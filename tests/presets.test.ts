@@ -95,3 +95,20 @@ test("派生条目的 baseUrl 必落在该 Agent 的协议槽上（防槽位映�
     }
   }
 });
+
+test("ZetaTechs 中转：三槽同址、address-only 背书（用户要求收录的商业中转首例）", () => {
+  const zeta = PROVIDER_PRESETS.find((p) => p.name === "ZetaTechs 中转");
+  assert.ok(zeta, "预设表缺 ZetaTechs 中转");
+  // 商业中转收录口径：最低背书档 + note 注明时效，防止未来被升格成 official
+  assert.equal(zeta.confidence, "address-only");
+  assert.ok(zeta.note && zeta.note.includes("下架"), "note 必须注明模型下架时效风险");
+  // 路由 2026-10-08 探测确认存在（401 = 有路由缺钥匙）；anthropic 槽不带 /v1
+  //（ANTHROPIC_BASE_URL 由 Claude Code 拼 /v1/messages，带 /v1 会成 /v1/v1/messages），
+  // openai/responses 按 OpenAI 族约定带 /v1
+  assert.equal(zeta.slots.anthropic, "https://api.zetatechs.com");
+  assert.equal(zeta.slots.openai, "https://api.zetatechs.com/v1");
+  assert.equal(zeta.slots.responses, "https://api.zetatechs.com/v1");
+  const codex = presetsForAgent("codex").find((p) => p.name === "ZetaTechs 中转");
+  assert.equal(codex?.baseUrl, "https://api.zetatechs.com/v1");
+  assert.equal(codex?.wireApi, "responses");
+});

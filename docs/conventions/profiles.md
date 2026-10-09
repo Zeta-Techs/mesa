@@ -16,7 +16,7 @@ Mesa 的配置单位从「一条连接粘住 Agent + 端点 + 密钥 + 模型 + 
 | 会话里 `/model` | 不改进程 env。状态栏按**启动时选中的模型**决定原生命令。混用时提示「换模要重开才按新模型注入」。不追踪 TUI。 |
 | 配置页 | 主列表仍按 Agent 看绑定；网关进同页工具条里的库。 |
 | 官方账号 / 本地 | 官方 = 无网关绑定；Ollama 等无密钥本地端点 = 普通网关（`noAuth`）。 |
-| 相对 cc-switch | 不做商业中转预设、本地代理、云同步、切走回写。**要做托盘一键「设为全局」**，且托盘只写全局文件、不改启动栏默认绑定。 |
+| 相对 cc-switch | 商业中转预设默认不收录——用户明确要求的以 `confidence: "address-only"` 例外收录并在 note 注明时效（2026-10-08 ZetaTechs 首例）；不做本地代理、云同步、切走回写。**要做托盘一键「设为全局」**，且托盘只写全局文件、不改启动栏默认绑定。 |
 | 内外双轨 | 「默认」（注入预选）和「全局生效」（上次写入 CLI 文件）是两个徽标，不合成「启用」。 |
 
 明确不做：解析 TUI `/model`、热切已开内嵌标签、请求改写。
@@ -84,7 +84,7 @@ Binding
 | Claude Code / CodeBuddy | `anthropic` | `ANTHROPIC_*` / `CODEBUDDY_*` env |
 | Codex | `responses` | `-c model_providers.<id>.*`，`wire_api=responses` |
 | Gemini | `gemini` | `GOOGLE_GEMINI_BASE_URL` 等 |
-| Cursor | `cursor` | `CURSOR_API_ENDPOINT` + `--model` |
+| Cursor | `cursor` | 只在端点是 `*.cursor.sh` / `*.cursor.com` 时注入 `CURSOR_API_KEY` + `CURSOR_API_ENDPOINT`；第三方地址拒绝启动。模型仍是 `--model` |
 | Grok / OpenCode | `openai` | grok：`GROK_MODELS_BASE_URL`；opencode：`OPENCODE_CONFIG_CONTENT` 内联 JSON |
 | Qwen / Kimi | 绑定 `protocol` → `openai` 或 `anthropic` | kimi 官方协议仍用 openai 槽 URL + `provider_type=kimi`；kimi 双写 `KIMI_MODEL_BASE_URL` / `KIMI_BASE_URL` |
 
@@ -378,7 +378,7 @@ Codex            → …
 - 逐模型策略是四头新工作，不是迁字段（§7）。
 - 落地第 1 步不是纯前端：状态栏隐藏无效 `/effort` 需要「该模型会不会思考」，能力链在 Rust，要先有 `combo_surface`（或同等）command / DTO。
 - Gemini 拉目录路径特殊（§14）。
-- 文档清单必须包含 **AGENTS.md 本身**（`profiles.rs` 条目、密钥/注入硬约束措辞随对象改名：密钥键从 profile id 改为 gateway id；`launch_plan` 入参；「复制到其他 agent」）。另改 `docs/user-guide.md` 连接章、本文、`docs/architecture.md` §5/§10、matrix 里 Profile 称谓、`docs/conventions/safety.md` 的 RequestPolicy 条。
+- 文档清单必须包含 **AGENTS.md 本身**（`profiles.rs` 条目、密钥/注入硬约束措辞随对象改名：密钥键从 profile id 改为 gateway id；`launch_plan` 入参；「复制到其他 agent」）。另改 `docs/guide/user-guide.md` 连接章、本文、`docs/architecture.md` §5/§10、matrix 里 Profile 称谓、`docs/conventions/safety.md` 的 RequestPolicy 条。
 
 ## 16. 落地顺序
 

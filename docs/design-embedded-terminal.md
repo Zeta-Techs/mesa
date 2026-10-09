@@ -8,7 +8,7 @@
 | 范围 | Mesa 内嵌终端（展示名 Mesa，内部身份 `ccode`）的几何、滚动、输入、第一眼、渲染与九家 CLI 差异 |
 | 第一刀 | 「输入行停在半截」：进程看到的第一帧尺寸 = 用户真正看见的那块终端 |
 
-本文只定合同与落地顺序，不改仓库源码。实现时同步改 `docs/conventions/terminal.md`、`docs/architecture.md` §10、以及入口/文案变化对应的 `docs/user-guide.md`。
+本文只定合同与落地顺序，不改仓库源码。实现时同步改 `docs/conventions/terminal.md`、`docs/architecture.md` §10、以及入口/文案变化对应的 `docs/guide/user-guide.md`。
 
 ---
 
@@ -84,7 +84,7 @@
 
 ### 上一刀为什么不能撤
 
-`docs/architecture.md` 2026-09-24：「审阅退回不再先按 80 列重放」。PTY 固定 24×80 时，Claude 在第一帧按 80 列把整段对话写进滚动记录；随后 fit 再拉宽，同一段按实际宽度再写一份。`docs/user-guide.md`「接回原来那条对话」已写明：更早那份窄画面清不掉，右键「清屏」只能整段清 xterm 缓冲，会话正文在聊天层。
+`docs/architecture.md` 2026-09-24：「审阅退回不再先按 80 列重放」。PTY 固定 24×80 时，Claude 在第一帧按 80 列把整段对话写进滚动记录；随后 fit 再拉宽，同一段按实际宽度再写一份。`docs/guide/user-guide.md`「接回原来那条对话」已写明：更早那份窄画面清不掉，右键「清屏」只能整段清 xterm 缓冲，会话正文在聊天层。
 
 路径 R 的第一帧合同因此是：**量到的格子原样 `openpty`；量不到就不要 spawn。** 不是「先把本来就收起的栏再收一次」。路径 N 才要在 `openpty` 之前去掉会在成功后消失的高级选项，让第一帧等于用户接着要看的那块。两条都不允许先 80 列再 resize，也不靠「等 Claude 贴底」。
 
@@ -348,7 +348,7 @@ PR1 **不**声称运行中的栏和查找条已经不占高度。点「修改」
 - 触控板合帧：`src/terminal-wheel-scroll.ts`。`term.element` capture 阶段截住，rAF 合并 deltaY，派回原始 target。备用屏、鼠标上报、修饰键、横向、`deltaMode ≠ 0` 不合帧。
 - DOM 行挪位：`src/terminal-row-reuse.ts`。平移不到一整屏且行文字一致才挪节点；WebGL 无行节点则空操作。`smoothScrollDuration` 保持 0（Ink 整屏重绘叠动画会闪）。
 - `onResize` 150ms trailing 保持。它减少 Codex 拖拽期间的重放次数，不承担「把错误的第一帧改正」。
-- 右键「清屏」保持 `term.clear()`。语义是清 **xterm 显示缓冲**，不是删 CLI 会话，也不是只删重复帧。`docs/user-guide.md` 已写对。
+- 右键「清屏」保持 `term.clear()`。语义是清 **xterm 显示缓冲**，不是删 CLI 会话，也不是只删重复帧。`docs/guide/user-guide.md` 已写对。
 
 合同（写进 `terminal.md`，PR2 只加测试与文案核对，不改算法，除非下面缺口成立）：
 
@@ -588,7 +588,7 @@ PR4 不新增 Tauri command。浮层只用现有 profile / agent 状态。
 
 - 行为变化写 `docs/conventions/terminal.md`（几何合同：路径 R / N / K，null 失败关闭，resize latch）。
 - 决策写 `docs/architecture.md` §10（实现日；写明「退回修改」不靠收起高级栏）。
-- `docs/user-guide.md`「接回原来那条对话」**PR1 不改**。不要写「不再先按摊开的工具栏来画」——路径 R 的工具栏没有摊开。路径 N 若要给使用者一句，用「带首条指令的新启动按收起高级选项后的画面来画」，并且等实现量到行数差再写。
+- `docs/guide/user-guide.md`「接回原来那条对话」**PR1 不改**。不要写「不再先按摊开的工具栏来画」——路径 R 的工具栏没有摊开。路径 N 若要给使用者一句，用「带首条指令的新启动按收起高级选项后的画面来画」，并且等实现量到行数差再写。
 - PR2 只加右键「清屏」的 title，不改「接回」那段的机制句。
 - PR4 改按钮时再改设计系统里「收缩启动行」那几句，并改说明书里的「修改启动配置」。
 - `CHANGELOG.md` 仅在发版时写。本设计不改它。
@@ -652,7 +652,7 @@ PR4 不新增 Tauri command。浮层只用现有 profile / agent 状态。
 - `docs/conventions/terminal.md`：渲染器、合帧、行挪位、Codex reflow、状态栏、聊天拉起、输入侧
 - `docs/conventions/design-system.md`：终端卡、空态、收缩行、状态栏 32px
 - `docs/architecture.md` 2026-09-24「审阅退回不再先按 80 列重放」；2026-09-22 DOM 行挪位；2026-09-21 清晰度与合帧；2026-09-19 渲染器可切
-- `docs/user-guide.md`「接回原来那条对话」
+- `docs/guide/user-guide.md`「接回原来那条对话」
 - `docs/agent-integration-matrix.md`：gemini `useAlternateBuffer`、各家 prompt 注入（实现以 `agent_specs.rs` 为准）
 - 测试：`tests/terminal-resume.test.ts`、`tests/terminal-wheel-scroll.test.ts`、`tests/terminal-row-reuse.test.ts`
 
@@ -664,7 +664,7 @@ PR4 不新增 Tauri command。浮层只用现有 profile / agent 状态。
 
 - **标题：** fix: 终端按量到的格子启动；带首条指令的新会话先收起高级选项
 - **文件：** `src/terminal-geometry.ts`（新）+ `docs/code-structure.md` 一行、`src/pages/TerminalPage.tsx`（`launch` / `resumeKick` / `openShell` / 自定义 Runtime / 脚本自动启动 / `onPtyExit` / `attach` / `onResize`）、`src-tauri/src/pty.rs`（`SpawnResult.adopted` + 只读 `pty_id_for_run` 命令）、`src-tauri/src/lib.rs`（登记该命令）、`tests/terminal-geometry.test.ts`、`docs/conventions/terminal.md`、`docs/architecture.md` §10
-- **不改：** `docs/user-guide.md`「接回原来那条对话」。不改 `pty_size_from`。不改运行中「修改」的 UI。
+- **不改：** `docs/guide/user-guide.md`「接回原来那条对话」。不改 `pty_size_from`。不改运行中「修改」的 UI。
 - **依赖：** 无。可单独合并
 - **改动：** 第 2 节。路径 R：不收栏；`visible && everVisible`；`waitForPostFitSize` 为 null 则不 spawn。路径 N：无论有没有 `runId`，openpty 都用收栏后的格子。有 `runId` 时先只读 `pty_id_for_run`；有活 PTY 则不收栏，`pty_spawn` 只收养；没有才收栏、再量、再 spawn，且不再 `pty_resize`。无 `runId` 不探测，先收再 spawn。路径 K：不收。shell / 回落 shell：不收，但 null 不 spawn。探测完成前禁止 `cleanupPty`。新进程 latch 为 `measured(openpty 尺寸)`，`allowPtyResize` 对它恒为 false。收养在 `attach` 前设 `frozen`。`attach` 和 150ms `onResize` 在进程活着之后都不 `pty_resize`。事后 resize 只在列出的手势处理函数里。未创建 PTY 的失败恢复 snapshot。`promptDropped` 仅在新进程上保持 compact，错误行带复制。差 ≥2 在 openpty 前放弃启动。单元测试覆盖 `launchChromeBeforeMeasure` / `allowSpawn` / `allowPtyResize`，外加 `adopted` 只在提前返回分支为 true、`pty_id_for_run` 命令不 spawn。
 - **验收：** 见第 2 节「PR1 验收」。点「修改」或打开查找条可以改变盒子高度，并且没有 `pty_resize`。不把这两项加进手势名单。不声称运行中的栏已经不占高度。
@@ -672,7 +672,7 @@ PR4 不新增 Tauri command。浮层只用现有 profile / agent 状态。
 ### PR2 — 把滚动与清屏语义写进约定和菜单说明
 
 - **标题：** docs: 终端清屏只清画面，重复滚动记录不单独删除
-- **文件：** `docs/conventions/terminal.md`、`docs/user-guide.md`（只加清屏怎么理解，**不改**「接回原来那条对话」的机制句）、`src/pages/TerminalPage.tsx` 右键「清屏」的 `title`
+- **文件：** `docs/conventions/terminal.md`、`docs/guide/user-guide.md`（只加清屏怎么理解，**不改**「接回原来那条对话」的机制句）、`src/pages/TerminalPage.tsx` 右键「清屏」的 `title`
 - **依赖：** 无。可与 PR1 并行。不碰 PR1 那一段说明书，所以没有合并冲突
 - **改动：** 第 3 节。合帧与行挪位保持。已写入的副本不能手术删除。聊天层是正文。清屏 title：「只清终端画面，对话还在聊天层」。不改滚动算法。
 
@@ -686,14 +686,14 @@ PR4 不新增 Tauri command。浮层只用现有 profile / agent 状态。
 ### PR4 — 运行中去掉会变高的启动栏
 
 - **标题：** fix: 运行中启动配置改到不占终端高度的浮层
-- **文件：** `src/pages/TerminalPage.tsx`（含 `actions.modify`，以及标签栏右侧的「插入」）、`src/components/TerminalStatusBar.tsx`（仅错误条若落在底栏；**不**放「插入」）、`docs/conventions/design-system.md`、`docs/conventions/terminal.md`、`docs/user-guide.md`（「修改启动配置」、收缩行、召回钮）、`docs/architecture.md` §10
+- **文件：** `src/pages/TerminalPage.tsx`（含 `actions.modify`，以及标签栏右侧的「插入」）、`src/components/TerminalStatusBar.tsx`（仅错误条若落在底栏；**不**放「插入」）、`docs/conventions/design-system.md`、`docs/conventions/terminal.md`、`docs/guide/user-guide.md`（「修改启动配置」、收缩行、召回钮）、`docs/architecture.md` §10
 - **依赖：** PR1（latch 与路径 N 已在）。**不**依赖 PR3。
 - **改动：** 第 5 节。这是「进程活着时 Mesa 自己不再撑高」的那一刀。未启动编辑条保留。运行中顶部高度 0；身份只在底栏；底栏只留状态。「插入」在标签栏右侧，与成果、分屏、查找并列，只写入 PTY、不回车。修改是只读浮层，不占文档流。`ccode.terminal.compactBar` 读时忽略，不删 localStorage 旧值。错误条不增加默认路径的文档流高度。不改九家注入，不改空态卡上「身份不重复」的结构。不改查找条的文档流（那是下一刀）。
 
 ### PR6 — 查找条改为叠在终端画面上
 
 - **标题：** fix: 查找条盖在终端画面上，打开不再改变行数
-- **文件：** `src/pages/TerminalPage.tsx`（查找条从 xterm 宿主上方的文档流改为画面内绝对定位）、`docs/conventions/terminal.md`、`docs/conventions/design-system.md`、`docs/user-guide.md`（若写了查找条占一行）
+- **文件：** `src/pages/TerminalPage.tsx`（查找条从 xterm 宿主上方的文档流改为画面内绝对定位）、`docs/conventions/terminal.md`、`docs/conventions/design-system.md`、`docs/guide/user-guide.md`（若写了查找条占一行）
 - **依赖：** 排在 PR1 之后，只为验收时自动 `pty_resize` 已经关掉。叠层本身不改 latch，不把查找加入 `pty_resize` 名单，不碰探测和路径 R。可与 PR4 并行。
 - **改动：** 查找输入条 `absolute` 盖在终端画面上（沿用现有查找逻辑：Cmd/Ctrl+F、Enter / Shift+Enter、Esc）。打开和关闭都不改变 xterm 容器高度。
 - **验收：** 进程已在跑时打开查找，再关掉，`term.rows` 两次相同，且没有 `pty_resize`。查找控件看得见、能输入，不把输入行往上顶。

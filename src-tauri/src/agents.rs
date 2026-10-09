@@ -125,6 +125,19 @@ fn env_preview_source(name: &str, profile: &Profile) -> &'static str {
     }
 }
 
+/// Cursor 自家云。只有这种地址才注入 CURSOR_API_KEY；其余地址是第三方网关。
+pub(crate) fn cursor_cloud_endpoint(url: &str) -> bool {
+    let Ok(parsed) = reqwest::Url::parse(url.trim()) else {
+        return false;
+    };
+    let host = parsed.host_str().unwrap_or("").to_ascii_lowercase();
+    host == "api2.cursor.sh"
+        || host == "cursor.sh"
+        || host == "cursor.com"
+        || host.ends_with(".cursor.sh")
+        || host.ends_with(".cursor.com")
+}
+
 /// 返回不含密钥值的启动计划，供配置页诊断和跨平台问题排查使用。
 #[tauri::command]
 pub fn preview_launch_plan(
@@ -969,13 +982,24 @@ pub fn launch_plan(
                     endpoint_env,
                     model_flag,
                 } => {
-                    // key/端点走 env（CURSOR_API_KEY / CURSOR_API_ENDPOINT，仅非空时注入）；
-                    // 模型没有 env，只能追加 --model <name> flag（bracket 参数化原样透传）
+                    // CURSOR_API_KEY 只交给 Cursor 自家云去换登录（/auth/exchange_user_api_key）。
+                    // 第三方网关的钥匙换不成，CLI 会报 “API key is invalid”。这种绑定直接拒绝启动，
+                    // 不再把网关钥匙写进环境。官方账号路径另有 env_remove，清掉残留钥匙。
+                    let endpoint = profile
+                        .base_url
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty());
+                    if let Some(url) = endpoint {
+                        if !cursor_cloud_endpoint(url) {
+                            return Err(
+                                "Cursor 不接受这个网关的钥匙。CURSOR_API_KEY 只能是 cursor.com 的用户 API Key，GLM 这类网关的钥匙换不了 Cursor 登录。请改用「官方账号」，在终端执行 cursor-agent login；或新建一条不填第三方地址的连接，钥匙用 cursor.com/dashboard 里创建的用户 API Key。".into(),
+                            );
+                        }
+                        plan.env.push(((*endpoint_env).into(), url.into()));
+                    }
                     if let Some(key) = key {
                         plan.env.push(((*key_env).into(), key));
-                    }
-                    if let Some(url) = &profile.base_url {
-                        plan.env.push(((*endpoint_env).into(), url.clone()));
                     }
                     if let Some(model) = model {
                         plan.args.push((*model_flag).into());
@@ -3889,7 +3913,7 @@ api_backend = "responses"
 
     #[test]
     fn cursor_plan_injects_key_endpoint_env_and_model_flag() {
-        let p = profile("cursor", Some("https://cursor.example.com"));
+        let p = profile("cursor", Some("https://api2.cursor.sh"));
         let plan = launch_plan(
             &p,
             Some("key-secret".into()),
@@ -3900,7 +3924,7 @@ api_backend = "responses"
             .contains(&("CURSOR_API_KEY".into(), "key-secret".into())));
         assert!(plan.env.contains(&(
             "CURSOR_API_ENDPOINT".into(),
-            "https://cursor.example.com".into()
+            "https://api2.cursor.sh".into()
         )));
         // 模型走 --model flag（bracket 参数化原样透传），不是 env
         assert_eq!(
@@ -3916,6 +3940,14 @@ api_backend = "responses"
         let plan = launch_plan_with_prompt(&p, Some("key-secret".into()), None, Some("干活")).unwrap();
         assert_eq!(plan.prompt_args, vec!["干活"]);
         assert!(!plan.prompt_dropped);
+    }
+
+    #[test]
+    fn cursor_plan_rejects_gateway_key_on_third_party_endpoint() {
+        let p = profile("cursor", Some("https://open.bigmodel.cn/api/paas/v4"));
+        let err = launch_plan(&p, Some("gateway-key".into()), Some("glm-5.3")).unwrap_err();
+        assert!(err.contains("官方账号"));
+        assert!(err.contains("cursor-agent login"));
     }
 
     #[test]

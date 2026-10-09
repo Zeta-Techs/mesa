@@ -32,7 +32,7 @@ test("文献雷达真实卡片：趋势标题、已知日期柱与缺日期空�
         b.onLoad({ filter: /.*/, namespace: "stub" }, ({ path }) => ({
           loader: "js",
           contents: path === "store"
-            ? "export const useAppStore = select => select({setPage(){},setWorkspaceReviewRequest(){},setFilePreviewReq(){},setProjectSurfaceReq(){}});"
+            ? "export const useAppStore = select => select({setPage(){},setReaderReq(){},setWorkspaceReviewRequest(){},setFilePreviewReq(){},setProjectSurfaceReq(){}});"
             : "export default function Editor(){return null;}",
         }));
       },

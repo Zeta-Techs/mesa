@@ -560,7 +560,12 @@ interface AppState {
   /** 依赖体检结果（git/node/安装渠道，dep_check.rs）：启动时静默探测一次，
       设置页诊断区「重新检测」与一键安装完成后就地刷新；null = 尚未探测/探测失败 */
   depCheck: DepCheckDto | null;
-  /** 每次调用重新探测（无缓存）；失败静默——体检失败不影响主流程 */
+  /** 显式点「重新检测」要有看得见的反馈：检测进行中（按钮转「检测中…」并禁用） */
+  depCheckBusy: boolean;
+  /** 最近一次检测失败原因（诊断行内红字展示）；成功后清空。启动探测失败也落这里，
+      只是不弹通知——静默指不打扰，不是不交代 */
+  depCheckError: string | null;
+  /** 每次调用重新探测（无缓存）；进行中防重入 */
   refreshDepCheck: () => Promise<void>;
   /** 一次性「跳设置页并选中分区」请求（收件箱 dep: 条目发起），设置页消费并清空 */
   settingsSectionReq: string | null;
@@ -816,11 +821,21 @@ export const useAppStore = create<AppState>((set, get) => {
   dismissInbox: (item) =>
     set((st) => ({ inboxDismissed: dismissInboxItem(item, st.inboxDismissed) })),
   depCheck: null,
+  depCheckBusy: false,
+  depCheckError: null,
   refreshDepCheck: async () => {
+    if (get().depCheckBusy) return;
+    set({ depCheckBusy: true });
     try {
-      set({ depCheck: await invoke<DepCheckDto>("check_dependencies") });
-    } catch {
-      /* 体检失败静默：不打扰主流程，设置页可点「重新检测」重试 */
+      set({
+        depCheck: await invoke<DepCheckDto>("check_dependencies"),
+        depCheckError: null,
+      });
+    } catch (e) {
+      // 静默指不打扰主流程：显式点「重新检测」失败必须看得见，落错误态由诊断行展示
+      set({ depCheckError: String(e) });
+    } finally {
+      set({ depCheckBusy: false });
     }
   },
   settingsSectionReq: null,

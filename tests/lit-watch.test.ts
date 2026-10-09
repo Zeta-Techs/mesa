@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   entryPassesFilter,
   filterLitDismissed,
+  followupMatchesDismissed,
   fulltextLinkFor,
   groupEntriesByDay,
   groupEntriesByKeyword,
@@ -534,6 +535,27 @@ test("papersForLitCandidate：取末尾 count 条、新的在前", () => {
     ),
     [],
   );
+});
+
+test("followupMatchesDismissed：忽略命中后，同标题的待人工下载一并算消失", () => {
+  const hits = [
+    entry({ id: "w-1", title: "Self-supporting WB/WC ceramic composite electrodes" }),
+    entry({ id: "w-2", title: "另一篇完全不同的论文题目很长" }),
+  ];
+  const dismissed = new Set(["w-1"]);
+  assert.equal(
+    followupMatchesDismissed(
+      "Self-supporting WB/WC ceramic composite electrodes for robust hydrogen evolution",
+      hits,
+      dismissed,
+    ),
+    true,
+  );
+  assert.equal(
+    followupMatchesDismissed("另一篇完全不同的论文题目很长", hits, dismissed),
+    false,
+  );
+  assert.equal(followupMatchesDismissed("WB", hits, dismissed), false);
 });
 
 test("filterLitDismissed：忽略表内的条目被过滤", () => {

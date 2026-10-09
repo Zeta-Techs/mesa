@@ -4,8 +4,8 @@ Mesa 是桌面应用：Tauri v2 + React/TypeScript + Rust。展示名是 Mesa，
 
 ## 先看这些
 
-- [使用教程](docs/tutorial.md)：第一次上手。
-- [产品说明书](docs/user-guide.md)：按钮、状态、页面。
+- [使用教程](docs/guide/tutorial.md)：第一次上手。
+- [产品说明书](docs/guide/user-guide.md)：按钮、状态、页面。
 - [AGENTS.md](AGENTS.md)：开发时必须遵守的约定。
 - [docs/architecture.md](docs/architecture.md)：为什么这样设计。
 

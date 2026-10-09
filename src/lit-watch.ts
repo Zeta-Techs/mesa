@@ -800,6 +800,26 @@ export function filterLitDismissed<T extends { id: string }>(
   return entries.filter((e) => !dismissed.has(e.id));
 }
 
+/** 待人工下载与上面的命中是同一篇时，忽略后下面也消失。
+ *  标题规范化后互相包含，短边至少 12 个字符，避免短标题误伤。 */
+export function followupMatchesDismissed(
+  followupTitle: string,
+  hits: readonly { id: string; title: string }[],
+  dismissed: ReadonlySet<string>,
+): boolean {
+  const title = normalizeTitle(followupTitle);
+  if (!title) return false;
+  return hits.some((hit) => {
+    if (!dismissed.has(hit.id)) return false;
+    const other = normalizeTitle(hit.title);
+    if (!other) return false;
+    if (title === other) return true;
+    if (!(title.includes(other) || other.includes(title))) return false;
+    const shorter = title.length < other.length ? title : other;
+    return shorter.length >= 12;
+  });
+}
+
 // ---- localStorage 薄层（以下依赖 DOM，不进 node 测试） ----
 
 /** 雷达卡片展开：按项目记住，切换项目不默认打开。 */

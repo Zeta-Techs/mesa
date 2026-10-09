@@ -14,7 +14,7 @@
         "width": 1100,
         "height": 720,
         "titleBarStyle": "Overlay",
-        "hiddenTitle": false,
+        "hiddenTitle": true,
         "transparent": true,
         "windowEffects": {
           "effects": ["underWindowBackground", "mica"],

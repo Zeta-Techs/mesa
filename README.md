@@ -73,8 +73,8 @@
 
 ## 文档
 
-- [docs/tutorial.md](docs/tutorial.md) — 使用教程（第一次上手；英文综述按步骤走完）
-- [docs/user-guide.md](docs/user-guide.md) — 产品说明书（查某个按钮、某种状态、某个页面；需要后补的图和视频已标位）
+- [docs/guide/tutorial.md](docs/guide/tutorial.md) — 使用教程（第一次上手；英文综述按步骤走完）
+- [docs/guide/user-guide.md](docs/guide/user-guide.md) — 产品说明书（查某个按钮、某种状态、某个页面；需要后补的图和视频已标位）
 - [CHANGELOG.md](CHANGELOG.md) — 版本更新日志
 - [docs/architecture.md](docs/architecture.md) — 架构设计与决策记录
 - [docs/agent-integration-matrix.md](docs/agent-integration-matrix.md) — 九个 CLI 的 env / 配置 / 会话格式调研

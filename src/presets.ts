@@ -1,5 +1,8 @@
 /**
- * 内置端点预设（provider 级）：只收录官方与公开端点，不收录第三方商业中转。
+ * 内置端点预设（provider 级）：只收录官方与公开端点。第三方商业中转默认不收录，
+ * 用户明确要求的例外收录：confidence 必须标 "address-only"（最低背书档）并在
+ * note 注明时效风险——中转站模型随上架/备案变动，一切以「验证并获取」拉到的
+ * 目录为准（2026-10-08 ZetaTechs 首例，profiles.md 定位表同步）。
  * 一份预设描述一个供应商在各协议槽的端点与推荐模型——网关本来就是一份多槽对象，
  * 预设跟着网关走：网关库新建表单直接用整表，「添加连接」按 Agent 所需槽位派生
  * （presetsForAgent）。加供应商 = 加一条。
@@ -121,6 +124,24 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     },
     noAuth: true,
     note: "无需密钥；模型取决于本机已拉取",
+  },
+  {
+    name: "ZetaTechs 中转",
+    slots: {
+      // anthropic 槽不带 /v1：注入的 ANTHROPIC_BASE_URL 由 Claude Code 自己拼 /v1/messages
+      //（同 DeepSeek/智谱先例）；New API 的 Anthropic 协议路由就在根下 /v1/messages。
+      // openai/responses 槽按 OpenAI 族约定带 /v1。
+      anthropic: "https://api.zetatechs.com",
+      openai: "https://api.zetatechs.com/v1",
+      responses: "https://api.zetatechs.com/v1",
+    },
+    models: ["kimi-k3", "deepseek-v4.1-flash", "glm-5.3-flash"],
+    note: "New API 中转；2026-07 起下架未备案境外模型（Claude/Gemini/Grok），可用模型以「验证并获取」为准",
+    slotNotes: {
+      anthropic:
+        "端点不带 /v1（Claude Code 自己拼 /v1/messages）；ANTHROPIC_AUTH_TOKEN、CodeBuddy 用 CODEBUDDY_API_KEY 鉴权",
+    },
+    confidence: "address-only",
   },
 ];
 

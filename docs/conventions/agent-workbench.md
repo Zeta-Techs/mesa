@@ -492,7 +492,7 @@ Headless 支持取消但不承诺会话恢复；定时任务行显示「停止�
 | 3 | `RuntimeKind` + Custom | `agent_specs.rs` `custom_runtime.rs` `runtime.rs` | **Custom 最小闭环已实现；Cloud 不实现** |
 | 7 | 定时进 watch 工作区 | `scheduler.rs` `lit_watch.rs` | **隔离路径 + 播种 + 只读评审 + 采纳进主仓已实现；无主仓 sentinel UI** |
 
-实现某一期时同步 `docs/user-guide.md` 对应操作；未实现不得写进手册当已有功能。发版才写 `CHANGELOG.md`。
+实现某一期时同步 `docs/guide/user-guide.md` 对应操作；未实现不得写进手册当已有功能。发版才写 `CHANGELOG.md`。
 
 
 ## 11. 项目页表面视图（2026-09-05）

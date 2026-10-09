@@ -799,7 +799,7 @@ export interface CodingWorktreeDto {
 3. 回滚 = revert 对应 PR。无 `project.toml` 迁移。
 4. 三平台同步发；Linux Desktop 按钮 fail-loud，其它能力不得裁剪。
 
-手册在 PR 7：`docs/user-guide.md`「编程项目」、架构 §10、`design-system.md` 编程主区、`safety.md` remote URL + Desktop CLI 门槛、`pipeline.md` 工作方式段、`Agents.md` `coding.rs` 一行。
+手册在 PR 7：`docs/guide/user-guide.md`「编程项目」、架构 §10、`design-system.md` 编程主区、`safety.md` remote URL + Desktop CLI 门槛、`pipeline.md` 工作方式段、`Agents.md` `coding.rs` 一行。
 
 ---
 
@@ -866,7 +866,7 @@ export interface CodingWorktreeDto {
 - `src/components/HoverTip.tsx`、`src/components/ConfirmDialog.tsx`
 - `docs/architecture.md` v3.179 / v3.180 / v3.190
 - `docs/conventions/pipeline.md`、`design-system.md` 编程主区、`safety.md` 多阶段 Git / opener
-- `docs/user-guide.md`「编程项目」条
+- `docs/guide/user-guide.md`「编程项目」条
 - GitHub Desktop：官方用户入口 `github /PATH/TO/REPOSITORY`（argv = 绝对路径，**不要**给 `github` 传 `--cli-open`）。`--cli-open=` 只用于 macOS `open -a "GitHub Desktop" --args --cli-open=...`（desktop#22150，内部投给应用）。`parse-app-url.ts` 现仅 `oauth`/`openrepo`；desktop#19733 从协议处理器移除 `openLocalRepo`；desktop#8646 Windows exe 传路径不切仓
 - 办公页外部打开先例：`fs_tree::open_in_system`
 
@@ -933,7 +933,7 @@ PR 1 ∥ PR 2 可并行。**PR 4/5/6 依赖 PR 2**（共用 `CodingOpDto`，禁�
 ### PR 7 — 文档与约定同步
 
 - **标题：** 编程 Git/GitHub 环：手册与约定
-- **影响文件：** `docs/user-guide.md`、`docs/architecture.md` §10、`docs/conventions/pipeline.md`、`design-system.md`、`safety.md`、`Agents.md`
+- **影响文件：** `docs/guide/user-guide.md`、`docs/architecture.md` §10、`docs/conventions/pipeline.md`、`design-system.md`、`safety.md`、`Agents.md`
 - **依赖：** PR 1–6 行为稳定后
 - **内容：** 从基准开工、芯片、Desktop 用 CLI 打开 **这一目录**、hostKind 文案、无 gh 降级。不写操作流水账。
 

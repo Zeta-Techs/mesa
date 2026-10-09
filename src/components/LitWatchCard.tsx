@@ -49,6 +49,8 @@ import { schedulesForProject } from "../schedule-tasks";
 import {
   dismissLitEntry,
   filterLitDismissed,
+  followupMatchesDismissed,
+  paperResourceFor,
   groupEntriesByDay,
   groupEntriesByKeyword,
   includedLineFor,
@@ -913,6 +915,7 @@ export default function LitWatchCard({
   );
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const setPage = useAppStore((s) => s.setPage);
+  const setReaderReq = useAppStore((s) => s.setReaderReq);
   const setFilePreviewReq = useAppStore((s) => s.setFilePreviewReq);
   const setProjectSurfaceReq = useAppStore((s) => s.setProjectSurfaceReq);
   const setWorkspaceReviewRequest = useAppStore(
@@ -1195,16 +1198,38 @@ export default function LitWatchCard({
         projectRoot,
         ...includedLineFor(entry),
       });
-      if (res.added) {
-        showToast("已加入精读清单，到文件页看");
-        setIncluded(
-          await invoke<IncludedEntryDto[]>("list_included_entries", {
-            projectRoot,
-          }),
-        );
-      } else {
-        showToast("已在精读清单，到文件页看");
+      void invoke<IncludedEntryDto[]>("list_included_entries", { projectRoot })
+        .then((rows) => setIncluded(rows))
+        .catch(() => {});
+      const names = await invoke<(string | null)[]>("to_fetch_progress", {
+        projectRoot,
+        items: [{ title: entry.title, url: entry.url }],
+      }).catch(() => null);
+      const saved = names?.[0] ?? null;
+      let rel = saved ? toFetchPaperRel(saved) : "";
+      if (!rel) {
+        const read = await invoke<{
+          config: { resources: { path: string; type: string; name: string; readonly: boolean; note: string }[] };
+        }>("read_project_config", { path: projectRoot }).catch(() => null);
+        rel =
+          paperResourceFor(
+            { title: entry.title },
+            read?.config.resources ?? [],
+          ) ?? "";
       }
+      if (rel) {
+        const root = projectRoot.replace(/[\\/]+$/, "");
+        const abs = /^([a-zA-Z]:[\\/]|\/)/.test(rel) ? rel : `${root}/${rel}`;
+        setReaderReq({ pdfPath: abs, projectRoot });
+        setPage("terminal");
+        showToast(res.added ? "已加入精读，正在打开全文" : "已在精读清单，正在打开全文");
+        return;
+      }
+      showToast(
+        res.added
+          ? "已加入精读清单。全文还没有，先用打开来源或关联 PDF"
+          : "已在精读清单。全文还没有，先用打开来源或关联 PDF",
+      );
     } catch (reason) {
       setError(String(reason));
     }
@@ -1665,7 +1690,9 @@ export default function LitWatchCard({
                     onToggle={() => setShowAllHits((v) => !v)}
                   />
                 )}
-                {followups.length > 0 && (
+                {followups.some(
+                  (f) => !followupMatchesDismissed(f.title, entries ?? [], dismissed),
+                ) && (
                   <div className="mt-2">
                     <button
                       type="button"
@@ -1674,12 +1701,20 @@ export default function LitWatchCard({
                       aria-expanded={followupsOpen}
                     >
                       <FoldMark open={followupsOpen} />
-                      待人工下载（{followups.length}）
+                      待人工下载（{
+                        followups.filter(
+                          (f) =>
+                            !followupMatchesDismissed(f.title, entries ?? [], dismissed),
+                        ).length
+                      }）
                     </button>
                     {followupsOpen && (
                       <>
                       <ul className="mt-1 space-y-0.5 px-0.5 py-px">
                         {followups.map((f, i) => {
+                          if (followupMatchesDismissed(f.title, entries ?? [], dismissed)) {
+                            return null;
+                          }
                           const fkey = `${f.title}-${i}`;
                           const savedName = followupSaved[fkey];
                           const waiting =

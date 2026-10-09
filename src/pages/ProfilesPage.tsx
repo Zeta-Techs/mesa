@@ -1972,6 +1972,32 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   const [officialStatus, setOfficialStatus] = useState<
     Record<string, OfficialAccountStatusDto>
   >({});
+  // 冲突提醒的显式忽略（同收件箱 v3.88 口径）：按「冲突清单签名」记录，⟳ 重检后
+  // 残留项有增减（签名变化）提醒自动复现；只隐藏提醒，官方账号启动拦截仍在后端生效
+  const [conflictDismissed, setConflictDismissed] = useState<Record<string, string>>(
+    () => {
+      try {
+        return JSON.parse(
+          localStorage.getItem("ccode.conflictDismissed") ?? "{}",
+        ) as Record<string, string>;
+      } catch {
+        return {};
+      }
+    },
+  );
+  function dismissConflicts(agentId: string, conflicts: string[]) {
+    const sig = [...conflicts].sort().join("\n");
+    setConflictDismissed((prev) => {
+      const next = { ...prev, [agentId]: sig };
+      try {
+        localStorage.setItem("ccode.conflictDismissed", JSON.stringify(next));
+      } catch {
+        /* 存储不可用仅本次会话生效 */
+      }
+      return next;
+    });
+    setConflictPop(null);
+  }
 
   /** 重新检测某个 agent 的官方账号连接状态（只读 auth 文件，失败不影响页面） */
   async function refreshOfficial(agentId: string) {
@@ -2155,6 +2181,29 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   const [updateResults, setUpdateResults] = useState<
     Record<string, AgentCmdResult>
   >({});
+  // 更新成功提示 8s 自动收起（失败保留——输出要留着排错）；同一 agent 的新结果覆盖旧计时
+  const updateResultTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>(
+    {},
+  );
+  function applyUpdateResult(agentId: string, res: AgentCmdResult) {
+    setUpdateResults((prev) => ({ ...prev, [agentId]: res }));
+    clearTimeout(updateResultTimersRef.current[agentId]);
+    if (!res.ok) return;
+    updateResultTimersRef.current[agentId] = setTimeout(() => {
+      setUpdateResults((prev) => {
+        if (!prev[agentId]?.ok) return prev;
+        const next = { ...prev };
+        delete next[agentId];
+        return next;
+      });
+    }, 8000);
+  }
+  useEffect(
+    () => () => {
+      for (const t of Object.values(updateResultTimersRef.current)) clearTimeout(t);
+    },
+    [],
+  );
   // 各 agent 最新版检查（组头「新版/已更新」状态；查不到渠道的组头回退普通「更新」按钮）
   const [updateInfo, setUpdateInfo] = useState<Record<string, AgentUpdateInfo>>(
     {},
@@ -2237,27 +2286,24 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
       `agent-update-done-${agentId}`,
       (e) => {
         doneArrived = true;
-        setUpdateResults((prev) => ({ ...prev, [agentId]: e.payload }));
+        applyUpdateResult(agentId, e.payload);
       },
     );
     try {
       const res = await invoke<AgentCmdResult>(command, { agentId });
       if (!doneArrived) {
-        setUpdateResults((prev) => ({ ...prev, [agentId]: res }));
+        applyUpdateResult(agentId, res);
       }
       await loadAll();
     } catch (e) {
       if (!doneArrived) {
-        setUpdateResults((prev) => ({
-          ...prev,
-          [agentId]: {
-            ok: false,
-            output: String(e),
-            method: "",
-            versionBefore: null,
-            versionAfter: null,
-          },
-        }));
+        applyUpdateResult(agentId, {
+          ok: false,
+          output: String(e),
+          method: "",
+          versionBefore: null,
+          versionAfter: null,
+        });
       }
     } finally {
       clearInterval(idleTimer);
@@ -2998,7 +3044,9 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                   </span>
                   {/* 连接冲突提升为组头琥珀胶囊（v3.93）：CLI 自读文件里的残留密钥会覆盖官方账号
                       登录并产生计费——藏在大段灰字里会被忽略；点击弹层列出具体文件/变量 */}
-                  {(officialStatus[agent.id]?.conflicts.length ?? 0) > 0 && (
+                  {(officialStatus[agent.id]?.conflicts.length ?? 0) > 0 &&
+                    conflictDismissed[agent.id] !==
+                      [...officialStatus[agent.id].conflicts].sort().join("\n") && (
                     <button
                       type="button"
                       onClick={(event) => {
@@ -3435,6 +3483,12 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
         (() => {
           const st = officialStatus[conflictPop.agentId];
           if (!st || st.conflicts.length === 0) return null;
+          // 忽略签名命中时也不弹（忽略动作本身会关弹层，这里守住重渲染路径）
+          if (
+            conflictDismissed[conflictPop.agentId] ===
+            [...st.conflicts].sort().join("\n")
+          )
+            return null;
           return (
             <div
               className="fixed inset-0 z-20"
@@ -3473,15 +3527,25 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                   这些文件里残留的密钥会覆盖官方账号登录并产生 API
                   计费；请编辑对应文件删除后，点状态行的 ⟳ 重新检测。
                 </p>
-                {st.cleanupSupported && (
+                <div className="mt-2 flex items-center gap-2">
+                  {st.cleanupSupported && (
+                    <button
+                      type="button"
+                      className="rounded-sm border border-warn-bd bg-warn px-2 py-1 text-xs text-warn-text hover:brightness-110"
+                      onClick={() => void clearAccountConflicts(conflictPop.agentId)}
+                    >
+                      备份后清理已识别项
+                    </button>
+                  )}
                   <button
                     type="button"
-                    className="mt-2 rounded-sm border border-warn-bd bg-warn px-2 py-1 text-xs text-warn-text hover:brightness-110"
-                    onClick={() => void clearAccountConflicts(conflictPop.agentId)}
+                    className="rounded-sm px-2 py-1 text-xs text-l3 hover:bg-hover hover:text-l1"
+                    title="只隐藏这条提醒；官方账号启动拦截仍生效，残留项有变化时提醒自动回来"
+                    onClick={() => dismissConflicts(conflictPop.agentId, st.conflicts)}
                   >
-                    备份后清理已识别项
+                    忽略
                   </button>
-                )}
+                </div>
               </div>
             </div>
           );

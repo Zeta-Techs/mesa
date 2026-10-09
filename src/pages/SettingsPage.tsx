@@ -930,6 +930,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
   const checkAppUpdate = useAppStore((s) => s.checkAppUpdate);
   // 依赖体检（诊断区 Row）：store 共享，启动时已静默探测一次；一键安装完成后就地刷新
   const depCheck = useAppStore((s) => s.depCheck);
+  const depCheckBusy = useAppStore((s) => s.depCheckBusy);
+  const depCheckError = useAppStore((s) => s.depCheckError);
   const refreshDepCheck = useAppStore((s) => s.refreshDepCheck);
   const depInstall = useDepInstall((_tool, res) => {
     // xcode 渠道只是触发系统弹窗（versionAfter 恒 null），装没装完都靠「重新检测」收口
@@ -3206,7 +3208,16 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                     上次检测 {depCheck.checkedAt}
                   </span>
                 </div>
+                {depCheckError && (
+                  <div className="py-1 text-xs text-err-text">
+                    上次检测失败：{depCheckError}，可重试
+                  </div>
+                )}
               </div>
+            ) : depCheckError ? (
+              <p className="text-xs text-err-text">
+                检测失败：{depCheckError}
+              </p>
             ) : (
               <p className="text-xs text-l4">尚未检测</p>
             )
@@ -3214,9 +3225,10 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         >
           <button
             onClick={() => void refreshDepCheck()}
+            disabled={depCheckBusy}
             className={rowActionClass}
           >
-            重新检测
+            {depCheckBusy ? "检测中…" : "重新检测"}
           </button>
         </Row>
         <BackgroundTasksPanel />

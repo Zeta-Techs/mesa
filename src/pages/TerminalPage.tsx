@@ -3334,7 +3334,7 @@ const TerminalView = memo(function TerminalView({
           if (!dir) return;
           if (
             !(await confirmDialog(
-              `把「${dir}」登记为 Mesa 项目？\n只登记这个目录，不会建工作区、不改动任何文件。写论文可在项目页选研究流程；只读文献写笔记可以不选。`,
+              `把「${dir}」登记为 Mesa 项目？\n只登记这个目录，不会建工作区、不改动任何文件。写论文可在项目页选研究流程；只读文献写笔记可以不选。\n对话跟着这个目录走；要落到别的文件夹，得在开聊前另选目录。`,
               { confirmText: "登记" },
             ))
           )
@@ -3432,7 +3432,12 @@ const TerminalView = memo(function TerminalView({
           </ul>
         </div>
       )}
-      {embedInPeek || activePtyId ? null : barExpanded ? (
+      {/* 底栏在会话运行中也保持可见（v3.213 运行态 = 收缩行）：运行中要能点到
+          修改/插入/⋯（转为项目…、停止都在里面）。顶部高度归零是
+          design-embedded-terminal.md 方案 C（PR4）的形态——portal 与底栏身份
+          没做之前不得提前藏整条栏（2026-10-08 回归修复：activePtyId 一挂就把
+          ⋯ 全藏掉，快速开聊转正出口在会话存活期间不可达）。 */}
+      {embedInPeek ? null : barExpanded ? (
         <>
           <div className="mb-1 flex min-w-0 flex-wrap items-start gap-x-1.5 gap-y-2">
             {/* Agent/配置/模型收进同一条分段工具条：段间留空隙各自成胶囊。
