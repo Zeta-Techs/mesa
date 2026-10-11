@@ -62,6 +62,10 @@ static LAST_SEEN: std::sync::LazyLock<Mutex<HashMap<PathBuf, std::time::Instant>
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 /// watcher 是否在跑（单实例）
 static WATCHER_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// 下载目录变了时，让正在跑的监听退出，下一轮按新目录启动。
+static WATCHER_STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static WATCHED_DIRS: std::sync::LazyLock<Mutex<Vec<PathBuf>>> =
+    std::sync::LazyLock::new(|| Mutex::new(Vec::new()));
 
 /// 收货决策：终端只印启动 / 失败 / 收货结果。去重、快照、无 pending 的无关 PDF
 /// 不刷热更新窗口（2026-09-17 排障期每个跳过都 eprintln，一次下载看起来像点了
@@ -783,18 +787,35 @@ pub fn ensure_watcher_at_startup(app: &tauri::AppHandle) {
     }
 }
 
-/// 确保收货监听在跑（单实例；启动时快照既有 PDF，只记不处理）
+/// 确保收货监听在跑。浏览器后来改了默认下载位置时，拆掉旧监听再按新目录启动。
 fn ensure_watcher(app: &tauri::AppHandle) -> Result<(), String> {
+    let dirs = watch_roots();
+    if dirs.is_empty() {
+        return Err("找不到可监听的下载目录".into());
+    }
     if WATCHER_RUNNING.swap(true, std::sync::atomic::Ordering::AcqRel) {
+        let same = WATCHED_DIRS
+            .lock()
+            .ok()
+            .is_some_and(|have| same_watch_dirs(&have, &dirs));
+        if same {
+            return Ok(());
+        }
+        WATCHER_STOP.store(true, std::sync::atomic::Ordering::Release);
+        let restart = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(400));
+            WATCHER_RUNNING.store(false, std::sync::atomic::Ordering::Release);
+            WATCHER_STOP.store(false, std::sync::atomic::Ordering::Release);
+            let _ = ensure_watcher(&restart);
+        });
         return Ok(());
     }
     // 闩锁纪律（2026-09-17 修正）：swap 置 true 之后任何提前返回都必须复位，
     // 否则一次瞬时失败（如定位不到下载目录）会把「单实例」永久占死——
     // 后续「在浏览器打开」全被 Ok(()) 假成功吞掉，再无人监听
-    let dirs = watch_roots();
-    if dirs.is_empty() {
-        WATCHER_RUNNING.store(false, std::sync::atomic::Ordering::Release);
-        return Err("找不到可监听的下载目录".into());
+    if let Ok(mut watched) = WATCHED_DIRS.lock() {
+        *watched = dirs.clone();
     }
     // 快照既有 PDF：后续事件里命中快照的一律跳过
     let mut snap: HashMap<PathBuf, u64> = HashMap::new();
@@ -836,6 +857,11 @@ fn ensure_watcher(app: &tauri::AppHandle) -> Result<(), String> {
     }
     dinbox_log(&format!("监听已启动: {dir_disp}"));
     Ok(())
+}
+
+fn same_watch_dirs(left: &[PathBuf], right: &[PathBuf]) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(a, b)| crate::paths::same_path(&a.to_string_lossy(), &b.to_string_lossy()))
 }
 
 fn is_pdf_path(p: &Path) -> bool {
@@ -1013,7 +1039,9 @@ fn watcher_loop(app: tauri::AppHandle, dirs: Vec<PathBuf>) {
                 q.is_empty()
             })
             .unwrap_or(true);
-        if pending_empty && last_event.elapsed() > IDLE_STOP {
+        if WATCHER_STOP.load(std::sync::atomic::Ordering::Relaxed)
+            || (pending_empty && last_event.elapsed() > IDLE_STOP)
+        {
             break;
         }
         match rx.recv_timeout(Duration::from_secs(15)) {
