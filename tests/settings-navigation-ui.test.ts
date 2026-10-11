@@ -258,6 +258,21 @@ test("设置保存与错误反馈保持原逻辑；网络输入仍按 Enter 提�
   } finally { await storage.close(); }
 });
 
+test("会话自动命名开关在集成分区：默认开，点一下 patch autoTitleSessions=false", async () => {
+  const view = await renderSettings();
+  try {
+    await view.select("集成");
+    const toggle = view.content().querySelector<HTMLButtonElement>(
+      'button[role="switch"][aria-label="会话自动命名"]',
+    )!;
+    assert.ok(toggle, "集成分区缺少「会话自动命名」开关");
+    // store 夹具没写 autoTitleSessions：断言的就是「缺省 = 默认开」这条路径
+    assert.equal(toggle.getAttribute("aria-checked"), "true");
+    await view.act(async () => toggle.click());
+    assert.deepEqual(view.patches, [{ autoTitleSessions: false }]);
+  } finally { await view.close(); }
+});
+
 test("侧栏与内容行按实际容器宽度响应，不靠整窗宽度挤压内容", async () => {
   const compiled = await compile(appCss, { base: fileURLToPath(new URL("../src/", import.meta.url)), onDependency() {} });
   const css = compiled.build([

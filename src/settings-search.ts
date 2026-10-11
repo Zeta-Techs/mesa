@@ -33,7 +33,7 @@ export interface SettingsSearchEntry {
 /**
  * 索引。label 与 SETTING_NAV 一致，别名按各档实际内容写：
  * 外观档带终端渲染/字号/字体/调色板/滚动缓冲/通知/状态栏，
- * 集成档带外部终端与 AI 配置，网络档带代理与文献页登录，数据档带导出与项目目录。
+ * 集成档带外部终端、AI 配置与会话自动命名，网络档带代理与文献页登录，数据档带导出与项目目录。
  * 顺序即界面顺序（常用在前、管理在后），无结果时按原序展示。
  */
 export const SETTINGS_SEARCH_INDEX: readonly SettingsSearchEntry[] = [
@@ -82,6 +82,7 @@ export const SETTINGS_SEARCH_INDEX: readonly SettingsSearchEntry[] = [
     aliases: [
       "集成", "外部终端", "终端应用", "iTerm", "Ghostty", "PowerShell", "cmd",
       "AI 配置", "AI 专用", "镜像", "brew", "Homebrew", "CLI",
+      "自动命名", "起名", "命名", "会话标题", "改标题", "标题",
       "integration", "terminal",
     ],
   },

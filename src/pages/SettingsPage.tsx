@@ -189,7 +189,7 @@ function externalTerminalSelectValue(stored: string | undefined): string {
 /** 内置 AI 功能按功能独立配置的行（key 与后端 ai.rs FN_* 常量对应） */
 const AI_FN_ROWS: { key: string; label: string }[] = [
   { key: "commit", label: "提交信息" },
-  { key: "summarize", label: "会话摘要" },
+  { key: "summarize", label: "会话摘要 / 起名" },
   { key: "pr", label: "PR 描述" },
   { key: "distill", label: "沉淀为技能" },
   { key: "digest", label: "提炼接力 / 评审沉淀" },
@@ -2681,6 +2681,18 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             label="brew 镜像"
             checked={settings?.brewMirror ?? false}
             onChange={(checked) => patch({ brewMirror: checked })}
+          />
+        </Row>
+
+        <Row
+          label="会话自动命名"
+          hint="起名跟下方 AI 配置走，「会话摘要 / 起名」行可单独换；关掉后不再自动改标题"
+          labelTitle="聊完起名、打开对话页补名去重。起名用哪份 AI 配置：默认跟下方「AI 专用配置」，在「按功能单独配置」的「会话摘要 / 起名」行可单独指定（起名和会话摘要共用这一行）。关掉后 Mesa 不再自动起名或补名，已有标题与你手改的标题都不受影响"
+        >
+          <Toggle
+            label="会话自动命名"
+            checked={settings?.autoTitleSessions ?? true}
+            onChange={(v) => patch({ autoTitleSessions: v })}
           />
         </Row>
 

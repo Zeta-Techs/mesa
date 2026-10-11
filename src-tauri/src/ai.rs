@@ -1431,6 +1431,7 @@ pub async fn ai_summarize_session(
 
 /// 自动起名：`stage=early` 只用首条用户问题；默认/final 用用户侧首条+纠正+定题。
 /// 人手改过的标题、内部会话、内容不足或没有创建日则跳过。
+/// 设置页「会话自动命名」关掉时直接返回 None（前端也跳过调用，这里是最终闸门）。
 #[tauri::command]
 pub async fn ai_auto_title_session(
     store: tauri::State<'_, ProfileStore>,
@@ -1440,6 +1441,9 @@ pub async fn ai_auto_title_session(
     created_at: Option<String>,
     stage: Option<String>,
 ) -> Result<Option<String>, String> {
+    if !crate::settings::auto_title_sessions_enabled() {
+        return Ok(None);
+    }
     let profiles = store.list()?;
     let early = stage.as_deref() == Some("early");
     tauri::async_runtime::spawn_blocking(move || {
@@ -1467,17 +1471,31 @@ pub struct RetitleAllResultDto {
 
 /// 按新规则重写所有非手改标题：过短、空泛、缺 Mesa 标题、或与已有标题撞车。
 /// 人手改过的（title_source=user / 旧数据已有自定义标题）不覆盖；不写回 CLI 源文件。
+/// 「会话自动命名」关掉时同样跳过——这条虽是批量命令，但唯一触发点是打开对话页的
+/// 自动补名，没有手动入口，关了开关还改标题就是「关不掉」。
 #[tauri::command]
 pub async fn ai_retitle_all_sessions(
     store: tauri::State<'_, ProfileStore>,
 ) -> Result<RetitleAllResultDto, String> {
+    if !crate::settings::auto_title_sessions_enabled() {
+        return Ok(RetitleAllResultDto { renamed: 0, skipped: 0, failed: 0 });
+    }
     let profiles = store.list()?;
-    tauri::async_runtime::spawn_blocking(move || retitle_all_sessions_impl(profiles))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        retitle_all_sessions_impl(profiles, &crate::settings::auto_title_sessions_enabled)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
-fn retitle_all_sessions_impl(profiles: Vec<Profile>) -> Result<RetitleAllResultDto, String> {
+fn retitle_all_sessions_impl(
+    profiles: Vec<Profile>,
+    gate: &dyn Fn() -> bool,
+) -> Result<RetitleAllResultDto, String> {
+    // 入口复查（命令入口查过一次；收进 impl 是为了让关停语义可单测）
+    if !gate() {
+        return Ok(RetitleAllResultDto { renamed: 0, skipped: 0, failed: 0 });
+    }
     let mut sessions = crate::sessions::list_sessions_sync();
     sessions.sort_by(|a, b| a.created_at.cmp(&b.created_at));
 
@@ -1502,6 +1520,11 @@ fn retitle_all_sessions_impl(profiles: Vec<Profile>) -> Result<RetitleAllResultD
     let mut skipped = 0u32;
     let mut failed = 0u32;
     for s in pending {
+        // 批量可跑几十秒到几分钟：用户中途在设置页关掉开关，下一轮就停，
+        // 不再有新标题落盘（评审确认的「关不掉」窗口）
+        if !gate() {
+            break;
+        }
         if s.internal || !s.alive || s.file_path.trim().is_empty() {
             if let Some(t) = s
                 .custom_title
@@ -1881,6 +1904,17 @@ mod tests {
             model_sync_note: None,
             provider_override: None,
         }
+    }
+
+    #[test]
+    fn retitle_all_stops_immediately_when_gate_closed() {
+        // 「会话自动命名」关掉时补名批全停。闸门收进 impl 入口正是为了这条测试：
+        // 删掉它，「关掉开关」会静默退化回关不掉，而其余测试照样全绿。
+        // 闸门关 = 不扫会话文件、不发起任何 AI 调用，直接全零返回。
+        let r = retitle_all_sessions_impl(Vec::new(), &|| false).unwrap();
+        assert_eq!(r.renamed, 0);
+        assert_eq!(r.skipped, 0);
+        assert_eq!(r.failed, 0);
     }
 
     #[test]

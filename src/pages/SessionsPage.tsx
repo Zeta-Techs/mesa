@@ -261,9 +261,12 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
   const retitleAllTriedRef = useRef(false);
 
   // 打开对话页时按新规则补起名：过短、空泛、缺 Mesa 标题、或互相撞车。手改过的不覆盖。
+  // 设置页「会话自动命名」关掉时跳过（后端命令另有闸门）；不置 retitleAllTriedRef，
+  // 同一次停留里重新打开开关后，随列表刷新还能补跑。
   useEffect(() => {
     if (!visible || retitleAllTriedRef.current) return;
     if (sessions.length === 0) return;
+    if (appSettings?.autoTitleSessions === false) return;
     retitleAllTriedRef.current = true;
     let cancelled = false;
     void invoke<{ renamed: number; skipped: number; failed: number }>(

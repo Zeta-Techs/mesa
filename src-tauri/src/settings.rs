@@ -10,6 +10,8 @@ pub const DEFAULT_SCROLLBACK: u32 = 5000;
 pub const DEFAULT_RATE_USD_CNY: f64 = 7.2;
 pub const DEFAULT_BREW_MIRROR: bool = true;
 pub const DEFAULT_NOTIFICATIONS_ENABLED: bool = true;
+/// 会话自动命名（聊完起名 + 打开对话页补名去重）默认开；关 = 全停，手改标题不受影响
+pub const DEFAULT_AUTO_TITLE_SESSIONS: bool = true;
 pub const DEFAULT_NAV_CAPSULE_RUN_ANNOUNCE: bool = true;
 pub const DEFAULT_THEME: &str = "midnight";
 pub const DEFAULT_TERMINAL_FONT_FAMILY: &str = "JetBrains Mono";
@@ -228,6 +230,10 @@ pub struct AppSettingsDto {
     pub brew_mirror: Option<bool>,
     /// 长任务 OS 通知开关（注意力跃迁且窗口未聚焦时发系统通知）
     pub notifications_enabled: Option<bool>,
+    /// 会话自动命名开关（设置页「集成」分区，默认开）。关 = 聊完起名（early/final）与
+    /// 打开对话页的补名去重（ai_retitle_all_sessions）全停；已有标题保留，
+    /// 手改标题（title_source=user）本就不被覆盖，与此开关无关。
+    pub auto_title_sessions: Option<bool>,
     pub theme: Option<String>,
     /// 侧栏 / 顶栏罩色透明度（百分比挡位，见 KNOWN_CHROME_OPACITIES）。
     /// 乘在各主题自己的罩色基数上，所以这一个值同时管侧栏和顶栏、深浅两套；
@@ -778,6 +784,9 @@ fn with_defaults(s: AppSettingsDto) -> AppSettingsDto {
         notifications_enabled: s
             .notifications_enabled
             .or(Some(DEFAULT_NOTIFICATIONS_ENABLED)),
+        auto_title_sessions: s
+            .auto_title_sessions
+            .or(Some(DEFAULT_AUTO_TITLE_SESSIONS)),
         theme: Some(theme),
         chrome_opacity: Some(
             s.chrome_opacity
@@ -882,6 +891,9 @@ fn merge(cur: &mut AppSettingsDto, patch: AppSettingsDto) {
     }
     if patch.notifications_enabled.is_some() {
         cur.notifications_enabled = patch.notifications_enabled;
+    }
+    if patch.auto_title_sessions.is_some() {
+        cur.auto_title_sessions = patch.auto_title_sessions;
     }
     if patch.theme.is_some() {
         cur.theme = patch.theme;
@@ -1199,6 +1211,13 @@ pub(crate) fn brew_mirror_enabled() -> bool {
     read_current().brew_mirror.unwrap_or(DEFAULT_BREW_MIRROR)
 }
 
+/// 会话自动命名是否启用（ai.rs 聊完起名与补名命令的闸门；设置缺失 = 默认开）
+pub(crate) fn auto_title_sessions_enabled() -> bool {
+    read_current()
+        .auto_title_sessions
+        .unwrap_or(DEFAULT_AUTO_TITLE_SESSIONS)
+}
+
 pub(crate) fn rate_setting() -> Option<f64> {
     read_current().rate_usd_cny.filter(|r| *r > 0.0)
 }
@@ -1395,6 +1414,7 @@ mod tests {
         assert_eq!(full.scrollback, Some(5000));
         assert_eq!(full.rate_usd_cny, Some(7.2));
         assert_eq!(full.brew_mirror, Some(true));
+        assert_eq!(full.auto_title_sessions, Some(true));
         assert_eq!(full.theme.as_deref(), Some("midnight"));
         // 100 = 各主题原有罩色，是「没调过和以前一模一样」的那一档
         assert_eq!(full.chrome_opacity, Some(100));
@@ -1526,6 +1546,45 @@ mod tests {
         // 未写过任何字段 → 默认开
         std::fs::remove_file(&p).unwrap();
         assert_eq!(with_defaults(read_from(&p)).status_bar, Some(true));
+        std::fs::remove_dir_all(p.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn auto_title_sessions_toggle_roundtrip() {
+        let p = tmp();
+        // 缺省 = 默认开（老用户没写过这个字段，行为不变）
+        assert_eq!(
+            with_defaults(read_from(&p)).auto_title_sessions,
+            Some(true)
+        );
+        // 关：patch 落盘后读回应为 Some(false)，不被默认值吞掉
+        let mut cur = read_from(&p);
+        merge(
+            &mut cur,
+            AppSettingsDto {
+                auto_title_sessions: Some(false),
+                ..Default::default()
+            },
+        );
+        write_to(&p, &cur).unwrap();
+        assert_eq!(
+            with_defaults(read_from(&p)).auto_title_sessions,
+            Some(false)
+        );
+        // 再打开
+        let mut cur2 = read_from(&p);
+        merge(
+            &mut cur2,
+            AppSettingsDto {
+                auto_title_sessions: Some(true),
+                ..Default::default()
+            },
+        );
+        write_to(&p, &cur2).unwrap();
+        assert_eq!(
+            with_defaults(read_from(&p)).auto_title_sessions,
+            Some(true)
+        );
         std::fs::remove_dir_all(p.parent().unwrap()).ok();
     }
 
