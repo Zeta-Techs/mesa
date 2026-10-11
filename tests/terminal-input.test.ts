@@ -98,10 +98,13 @@ test("复制文本去掉 Markdown 标记，代码和文件名还在", () => {
   assert.equal(plain.includes("```"), false);
 });
 
-test("Codex Shift+Enter 改写成 CSI-u 换行，其它 agent 不改", () => {
+test("Shift+Enter 换行改写：codex/cursor 走 CSI-u，claude 走 ESC+CR，其它不改", () => {
   assert.equal(ptyShiftEnterRewrite("codex"), "\x1b[13;2u");
+  assert.equal(ptyShiftEnterRewrite("cursor"), "\x1b[13;2u");
+  // claude 官方 terminal-setup 给别家终端装的正是 ESC+CR；xterm 默认发 \r 会直接提交
+  assert.equal(ptyShiftEnterRewrite("claude-code"), "\x1b\r");
   assert.equal(ptyShiftEnterRewrite("kimi"), null);
-  assert.equal(ptyShiftEnterRewrite("claude-code"), null);
+  assert.equal(ptyShiftEnterRewrite("gemini"), null);
 });
 
 test("printableKeyFallback：keyCode 0 与 229 都当场补发", () => {
@@ -286,14 +289,14 @@ test("底色告知只在 Windows + 探测型 agent + 浅色 + 开关开启时发
   assert.equal(shouldReportTerminalColors(reportOpts({ enabled: false })), false);
 });
 
-test("只推给会消费 OSC 11 回报的 agent，其余一律不推", () => {
-  // 实测会探测并消费：gemini（TerminalCapabilityManager）、qwen（detectOsc11Theme）
-  for (const id of ["gemini", "qwen"]) {
+test("只推给会消费 OSC 10/11 回报的 agent，其余一律不推", () => {
+  // 实测会探测并消费：gemini（TerminalCapabilityManager）、qwen（detectOsc11Theme）、
+  // codex 0.162（terminal_identity.rs 重新引入探测；0.150 曾短暂移除）
+  for (const id of ["gemini", "qwen", "codex"]) {
     assert.equal(shouldReportTerminalColors(reportOpts({ agentId: id })), true, id);
   }
-  // codex 0.150.1 已无底色探测，推过去会漏进输入框变乱码（2026-08-29 实机回归）；
-  // claude-code 走 settings.json theme、同样不探测
-  for (const id of ["codex", "claude-code", "cursor", "kimi", "opencode", "codebuddy", "grok"]) {
+  // claude-code 走 settings.json theme、不探测；其余各家未观察到探测消费
+  for (const id of ["claude-code", "cursor", "kimi", "opencode", "codebuddy", "grok"]) {
     assert.equal(shouldReportTerminalColors(reportOpts({ agentId: id })), false, id);
   }
   assert.equal(shouldReportTerminalColors(reportOpts({ agentId: undefined })), false);

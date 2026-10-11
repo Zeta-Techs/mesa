@@ -4,6 +4,7 @@ const MAX_TABS = 24;
 const AGENT_IDS = new Set(["claude-code", "codex", "gemini", "qwen", "opencode", "kimi", "codebuddy", "cursor", "grok"]);
 
 export interface RecoverableTerminalTab {
+  id?: string;
   label: string;
   cwd: string;
   agentId: string;
@@ -30,12 +31,15 @@ function textField(value: unknown, max: number, trim = true): string | null {
 function parseTab(value: unknown): RecoverableTerminalTab | null {
   if (!value || typeof value !== "object") return null;
   const tab = value as Record<string, unknown>;
+  const id = textField(tab.id, 80);
+  if (id && !/^[A-Za-z0-9-]+$/.test(id)) return null;
   const label = textField(tab.label, 256);
   const cwd = textField(tab.cwd, 4096, false);
   const agentId = textField(tab.agentId, 128);
   const customRuntimeId = textField(tab.customRuntimeId, 128);
   if (!label || !cwd || !agentId || (!AGENT_IDS.has(agentId) && !customRuntimeId)) return null;
   return {
+    ...(id ? { id } : {}),
     label,
     cwd,
     agentId,
@@ -74,6 +78,9 @@ export function serializeRecoverableTerminalState(
   state: RecoverableTerminalState,
 ): string {
   const tabs = state.tabs.slice(0, MAX_TABS).map((tab) => ({
+    ...(tab.id && /^[A-Za-z0-9-]+$/.test(tab.id)
+      ? { id: tab.id.slice(0, 80) }
+      : {}),
     label: tab.label.slice(0, 256),
     cwd: tab.cwd.slice(0, 4096),
     agentId: tab.agentId.slice(0, 128),

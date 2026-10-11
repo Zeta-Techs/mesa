@@ -1557,6 +1557,22 @@ select:focus-visible {
   border-right-width: 0.5px;
 }
 
+/* xterm 6 的滑块默认 20% 前景色，深底上几乎看不见，也点不中。
+   全屏 TUI（Claude Code）开了鼠标滚轮上报后 xterm 自己会藏掉这条滑块；
+   按 2026-10-09 拍板，Mesa 不另画自绘拖动条接管（翻历史回 TUI 内或收起
+   鼠标上报），这里的样式只管普通 shell 场景的原生滑块可见性。
+   必须用 :not(.invisible) 让位：xterm 靠该类隐藏滑块（无回滚/全屏场景），
+   !important 直接压它会出现点不动的死滑块并吃掉右缘点击（三轮审查实证）。 */
+.xterm .xterm-scrollable-element > .scrollbar.vertical:not(.invisible) {
+  width: 8px !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+.xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
+  width: 6px !important;
+  border-radius: 3px;
+}
+
 /* Ghostty 风格细滚动条：透明轨道 + 低对比拇指，hover 略提亮。
    0.12 实测最差 1.35:1（neutral/rail），低于 WCAG 2.1 非文本 3:1；
    0.40 在最差底（dracula/raised #3f404f）上是 3.06:1，其余深色底更高。 */

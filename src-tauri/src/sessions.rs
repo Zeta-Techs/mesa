@@ -325,12 +325,24 @@ pub(crate) fn common_secret_token(token: &str) -> Option<String> {
     let lower = value.to_ascii_lowercase();
     let known_prefix = lower.starts_with("sk-")
         || lower.starts_with("sk_")
+        || lower.starts_with("sk-ant")
         || lower.starts_with("ghp_")
+        || lower.starts_with("gho_")
         || lower.starts_with("github_pat_")
+        || lower.starts_with("glpat-")
+        || lower.starts_with("gsk_")
+        || lower.starts_with("xai-")
         || lower.starts_with("xoxb-")
         || lower.starts_with("xoxp-")
         || value.starts_with("AIza")
-        || value.starts_with("AKIA");
+        || value.starts_with("AKIA")
+        // 裸 JWT（三段 base64url，中段足够长）——终端回放里第三方网关密钥常见形态
+        || (value.split('.').count() == 3
+            && value
+                .split('.')
+                .take(2)
+                .all(|seg| !seg.is_empty() && seg.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+            && value.split('.').nth(1).map(|s| s.chars().count()).unwrap_or(0) >= 12);
     if !known_prefix || value.chars().count() < 12 {
         return None;
     }

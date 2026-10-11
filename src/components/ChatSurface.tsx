@@ -21,6 +21,7 @@ import {
   latestToolName,
   slashHandoff,
 } from "../chat-handoff";
+import { confirmChoices } from "../chat-reply";
 import { welcomeCwdLine } from "../terminal-welcome";
 import { escInterruptSafe } from "../agent-caps";
 
@@ -229,22 +230,22 @@ export default function ChatSurface({
             {/* Grok 无 Esc 键：非 prompt 态 Esc 会触发整进程退出确认（escInterruptSafe），
                 审批/菜单态同理——「Esc 取消」对该家隐藏，去终端里自行处理 */}
             <div className="mt-1.5 flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => onApprovalKey?.("y")}
-                title="往终端按 y（各 CLI 的批准热键）"
-                className="rounded-md bg-ok px-2.5 py-1 text-xs text-ok-text hover:opacity-85"
-              >
-                ✓ 批准
-              </button>
-              <button
-                type="button"
-                onClick={() => onApprovalKey?.("n")}
-                title="往终端按 n（各 CLI 的拒绝热键）"
-                className="rounded-md bg-err px-2.5 py-1 text-xs text-err-text hover:opacity-85"
-              >
-                ✗ 拒绝
-              </button>
+              {confirmChoices(confirmDetail).map((choice) => (
+                <button
+                  key={choice.key}
+                  type="button"
+                  onClick={() => onApprovalKey?.(choice.key)}
+                  title={`往终端按 ${choice.key}`}
+                  className={
+                    choice.key === "y"
+                      ? "rounded-md bg-ok px-2.5 py-1 text-xs text-ok-text hover:opacity-85"
+                      : "rounded-md bg-err px-2.5 py-1 text-xs text-err-text hover:opacity-85"
+                  }
+                >
+                  {choice.key === "y" ? "✓ " : "✗ "}
+                  {choice.label}
+                </button>
+              ))}
               {escInterruptSafe(agentId) && (
                 <button
                   type="button"

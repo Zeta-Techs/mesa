@@ -65,10 +65,18 @@ export const KIMI_CSI_U_CTRL_V = "\x1b[118;5u";
 /** Codex composer 默认 shift-enter = 换行。xterm.js 对 Shift+Enter 仍发 `\r`，会被当成发送。
  *  kitty CSI-u：键 13（Enter）+ 修饰位 2（Shift）。Codex 0.154 含 KeyboardEnhancement。 */
 export const CODEX_CSI_U_SHIFT_ENTER = "\x1b[13;2u";
+/** claude-code 官方 terminal-setup 给别家终端装的正是 `ESC+CR`（Alacritty 键位表 / iTerm2
+ *  映射同款）：它从不 push kitty 协议，多行换行认 \x1b\r 或 Ctrl+J，xterm 默认发 \r 会直接提交。 */
+export const CLAUDE_SHIFT_ENTER = "\x1b\r";
+/** Cursor 的输入解析接受 CSI-u 13;2u（chunk 9969.index.js 实证），且从不查询/推送 kitty 协议。 */
+export const CURSOR_CSI_U_SHIFT_ENTER = "\x1b[13;2u";
 
 /** Shift+Enter 要改写成非 `\r` 的序列时返回载荷；不需要改写返回 null（让 xterm 原样穿透）。 */
 export function ptyShiftEnterRewrite(agentId: string): string | null {
-  return agentId === "codex" ? CODEX_CSI_U_SHIFT_ENTER : null;
+  if (agentId === "codex") return CODEX_CSI_U_SHIFT_ENTER;
+  if (agentId === "cursor") return CURSOR_CSI_U_SHIFT_ENTER;
+  if (agentId === "claude-code") return CLAUDE_SHIFT_ENTER;
+  return null;
 }
 
 /** Shift+标点丢字的补发决议。xterm 在 keyCode 229 时不自己发字符，等 textarea。
@@ -229,13 +237,14 @@ export function xtermOscColorReport(
   return `\x1b]${slot};rgb:${rgb[0]}/${rgb[1]}/${rgb[2]}\x1b\\`;
 }
 
-/** 启动时会用 OSC 11 查询终端底色、并把回报**消费掉**的 agent（逐个核过 CLI 实现）。
+/** 启动时会用 OSC 10/11 查询终端底色、并把回报**消费掉**的 agent（逐个核过 CLI 实现）。
  *  - gemini 0.57.0：TerminalCapabilityManager.detectCapabilities，1s 超时，回报进 onData 后丢弃
  *  - qwen 0.22.2（gemini-cli fork）：detectOsc11Theme，同款 onData 消费
- *  白名单之外**一律不能推**：没人消费的字节会原样落进 TUI 输入框变成可见乱码——
- *  codex 0.150.1 实测就是如此（其二进制里已无任何底色探测，tui.theme 只管代码块语法高亮），
- *  claude-code 走 settings.json 的 theme 配置、同样不探测。 */
-const TERMINAL_BG_PROBING_AGENTS = new Set(["gemini", "qwen"]);
+ *  - codex 0.162：tui/src/terminal_probe/terminal_identity.rs 重新引入 ]10;? / ]11;? 探测
+ *    （0.150 曾短暂移除；旧版 codex 收到没人消费的回报会把字节落进输入框，见下行警告）。
+ *  白名单之外**一律不能推**：没人消费的字节会原样落进 TUI 输入框变成可见乱码，
+ *  claude-code 走 settings.json 的 theme 配置、不探测。 */
+const TERMINAL_BG_PROBING_AGENTS = new Set(["gemini", "qwen", "codex"]);
 
 /** 是否要在 attach 后主动把终端前景/底色推给 agent。
  *  仅 Windows：ConPTY 两个方向都不转发 OSC 10/11 查询，agent 探不到底色只能回落深色。

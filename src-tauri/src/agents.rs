@@ -1047,6 +1047,14 @@ pub fn launch_plan(
     apply_request_policy_env(&mut plan, &profile.agent, &profile.request_policy, &|k| {
         std::env::var(k).ok()
     });
+    // opencode（opentui）按终端身份名单决定通知协议，Mesa 不在名单里 → 全程静默；
+    // 它官方提供 env 覆盖出口：指到 OSC 777，Mesa 已能消费 notify;title;body 三段式
+    // （2026-10-10 调研实证 terminal.zig detectNotificationProtocol / OPENTUI_NOTIFICATION_PROTOCOL）
+    if profile.agent == "opencode"
+        && !profile.extra_env.contains_key("OPENTUI_NOTIFICATION_PROTOCOL")
+    {
+        plan.env.push(("OPENTUI_NOTIFICATION_PROTOCOL".into(), "osc777".into()));
+    }
     // 附加环境变量放在最后：CommandBuilder 重复 env 后者生效，用户可借此覆盖 adapter 内置值
     for (k, v) in &profile.extra_env {
         plan.env.push((k.clone(), v.clone()));

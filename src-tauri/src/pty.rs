@@ -252,6 +252,17 @@ fn gated_emit(
         }
         let _ = app.emit(event, text.to_string());
     } else {
+        // 后台标签的正文进 backlog，但带外信号（OSC 9/777 通知与进度、BEL）照发：
+        // 通知/进度徽章的主场景就是后台标签，等切回再补发就废了（2026-10-11 复核）。
+        // 前端 pty-signal 只喂通知/进度解析、不写画面；切回时的 backlog 补发会再见到
+        // 同样的字节，靠前端限频/幂等消化重复。
+        if text.contains("\x1b]9;")
+            || text.contains("\x1b]777;")
+            || text.contains('\u{7}')
+        {
+            let signal = format!("pty-signal-{}", &event["pty-output-".len()..]);
+            let _ = app.emit(&signal, text.to_string());
+        }
         backlog_push(&mut bl, text.as_bytes());
     }
 }
@@ -1124,6 +1135,33 @@ pub fn pty_get_cwd(manager: tauri::State<'_, PtyManager>, pty_id: String) -> Opt
     let mut entries = manager.entries.lock().unwrap();
     let entry = entries.get_mut(&pty_id)?;
     process_cwd(entry.child.process_id()?)
+}
+
+/// 终端里点到的路径能不能打开：相对路径按 cwd 拼、`~` 按 home 展开，
+/// 存在且是文件才返回规范化绝对路径（None = 点空）。终端链接的点击时终审，
+/// 一次调用一次 stat，避免为整屏候选做 IPC。
+#[tauri::command]
+pub fn terminal_link_target(cwd: String, path: String) -> Option<String> {
+    use std::path::Path;
+    if path.len() > 512 || path.is_empty() {
+        return None;
+    }
+    let expanded = if path.starts_with('~') {
+        let tilde = crate::paths::expand_tilde(&path);
+        std::path::PathBuf::from(tilde)
+    } else {
+        Path::new(&cwd).join(&path)
+    };
+    // canonicalize 顺带解符号链接；显示/回传前剥 Windows 的 \\?\ 前缀
+    let canonical = crate::paths::canonicalize_plain(&expanded).ok()?;
+    if !canonical.is_file() {
+        return None;
+    }
+    Some(
+        crate::paths::strip_verbatim(canonical)
+            .to_string_lossy()
+            .into_owned(),
+    )
 }
 
 /// 标记标签可见性（优化 2）：翻转为可见时在同一把 backlog 锁内补发积压输出，

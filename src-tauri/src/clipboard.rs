@@ -126,3 +126,94 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// 读系统剪贴板里的**文件**（Finder / 资源管理器复制后粘贴到终端 → 引号路径）。
+/// WKWebView / WebView2 的 paste 事件都不给文件路径（安全限制），只能原生读：
+/// - macOS：NSPasteboard 的 NSFilenamesPboardType（废弃但稳定，免引 objc2-foundation）
+/// - Windows：CF_HDROP（OpenClipboard / GetClipboardData / DragQueryFileW）
+/// - Linux：webkitgtk 无稳定通道，返回空（回落现状：粘贴无动作）
+#[tauri::command]
+pub fn read_clipboard_files() -> Result<Vec<String>, String> {
+    Ok(native_clipboard_files())
+}
+
+#[cfg(target_os = "macos")]
+fn native_clipboard_files() -> Vec<String> {
+    use objc2::rc::autoreleasepool;
+    use objc2::runtime::{AnyClass, AnyObject};
+    autoreleasepool(|_| unsafe {
+        let cls = AnyClass::get(c"NSPasteboard").expect("NSPasteboard 应存在");
+        let pb: *mut AnyObject = objc2::msg_send![cls, generalPasteboard];
+        if pb.is_null() {
+            return vec![];
+        }
+        let nsstring = AnyClass::get(c"NSString").expect("NSString 应存在");
+        let ty: *mut AnyObject = objc2::msg_send![
+            nsstring,
+            stringWithUTF8String: c"NSFilenamesPboardType".as_ptr()
+        ];
+        let list: *mut AnyObject = objc2::msg_send![pb, propertyListForType: ty];
+        if list.is_null() {
+            return vec![];
+        }
+        let count: usize = objc2::msg_send![list, count];
+        let mut out = Vec::new();
+        for i in 0..count.min(64) {
+            let item: *mut AnyObject = objc2::msg_send![list, objectAtIndex: i];
+            if item.is_null() {
+                continue;
+            }
+            let utf8: *const std::ffi::c_char = objc2::msg_send![item, UTF8String];
+            if utf8.is_null() {
+                continue;
+            }
+            if let Ok(path) = std::ffi::CStr::from_ptr(utf8).to_str() {
+                if !path.is_empty() && !path.contains('\0') {
+                    out.push(path.to_string());
+                }
+            }
+        }
+        out
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn native_clipboard_files() -> Vec<String> {
+    // CF_HDROP = 15（shellapi 常量，windows-sys 对应 feature 未导出该常量，字面量）
+    const CF_HDROP: u32 = 15;
+    use windows_sys::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
+    use windows_sys::Win32::UI::Shell::DragQueryFileW;
+    unsafe {
+        // HWND 传空（0 的整数不能直接当 *mut c_void，类型不过——CI Windows 才编译这段）
+        if OpenClipboard(std::ptr::null_mut()) == 0 {
+            return vec![];
+        }
+        let mut out: Vec<String> = Vec::new();
+        let handle = GetClipboardData(CF_HDROP);
+        if !handle.is_null() {
+            let count = DragQueryFileW(handle as *mut core::ffi::c_void, 0xFFFF_FFFF, std::ptr::null_mut(), 0);
+            for i in 0..count.min(64) {
+                let len = DragQueryFileW(handle as *mut core::ffi::c_void, i, std::ptr::null_mut(), 0);
+                if len == 0 {
+                    continue;
+                }
+                let mut buf = vec![0u16; len as usize + 1];
+                let got = DragQueryFileW(handle as *mut core::ffi::c_void, i, buf.as_mut_ptr(), buf.len() as u32);
+                if got > 0 {
+                    if let Some(path) = String::from_utf16(&buf[..got as usize]).ok() {
+                        if !path.is_empty() {
+                            out.push(path);
+                        }
+                    }
+                }
+            }
+        }
+        CloseClipboard();
+        out
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn native_clipboard_files() -> Vec<String> {
+    vec![]
+}

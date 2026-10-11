@@ -17,7 +17,8 @@
 - **项目区问 AI（v3.186）**：第一次选 Agent / 配置 / 模型，可设为默认（`ccode.askAi`）；未设默认不沿用 `lastLaunch` / 快速开聊。默认面是终端不是聊天；`previewPath` 打开右栏预览，PDF 与「查看」一样撑开。⌘/Ctrl 点问 AI 强制重选。指定了 `profileId` 时启动栏不得用上次留下的模型。
 - **顶部终端标签（v3.135 / v3.153 / v3.177）**：终端标签名与「＋」放进同一个 Ghostty 式轻量圆角胶囊；显示层、成果面板、分屏、查找不并入标签胶囊。聊天/终端是同一位置的单击切换（图标显示当前层，再点切到另一层）；成果面板是标签栏右侧常驻按钮（与左侧文件树按钮对仗）；分屏对照与查找终端输出同样是标签栏右侧 lucide 图标（与聊天/终端、成果面板同一套描边），不再经过布局菜单。标签栏右侧到查找为止，不放 `⋯`。没有「专注终端」入口：需要干净画布时收起左边工作树。
 - **标签「生成中」虚线圆（2026-09-13）**：只表示这一轮正在出字，不是进程还活着。用户提交（聊天发送 / 回车）后才允许点亮；**启动或恢复会话不转圈**（TUI 启动/回放画面不是生成回答；只有新会话带了首条指令才点亮）。带指令的新启动同时拉起聊天「等回复」（`pendingReply`）：从终端切到聊天要立刻有「正在回复」和发送钮「进行中」，不能等会话文件落盘或用户再发一条。TUI 开屏算出字，但等回复未结束时不得因 PTY 静默熄灭转圈。PTY 有输出才续命。会话窗口最后一条已是助手正文（无待执行工具）或尾部 `done`/`confirm` 立刻停转——不等 PTY 静默、也不让会话文件 sticky `working` 续命；**但 PTY 还在出字时（`ptyLive`，8s）不得被 Codex 中途 `agent_message` / 助手正文把转圈掐掉**（2026-09-18：长工具回合标签与聊天层无运行态）。回合结束后的 TUI 残帧不得从 `done` 再点亮。**收尾被 ptyLive 推迟必须保证重试（2026-09-19）**：推迟后若会话文件再无新写入，5s 轮询的签名门会让收尾判定永远不再执行、转圈冻结（综述大纲跑完实测）——`scheduleSettleRetry` 在 `PTY_LIVE_MS+1s` 强制重判一次；**armed 静默硬上限 120s（2026-09-19）**：真实思考/执行期间 TUI 动画仍在出字，整轮完全无声超上限只可能是回合已结束或链路冻结——熄灭转圈但保留 armed（PTY 再出字立即复亮，不重演 2026-09-15 的「再也点不亮」）。样子是 12px、`text-l2`、`strokeWidth=3` 的虚线圆沿圆周爬，不上强调色。动画走合成器相位闪 opacity，禁止 CSS `rotate`（WKWebView 圆心会晃），也禁 dashoffset 关键帧。纯逻辑 `src/tab-working.ts`。
-- **终端菜单分工（v3.136 / v3.153 / v3.177）**：启动栏 `⋯` 只保留当前标签的启动动作（打开 Shell、高级启动选项、转为项目）。标签栏不设 `⋯`：停止走展开启动栏「停止」，恢复走空态「恢复任务」，接力/对话页走对话页。查找、分屏是标签栏图标；「修改启动配置」只留收缩状态行的「修改」。不设布局菜单。**收缩状态行在会话运行中必须保持可见（2026-10-08 修复回归）**：`activePtyId` 一挂就把整条底栏（展开栏与收缩行）藏掉，`⋯`/修改/插入在会话存活期全部不可达，快速开聊的「转为项目…」出口随之消失。底栏高度归零是 design-embedded-terminal.md 方案 C（PR4）的形态，portal 与底栏身份补偿没做之前不得提前隐藏。
+- **终端菜单分工（v3.136 / v3.153 / v3.177）**：启动栏 `⋯` 只保留当前标签的启动动作（打开 Shell、高级启动选项、转为项目）。标签栏不设 `⋯`：停止走展开启动栏「停止」，恢复走空态「恢复任务」，接力/对话页走对话页。查找、分屏是标签栏图标；「修改启动配置」只留收缩状态行的「修改」。已有 PTY 时该钮改成「本次」，只开浮层，不把整条栏撑开（2026-10-10）；`⋯` 里的高级选项同样改成「查看本次启动」。未启动仍展开整条栏。不设布局菜单。**收缩状态行在会话运行中必须保持可见（2026-10-08 修复回归）**：`activePtyId` 一挂就把整条底栏（展开栏与收缩行）藏掉，`⋯`/修改/插入在会话存活期全部不可达，快速开聊的「转为项目…」出口随之消失。底栏高度归零是 design-embedded-terminal.md 方案 C（PR4）的形态，portal 与底栏身份补偿没做之前不得提前隐藏。
+- **收缩行提示与错误分家（2026-10-09）**：只陈述事实、不需要用户动手的消息（「已接回正在跑的进程，画面大小先不动」）走独立的 notice 态——灰字、不进 `compactBarUrgent`、进程退出即清。**禁止塞进 `error`**：error 会把收缩行强制顶出来（用户点「收起此行」永远收不起来，2026-10-09 实测）且飘红冒充故障，还会经 `error ?? "恢复会话失败…"` 兜底把接回提示错报成发送失败原因。需要用户动手的（「该 CLI 不支持启动注入：指令已复制」）才允许走 error 拦隐藏。
 - **启动栏窄宽度防覆盖（v3.137）**：Agent/连接/模型配置组允许收缩，控件宽度按窗口响应式钳制；技能/MCP/运行/更多动作保持独立不覆盖，恢复任务与 `⋯` 使用稳定间距。标签栏和启动栏不共享绝对定位或负边距，窄窗口只允许换行/截断，不允许按钮互相覆盖。
 - **启动栏层级间距（v3.138）**：启动配置条与顶部终端标签之间保留明确的垂直留白（TerminalView 上内边距），恢复态的技能/MCP/运行/更多状态行不再贴住上一栏下边框；Agent、连接、模型选择器使用较窄的响应式宽度，不因窗口变宽而放大到挤压动作区。
 - **启动配置条内容宽度（v3.139）**：Codex/连接/模型外层容器按内容宽度收缩，不再用 flex 增长占满整行；仅在窄窗口时允许收缩/换行。恢复态动作行额外保留上间距，避免视觉上盖住标签栏下边框。
@@ -282,11 +283,87 @@
   不自动发送）；无图片一律不干预。终端未启动时提示「终端未启动，无法粘贴」，不落盘。
 - **macOS Ctrl+V 透传**：`attachCustomKeyEventHandler` 里拦 `keydown + 仅 ctrl + v` → `pty_write("\x16")`，
   return false（网页侧 Ctrl+V 在 WKWebView 不产生 paste 事件也到不了 PTY；CLI 收到 \x16 自读系统剪贴板）。
+  **Kitty 键盘协议（2026-10-10 首版，同日按规范修正，`src/terminal-protocols.ts`）**：输出流里的
+  `CSI ? u` / `CSI > n u` / `CSI < n u` 由前端应答，只宣布 flags 5（消歧义 1 + 备用键 4），不宣布
+  松开/重复（bit 2，Grok 实证：答应了发不出，Enter 会交两次）。**编码形态按 kitty 规范**
+  （首版把无修饰功能键也编成 CSI-u 且用了 57417-57426 小键盘编号，gemini-cli 的映射表没有这段，
+  方向键/Home/End/Insert/Delete/PageUp/Down 全部打私用区乱码——复核实证后修正）：
+  无修饰功能键一律保持 xterm 传统序列，**只有 Esc 改写 `CSI 27u`**（消歧义档的本意）；
+  带修饰的方向/Home/End 用 `CSI 1;mod A-H/F` 字母形、PageUp/Down/Insert/Delete 用 `CSI 5/6/2/3;mod ~`；
+  带修饰的 Enter/Tab/Backspace 走 CSI-u（kimi 的 Enter 特判兜底在宿主键盘路径，协议未推时也生效）；
+  Ctrl/Alt/Cmd+可打印字符走 CSI-u，纯 Shift 可打印留给 xterm/输入法。弹栈认带层数形式
+  （`CSI < 1 u`，crossterm/grok 实发）；push 省略 flags 按 0（= 恢复传统）；进程退出即解除 armed
+  （TUI 崩溃没弹栈也不能让 shell 的 Ctrl+C 变垃圾）。不把 `TERM_PROGRAM` 改成 Ghostty 或 Kitty。
+  **启动查询应答**：DA1 回 `CSI ?1;2c`（kimi 哨兵）；XTVERSION 两种问法（`CSI > q` 裸式为 gemini/qwen
+  实发形式、`CSI > 0 q`）统一回 DCS `>|Mesa (xterm.js 6.0.0) ST`——带上 xterm.js 字样是如实自述，
+  OpenCode 的超链接能力表明确收录 "xterm.js"（同日调研实证，靠它启用 OSC 8/OSC 52）；
+  XTGETTCAP（`DCS + q`）问到 Ms（4d73）时回 terminfo Ms 能力值，OpenCode 据此开 OSC 52 剪贴板。
+  **OSC 8 / OSC 52 / 贴图**：OSC 8 只打开 http(s) 与 mailto（URL 含换行不认）。OSC 52 从输出抽走，
+  base64 上限约 256KB，写入系统剪贴板。Kitty 图形（`ESC _ G`）拆出右下角预览：MIME 按文件头判定
+  （PNG/JPEG/GIF/WEBP，RIFF 四字符不是 WEBP 的不算）、支持 m=1 分块拼装（>4KB 的图 kitty 客户端
+  惯例分块，续块只带 m/q 键）、新进程/重置清掉、可手动关。Sixel 不解码：DCS 由 xterm 自己静默吞掉
+  （Mesa 不另写剥离逻辑）。Grok / Codex 按终端身份决定发不发贴图，序列没来就没有预览。
+  **路径、通知、回放（2026-10-10，2026-10-11 复核修正）**：绝对/相对路径（可带 `:行` 或 `:行:列`）可点，
+  进右侧预览并滚到该行（cwd 之外的路径 root 传文件所在目录，不中「超出项目根」守卫）；链接坐标
+  **逐格自算**「字符→单元格列号」（getNullCell 复用格 + getWidth/getChars——src 版 translateToString
+  的 outColumns 参数在 6.0.0 编译产物里不存在，靠它曾整体失效）；中文/emoji 宽字符占 2 格，字符串
+  下标当列号会整体错位；句尾标点不吞进路径；边界集含中文弯引号与《「『开括号、全角冒号；候选正则的
+  **零宽匹配保护必须在循环体第一行**——行首是空格/引号/分号/全角标点的缩进行曾原地死循环冻结
+  整窗（P0，回归锚在 tests/terminal-links.test.ts）。
+  OSC 9 / 777 抽出标题发系统通知：**OSC 9;4 是 ConEmu 进度序列不是通知**（kimi 每秒发、grok/codebuddy
+  每轮发，当通知会刷屏；畸形形态同吞），静默吞掉、进度值经 `parseOsc9Progress` 直通标签徽章
+  （state 1 带百分比、2 错误显 !、3/4 显 …、0 清除；进程退出/重启即清）；OSC 777 只认 `notify;title;body`
+  三段式（currentdirectory 等其他子命令静默）；claude-code 的通知通道是 **BEL**（不发 OSC 9/777），
+  `term.onBell` 只对 agent PTY 转 notice。通知走与注意力通知同一套门：设置开关、前台当前标签不打扰、
+  按标签限频；序列断帧走与贴图/OSC 52 同一条 pending 管线（半截判定锚定帧尾——帧尾**完整**的短序列
+  不得扣住，kimi 的 8 字符进度帧曾因此卡死终点）。**后台标签**：正文进 backlog，但含 OSC 9/777/BEL
+  的帧由 Rust `gated_emit` 带外照发 `pty-signal-<id>`，前端只喂通知/进度解析不写画面——通知与进度
+  徽章的主场景就是后台标签，等切回补发就废了；补发重复由限频/幂等消化。
+  **粘贴**：右键粘贴出口在子进程开了 bracketed paste（DECSET 2004，claude 常开）时包
+  `\x1b[200~…\x1b[201~` 标记，让「大段粘贴确认」生效、多行粘贴不被逐行当回车。
+  **粘贴防线与文件粘贴（2026-10-10 二批，`src/paste-guard.ts`）**：所有粘贴出口统一走
+  `handleTerminalTextPaste`——普通缓冲一律剪收尾回车（防「粘贴即执行」）；shell 标签的
+  多行粘贴先经确认框（agent 标签不拦，TUI 自己消化）；备用屏原样写入。Cmd+V 的 paste
+  事件在 capture 阶段整体接管（图/文本/文件三分发）：无文本无图时探原生剪贴板
+  （`read_clipboard_files`：mac NSPasteboard / win CF_HDROP / linux 空回落），Finder/资源管理器
+  复制的文件粘贴成引号路径（复用 joinDroppedPaths 的 escapeShellPath）。
+  **相对路径链接（同日）**：terminal-links 认带 `/` 的相对候选（`~/`、`./`、`../` 前缀，
+  或带 `:行号` 或扩展名），点击时经 `terminal_link_target`（pty.rs）按标签 cwd 拼 + `~` 展开
+  + canonicalize 存在性校验后打开，误报词点了提示「没找到」；一次点击一次 stat，不做整屏校验。
+  **查找升级（同日）**：搜索条加正则/全词/大小写三开关 + 命中计数（`onDidChangeResults`），
+  输入 250ms 防抖增量高亮（`incremental: true`）；非法正则即时提示不当掉搜索。
+  **标签进度（同日）**：OSC 9;4 进度不再只是吞掉——`parseOsc9Progress` 解出后经
+  `onProgress` 直通标签条徽章（state 1 带百分比，其余算「…」，state 0 清除；进程退出即清）。
+  **崩溃收口（同日，2026-10-11 修正口径）**：横幅只认 `code > 0`——负数（-1 等）是
+  pty_kill/丢弃/等待超时共用的「原因未知」哨兵（exit-code.ts），手动「停止」正是走它，
+  `code≠0` 会把每次停止都误报成崩溃；横幅写在 `term.write` 的回调里再快照（同步快照读不到
+  异步解析中的字节）。死因随画面持久，弹窗一关就丢的问题不再。
+  **渲染与尺寸**：Windows 声明 `windowsPty: conpty`（portable-pty 即现代 ConPTY，满宽行
+  回绕补偿）；WebGL 上下文丢失不再永久退 DOM——窗口聚焦/可见时预算重试 ≤3 次（带
+  「已加载且健康」守卫与软件渲染探针缓存，否则每次聚焦都重建 renderer 新开上下文）；resize/容器
+  变化统一 rAF 合帧 + trailing（拖分屏把手不再每次事件全量重排）。
+  **「本次」浮层带配置指纹**：网关名（id 是 uuid 读不出）· 密钥尾号 · 附加变量名（值不显示）——
+  托盘切了全局默认后，跑着的终端吃的哪碗饭在这里可见。
+  **粘贴去重与键位**：writePtyPaste 同内容 80ms 去重（mac ⌘V 键盘路径与原生 paste 事件
+  可能各到一次）；armed 分支对 Ctrl/⌘+V 只放行不编码（否则 CSI-u 与粘贴文本双发）。
+  **Unicode11**：addon 注册后必须显式 `term.unicode.activeVersion = "11"` 才激活（首版漏了，
+  宽度表一直是 Unicode 6——2026-10-10 核查发现并修正）。
+  **回放**：快照式存档，存点 = 进程退出时 + 页面隐藏（pagehide/visibilitychange）+ **30 秒周期快照** +
+  Rust 侧关窗拦截（`mesa:flush-before-close` 事件，lib.rs `FLUSH_CLOSE`——2026-10-11 实机探针实证
+  前端 `onCloseRequested` 在红绿灯关窗时不执行，连既有 agent 关窗确认守卫也是死代码；周期快照兜住
+  任何死亡方式）；**不在卸载时存**（应用退出不触发卸载，首版因此整条链路失效）。
+  全屏 TUI 挂在备用屏时普通缓冲往往是空屏，改拍备用屏可视行（claude 整场在 1049）。关标签即 drop；
+  启动恢复完成后 `prune_terminal_replays` 只留当前标签集合，清崩溃残留。全屏 TUI 不另画滚动条：
+  它接管滚轮后，xterm 自带滑块不显示。
   **kimi 特判发 CSI-u `\x1b[118;5u`**（kitty 协议，v=118 + ctrl 修饰位 5，与同函数 Enter→`\x1b[13u` 同模式，
   **待实机验证**）。非 mac 不拦：Windows 各家贴图用 Alt+V（本就透传为 ESC+v），Ctrl+V 保留文本粘贴语义。
-  **Codex Shift+Enter 换行**：xterm.js 对 Shift+Enter 仍发 `\r`，Codex composer 当成发送。宿主拦 shift+Enter
-  （keydown/keypress）改写为 kitty CSI-u `\x1b[13;2u`，并吞掉随后 80ms 内 onData 的 `\r`（空输入时 Codex 不提交，
-  看起来像换行；有内容时这记 `\r` 会直接发送）。不点亮「生成中」。只改 Codex。
+  **Codex/Cursor Shift+Enter 换行**：xterm.js 对 Shift+Enter 仍发 `\r`，被 TUI 当成发送。宿主拦 shift+Enter
+  （keydown/keypress）改写为 kitty CSI-u `\x1b[13;2u`（Codex composer 与 Cursor 的解析器都认这个形式，
+  两家都不查询/推送 kitty 协议，走未 arm 的旧改写路径），并吞掉随后 80ms 内 onData 的 `\r`（空输入时 Codex 不提交，
+  看起来像换行；有内容时这记 `\r` 会直接发送）。不点亮「生成中」。
+  **claude-code Shift+Enter 换行（2026-10-10 补）**：claude 官方 terminal-setup 给别家终端装的正是
+  `ESC+CR`（Alacritty 键位表 `chars="\u001B\r"` / iTerm2 映射同款），它从不 push kitty 协议——
+  改写为 `\x1b\r`（`CLAUDE_SHIFT_ENTER`），同挂点同吞 `\r` 哨兵。Ctrl+J（0x0A）本就可用。
   **Shift+标点丢字**：xterm 的 keydown 只发送 `keyCode ≥ 48` 的单个字符。WKWebView 上 Shift+`/`
   实测报 **229**（不是 191），这一下 xterm 走 composition 的 `setTimeout(…, 0)` 分支、读到的
   textarea 还没被 `input` 事件写长 → 不发 → 第一下丢字，再按一下才出来。`printableKeyFallback`：
@@ -556,11 +633,14 @@
   - **gemini 0.57.0 ✅** `TerminalCapabilityManager.detectCapabilities`，OSC 11 查询 + 1s 超时，
     回报进 onData 后被消费；`pickDefaultThemeName(terminalBackground, …)` 只在用户主题仍是默认值时才自动切。
   - **qwen 0.22.2 ✅**（gemini-cli fork）`detectOsc11Theme` 同款消费；它额外还认 `COLORFGBG`。
-  - **codex 0.150.1 ❌ 不探测**：二进制里搜不到 OSC 10/11 查询、也没有 termbg/colorsaurus 一类库
-    （2026-08-24 那条记的 0.149.1 terminal_probe 已不复存在）。`[tui] theme` 的取值是
-    coldark-cold / dracula / gruvbox-light / solarized-light … 这些 **bat/syntect 语法高亮主题名**，
-    只影响代码块，控制不了输入框和用户消息行。**Mesa 侧对 codex 没有可用杠杆，别再试。**
+  - **codex 0.150.1 ❌ → 0.162 ✅（2026-10-10 二进制复查）**：0.150 一度移除探测（乱码教训来自那个版本）；
+    0.162 的 `tui/src/terminal_probe/terminal_identity.rs` 重新引入 `]10;?` / `]11;?` 探测（无 termbg/colorsaurus，
+    自实现）。codex 已加入 `TERMINAL_BG_PROBING_AGENTS` 白名单。**注意版本窗口**：更老的 codex（≤0.155 的
+    不探测版本）在 Windows 浅色主题下会收到没人消费的回报——设置开关 `terminal_color_report`（默认开）
+    是兜底刹车；若实测出现乱码，按启动栏已知版本门控（<0.156 不推）。`[tui] theme` 仍是语法高亮主题名。
   - **claude-code ❌ 不探测**：走 `~/.claude/settings.json` 的 theme 配置。
+  - **opencode/kimi 等**：2026-10-10 调研未观察到探测消费，不在白名单；OpenCode 的通知协议经
+    `OPENTUI_NOTIFICATION_PROTOCOL=osc777`（launch_plan 注入，extra_env 可覆盖）打通。
   只推浅色是因为深色本就是 agent 探测失败的回落值；不推 shell 是因为它不做这个探测。
   设置页开关 `terminal_color_report`（默认开）留作白名单内 CLI 换实现时的兜底。
   注入早于子进程读 stdin 也不会丢（ConPTY 会缓冲；300ms 注入 vs 2000ms 才挂监听，实测完整收到）。

@@ -52,6 +52,16 @@ import {
   xtermOscColorReport,
 } from "../terminal-input";
 import {
+  consumeHostSequences,
+  consumeTerminalQueries,
+  encodeKittyKey,
+  safeOsc8Url,
+} from "../terminal-protocols";
+import { hitCellRange, terminalPathHits } from "../terminal-links";
+import { pasteGuardPlan } from "../paste-guard";
+import type { TerminalProgress } from "../terminal-notify";
+import { terminalReplayText } from "../terminal-replay";
+import {
   confirmHandoffEvent,
   hasAssistantText,
   mergeConversationPages,
@@ -428,9 +438,13 @@ function buildXtermTheme(
           .tokens,
       )
     : (XTERM_BG_FG[themeId] ?? XTERM_BG_FG.midnight);
+  const light = isLightTheme(themeId);
   return {
     ...bgfg,
     ...palette,
+    scrollbarSliderBackground: light ? "#3a342c99" : "#ffffff99",
+    scrollbarSliderHoverBackground: light ? "#3a342ccc" : "#ffffffcc",
+    scrollbarSliderActiveBackground: light ? "#3a342cff" : "#ffffffff",
   };
 }
 
@@ -483,6 +497,8 @@ const TerminalView = memo(function TerminalView({
   onRestoreComplete,
   onConsumeResume,
   onForkChat,
+  onOpenPath,
+  onProgress,
 }: {
   visible: boolean;
   /** 分屏时只有活跃 pane 绑定窗口级 ⌘F 兜底；xterm 聚焦时的拦截不受影响 */
@@ -558,11 +574,21 @@ const TerminalView = memo(function TerminalView({
   onRestoreComplete?: (id: string) => void;
   /** launch 成功接管会话后通知父级清掉标签级 resumeSessionId（之后「启动」不再接旧会话） */
   onConsumeResume?: (id: string) => void;
-  /** 从当前会话摘要开一个只读分叉标签（启动行 ⋯，不进聊天 ＋） */
-  onForkChat?: () => void;
+  /** 从当前会话摘要开一个只读分叉标签（启动行 ⋯，不进聊天 ＋）。带 tabId：
+   *  页面侧可传稳定回调，避免内联箭头击穿 memo(TerminalView)。 */
+  onForkChat?: (tabId: string) => void;
+  /** 终端里的绝对路径点开到右侧预览。 */
+  onOpenPath?: (path: string, line: number | null) => void;
+  /** 终端上报的任务进度（OSC 9;4，kimi/grok/codebuddy 发）→ 标签条小徽章。
+   *  带 tabId 的稳定回调（memo 不失效，进度 1Hz 更新不级联全部终端重渲染）。 */
+  onProgress?: (tabId: string, progress: TerminalProgress | null) => void;
 }) {
   const profiles = useAppStore((s) => s.profiles);
   const settings = useAppStore((s) => s.settings);
+  const gateways = useAppStore((s) => s.gateways);
+  /** 配置指纹里显示网关名（id 是 uuid，人读不出） */
+  const gatewayNameOf = (id: string) =>
+    gateways.find((g) => g.id === id)?.name ?? id.slice(0, 8);
   // 终端创建 effect 依赖 [everVisible]，创建时参数经 ref 取最新设置
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
@@ -785,6 +811,7 @@ const TerminalView = memo(function TerminalView({
     setCwdChecking(false);
     setCwdIssue(null);
     setError(null);
+    setNotice(null);
     setBarExpanded(true);
   }
 
@@ -811,6 +838,9 @@ const TerminalView = memo(function TerminalView({
   /** agent 启动成功时刻（状态栏运行时长；shell/未启动为 null） */
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 提示（非错误）：「已接回正在跑的进程」这类只陈述事实的消息。与 error 分家——
+  // error 会把收缩行强制顶出来（compactBarUrgent）且飘红，接回成功是正常态，两样都不该占
+  const [notice, setNotice] = useState<string | null>(null);
   // 启动栏收缩：空闲时完整展示，启动成功后自动收成一行状态条（「修改」可重新展开）
   // 恢复占位标签默认使用紧凑行，避免「可恢复」卡片上方再堆一整套启动配置。
   const [barExpanded, setBarExpanded] = useState(!restored);
@@ -833,11 +863,44 @@ const TerminalView = memo(function TerminalView({
   const searchRef = useRef<SearchAddon | null>(null);
   const ptyIdRef = useRef<string | null>(null);
   const ptyKindRef = useRef<PtyKind | null>(null);
+  /** 子进程推过 Kitty 键盘 flags 之后才把功能键编成 CSI-u。弹出或新进程清掉。 */
+  const kkpArmedRef = useRef(false);
+  const queryPendingRef = useRef("");
+  const hostPendingRef = useRef("");
+  /** Kitty 分块贴图（m=1）跨帧攒的 base64。 */
+  const kittyAccumRef = useRef("");
+  /** 后台标签带外信号流（pty-signal）自己的断帧攒缓冲——与主输出流分开。 */
+  const signalPendingRef = useRef("");
+  /** 终端通知（OSC 9/777/BEL）按标签限频的时间戳。 */
+  const terminalNotifyAtRef = useRef(0);
+  /** 可见性走 ref：创建期一次性订阅（onBell 等）不捕获过期闭包 */
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
+  /** everVisible 同理（saveTerminalReplayNow 在生命周期回调里调用）；
+   *  声明在 1665 行的 state 之前，赋值挪到其后（渲染期内联赋值） */
+  const everVisibleRef = useRef(false);
+  const onOpenPathRef = useRef(onOpenPath);
+  onOpenPathRef.current = onOpenPath;
+  const onProgressRef = useRef(onProgress);
+  onProgressRef.current = onProgress;
+  const onForkChatRef = useRef(onForkChat);
+  onForkChatRef.current = onForkChat;
+  const [inlineImageUrl, setInlineImageUrl] = useState<string | null>(null);
   const unlistenRef = useRef<(() => void)[]>([]);
 
   // —— 输出搜索（SearchAddon）：搜索条只作用于本标签的 xterm 实例 ——
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  // 条件开关（借鉴 Tabby/VS Code）：正则 / 全词 / 大小写；命中计数 x/y
+  const [searchRegex, setSearchRegex] = useState(false);
+  const [searchWord, setSearchWord] = useState(false);
+  const [searchCase, setSearchCase] = useState(false);
+  const [searchResults, setSearchResults] = useState<{
+    index: number;
+    count: number;
+  } | null>(null);
+  const [searchNote, setSearchNote] = useState<string | null>(null);
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 备用屏（全屏 TUI）没有回滚区：查找范围塌缩成当前一屏，↑↓ 只在屏幕内打转。
   // 搜索条据此出提示，免得看起来像查找坏了。由 buffer.onBufferChange 驱动，
   // 进出全屏程序时提示跟着出现/消失。
@@ -901,6 +964,60 @@ const TerminalView = memo(function TerminalView({
     }
   }
 
+  /** 粘贴的实际写入：按 bracketed paste 模式包标记（TUI 的「大段粘贴确认」靠它）。
+   *  同内容 250ms 去重：mac ⌘V 的键盘路径（pasteFromClipboard 的 execCommand 失败后
+   *  readText）与原生 paste 事件（capture 三分发）可能各到一次，异步解析间隔可超
+   *  80ms（三轮审查）；双发会让 CLI 收两份。失败不静默——用户主动写入要有反馈。 */
+  const lastPasteRef = useRef<{ data: string; at: number } | null>(null);
+  function writePtyPaste(data: string, note?: string) {
+    const id = ptyIdRef.current;
+    if (!id) {
+      flashInputNote("终端未启动，无法粘贴");
+      return;
+    }
+    const now = performance.now();
+    const last = lastPasteRef.current;
+    if (last && last.data === data && now - last.at < 250) {
+      return; // 同一记粘贴的第二条路径，丢弃
+    }
+    lastPasteRef.current = { data, at: now };
+    const wrap = termRef.current?.modes.bracketedPasteMode
+      ? `\x1b[200~${data}\x1b[201~`
+      : data;
+    if (data.includes("\r")) {
+      invoke("pty_write", { ptyId: id, data: wrap })
+        .then(() => flashInputNote(note ?? "已粘贴"))
+        .catch(() => flashInputNote("粘贴失败"));
+    } else {
+      writeInteractivePty(id, wrap, note);
+    }
+  }
+
+  /** 终端文本粘贴的统一防线（src/paste-guard.ts）：shell 多行先确认、
+   *  收尾回车一律剪掉（防「粘贴即执行」）；agent 标签交给 TUI 自己消化。 */
+  function handleTerminalTextPaste(text: string) {
+    const plan = pasteGuardPlan({
+      text,
+      kind: ptyKindRef.current === "agent" ? "agent" : "shell",
+      alternateScreen:
+        termRef.current?.buffer.active.type === "alternate",
+    });
+    if (plan.action === "confirm") {
+      void confirmDialog(
+        `${plan.trimmed ? "首尾换行已去掉。" : ""}要粘贴 ${plan.lines} 行内容，确认粘贴？`,
+        { danger: true },
+      ).then((ok) => {
+        if (ok) writePtyPaste(plan.data);
+      });
+      return;
+    }
+    if (!plan.data) {
+      if (plan.note) flashInputNote(plan.note);
+      return;
+    }
+    writePtyPaste(plan.data, plan.note);
+  }
+
   /** 右键「粘贴」。菜单点击拿不到网页剪贴板权限，文字走终端输入框的 paste。 */
   async function pasteFromClipboard() {
     const area = termRef.current?.textarea;
@@ -914,15 +1031,16 @@ const TerminalView = memo(function TerminalView({
     }
     try {
       const text = await navigator.clipboard.readText();
-      if (!text) return;
-      const id = ptyIdRef.current;
-      if (id) {
-        if (text.includes("\n")) {
-          await invoke("pty_write", { ptyId: id, data: text });
-          flashInputNote("已粘贴");
-        } else {
-          writeInteractivePty(id, text);
-        }
+      if (text) {
+        handleTerminalTextPaste(text);
+        return;
+      }
+      // 网页剪贴板没文字：可能是 Finder/资源管理器复制的文件（WKWebView 不给路径）
+      const files = await invoke<string[]>("read_clipboard_files");
+      if (files.length > 0) {
+        const joined = joinDroppedPaths(files, IS_WINDOWS);
+        if (joined) writePtyPaste(joined, `已粘贴 ${files.length} 个文件路径`);
+        return;
       }
     } catch {
       flashInputNote("无法读取剪贴板");
@@ -930,32 +1048,95 @@ const TerminalView = memo(function TerminalView({
   }
 
   /** xterm 画布内的匹配高亮色（与主题无关，参照 VS Code Dark+ 查找高亮） */
-  const SEARCH_OPTS = {
-    decorations: {
-      matchBackground: "#3a5a8a",
-      matchOverviewRuler: "#3a5a8a",
-      activeMatchBackground: "#5a7ba8",
-      activeMatchColorOverviewRuler: "#5a7ba8",
-    },
+  const SEARCH_DECORATIONS = {
+    matchBackground: "#3a5a8a",
+    matchOverviewRuler: "#3a5a8a",
+    activeMatchBackground: "#5a7ba8",
+    activeMatchColorOverviewRuler: "#5a7ba8",
   };
+
+  /** 按当前开关拼搜索项；非法正则即时提示，不当掉整条搜索 */
+  const searchOptions = useCallback(
+    (incremental: boolean) => ({
+      decorations: SEARCH_DECORATIONS,
+      regex: searchRegex,
+      caseSensitive: searchCase,
+      wholeWord: searchWord,
+      incremental,
+    }),
+    [searchRegex, searchCase, searchWord],
+  );
+
+  const runSearch = useCallback(
+    (q: string, incremental: boolean, backward = false) => {
+      if (!q || !searchRef.current) {
+        setSearchResults(null);
+        setSearchNote(null);
+        return;
+      }
+      if (searchRegex) {
+        try {
+          new RegExp(q);
+        } catch (err) {
+          setSearchResults(null);
+          setSearchNote(`正则有误：${String(err).slice(0, 60)}`);
+          return;
+        }
+      }
+      setSearchNote(null);
+      try {
+        if (backward) searchRef.current.findPrevious(q, searchOptions(incremental));
+        else searchRef.current.findNext(q, searchOptions(incremental));
+      } catch {
+        // 增量搜索边打边查，中间态正则抛错按无结果处理
+        setSearchResults(null);
+      }
+    },
+    [searchOptions, searchRegex],
+  );
+
+  /** 输入变化：250ms 防抖后增量高亮（Tabby 同款节奏，长缓冲不卡输入） */
+  const queueIncrementalSearch = useCallback(
+    (q: string) => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+      searchDebounceRef.current = setTimeout(() => {
+        searchDebounceRef.current = null;
+        runSearch(q, true);
+      }, 250);
+    },
+    [runSearch],
+  );
 
   const findNext = useCallback(
     (q?: string) => {
       const query = q ?? searchQuery;
-      if (query) searchRef.current?.findNext(query, SEARCH_OPTS);
+      if (query) runSearch(query, false);
     },
-    // SEARCH_OPTS 为渲染期常量，无需入依赖
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [searchQuery],
+    [runSearch, searchQuery],
   );
 
   const findPrev = useCallback(() => {
-    if (searchQuery) searchRef.current?.findPrevious(searchQuery, SEARCH_OPTS);
+    if (searchQuery) runSearch(searchQuery, false, true);
+  }, [runSearch, searchQuery]);
+
+  // 开关切换：立即按当前词重查一遍（不等人再敲字）；先清掉防抖里携带旧开关的 pending
+  useEffect(() => {
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+      searchDebounceRef.current = null;
+    }
+    if (searchOpen && searchQuery) runSearch(searchQuery, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchQuery]);
+  }, [searchRegex, searchCase, searchWord]);
 
   const closeSearch = useCallback(() => {
     setSearchOpen(false);
+    setSearchResults(null);
+    setSearchNote(null);
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+      searchDebounceRef.current = null;
+    }
     searchRef.current?.clearDecorations();
     termRef.current?.focus();
   }, []);
@@ -1328,6 +1509,7 @@ const TerminalView = memo(function TerminalView({
   // 启动栏第二行（状态提示行）有内容才渲染——只有 ⋯ 时整行像悬空碎片（v3.92 修）
   const showBarMeta = !!(
     error ||
+    notice ||
     cwdIssue ||
     (initialExtraEnv && Object.keys(initialExtraEnv).length > 0) ||
     (!running &&
@@ -1506,6 +1688,7 @@ const TerminalView = memo(function TerminalView({
 
   // 懒挂载：首次可见时才创建 xterm，未展示过的标签不占用终端资源
   const [everVisible, setEverVisible] = useState(visible);
+  everVisibleRef.current = everVisible;
   useEffect(() => {
     if (visible) setEverVisible(true);
   }, [visible]);
@@ -1551,6 +1734,21 @@ const TerminalView = memo(function TerminalView({
       cursorStyle: "bar",
       cursorBlink: true,
       scrollback: settingsRef.current?.scrollback ?? 5000,
+      // Windows 走 ConPTY（portable-pty）：不声明时 xterm 按裸 Unix 假设处理满宽行回绕，
+      // 表格/长回显会错位（借鉴 Hyper/Tabby；buildNumber 取 ≥21376 = 现代 ConPTY 语义）
+      ...(IS_WINDOWS
+        ? { windowsPty: { backend: "conpty" as const, buildNumber: 21376 } }
+        : {}),
+      // macOS 触控板增量很小。放大滚动灵敏度，不改 Windows 的一格一行。
+      scrollSensitivity: IS_MAC ? 3 : 1,
+      fastScrollSensitivity: IS_MAC ? 8 : 5,
+      // OSC 8：只打开 http(s) 与 mailto。javascript: 等不进浏览器。
+      linkHandler: {
+        activate(_event, uri) {
+          const safe = safeOsc8Url(uri);
+          if (safe) void openUrl(safe);
+        },
+      },
       theme: buildXtermTheme(
         settingsRef.current?.theme ?? "midnight",
         settingsRef.current?.terminalPalette,
@@ -1561,9 +1759,16 @@ const TerminalView = memo(function TerminalView({
     term.loadAddon(fit);
     const search = new SearchAddon();
     term.loadAddon(search);
+    // 命中计数（x/y）：搜不到时给「没有」的明确反馈（借鉴 Tabby/VS Code）
+    search.onDidChangeResults((r) => {
+      setSearchResults({ index: r.resultIndex, count: r.resultCount });
+    });
     // Ghostty/现代终端使用 Unicode 11 宽度规则；xterm 默认 Unicode 6
     // 会让部分 emoji、组合字符和新 CJK 字符错列，尤其在 TUI 表格中明显。
+    // 注意：loadAddon 只注册，必须显式把 activeVersion 切到 "11" 才真正生效
+    // （2026-10-10 核查发现此前一直没激活，宽度表仍是 Unicode 6）。
     term.loadAddon(new Unicode11Addon());
+    term.unicode.activeVersion = "11";
     term.open(containerRef.current!);
     try {
       fit.fit();
@@ -1598,49 +1803,6 @@ const TerminalView = memo(function TerminalView({
     let printableEcho = { char: "", count: 0, until: 0 };
     // Cmd/Ctrl+F 在终端聚焦时也呼出搜索条（拦在 xterm 之前，避免 Ctrl+F 字符进 PTY）
     term.attachCustomKeyEventHandler((e) => {
-      // kimi 的 TUI 开了 kitty 键盘协议（\x1b[>7u）后只认 CSI-u 形式的 Enter，
-      // xterm.js 不支持该协议（手动回车发 \r，kimi 不提交）——在键盘层改写。
-      // 仅拦无修饰的 Enter；Shift/Ctrl/Alt 组合键保持原样穿透
-      if (
-        agentIdRef.current === "kimi" &&
-        e.type === "keydown" &&
-        e.key === "Enter" &&
-        !e.metaKey &&
-        !e.ctrlKey &&
-        !e.altKey &&
-        !e.shiftKey
-      ) {
-        const id = ptyIdRef.current;
-        if (id) {
-          armPtyWorking();
-          invoke("pty_write", { ptyId: id, data: KIMI_CSI_U_ENTER }).catch((e) => setError(String(e)));
-        }
-        return false;
-      }
-      // Codex composer：Shift+Enter 换行。xterm 仍发 \r，会被当成发送。
-      if (
-        e.key === "Enter" &&
-        (e.shiftKey || e.getModifierState("Shift")) &&
-        !e.metaKey &&
-        !e.ctrlKey &&
-        !e.altKey
-      ) {
-        const rewrite = ptyShiftEnterRewrite(agentIdRef.current);
-        if (rewrite) {
-          e.preventDefault();
-          e.stopPropagation();
-          if (e.type === "keydown") {
-            swallowShiftEnterCrUntil = performance.now() + 80;
-            const id = ptyIdRef.current;
-            if (id) {
-              invoke("pty_write", { ptyId: id, data: rewrite }).catch((err) =>
-                setError(String(err)),
-              );
-            }
-          }
-          return false;
-        }
-      }
       if (
         e.type === "keydown" &&
         (e.metaKey || e.ctrlKey) &&
@@ -1701,6 +1863,97 @@ const TerminalView = memo(function TerminalView({
         launchNowRef.current();
         return false;
       }
+      // 子进程推过 Kitty 键盘之后才改编码。此前 Ctrl+C 仍是中断字符，shell 不受影响。
+      // 不发松开：查询应答里也没有那一位。纯 Shift 的可打印字符留给 xterm / 输入法。
+      if (
+        kkpArmedRef.current &&
+        e.type === "keydown" &&
+        !e.isComposing
+      ) {
+        // 没选区的 ⌘C 已经过了复制分支。不要把它编成 CSI 写进 TUI。
+        if (
+          e.metaKey &&
+          !e.ctrlKey &&
+          !e.altKey &&
+          !e.shiftKey &&
+          e.key.toLowerCase() === "c"
+        ) {
+          return false;
+        }
+        // Ctrl/⌘+V 同理只放行不编码：编码会把 CSI-u 118 写进 PTY，而粘贴事件
+        // 又写一次文本——Windows（Ctrl+V）与 mac（⌘V）都双发（2026-10-11 复核实证）
+        if (
+          (e.metaKey || e.ctrlKey) &&
+          !e.altKey &&
+          !e.shiftKey &&
+          e.key.toLowerCase() === "v"
+        ) {
+          return false;
+        }
+        const encoded = encodeKittyKey({
+          type: e.type,
+          key: e.key,
+          code: e.code,
+          shiftKey: e.shiftKey || e.getModifierState("Shift"),
+          altKey: e.altKey,
+          ctrlKey: e.ctrlKey,
+          metaKey: e.metaKey,
+          repeat: e.repeat,
+        });
+        if (encoded) {
+          const id = ptyIdRef.current;
+          if (!id) return true;
+          if (e.shiftKey && e.key === "Enter") {
+            swallowShiftEnterCrUntil = performance.now() + 80;
+          }
+          invoke("pty_write", { ptyId: id, data: encoded }).catch((err) =>
+            setError(String(err)),
+          );
+          return false;
+        }
+      }
+      // 协议还没推上来时的旧改写：kimi 的 Enter、Codex 的 Shift+Enter。
+      if (
+        agentIdRef.current === "kimi" &&
+        e.type === "keydown" &&
+        e.key === "Enter" &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.shiftKey
+      ) {
+        const id = ptyIdRef.current;
+        if (id) {
+          armPtyWorking();
+          invoke("pty_write", { ptyId: id, data: KIMI_CSI_U_ENTER }).catch((err) =>
+            setError(String(err)),
+          );
+        }
+        return false;
+      }
+      if (
+        e.key === "Enter" &&
+        (e.shiftKey || e.getModifierState("Shift")) &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey
+      ) {
+        const rewrite = ptyShiftEnterRewrite(agentIdRef.current);
+        if (rewrite) {
+          e.preventDefault();
+          e.stopPropagation();
+          if (e.type === "keydown") {
+            swallowShiftEnterCrUntil = performance.now() + 80;
+            const id = ptyIdRef.current;
+            if (id) {
+              invoke("pty_write", { ptyId: id, data: rewrite }).catch((err) =>
+                setError(String(err)),
+              );
+            }
+          }
+          return false;
+        }
+      }
       // Shift+标点丢字：WKWebView 上 Shift+`/` 报 keyCode 0 或 229（不是 191），这一下 xterm 都不发，
       // 当场补发，再由下面的哨兵吞掉 xterm 可能补发的那一次。keyCode >= 48 交给 xterm：它认识
       // Shift+标点（evaluateKeyboardEvent 的 191:["/","?"] 等键位表），无需宿主插手。
@@ -1729,22 +1982,48 @@ const TerminalView = memo(function TerminalView({
     // 渲染器选择（设置页「终端渲染」）：auto = Windows 流畅优先（WebGL + 软件渲染探针）、
     // macOS 清晰优先（DOM）——xterm 的字形图集→GPU 纹理采样在 WKWebView 里整体偏软发糊
     // （A/B 截屏实测 DOM 渲染明显更锐利，Safari 同引擎复现一致），故 Mac 默认不走 WebGL；
-    // 用户显式选「流畅」(webgl) 时按流畅优先，软件渲染（SwiftShader 等，闪烁）或上下文
-    // 丢失时仍退回默认渲染器。
-    try {
-      const renderer = settingsRef.current?.terminalRenderer ?? "auto";
-      const wantWebgl =
-        renderer === "webgl" || (renderer === "auto" && !IS_MAC);
-      if (wantWebgl && !isSoftwareWebGL()) {
+    // 用户显式选「流畅」(webgl) 时按流畅优先，软件渲染（SwiftShader 等，闪烁）时退回默认。
+    // 上下文丢失不再永久退 DOM（借鉴 Tabby）：终端标签长寿命、常驻后台，正是丢失高发场景；
+    // 窗口重新聚焦/可见时预算重试（≤3 次），再丢才认命回落——Windows 默认 webgl 的用户
+    // 不会「流畅档悄悄变糊」。
+    const renderer = settingsRef.current?.terminalRenderer ?? "auto";
+    const wantWebgl = renderer === "webgl" || (renderer === "auto" && !IS_MAC);
+    let webglRecoveryLeft = 3;
+    // webglActive：当前已加载且健康——没有它，每次窗口聚焦都会重建 renderer、
+    // 新开 WebGL 上下文（2026-10-11 复核实证）。软件渲染探针也只开一次。
+    let webglActive = false;
+    let softwareWebgl: boolean | null = null;
+    const loadWebgl = (): boolean => {
+      if (!wantWebgl || webglActive || webglRecoveryLeft <= 0) return false;
+      try {
+        if (softwareWebgl === null) softwareWebgl = isSoftwareWebGL();
+        if (softwareWebgl) return false;
         const webgl = new WebglAddon();
         webgl.onContextLoss(() => {
           webgl.dispose();
+          webglActive = false;
+          webglRecoveryLeft -= 1;
         });
         term.loadAddon(webgl);
+        webglActive = true;
+        return true;
+      } catch {
+        return false;
       }
-    } catch {
-      // GPU/驱动不支持时保持默认渲染器
-    }
+    };
+    loadWebgl();
+    const recoverWebgl = () => {
+      if (wantWebgl && webglRecoveryLeft > 0) loadWebgl();
+    };
+    const onVisRecover = () => {
+      if (document.visibilityState === "visible") recoverWebgl();
+    };
+    window.addEventListener("focus", recoverWebgl);
+    document.addEventListener("visibilitychange", onVisRecover);
+    const teardownWebglRecovery = () => {
+      window.removeEventListener("focus", recoverWebgl);
+      document.removeEventListener("visibilitychange", onVisRecover);
+    };
 
     // 触控板滚动合帧（见 src/terminal-wheel-scroll.ts）：xterm 只对物理滚轮做平滑动画，
     // 触控板是「一枚事件写一次滚动位置、触发一次整屏重绘」——60–120Hz 细粒度小增量下就是
@@ -1760,18 +2039,105 @@ const TerminalView = memo(function TerminalView({
         void openUrl(uri);
       }),
     );
+    term.registerLinkProvider({
+      provideLinks(bufferLineNumber, callback) {
+        const raw = term.buffer.active.getLine(bufferLineNumber - 1);
+        if (!raw) return callback([]);
+        // 字符下标 ≠ 单元格列号（中文/emoji 宽字符占 2 格）。src 版 translateToString
+        // 有 outColumns 回填参数，但 6.0.0 编译产物里没有（2026-10-11 复核实证）——
+        // 逐格自算「每个字符 → 所在单元格列号」；复用格必须取自 getNullCell。
+        const probe = term.buffer.active.getNullCell();
+        const columns: number[] = [];
+        let text = "";
+        for (let x = 0; x < raw.length; x += 1) {
+          const cell = raw.getCell(x, probe);
+          if (!cell || cell.getWidth() === 0) continue; // 搭子格/越界格不产字符
+          const chars = cell.getChars() ?? "";
+          const emitted = chars.length > 0 ? chars : " "; // 空白格按 translateToString 口径补空格
+          for (const ch of emitted) {
+            columns.push(x);
+            text += ch;
+          }
+        }
+        const hits = terminalPathHits(text);
+        if (hits.length === 0) return callback([]);
+        callback(
+          hits.flatMap((hit) => {
+            const range = hitCellRange(hit, columns);
+            if (!range) return [];
+            return [
+              {
+                range: {
+                  start: { x: range.startX, y: bufferLineNumber },
+                  end: { x: range.endX, y: bufferLineNumber },
+                },
+                text: hit.text,
+                activate() {
+                  if (hit.kind === "absolute") {
+                    onOpenPathRef.current?.(hit.path, hit.line);
+                    return;
+                  }
+                  // 相对路径/~：点击时按标签 cwd 校验存在再打开（一次 stat，误报词点了给提示）
+                  void invoke<string | null>("terminal_link_target", {
+                    cwd: cwdRef.current ?? "",
+                    path: hit.path,
+                  })
+                    .then((abs) => {
+                      if (abs) {
+                        onOpenPathRef.current?.(abs, hit.line);
+                      } else {
+                        flashInputNote(`没找到 ${hit.path}`);
+                      }
+                    })
+                    .catch(() => flashInputNote(`没找到 ${hit.path}`));
+                },
+              },
+            ];
+          }),
+        );
+      },
+    });
 
-    // 剪贴板图片粘贴：capture 阶段拦在 xterm 默认文本粘贴之前——
-    // 有 image/* 条目就落盘并把绝对路径写进 PTY；无图片则不干预（走默认文本粘贴）
+    // BEL 响铃 → 系统通知（claude-code 的通知通道就是 BEL，不发 OSC 9/777；
+    // 2026-10-10 二进制核查确认）。只对 agent 生效，shell 里的 \a 不打扰。
+    // 订阅随 term.dispose() 一并释放，无需单独清理。
+    term.onBell(() => {
+      if (ptyKindRef.current !== "agent") return;
+      notifyTerminal("终端响铃，可能需要你确认");
+    });
+
+    // 剪贴板粘贴的统一入口（capture 阶段，先于 xterm 默认行为）：
+    // ① image/* → 落盘成绝对路径写 PTY（原有路径）；
+    // ② 有文本 → 过粘贴防线（shell 多行确认 / 剪收尾回车）后自管写入；
+    // ③ 无文本无图 → 可能是 Finder/资源管理器复制的文件（webview 剪贴板不给路径），
+    //    探一次原生剪贴板，有文件就按引号路径写入（mac NSPasteboard / win CF_HDROP）。
     const container = containerRef.current!;
     const onPasteCapture = (e: ClipboardEvent) => {
       const items = Array.from(e.clipboardData?.items ?? []);
       const idx = firstImageItem(items);
-      if (idx < 0) return;
+      if (idx >= 0) {
+        e.preventDefault();
+        e.stopPropagation();
+        const file = items[idx].getAsFile();
+        if (file) void pasteImageFile(file);
+        return;
+      }
+      const text = e.clipboardData?.getData("text/plain") ?? "";
+      if (text) {
+        e.preventDefault();
+        e.stopPropagation();
+        handleTerminalTextPaste(text);
+        return;
+      }
+      // 无文本：默认粘贴本来也写不进东西，接管去探原生文件剪贴板
       e.preventDefault();
-      e.stopPropagation();
-      const file = items[idx].getAsFile();
-      if (file) void pasteImageFile(file);
+      void invoke<string[]>("read_clipboard_files")
+        .then((files) => {
+          if (!files.length) return;
+          const joined = joinDroppedPaths(files, IS_WINDOWS);
+          if (joined) writePtyPaste(joined, `已粘贴 ${files.length} 个文件路径`);
+        })
+        .catch(() => {});
     };
     container.addEventListener("paste", onPasteCapture, true);
 
@@ -1805,22 +2171,39 @@ const TerminalView = memo(function TerminalView({
       }
     });
 
-    const onWinResize = () => {
-      try {
-        fit.fit();
-      } catch {}
-    };
-    window.addEventListener("resize", onWinResize);
-
-    // 容器尺寸变化的通用兜底：状态栏进出、启动栏塌缩、分屏拖拽、侧栏开合……
-    // 凡改变 xterm 容器高度的都自动 fit，不再逐个点名触发（留空/遮行问题的根治）
-    const resizeObs = new ResizeObserver(() => {
+    // fit 限频（借鉴 Tabby）：拖分屏把手/开合侧栏时 resize 事件连发，裸调 fit 每次都
+    // 全量重排；rAF 合并到帧尾一次 + trailing 兜底，WKWebView 重排更贵，收益明显
+    let fitQueued = false;
+    let fitPending = false;
+    const runFit = () => {
       try {
         fit.fit();
       } catch {
         // display:none 时尺寸为 0，fit 会抛；可见性 effect 里会补
       }
-    });
+    };
+    const scheduleFit = () => {
+      if (fitQueued) {
+        fitPending = true;
+        return;
+      }
+      fitQueued = true;
+      requestAnimationFrame(() => {
+        fitQueued = false;
+        runFit();
+        // 帧内又有请求：再排一帧（trailing），不丢最后一次尺寸
+        if (fitPending) {
+          fitPending = false;
+          scheduleFit();
+        }
+      });
+    };
+    const onWinResize = () => scheduleFit();
+    window.addEventListener("resize", onWinResize);
+
+    // 容器尺寸变化的通用兜底：状态栏进出、启动栏塌缩、分屏拖拽、侧栏开合……
+    // 凡改变 xterm 容器高度的都自动 fit，不再逐个点名触发（留空/遮行问题的根治）
+    const resizeObs = new ResizeObserver(() => scheduleFit());
     if (containerRef.current) resizeObs.observe(containerRef.current);
 
     // 画面稳定后再告诉进程一次。继续会话时高度会从启动栏展开变成收起，
@@ -1903,6 +2286,9 @@ const TerminalView = memo(function TerminalView({
       const linkedAgent = linkCtxRef.current?.agentId;
       if (sid && linkedAgent) setLiveSession(linkedAgent, sid, null);
       invoke("release_session_claim", { claimId: tabId }).catch(() => {});
+      // 注意：这里不存回放。关标签 = 标签即将消失，replay 文件由 requestCloseTab
+      // 先 drop；「上次离开时的画面」在 pty-exit / 页面隐藏 / 关窗守卫三处存
+      // （2026-10-10 修：原先只在卸载时存，应用退出不触发卸载 → 占位标签永远空）。
       const id = ptyIdRef.current;
       ptyIdRef.current = null;
       ptyKindRef.current = null;
@@ -1910,11 +2296,74 @@ const TerminalView = memo(function TerminalView({
       unlistenRef.current.forEach((u) => u());
       teardownWheelCoalescing();
       teardownRowReuse();
+      teardownWebglRecovery();
       term.dispose();
       termRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [everVisible]);
+
+  /** 抓当前终端画面存回放。全屏 TUI 挂在备用屏时普通缓冲往往只有启动前的空屏
+   *  （claude 整场都在 1049），此时改拍备用屏的可视行——回放要的是用户最后看到的画面。 */
+  function saveTerminalReplayNow() {
+    const term = termRef.current;
+    if (!term || !everVisibleRef.current) return;
+    const lines: string[] = [];
+    if (term.buffer.active.type === "alternate") {
+      for (let y = 0; y < term.rows; y += 1) {
+        lines.push(term.buffer.active.getLine(y)?.translateToString(true) ?? "");
+      }
+    } else {
+      const normal = term.buffer.normal;
+      const from = Math.max(0, normal.length - 400);
+      for (let y = from; y < normal.length; y += 1) {
+        lines.push(normal.getLine(y)?.translateToString(true) ?? "");
+      }
+    }
+    const replay = terminalReplayText(lines, 400);
+    if (replay.trim()) {
+      invoke("save_terminal_replay", { tabId, text: replay }).catch(() => {});
+    }
+  }
+
+  // 回放的存点：页面卸载（应用退出）、应用切后台/最小化、关窗守卫信号，
+  // 以及**30 秒周期快照**——关窗链路（JS onCloseRequested 与 Rust emit→listen）
+  // 在实机上都可能整条断掉（2026-10-11 探针实证），周期快照让任何死亡方式
+  // （正常关窗/崩溃/kill -9/输入法卡死）都只损失最后 30 秒画面。
+  useEffect(() => {
+    if (!everVisible) return;
+    const save = () => saveTerminalReplayNow();
+    const onSaveAll = () => save();
+    window.addEventListener("pagehide", save);
+    window.addEventListener("mesa:save-terminal-replays", onSaveAll);
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") save();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    const timer = setInterval(save, 30_000);
+    return () => {
+      window.removeEventListener("pagehide", save);
+      window.removeEventListener("mesa:save-terminal-replays", onSaveAll);
+      document.removeEventListener("visibilitychange", onVisibility);
+      clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [everVisible]);
+
+  useEffect(() => {
+    if (!everVisible || !restored) return;
+    let cancelled = false;
+    void invoke<string>("load_terminal_replay", { tabId }).then((text) => {
+      const term = termRef.current;
+      if (cancelled || !term || !text.trim() || ptyIdRef.current) return;
+      term.writeln("\x1b[90m── 上次离开时的画面 ──\x1b[0m");
+      term.write(text.replace(/\n/g, "\r\n"));
+      term.writeln("\r\n\x1b[90m── 点恢复任务后重新接上 ──\x1b[0m");
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [everVisible, restored, tabId]);
 
   // 空态隐藏 xterm 的静态块光标（左上角那个）：DECTCEM 转义对 WebGL/DOM 渲染都生效，
   // 不写进回滚缓冲；启动后进程输出会自行把光标恢复
@@ -2088,6 +2537,23 @@ const TerminalView = memo(function TerminalView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resumeKick, visible, running]);
 
+  /** 终端自己发的通知（OSC 9/777 标题、BEL）：与注意力通知同一套门——
+   *  设置关了不发、前台当前标签不打扰（画面就在眼前）、按标签限频。
+   *  OSC 9;4 进度序列已在 terminal-notify 里排除，不会走到这里。 */
+  function notifyTerminal(title: string) {
+    if (!(settingsRef.current?.notificationsEnabled ?? true)) return;
+    if (visibleRef.current && !document.hidden && document.hasFocus()) return;
+    const now = Date.now();
+    if (!debounceAllows(terminalNotifyAtRef.current, now)) return;
+    terminalNotifyAtRef.current = now;
+    // 正文带来源：多标签并跑时区分是谁在叫（三轮审查：原标题/正文颠倒且无来源）
+    void fireAttentionNotification(
+      title,
+      `${agentLabel(agentIdRef.current)} · 终端`,
+      { tabId, cwd: cwdRef.current },
+    );
+  }
+
   /** 把一个 PTY 接到 xterm 上；agent 退出时自动回落到 shell */
   async function attach(
     ptyId: string,
@@ -2100,14 +2566,52 @@ const TerminalView = memo(function TerminalView({
       return;
     }
     const term = termRef.current;
-    if (opts?.reset) term.reset();
+    if (opts?.reset) {
+      term.reset();
+      void invoke("drop_terminal_replay", { tabId }).catch(() => {});
+    }
     unlistenRef.current.forEach((u) => u());
     ptyIdRef.current = ptyId;
     ptyKindRef.current = kind;
+    kkpArmedRef.current = false;
+    queryPendingRef.current = "";
+    hostPendingRef.current = "";
+    kittyAccumRef.current = "";
+    signalPendingRef.current = "";
+    setInlineImageUrl(null);
     setActivePtyId(ptyId);
     unlistenRef.current = [
       await listen<string>(`pty-output-${ptyId}`, (e) => {
-        term.write(e.payload);
+        const queried = consumeTerminalQueries(queryPendingRef.current, e.payload);
+        queryPendingRef.current = queried.pending;
+        for (const reply of queried.replies) {
+          if (reply.kkp === "arm") kkpArmedRef.current = true;
+          if (reply.kkp === "disarm") kkpArmedRef.current = false;
+          if (reply.reply) {
+            invoke("pty_write", { ptyId, data: reply.reply }).catch(() => {});
+          }
+        }
+        // 贴图 / OSC 52 / OSC 9、777 通知统一走断帧管线（consumeHostSequences）：
+        // 半截序列攒到下一帧，不把转义或 base64 画进画面
+        const host = consumeHostSequences(
+          hostPendingRef.current,
+          queried.text,
+          kittyAccumRef.current,
+        );
+        hostPendingRef.current = host.pending;
+        kittyAccumRef.current = host.kittyAccum;
+        if (host.clipboard) {
+          void navigator.clipboard.writeText(host.clipboard).catch(() => {});
+        }
+        for (const title of host.titles) {
+          notifyTerminal(title);
+        }
+        if (host.progress) onProgressRef.current?.(tabId, host.progress);
+        const image = host.images.find((item) => item.protocol === "kitty");
+        if (image) {
+          setInlineImageUrl(`data:${image.mime};base64,${image.payload}`);
+        }
+        if (host.text) term.write(host.text);
         // PTY 出字即活动：静默计时器量的是真实输出，与「这帧算不算 working」分开——
         // 切聊天/点输入框引发的焦点重绘有 300ms 抑制窗，窗内的 TUI 重绘若不计入活动，
         // 突发渲染间隙 ≥2s 就会在切换瞬间误熄灭 attention，且 armed 已耗尽、
@@ -2132,6 +2636,21 @@ const TerminalView = memo(function TerminalView({
       }),
       await listen<number>(`pty-exit-${ptyId}`, (e) => {
         void onPtyExit(ptyId, e.payload);
+      }),
+      // 后台标签的带外信号（Rust gated_emit 在不可见时对含 OSC 9/777/BEL 的帧照发）：
+      // 只喂通知/进度解析，不写画面——正文仍在 backlog 里等切回补发；补发时的重复
+      // 通知由限频消化、进度幂等。没有这条，通知与进度徽章的主场景（后台标签）失效。
+      await listen<string>(`pty-signal-${ptyId}`, (e) => {
+        const host = consumeHostSequences(signalPendingRef.current, e.payload);
+        signalPendingRef.current = host.pending;
+        for (const title of host.titles) notifyTerminal(title);
+        if (host.progress) onProgressRef.current?.(tabId, host.progress);
+        // 裸 BEL：claude-code 等只发 BEL 的 CLI 在后台的唯一通知通道。完整的
+        // OSC 序列连同其 BEL 终结符已被上面消费，text 里残留的 \x07 只会是裸响铃
+        //（2026-10-11 三轮审查实证：缺这段时后台 BEL 整条链路断裂）。
+        if (ptyKindRef.current === "agent" && host.text.includes("\x07")) {
+          notifyTerminal("终端响铃，可能需要你确认");
+        }
       }),
     ];
     // 两个 await listen 期间卸载：退掉刚注册的监听并杀掉 PTY，避免向已 dispose 的 term 写入
@@ -2195,19 +2714,40 @@ const TerminalView = memo(function TerminalView({
     setActivePtyId(null);
     setRunning(false);
     setExitCode(code);
+    // 「已接回正在跑的进程」只描述接回那一刻的存活态，进程退出后即过期
+    setNotice(null);
+    // TUI 崩溃没弹栈时 armed 残留会把回落 shell 的 Ctrl+C 变 CSI-u 垃圾——进程退出即解除；
+    // 半截序列的攒帧状态一并清空，不留到下一个进程；进度徽章一并清
+    kkpArmedRef.current = false;
+    queryPendingRef.current = "";
+    hostPendingRef.current = "";
+    kittyAccumRef.current = "";
+    signalPendingRef.current = "";
+    onProgressRef.current?.(tabId, null);
     ptyWorkingArmedRef.current = false;
     hadPtyWorkingOutputRef.current = false;
     setAttention(null); // agent 退出：清除注意力标记
     if (kind === "agent") {
       // 记录可恢复的会话 id（一键恢复按钮用）
       lastResumeRef.current = linkCtxRef.current?.sessionId ?? null;
-      // agent 退出（含手动停止）→ 同一终端自动回落到登录 shell
+      // agent 退出（含手动停止）→ 同一终端自动回落到登录 shell。
+      // 异常横幅只认 code > 0：负数（-1 等）是 pty_kill/丢弃/等待超时的「原因未知」
+      // 哨兵（exit-code.ts），手动「停止」正是走它——code≠0 会把每次停止都误报成崩溃
+      //（2026-10-11 复核实证）。死因横幅随回放持久（借鉴 VS Code）。
       const clause = exitCodeClause(code);
-      termRef.current?.write(
-        `\r\n\x1b[90m── agent 已结束（会话已保存，可一键恢复）── 当前为 shell ──${
-          clause ? ` ${clause} ──` : ""
-        }\x1b[0m\r\n`,
-      );
+      if (code > 0) {
+        termRef.current?.write(
+          `\r\n\x1b[91m── agent 异常退出（代码 ${code}）${clause ? `：${clause}` : ""} ──\x1b[0m\r\n` +
+            `\x1b[90m退出画面已存进回放；从启动栏重新启动可接回上一次会话\x1b[0m\r\n`,
+        );
+      }
+      const fallbackBanner = `\r\n\x1b[90m── agent 已结束（会话已保存，可一键恢复）── 当前为 shell ──${
+        clause ? ` ${clause} ──` : ""
+      }\x1b[0m\r\n`;
+      // 快照放在末段横幅的 write 回调里：xterm.write 是异步解析，同步快照读不到刚写的字节
+      const t = termRef.current;
+      if (t) t.write(fallbackBanner, () => saveTerminalReplayNow());
+      else saveTerminalReplayNow();
       try {
         // 用 cwdRef 取最新目录：运行期间 pty_get_cwd 轮询更新的 cwd 不进本闭包
         const size = fittedPtySize(fitRef.current, termRef.current);
@@ -2245,6 +2785,7 @@ const TerminalView = memo(function TerminalView({
     } else {
       setShellActive(false);
       setExited(true);
+      saveTerminalReplayNow();
     }
   }
 
@@ -2253,6 +2794,8 @@ const TerminalView = memo(function TerminalView({
     const id = ptyIdRef.current;
     ptyIdRef.current = null;
     ptyKindRef.current = null;
+    // 重启/换会话时旧进度徽章不得残留到新进程第一个进度到来
+    onProgressRef.current?.(tabId, null);
     if (id) await invoke("pty_kill", { ptyId: id }).catch(() => {});
     unlistenRef.current.forEach((u) => u());
     unlistenRef.current = [];
@@ -2637,6 +3180,8 @@ const TerminalView = memo(function TerminalView({
   }
 
   function scheduleAutoTitle(stage: "early" | "final") {
+    // 设置页「会话自动命名」关掉时不发起调用（后端命令另有闸门，这里省掉白跑与重试）
+    if (useAppStore.getState().settings?.autoTitleSessions === false) return;
     const ctx = linkCtxRef.current;
     const agent = ctx?.agentId;
     const sessionId = ctx?.sessionId;
@@ -2726,6 +3271,7 @@ const TerminalView = memo(function TerminalView({
     options?: { prompt?: string; readonly?: boolean },
   ): Promise<{ ptyId: string; promptDropped: boolean } | null> {
     setError(null);
+    setNotice(null);
     if (customRuntimeId) {
       if (restored) {
         setError("自定义 Runtime 不支持恢复；点击“运行”会创建新的 Run");
@@ -2741,7 +3287,7 @@ const TerminalView = memo(function TerminalView({
           probeRun &&
           (await invoke<string | null>("pty_id_for_run", { runId: probeRun }))
         ) {
-          setError("已接回正在跑的进程，画面大小先不动");
+          setNotice("已接回正在跑的进程，画面大小先不动");
           return null;
         }
         await cleanupPty();
@@ -2836,7 +3382,7 @@ const TerminalView = memo(function TerminalView({
       setShellActive(false);
       setRunning(true);
       setStartedAt((prev) => prev ?? Date.now());
-      setError("已接回正在跑的进程，画面大小先不动");
+      setNotice("已接回正在跑的进程，画面大小先不动");
       return { ptyId: existingPty, promptDropped: false };
     }
     if (chrome.kind === "collapse") {
@@ -2987,7 +3533,7 @@ const TerminalView = memo(function TerminalView({
       setRunning(true);
       setStartedAt(Date.now());
       if (res.adopted) {
-        setError("已接回正在跑的进程，画面大小先不动");
+        setNotice("已接回正在跑的进程，画面大小先不动");
       } else if (res.promptDropped && !isResume) {
         disarmPtyWorking();
         setPendingReply(false);
@@ -3031,6 +3577,7 @@ const TerminalView = memo(function TerminalView({
 
   async function openShell() {
     setError(null);
+    setNotice(null);
     if (!(await checkWorkingDirectory(cwd))) {
       setBarExpanded(true);
       return;
@@ -3299,20 +3846,29 @@ const TerminalView = memo(function TerminalView({
     ...(!running && !shellActive
       ? [{ label: "打开 Shell", onSelect: () => void openShell() }]
       : []),
-    {
-      label: advancedLaunchOpen ? "收起高级启动选项" : "显示高级启动选项",
-      onSelect: () => {
-        setBarExpanded(true);
-        setAdvancedLaunchOpen((v) => !v);
-      },
-    },
+    ...(!ptyIdRef.current
+      ? [
+          {
+            label: advancedLaunchOpen ? "收起高级启动选项" : "显示高级启动选项",
+            onSelect: () => {
+              setBarExpanded(true);
+              setAdvancedLaunchOpen((v) => !v);
+            },
+          },
+        ]
+      : [
+          {
+            label: "查看本次启动",
+            onSelect: () => setLaunchInfoOpen(true),
+          },
+        ]),
     ...(sessionFile && linkedSessionId
       ? [
           ...(onForkChat
             ? [
                 {
                   label: "新建分叉聊天",
-                  onSelect: () => onForkChat(),
+                  onSelect: () => onForkChat?.(tabId),
                 },
               ]
             : []),
@@ -3369,7 +3925,8 @@ const TerminalView = memo(function TerminalView({
   // 收缩行被隐藏时，出现必须看见的失败信息（错误 / 目录问题）则临时自动显示——
   // 否则「恢复失败」这类 Run 提示会随着行一起被藏掉。「上次任务，可恢复」是被动提示，
   // 不算紧急（恢复入口在中央卡片），随隐藏偏好一起藏（首版把 restored 也算紧急，
-  // 导致恢复类标签永远藏不掉，用户实测否决）
+  // 导致恢复类标签永远藏不掉，用户实测否决）。「已接回正在跑的进程」同理走 notice
+  // 不拦隐藏——接回是正常态，走过 error 时这行点「收起」永远收不起来（2026-10-09 修复）
   const compactBarUrgent = !!error || !!cwdIssue;
 
   return (
@@ -3382,13 +3939,43 @@ const TerminalView = memo(function TerminalView({
             className="fixed inset-0 z-40"
             onClick={() => setLaunchInfoOpen(false)}
           />
-          <div className="absolute left-3 top-10 z-50 w-72 rounded-md border border-field bg-raised p-3 text-xs text-l2 shadow-none">
+          <div className="ccode-float-surface absolute left-3 top-10 z-50 w-72 rounded-md border border-field bg-raised p-3 text-xs text-l2">
             <p className="text-l1">这次进程不会改。要换，先停止。</p>
             <p className="mt-2">
               {agentLabel(agentId)}
               {selectedProfile ? ` · ${selectedProfile.name}` : ""}
               {model ? ` · ${model}` : ""}
             </p>
+            {/* 配置指纹（借鉴 VS Code 环境信息层）：托盘/设置切了全局默认后，
+                跑着的终端仍是旧网关——这里能看到本进程到底吃的哪碗饭。
+                只显标识与尾号，密钥值永不出现 */}
+            {selectedProfile && (
+              <p className="mt-1 truncate text-l4" title="本进程生效的配置指纹">
+                {(() => {
+                  if (selectedProfile.accountType === "official") {
+                    return "官方账号登录";
+                  }
+                  const parts = [
+                    selectedProfile.gatewayId
+                      ? `网关 ${gatewayNameOf(selectedProfile.gatewayId)}`
+                      : null,
+                    selectedProfile.keyHint
+                      ? `密钥 ${selectedProfile.keyHint}`
+                      : null,
+                  ].filter((s): s is string => Boolean(s));
+                  return parts.length > 0 ? parts.join(" · ") : null;
+                })()}
+              </p>
+            )}
+            {selectedProfile &&
+              Object.keys(selectedProfile.extraEnv ?? {}).length > 0 && (
+                <p
+                  className="mt-1 truncate text-l4"
+                  title={`附加环境变量（值不显示）：${Object.keys(selectedProfile.extraEnv).join("、")}`}
+                >
+                  附加变量：{Object.keys(selectedProfile.extraEnv).join("、")}
+                </p>
+              )}
             <p className="mt-1 truncate text-l3" title={cwd}>
               {cwd}
             </p>
@@ -3716,6 +4303,9 @@ const TerminalView = memo(function TerminalView({
               </span>
             )}
             {error && <span className="truncate text-err-text">{error}</span>}
+            {!error && notice && (
+              <span className="truncate text-l3">{notice}</span>
+            )}
           </div>
           )}
           {/* 无配置的引导统一收进空态卡片（v3.92：卡片给「去配置页创建」动作；
@@ -3750,18 +4340,27 @@ const TerminalView = memo(function TerminalView({
             {restored && !customRuntimeId && !running && !shellActive ? " · 上次任务，可恢复" : ""}
             {restored && customRuntimeId && !running && !shellActive ? " · 自定义 Runtime 不支持恢复" : ""}
           </span>
-          {error && <span className="truncate text-err-text">{error}</span>}
+          {error ? (
+            <span className="truncate text-err-text">{error}</span>
+          ) : notice ? (
+            <span className="truncate text-l3">{notice}</span>
+          ) : null}
           <span className="ml-auto flex shrink-0 items-center gap-1">
             {/* 技能/MCP 合并为一颗「插入」（运行时快捷入口，收缩状态行常驻）；
                 首条指令等低频启动项进入高级配置。 */}
             {renderInsertMenu(false, true)}
             <button
               type="button"
-              onClick={() => setBarExpanded(true)}
-              title="修改启动配置"
+              onClick={() => {
+                // 已有进程时只开浮层。展开整条栏会把 xterm 垫高，
+                // Ink 回合中不重排，输入行停在半截。
+                if (ptyIdRef.current) setLaunchInfoOpen(true);
+                else setBarExpanded(true);
+              }}
+              title={ptyIdRef.current ? "查看本次启动" : "修改启动配置"}
               className="rounded-sm px-2 py-1 text-l3 hover:bg-hover hover:text-l1"
             >
-              修改
+              {ptyIdRef.current ? "本次" : "修改"}
             </button>
             <button
               type="button"
@@ -3786,7 +4385,26 @@ const TerminalView = memo(function TerminalView({
           </span>
         </div>
       )}
-      {/* 查找盖在画面上，不占终端行。打开和关闭都不改行列。 */}
+      {/* 只有解出图片文件头才预览（MIME 按文件头判定）。新进程/重置时清掉，也可手动关。 */}
+      {inlineImageUrl && (
+        <div className="ccode-float-surface absolute bottom-10 right-8 z-20 max-h-40 max-w-[16rem] overflow-hidden rounded-md border border-field bg-raised p-1">
+          <div className="relative">
+            <img
+              src={inlineImageUrl}
+              alt="终端贴图"
+              className="block max-h-36 max-w-full object-contain"
+            />
+            <button
+              type="button"
+              onClick={() => setInlineImageUrl(null)}
+              title="关闭预览"
+              className="absolute right-0.5 top-0.5 rounded-sm bg-strip/90 px-1 text-micro text-l2 hover:bg-hover hover:text-l1"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
       {searchOpen && (
         <div className="absolute left-3 top-2 z-30 flex flex-col items-start gap-1 rounded-md border border-field bg-strip px-2 py-1">
           <div className="flex items-center gap-1">
@@ -3795,7 +4413,7 @@ const TerminalView = memo(function TerminalView({
               value={searchQuery}
               onChange={(e) => {
                 setSearchQuery(e.target.value);
-                findNext(e.target.value);
+                queueIncrementalSearch(e.target.value);
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
@@ -3842,6 +4460,43 @@ const TerminalView = memo(function TerminalView({
             >
               ×
             </button>
+            {/* 命中计数：搜不到时给「没有」的明确反馈，分不清「没有」还是「没生效」 */}
+            {searchQuery && (
+              <span className="w-14 shrink-0 text-center text-micro text-l4">
+                {searchNote
+                  ? "—"
+                  : searchResults
+                    ? searchResults.count === 0
+                      ? "无结果"
+                      : `${searchResults.index + 1}/${searchResults.count}`
+                    : ""}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-1">
+            {(
+              [
+                ["Aa", "区分大小写", searchCase, () => setSearchCase((v) => !v)],
+                ["全词", "整词匹配", searchWord, () => setSearchWord((v) => !v)],
+                [".*", "正则（如 Error|失败）", searchRegex, () => setSearchRegex((v) => !v)],
+              ] as const
+            ).map(([label, title, on, toggle]) => (
+              <button
+                key={label}
+                type="button"
+                title={title}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={toggle}
+                className={`flex min-h-7 items-center rounded-sm px-1.5 text-micro ${
+                  on
+                    ? "bg-seg-sel text-l1"
+                    : "text-l3 hover:bg-hover hover:text-l1"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+            {searchNote && <span className="truncate text-micro text-err-text">{searchNote}</span>}
           </div>
           {/* 全屏 TUI 跑在备用屏上，没有回滚缓冲可查：不说明的话 ↑↓ 只在屏幕内
               打转会被当成查找坏了。nowrap + 字数控制在输入行宽度内——浮条宽度由
@@ -4130,7 +4785,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       return { tabs: [tab], activeId: tab.id };
     }
     const restoredTabs: Tab[] = saved.tabs.map((tab) => ({
-      id: crypto.randomUUID(),
+      id: tab.id ?? crypto.randomUUID(),
       initialCwd: tab.cwd,
       initialTitle: tab.label,
       initialProfileId: tab.profileId,
@@ -4149,6 +4804,37 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   });
   const [tabs, setTabs] = useState<Tab[]>(initialState.tabs);
   const [activeId, setActiveId] = useState(initialState.activeId);
+  // 启动时清一次孤儿回放：崩溃/强退残留的 replay-* 只保留本次恢复的标签，
+  // 否则目录随历史标签无限堆积（2026-10-10 修；正常运行中关标签即 drop，不靠这里）
+  useEffect(() => {
+    void invoke("prune_terminal_replays", {
+      tabIds: initialState.tabs.map((t) => t.id),
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** 终端上报的任务进度（OSC 9;4，kimi/grok/codebuddy 发）→ 标签条小徽章 */
+  const [tabProgress, setTabProgress] = useState<
+    Record<string, TerminalProgress | null>
+  >({});
+  // 下面三个传给 TerminalView 的回调必须引用稳定：内联箭头每渲染换引用会击穿
+  // memo(TerminalView)，kimi 的 1Hz 进度帧把全部终端标签拖着重渲染
+  //（2026-10-11 三轮审查）。值判重：state/progress 都没变不落新对象。
+  const handleTabProgress = useCallback((tabId: string, p: TerminalProgress | null) => {
+    setTabProgress((prev) => {
+      const cur = prev[tabId];
+      if (cur?.state === p?.state && cur?.progress === p?.progress) return prev;
+      if (p === null && cur === undefined) return prev;
+      const next = { ...prev, [tabId]: p };
+      if (p === null && cur !== undefined) delete next[tabId];
+      return next;
+    });
+  }, []);
+  const forkChatRef = useRef(forkChat);
+  forkChatRef.current = forkChat;
+  const handleTabForkChat = useCallback((tabId: string) => {
+    void forkChatRef.current(tabId);
+  }, []);
   // 标签条拖拽排序（Ghostty 式跟手拖动）：源标签随指针平移、其余标签滑动让位（150ms
   // transition）、松手先吸附到目标槽位再真正重排——全程无 HTML5 DnD（Tauri 原生文件拖放
   // dragDropEnabled 默认开，会拦截 WKWebView 拖拽手势，dragstart 根本不触发）。
@@ -4375,6 +5061,11 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   const [previewFiles, setPreviewFiles] = useState<DirEntryDto[]>([]);
   /** 预览编辑器脏状态（预览页签的脏点） */
   const [previewDirty, setPreviewDirty] = useState(false);
+  /** 终端路径点击的滚行请求。带路径绑定：打开别的文件时不串行号（2026-10-10 修）。 */
+  const [previewReveal, setPreviewReveal] = useState<{
+    path: string;
+    line: number;
+  } | null>(null);
   /** 文件系统变化信号：FileTree 的 fs-changed 事件触发 GitPanel 一并刷新 */
   const [fsChangeTick, setFsChangeTick] = useState(0);
   /** 全宽任务审阅覆盖层；底下所有 TerminalView 继续挂载。 */
@@ -4767,6 +5458,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         {
           tabId: tab.id,
           value: {
+            id: tab.id,
             label:
               (status?.title ??
                 tab.initialTitle ??
@@ -4850,6 +5542,17 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       setPreviewDirty(false);
     },
     [],
+  );
+
+  /** 终端路径点击 → 右侧预览 + 滚行。引用稳定（memo 友好）；root 给文件所在
+   *  目录——cwd 之外的路径不被「超出项目根」守卫拒；根级文件目录为空时用 / 兜底。 */
+  const handleTerminalOpenPath = useCallback(
+    (path: string, line: number | null) => {
+      const dir = path.replace(/[\\/][^\\/]*$/, "");
+      openPreview(path, basename(path), dir || "/");
+      setPreviewReveal(line && line > 0 ? { path, line } : null);
+    },
+    [openPreview],
   );
 
   const switchPreview = useCallback(
@@ -5442,6 +6145,19 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
 
   // 资源面板「查看」交来的预览请求：绝对路径（未必在任何文件树根内），
   // root 留空——PDF 走后端白名单校验，不需要预览根
+  const diffFocusReq = useAppStore((s) => s.diffFocusReq);
+  const setDiffFocusReq = useAppStore((s) => s.setDiffFocusReq);
+  useEffect(() => {
+    if (!visible || !diffFocusReq) return;
+    if (diffFocusReq.cwd !== gitPanelCwd && diffFocusReq.cwd !== activeCwd) {
+      // 目录对不上（会话浏览页/别的项目）：清掉，避免请求滞留后误触发
+      setDiffFocusReq(null);
+      return;
+    }
+    setRightOpen(true);
+    setRightTab("git");
+  }, [visible, diffFocusReq, gitPanelCwd, activeCwd, setDiffFocusReq]);
+
   const previewReq = useAppStore((s) => s.previewReq);
   const setPreviewReq = useAppStore((s) => s.setPreviewReq);
   useEffect(() => {
@@ -5951,6 +6667,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         /* 后端命令未就绪：静默跳过守卫 */
       }
     }
+    void invoke("drop_terminal_replay", { tabId: id }).catch(() => {});
     doCloseTab(id);
   }
 
@@ -6002,6 +6719,12 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       delete n[id];
       return n;
     });
+    setTabProgress((prev) => {
+      if (!(id in prev)) return prev;
+      const n = { ...prev };
+      delete n[id];
+      return n;
+    });
     // run 脚本互斥登记随标签关闭释放
     for (const [wsId, tabId] of Object.entries(runningScriptsRef.current)) {
       if (tabId === id) setRunningScript(wsId, null);
@@ -6018,10 +6741,23 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     win
       .onCloseRequested((event) => {
         if (allowWindowCloseRef.current) return;
+        // 无论是否拦截确认，先让各标签终端存一版回放快照（同步分发，
+        // invoke 异步落盘，pagehide 会再兜底一次）
+        window.dispatchEvent(new CustomEvent("mesa:save-terminal-replays"));
         const candidates = Object.values(statusesRef.current).filter(
           (s) => s.running && s.ptyId,
         );
-        if (candidates.length === 0) return;
+        if (candidates.length === 0) {
+          // 无 agent 也要给回放 IPC 留出落盘时间（120ms，体感无感），
+          // 否则立即销毁 webview 时快照可能没写完（2026-10-11 复核）
+          event.preventDefault();
+          void (async () => {
+            await new Promise((resolve) => setTimeout(resolve, 120));
+            allowWindowCloseRef.current = true;
+            await win.close().catch(() => exit(0));
+          })();
+          return;
+        }
         event.preventDefault();
         void (async () => {
           let alive = 0;
@@ -6046,6 +6782,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           )
             return;
           allowWindowCloseRef.current = true;
+          // 等一小拍让回放 IPC 落盘再关窗
+          await new Promise((resolve) => setTimeout(resolve, 200));
           // 正常路径走 window.close（触发 onCloseRequested 但被放行）；
           // close 被权限拒绝时兜底直接退出进程（process:default 已授权）
           await win.close().catch(() => exit(0));
@@ -6055,9 +6793,20 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         if (disposed) u();
         else unlisten = u;
       });
+    // Rust 侧的关窗前置信号（lib.rs on_window_event）：红绿灯关窗时上面的
+    // onCloseRequested 实机不执行（2026-10-11 探针实证），可靠路径是 Rust 拦一次、
+    // 发这条事件、等 350ms 再放行——这里接住并分发各标签的回放存盘
+    let unlistenFlush: (() => void) | undefined;
+    void listen("mesa:flush-before-close", () => {
+      window.dispatchEvent(new CustomEvent("mesa:save-terminal-replays"));
+    }).then((u) => {
+      if (disposed) u();
+      else unlistenFlush = u;
+    });
     return () => {
       disposed = true;
       unlisten?.();
+      unlistenFlush?.();
     };
   }, []);
 
@@ -6392,6 +7141,33 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                 <span className="min-w-0 flex-1 truncate">
                   {s?.title && s.title !== "终端" ? s.title : "终端"}
                 </span>
+                {(() => {
+                  // 任务进度徽章（终端 OSC 9;4 上报）：后台跑长任务时标签条可见，
+                  // 不用切过去盯；state 0 = 结束不显示，1 带百分比，2 = 错误（!），
+                  // 3/4 = 进行中/暂停（…）
+                  const p = tabProgress[t.id];
+                  if (!p || p.state === 0) return null;
+                  const label =
+                    p.state === 1 && p.progress != null
+                      ? `${Math.round(p.progress)}%`
+                      : p.state === 2
+                        ? "!"
+                        : "…";
+                  return (
+                    <span
+                      className={`shrink-0 text-micro ${
+                        p.state === 2 ? "text-err-text" : "text-l4"
+                      }`}
+                      title={
+                        p.state === 2
+                          ? "任务报错（终端上报）"
+                          : "任务进度（终端上报）"
+                      }
+                    >
+                      {label}
+                    </span>
+                  );
+                })()}
                 {active && s?.ptyId && (
                   <button
                     type="button"
@@ -6625,13 +7401,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                 onActions={registerActions}
                 onRestoreComplete={finishRestore}
                 onConsumeResume={clearResumeSession}
-                onForkChat={
-                  sessionByTab[t.id]?.file &&
-                  sessionByTab[t.id]?.sessionId &&
-                  sessionByTab[t.id]?.agentId
-                    ? () => void forkChat(t.id)
-                    : undefined
-                }
+                onForkChat={handleTabForkChat}
+                onOpenPath={handleTerminalOpenPath}
+                onProgress={handleTabProgress}
               />
             );
             return (
@@ -7039,6 +7811,11 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                     <FilePreviewEditor
                       path={preview.path}
                       root={preview.root ?? activeCwd}
+                      revealLine={
+                        previewReveal && previewReveal.path === preview.path
+                          ? previewReveal.line
+                          : null
+                      }
                       onDirtyChange={setPreviewDirty}
                       onDiscuss={discussMdExcerpt}
                       onOpenReader={

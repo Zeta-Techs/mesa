@@ -1,4 +1,4 @@
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 mod agent_specs;
 mod agents;
@@ -6,6 +6,7 @@ mod ai;
 mod artifacts;
 mod citation;
 mod clipboard;
+mod terminal_replay;
 mod coding;
 mod combo;
 mod config_dump;
@@ -118,6 +119,8 @@ pub fn run() {
     static CLOSE_DIALOG_OPEN: std::sync::atomic::AtomicBool =
         std::sync::atomic::AtomicBool::new(false);
     static ALLOW_CLOSE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    /// 关窗存盘只拦一次（拦下→通知前端→350ms 后二次 close 放行）
+    static FLUSH_CLOSE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     static EXIT_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     static EXIT_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     diagnostics::start_process_monitor();
@@ -264,6 +267,21 @@ pub fn run() {
                                 let _ = window.close();
                             }
                         });
+                    return;
+                }
+                // 关窗存盘（2026-10-11 实机实证：前端 onCloseRequested 在红绿灯关窗时
+                // 不执行，终端回放的「关窗存点」乃至 agent 关窗确认守卫整条 JS 链路是
+                // 死的）。这里在 Rust 侧拦一次：通知前端各标签存回放，等 350ms 落盘
+                // 再放行关闭；FLUSH_CLOSE 保证只拦一次、二次 close 直接过。
+                if !FLUSH_CLOSE.load(std::sync::atomic::Ordering::Acquire) {
+                    api.prevent_close();
+                    FLUSH_CLOSE.store(true, std::sync::atomic::Ordering::Release);
+                    let window = window.clone();
+                    let _ = window.emit("mesa:flush-before-close", ());
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(350));
+                        let _ = window.close();
+                    });
                 }
             }
         })
@@ -364,7 +382,13 @@ pub fn run() {
             pty::pty_report_terminal_colors,
             pty::pty_resize,
             pty::pty_kill,
+            pty::terminal_link_target,
             clipboard::save_clipboard_image,
+            clipboard::read_clipboard_files,
+            terminal_replay::save_terminal_replay,
+            terminal_replay::load_terminal_replay,
+            terminal_replay::drop_terminal_replay,
+            terminal_replay::prune_terminal_replays,
             pty::pty_set_visible,
             pty::pty_get_cwd,
             pty::pty_has_running_process,
@@ -644,6 +668,7 @@ pub fn run() {
             lit_watch::download_paper_pdf,
             lit_watch::attach_paper_pdf,
             lit_watch::fetch_paper_fulltext,
+            lit_watch::match_dropped_paper,
             lit_watch::to_fetch_progress,
             inst_access::inst_session_status,
             browser_bridge::install_browser_bridge,
