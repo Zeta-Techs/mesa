@@ -1873,6 +1873,18 @@ pub async fn list_skills() -> Vec<SkillDto> {
 fn list_skills_impl(store: &SkillStore, dirs: &HashMap<String, PathBuf>) -> Vec<SkillDto> {
     let mut skills = store.read();
     for s in &mut skills {
+        // 内置技能默认归「Mesa 内置」分组：二十来个内置技能全落「未分类」里翻找费劲
+        // （2026-10-11 用户拍板）。只补展示层、不写盘——用户自己设过分组的（Some）不动，
+        // 清空自定义分组后回落到默认组而不是「未分类」。
+        // 除 source=builtin 外，名字在内置名单里的 local 技能也算：早期版本的种子用 local
+        // 身份进库（同名的先占了位，内置种子按「不覆盖用户技能」跳过），这一批元老同样归组。
+        if s.category.is_none()
+            && (s.source == "builtin"
+                || (s.source == "local"
+                    && BUILTIN_SKILLS.iter().any(|(name, _)| *name == s.name)))
+        {
+            s.category = Some("Mesa 内置".to_string());
+        }
         // 老技能的 apps 表是创建时的注册表快照：后来接入的 agent（codebuddy/cursor/grok）
         // 缺键，前端「一键应用」按 apps 键过滤会永远跳过它们——list 时现算补齐
         // （不写盘；将来再接入新 agent 也免疫，无需迁移）
@@ -2960,6 +2972,49 @@ mod tests {
         }
         // 幂等：第二次不再新增
         assert!(seed_builtin_skills_impl(&fx.store).unwrap().is_empty());
+    }
+
+    #[test]
+    fn builtin_skills_default_to_mesa_group_user_override_wins() {
+        let fx = Fx::new();
+        seed_builtin_skills_impl(&fx.store).unwrap();
+        fx.add_lib_skill("my-local-skill", "本地导入的技能");
+        // 早期种子身份：内置名单里的技能以 local 身份进库，同样要归「Mesa 内置」
+        {
+            let mut skills = fx.store.read();
+            let old = skills
+                .iter_mut()
+                .find(|s| s.source == "builtin" && s.name != "zotero-sync")
+                .unwrap();
+            old.source = "local".to_string();
+            // 用户给一个内置技能设了自定义分组：写进库里
+            skills
+                .iter_mut()
+                .find(|s| s.name == "zotero-sync")
+                .unwrap()
+                .category = Some("我的文献组".to_string());
+            fx.store.write(&skills).unwrap();
+        }
+        let listed = list_skills_impl(&fx.store, &HashMap::new());
+        let mesa = listed
+            .iter()
+            .filter(|s| s.category.as_deref() == Some("Mesa 内置"))
+            .count();
+        // 20 个内置：18 个默认归组（含 local 身份的元老）+ zotero-sync 用户自定义 + 被改成 local 的那个也归组 = 19
+        assert_eq!(mesa, BUILTIN_SKILLS.len() - 1, "除用户自定义的那条，其余内置（含 local 身份）都应归组");
+        assert_eq!(
+            listed.iter().filter(|s| s.category.as_deref() == Some("我的文献组")).count(),
+            1
+        );
+        // 非内置技能不动：仍是无分组
+        let local = listed.iter().find(|s| s.name == "my-local-skill").unwrap();
+        assert!(local.category.is_none());
+        // 不写盘：库里的原始记录仍为空分组
+        let stored = fx.store.read();
+        assert!(stored
+            .iter()
+            .filter(|s| s.source == "builtin" && s.category.is_none())
+            .count() > 0);
     }
 
     #[test]
