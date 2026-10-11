@@ -934,6 +934,39 @@ fn npm_latest(pkg: &str) -> Option<String> {
     (!v.is_empty()).then_some(v)
 }
 
+/// 从官方安装脚本正文提取当前版本。cursor 的脚本把版本烙在下载地址里
+/// （downloads.cursor.com/lab/<年.月.日-哈希>/）；其他脚本渠道出现时按各家形态另写
+/// 解析，不做通用猜测。取不到返回 None（UI 回退普通「更新」按钮，升级不受影响）。
+fn install_script_version(body: &str) -> Option<String> {
+    const ANCHOR: &str = "downloads.cursor.com/lab/";
+    let start = body.find(ANCHOR)? + ANCHOR.len();
+    let version: String = body[start..]
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '-')
+        .collect();
+    // 年.月.日-哈希 形态：至少两个点、带一个连接号、数字开头，滤掉空串与残片
+    (version.matches('.').count() >= 2
+        && version.contains('-')
+        && version.starts_with(|c: char| c.is_ascii_digit()))
+    .then_some(version)
+}
+
+/// 安装脚本 URL 兼作最新版查询口：抓一次脚本正文提取版本，失败静默 None，
+/// 与 npm_latest/brew_latest 同一口径（走下载代理设置，短超时，体积封顶）。
+fn script_latest(url: &str) -> Option<String> {
+    let curl = agents::resolve_binary("curl")?;
+    let mut c = crate::process::background_command(curl);
+    c.args(["-fsSL", "--max-time", "10", "--max-filesize", "262144", url]);
+    for (k, v) in crate::settings::download_proxy_env(&[]) {
+        c.env(k, v);
+    }
+    let out = c.output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    install_script_version(&String::from_utf8_lossy(&out.stdout))
+}
+
 fn brew_latest(pkg: &str, cask: bool) -> Option<String> {
     let brew = agents::resolve_binary("brew")?;
     let mut c = crate::process::background_command(brew);
@@ -1013,6 +1046,12 @@ fn latest_version(agent_id: &str, method: &str) -> Option<String> {
     // 但 npm registry 与自更新渠道同版本发布，自装方式也据此得到 latest 提示
     if let Some(pkg) = p.npm_update {
         return npm_latest(pkg);
+    }
+    // 安装脚本渠道（cursor）：脚本正文烙着当前版本，URL 本身就是查询口。
+    // 版本比较按 semver_token 收敛到「年.月.日」层级——同日重打包（哈希变、日期不变）
+    // 不提示新版，跨日发布正常提示。
+    if let Some(url) = p.script_latest {
+        return script_latest(url);
     }
     None
 }
@@ -1228,6 +1267,36 @@ mod tests {
         assert_eq!(
             interactive_self_update("cursor", "self", "/Users/x/.local/bin/cursor-agent"),
             None
+        );
+    }
+
+    #[test]
+    fn cursor_install_script_latest_extracts_version() {
+        // 官方安装脚本正文（2026-10-10 实抓节选）：版本烙在 downloads.cursor.com/lab/<版本>/ 下载地址里
+        let body = r#"FINAL_DIR="$HOME/.local/share/cursor-agent/versions/2026.10.01-e373342"
+DOWNLOAD_URL="https://downloads.cursor.com/lab/2026.10.01-e373342/${OS}/${ARCH}/agent-cli-package.tar.gz""#;
+        assert_eq!(
+            install_script_version(body).as_deref(),
+            Some("2026.10.01-e373342")
+        );
+        // 无锚点 / 残片不猜
+        assert_eq!(install_script_version("echo install"), None);
+        assert_eq!(
+            install_script_version("downloads.cursor.com/lab//agent-cli"),
+            None
+        );
+        assert_eq!(
+            install_script_version("downloads.cursor.com/lab/latest/agent-cli"),
+            None
+        );
+        // 版本比较按 semver_token 收敛到「年.月.日」：同日重打包不提示，跨日提示
+        assert_eq!(
+            semver_token("2026.10.01-e373342").as_deref(),
+            Some("2026.10.01")
+        );
+        assert_ne!(
+            semver_token("2026.10.02-aaa111"),
+            semver_token("2026.10.01-e373342")
         );
     }
 

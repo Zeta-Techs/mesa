@@ -245,7 +245,9 @@ pub struct PackagingSpec {
     pub brew_install: Option<BrewPackage>,
     /// brew 升级包（upgrade；opencode tap 安装后升级用短名，故与安装分开）
     pub brew_upgrade: Option<BrewPackage>,
-    /// brew 最新版查询包（brew info）；升级用 tap 短名会命中歧义时不查（opencode）
+    /// brew 最新版查询包（brew info）：tap 短名有歧义时用全名查询（opencode 用
+    /// anomalyco/tap/opencode，唯一命中）。不声明的 agent 最新版落到 npm registry 比对，
+    /// brew 用户会被 tap 滞后误报「永远有新版」
     pub brew_latest: Option<BrewPackage>,
     /// npm 全局安装包
     pub npm_install: Option<&'static str>,
@@ -263,6 +265,10 @@ pub struct PackagingSpec {
     pub interactive_tui: bool,
     /// 官方安装脚本（bash -c 内容）
     pub install_script: Option<&'static str>,
+    /// 安装脚本 URL 兼作最新版查询口：脚本正文烙着当前版本（如 cursor 的
+    /// downloads.cursor.com/lab/<年.月.日-哈希>/ 下载地址），抓正文提取即可，
+    /// 无包管理器渠道也能判定「已最新」；None = 脚本不带版本，不查
+    pub script_latest: Option<&'static str>,
     /// 安装方式非 brew/npm/uv 命中包管理器时的更新渠道顺序（首个成功即止）
     pub update_fallback: &'static [UpdateChannel],
     /// 新旧双变体（仅 kimi）
@@ -280,6 +286,7 @@ const NO_PACKAGING: PackagingSpec = PackagingSpec {
     self_update: None,
     interactive_tui: false,
     install_script: None,
+    script_latest: None,
     update_fallback: &[],
     legacy_variant: None,
 };
@@ -544,6 +551,11 @@ static AGENT_SPECS: &[AgentSpec] = &[
         packaging: PackagingSpec {
             brew_install: Some(BrewPackage { name: "anomalyco/tap/opencode", cask: false }),
             brew_upgrade: Some(BrewPackage { name: "opencode", cask: false }),
+            // 最新版查询用 tap 全名：短名 opencode 有歧义，全名唯一命中（2026-10-11 实测
+            // brew info --json=v2 anomalyco/tap/opencode 返回 1 条 formula）。不声明时最新版
+            // 落到 npm registry 比对，brew 用户刚升级完也永远显示「新版」（tap 滞后 npm：
+            // 实测 brew 1.18.35 vs npm 1.19.0）；声明后按 brew 渠道比，npm 领先走「上游更前」提示。
+            brew_latest: Some(BrewPackage { name: "anomalyco/tap/opencode", cask: false }),
             npm_install: Some("opencode-ai"),
             npm_update: Some("opencode-ai"),
             winget: Some("SST.opencode"),
@@ -717,6 +729,8 @@ static AGENT_SPECS: &[AgentSpec] = &[
             // 无 brew/npm 官方包：官方安装脚本装到 ~/.local/share/cursor-agent/versions/<ver>/
             // Windows 安装渠道官方不支持（updater pick_install 直接 None，文案指 WSL）
             install_script: Some("curl -fsSL https://cursor.com/install | bash"),
+            // 安装脚本正文烙着当前版本（downloads.cursor.com/lab/<版本>/），作最新版查询口
+            script_latest: Some("https://cursor.com/install"),
             // cursor-agent update 是非交互自更新
             self_update: Some(&["update"]),
             update_fallback: &[UpdateChannel::SelfUpdate],
