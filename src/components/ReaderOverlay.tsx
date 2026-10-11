@@ -764,24 +764,7 @@ export default function ReaderOverlay({
             >
               {/* 状态行：状态点 + agent 名 · 模型 + 启动中/运行中（终端页同语义）。
                   下方就是该阅读会话标签的 xterm 画面（宿主 DOM 搬移，PTY/scrollback 不动） */}
-              <div className="flex h-8 shrink-0 items-center gap-2 border-b border-hairline px-3 text-micro text-l4">
-                <span
-                  className={`size-2 shrink-0 rounded-full ${
-                    agentRunning
-                      ? "bg-ok-text"
-                      : agentSession?.state === "timeout"
-                        ? "bg-warn-text"
-                        : "bg-l4"
-                  }`}
-                />
-                <span className="min-w-0 truncate">
-                  {needsProfile
-                    ? "对话终端"
-                    : `${agentName ?? "Agent"}${agentModel ? ` · ${agentModel}` : ""} · ${agentStateText}`}
-                </span>
-              </div>
-              {/* 翻译面板：状态行之下、xterm/引导卡之上，占布局流、可收起（chevron 只折正文）；
-                  无 agent 标签的引导卡/重启分支时面板仍正常可用（历史/存进笔记不依赖会话） */}
+              {/* 翻译面板在上，自成一张卡。下面的对话另起一张，中间留出栏底。 */}
               <ReaderTranslatePanel
                 latest={tlHistory[0] ?? null}
                 pending={tlPending}
@@ -808,10 +791,27 @@ export default function ReaderOverlay({
                 }}
                 onSaveEntry={(e) => void saveTlEntry(e)}
                 onHint={showToast}
+                canAsk={Boolean(hasAgentTab)}
+                onAsk={(entry) => {
+                  const pairs = parseBilingual(entry.translated);
+                  const text = reflowBlockText(
+                    pairs ? plainFromBilingual(pairs) : entry.translated,
+                    { cjk: true },
+                  );
+                  // 注入失败（CLI 已退出等）要把提示亮出来，不能无声无息
+                  void Promise.resolve(
+                    onInject(
+                      `这段译文在第 ${entry.page} 页：\n${text}\n请对照原文指出译得不准或漏掉的地方。`,
+                      false,
+                    ),
+                  ).then((hint) => {
+                    if (hint) showToast(hint);
+                  });
+                }}
               />
               {needsProfile ? (
                 // 无可用配置：引导卡（一句话 + 跳配置页）
-                <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-4 text-center">
+                <div className="mx-2 mb-2 mt-2 flex min-h-0 flex-1 flex-col items-center justify-center gap-3 rounded-lg border border-field bg-canvas p-4 text-center">
                   <p className="text-sm text-l3">还没有可用的 API 配置</p>
                   <button
                     type="button"
@@ -824,13 +824,13 @@ export default function ReaderOverlay({
               ) : !hasAgentTab ? (
                 expectAgent ? (
                   // 标签还在派的路上：别把「阅读会话未在运行」闪一下（错误状态早于真实状态）
-                  <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4 text-center">
+                  <div className="mx-2 mb-2 mt-2 flex min-h-0 flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-field bg-canvas p-4 text-center">
                     <span className="size-2 animate-pulse rounded-full bg-l3" />
                     <p className="text-sm text-l3">正在启动 Agent…</p>
                   </div>
                 ) : (
                   // 阅读会话标签被手动关掉：给个重新拉起的入口（不连环自动重建）
-                  <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-4 text-center">
+                  <div className="mx-2 mb-2 mt-2 flex min-h-0 flex-1 flex-col items-center justify-center gap-3 rounded-lg border border-field bg-canvas p-4 text-center">
                     <p className="text-sm text-l3">阅读会话未在运行</p>
                     <button
                       type="button"
@@ -847,8 +847,27 @@ export default function ReaderOverlay({
               ) : (
                 // xterm 宿主槽 + 底部状态栏槽：TerminalPage 把阅读会话标签的终端容器节点
                 // 与 TerminalStatusBar 节点一并搬进来，阅读区关闭/栏收起时搬回原标签
-                // （DOM 搬移不重建，滚动缓冲与状态栏内部状态不丢）
-                <div className="flex min-h-0 flex-1 flex-col">
+                // （DOM 搬移不重建，滚动缓冲与状态栏内部状态不丢）。
+                // 根不 overflow-hidden：状态栏向上弹出的模型/工作目录菜单要伸出卡外。
+                // 卡面走全局 .ccode-well 配方（内容卡），不再自拼 border-field+bg-canvas
+                <div className="ccode-well mx-2 mb-2 mt-2 flex min-h-0 flex-1 flex-col rounded-lg">
+                  <div className="flex h-8 shrink-0 items-center gap-2 rounded-t-[7px] border-b border-hairline bg-strip px-2.5 text-micro">
+                    <span
+                      className={`size-2 shrink-0 rounded-full ${
+                        agentRunning
+                          ? "bg-ok-text"
+                          : agentSession?.state === "timeout"
+                            ? "bg-warn-text"
+                            : "bg-l4"
+                      }`}
+                    />
+                    <span className="text-l2">对话</span>
+                    <span className="min-w-0 truncate text-l4">
+                      {needsProfile
+                        ? "还没有配置"
+                        : `${agentName ?? "Agent"}${agentModel ? ` · ${agentModel}` : ""} · ${agentStateText}`}
+                    </span>
+                  </div>
                   <div
                     ref={termSlot}
                     className="relative flex min-h-0 flex-1 flex-col"

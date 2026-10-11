@@ -398,6 +398,7 @@ function TextFilePreviewEditor({
   path,
   root,
   onDirtyChange,
+  revealLine,
   onDiscuss,
   onAnnotate,
   hideImmersive,
@@ -409,6 +410,8 @@ function TextFilePreviewEditor({
   path: string;
   root: string;
   onDirtyChange?: (dirty: boolean) => void;
+  /** 打开后滚到这一行。终端路径点击传入。 */
+  revealLine?: number | null;
   /** md 阅读视图选段「◈ 讨论/改写此段」：写入活跃终端输入（send=true 直接发送）；返回 null 已写入，否则为提示 */
   onDiscuss?: (
     text: string,
@@ -668,6 +671,18 @@ function TextFilePreviewEditor({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready]);
+
+  // 终端路径点击的滚行：响应式执行——同文件换行号、编辑器后建好都能滚到。
+  // 必须依赖 ready：编辑器创建晚于本 effect 首跑（创建 effect 定义在前、
+  // ready 翻 true 的同一 commit 先建编辑器再重跑这里），否则首开/切文件的行号丢失
+  //（2026-10-11 复核实证）。
+  useEffect(() => {
+    if (!ready || !revealLine || revealLine <= 0) return;
+    const ed = editorRef.current;
+    if (!ed) return;
+    ed.revealLineInCenter(revealLine);
+    ed.setPosition({ lineNumber: revealLine, column: 1 });
+  }, [revealLine, ready]);
 
   useEffect(() => {
     editorRef.current?.updateOptions({ readOnly: truncated || readOnlyReason !== null });

@@ -19,6 +19,7 @@ import {
   appendToFetchEntry,
   bibMentionsRecord,
   confirmReason,
+  displayCitationTitle,
   doiToken,
   includedMdLine,
   includedRecordKey,
@@ -617,6 +618,51 @@ export default forwardRef<PendingConfirmHandle, {
   const pickedRows = pending.filter((row) => picked.has(includedRecordKey(row)));
   const pickedIncludedRows = included.filter((row) => pickedIncluded.has(includedRecordKey(row)));
 
+  const metricsStatus =
+    metricsReady === true ? (
+      <span className="text-l4">
+        {metricsBusy
+          ? "指标表更新中…"
+          : metricsNote?.startsWith("已是最新")
+            ? "指标表已是最新"
+            : metricsNote?.startsWith("上游有新版")
+              ? "指标表有新版"
+              : metricsNote?.startsWith("已更新")
+                ? metricsNote
+                : metricsNote?.startsWith("更新失败") || metricsNote?.startsWith("没能")
+                  ? metricsNote
+                  : "正在看指标表…"}
+        {(metricsUpdate?.hasUpdate || (metricsNote?.startsWith("没能") ?? false)) && (
+          <button
+            type="button"
+            disabled={metricsBusy}
+            onClick={() => void downloadMetrics()}
+            className="ml-1 text-cta-pill-text hover:underline disabled:opacity-50"
+          >
+            {metricsUpdate?.hasUpdate ? "更新" : "重新下载"}
+          </button>
+        )}
+      </span>
+    ) : null;
+  const listTools = (
+    <>
+      {metricsStatus}
+      <label className="flex items-center gap-1 text-micro text-l3">
+        排序
+        <select
+          value={sortMode}
+          onChange={(e) => setSortMode(e.target.value as ScreeningSort)}
+          className="rounded-sm border border-field bg-canvas px-1 py-0.5 text-l2"
+        >
+          <option value="listed">清单原序</option>
+          <option value="if-desc">影响因子从高到低</option>
+          <option value="if-asc">影响因子从低到高</option>
+        </select>
+      </label>
+    </>
+  );
+  const showListTools = pending.length > 0 || included.length > 0 || metricsReady != null;
+
   function toggleIn(set: Dispatch<SetStateAction<Set<string>>>, key: string) {
     set((cur) => {
       const next = new Set(cur);
@@ -634,18 +680,31 @@ export default forwardRef<PendingConfirmHandle, {
     const key = includedRecordKey(row);
     const pdfPath = matchPaperPdf(row, pdfFiles, papersDir);
     const meta = includedRecordMeta(row);
+    const title = displayCitationTitle(row.title);
     const metric = metrics.get(key);
     return (
       <li key={key} className="flex gap-2 border-t border-hairline pt-2">
         {selection && (
-          <input
-            type="checkbox"
-            className="mt-1 shrink-0"
-            checked={selection.picked.has(key)}
-            disabled={includingAll}
-            aria-label={`选择 ${row.title}`}
-            onChange={() => selection.toggle(key)}
-          />
+          <label className={`mt-0.5 flex h-4 w-4 shrink-0 ${includingAll ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}>
+            <input
+              type="checkbox"
+              className="sr-only"
+              checked={selection.picked.has(key)}
+              disabled={includingAll}
+              aria-label={`选择 ${title}`}
+              onChange={() => selection.toggle(key)}
+            />
+            <span
+              aria-hidden="true"
+              className={`flex h-4 w-4 items-center justify-center rounded-sm border text-micro ${
+                selection.picked.has(key)
+                  ? "border-cta-bd bg-cta text-cta-text"
+                  : "border-field bg-transparent text-transparent"
+              }`}
+            >
+              {selection.picked.has(key) ? "✓" : ""}
+            </span>
+          </label>
         )}
         <div className="min-w-0 flex-1">
         {pdfPath && onOpenPdf ? (
@@ -654,10 +713,10 @@ export default forwardRef<PendingConfirmHandle, {
             className="text-left text-xs leading-5 text-cta-pill-text hover:underline"
             onClick={() => onOpenPdf(pdfPath)}
           >
-            {row.title}
+            {title}
           </button>
         ) : (
-          <p className="text-xs leading-5 text-l1">{row.title}</p>
+          <p className="text-xs leading-5 text-l1">{title}</p>
         )}
         <p className="mt-0.5 flex flex-wrap items-center gap-1 text-micro text-l4">
           {meta && <span>{meta}</span>}
@@ -698,51 +757,13 @@ export default forwardRef<PendingConfirmHandle, {
       {metricsLoading && (
         <p className="text-micro text-l4">正在按 DOI 补期刊名，影响因子稍后出现。</p>
       )}
-      {(pending.length > 0 || included.length > 0 || metricsReady != null) && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-micro text-l3">
-          {metricsReady === true && (
-            <span className="text-l4">
-              {metricsBusy
-                ? "指标表更新中…"
-                : metricsNote?.startsWith("已是最新")
-                  ? "指标表已是最新"
-                  : metricsNote?.startsWith("上游有新版")
-                    ? "指标表有新版"
-                    : metricsNote?.startsWith("已更新")
-                      ? metricsNote
-                      : metricsNote?.startsWith("更新失败") || metricsNote?.startsWith("没能")
-                        ? metricsNote
-                        : "正在看指标表…"}
-              {(metricsUpdate?.hasUpdate || (metricsNote?.startsWith("没能") ?? false)) && (
-                <button
-                  type="button"
-                  disabled={metricsBusy}
-                  onClick={() => void downloadMetrics()}
-                  className="ml-1 text-cta-pill-text hover:underline disabled:opacity-50"
-                >
-                  {metricsUpdate?.hasUpdate ? "更新" : "重新下载"}
-                </button>
-              )}
-            </span>
-          )}
-          <label className="flex items-center gap-1">
-            排序
-            <select
-              value={sortMode}
-              onChange={(e) => setSortMode(e.target.value as ScreeningSort)}
-              className="rounded-sm border border-field bg-canvas px-1 py-0.5 text-l2"
-            >
-              <option value="listed">清单原序</option>
-              <option value="if-desc">影响因子从高到低</option>
-              <option value="if-asc">影响因子从低到高</option>
-            </select>
-          </label>
-        </div>
+      {showListTools && pending.length === 0 && (
+        <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">{listTools}</div>
       )}
       {error && <p className="text-micro text-err-text">{error}</p>}
       {pending.length > 0 && (
         <section>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <p className="text-micro text-l3">待确认 {pendingShown.length}{pendingShown.length === pending.length ? "" : ` / ${pending.length}`}</p>
             <button
               type="button"
@@ -772,6 +793,9 @@ export default forwardRef<PendingConfirmHandle, {
             >
               排除所选
             </button>
+            {showListTools && (
+              <div className="ml-auto flex flex-wrap items-center justify-end gap-x-3 gap-y-1">{listTools}</div>
+            )}
           </div>
           <ul className="space-y-2">
             {pendingShown.map((row) => {

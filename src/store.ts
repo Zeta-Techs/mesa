@@ -579,6 +579,9 @@ interface AppState {
       root 可选：文本预览的后端根约束（不给则回落活动标签 cwd） */
   previewReq: { path: string; name: string; root?: string } | null;
   setPreviewReq: (r: { path: string; name: string; root?: string } | null) => void;
+  /** 聊天里点到的项目文件：运行页改动面板展开这一份 diff。 */
+  diffFocusReq: { cwd: string; path: string } | null;
+  setDiffFocusReq: (r: { cwd: string; path: string } | null) => void;
   /** 沉浸式阅读区的一次性打开请求（终端页消费并清空）：PDF 绝对路径 + 所属项目根；
       notePath 指定后笔记栏直接编辑该 md（不按 PDF slug 另建模板笔记）；
       fromPage 由 store 自动记发起页——阅读区只挂在终端页，跨页进入退出时回到来源页 */
@@ -849,6 +852,8 @@ export const useAppStore = create<AppState>((set, get) => {
   setFocusTabReq: (tabId) => set({ focusTabReq: tabId }),
   previewReq: null,
   setPreviewReq: (r) => set({ previewReq: r }),
+  diffFocusReq: null,
+  setDiffFocusReq: (r) => set({ diffFocusReq: r }),
   readerReq: null,
   // 发起页在 store 层自动记（调用方不写 fromPage）：五个跨页入口（文件页/产物核验/资源面板）
   // 都该在退出阅读区时回来源页；终端页自己的入口不走 readerReq，天然不带回跳

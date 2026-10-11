@@ -1,3 +1,5 @@
+import { mentionedProjectFiles, splitReplySections } from "../chat-reply";
+import { FoldMark } from "./PageFrame";
 import { sanitizeDocumentHtml } from "../document-html";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -39,6 +41,82 @@ export default function ChatMarkdown({
 }: {
   text: string;
   /** 会话工作目录：相对图片/链接的解析基准 + read_image_bytes 的 cwdHint */
+  cwd?: string | null;
+}) {
+  const sections = useMemo(() => splitReplySections(text), [text]);
+  const files = useMemo(() => mentionedProjectFiles(text), [text]);
+  const setDiffFocusReq = useAppStore((s) => s.setDiffFocusReq);
+  const [openSections, setOpenSections] = useState<Set<number>>(() => new Set([0]));
+  if (sections && sections.length > 1) {
+    return (
+      <div>
+        {sections.map((section, index) => {
+          const open = openSections.has(index);
+          return (
+            <div key={`${section.title}-${index}`} className="my-1">
+              <button
+                type="button"
+                className="flex items-center gap-1 rounded-sm px-1 text-xs text-l2 hover:bg-hover hover:text-l1"
+                onClick={() =>
+                  setOpenSections((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(index)) next.delete(index);
+                    else next.add(index);
+                    return next;
+                  })
+                }
+              >
+                <FoldMark open={open} />
+                <span>{section.title}</span>
+              </button>
+              {open && section.body && <MarkdownBody text={section.body} cwd={cwd} />}
+            </div>
+          );
+        })}
+        <MentionedFiles files={files} cwd={cwd} onOpen={setDiffFocusReq} />
+      </div>
+    );
+  }
+  return (
+    <div>
+      <MarkdownBody text={text} cwd={cwd} />
+      <MentionedFiles files={files} cwd={cwd} onOpen={setDiffFocusReq} />
+    </div>
+  );
+}
+
+function MentionedFiles({
+  files,
+  cwd,
+  onOpen,
+}: {
+  files: string[];
+  cwd?: string | null;
+  onOpen: (req: { cwd: string; path: string }) => void;
+}) {
+  if (!cwd || files.length === 0) return null;
+  return (
+    <div className="mt-2 flex flex-wrap gap-1">
+      {files.slice(0, 8).map((path) => (
+        <button
+          key={path}
+          type="button"
+          title="在右侧改动里打开"
+          className="rounded-sm bg-inset px-1.5 py-0.5 text-micro text-l2 hover:bg-hover hover:text-l1"
+          onClick={() => onOpen({ cwd, path })}
+        >
+          {path}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function MarkdownBody({
+  text,
+  cwd,
+}: {
+  text: string;
   cwd?: string | null;
 }) {
   const html = useMemo(

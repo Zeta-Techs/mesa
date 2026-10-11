@@ -170,6 +170,8 @@ function GitPanel({
   // PDF 产物「查看」：复用 P2a 预览链路（previewReq → 终端页 PdfPreview）
   const setPreviewReq = useAppStore((s) => s.setPreviewReq);
   const setPage = useAppStore((s) => s.setPage);
+  const diffFocusReq = useAppStore((s) => s.diffFocusReq);
+  const setDiffFocusReq = useAppStore((s) => s.setDiffFocusReq);
   const [diffPath, setDiffPath] = useState<string | null>(null);
   const [diffDetail, setDiffDetail] = useState<GitFileDiffDto | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
@@ -540,6 +542,28 @@ function GitPanel({
       }
     }
   }
+
+  const focusSeen = useRef<string | null>(null);
+  useEffect(() => {
+    if (!diffFocusReq || diffFocusReq.cwd !== cwd) return;
+    // status 还没加载完：等它（deps 里有 status?.files，就绪后自动重跑）。
+    // 抢先判「不在改动里」会把目标 diff 误回落成纯文本预览（2026-10-11 复核）。
+    if (!status) return;
+    const mark = `${diffFocusReq.cwd}:${diffFocusReq.path}`;
+    if (focusSeen.current === mark) return;
+    focusSeen.current = mark;
+    const file = (status.files ?? []).find((item) => item.path === diffFocusReq.path);
+    if (!file) {
+      // 确实不在本次改动里：回落成文件预览——点了总得有反应，不能静默吞掉
+      const rel = diffFocusReq.path.replace(/\\/g, "/");
+      const abs = `${cwd.replace(/[\\/]$/, "")}/${rel}`;
+      setDiffFocusReq(null);
+      setPreviewReq({ path: abs, name: rel.split("/").pop() ?? rel, root: cwd });
+      return;
+    }
+    setDiffFocusReq(null);
+    void loadExpandedDiff(file);
+  }, [cwd, diffFocusReq, setDiffFocusReq, status]);
 
   async function toggleDiff(file: GitFileDto) {
     if (diffPath === file.path) {

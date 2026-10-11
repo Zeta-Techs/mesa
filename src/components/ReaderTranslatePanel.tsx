@@ -46,6 +46,8 @@ function ReaderTranslatePanel({
   onCancelPending,
   onSaveEntry,
   onHint,
+  onAsk,
+  canAsk,
 }: {
   /** 最新历史条目（无历史且在途翻译时为 null） */
   latest: TlHistoryEntry | null;
@@ -70,6 +72,9 @@ function ReaderTranslatePanel({
   onSaveEntry: (entry: TlHistoryEntry) => void;
   /** 轻反馈（复制结果等；上层接 toast） */
   onHint: (msg: string) => void;
+  /** 把当前译文放进下方对话的输入行，不发送。 */
+  onAsk?: (entry: TlHistoryEntry) => void;
+  canAsk?: boolean;
 }) {
   /** chevron 收起：只折正文区、表头常驻（与「×」区分：× = 面板整体消失、新翻译再回来）。
       组件内 state 不持久化 */
@@ -167,21 +172,23 @@ function ReaderTranslatePanel({
     <div
       ref={rootRef}
       style={fixedH ? { height: `${heightPct}%` } : undefined}
-      className={`relative flex shrink-0 flex-col border-b border-hairline bg-strip ${
+      className={`ccode-well relative mx-2 mt-2 flex shrink-0 flex-col rounded-lg ${
         fixedH ? "" : "max-h-[40%]"
       }`}
     >
+      {/* 注意根节点不能 overflow-hidden：历史抽屉（top-full）和底缘拖动手柄
+          （translate-y-1/2 骑跨底边）都要伸出卡外，裁掉就点不到（2026-10-10 修）。
+          圆角防溢出改为只给有底色的表头加 rounded-t。 */}
       {showBody ? (
         <>
-          <div className="flex h-7 shrink-0 items-center gap-1 px-2 text-micro">
-            <button
+          <div className="flex h-8 shrink-0 items-center gap-1 rounded-t-[7px] border-b border-hairline bg-strip px-2 text-micro">            <button
               type="button"
               onClick={() => setCollapsed((v) => !v)}
-              className="flex items-center gap-0.5 rounded-sm px-1 py-0.5 text-l4 hover:bg-hover hover:text-l2"
+              className="flex items-center gap-1 rounded-sm px-1 py-0.5 text-l2 hover:bg-hover hover:text-l1"
             >
-              <span className="inline-flex items-center gap-1">
-                <FoldMark open={!collapsed} /> 译 · 第 {(pending ?? current!).page} 页
-              </span>
+              <FoldMark open={!collapsed} />
+              <span>译文</span>
+              <span className="text-l4">第 {(pending ?? current!).page} 页</span>
             </button>
             <div className="ml-auto flex items-center gap-0.5">
               {!pending && current && (
@@ -197,6 +204,17 @@ function ReaderTranslatePanel({
                   >
                     原文
                   </button>
+                  {onAsk && (
+                    <button
+                      type="button"
+                      disabled={!canAsk}
+                      title={canAsk ? "放进下方对话的输入行，不发送" : "对话还没准备好"}
+                      onClick={() => onAsk(current)}
+                      className="rounded-sm px-1.5 py-0.5 text-l2 hover:bg-hover hover:text-l1 disabled:opacity-40"
+                    >
+                      问这段
+                    </button>
+                  )}
                   {canSave && (
                     <button
                       type="button"
@@ -376,10 +394,10 @@ function ReaderTranslatePanel({
         <div
           onPointerDown={startResize}
           onDoubleClick={onResizeReset}
-          title="拖动调整翻译区高度，双击恢复自适应"
-          className="group absolute inset-x-0 bottom-0 z-10 h-1.5 translate-y-1/2 cursor-row-resize"
+          title="拖动调整译文高度，双击恢复"
+          className="group absolute inset-x-3 bottom-0 z-10 h-2 translate-y-1/2 cursor-row-resize"
         >
-          <span className="absolute inset-x-0 top-0.5 h-0.5 bg-transparent transition-colors group-hover:bg-cta" />
+          <span className="absolute inset-x-0 top-0.5 h-px bg-field transition-colors group-hover:bg-cta" />
         </div>
       )}
     </div>
