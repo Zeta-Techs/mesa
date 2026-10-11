@@ -15,6 +15,7 @@ import {
   matchPaperPdf,
   paperHasDoiPdf,
   pdfNameFromReason,
+  displayCitationTitle,
   parseIncludedRecords,
   pendingConfirmCleared,
   arrangeScreeningRows,
@@ -174,6 +175,102 @@ const emptyRecord: IncludedRecord = {
   language: "",
 };
 
+test("清单题名只改显示：苹果字符和能整段拆开的化学式", () => {
+  assert.equal(
+    displayCitationTitle("In Situ Derived Co\uF8FFB Nanoarray: A High\u2010Efficiency 3D Catalyst"),
+    "In Situ Derived Co–B Nanoarray: A High-Efficiency 3D Catalyst",
+  );
+  assert.equal(
+    displayCitationTitle("Amorphous Cobalt Boride (Co 2 B) as a Catalyst"),
+    "Amorphous Cobalt Boride (Co₂B) as a Catalyst",
+  );
+  assert.equal(
+    displayCitationTitle("Canonic\u2010Like HER Activity of Cr 1\u2013 x Mo x B 2 Solid Solution"),
+    "Canonic-Like HER Activity of Cr₁₋ₓMoₓB₂ Solid Solution",
+  );
+  assert.equal(
+    displayCitationTitle("Hierarchical Nanostructured Co–Mo–B/CoMoO 4\u2013 x Amorphous Composite"),
+    "Hierarchical Nanostructured Co–Mo–B/CoMoO₄₋ₓ Amorphous Composite",
+  );
+  assert.equal(
+    displayCitationTitle("nickel boron by CeO x doping as a catalyst"),
+    "nickel boron by CeOₓ doping as a catalyst",
+  );
+  assert.equal(displayCitationTitle("Novel 2D Material of MBenes"), "Novel 2D Material of MBenes");
+  assert.equal(
+    displayCitationTitle("Complex Cobalt-Sulfo-Boride Compound"),
+    "Complex Cobalt-Sulfo-Boride Compound",
+  );
+  assert.equal(displayCitationTitle("current density of 2A cm \u22122"), "current density of 2 A cm⁻²");
+  assert.equal(
+    displayCitationTitle("Metal boride better than Pt: HCP Pd 2 B as a catalyst"),
+    "Metal boride better than Pt: HCP Pd₂B as a catalyst",
+  );
+  assert.equal(
+    displayCitationTitle("Highly Active MAB Phases Ni n +1 ZnB n ( n = 1, 2)"),
+    "Highly Active MAB Phases Niₙ₊₁ZnBₙ (n = 1, 2)",
+  );
+  assert.equal(
+    displayCitationTitle("Reversible S<sup>0</sup>/MgS<sub>x</sub> and Ca2+"),
+    "Reversible S⁰/MgSₓ and Ca²⁺",
+  );
+  // 2026-10-11 实证回归：电荷上标允许后跟连字符形容词；<sub>/<sup> 前的排版空格吃掉
+  assert.equal(
+    displayCitationTitle("Deep cycling enabled by a robust Mg2+-Conducting interphase"),
+    "Deep cycling enabled by a robust Mg²⁺-Conducting interphase",
+  );
+  assert.equal(
+    displayCitationTitle("LiCl-Assisted MgCl <sub>2</sub> Solubilization Mechanism"),
+    "LiCl-Assisted MgCl₂ Solubilization Mechanism",
+  );
+  assert.equal(
+    displayCitationTitle("Mg(CF<sub>3</sub>SO<sub>3</sub>)<sub>2</sub> -Based Electrolyte"),
+    "Mg(CF₃SO₃)₂-Based Electrolyte",
+  );
+  assert.equal(
+    displayCitationTitle("Reversible S<sup>0</sup>/MgS<sub><i>x</i></sub> Redox Chemistry"),
+    "Reversible S⁰/MgSₓ Redox Chemistry",
+  );
+  // 2026-10-11 对抗审查二轮：标识符停车、散文年份/温度不粘接、复合物电荷不翻转、双连字符不造负电荷
+  assert.equal(displayCitationTitle("10.1016/s0022-0728(99)00146-1"), "10.1016/s0022-0728(99)00146-1");
+  assert.equal(displayCitationTitle("DOI: 10.1039/D2EE04121A study"), "DOI: 10.1039/D2EE04121A study");
+  assert.equal(displayCitationTitle("In 2020, we demonstrated"), "In 2020, we demonstrated");
+  assert.equal(displayCitationTitle("At 300 K, the sample"), "At 300 K, the sample");
+  assert.equal(displayCitationTitle("such as Mg2Cl3+ species"), "such as Mg₂Cl₃⁺ species");
+  assert.equal(displayCitationTitle("C60--covered electrodes"), "C₆₀--covered electrodes");
+  assert.equal(
+    displayCitationTitle("Hexagonal MBene (Hf 2 BO 2 ): A Promising Platform"),
+    "Hexagonal MBene (Hf₂BO₂): A Promising Platform",
+  );
+  assert.equal(
+    displayCitationTitle("Crystalline β-MoB 2 Nanosheets"),
+    "Crystalline β-MoB₂ Nanosheets",
+  );
+  assert.equal(
+    displayCitationTitle("zirconium diboride (Zr1-TMB2; TM = Ni, Co, and Fe)"),
+    "zirconium diboride (Zr₁₋ₓTMₓB₂; TM = Ni, Co, and Fe)",
+  );
+  assert.equal(displayCitationTitle("Fe2B/MXene@NF electrocatalyst"), "Fe₂B/MXene@NF electrocatalyst");
+  assert.equal(
+    displayCitationTitle("MBene Mo 2 ErB 3 T 2.5 (T = O, F, and Cl)"),
+    "MBene Mo₂ErB₃T₂.₅ (T = O, F, and Cl)",
+  );
+  assert.equal(displayCitationTitle("a Current Density of 2A cm −2"), "a Current Density of 2 A cm⁻²");
+  assert.equal(displayCitationTitle("CoMoO 4– x"), "CoMoO₄₋ₓ");
+  assert.equal(displayCitationTitle("Ni/MoBT x for"), "Ni/MoBTₓ for");
+  assert.equal(displayCitationTitle("CeO x –NiB"), "CeOₓ –NiB");
+  assert.equal(displayCitationTitle("Ni n +1 ZnB n"), "Niₙ₊₁ZnBₙ");
+  assert.equal(displayCitationTitle("CoxMnyB nanosheet"), "CoₓMnᵧB nanosheet");
+  assert.equal(displayCitationTitle("(WB 2 -191)"), "(WB₂-191)");
+  assert.equal(displayCitationTitle("TMB 12 :"), "TMB₁₂:");
+  assert.equal(displayCitationTitle("Ni(OH)2/NF"), "Ni(OH)₂/NF");
+  assert.equal(
+    displayCitationTitle("Fe50-xMn30Cr10Co10Bx (x = 0, 3, 5, 10 at.-%)"),
+    "Fe₅₀₋ₓMn₃₀Cr₁₀Co₁₀Bₓ (x = 0, 3, 5, 10 at.-%)",
+  );
+  assert.equal(displayCitationTitle("Y(TM1TM2)B4-Type"), "Y(TM₁TM₂)B₄-Type");
+});
+
 test("纳入 JSON 计数与待拍板去重", () => {
   const records = parseIncludedRecords(JSON.stringify({
     items: [
@@ -185,6 +282,12 @@ test("纳入 JSON 计数与待拍板去重", () => {
   assert.equal(records.length, 2);
   const counts = screeningCounts(records, 3);
   assert.equal(screeningCountLine(counts), "纳入 1 · 待确认 1 · 待获取 3 · 共 2 篇");
+  const aliased = parseIncludedRecords(JSON.stringify([
+    { id: "doi:9", title: "Short include", decision: "include", reason: "纳入" },
+    { id: "doi:8", title: "Short exclude", decision: "exclude", reason: "排除" },
+  ]));
+  assert.deepEqual(aliased.map((row) => row.decision), ["included", "excluded"]);
+  assert.equal(screeningCounts(aliased, 0).included, 1);
   const extras = extraDecisionsFromSummary(
     "1. 回答了什么：完成筛选。\n5. 需要人决定：确认 pending 项；获取付费全文；如需写 Zotero 库须另行明确授权。",
   );
@@ -407,6 +510,11 @@ test("纳入 JSON 计数与待拍板去重", () => {
   assert.doesNotMatch(zotero, /M3  - /);
   assert.equal(recordToZoteroRis(row).includes("JO  -"), false);
   assert.equal(recordToEndnoteRis(row).includes("M2  - 177309"), true);
+  const marked = recordToZoteroRis({ ...row, title: "Amorphous Cobalt Boride (Co 2 B)", abstract: "Uses Co 2 B." });
+  assert.match(marked, /TI  - Amorphous Cobalt Boride \(Co₂B\)/);
+  assert.match(marked, /AB  - Uses Co₂B\./);
+  assert.match(marked, /PY  - 2024/);
+  assert.match(marked, /VL  - 1010/);
   const source = [
     "TY  - JOUR",
     "TI  - Fresh Paper",

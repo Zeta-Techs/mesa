@@ -16,6 +16,13 @@ const zipXml = (docx: string, names = ["word/document.xml"]) =>
     ["-c", "import sys; sys.stdout.reconfigure(encoding='utf-8'); import zipfile; z=zipfile.ZipFile(sys.argv[1]);\n[print(z.read(n).decode()) for n in sys.argv[2].split(',')]", docx, names.join(",")],
     { encoding: "utf8", timeout: 10_000 },
   );
+// EndNote/Zotero 的引文数据在域数据（fldData，base64）里，断言前先解码。
+const fldData = (docx: string) =>
+  spawnSync(
+    python,
+    ["-c", "import sys; sys.stdout.reconfigure(encoding='utf-8'); import zipfile,re,base64\nxml=zipfile.ZipFile(sys.argv[1]).read('word/document.xml').decode()\nblob=b''.join(base64.b64decode(''.join(m.split())) for m in re.findall(r'<w:fldData[^>]*>(.*?)</w:fldData>',xml,re.S))\nprint(blob.decode('utf-8','replace'))", docx],
+    { encoding: "utf8", timeout: 10_000 },
+  );
 
 test("EndNote bridge converts XML/RIS/BibTeX and preserves stable keys without changing original", () => {
   const root = mkdtempSync(join(tmpdir(), "mesa-bib-bridge-"));
@@ -67,6 +74,13 @@ test("导入标题里的 HTML 上下标收成两个库都认的记号", () => {
     assert.equal(result.status, 0, result.stderr);
     const text = readFileSync(ris, "utf8");
     assert.match(text, /TI  - Reversible S⁰\/MgSₓ Chemistry/);
+    const alloy = join(root, "alloy.bib");
+    writeFileSync(alloy, "@article{Alloy,\n title={Fe50-xMn30Cr10Co10Bx and Y(TM1TM2)B4 and Mo 2 B},\n author={Gao, Tao}, year={2024}, journal={Test}, doi={10.1000/alloy}\n}\n");
+    const alloyRis = join(root, "alloy.ris");
+    const alloyResult = run(bridge, ["--input", alloy, "--output", alloyRis, "--report", join(root, "alloy-report.json")]);
+    assert.equal(alloyResult.status, 0, alloyResult.stderr);
+    const alloyText = readFileSync(alloyRis, "utf8");
+    assert.match(alloyText, /TI  - Fe₅₀₋ₓMn₃₀Cr₁₀Co₁₀Bₓ and Y\(TM₁TM₂\)B₄ and Mo₂B/);
     assert.doesNotMatch(text, /<sup>|<sub>/);
     writeFileSync(input, "@article{Yang2019,\n title={Ca2+ Mg(CF 3 SO 3 ) 2 - MgCl 2},\n author={Yang, Ann}, year={2019}, journal={Research}, doi={10.1/space}\n}\n");
     const spaced = join(root, "spaced.ris");
@@ -82,6 +96,141 @@ test("导入标题里的 HTML 上下标收成两个库都认的记号", () => {
     assert.match(bracedText, /AU  - Smith, Jr\., John/);
     assert.match(bracedText, /DO  - 10\.1002\/example/);
     assert.doesNotMatch(bracedText, /doi\.org/);
+    // DOI 是标识符：化学美化把 D2EE04121A 转成下标后 DOI 匹配全断（2026-10-10 实证），出库必须保持 ASCII
+    writeFileSync(input, "@article{Sub,\n title={Plain}, author={Doe, Jane}, year={2026}, journal={J}, doi={10.1039/D₂EE₀₄₁₂₁A}\n}\n");
+    const subRis = join(root, "sub.ris");
+    const subResult = run(bridge, ["--input", input, "--output", subRis, "--report", join(root, "sub.json")]);
+    assert.equal(subResult.status, 0, subResult.stderr);
+    assert.match(readFileSync(subRis, "utf8"), /DO  - 10\.1039\/D2EE04121A/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("EndNote 出库：标识符行零化学美化，标签前空格与电荷上标收敛（2026-10-11 实证）", () => {
+  const root = mkdtempSync(join(tmpdir(), "mesa-endnote-id-"));
+  try {
+    const input = join(root, "source.bib");
+    writeFileSync(
+      input,
+      "@article{Mg2026,\n" +
+        " title={Deep cycling enabled by a robust Mg2+-Conducting interphase with MgCl <sub>2</sub> Solubilization and Mg(CF<sub>3</sub>SO<sub>3</sub>)<sub>2</sub> -Based salts at 500 µA cm −2},\n" +
+        " author={Doe, Jane}, year={2026}, journal={J}, doi={10.1016/s0022-0728(99)00146-1},\n" +
+        " volume={S1}, number={3a}, pages={A257--A260}, issn={0022-0728}, url={https://doi.org/10.1039/D2EE04121A},\n" +
+        " abstract={See 10.1039/D2EE04121A and https://example.com/A257-1 for data}\n" +
+        "}\n",
+    );
+    const ris = join(root, "export.ris");
+    const result = run(bridge, ["--input", input, "--output", ris, "--report", join(root, "report.json")]);
+    assert.equal(result.status, 0, result.stderr);
+    const text = readFileSync(ris, "utf8");
+    // 标题：电荷上标允许后跟连字符形容词；<sub> 前的排版空格吃掉；cm −2 收成 cm⁻²
+    assert.match(text, /TI  - .*Mg²⁺-Conducting interphase with MgCl₂ Solubilization and Mg\(CF₃SO₃\)₂-Based salts at 500 µA cm⁻²/);
+    // 标识符/定位行保持 ASCII：DOI、URL、卷、期、页、ISSN、citation key
+    assert.match(text, /DO  - 10\.1016\/s0022-0728\(99\)00146-1/);
+    assert.match(text, /UR  - https:\/\/doi\.org\/10\.1039\/D2EE04121A/);
+    assert.match(text, /VL  - S1/);
+    assert.match(text, /IS  - 3a/);
+    assert.match(text, /SP  - A257/);
+    assert.match(text, /EP  - A260/);
+    assert.match(text, /SN  - 0022-0728/);
+    assert.match(text, /ID  - Mg2026/);
+    // 摘要里引用的裸 DOI/URL 同样不做化学美化
+    assert.match(text, /AB  - See 10\.1039\/D2EE04121A and https:\/\/example\.com\/A257-1 for data/);
+    assert.doesNotMatch(text, /₀₀₁₄₆|D₂EE|₂EE|A₂₅₇/);
+    // XML 与 .enw 同口径：electronic-resource-num / %R 保持 ASCII，页码不美化
+    const xml = join(root, "export.xml");
+    assert.equal(run(bridge, ["--input", input, "--output", xml, "--report", join(root, "xml.json")]).status, 0);
+    const xmlText = readFileSync(xml, "utf8");
+    assert.match(xmlText, /<electronic-resource-num>10\.1016\/s0022-0728\(99\)00146-1</);
+    assert.match(xmlText, /<pages start="A257" end="A260">/);
+    assert.doesNotMatch(xmlText, /₀₀₁₄₆|D₂EE|₂EE|A₂₅₇/);
+    const enw = join(root, "export.enw");
+    assert.equal(run(bridge, ["--input", input, "--output", enw, "--report", join(root, "enw.json")]).status, 0);
+    const enwText = readFileSync(enw, "utf8");
+    assert.match(enwText, /%R 10\.1016\/s0022-0728\(99\)00146-1/);
+    assert.match(enwText, /%V S1/);
+    assert.match(enwText, /%P A257-A260/);
+    assert.doesNotMatch(enwText, /₀₀₁₄₆|D₂EE|₂EE|A₂₅₇/);
+    // 2026-10-11 对抗审查二轮：占位符进 <sup> 标签不丢 URL；散文年份不被下标；
+    // 复合物电荷不翻转（Mg2Cl3+ 是 Mg₂Cl₃⁺）；存量「字母 空格 下标字」愈合
+    writeFileSync(
+      input,
+      "@article{Adv2026,\n" +
+        " title={Study of Mg2Cl3+ and MgCl2 in 2020},\n" +
+        " author={Doe, Jane}, year={2026}, journal={J}, doi={10.1000/adv},\n" +
+        " abstract={See <sup>https://example.com/a</sup> and In 2020 we showed Mg2Cl3+; old MgCl ₂ data}\n" +
+        "}\n",
+    );
+    const adv = join(root, "adv.ris");
+    assert.equal(run(bridge, ["--input", input, "--output", adv, "--report", join(root, "adv.json")]).status, 0);
+    const advText = readFileSync(adv, "utf8");
+    assert.match(advText, /TI  - Study of Mg₂Cl₃⁺ and MgCl2 in 2020/);
+    assert.match(advText, /AB  - See https:\/\/example\.com\/a and In 2020 we showed Mg₂Cl₃⁺; old MgCl₂ data/);
+    assert.doesNotMatch(advText, /\x00|[-]/);
+    assert.doesNotMatch(advText, /In₂₀₂₀|Cl³⁺|₂0|0₂/);
+    // 输入侧愈合：被旧版污染的 RIS（页码 A₂₅₇、DOI 下标）读回来折成 ASCII
+    const poisoned = join(root, "poisoned.ris");
+    writeFileSync(
+      poisoned,
+      "TY  - JOUR\r\nID  - P1\r\nTI  - Old record\r\nPY  - 2020\r\nSP  - A₂₅₇\r\nEP  - A₂₆₂\r\nDO  - 10.1039/D₂EE₀₄₁₂₁A\r\nER  - \r\n",
+    );
+    const healed = join(root, "healed.bib");
+    assert.equal(run(bridge, ["--input", poisoned, "--output", healed, "--report", join(root, "healed.json")]).status, 0);
+    const healedText = readFileSync(healed, "utf8");
+    assert.match(healedText, /pages = \{A257--A262\}/);
+    assert.match(healedText, /doi = \{10\.1039\/D2EE04121A\}/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("域稿正文：约义~不与下标记号错配、\\@ 转义还原、同年同姓消歧（2026-10-11 定稿审计实证）", () => {
+  const root = mkdtempSync(join(tmpdir(), "mesa-body-marks-"));
+  try {
+    const md = join(root, "review-final.md");
+    const bib = join(root, "references.bib");
+    writeFileSync(
+      md,
+      "The routes hold ~79–81% efficiencies (Mg~3~Bi~2~, 170 mV) and a two-step a-MgCl~2~\\@polymer layer (~2 µm) drops overpotential from ~2.1 V to 0.25 V, failing after ~80 and ~50 cycles [@zhangS2026; @zhangX2026].",
+    );
+    writeFileSync(
+      bib,
+      "@article{zhangS2026,\n title={Mitigating}, author={Zhang, Shuxin and Ren, Ruotong}, year={2026}, journal={J}, doi={10.1/s}\n}\n" +
+        "@article{zhangX2026,\n title={Interphase}, author={Zhang, Xinyuan and Xu, Hengyue}, year={2026}, journal={J}, doi={10.1/x}\n}\n" +
+        "@article{sameA2026,\n title={First}, author={Chen, Li and Park, Min}, year={2025}, journal={J}, doi={10.1/a}\n}\n" +
+        "@article{sameB2026,\n title={Second}, author={Chen, Li and Park, Min}, year={2025}, journal={J}, doi={10.1/b}\n}\n",
+    );
+    writeFileSync(join(root, "full.md"), "Same author twice [@sameA2026; @sameB2026].\n");
+    const out = join(root, "endnote.docx");
+    const result = run(citeDocx, ["--input", md, "--bib", bib, "--output", out, "--report", join(root, "r.md")]);
+    assert.equal(result.status, 0, result.stderr);
+    // 解包验收 run 结构
+    spawnSync("unzip", ["-o", "-q", out, "-d", join(root, "x")]);
+    const xml = readFileSync(join(root, "x", "word", "document.xml"), "utf8");
+    const paras = [...xml.matchAll(/<w:p\b.*?<\/w:p>/gs)].map((m) => m[0]);
+    const runsOf = (p: string) =>
+      [...p.matchAll(/<w:r\b.*?<\/w:r>/gs)].map((m) => ({
+        sub: m[0].includes("subscript"),
+        text: (m[0].match(/<w:t[^>]*>(.*?)<\/w:t>/s) || ["", ""])[1] ?? "",
+      }));
+    const body = paras.find((p) => p.includes("79–81%"));
+    assert.ok(body, "找到目标段");
+    const runs = runsOf(body);
+    const subTexts = runs.filter((r) => r.sub).map((r) => r.text);
+    // 假下标不得出现：任何下标 run 的内容只能是化学计量数字
+    for (const t of subTexts) assert.match(t, /^[0-9]+$/, `下标 run 只允许数字，实得 ${JSON.stringify(t)}`);
+    const full = runs.map((r) => r.text).join("");
+    assert.match(full, /~79–81%/); // 大约号保留
+    assert.match(full, /\(~2 µm\)/);
+    assert.match(full, /~2\.1 V/);
+    assert.match(full, /~80 and ~50 cycles/);
+    assert.match(full, /a-MgCl2@polymer/); // \@ 已还原（2 为下标 run 摊平）
+    assert.doesNotMatch(full, /\\@/);
+    assert.match(full, /\(S\. Zhang et al\., 2026; X\. Zhang et al\., 2026\)/); // 同姓不同人加首字母
+    // 同一作者同年两篇 → a/b
+    const out2 = join(root, "same.docx");
+    const md2 = join(root, "full.md");
+    assert.equal(run(citeDocx, ["--input", md2, "--bib", bib, "--output", out2, "--report", join(root, "r2.md")]).status, 0);
+    spawnSync("unzip", ["-o", "-q", out2, "-d", join(root, "y")]);
+    const xml2 = readFileSync(join(root, "y", "word", "document.xml"), "utf8");
+    assert.match(xml2, /\(Chen et al\., 2025a; Chen et al\., 2025b\)/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -124,6 +273,22 @@ test("EndNote 域稿：匹配键写出 ADDIN EN.CITE，未匹配不写 docx", ()
     assert.match(zip.stdout, /ADDIN EN\.CITE/);
     assert.match(zip.stdout, /ADDIN EN\.REFLIST/);
     assert.doesNotMatch(zip.stdout, /\{Doe, 2020/);
+    // 域格式契约（2026-10-10 与 EndNote 2025 实稿核对）：instrText 只留短指令，
+    // 引文 XML 全在 fldData（base64，CRLF 换行），并嵌套 EN.CITE.DATA 子域（两层 fldData 同载荷）。
+    // 少了子域 CWYW 读不到数据，Update 会把引文整条报成 INVALID CITATION。
+    assert.doesNotMatch(zip.stdout, /ADDIN EN\.CITE &lt;EndNote&gt;/);
+    assert.match(zip.stdout, /ADDIN EN\.CITE\.DATA </);
+    assert.match(zip.stdout, new RegExp("[A-Za-z0-9+/]{76}\\r\\n"));
+    const fld = fldData(docx);
+    assert.equal(fld.status, 0, fld.stderr);
+    assert.match(fld.stdout, /<EndNote><Cite><Author>Doe<\/Author><Year>2020<\/Year><RecNum>1<\/RecNum><DisplayText>\(Doe et al\., 2020\)<\/DisplayText>/);
+    // 组引文 = 一条 fldData 里多个 Cite，只有第一个带 DisplayText
+    assert.match(fld.stdout, /<DisplayText>\(Doe et al\., 2020; Lee, 2021\)<\/DisplayText>/);
+    assert.match(fld.stdout, /<RecNum>2<\/RecNum><record><rec-number>2<\/rec-number><ref-type name="Journal Article">17<\/ref-type>/);
+    // record 内顺序：rec-number 在前；未绑定不写 foreign-keys；urls 在 electronic-resource-num 之前
+    assert.match(fld.stdout, /<rec-number>1<\/rec-number><ref-type name="Journal Article">17<\/ref-type>/);
+    assert.doesNotMatch(fld.stdout, /<foreign-keys>/);
+    assert.match(fld.stdout, /<urls><\/urls><electronic-resource-num>10\.1\/ex<\/electronic-resource-num>/);
     writeFileSync(md, "# Title\n\n3834 mAh cm^−3^ and **bold** H~2~O.\n");
     const marked = join(root, "marked.docx");
     result = run(citeDocx, ["--input", md, "--bib", bib, "--output", marked, "--report", join(root, "mark.md")]);
@@ -145,14 +310,15 @@ test("EndNote 域稿：匹配键写出 ADDIN EN.CITE，未匹配不写 docx", ()
     assert.doesNotMatch(frontZip.stdout, /摘要|关键词|图 1/);
     assert.match(frontZip.stdout, />1 Introduction</);
     assert.match(frontZip.stdout, />1\.1 Detail</);
-    assert.match(frontZip.stdout, /Figure 1/);
-    writeFileSync(md, "See Figure @fig-1 and Table @tbl-1.\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\n: The caption. {#tbl-1}\n\n![Panel.](dot.png){#fig-1}\n");
+    // 图注 = 粗体前缀 run + 粗体正文 run，断言跨 run 拼
+    assert.match(frontZip.stdout, /Figure 1\. <\/w:t><\/w:r><w:r><w:rPr><w:b \/><\/w:rPr><w:t>A panel\./);
+    writeFileSync(md, "See Figure @fig-1 and (Table @tbl-1).\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\n: The caption. {#tbl-1}\n\n![Panel.](dot.png){#fig-1}\n");
     const linked = join(root, "linked.docx");
     result = run(citeDocx, ["--input", md, "--bib", bib, "--output", linked, "--report", join(root, "link.md")]);
     assert.equal(result.status, 0, result.stderr);
     const linkZip = zipXml(linked);
-    assert.match(linkZip.stdout, /Figure 1/);
-    assert.match(linkZip.stdout, /Table 1/);
+    assert.match(linkZip.stdout, /Figure 1\. <\/w:t><\/w:r><w:r><w:rPr><w:b \/><\/w:rPr><w:t>Panel\./);
+    assert.match(linkZip.stdout, /Table 1\./);
     assert.doesNotMatch(linkZip.stdout, /@fig-1|@tbl-1/);
     assert.match(markZip.stdout, /outlineLvl w:val="0"/);
     assert.match(markZip.stdout, /outlineLvl w:val="5"/);
@@ -181,7 +347,7 @@ test("EndNote 域稿：匹配键写出 ADDIN EN.CITE，未匹配不写 docx", ()
     const braceZip = zipXml(braced);
     assert.match(braceZip.stdout, /ADDIN EN\.CITE/);
     assert.match(braceZip.stdout, /tbl-benchmark/);
-    assert.doesNotMatch(braceZip.stdout, /\{#/);
+    assert.doesNotMatch(braceZip.stdout, /\{#|@tbl-/);
     assert.match(zip.stdout, /Doe et al\., 2020/);
     assert.doesNotMatch(zip.stdout, /<Author>Missing<\/Author>/);
     assert.match(readFileSync(report, "utf8"), /未匹配：0/);
@@ -296,11 +462,11 @@ enl, zot = sys.argv[1], sys.argv[2]
 e = sqlite3.connect(enl)
 e.execute("CREATE TABLE misc(code INTEGER, subcode INTEGER, value BLOB, PRIMARY KEY(code, subcode))")
 e.execute("INSERT INTO misc VALUES (14, 0, ?)", (b"abc123libraryid",))
-e.execute("CREATE TABLE refs(id INTEGER PRIMARY KEY, trash_state INTEGER NOT NULL DEFAULT 0, electronic_resource_number TEXT NOT NULL DEFAULT '')")
-e.execute("INSERT INTO refs VALUES (392, 0, '10.1000/only')")
-e.execute("INSERT INTO refs VALUES (10, 0, '10.1000/dup')")
-e.execute("INSERT INTO refs VALUES (11, 0, '10.1000/dup')")
-e.execute("INSERT INTO refs VALUES (12, 1, '10.1000/trashed')")
+e.execute("CREATE TABLE refs(id INTEGER PRIMARY KEY, trash_state INTEGER NOT NULL DEFAULT 0, electronic_resource_number TEXT NOT NULL DEFAULT '', added_to_library INTEGER)")
+e.execute("INSERT INTO refs VALUES (392, 0, '10.1000/only', 1700000000)")
+e.execute("INSERT INTO refs VALUES (10, 0, '10.1000/dup', 1700000001)")
+e.execute("INSERT INTO refs VALUES (11, 0, '10.1000/dup', 1700000002)")
+e.execute("INSERT INTO refs VALUES (12, 1, '10.1000/trashed', 1700000003)")
 e.commit()
 z = sqlite3.connect(zot)
 z.execute("CREATE TABLE settings(setting TEXT, key TEXT, value TEXT)")
@@ -337,10 +503,13 @@ z.commit()
     const endnote = join(root, "endnote.docx");
     let result = run(citeDocx, ["--input", md, "--bib", bib, "--output", endnote, "--report", join(root, "en.md"), "--endnote-library", enl]);
     assert.equal(result.status, 0, result.stderr);
-    const enXml = zipXml(endnote);
-    assert.match(enXml.stdout, /abc123libraryid/);
-    assert.match(enXml.stdout, /&lt;RecNum&gt;392&lt;\/RecNum&gt;/);
-    assert.doesNotMatch(enXml.stdout, /&lt;RecNum&gt;10&lt;\/RecNum&gt;/);
+    const enFld = fldData(endnote);
+    assert.equal(enFld.status, 0, enFld.stderr);
+    assert.match(zipXml(endnote).stdout, /ADDIN EN\.CITE\.DATA </);
+    // 外键按实稿形态：rec-number 在前，key 带 timestamp 和 ENWeb 兄弟键
+    assert.match(enFld.stdout, /<RecNum>392<\/RecNum>/);
+    assert.match(enFld.stdout, /<rec-number>392<\/rec-number><foreign-keys><key app="EN" db-id="abc123libraryid" timestamp="1700000000">392<\/key><key app="ENWeb" db-id="">0<\/key><\/foreign-keys>/);
+    assert.doesNotMatch(enFld.stdout, /<RecNum>10<\/RecNum>|db-id="mesa"/);
     const enReport = readFileSync(join(root, "en.md"), "utf8");
     assert.match(enReport, /已绑定 1 条/);
     assert.match(enReport, /Dup2021.*2 条/);
@@ -356,10 +525,8 @@ z.commit()
     result = run(citeDocx, ["--input", md, "--bib", bib, "--output", unbound, "--report", join(root, "unbound.md")]);
     assert.equal(result.status, 0, result.stderr);
     assert.match(readFileSync(join(root, "unbound.md"), "utf8"), /未指定 EndNote 库/);
-    const unboundXml = zipXml(unbound);
-    assert.doesNotMatch(unboundXml.stdout, /abc123libraryid/);
-    assert.doesNotMatch(unboundXml.stdout, /db-id="mesa"/);
-    assert.doesNotMatch(unboundXml.stdout, /foreign-keys/);
+    const unboundFld = fldData(unbound);
+    assert.doesNotMatch(unboundFld.stdout, /foreign-keys|db-id/);
 
     const zoteroDocx = join(root, "zotero.docx");
     const zoteroScript = resolve("src-tauri/resources/skills/zotero-sync/scripts/zotero_docx.py");
@@ -394,10 +561,11 @@ test("Zotero 域稿写出 ADDIN ZOTERO_ITEM，缺键不交 docx", () => {
     assert.match(zip.stdout, /ADDIN ZOTERO_ITEM CSL_CITATION/);
     assert.match(zip.stdout, /citationID/);
     assert.match(zip.stdout, /formattedCitation/);
-    assert.match(zip.stdout, /ADDIN ZOTERO_BIBL/);
+    // 预置空 BIBL 会被 Zotero Refresh 删掉（2026-10-10 实证）：生成稿只留 References 标题和空锚点段
+    assert.doesNotMatch(zip.stdout, /ZOTERO_BIBL|CSL_BIBLIOGRAPHY/);
     assert.match(zip.stdout, /outlineLvl w:val="0"/);
     assert.match(zip.stdout, /w:footerReference/);
-    assert.match(zip.stdout, /CSL_BIBLIOGRAPHY/);
+    assert.match(zip.stdout, /References<\/w:t>/);
     assert.match(zip.stdout, /Doe et al\., 2020/);
     assert.doesNotMatch(zip.stdout, /\\\{Doe, 2020/);
     writeFileSync(md, "See {#Doe2020} and {#tbl-benchmark}.\n");
@@ -440,6 +608,45 @@ test("Zotero 交稿写出可扫描的引用和对应 RIS，缺键不交稿", () 
     result = run(script, ["--input", md, "--bib", bib, "--rtf", bad, "--ris", join(root, "bad.ris"), "--report", join(root, "bad.md")]);
     assert.notEqual(result.status, 0);
     assert.equal(existsSync(bad), false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("Zotero 全库 RIS（同步按钮）：T2/J2 字段约定，标识符零化学美化", () => {
+  const root = mkdtempSync(join(tmpdir(), "mesa-zotero-lib-"));
+  try {
+    const bib = join(root, "references.bib");
+    writeFileSync(
+      bib,
+      "@article{Mg2026,\n" +
+        " title={MgCl <sub>2</sub> Solubilization with robust Mg2+-Conducting interphase},\n" +
+        " author={Doe, Jane}, year={2026}, journal={Energy Storage Materials},\n" +
+        " doi={10.1016/s0022-0728(99)00146-1}, volume={S1}, pages={A257--A260}, issn={0022-0728},\n" +
+        " abstract={See 10.1039/D2EE04121A for data}\n" +
+        "}\n",
+    );
+    const script = resolve("src-tauri/resources/skills/zotero-sync/scripts/zotero_rtf.py");
+    const out = join(root, "zotero-library.ris");
+    // 差量导入会读本机 Zotero 库跳过已有 DOI；测试指一个空配置目录，保持确定性
+    const savedCfg = process.env.ZOTERO_CONFIG_DIR;
+    process.env.ZOTERO_CONFIG_DIR = root;
+    const result = run(script, ["--library-ris", "--bib", bib, "--ris", out]);
+    if (savedCfg === undefined) delete process.env.ZOTERO_CONFIG_DIR;
+    else process.env.ZOTERO_CONFIG_DIR = savedCfg;
+    assert.equal(result.status, 0, result.stderr);
+    const text = readFileSync(out, "utf8");
+    assert.match(text, /本次写入 1 条，库里已有同一 DOI 跳过 0 条/);
+    // 头注释与现行字段约定：T2/J2，不写 N1（进笔记）/JO/JF/JA（JO 进期刊缩写）/ID/DA/M2/M3/N2
+    assert.match(text, /^# 整份引文库，共 1 条。/);
+    assert.match(text, /T2  - Energy Storage Materials/);
+    assert.match(text, /TI  - MgCl₂ Solubilization with robust Mg²⁺-Conducting interphase/);
+    assert.match(text, /DO  - 10\.1016\/s0022-0728\(99\)00146-1/);
+    assert.match(text, /AB  - See 10\.1039\/D2EE04121A for data/);
+    for (const banned of ["N1  - ", "JO  - ", "JF  - ", "JA  - ", "ID  - ", "DA  - ", "M2  - ", "M3  - ", "N2  - "]) {
+      assert.doesNotMatch(text, new RegExp(banned.replace(/[- ]/g, (c) => "\\" + c)), banned);
+    }
+    assert.doesNotMatch(text, /₀₀₁₄₆|D₂EE|₂EE|A₂₅₇|MgCl ₂/);
+    // 同步按钮的反馈：stdout 必带库体检结论（查不成也说明，不静默）
+    assert.match(result.stdout, /库体检：/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

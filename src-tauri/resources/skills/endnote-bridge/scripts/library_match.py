@@ -17,12 +17,23 @@ import tempfile
 from pathlib import Path
 
 
+# 上下标/全角数字折回 ASCII：库里有 DOI 被化学美化成 D₂EE₀₄₁₂₁A 的记录，折叠后仍能整段相等。
+_DIGIT_FOLD = {}
+for _i, _c in enumerate("₀₁₂₃₄₅₆₇₈₉"):
+    _DIGIT_FOLD[ord(_c)] = str(_i)
+for _i, _c in enumerate("⁰¹²³⁴⁵⁶⁷⁸⁹"):
+    _DIGIT_FOLD[ord(_c)] = str(_i)
+for _i, _c in enumerate("０１２３４５６７８９"):
+    _DIGIT_FOLD[ord(_c)] = str(_i)
+
+
 def norm_doi(raw: str) -> str:
     """同一 DOI 的写法收成一段。收完仍必须整段相等，不按前缀或标题猜测。"""
     text = (raw or "").strip().strip("{}")
     text = re.sub(r"(?i)^https?://(dx\.)?doi\.org/", "", text)
     text = re.sub(r"(?i)^doi:\s*", "", text)
     text = text.replace("－", "-").replace("–", "-").replace("—", "-")
+    text = text.translate(_DIGIT_FOLD)
     text = re.sub(r"\s+", "", text)
     return text.strip().rstrip(".,;)").lower()
 
@@ -76,14 +87,14 @@ def endnote_pointer(project_root: Path | None) -> Path | None:
     return Path(lines[0]).expanduser()
 
 
-def endnote_index(path: Path) -> tuple[dict[str, list[int]], str, str]:
-    """DOI → live record ids, library db-id, and a note when the library cannot be used."""
+def endnote_index(path: Path) -> tuple[dict[str, list[int]], dict[int, int], str, str]:
+    """DOI → live record ids, record id → added_to_library 时间戳, library db-id, and a note."""
     if not path.is_file():
-        return {}, "", f"EndNote 库不存在：{path}"
+        return {}, {}, "", f"EndNote 库不存在：{path}"
     try:
         conn, copied = open_library_copy(path)
     except (OSError, sqlite3.Error) as exc:
-        return {}, "", f"EndNote 库打不开（只读副本）：{exc}"
+        return {}, {}, "", f"EndNote 库打不开（只读副本）：{exc}"
     error = ""
     try:
         raw = conn.execute("SELECT value FROM misc WHERE code = 14 AND subcode = 0").fetchone()
@@ -91,10 +102,20 @@ def endnote_index(path: Path) -> tuple[dict[str, list[int]], str, str]:
         if raw and raw[0]:
             blob = raw[0]
             db_id = blob.decode("utf-8", "replace").strip() if isinstance(blob, bytes) else str(blob).strip()
-        rows = conn.execute(
-            "SELECT id, trash_state, electronic_resource_number FROM refs "
-            "WHERE electronic_resource_number != ''"
-        ).fetchall()
+        try:
+            rows = conn.execute(
+                "SELECT id, trash_state, electronic_resource_number, added_to_library FROM refs "
+                "WHERE electronic_resource_number != ''"
+            ).fetchall()
+        except sqlite3.Error:
+            # 老库没有 added_to_library 列：外键 timestamp 退回生成时刻。
+            rows = [
+                (rec_id, trash, doi, 0)
+                for rec_id, trash, doi in conn.execute(
+                    "SELECT id, trash_state, electronic_resource_number FROM refs "
+                    "WHERE electronic_resource_number != ''"
+                ).fetchall()
+            ]
     except sqlite3.Error as exc:
         error = f"EndNote 库读不到记录：{exc}"
         rows = []
@@ -103,17 +124,21 @@ def endnote_index(path: Path) -> tuple[dict[str, list[int]], str, str]:
         conn.close()
         copied.close()
     if error:
-        return {}, "", error
+        return {}, {}, "", error
     index: dict[str, list[int]] = {}
-    for rec_id, trash, doi in rows:
+    stamps: dict[int, int] = {}
+    for rec_id, trash, doi, added in rows:
         if trash:
             continue
         key = norm_doi(str(doi))
         if doi_ok(key):
             index.setdefault(key, []).append(int(rec_id))
+            # 外键上的 timestamp 用库里的入库时间，与 EndNote 自己插引文时写的一致。
+            if isinstance(added, int) and added > 0:
+                stamps[int(rec_id)] = added
     if not db_id:
-        return index, "", "EndNote 库读不到库编号，记录号不写入域。"
-    return index, db_id, ""
+        return index, stamps, "", "EndNote 库读不到库编号，记录号不写入域。"
+    return index, stamps, db_id, ""
 
 
 def bind_endnote(records: dict[str, dict], cited: list[str], library: Path | None, project_root: Path | None = None) -> list[str]:
@@ -123,7 +148,7 @@ def bind_endnote(records: dict[str, dict], cited: list[str], library: Path | Non
         return ["未指定 EndNote 库，记录号未绑定。把库的绝对路径写进 papers/endnote-library.path（一行），或运行时加 --endnote-library。"]
     if library.suffix.lower() != ".enl" or not library.is_file():
         return [f"EndNote 库路径不是已有的 .enl：{library}"]
-    index, db_id, note = endnote_index(library)
+    index, stamps, db_id, note = endnote_index(library)
     lines = [f"EndNote 库：{library}"]
     if note:
         lines.append(note)
@@ -141,6 +166,8 @@ def bind_endnote(records: dict[str, dict], cited: list[str], library: Path | Non
         if len(hits) == 1:
             rec["_en_rec"] = hits[0]
             rec["_en_db"] = db_id
+            if hits[0] in stamps:
+                rec["_en_ts"] = stamps[hits[0]]
             bound += 1
         elif len(hits) > 1:
             lines.append(f"- `{key}` DOI `{doi}` 在库里有 {len(hits)} 条，未绑定")
@@ -226,6 +253,10 @@ def zotero_index(path: Path) -> tuple[dict[str, list[str]], str, str]:
             "SELECT value FROM settings WHERE setting = 'account' AND key = 'localUserKey'"
         ).fetchone()
         local_key = str(user[0]).strip() if user and user[0] else ""
+        account = conn.execute(
+            "SELECT value FROM settings WHERE setting = 'account' AND key = 'userID'"
+        ).fetchone()
+        user_id = str(account[0]).strip() if account and account[0] else ""
         # 只取用户库（libraries.type = user）。群组库的地址不是 users/local，混进来会指错。
         rows = conn.execute(
             "SELECT i.libraryID, i.key, v.value FROM items i "
@@ -239,13 +270,19 @@ def zotero_index(path: Path) -> tuple[dict[str, list[str]], str, str]:
         error = f"Zotero 库读不到条目：{exc}"
         rows = []
         local_key = ""
+        user_id = ""
     finally:
         conn.close()
         copied.close()
     if error:
         return {}, "", error
-    if not re.fullmatch(r"[A-Za-z0-9]+", local_key):
-        return {}, "", "Zotero 库没有可用的本机用户键，条目地址不写入域。"
+    # 已登录用账号编号。未登录才用 users/local，和 Zotero 自己写进 Word 的地址一致。
+    if re.fullmatch(r"\d+", user_id) and user_id != "0":
+        owner = f"users/{user_id}"
+    elif re.fullmatch(r"[A-Za-z0-9]+", local_key):
+        owner = f"users/local/{local_key}"
+    else:
+        return {}, "", "Zotero 库没有可用的账号编号或本机用户键，条目地址不写入域。"
     libraries = {int(row[0]) for row in rows}
     if libraries and len(libraries) != 1:
         return {}, "", "Zotero 用户库不是唯一的一个，条目地址不写入域。"
@@ -254,9 +291,9 @@ def zotero_index(path: Path) -> tuple[dict[str, list[str]], str, str]:
         key = norm_doi(str(doi))
         if not doi_ok(key) or not re.fullmatch(r"[A-Z0-9]{8}", str(item_key)):
             continue
-        uri = f"http://zotero.org/users/local/{local_key}/items/{item_key}"
+        uri = f"http://zotero.org/{owner}/items/{item_key}"
         index.setdefault(key, []).append(uri)
-    return index, local_key, ""
+    return index, owner, ""
 
 
 def bind_zotero(records: dict[str, dict], cited: list[str], database: Path | None) -> list[str]:
@@ -289,3 +326,86 @@ def bind_zotero(records: dict[str, dict], cited: list[str], database: Path | Non
             lines.append(f"- `{key}` DOI `{doi}` 库里没有，未绑定")
     lines.insert(1, f"已绑定 {bound} 条")
     return lines
+
+
+# ---------------------------------------------------------------------------
+# 库体检：检出「旧版 Mesa 导出」污染的存量记录，同步/域稿流程据此提示先清后导。
+# 判定特征（只命中旧版产物，正常人工录入不会长这样）：
+#   1. DOI 字段含上下标数字（10.1039/D₂EE₀₄₁₂₁A）——标识符永远不会合法含这些字符
+#   2. 标题里「字母/数字/右括号 + 空格 + 下标」（MgCl ₂）——旧版空格损伤
+#   3. 标题里「字母+数字+-」（Mg2+-Conducting）——旧版未转换的电荷
+_POISON_DIGITS = set("₀₁₂₃₄₅₆₇₈₉⁰¹²³⁴⁵⁶⁷⁸⁹")
+_SPACE_BEFORE_SUB = re.compile(r"[A-Za-z0-9)\]] [₀₁₂₃₄₅₆₇₈₉]")
+_UNCONVERTED_CHARGE = re.compile(r"[A-Za-z]\d\+-")
+
+
+def _stale_flag(doi: str, title: str) -> str:
+    if any(c in _POISON_DIGITS for c in doi or ""):
+        return "DOI 含上下标"
+    if _SPACE_BEFORE_SUB.search(title or ""):
+        return "标题空格损伤"
+    if _UNCONVERTED_CHARGE.search(title or ""):
+        return "标题电荷未转换"
+    return ""
+
+
+def endnote_stale_records(path: Path | None) -> tuple[list[str], str]:
+    """EndNote 库活记录里的旧版污染清单。返回 (清单, 说明)：说明非空表示没查成。"""
+    if path is None or not path.is_file():
+        return [], f"EndNote 库不存在：{path}"
+    try:
+        conn, copied = open_library_copy(path)
+    except (OSError, sqlite3.Error) as exc:
+        return [], f"EndNote 库打不开（只读副本）：{exc}"
+    try:
+        rows = conn.execute(
+            "SELECT id, electronic_resource_number, title FROM refs WHERE trash_state = 0"
+        ).fetchall()
+    except sqlite3.Error as exc:
+        return [], f"EndNote 库读不到记录：{exc}"
+    finally:
+        conn.close()
+        copied.close()
+    hits = []
+    for rec_id, doi, title in rows:
+        which = _stale_flag(str(doi or ""), str(title or ""))
+        if which:
+            hits.append(f"记录 {rec_id}（{which}）｜{(title or '')[:44]}")
+    return hits, ""
+
+
+def zotero_stale_items(db: Path | None) -> tuple[list[str], str]:
+    """Zotero 用户库里的旧版污染清单。没配置数据目录时返回说明，不当错误。"""
+    if db is None:
+        db = zotero_db_path()
+        if db is None:
+            return [], "未找到 Zotero 数据目录，跳过库体检"
+    if not db.is_file():
+        return [], f"Zotero 库不存在：{db}"
+    try:
+        conn, copied = open_library_copy(db)
+    except (OSError, sqlite3.Error) as exc:
+        return [], f"Zotero 库打不开（只读副本）：{exc}"
+    try:
+        rows = conn.execute(
+            "SELECT i.itemID, f.fieldName, v.value FROM items i "
+            "JOIN libraries lib ON lib.libraryID = i.libraryID AND lib.type = 'user' "
+            "JOIN itemData d ON d.itemID = i.itemID "
+            "JOIN fields f ON f.fieldID = d.fieldID AND f.fieldName IN ('DOI', 'title') "
+            "JOIN itemDataValues v ON v.valueID = d.valueID "
+            "WHERE i.itemID NOT IN (SELECT itemID FROM deletedItems)"
+        ).fetchall()
+    except sqlite3.Error as exc:
+        return [], f"Zotero 库读不到条目：{exc}"
+    finally:
+        conn.close()
+        copied.close()
+    per_item: dict[int, dict[str, str]] = {}
+    for item_id, field, value in rows:
+        per_item.setdefault(item_id, {})[field.lower()] = str(value)
+    hits = []
+    for item_id, fields in per_item.items():
+        which = _stale_flag(fields.get("doi", ""), fields.get("title", ""))
+        if which:
+            hits.append(f"条目 {item_id}（{which}）｜{fields.get('title', '')[:44]}")
+    return hits, ""

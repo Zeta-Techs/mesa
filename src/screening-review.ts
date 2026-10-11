@@ -299,6 +299,378 @@ function urlOf(rec: Record<string, unknown>, id: string): string {
   return doi ? `https://doi.org/${doi}` : "";
 }
 
+/** IUPAC 元素符号。双字母优先，避免把正文词切成元素。 */
+const ELEMENT_SYMBOLS = new Set(
+  "H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Ge As Se Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Sb Te I Xe Cs Ba La Ce Pr Nd Pm Sm Eu Gd Tb Dy Ho Er Tm Yb Lu Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Po At Rn Fr Ra Ac Th Pa U Np Pu Am Cm Bk Cf Es Fm Md No Lr Rf Db Sg Bh Hs Mt Ds Rg Cn Nh Fl Mc Lv Ts Og".split(" "),
+);
+
+function isElementSymbol(token: string): boolean {
+  return ELEMENT_SYMBOLS.has(token);
+}
+
+/** 下一个字母若还在拼单词（Cobalt、Complex），这里就不是元素。单独的计量 x 除外。 */
+function continuesWord(text: string, index: number): boolean {
+  const next = text[index] ?? "";
+  if (!/[a-z]/.test(next)) return false;
+  if (next === "x" && !/[A-Za-z]/.test(text[index + 1] ?? "")) return false;
+  return true;
+}
+
+/**
+ * 整段都能拆成元素、系数、计量 x 或键，才算化学式。
+ * 做法同 ComProScanner 的 formula prefix：双字母优先，碰到单词续写就停。
+ */
+function formulaCovers(text: string): boolean {
+  let pos = 0;
+  const greek = /^[α-ωΑ-Ω]+/.exec(text);
+  if (greek) pos = greek[0].length;
+  while (pos < text.length) {
+    const rest = text.slice(pos);
+    const ch = rest[0] ?? "";
+    if ("\u2013\u2212-/".includes(ch)) {
+      pos += 1;
+      continue;
+    }
+    if (ch === "x") {
+      const afterX = rest.slice(1);
+      const nextTwo = afterX.slice(0, 2);
+      const nextIsElement = (nextTwo.length === 2 && isElementSymbol(nextTwo) && !continuesWord(afterX, 2))
+        || (isElementSymbol(afterX[0] ?? "") && !continuesWord(afterX, 1));
+      if (nextIsElement || !/[A-Za-z]/.test(afterX[0] ?? "")) {
+        pos += 1;
+        continue;
+      }
+    }
+    const num = /^(?:\d+(?:\.\d+)?)(?:\/\d+(?:\.\d+)?)?/.exec(rest);
+    if (num && (pos === 0 || /[A-Za-z)\u2013\u2212/-]/.test(text[pos - 1] ?? ""))) {
+      pos += num[0].length;
+      continue;
+    }
+    const two = rest.slice(0, 2);
+    if (two.length === 2 && isElementSymbol(two) && !continuesWord(text, pos + 2)) {
+      pos += 2;
+      continue;
+    }
+    const one = rest.slice(0, 1);
+    if (isElementSymbol(one) && !continuesWord(text, pos + 1)) {
+      pos += 1;
+      continue;
+    }
+    return false;
+  }
+  return text.length > 0;
+}
+
+function hasRealElement(token: string): boolean {
+  const body = token.replace(/^[α-ωΑ-Ω]+/, "").replace(/[\u2013\u2212-]+$/u, "");
+  let i = 0;
+  let found = false;
+  while (i < body.length) {
+    const two = body.slice(i, i + 2);
+    if (two.length === 2 && /^[A-Z][a-z]$/.test(two) && isElementSymbol(two) && !continuesWord(body, i + 2)) {
+      found = true;
+      i += 2;
+      continue;
+    }
+    const one = body[i] ?? "";
+    if (/[A-Z]/.test(one) && isElementSymbol(one) && !continuesWord(body, i + 1) && !/[A-Z]/.test(body[i + 1] ?? "")) {
+      found = true;
+      i += 1;
+      continue;
+    }
+    i += 1;
+  }
+  return found;
+}
+
+export function isFormulaToken(token: string): boolean {
+  const body = token.replace(/^[α-ωΑ-Ω]+/, "");
+  const core = body.replace(/[\u2013\u2212-]+$/u, "");
+  if (!core) return false;
+  if (core === "x" || /^[\u2013\u2212-]?x$/.test(core)) return true;
+  // \u7eaf\u6570\u5b57 token \u53ea\u8ba4 1\u20132 \u4f4d\uff08\u5316\u5b66\u8ba1\u91cf\uff09\uff1a3 \u4f4d\u4ee5\u4e0a\u662f\u5e74\u4efd/\u6e29\u5ea6/\u9875\u7801\u4e00\u7c7b\u7684\u6563\u6587\u6570\u5b57\uff0c
+  // \u4e0d\u80fd\u5f53\u5f0f\u5b50\u6210\u5206\u53c2\u4e0e\u7c98\u63a5\uff08\u300cIn 2020,\u300d\u4f1a\u88ab\u62fc\u6210 In2020\uff0c2026-10-11 \u5bf9\u6297\u5ba1\u67e5\u5b9e\u8bc1\uff09
+  if (/^(?:\d{1,2}(?:\.\d+)?)(?:\/\d{1,2}(?:\.\d+)?)?(?:[\u2013\u2212-]x?)?$/.test(core)) return true;
+  if (/^\d{1,2}\.\d{1,2}$/.test(core)) return true;
+  // 三个以上全大写是缩写（HCP）。两个全大写且能拆成元素才算式子（BO）。
+  if (/^[A-Z][a-z]?\d/.test(core) && formulaCovers(core) && hasRealElement(core)) return true;
+  if (/^[A-Z][a-z]?\d+-[A-Z]{2,4}B\d+$/.test(core)) return true;
+  if (/^[A-Z]{3,}$/.test(core)) return false;
+  if (/^[A-Z]{2}$/.test(core) && !hasRealElement(core)) return false;
+  return formulaCovers(core) && hasRealElement(core);
+}
+
+const SUB_MARKS: Record<string, string> = {
+  "0": "₀", "1": "₁", "2": "₂", "3": "₃", "4": "₄",
+  "5": "₅", "6": "₆", "7": "₇", "8": "₈", "9": "₉",
+  "+": "₊", "-": "₋", "x": "ₓ", "y": "ᵧ",
+};
+const SUP_MARKS: Record<string, string> = {
+  "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
+  "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹",
+  "+": "⁺", "-": "⁻",
+};
+
+function shiftMarks(text: string, table: Record<string, string>): string {
+  return [...text].map((ch) => table[ch] ?? ch).join("");
+}
+
+/**
+ * 化学式数字收成下标，电荷收成上标。和 endnote-bridge 的 clean 同一条：
+ * 元素或右括号后面的数字（含小数、分数）才是下标；2D、相号 -191、变量 n 不动。
+ * 计量 x 和下标之间的连接号也收成下标，1–x 整段在一起。
+ */
+function markFormulaDigits(formula: string): string {
+  // 复合物末位「化学计量数+电荷」只把 + 上标，数字留给下标规则（Mg2Cl3+ → Mg₂Cl₃⁺，
+  // 不是 Mg₂Cl³⁺）。须在数字转下标之前做。
+  formula = formula.replace(/((?:[A-Z][a-z]?\d{1,2}){2,})\+/g, "$1⁺");
+  formula = formula
+    .replace(/(?<![A-Za-z])x(?![A-Za-z])/g, "ₓ")
+    .replace(/([A-Z][a-z]?)x(?![a-z])/g, (match, element: string) =>
+      isElementSymbol(element) ? `${element}ₓ` : match,
+    );
+  // 位数收到 1–2 位：化学计量鲜有 3 位以上，而「In 2020,」「At 300 K」这类散文高频句式
+  // 会被 3+ 位整段下标（2026-10-11 对抗审查实证）。
+  const coefficient = /^(\d{1,2}(?:\.\d+)?(?:\/\d{1,2}(?:\.\d+)?)?)(?![0-9+])/;
+  const atom = /^([A-Z][a-z]?|[α-ωΑ-Ω])/ ;
+  const sub = new Set([..."₀₁₂₃₄₅₆₇₈₉ₓᵧ"]);
+  const chars = [...formula];
+  const out: string[] = [];
+  let i = 0;
+  while (i < chars.length) {
+    const rest = chars.slice(i).join("");
+    const el = atom.exec(rest);
+    const prev = out[out.length - 1] ?? "";
+    const beforeIsFormula = prev === "" || prev === ")" || sub.has(prev) || /[A-Za-z\s\u2013\u2212ₓᵧ-]/.test(prev);
+    const symbolOk = Boolean(el) && (isElementSymbol(el?.[1] ?? "") || /[α-ωΑ-Ω]/.test(el?.[1] ?? ""));
+    if (el && symbolOk && beforeIsFormula) {
+      const after = rest.slice(el[1].length);
+      // 连写式：Zr1-xTMxB2。Crossref 纯文本会把 Zr1-xTMxB2 收成 Zr1-TMB2。先于单个数字。
+      const varied = /^(\d+)-x(?![a-z])/.exec(after);
+      if (varied && isElementSymbol(el[1])) {
+        out.push(`${el[1]}${shiftMarks(varied[1], SUB_MARKS)}₋ₓ`);
+        i += el[1].length + varied[0].length;
+        continue;
+      }
+      const glued = /^(\d+)[ \t]*-[ \t]*([A-Z]{2,4})B(\d+)/.exec(after);
+      if (glued && isElementSymbol(el[1])) {
+        out.push(`${el[1]}${shiftMarks(glued[1], SUB_MARKS)}₋ₓ${glued[2]}ₓB${shiftMarks(glued[3], SUB_MARKS)}`);
+        i += el[1].length + glued[0].length;
+        continue;
+      }
+      const gap = /^[ \t]+/.exec(after)?.[0].length ?? 0;
+      const num = coefficient.exec(after.slice(gap));
+      if (num && (gap > 0 || !/[a-z]/.test(chars[i + el[1].length] ?? ""))) {
+        out.push(el[1] + shiftMarks(num[1], SUB_MARKS));
+        i += el[1].length + gap + num[1].length;
+        continue;
+      }
+    }
+    const ch = chars[i] ?? "";
+    const ahead = chars.slice(i).join("");
+    const stoichiometry = /^([₀₁₂₃₄₅₆₇₈₉])([\u2013\u2212-])x(?![A-Za-z])/.exec(ahead);
+    if (stoichiometry) {
+      out.push(stoichiometry[1], "₋", "ₓ");
+      i += stoichiometry[0].length;
+      continue;
+    }
+    out.push(ch);
+    i += 1;
+  }
+  let text = out.join("");
+  text = text.replace(/([₀₁₂₃₄₅₆₇₈₉ₓᵧ])[ \t]+([A-Z][a-z]?)(?![a-z])/g, "$1$2");
+  text = text.replace(/([₀₁₂₃₄₅₆₇₈₉ₓᵧ])[ \t]+\)/g, "$1)");
+  text = text.replace(/(\d{1,2}\+|\d{1,2}-(?!-))(?![A-Za-z0-9])/g, (charge) => shiftMarks(charge, SUP_MARKS));
+  return text;
+}
+
+/** 整句里已经成形的化学式再收一次。摘要里的「Co₂ B.」不靠分词。 */
+function tightenMarkedFormula(text: string): string {
+  const chars = [...text];
+  const sub = new Set("₀₁₂₃₄₅₆₇₈₉ₓᵧ");
+  const bond = new Set(["\u2013", "\u2212", "-"]);
+  const out: string[] = [];
+  for (let i = 0; i < chars.length; i += 1) {
+    const ch = chars[i] ?? "";
+    const prev = out[out.length - 1] ?? "";
+    const next = chars[i + 1] ?? "";
+    if (ch === "x" && !/[A-Za-z]/.test(next) && (sub.has(prev) || bond.has(prev) || "–−-".includes(prev))) {
+      if (bond.has(prev) || "–−-".includes(prev)) out[out.length - 1] = "₋";
+      out.push("\u2093");
+      continue;
+    }
+    const nextWord = chars.slice(i + 1).join("").match(/^[A-Za-z]+/)?.[0] ?? "";
+    if (ch === " " && sub.has(prev) && isElementSymbol(nextWord)) {
+      continue;
+    }
+    out.push(ch);
+  }
+  return out.join("");
+}
+
+/**
+ * 题名显示。不改 included.json。
+ * Mac 把 U+F8FF 画成苹果；出版数据里它和制表线常是化学键。
+ * 连续几个词都能拆成化学式时才去掉它们之间的空格，并把数字收成上下标。
+ */
+export function displayCitationTitle(title: string): string {
+  // 标识符整段豁免：题名/摘要里的 DOI/URL 不做化学美化（与 bridge.py clean() 同款停车手法；
+  // 哨兵用私用区单字符，不用数字编码——数字会被上下标转换改写导致恢复失配、URL 静默丢失）。
+  const parked: string[] = [];
+  const prepared = title
+    .replace(/[\x00\uE000-\uE3FF]/g, "")
+    .replace(/(https?:\/\/[^<>\s]+|(?<![\w.])10\.\d{4,9}\/[^<>\s]+)/gi, (hit) => {
+      parked.push(hit);
+      return String.fromCharCode(0xe000 + parked.length - 1);
+    })
+    .replace(/[\uF8FF\u2500]/g, "–")
+    .replace(/\u2010/g, "-")
+    // 先剥斜体粗体，再吃掉标签前的排版空格（MgCl <sub>2</sub> → MgCl₂），最后收上下标。
+    // 标签内容以数字/正负号/x/y 开头、前一字符是字母数字或右括号才吃，纯文字不受影响。
+    .replace(/<\/?(?:i|b|em|strong)>/gi, "")
+    .replace(/(?<=[A-Za-z0-9)\]])[ \t ]+(?=<[sS][uU][bB]>[+\-−0-9xy]|<[sS][uU][pP]>[+\-−0-9xy])/g, "")
+    .replace(/<sup>(.*?)<\/sup>/gi, (_m, inner: string) => shiftMarks(inner, SUP_MARKS))
+    .replace(/<sub>(.*?)<\/sub>/gi, (_m, inner: string) => shiftMarks(inner, SUB_MARKS))
+    // 复合物末位是「化学计量数+电荷」而非高价电荷：Mg2Cl3+ 是 [Mg₂(μ-Cl)₃]⁺，只把 + 上标，
+    // 数字留给下标规则（2026-10-11 实证：整串读成 Mg₂Cl³⁺，化学含义翻转）。
+    .replace(/((?:[A-Z][a-z]?\d{1,2}){2,})\+/g, "$1⁺")
+    // 电荷上标常以连字符形容词收尾：Mg2+-Conducting、Li+-based。'-' 不在豁免之列；
+    // 负电荷不吞双连字符（C60--covered 不是 C⁶⁰⁻）。
+    .replace(/([A-Za-z])(\d{1,2}\+|\d{1,2}-(?!-))(?![A-Za-z0-9])/g, (_m, atom: string, charge: string) => atom + shiftMarks(charge, SUP_MARKS))
+    // 存量已损坏形态的愈合：老产物里「字母+空格+上下标字」（MgCl ₂、cm ⁻²）把空格吃掉。
+    // 正常散文不含 Unicode 上下标字符，此规则只命中被旧版污染过的题录。
+    .replace(/(?<=[A-Za-z0-9)\]])[ \t ]+(?=[₀₁₂₃₄₅₆₇₈₉⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻])/g, "");
+  const text = prepared.replace(/[ \u00A0]+([,.;:!?])/g, "$1");
+  const raw = text.split(/(\s+|[()[\]])/).flatMap((part) => {
+    if (/^\s+$/.test(part) || /^[()[\]]$/.test(part)) return [part];
+    return part.match(/\d+(?:\.\d+)?[\u2013\u2212-]?|[\u2013\u2212-]|[^\s()[\]]+/g) ?? [part];
+  });
+  const out: string[] = [];
+  let i = 0;
+  while (i < raw.length) {
+    const token = raw[i] ?? "";
+    if (!isFormulaToken(token)) {
+      out.push(token);
+      i += 1;
+      continue;
+    }
+    if (/[\dx]/i.test(token) && (formulaCovers(token.replace(/[\u2013\u2212-]+$/u, "")) && hasRealElement(token) || /^[A-Z][a-z]?\d+-[A-Z]{2,4}B\d+$/.test(token))) {
+      out.push(markFormulaDigits(token));
+      i += 1;
+      continue;
+    }
+    const parts = [token];
+    let j = i + 1;
+    let end = i;
+    while (j < raw.length) {
+      const glue: string[] = [];
+      let k = j;
+      while (k < raw.length && /^(\s+|[\u2013\u2212-])$/.test(raw[k] ?? "")) {
+        if (/^[\u2013\u2212-]$/.test(raw[k] ?? "")) glue.push(raw[k] ?? "");
+        k += 1;
+      }
+      if (k >= raw.length) break;
+      const next = raw[k] ?? "";
+      if (!isFormulaToken(next)) break;
+      parts.push(...glue, next);
+      end = k;
+      j = k + 1;
+    }
+    const joined = parts.join("");
+    const eachIsFormula = parts.every((part) => hasRealElement(part) || part === "x" || /^\d/.test(part));
+    if (parts.length > 1 && eachIsFormula && /[\dx]/.test(joined) && formulaCovers(joined) && hasRealElement(joined)) {
+      let prefix = "";
+      let cursor = out.length;
+      const pulled: string[] = [];
+      let sawSpace = false;
+      while (cursor > 0) {
+        const piece = out[cursor - 1] ?? "";
+        if (/^\s+$/.test(piece)) {
+          sawSpace = true;
+          cursor -= 1;
+          continue;
+        }
+        const formulaPiece = piece === "x" || /^\d[\u2013\u2212-]?$/.test(piece) || (/^[A-Z][a-z]?$/.test(piece) && hasRealElement(piece));
+        if (!formulaPiece) break;
+        pulled.unshift(piece);
+        sawSpace = false;
+        cursor -= 1;
+      }
+      if (pulled.length > 0) {
+        prefix = pulled.join("");
+        const dropFrom = sawSpace ? cursor + 1 : cursor;
+        out.splice(dropFrom, out.length - dropFrom);
+      }
+      out.push(markFormulaDigits(prefix + joined));
+      i = end + 1;
+      continue;
+    }
+    out.push(token);
+    i += 1;
+  }
+  return tightenMarkedFormula(out.join(""))
+    .replace(/([([{])[ \u00A0]+/g, "$1")
+    .replace(/[ \u00A0]+([)\]}])/g, "$1")
+    .replace(/₁–x/g, "₁₋ₓ")
+    .replace(/([A-Z][a-z]?)(\d+)-([A-Z]{2,4})B(\d+)/g, (_m, el: string, a: string, tm: string, b: string) =>
+      isElementSymbol(el) ? `${el}${shiftMarks(a, SUB_MARKS)}₋ₓ${tm}ₓB${shiftMarks(b, SUB_MARKS)}` : _m,
+    )
+    .replace(/([A-Z][a-z]?)(\d+)(?=[/B])/g, (_m, el: string, digits: string) =>
+      isElementSymbol(el) ? el + shiftMarks(digits, SUB_MARKS) : _m,
+    )
+    .replace(/([₀₁₂₃₄₅₆₇₈₉])[ \t]*[A-Z][ \t]+(\d+(?:\.\d+)?)/g, (_m, lead: string, rest: string) => `${lead}T${shiftMarks(rest, SUB_MARKS)}`)
+    .replace(/([₀₁₂₃₄₅₆₇₈₉])–ₓ/g, "$1₋ₓ")
+    .replace(/([A-Z][a-z]?) x(?![A-Za-z])/g, (match, element: string) =>
+      isElementSymbol(element) ? `${element}ₓ` : match,
+    )
+    .replace(/([A-Z]) x(?![A-Za-z])/g, "$1ₓ")
+    .replace(/([A-Z][a-z]?)x([A-Z][a-z]?)yB/g, (match, left: string, right: string) =>
+      isElementSymbol(left) && isElementSymbol(right) ? `${left}ₓ${right}ᵧB` : match,
+    )
+    .replace(/([A-Z][a-z]?) n \+1/g, (match, element: string) =>
+      isElementSymbol(element) ? `${element}ₙ₊₁` : match,
+    )
+    .replace(/([A-Z][a-z]?) n(?![A-Za-z])/g, (match, element: string) =>
+      isElementSymbol(element) ? `${element}ₙ` : match,
+    )
+    .replace(/([A-Z][a-z]?) (\d+)(?= -\d)/g, (match, element: string, digits: string) =>
+      isElementSymbol(element) ? `${element}${shiftMarks(digits, SUB_MARKS)}` : match,
+    )
+    .replace(/TMB (\d+)/g, (_m, digits: string) => `TMB${shiftMarks(digits, SUB_MARKS)}`)
+    .replace(/\)(\d+)/g, (_m, digits: string) => `)${shiftMarks(digits, SUB_MARKS)}`)
+    .replace(/(\d+)A cm [−-]2(?![0-9A-Za-z])/g, (_m, amount: string) => `${amount} A cm⁻²`)
+    .replace(/cm ?[−–-]2(?![0-9A-Za-z])/g, "cm⁻²")
+    .replace(/([a-z]) -(?=[A-Z])/g, "$1-")
+    .replace(/[ \t]+ₓ/g, "ₓ")
+    .replace(/([₀₁₂₃₄₅₆₇₈₉])\.(\d)/g, (_m, lead: string, tail: string) => `${lead}\u2024${shiftMarks(tail, SUB_MARKS)}`)
+    .replace(/([A-Z][a-z]?)(\d+)(?=[@A-Z])/g, (match, element: string, digits: string) =>
+      isElementSymbol(element) ? element + shiftMarks(digits, SUB_MARKS) : match,
+    )
+    .replace(/([ₙ₊₁])[ \t]+(?=[A-Z])/g, "$1")
+    .replace(/([₀₁₂₃₄₅₆₇₈₉ₓᵧⁿ])[ \t]+-(?=[A-Za-z0-9])/g, "$1-")
+    .replace(/([₀₁₂₃₄₅₆₇₈₉])\/(\d+)/g, (_m, lead: string, tail: string) => `${lead}/${shiftMarks(tail, SUB_MARKS)}`)
+    .replace(/([₀₁₂₃₄₅₆₇₈₉])[ \t]+([A-Z](?![a-z]{2}))/g, "$1$2")
+    .replace(/T[ \t]+z(?![A-Za-z])/g, "Tz")
+    .replace(/([₀₁₂₃₄₅₆₇₈₉])([A-Z][a-z]?)(\d+)/g, (_m, lead: string, element: string, digits: string) =>
+      isElementSymbol(element) ? `${lead}${element}${shiftMarks(digits, SUB_MARKS)}` : _m,
+    )
+    .replace(/([A-Z]{2,3})(\d+)/g, (_m, mark: string, digits: string) => `${mark}${shiftMarks(digits, SUB_MARKS)}`)
+    .replace(/([A-Z][a-z]?)(\d+)(?=-)/g, (match, element: string, digits: string) =>
+      isElementSymbol(element) ? `${element}${shiftMarks(digits, SUB_MARKS)}` : match,
+    )
+    // 放回停车的标识符原文
+    .replace(/[\uE000-\uE3FF]/g, (hit) => parked[hit.charCodeAt(0) - 0xe000] ?? hit);
+}
+
+/** Agent 常把纳入写成 include。清单、计数和移出都认 included。 */
+export function canonicalScreeningDecision(value: string): string {
+  const decision = value.trim().toLowerCase();
+  if (decision === "include" || decision === "included") return "included";
+  if (decision === "exclude" || decision === "excluded") return "excluded";
+  if (decision === "pending") return "pending";
+  return value.trim();
+}
+
 function asRows(data: unknown): unknown[] {
   if (Array.isArray(data)) return data;
   if (!data || typeof data !== "object") return [];
@@ -326,7 +698,7 @@ export function parseIncludedRecords(text: string): IncludedRecord[] {
     out.push({
       id,
       title,
-      decision: typeof rec.decision === "string" ? rec.decision : "",
+      decision: canonicalScreeningDecision(typeof rec.decision === "string" ? rec.decision : ""),
       reason: typeof rec.reason === "string" ? rec.reason : "",
       authors: authorsOf(rec),
       year: yearOf(rec),
@@ -866,6 +1238,11 @@ function risValue(value: string): string {
   return value.replace(/\r?\n/g, " ").replace(/\s+/g, " ").trim();
 }
 
+/** RIS 正文里的化学式。DOI、年份、卷期页不走这里。 */
+function risText(value: string): string {
+  return displayCitationTitle(risValue(value));
+}
+
 function risAuthors(authors: string): string[] {
   const text = authors.trim();
   if (!text) return [];
@@ -932,7 +1309,7 @@ function pushTag(lines: string[], tag: string, value: string) {
 function risBody(row: IncludedRecord, target: "zotero" | "endnote"): string[] {
   const lines = ["TY  - JOUR"];
   for (const author of risAuthors(row.authors)) lines.push(`AU  - ${author}`);
-  pushTag(lines, "TI", row.title);
+  pushTag(lines, "TI", risText(row.title));
   const journal = risValue(row.source);
   if (journal && journal !== "待补") lines.push(`T2  - ${journal}`);
   const short = risValue(row.journalAbbreviation);
@@ -955,10 +1332,10 @@ function risBody(row: IncludedRecord, target: "zotero" | "endnote"): string[] {
   pushTag(lines, "SN", row.issn);
   const doi = doiToken(row.id, row.url);
   if (doi) lines.push(`DO  - ${doi}`);
-  for (const word of risValue(row.keywords).split(/[;；]/)) {
+  for (const word of risText(row.keywords).split(/[;；]/)) {
     if (word.trim() && word.trim() !== "待补") lines.push(`KW  - ${word.trim()}`);
   }
-  pushTag(lines, "AB", row.abstract);
+  pushTag(lines, "AB", risText(row.abstract));
   if (target === "endnote") pushTag(lines, "LA", row.language);
   const url = risValue(row.url) || (doi ? `https://doi.org/${doi}` : "");
   if (url) lines.push(`UR  - ${url}`);

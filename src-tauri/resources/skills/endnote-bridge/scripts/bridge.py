@@ -141,6 +141,17 @@ def parse_bibtex(text):
 
 
 def load(path):
+    records = _load(path)
+    # 输入侧统一愈合标识符：老文件里被美化成上下标的数字折回 ASCII，回程对账才对得上。
+    # 页码/卷/期/ISSN 同病（A₂₅₇ 这类文章号页码），一并折叠（2026-10-11 对抗审查实证）。
+    for record in records:
+        for field in ('doi', 'url', 'pages', 'volume', 'number', 'issn'):
+            if record.get(field):
+                record[field] = plain_id(record[field])
+    return records
+
+
+def _load(path):
     with path.open('rb') as source:
         data = source.read(32 * 1024 * 1024 + 1)
     if len(data) > 32 * 1024 * 1024:
@@ -230,8 +241,26 @@ def escape_bib(value):
     return ''.join('\\'+c if c in '&%_#{}$' else c for c in str(value))
 
 
-_SUB = str.maketrans('0123456789+-xy', '₀₁₂₃₄₅₆₇₈₉₊₋ₓᵧ')
-_SUP = str.maketrans('0123456789+-', '⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻')
+_SUB = str.maketrans('0123456789+-xy−', '₀₁₂₃₄₅₆₇₈₉₊₋ₓᵧ₋')
+_SUP = str.maketrans('0123456789+-−', '⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁻')
+
+# DOI/URL/附件路径是标识符：不做化学上下标美化，只折空白；输入侧再把上下标/全角
+# 数字折叠回 ASCII（老导入文件里的 10.1039/D₂EE₀₄₁₂₁A 这类愈合回 D2EE04121A）。
+_DIGIT_FOLD = {}
+for _i, _c in enumerate('₀₁₂₃₄₅₆₇₈₉'):
+    _DIGIT_FOLD[ord(_c)] = str(_i)
+for _i, _c in enumerate('⁰¹²³⁴⁵⁶⁷⁸⁹'):
+    _DIGIT_FOLD[ord(_c)] = str(_i)
+for _i, _c in enumerate('０１２３４５６７８９'):
+    _DIGIT_FOLD[ord(_c)] = str(_i)
+
+
+def plain_id(value):
+    return ' '.join(str(value or '').translate(_DIGIT_FOLD).split())
+
+
+def ascii_doi(value):
+    return plain_id(value)
 
 
 def _shift_marks(text, table):
@@ -241,9 +270,29 @@ def _shift_marks(text, table):
 def clean(value):
     if value is None:
         return ''
-    text = str(value).replace('\r', ' ').replace('\n', ' ')
+    # NUL 与私用区 E000-E3FF 是标识符占位符的哨兵字符；源文本里混进来的先剥掉，防占位符错位。
+    # 哨兵不能用数字编码：占位符若落在 <sup>/<sub> 标签内，索引数字会被 _shift_marks
+    # 转成上/下标数字，恢复正则失配 → URL 静默丢失 + 哨兵字符泄漏（2026-10-11 对抗审查实证）。
+    text = re.sub('[\x00-]', '', str(value)).replace('\r', ' ').replace('\n', ' ')
+    # 标识符整段豁免：摘要里引用的 DOI/URL 同样不做化学美化（\)(\d+) 等规则会命中
+    # 10.1016/s0022-0728(99)00146-1 一类后缀）。先摘出去占位，收尾折空白放回。
+    # 匹配不跨 < >：URL 紧跟 </sup> 时不能把闭标签一起吞掉。
+    parked = []
+
+    def _park(match):
+        parked.append(match.group(0))
+        return chr(0xE000 + len(parked) - 1)
+
+    text = re.sub(r'https?://[^<>\s]+|(?<![\w.])10\.\d{4,9}/[^<>\s]+', _park, text, flags=re.I)
     # 先去掉斜体粗体标签，再把上下标收成 Unicode。两个库都按字符显示，不再留 <sup> 或变成 S0。
     text = re.sub(r'</?(?:i|b|em|strong)>', '', text, flags=re.I)
+    # Crossref 在标签前留的排版空格：MgCl <sub>2</sub>、cm <sup>−2</sup>、) <sub>2</sub>。
+    # 前一字符是字母数字/右括号/右中括号、标签内容以数字或正负号/x/y 开头才算化学附件，吃掉这个空格；
+    # 纯文字（"…in <sub>…"）不带这些标签，不受影响。标签名允许大小写混写，内容类保持大小写敏感
+    # （大写 <sub>X</sub> 是染色体/变量记法，X 不在翻译表里，粘连成 maximumX 更糟）。
+    text = re.sub(
+        r'(?<=[A-Za-z0-9)\]])[ \t ]+(?=<[sS][uU][bB]>[+\-−0-9xy]|<[sS][uU][pP]>[+\-−0-9xy])',
+        '', text)
     text = re.sub(r'<sup>(.*?)</sup>', lambda m: _shift_marks(m.group(1), _SUP), text, flags=re.I)
     text = re.sub(r'<sub>(.*?)</sub>', lambda m: _shift_marks(m.group(1), _SUB), text, flags=re.I)
     text = re.sub(r'<[^>]+>', '', text)
@@ -257,11 +306,52 @@ def clean(value):
     previous = None
     while previous != text:
         previous = text
-        text = re.sub(r'([A-Za-z])[ \t]*(\d{1,2}\+)', lambda m: m.group(1) + sup_num(m.group(2)), text)
-        text = re.sub(r'([A-Z][a-z]?|\))[ \t]+(\d{1,2})(?![0-9+])', lambda m: m.group(1) + sub_num(m.group(2)), text)
-        text = re.sub(r'(?<![A-Za-z])([A-Z][a-z]?)(\d{1,2})(?![0-9+])', lambda m: m.group(1) + sub_num(m.group(2)), text)
+        # 复合物末位是「化学计量数+电荷」而不是高价电荷：Mg2Cl3+ 是 [Mg₂(μ-Cl)₃]⁺（2026-10-11
+        # 全量巡查实证：被读成 Mg₂Cl³⁺，化学含义翻转）。两个以上「元素+数字」组再跟 + 时，
+        # 只把 + 上标，数字留给下标规则。单个 Mg2+ 仍是 Mg²⁺。
+        text = re.sub(r'((?:[A-Z][a-z]?\d{1,2}){2,})\+', lambda m: m.group(1) + '⁺', text)
+        # 电荷上标常以连字符形容词收尾：Mg2+-Conducting、Li+-based。'-' 不在豁免之列，
+        # 豁免它就整串不动（2026-10-11 实证：Mg2+-Conducting 原样进了参考文献表）。
+        text = re.sub(r'([A-Za-z])[ \t]*(\d{1,2}\+)(?![A-Za-z0-9])', lambda m: m.group(1) + sup_num(m.group(2)), text)
+        text = re.sub(r'([A-Z][a-z]?)(\d+)-x(?![a-z])', lambda m: m.group(1) + sub_num(m.group(2)) + '₋ₓ', text)
+        # 元素紧跟的计量 x 收成 ₓ（进循环：MgxMo3S4 要先变 Mgₓ，Mo₃ 才不会被字母 x 的
+        # 回溯断言挡住——放循环外会留半转换的 Mo3）
+        text = re.sub(r'([A-Z][a-z]?)x(?![a-z])', r'\1ₓ', text)
+        # 存量已损坏形态的愈合：老产物里「字母+空格+上下标字」（MgCl ₂、cm ⁻²）把空格吃掉。
+        # 正常散文里不会出现 Unicode 上下标字符，此规则只命中被旧版污染过的题录。
+        text = re.sub(r'(?<=[A-Za-z0-9)\]])[ \t ]+(?=[₀₁₂₃₄₅₆₇₈₉⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻])', '', text)
+        # 位数收到 1–2 位：化学计量鲜有 3 位以上，而「In 2020,」「At 300 K」这类散文高频句式
+        # 会被 3+ 位整段下标（2026-10-11 对抗审查实证）。页码 A257 也靠「1–2 位+后视断言」自然豁免。
+        text = re.sub(r'([A-Z][a-z]?|\))[ \t]+(\d{1,2}(?:\.\d+)?)(?![0-9+])', lambda m: m.group(1) + sub_num(m.group(2)), text)
+        text = re.sub(r'(?<![A-Za-z])([A-Z][a-z]?)(\d{1,2}(?:\.\d+)?)(?![0-9+])', lambda m: m.group(1) + sub_num(m.group(2)), text)
         text = re.sub(r'([₀₁₂₃₄₅₆₇₈₉ₓᵧ])[ \t]+([A-Z][a-z]?)(?![a-z])', r'\1\2', text)
         text = re.sub(r'([₀₁₂₃₄₅₆₇₈₉ₓᵧ])[ \t]+\)', r'\1)', text)
+    # 界面显示规则已经收住的写法。这里只补导入，不把两套合成一个函数。
+    text = text.replace('\uf8ff', '–').replace('\u2500', '–').replace('\u2010', '-')
+    text = re.sub(r'([A-Z][a-z]?)(\d+)-([A-Z]{2,4})B(\d+)', lambda m: m.group(1) + sub_num(m.group(2)) + '₋ₓ' + m.group(3) + 'ₓB' + sub_num(m.group(4)), text)
+    text = re.sub(r'([A-Z][a-z]?)x([A-Z][a-z]?)yB', lambda m: m.group(1) + 'ₓ' + m.group(2) + 'ᵧB', text)
+    text = re.sub(r'([A-Z]{2,3})(\d+)', lambda m: m.group(1) + sub_num(m.group(2)), text)
+    text = re.sub(r'([A-Z][a-z]?) (\d+)(?= -\d)', lambda m: m.group(1) + sub_num(m.group(2)), text)
+    text = re.sub(r'([₀₁₂₃₄₅₆₇₈₉])[ \t]*[A-Z][ \t]+(\d+(?:\.\d+)?)', lambda m: m.group(1) + 'T' + sub_num(m.group(2)), text)
+    text = re.sub(r'([₀₁₂₃₄₅₆₇₈₉])[–−-]ₓ', r'\1₋ₓ', text)
+    text = re.sub(r'([₀₁₂₃₄₅₆₇₈₉])[–−-]x(?![A-Za-z])', r'\1₋ₓ', text)
+    text = re.sub(r'[ \t]+x(?![A-Za-z])', 'ₓ', text)
+    text = re.sub(r'([A-Z][a-z]?) n[ \t]*\+[ \t]*1', r'\1ₙ₊₁', text)
+    text = re.sub(r'([A-Z][a-z]?) n(?![A-Za-z])', r'\1ₙ', text)
+    text = re.sub(r'TMB (\d+)', lambda m: 'TMB' + sub_num(m.group(1)), text)
+    text = re.sub(r'\)(\d+)', lambda m: ')' + sub_num(m.group(1)), text)
+    # 单位上标：µA cm −2、mA cm–2、mA cm−2 都收成 cm⁻²。旧规则只认数字紧邻 A 的写法，
+    # µA（µ 不进 \d）和不带空格的 cm−2 全部漏掉。后面不能再跟字母数字（cm-2D 是二维材料）。
+    text = re.sub(r'cm ?[−–-]2(?![0-9A-Za-z])', 'cm⁻²', text)
+    text = re.sub(r'(?<=\bh) -(?=[A-Z])', '-', text)
+    text = re.sub(r'([₀₁₂₃₄₅₆₇₈₉])\.(\d)', lambda m: m.group(1) + '\u2024' + sub_num(m.group(2)), text)
+    text = re.sub(r'([₀₁₂₃₄₅₆₇₈₉])/(\d+)', lambda m: m.group(1) + '/' + sub_num(m.group(2)), text)
+    text = re.sub(r'([₀₁₂₃₄₅₆₇₈₉])[ \t]+([A-Z](?![a-z]{2}))', r'\1\2', text)
+    text = re.sub(r'T[ \t]+z(?![A-Za-z])', 'Tz', text)
+    text = re.sub(r'([₀₁₂₃₄₅₆₇₈₉ₓᵧⁿ])[ \t]+-(?=[A-Za-z0-9])', r'\1-', text)
+    text = re.sub(r'([ₙ₊₁])[ \t]+(?=[A-Z])', r'\1', text)
+    # 放回标识符原文（只折空白与上下标数字）
+    text = re.sub('[-]', lambda m: plain_id(parked[ord(m.group(0)) - 0xE000]), text)
     return re.sub(r'\s+', ' ', text).strip()
 
 
@@ -269,7 +359,7 @@ def split_pages(pages):
     text = str(pages).replace('–', '-').replace('—', '-').replace('−', '-')
     # 区间分隔符按「横线串」切：BibTeX 页码是 1--8（双横线），按单 - 切会把
     # -8 当页尾，回程 EP 再拼 -- 变 1---8
-    parts = re.split(r'-+', text, 1)
+    parts = re.split(r'-+', text, maxsplit=1)
     if len(parts) == 2 and parts[0].strip() and parts[1].strip():
         return parts[0].strip(), parts[1].strip()
     return text.strip(), ''
@@ -295,7 +385,8 @@ def xml_date(parent, tag, value):
 
 
 def bare_doi(value):
-    return re.sub(r'^https?://(?:dx\.)?doi\.org/', '', clean(value), flags=re.I)
+    # 标识符不走 clean()：化学美化会把 D2EE04121A 转成 D₂EE₀₄₁₂₁A，DOI 就废了。
+    return re.sub(r'^https?://(?:dx\.)?doi\.org/', '', plain_id(value), flags=re.I)
 
 
 def family_comma(author):
@@ -374,11 +465,11 @@ def render(records, suffix):
                 urls = ET.SubElement(item, 'urls')
                 if r.get('url'):
                     web = ET.SubElement(urls, 'web-urls')
-                    ET.SubElement(web, 'url').text = clean(r['url'])
+                    ET.SubElement(web, 'url').text = plain_id(r['url'])
                 if r.get('attachments'):
                     pdfs = ET.SubElement(urls, 'pdf-urls')
                     for attachment in r['attachments']:
-                        ET.SubElement(pdfs, 'url').text = clean(attachment)
+                        ET.SubElement(pdfs, 'url').text = plain_id(attachment)
             if r.get('doi'):
                 put('electronic-resource-num', bare_doi(r['doi']))
             if r.get('language'): put('language', r['language'])
@@ -390,8 +481,9 @@ def render(records, suffix):
         for r in records:
             result.append(line('TY', {'article':'JOUR','book':'BOOK','incollection':'CHAP','inproceedings':'CONF','phdthesis':'THES'}.get(r.get('type'), 'JOUR')))
             # RIS Reference ID 载 citation key（XML 走 <label>、.enw 走 %F 的同一职责）：
-            # 不写这条，键出了 RIS 就丢，回程只能重生成 ref<hash>，--existing 也接不上
-            result.append(line('ID', r['id']))
+            # 不写这条，键出了 RIS 就丢，回程只能重生成 ref<hash>，--existing 也接不上。
+            # 键是标识符，不过 clean()
+            result.append(f'ID  - {r["id"]}')
             # 一位作者一行。逗号串进同一条 AU 会被 EndNote 当成一个人。
             for author in r.get('authors', []):
                 result.append(line('AU', family_comma(author)))
@@ -413,24 +505,24 @@ def render(records, suffix):
                 # ET 对应 edition；期刊文献里这一格显示为网络出版日期。
                 result.append(line('ET', r['epubDate']))
             if r.get('volume'):
-                result.append(line('VL', r['volume']))
+                result.append(f'VL  - {plain_id(r["volume"])}')
             if r.get('number'):
-                result.append(line('IS', r['number']))
+                result.append(f'IS  - {plain_id(r["number"])}')
             if r.get('pages'):
                 start, end = split_pages(r['pages'])
                 if start:
                     # EndNote 2025 RefMan RIS：SP 进「页」，M2 才进「起始页码」。
-                    result.append(line('SP', start))
-                    result.append(line('M2', start))
+                    result.append(f'SP  - {plain_id(start)}')
+                    result.append(f'M2  - {plain_id(start)}')
                 if end:
-                    result.append(line('EP', end))
+                    result.append(f'EP  - {plain_id(end)}')
             if r.get('articleType'):
                 # M3 进「文章类型」。M1 在这套过滤器里不进任何格子。
                 result.append(line('M3', r['articleType']))
             if r.get('issn') or r.get('isbn'):
-                result.append(line('SN', r.get('issn') or r.get('isbn')))
+                result.append(f'SN  - {plain_id(r.get("issn") or r.get("isbn"))}')
             if r.get('doi'):
-                result.append(line('DO', bare_doi(r['doi'])))
+                result.append(f'DO  - {bare_doi(r["doi"])}')
             for word in r.get('keywords') or []:
                 result.append(line('KW', word))
             if r.get('abstract'):
@@ -441,9 +533,9 @@ def render(records, suffix):
             if r.get('language'):
                 result.append(line('LA', r['language']))
             if r.get('url'):
-                result.append(line('UR', r['url']))
+                result.append(f'UR  - {plain_id(r["url"])}')
             for attachment in r.get('attachments', []):
-                result.append(line('L1', attachment))
+                result.append(f'L1  - {plain_id(attachment)}')
             result.append('ER  - ')
             result.append('')
         # EndNote 认 CRLF。不要加 BOM：带 BOM 时不认 TY 行，会跳过格式选择、静默导入 0 条。
@@ -467,14 +559,14 @@ def render(records, suffix):
             if short:
                 result.append('%B ' + clean(short))
             if r.get('volume'):
-                result.append('%V ' + clean(r['volume']))
+                result.append('%V ' + plain_id(r['volume']))
             if r.get('number'):
-                result.append('%N ' + clean(r['number']))
+                result.append('%N ' + plain_id(r['number']))
             if r.get('pages'):
                 start, end = split_pages(r['pages'])
                 result.append('%P ' + (f'{start}-{end}' if end else start))
             if r.get('issn') or r.get('isbn'):
-                result.append('%@ ' + clean(r.get('issn') or r.get('isbn')))
+                result.append('%@ ' + plain_id(r.get('issn') or r.get('isbn')))
             if r.get('abstract'):
                 result.append('%X ' + clean(r['abstract']))
             for word in r.get('keywords') or []:
@@ -482,9 +574,9 @@ def render(records, suffix):
             if r.get('notes'):
                 result.append('%Z ' + clean(r['notes']))
             if r.get('doi'):
-                result.append('%R ' + clean(r['doi']))
+                result.append('%R ' + bare_doi(r['doi']))
             if r.get('url'):
-                result.append('%U ' + clean(r['url']))
+                result.append('%U ' + plain_id(r['url']))
             result.append('%F ' + r['id'])
             result.append('')
         return '\r\n'.join(result) + '\r\n'
@@ -507,9 +599,25 @@ def render(records, suffix):
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--input',type=Path,required=True);p.add_argument('--output',type=Path,required=True)
-    p.add_argument('--report',type=Path,required=True);p.add_argument('--existing',type=Path)
+    p.add_argument('--input',type=Path);p.add_argument('--output',type=Path)
+    p.add_argument('--report',type=Path);p.add_argument('--existing',type=Path)
+    p.add_argument('--check-endnote-library',type=Path,dest='check_endnote_library')
     a=p.parse_args()
+    if a.check_endnote_library is not None:
+        # 库体检（同步按钮用）：只读列出旧版导出的污染记录，永远成功退出
+        import importlib.util
+        spec=importlib.util.spec_from_file_location('library_match',Path(__file__).with_name('library_match.py'))
+        match=importlib.util.module_from_spec(spec);spec.loader.exec_module(match)
+        hits,note=match.endnote_stale_records(a.check_endnote_library)
+        if note: print(note)
+        elif hits:
+            print(f'库体检：检出 {len(hits)} 条旧版导出的脏记录，不删掉它们，新导入的去重认不出、旧数据会残留：')
+            for h in hits: print(f'- {h}')
+            print('处方：在 EndNote 里按上面的标题搜到这些记录删除（进废纸篓即可），再导入本次生成的 RIS。')
+        else: print('库体检：库里没有旧版导出的脏记录。')
+        return 0
+    if a.input is None or a.output is None or a.report is None:
+        print('--input/--output/--report are required',file=sys.stderr);return 1
     try:
         records=load(a.input); existing=load(a.existing) if a.existing else []
         for dest in (a.output,a.report):
@@ -611,14 +719,14 @@ def fmt_date(parts):
 def pick_issn(message):
     printed = ''
     for item in message.get('issn-type') or []:
-        value = clean(item.get('value'))
+        value = plain_id(item.get('value'))
         if item.get('type') == 'print' and value:
             printed = value
     if printed:
         return printed
     for value in message.get('ISSN') or []:
-        if clean(value):
-            return clean(value)
+        if plain_id(value):
+            return plain_id(value)
     return ''
 
 
@@ -630,7 +738,9 @@ def crossref_fill(doi):
     printed = date_parts(message.get('published-print'))
     container = message.get('container-title') or []
     short = message.get('short-container-title') or []
-    page = clean(message.get('page')) or clean(message.get('article-number'))
+    # 页码/卷期/DOI/URL/ISSN 都是定位标识符：取值不过 clean()，化学美化会把
+    # 文章号页码 A257 变成 A₂₅₇、DOI 后缀 D2EE04121A 变成 D₂EE₀₄₁₂₁A。
+    page = plain_id(message.get('page')) or plain_id(message.get('article-number'))
     if not meaningful(page):
         page = ''
     authors = []
@@ -656,12 +766,12 @@ def crossref_fill(doi):
         'epubDate': fmt_date(online) if printed and online and online != issued else '',
         'journal': journal,
         'journalAbbreviation': abbrev,
-        'volume': clean(message.get('volume')) if meaningful(message.get('volume')) else '',
-        'number': clean(message.get('issue')) if meaningful(message.get('issue')) else '',
+        'volume': plain_id(message.get('volume')) if meaningful(message.get('volume')) else '',
+        'number': plain_id(message.get('issue')) if meaningful(message.get('issue')) else '',
         'pages': page,
         'issn': pick_issn(message),
-        'doi': clean(message.get('DOI') or doi),
-        'url': clean(message.get('URL') or f'https://doi.org/{doi}'),
+        'doi': bare_doi(message.get('DOI') or doi),
+        'url': plain_id(message.get('URL') or f'https://doi.org/{doi}'),
         'abstract': abstract if meaningful(abstract) else '',
         'keywords': keywords,
         'articleType': TYPE_LABEL.get(message.get('type') or '', ''),

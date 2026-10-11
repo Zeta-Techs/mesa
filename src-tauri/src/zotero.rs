@@ -1334,8 +1334,11 @@ pub async fn zotero_open_papers(project_root: String) -> Result<(), String> {
     .map_err(|e| format!("{e}"))?
 }
 
-/// 按 references.bib 重写 papers/zotero-library.ris。不改 papers/to-fetch.ris。
-pub fn refresh_library_ris(project_root: &Path) -> Result<PathBuf, String> {
+/// 按 references.bib 重写 papers/zotero-library.ris（差量：库里已有的 DOI 跳过）。不改 papers/to-fetch.ris。
+/// 返回 (RIS 路径, 差量+库体检提示)：体检由 zotero_rtf --library-ris 打到 stdout。
+/// 差量为零时返回 None——零记录的 RIS 不是合法导入文件（Zotero 报「不支持所选文件的格式」），
+/// 调用方直接把差量结论当反馈，不再拉起 Zotero。
+pub fn refresh_library_ris(project_root: &Path) -> Result<(Option<PathBuf>, String), String> {
     let root =
         crate::paths::canonicalize_plain(project_root).map_err(|e| format!("项目目录无效: {e}"))?;
     let bib = root.join("references.bib");
@@ -1350,6 +1353,19 @@ pub fn refresh_library_ris(project_root: &Path) -> Result<PathBuf, String> {
     crate::storage::atomic_write(
         &script,
         include_str!("../resources/skills/zotero-sync/scripts/zotero_rtf.py").as_bytes(),
+        true,
+    )?;
+    let bridge = script.with_file_name("bridge.py");
+    crate::storage::atomic_write(
+        &bridge,
+        include_str!("../resources/skills/endnote-bridge/scripts/bridge.py").as_bytes(),
+        true,
+    )?;
+    // 库体检用的只读匹配器与 bridge 同目录随包（zotero_rtf --library-ris 会加载它）
+    let matcher = script.with_file_name("library_match.py");
+    crate::storage::atomic_write(
+        &matcher,
+        include_str!("../resources/skills/endnote-bridge/scripts/library_match.py").as_bytes(),
         true,
     )?;
     let abbr = script.with_file_name("journal-abbreviations.csv");
@@ -1372,6 +1388,8 @@ pub fn refresh_library_ris(project_root: &Path) -> Result<PathBuf, String> {
         .output()
         .map_err(|e| format!("无法生成 Zotero RIS: {e}"))?;
     let _ = std::fs::remove_file(&script);
+    let _ = std::fs::remove_file(script.with_file_name("bridge.py"));
+    let _ = std::fs::remove_file(script.with_file_name("library_match.py"));
     let _ = std::fs::remove_file(&abbr);
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
@@ -1384,7 +1402,11 @@ pub fn refresh_library_ris(project_root: &Path) -> Result<PathBuf, String> {
     if !ris.is_file() {
         return Err("转换结束但没有 papers/zotero-library.ris".into());
     }
-    Ok(ris)
+    let health = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if health.contains("新增 0 条") {
+        return Ok((None, health));
+    }
+    Ok((Some(ris), health))
 }
 
 /// 用 Zotero 打开 RIS/BibTeX/CSL JSON（原生导入，不需要 Better BibTeX）。
@@ -1396,10 +1418,15 @@ pub async fn zotero_open_import(path: String, root: String) -> Result<String, St
         let path_exp = crate::sessions::expand_tilde(&path);
         let root_c = crate::paths::canonicalize_plain(std::path::Path::new(&root_exp))
             .map_err(|e| format!("目录无效: {e}"))?;
-        let open_path = if root_c.join("references.bib").is_file() {
+        let (open_path, health) = if root_c.join("references.bib").is_file() {
             refresh_library_ris(&root_c)?
         } else {
-            std::path::PathBuf::from(&path_exp)
+            (Some(std::path::PathBuf::from(&path_exp)), String::new())
+        };
+        // 库里已全部存在：没有要导的，不拉起 Zotero，差量结论就是反馈
+        let open_path = match open_path {
+            Some(path) => path,
+            None => return Ok(health),
         };
         let path_c = crate::paths::canonicalize_plain(&open_path)
             .map_err(|_| "找不到 papers/zotero-library.ris（精读保存后会按引文库生成）".to_string())?;
@@ -1417,7 +1444,13 @@ pub async fn zotero_open_import(path: String, root: String) -> Result<String, St
         tauri_plugin_opener::open_path(&path_c, Some("Zotero"))
             .or_else(|_| tauri_plugin_opener::open_path(&path_c, None::<&str>))
             .map_err(|e| format!("没法交给 Zotero 打开: {e}"))?;
-        Ok("已交给 Zotero。确认导入后，点「打开 papers」，把 PDF 拖到对应条目上。".into())
+        let mut message =
+            "已交给 Zotero。确认导入后，点「打开 papers」，把 PDF 拖到对应条目上。".to_string();
+        if !health.is_empty() {
+            message.push_str("\n\n");
+            message.push_str(&health);
+        }
+        Ok(message)
     })
     .await
     .map_err(|e| format!("{e}"))?

@@ -98,11 +98,11 @@ def cite_instruction(group: list[dict], rec_nums: dict[str, int], display: str) 
         index = rec_nums[rec["id"]]
         # 只有库里 DOI 唯一的那条才写 uris。对不上、库锁住、或同一 DOI 多条时省略，
         # 不编 ITEM-1 这种假地址，否则 Refresh 会当成幽灵条目。
-        entry = {"id": index, "itemData": csl_item(rec, index)}
+        # 条目号必须是字符串。数字会被 Zotero 当成另一种旧格式。
         uri = rec.get("_zotero_uri")
-        if isinstance(uri, str) and uri.startswith("http://zotero.org/"):
-            entry["uris"] = [uri]
-        items.append(entry)
+        if not isinstance(uri, str) or not uri.startswith("http://zotero.org/"):
+            continue
+        items.append({"id": str(index), "uris": [uri]})
     payload = {
         "citationID": cite_id(),
         "citationItems": items,
@@ -114,16 +114,6 @@ def cite_instruction(group: list[dict], rec_nums: dict[str, int], display: str) 
         "schema": SCHEMA,
     }
     return " ADDIN ZOTERO_ITEM CSL_CITATION " + json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + " "
-
-
-def bibliography_instruction() -> str:
-    # 官方域是 BIBL {json} CSL_BIBLIOGRAPHY。预先放在文末，刷新时填内容，不再现场插域。
-    payload = {"uncited": [], "omitted": [], "custom": []}
-    return (
-        " ADDIN ZOTERO_BIBL "
-        + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-        + " CSL_BIBLIOGRAPHY "
-    )
 
 
 def write_report(path: Path, payload: dict):
@@ -151,7 +141,7 @@ def write_report(path: Path, payload: dict):
             lines.append(f"- `{target}`")
     else:
         lines.append("")
-        lines.append("打开 `output/zotero.docx`，在 Zotero 工具栏点 Refresh，再换引用样式。不要改源稿里的 `[@键]`。")
+        lines.append("打开 `output/zotero.docx` → Zotero 工具栏点 **Refresh**（**先确认 Zotero 应用已在运行再开文档**：首次打开若插件无响应，是宿主未就绪——等 Zotero 加载完，或关掉文档重开一次，文档本身没坏。首次会弹引用样式选择框，属正常，选一次即可）→ **光标点进 References 标题下面那个空行**（⚠ 必须是空行本身：点在标题行上会把参考文献表插到标题上方、还继承标题的大字号）→ 点 **Add/Edit Bibliography** 插入参考文献表 → 换样式用 Document Preferences。插错位置就 Ctrl+Z 撤销，光标点对再点一次。不要改源稿里的 `[@键]`。")
     binding = payload.get("binding") or []
     if binding:
         lines.append("")
@@ -182,6 +172,8 @@ def main(argv: list[str] | None = None) -> int:
         print("source markdown or bib missing", file=sys.stderr)
         return 1
     records = {rec["id"]: rec for rec in bridge.load(bib_path) if rec.get("id")}
+    # Refresh 前的可见文字做同年同姓消歧（(R. Zhang et al., 2026) / 2026a/b），与 endnote 域稿同口径
+    cite.decorate_disambiguation(records)
     text = source.read_text(encoding="utf-8-sig")
     blocks = cite.split_blocks(text)
     cited: list[str] = []
@@ -204,19 +196,36 @@ def main(argv: list[str] | None = None) -> int:
     match = load_library_match()
     chosen = Path(args.zotero_db) if args.zotero_db else None
     binding = match.bind_zotero(records, list(rec_nums), chosen)
+    # 库体检：旧版 Mesa 导出的脏记录会让重新导入的去重认不出、旧数据残留，
+    # 参考文献表就会继续显示旧格式。只读检查；检出就给「先删再导」的处方。
+    stale, stale_note = match.zotero_stale_items(chosen)
+    if stale_note:
+        binding.append(f"库体检未完成：{stale_note}")
+    elif stale:
+        binding.append(
+            f"库体检：检出 {len(stale)} 条旧版导出的脏记录。不先删掉，"
+            "重新导入时 Zotero 去重认不出，旧数据会残留："
+        )
+        binding.extend(f"- {h}" for h in stale)
+        binding.append(
+            "处方：在 Zotero 里按上面清单的标题删除这些条目，重新导入 papers/zotero-library.ris，"
+            "然后重新生成本域稿再 Refresh。"
+        )
 
-    def instruction(group, numbers, display):
-        return cite_instruction(group, numbers, display)
+    def field(group, numbers, display):
+        # Zotero 的引文 JSON 写在 instrText 里，不写 fldData。
+        return cite_instruction(group, numbers, display), ""
 
-    cite.cite_instruction = instruction
+    cite.cite_field = field
     body_el, images, missing_images = cite.build_body(
         blocks, source.parent, records, rec_nums, cited, missing
     )
-    bibliography = cite.w_el("p")
-    bibliography.extend(cite.field_runs(bibliography_instruction(), "参考文献"))
     children = list(body_el)
     insert_at = next((i for i, child in enumerate(children) if child.tag == cite.W + "sectPr"), len(children))
-    body_el.insert(insert_at, bibliography)
+    body_el.insert(insert_at, cite.heading_paragraph("References"))
+    # 不预置空的 ZOTERO_BIBL 域：Refresh 会把它删掉（2026-10-10 集成日志实证 removeCode）。
+    # 留一个空段做插入锚点，人 Refresh 后点 Add/Edit Bibliography 让 Zotero 自己插域。
+    body_el.insert(insert_at + 1, cite.w_el("p"))
     uniq_missing = sorted(set(missing))
     payload = {
         "source": str(source),
@@ -235,8 +244,8 @@ def main(argv: list[str] | None = None) -> int:
         print("missing figures: " + ", ".join(missing_images), file=sys.stderr)
         return 1
     visible = cite.visible_text(body_el)
-    if cite.CURLY_KEY.search(visible) or cite.CURLY_TEMP.search(visible):
-        print("visible text contains {Author, Year}; refusing to write docx", file=sys.stderr)
+    if cite.CURLY_KEY.search(visible):
+        print("visible text contains an unmatched brace key; refusing to write docx", file=sys.stderr)
         return 1
     cite.write_docx(out, body_el, images)
     return 0

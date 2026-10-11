@@ -7,10 +7,12 @@ Visible text never contains {Author, Year} temporary citations.
 from __future__ import annotations
 
 import argparse
+import base64
 import importlib.util
 import re
 import struct
 import sys
+import time
 import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -89,18 +91,59 @@ def display_for(records: list[dict]) -> str:
     for rec in records:
         authors = rec.get("authors") or []
         year = rec.get("year") or "n.d."
+        disp = rec.get("_disp") or {}
         if not authors:
-            parts.append(f"{year}")
+            parts.append(year + disp.get("suffix", ""))
             continue
-        family = surname(authors[0])
+        family = disp.get("family") or surname(authors[0])
+        lead = f"{disp['initial']}. " if disp.get("initial") else ""
+        suffix = disp.get("suffix", "")
         if len(authors) > 1:
-            parts.append(f"{family} et al., {year}")
+            parts.append(f"{lead}{family} et al., {year}{suffix}")
         else:
-            parts.append(f"{family}, {year}")
+            parts.append(f"{lead}{family}, {year}{suffix}")
     return "(" + "; ".join(parts) + ")"
 
 
+def decorate_disambiguation(records: dict[str, dict]) -> None:
+    """同年同姓消歧（只作用于 Update 前的可见文字；EndNote/Zotero 刷新后按样式重排）：
+    第一作者同姓不同人 → 加名首字母（R. Zhang et al., 2026 / X. Zhang et al., 2026）；
+    同一第一作者同年多篇 → 年份加 a/b（按 bib 出现顺序）。不撞车不加任何东西。
+    2026-10-11 定稿审计实证：(Zhang et al., 2026; Zhang et al., 2026) 两篇不同文献同组出现。
+    """
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for rec in records.values():
+        authors = rec.get("authors") or [""]
+        first = authors[0]
+        family = surname(first)
+        given = first.split(",", 1)[1].strip() if "," in first else first
+        rec["_disp"] = {
+            "family": family,
+            "ini": (given[:1] or "").upper(),
+            "given": given.casefold(),
+            "year": rec.get("year") or "n.d.",
+        }
+        groups.setdefault((family.casefold(), rec["_disp"]["year"]), []).append(rec)
+    for recs in groups.values():
+        if len(recs) < 2:
+            continue
+        initials = [r["_disp"]["ini"] for r in recs]
+        for r in recs:
+            # 同姓不同人且首字母能区分 → 加首字母；首字母也撞 → 退回 a/b
+            r["_disp"]["initial"] = r["_disp"]["ini"] if initials.count(r["_disp"]["ini"]) == 1 else None
+        keys = [(r["_disp"]["given"], r["_disp"].get("initial")) for r in recs]
+        seen: dict[tuple, int] = {}
+        for r, k in zip(recs, keys):
+            if keys.count(k) > 1:
+                seen[k] = seen.get(k, 0) + 1
+                r["_disp"]["suffix"] = chr(ord("a") + seen[k] - 1)
+
+
 def record_xml(rec: dict, rec_num: int) -> str:
+    """真 EndNote 域里的 record 顺序（2026-10-10 与两份 EndNote 2025 实稿逐域核对）：
+    rec-number 在前、foreign-keys 紧随其后，urls 在 electronic-resource-num 之前。
+    顺序错了 CWYW 不认外键，Update 后引文会落在漫游个人图书馆而不是打开的库。
+    """
     kind, code = REF_TYPE.get(rec.get("type", ""), ("Generic", "13"))
     authors = "".join(
         f"<author>{xml_escape(a)}</author>" for a in (rec.get("authors") or [])
@@ -118,31 +161,42 @@ def record_xml(rec: dict, rec_num: int) -> str:
     # 不编 db-id="mesa" 和 1…n 的顺序号，刷新只靠域里的题录。
     library_num = rec.get("_en_rec")
     db_id = rec.get("_en_db") if isinstance(library_num, int) else ""
-    shown_num = library_num if isinstance(library_num, int) else 0
+    # 未绑定库时用文内编号。绑定后只用库里的真实 id，写 0 会被 EndNote 收进漫游库。
+    shown_num = library_num if isinstance(library_num, int) else rec_num
     foreign = ""
     if isinstance(library_num, int) and isinstance(db_id, str) and db_id and db_id != "mesa":
+        stamp = rec.get("_en_ts")
+        stamp = stamp if isinstance(stamp, int) and stamp > 0 else int(time.time())
+        # ENWeb 空键与 timestamp 属性都是实稿里的原生形态，一并写上。
         foreign = (
-            f'<foreign-keys><key app="EN" db-id="{xml_escape(db_id)}" timestamp="0">'
-            f"{library_num}</key></foreign-keys>"
+            f'<foreign-keys><key app="EN" db-id="{xml_escape(db_id)}" timestamp="{stamp}">'
+            f'{library_num}</key><key app="ENWeb" db-id="">0</key></foreign-keys>'
         )
+    urls = f"<urls><related-urls><url>{url}</url></related-urls></urls>" if url else "<urls></urls>"
     return (
-        f"<record><rec-number>{shown_num}</rec-number><label>{label}</label>"
-        f"{foreign}"
+        f"<record><rec-number>{shown_num}</rec-number>{foreign}"
         f'<ref-type name="{kind}">{code}</ref-type>'
         f"<contributors><authors>{authors}</authors></contributors>"
         f"<titles><title>{title}</title><secondary-title>{journal}</secondary-title></titles>"
         f"<periodical><full-title>{journal}</full-title></periodical>"
         f"<pages>{pages}</pages><volume>{volume}</volume><number>{number}</number>"
         f"<dates><year>{year}</year></dates>"
-        f"<electronic-resource-num>{doi}</electronic-resource-num>"
-        f"<urls><related-urls><url>{url}</url></related-urls></urls></record>"
+        f"{urls}<electronic-resource-num>{doi}</electronic-resource-num>"
+        f"<label>{label}</label></record>"
     )
 
 
-def cite_instruction(group: list[dict], rec_nums: dict[str, int], display: str) -> str:
+CITE_INSTRUCTION = " ADDIN EN.CITE "
+
+
+def cite_payload(group: list[dict], rec_nums: dict[str, int], display: str) -> str:
+    """域数据（fldData）里的 XML。组引文 = 多个 <Cite>，只有第一个带 DisplayText，
+    与 EndNote 2025 实稿一致。instrText 只留短指令，XML 全部走 fldData。
+    """
     cites = []
     for i, rec in enumerate(group):
-        num = rec.get("_en_rec") if isinstance(rec.get("_en_rec"), int) else 0
+        # 绑定用库里的真实记录号；未绑定的用文内编号，不写 0（0 会被收进漫游库）。
+        num = rec.get("_en_rec") if isinstance(rec.get("_en_rec"), int) else rec_nums[rec["id"]]
         author = xml_escape(surname((rec.get("authors") or ["Anon"])[0]))
         year = xml_escape(rec.get("year") or "n.d.")
         disp = f"<DisplayText>{xml_escape(display)}</DisplayText>" if i == 0 else ""
@@ -150,7 +204,14 @@ def cite_instruction(group: list[dict], rec_nums: dict[str, int], display: str) 
             f"<Cite><Author>{author}</Author><Year>{year}</Year>"
             f"<RecNum>{num}</RecNum>{disp}{record_xml(rec, num)}</Cite>"
         )
-    return " ADDIN EN.CITE <EndNote>" + "".join(cites) + "</EndNote>"
+    return "<EndNote>" + "".join(cites) + "</EndNote>"
+
+
+def cite_field(group: list[dict], rec_nums: dict[str, int], display: str) -> tuple[str, str]:
+    """一条引用域 = (instrText 指令, fldData 载荷)。Zotero 线（zotero_docx.py）
+    覆写这一层换成 ZOTERO_ITEM 的 JSON 指令、不写 fldData。
+    """
+    return CITE_INSTRUCTION, cite_payload(group, rec_nums, display)
 
 
 def w_el(tag: str, text: str | None = None, **attrs) -> ET.Element:
@@ -181,10 +242,25 @@ def run_text(text: str, vertical: str | None = None, bold: bool = False, italic:
 
 
 # Pandoc 单位：cm^−3^、kg^−1^。两端的 ^ 收成上标或下标，不再把记号留在正文里。
-MARK_RE = re.compile(r"(\*\*[^*]+\*\*|\*[^*]+\*|\^[^^]+\^|~[^~]+~)")
+# 上下标内容不得含空白（Pandoc 规则）：放宽会让「约义 ~」（~79–81%、~2 µm）与化学式
+# 下标号错位配对，把整段正文排成下标、化学式拆碎（2026-10-11 定稿审计实证，4 段 + 1 图注）。
+MARK_RE = re.compile(r"(\*\*[^*]+\*\*|\*[^*]+\*|\^[^\s^]+\^|~[^\s~]+~)")
+
+# Pandoc 反斜杠转义（\@、\~、\^ 等）：剥离出来当字面量，不参与标记配对（a-MgCl~2~\@polymer
+# 的 \@ 若不剥，正文会残留字面反斜杠；\~ 若不剥会被当标记参与配对）。
+ESCAPE_RE = re.compile(r"\\([!\"#$%&'()*+,./:;<=>?@\[\\\]^_`{|}~-])")
 
 
 def append_marked(p: ET.Element, text: str) -> None:
+    pos = 0
+    for esc in ESCAPE_RE.finditer(text):
+        _emit_marked(p, text[pos:esc.start()])
+        p.append(run_text(esc.group(1)))
+        pos = esc.end()
+    _emit_marked(p, text[pos:])
+
+
+def _emit_marked(p: ET.Element, text: str) -> None:
     pos = 0
     for match in MARK_RE.finditer(text):
         if match.start() > pos:
@@ -203,20 +279,103 @@ def append_marked(p: ET.Element, text: str) -> None:
         p.append(run_text(text[pos:]))
 
 
-def field_runs(instruction: str, display: str) -> list[ET.Element]:
-    begin = w_el("r")
-    begin.append(w_el("fldChar", **{"fldCharType": "begin"}))
-    instr = w_el("r")
+def split_lead_sentence(text: str) -> tuple[str, str]:
+    """图注第一句。小数点不当成句号。"""
+    match = re.search(r"(?<!\d)[.!?](?=\s|$)", text)
+    if match is None:
+        return text, ""
+    cut = match.end()
+    return text[:cut], text[cut:]
+
+
+def bold_paragraph(p: ET.Element) -> None:
+    """整段加粗。图注里的说明句和引用显示文字都要粗体。"""
+    for run in p.iter(W + "r"):
+        props = run.find(W + "rPr")
+        if props is None:
+            props = w_el("rPr")
+            run.insert(0, props)
+        if props.find(W + "b") is None:
+            props.append(w_el("b"))
+
+
+def heading_paragraph(text: str, level: int = 1) -> ET.Element:
+    """文末文献标题。Heading 样式才会进 Word 导航窗格。"""
+    p = w_el("p")
+    props = w_el("pPr")
+    props.append(w_el("pStyle", **{"val": f"Heading{level}"}))
+    p.append(props)
+    p.append(run_text(text, bold=True))
+    return p
+
+
+CITE_DATA_INSTRUCTION = " ADDIN EN.CITE.DATA "
+
+
+def fld_data_element(payload: str) -> ET.Element:
+    """域数据（fldData）：UTF-8 XML + 末尾 NUL，base64 后 76 列换行，行尾 CRLF、
+    末行也带 CRLF——与 EndNote 2025 实稿逐字节一致。
+    """
+    encoded = base64.b64encode(payload.encode("utf-8") + b"\x00").decode("ascii")
+    lines = [encoded[i : i + 76] for i in range(0, len(encoded), 76)]
+    data = w_el("fldData", "\r\n".join(lines) + "\r\n")
+    data.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+    return data
+
+
+def field_begin(payload: str | None = None, with_data: bool = False) -> ET.Element:
+    run = w_el("r")
+    char = w_el("fldChar", **{"fldCharType": "begin"})
+    if payload or with_data:
+        char.append(fld_data_element(payload or ""))
+    run.append(char)
+    return run
+
+
+def field_instr(instruction: str) -> ET.Element:
+    run = w_el("r")
     it = w_el("instrText", instruction)
     it.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
-    instr.append(it)
-    sep = w_el("r")
-    sep.append(w_el("fldChar", **{"fldCharType": "separate"}))
+    run.append(it)
+    return run
+
+
+def field_marker(kind: str) -> ET.Element:
+    run = w_el("r")
+    run.append(w_el("fldChar", **{"fldCharType": kind}))
+    return run
+
+
+def field_runs(instruction: str, display: str, payload: str = "", with_data: bool = False) -> list[ET.Element]:
+    """单层域（REFLIST、Zotero 线）。EndNote 引文域用 cite_runs 的嵌套形态。"""
+    begin = field_begin(payload, with_data)
     shown = w_el("r")
     shown.append(w_el("t", display))
-    end = w_el("r")
-    end.append(w_el("fldChar", **{"fldCharType": "end"}))
-    return [begin, instr, sep, shown, end]
+    return [begin, field_instr(instruction), field_marker("separate"), shown, field_marker("end")]
+
+
+def cite_runs(group: list[dict], rec_nums: dict[str, int], display: str) -> list[ET.Element]:
+    """EndNote 2025 引文域（2026-10-10 与实稿逐 run 核对修复）：
+    外层 ADDIN EN.CITE 的 fldData 装引文 XML，begin 与 separate 之间还嵌一个
+    ADDIN EN.CITE.DATA 子域（fldData 同一份 XML，无结果区）。少了这个子域，
+    CWYW 找不到域数据，Update 会把整条引文报成 INVALID CITATION。
+    Zotero 线覆写 cite_field 返回空载荷时，走单层 field_runs。
+    """
+    instruction, payload = cite_field(group, rec_nums, display)
+    if not payload:
+        return field_runs(instruction, display)
+    shown = w_el("r")
+    shown.append(w_el("t", display))
+    return [
+        field_begin(payload),
+        field_instr(instruction),
+        field_begin(payload),
+        field_instr(CITE_DATA_INSTRUCTION),
+        field_marker("end"),
+        field_marker("separate"),
+        shown,
+        field_marker("end"),
+    ]
 
 
 def parse_cite_keys(span: str) -> list[str]:
@@ -371,13 +530,13 @@ def crossref_maps(blocks: list[tuple[str, str]]) -> tuple[dict[str, int], dict[s
     table_no = 0
     for index, (kind, content) in enumerate(blocks):
         if kind == "p":
-            for ident in re.findall(r"\{#(fig-[^}]+)\}", content):
+            for ident in re.findall(r"\{#(fig-[A-Za-z0-9_-]+)", content):
                 figure_no += 1
                 figures.setdefault(ident, figure_no)
         elif kind == "table":
             table_no += 1
             caption = next((text for name, text in blocks[index + 1 :] if name == "tablecap"), "")
-            for ident in re.findall(r"\{#(tbl-[^}]+)\}", caption):
+            for ident in re.findall(r"\{#(tbl-[A-Za-z0-9_-]+)", caption):
                 tables.setdefault(ident, table_no)
     return figures, tables
 
@@ -392,14 +551,28 @@ def resolve_crossrefs(text: str, figures: dict[str, int], tables: dict[str, int]
         return f"{table_word} {tables[ident]}" if ident in tables else ident
 
     ident = r"[A-Za-z0-9_-]+"
-    text = re.sub(rf"\bFigure\s+@(fig-{ident})", lambda m: fig(m.group(1)), text)
-    text = re.sub(rf"\bTable\s+@(tbl-{ident})", lambda m: tbl(m.group(1)), text)
+    # 图片/链接后面的 {#fig-1} 是 image_spans 判定编号与写图注的锚点，先摘出来，
+    # 免得被下面的交叉引用替换吃掉，图注就没了。
+    anchors: list[str] = []
+
+    def stash(m: re.Match) -> str:
+        anchors.append(m.group(0))
+        return f"\x00ANCHOR{len(anchors) - 1}\x00"
+
+    text = re.sub(r"\]\([^)]*\)\s*\{#[A-Za-z0-9_-]+\}", stash, text)
+    # 表题末尾的 {#tbl-1} 是锚点：只在确属本文表题（在编号表里）时删除；对不上的键保留给正文。
+    text = re.sub(r"\s*\{#(tbl-[^}]+)\}", lambda m: "" if m.group(1) in tables else m.group(0), text)
+    text = re.sub(rf"\bFigure\s*@(fig-{ident})", lambda m: fig(m.group(1)), text)
+    text = re.sub(rf"\bTable\s*@(tbl-{ident})", lambda m: tbl(m.group(1)), text)
+    text = re.sub(rf"Fig\.\s*@(fig-{ident})", lambda m: fig(m.group(1)), text)
     text = re.sub(rf"(?<=图)\s*@(fig-{ident})", lambda m: f" {figures[m.group(1)]}" if m.group(1) in figures else m.group(1), text)
     text = re.sub(rf"(?<=表)\s*@(tbl-{ident})", lambda m: f" {tables[m.group(1)]}" if m.group(1) in tables else m.group(1), text)
     text = re.sub(rf"@(fig-{ident})", lambda m: fig(m.group(1)), text)
     text = re.sub(rf"@(tbl-{ident})", lambda m: tbl(m.group(1)), text)
-    text = re.sub(r"\{#(fig-[^}]+)\}", lambda m: fig(m.group(1)), text)
-    text = re.sub(r"\{#(tbl-[^}]+)\}", lambda m: tbl(m.group(1)), text)
+    # 独立成对的 {#fig-x}/{#tbl-x}（不在图片后）：对上编号就收成编号，对不上只留键名。
+    text = re.sub(rf"\{{#(fig-{ident})\}}", lambda m: fig(m.group(1)), text)
+    text = re.sub(rf"\{{#(tbl-{ident})\}}", lambda m: tbl(m.group(1)), text)
+    text = re.sub(r"\x00ANCHOR(\d+)\x00", lambda m: anchors[int(m.group(1))], text)
     return text.strip()
 
 
@@ -409,6 +582,20 @@ def brace_keys(text: str) -> list[tuple[int, int, str]]:
     for match in CURLY_KEY.finditer(text):
         out.append((match.start(), match.end(), match.group(1)))
     return out
+
+
+def plain_citations(text: str, bib: dict[str, dict]) -> str:
+    """图注和表题里的引用只留作者-年。Zotero 刷新时，图注里的引用域会整篇报错。"""
+
+    def replace(match: re.Match) -> str:
+        group = []
+        for key in parse_cite_keys(match.group(1)):
+            rec = bib.get(key)
+            if rec is not None:
+                group.append(rec)
+        return display_for(group) if group else match.group(0)
+
+    return CITE_RE.sub(replace, text)
 
 
 def append_inline(
@@ -439,7 +626,7 @@ def append_inline(
             else:
                 cited.append(payload)
                 display = display_for([rec])
-                p.extend(field_runs(cite_instruction([rec], rec_nums, display), display))
+                p.extend(cite_runs([rec], rec_nums, display))
             pos = end
             continue
         match_keys = payload
@@ -454,7 +641,7 @@ def append_inline(
                 group.append(rec)
         if group and not any(k not in bib for k in keys):
             display = display_for(group)
-            p.extend(field_runs(cite_instruction(group, rec_nums, display), display))
+            p.extend(cite_runs(group, rec_nums, display))
         else:
             append_marked(p, text[start:end])
         pos = end
@@ -466,8 +653,11 @@ def visible_text(root: ET.Element) -> str:
     return "".join(el.text or "" for el in root.iter(W + "t"))
 
 
-def image_spans(text: str) -> list[tuple[int, int, str, str]]:
-    """Markdown 图片。说明里的 `[@键]` 含 `]`，只把 `](` 当作图片结束。"""
+def image_spans(text: str) -> list[tuple[int, int, str, str, bool]]:
+    """Markdown 图片。说明里的 `[@键]` 含 `]`，只把 `](` 当作图片结束。
+
+    第五项为真时，这张图带 `{#fig-}`，要单独写图注。行内小图为假。
+    """
     found = []
     i = 0
     while True:
@@ -481,11 +671,13 @@ def image_spans(text: str) -> list[tuple[int, int, str, str]]:
         alt = text[start + 2 : close]
         target = text[close + 2 : end_paren].strip().split()[0].strip("<>")
         end = end_paren + 1
+        numbered = False
         if end < len(text) and text[end] == "{":
             attr = text.find("}", end)
             if attr >= 0:
+                numbered = bool(re.search(r"#fig-[A-Za-z0-9_-]+", text[end : attr + 1]))
                 end = attr + 1
-        found.append((start, end, alt, target))
+        found.append((start, end, alt, target, numbered))
         i = end
     return found
 
@@ -648,6 +840,9 @@ def append_content(
     missing: list[str],
     images: list[dict],
     missing_images: list[str],
+    captions: list[str],
+    figure_state: list[int],
+    figure_word: str,
 ):
     spans = image_spans(text)
     if not spans:
@@ -656,7 +851,8 @@ def append_content(
         body.append(p)
         return
     cursor = 0
-    for start, end, alt, target in spans:
+    numbered_left = sum(1 for span in spans if span[4])
+    for start, end, alt, target, numbered in spans:
         before = text[cursor:start].strip()
         if before:
             p = w_el("p")
@@ -686,12 +882,34 @@ def append_content(
             p = w_el("p")
             p.append(drawing_run(rel_id, name, len(images), cx, cy))
             body.append(p)
-            caption = alt.replace("**", "").strip()
-            if caption:
+            caption_text = alt.replace("**", "").strip()
+            # 一段里既有行内小图又有 {#fig-} 时，只给最后一张带锚点的图写图注。
+            if numbered and numbered_left == 1:
+                figure_state[0] += 1
                 cap = w_el("p")
-                append_inline(cap, caption, bib, rec_nums, cited, missing, False)
+                cap_props = w_el("pPr")
+                cap_props.append(w_el("jc", **{"val": "both"}))
+                cap_props.append(w_el("ind", **{"firstLine": "0", "firstLineChars": "0"}))
+                cap.append(cap_props)
+                cap.append(run_text(f"{figure_word} {figure_state[0]}. ", bold=True))
+                lead, rest = split_lead_sentence(plain_citations(caption_text, bib))
+                before_runs = len(list(cap))
+                append_inline(cap, lead, bib, rec_nums, cited, missing, False)
+                for run in list(cap)[before_runs:]:
+                    props = run.find(W + "rPr")
+                    if props is None:
+                        props = w_el("rPr")
+                        run.insert(0, props)
+                    if props.find(W + "b") is None:
+                        props.append(w_el("b"))
+                if rest:
+                    append_inline(cap, rest, bib, rec_nums, cited, missing, False)
                 body.append(cap)
+                captions.append(caption_text)
+            if numbered:
+                numbered_left -= 1
         cursor = end
+        # 图注已经单独成段。后面的正文不能再写进这一段。
     after = text[cursor:].strip()
     if after:
         p = w_el("p")
@@ -709,9 +927,11 @@ def build_body(
 ) -> tuple[ET.Element, list[dict], list[str]]:
     body = w_el("body")
     images: list[dict] = []
+    captions: list[str] = []
     missing_images: list[str] = []
     numbers = [0, 0, 0, 0, 0, 0]
     figure_no = 0
+    figure_count = [0]
     table_no = 0
     figure_word = "Figure"
     table_word = "Table"
@@ -744,9 +964,10 @@ def build_body(
         if kind == "tablecap":
             cap = w_el("p")
             props = w_el("pPr")
-            props.append(w_el("jc", **{"val": "center"}))
+            props.append(w_el("jc", **{"val": "both"}))
+            props.append(w_el("ind", **{"firstLine": "0", "firstLineChars": "0"}))
             cap.append(props)
-            append_inline(cap, f"{table_word} {table_no}. {content}", bib, rec_nums, cited, missing, False)
+            append_inline(cap, f"{table_word} {table_no}. {plain_citations(content, bib)}", bib, rec_nums, cited, missing, False)
             body.append(cap)
             continue
         if kind == "title":
@@ -779,7 +1000,6 @@ def build_body(
             append_inline(p, f"{prefix} {content}", bib, rec_nums, cited, missing, True)
             body.append(p)
             continue
-        before = len(images)
         append_content(
             body,
             content,
@@ -790,17 +1010,10 @@ def build_body(
             missing,
             images,
             missing_images,
+            captions,
+            figure_count,
+            figure_word,
         )
-        added = len(images) - before
-        if added:
-            figure_no += 1
-            label = w_el("p")
-            props = w_el("pPr")
-            props.append(w_el("jc", **{"val": "center"}))
-            label.append(props)
-            label.append(run_text(f"{figure_word} {figure_no}", bold=True))
-            # 插在这张图的段落之前。图注仍跟在图后，引用域不被改写。
-            body.insert(len(list(body)) - added * 2, label)
     section = w_el("sectPr")
     section.append(w_el("pgSz", **{"w": "11906", "h": "16838"}))
     section.append(w_el("pgMar", **{
@@ -931,7 +1144,7 @@ def write_report(path: Path, payload: dict):
             lines.append(f"- `{target}`")
     else:
         lines.append("")
-        lines.append("打开 `output/endnote.docx`，在 EndNote 工具栏点 Update Citations and Bibliography，再换 Output Style。不要改源稿里的 `[@键]`。")
+        lines.append("打开 `output/endnote.docx`，在 EndNote 工具栏点 Update Citations and Bibliography，再换 Output Style。**先确认 EndNote 应用已在运行再开文档**：首次打开若插件无响应（按钮灰/无反应），是宿主还没就绪——等 EndNote 加载完库，或关掉文档重开一次即可，文档本身没坏。不要改源稿里的 `[@键]`。")
         lines.append("合意后另存为 `manuscript/source.docx`。不要覆盖这份报告或源稿。")
     binding = payload.get("binding") or []
     if binding:
@@ -963,6 +1176,13 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     bridge = load_bridge()
     records = {rec["id"]: rec for rec in bridge.load(bib_path) if rec.get("id")}
+    # traveling library 里的题名/刊名与导入文件同一套化学上下标口径（<sup>0</sup> 收成 ⁰），
+    # 否则没绑上库的记录刷新后会把字面 <sup> 文本带进参考文献表。标识符字段保持原样。
+    for rec in records.values():
+        rec["title"] = bridge.clean(rec.get("title") or "")
+        rec["journal"] = bridge.clean(rec.get("journal") or "")
+    # Update 前的可见文字做同年同姓消歧（(R. Zhang et al., 2026) / 2026a/b）
+    decorate_disambiguation(records)
     text = source.read_text(encoding="utf-8-sig")
     blocks = split_blocks(text)
     cited: list[str] = []
@@ -987,14 +1207,43 @@ def main(argv: list[str] | None = None) -> int:
     chosen = Path(args.endnote_library) if args.endnote_library else None
     root = Path(args.project_root) if args.project_root else None
     binding = match.bind_endnote(records, list(rec_nums), chosen, root)
+    # 人看的防呆提示：域稿绑定的是记录号，库动过手术记录号就作废（2026-10-11 实证：
+    # 生成前一分钟重建库，Update 整篇落漫游个人图书馆）。把绑定范围和这条规矩写进报告。
+    bound_ids = sorted(
+        rec["_en_rec"] for rec in records.values() if isinstance(rec.get("_en_rec"), int)
+    )
+    if bound_ids:
+        binding.append(
+            f"绑定记录号范围 {bound_ids[0]}–{bound_ids[-1]}。"
+            "生成之后不要再对库做删除/重新导入——动了就要重新生成域稿，"
+            "否则 Update 会把整篇落进「漫游个人图书馆」。"
+        )
+    # 库体检：旧版 Mesa 导出的脏记录会让新导入的去重认不出、旧数据残留。
+    # 只读检查；检出就给出「先删再导」的处方，库干净时零输出。
+    lib_for_check = chosen or match.endnote_pointer(root)
+    if lib_for_check:
+        stale, stale_note = match.endnote_stale_records(lib_for_check)
+        if stale_note:
+            binding.append(f"库体检未完成：{stale_note}")
+        elif stale:
+            binding.append(
+                f"库体检：检出 {len(stale)} 条旧版导出的脏记录。不先删掉，"
+                "重新导入时去重认不出，旧数据会残留："
+            )
+            binding.extend(f"- {h}" for h in stale)
+            binding.append("处方：在 EndNote 按上面清单的标题搜索并删除这些记录，再导入新的 endnote-import.ris。")
     body_el, images, missing_images = build_body(
         blocks, source.parent, records, rec_nums, cited, missing
     )
+    children = list(body_el)
+    insert_at = next((i for i, child in enumerate(children) if child.tag == W + "sectPr"), len(children))
+    body_el.insert(insert_at, heading_paragraph("References"))
     reflist = w_el("p")
+    # 实稿的 REFLIST 带一个空 fldData；Update 往这里填参考文献表
     reflist.extend(
-        field_runs(" ADDIN EN.REFLIST ", " ")
+        field_runs(" ADDIN EN.REFLIST ", " ", with_data=True)
     )
-    body_el.append(reflist)
+    body_el.insert(insert_at + 1, reflist)
     uniq_missing = sorted(set(missing))
     payload = {
         "source": str(source),
@@ -1014,7 +1263,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     visible = visible_text(body_el)
     if CURLY_KEY.search(visible) or CURLY_TEMP.search(visible):
-        print("visible text contains {Author, Year}; refusing to write docx", file=sys.stderr)
+        print("visible text contains {Author, Year} or an unmatched brace key; refusing to write docx", file=sys.stderr)
         return 1
     write_docx(out, body_el, images)
     return 0

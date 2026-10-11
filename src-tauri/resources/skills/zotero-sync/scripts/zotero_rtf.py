@@ -95,8 +95,32 @@ def bib_records(text: str) -> dict[str, dict]:
 def load_bridge():
     from pathlib import Path
     import importlib.util
-    path = Path(__file__).resolve().parents[2] / "endnote-bridge" / "scripts" / "bridge.py"
+    here = Path(__file__).resolve()
+    candidates = [
+        here.parent / "bridge.py",
+        here.parents[2] / "endnote-bridge" / "scripts" / "bridge.py",
+    ]
+    path = next((item for item in candidates if item.is_file()), None)
+    if path is None:
+        raise FileNotFoundError("找不到 endnote-bridge/scripts/bridge.py")
     spec = importlib.util.spec_from_file_location("endnote_bridge", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def load_library_match():
+    from pathlib import Path
+    import importlib.util
+    here = Path(__file__).resolve()
+    candidates = [
+        here.parent / "library_match.py",
+        here.parents[2] / "endnote-bridge" / "scripts" / "library_match.py",
+    ]
+    path = next((item for item in candidates if item.is_file()), None)
+    if path is None:
+        raise FileNotFoundError("找不到 endnote-bridge/scripts/library_match.py")
+    spec = importlib.util.spec_from_file_location("library_match", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -111,16 +135,36 @@ def rtf_escape(text: str) -> str:
     return text.replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}")
 
 
-def write_library_ris(bib_text: str, dest: Path) -> None:
-    """整份 bib 写成 Zotero RIS。用 bridge 解析，避免花括号和括号把作者、标题截断。"""
+def write_library_ris(bib_text: str, dest: Path) -> tuple[int, int]:
+    """整份 bib 写成 Zotero RIS。用 bridge 解析，避免花括号和括号把作者、标题截断。
+
+    Zotero 的文件导入不会对已有条目去重——整份重复导入会逐条建重复项（2026-10-11 实证：
+    72 条全量重导后库里 144 条）。所以按 DOI 做差量：库里已有的跳过，只交缺的。
+    返回 (写入条数, 跳过条数)。
+    """
     bridge = load_bridge()
+    match = load_library_match()
     records = bridge.parse_bibtex(bib_text)
+    known_dois: set[str] = set()
+    db = match.zotero_db_path()
+    if db is not None:
+        index, _owner, _note = match.zotero_index(db)
+        known_dois = set(index)
     lines = []
+    skipped = 0
+    written = []
     for rec in records:
+        doi = match.norm_doi(rec.get("doi") or "")
+        if doi and doi in known_dois:
+            skipped += 1
+            continue
+        written.append(rec)
         kind = {"article": "JOUR", "book": "BOOK", "incollection": "CHAP", "inproceedings": "CONF", "phdthesis": "THES"}.get(rec.get("type"), "JOUR")
         lines.append(f"TY  - {kind}")
-        # Zotero 不读 ID。引用键放进 N1，避免和摘要抢同一格。
-        lines.append(f"N1  - citation key: {rec['id']}")
+        # Zotero 份字段口径（2026-10-11 与 zotero-sync/lit-search SKILL、screening-review.ts 的
+        # recordToZoteroRis 对齐）：期刊全称只写 T2、缩写只写 J2；不写 ID（Zotero 导入不读，
+        # 键的回流职责在 EndNote 份）、不写 N1（会进笔记）、不写 JO/JF/JA（JO 会进期刊缩写格）、
+        # 不写 DA/ET/M2/M3/LA/N2（EndNote 格子或重复）。
         if rec.get("title"):
             lines.append(f"TI  - {bridge.clean(rec['title'])}")
         for author in rec.get("authors") or []:
@@ -128,13 +172,11 @@ def write_library_ris(bib_text: str, dest: Path) -> None:
         if rec.get("year"):
             lines.append(f"PY  - {rec['year']}")
         journal = rec.get("journal") or ""
-        # Zotero：JO/JF 是期刊全称，JA 是缩写。T2/J2 是 EndNote 的格子，写过来会进错字段。
         if journal:
-            lines.append(f"JO  - {bridge.clean(journal)}")
-            lines.append(f"JF  - {bridge.clean(journal)}")
+            lines.append(f"T2  - {bridge.clean(journal)}")
         short = journal_short(journal, rec.get("journalAbbreviation") or "")
-        if short:
-            lines.append(f"JA  - {short}")
+        if short and short.lower() != journal.lower():
+            lines.append(f"J2  - {short}")
         if rec.get("volume"):
             lines.append(f"VL  - {rec['volume']}")
         if rec.get("number"):
@@ -144,10 +186,6 @@ def write_library_ris(bib_text: str, dest: Path) -> None:
             lines.append(f"SP  - {start}")
         if end and end != start:
             lines.append(f"EP  - {end}")
-        elif start:
-            lines.append(f"EP  - {start}")
-        if rec.get("date"):
-            lines.append(f"DA  - {rec['date']}")
         if rec.get("issn"):
             lines.append(f"SN  - {rec['issn']}")
         doi = bridge.bare_doi(rec.get("doi") or "")
@@ -165,9 +203,11 @@ def write_library_ris(bib_text: str, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     header = (
         f"# 整份引文库，共 {len(records)} 条。不是 papers/to-fetch.md 的待获取名单。\r\n"
-        "# 库里已有同一 DOI 的不要再导入。\r\n"
+        f"# 本次写入 {len(written)} 条，库里已有同一 DOI 跳过 {skipped} 条"
+        "（Zotero 的文件导入不去重，全量重导会建重复条目）。\r\n"
     )
     dest.write_bytes((header + "\r\n".join(lines)).encode("utf-8"))
+    return len(written), skipped
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -180,7 +220,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--report")
     args = parser.parse_args(argv)
     if args.library_ris:
-        write_library_ris(Path(args.bib).read_text(encoding="utf-8"), Path(args.ris))
+        written, skipped = write_library_ris(Path(args.bib).read_text(encoding="utf-8"), Path(args.ris))
+        print(
+            f"差量导入：本次新增 {written} 条"
+            + (f"，库里已有跳过 {skipped} 条（重复条目请在 Zotero「重复项」里合并）" if skipped else "")
+            + "。"
+        )
+        # 库体检（同步按钮反馈）：旧版导出的脏记录会让本次导入的去重认不出、旧数据残留。
+        # 只读检查，打到 stdout 交给调用方显示；查不成或干净时也说明一句。
+        match = load_library_match()
+        stale, note = match.zotero_stale_items(None)
+        if note:
+            print(f"库体检：{note}")
+        elif stale:
+            print(f"库体检：检出 {len(stale)} 条旧版导出的脏记录，不先删掉，这次导入的去重认不出、旧数据会残留：")
+            for h in stale:
+                print(f"- {h}")
+            print("处方：在 Zotero 里按上面的标题删除这些条目，再点一次「同步到 Zotero」。")
+        else:
+            print("库体检：库里没有旧版导出的脏记录。")
         return 0
     if not args.input:
         print("缺 --input", file=sys.stderr)

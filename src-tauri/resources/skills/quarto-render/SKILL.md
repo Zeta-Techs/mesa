@@ -67,6 +67,7 @@ quarto render manuscript/<稿件>.md --to pdf --output-dir output
 - **中文缺字/豆腐块**（PDF 里中文乱码或方框）：用 `fc-list :lang=zh family` 找本机中文字体，在 YAML 设 `mainfont`/`CJKmainfont`；缺字靠设字体，不靠换引擎。
 - **英文标题里的缺字**：`references.bib` 标题中的 U+2010 连字符在 xelatex + Times New Roman 下会变成缺字。渲染前把标题和作者字段里的 U+2010 / U+2011 换成 ASCII `-`，重渲后再数 PDF 里的缺字，不为 0 不算通过。
 - **正文 `@` 被当成引用**（`citation polymer not found` 这类）：材料名里的 `@` 写成 `\@`。子图写成 `@fig-2(a–c)`，Quarto 只认整图标签。
+- **图注和交叉引用**：图片写成 `![说明](../figures/figN.png){#fig-N out-width="100%"}`，表题末尾写 `{#tbl-N}`。正文交叉引用只写 `@fig-N`、`@tbl-N`，不要再加 `Figure` 或 `Table`，否则 PDF 和普通 Word 会显示 `Figure Figure 1`。阅读稿按 Quarto 所选样式排图注、表题和文献表。两份域稿另交，引用保持作者-年，等人在 EndNote 或 Zotero 里换样式。
 - **`--output-dir output` 仍落到 `output/manuscript/`**：把 `draft.pdf` / `draft.docx` 移到 `output/`，删掉带过来的脚手架目录。`keep-tex` 写在 YAML 里，不是命令行旗标。
 - **xelatex 跑满 9 轮**：先查 PDF 有没有 `??` 和未解析引用。没有就记入渲染说明，不要为消这句警告改稿。
 
@@ -104,6 +105,8 @@ quarto render manuscript/<稿件>.md --to pdf --output-dir output
 - **渲染说明**（一句话级）：渲染命令、产物路径、警告摘要（`quarto check` 遗留警告、渲染 warning 条数与要点，含 undefined citation/reference 计数；无警告写明「无警告」）
 
 ## 完成标准
+
+- **码位抽检**（2026-10-11 定稿审计实证：PDF 文本层 59 个分号全被映射成 U+037E 希腊问号，视觉不可辨但复制/检索/查重即坏）：`pdftotext` 抽全文，比对源稿与 PDF 的标点码位（分号、引号、减号），发现 U+037E/U+2018 类映射漂移按渲染管线缺陷处理（字体/ToUnicode 层），记录进报告，不静默放行。
 
 - 产物在产物目录且验收通过（存在、非零字节、残留 warning 已计数）；
 - 渲染说明齐全（命令/路径/警告摘要）；

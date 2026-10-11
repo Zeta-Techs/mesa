@@ -51,6 +51,8 @@ outputs: [papers/endnote-report.json, output/endnote.docx, papers/endnote-cite-r
   </record></records></xml>
   ```
 - RIS 与 XML 一起生成（`TY`/`ID`/`AU`/`TI`/`T2`/`J2`/`PY`/`DA`/`ET`/`VL`/`IS`/`SP`/`M2`/`EP`/`M3`/`SN`/`DO`/`KW`/`AB`/`UR`，CRLF，无 BOM）。`ID` 载 citation key。对照 EndNote 2025 的 RefMan RIS 过滤器：期刊全称只写 `T2`，其他形式的期刊名写 `J2`，页 `SP`，起始页码 `M2`，文章类型 `M3`，网络出版日期 `ET`（XML 写在 `edition`）。不要写 `JO`/`JF`/`JA`/`M1`：`M1` 不进任何格子。写文件时一次查全：有 DOI 就向 Crossref 取正式字段，摘要和关键词缺了再问 OpenAlex。期刊缩写用 ISO 4、每个缩写词后加句点，按期刊全称查；对不上就留空，不让 Agent 现编，也不用 NLM 的 ISSN 结果。点「同步到 EndNote」只把这份已经写好的 RIS 交给 EndNote，不再重新检索。
+- **标识符不做化学上下标美化**：DOI/URL/附件路径之外，卷、期、页、ISSN、citation key（RIS 的 `ID`）同口径（2026-10-11 实证：文章号页码 `A257` 被美化成 `A₂₅₇`、`s0022-0728(99)00146-1` 的 `00146` 被下标、`D2EE04121A` → `D₂EE₀₄₁₂₁A`，导进库后 DOI 匹配全断）。`clean()` 对正文（摘要）里引用的裸 DOI/URL 也整段豁免。输入侧统一把上下标/全角数字折回 ASCII（`ascii_doi`），老库里已被美化过的 DOI 靠折叠愈合，不改用户库。
+- **标题上下标收敛三规则**（2026-10-11 实证补齐）：`<sub>`/`<sup>` 标签前的排版空格吃掉（`MgCl <sub>2</sub>` → `MgCl₂`，不得留 `MgCl ₂`）；电荷上标允许后跟连字符形容词（`Mg2+-Conducting` → `Mg²⁺-Conducting`）；电流密度单位 `cm −2`/`cm–2` 收成 `cm⁻²`。前端 `displayCitationTitle`（清单显示 + 纳入追加 RIS 的 TI）镜像同款规则，两套实现按约定不合并。
 - 导入动作本身是人工：报告里写清指引——双击文件或 EndNote「File → Import」，XML 选「EndNote generated XML / EndNote XML」、RIS 选「Reference Manager (RIS)」；具体名称与附件解析须在实际版本验证
 
 ### 2. Word 侧人工步骤（供人工事项引用）
@@ -75,8 +77,15 @@ python3 <技能目录>/scripts/cite_docx.py \
 科研论文用 `manuscript/paper-final.md`，学位论文用 `manuscript/thesis-final.md`。输出必须是新路径，不覆盖 `manuscript/source.docx` 和 Quarto 的 `output/*.docx`。
 
 - 每个 `[@键]` / `[@a; @b]` 写成一条 Word 域：`ADDIN EN.CITE` + traveling library `<record>`（作者/年/题/DOI）。未匹配键 **fail-closed**：写报告、不写 docx、退出码非 0。
-- 生成时只读人指定的一个 EndNote 库。把 `.enl` 的绝对路径单独写一行到 `papers/endnote-library.path`，或运行时加 `--endnote-library`。不扫磁盘挑库。DOI 去掉网址前缀、空白和末尾句点后必须整段相同，并且库里只有一条未进废纸篓的记录，才把记录号和库编号写进域。同一 DOI 多条、没有 DOI、库里没有、或没指定库，都不猜，报告「库绑定」点名；这条仍用稿内题录。
-- 可见文字用 `(Author, year)`，禁止花括号临时引用。正文里的 `{#键}`：键在 bib 里就写成同一条引用域，不在就只留键名。不能把 `{#tbl-…}` 原样留在 Word 里，EndNote 会按它弹「选择匹配参考文献」。
+- **域格式契约（2026-10-10 与 EndNote 2025 实稿逐 run 核对定稿）**：每条引文是**嵌套双域**——外层 ` ADDIN EN.CITE `（fldData 装引文 XML，结果区放显示文字），begin 与 separate 之间还嵌一个 ` ADDIN EN.CITE.DATA ` 子域（fldData 同一份 XML，只有 begin→instr→end）。**少了这个子域，CWYW 找不到域数据，Update 会把引文整条报成 `!!! INVALID CITATION !!!`**（2026-10-10 实证）。fldData 是 UTF-8 XML 加末尾 NUL 后的 base64，76 列换行、行尾 CRLF、末行也带 CRLF；组引文是一条载荷里多个 `<Cite>`（每条记录一个，只有第一个带 `<DisplayText>`）；`<record>` 内顺序必须是 `<rec-number>` 在前、`<foreign-keys>` 紧随其后，外键写成 `<key app="EN" db-id="…" timestamp="…">记录号</key><key app="ENWeb" db-id="">0</key>`（timestamp 用库里 `added_to_library`），`<urls>` 在 `<electronic-resource-num>` 之前；文末 REFLIST 是单层域、带空 fldData。库编号取 .enl 里 `misc` 表 code=14 的值，不编造。
+- 生成时只读人指定的一个 EndNote 库。把 `.enl` 的绝对路径单独写一行到 `papers/endnote-library.path`，或运行时加 `--endnote-library`（从项目根跑时还要带 `--project-root`，否则找不到这份指针文件）。不扫磁盘挑库。DOI 去掉网址前缀、空白和末尾句点、上下标/全角数字折回 ASCII 后必须整段相同，并且库里只有一条未进废纸篓的记录，才把记录号和库编号写进域。同一 DOI 多条、没有 DOI、库里没有、或没指定库，都不猜，报告「库绑定」点名；这条仍用稿内题录。
+- **域稿绑定的是记录号：库里动过手术（删记录、重新导入）之后，旧域稿的记录号全部作废，Update 会把整篇落进「漫游个人图书馆」。必须在库稳定之后重新生成域稿再 Update（2026-10-11 实证：15:59 重建库、16:00 生成的域稿绑的是被删批次，Update 全文漫游）。生成前用库绑定报告的记录号范围和库里的活记录对一眼账。**
+- 可见文字用 `(Author, year)`，禁止花括号临时引用。**同年同姓消歧**（2026-10-11 定稿审计实证）：第一作者同姓不同人加名首字母（`S. Zhang et al., 2026` / `X. Zhang et al., 2026`），同一第一作者同年多篇加 `2026a/2026b`（按 bib 顺序）；不撞车不加。Update/Refresh 后由输出样式接管重排。正文里的 `{#键}`：键在 bib 里就写成同一条引用域，不在就只留键名。
+- **正文 Pandoc 标记按 Pandoc 规则解析**（2026-10-11 定稿审计实证）：`~x~`/`^x^` 的内容不得含空白——放宽会把「约义 ~」（`~79–81%`、`~2 µm`）与化学式下标号错位配对，整段正文被排成下标、化学式拆碎（Mg3Bi2 事故）；反斜杠转义（`\@`、`\~`）剥离成字面量再配标记，收尾还原（否则正文残留 `\@polymer`）。
+- 图片 `![说明](图){#fig-1 ...}` 的花括号是锚点，删掉，不显示成 `Figure 1`。图注写成一行 `Figure 1. 说明`，跟在这张图后面。图注和表题里的 `[@键]` 写成普通作者-年文字，不写引用域。Zotero 刷新时，图注里的引用域会让整篇报错。同一段里的行内插图不当成编号图。表是 Word 表格，表题写成 `Table 1. 说明`，放在表下。正文交叉引用写 `@fig-1`、`@tbl-1`，收成 `Figure 1`、`Table 1`。对不上的只留键名，不留 `@` 和花括号。EndNote 会把留下的花括号当成临时引文去库里搜。
+- 域稿的引用保持作者-年，等人点 Update 后按 Output Style 换成期刊格式。不在生成时改成阅读稿的编号。阅读稿的图注、表题和交叉引用由 Quarto 按所选样式生成。
+- 图注和表题两端对齐，不缩进，不居中。正文仍是两端对齐、首行缩进。
+- 「编辑库中的文献」只对已经写进当前打开的 EndNote 库、并且域里有记录号的引用有反应。先用同步生成的 RIS 导入这个库，再打开域稿点一次 Update。库里还没有这条时，按钮没有反应。
 - 没指定 `papers/endnote-library.path`、库打不开、或同一 DOI 有多条时，域里不写 `foreign-keys`，也不编 `db-id="mesa"` 和顺序记录号。文末已有空的 `EN.REFLIST`，Update 往这里填参考文献表。
 - 正文 `![说明](../figures/figN.png)` 嵌进域稿，说明里的 `[@键]` 仍写成引用域。找不到图或读不出尺寸就停，不交 docx。不另交 `output/figures/`：那是渲染时复制的同一张图，源图在 `figures/`。
 - 文末放空的 `ADDIN EN.REFLIST`，等人点 Update 填参考文献。

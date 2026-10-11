@@ -51,6 +51,11 @@ test("审阅摘要只出示计数和筛选决定，不摊纳入表", async () =>
     assert.match(host.textContent!, /纳入 1 · 待确认 1 · 待获取 1 · 共 2 篇/);
     assert.match(host.textContent!, /Neighboring system paper/);
     assert.ok([...host.querySelectorAll("button")].some((b) => b.textContent === "纳入"));
+    const excludePicked = [...host.querySelectorAll("button")].find((b) => b.textContent === "排除所选");
+    const tools = excludePicked?.parentElement?.querySelector(":scope > .ml-auto");
+    assert.ok(tools, "指标表状态和排序跟在排除所选右侧");
+    assert.match(tools!.textContent ?? "", /排序/);
+    assert.equal(tools!.querySelector("select")?.value, "listed");
     assert.doesNotMatch(host.textContent!, /验收摘要与未决项/);
   } finally {
     await act(async () => root.unmount());

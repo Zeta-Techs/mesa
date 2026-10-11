@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import html
 import re
 import sys
@@ -46,7 +47,15 @@ def markdown_keys(text: str) -> list[str]:
 def docx_records(path: Path) -> list[dict]:
     with zipfile.ZipFile(path) as zf:
         xml = zf.read("word/document.xml").decode("utf-8", "ignore")
-    blob = html.unescape("".join(re.findall(r"<w:instrText[^>]*>(.*?)</w:instrText>", xml, re.S)))
+    # EndNote 把引文 XML 放在域数据（fldData，base64）里；instrText 只剩短指令。
+    # 生成稿没点过 Update 时两者都可能有，合在一起读。
+    parts = re.findall(r"<w:instrText[^>]*>(.*?)</w:instrText>", xml, re.S)
+    for raw in re.findall(r"<w:fldData[^>]*>(.*?)</w:fldData>", xml, re.S):
+        try:
+            parts.append(base64.b64decode("".join(raw.split())).decode("utf-8", "ignore").rstrip("\x00"))
+        except Exception:
+            continue
+    blob = html.unescape("".join(parts))
     found = []
     seen = set()
     for match in re.finditer(r"<Cite>(.*?)</Cite>", blob, re.S):

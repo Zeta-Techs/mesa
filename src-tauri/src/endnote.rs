@@ -89,6 +89,76 @@ fn run_bridge_args(
     Ok(())
 }
 
+/// 人指定的 EndNote 库路径（papers/endnote-library.path，一行）。没有或不止一行就 None。
+fn endnote_library_pointer(root: &Path) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(root.join("papers/endnote-library.path")).ok()?;
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .collect();
+    if lines.len() != 1 {
+        return None;
+    }
+    Some(PathBuf::from(crate::sessions::expand_tilde(&lines[0].to_string())))
+}
+
+/// 同步按钮只需要 RIS。不再连写 XML 和 ENW，也不等 EndNote 把文件导完。
+/// 返回 (RIS 路径, 库体检提示)：检出旧版导出的脏记录时提示先删再导，干净时为空。
+pub fn export_ris_only(project_root: &Path) -> Result<(PathBuf, String), String> {
+    let root =
+        crate::paths::canonicalize_plain(project_root).map_err(|e| format!("项目目录无效: {e}"))?;
+    let bib = root.join("references.bib");
+    if !bib.is_file() {
+        return Err("还没有 references.bib，没法生成 EndNote 导入文件".into());
+    }
+    let papers = root.join("papers");
+    std::fs::create_dir_all(&papers).map_err(|e| format!("无法创建 papers/: {e}"))?;
+    let ris = papers.join("endnote-import.ris");
+    let report = papers.join("endnote-report.json");
+    let stamp = uuid::Uuid::new_v4();
+    let script = std::env::temp_dir().join(format!("ccode-endnote-bridge-{stamp}.py"));
+    crate::storage::atomic_write(&script, BRIDGE_PY.as_bytes(), true)?;
+    let abbr = script.with_file_name("journal-abbreviations.csv");
+    crate::storage::atomic_write(
+        &abbr,
+        include_bytes!("../resources/journal-abbreviations.csv"),
+        true,
+    )?;
+    let py = python_bin()?;
+    run_bridge(&py, &script, &bib, &papers, &stamp, "ris", &ris, &report, &root)?;
+    // 库体检（只读）：人指定了库就顺手查一遍旧版导出的脏记录，并进按钮反馈
+    let mut health = String::new();
+    if let Some(enl) = endnote_library_pointer(&root) {
+        let matcher = script.with_file_name("library_match.py");
+        if crate::storage::atomic_write(
+            &matcher,
+            include_str!("../resources/skills/endnote-bridge/scripts/library_match.py").as_bytes(),
+            true,
+        )
+        .is_ok()
+        {
+            if let Ok(out) = crate::process::background_command(&py)
+                .arg(&script)
+                .arg("--check-endnote-library")
+                .arg(&enl)
+                .output()
+            {
+                if out.status.success() {
+                    health = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                }
+            }
+            let _ = std::fs::remove_file(&matcher);
+        }
+    }
+    let _ = std::fs::remove_file(&script);
+    let _ = std::fs::remove_file(&abbr);
+    if !ris.is_file() {
+        return Err("转换结束但没有 papers/endnote-import.ris".into());
+    }
+    Ok((ris, health))
+}
+
 pub fn export_xml(project_root: &Path) -> Result<PathBuf, String> {
     export_xml_with(project_root, false)
 }
@@ -333,17 +403,12 @@ fn launch_endnote_with_file(file: &Path) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         // `open -a App file` 等于把文件拖到应用程序图标上。
-        let status = crate::process::background_command("open")
+        crate::process::background_command("open")
             .arg("-a")
             .arg(&app)
             .arg(file)
-            .status()
+            .spawn()
             .map_err(|e| format!("没法打开 EndNote: {e}"))?;
-        if !status.success() {
-            return Err(
-                "请把产物里的 papers/endnote-import.ris 拖到 Dock 或「应用程序」里的 EndNote 图标上。".into(),
-            );
-        }
         Ok(())
     }
     #[cfg(windows)]
@@ -397,8 +462,10 @@ pub async fn endnote_export_xml(project_root: String) -> Result<String, String> 
         let root = crate::sessions::expand_tilde(&project_root);
         let root_path = Path::new(&root);
         // 精读之后同步：有引文库就按它重写，不再打开检索时的旧文件。
+        let mut health = String::new();
         if root_path.join("references.bib").is_file() {
-            export_xml(root_path)?;
+            let (_, note) = export_ris_only(root_path)?;
+            health = note;
         }
         let Some(ris) = find_import_ris(root_path) else {
             return Err(
@@ -407,10 +474,17 @@ pub async fn endnote_export_xml(project_root: String) -> Result<String, String> 
             );
         };
         copy_path_to_clipboard(&ris);
+        let health_note = if health.is_empty() {
+            String::new()
+        } else {
+            format!("\n\n{health}")
+        };
         match launch_endnote_with_file(&ris) {
-            Ok(()) => Ok("已交给 EndNote。PDF 用「打开 papers」拖到对应条目。".into()),
+            Ok(()) => Ok(format!(
+                "已交给 EndNote。PDF 用「打开 papers」拖到对应条目。{health_note}"
+            )),
             Err(e) => Ok(format!(
-                "文件在 papers/endnote-import.ris。把它拖到 EndNote 图标上（不要拖进窗口）。{e}"
+                "文件在 papers/endnote-import.ris。把它拖到 EndNote 图标上（不要拖进窗口）。{e}{health_note}"
             )),
         }
     })
