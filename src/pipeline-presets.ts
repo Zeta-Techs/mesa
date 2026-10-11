@@ -176,7 +176,7 @@ function mcpLitSearchTask(): HumanTaskDto {
   return {
     title: "配置学术检索 MCP",
     guidance:
-      "Consensus 在 MCP 页填 API 密钥即可，不必自己设环境变量。本机已配置时可跳过。Undermind 要先在终端登录，授权后新开检索会话；点「开始」会直接检索。不配也能用 OpenAlex / Semantic Scholar。",
+      "Consensus 在 MCP 页填 API 密钥即可，不必自己设环境变量。本机已配置时可跳过。Undermind 要先在终端登录，授权后新开检索会话；点「开始」会直接检索。不配也能用 OpenAlex。标准档不把 Semantic Scholar 当发现库。",
     target: "",
     timing: "before",
     optional: true,
@@ -218,7 +218,7 @@ function litSearchHumanTasks(): HumanTaskDto[] {
 const TO_FETCH_RIS =
   "两份 RIS（papers/to-fetch.ris 与 papers/endnote-import.ris）。" +
   "同一批已纳入、缺全文的篇目，题录写入 included.json；pending 只留 included.json，不进这两份 RIS，也不进 to-fetch.md。" +
-  "有 DOI 时先向 Crossref 取正式字段，摘要和关键词没有再问 OpenAlex。期刊缩写用 ISO 4、每个缩写词后加句点（Adv. Mater.），按期刊全称查，不要用 NLM 的 ISSN 结果（不带句点，还会对错刊）。表里没有、或现有缩写是全称、缺句点、对不上全称的，写成「待补」，再按期刊官网或 ISO 4 补上；一词刊名（Nature、Small）不缩。不要自己编。纳入时不再另查。" +
+  "有 DOI 时先向 Crossref 取正式字段。标题用 Crossref 的 title，里面的 <sub> <sup> 收成 Unicode 再写入；不要用 OpenAlex 的 display_name 覆盖。摘要和关键词没有再问 OpenAlex。期刊缩写用 ISO 4、每个缩写词后加句点（Adv. Mater.），按期刊全称查，不要用 NLM 的 ISSN 结果（不带句点，还会对错刊）。表里没有、或现有缩写是全称、缺句点、对不上全称的，写成「待补」，再按期刊官网或 ISO 4 补上；一词刊名（Nature、Small）不缩。不要自己编。纳入时不再另查。" +
   "papers/to-fetch.ris 给 Zotero，RIS 2004、CRLF，与 to-fetch.md 同序。每篇 TY - JOUR，AU 每位作者单独一行（姓, 名）。" +
   "期刊全称只写 T2，缩写与全称不同才写 J2。再写 PY、VL、IS、SP 起始页、EP 结束页、SN、DO、KW 每个关键词一行、AB、UR。" +
   "不要写 JO、JF、JA、N1、N2、M1。Zotero 会把 JO 放进期刊缩写，把 N1 放进笔记。" +
@@ -233,7 +233,18 @@ const LIT_PENDING_BEFORE_FETCH =
   "**禁止把 pending 写入 to-fetch.md，也不得下载其全文。**" +
   "pending 的 venue 与 included 一样写期刊全称：有 DOI 先向 Crossref 取 container-title，没有再问 OpenAlex；书章没有期刊才写「待补」。不得因未拍板就把 venue、doi、url 留空。" +
   "若 included.json 仍有 pending：把待确认篇目（标题+理由）写入 .ccode/help-wanted.md 请人逐篇纳入或排除" +
-  "（未回复不把 pending 当已纳入、不进待获取），只推进已纳入篇目的全文获取。pending 经人改成 included 后才允许补进 to-fetch。";
+  "（未回复不把 pending 当已纳入、不进待获取），只推进已纳入篇目的全文获取。pending 经人改成 included 后才允许补进 to-fetch。" +
+  "开放获取只下接口已经给出 PDF 直链的已纳入篇目；连续 3 次 403 即停，其余写入 to-fetch.md，不要换链重试。";
+
+/** 标准档发现阶段不做重复劳动（2026-10-09）。字段补全与两套 RIS 仍按 TO_FETCH_RIS。 */
+const LIT_SEARCH_NO_WASTE =
+  "发现阶段只查 OpenAlex 一条主检索式（概念块 2–4 个，块内 OR、块间 AND；单复数与近义词不另开一条）。" +
+  "先取命中数，再取回这一条式子的记录；命中多也不要拆成十几条近义式重抓。" +
+  "已配置的 Consensus / Undermind 各跑一轮并进候选池，不替代 OpenAlex。" +
+  "标准档不用 Semantic Scholar、Crossref 标题检索、arXiv 做发现；429 或失败记一行覆盖缺口后继续，不重试。" +
+  "来源级别允许预印本时才查 arXiv。Crossref 只按 DOI 补字段，不当发现库。" +
+  "标准档不做引文扩展；人明确要求或全局设定为严格检索档才做。" +
+  "期刊缩写与两套 RIS 只给最终纳入和待确认各做一次，排除的不补字段。";
 
 /** 英文综述（review）：文献检索 → 精读笔记 → 大纲 → 初稿 → 润色定稿。
  *  示例课题直接用这份模板（src-tauri/resources/pipeline-review.json）。
@@ -250,7 +261,8 @@ const REVIEW_STEPS: ProjectStepDto[] = [
       ".ccode/help-wanted.md 问用户一句（附兜底：未回复只做试检，不冻结标准或正式筛选），写完仅推进无依赖、可逆的准备。" +
       "正式标准按问题制定，不为凑篇数或结果而改；\n" +
       "2. 先解析人工导入的题录（RIS/BibTeX/CSV），三处都要看：① 本文件「项目根」下 papers/imports/；② 工作区内 papers/imports/；③ 「项目资源」段类型为「引文」的条目、以及「上一步产物（提货单）」段中来自「人工交付」的条目——后两类给绝对路径，按路径直读、勿复制。都没有才跳过。解析后按 lit-search 技能口径去重合并进候选池，每条保留来源标注；\n" +
-      "3. 检索候选文献：OpenAlex / Semantic Scholar / arXiv / Crossref 官方 API 免 key 直连（WebFetch/curl），每个库的检索式、检索日期与命中数记入 papers/screening.md；人工事项若已配 Consensus/Undermind MCP 可直接调用；WoS/SerpAPI 等付费 key 一律用 $VAR 环境变量引用，禁止写进任何文件；末尾写覆盖缺口声明（哪些库没检）；\n" +
+      "3. 检索候选文献。" + LIT_SEARCH_NO_WASTE +
+      "检索式、检索日期与命中数记入 papers/screening.md；WoS/SerpAPI 等付费 key 一律用 $VAR 环境变量引用，禁止写进任何文件；末尾写覆盖缺口声明（哪些库没检，含按上面停手跳过的库）；\n" +
       "4. 按标准逐条筛选，每篇给出纳入/排除及理由；拿不准相关性的一律保留为 pending 候选并标注「待确认」，不冒充已决纳入，不允许自行裁掉；\n" +
       "5. 纳入清单写入 papers/included.md（一行一篇：标题 — 作者, 年份 — 来源 — 链接/DOI），并同步写入 papers/included.json（每篇一条，至少含稳定唯一字符串 id、title、decision（included/pending）、reason；与 md 记录一一对应）；\n" +
       "6. " + LIT_PENDING_BEFORE_FETCH +
@@ -294,7 +306,7 @@ const REVIEW_STEPS: ProjectStepDto[] = [
       "7. 写 notes/handoff.md，只给下一步用。两节：\n" +
       "「## 写作约束」：仅摘要或题录的 bib 键（下游不得写成已确立）；库内要并列的机制分歧；图只核对了文本层图注、拼图时再核；期刊缩写留空的刊名。每条一行，没有就写无。\n" +
       "「## 不由下一步做」：补全文、登录、授权。这些留在 .ccode/help-wanted.md，不写进大纲任务。\n" +
-      "不在这一步写 papers/endnote-import.ris。同步按钮会按 references.bib 重写两份 RIS。\n" +
+      "8. 项目根 papers/ 里已对上 DOI 的 PDF，读首页和摘要页。标题、化学式上下标、摘要与 Crossref 纯文本不一致时，以 PDF 为准改 references.bib 的 title 和 abstract。抽不出字或对不上 DOI 的保持原字段。不在这一步重写 RIS。人点「同步到文献库」时，Mesa 按这份 references.bib 生成导入文件。\n" +
       "完成标准：notes/index.json 与 included.json 全部 id 对齐（仅待确认或无法按摘要写的篇 notePath 可空）；已写笔记符合 lit-notes 写法；确认过的核心篇未写完、或已确认要按摘要记的非核心还没写完，则不得结束本轮等人，验收摘要写明剩余篇数，质量状态不得高于已生成待审。清单全有文件不等于完成。\n" +
       QUALITY_STATUS,
     inputs: ["papers/included.md", "papers/included.json", "papers/to-fetch.md"],
@@ -434,7 +446,7 @@ const RESEARCH_PAPER_STEPS: ProjectStepDto[] = [
       "输入：英文综述模板的 notes/ 与 references.bib（接自上游模板时随仓库合并自带；独立启动本项目时，先把上游产物放入对应目录，或在资源面板绑定上游项目目录）。\n" +
       "若项目根已有 notes/ 或 papers/included.md：检查检索日期、问题/标准与原文版本，有效则复用；按本课题实证问题补检索、补纳入，保留人写内容并更新失效笔记。没有上游产物时按下面流程全量检索。\n" +
       "围绕课题主题（见上方「课题主题」段；未填写时只提出候选主题记入 papers/screening.md，待人确认后正式筛选；只可先试检摸底）执行：\n" +
-      "1. 检索与筛选按 lit-search 技能：**先粗检一轮报数再定标准**（OpenAlex 命中约 N 篇与建议标准写入 .ccode/help-wanted.md，未回复仅做无依赖、可逆准备）；产出 papers/screening.md（标准 + 各库检索式、检索日期与命中数 + 每篇判定理由；拿不准相关性的一律保留为 pending 候选并标注「待确认」，不冒充已决纳入）与 papers/included.md；用户导入的检索结果先解析去重——看项目根 papers/imports/、工作区 papers/imports/、以及「项目资源」「提货单」里的绝对路径；\n" +
+      "1. 检索与筛选按 lit-search 技能：**先粗检一轮报数再定标准**（OpenAlex 命中约 N 篇与建议标准写入 .ccode/help-wanted.md，未回复仅做无依赖、可逆准备）；" + LIT_SEARCH_NO_WASTE + "产出 papers/screening.md（标准 + 各库检索式、检索日期与命中数 + 每篇判定理由；拿不准相关性的一律保留为 pending 候选并标注「待确认」，不冒充已决纳入）与 papers/included.md；用户导入的检索结果先解析去重——看项目根 papers/imports/、工作区 papers/imports/、以及「项目资源」「提货单」里的绝对路径；\n" +
       "2. " + LIT_PENDING_BEFORE_FETCH +
       "开放获取直接下载到**项目根 papers/**（文件名：作者年份-短标题.pdf），不要下载到本工作区；付费墙不得绕过，汇总写入 papers/to-fetch.md，并转成" + TO_FETCH_RIS + " 清单落盘后按 zotero-sync 记录通道并写 papers/zotero-sync.md；未明确要求进库则不写用户 Zotero 库，通道不可用则只留 RIS/bib。已有 references.bib 时不得覆盖，只补空着的卷、期、页、ISSN、摘要、关键词和期刊缩写。\n" +
       "完成标准：检索交付件均已提交（无付费文献则 to-fetch.md 说明无待获取，to-fetch.ris 与 endnote-import.ris 保留合法零条目空文件；未启用或回落时 zotero-sync.md 写明原因），筛选记录含检索日期与覆盖缺口、可复现。\n" +
@@ -468,6 +480,7 @@ const RESEARCH_PAPER_STEPS: ProjectStepDto[] = [
       "先整理项目根 papers/ 里的人工补投并更新 to-fetch.md；已有 notes/ 先核对原文版本、全文状态和问题范围；有效则复用，变化则保留人写内容并更新受影响项。全文缺失时按摘要写笔记并标注「仅摘要·待全文」。\n" +
       "**先粗读 included.md 全部条目的标题与摘要，把「共 N 篇、全文到位 M 篇、我建议核心精读 K 篇」写进 .ccode/help-wanted.md 问用户一句**（未回复仅做可逆准备，不含批量生成笔记）。用户确认的核心篇有 PDF 的读正文写精读；其余按摘要写短记。index pending 只留给待确认或无法按摘要写的篇。\n" +
       "在已写笔记基础上按主题归纳研究现状写入 survey/literature.md，提炼有实质差别的候选研究问题（无合理备选可只留一个）并逐一分析现有工作的 gap，写入 survey/gap-analysis.md。先把候选、每个 gap 的证据与我建议的研究问题写入 .ccode/help-wanted.md 问用户一句（未回复只保留候选，不替人确定研究问题），写完只做无依赖、可逆的准备。摘要-only 不得支撑需要全文的 gap。\n" +
+      "已对上 DOI 的 PDF 读首页和摘要页。标题、化学式上下标、摘要与 Crossref 纯文本不一致时，以 PDF 为准改 references.bib 的 title 和 abstract。抽不出字或对不上 DOI 的保持原字段。不在这一步重写 RIS。人点「同步到文献库」时，Mesa 按这份 references.bib 生成导入文件。\n" +
       APPROVED_QUESTION +
       "完成标准：notes/index.json 与 included.json 全部 id 对齐（仅待确认或无法按摘要写的篇 notePath 可空）；已写笔记符合 lit-notes 写法；survey/literature.md 与 survey/gap-analysis.md 齐全；研究问题的候选/人批准状态与取舍理由可追溯。确认过的核心篇未写完、或已确认要按摘要记的非核心还没写完，则不得结束本轮等人，质量状态不得高于已生成待审。\n" +
       QUESTION_GATE + QUALITY_STATUS,
@@ -900,7 +913,7 @@ const THESIS_STEPS: ProjectStepDto[] = [
       "输入：课题主题（见上方「课题主题」段；未填写时提出候选主题写进 papers/screening.md，等待人确认后正式筛选）。接自上游英文综述/科研论文时 notes/ 与 included.md 随仓库自带，按日期/范围/版本检查后查漏补缺，保留人写内容，不把旧笔记存在当作仍然有效；没有上游时全量检索。全程按 lit-search 技能。\n" +
       "1. **先粗检一轮报数再定标准**：OpenAlex 命中约 N 篇与建议标准写入 .ccode/help-wanted.md（未回复仅做无依赖、可逆准备）；纳入/排除标准（年份、语言、来源级别、相关性）写入 papers/screening.md；\n" +
       "2. 解析人工导入题录（项目根 papers/imports/、工作区 papers/imports/、项目资源与提货单绝对路径），去重进候选池；\n" +
-      "3. 检索候选并逐条判定，产出 papers/screening.md、papers/included.md 和 papers/included.json（每项稳定唯一字符串 id/title/decision/reason，与 md 一一对应）；拿不准一律保留为 pending 候选并标「待确认」，不冒充已决纳入；检索日期与覆盖缺口写入 screening.md；\n" +
+      "3. 检索候选并逐条判定。" + LIT_SEARCH_NO_WASTE + "产出 papers/screening.md、papers/included.md 和 papers/included.json（每项稳定唯一字符串 id/title/decision/reason，与 md 一一对应）；拿不准一律保留为 pending 候选并标「待确认」，不冒充已决纳入；检索日期与覆盖缺口写入 screening.md；\n" +
       "4. " + LIT_PENDING_BEFORE_FETCH +
       "开放获取全文下载到**项目根 papers/**；付费墙写入 papers/to-fetch.md，并转成" + TO_FETCH_RIS + " 清单落盘后按 zotero-sync 记录通道并写 papers/zotero-sync.md；未明确要求进库则不写用户 Zotero 库，通道不可用则只留 RIS/bib。已有 references.bib 时不得覆盖，只补空着的卷、期、页、ISSN、摘要、关键词和期刊缩写。\n" +
       "零结果也交付 included.json=[] 与说明，禁止造条目；没有可精读证据时后续只允许准备，不宣称完成研究。\n" +
@@ -938,6 +951,7 @@ const THESIS_STEPS: ProjectStepDto[] = [
       "1. 整理项目根 papers/ 人工补投并更新 to-fetch.md；\n" +
       "2. **先报清单规模与全文到位率，建议核心精读篇目**，写入 .ccode/help-wanted.md（未回复仅做可逆准备，不含批量生成笔记）；\n" +
       "3. 用户确认的核心篇有 PDF 的读正文按技能八段写笔记；其余按摘要写短记。全文未得按摘要写并标「仅摘要·待全文」。index pending 只留给待确认或无法按摘要写的篇。\n" +
+      "4. 已对上 DOI 的 PDF 读首页和摘要页。标题、化学式上下标、摘要与 Crossref 纯文本不一致时，以 PDF 为准改 references.bib 的 title 和 abstract。抽不出字或对不上 DOI 的保持原字段。不在这一步重写 RIS。人点「同步到文献库」时，Mesa 按这份 references.bib 生成导入文件。\n" +
       "完成标准：notes/index.json 保留 included.json 的全部 id（仅待确认或无法按摘要写的篇 notePath 可空）；已写笔记符合 lit-notes 写法。确认过的核心篇未写完、或已确认要按摘要记的非核心还没写完，则不得结束本轮等人，质量状态不得高于已生成待审。\n" + QUALITY_STATUS,
     inputs: ["papers/included.md", "papers/included.json", "papers/to-fetch.md"],
     optionalInputs: ["papers/*.pdf", "notes/", "references.bib"],

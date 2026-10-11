@@ -41,12 +41,13 @@ outputs: [papers/screening.md, papers/included.md, papers/included.json, papers/
 
 ### 3. 检索候选文献
 
-- 按学科选择来源，常用库清单：arXiv（预印本，可用官方 API 按日期排序）、OpenAlex 与 Semantic Scholar（覆盖广、可程序化检索）、Crossref（DOI 元数据核对）、PubMed（生物医学）、DBLP（CS 会议/期刊索引，免费 API）、CNKI/知网（中文文献，手动导出题录）；
-- **Consensus / Undermind MCP（挂了就必须用，2026-09-15 实测被跳过后收紧）**：开工第一件事盘点本会话可用工具——只要存在 mcp__undermind / mcp__consensus 类工具就各跑至少一轮检索（Undermind = 语义深搜补漏，围绕课题先跑一轮；Consensus = 按研究问题搜同行评议论文）。命中并进候选池，检索日志「库」写 Consensus / Undermind，去重与纳排与其他库同一套；**不替代** OpenAlex / Semantic Scholar，也不另写一份清单。**工具在而没检索 = 违规**，必须在覆盖缺口里写明原因；只有工具不存在或调用失败才允许跳过并声明，不中断检索；
+- 标准档的发现库是 **OpenAlex 一条主检索式**（概念块 2–4 个，块内 OR、块间 AND；单复数与近义词并进同一条，不另开检索式）。先取命中数，再取回这一条的记录。命中多时收紧这一条式子，不要拆成十几条近义式各抓一页。
+- **不做发现的库**：标准档不用 Semantic Scholar、Crossref 标题检索、arXiv 建候选池。429 或请求失败在检索日志记一行并写入覆盖缺口，**不重试**。来源级别允许预印本时才查 arXiv。Crossref 只在已有 DOI 时补字段（见下），不当发现库。PubMed（生物医学）、DBLP（CS）、CNKI（中文，手动导出）按学科需要再加，不加则写入覆盖缺口。
+- **Consensus / Undermind MCP（挂了就必须用，2026-09-15 实测被跳过后收紧）**：开工第一件事盘点本会话可用工具——只要存在 mcp__undermind / mcp__consensus 类工具就各跑**一轮**（Undermind = 语义深搜补漏；Consensus = 按研究问题搜同行评议论文，免费档有多少收多少）。命中并进候选池，检索日志「库」写 Consensus / Undermind，去重与纳排与其他库同一套；**不替代** OpenAlex，也不另写一份清单。**工具在而没检索 = 违规**，必须在覆盖缺口里写明原因；工具不存在、未登录或调用失败则记缺口后继续，不反复授权、不中断检索；
 - 检索日志用固定六字段表头，逐库一行记入 `papers/screening.md`：**日期 / 库 / 完整检索式 / 命中数 / 去重后数 / 筛后保留数**，保证检索过程可复现；
 - 各库结果合并去重后，同一篇（DOI 或标题归一判定）被 ≥2 个库命中的，在记录上标「**多源命中**」——这是优先阅读的提示，不是纳入标准；
 - 每篇记录：标题、作者（全名，一位一行）、年份、期刊全称、卷、期、页码、出版日期、文章类型、ISSN、DOI、链接。有摘要、关键词、期刊缩写一并记下。字段未知一律标「待补」，不得留空或猜测。
-- **有 DOI 就用 Crossref 把上面这些字段补全再写入筛选记录和 RIS**（`https://api.crossref.org/works/<DOI>`，礼貌 User-Agent）。Crossref 没有摘要时再用 OpenAlex。期刊缩写用 **ISO 4，每个缩写词后面加句点**（`Adv. Mater.`，不是 `Adv Mater`）。按期刊全称查 JabRef 的 ACS / mechanical / geology_physics / general / lifescience 表（`https://abbrv.jabref.org/journals/`），或期刊官网、CASSI。不要用 NLM Catalog 的 ISSN 结果：它不带句点，还会把 *Advanced Materials* 对成 `Adv Eng Mater`。Crossref 的 short-container-title 经常就是全称，不能当缩写。表里没有、现有值等于全称、缺句点、或对不上这本期刊全称的，先写「待补」，再按官网或 ISO 4 补上。一词刊名（*Nature*、*Science*、*Small*）不缩，写全称。不要自己编。没有期、没有独立网络出版日也标「待补」，不把卷、页或创建日期挪去填。作者以 Crossref 的 `family`/`given` 为准，写成 `姓, 名`，一人一行；来源名单被截成「前三人, et al.」或同一人重复出现时，用 Crossref 的完整名单替换，不沿用截断名单。
+- **有 DOI 就用 Crossref 把上面这些字段补全再写入筛选记录和 RIS**（`https://api.crossref.org/works/<DOI>`，礼貌 User-Agent）。标题用 Crossref 的 `title`，不要改用 OpenAlex 的 `display_name`。`title` 里的 `<sub>` `<sup>` 先收成 Unicode 下标和上标再写入 `included.json` 与两份 RIS；OpenAlex 的空格标题会把 `Mo<sub>2</sub>` 收成 `Mo 2`。Crossref 纯文本把 `Zr1-xTMxB2` 收成 `Zr1-TMB2` 时，按出版商这种残缺形状写回 `Zr₁₋ₓTMₓB₂`，不要再删字母。Crossref 没有摘要时再用 OpenAlex。期刊缩写用 **ISO 4，每个缩写词后面加句点**（`Adv. Mater.`，不是 `Adv Mater`）。按期刊全称查 JabRef 的 ACS / mechanical / geology_physics / general / lifescience 表（`https://abbrv.jabref.org/journals/`），或期刊官网、CASSI。不要用 NLM Catalog 的 ISSN 结果：它不带句点，还会把 *Advanced Materials* 对成 `Adv Eng Mater`。Crossref 的 short-container-title 经常就是全称，不能当缩写。表里没有、现有值等于全称、缺句点、或对不上这本期刊全称的，先写「待补」，再按官网或 ISO 4 补上。一词刊名（*Nature*、*Science*、*Small*）不缩，写全称。不要自己编。没有期、没有独立网络出版日也标「待补」，不把卷、页或创建日期挪去填。作者以 Crossref 的 `family`/`given` 为准，写成 `姓, 名`，一人一行；来源名单被截成「前三人, et al.」或同一人重复出现时，用 Crossref 的完整名单替换，不沿用截断名单。
 
 #### 外部 AI 检索站导出导入（人肉中转）
 
@@ -64,7 +65,7 @@ Elicit / Undermind / X-MOL / Google Scholar 等闭源站点无法程序化检索
 - **Web of Science**：Clarivate 官方 REST API（需机构订阅 key），用 `$WOS_API_KEY` 引用，如
   `curl -H "X-ApiKey: $WOS_API_KEY" "https://api.clarivate.com/apis/wos-starter/v1/documents?q=TS=(topic)"`；
 - **Consensus**：官方 API / hosted MCP（端点 `https://mcp.consensus.app/mcp`，HTTP 传输，401 需鉴权；以官方文档为准），key 用 `$CONSENSUS_API_KEY` 引用；
-- **Google Scholar 无官方 API**：首选 OpenAlex / Semantic Scholar 替代（均有免费官方 API）；确需 Scholar 走 SerpAPI（`$SERPAPI_KEY` 引用），如
+- **Google Scholar 无官方 API**：标准档用 OpenAlex。确需 Scholar 走 SerpAPI（`$SERPAPI_KEY` 引用），如
   `curl "https://serpapi.com/search.json?engine=google_scholar&q=<检索词>&api_key=$SERPAPI_KEY"`。
 
 #### 推荐 MCP（可选，去 MCP 页粘贴导入）
@@ -83,7 +84,7 @@ Elicit / Undermind / X-MOL / Google Scholar 等闭源站点无法程序化检索
 "playwright": { "command": "npx", "args": ["@playwright/mcp@latest"] }
 ```
 
-- Semantic Scholar 无权威社区 MCP，直接用其官方 REST API 即可（基础检索免 key）。
+- Semantic Scholar 无权威社区 MCP。标准档不把它当发现库；人明确要求引文扩展时再用其被引/参考文献接口，429 记缺口后停止，不重试。
 
 ### 4. 逐条筛选
 
@@ -93,10 +94,12 @@ Elicit / Undermind / X-MOL / Google Scholar 等闭源站点无法程序化检索
 - **开头那句篇数从 included.json 现数来。** 「终判纳入 N 篇」「另有待确认 M 篇」必须等于 json 里 `decision=included` / `pending` 的条数。后来改了判定，先改这句再交。不要留检索当时的旧数字。
 - **「待确认」不是题录没查全。** `decision=pending` 只表示相关性等人拍板。期刊全称、ISSN、`doi`、`url` 与已纳入同一套：有 DOI 就必须先向 Crossref 取 `container-title` 写入 `venue`，没有再问 OpenAlex。书章没有期刊才把 `venue` 写成「待补」。禁止因为这篇还没拍板，就把 `venue`/`doi`/`url` 整列写成「待补」或留空。
 - **先拍 pending，再下载全文**：`to-fetch.md` 与开放获取下载都只针对 `decision=included`。禁止把 pending 写入待获取或先下其全文。有 pending 时写入 `.ccode/help-wanted.md` 请人逐篇纳入或排除（未回复则不把 pending 当已纳入）；人改成 included 后才允许补进 to-fetch。
+- **开放获取失败就停**：只下载接口已经给出的 PDF 直链。连续 3 次 HTTP 403 即停止其余下载，未下到的写入 `to-fetch.md`，不要换链重试。
+- **排除的不补字段**：期刊全称、卷期页、ISSN、摘要、ISO 4 缩写和两套 RIS 只对最终纳入与待确认各做一次。排除篇留在筛选记录里即可，不向 Crossref 补全。
 
 ### 5. 引用扩展与停止
 
-- 标准档可选、严格档强制：从已纳入清单选择能覆盖不同概念与相反结论的种子文献（数量依问题，不固定为 3-5 篇），查其参考文献（向后）与被引（向前，OpenAlex / Semantic Scholar 均可），新增候选并入筛选；
+- **标准档不做引文扩展。** 只有人明确要求，或深度档为严格检索档，才从已纳入清单选择能覆盖不同概念与相反结论的种子文献（数量依问题，不固定为 3-5 篇），查其参考文献（向后）与被引（向前，优先 OpenAlex），新增候选并入筛选；
 - **显式停止**：普通检索可把新增很少作为预算提示，但停止依据须对应范围和覆盖缺口；系统综述按已批准方案和来源覆盖停止，不用固定两轮或少于三篇冒充穷尽。预算不足时报告未完成范围，供人缩题或补检。用户喊停立即停，保留已有清单；
 - 每轮扩展的来源种子与新增数记进 `papers/screening.md`。
 

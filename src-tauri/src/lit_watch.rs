@@ -1347,6 +1347,92 @@ fn title_hits(want: &str, have: &str) -> bool {
     !a.is_empty() && !b.is_empty() && short >= 8 && (a.contains(&b) || b.contains(&a))
 }
 
+/// 出版商下载名常是「期刊 - 年 - 作者 - 截断标题」。截断段够长且是清单标题的开头，算对上。
+fn filename_title_hits(want: &str, have: &str) -> bool {
+    if title_hits(want, have) {
+        return true;
+    }
+    let want_n = normalize_title(want);
+    if want_n.len() < 24 {
+        return false;
+    }
+    let flat = have.replace(['\u{2010}', '\u{2011}', '\u{2013}', '\u{2014}', '\u{2212}', '\u{2010}'], "-");
+    flat.split(" - ").any(|part| {
+        let bare = part
+            .trim()
+            .trim_end_matches(".pdf")
+            .trim_end_matches(".PDF");
+        let bare = bare.trim_end_matches(|c: char| c.is_ascii_whitespace());
+        let bare = if let Some(stem) = bare.strip_suffix(')') {
+            if let Some((body, n)) = stem.rsplit_once(" (") {
+                if !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) {
+                    body
+                } else {
+                    bare
+                }
+            } else {
+                bare
+            }
+        } else {
+            bare
+        };
+        let part_n = normalize_title(bare);
+        part_n.len() >= 24 && (want_n.starts_with(&part_n) || part_n.starts_with(&want_n))
+    })
+}
+
+/// PDF 正文里能抽出的标题线索。文件名是出版商编号时仍能对上清单。
+/// 只读前 256KB 的可见文字，不渲染页面。
+pub(crate) fn pdf_title_hints(bytes: &[u8]) -> Vec<String> {
+    let cap = bytes.len().min(256 * 1024);
+    let text = String::from_utf8_lossy(&bytes[..cap]);
+    let mut hints = Vec::new();
+    for key in ["/Title (", "/Title("] {
+        if let Some(start) = text.find(key) {
+            let rest = &text[start + key.len()..];
+            if let Some(end) = rest.find(')') {
+                let title = rest[..end].replace("\\(", "(").replace("\\)", ")");
+                if normalize_title(&title).len() >= 8 {
+                    hints.push(title);
+                }
+            }
+        }
+    }
+    let mut visible = String::new();
+    let raw = &bytes[..cap];
+    let mut i = 0;
+    while i < raw.len() {
+        let b = raw[i];
+        if b == b'(' {
+            i += 1;
+            let mut word = String::new();
+            while i < raw.len() && raw[i] != b')' {
+                if raw[i] == b'\\' && i + 1 < raw.len() {
+                    i += 1;
+                }
+                let c = raw[i];
+                if c.is_ascii_graphic() || c == b' ' {
+                    word.push(c as char);
+                }
+                i += 1;
+                if word.len() > 240 {
+                    break;
+                }
+            }
+            if word.len() >= 12 {
+                visible.push_str(&word);
+                visible.push(' ');
+            }
+        } else {
+            i += 1;
+        }
+    }
+    if normalize_title(&visible).len() >= 8 {
+        hints.push(visible);
+    }
+    hints
+}
+
 fn doi_hits(doi: &str, haystack: &str) -> bool {
     if doi.len() < 8 {
         return false;
@@ -1361,15 +1447,30 @@ fn doi_hits(doi: &str, haystack: &str) -> bool {
 
 struct PdfFact {
     filename: String,
+    path: std::path::PathBuf,
     aliases: Vec<String>,
+    /// PDF 正文里的标题。文件名对不上时才读。
+    hints: Vec<String>,
+    hints_loaded: bool,
     mtime: std::time::SystemTime,
+}
+
+fn load_pdf_hints(pdf: &mut PdfFact) {
+    if pdf.hints_loaded {
+        return;
+    }
+    pdf.hints_loaded = true;
+    pdf.hints = std::fs::read(&pdf.path)
+        .map(|bytes| pdf_title_hints(&bytes))
+        .unwrap_or_default();
 }
 
 fn item_hits_pdf(it: &ToFetchProbe, pdf: &PdfFact) -> bool {
     let doi = probe_doi_norm(&it.url);
     pdf.aliases
         .iter()
-        .any(|a| title_hits(&it.title, a) || doi_hits(&doi, a))
+        .any(|a| filename_title_hits(&it.title, a) || doi_hits(&doi, a))
+        || pdf.hints.iter().any(|hint| title_hits(&it.title, hint))
 }
 
 fn to_fetch_progress_inner(root: &Path, items: &[ToFetchProbe]) -> Vec<Option<String>> {
@@ -1408,7 +1509,10 @@ fn to_fetch_progress_with(
                         .unwrap_or(std::time::UNIX_EPOCH);
                     Some(PdfFact {
                         filename: name,
+                        path: e.path(),
                         aliases,
+                        hints: Vec::new(),
+                        hints_loaded: false,
                         mtime,
                     })
                 })
@@ -1420,9 +1524,12 @@ fn to_fetch_progress_with(
     let mut out: Vec<Option<String>> = items
         .iter()
         .map(|it| {
-            let hit = pdfs
-                .iter()
-                .position(|p| !taken.contains(&p.filename) && item_hits_pdf(it, p));
+            let hit = pdfs.iter().position(|p| {
+                !taken.contains(&p.filename)
+                    && p.aliases.iter().any(|alias| {
+                        filename_title_hits(&it.title, alias) || doi_hits(&probe_doi_norm(&it.url), alias)
+                    })
+            });
             match hit {
                 Some(pos) => {
                     taken.insert(pdfs[pos].filename.clone());
@@ -1437,6 +1544,7 @@ fn to_fetch_progress_with(
             }
         })
         .collect();
+    // 清单刷新只对文件名和 DOI。读 PDF 正文只发生在人把文件拖进清单时。
     // 文件名是 paper-5 这类对不上标题：用「浏览器打开」登记把最近落下的 PDF 挂到那一行
     let root_s = root.to_string_lossy();
     let mine: Vec<&crate::download_inbox::CatchIdent> = catches
@@ -1546,6 +1654,77 @@ pub(crate) fn save_paper_bytes_ident(
     let target = unique_pdf_path(&papers, &name);
     fs::write(&target, bytes).map_err(|e| format!("写入 PDF 失败: {e}"))?;
     register_pdf(root, &target, identity, doi)
+}
+
+/// 拖进待获取清单的 PDF：文件名、DOI、PDF 内标题都试。多篇命中时不猜。
+pub fn match_dropped_pdf(root: &Path, source: &Path, items: &[ToFetchProbe]) -> Result<usize, String> {
+    let name = source
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+    let stem = source
+        .file_stem()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+    let quick = PdfFact {
+        filename: name.clone(),
+        path: source.to_path_buf(),
+        aliases: vec![name.clone(), stem.clone()],
+        hints: Vec::new(),
+        hints_loaded: true,
+        mtime: std::time::SystemTime::UNIX_EPOCH,
+    };
+    let quick_hits: Vec<usize> = items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| item_hits_pdf(item, &quick))
+        .map(|(i, _)| i)
+        .collect();
+    if !quick_hits.is_empty() {
+        return match quick_hits.as_slice() {
+            [one] => Ok(*one),
+            _ => Err("这份 PDF 对上了多篇。点其中一行的「关联」指定。".into()),
+        };
+    }
+    let bytes = fs::read(source).map_err(|e| format!("读取 PDF 失败: {e}"))?;
+    let fact = PdfFact {
+        filename: name.clone(),
+        path: source.to_path_buf(),
+        aliases: vec![name, stem],
+        hints: pdf_title_hints(&bytes),
+        hints_loaded: true,
+        mtime: std::time::SystemTime::UNIX_EPOCH,
+    };
+    let hits: Vec<usize> = items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| item_hits_pdf(item, &fact))
+        .map(|(i, _)| i)
+        .collect();
+    match hits.as_slice() {
+        [one] => Ok(*one),
+        [] => Err("没有对上待获取清单。点这一行的「关联」指定这篇。".into()),
+        _ => Err("这份 PDF 对上了多篇。点其中一行的「关联」指定。".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn match_dropped_paper(
+    project_root: String,
+    source_path: String,
+    items: Vec<ToFetchProbe>,
+) -> Result<DownloadedPaperDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = gated_root(&project_root)?;
+        let src = PathBuf::from(crate::sessions::expand_tilde(&source_path));
+        let index = match_dropped_pdf(&root, &src, &items)?;
+        let title = items[index].title.clone();
+        attach_pdf_at(&root, &source_path, &title)
+    })
+    .await
+    .map_err(|e| format!("匹配 PDF 失败: {e}"))?
 }
 
 /// 关联本地 PDF（sync）：用户手动下载的 PDF 复制进 papers/ 并按标题登记。
@@ -2097,6 +2276,39 @@ mod tests {
         assert!(got.contains("chloride-free"), "{got}");
         assert!(!papers.join("paper-5.pdf").exists());
         assert!(papers.join(&got).exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn publisher_truncated_filename_matches_without_reading_pdf() {
+        let dir = tmpdir("drop-trunc");
+        let pdf = dir.join("Angew Chem Int Ed - 2017 - Park - Boron\u{2010}Dependency of Molybdenum Boride Electrocatalysts for the Hydrogen Evolution (1).pdf");
+        std::fs::write(&pdf, b"%PDF-1.4 not read").unwrap();
+        let items = vec![ToFetchProbe {
+            title: "Boron-Dependency of Molybdenum Boride Electrocatalysts for the Hydrogen Evolution Reaction".into(),
+            url: "10.1002/anie.2017".into(),
+        }];
+        assert_eq!(match_dropped_pdf(&dir, &pdf, &items).unwrap(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn dropped_pdf_matches_title_inside_file_not_filename() {
+        let dir = tmpdir("drop-body");
+        let pdf = dir.join("1-s2.0-S0000000000000000-main.pdf");
+        let body = b"%PDF-1.4\n(Amorphous Cobalt Boride as a Highly Efficient Catalyst for Hydrogen)\n";
+        std::fs::write(&pdf, body).unwrap();
+        let items = vec![
+            ToFetchProbe {
+                title: "Unrelated nickel phosphide paper about seawater splitting".into(),
+                url: "10.1000/other".into(),
+            },
+            ToFetchProbe {
+                title: "Amorphous Cobalt Boride as a Highly Efficient Catalyst for Hydrogen".into(),
+                url: "10.1000/cobalt".into(),
+            },
+        ];
+        assert_eq!(match_dropped_pdf(&dir, &pdf, &items).unwrap(), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

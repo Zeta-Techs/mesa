@@ -481,7 +481,7 @@ export function parseToFetchItems(text: string): ToFetchItem[] {
       done = Boolean(bulleted[1]);
       body = bulleted[2] ?? "";
     }
-    body = body.trim();
+    body = body.trim().replace(/^(?:\[\s*\]|【\s*】)\s*/, "");
     if (!body) return;
     const segs = body.split(/\s+—\s+|\s+--\s+/);
     let url = "";

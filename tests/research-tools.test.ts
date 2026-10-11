@@ -90,7 +90,7 @@ test("定稿同时交 EndNote 与 Zotero 两份域稿，不看文献库选项", 
   assert.equal(withResearchTools(notes, { ...DEFAULT_RESEARCH_TOOLS, libraryExport: "zotero" }).expectedArtifacts.includes("output/zotero.docx"), false);
   const notesEndnote = withResearchTools(notes, { ...DEFAULT_RESEARCH_TOOLS, libraryExport: "endnote" });
   assert.ok(notesEndnote.skills.includes("endnote-bridge"));
-  assert.match(notesEndnote.brief, /按 references\.bib 重写/);
+  assert.match(notesEndnote.brief, /按这份 references\.bib 生成导入文件/);
   assert.equal(notesEndnote.expectedArtifacts.includes("papers/endnote-import.ris"), false);
   for (const id of ["research-paper", "thesis", "submission-rebuttal"]) {
     const finals = template(id).steps.filter((s) =>

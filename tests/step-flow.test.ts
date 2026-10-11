@@ -497,6 +497,13 @@ test("parseToFetchItems：DOI 后面的刊名和标记不吞进链接", () => {
   assert.equal(item.title, "Boride review");
   const marked = parseToFetchItems("2. [已补] Paper — https://doi.org/10.1016/j.cej.2021.1 — 全文 papers/a.pdf");
   assert.equal(marked[0].url, "https://doi.org/10.1016/j.cej.2021.1");
+  const checkbox = parseToFetchItems(
+    "1. [ ] Novel 2D Material of MBenes — 10.1002/smll.202405870 — Small",
+  );
+  assert.equal(checkbox[0].title, "Novel 2D Material of MBenes");
+  assert.equal(checkbox[0].done, false);
+  assert.equal(checkbox[0].url, "10.1002/smll.202405870");
+  assert.equal(checkbox[0].venue, "Small");
 });
 
 

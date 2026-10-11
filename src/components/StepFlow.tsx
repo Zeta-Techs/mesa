@@ -10,6 +10,7 @@ import {
 } from "../lit-watch";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { marked } from "marked";
 import { renderMathInto } from "../md-math";
 import { useAppStore } from "../store";
@@ -35,6 +36,7 @@ import {
   type ResearchToolField,
   type ResearchTools,
 } from "../research-tools";
+import { displayCitationTitle } from "../screening-review";
 import { stepNodeAction, stepNodeReady } from "../step-node-actions.ts";
 import {
   DECISION_STATUS,
@@ -72,8 +74,10 @@ import {
   type AcademicMcpLogin,
 } from "../academic-mcp";
 import {
+  instActiveFrom,
   instOpenTarget,
   type FetchedFulltextDto,
+  type InstSessionStatus,
 } from "../inst-access";
 import PendingConfirmList, { type PendingConfirmHandle } from "./PendingConfirmList";
 import ReviewDecisionList from "./ReviewDecisionList";
@@ -161,6 +165,71 @@ function writeToFetchPageScroll(root: string, top: number): void {
     /* 隐私模式写不进就只靠本次 */
   }
 }
+function PublisherOpenButton({
+  url,
+  title,
+  projectPath,
+  onOpened,
+  onError,
+}: {
+  url: string;
+  title: string;
+  projectPath: string;
+  onOpened: () => void;
+  onError: (message: string) => void;
+}) {
+  const [waiting, setWaiting] = useState(false);
+  useEffect(() => {
+    if (!waiting) return;
+    const timer = window.setTimeout(() => setWaiting(false), 95000);
+    return () => window.clearTimeout(timer);
+  }, [waiting]);
+  return (
+    <>
+      <button
+        type="button"
+        className={`${inlineActionClass} shrink-0`}
+        title="去出版商官网打开这篇；点站方下载，90 秒内落下的 PDF 会收进 papers/。没收到用「关联」"
+        onClick={() => {
+          onError("");
+          void invoke("inst_browser_open", {
+            url: instOpenTarget(url),
+            projectRoot: projectPath,
+            title,
+            doi: url,
+          })
+            .then(() => {
+              onOpened();
+              setWaiting(true);
+            })
+            .catch((e) => {
+              onError(`打开浏览器失败：${String(e)}`);
+            });
+        }}
+      >
+        {waiting ? "等待收货…" : "官网"}
+      </button>
+      {waiting && (
+        <button
+          type="button"
+          className={`${ghostActionClass} shrink-0`}
+          title="这篇不下载了。收货等待取消，之后的 PDF 不会挂到这一行。"
+          onClick={() => {
+            setWaiting(false);
+            void invoke("inst_browser_cancel", {
+              projectRoot: projectPath,
+              title,
+              doi: url,
+            }).catch(() => {});
+          }}
+        >
+          取消
+        </button>
+      )}
+    </>
+  );
+}
+
 function JournalPills({ metric }: { metric: JournalMetricsDto | null | undefined }) {
   if (!metric) return null;
   return (
@@ -518,9 +587,10 @@ export default function StepFlow({
   // 90 秒窗从注册到过期全程零可见性，漏收也无从察觉）：打开后 95 秒内按钮显示
   // 等待收货文案，到期回落；配套独立错误位（旧口径把报错写进 Zotero 结果槽，
   // 渲染在滚动区最底部、语义也错位）
-  const [browserOpenedAt, setBrowserOpenedAt] = useState<Record<number, number>>({});
   const [browserOpenErr, setBrowserOpenErr] = useState<string | null>(null);
-  const [, tickBrowserOpened] = useState(0);
+  const [instLoggedIn, setInstLoggedIn] = useState(false);
+  const [dropNote, setDropNote] = useState<string | null>(null);
+  const paywallDropRef = useRef<HTMLDivElement>(null);
   // 点「浏览器」或已存标题后离开，回来要立刻找到刚才那行：主题强调色框，
   // 点下一篇才换/消失（不按时间收）。行号进 sessionStorage——切文件页会卸任务页。
   const [browserSpotlight, setBrowserSpotlight] = useState<number | null>(() =>
@@ -562,22 +632,6 @@ export default function StepFlow({
   useLayoutEffect(() => {
     return () => rememberToFetchPlace(projectPath, toFetchListRef.current);
   }, [projectPath]);
-  useEffect(() => {
-    if (!Object.keys(browserOpenedAt).length) return;
-    const t = window.setInterval(() => {
-      // 到期条目剪掉（终检二轮：只增不删会让秒级 interval 在组件存活期内永久
-      // 运转、整棵 StepFlow 每秒重渲染）；清空后 effect 守卫停表
-      const now = Date.now();
-      setBrowserOpenedAt((cur) => {
-        const next = Object.fromEntries(
-          Object.entries(cur).filter(([, at]) => now - at < 95000),
-        );
-        return Object.keys(next).length === Object.keys(cur).length ? cur : next;
-      });
-      tickBrowserOpened((v) => v + 1);
-    }, 1000);
-    return () => window.clearInterval(t);
-  }, [browserOpenedAt]);
   useEffect(() => {
     if (browserSpotlight == null) return;
     const onHide = () => {
@@ -634,19 +688,6 @@ export default function StepFlow({
         });
         rememberToFetchDone(projectPath, map);
         setToFetchDone(map);
-        // 扩展/收货一旦对上 papers/，清掉「等待收货」——否则 95 秒窗内清单
-        // 已存了按钮还在等（通道 C 不经下载夹，前端计时器不知情）
-        setBrowserOpenedAt((cur) => {
-          let changed = false;
-          const next = { ...cur };
-          for (const it of items) {
-            if (map[it.line] && next[it.line]) {
-              delete next[it.line];
-              changed = true;
-            }
-          }
-          return changed ? next : cur;
-        });
       })
       .catch(() => {});
   };
@@ -696,18 +737,6 @@ export default function StepFlow({
             const next = { ...cur, ...add };
             rememberToFetchDone(projectPath, next);
             return next;
-          });
-          setBrowserOpenedAt((cur) => {
-            let changed = false;
-            const next = { ...cur };
-            for (const line of Object.keys(add)) {
-              const k = Number(line);
-              if (next[k]) {
-                delete next[k];
-                changed = true;
-              }
-            }
-            return changed ? next : cur;
           });
         }
       }
@@ -806,6 +835,76 @@ export default function StepFlow({
   /** 手动关联本地 PDF（2026-09-17）：浏览器手动下载的文件名常是 main(1).pdf 这类
    *  通用名，靠文件名永远对不上清单条目——显式选文件 + 按本行标题登记，行立即亮
    *  「已存 papers/」（拷贝进 papers/，不动源文件） */
+  useEffect(() => {
+    if (!paywallListOpen) return;
+    let stale = false;
+    void invoke<InstSessionStatus>("inst_session_status")
+      .then((status) => {
+        if (!stale) setInstLoggedIn(instActiveFrom(status));
+      })
+      .catch(() => {
+        if (!stale) setInstLoggedIn(false);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [paywallListOpen]);
+
+  useEffect(() => {
+    if (!paywallListOpen || !projectPath) return;
+    function overList(x: number, y: number): boolean {
+      const scale = window.devicePixelRatio || 1;
+      const box = paywallDropRef.current;
+      if (!box) return false;
+      for (const [cx, cy] of [
+        [x, y],
+        [x / scale, y / scale],
+      ]) {
+        const rect = box.getBoundingClientRect();
+        if (cx >= rect.left && cx <= rect.right && cy >= rect.top && cy <= rect.bottom) return true;
+      }
+      return false;
+    }
+    const unlisten = getCurrentWebviewWindow().onDragDropEvent((event) => {
+      if (event.payload.type === "over") {
+        if (overList(event.payload.position.x, event.payload.position.y)) setDropNote("松开后按标题对上条目");
+        else setDropNote(null);
+      } else if (event.payload.type === "drop") {
+        const here = overList(event.payload.position.x, event.payload.position.y);
+        setDropNote(null);
+        const path = event.payload.paths.find((item) => item.toLowerCase().endsWith(".pdf"));
+        if (here && path) void matchDroppedPdf(path);
+      } else {
+        setDropNote(null);
+      }
+    });
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+    // paywallList.text 在匹配时读取，拖放监听只跟清单是否展开走
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paywallListOpen, projectPath]);
+
+  async function matchDroppedPdf(path: string) {
+    const items = parseToFetchItems(paywallList.text ?? "").filter((item) => !item.done);
+    if (items.length === 0) {
+      setDropNote("待获取清单是空的");
+      return;
+    }
+    setDropNote("正在按 PDF 标题对条目…");
+    try {
+      const res = await invoke<FetchedFulltextDto>("match_dropped_paper", {
+        projectRoot: projectPath,
+        sourcePath: path,
+        items: items.map((item) => ({ title: item.title, url: item.url })),
+      });
+      setDropNote(`已对上并保存：${res.name}`);
+      refreshToFetchProgress();
+    } catch (e) {
+      setDropNote(String(e));
+    }
+  }
+
   async function attachToFetchItem(item: ToFetchItem) {
     const selected = await openFileDialog({
       multiple: false,
@@ -2394,18 +2493,28 @@ export default function StepFlow({
                   </button>
                   </div>
                   {paywallListOpen && (
-                    <div className="mt-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSettingsSectionReq("network");
-                          setPage("settings");
-                        }}
-                        className="mb-1 rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1"
-                        title="打开设置 → 网络，登录学校账号。登录一次后，清单里点浏览器即可下载"
-                      >
-                        登录学校账号
-                      </button>
+                    <div ref={paywallDropRef} className="mt-1">
+                      {instLoggedIn ? (
+                        <span
+                          className="mb-1 inline-flex rounded-sm border border-done/40 px-1.5 py-0.5 text-xs text-done"
+                          title="学校账号会话已保存。清单里点官网即可下载。"
+                        >
+                          已登录
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSettingsSectionReq("network");
+                            setPage("settings");
+                          }}
+                          className="mb-1 rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1"
+                          title="打开设置 → 网络，登录学校账号。登录一次后，清单里点官网即可下载"
+                        >
+                          登录学校账号
+                        </button>
+                      )}
+                      {dropNote && <p className="mb-1 text-micro text-l3">{dropNote}</p>}
                       {paywallList.error ? (
                         <p className="text-micro text-l4">
                           {paywallList.error}
@@ -2440,9 +2549,6 @@ export default function StepFlow({
                                 const st = toFetchBusy[item.line];
                                 const doneName = toFetchDone[item.line];
                                 const done = item.done || !!doneName;
-                                const waiting =
-                                  !!browserOpenedAt[item.line] &&
-                                  Date.now() - browserOpenedAt[item.line] < 95000;
                                 const spotlight = browserSpotlight === item.line;
                                 return (
                                   <li
@@ -2484,7 +2590,7 @@ export default function StepFlow({
                                         }
                                       }}
                                     >
-                                      {item.title}
+                                      {displayCitationTitle(item.title)}
                                     </button>
                                     <JournalPills metric={paywallMetrics.get(item.line)} />
                                     {done ? (
@@ -2501,55 +2607,13 @@ export default function StepFlow({
                                     ) : (
                                       <span className="flex shrink-0 items-center">
                                         {item.url && (
-                                          <button
-                                            type="button"
-                                            className={`${inlineActionClass} shrink-0`}
-                                            title="去出版商官网打开这篇；点站方下载，90 秒内落下的 PDF 会收进 papers/。没收到用「关联」"
-                                            onClick={() => {
-                                              setBrowserOpenErr(null);
-                                              invoke("inst_browser_open", {
-                                                url: instOpenTarget(item.url),
-                                                projectRoot: projectPath,
-                                                title: item.title,
-                                                doi: item.url,
-                                              })
-                                                .then(() => {
-                                                  focusToFetchLine(item.line);
-                                                  setBrowserOpenedAt((cur) => ({
-                                                    ...cur,
-                                                    [item.line]: Date.now(),
-                                                  }));
-                                                })
-                                                .catch((e) => {
-                                                  setBrowserOpenErr(
-                                                    `打开浏览器失败：${String(e)}`,
-                                                  );
-                                                });
-                                            }}
-                                          >
-                                            {waiting ? "等待收货…" : "官网"}
-                                          </button>
-                                        )}
-                                        {waiting && (
-                                          <button
-                                            type="button"
-                                            className={`${ghostActionClass} shrink-0`}
-                                            title="这篇不下载了。收货等待取消，之后的 PDF 不会挂到这一行。"
-                                            onClick={() => {
-                                              setBrowserOpenedAt((cur) => {
-                                                const next = { ...cur };
-                                                delete next[item.line];
-                                                return next;
-                                              });
-                                              void invoke("inst_browser_cancel", {
-                                                projectRoot: projectPath,
-                                                title: item.title,
-                                                doi: item.url,
-                                              }).catch(() => {});
-                                            }}
-                                          >
-                                            取消
-                                          </button>
+                                          <PublisherOpenButton
+                                            url={item.url}
+                                            title={item.title}
+                                            projectPath={projectPath}
+                                            onOpened={() => focusToFetchLine(item.line)}
+                                            onError={(message) => setBrowserOpenErr(message || null)}
+                                          />
                                         )}
                                         <button
                                           type="button"

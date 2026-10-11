@@ -175,7 +175,7 @@ export function withResearchTools(source: ProjectStepDto, tools: ResearchTools, 
       ownsImport ? ["papers/endnote-import.ris"] : [],
       ownsImport
         ? "EndNote：papers/endnote-import.ris 只在检索步生成。同步打开这一份。已有记录不覆盖。"
-        : "EndNote：精读不把 papers/endnote-import.ris 列为产物。人点「同步到文献库」时，按 references.bib 重写 to-fetch.ris 与 endnote-import.ris 再打开。PDF 从「打开 papers」拖进库，挂到对应条目上。",
+        : "EndNote：精读只按已对上 DOI 的 PDF 改 references.bib 的标题和摘要，不写 RIS。人点「同步到文献库」时，Mesa 按这份 bib 生成导入文件。PDF 从「打开 papers」拖进库，挂到对应条目上。",
     );
   }
   const outputRoot = artifactDir.replace(/\\/g, "/").replace(/\/+$/, "") || "artifacts";

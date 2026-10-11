@@ -37,7 +37,12 @@ test("任务书减重不靠删阶段/门禁：共用摘要一次，格式适配�
   // 2026-09-30：初稿字体改到开工时问，并列入 typeface.md / reference.docx；润色步不再必交 target-journal.md。
   // 同日：论文/学位论文定稿步改成与综述同一句「沿用编号不写 target-journal.md」，并写明沿用 typeface.md。
   // 实测 review 24378、论文 33079、学位 30881。上限取整到百位，留一点改字余量。
-  const before: Record<string, number> = { review: 24600, "research-paper": 33400, "data-processing": 12100, thesis: 31200, "submission-rebuttal": 8600, "latex-paper": 13200 };
+  // 2026-10-10：三模板检索步加「标准档发现不空转」（LIT_SEARCH_NO_WASTE：只 OpenAlex 一条主检索式、
+  // 429 记缺口不重试、缩写与 RIS 只做一次）＋开放获取 3 次 403 停手；to-fetch 题录改用 Crossref 标题
+  // （上下标收成 Unicode、不用 OpenAlex display_name 覆盖）；精读步新增「按已对上 DOI 的 PDF 首页/摘要页
+  // 校正 references.bib 的标题与摘要」条款（三模板同一句）。实测 review 24948、论文 33979、学位 31784，
+  // 上限提到 25100 / 34200 / 32000。
+  const before: Record<string, number> = { review: 25100, "research-paper": 34200, "data-processing": 12100, thesis: 32000, "submission-rebuttal": 8600, "latex-paper": 13200 };
   for (const t of PIPELINE_TEMPLATES) {
     const tasks = md(t.id);
     assert.ok(tasks.reduce((n, s) => n+s.length, 0) < before[t.id], t.id);
