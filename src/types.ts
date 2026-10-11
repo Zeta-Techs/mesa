@@ -949,6 +949,10 @@ export interface SkillDto {
   id: string;
   name: string;
   description: string;
+  /** 可顶替的内置技能位（闭集=内置技能名；frontmatter provides 声明，list 时现算） */
+  provides?: string[] | null;
+  /** 合成溯源（「AI 优化另存」记录源技能名单；纯展示，不做运行时依赖） */
+  derivedFrom?: { name: string; digest?: string | null }[] | null;
   /** builtin | ccode（Mesa 新建）| local（本地导入；旧数据含早期自建）| zip | github | discovered */
   source: string;
   repo: string | null;

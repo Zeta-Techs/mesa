@@ -3,6 +3,7 @@ name: review-figures
 description: 综述文献图拼板。当综述初稿按大纲用图计划需要从论文 PDF 裁源图、组 panel，或不能拼时改为引用 Fig.n 时使用。裁切 fail-closed；排版用随包脚本，不改源图数据含义。
 inputs: [outline.md, notes/, papers/]
 outputs: [figures/]
+provides: [review-figures]
 ---
 
 # 综述文献图拼板

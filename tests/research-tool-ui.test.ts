@@ -51,7 +51,7 @@ test("工具预检先阻止未就绪开工，刷新后根据真实返回释放�
   try {
     await ui.act(async () => ui.root.render(ui.createElement(ui.Preflight,{projectRoot:"/fixture",stepName:"分析",agent:"codex",onBlocked})));
     assert.equal(blocked.at(-1),true);assert.match(ui.host.textContent!,/未分发/);
-    available=true;await ui.act(async () => (ui.host.querySelector("button") as HTMLButtonElement).click());
+    available=true;await ui.act(async () => ([...ui.host.querySelectorAll("button")].find((b) => b.textContent === "重新检测") as HTMLButtonElement).click());
     assert.equal(blocked.at(-1),false);assert.match(ui.host.textContent!,/已启用/);
     assert.deepEqual(invokes,["research_tool_preflight","research_tool_preflight"]);
   } finally { await ui.close(); }

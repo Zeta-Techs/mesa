@@ -2,6 +2,7 @@
 name: review-writing
 description: 英文综述写作规范。当用户要求基于文献笔记与引文库撰写学术综述（大纲、初稿、润色定稿任一阶段）时使用。约束综合而非堆砌（观点先行、引用为证）、扩写只加可回溯证据、禁止凑字数与防御性套话、引用只用 [@bib键]、严禁编造文献、图表占位不虚构数据、无依据论断标 [待核实]、润色只改表达不改观点。
 outputs: [outline.md, manuscript/]
+provides: [review-writing]
 ---
 
 # 英文综述写作

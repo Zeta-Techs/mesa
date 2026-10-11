@@ -148,6 +148,7 @@ export default function KickoffConfirmDialog({
   const [extras, setExtras] = useState<{
     artifacts: ArtifactEntryDto[];
     skillMeta: Record<string, string> | undefined;
+    providesByName: Record<string, string[]> | undefined;
     /** 已定方向（决策项答案，读自任务书草稿）：渲染进 TASK.md 的「已定方向」段 */
     decisions: { q: string; answer: string }[];
     upstream: UpstreamAcceptance[];
@@ -421,6 +422,10 @@ export default function KickoffConfirmDialog({
       projectPath,
       extras.artifacts,
       skillMeta ?? extras.skillMeta,
+      // 弹层打开时的快照可能落后于弹层内刚挂的技能：有 skillLib 时现算
+      skillLib
+        ? Object.fromEntries(skillLib.map((s) => [s.name, s.provides ?? []]))
+        : extras.providesByName,
       extras.decisions,
     );
   }, [extras, stepNow, cfgLocal, skillMeta, projectPath]);
@@ -964,6 +969,7 @@ export default function KickoffConfirmDialog({
           chainSupply={chainSupply}
           expectedArtifacts={stepNow.expectedArtifacts}
           stepOutputs={researchToolArtifacts(stepNow.brief)}
+          brief={stepNow.brief}
           onChange={(next) => void onSkillsChange(next)}
         />
         {skillError && (

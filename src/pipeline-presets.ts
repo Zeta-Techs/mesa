@@ -72,7 +72,7 @@ const MANUSCRIPT_FINALS = [
 
 /** 初稿正文字体：开工时问，写在本步工作区。商量会话只改任务书，不能写这些文件。 */
 const DRAFT_TYPEFACE =
-  "正文字体在第一次渲染前问人一次：默认英文 Times New Roman、中文宋体，人可以改这两个名字。这是一次决定，不要另开话题。按回答运行 quarto-render 技能的 scripts/manuscript_font.py，写入 YAML 的 mainfont 和 CJKmainfont，并生成 manuscript/reference.docx 与 manuscript/typeface.md。不要先渲完再重渲。PDF 用 xelatex。Word 必须加 --reference-doc manuscript/reference.docx。本机没有这套字体就停下来说明，不要改用别的字体。";
+  "正文字体在第一次渲染前问人一次：默认英文 Times New Roman、中文宋体，人可以改这两个名字。这是一次决定，不要另开话题。按回答运行 {skill:quarto-render} 技能的 scripts/manuscript_font.py，写入 YAML 的 mainfont 和 CJKmainfont，并生成 manuscript/reference.docx 与 manuscript/typeface.md。不要先渲完再重渲。PDF 用 xelatex。Word 必须加 --reference-doc manuscript/reference.docx。本机没有这套字体就停下来说明，不要改用别的字体。";
 
 /** 科研质量门复用文字，不增加编排层；报告状态不替代人的验收。 */
 const QUALITY_STATUS =
@@ -105,7 +105,7 @@ const STYLE_AT_FINAL =
 
 /** 人在 EndNote 里改过的 Word，由 Agent 读回，确认后才改源稿。 */
 const ENDNOTE_SYNC =
-  "人在 EndNote 里改过 output/endnote.docx 或 manuscript/source.docx 之后，运行 endnote-bridge 的 scripts/sync_docx.py，只写 papers/endnote-sync-report.md。人把每条决定写成接受或拒绝。接受的删除才从源稿去掉对应 [@键]；接受的新文献才追加进 references.bib，缺字段标待补。正文要补的引用等人指出位置再写。Export Traveling Library 在 Word 的 EndNote 菜单里，把这篇的文献抄进自己的库；Agent 不代点。\n";
+  "人在 EndNote 里改过 output/endnote.docx 或 manuscript/source.docx 之后，运行 {skill:endnote-bridge} 的 scripts/sync_docx.py，只写 papers/endnote-sync-report.md。人把每条决定写成接受或拒绝。接受的删除才从源稿去掉对应 [@键]；接受的新文献才追加进 references.bib，缺字段标待补。正文要补的引用等人指出位置再写。Export Traveling Library 在 Word 的 EndNote 菜单里，把这篇的文献抄进自己的库；Agent 不代点。\n";
 
 function styleChoiceTask(): HumanTaskDto {
   return {
@@ -122,7 +122,9 @@ function styleChoiceTask(): HumanTaskDto {
 function endnoteSyncTask(): HumanTaskDto {
   return {
     title: "决定 EndNote 同步项",
-    guidance: ENDNOTE_SYNC.trim(),
+    // guidance 是人看的人工事项文案，不走 renderTaskMd 的占位解析——
+    // 先把 {skill:锚名} 解析成锚名可读形态（同 resolveSkillRefs 的空缺兜底语义）
+    guidance: ENDNOTE_SYNC.trim().replace(/\{skill:([a-z0-9-]+)\}/g, "$1"),
     target: "papers/endnote-sync-report.md",
     timing: "after",
     optional: true,
@@ -143,7 +145,7 @@ function reviewDecisionTask(target: string): HumanTaskDto {
 
 /** 精读步 TASK 合同。写法细节以 lit-notes 技能为准；此处堵住「每篇都有文件=完成」。 */
 const LIT_NOTES_WRITE =
-  "写法见 lit-notes 技能。叙述用中文，材料名/离子/电解液/方法缩写/图表编号等惯用英文原词保留，不强翻。" +
+  "写法见 {skill:lit-notes} 技能。叙述用中文，材料名/离子/电解液/方法缩写/图表编号等惯用英文原词保留，不强翻。" +
   "禁止整段粘贴英文摘要或 PDF 抽取原文。未读完只在 notes/index.json 记 reviewStatus=pending、notePath 可空，禁止生成八段占位文件（文件存在会被标成已读）。" +
   "可逆准备只含 PDF 改名、index 骨架、bib 对账、合法 OA 尝试，不包括批量生成笔记正文。" +
   "「按摘要记」= 根据摘要消化来写并标「仅摘要」，不是贴英文。" +
@@ -159,7 +161,7 @@ const QUESTION_GATE =
 
 const DESIGN_GATE =
   "G2 设计与分析计划：design.md 固定版本/日期与已看过的数据/结果，写分析单元、主比较/指标、有意义效应或精度、样本量/对照、缺失剔除、停止规则、风险与备选方案。预设与探索分开；预测研究所有拟合型预处理仅在训练折学习，按个体/时间/机构划分评价边界，不以测试结果选模型；因果研究写识别假设和替代解释，其他形态使用相应规范。\n" +
-  "设计摘要给方案、推荐证据、总成本/依赖及待人批准的版本/范围；必要伦理/许可注明依据或不适用理由。换数据、指标、清洗、样本、矩阵、停止规则先记已见结果和影响，获人批准才改；stats-check 关键问题未关闭不得正式运行。\n";
+  "设计摘要给方案、推荐证据、总成本/依赖及待人批准的版本/范围；必要伦理/许可注明依据或不适用理由。换数据、指标、清洗、样本、矩阵、停止规则先记已见结果和影响，获人批准才改；{skill:stats-check} 关键问题未关闭不得正式运行。\n";
 
 const EXECUTION_GATE =
   "G3 数据与实现：最小试验先核对样本单位、数据流、指标已知答案或独立实现、基线和泄漏，不只测速；results/implementation-check.md 记录命令、预期/实测、容差及修复。未通过不扩规模，裁剪回 G2，不按易完成/结果好坏挑组合。\n" +
@@ -255,18 +257,18 @@ const REVIEW_STEPS: ProjectStepDto[] = [
     role: "both",
     workspaceName: "lit-search",
     brief:
-      "输入：课题主题（见上方「课题主题」段；未填写时只能提出候选主题写入 papers/screening.md「检索主题假设」，等待人确认后正式筛选；期间只做可逆摸底）。全程按 lit-search 技能执行。全局设定若写了「综述深度：严格档」，按技能严格档（引用扩展强制、screening 末尾 PRISMA-S 最小披露）；未写或标准档则按技能默认标准档。方法类型先按叙述性/范围/系统综述确认；严格检索不是完整系统综述。单人/人工或 Agent 复核范围在 Methods 如实声明，系统综述需完整方案与对应质量评价。\n" +
+      "输入：课题主题（见上方「课题主题」段；未填写时只能提出候选主题写入 papers/screening.md「检索主题假设」，等待人确认后正式筛选；期间只做可逆摸底）。全程按 {skill:lit-search} 技能执行。全局设定若写了「综述深度：严格档」，按技能严格档（引用扩展强制、screening 末尾 PRISMA-S 最小披露）；未写或标准档则按技能默认标准档。方法类型先按叙述性/范围/系统综述确认；严格检索不是完整系统综述。单人/人工或 Agent 复核范围在 Methods 如实声明，系统综述需完整方案与对应质量评价。\n" +
       "1. 制定纳入/排除标准（年份、语言、来源级别、相关性口径），写进 papers/screening.md。" +
       "**先粗检一轮报数再定标准**：用主题词在 OpenAlex 粗查命中量，把「命中约 N 篇」与你建议的标准写进 " +
       ".ccode/help-wanted.md 问用户一句（附兜底：未回复只做试检，不冻结标准或正式筛选），写完仅推进无依赖、可逆的准备。" +
       "正式标准按问题制定，不为凑篇数或结果而改；\n" +
-      "2. 先解析人工导入的题录（RIS/BibTeX/CSV），三处都要看：① 本文件「项目根」下 papers/imports/；② 工作区内 papers/imports/；③ 「项目资源」段类型为「引文」的条目、以及「上一步产物（提货单）」段中来自「人工交付」的条目——后两类给绝对路径，按路径直读、勿复制。都没有才跳过。解析后按 lit-search 技能口径去重合并进候选池，每条保留来源标注；\n" +
+      "2. 先解析人工导入的题录（RIS/BibTeX/CSV），三处都要看：① 本文件「项目根」下 papers/imports/；② 工作区内 papers/imports/；③ 「项目资源」段类型为「引文」的条目、以及「上一步产物（提货单）」段中来自「人工交付」的条目——后两类给绝对路径，按路径直读、勿复制。都没有才跳过。解析后按 {skill:lit-search} 技能口径去重合并进候选池，每条保留来源标注；\n" +
       "3. 检索候选文献。" + LIT_SEARCH_NO_WASTE +
       "检索式、检索日期与命中数记入 papers/screening.md；WoS/SerpAPI 等付费 key 一律用 $VAR 环境变量引用，禁止写进任何文件；末尾写覆盖缺口声明（哪些库没检，含按上面停手跳过的库）；\n" +
       "4. 按标准逐条筛选，每篇给出纳入/排除及理由；拿不准相关性的一律保留为 pending 候选并标注「待确认」，不冒充已决纳入，不允许自行裁掉；\n" +
       "5. 纳入清单写入 papers/included.md（一行一篇：标题 — 作者, 年份 — 来源 — 链接/DOI），并同步写入 papers/included.json（每篇一条，至少含稳定唯一字符串 id、title、decision（included/pending）、reason；与 md 记录一一对应）；\n" +
       "6. " + LIT_PENDING_BEFORE_FETCH +
-      "开放获取（arXiv/PMC/开放期刊/作者主页 preprint）直接下载到**项目根 papers/**（见上方「项目根」，文件名规范化：作者年份-短标题.pdf），不要下载到本工作区；付费墙不得尝试绕过，在 included.md 该行末尾标注「需自行获取」，并汇总写入 papers/to-fetch.md（编号清单，见 lit-search 产出格式）等用户提供全文，同时把 to-fetch.md 转成" + TO_FETCH_RIS + " 已有 references.bib 只补空着的卷、期、页、ISSN、摘要、关键词和期刊缩写，不覆盖、不改键。不在这一步默认写同步文件。文献来源或文献库选了 Zotero / EndNote 时，才按对应技能做导入和同步。已有 references.bib 不得覆盖。\n" +
+      "开放获取（arXiv/PMC/开放期刊/作者主页 preprint）直接下载到**项目根 papers/**（见上方「项目根」，文件名规范化：作者年份-短标题.pdf），不要下载到本工作区；付费墙不得尝试绕过，在 included.md 该行末尾标注「需自行获取」，并汇总写入 papers/to-fetch.md（编号清单，见 {skill:lit-search} 产出格式）等用户提供全文，同时把 to-fetch.md 转成" + TO_FETCH_RIS + " 已有 references.bib 只补空着的卷、期、页、ISSN、摘要、关键词和期刊缩写，不覆盖、不改键。不在这一步默认写同步文件。文献来源或文献库选了 Zotero / EndNote 时，才按对应技能做导入和同步。已有 references.bib 不得覆盖。\n" +
       "完成标准：papers/screening.md、papers/included.md、papers/to-fetch.md、papers/to-fetch.ris、papers/endnote-import.ris 均存在（两份 RIS 允许有效空文件，其他文件非空；无付费文献则 to-fetch.md 说明无待获取，两份 RIS 保留合法零条目空文件），每条记录无空缺字段（未知则标「待补」），筛选记录含检索日期与覆盖缺口、能让第三人按标准复现每条判定。\n" +
       QUESTION_GATE + QUALITY_STATUS,
     optionalInputs: ["references.bib"],
@@ -292,7 +294,7 @@ const REVIEW_STEPS: ProjectStepDto[] = [
     role: "both",
     workspaceName: "lit-notes",
     brief:
-      "输入：上一步产物 papers/included.md 与 papers/to-fetch.md（已随 main 合并在本工作区内）。全程按 lit-notes 技能执行。\n" +
+      "输入：上一步产物 papers/included.md 与 papers/to-fetch.md（已随 main 合并在本工作区内）。全程按 {skill:lit-notes} 技能执行。\n" +
       LIT_NOTES_WRITE +
       "篇数以 papers/included.json 的 decision 为准。included.md 开头若写着「终判纳入 N 篇 / 待确认 M 篇」而和 json 不一致，那是检索时的旧句子，人在 Mesa 里改过判定后以 json 为准，改掉那一句再继续，不要因此停步。\n" +
       "若后续提交把 included.json 从「纳入+待确认」改成「纳入+排除」、并把部分行移出 included.md，那是人在 Mesa 里做的筛选，不是定稿被退回。help-wanted.md 里列出的待确认是提问当时的名单，json 里已经没有 pending 就不要再当成未决。\n" +
@@ -307,7 +309,7 @@ const REVIEW_STEPS: ProjectStepDto[] = [
       "「## 写作约束」：仅摘要或题录的 bib 键（下游不得写成已确立）；库内要并列的机制分歧；图只核对了文本层图注、拼图时再核；期刊缩写留空的刊名。每条一行，没有就写无。\n" +
       "「## 不由下一步做」：补全文、登录、授权。这些留在 .ccode/help-wanted.md，不写进大纲任务。\n" +
       "8. 项目根 papers/ 里已对上 DOI 的 PDF，读首页和摘要页。标题、化学式上下标、摘要与 Crossref 纯文本不一致时，以 PDF 为准改 references.bib 的 title 和 abstract。抽不出字或对不上 DOI 的保持原字段。不在这一步重写 RIS。人点「同步到文献库」时，Mesa 按这份 references.bib 生成导入文件。\n" +
-      "完成标准：notes/index.json 与 included.json 全部 id 对齐（仅待确认或无法按摘要写的篇 notePath 可空）；已写笔记符合 lit-notes 写法；确认过的核心篇未写完、或已确认要按摘要记的非核心还没写完，则不得结束本轮等人，验收摘要写明剩余篇数，质量状态不得高于已生成待审。清单全有文件不等于完成。\n" +
+      "完成标准：notes/index.json 与 included.json 全部 id 对齐（仅待确认或无法按摘要写的篇 notePath 可空）；已写笔记符合 {skill:lit-notes} 写法；确认过的核心篇未写完、或已确认要按摘要记的非核心还没写完，则不得结束本轮等人，验收摘要写明剩余篇数，质量状态不得高于已生成待审。清单全有文件不等于完成。\n" +
       QUALITY_STATUS,
     inputs: ["papers/included.md", "papers/included.json", "papers/to-fetch.md"],
     optionalInputs: ["papers/*.pdf"],
@@ -334,7 +336,7 @@ const REVIEW_STEPS: ProjectStepDto[] = [
     role: "you",
     workspaceName: "outline",
     brief:
-      "输入：notes/ 全部笔记、notes/handoff.md、papers/included.md 与 references.bib（已随 main 合并在本工作区内）。先读 handoff 的「写作约束」：仅摘要不得写成已确立，机制分歧并列，图按笔记锚点再核。「不由下一步做」不要接手。框架构造全程按 review-framework 技能执行（空白清单 → 范式卡片 → 融合）：\n" +
+      "输入：notes/ 全部笔记、notes/handoff.md、papers/included.md 与 references.bib（已随 main 合并在本工作区内）。先读 handoff 的「写作约束」：仅摘要不得写成已确立，机制分歧并列，图按笔记锚点再核。「不由下一步做」不要接手。框架构造全程按 {skill:review-framework} 技能执行（空白清单 → 范式卡片 → 融合）：\n" +
       "1. 提炼研究空白清单：通读 notes/ 各笔记的「局限」与「可引用点」，最新一批精读文献回到原文前言核对作者自述的 gap（是待检主张，须用最邻近工作与反例核验）；每条空白标注来源笔记/bib 键，多条指向同一空白时合并；仅凭单篇文献主观抱怨的标「孤证」；\n" +
       "2. 拆解范式卡片：从 papers/included.md 选择足以比较候选框架的综述（篇数按问题，不凑数量）（问题相关性与方法透明度优先；期刊/被引仅为发现线索，不作证据权重；清单里没有综述类文献时如实说明并跳过本步，不虚构范式），每篇拆「结构逻辑 / 详略配比 / 论证顺序」三项；\n" +
       "3. **先报候选再融合**：把拆出的范式卡片连同「我建议以哪篇为骨架（按核心问题、证据分歧与读者需求给理由）+ 建议的综述卖点（想让读者读完记住的一句话）」写进 .ccode/help-wanted.md 问用户一句（附兜底：未回复仅保留候选框架，不锁定论证），写完仅推进无依赖、可逆的准备。；\n" +
@@ -358,13 +360,13 @@ const REVIEW_STEPS: ProjectStepDto[] = [
     name: "综述初稿",
     workspaceName: "draft",
     brief:
-      "输入：outline.md（含「框架推演」段）、notes/、references.bib（已随 main 合并在本工作区内）。写作规范全程按 review-writing 技能执行。\n" +
+      "输入：outline.md（含「框架推演」段）、notes/、references.bib（已随 main 合并在本工作区内）。写作规范全程按 {skill:review-writing} 技能执行。\n" +
       `写作范围由你按笔记判断：${DRAFT_EVIDENCE_DEFAULT}。人在审阅初稿时拍板，开工前不再问范围。\n` +
       "1. 按 outline.md 用规范学术英文撰写综述初稿，产出 manuscript/draft.md。**词数不是完成标准**（项目/大纲里的篇幅数字是读者预期，禁止改写成「以 N 词为目标」）。某节薄只回 notes/ 对应笔记的方法/结果/可引用点；笔记有来源 PDF 且非仅摘要时打开该 PDF 核对原文位置再补一句可定位证据；没有更多证据就保持短并标 [待核实]。禁止同义复述、空转场、防御性套话为凑字数。中心论点引言一次、结论一次。标题不要手写序号（Quarto 会再编号）；空白编号 G1 不准进稿件。全局设定为严格档时，Methods 须写检索策略（库、日期、式、筛选流程），并如实声明方法类型、单人筛选及实际复核范围，不把严格检索当作系统综述质量证明；\n" +
       "2. 引用一律用 [@bib键] 形式，且只能引用 references.bib 中已存在的键——严禁编造文献、严禁新造键。大纲「仅线索」/摘要级来源：定量句必须 [待核实] 或改成「摘要报告了」；不得把方法段的「32 篇全文」当许可，把其余文献写成已确立。\n" +
-      "3. 对照表用 markdown 真表。先读 outline.md 每一条用图计划，再按 review-figures 出图，写正文之前做完。计划写「拼」：从全文 PDF 裁源图，题注块必须以 Figure N. 开头，至少两块裁到才拼成 figures/figN.png，一行最多 4 块，第 5 块起用 --rows 分行。图注写 Adapted from，正文插入该图。只裁到一块、题注对不上、或会裁成整页：不猜，正文改成「见 [@键] Fig.n」，并在 figures/README.md 写原因。计划写「仅引用」的不插图。禁止「待绘制」「Figure N（待绘制）」和空的图片占位。撑主论点的图没有数据就改口。不臆造图号、不把整页当图、不非等比拉伸。Agent 读图不能代替人看 PNG。\n" +
+      "3. 对照表用 markdown 真表。先读 outline.md 每一条用图计划，再按 {skill:review-figures} 出图，写正文之前做完。计划写「拼」：从全文 PDF 裁源图，题注块必须以 Figure N. 开头，至少两块裁到才拼成 figures/figN.png，一行最多 4 块，第 5 块起用 --rows 分行。图注写 Adapted from，正文插入该图。只裁到一块、题注对不上、或会裁成整页：不猜，正文改成「见 [@键] Fig.n」，并在 figures/README.md 写原因。计划写「仅引用」的不插图。禁止「待绘制」「Figure N（待绘制）」和空的图片占位。撑主论点的图没有数据就改口。不臆造图号、不把整页当图、不非等比拉伸。Agent 读图不能代替人看 PNG。\n" +
       "4. 没有文献支撑的论断不得下。摘要只放全文撑得住的主张，禁止摘要里出现 [待核实] 或未测的近端动作（operando/软包等放 outlook 并标明是建议）。范围点名的主题后文必须展开，否则从范围删除。结论只写本综述论证了什么。\n" +
-      "5. 用本步骤 run 脚本先渲 docx、再渲 PDF（环境检查、编号引用 YAML、产物登记按 quarto-render 技能）。**初稿固定用编号制（方括号 [1]）渲，不要问人要哪种引用格式**：YAML 写 `csl: citation.csl` 并放随包的 ieee.csl。引用格式到定稿步再问：沿用这份编号，或改成目标期刊。" + DRAFT_TYPEFACE + "PDF 若 lualatex 无日志空转，按技能停掉改 xelatex，不要空等。产物写入本工作区 output/（评审合并后进项目根）。\n" +
+      "5. 用本步骤 run 脚本先渲 docx、再渲 PDF（环境检查、编号引用 YAML、产物登记按 {skill:quarto-render} 技能）。**初稿固定用编号制（方括号 [1]）渲，不要问人要哪种引用格式**：YAML 写 `csl: citation.csl` 并放随包的 ieee.csl。引用格式到定稿步再问：沿用这份编号，或改成目标期刊。" + DRAFT_TYPEFACE + "PDF 若 lualatex 无日志空转，按技能停掉改 xelatex，不要空等。产物写入本工作区 output/（评审合并后进项目根）。\n" +
       "6. 交稿前自检：打开 output/draft.pdf 第一页，必须能读出英文标题和段落；乱码、空心方框、目录页码变成字母 = 渲染失败，质量状态不得高于已生成待审，docx 仍交人审。引用键先对 references.bib，笔误键改正文不删句；材料名里的 @ 写成 \\@。正文数字若与笔记不符，按原文改稿并回写该笔记，记入 section-status.md。图裁不到就改成「见 [@键] Fig.n」，禁止用「待绘制」充产出。正文不得留 G1/任务编号、内部清单号。作者「待补」写进验收摘要等人填，不假装齐套。\n" +
       SECTION_STATUS +
       "完成标准：manuscript/draft.md 覆盖大纲全部章节；引用键全部可在 references.bib 中解析；扩写能回溯到笔记或原文；不以词数判定完成。用图计划里每一条「拼」要么有 figures/figN.png 且正文插了这张图，要么已改成「见 [@键] Fig.n」并在 figures/README.md 写明原因；正文不得出现「待绘制」。PDF 首页可读或已如实报渲染失败；人尚未审阅初稿前不得进入润色。\n" +
@@ -393,12 +395,12 @@ const REVIEW_STEPS: ProjectStepDto[] = [
       "输入：manuscript/draft.md、manuscript/section-status.md 与 references.bib（已随 main 合并在本工作区内）。上一步「去评审」里人退回过时，本步先修退回项（乱码 PDF、待绘制充图、内部编号、摘要里的 [待核实]、摘要级未降级、凑字数），不要当定稿润色。\n" +
       REVIEW_FIRST +
       "定稿同时交两份带引用域的 Word：output/endnote.docx（EndNote 的 ADDIN EN.CITE）和 output/zotero.docx（Zotero 的 ADDIN ZOTERO_ITEM）。Quarto 的 review-final.docx 只给阅读，换不了这两个软件的样式。未匹配的 [@键] 哪一份都不交。LaTeX 载体不交这两份。\n" +
-      "审查报告写 manuscript/review-report.md。第一轮同时按 bib-check 写 manuscript/citation-check.md，两份都只读不改稿。\n" +
+      "审查报告写 manuscript/review-report.md。第一轮同时按 {skill:bib-check} 写 manuscript/citation-check.md，两份都只读不改稿。\n" +
       "第二轮才改稿：未解析引用键改为 references.bib 中正确键或补条目（补条目缺字段标「待补」）；「疑似编造」不得自行删除对应论断，句末标 [待核实] 并记入「科学改动」；「未引用条目」只列出、不删。语言润色只改表达：语法、用词、句式与段落衔接；去掉防御性套话、空转场和重复立论；对照大纲把摘要级定量句降级或补 [待核实]；删正文 G 编号；摘要清掉 [待核实]。发现内容性错误标 [待核实]，不得自行改写事实。\n" +
       "4. 产出 manuscript/review-final.md 候选定稿（文末文献表按稿子里已在用的样式生成，不要手写 References；人还没换样式时沿用初稿编号，不因没有 citation-style.md 停渲）与 manuscript/changelog.md（逐条列出主要修改点及对应 citation-check.md 条目；未补的「待绘制」占位列入 changelog，不得假装已绘）。" + STYLE_AT_FINAL + "\n" +
-      "5. 收尾再按 bib-check 复核 review-final.md，结论追加进 citation-check.md；\n" +
+      "5. 收尾再按 {skill:bib-check} 复核 review-final.md，结论追加进 citation-check.md；\n" +
       "5b. 写 manuscript/verification-decisions.md：把 review-final.md 里每条 [待核实] 与 citation-check.md 里每条「疑似编造/元数据存疑」各列一行，格式 `- V001 | 位置：文件:行 | 原文摘要：…… | 来源：[@键] | 裁决：待裁决 | 依据：`。你只负责把清单列全、编号给上，**「裁决」与「依据」两栏一律留空或写「待裁决」，不得代填**——只有人能对照原始文献拍板。清单里的条数必须与稿子里实际剩余的 [待核实] 处数一致，漏列等于把未决项藏起来。\n" +
-      "6. 用本步骤 run 脚本渲染 PDF/docx（按 quarto-render 技能：人还没在流程线「更换引用样式」里换形式时，沿用初稿编号制渲，不因没选样式停渲）。正文字体沿用初稿 manuscript/typeface.md，不要另选字体，也不要重问。Word 加 --reference-doc manuscript/reference.docx。同一次再生成 output/endnote.docx 与 output/zotero.docx。产物写入本工作区 output/（评审合并后进项目根）。\n" +
+      "6. 用本步骤 run 脚本渲染 PDF/docx（按 {skill:quarto-render} 技能：人还没在流程线「更换引用样式」里换形式时，沿用初稿编号制渲，不因没选样式停渲）。正文字体沿用初稿 manuscript/typeface.md，不要另选字体，也不要重问。Word 加 --reference-doc manuscript/reference.docx。同一次再生成 output/endnote.docx 与 output/zotero.docx。产物写入本工作区 output/（评审合并后进项目根）。\n" +
       "完成标准：review-final.md 无语法硬伤、引用键全部可解析；citation-check.md 如实报告；verification-decisions.md 已列全、裁决栏为空等人填；核心支持性缺口未关闭时仅交待审稿，不标通过；changelog.md 已提交；run 脚本渲染通过。人未逐条裁决前，这一稿不得当定稿。\n" +
       RELEASE_GATE + QUALITY_STATUS,
     expectedArtifacts: [
@@ -446,9 +448,9 @@ const RESEARCH_PAPER_STEPS: ProjectStepDto[] = [
       "输入：英文综述模板的 notes/ 与 references.bib（接自上游模板时随仓库合并自带；独立启动本项目时，先把上游产物放入对应目录，或在资源面板绑定上游项目目录）。\n" +
       "若项目根已有 notes/ 或 papers/included.md：检查检索日期、问题/标准与原文版本，有效则复用；按本课题实证问题补检索、补纳入，保留人写内容并更新失效笔记。没有上游产物时按下面流程全量检索。\n" +
       "围绕课题主题（见上方「课题主题」段；未填写时只提出候选主题记入 papers/screening.md，待人确认后正式筛选；只可先试检摸底）执行：\n" +
-      "1. 检索与筛选按 lit-search 技能：**先粗检一轮报数再定标准**（OpenAlex 命中约 N 篇与建议标准写入 .ccode/help-wanted.md，未回复仅做无依赖、可逆准备）；" + LIT_SEARCH_NO_WASTE + "产出 papers/screening.md（标准 + 各库检索式、检索日期与命中数 + 每篇判定理由；拿不准相关性的一律保留为 pending 候选并标注「待确认」，不冒充已决纳入）与 papers/included.md；用户导入的检索结果先解析去重——看项目根 papers/imports/、工作区 papers/imports/、以及「项目资源」「提货单」里的绝对路径；\n" +
+      "1. 检索与筛选按 {skill:lit-search} 技能：**先粗检一轮报数再定标准**（OpenAlex 命中约 N 篇与建议标准写入 .ccode/help-wanted.md，未回复仅做无依赖、可逆准备）；" + LIT_SEARCH_NO_WASTE + "产出 papers/screening.md（标准 + 各库检索式、检索日期与命中数 + 每篇判定理由；拿不准相关性的一律保留为 pending 候选并标注「待确认」，不冒充已决纳入）与 papers/included.md；用户导入的检索结果先解析去重——看项目根 papers/imports/、工作区 papers/imports/、以及「项目资源」「提货单」里的绝对路径；\n" +
       "2. " + LIT_PENDING_BEFORE_FETCH +
-      "开放获取直接下载到**项目根 papers/**（文件名：作者年份-短标题.pdf），不要下载到本工作区；付费墙不得绕过，汇总写入 papers/to-fetch.md，并转成" + TO_FETCH_RIS + " 清单落盘后按 zotero-sync 记录通道并写 papers/zotero-sync.md；未明确要求进库则不写用户 Zotero 库，通道不可用则只留 RIS/bib。已有 references.bib 时不得覆盖，只补空着的卷、期、页、ISSN、摘要、关键词和期刊缩写。\n" +
+      "开放获取直接下载到**项目根 papers/**（文件名：作者年份-短标题.pdf），不要下载到本工作区；付费墙不得绕过，汇总写入 papers/to-fetch.md，并转成" + TO_FETCH_RIS + " 清单落盘后按 {skill:zotero-sync} 记录通道并写 papers/zotero-sync.md；未明确要求进库则不写用户 Zotero 库，通道不可用则只留 RIS/bib。已有 references.bib 时不得覆盖，只补空着的卷、期、页、ISSN、摘要、关键词和期刊缩写。\n" +
       "完成标准：检索交付件均已提交（无付费文献则 to-fetch.md 说明无待获取，to-fetch.ris 与 endnote-import.ris 保留合法零条目空文件；未启用或回落时 zotero-sync.md 写明原因），筛选记录含检索日期与覆盖缺口、可复现。\n" +
       QUESTION_GATE + QUALITY_STATUS,
     optionalInputs: ["notes/", "references.bib", "papers/included.md"],
@@ -475,14 +477,14 @@ const RESEARCH_PAPER_STEPS: ProjectStepDto[] = [
     role: "both",
     workspaceName: "lit-survey-gap",
     brief:
-      "输入：上一步的 papers/included.md、papers/to-fetch.md 与 references.bib。按 lit-notes 技能完成精读与笔记。\n" +
+      "输入：上一步的 papers/included.md、papers/to-fetch.md 与 references.bib。按 {skill:lit-notes} 技能完成精读与笔记。\n" +
       LIT_NOTES_WRITE +
       "先整理项目根 papers/ 里的人工补投并更新 to-fetch.md；已有 notes/ 先核对原文版本、全文状态和问题范围；有效则复用，变化则保留人写内容并更新受影响项。全文缺失时按摘要写笔记并标注「仅摘要·待全文」。\n" +
       "**先粗读 included.md 全部条目的标题与摘要，把「共 N 篇、全文到位 M 篇、我建议核心精读 K 篇」写进 .ccode/help-wanted.md 问用户一句**（未回复仅做可逆准备，不含批量生成笔记）。用户确认的核心篇有 PDF 的读正文写精读；其余按摘要写短记。index pending 只留给待确认或无法按摘要写的篇。\n" +
       "在已写笔记基础上按主题归纳研究现状写入 survey/literature.md，提炼有实质差别的候选研究问题（无合理备选可只留一个）并逐一分析现有工作的 gap，写入 survey/gap-analysis.md。先把候选、每个 gap 的证据与我建议的研究问题写入 .ccode/help-wanted.md 问用户一句（未回复只保留候选，不替人确定研究问题），写完只做无依赖、可逆的准备。摘要-only 不得支撑需要全文的 gap。\n" +
       "已对上 DOI 的 PDF 读首页和摘要页。标题、化学式上下标、摘要与 Crossref 纯文本不一致时，以 PDF 为准改 references.bib 的 title 和 abstract。抽不出字或对不上 DOI 的保持原字段。不在这一步重写 RIS。人点「同步到文献库」时，Mesa 按这份 references.bib 生成导入文件。\n" +
       APPROVED_QUESTION +
-      "完成标准：notes/index.json 与 included.json 全部 id 对齐（仅待确认或无法按摘要写的篇 notePath 可空）；已写笔记符合 lit-notes 写法；survey/literature.md 与 survey/gap-analysis.md 齐全；研究问题的候选/人批准状态与取舍理由可追溯。确认过的核心篇未写完、或已确认要按摘要记的非核心还没写完，则不得结束本轮等人，质量状态不得高于已生成待审。\n" +
+      "完成标准：notes/index.json 与 included.json 全部 id 对齐（仅待确认或无法按摘要写的篇 notePath 可空）；已写笔记符合 {skill:lit-notes} 写法；survey/literature.md 与 survey/gap-analysis.md 齐全；研究问题的候选/人批准状态与取舍理由可追溯。确认过的核心篇未写完、或已确认要按摘要记的非核心还没写完，则不得结束本轮等人，质量状态不得高于已生成待审。\n" +
       QUESTION_GATE + QUALITY_STATUS,
     inputs: ["papers/included.md", "papers/included.json", "papers/to-fetch.md"],
     optionalInputs: ["references.bib", "papers/*.pdf", "notes/"],
@@ -520,7 +522,7 @@ const RESEARCH_PAPER_STEPS: ProjectStepDto[] = [
       "2. 每个设计决策给出依据（文献支撑处引用 notes/ 笔记或 bib 键）；依赖的资源不可获取时提出替代品及研究对象/结论范围变化，待人批准后才替换；未批准标阻塞；\n" +
       "3. 估算每项实验和全项目的计算开销，超出本机条件的组合在矩阵中标注「待批准裁剪」并说明对研究问题/对照公平性的影响；\n" +
       "4. design.md 末尾附风险清单：最可能失败的环节与备选方案；伦理批件/数据许可若需要，列入人工事项，不编造已获批；\n" +
-      "5. 统计设计自查（按 stats-check 技能的实验设计口径）：主要结局及比较明确（共同主结局须说明多重性策略）、样本量有功效/精度或对应研究类型的依据、剔除标准事先定义；涉及统计检验的实验在 design.md 中写明检验方法与多重比较校正口径；问题清单写入 analysis/stats-check-design.md。\n" +
+      "5. 统计设计自查（按 {skill:stats-check} 技能的实验设计口径）：主要结局及比较明确（共同主结局须说明多重性策略）、样本量有功效/精度或对应研究类型的依据、剔除标准事先定义；涉及统计检验的实验在 design.md 中写明检验方法与多重比较校正口径；问题清单写入 analysis/stats-check-design.md。\n" +
       APPROVED_DESIGN +
       "完成标准：design.md 覆盖假设/方法/数据/基线/指标/实验矩阵/停止规则，关键未决项已处理或明确阻塞，不以猜测填满；同步写 experiments/matrix.json，每个组合一条稳定唯一字符串 id、configuration、status 记录；analysis/stats-check-design.md 各节齐全；实验矩阵可逐项直接执行。\n" +
       DESIGN_GATE + QUALITY_STATUS,
@@ -601,8 +603,8 @@ const RESEARCH_PAPER_STEPS: ProjectStepDto[] = [
     brief:
       "输入：results/summary.md 与产物目录中的原始结果（项目根相对路径见 summary.md 逐行记录，按项目根绝对路径读取）。\n" +
       "1. 汇总各实验主指标，与基线逐项对比，产出 analysis/results-table.md（表格：方法 × 指标，同时报告不确定性；最优值不等于重要或显著）；\n" +
-      "2. 关键对比生成图表写入 figures/（出图按 figure-forge 技能：可复现脚本、主交付 SVG 或 PNG 以便进 git，投稿用 PDF 副本写入本工作区 output/figures/（合并后进项目根）；色盲友好、图题含指标与实验条件）；\n" +
-      "3. 逐项解读：哪些结果支持、不支持或尚不能判断假设、与基线差异的可能原因；下结论只用表格中的数字，没有数据支撑的解读标 [推测]；涉及统计显著性的表述按 stats-check 技能口径报告（p 值给具体值、附效应量与置信区间）；统计审查问题另写入 analysis/stats-check-results.md。\n" +
+      "2. 关键对比生成图表写入 figures/（出图按 {skill:figure-forge} 技能：可复现脚本、主交付 SVG 或 PNG 以便进 git，投稿用 PDF 副本写入本工作区 output/figures/（合并后进项目根）；色盲友好、图题含指标与实验条件）；\n" +
+      "3. 逐项解读：哪些结果支持、不支持或尚不能判断假设、与基线差异的可能原因；下结论只用表格中的数字，没有数据支撑的解读标 [推测]；涉及统计显著性的表述按 {skill:stats-check} 技能口径报告（p 值给具体值、附效应量与置信区间）；统计审查问题另写入 analysis/stats-check-results.md。\n" +
       "4. 异常结果（失败/离群）单独一节说明，不删除不美化；结果不如预期时，先基于实际异常、补实验成本与 design.md 的停止规则写入 .ccode/help-wanted.md 问用户，不得事后改主指标；\n" +
       "5. 分析结论写入 analysis/findings.md：按实际证据列出，可少于 3 条或结论为证据不足；每条对应 results-table.md 中的具体数字。\n" +
       CLAIM_ENTRIES +
@@ -675,7 +677,7 @@ const RESEARCH_PAPER_STEPS: ProjectStepDto[] = [
       "2. 引用一律用 [@bib键] 形式，且只能引用 references.bib 中已存在的键——严禁编造文献；\n" +
       "3. 数字与结论必须与 analysis/results-table.md 一致，不得新造实验结果；缺少的数据在文中标 [待补实验]；\n" +
       "4. 图表引用已有 figures/ 文件（「Figure 1: …」），图片文件不复制进 manuscript/；缺图用占位并在文中标明待补；\n" +
-      "5. 用本步骤 run 脚本渲染 PDF/docx（按 quarto-render 技能）。**初稿固定用编号制（方括号 [1]）渲，不要问人要哪种引用格式**：YAML 写 `csl: citation.csl` 并放随包的 ieee.csl。引用格式到「润色与投稿准备」再问：沿用这份编号，或改成目标期刊。" + DRAFT_TYPEFACE + "产物写入本工作区 output/（评审合并后进项目根）。\n" +
+      "5. 用本步骤 run 脚本渲染 PDF/docx（按 {skill:quarto-render} 技能）。**初稿固定用编号制（方括号 [1]）渲，不要问人要哪种引用格式**：YAML 写 `csl: citation.csl` 并放随包的 ieee.csl。引用格式到「润色与投稿准备」再问：沿用这份编号，或改成目标期刊。" + DRAFT_TYPEFACE + "产物写入本工作区 output/（评审合并后进项目根）。\n" +
       "完成标准：manuscript/draft.md 覆盖大纲各节，引用键全部可在 references.bib 解析，数字与结论条目、results-table.md 一致，run 脚本渲染通过。\n" +
       QUALITY_STATUS,
     inputs: [
@@ -719,10 +721,10 @@ const RESEARCH_PAPER_STEPS: ProjectStepDto[] = [
       "输入：manuscript/draft.md、manuscript/section-status.md、analysis/results-table.md、references.bib（已随 main 合并在本工作区内）。\n" +
       REVIEW_FIRST +
       ENDNOTE_SYNC +
-      "审查报告写 manuscript/review-report.md。第一轮按 bib-check 写 manuscript/citation-check.md，并按 stats-check 把统计问题写入 analysis/stats-check.md；这三份只列问题，不改稿。核对：每个论断有引用、未用 bib 条目只列出、图表编号连续、数字与 results-table.md 和已认可结论条目一致。\n" +
+      "审查报告写 manuscript/review-report.md。第一轮按 {skill:bib-check} 写 manuscript/citation-check.md，并按 {skill:stats-check} 把统计问题写入 analysis/stats-check.md；这三份只列问题，不改稿。核对：每个论断有引用、未用 bib 条目只列出、图表编号连续、数字与 results-table.md 和已认可结论条目一致。\n" +
       "第二轮才改稿：语言只改表达。发现内容性错误标 [待核实]，不得自行改写事实。产出 manuscript/paper-final.md 与 manuscript/changelog.md。\n" +
       "投稿前清单写入 submission/pre-submission-checklist.md：目标期刊/会议（按主题匹配给出 2-3 个候选及理由）、cover letter 要点、图表源文件清单、代码/数据可用性占位、作者信息与利益声明占位；未知信息一律占位「待填」，不编造。\n" +
-      STYLE_AT_FINAL + "用本步骤 run 脚本渲染 PDF/docx（按 quarto-render 技能：人还没在流程线「更换引用样式」里换形式时，沿用初稿编号制渲，不因没选样式停渲）。正文字体沿用初稿 manuscript/typeface.md，不要另选字体，也不要重问。Word 加 --reference-doc manuscript/reference.docx。同一次再生成 output/endnote.docx 与 output/zotero.docx。产物写入本工作区 output/（评审合并后进项目根）。\n" +
+      STYLE_AT_FINAL + "用本步骤 run 脚本渲染 PDF/docx（按 {skill:quarto-render} 技能：人还没在流程线「更换引用样式」里换形式时，沿用初稿编号制渲，不因没选样式停渲）。正文字体沿用初稿 manuscript/typeface.md，不要另选字体，也不要重问。Word 加 --reference-doc manuscript/reference.docx。同一次再生成 output/endnote.docx 与 output/zotero.docx。产物写入本工作区 output/（评审合并后进项目根）。\n" +
       "完成标准：paper-final.md 引用闭环；manuscript/citation-check.md 与 analysis/stats-check.md 各节齐全，问题逐条处置；阻塞项未关闭时只交草稿，预清单注明不可投稿；changelog.md 与 submission/pre-submission-checklist.md 已提交；[待补实验] 不得仅删除标记；有证据补齐或经人确认撤回/缩窄对应主张，否则阻塞。\n" +
       RELEASE_GATE + QUALITY_STATUS,
     expectedArtifacts: [
@@ -823,7 +825,7 @@ const DATA_PROCESSING_STEPS: ProjectStepDto[] = [
     workspaceName: "data-clean",
     decisionMode: "hard_pause",
     brief:
-      "输入：data-dictionary.md（已随 main 合并在本工作区内；其中「待确认」字段若已由人补全口径，以补全值为准）。全程按 data-clean 技能执行：规则先行、原始数据只读。\n" +
+      "输入：data-dictionary.md（已随 main 合并在本工作区内；其中「待确认」字段若已由人补全口径，以补全值为准）。全程按 {skill:data-clean} 技能执行：规则先行、原始数据只读。\n" +
       "1. **先报数再定规则**：统计各字段缺失率、重复行数、表间关系与行数量级，把「缺失率 Top5 字段 / 建议的处理方式 / 建议的分析粒度 / 要不要合表」写进 .ccode/help-wanted.md 问用户一句（附兜底：未回复只画像和生成规则草案，不应用影响主分析的待确认规则），写完仅推进无依赖、可逆的准备。；\n" +
       "2. 清洗规则逐项写死再动手：缺失值处理（删除/填充及填充值）、去重键、异常值边界、类型转换，写入 cleaning/rules.md，每条规则注明依据，不允许含糊执行规则；未批准的规则标阻塞且不得应用；\n" +
       "3. 清洗脚本放入 cleaning/（可重复执行；输入只读原始数据，不原地修改）；\n" +
@@ -867,13 +869,13 @@ const DATA_PROCESSING_STEPS: ProjectStepDto[] = [
     decisionMode: "hard_pause",
     decisions: [{ q: "批准用于分析的清洗规则与数据版本（影响主分析的待确认规则必须先解决）", options: [] }],
     brief:
-      "输入：cleaning/cleaned-data-manifest.md 与 cleaning/rules.md（已随 main 合并在本工作区内）、项目根产物目录中清洗后的数据（按 manifest 的项目根相对路径读取）。全程按 data-eda 技能执行：分布/相关/异常全覆盖不挑选、图表可复现、发现可回溯。\n" +
+      "输入：cleaning/cleaned-data-manifest.md 与 cleaning/rules.md（已随 main 合并在本工作区内）、项目根产物目录中清洗后的数据（按 manifest 的项目根相对路径读取）。全程按 {skill:data-eda} 技能执行：分布/相关/异常全覆盖不挑选、图表可复现、发现可回溯。\n" +
       "1. 分析与出图脚本放入 analysis/，交付 analysis/reproduce.py（明确 --input/--output；前 40 行声明 # MESA_REPRODUCE: {\"interpreter\":\"python\",\"outputPlacement\":\"independent\",\"resultFile\":\"verification.json\"}；结果 verification.json 含 ok/checks/inputVersion，未验证不得写 ok=true；只读冻结数据，核对输入版本、重建主要表图/数字并比较参考值和容差；失败非零退出）；实际运行命令和结果写 stats-check-eda.md，缺环境则标未验证；\n" +
       "2. 分布分析：按变量类型选择图/摘要，ID 不强画分布；高维数据可分组并列未逐项覆盖范围，不按结果好看与否挑选；图表写入 figures/（英文标注，文件名与报告引用一一对应）；\n" +
       "3. 相关分析：按变量类型和问题选择相关/关联分析，排除 ID、无序类别等不适用字段并说明；报告选择口径、比较范围和多重性，不以固定 |r| 阈值筛选发现；\n" +
       "4. 异常分析：按 rules.md 的口径复查残留异常，新发现的异常标 [待确认] 并给出样例行号；\n" +
-      "5. 在 analysis/stats-check-eda.md 记录主要数字从原始输出的复算命令、版本、容差和结果；同数据探索后做检验仍是探索，不因通过 stats-check 变确证。\n" +
-      "6. 结论写入 eda-report.md：按证据报告可用于后续决策的发现（允许零条或证据不足，不凑数量），每条附对应图表或统计量；含统计检验/显著性表述的结论先按 stats-check 技能口径自查（检验方法与数据匹配、p 值给具体值、附效应量与置信区间）；问题清单写入 analysis/stats-check-eda.md。\n" +
+      "5. 在 analysis/stats-check-eda.md 记录主要数字从原始输出的复算命令、版本、容差和结果；同数据探索后做检验仍是探索，不因通过 {skill:stats-check} 变确证。\n" +
+      "6. 结论写入 eda-report.md：按证据报告可用于后续决策的发现（允许零条或证据不足，不凑数量），每条附对应图表或统计量；含统计检验/显著性表述的结论先按 {skill:stats-check} 技能口径自查（检验方法与数据匹配、p 值给具体值、附效应量与置信区间）；问题清单写入 analysis/stats-check-eda.md。\n" +
       CLAIM_ENTRIES +
       "完成标准：analysis/ 脚本、analysis/stats-check-eda.md、figures/ 与 eda-report.md 均存在，每条发现可回溯到具体图表/数字，无主观臆断。\n" +
       QUALITY_STATUS,
@@ -910,12 +912,12 @@ const THESIS_STEPS: ProjectStepDto[] = [
     role: "both",
     workspaceName: "lit-search",
     brief:
-      "输入：课题主题（见上方「课题主题」段；未填写时提出候选主题写进 papers/screening.md，等待人确认后正式筛选）。接自上游英文综述/科研论文时 notes/ 与 included.md 随仓库自带，按日期/范围/版本检查后查漏补缺，保留人写内容，不把旧笔记存在当作仍然有效；没有上游时全量检索。全程按 lit-search 技能。\n" +
+      "输入：课题主题（见上方「课题主题」段；未填写时提出候选主题写进 papers/screening.md，等待人确认后正式筛选）。接自上游英文综述/科研论文时 notes/ 与 included.md 随仓库自带，按日期/范围/版本检查后查漏补缺，保留人写内容，不把旧笔记存在当作仍然有效；没有上游时全量检索。全程按 {skill:lit-search} 技能。\n" +
       "1. **先粗检一轮报数再定标准**：OpenAlex 命中约 N 篇与建议标准写入 .ccode/help-wanted.md（未回复仅做无依赖、可逆准备）；纳入/排除标准（年份、语言、来源级别、相关性）写入 papers/screening.md；\n" +
       "2. 解析人工导入题录（项目根 papers/imports/、工作区 papers/imports/、项目资源与提货单绝对路径），去重进候选池；\n" +
       "3. 检索候选并逐条判定。" + LIT_SEARCH_NO_WASTE + "产出 papers/screening.md、papers/included.md 和 papers/included.json（每项稳定唯一字符串 id/title/decision/reason，与 md 一一对应）；拿不准一律保留为 pending 候选并标「待确认」，不冒充已决纳入；检索日期与覆盖缺口写入 screening.md；\n" +
       "4. " + LIT_PENDING_BEFORE_FETCH +
-      "开放获取全文下载到**项目根 papers/**；付费墙写入 papers/to-fetch.md，并转成" + TO_FETCH_RIS + " 清单落盘后按 zotero-sync 记录通道并写 papers/zotero-sync.md；未明确要求进库则不写用户 Zotero 库，通道不可用则只留 RIS/bib。已有 references.bib 时不得覆盖，只补空着的卷、期、页、ISSN、摘要、关键词和期刊缩写。\n" +
+      "开放获取全文下载到**项目根 papers/**；付费墙写入 papers/to-fetch.md，并转成" + TO_FETCH_RIS + " 清单落盘后按 {skill:zotero-sync} 记录通道并写 papers/zotero-sync.md；未明确要求进库则不写用户 Zotero 库，通道不可用则只留 RIS/bib。已有 references.bib 时不得覆盖，只补空着的卷、期、页、ISSN、摘要、关键词和期刊缩写。\n" +
       "零结果也交付 included.json=[] 与说明，禁止造条目；没有可精读证据时后续只允许准备，不宣称完成研究。\n" +
       "完成标准：检索交付件存在（无付费文献则 to-fetch.md 说明无待获取，to-fetch.ris 与 endnote-import.ris 保留合法零条目空文件；未启用或回落时 zotero-sync.md 写明原因），每条记录无空缺字段，筛选可复现。\n" + QUESTION_GATE + QUALITY_STATUS,
     optionalInputs: ["notes/", "references.bib", "papers/included.md"],
@@ -946,13 +948,13 @@ const THESIS_STEPS: ProjectStepDto[] = [
     role: "both",
     workspaceName: "lit-notes",
     brief:
-      "输入：papers/included.md 与 papers/to-fetch.md。全程按 lit-notes 技能。已有 notes/ 先核对原文版本、全文状态和问题范围；有效则复用，变化则保留人写内容并更新受影响项。\n" +
+      "输入：papers/included.md 与 papers/to-fetch.md。全程按 {skill:lit-notes} 技能。已有 notes/ 先核对原文版本、全文状态和问题范围；有效则复用，变化则保留人写内容并更新受影响项。\n" +
       LIT_NOTES_WRITE +
       "1. 整理项目根 papers/ 人工补投并更新 to-fetch.md；\n" +
       "2. **先报清单规模与全文到位率，建议核心精读篇目**，写入 .ccode/help-wanted.md（未回复仅做可逆准备，不含批量生成笔记）；\n" +
       "3. 用户确认的核心篇有 PDF 的读正文按技能八段写笔记；其余按摘要写短记。全文未得按摘要写并标「仅摘要·待全文」。index pending 只留给待确认或无法按摘要写的篇。\n" +
       "4. 已对上 DOI 的 PDF 读首页和摘要页。标题、化学式上下标、摘要与 Crossref 纯文本不一致时，以 PDF 为准改 references.bib 的 title 和 abstract。抽不出字或对不上 DOI 的保持原字段。不在这一步重写 RIS。人点「同步到文献库」时，Mesa 按这份 references.bib 生成导入文件。\n" +
-      "完成标准：notes/index.json 保留 included.json 的全部 id（仅待确认或无法按摘要写的篇 notePath 可空）；已写笔记符合 lit-notes 写法。确认过的核心篇未写完、或已确认要按摘要记的非核心还没写完，则不得结束本轮等人，质量状态不得高于已生成待审。\n" + QUALITY_STATUS,
+      "完成标准：notes/index.json 保留 included.json 的全部 id（仅待确认或无法按摘要写的篇 notePath 可空）；已写笔记符合 {skill:lit-notes} 写法。确认过的核心篇未写完、或已确认要按摘要记的非核心还没写完，则不得结束本轮等人，质量状态不得高于已生成待审。\n" + QUALITY_STATUS,
     inputs: ["papers/included.md", "papers/included.json", "papers/to-fetch.md"],
     optionalInputs: ["papers/*.pdf", "notes/", "references.bib"],
     expectedArtifacts: ["notes/*.md", "notes/index.json", "references.bib", "papers/to-fetch.md"],
@@ -967,9 +969,9 @@ const THESIS_STEPS: ProjectStepDto[] = [
     workspaceName: "proposal",
     brief:
       "输入：notes/、papers/included.md 与 references.bib（已随 main 合并在本工作区内）。\n" +
-      "1. 产出 proposal/proposal.md 开题报告（按 proposal-writer 技能）：选题依据、研究内容、研究目标与创新点、技术路线、可行性与进度安排，引用只用 references.bib 已有键；\n" +
+      "1. 产出 proposal/proposal.md 开题报告（按 {skill:proposal-writer} 技能）：选题依据、研究内容、研究目标与创新点、技术路线、可行性与进度安排，引用只用 references.bib 已有键；\n" +
       APPROVED_QUESTION +
-      "2. 产出 chapters/literature-review.md 综述章节草稿：框架构造按 review-framework 技能（空白清单 → 范式卡片 → 融合），只引用 references.bib 中存在的键，不为综述新造引用。\n" +
+      "2. 产出 chapters/literature-review.md 综述章节草稿：框架构造按 {skill:review-framework} 技能（空白清单 → 范式卡片 → 融合），只引用 references.bib 中存在的键，不为综述新造引用。\n" +
       "完成标准：proposal.md 五节齐全；literature-review.md 引用键全部可解析，含框架推演或等价取舍说明。\n" +
       QUESTION_GATE + QUALITY_STATUS,
     inputs: ["notes/", "papers/included.md", "papers/included.json", "references.bib"],
@@ -1009,7 +1011,7 @@ const THESIS_STEPS: ProjectStepDto[] = [
     brief:
       "输入：proposal/proposal.md 的研究内容与技术路线、chapters/literature-review.md（已随 main 合并在本工作区内）。\n" +
       "1. 产出 chapters/methodology.md 方法章节草稿：方法原理、实现步骤、数据来源与预处理、评价指标，逐节对应开题报告的研究内容；\n" +
-      "2. 产出 design.md 实验设计，并写 experiments/matrix.json（每项稳定唯一字符串 id、configuration、status，禁止省略经批准取消项）：对比基线（注明出处）、实验矩阵（按问题预先选定组合，不强制全因子穷举）、预期结果与分析方式；统计设计按 stats-check 技能的实验设计口径自查（主要结局及比较明确（共同主结局须说明多重性策略）、样本量有依据、剔除标准事先定义），涉及统计检验的写明检验方法与多重比较校正口径，问题清单写入 analysis/methodology-stats-check.md；\n" +
+      "2. 产出 design.md 实验设计，并写 experiments/matrix.json（每项稳定唯一字符串 id、configuration、status，禁止省略经批准取消项）：对比基线（注明出处）、实验矩阵（按问题预先选定组合，不强制全因子穷举）、预期结果与分析方式；统计设计按 {skill:stats-check} 技能的实验设计口径自查（主要结局及比较明确（共同主结局须说明多重性策略）、样本量有依据、剔除标准事先定义），涉及统计检验的写明检验方法与多重比较校正口径，问题清单写入 analysis/methodology-stats-check.md；\n" +
       "3. 每个方法选择给出依据；与开题报告不一致的改动在 methodology.md 末尾「变更说明」记录原因，不静默改方案；\n" +
       "4. 依赖的资源不可获取时提出替代品及研究对象/结论范围变化，待人批准后才替换；未批准标阻塞。\n" +
       APPROVED_DESIGN +
@@ -1081,8 +1083,8 @@ const THESIS_STEPS: ProjectStepDto[] = [
     workspaceName: "thesis-exp-analysis",
     brief:
       "输入：上一步 results/summary.md 与项目根产物目录中的原始结果（项目根相对路径见 summary.md，按项目根绝对路径读取）。\n" +
-      "1. 汇总各实验主指标，与基线逐项对比，产出 chapters/results.md：表格（方法 × 指标，同时报告不确定性；最优值不等于重要或显著）+ 关键图表（figures/ 主交付 SVG 或 PNG，投稿用 PDF 副本写本工作区 output/figures/（合并后进项目根），出图按 figure-forge 技能）+ 逐项解读；\n" +
-      "2. 只用 summary.md 中的数字下结论，推测性内容标 [推测]；失败/离群结果单独说明，不删除不美化；涉及统计显著性的表述按 stats-check 技能口径（p 值给具体值、附效应量与置信区间），问题清单写入 analysis/thesis-results-stats-check.md；\n" +
+      "1. 汇总各实验主指标，与基线逐项对比，产出 chapters/results.md：表格（方法 × 指标，同时报告不确定性；最优值不等于重要或显著）+ 关键图表（figures/ 主交付 SVG 或 PNG，投稿用 PDF 副本写本工作区 output/figures/（合并后进项目根），出图按 {skill:figure-forge} 技能）+ 逐项解读；\n" +
+      "2. 只用 summary.md 中的数字下结论，推测性内容标 [推测]；失败/离群结果单独说明，不删除不美化；涉及统计显著性的表述按 {skill:stats-check} 技能口径（p 值给具体值、附效应量与置信区间），问题清单写入 analysis/thesis-results-stats-check.md；\n" +
       "3. 对照 proposal/proposal.md 的创新点：哪些被结果支撑、哪些要降级或改口，写进 chapters/results.md 末尾；结果不如预期时，先基于实际异常、补实验成本与 design.md 的停止规则写入 .ccode/help-wanted.md 问用户；不得在看到结果前预设换方向。\n" +
       CLAIM_ENTRIES +
       "完成标准：chapters/results.md、analysis/thesis-results-stats-check.md、figures/ 已提交，每条结论可追溯到 summary.md 的数字。\n" +
@@ -1107,7 +1109,7 @@ const THESIS_STEPS: ProjectStepDto[] = [
       "3. 统一各章术语、符号与图表编号；引用一律 [@bib键] 且只能引用 references.bib 已有键——严禁编造文献；\n" +
       "4. 图表引用占位（「图 3-1：…」），数字与 chapters/results.md 一致，不一致处以结果章节为准并在修订记录标注；\n" +
       "5. 产出 manuscript/revision-notes.md：组装过程中的取舍与待确认项；\n" +
-      "6. 渲染验证：用本步骤 run 脚本渲染 PDF/docx（环境检查、编号引用 YAML、产物登记按 quarto-render 技能）。**初稿固定用编号制（方括号 [1]）渲，不要问人要哪种引用格式**：YAML 写 `csl: citation.csl` 并放随包的 ieee.csl。引用格式到「格式与定稿」再问：沿用这份编号，或改成目标期刊。" + DRAFT_TYPEFACE + "中文稿的中文用宋体。渲染报错先按技能指引补依赖，不绕路。\n" +
+      "6. 渲染验证：用本步骤 run 脚本渲染 PDF/docx（环境检查、编号引用 YAML、产物登记按 {skill:quarto-render} 技能）。**初稿固定用编号制（方括号 [1]）渲，不要问人要哪种引用格式**：YAML 写 `csl: citation.csl` 并放随包的 ieee.csl。引用格式到「格式与定稿」再问：沿用这份编号，或改成目标期刊。" + DRAFT_TYPEFACE + "中文稿的中文用宋体。渲染报错先按技能指引补依赖，不绕路。\n" +
       "完成标准：thesis-draft.md 章节齐全、引用闭环、revision-notes.md 已提交、run 脚本渲染通过。\n" +
       QUALITY_STATUS,
     expectedArtifacts: [
@@ -1157,9 +1159,9 @@ const THESIS_STEPS: ProjectStepDto[] = [
       "输入：manuscript/thesis-draft.md、manuscript/section-status.md、references.bib（已随 main 合并在本工作区内）。\n" +
       REVIEW_FIRST +
       ENDNOTE_SYNC +
-      "审查报告写 manuscript/review-report.md。第一轮只核对，不改正文：格式问题写入 manuscript/format-check.md；引用闭环按 bib-check 写入 manuscript/citation-check.md；查重降重建议写入 manuscript/plagiarism-advice.md，只给改写建议，不直接代写。\n" +
+      "审查报告写 manuscript/review-report.md。第一轮只核对，不改正文：格式问题写入 manuscript/format-check.md；引用闭环按 {skill:bib-check} 写入 manuscript/citation-check.md；查重降重建议写入 manuscript/plagiarism-advice.md，只给改写建议，不直接代写。\n" +
       "第二轮才产出 manuscript/thesis-final.md 与 manuscript/changelog.md。语言只改表达；内容性错误标 [待核实]。同时交 output/endnote.docx 与 output/zotero.docx 两份带引用域的 Word。\n" +
-      "6. " + STYLE_AT_FINAL + "渲染验证：用本步骤 run 脚本渲染 PDF/docx（环境检查、编号引用 YAML、产物登记按 quarto-render 技能：人还没在流程线「更换引用样式」里换形式时，沿用初稿编号制渲，不因没选样式停渲）。正文字体沿用初稿 manuscript/typeface.md，不要另选字体，也不要重问。Word 加 --reference-doc manuscript/reference.docx。同一次再生成 output/endnote.docx 与 output/zotero.docx。\n" +
+      "6. " + STYLE_AT_FINAL + "渲染验证：用本步骤 run 脚本渲染 PDF/docx（环境检查、编号引用 YAML、产物登记按 {skill:quarto-render} 技能：人还没在流程线「更换引用样式」里换形式时，沿用初稿编号制渲，不因没选样式停渲）。正文字体沿用初稿 manuscript/typeface.md，不要另选字体，也不要重问。Word 加 --reference-doc manuscript/reference.docx。同一次再生成 output/endnote.docx 与 output/zotero.docx。\n" +
       "完成标准：format-check.md 与 citation-check.md 问题逐条有处理结论，thesis-final.md 引用闭环，changelog.md 已提交，run 脚本渲染通过。\n" +
       RELEASE_GATE + QUALITY_STATUS,
     expectedArtifacts: [
@@ -1223,9 +1225,9 @@ const SUBMISSION_INITIAL_STEPS: ProjectStepDto[] = [
       "2. 获取目标期刊官方作者指南（WebFetch 期刊官网 Guide for Authors；获取失败时只做通用草稿并记录无法核验官方要求，不声称期刊格式通过）；\n" +
       "3. 人决定审查报告之后，按指南逐项适配：章节结构、引用与文献列表格式、图表规范、字数与摘要长度；产出 submission/formatted.md，只改格式与表达，不改学术观点与数据。若相对上游成稿改了数字或结论，必须在 submission/format-notes.md 逐条点名位置、旧值、新值和原因；只改格式与措辞的不写入该节；\n" +
       "4. 字数或摘要超限时不得自行删内容：在 formatted.md 原位标注超出量，把可选裁剪方案（砍哪节、砍多少）逐条写进 submission/format-notes.md 由用户定夺；\n" +
-      "5. 引用完整性自查（按 bib-check 技能）：报告写入 submission/citation-check.md；并把需要用户处理的摘要同步写入 submission/format-notes.md；\n" +
+      "5. 引用完整性自查（按 {skill:bib-check} 技能）：报告写入 submission/citation-check.md；并把需要用户处理的摘要同步写入 submission/format-notes.md；\n" +
       "6. 作者单位/基金号/通讯邮箱等未知信息一律占位「待填」，不编造；所有未决项汇总进 submission/format-notes.md；\n" +
-      "7. 换期刊时读该刊作者须知，并从 references.bib 取该刊最近 2–3 篇综述核对实际排法；库里没有就写明，两边不一致就停下来问。用本步骤 run 脚本渲染 PDF/docx（按 quarto-render 技能：人在流程线「更换引用样式」选定具体形式后再按其重渲），产物写入本工作区 output/formatted.pdf 与 formatted.docx（评审合并后进项目根）。同一次从 submission/formatted.md 重新生成 output/endnote.docx 与 output/zotero.docx。\n" +
+      "7. 换期刊时读该刊作者须知，并从 references.bib 取该刊最近 2–3 篇综述核对实际排法；库里没有就写明，两边不一致就停下来问。用本步骤 run 脚本渲染 PDF/docx（按 {skill:quarto-render} 技能：人在流程线「更换引用样式」选定具体形式后再按其重渲），产物写入本工作区 output/formatted.pdf 与 formatted.docx（评审合并后进项目根）。同一次从 submission/formatted.md 重新生成 output/endnote.docx 与 output/zotero.docx。\n" +
       "完成标准：submission/formatted.md、submission/target-journal.md、submission/citation-check.md 与 submission/format-notes.md 均已提交；format-notes.md 逐项给出处理结论；run 脚本渲染通过。\n" +
       "格式适配只核对期刊要求及记录证据缺口，引用上游有效审查；不重复复算或代替 G5。未解决项交下一步投稿材料统一关闭。\n" + QUALITY_STATUS,
     expectedArtifacts: [
@@ -1355,16 +1357,16 @@ function submissionRevisionSteps(round: number): ProjectStepDto[] {
       workspaceName: `rebuttal-r${r}`,
       brief:
         `输入：reviews/round-${r}.md 审稿意见全文（用户把编辑来信保存为该文件；缺失时提示用户提供并停止，不得编造审稿意见）；${previousLabel}（上一版成稿）。\n` +
-        "全程按 rebuttal-crafter 技能执行。只允许在本步骤 TASK.md 明确的上一版稿件上修改，并将每处修改绑定审稿意见编号。若用户撤回授权，则只生成回复信和对照表，不改正文。\n" +
+        "全程按 {skill:rebuttal-crafter} 技能执行。只允许在本步骤 TASK.md 明确的上一版稿件上修改，并将每处修改绑定审稿意见编号。若用户撤回授权，则只生成回复信和对照表，不改正文。\n" +
         `科学改动（数字、因果、样本、结论范围）先写入 rebuttal/review-report-r${r}.md。报告用 ## 严重问题、## 一般问题、## 建议，条目用 S001，避免和审稿意见编号混用。人把每条写成接受、拒绝或修改之前，不得把这些改动写进修订稿。revisions 表把科学改动单列，措辞另列。\n` +
         ENDNOTE_SYNC +
         "1. 逐条拆分审稿意见并编号（R1.1、R1.2…，多位审稿人分节，编辑意见单列 E.1…），不遗漏任何一条；\n" +
         `2. 产出 rebuttal/response-letter-r${r}.md，逐条回应：意见摘要 → 回应（接受修改 / 部分接受并说明限制 / 礼貌反驳并给依据）→ 稿件修改位置；拿不准的一律标 [待确认]；\n` +
         `3. 审查报告里的科学改动已有人的决定后，才在 ${previousLabel} 基础上修改，产出 manuscript/revised-r${r}.md，并在修改处标注对应意见编号；需要补实验/补数据的只写可执行计划并标 [待补实验]，不开空头支票；\n` +
         `4. 产出 rebuttal/revisions-r${r}.md：每条意见 → 修改点 → revised-r${r}.md 位置，逐条可核对；\n` +
-        `5. 按 bib-check 技能核对 revised-r${r}.md 与 references.bib，报告写入 rebuttal/citation-check-r${r}.md；\n` +
+        `5. 按 {skill:bib-check} 技能核对 revised-r${r}.md 与 references.bib，报告写入 rebuttal/citation-check-r${r}.md；\n` +
         `6. 产出 submission/resubmission-checklist-r${r}.md：上传文件、回复信/修订稿版本、逐项确认项与未决事项；提交前由人核对，不能把「已生成」当作「已提交」。\n` +
-        `换期刊时读该刊作者须知，并从 references.bib 取该刊最近 2–3 篇综述核对实际排法；库里没有就写明，两边不一致就停下来问。用本步骤 run 脚本渲染修订清稿 PDF/docx（按 quarto-render 技能：人在流程线「更换引用样式」选定具体形式后再按其重渲），并重新生成 output/endnote.docx 与 output/zotero.docx。改动按 revisions-r${r}.md 核验，期刊要求标改稿时另行按官方格式制作并登记，未制作不写已交付。\n` +
+        `换期刊时读该刊作者须知，并从 references.bib 取该刊最近 2–3 篇综述核对实际排法；库里没有就写明，两边不一致就停下来问。用本步骤 run 脚本渲染修订清稿 PDF/docx（按 {skill:quarto-render} 技能：人在流程线「更换引用样式」选定具体形式后再按其重渲），并重新生成 output/endnote.docx 与 output/zotero.docx。改动按 revisions-r${r}.md 核验，期刊要求标改稿时另行按官方格式制作并登记，未制作不写已交付。\n` +
         `完成标准：round-${r} 的回复信、修改对照表、citation-check 报告、修订稿、再投稿清单均存在且一一对应；[待确认]/[待补实验] 在清单末尾汇总。涉及补研究须先回到设计→执行→分析→复算，使用本轮独立产物并更新所有受影响数字与主张；只有计划时维持阻塞，不写已完成。\n` + RELEASE_GATE + QUALITY_STATUS,
       inputs: [`reviews/round-${r}.md`, "references.bib"],
       anyOfInputs: [previousInputs],
@@ -1501,13 +1503,13 @@ const LATEX_PAPER_STEPS: ProjectStepDto[] = [
     workspaceName: "latex-writing",
     brief:
       "输入：manuscript/main.tex 骨架与 chapters/ 各章文件；notes/ 与 references.bib 若已随 main 合并则读取，缺失时只能保留结构样稿，在 citation-check.md 标出证据缺口，不生成无依据正文。\n" +
-      "若 README 写明从成稿转写：只补全结构、交叉引用与引用纪律，**不改学术观点与数据**。从零写时按实证 IMRaD 用 research-writing 技能（综述体裁则按项目层说明改用综述口径）。引用一律 \\cite{bib键}。\n" +
+      "若 README 写明从成稿转写：只补全结构、交叉引用与引用纪律，**不改学术观点与数据**。从零写时按实证 IMRaD 用 {skill:research-writing} 技能（综述体裁则按项目层说明改用综述口径）。引用一律 \\cite{bib键}。\n" +
       SECTION_STATUS +
       "1. 按骨架逐章充实或校对内容：每节成文，学术语气，目标篇幅按项目层设定（未设定时每章 800-1500 词）；\n" +
       "2. 引用键必须存在于 references.bib——严禁编造文献、严禁新造键；确需引用而库里没有的文献，先在 references.bib 补条目（作者/年份/标题/出处/DOI 齐全，缺字段标「待补」）再引用；\n" +
       "3. 已有 figures/ 用 \\includegraphics 引用；没有的图用 figure 环境占位「（待绘制）」，不虚构数据；\n" +
       "4. 没有文献支撑的论断不得下；必须保留的判断在该行行尾加 % TODO 待核实 注释；\n" +
-      "5. 每写完一章跑一次本步骤 run 脚本 render-pdf 确认可编译，报错立即读 output/compile.log 与 output/main.log 定位修掉，不攒到最后；按 bib-check 技能输出 manuscript/citation-check.md。\n" +
+      "5. 每写完一章跑一次本步骤 run 脚本 render-pdf 确认可编译，报错立即读 output/compile.log 与 output/main.log 定位修掉，不攒到最后；按 {skill:bib-check} 技能输出 manuscript/citation-check.md。\n" +
       "完成标准：chapters/ 各章内容成文，全文编译通过，citation-check.md 各节齐全且 \\cite 键全部可在 references.bib 解析。\n" +
       QUALITY_STATUS,
     expectedArtifacts: ["manuscript/chapters/*.tex", "manuscript/section-status.md", "output/main.pdf", "manuscript/citation-check.md"],
@@ -1558,7 +1560,7 @@ const LATEX_PAPER_STEPS: ProjectStepDto[] = [
       REVIEW_FIRST +
       "审查报告写 manuscript/review-report.md。第一轮只核对，不改科学内容。\n" +
       "1. 第二轮才通读定稿：语法、用词与段落衔接，只改表达不改学术观点与数据；发现内容性错误在该行行尾加 % TODO 待核实 注释，不自行改写事实；\n" +
-      "2. 引用闭环核对按 bib-check 技能：全文 \\cite 键逐条对照 references.bib，未解析键与未被引用条目清单写入 manuscript/final-check.md（未使用条目只列出、不删）；\n" +
+      "2. 引用闭环核对按 {skill:bib-check} 技能：全文 \\cite 键逐条对照 references.bib，未解析键与未被引用条目清单写入 manuscript/final-check.md（未使用条目只列出、不删）；\n" +
       "3. 版面终检：图表编号连续、交叉引用无 ??、无残留「（待绘制）」占位；问题一并写入 final-check.md 并逐项处理；\n" +
       "4. 终编译：跑本步骤 run 脚本 render-pdf 产出定稿 output/main.pdf；\n" +
       "5. 产出 manuscript/changelog.md，逐条记录定稿阶段的修改点。\n" +

@@ -324,6 +324,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   review-file-groups.ts      # 精读/写作评审文件分组：笔记/稿件/引文/待获取/过程（tests/review-file-groups.test.ts）
   closeout-pack.ts           # 项目卡完结清单：最终稿 / 源稿 / 图 / 文献 / 核对 / 笔记（tests/closeout-pack.test.ts）
   research-tools.ts          # 科研工具注入 withResearchTools；定稿步同时挂 output/endnote.docx 与 output/zotero.docx（LaTeX 不挂）；
+  skill-slots.ts             # 技能位单一出处：{skill:锚名} 占位解析（provides 优先、名字兜底）、行为键判定、provides 映射 hook；锚名闭集见 pipeline.md（tests/skill-slots.test.ts）
                              # 域稿刷新收成一句可选「换样式时打开域稿」，不挂文献库同步按钮；来源只认 lit_source
   review-decisions.ts        # 审查报告 R/S 与待核实 V 的拆条、接受/拒绝/修改写回、点完后的继续提示
                              # （tests/review-decisions.test.ts）
@@ -527,7 +528,10 @@ src-tauri/src/
                              #   目录重建落位；zip-slip/大小/后缀/白名单；同 id 跳过不覆盖；Mesa 元数据写 app.db；
                              #   kimi 新版 wd_<basename>_<sha256[:12]> + session_index.jsonl；grok URL 编码 cwd
   skills.rs                  # 技能库（§6.13）：SSOT 库 + symlink/copy 分发（cursor/grok 固定 copy）、四路导入、ZIP 导出、卸载备份、
-                             # 漂移检测 resync、create_skill/update_skill_content；apps 表是创建时快照，
+                             # 漂移检测 resync、create_skill/update_skill_content；provides 解析（frontmatter 闭集位声明，
+                             #   compose_skill_md 重写链保留——曾在这里剥过字段）；「AI 优化另存」两阶段命令
+                             #   （optimize_skills_draft 多源合成出稿不写盘 + create_user_skill 权威名落库带 derivedFrom 溯源）；
+                             #   apps 表是创建时快照，
                              #   list 时现算补齐注册表新 agent 的缺键（否则一键应用永远漏新 agent，不写盘）；
                              #   contentDigest = 库目录清单哈希（与漂移检测同口径），项目上下文/执行快照按它记技能版本；内置技能种子（seed_builtin_skills：
                              # include_str! 内嵌 src-tauri/resources/skills/ 18 个技能，启动幂等播种，不覆盖/不复活用户改动；

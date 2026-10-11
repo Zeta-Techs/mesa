@@ -19,6 +19,17 @@ const MAX_WALK_DEPTH: usize = 8;
 
 // ===== DTO =====
 
+/// 合成溯源条目（「AI 优化另存」时记录源技能）：纯审计元数据，绝不做运行时依赖——
+/// 源被删/改名后悬空条目按「找不到就静默过滤」处理，合成技能自包含照常工作。
+/// digest 二期再补（dir_manifest_hash 口径，记录合成那一刻的源版本）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillDerivedFrom {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillDto {
@@ -64,6 +75,16 @@ pub struct SkillDto {
     /// SKILL.md frontmatter 声明的读取路径（口径同 outputs，list 时现算）
     #[serde(default)]
     pub inputs: Vec<String>,
+    /// 可顶替的内置技能位（闭集=内置技能名；声明即接口契约。流水线占位 {skill:锚名} 与
+    /// 前端行为键按它解析：步骤挂载的技能声明 provides 含某锚名即视作占据该位）。
+    /// list 时现算，不入库文件
+    #[serde(default)]
+    pub provides: Vec<String>,
+    /// 合成溯源（「AI 优化另存」新技能记录源技能名单）。只存 skills.json 不进 SKILL.md
+    /// frontmatter——compose 重写链会剥字段；消费点只有展示（删除影响面/详情面板），
+    /// 禁止任何「源变了合成技能失效」的运行时判定
+    #[serde(default)]
+    pub derived_from: Option<Vec<SkillDerivedFrom>>,
     /// inputs/outputs 来自正文推断而非 frontmatter 声明（外部技能常见；前端按「推断」口径提示）
     #[serde(default)]
     pub interface_inferred: bool,
@@ -185,6 +206,8 @@ fn new_skill(
         mentions_mcp: false,
         outputs: Vec::new(),
         inputs: Vec::new(),
+        provides: Vec::new(),
+        derived_from: None,
         interface_inferred: false,
         content_digest: None,
     }
@@ -686,20 +709,23 @@ pub async fn preview_builtin_skill_update(name: String) -> Result<BuiltinUpdateP
 
 // ===== SKILL.md 防御式解析（开放标准：frontmatter 取 name/description/outputs/inputs，扩展字段忽略） =====
 
-/// frontmatter 解析结果：outputs = 产物路径、inputs = 读取路径（目录带尾斜杠、文件写全路径）
+/// frontmatter 解析结果：outputs = 产物路径、inputs = 读取路径（目录带尾斜杠、文件写全路径）、
+/// provides = 可顶替的内置技能位（闭集=内置技能名；声明即接口契约，流水线按它解析占位与行为键）
 #[derive(Debug, Default, Clone, PartialEq)]
 struct SkillFrontmatter {
     name: Option<String>,
     description: Option<String>,
     outputs: Vec<String>,
     inputs: Vec<String>,
+    provides: Vec<String>,
 }
 
-/// 多行列表收集态：`outputs:`/`inputs:` 空值行之后连续的 `- item` 行都算条目
+/// 多行列表收集态：`outputs:`/`inputs:`/`provides:` 空值行之后连续的 `- item` 行都算条目
 #[derive(Clone, Copy, PartialEq)]
 enum ListKey {
     Outputs,
     Inputs,
+    Provides,
 }
 
 fn parse_skill_md(path: &Path) -> SkillFrontmatter {
@@ -730,6 +756,7 @@ fn parse_skill_md_text(text: &str) -> SkillFrontmatter {
                     match key {
                         ListKey::Outputs => parsed.outputs.push(item.to_string()),
                         ListKey::Inputs => parsed.inputs.push(item.to_string()),
+                        ListKey::Provides => parsed.provides.push(item.to_string()),
                     }
                 }
                 continue;
@@ -769,6 +796,13 @@ fn parse_skill_md_text(text: &str) -> SkillFrontmatter {
                     collecting = Some(ListKey::Inputs);
                 } else {
                     inline_list(&mut parsed.inputs);
+                }
+            }
+            "provides" => {
+                if value.is_empty() {
+                    collecting = Some(ListKey::Provides);
+                } else {
+                    inline_list(&mut parsed.provides);
                 }
             }
             _ => {}
@@ -899,14 +933,17 @@ fn infer_interface_from_body(body: &str) -> (Vec<String>, Vec<String>) {
     (inputs, outputs)
 }
 
-/// 由名称/描述/正文组成 SKILL.md 全文（frontmatter 写 name/description + 非空的 inputs/outputs
-/// 多行列表，与解析口径一致）。描述强制单行：换行会破坏 frontmatter 的行解析
+/// 由名称/描述/正文组成 SKILL.md 全文（frontmatter 写 name/description + 非空的
+/// inputs/outputs/provides 多行列表，与解析口径一致）。描述强制单行：换行会破坏
+/// frontmatter 的行解析。provides 必须原样保留——「适配到流水线」落盘与编辑器保存
+/// 都走这里，漏掉等于把可顶替声明在最后一公里剥掉（2026-10-11 复审实证）
 fn compose_skill_md(
     name: &str,
     description: &str,
     content: &str,
     inputs: &[String],
     outputs: &[String],
+    provides: &[String],
 ) -> String {
     let desc = description.replace(['\r', '\n'], " ");
     let mut fm = format!("---\nname: {name}\ndescription: {}\n", desc.trim());
@@ -921,6 +958,7 @@ fn compose_skill_md(
     };
     push_list("inputs", inputs);
     push_list("outputs", outputs);
+    push_list("provides", provides);
     format!("{fm}---\n\n{}\n", content.trim())
 }
 
@@ -1902,6 +1940,7 @@ fn list_skills_impl(store: &SkillStore, dirs: &HashMap<String, PathBuf>) -> Vec<
         let parsed = parse_skill_md(&md);
         s.outputs = parsed.outputs;
         s.inputs = parsed.inputs;
+        s.provides = parsed.provides;
         s.interface_inferred = false;
         if s.outputs.is_empty() && s.inputs.is_empty() {
             if let Ok(text) = fs::read_to_string(&md) {
@@ -2008,9 +2047,10 @@ pub(crate) fn create_skill_from_full_md(
     full_md: &str,
     fallback_name: &str,
     category: Option<&str>,
+    derived_from: Option<Vec<SkillDerivedFrom>>,
 ) -> Result<SkillDto, String> {
     let store = SkillStore::default_paths()?;
-    create_skill_from_full_md_at(&store, full_md, fallback_name, category)
+    create_skill_from_full_md_at(&store, full_md, fallback_name, category, derived_from)
 }
 
 fn create_skill_from_full_md_at(
@@ -2018,6 +2058,7 @@ fn create_skill_from_full_md_at(
     full_md: &str,
     fallback_name: &str,
     category: Option<&str>,
+    derived_from: Option<Vec<SkillDerivedFrom>>,
 ) -> Result<SkillDto, String> {
     let text = extract_skill_md(full_md);
     let parsed = parse_skill_md_text(text);
@@ -2036,15 +2077,29 @@ fn create_skill_from_full_md_at(
     let desc = parsed.description.clone().unwrap_or_default();
     let mut skills = store.read();
     create_impl(store, &mut skills, &name, &desc, body)?;
-    if !parsed.inputs.is_empty() || !parsed.outputs.is_empty() {
-        update_content_impl(
+    // provides-only 的稿（只声明顶位、无 inputs/outputs）也要过 update 写回声明——
+    // 门槛漏掉会把合成稿的 provides 静默丢掉（2026-10-11 设计审查实证的漏网分支）
+    if !parsed.inputs.is_empty() || !parsed.outputs.is_empty() || !parsed.provides.is_empty() {
+        if let Err(e) = update_content_impl(
             store,
             &mut skills,
             &name,
             body,
             Some(desc),
-            Some((parsed.inputs, parsed.outputs)),
-        )?;
+            Some((parsed.inputs, parsed.outputs, parsed.provides)),
+        ) {
+            // 接口回写失败不留半成品：清掉刚建的条目再报错（best-effort，清理失败不掩盖原错误）
+            skills.retain(|s| s.name != name);
+            let _ = store.write(&skills);
+            let _ = std::fs::remove_dir_all(store.skill_dir(&name));
+            return Err(e);
+        }
+    }
+    if let Some(src) = derived_from {
+        if let Some(s) = skills.iter_mut().find(|s| s.name == name) {
+            s.derived_from = Some(src);
+            store.write(&skills)?;
+        }
     }
     if let Some(cat) = category.map(str::trim).filter(|c| !c.is_empty()) {
         if let Some(s) = skills.iter_mut().find(|s| s.name == name) {
@@ -2521,7 +2576,7 @@ fn create_impl(
     fs::create_dir_all(&dst).map_err(|e| format!("创建技能目录失败: {e}"))?;
     if let Err(e) = fs::write(
         dst.join("SKILL.md"),
-        compose_skill_md(name, description, content, &[], &[]),
+        compose_skill_md(name, description, content, &[], &[], &[]),
     ) {
         let _ = fs::remove_dir_all(&dst);
         return Err(format!("写入 SKILL.md 失败: {e}"));
@@ -2547,7 +2602,7 @@ fn update_content_impl(
     name: &str,
     content: &str,
     description: Option<String>,
-    interface: Option<(Vec<String>, Vec<String>)>,
+    interface: Option<(Vec<String>, Vec<String>, Vec<String>)>,
 ) -> Result<(), String> {
     validate_skill_name(name)?;
     let existing = skills
@@ -2563,13 +2618,13 @@ fn update_content_impl(
     let result = (|| {
         copy_dir_recursive(&lib_dir, &temp)?;
         let desc = description.unwrap_or_else(|| existing.description.clone());
-        let (inputs, outputs) = interface.unwrap_or_else(|| {
+        let (inputs, outputs, provides) = interface.unwrap_or_else(|| {
             let keep = parse_skill_md(&lib_dir.join("SKILL.md"));
-            (keep.inputs, keep.outputs)
+            (keep.inputs, keep.outputs, keep.provides)
         });
         fs::write(
             temp.join("SKILL.md"),
-            compose_skill_md(name, &desc, content, &inputs, &outputs),
+            compose_skill_md(name, &desc, content, &inputs, &outputs, &provides),
         )
         .map_err(|e| format!("写入 SKILL.md 失败: {e}"))?;
         // source/repo 保持原值：编辑不改写来源信息
@@ -2653,8 +2708,14 @@ pub(crate) fn build_adapt_prompt(name: &str, current: &str) -> String {
          约定表里没有的新路径可保留，但与约定冲突的一律改按约定；\n\
          2. frontmatter 保留 name/description，并补写 inputs: 与 outputs: 多行列表\
          （`  - 路径` 写法，目录带尾斜杠、文件写全路径；没有的一侧省略）；\n\
-         3. 保持单文件轻量规范（约 100 行内），不加脚本/JSON 中间件/lint 体系；\n\
-         4. 只输出完整的新版 SKILL.md 全文（含 frontmatter），不要解释、不要代码围栏。"
+         3. 若本技能的职责能顶替某个内置技能位（检索=lit-search、精读=lit-notes、框架=review-framework、\n\
+         综述写作=review-writing、拼图=review-figures、论文写作=research-writing、开题=proposal-writer、\n\
+         审稿回复=rebuttal-crafter、清洗=data-clean、探索=data-eda、统计审查=stats-check、出图=figure-forge、\n\
+         渲染=quarto-render、引用校验=bib-check、汇报=slides-deck、监控=lit-watch、Zotero 同步=zotero-sync、EndNote 桥接=endnote-bridge、Origin 出图=origin-plot、Blender 示意=blender-research），\n\
+         在 frontmatter 补写 provides: [位名]——声明后流水线步骤里可用本技能顶替该内置位；\n\
+         职责对不上任何内置位就省略 provides，不要硬凑；\n\
+         4. 保持单文件轻量规范（约 100 行内），不加脚本/JSON 中间件/lint 体系；\n\
+         5. 只输出完整的新版 SKILL.md 全文（含 frontmatter），不要解释、不要代码围栏。"
     )
 }
 
@@ -2748,8 +2809,166 @@ pub async fn write_skill_md(name: String, full_text: String) -> Result<(), Strin
         name.trim(),
         body,
         parsed.description,
-        Some((parsed.inputs, parsed.outputs)),
+        Some((parsed.inputs, parsed.outputs, parsed.provides)),
     )
+}
+
+/// 「AI 优化另存」出稿 prompt（纯函数，可测）：多源合成一份，内置源的流水线落点为骨架、
+/// 人的优化方向优先级最高，职责对得上内置位才声明 provides（锚名闭集与 build_adapt_prompt 同表）。
+fn build_optimize_prompt(sources: &[(String, String)], direction: &str) -> String {
+    let mut body = String::from("你是技能合成助手。下面是若干份 agent 技能文件（SKILL.md）和一条优化方向；把它们优化/合成为一份新的 SKILL.md。\n\n【源技能】\n");
+    for (i, (name, text)) in sources.iter().enumerate() {
+        body.push_str(&format!("### 源 {}：{name}\n{text}\n\n", i + 1));
+    }
+    format!(
+        "{body}【优化方向（人的要求，优先级最高）】\n{direction}\n\n【合成要求】\n\
+         1. 只输出一份完整的新版 SKILL.md 全文（含 frontmatter），不要解释、不要代码围栏；认为该拆成多份时只能作为正文建议写出，不得输出多份；\n\
+         2. 方法论融合：多源时融合各源的方法、检查清单与口径，单源时优化它；源是内置技能的，其流水线落点（papers/、notes/、references.bib、manuscript/、output/、data/、analysis/、figures/）与结构为骨架原样保留；与优化方向冲突的一律以方向为准；\n\
+         3. frontmatter 写 name/description，补写 inputs: 与 outputs: 多行列表（`  - 路径` 写法，目录带尾斜杠、文件写全路径；没有的一侧省略），description 末尾注明「综合自 各源技能名」；\n\
+         4. 职责能顶替内置位时补写 provides: [位名]（检索=lit-search、精读=lit-notes、框架=review-framework、综述写作=review-writing、拼图=review-figures、论文写作=research-writing、开题=proposal-writer、审稿回复=rebuttal-crafter、清洗=data-clean、探索=data-eda、统计审查=stats-check、出图=figure-forge、渲染=quarto-render、引用校验=bib-check、汇报=slides-deck、监控=lit-watch、Zotero 同步=zotero-sync、EndNote 桥接=endnote-bridge、Origin 出图=origin-plot、Blender 示意=blender-research），对不上不硬凑；\n\
+         5. name 用小写字母数字连字符、体现优化方向（如 lit-search-enhanced）；保持单文件轻量规范（约 100 行内），不加脚本/JSON 中间件。"
+    )
+}
+
+/// 多源截断预算（2026-10-11 拍板）：总量 48KB 上限、单源保底 8KB，超出均分。
+/// 单源全宽 48KB；源越多每份越窄，但不低于 8KB（源极多时总量允许超 48KB——保底优先）。
+fn optimize_source_budget(count: usize) -> usize {
+    if count == 0 {
+        return 0;
+    }
+    (48 * 1024 / count).max(8 * 1024)
+}
+
+fn optimize_skills_draft_impl(
+    profiles: Vec<crate::profiles::Profile>,
+    ids: &[String],
+    direction: &str,
+) -> Result<SkillAdaptDto, String> {
+    let store = SkillStore::default_paths()?;
+    let skills = store.read();
+    let mut sources: Vec<(String, String)> = Vec::new();
+    let budget = optimize_source_budget(ids.len());
+    for id in ids {
+        let skill = skills
+            .iter()
+            .find(|s| &s.id == id)
+            .ok_or_else(|| format!("技能不存在: {id}"))?;
+        let md = fs::read_to_string(store.skill_dir(&skill.name).join("SKILL.md"))
+            .map_err(|e| format!("读取 {} 失败: {e}", skill.name))?;
+        sources.push((skill.name.clone(), crate::ai::cap_text_middle(&md, budget)));
+    }
+    if sources.is_empty() {
+        return Err("没有选择源技能".into());
+    }
+    let prompt = build_optimize_prompt(&sources, direction);
+    let ai_out = crate::ai::ai_prompt_impl(profiles, None, Some(crate::ai::FN_SKILL_OPTIMIZE), prompt)?;
+    let redacted = crate::handoff::redact_and_cap(&ai_out);
+    let text = extract_skill_md(&redacted);
+    if text.trim().is_empty() {
+        return Err("AI 没有产出优化稿，请重试".into());
+    }
+    // AI 建议名（frontmatter name）随稿带回，前端预填、人可改
+    let suggested = parse_skill_md_text(text)
+        .name
+        .filter(|n| validate_skill_name(n).is_ok())
+        .unwrap_or_default();
+    Ok(SkillAdaptDto { name: suggested, content: text.to_string() })
+}
+
+/// 「AI 优化另存」第一阶段：多源合成出稿（不写盘，前端预览/编辑后确认）
+#[tauri::command]
+pub async fn optimize_skills_draft(
+    store: tauri::State<'_, crate::profiles::ProfileStore>,
+    ids: Vec<String>,
+    direction: String,
+) -> Result<SkillAdaptDto, String> {
+    let direction = direction.trim().to_string();
+    if direction.is_empty() {
+        return Err("优化方向不能为空".into());
+    }
+    let profiles = store.list()?;
+    tauri::async_runtime::spawn_blocking(move || optimize_skills_draft_impl(profiles, &ids, &direction))
+        .await
+        .map_err(|e| format!("AI 优化出稿失败: {e}"))?
+}
+
+/// 「AI 优化另存」第二阶段：整稿落库为新技能（source=ccode、provides 全保留、derivedFrom 溯源）。
+/// name 是**权威名**（预览屏输入框的值）：非空合法时覆盖稿内 frontmatter 的 name——
+/// 只当 fallback 的话，AI 稿必带合法 frontmatter 名，用户改名会被静默压掉（2026-10-11 复审实证）。
+#[tauri::command]
+pub async fn create_user_skill(
+    full_text: String,
+    name: String,
+    derived_from: Option<Vec<String>>,
+) -> Result<SkillDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("请填写新技能名（AI 建议名在预览输入框里，可改）".into());
+        }
+        // 权威名写回 frontmatter：稿内 name 行替换为用户确认的名字
+        let rewritten = rewrite_frontmatter_name(&full_text, name);
+        let derived = derived_from.map(|names| {
+            names
+                .into_iter()
+                .filter(|n| !n.trim().is_empty())
+                .map(|name| SkillDerivedFrom { name, digest: None })
+                .collect::<Vec<_>>()
+        });
+        create_skill_from_full_md(&rewritten, name, None, derived)
+    })
+    .await
+    .map_err(|e| format!("创建技能失败: {e}"))?
+}
+
+/// 把 SKILL.md 稿 frontmatter 的 name 行替换为权威名；无 frontmatter 或无 name 行时
+/// 原样返回（create_skill_from_full_md_at 的 fallback 兜底）。只动 name 行，其余逐字节保留。
+fn rewrite_frontmatter_name(full_md: &str, name: &str) -> String {
+    let text = full_md.trim_start_matches('\u{feff}');
+    let mut lines = text.lines().peekable();
+    if lines.peek() != Some(&"---") {
+        return full_md.to_string();
+    }
+    let mut out: Vec<String> = vec!["---".to_string()];
+    let mut in_fm = true;
+    let mut replaced = false;
+    let mut saw_name = false;
+    for line in lines.by_ref().skip(1) {
+        if !in_fm {
+            out.push(line.to_string());
+            continue;
+        }
+        if line.trim_end() == "---" {
+            if !replaced && !saw_name {
+                // frontmatter 没有 name 行：插一行（合法位置：首键之前不强求，放最前最稳）
+                out.push(format!("name: {name}"));
+            }
+            out.push(line.to_string());
+            in_fm = false;
+            continue;
+        }
+        if let Some((key, _)) = line.split_once(':') {
+            if key.trim() == "name" {
+                saw_name = true;
+                out.push(format!("name: {name}"));
+                replaced = true;
+                continue;
+            }
+        }
+        out.push(line.to_string());
+    }
+    if in_fm {
+        // frontmatter 未闭合：不动，交给下游解析兜底
+        return full_md.to_string();
+    }
+    let mut body = out.join("\n");
+    if !body.ends_with('\n') {
+        body.push('\n');
+    }
+    if !full_md.ends_with('\n') {
+        body.pop();
+    }
+    body
 }
 
 #[tauri::command]
@@ -2773,6 +2992,110 @@ pub async fn skill_md_path(id: String) -> Result<SkillPathDto, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+
+#[test]
+    fn optimize_prompt_carries_sources_direction_and_provides_rule() {
+        let prompt = build_optimize_prompt(
+            &[("lit-search".into(), "内置检索技能正文".into()), ("my-search".into(), "用户技能正文".into())],
+            "把我的检索习惯融进去，保留严格档",
+        );
+        assert!(prompt.contains("### 源 1：lit-search"));
+        assert!(prompt.contains("### 源 2：my-search"));
+        assert!(prompt.contains("把我的检索习惯融进去，保留严格档"));
+        assert!(prompt.contains("优先级最高"));
+        assert!(prompt.contains("provides: [位名]"));
+        assert!(prompt.contains("不得输出多份"));
+    }
+
+    #[test]
+    fn optimize_budget_total_cap_single_floor() {
+        assert_eq!(optimize_source_budget(0), 0);
+        assert_eq!(optimize_source_budget(1), 48 * 1024);
+        assert_eq!(optimize_source_budget(6), 8 * 1024);
+        // 源极多时保底优先（总量允许超 48KB）
+        assert_eq!(optimize_source_budget(10), 8 * 1024);
+    }
+
+    #[test]
+    fn full_md_provides_only_survives_create() {
+        let fx = Fx::new();
+        let md = "---\nname: merged-skill\ndescription: 综合自 lit-search\nprovides: [lit-search]\n---\n\n正文\n".replace("\\n", "\n");
+        let skill = create_skill_from_full_md_at(&fx.store, &md, "fallback", None, None).unwrap();
+        assert_eq!(skill.name, "merged-skill");
+        assert!(skill.derived_from.is_none());
+        // 落盘文件里 provides 必须在（此前门槛漏掉 provides-only 稿）
+        let written = fs::read_to_string(fx.store.skill_dir("merged-skill").join("SKILL.md")).unwrap();
+        assert!(written.contains("provides:"));
+        let parsed = parse_skill_md_text(&written);
+        assert_eq!(parsed.provides, vec!["lit-search".to_string()]);
+    }
+
+    #[test]
+    fn rewrite_frontmatter_name_authoritative() {
+        // 常规稿：frontmatter 有 name 行 → 权威名替换
+        let md = "---\nname: ai-name\ndescription: d\nprovides: [lit-search]\n---\n\n正文\n".replace("\\n", "\n");
+        let out = rewrite_frontmatter_name(&md, "my-name");
+        assert!(out.contains("name: my-name"));
+        assert!(!out.contains("ai-name"));
+        assert!(out.contains("provides: [lit-search]"));
+        // 无 name 行：插入；未闭合 frontmatter：原样返回兜底
+        let no_name = "---\ndescription: d\n---\n\n正文\n".replace("\\n", "\n");
+        assert!(rewrite_frontmatter_name(&no_name, "x").contains("name: x"));
+        let unclosed = "---\nname: ai\n正文".replace("\\n", "\n");
+        assert_eq!(rewrite_frontmatter_name(&unclosed, "x"), unclosed);
+    }
+
+    #[test]
+    fn create_user_skill_name_authoritative_end_to_end() {
+        let fx = Fx::new();
+        // AI 稿名 ai-name，用户确认时改名 my-name → 落库名必须是 my-name（此前被 frontmatter 名静默压掉）
+        let md = "---\nname: ai-name\ndescription: 合成\nprovides: [lit-notes]\n---\n\n正文\n".replace("\\n", "\n");
+        let rewritten = rewrite_frontmatter_name(&md, "my-name");
+        let skill = create_skill_from_full_md_at(&fx.store, &rewritten, "my-name", None, None).unwrap();
+        assert_eq!(skill.name, "my-name");
+        let written = fs::read_to_string(fx.store.skill_dir("my-name").join("SKILL.md")).unwrap();
+        assert!(written.contains("name: my-name"));
+    }
+
+    #[test]
+    fn derived_from_roundtrip_stored_in_registry() {
+        let fx = Fx::new();
+        fx.add_lib_skill("plain-skill", "普通技能");
+        let md = "---\nname: merged-2\ndescription: 合成\nprovides: [lit-notes]\n---\n\n正文\n".replace("\\n", "\n");
+        let derived = vec![SkillDerivedFrom { name: "lit-notes".into(), digest: None }];
+        create_skill_from_full_md_at(&fx.store, &md, "fallback", None, Some(derived)).unwrap();
+        let stored = fx.store.read();
+        let s = stored.iter().find(|s| s.name == "merged-2").unwrap();
+        assert_eq!(
+            s.derived_from.as_deref(),
+            Some(&[SkillDerivedFrom { name: "lit-notes".into(), digest: None }][..])
+        );
+        // 旧档兼容：没有 derived_from 键的记录读回 None
+        let plain = stored.iter().find(|s| s.name == "plain-skill").unwrap();
+        assert!(plain.derived_from.is_none());
+    }
+
+    #[test]
+    fn frontmatter_provides_parsed_and_listed() {
+        let fx = Fx::new();
+        fx.add_lib_skill("plain-skill", "不声明 provides 的技能");
+        let dir = fx.store.skill_dir("slot-skill");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("SKILL.md"),
+            "---\nname: slot-skill\ndescription: 顶位技能\nprovides: [lit-search, lit-notes]\noutputs: [papers/x.md]\n---\nbody\n",
+        )
+        .unwrap();
+        let mut skills = fx.store.read();
+        skills.push(new_skill("slot-skill".into(), Some("顶位技能".into()), "local", None));
+        fx.store.write(&skills).unwrap();
+        let listed = list_skills_impl(&fx.store, &HashMap::new());
+        let s = listed.iter().find(|s| s.name == "slot-skill").unwrap();
+        assert_eq!(s.provides, vec!["lit-search".to_string(), "lit-notes".to_string()]);
+        let plain = listed.iter().find(|s| s.name == "plain-skill").unwrap();
+        assert!(plain.provides.is_empty());
+    }
 
     #[test]
     fn named_skill_snapshot_requires_matching_runtime_copy() {
@@ -3497,16 +3820,19 @@ mod tests {
             "正文",
             &["papers/".to_string()],
             &["notes/inbox.md".to_string()],
+            &["lit-search".to_string()],
         );
         assert!(text.contains("inputs:\n  - papers/\n"));
         assert!(text.contains("outputs:\n  - notes/inbox.md\n"));
-        // 往返一致：写出来的 frontmatter 能被解析回同样的接口
+        assert!(text.contains("provides:\n  - lit-search\n"));
+        // 往返一致：写出来的 frontmatter 能被解析回同样的接口（provides 同口径，编辑不丢声明）
         let parsed = parse_skill_md_text(&text);
         assert_eq!(parsed.inputs, vec!["papers/".to_string()]);
         assert_eq!(parsed.outputs, vec!["notes/inbox.md".to_string()]);
+        assert_eq!(parsed.provides, vec!["lit-search".to_string()]);
         // 空接口不写键（保持既有格式不变）
-        let plain = compose_skill_md("s", "描述", "正文", &[], &[]);
-        assert!(!plain.contains("inputs:") && !plain.contains("outputs:"));
+        let plain = compose_skill_md("s", "描述", "正文", &[], &[], &[]);
+        assert!(!plain.contains("inputs:") && !plain.contains("outputs:") && !plain.contains("provides:"));
     }
 
     #[test]
@@ -3545,7 +3871,7 @@ mod tests {
             "ext",
             skill_md_body(full),
             parsed.description,
-            Some((parsed.inputs, parsed.outputs)),
+            Some((parsed.inputs, parsed.outputs, parsed.provides)),
         )
         .unwrap();
         let written = fs::read_to_string(fx.store.skill_dir("ext").join("SKILL.md")).unwrap();
@@ -4257,7 +4583,7 @@ mod tests {
     fn create_from_full_md_sets_category_and_outputs() {
         let fx = Fx::new();
         let md = "---\nname: model-watch\ndescription: 查各家模型\noutputs:\n  - notes/watch-inbox.md\n---\n\n只追加清单，不改表。\n";
-        let skill = create_skill_from_full_md_at(&fx.store, md, "fallback", Some("巡检")).unwrap();
+        let skill = create_skill_from_full_md_at(&fx.store, md, "fallback", Some("巡检"), None).unwrap();
         assert_eq!(skill.name, "model-watch");
         assert_eq!(skill.category.as_deref(), Some("巡检"));
         assert_eq!(skill.source, "ccode");

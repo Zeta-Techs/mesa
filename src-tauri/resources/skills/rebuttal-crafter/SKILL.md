@@ -2,6 +2,7 @@
 name: rebuttal-crafter
 description: 审稿意见回复规范。当用户收到审稿意见/返修邮件，需要写 response letter、逐条回复审稿人、或产出修改对照表时使用。意见逐条编号不遗漏并按类别+严重度分级，大修小修分流定策略；回应分「接受修改/部分接受/礼貌反驳」三型，审稿人漏看按呈现问题处理；产出回复信草稿与修改对照表，承诺与对照表双向核对；不直接改稿件正文，除非用户明确要求。
 outputs: [rebuttal/, manuscript/]
+provides: [rebuttal-crafter]
 ---
 
 # 审稿意见回复（rebuttal-crafter）

@@ -26,7 +26,7 @@ test("实际开工确认：上游摘要可见，决定可填写/撤回，最终�
   const calls:string[]=[];
   Object.assign(dom.window,{__TAURI_INTERNALS__:{invoke:async(command:string,args:any)=>{
     calls.push(command);
-    if(command==='read_task_draft')return {relPath:'.ccode/drafts/exp-run.md',text:null};
+    if(command==='list_skills')return[];if(command==='read_task_draft')return {relPath:'.ccode/drafts/exp-run.md',text:null};
     if(command==='git_status')return {isRepo:true,files:[]};
     if(['inspect_step_inputs','list_skills','discover_resources','list_legacy_briefs','list_human_task_states','list_dir'].includes(command))return [];
     if(command==='read_file_preview'){

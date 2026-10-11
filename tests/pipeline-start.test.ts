@@ -110,3 +110,20 @@ test("TASK.md 项目规则不含未填的全局设定空表", () => {
   assert.match(md, /答辩时间：（倒推各章节的截止）/);
   assert.match(md, /先逐项问人/);
 });
+
+test("TASK.md 简报占位按挂载名单解析：换技能后正文跟随（2026-10-11 个性化机制）", () => {
+  const s = step();
+  s.brief = "全程按 {skill:lit-search} 技能执行，写法见 {skill:lit-notes} 技能。";
+  s.skills = ["my-search", "lit-notes"];
+  // 用户技能声明 provides: [lit-search] → 顶位；lit-notes 无顶位者 → 名字兜底
+  const provides = { "my-search": ["lit-search"] };
+  const md = renderTaskMd(s, cfg(), "/tmp/p", undefined, undefined, provides);
+  assert.match(md, /全程按 my-search 技能执行/);
+  assert.match(md, /写法见 lit-notes 技能/);
+  assert.doesNotMatch(md, /\{skill:/);
+  // 位空缺：渲染成锚名可读形态（校验层负责提醒）
+  s.skills = ["lit-notes"];
+  const md2 = renderTaskMd(s, cfg(), "/tmp/p", undefined, undefined, provides);
+  assert.match(md2, /全程按 lit-search 技能执行/);
+  assert.doesNotMatch(md2, /\{skill:/);
+});

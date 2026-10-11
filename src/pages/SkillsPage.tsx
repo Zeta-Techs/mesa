@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { invalidateSkillProvides } from "../skill-slots.ts";
 import { AGENTS } from "../types";
 import { useAppStore } from "../store";
 import ContextMenu from "../components/ContextMenu";
@@ -597,10 +598,13 @@ function DiscoverModal({
  *  外部导入提示来源；删除前库目录自动备份（delete_impl 先备份再卸载，保留最近 5 份）。 */
 function DeleteSkillModal({
   skill,
+  derivedChildren,
   onClose,
   onConfirm,
 }: {
   skill: SkillDto;
+  /** 从本技能合成的新技能名单（纯提示：独立副本，不受删除影响） */
+  derivedChildren: string[];
   onClose: () => void;
   onConfirm: () => Promise<void>;
 }) {
@@ -637,6 +641,12 @@ function DeleteSkillModal({
           <p className="mb-1 text-xs leading-5 text-l3">
             将从以下 agent 的技能目录移除：{impact.join("、")}
             （只移除 Mesa 分发的副本/链接，你自己放的同名内容不受影响）。
+          </p>
+        )}
+        {derivedChildren.length > 0 && (
+          <p className="mb-1 text-xs leading-5 text-l3">
+            有技能从它合成：{derivedChildren.join("、")}
+            （独立副本，不受本次删除影响）。
           </p>
         )}
         <p className="mb-1 text-xs leading-5 text-l4">
@@ -789,17 +799,28 @@ function SkillEditorModal({
   );
 }
 
-/** ◈ 优化技能（RX3b）：内联收集优化意见 → 开终端标签，让 Agent 阅读并直接改写库中的 SKILL.md */
+/** ◈ 优化技能（RX3b）：去向二选一——原地改（开终端让 Agent 直改库文件，现状行为）｜
+ *  另存为新技能（多选源技能 → AI 按人的优化方向合成出稿 → 预览/再编辑 → 确认落库，
+ *  源技能零触碰）。一个入口一个主 CTA，按钮文案随去向切换。 */
 function OptimizeModal({
   skill,
+  skillLib,
   onClose,
   onConfirm,
+  onCreated,
 }: {
   skill: SkillDto;
+  skillLib: SkillDto[] | null;
   onClose: () => void;
+  /** 原地改路径：意见 → 开终端（现状行为不变） */
   onConfirm: (opinion: string) => Promise<void>;
+  /** 另存路径：新技能落库后回调（预览面板/刷新由父级处理） */
+  onCreated: (created: SkillDto) => Promise<void>;
 }) {
+  const [mode, setMode] = useState<"terminal" | "new">("terminal");
   const [opinion, setOpinion] = useState("");
+  const [sources, setSources] = useState<Set<string>>(new Set([skill.id]));
+  const [draft, setDraft] = useState<{ name: string; content: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -807,8 +828,18 @@ function OptimizeModal({
     setBusy(true);
     setError(null);
     try {
-      await onConfirm(opinion.trim());
-      onClose();
+      if (mode === "terminal") {
+        await onConfirm(opinion.trim());
+        onClose();
+        return;
+      }
+      // 另存：第一阶段出稿（不写盘）
+      const ids = [...sources];
+      const dto = await invoke<{ name: string; content: string }>("optimize_skills_draft", {
+        ids,
+        direction: opinion.trim(),
+      });
+      setDraft({ name: dto.name || "", content: dto.content });
     } catch (reason) {
       setError(String(reason));
     } finally {
@@ -816,15 +847,132 @@ function OptimizeModal({
     }
   }
 
+  async function confirmCreate() {
+    if (!draft) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const created = await invoke<SkillDto>("create_user_skill", {
+        fullText: draft.content,
+        name: draft.name.trim(),
+        derivedFrom: (skillLib ?? [])
+          .filter((s) => sources.has(s.id))
+          .map((s) => s.name),
+      });
+      await onCreated(created);
+      onClose();
+    } catch (reason) {
+      // 撞名错误在另存语境下指错方向（“改用编辑内容”会引导覆盖源技能）：补一句本语境指引
+      const msg = String(reason);
+      setError(msg.includes("已存在") ? `${msg}——换个新技能名再试；源技能不要动` : msg);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // 另存路径的预览/编辑阶段：全文可见可改，provides 行显形（它决定流程入口点亮，必须让人看见）
+  if (mode === "new" && draft) {
+    return (
+      <Modal open title={`◈ 优化另存：${skill.name}`} onClose={onClose} size="lg">
+        <p className="mb-3 text-xs text-l3">
+          AI 合成稿如下，可再改；确认后作为新技能落库，源技能零触碰。frontmatter 里的
+          provides 行决定它能顶替哪个内置位（流程里换上后对应入口才点亮）。
+        </p>
+        <label className="mb-3 block">
+          <span className="mb-1 block text-xs text-l3">新技能名（可改）</span>
+          <input
+            className={fieldClass}
+            value={draft.name}
+            onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+          />
+        </label>
+        <textarea
+          className={`${fieldClass} mb-3 min-h-64 flex-1 resize-y font-mono text-xs`}
+          value={draft.content}
+          onChange={(e) => setDraft({ ...draft, content: e.target.value })}
+        />
+        {error && <p className="mb-2 text-sm text-err-text">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={() => {
+              setDraft(null);
+              setError(null);
+            }}
+            disabled={busy}
+            className="rounded-sm px-3 py-1.5 text-sm text-l2 hover:bg-hover disabled:opacity-50"
+          >
+            返回重选
+          </button>
+          <button
+            onClick={() => void confirmCreate()}
+            disabled={busy || !draft.content.trim() || !draft.name.trim()}
+            className="rounded-sm border border-cta-bd bg-cta px-3 py-1.5 text-sm text-cta-text hover:brightness-110 disabled:opacity-50"
+          >
+            {busy ? "落库中…" : "确认落库为新技能"}
+          </button>
+        </div>
+      </Modal>
+    );
+  }
+
   return (
     <Modal open title={`◈ 优化技能：${skill.name}`} onClose={onClose} size="md">
-        <p className="mb-3 text-xs text-l3">开终端让 Agent 按你的意见改写这个技能；改完记得审查。</p>
+        {/* 去向分段：唯一入口内部二选一，不增第二套入口 */}
+        <div className="mb-3 flex gap-1 rounded-sm border border-hairline p-1 text-sm">
+          {([["terminal", "原地改（开终端）"], ["new", "另存为新技能（AI 出稿）"]] as const).map(
+            ([value, label]) => (
+              <button
+                key={value}
+                onClick={() => setMode(value)}
+                className={`flex-1 rounded-sm px-2 py-1 ${mode === value ? "bg-active text-l1" : "text-l3 hover:bg-hover"}`}
+              >
+                {label}
+              </button>
+            ),
+          )}
+        </div>
+        {mode === "terminal" ? (
+          <p className="mb-3 text-xs text-l3">开终端让 Agent 按你的意见改写这个技能；改完记得审查。</p>
+        ) : (
+          <>
+            <p className="mb-3 text-xs text-l3">
+              AI 按你的优化方向把勾选的技能合成一份新技能（内置源的流水线落点为骨架）；
+              出稿后预览可改，确认才落库，源技能零触碰。
+            </p>
+            <div className="mb-3 max-h-64 overflow-auto rounded-sm border border-hairline">
+              {(skillLib ?? []).map((s) => (
+                <label
+                  key={s.id}
+                  className={`flex items-center gap-2 border-b border-hairline py-2 px-3 text-sm last:border-b-0 ${busy ? "opacity-50" : "cursor-pointer"}`}
+                >
+                  <input
+                    type="checkbox"
+                    disabled={busy}
+                    checked={sources.has(s.id)}
+                    onChange={(e) => {
+                      const next = new Set(sources);
+                      if (e.target.checked) next.add(s.id);
+                      else next.delete(s.id);
+                      setSources(next);
+                    }}
+                  />
+                  <span className="text-l2">{s.name}</span>
+                  {isBuiltinSkill(s.source) && <span className="text-xs text-l4">内置</span>}
+                </label>
+              ))}
+            </div>
+          </>
+        )}
         <textarea
           autoFocus
           className={`${fieldClass} mb-3 h-24 resize-y`}
           value={opinion}
           onChange={(e) => setOpinion(e.target.value)}
-          placeholder="优化意见，如：补充中文输出格式约定；把检查清单精简到 5 条"
+          placeholder={
+            mode === "terminal"
+              ? "优化意见，如：补充中文输出格式约定；把检查清单精简到 5 条"
+              : "优化方向，如：把我的检索习惯融进内置流程，保留严格档；检查清单按我们组的口径重写"
+          }
         />
         {error && <p className="mb-2 text-sm text-err-text">{error}</p>}
         <div className="flex justify-end gap-2">
@@ -836,10 +984,16 @@ function OptimizeModal({
           </button>
           <button
             onClick={() => void submit()}
-            disabled={busy || !opinion.trim()}
+            disabled={busy || !opinion.trim() || (mode === "new" && sources.size === 0)}
             className="rounded-sm border border-cta-bd bg-cta px-3 py-1.5 text-sm text-cta-text hover:brightness-110 disabled:opacity-50"
           >
-            {busy ? "打开中…" : "开终端优化"}
+            {busy
+              ? mode === "terminal"
+                ? "打开中…"
+                : "AI 出稿中…"
+              : mode === "terminal"
+                ? "开终端优化"
+                : `AI 合成（${sources.size} 个源）`}
           </button>
         </div>
     </Modal>
@@ -1205,6 +1359,8 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
     try {
       const list = await invoke<SkillDto[]>("list_skills");
       setSkills(list);
+      // 技能库刚变过：失效行为键用的 provides 缓存（导入/新建/编辑/更新/删除都经 refresh 回刷）
+      invalidateSkillProvides();
       // 预览面板跟随最新数据（resync/分类等变化），技能消失时关闭预览
       setPreview((prev) => {
         if (!prev) return prev;
@@ -2025,6 +2181,12 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
           <div className="border-b border-hairline px-3 py-2.5 text-sm text-l3">
             <span>
               {SOURCE_LABEL[preview.skill.source] ?? preview.skill.source}
+              {preview.skill.derivedFrom?.length
+                ? `｜从 ${preview.skill.derivedFrom
+                    .filter((d) => skills.some((s) => s.name === d.name))
+                    .map((d) => d.name)
+                    .join("、")} 合成`
+                : ""}
             </span>
             {preview.skill.repo &&
               (() => {
@@ -2203,8 +2365,22 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
       {optimize && (
         <OptimizeModal
           skill={optimize}
+          skillLib={skills}
           onClose={() => setOptimize(null)}
           onConfirm={(opinion) => confirmOptimize(optimize, opinion)}
+          onCreated={async (created) => {
+            // 落库即终点：刷新 + 失效行为键映射（新技能的 provides 立即可点亮流程入口）；
+            // 挂步骤/分发只指路不代做——打开既有反向挂载弹层
+            await refresh();
+            invalidateSkillProvides();
+            setNotice(`已创建「${created.name}」；挂载到步骤走 ⋯ 菜单，分发用右侧开关`);
+            try {
+              const content = await invoke<string>("read_skill_md", { id: created.id });
+              setPreview({ skill: created, content });
+            } catch {
+              /* 预览失败不影响落库结果 */
+            }
+          }}
         />
       )}
       {adapt && (
@@ -2227,6 +2403,9 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
       {deleteTarget && (
         <DeleteSkillModal
           skill={deleteTarget}
+          derivedChildren={skills
+            .filter((s) => s.derivedFrom?.some((d) => d.name === deleteTarget.name))
+            .map((s) => s.name)}
           onClose={() => setDeleteTarget(null)}
           onConfirm={() => confirmDelete(deleteTarget)}
         />

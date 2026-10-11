@@ -31,6 +31,7 @@ import {
   type StepFlowNode,
   type ToFetchItem,
 } from "../step-flow";
+import { stepFillsAnySlot, useSkillProvides } from "../skill-slots.ts";
 import {
   RESEARCH_TOOL_FIELDS,
   type ResearchToolField,
@@ -474,6 +475,7 @@ export default function StepFlow({
   }`;
   const pendingDecisions = unansweredDecisions(decisions, answered);
   const decisionGaps = decisionGate(step, draft?.text ?? "").missing;
+  const skillProvides = useSkillProvides();
   const [decisionBusy, setDecisionBusy] = useState(false);
   const [decisionError, setDecisionError] = useState<string | null>(null);
   // 「自己写」行内输入：选项不合适时多半只是想填一句自己的答案，
@@ -1379,7 +1381,7 @@ export default function StepFlow({
       step.workspaceName === "journal-format" ||
       step.workspaceName === "submission-materials" ||
       /^rebuttal-r\d+$/.test(step.workspaceName ?? ""),
-    continueNotes: step.skills.includes("lit-notes"),
+    continueNotes: stepFillsAnySlot(step.skills, ["lit-notes"], skillProvides),
   });
   const seeds = step.discussionSeeds ?? [];
 

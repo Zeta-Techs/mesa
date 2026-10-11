@@ -2,6 +2,7 @@
 name: zotero-sync
 description: Zotero 文献库同步规范。当用户明确要求把检索结果写入 Zotero，或按需从 Zotero 导出项目文献时使用。内核 zotero_import 仍是只读进料口。Zotero 7–9 本地 /api/ 只读，进库走 RIS/BibTeX 原生导入（清单「同步到 Zotero」或拖文件），禁止 POST 假装写库。不可用时回落纯文件口径，不阻塞文献流程。
 outputs: [papers/zotero-sync.md, output/zotero.docx, papers/zotero-cite-report.md]
+provides: [zotero-sync]
 ---
 
 # Zotero 文献库同步（zotero-sync）

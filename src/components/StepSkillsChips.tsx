@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { skillChainWarnings, skillOutputConflicts } from "../skill-conflicts";
+import { skillChainWarnings, skillOutputConflicts, unresolvedSkillRefs } from "../skill-conflicts";
 import type { SkillDto } from "../types";
 
 /**
@@ -25,6 +25,7 @@ export default function StepSkillsChips({
   chainSupply,
   expectedArtifacts,
   stepOutputs,
+  brief,
   hint,
 }: {
   /** 步骤当前挂载的技能名（project.toml steps[].skills） */
@@ -49,6 +50,8 @@ export default function StepSkillsChips({
   expectedArtifacts?: string[];
   /** 本步合同实际要写的文件。给了就只检查这批，不拿技能声明里别的阶段来报。 */
   stepOutputs?: string[];
+  /** 步骤简报：{skill:锚名} 占位校验用（点名了没挂载的技能位 → 提醒，不拦截） */
+  brief?: string;
   /** 标题旁小字；false = 不写（开工弹层用 tooltip 承担） */
   hint?: string | false;
 }) {
@@ -60,6 +63,7 @@ export default function StepSkillsChips({
   const showRequirement = requiredSkills !== undefined;
   const candidates = (available ?? []).filter((name) => !skills.includes(name));
   const outputConflicts = skillLib ? skillOutputConflicts(skills, skillLib) : [];
+  const unresolvedRefs = skillLib && brief ? unresolvedSkillRefs(brief, skills, skillLib) : [];
   const chainWarnings =
     skillLib && chainSupply && expectedArtifacts
       ? skillChainWarnings(skills, skillLib, chainSupply, expectedArtifacts, stepOutputs)
@@ -201,6 +205,12 @@ export default function StepSkillsChips({
           {w.inferred ? "（接口为正文推断，供参考）" : ""}
         </p>
       ))}
+      {unresolvedRefs.length > 0 && (
+        <p className="mt-1 text-micro text-warn-text">
+          ! 简报点名的技能位（{unresolvedRefs.join("、")}）在本步骤没有挂载占据者——
+          正文指令会保留占位原样；挂载对应技能或声明 provides 即顶位
+        </p>
+      )}
     </div>
   );
 }

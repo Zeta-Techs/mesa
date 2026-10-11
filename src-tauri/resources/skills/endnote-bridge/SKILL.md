@@ -3,6 +3,7 @@ name: endnote-bridge
 description: EndNote 格式桥接规范。当用户必须把项目文献导入 EndNote 库、收尾存量「Word + EndNote」稿件、或组内流程绑定 EndNote 时使用。本项目不依赖 EndNote 桌面端自动化 API，本技能只做格式桥接（references.bib → EndNote XML/RIS 供一键导入；定稿 Markdown [@键] → 带 ADDIN EN.CITE 域的 Word；EndNote 导出 → 解析回流 references.bib）与人工步骤指引；禁止 CWYW 无人值守（不点 Word 插件、不写假花括号引用）。新稿写作可按需选择 Zotero 线（zotero-sync），两者互补不互斥。
 inputs: [references.bib]
 outputs: [papers/endnote-report.json, output/endnote.docx, papers/endnote-cite-report.md]
+provides: [endnote-bridge]
 ---
 
 # EndNote 格式桥接（endnote-bridge）

@@ -10,6 +10,7 @@ import {
   requestPermission,
   sendNotification,
 } from "@tauri-apps/plugin-notification";
+import { LIT_WATCH_SLOT } from "./skill-slots.ts";
 import ErrorBoundary from "./components/ErrorBoundary";
 import CommandPalette from "./components/CommandPalette";
 import QuickChatModal, {
@@ -604,14 +605,14 @@ function App() {
         runDoneNotifyTitle(
           baseName(e.payload.projectRoot),
           e.payload.status,
-          e.payload.scheduleName || (e.payload.skill === "lit-watch" ? "文献雷达" : "定时任务"),
+          e.payload.scheduleName || (e.payload.skill === LIT_WATCH_SLOT ? "文献雷达" : "定时任务"),
         ),
         runDoneNotifyBody(e.payload.summary),
         {
           projectRoot: e.payload.projectRoot,
           scheduleId: e.payload.scheduleId,
           skill: e.payload.skill,
-          focus: e.payload.skill === "lit-watch" ? "lit" : "schedule",
+          focus: e.payload.skill === LIT_WATCH_SLOT ? "lit" : "schedule",
         },
       );
     })

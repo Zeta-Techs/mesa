@@ -192,6 +192,7 @@ const AI_FN_ROWS: { key: string; label: string }[] = [
   { key: "summarize", label: "会话摘要 / 起名" },
   { key: "pr", label: "PR 描述" },
   { key: "distill", label: "沉淀为技能" },
+      { key: "skill-optimize", label: "优化合成技能" },
   { key: "digest", label: "提炼接力 / 评审沉淀" },
   { key: "conflict", label: "冲突建议" },
   { key: "translate", label: "翻译" },

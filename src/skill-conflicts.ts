@@ -1,4 +1,5 @@
 import type { SkillDto } from "./types";
+import { resolveSkillRefs } from "./skill-slots.ts";
 
 /** 技能产物路径冲突检测（v3.79；2026-09-14 收口）：技能本质是 markdown 指导文件，内容级
  *  「职责重叠」无法自动判定。真冲突 = 同一路径，或两个目录互含。
@@ -160,4 +161,19 @@ export function skillChainWarnings(
     }
   }
   return out;
+}
+
+/** 简报技能占位校验（2026-10-11 个性化技能机制）：{skill:锚名} 占位在步骤挂载名单里
+ *  找不到占据者（provides 声明或同名都不中）→ 提醒。只提醒不拦截（守「不做事前硬门」红线）；
+ *  渲染进 TASK.md 时空缺锚保留原样，agent 会看到未解析占位，本身也是显式信号。 */
+export function unresolvedSkillRefs(
+  brief: string,
+  skills: readonly string[],
+  skillLib: readonly SkillDto[] | null | undefined,
+): string[] {
+  const providesByName = skillLib
+    ? Object.fromEntries(skillLib.map((s) => [s.name, s.provides ?? []]))
+    : undefined;
+  const { unresolved } = resolveSkillRefs(brief, skills, providesByName);
+  return [...new Set(unresolved)];
 }

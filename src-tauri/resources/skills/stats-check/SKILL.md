@@ -2,6 +2,7 @@
 name: stats-check
 description: 统计审查与实验设计自查规范。当用户要求检查论文/报告中的统计用法（分析单元、检验选择、p 值报告、多重比较、效应量、图注统计一致性），或在实验设计阶段做样本量与功效自查时使用。只读检查，产出问题清单与修改建议，不改数据与正文。
 outputs: [analysis/stats-check.md]
+provides: [stats-check]
 ---
 
 # 统计审查（stats-check）

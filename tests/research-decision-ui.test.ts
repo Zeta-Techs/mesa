@@ -52,6 +52,7 @@ test("手写依据 UI：不提供默认批准，保存原文与依据后才满�
   let changed = 0;
   const calls: string[] = [];
   Object.assign(dom.window, { __TAURI_INTERNALS__: { invoke: async (command: string, args: { content?: string }) => {
+    if (command === "list_skills") return []; // useSkillProvides 的环境拉取：吸收，不进序列断言
     calls.push(command);
     if (command === "read_task_draft") return { relPath: ".ccode/drafts/exp-run.md", text: disk };
     if (command === "write_task_draft") { disk = args.content!; return { relPath: ".ccode/drafts/exp-run.md", revision: "rev" }; }

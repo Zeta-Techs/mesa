@@ -2,6 +2,7 @@
 name: data-clean
 description: 数据清洗规范。当用户要求清洗/整理数据集、制定清洗规则、去重与缺失值处理、或产出清洗报告时使用。先画像再定规，规则先写进 rules.md 再动手，脚本只读原始数据绝不原地修改，处理后数据写入产物目录（不进 git），产出含行号/计数证据的清洗报告。
 outputs: [cleaning/]
+provides: [data-clean]
 ---
 
 # 数据清洗

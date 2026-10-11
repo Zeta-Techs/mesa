@@ -22,6 +22,7 @@ import {
   RefreshCw,
   Rss,
 } from "lucide-react";
+import { LIT_WATCH_SLOT, resolveSkillSlot, useSkillProvides } from "../skill-slots.ts";
 import ContextMenu from "./ContextMenu";
 import { Modal } from "./Modal";
 
@@ -878,6 +879,7 @@ export default function LitWatchCard({
   /** 收件箱点的那一篇：展开这一条 */
   focusEntryId?: string | null;
 }) {
+  const skillProvides = useSkillProvides();
   const [entries, setEntries] = useState<WatchEntryDto[] | null>(null);
   const [followups, setFollowups] = useState<WatchFollowupDto[]>([]);
   const [subs, setSubs] = useState<WatchSubscriptionDto[] | null>(null);
@@ -1057,7 +1059,8 @@ export default function LitWatchCard({
   }, [projectRoot]);
 
   /** 最近一次成功 run（卡头时间 / 立即跑 / 漂移提醒共用） */
-  const radarSchedules = (schedules ?? []).filter((s) => s.skill === "lit-watch");
+  // 文献雷达位：自建巡检技能声明 provides: lit-watch 即点亮本卡（名字精确匹配兜底）
+  const radarSchedules = (schedules ?? []).filter((s) => resolveSkillSlot(LIT_WATCH_SLOT, [s.skill], skillProvides) !== null);
   const lastOkRun = (s: ScheduleDto) => s.history.find((r) => r.status === "ok");
   const latestRadarRun = radarSchedules
     .map((s) => ({ schedule: s, run: lastOkRun(s) }))

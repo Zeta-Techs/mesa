@@ -2,6 +2,7 @@
 name: blender-research
 description: 用户明确需要科研结构、装置或机制三维示意时使用 Blender。把已确认尺寸、源数据和科学范围变成可重建场景、图和来源清单；不替代统计图，不生成伪实验图，不对重要个人工程操作。
 outputs: [analysis/build_scene.py, figures/blender-manifest.json]
+provides: [blender-research]
 ---
 
 # 科研 Blender 示意

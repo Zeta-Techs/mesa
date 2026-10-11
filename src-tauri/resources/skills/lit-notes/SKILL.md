@@ -2,6 +2,7 @@
 name: lit-notes
 description: 文献精读笔记规范。当用户要求逐篇精读文献清单、整理学术笔记、或维护 references.bib 引文库时使用。已读完才写八段笔记（一句话总结/研究问题/方法/主要结果/局限/可引用点/与本课题的关系/疑问与待跟进），叙述用中文、术语可留英文，未读完只在索引记 pending，并追加规范 BibTeX 条目。
 outputs: [notes/, references.bib, papers/to-fetch.md]
+provides: [lit-notes]
 ---
 
 # 文献精读与笔记

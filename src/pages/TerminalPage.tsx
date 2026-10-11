@@ -6499,11 +6499,15 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           name: target.name,
         });
         let skillMeta: Record<string, string> | undefined;
+        let providesByName: Record<string, string[]> | undefined;
         if (step?.skills.length) {
           try {
             const lib = await invoke<SkillDto[]>("list_skills");
             skillMeta = Object.fromEntries(
               lib.map((skill) => [skill.name, skill.description]),
+            );
+            providesByName = Object.fromEntries(
+              lib.map((skill) => [skill.name, skill.provides ?? []]),
             );
           } catch {
             /* 技能库不可读时只列技能名 */
@@ -6513,7 +6517,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           try {
             await invoke("write_workspace_task_md", {
               worktreePath: ws.worktreePath,
-              content: renderTaskMd(step, cfg, owner.path, undefined, skillMeta),
+              content: renderTaskMd(step, cfg, owner.path, undefined, skillMeta, providesByName),
             });
           } catch {
             /* 简报仍可在 project.toml 与步骤「编辑简报」中查看 */

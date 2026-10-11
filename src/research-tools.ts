@@ -31,25 +31,28 @@ export function settingsWithResearchTools(settings: readonly string[], tools: Re
   return [...settings.filter((s) => !s.startsWith(LITERATURE_SETTING) && !RESEARCH_TOOL_FIELDS.some((f) => s.startsWith(`${PREFIX}${f.key}：`))),
     ...RESEARCH_TOOL_FIELDS.filter((f) => tools[f.key] !== DEFAULT_RESEARCH_TOOLS[f.key]).map((f) => `${PREFIX}${f.key}：${tools[f.key]}`)];
 }
-function stepTakesReading(step: Pick<ProjectStepDto, "skills">): boolean {
-  return step.skills.some((s) => s === "lit-search" || s === "lit-notes");
+import { stepFillsAnySlot, type SkillProvides } from "./skill-slots.ts";
+
+function stepTakesReading(step: Pick<ProjectStepDto, "skills">, providesByName: SkillProvides): boolean {
+  // 技能位判定：用户技能声明 provides 含锚名即顶位（lit-search/lit-notes）
+  return stepFillsAnySlot(step.skills, ["lit-search", "lit-notes"], providesByName);
 }
-function stepTakesLibraryExport(step: Pick<ProjectStepDto, "skills" | "workspaceName">): boolean {
+function stepTakesLibraryExport(step: Pick<ProjectStepDto, "skills" | "workspaceName">, providesByName: SkillProvides): boolean {
   // 文献库是 Zotero 与 EndNote 的同一种选择，挂在有定稿交接或精读的流程上。
-  if (step.skills.includes("lit-notes")) return true;
+  if (stepFillsAnySlot(step.skills, ["lit-notes"], providesByName)) return true;
   return step.workspaceName === "submission-materials"
     || step.workspaceName === "journal-format"
     || /^rebuttal-r\d+$/.test(step.workspaceName ?? "");
 }
 /** 流程线只在没有精读的投稿链上问 EndNote。Zotero 进库不是设定，是检索步待获取里的「同步到 Zotero」。 */
-function stepAsksLibraryExport(step: Pick<ProjectStepDto, "skills" | "workspaceName">): boolean {
-  if (step.skills.includes("lit-notes")) return false;
+function stepAsksLibraryExport(step: Pick<ProjectStepDto, "skills" | "workspaceName">, providesByName: SkillProvides): boolean {
+  if (stepFillsAnySlot(step.skills, ["lit-notes"], providesByName)) return false;
   return step.workspaceName === "submission-materials"
     || step.workspaceName === "journal-format"
     || /^rebuttal-r\d+$/.test(step.workspaceName ?? "");
 }
-function stepTakesPlotting(step: Pick<ProjectStepDto, "skills">): boolean {
-  return step.skills.some((s) => s === "figure-forge" || s === "data-eda");
+function stepTakesPlotting(step: Pick<ProjectStepDto, "skills">, providesByName: SkillProvides): boolean {
+  return stepFillsAnySlot(step.skills, ["figure-forge", "data-eda"], providesByName);
 }
 function stepTakesIllustration(step: Pick<ProjectStepDto, "workspaceName">): boolean {
   return step.workspaceName === "methodology" || step.workspaceName === "exp-design";
@@ -76,17 +79,17 @@ function stepAsksManuscript(step: Pick<ProjectStepDto, "workspaceName">): boolea
     || /^rebuttal-r\d+$/.test(step.workspaceName ?? "");
 }
 /** 选定模板后只出示与这套步骤有关的工具字段；文献来源不在此列。 */
-export function researchToolFieldsForSteps(steps: readonly ProjectStepDto[]): ResearchToolField[] {
+export function researchToolFieldsForSteps(steps: readonly ProjectStepDto[], providesByName?: SkillProvides): ResearchToolField[] {
   return RESEARCH_TOOL_FIELDS.filter((field) => steps.some((step) => {
-    if (field.key === "libraryExport") return stepTakesLibraryExport(step);
-    if (field.key === "plotting") return stepTakesPlotting(step);
+    if (field.key === "libraryExport") return stepTakesLibraryExport(step, providesByName);
+    if (field.key === "plotting") return stepTakesPlotting(step, providesByName);
     if (field.key === "illustration") return stepTakesIllustration(step);
     return stepTakesManuscript(step);
   }));
 }
-function stepMatchesAsk(field: ResearchToolField, step: Pick<ProjectStepDto, "name" | "workspaceName" | "skills" | "expectedArtifacts">): boolean {
-  if (field.key === "libraryExport") return stepAsksLibraryExport(step);
-  if (field.key === "plotting") return stepTakesPlotting(step);
+function stepMatchesAsk(field: ResearchToolField, step: Pick<ProjectStepDto, "name" | "workspaceName" | "skills" | "expectedArtifacts">, providesByName: SkillProvides): boolean {
+  if (field.key === "libraryExport") return stepAsksLibraryExport(step, providesByName);
+  if (field.key === "plotting") return stepTakesPlotting(step, providesByName);
   if (field.key === "illustration") return stepTakesIllustration(step);
   return stepAsksManuscript(step);
 }
@@ -94,10 +97,11 @@ function stepMatchesAsk(field: ResearchToolField, step: Pick<ProjectStepDto, "na
 export function researchToolAskFieldsForStep(
   step: Pick<ProjectStepDto, "name" | "workspaceName" | "skills" | "expectedArtifacts">,
   steps: readonly ProjectStepDto[],
+  providesByName?: SkillProvides,
 ): ResearchToolField[] {
   return RESEARCH_TOOL_FIELDS.filter((field) => {
-    if (!stepMatchesAsk(field, step)) return false;
-    const first = steps.find((s) => stepMatchesAsk(field, s));
+    if (!stepMatchesAsk(field, step, providesByName)) return false;
+    const first = steps.find((s) => stepMatchesAsk(field, s, providesByName));
     return first?.name === step.name;
   });
 }
@@ -127,7 +131,7 @@ interface Added {
 
 /** Only remove additions recorded by this function; manual skills and other brief sections survive.
  *  文献同步技能跟 `lit_source`（流程线「确定文献来源」），不跟已废除的 settings literature。 */
-export function withResearchTools(source: ProjectStepDto, tools: ResearchTools, artifactDir = "artifacts", litSource = "search"): ProjectStepDto {
+export function withResearchTools(source: ProjectStepDto, tools: ResearchTools, artifactDir = "artifacts", litSource = "search", providesByName?: SkillProvides): ProjectStepDto {
   const step = { ...source, skills: [...source.skills], requiredSkills: [...(source.requiredSkills ?? source.skills)], expectedArtifacts: [...source.expectedArtifacts], humanTasks: [...(source.humanTasks ?? [])] };
   const start = step.brief.indexOf(START);
   const end = step.brief.indexOf(END, start);
@@ -161,15 +165,15 @@ export function withResearchTools(source: ProjectStepDto, tools: ResearchTools, 
     }
     notes.push(note);
   };
-  const reading = stepTakesReading(step);
-  const figures = stepTakesPlotting(step);
+  const reading = stepTakesReading(step, providesByName);
+  const figures = stepTakesPlotting(step, providesByName);
   const illustration = stepTakesIllustration(step);
   const lit = litSource.trim();
   if (reading && (lit === "zotero" || tools.libraryExport === "zotero")) {
     mount("zotero-sync", ["papers/zotero-sync.md"], "Zotero：导入用「从 Zotero 导入」（只读，不 POST）。用户若把 PDF 拖进 Zotero，它会检索元数据并生成条目，拖完再导入。未使用 Zotero 的项目不要走这条，题录直接写入 references.bib。同步用待获取清单「同步到 Zotero」或拖 to-fetch.ris。已有主 bib 键不改。定稿同时交 output/endnote.docx 与 output/zotero.docx。");
   }
   if (reading && (lit === "endnote" || tools.libraryExport === "endnote")) {
-    const ownsImport = step.skills.includes("lit-search");
+    const ownsImport = stepFillsAnySlot(step.skills, ["lit-search"], providesByName);
     mount(
       "endnote-bridge",
       ownsImport ? ["papers/endnote-import.ris"] : [],

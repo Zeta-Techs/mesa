@@ -2,6 +2,7 @@
 name: data-eda
 description: 探索性数据分析与绘图规范。当用户要求对数据集做 EDA、分布/相关/异常分析、或绘制可复现图表时使用。分析前先做数据档案（样本量/缺失模式/变量类型）并列数据警告；分布、相关、异常按适用性覆盖并披露选择；图表英文标注、由可复现脚本生成并写入 figures/；每条发现区分描述性事实、探索模式和有明确验证依据的确证结论并可回溯出处；统计结论先过 stats-check 口径。
 outputs: [analysis/, figures/, eda-report.md]
+provides: [data-eda]
 ---
 
 # 探索性分析与绘图

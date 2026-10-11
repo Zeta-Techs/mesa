@@ -1740,6 +1740,7 @@ pub fn commit_watch_skill_draft(
         &md,
         &pending.skill_name,
         Some(WATCH_SKILL_CATEGORY),
+        None,
     )?;
     let profile = schedule_run_profile(pending.profile_id.clone())?;
     if let Err(e) = crate::skills::apply_skill_by_id(&skill.id, &profile.agent, true) {

@@ -245,3 +245,22 @@ test("旧草稿不能悄悄绕过当前工具选择，恢复默认后可开工",
   assert.notEqual(extra, chosen.brief);
   assert.equal(researchToolContractMatches(chosen, extra), true);
 });
+
+test("个性化技能顶位：声明 provides 的用户技能点亮文献库与读位行为键", () => {
+  // 用户技能 my-notes 声明 provides: [lit-notes]；精读步挂的是它而不是内置 lit-notes
+  const step = {
+    name: "文献精读与笔记",
+    workspaceName: "lit-notes",
+    skills: ["my-notes"],
+    requiredSkills: ["my-notes"],
+    expectedArtifacts: [],
+    humanTasks: [],
+    brief: "",
+  } as unknown as Parameters<typeof withResearchTools>[0];
+  const provides = { "my-notes": ["lit-notes"] };
+  const out = withResearchTools(step, { ...DEFAULT_RESEARCH_TOOLS, libraryExport: "zotero" }, "artifacts", "search", provides);
+  assert.ok(out.skills.includes("zotero-sync"), "provides 顶位后仍应挂 zotero-sync（旧行为：换名即消失）");
+  // 无映射回落名字匹配：my-notes 不叫 lit-notes → 不点亮（等价旧行为）
+  const outNoMap = withResearchTools(step, { ...DEFAULT_RESEARCH_TOOLS, libraryExport: "zotero" }, "artifacts", "search", undefined);
+  assert.ok(!outNoMap.skills.includes("zotero-sync"), "无映射时不点亮（名字兜底语义）");
+});

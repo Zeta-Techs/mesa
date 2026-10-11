@@ -238,6 +238,10 @@ export default function PipelineEditor({
   const resources = config.resources;
   // 技能库（推荐技能 chip 的展示元数据与「＋ 添加技能」候选）：挂载时读一次，失败降级为不可编辑 chip
   const [skillLib, setSkillLib] = useState<SkillDto[] | null>(null);
+  const providesByName = useMemo(
+    () => (skillLib ? Object.fromEntries(skillLib.map((s) => [s.name, s.provides ?? []])) : undefined),
+    [skillLib],
+  );
   const skillMeta = useMemo(
     () =>
       skillLib
@@ -372,7 +376,7 @@ export default function PipelineEditor({
     }
     setError(null);
     try {
-      onSave(drafts.map(toStep).map((s) => withResearchTools(s, tools, config.artifactDir, config.litSource)), settingsWithResearchTools(config.settings ?? [], tools));
+      onSave(drafts.map(toStep).map((s) => withResearchTools(s, tools, config.artifactDir, config.litSource, providesByName)), settingsWithResearchTools(config.settings ?? [], tools));
     } catch (reason) { setError(String(reason)); }
   }
 
@@ -411,7 +415,7 @@ export default function PipelineEditor({
           : tpl.steps;
       const current = await invoke<ProjectConfigReadDto>("read_project_config", { path: projectPath });
       const savedTools = researchToolsFromSettings(current.config.settings);
-      submissionSteps = submissionSteps.map((s) => withResearchTools(s, savedTools, current.config.artifactDir, current.config.litSource));
+      submissionSteps = submissionSteps.map((s) => withResearchTools(s, savedTools, current.config.artifactDir, current.config.litSource, providesByName));
       const conflicts = conflictingTemplateSteps(current.config.steps, submissionSteps);
       if (conflicts.length) {
         if (!(await confirmDialog(`同名步骤交付不同：${conflicts.join("、")}。不能直接跳过；是否保留旧步骤，将这些步骤按「${tpl.name}」改名追加？取消可回编辑器自行选择复用并调整输入。`, { confirmText: "改名追加" }))) return;
@@ -688,6 +692,7 @@ export default function PipelineEditor({
           <StepSkillsChips
             skills={d.skills}
             requiredSkills={d.requiredSkills}
+            brief={d.brief}
             skillMeta={skillMeta}
             available={skillLib?.map((s) => s.name)}
             mcpRecommended={skillLib
@@ -1218,7 +1223,7 @@ export default function PipelineEditor({
               {changes.map((change) => <details key={change.index} className="mt-2"><summary><input type="checkbox" checked={upgradeSelection.includes(change.index)} onClick={(e) => e.stopPropagation()} onChange={(e) => setUpgradeSelection((old) => e.target.checked ? [...old, change.index] : old.filter((i) => i !== change.index))} /> {change.current.name} · {change.fields.join("、")}</summary><div className="grid grid-cols-2 gap-2"><pre className="max-h-64 overflow-auto whitespace-pre-wrap bg-canvas p-2">{JSON.stringify(change.current,null,2)}</pre><pre className="max-h-64 overflow-auto whitespace-pre-wrap bg-canvas p-2">{JSON.stringify(change.proposed,null,2)}</pre></div></details>)}
               <button type="button" disabled={!upgradeSelection.length} className="mt-2 text-l2 disabled:opacity-40" onClick={async () => {
                 if (!(await confirmDialog("将用新版合同替换勾选步骤的简报、输入输出、技能和人工事项；自定义修改不会自动合并。只更新编辑草稿，确认？", { confirmText: "载入草稿" }))) return;
-                setDrafts((old) => old.map((draft, index) => { const change = changes.find((c) => c.index === index); return change && upgradeSelection.includes(index) ? toDraft(withResearchTools({ ...change.proposed, resources: draft.resources }, tools, config.artifactDir, config.litSource)) : draft; }));
+                setDrafts((old) => old.map((draft, index) => { const change = changes.find((c) => c.index === index); return change && upgradeSelection.includes(index) ? toDraft(withResearchTools({ ...change.proposed, resources: draft.resources }, tools, config.artifactDir, config.litSource, providesByName)) : draft; }));
                 setUpgradeSelection([]);
               }}>将勾选更新载入草稿</button>
             </>; })()}

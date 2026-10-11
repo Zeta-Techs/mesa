@@ -41,6 +41,7 @@ import { upsertLitSourceSection, upsertPendingSettingsSection } from "../task-md
 import { isTaskMdStub } from "../step-decisions";
 import { userDirtyFiles } from "../git-status-groups";
 import { demoReadPaperResource } from "../step-flow";
+import { useSkillProvides } from "../skill-slots.ts";
 import { normSep } from "../path-utils";
 import { beginAskAi } from "./AskAiModal";
 import { projectAgentPrefs, projectNeedsDefaultAgent } from "../project-agents";
@@ -410,6 +411,7 @@ export default function ProjectGroup({
   const displayName = project?.name ?? repoName;
 
   // ===== 档案卡（仅注册项目） =====
+  const skillProvides = useSkillProvides();
   const [cfg, setCfg] = useState<ProjectConfigDto | null>(null);
   const [cfgWarnings, setCfgWarnings] = useState<string[]>([]);
   const [cfgLoadError, setCfgLoadError] = useState<string | null>(null);
@@ -693,7 +695,7 @@ export default function ProjectGroup({
       try {
         await invoke("apply_pipeline_template", {
           projectRoot: projectPath,
-          steps: item.steps.map((s) => withResearchTools(s, researchToolsFromSettings(cfg.settings), cfg.artifactDir, cfg.litSource)),
+          steps: item.steps.map((s) => withResearchTools(s, researchToolsFromSettings(cfg.settings), cfg.artifactDir, cfg.litSource, skillProvides)),
           projectSettings: settingsForTemplateApply(item),
           strategy: "append",
           topic: templateTopic.trim() || null,
@@ -733,7 +735,7 @@ export default function ProjectGroup({
     try {
       await invoke("apply_pipeline_template", {
         projectRoot: projectPath,
-        steps: item.steps.map((s) => withResearchTools(s, researchToolsFromSettings(cfg.settings), cfg.artifactDir, cfg.litSource)),
+        steps: item.steps.map((s) => withResearchTools(s, researchToolsFromSettings(cfg.settings), cfg.artifactDir, cfg.litSource, skillProvides)),
         projectSettings: settingsForTemplateApply(item),
         strategy: "replace",
         topic: templateTopic.trim() || null,
@@ -954,7 +956,7 @@ export default function ProjectGroup({
     setLitBusy(true);
     try {
       const steps = cfg.steps.map((s) =>
-        withResearchTools(s, researchToolsFromSettings(cfg.settings), cfg.artifactDir, target),
+        withResearchTools(s, researchToolsFromSettings(cfg.settings), cfg.artifactDir, target, skillProvides),
       );
       const ok = await saveConfig({ ...cfg, litSource: target, steps });
       if (ok) await syncLitSourceToTaskMds(target);
@@ -973,7 +975,7 @@ export default function ProjectGroup({
     setToolBusy(true);
     try {
       const steps = cfg.steps.map((s) =>
-        withResearchTools(s, tools, cfg.artifactDir, cfg.litSource),
+        withResearchTools(s, tools, cfg.artifactDir, cfg.litSource, skillProvides),
       );
       await saveConfig({
         ...cfg,
@@ -1071,7 +1073,7 @@ export default function ProjectGroup({
       // 后端已把资源与来源一起保存；不得用导入前的 cfg 全量回写。
       // 来源既已是 zotero，检索/精读步要补上同步技能（与流程线选择同一合同）。
       const steps = out.config.steps.map((s) =>
-        withResearchTools(s, researchToolsFromSettings(out.config.settings), out.config.artifactDir, "zotero"),
+        withResearchTools(s, researchToolsFromSettings(out.config.settings), out.config.artifactDir, "zotero", skillProvides),
       );
       await saveConfig({ ...out.config, litSource: "zotero", steps });
       await syncLitSourceToTaskMds("zotero");
@@ -1496,6 +1498,7 @@ export default function ProjectGroup({
         steps: cfg.steps,
         focusStepName,
         resources: cfg.resources,
+        providesByName: skillProvides,
       })
     : undefined;
   return (

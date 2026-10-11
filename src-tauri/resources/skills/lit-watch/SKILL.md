@@ -2,6 +2,7 @@
 name: lit-watch
 description: 文献监控规范。当用户要求跟踪某个课题的最新文献、订阅 arXiv/期刊关键词、做每日/每周新文献巡检，或流水线中配置了文献监控步骤时使用。按 papers/watchlist.md 的关键词检索新文献，去重、精选后把命中追加到 notes/inbox.md。
 outputs: [notes/inbox.md]
+provides: [lit-watch]
 ---
 
 # 文献监控（lit-watch）

@@ -2,6 +2,7 @@
 name: slides-deck
 description: 学术汇报幻灯片规范。当用户要求把论文/课题/数据结果做成组会、答辩、会议 talk 的幻灯片或逐页大纲时使用。先定场合与时长再提炼故事线，产出逐页大纲（含演讲备注）或零依赖单文件 HTML 幻灯片；内容只来自项目已有材料，不虚构结果。
 outputs: [slides/]
+provides: [slides-deck]
 ---
 
 # 学术汇报幻灯片（slides-deck）

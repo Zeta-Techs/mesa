@@ -1133,3 +1133,15 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
 - 复现入口的 `MESA_REPRODUCE`、`--input/--output`、结果 JSON 合同须与面板解析一致。约定结果缺失或显式失败不可记运行成功。上游人工验收只在证据文件版本一致时引用，引用按钮仅带入准备许可；正式执行仍走本步决定。无条件接受与未关闭阻塞项互斥。
 - `machine:records-allow-empty:` 明确允许有效零记录；`machine:optional-empty:` 允许该精确交付文件为空但不允许缺文件。一般 records/产物非空语义保持不变。零结果不等于后续研究可以通过。
 - 原始数据、图源/场景源、数值结果和来源许可分别验收；工程大文件放配置产物目录、manifest 带版本/命令/哈希。UI 测试/合成示意不等于 Windows Origin、EndNote、真实 Zotero 写库或真人科研端到端已验收。
+
+## 技能位与个性化替换（2026-10-11）
+
+- **占位语法**：模板简报里指挥技能的句子一律写 `{skill:锚名}`，锚名闭集 = 内置技能名（lit-search、lit-notes、review-framework、review-writing、review-figures、research-writing、proposal-writer、rebuttal-crafter、data-clean、data-eda、stats-check、figure-forge、quarto-render、bib-check、slides-deck、lit-watch、zotero-sync、endnote-bridge、origin-plot、blender-research）。新锚进闭集须拍板。渲染进 TASK.md 时解析：步骤挂载技能里 frontmatter `provides` 声明含锚名者优先顶位（多个声明者按挂载顺序取第一个），无人声明回落名字精确匹配，都不中渲染成锚名可读形态、锚名进未解析清单（占位语法不漏进 TASK.md；写错的占位——大写/中文/空格——不解析，原样保留并同样进清单）。
+- **provides 声明**：技能作者在 SKILL.md frontmatter 写 `provides: [位名]` 即声明可顶替该内置位（自声明 `provides: [自身名]` 是内置技能的标准写法）。前端行为键（文献同步、开读这一篇、Origin、文献雷达卡）按占位判定——换上声明了对应位的用户技能，入口不消失。
+- **校验只提醒不拦截**：简报点名的位无占据者 → StepSkillsChips ⚠ 提示；不得做成开工门控。
+- **替换必须人显式**：挂载/换名/顶替一律经流程编辑器、开工弹层或技能页反向挂载；禁止按步骤特征或技能存在与否自动推荐并应用（2026-09-07 否决先例仍有效）。
+- **换技能不换验收**：expected_artifacts / acceptance_criteria / 提货单 / 评审冻结与技能身份解耦（既有拍板）。技能产物报告按既有规则声明进预期产物即可。
+- **英文锚名拍板（2026-10-11）**：占位用英文锚名（=内置技能名）而非中文位名——闭集稳定、不随文案重写漂移。
+- **用户技能的三条来路（2026-10-11）**：①外部技能 →「◈ 适配到流水线」（AI 按路径约定改写 + 声明 provides）；②多源合成 →「◈ 优化」切「另存为新技能」（勾选源技能 + 优化方向 → AI 合成稿 → 人预览确认落库为 source=ccode 的新技能；新技能名是权威参数、写回 frontmatter；一次一份稿）；③手工新建/导入后自行补 frontmatter provides。三条路汇合到同一挂载入口（流程编辑器/开工弹层/技能页反向挂载）。
+- **合成溯源（derivedFrom）**：只存 skills.json、不进 SKILL.md frontmatter（compose 重写链会剥）；消费点只有展示（删除源技能影响面一行、详情面板「从 X、Y 合成」，悬空源名按库内名单静默过滤）；禁止任何「源变了/删了合成技能失效」的运行时判定——合成技能自包含。digest 版本快照二期再补。
+- **provides 映射的时效**：技能页变更走显式失效（refresh 接线）；技能页外的库变更（◈ 优化开终端直改、定时草稿落库、agent 改库文件）靠 120s TTL 有界兜底——防止陈旧映射经 withResearchTools 把缺挂载的步骤持久化进 project.toml。

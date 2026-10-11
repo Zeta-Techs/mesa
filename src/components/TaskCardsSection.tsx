@@ -32,6 +32,7 @@ import type {
 import { isSettingPlaceholder } from "../project-context";
 import { upsertPendingSettingsSection } from "../task-md-sections";
 import { researchToolAskFieldsForStep, researchToolsFromSettings } from "../research-tools";
+import { useSkillProvides } from "../skill-slots.ts";
 import { statusBadgeTitle, userDirtyFiles } from "../git-status-groups";
 import {
   historySaveBlockedReason,
@@ -194,6 +195,7 @@ export default function TaskCardsSection({
   // 探测结果还没回来时按「有硬保护」显示：不在加载中途闪一条吓人的警告
   const guardHard =
     detected?.find((a) => a.id === guardAgentId)?.readonlySupported ?? true;
+  const skillProvides = useSkillProvides();
   const [error, setError] = useState<string | null>(null);
   const [dirtyOpen, setDirtyOpen] = useState(false);
   const [dirtyFiles, setDirtyFiles] = useState<GitFileDto[]>([]);
@@ -947,7 +949,7 @@ export default function TaskCardsSection({
             onSetLitSource={onSetLitSource}
             litBusy={litBusy}
             tools={researchToolsFromSettings(cfg.settings)}
-            toolAskFields={researchToolAskFieldsForStep(focusStepDto, steps)}
+            toolAskFields={researchToolAskFieldsForStep(focusStepDto, steps, skillProvides)}
             onSetResearchTool={onSetResearchTool}
             toolBusy={toolBusy}
             ws={workspaces.find(

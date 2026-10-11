@@ -2,6 +2,7 @@
 name: research-writing
 description: Write and revise empirical research papers from an outline, study design, analysis outputs, figures, and an existing BibTeX library. Use for IMRaD manuscripts and evidence reports; do not use for literature-only reviews or rebuttal letters.
 outputs: [manuscript/]
+provides: [research-writing]
 ---
 
 # 实证科研论文写作

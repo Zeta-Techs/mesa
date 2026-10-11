@@ -2,6 +2,7 @@
 name: origin-plot
 description: 用 Origin（OriginLab）驱动出图的规范。当用户在 Windows 上要求用 Origin 处理数据、绘制图表，或流水线出图步骤指定用 Origin 出图时使用。外部 Python 经 originpro 包（COM 自动化）为主路、LabTalk 命令行隐藏批处理为备路；图型选择与期刊规格决策归 figure-forge 技能，本技能只管 Origin 驱动机制与产物落盘。两者同挂时由本技能驱动出图，figure-forge 只定规格，不再跑 matplotlib；`figures/` 冲突警告是分工提醒，不是停工条件。仅适用 Windows + 已安装 Origin 2021 及以上。
 outputs: [analysis/, figures/]
+provides: [origin-plot]
 ---
 
 # Origin 驱动出图（origin-plot）

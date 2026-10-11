@@ -2,6 +2,7 @@
  * 定时雷达（scheduler.rs）前端纯逻辑：周期白话、按项目过滤、通知文案、简报预览。
  * 与 DOM/Tauri 解耦，供 node --test 直接测；组件 ScheduleSection 保持薄。
  */
+import { LIT_WATCH_SLOT } from "./skill-slots.ts";
 import type { RunRecordDto, ScheduleDto } from "./types.ts";
 
 const WEEKDAY_LABELS = ["一", "二", "三", "四", "五", "六", "日"] as const;
@@ -44,7 +45,7 @@ export function schedulesForProject(
 export function litWatchSchedules(
   schedules: readonly ScheduleDto[],
 ): ScheduleDto[] {
-  return schedules.filter((s) => s.skill === "lit-watch");
+  return schedules.filter((s) => s.skill === LIT_WATCH_SLOT);
 }
 
 /** 运行完成通知标题：「文献雷达 · 项目名」，失败时带「失败」 */

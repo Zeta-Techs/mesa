@@ -610,6 +610,8 @@ pub fn run() {
             skills::update_skill_content,
             skills::write_skill_md,
             skills::adapt_skill_to_pipeline,
+            skills::optimize_skills_draft,
+            skills::create_user_skill,
             skills::skill_md_path,
             skills::resync_skill_copies,
             usage::rebuild_usage_index,

@@ -2,6 +2,7 @@
 name: bib-check
 description: 引用完整性校验规范。当用户要求检查论文/综述的引用是否闭环、bib 条目是否齐全、参考文献与正文引用是否对应，或流水线「润色/格式适配」步骤做一致性核对时使用。只读检查，产出按严重度分级的问题清单，不修改正文与 bib；联网可用时可加做外部元数据核验。
 outputs: [manuscript/citation-check.md]
+provides: [bib-check]
 ---
 
 # 引用完整性校验（bib-check）

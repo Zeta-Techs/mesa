@@ -7,6 +7,7 @@ import {
   uniqueRuleLines,
 } from "./project-context.ts";
 import { stripOptionalTitlePrefix } from "./step-flow.ts";
+import { resolveSkillRefs, type SkillProvides } from "./skill-slots.ts";
 import type {
   ArtifactEntryDto,
   ProjectConfigDto,
@@ -20,6 +21,7 @@ export function renderTaskMd(
   projectPath: string,
   artifacts?: ArtifactEntryDto[],
   skillMeta?: Record<string, string>,
+  providesByName?: SkillProvides,
   decisions?: { q: string; answer: string }[],
 ): string {
   const projectRoot = projectPath.replace(/[\\/]+$/, "");
@@ -91,7 +93,13 @@ export function renderTaskMd(
     );
   }
   lines.push(
-    step.brief.trim() ||
+    // {skill:锚名} 占位在此解析成实际挂载的技能名：换技能后正文指令跟随，
+    // 不再与本步骤技能段打架；空缺锚保留原样（开工弹层的校验会提醒）
+    resolveSkillRefs(
+      step.brief.trim(),
+      step.skills,
+      providesByName,
+    ).text ||
       "（在 .ccode/project.toml 的 steps.brief 中补充本步骤任务简报）",
   );
   if (step.expectedArtifacts.length > 0) {

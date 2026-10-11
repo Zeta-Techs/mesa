@@ -4,6 +4,7 @@
  * 供 node --test 直接测；组件 LitWatchCard 保持薄。
  * DTO 与 src-tauri/src/lit_watch.rs 的 camelCase 序列化一一对应。
  */
+import { LIT_WATCH_SLOT } from "./skill-slots.ts";
 import { samePath } from "./path-utils.ts";
 import type { LitWatchFilterDto, ScheduleDto } from "./types.ts";
 
@@ -432,7 +433,7 @@ export function undatedWatchRuns(
 ): { day: string }[] {
   const days = new Set<string>();
   for (const schedule of schedules) {
-    if (schedule.skill !== "lit-watch") continue;
+    if (schedule.skill !== LIT_WATCH_SLOT) continue;
     for (const run of schedule.history) {
       if (run.status !== "ok" || run.adopted === false) continue;
       if ((run.newEntries ?? 0) <= 0) continue;
@@ -675,7 +676,7 @@ export function litInboxCandidates(
 ): LitInboxCandidate[] {
   const out: LitInboxCandidate[] = [];
   for (const s of schedules) {
-    if (s.skill !== "lit-watch") continue;
+    if (s.skill !== LIT_WATCH_SLOT) continue;
     if (s.lastStatus !== "ok") continue;
     const lastOk = s.history.find((r) => r.status === "ok");
     if (!lastOk) continue;

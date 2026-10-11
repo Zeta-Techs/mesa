@@ -66,15 +66,19 @@ export function demoReadPaperResource<T extends { type: string; path: string }>(
   steps: Array<{ name: string; seedComplete?: boolean; skills: string[] }>;
   focusStepName?: string | null;
   resources: T[];
+  /** 名字→provides 映射（缺省回落名字匹配：内置 lit-notes 行为不变） */
+  providesByName?: Record<string, string[]>;
 }): T | undefined {
   if (!args.focusStepName) return undefined;
   if (!args.steps.some((s) => s.seedComplete)) return undefined;
   const focus = args.steps.find((s) => s.name === args.focusStepName);
-  if (!focus?.skills.includes("lit-notes")) return undefined;
+  if (!stepFillsAnySlot(focus?.skills, ["lit-notes"], args.providesByName)) return undefined;
   return args.resources.find((r) => r.type === "paper" && isPaperPdfPath(r.path));
 }
 
 /** 可选分区已经标明「可选」，标题里再写「（可选）」是重复。 */
+import { stepFillsAnySlot } from "./skill-slots.ts";
+
 export function stripOptionalTitlePrefix(title: string): string {
   return title.replace(/^（可选）\s*/, "");
 }

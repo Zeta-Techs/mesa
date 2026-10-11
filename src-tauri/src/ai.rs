@@ -22,6 +22,7 @@ pub const FN_COMMIT: &str = "commit"; // ai_commit_message（◈ 提交信息）
 pub const FN_SUMMARIZE: &str = "summarize"; // ai_summarize_session（会话摘要）+ ai_auto_title_session（聊完起名）
 pub const FN_PR: &str = "pr"; // ai_draft_pr（PR 描述起草）
 pub const FN_DISTILL: &str = "distill"; // ai_distill_skill（✦ 沉淀为技能）
+pub const FN_SKILL_OPTIMIZE: &str = "skill-optimize"; // optimize_skills_draft（◈ 优化另存：多源合成出稿）
 pub const FN_CONFLICT: &str = "conflict"; // ai_conflict_advice（冲突选侧建议）
 pub const FN_DIGEST: &str = "digest"; // build_session_digest（◈ 提炼接力）+ ai_distill_review（评审沉淀起草）
                                       // 「translate」由 JS 侧（技能页翻译）作为 ai_prompt 的 fnKey 显式传入，Rust 无字面引用

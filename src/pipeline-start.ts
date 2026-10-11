@@ -30,6 +30,7 @@ export async function gatherTaskMdExtras(
 ): Promise<{
   artifacts: ArtifactEntryDto[];
   skillMeta: Record<string, string> | undefined;
+  providesByName: Record<string, string[]> | undefined;
   decisions: { q: string; answer: string }[];
   upstream: UpstreamAcceptance[];
 }> {
@@ -45,11 +46,15 @@ export async function gatherTaskMdExtras(
   // 步骤挂载技能（RX3b）：skills 非空时读库元数据渲染「本步骤推荐技能」段，
   // best-effort——库读取失败只列技能名，不阻断开步
   let skillMeta: Record<string, string> | undefined;
+  let providesByName: Record<string, string[]> | undefined;
   if (step.skills.length > 0) {
     try {
       const lib = await invoke<SkillDto[]>("list_skills");
       skillMeta = Object.fromEntries(
         lib.map((skill) => [skill.name, skill.description]),
+      );
+      providesByName = Object.fromEntries(
+        lib.map((skill) => [skill.name, skill.provides ?? []]),
       );
     } catch {
       /* 技能库不可读时只列技能名 */
@@ -70,7 +75,7 @@ export async function gatherTaskMdExtras(
     /* 草稿不可读时跳过「已定方向」段 */
   }
   const upstream = await invoke<UpstreamAcceptance[]>("research_upstream_acceptances", { projectRoot: projectPath, stepName: step.name });
-  return { artifacts, skillMeta, decisions, upstream };
+  return { artifacts, skillMeta, providesByName, decisions, upstream };
 }
 
 /** 只读预览用的一步到位拼装（步骤级「预览 TASK.md」入口）：与开工落盘同一出处
@@ -80,11 +85,14 @@ export async function buildTaskMdPreview(
   step: ProjectStepDto,
   cfg: ProjectConfigDto,
 ): Promise<string> {
-  const { artifacts, skillMeta, decisions, upstream } = await gatherTaskMdExtras(
+  const { artifacts, skillMeta, providesByName, decisions, upstream } = await gatherTaskMdExtras(
     projectPath,
     step,
   );
-  return appendUpstreamAcceptance(renderTaskMd(step, cfg, projectPath, artifacts, skillMeta, decisions), upstream);
+  return appendUpstreamAcceptance(
+    renderTaskMd(step, cfg, projectPath, artifacts, skillMeta, providesByName, decisions),
+    upstream,
+  );
 }
 
 /** 一键开步共享链路（§11.3 机制三）：ensure git → bootstrap 提交 → 建工作区 → 简报落成 TASK.md →
@@ -171,7 +179,7 @@ export async function startPipelineStep({
   if (taskMdOverride?.trim()) {
     content = taskMdOverride;
   } else {
-    const { artifacts, skillMeta, decisions } = await gatherTaskMdExtras(
+    const { artifacts, skillMeta, providesByName, decisions } = await gatherTaskMdExtras(
       projectPath,
       step,
     );
@@ -181,6 +189,7 @@ export async function startPipelineStep({
       projectPath,
       artifacts,
       skillMeta,
+      providesByName,
       decisions,
     );
   }

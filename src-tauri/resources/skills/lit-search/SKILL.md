@@ -2,6 +2,7 @@
 name: lit-search
 description: 文献检索与筛选规范。当用户要求围绕某个课题检索学术文献、做系统综述检索、制定纳入/排除标准、或把候选文献筛选成最终清单时使用。按深度分档（快筛/标准/严格检索）执行，检索过程全程留痕可复现。严格检索档不等于完整系统综述。产出 papers/screening.md、papers/included.md、papers/included.json、papers/to-fetch.md、papers/to-fetch.ris、papers/endnote-import.ris。
 outputs: [papers/screening.md, papers/included.md, papers/included.json, papers/to-fetch.md, papers/to-fetch.ris, papers/endnote-import.ris]
+provides: [lit-search]
 ---
 
 # 文献检索与筛选
