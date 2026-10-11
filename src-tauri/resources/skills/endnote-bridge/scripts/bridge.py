@@ -598,6 +598,10 @@ def render(records, suffix):
 
 
 def main():
+    # Windows 控制台/管道默认 cp1252：库体检提示含中文，print 会 UnicodeEncodeError
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, 'reconfigure'):
+            stream.reconfigure(encoding='utf-8', errors='replace')
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--input',type=Path);p.add_argument('--output',type=Path)
     p.add_argument('--report',type=Path);p.add_argument('--existing',type=Path)

@@ -211,6 +211,10 @@ def write_library_ris(bib_text: str, dest: Path) -> tuple[int, int]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Windows 控制台/管道默认 cp1252：差量与库体检提示含中文，print 会 UnicodeEncodeError
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description="Write a Zotero RTF Scan manuscript")
     parser.add_argument("--library-ris", action="store_true")
     parser.add_argument("--input")

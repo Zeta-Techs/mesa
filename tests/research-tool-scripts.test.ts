@@ -13,7 +13,8 @@ const run = (script: string, args: string[]) => spawnSync(python, [script, ...ar
 const zipXml = (docx: string, names = ["word/document.xml"]) =>
   spawnSync(
     python,
-    ["-c", "import sys; sys.stdout.reconfigure(encoding='utf-8'); import zipfile; z=zipfile.ZipFile(sys.argv[1]);\n[print(z.read(n).decode()) for n in sys.argv[2].split(',')]", docx, names.join(",")],
+    // 字节直写 stdout：文本模式 print 在 Windows 会把 \n 翻成 \r\n，fldData 的 \r\n 就成 \r\r\n（2026-10-11 CI 实证）
+    ["-c", "import sys, zipfile; z=zipfile.ZipFile(sys.argv[1]);\n[sys.stdout.buffer.write(z.read(n)) for n in sys.argv[2].split(',')]", docx, names.join(",")],
     { encoding: "utf8", timeout: 10_000 },
   );
 // EndNote/Zotero 的引文数据在域数据（fldData，base64）里，断言前先解码。
