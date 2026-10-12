@@ -592,15 +592,24 @@ function App() {
   }, [paletteOpen, setPage, toggleChromeHidden, settings]);
 
   // macOS 菜单栏入口（v3.259）：Rust on_menu_event 经 "menu:action" 转发，
-  // 设置/命令面板与侧栏、⌘K 同一动作出口。Windows/Linux 无菜单栏，不挂监听。
+  // 设置/命令面板/反馈与侧栏、⌘K、帮助菜单同一动作出口。Windows/Linux 无菜单栏，不挂监听。
+  // listen 是异步注册：StrictMode 双挂载时若清理先于注册完成，必须补注销，
+  // 否则孤儿监听 + 第二次挂载 = 每个事件触发两次（palette 这类 toggle 会被抵消）。
   useEffect(() => {
     if (!IS_MAC) return;
-    const un = listen<string>("menu:action", (e) => {
+    let un: (() => void) | undefined;
+    let cancelled = false;
+    listen<string>("menu:action", (e) => {
       if (e.payload === "settings") setPage("settings");
       else if (e.payload === "palette") setPaletteOpen((v) => !v);
+      else if (e.payload === "feedback") setFeedbackOpen(true);
+    }).then((f) => {
+      if (cancelled) f();
+      else un = f;
     });
     return () => {
-      un.then((f) => f());
+      cancelled = true;
+      un?.();
     };
   }, [setPage]);
 
