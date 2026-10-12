@@ -79,6 +79,8 @@ import {
   themeSwatchFor,
 } from "../theme-swatch";
 import { alertDialog, confirmDialog } from "../components/ConfirmDialog";
+import FeedbackModal from "../components/FeedbackModal";
+import { Modal } from "../components/Modal";
 import {
   addCustomThemeCard,
   chipInk,
@@ -354,6 +356,40 @@ function DepStatusLine({
   );
 }
 
+/** 版本行的构建信息：macOS aarch64 标「Apple 芯片」——用户看得懂的叫法；
+ *  Intel 自构建版在这里就能认出来，不用撞「平台不在更新清单」的错 */
+function buildInfoSuffix(
+  b: { os: string; arch: string; channel: string } | null,
+): string | undefined {
+  if (!b) return undefined;
+  const os = b.os === "macos" ? "macOS" : b.os === "windows" ? "Windows" : b.os;
+  const arch =
+    b.os === "macos" && b.arch === "aarch64"
+      ? "Apple 芯片"
+      : b.arch === "x86_64"
+        ? "x64"
+        : b.arch;
+  return `${os} · ${arch}${b.channel === "dev" ? " · 开发模式" : ""}`;
+}
+
+/** 「开源许可」只读浮层：几百行清单文本，复用全站 Modal 壳
+ *  （Esc / 遮罩 / 关闭钮 + 焦点陷阱，与确认框同一套行为）。 */
+function NoticesOverlay({ text, onClose }: { text: string; onClose: () => void }) {
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="开源许可"
+      description="Mesa 与第三方组件"
+      size="lg"
+    >
+      <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap text-xs leading-5 text-l2">
+        {text}
+      </pre>
+    </Modal>
+  );
+}
+
 /** 导航选中的分区始终展开；分区标题不是折叠操作。 */
 function Section({
   title,
@@ -548,7 +584,7 @@ function HotkeysSection({
     <>
       <Row
         label="页面切换"
-        hint="按侧栏顺序切换页面；关闭后下面九个绑定全部不生效"
+        hint="按侧栏顺序切页；关闭后九个绑定不生效"
       >
         <Toggle
           checked={pageSwitchOn}
@@ -949,7 +985,26 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const autoOpenedUpdate = useRef(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [activeSection, setActiveSection] = useState("appearance");
+  // 恢复上次查看的分区（HIG settings.md「Restore the most recently viewed pane」）：
+  // 常改的设置往往连着改几次，每次都弹回「外观」要重新点。非法/清空的存量值回落外观。
+  const [activeSection, setActiveSection] = useState(() => {
+    try {
+      const saved = localStorage.getItem("ccode.settings.section");
+      return saved && SETTING_NAV.some((n) => n.id === saved)
+        ? saved
+        : "appearance";
+    } catch {
+      return "appearance";
+    }
+  });
+  // 外部深链与「有更新切到更新分区」也会改 activeSection，统一在这里落盘
+  useEffect(() => {
+    try {
+      localStorage.setItem("ccode.settings.section", activeSection);
+    } catch {
+      /* 私密模式等场景写不进就算了，不影响当次会话 */
+    }
+  }, [activeSection]);
   /** 设置页搜索：只筛左侧分区，不做逐行高亮（见 settings-search.ts 的说明） */
   const [sectionQuery, setSectionQuery] = useState("");
   /** 命中的分区 id（按相关度）。空查询 = 全部。 */
@@ -1017,6 +1072,17 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
   );
   // 应用版本（「关于」分区）：Tauri 从 tauri.conf.json 取，与打包产物一致
   const [appVersion, setAppVersion] = useState<string | null>(null);
+  // 构建信息（「关于」分区）：平台/架构/渠道，辨认自己装的是哪种包（Intel 自构建版等）
+  const [buildInfo, setBuildInfo] = useState<{
+    os: string;
+    arch: string;
+    channel: string;
+  } | null>(null);
+  // 第三方许可清单：首次点「查看开源许可」才拉（几百 KB 文本，不值得常驻）
+  const [noticesText, setNoticesText] = useState<string | null>(null);
+  const [noticesOpen, setNoticesOpen] = useState(false);
+  // 「问题反馈」行的表单弹层（与顶栏帮助菜单共用同一个 FeedbackModal 组件）
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   // 精确注意力标记支持清单（九家全列出，支持与否与备注以后端注册表为准）
   const [hookSupport, setHookSupport] = useState<HookSupport[]>([]);
   const [hookSupportError, setHookSupportError] = useState<string | null>(null);
@@ -1071,7 +1137,26 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
     getVersion()
       .then(setAppVersion)
       .catch(() => toast("应用版本读取失败", "warning"));
-  }, [visible, activeSection, appVersion]);
+    if (buildInfo === null) {
+      invoke<{ os: string; arch: string; channel: string }>("build_info")
+        .then(setBuildInfo)
+        .catch(() => setBuildInfo(null));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, activeSection]);
+
+  /** 打开「开源许可」浮层：清单文本懒加载一次，失败提示不弹层 */
+  async function openNotices() {
+    if (noticesText === null) {
+      try {
+        setNoticesText(await invoke<string>("read_third_party_notices"));
+      } catch (e) {
+        toast(`开源许可清单读取失败：${String(e)}`, "warning");
+        return;
+      }
+    }
+    setNoticesOpen(true);
+  }
 
   useEffect(() => {
     if (!visible || activeSection !== "stats") return;
@@ -2164,7 +2249,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
 
         <Row
           label="终端字体"
-          hint="立即生效。没装上的可以一键装"
+          hint="立即生效；未安装可一键装"
           extra={
             fontInstallTarget &&
             fontInstallTarget === INSTALLABLE_FONTS[fontFamily] &&
@@ -2342,7 +2427,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
 
         <Row
           label="长任务 OS 通知"
-          hint="窗口在后台、待你确认时通知，30 秒内不重复"
+          hint="后台窗口的待确认通知"
+          labelTitle="窗口在后台、待你确认时通知，30 秒内不重复"
         >
           <Toggle
             label="长任务 OS 通知"
@@ -2353,7 +2439,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
 
         <Row
           label="底部状态栏"
-          hint="终端和聊天共用。关掉后两边都不显示"
+          hint="关掉后终端和聊天都不显示"
         >
           <Toggle
             label="底部状态栏"
@@ -2409,7 +2495,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         </Row>
         <Row
           label="默认导航形态"
-          hint="仅影响下次启动；运行中仍可通过侧栏按钮或 ⌘\\ 临时切换"
+          hint="下次启动生效；运行中可临时切换"
         >
           <select
             className={`${fieldFixed} w-52`}
@@ -2569,11 +2655,14 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
 
         {/* 自定义定价：表格编辑（每行 = 模型前缀 + 输入/输出价），保存时序列化为 pricing.json */}
         <div className="py-3">
-          <div className="mb-1 flex items-center gap-3">
-            <span className="w-32 shrink-0 text-sm text-l2">自定义定价</span>
-            <span className="text-xs text-l4">
-              美元 / 每百万 token，按模型名前缀匹配（覆盖内置价目与模型能力库价目）
+          <div className="mb-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span
+              className="text-sm text-l2"
+              title="按模型名前缀匹配，覆盖内置价目与模型能力库价目"
+            >
+              自定义定价
             </span>
+            <span className="text-xs text-l4">美元 / 每百万 token</span>
             <button
               onClick={savePricing}
               disabled={!pricingDirty || savingPricing}
@@ -2677,7 +2766,11 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             </button>
           </div>
         )}
-        <Row label="brew 镜像" hint="安装/更新走国内镜像（元数据 TUNA、包体南大 ghcr 代理）">
+        <Row
+          label="brew 镜像"
+          hint="安装/更新走国内镜像"
+          labelTitle="元数据走 TUNA，包体走南大 ghcr 代理"
+        >
           <Toggle
             label="brew 镜像"
             checked={settings?.brewMirror ?? false}
@@ -2687,8 +2780,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
 
         <Row
           label="会话自动命名"
-          hint="起名跟下方 AI 配置走，「会话摘要 / 起名」行可单独换；关掉后不再自动改标题"
-          labelTitle="聊完起名、打开对话页补名去重。起名用哪份 AI 配置：默认跟下方「AI 专用配置」，在「按功能单独配置」的「会话摘要 / 起名」行可单独指定（起名和会话摘要共用这一行）。关掉后 Mesa 不再自动起名或补名，已有标题与你手改的标题都不受影响"
+          hint="关掉后不再自动起名"
+          labelTitle="起名跟下方「AI 专用配置」走，「会话摘要 / 起名」行可单独换。聊完起名、打开对话页补名去重；关掉后已有标题与你手改的标题都不受影响"
         >
           <Toggle
             label="会话自动命名"
@@ -2699,7 +2792,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
 
         <Row
           label="AI 专用配置"
-          hint="同一配置的每个模型各占一条。自动用最近使用的配置"
+          hint="留空自动用最近使用的配置"
+          labelTitle="同一配置的每个模型各占一条"
         >
           <select
             className={fieldFixed}
@@ -2719,14 +2813,18 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           </select>
         </Row>
 
-        {/* 同权控件分级（跨页三原则 #1）：按功能的七条收进一张卡，不再与上方默认行排成一堵墙 */}
+        {/* 同权控件分级（跨页三原则 #1）：按功能的七条收进一张卡，不再与上方默认行排成一堵墙；
+            行样式与快捷键卡同款（hover 高亮 + 宽屏双列） */}
         <div className="rounded-lg ccode-well p-3">
           <div className="mb-2 text-xs font-medium text-l3">
             按功能单独配置（留空跟随上方默认）
           </div>
-          <div className="flex flex-col gap-2">
+          <div className="grid grid-cols-1 gap-1 lg:grid-cols-2">
             {AI_FN_ROWS.map((fn) => (
-              <div key={fn.key} className="flex items-center justify-between gap-3">
+              <div
+                key={fn.key}
+                className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-hover"
+              >
                 <span className="min-w-0 truncate text-sm text-l2">{fn.label}</span>
                 <select
                   className={`${fieldFixed} w-56 shrink-0`}
@@ -2767,21 +2865,25 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           </select>
         </Row>
 
-        {/* 九家收一张卡：行标签只写 agent 名（「精确注意力标记」由卡头承担），写入位置放行内 micro 说明 */}
+        {/* 九家收一张卡：行标签只写 agent 名（「精确注意力标记」由卡头承担）；
+            写入路径整段挂标签悬浮（v3.88：机制说明不占版面），行样式与快捷键卡同款 */}
         {hookSupport.length > 0 && (
           <div className="rounded-lg ccode-well p-3">
             <div className="mb-2 text-xs font-medium text-l3">精确注意力标记</div>
-            <div className="flex flex-col gap-2">
+            <div className="grid grid-cols-1 gap-1 lg:grid-cols-2">
               {hookSupport.map((h) => {
                 const label = AGENTS.find((a) => a.id === h.agent)?.label ?? h.agent;
                 const hint = h.supported
-                  ? `写入 ${h.configPath ?? `${label} 配置`}（自动备份）${h.note ? `；${h.note}` : ""}`
+                  ? `写入配置，自动备份${h.note ? `；${h.note}` : ""}`
                   : "暂不支持";
                 return (
-                  <div key={h.agent} className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="text-sm text-l2">{label}</div>
-                      <p className="mt-0.5 break-all text-micro leading-4 text-l4">{hint}</p>
+                  <div
+                    key={h.agent}
+                    className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-hover"
+                  >
+                    <div className="min-w-0" title={h.configPath ?? undefined}>
+                      <div className="truncate text-sm text-l2">{label}</div>
+                      <p className="mt-0.5 truncate text-micro leading-4 text-l4">{hint}</p>
                     </div>
                     {h.supported ? (
                       <Toggle
@@ -2880,7 +2982,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         </Row>
         <Row
           label="不走代理的地址"
-          hint="对应 NO_PROXY。填了出网代理但此项留空时，默认 localhost,127.0.0.1,::1"
+          hint="对应 NO_PROXY；留空默认本机地址"
+          labelTitle="填了出网代理但此项留空时，默认 localhost,127.0.0.1,::1"
         >
           <input
             className={`${fieldFixed} w-72 font-mono text-xs`}
@@ -2925,7 +3028,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
               onToggle={() => setInstPrefixOpen(!prefixOpen)}
             >
               <p className="text-micro text-l4">
-                把图书馆「校外访问」链接贴这里，打开文献会走学校代理。校园网直连不用填。
+                贴图书馆「校外访问」链接，下载自动走学校代理
               </p>
               <input
                 className={`${fieldFixed} w-full font-mono text-xs`}
@@ -3133,7 +3236,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
       >
         <Row
           label="Windows 诊断包"
-          hint="打包系统与运行信息供排查；已脱敏，不含环境变量"
+          hint="系统与运行信息，已脱敏"
+          labelTitle="打包供排查用；不含环境变量"
         >
           <button
             onClick={exportDiagnosticsBundle}
@@ -3145,7 +3249,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         </Row>
         <Row
           label="生效配置快照"
-          hint="应用设置、九家配置清单与能力表的当前生效值，排查配置漂移用；已脱敏，不含密钥"
+          hint="当前生效值，排查配置漂移；已脱敏"
+          labelTitle="应用设置、九家配置清单与能力表；不含密钥"
         >
           <button
             onClick={exportEffectiveConfig}
@@ -3247,8 +3352,11 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         <BackgroundTasksPanel />
         <div className="py-3">
           <div className="group mb-2 flex items-center gap-2">
-            <span className="text-xs text-l4">
-              最近 100 条应用日志（进程内缓冲，重启即清空）
+            <span
+              className="text-xs text-l4"
+              title="进程内缓冲，重启即清空"
+            >
+              最近 100 条应用日志
             </span>
             {/* 诊断是低频区：行内按钮 hover 才现，Tab 聚焦同样显示 */}
             <button
@@ -3375,7 +3483,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           hint={
             appUpdate
               ? `有新版本 v${appUpdate.version}，到「更新」分区安装`
-              : undefined
+              : buildInfoSuffix(buildInfo)
           }
         >
           <span className="flex items-center gap-2">
@@ -3393,7 +3501,65 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             )}
           </span>
         </Row>
-        <Row label="项目主页" hint="MIT 许可">
+        <Row
+          label="版权"
+          hint="展示名 Mesa，内部身份 ccode"
+          labelTitle="bundle ID com.ccode.dev，数据在 ~/ccode/——报障找目录时对得上"
+        >
+          <span className="text-xs text-l2">© 2026 泽塔前沿科技（杭州）有限公司</span>
+        </Row>
+        <Row
+          label="开源许可"
+          hint="第三方组件与字体的许可清单"
+          labelTitle="Mesa 按 Apache-2.0 发布"
+        >
+          <button
+            type="button"
+            className={secondaryActionClass}
+            onClick={() => void openNotices()}
+          >
+            查看开源许可
+          </button>
+        </Row>
+        <Row
+          label="致谢"
+          hint="字体 JetBrains Mono；图标 lobe-icons"
+          labelTitle="设计参考 cc-switch / waveterm / VS Code（学机制不抄代码）；平台图标 lobehub lobe-icons（MIT）"
+        >
+          <span className="text-xs text-l2">
+            cc-switch · waveterm · VS Code
+          </span>
+        </Row>
+        <Row
+          label="数据来源"
+          hint="文献元数据与指标服务，仅在同步 / 下载时访问"
+          labelTitle="期刊缩写 JabRef（CC0）与 NLM；期刊指标 ShowJCR；开放获取 Unpaywall；元数据 Crossref / OpenAlex"
+        >
+          <span className="text-xs text-l2">
+            JabRef · NLM · ShowJCR · Unpaywall · Crossref · OpenAlex
+          </span>
+        </Row>
+        <Row
+          label="隐私"
+          hint="密钥只存本机；数据去向看悬浮说明"
+          labelTitle="API 密钥只存本机（0600）；各 CLI 会话目录只读；更新检查向 GitHub 发版本请求，文献同步 / 下载 / 远查会把 DOI 或刊名发往「数据来源」所列服务；「反馈与提需求」按你点发送的内容寄出——此外不上传数据"
+        >
+          <span className="text-xs text-l2">密钥不出本机</span>
+        </Row>
+        <Row
+          label="反馈与提需求"
+          hint="应用内直发；别贴密钥或 token"
+          labelTitle="诊断包已脱敏；自己复制的终端输出可能还带着密钥，发送前留意"
+        >
+          <button
+            type="button"
+            className={secondaryActionClass}
+            onClick={() => setFeedbackOpen(true)}
+          >
+            打开反馈表单
+          </button>
+        </Row>
+        <Row label="项目主页" hint="Apache-2.0 许可">
           <button
             type="button"
             className={secondaryActionClass}
@@ -3404,10 +3570,21 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             在浏览器打开
           </button>
         </Row>
+        <p className="pt-2 text-micro leading-4 text-l4">
+          Mesa 不是 Claude Code、Codex 等任何 CLI
+          的官方产品，各家名称与商标归其所有者。
+        </p>
       </Section>
           </div>
         </div>
       </div>
+      {noticesOpen && noticesText !== null && (
+        <NoticesOverlay
+          text={noticesText}
+          onClose={() => setNoticesOpen(false)}
+        />
+      )}
+      <FeedbackModal open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
     </PageFrame>
   );
 }
