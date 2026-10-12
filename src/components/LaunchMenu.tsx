@@ -26,9 +26,14 @@ export function useDownMenu(
   open: boolean,
   anchorRef: RefObject<HTMLElement | null>,
   preferredWidth: number,
-): { box: DownMenuBox | null; exiting: boolean } {
+): {
+  box: DownMenuBox | null;
+  exiting: boolean;
+  /** commit 路径（选中项）即时关闭，不播退场 */
+  closeNow: () => void;
+} {
   const [box, setBox] = useState<DownMenuBox | null>(null);
-  const { render, exiting } = useExitRender(open);
+  const { render, exiting, closeNow } = useExitRender(open);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -53,7 +58,7 @@ export function useDownMenu(
     };
   }, [open, anchorRef, preferredWidth]);
 
-  return { box: render ? box : null, exiting };
+  return { box: render ? box : null, exiting, closeNow };
 }
 
 function assignRef<T>(ref: Ref<T> | undefined, node: T | null) {
@@ -135,7 +140,7 @@ export default function LaunchMenu({
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const focusedOnce = useRef(false);
-  const { box, exiting } = useDownMenu(open, btnRef, preferredWidth);
+  const { box, exiting, closeNow } = useDownMenu(open, btnRef, preferredWidth);
   const current = options.find((item) => item.value === value);
 
   useLayoutEffect(() => {
@@ -286,6 +291,7 @@ export default function LaunchMenu({
                     }`}
                     onClick={() => {
                       onChange(item.value);
+                      closeNow();
                       onOpenChange(false);
                       btnRef.current?.focus();
                     }}

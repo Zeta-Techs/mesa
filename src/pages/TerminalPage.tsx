@@ -762,6 +762,7 @@ const TerminalView = memo(function TerminalView({
   const {
     box: modelMenuBox,
     exiting: modelMenuExiting,
+    closeNow: modelMenuCloseNow,
   } = useDownMenu(modelOpen && modelOptions.length > 0, modelAnchorRef, 0);
   // 模型清单挂在 body 上，点输入框外要收起（箭头按钮在锚点内，不误关）
   useEffect(() => {
@@ -4151,6 +4152,7 @@ const TerminalView = memo(function TerminalView({
                               e.preventDefault();
                               setModel(m);
                               setModelKept(false);
+                              modelMenuCloseNow();
                               setModelOpen(false);
                             }}
                             className={`flex h-8 w-full items-center truncate px-2.5 text-left text-sm ${

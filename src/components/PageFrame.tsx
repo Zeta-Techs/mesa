@@ -135,8 +135,9 @@ export function MenuSelect({
   const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(
     null,
   );
-  // 关闭后保持挂载 150ms 播退场（pos 不清空，退场期间位置不动）
-  const { render, exiting } = useExitRender(open);
+  // 关闭后保持挂载 150ms 播退场（pos 不清空，退场期间位置不动）；
+  // 选中项走 closeNow 即时消失（macOS 菜单口径），Esc/点外才有退场
+  const { render, exiting, closeNow } = useExitRender(open);
   const current = options.find((item) => item.value === value);
 
   useEffect(() => {
@@ -217,6 +218,7 @@ export function MenuSelect({
                     }`}
                     onClick={() => {
                       onChange(item.value);
+                      closeNow();
                       setOpen(false);
                     }}
                   >
