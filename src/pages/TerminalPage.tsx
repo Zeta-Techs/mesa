@@ -155,7 +155,7 @@ import {
   serializeRecoverableTerminalState,
   TERMINAL_TABS_STORAGE_KEY,
 } from "../terminal-tab-persistence";
-import { clampTabDragDx, tabDragTarget } from "../tab-drag";
+import { clampTabDragDx, rubberbandTabDx, tabDragTarget } from "../tab-drag";
 import { directoryUnavailableMessage } from "../terminal-cwd";
 import {
   collapseHomeTreeOnce,
@@ -4929,10 +4929,19 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       }
       // 钳制：源标签不出标签条内容范围；目标槽位：源中心越过谁的中线就占谁的位
       // （纯逻辑在 tab-drag.ts——>= 判定守「拖到最右」边界，曾翻车：严格 > 永远够不到末槽）
-      const dx = clampTabDragDx(rects, from, ev.clientX - startX);
+      const rawDx = ev.clientX - startX;
+      const dx = clampTabDragDx(rects, from, rawDx);
       const target = tabDragTarget(rects, from, dx);
       lastTarget = target;
-      setTabDrag({ id: tabId, from, target, dx, rects, settling: false });
+      // 视觉位移走橡胶带：越界阻力递增不在边界冻住，槽位判定仍用钳制值（语义不动）
+      setTabDrag({
+        id: tabId,
+        from,
+        target,
+        dx: rubberbandTabDx(rects, from, rawDx),
+        rects,
+        settling: false,
+      });
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", finish);

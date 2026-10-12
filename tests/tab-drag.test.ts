@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { clampTabDragDx, tabDragTarget } from "../src/tab-drag.ts";
+import {
+  clampTabDragDx,
+  rubberbandTabDx,
+  tabDragTarget,
+} from "../src/tab-drag.ts";
 
 // 等宽三槽（130px + 4px gap）：left 0 / 134 / 268
 const SLOTS = [
@@ -49,5 +53,46 @@ test("钳制后的极值位置目标判定不越界", () => {
     const hi = clampTabDragDx(SLOTS, from, 9999);
     assert.equal(tabDragTarget(SLOTS, from, lo), 0);
     assert.equal(tabDragTarget(SLOTS, from, hi), SLOTS.length - 1);
+  }
+});
+
+test("橡胶带：界内与钳制值恒等（只放宽越界视觉）", () => {
+  assert.equal(rubberbandTabDx(SLOTS, 0, 50), 50);
+  assert.equal(rubberbandTabDx(SLOTS, 0, 0), 0);
+  assert.equal(rubberbandTabDx(SLOTS, 1, -100), -100);
+  assert.equal(rubberbandTabDx([], 0, 100), 0);
+});
+
+test("橡胶带：越界位移单调递增但被衰减，恒不超过同向无限拖的渐近线", () => {
+  const max = 268; // 首标签右拖钳制上限
+  // 公式渐近线 = max + dimension（398px 条宽）：拖得无限远也最多再多走一条宽
+  const far = rubberbandTabDx(SLOTS, 0, 100000);
+  assert.ok(far > max + 10, "越界后仍能继续拉动一点");
+  assert.ok(far < max + 398 + 1, "但被皮筋衰减在渐近线内");
+  // 单调：拖得越远走得越远
+  assert.ok(rubberbandTabDx(SLOTS, 0, 400) > rubberbandTabDx(SLOTS, 0, 300));
+  // 衰减率递减：第二段 100px 的增量小于第一段
+  const gain1 = rubberbandTabDx(SLOTS, 0, 500) - rubberbandTabDx(SLOTS, 0, 400);
+  const gain2 = rubberbandTabDx(SLOTS, 0, 600) - rubberbandTabDx(SLOTS, 0, 500);
+  assert.ok(gain2 < gain1, "越界越深每像素跟随越少（阻力递增）");
+});
+
+test("橡胶带：左向越界同样衰减", () => {
+  const lo = rubberbandTabDx(SLOTS, 2, -100000);
+  assert.ok(lo < -268 - 10, "左越界仍能拉动一点");
+  assert.ok(lo > -268 - 398 - 1, "渐近线内");
+});
+
+test("橡胶带不改变槽位判定：视觉极值位置的目标与钳制极值一致", () => {
+  for (let from = 0; from < SLOTS.length; from++) {
+    const clamped = clampTabDragDx(SLOTS, from, 9999);
+    assert.equal(tabDragTarget(SLOTS, from, clamped), SLOTS.length - 1);
+    // 橡胶带放宽后的视觉位移喂给判定，结论不因放宽而变
+    const visual = rubberbandTabDx(SLOTS, from, 100000);
+    assert.equal(tabDragTarget(SLOTS, from, visual), SLOTS.length - 1);
+    assert.equal(
+      tabDragTarget(SLOTS, from, rubberbandTabDx(SLOTS, from, -100000)),
+      0,
+    );
   }
 });
