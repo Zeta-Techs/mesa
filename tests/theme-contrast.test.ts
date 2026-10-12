@@ -376,3 +376,29 @@ test("滚动条拇指在全部十四套主题上都过 3:1（WCAG 非文本）",
     `滚动条拇指低于 3:1：\n${failures.join("\n")}`,
   );
 });
+
+test("focus ring（l3）对画布对比度全主题 ≥3:1（WCAG 2.2 Focus Appearance）", () => {
+  // focus 环是 outline: 1px solid var(--color-l3)（App.css 全局基线），可见性由
+  // l3 与所在底色（canvas）的对比承载。逐主题锁定，防未来调 l3 档时悄悄跌破。
+  const themeIds: (string | null)[] = [
+    null,
+    ...THEMES.map((t) => t.id).filter((id) => id !== "midnight"),
+  ];
+  const failures: string[] = [];
+  for (const id of themeIds) {
+    const t = tokens(id);
+    const ratio = contrast(t["l3"], t.canvas);
+    if (ratio < 3) {
+      failures.push(`${id ?? "@theme"}: ${ratio.toFixed(2)}:1`);
+    }
+  }
+  // 自定义主题：两个种子方向（深/浅）都派生一遍检查
+  for (const seeds of [DEFAULT_CUSTOM_THEME, { ...DEFAULT_CUSTOM_THEME, canvas: "#f4f2ee", accent: "#b3554f" }]) {
+    const derived = deriveThemeTokens(seeds).tokens;
+    const ratio = contrast(derived.l3, derived.canvas);
+    if (ratio < 3) {
+      failures.push(`custom(${seeds.canvas}): ${ratio.toFixed(2)}:1`);
+    }
+  }
+  assert.deepEqual(failures, [], `focus ring 低于 3:1：\n${failures.join("\n")}`);
+});
