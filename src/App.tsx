@@ -1,8 +1,21 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import { Inbox } from "lucide-react";
+import {
+  Activity,
+  BookOpen,
+  BookText,
+  CircleHelp,
+  ExternalLink,
+  Inbox,
+  Info,
+  Keyboard,
+  Megaphone,
+  RefreshCw,
+  ShieldAlert,
+} from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   isPermissionGranted,
   onAction,
@@ -19,6 +32,7 @@ import QuickChatModal, {
   resumeSessionInTerminal,
 } from "./components/QuickChatModal";
 import AskAiModal from "./components/AskAiModal";
+import FeedbackModal from "./components/FeedbackModal";
 import QuickChatHistoryMenu from "./components/QuickChatHistoryMenu";
 import TopNavCapsule from "./components/TopNavCapsule";
 import { pickQuickChatHistory } from "./quick-chat";
@@ -209,6 +223,56 @@ function RelayToasts(props: {
 }
 
 /** 页切顺序/逐页绑定/默认值的单一出处在 hotkeys.ts PAGE_HOTKEY_DEFS（与侧栏顺序一致） */
+
+/** 仓库对外地址：帮助菜单外链（文档 / Issues / 安全报告）都挂在这里，转 org 时同步 */
+const REPO_URL = "https://github.com/hongtongzhou-design/ccode";
+
+/** 顶栏帮助菜单清单：外链（文档/支持，带 ↗ 标记）与应用内目标（跳设置分区）混排分组。
+ *  入口选型口径：只放「新用户第一次卡住时会找的东西」——文档、反馈、诊断、更新、关于；
+ *  应用内目标沿收件箱 settings 动作的同一条路（settingsSectionReq）跳转。 */
+const HELP_MENU: {
+  label: string;
+  items: {
+    icon: typeof BookOpen;
+    text: string;
+    url?: string;
+    section?: string;
+    /** 应用内反馈表单（FeedbackModal）——不落外链也不跳设置分区 */
+    feedback?: boolean;
+  }[];
+}[] = [
+  {
+    label: "使用",
+    items: [
+      {
+        icon: BookOpen,
+        text: "使用教程",
+        url: `${REPO_URL}/blob/main/docs/guide/tutorial.md`,
+      },
+      {
+        icon: BookText,
+        text: "产品说明书",
+        url: `${REPO_URL}/blob/main/docs/guide/user-guide.md`,
+      },
+      { icon: Keyboard, text: "快捷键", section: "hotkeys" },
+    ],
+  },
+  {
+    label: "支持",
+    items: [
+      { icon: Megaphone, text: "反馈与提需求", feedback: true },
+      { icon: ShieldAlert, text: "报告安全问题", url: `${REPO_URL}/security` },
+      { icon: Activity, text: "诊断与日志", section: "diag" },
+    ],
+  },
+  {
+    label: "应用",
+    items: [
+      { icon: RefreshCw, text: "检查更新", section: "update" },
+      { icon: Info, text: "关于 Mesa", section: "about" },
+    ],
+  },
+];
 
 function App() {
   const page = useAppStore((s) => s.page);
@@ -418,6 +482,30 @@ function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [titleInboxCat]);
+  // 顶栏帮助菜单：开关态 + Esc 关闭，关闭范式与收件箱下拉一致（遮罩在 JSX 尾部 z-20）
+  const [helpOpen, setHelpOpen] = useState(false);
+  // 帮助菜单/关于页共用的反馈表单弹层（FeedbackModal，双通道见 feedback.ts）
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  useEffect(() => {
+    if (!helpOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setHelpOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [helpOpen]);
+  const setSettingsSectionReq = useAppStore((s) => s.setSettingsSectionReq);
+  /** 帮助菜单 → 应用内目标：关菜单、跳设置分区（与收件箱 settings 动作同一条路） */
+  const openHelpSection = (section: string) => {
+    setHelpOpen(false);
+    setSettingsSectionReq(section);
+    setPage("settings");
+  };
+  /** 帮助菜单 → 外链（文档 / Issues / 安全报告）：关菜单再交系统浏览器打开 */
+  const openHelpUrl = (url: string) => {
+    setHelpOpen(false);
+    void openUrl(url);
+  };
   const loadAll = useAppStore((s) => s.loadAll);
   const loadSessions = useAppStore((s) => s.loadSessions);
   const loadProjects = useAppStore((s) => s.loadProjects);
@@ -463,6 +551,13 @@ function App() {
     const pageSwitchOn = settings?.hotkeyPageSwitch !== false;
     const onKey = (e: KeyboardEvent) => {
       if (e.isComposing) return;
+      // ⌘,/Ctrl+, 设置：全局命令，输入框内也生效（macOS 惯例；
+      // macOS 上菜单加速键先行消费，这条主要服务 Windows/Linux）
+      if (eventMatchesCombo(e, "mod+,")) {
+        e.preventDefault();
+        setPage("settings");
+        return;
+      }
       const target = e.target as HTMLElement | null;
       const isEditable =
         target?.isContentEditable ||
@@ -495,6 +590,19 @@ function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [paletteOpen, setPage, toggleChromeHidden, settings]);
+
+  // macOS 菜单栏入口（v3.259）：Rust on_menu_event 经 "menu:action" 转发，
+  // 设置/命令面板与侧栏、⌘K 同一动作出口。Windows/Linux 无菜单栏，不挂监听。
+  useEffect(() => {
+    if (!IS_MAC) return;
+    const un = listen<string>("menu:action", (e) => {
+      if (e.payload === "settings") setPage("settings");
+      else if (e.payload === "palette") setPaletteOpen((v) => !v);
+    });
+    return () => {
+      un.then((f) => f());
+    };
+  }, [setPage]);
 
   // 通知动作：注册「去处理」按钮类型；点击后聚焦对应终端标签（通知只有「待确认」一种），
   // 无 extra（旧通知）→ 回首页收件箱。**桌面端这是死代码**：插件桌面实现没有动作命令、
@@ -961,9 +1069,119 @@ function App() {
             )}
           </div>
           <div className="ccode-titlebar-side relative z-3 ml-auto flex min-w-0 shrink-0 items-center gap-1.5">
+              {/* 帮助：命令面板左侧常驻入口。文档/支持走外链（↗ 标记），应用内
+                  目标跳设置分区；下拉结构与关闭范式对齐收件箱（Esc / 遮罩 / 再点），
+                  与收件箱/命令面板互斥（同锚区三个浮层不同时开）。
+                  浮层面板上的次级文字用 l3 不用 l4：l4 压在 ccode-float-surface 上
+                  对比度只有 2.3–2.9:1，低于项目 3.0 底线（2026-10-12 HIG 复审）。 */}
+              <div className="relative flex items-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setHelpOpen((v) => !v);
+                    setTitleInboxCat(null);
+                  }}
+                  title="帮助"
+                  aria-label="帮助"
+                  aria-expanded={helpOpen}
+                  aria-haspopup="menu"
+                  className="flex h-6 shrink-0 items-center gap-1.5 rounded-md px-2 text-micro text-l3 hover:bg-hover hover:text-l1"
+                >
+                  <CircleHelp
+                    size={14.5}
+                    strokeWidth={1.8}
+                    className="shrink-0"
+                    aria-hidden="true"
+                  />
+                  <span className="hidden sm:inline">帮助</span>
+                </button>
+                {helpOpen && (
+                  <div
+                    role="menu"
+                    aria-label="帮助菜单"
+                    ref={(node) => {
+                      // 打开即聚焦首项：方向键立即可用（roving focus 的最简实现）
+                      if (node) node.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+                    }}
+                    onKeyDown={(e) => {
+                      if (
+                        e.key !== "ArrowDown" &&
+                        e.key !== "ArrowUp" &&
+                        e.key !== "Home" &&
+                        e.key !== "End"
+                      )
+                        return;
+                      e.preventDefault();
+                      const items = Array.from(
+                        e.currentTarget.querySelectorAll<HTMLElement>(
+                          '[role="menuitem"]',
+                        ),
+                      );
+                      if (!items.length) return;
+                      const idx = items.indexOf(document.activeElement as HTMLElement);
+                      const next =
+                        e.key === "Home"
+                          ? items[0]
+                          : e.key === "End"
+                            ? items[items.length - 1]
+                            : e.key === "ArrowDown"
+                              ? items[(idx + 1 + items.length) % items.length]
+                              : items[(idx - 1 + items.length) % items.length];
+                      next.focus();
+                    }}
+                    className="absolute right-0 top-full z-40 mt-1.5 w-64 rounded-md border border-field ccode-float-surface p-1"
+                  >
+                    {HELP_MENU.map((group) => (
+                      <div key={group.label}>
+                        <div className="px-2.5 pb-0.5 pt-1.5 text-micro text-l3">
+                          {group.label}
+                        </div>
+                        {group.items.map((item) => (
+                          <button
+                            key={item.text}
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              if (item.feedback) {
+                                setHelpOpen(false);
+                                setFeedbackOpen(true);
+                              } else if (item.url) {
+                                openHelpUrl(item.url);
+                              } else {
+                                openHelpSection(item.section ?? "about");
+                              }
+                            }}
+                            className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-xs text-l2 hover:bg-hover hover:text-l1"
+                          >
+                            <item.icon
+                              size={13}
+                              strokeWidth={1.8}
+                              className="shrink-0 text-l3"
+                              aria-hidden="true"
+                            />
+                            <span className="min-w-0 flex-1">{item.text}</span>
+                            {item.url && (
+                              <ExternalLink
+                                size={11}
+                                strokeWidth={1.8}
+                                className="shrink-0 text-l3"
+                                aria-hidden="true"
+                              />
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
               <button
                 type="button"
-                onClick={() => setPaletteOpen(true)}
+                onClick={() => {
+                  setHelpOpen(false);
+                  setTitleInboxCat(null);
+                  setPaletteOpen(true);
+                }}
                 title={`打开命令面板（${paletteComboLabel}）`}
                 aria-label="打开命令面板"
                 className="flex h-6 items-center gap-1.5 rounded-md px-2 text-micro text-l3 hover:bg-hover hover:text-l1"
@@ -1195,6 +1413,9 @@ function App() {
             onClick={() => setTitleInboxCat(null)}
           />
         )}
+        {helpOpen && (
+          <div className="fixed inset-0 z-20" onClick={() => setHelpOpen(false)} />
+        )}
         <main className="ccode-app-main min-h-0 min-w-0 flex-1">
           {/* 页面保持挂载，切换标签不销毁终端；未访问过的页不挂载（懒加载） */}
           <div className={page === "workbench" ? "h-full overflow-auto" : "hidden"}>
@@ -1278,6 +1499,7 @@ function App() {
         {quickChatOpen && (
           <QuickChatModal onClose={() => setQuickChatOpen(false)} />
         )}
+        <FeedbackModal open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
         <AskAiModal />
         {quickChatMenu && (
           <QuickChatHistoryMenu

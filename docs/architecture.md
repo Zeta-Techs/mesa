@@ -1154,6 +1154,7 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 - **多 Agent 工作台（v3.221 / v3.222 / v3.224 / v3.225）**：一等对象是 Project → Task → Run，不是终端标签；并行只来自人声明或模板；Agent 是 Runtime，CLI 是第一种实现。工作台「正在进行」只列交互活（含还开着的阅读标签），无头不进主卡；关标签后按 `runId` 找回。定时隔离产物经评审才进主仓。细则 `docs/conventions/agent-workbench.md`。
 - **侧栏桌面磨砂（v3.251）**：只磨标题栏、全局侧栏和四周缝；主画布不透明。macOS 依赖 `macOSPrivateApi`（GitHub Release 分发，不上 Mac App Store）。Windows 用 Mica，跟随 Mesa 主题深浅。Linux 与系统「减少透明度」保持实心。细则 `docs/conventions/design-system.md`。
 - **浮层退场动效（v3.258，apple-motion 批）**：弹层关闭不再瞬时卸载——纯 dismiss（Esc/遮罩/点外）先播 150ms 逆向退场再卸载（挂载延续由 `src/exit-animation.ts` 统一负责，reduced-motion 跳过）；commit（选中命令/菜单项）不播退场立即执行；滚动关闭右键菜单即时（位置脱锚）。居中对话框 pop、侧滑抽屉 slide 按形态分口径（`--ccode-motion-spring` 弹簧缓动，linear() 旧引擎回退）；菜单展开锚定触发器一侧（`ccode-anchor-topleft/top`）。细则 `docs/conventions/design-system.md`「动效口径」。
+- **macOS 菜单栏命令覆盖 + ⌘, 设置（v3.259，HIG 批）**：app 菜单挂设置…（⌘,）与命令面板（⌘K），窗口/帮助子菜单补齐（HIG：每个命令可从菜单栏到达、设置归 app 菜单）。菜单事件经 Rust `on_menu_event` → `"menu:action"` 事件 → 前端 App.tsx 监听（IS_MAC 门控）；帮助两项直接 opener 开 GitHub。⌘, webview 兜底服务 Windows/Linux（Ctrl+,），输入框内也生效。仅 macOS 有菜单（cfg 门控），Windows 无菜单栏惯例不改。
 
 ## 12. 当前待办与批次状态（滚动维护）
 

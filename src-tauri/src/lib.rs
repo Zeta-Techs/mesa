@@ -1,6 +1,8 @@
 use tauri::{Emitter, Manager};
 
+mod about;
 mod agent_specs;
+mod feedback;
 mod agents;
 mod ai;
 mod artifacts;
@@ -161,6 +163,104 @@ pub fn run() {
             browser_bridge::spawn_receipts_watch(app.handle().clone());
             if let Err(e) = tray::setup(app.handle()) {
                 logbuf::record("warn", "tray", &format!("托盘初始化失败: {e}"));
+            }
+            // macOS 菜单栏：应用子菜单带 About 面板（版权 / 许可入口）。set_menu 会
+            // 整体替换默认菜单——编辑子菜单的复制粘贴等预置项必须显式带上，否则
+            // 文本框的系统快捷键全失灵。仅 macOS：Windows 无菜单栏惯例。
+            // v3.259 起按 HIG 补命令覆盖：设置/命令面板归 app 菜单，窗口/帮助子菜单，
+            // 菜单事件经 "menu:action" 转给前端（App.tsx 监听）。
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::menu::{
+                    AboutMetadata, MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder,
+                };
+                let about = PredefinedMenuItem::about(
+                    app.handle(),
+                    None,
+                    Some(AboutMetadata {
+                        name: Some("Mesa".into()),
+                        copyright: Some("Copyright 2026 hongtongzhou-design".into()),
+                        credits: Some(
+                            "按 Apache-2.0 开源；第三方组件与字体许可见 设置 → 关于 → 开源许可。\n\
+                             设计参考 cc-switch / waveterm / VS Code"
+                                .into(),
+                        ),
+                        ..Default::default()
+                    }),
+                )?;
+                let settings_item = MenuItemBuilder::with_id("settings", "设置…")
+                    .accelerator("CmdOrCtrl+Comma")
+                    .build(app)?;
+                let palette_item = MenuItemBuilder::with_id("palette", "命令面板")
+                    .accelerator("CmdOrCtrl+K")
+                    .build(app)?;
+                let app_menu = SubmenuBuilder::new(app, "Mesa")
+                    .item(&about)
+                    .separator()
+                    .item(&settings_item)
+                    .item(&palette_item)
+                    .separator()
+                    .services()
+                    .separator()
+                    .hide()
+                    .hide_others()
+                    .show_all()
+                    .separator()
+                    .quit()
+                    .build()?;
+                let edit_menu = SubmenuBuilder::new(app, "编辑")
+                    .undo()
+                    .redo()
+                    .separator()
+                    .cut()
+                    .copy()
+                    .paste()
+                    .select_all()
+                    .build()?;
+                let window_menu = SubmenuBuilder::new(app, "窗口")
+                    .minimize()
+                    .maximize()
+                    .separator()
+                    .fullscreen()
+                    .separator()
+                    .close_window()
+                    .build()?;
+                let docs_item =
+                    MenuItemBuilder::with_id("docs", "Mesa 文档").build(app)?;
+                let feedback_item =
+                    MenuItemBuilder::with_id("feedback", "反馈问题").build(app)?;
+                let help_menu = SubmenuBuilder::new(app, "帮助")
+                    .item(&docs_item)
+                    .item(&feedback_item)
+                    .build()?;
+                let menu = MenuBuilder::new(app)
+                    .item(&app_menu)
+                    .item(&edit_menu)
+                    .item(&window_menu)
+                    .item(&help_menu)
+                    .build()?;
+                app.set_menu(menu)?;
+                // settings/palette/feedback 走事件桥交给前端（反馈开应用内表单）；文档直接系统 opener 打开
+                app.on_menu_event(|app_handle, event| match event.id().as_ref() {
+                    "settings" => {
+                        let _ = app_handle.emit("menu:action", "settings");
+                    }
+                    "palette" => {
+                        let _ = app_handle.emit("menu:action", "palette");
+                    }
+                    "docs" => {
+                        use tauri_plugin_opener::OpenerExt;
+                        let _ = app_handle
+                            .opener()
+                            .open_url("https://github.com/hongtongzhou-design/ccode", None::<&str>);
+                    }
+                    "feedback" => {
+                        // 反馈走应用内表单（2026-10-12 拍板：不跳 GitHub）——
+                        // 经事件桥开 FeedbackModal，与帮助菜单同一出口
+                        let _ = app_handle.emit("menu:action", "feedback");
+                    }
+                    _ => {}
+                });
             }
             // 配置里的 windowEffects 在建窗时就会套。这里再挂一次，兜住没带上的情况。
             if let Some(window) = app.get_webview_window("main") {
@@ -699,6 +799,10 @@ pub fn run() {
             reader::append_glossary,
             reader::remove_glossary_entry,
             reader::append_note_translation,
+            about::read_third_party_notices,
+            about::build_info,
+            feedback::feedback_endpoint,
+            feedback::submit_feedback,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
