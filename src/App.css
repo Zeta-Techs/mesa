@@ -531,6 +531,15 @@ body {
      上接近直角，用户反馈「方正」后提到 12px（Linear 卡片口径）；控件 7px / 紧凑 5px 不动。 */
   --ccode-radius-panel: 12px;
   --ccode-motion-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  /* 弹簧缓动（apple-motion 手感批）：临界阻尼近似（damping 1.0 / response 0.3），
+     只给抽屉侧滑等动量面用；linear() 需 WKWebView macOS 14+/WebView2 116+，
+     不支持的旧引擎自动回退上一行。 */
+  --ccode-motion-spring: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --ccode-motion-spring: linear(
+    0, 0.0372 7.14%, 0.1241 14.29%, 0.233 21.43%, 0.3482 28.57%, 0.4599 35.71%,
+    0.5627 42.86%, 0.6538 50%, 0.733 57.14%, 0.8001 64.29%, 0.8571 71.43%,
+    0.9038 78.57%, 0.9428 85.71%, 0.9739 92.86%, 1
+  );
   /* 完全隐藏侧栏时的顶部导航岛，嵌在标题栏里，不下沉到内容上。
      岛是 content-box：总高 = 行高 + 上下各 2px padding + 各 1px 边框 = 行高 + 6px。
      行 22px → 总高 28px；macOS 标题栏 2.25rem×14 = 31.5px、Windows 2.25rem×16 = 36px，
@@ -838,6 +847,116 @@ body {
   background-color: var(--color-raised);
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06);
   animation: ccode-pop 150ms var(--ccode-motion-ease);
+}
+
+/* ===== 浮层退场与锚定（apple-motion 手感批 2026-10-12）=====
+   emil §7 空间一致性：从哪来回哪去——退场沿入场路径逆向、时长对称。
+   组件侧由 src/exit-animation.ts 控制延迟卸载（reduced-motion 直接跳过）；
+   commit 动作（选中命令/菜单项）不播退场，立即执行（§1 响应优先）。 */
+@keyframes ccode-pop-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+
+@keyframes ccode-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* 退场态统一不可交互：点击穿透到下层，遮罩不再吃事件 */
+.ccode-exiting {
+  pointer-events: none;
+}
+
+.ccode-float-surface.ccode-exiting {
+  animation: ccode-pop-out 150ms var(--ccode-motion-ease) forwards;
+}
+
+.ccode-fade.ccode-exiting {
+  animation: ccode-fade-out 120ms var(--ccode-motion-ease) forwards;
+}
+
+/* 锚定展开（emil §7 anchored origins）：菜单从触发器一侧长出来，而非中心凭空浮现。
+   topleft 给下沿对齐触发器的菜单/右键菜单；top 给居中下落的命令面板。 */
+.ccode-anchor-topleft {
+  transform-origin: top left;
+}
+
+.ccode-anchor-top {
+  transform-origin: top center;
+}
+
+/* 抽屉侧滑：居中对话框 pop、侧滑抽屉 slide，按形态分口径（HIG sheet 惯例）。
+   入场 220ms 走弹簧缓动；退场 150ms 逆向同径。 */
+@keyframes ccode-sheet-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(3%);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes ccode-sheet-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-3%);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes ccode-sheet-out-right {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateX(3%);
+  }
+}
+
+@keyframes ccode-sheet-out-left {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateX(-3%);
+  }
+}
+
+.ccode-sheet-right {
+  animation: ccode-sheet-in-right 220ms var(--ccode-motion-spring);
+}
+
+.ccode-sheet-left {
+  animation: ccode-sheet-in-left 220ms var(--ccode-motion-spring);
+}
+
+/* 注意顺序：sheet 退场规则必须排在通用 ccode-exiting 之后（同特异度靠源序取胜） */
+.ccode-sheet-right.ccode-exiting {
+  animation: ccode-sheet-out-right 150ms var(--ccode-motion-spring) forwards;
+}
+
+.ccode-sheet-left.ccode-exiting {
+  animation: ccode-sheet-out-left 150ms var(--ccode-motion-spring) forwards;
 }
 
 /* 完全隐藏侧栏时的顶部灵动岛（替代旧的"幽灵胶囊"）。
@@ -1233,7 +1352,13 @@ body {
   .ccode-nav-island-hint,
   .ccode-app-main > div,
   .ccode-app-shell :where(.animate-spin),
-  .ccode-working-spinner circle {
+  .ccode-working-spinner circle,
+  .ccode-float-surface.ccode-exiting,
+  .ccode-fade.ccode-exiting,
+  .ccode-sheet-right,
+  .ccode-sheet-left,
+  .ccode-sheet-right.ccode-exiting,
+  .ccode-sheet-left.ccode-exiting {
     animation: none;
   }
 }

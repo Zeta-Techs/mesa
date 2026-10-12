@@ -139,7 +139,7 @@
   次要动作不 `ml-auto`；主干节点 `space-y-3`、`py-1.5`。文献来源/工具选项与标题 `mt-2.5`，该 input 节点 `pb-0`。六套模板共用这一张卡。**项目头绝对路径缩略显示为 `~/…`**
   （`abbrevHome` + 模块级缓存的 `home_dir` 命令；完整路径在 title 悬浮），字色不低于 l3。
   **篇幅 / 读者 / 去向 / 期刊等项目层设定**不摊成身份段一段灰字，收成一粒可点「全局设定」芯片（全文在项目设置抽屉）。
-  **文献雷达在项目「定时任务」页签**（任务页右边），默认收起。没订阅：一行「文献雷达 · 还没订阅读」+「添加」。有新命中：头上「文献雷达 · N 篇」。精读清单不在雷达卡上。本项目定时任务列表在雷达下面。
+  **文献雷达在项目「定时任务」页签**（任务页右边），默认收起。没订阅且已有雷达巡检：一行「文献雷达 · 还没订阅读」+「订阅关键词」；连雷达巡检都没有时整块不出现（订阅无任务不跑，页面只留「＋ 定时巡检」主路）。有新命中：头上「文献雷达 · N 篇」。精读清单不在雷达卡上。本项目定时任务列表在雷达下面。
   流程线「预览/编辑 TASK.md」是 ghost 微字「TASK.md」，不得与「开始」同权。
 - **项目级低频配置收进「项目设置」抽屉（v3.85）**：右侧滑出，**不是页面、不进侧栏、不占路由**。
   分组 = 基本（项目名 / 课题主题 / 项目路径）· 研究流程（更换模板 / 另存为模板 + TemplatePicker 实例）·
@@ -180,6 +180,15 @@
   局部块要统一字号的做法：给容器定字号、让按钮继承（不要再给按钮单独标 `text-*`）。
 - **动效口径**：弹层入场 `ccode-pop`（150ms opacity+scale .98→1，已绑在 `.ccode-float-surface` 上，弹层零额外接入）；
   遮罩入场 `ccode-fade`（120ms 透明度）；统一 `--ccode-motion-ease`，UI 反馈都在 200ms 内；`prefers-reduced-motion` 全局关闭。
+  **浮层退场与锚定（2026-10-12 apple-motion 批）**：关闭不再是瞬时卸载——纯 dismiss（Esc/遮罩/点外）先播 150ms 逆向
+  退场再卸载（`ccode-pop-out`/`ccode-fade-out`；挂载延续由 `src/exit-animation.ts` 的 `useExitRender`（自带 open prop 的
+  壳：Modal/Sheet/MenuSelect/项目设置抽屉/useDownMenu）与 `useAnimatedDismiss`（父级挂载控制：CommandPalette/ContextMenu/
+  随手聊历史）负责，reduced-motion 直接跳过延迟）。**commit 动作（选中命令/菜单项）不播退场**——立即执行，反馈由动作
+  本身给；滚动关闭右键菜单即时卸载（位置会脱锚）。退场态 `ccode-exiting` 统一 pointer-events:none（点击穿透）。
+  **抽屉按形态分口径**：居中对话框 pop、侧滑抽屉 slide（`ccode-sheet-right/left`，入场 220ms / 退场 150ms，走
+  `--ccode-motion-spring` 弹簧缓动——linear() 临界阻尼近似 damping 1.0/response 0.3，旧引擎回退 cubic-bezier；Sheet 与
+  项目设置抽屉已接，新抽屉一律同款）。**菜单展开锚定来源**（emil §7）：`ccode-anchor-topleft`（下沿菜单/右键菜单）与
+  `ccode-anchor-top`（命令面板）——面板从触发器一侧长出来，不从中心凭空浮现；新增菜单类弹层必须带其一。
   focus 环 `outline: 1px solid var(--color-l3)`（field 色太弱，l3 提亮不换色相）。
   **页面切换与按压反馈（2026-09-13 沉浸感批）**：九个页面容器都是 `.ccode-app-main` 的直接子级，切页入场统一走
   `ccode-page-in`（160ms 淡入 + 3px 上浮；容器 `hidden`→显示时重播；reduced-motion 一并关闭）——新页面不加自己的入场动画；

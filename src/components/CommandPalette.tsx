@@ -10,6 +10,7 @@ import {
   normalizeCustomThemeCards,
 } from "../custom-theme";
 import { comboLabel } from "../hotkeys";
+import { useAnimatedDismiss } from "../exit-animation";
 
 const PAGE_COMMANDS: {
   id: string;
@@ -50,6 +51,8 @@ export default function CommandPalette({
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  // 纯 dismiss（Esc/遮罩）播 150ms 退场再交给父级卸载；选中命令走 commit 立即执行
+  const { dismiss, exiting } = useAnimatedDismiss(onClose);
 
   const commands = useMemo<{ cmd: PaletteCommand; run: () => void }[]>(
     () => [
@@ -176,14 +179,14 @@ export default function CommandPalette({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex justify-center bg-black/40 ccode-fade"
-      onClick={onClose}
+      className={`fixed inset-0 z-50 flex justify-center bg-black/40 ccode-fade${exiting ? " ccode-exiting" : ""}`}
+      onClick={dismiss}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-label="命令面板"
-        className="ccode-command-palette mt-[10vh] h-fit w-[min(520px,calc(100vw-32px))] overflow-hidden rounded-xl border border-field ccode-float-surface"
+        className={`ccode-command-palette ccode-anchor-top mt-[10vh] h-fit w-[min(520px,calc(100vw-32px))] overflow-hidden rounded-xl border border-field ccode-float-surface${exiting ? " ccode-exiting" : ""}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 border-b border-hairline px-3.5">
@@ -201,10 +204,10 @@ export default function CommandPalette({
                 setIndex((i) => Math.max(i - 1, 0));
               } else if (e.key === "Enter") {
                 e.preventDefault();
-                runAt(index);
+                if (!exiting) runAt(index);
               } else if (e.key === "Escape") {
                 e.preventDefault();
-                onClose();
+                dismiss();
               }
             }}
             placeholder="跳转页面、换主题或管理侧栏…"

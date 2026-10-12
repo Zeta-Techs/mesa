@@ -759,11 +759,10 @@ const TerminalView = memo(function TerminalView({
     ].filter(Boolean);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId, selectedProfile, model]);
-  const modelMenuBox = useDownMenu(
-    modelOpen && modelOptions.length > 0,
-    modelAnchorRef,
-    0,
-  );
+  const {
+    box: modelMenuBox,
+    exiting: modelMenuExiting,
+  } = useDownMenu(modelOpen && modelOptions.length > 0, modelAnchorRef, 0);
   // 模型清单挂在 body 上，点输入框外要收起（箭头按钮在锚点内，不误关）
   useEffect(() => {
     if (!modelOpen) return;
@@ -4135,6 +4134,7 @@ const TerminalView = memo(function TerminalView({
                       ? modelMenuBox
                       : null
                   }
+                  exiting={modelMenuExiting}
                   id={`mesa-launch-model-menu-${tabId}`}
                   labelledBy="模型"
                 >

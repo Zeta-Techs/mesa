@@ -4,6 +4,7 @@ import AcceptanceLogList from "./AcceptanceLogList";
 import ProjectMemoryPanel from "./ProjectMemoryPanel";
 import ProjectRulesPanel from "./ProjectRulesPanel";
 import { inlineActionClass } from "./PageFrame";
+import { useExitRender } from "../exit-animation";
 import type { AcceptanceLogEntryDto } from "../types";
 
 /** 项目低频项：规则、验收记录，以及调用方追加的定时等。 */
@@ -23,6 +24,7 @@ export default function ProjectSettingsDrawer({
   onError?: (message: string) => void;
 }) {
   const [acceptLog, setAcceptLog] = useState<AcceptanceLogEntryDto[]>([]);
+  const { render, exiting } = useExitRender(open);
   useEffect(() => {
     if (!open) return;
     let stale = false;
@@ -37,15 +39,15 @@ export default function ProjectSettingsDrawer({
       stale = true;
     };
   }, [open, projectPath]);
-  if (!open) return null;
+  if (!render) return null;
   return (
     <div
-      className="fixed inset-0 z-40 flex justify-end bg-black/40 ccode-fade"
+      className={`fixed inset-0 z-40 flex justify-end bg-black/40 ccode-fade${exiting ? " ccode-exiting" : ""}`}
       onClick={onClose}
     >
       <aside
         data-surface="canvas"
-        className="flex h-full w-[34rem] max-w-[92vw] flex-col bg-canvas"
+        className={`ccode-sheet-right flex h-full w-[34rem] max-w-[92vw] flex-col bg-canvas${exiting ? " ccode-exiting" : ""}`}
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex h-12 shrink-0 items-center gap-2 px-5">

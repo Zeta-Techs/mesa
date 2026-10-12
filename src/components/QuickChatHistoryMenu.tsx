@@ -4,6 +4,7 @@ import { AGENTS } from "../types";
 import { agentBrandBadgeStyle } from "../agent-colors";
 import { relTime } from "../rel-time";
 import { sessionDisplayTitle } from "../quick-chat";
+import { useAnimatedDismiss } from "../exit-animation";
 
 /**
  * 侧栏「快速开聊」右键 = 继续上次（scratch 里的随手聊）。
@@ -27,10 +28,12 @@ export default function QuickChatHistoryMenu({
   const [measured, setMeasured] = useState<{ left: number; top: number } | null>(
     null,
   );
+  // Esc/点外播退场；滚动关闭和选中会话（commit）保持即时卸载
+  const { dismiss, exiting } = useAnimatedDismiss(onClose);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") dismiss();
     };
     const onScroll = () => onClose();
     window.addEventListener("keydown", onKey);
@@ -39,7 +42,8 @@ export default function QuickChatHistoryMenu({
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("scroll", onScroll, true);
     };
-  }, [onClose]);
+    // dismiss 是稳定引用（useCallback 仅依赖时长）
+  }, [onClose, dismiss]);
 
   // 实测面板宽高后钳制在视口内（useLayoutEffect 绘制前完成修正，不闪动）
   useLayoutEffect(() => {
@@ -56,18 +60,18 @@ export default function QuickChatHistoryMenu({
 
   return (
     <div
-      className="fixed inset-0 z-50"
-      onClick={onClose}
+      className={`fixed inset-0 z-50${exiting ? " ccode-exiting" : ""}`}
+      onClick={dismiss}
       onContextMenu={(e) => {
         e.preventDefault();
-        onClose();
+        dismiss();
       }}
     >
       <div
         ref={panelRef}
         role="menu"
         aria-label="随手聊历史"
-        className="absolute w-80 overflow-hidden rounded-md border border-field ccode-float-surface"
+        className={`ccode-anchor-topleft absolute w-80 overflow-hidden rounded-md border border-field ccode-float-surface${exiting ? " ccode-exiting" : ""}`}
         style={style}
         onClick={(e) => e.stopPropagation()}
       >

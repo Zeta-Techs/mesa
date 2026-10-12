@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { ChevronDown } from "lucide-react";
 import { HoverTip, useHoverTip } from "./HoverTip";
 import { nextTabIndex, tabNavDelta, tabStopIndex } from "../tab-keys";
+import { useExitRender } from "../exit-animation";
 
 const WIDTHS = {
   narrow: "max-w-2xl",
@@ -134,6 +135,8 @@ export function MenuSelect({
   const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(
     null,
   );
+  // 关闭后保持挂载 150ms 播退场（pos 不清空，退场期间位置不动）
+  const { render, exiting } = useExitRender(open);
   const current = options.find((item) => item.value === value);
 
   useEffect(() => {
@@ -187,7 +190,7 @@ export function MenuSelect({
           aria-hidden="true"
         />
       </button>
-      {open &&
+      {render &&
         pos &&
         typeof document !== "undefined" &&
         document.body &&
@@ -196,7 +199,7 @@ export function MenuSelect({
             ref={menuRef}
             role="listbox"
             style={{ top: pos.top, left: pos.left, width: pos.width }}
-            className="ccode-float-surface fixed z-50 max-h-64 overflow-auto py-1"
+            className={`ccode-anchor-topleft ccode-float-surface fixed z-50 max-h-64 overflow-auto py-1${exiting ? " ccode-exiting" : ""}`}
           >
             {options.map((item) => {
               const selected = item.value === value;

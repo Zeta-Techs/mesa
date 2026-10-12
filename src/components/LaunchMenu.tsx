@@ -10,6 +10,7 @@ import {
 import { createPortal } from "react-dom";
 import { Check, ChevronDown } from "lucide-react";
 import { placeDownMenu, type DownMenuBox } from "../launch-menu";
+import { useExitRender } from "../exit-animation";
 
 export interface LaunchMenuOption {
   value: string;
@@ -19,13 +20,15 @@ export interface LaunchMenuOption {
   disabled?: boolean;
 }
 
-/** 锚点下沿的浮层盒子。关闭时为 null。 */
+/** 锚点下沿的浮层盒子。关闭后保持 150ms 退场（exiting 供退场样式），box 持续指向
+ *  最后一次实测位置（box state 不清空，退场期间不脱锚）；彻底关闭后为 null。 */
 export function useDownMenu(
   open: boolean,
   anchorRef: RefObject<HTMLElement | null>,
   preferredWidth: number,
-): DownMenuBox | null {
+): { box: DownMenuBox | null; exiting: boolean } {
   const [box, setBox] = useState<DownMenuBox | null>(null);
+  const { render, exiting } = useExitRender(open);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -50,7 +53,7 @@ export function useDownMenu(
     };
   }, [open, anchorRef, preferredWidth]);
 
-  return open ? box : null;
+  return { box: render ? box : null, exiting };
 }
 
 function assignRef<T>(ref: Ref<T> | undefined, node: T | null) {
@@ -61,6 +64,7 @@ function assignRef<T>(ref: Ref<T> | undefined, node: T | null) {
 
 export function DownMenu({
   box,
+  exiting = false,
   menuRef,
   labelledBy,
   onKeyDown,
@@ -68,6 +72,8 @@ export function DownMenu({
   children,
 }: {
   box: DownMenuBox | null;
+  /** useDownMenu 的退场标记：面板播 ccode-pop-out 并停止交互 */
+  exiting?: boolean;
   menuRef?: Ref<HTMLDivElement>;
   labelledBy?: string;
   onKeyDown?: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
@@ -90,7 +96,7 @@ export function DownMenu({
         width: box.width,
         maxHeight: box.maxHeight,
       }}
-      className="ccode-float-surface fixed z-50 overflow-auto rounded-md border border-field py-1"
+      className={`ccode-anchor-topleft ccode-float-surface fixed z-50 overflow-auto rounded-md border border-field py-1${exiting ? " ccode-exiting" : ""}`}
     >
       {children}
     </div>,
@@ -129,7 +135,7 @@ export default function LaunchMenu({
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const focusedOnce = useRef(false);
-  const box = useDownMenu(open, btnRef, preferredWidth);
+  const { box, exiting } = useDownMenu(open, btnRef, preferredWidth);
   const current = options.find((item) => item.value === value);
 
   useLayoutEffect(() => {
@@ -243,9 +249,10 @@ export default function LaunchMenu({
           aria-hidden="true"
         />
       </button>
-      {open && box && (
+      {box && (
         <DownMenu
           box={box}
+          exiting={exiting}
           menuRef={menuRef}
           labelledBy={label}
           onKeyDown={onMenuKey}

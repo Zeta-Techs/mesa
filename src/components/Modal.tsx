@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef } from "react";
 import type { ReactNode } from "react";
+import { useExitRender } from "../exit-animation";
 
 type ModalSize = "sm" | "md" | "lg" | "xl";
 
@@ -41,6 +42,8 @@ export function Modal({
   const descriptionId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
+  // 退场延续：open→false 后保持挂载 150ms 播退场（焦点/滚动锁仍由下方 effect 即刻恢复）
+  const { render, exiting } = useExitRender(open);
 
   // 调用方常以内联函数传入 onClose。不要让它导致焦点陷阱 effect
   // 每次渲染重跑，否则 busy/error 状态更新时焦点会被恢复到背景元素。
@@ -88,10 +91,10 @@ export function Modal({
     };
   }, [open]);
 
-  if (!open) return null;
+  if (!render) return null;
   return (
     <div
-      className="ccode-modal-backdrop fixed inset-0 z-40 flex items-center justify-center overflow-hidden overscroll-none bg-black/40 p-3 sm:p-4 ccode-fade"
+      className={`ccode-modal-backdrop fixed inset-0 z-40 flex items-center justify-center overflow-hidden overscroll-none bg-black/40 p-3 sm:p-4 ccode-fade${exiting ? " ccode-exiting" : ""}`}
       onMouseDown={(event) => {
         if (dismissOnBackdrop && event.target === event.currentTarget) onClose();
       }}
@@ -105,7 +108,7 @@ export function Modal({
         tabIndex={-1}
         className={`ccode-modal-panel ccode-float-surface flex max-h-[calc(100vh-24px)] w-full ${sizes[size]} flex-col rounded-lg border border-field p-4 sm:p-5 ${
           overflow === "hidden" ? "overflow-hidden overscroll-none" : "overflow-y-auto"
-        } ${panelClassName}`}
+        }${exiting ? " ccode-exiting" : ""} ${panelClassName}`}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3">
@@ -148,6 +151,7 @@ export function Sheet({
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
+  const { render, exiting } = useExitRender(open);
   onCloseRef.current = onClose;
 
   useEffect(() => {
@@ -193,16 +197,19 @@ export function Sheet({
     };
   }, [open]);
 
-  if (!open) return null;
+  if (!render) return null;
   return (
-    <div className="fixed inset-0 z-40 flex bg-black/40 ccode-fade" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div
+      className={`fixed inset-0 z-40 flex bg-black/40 ccode-fade${exiting ? " ccode-exiting" : ""}`}
+      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+    >
       <div
         ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className={`ccode-float-surface flex h-full w-[min(30rem,calc(100vw-24px))] flex-col overflow-y-auto border-field p-4 sm:p-5 ${side === "right" ? "ml-auto border-l" : "mr-auto border-r"}`}
+        className={`ccode-float-surface ccode-sheet-${side} flex h-full w-[min(30rem,calc(100vw-24px))] flex-col overflow-y-auto border-field p-4 sm:p-5 ${side === "right" ? "ml-auto border-l" : "mr-auto border-r"}${exiting ? " ccode-exiting" : ""}`}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between gap-3">

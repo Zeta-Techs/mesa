@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useAnimatedDismiss } from "../exit-animation";
 
 export interface ContextMenuItem {
   label?: string;
@@ -37,12 +38,14 @@ export default function ContextMenu({
     left: number;
     top: number;
   } | null>(null);
+  // Esc/点外播退场；滚动关闭和选中项（commit）保持即时卸载
+  const { dismiss, exiting } = useAnimatedDismiss(onClose);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") dismiss();
     };
-    // capture 阶段的滚动监听能捕获任意容器的滚动
+    // capture 阶段的滚动监听能捕获任意容器的滚动；滚动时面板位置会脱锚，不播退场
     const onScroll = () => onClose();
     window.addEventListener("keydown", onKey);
     window.addEventListener("scroll", onScroll, true);
@@ -50,7 +53,8 @@ export default function ContextMenu({
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("scroll", onScroll, true);
     };
-  }, [onClose]);
+    // dismiss 是稳定引用（useCallback 仅依赖时长），不随 onClose 内联换引用而重挂
+  }, [onClose, dismiss]);
 
   // 实测面板宽高后钳制在视口内；useLayoutEffect 保证绘制前完成修正，不闪动
   useLayoutEffect(() => {
@@ -77,16 +81,16 @@ export default function ContextMenu({
 
   return (
     <div
-      className="fixed inset-0 z-50"
-      onClick={onClose}
+      className={`fixed inset-0 z-50${exiting ? " ccode-exiting" : ""}`}
+      onClick={dismiss}
       onContextMenu={(e) => {
         e.preventDefault();
-        onClose();
+        dismiss();
       }}
     >
       <div
         ref={panelRef}
-        className="absolute min-w-40 max-w-80 rounded-sm border border-field ccode-float-surface py-1"
+        className={`ccode-anchor-topleft absolute min-w-40 max-w-80 rounded-sm border border-field ccode-float-surface py-1${exiting ? " ccode-exiting" : ""}`}
         style={style}
         onClick={(e) => e.stopPropagation()}
       >
