@@ -99,6 +99,7 @@ import {
   groupByWorkMode,
   lockWorkModeFromConfig,
   normalizeWorkMode,
+  projectSwitchRows,
   type WorkMode,
 } from "../work-mode";
 import { sortWorkspacesByAttention } from "../project-status";
@@ -877,6 +878,10 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   const [addMenu, setAddMenu] = useState<{ x: number; y: number } | null>(
     null,
   );  const [created, setCreated] = useState<WorkspaceDto | null>(null);
+  // 收起态课题名下拉（切换项目）：锚点来自 ProjectIdentityHeader 报回的按钮矩形
+  const [switchMenu, setSwitchMenu] = useState<{ x: number; y: number } | null>(
+    null,
+  );
   // 创建成功横幅是瞬态反馈：10s 自动消退（setup 失败除外——失败详情要人看，不自动收）
   useEffect(() => {
     if (!created || (created.setupResult && !created.setupResult.ok)) return;
@@ -1469,6 +1474,26 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
       }
       return next;
     });
+  }
+
+  // 课题状态（rail 行与收起态切换菜单同口径）：
+  // 待处理 = 工作区冲突/可合并 + 归属本项目的终端待确认/外部 live 待确认；
+  // 绿点只认此刻还在跑的 Agent，未归档工作区本身不亮。
+  function groupRailStatus(group: (typeof groups)[number]) {
+    const needsAttention =
+      group.list.filter((workspace) => {
+        const state = health[workspace.id];
+        return state?.conflict || state?.readyToMerge;
+      }).length + (navAttention.get(group.key) ?? 0);
+    const railDot = projectRailStatus({
+      needsAttention,
+      roots: [
+        group.repoPath,
+        ...group.list.map((workspace) => workspace.worktreePath),
+      ],
+      runs: terminalRunInputs,
+    });
+    return { needsAttention, railDot };
   }
 
   function toggleArtifacts(wsId: string) {
@@ -2263,21 +2288,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                     {RAIL_WORK_MODE_LABEL[section.mode]}
                   </p>
                   {section.items.map((group) => {
-                    // 待处理 = 工作区冲突/可合并 + 归属本项目的终端待确认/外部 live 待确认
-                    const needsAttention =
-                      group.list.filter((workspace) => {
-                        const state = health[workspace.id];
-                        return state?.conflict || state?.readyToMerge;
-                      }).length + (navAttention.get(group.key) ?? 0);
-                    // 绿点只认此刻还在跑的 Agent。未归档工作区本身不亮。
-                    const railDot = projectRailStatus({
-                      needsAttention,
-                      roots: [
-                        group.repoPath,
-                        ...group.list.map((workspace) => workspace.worktreePath),
-                      ],
-                      runs: terminalRunInputs,
-                    });
+                    const { needsAttention, railDot } = groupRailStatus(group);
                     const selected = selectedGroup?.key === group.key;
                     return (
                       <button
@@ -2358,6 +2369,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
               </button>
             ) : undefined
           }
+          onOpenProjectSwitch={projectRailCollapsed ? setSwitchMenu : undefined}
           onRegisterProject={setAddProjectPath}
           onRefresh={refresh}
           onError={setError}
@@ -2905,6 +2917,46 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
               y={railMenu.y}
               onClose={() => setRailMenu(null)}
               items={railMenuItems(group)}
+            />
+          );
+        })()}
+      {/* 收起态课题名下拉：镜像左栏——同分段同序（段头组头同款）、状态点同口径、
+          当前课题 checked（行尾勾+行底），选中即切（列表保持收起） */}
+      {switchMenu &&
+        (() => {
+          const statusByKey = new Map(
+            groups.map((group) => [group.key, groupRailStatus(group)]),
+          );
+          const items = projectSwitchRows(
+            railSections.map((section) => ({
+              label: RAIL_WORK_MODE_LABEL[section.mode],
+              items: section.items.map((group) => ({
+                key: group.key,
+                name: group.project?.name ?? group.repoName,
+                repoPath: group.repoPath,
+              })),
+            })),
+            selectedGroup?.key ?? null,
+          ).flatMap((row) => {
+            const dot = statusByKey.get(row.key)?.railDot;
+            const item = {
+              label: row.label,
+              title: row.repoPath,
+              checked: row.current,
+              mark: dot === "warn" || dot === "running" ? dot : undefined,
+              onSelect: () => setSelectedGroupKey(row.key),
+            };
+            return row.sectionLabelBefore
+              ? [{ header: row.sectionLabelBefore }, item]
+              : [item];
+          });
+          if (items.length === 0) return null;
+          return (
+            <ContextMenu
+              x={switchMenu.x}
+              y={switchMenu.y}
+              onClose={() => setSwitchMenu(null)}
+              items={items}
             />
           );
         })()}

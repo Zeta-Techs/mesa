@@ -64,6 +64,38 @@ export function normalizeWorkMode(value?: string | null): WorkMode {
   return "research";
 }
 
+/** 收起态课题名下拉的行：分段压平、每段首行携带段头标签（组头同款，首段也带——LaunchMenu 同法）、当前课题打 current。
+ *  顺序与项目栏分段一致（railSections 直传），保证菜单与列表同一序。 */
+export interface ProjectSwitchRow {
+  key: string;
+  label: string;
+  repoPath: string;
+  current: boolean;
+  sectionLabelBefore: string | null;
+}
+
+export function projectSwitchRows(
+  sections: readonly {
+    label: string;
+    items: readonly { key: string; name: string; repoPath: string }[];
+  }[],
+  currentKey: string | null,
+): ProjectSwitchRow[] {
+  const rows: ProjectSwitchRow[] = [];
+  sections.forEach((section) => {
+    section.items.forEach((item, itemIndex) => {
+      rows.push({
+        key: item.key,
+        label: item.name,
+        repoPath: item.repoPath,
+        current: item.key === currentKey,
+        sectionLabelBefore: itemIndex === 0 ? section.label : null,
+      });
+    });
+  });
+  return rows;
+}
+
 /** 已选定或档案卡已落盘的工作方式不可改选（终身一张主界面）。 */
 export function lockWorkModeFromConfig(input: {
   existingMode?: WorkMode | null;

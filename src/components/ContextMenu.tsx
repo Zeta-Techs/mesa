@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Check } from "lucide-react";
 import { useAnimatedDismiss } from "../exit-animation";
 
 export interface ContextMenuItem {
@@ -8,6 +9,13 @@ export interface ContextMenuItem {
   disabled?: boolean;
   /** 危险项：红色警示文字（删除类不可逆操作） */
   danger?: boolean;
+  /** 当前项：行底 bg-hover text-l1 + 行尾 Check，形态与 LaunchMenu 选中行一致 */
+  checked?: boolean;
+  /** 分组小标题（不可点）：段头与首行同现，替代裸分隔线；文字弱化同左栏组头 */
+  header?: string;
+  /** 行首状态点（无状态不渲染点、留占位保各行文字左对齐）：warn=待处理 / running=运行中，
+   *  词表与项目栏 projectRailStatus 同款 */
+  mark?: "warn" | "running";
   title?: string;
   separator?: boolean;
 }
@@ -45,8 +53,14 @@ export default function ContextMenu({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") dismiss();
     };
-    // capture 阶段的滚动监听能捕获任意容器的滚动；滚动时面板位置会脱锚，不播退场
-    const onScroll = () => onClose();
+    // capture 阶段的滚动监听能捕获任意容器的滚动；滚动时面板位置会脱锚，不播退场。
+    // 面板自身的滚动（长清单 max-h 内部滚动）不脱锚，放行
+    const onScroll = (e: Event) => {
+      if (e.target instanceof Node && panelRef.current?.contains(e.target)) {
+        return;
+      }
+      onClose();
+    };
     window.addEventListener("keydown", onKey);
     window.addEventListener("scroll", onScroll, true);
     return () => {
@@ -94,6 +108,8 @@ export default function ContextMenu({
         style={style}
         onClick={(e) => e.stopPropagation()}
       >
+        {/* 长清单（如收起态切换菜单）内部滚动：高度封顶、自身滚动不触发关闭（见 onScroll） */}
+        <div className="max-h-[min(24rem,60vh)] overflow-y-auto">
         {items.map((it, i) =>
           it.separator ? (
             <div
@@ -101,28 +117,57 @@ export default function ContextMenu({
               className="my-1 border-t border-hairline"
               role="separator"
             />
+          ) : it.header ? (
+            <div
+              key={`head-${i}`}
+              className="px-3 pb-0.5 pt-1.5 text-micro text-l4"
+            >
+              {it.header}
+            </div>
           ) : (
             <button
-              key={it.label ?? `item-${i}`}
+              key={`item-${i}`}
               disabled={it.disabled}
               title={it.title}
+              aria-current={it.checked ? "true" : undefined}
               onClick={() => {
                 if (it.disabled) return;
                 onClose();
                 it.onSelect?.();
               }}
-              className={`block w-full truncate px-3 py-1.5 text-left text-sm ${
+              className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm ${
                 it.disabled
                   ? "cursor-not-allowed text-l4"
                   : it.danger
                     ? "text-err-text hover:bg-hover"
-                    : "text-l2 hover:bg-hover"
+                    : it.checked
+                      ? "bg-hover text-l1"
+                      : "text-l2 hover:bg-hover"
               }`}
             >
-              {it.label}
+              {it.mark ? (
+                <span
+                  className={`size-2 shrink-0 rounded-full ${
+                    it.mark === "warn" ? "bg-warn-text" : "bg-ok-text"
+                  }`}
+                  title={it.mark === "warn" ? "待处理" : "运行中"}
+                />
+              ) : (
+                <span className="size-2 shrink-0" aria-hidden="true" />
+              )}
+              <span className="min-w-0 flex-1 truncate">{it.label}</span>
+              {it.checked && (
+                <Check
+                  size={14}
+                  strokeWidth={1.8}
+                  className="shrink-0 text-l3"
+                  aria-hidden="true"
+                />
+              )}
             </button>
           ),
         )}
+        </div>
       </div>
     </div>
   );

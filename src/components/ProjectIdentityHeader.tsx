@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { ChevronsUpDown } from "lucide-react";
 import ContextMenu from "./ContextMenu";
 import { confirmDialog } from "./ConfirmDialog";
 import {
@@ -26,6 +27,7 @@ export default function ProjectIdentityHeader({
   refreshToken,
   leading,
   chromeReq,
+  onOpenProjectSwitch,
   onRegisterProject,
   onRefresh,
   onError,
@@ -38,6 +40,8 @@ export default function ProjectIdentityHeader({
   refreshToken: number;
   leading?: ReactNode;
   chromeReq?: { action: ProjectChromeAction; token: number } | null;
+  /** 项目栏收起时传入：课题名变成切换下拉的入口，锚点坐标由这里报给调用方弹菜单 */
+  onOpenProjectSwitch?: (anchor: { x: number; y: number }) => void;
   onRegisterProject: (repoPath: string) => void;
   onRefresh: () => Promise<void>;
   onError: (message: string) => void;
@@ -170,6 +174,29 @@ export default function ProjectIdentityHeader({
               取消
             </button>
           </form>
+        ) : onOpenProjectSwitch ? (
+          // 项目栏收起态：课题名即切换入口（常驻 ⇅ 示意可点），点击把锚点报给页面弹菜单；
+          // 展开态不传该 prop，课题名仍是纯标题——列表本身就是切换器，不重复摆第二个
+          <h1 className="shrink-0 text-base font-semibold tracking-tight text-l1">
+            <button
+              type="button"
+              aria-label={`切换课题，当前：${displayName}`}
+              title="点击切换课题"
+              onClick={(event) => {
+                const rect = event.currentTarget.getBoundingClientRect();
+                onOpenProjectSwitch({ x: rect.left, y: rect.bottom + 4 });
+              }}
+              className="-ml-1.5 flex items-center gap-1 rounded-md px-1.5 py-0.5 hover:bg-hover"
+            >
+              {displayName}
+              <ChevronsUpDown
+                aria-hidden="true"
+                size={14}
+                strokeWidth={1.8}
+                className="shrink-0 text-l4"
+              />
+            </button>
+          </h1>
         ) : (
           <h1 className="shrink-0 text-base font-semibold tracking-tight text-l1">
             {displayName}
