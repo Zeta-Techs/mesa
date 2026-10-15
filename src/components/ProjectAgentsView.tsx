@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ArrowUpRight, Check, ChevronDown, Star } from "lucide-react";
 import { useAppStore } from "../store";
+import { toast } from "../toast";
 import { AGENTS, type CodingOverviewDto, type ProjectDto, type ScheduleDto, type TaskDto } from "../types";
 import { ghostActionClass } from "./PageFrame";
 import { agentBrand } from "../agent-colors";
@@ -222,6 +223,15 @@ export default function ProjectAgentsView({
       if (profileId) next[slot] = { profile: profileId, model: modelId || null };
       else delete next[slot];
       onProjectChanged({ ...project, taskBindings: next });
+      // 生效时机披露（用户自然预期「切换立即生效」，实际在跑会话沿用原 Agent、
+      // 下次开工/继续才用新值）：保存回执带一句，免得自己去发现
+      if (slot.startsWith("step:")) {
+        toast(
+          profileId
+            ? "已存为本步骤默认：正在跑的会话不受影响，下次开工 / 继续生效"
+            : "已清除本步骤默认：这一步回到跟随项目默认（下次启动生效）",
+        );
+      }
     } catch (reason) {
       onError(`保存专属绑定失败：${String(reason)}`);
     } finally {
@@ -736,12 +746,16 @@ export default function ProjectAgentsView({
           <div className="mb-4">
             <SectionHeading
               title={
-                workMode === "office" ? "工作目标" : showStepGroup ? "目标" : "新建目标"
+                workMode === "office"
+                  ? "工作目标"
+                  : (pipelineSteps ?? []).length > 0
+                    ? "目标"
+                    : "新建目标"
               }
               hint={
                 workMode === "office"
                   ? "新建时用上面的项目默认。这里可以改这一条，不影响别的目标。"
-                  : showStepGroup
+                  : (pipelineSteps ?? []).length > 0
                     ? "科研步骤之外另建的目标。每条自己的连接，这里可以改。"
                     : "没有研究流程。新建时用上面的项目默认；这里可以改这一条。"
               }
@@ -876,9 +890,13 @@ function stepGlyphFor(name: string, skills: string[]): string {
 }
 
 function stepGroupSummary(total: number, bound: number, stale: number): string {
-  if (stale > 0) return `${total} 步 · ${stale} 条失效`;
-  if (bound > 0) return `${total} 步 · ${bound} 已单独指定`;
-  return `${total} 步 · 都跟项目默认`;
+  // 三段常显口径（agent-binding.md：组头一眼感知）：N 步 · M 已专属 · K 条失效，
+  // 各计数 >0 才出现——既有专属又有坏行时不再二选一吞掉其一
+  const parts = [`${total} 步`];
+  if (bound > 0) parts.push(`${bound} 已专属`);
+  if (stale > 0) parts.push(`${stale} 条失效`);
+  if (bound === 0 && stale === 0) parts.push("都跟项目默认");
+  return parts.join(" · ");
 }
 
 /** 与「项目 Agents / 默认选择仅对本项目生效。」同一套标题。 */
