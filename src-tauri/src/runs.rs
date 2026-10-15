@@ -2680,6 +2680,88 @@ pub fn task_unarchive(id: String) -> Result<TaskDto, String> {
     unarchive_goal_at(&db()?, &id)
 }
 
+/// 从「已归档」里彻底去掉这条目标。不删项目里已接受的文件。
+/// 内部副本还在时拒绝，避免删掉记录后副本没处清理。
+/// 目录里除了 .DS_Store 还有别的东西，才算副本还在。
+fn copy_dir_occupied(dir: &std::path::Path) -> Result<bool, String> {
+    let entries = std::fs::read_dir(dir).map_err(|err| format!("检查副本目录失败: {err}"))?;
+    for entry in entries {
+        let entry = entry.map_err(|err| format!("检查副本目录失败: {err}"))?;
+        if entry.file_name() == ".DS_Store" {
+            continue;
+        }
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn purge_archived_goal_at(conn: &Connection, id: &str) -> Result<(), String> {
+    let task = attach_pending_goal_apply(conn, task_by_id(conn, id)?)?;
+    if task.archived_at.is_none() {
+        return Err("先归档，再删除这个目标".into());
+    }
+    if task.pending_apply_run_id.is_some() {
+        return Err("目标有未完成的接受操作，请先处理后再删除".into());
+    }
+    if task.storage_cleanup_pending {
+        return Err("还有未完成的副本清理，请先继续清理再删除".into());
+    }
+    if !task.declared {
+        return Err("只能删除你记下的目标".into());
+    }
+    if task.kind != "free_research" && task.kind != "office_doc" {
+        return Err("只能删除科研或工作目标".into());
+    }
+    let open = query_runs(
+        conn,
+        "WHERE task_id=?1 AND closed_at IS NULL AND internal=0 LIMIT 1",
+        [id],
+    )?;
+    if !open.is_empty() {
+        return Err("先停掉正在跑的 Agent，再删除这个目标".into());
+    }
+    // 释放副本后，目标目录本身常还留着空壳。空目录不算占用，删掉再继续。
+    // 里面还有工作副本或评审目录时才拒绝。
+    if let Ok(root) = goal_storage::root() {
+        let dir = root.join(id);
+        match std::fs::symlink_metadata(&dir) {
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(format!("检查副本目录失败: {err}")),
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return Err("副本目录不是普通目录，未删除。".into());
+            }
+            Ok(_) => {
+                if copy_dir_occupied(&dir)? {
+                    return Err("还有内部副本。请先释放副本空间，再删除这条归档。".into());
+                }
+                let _ = std::fs::remove_file(dir.join(".DS_Store"));
+                std::fs::remove_dir(&dir).map_err(|err| format!("去掉空副本目录失败: {err}"))?;
+            }
+        }
+    }
+    let run_ids = query_runs(conn, "WHERE task_id=?1", [id])?
+        .into_iter()
+        .map(|run| run.id)
+        .collect::<Vec<_>>();
+    for run_id in &run_ids {
+        conn.execute("DELETE FROM run_events WHERE run_id=?1", [run_id])
+            .map_err(|err| format!("删除目标记录失败: {err}"))?;
+    }
+    conn.execute("DELETE FROM runs WHERE task_id=?1", [id])
+        .map_err(|err| format!("删除目标记录失败: {err}"))?;
+    conn.execute("DELETE FROM goal_storage_pending WHERE task_id=?1", [id])
+        .map_err(|err| format!("删除目标记录失败: {err}"))?;
+    conn.execute("DELETE FROM tasks WHERE id=?1", [id])
+        .map_err(|err| format!("删除目标记录失败: {err}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn task_purge_archived(id: String) -> Result<(), String> {
+    let _lock = goal_storage::lock_task(&id)?;
+    purge_archived_goal_at(&db()?, &id)
+}
+
 #[tauri::command]
 pub fn task_get(id: String) -> Result<Option<TaskDto>, String> {
     let conn = db()?;
@@ -4245,6 +4327,12 @@ mod tests {
         assert!(restored.archived_at.is_none());
         assert_eq!(list_tasks_at(&conn, Some("/p"), false).unwrap().len(), 1);
         unarchive_goal_at(&conn, "old").unwrap(); // 幂等
+        purge_archived_goal_at(&conn, "other").unwrap_err();
+        purge_archived_goal_at(&conn, "live").unwrap();
+        assert!(list_tasks_at(&conn, Some("/p"), true)
+            .unwrap()
+            .iter()
+            .all(|task| task.id != "live"));
     }
 
     #[test]

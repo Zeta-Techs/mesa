@@ -459,6 +459,7 @@ pub fn run() {
             runs::task_set_launch,
             runs::task_delete,
             runs::task_unarchive,
+            runs::task_purge_archived,
             runs::goal_storage::task_storage_review,
             runs::goal_storage::task_cleanup,
             runs::task_prepare_run,
