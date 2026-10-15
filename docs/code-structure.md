@@ -58,7 +58,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # TemplatePickModal（科研项目注册成功后的研究流程模板选择层：顶部课题主题 +
                              # 六套内置模板 + 「不使用研究流程」（写 pipeline_opt_out 标记；只读文献走这条）/
                              # 「稍后再选」（不留痕，已填主题仍落盘）两出口）、
-                             # CodingProjectView / OfficeProjectView（编程左工作树右会话可收；工作树事后分组、行内图标动作 / 办公左文档右对话+定时同款可收）、
+                             # CodingProjectView（编程左工作树右会话可收；工作树事后分组、行内图标动作）、
                              # FuseDraftModal（「◈ 融合进任务书」预览编辑弹层：AI 融合稿可改后确认才写草稿）、
                              # TerminalStatusBar（终端底部常驻状态栏：未启动只留状态点 + 📂 目录胶囊；
                              #   进程起来后才有模型/思考档可点切 + git 芯片/保存/推送 + 时长/token） 等
