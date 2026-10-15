@@ -1420,6 +1420,20 @@ pub struct CreateTaskInput {
 }
 
 #[tauri::command]
+/// 删除连接时清 tasks 表的显式绑定引用（W2a 级联，镜像 projects 侧
+/// clear_project_default_profile 的写侧收口）：agent 恒随 profile——连接没了
+/// agent 意图一并回落，目标启动按项目默认解析，不留在数据里当死引用。
+pub(crate) fn clear_task_profile_refs(profile_id: &str) {
+    let Ok(conn) = db() else {
+        return;
+    };
+    let _ = conn.execute(
+        "UPDATE tasks SET agent=NULL, profile_id=NULL, model=NULL, updated_at=?2 WHERE profile_id=?1",
+        params![now_rfc3339(), profile_id],
+    );
+}
+
+#[tauri::command]
 pub fn task_set_launch(
     id: String,
     agent: Option<String>,
@@ -1446,10 +1460,30 @@ pub fn task_set_launch(
     let profile = profile.trim();
     let model = model.unwrap_or_default();
     let model = model.trim();
+    // W2a 写侧三件套（与槽位写入同口径）：连接存在、agent 恒随 profile 所属 CLI、
+    // 模型在名单。后端是唯一硬边界——UI 下拉自证不算防线，任何调用方都写不进脏值。
+    let mut agent = agent.to_string();
+    if !profile.is_empty() {
+        let bindings = crate::gateway_store::load_bindings()?;
+        let binding = bindings
+            .iter()
+            .find(|binding| binding.id == profile)
+            .ok_or("连接不存在")?;
+        if agent.is_empty() {
+            agent = binding.agent.clone(); // agent 恒随 profile：缺省从连接推导，不信入参
+        } else if agent != binding.agent {
+            return Err(format!(
+                "agent 与连接不一致：这条连接属于 {}，不单独绑工具",
+                binding.agent
+            ));
+        }
+        // 模型须在名单（空 = 名单第一，读侧回落）；名单外直接拒写
+        crate::projects::accept_project_model(&binding.models, Some(model))?;
+    }
     let agent_val = if agent.is_empty() {
         None::<String>
     } else {
-        Some(agent.to_string())
+        Some(agent.clone())
     };
     let profile_val = if profile.is_empty() {
         None::<String>

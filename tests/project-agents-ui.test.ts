@@ -331,3 +331,22 @@ test("空名册保持连接入口，只有真实关联目标才在 Agent 下显�
     await assigned.close();
   }
 });
+
+
+test("目标绑定连接已删：卡片如实标「已失效」，不再显示伪当前", async () => {
+  const tasks: ProjectAgentTaskRef[] = [
+    { id: "g1", name: "整理周报", status: "pending", kind: "office_doc", agent: "gemini", profileId: "ghost-profile", inputPaths: [], declared: true },
+  ];
+  const view = await renderView({
+    tasks,
+    project: { workMode: "office", defaultAgent: null },
+  });
+  try {
+    assert.match(view.host.textContent!, /整理周报/);
+    assert.match(view.host.textContent!, /已失效/);
+    assert.match(view.host.textContent!, /连接已删除，可清除或换绑/);
+    assert.ok(!view.host.textContent!.includes("已指定"), "死引用不再显示「已指定」伪状态");
+  } finally {
+    await view.close();
+  }
+});

@@ -531,6 +531,35 @@ fn update_schedule_at(
         }
         task.skill = skill;
     }
+    // W2a 写侧校验（与槽位/目标写入同口径）：钉的连接须存在、模型须在名单。
+    // 日程是无人值守长住户，脏值只能等下一次到点才炸——写时就拦。
+    let effective_profile = patch
+        .profile_id
+        .as_ref()
+        .and_then(|p| p.as_deref())
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(str::to_string)
+        .or_else(|| task.profile_id.clone());
+    if let Some(pid) = effective_profile.as_deref() {
+        let bindings = crate::gateway_store::load_bindings()?;
+        let binding = bindings
+            .iter()
+            .find(|binding| binding.id == pid)
+            .ok_or("连接不存在")?;
+        let model_patch = patch
+            .model
+            .as_ref()
+            .and_then(|m| m.as_deref())
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+            .map(|m| m.to_string())
+            .or_else(|| task.model.clone());
+        crate::projects::accept_project_model(
+            &binding.models,
+            model_patch.as_deref(),
+        )?;
+    }
     if let Some(profile_id) = patch.profile_id {
         task.profile_id = profile_id.filter(|v| !v.trim().is_empty());
     }

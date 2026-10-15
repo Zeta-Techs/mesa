@@ -763,27 +763,35 @@ export default function ProjectAgentsView({
           </div>
           {goals.length > 0 && (
             <ul className="grid grid-cols-1 items-start gap-2 md:grid-cols-2">
-              {goals.map((goal) => (
+              {goals.map((goal) => {
+                // W2a 读侧坏行：目标钉住的连接已删——如实标「已失效」（可清除/换绑），
+                // 不再把拍平清单第一条当「已指定」的伪当前（运行侧早已 fail-loud）
+                const goalStale =
+                  Boolean(goal.profileId) &&
+                  !profiles.some((p) => p.id === goal.profileId);
+                return (
                 <SlotCard
                   key={goal.id}
-                  glyph="🎯"
+                  glyph={goalStale ? "⚠" : "🎯"}
                   label={goal.name}
-                  tag={goal.agent || goal.profileId ? taskStatusLabel(goal.status) : "项目默认"}
-                  marked={Boolean(goal.profileId)}
+                  tag={goalStale ? "已失效" : goal.agent || goal.profileId ? taskStatusLabel(goal.status) : "项目默认"}
+                  marked={Boolean(goal.profileId) && !goalStale}
+                  stale={goalStale}
                   binding={
-                    goal.profileId
+                    goal.profileId && !goalStale
                       ? { profile: goal.profileId, model: goal.model }
                       : undefined
                   }
-                  unboundLine={inherited.line}
-                  unboundDetail={inherited.detail}
+                  unboundLine={goalStale ? "连接已删除，可清除或换绑" : inherited.line}
+                  unboundDetail={goalStale ? "" : inherited.detail}
                   choices={stepSlotProfiles}
                   disabled={saving || goal.status === "running" || stepSlotProfiles.length === 0}
                   onPick={(pid, mid) => void saveGoalLaunch(goal, pid, mid)}
                   onClear={() => void saveGoalLaunch(goal, "", "")}
                   onAdd={() => setPage("profiles")}
                 />
-              ))}
+                );
+              })}
             </ul>
           )}
         </div>

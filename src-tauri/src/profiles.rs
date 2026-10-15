@@ -963,6 +963,10 @@ impl ProfileStore {
         }
         crate::settings::clear_profile_refs(id);
         crate::projects::clear_project_default_profile(id);
+        // W2a：tasks 表（科研/工作目标的显式绑定）同口径级联——agent 恒随 profile，
+        // 连接没了 agent 一并回落；schedules.json 不清（无人值守 fail-loud 铁律，
+        // 死引用由读侧标 missing + 执行侧留失败 Run，清了反而会静默换家）
+        crate::runs::clear_task_profile_refs(id);
         Ok(())
     }
 
