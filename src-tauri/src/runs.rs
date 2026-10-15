@@ -3093,7 +3093,7 @@ fn open_at(conn: &Connection, input: OpenRunInput) -> Result<RunDto, String> {
             if let Some(run) = query_runs(conn, "WHERE reuse_key=?1 AND closed_at IS NULL AND internal=0 ORDER BY created_at DESC LIMIT 1", [key])?.into_iter().next() {
                 if run.agent != input.agent || run.runtime != runtime || run.isolation_path != input.isolation_path
                     || input.permission.as_deref().is_some_and(|p| run.permission != p) {
-                    return Err("此任务已有活跃 Run，请先停止它再更换执行体".into());
+                    return Err("这条工作树已有活跃执行体（可能是没有终端标签的运行中会话）。到工作台「正在进行」或运行页找到它停止后再换；沿用原执行体进入不受影响".into());
                 }
                 return Ok(run);
             }

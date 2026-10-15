@@ -54,6 +54,7 @@ import {
 } from "../coding-lanes";
 import { loadAskAiRemembered } from "../ask-ai";
 import { codingTerminalLaunch } from "../kickoff-launch";
+import { toast } from "../toast";
 import { projectAgentPrefs } from "../project-agents";
 import { loadProjectContextPack } from "../project-context-load";
 import { absTime, relTime } from "../rel-time";
@@ -351,6 +352,7 @@ export default function CodingProjectView({
   const setPage = useAppStore((s) => s.setPage);
   const setPendingTerminal = useAppStore((s) => s.setPendingTerminal);
   const profiles = useAppStore((s) => s.profiles);
+  const hiddenProfiles = useAppStore((s) => s.settings?.hiddenProfiles ?? []);
   const branchInputRef = useRef<HTMLInputElement>(null);
   const [ov, setOv] = useState<CodingOverviewDto | null>(
     () => overviewCache.get(repoPath) ?? null,
@@ -459,6 +461,21 @@ export default function CodingProjectView({
     [trees, ov],
   );
 
+  /** C2a（拍板②推荐形态）：进入/建树默认仍即点即拉起；但解析出的连接已停用或
+   *  已删时降为预填不自动拉起——停用想规避的问题（过期密钥、旧供应商计费）不该
+   *  在无交互的路径上复现。选择权留在启动栏（「本次用 X」事实回执由启动栏自持）。 */
+  function gateCodingAutoStart<
+    T extends { profileId: string; autoStart: boolean },
+  >(launch: T | null): T | null {
+    if (!launch || !launch.autoStart) return launch;
+    const ok = profiles.some(
+      (p) => p.id === launch.profileId && !hiddenProfiles.includes(p.id),
+    );
+    if (ok) return launch;
+    toast("原配置已停用或失效：已预填启动栏，选好连接再启动。", "warning");
+    return { ...launch, autoStart: false };
+  }
+
   async function enterTree(w: CodingWorktreeDto, title: string) {
     const primaryPath = trees.find((t) => t.isPrimary)?.path ?? repoPath;
     const runningOnPrimary = terminalRunInputs.some(
@@ -479,12 +496,14 @@ export default function CodingProjectView({
       if (!ok) return;
     }
     const prefs = projectAgentPrefs(project);
-    const launch = codingTerminalLaunch(
-      profiles,
-      loadAskAiRemembered(),
-      prefs.preferredAgent,
-      prefs.preferredProfile,
-      prefs.preferredModel,
+    const launch = gateCodingAutoStart(
+      codingTerminalLaunch(
+        profiles,
+        loadAskAiRemembered(),
+        prefs.preferredAgent,
+        prefs.preferredProfile,
+        prefs.preferredModel,
+      ),
     );
     const pack = await loadProjectContextPack({
       name: project?.name ?? title,
@@ -596,12 +615,14 @@ export default function CodingProjectView({
         if (r.worktree) {
           const name = r.worktree.branch;
           const prefs = projectAgentPrefs(project);
-          const launch = codingTerminalLaunch(
-            profiles,
-            loadAskAiRemembered(),
-            prefs.preferredAgent,
-            prefs.preferredProfile,
-            prefs.preferredModel,
+          const launch = gateCodingAutoStart(
+            codingTerminalLaunch(
+              profiles,
+              loadAskAiRemembered(),
+              prefs.preferredAgent,
+              prefs.preferredProfile,
+              prefs.preferredModel,
+            ),
           );
           const pack = await loadProjectContextPack({
             name: project?.name ?? name,
