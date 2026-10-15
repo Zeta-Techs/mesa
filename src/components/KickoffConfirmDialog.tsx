@@ -5,7 +5,8 @@ import ResearchToolPreflight from "./ResearchToolPreflight";
 import ResearchEvidencePanel from "./ResearchEvidencePanel";
 import ResearchDecisionFields from "./ResearchDecisionFields";
 import { researchReportPatterns } from "../research-report";
-import { useEffect, useMemo, useReducer, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { toast } from "../toast";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Checkbox,
@@ -295,8 +296,14 @@ export default function KickoffConfirmDialog({
     // 任一预填源在（步骤绑定 / 项目默认 / 开工记忆）即折叠成一行 launchLine
     () => !(stepBinding || preferredAgent || kickoffMemory),
   );
+  // 「本次手选永远最高」守卫（塔顶规则）：三个下拉任一被手改后，异步刷新
+  // （窗口聚焦→loadAll→profiles 引用替换、taskBindings 晚到）不得再把预选顶回
+  // 槽/项目默认/记忆值——顶回过一次实测会把用户明确换掉的付费连接悄悄跑起来。
+  const launchTouchedRef = useRef(false);
+  const saveTouchedRef = useRef(false);
 
   useEffect(() => {
+    if (launchTouchedRef.current) return;
     const next = pickKickoffLaunch(
       profiles,
       kickoffMemory,
@@ -394,6 +401,11 @@ export default function KickoffConfirmDialog({
   const [saveStepDefault, setSaveStepDefault] = useState(selectionMatchesSlot);
   useEffect(() => {
     if (!selectionMatchesSlot) setSaveStepDefault(false);
+    // 晚到的绑定补勾：冷启动 profiles/taskBindings 后到时挂载瞬间算不出匹配，
+    // 预选被重置成槽值后勾选框应回到「已存默认」的勾态（两态勾选的视觉契约）。
+    // 仅在用户没手改过启动三连、也没碰过勾选框时补——手改后不越权翻回。
+    else if (!launchTouchedRef.current && !saveTouchedRef.current) setSaveStepDefault(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectionMatchesSlot]);
   const slotLine = stepBinding
     ? kickoffLaunchLabel(
@@ -758,13 +770,16 @@ export default function KickoffConfirmDialog({
         model: launch.model,
       });
       if (saveStepDefault) {
-        // 失败不拦开工（fire-and-forget）：槽写不进只是没记住默认，开工照常
+        // 失败不拦开工（fire-and-forget）：槽写不进只是没记住默认，开工照常；
+        // 但「勾了却没存成」要让人知道（典型：记忆里残留的模型不在所选连接名单）
         void invoke("set_project_agent_binding", {
           projectRoot: projectPath,
           slot: stepSlotKey(step.name),
           profileId: launch.profileId,
           model: launch.model || null,
-        }).catch(() => {});
+        }).catch((reason) => {
+          toast(`本步骤默认没存成：${String(reason)}。开工不受影响，可去 Agents 页重存。`, "warning");
+        });
       }
     }
     onConfirm(editor.text, launch, gate.needsAck && !needsDecisionAck, intakeDecision);
@@ -914,7 +929,7 @@ export default function KickoffConfirmDialog({
                 <select
                   className={`${compactFieldClass} mt-0.5 w-full`}
                   value={agentId}
-                  onChange={(e) => setAgentId(e.target.value)}
+                  onChange={(e) => { launchTouchedRef.current = true; setAgentId(e.target.value); }}
                 >
                   {[...AGENTS]
                     .sort(
@@ -935,7 +950,7 @@ export default function KickoffConfirmDialog({
                 <select
                   className={`${compactFieldClass} mt-0.5 w-full`}
                   value={profileId}
-                  onChange={(e) => setProfileId(e.target.value)}
+                  onChange={(e) => { launchTouchedRef.current = true; setProfileId(e.target.value); }}
                 >
                   {agentProfiles.length === 0 ? (
                     <option value="">没有连接</option>
@@ -953,7 +968,7 @@ export default function KickoffConfirmDialog({
                 <select
                   className={`${compactFieldClass} mt-0.5 w-full`}
                   value={model}
-                  onChange={(e) => setModel(e.target.value)}
+                  onChange={(e) => { launchTouchedRef.current = true; setModel(e.target.value); }}
                   disabled={!selected}
                 >
                   {(selected?.models.length
@@ -972,7 +987,7 @@ export default function KickoffConfirmDialog({
             <Checkbox
               className="mt-2 text-micro text-l3"
               checked={saveStepDefault}
-              onChange={setSaveStepDefault}
+              onChange={(checked) => { saveTouchedRef.current = true; setSaveStepDefault(checked); }}
               label="存为本步骤默认（下次开工直接用它）"
             />
             {stepBinding && !selectionMatchesSlot && slotLine && (
