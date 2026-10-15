@@ -55,6 +55,7 @@ import {
 } from "../step-decisions";
 import { useHumanTasks, RegisterOfferRow } from "./HumanTasksList";
 import { buildWorkspaceTerminalRequest } from "../pipeline-start";
+import { stepSlotKey, taskBindingLaunch } from "../project-agents";
 import {
   CITATION_STYLE_CHOICES,
   citationFormFamily,
@@ -348,6 +349,8 @@ export default function StepFlow({
   agentAttention = null,
   runId = null,
   projectLaunch = null,
+  stepSlotLaunch = null,
+  onContinueStep,
 }: {
   projectPath: string;
   step: ProjectStepDto;
@@ -421,8 +424,15 @@ export default function StepFlow({
   agentAttention?: "confirm" | "done" | "working" | null;
   /** Explicit Run identity for the review handoff. */
   runId?: string | null;
-  /** 项目 Agents 名册解析出的启动；有则「跟 AI 商量一下」直接用它拉起。 */
+  /** 项目 Agents 名册解析出的启动；有则「跟 AI 商量一下」直接用它拉起。
+   *  商量类入口（任务书讨论/MCP 登录）刻意不吃步骤专属绑定（2026-10-15 用户拍板）：
+   *  讨论质量取决于通用对话能力、与步骤任务类型无关，全项目保持一致的商量体验；
+   *  步骤绑定只管执行面（开工弹层/继续/去终端）。 */
   projectLaunch?: { agentId: string; profileId: string; model: string } | null;
+  /** 仅 step: 槽命中（不含 discuss/项目默认回落）。去终端看看用来决定要不要接回旧会话。 */
+  stepSlotLaunch?: { agentId: string; profileId: string; model: string } | null;
+  /** 工作区已开时：新会话，用步骤绑定接着做到完成标准。不接回旧 Agent。 */
+  onContinueStep?: () => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const {
@@ -1387,12 +1397,26 @@ export default function StepFlow({
 
   function goTerminal() {
     if (!ws) return;
-    // 共享交接（pipeline-start.ts）：reuseKey 切回该工作区已有标签；没有活标签时
-    // resume 最近会话——「去终端看看」是回到那个对话，不是每次新开
-    void buildWorkspaceTerminalRequest(ws).then((req) => {
+    // 共享交接（pipeline-start.ts）：有活标签就切回去。没有活会话时，步骤绑定若是
+    // 另一家 Agent，不接回历史会话，启动栏用绑定。同一家或没绑步骤才接回原对话。
+    void (async () => {
+      let stepL: { agentId: string; profileId: string; model: string } | null = null;
+      try {
+        const b = await invoke<{ profile: string; model?: string | null } | null>(
+          "get_project_agent_binding",
+          { projectRoot: projectPath, slot: stepSlotKey(step.name) },
+        );
+        stepL = taskBindingLaunch(useAppStore.getState().profiles, b);
+      } catch {
+        /* DB 读失败走 props 里的步骤槽 */
+      }
+      const req = await buildWorkspaceTerminalRequest(ws, undefined, {
+        stepLaunch: stepL ?? stepSlotLaunch ?? undefined,
+        releaseToStepBinding: true,
+      });
       setPendingTerminal(req);
       setPage("terminal");
-    });
+    })();
   }
 
   function goReview() {
@@ -1562,21 +1586,36 @@ export default function StepFlow({
             </button>
           </span>
         );
-      case "go-terminal":
+      case "go-terminal": {
+        // 这一行只留一个入口。会话还在出字或等确认：回去看。否则「继续」新开一轮，
+        // 用这一步的绑定。两颗同时出现会和下面工作区的「继续」叠成三件同一件事。
+        const live =
+          agentAttention === "working" || agentAttention === "confirm";
         return (
-          // agent 已跑完（会话尾部判定 done，大圆角标同一口径）：按钮旁给完成提示，
-          // 行为不变——点进去看产出/提交情况；状态翻转仍走 git 派生（提交→待评审）
           <span className="flex shrink-0 items-center gap-1.5">
             {action.agentDone && <span className="text-xs text-l3">Agent 已跑完</span>}
-            <button
-              type="button"
-              onClick={goTerminal}
-              className="shrink-0 rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover"
-            >
-              去终端看看
-            </button>
+            {live || !onContinueStep ? (
+              <button
+                type="button"
+                onClick={goTerminal}
+                title="回到这一步正在进行的对话"
+                className="shrink-0 rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover"
+              >
+                去终端看看
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onContinueStep}
+                title="在这一步的工作区开新会话，用这一步绑定的配置，接着做到完成标准"
+                className="shrink-0 rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover"
+              >
+                继续
+              </button>
+            )}
           </span>
         );
+      }
       case "go-review":
         return (
           <button type="button" onClick={goReview} className={primary}>

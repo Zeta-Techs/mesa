@@ -28,7 +28,7 @@ import {
 } from "./PageFrame";
 import { Modal } from "./Modal";
 import { agentBrand } from "../agent-colors";
-import { resolveProfileModel } from "../project-agents";
+import { resolveTaskModel } from "../project-agents";
 
 import { confirmDialog } from "./ConfirmDialog";
 import ResearchReproductionPanel from "./ResearchReproductionPanel";
@@ -136,6 +136,7 @@ export default function ProjectUserTasksView({
   const [startingId, setStartingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [restoringId, setRestoringId] = useState<string | null>(null);
+  const [purgingId, setPurgingId] = useState<string | null>(null);
   const [configReady, setConfigReady] = useState(
     embed || project.workMode !== "research",
   );
@@ -317,12 +318,13 @@ export default function ProjectUserTasksView({
         title: task.name,
         agentId: profile.agent,
         profileId: profile.id,
-        model: resolveProfileModel(
-          profile.models,
-          profile.id === project.defaultProfiles?.[profile.agent]
-            ? project.defaultModels?.[profile.agent]
-            : "",
-        ),
+        model: resolveTaskModel({
+          models: profile.models,
+          taskModel: task.model,
+          profileId: profile.id,
+          defaultProfileId: project.defaultProfiles?.[profile.agent],
+          defaultModel: project.defaultModels?.[profile.agent],
+        }),
         resume:
           retrying?.sessionId && retrying.agent === profile.agent
             ? { agentId: retrying.agent, sessionId: retrying.sessionId }
@@ -361,6 +363,25 @@ export default function ProjectUserTasksView({
       setError(`归档目标失败：${String(reason)}`);
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  async function purgeGoal(task: TaskDto) {
+    const name = goalDisplayName(task);
+    const ok = await confirmDialog(
+      `删除归档目标「${name}」？它会从已归档里消失，不能恢复。项目里已经接受的文件还在。如果还有内部副本，请先释放副本空间。`,
+      { danger: true, confirmText: "删除" },
+    );
+    if (!ok) return;
+    setPurgingId(task.id);
+    try {
+      await invoke("task_purge_archived", { id: task.id });
+      setError(null);
+      await load();
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setPurgingId(null);
     }
   }
 
@@ -638,6 +659,15 @@ export default function ProjectUserTasksView({
                     >
                       {restoringId === task.id ? "恢复中…" : "恢复"}
                     </button>
+                    <button
+                      type="button"
+                      className="inline-flex h-7 items-center rounded-md px-2 text-xs text-err-text hover:bg-hover disabled:opacity-50"
+                      disabled={purgingId === task.id || task.storageCleanupPending}
+                      title={task.storageCleanupPending ? "请先继续未完成的副本清理，再删除" : "从已归档里删除，项目里已接受的文件保留"}
+                      onClick={() => void purgeGoal(task)}
+                    >
+                      {purgingId === task.id ? "删除中…" : "删除"}
+                    </button>
                   </li>
                 ))}
               </ul>
@@ -754,6 +784,19 @@ function CreateTaskModal({
   const [taskProfile, setTaskProfile] = useState(
     project.defaultProfiles?.[taskAgent] ?? agentProfiles[0]?.id ?? "",
   );
+  // B2 目标级模型：随连接换档重置（旧模型的名单属于旧连接）
+  const taskProfileObj = agentProfiles.find((profile) => profile.id === taskProfile);
+  const [taskModel, setTaskModel] = useState(
+    taskProfileObj && taskProfileObj.id === project.defaultProfiles?.[taskAgent]
+      ? (project.defaultModels?.[taskAgent] ?? "")
+      : "",
+  );
+  useEffect(() => {
+    setTaskModel((cur) =>
+      taskProfileObj?.models.includes(cur) ? cur : "",
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taskProfile]);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -807,6 +850,7 @@ function CreateTaskModal({
           permission,
           agent: taskAgent || null,
           profileId: taskProfile || null,
+          model: taskModel || null,
           skills: pickedSkills,
         },
       });
@@ -997,6 +1041,36 @@ function CreateTaskModal({
                 )}
               </div>
             )}
+            {configuredAgents.length > 0 &&
+              taskProfileObj &&
+              taskProfileObj.models.length > 0 && (
+                <div>
+                  <p className="mb-1 text-xs text-l3">模型</p>
+                  <div className="flex flex-wrap gap-1">
+                    <button
+                      type="button"
+                      className={`inline-flex h-7 items-center rounded-full px-2.5 text-xs ${
+                        taskModel === "" ? "bg-seg-sel text-l1" : "text-l3 hover:text-l1"
+                      }`}
+                      onClick={() => setTaskModel("")}
+                    >
+                      默认
+                    </button>
+                    {taskProfileObj.models.map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        className={`inline-flex h-7 items-center rounded-full px-2.5 text-xs ${
+                          taskModel === m ? "bg-seg-sel text-l1" : "text-l3 hover:text-l1"
+                        }`}
+                        onClick={() => setTaskModel(m)}
+                      >
+                        {m}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
           </div>
         )}
         {formError && <p className="text-xs text-err-text">{formError}</p>}

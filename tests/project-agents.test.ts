@@ -11,6 +11,14 @@ import {
   projectBoundProfileId,
   resolveProfileModel,
   resolvedTaskAgentId,
+  taskBindingLaunch,
+  resolveTaskModel,
+  slotPrefs,
+  CHAT_BINDING_SLOT,
+  DISCUSS_BINDING_SLOT,
+  stepSlotKey,
+  resolveStepLaunch,
+  workspaceLaunchChain,
 } from "../src/project-agents.ts";
 import { declaredTaskKindsForMode, taskStatusLabel } from "../src/project-tasks.ts";
 
@@ -309,4 +317,177 @@ test("roster keeps connection names and models separate, including names with se
     { name: "科研 · 精读", model: "gpt-6-astra" },
     { name: "CLI", model: "CLI 默认" },
   ]);
+});
+
+test("taskBindingLaunch：绑定命中出三元组，失效/缺失回落 null，模型校验名单", () => {
+  const profiles = [
+    { id: "p1", agent: "claude-code", models: ["m-a", "m-b"] },
+    { id: "p2", agent: "codex", models: [] },
+  ];
+  // 命中：agent 跟随连接、模型用绑定值
+  assert.deepEqual(
+    taskBindingLaunch(profiles, { profile: "p1", model: "m-b" }),
+    { agentId: "claude-code", profileId: "p1", model: "m-b" },
+  );
+  // 模型不在名单：回落名单第一个；空名单给空串（CLI 默认）
+  assert.deepEqual(
+    taskBindingLaunch(profiles, { profile: "p1", model: "gone" }),
+    { agentId: "claude-code", profileId: "p1", model: "m-a" },
+  );
+  assert.deepEqual(taskBindingLaunch(profiles, { profile: "p2" }), {
+    agentId: "codex",
+    profileId: "p2",
+    model: "",
+  });
+  // 未绑定 / 连接被删 / 空串：null（调用方回落自动链）
+  assert.equal(taskBindingLaunch(profiles, undefined), null);
+  assert.equal(taskBindingLaunch(profiles, { profile: "deleted" }), null);
+  assert.equal(taskBindingLaunch(profiles, { profile: "  " }), null);
+});
+
+test("stepSlotKey：step: 前缀拼接", () => {
+  assert.equal(stepSlotKey("文献检索与筛选"), "step:文献检索与筛选");
+});
+
+test("resolveStepLaunch：步骤槽命中即用，未绑/失效回落项目默认三元组", () => {
+  const profiles = [
+    { id: "p1", agent: "claude-code", models: ["m-a"] },
+    { id: "p2", agent: "codex", models: ["n-1", "n-2"] },
+  ];
+  const projectDefault = { agentId: "claude-code", profileId: "p1", model: "m-a" };
+  // 命中：agent 跟随绑定连接、模型用绑定值
+  assert.deepEqual(
+    resolveStepLaunch(
+      profiles,
+      { "step:综述大纲": { profile: "p2", model: "n-2" } },
+      "综述大纲",
+      projectDefault,
+    ),
+    { agentId: "codex", profileId: "p2", model: "n-2" },
+  );
+  // 未绑：原样回落项目默认
+  assert.equal(
+    resolveStepLaunch(profiles, {}, "综述大纲", projectDefault),
+    projectDefault,
+  );
+  // 绑定连接被删：回落项目默认（不报错）
+  assert.equal(
+    resolveStepLaunch(
+      profiles,
+      { "step:综述大纲": { profile: "gone" } },
+      "综述大纲",
+      projectDefault,
+    ),
+    projectDefault,
+  );
+  // 无绑定表也回落
+  assert.equal(
+    resolveStepLaunch(profiles, null, "综述大纲", projectDefault),
+    projectDefault,
+  );
+});
+
+test("workspaceLaunchChain：本次手选 > 步骤绑定 > 目录上次使用；缺层跳过", () => {
+  const launch = { agentId: "a1", profileId: "pf1", model: "m1" };
+  const stepL = { agentId: "a2", profileId: "pf2", model: "m2" };
+  const last = { agentId: "a3", profileId: "pf3", model: "m3" };
+  assert.deepEqual(workspaceLaunchChain(launch, stepL, last), launch);
+  assert.deepEqual(workspaceLaunchChain(null, stepL, last), stepL);
+  assert.deepEqual(workspaceLaunchChain(null, null, last), last);
+  // 层内字段级缺省也要逐字段回落（弹层只给 agent 的场景不存在，但链是字段级的）
+  assert.deepEqual(workspaceLaunchChain({ agentId: "x" }, stepL, last), {
+    agentId: "x",
+    profileId: "pf2",
+    model: "m2",
+  });
+  assert.deepEqual(workspaceLaunchChain(null, null, null), {
+    agentId: undefined,
+    profileId: undefined,
+    model: undefined,
+  });
+});
+
+test("resolveTaskModel：目标绑定模型 > 命中项目默认连接取项目模型 > 名单第一（B2 三档回落）", () => {
+  const models = ["m-a", "m-b"];
+  // 目标绑定且在名单：直接用
+  assert.equal(
+    resolveTaskModel({ models, taskModel: "m-b", profileId: "p1", defaultProfileId: "p1", defaultModel: "m-a" }),
+    "m-b",
+  );
+  // 目标绑定不在名单（连接换过名单）：命中项目默认连接 → 项目模型
+  assert.equal(
+    resolveTaskModel({ models, taskModel: "gone", profileId: "p1", defaultProfileId: "p1", defaultModel: "m-b" }),
+    "m-b",
+  );
+  // 未绑 + 未命中项目默认连接：名单第一（不吃项目模型）
+  assert.equal(
+    resolveTaskModel({ models, taskModel: null, profileId: "p2", defaultProfileId: "p1", defaultModel: "m-b" }),
+    "m-a",
+  );
+  // 命中项目默认连接但项目没点过模型：名单第一
+  assert.equal(
+    resolveTaskModel({ models, taskModel: null, profileId: "p1", defaultProfileId: "p1", defaultModel: null }),
+    "m-a",
+  );
+  // 空名单：空串（CLI 默认）
+  assert.equal(
+    resolveTaskModel({ models: [], taskModel: null, profileId: "p1" }),
+    "",
+  );
+});
+
+test("slotPrefs：discuss 槽绑定命中出三件套，未绑原样回落项目默认（B4）", () => {
+  const profiles = [
+    { id: "p1", agent: "claude-code", models: ["m-a"] },
+    { id: "p2", agent: "codex", models: ["n-1"] },
+  ];
+  const project = {
+    defaultAgent: "claude-code",
+    defaultProfiles: { "claude-code": "p1" },
+    defaultModels: { "claude-code": "m-a" },
+    taskBindings: { discuss: { profile: "p2", model: "n-1" } },
+  };
+  assert.deepEqual(slotPrefs(profiles, project, DISCUSS_BINDING_SLOT), {
+    preferredAgent: "codex",
+    preferredProfile: "p2",
+    preferredModel: "n-1",
+  });
+  // 绑定连接被删 / 未绑：回落项目默认三件套
+  const fallback = slotPrefs(
+    profiles,
+    { ...project, taskBindings: { discuss: { profile: "gone" } } },
+    DISCUSS_BINDING_SLOT,
+  );
+  assert.deepEqual(fallback, { preferredAgent: "claude-code", preferredProfile: "p1", preferredModel: "m-a" });
+  const unbound = slotPrefs(profiles, { ...project, taskBindings: {} }, DISCUSS_BINDING_SLOT);
+  assert.deepEqual(unbound, { preferredAgent: "claude-code", preferredProfile: "p1", preferredModel: "m-a" });
+  // 绑定未点模型：taskBindingLaunch 语义——回落该连接名单第一（n-1），不借项目默认的模型
+  const noModel = slotPrefs(
+    profiles,
+    { ...project, taskBindings: { discuss: { profile: "p2" } } },
+    DISCUSS_BINDING_SLOT,
+  );
+  assert.deepEqual(noModel, { preferredAgent: "codex", preferredProfile: "p2", preferredModel: "n-1" });
+});
+
+test("slotPrefs：项目对话槽与问 AI 槽互不借用", () => {
+  const profiles = [
+    { id: "p1", agent: "claude-code", models: ["m-a"] },
+    { id: "p2", agent: "codex", models: ["n-1"] },
+  ];
+  const project = {
+    defaultAgent: "claude-code",
+    defaultProfiles: { "claude-code": "p1" },
+    defaultModels: { "claude-code": "m-a" },
+    taskBindings: {
+      discuss: { profile: "p1", model: "m-a" },
+      chat: { profile: "p2", model: "n-1" },
+    },
+  };
+  assert.deepEqual(slotPrefs(profiles, project, CHAT_BINDING_SLOT), {
+    preferredAgent: "codex",
+    preferredProfile: "p2",
+    preferredModel: "n-1",
+  });
+  assert.deepEqual(slotPrefs(profiles, project, DISCUSS_BINDING_SLOT).preferredAgent, "claude-code");
 });

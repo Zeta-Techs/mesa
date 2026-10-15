@@ -76,6 +76,11 @@ pub struct Schedule {
     pub skill: String,
     /// None = 每次运行现解析（设置页 AI 专用 profile → 最近使用）
     pub profile_id: Option<String>,
+    /// 任务钉住的模型 id（B3）：在所选 profile 名单内生效；不在名单回落名单第一并在
+    /// 运行历史披露一句（同连接换档不换认证，不算换家）。None = 名单第一。
+    /// serde default 兼容老 schedules.json
+    #[serde(default)]
+    pub model: Option<String>,
     /// 关联的流水线步骤名（步骤 name；未关联为 None）。serde default 兼容老 schedules.json
     #[serde(default)]
     pub linked_step: Option<String>,
@@ -101,6 +106,7 @@ pub struct ScheduleDto {
     pub project_root: String,
     pub skill: String,
     pub profile_id: Option<String>,
+    pub model: Option<String>,
     pub linked_step: Option<String>,
     pub frequency: String,
     pub weekday: Option<u8>,
@@ -121,6 +127,7 @@ impl From<Schedule> for ScheduleDto {
             project_root: s.project_root,
             skill: s.skill,
             profile_id: s.profile_id,
+            model: s.model,
             linked_step: s.linked_step,
             frequency: s.frequency,
             weekday: s.weekday,
@@ -141,6 +148,8 @@ pub struct CreateScheduleInput {
     pub project_root: String,
     pub skill: Option<String>,
     pub profile_id: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
     /// 关联的流水线步骤名（可选；老前端不传为 None）
     pub linked_step: Option<String>,
     pub frequency: String,
@@ -158,6 +167,9 @@ pub struct UpdateSchedulePatch {
     pub skill: Option<String>,
     #[serde(default)]
     pub profile_id: Option<Option<String>>,
+    // 模型补丁：与 profile_id 同口径——Some(空串) 清掉指定模型回名单第一
+    #[serde(default)]
+    pub model: Option<Option<String>>,
     // 关联步骤补丁。注意 serde 对 Option<Option<T>> 不区分「缺失」与显式 null（都按 None = 不改），
     // 清除关联走 Some("")：空白在下方归一为 None（与 profile_id 的空串过滤口径一致）
     #[serde(default)]
@@ -474,6 +486,7 @@ fn create_schedule_at(path: &Path, input: CreateScheduleInput) -> Result<Schedul
         project_root: root,
         skill,
         profile_id: input.profile_id.filter(|v| !v.trim().is_empty()),
+        model: input.model.filter(|v| !v.trim().is_empty()),
         linked_step: input
             .linked_step
             .map(|s| s.trim().to_string())
@@ -520,6 +533,9 @@ fn update_schedule_at(
     }
     if let Some(profile_id) = patch.profile_id {
         task.profile_id = profile_id.filter(|v| !v.trim().is_empty());
+    }
+    if let Some(model) = patch.model {
+        task.model = model.filter(|v| !v.trim().is_empty());
     }
     if let Some(linked_step) = patch.linked_step {
         task.linked_step = linked_step
@@ -1081,6 +1097,8 @@ fn execute_one(id: &str) -> RunDonePayload {
     // 绑定 profile 被删导致回落时，在运行历史里留一句说明（成功/失败都带）
     let mut actual_isolation: Option<String> = None;
     let mut run_id: Option<String> = None;
+    // B3 模型换档披露：执行闭包写、成功简报读（无人值守不静默换档）
+    let mut model_note = String::new();
     let result: Result<String, String> = (|| {
         let root = scheduled_isolation.as_ref().map_err(Clone::clone)?;
         actual_isolation = Some(root.to_string_lossy().into_owned());
@@ -1158,17 +1176,49 @@ fn execute_one(id: &str) -> RunDonePayload {
         if task.skill != "lit-watch" {
             crate::skills::require_skill_distributed(&task.skill, &profile.agent)?;
         }
-        let model = crate::ai::preferred_ai_model(
-            &profile.id,
-            pinned.as_deref().filter(|id| !id.trim().is_empty()),
-            None,
-            None,
-            dedicated.as_deref(),
-            dedicated_model.as_deref(),
-        );
+        // 模型解析（B3）：任务钉住的模型在名单内直接用；不在名单回落名单第一并记
+        // 一句披露（无人值守场景不能静默换档；同连接换档不换认证，不算换家）。
+        // 未钉走既有档位链（dedicated 命中取 settings.ai_model，否则名单第一）。
+        // model_note 是 &mut String 借用——闭包写、闭包外 summary 读
+        // 模型与配置独立生效（设计拍板）：自动解析出的连接也校验任务模型，在名单即用
+        let pinned_model = task
+            .model
+            .clone()
+            .filter(|m| !m.trim().is_empty());
+        let model = if let Some(want) = pinned_model.as_deref() {
+            let models = &profile.models;
+            if models.iter().any(|m| m == want) {
+                Some(want.to_string())
+            } else {
+                // 名单空：不传模型（CLI 默认档），披露写实话；不拼「本次用 」的空名句
+                match models.first() {
+                    Some(fallback) => {
+                        model_note =
+                            format!("绑定模型 {want} 已不在名单，本次用 {fallback}；");
+                        Some(fallback.clone())
+                    }
+                    None => {
+                        model_note = format!(
+                            "绑定模型 {want} 已不在名单，连接名单为空，本次未指定模型；"
+                        );
+                        None
+                    }
+                }
+            }
+        } else {
+            crate::ai::preferred_ai_model(
+                &profile.id,
+                pinned.as_deref().filter(|id| !id.trim().is_empty()),
+                None,
+                None,
+                dedicated.as_deref(),
+                dedicated_model.as_deref(),
+            )
+            .map(str::to_string)
+        };
         crate::ai::run_agent_task(
             &profile,
-            model,
+            model.as_deref(),
             &build_task_prompt(&task.skill),
             root,
             RUN_TIMEOUT,
@@ -1235,10 +1285,13 @@ fn execute_one(id: &str) -> RunDonePayload {
         _ => None,
     };
     let (status, summary) = match result {
-        // 简报/错误文本落存储与发事件前必须脱敏
+        // 简报/错误文本落存储与发事件前必须脱敏；模型换档披露前缀（scheduler.rs:1081 先例）
         Ok(out) => (
             "ok",
-            cap_summary(&crate::sessions::redact_sensitive_text(&out)),
+            cap_summary(&format!(
+                "{model_note}{}",
+                crate::sessions::redact_sensitive_text(&out)
+            )),
         ),
         Err(e) if e.contains("任务已取消") => (
             "cancelled",
@@ -1973,6 +2026,8 @@ pub fn commit_watch_skill_draft(
             project_root: crate::sessions::expand_tilde(&project_root),
             skill: Some(skill.name.clone()),
             profile_id: pending.profile_id.clone(),
+            // 直建链路不透传 model（设计拍板）：落 None=名单第一，要绑去编辑弹层
+            model: None,
             linked_step: pending.linked_step.clone(),
             frequency: pending.frequency.clone(),
             weekday: pending.weekday,
@@ -2007,6 +2062,29 @@ pub fn ensure_schedule_skill_distributed(
 mod tests {
     use super::*;
 
+    // ===== B3 模型字段 =====
+
+    /// 老 schedules.json 没有 model 键：serde default 兼容（None），新旧互读不炸
+    #[test]
+    fn schedule_model_defaults_for_old_json() {
+        let old = r#"{"id":"s1","name":"雷达","project_root":"/p","skill":"lit-watch",
+            "profile_id":"pf-1","frequency":"daily","hour":8,"minute":0,"enabled":true,
+            "last_run_at":null,"last_status":null,"history":[]}"#;
+        let list: Vec<Schedule> = serde_json::from_str(&format!("[{old}]")).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].profile_id.as_deref(), Some("pf-1"));
+        assert_eq!(list[0].model, None);
+        // 新档带 model 往返
+        let with_model = serde_json::to_string(&Schedule {
+            model: Some("glm-4.7".into()),
+            ..list.into_iter().next().unwrap()
+        })
+        .unwrap();
+        assert!(with_model.contains(r#""model":"glm-4.7""#));
+        let back: Vec<Schedule> = serde_json::from_str(&format!("[{with_model}]")).unwrap();
+        assert_eq!(back[0].model.as_deref(), Some("glm-4.7"));
+    }
+
     fn dt(date: NaiveDate, h: u8, m: u8) -> NaiveDateTime {
         date.and_hms_opt(h as u32, m as u32, 0).unwrap()
     }
@@ -2026,6 +2104,7 @@ mod tests {
     fn sample_task(id: &str, root: &str) -> Schedule {
         Schedule {
             id: id.into(),
+            model: None,
             name: "文献雷达".into(),
             project_root: root.into(),
             skill: "lit-watch".into(),
@@ -2178,6 +2257,7 @@ mod tests {
         let path = tmp_schedules_path("roundtrip");
         let task = Schedule {
             id: "t1".into(),
+            model: None,
             name: "文献雷达".into(),
             project_root: "/tmp/p".into(),
             skill: "lit-watch".into(),
@@ -2297,6 +2377,7 @@ mod tests {
         let input = |frequency: &str, weekday: Option<u8>, hour: u8, minute: u8, root: &str| {
             CreateScheduleInput {
                 name: None,
+                model: None,
                 project_root: root.to_string(),
                 skill: None,
                 profile_id: None,

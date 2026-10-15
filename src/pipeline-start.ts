@@ -4,11 +4,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { isGitMissingError } from "./dep-check";
 import { decisionGate, orderedAnswers, parseDecisions } from "./step-decisions";
 import {
+  keepWorkspaceResume,
   pickWorkspaceResume,
   shouldResumeWorkspaceSession,
 } from "./workspace-resume";
 import { DEFAULT_KICKOFF_PROMPT } from "./pipeline-presets";
 import { renderTaskMd } from "./task-md";
+import { stepSlotKey, taskBindingLaunch, workspaceLaunchChain } from "./project-agents";
 export { renderTaskMd };
 import type { KickoffLaunch } from "./kickoff-launch";
 import type { PendingTerminal } from "./store";
@@ -263,16 +265,30 @@ export async function startPipelineStep({
   });
 }
 
-/** 工作区 → 终端的交接 payload：取端口段 env + 预填该目录上次使用的配置
- *  （与工作区页 useOpenInTerminal 同一语义；`ccode.wsLast.<worktreePath>` 为共享键）。
+/** 工作区 → 终端的交接 payload：取端口段 env + 预填配置。
+ *  配置三链（B1）：本次手选（开工弹层 launch）> 步骤绑定（stepLaunch，显式声明）>
+ *  该目录上次使用（`ccode.wsLast.<worktreePath>`，隐式记忆）——纯链在
+ *  project-agents.ts workspaceLaunchChain（organizePdfExcerpt 等手搓调用方共用）。
  *  始终带 reuseKey：同一工作区永远回到同一个终端标签（开工起的标签之后「去终端」能找回）。
- *  无 initialPrompt（「去终端看看」等纯查看入口）时自动 resume 该工作区最近会话。
- *  有 prompt 默认是新任务（开工/按意见重写），不 resume；
- *  `resumeSession: true`（评审「退回修改」）接回最近会话并把意见当下一轮输入。 */
+ *  无 initialPrompt（「去终端看看」）时接回该工作区最近会话，但步骤绑定若是另一家
+ *  Agent 则不接回（keepWorkspaceResume）——没有活会话时启动栏用这一步的绑定。
+ *  有 prompt 默认是新任务（开工/按意见重写/继续做到完成标准），不 resume；
+ *  `resumeSession: true`（评审「退回修改」）接回最近会话并把意见当下一轮输入。
+ *  stepLaunch 由知步骤的调用方传入（WorkspaceReviewView 评审退回持 step 对象、
+ *  WorkspacesPage help-wanted 经 resolveStepLaunchByWorkspace 反查、TerminalPage
+ *  整理为笔记自定位精读步骤；通用工作区列表不传——手建工作区无步骤层）。 */
 export async function buildWorkspaceTerminalRequest(
   ws: WorkspaceDto,
   initialPrompt?: string,
-  opts?: { autoStart?: boolean; launch?: KickoffLaunch; resumeSession?: boolean },
+  opts?: {
+    autoStart?: boolean;
+    launch?: KickoffLaunch;
+    resumeSession?: boolean;
+    stepLaunch?: { agentId: string; profileId: string; model: string } | null;
+    /** 仅「去终端看看」：步骤绑定若是另一家 Agent，不接回历史会话。
+     *  评审退回、去终端回答不传——那些入口要回到发出请求的那次对话。 */
+    releaseToStepBinding?: boolean;
+  },
 ): Promise<PendingTerminal> {
   const pairs = await invoke<[string, string][]>("workspace_env_for", {
     worktreePath: ws.worktreePath,
@@ -286,29 +302,71 @@ export async function buildWorkspaceTerminalRequest(
       return {};
     }
   })();
-  const resume = shouldResumeWorkspaceSession({
+  const resumeCandidate = shouldResumeWorkspaceSession({
     hasPrompt: Boolean(initialPrompt?.trim()),
     resumeSession: opts?.resumeSession,
   })
     ? await latestWorkspaceSession(ws)
     : null;
+  const resume =
+    resumeCandidate &&
+    keepWorkspaceResume({
+      explicitResume: opts?.resumeSession,
+      sessionAgentId: resumeCandidate.agentId,
+      stepAgentId: opts?.releaseToStepBinding ? opts.stepLaunch?.agentId : undefined,
+    })
+      ? resumeCandidate
+      : null;
+  const chain = workspaceLaunchChain(opts?.launch, opts?.stepLaunch, last);
+  const sameAgentBinding =
+    resume &&
+    opts?.stepLaunch &&
+    opts.stepLaunch.agentId === resume.agentId
+      ? opts.stepLaunch
+      : null;
   return {
     cwd: ws.worktreePath,
     extraEnv: Object.fromEntries(pairs),
     title: ws.name,
     // resume 命中时以会话的 agent 为准（TerminalPage 的 resume 分支会自选 profile/model）；
-    // 未命中按该目录上次使用的配置预填
-    agentId: resume?.agentId ?? opts?.launch?.agentId ?? last.agentId,
-    profileId: resume ? undefined : (opts?.launch?.profileId ?? last.profileId),
-    model: resume ? undefined : (opts?.launch?.model ?? last.model),
+    // 同一家 Agent 时，步骤绑定的连接只作 autoLaunchProfileId 预填。
+    // 未命中按三链预填
+    agentId: resume?.agentId ?? chain.agentId,
+    profileId: resume ? undefined : chain.profileId,
+    model: resume ? undefined : chain.model,
+    autoLaunchProfileId: sameAgentBinding?.profileId,
     // 开工弹层的本次思考档覆盖（空 = 绑定默认）：随标签种子传递，launch 时经
     // pty_spawn effortOverride 注入，不写回绑定
     effort: opts?.launch?.effort ?? undefined,
     resume: resume ?? undefined,
     initialPrompt,
-    autoStart: Boolean(opts?.autoStart && (opts.launch?.profileId || last.profileId)),
+    autoStart: Boolean(opts?.autoStart && chain.profileId),
     reuseKey: workspaceReuseKey(ws),
   };
+}
+
+/** 只持工作区的调用方（help-wanted 去终端回答等）解析步骤槽绑定：按工作区名反查
+ *  步骤（cfg.steps **first-match**——注意与 ProjectGroup wsStepMap 的 last-wins 不同，
+ *  终检钉住），再读 step:<名> 槽。任何一环读不到/不匹配返回 null（调用方回落既有链，
+ *  不因绑定解析失败挡住开终端）。resume 优先的入口里它只在无会话回落时生效。 */
+export async function resolveStepLaunchByWorkspace(
+  ws: Pick<WorkspaceDto, "name" | "repoPath">,
+  profiles: readonly { id: string; agent: string; models?: readonly string[] }[],
+): Promise<{ agentId: string; profileId: string; model: string } | null> {
+  try {
+    const read = await invoke<{
+      config: { steps: readonly { name: string; workspaceName: string }[] };
+    }>("read_project_config", { path: ws.repoPath });
+    const step = read.config.steps.find((x) => x.workspaceName === ws.name);
+    if (!step) return null;
+    const binding = await invoke<{ profile: string; model?: string | null } | null>(
+      "get_project_agent_binding",
+      { projectRoot: ws.repoPath, slot: stepSlotKey(step.name) },
+    );
+    return taskBindingLaunch(profiles, binding);
+  } catch {
+    return null;
+  }
 }
 
 /** 工作区终端的复用键：开工/去终端/评审「开始下一步」共用同一口径 */

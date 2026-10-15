@@ -111,8 +111,10 @@ function CreateScheduleModal({
   const [weekday, setWeekday] = useState(1);
   const [time, setTime] = useState("09:00");
   const [profileId, setProfileId] = useState("");
+  const [modelId, setModelId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // 关键词跟着任务走：新建时还没有任务 id，订阅在建好后从任务行打开。
 
   const isNew = skill === NEW_WATCH;
   const kindOptions = [
@@ -210,6 +212,7 @@ function CreateScheduleModal({
           hour,
           minute,
           profileId: profileId || null,
+          model: modelId || null,
           linkedStep: null,
         },
       });
@@ -334,7 +337,10 @@ function CreateScheduleModal({
           <select
             className={fieldClass}
             value={profileId}
-            onChange={(e) => setProfileId(e.target.value)}
+            onChange={(e) => {
+              setProfileId(e.target.value);
+              setModelId("");
+            }}
           >
             <option value="">自动（跟随默认解析）</option>
             {profiles.map((p) => {
@@ -345,6 +351,25 @@ function CreateScheduleModal({
                 </option>
               );
             })}
+          </select>
+        </label>
+        <label className="mb-4 block text-sm">
+          <span className="mb-1 block text-xs text-l3">模型（可选）</span>
+          <select
+            className={fieldClass}
+            value={modelId}
+            disabled={!profileId}
+            onChange={(e) => setModelId(e.target.value)}
+          >
+            <option value="">
+              {profileId ? "默认（名单第一个）" : "跟随执行时解析"}
+            </option>
+            {profileId &&
+              (profiles.find((p) => p.id === profileId)?.models ?? []).map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
           </select>
         </label>
         {profileId &&
@@ -480,7 +505,8 @@ function EditScheduleModal({
   onSaved,
 }: {
   schedule: ScheduleDto;
-  profiles: { id: string; name: string; agent: string }[];
+  /** B3：模型下拉要读名单，扩 models 字段（调用方传的是 store 全量 Profile） */
+  profiles: { id: string; name: string; agent: string; models?: string[] }[];
   onClose: () => void;
   onSaved: (warning?: string) => Promise<void>;
 }) {
@@ -493,6 +519,7 @@ function EditScheduleModal({
   const [weekday, setWeekday] = useState(schedule.weekday ?? 1);
   const [time, setTime] = useState(`${String(schedule.hour).padStart(2, "0")}:${String(schedule.minute).padStart(2, "0")}`);
   const [profileId, setProfileId] = useState(schedule.profileId ?? "");
+  const [modelId, setModelId] = useState(schedule.model ?? "");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const caps = useAgentCaps();
@@ -530,8 +557,10 @@ function EditScheduleModal({
           weekday: frequency === "weekly" ? weekday : null,
           hour,
           minute,
-          profileId: profileId || null,
-          linkedStep: null,
+          // 清空运行配置/模型必须发空串：后端 Option<Option> 语义下显式 null ≡ 缺失 ≡ 不改，
+          // 发 null 会让「选回自动」静默失效（行内改口径早已是空串，这里对齐）
+          profileId,
+          model: modelId,
         },
       });
       if (!isLitWatchSkill(skill)) {
@@ -566,7 +595,8 @@ function EditScheduleModal({
           {frequency === "weekly" && <label className="block flex-1 text-sm"><span className="mb-1 block text-xs text-l3">星期</span><select className={fieldClass} value={weekday} onChange={(e) => setWeekday(Number(e.target.value))}>{["一","二","三","四","五","六","日"].map((d, i) => <option key={d} value={i + 1}>周{d}</option>)}</select></label>}
           <label className="block flex-1 text-sm"><span className="mb-1 block text-xs text-l3">时间</span><input className={fieldClass} type="time" required value={time} onChange={(e) => setTime(e.target.value)} /></label>
         </div>
-        <label className="mb-3 block text-sm"><span className="mb-1 block text-xs text-l3">运行配置</span><span className="mb-1 block text-micro text-l4">文献雷达选 Codex。没有后缀的只在课题目录里写。</span><select className={fieldClass} value={profileId} onChange={(e) => setProfileId(e.target.value)}><option value="">自动</option>{profiles.map((p) => { const meta = profileScheduleMeta(p, caps); return <option key={p.id} value={p.id} disabled={meta.disabled}>{meta.label}</option>; })}</select></label>
+        <label className="mb-3 block text-sm"><span className="mb-1 block text-xs text-l3">运行配置</span><span className="mb-1 block text-micro text-l4">文献雷达选 Codex。没有后缀的只在课题目录里写。</span><select className={fieldClass} value={profileId} onChange={(e) => { setProfileId(e.target.value); setModelId(""); }}><option value="">自动</option>{profiles.map((p) => { const meta = profileScheduleMeta(p, caps); return <option key={p.id} value={p.id} disabled={meta.disabled}>{meta.label}</option>; })}</select></label>
+        <label className="mb-3 block text-sm"><span className="mb-1 block text-xs text-l3">模型</span><select className={fieldClass} value={modelId} disabled={!profileId} onChange={(e) => setModelId(e.target.value)}><option value="">{profileId ? "默认（名单第一个）" : "跟随执行时解析"}</option>{profileId && (profiles.find((p) => p.id === profileId)?.models ?? []).map((m) => <option key={m} value={m}>{m}</option>)}</select></label>
         {profileId && (() => { const p = profiles.find((x) => x.id === profileId); const caution = p ? headlessWriteCaution(caps[p.agent]?.headlessWrite) : null; return caution ? <p className="mb-3 text-xs text-warn-text">⚠ {caution}</p> : null; })()}
         {error && <p className="mb-3 text-sm text-err-text">{error}</p>}
         <div className="flex justify-end gap-2"><button type="button" onClick={onClose} className="rounded-sm px-3 py-1.5 text-sm text-l2 hover:bg-hover">取消</button><button type="submit" disabled={busy} className="rounded-sm border border-cta-bd bg-cta px-3 py-1.5 text-sm text-cta-text">{busy ? "保存中…" : "保存"}</button></div>
@@ -898,7 +928,8 @@ export default function ScheduleSection({
     try {
       await invoke("update_schedule", {
         id: s.id,
-        patch: { profileId },
+        // 换配置连带清模型：旧模型的名单属于旧连接（要改模型去编辑弹层）
+        patch: { profileId, model: "" },
       });
       if (!isLitWatchSkill(s.skill)) {
         try {

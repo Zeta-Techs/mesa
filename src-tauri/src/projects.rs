@@ -36,6 +36,20 @@ pub struct ProjectDto {
     /// Agent id → 本项目选用的模型 id。须属于该默认连接的模型名单；空 = 用名单第一个。
     #[serde(default)]
     pub default_models: BTreeMap<String, String>,
+    /// 槽位 → 专属 Agent 绑定（见 ProjectAgentBinding）：某个固定用途不吃项目默认、
+    /// 单独指一条连接+模型。槽位是稳定 key（reader = 沉浸阅读会话），按需扩展。
+    #[serde(default)]
+    pub task_bindings: BTreeMap<String, ProjectAgentBinding>,
+}
+
+/// 项目槽位的专属 Agent 绑定：agent 不单存，跟随 profile 所属 CLI。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ProjectAgentBinding {
+    /// 绑定的 profile id（连接被删时读取侧按未绑定回落，写入侧有清理）
+    pub profile: String,
+    /// 该连接里选用的模型 id；空/不在名单 = 用名单第一个
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -321,6 +335,13 @@ fn db_at(path: &Path) -> Result<Connection, String> {
         )
         .map_err(|e| format!("升级 projects 表失败: {e}"))?;
     }
+    if !columns.iter().any(|c| c == "task_bindings") {
+        conn.execute(
+            "ALTER TABLE projects ADD COLUMN task_bindings TEXT NOT NULL DEFAULT '{}'",
+            [],
+        )
+        .map_err(|e| format!("升级 projects 表失败: {e}"))?;
+    }
     // §4.6：稳定项目身份；旧行在注册/配置写入/列表读到档案卡 id 时回填
     if !columns.iter().any(|c| c == "id") {
         conn.execute("ALTER TABLE projects ADD COLUMN id TEXT", [])
@@ -434,6 +455,7 @@ fn register_at(
                     .flatten(),
                 default_profiles: project_string_map(&conn, &key, "default_profiles"),
                 default_models: project_string_map(&conn, &key, "default_models"),
+                task_bindings: project_task_bindings(&conn, &key),
             }));
         }
     }
@@ -472,6 +494,7 @@ fn register_at(
             .flatten(),
         default_profiles: project_string_map(&conn, &key, "default_profiles"),
         default_models: project_string_map(&conn, &key, "default_models"),
+        task_bindings: project_task_bindings(&conn, &key),
     }))
 }
 
@@ -485,6 +508,21 @@ fn project_string_map(conn: &Connection, path: &str, column: &str) -> BTreeMap<S
         .ok()
         .and_then(|raw| serde_json::from_str(&raw).ok())
         .unwrap_or_default()
+}
+
+/// task_bindings 列（槽位 → ProjectAgentBinding 的 JSON map）；坏值按空处理
+fn project_task_bindings(
+    conn: &Connection,
+    path: &str,
+) -> BTreeMap<String, ProjectAgentBinding> {
+    conn.query_row(
+        "SELECT task_bindings FROM projects WHERE path=?1",
+        params![path],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+    .and_then(|raw| serde_json::from_str(&raw).ok())
+    .unwrap_or_default()
 }
 
 /// 项目只记住连接名单里的一个模型 id。空 = 用名单第一个；不在名单里的拒绝写入。
@@ -509,7 +547,7 @@ fn attach_work_mode(mut p: ProjectDto) -> ProjectDto {
 pub(crate) fn list_projects_in(conn: &Connection) -> Result<Vec<ProjectDto>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT path, name, created_at, last_opened_at, default_agent, default_profiles, id, default_models FROM projects
+            "SELECT path, name, created_at, last_opened_at, default_agent, default_profiles, id, default_models, task_bindings FROM projects
              ORDER BY last_opened_at DESC, path ASC",
         )
         .map_err(|e| format!("读取项目列表失败: {e}"))?;
@@ -525,6 +563,7 @@ pub(crate) fn list_projects_in(conn: &Connection) -> Result<Vec<ProjectDto>, Str
                 default_agent: r.get(4)?,
                 default_profiles: serde_json::from_str(&r.get::<_, String>(5)?).unwrap_or_default(),
                 default_models: serde_json::from_str(&r.get::<_, String>(7)?).unwrap_or_default(),
+                task_bindings: serde_json::from_str(&r.get::<_, String>(8)?).unwrap_or_default(),
             })
         })
         .map_err(|e| format!("读取项目列表失败: {e}"))?;
@@ -581,20 +620,24 @@ pub(crate) fn project_root_containing(path: &str) -> Option<String> {
 }
 
 /// 删除 profile 时清理项目默认配置引用；不影响项目默认 Agent。
+/// 槽位专属绑定（task_bindings）里指向该连接的槽位一并清掉（读取侧也有失效回落，
+/// 这里是写侧收口，避免列表里挂着死引用）。
 pub(crate) fn clear_project_default_profile(profile_id: &str) {
     let Ok(conn) = db() else {
         return;
     };
-    let Ok(mut stmt) = conn.prepare("SELECT path, default_profiles, default_models FROM projects")
+    let Ok(mut stmt) = conn
+        .prepare("SELECT path, default_profiles, default_models, task_bindings FROM projects")
     else {
         return;
     };
-    let rows: Vec<(String, String, String)> = stmt
+    let rows: Vec<(String, String, String, String)> = stmt
         .query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
             ))
         })
         .ok()
@@ -604,14 +647,21 @@ pub(crate) fn clear_project_default_profile(profile_id: &str) {
     if rows.is_empty() {
         return;
     }
-    for (path, raw, raw_models) in rows {
+    for (path, raw, raw_models, raw_bindings) in rows {
         let mut defaults: BTreeMap<String, String> = serde_json::from_str(&raw).unwrap_or_default();
         let removed: Vec<String> = defaults
             .iter()
             .filter(|(_, id)| id.as_str() == profile_id)
             .map(|(agent, _)| agent.clone())
             .collect();
-        if removed.is_empty() {
+        let mut bindings: BTreeMap<String, ProjectAgentBinding> =
+            serde_json::from_str(&raw_bindings).unwrap_or_default();
+        let bound_slots: Vec<String> = bindings
+            .iter()
+            .filter(|(_, b)| b.profile == profile_id)
+            .map(|(slot, _)| slot.clone())
+            .collect();
+        if removed.is_empty() && bound_slots.is_empty() {
             continue;
         }
         defaults.retain(|_, id| id != profile_id);
@@ -620,15 +670,21 @@ pub(crate) fn clear_project_default_profile(profile_id: &str) {
         for agent in &removed {
             models.remove(agent);
         }
+        for slot in &bound_slots {
+            bindings.remove(slot);
+        }
         let Ok(encoded) = serde_json::to_string(&defaults) else {
             continue;
         };
         let Ok(encoded_models) = serde_json::to_string(&models) else {
             continue;
         };
+        let Ok(encoded_bindings) = serde_json::to_string(&bindings) else {
+            continue;
+        };
         let _ = conn.execute(
-            "UPDATE projects SET default_profiles=?2, default_models=?3 WHERE path=?1",
-            params![path, encoded, encoded_models],
+            "UPDATE projects SET default_profiles=?2, default_models=?3, task_bindings=?4 WHERE path=?1",
+            params![path, encoded, encoded_models, encoded_bindings],
         );
     }
 }
@@ -3242,6 +3298,106 @@ pub async fn set_project_default_profile(
     .map_err(|e| format!("保存项目默认配置失败: {e}"))?
 }
 
+/// 项目槽位专属 Agent 绑定可用槽位（白名单：槽位是稳定契约 key，先开一个，
+/// 后续任务槽位按需入列）
+/// 槽位白名单：固定用途槽逐一列出（reader=精读阅读会话；discuss=问 AI 与聊想法）。
+/// 步骤槽走 `step:<步骤名>` 前缀（B1）。读取侧
+/// （get_project_agent_binding）不做白名单校验，天然通用
+const PROJECT_AGENT_BINDING_SLOTS: &[&str] = &["reader", "discuss", "chat"];
+const STEP_SLOT_PREFIX: &str = "step:";
+
+/// 槽位合法性：固定槽在白名单，或 step: 前缀 + 非空步骤名
+fn valid_agent_binding_slot(slot: &str) -> bool {
+    if PROJECT_AGENT_BINDING_SLOTS.contains(&slot) {
+        return true;
+    }
+    slot.strip_prefix(STEP_SLOT_PREFIX)
+        .is_some_and(|name| !name.trim().is_empty())
+}
+
+/// 保存项目某槽位的专属 Agent 绑定（profile + model；agent 跟随 profile 所属 CLI，
+/// 不单存）。模型须在该连接名单里；不传 = 用名单第一个。清空 = profile 传 None
+/// （该槽位回落项目默认/启动栏自动链）。只保存引用，不改连接本身。
+#[tauri::command]
+pub async fn set_project_agent_binding(
+    project_root: String,
+    slot: String,
+    profile_id: Option<String>,
+    model: Option<String>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let project = PathBuf::from(crate::sessions::expand_tilde(&project_root));
+        let key = canonical_key(&project);
+        if !valid_agent_binding_slot(&slot) {
+            return Err(format!("未知绑定槽位：{slot}"));
+        }
+        let profile_id = profile_id
+            .map(|value| value.trim().to_string())
+            .filter(|id| !id.is_empty());
+        let model = if let Some(profile_id) = profile_id.as_deref() {
+            let bindings = crate::gateway_store::load_bindings()?;
+            let binding = bindings
+                .iter()
+                .find(|binding| binding.id == profile_id)
+                .ok_or("连接不存在")?;
+            accept_project_model(&binding.models, model.as_deref())?
+        } else {
+            None
+        };
+        let conn = db()?;
+        let raw: String = conn
+            .query_row(
+                "SELECT task_bindings FROM projects WHERE path=?1",
+                params![key],
+                |r| r.get(0),
+            )
+            .map_err(|_| "项目尚未注册，不能保存专属绑定".to_string())?;
+        let mut map: BTreeMap<String, ProjectAgentBinding> =
+            serde_json::from_str(&raw).unwrap_or_default();
+        match profile_id {
+            Some(profile_id) => {
+                map.insert(
+                    slot,
+                    ProjectAgentBinding {
+                        profile: profile_id,
+                        model,
+                    },
+                );
+            }
+            None => {
+                map.remove(&slot);
+            }
+        }
+        let encoded =
+            serde_json::to_string(&map).map_err(|e| format!("保存专属绑定失败: {e}"))?;
+        conn.execute(
+            "UPDATE projects SET task_bindings=?2 WHERE path=?1",
+            params![key, encoded],
+        )
+        .map_err(|e| format!("保存专属绑定失败: {e}"))?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("保存专属绑定失败: {e}"))?
+}
+
+/// 读项目某槽位的专属绑定（前端拉起前现读，不动注册表）；未绑定/未注册返回 None
+#[tauri::command]
+pub async fn get_project_agent_binding(
+    project_root: String,
+    slot: String,
+) -> Result<Option<ProjectAgentBinding>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let project = PathBuf::from(crate::sessions::expand_tilde(&project_root));
+        let key = canonical_key(&project);
+        let conn = db()?;
+        let map = project_task_bindings(&conn, &key);
+        Ok(map.into_iter().find(|(s, _)| s == &slot).map(|(_, b)| b))
+    })
+    .await
+    .map_err(|e| format!("读取专属绑定失败: {e}"))?
+}
+
 #[tauri::command]
 pub async fn remove_project(path: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -3292,11 +3448,34 @@ pub async fn read_project_config(path: String) -> ProjectConfigReadDto {
     })
 }
 
+/// 步骤名校验（write_project_config 入口；纯函数供测试）：非空 + 不重名。
+/// 重名会让 step:<名> 绑定与 Agents 页坏行归堆错乱（B1）
+fn validate_step_names(steps: &[StepDto]) -> Result<(), String> {
+    let mut seen = std::collections::BTreeSet::new();
+    for (i, step) in steps.iter().enumerate() {
+        let name = step.name.trim();
+        if name.is_empty() {
+            return Err(format!("第 {} 步还没有填写步骤名", i + 1));
+        }
+        if !seen.insert(name.to_string()) {
+            return Err(format!(
+                "步骤名重复：{name}（第 {} 步）；步骤专属绑定按步骤名匹配，重名会错乱",
+                i + 1
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn write_project_config(path: String, config: ProjectConfigDto) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let project = PathBuf::from(crate::sessions::expand_tilde(&path));
         let _guard = project_config_lock(&project)?;
+        // 步骤重名防御（B1 步骤绑定按步骤名做槽键）：编辑器保存只拦空名，
+        // 手工改名可造重名。内部模板追加路径自带去重（append 步骤重名跳过），
+        // 不走本命令
+        validate_step_names(&config.steps)?;
         write_config_at(&project, &config)
     })
     .await
@@ -3914,7 +4093,7 @@ fn seed_demo_task_card(root: &Path) -> Result<(), String> {
 /// 按 canonical 主键查注册表；未注册返回 None
 fn demo_registered(conn: &Connection, key: &str) -> Result<Option<ProjectDto>, String> {
     match conn.query_row(
-        "SELECT path, name, created_at, last_opened_at, default_agent, default_profiles, id, default_models FROM projects WHERE path=?1",
+        "SELECT path, name, created_at, last_opened_at, default_agent, default_profiles, id, default_models, task_bindings FROM projects WHERE path=?1",
         params![key],
         |r| {
             Ok(attach_work_mode(ProjectDto {
@@ -3930,6 +4109,7 @@ fn demo_registered(conn: &Connection, key: &str) -> Result<Option<ProjectDto>, S
                 )
                 .unwrap_or_default(),
                 default_models: serde_json::from_str(&r.get::<_, String>(7)?).unwrap_or_default(),
+                task_bindings: serde_json::from_str(&r.get::<_, String>(8)?).unwrap_or_default(),
             }))
         },
     ) {

@@ -14,9 +14,54 @@ export interface KickoffLaunch {
   effort?: string | null;
 }
 
+// ===== 开工项目级记忆（B1）：ccode.kickoffLast.<projectRoot> =====
+// 开工确认无条件写入，供本项目的下次开工预填与弹层折叠判定；与问 AI 的
+// ccode.askAi（AskAiModal 自管）彻底分键——此前两处写同一个键互相覆写 useDefault。
+// 只记三元组（effort 是本次覆盖不入记忆）。kickoffLast 缺失时由弹层只读回落
+// loadAskAiRemembered() 做首跑预填（不回写），保老用户肌肉记忆。
+
+export interface KickoffLastChoice {
+  agentId: string;
+  profileId: string;
+  model: string;
+}
+
+export function kickoffLastKey(projectRoot: string): string {
+  return `ccode.kickoffLast.${projectRoot}`;
+}
+
+export function loadKickoffLast(projectRoot: string): KickoffLastChoice | null {
+  try {
+    const raw = localStorage.getItem(kickoffLastKey(projectRoot));
+    if (!raw) return null;
+    const v = JSON.parse(raw) as Partial<KickoffLastChoice>;
+    if (!v || typeof v.agentId !== "string" || typeof v.profileId !== "string") {
+      return null;
+    }
+    return {
+      agentId: v.agentId,
+      profileId: v.profileId,
+      model: typeof v.model === "string" ? v.model : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function saveKickoffLast(projectRoot: string, choice: KickoffLastChoice): void {
+  try {
+    localStorage.setItem(kickoffLastKey(projectRoot), JSON.stringify(choice));
+  } catch {
+    /* 隐私模式：不记即可 */
+  }
+}
+
 export function pickKickoffLaunch(
   profiles: readonly { id: string; agent: string; models?: string[] }[],
-  remembered: AskAiRemembered | null,
+  /** 记忆三件组（问 AI 记忆或开工 kickoffLast 均可——只读 agentId/profileId/model） */
+  remembered:
+    | Pick<AskAiRemembered, "agentId" | "profileId" | "model">
+    | null,
   last?: { agentId?: string; profileId?: string; model?: string } | null,
   preferredAgent?: string | null,
   preferredProfile?: string | null,

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ContextMenu from "./ContextMenu";
 import { confirmDialog } from "./ConfirmDialog";
@@ -13,13 +13,20 @@ import {
   topicCardsForStep,
   unstartedSeeds,
 } from "../task-cards";
-import { buildTaskMdPreview } from "../pipeline-start";
-import { CONTINUE_STEP_PROMPT, isTaskMdStub, resolveTaskMdSource } from "../step-decisions";
+import { buildTaskMdPreview, buildWorkspaceTerminalRequest } from "../pipeline-start";
+import { CONTINUE_STEP_PROMPT, continueWithBriefPrompt, isTaskMdStub, resolveTaskMdSource } from "../step-decisions";
+import { workspaceCarrySource } from "../workspace-resume";
 import { filterProjectSessions } from "../project-status";
 import { pickDiscussResume } from "../step-flow";
 import { IS_WINDOWS } from "../hotkeys";
 import { AGENTS } from "../types";
-import { projectAgentLaunch } from "../project-agents";
+import {
+  projectAgentLaunch,
+  resolveStepLaunch,
+  stepSlotKey,
+  taskBindingLaunch,
+  DISCUSS_BINDING_SLOT,
+} from "../project-agents";
 import type {
   GitCommitResultDto,
   GitFileDto,
@@ -95,6 +102,7 @@ export default function TaskCardsSection({
   preferredAgent,
   preferredProfile,
   preferredModel,
+  taskBindings = null,
 }: {
   projectPath: string;
   steps: ProjectStepDto[];
@@ -146,21 +154,43 @@ export default function TaskCardsSection({
   preferredAgent?: string | null;
   preferredProfile?: string | null;
   preferredModel?: string | null;
+  /** 项目槽位专属绑定（B1 步骤槽）：聚焦步骤的商量/继续与卡片「继续」优先用 step:<名> */
+  taskBindings?: Record<string, { profile: string; model?: string | null }> | null;
 }) {
   const profiles = useAppStore((s) => s.profiles);
   const preferredAgentTrimmed = preferredAgent?.trim() ?? "";
   const preferredProfileTrimmed = preferredProfile?.trim() ?? "";
   const preferredModelTrimmed = preferredModel?.trim() ?? "";
-  const projectLaunch = projectAgentLaunch(
-    profiles,
-    preferredAgentTrimmed,
-    preferredAgentTrimmed && preferredProfileTrimmed
-      ? { [preferredAgentTrimmed]: preferredProfileTrimmed }
-      : null,
-    preferredAgentTrimmed && preferredModelTrimmed
-      ? { [preferredAgentTrimmed]: preferredModelTrimmed }
-      : null,
+  const projectLaunch = useMemo(
+    () =>
+      projectAgentLaunch(
+        profiles,
+        preferredAgentTrimmed,
+        preferredAgentTrimmed && preferredProfileTrimmed
+          ? { [preferredAgentTrimmed]: preferredProfileTrimmed }
+          : null,
+        preferredAgentTrimmed && preferredModelTrimmed
+          ? { [preferredAgentTrimmed]: preferredModelTrimmed }
+          : null,
+      ),
+    [profiles, preferredAgentTrimmed, preferredProfileTrimmed, preferredModelTrimmed],
   );
+  /** 商量层（B4）：discuss 槽 ?? 项目默认——聊想法/问 AI/任务书讨论/MCP 登录的
+   *  统一偏好（2026-10-15 用户拍板：商量类不吃步骤绑定，全项目一致）。
+   *  绑定解析与失效回落收敛在 taskBindingLaunch（绑定失联→null→回落项目默认） */
+  const discussLaunch = useMemo(
+    () =>
+      taskBindingLaunch(profiles, taskBindings?.[DISCUSS_BINDING_SLOT]) ??
+      projectLaunch,
+    [profiles, taskBindings, projectLaunch],
+  );
+  /** 步骤启动三元组（B1）：按步骤名现解析——步骤槽 ?? **discussLaunch**（B4 后中间层
+   *  是 discuss）。只喂**执行面**（卡片「继续」＝在工作树里继续做到完成标准） */
+  function stepLaunchFor(stepName: string | null | undefined) {
+    return stepName
+      ? resolveStepLaunch(profiles, taskBindings, stepName, discussLaunch)
+      : discussLaunch;
+  }
   const cards = useAppStore((s) => s.taskCards[projectPath]);
   const sessions = useAppStore((s) => s.sessions);
   const discussResumeSession = pickDiscussResume(
@@ -197,6 +227,27 @@ export default function TaskCardsSection({
     detected?.find((a) => a.id === guardAgentId)?.readonlySupported ?? true;
   const skillProvides = useSkillProvides();
   const [error, setError] = useState<string | null>(null);
+  /** 继续时上次会话是另一家 Agent：问要不要带简报。取消 = 先不开。 */
+  const [carryAsk, setCarryAsk] = useState<{
+    fromAgent: string;
+    fromSessionId: string;
+    filePath: string;
+    sessionTitle: string | null;
+    launch: { agentId: string; profileId: string; model: string };
+    ws: WorkspaceDto;
+    title: string;
+    card: TaskCardDto | null;
+  } | null>(null);
+  const [carryBusy, setCarryBusy] = useState(false);
+  const [carryError, setCarryError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!carryAsk) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !carryBusy) setCarryAsk(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [carryAsk, carryBusy]);
   const [dirtyOpen, setDirtyOpen] = useState(false);
   const [dirtyFiles, setDirtyFiles] = useState<GitFileDto[]>([]);
   const [dirtyMerging, setDirtyMerging] = useState(false);
@@ -354,10 +405,17 @@ export default function TaskCardsSection({
 
   /** 从卡片发起聊天前登记认领（claim_next_session_for_card：该项目的下一个新会话自动归卡）。
    *  cwd 一律用项目根——工作区内会话的 project_path 已被后端改写为真实仓库，认领照样命中。
+   *  登记的 agent 必须与实际拉起的一致（认领键 = agent+cwd，登记别家 agent 会认领落空）——
+   *  B1 参数化：调用方传各自语境的 launch（onContinue 传 stepLaunch，onDiscuss 暂传
+   *  projectLaunch、B4 换 discussLaunch）；开工（onStart）维持预测，spawn 时按最终值
+   *  claim_next_session_for_step 兜底。
    *  登记失败静默降级：不阻断开终端，会话事后可在对话页手动归卡 */
-  function claimForCard(card: TaskCardDto) {
+  function claimForCard(
+    card: TaskCardDto,
+    launch?: { agentId?: string } | null,
+  ) {
     invoke("claim_next_session_for_card", {
-      agent: projectLaunch?.agentId ?? launchBarAgent(),
+      agent: launch?.agentId ?? projectLaunch?.agentId ?? launchBarAgent(),
       cwd: projectPath,
       taskId: card.id,
     }).catch(() => {});
@@ -372,7 +430,7 @@ export default function TaskCardsSection({
    *  它会把「用户点头」当成在主仓直接产出的授权（实测：聊想法会话里 agent 问「要现在开 outline 吗」）。
    *  kimi 无启动注入参数：启动栏保留指令文本由用户手动发送（promptDropped 既有处理） */
   function onDiscuss(card: TaskCardDto, allowEdit = false, topic?: string) {
-    claimForCard(card);
+    claimForCard(card, discussLaunch);
     const guard = useAppStore.getState().settings?.discussReadonly !== false;
     const protect = guard && !allowEdit;
     const opening = topic
@@ -387,8 +445,8 @@ export default function TaskCardsSection({
       initialPrompt: protect
         ? `${opening}。注意：现在只讨论方案，不要修改/新建/删除任何文件，也不要在这里产出任何步骤产物（哪怕我点头）——聊到该动手的程度时，提醒我回项目页点「开工」或「跟 AI 商量一下」，那边会在独立工作区里执行。`
         : opening,
-      ...(projectLaunch ?? {}),
-      autoStart: Boolean(projectLaunch?.profileId),
+      ...(discussLaunch ?? {}),
+      autoStart: Boolean(discussLaunch?.profileId),
       surface: "terminal",
     });
     setPage("terminal");
@@ -458,26 +516,186 @@ export default function TaskCardsSection({
     }
   }
 
-  /** 继续（已绑定工作区的卡）：开终端新会话，cwd = 工作树，预填 CONTINUE_STEP_PROMPT。
-   *  kimi 无启动注入参数：启动栏保留指令文本由用户手动发送（pty_spawn promptDropped 既有处理） */
-  function onContinue(card: TaskCardDto) {
-    const ws = card.workspace
-      ? workspaces.find(
-          (w) => w.name === card.workspace && w.status === "active",
-        )
+  /** 卡片上写了 workspace 就用它；否则按卡片步骤名找这一步的活跃工作区。
+   *  建卡不写 workspace（字段预留未填），步骤开工后「继续」仍要找得到工作树。 */
+  function activeWorkspaceFor(stepName: string | null | undefined, workspaceName?: string | null) {
+    const named = workspaceName
+      ? workspaces.find((w) => w.name === workspaceName && w.status === "active")
       : undefined;
-    if (!ws) return; // 绑定工作区不存在/已归档：renderCard 不渲染「继续」，此处兜底
-    claimForCard(card);
+    if (named) return named;
+    if (!stepName) return undefined;
+    const step = steps.find((s) => s.name === stepName);
+    if (!step?.workspaceName) return undefined;
+    return workspaces.find((w) => w.name === step.workspaceName && w.status === "active");
+  }
+
+  /** 继续：工作树里新开一轮，预填 CONTINUE_STEP_PROMPT。不接回旧会话、不复用旧标签。
+   *  配置现读数据库 step:步骤名，失败再走 props（步骤槽 > discuss > 项目默认）。
+   *  kimi 无启动注入参数：启动栏保留指令文本由用户手动发送（pty_spawn promptDropped 既有处理） */
+  async function openStepContinuation(
+    stepName: string | null | undefined,
+    ws: WorkspaceDto,
+    title: string,
+    card?: TaskCardDto | null,
+  ) {
+    let launch: { agentId: string; profileId: string; model: string } | null = null;
+    if (stepName) {
+      try {
+        const b = await invoke<{ profile: string; model?: string | null } | null>(
+          "get_project_agent_binding",
+          { projectRoot: projectPath, slot: stepSlotKey(stepName) },
+        );
+        launch = taskBindingLaunch(useAppStore.getState().profiles, b);
+      } catch {
+        /* DB 读失败走 props 链 */
+      }
+    }
+    if (!launch?.profileId) launch = stepLaunchFor(stepName);
+    if (!launch?.profileId) {
+      setError("还没解析到可用连接：去 Agents 页给这一步绑一条，或确认项目默认 Agent 有连接。");
+      return;
+    }
+    try {
+      await useAppStore.getState().loadSessions();
+    } catch {
+      /* 用已加载的会话列表判断要不要问 */
+    }
+    const prior = workspaceCarrySource(
+      useAppStore.getState().sessions,
+      ws.name,
+      ws.repoPath,
+      launch.agentId,
+    );
+    if (prior) {
+      setCarryError(null);
+      setCarryAsk({
+        fromAgent: prior.agent,
+        fromSessionId: prior.sessionId,
+        filePath: prior.filePath,
+        sessionTitle: prior.title,
+        launch,
+        ws,
+        title,
+        card: card ?? null,
+      });
+      return;
+    }
+    try {
+      await launchContinuation(launch, ws, title, CONTINUE_STEP_PROMPT, card);
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
+
+  /** 新开一轮。不 resume、不复用旧标签。prompt 可以是完成标准，或先读简报再完成标准。 */
+  async function launchContinuation(
+    launch: { agentId: string; profileId: string; model: string },
+    ws: WorkspaceDto,
+    title: string,
+    prompt: string,
+    card?: TaskCardDto | null,
+  ) {
+    if (card) claimForCard(card, launch);
+    const agentLabel =
+      AGENTS.find((a) => a.id === launch.agentId)?.label ?? launch.agentId;
+    const req = await buildWorkspaceTerminalRequest(ws, prompt, {
+      autoStart: true,
+      stepLaunch: launch,
+    });
     setPendingTerminal({
-      cwd: ws.worktreePath,
-      extraEnv: {},
-      title: card.name,
-      initialPrompt: CONTINUE_STEP_PROMPT,
-      ...(projectLaunch ?? {}),
-      autoStart: Boolean(projectLaunch?.profileId),
+      cwd: req.cwd,
+      extraEnv: req.extraEnv,
+      title: `${title} · ${agentLabel}`,
+      agentId: launch.agentId,
+      profileId: launch.profileId,
+      model: launch.model,
+      initialPrompt: prompt,
+      autoStart: true,
       surface: "terminal",
     });
     setPage("terminal");
+  }
+
+  function digestReady(): boolean {
+    const settings = useAppStore.getState().settings;
+    return Boolean(
+      settings?.aiProfiles?.digest?.trim() || settings?.aiProfileId?.trim(),
+    );
+  }
+
+  function briefRel(worktreePath: string, filePath: string): string {
+    const root = worktreePath.replace(/[\\/]+$/, "").replace(/\\/g, "/");
+    const norm = filePath.replace(/\\/g, "/");
+    return norm.startsWith(`${root}/`) ? norm.slice(root.length + 1) : norm;
+  }
+
+  async function carryAndContinue() {
+    const ask = carryAsk;
+    if (!ask || carryBusy) return;
+    setCarryBusy(true);
+    setCarryError(null);
+    try {
+      const args = {
+        agent: ask.fromAgent,
+        sessionId: ask.fromSessionId,
+        filePath: ask.filePath,
+        cwd: ask.ws.worktreePath,
+        title: ask.sessionTitle,
+        targetPath: null,
+      };
+      // 配了提炼才走 AI；没配就用规则简报。配了但调用失败不悄悄降级，留在框里重试或改走不带。
+      const brief = await invoke<{ filePath: string }>(
+        digestReady() ? "build_session_digest" : "build_handoff_brief",
+        args,
+      );
+      await invoke("mark_handoff", {
+        targetAgent: ask.launch.agentId,
+        targetCwd: ask.ws.repoPath,
+        fromAgent: ask.fromAgent,
+        fromSessionId: ask.fromSessionId,
+      });
+      const prompt = continueWithBriefPrompt(briefRel(ask.ws.worktreePath, brief.filePath));
+      await launchContinuation(ask.launch, ask.ws, ask.title, prompt, ask.card);
+      setCarryAsk(null);
+    } catch (reason) {
+      setCarryError(String(reason));
+    } finally {
+      setCarryBusy(false);
+    }
+  }
+
+  async function continueWithoutCarry() {
+    const ask = carryAsk;
+    if (!ask || carryBusy) return;
+    setCarryBusy(true);
+    setCarryError(null);
+    try {
+      await launchContinuation(
+        ask.launch,
+        ask.ws,
+        ask.title,
+        CONTINUE_STEP_PROMPT,
+        ask.card,
+      );
+      setCarryAsk(null);
+    } catch (reason) {
+      setCarryError(String(reason));
+    } finally {
+      setCarryBusy(false);
+    }
+  }
+
+  function onContinue(card: TaskCardDto) {
+    const ws = activeWorkspaceFor(card.step, card.workspace);
+    if (!ws) return;
+    void openStepContinuation(card.step, ws, card.name, card);
+  }
+
+  function continueFocusedStep() {
+    if (!focusStepDto) return;
+    const ws = activeWorkspaceFor(focusStepDto.name, focusStepDto.workspaceName);
+    if (!ws) return;
+    void openStepContinuation(focusStepDto.name, ws, focusStepDto.name);
   }
 
   /** 「跟 AI 商量一下」开聊前的草稿播种（v3.90）：空/仅决策答案/仅评审沉淀的草稿
@@ -606,11 +824,7 @@ export default function TaskCardsSection({
       steps.some((s) => s.name === card.step);
     // 已绑定工作区（活跃）= 已开工：主按钮「继续」；未绑定的挂步骤卡 = 想法期：「聊想法」+「开工」；
     // 未挂步骤卡只有「聊想法」（onDiscuss 只读纯聊）
-    const boundWs = card.workspace
-      ? workspaces.find(
-          (w) => w.name === card.workspace && w.status === "active",
-        )
-      : undefined;
+    const boundWs = activeWorkspaceFor(card.step, card.workspace);
     return (
       <li key={card.id} className="group">
         <div className="flex h-7 min-w-0 items-center gap-2 rounded-sm px-1 hover:bg-hover">
@@ -832,7 +1046,14 @@ export default function TaskCardsSection({
           <StepFlow
             bare
             runId={focusRunId}
-            projectLaunch={projectLaunch}
+            projectLaunch={discussLaunch}
+            stepSlotLaunch={
+              taskBindingLaunch(
+                profiles,
+                taskBindings?.[stepSlotKey(focusStepDto.name)],
+              )
+            }
+            onContinueStep={continueFocusedStep}
             discussContent={
               // 零态且非人主导步骤：整个想法区不渲染（没有入口也没有约束对象）
               !showIdeaEntry && !ideaFormOpen ? null : (
@@ -1078,6 +1299,57 @@ export default function TaskCardsSection({
             },
           ]}
         />
+      )}
+      {carryAsk && (
+        <div
+          className="fixed inset-0 z-70 flex items-center justify-center bg-black/40 p-6"
+          onClick={() => {
+            if (!carryBusy) setCarryAsk(null);
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="continue-carry-title"
+            className="w-full max-w-[26rem] rounded-lg border border-hairline ccode-float-surface p-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="continue-carry-title" className="text-sm font-medium text-l1">
+              上次是 {AGENTS.find((a) => a.id === carryAsk.fromAgent)?.label ?? carryAsk.fromAgent}
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-l2">
+              这次用 {AGENTS.find((a) => a.id === carryAsk.launch.agentId)?.label ?? carryAsk.launch.agentId} 开新一轮。要不要把上次对话里的用户原话逐条带上？原话不改写，助手正文附在后面供核对。旧对话还留在原来那家。
+            </p>
+            {!digestReady() && (
+              <p className="mt-2 text-xs text-l4">
+                还没配提炼模型，这次用规则简报（对话尾部和改动文件），不调用 AI。
+              </p>
+            )}
+            {carryError && (
+              <p className="mt-2 text-xs text-err-text" role="alert">
+                {carryError}
+              </p>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={carryBusy}
+                onClick={() => void continueWithoutCarry()}
+                className="inline-flex h-7 items-center justify-center rounded-md border border-field bg-strip px-3 text-xs text-l2 hover:bg-inset hover:text-l1 disabled:opacity-50"
+              >
+                不带，直接开
+              </button>
+              <button
+                type="button"
+                disabled={carryBusy}
+                onClick={() => void carryAndContinue()}
+                className="inline-flex h-7 items-center justify-center rounded-md border border-cta-bd bg-cta px-3 text-xs font-medium text-cta-text hover:brightness-110 disabled:opacity-50"
+              >
+                {carryBusy ? "正在整理…" : "带上上次对话"}
+              </button>
+            </div>
+          </section>
+        </div>
       )}
     </div>
   );

@@ -37,7 +37,7 @@ import {
 } from "../work-mode";
 import type { ProjectFileFilter } from "../project-files";
 import { beginAskAi, beginProjectChat } from "./AskAiModal";
-import { projectAgentPrefs } from "../project-agents";
+import { slotPrefs, CHAT_BINDING_SLOT, DISCUSS_BINDING_SLOT } from "../project-agents";
 import {
   countTouchedSince,
   officeContinueItems,
@@ -142,6 +142,7 @@ export default function OfficeProjectView({
   onError: (msg: string) => void;
 }) {
   const sessions = useAppStore((s) => s.sessions);
+  const profiles = useAppStore((s) => s.profiles);
   const terminalRunInputs = useAppStore((s) => s.terminalRunInputs);
   const [docs, setDocs] = useState<OfficeDocDto[]>([]);
   const [filter, setFilter] = useState<ProjectFileFilter>("all");
@@ -249,7 +250,7 @@ export default function OfficeProjectView({
         root: repoPath,
         reuseKey: officeFileReuseKey(repoPath, d.rel),
         prompt,
-        ...projectAgentPrefs(project),
+        ...slotPrefs(profiles, project, DISCUSS_BINDING_SLOT),
       },
       { forcePick: !!(e?.metaKey || e?.ctrlKey) },
     );
@@ -288,7 +289,7 @@ export default function OfficeProjectView({
         cwd: repoPath,
         name,
         kind: "office",
-        ...projectAgentPrefs(project),
+        ...slotPrefs(profiles, project, CHAT_BINDING_SLOT),
       },
       { forcePick: !!(e?.metaKey || e?.ctrlKey) },
     );

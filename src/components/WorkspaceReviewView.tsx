@@ -26,6 +26,7 @@ import {
   type WritingReviewHit,
 } from "../draft-review";
 import { buildWorkspaceTerminalRequest } from "../pipeline-start";
+import { stepSlotKey, taskBindingLaunch } from "../project-agents";
 import ProjectFilePreview from "./ProjectFilePreview";
 import { REVIEW_SAVE, reviewSavePrimaryLabel } from "../review-save-copy";
 import WatchRunReview from "./WatchRunReview";
@@ -1080,6 +1081,7 @@ function LiveWorkspaceReviewView({
   // 上游漂移提醒：上游步骤晚于本步最后推进时间合并 → 产物可能过期（list_workspaces 顺带取回）
   const [staleUpstream, setStaleUpstream] = useState<string | null>(null);
   const setPage = useAppStore((s) => s.setPage);
+  const profiles = useAppStore((s) => s.profiles);
   const setPendingTerminal = useAppStore((s) => s.setPendingTerminal);
   const setSelectProjectReq = useAppStore((s) => s.setSelectProjectReq);
   const setFilePreviewReq = useAppStore((s) => s.setFilePreviewReq);
@@ -1537,11 +1539,26 @@ function LiveWorkspaceReviewView({
         worktreePath,
         content: stored,
       });
+      // B1：步骤槽绑定优先于 wsLast 预填（rewrite 新会话分支生效；resume 分支以
+      // 会话为准）。现读注册表（reader 槽同款口径），读不到按未绑定回落
+      let stepL: { agentId: string; profileId: string; model: string } | null = null;
+      const stepCtx = researchContext?.step;
+      if (stepCtx && repoPath) {
+        try {
+          const b = await invoke<{ profile: string; model?: string | null } | null>(
+            "get_project_agent_binding",
+            { projectRoot: repoPath, slot: stepSlotKey(stepCtx.name) },
+          );
+          stepL = taskBindingLaunch(profiles, b);
+        } catch {
+          /* 读不到按未绑定回落 */
+        }
+      }
       setPendingTerminal(
         await buildWorkspaceTerminalRequest(
           wsRow,
           writingReturnPrompt({ notes: stored, hits: writingHits, rewrite }),
-          { autoStart: true, resumeSession: !rewrite },
+          { autoStart: true, resumeSession: !rewrite, stepLaunch: stepL ?? undefined },
         ),
       );
       setPage("terminal");

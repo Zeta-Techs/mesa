@@ -374,6 +374,13 @@ export default function PipelineEditor({
       setError(`第 ${missing + 1} 步还没有填写步骤名`);
       return;
     }
+    // 步骤重名防御（步骤专属绑定按步骤名做键，重名会错乱；后端 write_project_config 同拦）
+    const names = drafts.map((d) => d.name.trim());
+    const dup = names.find((n, i) => names.indexOf(n) !== i);
+    if (dup) {
+      setError(`步骤名重复：${dup}；步骤专属绑定按步骤名匹配，重名会错乱`);
+      return;
+    }
     setError(null);
     try {
       onSave(drafts.map(toStep).map((s) => withResearchTools(s, tools, config.artifactDir, config.litSource, providesByName)), settingsWithResearchTools(config.settings ?? [], tools));

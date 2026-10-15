@@ -170,6 +170,8 @@ fn ensure_schema(conn: &Connection) -> Result<(), String> {
         ("adopted_paths", "TEXT NOT NULL DEFAULT '[]'"),
         ("skills", "TEXT NOT NULL DEFAULT '[]'"),
         ("project_id", "TEXT"),
+        // B2 目标级模型绑定：追加队尾（map_task 按位置索引读列，插中间会静默串列）
+        ("model", "TEXT"),
     ] {
         if !columns.iter().any(|c| c == column) {
             conn.execute(
@@ -365,6 +367,8 @@ pub struct TaskDto {
     pub archived_at: Option<String>,
     pub agent: Option<String>,
     pub profile_id: Option<String>,
+    /// 目标绑定的模型 id（B2；agent/profile 同款「只在创建时写入」）。空 = 该连接名单第一
+    pub model: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub declared: bool,
@@ -404,13 +408,14 @@ fn map_task(r: &rusqlite::Row<'_>) -> rusqlite::Result<TaskDto> {
         adopted_paths: serde_json::from_str(&r.get::<_, String>(16)?).unwrap_or_default(),
         skills: serde_json::from_str(&r.get::<_, String>(17)?).unwrap_or_default(),
         project_id: r.get(18)?,
+        model: r.get(19)?,
         pending_apply_run_id: None,
         workspace_cleared: false,
         review_cleared: false,
         storage_cleanup_pending: false,
     })
 }
-const TASK_COLS: &str = "id,project_root,kind,task_ref,name,description,status,input_paths,output_paths,review_required,archived_at,agent,profile_id,created_at,updated_at,identity_key,adopted_paths,skills,project_id";
+const TASK_COLS: &str = "id,project_root,kind,task_ref,name,description,status,input_paths,output_paths,review_required,archived_at,agent,profile_id,created_at,updated_at,identity_key,adopted_paths,skills,project_id,model";
 fn ensure_task_at(
     conn: &Connection,
     root: Option<&str>,
@@ -1409,7 +1414,59 @@ pub struct CreateTaskInput {
     pub agent: Option<String>,
     pub profile_id: Option<String>,
     #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
     pub skills: Vec<String>,
+}
+
+#[tauri::command]
+pub fn task_set_launch(
+    id: String,
+    agent: Option<String>,
+    profile_id: Option<String>,
+    model: Option<String>,
+) -> Result<TaskDto, String> {
+    let conn = db()?;
+    let task = task_by_id(&conn, &id)?;
+    if !task.declared {
+        return Err("只能改你记下的目标".into());
+    }
+    if task.kind != "free_research" && task.kind != "office_doc" {
+        return Err("只能改科研或工作目标".into());
+    }
+    if task.status == "running" {
+        return Err("目标正在跑，先停掉再改连接".into());
+    }
+    let agent = agent.unwrap_or_default();
+    let agent = agent.trim();
+    if !agent.is_empty() && crate::agent_specs::agent_spec(agent).is_none() {
+        return Err(format!("未知 Agent：{agent}"));
+    }
+    let profile = profile_id.unwrap_or_default();
+    let profile = profile.trim();
+    let model = model.unwrap_or_default();
+    let model = model.trim();
+    let agent_val = if agent.is_empty() {
+        None::<String>
+    } else {
+        Some(agent.to_string())
+    };
+    let profile_val = if profile.is_empty() {
+        None::<String>
+    } else {
+        Some(profile.to_string())
+    };
+    let model_val = if model.is_empty() {
+        None::<String>
+    } else {
+        Some(model.to_string())
+    };
+    conn.execute(
+        "UPDATE tasks SET agent=?2, profile_id=?3, model=?4, updated_at=?5 WHERE id=?1",
+        params![id, agent_val, profile_val, model_val, now_rfc3339()],
+    )
+    .map_err(|err| format!("保存目标连接失败: {err}"))?;
+    task_by_id(&conn, &id)
 }
 
 #[tauri::command]
@@ -1515,9 +1572,14 @@ pub fn task_create(input: CreateTaskInput) -> Result<TaskDto, String> {
             skills.push(name.to_string());
         }
     }
+    let model = input
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|m| !m.is_empty());
     conn.execute(
-        "INSERT INTO tasks(id,identity_key,project_root,kind,task_ref,name,description,status,input_paths,output_paths,review_required,agent,profile_id,skills,project_id,created_at,updated_at)
-         VALUES(?1,?2,?3,?4,?5,?6,?7,'pending',?8,?9,?10,?11,?12,?13,?14,?15,?15)",
+        "INSERT INTO tasks(id,identity_key,project_root,kind,task_ref,name,description,status,input_paths,output_paths,review_required,agent,profile_id,skills,project_id,created_at,updated_at,model)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,'pending',?8,?9,?10,?11,?12,?13,?14,?15,?15,?16)",
         params![
             id,
             identity,
@@ -1537,7 +1599,8 @@ pub fn task_create(input: CreateTaskInput) -> Result<TaskDto, String> {
                 .filter(|id| !id.is_empty()),
             task_json_paths(&skills)?,
             project_id,
-            now
+            now,
+            model
         ],
     )
     .map_err(|e| format!("创建 Task 失败: {e}"))?;
@@ -3639,6 +3702,50 @@ pub fn run_open_custom(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ===== B2 目标级模型 =====
+
+    /// map_task 按位置索引读列（TASK_COLS 的第 20 列）——model 追加队尾后，
+    /// agent/profile_id/model 三列必须互不串位。内存库跑真实 SELECT {TASK_COLS}
+    /// + map_task，列序错位会直接在这里炸（拿不到值或张冠李戴）
+    #[test]
+    fn task_model_round_trips_without_column_shift() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO tasks(id,identity_key,project_root,kind,task_ref,name,status,created_at,updated_at,agent,profile_id,model)
+             VALUES('t1','user:t1','/p/proj','free_research','t1','试目标','pending','now','now','claude-code','pf-1','glm-4.7')",
+            [],
+        )
+        .unwrap();
+        // 旧行无 model（ALTER 前的存量）：NULL 回落不报错
+        conn.execute(
+            "INSERT INTO tasks(id,identity_key,project_root,kind,task_ref,name,status,created_at,updated_at,agent)
+             VALUES('t2','user:t2','/p/proj','free_research','t2','旧目标','pending','now','now','codex')",
+            [],
+        )
+        .unwrap();
+        let t1: TaskDto = conn
+            .query_row(
+                &format!("SELECT {TASK_COLS} FROM tasks WHERE id='t1'"),
+                [],
+                map_task,
+            )
+            .unwrap();
+        assert_eq!(t1.agent.as_deref(), Some("claude-code"));
+        assert_eq!(t1.profile_id.as_deref(), Some("pf-1"));
+        assert_eq!(t1.model.as_deref(), Some("glm-4.7"));
+        let t2: TaskDto = conn
+            .query_row(
+                &format!("SELECT {TASK_COLS} FROM tasks WHERE id='t2'"),
+                [],
+                map_task,
+            )
+            .unwrap();
+        assert_eq!(t2.agent.as_deref(), Some("codex"));
+        assert_eq!(t2.profile_id, None);
+        assert_eq!(t2.model, None);
+    }
 
     fn journal_fixture() -> (PathBuf, PathBuf, PathBuf, Connection, GoalApplyJournal) {
         let base =

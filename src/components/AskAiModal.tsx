@@ -211,6 +211,8 @@ export default function AskAiModal() {
             permission: "write_tree",
             agent: agentId,
             profileId,
+            // B2：验收后写入的目标也带上这次选的模型（goal 表单同款三档回落）
+            model: choice.model || null,
           },
         });
         const { run, prompt } = await prepareGoalRun({

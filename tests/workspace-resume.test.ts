@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  keepWorkspaceResume,
   pickWorkspaceResume,
   shouldResumeWorkspaceSession,
+  workspaceCarrySource,
 } from "../src/workspace-resume.ts";
 import type { SessionMetaDto } from "../src/types.ts";
 
@@ -96,6 +98,63 @@ test("评审退回接回原会话，开工和按意见重写新开", () => {
   assert.equal(
     shouldResumeWorkspaceSession({ hasPrompt: true, resumeSession: false }),
     false,
+  );
+});
+
+test("去终端：步骤绑定是另一家 Agent 时不接回历史会话", () => {
+  assert.equal(
+    keepWorkspaceResume({
+      sessionAgentId: "claude-code",
+      stepAgentId: "codex",
+    }),
+    false,
+  );
+  assert.equal(
+    keepWorkspaceResume({
+      explicitResume: true,
+      sessionAgentId: "claude-code",
+      stepAgentId: "codex",
+    }),
+    true,
+  );
+  assert.equal(
+    keepWorkspaceResume({
+      sessionAgentId: "codex",
+      stepAgentId: "codex",
+    }),
+    true,
+  );
+  assert.equal(
+    keepWorkspaceResume({ sessionAgentId: "claude-code" }),
+    true,
+  );
+  assert.equal(
+    keepWorkspaceResume({ stepAgentId: "codex" }),
+    false,
+  );
+});
+
+test("换 Agent 继续：另一家的最近会话可带上，同一家或没有则不问", () => {
+  const sessions = [
+    session({ sessionId: "s-new", agent: "claude-code", filePath: "/f-new" }),
+    session({ sessionId: "s-old", agent: "codex", filePath: "/f-old" }),
+  ];
+  assert.equal(
+    workspaceCarrySource(sessions, "lit-search", "/repo", "codex")?.sessionId,
+    "s-new",
+  );
+  assert.equal(
+    workspaceCarrySource(sessions, "lit-search", "/repo", "claude-code"),
+    null,
+  );
+  assert.equal(
+    workspaceCarrySource(
+      [session({ live: true, agent: "claude-code" })],
+      "lit-search",
+      "/repo",
+      "codex",
+    ),
+    null,
   );
 });
 

@@ -28,12 +28,19 @@ import {
   summarizeIntakeBridge,
 } from "../kickoff-dirty-gate";
 import { userDirtyFiles } from "../git-status-groups";
-import { loadAskAiRemembered, saveAskAiRemembered } from "../ask-ai";
+import { loadAskAiRemembered } from "../ask-ai";
 import {
   kickoffLaunchLabel,
+  loadKickoffLast,
   pickKickoffLaunch,
+  saveKickoffLast,
   type KickoffLaunch,
 } from "../kickoff-launch";
+import {
+  stepSlotKey,
+  taskBindingLaunch,
+  type ProjectAgentBinding,
+} from "../project-agents";
 import {
   accumulationChip,
   expectedDeliverNames,
@@ -48,7 +55,11 @@ import {
   taskMdEditorReduce,
   type TaskMdEditorState,
 } from "../task-cards";
-import { gatherTaskMdExtras, renderTaskMd, type IntakeBridgeDecision } from "../pipeline-start";
+import {
+  gatherTaskMdExtras,
+  renderTaskMd,
+  type IntakeBridgeDecision,
+} from "../pipeline-start";
 import { decisionGate, isTaskMdStub, resolveTaskMdSource } from "../step-decisions";
 import { RESOURCE_TYPE_LABELS } from "../pipeline-presets";
 import type {
@@ -86,6 +97,7 @@ export default function KickoffConfirmDialog({
   projectPath,
   step,
   cfg,
+  taskBindings,
   preferredAgent,
   preferredProfile,
   preferredModel,
@@ -97,6 +109,8 @@ export default function KickoffConfirmDialog({
   projectPath: string;
   step: ProjectStepDto;
   cfg: ProjectConfigDto;
+  /** 项目槽位专属绑定（projects 表 taskBindings；本弹层消费 step:<步骤名> 槽做预选） */
+  taskBindings?: Record<string, ProjectAgentBinding> | null;
   /** 项目级默认 Agent；单次开工仍可在弹层里改选 */
   preferredAgent?: string | null;
   /** 项目级默认 profile；仅在与默认 Agent 匹配时生效 */
@@ -244,17 +258,32 @@ export default function KickoffConfirmDialog({
     () => new Set(agents.filter((a) => a.binaryPath).map((a) => a.id)),
     [agents],
   );
+  // 步骤槽绑定（B1）：显式绑定的三元组作弹层预选来源（弹层内可见选择即最终
+  // 启动值；绑定模型不在名单时按弹层自身链回落，预选失效≠启动错误）
+  const stepBinding = useMemo(
+    () => taskBindingLaunch(profiles, taskBindings?.[stepSlotKey(step.name)]),
+    [profiles, taskBindings, step.name],
+  );
+  // 开工记忆：项目级 kickoffLast（本弹层每次确认无条件写）；缺失时只读回落
+  // 问 AI 记忆（useDefault 勾过的）做首跑预填——不回写，保老用户肌肉记忆
+  const kickoffMemory = useMemo(() => {
+    const last = loadKickoffLast(projectPath);
+    if (last) return { agentId: last.agentId, profileId: last.profileId, model: last.model };
+    // 不过滤 useDefault：旧开工弹层自己写的记忆（可能没勾「设为默认」）也预填——
+    // 设计口径「kickoffLast 缺失时只读回落 loadAskAiRemembered() 做首跑预填」
+    return remembered;
+  }, [projectPath, remembered]);
   const picked = useMemo(
     () =>
       pickKickoffLaunch(
         profiles,
-        remembered,
+        kickoffMemory,
         null,
-        preferredAgent,
-        preferredProfile,
-        preferredModel,
+        stepBinding?.agentId ?? preferredAgent,
+        stepBinding?.profileId ?? preferredProfile,
+        stepBinding?.model ?? preferredModel,
       ),
-    [profiles, remembered, preferredAgent, preferredProfile, preferredModel],
+    [profiles, kickoffMemory, stepBinding, preferredAgent, preferredProfile, preferredModel],
   );
   const [agentId, setAgentId] = useState(
     () => picked?.agentId ?? "claude-code",
@@ -262,21 +291,19 @@ export default function KickoffConfirmDialog({
   const agentProfiles = profiles.filter((p) => p.agent === agentId);
   const [profileId, setProfileId] = useState(() => picked?.profileId ?? "");
   const [model, setModel] = useState(() => picked?.model ?? "");
-  const [useDefault, setUseDefault] = useState(
-    () => remembered?.useDefault ?? false,
-  );
   const [editingLaunch, setEditingLaunch] = useState(
-    () => !preferredAgent && !remembered?.useDefault,
+    // 任一预填源在（步骤绑定 / 项目默认 / 开工记忆）即折叠成一行 launchLine
+    () => !(stepBinding || preferredAgent || kickoffMemory),
   );
 
   useEffect(() => {
     const next = pickKickoffLaunch(
       profiles,
-      loadAskAiRemembered(),
+      kickoffMemory,
       null,
-      preferredAgent,
-      preferredProfile,
-      preferredModel,
+      stepBinding?.agentId ?? preferredAgent,
+      stepBinding?.profileId ?? preferredProfile,
+      stepBinding?.model ?? preferredModel,
     );
     if (!next) {
       setProfileId("");
@@ -285,7 +312,9 @@ export default function KickoffConfirmDialog({
     setAgentId(next.agentId);
     setProfileId(next.profileId);
     setModel(next.model);
-  }, [profiles, preferredAgent, preferredProfile, preferredModel]);
+    // 依赖补 stepBinding：绑定随 taskBindings 异步到位时重置预选（终检钉住的点）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profiles, preferredAgent, preferredProfile, preferredModel, stepBinding, kickoffMemory]);
 
   useEffect(() => {
     if (!agentProfiles.some((p) => p.id === profileId))
@@ -354,6 +383,25 @@ export default function KickoffConfirmDialog({
   const launchLine = kickoffLaunchLabel(launch, profiles, (id) =>
     AGENTS.find((a) => a.id === id)?.label ?? id,
   );
+  // 「存为本步骤默认」两态（B1）：勾=确认时写 step 槽；不勾=槽原样不动（清槽去
+  // Agents 页步骤组）。初值 = 槽存在 && 当前预选==槽值；展开改选偏离槽值时自动
+  // 摘勾（改一次选择≠想改默认，要覆盖须再勾一次）
+  const selectionMatchesSlot =
+    !!stepBinding &&
+    launch?.agentId === stepBinding.agentId &&
+    launch?.profileId === stepBinding.profileId &&
+    launch?.model === stepBinding.model;
+  const [saveStepDefault, setSaveStepDefault] = useState(selectionMatchesSlot);
+  useEffect(() => {
+    if (!selectionMatchesSlot) setSaveStepDefault(false);
+  }, [selectionMatchesSlot]);
+  const slotLine = stepBinding
+    ? kickoffLaunchLabel(
+        { ...stepBinding, effort: null },
+        profiles,
+        (id) => AGENTS.find((a) => a.id === id)?.label ?? id,
+      )
+    : null;
 
   // 打开时一次性加载：提货单/技能元数据 + 主仓状态 + 技能库 + 未登记资源 + 任务书草稿 + 旧版简报；不轮询
   useEffect(() => {
@@ -653,6 +701,10 @@ export default function KickoffConfirmDialog({
         intakeHits.filter((h) => h.kind === "ledger").length,
       )
     : "";
+  const intakeDecision: IntakeBridgeDecision | undefined =
+    intakeHits.length > 0
+      ? { accepted: intakeChecked, paths: intakeHits.map((h) => h.path) }
+      : undefined;
   const rootDir = projectPath.replace(/[\\/]+$/, "");
   const accChip = useMemo(
     () => accumulationChip(accCount, `${rootDir}/papers/reading-list.md`),
@@ -692,6 +744,30 @@ export default function KickoffConfirmDialog({
     } finally {
       setDirtySaving(false);
     }
+  }
+  /** 确认开工的统一收口（B1 记忆拆键）：
+   *  ① 无条件写项目级开工记忆 kickoffLast（下次开工预填/折叠判定）；
+   *  ② 勾「存为本步骤默认」才写 step 槽——不勾槽原样不动（临时换一次不毁绑定）；
+   *  ③ 不再写全局问 AI 记忆（那是 AskAiModal 自管的键）。
+   *  把接驳决定随第四参交回调用方（无命中传 undefined；透传给 startPipelineStep） */
+  function confirmKickoff() {
+    if (launch) {
+      saveKickoffLast(projectPath, {
+        agentId: launch.agentId,
+        profileId: launch.profileId,
+        model: launch.model,
+      });
+      if (saveStepDefault) {
+        // 失败不拦开工（fire-and-forget）：槽写不进只是没记住默认，开工照常
+        void invoke("set_project_agent_binding", {
+          projectRoot: projectPath,
+          slot: stepSlotKey(step.name),
+          profileId: launch.profileId,
+          model: launch.model || null,
+        }).catch(() => {});
+      }
+    }
+    onConfirm(editor.text, launch, gate.needsAck && !needsDecisionAck, intakeDecision);
   }
   return (
     <div
@@ -783,7 +859,9 @@ export default function KickoffConfirmDialog({
         )}
 
         {staleTools && <p role="alert" className="my-2 text-xs text-warn-text">旧任务书的工具合同与当前选择不同。请展开 TASK.md 对照，或「恢复默认拼装」后重新确认；未覆盖你的草稿。</p>}
-        {launch && stepNow.skills.length > 0 && <ResearchToolPreflight key={`${stepNow.name}:${stepNow.skills.join(",")}:${launch.agentId}`} projectRoot={projectPath} stepName={stepNow.name} agent={launch.agentId} onBlocked={setToolsBlocked} />}
+        {/* 技能预检跟随弹层当前选的 agentId（不依赖 launch——无连接时也展示，
+            切换 Agent 后重查；key 含 agentId 使组件重挂刷新检查结果） */}
+        {stepNow.skills.length > 0 && <ResearchToolPreflight key={`${stepNow.name}:${stepNow.skills.join(",")}:${agentId}`} projectRoot={projectPath} stepName={stepNow.name} agent={agentId} onBlocked={setToolsBlocked} />}
         {(stepNow.decisions?.length ?? 0) > 0 && <>
           <UpstreamResearchAcceptance projectRoot={projectPath} stepName={stepNow.name} decisions={stepNow.decisions ?? []} text={editor.text} evidenceRevision={evidenceRevision} onChange={(text) => dispatchEditor({ type: "edit", text })} />
           <ResearchEvidencePanel key={`${projectPath}:${stepNow.workspaceName}`} root={projectPath} patterns={researchReportPatterns(stepNow, "decision")} kind="decision"
@@ -812,6 +890,14 @@ export default function KickoffConfirmDialog({
             <span className="min-w-0 truncate" title={launchLine}>
               {launchLine}
             </span>
+            {selectionMatchesSlot && (
+              <span
+                className="shrink-0 text-micro text-l4"
+                title="本步骤已存专属默认（Agents → 专属绑定可改可清）"
+              >
+                · 本步骤默认
+              </span>
+            )}
             <button
               type="button"
               className="shrink-0 text-micro text-l4 hover:text-l1"
@@ -885,10 +971,16 @@ export default function KickoffConfirmDialog({
             </div>
             <Checkbox
               className="mt-2 text-micro text-l3"
-              checked={useDefault}
-              onChange={setUseDefault}
-              label="记住这次选择"
+              checked={saveStepDefault}
+              onChange={setSaveStepDefault}
+              label="存为本步骤默认（下次开工直接用它）"
             />
+            {stepBinding && !selectionMatchesSlot && slotLine && (
+              // 披露（终检钉住）：已有绑定且本次选择偏离时明说，防止「被顶掉」的无知感
+              <p className="mt-1 truncate text-micro text-l4" title={`${slotLine}；本次 ${launchLine}`}>
+                已存默认 {slotLine}；本次用 {launchLine}（不勾即不改默认）
+              </p>
+            )}
           </div>
         )}
 
@@ -1210,22 +1302,11 @@ export default function KickoffConfirmDialog({
               }
               if (dirtyHits.length > 0) {
                 void saveDirtyHits().then((saved) => {
-                  if (!saved) return;
-                  if (launch && useDefault) {
-                    saveAskAiRemembered({ ...launch, useDefault: true });
-                  } else if (launch) {
-                    saveAskAiRemembered({ ...launch, useDefault });
-                  }
-                  onConfirm(editor.text, launch, gate.needsAck && !needsDecisionAck);
+                  if (saved) confirmKickoff();
                 });
                 return;
               }
-              if (launch && useDefault) {
-                saveAskAiRemembered({ ...launch, useDefault: true });
-              } else if (launch) {
-                saveAskAiRemembered({ ...launch, useDefault });
-              }
-              onConfirm(editor.text, launch, gate.needsAck && !needsDecisionAck);
+              confirmKickoff();
             }}
             className={primaryActionClass}
           >

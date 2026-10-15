@@ -1183,6 +1183,9 @@ export interface ProjectDto {
   defaultProfiles?: Record<string, string>;
   /** Agent id → 本项目在该默认连接里选用的模型。空 = 用连接名单的第一个。 */
   defaultModels?: Record<string, string>;
+  /** 槽位 → 专属绑定（固定用途单独指一条连接+模型，agent 跟随连接；键见
+   *  project-agents.ts READER_BINDING_SLOT 等，与后端 PROJECT_AGENT_BINDING_SLOTS 同源） */
+  taskBindings?: Record<string, { profile: string; model?: string | null }>;
 }
 
 /** 档案卡 .ccode/project.toml 的资源条目 */
@@ -1623,6 +1626,8 @@ export interface TaskDto {
   archivedAt: string | null;
   agent: string | null;
   profileId: string | null;
+  /** 目标绑定的模型（B2；空 = 该连接名单第一） */
+  model?: string | null;
   createdAt: string;
   updatedAt: string;
   /** 人在「新建任务」里声明的步骤。会话/开步自动登记的为 false。 */
@@ -1773,6 +1778,8 @@ export interface ScheduleDto {
   skill: string;
   /** null = 每次运行现解析（设置页 AI 专用 profile → 最近使用） */
   profileId: string | null;
+  /** 任务钉住的模型（B3）：在所选连接名单内生效；null = 名单第一 */
+  model?: string | null;
   /** "daily" | "weekly" */
   frequency: string;
   /** weekly 时 1-7（周一=1）；daily 忽略 */
@@ -1793,6 +1800,8 @@ export interface CreateScheduleInput {
   projectRoot: string;
   skill?: string;
   profileId?: string | null;
+  /** 任务钉住的模型；空 = 名单第一 */
+  model?: string | null;
   frequency: string;
   weekday?: number | null;
   hour: number;
@@ -1801,7 +1810,8 @@ export interface CreateScheduleInput {
   linkedStep?: string | null;
 }
 
-/** 更新补丁：字段全可选（不传 = 不改）；profileId/linkedStep 显式传 null = 清掉回到未指定 */
+/** 更新补丁：字段全可选（不传 = 不改）。profileId 清掉必须传**空串**——后端 Option<Option>
+ *  语义下显式 null 与缺失同为「不改」（scheduler.rs 测试钉死），发 null 的清除会静默失效 */
 export interface UpdateSchedulePatch {
   name?: string;
   skill?: string;
@@ -1841,6 +1851,8 @@ export interface SchedulerRunDonePayload {
   newEntries?: number | null;
   status: string;
   summary: string;
+  /** 本次运行改动过的文件（changed_artifacts，相对项目根） */
+  artifacts?: string[];
 }
 
 /** 应用数据占用（设置页「数据与存储」） */

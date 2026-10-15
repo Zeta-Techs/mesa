@@ -69,6 +69,10 @@ async function renderView(options: {
       invoke: async (command: string, args: unknown) => {
         calls.push({ command, args });
         if (command === "task_list") return options.tasks ?? [];
+        // B1 流程步骤组：挂载读一次步骤清单（组件 catch 降级，这里正常回）
+        if (command === "read_project_config") {
+          return { config: { steps: options.pipelineSteps ?? [] }, warnings: [] };
+        }
         if (["set_project_default_agent", "set_project_default_profile"].includes(command)) {
           await options.write?.(command);
           return;
@@ -93,6 +97,8 @@ async function renderView(options: {
     onError: (message: string) => errors.push(message),
     onOpenGoals: () => { openGoals++; },
   })));
+  // 挂载期的 read_project_config 不算交互：清零后既有断言（展示不写配置等）语义不变
+  calls.length = 0;
   const button = (label: string) => {
     const found = Array.from(host.querySelectorAll("button")).find((item) =>
       (item.getAttribute("aria-label") ?? item.textContent?.trim()) === label,

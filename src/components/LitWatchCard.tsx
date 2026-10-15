@@ -1287,7 +1287,7 @@ export default function LitWatchCard({
     }
   }
 
-  /** ◈ 解读：快筛五节；已落盘的直接展开。ai_prompt 不传功能键（走自动回落链）。 */
+  /** ◈ 解读：快筛五节；已落盘的直接展开。ai_prompt 传功能键 watch-explain（设置页「雷达解读」行可配专属连接+模型，未配走自动回落链）。 */
   async function explain(entry: WatchEntryDto) {
     setExplainOpen((cur) => new Set(cur).add(entry.id));
     setExplains((cur) => ({ ...cur, [entry.id]: { status: "loading" } }));
@@ -1295,7 +1295,7 @@ export default function LitWatchCard({
     try {
       const text = (await invoke<string>("ai_prompt", {
         profileId: null,
-        fnKey: null,
+        fnKey: "watch-explain",
         prompt,
       })).trim();
       if (!text) throw new Error("AI 返回为空");

@@ -83,6 +83,7 @@ export const SETTINGS_SEARCH_INDEX: readonly SettingsSearchEntry[] = [
       "集成", "外部终端", "终端应用", "iTerm", "Ghostty", "PowerShell", "cmd",
       "AI 配置", "AI 专用", "镜像", "brew", "Homebrew", "CLI",
       "自动命名", "起名", "命名", "会话标题", "改标题", "标题",
+      "翻译",
       "integration", "terminal",
     ],
   },

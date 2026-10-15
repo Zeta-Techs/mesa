@@ -92,6 +92,12 @@ import WorkspaceReviewView from "../components/WorkspaceReviewView";
 import ReaderOverlay from "../components/ReaderOverlay";
 import { renderTaskMd } from "../pipeline-start";
 import { formatPdfExcerptPrompt, readerReuseKey } from "../reader";
+import {
+  READER_BINDING_SLOT,
+  stepSlotKey,
+  taskBindingLaunch,
+  workspaceLaunchChain,
+} from "../project-agents";
 import { defaultCommitMessage } from "../git-commit-message";
 import { skipDisconnectedOfficial } from "../resume-profile";
 import {
@@ -489,6 +495,7 @@ const TerminalView = memo(function TerminalView({
   reuseKey,
   initialRunId,
   taskId,
+  launchSeed = 0,
   externalCwd,
   onConsumeExternalCwd,
   onStatus,
@@ -562,6 +569,9 @@ const TerminalView = memo(function TerminalView({
   initialRunId?: string;
   /** 新建 Task 后预创建的 Run 所属 Task */
   taskId?: string;
+  /** 父级要求把启动栏改成 initialAgent/Profile/Model（去终端看看：闲置标签换上步骤绑定）。
+   *  只在未运行时生效，不打断正在跑的会话。 */
+  launchSeed?: number;
   /** 最近项目「真进入」：把目标目录注入活动标签的启动栏（TerminalView 消费后清空） */
   externalCwd?: string | null;
   onConsumeExternalCwd?: () => void;
@@ -832,6 +842,16 @@ const TerminalView = memo(function TerminalView({
   const forkPromptRef = useRef(presetPrompt ?? "");
   const [showPrompt, setShowPrompt] = useState(!!presetPrompt);
   const [running, setRunning] = useState(false); // agent 正在运行
+  // 去终端看看命中已有闲置标签：把启动栏改成这次解析出的 Agent/连接/模型。
+  // 跑着的会话不改（活会话仍是原 Agent）。
+  const appliedLaunchSeed = useRef(0);
+  useEffect(() => {
+    if (!launchSeed || launchSeed === appliedLaunchSeed.current || running) return;
+    appliedLaunchSeed.current = launchSeed;
+    if (initialAgentId) setAgentId(initialAgentId);
+    if (initialProfileId) setProfileId(initialProfileId);
+    setModel(initialModel ?? "");
+  }, [launchSeed, initialAgentId, initialProfileId, initialModel, running]);
   const [shellActive, setShellActive] = useState(false); // 当前接的是 shell
   const [exited, setExited] = useState(false);
   /** 最后一次子进程退出的码；后端 pty-exit 事件的 payload。null＝从未退出过。 */
@@ -4774,6 +4794,8 @@ interface Tab {
   stepName?: string;
   runId?: string;
   taskId?: string;
+  /** 递增则把已挂载标签的启动栏改成 initialAgent/Profile/Model（见 TerminalView） */
+  launchSeed?: number;
 }
 
 export default function TerminalPage({ visible }: { visible: boolean }) {
@@ -6018,23 +6040,30 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         const kick = pt.resume
           ? shouldRelaunchResumeTab(st)
           : Boolean(pt.autoStart && st && !st.running);
-        if (kick) {
+        // 闲置标签把启动栏改成这次交接的配置（步骤绑定或接回的原会话）。
+        // 正在跑的不改，活会话仍是原来那家 Agent。
+        const reseed = !st?.running && Boolean(launchAgentId || profileId);
+        if (kick || reseed) {
           setTabs((prev) =>
-            prev.map((t) =>
-              t.id === existing.id
-                ? {
-                    ...t,
-                    resumeKick: (t.resumeKick ?? 0) + 1,
-                    ...(pt.resume
-                      ? {
-                          resumeSessionId: pt.resume.sessionId,
-                          resumeProvider: pt.resume.provider ?? undefined,
-                          initialAgentId: pt.resume.agentId,
-                        }
-                      : {}),
-                  }
-                : t,
-            ),
+            prev.map((t) => {
+              if (t.id !== existing.id) return t;
+              return {
+                ...t,
+                ...(kick ? { resumeKick: (t.resumeKick ?? 0) + 1 } : {}),
+                ...(reseed
+                  ? {
+                      initialAgentId: launchAgentId ?? t.initialAgentId,
+                      initialProfileId: profileId || t.initialProfileId,
+                      initialModel: model ?? t.initialModel,
+                      launchSeed: (t.launchSeed ?? 0) + 1,
+                      resumeSessionId: pt.resume ? pt.resume.sessionId : undefined,
+                      resumeProvider: pt.resume
+                        ? (pt.resume.provider ?? undefined)
+                        : undefined,
+                    }
+                  : {}),
+              };
+            }),
           );
         }
       };
@@ -6240,10 +6269,38 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     if (!reader) readerTriedRef.current = null;
   }, [reader]);
 
-  /** 阅读会话的启动配置：agent 跟随启动栏上次选择；profile 按既有解析顺序
+  /** 阅读会话的启动配置：项目 Agents「专属绑定 · 沉浸阅读对话」优先（现读注册表；
+      agent 跟随绑定连接所属 CLI，停用项照常尊重——显式绑定；连接被删/读失败按
+      未绑定回落自动链）；否则 agent 跟随启动栏上次选择，profile 按既有解析顺序
       （显式默认 settings.defaultProfiles > 上次使用 > 首个可见 > 首个，与启动栏一致） */
-  function resolveReaderLaunch(): { agentId: string; profileId: string } {
+  async function resolveReaderLaunch(projectRoot: string): Promise<{
+    agentId: string;
+    profileId: string;
+    model: string | null;
+  }> {
     const st = useAppStore.getState();
+    let research = true;
+    try {
+      const read = await invoke<{ config: { workMode?: string | null } }>(
+        "read_project_config",
+        { path: projectRoot },
+      );
+      research = normalizeWorkMode(read.config.workMode) === "research";
+    } catch {
+      /* 读不到工作方式时仍尝试槽位，避免科研项目开不了阅读区 */
+    }
+    if (research) {
+      try {
+        const binding = await invoke<{ profile: string; model?: string | null } | null>(
+          "get_project_agent_binding",
+          { projectRoot, slot: READER_BINDING_SLOT },
+        );
+        const bound = taskBindingLaunch(st.profiles, binding);
+        if (bound) return bound;
+      } catch {
+        /* 读不到按未绑定回落自动链，不让阅读区因注册表读取失败开不了会话 */
+      }
+    }
     let agentId = "claude-code";
     try {
       const saved = JSON.parse(
@@ -6279,16 +6336,18 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         visibleProfiles[0]?.id ??
         st.profiles.find((p) => p.agent === agentId)?.id ??
         "",
+      model: null,
     };
   }
 
-  /** 派一个阅读会话标签（项目根 + 默认配置 + autoStart + reuseKey，快速开聊同款机制）；
-      返回 false = 无可用配置（Agent 栏显示引导卡） */
-  function dispatchReaderSession(r: {
+  /** 派一个阅读会话标签（项目根 + 专属绑定/默认配置 + autoStart + reuseKey，快速开聊
+      同款机制）；返回 false = 无可用配置（Agent 栏显示引导卡）。绑定要现读注册表，
+      异步——由 effect 侧接住 */
+  async function dispatchReaderSession(r: {
     pdfPath: string;
     projectRoot: string;
-  }): boolean {
-    const launch = resolveReaderLaunch();
+  }): Promise<boolean> {
+    const launch = await resolveReaderLaunch(r.projectRoot);
     if (!launch.profileId) return false;
     setPendingTerminal({
       cwd: r.projectRoot,
@@ -6296,6 +6355,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       title: `阅读 · ${basename(r.pdfPath).replace(/\.pdf$/i, "")}`,
       agentId: launch.agentId,
       profileId: launch.profileId,
+      ...(launch.model ? { model: launch.model } : {}),
       autoStart: true,
       reuseKey: readerReuseKey(r.projectRoot),
     });
@@ -6310,10 +6370,17 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       return;
     }
     if (readerTriedRef.current === readerKey) return;
-    const ok = dispatchReaderSession(reader);
-    // 无配置不记一次性标记：配置页加好配置后 profiles 变化会自然重试
-    readerTriedRef.current = ok ? readerKey : null;
-    setReaderNeedsProfile(!ok);
+    let cancelled = false;
+    void (async () => {
+      const ok = await dispatchReaderSession(reader);
+      if (cancelled) return;
+      // 无配置不记一次性标记：配置页加好配置后 profiles 变化会自然重试
+      readerTriedRef.current = ok ? readerKey : null;
+      setReaderNeedsProfile(!ok);
+    })();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, reader, readerKey, readerTabId, profiles, readerAgentTick]);
 
@@ -6567,13 +6634,30 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           return {};
         }
       })();
+      // B1：整理笔记是步骤工作区启动——步骤槽绑定优先于 wsLast（workspaceLaunchChain
+      // 与 buildWorkspaceTerminalRequest 同一纯链，免两处顺序漂移）；绑定现读，
+      // 读不到按未绑定走 wsLast 现状
+      let stepL: { agentId: string; profileId: string; model: string } | null = null;
+      try {
+        const b = await invoke<{ profile: string; model?: string | null } | null>(
+          "get_project_agent_binding",
+          {
+            projectRoot: owner.path,
+            slot: stepSlotKey((step ?? cfg.steps[1]).name),
+          },
+        );
+        stepL = taskBindingLaunch(useAppStore.getState().profiles, b);
+      } catch {
+        /* 读不到按未绑定回落 */
+      }
+      const chain = workspaceLaunchChain(null, stepL, last);
       setPendingTerminal({
         cwd: ws.worktreePath,
         extraEnv: Object.fromEntries(pairs),
         title: ws.name,
-        agentId: last.agentId,
-        profileId: last.profileId,
-        model: last.model,
+        agentId: chain.agentId,
+        profileId: chain.profileId,
+        model: chain.model,
         initialPrompt: ORGANIZE_NOTES_PROMPT,
       });
       return {
@@ -7425,6 +7509,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                 reuseKey={t.reuseKey}
                 initialRunId={t.runId}
                 taskId={t.taskId}
+                launchSeed={t.launchSeed}
                 externalCwd={t.id === focusedId ? enterCwd : null}
                 onConsumeExternalCwd={consumeExternalCwd}
                 onStatus={reportStatus}

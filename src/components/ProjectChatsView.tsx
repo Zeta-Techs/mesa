@@ -5,7 +5,7 @@ import { agentBrandBadgeStyle } from "../agent-colors";
 import { beginProjectChat } from "./AskAiModal";
 import ConversationView from "./ConversationView";
 import { resumeSessionInTerminal } from "./QuickChatModal";
-import { projectAgentPrefs, projectBoundProfileId } from "../project-agents";
+import { projectBoundProfileId, slotPrefs, CHAT_BINDING_SLOT } from "../project-agents";
 import {
   compactFieldClass,
   compactPrimaryActionClass,
@@ -50,6 +50,7 @@ export default function ProjectChatsView({
   onError?: (msg: string) => void;
 }) {
   const sessions = useAppStore((s) => s.sessions);
+  const profiles = useAppStore((s) => s.profiles);
   const loadSessions = useAppStore((s) => s.loadSessions);
   const setPage = useAppStore((s) => s.setPage);
   const setOpenSessionReq = useAppStore((s) => s.setOpenSessionReq);
@@ -146,7 +147,7 @@ export default function ProjectChatsView({
         cwd: project.path,
         name: project.name,
         kind: kind === "coding" || kind === "office" ? kind : "research",
-        ...projectAgentPrefs(project),
+        ...slotPrefs(profiles, project, CHAT_BINDING_SLOT),
       },
       { forcePick: e.metaKey || e.ctrlKey },
     );
@@ -247,11 +248,13 @@ export default function ProjectChatsView({
   }
 
   function resumeInProject(s: SessionMetaDto) {
+    const chat = slotPrefs(profiles, project, CHAT_BINDING_SLOT);
+    const fromChat =
+      chat.preferredAgent === s.agent ? chat.preferredProfile : undefined;
     resumeSessionInTerminal(s, {
-      preferredProfileId: projectBoundProfileId(
-        project.defaultProfiles,
-        s.agent,
-      ),
+      preferredProfileId:
+        fromChat ||
+        projectBoundProfileId(project.defaultProfiles, s.agent),
     });
   }
 

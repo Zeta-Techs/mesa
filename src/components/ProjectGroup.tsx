@@ -44,7 +44,12 @@ import { demoReadPaperResource } from "../step-flow";
 import { useSkillProvides } from "../skill-slots.ts";
 import { normSep } from "../path-utils";
 import { beginAskAi } from "./AskAiModal";
-import { projectAgentPrefs, projectNeedsDefaultAgent } from "../project-agents";
+import {
+  projectAgentPrefs,
+  projectNeedsDefaultAgent,
+  slotPrefs,
+  DISCUSS_BINDING_SLOT,
+} from "../project-agents";
 import {
   runIdForPath,
   workspaceHasLiveAgent,
@@ -722,10 +727,11 @@ export default function ProjectGroup({
       }
       return;
     }
-    // 已有步骤时视为「更换模板」：提示覆盖，绑定的工作区与资源不受影响
+    // 已有步骤时视为「更换模板」：提示覆盖，绑定的工作区与资源不受影响；
+    // 步骤专属绑定按步骤名匹配，步骤被换可能失效或转移到同名新步骤（B1）
     if (
       !(await confirmDialog(
-        `更换模板「${item.name}」？现有 ${cfg.steps.length} 个步骤会被替换，绑定的工作区与资源不受影响。继续？`,
+        `更换模板「${item.name}」？现有 ${cfg.steps.length} 个步骤会被替换，绑定的工作区与资源不受影响；步骤专属绑定按步骤名匹配，可能失效或转移。继续？`,
         { danger: true },
       ))
     )
@@ -1242,7 +1248,7 @@ export default function ProjectGroup({
         cwd: projectPath,
         root: projectPath,
         reuseKey: `lit:${projectPath}:${r.path.replace(/\\/g, "/")}`,
-        ...projectAgentPrefs(project),
+        ...slotPrefs(profiles, project, DISCUSS_BINDING_SLOT),
       },
       { forcePick: !!(e?.metaKey || e?.ctrlKey) },
     );
@@ -1896,6 +1902,7 @@ export default function ProjectGroup({
         <TaskCardsSection
           projectPath={projectPath}
           {...projectAgentPrefs(project)}
+          taskBindings={project.taskBindings ?? null}
           steps={cfg.steps}
           cfg={cfg}
           workspaces={workspaces}
@@ -2473,6 +2480,7 @@ export default function ProjectGroup({
           projectPath={project.path}
           step={cfg.steps[kickoff.index]}
           cfg={cfg}
+          taskBindings={project.taskBindings ?? null}
           {...projectAgentPrefs(project)}
           originCardId={kickoff.originCardId}
           busy={starting !== null}

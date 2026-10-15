@@ -4,6 +4,9 @@ import {
   codingTerminalLaunch,
   kickoffLaunchLabel,
   pickKickoffLaunch,
+  kickoffLastKey,
+  loadKickoffLast,
+  saveKickoffLast,
 } from "../src/kickoff-launch.ts";
 import {
   expectedDeliverLine,
@@ -233,4 +236,32 @@ test("expectedDeliverLine：列出本步产物短名", () => {
     "本步要交：notes/、references.bib",
   );
   assert.equal(expectedDeliverLine([]), "按任务书交付本步产物");
+});
+
+test("kickoffLast：项目级开工记忆往返与坏值回落（B1 与问 AI 记忆分键）", () => {
+  // Node 测试无 localStorage：内存桩（reader.test 同款）
+  const store = new Map<string, string>();
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+      clear: () => void store.clear(),
+    },
+  });
+  localStorage.clear();
+  assert.equal(loadKickoffLast("/p/proj"), null);
+  saveKickoffLast("/p/proj", { agentId: "claude-code", profileId: "pf", model: "m" });
+  assert.equal(kickoffLastKey("/p/proj"), "ccode.kickoffLast./p/proj");
+  assert.deepEqual(loadKickoffLast("/p/proj"), {
+    agentId: "claude-code",
+    profileId: "pf",
+    model: "m",
+  });
+  // 坏 JSON / 缺字段按 null（不抛）
+  localStorage.setItem("ccode.kickoffLast./p/bad", "{oops");
+  assert.equal(loadKickoffLast("/p/bad"), null);
+  localStorage.setItem("ccode.kickoffLast./p/half", JSON.stringify({ agentId: "a" }));
+  assert.equal(loadKickoffLast("/p/half"), null);
 });

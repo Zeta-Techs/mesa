@@ -28,6 +28,7 @@ pub const FN_DIGEST: &str = "digest"; // build_session_digest（◈ 提炼接力
                                       // 「translate」由 JS 侧（技能页翻译）作为 ai_prompt 的 fnKey 显式传入，Rust 无字面引用
 #[allow(dead_code)]
 pub const FN_TRANSLATE: &str = "translate";
+pub const FN_WATCH_EXPLAIN: &str = "watch-explain"; // 文献雷达「解读」（LitWatchCard 显式传入）
 
 /// 显式 id 优先；其次该功能的专属 profile（ai_profiles[fn_key]）；再次设置页 AI 专用 profile；
 /// 最后最近使用（last_used_at 最新）；一个都没有才报错。

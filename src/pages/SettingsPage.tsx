@@ -199,6 +199,7 @@ const AI_FN_ROWS: { key: string; label: string }[] = [
   { key: "digest", label: "提炼接力 / 评审沉淀" },
   { key: "conflict", label: "冲突建议" },
   { key: "translate", label: "翻译" },
+  { key: "watch-explain", label: "雷达解读" },
 ];
 
 const NAV_CAPSULE_SETTING_ITEMS: { id: NavCapsuleItemId; label: string }[] = [
