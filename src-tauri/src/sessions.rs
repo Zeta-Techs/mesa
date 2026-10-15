@@ -4060,6 +4060,26 @@ pub fn scan_sessions() -> ScanResult {
             }
         }
     }
+    // 编程工作树会话归并回主仓 + 分支名（C2）：与科研工作区同构，用量页「按项目」
+    // 与会话列表经 scan_sessions 同源跟随，不再把每棵树当独立项目行。
+    // 边界铁律：①科研先、编程只收剩余（科研工作区本身也是 git worktree，先归并防抢）；
+    // ②只认 Mesa 自己的 ~/ccode/worktrees/ 下的树——git 兜底不能把任意 git 目录里
+    // 的会话归并到那个仓（会话 cwd 没有边界，会误伤用户在 Mesa 外的普通 git 项目）。
+    if let Ok(coding_root) = crate::coding::worktrees_root() {
+        let root_str = coding_root.to_string_lossy().into_owned();
+        for s in &mut out {
+            if s.workspace.is_some() {
+                continue;
+            }
+            if !crate::paths::path_within(&s.project_path, &root_str) {
+                continue;
+            }
+            if let Some((repo, branch)) = crate::coding::attribution_for_worktree(&s.project_path) {
+                s.project_path = repo;
+                s.workspace = Some(branch);
+            }
+        }
+    }
     // RX3a 对话步骤化：工作区名命中项目档案卡 steps[].workspaceName 时附带步骤名。
     // 每轮扫描按仓库只读一次 project.toml；扫描结果本身有 10s 缓存，档案卡改动下轮生效
     let mut step_maps: HashMap<String, HashMap<String, String>> = HashMap::new();

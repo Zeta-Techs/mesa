@@ -16,7 +16,7 @@ fn expand(path: &str) -> PathBuf {
     PathBuf::from(crate::sessions::expand_tilde(path))
 }
 
-fn worktrees_root() -> Result<PathBuf, String> {
+pub(crate) fn worktrees_root() -> Result<PathBuf, String> {
     #[cfg(test)]
     if let Some(p) = TEST_WT_ROOT.with(|c| c.borrow().clone()) {
         return Ok(p);
@@ -873,8 +873,8 @@ fn list_lanes_for(repo: &Path) -> Vec<CodingLaneDto> {
     }
 }
 
-/// lanes 表按最长前缀命中（覆盖层登记）。
-fn repo_path_for_worktree_lanes(isolation: &str) -> Option<String> {
+/// lanes 表按最长前缀命中（覆盖层登记）：主仓 + 分支名一起回。
+fn lanes_attribution(isolation: &str) -> Option<(String, String)> {
     let Ok(conn) = crate::sessions::open_db() else {
         return None;
     };
@@ -882,21 +882,31 @@ fn repo_path_for_worktree_lanes(isolation: &str) -> Option<String> {
         return None;
     }
     let mut stmt = conn
-        .prepare("SELECT repo_path, worktree_path FROM coding_lanes")
+        .prepare("SELECT repo_path, worktree_path, branch FROM coding_lanes")
         .ok()?;
     let rows = stmt
-        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })
         .ok()?;
-    let mut best: Option<(usize, String)> = None;
-    for (repo, wt) in rows.flatten() {
+    let mut best: Option<(usize, String, String)> = None;
+    for (repo, wt, branch) in rows.flatten() {
         if crate::paths::path_within(isolation, &wt) {
             let len = wt.len();
-            if best.as_ref().map(|(l, _)| len > *l).unwrap_or(true) {
-                best = Some((len, repo));
+            if best.as_ref().map(|(l, _, _)| len > *l).unwrap_or(true) {
+                best = Some((len, repo, branch));
             }
         }
     }
-    best.map(|(_, p)| p)
+    best.map(|(_, p, b)| (p, b))
+}
+
+fn repo_path_for_worktree_lanes(isolation: &str) -> Option<String> {
+    lanes_attribution(isolation).map(|(repo, _)| repo)
 }
 
 /// 工作树 → 主仓路径：lanes 覆盖层优先，miss 时走 git 事实源兜底（C1 修复）。
@@ -940,6 +950,42 @@ pub(crate) fn repo_path_for_worktree(isolation: &str) -> Option<String> {
         Err(_) => git_common_repo_path(Path::new(isolation)),
     };
     resolved
+}
+
+/// 工作树 → (主仓, 分支名)：lanes 覆盖层优先，miss 走 git 事实源
+/// （C2：会话扫描把编程树会话归并回主仓行、workspace 填分支名）。记忆化同
+/// repo_path_for_worktree——会话/用量每轮扫描都要解。
+fn git_branch_for_worktree(isolation: &Path) -> Option<String> {
+    let out = git(isolation, &["rev-parse", "--abbrev-ref", "HEAD"]).ok()?;
+    let branch = out.trim();
+    if branch.is_empty() || branch == "HEAD" {
+        return None; // detached
+    }
+    Some(branch.to_string())
+}
+
+static WT_BRANCH_GIT_CACHE: Mutex<Option<HashMap<String, Option<String>>>> =
+    Mutex::new(None);
+
+pub(crate) fn attribution_for_worktree(isolation: &str) -> Option<(String, String)> {
+    if let Some((repo, branch)) = lanes_attribution(isolation) {
+        return Some((repo, branch));
+    }
+    let repo = repo_path_for_worktree(isolation)?;
+    let branch = match WT_BRANCH_GIT_CACHE.lock() {
+        Ok(mut guard) => {
+            let cache = guard.get_or_insert_with(HashMap::new);
+            if let Some(cached) = cache.get(isolation) {
+                cached.clone()
+            } else {
+                let value = git_branch_for_worktree(Path::new(isolation));
+                cache.insert(isolation.to_string(), value.clone());
+                value
+            }
+        }
+        Err(_) => git_branch_for_worktree(Path::new(isolation)),
+    };
+    branch.map(|b| (repo, b))
 }
 
 pub(crate) fn touch_lane_current_run(worktree: &str, run_id: &str) {
@@ -1958,6 +2004,9 @@ mod tests {
             crate::paths::same_path(hit.as_deref().unwrap_or(""), repo_canon.as_str()),
             "git 兜底应解出主仓：resolved={resolved:?} expect={repo_canon:?}"
         );
+        // C2：attribution 连分支名一起回（会话归并的 workspace 列）
+        let attr = attribution_for_worktree(wt.to_str().unwrap());
+        assert_eq!(attr.as_ref().map(|(_, b)| b.as_str()), Some("feat/x"));
         // lanes 表行优先于 git 兜底（覆盖层语义）
         let _ = fs::remove_dir_all(&root);
     }
