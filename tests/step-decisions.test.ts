@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   CONTINUE_STEP_PROMPT,
+  continueWithBriefPrompt,
   DECISIONS_HEADING,
   KEEP_WORKING_CLAUSE,
   decisionAsk,
@@ -31,6 +32,9 @@ const DECISIONS: StepDecisionDto[] = [
 test("决策暂停策略：按步骤列出必须停的事项，批次提交不是停工", () => {
   assert.match(decisionPolicyText("auto_continue"), /auto_continue/);
   assert.ok(CONTINUE_STEP_PROMPT.includes(KEEP_WORKING_CLAUSE));
+  const carried = continueWithBriefPrompt(".ccode/handoff-1.md");
+  assert.match(carried, /读 \.ccode\/handoff-1\.md 接力简报/);
+  assert.ok(carried.includes(CONTINUE_STEP_PROMPT));
   const notes = decisionPolicyBlock({
     name: "文献精读与笔记",
     workspaceName: "lit-notes",

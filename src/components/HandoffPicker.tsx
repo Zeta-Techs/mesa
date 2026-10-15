@@ -134,7 +134,9 @@ export default function HandoffPicker({
       >
         <div className="px-3 pb-2">
           <p className="font-medium text-l1">◈ 接力到…</p>
-          <p className="mt-1 text-xs text-l4">生成一份简报交给新 Agent 接着做（不是完整记忆）。</p>
+          <p className="mt-1 text-xs text-l4">
+            选中后才生成。用户原话逐条原文带上，助手正文附在文末供核对。要一份「该接上什么」的结论，用「提炼接力」。
+          </p>
         </div>
         {error && <p className="px-3 pb-1 text-xs text-err-text">{error}</p>}
         {ready ? (

@@ -427,6 +427,11 @@ export const KEEP_WORKING_CLAUSE =
 export const CONTINUE_STEP_PROMPT =
   `阅读 TASK.md 并继续做到完成标准。停哪些见「决策暂停策略」。${KEEP_WORKING_CLAUSE}`;
 
+/** 换 Agent 继续：先读接力简报，再按完成标准往下做。简报不是原会话。 */
+export function continueWithBriefPrompt(briefRel: string): string {
+  return `读 ${briefRel} 接力简报，按这份简报接着做。${CONTINUE_STEP_PROMPT}`;
+}
+
 export function decisionPolicyText(mode: string | undefined): string {
   if (mode === "hard_pause") {
     return "hard_pause：遇到新的待拍板问题，写入 .ccode/help-wanted.md 并暂停本步骤，等待人明确答复后继续；不得自行采用推荐值或「未回复即继续」。";
