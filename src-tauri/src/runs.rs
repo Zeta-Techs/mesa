@@ -2943,7 +2943,7 @@ fn validate_policy(input: &OpenRunInput) -> Result<(), String> {
         let root = input
             .project_root
             .as_deref()
-            .ok_or("无法确定所属项目，拒绝启动写盘任务")?;
+            .ok_or("无法确定这棵工作树属于哪个项目：从编程页进入一次（或给它分组）即可建立关联；拒绝启动写盘任务")?;
         if crate::paths::path_within(&input.isolation_path, root) {
             return Err("写盘任务必须进入主仓之外的隔离工作树，不得回落主仓".into());
         }

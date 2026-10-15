@@ -4,6 +4,7 @@
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Mutex;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -872,7 +873,8 @@ fn list_lanes_for(repo: &Path) -> Vec<CodingLaneDto> {
     }
 }
 
-pub(crate) fn repo_path_for_worktree(isolation: &str) -> Option<String> {
+/// lanes 表按最长前缀命中（覆盖层登记）。
+fn repo_path_for_worktree_lanes(isolation: &str) -> Option<String> {
     let Ok(conn) = crate::sessions::open_db() else {
         return None;
     };
@@ -895,6 +897,49 @@ pub(crate) fn repo_path_for_worktree(isolation: &str) -> Option<String> {
         }
     }
     best.map(|(_, p)| p)
+}
+
+/// 工作树 → 主仓路径：lanes 覆盖层优先，miss 时走 git 事实源兜底（C1 修复）。
+/// 「Lane 是覆盖层、git worktree 是事实源」（agent-workbench §5.1）落在解析层：
+/// 建树不写 lane 行（分组是可选装饰）不再让 validate_policy 拦「无法确定所属项目」。
+/// 注意不用 --show-toplevel（那是工作树自己的顶层），--git-common-dir 指向主仓 .git。
+fn git_common_repo_path(isolation: &Path) -> Option<String> {
+    let out = git(isolation, &[
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-common-dir",
+    ])
+    .ok()?;
+    let common = PathBuf::from(out.trim());
+    let repo = common.parent()?;
+    if repo.as_os_str().is_empty() {
+        return None;
+    }
+    Some(repo.to_string_lossy().into_owned())
+}
+
+/// git 兜底结果按路径记忆化：会话扫描/用量归并会对每棵树各解一次，
+/// 子进程别重复跑（目录后来才建树的场景由 lanes 表命中覆盖，缓存不失效可接受）。
+static REPO_PATH_GIT_CACHE: Mutex<Option<HashMap<String, Option<String>>>> =
+    Mutex::new(None);
+
+pub(crate) fn repo_path_for_worktree(isolation: &str) -> Option<String> {
+    if let Some(hit) = repo_path_for_worktree_lanes(isolation) {
+        return Some(hit);
+    }
+    let resolved = match REPO_PATH_GIT_CACHE.lock() {
+        Ok(mut guard) => {
+            let cache = guard.get_or_insert_with(HashMap::new);
+            if let Some(cached) = cache.get(isolation) {
+                return cached.clone();
+            }
+            let value = git_common_repo_path(Path::new(isolation));
+            cache.insert(isolation.to_string(), value.clone());
+            value
+        }
+        Err(_) => git_common_repo_path(Path::new(isolation)),
+    };
+    resolved
 }
 
 pub(crate) fn touch_lane_current_run(worktree: &str, run_id: &str) {
@@ -1881,6 +1926,40 @@ mod tests {
         let _ = fs::remove_dir_all(&p);
         fs::create_dir_all(&p).unwrap();
         p
+    }
+
+    #[test]
+    fn repo_path_resolves_without_lane_row_via_git() {
+        // C1：建树不写 coding_lanes 行（分组是可选装饰），repo_path_for_worktree
+        // 走 git --git-common-dir 事实源兜底能解出主仓——不再让 validate_policy 拦路。
+        let Some(git) = git_bin() else { return };
+        let root = tmp("repo-path-git");
+        let repo = root.join("repo");
+        let wt = root.join("wt");
+        fs::create_dir_all(&repo).unwrap();
+        git_ok(&repo, &["init", "-q", "-b", "main"]);
+        fs::write(repo.join("a.txt"), "x").unwrap();
+        git_ok(&repo, &["add", "."]);
+        git_ok(&repo, &["-c", "user.email=t@t.dev", "-c", "user.name=t", "commit", "-q", "-m", "init"]);
+        let st = Command::new(&git)
+            .current_dir(&repo)
+            .args(["worktree", "add", "-q", "-b", "feat/x", wt.to_str().unwrap()])
+            .status()
+            .unwrap();
+        assert!(st.success(), "建工作树失败");
+        let resolved = repo_path_for_worktree(wt.to_str().unwrap());
+        let repo_canon = repo.canonicalize().unwrap().to_string_lossy().into_owned();
+        let hit = resolved
+            .as_deref()
+            .and_then(|p| Path::new(p).canonicalize().ok())
+            .map(|p| p.to_string_lossy().into_owned())
+            .or_else(|| resolved.clone());
+        assert!(
+            crate::paths::same_path(hit.as_deref().unwrap_or(""), repo_canon.as_str()),
+            "git 兜底应解出主仓：resolved={resolved:?} expect={repo_canon:?}"
+        );
+        // lanes 表行优先于 git 兜底（覆盖层语义）
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
