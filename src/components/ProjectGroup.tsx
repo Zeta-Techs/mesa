@@ -2364,6 +2364,7 @@ export default function ProjectGroup({
           config={cfg}
           warnings={cfgWarnings}
           saving={pipelineSaving}
+          taskBindings={project.taskBindings ?? null}
           focusStep={editorFocus}
           onSave={(steps, settings) => void savePipeline(steps, settings)}
           onClose={() => setEditorOpen(false)}

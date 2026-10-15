@@ -37,6 +37,7 @@ import type {
   ProjectStepRunDto,
   SkillDto,
 } from "../types";
+import { useAppStore } from "../store";
 
 const actionBtn = inlineActionClass;
 const ctaSm = compactPrimaryActionClass;
@@ -196,6 +197,7 @@ export default function PipelineEditor({
   config,
   warnings,
   saving,
+  taskBindings,
   focusStep,
   onSave,
   onClose,
@@ -208,6 +210,8 @@ export default function PipelineEditor({
   /** read_project_config 的 warnings（含资源绑定校验），原样展示 */
   warnings: string[];
   saving: boolean;
+  /** 步骤专属绑定（改名/删步骤保存时点名受影响条数；undefined = 调用方没有该数据） */
+  taskBindings?: Record<string, { profile: string; model?: string | null }> | null;
   /** 从步骤 ✎ 进入时定位的步骤序号：滚动到该卡片并聚焦简报输入框 */
   focusStep?: number | null;
   /** 保存成功与关闭覆盖层由父组件负责 */
@@ -368,7 +372,7 @@ export default function PipelineEditor({
     onClose();
   }
 
-  function save() {
+  async function save() {
     const missing = drafts.findIndex((d) => !d.name.trim());
     if (missing >= 0) {
       setError(`第 ${missing + 1} 步还没有填写步骤名`);
@@ -380,6 +384,34 @@ export default function PipelineEditor({
     if (dup) {
       setError(`步骤名重复：${dup}；步骤专属绑定按步骤名匹配，重名会错乱`);
       return;
+    }
+    // 改名/删步骤的影响面披露（M6 修复）：步骤名同时是 step: 槽键（SQLite）与
+    // project.toml tasks[].step（任务卡）的软外键，写侧无迁移——保存前点名
+    // 「多少绑定悬空、多少张卡降级为想法卡」，把悬空从事后发现（Agents 页坏行）
+    // 变成显式决定。与换模板路径的警示句式同款。
+    const oldNames = new Set(config.steps.map((s) => s.name));
+    const newNames = new Set(names);
+    const gone = [...oldNames].filter((n) => !newNames.has(n));
+    if (gone.length > 0) {
+      let cards: { step: string | null }[] = [];
+      try {
+        cards = (await useAppStore.getState().loadTaskCards(projectPath)) ?? [];
+      } catch {
+        cards = [];
+      }
+      const boundGone = gone.filter((n) => taskBindings?.[`step:${n}`]).length;
+      const cardGone = cards.filter((c) => c.step !== null && gone.includes(c.step)).length;
+      const impacts = [
+        ...(boundGone > 0 ? [`${boundGone} 条步骤专属绑定将失效（Agents 页可清）`] : []),
+        ...(cardGone > 0 ? [`${cardGone} 张任务卡将脱离本步骤，转为想法卡（「继续/开工」入口随之消失）`] : []),
+      ];
+      if (impacts.length > 0) {
+        const okToSave = await confirmDialog(
+          `步骤被删除或改名：${gone.join("、")}。${impacts.join("；")}。仍要保存？`,
+          { danger: true, confirmText: "仍要保存" },
+        );
+        if (!okToSave) return;
+      }
     }
     setError(null);
     try {
