@@ -636,6 +636,12 @@ function workspaceState(
         ...(health.conflictFiles.length
           ? [`冲突文件：${health.conflictFiles.join("、")}`]
           : [`与 ${workspace.baseBranch} 改了同一处内容，进入评审后选一边保留。`]),
+        // 基准已前进＝这轮是在跟「之后的主仓」撞：多半是旧轮被重跑取代，明说可选删除
+        ...(health.behind > 0
+          ? [
+              `主仓已前进 ${health.behind} 个提交：这一轮的产物和主仓的新版本改了同一批文件。若这一轮已被后面的重跑取代，直接删除工作区即可，不必解决冲突。`,
+            ]
+          : []),
         // 主仓问题与冲突并存时一并列出，避免漏掉合并阻塞项
         ...(health.mainDirty
           ? ["主文件夹里还有没保存的改动，提交保存后才能合并。"]
@@ -2621,6 +2627,17 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                   (workspaceDrift?.healthy === true ||
                     canResolveConflict ||
                     isDriftFailed);
+                // 还没保存进项目时，终端入口在上面的步骤卡（继续 / 去终端看看），
+                // 这一行不再重复。已经保存进项目后，步骤卡不再提供回终端，
+                // 工作区还留着，这里要能继续改，改完再评审。
+                const stepOwnsTerminal =
+                  !merged &&
+                  !!focusStepName &&
+                  wsView.steps.some(
+                    (step) =>
+                      step.name === focusStepName &&
+                      step.workspaceName === workspace.name,
+                  );
                 return (
                   <li
                     key={workspace.id}
@@ -2669,24 +2686,29 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                           </button>
                           )}
                         </div>
-                        {/* 副行：micro 档灰字，相对时间主显、悬浮给绝对时间（白话双层） */}
+                        {/* 副行：相对时间主显；分支默认就是 ccode/同名，重复列只添杂——
+                            只有与名字不一致的自建工作区才亮分支，完整路径与绝对时间都在悬浮 */}
                         <p
-                          className="mt-0.5 truncate font-mono text-micro text-l4"
-                          title={`${workspace.worktreePath}\n创建于 ${absTime(workspace.createdAt)}`}
+                          className="mt-0.5 truncate text-micro text-l4"
+                          title={`${workspace.branch}\n${workspace.worktreePath}\n创建于 ${absTime(workspace.createdAt)}`}
                         >
-                          {workspace.branch} · {relTime(workspace.createdAt)}
+                          {workspace.branch === `ccode/${workspace.name}`
+                            ? `创建于 ${relTime(workspace.createdAt)}`
+                            : `${workspace.branch} · ${relTime(workspace.createdAt)}`}
                         </p>
                       </div>
                       <div className="flex shrink-0 items-center gap-1">
                         {canOpenWorkspace && (
                           <>
-                            <button
-                              type="button"
-                              onClick={() => void openInTerminal(workspace)}
-                              className={rowActionClass}
-                            >
-                              继续
-                            </button>
+                            {!stepOwnsTerminal && (
+                              <button
+                                type="button"
+                                onClick={() => void openInTerminal(workspace)}
+                                className={rowActionClass}
+                              >
+                                继续
+                              </button>
+                            )}
                             {(canResolveConflict || workspaceHealth?.conflict) && !merged && (
                               <button
                                 type="button"

@@ -115,6 +115,13 @@ created → starting → running → {completed | failed | stopped}
 
 写盘必须离开主仓的规则只约束 `pipeline_step` / `coding_lane` / `watch`。Custom Runtime 在项目根或随手聊目录启动是普通终端，不得套这条拒绝。
 
+**步骤工作区重名撞分支（2026-10-13）**：步骤工作区名固定（`lit-search` 等），重跑同一步是常态，
+`create_workspace` 撞 `ccode/<名>` 分支时按占用行分三分支（`ensure_branch_free`）——①活动行：报错指路
+「继续它或删除后重开」，不得再叫人换任务名；②已归档且已合并：旧轮产物已在主仓，分支与行让位给新轮
+（删除并记日志）；③无行引用的悬空 `ccode/*` 分支：创建失败半路的残留，清掉继续。归档本身仍只删
+worktree 不删分支；冲突卡片在 `behind>0` 时明说「主仓已前进 N 提交，旧轮被重跑取代可直删工作区」，
+不让人把过时冲突当活冲突去解。
+
 无流程科研 / 办公的 `task-runs` 容量清理是显式两步（先工作副本，再历史冻结），各需确认；不得删除仍被其他项目或运行引用的目录，中断后待删目录被外部改过则拒绝继续。清理后任务与接受记录保留，不能从已删副本续跑。
 
 Run 只引用 `isolationPath`。禁止把编程树并进 `workspaces` 表（`coding-git.md` Non-Goal）。用户心智统一为「给 Agent 的独立目录」，代码保持两套。

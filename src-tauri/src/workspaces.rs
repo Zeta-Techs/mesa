@@ -694,6 +694,62 @@ fn create_impl(
     })
 }
 
+/// 分支撞名不能拿「请换一个任务名」把人堵死：步骤工作区名是固定的，
+/// 重跑同一步是常态。三种情况分开处置（2026-10-13）：
+/// ① 活动工作区占着——指路：继续它，或删除后再开新轮；
+/// ② 已归档且已合并——旧轮产物已在主仓，分支只是恢复用的冗余，让位给新轮；
+/// ③ 没有任何行引用的悬空 ccode/* 分支——创建失败等半路留下的残留，清掉继续。
+fn ensure_branch_free(
+    conn: &Connection,
+    repo: &Path,
+    branch: &str,
+    name: &str,
+) -> Result<(), String> {
+    if run_git(repo, &["rev-parse", "--verify", "--quiet", branch], Duration::from_secs(10))
+        .is_err()
+    {
+        return Ok(());
+    }
+    let owner = query_workspaces(conn)
+        .ok()
+        .and_then(|all| {
+            all.into_iter().find(|w| {
+                w.branch == branch
+                    && fs::canonicalize(&w.repo_path)
+                        .unwrap_or_else(|_| PathBuf::from(&w.repo_path))
+                        == fs::canonicalize(repo).unwrap_or_else(|_| repo.to_path_buf())
+            })
+        });
+    match owner {
+        Some(w) if w.status != "archived" => Err(format!(
+            "工作区 {name} 已存在且未合并：在工作台继续它跑完，或不需要这一轮就删除工作区后再开"
+        )),
+        Some(w) if w.merged_at.is_some() => {
+            run_git(repo, &["branch", "-D", branch], Duration::from_secs(30))?;
+            conn.execute("DELETE FROM workspaces WHERE id=?1", params![w.id])
+                .map_err(|e| e.to_string())?;
+            crate::logbuf::record(
+                "info",
+                "workspaces",
+                &format!("{branch} 旧轮已合并归档，让位给新一轮（已清旧行与分支）"),
+            );
+            Ok(())
+        }
+        Some(_) => Err(format!(
+            "工作区 {name} 已归档但那一轮没合并：恢复它继续，或删除工作区后再开"
+        )),
+        None => {
+            run_git(repo, &["branch", "-D", branch], Duration::from_secs(30))?;
+            crate::logbuf::record(
+                "info",
+                "workspaces",
+                &format!("清理无工作区引用的残留分支 {branch}"),
+            );
+            Ok(())
+        }
+    }
+}
+
 fn create_impl_with_copy<F>(
     conn: &Connection,
     ws_root: &Path,
@@ -714,15 +770,7 @@ where
     run_git(&repo, &["rev-parse", "--git-dir"], Duration::from_secs(10))
         .map_err(|e| format!("不是 git 仓库: {repo_path} ({e})"))?;
     let branch = format!("ccode/{name}");
-    if run_git(
-        &repo,
-        &["rev-parse", "--verify", "--quiet", &branch],
-        Duration::from_secs(10),
-    )
-    .is_ok()
-    {
-        return Err(format!("分支 {branch} 已存在，请换一个任务名"));
-    }
+    ensure_branch_free(conn, &repo, &branch, &name)?;
     // 空仓库（unborn HEAD）先补初始提交：放在端口预留/事务之前，失败无需回滚，
     // 错误直接透出；成功后 detect_base_branch 才能解析到真实基准分支
     ensure_initial_commit(&repo)?;
@@ -5447,6 +5495,38 @@ mod tests {
             repo_cache().lock().unwrap().is_none(),
             "create_workspace 成功后 list_repos 缓存必须失效"
         );
+    }
+
+    #[test]
+    fn same_name_branch_routes_by_owning_row_state() {
+        let Some(fx) = Fixture::new() else { return };
+        // ① 活动工作区占名：指路「继续/删除」，不再叫人换任务名
+        let w = create_impl(&fx.conn, &fx.ws_root, fx.repo.to_str().unwrap(), "lit").unwrap();
+        let err = create_impl(&fx.conn, &fx.ws_root, fx.repo.to_str().unwrap(), "lit").unwrap_err();
+        assert!(err.contains("继续"), "活动工作区占名应指路：{err}");
+        assert!(err.contains("删除"), "应说明可删掉旧轮再开：{err}");
+        // ② 已归档且已合并：旧轮让位——行清掉、分支重建，新一轮照常创建
+        fs::remove_dir_all(&w.worktree_path).unwrap();
+        run_git(&fx.repo, &["worktree", "prune"], Duration::from_secs(30)).unwrap();
+        fx.conn
+            .execute(
+                "UPDATE workspaces SET status='archived', archived_at='2026-10-13T00:00:00Z', merged_at='2026-10-13T00:00:00Z' WHERE id=?1",
+                params![w.id],
+            )
+            .unwrap();
+        let w2 = create_impl(&fx.conn, &fx.ws_root, fx.repo.to_str().unwrap(), "lit").unwrap();
+        assert_ne!(w2.id, w.id);
+        assert!(
+            query_workspaces(&fx.conn)
+                .unwrap()
+                .iter()
+                .all(|x| x.id != w.id),
+            "已合并归档的旧行应让位清掉"
+        );
+        // ③ 悬空分支（没有任何行引用）：清掉残留后照常创建
+        run_git(&fx.repo, &["branch", "ccode/orphan"], Duration::from_secs(10)).unwrap();
+        let w3 = create_impl(&fx.conn, &fx.ws_root, fx.repo.to_str().unwrap(), "orphan").unwrap();
+        assert_eq!(w3.branch, "ccode/orphan");
     }
 
     #[test]
