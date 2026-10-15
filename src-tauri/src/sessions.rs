@@ -559,12 +559,13 @@ fn read_head_tail(path: &Path, budget: usize) -> Option<(Vec<String>, Vec<String
     f.read_exact(&mut magic).ok()?;
     if magic == ZSTD_MAGIC {
         // zstd：解压后大小可能远超压缩文件（重复内容压到几 KB），不能按压缩体积走
-        // 小文件阈值——一律流式解码一遍，只保留头窗 + 尾窗环形缓冲，峰值内存 ~2×budget
+        // 小文件阈值——一律流式解码一遍，只保留头窗 + 尾窗滑窗，峰值内存 ~2×budget。
+        // 尾窗必须批量滑动（drain 让位 + extend_from_slice 接块尾，都是 memmove 级）：
+        // 逐字节 pop/extend 曾把 2.8GB 归档 zst 的开机扫描烧到 90 秒（2026-10-15 实证）
         let f2 = fs::File::open(path).ok()?;
         let mut dec = zstd::stream::read::Decoder::new(f2).ok()?;
         let mut head: Vec<u8> = Vec::with_capacity(budget);
-        let mut tail: std::collections::VecDeque<u8> =
-            std::collections::VecDeque::with_capacity(budget);
+        let mut tail: Vec<u8> = Vec::with_capacity(budget);
         let mut total = 0usize;
         let mut buf = [0u8; 65536];
         loop {
@@ -577,14 +578,17 @@ fn read_head_tail(path: &Path, budget: usize) -> Option<(Vec<String>, Vec<String
                         let take = (budget - head.len()).min(chunk.len());
                         head.extend_from_slice(&chunk[..take]);
                     }
-                    tail.extend(chunk.iter().copied());
-                    while tail.len() > budget {
-                        tail.pop_front();
+                    // 只需最后 budget 字节：先批量挤出超量前缀，再接本块尾部
+                    let keep = n.min(budget);
+                    let overflow = (tail.len() + keep).saturating_sub(budget);
+                    if overflow > 0 {
+                        tail.drain(..overflow);
                     }
+                    tail.extend_from_slice(&chunk[n - keep..]);
                 }
             }
         }
-        let tail_v: Vec<u8> = tail.into_iter().collect();
+        let tail_v: Vec<u8> = tail;
         if total <= budget {
             // 解压后不足一窗：head 即全量
             return Some((to_lines(&String::from_utf8_lossy(&head)), Vec::new()));
@@ -4067,6 +4071,9 @@ pub fn scan_sessions() -> ScanResult {
     // 的会话归并到那个仓（会话 cwd 没有边界，会误伤用户在 Mesa 外的普通 git 项目）。
     if let Ok(coding_root) = crate::coding::worktrees_root() {
         let root_str = coding_root.to_string_lossy().into_owned();
+        // 同一工作树只解析一次：lanes 查表每次新开连接（带幂等 DDL），逐会话查会
+        // 拖慢冷扫描（实测约 30 个会话多花 1.7s）；按路径去重后每棵树最多一次
+        let mut attr_by_path: HashMap<String, Option<(String, String)>> = HashMap::new();
         for s in &mut out {
             if s.workspace.is_some() {
                 continue;
@@ -4074,7 +4081,11 @@ pub fn scan_sessions() -> ScanResult {
             if !crate::paths::path_within(&s.project_path, &root_str) {
                 continue;
             }
-            if let Some((repo, branch)) = crate::coding::attribution_for_worktree(&s.project_path) {
+            let attr = attr_by_path
+                .entry(s.project_path.clone())
+                .or_insert_with(|| crate::coding::attribution_for_worktree(&s.project_path))
+                .clone();
+            if let Some((repo, branch)) = attr {
                 s.project_path = repo;
                 s.workspace = Some(branch);
             }
@@ -9718,3 +9729,5 @@ mod tests {
         ));
     }
 }
+
+
