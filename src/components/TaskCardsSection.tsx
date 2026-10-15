@@ -7,6 +7,8 @@ import StepEvidenceChip from "./StepEvidenceChip";
 import StepFlow from "./StepFlow";
 import FuseDraftModal from "./FuseDraftModal";
 import { useAppStore } from "../store";
+import { stepAttention } from "../run-overview";
+import { workspaceReuseKey } from "../pipeline-start";
 import {
   bucketCardsByStep,
   ideaTopicPlaceholder,
@@ -191,6 +193,7 @@ export default function TaskCardsSection({
       ? resolveStepLaunch(profiles, taskBindings, stepName, discussLaunch)
       : discussLaunch;
   }
+  const terminalRunInputs = useAppStore((s) => s.terminalRunInputs);
   const cards = useAppStore((s) => s.taskCards[projectPath]);
   const sessions = useAppStore((s) => s.sessions);
   const discussResumeSession = pickDiscussResume(
@@ -685,6 +688,18 @@ export default function TaskCardsSection({
     }
   }
 
+  /** 「去终端看看」：带 reuseKey 交接——命中在跑标签只聚焦，不另起会话 */
+  function goWorkspaceTerminal(ws: WorkspaceDto) {
+    setPendingTerminal({
+      cwd: ws.worktreePath,
+      extraEnv: {},
+      title: ws.name,
+      reuseKey: workspaceReuseKey(ws),
+      surface: "terminal",
+    });
+    setPage("terminal");
+  }
+
   function onContinue(card: TaskCardDto) {
     const ws = activeWorkspaceFor(card.step, card.workspace);
     if (!ws) return;
@@ -825,6 +840,11 @@ export default function TaskCardsSection({
     // 已绑定工作区（活跃）= 已开工：主按钮「继续」；未绑定的挂步骤卡 = 想法期：「聊想法」+「开工」；
     // 未挂步骤卡只有「聊想法」（onDiscuss 只读纯聊）
     const boundWs = activeWorkspaceFor(card.step, card.workspace);
+    // 在跑闸门（与聚焦步骤「AI 干活」行同款互斥）：Agent 正在出字/等确认时点「继续」
+    // 会在同一工作区并行拉起第二条会话——两个 Agent 并发写一棵树。此时只给「去终端
+    // 看看」回到在跑的对话（reuseKey 命中活标签只聚焦）；跑完/闲置才恢复「继续」。
+    const attention = boundWs ? stepAttention(boundWs, terminalRunInputs) : null;
+    const agentLive = attention === "working" || attention === "confirm";
     return (
       <li key={card.id} className="group">
         <div className="flex h-7 min-w-0 items-center gap-2 rounded-sm px-1 hover:bg-hover">
@@ -832,14 +852,25 @@ export default function TaskCardsSection({
             {card.name}
           </span>
           {boundWs ? (
-            <button
-              type="button"
-              onClick={() => onContinue(card)}
-              title="开终端新会话，预填继续做到完成标准；会话自动归入本卡"
-              className={`${actionBtn} shrink-0`}
-            >
-              继续
-            </button>
+            agentLive ? (
+              <button
+                type="button"
+                onClick={() => goWorkspaceTerminal(boundWs)}
+                title={attention === "confirm" ? "Agent 在等确认：回到那次对话处理" : "Agent 正在出字：回到那次对话看进展（跑完才继续）"}
+                className={`${actionBtn} shrink-0`}
+              >
+                去终端看看
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onContinue(card)}
+                title="开终端新会话，预填继续做到完成标准；会话自动归入本卡"
+                className={`${actionBtn} shrink-0`}
+              >
+                继续
+              </button>
+            )
           ) : canStart ? (
             <button
               type="button"

@@ -1,8 +1,39 @@
+import { normSep } from "./path-utils.ts";
 /**
  * 运行中总览（P5 聚合视图）的聚合/排序纯逻辑。
  * 输入全部由终端页现有 statuses 上报派生（TerminalView 本地轮询后镜像），
  * 不新增任何后端轮询；node --test 可直接单测。
  */
+
+/** 工作区的终端注意力：cwd 落在该工作区内的运行标签。confirm > working > done。
+ *  Agent 进程还在跑时不把中途助手正文当成「已跑完」。
+ *  用途：流程线「已跑完」提示（ProjectGroup）与任务卡「继续/去终端看看」互斥
+ *  （TaskCardsSection——在跑时点继续会在同一工作区并行第二条会话，两 Agent 并发写一棵树）。 */
+export function stepAttention(
+  ws: { worktreePath: string } | undefined,
+  inputs: RunOverviewInput[],
+): "confirm" | "done" | "working" | null {
+  if (!ws) return null;
+  const root = normSep(ws.worktreePath).replace(/\/+$/, "");
+  let found: "confirm" | "done" | "working" | null = null;
+  for (const input of inputs) {
+    const cwd = normSep(input.cwd).replace(/\/+$/, "");
+    if (cwd !== root && !cwd.startsWith(`${root}/`)) continue;
+    if (input.attention === "confirm") return "confirm";
+    if (input.attention === "working") {
+      found = "working";
+      continue;
+    }
+    if (
+      found !== "working" &&
+      input.attention === "done" &&
+      !(input.running && !input.shell)
+    ) {
+      found = "done";
+    }
+  }
+  return found;
+}
 
 /** 聚合输入的单项：TerminalPage 从 tabs + statuses 派生（无状态的标签由调用方填默认值） */
 export interface RunOverviewInput {

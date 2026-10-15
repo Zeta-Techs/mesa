@@ -6,6 +6,7 @@ import {
   cwdBasename,
   itemRank,
   projectRailStatus,
+  stepAttention,
   workspaceAgentBusy,
   workspaceHasLiveAgent,
   workspaceReviewInboxEligible,
@@ -246,4 +247,23 @@ test("attributeToProject 最长前缀命中 + 段边界", () => {
   // 不命中 / 空路径
   assert.equal(attributeToProject("/elsewhere", groups), null);
   assert.equal(attributeToProject("", groups), null);
+});
+
+
+test("stepAttention：在跑工作区的注意力派生（任务卡继续/去终端互斥的判据）", () => {
+  const ws = { worktreePath: "/repo/.mesa/ws-lit-search" };
+  const mk = (attention: "done" | "working" | "confirm" | null, cwd = ws.worktreePath, extra: Partial<RunOverviewInput> = {}) =>
+    input({ attention, cwd, ...extra });
+  // 空输入 / cwd 不在工作区内 → null
+  assert.equal(stepAttention(ws, []), null);
+  assert.equal(stepAttention(ws, [mk("working", "/别的目录")]), null);
+  // 子目录也算（工作区内运行的终端）
+  assert.equal(stepAttention(ws, [mk("working", `${ws.worktreePath}/sub`)]), "working");
+  // confirm 最优先；working 次之；done 不被中途正文冒充
+  assert.equal(stepAttention(ws, [mk("done"), mk("confirm")]), "confirm");
+  assert.equal(stepAttention(ws, [mk("done"), mk("working")]), "working");
+  assert.equal(stepAttention(ws, [mk("done")]), "done");
+  // 进程在跑（非 shell）时的 done 不算「已跑完」
+  assert.equal(stepAttention(ws, [mk("done", ws.worktreePath, { running: true, shell: false })]), null);
+  assert.equal(stepAttention(ws, [mk("done", ws.worktreePath, { running: true, shell: true })]), "done");
 });

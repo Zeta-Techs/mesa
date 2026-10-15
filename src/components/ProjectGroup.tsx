@@ -42,7 +42,7 @@ import { isTaskMdStub } from "../step-decisions";
 import { userDirtyFiles } from "../git-status-groups";
 import { demoReadPaperResource } from "../step-flow";
 import { useSkillProvides } from "../skill-slots.ts";
-import { normSep } from "../path-utils";
+import { stepAttention } from "../run-overview";
 import { beginAskAi } from "./AskAiModal";
 import {
   projectAgentPrefs,
@@ -242,34 +242,6 @@ function wsLastConfig(
   } catch {
     return {};
   }
-}
-
-/** 步骤的终端注意力（流程线「已跑完」/藏去评审）：cwd 落在工作区内的运行标签。
- *  confirm > working > done。Agent 进程还在跑时不把中途助手正文当成「已跑完」。 */
-function stepAttention(
-  ws: WorkspaceDto | undefined,
-  inputs: RunOverviewInput[],
-): "confirm" | "done" | "working" | null {
-  if (!ws) return null;
-  const root = normSep(ws.worktreePath).replace(/\/+$/, "");
-  let found: "confirm" | "done" | "working" | null = null;
-  for (const input of inputs) {
-    const cwd = normSep(input.cwd).replace(/\/+$/, "");
-    if (cwd !== root && !cwd.startsWith(`${root}/`)) continue;
-    if (input.attention === "confirm") return "confirm";
-    if (input.attention === "working") {
-      found = "working";
-      continue;
-    }
-    if (
-      found !== "working" &&
-      input.attention === "done" &&
-      !(input.running && !input.shell)
-    ) {
-      found = "done";
-    }
-  }
-  return found;
 }
 
 /** 步骤状态：从绑定工作区（steps[].workspaceName 匹配工作区名）的 health/drift 派生，纯展示无双状态机 */
