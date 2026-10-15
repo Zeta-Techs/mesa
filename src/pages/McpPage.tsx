@@ -1025,7 +1025,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
   // 与连接/技能同属资源页：外壳随主区变宽。五列网格把多出来的宽度分给名称和配置，
   // 启用开关留在末列，不再出现「名称在左、开关在窗口最右」的空档。
   return (
-    <PageFrame width="fluid">
+    <PageFrame width="wide">
       <PageHeader
         title="MCP"
         meta={`${servers.length} 个`}

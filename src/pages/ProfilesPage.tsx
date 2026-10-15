@@ -2658,7 +2658,9 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
       if (!path) return;
       await invoke("export_gateways_v2", { path, includeKeys });
       setError(null);
-      setNotice(includeKeys ? "已导出（含密钥，请妥善保管文件）" : "已导出网关与绑定（不含密钥）");
+      setNotice(
+        `已导出：${path}${includeKeys ? "（含密钥，请妥善保管文件）" : "（不含密钥）"}`,
+      );
     } catch (e) {
       setError(String(e));
     }
@@ -2876,7 +2878,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
 
   return (
     <div className="min-h-full bg-canvas">
-      <PageFrame width="fluid">
+      <PageFrame width="wide">
         {/* 注入模式的核心规则：配置只在**启动那一刻**注入子进程，改了对已在跑的标签无效。
             这条以前只写在用户手册里，用户改完配置回终端发现没变化，界面上没有任何解释
             （「有时候配置了无法切换模型」的第二个来源）。保存后有标签在跑才提示，平时不啰嗦。 */}

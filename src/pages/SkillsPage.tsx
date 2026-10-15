@@ -1747,7 +1747,7 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
   return (
     <div className="flex h-full">
       <div className="min-w-0 flex-1 overflow-auto">
-        <PageFrame width="fluid">
+        <PageFrame width="wide">
           <PageHeader
             title="技能"
             meta={`${skills.length} 个 · 已应用 ${appliedCount}`}
