@@ -7,6 +7,7 @@ import { cwdBasename, buildRunOverview, type RunOverviewInput } from "./run-over
 import {
   canonicalizeReuseKey,
   isRunProcessLive,
+  isWorkbenchActiveRun,
   isWorkbenchSurfaceRun,
 } from "./run-model.ts";
 import { goalBucket } from "./project-tasks.ts";
@@ -109,6 +110,11 @@ interface PathGroup {
 
 function isLiveWork(run: RunOverviewInput): boolean {
   return isWorkbenchSurfaceRun(run);
+}
+
+/** 「正在进行」列表专用：比主卡更严，空闲挂着的任务/工作区标签不算活。 */
+function isActiveWork(run: RunOverviewInput): boolean {
+  return isWorkbenchActiveRun(run);
 }
 
 /** 标签标题优先；占位「终端」回落到目录尾段。 */
@@ -236,8 +242,9 @@ function compareRecent(a: string | null, b: string | null): number {
 
 /**
  * 工作台「最近项目」行：已添加项目 ∪ 会话扫出的仓库。
- * 办公/新建项目没有 Agent 会话、甚至不是 git，也必须出现。
- * 已添加用注册名；未添加（外部 Codex 等）标出来。按最近活动降序，默认最多 10 条。
+ * 传入 interactiveLast（项目路径→最近一次交互会话时间）时，只列有交互历史的项目、
+ * 按交互时间排序——定时雷达只产生自动活动不产生会话，纯雷达项目不进「最近」
+ * （2026-10-13 拍板；项目页「查看全部」仍可达）。radar 之外按最近活动降序，默认最多 10 条。
  * 正在进行的主卡项目仍列入：刚添加的办公项目否则会从「最近」里消失。
  */
 export function workbenchRecentRows(input: {
@@ -246,16 +253,28 @@ export function workbenchRecentRows(input: {
   excludePaths?: readonly string[];
   isWindows?: boolean;
   limit?: number;
+  /** 项目路径 → 最近一次交互会话时间；提供即启用「只列交互项目」口径 */
+  interactiveLast?: ReadonlyMap<string, string>;
 }): WorkbenchRecentRow[] {
   const isWindows = input.isWindows ?? false;
   const limit = input.limit ?? WORKBENCH_RECENT_LIMIT;
   const exclude = input.excludePaths ?? [];
+  const interactive = input.interactiveLast;
+  const interactiveAt = (path: string): string | null => {
+    if (!interactive) return null;
+    for (const [k, v] of interactive) {
+      if (samePath(k, path, isWindows)) return v;
+    }
+    return null;
+  };
   const skipped = (path: string) =>
     exclude.some((p) => samePath(p, path, isWindows));
   const rows: WorkbenchRecentRow[] = [];
 
   for (const project of input.projects) {
     if (skipped(project.path)) continue;
+    const last = interactiveAt(project.path);
+    if (interactive && !last) continue;
     const repo = input.recentRepos.find((r) =>
       samePath(r.path, project.path, isWindows),
     );
@@ -268,7 +287,7 @@ export function workbenchRecentRows(input: {
       path: project.path,
       name,
       lastActive: laterIso(
-        laterIso(project.lastOpenedAt, project.createdAt),
+        laterIso(last, laterIso(project.lastOpenedAt, project.createdAt)),
         repo?.lastActive,
       ),
       registered: true,
@@ -278,10 +297,12 @@ export function workbenchRecentRows(input: {
   for (const repo of input.recentRepos) {
     if (skipped(repo.path)) continue;
     if (rows.some((row) => samePath(row.path, repo.path, isWindows))) continue;
+    const last = interactiveAt(repo.path);
+    if (interactive && !last) continue;
     rows.push({
       path: repo.path,
       name: repo.name.trim() || cwdBasename(repo.path) || repo.path,
-      lastActive: repo.lastActive ?? null,
+      lastActive: laterIso(last, repo.lastActive ?? null),
       registered: false,
     });
   }
@@ -537,7 +558,8 @@ export function pickWorkbenchNow(input: {
     roots: [s.path, ...(s.extraRoots ?? [])],
     registered: s.registered,
   }));
-  const live = buildRunOverview([...input.runs]).items.filter(isLiveWork);
+  // 「正在进行」用严口径：空闲老标签不顶卡（主卡/找回区仍用宽口径保留死标签）
+  const live = buildRunOverview([...input.runs]).items.filter(isActiveWork);
   const byPath = new Map<string, WorkbenchNowItem>();
 
   function ensure(path: string, source: WorkbenchHeroSource): WorkbenchNowItem {

@@ -743,7 +743,27 @@ test("正在进行：已退出/未启动的保留标签留在卡上但不算运�
   assert.equal(items[0]?.runningCount, 0);
 });
 
-test("主卡：保留标签不冒充运行数，进程活着才算", () => {
+test("最近项目（交互口径）：纯定时项目不出现，按会话时间排序", () => {
+  const projects = [
+    { path: "/p/radar", name: "雷达课题", workMode: "research", lastOpenedAt: null, createdAt: "2026-10-13T00:00:00Z" },
+    { path: "/p/dev", name: "开发课题", workMode: "research", lastOpenedAt: null, createdAt: "2026-09-01T00:00:00Z" },
+    { path: "/p/old", name: "老会话课题", workMode: "research", lastOpenedAt: null, createdAt: "2026-09-01T00:00:00Z" },
+  ];
+  const interactive = new Map([
+    ["/p/dev", "2026-10-12T10:00:00Z"],
+    ["/p/old", "2026-09-20T10:00:00Z"],
+  ]);
+  const rows = workbenchRecentRows({ recentRepos: [], projects, interactiveLast: interactive });
+  // 只有会话的项目入选；雷达项目（哪怕今天注册）不出现
+  assert.deepEqual(rows.map((r) => r.path), ["/p/dev", "/p/old"]);
+  // 排序按交互时间：dev(10-12) 在 old(09-20) 前；lastActive 取交互时间与注册时间较晚者
+  assert.equal(rows[0].lastActive, "2026-10-12T10:00:00Z");
+  // 不传 interactiveLast 时保持旧口径（全部项目，注册时间兜底）
+  const legacy = workbenchRecentRows({ recentRepos: [], projects });
+  assert.deepEqual(legacy.map((r) => r.path), ["/p/radar", "/p/dev", "/p/old"]);
+});
+
+test("主卡：保留标签不冒充运行数，进程活着就算", () => {
   const hero = pickWorkbenchHero({
     projects: [ccode],
     recentRepos: [],

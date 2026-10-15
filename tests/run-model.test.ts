@@ -5,6 +5,7 @@ import {
   inferTaskKind,
   isDiscussPermission,
   isRunProcessLive,
+  isWorkbenchActiveRun,
   isWorkbenchSurfaceRun,
   pickRecoverableRun,
 } from "../src/run-model.ts";
@@ -82,6 +83,38 @@ test("isDiscussPermission：permission 优先于 readonly", () => {
   assert.equal(isDiscussPermission("discuss", false), true);
   assert.equal(isDiscussPermission("write_tree", true), false);
   assert.equal(isDiscussPermission(undefined, true), true);
+});
+
+test("isWorkbenchActiveRun：空闲老标签不进「正在进行」，主卡口径不受影响", () => {
+  // 空闲挂着的任务标签（进程退出、无注意力、非 shell）：不算活
+  assert.equal(
+    isWorkbenchActiveRun({ reuseKey: "task:task-1", running: false, attention: null }),
+    false,
+  );
+  assert.equal(
+    isWorkbenchActiveRun({ reuseKey: "ws:/wt", running: false, attention: null }),
+    false,
+  );
+  // 有活的任务标签照常：在跑 / 等确认 / 已跑完等你收 / 开着的交互 shell
+  assert.equal(
+    isWorkbenchActiveRun({ reuseKey: "task:task-1", running: true, attention: null }),
+    true,
+  );
+  assert.equal(
+    isWorkbenchActiveRun({ reuseKey: "task:task-1", running: false, attention: "confirm" }),
+    true,
+  );
+  assert.equal(
+    isWorkbenchActiveRun({ reuseKey: "task:task-1", running: false, attention: "done" }),
+    true,
+  );
+  assert.equal(
+    isWorkbenchActiveRun({ reuseKey: "reader:/p", running: false, shell: true }),
+    true,
+  );
+  // 白名单外照旧不算；主卡口径（surface）仍保留死标签供找回
+  assert.equal(isWorkbenchActiveRun({ reuseKey: "watch:1:/p", running: true }), false);
+  assert.equal(isWorkbenchSurfaceRun({ reuseKey: "task:task-1", running: false, attention: null }), true);
 });
 
 test("自由任务标签按任务入口进入工作台白名单", () => {

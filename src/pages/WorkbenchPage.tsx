@@ -31,7 +31,7 @@ import type {
   TaskDto,
   WorkspaceDto,
 } from "../types";
-import { pickRecoverableRun, isWorkbenchSurfaceRun } from "../run-model";
+import { pickRecoverableRun, isWorkbenchActiveRun } from "../run-model";
 import { visibleDeclaredTasks } from "../project-tasks";
 import {
   continueWorkbenchTarget,
@@ -67,6 +67,9 @@ import {
 import { toast } from "../toast";
 
 const iconClass = "shrink-0 text-l4";
+
+/** 不参与工作台「需要你」判定的自动登记任务类（见 nowSeeds 里的过滤注释） */
+const WORKBENCH_AUTO_TASK_KINDS = new Set(["pipeline_step", "coding_lane", "watch"]);
 
 function agentLabel(id: string | null): string | null {
   if (!id) return null;
@@ -232,8 +235,9 @@ function WorkbenchPage({
   }, [visible, runCwdSig, reloadToken]);
 
   const nowSeeds = useMemo((): WorkbenchNowSeed[] => {
-    // 「活着」只算工作台表面白名单内的运行（登录/定时巡检/无头不算）
-    const live = terminalRunInputs.filter((r) => isWorkbenchSurfaceRun(r));
+    // 「活着」只算真有交互活的运行：白名单（登录/定时巡检/无头不算）之上，
+    // 空闲挂着的任务/工作区老标签也不算——否则会把无交互的项目顶上「正在进行」
+    const live = terminalRunInputs.filter((r) => isWorkbenchActiveRun(r));
     return projects.map((p) => {
       const mode = normalizeWorkMode(p.workMode);
       const mineWs = workspaces.filter(
@@ -246,8 +250,13 @@ function WorkbenchPage({
       ];
       let subtitle: string | null = null;
       let needsYou = false;
-      const mineTasks = userTasks.filter((task) =>
-        samePath(task.projectRoot ?? "", p.path, IS_WINDOWS),
+      const mineTasks = userTasks.filter(
+        (task) =>
+          samePath(task.projectRoot ?? "", p.path, IS_WINDOWS) &&
+          // 自动登记的三类任务（流程步骤/编程车道/定时雷达）不进「需要你」判定：
+          // 它们的 stopped/failed 是历史轮次残留，状态由步进器/工作区卡/收件箱表达；
+          // 工作台只列交互活（2026-10-13 实证：13 条老 stopped 步骤任务把纯定时课题顶上工作台）
+          !WORKBENCH_AUTO_TASK_KINDS.has(task.kind),
       );
       if (mode === "research") {
         // 流程只读本项目自己的；读取失败就是无步骤，不跨项目回落到主卡 steps
@@ -389,14 +398,26 @@ function WorkbenchPage({
     });
   }, [nowItems, wbProjects, recentRepos, workspaces, terminalRunInputs, contextLabel, runAttribution]);
 
+  // 「最近项目」的交互口径：项目路径 → 最近一次用户会话时间（内部会话不算——
+  // 定时雷达/无头只产生自动活动，纯雷达项目不进「最近」）
+  const interactiveLast = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const s of sessions) {
+      if (s.internal || !s.projectPath || !s.updatedAt) continue;
+      const prev = map.get(s.projectPath);
+      if (!prev || prev < s.updatedAt) map.set(s.projectPath, s.updatedAt);
+    }
+    return map;
+  }, [sessions]);
   const recentRows = useMemo(
     () =>
       workbenchRecentRows({
         recentRepos,
         projects: wbProjects,
         isWindows: IS_WINDOWS,
+        interactiveLast,
       }),
-    [recentRepos, wbProjects],
+    [recentRepos, wbProjects, interactiveLast],
   );
 
   useEffect(() => {

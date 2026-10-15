@@ -142,3 +142,23 @@ export function isWorkbenchSurfaceRun(input: {
   if (isTaskReuseKey(key)) return true;
   return Boolean(input.running || input.attention === "confirm");
 }
+
+/** 「正在进行」列表的口径，比 isWorkbenchSurfaceRun（主卡/找回用，保留死标签）更严：
+ *  任务/工作区标签必须真有活——进程在跑、有注意力（含已跑完等你收）、或是你开着的
+ *  交互 shell。空闲挂着的老标签不算，否则测试期留下的步骤标签会把没有任何交互活动
+ *  的项目常驻工作台（2026-10-13 实证）。 */
+export function isWorkbenchActiveRun(input: {
+  reuseKey?: string;
+  shell?: boolean;
+  running?: boolean;
+  attention?: "done" | "working" | "confirm" | null;
+}): boolean {
+  if (!isWorkbenchSurfaceRun(input)) return false;
+  const key = canonicalizeReuseKey(input.reuseKey);
+  if (isTaskReuseKey(key)) {
+    return Boolean(
+      input.running || input.attention != null || input.shell === true,
+    );
+  }
+  return true;
+}
