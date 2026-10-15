@@ -32,7 +32,10 @@ import ArtifactChecklist from "../components/ArtifactChecklist";
 import { REVIEW_SAVE } from "../review-save-copy";
 import ProjectAgentsView from "../components/ProjectAgentsView";
 import ProjectFilesView from "../components/ProjectFilesView";
-import { projectAgentPrefs } from "../project-agents";
+import {
+  slotPrefs,
+  DISCUSS_BINDING_SLOT,
+} from "../project-agents";
 import ProjectSurfaceTabs from "../components/ProjectSurfaceTabs";
 import ProjectIdentityHeader, {
   type ProjectChromeAction,
@@ -41,7 +44,7 @@ import ProjectUserTasksView from "../components/ProjectUserTasksView";
 import TemplatePickModal from "../components/TemplatePickModal";
 import { Modal } from "../components/Modal";
 import { filterWorkspacesByFocus } from "../workspace-visibility";
-import { buildWorkspaceTerminalRequest } from "../pipeline-start";
+import { buildWorkspaceTerminalRequest, resolveStepLaunchByWorkspace } from "../pipeline-start";
 import {
   EmptyState,
   fieldClass,
@@ -2461,7 +2464,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
           <ProjectFilesView
             projectPath={selectedGroup.repoPath}
             workMode={selectedGroup.project.workMode}
-            {...projectAgentPrefs(selectedGroup.project)}
+            {...slotPrefs(profiles, selectedGroup.project, DISCUSS_BINDING_SLOT)}
             onError={setError}
             focusPath={
               filePreviewReq &&
@@ -2988,10 +2991,19 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                     workspaces.find((w) => w.id === view.workspaceId) ??
                     workspaces.find((w) => w.worktreePath === view.root);
                   if (ws) {
-                    void buildWorkspaceTerminalRequest(ws).then((req) => {
-                      setPendingTerminal(req);
-                      setPage("terminal");
-                    });
+                    // B1：help-wanted 也是步骤工作区语境——步骤槽绑定作预填
+                    //（该入口 resume 优先，绑定只在无会话回落时生效）
+                    const profilesNow = useAppStore.getState().profiles;
+                    void resolveStepLaunchByWorkspace(ws, profilesNow)
+                      .then((stepL) =>
+                        buildWorkspaceTerminalRequest(ws, undefined, {
+                          stepLaunch: stepL ?? undefined,
+                        }),
+                      )
+                      .then((req) => {
+                        setPendingTerminal(req);
+                        setPage("terminal");
+                      });
                     return;
                   }
                   setPendingTerminal({
