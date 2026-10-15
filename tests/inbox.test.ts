@@ -20,6 +20,7 @@ test("inboxCategoryOf：key 前缀推导类别，confirm: 与 live: 合并为待
   assert.equal(inboxCategoryOf("ready:ws-2"), "ready");
   assert.equal(inboxCategoryOf("artifacts:ws-3"), "artifacts");
   assert.equal(inboxCategoryOf("digest"), "digest");
+  assert.equal(inboxCategoryOf("skill:lit-search"), "skill");
   assert.equal(inboxCategoryOf("profile:p-1"), "profile");
   assert.equal(inboxCategoryOf("help:/repo/root"), "help");
   assert.equal(inboxCategoryOf("lit:s-1:2026-08-18"), "lit");

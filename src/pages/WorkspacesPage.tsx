@@ -960,6 +960,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   const setInboxItems = useAppStore((s) => s.setInboxItems);
   // 「◈ 提炼接力」后台任务（store）：ready 未消费 → 收件箱「待发送」
   const digestJob = useAppStore((s) => s.digestJob);
+  const skillAdaptJobs = useAppStore((s) => s.skillAdaptJobs);
   // profile 三层验证失败镜像（ProfilesPage 写入），收件箱只读；已删除的 profile 惰性剔除
   const profileIssues = useAppStore((s) => s.profileIssues);
   const profiles = useAppStore((s) => s.profiles);
@@ -1718,6 +1719,18 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
           },
         ]
       : []),
+    ...Object.values(skillAdaptJobs)
+      .filter((job) => job.status !== "running" && !job.opened)
+      .map((job) => ({
+        key: `skill:${job.skillId}`,
+        dot: job.status === "ready" ? "bg-ok-text" : "bg-warn-text",
+        text: inboxTaskLine(
+          job.skillName,
+          job.status === "ready" ? "适配稿已生成" : "适配稿生成失败",
+        ),
+        actionLabel: "去查看",
+        action: { type: "skillAdapt" as const, skillId: job.skillId },
+      })),
     // profile 验证失败：agent 起不来 = 停工；只镜像用户触发的验证结果，不新增后台轮询
     ...Object.entries(profileIssues)
       .filter(([id]) => profiles.some((p) => p.id === id))

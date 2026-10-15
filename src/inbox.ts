@@ -16,6 +16,7 @@ export type InboxCategory =
   | "ready"
   | "artifacts"
   | "digest"
+  | "skill"
   | "profile"
   | "help";
 
@@ -37,6 +38,7 @@ export const INBOX_CATEGORIES: readonly InboxCategoryMeta[] = [
   { id: "ready", label: "可合并" },
   { id: "artifacts", label: "待核验" },
   { id: "digest", label: "待发送" },
+  { id: "skill", label: "技能" },
   { id: "profile", label: "配置失效" },
   { id: "help", label: "人工请求" },
 ];
@@ -51,6 +53,7 @@ export function inboxCategoryOf(key: string): InboxCategory {
   if (key.startsWith("ready:")) return "ready";
   if (key.startsWith("artifacts:")) return "artifacts";
   if (key.startsWith("digest")) return "digest";
+  if (key.startsWith("skill:")) return "skill";
   if (key.startsWith("profile:")) return "profile";
   if (key.startsWith("help:")) return "help";
   return "confirm";

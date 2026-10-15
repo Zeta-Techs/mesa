@@ -9,6 +9,7 @@ import ContextMenu from "../components/ContextMenu";
 import { Modal } from "../components/Modal";
 import { HoverTip, useHoverTip } from "../components/HoverTip";
 import { confirmDialog } from "../components/ConfirmDialog";
+import { toast } from "../toast";
 import {
   isBuiltinSkill,
   skillDeleteImpact,
@@ -941,24 +942,26 @@ function OptimizeModal({
             </p>
             <div className="mb-3 max-h-64 overflow-auto rounded-sm border border-hairline">
               {(skillLib ?? []).map((s) => (
-                <label
+                <Checkbox
                   key={s.id}
-                  className={`flex items-center gap-2 border-b border-hairline py-2 px-3 text-sm last:border-b-0 ${busy ? "opacity-50" : "cursor-pointer"}`}
-                >
-                  <input
-                    type="checkbox"
-                    disabled={busy}
-                    checked={sources.has(s.id)}
-                    onChange={(e) => {
-                      const next = new Set(sources);
-                      if (e.target.checked) next.add(s.id);
-                      else next.delete(s.id);
-                      setSources(next);
-                    }}
-                  />
-                  <span className="text-l2">{s.name}</span>
-                  {isBuiltinSkill(s.source) && <span className="text-xs text-l4">内置</span>}
-                </label>
+                  disabled={busy}
+                  checked={sources.has(s.id)}
+                  onChange={(checked) => {
+                    const next = new Set(sources);
+                    if (checked) next.add(s.id);
+                    else next.delete(s.id);
+                    setSources(next);
+                  }}
+                  className="border-b border-hairline px-3 py-2 text-sm last:border-b-0"
+                  label={
+                    <span className="text-l2">
+                      {s.name}
+                      {isBuiltinSkill(s.source) && (
+                        <span className="ml-2 text-xs text-l4">内置</span>
+                      )}
+                    </span>
+                  }
+                />
               ))}
             </div>
           </>
@@ -1000,46 +1003,30 @@ function OptimizeModal({
   );
 }
 
-/** ◈ 适配到流水线（两阶段，与「融合进任务书」同口径）：AI 按流水线路径约定改写 SKILL.md →
- *  人在此预览/再编辑 → 确认才经 write_skill_md 落盘（备份/回滚复用编辑路径）。
- *  打开即自动生成；失败可重试，不写盘。 */
+/** ◈ 适配到流水线：成稿在后台生成。这里只预览已有稿，确认才写回。 */
 function AdaptModal({
   skill,
+  initialContent,
+  initialError,
+  unchanged = false,
   onClose,
   onSaved,
+  onRetry,
 }: {
   skill: SkillDto;
+  initialContent: string | null;
+  initialError: string | null;
+  unchanged?: boolean;
   onClose: () => void;
   onSaved: () => Promise<void>;
+  onRetry: () => void;
 }) {
-  const [content, setContent] = useState<string | null>(null);
+  const [content, setContent] = useState(initialContent ?? "");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function generate() {
-    setBusy(true);
-    setError(null);
-    try {
-      const dto = await invoke<{ name: string; content: string }>(
-        "adapt_skill_to_pipeline",
-        { id: skill.id },
-      );
-      setContent(dto.content);
-    } catch (reason) {
-      setError(String(reason));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  useEffect(() => {
-    void generate();
-    // 仅打开时生成一次（失败点「重试」）；skill 在弹层生命周期内不变
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const [error, setError] = useState<string | null>(initialError);
 
   async function confirm() {
-    if (!content) return;
+    if (!content.trim()) return;
     setBusy(true);
     setError(null);
     try {
@@ -1064,14 +1051,19 @@ function AdaptModal({
           AI 按流水线路径约定（papers/、notes/、references.bib
           等）改写技能，并补写 inputs/outputs 接口声明；可再手动改，确认后才写回技能库。
         </p>
-        {content === null && !error ? (
-          <p className="py-8 text-center text-sm text-l4">正在生成适配稿…</p>
-        ) : (
+        {unchanged ? (
+          <p className="mb-3 text-xs text-l3">
+            这份技能的路径和顶位声明已经符合流水线，没有重写。下面是原文，确认会原样写回。
+          </p>
+        ) : null}
+        {content.trim() ? (
           <textarea
             className={`${fieldClass} mb-3 min-h-64 flex-1 resize-y font-mono text-xs`}
-            value={content ?? ""}
+            value={content}
             onChange={(e) => setContent(e.target.value)}
           />
+        ) : (
+          <p className="py-8 text-center text-sm text-l4">还没有适配稿。</p>
         )}
         {error && <p className="mb-2 text-sm text-err-text">{error}</p>}
         <div className="flex justify-end gap-2">
@@ -1083,7 +1075,7 @@ function AdaptModal({
           </button>
           {error && (
             <button
-              onClick={() => void generate()}
+              onClick={onRetry}
               disabled={busy}
               className="rounded-sm px-3 py-1.5 text-sm text-l2 hover:bg-hover disabled:opacity-50"
             >
@@ -1092,7 +1084,7 @@ function AdaptModal({
           )}
           <button
             onClick={() => void confirm()}
-            disabled={busy || !content?.trim()}
+            disabled={busy || !content.trim()}
             className="rounded-sm border border-cta-bd bg-cta px-3 py-1.5 text-sm text-cta-text hover:brightness-110 disabled:opacity-50"
           >
             {busy ? "处理中…" : "确认写回技能库"}
@@ -1350,6 +1342,40 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
   const [optimize, setOptimize] = useState<SkillDto | null>(null);
   // ◈ 适配到流水线（AI 改写稿预览确认）与反向挂载到步骤
   const [adapt, setAdapt] = useState<SkillDto | null>(null);
+  const skillAdaptJobs = useAppStore((s) => s.skillAdaptJobs);
+  const skillAdaptOpenId = useAppStore((s) => s.skillAdaptOpenId);
+  const startSkillAdapt = useAppStore((s) => s.startSkillAdapt);
+  const markSkillAdaptOpened = useAppStore((s) => s.markSkillAdaptOpened);
+  const clearSkillAdapt = useAppStore((s) => s.clearSkillAdapt);
+  const setSkillAdaptOpenId = useAppStore((s) => s.setSkillAdaptOpenId);
+
+  useEffect(() => {
+    if (!skillAdaptOpenId) return;
+    const skill = skills.find((item) => item.id === skillAdaptOpenId);
+    if (!skill) return;
+    setAdapt(skill);
+    markSkillAdaptOpened(skill.id);
+    setSkillAdaptOpenId(null);
+  }, [markSkillAdaptOpened, setSkillAdaptOpenId, skillAdaptOpenId, skills]);
+
+  function openAdapt(skill: SkillDto) {
+    const job = skillAdaptJobs[skill.id];
+    if (job?.status === "running") {
+      toast(`「${skill.name}」的适配稿还在生成`);
+      return;
+    }
+    if (job?.status === "ready" && job.content) {
+      markSkillAdaptOpened(skill.id);
+      setAdapt(skill);
+      return;
+    }
+    if (job?.status === "error") {
+      setAdapt(skill);
+      return;
+    }
+    startSkillAdapt({ id: skill.id, name: skill.name });
+    toast(`正在后台生成「${skill.name}」的适配稿，完成后在待你处理里通知`);
+  }
   const [bindSkill, setBindSkill] = useState<SkillDto | null>(null);
   const setPendingTerminal = useAppStore((s) => s.setPendingTerminal);
   const setPage = useAppStore((s) => s.setPage);
@@ -2386,8 +2412,17 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
       {adapt && (
         <AdaptModal
           skill={adapt}
+          initialContent={skillAdaptJobs[adapt.id]?.content ?? null}
+          initialError={skillAdaptJobs[adapt.id]?.error ?? null}
+          unchanged={skillAdaptJobs[adapt.id]?.unchanged === true}
           onClose={() => setAdapt(null)}
+          onRetry={() => {
+            setAdapt(null);
+            startSkillAdapt({ id: adapt.id, name: adapt.name }, true);
+            toast(`正在重新生成「${adapt.name}」的适配稿`);
+          }}
           onSaved={async () => {
+            clearSkillAdapt(adapt.id);
             setNotice(`技能「${adapt.name}」已按流水线口径适配（原文件已备份）`);
             await refresh();
           }}
@@ -2485,7 +2520,7 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
             },
             {
               label: "◈ 适配到流水线",
-              onSelect: () => setAdapt(rowMenu.skill),
+              onSelect: () => openAdapt(rowMenu.skill),
             },
             {
               label: "挂载到步骤",

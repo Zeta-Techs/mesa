@@ -327,6 +327,7 @@ export interface InboxItem {
       }
     | { type: "session"; agent: string; sessionId: string }
     | { type: "digest" }
+    | { type: "skillAdapt"; skillId: string }
     | { type: "artifacts"; workspaceId: string }
     | { type: "project"; projectRoot: string }
     | {
@@ -384,6 +385,20 @@ export interface DigestJob {
   consumed: boolean;
 }
 
+/** 「◈ 适配到流水线」后台成稿。opened 后从收件箱摘掉，稿还在，再点该技能直接打开。 */
+export interface SkillAdaptJob {
+  skillId: string;
+  skillName: string;
+  status: "running" | "ready" | "error";
+  content: string | null;
+  error: string | null;
+  /** 技能本来就符合流水线，稿是原文，没有重写。 */
+  unchanged: boolean;
+  opened: boolean;
+}
+
+/** 收件箱按篇开读：先进积累账 papers/reading-list.md（不进 git，不影响流程），
+    再按已登记资源找 PDF——有则进沉浸阅读 */
 async function openLitInboxPaper(act: {
   projectRoot: string;
   title?: string;
@@ -484,6 +499,9 @@ export function runInboxAction(item: InboxItem) {
   } else if (item.action.type === "digest") {
     s.setDigestOpenReq(Date.now());
     s.setPage("sessions");
+  } else if (item.action.type === "skillAdapt") {
+    s.setSkillAdaptOpenId(item.action.skillId);
+    s.setPage("skills");
   } else if (item.action.type === "artifacts") {
     s.setArtifactCheckReq(item.action.workspaceId);
     s.setPage("workspaces");
@@ -659,6 +677,14 @@ interface AppState {
   /** 收件箱「去发送」→ 对话页重开 DigestPicker 的一次性请求（nonce 触发） */
   digestOpenReq: number | null;
   setDigestOpenReq: (n: number | null) => void;
+  /** 「◈ 适配到流水线」后台成稿，按技能 id。打开成稿后 opened=true，收件箱摘掉。 */
+  skillAdaptJobs: Record<string, SkillAdaptJob>;
+  startSkillAdapt: (skill: { id: string; name: string }, force?: boolean) => void;
+  markSkillAdaptOpened: (skillId: string) => void;
+  clearSkillAdapt: (skillId: string) => void;
+  /** 收件箱「去查看」→ 技能页打开该技能适配稿 */
+  skillAdaptOpenId: string | null;
+  setSkillAdaptOpenId: (id: string | null) => void;
   /** 收件箱「去核验」→ 工作区页展开对应任务行产物清单的一次性请求 */
   artifactCheckReq: string | null;
   setArtifactCheckReq: (id: string | null) => void;
@@ -901,6 +927,74 @@ export const useAppStore = create<AppState>((set, get) => {
   skillDraftReq: null,
   setSkillDraftReq: (r) => set({ skillDraftReq: r }),
   digestJob: null,
+  skillAdaptJobs: {},
+  startSkillAdapt: (skill, force) => {
+    const cur = get().skillAdaptJobs[skill.id];
+    if (cur?.status === "running") return;
+    if (cur?.status === "ready" && !force) return;
+    set({
+      skillAdaptJobs: {
+        ...get().skillAdaptJobs,
+        [skill.id]: {
+          skillId: skill.id,
+          skillName: skill.name,
+          status: "running",
+          content: null,
+          error: null,
+          unchanged: false,
+          opened: false,
+        },
+      },
+    });
+    invoke<{ name: string; content: string; unchanged?: boolean }>("adapt_skill_to_pipeline", {
+      id: skill.id,
+    })
+      .then((dto) => {
+        const jobs = get().skillAdaptJobs;
+        const job = jobs[skill.id];
+        if (!job || job.status !== "running") return;
+        set({
+          skillAdaptJobs: {
+            ...jobs,
+            [skill.id]: {
+            ...job,
+            status: "ready",
+            content: dto.content,
+            error: null,
+            unchanged: dto.unchanged === true,
+          },
+          },
+        });
+      })
+      .catch((reason) => {
+        const jobs = get().skillAdaptJobs;
+        const job = jobs[skill.id];
+        if (!job || job.status !== "running") return;
+        set({
+          skillAdaptJobs: {
+            ...jobs,
+            [skill.id]: { ...job, status: "error", error: String(reason), content: null },
+          },
+        });
+      });
+  },
+  markSkillAdaptOpened: (skillId) => {
+    const job = get().skillAdaptJobs[skillId];
+    if (!job) return;
+    set({
+      skillAdaptJobs: {
+        ...get().skillAdaptJobs,
+        [skillId]: { ...job, opened: true },
+      },
+    });
+  },
+  clearSkillAdapt: (skillId) => {
+    const next = { ...get().skillAdaptJobs };
+    delete next[skillId];
+    set({ skillAdaptJobs: next });
+  },
+  skillAdaptOpenId: null,
+  setSkillAdaptOpenId: (id) => set({ skillAdaptOpenId: id }),
   startDigestJob: (src, force) => {
     const cur = get().digestJob;
     const same =

@@ -2687,6 +2687,8 @@ pub async fn update_skill_content(
 pub struct SkillAdaptDto {
     pub name: String,
     pub content: String,
+    /// 路径和顶位声明已经符合流水线，没有再叫模型重写。
+    pub unchanged: bool,
 }
 
 /// 适配 prompt（纯函数，可测）：规范路径表单一出处，改约定只动这里。
@@ -2717,6 +2719,65 @@ pub(crate) fn build_adapt_prompt(name: &str, current: &str) -> String {
          4. 保持单文件轻量规范（约 100 行内），不加脚本/JSON 中间件/lint 体系；\n\
          5. 只输出完整的新版 SKILL.md 全文（含 frontmatter），不要解释、不要代码围栏。"
     )
+}
+
+/// 流水线能识别的内置技能位。适配稿里写了别的 provides 会被丢掉，避免声明了却顶不上位。
+const PIPELINE_SLOTS: &[&str] = &[
+    "lit-search",
+    "lit-notes",
+    "review-framework",
+    "review-writing",
+    "review-figures",
+    "research-writing",
+    "proposal-writer",
+    "rebuttal-crafter",
+    "data-clean",
+    "data-eda",
+    "stats-check",
+    "figure-forge",
+    "quarto-render",
+    "bib-check",
+    "slides-deck",
+    "lit-watch",
+    "zotero-sync",
+    "endnote-bridge",
+    "origin-plot",
+    "blender-research",
+];
+
+/// 把模型输出收成一份能写回的 SKILL.md。缺 frontmatter、正文为空、或被 64KB 截断时拒绝，
+/// 不把半份稿写进技能库。provides 只留流水线认识的位名。
+fn usable_adapt_draft(raw: &str) -> Result<String, String> {
+    if raw.contains("简报超过 64KB 上限") {
+        return Err("适配稿过长被截断，不能写回技能库。请缩短技能后重试".into());
+    }
+    let text = extract_skill_md(raw).trim();
+    if !text.starts_with("---") {
+        return Err("适配稿不是完整的 SKILL.md（没有 frontmatter），不能写回。请重试".into());
+    }
+    let mut parsed = parse_skill_md_text(text);
+    let body = skill_md_body(text).trim();
+    if body.is_empty() {
+        return Err("适配稿正文为空，不能写回".into());
+    }
+    parsed
+        .provides
+        .retain(|slot| PIPELINE_SLOTS.iter().any(|known| known == slot));
+    let name = parsed
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .unwrap_or("skill");
+    let desc = parsed.description.unwrap_or_default();
+    Ok(compose_skill_md(
+        name,
+        &desc,
+        body,
+        &parsed.inputs,
+        &parsed.outputs,
+        &parsed.provides,
+    ))
 }
 
 /// AI 输出容错：剥掉首尾代码围栏（模型偶尔无视「不要代码围栏」）
@@ -2750,6 +2811,27 @@ fn extract_skill_md(text: &str) -> &str {
     start
 }
 
+/// 已有 inputs/outputs，且 provides 是流水线认识的位，或正文已在用约定路径。
+/// 这种技能再整篇重写只会卡住，原稿就可以写回。
+fn already_pipeline_aligned(text: &str) -> bool {
+    let parsed = parse_skill_md_text(text);
+    let has_interface = !parsed.inputs.is_empty() || !parsed.outputs.is_empty();
+    if !has_interface {
+        return false;
+    }
+    let known = parsed
+        .provides
+        .iter()
+        .any(|slot| PIPELINE_SLOTS.iter().any(|known| known == slot));
+    if known {
+        return true;
+    }
+    let body = skill_md_body(text);
+    ["papers/", "notes/", "references.bib", "manuscript/", "outline.md"]
+        .iter()
+        .any(|path| body.contains(path))
+}
+
 fn adapt_skill_to_pipeline_impl(
     profiles: Vec<crate::profiles::Profile>,
     id: &str,
@@ -2762,6 +2844,13 @@ fn adapt_skill_to_pipeline_impl(
         .ok_or_else(|| format!("技能不存在: {id}"))?;
     let md_path = store.skill_dir(&skill.name).join("SKILL.md");
     let current = fs::read_to_string(&md_path).map_err(|e| format!("读取 SKILL.md 失败: {e}"))?;
+    if already_pipeline_aligned(&current) {
+        return Ok(SkillAdaptDto {
+            name: skill.name.clone(),
+            content: current,
+            unchanged: true,
+        });
+    }
     // 与「◈ 融合进任务书」同口径：超长中段挖空截 24KB，profile 走设置页 distill 功能键
     let prompt = build_adapt_prompt(
         &skill.name,
@@ -2769,13 +2858,11 @@ fn adapt_skill_to_pipeline_impl(
     );
     let ai_out = crate::ai::ai_prompt_impl(profiles, None, Some(crate::ai::FN_DISTILL), prompt)?;
     let redacted = crate::handoff::redact_and_cap(&ai_out);
-    let text = strip_code_fence(redacted.trim());
-    if text.is_empty() {
-        return Err("AI 没有产出适配稿，请重试".into());
-    }
+    let content = usable_adapt_draft(&redacted)?;
     Ok(SkillAdaptDto {
         name: skill.name.clone(),
-        content: text.to_string(),
+        content,
+        unchanged: false,
     })
 }
 
@@ -2798,11 +2885,10 @@ pub async fn adapt_skill_to_pipeline(
 pub async fn write_skill_md(name: String, full_text: String) -> Result<(), String> {
     let store = SkillStore::default_paths()?;
     let mut skills = store.read();
+    // 确认写回的就是预览里那份能解析的稿：前言、围栏先剥掉，缺结构直接拒绝。
+    let full_text = usable_adapt_draft(&full_text)?;
     let parsed = parse_skill_md_text(&full_text);
     let body = skill_md_body(&full_text);
-    if body.trim().is_empty() {
-        return Err("SKILL.md 正文为空，未写入".into());
-    }
     update_content_impl(
         &store,
         &mut skills,
@@ -2872,7 +2958,11 @@ fn optimize_skills_draft_impl(
         .name
         .filter(|n| validate_skill_name(n).is_ok())
         .unwrap_or_default();
-    Ok(SkillAdaptDto { name: suggested, content: text.to_string() })
+    Ok(SkillAdaptDto {
+        name: suggested,
+        content: text.to_string(),
+        unchanged: false,
+    })
 }
 
 /// 「AI 优化另存」第一阶段：多源合成出稿（不写盘，前端预览/编辑后确认）
@@ -3855,6 +3945,25 @@ mod tests {
         assert!(prompt.contains("references.bib"));
         assert!(prompt.contains("【当前 SKILL.md】\n---\nname: my-skill\n---\n正文"));
         assert!(prompt.contains("inputs:"), "必须要求补写接口声明");
+    }
+
+    #[test]
+    fn usable_adapt_draft_strips_preamble_and_drops_unknown_provides() {
+        let raw = "下面是改好的稿：\n```markdown\n---\nname: hacked\ndescription: 新描述\ninputs:\n  - papers/included.md\noutputs:\n  - notes/\nprovides: [lit-search, not-a-slot]\n---\n新正文\n```\n";
+        let draft = usable_adapt_draft(raw).unwrap();
+        let parsed = parse_skill_md_text(&draft);
+        assert_eq!(parsed.inputs, vec!["papers/included.md".to_string()]);
+        assert_eq!(parsed.outputs, vec!["notes/".to_string()]);
+        assert_eq!(parsed.provides, vec!["lit-search".to_string()]);
+        assert_eq!(skill_md_body(&draft).trim(), "新正文");
+        assert!(usable_adapt_draft("只有一段说明，没有 frontmatter").is_err());
+    }
+
+    #[test]
+    fn already_aligned_skill_is_detected() {
+        let aligned = "---\nname: lit-search\noutputs:\n  - papers/screening.md\nprovides: [lit-search]\n---\n正文\n";
+        assert!(already_pipeline_aligned(aligned));
+        assert!(!already_pipeline_aligned("---\nname: x\n---\n随便写，没有路径\n"));
     }
 
     #[test]
