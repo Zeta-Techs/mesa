@@ -6,6 +6,12 @@
 >
 > **边走边改（2026-09-22 用户拍板）**：用户在走科研流程时的提问和反馈，默认是要改他正在用的那条流程（当前课题档案卡 + 模板/任务书/界面），不是要一段说明。先核对实际落盘和界面再改，改到这一步能接着用；回答里写清改了什么、在哪能看见。
 >
+> **动真实数据先干跑 + 未发布不养闲机器（2026-10-13 用户拍板）**：凡要写用户真实项目数据的功能（迁移/清理/批量改写一类），
+> 交到用户手里点之前必须先在干跑环境或用户一个真实项目上完整执行一遍验证——静态审查代替不了执行（当日实证：迁移命令审查
+> 全过，用户一点才暴露 git add 拒收被忽略文件）。应用未发布期间，只服务「假想老用户」的界面机器不留：用户数据量小就直接
+> 替用户做掉并验证，机器删掉（当日实证：文献台账迁移命令+界面整体移除）；真到发布需要重建的，重建序列记在
+> `docs/conventions/pipeline.md`「双台账·存量收口」，发布前检查项见 architecture §12。
+>
 > **文档同步（用户指令）**：`docs/guide/user-guide.md` 是面向使用者的**产品说明书**。只要改了入口、步骤、按钮文案或默认行为，必须改对应章节。写法（2026-09-18 用户拍板，否决无小标题长文）：写给干活的人；对「你」说话；保留小标题（如「安装时可能碰到的唯一拦路虎（Mac）」）；每节尽量同一口气——解决什么问题、打开会看见什么、一步一步怎么点、怎样才算做成、常见卡在哪；内部词第一次出现用白话带过。不要功能清单，不要文首流水账，不要把步骤揉进没有小标题的长段落。白话不等于口语俚语——「找场子」「糊涂账」一类词不得出现，语气保持专业（2026-10-09 用户拍板）。文中 `【配图】` / `【配视频】` 是后补素材位，改用法时同步改说明。版本叙事写 `CHANGELOG.md`（发版本时更新）。
 
 > **跨平台换行约定**：仓库文本文件统一以 LF 形式存储，规则见 `.gitattributes`。Windows 本地可保留
@@ -40,6 +46,9 @@ Mesa 是一个「AI 科研工作台」桌面应用（Tauri v2 + React/TS）—�
 - token/费用统计随 P3 顺带做，不提前
 - **三平台（macOS/Windows/Linux）同步**支持，功能不得以平台为由裁剪
 - **Agent Workspace（v3.221 / v3.235）**：以 Project 为家。人负责目标，系统给环境（文件地图、规则、上下文）和验收门；Agent 自己规划。CLI 是第一种 Runtime。用户不面对 Run。并行只来自人声明或模板，禁止自动拆任务 / 智能路由。科研/编程两套 worktree 库不合并。工作台「正在进行」只列交互活；关标签后按 `runId` 找回。定时隔离产物经评审才进主仓。改工作台/目标/验收前必读 `docs/conventions/agent-workbench.md`
+- **开源与许可（2026-10-12 拍板，公司身份对外发布）**：Mesa 按 **Apache-2.0** 开源（LICENSE/NOTICE/package.json/Cargo.toml/README/CONTRIBUTING/关于页同步；**版权落款 `泽塔前沿科技（杭州）有限公司`**——七处署名：LICENSE/NOTICE/Cargo authors/tauri.conf publisher/关于页版权行/macOS About 面板/gen 脚本随包清单头；中文注册名即主体名，无官方英文名不写英文，仓库链接与 updater endpoint 仍指 `hongtongzhou-design/ccode` 个人 repo（转 org 时按三处同步口径换）；贡献要求 DCO 签署）；**商业中转预设不进开源默认表**（ZetaTechs 预设已移除，恢复 §10 2026-09-20 口径，tests/presets.test.ts 钉住）；zhipu/kimi/minimax 三个图标按 lobe-icons（MIT）+ cc-switch（MIT）署名进 `docs/licenses/THIRD-PARTY.md`；**随包第三方许可清单由 `npm run gen:notices` 生成**（`src-tauri/resources/third-party-notices.md` 提交进仓、进 bundle.resources、`about.rs` 嵌二进制）——**改动依赖后必须再生成**；设置页「关于」承载版本/构建信息/版权/开源许可浮层/致谢/数据来源/隐私/反馈（文案改动同步 user-guide §13.9）；macOS 菜单 About 面板在 lib.rs setup（编辑子菜单必须保留，否则文本框复制粘贴失灵）；顶栏「? 帮助」菜单三组入口（外链 ↗ / 跳设置分区 / 反馈表单），「反馈与提需求」双通道（公司端点 `feedback.rs FEEDBACK_ENDPOINT` 为主，mailto 回落）
+- **用量页活跃度热力图（2026-10-12 拍板，详见 architecture §10 当日条目）**：GitHub 风格年历进用量页；**色阶锚 `--color-cta`**（用户指定）；着色量纲=四类合计（与 KPI 卡输入+输出口径不同，tooltip 披露）；streak 降权展示+今天宽限；载体 DOM 真表格（v3.88 修订为「手绘不引库」）；口径铁律——着色/活跃/streak 恒只算非 internal（official 计入），「显示内部活动」开关只加 tooltip 注记不改色不改统计；自然年翻页与 range 解耦；四分位分档禁线性归一；rebuild 并发锁（rebuild_locked 四调用点）修存量双计隐患；**点格下钻（usage_day_detail→直跳会话视图 + sessionScopeReq kind:day 深链）与按 agent 筛选（usage_activity_agents 矩阵+胶囊，口径随胶囊重算）同日实装**
+- **定时雷达定位与评审/采纳口径（2026-10-13 拍板，细则见 conventions/pipeline.md「评审与采纳口径」）**：雷达文献=项目内**日常积累/资源储备**，不进科研流程——绝不写 `papers/included.md`、`notes/index.json`、`references.bib`，流程开始后雷达命中不再往流程加文献；「留下/排除」只决定哪些**进项目**（排除的采纳时不写入，未定与留下照进），精读由人发起（雷达行单篇「加入积累」——旧称「加入精读」 / 从积累发起检索与科研流程）；**精读接续铁律**：某篇已有笔记时 agent 必须在原笔记上续写优化，「译段」「我的想法」与用户手写内容原样保留、不另起平行笔记（lit-notes §1a）；评审页只列该次运行**新命中**（冻结 after−initial）；已采纳运行=历史行「已采纳·查看」+评审只读+后端双闸（adopt/decide 都拒），决定文件损坏写入 fail-closed。**同日追加拍板**：①历史运行记录支持删除——`schedule_run_delete` 删单条（账行/事件/历史行/冻结证据，worktree 共享保留、已采纳产物不动）；删任务必级联清同款产物（`purge_schedule_side_effects`，worktree 走回收站），不再留界面到不了的孤儿；②雷达筛选语义修订——设筛选后指标未知=不匹配（前后端镜像同改+测试钉住），不设筛选全显示，筛选清空有空态提示；③**双台账定稿（同日二批「全按推荐+抽屉同批」，细则 pipeline.md「双台账」）**——`papers/reading-list.md`＝积累账（gitignored，「加入精读」改名「加入积累」的唯一落点，去重域=两表并集，卡内「积累 N」抽屉可列可删；2026-10-14 细化——加入积累只写账不跳转，已积累书标点击＝展开抽屉定位该篇（行内不放移出，移出只走抽屉 ✕），抽屉「精读」有笔记显「继续精读」，仅在正典（不在积累账）的书标点击＝打开已存全文或说明去处、不默认用户想移出），`papers/included.md`+json＝流程正典（检索步/人审/开工接驳三入口），雷达台账（inbox/watch-seen/watch-followup/watch-explains/pending-registrations/acceptance-log×2/.ccode/watch/ 订阅）全 gitignored、永不进任何步骤永不影响合并；开工两动作＝接驳提交（弹层默认勾选可取消，scoped 提交把主仓未提交的 included.md/included.json/to-fetch.md/to-fetch.ris 存量+notes/*.md 用户笔记并入基准，bootstrap 后、create_workspace 前）＋冻结快照 `.ccode/handoff-lit-intake.md`（best-effort，检索步与 included 存量/imports/检索候选统一去重当进料口，不回写不清空）；合并闸门白名单重写（review_contract.rs）——reading-list/watch-explains/pending-registrations 只豁免 ??（防呆：违规提交后 M 态仍拦并点名），notes/*.md（index.json 除外）/inbox/watch-seen/watch-followup/acceptance-log×2/.ccode/watch/ 双态全豁免；PDF 资源登记相位感知（有 active/creating 工作区时 register_pdf 改记 pending-registrations.json，项目打开与工作区归档回放）；存量项目当日已手工迁移完（等价 git 序列）；**迁移命令与界面按「未发布、留着没用就删」拍板移除**（曾实现后删，重建按当日 git 序列即可），新项目 .gitignore 模板直带台账面
 
 ## 构建与运行
 
@@ -96,7 +105,7 @@ npm run tauri build    # 打包
 - **git 分支纪律**：未经用户明确指令，禁止 checkout/switch/merge/rebase/stash/删分支等任何改动 HEAD 或分支指向的操作；
   开工先 `git branch --show-current` 确认在用户指定的分支上，不符就停下报告，不自行切换；任务收尾报告分支名 + `git status` 结果。
 - **git 推送走 SSH:443 + repo deploy key**；发版推 tag 后先用 `gh run list --workflow build.yml` 确认是否已产生该 tag 的 push run，已触发则只保留该 run；30 秒内未触发才执行 `gh api repos/hongtongzhou-design/ccode/actions/workflows/build.yml/dispatches -f ref=<tag>`。禁止让 tag push 与 workflow_dispatch 两个打包 run 并行写同一 Release。workflow 已配 `permissions: contents: write`（tauri-action 建 Release 草稿必需）。**仓库 owner 与 tauri.conf 升级端点绑定**（同为 `hongtongzhou-design/ccode`）：仓库若转移，本命令、updater endpoint、README 链接三处必须同步改。
-- **CI 测试**：禁墙钟时序硬断言（runner 调度延迟不可控；只留内容语义断言 + 防挂死宽松兜底）；unix 专属语义（symlink/PTY/脚本）测试加 `#[cfg(unix)]`；路径断言用 `Path::ends_with`（Windows `\`）。
+- **CI 测试**：禁墙钟时序硬断言（runner 调度延迟不可控；只留内容语义断言 + 防挂死宽松兜底）；unix 专属语义（symlink/PTY/脚本）测试加 `#[cfg(unix)]`；路径断言用 `Path::ends_with`（Windows `\`）；**测试禁触系统 UI/回收站**——`trash` 等走 Finder AppleScript 的调用在测试态必须经隔离缝直删（projects.rs `trash_to_recycle_bin` 先例：测试驱动 Finder 会与用户桌面互抢并偶发 -47，purge 组 51.7s→0.06s 实证）。
 
 ## 代码结构
 
@@ -158,6 +167,7 @@ docs/            architecture.md（总体设计 + §10 决策记录 + §12 当�
 | 多 Agent 工作台对象 | `docs/conventions/agent-workbench.md` | **改工作台/并行/无头/Runtime 前必读（v3.221 定稿；第 0–3 期核心路径已落地）**：Project→Task→Run、编程车道、RuntimeKind、禁止自动拆工；定时任务默认隔离 worktree；非 Git 项目失败 |
 | 步骤工作面板 | `docs/conventions/step-panel.md` | **新增步骤/模板前必读**：七条硬规则（顺序即语义、空节点不出现、同一事实只说一次、孤立按钮、主路径唯一、显式决策契约门控、角色标注）、问题该在什么时刻与层级出现（项目层/决策项/按需问/种子/人工事项五选一）、文案与术语、新增模板检查清单 |
 | 主题与设计系统 | `docs/conventions/design-system.md` | 主题令牌、字体栈、线条语言、控件密度、页面框架、对话页三栏、步进器规格、已否决设计 |
+| Agent 绑定体系 | `docs/conventions/agent-binding.md` | **改任何「谁用什么配置启动」前必读（2026-10-15 定稿）**：解析塔（实体绑定>用途槽位>项目默认>记忆>全局）、槽位白名单（reader/discuss/step:）、开工弹层两态勾选、kickoffLast 拆键、工作区三链 workspaceLaunchChain、商量类不吃步骤绑定 |
 | 网关与绑定（配置模型层） | `docs/conventions/profiles.md` | **改配置/注入/设为全局/模型能力/托盘前必读（已落地）**：网关×绑定拆层、binding id 复用、provider 派生名、relay 缓存键、求交器、体检与通道表不对称、迁移合并、模型配置约定（Claude --settings、Grok fail-closed、Codex 端点分槽、思考档注入优先级） |
 | 普通目标评审冻结 | `docs/conventions/review-freeze.md` | **改普通目标开工/收尾/评审/采纳前必读（2026-09-09 落地）**：开工基线哈希、收尾冻结 payload、采纳三向判定与删除/大文件/旧 Run 口径 |
 | 本机环境与踩坑 | `docs/conventions/environment.md` | 网络镜像、跨平台行为（Windows conhost/npm shim、macOS CLT/Xcode、PDF 白屏）、钥匙串、双 clone 第二实例；涉网/装依赖/平台问题前必读 |

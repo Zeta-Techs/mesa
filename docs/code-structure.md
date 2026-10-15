@@ -25,15 +25,26 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 就地「存进历史」（git_commit 只提交命中子集）/二击开工；不相交仍只是主仓提醒行（想法期实验改动留在主仓合法））、
                              # StepSkillsChips（步骤推荐技能 chip 区：只读/可编辑两态 + 产物冲突/跨步骤链路 ⚠ 警告行）、
                              # HumanTasksList（人工事项清单 + useHumanTasks 共享逻辑；待确认清完且未手动取消才自动勾）、StepFlow（步骤内协同流程线；付费墙行已登录显示「已登录」，未登录才是「登录学校账号」；拖进待获取清单按文件名、DOI 和 PDF 内标题对条目）、
-                             # ScheduleSection（定时任务：有流程在项目设置抽屉；无流程主区雷达下；编程/办公右侧会话栏）、
+                             # ScheduleSection（定时任务：有流程在项目设置抽屉；无流程主区雷达下；编程/办公右侧会话栏；
+                             #   onSchedulesChanged = 任务集变更回调，定时任务页里喂 ProjectSchedulesView 的版本号桥）、
                              # LitWatchCard（「◔ 文献雷达」卡片：近 8 周趋势（全部缺巡检日时可按巡检日补记）+
-                             #   命中固定两行（标题一行；第二行摘要+徽章+日期+精读，解读/来源/⋯ 悬停才现；无获取全文）+
+                             #   命中固定两行（标题一行；第二行摘要+徽章+日期+加入积累，解读/来源/⋯ 悬停才现；无获取全文）+
+                             #   书标三态：加入积累只写账不跳转；已积累点击＝展开「积累 N」抽屉定位该篇（移出只走抽屉 ✕）；
+                             #   仅在正典（不在积累账）点击＝打开已存全文或说明去处——精读/笔记/全文入口统一在抽屉，
+                             #   「精读」有笔记（list_paper_notes×noteLinkForPaper）显「继续精读」+
                              #   待人工下载：官网/等待收货+取消/关联/✓已存/打开 papers/ +
                              #   新命中默认两行对齐精读清单密度（摘要点开才见）+
                              #   期刊徽章（IF/中科院分区/TOP，数据源 journal_metrics.rs）+ 新命中按日期/按关键词分组切换 +
                              #   卡头期刊指标表入口常驻（未装=↓下载 / 已装=↻重下即更新）+ 卡头「筛选」弹层
-                             #   （litWatchFilter：IF/分区/TOP 三条件，被筛掉条目「查看全部」临时态），挂科研任务步进器与当前步骤卡之间、默认收起）、
+                             #   （litWatchFilter：IF/分区/TOP 三条件，被筛掉条目「查看全部」临时态），唯一挂载点 ProjectSchedulesView（项目「定时任务」页签，仅科研工作方式渲染）；
+                             #   空态入口只认有任务的卡（2026-10-12）：没订阅时若有雷达巡检出「还没订阅读+订阅关键词」，
+                             #   连雷达巡检都没有则整块不渲染——订阅无任务不跑，定时任务页只留「＋ 定时巡检」主路；
+                             #   schedulesVersion prop = 同页任务列表增删改的桥（新建/删除不发 scheduler-run-done，靠它重拉））、
+                             # ReaderTlFloat（译文「译」悬浮球：可拖动（位置记 readerTlBall），点球在球旁展开译文卡、
+                             #   × 收回球，新翻译落地自动展开；钉住档与右栏收起兜底档的载体）、
                              # ReaderOverlay（沉浸阅读区全屏覆盖层，v3.96：三栏「笔记｜PDF｜Agent 终端」，fixed inset-0 z-40，
+                             #   左右栏收起＝栏块常挂载负 margin 滑出（ccode-reader-panel，宽度不变：Monaco/xterm 零重排零搬移，
+                             #   PDF 适配重算在 PdfContinuousView 停稳防抖收口；禁止改回条件卸载），
                              #   Esc 退出级联最优先，底下终端/PTY 保持挂载；右栏 = 阅读会话标签 xterm 宿主搬移，注入由 TerminalPage 供给；
                              #   跨页进入的退出回来源页（setReaderReq 在 store 层自动记 fromPage、closeReader 回跳）+
                              #   退出同时直接关阅读会话标签、不弹确认（正在生成的回应一并中断；requestCloseTab 的「进程活着」
@@ -51,8 +62,12 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # FuseDraftModal（「◈ 融合进任务书」预览编辑弹层：AI 融合稿可改后确认才写草稿）、
                              # TerminalStatusBar（终端底部常驻状态栏：未启动只留状态点 + 📂 目录胶囊；
                              #   进程起来后才有模型/思考档可点切 + git 芯片/保存/推送 + 时长/token） 等
-  App.tsx                    # 应用壳：标题栏、侧栏、九页挂载。壳与标题栏/侧栏/缝透明，桌面磨砂从窗口底透上来
+  App.tsx                    # 应用壳：标题栏、侧栏、九页挂载。壳与标题栏/侧栏/缝透明，桌面磨砂从窗口底透上来；
+                             #   顶栏帮助菜单（HELP_MENU：命令面板左侧 ? 钮，分组下拉，关闭范式同收件箱）
   App.css                    # 主题令牌与壳层样式。侧栏罩色：展开 42%、图标态 28%、选中行 88%；Linux 与减少透明度回落实心
+  feedback.ts                # 反馈与提需求纯逻辑：类型闭集/环境行/正文与主题拼装/mailto 通道/端点负载/截图常量（≤3 张 ≤2MB）与邮件附件注记（tests/feedback.test.ts）
+  components/FeedbackModal.tsx # 反馈表单弹层（帮助菜单与设置→关于双入口）：三通道自动降级（端点→邮箱直发 SMTP→mailto）+ 邮箱直发配置视图（预设/自定义按端口推 STARTTLS、换账号强制重填授权码、草稿回填）+ 截图附件 + 已发送记录
+  components/HelpDialogs.tsx # 帮助菜单两个内容弹窗：诊断与日志（get_app_log + export_diagnostics_bundle）、关于（含第三方许可内页，feedbackEnvLine 复用环境行）；快捷键速查曾短暂存在后按「不与命令面板/设置/说明书重复」删除（2026-10-12）
   components/CommandPalette.tsx # ⌘K 面板
   components/LaunchMenu.tsx  # 启动栏下拉菜单组件：portal 到 body、分组标题、键盘导航，替代原生 select
                              # （Agent/配置/模型三段共用；隐藏配置沉「已停用（可手选）」组）
@@ -71,20 +86,34 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   components/HoverTip.tsx      # 应用内 tooltip 共享件（v3.93 提取自 ProjectGroup）：useHoverTip + HoverTip，
                              # portal 到 body（免疫祖先 opacity/transform 的 fixed 包含块问题）、滚动/缩放即关、
                              # up 参数支持锚点上方弹出（行内动作栏 tooltip 专用）；PageFrame 的 RowAction 内置上方 tooltip
+  components/ActivityHeatmap.tsx  # 用量页「活跃度」热力图区块（2026-10-12）：真 table role=grid + CSS 格子（几何全在
+                             #   App.css .ccode-heat*，档位色 --heat-1..4 令牌）；去年同月 1 日到今天、与 range 解耦；
+                             #   <1020 胶囊跟在「活跃度」后 / ≥1020 左栏紧凑双列（192px）；格子边长 11–20 整数；
+                             #   到顶后卡片 hug 内容宽；16px 右边还剩 ≥220px 时右侧色阶+四项统计；
+                             #   布局观察满宽哨兵（禁止观察 hug 主区，防抖动）
+                             #   挂在 StatsPage empty 三元之外（页面空态是 range 口径）；共享单例 tooltip
+                             #   （pointerover 委托 + 键盘焦点同款触发）+ roving tabindex 方向键漫游；
+                             #   二期同日实装：点格/回车下钻日详情浮层（usage_day_detail 按日缓存、内滚不关、
+                             #   z-60 弹层档；会话行直跳结构化会话视图、日期出口 sessionScopeReq kind:day）+
+                             #   按 agent 筛选胶囊（usage_activity_agents 年矩阵一次拉、切胶囊纯前端过滤，
+                             #   分档/活跃/峰值/连续随胶囊重算，streak 限所选年）；
+                             #   数据自持（usage_activity 全历史非零日，refreshKey 由页级刷新驱动）
   pipeline-presets.ts        # 内置流水线模板 PIPELINE_TEMPLATES（六套，含 v3.97「LaTeX 论文」）；
                              #   每套 projectRules 纪律不同，settingsForTemplateApply 不落空表格
   lit-project.ts             # 文献-only 项目：建议添加目录 / 家目录禁入 / 无流程时 inbox 落点
   task-md.ts                 # TASK.md 拼装纯函数（项目根/产物目录绝对路径）；pipeline-start 再导出
   pipeline-start.ts          # 一键开步共享链路（renderTaskMd/gatherTaskMdExtras 单一出处，弹层预览与落盘共用）；
                              # 工作区→终端交接单一出处 buildWorkspaceTerminalRequest（reuseKey 找回同工作区标签 +
-                             # 无 prompt 时 resume 最近会话）
+                             # 无 prompt 时 resume 最近会话；步骤绑定换了 Agent 则不接回，见 keepWorkspaceResume）
   goal-run.ts                # 普通目标/「验收后写入」共享启动链（审计 §4.10）：prepareGoalRun 先拼上下文
                              # （packGoal/goalLine 可覆盖）再 task_prepare_run（contextText 冻结快照）；
                              # goalRunTerminalFields 出终端请求公共字段；页面只补 model/预览等自有字段
-  workspace-resume.ts        # 「去终端」resume 挑选纯逻辑（workspace 名 + 仓库路径匹配，排除归档/内部/live，
-                             # tests/workspace-resume.test.ts）
+  workspace-resume.ts        # 「去终端」resume 挑选纯逻辑（workspace 名 + 仓库路径匹配，排除归档/内部/live；
+                             # keepWorkspaceResume：步骤绑定是另一家 Agent 时不接回；
+                             # workspaceCarrySource：换 Agent 继续时要不要问带简报。tests/workspace-resume.test.ts）
   presets.ts                 # 端点预设表（provider 级一份多槽：PROVIDER_PRESETS 各协议槽端点 + 推荐模型 ≤3 + 适用 Agent；
-                             #   presetsForAgent 按 Agent 协议槽派生下拉；加供应商 = 加一条；仍只收官方/公开端点）
+                             #   presetsForAgent 按 Agent 协议槽派生下拉；加供应商 = 加一条；仍只收官方/公开端点——
+                             #   商业中转不进默认表，2026-10-12 拍板，tests/presets.test.ts 钉住）
   preset-flow.ts             # 一键接入纯逻辑：推荐模型与目录求交（intersectCatalog，不整目录预填）、「同时绑到」
                              #   协议兼容目标推导（extraBindTargets，复用 apiKindOf；多协议 Agent 优先 openai）、
                              #   多 Agent 槽位拼装（gatewayDraftSlots：主槽=表单地址，预设分槽值优先于同址回落）
@@ -119,7 +148,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 文件行「进行中」只认 officeFileReuseKey 对上的活标签（仓级仍 isOfficeInProgress）；
                              # 顶栏课题主题可见性 headerShowsTopic（科研项目含无流程都展示，身份四件套之一）
                              # （lockWorkModeFromConfig / codingFactChips / codingDivergenceBar /
-                             #   groupByWorkMode 项目栏分段；tests/work-mode.test.ts）
+                             #   groupByWorkMode 项目栏分段 / projectSwitchRows 收起态课题名切换菜单行；tests/work-mode.test.ts）
   session-title.ts           # 会话列表展示标题清洗（去 URL/绝对路径/中断/resume/未命名，取首句；不写回源文件）
                              # （tests/session-title.test.ts）
   project-status.ts          # 项目页状态行 / 工作区要你管排序 / 笔记过滤 / 办公继续上次与问 AI 建议
@@ -147,9 +176,17 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # parseWatchExplain 五节学术口径；卡片展开按项目记忆（默认收起）；
                              # tests/lit-watch.test.ts）
   md-image-hydrate.ts        # md 阅读/聊天图片占位水合：每次 layout 扫 data-md-src，本地图缓存
-  reader.ts                  # 沉浸阅读区纯逻辑：分栏钳制与像素换算/圈选命中与 canvas 映射/截图注入格式/
+  agent-binding 体系（2026-10-15 定稿，全文 docs/conventions/agent-binding.md）：
+  project-agents.ts          # 绑定纯逻辑单一出处：slotPrefs（discuss 槽>项目默认）/ taskBindingLaunch /
+                             #   resolveStepLaunch（步骤槽>discuss）/ resolveTaskModel（目标三档回落）/
+                             #   workspaceLaunchChain（手选>步骤>wsLast 三链）/ stepSlotKey /
+                             #   CHAT_BINDING_SLOT（项目对话）/ DISCUSS_BINDING_SLOT（问 AI·聊想法）
+  render-gate.ts            # 通用并发槽 RenderGate（限并发 + FIFO + 槽位直接移交）：PDF 位图重渲过闸逐页错开，
+                             # 停稳换挡后的补渲不再挤同一帧（tests/render-gate.test.ts）
+  reader.ts                  # 沉浸阅读区纯逻辑：分栏钳制与像素换算（含收起滑动量 readerPanelSlideMargin，栏宽不变负 margin 滑出）/
+                             # 圈选命中与 canvas 映射/截图注入格式/
                              # glossary 表格契约（与 reader.rs 双端镜像，改动需同步）/段落边界提取/术语匹配/
-                             # 进度与护眼存储键/翻译面板高度键（readerSplitT，未拖过不落键 = 内容自适应）/
+                             # 进度与护眼存储键/翻译面板高度键（readerSplitT，未拖过不落键 = 内容自适应）/译文卡钉位键（readerTlPinned）与悬浮球位键（readerTlBall，PDF 栏百分比 0–100、渲染层按球半径贴边兜底）/悬浮卡尺寸键（readerTlCard，240×140 下限、拖过才落键）/
                              # PDF 适配宽度 nextFitScale（亚像素门槛，防滚动条槽振荡闪白）/
                              # 手势缩放 clampPdfScale、pdfWheelZoomFactor（组件绑定共享在
                              # components/use-pdf-zoom.ts：布局倍率即时重排、渲染倍率 renderScale 延迟重绘、
@@ -160,6 +197,13 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   md-path.ts                 # 阅读版式覆盖的 md 族（md/markdown/mdx/qmd）与 html 判定
   md-toc.ts                  # md 浮动目录：≥3 标题才出、slug/展开 details
   md-code-chrome.ts          # 阅读态代码块语言名 + 复制；mermaid 围栏打标
+  md-block-map.ts            # md 渲染块→源码行映射（阅读态双击段落跳编辑态定位）：lexer raw
+                             # 累积算行（无参调用，带 options 丢 md-math 扩展）+ 上屏 DOM 惰性
+                             # 配对（md-code/md-mermaid 归一 pre），失败回落纯切换
+                             # （tests/md-block-map.test.ts，含 parse→清洗→装饰全链路）
+  md-edit.ts                 # md 行内/行级格式编辑纯逻辑：加粗/斜体/删除线/行内代码标记切换、
+                             # 列表·任务·引用前缀整组切换、回车续列表、链接包裹；
+                             # 编辑器格式行与 ⌘B 等快捷键同一套（tests/md-edit.test.ts）
   mermaid-blocks.ts          # mermaid 围栏检测（无围栏不加载 chunk）
   mermaid-sanitize.ts        # mermaid SVG 二次清洗（strict + 剥脚本/链接）
   html-preview.ts            # html 沙箱预览：stylesheet 内联 / 本地图 / srcdoc
@@ -253,7 +297,11 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   custom-runtime.ts          # 自定义运行时默认 cwd：仅空目录/scratch 启用（tests/custom-runtime.test.ts）
   gateway-slot.ts            # Agent→协议槽与目录刷新优先槽（与 slot_for_agent 双端镜像，tests/gateway-slot.test.ts）
   command-palette.ts         # 命令面板过滤纯逻辑
-  stats-insight.ts           # 统计页花费环比 / 缓存命中率 / 会话标题回落纯逻辑（tests/stats-insight.test.ts）
+  stats-insight.ts           # 统计页花费环比 / 缓存命中率 / 会话标题回落纯逻辑；compact/fmtCost 统计页统一数字方言（tests/stats-insight.test.ts）
+  usage-activity.ts          # 活跃度热力图纯逻辑：周一开头年网格 / 月份标签避让 / 非零天四分位分档（GitHub 同构）/
+                             #   streaks（今天宽限，跨年不断档）/ yearStats / 中文日期短语 /
+                             #   布局：heatCellPx 11–20 夹紧、heatRailLeft、heatWideAside（40px 回差）；
+                             #   口径铁律：着色、活跃、streak 恒只算非 internal（official 计入），着色量=四类合计（tests/usage-activity.test.ts）
   gateway-balance.ts         # 网关余额卡纯逻辑：主机命中 / 站点币种金额 / 已用百分比 /
                              #   大数字拆币种符号 splitBalanceAmount（整串 2xl 头重脚轻、tokens 更长）/
                              #   同站账户合并 groupWalletAccounts（**分组键 = origin + account，不能只按
@@ -489,6 +537,7 @@ src-tauri/src/
                              #   supports_reasoning_effort=false 时改回 true，否则菜单写了也不出。
                              #   中转目录不带 reasoning_efforts 时不写这段则 /effort 不出
   projects.rs                # 项目档案卡（§11.3）：project.toml 读写、注册、资源登记/发现、一键开步、append_workspace_inbox、
+                             #   槽位专属绑定（task_bindings 列：reader=沉浸阅读对话，set/get_project_agent_binding；删连接时连带清理）、
                              # 稳定项目身份（档案卡顶层 `id` 跟随文件夹；register_at 同一 id 新路径 = 移动重连
                              # 改路径不建新行；write_config_at 保证卡片带 id；list 回填旧行）、
                              # update_step_skills（步骤推荐技能读-改-原子写）、append_pipeline_steps（从模板追加：重名跳过、全跳过不落盘、
@@ -501,7 +550,10 @@ src-tauri/src/
                              # 验收接受账本（.ccode/acceptance-log.jsonl append-only，按 run_id 去重幂等；
                              #   目标页只读展示最近若干条；task_list 默认不含归档，task_unarchive 恢复）
                              # project-status.json 只是其「最近摘要」投影；目标删除不动账本与摘要）、
-                             # 项目移除三档（移除注册 / purge_project_traces 清除 Mesa 痕迹保留文件夹 / delete_project_dir）
+                             # 项目移除三档（移除注册 / purge_project_traces 清除 Mesa 痕迹保留文件夹 / delete_project_dir）；
+                             # 2026-10-13 双台账：科研 .gitignore 模板直带积累台账面（reading-list/inbox/watch-seen/
+                             # watch-followup/watch-explains/pending-registrations/acceptance-log×2/.ccode/watch/）；
+                             # 迁移命令曾实现后按「未发布无用即删」移除（存量已手工迁完，重建序列见 pipeline.md）
   project_memory.rs          # 项目知识 .ccode/memory.md：结构化块只记人工确认（revision 比对 + active/superseded/revoked 状态机；
                              # 作废/替代条目不注入，Agent 结论不自动采纳；原文历史保留并留备份）
   pty.rs                     # PtyManager：spawn_tracked 公共拉起，agent/shell 复用；
@@ -582,6 +634,13 @@ src-tauri/src/
                              #   命令路径探测 mcp_command_path_status（ok/relative/missing 闭集，$VAR 引用不判）+
                              #   resolve_mcp_command_fix 一键修复候选（origin 推断来源 agent）
   usage.rs                   # 用量统计（§6.11）：usage 事件提取、usage_daily 按天聚合、任务成本归因、订阅口径、
+                             # rebuild_locked 进程互斥（DELETE→upsert 非事务，并发双跑会 ON CONFLICT 累加翻倍，
+                             #   四个调用点 session_usage/rebuild_usage_index/get_usage_stats 首跑/usage_activity 全走它）；
+                             # usage_activity 活跃度热力图：全历史非零日序列（day×agent×model 聚合 +
+                             #   day×model 走 Bucket::cost 计价），先增量 rebuild 再查询、失败 stale=true 回落；
+                             #   二期：usage_day_detail 单日明细（总量+按 agent 分解+会话列表，internal 沉底、
+                             #   标题过 redact_sensitive_text，不触发 rebuild）+ usage_activity_agents
+                             #   年矩阵（day×agent 四类合计，胶囊筛选用）；
                              # session_usage 单会话聚合（终端状态栏 token 段，先增量索引再按 session_id 汇总）；
                              # usage_trend / top_sessions：花费折线与最贵会话均跟随页顶范围，官方账号与 internal 不计费不进榜，
                              # 自定义标题出站前过 redact_sensitive_text；总额卡与折线/榜单同一计费范围，
@@ -639,6 +698,8 @@ src-tauri/src/
                              #   改等待结构前先量单请求 TTFB（本机 status ≈1.0–1.5s / self ≈0.8s / token ≈0.7–2.0s），
                              #   慢的是串行 × 网关数，不是某一路慢
   pricing.rs                 # pricing.json 读写与校验（定价链最高层，原子写）
+  about.rs                   # 「关于」分区后端：read_third_party_notices（include_str! 嵌随包许可清单）+ build_info（平台/架构/渠道）；清单由 scripts/gen-third-party-notices.mjs 生成，改依赖后必须 npm run gen:notices 再提交
+  feedback.rs                # 反馈通道后端：FEEDBACK_ENDPOINT 常量（None=mailto 回落，公司端点上线改这一行）+ submit_feedback（POST JSON，15s 超时，表单+环境行+截图 Base64）+ save_feedback_images（邮件通道截图落盘 Downloads/ccode-exports/mesa-feedback-<时间>/）+ 邮箱直发（send_feedback_smtp：lettre+rustls，截图真实附件；授权码经 profiles::set_shared_key 存 keys.json 键 feedback-smtp，0600 持锁；配置存 settings feedbackSmtp）。端点启用前需验证 8MB 级 JSON 的 IPC 与超时
   settings.rs                # 应用设置（settings.json）：字体/scrollback/渲染器（terminal_renderer：auto/dom/webgl，Mac 默认清晰、Windows 默认流畅，读时闭集过滤）/汇率/镜像/主题/OS 通知/精确注意力
                              # （hooks_attention 按 agent map，旧 claude_hooks_attention 仅反序列化兼容迁移）/想法期只读保护
                              # /会话自动命名开关（auto_title_sessions 默认开，关 = ai.rs 起名/补名命令全停；
@@ -739,7 +800,7 @@ src-tauri/src/
                              #   补名批循环逐轮复查闸门（中途关掉即停）；retitle impl 闸门收进参数是关停语义的单测锚点
   scheduler.rs               # 定时雷达（v3.75；v3.79 起技能可选；v3.218 新建巡检技能：草稿 .ccode/drafts/watch-*，确认才入库分发）：
                              # schedules.json（每日/每周+时分，本地时区）、60s tick + 启动补跑
-                             # （漏跑 coalesce 只补一次）、无头拉起 agent 在任务隔离 worktree 跑技能（先从主仓播种订阅/台账；项目根只用于归属与采纳；非 Git 项目明确失败；显式 sentinel 才允许主仓写入；人点「采纳进主仓」才拷产出；默认 lit-watch，prompt 按技能分派：
+                             # （漏跑 coalesce 只补一次）、无头拉起 agent 在任务隔离 worktree 跑技能（先从主仓播种订阅/台账；项目根只用于归属与采纳；非 Git 项目明确失败；显式 sentinel 才允许主仓写入；人点「采纳进项目」才拷产出——2026-10-13 起：采纳前按评审「排除」决定剔除条目（watch_review::drop_excluded_from_snapshot）、已采纳记录明确拒绝重采纳（find_run_record）、run_marked_adopted 是 decide 的后端闸门；历史行可删（schedule_run_delete：账行/事件/历史行/冻结证据），删任务/移项目必级联（purge_schedule_side_effects，worktree 走回收站）；默认 lit-watch，prompt 按技能分派（lit-watch 文案明锁不写 included/index/references.bib）：
                              # lit-watch 专用文案不动、其他技能通用模板，非 lit-watch 跑前检查已分发，30 分钟超时（2026-10-03 由 600s 提高））、
                              # 历史留 20 条、跑完发 scheduler-run-done 事件（App.tsx 全局监听弹 OS 通知，复用长任务通知开关）；
                              # RunRecord.newEntries 新命中计数；2026-09-29 起界面不再写关联步骤，保存时清掉旧 linkedStep
@@ -751,12 +812,17 @@ src-tauri/src/
                              # papers/watch-followup.md 付费墙待办、watchlist.md 订阅读写整表写回保留注释行、included.md 精读清单
                              # 增删去重）+ download_paper_pdf 白名单下载（仅 http/https、60MB 流式上限、%PDF- 魔数校验、
                              # adopt_watch_pdfs：采纳时把隔离树 papers/ 里主仓没有的 %PDF- 拷进项目根并登记，同名不覆盖；
+                             # drop_inbox_entries：采纳过滤用，按行范围整段删被排除条目并清悬空批次标记；
                              # 落 papers/ 自动登记 project.toml 资源）+ attach_paper_pdf 关联本地 PDF（付费墙手动下载后
                              # 一步复制进 papers/ 并登记，源文件同口径校验、复制非移动）；门槛 = 注册项目根 + canonicalize + 读-改-原子写；
                              # 雷达筛选判定 metrics_pass_filter / count_inbox_entries_matching（scheduler 推送计数用，
                              # 口径见 conventions/pipeline.md「雷达筛选」）；
                              # 快筛解读落 `.ccode/watch-explains.json`（规范化标题去重，list 出口挂 WatchEntryDto.explain，
-                             # 不写 inbox.md）
+                             # 不写 inbox.md）；2026-10-13 双台账：papers/reading-list.md 积累账（list/add/remove_reading_list_entry，
+                             # 行格式与 included.md 同构、去重域=两账并集）+ freeze_reading_list_intake 开工冻结为工作区
+                             # .ccode/handoff-lit-intake.md（best-effort、agent 读定格副本不回写活文件）+ PDF 资源登记相位感知
+                             # （register_pdf 遇 active/creating 工作区不写 project.toml，改记 .ccode/pending-registrations.json
+                             # 按 path 覆盖去重；replay_pending_registrations 在项目打开/工作区归档时回放登记）
   journal_metrics.rs         # 期刊指标表（雷达徽章数据源）：config_dir/ccode/journal-metrics/ 下 JCR2025-UTF8.csv +
                              # FQBJCR2025-UTF8.csv（来源 github.com/hitfyd/ShowJCR，用户本机下载、禁内置分发）合并成
                              # HashMap（normalize_title 规范化精确匹配，miss 时剥末尾出版商括号尾巴（「(Wiley)」「（ACS）」可多级）
@@ -798,6 +864,13 @@ src-tauri/src/
   task_review.rs             # 普通目标评审证据（规格 conventions/review-freeze.md）：开工基线哈希、
                              # 收尾冻结 payload 副本（拒绝改写）、采纳三向判定（项目现读 vs 基线 vs 冻结内容，
                              # 删除永不写回、>64MB 不自动采纳）；纯文件事实不碰数据库，编排在 runs.rs
+  review_contract.rs         # 评审契约纯逻辑（本文件禁 git/文件拷贝/merge）：四条写回链 kind 常量（goal_adopt/
+                             # pipeline_merge/coding_merge/watch_adopt）、seq/SHA 断言、apply_lock 项目锁、
+                             # pending 恢复单（write/read/clear + recover_fact 补账只重放原事实不编造）、
+                             # result_readiness 派生可审；2026-10-13 起承载合并闸门台账豁免 is_untracked_ledger_file
+                             # （reading-list/watch-explains/pending-registrations 只豁免 ??；notes/*.md（index.json 除外）、
+                             # inbox/watch-seen/watch-followup/acceptance-log×2 双态全豁免）——workspaces 合并闸门与
+                             # 开工脏文件点名、coding 改动计数、projects 迁移前置四处共用
   custom_runtime.rs          # 自定义 Runtime：用户登记命令，直接在已校验的隔离目录中运行；相对路径拒写；无密钥/会话/MCP；不支持恢复
   coding.rs                  # 编程项目 git 原语：worktree list / 从基准或已有本地·远程分支建树（~/ccode/worktrees）、
                              # origin 身份 + 相对上游 behind、fetch / pull --ff-only / push、合并进基准、
@@ -825,6 +898,8 @@ src-tauri/src/
   updater.rs                 # CLI 安装/更新（brew TUNA、npm_for 同目录 npm、Windows winget 渠道：claude/codex/opencode/kimi/grok 五家有官方包）+ 应用自身 Tauri updater；
                              #   run_streaming_pty/run_streaming/emit_done/winget_args 为 pub(crate)，dep_check 复用同一管线
   watch_review.rs            # 定时巡检产物评审：工作目录可复用，但评审和采纳只读每次执行冻结的副本
+                             #   （2026-10-13 起：new_hits_of 评审只列该次新命中=after−initial；watch_run_decide 校验冻结证据并对已采纳运行拒绝；
+                             #   决定存隔离树 .ccode/watch-review.json，文件损坏时写入 fail-closed；drop_excluded_from_snapshot 供采纳剔除被排除条目）
                              #   （基线文件 + 技能产出契约，与 task_review.rs 同构不合并）
   dep_check.rs               # 依赖体检 + 一键安装（git/node/quarto/tex/pymupdf/pillow）：check_dependencies（git 三态
                              #   ok/missing/clt_stub，TeX 认 xelatex/tectonic/pdflatex 任一，拼图库问 python 能否导入）
