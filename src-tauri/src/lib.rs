@@ -390,6 +390,7 @@ pub fn run() {
             profiles::create_profile,
             profiles::update_profile,
             profiles::delete_profile,
+            profiles::profile_usage_refs,
             profiles::clear_profile_key,
             profiles::duplicate_profile,
             profiles::copy_profile_to_agent,

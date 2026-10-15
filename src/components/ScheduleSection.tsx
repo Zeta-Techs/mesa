@@ -1153,14 +1153,14 @@ export default function ScheduleSection({
                     <select
                       value={s.profileId ?? ""}
                       onChange={(e) => void changeProfile(s, e.target.value)}
-                      title="运行配置：「自动」= 跟随默认解析（设置页 AI 专用配置 → 最近使用）；绑定配置被删会自动回落并在此标出"
+                      title="运行配置：「自动」= 跟随默认解析（设置页 AI 专用配置 → 最近使用）；钉住的连接被删后下次运行会失败并在此标出——不会静默换一家出站"
                       className="min-w-0 max-w-52 shrink cursor-pointer truncate rounded-sm border border-transparent bg-transparent px-1 py-0.5 text-micro text-l4 outline-none hover:border-field hover:text-l2"
                     >
                       <option value="">自动</option>
                       {s.profileId &&
                         !profiles.some((p) => p.id === s.profileId) && (
                           <option value={s.profileId}>
-                            原配置已删除（自动回落中）
+                            原配置已删除（下次运行会失败，请换连接）
                           </option>
                         )}
                       {profiles.map((p) => {

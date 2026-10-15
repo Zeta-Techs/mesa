@@ -2708,9 +2708,22 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
             .join("、")}${affected.length > 3 ? " 等" : ""}）。` +
           `解绑后它们不会自动改用别的配置，会在下次运行时停下并提示重选连接。`
         : "";
+    // 删连接清点（W2b）：把「删了会怎样」说在事前——项目侧引用会被级联清理、
+    // 目标回落项目默认、定时按上句 fail-loud。数不出来（命令失败）不拦删除。
+    const usageWarn = await invoke<{
+      projects: number;
+      goals: number;
+    }>("profile_usage_refs", { id: p.id })
+      .then((refs) =>
+        refs.projects + refs.goals > 0
+          ? `\n\n另有 ${refs.projects} 个项目的默认/专属绑定引用它（删除后自动清理），` +
+            `${refs.goals} 条目标钉着它（删除后跟随项目默认）。`
+          : "",
+      )
+      .catch(() => "");
     if (
       !(await confirmDialog(
-        `解绑「${p.name}」？网关和密钥会留下，其它 Agent 的绑定不受影响。${warn}`,
+        `解绑「${p.name}」？网关和密钥会留下，其它 Agent 的绑定不受影响。${usageWarn}${warn}`,
         {
           danger: true,
         },

@@ -1822,6 +1822,61 @@ pub fn update_profile(
     store.update(&id, input)
 }
 
+/// 删连接前的引用清点（W2b）：点名「还有谁在用」。只做计数提示，不做拦截——
+/// 删除本身的级联清理在 delete() 里（项目默认/槽位/tasks 表），schedules 走
+/// fail-loud 铁律保留死引用。前端确认弹层据此把「删了会怎样」说在事前。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileUsageRefsDto {
+    /// 项目数：名册默认连接或任意专属槽位引用它
+    pub projects: usize,
+    /// 目标数：tasks 表显式钉住它（删除后回落项目默认）
+    pub goals: usize,
+}
+
+#[tauri::command]
+pub fn profile_usage_refs(id: String) -> Result<ProfileUsageRefsDto, String> {
+    let conn = crate::sessions::open_db()?;
+    // projects：default_profiles / default_models 不含 id（那是 agent→id 的 map，值才
+    // 是连接 id）；default_profiles JSON 值命中或 task_bindings 任意槽引用都算
+    let mut projects = 0usize;
+    {
+        let mut stmt = conn
+            .prepare("SELECT default_profiles, task_bindings FROM projects")
+            .map_err(|e| format!("读取项目表失败: {e}"))?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0).unwrap_or_default(),
+                    r.get::<_, String>(1).unwrap_or_default(),
+                ))
+            })
+            .map_err(|e| format!("读取项目表失败: {e}"))?;
+        for (defaults_raw, bindings_raw) in rows.flatten() {
+            let defaults: serde_json::Value =
+                serde_json::from_str(&defaults_raw).unwrap_or(serde_json::Value::Null);
+            let in_defaults = defaults
+                .as_object()
+                .map(|map| map.values().any(|v| v.as_str() == Some(id.as_str())))
+                .unwrap_or(false);
+            let in_bindings = bindings_raw.contains(&format!("\"{id}\""));
+            if in_defaults || in_bindings {
+                projects += 1;
+            }
+        }
+    }
+    // tasks：显式绑定引用（级联会清掉，回落项目默认）
+    let goals = conn
+        .query_row(
+            "SELECT COUNT(*) FROM tasks WHERE profile_id=?1",
+            rusqlite::params![id],
+            |r| r.get::<_, i64>(0),
+        )
+        .map(|n| n as usize)
+        .unwrap_or(0);
+    Ok(ProfileUsageRefsDto { projects, goals })
+}
+
 #[tauri::command]
 pub fn delete_profile(store: tauri::State<'_, ProfileStore>, id: String) -> Result<(), String> {
     store.delete(&id)

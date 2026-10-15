@@ -767,11 +767,10 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   （`-s` 单值参数，重复直接报「cannot be used multiple times」）；统一由 `compose_headless_args` 拼装
   （ai_prompt / 定时任务两路共用，有测试钉住）——`-c` 放在 exec 前会被顶层解析
   **静默吞掉**，provider 回落 `~/.codex/config.toml` 的桌面版默认 provider，表现为你配的端点/密钥整个不生效、
-  报 401 还以为是配置错了。交互式拉起（无子命令）不受影响，这正是「终端聊天正常、定时任务 401」的成因。**任务绑定的 profile 走「功能专属 id」槽**（v3.98：定时任务是长期住户，
-  绑定配置被删时按失效回落——AI 专用 → 最近使用——不硬报错哑跑；AI 专用配置指着已删 id 时再去掉专用槽
-  回落最近使用；回落发生时运行历史留一句「原绑定配置已删除，本次回落用「X」」；显式槽的硬报错口径只留给
-  交互场景）。**删除 profile 时同步清设置引用**（profiles.delete → settings::clear_profile_refs：
-  ai_profile_id / ai_profiles 指到已删 id 的一并清掉，持锁内联、失败只记日志），从源头减少悬空指针。
+  报 401 还以为是配置错了。交互式拉起（无子命令）不受影响，这正是「终端聊天正常、定时任务 401」的成因。**任务绑定的 profile 是显式连接**（2026-10-15 修订，取代 v3.98 回落口径：pinned 失效
+  fail-loud 留失败 Run，不静默换家出站；模型不在名单回落名单第一并披露）。**删除 profile 时同步清设置引用**
+  （profiles.delete → settings::clear_profile_refs：ai_profile_id / ai_profiles 指到已删 id 的一并清掉，
+  持锁内联、失败只记日志），从源头减少悬空指针。
 - **投递**：跑完发 `scheduler-run-done` 事件（summary 已脱敏）→ App.tsx 全局监听弹 OS 通知（复用
   notificationsEnabled 开关，不新增设置项）；命中正文写在隔离树 `notes/inbox.md`，调度器不自动搬进主仓。
   收件箱「去评审」打开该 Run 的命中评审；「采纳进项目」才拷 `notes/inbox.md`、`papers/watch-seen.md`、
@@ -847,7 +846,9 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
     `papers/reading-list.md`（积累账读写，2026-10-13 双台账：行格式与 included.md 逐字同构，解析复用 parse_included）
     解析为 DTO；格式不规整的条目容错跳过。所有操作门槛 = 已注册项目根 + canonicalize 防逃逸 + 读-改-原子写。
   - **收件箱 lit 类别**：key 前缀 `lit:`，胶囊排在「待确认」之后；最近一次成功 run 有 newEntries>0 且 24h 内 →
-    条目「<项目名>有N条新命中」（隔离树未采纳则「有N条新命中待评审」），点击跳项目详情；dismiss 走既有签名机制。
+    条目「<项目名>有N条新命中」（隔离树未采纳则「有N条新命中待评审」）。**每个 run 一条、不按篇展开、不列论文
+    标题**（2026-10-15 拍板，取代 v3.215 按篇开读），点击跳该项目文献雷达卡（focus lit）；dismiss 走既有签名机制
+    （key=`lit:<scheduleId>:<run时间>`，新 run 即新条目——上一 run 忽略过不拦下一 run 的推送）。
   - **不挂步骤**：定时巡检不提供「关联步骤」。新命中只进雷达和收件箱。
     旧日程里若存过 `linkedStep`，保存时清掉，界面不再显示，也不在步骤圆点上提醒。
     `RunRecord.newEntries` 仍按跑前后 `inbox.md` 的 `## ` 标题数取差（超时/失败不记）。
@@ -1182,7 +1183,7 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
 - **示例课题（15 分钟精读环）**：`projects::create_demo_project` 在「文档/Mesa 示例课题」幂等生成演示项目。步骤**就是**内置「英文综述」模板（`PIPELINE_TEMPLATES` id=review → `src-tauri/resources/pipeline-review.json`，改 `REVIEW_STEPS` 后跑 `scripts/export-review-template.ts`；`tests/pipeline-review-sync.test.ts` 守同步）。演示只叠加：课题主题、示例 PDF/清单、检索步 `seed_complete = true`。打开后当前步是「文献精读与笔记」，主按钮「开读这一篇」。已注册直接返回现有 project。目录还在但未注册（删除后再点「创建示例课题」、或废纸篓/iCloud 还原）时**档案卡按当前英文综述模板重写**，缺的演示文件才补，已有笔记/PDF/README 不动。用「添加项目」选中旧目录只读盘上的档案卡，不会刷新步骤——要同步流程请用「创建示例课题」。**「开读这一篇」不得挂到普通模板**：判定单一出处 `demoReadPaperResource`（检索步 `seedComplete` + 当前步挂 `lit-notes` + 已有 PDF）；英文综述/科研论文/毕业论文等流程线只显示「开始」。有 PDF 不是充分条件——真实课题导入文献后几乎都会中招。
 - **开步确认后自动拉起 Agent**：`startPipelineStep` 经 `buildWorkspaceTerminalRequest(..., { autoStart, launch })` 带 `autoStart`。确认弹层三行（本步要交 / 接到的输入芯片 / 将用哪个 Agent）+ 连接选择；无连接时主按钮「先加连接」跳连接页。TASK.md 默认折叠。
 - **合并后自动提货**：`merge_workspace` 在拷回 `papers/` 等 gitignored 产物之后，按本步 `expected_artifacts` 扫项目根，未跟踪文件自动 `register_artifact`；已 git 跟踪的跳过。开步弹层芯片来自 `inspect_step_inputs`（扫磁盘，不依赖人填 yaml）。
-- **雷达收件箱按篇开读**：`lit:` 条目主文案是论文标题；点了先加入积累清单（2026-10-13 前写精读清单 included.md，现落积累账 reading-list.md），有已下载 PDF 则 `setReaderReq` 进沉浸阅读，否则落雷达并展开那一条。
+- **雷达收件箱一次推送一条（2026-10-15 拍板，取代 v3.215 按篇开读）**：`lit:` 条目只报数不带路——主文案「<项目名>有N条新命中」，按钮「去看看」，action 只带 projectRoot；点击经 `setProjectFocusReq(focus:"lit")` 跳该项目文献雷达卡。**不按篇展开、不列论文标题；点击不再自动写积累账、不再自动进沉浸阅读**——逐篇的加积累/开读只在雷达卡与「积累 N」抽屉由人发起（与 2026-10-14「加入积累只写账不跳转」同口径）。隔离树未采纳 run 仍是单条「待评审」走 review 动作。死代码同批清除：papersForLitCandidate、openLitInboxPaper、收件箱侧 list_watch_entries 扇出（litEntriesByRoot）、focusEntryId 五文件链（store 类型 → WorkspacesPage → ProjectSchedulesView → LitWatchCard focusEntryId/startOpen）。
 - **界面白话双层呈现（双语义）**：UI 主文案一律白话（保存到历史 / 相对主分支 / 多出 N 个保存点 / 改动说明），git 技术信息
   不删除、降为二级呈现（小字 mono、悬浮 title、详情 popover、⋯ 菜单），**不加任何模式开关**；状态分组等纯逻辑集中放
   `src/git-status-groups.ts`，新增 git 相关 UI 必须遵守同一双层规则。

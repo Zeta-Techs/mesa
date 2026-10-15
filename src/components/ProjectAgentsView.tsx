@@ -682,6 +682,44 @@ export default function ProjectAgentsView({
           )}
         </ul>
       </div>
+      {workMode !== "research" &&
+        Object.keys(project.taskBindings ?? {}).some(
+          (slot) => slot === READER_BINDING_SLOT || slot.startsWith("step:"),
+        ) && (
+        <div className="mt-8">
+          <div className="mb-4">
+            <SectionHeading
+              title="遗留绑定（仅清理）"
+              hint="这些槽只对科研流程生效，本项目用不到——是以前存下的，清掉即可。"
+            />
+          </div>
+          <ul className="space-y-2">
+            {Object.keys(project.taskBindings ?? {})
+              .filter((slot) => slot === READER_BINDING_SLOT || slot.startsWith("step:"))
+              .map((slot) => (
+                <li
+                  key={slot}
+                  className="flex min-w-0 items-center gap-2 rounded-lg ccode-well p-3"
+                >
+                  <span aria-hidden="true" className="shrink-0 text-sm leading-none">⚠</span>
+                  <span className="min-w-0 flex-1 truncate text-sm text-l2">
+                    {slot === READER_BINDING_SLOT
+                      ? "沉浸阅读对话"
+                      : `步骤 · ${slot.slice("step:".length)}`}
+                  </span>
+                  <button
+                    type="button"
+                    className={`${ghostActionClass} shrink-0`}
+                    disabled={saving}
+                    onClick={() => void saveSlotBinding(slot, "", "")}
+                  >
+                    清除
+                  </button>
+                </li>
+              ))}
+          </ul>
+        </div>
+      )}
       {schedules.length > 0 && (
         <div className="mt-8">
           <div className="mb-4">
@@ -691,20 +729,33 @@ export default function ProjectAgentsView({
             />
           </div>
           <ul className="grid grid-cols-1 items-start gap-2 md:grid-cols-2">
-            {schedules.map((item) => (
+            {schedules.map((item) => {
+              // W2b 读侧坏行：钉住的连接已删——执行侧 fail-loud（留失败 Run），界面
+              // 如实标失效给重绑入口，不再显示拍平清单第一条当「已指定」
+              const schedStale =
+                Boolean(item.profileId) &&
+                !profiles.some((p) => p.id === item.profileId);
+              return (
               <SlotCard
                 key={item.id}
-                glyph="⏰"
+                glyph={schedStale ? "⚠" : "⏰"}
                 label={item.name}
-                tag={!item.enabled ? "已暂停" : item.profileId ? "已指定" : "自动"}
-                marked={Boolean(item.profileId) && item.enabled}
+                tag={!item.enabled
+                  ? "已暂停"
+                  : schedStale
+                    ? "已失效"
+                    : item.profileId
+                      ? "已指定"
+                      : "自动"}
+                marked={Boolean(item.profileId) && item.enabled && !schedStale}
+                stale={schedStale}
                 binding={
-                  item.profileId
+                  item.profileId && !schedStale
                     ? { profile: item.profileId, model: item.model }
                     : undefined
                 }
-                unboundLine="运行时再决定"
-                unboundDetail="未钉连接"
+                unboundLine={schedStale ? "连接已删除，下次运行会失败；可换绑或改回自动" : "运行时再决定"}
+                unboundDetail={schedStale ? "" : "未钉连接"}
                 defaultOptionLabel="自动"
                 choices={scheduleChoices}
                 disabled={saving || scheduleChoices.length === 0}
@@ -712,7 +763,7 @@ export default function ProjectAgentsView({
                 onClear={() => void saveScheduleLaunch(item, "", "")}
                 onAdd={() => setPage("profiles")}
               />
-            ))}
+            ) })}
           </ul>
         </div>
       )}
