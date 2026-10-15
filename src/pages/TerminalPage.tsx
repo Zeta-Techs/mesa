@@ -6426,7 +6426,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   // 阅读区打开期间：阅读会话标签的 xterm 宿主节点移进覆盖层右栏槽位，关闭时移回原标签槽位
   // （Monaco 宿主移动同款先例：DOM 搬移不重建，PTY/xterm/scrollback 全程不丢；
   // 容器上的 ResizeObserver 在尺寸变化时自动 fit，无需额外触发）。
-  // 槽位用回调 ref + state：右栏收起/展开导致槽位卸载重建时 effect 随之复位/再搬。
+  // 槽位用回调 ref + state。右栏收起/展开不再卸载槽位（栏体滑出隐藏、宽度不变，
+  // 宿主不搬不 fit），effect 只在覆盖层开/关、标签更替时复位/再搬。
   const [readerTermSlot, setReaderTermSlot] = useState<HTMLDivElement | null>(
     null,
   );

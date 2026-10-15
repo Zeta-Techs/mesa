@@ -959,6 +959,22 @@ body {
   animation: ccode-sheet-out-left 150ms var(--ccode-motion-spring) forwards;
 }
 
+/* 沉浸阅读区侧栏收起滑动（ReaderOverlay 左右栏）：整块（栏 + 分隔条）负 margin
+   滑出窗口外——栏体宽度全程不变，Monaco/xterm 宿主零重排，PDF 栏的适配重排
+   由 PdfContinuousView 的停稳防抖收口。visibility 参与过渡：收起方向在滑动全程
+   保持可见、末帧才隐（CSS visibility 插值规则），展开起点即显；收起态不可聚焦。 */
+.ccode-reader-panel {
+  transition-property: margin-left, margin-right, visibility;
+  transition-duration: 200ms;
+  transition-timing-function: var(--ccode-motion-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ccode-reader-panel {
+    transition: none;
+  }
+}
+
 /* 完全隐藏侧栏时的顶部灵动岛（替代旧的"幽灵胶囊"）。
    旧结构是一条隐形热区 + 悬停唤出后自己跑掉的胶囊，全收起后窗口顶部是空的，
    用户不主动去摸就以为导航没了。现在岛常驻，只在休眠/展开两态之间收缩展开：
@@ -2099,6 +2115,14 @@ select:focus-visible {
 /* 预留滚动条槽，避免 Windows 经典滚动条出现时 clientWidth 跳变触发适配振荡 */
 .ccode-pdf-scroll {
   scrollbar-gutter: stable;
+  /* 横向滚动条不显示：阅读区是适配宽度版式，栏收起/展开的停稳换挡窗与钉住倍率
+     溢出时这条槽会露出来像坏了；横向平移仍可用（触控板 shift 滚/拖拽），
+     纵向滚动条照常 */
+}
+
+.ccode-pdf-scroll::-webkit-scrollbar:horizontal {
+  display: none;
+  height: 0;
 }
 
 /* PDF 选区高亮层：pdf.js v6 DrawLayer 把选区画成整页 div + SVG clip-path 贴合字形
@@ -2131,4 +2155,25 @@ select:focus-visible {
 }
 .ccode-reader-dark [data-page-num] {
   background-color: #141414;
+}
+
+/* ===== Monaco 查找控件窄栏适配（2026-10-14；当晚审查修订） ===== */
+/* 真正卡窄栏的是输入盒：findWidget.js 按 FIND_INPUT_AREA_WIDTH(=221px) 定宽渲染
+   .monaco-inputbox，容器收缩了它也不收——溢出 overflow-guard 左缘被裁、输入框
+   整个看不见。min-width:0 + max-width:100% 让输入盒随栏收缩；选择器不加 `>`，
+   有意连替换输入框一起命中（monaco 给替换框写了 flex-shrink:0）。宽编辑器不受
+   影响。#root 提权盖过 monaco 自带样式，不用 !important */
+#root .monaco-editor .find-widget .monaco-findInput {
+  flex-shrink: 1;
+  min-width: 0;
+}
+#root .monaco-editor .find-widget .monaco-findInput .monaco-inputbox {
+  max-width: 100%;
+}
+
+/* Monaco 悬停提示整体不显示（2026-10-14 用户拍板「显示不了就去掉」）：查找控件按钮
+   的提示渲染在 overflow-guard 裁切上下文内，控件贴编辑器顶边时被裁出残影；Mesa 各
+   编辑器（md/txt/latex）没有值得保留的内容悬停——与其半残显示不如不放 */
+#root .monaco-hover {
+  display: none;
 }

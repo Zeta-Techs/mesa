@@ -30,9 +30,18 @@ import {
   rewriteMdImageHtml,
 } from "../reader";
 import { escapeShellPath, imageExtFromMime } from "../terminal-input";
-import { comboLabel, IS_WINDOWS, READER_MODE_HOTKEY } from "../hotkeys";
+import { comboLabel, eventMatchesCombo, IS_WINDOWS, READER_MODE_HOTKEY } from "../hotkeys";
+import { imeBlocksEnter } from "../ime-guard";
 // md-math 模块作用域完成 marked 公式扩展注册（全局生效，占位=原始 $..$ 源码，未升级处观感不变）
 import { renderMathInto } from "../md-math";
+import { mdBlocks, mdChildTagOf, mdLineForChild } from "../md-block-map";
+import {
+  continueListItem,
+  toggleInlineMark,
+  toggleLinePrefix,
+  wrapAsLink,
+  type MdEditResult,
+} from "../md-edit";
 import { hydrateMdImages } from "../md-image-hydrate";
 import { isPreviewableImagePath } from "../file-icons";
 import { isHtmlPath, isMarkdownPath } from "../md-path";
@@ -108,6 +117,7 @@ interface PathContext {
  * 选中文字出现浮动按钮「◈ 讨论/改写此段」（与 PDF 问 AI 共用 SelectionFloatBar），
  * 点击把选段 + 出处交给调用方写入活跃终端输入（「↵ 直接发送」立即回车发送）；沉浸阅读覆盖层同款生效。
  * 另有「✦ 沉淀为技能」（DistillSkillButton）：AI 把选段提炼成技能草稿，跳技能页新建表单预填。
+ * 双击段落切编辑态并定位到对应源码行（映射见 md-block-map；配对失败回落纯切换）。
  * 批次 B2 / v3.161 后处理：渲染前把 img 换成 data-md-src 占位 span（避免 WebView
  * 把相对/绝对本地 png/gif 当成网站地址拉成裂图，也避免无 src 的 img 直接画问号）；
  * 本地图经 read_image_bytes 换 data URL。本机打开的 md 允许显示 https 图；
@@ -122,6 +132,7 @@ function MarkdownView({
   onDiscuss,
   onAnnotate,
   onOpenFile,
+  onJumpToSource,
 }: {
   text: string;
   large?: boolean;
@@ -144,7 +155,15 @@ function MarkdownView({
   ) => string | null;
   /** 相对链接的打开去向（阅读区笔记栏原地打开）；缺省走 store previewReq 终端页预览 */
   onOpenFile?: (absPath: string) => void;
+  /** 双击段落：切编辑态并定位到该块源码行（null=定位失败，只切模式）；只读/截断时宿主不传 */
+  onJumpToSource?: (line: number | null) => void;
 }) {
+  // 渲染/映射共用解析源（emoji 替换的原因见下方 html useMemo 注释）：
+  // 双击跳源码行的映射（md-block-map）必须与渲染解析同一份字符串
+  const mdSource = useMemo(
+    () => text.replace(/⚠️/g, "⚠︎"),
+    [text],
+  );
   const html = useMemo(
     // ⚠️（U+26A0+U+FE0F）在 WKWebView 里渲染成黄色 Apple Color Emoji，
     // 与沉浸冷黑主题冲突（笔记里大量「⚠️ 仅摘要」提示）；换成文本呈现选择符
@@ -153,14 +172,14 @@ function MarkdownView({
     () =>
       sanitizeDocumentHtml(
         rewriteMdImageHtml(
-          marked.parse(text.replace(/\u26A0\uFE0F/g, "\u26A0\uFE0E"), {
+          marked.parse(mdSource, {
             gfm: true,
             breaks: false,
             async: false,
           }) as string,
         ),
       ),
-    [text],
+    [mdSource],
   );
   const scrollRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -274,6 +293,33 @@ function MarkdownView({
     else setPreviewReq({ path: abs, name: abs.split(/[\\/]/).pop() ?? abs, root });
   }
 
+  /** 双击段落跳源码行（2026-10-14 拍板）：双击时惰性配对当前 DOM 顶层块 ↔ 块 token
+      起始行，定位失败回落纯切编辑态。配对不常驻——decorate/mermaid/图片水合都会
+      改写顶层节点形态，常驻映射会留死键（详见 md-block-map 头注释） */
+  function onBodyDoubleClick(e: React.MouseEvent<HTMLDivElement>) {
+    const host = bodyRef.current;
+    if (!host || !onJumpToSource) return;
+    const target = e.target;
+    if (!(target instanceof Element) || target === host) return;
+    // 链接/图片/代码条的双击保持原语义（单击已处理打开/复制），不抢成跳编辑
+    if (target.closest("a, img, button, input, .md-code-bar")) return;
+    // 批注草稿表单开着时双击不跳编辑——跳转会卸载阅读态、把已输入的意见静默丢掉
+    if (annotateDraft !== null) return;
+    // 双击默认选词会让划选浮条闪一帧——跳转前先清选区
+    window.getSelection()?.removeAllRanges();
+    let el: Element = target;
+    while (el.parentElement && el.parentElement !== host) el = el.parentElement;
+    const index = Array.prototype.indexOf.call(host.children, el);
+    if (index < 0) {
+      onJumpToSource(null);
+      return;
+    }
+    const tags = Array.from(host.children).map((c) =>
+      mdChildTagOf(c.tagName, c.getAttribute("class") ?? ""),
+    );
+    onJumpToSource(mdLineForChild(mdBlocks(mdSource), tags, index));
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {hint && (
@@ -289,6 +335,7 @@ function MarkdownView({
         <div
           ref={bodyRef}
           onClick={onBodyClick}
+          onDoubleClick={onJumpToSource ? onBodyDoubleClick : undefined}
           className={`md-body${large ? " md-body-lg" : ""} ${
             large ? "mx-auto max-w-3xl px-8 py-10" : "px-5 py-4"
           }`}
@@ -478,6 +525,14 @@ function TextFilePreviewEditor({
   const hasReadMode = isMd || isHtml;
   const [mode, setMode] = useState<"read" | "edit">(hasReadMode ? "read" : "edit");
   const [immersive, setImmersive] = useState(false);
+  // 双击段落跳源码行（2026-10-14 拍板）：{line, nonce} 同 modeTick 的 tick 模式——
+  // 双击同一块两次也要重新定位（revealLine prop 的同值不重触发不适用于交互重放）
+  const [jumpReveal, setJumpReveal] = useState<{
+    line: number;
+    nonce: number;
+  } | null>(null);
+  const jumpNonceRef = useRef(0);
+  const jumpDoneNonceRef = useRef(0);
 
   /** 编辑→阅读：把编辑器缓冲（含未保存改动）同步进 text 状态。
       编辑期间 text 不随键入更新、dirty 时 watcher 也停订，不同步的话
@@ -488,6 +543,85 @@ function TextFilePreviewEditor({
       setText(editorRef.current.getValue());
     }
     setMode(m);
+  }
+
+  /** 阅读态双击段落的落点：切编辑态；拿到行号则排队定位（定位 effect 在 revealLine 邻近） */
+  function jumpToSource(line: number | null) {
+    switchMode("edit");
+    if (line !== null && line > 0) {
+      jumpNonceRef.current += 1;
+      setJumpReveal({ line, nonce: jumpNonceRef.current });
+    }
+  }
+
+  /** 把 md-edit 纯函数的结果回写编辑器：整文替换 + undo 止点 + 还原选区（offset↔position）。
+      全文替换单条 edit，大文件开销可忽略；undo 一步成组 */
+  function applyMdEdit(
+    fn: (text: string, s: number, e: number) => MdEditResult,
+  ) {
+    const ed = editorRef.current;
+    const model = ed?.getModel();
+    const sel = ed?.getSelection();
+    if (!ed || !model || !sel) return;
+    const s = model.getOffsetAt(sel.getStartPosition());
+    const e = model.getOffsetAt(sel.getEndPosition());
+    const r = fn(model.getValue(), s, e);
+    if (r.text === model.getValue() && r.selStart === s && r.selEnd === e) return;
+    ed.focus();
+    // 前后双止点：把格式化独立成一步 undo，不与之前的连续打字并组
+    ed.pushUndoStop();
+    ed.executeEdits("md-format", [
+      { range: model.getFullModelRange(), text: r.text },
+    ]);
+    ed.pushUndoStop();
+    const p1 = model.getPositionAt(r.selStart);
+    const p2 = model.getPositionAt(r.selEnd);
+    ed.setSelection({
+      startLineNumber: p1.lineNumber,
+      startColumn: p1.column,
+      endLineNumber: p2.lineNumber,
+      endColumn: p2.column,
+    });
+  }
+
+  /** 回车续列表（md）：列表项继承前缀（任务清单重置未勾选）、空项退出；
+      非列表行保持默认「换行 + 保留缩进」的等价实现。多光标只处理主光标 */
+  function mdEnter() {
+    const ed = editorRef.current;
+    const model = ed?.getModel();
+    const sel = ed?.getSelection();
+    if (!ed || !model || !sel || !ed.hasTextFocus()) return;
+    const line = model.getLineContent(sel.startLineNumber);
+    const lead = /^[\t ]*/.exec(line)![0];
+    const cont = continueListItem(line);
+    ed.pushUndoStop();
+    if (cont.kind === "continue") {
+      ed.executeEdits("md-enter", [
+        { range: sel, text: "\n" + lead + cont.prefix },
+      ]);
+      ed.pushUndoStop();
+    } else if (cont.kind === "exit") {
+      ed.executeEdits("md-enter", [
+        {
+          range: {
+            startLineNumber: sel.startLineNumber,
+            startColumn: 1,
+            endLineNumber: sel.startLineNumber,
+            endColumn: model.getLineMaxColumn(sel.startLineNumber),
+          },
+          text: cont.clean,
+        },
+      ]);
+      ed.pushUndoStop();
+      ed.setPosition({
+        lineNumber: sel.startLineNumber,
+        column: cont.clean.length + 1,
+      });
+    } else {
+      // 键盘路径不再到达（监听层只在列表行接管），留作防御
+      ed.executeEdits("md-enter", [{ range: sel, text: "\n" + lead }]);
+      ed.pushUndoStop();
+    }
   }
 
   // 外部快捷键翻转（阅读区 ⌘E）：tick 变化即翻转一次；初挂载跳过
@@ -642,6 +776,11 @@ function TextFilePreviewEditor({
       language: languageFor(path),
       theme: "ccode-dark",
       readOnly: truncated || readOnlyReason !== null,
+      // md 开折行（2026-10-14 拍板）：笔记栏窄栏 + reflowBlockText 接成的中文单行长段，
+      // 不折行时源码态要横向滚动盲找位置；其他语言保持默认不折行
+      wordWrap: isMd ? "on" : "off",
+      // md 缩进 2 空格（列表嵌套），其他语言保持 monaco 默认
+      ...(isMd ? { insertSpaces: true, tabSize: 2 } : {}),
       minimap: { enabled: false },
       fontSize: 12.5,
       automaticLayout: true,
@@ -684,6 +823,107 @@ function TextFilePreviewEditor({
     ed.setPosition({ lineNumber: revealLine, column: 1 });
   }, [revealLine, ready]);
 
+  // 双击段落跳源码行的定位执行：nonce 去重防阅读⇄编辑往返时旧定位重放；
+  // reveal 等一帧——刚从隐藏态显示时 automaticLayout 的 ResizeObserver 下一帧才
+  // 补高度，立即 reveal 会按 0 高度算成顶部对齐
+  useEffect(() => {
+    if (!jumpReveal || !ready || mode !== "edit") return;
+    if (jumpDoneNonceRef.current === jumpReveal.nonce) return;
+    jumpDoneNonceRef.current = jumpReveal.nonce;
+    const ed = editorRef.current;
+    if (!ed) return;
+    // 截断/外部变化兜底夹取：目标行不在缓冲里时夹到最后有效行
+    const total = ed.getModel()?.getLineCount() ?? jumpReveal.line;
+    const line = Math.max(1, Math.min(jumpReveal.line, total));
+    ed.setPosition({ lineNumber: line, column: 1 });
+    const raf = requestAnimationFrame(() => {
+      ed.revealLineInCenter(line);
+      ed.focus();
+    });
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jumpReveal, ready, mode]);
+
+  // md 编辑快捷键（2026-10-14 补齐；当晚全量审查改版）：行内标记 ⌘B/⌘I/⌘⇧X/⌘⇧C 与
+  // 回车续列表全走编辑器 DOM 的 capture 监听（与 ⌘E 同模式）。不用 addCommand——它
+  // 挂在全局单例 keybinding 服务上：无 when 子句会跨编辑器串扰（别的预览 Enter 被
+  // 吞）、编辑器销毁也不清理（每切一次文件泄漏一批绑定）、还会压掉查找控件输入框
+  // 里的原生 Enter。capture + 命中才 preventDefault：组词、多光标、非列表行回车
+  // 一律回落 Monaco 原生行为（保留缩进/括号等），不抢不漏
+  useEffect(() => {
+    const ed = editorRef.current;
+    const dom = ed?.getDomNode();
+    if (!ed || !dom || !isMd) return;
+    // IME 锁：WKWebView 确认候选的 Enter 在 compositionend 之后到达（isComposing
+    // 已翻 false、keyCode 13），只看事件态拦不住——锁保持到 compositionend 后一帧
+    let composingLock = false;
+    let unlockRaf = 0;
+    const onCompositionStart = () => {
+      cancelAnimationFrame(unlockRaf);
+      composingLock = true;
+    };
+    const onCompositionEnd = () => {
+      unlockRaf = requestAnimationFrame(() => (composingLock = false));
+    };
+    const imeActive = (e: KeyboardEvent) =>
+      imeBlocksEnter({
+        isComposing: e.isComposing,
+        keyCode: e.keyCode,
+        composingLock,
+      });
+    const onKey = (e: KeyboardEvent) => {
+      // 查找控件等内嵌输入框：焦点不在正文文本层，全不拦（Enter=下一个匹配等原生行为）
+      if (!ed.hasTextFocus()) return;
+      const mod = e.metaKey || e.ctrlKey;
+      const key = e.key.toLowerCase();
+      const inlineMark =
+        mod &&
+        !e.altKey &&
+        ((e.shiftKey && (key === "x" || key === "c")) ||
+          (!e.shiftKey && (key === "b" || key === "i")));
+      if (inlineMark) {
+        if (imeActive(e)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const mark = e.shiftKey
+          ? key === "x"
+            ? "~~"
+            : "`"
+          : key === "b"
+            ? "**"
+            : "*";
+        applyMdEdit((t, s, e) => toggleInlineMark(t, s, e, mark));
+        return;
+      }
+      if (
+        e.key === "Enter" &&
+        !mod &&
+        !e.shiftKey &&
+        !e.altKey &&
+        !imeActive(e) &&
+        // 只在单光标且光标行确为列表项时才接管；其余回落原生 Enter
+        ed.getSelections()?.length === 1 &&
+        continueListItem(
+          ed.getModel()?.getLineContent(ed.getPosition()?.lineNumber ?? 1) ?? "",
+        ).kind !== "none"
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        mdEnter();
+      }
+    };
+    dom.addEventListener("keydown", onKey, true);
+    dom.addEventListener("compositionstart", onCompositionStart, true);
+    dom.addEventListener("compositionend", onCompositionEnd, true);
+    return () => {
+      cancelAnimationFrame(unlockRaf);
+      dom.removeEventListener("keydown", onKey, true);
+      dom.removeEventListener("compositionstart", onCompositionStart, true);
+      dom.removeEventListener("compositionend", onCompositionEnd, true);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, isMd, path]);
+
   useEffect(() => {
     editorRef.current?.updateOptions({ readOnly: truncated || readOnlyReason !== null });
   }, [ready, truncated, readOnlyReason]);
@@ -708,6 +948,27 @@ function TextFilePreviewEditor({
     return () => dom.removeEventListener("paste", onPaste, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, truncated, readOnlyReason, isMd, path, root]);
+
+  // ⌘E 翻转阅读/编辑（modeTick 接线的宿主才拦）：焦点在编辑器里时 Monaco 会把
+  // mod+E 消化成「用所选内容查找」并弹查找控件（StartFindWithSelectionAction 的
+  // mac 默认绑定 CtrlCmd+KeyE），窗口级监听收不到——在编辑器 DOM 上 capture 拦截
+  // （与上方粘贴图片同一模式）；stopPropagation 后 ReaderOverlay 的窗口监听不会
+  // 二次翻转。无 modeTick 接线的宿主不承诺快捷键，保留 Monaco 原生行为
+  useEffect(() => {
+    const ed = editorRef.current;
+    const dom = ed?.getDomNode();
+    if (!ed || !dom || modeTick === undefined || !hasReadMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.isComposing) return;
+      if (!eventMatchesCombo(e, READER_MODE_HOTKEY)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      switchMode(mode === "read" ? "edit" : "read");
+    };
+    dom.addEventListener("keydown", onKey, true);
+    return () => dom.removeEventListener("keydown", onKey, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, modeTick, hasReadMode, mode, path]);
 
   /** 粘贴图片落盘并在光标处插入（executeEdits 会触发 dirty，沿用既有保存链路） */
   async function pasteImageIntoMd(
@@ -897,6 +1158,78 @@ function TextFilePreviewEditor({
           )}
         </div>
       </div>
+      {/* md 编辑格式行（2026-10-14 补齐）：按钮与快捷键同一套纯逻辑（md-edit）；
+          行级按钮对选区覆盖的行整组切换；只读/截断态收起（executeEdits 会被拒，
+          按了只抢焦点没反应） */}
+      {isMd && mode === "edit" && ready && !truncated && !readOnlyReason && (
+        <div className="flex h-7 shrink-0 items-center gap-0.5 border-b border-hairline bg-strip px-2 text-xs">
+          <button
+            type="button"
+            title="加粗（⌘B / Ctrl+B）"
+            onClick={() => applyMdEdit((t, s, e) => toggleInlineMark(t, s, e, "**"))}
+            className="rounded-sm px-1.5 py-0.5 font-bold text-l3 hover:bg-hover hover:text-l1"
+          >
+            B
+          </button>
+          <button
+            type="button"
+            title="斜体（⌘I / Ctrl+I）"
+            onClick={() => applyMdEdit((t, s, e) => toggleInlineMark(t, s, e, "*"))}
+            className="rounded-sm px-1.5 py-0.5 italic text-l3 hover:bg-hover hover:text-l1"
+          >
+            I
+          </button>
+          <button
+            type="button"
+            title="删除线（⌘⇧X / Ctrl+Shift+X）"
+            onClick={() => applyMdEdit((t, s, e) => toggleInlineMark(t, s, e, "~~"))}
+            className="rounded-sm px-1.5 py-0.5 text-l3 line-through hover:bg-hover hover:text-l1"
+          >
+            S
+          </button>
+          <button
+            type="button"
+            title="行内代码（⌘⇧C / Ctrl+Shift+C）"
+            onClick={() => applyMdEdit((t, s, e) => toggleInlineMark(t, s, e, "`"))}
+            className="rounded-sm px-1.5 py-0.5 font-mono text-l3 hover:bg-hover hover:text-l1"
+          >
+            {"`"}
+          </button>
+          <span className="mx-1 h-4 w-px shrink-0 bg-hairline" />
+          <button
+            type="button"
+            title="无序列表（回车自动续项）"
+            onClick={() => applyMdEdit((t, s, e) => toggleLinePrefix(t, s, e, "- "))}
+            className="rounded-sm px-1.5 py-0.5 text-l3 hover:bg-hover hover:text-l1"
+          >
+            •
+          </button>
+          <button
+            type="button"
+            title="任务清单（回车自动续项，新项未勾选）"
+            onClick={() => applyMdEdit((t, s, e) => toggleLinePrefix(t, s, e, "- [ ] "))}
+            className="rounded-sm px-1.5 py-0.5 text-l3 hover:bg-hover hover:text-l1"
+          >
+            ☑
+          </button>
+          <button
+            type="button"
+            title="引用"
+            onClick={() => applyMdEdit((t, s, e) => toggleLinePrefix(t, s, e, "> "))}
+            className="rounded-sm px-1.5 py-0.5 text-l3 hover:bg-hover hover:text-l1"
+          >
+            ❝
+          </button>
+          <button
+            type="button"
+            title="链接（选中文字后点，可接着输入地址）"
+            onClick={() => applyMdEdit(wrapAsLink)}
+            className="rounded-sm px-1.5 py-0.5 font-mono text-l3 hover:bg-hover hover:text-l1"
+          >
+            {"<a>"}
+          </button>
+        </div>
+      )}
       {error && (
         error.includes("二进制") ? (
           <PreviewErrorState
@@ -924,6 +1257,7 @@ function TextFilePreviewEditor({
             onDiscuss={onDiscuss}
             onAnnotate={onAnnotate}
             onOpenFile={onOpenFile}
+            onJumpToSource={isMd && !truncated && !readOnlyReason ? jumpToSource : undefined}
           />
         )
       )}
@@ -979,6 +1313,7 @@ function TextFilePreviewEditor({
                 onDiscuss={onDiscuss}
                 onAnnotate={onAnnotate}
                 onOpenFile={onOpenFile}
+                onJumpToSource={isMd && !truncated && !readOnlyReason ? jumpToSource : undefined}
               />
             )
           ) : (

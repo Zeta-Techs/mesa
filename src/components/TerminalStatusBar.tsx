@@ -354,6 +354,10 @@ export default function TerminalStatusBar({
         e.stopPropagation();
         reset();
       } else if (e.key === "Enter" && phase === "review" && !editing) {
+        // 焦点在 md 预览编辑器（monaco）里：Enter 是换行/续列表的编辑键，
+        // 不当「立即执行」评审动作（一次按键双动作，2026-10-14 审查补守卫）
+        const t = e.target as HTMLElement | null;
+        if (t && t.closest(".monaco-editor")) return;
         e.preventDefault();
         void execute();
       }

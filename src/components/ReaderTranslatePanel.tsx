@@ -1,9 +1,12 @@
 import { memo, useEffect, useRef, useState } from "react";
 import {
+  clampReaderTlCard,
   clampReaderTlPct,
+  loadReaderTlCard,
   parseBilingual,
   plainFromBilingual,
   reflowBlockText,
+  saveReaderTlCard,
   type TlHistoryEntry,
 } from "../reader";
 import { FoldMark } from "./PageFrame";
@@ -25,9 +28,13 @@ function plainTextOf(e: TlHistoryEntry): string {
 }
 
 /**
- * 阅读区翻译面板（右栏状态行之下、xterm 之上，占布局流不悬浮）：
- * 上下结构——表头行（chevron 收起/展开 +「译 · 第 N 页」+ 原文显隐/存进笔记/复制/历史/×），
- * 之下块级对照正文（原文整段弱色小字在上可隐藏、译文整段正文在下，均两端对齐）。
+ * 阅读区翻译面板，两种摆位（表头「钉住/回栏」切换，状态由上层持有）：
+ * 原位 = 右栏状态行之下、xterm 之上（占布局流，% 高度/底缘拖拽只在这档有意义）；
+ * 悬浮 = 锚在「译」悬浮球旁（ReaderTlFloat 持球拖位）：absolute 定位、60% 封顶自适应、
+ * 历史抽屉按球位上下弹、× 直接收回球（不走「一行动作条」退场——那是原位档的形态）。
+ * 上下结构——表头行（chevron 收起/展开 +「译 · 第 N 页」+ 原文显隐/钉位/存进笔记/复制/历史/×），
+ * 之下块级对照正文（原文整段弱色小字在上可隐藏、译文整段正文在下，均两端对齐；
+ * 悬浮档默认只看译文求紧凑，点「原文」临时对照）。
  * 历史抽屉点行 = 载入主面板（viewingAt，新翻译进来自动回最新）。
  * 状态（历史/pending）由 ReaderOverlay 持有，本组件只管呈现与面板内 UI 态
  * （chevron 收起 / × 收起 / 查看条目 / 抽屉开关）。
@@ -39,6 +46,9 @@ function ReaderTranslatePanel({
   saving,
   canSave,
   heightPct,
+  floatAnchor,
+  onTogglePlacement,
+  onClose,
   onResize,
   onResizeEnd,
   onResizeReset,
@@ -57,8 +67,16 @@ function ReaderTranslatePanel({
   saving: boolean;
   /** onSaveTranslation 链路是否可用 */
   canSave: boolean;
-  /** 面板高度（% 右栏总高）：null = 内容自适应（40% 封顶）；拖过底缘分割条后由上层记忆 */
+  /** 面板高度（% 右栏总高）：null = 内容自适应（40% 封顶）；拖过底缘分割条后由上层记忆。
+   *  悬浮档恒按内容自适应，上层传 null */
   heightPct: number | null;
+  /** 悬浮档锚点（悬浮球在 PDF 栏内的百分比坐标，球心）：传入即悬浮形态——卡在球旁
+   *  展开（球在右半区贴球左侧展开、左半区贴右侧），宽 ≤26rem、高 60% 封顶贴边钳制 */
+  floatAnchor?: { xp: number; yp: number };
+  /** 表头「钉住/回栏」；不传则不出现该钮（未接线的占位用法） */
+  onTogglePlacement?: () => void;
+  /** 悬浮档的 ×：收回球（由球组件接管）；不传则 × 走原位档的「一行动作条」退场 */
+  onClose?: () => void;
   /** 拖动中实时回调（同右栏竖分割条口径：move 只更新 state） */
   onResize: (pct: number) => void;
   /** 松手落持久化 */
@@ -76,11 +94,12 @@ function ReaderTranslatePanel({
   onAsk?: (entry: TlHistoryEntry) => void;
   canAsk?: boolean;
 }) {
+  const floating = floatAnchor != null;
   /** chevron 收起：只折正文区、表头常驻（与「×」区分：× = 面板整体消失、新翻译再回来）。
       组件内 state 不持久化 */
   const [collapsed, setCollapsed] = useState(false);
-  /** 原文显隐（默认显示；块级对照里点了就只看译文） */
-  const [showOriginal, setShowOriginal] = useState(true);
+  /** 原文显隐：原位档默认对照（右栏里对照着读），悬浮档默认只看译文（球旁求紧凑） */
+  const [showOriginal, setShowOriginal] = useState(!floating);
   /** 「×」收起 = 记下当时显示条的 at：本轮不再弹出，新翻译进来（at 变）自动回来；
       收起态仍留一行动作条，历史抽屉随时可开 */
   const [dismissedAt, setDismissedAt] = useState<string | null>(null);
@@ -88,7 +107,17 @@ function ReaderTranslatePanel({
       按 at 标识，不碰 latest 语义；新翻译进来自动回到最新 */
   const [viewingAt, setViewingAt] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  /** 开抽屉时量得的几何（方向由上下空隙定，见 toggleDrawer） */
+  const [drawerGeom, setDrawerGeom] = useState<{
+    up: boolean;
+    maxH: number;
+    w: number;
+  } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  /** 悬浮卡显式尺寸：拖过角柄后记住（null = 内容自适应 60% 封顶，双击角柄复位） */
+  const [cardSize, setCardSize] = useState(() => (floating ? loadReaderTlCard() : null));
+  const cardSizeRef = useRef(cardSize);
+  cardSizeRef.current = cardSize;
 
   /** 主面板当前显示条：在途翻译优先，其次抽屉点选，缺省最新 */
   const current = viewingAt
@@ -110,6 +139,24 @@ function ReaderTranslatePanel({
     setDismissedAt(null);
     setCollapsed(false);
     setDrawerOpen(false);
+  }
+
+  /** 开抽屉前先量：悬浮卡可能贴窗任何位置，固定「向下弹」会探出窗顶/窗底、
+      固定 w-96 在窄卡/窄栏会横向越界——按卡与窗的实际空隙定方向、最大高与宽 */
+  function toggleDrawer() {
+    const root = rootRef.current;
+    if (root) {
+      const r = root.getBoundingClientRect();
+      const spaceUp = r.top;
+      const spaceDown = window.innerHeight - r.bottom;
+      const up = spaceUp > spaceDown; // 哪边空隙大往哪边弹
+      setDrawerGeom({
+        up,
+        maxH: Math.max(96, Math.floor((up ? spaceUp : spaceDown) - 16)),
+        w: Math.min(384, Math.max(240, Math.floor(r.width) - 8)),
+      });
+    }
+    setDrawerOpen((v) => !v);
   }
 
   // 历史抽屉：Esc（capture 相抢在关阅读区之前）/ 点外关闭（面板正文在布局流里，不参与）
@@ -160,20 +207,102 @@ function ReaderTranslatePanel({
     window.addEventListener("pointercancel", onUp);
   }
 
+  /** 悬浮卡角柄拖拽：宽高一起改（贴球侧的边不动，自由角在球对侧下方——
+      贴右长宽向左、贴左向右，高度都向下长），钳在窗内可用空间，松手落键。
+      与球同款 4px 阈值：抖一下不算拖（否则 1px 抖动就把自适应卡永久锁成显式
+      尺寸、矮卡瞬间跳到 140 下限）；基值取当前渲染尺寸而非存档——窄窗下
+      存档被渲染 min() 压小过，从存档起步会先吃一段看不见的死区 */
+  function startCardResize(e: React.PointerEvent<HTMLDivElement>) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const root = rootRef.current;
+    const host = root?.offsetParent as HTMLElement | null;
+    if (!root || !host || !floatAnchor) return;
+    const hostRect = host.getBoundingClientRect();
+    const startRect = root.getBoundingClientRect();
+    const growLeft = floatAnchor.xp > 50;
+    const base = {
+      w: Math.round(startRect.width),
+      h: Math.round(startRect.height),
+    };
+    const startX = e.clientX;
+    const startY = e.clientY;
+    let moved = false;
+    const onMove = (ev: PointerEvent) => {
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      if (!moved && dx * dx + dy * dy < 16) return; // 4px 阈值：抖动不算拖
+      moved = true;
+      setCardSize(
+        clampReaderTlCard(
+          growLeft ? base.w - dx : base.w + dx,
+          base.h + dy,
+          hostRect.width - 16,
+          hostRect.height - 16,
+        ),
+      );
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      if (!moved) return; // 没拖动不落键（双击复位路径也不被污染）
+      const s = cardSizeRef.current;
+      if (s) saveReaderTlCard(s);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  }
+
   // 空历史且无在途翻译：面板整体不出现（空节点不出现）
   if (!latest && !pending) return null;
+  const drawerUp = drawerGeom?.up ?? false; // 没量到（极端）缺省向下弹
 
-  // 显式高度只在正文展开时套用（chevron 收起/× 收起后面板回归内容自适应高度）；
+  // 显式高度只在原位档、正文展开时套用（chevron 收起/× 收起后面板回归内容自适应高度）；
   // 未拖过保持内容自适应 + 40% 封顶，超出内部滚动——整段长译文不能无限顶高挤压终端区
-  // （% 高/% max-h 挂栏根的 flex 子级上才解析得到定高，故放本容器而非内层）
-  const fixedH = heightPct != null && showBody && !collapsed;
+  // （% 高/% max-h 挂栏根的 flex 子级上才解析得到定高，故放本容器而非内层）。
+  // 悬浮档 absolute 挂覆盖层根：百分比一律对整窗解析。球心渲染位 = clamp(18px, x%,
+  // 100%-18px)（ReaderTlFloat），卡的锚定必须用同一份钳制值——否则球贴边时卡按
+  // 未钳制百分比锚位压住球（默认 xp=100 实测压 14px）。卡顶/卡高的 min() 用同一份
+  // 活钳高度：窗口变小后存档高被渲染压缩，卡顶不再按裸存档值算出负数探出窗顶
+  const fixedH = !floating && heightPct != null && showBody && !collapsed;
+  // 球心距某侧窗边的钳制距离（与球渲染同款）：dist = clamp(18px, pct%, 100%-18px)
+  const ballDist = (pct: number) =>
+    `clamp(18px, ${pct}%, calc(100% - 18px))`;
+  const anchorStyle = floating
+    ? {
+        left:
+          floatAnchor.xp <= 50
+            ? `calc(${ballDist(floatAnchor.xp)} + 22px)`
+            : undefined,
+        right:
+          floatAnchor.xp > 50
+            ? `calc(${ballDist(100 - floatAnchor.xp)} + 22px)`
+            : undefined,
+        top: cardSize
+          ? `min(${floatAnchor.yp}%, calc(100% - min(${cardSize.h}px, calc(100% - 16px)) - 8px))`
+          : `min(${floatAnchor.yp}%, calc(100% - 60% - 8px))`,
+        width: cardSize
+          ? `min(${cardSize.w}px, calc(100% - 16px), calc(100% - ${floatAnchor.xp > 50 ? ballDist(100 - floatAnchor.xp) : ballDist(floatAnchor.xp)} - 30px))`
+          : `min(26rem, calc(100% - 44px), calc(100% - ${floatAnchor.xp > 50 ? ballDist(100 - floatAnchor.xp) : ballDist(floatAnchor.xp)} - 30px))`,
+        // 显式尺寸走 height（60% 封顶会让拖大的卡被裁）；自适应走 60% 封顶
+        ...(cardSize
+          ? { height: `min(${cardSize.h}px, calc(100% - 16px))` }
+          : { maxHeight: "60%" }),
+      }
+    : fixedH
+      ? { height: `${heightPct}%` }
+      : undefined;
 
   return (
     <div
       ref={rootRef}
-      style={fixedH ? { height: `${heightPct}%` } : undefined}
-      className={`ccode-well relative mx-2 mt-2 flex shrink-0 flex-col rounded-lg ${
-        fixedH ? "" : "max-h-[40%]"
+      style={anchorStyle}
+      className={`ccode-well flex shrink-0 flex-col rounded-lg ${
+        floating
+          ? "pointer-events-auto absolute z-30 border border-field shadow-lg"
+          : `relative mx-2 mt-2 ${fixedH ? "" : "max-h-[40%]"}`
       }`}
     >
       {/* 注意根节点不能 overflow-hidden：历史抽屉（top-full）和底缘拖动手柄
@@ -181,15 +310,26 @@ function ReaderTranslatePanel({
           圆角防溢出改为只给有底色的表头加 rounded-t。 */}
       {showBody ? (
         <>
-          <div className="flex h-8 shrink-0 items-center gap-1 rounded-t-[7px] border-b border-hairline bg-strip px-2 text-micro">            <button
-              type="button"
-              onClick={() => setCollapsed((v) => !v)}
-              className="flex items-center gap-1 rounded-sm px-1 py-0.5 text-l2 hover:bg-hover hover:text-l1"
-            >
-              <FoldMark open={!collapsed} />
-              <span>译文</span>
-              <span className="text-l4">第 {(pending ?? current!).page} 页</span>
-            </button>
+          {/* 表头允许折行：窄卡（用户拖小）/ 最窄右栏里动作钮一排放不下，
+              折成两行比挤出头干净；min-h-8 保证单行时与原 h-8 同高 */}
+          <div className="flex min-h-8 shrink-0 flex-wrap items-center gap-1 rounded-t-[7px] border-b border-hairline bg-strip px-2 py-1 text-micro">
+            {floating ? (
+              // 悬浮档没有「只折正文」一说（点球/× 已是完全收起），纯标识行
+              <span className="flex items-center gap-1 px-1 text-l2">
+                <span>译文</span>
+                <span className="text-l4">第 {(pending ?? current!).page} 页</span>
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setCollapsed((v) => !v)}
+                className="flex items-center gap-1 rounded-sm px-1 py-0.5 text-l2 hover:bg-hover hover:text-l1"
+              >
+                <FoldMark open={!collapsed} />
+                <span>译文</span>
+                <span className="text-l4">第 {(pending ?? current!).page} 页</span>
+              </button>
+            )}
             <div className="ml-auto flex items-center gap-0.5">
               {!pending && current && (
                 <>
@@ -223,6 +363,24 @@ function ReaderTranslatePanel({
                       className="rounded-sm px-1.5 py-0.5 text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50"
                     >
                       {current.saved ? "✓ 已存" : "存进笔记"}
+                    </button>
+                  )}
+                  {onTogglePlacement && (
+                    <button
+                      type="button"
+                      onClick={onTogglePlacement}
+                      title={
+                        floating
+                          ? "回到右栏对话上方（右栏收着会顺手展开）"
+                          : "变成 PDF 边上的「译」悬浮球（可拖动，收起终端栏也在）"
+                      }
+                      className={`rounded-sm px-1.5 py-0.5 ${
+                        floating
+                          ? "bg-seg-sel text-l1"
+                          : "text-l3 hover:bg-hover hover:text-l1"
+                      }`}
+                    >
+                      {floating ? "回栏" : "钉住"}
                     </button>
                   )}
                   {/* 复制当前显示条的纯译文（兼容 shim 口径同 drawer/存笔记）；
@@ -259,7 +417,7 @@ function ReaderTranslatePanel({
               )}
               <button
                 type="button"
-                onClick={() => setDrawerOpen((v) => !v)}
+                onClick={toggleDrawer}
                 className={`rounded-sm px-1.5 py-0.5 ${
                   drawerOpen
                     ? "bg-seg-sel text-l1"
@@ -272,7 +430,9 @@ function ReaderTranslatePanel({
                 type="button"
                 onClick={() => {
                   onCancelPending();
-                  if (current) setDismissedAt(current.at);
+                  // 悬浮档 × = 收回球；原位档 × = 本轮不再弹出（留一行动作条，历史随时可开）
+                  if (onClose) onClose();
+                  else if (current) setDismissedAt(current.at);
                   setDrawerOpen(false);
                 }}
                 className="flex h-5 w-5 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1"
@@ -340,7 +500,7 @@ function ReaderTranslatePanel({
           )}
           <button
             type="button"
-            onClick={() => setDrawerOpen((v) => !v)}
+            onClick={toggleDrawer}
             className={`rounded-sm px-1.5 py-0.5 ${
               drawerOpen
                 ? "bg-seg-sel text-l1"
@@ -353,13 +513,20 @@ function ReaderTranslatePanel({
       )}
       {drawerOpen && (
         // 历史抽屉（QuickChatHistoryMenu 同款浮层：Esc/点外关闭，新条目在上）：
-        // w-96 + 摘要两行 clamp（点行 = 载入主面板显示该条）；行内只留「存进笔记」
-        // 且收到摘要下方——动作不再占正文宽度；「复制」挪到主面板表头图标钮
-        <div className="absolute right-2 top-full z-40 mt-1 w-96 overflow-hidden rounded-md border border-field ccode-float-surface">
+        // 摘要两行 clamp（点行 = 载入主面板显示该条）；行内只留「存进笔记」
+        // 且收到摘要下方——动作不再占正文宽度；「复制」挪到主面板表头图标钮。
+        // 弹出方向/最大高/宽在 toggleDrawer 开抽屉时量好（悬浮卡可贴窗任何位置，
+        // 固定方向会探出窗顶/窗底，固定 w-96 在窄卡/窄栏会横向越界）
+        <div
+          style={drawerGeom ? { width: drawerGeom.w, maxHeight: drawerGeom.maxH } : undefined}
+          className={`absolute right-2 z-40 flex flex-col overflow-hidden rounded-md border border-field ccode-float-surface ${
+            drawerUp ? "bottom-full mb-1" : "top-full mt-1"
+          }`}
+        >
           <div className="border-b border-hairline px-3 py-1.5 text-micro text-l3">
             本次阅读的翻译
           </div>
-          <ul className="max-h-72 overflow-auto py-1">
+          <ul className="min-h-0 flex-1 overflow-auto py-1">
             {history.map((e) => (
               <li key={`${e.at}@${e.page}`} className="px-2.5 py-1.5 hover:bg-hover">
                 <button
@@ -388,9 +555,35 @@ function ReaderTranslatePanel({
           </ul>
         </div>
       )}
-      {showBody && !collapsed && (
+      {floating && (
+        // 悬浮卡角柄：拖 = 宽高一起改（自由角在球对侧下方），双击复位内容自适应
+        // （拖过落键记住尺寸，与右栏高度条同款「拖过 = 显式记忆」口径）
+        <div
+          onPointerDown={startCardResize}
+          onDoubleClick={() => {
+            setCardSize(null);
+            saveReaderTlCard(null);
+          }}
+          title="拖动调整大小，双击恢复自适应"
+          className={`group absolute bottom-0 z-10 flex size-4 touch-none items-center justify-center ${
+            floatAnchor.xp > 50
+              ? "left-0 -translate-x-1/2 translate-y-1/2 cursor-nesw-resize"
+              : "right-0 translate-x-1/2 translate-y-1/2 cursor-nwse-resize"
+          }`}
+        >
+          <span
+            className="size-2.5 opacity-50 transition-opacity group-hover:opacity-100"
+            style={{
+              background:
+                "repeating-linear-gradient(45deg, transparent 0 2px, var(--color-l4) 2px 3px)",
+            }}
+          />
+        </div>
+      )}
+      {!floating && showBody && !collapsed && (
         // 底缘纵向分割条：抓取热区骑跨底边（translate-y-1/2），平时透明、悬停显色
-        // （右栏竖分割条同款手法）；chevron 收起/× 收起时不出现（无正文可调）
+        // （右栏竖分割条同款手法）；chevron 收起/× 收起时不出现（无正文可调）；
+        // 悬浮档高度自适应封顶，无 % 高度语义，不给拖拽
         <div
           onPointerDown={startResize}
           onDoubleClick={onResizeReset}

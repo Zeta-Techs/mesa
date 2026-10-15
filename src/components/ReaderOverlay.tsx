@@ -16,6 +16,7 @@ import { AGENTS } from "../types";
 import {
   READER_PCT_DEFAULT_L,
   READER_PCT_DEFAULT_R,
+  READER_SPLITTER_PX,
   READER_SPLIT_L_KEY,
   READER_SPLIT_R_KEY,
   READER_SPLIT_T_KEY,
@@ -27,13 +28,16 @@ import {
   loadReaderDark,
   loadReaderPct,
   loadReaderTlPct,
+  loadReaderTlPinned,
   loadTlHistory,
   markTlEntrySaved,
   parseBilingual,
   plainFromBilingual,
   readerColumnWidths,
+  readerPanelSlideMargin,
   reflowBlockText,
   saveReaderDark,
+  saveReaderTlPinned,
   saveTlHistory,
   translationSavedToast,
   upsertTlEntry,
@@ -44,6 +48,7 @@ import {
 import ReaderTranslatePanel, {
   type TlPending,
 } from "./ReaderTranslatePanel";
+import ReaderTlFloat from "./ReaderTlFloat";
 import type { SessionLinkState, TabStatus } from "../pages/TerminalPage";
 
 // Monaco 与 pdf.js 都不进主包：首次进入阅读区才加载（同终端页预览的懒加载姿势）
@@ -157,6 +162,21 @@ export default function ReaderOverlay({
   // ===== 侧栏收起与分隔条拖拽（宽度百分比记 localStorage） =====
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
+  /** 滑动进行中（过渡配方只在这个窗口内挂上）：收起态下栏宽会随窗口缩放/对侧
+   *  分隔条拖拽逐帧变——margin 目标每帧变而过渡常开时，CSS 从插值中点重定向，
+   *  收起侧整段拖拽过程外宽≠0、露出一条空底。过完渡即摘类，此后栏宽变化瞬时生效
+   *  （元素 invisible，无视觉参与）。transitionend 提前收口，定时器兜底 */
+  const [leftSlide, setLeftSlide] = useState(false);
+  const [rightSlide, setRightSlide] = useState(false);
+  useEffect(() => {
+    if (!leftSlide && !rightSlide) return;
+    const t = setTimeout(() => {
+      setLeftSlide(false);
+      setRightSlide(false);
+    }, 260); // 200ms 过渡 + 余量；连点重定向后过渡会跑满新时长，
+    // open 态进依赖让每次翻转重臂定时器，避免中途到期把过渡掐断
+    return () => clearTimeout(t);
+  }, [leftSlide, rightSlide, leftOpen, rightOpen]);
   const [pctL, setPctL] = useState(() =>
     loadReaderPct(READER_SPLIT_L_KEY, READER_PCT_DEFAULT_L),
   );
@@ -175,9 +195,11 @@ export default function ReaderOverlay({
     return () => ro.disconnect();
   }, []);
   const { left: leftPx, right: rightPx } = readerColumnWidths(areaW, pctL, pctR);
-  // 极端窄窗（PDF 保底都拿不出）时换算结果为 0：侧栏整栏让位，只留 PDF
-  const showLeft = leftOpen && leftPx > 0;
-  const showRight = rightOpen && rightPx > 0;
+  // 极端窄窗（PDF 保底都拿不出）时换算结果为 0：侧栏整栏让位，只留 PDF。
+  // 平时收起/展开不卸载——整块（栏 + 分隔条）负 margin 滑出（readerPanelSlideMargin），
+  // 栏宽不变 → Monaco/xterm 宿主零重排零搬移，PDF 栏重排由其停稳防抖收口
+  const mountLeft = leftPx > 0;
+  const mountRight = rightPx > 0;
 
   /** 分隔条拖拽（仿终端页 startSplitResize 的 pointer 模式；松手才落 localStorage） */
   function startSideResize(
@@ -215,9 +237,11 @@ export default function ReaderOverlay({
   const splitter = (side: "left" | "right") => (
     <div
       onPointerDown={(e) => startSideResize(side, e)}
-      className="group relative w-1.5 shrink-0 cursor-col-resize"
+      style={{ width: READER_SPLITTER_PX }}
+      className="group relative shrink-0 cursor-col-resize"
     >
-      {/* 平时透明极细（w-0.5），悬停才显色（终端页同款手法）；外层 w-1.5 只是抓取热区 */}
+      {/* 平时透明极细（w-0.5），悬停才显色（终端页同款手法）；外层热区宽走
+          READER_SPLITTER_PX（与收起滑出量同源，reader.ts 单一出处） */}
       <span className="absolute inset-y-0 left-0.5 w-0.5 bg-transparent transition-colors group-hover:bg-cta" />
     </div>
   );
@@ -356,13 +380,18 @@ export default function ReaderOverlay({
     [needsProfile],
   );
 
-  // ===== 翻译面板（右栏状态行之下、xterm 之上）：历史/pending 状态上提自 PdfContinuousView，
-  // 下栏只留触发（选段「译」/ ⌘+点击段落 → onTranslate）。localStorage 键不变 =====
+  // ===== 翻译面板（原位 = 右栏状态行之下、xterm 之上；钉住 = 悬浮 PDF 正文栏右下）：
+  // 历史/pending 状态上提自 PdfContinuousView，下栏只留触发（选段「译」/ ⌘+点击段落
+  // → onTranslate）。localStorage 键不变，另加钉位键 =====
   /** 翻译面板高度占比（% 右栏总高）：null = 内容自适应（40% 封顶，未拖过）；拖过底缘分割条后
       显式高度并记忆（同左右分栏口径），双击分割条复位自适应 */
   const [tlPct, setTlPct] = useState<number | null>(() =>
     loadReaderTlPct(READER_SPLIT_T_KEY),
   );
+  /** 译文卡「钉在 PDF 上」（跨收起/展开、跨次进入都保持悬浮球形态）；有效悬浮 = 钉住
+   *  OR 右栏收起/让位（兜底：终端栏收着时译文有地方看，展开即回原位，无需提前钉） */
+  const [tlPinned, setTlPinned] = useState(() => loadReaderTlPinned());
+  const tlFloat = tlPinned || !mountRight || !rightOpen;
   const [tlHistory, setTlHistory] = useState<TlHistoryEntry[]>([]);
   const [tlPending, setTlPending] = useState<TlPending | null>(null);
   const [tlSaving, setTlSaving] = useState(false);
@@ -374,6 +403,35 @@ export default function ReaderOverlay({
     setTlHistory(loadTlHistory(pdfPath));
     setTlPending(null);
   }, [pdfPath]);
+
+  // 悬浮会话内「新翻译落地/失败/在途开始」递进信号：球自动展开（译完即见；
+  // 失败也要弹——球关着时错误落地球里静默等于动作失灵）。只认变化不认存量
+  const [tlOpenTick, setTlOpenTick] = useState(0);
+  const tlSeenRef = useRef<{
+    at: string | null;
+    pending: boolean;
+    err: boolean;
+  } | null>(null);
+  useEffect(() => {
+    if (!tlFloat) {
+      tlSeenRef.current = null;
+      tlStartOpenRef.current = false; // 钉住接续标记只在本次悬浮会话生效
+      return;
+    }
+    const at = tlHistory[0]?.at ?? null;
+    const pending = tlPending !== null;
+    const err = tlPending?.phase === "error";
+    const prev = tlSeenRef.current;
+    tlSeenRef.current = { at, pending, err };
+    if (!prev) return; // 进入悬浮态第一拍只建基线
+    if (
+      (at !== null && at !== prev.at) ||
+      (pending && !prev.pending) ||
+      (err && !prev.err)
+    ) {
+      setTlOpenTick((t) => t + 1);
+    }
+  }, [tlFloat, tlHistory, tlPending]);
 
   /** 面板翻译主链路：在途态 → 纯文本翻译 → 成功入历史（同原文替换置顶）。
       写盘放在 setState updater 里：StrictMode 双跑写同样内容，幂等无副作用 */
@@ -579,6 +637,76 @@ export default function ReaderOverlay({
       ? "未在运行"
       : "启动中…";
 
+  /** 表头「钉住/回栏」：钉住落记忆键（跨收起/展开、跨次进入保持悬浮）；回栏 = 取钉
+      并确保右栏展开——右栏收着时点回栏就是「把侧栏叫回来接住面板」，不让它无声消失。
+      从看得见的卡点钉住时球先展开接续（卡搬家，不是缩成球）；该标记只在本次悬浮
+      会话生效，兜底档（收起右栏自动出球）仍收着球起步 */
+  const tlStartOpenRef = useRef(false);
+  function toggleTlPlacement() {
+    if (tlFloat) {
+      setTlPinned(false);
+      saveReaderTlPinned(false);
+      // 回栏顺手展开右栏要带滑入过渡（与顶栏按钮同款成对翻转，否则瞬跳）
+      if (!rightOpen) {
+        setRightOpen(true);
+        setRightSlide(true);
+      }
+    } else {
+      tlStartOpenRef.current = true;
+      setTlPinned(true);
+      saveReaderTlPinned(true);
+    }
+  }
+
+  // 翻译面板两档摆位共用一套 props；摆位差异只在 heightPct（% 右栏高，悬浮档恒 null）
+  const tlPanelProps = {
+    latest: tlHistory[0] ?? null,
+    pending: tlPending,
+    history: tlHistory,
+    saving: tlSaving,
+    canSave: true,
+    onTogglePlacement: toggleTlPlacement,
+    onResize: setTlPct,
+    onResizeEnd: (pct: number) => {
+      setTlPct(pct);
+      localStorage.setItem(READER_SPLIT_T_KEY, String(Math.round(pct)));
+    },
+    onResizeReset: () => {
+      setTlPct(null);
+      localStorage.removeItem(READER_SPLIT_T_KEY);
+    },
+    onRetry: (text: string, page: number) => void runTranslate(text, page),
+    onCancelPending: () => {
+      tlReqRef.current++;
+      setTlPending(null);
+    },
+    onSaveEntry: (e: TlHistoryEntry) => void saveTlEntry(e),
+    onHint: showToast,
+    canAsk: Boolean(hasAgentTab),
+    onAsk: (entry: TlHistoryEntry) => {
+      const pairs = parseBilingual(entry.translated);
+      const text = reflowBlockText(
+        pairs ? plainFromBilingual(pairs) : entry.translated,
+        { cjk: true },
+      );
+      // 右栏收着时注入进看不见的终端＝动作看似失灵：顺手带滑入过渡展开右栏
+      // （回栏同款口径），让文字落在看得见的输入行里
+      if (!mountRight || !rightOpen) {
+        setRightOpen(true);
+        setRightSlide(true);
+      }
+      // 注入失败（CLI 已退出等）要把提示亮出来，不能无声无息
+      void Promise.resolve(
+        onInject(
+          `这段译文在第 ${entry.page} 页：\n${text}\n请对照原文指出译得不准或漏掉的地方。`,
+          false,
+        ),
+      ).then((hint) => {
+        if (hint) showToast(hint);
+      });
+    },
+  };
+
   return (
     <div className="fixed inset-0 z-40 flex flex-col bg-canvas">
       {/* 40px 顶栏：← 返回（Esc 同效）/ 《文献标题》/ 收起左右栏。
@@ -640,7 +768,10 @@ export default function ReaderOverlay({
           aria-label={leftOpen ? "收起左侧笔记栏" : "展开左侧笔记栏"}
           onMouseEnter={leftTip.show}
           onMouseLeave={leftTip.hide}
-          onClick={() => setLeftOpen((v) => !v)}
+          onClick={() => {
+            setLeftOpen((v) => !v);
+            setLeftSlide(true);
+          }}
           className={topBtn}
         >
           {leftOpen ? "‹" : "›"}
@@ -651,7 +782,10 @@ export default function ReaderOverlay({
           aria-label={rightOpen ? "收起右侧对话栏" : "展开右侧对话栏"}
           onMouseEnter={rightTip.show}
           onMouseLeave={rightTip.hide}
-          onClick={() => setRightOpen((v) => !v)}
+          onClick={() => {
+            setRightOpen((v) => !v);
+            setRightSlide(true);
+          }}
           className={topBtn}
         >
           {rightOpen ? "›" : "‹"}
@@ -675,59 +809,73 @@ export default function ReaderOverlay({
         />
       </div>
 
-      {/* 三栏区：笔记 | PDF | Agent 终端（侧栏可整栏收起，拖拽条记百分比） */}
+      {/* 三栏区：笔记 | PDF | Agent 终端（侧栏收起 = 整块滑出，拖拽条记百分比）。
+          侧栏块常挂载：收起用负 margin 滑出窗口外（过渡配方 ccode-reader-panel
+          只在滑动窗口内挂——见 leftSlide 注释），栏宽全程不变——笔记 Monaco 与右栏
+          xterm 宿主不重排不搬移（slot ref 稳定，TerminalPage 的搬移只在覆盖层
+          开/关、标签更替时发生）；visibility 参与过渡：收起滑完才隐、展开起点即显，
+          收起态不可聚焦不可 Tab */}
       <div ref={areaRef} className="flex min-h-0 flex-1">
-        {showLeft && (
-          <>
+        {mountLeft && (
+          <div
+            style={{ marginLeft: readerPanelSlideMargin(leftPx, leftOpen) }}
+            onTransitionEnd={(e) => {
+              if (e.target !== e.currentTarget) return; // 子元素过渡不冒充本栏
+              if (e.propertyName.startsWith("margin")) setLeftSlide(false);
+            }}
+            className={`flex shrink-0 ${leftSlide ? "ccode-reader-panel" : ""} ${
+              leftOpen ? "" : "invisible"
+            }`}
+          >
             <div
-              style={{ width: leftPx || undefined }}
+              style={{ width: leftPx }}
               className="flex min-w-0 shrink-0 flex-col border-r border-hairline bg-rail2"
             >
-              {noteError ? (
-                <div className="p-3">
-                  <p className="text-xs text-err-text">
-                    笔记建档失败：{noteError}
-                  </p>
-                </div>
-              ) : !note ? (
-                <div className="p-3">
-                  <LoadingRows compact />
-                </div>
-              ) : (
-                <Suspense
-                  fallback={
-                    <div className="p-3">
-                      <LoadingRows compact />
-                    </div>
-                  }
-                >
-                  {/* 文件名/阅读⇄编辑切换沿用 FilePreviewEditor 自带工具条（不重复画一行）；
-                      hideImmersive：它自己的 ⛶ 沉浸层是 z-30，压在阅读区 z-40 下面会失灵；
-                      onOpenFile：md 相对链接在笔记栏原地打开（previewReq 会开在阅读区底下看不见） */}
-                  {noteViewPath && noteViewPath !== note.path && (
-                    <div className="flex h-7 shrink-0 items-center border-b border-hairline px-2">
-                      <button
-                        type="button"
-                        onClick={() => setNoteViewPath(null)}
-                        className="rounded-sm px-1.5 py-0.5 text-xs text-l3 hover:bg-hover hover:text-l1"
-                      >
-                        ← 回笔记
-                      </button>
-                    </div>
-                  )}
-                  <FilePreviewEditor
-                    path={noteViewPath ?? note.path}
-                    root={projectRoot}
-                    hideImmersive
-                    onOpenFile={setNoteViewPath}
-                    modeTick={noteModeTick}
-                    onDirtyChange={setNoteDirty}
-                  />
-                </Suspense>
-              )}
+                {noteError ? (
+                  <div className="p-3">
+                    <p className="text-xs text-err-text">
+                      笔记建档失败：{noteError}
+                    </p>
+                  </div>
+                ) : !note ? (
+                  <div className="p-3">
+                    <LoadingRows compact />
+                  </div>
+                ) : (
+                  <Suspense
+                    fallback={
+                      <div className="p-3">
+                        <LoadingRows compact />
+                      </div>
+                    }
+                  >
+                    {/* 文件名/阅读⇄编辑切换沿用 FilePreviewEditor 自带工具条（不重复画一行）；
+                        hideImmersive：它自己的 ⛶ 沉浸层是 z-30，压在阅读区 z-40 下面会失灵；
+                        onOpenFile：md 相对链接在笔记栏原地打开（previewReq 会开在阅读区底下看不见） */}
+                    {noteViewPath && noteViewPath !== note.path && (
+                      <div className="flex h-7 shrink-0 items-center border-b border-hairline px-2">
+                        <button
+                          type="button"
+                          onClick={() => setNoteViewPath(null)}
+                          className="rounded-sm px-1.5 py-0.5 text-xs text-l3 hover:bg-hover hover:text-l1"
+                        >
+                          ← 回笔记
+                        </button>
+                      </div>
+                    )}
+                    <FilePreviewEditor
+                      path={noteViewPath ?? note.path}
+                      root={projectRoot}
+                      hideImmersive
+                      onOpenFile={setNoteViewPath}
+                      modeTick={noteModeTick}
+                      onDirtyChange={setNoteDirty}
+                    />
+                  </Suspense>
+                )}
             </div>
             {splitter("left")}
-          </>
+          </div>
         )}
 
         <div className="flex min-w-0 flex-1 flex-col">
@@ -754,145 +902,127 @@ export default function ReaderOverlay({
           </Suspense>
         </div>
 
-        {showRight && (
-          <>
+        {mountRight && (
+          <div
+            style={{ marginRight: readerPanelSlideMargin(rightPx, rightOpen) }}
+            onTransitionEnd={(e) => {
+              if (e.target !== e.currentTarget) return; // 子元素过渡不冒充本栏
+              if (e.propertyName.startsWith("margin")) setRightSlide(false);
+            }}
+            className={`flex shrink-0 ${rightSlide ? "ccode-reader-panel" : ""} ${
+              rightOpen ? "" : "invisible"
+            }`}
+          >
             {splitter("right")}
             <div
               ref={rightColRef}
-              style={{ width: rightPx || undefined }}
+              style={{ width: rightPx }}
               className="flex min-w-0 shrink-0 flex-col border-l border-hairline bg-raised"
             >
-              {/* 状态行：状态点 + agent 名 · 模型 + 启动中/运行中（终端页同语义）。
-                  下方就是该阅读会话标签的 xterm 画面（宿主 DOM 搬移，PTY/scrollback 不动） */}
-              {/* 翻译面板在上，自成一张卡。下面的对话另起一张，中间留出栏底。 */}
-              <ReaderTranslatePanel
-                latest={tlHistory[0] ?? null}
-                pending={tlPending}
-                history={tlHistory}
-                saving={tlSaving}
-                canSave
-                heightPct={tlPct}
-                onResize={setTlPct}
-                onResizeEnd={(pct) => {
-                  setTlPct(pct);
-                  localStorage.setItem(
-                    READER_SPLIT_T_KEY,
-                    String(Math.round(pct)),
-                  );
-                }}
-                onResizeReset={() => {
-                  setTlPct(null);
-                  localStorage.removeItem(READER_SPLIT_T_KEY);
-                }}
-                onRetry={(text, page) => void runTranslate(text, page)}
-                onCancelPending={() => {
-                  tlReqRef.current++;
-                  setTlPending(null);
-                }}
-                onSaveEntry={(e) => void saveTlEntry(e)}
-                onHint={showToast}
-                canAsk={Boolean(hasAgentTab)}
-                onAsk={(entry) => {
-                  const pairs = parseBilingual(entry.translated);
-                  const text = reflowBlockText(
-                    pairs ? plainFromBilingual(pairs) : entry.translated,
-                    { cjk: true },
-                  );
-                  // 注入失败（CLI 已退出等）要把提示亮出来，不能无声无息
-                  void Promise.resolve(
-                    onInject(
-                      `这段译文在第 ${entry.page} 页：\n${text}\n请对照原文指出译得不准或漏掉的地方。`,
-                      false,
-                    ),
-                  ).then((hint) => {
-                    if (hint) showToast(hint);
-                  });
-                }}
-              />
-              {needsProfile ? (
-                // 无可用配置：引导卡（一句话 + 跳配置页）
-                <div className="mx-2 mb-2 mt-2 flex min-h-0 flex-1 flex-col items-center justify-center gap-3 rounded-lg border border-field bg-canvas p-4 text-center">
-                  <p className="text-sm text-l3">还没有可用的 API 配置</p>
-                  <button
-                    type="button"
-                    onClick={onGoProfiles}
-                    className="rounded-md border border-cta-bd bg-cta px-3 py-1.5 text-sm text-cta-text hover:brightness-110"
-                  >
-                    去配置页添加
-                  </button>
-                </div>
-              ) : !hasAgentTab ? (
-                expectAgent ? (
-                  // 标签还在派的路上：别把「阅读会话未在运行」闪一下（错误状态早于真实状态）
-                  <div className="mx-2 mb-2 mt-2 flex min-h-0 flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-field bg-canvas p-4 text-center">
-                    <span className="size-2 animate-pulse rounded-full bg-l3" />
-                    <p className="text-sm text-l3">正在启动 Agent…</p>
-                  </div>
-                ) : (
-                  // 阅读会话标签被手动关掉：给个重新拉起的入口（不连环自动重建）
+                {/* 状态行：状态点 + agent 名 · 模型 + 启动中/运行中（终端页同语义）。
+                    下方就是该阅读会话标签的 xterm 画面（宿主 DOM 搬移，PTY/scrollback 不动） */}
+                {/* 翻译面板在上，自成一张卡。下面的对话另起一张，中间留出栏底。
+                    钉住档 / 右栏收起时不在此渲染——同一张卡悬浮到 PDF 正文栏（见 PDF 栏） */}
+                {!tlFloat && (
+                  <ReaderTranslatePanel {...tlPanelProps} heightPct={tlPct} />
+                )}
+                {needsProfile ? (
+                  // 无可用配置：引导卡（一句话 + 跳配置页）
                   <div className="mx-2 mb-2 mt-2 flex min-h-0 flex-1 flex-col items-center justify-center gap-3 rounded-lg border border-field bg-canvas p-4 text-center">
-                    <p className="text-sm text-l3">阅读会话未在运行</p>
+                    <p className="text-sm text-l3">还没有可用的 API 配置</p>
                     <button
                       type="button"
-                      onClick={() => {
-                        setExpectAgent(true);
-                        onRestartAgent();
-                      }}
-                      className="rounded-md border border-field bg-strip px-3 py-1.5 text-sm text-l2 hover:bg-inset hover:text-l1"
+                      onClick={onGoProfiles}
+                      className="rounded-md border border-cta-bd bg-cta px-3 py-1.5 text-sm text-cta-text hover:brightness-110"
                     >
-                      重新启动会话
+                      去配置页添加
                     </button>
                   </div>
-                )
-              ) : (
-                // xterm 宿主槽 + 底部状态栏槽：TerminalPage 把阅读会话标签的终端容器节点
-                // 与 TerminalStatusBar 节点一并搬进来，阅读区关闭/栏收起时搬回原标签
-                // （DOM 搬移不重建，滚动缓冲与状态栏内部状态不丢）。
-                // 根不 overflow-hidden：状态栏向上弹出的模型/工作目录菜单要伸出卡外。
-                // 卡面走全局 .ccode-well 配方（内容卡），不再自拼 border-field+bg-canvas
-                <div className="ccode-well mx-2 mb-2 mt-2 flex min-h-0 flex-1 flex-col rounded-lg">
-                  <div className="flex h-8 shrink-0 items-center gap-2 rounded-t-[7px] border-b border-hairline bg-strip px-2.5 text-micro">
-                    <span
-                      className={`size-2 shrink-0 rounded-full ${
-                        agentRunning
-                          ? "bg-ok-text"
-                          : agentSession?.state === "timeout"
-                            ? "bg-warn-text"
-                            : "bg-l4"
-                      }`}
+                ) : !hasAgentTab ? (
+                  expectAgent ? (
+                    // 标签还在派的路上：别把「阅读会话未在运行」闪一下（错误状态早于真实状态）
+                    <div className="mx-2 mb-2 mt-2 flex min-h-0 flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-field bg-canvas p-4 text-center">
+                      <span className="size-2 animate-pulse rounded-full bg-l3" />
+                      <p className="text-sm text-l3">正在启动 Agent…</p>
+                    </div>
+                  ) : (
+                    // 阅读会话标签被手动关掉：给个重新拉起的入口（不连环自动重建）
+                    <div className="mx-2 mb-2 mt-2 flex min-h-0 flex-1 flex-col items-center justify-center gap-3 rounded-lg border border-field bg-canvas p-4 text-center">
+                      <p className="text-sm text-l3">阅读会话未在运行</p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setExpectAgent(true);
+                          onRestartAgent();
+                        }}
+                        className="rounded-md border border-field bg-strip px-3 py-1.5 text-sm text-l2 hover:bg-inset hover:text-l1"
+                      >
+                        重新启动会话
+                      </button>
+                    </div>
+                  )
+                ) : (
+                  // xterm 宿主槽 + 底部状态栏槽：TerminalPage 把阅读会话标签的终端容器节点
+                  // 与 TerminalStatusBar 节点一并搬进来，阅读区关闭时搬回原标签
+                  // （栏收起只是滑出隐藏，槽位常驻不搬；DOM 搬移不重建，
+                  // 滚动缓冲与状态栏内部状态不丢）。
+                  // 根不 overflow-hidden：状态栏向上弹出的模型/工作目录菜单要伸出卡外。
+                  // 卡面走全局 .ccode-well 配方（内容卡），不再自拼 border-field+bg-canvas
+                  <div className="ccode-well mx-2 mb-2 mt-2 flex min-h-0 flex-1 flex-col rounded-lg">
+                    <div className="flex h-8 shrink-0 items-center gap-2 rounded-t-[7px] border-b border-hairline bg-strip px-2.5 text-micro">
+                      <span
+                        className={`size-2 shrink-0 rounded-full ${
+                          agentRunning
+                            ? "bg-ok-text"
+                            : agentSession?.state === "timeout"
+                              ? "bg-warn-text"
+                              : "bg-l4"
+                        }`}
+                      />
+                      <span className="text-l2">对话</span>
+                      <span className="min-w-0 truncate text-l4">
+                        {needsProfile
+                          ? "还没有配置"
+                          : `${agentName ?? "Agent"}${agentModel ? ` · ${agentModel}` : ""} · ${agentStateText}`}
+                      </span>
+                    </div>
+                    <div
+                      ref={termSlot}
+                      className="relative flex min-h-0 flex-1 flex-col"
+                    >
+                      {/* CLI 开屏遮面：会话联动出现（≈TUI 已开屏）前盖住 xterm 黑底；
+                          搬移是 appendChild，遮面作为槽位孩子与宿主共存 */}
+                      {sessionVeil && (
+                        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-raised">
+                          <span className="size-2 animate-pulse rounded-full bg-l3" />
+                          <p className="text-sm text-l3">
+                            正在启动 {agentName ?? "Agent"}…
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                    <div
+                      ref={statusBarSlot}
+                      className="shrink-0 border-t border-hairline"
                     />
-                    <span className="text-l2">对话</span>
-                    <span className="min-w-0 truncate text-l4">
-                      {needsProfile
-                        ? "还没有配置"
-                        : `${agentName ?? "Agent"}${agentModel ? ` · ${agentModel}` : ""} · ${agentStateText}`}
-                    </span>
                   </div>
-                  <div
-                    ref={termSlot}
-                    className="relative flex min-h-0 flex-1 flex-col"
-                  >
-                    {/* CLI 开屏遮面：会话联动出现（≈TUI 已开屏）前盖住 xterm 黑底；
-                        搬移是 appendChild，遮面作为槽位孩子与宿主共存 */}
-                    {sessionVeil && (
-                      <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-raised">
-                        <span className="size-2 animate-pulse rounded-full bg-l3" />
-                        <p className="text-sm text-l3">
-                          正在启动 {agentName ?? "Agent"}…
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                  <div
-                    ref={statusBarSlot}
-                    className="shrink-0 border-t border-hairline"
-                  />
-                </div>
-              )}
+                )}
             </div>
-          </>
+          </div>
         )}
       </div>
+
+      {tlFloat && (
+        // 译文悬浮档（钉住显式声明，或右栏收起时的兜底）：挂覆盖层根——坐标域是
+        // 整窗，右栏/笔记栏展开时球也拖得到窗口边缘（挂 PDF 栏会被栏界挡住）。
+        // 拖动状态留在球组件内，不惊动三栏树
+        <ReaderTlFloat
+          panelProps={tlPanelProps}
+          hasContent={Boolean(tlHistory[0] || tlPending)}
+          openTick={tlOpenTick}
+          startOpen={tlStartOpenRef.current}
+        />
+      )}
 
       {/* 保存译段/生词本结果 toast：右下角浮出 2.5s 淡出（✓/✗ 语义色小标） */}
       {toast && (

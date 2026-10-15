@@ -9,6 +9,7 @@ import SelectionFloatBar, { DistillSkillButton } from "./SelectionFloatBar";
 import { HoverTip, useHoverTip } from "./HoverTip";
 import { IS_MAC, IS_WINDOWS } from "../hotkeys";
 import { usePdfGestureZoom } from "./use-pdf-zoom";
+import { RenderGate } from "../render-gate";
 import {
   PDF_ZOOM_STEP,
   clampPdfScale,
@@ -95,6 +96,10 @@ function basename(p: string): string {
  *  renderScale：渲染倍率（缺省 = scale）。缩放期间布局倍率 scale 先行、渲染倍率
  *  停稳才跟上——旧位图 CSS 拉伸兜底，定格时布局零变化只换清晰位图（官方 viewer
  *  drawingDelay 同款，见 use-pdf-zoom.ts）。 */
+/** PDF 位图渲染闸：同一时刻最多 2 页在渲——换挡（栏收起/拖拽/缩放停稳）后的
+ *  补渲爆发被拆到不同帧，等闸页旧位图 CSS 拉伸兜底（机制见 render-gate.ts） */
+const pageRenderGate = new RenderGate(2);
+
 export const PdfPageView = memo(function PdfPageView({
   doc,
   pageNum,
@@ -173,8 +178,14 @@ export const PdfPageView = memo(function PdfPageView({
     let textLayer: pdfjs.TextLayer | null = null;
     let drawLayer: pdfjs.DrawLayer | null = null;
     void (async () => {
+      let releaseSlot: (() => void) | null = null;
       try {
+        // 换挡重渲从排队起先藏 textLayer：旧坐标错位叠在新拉伸位图上更脏，
+        // 等闸会拉长这个窗口；本页重建完成后由 textRendered 触发既有可见性效果恢复
+        if (textRef.current) textRef.current.style.visibility = "hidden";
         const page = await doc.getPage(pageNum);
+        if (cancelled) return;
+        releaseSlot = await pageRenderGate.acquire();
         if (cancelled) return;
         const viewport = page.getViewport({ scale: rs });
         const baseVp = page.getViewport({ scale: 1 });
@@ -259,6 +270,8 @@ export const PdfPageView = memo(function PdfPageView({
         if (!cancelled && !(e instanceof pdfjs.RenderingCancelledException)) {
           setError(String(e));
         }
+      } finally {
+        releaseSlot?.();
       }
     })();
     return () => {

@@ -50,8 +50,10 @@ test("大纲阅读态划选后，批注写进同一个意见框", async () => {
                 ? "export default \"data:text/javascript,\";"
                 : args.path === "monaco"
                   ? `const model={getValue(){return ""},setValue(){},getFullModelRange(){return{}}};
-const ed={dispose(){},updateOptions(){},layout(){},focus(){},getDomNode(){return null},getSelection(){return null},executeEdits(){},pushUndoStop(){},onDidChangeModelContent(){return{dispose(){}}},getModel(){return model},getValue(){return ""}};
+const ed={dispose(){},updateOptions(){},layout(){},focus(){},hasTextFocus(){return false},addCommand(){},getDomNode(){return null},getSelection(){return null},executeEdits(){},pushUndoStop(){},onDidChangeModelContent(){return{dispose(){}}},getModel(){return model},getValue(){return ""}};
 export const editor={defineTheme(){},setTheme(){},create(){return ed}};
+export const KeyMod={CtrlCmd:2048,Shift:1024,WinCtrl:2048};
+export const KeyCode={Enter:3,KeyB:41,KeyC:42,KeyI:53,KeyX:56};
 export const languages={register(){},setMonarchTokensProvider(){},getLanguages(){return[]}};`
                   : "export default function Stub(){return null;}",
           }));

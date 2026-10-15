@@ -13,6 +13,16 @@ export const READER_SPLIT_L_KEY = "ccode.readerSplitL";
 export const READER_SPLIT_R_KEY = "ccode.readerSplitR";
 /** 右栏「翻译面板 × 终端」纵向分割：面板高度占右栏高度的百分比（未拖过 = 内容自适应，不落键） */
 export const READER_SPLIT_T_KEY = "ccode.readerSplitT";
+/** 译文卡「钉在 PDF 上」（true = 正文栏悬浮球形态；未落键 = 右栏 agent 上方原位） */
+export const READER_TL_PINNED_KEY = "ccode.readerTlPinned";
+/** 译文悬浮球位置（PDF 栏内百分比坐标，球心；缺省贴右缘中部） */
+export const READER_TL_BALL_KEY = "ccode.readerTlBall";
+export const READER_TL_BALL_DEFAULT = { xp: 100, yp: 45 };
+/** 译文悬浮卡显式尺寸（px；未拖过角柄不落键 = 内容自适应 60% 封顶） */
+export const READER_TL_CARD_KEY = "ccode.readerTlCard";
+/** 悬浮卡尺寸下限：再窄动作钮排不下、再矮表头都不够 */
+export const READER_TL_CARD_MIN_W = 240;
+export const READER_TL_CARD_MIN_H = 140;
 /** 侧栏宽度百分比的可拖范围（相对三栏总宽） */
 export const READER_PCT_MIN = 12;
 export const READER_PCT_MAX = 40;
@@ -21,6 +31,8 @@ export const READER_TL_PCT_MIN = 12;
 export const READER_TL_PCT_MAX = 70;
 /** 侧栏（笔记/Agent）最小像素宽：窗口再小也不压缩到不可用 */
 export const READER_SIDE_MIN_PX = 240;
+/** 分隔条抓取热区宽（splitter 外层）：与收起滑出量同源，改一处必改另一处 */
+export const READER_SPLITTER_PX = 6;
 /** PDF 栏保底宽度：两侧合计不得把它压到这条线以下 */
 export const READER_PDF_MIN_PX = 280;
 /** 侧栏缺省百分比（笔记栏窄些、Agent 栏宽些——对话内容比笔记目录长） */
@@ -174,6 +186,105 @@ export function loadReaderTlPct(key: string): number | null {
   }
 }
 
+/** 读「译文卡钉在 PDF 上」记忆（缺省 false = 右栏原位）；localStorage 不可用时静默回落 */
+export function loadReaderTlPinned(): boolean {
+  try {
+    return localStorage.getItem(READER_TL_PINNED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** 写「钉在 PDF 上」记忆；false 时清键（缺省即原位，不落占位键） */
+export function saveReaderTlPinned(v: boolean): void {
+  try {
+    if (v) localStorage.setItem(READER_TL_PINNED_KEY, "1");
+    else localStorage.removeItem(READER_TL_PINNED_KEY);
+  } catch {
+    /* 隐私模式等存不进就算没记过 */
+  }
+}
+
+/** 悬浮球位置归一：0–100 百分比（可贴边）。真出界由渲染层兜——球心用
+ *  translate(-50%,-50%) 居中，样式走 clamp(18px, x%, calc(100% - 18px))
+ *  按球半径钳住，存档值与栏宽解耦（换窗口宽不失位、也不出界） */
+export function clampReaderTlBall(
+  xp: number,
+  yp: number,
+): { xp: number; yp: number } {
+  const c = (v: number) =>
+    Number.isFinite(v) ? Math.min(100, Math.max(0, v)) : 50;
+  return { xp: c(xp), yp: c(yp) };
+}
+
+/** 读悬浮球位置记忆（坏值/缺省回落右缘中部） */
+export function loadReaderTlBall(): { xp: number; yp: number } {
+  try {
+    const raw = localStorage.getItem(READER_TL_BALL_KEY);
+    if (!raw) return { ...READER_TL_BALL_DEFAULT };
+    const [xp, yp] = raw.split(",").map(Number);
+    return clampReaderTlBall(xp, yp);
+  } catch {
+    return { ...READER_TL_BALL_DEFAULT };
+  }
+}
+
+/** 写悬浮球位置记忆（取整百分比 "xp,yp"） */
+export function saveReaderTlBall(xp: number, yp: number): void {
+  try {
+    localStorage.setItem(
+      READER_TL_BALL_KEY,
+      `${Math.round(xp)},${Math.round(yp)}`,
+    );
+  } catch {
+    /* 存不进就不记 */
+  }
+}
+
+/** 悬浮卡尺寸钳制：下限常量、上限传栏内可用空间；坏值回落下限 */
+export function clampReaderTlCard(
+  w: number,
+  h: number,
+  maxW: number,
+  maxH: number,
+): { w: number; h: number } {
+  const cw = Math.min(
+    Math.max(READER_TL_CARD_MIN_W, Math.round(Number.isFinite(w) ? w : 0)),
+    Math.max(READER_TL_CARD_MIN_W, Math.floor(maxW)),
+  );
+  const ch = Math.min(
+    Math.max(READER_TL_CARD_MIN_H, Math.round(Number.isFinite(h) ? h : 0)),
+    Math.max(READER_TL_CARD_MIN_H, Math.floor(maxH)),
+  );
+  return { w: cw, h: ch };
+}
+
+/** 读悬浮卡显式尺寸（"w,h" px；未拖过/坏值 = null，内容自适应） */
+export function loadReaderTlCard(): { w: number; h: number } | null {
+  try {
+    const raw = localStorage.getItem(READER_TL_CARD_KEY);
+    if (!raw) return null;
+    const [w, h] = raw.split(",").map(Number);
+    if (!Number.isFinite(w) || !Number.isFinite(h)) return null;
+    return { w: Math.round(w), h: Math.round(h) };
+  } catch {
+    return null;
+  }
+}
+
+/** 写悬浮卡显式尺寸；undefined/null 清键回自适应（双击角柄复位） */
+export function saveReaderTlCard(size: { w: number; h: number } | null): void {
+  try {
+    if (size) {
+      localStorage.setItem(READER_TL_CARD_KEY, `${size.w},${size.h}`);
+    } else {
+      localStorage.removeItem(READER_TL_CARD_KEY);
+    }
+  } catch {
+    /* 存不进就不记 */
+  }
+}
+
 /** 三栏像素换算：侧栏按百分比取整后保底 240px；两侧合计超出「总宽 − PDF 保底」时按比例压缩；
  *  窗口窄到 PDF 保底都拿不出时侧栏归零让位（PDF 全宽） */
 export function readerColumnWidths(
@@ -188,6 +299,13 @@ export function readerColumnWidths(
   if (left + right <= budget) return { left, right };
   const k = budget / (left + right);
   return { left: Math.floor(left * k), right: Math.floor(right * k) };
+}
+
+/** 侧栏收起滑动量：整块（栏宽 + 分隔条热区）用负 margin 滑出窗口外，展开归 0。
+ *  栏体宽度全程不变——内容（Monaco/xterm 宿主）零重排，只有 PDF 栏随布局伸缩；
+ *  收起态配合 visibility 过渡收尾（滑动期间保持可见，滑完才隐） */
+export function readerPanelSlideMargin(panelPx: number, open: boolean): number {
+  return open ? 0 : -(panelPx + READER_SPLITTER_PX);
 }
 
 /** 阅读会话终端标签的复用键：退出再进接着聊（TerminalPage 与覆盖层同一出处） */

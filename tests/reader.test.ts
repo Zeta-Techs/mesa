@@ -4,6 +4,7 @@ import {
   CAPTURE_MIN_PX,
   READER_PDF_MIN_PX,
   READER_SIDE_MIN_PX,
+  READER_SPLITTER_PX,
   bytesToBase64,
   buildReaderTranslatePrompt,
   captureRectToCanvasPixels,
@@ -39,6 +40,7 @@ import {
   parseGlossaryTable,
   readerColumnWidths,
   readerDarkKey,
+  readerPanelSlideMargin,
   readerProgressKey,
   readerReuseKey,
   relMdLinkPath,
@@ -54,6 +56,15 @@ import {
   plainFromBilingual,
   reflowBlockText,
   READER_TL_HISTORY_MAX,
+  READER_TL_PINNED_KEY,
+  loadReaderTlPinned,
+  saveReaderTlPinned,
+  clampReaderTlBall,
+  loadReaderTlBall,
+  saveReaderTlBall,
+  clampReaderTlCard,
+  loadReaderTlCard,
+  saveReaderTlCard,
   type TlHistoryEntry,
 } from "../src/reader.ts";
 
@@ -187,6 +198,15 @@ test("readerColumnWidths 极端窄窗侧栏归零让位", () => {
     right: 0,
   });
   assert.deepEqual(readerColumnWidths(0, 22, 28), { left: 0, right: 0 });
+});
+
+test("readerPanelSlideMargin：展开归 0，收起滑出整块（栏宽 + 分隔条热区）", () => {
+  assert.equal(readerPanelSlideMargin(320, true), 0);
+  // 负 margin 恰好抵掉整块占位：后续栏从窗口边起步，栏体自身宽度不变
+  assert.equal(
+    readerPanelSlideMargin(320, false),
+    -(320 + READER_SPLITTER_PX),
+  );
 });
 
 test("readerReuseKey 稳定格式（退出再进找回同一标签）", () => {
@@ -386,6 +406,68 @@ test("buildReaderTranslatePrompt 学术直译约束 + 原文附上", () => {
 test("进度记忆与护眼的 localStorage 键格式", () => {
   assert.equal(readerProgressKey("/p/a.pdf"), "ccode.readerProgress./p/a.pdf");
   assert.equal(readerDarkKey("/p/a.pdf"), "ccode.readerDark./p/a.pdf");
+});
+
+test("译文卡钉位记忆：缺省原位，true 落键、false 清键", () => {
+  // Node 测试无 localStorage：装个最小内存桩（UI 测试走 JSDOM，纯逻辑测试就地造）
+  const store = new Map<string, string>();
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    },
+  });
+  assert.equal(loadReaderTlPinned(), false);
+  saveReaderTlPinned(true);
+  assert.equal(loadReaderTlPinned(), true);
+  assert.equal(store.get(READER_TL_PINNED_KEY), "1");
+  saveReaderTlPinned(false);
+  assert.equal(loadReaderTlPinned(), false);
+  assert.equal(store.get(READER_TL_PINNED_KEY), undefined);
+});
+
+test("译文悬浮球位置：归一到 0–100（贴边由渲染层 clamp 兜），坏值回落中部，记忆往返取整", () => {
+  // 同上：本测试自带内存桩，不依赖前一个测试的装配
+  const store = new Map<string, string>();
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    },
+  });
+  assert.deepEqual(clampReaderTlBall(-5, 120), { xp: 0, yp: 100 });
+  assert.deepEqual(clampReaderTlBall(50, 50), { xp: 50, yp: 50 });
+  assert.deepEqual(clampReaderTlBall(Number.NaN, 50).xp, 50);
+  saveReaderTlBall(73.6, 28.4);
+  assert.deepEqual(loadReaderTlBall(), { xp: 74, yp: 28 });
+  store.delete("ccode.readerTlBall");
+  assert.deepEqual(loadReaderTlBall(), { xp: 100, yp: 45 });
+});
+
+test("译文悬浮卡尺寸：下限常量、上限随栏钳制、坏值兜底；记忆往返与复位清键", () => {
+  const store = new Map<string, string>();
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    },
+  });
+  assert.deepEqual(clampReaderTlCard(100, 80, 1200, 900), { w: 240, h: 140 });
+  assert.deepEqual(clampReaderTlCard(500, 2000, 1200, 900), { w: 500, h: 900 });
+  // 上限比下限还小时不让倒挂（窄栏）：钳到下限
+  assert.deepEqual(clampReaderTlCard(400, 400, 100, 100), { w: 240, h: 140 });
+  assert.equal(loadReaderTlCard(), null); // 未拖过 = 自适应
+  saveReaderTlCard({ w: 480, h: 320 });
+  assert.deepEqual(loadReaderTlCard(), { w: 480, h: 320 });
+  saveReaderTlCard(null);
+  assert.equal(loadReaderTlCard(), null);
+  assert.equal(store.get("ccode.readerTlCard"), undefined);
 });
 
 test("splitGlossaryRow 转义还原与尾单元处理", () => {

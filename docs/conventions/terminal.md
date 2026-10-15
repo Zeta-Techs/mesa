@@ -400,6 +400,36 @@
   `data-tauri-drag-region` 属性版只认落点元素本尊，顶栏几乎全被子元素占满，实测拖不动（v3.99 教训）。
   任何 inset-0 覆盖层同理，漏了就是按钮重合 + 窗口拖不动。
   分隔条拖拽记宽度（localStorage `ccode.readerSplitL/R`，钳制与像素换算在 `src/reader.ts`），左右栏可收起；
+  **收起/展开是平滑滑动不是卸载**（2026-10-14）：栏块（栏 + 分隔条）常挂载，收起用负 margin 整块滑出窗口外
+  （滑动量 `readerPanelSlideMargin`＝栏宽＋分隔条热区 `READER_SPLITTER_PX`，过渡配方 `ccode-reader-panel`
+  200ms——**只在滑动窗口挂类**（点击起 260ms 兜底/transitionend 提前收口）：收起态下栏宽随窗口缩放或
+  对侧分隔条拖拽逐帧变时若过渡常开，margin 从插值中点重定向会让收起侧整段过程外宽≠0、露出空底），栏体宽度全程不变——笔记 Monaco 与右栏 xterm 宿主零重排零搬移、展开零冷启动；visibility 参与
+  过渡（收起滑完才隐、展开起点即显，收起态不可聚焦）。PDF 栏随之伸缩，适配宽度重算在 PdfContinuousView
+  侧做停稳防抖（`FIT_SETTLE_MS` 150ms）——动画期间零重排，停稳后一次重算，位图另由 use-pdf-zoom 的
+  120ms 去抖追平、且经 render-gate（限并发 2 的 FIFO 槽闸，
+  PdfPageView 排队逐页错开）补渲——换挡补渲不再挤同一帧顿挫，等闸页 textLayer 先藏、旧位图 CSS 拉伸兜底
+  （分隔条拖拽同享这套收口；停稳换挡前的过渡窗内页盒仍按旧宽渲染，栏变窄方向会有短暂的横向溢出/页缘裁切，停稳即收——这是防抖的既定代价，勿为消除它退回逐帧重算）；禁止改回条件卸载（收起卸 Monaco、右栏卸槽位是当年卡顿根源）；
+  翻译面板两档摆位（2026-10-14，当日三批改为悬浮球+整窗坐标）：表头「钉住/回栏」切换——原位 = 右栏 xterm 上方
+  （布局流，% 高度/底缘拖拽只在这档有意义）；钉住 = **可拖动「译」悬浮球**（`ReaderTlFloat`：点球在球旁展开
+  同一张译文卡，×/再点收回球；拖球换位记 `ccode.readerTlBall` 百分比坐标（0–100 归一，可贴边；出界由渲染层
+  `clamp(18px, x%, calc(100% - 18px))` 按球半径兜住），位移 <4px 判点击）。**球与卡挂覆盖层根（fixed inset-0），
+  坐标域是整窗**——当日审查实证挂 PDF 栏内会被栏界挡住（右栏展开时球到不了窗口边，正是用户报障）；卡的锚定
+  left/right 用与球同一份 clamp 值（裸百分比锚位在贴边时压球，默认 xp=100 实测压 14px），宽度再按锚定侧可用
+  空间限幅；卡顶/卡高共用同一活钳 min()（窗口变小后存档高被压缩，卡顶按裸存档算会探出窗顶、表头不可点）。
+  拖动状态留在球组件内不惊动三栏树。悬浮卡 absolute 锚在球旁（右半区贴左展开/左半区贴右，宽 ≤26rem、高 60% 封顶 min() 钳底）、
+  默认只看译文（原文要点开对照）、历史抽屉按球位上下弹、× 直接收球不落「一行动作条」、
+  表头没有「只折正文」chevron（点球/× 已是完全收起，纯标识行，窄卡时表头折行）。
+  从看得见的卡点「钉住」球先展开接续（卡搬家，不是缩成球）；兜底档（收起右栏自动出球）收着球起步。悬浮卡可**自由改形**：球对侧
+  下角角柄拖宽高（`clampReaderTlCard` 240×140 下限、窗内空间上限，显式尺寸记 `ccode.readerTlCard`，
+  双击角柄复位自适应——「拖过 = 显式记忆」与右栏高度条同款口径；角柄与球同款 4px 位移阈值——1px 抖动不得
+  把自适应卡锁成显式尺寸/矮卡跳到 140 下限，基值取当前渲染尺寸而非存档）。历史抽屉弹出方向/最大高/宽在开抽屉
+  时按卡与窗的实际空隙量得（固定方向会探出窗顶/窗底，固定 w-96 在窄卡/窄栏横向越界）。钉位记
+  `ccode.readerTlPinned`。**兜底**：右栏收起/极端窄窗让位时未钉住也出球（收着终端也能看译文），展开即回原位。「回栏」/悬浮卡
+  「问这段」在右栏收起时点击都**带滑入过渡**顺手展开右栏（问这段注入看不见的终端＝动作看似失灵）——
+  setRightOpen 必须与 setRightSlide 成对，否则瞬跳。新翻译**落地或失败**球自动展开（失败也要弹，球关着时
+  错误静默等于失灵；信号只认递进不认存量，StrictMode 记值式哨兵）；用户在途翻译期间手动收球则压掉下一次
+  自动展开（刚合上别又被顶开）。
+  悬浮与原位是同一组件两处渲染（内部 UI 态随摆位切换重置，可接受）。
   右栏内「翻译面板 × 终端」的底缘横分割条同样可拖记高度（`ccode.readerSplitT`，% 右栏总高、12–70 钳制，
   未拖过 = 内容自适应 40% 封顶不落键，双击复位自适应；拖拽为增量式——自适应态起点取当前渲染高度占比，不跳变）；
   右栏底部还有终端状态栏——TerminalStatusBar 节点随 xterm 宿主一并 DOM 搬移（`data-statusbar-host` 标记，
@@ -423,8 +453,8 @@
   无命中报错透出。另有根已知的变体 `pdf_for_note`（返回 Option，供已知 projectRoot 的调用方）。
 - **右栏 = 阅读会话标签的 xterm 终端画面**（2026-08-18 用户拍板：右栏从结构化对话视图改为真实终端，
   用户看着终端直接敲）：TerminalPage 用 `useLayoutEffect` 把该标签的 xterm 宿主节点（TerminalView 容器 div，
-  `data-terminal-host=<tabId>`）appendChild 进覆盖层右栏槽位（槽位经回调 ref + state 上报，右栏收起槽位卸载时
-  自动回搬），关闭时插回原槽位最前——FilePreviewEditor 的 Monaco 宿主移动同款先例，PTY/xterm/scrollback
+  `data-terminal-host=<tabId>`）appendChild 进覆盖层右栏槽位（槽位经回调 ref + state 上报；右栏收起不卸槽位——
+  栏块滑出隐藏、宿主尺寸不变，effect 只在覆盖层开/关、标签更替时搬），关闭时插回原槽位最前——FilePreviewEditor 的 Monaco 宿主移动同款先例，PTY/xterm/scrollback
   不重建不丢；容器上既有 ResizeObserver 在尺寸变化时自动 fit，无需额外触发。阅读区打开时该标签被提到活跃。
   没有独立的对话视图与输入框：「◈ 问 AI」/圈选截图注入仍写该标签 PTY（`injectToReader`），文字出现在终端
   输入行里正好可见。无配置引导卡、标签被关的「重新启动会话」卡片行为保留。标签的 ⌘F 搜索条与粘贴反馈小条
@@ -452,10 +482,18 @@
 - **注入单一内核 `injectToTab(tabId, data, send)`**：原 `injectToActiveAgent` 抽成按 tabId 的共用内核，
   右栏选段（活跃标签）与阅读区注入（阅读会话标签）走同一条链路，行为口径不变（缺省不自动回车、`send=true`
   一次拼接 `\r`）；选段「◈ 问 AI」/「↵ 直接发送」/圈选「发给 agent」全部经此。
-- **阅读会话 reuseKey 口径**：进入阅读区自动起一个阅读会话标签（项目根 + 默认配置 + autoStart，快速开聊同款
+- **阅读会话 reuseKey 口径**：进入阅读区自动起一个阅读会话标签（项目根 + autoStart，快速开聊同款
   机制），`reuseKey = reader:<projectRoot>`（`src/reader.ts readerReuseKey` 单一出处）——退出再进找回同一标签
   接着聊；恢复出的占位标签不带 reuseKey 不参与复用；用户手动关掉标签后不连环重建（一次性标记，栏内给
-  「重新启动」入口）；无可用配置时右栏给引导卡跳配置页，不自动起会话。
+  「重新启动」入口）；无可用配置时右栏给引导卡跳配置页，不自动起会话。启动配置解析
+  （resolveReaderLaunch，异步）：项目 Agents「专属绑定 · 沉浸阅读对话」显式槽优先
+  （project.taskBindings.reader，经 get_project_agent_binding 现读；agent 跟随绑定连接
+  所属 CLI 且可带模型，停用项照常尊重，连接被删/读失败按未绑定回落）> 启动栏上次 agent
+  的默认配置 > 上次使用 > 首个可见。专属绑定是项目级槽位机制（projects 表 task_bindings
+  列，槽位白名单见 PROJECT_AGENT_BINDING_SLOTS，set/get_project_agent_binding 写读，
+  clear_project_default_profile 删连接时连带清理），首个槽位 reader，后续任务槽位按需入列。
+  阅读翻译不受此槽影响——走 ai_prompt fnKey="translate" 的 AI 按功能配置（设置页「翻译」行），
+  与 agent 各用各的模型。
 - **圈选截图两个去向**（裁好的 PNG 由 PdfContinuousView 交来）：「◈ 发给 agent」= 走 `save_clipboard_image`
   落**临时图**（终端粘贴图片同一命令/口径），路径 + 预填 prompt 写进终端输入行**不自动发送**（图是临时产物，
   不进项目目录）；「＋ 插入笔记」= 走 `save_reader_capture` 落 `notes/assets/`（PNG 魔数校验 + 同秒重名 -2/-3）
@@ -477,6 +515,33 @@
   lastSavedRef），直接切回阅读会停在旧盘稿（删除/新增都看不见）——`switchMode("read")` 时把
   `editorRef.getValue()`（含未保存改动）setText 进去，阅读态 = 当前缓冲的预览；反向不走这条路
   （external-reload effect 遇模型相同自行跳过）。
+  **双击段落跳源码行（2026-10-14 拍板，同批 md 编辑态开折行）**：阅读态双击任意段落 → 切编辑态
+  并把光标定位到该块源码行。映射在 `md-block-map.ts`：marked 18 token 无行号，lexer raw 前缀累积
+  自算（**lexer 必须无参调用**，带 options 会整体替换 defaults 丢 md-math 扩展）；标记不烘进 HTML
+  （DOMPurify 白名单剥自造 data-*），双击时惰性配对 `.md-body` 顶层子节点 ↔ 块 token
+  （div.md-code / div.md-mermaid 归一 pre），配对失败回落纯切编辑态。定位走 {line, nonce} 通道
+  （modeTick 先例）防同值不重触发，reveal 等一帧再居中（隐藏态高度未定）。双击排除
+  a/img/button/input/.md-code-bar（不抢链接/图片/复制/复选框原语义），先清选区防划选浮条
+  闪帧；批注草稿表单开着时不跳（护住已输入意见，防卸载阅读态丢稿）；只读/截断态不接线。
+  **⌘E 在编辑器内失效的坑（2026-10-14 修）**：Monaco 把 mod+E 默认绑成「用所选内容查找」
+  （findController StartFindWithSelectionAction，mac 默认 CtrlCmd+KeyE），焦点在编辑器里时
+  窗口级 ⌘E 监听收不到键——FilePreviewEditor 在编辑器 DOM 上 capture 拦截（同粘贴图片模式），
+  仅 modeTick 接线宿主（阅读区）生效并 stopPropagation 防二次翻转，其他宿主保留 Monaco 原生查找。
+  **md 编辑格式行与快捷键（同日补齐）**：编辑态 md 自带格式行（B/I/S/`/•/☑/❝/<a>）与
+  ⌘B/⌘I/⌘⇧X/⌘⇧C 行内标记切换（已包裹→解除），回车续列表（任务清单重置未勾选、空项退出），
+  md 缩进 2 空格；纯逻辑在 src/md-edit.ts，按钮与快捷键同源。键接线走编辑器 DOM 的 capture
+  监听（与 ⌘E 同模式）——**不用 addCommand**：它挂在全局单例 keybinding 服务上，无 when 子句
+  会跨编辑器串扰（别的预览 Enter 被吞）、编辑器销毁不清理（每切一次文件泄漏一批绑定）、还压掉
+  查找控件输入框里的原生 Enter，三坑当晚全量审查源码实证。Enter 只在单光标且光标行为列表项时
+  接管，组词/多光标/非列表行回落原生；IME 锁（ime-guard 的 imeBlocksEnter + compositionend
+  后一帧）防确认候选的 Enter 穿透（WKWebView 时序档案见 ime-guard.ts 头注释）。undo 前后双
+  止点隔离格式化操作。TerminalStatusBar 评审相位的 window capture Enter 加 monaco 目标守卫
+  （编辑器里的回车不当「立即执行」，防一次按键双动作）。
+  **Monaco 悬停提示整体隐藏（2026-10-14 用户拍板「显示不了就去掉」）**：查找控件按钮的提示
+  走 monaco hoverService（非原生 title），浮层渲染在 overflow-guard 裁切上下文内、控件贴编辑器
+  顶边时被裁出残影；Mesa 各编辑器无值得保留的内容悬停，App.css 以 `#root .monaco-hover
+  { display:none }` 整体不放；哪天真需要编辑器内悬停（如接入语言服务）先摘掉这行。查找控件
+  窄栏溢出已由 App.css 适配（max-width + 换行收缩）。
 - **笔记编辑态粘贴图片**：项目内 md（有 projectRoot 语境）落 `notes/assets/` 并在光标处插 `![](相对路径)`；
   非项目内文件回落临时图路径文本（终端粘贴同口径），不混用两条通道。
 - **术语淡高亮实现约束**：textLayer 落地后对**文本节点**跑整词匹配（`findGlossaryMatches`，大小写不敏感），

@@ -100,6 +100,10 @@ function FloatBarOverflow({ onSend }: { onSend: () => void }) {
 const FALLBACK_PAGE = { w: 595, h: 842 };
 /** 离窗页的预渲染带宽：可视窗口上下各扩展的页数 */
 const RENDER_MARGIN = 2;
+/** 适配宽度重算的停稳阈值：容器宽度连续变化（侧栏收起动画/分隔条拖拽）期间
+ *  RO 逐帧连发，等停稳这么多毫秒才重算换挡（与 use-pdf-zoom 的 120ms 位图
+ *  去抖同量级，衔接成「布局停稳 → 位图追平」两段收口） */
+const FIT_SETTLE_MS = 150;
 
 /**
  * PDF 连续滚动视图（阅读区中栏）：全部页按自然高度纵向排布，
@@ -414,12 +418,16 @@ function PdfContinuousView({
     };
   }, [path, cwdHint]);
 
-  // 适配宽度：量首页原始宽度换算 scale；容器尺寸变化（分栏拖拽）时重算并重渲染
+  // 适配宽度：量首页原始宽度换算 scale；容器尺寸变化停稳后重算并重渲染。
+  // 停稳防抖（FIT_SETTLE_MS）：侧栏收起/展开动画与分隔条拖拽期间 RO 逐帧连发，
+  // 每帧 setFitScale 会整树重渲 + 页盒逐帧 reflow——防抖后动画期间零重排，
+  // 停稳一次重算，位图重渲另由 use-pdf-zoom 的 120ms 去抖收口
   useEffect(() => {
     if (!doc || fixedScale !== null) return;
     const el = scrollRef.current;
     if (!el) return;
     let cancelled = false;
+    let settleTimer: ReturnType<typeof setTimeout> | undefined;
     const compute = async () => {
       try {
         const page = await doc.getPage(1);
@@ -435,11 +443,13 @@ function PdfContinuousView({
     };
     void compute();
     const ro = new ResizeObserver(() => {
-      void compute();
+      clearTimeout(settleTimer);
+      settleTimer = setTimeout(() => void compute(), FIT_SETTLE_MS);
     });
     ro.observe(el);
     return () => {
       cancelled = true;
+      clearTimeout(settleTimer);
       ro.disconnect();
     };
   }, [doc, fixedScale]);
