@@ -93,6 +93,7 @@ async function renderSettings(options: { request?: string; update?: boolean; vis
         }
         if (command === "plugin:app|version") return "1.0.0";
         if (command === "plugin:opener|reveal_item_in_dir") return;
+        if (command === "plugin:opener|open_url") return;
         if (command === "inst_session_status") {
           return {
             prefixConfigured: false,
@@ -270,6 +271,19 @@ test("会话自动命名开关在集成分区：默认开，点一下 patch auto
     assert.equal(toggle.getAttribute("aria-checked"), "true");
     await view.act(async () => toggle.click());
     assert.deepEqual(view.patches, [{ autoTitleSessions: false }]);
+  } finally { await view.close(); }
+});
+
+test("关于页项目主页：去点 Star 打开仓库", async () => {
+  const view = await renderSettings();
+  try {
+    await view.select("关于");
+    assert.equal(view.content().querySelector(".ccode-repo-star-stage"), null);
+    const button = view.button("去点 Star", view.content());
+    assert.ok(button.querySelector("svg"), "按钮上要有 GitHub 图标");
+    await view.click("去点 Star", view.content());
+    const open = view.calls.find((call) => call.command === "plugin:opener|open_url");
+    assert.equal(open?.args?.url, "https://github.com/hongtongzhou-design/ccode");
   } finally { await view.close(); }
 });
 
