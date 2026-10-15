@@ -719,6 +719,55 @@ fn is_registered_at(conn: &Connection, path: &Path) -> bool {
 
 /// 目录删除防护：拒绝 home/document_dir 本身、少于两级的浅层路径（防误传 ~/Documents
 /// 这类）、系统与关键用户目录（复用 fs_tree 的重要路径黑名单，含 canonicalize 双校验）。
+/// 回收站入口（测试态直删）。单测里走真实 trash 会在开发机上驱动 Finder
+/// （AppleScript）：慢、与用户桌面上的回收站操作互相争抢，还会把瞬态
+/// -47「正在使用中」带进测试结果（2026-10-12 实证：全量测试与用户界面
+/// 同分钟报同款错）。trash 库行为不是被测对象——测试里直删即可。
+#[allow(unused)]
+fn trash_to_recycle_bin(path: &Path) -> Result<(), trash::Error> {
+    #[cfg(test)]
+    {
+        let r = if path.is_dir() {
+            std::fs::remove_dir_all(path)
+        } else {
+            std::fs::remove_file(path)
+        };
+        return r.map_err(|e| trash::Error::Unknown {
+            description: format!("测试直删失败: {e}"),
+        });
+    }
+    #[cfg(not(test))]
+    {
+        trash::delete(path)
+    }
+}
+
+/// 移入系统回收站（带重试）。macOS 上 trash 走 Finder AppleScript，目录刚经历
+/// 大批文件操作后（如清痕迹先删全部 worktree）、或系统元数据服务尚未放手时，
+/// Finder 会瞬时返回 -47「正在使用中」——实测连单测都会偶发。重试两轮（300ms /
+/// 1s）吃掉瞬态；仍失败则给可执行提示（常见占用方：打开该目录的终端/编辑器/
+/// Finder 窗口、工作目录在其内的运行中 agent）。
+pub(crate) fn trash_delete_retry(path: &Path, what: &str) -> Result<(), String> {
+    let mut last = None;
+    for attempt in 0..3 {
+        match trash_to_recycle_bin(path) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                last = Some(e);
+                if attempt < 2 {
+                    std::thread::sleep(std::time::Duration::from_millis(
+                        if attempt == 0 { 300 } else { 1000 },
+                    ));
+                }
+            }
+        }
+    }
+    Err(format!(
+        "{what}移入回收站失败（目录被占用：常见于打开它的终端 / 编辑器 / Finder 窗口，或工作目录在其内的运行中 agent；关掉后重试）: {}",
+        last.map(|e| e.to_string()).unwrap_or_default()
+    ))
+}
+
 fn guard_project_dir(dir: &Path) -> Result<(), String> {
     // 两侧都归一到 canonicalize 口径再比。调用方（:464 / :501）传进来的是 canonicalize
     // 过的路径，Windows 上带 `\\?\` verbatim 前缀，而 home_dir()/document_dir() 是普通形式，
@@ -856,7 +905,7 @@ fn delete_project_dir_impl(conn: &Connection, path: &Path) -> Result<String, Str
     let task_ids: Vec<String> = task_cards_at(&dir).into_iter().map(|c| c.id).collect();
     let deleted = crate::workspaces::delete_workspaces_for_repo(conn, &dir)?;
     // 主目录走系统回收站可反悔；工作区 worktree/分支属 git 元数据，回收站管不了，仍为彻底删除
-    trash::delete(&dir).map_err(|e| format!("移入回收站失败: {e}"))?;
+    trash_delete_retry(&dir, "")?;
     remove_project_at(conn, &dir)?;
     let (_, warn) = cleanup_project_db_traces(conn, &dir, &task_ids);
     let tail = warn.first().map(|w| format!("；{w}")).unwrap_or_default();
@@ -899,8 +948,7 @@ fn purge_project_traces_impl(conn: &Connection, path: &Path) -> Result<String, S
     // 卡片 id 在 .ccode 还在时读出来（下面就要把它移进回收站了）
     let task_ids: Vec<String> = task_cards_at(&dir).into_iter().map(|c| c.id).collect();
     if has_ccode {
-        trash::delete(dir.join(".ccode"))
-            .map_err(|e| format!("工作区已清理，但 .ccode 移入回收站失败: {e}"))?;
+        trash_delete_retry(&dir.join(".ccode"), "工作区已清理，但 .ccode ")?;
     }
     remove_project_at(conn, &dir)?;
     let (cleaned, warn) = cleanup_project_db_traces(conn, &dir, &task_ids);
