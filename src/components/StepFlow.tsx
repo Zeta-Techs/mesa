@@ -1410,12 +1410,17 @@ export default function StepFlow({
       } catch {
         /* DB 读失败走 props 里的步骤槽 */
       }
-      const req = await buildWorkspaceTerminalRequest(ws, undefined, {
-        stepLaunch: stepL ?? stepSlotLaunch ?? undefined,
-        releaseToStepBinding: true,
-      });
-      setPendingTerminal(req);
-      setPage("terminal");
+      try {
+        const req = await buildWorkspaceTerminalRequest(ws, undefined, {
+          stepLaunch: stepL ?? stepSlotLaunch ?? undefined,
+          releaseToStepBinding: true,
+        });
+        setPendingTerminal(req);
+        setPage("terminal");
+      } catch (reason) {
+        // 后端 workspace_env_for 等失败：不静默（点了没反应无从重试）
+        setDecisionError(`打不开终端：${String(reason)}`);
+      }
     })();
   }
 

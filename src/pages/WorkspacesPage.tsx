@@ -3090,6 +3090,11 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                       .then((req) => {
                         setPendingTerminal(req);
                         setPage("terminal");
+                      })
+                      .catch((reason) => {
+                        // 弹层已关、不落错误面就等于点了没反应（workspace_env_for
+                        // 失败等后端异常会走到这里）
+                        toast(`打不开终端：${String(reason)}`, "error");
                       });
                     return;
                   }
