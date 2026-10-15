@@ -19,6 +19,7 @@ import {
   stepSlotKey,
   resolveStepLaunch,
   workspaceLaunchChain,
+  goalBoundLaunch,
 } from "../src/project-agents.ts";
 import { declaredTaskKindsForMode, taskStatusLabel } from "../src/project-tasks.ts";
 
@@ -490,4 +491,35 @@ test("slotPrefs：项目对话槽与问 AI 槽互不借用", () => {
     preferredModel: "n-1",
   });
   assert.deepEqual(slotPrefs(profiles, project, DISCUSS_BINDING_SLOT).preferredAgent, "claude-code");
+});
+
+
+test("goalBoundLaunch：显式绑定尊重停用项，死引用 fail-loud，模型名单回落（W1 拍板①A）", () => {
+  const profiles = [
+    { id: "live", agent: "codex", models: ["m1", "m2"] },
+    { id: "paused", agent: "claude-code", models: ["c1"] },
+  ];
+  // 无显式绑定 → null（调用方走既有回落链）
+  assert.equal(goalBoundLaunch({ profiles, hiddenProfiles: [], profileId: null }), null);
+  // 正常绑定：原样返回，无披露
+  const ok = goalBoundLaunch({ profiles, hiddenProfiles: [], profileId: "live", model: "m2" });
+  assert.deepEqual(ok, { kind: "bound", profileId: "live", agent: "codex", model: "m2", notes: [] });
+  // 停用照用（①A：显式绑定尊重停用项）+ 披露一句
+  const paused = goalBoundLaunch({ profiles, hiddenProfiles: ["paused"], profileId: "paused", model: "c1" });
+  assert.equal(paused?.kind, "bound");
+  if (paused?.kind === "bound") {
+    assert.equal(paused.agent, "claude-code");
+    assert.equal(paused.notes.length, 1);
+    assert.match(paused.notes[0], /已停用/);
+  }
+  // 模型不在名单 → 回落名单第一 + 披露
+  const stale = goalBoundLaunch({ profiles, hiddenProfiles: [], profileId: "live", model: "gone" });
+  assert.equal(stale?.kind, "bound");
+  if (stale?.kind === "bound") {
+    assert.equal(stale.model, "m1");
+    assert.match(stale.notes[0], /名单第一/);
+  }
+  // 死引用 → missing（fail-loud 交上层引导重绑，不静默换家）
+  const dead = goalBoundLaunch({ profiles, hiddenProfiles: [], profileId: "deleted-x" });
+  assert.deepEqual(dead, { kind: "missing", deadId: "deleted-x" });
 });

@@ -28,7 +28,8 @@ import {
 } from "./PageFrame";
 import { Modal } from "./Modal";
 import { agentBrand } from "../agent-colors";
-import { resolveTaskModel } from "../project-agents";
+import { goalBoundLaunch, resolveTaskModel } from "../project-agents";
+import { toast } from "../toast";
 
 import { confirmDialog } from "./ConfirmDialog";
 import ResearchReproductionPanel from "./ResearchReproductionPanel";
@@ -277,16 +278,36 @@ export default function ProjectUserTasksView({
     opts?: { reuseIsolation?: boolean; feedback?: string },
   ) {
     const preferredAgent = task.agent ?? project.defaultAgent;
-    const profile =
-      visibleProfiles.find(
-        (item) =>
-          item.id ===
-          (task.profileId ??
-            (preferredAgent ? project.defaultProfiles?.[preferredAgent] : undefined)),
-      ) ??
-      visibleProfiles.find((item) => item.agent === preferredAgent) ??
-      visibleProfiles.find((item) => item.agent === "claude-code") ??
-      visibleProfiles[0];
+    // W1（拍板①A）：显式绑定在全量 profiles 里解析——停用照用（显式绑定尊重停用
+    // 项，与 Agents 页换绑侧同向）；连接真被删才 fail-loud 引导重绑，不再静默滑到
+    // 「同家第一条 → claude-code → 任意」——那会把长跑目标悄悄换供应商换模型。
+    const bound = goalBoundLaunch({
+      profiles,
+      hiddenProfiles,
+      profileId: task.profileId,
+      model: task.model,
+    });
+    if (bound?.kind === "missing") {
+      setError(
+        "这条目标绑定的连接已删除，启动已停：去 Agents 页这条目标的行内重绑，或清掉绑定跟随项目默认。",
+      );
+      return;
+    }
+    let launchModel: string | undefined;
+    if (bound?.kind === "bound") {
+      for (const note of bound.notes) toast(note, "info");
+      launchModel = bound.model;
+    }
+    const profile = bound?.kind === "bound"
+      ? profiles.find((item) => item.id === bound.profileId)
+      : visibleProfiles.find(
+          (item) =>
+            item.id ===
+            (preferredAgent ? project.defaultProfiles?.[preferredAgent] : undefined),
+        ) ??
+        visibleProfiles.find((item) => item.agent === preferredAgent) ??
+        visibleProfiles.find((item) => item.agent === "claude-code") ??
+        visibleProfiles[0];
     if (!profile) {
       setError("还没有可用连接，先到连接页配一个。");
       setPage("profiles");
@@ -318,13 +339,14 @@ export default function ProjectUserTasksView({
         title: task.name,
         agentId: profile.agent,
         profileId: profile.id,
-        model: resolveTaskModel({
-          models: profile.models,
-          taskModel: task.model,
-          profileId: profile.id,
-          defaultProfileId: project.defaultProfiles?.[profile.agent],
-          defaultModel: project.defaultModels?.[profile.agent],
-        }),
+        model: launchModel ??
+          resolveTaskModel({
+            models: profile.models,
+            taskModel: task.model,
+            profileId: profile.id,
+            defaultProfileId: project.defaultProfiles?.[profile.agent],
+            defaultModel: project.defaultModels?.[profile.agent],
+          }),
         resume:
           retrying?.sessionId && retrying.agent === profile.agent
             ? { agentId: retrying.agent, sessionId: retrying.sessionId }

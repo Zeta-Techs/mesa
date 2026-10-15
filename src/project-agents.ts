@@ -384,6 +384,48 @@ export function workspaceLaunchChain(
   };
 }
 
+/** 目标显式绑定的启动解析（W1，2026-10-15 拍板①A）。
+ *  显式绑定（tasks.profileId）在全量 profiles 里找——停用照用（「显式绑定尊重
+ *  停用项」与 Agents 页换绑侧同向），只有连接真被删才 fail-loud 引导重绑；
+ *  模型不在名单回落名单第一（换档不换家）。返回 null = 无显式绑定（调用方走
+ *  既有回落链：项目默认 → 同家第一条可见 → …）。notes 是启动时的披露行。 */
+export type GoalBoundLaunch =
+  | {
+      kind: "bound";
+      profileId: string;
+      agent: string;
+      model: string;
+      notes: string[];
+    }
+  | { kind: "missing"; deadId: string };
+
+export function goalBoundLaunch(input: {
+  profiles: { id: string; agent: string; models: string[] }[];
+  hiddenProfiles: string[];
+  profileId: string | null | undefined;
+  model?: string | null;
+}): GoalBoundLaunch | null {
+  if (!input.profileId) return null;
+  const profile = input.profiles.find((p) => p.id === input.profileId);
+  if (!profile) return { kind: "missing", deadId: input.profileId };
+  const wanted = input.model?.trim() ?? "";
+  const modelOk = wanted && profile.models.includes(wanted);
+  const notes: string[] = [];
+  if (input.hiddenProfiles.includes(profile.id)) {
+    notes.push(`这条目标绑定的连接（${profile.id}）已停用，按绑定照常使用`);
+  }
+  if (wanted && !modelOk && profile.models.length > 0) {
+    notes.push(`绑定的模型 ${wanted} 不在这条连接的名单里，本次用名单第一`);
+  }
+  return {
+    kind: "bound",
+    profileId: profile.id,
+    agent: profile.agent,
+    model: modelOk ? wanted : (profile.models[0] ?? ""),
+    notes,
+  };
+}
+
 /** 目标启动的模型三档回落（B2，从 ProjectUserTasksView 内联抽出）：
  *  目标绑定模型（还在该连接名单里）> 命中项目默认连接时项目点选的模型 > 名单第一。
  *  taskModel 与 defaultModel 都是「点过才非空」；都不适用时空串（CLI 默认/名单第一由
