@@ -52,3 +52,12 @@ L0 全局设置   settings.defaultProfiles / ai_profile_id / ai_profiles[fn]（�
 ## 测试钉住面
 
 `tests/project-agents.test.ts`（slotPrefs/resolveStepLaunch/resolveTaskModel/workspaceLaunchChain/taskBindingLaunch）、`tests/kickoff-launch.test.ts`（pickKickoffLaunch 链/kickoffLast 往返）、`tests/project-agents-ui.test.ts`（名册+绑定区，read_project_config 桩）、`research-kickoff-ui.test.ts`（弹层 invoke catch 降级）、cargo（槽位白名单/步骤重名/tasks model 列位/旧 schedules.json 兼容）。
+
+## 2026-10-15 审查修复批拍板（四项，用户按推荐裁定）
+
+- **①停用连接的启动语义＝A**：显式绑定指向停用（隐藏）连接时照常拉起 + 启动披露一句（与 Agents 页换绑侧同向）；连接被删才 fail-loud 引导重绑。目标启动侧已按此实现（goalBoundLaunch）。
+- **②编程侧自由搭配＝C2a 推荐形态起步**：进入/建树默认即点即拉起；解析连接停用/失效时降为预填不自动拉起+提示（gateCodingAutoStart）。lane: 槽（C2b 终态）未开，需要时另立拍板。
+- **③office/coding 遗留绑定＝可见可清**：Agents 页「遗留绑定（仅清理）」组（reader/step: 槽）。
+- **④归并后 workspace 标签＝分支名**：编程工作树会话归并主仓行、workspace 列填分支名（与科研「仓库+工作区名」同构；只认 ~/ccode/worktrees/ 下的树，科研先归并防抢）。
+
+同批落地：task_set_launch / update_schedule 写侧三件套（连接存在、agent 恒随 profile、模型在名单）；删连接级联清 tasks 引用（schedules 不清——fail-loud 铁律，读侧标失效）；profile_usage_refs 删前清点；Agents 页目标/定时卡死引用坏行。
