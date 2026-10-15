@@ -402,3 +402,128 @@ test("focus ring（l3）对画布对比度全主题 ≥3:1（WCAG 2.2 Focus Appe
   }
   assert.deepEqual(failures, [], `focus ring 低于 3:1：\n${failures.join("\n")}`);
 });
+
+/** color-mix(in oklab, A p%, B)：oklab 域线性插值（与 CSS 同构；混黑保色相，
+ *  这正是两段式第一段的用意——srgb 直混近中性画布会把浅 cta 洗成灰彩） */
+function srgb2lin(c: number): number {
+  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+function lin2srgb(c: number): number {
+  return c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
+}
+function hex2rgb(hex: string): number[] {
+  const h = hex.replace("#", "");
+  return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
+}
+function rgb2hex(ch: number[]): string {
+  const cl = (x: number) =>
+    Math.round(Math.min(255, Math.max(0, x)))
+      .toString(16)
+      .padStart(2, "0");
+  return `#${cl(ch[0])}${cl(ch[1])}${cl(ch[2])}`;
+}
+function rgb2lab(ch: number[]): number[] {
+  // srgb2lin 期望 0–1，hex2rgb 给的是 0–255——这里必须先除（oklch 版的除法在 hex2oklab 里）
+  const [R, G, B] = ch.map((v) => srgb2lin(v / 255));
+  const l = 0.4122214708 * R + 0.5363325363 * G + 0.0514459929 * B;
+  const m = 0.2119034982 * R + 0.6806995451 * G + 0.1073969566 * B;
+  const s = 0.0883024619 * R + 0.2817188376 * G + 0.6299787005 * B;
+  const l_ = Math.cbrt(l), m_ = Math.cbrt(m), s_ = Math.cbrt(s);
+  return [
+    0.2104542553 * l_ + 0.793617785 * m_ - 0.0040720468 * s_,
+    1.9779984951 * l_ - 2.428592205 * m_ + 0.4505937099 * s_,
+    0.0259040371 * l_ + 0.7827717662 * m_ - 0.808675766 * s_,
+  ];
+}
+function lab2rgb(lab: number[]): number[] {
+  const [L, a, b] = lab;
+  const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
+  const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
+  const s_ = L - 0.0894841775 * a - 1.291485548 * b;
+  const l = l_ ** 3, m = m_ ** 3, s = s_ ** 3;
+  return [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+  ].map((x) => lin2srgb(x) * 255);
+}
+function mixOklab(h1: string, h2: string, p: number): string {
+  const A = rgb2lab(hex2rgb(h1));
+  const B = rgb2lab(hex2rgb(h2));
+  return rgb2hex(lab2rgb(A.map((v, i) => (v * p) / 100 + (B[i] * (100 - p)) / 100)));
+}
+/** srgb 伽马域逐通道插值（color-mix in srgb 同域） */
+function mixSrgbHex(h1: string, h2: string, p: number): string {
+  const A = hex2rgb(h1);
+  const B = hex2rgb(h2);
+  return rgb2hex(A.map((v, i) => (v * p) / 100 + (B[i] * (100 - p)) / 100));
+}
+function pct(re: RegExp, src: string, name: string): number {
+  const m = re.exec(src);
+  assert.ok(m, `热力图公式缺 ${name}`);
+  return Number(m[1]);
+}
+
+test("热力图五档色阶（cta 同色系 oklab 两段式）全主题可辨：递增 / 相邻 Δ≥8 / 顶档 ≥3:1", () => {
+  // 公式从 App.css 解析（单一出处）：改两段式百分比即改测试。
+  // 口径（2026-10-12 第七轮定稿）：色相经 var(--color-cta) 透传随主题切换
+  // （oklch 相对色语法在 Lightning/WKWebView 链上不跟主题，已否决）；
+  // 底档贴地是参考图的有意设计，最低档距卡底阈值 ≥14；相邻档与顶档对比从严。
+  const themeSrc = /@theme \{(.*?)\n\}/s.exec(css)?.[1] ?? "";
+  const dp = (n: number) =>
+    pct(new RegExp(`--heat-d${n}: color-mix\\(in oklab, var\\(--color-cta\\) (\\d+)%, black\\)`), themeSrc, `--heat-d${n}`);
+  const hp = (n: number) =>
+    pct(new RegExp(`--heat-${n}: color-mix\\(in oklab, var\\(--heat-d${n}\\) (\\d+)%, var\\(--color-canvas\\)\\)`), themeSrc, `--heat-${n}`);
+  const D = [1, 2, 3].map(dp);
+  const H = [1, 2, 3].map(hp);
+  assert.match(themeSrc, /--heat-4:\s*var\(--color-cta\)/, "深色顶档 = 纯 cta");
+
+  const lightSrc = /\[data-theme\$="-light"\] \{(.*?)\n\}/s.exec(css)?.[1] ?? "";
+  const lp = (n: number) =>
+    pct(new RegExp(`--heat-${n}: color-mix\\(in srgb, var\\(--color-cta\\) (\\d+)%, var\\(--color-canvas\\)\\)`), lightSrc, `浅色 --heat-${n}`);
+  const Lp = [1, 2, 3].map(lp);
+  const l4m = /--heat-4: color-mix\(in srgb, var\(--color-cta\) (\d+)%, var\(--color-l1\)\)/.exec(lightSrc);
+  assert.ok(l4m, "浅色最高档必须是 cta×l1（近白卡底上纯 cta 不足 3:1）");
+
+  const failures: string[] = [];
+  function check(name: string, t: Record<string, string>, isLight: boolean) {
+    const bg = wellColor(t, "canvas");
+    const ladder = isLight
+      ? [
+          mixSrgbHex(t.cta, t.canvas, Lp[0]),
+          mixSrgbHex(t.cta, t.canvas, Lp[1]),
+          mixSrgbHex(t.cta, t.canvas, Lp[2]),
+          mixSrgbHex(t.cta, t.l1, Number(l4m![1])),
+        ]
+      : (() => {
+          const d = D.map((p) => mixOklab(t.cta, "#000000", p));
+          return [
+            mixOklab(d[0], t.canvas, H[0]),
+            mixOklab(d[1], t.canvas, H[1]),
+            mixOklab(d[2], t.canvas, H[2]),
+            t.cta,
+          ];
+        })();
+    const d = ladder.map((x) => Math.abs(lum(x) - lum(bg)));
+    if (!(d[0] < d[1] && d[1] < d[2] && d[2] < d[3]))
+      failures.push(`${name}: 档位距卡底不是严格递增`);
+    const minAdj = Math.min(d[1] - d[0], d[2] - d[1], d[3] - d[2]);
+    if (minAdj < 8) failures.push(`${name}: 相邻档亮度差最小 ${minAdj.toFixed(1)} < 8`);
+    if (d[0] < 14) failures.push(`${name}: 底档距卡底 ${d[0].toFixed(0)} < 14（贴地底档下限）`);
+    const c4 = contrast(ladder[3], bg);
+    if (c4 < 3) failures.push(`${name}: 顶档对卡底 ${c4.toFixed(2)}:1 < 3（WCAG 非文本）`);
+  }
+
+  const themeIds: (string | null)[] = [
+    null,
+    ...THEMES.map((t) => t.id).filter((id) => id !== "midnight"),
+  ];
+  for (const id of themeIds) {
+    check(id ?? "@theme", tokens(id), (id ?? "").endsWith("-light"));
+  }
+  for (const seeds of [DEFAULT_CUSTOM_THEME, { rail: "#f0f0f0", canvas: "#fcfcfc", accent: "#0169cc" }]) {
+    const derived = deriveThemeTokens(seeds).tokens;
+    check(seeds.accent, derived, lum(derived.canvas) > 200);
+  }
+  assert.deepEqual(failures, [], `热力图色阶断档：\n${failures.join("\n")}`);
+});

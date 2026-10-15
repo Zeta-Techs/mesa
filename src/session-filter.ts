@@ -38,8 +38,8 @@ export const QUICK_FILTERS: readonly QuickFilterDef[] = [
 
 /** 作用域筛选：搜索建议点选后落成的 chip，可叠加 */
 export interface ScopeChip {
-  kind: "project" | "step" | "task" | "agent";
-  /** 匹配值（projectPath / stepName / taskName / agent id） */
+  kind: "project" | "step" | "task" | "agent" | "day";
+  /** 匹配值（projectPath / stepName / taskName / agent id / 本机时区日期 YYYY-MM-DD） */
   value: string;
   /** 展示用短标签 */
   label: string;
@@ -57,6 +57,16 @@ export function sessionTime(s: SessionMetaDto): number | null {
   if (!raw) return null;
   const t = Date.parse(raw);
   return Number.isNaN(t) ? null : t;
+}
+
+/** 会话归属的本机时区日期键 YYYY-MM-DD（day chip 匹配用；按最近更新时间归日） */
+export function sessionDayKey(s: SessionMetaDto): string | null {
+  const t = sessionTime(s);
+  if (t === null) return null;
+  const d = new Date(t);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate(),
+  ).padStart(2, "0")}`;
 }
 
 /**
@@ -103,6 +113,7 @@ export function applySessionFilters(
         if (kind === "project") return s.projectPath === v;
         if (kind === "step") return s.stepName === v;
         if (kind === "task") return s.taskName === v;
+        if (kind === "day") return sessionDayKey(s) === v;
         return s.agent === v;
       });
       if (!hit) return false;
@@ -290,4 +301,5 @@ export const SCOPE_KIND_LABEL: Record<ScopeChip["kind"], string> = {
   step: "步骤",
   task: "卡片",
   agent: "Agent",
+  day: "日期",
 };

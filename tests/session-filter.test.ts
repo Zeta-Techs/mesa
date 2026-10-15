@@ -12,6 +12,7 @@ import {
   sessionLooksInternal,
   sessionExcludedFromProjectList,
   sessionTime,
+  sessionDayKey,
   type QuickFilterId,
   type ScopeChip,
 } from "../src/session-filter.ts";
@@ -300,3 +301,22 @@ test("按项目分组跳过无头 AI 临时目录", () => {
 });
 
 
+
+test("day chip：sessionDayKey 按本机时区归日，applySessionFilters 按日期过滤", () => {
+  // 2026-10-12 当天（本地时区）更新的一条：dayKey 即当天日期串
+  const inDay = s({ updatedAt: new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate(), 15, 0).toISOString() });
+  const key = sessionDayKey(inDay)!;
+  const y = new Date();
+  const expectKey = `${y.getFullYear()}-${String(y.getMonth() + 1).padStart(2, "0")}-${String(y.getDate()).padStart(2, "0")}`;
+  assert.equal(key, expectKey);
+  // 前一天 23:59 与当天 00:01 是两个不同的键
+  const late = s({ updatedAt: new Date(y.getFullYear(), y.getMonth(), y.getDate() - 1, 23, 59).toISOString() });
+  assert.notEqual(sessionDayKey(late), sessionDayKey(inDay));
+  // 无时间戳 → null
+  assert.equal(sessionDayKey(s({ updatedAt: null, createdAt: null })), null);
+  // chip 过滤：命中当天、放行别的 kind
+  const chip: ScopeChip = { kind: "day", value: key, label: "今天" };
+  const kept = applySessionFilters([inDay, late], new Set(), [chip], []);
+  assert.equal(kept.length, 1);
+  assert.equal(kept[0].sessionId, inDay.sessionId);
+});

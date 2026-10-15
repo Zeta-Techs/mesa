@@ -1059,6 +1059,82 @@ export interface UsageTopSessionDto {
   costPartial: boolean;
 }
 
+/** 活跃度热力图的单日行：四列主量只计非 internal（官方订阅计入）；
+ *  official/internal 子计量仅供「显示内部活动」开关做展示层注记 */
+export interface UsageActivityDayDto {
+  /** 本机时区日期 YYYY-MM-DD；只出现有行的天，年份窗口零填由前端做 */
+  day: string;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  /** 当天非 internal 不重复会话数 */
+  sessions: number;
+  /** 其中官方订阅份额（四类合计），不参与计费 */
+  officialTokens: number;
+  /** 内部活动四类合计：不进格子着色与连续天数 */
+  internalTokens: number;
+  internalSessions: number;
+  /** 与 usage_trend 同口径：无可计费行记 0，全未计价为 null（显示 ~） */
+  costUsd: number | null;
+  costPartial: boolean;
+}
+
+/** 全历史非零日序列：翻年/streak/开关全部前端推导，零重查 */
+export interface UsageActivityDto {
+  /** 查询时刻的本机日期（前端年份窗口与「今天」宽限的唯一今天出处） */
+  today: string;
+  /** 最早有记录的日子；空库为 null（区块不渲染） */
+  firstDay: string | null;
+  days: UsageActivityDayDto[];
+  /** 增量索引刷新失败但返回了已建索引数据 */
+  stale: boolean;
+}
+
+/** 按 agent 的单日分解（四类合计；非 internal） */
+export interface UsageDayAgentRowDto {
+  agent: string;
+  tokens: number;
+  sessions: number;
+}
+
+/** 点格下钻的当日会话行：标题出站前已脱敏；无自定义名为 null（前端回落扫描标题/短 id） */
+export interface UsageDaySessionDto {
+  agent: string;
+  sessionId: string;
+  title: string | null;
+  projectPath: string;
+  tokens: number;
+  official: boolean;
+  internal: boolean;
+  /** 仅可计费会话有估算费用；订阅/内部会话为 null */
+  costUsd: number | null;
+  costPartial: boolean;
+}
+
+/** 点格下钻：当日总量 + 按 agent 分解 + 会话列表 */
+export interface UsageDayDetailDto {
+  day: string;
+  totals: UsageActivityDayDto;
+  /** tokens 降序 */
+  byAgent: UsageDayAgentRowDto[];
+  /** 四类合计降序，internal 沉底 */
+  sessions: UsageDaySessionDto[];
+}
+
+/** 按 agent 拆分的年矩阵（筛选胶囊用） */
+export interface UsageActivityAgentsDayDto {
+  day: string;
+  byAgent: UsageDayAgentRowDto[];
+}
+
+export interface UsageActivityAgentsDto {
+  year: number;
+  /** 该年出现过的非 internal agent（按年总量降序） */
+  agents: string[];
+  days: UsageActivityAgentsDayDto[];
+}
+
 export interface AgentUsageDto {
   agent: string;
   tokens: number;

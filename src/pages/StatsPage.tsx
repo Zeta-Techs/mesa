@@ -16,9 +16,12 @@ import type {
 import { axisLabels } from "../stats-trend";
 import {
   cacheHitRate,
+  compact,
+  fmtCost,
   sessionDisplayTitle,
   weekOverWeek,
 } from "../stats-insight";
+import ActivityHeatmap from "../components/ActivityHeatmap";
 import {
   formatPlanTimestamp,
   formatResetPoint,
@@ -108,27 +111,6 @@ const RANGES: { id: Range; label: string }[] = [
   { id: "month", label: "近 30 天" },
   { id: "all", label: "全部" },
 ];
-
-/** 紧凑数字：1234567 → 1.2M，12345 → 12K */
-function compact(n: number): string {
-  if (n >= 1_000_000)
-    return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, "")}K`;
-  return String(n);
-}
-
-function fmtCost(
-  c: number | null,
-  currency: "$" | "¥",
-  rate: number,
-  partial: boolean,
-): string {
-  if (c == null) return "~";
-  const prefix = partial ? "≥" : "";
-  return currency === "¥"
-    ? `${prefix}¥${(c * rate).toFixed(2)}`
-    : `${prefix}$${c.toFixed(2)}`;
-}
 
 /** 明细表费用列保持单行；金额过长时省略，完整值仍可通过悬浮查看。 */
 function CostText({ children }: { children: ReactNode }) {
@@ -510,6 +492,8 @@ export default function StatsPage({ visible }: { visible: boolean }) {
   const [showInternal, setShowInternal] = useState(
     () => localStorage.getItem("ccode.stats.showInternal") === "1",
   );
+  /** 活跃度区块的独立刷新信号：页级「刷新」重建索引后一并重拉（与 range 无关，不进 load） */
+  const [activityRefresh, setActivityRefresh] = useState(0);
 
   // 订阅余量卡（智谱/Kimi/MiniMax 一张卡切换）：进页查 + 可见期 2 分钟自动轮询，手动刷新才 force
   const [planRows, setPlanRows] = useState<PlanQuotaDto[]>([]);
@@ -711,6 +695,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
       setTimeout(() => setNotice(null), 4000);
       setError(null);
       await load(range);
+      setActivityRefresh((k) => k + 1);
       void loadPlans(true);
       void loadWallets(true);
     } catch (e) {
@@ -842,7 +827,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
   }
 
   return (
-    <PageFrame width="fluid">
+    <PageFrame width="wide">
       <PageHeader
         title="用量"
         meta="只计经 Mesa 记下归属的会话。费用按公开价估算，≥ 含未计价，~ 无价格。"
@@ -1378,8 +1363,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
           detail="跑几个 agent 会话后，这里会按天汇总 token 和费用。"
         />
       ) : (
-        <>
-          <div className="mb-6 rounded-lg ccode-well p-4">
+        <div className="mb-6 rounded-lg ccode-well p-4">
             <div className="flex flex-wrap items-start gap-x-8 gap-y-3">
               <div>
                 <div className="text-xs font-medium tracking-wider text-l4">
@@ -1496,7 +1480,20 @@ export default function StatsPage({ visible }: { visible: boolean }) {
               </div>
             )}
           </div>
+      )}
 
+      {/* 活跃度区块挂在 empty 三元之外：页面空态是 range 口径，历史有数据的用户
+          恰恰要在空 range 下看到这张图；位置稳定也避免分支切换时组件重挂载 */}
+      <ActivityHeatmap
+        visible={visible}
+        currency={currency}
+        rate={rate}
+        showInternal={showInternal}
+        refreshKey={activityRefresh}
+      />
+
+      {stats && !empty && (
+        <>
           {distItems.length > 0 && (
           <div className="mb-6 rounded-lg ccode-well p-3">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">

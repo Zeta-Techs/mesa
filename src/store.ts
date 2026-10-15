@@ -685,9 +685,9 @@ interface AppState {
   helpViewReq: string | null;
   setHelpViewReq: (path: string | null) => void;
   /** 对话页作用域筛选的一次性请求（落成 step / project / task / agent chip） */
-  sessionScopeReq: { kind: "project" | "step" | "task" | "agent"; value: string; label: string } | null;
+  sessionScopeReq: { kind: "project" | "step" | "task" | "agent" | "day"; value: string; label: string } | null;
   setSessionScopeReq: (
-    r: { kind: "project" | "step" | "task" | "agent"; value: string; label: string } | null,
+    r: { kind: "project" | "step" | "task" | "agent" | "day"; value: string; label: string } | null,
   ) => void;
   setSelectProjectReq: (path: string | null) => void;
   /** 工作台「待验收」→ 项目页打开对应目标的验收层 */

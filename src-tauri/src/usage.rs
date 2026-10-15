@@ -1239,6 +1239,17 @@ fn rebuild_impl() -> Result<UsageBuildResult, String> {
     })
 }
 
+/// rebuild 的 DELETE→upsert 序列不在一个事务里：终端状态栏轮询的 session_usage 与
+/// 手动刷新并发时，两个 rebuild 都可能先通过 marker 检查再交错执行同一会话，
+/// ON CONFLICT 的累加分支会把 token 翻倍。所有调用点一律经此入口串行化；
+/// 毒锁按 sessions.rs 既有口径容忍（持锁 panic 不应永久瘫痪终端状态栏轮询）。
+fn rebuild_locked() -> Result<UsageBuildResult, String> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    let mutex = LOCK.get_or_init(|| std::sync::Mutex::new(()));
+    let _guard = mutex.lock().unwrap_or_else(|e| e.into_inner());
+    rebuild_impl()
+}
+
 // ===== 定价 =====
 
 /// 内置前缀价目（美元 / 每百万 token）；最长前缀匹配（gpt-5-codex 优先于 gpt-5、
@@ -1886,7 +1897,7 @@ pub struct UsageStatsDto {
 
 #[tauri::command]
 pub async fn rebuild_usage_index() -> Result<UsageBuildResult, String> {
-    tauri::async_runtime::spawn_blocking(rebuild_impl)
+    tauri::async_runtime::spawn_blocking(rebuild_locked)
         .await
         .map_err(|e| e.to_string())?
 }
@@ -1951,7 +1962,7 @@ fn session_usage_from(
 #[tauri::command]
 pub async fn session_usage(agent: String, session_id: String) -> Result<SessionUsageDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        rebuild_impl()?;
+        rebuild_locked()?;
         let conn = usage_db()?;
         session_usage_from(&conn, &agent, &session_id)
     })
@@ -1967,7 +1978,7 @@ pub async fn get_usage_stats(range: String) -> Result<UsageStatsDto, String> {
             .map(|conn| meta_get(&conn, "initialized").is_none())
             .unwrap_or(false);
         if first_run {
-            rebuild_impl()?;
+            rebuild_locked()?;
         }
         query_stats(&range)
     })
@@ -2246,6 +2257,513 @@ pub async fn top_sessions(range: String) -> Result<Vec<UsageTopSessionDto>, Stri
         let conn = usage_db()?;
         let (table, _) = pricing_table_and_rate();
         top_sessions_from(&conn, &range, Local::now().date_naive(), &table)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// ===== 活跃度热力图（全历史非零日序列） =====
+
+/// 活跃度热力图的单日行：四列主量只计非 internal（计费+官方订阅都在内，订阅日也是
+/// 真实使用）；internal/official 作为并列子计量出站，前端「显示内部活动」开关只做
+/// 展示层合成，永不进格子着色与连续天数。official_tokens/internal_tokens 是四类
+/// 合计，与四列主量同量纲（注意与 cards 的输入+输出口径不同，tooltip 文案已披露）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageActivityDayDto {
+    /// 本机时区日期 YYYY-MM-DD（与 usage_daily 落库同口径）；只出现有行的天，年份窗口零填由前端做
+    pub day: String,
+    pub input: u64,
+    pub output: u64,
+    pub cache_read: u64,
+    pub cache_write: u64,
+    /// 当天有用量行的非 internal 不重复会话数（官方订阅会话计入）
+    pub sessions: u32,
+    /// 其中官方订阅份额（四类合计）：tooltip 注记用，不参与计费
+    pub official_tokens: u64,
+    /// 内部活动四类合计：仅开关打开时 tooltip 注记
+    pub internal_tokens: u64,
+    pub internal_sessions: u32,
+    /// 当天可计费行费用（官方/内部不计）：与 usage_trend 同口径，
+    /// 无可计费行记 Some(0.0)、有但全未计价保持 None（前端显示 ~）
+    pub cost_usd: Option<f64>,
+    pub cost_partial: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageActivityDto {
+    /// 查询时刻的本机日期：前端年份窗口与「今天」宽限的唯一今天出处（跨午夜由前端重算）
+    pub today: String,
+    /// 最早有记录的日子；空库为 None（前端据此收敛年份翻页下界与全库空判定）
+    pub first_day: Option<String>,
+    /// 升序全历史非零日（翻年/streak/开关全部前端推导，零重查）
+    pub days: Vec<UsageActivityDayDto>,
+    /// 增量索引刷新失败但返回了已建索引数据时为 true（前端出一行警示）
+    pub stale: bool,
+}
+
+/// 查询本体（注入 today 供测试）：token/会话主查询按 PK 最左列 GROUP BY day 索引有序扫；
+/// 费用必须按 (day, model) 粒度走 Bucket::cost 计价链（跨模型合计无法还原费用），
+/// 与 build_stats 的 by_day_billed 同形
+fn usage_activity_from(
+    conn: &Connection,
+    today: NaiveDate,
+    table: &PriceChain,
+) -> Result<UsageActivityDto, String> {
+    let today_str = today.format("%Y-%m-%d").to_string();
+    #[allow(clippy::type_complexity)]
+    let mut stmt = conn
+        .prepare(
+            "SELECT day,
+               SUM(CASE WHEN internal=0 THEN input ELSE 0 END),
+               SUM(CASE WHEN internal=0 THEN output ELSE 0 END),
+               SUM(CASE WHEN internal=0 THEN cache_read ELSE 0 END),
+               SUM(CASE WHEN internal=0 THEN cache_write ELSE 0 END),
+               SUM(CASE WHEN internal=0 AND official=1
+                        THEN input+output+cache_read+cache_write ELSE 0 END),
+               SUM(CASE WHEN internal=1
+                        THEN input+output+cache_read+cache_write ELSE 0 END),
+               COUNT(DISTINCT CASE WHEN internal=0 THEN session_id END),
+               COUNT(DISTINCT CASE WHEN internal=1 THEN session_id END)
+             FROM usage_daily
+             WHERE day <> '' AND day <= ?1
+             GROUP BY day ORDER BY day",
+        )
+        .map_err(|e| e.to_string())?;
+    type MainRow = (
+        String,
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+    );
+    let main_rows: Vec<MainRow> = stmt
+        .query_map(params![today_str], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, i64>(4)?,
+                r.get::<_, i64>(5)?,
+                r.get::<_, i64>(6)?,
+                r.get::<_, i64>(7)?,
+                r.get::<_, i64>(8)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<rusqlite::Result<_>>()
+        .map_err(|e| e.to_string())?;
+    // 可计费行（非官方非内部）按天按模型聚合后走既有计价链
+    let mut cost_stmt = conn
+        .prepare(
+            "SELECT day, model, SUM(input), SUM(output), SUM(cache_read), SUM(cache_write)
+             FROM usage_daily
+             WHERE day <> '' AND day <= ?1 AND internal=0 AND official=0
+             GROUP BY day, model",
+        )
+        .map_err(|e| e.to_string())?;
+    let cost_rows: Vec<(String, String, i64, i64, i64, i64)> = cost_stmt
+        .query_map(params![today_str], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, i64>(4)?,
+                r.get::<_, i64>(5)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<rusqlite::Result<_>>()
+        .map_err(|e| e.to_string())?;
+    let mut by_day_billed: std::collections::BTreeMap<String, Bucket> = Default::default();
+    for (day, model, i, o, cr, cw) in cost_rows {
+        by_day_billed.entry(day).or_default().add(
+            &model,
+            "",
+            TokenAcc {
+                input: i as u64,
+                output: o as u64,
+                cache_read: cr as u64,
+                cache_write: cw as u64,
+            },
+        );
+    }
+    let days: Vec<UsageActivityDayDto> = main_rows
+        .into_iter()
+        .map(
+            |(day, input, output, cache_read, cache_write, official_tokens, internal_tokens, sessions, internal_sessions)| {
+                let billed = by_day_billed.remove(&day).unwrap_or_default();
+                let (cost_usd, cost_partial) = billed.cost(table);
+                UsageActivityDayDto {
+                    day,
+                    input: input.max(0) as u64,
+                    output: output.max(0) as u64,
+                    cache_read: cache_read.max(0) as u64,
+                    cache_write: cache_write.max(0) as u64,
+                    sessions: sessions.max(0) as u32,
+                    official_tokens: official_tokens.max(0) as u64,
+                    internal_tokens: internal_tokens.max(0) as u64,
+                    internal_sessions: internal_sessions.max(0) as u32,
+                    // 与 usage_trend 同口径：当天没有任何可计费行（空天/纯订阅）记 0；
+                    // 有可计费行但全未计价保持 None（前端显示 ~）
+                    cost_usd: if billed.by_model.is_empty() {
+                        Some(0.0)
+                    } else {
+                        cost_usd
+                    },
+                    cost_partial,
+                }
+            },
+        )
+        .collect();
+    Ok(UsageActivityDto {
+        today: today_str,
+        first_day: days.first().map(|d| d.day.clone()),
+        days,
+        stale: false,
+    })
+}
+
+/// 活跃度热力图数据：先增量索引（同 session_usage 口径——「今天」的格子不能等终端
+/// 轮询才亮）再查询；索引刷新失败不阻断查询，stale=true 由前端提示
+#[tauri::command]
+pub async fn usage_activity() -> Result<UsageActivityDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let stale = rebuild_locked().is_err();
+        let conn = usage_db()?;
+        let (table, _) = pricing_table_and_rate();
+        usage_activity_from(&conn, Local::now().date_naive(), &table)
+            .map(|mut dto| {
+                dto.stale = stale;
+                dto
+            })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// ===== 活跃度二期：点格下钻与按 agent 拆分 =====
+
+/// 按 agent 的单日分解（四类合计；非 internal）
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageDayAgentRowDto {
+    pub agent: String,
+    pub tokens: u64,
+    pub sessions: u32,
+}
+
+/// 点格下钻的当日会话行：标题出站前已过 redact_sensitive_text（top_sessions 同口径），
+/// 无自定义名为 None，前端回落扫描标题/短 id
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageDaySessionDto {
+    pub agent: String,
+    pub session_id: String,
+    pub title: Option<String>,
+    pub project_path: String,
+    /// 四类合计
+    pub tokens: u64,
+    pub official: bool,
+    pub internal: bool,
+    /// 仅可计费会话有估算费用；订阅/内部会话为 None（前端显示「订阅」/不显示）
+    pub cost_usd: Option<f64>,
+    pub cost_partial: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageDayDetailDto {
+    pub day: String,
+    /// 当日总量（与热力图格同口径，含 official/internal 子计量）
+    pub totals: UsageActivityDayDto,
+    /// 按 agent 四类合计（非 internal，tokens 降序）
+    pub by_agent: Vec<UsageDayAgentRowDto>,
+    /// 当日会话（四类合计降序，internal 沉底；前端按「显示内部活动」滤）
+    pub sessions: Vec<UsageDaySessionDto>,
+}
+
+/// 单日明细：一条查询取当日全部行，总量/分解/会话列表在 Rust 侧聚合
+fn usage_day_detail_from(
+    conn: &Connection,
+    day: &str,
+    table: &PriceChain,
+) -> Result<UsageDayDetailDto, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT agent, model, project_path, session_id, input, output, cache_read, cache_write, internal, official
+             FROM usage_daily WHERE day = ?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows: Vec<(String, String, String, String, i64, i64, i64, i64, bool, bool)> = stmt
+        .query_map(params![day], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, i64>(4)?,
+                r.get::<_, i64>(5)?,
+                r.get::<_, i64>(6)?,
+                r.get::<_, i64>(7)?,
+                r.get::<_, i64>(8)? != 0,
+                r.get::<_, i64>(9)? != 0,
+            ))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<rusqlite::Result<_>>()
+        .map_err(|e| e.to_string())?;
+
+    let mut totals_input = 0u64;
+    let mut totals_output = 0u64;
+    let mut totals_cache_read = 0u64;
+    let mut totals_cache_write = 0u64;
+    let mut main_sessions: HashSet<String> = HashSet::new();
+    let mut internal_sessions: HashSet<String> = HashSet::new();
+    let mut official_tokens = 0u64;
+    let mut internal_tokens = 0u64;
+    let mut billed_day = Bucket::default();
+    // (agent, sid) → 四类合计 + 项目路径 + 标志；可计费会话另有按模型分桶算费用
+    #[derive(Default)]
+    struct SessionAgg {
+        tokens: u64,
+        project: String,
+        official: bool,
+        internal: bool,
+        cost: std::collections::HashMap<String, TokenAcc>,
+    }
+    let mut by_session: std::collections::BTreeMap<(String, String), SessionAgg> = Default::default();
+    let mut by_agent_tokens: HashMap<String, u64> = HashMap::new();
+    let mut by_agent_sessions: HashMap<String, HashSet<String>> = HashMap::new();
+
+    for (agent, model, project, sid, i, o, cr, cw, internal, official) in rows {
+        let acc = TokenAcc {
+            input: i as u64,
+            output: o as u64,
+            cache_read: cr as u64,
+            cache_write: cw as u64,
+        };
+        let four = acc.input + acc.output + acc.cache_read + acc.cache_write;
+        let entry = by_session.entry((agent.clone(), sid.clone())).or_default();
+        entry.tokens += four;
+        if entry.project.is_empty() && !project.is_empty() {
+            entry.project = project;
+        }
+        entry.official |= official;
+        entry.internal |= internal;
+        if internal {
+            internal_tokens += four;
+            internal_sessions.insert(sid.clone());
+        } else {
+            totals_input += acc.input;
+            totals_output += acc.output;
+            totals_cache_read += acc.cache_read;
+            totals_cache_write += acc.cache_write;
+            main_sessions.insert(sid.clone());
+            if official {
+                official_tokens += four;
+            } else {
+                billed_day.add(&model, &sid, acc);
+            }
+            *by_agent_tokens.entry(agent.clone()).or_insert(0) += four;
+            by_agent_sessions
+                .entry(agent.clone())
+                .or_default()
+                .insert(sid.clone());
+        }
+        if !internal && !official {
+            if let Some(e) = by_session.get_mut(&(agent, sid)) {
+                let m = e.cost.entry(model).or_default();
+                m.input += acc.input;
+                m.output += acc.output;
+                m.cache_read += acc.cache_read;
+                m.cache_write += acc.cache_write;
+            }
+        }
+    }
+
+    let mut by_agent: Vec<UsageDayAgentRowDto> = by_agent_tokens
+        .into_iter()
+        .map(|(agent, tokens)| UsageDayAgentRowDto {
+            agent: agent.clone(),
+            tokens,
+            sessions: by_agent_sessions.remove(&agent).map(|s| s.len() as u32).unwrap_or(0),
+        })
+        .collect();
+    by_agent.sort_by(|a, b| b.tokens.cmp(&a.tokens).then(a.agent.cmp(&b.agent)));
+
+    let mut main_rows: Vec<((u64, String, String), SessionAgg)> = Vec::new();
+    let mut internal_rows: Vec<((u64, String, String), SessionAgg)> = Vec::new();
+    for ((agent, sid), agg) in by_session {
+        let key = (agg.tokens, agent, sid);
+        if agg.internal {
+            internal_rows.push((key, agg));
+        } else {
+            main_rows.push((key, agg));
+        }
+    }
+    main_rows.sort_by(|a, b| b.0.cmp(&a.0));
+    internal_rows.sort_by(|a, b| b.0.cmp(&a.0));
+    let mut sessions: Vec<UsageDaySessionDto> = main_rows
+        .into_iter()
+        .chain(internal_rows)
+        .map(|((tokens, agent, sid), agg)| {
+            let (cost_usd, cost_partial) = if agg.internal || agg.official {
+                (None, false)
+            } else {
+                let mut bucket = Bucket::default();
+                for (model, acc) in &agg.cost {
+                    bucket.add(model, "", *acc);
+                }
+                bucket.cost(table)
+            };
+            UsageDaySessionDto {
+                title: session_custom_title(conn, &agent, &sid),
+                agent,
+                session_id: sid,
+                project_path: agg.project,
+                tokens,
+                official: agg.official,
+                internal: agg.internal,
+                cost_usd,
+                cost_partial,
+            }
+        })
+        .collect();
+    sessions.truncate(LIST_CAP);
+
+    let (cost_usd, cost_partial) = billed_day.cost(table);
+    Ok(UsageDayDetailDto {
+        day: day.to_string(),
+        totals: UsageActivityDayDto {
+            day: day.to_string(),
+            input: totals_input,
+            output: totals_output,
+            cache_read: totals_cache_read,
+            cache_write: totals_cache_write,
+            sessions: main_sessions.len() as u32,
+            official_tokens,
+            internal_tokens,
+            internal_sessions: internal_sessions.len() as u32,
+            cost_usd: if billed_day.by_model.is_empty() {
+                Some(0.0)
+            } else {
+                cost_usd
+            },
+            cost_partial,
+        },
+        by_agent,
+        sessions,
+    })
+}
+
+/// 点格下钻：当日总量 + 按 agent 分解 + 会话列表（前端可直跳结构化会话视图）。
+/// 不触发增量索引——进页时 usage_activity 已跑过，同一次浏览内点格不该重复付这笔钱
+#[tauri::command]
+pub async fn usage_day_detail(day: String) -> Result<UsageDayDetailDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = usage_db()?;
+        let (table, _) = pricing_table_and_rate();
+        usage_day_detail_from(&conn, &day, &table)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 按 agent 拆分的年矩阵（筛选胶囊用）：某年每天每 agent 的四类合计（非 internal）
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageActivityAgentsDayDto {
+    pub day: String,
+    /// tokens 降序
+    pub by_agent: Vec<UsageDayAgentRowDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageActivityAgentsDto {
+    pub year: i32,
+    /// 该年出现过的非 internal agent（按年总量降序）
+    pub agents: Vec<String>,
+    /// 只含有数据的天（升序）
+    pub days: Vec<UsageActivityAgentsDayDto>,
+}
+
+fn usage_activity_agents_from(
+    conn: &Connection,
+    year: i32,
+    today: NaiveDate,
+) -> Result<UsageActivityAgentsDto, String> {
+    let start = format!("{year:04}-01-01");
+    let end_today = today.format("%Y-%m-%d").to_string();
+    let end = if end_today > format!("{year:04}-12-31") {
+        format!("{year:04}-12-31")
+    } else {
+        end_today
+    };
+    let mut stmt = conn
+        .prepare(
+            "SELECT day, agent, SUM(input+output+cache_read+cache_write), COUNT(DISTINCT session_id)
+             FROM usage_daily
+             WHERE day >= ?1 AND day <= ?2 AND internal = 0
+             GROUP BY day, agent ORDER BY day",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows: Vec<(String, String, i64, i64)> = stmt
+        .query_map(params![start, end], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, i64>(3)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<rusqlite::Result<_>>()
+        .map_err(|e| e.to_string())?;
+    let mut by_day: std::collections::BTreeMap<String, Vec<UsageDayAgentRowDto>> = Default::default();
+    let mut year_totals: HashMap<String, u64> = HashMap::new();
+    for (day, agent, tokens, sessions) in rows {
+        let tokens = tokens.max(0) as u64;
+        *year_totals.entry(agent.clone()).or_insert(0) += tokens;
+        by_day.entry(day).or_default().push(UsageDayAgentRowDto {
+            agent,
+            tokens,
+            sessions: sessions.max(0) as u32,
+        });
+    }
+    let mut agents: Vec<String> = year_totals.keys().cloned().collect();
+    agents.sort_by(|a, b| {
+        year_totals
+            .get(b)
+            .unwrap_or(&0)
+            .cmp(year_totals.get(a).unwrap_or(&0))
+            .then(a.cmp(b))
+    });
+    let mut days: Vec<UsageActivityAgentsDayDto> = by_day
+        .into_iter()
+        .map(|(day, mut rows)| {
+            rows.sort_by(|a, b| b.tokens.cmp(&a.tokens).then(a.agent.cmp(&b.agent)));
+            UsageActivityAgentsDayDto { day, by_agent: rows }
+        })
+        .collect();
+    days.sort_by(|a, b| a.day.cmp(&b.day));
+    Ok(UsageActivityAgentsDto { year, agents, days })
+}
+
+/// 按 agent 拆分的年矩阵：与热力图同页取数（进页/翻年/刷新时各一次，切胶囊纯前端过滤）
+#[tauri::command]
+pub async fn usage_activity_agents(year: i32) -> Result<UsageActivityAgentsDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = usage_db()?;
+        usage_activity_agents_from(&conn, year, Local::now().date_naive())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -4206,5 +4724,197 @@ mod gateway_usage_tests {
         let deleted = rows.iter().find(|r| r.bucket == "deleted").unwrap();
         assert!(deleted.gateway_name.contains("已删除网关"));
         assert_eq!(deleted.tokens_in, 50);
+    }
+
+    // ===== usage_activity（活跃度热力图） =====
+
+    /// 直插一行 usage_daily：比 insert_daily 多 internal 与 cache_write 维度
+    fn insert_activity_row(
+        conn: &Connection,
+        day: &str,
+        agent: &str,
+        model: &str,
+        sid: &str,
+        i: i64,
+        o: i64,
+        cr: i64,
+        cw: i64,
+        internal: bool,
+        official: bool,
+    ) {
+        conn.execute(
+            "INSERT INTO usage_daily(day, agent, model, project_path, session_id,
+             input, output, cache_read, cache_write, internal, official)
+             VALUES (?1,?2,?3,'/p',?4,?5,?6,?7,?8,?9,?10)",
+            rusqlite::params![
+                day,
+                agent,
+                model,
+                sid,
+                i,
+                o,
+                cr,
+                cw,
+                i64::from(internal),
+                i64::from(official),
+            ],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn usage_activity_empty_db() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_usage_schema(&conn).unwrap();
+        let dto =
+            usage_activity_from(&conn, NaiveDate::from_ymd_opt(2026, 3, 15).unwrap(), &load_pricing(None))
+                .unwrap();
+        assert!(dto.days.is_empty());
+        assert_eq!(dto.first_day, None);
+        assert_eq!(dto.today, "2026-03-15");
+        assert!(!dto.stale);
+    }
+
+    #[test]
+    fn usage_activity_sums_main_and_splits_internal_official() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_usage_schema(&conn).unwrap();
+        // 同日：两个可计费会话（不同模型）+ 一条官方订阅行 + 一条内部行
+        insert_activity_row(&conn, "2026-08-14", "codex", "gpt-5", "s1", 100, 10, 1000, 0, false, false);
+        insert_activity_row(&conn, "2026-08-14", "claude-code", "claude-sonnet-4", "s2", 50, 5, 500, 0, false, false);
+        insert_activity_row(&conn, "2026-08-14", "kimi", "kimi-k2", "s3", 30, 3, 300, 0, false, true);
+        insert_activity_row(&conn, "2026-08-14", "claude-code", "claude-sonnet-4", "s4", 999, 99, 999, 9, true, false);
+        let dto =
+            usage_activity_from(&conn, NaiveDate::from_ymd_opt(2026, 8, 20).unwrap(), &load_pricing(None))
+                .unwrap();
+        assert_eq!(dto.days.len(), 1);
+        let d = &dto.days[0];
+        // 主量只计非 internal（billed + official 都在内）
+        assert_eq!((d.input, d.output, d.cache_read, d.cache_write), (180, 18, 1800, 0));
+        // 按天会话数 = 非 internal 不重复会话（billed 2 + official 1）
+        assert_eq!(d.sessions, 3);
+        // 官方/内部并列子计量（四类合计）
+        assert_eq!(d.official_tokens, 333);
+        assert_eq!(d.internal_tokens, 2106);
+        assert_eq!(d.internal_sessions, 1);
+        // 费用只计可计费行，且 > 0
+        assert!(d.cost_usd.unwrap() > 0.0);
+        assert_eq!(dto.first_day.as_deref(), Some("2026-08-14"));
+    }
+
+    #[test]
+    fn usage_activity_skips_blank_and_future_days_and_keeps_ascending() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_usage_schema(&conn).unwrap();
+        insert_activity_row(&conn, "2026-08-02", "codex", "gpt-5", "s1", 10, 1, 0, 0, false, false);
+        insert_activity_row(&conn, "2026-08-01", "codex", "gpt-5", "s1", 20, 2, 0, 0, false, false);
+        // 空日（防御）与未来日（CLI 时钟漂移）都不得出现
+        insert_activity_row(&conn, "", "codex", "gpt-5", "s2", 1, 1, 0, 0, false, false);
+        insert_activity_row(&conn, "2026-09-05", "codex", "gpt-5", "s3", 1, 1, 0, 0, false, false);
+        let dto =
+            usage_activity_from(&conn, NaiveDate::from_ymd_opt(2026, 8, 14).unwrap(), &load_pricing(None))
+                .unwrap();
+        let days: Vec<&str> = dto.days.iter().map(|d| d.day.as_str()).collect();
+        assert_eq!(days, vec!["2026-08-01", "2026-08-02"], "乱序插入仍升序，空/未来日被截掉");
+        assert_eq!(dto.first_day.as_deref(), Some("2026-08-01"));
+    }
+
+    #[test]
+    fn usage_activity_internal_only_day_stays_but_costs_zero() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_usage_schema(&conn).unwrap();
+        insert_activity_row(&conn, "2026-08-01", "claude-code", "claude-sonnet-4", "s1", 10, 1, 0, 0, true, false);
+        let dto =
+            usage_activity_from(&conn, NaiveDate::from_ymd_opt(2026, 8, 14).unwrap(), &load_pricing(None))
+                .unwrap();
+        assert_eq!(dto.days.len(), 1, "纯 internal 日保留行（开关打开时前端注记），主量为 0");
+        let d = &dto.days[0];
+        assert_eq!((d.input, d.sessions, d.internal_tokens), (0, 0, 11));
+        assert_eq!(d.cost_usd, Some(0.0));
+    }
+
+    #[test]
+    fn usage_activity_costs_none_when_unpriced_and_zero_when_official_only() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_usage_schema(&conn).unwrap();
+        // 全未计价模型：费用 None（前端 ~），不是 0
+        insert_activity_row(&conn, "2026-08-01", "codex", "mystery-x", "s1", 100, 10, 0, 0, false, false);
+        // 纯订阅日：无可计费行记 Some(0.0)
+        insert_activity_row(&conn, "2026-08-02", "kimi", "kimi-k2", "s2", 30, 3, 300, 0, false, true);
+        let dto =
+            usage_activity_from(&conn, NaiveDate::from_ymd_opt(2026, 8, 14).unwrap(), &load_pricing(None))
+                .unwrap();
+        assert_eq!(dto.days[0].cost_usd, None);
+        assert_eq!(dto.days[1].cost_usd, Some(0.0));
+        assert!(dto.days[1].official_tokens > 0);
+    }
+
+    #[test]
+    fn usage_day_detail_totals_match_activity_and_ranks_sessions() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_usage_schema(&conn).unwrap();
+        let table = load_pricing(None);
+        // 与 usage_activity_sums 同款数据：两会话可计费 + 一订阅 + 一内部
+        insert_activity_row(&conn, "2026-08-14", "codex", "gpt-5", "s1", 100, 10, 1000, 0, false, false);
+        insert_activity_row(&conn, "2026-08-14", "claude-code", "claude-sonnet-4", "s2", 50, 5, 500, 0, false, false);
+        insert_activity_row(&conn, "2026-08-14", "kimi", "kimi-k2", "s3", 30, 3, 300, 0, false, true);
+        insert_activity_row(&conn, "2026-08-14", "claude-code", "claude-sonnet-4", "s4", 999, 99, 999, 9, true, false);
+        let today = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
+        let act = usage_activity_from(&conn, today, &table).unwrap();
+        let det = usage_day_detail_from(&conn, "2026-08-14", &table).unwrap();
+        // 总量与热力图格同口径
+        assert_eq!(det.totals.input, act.days[0].input);
+        assert_eq!(det.totals.sessions, act.days[0].sessions);
+        assert_eq!(det.totals.official_tokens, act.days[0].official_tokens);
+        assert_eq!(det.totals.internal_tokens, act.days[0].internal_tokens);
+        assert_eq!(det.totals.cost_usd, act.days[0].cost_usd);
+        // by_agent 只含非 internal，tokens 降序；codex(1110) > claude(555) > kimi(333)
+        assert_eq!(
+            det.by_agent.iter().map(|r| (r.agent.as_str(), r.tokens)).collect::<Vec<_>>(),
+            vec![("codex", 1110), ("claude-code", 555), ("kimi", 333)]
+        );
+        // 会话四类合计降序、internal 沉底
+        assert_eq!(
+            det.sessions.iter().map(|s| s.session_id.as_str()).collect::<Vec<_>>(),
+            vec!["s1", "s2", "s3", "s4"]
+        );
+        let s4 = det.sessions.last().unwrap();
+        assert!(s4.internal && s4.cost_usd.is_none(), "内部会话不算费用");
+        let s3 = det.sessions.iter().find(|s| s.session_id == "s3").unwrap();
+        assert!(s3.official && s3.cost_usd.is_none(), "订阅会话不算费用");
+        let s1 = det.sessions.iter().find(|s| s.session_id == "s1").unwrap();
+        assert!(s1.cost_usd.unwrap() > 0.0);
+        assert_eq!(s1.title, None, "无 session_meta 表时标题安全回落 None");
+        // 空日：不炸、全零
+        let empty = usage_day_detail_from(&conn, "2026-08-19", &table).unwrap();
+        assert_eq!(empty.totals.sessions, 0);
+        assert!(empty.sessions.is_empty());
+    }
+
+    #[test]
+    fn usage_activity_agents_window_and_internal_excluded() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_usage_schema(&conn).unwrap();
+        insert_activity_row(&conn, "2025-12-31", "codex", "gpt-5", "s1", 10, 1, 0, 0, false, false);
+        insert_activity_row(&conn, "2026-01-02", "codex", "gpt-5", "s2", 20, 2, 0, 0, false, false);
+        insert_activity_row(&conn, "2026-01-02", "claude-code", "claude-sonnet-4", "s3", 40, 4, 0, 0, false, false);
+        insert_activity_row(&conn, "2026-01-05", "kimi", "kimi-k2", "s4", 30, 3, 0, 0, false, false);
+        insert_activity_row(&conn, "2026-01-06", "claude-code", "claude-sonnet-4", "s5", 999, 9, 0, 0, true, false);
+        insert_activity_row(&conn, "2026-01-07", "codex", "gpt-5", "s6", 5, 0, 0, 0, false, false); // 未来日
+        let dto = usage_activity_agents_from(
+            &conn,
+            2026,
+            NaiveDate::from_ymd_opt(2026, 1, 6).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(dto.year, 2026);
+        // agent 按年总量降序：claude(44) > kimi(33) > codex(22)；internal 与未来日不进
+        assert_eq!(dto.agents, vec!["claude-code", "kimi", "codex"]);
+        let d2 = dto.days.iter().find(|d| d.day == "2026-01-02").unwrap();
+        assert_eq!(
+            d2.by_agent.iter().map(|r| (r.agent.as_str(), r.tokens)).collect::<Vec<_>>(),
+            vec![("claude-code", 44), ("codex", 22)]
+        );
+        assert!(!dto.days.iter().any(|d| d.day == "2026-01-07"), "未来日不进矩阵");
     }
 }

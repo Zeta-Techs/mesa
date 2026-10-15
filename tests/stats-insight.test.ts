@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   cacheHitRate,
+  compact,
+  fmtCost,
   sessionDisplayTitle,
   shortSessionId,
   weekOverWeek,
@@ -91,4 +93,19 @@ test("sessionDisplayTitle：自定义 > 扫描 > 短 id", () => {
     sessionDisplayTitle({ customTitle: null, scannedTitle: null, sessionId: "abcdefghij" }),
     "cdefghij",
   );
+});
+
+test("compact 统计页数字方言：K/M 两档", () => {
+  assert.equal(compact(999), "999");
+  assert.equal(compact(1_234), "1.2K");
+  assert.equal(compact(12_000), "12K");
+  assert.equal(compact(1_234_567), "1.2M");
+  assert.equal(compact(796_597_060), "796.6M");
+});
+
+test("fmtCost：~ 无价格、≥ 含未计价、$/¥ 换算", () => {
+  assert.equal(fmtCost(null, "$", 7.2, false), "~");
+  assert.equal(fmtCost(1.24, "$", 7.2, false), "$1.24");
+  assert.equal(fmtCost(1.24, "¥", 7.2, false), "¥8.93");
+  assert.equal(fmtCost(1.24, "¥", 7.2, true), "≥¥8.93");
 });
