@@ -46,9 +46,12 @@ test("继续精读打开序号最早的笔记，跳过索引和生词本", () =>
 });
 
 test("文献状态与搜索/筛选", () => {
-  assert.equal(litReadState(true, true), "read");
-  assert.equal(litReadState(false, true), "queued");
-  assert.equal(litReadState(false, false), "unread");
+  // 2026-10-13 双台账：状态=已读 > 已在清单（included.md 正典）> 已积累（reading-list.md）> 未读
+  assert.equal(litReadState(true, true, true), "read");
+  assert.equal(litReadState(true, false, false), "read");
+  assert.equal(litReadState(false, false, true), "queued");
+  assert.equal(litReadState(false, true, false), "accumulated");
+  assert.equal(litReadState(false, false, false), "unread");
   assert.equal(
     litRowMatches("Tunnel Copper", "papers/a.pdf", "read", "copper", "all"),
     true,

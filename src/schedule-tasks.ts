@@ -2,7 +2,7 @@
  * 定时雷达（scheduler.rs）前端纯逻辑：周期白话、按项目过滤、通知文案、简报预览。
  * 与 DOM/Tauri 解耦，供 node --test 直接测；组件 ScheduleSection 保持薄。
  */
-import { LIT_WATCH_SLOT } from "./skill-slots.ts";
+import { samePath } from "./path-utils.ts";
 import type { RunRecordDto, ScheduleDto } from "./types.ts";
 
 const WEEKDAY_LABELS = ["一", "二", "三", "四", "五", "六", "日"] as const;
@@ -27,25 +27,16 @@ export function frequencyLabel(
   return `每周${WEEKDAY_LABELS[weekday - 1]} ${time}`;
 }
 
-/** 项目路径归一比较（与 WorkspacesPage samePath 同口径）：统一分隔符 + 去尾部斜杠 */
-function normPath(p: string): string {
-  return p.replace(/\\/g, "/").replace(/\/+$/, "");
-}
-
-/** 取某个项目根下的定时任务（注册路径为 canonical 绝对路径，这里宽松去尾斜杠比对） */
+/** 取某个项目根下的定时任务（注册路径为 canonical 绝对路径）。
+ *  比较必须走 path-utils 的 samePath 方言层（剥 \\?\ verbatim、Windows 折大小写，
+ *  与后端 same_path 同口径）——本地 normPath 字符串全等会把 verbatim/大小写漂移的
+ *  任务在前端列表里弄丢而后端照跑，叠加雷达空态门控就是整张卡无声消失。 */
 export function schedulesForProject(
   schedules: ScheduleDto[],
   projectRoot: string,
+  isWindows: boolean,
 ): ScheduleDto[] {
-  const root = normPath(projectRoot);
-  return schedules.filter((s) => normPath(s.projectRoot) === root);
-}
-
-/** 文献雷达只消费 lit-watch 任务；项目可以同时配置其它定时技能。 */
-export function litWatchSchedules(
-  schedules: readonly ScheduleDto[],
-): ScheduleDto[] {
-  return schedules.filter((s) => s.skill === LIT_WATCH_SLOT);
+  return schedules.filter((s) => samePath(s.projectRoot, projectRoot, isWindows));
 }
 
 /** 运行完成通知标题：「文献雷达 · 项目名」，失败时带「失败」 */

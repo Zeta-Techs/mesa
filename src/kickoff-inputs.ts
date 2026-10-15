@@ -13,6 +13,25 @@ export interface KickoffInputChip {
   previewPath?: string | null;
 }
 
+/** 积累芯片的 pattern（项目根 papers/reading-list.md，gitignored 积累账，非步骤输入） */
+export const ACCUMULATION_PATTERN = "papers/reading-list.md";
+
+/** 积累芯片：计数 = 项目根 reading-list.md 的非注释行数（= list_reading_list_entries
+ *  的条目数，同一口径），文件缺失为 0 → 返回 null 不出场。纯构造，不读文件。 */
+export function accumulationChip(
+  count: number,
+  previewPath?: string | null,
+): KickoffInputChip | null {
+  if (count <= 0) return null;
+  return {
+    pattern: ACCUMULATION_PATTERN,
+    role: "optional",
+    present: true,
+    count,
+    previewPath: previewPath ?? null,
+  };
+}
+
 export function chipFileName(pattern: string): string {
   const n = pattern.replace(/\\/g, "/").replace(/\/+$/, "");
   const parts = n.split("/").filter(Boolean);
@@ -31,6 +50,11 @@ export function formatKickoffChip(chip: KickoffInputChip): {
   if (!chip.present || chip.count <= 0) {
     if (chip.role !== "required") return null;
     return { label: `${base} · 还没有`, missing: true };
+  }
+  // 积累芯片走固定文案「积累 N 条」（2026-10-13 双台账拍板）：reading-list 是用户
+  // 日常攒的精读候选，不是步骤声明的输入，叫文件名反而认不出它是什么
+  if (chip.pattern === ACCUMULATION_PATTERN) {
+    return { label: `积累 ${chip.count} 条`, missing: false };
   }
   const unit = unitForPattern(chip.pattern);
   if (chip.count === 1 && unit === "个" && !chip.pattern.includes("*")) {

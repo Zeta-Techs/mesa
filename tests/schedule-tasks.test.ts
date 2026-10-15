@@ -3,7 +3,6 @@ import test from "node:test";
 import {
   frequencyLabel,
   hhmm,
-  litWatchSchedules,
   reconcileRunningSchedules,
   runDoneNotifyBody,
   runDoneNotifyTitle,
@@ -63,30 +62,41 @@ test("schedulesForProject：只留 projectRoot 命中的任务", () => {
     schedule("/repo/a", "s-3"),
   ];
   assert.deepEqual(
-    schedulesForProject(list, "/repo/a").map((s) => s.id),
+    schedulesForProject(list, "/repo/a", false).map((s) => s.id),
     ["s-1", "s-3"],
   );
-  assert.deepEqual(schedulesForProject(list, "/repo/c"), []);
-});
-
-test("litWatchSchedules：雷达卡片不误跑其它技能任务", () => {
-  const list = [
-    schedule("/repo/a", "lit"),
-    { ...schedule("/repo/a", "eda"), name: "EDA", skill: "data-eda" },
-  ];
-  assert.deepEqual(litWatchSchedules(list).map((s) => s.id), ["lit"]);
+  assert.deepEqual(schedulesForProject(list, "/repo/c", false), []);
 });
 
 test("schedulesForProject：尾部斜杠与分隔符差异不影响归属", () => {
   const list = [schedule("/repo/a", "s-1"), schedule("C:\\repo\\b\\", "s-2")];
   assert.deepEqual(
-    schedulesForProject(list, "/repo/a/").map((s) => s.id),
+    schedulesForProject(list, "/repo/a/", false).map((s) => s.id),
     ["s-1"],
   );
   assert.deepEqual(
-    schedulesForProject(list, "C:/repo/b").map((s) => s.id),
+    schedulesForProject(list, "C:/repo/b", true).map((s) => s.id),
     ["s-2"],
   );
+});
+
+test("schedulesForProject：verbatim 前缀与 Windows 大小写漂移不再丢任务", () => {
+  // 存量 schedules.json 可能带 \\?\ verbatim 前缀；目录改大小写后注册路径漂移。
+  // 字符串全等会把任务在前端列表里弄丢（后端照跑）——必须走 path-utils 方言层
+  const list = [
+    schedule("\\\\?\\C:\\repo\\A", "s-verbatim"),
+    schedule("C:\\Repo\\B", "s-case"),
+  ];
+  assert.deepEqual(
+    schedulesForProject(list, "C:/repo/a", true).map((s) => s.id),
+    ["s-verbatim"],
+  );
+  assert.deepEqual(
+    schedulesForProject(list, "c:/REPO/b", true).map((s) => s.id),
+    ["s-case"],
+  );
+  // 非 Windows 不折大小写（与后端 path_key 的 cfg(windows) 口径一致）
+  assert.deepEqual(schedulesForProject(list, "C:/repo/a", false), []);
 });
 
 test("runDoneNotifyTitle：任务名、成功与失败", () => {

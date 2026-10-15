@@ -35,7 +35,7 @@ import {
 } from "./PageFrame";
 import { useAppStore } from "../store";
 import { RESOURCE_TYPE_LABELS, settingsForTemplateApply } from "../pipeline-presets";
-import { startPipelineStep } from "../pipeline-start";
+import { startPipelineStep, type IntakeBridgeDecision } from "../pipeline-start";
 import type { KickoffLaunch } from "../kickoff-launch";
 import { upsertLitSourceSection, upsertPendingSettingsSection } from "../task-md-sections";
 import { isTaskMdStub } from "../step-decisions";
@@ -628,6 +628,7 @@ export default function ProjectGroup({
     taskMdOverride?: string,
     launch?: KickoffLaunch | null,
     decisionPauseAcknowledged = false,
+    intakeBridge?: IntakeBridgeDecision,
   ) {
     if (!project || !cfg) return;
     const step = cfg.steps[index];
@@ -640,6 +641,7 @@ export default function ProjectGroup({
         taskMdOverride,
         decisionPauseAcknowledged,
         launch,
+        intakeBridge,
         onError,
         // 刷新先于跳终端：run 脚本写入在工作区行刷新之前，「运行脚本」菜单当次即可见
         onOpenTerminal: async (ws, initialPrompt, opts) => {
@@ -2475,10 +2477,10 @@ export default function ProjectGroup({
           originCardId={kickoff.originCardId}
           busy={starting !== null}
           onCancel={() => setKickoff(null)}
-          onConfirm={(taskMd, launch, decisionPauseAcknowledged) => {
+          onConfirm={(taskMd, launch, decisionPauseAcknowledged, intake) => {
             const index = kickoff.index;
             setKickoff(null);
-            void runStartStep(index, taskMd, launch, decisionPauseAcknowledged);
+            void runStartStep(index, taskMd, launch, decisionPauseAcknowledged, intake);
           }}
           onCfgChange={(next) => setCfg(next)}
         />

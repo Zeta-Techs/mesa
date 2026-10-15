@@ -26,6 +26,17 @@ test("示例课题用的英文综述 JSON 与 PIPELINE_TEMPLATES 同步", () => 
   );
 });
 
+test("示例课题 JSON 的检索简报同步带积累进料句", () => {
+  const disk = JSON.parse(
+    readFileSync("src-tauri/resources/pipeline-review.json", "utf8"),
+  ) as { steps: { workspaceName?: string; brief?: string }[] };
+  const brief =
+    disk.steps.find((s) => s.workspaceName === "lit-search")?.brief ?? "";
+  assert.match(brief, /\.ccode\/handoff-lit-intake\.md/, "示例课题缺积累进料句");
+  assert.match(brief, /不回写、不删除、不清空积累台账/);
+  assert.doesNotMatch(brief, /加入精读/);
+});
+
 test("精读步机器验收不要求未读篇也有 notePath", () => {
   for (const tpl of PIPELINE_TEMPLATES) {
     for (const step of tpl.steps) {

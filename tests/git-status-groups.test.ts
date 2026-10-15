@@ -53,9 +53,42 @@ test("未跟踪的验收账本不算用户改动", () => {
     userDirtyFiles(files).map((row) => row.path),
     ["papers/included.md"],
   );
+  // 2026-10-13 双台账口径：验收台账已跟踪的 M 也不算「你的改动」（合并写台账不该回头催你）
   assert.deepEqual(
     userDirtyFiles([file(".ccode/acceptance-log.jsonl", "M")]).map((row) => row.path),
-    [".ccode/acceptance-log.jsonl"],
+    [],
+  );
+});
+
+test("积累面台账不算「你的改动未存入历史」（与合并闸门同口径）", () => {
+  const clean = [
+    file("notes/inbox.md", "M"),
+    file("papers/watch-seen.md", "M"),
+    file("papers/watch-followup.md", "??"),
+    file("papers/reading-list.md", "??"),
+    file(".ccode/watch-explains.json", "??"),
+    file(".ccode/pending-registrations.json", "??"),
+    file("notes/my-note.md", "??"),
+    file("notes/slug/我的笔记.md", "M"),
+    file(".ccode/watch/s1/watchlist.md", "M"),
+  ];
+  assert.deepEqual(
+    userDirtyFiles(clean).map((row) => row.path),
+    [],
+  );
+  // 防呆：积累账被违规提交后变 tracked 的 M 要显形；流程正典照常计
+  const visible = [
+    file("papers/reading-list.md", "M"),
+    file(".ccode/watch-explains.json", "M"),
+    file("papers/included.md", "M"),
+    file("notes/index.json", "M"),
+    file("notes/inbox.md.bak", "??"),
+    // 豁免按精确路径认：产出目录里的同名文件不算台账（与后端口径对称）
+    file("output/acceptance-log.jsonl", "M"),
+  ];
+  assert.deepEqual(
+    userDirtyFiles(visible).map((row) => row.path),
+    ["papers/reading-list.md", ".ccode/watch-explains.json", "papers/included.md", "notes/index.json", "notes/inbox.md.bak", "output/acceptance-log.jsonl"],
   );
 });
 

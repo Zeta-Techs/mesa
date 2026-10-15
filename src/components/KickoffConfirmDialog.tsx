@@ -21,7 +21,12 @@ import { useAppStore } from "../store";
 import { AGENTS, type GitFileDto } from "../types";
 import { officialModelAllowed } from "../model-switch";
 import { historySaveBlockedReason, historySaveMessage } from "../main-history-save";
-import { dirtyInputHits } from "../kickoff-dirty-gate";
+import {
+  dirtyInputHits,
+  intakeBridgeHits,
+  intakeBridgeLabel,
+  summarizeIntakeBridge,
+} from "../kickoff-dirty-gate";
 import { userDirtyFiles } from "../git-status-groups";
 import { loadAskAiRemembered, saveAskAiRemembered } from "../ask-ai";
 import {
@@ -30,6 +35,7 @@ import {
   type KickoffLaunch,
 } from "../kickoff-launch";
 import {
+  accumulationChip,
   expectedDeliverNames,
   formatKickoffChip,
   isFlowDeclaredPath,
@@ -42,7 +48,7 @@ import {
   taskMdEditorReduce,
   type TaskMdEditorState,
 } from "../task-cards";
-import { gatherTaskMdExtras, renderTaskMd } from "../pipeline-start";
+import { gatherTaskMdExtras, renderTaskMd, type IntakeBridgeDecision } from "../pipeline-start";
 import { decisionGate, isTaskMdStub, resolveTaskMdSource } from "../step-decisions";
 import { RESOURCE_TYPE_LABELS } from "../pipeline-presets";
 import type {
@@ -102,8 +108,14 @@ export default function KickoffConfirmDialog({
   /** 确认开工后的链路进行中（父组件自持 starting） */
   busy: boolean;
   onCancel: () => void;
-  /** 确认开工：taskMd = 编辑区最终内容；launch = 将自动拉起的连接 */
-  onConfirm: (taskMd: string, launch: KickoffLaunch | null, decisionPauseAcknowledged: boolean) => void;
+  /** 确认开工：taskMd = 编辑区最终内容；launch = 将自动拉起的连接；
+   *  intake = 开工接驳决定（勾选 + 积累面命中路径；未接驳时 accepted=false） */
+  onConfirm: (
+    taskMd: string,
+    launch: KickoffLaunch | null,
+    decisionPauseAcknowledged: boolean,
+    intake?: IntakeBridgeDecision,
+  ) => void;
   /** 技能区增删写回 project.toml 后同步父级 cfg（保持步进器/下次打开一致） */
   onCfgChange?: (cfg: ProjectConfigDto) => void;
 }) {
@@ -156,7 +168,16 @@ export default function KickoffConfirmDialog({
   const [mainDirtyFiles, setMainDirtyFiles] = useState<GitFileDto[] | null>(
     null,
   );
+  // 接驳候选必须看原始清单：userDirtyFiles 已把积累面（notes/*.md 等）剔除，
+  // 从过滤后的表取会让「未提交笔记」臂永远空转——intakeBridgeSurfaceKind 自带 inbox.md 排除
+  const [mainRawFiles, setMainRawFiles] = useState<GitFileDto[] | null>(null);
   const [mainDirtyMerging, setMainDirtyMerging] = useState(false);
+  // 积累芯片计数（项目根 papers/reading-list.md 非注释行数；文件缺失为 0）
+  const [accCount, setAccCount] = useState(0);
+  // 开工接驳（2026-10-13）：积累面脏文件的清单 md 主仓内容（数非注释行用）与勾选态。
+  // 默认勾选——接驳是把人攒的积累带进本轮基准，不是需要人主动开启的额外动作
+  const [intakeTexts, setIntakeTexts] = useState<Record<string, string>>({});
+  const [intakeChecked, setIntakeChecked] = useState(true);
   // 开工软门二击态 + 就地「存进历史」（与上一步收尾软门同款交互）
   const [dirtySaving, setDirtySaving] = useState(false);
   const [dirtySaveError, setDirtySaveError] = useState<string | null>(null);
@@ -350,11 +371,22 @@ export default function KickoffConfirmDialog({
       .catch(() => {
         if (!stale) setInputChips([]);
       });
+    // 积累芯片：条目数与 reading-list.md 非注释行同一口径（后端解析同一文件）
+    invoke<unknown[]>("list_reading_list_entries", {
+      projectRoot: projectPath,
+    })
+      .then((entries) => {
+        if (!stale) setAccCount(Array.isArray(entries) ? entries.length : 0);
+      })
+      .catch(() => {
+        if (!stale) setAccCount(0);
+      });
     invoke<GitStatusBrief>("git_status", { cwd: projectPath })
       .then((status) => {
         if (stale) return;
         const dirty = status.isRepo ? userDirtyFiles(status.files) : [];
         setMainDirtyFiles(status.isRepo ? dirty : null);
+        setMainRawFiles(status.isRepo ? status.files : null);
         setMainDirtyMerging(status.merging === true);
       })
       .catch(() => {});
@@ -557,16 +589,78 @@ export default function KickoffConfirmDialog({
   // 开工软门（2026-09-20）：工作区从本地基准分支 HEAD 建树，项目根未提交的改动带不进去。
   // 改动与本步声明输入相交时升级成软门（列文件 + 就地存进历史 + 二击确认）；
   // 不相交的仍只是顶部那行提醒（想法期实验性改动留在主仓是合法的）
-  const dirtyHits = useMemo(
-    () =>
-      mainDirtyFiles
-        ? dirtyInputHits(mainDirtyFiles, [
-            ...(stepNow.inputs ?? []),
-            ...(stepNow.optionalInputs ?? []),
-            ...(stepNow.anyOfInputs ?? []).flat(),
-          ])
-        : [],
-    [mainDirtyFiles, stepNow],
+  // 开工接驳勾选时（2026-10-13），积累面文件从软门排除——它们由接驳提交带进基准，
+  // 不再走「存进历史」双份提交；不勾选则保持软门原行为（保留警告）
+  const intakeHits = useMemo(
+    () => (mainRawFiles ? intakeBridgeHits(mainRawFiles) : []),
+    [mainRawFiles],
+  );
+  const intakePaths = useMemo(
+    () => new Set(intakeHits.map((h) => h.path)),
+    [intakeHits],
+  );
+  const dirtyHits = useMemo(() => {
+    if (!mainDirtyFiles) return [];
+    const base = dirtyInputHits(mainDirtyFiles, [
+      ...(stepNow.inputs ?? []),
+      ...(stepNow.optionalInputs ?? []),
+      ...(stepNow.anyOfInputs ?? []).flat(),
+    ]);
+    return intakeChecked
+      ? base.filter((f) => !intakePaths.has(f.path))
+      : base;
+  }, [mainDirtyFiles, stepNow, intakeChecked, intakePaths]);
+
+  // 接驳摘要：清单 md 拿主仓内容数非注释行（打开时读一次，读失败按空计）、笔记按份数
+  const intakeLedgerMdKey = intakeHits
+    .filter((h) => h.kind === "ledger" && h.path.endsWith(".md"))
+    .map((h) => h.path)
+    .join("\n");
+  useEffect(() => {
+    let stale = false;
+    const rels = intakeLedgerMdKey ? intakeLedgerMdKey.split("\n") : [];
+    if (rels.length === 0) {
+      setIntakeTexts({});
+      return;
+    }
+    const root = projectPath.replace(/[\\/]+$/, "");
+    Promise.all(
+      rels.map(async (rel) => {
+        try {
+          const p = await invoke<{ text: string }>("read_file_preview", {
+            path: `${root}/${rel}`,
+            root: projectPath,
+          });
+          return [rel, p.text] as const;
+        } catch {
+          return [rel, ""] as const;
+        }
+      }),
+    ).then((pairs) => {
+      if (!stale) setIntakeTexts(Object.fromEntries(pairs));
+    });
+    return () => {
+      stale = true;
+    };
+  }, [projectPath, intakeLedgerMdKey]);
+  const intakeSummary = useMemo(
+    () => summarizeIntakeBridge(intakeHits, intakeTexts),
+    [intakeHits, intakeTexts],
+  );
+  const intakeLine = intakeHits.length > 0
+    ? intakeBridgeLabel(
+        intakeSummary,
+        intakeHits.filter((h) => h.kind === "ledger").length,
+      )
+    : "";
+  const rootDir = projectPath.replace(/[\\/]+$/, "");
+  const accChip = useMemo(
+    () => accumulationChip(accCount, `${rootDir}/papers/reading-list.md`),
+    [accCount, rootDir],
+  );
+  const chipsView = useMemo(
+    () => (inputChips && accChip ? [...inputChips, accChip] : inputChips),
+    [inputChips, accChip],
   );
   async function saveDirtyHits(): Promise<boolean> {
     const blocked = historySaveBlockedReason(dirtyHits, mainDirtyMerging);
@@ -589,6 +683,7 @@ export default function KickoffConfirmDialog({
       });
       const dirty = status.isRepo ? userDirtyFiles(status.files) : [];
       setMainDirtyFiles(status.isRepo ? dirty : null);
+      setMainRawFiles(status.isRepo ? status.files : null);
       setMainDirtyMerging(status.merging === true);
       return true;
     } catch (reason) {
@@ -633,11 +728,11 @@ export default function KickoffConfirmDialog({
             </div>
           ) : null;
         })()}
-        {inputChips && inputChips.some((chip) => formatKickoffChip(chip)) && (
+        {chipsView && chipsView.some((chip) => formatKickoffChip(chip)) && (
           <div className="mb-3">
             <p className="mb-1 text-micro text-l4">已有材料</p>
             <div className="flex flex-wrap gap-1">
-              {inputChips.map((chip) => {
+              {chipsView.map((chip) => {
                 if (isOwnDeliverable(chip.pattern, stepNow.expectedArtifacts)) return null;
                 const view = formatKickoffChip(chip);
                 if (!view) return null;
@@ -832,6 +927,38 @@ export default function KickoffConfirmDialog({
               <span className="mt-1 block text-err-text">{dirtySaveError}</span>
             )}
           </p>
+        )}
+
+        {/* 开工接驳（2026-10-13 双台账拍板）：项目根积累面（流程正典清单 + 用户笔记）有
+            未提交改动才出现，默认勾选。勾选 = 随开工提交进基准分支；不勾选 = 照常开工，
+            文件留在项目根未提交（它们仍是这一步要读的输入时，走上方存进历史软门） */}
+        {intakeHits.length > 0 && (
+          <div className="mb-3 shrink-0 rounded-md ccode-well px-2.5 py-2">
+            <Checkbox
+              checked={intakeChecked}
+              onChange={setIntakeChecked}
+              label={
+                <span className="text-xs text-l2">
+                  开工接驳{intakeLine ? `：${intakeLine}` : ""}
+                </span>
+              }
+            />
+            <p
+              className={`mt-1 pl-5 text-micro leading-4 ${
+                intakeChecked ? "text-l4" : "text-warn-text"
+              }`}
+            >
+              {intakeChecked
+                ? "将随开工提交进基准分支，供检索步/精读步直接使用你的积累与笔记。"
+                : "未接驳：这批积累与笔记不进本轮基准分支，工作区里用不到；仍留在项目根（不拦合并），需要时可在终端自行提交。"}
+            </p>
+            <p
+              className="mt-1 break-all pl-5 font-mono text-micro leading-4 text-l4"
+              title={intakeHits.map((h) => h.path).join("\n")}
+            >
+              {intakeHits.map((h) => h.path).join("、")}
+            </p>
+          </div>
         )}
 
         {/* 旧版简报兜底（只提醒不阻断）：新口径沉淀走任务书草稿，旧 brief-*.md 不再自动带入 */}

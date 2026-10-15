@@ -30,6 +30,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import { sessionRuntimeKey, useAppStore } from "../store";
+import type { ProjectSurfaceTab } from "../project-surface";
 import { IS_MAC, IS_WINDOWS } from "../hotkeys";
 import { monoFallbackStack, terminalFontStack } from "../terminal-font";
 import { installDomScrollRowReuse } from "../terminal-row-reuse";
@@ -5084,6 +5085,19 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   const [reviewAction, setReviewAction] = useState<
     "pr" | "archive" | "resolve-conflict" | null
   >(null);
+  /** 从项目页签进来的评审：返回时回到那个项目的那个页签。
+   *  关评审的入口不止返回键（开新终端、开阅读、切目录都会盖掉它），
+   *  ref 让这些入口清状态时不用逐个改依赖 */
+  const reviewReturnRef = useRef<{
+    projectRoot: string;
+    surface: ProjectSurfaceTab;
+  } | null>(null);
+  const setReviewReturn = (
+    value: { projectRoot: string; surface: ProjectSurfaceTab } | null,
+  ) => {
+    reviewReturnRef.current = value;
+  };
+  const [reviewLocked, setReviewLocked] = useState(false);
   const [reviewRequestId, setReviewRequestId] = useState<string | null>(null);
   // 评审身份由入口显式携带；不能从 cwd 猜测是哪次 Run。
   const [reviewRunId, setReviewRunId] = useState<string | null>(null);
@@ -6141,6 +6155,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     setReviewRunId(workspaceReviewRequest.runId ?? null);
     setReviewAction(workspaceReviewRequest.action ?? null);
     setReviewRequestId(workspaceReviewRequest.requestId);
+    setReviewReturn(workspaceReviewRequest.returnTo ?? null);
+    setReviewLocked(!!workspaceReviewRequest.locked);
     setWorkspaceReviewRequest(null);
   }, [visible, workspaceReviewRequest, setWorkspaceReviewRequest]);
 
@@ -7878,13 +7894,23 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         <WorkspaceReviewView
           worktreePath={reviewPath}
           runId={reviewRunId}
+          reviewLocked={reviewLocked}
           initialAction={reviewAction}
           initialActionKey={reviewRequestId}
           onClose={() => {
+            const back = reviewReturnRef.current;
             setReviewPath(null);
             setReviewRunId(null);
             setReviewAction(null);
             setReviewRequestId(null);
+            setReviewReturn(null);
+            setReviewLocked(false);
+            if (back) {
+              const s = useAppStore.getState();
+              s.setSelectProjectReq(back.projectRoot);
+              s.setProjectSurfaceReq(back.surface);
+              s.setPage("workspaces");
+            }
           }}
         />
       )}

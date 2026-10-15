@@ -149,6 +149,7 @@ const LIT_NOTES_WRITE =
   "禁止整段粘贴英文摘要或 PDF 抽取原文。未读完只在 notes/index.json 记 reviewStatus=pending、notePath 可空，禁止生成八段占位文件（文件存在会被标成已读）。" +
   "可逆准备只含 PDF 改名、index 骨架、bib 对账、合法 OA 尝试，不包括批量生成笔记正文。" +
   "「按摘要记」= 根据摘要消化来写并标「仅摘要」，不是贴英文。" +
+  "这篇已有笔记（沉浸阅读建的、用户手动读过的、或上一轮流程写的）时在原文件上续写优化，不另起一份平行笔记；来源锚点行保持标题下第一行，「译段」「我的想法」两节和用户在八段里手写的内容原样保留，只增补不重写。" +
   "分批读写时每批已读的写真笔记、可中途 git 提交；提交后立刻继续：先写完已确认核心篇（有 PDF 的写精读），再按摘要写完非核心，不要每批停下来等人。" +
   "有全文的笔记在可引用点末列可引用图（Fig./Table 编号｜画了什么｜可拼或仅引用）。图号和图注以 PDF 文本层为准，不要求把页面渲成图片再看。仅摘要写无可引用图，不臆造图号。" +
   "pending 只留给待确认、或摘要和题录都不足以写笔记的篇，不是「先写一批再汇报」的许可。\n";
@@ -248,6 +249,12 @@ const LIT_SEARCH_NO_WASTE =
   "标准档不做引文扩展；人明确要求或全局设定为严格检索档才做。" +
   "期刊缩写与两套 RIS 只给最终纳入和待确认各做一次，排除的不补字段。";
 
+/** 积累进料口（2026-10-13 双台账拍板）：接在人工导入题录句后。工作区快照由开工时
+ *  freeze_reading_list_intake 从项目根 papers/reading-list.md 冻结；积累账不回写不改删，
+ *  正典仍是本工作区 papers/included.md / included.json，纳入走人审。 */
+const LIT_INTAKE_CLAUSE =
+  "工作区 .ccode/handoff-lit-intake.md（开工时从项目根 papers/reading-list.md 冻结；若缺失则按上方「项目根」绝对路径只读 papers/reading-list.md）是用户日常积累的精读候选：与 included.md 存量、人工导入题录、检索候选池统一去重（同篇不重复列），值得纳入的写入本工作区 papers/included.md/included.json 走人审；不回写、不删除、不清空积累台账。";
+
 /** 英文综述（review）：文献检索 → 精读笔记 → 大纲 → 初稿 → 润色定稿。
  *  示例课题直接用这份模板（src-tauri/resources/pipeline-review.json）。
  *  改这里之后跑：node --experimental-strip-types scripts/export-review-template.ts */
@@ -262,11 +269,11 @@ const REVIEW_STEPS: ProjectStepDto[] = [
       "**先粗检一轮报数再定标准**：用主题词在 OpenAlex 粗查命中量，把「命中约 N 篇」与你建议的标准写进 " +
       ".ccode/help-wanted.md 问用户一句（附兜底：未回复只做试检，不冻结标准或正式筛选），写完仅推进无依赖、可逆的准备。" +
       "正式标准按问题制定，不为凑篇数或结果而改；\n" +
-      "2. 先解析人工导入的题录（RIS/BibTeX/CSV），三处都要看：① 本文件「项目根」下 papers/imports/；② 工作区内 papers/imports/；③ 「项目资源」段类型为「引文」的条目、以及「上一步产物（提货单）」段中来自「人工交付」的条目——后两类给绝对路径，按路径直读、勿复制。都没有才跳过。解析后按 {skill:lit-search} 技能口径去重合并进候选池，每条保留来源标注；\n" +
+      "2. 先解析人工导入的题录（RIS/BibTeX/CSV），三处都要看：① 本文件「项目根」下 papers/imports/；② 工作区内 papers/imports/；③ 「项目资源」段类型为「引文」的条目、以及「上一步产物（提货单）」段中来自「人工交付」的条目——后两类给绝对路径，按路径直读、勿复制。都没有才跳过。解析后按 {skill:lit-search} 技能口径去重合并进候选池，每条保留来源标注；" + LIT_INTAKE_CLAUSE + "\n" +
       "3. 检索候选文献。" + LIT_SEARCH_NO_WASTE +
       "检索式、检索日期与命中数记入 papers/screening.md；WoS/SerpAPI 等付费 key 一律用 $VAR 环境变量引用，禁止写进任何文件；末尾写覆盖缺口声明（哪些库没检，含按上面停手跳过的库）；\n" +
       "4. 按标准逐条筛选，每篇给出纳入/排除及理由；拿不准相关性的一律保留为 pending 候选并标注「待确认」，不冒充已决纳入，不允许自行裁掉；\n" +
-      "5. 纳入清单写入 papers/included.md（一行一篇：标题 — 作者, 年份 — 来源 — 链接/DOI），并同步写入 papers/included.json（每篇一条，至少含稳定唯一字符串 id、title、decision（included/pending）、reason；与 md 记录一一对应）；\n" +
+      "5. 纳入清单写入 papers/included.md（一行一篇：标题 — 作者, 年份 — 来源 — 链接/DOI），并同步写入 papers/included.json（每篇一条，至少含稳定唯一字符串 id、title、decision（included/pending）、reason；与 md 记录一一对应）。开工时清单里已有的存量条目（人在文献雷达点「加入积累」攒下的、或上一轮留下的）是进料口的一部分：保留在清单里与检索候选池统一去重（同篇不重复列），不删除不清空、不当作异常；\n" +
       "6. " + LIT_PENDING_BEFORE_FETCH +
       "开放获取（arXiv/PMC/开放期刊/作者主页 preprint）直接下载到**项目根 papers/**（见上方「项目根」，文件名规范化：作者年份-短标题.pdf），不要下载到本工作区；付费墙不得尝试绕过，在 included.md 该行末尾标注「需自行获取」，并汇总写入 papers/to-fetch.md（编号清单，见 {skill:lit-search} 产出格式）等用户提供全文，同时把 to-fetch.md 转成" + TO_FETCH_RIS + " 已有 references.bib 只补空着的卷、期、页、ISSN、摘要、关键词和期刊缩写，不覆盖、不改键。不在这一步默认写同步文件。文献来源或文献库选了 Zotero / EndNote 时，才按对应技能做导入和同步。已有 references.bib 不得覆盖。\n" +
       "完成标准：papers/screening.md、papers/included.md、papers/to-fetch.md、papers/to-fetch.ris、papers/endnote-import.ris 均存在（两份 RIS 允许有效空文件，其他文件非空；无付费文献则 to-fetch.md 说明无待获取，两份 RIS 保留合法零条目空文件），每条记录无空缺字段（未知则标「待补」），筛选记录含检索日期与覆盖缺口、能让第三人按标准复现每条判定。\n" +
@@ -448,7 +455,7 @@ const RESEARCH_PAPER_STEPS: ProjectStepDto[] = [
       "输入：英文综述模板的 notes/ 与 references.bib（接自上游模板时随仓库合并自带；独立启动本项目时，先把上游产物放入对应目录，或在资源面板绑定上游项目目录）。\n" +
       "若项目根已有 notes/ 或 papers/included.md：检查检索日期、问题/标准与原文版本，有效则复用；按本课题实证问题补检索、补纳入，保留人写内容并更新失效笔记。没有上游产物时按下面流程全量检索。\n" +
       "围绕课题主题（见上方「课题主题」段；未填写时只提出候选主题记入 papers/screening.md，待人确认后正式筛选；只可先试检摸底）执行：\n" +
-      "1. 检索与筛选按 {skill:lit-search} 技能：**先粗检一轮报数再定标准**（OpenAlex 命中约 N 篇与建议标准写入 .ccode/help-wanted.md，未回复仅做无依赖、可逆准备）；" + LIT_SEARCH_NO_WASTE + "产出 papers/screening.md（标准 + 各库检索式、检索日期与命中数 + 每篇判定理由；拿不准相关性的一律保留为 pending 候选并标注「待确认」，不冒充已决纳入）与 papers/included.md；用户导入的检索结果先解析去重——看项目根 papers/imports/、工作区 papers/imports/、以及「项目资源」「提货单」里的绝对路径；\n" +
+      "1. 检索与筛选按 {skill:lit-search} 技能：**先粗检一轮报数再定标准**（OpenAlex 命中约 N 篇与建议标准写入 .ccode/help-wanted.md，未回复仅做无依赖、可逆准备）；" + LIT_SEARCH_NO_WASTE + "产出 papers/screening.md（标准 + 各库检索式、检索日期与命中数 + 每篇判定理由；拿不准相关性的一律保留为 pending 候选并标注「待确认」，不冒充已决纳入）与 papers/included.md；用户导入的检索结果先解析去重——看项目根 papers/imports/、工作区 papers/imports/、以及「项目资源」「提货单」里的绝对路径；" + LIT_INTAKE_CLAUSE + "\n" +
       "2. " + LIT_PENDING_BEFORE_FETCH +
       "开放获取直接下载到**项目根 papers/**（文件名：作者年份-短标题.pdf），不要下载到本工作区；付费墙不得绕过，汇总写入 papers/to-fetch.md，并转成" + TO_FETCH_RIS + " 清单落盘后按 {skill:zotero-sync} 记录通道并写 papers/zotero-sync.md；未明确要求进库则不写用户 Zotero 库，通道不可用则只留 RIS/bib。已有 references.bib 时不得覆盖，只补空着的卷、期、页、ISSN、摘要、关键词和期刊缩写。\n" +
       "完成标准：检索交付件均已提交（无付费文献则 to-fetch.md 说明无待获取，to-fetch.ris 与 endnote-import.ris 保留合法零条目空文件；未启用或回落时 zotero-sync.md 写明原因），筛选记录含检索日期与覆盖缺口、可复现。\n" +
@@ -914,7 +921,7 @@ const THESIS_STEPS: ProjectStepDto[] = [
     brief:
       "输入：课题主题（见上方「课题主题」段；未填写时提出候选主题写进 papers/screening.md，等待人确认后正式筛选）。接自上游英文综述/科研论文时 notes/ 与 included.md 随仓库自带，按日期/范围/版本检查后查漏补缺，保留人写内容，不把旧笔记存在当作仍然有效；没有上游时全量检索。全程按 {skill:lit-search} 技能。\n" +
       "1. **先粗检一轮报数再定标准**：OpenAlex 命中约 N 篇与建议标准写入 .ccode/help-wanted.md（未回复仅做无依赖、可逆准备）；纳入/排除标准（年份、语言、来源级别、相关性）写入 papers/screening.md；\n" +
-      "2. 解析人工导入题录（项目根 papers/imports/、工作区 papers/imports/、项目资源与提货单绝对路径），去重进候选池；\n" +
+      "2. 解析人工导入题录（项目根 papers/imports/、工作区 papers/imports/、项目资源与提货单绝对路径），去重进候选池；" + LIT_INTAKE_CLAUSE + "\n" +
       "3. 检索候选并逐条判定。" + LIT_SEARCH_NO_WASTE + "产出 papers/screening.md、papers/included.md 和 papers/included.json（每项稳定唯一字符串 id/title/decision/reason，与 md 一一对应）；拿不准一律保留为 pending 候选并标「待确认」，不冒充已决纳入；检索日期与覆盖缺口写入 screening.md；\n" +
       "4. " + LIT_PENDING_BEFORE_FETCH +
       "开放获取全文下载到**项目根 papers/**；付费墙写入 papers/to-fetch.md，并转成" + TO_FETCH_RIS + " 清单落盘后按 {skill:zotero-sync} 记录通道并写 papers/zotero-sync.md；未明确要求进库则不写用户 Zotero 库，通道不可用则只留 RIS/bib。已有 references.bib 时不得覆盖，只补空着的卷、期、页、ISSN、摘要、关键词和期刊缩写。\n" +

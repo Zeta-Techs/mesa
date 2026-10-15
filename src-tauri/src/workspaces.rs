@@ -946,6 +946,8 @@ fn archive_impl_with_guard(
         }
         return Err(format!("更新 workspaces 失败: {e}"));
     }
+    // 归档成功即流程收尾：回放期间暂缓的 PDF 资源登记（幂等 best-effort）
+    crate::lit_watch::replay_pending_registrations(Path::new(&w.repo_path));
     Ok(())
 }
 
@@ -1008,6 +1010,24 @@ fn delete_impl(conn: &Connection, id: &str) -> Result<(), String> {
     conn.execute("DELETE FROM workspaces WHERE id=?1", params![id])
         .map_err(|e| format!("删除 workspaces 行失败: {e}"))?;
     Ok(())
+}
+
+/// 该项目是否还有**未落地**的工作区（active/creating 且尚未合并——merged_at 为空）。
+/// 雷达「登记暂缓」与「台账迁移」的相位判据：只有这种轮次还可能向基准合并，
+/// 迁移动跟踪关系、project.toml 写入拦合并才需要避让。「已合并保留」（merged_at 置位）
+/// 的轮次产物已进主仓，不算进行中——否则合并完没归档的旧项目永远迁不了（2026-10-13 实证）。
+/// 不新增状态文件——workspaces 表的 status + merged_at 就是唯一事实。
+pub(crate) fn project_has_active_workspace(repo: &Path) -> bool {
+    let Ok(conn) = db() else {
+        return false;
+    };
+    workspaces_of_repo(&conn, repo)
+        .map(|list| {
+            list.iter().any(|w| {
+                (w.status == "active" || w.status == "creating") && w.merged_at.is_none()
+            })
+        })
+        .unwrap_or(false)
 }
 
 /// 某仓库的全部工作区（active/archived 不分状态）。
@@ -3340,6 +3360,9 @@ fn is_delivery_process_file(path: &str) -> bool {
             | "zotero-sync.md"
             | ".gitignore"
             | ".gitattributes"
+            // 积累账与开工冻结的进料快照：gitignored 台账，不参与交付
+            | "reading-list.md"
+            | "handoff-lit-intake.md"
     ) {
         return true;
     }

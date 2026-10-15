@@ -27,6 +27,8 @@ export interface WatchEntryDto {
   zhSummary: string;
   /** 链接/DOI 段；没有为空串 */
   url: string;
+  /** 发表日期（来源行第二段，arXiv 发布日/期刊出版日）；旧条目缺段为 null */
+  pubDate: string | null;
   /** 巡检批次日期 YYYY-MM-DD（标准注释或旧版巡检标题）；缺失/无效为 null */
   date: string | null;
   rawLineRange: [number, number];
@@ -139,26 +141,20 @@ export function litWatchFilterActive(
   return !!f && (f.minIf != null || f.maxCasQuartile != null || !!f.topOnly);
 }
 
-/** 条目是否通过筛选。指标未知（表未装 / 期刊未收录 / IF 不可解析）一律放行不误伤——
- *  筛选只在有数据时生效，绝不用「查不到」当「不达标」 */
+/** 条目是否通过筛选。选了条件但查不到对应指标，就不显示。 */
 export function entryPassesFilter(
   metrics: WatchEntryDto["metrics"],
   f: LitWatchFilterDto | null | undefined,
 ): boolean {
-  // 全空筛选各条件自然全部跳过，无需单独判 active
-  if (!f || !metrics) return true;
-  if (f.minIf != null && metrics.impactFactor != null) {
+  if (!f || !litWatchFilterActive(f)) return true;
+  if (!metrics) return false;
+  if (f.minIf != null) {
     const v = Number(metrics.impactFactor);
-    // IF 存在但不可解析 = 未知 → 放行（Number("")=0 之类不纳入：后端空串不落字段）
-    if (Number.isFinite(v) && metrics.impactFactor.trim() !== "" && v < f.minIf) {
+    if (!metrics.impactFactor || !Number.isFinite(v) || metrics.impactFactor.trim() === "" || v < f.minIf) {
       return false;
     }
   }
-  if (
-    f.maxCasQuartile != null &&
-    metrics.casQuartile != null &&
-    metrics.casQuartile > f.maxCasQuartile
-  ) {
+  if (f.maxCasQuartile != null && (metrics.casQuartile == null || metrics.casQuartile > f.maxCasQuartile)) {
     return false;
   }
   if (f.topOnly && !metrics.top) return false;
@@ -200,7 +196,7 @@ export interface WatchSubscriptionDto {
   note: string;
 }
 
-/** included.md 精读清单行 */
+/** included.md（流程正典）/ reading-list.md（积累账）清单行，两账行格式同构 */
 export interface IncludedEntryDto {
   /** 行内容哈希 id，`i-<hex>`；remove 时原样回传 */
   lineId: string;
@@ -350,14 +346,9 @@ export function sourceDisplayName(source: string): string {
 
 /** 新命中收起态第二行：中文一句话 · 期刊/来源。英文摘要不进这一行。 */
 export function watchEntryScanLine(
-  entry: Pick<WatchEntryDto, "zhSummary" | "journal" | "source">,
+  entry: Pick<WatchEntryDto, "zhSummary">,
 ): string {
-  const parts: string[] = [];
-  const zh = entry.zhSummary.trim();
-  if (zh) parts.push(zh);
-  const src = sourceDisplayName((entry.journal ?? entry.source).trim());
-  if (src) parts.push(src);
-  return parts.join(" · ");
+  return entry.zhSummary.trim();
 }
 
 // ===== 周趋势（迷你柱状图） =====
@@ -368,6 +359,10 @@ export interface WeekBucket {
   /** 「8月3日周」 */
   label: string;
   count: number;
+  /** 桶起点 YYYY-MM-DD（点击柱子筛选时间桶的稳定键） */
+  key: string;
+  /** 其中「推荐」条数（双色堆叠柱的上层） */
+  recommendedCount: number;
 }
 
 /** 本地周一零点（周一 = 一周起点，中文语境惯例） */
@@ -407,6 +402,8 @@ export function weeklyBuckets(
     start,
     label: `${start.getMonth() + 1}月${start.getDate()}日周`,
     count: counts.get(localDayKey(start)) ?? 0,
+    key: localDayKey(start),
+    recommendedCount: 0,
   }));
 }
 
@@ -455,6 +452,120 @@ export function weeklyTrend(
   showChart: boolean;
   note: string | null;
 } {
+  return { ...trendSummary(entries, "week", now), buckets: weeklyBuckets(entries, weeks, now) };
+}
+
+// ===== 趋势图多粒度（天/周/月，2026-10-14） =====
+
+export type TrendMode = "day" | "week" | "month";
+
+export const TREND_WINDOW: Record<TrendMode, number> = {
+  day: 14,
+  week: 8,
+  month: 6,
+};
+
+/** 月起点：当月 1 日零点 */
+function monthStart(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), 1);
+}
+
+/** 各粒度的桶起点序列（旧→新，最后一桶含 now） */
+export function trendStarts(mode: TrendMode, now: Date): Date[] {
+  const n = TREND_WINDOW[mode];
+  const starts: Date[] = [];
+  if (mode === "day") {
+    for (let i = n - 1; i >= 0; i--) {
+      starts.push(
+        new Date(now.getFullYear(), now.getMonth(), now.getDate() - i),
+      );
+    }
+  } else if (mode === "week") {
+    const w = weekStart(now);
+    for (let i = n - 1; i >= 0; i--) {
+      starts.push(
+        new Date(w.getFullYear(), w.getMonth(), w.getDate() - i * 7),
+      );
+    }
+  } else {
+    for (let i = n - 1; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      starts.push(d);
+    }
+  }
+  return starts;
+}
+
+function bucketKey(mode: TrendMode, day: Date): string {
+  const s =
+    mode === "day"
+      ? day
+      : mode === "week"
+        ? weekStart(day)
+        : monthStart(day);
+  return localDayKey(s);
+}
+
+function bucketLabel(mode: TrendMode, start: Date): string {
+  if (mode === "day") return `${start.getMonth() + 1}/${start.getDate()}`;
+  if (mode === "month") return `${start.getMonth() + 1}月`;
+  return `${start.getMonth() + 1}月${start.getDate()}日周`;
+}
+
+/** 多粒度计数桶（旧→新）；含推荐计数与筛选键 */
+export function trendBuckets(
+  entries: readonly WatchEntryDto[],
+  mode: TrendMode,
+  now: Date = new Date(),
+): WeekBucket[] {
+  const starts = trendStarts(mode, now);
+  const counts = new Map<string, number>();
+  const recs = new Map<string, number>();
+  for (const entry of entries) {
+    if (!entry.date) continue;
+    const day = parseLocalDay(entry.date);
+    if (!day) continue;
+    const key = bucketKey(mode, day);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+    if (entry.relevance === "推荐") {
+      recs.set(key, (recs.get(key) ?? 0) + 1);
+    }
+  }
+  return starts.map((start) => {
+    const key = localDayKey(start);
+    return {
+      start,
+      label: bucketLabel(mode, start),
+      count: counts.get(key) ?? 0,
+      key,
+      recommendedCount: recs.get(key) ?? 0,
+    };
+  });
+}
+
+/** 点击柱子后过滤列表用：条目是否落在指定时间桶里（与 trendBuckets 同口径） */
+export function entryInTrendBucket(
+  entry: Pick<WatchEntryDto, "date">,
+  mode: TrendMode,
+  bucketKeyToTest: string,
+): boolean {
+  if (!entry.date) return false;
+  const day = parseLocalDay(entry.date);
+  if (!day) return false;
+  return bucketKey(mode, day) === bucketKeyToTest;
+}
+
+/** trendSummary：粒度通用的 {buckets, undated, showChart, note} */
+export function trendSummary(
+  entries: readonly WatchEntryDto[],
+  mode: TrendMode,
+  now: Date = new Date(),
+): {
+  buckets: WeekBucket[];
+  undatedCount: number;
+  showChart: boolean;
+  note: string | null;
+} {
   const undatedCount = entries.filter(
     (e) => !e.date || !parseLocalDay(e.date),
   ).length;
@@ -468,7 +579,7 @@ export function weeklyTrend(
           ? `另有 ${undatedCount} 条缺少有效巡检日期，未计入趋势`
           : null;
   return {
-    buckets: weeklyBuckets(entries, weeks, now),
+    buckets: trendBuckets(entries, mode, now),
     undatedCount,
     showChart,
     note,
@@ -510,10 +621,10 @@ export function fulltextLinkFor(rawUrl: string): FulltextLink {
   return { kind: "source", url: u };
 }
 
-// ===== 精读清单 =====
+// ===== 清单行拼装（included.md 正典与 reading-list.md 积累账同构）=====
 
 /**
- * 命中条目 → add_included_entry 的参数。
+ * 命中条目 → add_reading_list_entry（积累账）的参数。
  * authorsYear 口径：作者缺 → 整段「待补」；作者在 → 附年份（取批次日期的年——
  * 雷达条目多为新文献，批次年≈发表年），批次日期也没有就只留作者。
  */
@@ -524,7 +635,9 @@ export function includedLineFor(entry: WatchEntryDto): {
   link: string;
 } {
   const authors = entry.authors.trim();
-  const year = entry.date ? parseLocalDay(entry.date)?.getFullYear() : undefined;
+  // 年份优先取发表日期（论文自身）；旧条目缺发表日期回落巡检批次日
+  const yearSrc = entry.pubDate?.trim() || entry.date;
+  const year = yearSrc ? parseLocalDay(yearSrc)?.getFullYear() : undefined;
   const authorsYear = authors
     ? year
       ? `${authors}, ${year}`
@@ -536,6 +649,37 @@ export function includedLineFor(entry: WatchEntryDto): {
     source: entry.source,
     link: entry.url,
   };
+}
+
+// ===== 双台账书标（included.md 正典 + reading-list.md 积累账） =====
+
+/** 清单行 → 规范化标题集合（书标判定 / 抽屉计数的统一口径；空白标题不入集合） */
+export function normalizedTitleSet(
+  rows: readonly { title: string }[] | null | undefined,
+): Set<string> {
+  const out = new Set<string>();
+  for (const r of rows ?? []) {
+    const t = normalizeTitle(r.title);
+    if (t) out.add(t);
+  }
+  return out;
+}
+
+export type LedgerMark = "included" | "reading";
+
+/** 行内书标双态：已在正典（included.md）→ "included"；仅在积累账（reading-list.md）→
+ *  "reading"；都不在 → null。正典优先。与后端 add_reading_list_at 的去重域同口径：
+ *  规范化标题全等（不做包含匹配） */
+export function ledgerMarkFor(
+  title: string,
+  includedTitles: ReadonlySet<string>,
+  readingTitles: ReadonlySet<string>,
+): LedgerMark | null {
+  const t = normalizeTitle(title);
+  if (!t) return null;
+  if (includedTitles.has(t)) return "included";
+  if (readingTitles.has(t)) return "reading";
+  return null;
 }
 
 // ===== 已读判定（精读条目 × notes/ 笔记文件名） =====
@@ -801,24 +945,68 @@ export function filterLitDismissed<T extends { id: string }>(
   return entries.filter((e) => !dismissed.has(e.id));
 }
 
-/** 待人工下载与上面的命中是同一篇时，忽略后下面也消失。
- *  标题规范化后互相包含，短边至少 12 个字符，避免短标题误伤。 */
+/** 两篇是不是同一篇。规范化后互相包含，短边至少 12；
+ *  两边都到 24 个字符时，开头 24 个相同也算（巡检常把标题写断）。 */
+export function titlesLookSame(a: string, b: string): boolean {
+  const left = normalizeTitle(a);
+  const right = normalizeTitle(b);
+  if (!left || !right) return false;
+  if (left === right) return true;
+  if (left.includes(right) || right.includes(left)) {
+    const shorter = left.length < right.length ? left : right;
+    return shorter.length >= 12;
+  }
+  const head = 24;
+  return left.length >= head && right.length >= head && left.slice(0, head) === right.slice(0, head);
+}
+
+/** 待获取：这次命中里 papers/ 还没有 PDF 的，加上跟进队列里对不上任何命中的。
+ *  已有 PDF 的不出现。忽略的命中和跟它对上的跟进行都不出现。
+ *  不看巡检有没有把跟进队列写全。 */
+export function pendingDownloads(
+  hits: readonly { id: string; title: string; url: string }[],
+  followups: readonly { title: string; url: string; note: string }[],
+  savedIds: ReadonlySet<string>,
+  dismissed: ReadonlySet<string>,
+): { key: string; title: string; url: string; note: string; entryId: string | null }[] {
+  const open = hits.filter((hit) => !dismissed.has(hit.id));
+  // 显式行类型：跟进待办没有命中条目 id（null），不能让首段 map 把 rows 推窄成 string
+  const rows: { key: string; title: string; url: string; note: string; entryId: string | null }[] = open
+    .filter((hit) => !savedIds.has(hit.id))
+    .map((hit) => {
+      const note = followups.find((item) => titlesLookSame(item.title, hit.title));
+      return {
+        key: hit.id,
+        title: hit.title,
+        url: hit.url || note?.url || "",
+        note: note?.note ?? "",
+        entryId: hit.id,
+      };
+    });
+  for (const item of followups) {
+    const same = hits.find((hit) => titlesLookSame(item.title, hit.title));
+    if (same) continue;
+    if (followupMatchesDismissed(item.title, hits, dismissed)) continue;
+    rows.push({
+      key: `f:${normalizeTitle(item.title)}`,
+      title: item.title,
+      url: item.url,
+      note: item.note,
+      entryId: null,
+    });
+  }
+  return rows;
+}
+
+/** 待人工下载与上面的命中是同一篇时，忽略后下面也消失。 */
 export function followupMatchesDismissed(
   followupTitle: string,
   hits: readonly { id: string; title: string }[],
   dismissed: ReadonlySet<string>,
 ): boolean {
-  const title = normalizeTitle(followupTitle);
-  if (!title) return false;
-  return hits.some((hit) => {
-    if (!dismissed.has(hit.id)) return false;
-    const other = normalizeTitle(hit.title);
-    if (!other) return false;
-    if (title === other) return true;
-    if (!(title.includes(other) || other.includes(title))) return false;
-    const shorter = title.length < other.length ? title : other;
-    return shorter.length >= 12;
-  });
+  return hits.some(
+    (hit) => dismissed.has(hit.id) && titlesLookSame(followupTitle, hit.title),
+  );
 }
 
 // ---- localStorage 薄层（以下依赖 DOM，不进 node 测试） ----

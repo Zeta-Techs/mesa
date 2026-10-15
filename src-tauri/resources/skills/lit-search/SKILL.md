@@ -50,6 +50,8 @@ provides: [lit-search]
 - 每篇记录：标题、作者（全名，一位一行）、年份、期刊全称、卷、期、页码、出版日期、文章类型、ISSN、DOI、链接。有摘要、关键词、期刊缩写一并记下。字段未知一律标「待补」，不得留空或猜测。
 - **有 DOI 就用 Crossref 把上面这些字段补全再写入筛选记录和 RIS**（`https://api.crossref.org/works/<DOI>`，礼貌 User-Agent）。标题用 Crossref 的 `title`，不要改用 OpenAlex 的 `display_name`。`title` 里的 `<sub>` `<sup>` 先收成 Unicode 下标和上标再写入 `included.json` 与两份 RIS；OpenAlex 的空格标题会把 `Mo<sub>2</sub>` 收成 `Mo 2`。Crossref 纯文本把 `Zr1-xTMxB2` 收成 `Zr1-TMB2` 时，按出版商这种残缺形状写回 `Zr₁₋ₓTMₓB₂`，不要再删字母。Crossref 没有摘要时再用 OpenAlex。期刊缩写用 **ISO 4，每个缩写词后面加句点**（`Adv. Mater.`，不是 `Adv Mater`）。按期刊全称查 JabRef 的 ACS / mechanical / geology_physics / general / lifescience 表（`https://abbrv.jabref.org/journals/`），或期刊官网、CASSI。不要用 NLM Catalog 的 ISSN 结果：它不带句点，还会把 *Advanced Materials* 对成 `Adv Eng Mater`。Crossref 的 short-container-title 经常就是全称，不能当缩写。表里没有、现有值等于全称、缺句点、或对不上这本期刊全称的，先写「待补」，再按官网或 ISO 4 补上。一词刊名（*Nature*、*Science*、*Small*）不缩，写全称。不要自己编。没有期、没有独立网络出版日也标「待补」，不把卷、页或创建日期挪去填。作者以 Crossref 的 `family`/`given` 为准，写成 `姓, 名`，一人一行；来源名单被截成「前三人, et al.」或同一人重复出现时，用 Crossref 的完整名单替换，不沿用截断名单。
 
+- **用户积累进料（双台账口径，2026-10-13）**：工作区 `.ccode/handoff-lit-intake.md`（开工冻结的进料快照）或项目根 `papers/reading-list.md`（积累清单）是用户平时攒下的文献候选，与 `papers/included.md` 存量、`papers/imports/` 导入、本轮检索候选统一去重后并入候选池一起走纳排；这两份积累文件只读——不回写、不删改，产出契约不变。
+
 #### 外部 AI 检索站导出导入（人肉中转）
 
 Elicit / Undermind / X-MOL / Google Scholar 等闭源站点无法程序化检索时，由用户在网页端检索并导出 RIS / BibTeX / CSV：

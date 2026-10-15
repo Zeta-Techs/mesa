@@ -56,6 +56,7 @@ import {
   deliveryFollowupText,
 } from "../acceptance-log";
 import { defaultCommitMessage } from "../git-commit-message";
+import { userDirtyFiles } from "../git-status-groups";
 import {
   absUnderRoot,
   blockerList,
@@ -849,7 +850,8 @@ function MainRepoCommitPanel({
     };
   }, [repoPath]);
 
-  const files = status?.files ?? [];
+  // 台账类（雷达/积累面）从面板剔除：它们不进 git，列出来只会引导把积累面提交进主线
+  const files = userDirtyFiles(status?.files ?? []);
   const selectedFiles = files.filter((file) => selectedPaths.has(file.path));
   const allSelected = files.length > 0 && selectedPaths.size === files.length;
 
@@ -995,7 +997,7 @@ export default function WorkspaceReviewView(props: Parameters<typeof LiveWorkspa
       <p>{resolved.error ?? "运行记录不存在，无法核验历史证据"}</p>
       <button type="button" onClick={props.onClose} className="mt-2 text-l2">返回</button>
     </div>;
-    if (resolved.run.taskKind === "watch") return <WatchRunReview key={props.runId} run={resolved.run} onClose={props.onClose}
+    if (resolved.run.taskKind === "watch") return <WatchRunReview key={props.runId} run={resolved.run} locked={props.reviewLocked} onClose={props.onClose}
       currentDirectory={<LiveWorkspaceReviewView {...props} runId={null} />} />;
   }
   return <LiveWorkspaceReviewView {...props} />;
@@ -1011,6 +1013,8 @@ function LiveWorkspaceReviewView({
   worktreePath: string;
   /** 运行身份；存在时评审证据以该 Run 的隔离树和状态为准。 */
   runId?: string | null;
+  /** 定时巡检已采纳：评审只查看。 */
+  reviewLocked?: boolean;
   /** pr/archive 定位对应弹层；resolve-conflict 表示「解决冲突」入口，允许自动准备冲突两侧。 */
   initialAction?: "pr" | "archive" | "resolve-conflict" | null;
   /** 同一工作区的重复“更多操作”请求也必须重新打开相应弹层。 */
@@ -2035,6 +2039,68 @@ function LiveWorkspaceReviewView({
     }
   }
 
+  /** 健康复查 + 保存进项目（merge_workspace）+ 成功态收尾；失败抛错由调用方渲染。
+   *  finish 与冲突解决共用这一个重发体。
+   *  healthFail 把健康未过的原因包装成各入口自己的话术；committedHash 供 finish 在
+   *  复查通过后冻结新评审基线（与旧内联顺序一致）。 */
+  async function mergeIntoProject(
+    archive: boolean,
+    opts: {
+      healthFail: (reasons: string) => string;
+      committedHash?: string | null;
+    },
+  ): Promise<WorkspaceMergeResultDto> {
+    if (!diff) throw new Error("工作区数据未加载");
+    const latest = await invoke<WorkspaceHealthDto>("workspace_health", {
+      id: diff.workspaceId,
+    });
+    if (!latest.readyToMerge) {
+      const reasons = blockerText(latest);
+      if (latest.uncommitted) reasons.unshift("任务里还有没保存的改动");
+      throw new Error(opts.healthFail(reasons.join("；") || "健康检查未通过"));
+    }
+    if (opts.committedHash) {
+      reviewedShaRef.current = reviewedShaAfterCommit(
+        opts.committedHash,
+        latest.worktreeHead,
+      );
+    }
+    const merged = await invoke<WorkspaceMergeResultDto>("merge_workspace", {
+      id: diff.workspaceId,
+      archive,
+      expectDeliveryToken: deliveryReviewRef.current?.token ?? null,
+      ...gitAdmissionPayload({
+        retry: false,
+        reviewedSha:
+          reviewedShaRef.current ??
+          latest.worktreeHead ??
+          health?.worktreeHead ??
+          null,
+      }),
+    });
+    setDeliveryFollowup(deliveryFollowupText(merged.salvage));
+    if (merged.failedPhase) throw new Error(merged.message);
+    if (merged.merged && merged.ledgerWritten === false) {
+      setLedgerPending(true);
+      setMergeDone(true);
+      setMergeVersionId(merged.versionId ?? null);
+      setError(null);
+      setResult(null);
+      return merged;
+    }
+    setLedgerPending(false);
+    setMergeVersionId(merged.versionId ?? null);
+    setResult(merged.message);
+    setMergedAt(new Date().toISOString());
+    setMergeDone(true);
+    setConflictFiles([]);
+    setConflictContents({});
+    setConflictContentErrors({});
+    setConflictChoices({});
+    setConflictAdvice({});
+    return merged;
+  }
+
   async function finishConflict(mergeAfter: boolean) {
     if (!diff) return;
     if (mergeAfter && !deliveryReviewRef.current) { setError(REVIEW_SAVE.needDelivery); return; }
@@ -2062,53 +2128,16 @@ function LiveWorkspaceReviewView({
         await refresh();
         return;
       }
-      const latest = await invoke<WorkspaceHealthDto>("workspace_health", {
-        id: diff.workspaceId,
+      await mergeIntoProject(false, {
+        healthFail: (reasons) => reasons,
       });
-      if (!latest.readyToMerge) {
-        const reasons = blockerText(latest);
-        if (latest.uncommitted) reasons.unshift("任务里还有没保存的改动");
-        throw new Error(reasons.join("；") || "健康检查未通过");
-      }
-      const merged = await invoke<WorkspaceMergeResultDto>("merge_workspace", {
-        id: diff.workspaceId,
-        archive: false,
-        expectDeliveryToken: deliveryReviewRef.current?.token ?? null,
-        ...gitAdmissionPayload({
-          retry: false,
-          reviewedSha:
-            reviewedShaRef.current ??
-            latest.worktreeHead ??
-            health?.worktreeHead ??
-            null,
-        }),
-      });
-      setDeliveryFollowup(deliveryFollowupText(merged.salvage));
-      if (merged.failedPhase) throw new Error(merged.message);
-      if (merged.merged && merged.ledgerWritten === false) {
-        setLedgerPending(true);
-        setMergeDone(true);
-        setMergeVersionId(merged.versionId ?? null);
-        setError(null);
-        setResult(null);
-        await refresh();
-        return;
-      }
-      setLedgerPending(false);
-      setMergeVersionId(merged.versionId ?? null);
-      setResult(merged.message);
-      setMergedAt(new Date().toISOString());
-      setMergeDone(true);
-      setConflictFiles([]);
-      setConflictContents({});
-      setConflictContentErrors({});
-      setConflictChoices({});
-      setConflictAdvice({});
       await refresh();
     } catch (reason) {
-      setError(
-        `${resolvedCommitted ? "解决结果已提交，但尚未保存进项目：" : ""}${reason}`,
-      );
+      const raw = String(reason);
+      const prefix = resolvedCommitted
+        ? "解决结果已提交，但尚未保存进项目："
+        : "";
+      setError(`${prefix}${raw}`);
       await refresh(true);
     } finally {
       setConflictBusy(false);
@@ -2235,59 +2264,14 @@ function LiveWorkspaceReviewView({
         setMessage("");
       }
       if (shouldMerge) {
-        const latest = await invoke<WorkspaceHealthDto>("workspace_health", {
-          id: diff.workspaceId,
+        const mergeResult = await mergeIntoProject(archive, {
+          healthFail: (reasons) => REVIEW_SAVE.cannotSaveYet(reasons),
+          committedHash: committed ? committedHash : null,
         });
-        if (!latest.readyToMerge) {
-          const reasons = blockerText(latest);
-          if (latest.uncommitted) reasons.unshift("任务里还有没保存的改动");
-          throw new Error(
-            REVIEW_SAVE.cannotSaveYet(reasons.join("；")),
-          );
-        }
-        if (committed) {
-          reviewedShaRef.current = reviewedShaAfterCommit(committedHash, latest.worktreeHead);
-        }
-        const mergeResult = await invoke<WorkspaceMergeResultDto>(
-          "merge_workspace",
-          {
-            id: diff.workspaceId,
-            archive,
-            expectDeliveryToken: deliveryReviewRef.current?.token ?? null,
-            ...gitAdmissionPayload({
-              retry: false,
-              reviewedSha:
-                reviewedShaRef.current ??
-                latest.worktreeHead ??
-                health?.worktreeHead ??
-                null,
-            }),
-          },
-        );
-        setDeliveryFollowup(deliveryFollowupText(mergeResult.salvage));
-        if (mergeResult.failedPhase) {
-          setError(`${committed ? "提交已完成；" : ""}${mergeResult.message}`);
-          await refresh(true);
-          return;
-        }
-        if (mergeResult.merged && mergeResult.ledgerWritten === false) {
-          setLedgerPending(true);
-          setMergeDone(true);
-          setMergeVersionId(mergeResult.versionId ?? null);
-          setError(null);
-          setResult(null);
-          await refresh(true);
-          return;
-        }
-        setLedgerPending(false);
-        setMergeVersionId(mergeResult.versionId ?? null);
-        setResult(mergeResult.message);
         if (mergeResult.archived) {
           onClose();
           return;
         }
-        setMergedAt(new Date().toISOString());
-        setMergeDone(true);
       } else if (shouldArchive) {
         await invoke("archive_workspace", { id: diff.workspaceId });
         setResult("工作区已归档，分支仍可恢复");
@@ -2298,9 +2282,10 @@ function LiveWorkspaceReviewView({
       }
       await refresh();
     } catch (reason) {
-      setError(
-        `${committed && !String(reason).includes("提交已完成") ? "提交已完成；" : ""}${reason}`,
-      );
+      const raw = String(reason);
+      const prefix =
+        committed && !raw.includes("提交已完成") ? "提交已完成；" : "";
+      setError(`${prefix}${raw}`);
       await refresh(true);
     } finally {
       setBusy(false);
@@ -2314,7 +2299,7 @@ function LiveWorkspaceReviewView({
           <button
             type="button"
             onClick={onClose}
-            title="返回终端"
+            title="返回"
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1"
           >
             <ArrowLeft aria-hidden="true" className="h-4 w-4" />
@@ -2949,8 +2934,8 @@ function LiveWorkspaceReviewView({
         </div>
       )}
       {error && (
-        <div className="shrink-0 border-b border-hairline bg-inset px-3 py-1.5 text-xs text-err-text">
-          ✗ {error}
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-hairline bg-inset px-3 py-1.5 text-xs text-err-text">
+          <span className="min-w-0 flex-1">✗ {error}</span>
         </div>
       )}
 

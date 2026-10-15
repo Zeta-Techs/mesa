@@ -115,7 +115,7 @@
   待补账状态由持久凭证派生，重新打开项目/评审仍有入口，不只放在组件 state 中。
   补账不受主仓新改动阻挡，但凭证版本必须仍属于基准历史；损坏/缺失凭证拒绝猜测。账本未完成不归档。
   已合并工作区仍允许之后归档，归档继续检查工作区脏状态、未合入提交和活任务。
-  未跟踪的 `.ccode/acceptance-log.jsonl` 与 `.ccode/acceptance-log.lock` 不阻塞新合并，也不计入项目页「改动未存入历史」；已跟踪的账本改动仍算。
+  **合并闸门台账豁免（2026-10-13 双台账重写，`review_contract::is_untracked_ledger_file`，merge 闸门/开工脏文件点名/编程改动计数/迁移前置四处共用）**：日常积累面**任何 git 状态**都不算主仓脏、不阻塞合并、不计入「改动未存入历史」——`notes/*.md`（用户笔记；`notes/index.json` 是流程正典，不豁免）、`notes/inbox.md`、`papers/watch-seen.md`、`papers/watch-followup.md`、`.ccode/acceptance-log.jsonl/.lock`；**只豁免未跟踪（??）态**：`papers/reading-list.md`、`.ccode/watch-explains.json`、`.ccode/pending-registrations.json`——reading-list 只豁免 ?? 是防呆设计，agent 违规把积累账提交进工作区分支后它变 tracked，后续写入的 M 态仍会拦合并并点名。旧口径「已跟踪的账本改动仍算」对上述积累面作废；闸门只负责提前拦，git merge 自身的脏文件保护仍会拒绝任何真覆盖。
   开工时，本步要读的未存文件由「记下并开始」先提交再开工，不再二次确认。与本步输入无关的改动不开工弹层里提醒。
   任务书工具合同只在所选工具变了时挡住开始。产物名单增减不挡。技能预期读入若已是本步预期产物，不报上游缺失。
   精读收尾写 `notes/handoff.md`：写作约束给大纲遵守，补全文和登录留在 help-wanted，不进下一步任务书。大纲输入含这份文件。`handoff.md` 是 Agent 交的产物。「沉淀到下一步」是人在审阅里另写的一段，追加进下一步任务书草稿，不代替 handoff。help-wanted 在步骤保存后仍进收件箱，直到人忽略或文件清空。
@@ -155,8 +155,8 @@
 
 - **流水线开步是预设参数的组合调用**（架构 §11）：点「开始」= 建工作区 + 启 Agent + 注入简报 + 落 TASK.md，复用既有
   工作区创建与终端启动；不破坏手动启动栏「Agent → profile → 模型 → 目录 → 启动」主流程。**invoke 链路单一出处
-  `src/pipeline-start.ts` 的 `startPipelineStep`**（ensure git → bootstrap 提交 → 建工作区 → 提货单/技能元数据 → TASK.md →
-  run 脚本 → 终端交接），工作区页步进器大圆与评审「开始下一步」共用，组件态由调用方回调注入。**v3.64 起「开工」为两步**：
+  `src/pipeline-start.ts` 的 `startPipelineStep`**（ensure git → bootstrap 提交 →（有积累时）接驳提交 → 建工作区 →
+  （积累非空）冻结进料快照 → 提货单/技能元数据 → TASK.md → run 脚本 → 终端交接），工作区页步进器大圆与评审「开始下一步」共用，组件态由调用方回调注入。**v3.64 起「开工」为两步**：
   步进器大圆与卡片「开工」先开 `KickoffConfirmDialog`（TASK.md 预览/编辑（草稿优先）+ 推荐技能区 + 人工事项区 +
   主仓提醒），确认才走 startPipelineStep；评审「→ 去下一步」不直开（v3.97 改向：跳项目页聚焦下一步，
   由用户在流程页自己点「开始」——直接开步跳终端会把不熟流程的用户扔进黑窗），「继续」
@@ -173,7 +173,16 @@
   「推荐 MCP」节的技能、点击跳 MCP 页。步骤级只读预览入口
   （任务卡桶头部「预览 TASK.md」）走 `buildTaskMdPreview`，同一出处。开步在 ensure_git_repo 后先走
   `commit_project_bootstrap`（best-effort）：只把 `.ccode` 与 `.gitignore` 提交进主仓（literal pathspec，用户暂存文件
-  绝不带走），防评审合并被主仓脏拦截；默认 .gitignore 含 `*.pdf` 与 `.ccode/handoff-*.md`。**任务书写入是启动前置（2026-09-08）**：`write_workspace_task_md` 失败时保留已创建工作区并报错，不写后续 run 配置、不打开/自动启动 Agent；修复本轮任务书后方可继续。不得无合同启动以兜底旧命令缺失。**TASK.md 不进 git**：落盘时自动追加进
+  绝不带走），防评审合并被主仓脏拦截；默认 .gitignore 含 `*.pdf` 与 `.ccode/handoff-*.md`。
+  **开工接驳与进料冻结（2026-10-13 双台账）**：①**接驳提交**（bootstrap 之后、create_workspace 之前）——主仓有
+  未提交的清单存量（`papers/included.md`/`included.json`/`to-fetch.md`/`to-fetch.ris`）或用户笔记（`notes/*.md`，
+  inbox.md 除外——它 gitignored 不会出现）时，开工确认弹层出「开工接驳：清单 N 条新行 / M 篇未提交笔记」区块，
+  **默认勾选、可取消**；勾选即随开工做 scoped 提交（只提交这些路径，用户其他改动绝不带走）把它们并入基准分支，
+  本轮工作区带上最新积累；取消则按现状开工（积累面台账豁免不拦合并，开工后仍可从改动面板存入历史）。
+  ②**冻结快照**（create_workspace 与任务书落盘之后执行，best-effort 不阻断开工）——`papers/reading-list.md` 非空时原样复制为工作区 `.ccode/handoff-lit-intake.md`
+  （被 `.ccode/handoff-*.md` 忽略规则盖住，不进提交/合并/交付评审）：agent 读的是开工定格副本而非活文件，
+  流程期间继续「加入积累」不影响本轮；检索步简报把它与 included 存量、`papers/imports/` 导入、本轮检索候选
+  统一去重当进料口，不回写、不清空积累账。**任务书写入是启动前置（2026-09-08）**：`write_workspace_task_md` 失败时保留已创建工作区并报错，不写后续 run 配置、不打开/自动启动 Agent；修复本轮任务书后方可继续。不得无合同启动以兜底旧命令缺失。**TASK.md 不进 git**：落盘时自动追加进
   `.git/info/exclude`（`exclude_task_md`，全 worktree 与主仓生效，best-effort 不阻断）——TASK.md 是开步脚手架而非任务产物。
 - **流水线模板库**：内置模板集中在 `src/pipeline-presets.ts` 的 `PIPELINE_TEMPLATES`（综述/科研论文/数据处理/毕业论文/投稿与返修/LaTeX 论文），
   新增场景 = 数组加一项，简报必须遵守输入明确/决策分级/交付可验约定（低风险准备可继续，关键未决不默认批准）；用户模板走后端
@@ -440,7 +449,9 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
 
 ## 接力与提炼接力
 
-- **「接力」是唯一的跨 Agent 交接表述**：接力 = 结构化简报落成文件 + 新 Agent 带简报启动 + 记录接力链，明示不是记忆转移；
+- **「接力」是唯一的跨 Agent 交接表述**：接力 = 结构化简报落成文件 + 新 Agent 带简报启动 + 记录接力链，明示不是记忆转移。
+  快速简报在点选目标 Agent 的那一刻生成（不预生成、不调用 AI）：用户原话与助手正文都按时间逐条原文收录，不抽样、不改写；工具调用不收录。超 64KB 时先截文末的助手正文，用户原话留在前面。
+  「提炼接力」在打开选择器时开始生成：用户原话仍逐条原文；AI 只根据助手正文写「要接上的结论」，不能改写用户原话。助手正文过长时，送给模型的中间段会标明省略，文末原文仍在。
   禁用「无缝继续」。v1 机制（handoff.rs）：简报全文过 `redact_sensitive_text` 脱敏 + 64KB 上限后原子写
   `cwd/.ccode/handoff-<时间>.md`（自定义路径不得出项目根）；简报是过程文件不进版本库：新项目默认 .gitignore 模板含
   `.ccode/handoff-*.md`，存量仓库在每次写简报时 best-effort 补齐该规则（`with_handoff_rule` 幂等追加，非仓库静默跳过）；
@@ -469,7 +480,7 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   `src/task-cards.ts`（按步骤分桶——失效步骤并入「未挂步骤」桶恒在末尾、cardForStep、groupSessionsByTask——
   「未归置」恒最前同原「无工作区会话排最前」口径）。工作区页卡片区 = `TaskCardsSection`（ProjectGroup 内、步进器下方，
   展开手风琴按卡片 id 记忆、切项目随 key 重挂载清空）：「开工」= 打开开工确认弹层（TASK.md 预览/编辑，草稿优先），
-  确认才走 startPipelineStep；「继续」= 有绑定工作区时可用：pendingTerminal initialPrompt 为 `CONTINUE_STEP_PROMPT`（阅读 TASK.md 并继续做到完成标准）
+  确认才走 startPipelineStep；「继续」= 当前步骤已有活跃工作区、且这一步的 Agent 没在出字/等确认时，单独出现在「AI 干活」行（与「去终端看看」互斥；聚焦步骤自己的工作区卡片不再重复这颗按钮）：新开会话，不接回旧 Agent；pendingTerminal initialPrompt 为 `CONTINUE_STEP_PROMPT`（阅读 TASK.md 并继续做到完成标准），配置为步骤绑定 > discuss > 项目默认。上次会话是另一家 Agent 时先问要不要带接力简报（用户原话逐条原文；配了提炼才加结论），同一家不问
   （cwd = 卡片绑定工作区工作树否则项目根，工作树内引用用绝对路径；kimi 无注入由启动栏 promptDropped
   既有处理兜底）。**主仓改动协同**（v3.64；2026-09-10 就地保存）：聊想法在主仓进行，agent 改动留主仓合法——
   弹层顶部与卡片区标题行各一条警告色提醒（复用 `git_status`，进项目详情读一次 + 弹层打开刷新，不轮询，非 git 不渲染）。
@@ -734,8 +745,10 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
 
 ## 定时雷达（scheduler.rs，v3.75；v3.79 起技能可选）
 
-- **职责切分**：调度器只管「什么时候跑」；任务内容永远以技能自身规范与项目内文件为准（lit-watch 的检索策略/关键词/来源
-  以 `papers/watchlist.md` 为唯一口径，改流程 = 改文件，不在任务定义里复制关键词）。
+- **职责切分**：调度器只管「什么时候跑」；任务内容以技能自身规范为准。**关键词按任务一份**
+  （2026-10-13）：每条文献雷达的订阅在 `.ccode/watch/<任务id>/watchlist.md`，跑之前写入隔离树的
+  `papers/watchlist.md`，巡检只读到这一份。删任务时这个目录一起删。项目根 `papers/watchlist.md`
+  是旧的共享清单，第一次读取时搬进还没有自己清单的雷达任务，之后不再读取、不回写。
 - **技能可选（v3.218）**：创建弹层种类 = 文献雷达 + 分类「巡检」的技能 +「＋ 新建巡检技能」。一次性内置技能（data-clean 等）不进下拉。下拉 value = 技能目录名（`Schedule.skill` / Agent 查找用），不是库 UUID。默认任务名跟随：lit-watch =「文献雷达」、巡检技能 = 技能名；手改过的名称不被覆盖（`src/schedule-skill.ts`）。**新建巡检技能两段**：弹层只收任务名/周期/意图 →「跟 AI 写技能」把 SKILL.md 写到 `.ccode/drafts/watch-<id>.md`（不进技能库）→ 人预览确认才 `create_skill`（分类「巡检」）+ 分发到将跑的 Agent + `create_schedule`。取消则日程也不建。跑非 lit-watch 前检查已分发，未分发本轮失败并写明原因（lit-watch prompt 自带口径不拦存量）。**prompt 模板按技能分派**（`build_task_prompt`）：
   lit-watch 用文献巡检专用文案（一字不动）；其他技能用通用模板（「请使用 {skill} 技能…按该技能的既定规范产出结果…
   三行以内简报…定时雷达自动触发」），调度器不替其他技能发明任务内容、不在 schedules.json 存长 prompt。
@@ -761,8 +774,59 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   ai_profile_id / ai_profiles 指到已删 id 的一并清掉，持锁内联、失败只记日志），从源头减少悬空指针。
 - **投递**：跑完发 `scheduler-run-done` 事件（summary 已脱敏）→ App.tsx 全局监听弹 OS 通知（复用
   notificationsEnabled 开关，不新增设置项）；命中正文写在隔离树 `notes/inbox.md`，调度器不自动搬进主仓。
-  收件箱「去评审」打开该 Run 的只读 diff；「采纳进主仓」才拷 `notes/inbox.md`、`papers/watch-seen.md`、
+  收件箱「去评审」打开该 Run 的命中评审；「采纳进项目」才拷 `notes/inbox.md`、`papers/watch-seen.md`、
   `papers/watch-followup.md`、`notes/references.bib`（不回写 watchlist）。采纳后发 `watch-run-adopted`。
+- **评审与采纳口径（2026-10-13 定稿，修「每次评审都列旧命中、排除无效果、已采纳仍可再采纳」）**：
+  - 评审页只列**这次运行的新命中**＝冻结 `after` 条目 − `initial` 条目（`watch_review::new_hits_of`）；
+    收件箱在按日程复用的隔离树里只增不改，不扣旧条目的话每次评审都把以前各次命中再列一遍。
+  - 「留下/排除」写在隔离树 `.ccode/watch-review.json`（留下=用户标记；排除=这篇不进项目）。
+    决定校验对冻结证据做、不对实时收件箱做（工作目录重建后实时文件对不上不代表这次巡检没有这篇）；
+    决定文件损坏时写入 fail-closed 拒绝，不得静默清空其余决定。
+  - **采纳过滤**：采纳前把被「排除」的条目从冻结的 `notes/inbox.md` 结果文本里整段剔除
+    （`drop_excluded_from_snapshot` → `lit_watch::drop_inbox_entries` 按行范围删、清悬空批次标记），
+    未定与留下的一起进项目；`initial/before` 基线不动，冲突判定仍以整文件基线为准。
+  - **已采纳闸门**：历史行变「已采纳 · 查看」，评审只读（`locked`）；后端双闸——`adopt_watch_run`
+    对已采纳记录明确拒绝（重采纳是内容相同的空拷贝），`watch_run_decide` 对已采纳运行拒绝改决定。
+    重复采纳不再堆验收台账（`fact_already_recorded` 按 watch_adopt+run_id 去重）。
+  - **历史删除与级联清理（2026-10-13 用户拍板「历史运行记录支持删除」）**：历史行悬停 **✕** →
+    `schedule_run_delete`：Run 账行与事件、历史行、冻结证据一起删；隔离 worktree 按日程共享不随单条删；
+    已采纳进项目的产物不受影响。**删任务必级联**（`delete_schedule` / `delete_schedules_for_project`：
+    先拒删「有未结束运行」，删除后 `purge_schedule_side_effects` 清该日程全部 Run/快照/watch 任务行，
+    worktree 走回收站可反悔）——2026-10-13 前只删日程与订阅，运行/快照/任务行/worktree 全留，攒成
+    界面到不了的孤儿（当日手工清了 13 条）。
+  - **雷达定位（2026-10-13 用户拍板）**：雷达文献是项目内的**日常积累/资源储备**，不进科研流程——
+    巡检 prompt 明锁不写 `papers/included.md`、`notes/index.json`、`references.bib`；精读与引文库
+    由人发起（雷达行「加入积累」或从积累上发起检索/科研流程）后才动。流程开始后雷达命中不再往流程里加文献。
+    **精读接续**：某篇已有笔记（沉浸阅读建的/用户手写/上一轮流程）时，lit-notes 技能（§1a）与精读步
+    TASK 合同要求在原笔记上续写优化，「译段」「我的想法」两节与用户手写内容原样保留，不另起平行笔记。
+  - **双台账（2026-10-13 同日二批拍板「全按推荐+抽屉同批」）**。当日背景：`papers/included.md` 身兼
+    流程正典与雷达「加入精读」落点两职，是污染根源——用户随手加的行在主仓是未提交改动，进不了已开工
+    的步骤、又要靠人记得提交才放行合并；雷达台账（inbox/watch-seen/watch-followup）在模板没忽略它们的
+    老项目里被 git 跟踪，采纳一次产生一批 M 态脏行，把后续所有合并拦死。定案＝**积累与正典彻底拆层**：
+    - **数据分层**：`papers/reading-list.md`＝**积累账**（gitignored，「加入积累」唯一落点——按钮由
+      「加入精读」改名；去重域＝积累账 ∪ 正典 `papers/included.md` 两表并集，已在任一账不重复记）；
+      `papers/included.md`+`included.json`＝**流程正典**（检索步产出 / 人审移入移出 / 开工接驳三个入口）；
+      雷达台账（`notes/inbox.md`、`papers/watch-seen.md`、`papers/watch-followup.md`、
+      `.ccode/watch-explains.json`、`.ccode/pending-registrations.json`、`.ccode/acceptance-log*`）
+      全部 gitignored——台账 git 不可见，永不进任何步骤、永不影响合并。
+    - **运行期规则**：平时「加入积累」攒账＋随时开读写笔记；流程中雷达照常推送/采纳/积累；后到文献＝
+      下一轮的积累。雷达行书标双态（`ledgerMarkFor`：已在正典 / 仅在积累账，正典优先）；已积累态书标
+      点击＝展开「积累 N」抽屉并高亮该篇（2026-10-14：行内不放移出，移出只走抽屉 ✕）；仅在正典（不在
+      积累账）的书标点击＝打开已存全文（`to_fetch_progress` 已存，与标题点击同一动作），没有全文才说明
+      去处（正典进出在文件页——不默认用户想移出）；抽屉列出积累账条目、可移除，「精读」按钮有笔记显
+      「继续精读」（`list_reading_list_entries` / `remove_reading_list_entry`，`add_reading_list_entry`
+      去重后返回 added；笔记配对 `list_paper_notes` × `noteLinkForPaper`，与文件页精读状态同源）。
+    - **开工两动作**（接驳提交＋冻结快照）与合并闸门白名单重写：见「流水线开步与模板」「工作区生命周期」对应条目。
+    - **PDF 资源登记相位感知**：项目有 active/creating 工作区时 `register_pdf` 不写 `project.toml`
+      （流程期间档案卡属基准分支），改记 `.ccode/pending-registrations.json`（按 path 覆盖去重）；
+      项目打开（read_project_status）与工作区归档时 `replay_pending_registrations` 回放登记，
+      best-effort 失败记日志。
+    - **存量收口（迁移命令已删）**：2026-10-13 当日两个存量项目已手工迁移完。序列＝.gitignore 追加
+      台账 marker 块 → `git rm --cached` 台账文件（磁盘不动）→ **只 `git add .gitignore`** → 整索引单独提交
+      （不能对台账路径 git add——rm --cached 后它们已被忽略，add 拒收）。迁移命令与界面曾实现
+      （幂等 marker＋前置点名＋回滚），当晚按「未发布、留着没用就删」用户拍板移除，重建按此序列。
+      新项目 .gitignore 模板直接带台账面；存量 included.md 里的旧雷达行不搬迁，
+      由下一轮检索步当存量进料补齐 included.json。
 - **分发失败必须可见**：创建或编辑非 `lit-watch` 定时任务时，若技能无法分发到所选 Agent，
   日程本身可以保留，但弹层不得静默关闭；必须明确提示“任务已保存/创建，但技能分发失败”，
   并让用户先修复分发再运行。行内修改运行配置同口径。
@@ -779,14 +843,16 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
     打开雷达时，若全部条目都缺日期且该项目有已采纳的成功巡检，按最近一次完成日补上。
     已有任一条带日期则不猜归属，空态给出「按巡检日补记」（`repair_watch_batch_dates`，同样只在全部缺日期时写）。
   - **解析口径**：lit_watch.rs 把 `notes/inbox.md`（上限 500 条）、`papers/watch-followup.md`（付费墙待办）、
-    `papers/watchlist.md`（订阅读写：整表写回、保留注释行）、`papers/included.md`（精读清单增删、规范化标题去重）
+    `papers/watchlist.md`（订阅读写：整表写回、保留注释行）、`papers/included.md`（精读清单增删、规范化标题去重）、
+    `papers/reading-list.md`（积累账读写，2026-10-13 双台账：行格式与 included.md 逐字同构，解析复用 parse_included）
     解析为 DTO；格式不规整的条目容错跳过。所有操作门槛 = 已注册项目根 + canonicalize 防逃逸 + 读-改-原子写。
   - **收件箱 lit 类别**：key 前缀 `lit:`，胶囊排在「待确认」之后；最近一次成功 run 有 newEntries>0 且 24h 内 →
     条目「<项目名>有N条新命中」（隔离树未采纳则「有N条新命中待评审」），点击跳项目详情；dismiss 走既有签名机制。
   - **不挂步骤**：定时巡检不提供「关联步骤」。新命中只进雷达和收件箱。
     旧日程里若存过 `linkedStep`，保存时清掉，界面不再显示，也不在步骤圆点上提醒。
     `RunRecord.newEntries` 仍按跑前后 `inbox.md` 的 `## ` 标题数取差（超时/失败不记）。
-  - **精读清单与已读判定**：included.md 是「先攒后读」主路径；已读 = notes/ 有匹配笔记文件（规范化标题互相包含
+  - **精读清单与已读判定**：included.md 是流程正典、「先攒后读」的读侧（攒侧＝积累账 papers/reading-list.md，
+    2026-10-13 起雷达「加入积累」落那里）；已读 = notes/ 有匹配笔记文件（规范化标题互相包含
     判定），纯派生不建状态机；「开读」有已下载 PDF 走 previewReq 预览，没有则主按钮变「↓ 全文」先下载。
   - **期刊指标徽章（journal_metrics.rs）**：条目徽章（IF / 中科院大类分区 / TOP）在 `list_watch_entries` 出口按
     期刊名（journal 优先、source 回落）查表 enrichment，**展示时现算、不落 inbox.md**——技能规范与收件箱格式不变，
@@ -795,27 +861,29 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
     下载命令 jsDelivr 优先、raw 回落，.tmp 原子落盘后清进程内缓存）。匹配 = normalize_title 规范化精确匹配 +
     末尾出版商括号尾巴剥除重试（来源常写成「Advanced Functional Materials (Wiley)」，前端 sourceDisplayName 同口径），
     miss / 未装表一律 None 不虚构；合并表 HashMap 进程内 RwLock 缓存（7MB 不能每次 list 重解析）。
-    **条目行版式（2026-10-03）**：固定两行。第一行只有标题（截断；点开才换行）。第二行左侧是中文一句话 · 期刊，右侧依次是推荐/IF/分区/TOP、巡检相对时间、加入精读。解读、打开来源、⋯ 在第二行悬停或展开才出现。英文摘要与解读只在点开后出现。
+    **条目行版式（2026-10-03；行尾按钮 2026-10-13 随双台账改名）**：固定两行。第一行只有标题（截断；点开才换行）。第二行左侧是中文一句话 · 期刊，右侧依次是推荐/IF/分区/TOP、巡检相对时间、加入积累。解读、打开来源、⋯ 在第二行悬停或展开才出现。英文摘要与解读只在点开后出现。
     不在标题行插操作（2026-10-03 实测：悬停图标插进标题和徽章之间，把两行摘要行高撑乱）。禁止每条常驻铺英文摘要；也禁止标题被期刊名+徽章压成窄列（2026-08-25 否决仍有效）。
     **更新发现（v3.99+）**：status 带 downloadedAt（两份 CSV 取较新 mtime，不另记 meta）；check_journal_metrics_update
     用 GitHub commits API 按数据目录查最近 commit，与本地 mtime 严比（解析失败/未装表 = 无新版，不虚构提醒），
     前端卡头按钮有新版时标「（有新表）」、tooltip 显示下载于何时——只提示不自动下载，下载动作恒由用户发起。
-  - **雷达筛选（2026-08-25，project.toml `litWatchFilter`）**：三条可选条件（minIf / maxCasQuartile / topOnly，
+  - **雷达筛选（2026-08-25 立，2026-10-13 语义修订，project.toml `litWatchFilter`）**：三条可选条件（minIf / maxCasQuartile / topOnly，
     全空归一 None 不留空段），update_lit_watch_filter 读-改-原子写；**两处生效、同一口径**——新命中列表展示
     （前端 entryPassesFilter）与定时巡检 newEntries 计数（scheduler 前后各数一次过滤后条目取差，收件箱胶囊/通知
-    随之只算符合筛选的）。**指标未知（表未装/期刊未收录/IF 不可解析）一律放行不误伤**（lit_watch.rs
-    metrics_pass_filter ⇔ lit-watch.ts entryPassesFilter 双端镜像，改动需同步）；表未装时筛选不生效，
-    弹层与列表区均有明说提示。精读清单是用户自选的不过滤；被筛掉的条目不落任何状态，「查看全部」为纯前端临时态。
+    随之只算符合筛选的）。**2026-10-13 修订：设了筛选后指标未知（期刊未收录/IF 不可解析）＝不匹配**（lit_watch.rs
+    metrics_pass_filter ⇔ lit-watch.ts entryPassesFilter 双端镜像同改，两侧各有测试钉住）；不设筛选仍全部显示；
+    筛选把列表清空时给「隐藏了全部 N 条，点不限看全部」空态。精读清单是用户自选的不过滤。
   - **快筛解读（v3.192）**：雷达「◈ 解读」按标题+摘要写五节（问题与动机 / 做法与对象 / 摘要声称的结果 / 局限与未写明 / 对本课题的用处或适用研究方向），禁止三行口号和编造；结果落 `.ccode/watch-explains.json`（规范化标题去重，上限 500），`list_watch_entries` 出口挂 `WatchEntryDto.explain`，下次点解读直接展开不重跑。不写 `notes/inbox.md`。加载中禁止再用与底板同色的 `LoadingRows`（inset 上套 inset 是白板），改为「解读进行中…」。
   - **无头 AI 不进本项目会话（v3.193 / v3.194）**：解读与定时巡检归对话页「内部 AI」。问 AI（「看这份文件」）、沉浸阅读注入、接力简报也不进项目页会话列表，但仍在对话页。`sessionExcludedFromProjectList` 是项目列表口径；不要把项目路径写入 `usage_provenance.internal`。
   - **下载白名单与资源登记**：download_paper_pdf 仅 http/https、60MB 上限流式中止、%PDF- 魔数校验、文件名
     sanitize、落 papers/ 重名 -2/-3、自动登记 project.toml `[[resources]]` type="paper"；非直链（出版商页）前端
-    付费墙文献走 watch-followup.md「待人工下载」。
+    付费墙文献走 watch-followup.md「待人工下载」。两种写法都认：一行一条
+    （`- 标题 — 作者 — 链接 — 原因`），以及和收件箱同构的多行（`## 标题` 下挂来源/作者/缺失原因）。
+    多行时标题取 `##` 行，链接取来源行里的 DOI，期刊、日期、作者和缺失原因并进备注。
     能免费直接下的 PDF（arXiv `/pdf/` 或以 `.pdf` 结尾）由巡检 Agent 在结束前下到隔离树 `papers/`；
     采纳时 `adopt_watch_pdfs` 把主仓还没有的 PDF 拷进项目根并登记。界面不再放「获取全文」：
     出版商页和 DOI 落地页大多下不成，逐篇获取会把行撑乱。
     **忽略这条**只记本机（`ccode.litDismissed`）。待人工下载标题与被忽略命中规范化后互相包含（短边 ≥12）时，下面那一行一起不显示，不改 `watch-followup.md`。
-    **加入精读**写入 `papers/included.md`。`to_fetch_progress` 或项目资源里已有这篇 PDF 时，打开沉浸阅读；没有则停在雷达并说明还缺全文。再点已在清单里的书签，有全文仍打开。
+    **加入积累**（2026-10-13 由「加入精读」改名）写入积累账 `papers/reading-list.md`（gitignored，去重域＝两表并集，已在正典 included.md 的不重复记）。只写账不跳转（2026-10-14 拍板：不跳精读、不开全文，toast 指路）；再点已积累的书标＝展开抽屉定位该篇，移出只走抽屉 ✕；仅在正典的书标点击＝打开已存全文，没有全文才说明去处。抽屉「精读」进沉浸阅读，有笔记显「继续精读」。开工接驳与检索步进料见「流水线开步与模板」/「评审与采纳口径·双台账」。
     待人工下载对照 `to_fetch_progress`，已存显示「✓ 已存」、点标题到文件页打开；
     未存给「官网 / 等待收货…+取消 / 关联」，底下「打开 papers/」。官网走 `inst_browser_open` 收货。
   - **机构访问通道（2026-09-16，fetch_paper_fulltext 逐篇获取阶梯）**：形态是**人登录一次、系统复用会话**——
@@ -1114,7 +1182,7 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
 - **示例课题（15 分钟精读环）**：`projects::create_demo_project` 在「文档/Mesa 示例课题」幂等生成演示项目。步骤**就是**内置「英文综述」模板（`PIPELINE_TEMPLATES` id=review → `src-tauri/resources/pipeline-review.json`，改 `REVIEW_STEPS` 后跑 `scripts/export-review-template.ts`；`tests/pipeline-review-sync.test.ts` 守同步）。演示只叠加：课题主题、示例 PDF/清单、检索步 `seed_complete = true`。打开后当前步是「文献精读与笔记」，主按钮「开读这一篇」。已注册直接返回现有 project。目录还在但未注册（删除后再点「创建示例课题」、或废纸篓/iCloud 还原）时**档案卡按当前英文综述模板重写**，缺的演示文件才补，已有笔记/PDF/README 不动。用「添加项目」选中旧目录只读盘上的档案卡，不会刷新步骤——要同步流程请用「创建示例课题」。**「开读这一篇」不得挂到普通模板**：判定单一出处 `demoReadPaperResource`（检索步 `seedComplete` + 当前步挂 `lit-notes` + 已有 PDF）；英文综述/科研论文/毕业论文等流程线只显示「开始」。有 PDF 不是充分条件——真实课题导入文献后几乎都会中招。
 - **开步确认后自动拉起 Agent**：`startPipelineStep` 经 `buildWorkspaceTerminalRequest(..., { autoStart, launch })` 带 `autoStart`。确认弹层三行（本步要交 / 接到的输入芯片 / 将用哪个 Agent）+ 连接选择；无连接时主按钮「先加连接」跳连接页。TASK.md 默认折叠。
 - **合并后自动提货**：`merge_workspace` 在拷回 `papers/` 等 gitignored 产物之后，按本步 `expected_artifacts` 扫项目根，未跟踪文件自动 `register_artifact`；已 git 跟踪的跳过。开步弹层芯片来自 `inspect_step_inputs`（扫磁盘，不依赖人填 yaml）。
-- **雷达收件箱按篇开读**：`lit:` 条目主文案是论文标题；点了先加入精读清单，有已下载 PDF 则 `setReaderReq` 进沉浸阅读，否则落雷达并展开那一条。
+- **雷达收件箱按篇开读**：`lit:` 条目主文案是论文标题；点了先加入积累清单（2026-10-13 前写精读清单 included.md，现落积累账 reading-list.md），有已下载 PDF 则 `setReaderReq` 进沉浸阅读，否则落雷达并展开那一条。
 - **界面白话双层呈现（双语义）**：UI 主文案一律白话（保存到历史 / 相对主分支 / 多出 N 个保存点 / 改动说明），git 技术信息
   不删除、降为二级呈现（小字 mono、悬浮 title、详情 popover、⋯ 菜单），**不加任何模式开关**；状态分组等纯逻辑集中放
   `src/git-status-groups.ts`，新增 git 相关 UI 必须遵守同一双层规则。

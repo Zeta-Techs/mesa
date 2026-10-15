@@ -2695,7 +2695,7 @@ pub(crate) fn build_adapt_prompt(name: &str, current: &str) -> String {
     format!(
         "你是技能改写助手。下面是一份 agent 技能文件 SKILL.md「{name}」，和 Mesa 科研工作台的流水线路径约定。\n\n\
          【流水线路径约定（相对项目根）】\n\
-         - papers/ 文献检索与筛选：screening.md 初筛、included.md 精读清单、to-fetch.md 付费墙待办、watchlist.md 监控订阅\n\
+         - papers/ 文献检索与筛选：screening.md 初筛、included.md 精读清单（流程正典）、reading-list.md 用户积累账（gitignored，只读进料、不回写不清空）、to-fetch.md 付费墙待办、watchlist.md 监控订阅；工作区 .ccode/handoff-lit-intake.md＝开工冻结的积累进料快照（只读）\n\
          - notes/ 精读笔记与文献雷达收件箱（inbox.md）\n\
          - references.bib 引文库（引用一律用 [@键] 对照它）\n\
          - outline.md 综述/论文大纲\n\

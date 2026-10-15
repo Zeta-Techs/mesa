@@ -4,11 +4,14 @@ import {
   entryPassesFilter,
   filterLitDismissed,
   followupMatchesDismissed,
+  pendingDownloads,
   fulltextLinkFor,
   groupEntriesByDay,
   groupEntriesByKeyword,
   includedLineFor,
   isRead,
+  ledgerMarkFor,
+  normalizedTitleSet,
   litInboxCandidates,
   litInboxForRegisteredProjects,
   papersForLitCandidate,
@@ -25,6 +28,8 @@ import {
   watchEntryScanLine,
   UNCATEGORIZED_KEYWORD,
   weeklyBuckets,
+  entryInTrendBucket,
+  trendBuckets,
   weeklyTrend,
   shanghaiDay,
   undatedWatchRuns,
@@ -333,6 +338,41 @@ test("normalizeTitle：小写、标点折叠为单空格", () => {
   assert.equal(normalizeTitle("  "), "");
 });
 
+test("normalizedTitleSet：清单行折成规范化标题集合，空白标题不入集合", () => {
+  assert.deepEqual(
+    [...normalizedTitleSet([
+      { title: "Attention Is All You Need!" },
+      { title: "  " },
+      { title: "deep-residual learning" },
+    ])].sort(),
+    ["attention is all you need", "deep residual learning"],
+  );
+  assert.deepEqual([...normalizedTitleSet([])], []);
+  assert.deepEqual([...normalizedTitleSet(null)], []);
+});
+
+test("ledgerMarkFor：书标双态两表并集，正典优先，规范化全等", () => {
+  const included = normalizedTitleSet([{ title: "Attention Is All You Need!" }]);
+  const reading = normalizedTitleSet([{ title: "Deep-Residual  Learning" }]);
+  // 规范化后全等命中（大小写 / 标点 / 多空格不敏感）
+  assert.equal(ledgerMarkFor("attention is all you need", included, reading), "included");
+  assert.equal(ledgerMarkFor("Deep-Residual Learning", included, reading), "reading");
+  // 两表都有：正典 included.md 优先
+  assert.equal(
+    ledgerMarkFor(
+      "Attention Is All You Need",
+      included,
+      normalizedTitleSet([{ title: "ATTENTION IS ALL YOU NEED" }]),
+    ),
+    "included",
+  );
+  // 都不在 / 空标题
+  assert.equal(ledgerMarkFor("Another Paper", included, reading), null);
+  assert.equal(ledgerMarkFor("  ", included, reading), null);
+  // 不做包含匹配：标题片段不算已积累
+  assert.equal(ledgerMarkFor("Deep-Residual", included, reading), null);
+});
+
 test("isRead：规范化标题与笔记文件名互相包含即已读；无笔记全未读", () => {
   const e = entry({ title: "Attention Is All You Need" });
   assert.equal(isRead(e, ["attention-is-all-you-need.md"]), true);
@@ -556,6 +596,30 @@ test("followupMatchesDismissed：忽略命中后，同标题的待人工下载�
     false,
   );
   assert.equal(followupMatchesDismissed("WB", hits, dismissed), false);
+  assert.equal(
+    followupMatchesDismissed(
+      "Self-supporting WB/WC ceramic composite electrodes for a later clause",
+      hits,
+      dismissed,
+    ),
+    true,
+  );
+});
+
+test("pendingDownloads：没有 PDF 的命中才待获取，忽略后同一篇一起消失", () => {
+  const hits = [
+    { id: "w-1", title: "Self-supporting WB/WC ceramic composite electrodes", url: "https://doi.org/10.1000/a" },
+    { id: "w-2", title: "Rational Synthesis of High-Entropy Microrings", url: "https://doi.org/10.1000/b" },
+  ];
+  const followups = [
+    { title: "Rational Synthesis of High-Entropy Microrings and Their Performance", url: "https://doi.org/10.1000/b", note: "付费墙" },
+    { title: "一篇跟进队列里多出来的文献题目足够长", url: "", note: "无摘要" },
+  ];
+  const all = pendingDownloads(hits, followups, new Set(["w-1"]), new Set());
+  assert.deepEqual(all.map((row) => row.entryId), ["w-2", null]);
+  assert.equal(all[0].note, "付费墙");
+  const after = pendingDownloads(hits, followups, new Set(["w-1"]), new Set(["w-2"]));
+  assert.deepEqual(after.map((row) => row.title), ["一篇跟进队列里多出来的文献题目足够长"]);
 });
 
 test("filterLitDismissed：忽略表内的条目被过滤", () => {
@@ -584,7 +648,51 @@ test("sourceDisplayName：剥出版商括号尾巴", () => {
   assert.equal(sourceDisplayName("(Wiley)"), "(Wiley)");
 });
 
-test("watchEntryScanLine：中文一句话 · 期刊，不含英文摘要", () => {
+test("trendBuckets：日/周/月三粒度按日历对齐计数", () => {
+  const mk = (date: string): WatchEntryDto =>
+    ({ ...entry({}), date, id: "w-" + date });
+  const now = new Date(2026, 9, 14); // 2026-10-14 周三
+  // 日：今天 2 篇、昨天 1 篇 → 14 桶，末桶 2、次末桶 1
+  const dayRows = [mk("2026-10-14"), mk("2026-10-14"), mk("2026-10-13")];
+  const dayBuckets = trendBuckets(dayRows, "day", now);
+  assert.equal(dayBuckets.length, 14);
+  assert.equal(dayBuckets[13]!.count, 2, "今天的命中进末桶");
+  assert.equal(dayBuckets[12]!.count, 1);
+  assert.equal(dayBuckets[13]!.label, "10/14");
+  // 周：本周（10/12 起）3 篇进末桶；上周一的落到倒数第二桶
+  const weekRows = [...dayRows, mk("2026-10-08")];
+  const weekBuckets = trendBuckets(weekRows, "week", now);
+  assert.equal(weekBuckets.length, 8);
+  assert.equal(weekBuckets[7]!.count, 3);
+  assert.equal(weekBuckets[6]!.count, 1);
+  // 月：10 月 3 篇、9 月 1 篇 → 6 桶，末桶 3、前一桶 1
+  const monthRows = [...dayRows, mk("2026-09-02")];
+  const monthBuckets = trendBuckets(monthRows, "month", now);
+  assert.equal(monthBuckets.length, 6);
+  assert.equal(monthBuckets[5]!.count, 3);
+  assert.equal(monthBuckets[4]!.count, 1);
+  assert.equal(monthBuckets[5]!.label, "10月");
+  // key 与推荐计数：推荐条目进上层段、key 可作筛选键
+  const recRow: WatchEntryDto = { ...entry({ relevance: "推荐" }), date: "2026-10-14" };
+  const normRow: WatchEntryDto = { ...entry({ relevance: "相关" }), date: "2026-10-14" };
+  const mix = trendBuckets([recRow, normRow], "day", now);
+  assert.equal(mix[13]!.count, 2);
+  assert.equal(mix[13]!.recommendedCount, 1);
+  assert.equal(mix[13]!.key, "2026-10-14");
+  assert.ok(entryInTrendBucket(recRow, "day", "2026-10-14"));
+  assert.ok(!entryInTrendBucket(recRow, "day", "2026-10-13"));
+  assert.ok(!entryInTrendBucket({ ...entry({}), date: null }, "day", "2026-10-14"), "无日期不进任何桶");
+  // 周粒度：同一周的两天命中同一 key
+  assert.equal(
+    bucketKeyOfWeek(trendBuckets([recRow], "week", now), recRow),
+    true,
+  );
+  function bucketKeyOfWeek(bs: ReturnType<typeof trendBuckets>, e: WatchEntryDto): boolean {
+    return bs.some((b) => b.count === 1 && entryInTrendBucket(e, "week", b.key));
+  }
+});
+
+test("watchEntryScanLine：只出中文一句话（期刊·日期在行内固定区，不进截断串）", () => {
   assert.equal(
     watchEntryScanLine(
       entry({
@@ -594,13 +702,13 @@ test("watchEntryScanLine：中文一句话 · 期刊，不含英文摘要", () =
         abstractFirst: "Magnesium-ion batteries are promising.",
       }),
     ),
-    "镁电池正极仍缺合适材料 · Nature Energy",
+    "镁电池正极仍缺合适材料",
   );
   assert.equal(
     watchEntryScanLine(
       entry({ zhSummary: "", journal: null, source: "arxiv" }),
     ),
-    "arxiv",
+    "",
   );
   assert.equal(
     watchEntryScanLine(entry({ zhSummary: "  ", journal: null, source: "" })),
@@ -682,25 +790,25 @@ test("雷达筛选：active 判定 / 条目过滤 / 摘要文案（与 Rust 同�
   assert.equal(litWatchFilterActive({ maxCasQuartile: 2 }), true);
   assert.equal(litWatchFilterActive({ topOnly: true }), true);
 
-  // 指标未知一律放行不误伤
-  assert.equal(entryPassesFilter(null, { minIf: 10, topOnly: true }), true);
+  // 选了条件但没有指标：不显示
+  assert.equal(entryPassesFilter(null, { minIf: 10, topOnly: true }), false);
   const met = (
     impactFactor: string | null,
     casQuartile: number | null,
     top: boolean,
   ): WatchEntryDto["metrics"] => ({ impactFactor, casQuartile, top });
 
-  // IF 门槛：低于阈值排除；恰好等于通过；缺失/不可解析放行
+  // IF 门槛：低于阈值、缺失、不可解析都不显示；恰好等于通过
   assert.equal(entryPassesFilter(met("3.9", 3, false), { minIf: 10 }), false);
   assert.equal(entryPassesFilter(met("29.1", 3, false), { minIf: 10 }), true);
   assert.equal(entryPassesFilter(met("10", 3, false), { minIf: 10 }), true);
-  assert.equal(entryPassesFilter(met(null, 3, false), { minIf: 10 }), true);
-  assert.equal(entryPassesFilter(met("N/A", 3, false), { minIf: 10 }), true);
+  assert.equal(entryPassesFilter(met(null, 3, false), { minIf: 10 }), false);
+  assert.equal(entryPassesFilter(met("N/A", 3, false), { minIf: 10 }), false);
 
-  // 分区：超过 N 区排除；未知放行
+  // 分区：超过 N 区或不分区都不显示
   assert.equal(entryPassesFilter(met(null, 3, false), { maxCasQuartile: 2 }), false);
   assert.equal(entryPassesFilter(met(null, 1, false), { maxCasQuartile: 2 }), true);
-  assert.equal(entryPassesFilter(met(null, null, false), { maxCasQuartile: 2 }), true);
+  assert.equal(entryPassesFilter(met(null, null, false), { maxCasQuartile: 2 }), false);
 
   // TOP：已知非 TOP 排除；未知放行；条件之间是「且」
   assert.equal(entryPassesFilter(met(null, null, false), { topOnly: true }), false);

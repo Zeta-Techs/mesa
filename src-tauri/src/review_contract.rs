@@ -13,12 +13,51 @@ pub const KIND_PIPELINE_MERGE: &str = "pipeline_merge";
 pub const KIND_CODING_MERGE: &str = "coding_merge";
 pub const KIND_WATCH_ADOPT: &str = "watch_adopt";
 
-/// 仅未跟踪的本机验收账本/锁不阻塞下一次合并；用户已跟踪的改动和其它 .ccode 文件照常保护。
+/// 合并闸门的台账豁免（2026-10-13 双台账拍板）：解析 porcelain 状态行，按路径分两档。
+/// - **只豁免未跟踪（??）**：Mesa 审计/缓存与积累账。reading-list 只豁免 ?? 是防呆设计——
+///   agent 若违规把积累账提交进工作区分支，合并后它变 tracked，后续写入产生 M 会拦合并并点名。
+/// - **未跟踪与改动都豁免**：日常积累面（雷达台账 + 用户笔记 + 验收台账）。闸门只负责提前拦，
+///   git merge 自身的脏文件保护仍会拒绝任何真覆盖——真同文件并发走 git 三向合并或明确报错。
 pub fn is_untracked_ledger_file(status: &str) -> bool {
+    let line = status.trim_end();
+    if line.len() < 4 {
+        return false;
+    }
+    let untracked = line.starts_with("??");
+    // porcelain 路径可能带引号（非 ASCII）；重命名行是 "old -> new"，两侧都认
+    fn strip(p: &str) -> &str {
+        p.trim().trim_matches('"')
+    }
+    let sides: Vec<&str> = line[3..].split(" -> ").map(strip).collect();
+    let hit = |f: fn(&str) -> bool| sides.iter().any(|p| f(p));
+    if untracked {
+        return hit(is_untracked_only_ledger) || hit(is_accumulation_ledger);
+    }
+    hit(is_accumulation_ledger)
+}
+
+/// 只豁免未跟踪态的 Mesa 台账（迁移完成前它们可能仍被跟踪；迁出后 ignore 双保险）。
+fn is_untracked_only_ledger(path: &str) -> bool {
     matches!(
-        status,
-        "?? .ccode/acceptance-log.jsonl" | "?? .ccode/acceptance-log.lock"
+        path,
+        ".ccode/watch-explains.json"
+            | ".ccode/pending-registrations.json"
+            | "papers/reading-list.md"
     )
+}
+
+/// 日常积累面：雷达台账、用户精读笔记、本机验收台账、雷达订阅——任何常规状态都不拦合并。
+/// notes/index.json 是流程正典（.json），不在此列。
+fn is_accumulation_ledger(path: &str) -> bool {
+    matches!(
+        path,
+        "notes/inbox.md"
+            | "papers/watch-seen.md"
+            | "papers/watch-followup.md"
+            | ".ccode/acceptance-log.jsonl"
+            | ".ccode/acceptance-log.lock"
+    ) || (path.starts_with("notes/") && path.ends_with(".md"))
+        || path.starts_with(".ccode/watch/")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -326,9 +365,36 @@ mod tests {
     fn only_untracked_ledger_files_are_nonblocking() {
         assert!(is_untracked_ledger_file("?? .ccode/acceptance-log.jsonl"));
         assert!(is_untracked_ledger_file("?? .ccode/acceptance-log.lock"));
-        assert!(!is_untracked_ledger_file(" M .ccode/acceptance-log.jsonl"));
+        // 验收台账已跟踪态也豁免：合并写台账不应拦住下一次合并
+        assert!(is_untracked_ledger_file(" M .ccode/acceptance-log.jsonl"));
+        assert!(is_untracked_ledger_file("M  .ccode/acceptance-log.lock"));
+        // 积累面：雷达台账与用户笔记，?? 与 M 双态豁免
+        assert!(is_untracked_ledger_file("?? notes/inbox.md"));
+        assert!(is_untracked_ledger_file(" M papers/watch-seen.md"));
+        assert!(is_untracked_ledger_file(" M papers/watch-followup.md"));
+        assert!(is_untracked_ledger_file("?? notes/my-note.md"));
+        assert!(is_untracked_ledger_file(" M notes/slug/我的笔记.md"));
+        assert!(is_untracked_ledger_file("?? papers/reading-list.md"));
+        // 雷达订阅目录（.ccode/watch/<任务id>/watchlist.md）同属积累面
+        assert!(is_untracked_ledger_file("?? .ccode/watch/s1/watchlist.md"));
+        assert!(is_untracked_ledger_file(" M .ccode/watch/s1/watchlist.md"));
+        assert!(is_untracked_ledger_file("?? .ccode/watch-explains.json"));
+        assert!(is_untracked_ledger_file("?? .ccode/pending-registrations.json"));
+        // 积累账只豁免 ??：agent 违规提交后变 tracked，M 态要拦并点名（防呆）
+        assert!(!is_untracked_ledger_file(" M papers/reading-list.md"));
+        assert!(!is_untracked_ledger_file(" M .ccode/watch-explains.json"));
+        // 流程正典与其它文件照常保护
+        assert!(!is_untracked_ledger_file(" M notes/index.json"));
         assert!(!is_untracked_ledger_file("?? .ccode/memory.md"));
         assert!(!is_untracked_ledger_file("?? .ccode/project.toml"));
+        assert!(!is_untracked_ledger_file(" M papers/included.md"));
+        assert!(!is_untracked_ledger_file(" M manuscript/main.md"));
+        // 重命名行两侧都认；引号路径剥壳；近邻路径不误豁免
+        assert!(is_untracked_ledger_file("R  notes/old.md -> notes/new.md"));
+        assert!(is_untracked_ledger_file("?? \"notes/带空格 的笔记.md\""));
+        assert!(!is_untracked_ledger_file("?? notes/inbox.md.bak"));
+        assert!(!is_untracked_ledger_file("?? papers/watch-seen-report.md"));
+        assert!(!is_untracked_ledger_file("?? sub/notes/inbox.md"));
     }
 
     #[test]

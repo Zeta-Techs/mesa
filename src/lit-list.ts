@@ -2,6 +2,8 @@
  * 无流程科研文献/笔记列表：展示名、编号、状态与过滤纯逻辑。
  */
 
+import { normalizeTitle } from "./lit-watch.ts";
+
 const DISPLAY_EXT = /\.(pdf|md|markdown|mdx|qmd|ris|bib|txt|csv|tsv|docx|xlsx)$/i;
 
 /** 行上隐去类型后缀（左侧已有 PDF / M↓ 识别），完整文件名留给 title */
@@ -42,11 +44,17 @@ export function pickContinueNotePath(names: readonly string[]): string | null {
   return [...notes].sort(compareNotesBySeq)[0] ?? null;
 }
 
-export type LitReadState = "read" | "queued" | "unread";
+export type LitReadState = "read" | "queued" | "accumulated" | "unread";
 
-export function litReadState(hasNote: boolean, included: boolean): LitReadState {
+/** 双台账口径：已有笔记 > 已在精读清单（流程正典 included.md）> 已积累（积累清单 reading-list.md）> 未读 */
+export function litReadState(
+  hasNote: boolean,
+  accumulated: boolean,
+  included: boolean,
+): LitReadState {
   if (hasNote) return "read";
   if (included) return "queued";
+  if (accumulated) return "accumulated";
   return "unread";
 }
 
@@ -56,9 +64,38 @@ export const LIT_STATUS_FILTERS: {
 }[] = [
   { id: "all", label: "全部" },
   { id: "read", label: "已读" },
-  { id: "queued", label: "精读" },
+  { id: "queued", label: "已在清单" },
+  { id: "accumulated", label: "已积累" },
   { id: "unread", label: "未读" },
 ];
+
+/** 双台账文件行的白话显示名：积累账与流程正典一眼可分，其余走文件名 */
+export function ledgerFileDisplayName(path: string): string | null {
+  const norm = path.replace(/\\/g, "/").replace(/^\.\//, "");
+  if (norm === "papers/reading-list.md") return "积累清单（我的精读候选）";
+  if (norm === "papers/included.md") return "精读清单（流程）";
+  return null;
+}
+
+/** 文献 PDF 是否已进积累清单（papers/reading-list.md）：文件名 stem 与条目标题规范化互相包含，
+ *  与精读清单（lit-watch 的 paperIsIncluded）同一匹配口径 */
+export function paperIsAccumulated(
+  pdfPath: string,
+  entries: readonly { title: string }[],
+): boolean {
+  const name = pdfPath.replace(/\\/g, "/").split("/").pop() ?? pdfPath;
+  const stem = name.replace(/\.[^.]*$/, "");
+  const n = normalizeTitle(stem);
+  if (!n) return false;
+  return entries.some((e) => {
+    const t = normalizeTitle(e.title);
+    if (!t) return false;
+    if (n === t) return true;
+    if (!(n.includes(t) || t.includes(n))) return false;
+    const shorter = n.length < t.length ? n : t;
+    return shorter.length >= 12;
+  });
+}
 
 export function litRowMatches(
   title: string,

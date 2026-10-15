@@ -55,6 +55,10 @@ pub struct WatchEntryDto {
     pub zh_summary: String,
     /// 来源行里的链接/DOI 段；没有为空串
     pub url: String,
+    /// 来源行第二段的发表日期（arXiv 发布日/期刊出版日）；旧条目缺段为 None。
+    /// 与 `date`（巡检批次日，趋势图用）是两回事
+    #[serde(default)]
+    pub pub_date: Option<String>,
     /// 最近的巡检批次日期（标准注释或旧版巡检标题）；缺失/无效为 None
     pub date: Option<String>,
     /// 条目在 inbox.md 中的行范围（1 起，闭区间），供前端定位/高亮
@@ -152,7 +156,9 @@ fn resolve_inside(root: &Path, rel: &str) -> Result<PathBuf, String> {
     if p.exists() || p.is_symlink() {
         let c =
             crate::paths::canonicalize_plain(&p).map_err(|e| format!("路径无效（{rel}）: {e}"))?;
-        if !crate::paths::path_within_path(&c, root) {
+        // root 在测试里可能是未解析的 /var → /private/var；先对齐再比
+        let root_c = crate::paths::canonicalize_plain(root).unwrap_or_else(|_| root.to_path_buf());
+        if !crate::paths::path_within_path(&c, &root_c) {
             return Err(format!("{rel} 指向项目目录之外，拒绝访问"));
         }
     }
@@ -304,22 +310,65 @@ fn parse_field_line(line: &str) -> Option<(&str, &str)> {
     Some((k.trim(), v.trim()))
 }
 
-/// 来源行值拆分：固定格式 `<来源> — <日期> — <链接或DOI>`，容错处理缺段
-fn split_source_line(value: &str) -> (String, String) {
-    let segs: Vec<&str> = value.split(" — ").map(|s| s.trim()).collect();
+/// 来源行值拆分：固定格式 `<来源> — <日期> — <链接或DOI>`，容错处理缺段。
+/// 分隔符按 em/en 破折号且空格可有可无（agent 实测会写 `…）— 2026-10-07 — DOI…`），
+/// 段内含日期的取**最靠前的完整日期**（`2026-10-06 线上（期号 2026-11）`取 2026-10-06）。
+fn split_source_line(value: &str) -> (String, String, Option<String>) {
+    let segs: Vec<&str> = value
+        .split(['—', '–'])
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
     let source = segs.first().copied().unwrap_or("").to_string();
-    let url = if segs.len() >= 3 {
-        // 第三段起都归链接（链接本身含 " — " 的极端情况不砍）
-        segs[2..].join(" — ")
-    } else {
-        // 只有两段时第二段可能是日期也可能是链接：像链接才算链接
-        segs.get(1)
-            .copied()
-            .filter(|s| looks_like_link(s))
-            .unwrap_or("")
-            .to_string()
+    let mut date: Option<String> = None;
+    let mut url = String::new();
+    for seg in segs.iter().skip(1) {
+        if url.is_empty() && looks_like_link(seg) {
+            url = (*seg).to_string();
+            continue;
+        }
+        if date.is_none() {
+            if let Some(d) = leading_day(seg) {
+                date = Some(d);
+            }
+        }
+    }
+    (source, url, date)
+}
+
+/// 从段里取最靠前的日期（YYYY-MM-DD / YYYY.M.D / YYYY/M/D，月日缺零也认）；
+/// 整段就是日期时原样返回，带尾巴时只取日期部分。
+fn leading_day(seg: &str) -> Option<String> {
+    let t = seg.trim();
+    if looks_like_day(t) {
+        return Some(t.split(['T', ' ']).next().unwrap_or(t).trim().to_string());
+    }
+    // 扫描每个空格分隔的 token：命中第一个像日期的（“2026-10-06 线上（期号 2026-11）”取前者）
+    for tok in t.split_whitespace() {
+        let cleaned = tok.trim_matches(|c: char| !c.is_ascii_digit() && !matches!(c, '-' | '.' | '/'));
+        if !cleaned.is_empty() && looks_like_day(cleaned) {
+            return Some(cleaned.to_string());
+        }
+    }
+    None
+}
+
+/// 来源行里的日期段：YYYY-MM-DD / YYYY.MM.DD / YYYY/MM/DD（月日缺零也认）
+fn looks_like_day(s: &str) -> bool {
+    // 期刊接口可能带 ISO 时间后缀（2026-10-12T09:00:00Z）：日期判定只看 T 前面
+    let t = s.trim().split(['T', ' ']).next().unwrap_or("").trim();
+    let norm = t.replace(['.', '/'], "-");
+    let mut parts = norm.splitn(3, '-');
+    let (Some(y), Some(m), rest) = (parts.next(), parts.next(), parts.next()) else {
+        return false;
     };
-    (source, url)
+    let y_ok = y.len() == 4 && y.chars().all(|c| c.is_ascii_digit());
+    let m_ok = (1..=2).contains(&m.len()) && m.chars().all(|c| c.is_ascii_digit());
+    let d_ok = match rest {
+        Some(d) => (1..=2).contains(&d.len()) && d.chars().all(|c| c.is_ascii_digit()),
+        None => true,
+    };
+    y_ok && m_ok && d_ok
 }
 
 fn looks_like_link(s: &str) -> bool {
@@ -347,6 +396,7 @@ struct EntryBuilder {
     last_line: u32,
     date: Option<String>,
     id_date: Option<String>,
+    pub_date: Option<String>,
     source: String,
     authors: String,
     abstract_first: String,
@@ -365,6 +415,7 @@ impl EntryBuilder {
             last_line: start_line,
             date,
             id_date,
+            pub_date: None,
             source: String::new(),
             authors: String::new(),
             abstract_first: String::new(),
@@ -394,6 +445,7 @@ impl EntryBuilder {
             journal: self.journal,
             zh_summary: self.zh_summary,
             url: self.url,
+            pub_date: self.pub_date,
             date,
             raw_line_range: [self.start_line, self.last_line],
             // 期刊指标在 list_watch_entries 列表出口统一 enrichment，解析器不管
@@ -465,9 +517,12 @@ fn parse_inbox_entries_with_cap(text: &str, cap: bool) -> Vec<WatchEntryDto> {
             if let Some((k, v)) = parse_field_line(line) {
                 match k {
                     "来源" => {
-                        let (source, url) = split_source_line(v);
+                        let (source, url, pub_date) = split_source_line(v);
                         b.source = source;
                         b.url = url;
+                        if pub_date.is_some() {
+                            b.pub_date = pub_date;
+                        }
                     }
                     "作者" => b.authors = v.to_string(),
                     "摘要首句" => b.abstract_first = v.to_string(),
@@ -500,6 +555,74 @@ fn parse_inbox_entries(text: &str) -> Vec<WatchEntryDto> {
     parse_inbox_entries_with_cap(text, true)
 }
 
+/// 评审页用：一份收件箱文本里的全部命中，不截断，并带上期刊指标。
+pub(crate) fn watch_inbox_from_text(text: &str) -> Vec<WatchEntryDto> {
+    let mut entries = parse_inbox_entries_with_cap(text, false);
+    for entry in &mut entries {
+        let name = match &entry.journal {
+            Some(journal) if !journal.trim().is_empty() => journal.as_str(),
+            _ => entry.source.as_str(),
+        };
+        entry.metrics = crate::journal_metrics::lookup(name);
+    }
+    entries
+}
+
+/// 采纳时按评审「排除」决定剔除条目：按解析器同口径的行范围整段删掉被排除的条目，
+/// 其余原文保留；条目删空后遗留的批次标记行（其后到下一标记间再无内容）一并清掉。
+/// 传入 id 不在本文里的忽略；返回文本保持原结尾换行习惯。
+pub(crate) fn drop_inbox_entries(text: &str, excluded_ids: &std::collections::HashSet<&str>) -> String {
+    if excluded_ids.is_empty() {
+        return text.to_string();
+    }
+    let mut drop_lines = std::collections::HashSet::new();
+    for entry in parse_inbox_entries_with_cap(text, false) {
+        if excluded_ids.contains(entry.id.as_str()) {
+            for line in entry.raw_line_range[0]..=entry.raw_line_range[1] {
+                drop_lines.insert(line);
+            }
+        }
+    }
+    if drop_lines.is_empty() {
+        return text.to_string();
+    }
+    let kept: Vec<&str> = text
+        .lines()
+        .enumerate()
+        .filter(|(idx, _)| !drop_lines.contains(&(*idx as u32 + 1)))
+        .map(|(_, line)| line)
+        .collect();
+    // 清掉因此悬空的批次标记：标记行到下一标记行（或文末）之间只剩空行即删
+    let mut pruned: Vec<&str> = Vec::with_capacity(kept.len());
+    let mut marker_slots: Vec<usize> = Vec::new();
+    for line in kept {
+        let is_marker = line.trim().starts_with("<!-- watch-run:") || parse_batch_heading(line).is_some();
+        if is_marker {
+            // 回看已收下的行：上个标记之后若只有空行，标记作废
+            if let Some(&slot) = marker_slots.last() {
+                if pruned[slot + 1..].iter().all(|l| l.trim().is_empty()) {
+                    pruned.drain(slot..);
+                }
+            }
+            marker_slots.clear();
+            marker_slots.push(pruned.len());
+            pruned.push(line);
+            continue;
+        }
+        pruned.push(line);
+    }
+    if let Some(&slot) = marker_slots.last() {
+        if pruned[slot + 1..].iter().all(|l| l.trim().is_empty()) {
+            pruned.drain(slot..);
+        }
+    }
+    let mut result = pruned.join("\n");
+    if text.ends_with('\n') {
+        result.push('\n');
+    }
+    result
+}
+
 /// scheduler 用：lit-watch 运行前后各数一次条目数取差值（`## ` 标题计数，文件缺失按 0）
 pub(crate) fn count_inbox_entries(root: &Path) -> u32 {
     let Ok(text) = fs::read_to_string(root.join("notes").join("inbox.md")) else {
@@ -510,8 +633,7 @@ pub(crate) fn count_inbox_entries(root: &Path) -> u32 {
 
 // ===== 雷达筛选（project.toml 的 lit_watch_filter；前端 lit-watch.ts 同口径镜像） =====
 
-/// 指标是否通过筛选。指标未知（表未装 / 期刊未收录 / IF 不可解析）一律放行不误伤——
-/// 筛选只在有数据时生效，绝不用「查不到」当「不达标」
+/// 指标是否通过筛选。选了条件但查不到对应指标，就不算通过。
 pub(crate) fn metrics_pass_filter(
     metrics: Option<&crate::journal_metrics::JournalMetricsDto>,
     filter: &crate::projects::LitWatchFilterDto,
@@ -519,23 +641,23 @@ pub(crate) fn metrics_pass_filter(
     if filter.is_inert() {
         return true;
     }
-    let Some(m) = metrics else { return true };
+    let Some(m) = metrics else { return false };
     if let Some(min) = filter.min_if {
-        if let Some(v) = m
+        let Some(v) = m
             .impact_factor
             .as_deref()
             .and_then(|s| s.parse::<f64>().ok())
-        {
-            if v < min {
-                return false;
-            }
+        else {
+            return false;
+        };
+        if v < min {
+            return false;
         }
     }
     if let Some(max_q) = filter.max_cas_quartile {
-        if let Some(q) = m.cas_quartile {
-            if q > max_q {
-                return false;
-            }
+        let Some(q) = m.cas_quartile else { return false };
+        if q > max_q {
+            return false;
         }
     }
     if filter.top_only && !m.top {
@@ -595,14 +717,64 @@ pub(crate) fn output_note(root: &Path) -> Option<String> {
 
 // ===== papers/watch-followup.md 解析 =====
 
-/// 待办行：`- 题录…`，「 — 」分段；标题取首段，链接取第一个像链接的段，其余并入备注。
-/// 技能没有钉死 followup 的段序（只约定「题录 + 缺失原因」），解析必须宽进。
+/// 待办三种写法都认（技能只约定「题录 + 缺失原因」，没有钉死排版）：
+/// - 一行一条：`- 标题 — 作者 — 链接 — 原因`
+/// - `## 标题` 下挂来源/作者/缺失原因（`## …批次` 只是分组，不当标题）
+/// - 编号列表：`1. 标题` 下挂缩进的作者行和原因行
 fn parse_followups(text: &str) -> Vec<WatchFollowupDto> {
     let mut out = Vec::new();
-    for line in text.lines() {
-        let Some(body) = line.trim_start().strip_prefix("- ") else {
-            continue; // 标题/注释/空行跳过
+    let mut block_title: Option<String> = None;
+    let mut block_url = String::new();
+    let mut block_note: Vec<String> = Vec::new();
+    let flush = |out: &mut Vec<WatchFollowupDto>,
+                 title: &mut Option<String>,
+                 url: &mut String,
+                 note: &mut Vec<String>| {
+        let Some(title) = title.take() else { return };
+        if title.is_empty() {
+            return;
+        }
+        out.push(WatchFollowupDto {
+            title,
+            url: std::mem::take(url),
+            note: note.join(" · "),
+        });
+        note.clear();
+    };
+    for raw in text.lines() {
+        let t = raw.trim();
+        if let Some(heading) = t.strip_prefix("## ") {
+            flush(&mut out, &mut block_title, &mut block_url, &mut block_note);
+            let heading = heading.trim();
+            // 「2026-10-13 批次」是分组，不是一篇论文
+            if !heading.is_empty() && !is_batch_heading(heading) {
+                block_title = Some(heading.to_string());
+            }
+            continue;
+        }
+        if let Some(title) = numbered_followup_title(t) {
+            flush(&mut out, &mut block_title, &mut block_url, &mut block_note);
+            block_title = Some(title);
+            continue;
+        }
+        let Some(body) = t.strip_prefix("- ") else {
+            continue;
         };
+        let indented = raw.starts_with(' ') || raw.starts_with('\t');
+        // 块内的字段行：有标签的（来源/作者/原因/DOI/期刊），或编号条目下缩进的作者行
+        if block_title.is_some() && (indented || labeled_followup_field(body).is_some()) {
+            let rest = labeled_followup_field(body).unwrap_or(body);
+            let (url, note) = followup_field(rest);
+            if block_url.is_empty() && !url.is_empty() {
+                block_url = url;
+            }
+            if !note.is_empty() {
+                block_note.push(note);
+            }
+            continue;
+        }
+        // 一行一条。若正开着一个还没写完的多行块，先收掉再开新条
+        flush(&mut out, &mut block_title, &mut block_url, &mut block_note);
         let segs: Vec<&str> = body
             .split(" — ")
             .map(|s| s.trim())
@@ -622,12 +794,145 @@ fn parse_followups(text: &str) -> Vec<WatchFollowupDto> {
             .collect::<Vec<_>>()
             .join(" — ");
         out.push(WatchFollowupDto {
-            title: title.to_string(),
+            title: (*title).to_string(),
             url,
             note,
         });
     }
+    flush(&mut out, &mut block_title, &mut block_url, &mut block_note);
     out
+}
+
+/// `## 2026-10-13 批次` / `## 2026-10-13` 是分组标题，不是论文。
+fn is_batch_heading(heading: &str) -> bool {
+    if heading.contains("批次") {
+        return true;
+    }
+    let date = heading.split_whitespace().next().unwrap_or("");
+    let b = date.as_bytes();
+    b.len() == 10
+        && b.get(4) == Some(&b'-')
+        && b.get(7) == Some(&b'-')
+        && heading.len() <= date.len() + 6
+}
+
+/// `1. 标题` / `12、标题`。点号后必须有空格，避免把 `10.1021/…` 当成编号。
+fn numbered_followup_title(line: &str) -> Option<String> {
+    let bytes = line.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        i += 1;
+    }
+    if i == 0 || i > 3 {
+        return None;
+    }
+    let rest = line[i..].strip_prefix(['.', '、', ')', '）'])?;
+    if !rest.starts_with(|c: char| c.is_whitespace()) {
+        return None;
+    }
+    let title = rest.trim();
+    if title.is_empty() {
+        None
+    } else {
+        Some(title.to_string())
+    }
+}
+
+/// `- 来源：…` / `- 缺失原因：…` / `- DOI：…` 的冒号后内容；不是这种字段行返回 None。
+fn labeled_followup_field(body: &str) -> Option<&str> {
+    const LABELS: [&str; 8] = ["缺失原因", "来源", "作者", "期刊", "原因", "链接", "DOI", "doi"];
+    for label in LABELS {
+        let Some(rest) = body.strip_prefix(label) else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        let Some(rest) = rest.strip_prefix(['：', ':']) else {
+            continue;
+        };
+        return Some(rest.trim());
+    }
+    None
+}
+
+/// 字段内容里抽出第一个链接（含 `DOI: 10.xxxx/…`），其余并成备注。
+fn followup_field(text: &str) -> (String, String) {
+    let url = find_followup_link(text);
+    let note = text
+        .split(" — ")
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && !followup_segment_is_link(*s))
+        .collect::<Vec<_>>()
+        .join(" · ");
+    (url, note)
+}
+
+fn followup_segment_is_link(seg: &str) -> bool {
+    let mut t = seg.trim();
+    for label in ["DOI", "doi", "链接", "URL", "url"] {
+        if let Some(rest) = t.strip_prefix(label) {
+            let rest = rest.trim_start().trim_start_matches([':', '：']).trim();
+            if !rest.is_empty() {
+                t = rest;
+            }
+            break;
+        }
+    }
+    let link = find_followup_link(t);
+    !link.is_empty() && t.trim_end_matches(['.', ',', ')', '）']).len() <= link.len() + 2
+}
+
+/// `https://…` 优先；否则认 `10.xxxx/…` 形式的 DOI，补成 doi.org 链接。
+fn find_followup_link(text: &str) -> String {
+    let lower = text.to_ascii_lowercase();
+    for scheme in ["https://", "http://"] {
+        if let Some(i) = lower.find(scheme) {
+            let rest = &text[i..];
+            let end = rest
+                .find(|c: char| c.is_whitespace())
+                .unwrap_or(rest.len());
+            return rest[..end]
+                .trim_end_matches(['.', ',', ')', '）', '。'])
+                .to_string();
+        }
+    }
+    find_doi(text)
+        .map(|doi| format!("https://doi.org/{doi}"))
+        .unwrap_or_default()
+}
+
+fn find_doi(text: &str) -> Option<&str> {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i + 8 <= bytes.len() {
+        if text.is_char_boundary(i)
+            && bytes[i] == b'1'
+            && bytes.get(i + 1) == Some(&b'0')
+            && bytes.get(i + 2) == Some(&b'.')
+        {
+            let mut j = i + 3;
+            let mut digits = 0;
+            while j < bytes.len() && bytes[j].is_ascii_digit() {
+                digits += 1;
+                j += 1;
+            }
+            if digits >= 4 && bytes.get(j) == Some(&b'/') {
+                let mut k = j + 1;
+                while k < bytes.len()
+                    && !bytes[k].is_ascii_whitespace()
+                    && bytes[k] != b')'
+                    && !text[k..].starts_with('）')
+                {
+                    k += 1;
+                }
+                let doi = text[i..k].trim_end_matches(['.', ',', '。']);
+                if doi.contains('/') {
+                    return Some(doi);
+                }
+            }
+        }
+        i += 1;
+    }
+    None
 }
 
 // ===== papers/watchlist.md 读写 =====
@@ -668,6 +973,11 @@ fn parse_subscriptions(text: &str) -> Vec<WatchSubscriptionDto> {
     out
 }
 
+/// 新建一份订阅（没有旧文件可保留注释）。调度器给隔离树写本次订阅时用。
+pub(crate) fn render_watchlist_new(subs: &[WatchSubscriptionDto]) -> String {
+    render_watchlist(None, subs)
+}
+
 /// 整表写回：保留既有文件里的 `#` 注释行（置前），空关键词条目丢弃；
 /// 缺段不补尾巴（无备注写 `关键词 — 来源`，无来源只写 `关键词`）
 fn render_watchlist(existing: Option<&str>, subs: &[WatchSubscriptionDto]) -> String {
@@ -682,7 +992,7 @@ fn render_watchlist(existing: Option<&str>, subs: &[WatchSubscriptionDto]) -> St
     } else {
         // 新建文件给格式模板注释，打开不是一片空白
         lines.push("# 文献雷达订阅：每行 关键词 — 来源 — 备注".to_string());
-        lines.push("# 来源：arxiv / openalex / crossref / web（逗号分隔，缺省 arxiv,openalex）；备注可写时间窗（缺省 7 天）与 +bib".to_string());
+        lines.push("# 来源可省略（缺省 arxiv,openalex,crossref 三库全查）；限定库或加 web 才需要手写本文件。备注可写时间窗（缺省 7 天）与 +bib".to_string());
     }
     for s in subs {
         let keyword = s.keyword.trim();
@@ -754,7 +1064,7 @@ pub(crate) fn normalize_title(t: &str) -> String {
         .collect()
 }
 
-fn add_included_at(
+pub(crate) fn add_included_at(
     root: &Path,
     title: &str,
     authors_year: &str,
@@ -1071,6 +1381,99 @@ fn doi_note(doi: &str) -> String {
         .unwrap_or_default()
 }
 
+/// 资源行 upsert：同路径补名/补注（标题可用才覆盖），无则追加。返回是否变更。
+fn upsert_paper_resource(
+    cfg: &mut crate::projects::ProjectConfigDto,
+    rel: &str,
+    display: &str,
+    note: &str,
+    identity_usable: bool,
+) -> bool {
+    let mut changed = false;
+    if let Some(r) = cfg.resources.iter_mut().find(|r| r.path == rel) {
+        if identity_usable && !is_usable_paper_title(&r.name) {
+            r.name = display.to_string();
+            changed = true;
+        }
+        if r.note.is_empty() && !note.is_empty() {
+            r.note = note.to_string();
+            changed = true;
+        }
+    } else {
+        cfg.resources.push(crate::projects::ResourceDto {
+            name: display.to_string(),
+            path: rel.to_string(),
+            kind: "paper".into(),
+            readonly: false,
+            note: note.to_string(),
+        });
+        changed = true;
+    }
+    changed
+}
+
+// ===== PDF 资源登记的相位感知：流程期间暂缓，收尾回放 =====
+
+const PENDING_REGISTRATIONS_REL: &str = ".ccode/pending-registrations.json";
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct PendingRegistration {
+    path: String,
+    name: String,
+    note: String,
+}
+
+fn read_pending_registrations(root: &Path) -> Vec<PendingRegistration> {
+    read_text_inside(root, PENDING_REGISTRATIONS_REL)
+        .ok()
+        .flatten()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+/// 暂缓登记（gitignored 台账，按 path 覆盖去重——stamp_paper_identity 后来的
+/// 更好标题会顶掉先记的通用名）。
+fn defer_pdf_registration(root: &Path, rel: &str, display: &str, note: &str) -> Result<(), String> {
+    let mut rows = read_pending_registrations(root);
+    let row = PendingRegistration {
+        path: rel.to_string(),
+        name: display.to_string(),
+        note: note.to_string(),
+    };
+    if let Some(existing) = rows.iter_mut().find(|r| r.path == row.path) {
+        *existing = row;
+    } else {
+        rows.push(row);
+    }
+    let text = serde_json::to_string_pretty(&rows).map_err(|e| e.to_string())?;
+    write_text_inside(root, PENDING_REGISTRATIONS_REL, &format!("{text}\n"))
+}
+
+/// 回放暂缓登记（项目打开 / 工作区归档时调用；best-effort，失败记日志不留半截状态）。
+pub(crate) fn replay_pending_registrations(root: &Path) {
+    let rows = read_pending_registrations(root);
+    if rows.is_empty() {
+        return;
+    }
+    let result = (|| -> Result<(), String> {
+        let mut cfg = crate::projects::read_config_at(root).config;
+        let mut changed = false;
+        for row in &rows {
+            changed |= upsert_paper_resource(&mut cfg, &row.path, &row.name, &row.note, true);
+        }
+        if changed {
+            crate::projects::write_config_at(root, &cfg)?;
+        }
+        // 回放成功即清账（目标 PDF 已不在的行也一并清——upsert 只是无害的清单行）
+        write_text_inside(root, PENDING_REGISTRATIONS_REL, "[]\n")?;
+        Ok(())
+    })();
+    if let Err(e) = result {
+        crate::logbuf::record("warn", "lit_watch", &format!("回放暂缓登记失败：{e}"));
+    }
+}
+
 /// 把 papers/ 里已存在的 PDF 登记进 project.toml 的 [[resources]]（type="paper"；
 /// path 存相对项目根。identity 是文献标题——文件名可以是 paper-5.pdf，清单靠
 /// name/note 认「已存」，不靠文件名）
@@ -1096,28 +1499,15 @@ fn register_pdf(
     };
     let note = doi_note(doi);
     let mut cfg = crate::projects::read_config_at(root).config;
-    let mut changed = false;
-    if let Some(r) = cfg.resources.iter_mut().find(|r| r.path == rel) {
-        if is_usable_paper_title(identity) && !is_usable_paper_title(&r.name) {
-            r.name = display.clone();
-            changed = true;
-        }
-        if r.note.is_empty() && !note.is_empty() {
-            r.note = note.clone();
-            changed = true;
-        }
-    } else {
-        cfg.resources.push(crate::projects::ResourceDto {
-            name: display.clone(),
-            path: rel,
-            kind: "paper".into(),
-            readonly: false,
-            note,
-        });
-        changed = true;
-    }
+    let changed = upsert_paper_resource(&mut cfg, &rel, &display, &note, is_usable_paper_title(identity));
     if changed {
-        crate::projects::write_config_at(root, &cfg)?;
+        // 相位感知（2026-10-13）：项目有 active/creating 工作区（流程进行中）时不写
+        // project.toml——那会弄脏主仓拦住合并；改记 gitignored 待登记台账，收尾回放。
+        if crate::workspaces::project_has_active_workspace(root) {
+            defer_pdf_registration(root, &rel, &display, &note)?;
+        } else {
+            crate::projects::write_config_at(root, &cfg)?;
+        }
     }
     Ok(DownloadedPaperDto {
         path: target.to_string_lossy().into_owned(),
@@ -1967,16 +2357,108 @@ pub async fn save_watch_explain(
     .map_err(|e| format!("保存解读失败: {e}"))?
 }
 
+/// 一个巡检任务自己的订阅：`.ccode/watch/<任务id>/watchlist.md`。
+/// 不再读项目根 papers/watchlist.md——那份是旧的共享清单。
+pub(crate) fn schedule_watchlist_rel(schedule_id: &str) -> Result<String, String> {
+    if !crate::scheduler::schedule_id_ok(schedule_id) {
+        return Err("非法的定时任务 id".into());
+    }
+    Ok(format!(".ccode/watch/{schedule_id}/watchlist.md"))
+}
+
+pub(crate) fn read_schedule_subscriptions(
+    root: &Path,
+    schedule_id: &str,
+) -> Result<Vec<WatchSubscriptionDto>, String> {
+    let rel = schedule_watchlist_rel(schedule_id)?;
+    match read_text_inside(root, &rel)? {
+        Some(text) => Ok(parse_subscriptions(&text)),
+        None => Ok(Vec::new()),
+    }
+}
+
+pub(crate) fn write_schedule_subscriptions(
+    root: &Path,
+    schedule_id: &str,
+    subs: &[WatchSubscriptionDto],
+) -> Result<(), String> {
+    let rel = schedule_watchlist_rel(schedule_id)?;
+    let existing = read_text_inside(root, &rel)?;
+    let text = render_watchlist(existing.as_deref(), subs);
+    write_text_inside(root, &rel, &text)
+}
+
+/// 删任务时清掉这一份。目录里只有 watchlist，整个目录一起去掉。
+pub(crate) fn delete_schedule_subscriptions(project_root: &str, schedule_id: &str) {
+    let Ok(root) = (if cfg!(test) {
+        Ok(PathBuf::from(project_root))
+    } else {
+        gated_root(project_root)
+    }) else {
+        return;
+    };
+    let Ok(rel) = schedule_watchlist_rel(schedule_id) else {
+        return;
+    };
+    if let Some(dir) = root.join(rel).parent() {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+/// 旧的项目级 papers/watchlist.md 迁进还没有自己清单的文献雷达任务。
+/// 只在第一次读到时搬一次；已经有自己清单的任务不动。搬完旧文件留在原地作备份，不再被读取。
+pub(crate) fn adopt_shared_watchlists() -> Result<(), String> {
+    let path = dirs::config_dir()
+        .ok_or("无法确定平台配置目录")?
+        .join("ccode")
+        .join("schedules.json");
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("读取 schedules.json 失败: {e}")),
+    };
+    let list: Vec<crate::scheduler::Schedule> =
+        serde_json::from_str(&text).map_err(|e| format!("解析 schedules.json 失败: {e}"))?;
+    let mut roots: Vec<String> = Vec::new();
+    for task in &list {
+        if task.skill == "lit-watch" && !roots.iter().any(|r| crate::paths::same_path(r, &task.project_root))
+        {
+            roots.push(task.project_root.clone());
+        }
+    }
+    for root_s in roots {
+        let Ok(root) = gated_root(&root_s) else {
+            continue;
+        };
+        let Some(shared) = read_text_inside(&root, "papers/watchlist.md")? else {
+            continue;
+        };
+        let subs = parse_subscriptions(&shared);
+        if subs.is_empty() {
+            continue;
+        }
+        for task in list.iter().filter(|t| {
+            t.skill == "lit-watch" && crate::paths::same_path(&t.project_root, &root_s)
+        }) {
+            if read_schedule_subscriptions(&root, &task.id)?.is_empty()
+                && read_text_inside(&root, &schedule_watchlist_rel(&task.id)?)?.is_none()
+            {
+                write_schedule_subscriptions(&root, &task.id, &subs)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn list_watch_subscriptions(
     project_root: String,
+    schedule_id: String,
 ) -> Result<Vec<WatchSubscriptionDto>, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        adopt_shared_watchlists()?;
         let root = gated_root(&project_root)?;
-        match read_text_inside(&root, "papers/watchlist.md")? {
-            Some(text) => Ok(parse_subscriptions(&text)),
-            None => Ok(Vec::new()),
-        }
+        read_schedule_subscriptions(&root, &schedule_id)
     })
     .await
     .map_err(|e| format!("读取订阅清单失败: {e}"))?
@@ -1985,14 +2467,12 @@ pub async fn list_watch_subscriptions(
 #[tauri::command]
 pub async fn save_watch_subscriptions(
     project_root: String,
+    schedule_id: String,
     subs: Vec<WatchSubscriptionDto>,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let root = gated_root(&project_root)?;
-        const REL: &str = "papers/watchlist.md";
-        let existing = read_text_inside(&root, REL)?;
-        let text = render_watchlist(existing.as_deref(), &subs);
-        write_text_inside(&root, REL, &text)
+        write_schedule_subscriptions(&root, &schedule_id, &subs)
     })
     .await
     .map_err(|e| format!("写入订阅清单失败: {e}"))?
@@ -2035,6 +2515,171 @@ pub async fn remove_included_entry(project_root: String, line_id: String) -> Res
     })
     .await
     .map_err(|e| format!("删除精读清单行失败: {e}"))?
+}
+
+// ===== papers/reading-list.md（积累账，2026-10-13 双台账拍板）=====
+// 雷达「加入积累」的唯一落点：gitignored，永不进工作区、永不参与合并；
+// 行格式与 included.md 逐字同构（parse_included 直读）。新流程开工时由
+// freeze_reading_list_intake 冻结成工作区进料快照，检索步统一去重当进料口。
+
+const READING_LIST_REL: &str = "papers/reading-list.md";
+
+fn reading_list_entries_at(root: &Path) -> Result<Vec<IncludedEntryDto>, String> {
+    Ok(match read_text_inside(root, READING_LIST_REL)? {
+        Some(text) => parse_included(&text),
+        None => Vec::new(),
+    })
+}
+
+fn add_reading_list_at(
+    root: &Path,
+    title: &str,
+    authors_year: &str,
+    source: &str,
+    link: &str,
+) -> Result<AddIncludedResultDto, String> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err("标题不能为空".into());
+    }
+    // 去重域 = 积累账自身 + 正典 included.md 两表并集：已在任一账的不重复记
+    let want = normalize_title(title);
+    for entry in reading_list_entries_at(root)? {
+        if normalize_title(&entry.title) == want {
+            return Ok(AddIncludedResultDto { added: false });
+        }
+    }
+    if let Some(text) = read_text_inside(root, "papers/included.md")? {
+        if parse_included(&text)
+            .iter()
+            .any(|e| normalize_title(&e.title) == want)
+        {
+            return Ok(AddIncludedResultDto { added: false });
+        }
+    }
+    fn fill_or_tbd(s: &str) -> &str {
+        let s = s.trim();
+        if s.is_empty() {
+            "待补"
+        } else {
+            s
+        }
+    }
+    let new_line = format!(
+        "{} — {} — {} — {}",
+        title,
+        fill_or_tbd(authors_year),
+        fill_or_tbd(source),
+        fill_or_tbd(link)
+    );
+    let mut text = read_text_inside(root, READING_LIST_REL)?.unwrap_or_default();
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push_str(&new_line);
+    text.push('\n');
+    write_text_inside(root, READING_LIST_REL, &text)?;
+    Ok(AddIncludedResultDto { added: true })
+}
+
+fn remove_reading_list_at(root: &Path, line_id: &str) -> Result<(), String> {
+    let text = read_text_inside(root, READING_LIST_REL)?.ok_or("积累清单不存在")?;
+    let mut removed = false;
+    let kept: Vec<&str> = text
+        .lines()
+        .filter(|line| {
+            if !removed && included_line_id(line) == line_id {
+                removed = true;
+                false
+            } else {
+                true
+            }
+        })
+        .collect();
+    if !removed {
+        return Err("该行已不存在（清单可能已变动，请刷新后重试）".into());
+    }
+    let mut out = kept.join("\n");
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    write_text_inside(root, READING_LIST_REL, &out)
+}
+
+#[tauri::command]
+pub async fn list_reading_list_entries(
+    project_root: String,
+) -> Result<Vec<IncludedEntryDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = gated_root(&project_root)?;
+        reading_list_entries_at(&root)
+    })
+    .await
+    .map_err(|e| format!("读取积累清单失败: {e}"))?
+}
+
+#[tauri::command]
+pub async fn add_reading_list_entry(
+    project_root: String,
+    title: String,
+    authors_year: String,
+    source: String,
+    link: String,
+) -> Result<AddIncludedResultDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = gated_root(&project_root)?;
+        add_reading_list_at(&root, &title, &authors_year, &source, &link)
+    })
+    .await
+    .map_err(|e| format!("追加积累清单失败: {e}"))?
+}
+
+#[tauri::command]
+pub async fn remove_reading_list_entry(
+    project_root: String,
+    line_id: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = gated_root(&project_root)?;
+        remove_reading_list_at(&root, &line_id)
+    })
+    .await
+    .map_err(|e| format!("删除积累清单行失败: {e}"))?
+}
+
+/// 开工冻结进料：把项目根积累账非空内容原样复制为工作区 `.ccode/handoff-lit-intake.md`
+/// （被 `.ccode/handoff-*.md` 规则忽略，不进提交/合并/交付评审）。agent 读的是开工定格
+/// 副本而非活文件——流程期间继续「加入积累」不影响本轮。返回是否生成了快照。
+fn freeze_intake_at(root: &Path, worktree: &Path) -> Result<bool, String> {
+    if !worktree.is_dir() {
+        return Err("工作区目录不存在".into());
+    }
+    let Some(text) = read_text_inside(root, READING_LIST_REL)? else {
+        return Ok(false);
+    };
+    if text.trim().is_empty() {
+        return Ok(false);
+    }
+    let dest = worktree.join(".ccode").join("handoff-lit-intake.md");
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("创建工作区 .ccode 失败：{e}"))?;
+    }
+    crate::profiles::atomic_write(&dest, &text).map_err(|e| format!("写入进料快照失败：{e}"))?;
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn freeze_reading_list_intake(
+    project_root: String,
+    worktree_path: String,
+) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = gated_root(&project_root)?;
+        let worktree = PathBuf::from(crate::sessions::expand_tilde(&worktree_path));
+        freeze_intake_at(&root, &worktree)
+    })
+    .await
+    .map_err(|e| format!("冻结进料快照失败: {e}"))?
 }
 
 /// 下载文献全文 PDF：网络段 async、落盘与登记段 spawn_blocking（文件操作风格同 pdf.rs）
@@ -2515,13 +3160,43 @@ mod tests {
         assert_eq!(full.journal.as_deref(), Some("Nature Energy"));
         assert_eq!(full.zh_summary, "提出一种提升固态电解质界面稳定性的方法");
         assert_eq!(full.url, "10.1000/xyz123");
+        assert_eq!(full.pub_date.as_deref(), Some("2026-08-17"));
         assert_eq!(full.date.as_deref(), Some("2026-08-18"));
+        // 旧条目来源行三段同样带发表日期
+        assert_eq!(legacy.pub_date.as_deref(), Some("2026-08-10"));
         // 没有任何文献字段的标题块（如巡检摘要）不会进入雷达条目。
         // id 稳定且互不相同
         assert_ne!(legacy.id, full.id);
         assert!(legacy.id.starts_with("w-"));
         // 行范围：完整条目从 ## 行（14）起到块内最后一个非空行（24，含坏行/未知字段行）
         assert_eq!(full.raw_line_range, [14, 24]);
+    }
+
+    #[test]
+    fn drop_inbox_entries_removes_excluded_and_dangling_markers() {
+        let text = "# 文献收件箱\n\n<!-- watch-run: 2026-08-11 -->\n\n## 保留条目\n- 来源：arxiv — 2026-08-10 — https://arxiv.org/abs/2608.00001\n- 相关性：相关\n\n<!-- watch-run: 2026-08-18 -->\n\n## 排除条目\n- 来源：期刊 — 2026-08-17 — 10.1000/xyz123\n- 相关性：推荐\n";
+        let entries = parse_inbox_entries(text);
+        assert_eq!(entries.len(), 2);
+        let ids = std::collections::HashSet::from([entries[1].id.as_str()]);
+        let dropped = drop_inbox_entries(text, &ids);
+        assert!(!dropped.contains("排除条目"), "被排除条目整段删除");
+        assert!(dropped.contains("保留条目"), "其余条目原文保留");
+        assert!(!dropped.contains("2026-08-18"), "被删空的批次标记一并清掉");
+        assert!(dropped.contains("2026-08-11"), "仍有序列条目的批次标记保留");
+        assert_eq!(parse_inbox_entries(&dropped).len(), 1);
+        assert!(dropped.ends_with('\n'), "结尾换行保持");
+    }
+
+    #[test]
+    fn drop_inbox_entries_ignores_unknown_ids() {
+        let ids = std::collections::HashSet::from(["w-none"]);
+        assert_eq!(drop_inbox_entries(SAMPLE_INBOX, &ids), SAMPLE_INBOX);
+        // 混入未知 id 不影响命中 id 的剔除
+        let entries = parse_inbox_entries(SAMPLE_INBOX);
+        let ids = std::collections::HashSet::from(["w-none", entries[0].id.as_str()]);
+        let dropped = drop_inbox_entries(SAMPLE_INBOX, &ids);
+        assert!(!dropped.contains("旧条目没有新增字段"));
+        assert!(dropped.contains("完整字段条目"));
     }
 
     #[test]
@@ -2624,16 +3299,35 @@ mod tests {
     #[test]
     fn source_line_tolerates_missing_segments() {
         // 只有来源一段
-        let (s, u) = split_source_line("arxiv");
+        let (s, u, d) = split_source_line("arxiv");
+        assert_eq!((s.as_str(), u.as_str(), d), ("arxiv", "", None));
+        // 两段：第二段像链接才算链接，像日期归发表日期
+        let (s, u, d) = split_source_line("arxiv — 2026-08-10");
         assert_eq!((s.as_str(), u.as_str()), ("arxiv", ""));
-        // 两段：第二段像链接才算链接，否则视为日期丢弃
-        let (s, u) = split_source_line("arxiv — 2026-08-10");
-        assert_eq!((s.as_str(), u.as_str()), ("arxiv", ""));
-        let (s, u) = split_source_line("arxiv — https://x.org/1");
-        assert_eq!((s.as_str(), u.as_str()), ("arxiv", "https://x.org/1"));
-        // 标准三段
-        let (s, u) = split_source_line("Nature — 2026-08-01 — 10.1038/s41586");
+        assert_eq!(d.as_deref(), Some("2026-08-10"));
+        let (s, u, d) = split_source_line("arxiv — https://x.org/1");
+        assert_eq!((s.as_str(), u.as_str(), d), ("arxiv", "https://x.org/1", None));
+        // 标准三段：第二段发表日期、第三段链接
+        let (s, u, d) = split_source_line("Nature — 2026-08-01 — 10.1038/s41586");
         assert_eq!((s.as_str(), u.as_str()), ("Nature", "10.1038/s41586"));
+        assert_eq!(d.as_deref(), Some("2026-08-01"));
+        // 日期段点/斜杠分隔、月日缺零也认；非日期不误判
+        let (_, _, d) = split_source_line("Nature — 2026.8.1 — 10.1/x");
+        assert_eq!(d.as_deref(), Some("2026.8.1"));
+        let (_, _, d) = split_source_line("Nature — 2026/8/1 — 10.1/x");
+        assert_eq!(d.as_deref(), Some("2026/8/1"));
+        let (_, _, d) = split_source_line("Nature — 卷 12 期 3 — 10.1/x");
+        assert_eq!(d, None);
+        // 期刊接口常见 ISO 时间后缀：日期判定只看 T 前面，同样只保留日期部分
+        let (_, _, d) = split_source_line("Crossref — 2026-10-12T09:00:00Z — 10.1/x");
+        assert_eq!(d.as_deref(), Some("2026-10-12"));
+        // 实测 agent 变体：括号后破折号不带空格、日期带「线上（期号 …）」尾巴
+        let (s, u, d) = split_source_line("期刊（ACS Applied Materials & Interfaces）— 2026-10-07 — DOI: 10.1021/acsami.6c16394");
+        assert_eq!(s, "期刊（ACS Applied Materials & Interfaces）");
+        assert_eq!(u, "DOI: 10.1021/acsami.6c16394");
+        assert_eq!(d.as_deref(), Some("2026-10-07"));
+        let (_, _, d) = split_source_line("期刊（Journal of Magnesium and Alloys）— 2026-10-06 线上（期号 2026-11）— DOI: 10.1016/j.jma.2026.102294");
+        assert_eq!(d.as_deref(), Some("2026-10-06"));
     }
 
     #[test]
@@ -2697,20 +3391,21 @@ mod tests {
             Some(&metrics(Some("3.9"), None, false)),
             &f
         ));
-        // 恰好等于阈值通过；IF 缺失/不可解析 = 未知 → 放行
+        // 恰好等于阈值通过；设了筛选后 IF 缺失/不可解析 = 未知 → 不匹配
+        // （与前端 entryPassesFilter 镜像同口径；不设筛选仍全部放行）
         assert!(metrics_pass_filter(
             Some(&metrics(Some("10"), None, false)),
             &f
         ));
-        assert!(metrics_pass_filter(
+        assert!(!metrics_pass_filter(
             Some(&metrics(None, Some(4), false)),
             &f
         ));
-        assert!(metrics_pass_filter(
+        assert!(!metrics_pass_filter(
             Some(&metrics(Some("N/A"), None, false)),
             &f
         ));
-        assert!(metrics_pass_filter(None, &f));
+        assert!(!metrics_pass_filter(None, &f));
     }
 
     #[test]
@@ -2731,8 +3426,8 @@ mod tests {
             Some(&metrics(None, Some(3), false)),
             &q2
         ));
-        // 分区未知放行
-        assert!(metrics_pass_filter(Some(&metrics(None, None, false)), &q2));
+        // 设了分区筛选后分区未知 → 不匹配（与前端镜像同口径）
+        assert!(!metrics_pass_filter(Some(&metrics(None, None, false)), &q2));
 
         let top = crate::projects::LitWatchFilterDto {
             top_only: true,
@@ -2743,8 +3438,8 @@ mod tests {
             Some(&metrics(None, None, false)),
             &top
         ));
-        // 指标完全未知放行不误伤
-        assert!(metrics_pass_filter(None, &top));
+        // 设了仅 TOP 后指标完全未知 → 不匹配（与前端镜像同口径）
+        assert!(!metrics_pass_filter(None, &top));
     }
 
     #[test]
@@ -2812,6 +3507,103 @@ mod tests {
         assert_eq!(f[1].url, "10.1000/b");
         assert_eq!(f[2].url, "");
         assert_eq!(f[2].note, "");
+    }
+
+    #[test]
+    fn followups_parse_inbox_style_blocks() {
+        // 技能把跟进队列写成了和收件箱一样的多行：标题在 ## 下，
+        // 作者/来源/原因各占一行。一行一条的解析会把作者行当成标题。
+        let text = "\
+# 跟进队列（无摘要 / 付费墙，待人工获取全文）
+
+## Rational Synthesis of High-Entropy Microrings
+- 来源：Catalysis Letters — 2026-10-12 — https://doi.org/10.1007/s10562-026-05549-4
+- 作者：Lei Yang; YuXin Wan et al.
+- 缺失原因：Crossref/OpenAlex 均无摘要
+
+## 只有标题没有字段的一篇
+
+- 一行一条的旧格式 — Chen L — https://doi.org/10.1000/z — 付费墙
+";
+        let f = parse_followups(text);
+        assert_eq!(f.len(), 3, "{f:?}");
+        assert_eq!(f[0].title, "Rational Synthesis of High-Entropy Microrings");
+        assert_eq!(f[0].url, "https://doi.org/10.1007/s10562-026-05549-4");
+        assert!(f[0].note.contains("Catalysis Letters"), "{}", f[0].note);
+        assert!(f[0].note.contains("Lei Yang"), "{}", f[0].note);
+        assert!(f[0].note.contains("均无摘要"), "{}", f[0].note);
+        assert!(!f[0].note.contains("doi.org"), "{}", f[0].note);
+        assert_eq!(f[1].title, "只有标题没有字段的一篇");
+        assert_eq!(f[1].url, "");
+        assert_eq!(f[2].title, "一行一条的旧格式");
+        assert_eq!(f[2].url, "https://doi.org/10.1000/z");
+    }
+
+    #[test]
+    fn schedule_watchlist_is_per_task_and_deletes_with_it() {
+        let root = std::env::temp_dir().join(format!(
+            "ccode-watch-subs-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(root.join("papers")).unwrap();
+        let shared = "\
+# 文献雷达订阅：每行 关键词 — 来源 — 备注
+HER — arxiv,openalex
+";
+        std::fs::write(root.join("papers/watchlist.md"), shared).unwrap();
+        let id_a = "11111111-1111-1111-1111-111111111111";
+        let id_b = "22222222-2222-2222-2222-222222222222";
+        // 旧共享清单搬进还没有自己清单的任务；已有自己清单的不动
+        write_schedule_subscriptions(
+            &root,
+            id_b,
+            &[WatchSubscriptionDto {
+                keyword: "boride".into(),
+                sources: vec!["arxiv".into()],
+                note: String::new(),
+            }],
+        )
+        .unwrap();
+        let a = read_schedule_subscriptions(&root, id_a).unwrap();
+        assert!(a.is_empty());
+        let b = read_schedule_subscriptions(&root, id_b).unwrap();
+        assert_eq!(b[0].keyword, "boride");
+        // 删一份不影响另一份
+        delete_schedule_subscriptions(&root.to_string_lossy(), id_b);
+        assert!(read_schedule_subscriptions(&root, id_b).unwrap().is_empty());
+        assert!(!root.join(".ccode/watch").join(id_a).join("watchlist.md").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn followups_parse_numbered_batch() {
+        // 实际巡检写成编号列表：## 只是批次名，标题在「1. 」后，
+        // 作者和原因缩进挂在下面，DOI 写成「DOI: 10.xxxx/…」而不是链接。
+        let text = "\
+# lit-watch 跟进队列
+
+## 2026-10-13 批次
+
+1. Quantifying the Heterointerface Contribution in a Cu7S4 Cathode
+   - Wang X.; Zhang G. et al. — ACS Applied Materials & Interfaces, 2026-10-07 — DOI: 10.1021/acsami.6c16394
+   - 原因：付费墙（closed），无免费直链 PDF。
+2. Imidazole-Amine Synergistic Coordination
+   - Cui Z. et al. — Small, 2026-10-07 — DOI: 10.1002/smll.76114
+   - 原因：bronze OA，仅出版商页。
+";
+        let f = parse_followups(text);
+        assert_eq!(f.len(), 2, "{f:?}");
+        assert_eq!(
+            f[0].title,
+            "Quantifying the Heterointerface Contribution in a Cu7S4 Cathode"
+        );
+        assert_eq!(f[0].url, "https://doi.org/10.1021/acsami.6c16394");
+        assert!(f[0].note.contains("Wang X."), "{}", f[0].note);
+        assert!(f[0].note.contains("ACS Applied"), "{}", f[0].note);
+        assert!(f[0].note.contains("付费墙"), "{}", f[0].note);
+        assert!(!f[0].note.contains("10.1021"), "{}", f[0].note);
+        assert!(f[1].title.starts_with("Imidazole"), "{}", f[1].title);
+        assert_eq!(f[1].url, "https://doi.org/10.1002/smll.76114");
     }
 
     #[test]
@@ -2900,6 +3692,49 @@ lone keyword
         assert!(text2.contains("另一篇论文"));
         // 再删同一 id → 报错
         assert!(remove_included_at(&dir, &list[0].line_id).is_err());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn reading_list_round_trip_and_cross_ledger_dedup() {
+        let dir = tmpdir("reading-list");
+        // 积累账落 papers/reading-list.md，行格式与 included.md 同构
+        let r = add_reading_list_at(&dir, "Radar Paper One", "Chen L, 2026", "Nat. Energy", "10.1/a")
+            .unwrap();
+        assert!(r.added);
+        assert!(dir.join("papers/reading-list.md").exists());
+        // 同标题（规范化后相同）→ 自身去重
+        let r2 = add_reading_list_at(&dir, "radar paper one!", "X", "Y", "Z").unwrap();
+        assert!(!r2.added);
+        // 已在正典 included.md 的篇也不重复记（两表并集去重域）
+        add_included_at(&dir, "Canon Paper", "A, 2025", "JACS", "10.1/b").unwrap();
+        let r3 = add_reading_list_at(&dir, "Canon Paper", "", "", "").unwrap();
+        assert!(!r3.added);
+        // list / remove 与 included 同一套解析
+        let list = reading_list_entries_at(&dir).unwrap();
+        assert_eq!(list.len(), 1);
+        remove_reading_list_at(&dir, &list[0].line_id).unwrap();
+        assert!(reading_list_entries_at(&dir).unwrap().is_empty());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn freeze_intake_copies_nonempty_reading_list_into_worktree() {
+        let dir = tmpdir("intake");
+        let worktree = dir.join("wt");
+        fs::create_dir_all(&worktree).unwrap();
+        // 空账/无账：不生成快照，不报错
+        assert!(!freeze_intake_at(&dir, &worktree).unwrap());
+        add_reading_list_at(&dir, "Accumulated Paper", "A, 2026", "J", "10.1/x").unwrap();
+        assert!(freeze_intake_at(&dir, &worktree).unwrap());
+        let snap = fs::read_to_string(worktree.join(".ccode/handoff-lit-intake.md")).unwrap();
+        assert!(snap.contains("Accumulated Paper"), "{snap}");
+        // 快照是开工定格副本：之后积累账再动，快照不变
+        add_reading_list_at(&dir, "Later Paper", "", "", "").unwrap();
+        let snap2 = fs::read_to_string(worktree.join(".ccode/handoff-lit-intake.md")).unwrap();
+        assert!(!snap2.contains("Later Paper"), "{snap2}");
+        // 工作区目录不存在 → 明确报错
+        assert!(freeze_intake_at(&dir, &dir.join("nope")).is_err());
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -3095,3 +3930,5 @@ lone keyword
         fs::remove_dir_all(&dir).ok();
     }
 }
+
+

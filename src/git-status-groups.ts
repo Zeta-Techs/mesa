@@ -33,6 +33,29 @@ export function isAcceptanceLedgerPath(path: string): boolean {
   return name === "acceptance-log.jsonl" || name === "acceptance-log.lock";
 }
 
+/** 积累面台账（2026-10-13 双台账口径，与后端合并闸门 review_contract.rs 同口径镜像）：
+ * 雷达台账（inbox/watch-seen/watch-followup）、用户笔记（notes/*.md）、验收账本的任何
+ * 常规状态都不算「你的改动未存入历史」；reading-list / watch-explains /
+ * pending-registrations 只豁免未跟踪态（防呆：agent 违规提交后变 tracked 的 M 要显形）。 */
+export function isAccumulationLedgerPath(path: string, status: string): boolean {
+  const p = path.replace(/\\/g, "/").replace(/^"|"$/g, "");
+  const anyState =
+    p === "notes/inbox.md" ||
+    p === "papers/watch-seen.md" ||
+    p === "papers/watch-followup.md" ||
+    p === ".ccode/acceptance-log.jsonl" ||
+    p === ".ccode/acceptance-log.lock" ||
+    (p.startsWith("notes/") && p.endsWith(".md")) ||
+    p.startsWith(".ccode/watch/");
+  if (anyState) return true;
+  return (
+    status === "??" &&
+    (p === "papers/reading-list.md" ||
+      p === ".ccode/watch-explains.json" ||
+      p === ".ccode/pending-registrations.json")
+  );
+}
+
 function isReviewNotesPath(path: string): boolean {
   const name = path.replace(/\\/g, "/").split("/").pop() ?? path;
   return name === "review-notes.md";
@@ -43,6 +66,7 @@ export function userDirtyFiles<T extends { path: string; status: string }>(
 ): T[] {
   return files.filter((file) => {
     if (isReviewNotesPath(file.path)) return false;
+    if (isAccumulationLedgerPath(file.path, file.status)) return false;
     return !(file.status === "??" && isAcceptanceLedgerPath(file.path));
   });
 }

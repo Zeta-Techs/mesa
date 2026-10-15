@@ -16,10 +16,12 @@ import OfficePreviewModal from "./OfficePreviewModal";
 import { useAppStore } from "../store";
 import {
   displayFileTitle,
+  ledgerFileDisplayName,
   LIST_PREVIEW_CAP,
   LIT_STATUS_FILTERS,
   litReadState,
   litRowMatches,
+  paperIsAccumulated,
   type LitReadState,
 } from "../lit-list";
 import { buildFolderTree } from "../folder-groups";
@@ -83,6 +85,7 @@ export default function ResourceListSection({
   const [notePreview, setNotePreview] = useState<string | null>(null);
   const [noteLinks, setNoteLinks] = useState<PaperNoteLink[]>([]);
   const [included, setIncluded] = useState<IncludedEntryDto[]>([]);
+  const [readingList, setReadingList] = useState<IncludedEntryDto[]>([]);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | LitReadState>("all");
   const folders = useFolderChrome(
@@ -101,10 +104,14 @@ export default function ResourceListSection({
       invoke<IncludedEntryDto[]>("list_included_entries", {
         projectRoot: projectPath,
       }).catch(() => [] as IncludedEntryDto[]),
-    ]).then(([links, rows]) => {
+      invoke<IncludedEntryDto[]>("list_reading_list_entries", {
+        projectRoot: projectPath,
+      }).catch(() => [] as IncludedEntryDto[]),
+    ]).then(([links, rows, readingRows]) => {
       if (cancelled) return;
       setNoteLinks(links);
       setIncluded(rows);
+      setReadingList(readingRows);
     });
     return () => {
       cancelled = true;
@@ -138,11 +145,16 @@ export default function ResourceListSection({
           : null;
         const includedHit =
           showLitStatus && isPdf(r.path) && paperIsIncluded(r.path, included);
+        const accumulatedHit =
+          showLitStatus &&
+          isPdf(r.path) &&
+          paperIsAccumulated(r.path, readingList);
         const state = showLitStatus
-          ? litReadState(!!note, includedHit)
+          ? litReadState(!!note, accumulatedHit, includedHit)
           : "unread";
-        const title = displayFileTitle(r.name);
-        return { r, note, includedHit, state, title };
+        const title =
+          ledgerFileDisplayName(r.path) ?? displayFileTitle(r.name);
+        return { r, note, includedHit, accumulatedHit, state, title };
       })
       .filter((row) =>
         litRowMatches(
@@ -157,6 +169,7 @@ export default function ResourceListSection({
     resources,
     noteLinks,
     included,
+    readingList,
     query,
     statusFilter,
     showLitStatus,
@@ -298,7 +311,12 @@ export default function ResourceListSection({
                       <span
                         className={`${statusPill} border border-field bg-canvas text-l2`}
                       >
-                        精读
+                        已在清单
+                      </span>
+                    )}
+                    {showLitStatus && state === "accumulated" && (
+                      <span className={`${statusPill} bg-canvas text-l4`}>
+                        已积累
                       </span>
                     )}
                   </span>

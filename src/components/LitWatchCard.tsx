@@ -3,6 +3,7 @@ import {
   lazy,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type MouseEvent,
@@ -14,13 +15,11 @@ import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import {
   Bookmark,
   BookmarkPlus,
-  Clock,
   Download,
   ExternalLink,
   ListFilter,
-  Play,
-  RefreshCw,
   Rss,
+  Table2,
 } from "lucide-react";
 import { LIT_WATCH_SLOT, resolveSkillSlot, useSkillProvides } from "../skill-slots.ts";
 import ContextMenu from "./ContextMenu";
@@ -35,23 +34,22 @@ import {
   SegTabs,
   fieldClass,
   ghostActionClass,
+  primaryActionClass,
   iconActionClass,
-  inlineActionClass,
   projectWellClass,
   searchFieldClass,
 } from "./PageFrame";
 import { LIST_PREVIEW_CAP } from "../lit-list";
 import { instOpenTarget } from "../inst-access";
+import { samePath } from "../path-utils";
 import { ListPreviewToggle } from "./FolderGroupedList";
-import { toFetchPaperRel } from "../step-flow";
 import { useAppStore } from "../store";
 import { relTime } from "../rel-time";
 import { schedulesForProject } from "../schedule-tasks";
+import { IS_WINDOWS } from "../hotkeys";
 import {
   dismissLitEntry,
   filterLitDismissed,
-  followupMatchesDismissed,
-  paperResourceFor,
   groupEntriesByDay,
   groupEntriesByKeyword,
   includedLineFor,
@@ -59,22 +57,29 @@ import {
   readLitWatchBodyOpen,
   writeLitWatchBodyOpen,
   entryPassesFilter,
+  ledgerMarkFor,
+  normalizeTitle,
+  normalizedTitleSet,
   litWatchFilterActive,
   litWatchFilterLabel,
   journalMetricTone,
   metricsTooltip,
-  weeklyTrend,
+  entryInTrendBucket,
+  trendSummary,
+  type TrendMode,
   undatedWatchRuns,
-  normalizeTitle,
   parseWatchExplain,
   watchExplainPrompt,
   watchEntryScanLine,
   sourceDisplayName,
+  noteLinkForPaper,
 } from "../lit-watch";
 import type {
   AddIncludedResultDto,
   DownloadedPaperDto,
   IncludedEntryDto,
+  LedgerMark,
+  PaperNoteLink,
   JournalMetricsStatusDto,
   JournalMetricsUpdateDto,
   WatchEntryDto,
@@ -86,7 +91,6 @@ import type {
   ProjectConfigDto,
   LitWatchFilterDto,
   ScheduleDto,
-  SchedulerRunDonePayload,
 } from "../types";
 
 function HeadIcon({
@@ -120,24 +124,45 @@ function HeadIcon({
 }
 
 
-/** 近 8 周命中迷你趋势（手绘 SVG 柱，不引图表库）；悬停出 HoverTip（禁原生 title） */
+/** 选中桶的可读标签（胶囊用）；找不到回落 key 本身 */
+function selectedBucketLabel(
+  trend: ReturnType<typeof trendSummary>,
+  key: string,
+): string {
+  return trend.buckets.find((b) => b.key === key)?.label ?? key;
+}
+
+/** 命中迷你趋势（手绘细柱，不引图表库）：天/周/月三粒度切换，
+ *  首尾起点标签定时间轴，巡检统计挂右端同排；悬停出 HoverTip（禁原生 title） */
 function TrendChart({
   trend,
+  mode,
+  onMode,
+  selectedKey,
+  onSelectKey,
   repairDays,
   repairing,
   onRepair,
+  stats,
 }: {
-  trend: ReturnType<typeof weeklyTrend>;
+  trend: ReturnType<typeof trendSummary>;
+  mode: TrendMode;
+  onMode: (m: TrendMode) => void;
+  /** 点柱筛选：当前选中的时间桶 key；null 未选 */
+  selectedKey: string | null;
+  onSelectKey: (key: string | null) => void;
   /** 成功巡检漏写批次标记、可以按完成日补上的日期 */
   repairDays: string[];
   repairing: boolean;
   onRepair: () => void;
+  /** 右端统计行（最近巡检/推荐/未忽略）；null 不占位 */
+  stats: ReactNode;
 }) {
   const { buckets, showChart, note } = trend;
   const [tip, setTip] = useState<{ x: number; y: number; text: string } | null>(
     null,
   );
-  // 滚动/缩放即关（与 useHoverTip 同口径；SVG 柱子用不了 hook 的 ref 绑定，这里自管定位）
+  // 滚动/缩放即关（与 useHoverTip 同口径）
   useEffect(() => {
     if (!tip) return;
     const hide = () => setTip(null);
@@ -149,35 +174,69 @@ function TrendChart({
     };
   }, [tip]);
   const max = Math.max(1, ...buckets.map((b) => b.count));
-  const BAR_W = 12;
-  const GAP = 8;
-  const H = 40;
-  const W = buckets.length * (BAR_W + GAP) - GAP;
+  const titleText =
+    mode === "day" ? "近 14 天" : mode === "month" ? "近 6 月" : "近 8 周";
+  const unit = mode === "day" ? "每天" : mode === "month" ? "每月" : "每周";
+  // 日模式 14 列刻度太密：只在第 1/4/7/10/14 桶和选中桶出标签，挂列内不会错位
+  const tickIdx = new Set([0, 3, 6, 9, buckets.length - 1]);
   return (
     <div className="mt-1 px-2">
-      <p className="mb-1 text-micro text-l3">近 8 周新命中</p>
+      <div className="mb-1 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <p className="text-micro text-l3">{titleText}新命中</p>
+          <SegTabs
+            items={[
+              { id: "day" as const, label: "日" },
+              { id: "week" as const, label: "周" },
+              { id: "month" as const, label: "月" },
+            ]}
+            value={mode}
+            onChange={(m) => onMode(m)}
+          />
+        </div>
+        {stats && (
+          <p className="shrink-0 text-right text-micro leading-4 text-l4">
+            {stats}
+          </p>
+        )}
+      </div>
       {showChart && (
-        <svg
-          width={W}
-          height={H}
-          className="block"
+        // 通栏等分列：整列是悬停/点击热区（细柱难瞄准），刻度挂在列内根治错位
+        <div
+          className="grid w-full"
+          style={{ gridTemplateColumns: `repeat(${buckets.length}, minmax(0, 1fr))` }}
           role="img"
-          aria-label="近 8 周每周新命中数"
+          aria-label={`${titleText}新命中数`}
         >
           {buckets.map((b, i) => {
-            const h =
-              b.count === 0 ? 2 : Math.max(4, Math.round((b.count / max) * (H - 6)));
+            const totalPx =
+              b.count === 0 ? 0 : Math.max(8, Math.round((b.count / max) * 36));
+            const recPx =
+              b.recommendedCount > 0
+                ? Math.max(3, Math.round((totalPx * b.recommendedCount) / b.count))
+                : 0;
+            const normalPx = Math.max(b.count - b.recommendedCount > 0 ? 3 : 0, totalPx - recPx);
+            const selected = selectedKey === b.key;
+            const tick =
+              mode !== "day" ||
+              tickIdx.has(i) ||
+              selected ||
+              b.count > 0;
             return (
-              <rect
-                key={b.label}
-                x={i * (BAR_W + GAP)}
-                y={H - h}
-                width={BAR_W}
-                height={h}
-                rx={2}
-                fill={
-                  b.count > 0 ? "var(--color-cta)" : "var(--color-hairline)"
-                }
+              <button
+                key={b.key}
+                type="button"
+                data-trend-col={b.key}
+                disabled={b.count === 0}
+                aria-label={`${b.label}${unit === "每天" ? "" : `（${unit}）`} ${b.count} 篇${b.recommendedCount ? `，推荐 ${b.recommendedCount}` : ""}${b.count === 0 ? "（无命中）" : selected ? "，已选中" : ""}`}
+                className={`flex min-w-0 cursor-pointer flex-col items-center rounded-sm px-0.5 text-micro leading-3 transition-colors ${
+                  b.count === 0
+                    ? "cursor-default"
+                    : selected
+                      ? "bg-cta/12"
+                      : "hover:bg-hover"
+                }`}
+                onClick={() => b.count > 0 && onSelectKey(selected ? null : b.key)}
                 onMouseEnter={(e) => {
                   const r = e.currentTarget.getBoundingClientRect();
                   setTip({
@@ -186,14 +245,38 @@ function TrendChart({
                       window.innerWidth - 150,
                     ),
                     y: r.top - 8,
-                    text: `${b.count} 篇 · ${b.label}`,
+                    text: `${b.count} 篇${b.recommendedCount ? `（推荐 ${b.recommendedCount}）` : ""} · ${b.label}`,
                   });
                 }}
                 onMouseLeave={() => setTip(null)}
-              />
+              >
+                <span className="flex h-11 w-full items-end justify-center">
+                  {b.count === 0 ? (
+                    // 0 值胶囊底座：一排整齐的待机位，替代原先的细虚线
+                    <span className={`w-3/5 max-w-4 ${mode === "day" ? "h-[3px]" : "h-[3px]"} bg-field`} />
+                  ) : (
+                    <span
+                      className={`flex w-3/5 max-w-4 flex-col justify-end overflow-hidden rounded-t-sm`}
+                      style={{ height: totalPx }}
+                    >
+                      {normalPx > 0 && (
+                        <span className="w-full bg-cta/30" style={{ height: normalPx }} />
+                      )}
+                      {recPx > 0 && (
+                        <span className="w-full bg-cta" style={{ height: recPx }} />
+                      )}
+                    </span>
+                  )}
+                </span>
+                <span
+                  className={`mt-1 truncate ${selected ? "font-medium text-l1" : "text-l4"}`}
+                >
+                  {tick ? (mode === "day" ? `${b.start.getMonth() + 1}/${b.start.getDate()}` : b.label) : ""}
+                </span>
+              </button>
             );
           })}
-        </svg>
+        </div>
       )}
       {note && (
         <p className="mt-1 text-micro text-l4">
@@ -255,31 +338,37 @@ function WatchExplainBody({
   );
 }
 
-function RelevancePills({ entry }: { entry: WatchEntryDto }) {
+/** 第一行右端的徽章组（2026-10-14 方案 A）：
+ *  相关性只有 推荐/待确认 才挂胶囊（「相关」占多数，挂了反而挑不出推荐）；
+ *  期刊指标合成一颗复合胶囊（1区 TOP · IF 16.6），色调随分区。 */
+function EntryBadges({ entry }: { entry: WatchEntryDto }) {
+  const m = entry.metrics;
+  const metricParts = [
+    m?.casQuartile != null ? `${m.casQuartile}区` : null,
+    m?.top ? "TOP" : null,
+    m?.impactFactor ? `IF ${m.impactFactor}` : null,
+  ].filter(Boolean);
   return (
     <span className="flex shrink-0 items-center gap-1">
-      {entry.relevance === "推荐" ? (
-        <span className="rounded-full bg-cta-pill px-1.5 py-px text-micro text-cta-pill-text">
-          推荐
-        </span>
-      ) : (
-        <span className="rounded-full border border-field bg-canvas px-1.5 py-px text-micro text-l3">
+      {(entry.relevance === "推荐" || entry.relevance === "待确认") && (
+        <span
+          className={
+            entry.relevance === "推荐"
+              ? "rounded-full bg-cta-pill px-1.5 py-px text-micro text-cta-pill-text"
+              : "rounded-full border border-field bg-canvas px-1.5 py-px text-micro text-l3"
+          }
+        >
           {entry.relevance}
         </span>
       )}
-      {entry.metrics?.impactFactor && (
-        <span className={`rounded-full px-1.5 py-px text-micro ${journalMetricTone("if")}`}>
-          IF {entry.metrics.impactFactor}
-        </span>
-      )}
-      {entry.metrics?.casQuartile != null && (
-        <span className={`rounded-full px-1.5 py-px text-micro ${journalMetricTone("quartile", entry.metrics.casQuartile)}`}>
-          {entry.metrics.casQuartile}区
-        </span>
-      )}
-      {entry.metrics?.top && (
-        <span className={`rounded-full px-1.5 py-px text-micro ${journalMetricTone("top")}`}>
-          TOP
+      {metricParts.length > 0 && (
+        <span
+          className={`rounded-full px-1.5 py-px text-micro ${journalMetricTone(
+            m?.top ? "top" : "quartile",
+            m?.casQuartile,
+          )}`}
+        >
+          {metricParts.join(" · ")}
         </span>
       )}
     </span>
@@ -291,27 +380,39 @@ function RelevancePills({ entry }: { entry: WatchEntryDto }) {
 function WatchEntryRow({
   entry,
   explain,
-  onAddIncluded,
   onExplain,
   onCloseExplain,
   onRerun,
   onOpenSource,
+  onCancelCollect,
+  collecting,
   onAttach,
   onDismiss,
-  included,
+  onOpenPdf,
+  savedPdf,
+  ledger,
   startOpen,
+  onBookmarkClick,
 }: {
   entry: WatchEntryDto;
   explain: ExplainState | null;
-  onAddIncluded: () => void;
+  /** 书标点击的统一出口：ledger=reading 时是移出积累，否则加入（父级判定） */
+  onBookmarkClick: () => void;
   onExplain: () => void;
   onCloseExplain: () => void;
   onRerun: () => void;
   /** 打开来源页：有机构会话时开进机构登录窗（带会话能过反爬墙），否则系统浏览器 */
   onOpenSource: () => void;
+  /** 收货等待中的取消（原「待获取全文」区块的取消口径，区块移除后收回行内） */
+  onCancelCollect: () => void;
+  collecting: boolean;
   onAttach: () => void;
   onDismiss: () => void;
-  included: boolean;
+  /** papers/ 里已存这篇的 PDF：标题变强调色、点击直接打开（对照检索步已存条目） */
+  onOpenPdf: () => void;
+  savedPdf: string | null;
+  /** 书标双态：已在正典（included.md）/ 已在积累（reading-list.md）/ 都不在（null） */
+  ledger: LedgerMark | null;
   startOpen?: boolean;
 }) {
   const [expanded, setExpanded] = useState(!!startOpen);
@@ -322,96 +423,179 @@ function WatchEntryRow({
   const open = expanded || !!explain;
   const scan = watchEntryScanLine(entry);
   const source = sourceDisplayName((entry.journal ?? entry.source).trim());
-  const when = entry.date ? relTime(entry.date) : "";
   const zh = entry.zhSummary.trim();
   const abs = entry.abstractFirst.trim();
   const authors = entry.authors.trim();
-  const expandedMeta = [authors, source, when].filter(Boolean).join(" · ");
-  return (
-    <li className="group rounded-md px-2 py-1.5 hover:bg-hover">
+  const pub = entry.pubDate?.trim();
+  const expandedMeta = [authors, source, pub].filter(Boolean).join(" · ");
+  // 展开的价值＝被截断的完整摘要＋英文摘要＋作者。三者皆无时展开是空操作，
+  // 标题/摘要不再可点（点了没反馈比点不动更糊弄人）
+  const hasMore = Boolean(abs) || Boolean(authors) || zh.length > 40;
+  // 行内四个操作（收起态悬停出、展开态常驻右对齐），两处复用
+  const rowActions = (
+    <>
       <button
         type="button"
-        className={`block w-full text-left text-sm leading-5 text-l2 ${
-          expanded ? "whitespace-normal" : "truncate"
-        }`}
-        onClick={() => setExpanded((v) => !v)}
-        title={entry.title}
+        className={iconActionClass}
+        title={explain ? "收起解读" : "解读"}
+        aria-label={explain ? "收起解读" : "解读"}
+        onClick={explain ? onCloseExplain : onExplain}
       >
-        {entry.title}
+        ◈
       </button>
-      <div className="mt-0.5 flex min-w-0 items-center gap-2">
-        {scan && !expanded ? (
-          <button
-            type="button"
-            className="min-w-0 flex-1 truncate text-left text-micro text-l4"
-            onClick={() => setExpanded(true)}
-          >
-            {scan}
-          </button>
-        ) : (
-          <span className="min-w-0 flex-1" />
-        )}
-        <RelevancePills entry={entry} />
-        {when && !expanded && (
-          <span className="shrink-0 text-micro text-l4">{when}</span>
-        )}
-        <span className="flex shrink-0 items-center">
-          <span
-            className={`items-center ${
-              open ? "flex" : "hidden group-hover:flex group-focus-within:flex"
-            }`}
-          >
-            <button
-              type="button"
-              className={iconActionClass}
-              title={explain ? "收起解读" : "解读"}
-              aria-label={explain ? "收起解读" : "解读"}
-              onClick={explain ? onCloseExplain : onExplain}
-            >
-              ◈
-            </button>
-            {entry.url.trim() && (
-              <button
-                type="button"
-                className={iconActionClass}
-                title="在系统浏览器里打开来源（有机构前缀时自动改写带代理）；浏览器里点站方下载，90 秒内落下的 PDF 由 Mesa 自动收进 papers/"
-                aria-label="打开来源"
-                onClick={onOpenSource}
-              >
-                <ExternalLink size={13} strokeWidth={1.8} />
-              </button>
-            )}
-            <button
-              type="button"
-              className={iconActionClass}
-              aria-label={`更多操作：${entry.title}`}
-              title="更多"
-              onClick={(e) => {
-                const rect = e.currentTarget.getBoundingClientRect();
-                setMenu({ x: rect.right, y: rect.bottom + 4 });
-              }}
-            >
-              ⋯
-            </button>
+      {/* 书标：都不在两账 → 加入积累；已在积累 → 点击在「积累」抽屉里定位这一篇
+          （移出只走抽屉里的 ✕，行内不放第二个动词）；已在正典 → 只报状态不写；
+          精读/全文入口统一在卡头「积累」抽屉 */}
+      <button
+        type="button"
+        className={iconActionClass}
+        title={
+          ledger === "included"
+            ? "这篇已在流程的文献清单 papers/included.md（检索/人审纳入的），不在你的积累清单；点击打开已存全文，纳入/移出在文件页"
+            : ledger === "reading"
+              ? "已在积累 papers/reading-list.md；点击在「积累」抽屉里定位这一篇（移出在抽屉里）"
+              : "存入项目积累清单 papers/reading-list.md；进行中的流程不受影响，下一轮检索步开工时自动作为进料口"
+        }
+        aria-label={
+          ledger === "included"
+            ? `已在清单：${entry.title}`
+            : ledger === "reading"
+              ? `定位积累：${entry.title}`
+              : `加入积累：${entry.title}`
+        }
+        onClick={onBookmarkClick}
+      >
+        {ledger ? <Bookmark size={13} strokeWidth={1.8} /> : <BookmarkPlus size={13} strokeWidth={1.8} />}
+      </button>
+      {entry.url.trim() && !collecting && (
+        <button
+          type="button"
+          className={iconActionClass}
+          title="在系统浏览器里打开来源（有机构前缀时自动改写带代理）；浏览器里点站方下载，90 秒内落下的 PDF 由 Mesa 自动收进 papers/"
+          aria-label="打开来源"
+          onClick={onOpenSource}
+        >
+          <ExternalLink size={13} strokeWidth={1.8} />
+        </button>
+      )}
+      {entry.url.trim() && collecting && (
+        // 收货等待态（原「待获取全文」的等待/取消收进行内）：点 ✕ 取消等待
+        <span className="flex shrink-0 items-center gap-0.5">
+          <span className="text-micro text-l4" title="浏览器已打开；90 秒内落下的 PDF 会自动收进 papers/">
+            收货中
           </span>
           <button
             type="button"
             className={iconActionClass}
-            disabled={included}
-            title={included ? "已在精读清单" : "加入精读"}
-            aria-label={included ? "已在精读清单" : "加入精读"}
-            onClick={onAddIncluded}
+            title="这篇不下载了：取消收货等待，之后落下的 PDF 不再挂到这一条"
+            aria-label="取消收货等待"
+            onClick={onCancelCollect}
           >
-            {included ? (
-              <Bookmark size={13} strokeWidth={1.8} />
-            ) : (
-              <BookmarkPlus size={13} strokeWidth={1.8} />
-            )}
+            ✕
           </button>
         </span>
+      )}
+      <button
+        type="button"
+        className={iconActionClass}
+        aria-label={`更多操作：${entry.title}`}
+        title="更多"
+        onClick={(e) => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          setMenu({ x: rect.right, y: rect.bottom + 4 });
+        }}
+      >
+        ⋯
+      </button>
+    </>
+  );
+  return (
+    <li
+      className="group rounded-md px-2 py-1.5 hover:bg-hover"
+      data-lit-open-url={entry.url.trim() || undefined}
+    >
+      {/* 第一行：标题（可截断/展开换行；已存 PDF 时强调色可点开） + 复合胶囊 */}
+      <div className="flex items-start gap-2">
+        {savedPdf ? (
+          <button
+            type="button"
+            className="min-w-0 flex-1 truncate text-left text-sm leading-5 text-cta hover:underline"
+            onClick={onOpenPdf}
+            title={`打开全文 papers/${savedPdf}`}
+          >
+            {entry.title}
+          </button>
+        ) : hasMore || expanded ? (
+          <button
+            type="button"
+            className={`min-w-0 flex-1 text-left text-sm leading-5 text-l2 ${
+              expanded ? "whitespace-normal" : "truncate"
+            }`}
+            onClick={() => setExpanded((v) => !v)}
+            title={expanded ? "收起" : entry.title}
+          >
+            {entry.title}
+          </button>
+        ) : (
+          <span
+            className="min-w-0 flex-1 truncate text-sm leading-5 text-l2"
+            title={entry.title}
+          >
+            {entry.title}
+          </span>
+        )}
+        <EntryBadges entry={entry} />
+        {/* 展开/解读态：操作按钮上收标题行右端（与胶囊并排），
+            不再单独占一行——独立操作条视觉上就是一条空行（2026-10-14 两轮实证） */}
+        {open && (
+          <span className="flex shrink-0 items-center">{rowActions}</span>
+        )}
       </div>
+      {/* 收起态才有第二行（摘要截断 + 右端期刊·日期/悬停操作）。
+          展开/解读态这行整个去掉 */}
+      {!open && (
+        <div className="mt-0.5 flex min-w-0 items-center gap-2">
+          {scan ? (
+            hasMore ? (
+              <button
+                type="button"
+                className="min-w-0 flex-1 truncate text-left text-micro text-l4"
+                onClick={() => setExpanded(true)}
+              >
+                {scan}
+              </button>
+            ) : (
+              <span className="min-w-0 flex-1 truncate text-micro text-l4">
+                {scan}
+              </span>
+            )
+          ) : (
+            <span className="min-w-0 flex-1" />
+          )}
+          {/* 第二行右端固定槽：平时「期刊 · 日期」，悬停原位换成操作按钮。
+              两层同格叠放（grid 同 cell）且都常驻占位（invisible 而非 hidden）——
+              槽宽恒为两层较大值，悬停零位移；淡出层同时关 pointer-events，不挡按钮 */}
+          <span className="relative grid shrink-0 justify-items-end">
+            <span
+              className="col-start-1 row-start-1 flex w-max max-w-64 items-center gap-1 text-micro leading-4 text-l3 transition-opacity group-hover:pointer-events-none group-hover:opacity-0"
+              title={[entry.journal?.trim() || source, pub].filter(Boolean).join(" · ")}
+            >
+              {source && <span className="min-w-0 truncate">{source}</span>}
+              {pub && <span className="shrink-0 font-mono">{pub}</span>}
+            </span>
+            <span className="col-start-1 row-start-1 flex items-center invisible group-hover:visible group-focus-within:visible">
+              {rowActions}
+            </span>
+          </span>
+        </div>
+      )}
       {expanded && (zh || abs || expandedMeta) && (
-        <div className="mt-1 space-y-1">
+        // 点摘要区同样收起：只让点标题收起，展开后大半行都是「点不动的内容」
+        <div
+          className="mt-1 cursor-pointer space-y-1"
+          onClick={() => setExpanded(false)}
+          title="收起"
+        >
           {zh && <p className="text-xs leading-5 text-l3">{zh}</p>}
           {abs && <p className="text-xs leading-5 text-l3">{abs}</p>}
           {expandedMeta && (
@@ -485,14 +669,18 @@ function WatchEntryRow({
   );
 }
 
-/** 订阅弹层（w-[36rem] 富表单档）：表格化编辑 watchlist.md（关键词 + 来源多选 + 备注） */
-function SubscriptionsModal({
+/** 一条巡检自己的订阅。scheduleId 指向 .ccode/watch/<id>/watchlist.md。 */
+export function SubscriptionsModal({
   projectRoot,
+  scheduleId,
+  scheduleName,
   initial,
   onClose,
   onSaved,
 }: {
   projectRoot: string;
+  scheduleId: string;
+  scheduleName?: string;
   initial: WatchSubscriptionDto[];
   onClose: () => void;
   onSaved: () => void;
@@ -502,18 +690,36 @@ function SubscriptionsModal({
       ? initial.map((s) => ({ ...s, sources: [...s.sources] }))
       : [{ keyword: "", sources: [], note: "" }],
   );
+  // 调用方没带上现有订阅时（巡检行直接打开），自己按任务读一次
+  useEffect(() => {
+    if (initial.length > 0 || !scheduleId) return;
+    let stale = false;
+    invoke<WatchSubscriptionDto[]>("list_watch_subscriptions", {
+      projectRoot,
+      scheduleId,
+    })
+      .then((subs) => {
+        if (stale || subs.length === 0) return;
+        setRows(subs.map((s) => ({ ...s, sources: [...s.sources] })));
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+    // 只在打开时读一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // 原地编辑源文件：不跳终端页，弹层内嵌 FilePreviewEditor
   const [sourceOpen, setSourceOpen] = useState(false);
-  const SOURCES = ["arxiv", "openalex", "crossref"] as const;
 
   // 源文件可能被用户手改过：关掉编辑器后重读清单刷新表格（读失败保留当前编辑内容）
   async function reloadRows() {
     try {
       const subs = await invoke<WatchSubscriptionDto[]>(
         "list_watch_subscriptions",
-        { projectRoot },
+        { projectRoot, scheduleId },
       );
       setRows(
         subs.length > 0
@@ -541,7 +747,7 @@ function SubscriptionsModal({
     setBusy(true);
     setError(null);
     try {
-      await invoke("save_watch_subscriptions", { projectRoot, subs });
+      await invoke("save_watch_subscriptions", { projectRoot, scheduleId, subs });
       onSaved();
     } catch (reason) {
       setError(String(reason));
@@ -554,65 +760,36 @@ function SubscriptionsModal({
     <>
       <Modal
         open
-        title="追踪关键词"
+        title={scheduleName ? `${scheduleName} · 关键词` : "追踪关键词"}
         onClose={onClose}
         size="lg"
-        description="雷达按这些关键词定期检索，新命中进「新命中」列表。"
+        description="只给这一条巡检用。arXiv、OpenAlex、Crossref 三个库都会查，每次回看最近 7 天（已见过的自动去重）。"
       >
       <form onSubmit={(e) => void submit(e)}>
-        <div className="max-h-72 space-y-2 overflow-auto">
+        <div className="max-h-80 space-y-2 overflow-auto">
           {rows.map((row, i) => (
-            <div key={i} className="flex min-w-0 items-center gap-2">
-              <input
-                className={`${fieldClass} min-w-0 flex-1`}
-                value={row.keyword}
-                onChange={(e) => patchRow(i, { keyword: e.target.value })}
-                placeholder="关键词，如 mixture-of-experts"
-              />
-              <span className="flex shrink-0 items-center gap-1">
-                {SOURCES.map((src) => {
-                  const on = row.sources.includes(src);
-                  return (
-                    <button
-                      key={src}
-                      type="button"
-                      onClick={() =>
-                        patchRow(i, {
-                          sources: on
-                            ? row.sources.filter((s) => s !== src)
-                            : [...row.sources, src],
-                        })
-                      }
-                      className={`flex h-6 items-center rounded-full px-2 text-xs transition-colors ${
-                        on ? "bg-seg-sel text-l1" : "bg-inset text-l3 hover:text-l1"
-                      }`}
-                    >
-                      {src}
-                    </button>
-                  );
-                })}
-              </span>
-              {/* 备注固定 9rem：fieldClass 自带 w-full，须用外层 span 约束，否则挤死关键词列 */}
-              <span className="w-36 shrink-0">
+            <div key={i} className="rounded-md bg-inset/60 px-2.5 py-2">
+              <div className="flex min-w-0 items-center gap-2">
                 <input
-                  className={fieldClass}
-                  value={row.note}
-                  onChange={(e) => patchRow(i, { note: e.target.value })}
-                  placeholder="备注（可选）"
+                  className={`${fieldClass} min-w-0 flex-1`}
+                  value={row.keyword}
+                  onChange={(e) => patchRow(i, { keyword: e.target.value })}
+                  placeholder="关键词，如 mixture-of-experts"
+                  aria-label={`第 ${i + 1} 条关键词`}
                 />
-              </span>
-              <button
-                type="button"
-                aria-label="删除该行"
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-xs text-l3 hover:bg-hover hover:text-l1"
-                onClick={() =>
-                  setRows((cur) =>
-                    cur.length > 1 ? cur.filter((_, j) => j !== i) : cur,
-                  )
-                }
-              >
-                ×
-              </button>
+                <button
+                  type="button"
+                  aria-label={`删除第 ${i + 1} 条`}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-xs text-l3 hover:bg-hover hover:text-l1"
+                  onClick={() =>
+                    setRows((cur) =>
+                      cur.length > 1 ? cur.filter((_, j) => j !== i) : cur,
+                    )
+                  }
+                >
+                  ×
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -638,6 +815,7 @@ function SubscriptionsModal({
               setError(null);
               invoke("save_watch_subscriptions", {
                 projectRoot,
+                scheduleId,
                 subs: initial,
               })
                 .then(() => setSourceOpen(true))
@@ -710,181 +888,52 @@ function SubscriptionsModal({
   );
 }
 
-/** 筛选弹层：按期刊指标过滤「新命中」与推送计数（存 project.toml 的 litWatchFilter）。
- *  全条件清空 = 不筛选（后端归一为 None）；指标未知的条目放行不误伤 */
-function FilterModal({
-  projectRoot,
-  initial,
-  metricsAvailable,
-  onClose,
-  onSaved,
-}: {
-  projectRoot: string;
-  initial: LitWatchFilterDto | null | undefined;
-  metricsAvailable: boolean;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [minIf, setMinIf] = useState(
-    initial?.minIf != null ? String(initial.minIf) : "",
-  );
-  const [maxQuartile, setMaxQuartile] = useState<number | null>(
-    initial?.maxCasQuartile ?? null,
-  );
-  const [topOnly, setTopOnly] = useState(!!initial?.topOnly);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const QUARTILES: { v: number | null; label: string }[] = [
-    { v: null, label: "不限" },
-    { v: 1, label: "仅 1 区" },
-    { v: 2, label: "2 区及以上" },
-    { v: 3, label: "3 区及以上" },
-  ];
-
-  async function save(filter: LitWatchFilterDto | null) {
-    setBusy(true);
-    setError(null);
-    try {
-      await invoke("update_lit_watch_filter", { projectRoot, filter });
-      onSaved();
-    } catch (reason) {
-      setError(String(reason));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function submit(e: React.FormEvent) {
-    e.preventDefault();
-    const trimmed = minIf.trim();
-    const parsed = trimmed === "" ? null : Number(trimmed);
-    if (parsed !== null && (!Number.isFinite(parsed) || parsed < 0)) {
-      setError("IF 门槛要是非负数字");
-      return;
-    }
-    void save({ minIf: parsed, maxCasQuartile: maxQuartile, topOnly });
-  }
-
-  return (
-    <Modal
-      open
-      title="筛选新命中"
-      onClose={onClose}
-      size="md"
-      description="按期刊指标过滤「新命中」列表与定时巡检的推送计数；查不到指标的条目照常显示（不误伤），精读清单不受影响。"
-    >
-      <form onSubmit={submit}>
-        {!metricsAvailable && (
-          <p className="mb-3 text-xs text-warn-text">
-            期刊指标表还没装：筛选保存后暂不生效，点卡头「↓ 期刊指标表」装表即生效。
-          </p>
-        )}
-        <label className="mb-1 block text-xs text-l2">影响因子 IF 至少</label>
-        <input
-          className={fieldClass}
-          value={minIf}
-          onChange={(e) => setMinIf(e.target.value)}
-          placeholder="不限，如填 10 表示只看 IF≥10"
-          inputMode="decimal"
-        />
-        <label className="mb-1 mt-3 block text-xs text-l2">中科院大类分区</label>
-        <div className="flex items-center gap-1">
-          {QUARTILES.map((q) => (
-            <button
-              key={q.label}
-              type="button"
-              onClick={() => setMaxQuartile(q.v)}
-              className={`flex h-6 items-center rounded-full px-2 text-xs transition-colors ${
-                maxQuartile === q.v
-                  ? "bg-seg-sel text-l1"
-                  : "bg-inset text-l3 hover:text-l1"
-              }`}
-            >
-              {q.label}
-            </button>
-          ))}
-        </div>
-        <button
-          type="button"
-          onClick={() => setTopOnly((v) => !v)}
-          className="mt-3 flex items-center gap-2 text-xs text-l2 hover:text-l1"
-          aria-pressed={topOnly}
-        >
-          <span
-            className={`flex h-4 w-4 items-center justify-center rounded-xs border text-micro ${
-              topOnly
-                ? "border-cta-bd bg-cta text-cta-text"
-                : "border-field bg-inset text-transparent"
-            }`}
-          >
-            ✓
-          </span>
-          仅中科院 TOP 期刊
-        </button>
-        {error && <p className="mt-2 text-sm text-err-text">{error}</p>}
-        <div className="mt-4 flex items-center justify-end gap-2">
-          {litWatchFilterActive(initial) && (
-            <button
-              type="button"
-              disabled={busy}
-              className="mr-auto rounded-sm px-3 py-1.5 text-sm text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50"
-              onClick={() => void save(null)}
-            >
-              清除筛选
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-sm px-3 py-1.5 text-sm text-l2 hover:bg-hover"
-          >
-            取消
-          </button>
-          <button
-            type="submit"
-            disabled={busy}
-            className="rounded-sm border border-cta-bd bg-cta px-3 py-1.5 text-sm text-cta-text hover:brightness-110 disabled:opacity-50"
-          >
-            {busy ? "保存中…" : "保存筛选"}
-          </button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
 
 /**
  * 科研任务「现在」：定时巡检推来的新文献。默认收起；有新命中头上写篇数。
- * 精读清单在文件页，这里只处理新命中。订阅/筛选/定时入口仍在卡头（定时滚到项目设置）。
+ * 行内「加入积累」由人逐篇挑，存 papers/reading-list.md（积累账）；正典 included.md 在文件页。
+ * 订阅/筛选/积累清单入口在卡头，定时入口在项目设置。
  */
 export default function LitWatchCard({
   projectRoot,
   cfg,
-  onOpenSchedules,
   onConfigChanged,
+  onSubscriptionsChanged,
   focusToken,
   focusEntryId,
   preferCollapsed = false,
+  schedulesVersion = 0,
 }: {
   projectRoot: string;
   cfg: ProjectConfigDto;
-  /** 「◔ 定时」：打开项目设置抽屉并滚到定时任务区块 */
-  onOpenSchedules: () => void;
   /** 下载 PDF 会登记进 project.toml 资源清单：通知父级重读档案卡 */
   onConfigChanged: () => void;
+  /** 订阅保存后：巡检行的「立即运行」要跟着能点 */
+  onSubscriptionsChanged?: () => void;
   /** 收件箱跳转：展开雷达并滚到这一条。 */
   focusToken?: number | null;
   /** 有进行中/待验收目标时默认收起，把「项目现在」让出来。 */
   preferCollapsed?: boolean;
   /** 收件箱点的那一篇：展开这一条 */
   focusEntryId?: string | null;
+  /** 同页任务列表增删改（含启停）的版本号：任务集变了空态行/立即跑要跟着变。
+   *  新建/删除任务不发 scheduler-run-done（那只管跑完），靠这个 props 桥刷新。 */
+  schedulesVersion?: number;
 }) {
   const skillProvides = useSkillProvides();
   const [entries, setEntries] = useState<WatchEntryDto[] | null>(null);
-  const [followups, setFollowups] = useState<WatchFollowupDto[]>([]);
+  const [, setFollowups] = useState<WatchFollowupDto[]>([]);
   const [subs, setSubs] = useState<WatchSubscriptionDto[] | null>(null);
+  /** 每条巡检自己的关键词。空态和弹层按任务取，不再用项目级一份 */
+  const [subsBySchedule, setSubsBySchedule] = useState<
+    Record<string, WatchSubscriptionDto[]>
+  >({});
   const [included, setIncluded] = useState<IncludedEntryDto[] | null>(null);
+  /** 积累账 papers/reading-list.md 的行；与正典 included.md 并行拉，供书标双态与「积累」抽屉 */
+  const [readingList, setReadingList] = useState<IncludedEntryDto[] | null>(null);
   const [schedules, setSchedules] = useState<ScheduleDto[] | null>(null);
+  /** list_schedules 失败才乐观出卡；加载中不出，避免没建巡检时卡片闪一下再消失 */
+  const [schedulesFailed, setSchedulesFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   /** 「新命中」页签内的分组视图：按日期（默认）/ 按关键词 */
@@ -900,14 +949,16 @@ export default function LitWatchCard({
     loadLitDismissed(),
   );
   const [subsOpen, setSubsOpen] = useState(false);
-  /** 筛选弹层；showFilteredOut = 临时查看全部被筛掉的条目 */
+  /** 卡头筛选行开关 */
   const [filterOpen, setFilterOpen] = useState(false);
-  const [showFilteredOut, setShowFilteredOut] = useState(false);
-  const [followupsOpen, setFollowupsOpen] = useState(false);
+  /** 卡头「积累」抽屉开关 */
+  const [readingOpen, setReadingOpen] = useState(false);
+  /** 书标定位：点已积累的书标 → 展开抽屉并高亮这一篇（token 重触发，同篇再点再闪） */
+  const [readingFocus, setReadingFocus] = useState<{ lineId: string; token: number } | null>(null);
+  const [readingFlash, setReadingFlash] = useState<string | null>(null);
   const [browserOpenedAt, setBrowserOpenedAt] = useState<Record<string, number>>({});
   const [browserSpotlight, setBrowserSpotlight] = useState<string | null>(null);
   const browserSpotlightAway = useRef(false);
-  const [running, setRunning] = useState(false);
   const [explains, setExplains] = useState<Record<string, ExplainState>>({});
   /** 解读展开态与结果缓存分离：收起不丢缓存，再展开直接复用（不重复调 AI） */
   const [explainOpen, setExplainOpen] = useState<Set<string>>(new Set());
@@ -919,19 +970,23 @@ export default function LitWatchCard({
   const setPage = useAppStore((s) => s.setPage);
   const setReaderReq = useAppStore((s) => s.setReaderReq);
   const setFilePreviewReq = useAppStore((s) => s.setFilePreviewReq);
-  const setProjectSurfaceReq = useAppStore((s) => s.setProjectSurfaceReq);
   const setWorkspaceReviewRequest = useAppStore(
     (s) => s.setWorkspaceReviewRequest,
   );
-  const [runMenu, setRunMenu] = useState<{ x: number; y: number } | null>(null);
   const [bodyOpen, setBodyOpen] = useState(() =>
     preferCollapsed ? false : readLitWatchBodyOpen(projectRoot),
   );
   const [hitQuery, setHitQuery] = useState("");
   const [showAllHits, setShowAllHits] = useState(false);
   // 待人工下载对照 papers/：文件名 → 已存。和检索步待获取共用 to_fetch_progress。
-  const [followupSaved, setFollowupSaved] = useState<Record<string, string>>({});
-  const [followupBusy, setFollowupBusy] = useState<Record<string, string>>({});
+  /** 命中里 papers/ 已有 PDF 的 id。待获取 = 没有 PDF 的命中 */
+  const [, setSavedHitIds] = useState<Set<string>>(new Set());
+  /** papers/ 已存 PDF 的命中 → 文件名（标题强调色点击开全文） */
+  const [savedPdfBy, setSavedPdfBy] = useState<Record<string, string>>({});
+  /** 积累抽屉行 → 已存 PDF 文件名（开读按钮） */
+  const [readingPdfBy, setReadingPdfBy] = useState<Record<string, string>>({});
+  /** notes/ 笔记配对（list_paper_notes）：抽屉「精读」按钮有笔记时显示「继续精读」 */
+  const [noteLinks, setNoteLinks] = useState<PaperNoteLink[] | null>(null);
   const [repairingDates, setRepairingDates] = useState(false);
 
   function showToast(text: string) {
@@ -966,7 +1021,7 @@ export default function LitWatchCard({
   }, [focusToken, focusEntryId, setRadarOpen]);
 
   async function load() {
-    const [inbox, subList, includedList, scheduleList] =
+    const [inbox, includedList, readingRows, noteLinkRows, scheduleList] =
       await Promise.all([
         invoke<WatchInboxDto>("list_watch_entries", { projectRoot }).catch(
           (reason) => {
@@ -975,12 +1030,15 @@ export default function LitWatchCard({
             return null;
           },
         ),
-        invoke<WatchSubscriptionDto[]>("list_watch_subscriptions", {
-          projectRoot,
-        }).catch(() => null),
         invoke<IncludedEntryDto[]>("list_included_entries", {
           projectRoot,
         }).catch(() => null),
+        invoke<IncludedEntryDto[]>("list_reading_list_entries", {
+          projectRoot,
+        }).catch(() => null),
+        invoke<PaperNoteLink[]>("list_paper_notes", { projectRoot }).catch(
+          () => null,
+        ),
         invoke<ScheduleDto[]>("list_schedules").catch(() => null),
       ]);
     if (inbox) {
@@ -999,10 +1057,15 @@ export default function LitWatchCard({
         return next;
       });
     }
-    if (subList) setSubs(subList);
     if (includedList) setIncluded(includedList);
-    if (scheduleList)
-      setSchedules(schedulesForProject(scheduleList, projectRoot));
+    if (readingRows) setReadingList(readingRows);
+    if (noteLinkRows) setNoteLinks(noteLinkRows);
+    if (scheduleList) {
+      setSchedules(schedulesForProject(scheduleList, projectRoot, IS_WINDOWS));
+      setSchedulesFailed(false);
+    } else {
+      setSchedulesFailed(true);
+    }
   }
 
   useEffect(() => {
@@ -1027,8 +1090,7 @@ export default function LitWatchCard({
       })
       .catch(() => {});
     let unlisten: (() => void) | undefined;
-    listen<SchedulerRunDonePayload>("scheduler-run-done", () => {
-      setRunning(false);
+    listen("scheduler-run-done", () => {
       reload();
     })
       .then((u) => (unlisten = u))
@@ -1058,9 +1120,75 @@ export default function LitWatchCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectRoot]);
 
+  // 同页任务列表增删改的桥（见 props 注释）：任务集变化就地刷新空态行与「立即跑」，
+  // 不用切页回来才看到。0 是初值不触发，挂载那轮已由上面的 effect 拉过。
+  useEffect(() => {
+    if (!schedulesVersion) return;
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [schedulesVersion]);
+
+  /** 笔记配对重拉：抽屉每次展开刷一次（笔记可能在沉浸阅读/流程里被写过），建档后也调 */
+  const refreshNoteLinks = useCallback(() => {
+    invoke<PaperNoteLink[]>("list_paper_notes", { projectRoot })
+      .then((rows) => setNoteLinks(rows))
+      .catch(() => {});
+  }, [projectRoot]);
+  useEffect(() => {
+    if (readingOpen) refreshNoteLinks();
+  }, [readingOpen, refreshNoteLinks]);
+
+  // 书标定位落地：同批 setState 提交后抽屉行才渲染完，这里找得到节点。不走 CSS.escape
+  // （jsdom 无 CSS 全局），lineId 是后端哈希，按属性值直接比对即可
+  useEffect(() => {
+    if (!readingFocus) return;
+    const el = [
+      ...document.querySelectorAll<HTMLElement>("[data-reading-line]"),
+    ].find((node) => node.getAttribute("data-reading-line") === readingFocus.lineId);
+    el?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+    setReadingFlash(readingFocus.lineId);
+    const timer = window.setTimeout(() => setReadingFlash(null), 1800);
+    return () => window.clearTimeout(timer);
+  }, [readingFocus]);
+
+  // 文献雷达位：自建巡检技能声明 provides: lit-watch 即点亮本卡（名字精确匹配兜底）。
+  // 已知不对称（复审记录）：后端的专用 prompt / new_entries 计数 / 待采纳评审仍只认
+  // 内置技能名 "lit-watch"——provides 点亮的卡能跑能「立即跑」，但没有计数与采纳行
+  const radarSchedules = (schedules ?? []).filter((s) =>
+    resolveSkillSlot(LIT_WATCH_SLOT, [s.skill], skillProvides) !== null,
+  );
+  const radarKey = radarSchedules.map((s) => s.id).join("\n");
+
+  // 每条巡检自己的关键词。空表 = 一条都没有；null = 还没拉到。
+  useEffect(() => {
+    const ids = radarKey ? radarKey.split("\n") : [];
+    if (ids.length === 0) {
+      setSubs([]);
+      return;
+    }
+    let stale = false;
+    Promise.all(
+      ids.map((id) =>
+        invoke<WatchSubscriptionDto[]>("list_watch_subscriptions", {
+          projectRoot,
+          scheduleId: id,
+        }).then((list) => [id, list] as const),
+      ),
+    )
+      .then((pairs) => {
+        if (stale) return;
+        const next: Record<string, WatchSubscriptionDto[]> = {};
+        for (const [id, list] of pairs) next[id] = list;
+        setSubsBySchedule(next);
+        setSubs(pairs.flatMap(([, list]) => list));
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [projectRoot, radarKey, schedulesVersion]);
+
   /** 最近一次成功 run（卡头时间 / 立即跑 / 漂移提醒共用） */
-  // 文献雷达位：自建巡检技能声明 provides: lit-watch 即点亮本卡（名字精确匹配兜底）
-  const radarSchedules = (schedules ?? []).filter((s) => resolveSkillSlot(LIT_WATCH_SLOT, [s.skill], skillProvides) !== null);
   const lastOkRun = (s: ScheduleDto) => s.history.find((r) => r.status === "ok");
   const latestRadarRun = radarSchedules
     .map((s) => ({ schedule: s, run: lastOkRun(s) }))
@@ -1077,25 +1205,31 @@ export default function LitWatchCard({
   /** 待采纳提示：正文 + 「去评审」收进内容井列表区（用户视线所在）；无订阅时不渲染
    *  内容井，但入口不能丢——单独出这一行 */
   const pendingRow = pendingAdoption ? (
-    <p className="mt-1 mb-2 flex flex-wrap items-center gap-2 px-2 text-xs text-warn-text">
-      <span>
-        隔离树有 {pendingAdoption.newEntries} 条新命中，尚未采纳进主仓
-      </span>
+    <div className="mt-2 mb-2 flex flex-wrap items-center gap-3 rounded-md border border-warn-text/25 bg-warn-text/10 px-3 py-2.5">
+      <div className="min-w-0 flex-1">
+        <p className="text-sm text-l1">
+          {pendingAdoption.newEntries} 条新命中待采纳
+        </p>
+        <p className="mt-0.5 text-micro text-l3">
+          还在这次巡检的隔离目录里，核对后才会进课题文件夹
+        </p>
+      </div>
       <button
         type="button"
-        className={ghostActionClass}
+        className={`${primaryActionClass} shrink-0`}
         onClick={() => {
           setWorkspaceReviewRequest({
             worktreePath: pendingAdoption.isolationPath!,
             runId: pendingAdoption.runId ?? null,
             requestId: crypto.randomUUID(),
+            returnTo: { projectRoot, surface: "schedules" },
           });
           setPage("terminal");
         }}
       >
         去评审
       </button>
-    </p>
+    </div>
   ) : null;
   async function repairWatchDates() {
     const days = undatedWatchRuns(radarSchedules).map((run) => run.day);
@@ -1124,16 +1258,12 @@ export default function LitWatchCard({
     .sort()
     .pop();
 
-  async function runNow() {
-    const s = radarSchedules.find((x) => x.enabled) ?? radarSchedules[0];
-    if (!s) return;
-    setRunning(true);
+  async function saveFilter(next: LitWatchFilterDto | null) {
     setError(null);
     try {
-      await invoke("run_schedule_now", { id: s.id });
-      // 成功拉起后结果走 scheduler-run-done 事件（监听里清 running 并重拉）
+      await invoke("update_lit_watch_filter", { projectRoot, filter: next });
+      onConfigChanged();
     } catch (reason) {
-      setRunning(false);
       setError(String(reason));
     }
   }
@@ -1195,44 +1325,128 @@ export default function LitWatchCard({
     }
   }
 
-  async function addToIncluded(entry: WatchEntryDto) {
+  /** 「加入积累」：只写账不打断——不跳精读、不开全文（2026-10-14 用户拍板：
+   *  精读与笔记入口统一收进积累抽屉，行内书标只负责进账与定位）。
+   *  全文状态由轮询 + inst-papers-changed 即时回执翻新 */
+  async function addToReading(entry: WatchEntryDto) {
     try {
-      const res = await invoke<AddIncludedResultDto>("add_included_entry", {
+      const res = await invoke<AddIncludedResultDto>("add_reading_list_entry", {
         projectRoot,
         ...includedLineFor(entry),
       });
-      void invoke<IncludedEntryDto[]>("list_included_entries", { projectRoot })
-        .then((rows) => setIncluded(rows))
-        .catch(() => {});
-      const names = await invoke<(string | null)[]>("to_fetch_progress", {
-        projectRoot,
-        items: [{ title: entry.title, url: entry.url }],
-      }).catch(() => null);
-      const saved = names?.[0] ?? null;
-      let rel = saved ? toFetchPaperRel(saved) : "";
-      if (!rel) {
-        const read = await invoke<{
-          config: { resources: { path: string; type: string; name: string; readonly: boolean; note: string }[] };
-        }>("read_project_config", { path: projectRoot }).catch(() => null);
-        rel =
-          paperResourceFor(
-            { title: entry.title },
-            read?.config.resources ?? [],
-          ) ?? "";
+      const rows = await invoke<IncludedEntryDto[]>(
+        "list_reading_list_entries",
+        { projectRoot },
+      ).catch(() => null);
+      if (rows) setReadingList(rows);
+      refreshFollowupSaved();
+      showToast(res.added ? "已加入积累清单，点书标在「积累」里定位开读" : "已在积累清单（正典或积累账其一）");
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
+
+  /** 书标统一出口：都不在 → 加入积累；已在积累 → 展开「积累」抽屉并定位这一篇
+   *  （移出只走抽屉里的 ✕，行内不放第二个动词）；仅在正典 → 这篇归流程管、抽屉里
+   *  没有它——已存全文直接打开（与标题点击同一动作），没有全文才说明去处 */
+  async function bookmarkToggle(entry: WatchEntryDto) {
+    const mark = ledgerMarkFor(entry.title, includedTitles, readingTitles);
+    if (mark === "included") {
+      const pdf = savedPdfBy[entry.id];
+      if (pdf) {
+        openSavedPdf(pdf);
+        showToast("这篇已在流程的文献清单里；打开已存全文");
+      } else {
+        showToast("这篇已在流程的文献清单里，不加重复积累；全文和移出都在文件页");
       }
-      if (rel) {
-        const root = projectRoot.replace(/[\\/]+$/, "");
-        const abs = /^([a-zA-Z]:[\\/]|\/)/.test(rel) ? rel : `${root}/${rel}`;
-        setReaderReq({ pdfPath: abs, projectRoot });
-        setPage("terminal");
-        showToast(res.added ? "已加入精读，正在打开全文" : "已在精读清单，正在打开全文");
-        return;
-      }
-      showToast(
-        res.added
-          ? "已加入精读清单。全文还没有，先用打开来源或关联 PDF"
-          : "已在精读清单。全文还没有，先用打开来源或关联 PDF",
+      return;
+    }
+    if (mark === "reading") {
+      // 与书标判定（ledgerMarkFor/normalizedTitleSet）同一把尺子：规范化标题精确相等
+      const et = normalizeTitle(entry.title);
+      const locate = (rows: readonly IncludedEntryDto[] | null) => {
+        const row = (rows ?? []).find((r) => normalizeTitle(r.title) === et);
+        if (!row) return false;
+        setRadarOpen(true);
+        setReadingOpen(true);
+        setReadingFocus({ lineId: row.lineId, token: Date.now() });
+        return true;
+      };
+      if (locate(readingList)) return;
+      // 状态里没找到先重拉一次再判（清单可能刚被别处改过），还不在这篇才说明
+      const rows2 = await invoke<IncludedEntryDto[]>("list_reading_list_entries", { projectRoot }).catch(() => null);
+      if (rows2) setReadingList(rows2);
+      if (!locate(rows2)) showToast("积累清单里没有找到这篇（可能刚被移除）");
+      return;
+    }
+    await addToReading(entry);
+  }
+
+  /** 积累抽屉「精读」：建档（已有笔记则配对复用）后进沉浸阅读——笔记接续由
+   *  reader 侧既有机制保证（来源锚点/标题配对 + lit-notes §1a 接续口径） */
+  async function openReaderFor(fileName: string) {
+    const name = fileName.replace(/\\/g, "/").split("/").pop()?.trim() ?? "";
+    if (!name) return;
+    const rel = `papers/${name}`;
+    const root = projectRoot.replace(/[\\/]+$/, "");
+    const abs = /^([a-zA-Z]:[\\/]|\/)/.test(rel) ? rel : `${root}/${rel}`;
+    try {
+      const note = await invoke<{ path: string; created: boolean }>(
+        "ensure_paper_note",
+        { projectRoot, pdfPath: abs },
       );
+      refreshNoteLinks();
+      setReaderReq({ pdfPath: abs, projectRoot, notePath: note.path });
+      setPage("terminal");
+    } catch (reason) {
+      // 建档被拒（未登记只读资源等）：仍给预览兜底，错误照实说
+      setError(String(reason));
+      openSavedPdf(fileName);
+    }
+  }
+
+  /** 积累抽屉「笔记」：按 PDF 找/建精读笔记（ensure_paper_note：已存在复用路径、
+   *  新建给八段骨架），文件页打开这份笔记；建不出来给出原因 */
+  async function openNoteFor(fileName: string) {
+    const name = fileName.replace(/\\/g, "/").split("/").pop()?.trim() ?? "";
+    if (!name) return;
+    const rel = `papers/${name}`;
+    const root = projectRoot.replace(/[\\/]+$/, "");
+    const abs = /^([a-zA-Z]:[\\/]|\/)/.test(rel) ? rel : `${root}/${rel}`;
+    try {
+      const note = await invoke<{ path: string; created: boolean }>(
+        "ensure_paper_note",
+        { projectRoot, pdfPath: abs },
+      );
+      refreshNoteLinks();
+      setFilePreviewReq({ projectRoot, path: note.path, token: Date.now() });
+      if (note.created) {
+        showToast("笔记已建档（八段骨架）；精读时在沉浸阅读里接着写");
+      }
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
+
+  /** papers/ 已存的 PDF：文件页预览打开。fileName 来自 to_fetch_progress/关联结果 */
+  function openSavedPdf(fileName: string) {
+    const name = fileName.replace(/\\/g, "/").split("/").pop()?.trim() ?? "";
+    if (!name) return;
+    const rel = `papers/${name}`;
+    const root = projectRoot.replace(/[\\/]+$/, "");
+    const abs = /^([a-zA-Z]:[\\/]|\/)/.test(rel) ? rel : `${root}/${rel}`;
+    setFilePreviewReq({ projectRoot, path: abs, token: Date.now() });
+  }
+
+  /** 抽屉里移除一条积累：删 reading-list.md 对应行并重拉清单（不动正典 included.md） */
+  async function removeReading(lineId: string) {
+    try {
+      await invoke("remove_reading_list_entry", { projectRoot, lineId });
+      const rows = await invoke<IncludedEntryDto[]>(
+        "list_reading_list_entries",
+        { projectRoot },
+      );
+      setReadingList(rows);
     } catch (reason) {
       setError(String(reason));
     }
@@ -1286,57 +1500,89 @@ export default function LitWatchCard({
     };
   }, [browserSpotlight]);
 
-  const followupProbeRef = useRef(followups);
-  followupProbeRef.current = followups;
+  const hitProbeRef = useRef(entries);
+  hitProbeRef.current = entries;
+  // 轮询 papers/ 已存状态：命中行的书标/开读分流靠 savedHitIds；命中标题开全文靠
+  // savedPdfBy；积累抽屉的开读按钮靠 readingPdfBy（probes = 命中行 + 积累行，先命中后积累）
+  const readingProbeRef = useRef<IncludedEntryDto[] | null>(null);
+  readingProbeRef.current = readingList;
   const refreshFollowupSaved = useCallback(() => {
-    const items = followupProbeRef.current;
-    if (!items.length) {
-      setFollowupSaved({});
+    const hits = hitProbeRef.current ?? [];
+    const rows = readingProbeRef.current ?? [];
+    const probes = [
+      ...hits.map((hit) => ({ title: hit.title, url: hit.url })),
+      ...rows.map((row) => ({ title: row.title, url: row.link })),
+    ];
+    if (!probes.length) {
+      setSavedHitIds(new Set());
+      setSavedPdfBy({});
+      setReadingPdfBy({});
       return;
     }
     invoke<(string | null)[]>("to_fetch_progress", {
       projectRoot,
-      items: items.map((it) => ({ title: it.title, url: it.url })),
+      items: probes,
     })
       .then((names) => {
-        const map: Record<string, string> = {};
+        const saved = new Set<string>();
+        const byId: Record<string, string> = {};
         names?.forEach((name, i) => {
-          const it = items[i];
-          if (name && it) map[`${it.title}-${i}`] = name;
+          const hit = hits[i];
+          if (name && hit) {
+            saved.add(hit.id);
+            byId[hit.id] = name;
+          }
         });
-        setFollowupSaved(map);
-        setBrowserOpenedAt((cur) => {
-          let changed = false;
-          const next = { ...cur };
-          items.forEach((it, i) => {
-            const key = it.url.trim();
-            if (map[`${it.title}-${i}`] && key && next[key]) {
-              delete next[key];
-              changed = true;
-            }
+        setSavedHitIds(saved);
+        setSavedPdfBy(byId);
+        const byLine: Record<string, string> = {};
+        names?.forEach((name, i) => {
+          const row = rows[i - hits.length];
+          if (name && row && i >= hits.length) {
+            byLine[row.lineId] = name;
+          }
+        });
+        // to_fetch_progress 有「一个 PDF 只挂一行」的 taken 保护：同一篇论文
+        // 同时在命中行和积累行时，命中行先占、积累行恒空（2026-10-14 实证）。
+        // 同题不是重复挂——把命中行的匹配补给积累行（normalizeTitle 同一把尺子）
+        for (const row of rows) {
+          if (byLine[row.lineId]) continue;
+          const rt = normalizeTitle(row.title);
+          if (!rt) continue;
+          const fromHit = Object.entries(byId).find(([id]) => {
+            const hit = hits.find((h) => h.id === id);
+            return hit ? normalizeTitle(hit.title) === rt : false;
           });
-          return changed ? next : cur;
-        });
+          if (fromHit) byLine[row.lineId] = fromHit[1];
+        }
+        setReadingPdfBy(byLine);
       })
       .catch(() => {});
   }, [projectRoot]);
   useEffect(() => {
-    if (!followupsOpen) return;
     refreshFollowupSaved();
-    const timer = window.setInterval(refreshFollowupSaved, 2000);
+    const timer = window.setInterval(refreshFollowupSaved, 4000);
     return () => window.clearInterval(timer);
-  }, [followupsOpen, followups, refreshFollowupSaved]);
+  }, [entries, readingList, refreshFollowupSaved]);
+  // 收货/关联落盘即时回执（与检索步同款事件）：不等 4 秒轮询，标题/书标当场翻
+  useEffect(() => {
+    let un: (() => void) | undefined;
+    let cancelled = false;
+    listen<{ projectRoot?: string }>("inst-papers-changed", (e) => {
+      if (e.payload?.projectRoot && !samePath(e.payload.projectRoot, projectRoot, IS_WINDOWS)) return;
+      refreshFollowupSaved();
+    })
+      .then((u) => {
+        if (cancelled) u();
+        else un = u;
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      un?.();
+    };
+  }, [projectRoot, refreshFollowupSaved]);
 
-  function openSavedPdf(fileName: string) {
-    const rel = toFetchPaperRel(fileName);
-    if (!rel) return;
-    setProjectSurfaceReq("files");
-    setFilePreviewReq({
-      projectRoot,
-      path: `${projectRoot.replace(/[\\/]+$/, "")}/${rel}`,
-      token: Date.now(),
-    });
-  }
 
   function openWithSession(rawUrl: string, title?: string) {
     if (!rawUrl.trim()) return;
@@ -1380,17 +1626,25 @@ export default function LitWatchCard({
     }
   }
 
-  // 雷达筛选（存 project.toml）：只过滤新命中；指标未知的条目放行不误伤
+  // 雷达筛选（存 project.toml）：只过滤新命中；指标未知的条目放行不误伤。
+  // 趋势柱点选是第三层过滤（时间桶），与指标筛选、搜索叠加
   const filter = cfg.litWatchFilter;
   const filterOn = litWatchFilterActive(filter);
+  const [trendMode, setTrendMode] = useState<TrendMode>("week");
+  // 点趋势柱选中的时间桶（key=桶起点 YYYY-MM-DD）；切粒度/再点同柱清除
+  const [selectedBucketKey, setSelectedBucketKey] = useState<string | null>(null);
   const undismissed = filterLitDismissed(entries ?? [], dismissed);
-  const applyingFilter = filterOn && !showFilteredOut;
-  const visibleEntries = applyingFilter
+  const filteredEntries = filterOn
     ? undismissed.filter((e) => entryPassesFilter(e.metrics, filter))
     : undismissed;
-  const hiddenByFilter = applyingFilter
-    ? undismissed.length - visibleEntries.length
-    : 0;
+  const recTotal = undismissed.filter((e) => e.relevance === "推荐").length;
+  const bucketFiltered =
+    selectedBucketKey != null
+      ? filteredEntries.filter((e) =>
+          entryInTrendBucket(e, trendMode, selectedBucketKey),
+        )
+      : filteredEntries;
+  const visibleEntries = bucketFiltered;
   const qHit = hitQuery.trim().toLowerCase();
   const searchedHits = qHit
     ? visibleEntries.filter(
@@ -1404,10 +1658,13 @@ export default function LitWatchCard({
     qHit || showAllHits
       ? searchedHits
       : searchedHits.slice(0, LIST_PREVIEW_CAP);
-  const includedTitles = new Set(
-    (included ?? []).map((item) => normalizeTitle(item.title)),
+  // 书标双态的两张规范化标题表：正典 included.md 与积累账 reading-list.md
+  const includedTitles = normalizedTitleSet(included);
+  const readingTitles = normalizedTitleSet(readingList);
+  const trend = useMemo(
+    () => trendSummary(entries ?? [], trendMode),
+    [entries, trendMode],
   );
-  const trend = weeklyTrend(entries ?? []);
   // 「新命中」两种分组视图统一成同构组列表，下方渲染不分支；关键词组头要显眼（prominent）
   const entryGroups: {
     key: string;
@@ -1423,9 +1680,20 @@ export default function LitWatchCard({
           entries: g.entries,
           prominent: true,
         }));
-  const hasSubs = (subs ?? []).length > 0;
+  const hasSubs = radarSchedules.some((s) => (subsBySchedule[s.id] ?? []).length > 0);
+  const unsubscribed = radarSchedules.filter(
+    (s) => subsBySchedule[s.id] && subsBySchedule[s.id].length === 0,
+  );
+
+  if (schedules === null && !schedulesFailed) return null;
 
   if (subs !== null && !hasSubs) {
+    // 订阅在没有定时任务时毫无效果（「立即跑」也只认有任务的卡，新命中只来自巡检）：
+    // 还没建雷达巡检时不摆这个入口，定时任务页只留「＋ 定时巡检」一条主路，
+    // 免得「添加」被当成加任务、订完关键词又永远不跑。
+    // schedules 未落定/拉取失败时不判「没有任务」（与本条件里 subs !== null 的判空对称）：
+    // list_schedules 静默吞错，失败时按乐观出这行，事件/桥会再翻新
+    if (schedules !== null && radarSchedules.length === 0) return null;
     return (
       <>
       <div className="mb-4 flex items-center gap-2 px-1">
@@ -1435,17 +1703,22 @@ export default function LitWatchCard({
           className={ghostActionClass}
           onClick={() => setSubsOpen(true)}
         >
-          添加
+          订阅关键词
         </button>
       </div>
+      {/* 无订阅时不渲染内容井，但待采纳入口不能丢（同主渲染的口径） */}
+      {pendingRow}
       {subsOpen && (
         <SubscriptionsModal
           projectRoot={projectRoot}
-          initial={subs}
+          scheduleId={unsubscribed[0]?.id ?? radarSchedules[0]?.id ?? ""}
+          scheduleName={unsubscribed[0]?.name ?? radarSchedules[0]?.name}
+          initial={subsBySchedule[unsubscribed[0]?.id ?? ""] ?? []}
           onClose={() => setSubsOpen(false)}
           onSaved={() => {
             setSubsOpen(false);
             void load();
+            onSubscriptionsChanged?.();
           }}
         />
       )}
@@ -1492,72 +1765,228 @@ export default function LitWatchCard({
               onClick={() => void downloadMetrics()}
             >
               {metricsStatus.available ? (
-                <RefreshCw size={13} strokeWidth={1.8} />
+                <Table2 size={13} strokeWidth={1.8} />
               ) : (
                 <Download size={13} strokeWidth={1.8} />
               )}
             </HeadIcon>
           )}
-          {radarSchedules.length > 0 && (
-            <HeadIcon
-              label={running ? "运行中…" : "立即跑"}
-              disabled={running}
-              onClick={(event) => {
-                if (radarSchedules.length === 1) void runNow();
-                else {
-                  const rect = event.currentTarget.getBoundingClientRect();
-                  setRunMenu({ x: rect.right, y: rect.bottom + 4 });
-                }
-              }}
-            >
-              <Play size={13} strokeWidth={1.8} />
+          {radarSchedules.length <= 1 && (
+            <HeadIcon label="订阅" onClick={() => setSubsOpen(true)}>
+              <Rss size={13} strokeWidth={1.8} />
             </HeadIcon>
           )}
-          <HeadIcon label="订阅" onClick={() => setSubsOpen(true)}>
-            <Rss size={13} strokeWidth={1.8} />
-          </HeadIcon>
+          {/* 积累清单入口：条数为 0 也显示，让「攒候选」这条路径常驻可见 */}
+          <button
+            type="button"
+            className="flex h-7 shrink-0 items-center gap-1 rounded-md px-1.5 text-micro text-l3 hover:bg-hover hover:text-l1"
+            title="项目积累清单 papers/reading-list.md：雷达里「加入积累」的候选都攒在这里。不进 git、不影响进行中的流程，下一轮检索步开工时自动作为进料口"
+            aria-expanded={readingOpen}
+            onClick={() => setReadingOpen((v) => !v)}
+          >
+            <Bookmark size={13} strokeWidth={1.8} />
+            积累 {readingList?.length ?? 0}
+          </button>
           <HeadIcon
             label={
               filterOn
                 ? `当前筛选：${litWatchFilterLabel(filter)}（点我修改）`
-                : "按期刊指标筛选新命中"
+                : "按期刊指标筛选新命中（查不到指标的条目开了筛选不显示）"
             }
             mark={filterOn}
-            onClick={() => setFilterOpen(true)}
+            onClick={() => setFilterOpen((v) => !v)}
           >
             <ListFilter size={13} strokeWidth={1.8} />
           </HeadIcon>
-          <HeadIcon label="定时巡检" onClick={onOpenSchedules}>
-            <Clock size={13} strokeWidth={1.8} />
-          </HeadIcon>
         </div>
         )}
+        {bodyOpen && filterOpen && (
+          <div className="mt-2 flex flex-wrap items-center gap-1 px-1">
+            {(
+              [
+                { label: "不限", filter: null },
+                { label: "IF≥5", filter: { minIf: 5, maxCasQuartile: null, topOnly: false } },
+                { label: "IF≥10", filter: { minIf: 10, maxCasQuartile: null, topOnly: false } },
+                { label: "仅 1 区", filter: { minIf: null, maxCasQuartile: 1, topOnly: false } },
+                { label: "仅 TOP", filter: { minIf: null, maxCasQuartile: null, topOnly: true } },
+              ] as const
+            ).map((item) => {
+              const current =
+                item.filter == null
+                  ? !filterOn
+                  : filter?.minIf === item.filter.minIf &&
+                    filter?.maxCasQuartile === item.filter.maxCasQuartile &&
+                    !!filter?.topOnly === item.filter.topOnly;
+              return (
+                <button
+                  key={item.label}
+                  type="button"
+                  onClick={() => {
+                    void saveFilter(current ? null : item.filter);
+                    setFilterOpen(false);
+                  }}
+                  className={`flex h-6 items-center rounded-full px-2 text-xs ${
+                    current ? "bg-seg-sel text-l1" : "bg-inset text-l3 hover:text-l1"
+                  }`}
+                >
+                  {item.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {/* 积累清单抽屉：展开方式与筛选行一致。内容三层——定位说明 / 条目行（含开读） / 去向说明 */}
+        {bodyOpen && readingOpen && (
+          <div className="mt-2 w-full px-1">
+            <p className="mb-1.5 text-micro leading-4 text-l4">
+              日常攒的精读候选（reading-list.md）：不进 git、不影响进行中的流程，下次开科研流程时自动并入检索进料。
+            </p>
+            {readingList !== null && readingList.length === 0 && (
+              <p className="text-xs text-l4">
+                还没有积累。雷达里点『加入积累』攒你自己的精读候选；配了全文的可以直接开读。
+              </p>
+            )}
+            {readingList !== null && readingList.length > 0 && (
+              <ul className="max-h-64 space-y-0.5 overflow-auto">
+                {readingList.map((row) => {
+                  const pdf = readingPdfBy[row.lineId];
+                  // 有笔记 → 「继续精读」：接续铁律在入口上可见（配对口径与文件页
+                  // 精读状态同源：list_paper_notes + noteLinkForPaper）
+                  const hasNote = !!pdf && !!noteLinkForPaper(`papers/${pdf}`, noteLinks ?? []);
+                  return (
+                  <li
+                    key={row.lineId}
+                    data-reading-line={row.lineId}
+                    className={`group flex items-start gap-1 rounded-md px-1.5 py-1 hover:bg-hover${
+                      readingFlash === row.lineId ? " bg-inset" : ""
+                    }`}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs text-l2" title={row.title}>
+                        {row.title}
+                      </p>
+                      <p className="truncate text-micro text-l4">
+                        {[row.authorsYear, row.source]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </p>
+                    </div>
+                    {pdf ? (
+                      <span className="flex shrink-0 items-center gap-0.5">
+                        <button
+                          type="button"
+                          className="shrink-0 rounded-sm px-1.5 py-0.5 text-micro text-ok-text hover:bg-hover"
+                          title={
+                            hasNote
+                              ? "继续精读：进沉浸阅读（三栏），笔记接着已写的内容补全"
+                              : "精读：进沉浸阅读（三栏），先建八段骨架笔记"
+                          }
+                          aria-label={`${hasNote ? "继续精读" : "精读"}：${row.title}`}
+                          onClick={() => void openReaderFor(pdf)}
+                        >
+                          {hasNote ? "继续精读" : "精读"}
+                        </button>
+                        <button
+                          type="button"
+                          className="shrink-0 rounded-sm px-1.5 py-0.5 text-micro text-l3 hover:bg-hover hover:text-l1"
+                          title="打开这篇的精读笔记（notes/）；还没有就先精读建档"
+                          aria-label={`笔记：${row.title}`}
+                          onClick={() => void openNoteFor(pdf)}
+                        >
+                          笔记
+                        </button>
+                        <button
+                          type="button"
+                          className="shrink-0 rounded-sm px-1.5 py-0.5 text-micro text-l3 hover:bg-hover hover:text-l1"
+                          title={`预览全文 papers/${pdf}`}
+                          aria-label={`预览全文：${row.title}`}
+                          onClick={() => openSavedPdf(pdf)}
+                        >
+                          全文
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="shrink-0 rounded-sm px-1.5 py-0.5 text-micro text-l3 hover:bg-hover hover:text-l1"
+                        title="papers/ 里还没有这篇的全文：选一个已下载的 PDF 关联进来（复制进 papers/ 并登记）"
+                        aria-label={`关联本地 PDF：${row.title}`}
+                        onClick={() => void attachPdf(row.title)}
+                      >
+                        关联
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="shrink-0 rounded-sm px-1.5 py-0.5 text-xs text-l4 opacity-0 hover:bg-hover hover:text-l1 focus-visible:opacity-100 group-hover:opacity-100"
+                      aria-label={`从积累清单移除：${row.title}`}
+                      title="从积累清单移除（只动 papers/reading-list.md，不影响流程正典）"
+                      onClick={() => void removeReading(row.lineId)}
+                    >
+                      ✕
+                    </button>
+                  </li>
+                  );
+                })}
+              </ul>
+            )}
+
+          </div>
+        )}
       </div>
+      {unsubscribed.length > 0 && hasSubs && (
+        <p className="mb-2 px-1 text-xs text-l4">
+          {unsubscribed.map((s) => s.name).join("、")} 还没有关键词，在下面的巡检行点「关键词」添加。
+        </p>
+      )}
+
       {error && <p className="mb-2 text-xs text-err-text">{error}</p>}
 
-      {bodyOpen && (subs !== null && !hasSubs ? pendingRow : (
+      {/* 无订阅的早返回分支已带 pendingRow，这里恒走内容井（原三元永远取不到左支） */}
+      {bodyOpen && (
         <div className={projectWellClass}>
             {entries === null ? (
               <LoadingRows compact />
             ) : (
               <>
-                <TrendChart
-                  trend={trend}
-                  repairDays={
-                    trend.showChart
-                      ? []
-                      : undatedWatchRuns(radarSchedules).map((run) => run.day)
-                  }
-                  repairing={repairingDates}
-                  onRepair={() => void repairWatchDates()}
-                />
-                {/* 计数只说一遍：待采纳批次的「新增 N 条」由待评审行承担，微行只补未忽略数 */}
-                {latestRadarRun && !pendingAdoption && (
-                  <p className="mt-1 px-2 text-micro text-l4">
-                    最近一次成功巡检新增 {latestRadarRun.newEntries ?? "未知"} 条 · 未忽略 {undismissed.length} 条
-                  </p>
+                {(trend.showChart ||
+                  (!pendingAdoption && trend.note)) && (
+                  <TrendChart
+                    trend={trend}
+                    mode={trendMode}
+                    onMode={(m) => {
+                      // 切粒度自动复位时间桶筛选（旧粒度的 key 对新粒度无意义）
+                      setSelectedBucketKey(null);
+                      setTrendMode(m);
+                    }}
+                    selectedKey={selectedBucketKey}
+                    onSelectKey={setSelectedBucketKey}
+                    repairDays={
+                      trend.showChart
+                        ? []
+                        : undatedWatchRuns(radarSchedules).map((run) => run.day)
+                    }
+                    repairing={repairingDates}
+                    onRepair={() => void repairWatchDates()}
+                    stats={
+                      // 计数只说一遍：待采纳批次的「新增 N 条」由待评审行承担，微行只补推荐与未忽略
+                      latestRadarRun && !pendingAdoption ? (
+                        <>
+                          最近一次成功巡检新增 {latestRadarRun.newEntries ?? "未知"} 条
+                          {recTotal > 0 && <> · 推荐 <span className="text-cta">{recTotal}</span></>}
+                          {" · 未忽略 "}
+                          {undismissed.length} 条
+                        </>
+                      ) : pendingAdoption && undismissed.length > 0 ? (
+                        <>未忽略 {undismissed.length} 条</>
+                      ) : null
+                    }
+                  />
                 )}
-                {pendingAdoption && undismissed.length > 0 && (
+                {/* 趋势块不出现（无命中且有待采纳）时的统计兜底行 */}
+                {!(trend.showChart || (!pendingAdoption && trend.note)) &&
+                  pendingAdoption &&
+                  undismissed.length > 0 && (
                   <p className="mt-1 px-2 text-micro text-l4">
                     未忽略 {undismissed.length} 条
                   </p>
@@ -1569,30 +1998,8 @@ export default function LitWatchCard({
                     筛选（{litWatchFilterLabel(filter)}）需要期刊指标表，装表后才生效
                   </p>
                 )}
-                {filterOn && !showFilteredOut && hiddenByFilter > 0 && (
-                  <p className="mt-1 px-2 text-micro text-l4">
-                    筛选（{litWatchFilterLabel(filter)}）隐藏 {hiddenByFilter} 条 ·{" "}
-                    <button
-                      type="button"
-                      className="underline hover:text-l1"
-                      onClick={() => setShowFilteredOut(true)}
-                    >
-                      查看全部
-                    </button>
-                  </p>
-                )}
-                {filterOn && showFilteredOut && (
-                  <p className="mt-1 px-2 text-micro text-l4">
-                    正在显示全部 {undismissed.length} 条（含不符合筛选的） ·{" "}
-                    <button
-                      type="button"
-                      className="underline hover:text-l1"
-                      onClick={() => setShowFilteredOut(false)}
-                    >
-                      恢复筛选
-                    </button>
-                  </p>
-                )}
+
+                {(searchedHits.length > 0 || qHit || selectedBucketKey != null) && (
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   {searchedHits.length > 0 && (
                     <SegTabs
@@ -1604,6 +2011,16 @@ export default function LitWatchCard({
                       onChange={setGroupBy}
                     />
                   )}
+                  {selectedBucketKey != null && (
+                    <button
+                      type="button"
+                      className="flex h-6 shrink-0 items-center gap-1 rounded-full bg-cta-pill px-2 text-micro text-cta-pill-text"
+                      title="只看这个时间桶里的命中；点一下取消"
+                      onClick={() => setSelectedBucketKey(null)}
+                    >
+                      {selectedBucketLabel(trend, selectedBucketKey)} ×
+                    </button>
+                  )}
                   <input
                     type="search"
                     value={hitQuery}
@@ -1613,9 +2030,16 @@ export default function LitWatchCard({
                     aria-label="搜索新命中"
                   />
                 </div>
-                {searchedHits.length === 0 && (qHit || !pendingAdoption) && (
+                )}
+                {searchedHits.length === 0 && (qHit || !pendingAdoption || selectedBucketKey != null) && (
                   <p className="mt-2 text-xs text-l4">
-                    {qHit ? "没有匹配" : "暂无新命中"}
+                    {qHit
+                      ? "没有匹配"
+                      : selectedBucketKey != null
+                        ? "这个时间桶里没有可显示的命中（可能被指标筛选或忽略藏起来了）。"
+                        : filterOn && undismissed.length > 0
+                          ? `筛选隐藏了全部 ${undismissed.length} 条命中；指标未收录的条目开了筛选不显示，点「不限」看全部`
+                          : "暂无新命中"}
                   </p>
                 )}
                 {entryGroups.map((group) => (
@@ -1642,7 +2066,7 @@ export default function LitWatchCard({
                               ? (explains[entry.id] ?? { status: "loading" as const })
                               : null
                           }
-                          onAddIncluded={() => void addToIncluded(entry)}
+                          onBookmarkClick={() => void bookmarkToggle(entry)}
                           onExplain={() => {
                             const cur = explains[entry.id];
                             if (cur?.status === "loading") {
@@ -1673,11 +2097,32 @@ export default function LitWatchCard({
                           }
                           onRerun={() => void explain(entry)}
                           onOpenSource={() => openWithSession(entry.url, entry.title)}
+                          collecting={
+                            !!entry.url.trim() &&
+                            !!browserOpenedAt[entry.url.trim()] &&
+                            Date.now() - browserOpenedAt[entry.url.trim()] < 95000
+                          }
+                          onCancelCollect={() => {
+                            const key = entry.url.trim();
+                            setBrowserOpenedAt((cur) => {
+                              const next = { ...cur };
+                              delete next[key];
+                              return next;
+                            });
+                            setBrowserSpotlight((cur) => (cur === key ? null : cur));
+                            void invoke("inst_browser_cancel", {
+                              projectRoot,
+                              title: entry.title,
+                              doi: entry.url,
+                            }).catch(() => {});
+                          }}
                           onAttach={() => void attachPdf(entry.title)}
                           onDismiss={() =>
                             setDismissed((cur) => dismissLitEntry(cur, entry.id))
                           }
-                          included={includedTitles.has(normalizeTitle(entry.title))}
+                          savedPdf={savedPdfBy[entry.id] ?? null}
+                          onOpenPdf={() => openSavedPdf(savedPdfBy[entry.id] ?? "")}
+                          ledger={ledgerMarkFor(entry.title, includedTitles, readingTitles)}
                           startOpen={entry.id === expandedId}
                         />
                       ))}
@@ -1693,212 +2138,26 @@ export default function LitWatchCard({
                     onToggle={() => setShowAllHits((v) => !v)}
                   />
                 )}
-                {followups.some(
-                  (f) => !followupMatchesDismissed(f.title, entries ?? [], dismissed),
-                ) && (
-                  <div className="mt-2">
-                    <button
-                      type="button"
-                      className="flex items-center gap-1 px-2 text-xs text-l3 hover:text-l1"
-                      onClick={() => setFollowupsOpen((v) => !v)}
-                      aria-expanded={followupsOpen}
-                    >
-                      <FoldMark open={followupsOpen} />
-                      待人工下载（{
-                        followups.filter(
-                          (f) =>
-                            !followupMatchesDismissed(f.title, entries ?? [], dismissed),
-                        ).length
-                      }）
-                    </button>
-                    {followupsOpen && (
-                      <>
-                      <ul className="mt-1 space-y-0.5 px-0.5 py-px">
-                        {followups.map((f, i) => {
-                          if (followupMatchesDismissed(f.title, entries ?? [], dismissed)) {
-                            return null;
-                          }
-                          const fkey = `${f.title}-${i}`;
-                          const savedName = followupSaved[fkey];
-                          const waiting =
-                            !!f.url.trim() &&
-                            !!browserOpenedAt[f.url.trim()] &&
-                            Date.now() - browserOpenedAt[f.url.trim()] < 95000;
-                          const meta = [f.note, followupBusy[fkey]]
-                            .filter(Boolean)
-                            .join(" · ");
-                          return (
-                          <li
-                            key={fkey}
-                            data-lit-open-url={f.url.trim()}
-                            className={`flex min-w-0 flex-wrap items-center gap-1 rounded-md px-1 py-0.5 ${
-                              browserSpotlight === f.url.trim()
-                                ? "bg-cta/10 ring-1 ring-inset ring-cta-bd"
-                                : "hover:bg-hover"
-                            }`}
-                          >
-                            <button
-                              type="button"
-                              className={`min-w-0 flex-1 truncate text-left text-xs ${
-                                savedName
-                                  ? "text-l4 line-through hover:text-l2"
-                                  : "text-l2 hover:text-l1"
-                              }`}
-                              title={
-                                savedName
-                                  ? `在文件页打开 papers/${savedName}`
-                                  : f.url
-                                    ? "用右侧「官网」打开这篇的出版商页面"
-                                    : f.title
-                              }
-                              onClick={() => {
-                                if (savedName) openSavedPdf(savedName);
-                              }}
-                            >
-                              {f.title}
-                            </button>
-                            {meta && (
-                              <span className="max-w-[14rem] shrink-0 truncate text-micro text-l4" title={meta}>
-                                {meta}
-                              </span>
-                            )}
-                            {savedName ? (
-                              <span
-                                className="shrink-0 text-micro text-done"
-                                title={`点标题打开 papers/${savedName}`}
-                              >
-                                ✓ 已存
-                              </span>
-                            ) : (
-                              <span className="flex shrink-0 items-center">
-                                {f.url.trim() && (
-                                  <button
-                                    type="button"
-                                    className={`${inlineActionClass} shrink-0`}
-                                    title="去出版商官网打开这篇；点站方下载，90 秒内落下的 PDF 会收进 papers/。没收到用「关联」"
-                                    onClick={() => openWithSession(f.url, f.title)}
-                                  >
-                                    {waiting ? "等待收货…" : "官网"}
-                                  </button>
-                                )}
-                                {waiting && (
-                                  <button
-                                    type="button"
-                                    className={`${ghostActionClass} shrink-0`}
-                                    title="这篇不下载了。收货等待取消，之后的 PDF 不会挂到这一行。"
-                                    onClick={() => {
-                                      setBrowserOpenedAt((cur) => {
-                                        const next = { ...cur };
-                                        delete next[f.url.trim()];
-                                        return next;
-                                      });
-                                      setBrowserSpotlight((cur) =>
-                                        cur === f.url.trim() ? null : cur,
-                                      );
-                                      void invoke("inst_browser_cancel", {
-                                        projectRoot,
-                                        title: f.title,
-                                        doi: f.url,
-                                      }).catch(() => {});
-                                    }}
-                                  >
-                                    取消
-                                  </button>
-                                )}
-                                <button
-                                  type="button"
-                                  className={`${ghostActionClass} shrink-0`}
-                                  disabled={followupBusy[fkey] === "关联中…"}
-                                  title="选一个已下载的 PDF，按本行标题复制进 papers/（文件名随意）"
-                                  onClick={() => {
-                                    setFollowupBusy((cur) => ({ ...cur, [fkey]: "关联中…" }));
-                                    void attachPdf(f.title).finally(() => {
-                                      setFollowupBusy((cur) => {
-                                        const next = { ...cur };
-                                        delete next[fkey];
-                                        return next;
-                                      });
-                                      refreshFollowupSaved();
-                                    });
-                                  }}
-                                >
-                                  {followupBusy[fkey] === "关联中…" ? "关联中…" : "关联"}
-                                </button>
-                              </span>
-                            )}
-                          </li>
-                          );
-                        })}
-                      </ul>
-                      <div className="mt-1 flex min-w-0 items-center gap-2 px-1">
-                        <button
-                          type="button"
-                          className={`${ghostActionClass} shrink-0`}
-                          title="打开课题的 papers/。PDF 在这里，拖进 Zotero 或 EndNote"
-                          onClick={() => {
-                            void invoke("zotero_open_papers", { projectRoot }).catch((reason) =>
-                              setError(String(reason)),
-                            );
-                          }}
-                        >
-                          打开 papers/
-                        </button>
-                      </div>
-                      </>
-                    )}
-                  </div>
-                )}
               </>
             )}
         </div>
-      ))}
+      )}
 
       {subsOpen && subs !== null && (
         <SubscriptionsModal
           projectRoot={projectRoot}
-          initial={subs}
+          scheduleId={radarSchedules[0]?.id ?? ""}
+          scheduleName={radarSchedules[0]?.name}
+          initial={subsBySchedule[radarSchedules[0]?.id ?? ""] ?? []}
           onClose={() => setSubsOpen(false)}
           onSaved={() => {
             setSubsOpen(false);
             void load();
+            onSubscriptionsChanged?.();
           }}
         />
       )}
-      {filterOpen && (
-        <FilterModal
-          projectRoot={projectRoot}
-          initial={filter}
-          metricsAvailable={metricsStatus?.available ?? false}
-          onClose={() => setFilterOpen(false)}
-          onSaved={() => {
-            // 保存后重读档案卡（cfg.litWatchFilter 随 prop 更新），并退出「查看全部」临时态
-            setFilterOpen(false);
-            setShowFilteredOut(false);
-            onConfigChanged();
-          }}
-        />
-      )}
-      {runMenu && (
-        <ContextMenu
-          x={runMenu.x}
-          y={runMenu.y}
-          alignRight
-          onClose={() => setRunMenu(null)}
-          items={radarSchedules.map((s) => ({
-            label: `${s.name} · ${s.frequency === "weekly" ? "每周" : "每天"}`,
-            title: "立即运行这条文献雷达任务",
-            onSelect: () => {
-              setRunMenu(null);
-              setRunning(true);
-              setError(null);
-              void invoke("run_schedule_now", { id: s.id }).catch((reason) => {
-                setRunning(false);
-                setError(String(reason));
-              });
-            },
-          }))}
-        />
-      )}
+
       {toast && (
         <div
           className={`fixed bottom-4 right-4 z-50 flex items-center gap-2 rounded-md border border-cta-bd bg-cta px-3 py-2 text-sm text-cta-text transition-all duration-300 ${

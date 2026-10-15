@@ -5,6 +5,7 @@ import ScheduleSection from "./ScheduleSection";
 import { normalizeWorkMode } from "../work-mode";
 import type { ProjectConfigDto, ProjectDto } from "../types";
 
+
 /** 项目「定时任务」页：文献雷达（科研）+ 本项目全部定时任务。 */
 export default function ProjectSchedulesView({
   project,
@@ -21,6 +22,11 @@ export default function ProjectSchedulesView({
 }) {
   const research = normalizeWorkMode(project.workMode) === "research";
   const [cfg, setCfg] = useState<ProjectConfigDto | null>(null);
+  /** 任务列表增删改的版本号：新建/删除不发 scheduler-run-done（那只管跑完），
+   *  雷达卡的空态行与「立即跑」靠这座桥就地翻新，不用切页回来 */
+  const [schedulesVersion, setSchedulesVersion] = useState(0);
+  /** 订阅保存后让巡检行重读关键词数：没关键词时「立即运行」禁用 */
+  const [subsVersion, setSubsVersion] = useState(0);
   const scheduleRef = useRef<HTMLDivElement>(null);
 
   function reloadCfg() {
@@ -56,17 +62,18 @@ export default function ProjectSchedulesView({
           cfg={cfg}
           focusToken={focusToken}
           focusEntryId={focusEntryId}
-          onOpenSchedules={() =>
-            scheduleRef.current?.scrollIntoView({
-              behavior: "smooth",
-              block: "start",
-            })
-          }
+          schedulesVersion={schedulesVersion}
           onConfigChanged={reloadCfg}
+          onSubscriptionsChanged={() => setSubsVersion((v) => v + 1)}
         />
       )}
       <div ref={scheduleRef}>
-        <ScheduleSection projectRoot={project.path} layout="card" />
+        <ScheduleSection
+          projectRoot={project.path}
+          layout="card"
+          subsVersion={subsVersion}
+          onSchedulesChanged={() => setSchedulesVersion((v) => v + 1)}
+        />
       </div>
     </div>
   );

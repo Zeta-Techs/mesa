@@ -298,6 +298,10 @@ export interface WorkspaceReviewRequest {
   action?: "pr" | "archive" | "resolve-conflict";
   /** 同一路径的重复请求也要重新触发评审内的定位动作。 */
   requestId: string;
+  /** 从项目页签进来的：返回时回到这个项目的这个页签，而不是停在终端页。 */
+  returnTo?: { projectRoot: string; surface: ProjectSurfaceTab } | null;
+  /** 这次已经采纳：评审只查看，不能再改纳入或排除。 */
+  locked?: boolean;
 }
 
 export function sessionRuntimeKey(agent: string, sessionId: string): string {
@@ -388,7 +392,7 @@ async function openLitInboxPaper(act: {
   const title = act.title?.trim();
   if (!title) return;
   try {
-    await invoke("add_included_entry", {
+    await invoke("add_reading_list_entry", {
       projectRoot: act.projectRoot,
       title,
       authorsYear: "待补",

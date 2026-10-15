@@ -3389,6 +3389,55 @@ pub fn run_open(input: OpenRunInput) -> Result<RunDto, String> {
 pub fn run_get(id: String) -> Result<Option<RunDto>, String> {
     get_run_at(&db()?, &id)
 }
+
+// ===== 定时历史删除（2026-10-13 用户拍板：历史运行记录支持删除）=====
+
+/// 某条日程挂着的全部 watch Run id（含失败/取消的——历史行未必都记到）。
+pub(crate) fn watch_run_ids_of_schedule(task_ref: &str) -> Vec<String> {
+    let Ok(conn) = db() else {
+        return Vec::new();
+    };
+    let Ok(mut stmt) =
+        conn.prepare("SELECT id FROM runs WHERE task_kind='watch' AND task_ref=?1")
+    else {
+        return Vec::new();
+    };
+    stmt.query_map(params![task_ref], |r| r.get::<_, String>(0))
+        .map(|rows| rows.flatten().collect())
+        .unwrap_or_default()
+}
+
+/// 该日程还有没收尾的 Run 吗（删除日程前要先停掉，返回 run id）。
+pub(crate) fn schedule_open_run(task_ref: &str) -> Option<String> {
+    let conn = db().ok()?;
+    conn.query_row(
+        "SELECT id FROM runs WHERE task_kind='watch' AND task_ref=?1 AND closed_at IS NULL",
+        params![task_ref],
+        |r| r.get::<_, String>(0),
+    )
+    .ok()
+}
+
+/// 人显式删除一条 Run：账行与事件一起删（与目标「删除即归档」口径不同，这里删就是删）。
+pub(crate) fn delete_run_row(run_id: &str) -> Result<(), String> {
+    let conn = db()?;
+    conn.execute("DELETE FROM run_events WHERE run_id=?1", params![run_id])
+        .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM runs WHERE id=?1", params![run_id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 删除日程对应的 watch 任务行（删日程时级联）。
+pub(crate) fn delete_watch_task_row(task_ref: &str) -> Result<(), String> {
+    let conn = db()?;
+    conn.execute(
+        "DELETE FROM tasks WHERE kind='watch' AND task_ref=?1",
+        params![task_ref],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
 #[tauri::command]
 pub fn run_list(project_root: Option<String>) -> Result<Vec<RunDto>, String> {
     let conn = db()?;

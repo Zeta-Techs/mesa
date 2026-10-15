@@ -1,8 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createRequire } from "node:module";
+import { build } from "esbuild";
 import { renderTaskMd } from "../src/task-md.ts";
 import { PIPELINE_TEMPLATES, settingsForTemplateApply } from "../src/pipeline-presets.ts";
 import { KEEP_WORKING_CLAUSE } from "../src/step-decisions.ts";
+import { accumulationChip, formatKickoffChip } from "../src/kickoff-inputs.ts";
+import {
+  countNonCommentLines,
+  intakeBridgeHits,
+  intakeBridgeLabel,
+  intakeBridgeSurfaceKind,
+  summarizeIntakeBridge,
+} from "../src/kickoff-dirty-gate.ts";
 import type { ProjectConfigDto, ProjectStepDto } from "../src/types.ts";
 
 function step(partial: Partial<ProjectStepDto> = {}): ProjectStepDto {
@@ -126,4 +136,244 @@ test("TASK.md 简报占位按挂载名单解析：换技能后正文跟随（202
   const md2 = renderTaskMd(s, cfg(), "/tmp/p", undefined, undefined, provides);
   assert.match(md2, /全程按 lit-search 技能执行/);
   assert.doesNotMatch(md2, /\{skill:/);
+});
+
+test("积累面命中：正典清单与笔记算，inbox / 积累账 / 其他文件不算", () => {
+  assert.equal(intakeBridgeSurfaceKind("papers/included.md"), "ledger");
+  assert.equal(intakeBridgeSurfaceKind("papers/included.json"), "ledger");
+  assert.equal(intakeBridgeSurfaceKind("papers/to-fetch.md"), "ledger");
+  assert.equal(intakeBridgeSurfaceKind("papers/to-fetch.ris"), "ledger");
+  assert.equal(intakeBridgeSurfaceKind("notes/a.md"), "notes");
+  assert.equal(intakeBridgeSurfaceKind("notes/sub/deep/b.md"), "notes");
+  // inbox.md 已 gitignored（显式排除是双保险）；reading-list 是积累账，走快照不走 git
+  assert.equal(intakeBridgeSurfaceKind("notes/inbox.md"), null);
+  assert.equal(intakeBridgeSurfaceKind("papers/reading-list.md"), null);
+  assert.equal(intakeBridgeSurfaceKind("papers/screening.md"), null);
+  assert.equal(intakeBridgeSurfaceKind("notes/index.json"), null);
+  const hits = intakeBridgeHits([
+    { path: "papers/included.md" },
+    { path: "notes/01.md" },
+    { path: "papers/screening.md" },
+    { path: "notes/inbox.md" },
+    { path: "src/main.rs" },
+  ]);
+  assert.deepEqual(hits, [
+    { path: "papers/included.md", kind: "ledger" },
+    { path: "notes/01.md", kind: "notes" },
+  ]);
+});
+
+test("接驳摘要：清单 md 数主仓非注释行、笔记按份数，标签按命中段拼", () => {
+  const hits = intakeBridgeHits([
+    { path: "papers/included.md" },
+    { path: "papers/to-fetch.ris" },
+    { path: "notes/a.md" },
+    { path: "notes/b.md" },
+  ]);
+  const summary = summarizeIntakeBridge(hits, {
+    "papers/included.md": "# 清单\n\nA — B, 2020 — C — D\nE — F, 2021 — G — H\n",
+  });
+  assert.equal(summary.ledgerLines, 2);
+  assert.equal(summary.notesCount, 2);
+  assert.equal(
+    intakeBridgeLabel(summary, hits.filter((h) => h.kind === "ledger").length),
+    "清单 2 条新行 / 2 篇未提交笔记",
+  );
+  // 只有结构化清单（json/ris，无数可数）→ 兜底段；只有笔记 → 只出笔记段
+  const onlyRis = summarizeIntakeBridge(hits.filter((h) => h.path.endsWith(".ris")), {});
+  assert.equal(intakeBridgeLabel(onlyRis, 1), "清单文件待提交");
+  const onlyNotes = summarizeIntakeBridge(hits.filter((h) => h.kind === "notes"), {});
+  assert.equal(intakeBridgeLabel(onlyNotes, 0), "2 篇未提交笔记");
+  assert.equal(countNonCommentLines("# 注释\n正文\n\n"), 1);
+});
+
+test("积累芯片：N 条才出场，标签固定「积累 N 条」", () => {
+  assert.equal(accumulationChip(0, "/p/papers/reading-list.md"), null);
+  const chip = accumulationChip(3, "/p/papers/reading-list.md")!;
+  assert.equal(chip.role, "optional");
+  assert.equal(chip.present, true);
+  assert.equal(chip.previewPath, "/p/papers/reading-list.md");
+  assert.deepEqual(formatKickoffChip(chip), { label: "积累 3 条", missing: false });
+});
+
+/**
+ * startPipelineStep 开工接驳时序（2026-10-13 双台账）：真实链路经 @tauri-apps invoke，
+ * 这里用 esbuild 打包 + 桩替换 invoke，钉三件事：
+ * 1. 勾选且命中非空 → scoped git_commit（固定信息 + 路径）发生在 commit_project_bootstrap
+ *    之后、create_workspace 之前；
+ * 2. create_workspace 成功、TASK.md 落盘后 freeze_reading_list_intake（projectRoot +
+ *    worktreePath），失败只经 onError 提示、链路继续走到终端交接；
+ * 3. 未勾选 / 无命中不提交，但仍冻结积累账快照。
+ * 注意：startPipelineStep 还被 research-quality.test.ts 以「提取函数体」方式在隔离上下文
+ * 执行，本函数体禁引新的模块级标识符（提交信息用字面量），新增依赖须两边同改。
+ */
+async function bundleStartPipeline(): Promise<{
+  startPipelineStep: (args: Record<string, unknown>) => Promise<void>;
+}> {
+  const bundle = await build({
+    stdin: {
+      contents: `export {startPipelineStep} from './src/pipeline-start';`,
+      resolveDir: process.cwd(),
+      loader: "ts",
+    },
+    bundle: true,
+    write: false,
+    format: "cjs",
+    platform: "node",
+    plugins: [
+      {
+        name: "pipeline-start-host",
+        setup(b) {
+          const stubs: Record<string, string> = {
+            "@tauri-apps/api/core":
+              "export const invoke = async (cmd, args) => globalThis.__pipelineStartHost.invoke(cmd, args);",
+          };
+          b.onResolve({ filter: /.*/ }, (args) =>
+            args.path in stubs
+              ? { path: args.path, namespace: "pipeline-start-stub" }
+              : undefined,
+          );
+          b.onLoad({ filter: /.*/, namespace: "pipeline-start-stub" }, (args) => ({
+            contents: stubs[args.path],
+            loader: "js",
+          }));
+        },
+      },
+    ],
+  });
+  const compiled = { exports: {} as Record<string, unknown> };
+  new Function("require", "module", "exports", bundle.outputFiles[0].text)(
+    createRequire(import.meta.url),
+    compiled,
+    compiled.exports,
+  );
+  return compiled.exports as unknown as {
+    startPipelineStep: (args: Record<string, unknown>) => Promise<void>;
+  };
+}
+
+interface SeqCall {
+  cmd: string;
+  args: Record<string, unknown>;
+}
+
+function installInvokeHost(
+  overrides: Record<string, (args: Record<string, unknown>) => unknown> = {},
+): { calls: SeqCall[]; errors: string[] } {
+  const calls: SeqCall[] = [];
+  const errors: string[] = [];
+  const impl: Record<string, (args: Record<string, unknown>) => unknown> = {
+    ensure_git_repo: () => ({}),
+    commit_project_bootstrap: () => ({}),
+    git_commit: () => ({}),
+    create_workspace: () => ({
+      id: "w1",
+      name: "data-clean",
+      repoPath: "/p",
+      worktreePath: "/p/.mesa/ws-data-clean",
+    }),
+    freeze_reading_list_intake: () => true,
+    write_workspace_task_md: () => null,
+    research_upstream_acceptances: () => [],
+    ...overrides,
+  };
+  (globalThis as { __pipelineStartHost?: unknown }).__pipelineStartHost = {
+    invoke: async (cmd: string, args: Record<string, unknown>) => {
+      calls.push({ cmd, args });
+      const fn = impl[cmd];
+      if (!fn) throw new Error(`测试未预期的命令：${cmd}`);
+      return fn(args);
+    },
+  };
+  return { calls, errors };
+}
+
+async function runStart(
+  api: Awaited<ReturnType<typeof bundleStartPipeline>>,
+  errors: string[],
+  intakeBridge?: { accepted: boolean; paths: string[] },
+): Promise<{ opened: boolean }> {
+  let opened = false;
+  await api.startPipelineStep({
+    projectPath: "/p",
+    step: step(),
+    cfg: cfg({ steps: [step()] }),
+    taskMdOverride: "# 任务书\n做清洗。",
+    onError: (msg: string) => errors.push(msg),
+    onOpenTerminal: async () => {
+      opened = true;
+    },
+    ...(intakeBridge ? { intakeBridge } : {}),
+  });
+  return { opened };
+}
+
+test("开工接驳：scoped 提交在 bootstrap 后、建区前，冻结在任务书落盘后", async () => {
+  const api = await bundleStartPipeline();
+  const { calls, errors } = installInvokeHost();
+  const { opened } = await runStart(api, errors, {
+    accepted: true,
+    paths: ["papers/included.md", "papers/to-fetch.ris", "notes/a.md"],
+  });
+  const order = calls.map((c) => c.cmd);
+  const bootstrapAt = order.indexOf("commit_project_bootstrap");
+  const commitAt = order.indexOf("git_commit");
+  const createAt = order.indexOf("create_workspace");
+  const writeAt = order.indexOf("write_workspace_task_md");
+  const freezeAt = order.indexOf("freeze_reading_list_intake");
+  assert.ok(bootstrapAt >= 0, "缺档案卡 bootstrap 提交");
+  assert.ok(commitAt > bootstrapAt, "接驳提交必须晚于 bootstrap");
+  assert.ok(createAt > commitAt, "接驳提交必须早于 create_workspace");
+  assert.ok(freezeAt > createAt, "积累账冻结必须晚于 create_workspace");
+  assert.ok(freezeAt > writeAt, "积累账冻结在任务书落盘之后");
+  const commit = calls[commitAt];
+  assert.equal(commit.args.cwd, "/p");
+  assert.equal(commit.args.push, false);
+  assert.deepEqual(commit.args.paths, [
+    "papers/included.md",
+    "papers/to-fetch.ris",
+    "notes/a.md",
+  ]);
+  assert.equal(
+    commit.args.message,
+    "Mesa: 开工接驳——积累清单与笔记并入基准（开工确认）",
+  );
+  assert.deepEqual(calls[freezeAt].args, {
+    projectRoot: "/p",
+    worktreePath: "/p/.mesa/ws-data-clean",
+  });
+  assert.deepEqual(errors, []);
+  assert.equal(opened, true);
+});
+
+test("冻结积累账失败只提示不阻断：链路仍交接终端", async () => {
+  const api = await bundleStartPipeline();
+  const { calls, errors } = installInvokeHost({
+    freeze_reading_list_intake: () => {
+      throw new Error("快照写入失败");
+    },
+  });
+  const { opened } = await runStart(api, errors, {
+    accepted: true,
+    paths: ["papers/included.md"],
+  });
+  assert.equal(calls.filter((c) => c.cmd === "freeze_reading_list_intake").length, 1);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /积累清单快照写入失败（不影响开步）/);
+  assert.equal(opened, true, "冻结失败后仍要交接终端");
+});
+
+test("未勾选不接驳提交；无命中不提交：两种情况都照常冻结快照", async () => {
+  const api = await bundleStartPipeline();
+  // 显式不勾选
+  const off = installInvokeHost();
+  await runStart(api, off.errors, { accepted: false, paths: ["papers/included.md"] });
+  assert.equal(off.calls.some((c) => c.cmd === "git_commit"), false);
+  assert.equal(off.calls.some((c) => c.cmd === "freeze_reading_list_intake"), true);
+  assert.deepEqual(off.errors, []);
+  // 无命中（paths 空）→ 不提交
+  const none = installInvokeHost();
+  await runStart(api, none.errors, { accepted: true, paths: [] });
+  assert.equal(none.calls.some((c) => c.cmd === "git_commit"), false);
+  assert.equal(none.calls.some((c) => c.cmd === "freeze_reading_list_intake"), true);
 });

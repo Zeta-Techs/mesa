@@ -1553,6 +1553,40 @@ fn parse_config(text: &str) -> (ProjectConfigDto, Vec<String>) {
     } else if value.get("steps").is_some() {
         warnings.push("steps 不是表数组，已忽略".to_string());
     }
+    // 雷达筛选。整份反序列化走的是上面的逐项读取，不读这一段时保存后再打开是空的。
+    match value.get("litWatchFilter").or_else(|| value.get("lit_watch_filter")) {
+        None => {}
+        Some(toml::Value::Table(table)) => {
+            let mut filter = LitWatchFilterDto::default();
+            match table.get("minIf").or_else(|| table.get("min_if")) {
+                None => {}
+                Some(toml::Value::Float(n)) if *n >= 0.0 => filter.min_if = Some(*n),
+                Some(toml::Value::Integer(n)) if *n >= 0 => filter.min_if = Some(*n as f64),
+                Some(_) => warnings.push("litWatchFilter.minIf 不是非负数字，已忽略".into()),
+            }
+            match table
+                .get("maxCasQuartile")
+                .or_else(|| table.get("max_cas_quartile"))
+            {
+                None => {}
+                Some(toml::Value::Integer(n)) if (1..=4).contains(n) => {
+                    filter.max_cas_quartile = Some(*n as u8);
+                }
+                Some(_) => {
+                    warnings.push("litWatchFilter.maxCasQuartile 要是 1 到 4，已忽略".into())
+                }
+            }
+            match table.get("topOnly").or_else(|| table.get("top_only")) {
+                None => {}
+                Some(toml::Value::Boolean(b)) => filter.top_only = *b,
+                Some(_) => warnings.push("litWatchFilter.topOnly 不是布尔值，已忽略".into()),
+            }
+            if !filter.is_inert() {
+                config.lit_watch_filter = Some(filter);
+            }
+        }
+        Some(_) => warnings.push("litWatchFilter 不是表，已忽略".into()),
+    }
     // 语义级校验（绑定资源、结构化输入、简报产物引用）并入 warnings，read_project_config 自动产出
     // prior_artifacts 按步骤顺序累计：简报引用上游产物 = 合法输入，不报（见 validate_step ②）
     let mut prior_artifacts: Vec<String> = Vec::new();
@@ -1845,6 +1879,26 @@ fn render_config(existing: Option<&str>, config: &ProjectConfigDto) -> Result<St
         }
         _ => {
             doc.remove("submission_round");
+        }
+    }
+    // 全空 = 不筛选，清掉已有段。漏写这一段时，保存筛选会在下一次整卡重写里消失，
+    // 弹层再打开是空的，列表也不会变。
+    match config.lit_watch_filter.as_ref().filter(|f| !f.is_inert()) {
+        Some(filter) => {
+            let mut t = Table::new();
+            if let Some(min_if) = filter.min_if {
+                t["minIf"] = value(min_if);
+            }
+            if let Some(max_q) = filter.max_cas_quartile {
+                t["maxCasQuartile"] = value(max_q as i64);
+            }
+            if filter.top_only {
+                t["topOnly"] = value(true);
+            }
+            doc["litWatchFilter"] = Item::Table(t);
+        }
+        None => {
+            doc.remove("litWatchFilter");
         }
     }
     if config.resources.is_empty() {
@@ -2291,6 +2345,8 @@ pub(crate) fn append_acceptance_log_at(
 #[tauri::command]
 pub fn read_project_status(path: String) -> Result<ProjectStatusDto, String> {
     let root = PathBuf::from(crate::sessions::expand_tilde(&path));
+    // 项目打开时回放流程期间暂缓的 PDF 资源登记（幂等 best-effort）
+    crate::lit_watch::replay_pending_registrations(&root);
     Ok(read_project_status_at(&root))
 }
 
@@ -2823,6 +2879,17 @@ fn gitignore_text(work_mode: &str, artifact_dir: &str) -> String {
          # 文献 PDF 等大文件登记为资源引用，不进 git\n\
          *.pdf\n\
          \n\
+         # Mesa 雷达与积累台账（日常积累，不进 git；2026-10-13 双台账口径）\n\
+         /papers/reading-list.md\n\
+         /notes/inbox.md\n\
+         /papers/watch-seen.md\n\
+         /papers/watch-followup.md\n\
+         /.ccode/watch-explains.json\n\
+         /.ccode/pending-registrations.json\n\
+         /.ccode/acceptance-log.jsonl\n\
+         /.ccode/acceptance-log.lock\n\
+         /.ccode/watch/\n\
+         \n\
          # 常见数据/产物目录（按需取消注释）\n\
          # /data/\n\
          /output/\n\
@@ -2830,6 +2897,23 @@ fn gitignore_text(work_mode: &str, artifact_dir: &str) -> String {
          # /figures/\n"
     )
 }
+
+/// 台账 marker 段名（gitignore_text 里的积累台账段用；模板钉住测试断言它存在）。
+/// 2026-10-13 迁移命令按「未发布无用即删」拍板移除——存量项目当日已手工迁移完。
+pub(crate) const GITIGNORE_LEDGER_MARKER: &str = "# Mesa 雷达与积累台账";
+
+/// gitignore 模板里的台账忽略路径清单（模板钉住测试逐条断言，二者必须同步改）。
+pub(crate) const LEDGER_IGNORE_PATHS: [&str; 9] = [
+    "/papers/reading-list.md",
+    "/notes/inbox.md",
+    "/papers/watch-seen.md",
+    "/papers/watch-followup.md",
+    "/.ccode/watch-explains.json",
+    "/.ccode/pending-registrations.json",
+    "/.ccode/acceptance-log.jsonl",
+    "/.ccode/acceptance-log.lock",
+    "/.ccode/watch/",
+];
 
 fn ensure_git_at(project: &Path) -> Result<EnsureGitDto, String> {
     ensure_git_at_mode(project, "research")
@@ -2915,9 +2999,20 @@ fn commit_bootstrap_at(repo: &Path) -> Result<BootstrapCommitDto, String> {
             paths: Vec::new(),
         });
     }
-    // 暂存这两个路径下的全部改动（untracked / modified / 已暂存）
-    let mut add_args: Vec<&str> = vec!["--literal-pathspecs", "add", "--"];
+    // 暂存这两个路径下的全部改动（untracked / modified / 已暂存）。
+    // 排除雷达/验收台账缓存（2026-10-13 双台账口径）：老项目 .gitignore 还没有忽略行，
+    // 不排除的话这一把会把台账提交成 tracked——Mesa 自己制造自己要拦的合并阻塞。
+    // 用 pathspec exclude magic，故这一步不用 --literal-pathspecs（路径本身无通配，等价）
+    const BOOTSTRAP_EXCLUDES: [&str; 5] = [
+        ":(exclude).ccode/watch-explains.json",
+        ":(exclude).ccode/pending-registrations.json",
+        ":(exclude).ccode/acceptance-log.jsonl",
+        ":(exclude).ccode/acceptance-log.lock",
+        ":(exclude).ccode/watch",
+    ];
+    let mut add_args: Vec<&str> = vec!["add", "--"];
     add_args.extend(existing.iter().copied());
+    add_args.extend(BOOTSTRAP_EXCLUDES);
     crate::workspaces::run_git(repo, &add_args, T)
         .map_err(|e| format!("暂存 .ccode/.gitignore 失败: {e}"))?;
     // 有暂存内容才提交；空仓库（unborn HEAD）下 diff --cached 与空树比较，也能列出新增文件
@@ -3604,6 +3699,12 @@ const DEMO_README: &str = r#"# 示例课题（演示）
 
 const DEMO_INCLUDED: &str = "Liraglutide and Cardiovascular Outcomes in Type 2 Diabetes — Marso SP, 2016 — N Engl J Med — https://doi.org/10.1056/NEJMoa1603827\n";
 
+/// 积累账演示（gitignored，磁盘存在即可）：演示「加入积累」的日常进料面——
+/// 与正典 included.md 不同篇，避免示例里两表撞车。
+const DEMO_READING_LIST: &str = "\
+Semaglutide and Cardiovascular Outcomes in Patients with Type 2 Diabetes — Marso SP, 2016 — N Engl J Med — https://doi.org/10.1056/NEJMoa1607141\n\
+Effect of Once-Weekly Semaglutide vs Placebo in Adults with Overweight or Obesity — Wilding JPH, 2021 — N Engl J Med — https://doi.org/10.1056/NEJMoa2032183\n";
+
 const DEMO_INCLUDED_JSON: &str = r#"[
   {"id":"leader-2016-demo","title":"Liraglutide and Cardiovascular Outcomes in Type 2 Diabetes","decision":"included","reason":"演示纳入，仅用于阅读操作；演示 PDF 不是真实全文，不可作为科研证据","fulltextStatus":"demo-only"}
 ]
@@ -3786,6 +3887,7 @@ fn refresh_demo_content(dir: &Path) -> Result<(), String> {
         fs::write(&pdf, build_demo_pdf()).map_err(|e| format!("写入示例 PDF 失败: {e}"))?;
     }
     write_if_missing(&dir.join("papers/included.md"), DEMO_INCLUDED)?;
+    write_if_missing(&dir.join("papers/reading-list.md"), DEMO_READING_LIST)?;
     write_if_missing(&dir.join("papers/included.json"), DEMO_INCLUDED_JSON)?;
     write_if_missing(&dir.join("papers/screening.md"), DEMO_SCREENING)?;
     write_if_missing(&dir.join("papers/to-fetch.md"), DEMO_TO_FETCH)?;
@@ -4770,12 +4872,24 @@ topOnly = true
 "#,
         )
         .unwrap();
-        let f = with_filter.lit_watch_filter.unwrap();
+        let f = with_filter.lit_watch_filter.clone().unwrap();
         assert_eq!(f.min_if, Some(10.0));
         assert_eq!(f.max_cas_quartile, Some(2));
         assert!(f.top_only);
         assert!(!f.is_inert());
         assert!(LitWatchFilterDto::default().is_inert());
+        // 整卡重写必须把筛选写回去。漏写时保存成功、再打开是空的。
+        let rendered = render_config(None, &with_filter).unwrap();
+        assert!(rendered.contains("litWatchFilter"), "{rendered}");
+        assert!(rendered.contains("minIf"), "{rendered}");
+        let back = parse_config(&rendered).0.lit_watch_filter.unwrap();
+        assert_eq!(back.min_if, Some(10.0));
+        assert_eq!(back.max_cas_quartile, Some(2));
+        assert!(back.top_only);
+        let mut cleared = with_filter;
+        cleared.lit_watch_filter = None;
+        let rendered = render_config(Some(&rendered), &cleared).unwrap();
+        assert!(!rendered.contains("litWatchFilter"), "{rendered}");
     }
 
     #[test]
@@ -7687,5 +7801,55 @@ briefs = "not-an-array"
         );
         assert!(accept_project_model(&models, Some("deepseek-v4-flash-0731")).is_err());
         assert!(accept_project_model(&[], Some("glm-5.3")).is_err());
+    }
+
+    #[test]
+    fn gitignore_template_covers_ledger_block_and_coding_mode_does_not() {
+        let research = gitignore_text("research", "artifacts");
+        assert!(research.contains(GITIGNORE_LEDGER_MARKER));
+        for path in LEDGER_IGNORE_PATHS {
+            assert!(research.contains(path), "模板缺忽略行：{path}");
+        }
+        // 迁移 marker 块与模板同款，保证幂等判据不会误判老模板
+        assert!(research.contains("（日常积累，不进 git；2026-10-13 双台账口径）"));
+        // coding 模式没有文献台账，不带积累面
+        assert!(!gitignore_text("coding", "artifacts").contains(GITIGNORE_LEDGER_MARKER));
+    }
+
+
+    // ===== B1 步骤槽位 =====
+
+    #[test]
+    fn agent_binding_slot_accepts_reader_and_step_prefix_rejects_garbage() {
+        assert!(valid_agent_binding_slot("reader"));
+        assert!(valid_agent_binding_slot("step:文献检索与筛选"));
+        assert!(valid_agent_binding_slot("step:a"));
+        // 裸 step 前缀（空步骤名）/未知固定槽/乱写一律拒绝
+        assert!(!valid_agent_binding_slot("step:"));
+        assert!(!valid_agent_binding_slot("step"));
+        assert!(valid_agent_binding_slot("discuss")); // B4 已与消费同批放开
+        assert!(valid_agent_binding_slot("chat")); // 项目对话，与 discuss 分开
+        assert!(!valid_agent_binding_slot(""));
+        assert!(!valid_agent_binding_slot("random-slot"));
+    }
+
+    #[test]
+    fn step_names_must_be_nonempty_and_unique() {
+        let mk = |names: &[&str]| {
+            names
+                .iter()
+                .map(|n| StepDto {
+                    name: (*n).into(),
+                    ..Default::default()
+                })
+                .collect::<Vec<_>>()
+        };
+        assert!(validate_step_names(&mk(&["文献检索与筛选", "综述大纲"])).is_ok());
+        // 空名与重名都拦；重名文案点名「专属绑定按步骤名匹配」
+        let empty = validate_step_names(&mk(&["甲", " "]));
+        assert!(empty.is_err() && empty.unwrap_err().contains("还没有填写步骤名"));
+        let dup = validate_step_names(&mk(&["文献精读", "文献精读"]));
+        assert!(dup.is_err() && dup.unwrap_err().contains("步骤名重复"));
+        assert!(validate_step_names(&[]).is_ok());
     }
 }

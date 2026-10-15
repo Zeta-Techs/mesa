@@ -95,6 +95,15 @@ export async function buildTaskMdPreview(
   );
 }
 
+/** 开工接驳决定（2026-10-13 双台账拍板）：accepted 且 paths 非空时，把积累面
+ *  （流程正典清单 + 用户笔记，见 kickoff-dirty-gate 的接驳面判定）随开工提交进基准分支。
+ *  由开工确认弹层随 onConfirm 第四参透传，调用链把它原样交给 startPipelineStep。 */
+export interface IntakeBridgeDecision {
+  accepted: boolean;
+  /** 接驳面的仓库相对路径（弹层按 git_status 现算，只含仍脏的文件） */
+  paths: string[];
+}
+
 /** 一键开步共享链路（§11.3 机制三）：ensure git → bootstrap 提交 → 建工作区 → 简报落成 TASK.md →
  *  run 脚本写入 → onOpenTerminal 预填启动。开工确认弹层与评审覆盖层「开始下一步」共用；
  *  组件态（starting/刷新）由调用方自持。硬失败抛错，best-effort 子步骤失败只经 onError 提示 */
@@ -107,6 +116,7 @@ export async function startPipelineStep({
   onOpenTerminal,
   launch,
   decisionPauseAcknowledged = false,
+  intakeBridge,
 }: {
   projectPath: string;
   step: ProjectStepDto;
@@ -125,6 +135,8 @@ export async function startPipelineStep({
   launch?: KickoffLaunch | null;
   /** soft_pause 的二次确认只允许推进不依赖未答决策的工作。 */
   decisionPauseAcknowledged?: boolean;
+  /** 开工接驳决定：开工弹层「开工接驳」勾选态 + 积累面命中路径（无命中传 undefined） */
+  intakeBridge?: IntakeBridgeDecision;
 }): Promise<void> {
   const gate = decisionGate(step, taskMdOverride ?? "");
   if (gate.blocked) {
@@ -169,6 +181,23 @@ export async function startPipelineStep({
   } catch (reason) {
     onError(`档案卡自动提交失败（不影响开步）：${String(reason)}`);
   }
+  // 开工接驳：勾选且命中非空时，把积累面（清单/笔记）随开工提交进基准分支——
+  // 在档案卡 bootstrap 之后、建工作区之前，新工作区从基准 HEAD 建树即带上这批积累与笔记。
+  // best-effort：提交失败只提示（积累与笔记留在项目根未提交），不阻断开步
+  if (intakeBridge?.accepted && intakeBridge.paths.length > 0) {
+    try {
+      await invoke("git_commit", {
+        cwd: projectPath,
+        // 固定提交信息（时序测试钉住）；不用模块常量——startPipelineStep 会被提取式
+        // 单测在隔离上下文执行，模块级新标识符在那里不存在
+        message: "Mesa: 开工接驳——积累清单与笔记并入基准（开工确认）",
+        push: false,
+        paths: intakeBridge.paths,
+      });
+    } catch (reason) {
+      onError(`开工接驳提交失败（不影响开步，积累与笔记留在项目根未提交）：${String(reason)}`);
+    }
+  }
   const ws = await invoke<WorkspaceDto>("create_workspace", {
     repoPath: projectPath,
     name: step.workspaceName,
@@ -201,6 +230,17 @@ export async function startPipelineStep({
     });
   } catch (reason) {
     throw new Error(`工作区「${ws.name}」已创建，但 TASK.md 写入失败，未启动 Agent；请修复任务书后再继续：${String(reason)}`);
+  }
+  // 积累账冻结（best-effort）：create_workspace 成功、任务书落盘后，把项目根
+  // papers/reading-list.md 复制为工作区 .ccode/handoff-lit-intake.md——检索步按简报
+  // 把这份开工定格副本当进料口；失败只提示（检索步回落按「项目根」绝对路径直读），不阻断开步
+  try {
+    await invoke("freeze_reading_list_intake", {
+      projectRoot: projectPath,
+      worktreePath: ws.worktreePath,
+    });
+  } catch (reason) {
+    onError(`积累清单快照写入失败（不影响开步）：${String(reason)}`);
   }
   // 步骤预设的 run 脚本（P4 quarto 渲染等）落进项目层 .ccode/settings.toml：
   // 同名覆盖、其余键保留；best-effort 失败不阻断开步

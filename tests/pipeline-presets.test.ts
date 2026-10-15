@@ -393,6 +393,40 @@ test("检索步先核对待确认，再下载已纳入全文，pending 不进 to
   }
 });
 
+test("三条检索链简报都带积累进料句，全模板不再出现「加入精读」", () => {
+  const searchSteps = PIPELINE_TEMPLATES.flatMap((t) => t.steps).filter(
+    (s) => s.skills.includes("lit-search"),
+  );
+  assert.equal(searchSteps.length, 3, "英文综述 / 科研论文 / 毕业论文各一条检索步");
+  for (const step of searchSteps) {
+    assert.match(
+      step.brief,
+      /工作区 \.ccode\/handoff-lit-intake\.md（开工时从项目根 papers\/reading-list\.md 冻结/,
+      `${step.workspaceName} 缺积累进料句`,
+    );
+    assert.match(
+      step.brief,
+      /与 included\.md 存量、人工导入题录、检索候选池统一去重（同篇不重复列）/,
+      `${step.workspaceName} 进料句缺统一去重口径`,
+    );
+    assert.match(
+      step.brief,
+      /不回写、不删除、不清空积累台账/,
+      `${step.workspaceName} 进料句缺积累账保护句`,
+    );
+  }
+  // 2026-10-13 拍板：「加入精读」改叫「加入积累」；模板文案零残留旧称
+  for (const template of PIPELINE_TEMPLATES) {
+    for (const step of template.steps) {
+      assert.doesNotMatch(
+        step.brief,
+        /加入精读/,
+        `${template.id}/${step.name} 仍写旧称「加入精读」`,
+      );
+    }
+  }
+});
+
 test("内置模板不再用空目录作为预期产物", () => {
   for (const template of PIPELINE_TEMPLATES) {
     const variants =

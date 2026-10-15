@@ -7,12 +7,15 @@ import { Modal } from "./Modal";
 import { confirmDialog } from "./ConfirmDialog";
 import {
   FoldMark,
+  hoverRevealClass,
+  iconActionClass,
   inlineActionClass,
   projectWellClass,
   Toggle,
   fieldClass,
 } from "./PageFrame";
 import { useAppStore } from "../store";
+import { IS_WINDOWS } from "../hotkeys";
 import { absTime, relTime } from "../rel-time";
 import {
   frequencyLabel,
@@ -38,6 +41,8 @@ import type {
   SkillDto,
   WatchSkillDraftDto,
 } from "../types";
+import { SubscriptionsModal } from "./LitWatchCard";
+import type { WatchSubscriptionDto } from "../lit-watch";
 import { headlessWriteBlocked, headlessWriteCaution, headlessWriteNote } from "../agent-caps";
 import { toast } from "../toast";
 
@@ -240,6 +245,11 @@ function CreateScheduleModal({
               ? "按周期跑文献雷达，新命中追加到 notes/inbox.md。"
               : "按周期跑所选巡检技能，规范以该技能的 SKILL.md 为准。"}
         </p>
+        {isLitWatchSkill(skill) && (
+          <p className="-mt-2 mb-3 text-xs text-l3">
+            建好后在这一行点「关键词」添加。每条巡检用自己的关键词，互不影响。
+          </p>
+        )}
         <label className="mb-3 block text-sm">
           <span className="mb-1 block text-xs text-l3">种类</span>
           <select
@@ -379,9 +389,12 @@ function CreateScheduleModal({
 function RunHistoryItem({
   record,
   onReview,
+  onDelete,
 }: {
   record: RunRecordDto;
   onReview?: (record: RunRecordDto) => void;
+  /** 删除这条运行历史（runId 缺失的旧记录没有删除入口） */
+  onDelete?: (record: RunRecordDto) => void;
 }) {
   // 行内单行截断只给预览（hover title 有全文但不易发现）；点击切换全文展开
   const [open, setOpen] = useState(false);
@@ -419,13 +432,41 @@ function RunHistoryItem({
           summaryPreview(record) || "（无简报）"
         )}
       </button>
-      {record.isolationPath && onReview && (
+      {record.isolationPath && onReview && !record.adopted && (
         <button
           type="button"
           className={`${actionBtn} shrink-0`}
           onClick={() => onReview(record)}
         >
-          {record.adopted ? "再看评审" : "去评审"}
+          去评审
+        </button>
+      )}
+      {record.isolationPath && onReview && record.adopted && (
+        <>
+          <span className="shrink-0 self-center text-micro text-ok-text">已采纳</span>
+          <button
+            type="button"
+            className={`${actionBtn} shrink-0`}
+            title="这次运行的产物已经采纳进项目。这里只回看当时的新命中与你的留下/排除，不能再改。"
+            onClick={() => onReview(record)}
+          >
+            查看
+          </button>
+        </>
+      )}
+      {onDelete && (
+        <button
+          type="button"
+          className={`${iconActionClass} ${hoverRevealClass} shrink-0`}
+          title={
+            record.runId
+              ? "删除这条运行记录（历史行、冻结证据和运行账目一起删；已采纳进项目的产物不受影响）"
+              : "删除这条失败记录（启动即失败，没有运行账目与证据）"
+          }
+          aria-label={`删除运行记录：${record.at}`}
+          onClick={() => onDelete(record)}
+        >
+          ✕
         </button>
       )}
     </li>
@@ -693,10 +734,17 @@ function EditWatchSkillModal({
 export default function ScheduleSection({
   projectRoot,
   layout = "fold",
+  subsVersion = 0,
+  onSchedulesChanged,
 }: {
   projectRoot: string;
   /** card = 办公侧栏常驻卡片，不折叠 */
   layout?: "fold" | "card";
+  /** 同页保存订阅后的版本号：重读关键词数，文献雷达的立即跑跟着解禁 */
+  subsVersion?: number;
+  /** 增删改（含启停/改运行配置）成功后调用：同页兄弟组件（雷达卡）靠它感知任务集变化。
+   *  新建/删除不发 scheduler-run-done（那只管跑完），没有这座桥雷达空态行要切页才翻新。 */
+  onSchedulesChanged?: () => void;
 }) {
   const isCard = layout === "card";
   const [open, setOpen] = useState(isCard);
@@ -723,6 +771,9 @@ export default function ScheduleSection({
     null,
   );
   const [skills, setSkills] = useState<SkillDto[]>([]);
+  /** 每条文献雷达自己的关键词数。缺这一项 = 还没拉到，不拦立即跑 */
+  const [subCounts, setSubCounts] = useState<Record<string, number>>({});
+  const [keywordFor, setKeywordFor] = useState<ScheduleDto | null>(null);
 
   async function load() {
     try {
@@ -733,9 +784,32 @@ export default function ScheduleSection({
         ),
         invoke<SkillDto[]>("list_skills").catch(() => [] as SkillDto[]),
       ]);
-      setSchedules(schedulesForProject(list, projectRoot));
+      const mine = schedulesForProject(list, projectRoot, IS_WINDOWS);
+      const counts = await Promise.all(
+        mine
+          .filter((s) => isLitWatchSkill(s.skill))
+          .map(async (s) => {
+            try {
+              const subs = await invoke<WatchSubscriptionDto[]>(
+                "list_watch_subscriptions",
+                { projectRoot, scheduleId: s.id },
+              );
+              return [s.id, subs.length] as const;
+            } catch {
+              return null;
+            }
+          }),
+      );
+      setSchedules(mine);
       setDrafts(pending);
       setSkills(skillList);
+      setSubCounts((cur) => {
+        const next = { ...cur };
+        for (const item of counts) {
+          if (item) next[item[0]] = item[1];
+        }
+        return next;
+      });
       setError(null);
     } catch (reason) {
       setError(String(reason));
@@ -773,6 +847,12 @@ export default function ScheduleSection({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectRoot]);
 
+  useEffect(() => {
+    if (!subsVersion) return;
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subsVersion]);
+
   const waitingDraft = drafts.some((d) => !d.hasDraft);
   useEffect(() => {
     if (!waitingDraft) return;
@@ -799,6 +879,7 @@ export default function ScheduleSection({
         patch: { enabled: !s.enabled },
       });
       await load();
+      onSchedulesChanged?.();
     } catch (reason) {
       setError(String(reason));
     }
@@ -827,6 +908,8 @@ export default function ScheduleSection({
           });
         } catch (reason) {
           await load();
+          // 配置已落盘（update_schedule 成功），任务集对兄弟组件仍是变更，桥不能漏
+          onSchedulesChanged?.();
           setError(
             `运行配置已保存，但技能分发失败：${String(reason)}。请修复分发后再运行。`,
           );
@@ -834,6 +917,7 @@ export default function ScheduleSection({
         }
       }
       await load();
+      onSchedulesChanged?.();
     } catch (reason) {
       setError(String(reason));
     }
@@ -875,8 +959,12 @@ export default function ScheduleSection({
   }
 
   async function removeSchedule(s: ScheduleDto) {
+    let message = `删除定时任务「${s.name}」？历史记录一并删除。`;
+    if (isLitWatchSkill(s.skill)) {
+      message += "这条巡检的关键词一起删除，其他巡检不受影响。";
+    }
     if (
-      !(await confirmDialog(`删除定时任务「${s.name}」？历史记录一并删除。`, {
+      !(await confirmDialog(message, {
         danger: true,
         confirmText: "删除",
       }))
@@ -885,6 +973,7 @@ export default function ScheduleSection({
     try {
       await invoke("delete_schedule", { id: s.id });
       await load();
+      onSchedulesChanged?.();
     } catch (reason) {
       setError(String(reason));
     }
@@ -997,9 +1086,12 @@ export default function ScheduleSection({
           )}
           {schedules !== null && schedules.length > 0 && (
             <ul className="space-y-0.5">
-              {schedules.map((s) => (
+              {schedules.map((s) => {
+                const needsKeywords =
+                  isLitWatchSkill(s.skill) && subCounts[s.id] === 0;
+                return (
                 <li key={s.id} className="group rounded-sm py-1.5">
-                  <div className="flex min-w-0 items-center gap-2">
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
                     <Toggle
                       checked={s.enabled}
                       onChange={() => void toggleEnabled(s)}
@@ -1011,73 +1103,27 @@ export default function ScheduleSection({
                     >
                       {s.name}
                     </span>
-                    <span className="min-w-0 flex-1" />
-                    {s.runningRunId && <button type="button" className={actionBtn} onClick={() => void cancelSchedule(s)}>停止运行</button>}
-                    {s.lastRunAt && (
-                      <span
-                        className="shrink-0 text-xs text-l4"
-                        title={absTime(s.lastRunAt)}
-                      >
-                        上次{" "}
-                        <span
-                          className={
-                            scheduleStatusMark(s.lastStatus).className
-                          }
-                        >
-                          {scheduleStatusMark(s.lastStatus).glyph}
-                        </span>{" "}
-                        {relTime(s.lastRunAt)}
-                      </span>
-                    )}
-                    {s.history.length > 0 && (
-                      <button
-                        type="button"
-                        className={`${actionBtn} inline-flex shrink-0 items-center gap-1`}
-                        aria-expanded={historyOpen === s.id}
-                        title="最近运行记录"
-                        onClick={() =>
-                          setHistoryOpen((v) => (v === s.id ? null : s.id))
-                        }
-                      >
-                        <FoldMark open={historyOpen === s.id} /> 历史
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      className={`${actionBtn} shrink-0`}
-                      disabled={running.has(s.id)}
-                      title="立即运行一次（结果走通知）"
-                      onClick={() => void runNow(s)}
-                    >
-                      {running.has(s.id) ? "◔ 运行中…" : "▶ 立即跑"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        setMenu({ x: rect.right, y: rect.bottom + 4, id: s.id });
-                      }}
-                      title="任务操作"
-                      aria-label={`任务操作：${s.name}`}
-                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-xs text-l3 hover:bg-hover hover:text-l1"
-                    >
-                      ⋯
-                    </button>
-                  </div>
-                  {/* meta 行（窄栏不挤主行）：周期 · 技能 · 运行配置；
-                      配置行内可改，hover 才显边框降存在感，绑定被删给出可见标记 */}
-                  <div className="ml-9 mt-0.5 flex min-w-0 items-center gap-2">
-                    <span className="shrink-0 text-micro text-l3">
+                    <span className="shrink-0 text-micro text-l4">
                       {frequencyLabel(s.frequency, s.weekday, s.hour, s.minute)}
                     </span>
-                    <span className="shrink-0 text-micro text-l4">
-                      {s.skill}
-                    </span>
+                    <span aria-hidden="true" className="text-micro text-l4">·</span>
+                    <span className="shrink-0 text-micro text-l4">{s.skill}</span>
+                    {isLitWatchSkill(s.skill) && (
+                      <button
+                        type="button"
+                        className={actionBtn}
+                        onClick={() => setKeywordFor(s)}
+                      >
+                        关键词
+                        {subCounts[s.id] != null ? ` ${subCounts[s.id]}` : ""}
+                      </button>
+                    )}
+                    <span aria-hidden="true" className="text-micro text-l4">·</span>
                     <select
                       value={s.profileId ?? ""}
                       onChange={(e) => void changeProfile(s, e.target.value)}
                       title="运行配置：「自动」= 跟随默认解析（设置页 AI 专用配置 → 最近使用）；绑定配置被删会自动回落并在此标出"
-                      className="min-w-0 max-w-36 shrink cursor-pointer truncate rounded-sm border border-transparent bg-transparent px-1 py-0.5 text-micro text-l4 outline-none hover:border-field hover:text-l2"
+                      className="min-w-0 max-w-52 shrink cursor-pointer truncate rounded-sm border border-transparent bg-transparent px-1 py-0.5 text-micro text-l4 outline-none hover:border-field hover:text-l2"
                     >
                       <option value="">自动</option>
                       {s.profileId &&
@@ -1099,9 +1145,59 @@ export default function ScheduleSection({
                         );
                       })}
                     </select>
+                    <span className="ml-auto flex shrink-0 items-center">
+                      {s.history.length > 0 && (
+                        <button
+                          type="button"
+                          className={`${actionBtn} inline-flex items-center gap-1`}
+                          aria-expanded={historyOpen === s.id}
+                          title="最近运行记录"
+                          onClick={() =>
+                            setHistoryOpen((v) => (v === s.id ? null : s.id))
+                          }
+                        >
+                          <FoldMark open={historyOpen === s.id} /> 历史
+                        </button>
+                      )}
+                      {s.runningRunId && (
+                        <button
+                          type="button"
+                          className={actionBtn}
+                          onClick={() => void cancelSchedule(s)}
+                        >
+                          停止运行
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className={`${iconActionClass} ${running.has(s.id) || needsKeywords ? "" : hoverRevealClass}`}
+                        disabled={running.has(s.id) || needsKeywords}
+                        title={
+                          needsKeywords
+                            ? "先在文献雷达里订阅关键词，再立即运行"
+                            : "立即运行一次（结果走通知）"
+                        }
+                        aria-label={`立即运行：${s.name}`}
+                        onClick={() => void runNow(s)}
+                      >
+                        {running.has(s.id) ? "◔" : "▶"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          setMenu({ x: rect.right, y: rect.bottom + 4, id: s.id });
+                        }}
+                        title="任务操作"
+                        aria-label={`任务操作：${s.name}`}
+                        className={`${iconActionClass} ${hoverRevealClass}`}
+                      >
+                        ⋯
+                      </button>
+                    </span>
                   </div>
-                  {historyOpen === s.id && (
-                    <ul className="ml-9 mt-1 divide-y divide-hairline border-l border-white/5 pl-2">
+                  {s.history.length > 0 && historyOpen === s.id && (
+                    <ul className="mt-0.5 divide-y divide-hairline border-l border-white/5 pl-11">
                       {s.history.slice(0, HISTORY_PREVIEW).map((r, i) => (
                         <RunHistoryItem
                           key={`${r.at}-${i}`}
@@ -1112,15 +1208,42 @@ export default function ScheduleSection({
                               worktreePath: rec.isolationPath,
                               runId: rec.runId ?? null,
                               requestId: crypto.randomUUID(),
+                              returnTo: { projectRoot, surface: "schedules" },
+                              locked: !!rec.adopted,
                             });
                             setPage("terminal");
+                          }}
+                          onDelete={(rec) => {
+                            // 启动即失败的记录没有 runId，走（任务 id + 记录时间）定位
+                            void (async () => {
+                              if (
+                                !(await confirmDialog(
+                                  rec.runId
+                                    ? `删除 ${relTime(rec.at)} 这条运行记录？历史行、冻结证据和运行账目一起删除；已采纳进项目的产物不受影响。`
+                                    : `删除 ${relTime(rec.at)} 这条失败记录？它启动就失败了，只删历史行。`,
+                                  { confirmText: "删除" },
+                                ))
+                              )
+                                return;
+                              try {
+                                await invoke("schedule_run_delete", {
+                                  runId: rec.runId,
+                                  scheduleId: rec.runId ? undefined : s.id,
+                                  at: rec.runId ? undefined : rec.at,
+                                });
+                                void load();
+                              } catch (reason) {
+                                setError(String(reason));
+                              }
+                            })();
                           }}
                         />
                       ))}
                     </ul>
                   )}
                 </li>
-              ))}
+                );
+              })}
             </ul>
           )}
         </div>
@@ -1162,6 +1285,19 @@ export default function ScheduleSection({
           ]}
         />
       )}
+      {keywordFor && (
+        <SubscriptionsModal
+          projectRoot={projectRoot}
+          scheduleId={keywordFor.id}
+          scheduleName={keywordFor.name}
+          initial={[]}
+          onClose={() => setKeywordFor(null)}
+          onSaved={() => {
+            setKeywordFor(null);
+            void load();
+          }}
+        />
+      )}
       {createOpen && (
         <CreateScheduleModal
           projectRoot={projectRoot}
@@ -1170,12 +1306,14 @@ export default function ScheduleSection({
             setCreateOpen(false);
             setOpen(true);
             await load();
+            onSchedulesChanged?.();
             if (warning) setError(warning);
           }}
           onDraftStarted={() => {
             setCreateOpen(false);
             setOpen(true);
             void load();
+            onSchedulesChanged?.();
           }}
         />
       )}
@@ -1187,6 +1325,7 @@ export default function ScheduleSection({
           onSaved={async (warning) => {
             setEditSchedule(null);
             await load();
+            onSchedulesChanged?.();
             if (warning) setError(warning);
           }}
         />
@@ -1199,6 +1338,9 @@ export default function ScheduleSection({
           onCommitted={() => {
             setCommitDraft(null);
             void load();
+            // 落盘会 create_schedule 建任务（后端 commit_watch_skill_draft），
+            // 这是桥最初要接的「新建」路径，漏了雷达卡要等别的事件才翻新
+            onSchedulesChanged?.();
           }}
         />
       )}
