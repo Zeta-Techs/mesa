@@ -212,7 +212,7 @@ async function bundleStartPipeline(): Promise<{
 }> {
   const bundle = await build({
     stdin: {
-      contents: `export {startPipelineStep} from './src/pipeline-start';`,
+      contents: `export {startPipelineStep, buildWorkspaceTerminalRequest, wireWorkspaceLaunchGuard} from './src/pipeline-start';`,
       resolveDir: process.cwd(),
       loader: "ts",
     },
@@ -249,6 +249,8 @@ async function bundleStartPipeline(): Promise<{
   );
   return compiled.exports as unknown as {
     startPipelineStep: (args: Record<string, unknown>) => Promise<void>;
+    buildWorkspaceTerminalRequest: (ws: Record<string, unknown>, prompt?: string, opts?: Record<string, unknown>) => Promise<Record<string, unknown>>;
+    wireWorkspaceLaunchGuard: (get: () => unknown) => void;
   };
 }
 
@@ -376,4 +378,58 @@ test("未勾选不接驳提交；无命中不提交：两种情况都照常冻�
   await runStart(api, none.errors, { accepted: true, paths: [] });
   assert.equal(none.calls.some((c) => c.cmd === "git_commit"), false);
   assert.equal(none.calls.some((c) => c.cmd === "freeze_reading_list_intake"), true);
+});
+
+
+test("wsLast 记忆层闸门：停用连接不被自动预填（autoStart 落空），陈旧模型过名单校验", async () => {
+  const api = await bundleStartPipeline();
+  const ws = {
+    id: "w1", repoPath: "/p", repoName: "p", name: "data-clean", branch: "ccode/data-clean",
+    worktreePath: "/p/.mesa/ws-data-clean", baseBranch: "main", portBase: 4200,
+    status: "active", createdAt: "2026-10-15T00:00:00Z", archivedAt: null,
+  };
+  const lsPrev = (globalThis as { localStorage?: unknown }).localStorage;
+  const store: Record<string, string> = {};
+  (globalThis as { localStorage?: unknown }).localStorage = {
+    getItem: (k: string) => store[k] ?? null,
+    setItem: (k: string, v: string) => { store[k] = v; },
+    removeItem: (k: string) => { delete store[k]; },
+  };
+  const prevHost = (globalThis as { __pipelineStartHost?: unknown }).__pipelineStartHost;
+  (globalThis as { __pipelineStartHost?: unknown }).__pipelineStartHost = {
+    invoke: async (cmd: string) => {
+      if (cmd === "workspace_env_for") return [];
+      if (cmd === "list_sessions") return [];
+      throw new Error(`测试未预期的命令：${cmd}`);
+    },
+  };
+  try {
+    api.wireWorkspaceLaunchGuard(() => ({
+      profiles: [
+        { id: "p-disabled", models: ["m1"] },
+        { id: "p-live", models: ["m2"] },
+      ],
+      hiddenProfiles: ["p-disabled"],
+    }));
+    // ① wsLast 指向停用连接：不预填、不自动拉起（StepFlow 无手选 autoStart 入口靠这道闸）
+    store["ccode.wsLast./p/.mesa/ws-data-clean"] = JSON.stringify({ agentId: "codex", profileId: "p-disabled", model: "m1" });
+    const req1 = await api.buildWorkspaceTerminalRequest(ws, "继续做到完成标准", { autoStart: true });
+    assert.equal(req1.profileId, undefined, "停用连接不做预填");
+    assert.equal(req1.autoStart, false, "记忆失效时降为预填不自动拉起");
+    // ② wsLast 指向活连接但模型已不在名单：连接保留、模型落空（回落名单第一由启动侧兑）
+    store["ccode.wsLast./p/.mesa/ws-data-clean"] = JSON.stringify({ agentId: "codex", profileId: "p-live", model: "gone-model" });
+    const req2 = await api.buildWorkspaceTerminalRequest(ws, "继续做到完成标准", { autoStart: true });
+    assert.equal(req2.profileId, "p-live");
+    assert.equal(req2.model, undefined, "名单外模型不逐字注入");
+    assert.equal(req2.autoStart, true);
+    // ③ 未接线（wire 前置为 undefined 语义不可逆，这里只验证停用名单为空时照常预填）
+    api.wireWorkspaceLaunchGuard(() => ({ profiles: [{ id: "p-disabled", models: ["m1"] }], hiddenProfiles: [] }));
+    store["ccode.wsLast./p/.mesa/ws-data-clean"] = JSON.stringify({ agentId: "codex", profileId: "p-disabled", model: "m1" });
+    const req3 = await api.buildWorkspaceTerminalRequest(ws, "继续做到完成标准", { autoStart: true });
+    assert.equal(req3.profileId, "p-disabled", "未停用的记忆照常预填");
+  } finally {
+    if (lsPrev === undefined) delete (globalThis as { localStorage?: unknown }).localStorage;
+    else (globalThis as { localStorage?: unknown }).localStorage = lsPrev;
+    (globalThis as { __pipelineStartHost?: unknown }).__pipelineStartHost = prevHost;
+  }
 });

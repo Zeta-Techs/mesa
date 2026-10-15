@@ -265,6 +265,16 @@ export async function startPipelineStep({
   });
 }
 
+/** wsLast 记忆层闸门的数据源（profiles + 停用名单）。由 TerminalPage 模块加载时
+ *  接线；不接（测试环境）时该闸门跳过、行为与修复前一致。 */
+export interface WorkspaceLaunchGuardSource {
+  (): { profiles: { id: string; models?: string[] }[]; hiddenProfiles: string[] } | undefined;
+}
+let wsLastGuardSource: WorkspaceLaunchGuardSource | undefined;
+export function wireWorkspaceLaunchGuard(get: WorkspaceLaunchGuardSource) {
+  wsLastGuardSource = get;
+}
+
 /** 工作区 → 终端的交接 payload：取端口段 env + 预填配置。
  *  配置三链（B1）：本次手选（开工弹层 launch）> 步骤绑定（stepLaunch，显式声明）>
  *  该目录上次使用（`ccode.wsLast.<worktreePath>`，隐式记忆）——纯链在
@@ -302,6 +312,27 @@ export async function buildWorkspaceTerminalRequest(
       return {};
     }
   })();
+  // 记忆层闸门（H4 修复）：wsLast 是纯自动预填（用户本次没手选），停用项不得被
+  // 自动落回——对照裸终端 ccode.lastProfile 滤停用与 resume 路径 reselectNeeded 的
+  // 同一口径（StepFlow 无手选的 autoStart 入口会无交互拉起，拦在这里才挡得住）。
+  // 陈旧模型同步过名单校验：网关名单变更后旧模型逐字注入，错误只会发生在 CLI
+  // 运行期、远离决策点。手选（launch）与显式绑定（stepLaunch）不过此闸——
+  // 「显式绑定尊重停用项」是定稿。接线由 TerminalPage 模块加载时完成（纯逻辑层
+  // 不直接依赖 store 模块，测试打包口径不变）。
+  let lastLaunch: Partial<{ agentId: string; profileId: string; model: string }> = last;
+  const guard = wsLastGuardSource?.();
+  if (last.profileId && guard) {
+    const profile = guard.profiles.find((p) => p.id === last.profileId);
+    if (!profile || guard.hiddenProfiles.includes(profile.id)) {
+      lastLaunch = {}; // 记忆失效/停用：不预填，交还启动栏自动链（自带可见过滤）
+    } else if (
+      last.model &&
+      (profile.models?.length ?? 0) > 0 &&
+      !profile.models!.includes(last.model)
+    ) {
+      lastLaunch = { ...last, model: undefined };
+    }
+  }
   const resumeCandidate = shouldResumeWorkspaceSession({
     hasPrompt: Boolean(initialPrompt?.trim()),
     resumeSession: opts?.resumeSession,
@@ -317,7 +348,7 @@ export async function buildWorkspaceTerminalRequest(
     })
       ? resumeCandidate
       : null;
-  const chain = workspaceLaunchChain(opts?.launch, opts?.stepLaunch, last);
+  const chain = workspaceLaunchChain(opts?.launch, opts?.stepLaunch, lastLaunch);
   const sameAgentBinding =
     resume &&
     opts?.stepLaunch &&

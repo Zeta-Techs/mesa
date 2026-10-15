@@ -90,7 +90,7 @@ import LaunchMenu, {
 import ProjectRail from "../components/ProjectRail";
 import WorkspaceReviewView from "../components/WorkspaceReviewView";
 import ReaderOverlay from "../components/ReaderOverlay";
-import { renderTaskMd } from "../pipeline-start";
+import { renderTaskMd, wireWorkspaceLaunchGuard } from "../pipeline-start";
 import { formatPdfExcerptPrompt, readerReuseKey } from "../reader";
 import {
   READER_BINDING_SLOT,
@@ -200,6 +200,18 @@ import type {
   SurfaceMode,
 } from "../types";
 import type { PdfActionResult } from "../components/PdfPreview";
+
+// wsLast 记忆层闸门接线（H4 修复）：buildWorkspaceTerminalRequest 是纯逻辑层、按测试
+// 打包口径不直接依赖 store 模块；这里模块加载时把真实数据源接上（停用连接不被自动
+// 预填、陈旧模型过名单校验）。
+wireWorkspaceLaunchGuard(() => {
+  const s = useAppStore.getState();
+  return {
+    profiles: s.profiles.map((p) => ({ id: p.id, models: p.models })),
+    hiddenProfiles: s.settings?.hiddenProfiles ?? [],
+  };
+});
+
 
 // Monaco 体积大，首次打开文件预览时才加载
 const FilePreviewEditor = lazy(() => import("../components/FilePreviewEditor"));
