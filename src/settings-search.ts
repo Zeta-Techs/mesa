@@ -121,7 +121,12 @@ export const SETTINGS_SEARCH_INDEX: readonly SettingsSearchEntry[] = [
   {
     id: "about",
     label: "关于",
-    aliases: ["关于", "版本", "主页", "项目主页", "开源", "许可", "about"],
+    aliases: [
+      "关于", "版本", "主页", "项目主页", "开源", "许可", "许可证", "开源许可",
+      "第三方", "组件", "版权", "致谢", "隐私", "商标", "反馈", "问题反馈",
+      "数据来源", "邮箱直发", "授权码", "SMTP", "反馈邮箱", "issue", "licenses",
+      "about", "标星", "star",
+    ],
   },
 ];
 

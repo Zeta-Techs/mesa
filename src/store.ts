@@ -90,6 +90,14 @@ export interface AppSettings {
   notificationsEnabled: boolean;
   /** 会话自动命名（默认开）：聊完起名 + 打开对话页补名去重；关 = 全停，手改标题不受影响 */
   autoTitleSessions?: boolean;
+  /** 反馈邮箱直发配置（授权码另存 keys.json 0600，绝不在此对象/不回显） */
+  feedbackSmtp?: {
+    provider: string;
+    host: string;
+    port: number;
+    tls: string;
+    from: string;
+  } | null;
   theme: string;
   /** 自定义主题三色（左栏/画布/强调）；theme 为 custom / custom-light 时生效 */
   customTheme?: CustomThemeSeeds | null;

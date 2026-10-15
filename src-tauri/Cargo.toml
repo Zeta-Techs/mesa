@@ -2,8 +2,8 @@
 name = "ccode"
 version = "0.1.0"
 description = "Unified launcher, config center and session monitor for AI coding agents"
-authors = ["hongtongzhou-design"]
-license = "MIT"
+authors = ["泽塔前沿科技（杭州）有限公司"]
+license = "Apache-2.0"
 edition = "2021"
 # 多 bin（主程序 ccode + 浏览器桥 mesa_helper）后 cargo run 必须指明默认目标，
 # 否则 tauri dev 起不来（2026-09-17 热更新窗口打不开的根因）
@@ -51,6 +51,8 @@ calamine = "0.26"
 toml_edit = "0.22"
 notify = "6"
 base64 = "0.22"
+# 反馈邮箱直发（lettre：SMTP + rustls；附件走 MultiPart，授权码存 keys.json）
+lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "rustls-tls"] }
 trash = "5"
 csv = "1"
 sysinfo = "0.33"

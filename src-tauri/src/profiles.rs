@@ -1636,6 +1636,39 @@ pub(crate) fn store_lock() -> Result<StoreGuard, String> {
     })
 }
 
+// ===== 共享密钥（keys.json 里的非 profile 条目）=====
+// 反馈邮箱授权码（feedback-smtp）等非网关密钥也存同一份 keys.json，
+// 写入必须与 profile 密钥共持同一把锁（进程互斥 + OS 文件锁），不许无锁并发写。
+
+/// 写一个共享密钥（存在则覆盖）。持 store_lock。
+pub(crate) fn set_shared_key(id: &str, secret: &str) -> Result<(), String> {
+    let _g = store_lock()?;
+    let path = keys_path()?;
+    let mut keys = read_keys_at(&path)?;
+    keys.insert(id.to_string(), secret.to_string());
+    write_keys_at(&path, &keys)
+}
+
+/// 读一个共享密钥（只读不加锁，与既有注入期读取同口径）
+pub(crate) fn get_shared_key(id: &str) -> Result<Option<String>, String> {
+    let path = keys_path()?;
+    Ok(read_keys_at(&path)?
+        .into_iter()
+        .find(|(k, _)| k == id)
+        .map(|(_, v)| v))
+}
+
+/// 清除一个共享密钥（不存在则静默成功）。持 store_lock。
+pub(crate) fn clear_shared_key(id: &str) -> Result<(), String> {
+    let _g = store_lock()?;
+    let path = keys_path()?;
+    let mut keys = read_keys_at(&path)?;
+    if keys.remove(id).is_some() {
+        write_keys_at(&path, &keys)?;
+    }
+    Ok(())
+}
+
 fn commit_gateway_binding_files(
     old_gateways: &[Gateway],
     old_bindings: &[Binding],

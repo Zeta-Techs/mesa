@@ -1,7 +1,13 @@
 # 第三方组件与许可
 
-Mesa 本体按 [MIT](../../LICENSE) 发布。安装包与源码中再分发的第三方组件如下。
-完整依赖树以锁文件为准（`package-lock.json`、`src-tauri/Cargo.lock`）；本清单只列直接依赖与内嵌资产。
+Mesa 本体按 [Apache-2.0](../../LICENSE) 发布（见 [NOTICE](../../NOTICE)）。安装包与源码中再分发的第三方组件如下。
+
+本清单是**手工维护层**：内嵌资产、需要特别声明的许可选择、数据来源与设计致谢。
+完整依赖清单（npm 生产依赖 + Rust 依赖树，逐包列版本与许可）由
+`npm run gen:notices`（`scripts/gen-third-party-notices.mjs`）生成到
+`src-tauri/resources/third-party-notices.md`，**随安装包分发**、应用内
+「设置 → 关于 → 开源许可」可查看。**改动依赖后必须再生成**，随包清单与
+`package-lock.json` / `Cargo.lock` 不允许漂移。
 
 ## 内嵌资产
 
@@ -43,10 +49,10 @@ copyright statement(s).
 "Original Version" refers to the collection of Font Software components as
 distributed by the Copyright Holder(s).
 
-"Modified Version" refers to any derivative made by adding to, deleting,
-or substituting -- in part or in whole -- any of the components of the
-Original Version, by changing formats or by porting the Font Software to a
-new environment.
+"Modified Version" refers to any derivative made by adding to, deleting
+from, or substituting -- in part or in whole -- any of the components of
+the Original Version, by changing formats or by porting the Font Software
+to a new environment.
 
 "Author" refers to any designer, engineer, programmer, technical writer
 or other person who contributed to the Font Software.
@@ -80,7 +86,7 @@ Holder(s) and the Author(s) or with their explicit written permission.
 5) The Font Software, modified or unmodified, in part or in whole, must be
 distributed entirely under this license, and must not be distributed under
 any other license. The requirement for fonts to remain under this license
-does not apply to any document created using the Font Software.
+does not apply to any document created using the fonts.
 
 TERMINATION
 This license becomes null and void if any of the above conditions are not
@@ -98,7 +104,30 @@ FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM OTHER
 DEALINGS IN THE FONT SOFTWARE.
 ```
 
-## 主要依赖
+### KaTeX 字体（OFL 1.1）
+
+- 用途：公式渲染字体，随 katex 的样式表打进前端产物（`dist/assets/KaTeX_*.woff2/.ttf`，
+  AMS / Caligraphic / Fraktur / Main / Math / SansSerif / Script / Size1–4 / Typewriter 共 12 字族）
+- 版权：各字族版权行内嵌于字体文件 name 表（典型形式：© 2009-2010 Design Science, Inc.
+  (www.mathjax.org) / © 2014-2018 Khan Academy (www.khanacademy.org)，
+  Reserved Font Name KaTeX_*）；未修改字形，字体名原样保留
+- 许可：SIL Open Font License 1.1——全文见上节 JetBrains Mono 附带的 OFL 全文
+  （同一份许可文本适用于本节全部字族）
+- 说明：katex 的 npm 包级许可是 MIT（© 2013-2020 Khan Academy），只覆盖代码；
+  字体目录是 OFL 1.1，再分发需随附版权声明与许可全文（本清单 + 随包
+  `third-party-notices.md` + 应用内「开源许可」页共同履行）
+
+### 平台标识 SVG（zhipu / kimi / minimax）
+
+- 用途：统计页标识对应平台的订阅套餐（`src/assets/plan-icons/{zhipu,kimi,minimax}.svg`），
+  指示性使用（nominative use），不构成对该平台的关联或背书
+- 来源链条：[lobe-icons](https://github.com/lobehub/lobe-icons)（MIT，© lobehub）
+  → [cc-switch](https://github.com/farion1231/cc-switch)（MIT，© 2025 Jason Young）
+  `src/icons/extracted/` → 本仓库逐字节引入
+- 许可：MIT——再分发需附版权与许可声明（本条目即该声明）
+- 商标：三个 logo 本身分别是智谱 / Moonshot AI / MiniMax 的商标
+
+## 主要依赖（前端，随安装包分发）
 
 | 组件 | 用途 | 许可 |
 |---|---|---|
@@ -106,12 +135,54 @@ DEALINGS IN THE FONT SOFTWARE.
 | React、react-dom | UI 框架 | MIT |
 | zustand | 状态管理 | MIT |
 | @xterm/xterm 及 addons | 内嵌终端 | MIT |
-| monaco-editor | 代码编辑器 | MIT |
-| katex | 公式渲染 | MIT |
-| marked、dompurify | Markdown 渲染与净化 | MIT / (Apache-2.0 或 MPL-2.0) |
-| mermaid | 图表渲染 | MIT |
+| monaco-editor（含 codicon 字体） | 代码编辑器 | MIT |
+| katex | 公式渲染（代码） | MIT（字体见上节，OFL 1.1） |
+| marked | Markdown 渲染 | MIT |
+| dompurify | HTML 净化 | MPL-2.0 OR Apache-2.0，**本产品按 Apache-2.0 分发**（package.json overrides 同时钉给 monaco，dist 内仅一份） |
+| mermaid | 图表渲染 | MIT；传递依赖 chevrotain 系 Apache-2.0、jszip 择 MIT、d3 系 ISC、khroma MIT（盘上 LICENSE 核实） |
 | lucide-react | 图标 | ISC |
-| mammoth | .docx 读取 | BSD-2-Clause |
-| pdfjs-dist | PDF 渲染 | Apache-2.0 |
-| tailwindcss、vite、esbuild、typescript | 构建链 | MIT |
+| mammoth 及依赖 | .docx 读取 | BSD-2-Clause |
+| pdfjs-dist | PDF 渲染（含 worker） | Apache-2.0 |
+| tailwindcss、vite、esbuild、typescript | 构建链（不随包分发） | MIT |
 | 各 AI CLI（Claude Code、Codex 等） | Mesa 只做拉起与配置，不捆绑其本体 | 各自协议，与本项目无关 |
+
+## Rust 侧随包义务要点（静态链接进安装包）
+
+完整清单见随包 `third-party-notices.md`；这里只列**许可形态特殊、需要明示**的：
+
+| 组件 | 义务 |
+|---|---|
+| cssparser、cssparser-macros、selectors、dtoa-short、option-ext（MPL-2.0） | 文件级弱 copyleft：二进制按 Mesa 许可分发不受影响，但需随附 MPL-2.0 文本、标明覆盖组件并指明源码获取途径（crates.io / GitHub） |
+| webpki-roots / webpki-root-certs（CDLA-Permissive-2.0） | 内嵌 WebPKI 根证书数据集：无 copyleft，需保留署名 |
+| ring（Apache-2.0 AND ISC） | 含 OpenSSL 血统代码的声明条款 |
+| rusqlite bundled SQLite、liblzma | 公共领域 / 宽松条款，署名即可 |
+| zstd-sys（libzstd：BSD-3 OR GPL-2） | 择 BSD-3 分发，附文本 |
+| bzip2-sys | bzip2 专有宽松许可，附其许可文本 |
+| notify（CC0-1.0） | 公共领域奉献，无义务 |
+| 其余（tauri 全家 / wry / tao / rustls / reqwest / portable-pty / trash / keyring 等） | MIT OR Apache-2.0 为主，按惯例附版权与许可声明 |
+
+无 openssl-sys 静态链接（reqwest 走 rustls）；全树无 GPL / AGPL / LGPL 单一许可项。
+
+## 数据来源（运行期外联，不随包分发）
+
+- 期刊缩写与 ISSN 线：JabRef / abbrv.jabref.org 缩写表（CC0-1.0）、NLM Catalog
+  eutils（MedlineTA）——EndNote / Zotero 同步时拉取
+- 期刊指标（IF / 分区徽章）：ShowJCR（github.com/hitfyd/ShowJCR——CSV 经 jsDelivr /
+  raw.githubusercontent 下载到本机，更新检查经 api.github.com）；刊名缺失时向
+  OpenAlex 补查
+- 文献元数据补全：Crossref
+- 开放获取状态：Unpaywall（OA_EMAIL 联系邮箱随请求携带）
+- 以上只在用户执行同步 / 下载 / 远查时访问，Mesa 不上传用户数据
+
+## 设计参考致谢
+
+Mesa 的机制设计参考了三个开源项目（学机制与取舍，未复制代码；唯一例外是上文的
+三个平台图标文件）：
+
+- [cc-switch](https://github.com/farion1231/cc-switch)（MIT，© 2025 Jason Young）— provider 预设、配置同步、订阅余量解析口径
+- [waveterm](https://github.com/wavetermdev/waveterm)（Apache-2.0，© 2025 Command Line Inc.）— block/workspace 对象模型、注意力标记与滚动缓冲恢复思路
+- [VS Code](https://github.com/microsoft/vscode)（MIT，© Microsoft Corporation）— 文件树、编辑器标签与面板布局
+
+内置科研技能中四个（proposal-writer / rebuttal-crafter / slides-deck / figure-forge）
+在文件尾注明了理念参考来源；figure-forge 引用的 Anthropic Claude Science
+figure-composer 上游许可待独立核实（自述 Apache-2.0）。

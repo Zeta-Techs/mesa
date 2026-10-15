@@ -1,4 +1,5 @@
 import BackgroundTasksPanel from "../components/BackgroundTasksPanel";
+import { RepoStarMark } from "../components/RepoStarMark";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
 import { searchSettings, type SettingSectionId } from "../settings-search.ts";
@@ -984,7 +985,9 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const autoOpenedUpdate = useRef(false);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<
+    string | { text: string; openPath: string } | null
+  >(null);
   // 恢复上次查看的分区（HIG settings.md「Restore the most recently viewed pane」）：
   // 常改的设置往往连着改几次，每次都弹回「外观」要重新点。非法/清空的存量值回落外观。
   const [activeSection, setActiveSection] = useState(() => {
@@ -1081,7 +1084,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
   // 第三方许可清单：首次点「查看开源许可」才拉（几百 KB 文本，不值得常驻）
   const [noticesText, setNoticesText] = useState<string | null>(null);
   const [noticesOpen, setNoticesOpen] = useState(false);
-  // 「问题反馈」行的表单弹层（与顶栏帮助菜单共用同一个 FeedbackModal 组件）
+  // 「反馈与提需求」行的表单弹层（与顶栏帮助菜单共用同一个 FeedbackModal 组件）
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   // 精确注意力标记支持清单（九家全列出，支持与否与备注以后端注册表为准）
   const [hookSupport, setHookSupport] = useState<HookSupport[]>([]);
@@ -1781,8 +1784,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
       const path = await invoke<string>("export_diagnostics_bundle", {
         frontend: collectFrontendDiagnostics(),
       });
-      setNotice(`诊断包已导出：${path}`);
-      setTimeout(() => setNotice(null), 5000);
+      setNotice({ text: `诊断包已导出：${path}`, openPath: path });
+      setTimeout(() => setNotice(null), 8000);
       await loadLogs();
     } catch (e) {
       const message = String(e);
@@ -1803,8 +1806,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
       const path = await invoke<string>("export_effective_config", {
         projectRoot: null,
       });
-      setNotice(`配置快照已导出：${path}`);
-      setTimeout(() => setNotice(null), 5000);
+      setNotice({ text: `配置快照已导出：${path}`, openPath: path });
+      setTimeout(() => setNotice(null), 8000);
     } catch (e) {
       const message = String(e);
       setError(message);
@@ -1856,7 +1859,18 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
       {notice && (
         <div role="status" className="mb-3 flex items-start gap-2 rounded-md ccode-well px-3 py-2.5 text-xs leading-5 text-l2">
           <span className="shrink-0 text-ok-text">✓</span>
-          <span className="min-w-0 flex-1">{notice}</span>
+          <span className="min-w-0 flex-1">
+            {typeof notice === "string" ? notice : notice.text}
+          </span>
+          {typeof notice !== "string" && (
+            <button
+              type="button"
+              className="h-6 shrink-0 rounded-md border border-field bg-strip px-2 text-micro text-l2 hover:bg-hover hover:text-l1"
+              onClick={() => void revealItemInDir(notice.openPath)}
+            >
+              打开
+            </button>
+          )}
         </div>
       )}
 
@@ -3235,9 +3249,13 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         active={activeSection === "diag"}
       >
         <Row
-          label="Windows 诊断包"
-          hint="系统与运行信息，已脱敏"
-          labelTitle="打包供排查用；不含环境变量"
+          label="诊断包"
+          hint={
+            IS_WINDOWS
+              ? "系统 / WebView2 / 显卡 / 输入法与运行信息，已脱敏"
+              : "系统与运行信息，已脱敏"
+          }
+          labelTitle="排障附件：导出后附到「反馈与提需求」里；不含环境变量"
         >
           <button
             onClick={exportDiagnosticsBundle}
@@ -3377,8 +3395,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                 setError(null);
                 try {
                   const path = await invoke<string>("export_app_log");
-                  setNotice(`已导出：${path}`);
-                  setTimeout(() => setNotice(null), 4000);
+                  setNotice({ text: `已导出：${path}`, openPath: path });
+                  setTimeout(() => setNotice(null), 8000);
                 } catch (e) {
                   setError(String(e));
                 }
@@ -3548,7 +3566,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         </Row>
         <Row
           label="反馈与提需求"
-          hint="应用内直发；别贴密钥或 token"
+          hint="表单或 GitHub Issue；未配收集端点时经系统邮件应用寄出。别贴密钥或 token"
           labelTitle="诊断包已脱敏；自己复制的终端输出可能还带着密钥，发送前留意"
         >
           <button
@@ -3558,13 +3576,30 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           >
             打开反馈表单
           </button>
-        </Row>
-        <Row label="项目主页" hint="Apache-2.0 许可">
           <button
             type="button"
             className={secondaryActionClass}
             onClick={() =>
-              void openUrl("https://github.com/hongtongzhou-design/ccode")
+              void openUrl(
+                "https://github.com/hongtongzhou-design/ccode/issues",
+              ).catch(() => toast("浏览器没打开，稍后再试", "warning"))
+            }
+          >
+            去 GitHub 提 Issue
+          </button>
+        </Row>
+        <Row
+          label="项目主页"
+          hint="按 Apache-2.0 开源。用着顺手，可以去仓库标一颗星"
+        >
+          <RepoStarMark />
+          <button
+            type="button"
+            className={secondaryActionClass}
+            onClick={() =>
+              void openUrl("https://github.com/hongtongzhou-design/ccode").catch(
+                () => toast("浏览器没打开，稍后再试", "warning"),
+              )
             }
           >
             在浏览器打开

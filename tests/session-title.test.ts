@@ -111,7 +111,7 @@ test("绝对路径换成文件名，相对路径不动", () => {
     "请看这份文件：b.xlsx",
   );
   assert.equal(
-    tidySessionText("请看这份文件：/Users/tongzhouhong/Documents/AI4Paper/AI4Paper.md"),
+    tidySessionText("请看这份文件：/Users/example/Documents/AI4Paper/AI4Paper.md"),
     "看这份文件：AI4Paper.md",
   );
   assert.equal(tidySessionText("Fix the nav. Then merge it"), "Fix the nav");

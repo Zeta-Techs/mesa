@@ -791,7 +791,7 @@ struct Job {
 /// 用量页「网关余额」总览：扫全部网关，钱包站命中才出卡。
 ///
 /// 多网关并发：先把要联网的行全部 spawn，再按序收结果——等待时间 ≈ 最慢的一个网关，
-/// 不是各网关相加（本机三个 zetatechs 网关：顺序中位 ≈2.1s → 并发中位 ≈0.66s）。
+/// 不是各网关相加（多网关实测：顺序中位 ≈2.1s → 并发中位 ≈0.66s）。
 /// 输出顺序 = 网关列表顺序（缓存行/错误行/联网行按原下标归位，不是「谁先回来谁在前」）。
 #[tauri::command]
 pub async fn gateway_balance_overview(force: Option<bool>) -> Vec<GatewayBalanceDto> {

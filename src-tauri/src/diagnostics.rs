@@ -462,6 +462,14 @@ fn add_text(writer: &mut zip::ZipWriter<fs::File>, name: &str, text: &str) -> Re
         .map_err(|e| format!("写入诊断包失败: {e}"))
 }
 
+/// 诊断包 README（随包分发）。平台分支：Windows 有系统级采集清单；
+/// 其余平台 system.json 只是简表，别让包自称 Windows 包（2026-10-12 口径统一）。
+#[cfg(windows)]
+const BUNDLE_README: &str = "Mesa 诊断包\n\n用途：遇到问题时导出，附到「反馈与提需求」发给维护者；也可以自己解压查看。全部文件为 UTF-8 JSON/TXT，无需安装任何工具。\n\nsystem.json：Windows、WebView2、显卡、语言与输入法\nfrontend.json：WebView 用户代理、语言、屏幕与 WebGL Renderer\nfeature-flags.json：当前功能开关（不含密钥与 profile id）\nprocess-lifecycle.json：Mesa 子孙进程及输入法进程的开始/结束记录；captureMethod=spawn-hook 表示由启动边界精确登记参数，process-scan 表示进程扫描补充，startTimeEstimated=true 表示开始时间为首次观察时间\nprocess-active.json：导出时仍活动的相关进程\napp-log.json / app-log.txt：应用诊断日志\n\n安全：不采集环境变量；参数与日志会脱敏，但路径和普通参数仍可能包含项目名称。发送给他人前可先解压检查。\n";
+
+#[cfg(not(windows))]
+const BUNDLE_README: &str = "Mesa 诊断包\n\n用途：遇到问题时导出，附到「反馈与提需求」发给维护者；也可以自己解压查看。全部文件为 UTF-8 JSON/TXT，无需安装任何工具。\n\nsystem.json：当前平台简表（Windows 专属的 WebView2 / 显卡 / 输入法系统采集在本平台不适用）\nfrontend.json：WebView 用户代理、语言、屏幕与 WebGL Renderer\nfeature-flags.json：当前功能开关（不含密钥与 profile id）\nprocess-lifecycle.json / process-active.json：Mesa 子孙进程的开始/结束与活动记录\napp-log.json / app-log.txt：应用诊断日志\n\n安全：不采集环境变量；参数与日志会脱敏，但路径和普通参数仍可能包含项目名称。发送给他人前可先解压检查。\n";
+
 fn write_bundle(
     path: &Path,
     frontend: &FrontendDiagnosticsDto,
@@ -520,11 +528,7 @@ fn write_bundle(
         .collect::<Vec<_>>()
         .join("\n");
     add_text(&mut writer, "app-log.txt", &log_text)?;
-    add_text(
-        &mut writer,
-        "README.txt",
-        "Mesa Windows 诊断包\n\n本包用于 Windows 现场采集后带回 macOS 离线分析；全部文件均为 UTF-8 JSON/TXT，不需要安装 Mesa、PowerShell 或 Windows 专用查看器。\n\nsystem.json：Windows、WebView2、显卡、语言与输入法\nfrontend.json：WebView 用户代理、语言、屏幕与 WebGL Renderer\nfeature-flags.json：当前功能开关（不含密钥与 profile id）\nprocess-lifecycle.json：Mesa 子孙进程及输入法进程的开始/结束记录；captureMethod=spawn-hook 表示由启动边界精确登记参数，process-scan 表示进程扫描补充，startTimeEstimated=true 表示开始时间为首次观察时间\nprocess-active.json：导出时仍活动的相关进程\napp-log.json / app-log.txt：应用诊断日志\n\n安全：不采集环境变量；参数与日志会脱敏，但路径和普通参数仍可能包含项目名称。发送给他人前可先解压检查。\n",
-    )?;
+    add_text(&mut writer, "README.txt", BUNDLE_README)?;
     let file = writer
         .finish()
         .map_err(|e| format!("完成诊断包失败: {e}"))?;

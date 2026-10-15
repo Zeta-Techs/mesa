@@ -540,7 +540,7 @@ async fn get_json(client: &reqwest::Client, url: &str) -> Option<serde_json::Val
 async fn venue_for_doi(client: &reqwest::Client, doi: &str) -> Option<(String, String)> {
     let encoded = encode_doi(doi);
     let openalex = format!(
-        "https://api.openalex.org/works/https://doi.org/{encoded}?mailto=mesa-litwatch@noreply.github.com"
+        "https://api.openalex.org/works/https://doi.org/{encoded}?mailto=hong.tongzhou@zetatechs.com"
     );
     if let Some(value) = get_json(client, &openalex).await {
         if let Some(found) = openalex_venue(&value) {

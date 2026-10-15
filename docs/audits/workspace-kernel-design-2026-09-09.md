@@ -5,7 +5,7 @@
 | 作者 | Mesa |
 | 日期 | 2026-09-09 |
 | 状态 | **Accepted（2026-09-10 用户「全部执行」）**。决策已写入 `docs/architecture.md` §10。 |
-| 仓库 | `/Users/tongzhouhong/Documents/Ccode`，分支 `main`，对照提交 `c1c48db`（审计基线 `30ee84e` 之后已落地整改） |
+| 仓库 | `仓库根`，分支 `main`，对照提交 `c1c48db`（审计基线 `30ee84e` 之后已落地整改） |
 | 范围 | 把 Mesa 收成可信的 AI Project Workspace；**科研半自动化流程必须保留** |
 | 前置 | `docs/architecture.md` §10；`docs/audits/architecture-audit-2026-09-09.md`；`docs/audits/remediation-handoff-2026-09-09.md`；`docs/conventions/review-freeze.md`；`docs/conventions/agent-workbench.md`；`docs/conventions/pipeline.md` |
 

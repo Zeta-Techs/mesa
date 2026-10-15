@@ -179,7 +179,7 @@ pub fn run() {
                     None,
                     Some(AboutMetadata {
                         name: Some("Mesa".into()),
-                        copyright: Some("Copyright 2026 hongtongzhou-design".into()),
+                        copyright: Some("Copyright 2026 泽塔前沿科技（杭州）有限公司".into()),
                         credits: Some(
                             "按 Apache-2.0 开源；第三方组件与字体许可见 设置 → 关于 → 开源许可。\n\
                              设计参考 cc-switch / waveterm / VS Code"
@@ -802,7 +802,14 @@ pub fn run() {
             about::read_third_party_notices,
             about::build_info,
             feedback::feedback_endpoint,
+            feedback::feedback_error_log,
             feedback::submit_feedback,
+            feedback::test_feedback_smtp,
+            feedback::save_feedback_images,
+            feedback::set_feedback_smtp_secret,
+            feedback::clear_feedback_smtp_secret,
+            feedback::send_feedback_smtp,
+            settings::clear_feedback_smtp_config,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

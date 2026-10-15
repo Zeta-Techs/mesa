@@ -291,7 +291,7 @@ Claude Code、Codex、Gemini、CodeBuddy、Cursor、Grok 支持。「账号类�
 
 一篇综述要多久、花多少 token，取决于纳入篇数和你用的模型，这里不给一个会过期的数字。用量页按这一次运行记账。示例课题可以先走通界面，再拿你自己的篇数估计。
 
-![6](/Users/tongzhouhong/Documents/Ccode/docs/guide/6.png)
+![6](6.png)
 
 ### 7.1 应用模板：五项全局设定
 
@@ -463,7 +463,7 @@ Claude Code、Codex、Gemini、CodeBuddy、Cursor、Grok 支持。「账号类�
 
 精读后又手改了笔记：开大纲时确认层写「开始时会先记下 N 个这一步要读的文件，再开工」，按钮是 **记下并开始**，点它即可，大纲步就看得到。
 
-![7](/Users/tongzhouhong/Documents/Ccode/docs/guide/7.png)
+![7](7.png)
 
 **怎样算做完：** 纳入篇目都有笔记或明确的 pending 理由；文件页「已读」对得上；**保存进项目**。
 
@@ -495,9 +495,9 @@ Claude Code、Codex、Gemini、CodeBuddy、Cursor、Grok 支持。「账号类�
 
 **怎样算做完：** 你认可框架推演里的融合理由；**保存进项目**。
 
-![8](/Users/tongzhouhong/Documents/Ccode/docs/guide/8.png)
+![8](8.png)
 
-![9](/Users/tongzhouhong/Documents/Ccode/docs/guide/9.png)
+![9](9.png)
 
 ---
 
@@ -531,11 +531,11 @@ Claude Code、Codex、Gemini、CodeBuddy、Cursor、Grok 支持。「账号类�
 
 **怎样算做完：** 结构和论点你认可；[待核实] 的数量你心里有数（定稿会逐条处理）；**保存进项目**。
 
-![10](/Users/tongzhouhong/Documents/Ccode/docs/guide/10.png)
+![10](10.png)
 
-![11](/Users/tongzhouhong/Documents/Ccode/docs/guide/11.png)
+![11](11.png)
 
-![12](/Users/tongzhouhong/Documents/Ccode/docs/guide/12.png)
+![12](12.png)
 
 ---
 
@@ -602,7 +602,7 @@ AI 会先问：初稿是编号制，**沿用**编号，还是**改成目标期�
 
 后来又追加了步骤、还没做完时，这一块先不出现。
 
-![13](/Users/tongzhouhong/Documents/Ccode/docs/guide/13.png)
+![13](13.png)
 
 ### 7.9 常见问题（综述流程）
 
@@ -773,4 +773,4 @@ AI 会先问：初稿是编号制，**沿用**编号，还是**改成目标期�
 | 工作区里的对话找不到 | 在所属课题的「对话」里，带步骤名 |
 | 改动面板报找不到 git | 诊断页一键安装；Mac 先处理 Xcode 许可弹窗 |
 
-问题与想法提到 [GitHub Issues](https://github.com/hongtongzhou-design/ccode/issues)。附上 **设置 → 诊断** 导出的日志。不要贴 API 密钥或 token。
+如果您有其他问题与想法提到 [GitHub Issues](https://github.com/hongtongzhou-design/ccode/issues)。最好是附上 **设置 → 诊断** 导出的日志。谢谢！

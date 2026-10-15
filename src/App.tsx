@@ -7,7 +7,6 @@ import {
   ExternalLink,
   Inbox,
   Info,
-  Keyboard,
   Megaphone,
   RefreshCw,
   ShieldAlert,
@@ -33,10 +32,11 @@ import QuickChatModal, {
 } from "./components/QuickChatModal";
 import AskAiModal from "./components/AskAiModal";
 import FeedbackModal from "./components/FeedbackModal";
+import { HelpAboutDialog, HelpDiagnosticsDialog } from "./components/HelpDialogs";
 import QuickChatHistoryMenu from "./components/QuickChatHistoryMenu";
 import TopNavCapsule from "./components/TopNavCapsule";
 import { pickQuickChatHistory } from "./quick-chat";
-import { ConfirmDialogHost } from "./components/ConfirmDialog";
+import { ConfirmDialogHost, alertDialog, confirmDialog } from "./components/ConfirmDialog";
 import { HoverTip, useHoverTip } from "./components/HoverTip";
 import { LoadingRows, rowActionClass } from "./components/PageFrame";
 import "./App.css";
@@ -224,21 +224,25 @@ function RelayToasts(props: {
 
 /** 页切顺序/逐页绑定/默认值的单一出处在 hotkeys.ts PAGE_HOTKEY_DEFS（与侧栏顺序一致） */
 
-/** 仓库对外地址：帮助菜单外链（文档 / Issues / 安全报告）都挂在这里，转 org 时同步 */
+/** 仓库对外地址：帮助菜单外链（文档 / 安全报告）都挂在这里，转 org 时同步 */
 const REPO_URL = "https://github.com/hongtongzhou-design/ccode";
 
-/** 顶栏帮助菜单清单：外链（文档/支持，带 ↗ 标记）与应用内目标（跳设置分区）混排分组。
+/** 顶栏帮助菜单清单：外链（文档/支持，带 ↗ 标记）、应用内动作（反馈表单、当场
+ *  检查更新并弹窗报结果）与设置分区跳转混排分组。
  *  入口选型口径：只放「新用户第一次卡住时会找的东西」——文档、反馈、诊断、更新、关于；
- *  应用内目标沿收件箱 settings 动作的同一条路（settingsSectionReq）跳转。 */
+ *  设置分区跳转沿收件箱 settings 动作的同一条路（settingsSectionReq）。 */
 const HELP_MENU: {
   label: string;
   items: {
     icon: typeof BookOpen;
     text: string;
     url?: string;
-    section?: string;
     /** 应用内反馈表单（FeedbackModal）——不落外链也不跳设置分区 */
     feedback?: boolean;
+    /** 当场跑一次更新检查并弹窗报结果（不跳设置分区） */
+    updateCheck?: boolean;
+    /** 应用内弹窗（HelpDialogs）：诊断与日志 / 关于 */
+    dialog?: "diag" | "about";
   }[];
 }[] = [
   {
@@ -254,7 +258,6 @@ const HELP_MENU: {
         text: "产品说明书",
         url: `${REPO_URL}/blob/main/docs/guide/user-guide.md`,
       },
-      { icon: Keyboard, text: "快捷键", section: "hotkeys" },
     ],
   },
   {
@@ -262,14 +265,14 @@ const HELP_MENU: {
     items: [
       { icon: Megaphone, text: "反馈与提需求", feedback: true },
       { icon: ShieldAlert, text: "报告安全问题", url: `${REPO_URL}/security` },
-      { icon: Activity, text: "诊断与日志", section: "diag" },
+      { icon: Activity, text: "诊断与日志", dialog: "diag" },
     ],
   },
   {
     label: "应用",
     items: [
-      { icon: RefreshCw, text: "检查更新", section: "update" },
-      { icon: Info, text: "关于 Mesa", section: "about" },
+      { icon: RefreshCw, text: "检查更新", updateCheck: true },
+      { icon: Info, text: "关于 Mesa", dialog: "about" },
     ],
   },
 ];
@@ -486,6 +489,33 @@ function App() {
   const [helpOpen, setHelpOpen] = useState(false);
   // 帮助菜单/关于页共用的反馈表单弹层（FeedbackModal，双通道见 feedback.ts）
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+  // 帮助菜单的三个内容弹窗（HelpDialogs）：快捷键 / 诊断与日志 / 关于
+  const [helpDialog, setHelpDialog] = useState<"diag" | "about" | null>(null);
+  // 帮助菜单/收件箱下拉的包裹层 ref：「点外面关闭」要放行菜单与触发钮自身的按下
+  const helpRootRef = useRef<HTMLDivElement | null>(null);
+  const inboxRootRef = useRef<HTMLDivElement | null>(null);
+  // 遮罩 z-20 盖不住标题栏自身（.ccode-titlebar z-39，点标题栏空白——含 macOS
+  // 拖拽区——永远打不到遮罩，菜单不消失）。补 document 捕获阶段 mousedown：落点
+  // 不在对应包裹层内即关；捕获先于拖拽区处理，按下不动它也不会误拖窗口。
+  useEffect(() => {
+    if (!helpOpen && titleInboxCat === null) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (helpOpen && !helpRootRef.current?.contains(t)) setHelpOpen(false);
+      if (titleInboxCat !== null && !inboxRootRef.current?.contains(t))
+        setTitleInboxCat(null);
+    };
+    document.addEventListener("mousedown", onDown, true);
+    return () => document.removeEventListener("mousedown", onDown, true);
+  }, [helpOpen, titleInboxCat]);
+  // 菜单打开时聚焦首项（方向键立即可用）。放 effect 而不是内联 ref 回调：
+  // App 重渲染会重挂 ref 回调、把焦点反复拉回首项，打断方向键导航。
+  useEffect(() => {
+    if (!helpOpen) return;
+    helpRootRef.current
+      ?.querySelector<HTMLElement>('[role="menuitem"]')
+      ?.focus();
+  }, [helpOpen]);
   useEffect(() => {
     if (!helpOpen) return;
     const onKey = (e: KeyboardEvent) => {
@@ -501,10 +531,53 @@ function App() {
     setSettingsSectionReq(section);
     setPage("settings");
   };
-  /** 帮助菜单 → 外链（文档 / Issues / 安全报告）：关菜单再交系统浏览器打开 */
+  /** 帮助菜单「检查更新」的结果弹窗：复用启动检查的同一条状态链（store），
+   *  命中给「去安装」（跳更新分区），none/error/dev 各给一句结果。 */
+  const reportUpdateResult = async () => {
+    const s = useAppStore.getState();
+    const upd = s.appUpdate;
+    if (upd) {
+      const go = await confirmDialog(
+        `发现新版本 v${upd.version}，到「更新」分区下载安装。`,
+        { confirmText: "去安装" },
+      );
+      if (go) openHelpSection("update");
+      return;
+    }
+    if (s.appUpdateStatus === "error") {
+      await alertDialog(`检查更新失败：${s.appUpdateError ?? "网络异常"}`);
+    } else if (s.appUpdateStatus === "dev") {
+      await alertDialog("开发模式不检查更新；安装版在设置 → 更新查看。");
+    } else if (s.appUpdateStatus === "checking" || s.appUpdateStatus === "idle") {
+      // 与启动/设置页的检查并发时本次可能被代际竞态作废，状态仍在 checking——
+      // 如实说「还在查」，不能误报「已是最新」
+      await alertDialog("检查还在进行中，稍等片刻再看结果。");
+    } else {
+      await alertDialog("已是最新版本。");
+    }
+  };
+  /** 帮助菜单「检查更新」：真检查 + 弹窗报结果（不跳转）。已有已知更新不重查。 */
+  const helpCheckBusyRef = useRef(false);
+  const checkUpdatesFromHelp = async () => {
+    setHelpOpen(false);
+    if (helpCheckBusyRef.current) return;
+    if (useAppStore.getState().appUpdate) {
+      void reportUpdateResult();
+      return;
+    }
+    helpCheckBusyRef.current = true;
+    toast("正在检查更新…");
+    try {
+      await useAppStore.getState().checkAppUpdate();
+    } finally {
+      helpCheckBusyRef.current = false;
+    }
+    await reportUpdateResult();
+  };
+  /** 帮助菜单 → 外链（文档 / 安全报告）：关菜单再交系统浏览器打开 */
   const openHelpUrl = (url: string) => {
     setHelpOpen(false);
-    void openUrl(url);
+    openUrl(url).catch(() => toast("浏览器没打开，稍后再试", "warning"));
   };
   const loadAll = useAppStore((s) => s.loadAll);
   const loadSessions = useAppStore((s) => s.loadSessions);
@@ -1083,7 +1156,7 @@ function App() {
                   与收件箱/命令面板互斥（同锚区三个浮层不同时开）。
                   浮层面板上的次级文字用 l3 不用 l4：l4 压在 ccode-float-surface 上
                   对比度只有 2.3–2.9:1，低于项目 3.0 底线（2026-10-12 HIG 复审）。 */}
-              <div className="relative flex items-center">
+              <div className="relative flex items-center" ref={helpRootRef}>
                 <button
                   type="button"
                   onClick={() => {
@@ -1108,10 +1181,6 @@ function App() {
                   <div
                     role="menu"
                     aria-label="帮助菜单"
-                    ref={(node) => {
-                      // 打开即聚焦首项：方向键立即可用（roving focus 的最简实现）
-                      if (node) node.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
-                    }}
                     onKeyDown={(e) => {
                       if (
                         e.key !== "ArrowDown" &&
@@ -1154,10 +1223,13 @@ function App() {
                               if (item.feedback) {
                                 setHelpOpen(false);
                                 setFeedbackOpen(true);
+                              } else if (item.updateCheck) {
+                                void checkUpdatesFromHelp();
                               } else if (item.url) {
                                 openHelpUrl(item.url);
-                              } else {
-                                openHelpSection(item.section ?? "about");
+                              } else if (item.dialog) {
+                                setHelpOpen(false);
+                                setHelpDialog(item.dialog);
                               }
                             }}
                             className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-xs text-l2 hover:bg-hover hover:text-l1"
@@ -1199,12 +1271,17 @@ function App() {
                 <span className="hidden sm:inline">命令面板</span>
               </button>
               {inboxGroups.length > 0 && (
-                <div className="relative flex items-center gap-1.5">
+                <div
+                  className="relative flex items-center gap-1.5"
+                  ref={inboxRootRef}
+                >
                   <button
                     type="button"
-                    onClick={() =>
-                      setTitleInboxCat((v) => (v ? null : inboxGroups[0].category))
-                    }
+                    onClick={() => {
+                      // 与帮助菜单互斥：同锚区两个下拉不同时开
+                      setHelpOpen(false);
+                      setTitleInboxCat((v) => (v ? null : inboxGroups[0].category));
+                    }}
                     aria-expanded={titleInboxCat !== null}
                     className="flex h-6 shrink-0 items-center gap-1 rounded-md px-2 text-micro text-l3 hover:bg-hover hover:text-l1"
                     title="待处理"
@@ -1217,7 +1294,7 @@ function App() {
                     <ul className="absolute right-0 top-full z-40 mt-1.5 max-h-80 w-[360px] max-w-[80vw] space-y-2 overflow-auto rounded-md border border-field ccode-float-surface p-1">
                       {inboxGroups.map((group) => (
                         <li key={group.category}>
-                          <div className="px-2.5 py-1 text-micro text-l4">
+                          <div className="px-2.5 py-1 text-micro text-l3">
                             {group.label} {group.items.length}
                           </div>
                           {group.items.map((item) => (
@@ -1509,6 +1586,23 @@ function App() {
           <QuickChatModal onClose={() => setQuickChatOpen(false)} />
         )}
         <FeedbackModal open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
+        <HelpDiagnosticsDialog
+          open={helpDialog === "diag"}
+          onClose={() => setHelpDialog(null)}
+          onOpenFull={() => {
+            setHelpDialog(null);
+            setSettingsSectionReq("diag");
+            setPage("settings");
+          }}
+        />
+        <HelpAboutDialog
+          open={helpDialog === "about"}
+          onClose={() => setHelpDialog(null)}
+          onFeedback={() => {
+            setHelpDialog(null);
+            setFeedbackOpen(true);
+          }}
+        />
         <AskAiModal />
         {quickChatMenu && (
           <QuickChatHistoryMenu

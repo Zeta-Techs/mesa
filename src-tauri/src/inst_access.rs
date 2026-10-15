@@ -36,7 +36,7 @@ const UA: &str = "Mesa lit-watch (https://github.com/hongtongzhou-design/ccode)"
 /// 不带 Mesa 爬虫 UA。程序化阶梯（fetch_via_session）仍用上面的礼貌 UA。
 const WINDOW_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15";
 /// Unpaywall 要求带联系邮箱（礼貌参数，非鉴权）
-const OA_EMAIL: &str = "mesa-litwatch@noreply.github.com";
+const OA_EMAIL: &str = "hong.tongzhou@zetatechs.com";
 
 // ===== 会话罐（0600，值不出站） =====
 

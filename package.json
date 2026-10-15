@@ -2,7 +2,7 @@
   "name": "ccode",
   "private": true,
   "version": "0.1.0",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "type": "module",
   "scripts": {
     "dev": "vite --config vite.config.ts",
@@ -11,7 +11,8 @@
     "test": "node --experimental-strip-types --test \"tests/**/*.test.ts\"",
     "tauri": "tauri",
     "tauri:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
-    "tauri:dev:17576": "tauri dev --config src-tauri/tauri.dev.17576.conf.json"
+    "tauri:dev:17576": "tauri dev --config src-tauri/tauri.dev.17576.conf.json",
+    "gen:notices": "node scripts/gen-third-party-notices.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

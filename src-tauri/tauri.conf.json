@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:17575",
-    "beforeBuildCommand": "npm run build && node scripts/stage-sidecar.mjs",
+    "beforeBuildCommand": "npm run build && node scripts/gen-third-party-notices.mjs && node scripts/stage-sidecar.mjs",
     "frontendDist": "../dist"
   },
   "app": {
@@ -33,9 +33,10 @@
   "bundle": {
     "active": true,
     "targets": ["app", "dmg", "nsis"],
+    "publisher": "泽塔前沿科技（杭州）有限公司",
     "createUpdaterArtifacts": true,
     "externalBin": ["binaries/mesa_helper"],
-    "resources": ["extension-src/**/*"],
+    "resources": ["extension-src/**/*", "resources/third-party-notices.md"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

@@ -234,6 +234,9 @@ pub struct AppSettingsDto {
     /// 打开对话页的补名去重（ai_retitle_all_sessions）全停；已有标题保留，
     /// 手改标题（title_source=user）本就不被覆盖，与此开关无关。
     pub auto_title_sessions: Option<bool>,
+    /// 反馈邮箱直发配置（非密钥部分；授权码存 keys.json 键 feedback-smtp，
+    /// 由 feedback.rs 的 set_feedback_smtp_secret 管理，绝不进 settings）
+    pub feedback_smtp: Option<crate::feedback::FeedbackSmtpConfigDto>,
     pub theme: Option<String>,
     /// 侧栏 / 顶栏罩色透明度（百分比挡位，见 KNOWN_CHROME_OPACITIES）。
     /// 乘在各主题自己的罩色基数上，所以这一个值同时管侧栏和顶栏、深浅两套；
@@ -787,6 +790,7 @@ fn with_defaults(s: AppSettingsDto) -> AppSettingsDto {
         auto_title_sessions: s
             .auto_title_sessions
             .or(Some(DEFAULT_AUTO_TITLE_SESSIONS)),
+        feedback_smtp: s.feedback_smtp,
         theme: Some(theme),
         chrome_opacity: Some(
             s.chrome_opacity
@@ -894,6 +898,11 @@ fn merge(cur: &mut AppSettingsDto, patch: AppSettingsDto) {
     }
     if patch.auto_title_sessions.is_some() {
         cur.auto_title_sessions = patch.auto_title_sessions;
+    }
+    // 反馈邮箱直发配置（校验在 update_settings 入口做，merge 只搬运）。
+    // 清空不走这里——Option<T> 下 null 等价于字段缺失，清除有专用命令
+    if patch.feedback_smtp.is_some() {
+        cur.feedback_smtp = patch.feedback_smtp;
     }
     if patch.theme.is_some() {
         cur.theme = patch.theme;
@@ -1274,8 +1283,25 @@ pub async fn update_settings(patch: AppSettingsDto) -> Result<AppSettingsDto, St
     if let Some(ref proxy) = patch.outbound_proxy {
         validate_outbound_proxy(proxy)?;
     }
+    // 直发配置入 settings 前过一遍校验（merge 只搬运不校验）
+    if let Some(ref smtp) = patch.feedback_smtp {
+        crate::feedback::validate_smtp_config(smtp)?;
+    }
     let mut cur = read_checked(&path)?;
     merge(&mut cur, patch);
+    write_to(&path, &cur)?;
+    Ok(with_defaults(cur))
+}
+
+/// 清除反馈邮箱直发配置（settings 侧；授权码另有 clear_feedback_smtp_secret）。
+/// 不走 update_settings：Option<T> 下前端传 null 反序列化为 None、与字段缺失
+/// 无异，merge 不会触发——清空语义必须专用命令（clear_profile_refs_at 先例）。
+#[tauri::command]
+pub async fn clear_feedback_smtp_config() -> Result<AppSettingsDto, String> {
+    let _g = crate::profiles::store_lock()?;
+    let path = settings_path()?;
+    let mut cur = read_checked(&path)?;
+    cur.feedback_smtp = None;
     write_to(&path, &cur)?;
     Ok(with_defaults(cur))
 }
@@ -1958,6 +1984,32 @@ mod tests {
         merge(&mut cur2, AppSettingsDto::default());
         assert_eq!(cur2.discuss_readonly, Some(false));
         std::fs::remove_dir_all(p.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn feedback_smtp_merges_when_present_and_keeps_old_when_absent() {
+        let cfg = crate::feedback::FeedbackSmtpConfigDto {
+            provider: "QQ 邮箱".into(),
+            host: "smtp.qq.com".into(),
+            port: 465,
+            tls: "tls".into(),
+            from: "a@b.c".into(),
+        };
+        // 缺字段（null 反序列化同形）：不清不动
+        let mut cur = AppSettingsDto::default();
+        merge(&mut cur, AppSettingsDto::default());
+        assert!(cur.feedback_smtp.is_none());
+        // Some 覆盖；再 merge 缺字段的 patch 保持已配置
+        merge(
+            &mut cur,
+            AppSettingsDto {
+                feedback_smtp: Some(cfg.clone()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(cur.feedback_smtp.as_ref(), Some(&cfg));
+        merge(&mut cur, AppSettingsDto::default());
+        assert_eq!(cur.feedback_smtp.as_ref(), Some(&cfg));
     }
 
     #[test]

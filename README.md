@@ -8,7 +8,7 @@
   <a href="https://github.com/hongtongzhou-design/ccode/actions/workflows/build.yml"><img src="https://github.com/hongtongzhou-design/ccode/actions/workflows/build.yml/badge.svg" alt="Build" /></a>
   <a href="https://github.com/hongtongzhou-design/ccode/releases/latest"><img src="https://img.shields.io/github/v/release/hongtongzhou-design/ccode?label=release" alt="Release" /></a>
   <img src="https://img.shields.io/badge/platforms-macOS%20%C2%B7%20Windows-blue" alt="Platforms" />
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache_2.0-green" alt="License: Apache-2.0" /></a>
 </p>
 
 **AI 科研工作台**（桌面应用，Tauri v2 + React/TS + Rust）。底层是九个终端 Agent 的统一控制台（启动器 + 配置中心 + 会话监控台），表面是科研、编程、工作三条流水线：读文献 → 整数据 → 做图 → 写论文。**AI 负责干活，Mesa 负责管环境和验收，人负责拍板。**
@@ -99,7 +99,7 @@ npm run tauri build    # 打包
 
 ## 反馈与参与
 
-遇到问题或有想法，到 [Issues](../../issues) 提出。缺陷请附应用内「设置 → 诊断」导出的日志。不要在 Issue 里贴 API 密钥或 token。
+遇到问题或有想法，用应用内的「**? 帮助 → 反馈与提需求**」表单直接提交（不需要 GitHub 账号），或到 [Issues](../../issues) 提出。缺陷请附应用内「设置 → 诊断」导出的日志。不要在反馈或 Issue 里贴 API 密钥或 token。
 
 想改代码先看 [CONTRIBUTING.md](CONTRIBUTING.md)。安全问题的报告方式见 [SECURITY.md](SECURITY.md)。
 
@@ -111,9 +111,21 @@ npm run tauri build    # 打包
 - 不是系统综述工具，也不做 Meta 分析。
 - 不做 PDF 批注、多人协作、SSH 远程执行、云端会话同步。
 
-## 开源协议
+## 许可与商标
 
-本项目按 [MIT](LICENSE) 发布。内嵌的 JetBrains Mono 字体按 SIL OFL 1.1 再分发；第三方组件清单见 [docs/licenses/THIRD-PARTY.md](docs/licenses/THIRD-PARTY.md)。
+本项目按 [Apache-2.0](LICENSE) 发布，附带 [NOTICE](NOTICE)。Apache-2.0 不授予商标权：**"Mesa" 名称与图标归项目维护方，不随代码许可授权**。Mesa 不是 Claude Code、Codex 等任何 CLI 的官方产品，各家名称与商标归其所有者；本项目与 [Mesa 3D 图形库](https://mesa3d.org/) 等同名项目无关联。
+
+内嵌的 JetBrains Mono 与 KaTeX 字体按 SIL OFL 1.1 再分发；第三方组件清单见 [docs/licenses/THIRD-PARTY.md](docs/licenses/THIRD-PARTY.md)（随包版本由构建脚本生成，应用内「设置 → 关于 → 开源许可」可查看）。
+
+## 致谢
+
+Mesa 的机制设计参考了三个开源项目（学机制与取舍，未复制代码）：
+
+- [cc-switch](https://github.com/farion1231/cc-switch)（MIT）— provider 预设、配置同步与订阅余量口径
+- [waveterm](https://github.com/wavetermdev/waveterm)（Apache-2.0）— block/workspace 对象模型与注意力标记思路
+- [VS Code](https://github.com/microsoft/vscode)（MIT）— 文件树、编辑器标签与面板布局
+
+等宽字体 [JetBrains Mono](https://www.jetbrains.com/lp/mono/)（OFL 1.1）；部分平台图标来自 [lobe-icons](https://github.com/lobehub/lobe-icons)（MIT，经 cc-switch 引入）。
 
 ## 技术栈
 

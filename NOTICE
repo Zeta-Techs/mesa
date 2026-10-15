@@ -1,0 +1,16 @@
+Mesa — AI 科研工作台（桌面应用）
+Copyright 2026 泽塔前沿科技（杭州）有限公司
+
+本产品包含的第三方组件及其许可：
+- 完整清单见 docs/licenses/THIRD-PARTY.md（仓库）与随包分发的
+  third-party-notices.md（由 scripts/gen-third-party-notices.mjs 生成）。
+
+内嵌第三方资产（摘要）：
+- zhipu / kimi / minimax 平台标识 SVG：源自 lobe-icons（MIT，© lobehub），
+  经 cc-switch（MIT，© 2025 Jason Young）引入；仅用于标识对应平台。
+- JetBrains Mono 字体（400/500/700 三字重）：OFL-1.1，© JetBrains Ltd.
+- KaTeX 字体（随公式渲染打包，12 字族）：OFL-1.1，
+  © Design Science, Inc. / Khan Academy。
+
+商标：Mesa 不是 Claude Code、Codex 等任何 CLI 的官方产品，各家名称与商标
+归其所有者。"Mesa" 名称与图标不随代码许可授权（Apache-2.0 §6）。
