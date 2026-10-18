@@ -5,45 +5,69 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Mesa</title>
     <style>
-      /* 首帧底色：JS 加载完成前先上深色，避免启动白闪 */
+      /* 首帧底色：跟随应用主题（localStorage.ccodeBootTheme，App 持久化；没存过值
+         回落系统外观）。先不透明——WKWebView 加载期自铺的不透明白底层（lib.rs
+         400ms 二次清底针对的就是它）只能被实心底罩住；400ms 后白底层已清，底色
+         淡出成纯毛玻璃（窗口材质 + 桌面磨砂直接透出）。ready-to-show 隐藏亮窗
+         方案试过被用户退回：无窗静默期读起来像卡死。减弱动态效果时不淡出
+         （保持实心底整段过渡，宁实不白）。 */
       html,
       body,
       #root {
         margin: 0;
         height: 100%;
+      }
+      html {
+        background: #eef0f4;
+        animation: boot-frost 0.45s ease-out 0.4s forwards;
+      }
+      html[data-boot="dark"] {
         background: #11131a;
       }
-      /* React 挂上后交给 App.css：壳层透明，桌面磨砂从侧栏透出。
-         这里的实心底只挡住启动白闪，不能盖过已挂载的页面。 */
-      html:has(#root > :not(.boot-splash)),
-      html:has(#root > :not(.boot-splash)) body,
-      html:has(#root > :not(.boot-splash)) #root {
-        background: transparent;
+      @keyframes boot-frost {
+        to {
+          background: transparent;
+        }
       }
-      /* 加载占位：呼吸感，React 挂载后自动被替换 */
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          animation: none;
+        }
+      }
+      html[data-boot="dark"] .boot-splash {
+        color: #767e90;
+      }
+      /* React 挂上后交给 App.css：壳层透明，桌面磨砂从侧栏透出。
+         这里的启动底不能盖过已挂载的页面。 */
+      html:has(#root > :not(.boot-splash)) {
+        background: transparent;
+        animation: none;
+      }
+      /* 加载占位：呼吸感（0.45↔0.9 缓起伏，快闪是 0.25↔1 换来的教训），React 挂载后
+         由 BootGate 以负 animation-delay 接同一相位，无换手跳变 */
       .boot-splash {
         height: 100%;
         display: flex;
         align-items: center;
         justify-content: center;
-        color: #767e90;
+        color: #6f7787;
         font-family: -apple-system, "SF Pro", sans-serif;
         font-size: 15px;
         letter-spacing: 0.35em;
         text-indent: 0.35em;
-        animation: boot-breathe 1.4s ease-in-out infinite;
+        animation: boot-breathe 2.4s ease-in-out infinite;
       }
       @keyframes boot-breathe {
         0%,
         100% {
-          opacity: 0.25;
+          opacity: 0.45;
         }
         50% {
-          opacity: 1;
+          opacity: 0.9;
         }
       }
-      /* 应用挂载后整体淡入 */
-      #root > * {
+      /* 应用挂载后整体淡入——排除 splash：淡入会把呼吸顶掉，换手时闪一下 */
+      #root > :not(.boot-splash) {
         animation: boot-fadein 0.3s ease-out;
       }
       @keyframes boot-fadein {
@@ -54,7 +78,28 @@
           opacity: 1;
         }
       }
+      @media (prefers-reduced-motion: reduce) {
+        .boot-splash {
+          animation: none;
+          opacity: 0.7;
+        }
+      }
     </style>
+    <script>
+      // 首帧前同步定启动底色（浅/深）。localStorage 不可用（隐私模式等）回落系统外观。
+      try {
+        var boot = localStorage.getItem("ccodeBootTheme");
+        if (boot !== "light" && boot !== "dark") {
+          boot = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        }
+        document.documentElement.dataset.boot = boot;
+      } catch (e) {
+        document.documentElement.dataset.boot = matchMedia("(prefers-color-scheme: dark)")
+          .matches
+          ? "dark"
+          : "light";
+      }
+    </script>
   </head>
 
   <body>

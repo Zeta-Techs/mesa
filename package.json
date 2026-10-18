@@ -12,7 +12,8 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "tauri:dev:17576": "tauri dev --config src-tauri/tauri.dev.17576.conf.json",
-    "gen:notices": "node scripts/gen-third-party-notices.mjs"
+    "gen:notices": "node scripts/gen-third-party-notices.mjs",
+    "gen:icons": "node scripts/gen-icons.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

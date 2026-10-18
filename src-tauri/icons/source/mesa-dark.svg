@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2b2d39"/><stop offset="1" stop-color="#17181f"/></linearGradient>
+    <linearGradient id="ink" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f6f3ed"/><stop offset="1" stop-color="#dcd7ce"/></linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity="0.14"/><stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/></linearGradient>
+    <filter id="sh" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000" flood-opacity="0.25"/></filter>
+    <filter id="phos" x="-60%" y="-120%" width="220%" height="340%"><feGaussianBlur stdDeviation="16"/></filter>
+  </defs>
+  <g filter="url(#sh)"><rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/></g>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="183.5" fill="none" stroke="url(#rim)" stroke-width="3"/>
+  <g transform="translate(512 522) scale(0.86) translate(-586 -512)">
+    <path d="M232 740 V284 H356 L512 512 L668 284 H792 V740 H672 V474 L548 652 H476 L352 474 V740 Z" fill="url(#ink)"/>
+    <!-- 光标：与竖干同宽，落在基线上；一层同色柔光模拟荧光屏余辉 -->
+    <rect x="820" y="680" width="120" height="60" rx="6" fill="#f5b83d" opacity="0.45" filter="url(#phos)"/>
+    <rect x="820" y="680" width="120" height="60" rx="6" fill="#f5b83d"/>
+  </g>
+</svg>
