@@ -320,3 +320,27 @@ test("day chip：sessionDayKey 按本机时区归日，applySessionFilters 按�
   assert.equal(kept.length, 1);
   assert.equal(kept[0].sessionId, inDay.sessionId);
 });
+
+test("sessionProjectLabel：注册名 > 随手聊 > 目录末段", async () => {
+  const { sessionProjectLabel } = await import("../src/session-filter.ts");
+  const names = new Map([["/Users/me/Desktop/demo", "演示课题"]]);
+  assert.equal(sessionProjectLabel("/Users/me/Desktop/demo/", names), "演示课题");
+  assert.equal(sessionProjectLabel("/Users/me/ccode/scratch", names), "随手聊");
+  assert.equal(sessionProjectLabel("/Users/me/code/mesa", names), "mesa");
+  assert.equal(sessionProjectLabel("", names), null);
+});
+
+test("scopeDirRows：已添加项目用注册名在上，家目录/其他目录另段，随手聊不进", async () => {
+  const { scopeDirRows } = await import("../src/session-filter.ts");
+  const g = (path: string, n: number) => ({ path, list: Array.from({ length: n }, () => ({}) as never) });
+  const { projects, others } = scopeDirRows(
+    [g("/Users/me/code/backend-admin", 21), g("/Users/me", 63), g("/Users/me/ccode/scratch", 6), g("/tmp", 9)],
+    new Map([["/Users/me/code/backend-admin", "后端管理"]]),
+    "/Users/me",
+  );
+  assert.deepEqual(projects, [{ path: "/Users/me/code/backend-admin", label: "后端管理", count: 21 }]);
+  assert.deepEqual(
+    others.map((r) => [r.label, r.count]),
+    [["主目录", 63], ["tmp", 9]],
+  );
+});

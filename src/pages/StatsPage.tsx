@@ -62,7 +62,16 @@ import {
 } from "../gateway-balance";
 import { confirmDialog } from "../components/ConfirmDialog";
 import { agentBrand } from "../agent-colors";
-import { Eye, EyeOff, RefreshCw } from "lucide-react";
+import { ChevronRight, Copy, Eye, EyeOff, RefreshCw } from "lucide-react";
+import { toast } from "../toast";
+import {
+  barWidthPct,
+  DIST_PREVIEW,
+  shareOf,
+  sharePctLabel,
+  toTsv,
+  visibleDistRows,
+} from "../usage-dist";
 import zhipuIcon from "../assets/plan-icons/zhipu.svg";
 import kimiIcon from "../assets/plan-icons/kimi.svg";
 import minimaxIcon from "../assets/plan-icons/minimax.svg";
@@ -76,7 +85,6 @@ const PLAN_PROVIDER_ICON: Record<string, string | undefined> = {
 import {
   Checkbox,
   EmptyState,
-  FoldMark,
   LoadingRows,
   PageFrame,
   PageHeader,
@@ -85,11 +93,13 @@ import {
   ghostActionClass,
   rowActionClass,
   SegTabs,
+  NoticeBar,
+  InlineNotice,
 } from "../components/PageFrame";
 import type { WeekOverWeek } from "../stats-insight";
 
 type Range = "today" | "week" | "month" | "all";
-type DistView = "sessions" | "agent" | "project" | "gateway" | "task";
+type DistView = "sessions" | "agent" | "project" | "gateway" | "task" | "model";
 type ChartMetric = "cost" | "tokens";
 
 const DIST: { id: DistView; label: string }[] = [
@@ -98,7 +108,29 @@ const DIST: { id: DistView; label: string }[] = [
   { id: "project", label: "项目" },
   { id: "gateway", label: "网关" },
   { id: "task", label: "任务" },
+  // 原「按模型」是页底单独一块折叠表，和上面五个分布同一类东西却换了一种长相——并成第六个页签
+  { id: "model", label: "模型" },
 ];
+
+/** 分布区统一行：六个页签都映射成这一形状，渲染只有一份（DistList） */
+interface DistRowData {
+  key: string;
+  name: ReactNode;
+  /** 名称悬停全称（截断时） */
+  nameTitle?: string;
+  /** 名称下方一行弱化说明（对话数、模型数、所属项目…） */
+  meta?: string;
+  /** 行首色点（Agent 品牌色）；不给就不画 */
+  dot?: string;
+  share: number;
+  tokens: number;
+  cost: ReactNode;
+  /** 复制表格用的纯文本费用 */
+  costText: string;
+  highlight?: boolean;
+  onOpen?: () => void;
+  openTitle?: string;
+}
 
 const CHART_METRICS: { id: ChartMetric; label: string }[] = [
   { id: "cost", label: "花费" },
@@ -291,7 +323,7 @@ function PlanWindowBlock({
 
   return (
     <div>
-      <div className="text-xs font-medium tracking-wider text-l4">{caption}</div>
+      <div className="text-xs font-medium tracking-wider text-l3">{caption}</div>
       <div className="mt-0.5 flex flex-col gap-2">
         <div className="flex items-baseline gap-2">
           <span className={`text-2xl font-semibold tracking-tight tabular-nums ${text}`}>
@@ -452,10 +484,147 @@ function UsageChart({ pts, aria }: { pts: ChartPt[]; aria: string }) {
   );
 }
 
+/** 总览卡下方的小指标：标签 l3、数值 l1 等宽数字；tone=ok 用于「省下」这类正向数 */
+function KpiStat({
+  label,
+  value,
+  title,
+  tone,
+}: {
+  label: string;
+  value: string;
+  title?: string;
+  tone?: "ok";
+}) {
+  return (
+    <div className="flex items-baseline gap-1.5" title={title}>
+      <dt className="text-l3">{label}</dt>
+      <dd
+        className={`font-medium tabular-nums ${tone === "ok" ? "text-ok-text" : "text-l1"}`}
+      >
+        {value}
+      </dd>
+    </div>
+  );
+}
+
+/** 分布区统一列表：名称（+说明）· 占比条 · tokens · 占比 · 费用；可下钻的行整行可点。
+ *  不画表格分隔线（设计系统「块内密集行用间距 + hover，不画线」）；先露 10 行，其余「显示全部」。 */
+function DistList({
+  rows,
+  expanded,
+  onToggle,
+  shareLabel,
+}: {
+  rows: DistRowData[];
+  expanded: boolean;
+  onToggle: () => void;
+  shareLabel: string;
+}) {
+  const { shown, hidden } = visibleDistRows(rows, expanded);
+  return (
+    <>
+      <div className="flex items-center gap-3 px-2 pb-1 text-micro text-l3">
+        <span className="min-w-0 flex-1">名称</span>
+        <span className="hidden w-[28%] sm:block">{shareLabel}</span>
+        <span className="w-16 text-right">tokens</span>
+        <span className="w-12 text-right">占比</span>
+        <span className="w-20 text-right">费用</span>
+      </div>
+      <ul className="space-y-0.5">
+        {shown.map((r) => {
+          const inner = (
+            <>
+              <span className="flex min-w-0 flex-1 items-center gap-2.5">
+                {r.dot && (
+                  <span
+                    className="size-2 shrink-0 rounded-full"
+                    style={{ backgroundColor: r.dot }}
+                    aria-hidden="true"
+                  />
+                )}
+                <span className="min-w-0">
+                  <span
+                    className="flex items-center gap-1 truncate text-sm text-l1"
+                    title={r.nameTitle}
+                  >
+                    <span className="truncate">{r.name}</span>
+                    {r.onOpen && (
+                      <ChevronRight
+                        size={13}
+                        strokeWidth={1.8}
+                        aria-hidden="true"
+                        className="shrink-0 text-l4 opacity-0 transition-opacity group-hover:opacity-100"
+                      />
+                    )}
+                  </span>
+                  {r.meta && (
+                    <span className="block truncate text-micro text-l3">
+                      {r.meta}
+                    </span>
+                  )}
+                </span>
+              </span>
+              {/* 轨道 inset 底全圆角；前景有品牌色用品牌色（Agent / 对话），否则走强调色 */}
+              <span className="hidden h-1.5 w-[28%] shrink-0 rounded-full bg-inset sm:block">
+                <span
+                  className="block h-1.5 rounded-full"
+                  style={{
+                    width: `${barWidthPct(r.share)}%`,
+                    backgroundColor: r.dot ?? "var(--color-cta)",
+                  }}
+                />
+              </span>
+              <span className="w-16 shrink-0 text-right font-mono text-xs tabular-nums text-l2">
+                {compact(r.tokens)}
+              </span>
+              <span className="w-12 shrink-0 text-right font-mono text-xs tabular-nums text-l3">
+                {sharePctLabel(r.share)}
+              </span>
+              <span className="w-20 max-w-20 shrink-0 overflow-hidden text-right font-mono text-xs tabular-nums text-l2">
+                {r.cost}
+              </span>
+            </>
+          );
+          const rowClass = `group flex w-full items-center gap-3 rounded-md px-2 py-1.5 text-left ${
+            r.highlight ? "bg-hover" : ""
+          }`;
+          return (
+            <li key={r.key}>
+              {r.onOpen ? (
+                <button
+                  type="button"
+                  onClick={r.onOpen}
+                  title={r.openTitle}
+                  className={`${rowClass} hover:bg-hover`}
+                >
+                  {inner}
+                </button>
+              ) : (
+                <div className={rowClass}>{inner}</div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {(hidden > 0 || expanded) && rows.length > DIST_PREVIEW + 2 && (
+        <button
+          type="button"
+          onClick={onToggle}
+          className="mt-1 w-full rounded-md py-1.5 text-center text-xs text-l3 hover:bg-hover hover:text-l1"
+        >
+          {expanded ? "收起" : `显示全部 ${rows.length} 项（还有 ${hidden} 项）`}
+        </button>
+      )}
+    </>
+  );
+}
+
 export default function StatsPage({ visible }: { visible: boolean }) {
   const setPage = useAppStore((s) => s.setPage);
   const setSelectProjectReq = useAppStore((s) => s.setSelectProjectReq);
   const setOpenSessionReq = useAppStore((s) => s.setOpenSessionReq);
+  const setSessionScopeReq = useAppStore((s) => s.setSessionScopeReq);
   const sessions = useAppStore((s) => s.sessions);
   const loadSessions = useAppStore((s) => s.loadSessions);
   const [range, setRange] = useState<Range>("week");
@@ -466,9 +635,8 @@ export default function StatsPage({ visible }: { visible: boolean }) {
     () =>
       (localStorage.getItem("ccode.stats.chartMetric") as ChartMetric) || "cost",
   );
-  const [modelsOpen, setModelsOpen] = useState(
-    () => localStorage.getItem("ccode.stats.modelsOpen") === "1",
-  );
+  // 分布区「显示全部」只对当前页签生效：记下展开的是哪个页签，换页签自然回到先露 10 行
+  const [distExpanded, setDistExpanded] = useState<DistView | null>(null);
   const [gatewayRows, setGatewayRows] = useState<GatewayUsageRow[]>([]);
   const [focusGateway, setFocusGateway] = useState<string | null>(() => {
     const v = sessionStorage.getItem("ccode.statsGateway");
@@ -717,8 +885,6 @@ export default function StatsPage({ visible }: { visible: boolean }) {
   );
   const rate = stats?.rateUsdCny ?? 7.2;
   const totalTokens = (stats?.cards.input ?? 0) + (stats?.cards.output ?? 0);
-  // 分布区表头：caps 式小字加字距（同 SkillsPage 表头规格），弱化只作列定位
-  const th = "px-2 py-1.5 text-left text-micro font-normal tracking-wider text-l4";
 
   const projectRows = useMemo(() => {
     if (!stats || showInternal) return stats?.byProject ?? [];
@@ -798,11 +964,151 @@ export default function StatsPage({ visible }: { visible: boolean }) {
     if (item.id === "agent") return (stats?.byAgent.length ?? 0) > 0;
     if (item.id === "project") return projectRows.length > 0;
     if (item.id === "gateway") return gatewayRows.length > 0;
+    if (item.id === "model") return modelRows.length > 0;
     return workspaceRows.length > 0;
   });
   const dist: DistView = distItems.some((item) => item.id === view)
     ? view
     : (distItems[0]?.id ?? "agent");
+  const costCell = (
+    official: boolean,
+    cost: number | null,
+    partial: boolean,
+  ): { cost: ReactNode; costText: string } =>
+    official
+      ? { cost: <SubscriptionCost />, costText: "订阅" }
+      : (() => {
+          const t = fmtCost(cost, currency, rate, partial);
+          return { cost: <CostText>{t}</CostText>, costText: t };
+        })();
+  /** 当前页签的统一行。占比：「最贵」按费用占本区间总花费，其余按 tokens 占本页签合计 */
+  const distRows: DistRowData[] = (() => {
+    if (!stats) return [];
+    if (dist === "sessions") {
+      const total = stats.cards.costUsd ?? 0;
+      return topSessions.map((s) => {
+        const scanned = sessions.find(
+          (x) => x.agent === s.agent && x.sessionId === s.sessionId,
+        );
+        const title = sessionDisplayTitle({
+          customTitle: s.title,
+          scannedTitle: scanned?.customTitle ?? scanned?.title,
+          sessionId: s.sessionId,
+        });
+        return {
+          key: `${s.agent}-${s.sessionId}`,
+          name: title,
+          nameTitle: title,
+          meta: `${agentLabel(s.agent)} · ${basename(s.projectPath)}`,
+          dot: agentBrand(s.agent),
+          share: shareOf(s.costUsd ?? 0, total),
+          tokens: s.tokens,
+          ...costCell(false, s.costUsd, s.costPartial),
+          onOpen: () => {
+            setOpenSessionReq({ agent: s.agent, sessionId: s.sessionId });
+            setPage("sessions");
+          },
+          openTitle: "打开这段对话的回放",
+        };
+      });
+    }
+    if (dist === "agent") {
+      return stats.byAgent.map((a) => ({
+        key: `${a.agent}-${a.official}`,
+        name: agentLabel(a.agent),
+        meta: `${a.modelCount} 个模型${a.official ? " · 订阅" : ""}`,
+        dot: agentBrand(a.agent),
+        share: shareOf(a.tokens, totalAgentTokens),
+        tokens: a.tokens,
+        ...costCell(a.official, a.costUsd, a.costPartial),
+        onOpen: () => {
+          setSessionScopeReq({
+            kind: "agent",
+            value: a.agent,
+            label: agentLabel(a.agent),
+          });
+          setPage("sessions");
+        },
+        openTitle: `在对话页只看 ${agentLabel(a.agent)} 的对话`,
+      }));
+    }
+    if (dist === "project") {
+      const total = projectRows.reduce((n, p) => n + p.tokens, 0);
+      return projectRows.map((p) => {
+        const canJump = Boolean(p.projectPath) && !p.internal;
+        return {
+          key: `${p.internal}-${p.official}-${p.source}-${p.projectPath}`,
+          name: basename(p.projectPath),
+          nameTitle: p.projectPath,
+          meta: `${p.sessions} 次对话`,
+          share: shareOf(p.tokens, total),
+          tokens: p.tokens,
+          ...costCell(p.official, p.costUsd, p.costPartial),
+          onOpen: canJump
+            ? () => {
+                setSelectProjectReq(p.projectPath);
+                setPage("workspaces");
+              }
+            : undefined,
+          openTitle: canJump ? "打开这个项目" : undefined,
+        };
+      });
+    }
+    if (dist === "gateway") {
+      const total = gatewayRows.reduce((n, g) => n + g.tokensIn + g.tokensOut, 0);
+      return gatewayRows.map((g) => ({
+        key: `${g.bucket}-${g.gatewayId}`,
+        name: g.gatewayName,
+        nameTitle: g.gatewayName,
+        meta: `${g.sessionCount} 次对话 · ${g.agents.join("、")}`,
+        share: shareOf(g.tokensIn + g.tokensOut, total),
+        tokens: g.tokensIn + g.tokensOut,
+        ...costCell(g.bucket === "official", g.costUsd, g.costPartial),
+        highlight: Boolean(focusGateway && g.gatewayId === focusGateway),
+      }));
+    }
+    if (dist === "task") {
+      const total = workspaceRows.reduce((n, w) => n + w.tokensIn + w.tokensOut, 0);
+      return workspaceRows.map((w) => ({
+        key: `${w.internal}-${w.official}-${w.repoName}-${w.workspaceName}`,
+        name: <span className="font-mono">{w.workspaceName}</span>,
+        nameTitle: w.workspaceName,
+        meta: `${w.repoName} · ${w.models} 个模型`,
+        share: shareOf(w.tokensIn + w.tokensOut, total),
+        tokens: w.tokensIn + w.tokensOut,
+        ...costCell(w.official, w.cost, w.costPartial),
+      }));
+    }
+    const total = modelRows.reduce((n, m) => n + m.input + m.output, 0);
+    return modelRows.map((m) => ({
+      key: `${m.internal}-${m.source}-${m.model}`,
+      name: m.model || "（未知）",
+      nameTitle: m.model,
+      meta: `输入 ${compact(m.input)} · 输出 ${compact(m.output)}`,
+      share: shareOf(m.input + m.output, total),
+      tokens: m.input + m.output,
+      ...costCell(false, m.costUsd, m.costPartial),
+    }));
+  })();
+  const distLabel = DIST.find((d) => d.id === dist)?.label ?? "";
+  async function copyDistTable() {
+    const tsv = toTsv(
+      [distLabel, "说明", "tokens", "占比", "费用"],
+      distRows.map((r) => [
+        r.nameTitle ?? (typeof r.name === "string" ? r.name : ""),
+        r.meta ?? "",
+        String(r.tokens),
+        sharePctLabel(r.share),
+        r.costText,
+      ]),
+    );
+    try {
+      await navigator.clipboard.writeText(tsv);
+      toast(`已复制 ${distRows.length} 行，可直接粘进表格`, "success");
+    } catch (e) {
+      toast(`复制失败：${String(e)}`, "error");
+    }
+  }
   const rangeLabel = RANGES.find((item) => item.id === range)?.label ?? "";
   const costPts: ChartPt[] = (trend?.days ?? []).map((d) => ({
     day: d.day,
@@ -869,21 +1175,21 @@ export default function StatsPage({ visible }: { visible: boolean }) {
           )}
         </div>
       </PageToolbar>
-      {error && <p className="mb-3 text-sm text-err-text">{error}</p>}
+      {error && <NoticeBar tone="err" className="mb-3" onDismiss={() => setError(null)}>{error}</NoticeBar>}
       {partialError && (
-        <p className="mb-3 text-xs text-warn-text">{partialError}</p>
+        <InlineNotice tone="warn" className="mb-3">{partialError}</InlineNotice>
       )}
       {sessionsLoadError && (
-        <p className="mb-3 text-xs text-warn-text">{sessionsLoadError}</p>
+        <InlineNotice tone="warn" className="mb-3">{sessionsLoadError}</InlineNotice>
       )}
-      {notice && <p className="mb-3 text-xs text-ok-text">{notice}</p>}
+      {notice && <NoticeBar className="mb-3" onDismiss={() => setNotice(null)}>{notice}</NoticeBar>}
 
       {(planRows.length > 0 || (planLoading && hasPlanGateway)) && (
-        <div className="mb-6 rounded-lg ccode-well p-4">
+        <div className="mb-6 ccode-well ccode-card p-4">
           {planRows.length === 0 ? (
             <>
               <div className="flex items-center gap-2">
-                <span className="text-xs font-medium tracking-wider text-l4">订阅余量</span>
+                <span className="text-xs font-medium tracking-wider text-l3">订阅余量</span>
                 <button
                   type="button"
                   className="ml-auto flex h-6 w-6 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50"
@@ -895,7 +1201,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                 </button>
               </div>
               {planError && (
-                <p className="mt-2 text-xs text-err-text">{planError}</p>
+                <InlineNotice tone="err" className="mt-2">{planError}</InlineNotice>
               )}
               <div className="mt-3 space-y-2">
                 <div className="h-3 w-3/4 animate-pulse rounded bg-l4/50" />
@@ -917,7 +1223,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
             return (
               <>
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs font-medium tracking-wider text-l4">订阅余量</span>
+                  <span className="text-xs font-medium tracking-wider text-l3">订阅余量</span>
                   {planGatewayNameVisible(row.gatewayName, row.provider) && (
                     <span className="text-xs text-l2">{row.gatewayName}</span>
                   )}
@@ -958,7 +1264,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                   </div>
                 </div>
                 {planError && (
-                  <p className="mt-2 text-xs text-err-text">{planError}</p>
+                  <InlineNotice tone="err" className="mt-2">{planError}</InlineNotice>
                 )}
                 {planRows.length > 1 && (
                   <div className="mt-2">
@@ -1089,11 +1395,11 @@ export default function StatsPage({ visible }: { visible: boolean }) {
 
       {hasWalletGateway &&
         (walletRowsShown.length > 0 || walletLoading) && (
-        <div className="mb-6 rounded-lg ccode-well p-4">
+        <div className="mb-6 ccode-well ccode-card p-4">
           {walletGroups.length === 0 ? (
             <>
               <div className="flex items-center gap-2">
-                <span className="text-xs font-medium tracking-wider text-l4">网关余额</span>
+                <span className="text-xs font-medium tracking-wider text-l3">网关余额</span>
                 <div className="ml-auto flex items-center">
                   <button
                     type="button"
@@ -1125,7 +1431,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                 </div>
               </div>
               {walletError && (
-                <p className="mt-2 text-xs text-err-text">{walletError}</p>
+                <InlineNotice tone="err" className="mt-2">{walletError}</InlineNotice>
               )}
               <div className="mt-3 space-y-2">
                 <div className="h-3 w-3/4 animate-pulse rounded bg-l4/50" />
@@ -1158,7 +1464,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
               return (
                 <>
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs font-medium tracking-wider text-l4">网关余额</span>
+                    <span className="text-xs font-medium tracking-wider text-l3">网关余额</span>
                     {walletGroups.length === 1 && (
                       <span className="text-xs text-l2" title={walletKindLabel(row.kind)}>
                         {walletAccountTitle(group)}
@@ -1208,7 +1514,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                     </div>
                   </div>
                   {walletError && (
-                    <p className="mt-2 text-xs text-err-text">{walletError}</p>
+                    <InlineNotice tone="err" className="mt-2">{walletError}</InlineNotice>
                   )}
                   {walletGroups.length > 1 && (
                     <div className="mt-2">
@@ -1228,7 +1534,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                         {row.error}
                       </p>
                     )}
-                    <div className="text-xs font-medium tracking-wider text-l4">
+                    <div className="text-xs font-medium tracking-wider text-l3">
                       {walletAmountCaption(row.source)}
                     </div>
                     <div className="mt-0.5 flex items-baseline gap-2">
@@ -1273,7 +1579,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                     )}
                     {group.members.length > 0 && (
                       <div className="mt-5">
-                        <div className="text-xs font-medium tracking-wider text-l4">
+                        <div className="text-xs font-medium tracking-wider text-l3">
                           密钥额度
                         </div>
                         <div className="mt-3 space-y-2">
@@ -1363,10 +1669,10 @@ export default function StatsPage({ visible }: { visible: boolean }) {
           detail="跑几个 agent 会话后，这里会按天汇总 token 和费用。"
         />
       ) : (
-        <div className="mb-6 rounded-lg ccode-well p-4">
+        <div className="mb-6 ccode-well ccode-card p-4">
             <div className="flex flex-wrap items-start gap-x-8 gap-y-3">
               <div>
-                <div className="text-xs font-medium tracking-wider text-l4">
+                <div className="text-xs font-medium tracking-wider text-l3">
                   费用
                 </div>
                 <div className="mt-0.5 text-3xl font-semibold tracking-tight tabular-nums text-l1">
@@ -1392,7 +1698,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                 )}
               </div>
               <div>
-                <div className="text-xs font-medium tracking-wider text-l4">
+                <div className="text-xs font-medium tracking-wider text-l3">
                   tokens
                 </div>
                 <div className="mt-0.5 text-3xl font-semibold tracking-tight tabular-nums text-l1">
@@ -1403,49 +1709,58 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                 </div>
               </div>
             </div>
-            <p className="mt-3 text-xs text-l3">
-              {stats.cards.sessions} 次对话
+            {/* 次要指标拆成一排「标签 · 数值」小格（原先五六件事挤在一句话里，读到后半句已忘了前半句）；
+                没有的项不出现，解释进悬停 */}
+            <dl className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-xs">
+              <KpiStat label="对话" value={`${stats.cards.sessions} 次`} />
               {perChat != null && (
-                <>
-                  {" "}
-                  · 场均 {fmtCost(perChat, currency, rate, stats.cards.costPartial)}
-                </>
+                <KpiStat
+                  label="场均"
+                  value={fmtCost(perChat, currency, rate, stats.cards.costPartial)}
+                />
               )}
               {hit != null && (
-                <>
-                  {" "}
-                  · 缓存 {(hit * 100).toFixed(0)}%
-                  {stats.cards.cacheSavingsUsd != null &&
-                    stats.cards.costUsd != null && (
-                      <>
-                        {" "}
-                        · 若无缓存约{" "}
-                        {fmtCost(
-                          stats.cards.costUsd + stats.cards.cacheSavingsUsd,
-                          currency,
-                          rate,
-                          stats.cards.costPartial,
-                        )}
-                      </>
-                    )}
-                </>
+                <KpiStat
+                  label="缓存命中"
+                  value={`${(hit * 100).toFixed(0)}%`}
+                  title="输入里有多少是从缓存读的；命中越高越省钱"
+                />
               )}
+              {hit != null &&
+                stats.cards.cacheSavingsUsd != null &&
+                stats.cards.costUsd != null && (
+                  <KpiStat
+                    label="缓存省下"
+                    value={fmtCost(
+                      stats.cards.cacheSavingsUsd,
+                      currency,
+                      rate,
+                      stats.cards.costPartial,
+                    )}
+                    tone="ok"
+                    title={`若无缓存约 ${fmtCost(
+                      stats.cards.costUsd + stats.cards.cacheSavingsUsd,
+                      currency,
+                      rate,
+                      stats.cards.costPartial,
+                    )}`}
+                  />
+                )}
               {(stats.cards.officialTokens > 0 || stats.cards.internalTokens > 0) && (
-                <>
-                  {" "}
-                  · 另有{" "}
-                  {[
+                <KpiStat
+                  label="不计费"
+                  value={[
                     stats.cards.officialTokens > 0 &&
                       `订阅 ${compact(stats.cards.officialTokens)}`,
                     stats.cards.internalTokens > 0 &&
                       `内部 ${compact(stats.cards.internalTokens)}`,
                   ]
                     .filter(Boolean)
-                    .join(" / ")}{" "}
-                  tokens 不计入费用
-                </>
+                    .join(" / ")}
+                  title="官方账号订阅与 Mesa 内部 AI 的 tokens：统计在内，但不算进费用"
+                />
               )}
-            </p>
+            </dl>
             {chartPts.length > 1 && (
               <div className="mt-4">
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -1492,321 +1807,40 @@ export default function StatsPage({ visible }: { visible: boolean }) {
         refreshKey={activityRefresh}
       />
 
-      {stats && !empty && (
-        <>
-          {distItems.length > 0 && (
-          <div className="mb-6 rounded-lg ccode-well p-3">
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <SegTabs items={distItems} value={dist} onChange={setView} />
+      {stats && !empty && distItems.length > 0 && (
+        <div className="mb-6 ccode-well ccode-card p-3">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <SegTabs items={distItems} value={dist} onChange={setView} />
+            <div className="ml-auto flex items-center gap-1">
               {dist === "gateway" && focusGateway && (
                 <button
                   type="button"
-                  className={rowActionClass}
+                  className={ghostActionClass}
                   onClick={() => setFocusGateway(null)}
                 >
-                  查看全部
+                  取消高亮
                 </button>
               )}
-            </div>
-          {dist === "sessions" && (
-            <ul className="space-y-0.5">
-              {topSessions.map((s) => {
-                const scanned = sessions.find(
-                  (x) => x.agent === s.agent && x.sessionId === s.sessionId,
-                );
-                const title = sessionDisplayTitle({
-                  customTitle: s.title,
-                  scannedTitle: scanned?.customTitle ?? scanned?.title,
-                  sessionId: s.sessionId,
-                });
-                return (
-                  <li key={`${s.agent}-${s.sessionId}`}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setOpenSessionReq({
-                          agent: s.agent,
-                          sessionId: s.sessionId,
-                        });
-                        setPage("sessions");
-                      }}
-                      className="flex w-full items-baseline gap-2 rounded-md px-1.5 py-1.5 text-left hover:bg-hover"
-                    >
-                      <span className="min-w-0 flex-1 truncate text-sm text-l2">
-                        {title}
-                      </span>
-                      <span className="max-w-[7rem] shrink-0 truncate text-micro text-l4">
-                        {basename(s.projectPath)}
-                      </span>
-                      <span className="shrink-0 font-mono text-xs tabular-nums text-l2">
-                        {fmtCost(s.costUsd, currency, rate, s.costPartial)}
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-          {dist === "gateway" && (
-              <table className="w-full table-fixed text-sm">
-                <thead>
-                  <tr className="border-b border-hairline">
-                    <th className={th}>网关</th>
-                    <th className={`${th} text-right`}>会话</th>
-                    <th className={`${th} text-right`}>tokens</th>
-                    <th className={`${th} w-24 text-right`}>费用</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {gatewayRows.map((g) => {
-                    const tokens = g.tokensIn + g.tokensOut;
-                    const focused = focusGateway && g.gatewayId === focusGateway;
-                    const official = g.bucket === "official";
-                    return (
-                      <tr
-                        key={`${g.bucket}-${g.gatewayId}`}
-                        className={`border-b border-hairline ${focused ? "bg-hover/60" : ""}`}
-                      >
-                        <td className="max-w-0 truncate px-2 py-2 text-l2" title={g.gatewayName}>
-                          {g.gatewayName}
-                          <span className="ml-1 text-micro text-l4">{g.agents.join("、")}</span>
-                        </td>
-                        <td className="px-2 py-2 text-right font-mono text-xs tabular-nums text-l3">
-                          {g.sessionCount}
-                        </td>
-                        <td className="px-2 py-2 text-right font-mono text-xs tabular-nums text-l2">
-                          {compact(tokens)}
-                        </td>
-                        <td className="px-2 py-2 text-right font-mono text-xs tabular-nums text-l3">
-                          {official ? (
-                            <SubscriptionCost />
-                          ) : (
-                            fmtCost(g.costUsd, currency, rate, g.costPartial)
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-          )}
-
-          {dist === "agent" && (
-              <ul className="space-y-1">
-                {stats.byAgent.map((a) => {
-                  const share = a.tokens / totalAgentTokens;
-                  return (
-                    <li
-                      key={`${a.agent}-${a.official}`}
-                      className="flex items-center gap-3 rounded-md px-2 py-2 text-sm hover:bg-hover"
-                    >
-                      <span
-                        className="size-2 shrink-0 rounded-full"
-                        style={{ backgroundColor: agentBrand(a.agent) }}
-                      />
-                      <span className="w-24 shrink-0">
-                        <span className="block text-l2">
-                          {agentLabel(a.agent)}
-                        </span>
-                        <span
-                          className="block text-micro text-l4"
-                          title={`统计范围内使用了 ${a.modelCount} 个不同模型`}
-                        >
-                          {a.modelCount} 个模型
-                        </span>
-                      </span>
-                      {/* 轨道：inset 底（浅色≈近白浅槽/深色=微亮槽）全圆角；
-                          前景与圆点同绑品牌色（v3.94 起，与对话页胶囊同 AGENT_BRAND 口径） */}
-                      <span className="h-2 min-w-0 flex-1 rounded-full bg-inset">
-                        <span
-                          className="block h-2 rounded-full"
-                          style={{
-                            width: `${Math.max(1.5, share * 100)}%`,
-                            backgroundColor: agentBrand(a.agent),
-                          }}
-                        />
-                      </span>
-                      <span className="w-16 shrink-0 text-right font-mono text-xs tabular-nums text-l2">
-                        {compact(a.tokens)}
-                      </span>
-                      <span className="w-12 shrink-0 text-right font-mono text-xs tabular-nums text-l4">
-                        {(share * 100).toFixed(1)}%
-                      </span>
-                      <span className="w-14 shrink-0 text-right font-mono text-xs tabular-nums text-l3">
-                        {a.official ? (
-                          <SubscriptionCost />
-                        ) : (
-                          fmtCost(a.costUsd, currency, rate, a.costPartial)
-                        )}
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-          )}
-
-          {dist === "project" && (
-              <table className="w-full table-fixed text-sm">
-                <thead>
-                  <tr className="border-b border-hairline">
-                    <th className={th}>项目</th>
-                    <th className={`${th} text-right`}>对话数</th>
-                    <th className={`${th} text-right`}>tokens</th>
-                    <th className={`${th} w-24 text-right`}>费用</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {projectRows.slice(0, 20).map((p) => {
-                    const canJumpToProject = Boolean(p.projectPath) && !p.internal;
-                    return (
-                      <tr
-                        key={`${p.internal}-${p.official}-${p.source}-${p.projectPath}`}
-                        className="border-b border-hairline"
-                      >
-                      <td className="max-w-0 truncate px-2 py-2 text-l2" title={p.projectPath}>
-                        {canJumpToProject ? (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectProjectReq(p.projectPath);
-                              setPage("workspaces");
-                            }}
-                            className="inline-flex max-w-full items-center truncate text-left hover:text-l1"
-                            title="跳转到项目页"
-                          >
-                            {basename(p.projectPath)}
-                            <span aria-hidden="true" className="ml-1 text-micro text-l4">
-                              ↗
-                            </span>
-                          </button>
-                        ) : (
-                          <span className="truncate">{basename(p.projectPath)}</span>
-                        )}
-                      </td>
-                      <td className="px-2 py-2 text-right font-mono text-xs tabular-nums text-l3">
-                        {p.sessions}
-                      </td>
-                      <td className="px-2 py-2 text-right font-mono text-xs tabular-nums text-l2">
-                        {compact(p.tokens)}
-                      </td>
-                      <td className="w-24 max-w-24 overflow-hidden px-2 py-2 text-right font-mono text-xs tabular-nums text-l3">
-                        {p.official ? (
-                          <CostText><SubscriptionCost /></CostText>
-                        ) : (
-                          <CostText>{fmtCost(p.costUsd, currency, rate, p.costPartial)}</CostText>
-                        )}
-                      </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-          )}
-
-          {dist === "task" && (
-              <table className="w-full table-fixed text-sm">
-                <thead>
-                  <tr className="border-b border-hairline">
-                    <th className={th}>任务</th>
-                    <th className={`${th} text-right`}>tokens</th>
-                    <th className={`${th} w-24 text-right`}>费用</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {workspaceRows.map((w) => (
-                    <tr
-                      key={`${w.internal}-${w.official}-${w.repoName}-${w.workspaceName}`}
-                      className="border-b border-hairline"
-                    >
-                      <td className="max-w-0 truncate px-2 py-2 text-l2">
-                        <span className="font-mono">{w.workspaceName}</span>
-                        <span className="ml-2 text-xs text-l4">
-                          {w.repoName}
-                        </span>
-                      </td>
-                      <td
-                        className="px-2 py-2 text-right font-mono text-xs tabular-nums text-l2"
-                        title={`输入 ${compact(w.tokensIn)} / 输出 ${compact(
-                          w.tokensOut,
-                        )}，${w.models} 个模型`}
-                      >
-                        {compact(w.tokensIn + w.tokensOut)}
-                      </td>
-                      <td className="w-24 max-w-24 overflow-hidden px-2 py-2 text-right font-mono text-xs tabular-nums text-l3">
-                        {w.official ? (
-                          <CostText><SubscriptionCost /></CostText>
-                        ) : (
-                          <CostText>{fmtCost(w.cost, currency, rate, w.costPartial)}</CostText>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-          )}
-          </div>
-          )}
-
-          {modelRows.length > 0 && (
-            <section className="mb-2">
               <button
                 type="button"
-                onClick={() => {
-                  const next = !modelsOpen;
-                  setModelsOpen(next);
-                  localStorage.setItem(
-                    "ccode.stats.modelsOpen",
-                    next ? "1" : "0",
-                  );
-                }}
-                aria-expanded={modelsOpen}
-                className="flex h-9 w-full items-center gap-2 rounded-md px-1 text-left text-sm font-medium text-l1 hover:bg-hover"
+                className={ghostActionClass}
+                onClick={() => void copyDistTable()}
+                title="复制当前页签为表格（制表符分隔），可直接粘进 Excel / Numbers"
               >
-                <FoldMark open={modelsOpen} boxed />
-                按模型
-                <span className="text-micro font-normal text-l4">
-                  {modelRows.length}
-                </span>
+                <Copy size={13} strokeWidth={1.8} className="mr-1" aria-hidden="true" />
+                复制表格
               </button>
-              {modelsOpen && (
-              <table className="w-full table-fixed text-sm">
-                <thead>
-                  <tr className="border-b border-hairline">
-                    <th className={th}>模型</th>
-                    <th className={`${th} text-right`}>输入</th>
-                    <th className={`${th} text-right`}>输出</th>
-                    <th className={`${th} w-24 text-right`}>费用</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {modelRows.map((m) => (
-                    <tr
-                      key={`${m.internal}-${m.source}-${m.model}`}
-                      className="border-b border-hairline"
-                    >
-                      <td
-                        className="max-w-0 truncate px-2 py-2 text-l2"
-                        title={m.model}
-                      >
-                        {m.model || "（未知）"}
-                      </td>
-                      <td className="px-2 py-2 text-right font-mono text-xs tabular-nums text-l3">
-                        {compact(m.input)}
-                      </td>
-                      <td className="px-2 py-2 text-right font-mono text-xs tabular-nums text-l3">
-                        {compact(m.output)}
-                      </td>
-                      <td className="w-24 max-w-24 overflow-hidden px-2 py-2 text-right font-mono text-xs tabular-nums text-l3">
-                        <CostText>{fmtCost(m.costUsd, currency, rate, m.costPartial)}</CostText>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              )}
-            </section>
-          )}
-        </>
+            </div>
+          </div>
+          <DistList
+            rows={distRows}
+            expanded={distExpanded === dist}
+            onToggle={() =>
+              setDistExpanded((cur) => (cur === dist ? null : dist))
+            }
+            shareLabel={dist === "sessions" ? "占花费" : "占用量"}
+          />
+        </div>
       )}
     </PageFrame>
   );

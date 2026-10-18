@@ -12,7 +12,7 @@ import {
 } from "../session-transfer";
 import { AGENTS } from "../types";
 import type { ImportPreviewDto, ImportReportDto } from "../types";
-import { Checkbox, fieldClass, primaryActionClass, rowActionClass } from "./PageFrame";
+import { Checkbox, fieldClass, primaryActionClass, rowActionClass, InlineNotice } from "./PageFrame";
 import { Modal } from "./Modal";
 
 function agentLabel(id: string): string {
@@ -140,7 +140,7 @@ export default function SessionImportModal({
       }
     >
         <div className="text-sm">
-          {error && <p className="mb-2 text-xs text-err-text">{error}</p>}
+          {error && <InlineNotice tone="err" className="mb-2">{error}</InlineNotice>}
           {!preview && !report && (
             <div className="space-y-2">
               <p className="text-xs text-l3">

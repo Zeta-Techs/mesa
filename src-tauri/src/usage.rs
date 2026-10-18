@@ -4,6 +4,7 @@
 
 use chrono::{DateTime, Days, Local, NaiveDate, TimeZone};
 use rusqlite::{params, Connection};
+use tauri::Emitter;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -782,7 +783,13 @@ fn ensure_usage_schema(conn: &Connection) -> Result<(), String> {
             "DELETE FROM usage_daily WHERE agent='grok';
              DELETE FROM usage_meta WHERE key LIKE 'seen:grok:%' OR key='initialized';"
         } else {
-            "DELETE FROM usage_daily;
+            // 只清还能从会话文件重抽的行（有 seen 标记的）；文件已不在的历史行与
+            // 不落盘的一次性内部调用行（ephemeral-*）重抽不回来，整表清空就是永久丢账
+            "DELETE FROM usage_daily WHERE EXISTS (
+               SELECT 1 FROM usage_meta m
+               WHERE m.key = 'seen:' || usage_daily.agent || ':' || usage_daily.session_id || ':live'
+                  OR m.key = 'seen:' || usage_daily.agent || ':' || usage_daily.session_id || ':snap'
+                  OR m.key = 'seen:' || usage_daily.agent || ':' || usage_daily.session_id);
              DELETE FROM usage_meta WHERE key LIKE 'seen:%' OR key='initialized';"
         };
         conn.execute_batch(reset_sql)
@@ -845,6 +852,19 @@ pub(crate) fn is_ccode_ai_temp_cwd(path: &str) -> bool {
         })
 }
 
+/// 定时雷达隔离 worktree（~/ccode/watch-worktrees/<项目>/<任务id>）里的会话一律是
+/// Mesa 无头拉起的自动活动。按会话 id 的 mark_session_internal 依赖从 CLI 输出解析
+/// id——失败/超时的运行解析不到就漏标（2026-10-16 实证：失败运行留下的 codex 会话
+/// 未标 internal，隔离目录以任务 UUID 冒充「最近项目」），读取侧按路径兜底。
+pub(crate) fn is_watch_worktree_cwd(path: &str) -> bool {
+    let key = crate::paths::path_key(&crate::sessions::expand_tilde(path));
+    // 家目录可换位置：旧位置里的隔离树会话同样是无头自动活动
+    crate::ccode_home::all_sub("watch-worktrees").iter().any(|root| {
+        let root_key = crate::paths::path_key(&root.to_string_lossy());
+        key == root_key || key.starts_with(&format!("{root_key}/"))
+    })
+}
+
 pub(crate) fn normalize_provenance_path(path: &str) -> String {
     let expanded = crate::sessions::expand_tilde(path);
     let resolved =
@@ -876,6 +896,75 @@ pub(crate) fn normalize_provenance_path(path: &str) -> String {
 
 /// Ccode 自己发起无头 AI 调用时登记精确来源；普通终端启动不调用本函数。
 /// 临时 cwd 一次运行一个目录（`ccode-ai-<uuid>`），项目级行（session_id=''）天然就是运行粒度。
+/// 用户在 Mesa 里亲手删除对话：连同它的用量历史一起删（其余「文件消失」一律保留用量，见 rebuild）。
+pub(crate) fn forget_session_usage(agent: &str, session_id: &str) {
+    let Ok(conn) = usage_db() else {
+        return;
+    };
+    let _ = conn.execute(
+        "DELETE FROM usage_daily WHERE agent=?1 AND session_id=?2",
+        params![agent, session_id],
+    );
+    let _ = conn.execute(
+        "DELETE FROM usage_meta WHERE key=?1 OR key=?2",
+        params![
+            format!("seen:{agent}:{session_id}:live"),
+            format!("seen:{agent}:{session_id}:snap")
+        ],
+    );
+}
+
+/// 不落盘的一次性内部调用（claude `--no-session-persistence` / codex `--ephemeral`）：
+/// 没有会话文件可供重建时抽取，花费从 CLI 返回结果里直接记账。session_id 用
+/// `ephemeral-<run id>`，扫描永远遇不到它，不会被重建覆盖或删除。
+pub(crate) fn record_ephemeral_usage(
+    agent: &str,
+    session_id: &str,
+    project_path: &str,
+    official: bool,
+    events: &[UsageEvent],
+) -> Result<(), String> {
+    if events.is_empty() {
+        return Ok(());
+    }
+    let conn = usage_db()?;
+    let mut events = events.to_vec();
+    for e in &mut events {
+        e.source = SOURCE_CCODE_AI.into();
+        e.internal = true;
+        e.official = official;
+    }
+    let contrib = SessionContrib {
+        agent: agent.into(),
+        session_id: session_id.into(),
+        project_path: project_path.into(),
+        workspace: String::new(),
+        events,
+    };
+    for row in aggregate(&[contrib]) {
+        conn.execute(
+            "INSERT INTO usage_daily(day, agent, model, project_path, session_id,
+                                    input, output, cache_read, cache_write, source, internal, workspace, official)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+             ON CONFLICT(day, agent, model, project_path, session_id) DO UPDATE SET
+               input=input+excluded.input, output=output+excluded.output,
+               cache_read=cache_read+excluded.cache_read, cache_write=cache_write+excluded.cache_write",
+            params![
+                row.day, row.agent, row.model, row.project_path, row.session_id,
+                row.input as i64, row.output as i64, row.cache_read as i64, row.cache_write as i64,
+                row.source, i64::from(row.internal), row.workspace, i64::from(row.official),
+            ],
+        )
+        .map_err(|e| format!("记录内部调用用量失败: {e}"))?;
+    }
+    Ok(())
+}
+
+/// 今天（本机时区）的日期串，一次性调用的用量记在调用当天
+pub(crate) fn today_local() -> String {
+    Local::now().format("%Y-%m-%d").to_string()
+}
+
 pub(crate) fn register_internal_ai_run(agent: &str, project_path: &Path) -> Result<(), String> {
     let conn = usage_db()?;
     register_provenance_impl(
@@ -1042,6 +1131,17 @@ fn session_provenance(
     (SOURCE_CLI.into(), false, false)
 }
 
+/// 小键值：给用量之外的维护任务记时间戳（如内部对话清理的上次运行时刻）
+pub(crate) fn kv_get(key: &str) -> Option<String> {
+    usage_db().ok().and_then(|conn| meta_get(&conn, key))
+}
+
+pub(crate) fn kv_set(key: &str, value: &str) {
+    if let Ok(conn) = usage_db() {
+        meta_set(&conn, key, value);
+    }
+}
+
 fn meta_get(conn: &Connection, key: &str) -> Option<String> {
     conn.query_row(
         "SELECT value FROM usage_meta WHERE key=?1",
@@ -1119,6 +1219,7 @@ fn seen_key(s: &crate::sessions::SessionMetaDto) -> String {
 }
 
 /// 从 seen 键反解 (agent, session_id)，供清理已消失会话的行；旧格式/损坏键返回 None
+#[cfg_attr(not(test), allow(dead_code))]
 fn parse_seen_key(key: &str) -> Option<(String, String)> {
     let rest = key.strip_prefix("seen:")?;
     let (agent_sid, _kind) = rest.rsplit_once(':')?;
@@ -1203,7 +1304,11 @@ fn rebuild_impl() -> Result<UsageBuildResult, String> {
         meta_set(&conn, &key, &marker);
         indexed += 1;
     }
-    // 已消失的会话：连同行一并清除
+    // 已消失的会话：只撤「已索引」标记，**用量行留作历史账**（2026-10-17 用户拍板）。
+    // 会话文件会被 CLI 自己清掉（Claude Code 默认只留 30 天）或被 Mesa 的内部对话保留期清理
+    // 删掉；原先这里连行一起删，用量页的 Claude Code 历史永远只剩最近 30 天。
+    // 只有用户在 Mesa 里亲手删除对话才连用量一起删（forget_session_usage）。
+    // 文件以后若又出现（快照恢复等），上面的循环会先按 agent+session 删行再重抽，不会翻倍。
     let mut stale: Vec<String> = Vec::new();
     {
         let mut stmt = conn
@@ -1219,12 +1324,6 @@ fn rebuild_impl() -> Result<UsageBuildResult, String> {
         }
     }
     for k in stale {
-        if let Some((agent, sid)) = parse_seen_key(&k) {
-            let _ = conn.execute(
-                "DELETE FROM usage_daily WHERE agent=?1 AND session_id=?2",
-                params![agent, sid],
-            );
-        }
         let _ = conn.execute("DELETE FROM usage_meta WHERE key=?1", params![k]);
     }
     meta_set(&conn, "initialized", &crate::sessions::now_iso());
@@ -2232,6 +2331,58 @@ fn top_sessions_from(
         .collect())
 }
 
+/// 设置页「自定义定价」的待补清单：用量里出现过、但三层价目都查不到价的模型。
+/// 用户此前只能对着「≥ / ~」猜是哪个模型没价（2026-10-17）。订阅额度（official）不计费，不列
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnpricedModelDto {
+    pub model: String,
+    /// 四类 token 合计（只用于排序与让用户判断值不值得补）
+    pub tokens: u64,
+    pub last_day: String,
+}
+
+fn unpriced_models(conn: &Connection, chain: &PriceChain) -> Result<Vec<UnpricedModelDto>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT model, SUM(input + output + cache_read + cache_write), MAX(day)
+             FROM usage_daily WHERE official = 0 AND model <> '' GROUP BY model",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
+    let mut out: Vec<UnpricedModelDto> = rows
+        .flatten()
+        .filter(|(model, tokens, _)| *tokens > 0 && price_of(model, chain).is_none())
+        .map(|(model, tokens, last_day)| UnpricedModelDto {
+            model,
+            tokens: tokens.max(0) as u64,
+            last_day,
+        })
+        .collect();
+    out.sort_by(|a, b| b.tokens.cmp(&a.tokens).then_with(|| a.model.cmp(&b.model)));
+    out.truncate(30);
+    Ok(out)
+}
+
+#[tauri::command]
+pub async fn usage_unpriced_models() -> Result<Vec<UnpricedModelDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = usage_db()?;
+        let (chain, _) = pricing_table_and_rate();
+        unpriced_models(&conn, &chain)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 fn pricing_table_and_rate() -> (PriceChain, f64) {
     let pricing_path = dirs::config_dir().map(|d| d.join("ccode").join("pricing.json"));
     (
@@ -2301,6 +2452,9 @@ pub struct UsageActivityDto {
     pub days: Vec<UsageActivityDayDto>,
     /// 增量索引刷新失败但返回了已建索引数据时为 true（前端出一行警示）
     pub stale: bool,
+    /// 冷启动兜底：重建超预算仍在后台跑、先返回了库里现有数据（2026-10-15）——
+    /// 后台刷完会发 usage-activity-refreshed 事件，前端补拉后自动变新
+    pub refreshing: bool,
 }
 
 /// 查询本体（注入 today 供测试）：token/会话主查询按 PK 最左列 GROUP BY day 索引有序扫；
@@ -2428,22 +2582,91 @@ fn usage_activity_from(
         first_day: days.first().map(|d| d.day.clone()),
         days,
         stale: false,
+        refreshing: false,
     })
 }
 
-/// 活跃度热力图数据：先增量索引（同 session_usage 口径——「今天」的格子不能等终端
-/// 轮询才亮）再查询；索引刷新失败不阻断查询，stale=true 由前端提示
+/// usage_activity 等增量索引的预算：稳态（进程内文件缓存热、marker 全命中）几十毫秒
+/// 内完成；冷启动全量扫描（约三千个会话文件）要几秒。超预算先返回库里现有数据，
+/// 重建继续在后台跑、成功后发事件让前端补拉——图先出来，几秒内自动变新。
+const USAGE_REBUILD_BUDGET_MS: u64 = 800;
+
+/// 冷启动兜底的后台重建是否已在跑：在跑就不再叠一个（排队等锁只会白占阻塞线程、
+/// 攒出发射事件的风暴——2026-10-15 实证：无此闸时事件→补拉→再超时→再发事件
+/// 会自激成环，后端被打满、sessions/projects 全饿死）。完成通知由先起的那次负责。
+static USAGE_REBUILD_IN_FLIGHT: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// 早退等结果的调用方计数：事件不能只看发起方是否超时离开——IN_FLIGHT 早退方
+/// 不拥有任何通知渠道，若那次重建快于预算，send 成功、事件不发，早退方的
+/// refreshing 永无终点（2026-10-16 复审坐实）。重建完成时据此计数补发。
+static USAGE_REBUILD_WAITERS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// 活跃度热力图数据。三段式（2026-10-15 拍板 + 2026-10-16 复审修订）：
+/// ① 先查旧数（冷库也查得动，前端先有图）；② 预算内（USAGE_REBUILD_BUDGET_MS）
+/// 重建完成 → **重查一次再返回**——等待成本已付，重查只是毫秒级聚合，这样快路径
+/// 仍兑现「先索引后查询」（否则隔夜外部会话被静默吞掉、且与同屏 agents 矩阵口径
+/// 自相矛盾）；③ 超预算 → 先回旧数（refreshing=true），后台刷完发
+/// usage-activity-refreshed 前端补拉（每个旧数周期最多自动补拉一次，环不可能成形）。
+/// 索引刷新失败不阻断查询：快路径 stale=true 前端出警示；慢失败也发事件，让前端
+/// 仅一次的补拉去命中快失败路径把警示浮出来（失败不再因慢而静默）。
 #[tauri::command]
-pub async fn usage_activity() -> Result<UsageActivityDto, String> {
+pub async fn usage_activity(app: tauri::AppHandle) -> Result<UsageActivityDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let stale = rebuild_locked().is_err();
-        let conn = usage_db()?;
-        let (table, _) = pricing_table_and_rate();
-        usage_activity_from(&conn, Local::now().date_naive(), &table)
-            .map(|mut dto| {
-                dto.stale = stale;
-                dto
-            })
+        let mut dto = {
+            let conn = usage_db()?;
+            let (table, _) = pricing_table_and_rate();
+            usage_activity_from(&conn, Local::now().date_naive(), &table)?
+        };
+        // 已有后台重建在跑：本调用必然拿不到快结果，登记等待后先出旧数，
+        // 在跑的那次完成时会按等待计数补发事件
+        if USAGE_REBUILD_IN_FLIGHT.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            USAGE_REBUILD_WAITERS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            dto.refreshing = true;
+            return Ok(dto);
+        }
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<bool>();
+        tauri::async_runtime::spawn_blocking(move || {
+            let failed = rebuild_locked().is_err();
+            USAGE_REBUILD_IN_FLIGHT.store(false, std::sync::atomic::Ordering::SeqCst);
+            // 通道传「失败与否」——接收端直接赋 dto.stale，两端语义必须同名同向
+            //（首版传 is_ok() 接收端当 is_err() 用，重建越成功越报「索引刷新失败」，
+            //  2026-10-16 用户实证）
+            let waiters = USAGE_REBUILD_WAITERS.swap(0, std::sync::atomic::Ordering::SeqCst);
+            // 发事件的三种情形任一即发：发起方超时离开（send 失败）/ 有早退等待者 /
+            // 重建失败（慢失败不再静默——前端仅一次的补拉会命中快失败路径报 stale）。
+            // 快路径（send 成功、无等待者、未失败）绝不发：事件风暴的闸保持原样
+            if done_tx.send(failed).is_err() || waiters > 0 || failed {
+                let _ = app.emit("usage-activity-refreshed", ());
+            }
+        });
+        match done_rx.recv_timeout(std::time::Duration::from_millis(
+            USAGE_REBUILD_BUDGET_MS,
+        )) {
+            // 预算内刷完：重查一次（恢复「先索引后查询」，重建扫进的新数据不丢）；
+            // 重查本身失败才回落旧数并显性置 stale（fail-visible 不静默）
+            Ok(rebuild_failed) => {
+                let requery = usage_db().and_then(|conn| {
+                    let (table, _) = pricing_table_and_rate();
+                    usage_activity_from(&conn, Local::now().date_naive(), &table)
+                });
+                match requery {
+                    Ok(fresh) => {
+                        dto = fresh;
+                        dto.stale = rebuild_failed;
+                    }
+                    Err(_) => dto.stale = true,
+                }
+            }
+            // 超预算：立刻弃守接收端（事件已由等待计数兜底，不再依赖 send 失败），
+            // 先出旧数，后台还在刷（不是失败，不占用 stale 警示位）
+            Err(_) => {
+                drop(done_rx);
+                dto.refreshing = true;
+            }
+        }
+        Ok(dto)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -2923,6 +3146,32 @@ mod tests {
         );
         assert_eq!(price_of("relay-y-x", &table), Some((0.5, 0.5)));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn schema_reset_keeps_rows_that_cannot_be_rebuilt() {
+        // 用户拍板：会话文件消失后用量留作历史账；表版本升级时只清能从文件重抽的行
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_usage_schema(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO usage_daily(day, agent, model, project_path, session_id, input, output, cache_read, cache_write, source, internal, workspace, official)
+               VALUES('2026-08-01','claude-code','m','/p','alive',1,1,0,0,'cli',0,'',0),
+                     ('2026-08-01','claude-code','m','/p','gone',2,2,0,0,'cli',0,'',0),
+                     ('2026-10-17','codex','m','/tmp/ccode-ai-x','ephemeral-r1',3,3,0,0,'ccode-ai',1,'',0);
+             INSERT INTO usage_meta(key, value) VALUES('seen:claude-code:alive:live','t');
+             UPDATE usage_meta SET value='6' WHERE key='schema_version';",
+        )
+        .unwrap();
+        ensure_usage_schema(&conn).unwrap();
+        let mut ids: Vec<String> = conn
+            .prepare("SELECT session_id FROM usage_daily ORDER BY session_id")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .flatten()
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec!["ephemeral-r1".to_string(), "gone".to_string()]);
     }
 
     #[test]
@@ -3457,6 +3706,28 @@ mod tests {
     }
 
     #[test]
+    fn watch_worktree_cwd_only_matches_under_mesa_root() {
+        let home = dirs::home_dir().expect("测试机必有 home");
+        let inside = home.join("ccode/watch-worktrees/测试项目/f4334054-d77e-4c11-ab56-22bb11a2a83f");
+        assert!(is_watch_worktree_cwd(&inside.to_string_lossy()));
+        // 根目录本身也命中：与 list_repos 的排除口径（== 或前缀 /）一致
+        let root = home.join("ccode/watch-worktrees");
+        assert!(is_watch_worktree_cwd(&root.to_string_lossy()));
+        // 兄弟目录不算：工作区 worktree 与真实项目仓库不受影响
+        assert!(!is_watch_worktree_cwd(
+            &home.join("ccode/workspaces/测试项目/lit-search").to_string_lossy()
+        ));
+        assert!(!is_watch_worktree_cwd(
+            &home.join("Desktop/测试项目").to_string_lossy()
+        ));
+        // 相近前缀不误伤：只是开头同名的目录
+        assert!(!is_watch_worktree_cwd(
+            &home.join("ccode/watch-worktrees-别家").to_string_lossy()
+        ));
+        assert!(!is_watch_worktree_cwd(""));
+    }
+
+    #[test]
     fn stats_keep_internal_dimension_for_same_model() {
         let rows: Vec<StoredUsageRow> = vec![
             (
@@ -3817,6 +4088,24 @@ mod tests {
             Some("2026-07-01")
         );
         assert_eq!(cutoff_day_from("all", today), None);
+    }
+
+    #[test]
+    fn unpriced_models_lists_billed_models_without_price() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_usage_schema(&conn).unwrap();
+        let chain: PriceChain = [vec![("gpt-5".to_string(), (1.25, 10.0))], vec![], vec![]];
+        insert_daily(&conn, "2026-10-01", "codex", "gpt-5", "/p", "s1", 100, 10, 0, false);
+        insert_daily(&conn, "2026-10-02", "kimi", "kimi-k3", "/p", "s2", 500, 50, 0, false);
+        insert_daily(&conn, "2026-10-05", "kimi", "kimi-k3", "/p", "s3", 100, 0, 0, false);
+        insert_daily(&conn, "2026-10-03", "grok", "relay-x", "/p", "s4", 10, 0, 0, false);
+        // 订阅额度不计费，不该被列出
+        insert_daily(&conn, "2026-10-04", "gemini", "gemini-sub", "/p", "s5", 900, 0, 0, true);
+        let got = unpriced_models(&conn, &chain).unwrap();
+        let names: Vec<&str> = got.iter().map(|m| m.model.as_str()).collect();
+        assert_eq!(names, vec!["kimi-k3", "relay-x"], "有价的与订阅的不列，按用量降序");
+        assert_eq!(got[0].tokens, 650);
+        assert_eq!(got[0].last_day, "2026-10-05");
     }
 
     fn insert_daily(
@@ -4684,6 +4973,7 @@ mod gateway_usage_tests {
             protocol: None,
             api_backend: None,
             models: vec![],
+            role_models: Default::default(),
             extra_env: Default::default(),
             last_used_at: None,
         }

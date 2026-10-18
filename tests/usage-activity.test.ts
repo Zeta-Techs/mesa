@@ -4,14 +4,9 @@ import {
   activeMainDays,
   activityDatePhrase,
   buildRollingGrid,
-  buildYearGrid,
   heatCellPx,
-  heatRailLeft,
-  heatWideAside,
   HEAT_CELL_MAX_PX,
   HEAT_CELL_MIN_PX,
-  HEAT_RAIL_AT,
-  HEAT_WIDE_REMAINDER_PX,
   levelOf,
   levelThresholds,
   mainTokens,
@@ -19,7 +14,6 @@ import {
   shiftDay,
   streaks,
   weekdayIndex,
-  yearBounds,
   yearStats,
 } from "../src/usage-activity.ts";
 import type { UsageActivityDayDto } from "../src/types.ts";
@@ -44,60 +38,32 @@ function day(
   };
 }
 
-test("yearBounds：当年截到今天，往年整年", () => {
-  assert.deepEqual(yearBounds(2026, "2026-10-12"), {
-    start: "2026-01-01",
-    end: "2026-10-12",
+test("rollingBounds / buildRollingGrid：去年同月 1 日到今天，右边停在今天，两个 10 月都标", () => {
+  assert.deepEqual(rollingBounds("2026-10-15"), {
+    start: "2025-10-01",
+    end: "2026-10-15",
   });
-  assert.deepEqual(yearBounds(2025, "2026-10-12"), {
-    start: "2025-01-01",
-    end: "2025-12-31",
-  });
-});
-
-test("buildYearGrid：2026-01-01 是周四 → 首列 3 个 pad，周一开头；整年 + future 标记", () => {
-  const g = buildYearGrid(2026, "2026-10-12");
-  // 2026-01-01 周四：周一 12/28、周二 29、周三 31 都属 2025 → 首列前 3 格 null
-  assert.equal(g.weeks[0].filter((x) => x === null).length, 3);
-  assert.equal(g.weeks[0][3]?.day, "2026-01-01");
-  // 整年网格（翻年宽度不跳变）：365 天、53 列
-  assert.equal(g.dayCount, 365);
-  assert.equal(g.weeks.length, 53);
-  // 今天之后标记 future（组件渲染成空格）；之前不标
-  const today = g.weeks.flatMap((c) => c).find((x) => x?.day === "2026-10-12");
-  assert.ok(today && !today.future);
-  const next = g.weeks.flatMap((c) => c).find((x) => x?.day === "2026-10-13");
-  assert.ok(next?.future);
-  // 每个非空格都坐在自己的周几行上（行 0=周一 … 行 6=周日）
+  const g = buildRollingGrid("2026-10-15");
+  const cells = g.weeks.flatMap((c) => c).filter((x): x is { day: string } => x !== null);
+  assert.equal(cells[0]?.day, "2025-10-01");
+  assert.equal(cells[cells.length - 1]?.day, "2026-10-15");
+  assert.ok(cells.every((c) => c.day >= "2025-10-01" && c.day <= "2026-10-15"));
+  // 2025-10-01 周三：首列周一、周二是窗口外，不画格
+  assert.equal(g.weeks[0][0], null);
+  assert.equal(g.weeks[0][1], null);
+  assert.equal(g.weeks[0][2]?.day, "2025-10-01");
+  // 今天之后的日子不在网格里（不补完 10 月，也不补到 12 月）
+  assert.equal(cells.some((c) => c.day > "2026-10-15"), false);
+  const labels = g.monthMarks.map((m) => m.label);
+  assert.equal(labels[0], "10月");
+  assert.equal(labels[labels.length - 1], "10月");
+  assert.ok(labels.includes("1月") && labels.includes("6月"));
+  assert.ok(g.monthMarks[0].weekIndex < g.monthMarks[g.monthMarks.length - 1].weekIndex);
   g.weeks.forEach((col) => {
     col.forEach((cell, r) => {
       if (cell) assert.equal(weekdayIndex(cell.day), r);
     });
   });
-  // 整月都在未来的月份不标（11/12 月）；10 月要标
-  const labels = g.monthMarks.map((m) => m.label);
-  assert.ok(labels.includes("10月"));
-  assert.ok(!labels.includes("11月") && !labels.includes("12月"));
-});
-
-test("buildYearGrid：往年整年、跨月共周不丢标签、相邻标签不重叠", () => {
-  const g = buildYearGrid(2025, "2026-10-12");
-  assert.equal(g.dayCount, 365);
-  const labels = g.monthMarks.map((m) => m.label);
-  // 12 个月里 12 月首周太贴近 11 月标签时允许跳过，但至少 1/6/12 月要在
-  assert.ok(labels.includes("1月") && labels.includes("6月"));
-  for (let i = 1; i < g.monthMarks.length; i++) {
-    assert.ok(
-      g.monthMarks[i].weekIndex - g.monthMarks[i - 1].weekIndex >= 2,
-      "相邻月标签首列间隔 <2",
-    );
-  }
-  // 每个标签 span 覆盖的周内确实有该月的日期（按周一归属）
-  for (const m of g.monthMarks) {
-    const month = Number(m.label.replace("月", ""));
-    const anchor = g.weeks[m.weekIndex].find((x) => x);
-    assert.equal(Number(anchor!.day.slice(5, 7)), month);
-  }
 });
 
 test("levelThresholds/levelOf：非零天四分位，同值归 1 档，0 不进分位", () => {
@@ -180,36 +146,14 @@ test("shiftDay 跨月跨年", () => {
   assert.equal(shiftDay("2026-12-31", 1), "2027-01-01");
 });
 
-test("heatCellPx：11–16 夹紧，16 是地砖上限不得再抬", () => {
+test("heatCellPx：11–28 夹紧，28 以上不再抬", () => {
   assert.equal(heatCellPx(400, 53), HEAT_CELL_MIN_PX);
   // 常规卡宽约 918：floor((918-20)/53)-3 = 13，吃满而不是停在更小档
   assert.equal(heatCellPx(918, 53), 13);
-  // 最大化窗口也停在 16，不再长成地砖
+  // 单模布局（2026-10-16）：胶囊全上卡头、主区无左栏，满宽都给格子
+  // ——1440 限宽页卡内约 1360：floor((1360-20)/53)-3 = 22
+  assert.equal(heatCellPx(1360, 53), 22);
+  // 再宽也停在上限，不再长成地砖
   assert.equal(heatCellPx(1720, 53), HEAT_CELL_MAX_PX);
   assert.equal(heatCellPx(4000, 53), HEAT_CELL_MAX_PX);
-});
-
-test("heatRailLeft：主区 1020 起左栏双列", () => {
-  assert.equal(heatRailLeft(HEAT_RAIL_AT - 1), false);
-  assert.equal(heatRailLeft(HEAT_RAIL_AT), true);
-});
-
-test("heatWideAside：16px 舒适网格右侧 ≥220 才挂统计，40px 回差防抖", () => {
-  const weeks = 53;
-  // 有胶囊：门槛 = 256+24 + 20+(16+3)*53 + 220 = 1527
-  const enter = 256 + 24 + 20 + 19 * weeks + HEAT_WIDE_REMAINDER_PX;
-  assert.equal(enter, 1527);
-  assert.equal(heatWideAside(enter - 1, weeks, true, false), false);
-  assert.equal(heatWideAside(enter, weeks, true, false), true);
-  // 已在超宽档：差 40px 内不退（1527-40=1487 起仍为宽）
-  assert.equal(heatWideAside(enter - 40, weeks, true, true), true);
-  assert.equal(heatWideAside(enter - 41, weeks, true, true), false);
-  // 未进超宽档时，同样的中间值仍是窄——回差是单向的
-  assert.equal(heatWideAside(enter - 20, weeks, true, false), false);
-  // 低于左栏门槛绝不挂右侧
-  assert.equal(heatWideAside(HEAT_RAIL_AT, weeks, true, false), false);
-  // 无胶囊时左栏不占位，门槛更早
-  const enterNoChips = 20 + 19 * weeks + HEAT_WIDE_REMAINDER_PX;
-  assert.equal(heatWideAside(enterNoChips, weeks, false, false), true);
-  assert.equal(heatWideAside(enterNoChips - 1, weeks, false, false), false);
 });

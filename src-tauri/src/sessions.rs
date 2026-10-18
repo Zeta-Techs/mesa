@@ -1,6 +1,6 @@
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use rusqlite::{params, Connection};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -60,7 +60,7 @@ fn watch_event_matches(paths: &[PathBuf], targets: &[String]) -> bool {
 
 // ===== 前端 DTO =====
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TokenUsageDto {
     pub input: u64,
@@ -69,7 +69,7 @@ pub struct TokenUsageDto {
     pub cache_write: u64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMetaDto {
     pub agent: String, // "claude-code" | "codex"
@@ -628,6 +628,49 @@ fn align_head(bytes: &[u8]) -> Vec<String> {
     to_lines(&String::from_utf8_lossy(&bytes[..end]))
 }
 
+/// 归档 zst 专用：只解到头窗满即停，不解剩余流。列表只需要元数据——title 与
+/// session_meta（cwd/id/version/forked/provider）全在头部，updated_at 本就取 mtime；
+/// 尾窗唯一用途是 token_usage，归档会话宁缺毋滥给 None（2026-10-16 拍板懒解压：
+/// Codex 批量压缩历史后，为尾窗整流解码 2.8GB 归档曾是冷启动的绝对大头）。
+/// 明文文件走与 read_head_tail 相同的 seek 头窗路径。
+fn read_head_only(path: &Path, budget: usize) -> Option<Vec<String>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = fs::File::open(path).ok()?;
+    let mut magic = [0u8; 4];
+    f.read_exact(&mut magic).ok()?;
+    if magic != ZSTD_MAGIC {
+        let len = f.metadata().ok()?.len() as usize;
+        if len <= budget * 2 {
+            let raw = fs::read(path).ok()?;
+            return Some(to_lines(&String::from_utf8_lossy(&raw)));
+        }
+        f.seek(SeekFrom::Start(0)).ok()?;
+        let mut head = vec![0u8; budget];
+        let n = f.read(&mut head).ok()?;
+        head.truncate(n);
+        return Some(align_head(&head));
+    }
+    let f2 = fs::File::open(path).ok()?;
+    let mut dec = zstd::stream::read::Decoder::new(f2).ok()?;
+    let mut head: Vec<u8> = Vec::with_capacity(budget);
+    let mut buf = [0u8; 65536];
+    loop {
+        match dec.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                if head.len() < budget {
+                    let take = (budget - head.len()).min(n);
+                    head.extend_from_slice(&buf[..take]);
+                }
+                if head.len() >= budget {
+                    break; // 头窗已满即停：这是本函数存在的全部意义
+                }
+            }
+        }
+    }
+    Some(align_head(&head))
+}
+
 /// 尾窗对齐：从第一个换行之后起（丢弃开头半行）
 fn align_tail(bytes: &[u8]) -> Vec<String> {
     let from = bytes
@@ -804,6 +847,85 @@ fn claude_file_meta(path: &Path, alive: bool) -> Option<SessionMetaDto> {
     })
 }
 
+fn tag_inner<'a>(text: &'a str, open: &str, close: &str) -> Option<&'a str> {
+    let start = text.find(open)? + open.len();
+    let end = text[start..].find(close)? + start;
+    Some(&text[start..end])
+}
+
+/// Claude Code 把斜杠命令与 `!` 命令及其输出写成带标签的 user 行（2.1.x 起不再标 isMeta）：
+/// `<command-name>/model</command-name><command-args>glm-5.2</command-args>`、
+/// `<local-command-stdout>Set model to …\x1b[2m…</local-command-stdout>`、`<bash-input>` / `<bash-stdout>`。
+/// 原样当用户气泡会把标签和 ANSI 一起露出来（2026-10-17 用户截图），这里拆成 command / command_output 块。
+/// 返回 None = 不是命令行；Some(None) = 是命令行但没有可显示的内容（如空输出、caveat）。
+fn claude_command_block(text: &str) -> Option<Option<BlockDto>> {
+    let t = text.trim_start();
+    let block = |kind: &str, text: String| {
+        Some(Some(BlockDto {
+            kind: kind.into(),
+            text,
+            tool_name: None,
+        }))
+    };
+    if t.starts_with("<command-name>") || t.starts_with("<command-message>") {
+        let name = tag_inner(t, "<command-name>", "</command-name>")
+            .map(str::trim)
+            .unwrap_or("");
+        let args = tag_inner(t, "<command-args>", "</command-args>")
+            .map(str::trim)
+            .unwrap_or("");
+        if name.is_empty() {
+            return Some(None);
+        }
+        let cmd = if args.is_empty() {
+            name.to_string()
+        } else {
+            format!("{name} {args}")
+        };
+        return block("command", cmd);
+    }
+    if t.starts_with("<bash-input>") {
+        let cmd = tag_inner(t, "<bash-input>", "</bash-input>").unwrap_or("").trim();
+        return if cmd.is_empty() {
+            Some(None)
+        } else {
+            block("command", format!("! {cmd}"))
+        };
+    }
+    const OUTPUT_TAGS: [(&str, &str); 4] = [
+        ("<local-command-stdout>", "</local-command-stdout>"),
+        ("<local-command-stderr>", "</local-command-stderr>"),
+        ("<bash-stdout>", "</bash-stdout>"),
+        ("<bash-stderr>", "</bash-stderr>"),
+    ];
+    if OUTPUT_TAGS.iter().any(|(open, _)| t.starts_with(open)) {
+        // 一行里可能同时带 stdout 与 stderr：都收进来
+        let parts: Vec<String> = OUTPUT_TAGS
+            .iter()
+            .filter_map(|(open, close)| tag_inner(t, open, close))
+            .map(|inner| {
+                crate::updater::strip_ansi(inner)
+                    .lines()
+                    .map(str::trim_end)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    .trim()
+                    .to_string()
+            })
+            .filter(|clean| !clean.is_empty())
+            .collect();
+        return if parts.is_empty() {
+            Some(None)
+        } else {
+            block("command_output", parts.join("\n"))
+        };
+    }
+    if t.starts_with("<local-command-caveat>") {
+        return Some(None);
+    }
+    None
+}
+
 fn parse_claude(lines: &[String]) -> Vec<ChatMessageDto> {
     let mut msgs = Vec::new();
     for line in lines {
@@ -824,7 +946,27 @@ fn parse_claude(lines: &[String]) -> Vec<ChatMessageDto> {
                 };
                 match content {
                     Value::String(s) => {
-                        if !s.trim().is_empty() {
+                        if let Some(cmd) = claude_command_block(s) {
+                            let Some(block) = cmd else {
+                                continue;
+                            };
+                            // 命令输出并进紧挨着的那条命令，聊天里是一行「命令 → 结果」
+                            let joins = block.kind == "command_output"
+                                && msgs.last().is_some_and(|m: &ChatMessageDto| {
+                                    m.role == "user"
+                                        && m.blocks.last().is_some_and(|b| b.kind == "command")
+                                });
+                            if joins {
+                                msgs.last_mut().unwrap().blocks.push(block);
+                            } else {
+                                msgs.push(ChatMessageDto {
+                                    role: "user".into(),
+                                    blocks: vec![block],
+                                    timestamp: ts,
+                                    usage: None,
+                                });
+                            }
+                        } else if !s.trim().is_empty() {
                             msgs.push(ChatMessageDto {
                                 role: "user".into(),
                                 blocks: vec![text_block(s.clone())],
@@ -970,8 +1112,15 @@ fn codex_file_meta(
     alive: bool,
     archived: bool,
 ) -> Option<(SessionMetaDto, Option<String>)> {
-    // Codex 开头的 user_instructions 块可能很大，头部放宽到 256KB 才更常拿到真实首条提问
-    let (head, tail) = read_head_tail(path, 256 * 1024)?;
+    // Codex 开头的 user_instructions 块可能很大，头部放宽到 256KB 才更常拿到真实首条提问。
+    // 归档 zst 懒解压（2026-10-16）：只读头窗、不解剩余流——尾窗只为 token_usage，
+    // 归档会话给 None，换取冷启动不整流解码归档
+    let archived_lazy = archived && path.extension().and_then(|e| e.to_str()) == Some("zst");
+    let (head, tail) = if archived_lazy {
+        (read_head_only(path, 256 * 1024)?, Vec::new())
+    } else {
+        read_head_tail(path, 256 * 1024)?
+    };
     let (mut cwd, mut created, mut session_id, mut version, mut title) =
         (None, None, None, None, None);
     let mut forked_from_id = None;
@@ -1015,13 +1164,19 @@ fn codex_file_meta(
             }
         }
     }
-    // 小文件全在头部、tail 为空，此时从头部找最后一条 token_count
-    let tail_src = if tail.is_empty() { &head } else { &tail };
-    let token_usage = tail_src.iter().rev().find_map(|line| {
-        serde_json::from_str::<Value>(line)
-            .ok()
-            .and_then(|v| codex_token_usage(&v))
-    });
+    // 归档懒解压路径没有尾窗：token_usage 宁缺毋滥给 None（head 里翻出来的是
+    // 会话中段的旧计数，不是最终值，展示出来是错数据）
+    let token_usage = if archived_lazy {
+        None
+    } else {
+        // 小文件全在头部、tail 为空，此时从头部找最后一条 token_count
+        let tail_src = if tail.is_empty() { &head } else { &tail };
+        tail_src.iter().rev().find_map(|line| {
+            serde_json::from_str::<Value>(line)
+                .ok()
+                .and_then(|v| codex_token_usage(&v))
+        })
+    };
     let session_id = session_id
         .or_else(|| path.file_stem().map(|s| s.to_string_lossy().into_owned()))
         .unwrap_or_default();
@@ -3543,9 +3698,9 @@ pub struct ScanResult {
 // usage.rs 的增量索引是同一思路，但两边用途不同（meta 列表 vs token 事件），不共用存储。
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct FileSig {
-    len: u64,
-    mtime_ns: i64,
+pub(crate) struct FileSig {
+    pub(crate) len: u64,
+    pub(crate) mtime_ns: i64,
 }
 
 fn file_sig(path: &Path) -> Option<FileSig> {
@@ -3563,17 +3718,17 @@ fn file_sig(path: &Path) -> Option<FileSig> {
 }
 
 #[derive(Default)]
-struct ScanFileCache {
+pub(crate) struct ScanFileCache {
     /// 主会话文件：路径 → (指纹, meta)
-    plain: HashMap<String, (FileSig, SessionMetaDto)>,
+    pub(crate) plain: HashMap<String, (FileSig, SessionMetaDto)>,
     /// codex/grok：meta + 链父 id（merge_codex_chains 的输入）
-    chained: HashMap<String, (FileSig, SessionMetaDto, Option<String>)>,
+    pub(crate) chained: HashMap<String, (FileSig, SessionMetaDto, Option<String>)>,
     /// kimi：state.json 内容参与解析，值多带一份 state 指纹
-    kimi: HashMap<String, (FileSig, Option<FileSig>, SessionMetaDto)>,
+    pub(crate) kimi: HashMap<String, (FileSig, Option<FileSig>, SessionMetaDto)>,
     /// 快照区（kimi 之外各家 + opencode .json）：解析不依赖外部文件
-    snapshot: HashMap<String, (FileSig, SessionMetaDto)>,
+    pub(crate) snapshot: HashMap<String, (FileSig, SessionMetaDto)>,
     /// kimi 快照要先读字节分辨新/旧协议，单独一栏
-    kimi_snapshot: HashMap<String, (FileSig, SessionMetaDto)>,
+    pub(crate) kimi_snapshot: HashMap<String, (FileSig, SessionMetaDto)>,
     /// opencode 共享 SQLite：db 文件指纹 → 整批行
     opencode_db: HashMap<String, (FileSig, Vec<SessionMetaDto>)>,
     /// opencode 旧版扁平 JSON：storage 根路径 → (目录清单指纹, 整批)
@@ -3668,6 +3823,9 @@ pub fn scan_sessions() -> ScanResult {
     let mut out = Vec::new();
     let mut chain_members = HashMap::new();
     let mut cache = scan_file_cache().lock().unwrap_or_else(|e| e.into_inner());
+    // 冷启动兜底（2026-10-16）：装回上一进程落盘的 meta 缓存——指纹未变的文件
+    // 直接沿用旧解析结果，归档 zst 一个字节都不用重读（秒开的关键）
+    crate::scan_persist::load_once(&mut cache);
     let ScanFileCache {
         plain,
         chained,
@@ -4069,8 +4227,15 @@ pub fn scan_sessions() -> ScanResult {
     // 边界铁律：①科研先、编程只收剩余（科研工作区本身也是 git worktree，先归并防抢）；
     // ②只认 Mesa 自己的 ~/ccode/worktrees/ 下的树——git 兜底不能把任意 git 目录里
     // 的会话归并到那个仓（会话 cwd 没有边界，会误伤用户在 Mesa 外的普通 git 项目）。
-    if let Ok(coding_root) = crate::coding::worktrees_root() {
-        let root_str = coding_root.to_string_lossy().into_owned();
+    // 家目录可被用户换位置：当前根 + 曾用根 + 默认根的工作树都算 Mesa 自己的
+    let mut coding_roots: Vec<String> = Vec::new();
+    if let Ok(cur) = crate::coding::worktrees_root() {
+        coding_roots.push(cur.to_string_lossy().into_owned());
+    }
+    for r in crate::ccode_home::all_sub("worktrees") {
+        coding_roots.push(r.to_string_lossy().into_owned());
+    }
+    if !coding_roots.is_empty() {
         // 同一工作树只解析一次：lanes 查表每次新开连接（带幂等 DDL），逐会话查会
         // 拖慢冷扫描（实测约 30 个会话多花 1.7s）；按路径去重后每棵树最多一次
         let mut attr_by_path: HashMap<String, Option<(String, String)>> = HashMap::new();
@@ -4078,7 +4243,10 @@ pub fn scan_sessions() -> ScanResult {
             if s.workspace.is_some() {
                 continue;
             }
-            if !crate::paths::path_within(&s.project_path, &root_str) {
+            if !coding_roots
+                .iter()
+                .any(|r| crate::paths::path_within(&s.project_path, r))
+            {
                 continue;
             }
             let attr = attr_by_path
@@ -4511,7 +4679,23 @@ fn ends_with_question(text: &str) -> bool {
     t.ends_with('?') || t.ends_with('？')
 }
 
+fn claude_local_output_line(v: &Value) -> bool {
+    v.get("message")
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_str())
+        .is_some_and(|t| {
+            let t = t.trim_start();
+            ["<local-command-stdout>", "<local-command-stderr>", "<bash-stdout>", "<bash-stderr>"]
+                .iter()
+                .any(|tag| t.starts_with(tag))
+        })
+}
+
 fn claude_tail_state(lines: &[String]) -> &'static str {
+    // Claude 在一轮结束时写 system/turn_duration：这是确定的「回合已结束」，与 TUI 是否还在出字无关
+    // （状态行、计时这类重绘会让 PTY 一直有输出，只靠「PTY 静下来」判收尾会永远转圈）。
+    // 见到它就把随后找到的那条助手正文判成 settled（问句收尾仍是 confirm）
+    let mut turn_ended = false;
     for line in lines.iter().rev() {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             continue;
@@ -4522,6 +4706,14 @@ fn claude_tail_state(lines: &[String]) -> &'static str {
             continue;
         }
         match get_str(&v, "type") {
+            Some("system") if get_str(&v, "subtype") == Some("turn_duration") => {
+                turn_ended = true;
+                continue;
+            }
+            // 回合已结束后往回只遇到 user（被打断、只有工具回执）也算收尾
+            Some("user") if turn_ended => return "settled",
+            // 本地命令（/model、/effort、! ls…）的输出行：命令在本机跑完了，模型没有在干活
+            Some("user") if claude_local_output_line(&v) => return "settled",
             Some("user") => return "working", // 发了 prompt 还没等到回答（或 tool_result 刚回）
             Some("assistant") => {
                 let Some(arr) = v
@@ -4532,7 +4724,8 @@ fn claude_tail_state(lines: &[String]) -> &'static str {
                     continue;
                 };
                 if arr.iter().any(|b| get_str(b, "type") == Some("tool_use")) {
-                    return "working"; // 尾部有待执行的工具调用
+                    // 尾部有待执行的工具调用；回合都结束了就不是在等工具
+                    return if turn_ended { "settled" } else { "working" };
                 }
                 let last_text = arr.iter().rev().find_map(|b| {
                     if get_str(b, "type") == Some("text") {
@@ -4544,16 +4737,32 @@ fn claude_tail_state(lines: &[String]) -> &'static str {
                 match last_text {
                     None => continue,
                     Some(t) if ends_with_question(t) => return "confirm", // 文本以问句收尾，保守判定待确认
+                    Some(_) if turn_ended => return "settled",
                     Some(_) => return "done",
                 }
             }
             _ => continue,
         }
     }
-    "unknown"
+    if turn_ended {
+        "settled"
+    } else {
+        "unknown"
+    }
 }
 
 fn codex_tail_state(lines: &[String]) -> &'static str {
+    // Codex 一轮结束写 event_msg/task_complete（按 Esc 打断写 turn_aborted）：同 Claude 的 turn_duration，
+    // 是确定的回合结束，与 TUI 还出不出字无关。原先判 done，前端要等 PTY 静下来 8 秒才收尾，
+    // 内嵌终端里一直有重绘时聊天层就停在「正在回复」（2026-10-18 用户截图：回答早已落盘）
+    let mut turn_ended = false;
+    let ended = |turn_ended: bool, fallback: &'static str| {
+        if turn_ended {
+            "settled"
+        } else {
+            fallback
+        }
+    };
     for line in lines.iter().rev() {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             continue;
@@ -4565,21 +4774,23 @@ fn codex_tail_state(lines: &[String]) -> &'static str {
                 };
                 match get_str(p, "type") {
                     Some("message") => match get_str(p, "role") {
-                        Some("user") => return "working",
+                        Some("user") => return ended(turn_ended, "working"),
                         Some("assistant") => {
                             let text = codex_message_text(p).unwrap_or_default();
                             return if ends_with_question(&text) {
                                 "confirm"
                             } else {
-                                "done"
+                                ended(turn_ended, "done")
                             };
                         }
                         _ => continue,
                     },
                     // 调用未回/刚回，都还在一轮当中
-                    Some("function_call") | Some("custom_tool_call") => return "working",
+                    Some("function_call") | Some("custom_tool_call") => {
+                        return ended(turn_ended, "working")
+                    }
                     Some("function_call_output") | Some("custom_tool_call_output") => {
-                        return "working"
+                        return ended(turn_ended, "working")
                     }
                     _ => continue,
                 }
@@ -4589,17 +4800,20 @@ fn codex_tail_state(lines: &[String]) -> &'static str {
                     continue;
                 };
                 match get_str(p, "type") {
-                    Some("user_message") => return "working",
+                    Some("user_message") => return ended(turn_ended, "working"),
                     // 中途流式正文不是回合结束；Codex 工具调用之间也会写 agent_message
                     Some("agent_message") => continue,
-                    Some("task_complete") => return "done",
+                    Some("task_complete") | Some("turn_aborted") => {
+                        turn_ended = true;
+                        continue;
+                    }
                     _ => continue,
                 }
             }
             _ => continue,
         }
     }
-    "unknown"
+    ended(turn_ended, "unknown")
 }
 
 fn gemini_tail_state(lines: &[String]) -> &'static str {
@@ -4653,6 +4867,9 @@ fn kimi_tail_state(lines: &[String]) -> &'static str {
             continue;
         };
         match get_str(&v, "type") {
+            // 回合确定结束（Kimi Code 2.1 wire：agent.turn.ended → turn.ended → prompt.completed），
+            // 同 Claude turn_duration / Codex task_complete：不再等 PTY 静下来
+            Some("turn.ended") => return "settled",
             Some("turn.prompt") => {
                 if v.get("origin").and_then(|o| get_str(o, "kind")) == Some("user") {
                     return "working";
@@ -4714,7 +4931,8 @@ fn cursor_tail_state(lines: &[String]) -> &'static str {
             continue;
         };
         match get_str(&v, "type") {
-            Some("turn_ended") => return "done",
+            // 回合确定结束，同 Claude turn_duration：不再等 PTY 静下来
+            Some("turn_ended") => return "settled",
             // 用户消息发出后还没等到回合结束；工具调用/结果都在回合进行中
             Some("user_message") | Some("tool_call") | Some("tool_result") => return "working",
             _ => continue,
@@ -4847,6 +5065,10 @@ pub(crate) fn cached_scan() -> ScanResult {
         }
     }
     let mut res = scan_sessions();
+    // 首轮扫描后把五张 meta 缓存表落盘（每进程一次）：下个进程冷启动免重解析
+    if let Ok(c) = scan_file_cache().lock() {
+        crate::scan_persist::save_once(&c, res.sessions.len());
+    }
     // provenance 路径规范化（含 canonicalize）按项目去重算一次，随扫描结果缓存一轮
     let mut provenance_paths = HashMap::new();
     for s in &res.sessions {
@@ -5004,6 +5226,9 @@ fn apply_provenance(
             session.internal = session.internal || *internal;
         } else if crate::usage::is_ccode_ai_temp_cwd(&session.project_path) {
             session.source = "ccode-ai".into();
+            session.internal = true;
+        } else if crate::usage::is_watch_worktree_cwd(&session.project_path) {
+            // 定时雷达隔离 worktree：无头自动活动，失败运行漏标 internal 的读取侧兜底
             session.internal = true;
         }
     }
@@ -5244,6 +5469,9 @@ const CONVERSATION_PAGE_BYTES: u64 = 192 * 1024;
 /// 一页解析不出对话时继续往前扫的上限（Codex 工具行经常 >192KB，空窗必须连跳）。
 const CONVERSATION_PAGE_SCAN_LIMIT: u64 = CONVERSATION_PAGE_BYTES * 24;
 const OPENCODE_PAGE_MESSAGES: usize = 80;
+/// 一页至少解析出这么多条消息才停：Claude 每轮写一行几百 KB 的 prompt_snapshot 附件，
+/// 192KB 的窗常常只剩最后一句提问，聊天层只看得到「加载更早的消息」+ 一条气泡（2026-10-17 用户截图）
+const CONVERSATION_PAGE_MIN_MESSAGES: usize = 6;
 
 pub(crate) fn parse_session_lines(agent: &str, lines: &[String]) -> Vec<ChatMessageDto> {
     match agent {
@@ -5413,7 +5641,10 @@ fn plain_conversation_page(
         lines = combined;
         scanned = scanned.saturating_add(CONVERSATION_PAGE_BYTES);
         let mut messages = parse_session_lines(agent, &lines);
-        if !messages.is_empty() || win.cursor.is_none() || scanned >= CONVERSATION_PAGE_SCAN_LIMIT {
+        if messages.len() >= CONVERSATION_PAGE_MIN_MESSAGES
+            || win.cursor.is_none()
+            || scanned >= CONVERSATION_PAGE_SCAN_LIMIT
+        {
             redact_conversation(&mut messages);
             return Ok(ConversationPageDto {
                 messages,
@@ -5811,6 +6042,11 @@ pub(crate) fn render_markdown(
                 "tool_result" => {
                     let f = fence_for(&b.text);
                     out.push_str(&format!("\n**工具结果**\n\n{f}\n{}\n{f}\n", b.text));
+                }
+                "command" => out.push_str(&format!("\n**命令** `{}`\n", b.text)),
+                "command_output" => {
+                    let f = fence_for(&b.text);
+                    out.push_str(&format!("\n{f}text\n{}\n{f}\n", b.text));
                 }
                 // 未知块类型防御式跳过（解析器随 CLI 版本漂移）
                 _ => {}
@@ -6348,6 +6584,108 @@ fn session_data_dirs() -> Vec<(PathBuf, bool)> {
     dirs
 }
 
+/// 预分配会话 id（--session-id）的 CLI 在第一条消息之前不落盘：启动后直接退出、启动即崩，
+/// Run 上记着 id，盘上却没有这段对话，按 id 恢复会报「No conversation found」并以 1 退出。
+/// 返回 Some(false) = 确定没有；Some(true) = 找到了；None = 这家不判（布局未核实，照常恢复）。
+/// `env` 是本次启动注入的变量：配置目录搬迁（CLAUDE_CONFIG_DIR 等）以它为准，其次进程环境，
+/// 默认目录也一并查——任一处有就算有，宁可放过也不误判成没有。
+pub(crate) fn fixed_id_session_exists(
+    agent: &str,
+    session_id: &str,
+    env: &[(String, String)],
+) -> Option<bool> {
+    let home = dirs::home_dir()?;
+    fixed_id_session_exists_at(&home, agent, session_id, env)
+}
+
+fn fixed_id_session_exists_at(
+    home: &Path,
+    agent: &str,
+    session_id: &str,
+    env: &[(String, String)],
+) -> Option<bool> {
+    let (var, default_root) = match agent {
+        // 两家都是 <root>/projects/<cwd 编码>/<uuid>.jsonl
+        "claude-code" => ("CLAUDE_CONFIG_DIR", home.join(".claude")),
+        "codebuddy" => ("CODEBUDDY_CONFIG_DIR", home.join(".codebuddy")),
+        _ => return None,
+    };
+    let sid = session_id.trim();
+    // id 里带路径分隔符不是合法会话 id，交给 CLI 自己报错
+    if sid.is_empty() || sid.contains(['/', '\\']) {
+        return None;
+    }
+    let mut roots = vec![default_root];
+    let injected = env
+        .iter()
+        .find(|(k, _)| k == var)
+        .map(|(_, v)| v.clone())
+        .or_else(|| std::env::var(var).ok())
+        .filter(|v| !v.trim().is_empty());
+    if let Some(root) = injected {
+        roots.push(PathBuf::from(root));
+    }
+    let file = format!("{sid}.jsonl");
+    for root in roots {
+        let Ok(dirs) = std::fs::read_dir(root.join("projects")) else {
+            continue;
+        };
+        for dir in dirs.flatten() {
+            if dir.path().join(&file).is_file() {
+                return Some(true);
+            }
+        }
+    }
+    Some(false)
+}
+
+#[cfg(test)]
+mod fixed_id_session_tests {
+    use super::*;
+
+    fn scratch() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("ccode-fixedsid-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn unwritten_claude_session_is_reported_missing() {
+        let home = scratch();
+        let project = home.as_path().join(".claude").join("projects").join("-tmp-demo");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(project.join("written.jsonl"), "{}\n").unwrap();
+        assert_eq!(
+            fixed_id_session_exists_at(home.as_path(), "claude-code", "written", &[]),
+            Some(true)
+        );
+        // 启动即退出：Run 记着 id，盘上没有
+        assert_eq!(
+            fixed_id_session_exists_at(home.as_path(), "claude-code", "never-written", &[]),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn relocated_config_dir_counts_and_unknown_agents_are_not_judged() {
+        let home = scratch();
+        let moved = scratch();
+        let project = moved.as_path().join("projects").join("-tmp-demo");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(project.join("abc.jsonl"), "{}\n").unwrap();
+        let env = vec![(
+            "CLAUDE_CONFIG_DIR".to_string(),
+            moved.as_path().to_string_lossy().into_owned(),
+        )];
+        assert_eq!(
+            fixed_id_session_exists_at(home.as_path(), "claude-code", "abc", &env),
+            Some(true)
+        );
+        assert_eq!(fixed_id_session_exists_at(home.as_path(), "qwen", "abc", &[]), None);
+        assert_eq!(fixed_id_session_exists_at(home.as_path(), "claude-code", "../x", &[]), None);
+    }
+}
+
 /// 相对给定 home 的各 CLI 会话数据目录（不含 Mesa pin 快照）。
 /// 导入白名单与删除白名单同源；测试可注入假 home。
 pub(crate) fn session_data_dirs_at(home: &Path) -> Vec<(PathBuf, bool)> {
@@ -6444,6 +6782,12 @@ pub(crate) fn deletable_session_file(path: &Path, dirs: &[(PathBuf, bool)]) -> b
 
 /// 删除源文件（不存在的候选跳过），返回是否真的删到了文件
 fn delete_source_file(file_path: &str) -> Result<bool, String> {
+    delete_source_file_mode(file_path, false)
+}
+
+/// permanent = true 只给「内部对话保留期清理」用：Mesa 自己产生的一次性后台对话，
+/// 成千上万条逐个进回收站既慢（Finder 逐批调度）又把回收站塞满；用户手动删除照旧进回收站。
+fn delete_source_file_mode(file_path: &str, permanent: bool) -> Result<bool, String> {
     let mut deleted = false;
     let mut candidates = vec![file_path.to_string()];
     if !file_path.ends_with(".zst") {
@@ -6460,7 +6804,11 @@ fn delete_source_file(file_path: &str) -> Result<bool, String> {
                 "拒绝删除非会话文件（不在会话数据目录或后缀不符）: {c}"
             ));
         }
-        trash::delete(&p).map_err(|e| format!("删除 {c} 失败: {e}"))?;
+        if permanent {
+            fs::remove_file(&p).map_err(|e| format!("删除 {c} 失败: {e}"))?;
+        } else {
+            trash::delete(&p).map_err(|e| format!("删除 {c} 失败: {e}"))?;
+        }
         deleted = true;
     }
     Ok(deleted)
@@ -6571,11 +6919,12 @@ fn codex_member_files_in(roots: &[PathBuf], member_ids: &[String]) -> Vec<PathBu
 
 /// 删除一个会话的全部磁盘痕迹：源文件（opencode 删库行；codex 连带链成员文件）+ pin 快照。
 /// 返回需要一并清 meta 的额外 session id（codex 链成员，不含自身）
-fn delete_session_files(
+pub(crate) fn delete_session_files(
     agent: &str,
     session_id: &str,
     file_path: &str,
     chain_members: &HashMap<String, Vec<String>>,
+    permanent: bool,
 ) -> Result<Vec<String>, String> {
     let mut extra_meta_ids = Vec::new();
     if agent == "opencode" {
@@ -6584,11 +6933,11 @@ fn delete_session_files(
             Some((db, sid)) => delete_opencode_rows(Path::new(db), sid)?,
             // legacy storage 的 .json（或快照路径兜底）
             None => {
-                delete_source_file(file_path)?;
+                delete_source_file_mode(file_path, permanent)?;
             }
         }
     } else {
-        delete_source_file(file_path)?;
+        delete_source_file_mode(file_path, permanent)?;
         if agent == "codex" || agent == "grok" {
             // resume/fork 链：只删代表文件会让链换个代表重新出现，成员文件一并删除
             let members = chain_members.get(session_id).cloned().unwrap_or_default();
@@ -6598,7 +6947,7 @@ fn delete_session_files(
                 grok_member_files(&members)
             };
             for f in extra_files {
-                delete_source_file(&f.to_string_lossy())?;
+                delete_source_file_mode(&f.to_string_lossy(), permanent)?;
             }
             extra_meta_ids = members.into_iter().filter(|id| *id != session_id).collect();
         }
@@ -6625,7 +6974,12 @@ fn delete_session_impl(agent: &str, session_id: &str, file_path: &str) -> Result
     } else {
         HashMap::new()
     };
-    let member_ids = delete_session_files(agent, session_id, file_path, &chain_members)?;
+    let member_ids = delete_session_files(agent, session_id, file_path, &chain_members, false)?;
+    // 用户亲手删除：用量历史一起删（其余「文件消失」一律保留用量，见 usage::rebuild）
+    crate::usage::forget_session_usage(agent, session_id);
+    for id in &member_ids {
+        crate::usage::forget_session_usage(agent, id);
+    }
     let mut conn = open_db()?;
     let tx = conn
         .transaction()
@@ -6697,8 +7051,12 @@ fn delete_project_sessions_impl(
     let mut count = 0;
     let mut failed: Vec<String> = Vec::new();
     for s in &targets {
-        match delete_session_files(&s.agent, &s.session_id, &s.file_path, &chain_members) {
+        match delete_session_files(&s.agent, &s.session_id, &s.file_path, &chain_members, false) {
             Ok(member_ids) => {
+                crate::usage::forget_session_usage(&s.agent, &s.session_id);
+                for id in &member_ids {
+                    crate::usage::forget_session_usage(&s.agent, id);
+                }
                 tx.execute(
                     "DELETE FROM session_meta WHERE agent=?1 AND session_id=?2",
                     params![s.agent, s.session_id],
@@ -6939,6 +7297,46 @@ mod tests {
             (u.input, u.output, u.cache_read, u.cache_write),
             (10, 5, 3, 2)
         );
+    }
+
+    #[test]
+    fn claude_slash_command_and_output_become_one_command_row() {
+        // 2.1.292 实录：命令行与输出行都不标 isMeta，输出带 ANSI 暗色转义
+        let lines = s(&[
+            r#"{"type":"user","message":{"role":"user","content":"<command-name>/model</command-name>\n            <command-message>model</command-message>\n            <command-args>glm-5.2</command-args>"}}"#,
+            r#"{"type":"user","message":{"role":"user","content":"<local-command-stdout>Set model to `glm-5.2` and saved as your default for new sessions\u001b[2m\u001b[22m\n\u001b[2m     ANTHROPIC_MODEL is set to \u001b[22m`glm-5.3-flash`\u001b[2m — new sessions use that while it is set\u001b[22m</local-command-stdout>"}}"#,
+            r#"{"type":"user","message":{"role":"user","content":"<command-name>/clear</command-name>"}}"#,
+            r#"{"type":"user","message":{"role":"user","content":"<local-command-stdout></local-command-stdout>"}}"#,
+            r#"{"type":"user","message":{"role":"user","content":"<bash-input>ls</bash-input>"}}"#,
+            r#"{"type":"user","message":{"role":"user","content":"<bash-stdout>a.txt</bash-stdout><bash-stderr></bash-stderr>"}}"#,
+            r#"{"type":"user","message":{"role":"user","content":"真正的问题"}}"#,
+        ]);
+        let msgs = parse_claude(&lines);
+        assert_eq!(msgs.len(), 4);
+        assert_eq!(msgs[0].blocks[0].kind, "command");
+        assert_eq!(msgs[0].blocks[0].text, "/model glm-5.2");
+        assert_eq!(msgs[0].blocks[1].kind, "command_output");
+        let out = &msgs[0].blocks[1].text;
+        assert!(out.starts_with("Set model to `glm-5.2`"));
+        assert!(!out.contains('\u{1b}') && !out.contains("[2m"), "ANSI 要剥干净：{out}");
+        assert_eq!(msgs[1].blocks.len(), 1, "空输出不留块");
+        assert_eq!(msgs[1].blocks[0].text, "/clear");
+        assert_eq!(msgs[2].blocks[0].text, "! ls");
+        assert_eq!(msgs[2].blocks[1].text, "a.txt");
+        assert_eq!(msgs[3].blocks[0].kind, "text");
+    }
+
+    #[test]
+    fn claude_local_command_output_settles_tail() {
+        let lines = s(&[
+            r#"{"type":"user","message":{"role":"user","content":"<command-name>/effort</command-name><command-args>high</command-args>"}}"#,
+            r#"{"type":"user","message":{"role":"user","content":"<local-command-stdout>Set effort level to high (saved as your default for new sessions)</local-command-stdout>"}}"#,
+        ]);
+        assert_eq!(claude_tail_state(&lines), "settled");
+        let pending = s(&[
+            r#"{"type":"user","message":{"role":"user","content":"<command-name>/init</command-name>"}}"#,
+        ]);
+        assert_eq!(claude_tail_state(&pending), "working", "/init 这类会让模型干活的命令仍算进行中");
     }
 
     #[test]
@@ -7214,7 +7612,7 @@ mod tests {
             r#"{"type":"future_unknown_type"}"#, // 未知 type 跳过，不算最新状态
             r#"{"type":"turn_ended"}"#,
         ]);
-        assert_eq!(cursor_tail_state(&done), "done");
+        assert_eq!(cursor_tail_state(&done), "settled");
         assert_eq!(cursor_tail_state(&[]), "unknown");
     }
 
@@ -7617,6 +8015,33 @@ mod tests {
     }
 
     #[test]
+    fn plain_conversation_page_reaches_past_huge_prompt_snapshot() {
+        // Claude 2.1.x 每轮写一行几百 KB 的 prompt_snapshot：首屏不能只剩最后一句提问（2026-10-17 用户截图）
+        let dir = std::env::temp_dir().join(format!("ccode-snapshot-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("s.jsonl");
+        let mut content = String::new();
+        for turn in 0..4 {
+            content.push_str(&claude_user_line(&format!("问题 {turn}")));
+            content.push_str(&format!(
+                "{{\"type\":\"assistant\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"回答 {turn}\"}}]}}}}\n"
+            ));
+            content.push_str(&format!(
+                "{{\"type\":\"attachment\",\"attachment\":{{\"type\":\"prompt_snapshot\",\"systemPrompt\":[\"{}\"]}}}}\n",
+                "p".repeat(260 * 1024)
+            ));
+        }
+        content.push_str(&claude_user_line("最新的问题"));
+        std::fs::write(&file, &content).unwrap();
+        let latest = plain_conversation_page("claude-code", &file, None, None).unwrap();
+        let texts: Vec<&str> = latest.messages.iter().map(|m| m.blocks[0].text.as_str()).collect();
+        assert!(texts.len() >= CONVERSATION_PAGE_MIN_MESSAGES, "{texts:?}");
+        assert_eq!(texts.last(), Some(&"最新的问题"));
+        assert!(texts.contains(&"回答 3"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn plain_conversation_page_skips_oversized_jsonl_line() {
         // Codex 工具行经常 >192KB：旧分页会把 cursor 钉在超长行尾，加载更早死循环。
         let dir = std::env::temp_dir().join(format!("ccode-huge-line-{}", uuid::Uuid::new_v4()));
@@ -7624,7 +8049,10 @@ mod tests {
         let file = dir.join("huge.jsonl");
         let huge = "H".repeat(300_000);
         let mut content = String::new();
-        content.push_str(&claude_user_line("early-msg"));
+        // 首屏要攒够 CONVERSATION_PAGE_MIN_MESSAGES 条才停：前面多放几屏的早消息，才有「更早一页」
+        for i in 0..2000 {
+            content.push_str(&claude_user_line(&format!("early-msg {i:04} {}", "e".repeat(80))));
+        }
         content.push_str(&claude_user_line(&huge));
         content.push_str(&claude_user_line("late-msg"));
         std::fs::write(&file, &content).unwrap();
@@ -7676,7 +8104,9 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("events.jsonl");
         let mut content = String::new();
-        content.push_str(&claude_user_line("early-msg"));
+        for i in 0..2000 {
+            content.push_str(&claude_user_line(&format!("early-msg {i:04} {}", "e".repeat(80))));
+        }
         let filler = "{\"type\":\"ignore\",\"payload\":{}}\n";
         while content.len() < 250_000 {
             content.push_str(filler);
@@ -8089,6 +8519,12 @@ mod tests {
         let (h4, t4) = head_tail_lines(&maybe_decompress(&compressed), 64 * 1024);
         assert_eq!(h3, h4, "zstd 头窗应与全量解压一致");
         assert_eq!(t3, t4, "zstd 尾窗应与全量解压一致");
+        // 懒解压（归档 zst 头窗专用）：头窗与全量解压的头窗一致，不解剩余流
+        let h5 = read_head_only(&zst, 64 * 1024).unwrap();
+        assert_eq!(h5, h4, "read_head_only 头窗应与全量解压一致");
+        // 明文路径同口径
+        let h6 = read_head_only(&plain, 64 * 1024).unwrap();
+        assert_eq!(h6, h2, "read_head_only 明文头窗应与全量读取一致");
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -9488,6 +9924,26 @@ mod tests {
             r#"{"type":"user","isMeta":true,"message":{"role":"user","content":"<local-command-stdout>x</local-command-stdout>"}}"#,
         ]);
         assert_eq!(claude_tail_state(&user), "working");
+        // 回合收尾标记：正文 + system/turn_duration（后面再跟几行元数据）→ settled
+        let settled = s(&[
+            r#"{"type":"user","message":{"role":"user","content":"你好"}}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"..."}]}}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"你好！都可以直接说。"}]}}"#,
+            r#"{"type":"system","subtype":"turn_duration","durationMs":3000}"#,
+            r#"{"type":"last-prompt"}"#,
+            r#"{"type":"ai-title"}"#,
+        ]);
+        assert_eq!(claude_tail_state(&settled), "settled");
+        // 收尾后用户又发了一条：回到 working
+        let mut again = settled.clone();
+        again.push(r#"{"type":"user","message":{"role":"user","content":"明天天气如何"}}"#.into());
+        assert_eq!(claude_tail_state(&again), "working");
+        // 问句收尾即便有收尾标记仍是 confirm
+        let ask = s(&[
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"要我继续删除吗？"}]}}"#,
+            r#"{"type":"system","subtype":"turn_duration","durationMs":3000}"#,
+        ]);
+        assert_eq!(claude_tail_state(&ask), "confirm");
     }
 
     #[test]
@@ -9516,7 +9972,34 @@ mod tests {
             r#"{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"好"}]}}"#,
             r#"{"type":"event_msg","payload":{"type":"task_complete"}}"#,
         ]);
-        assert_eq!(codex_tail_state(&complete), "done");
+        assert_eq!(codex_tail_state(&complete), "settled");
+        // Codex 0.163 一轮的真实尾巴（2026-10-18 本机会话，节选）：回答后跟用量与 task_complete
+        let real = s(&[
+            r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"你好"}]}}"#,
+            r#"{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"AgentMessage"}}}"#,
+            r#"{"type":"response_item","payload":{"type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"你好！有什么需要我做的吗？比如：\n\n- 查看代码"}]}}"#,
+            r#"{"type":"token_usage_record","payload":{}}"#,
+            r#"{"type":"event_msg","payload":{"type":"token_count","info":{}}}"#,
+            r#"{"type":"event_msg","payload":{"type":"task_complete","turn_id":"t1","root_turn_id":"t1"}}"#,
+        ]);
+        assert_eq!(codex_tail_state(&real), "settled");
+        // 问句收尾即便回合结束仍是 confirm；按 Esc 打断（只有提问没有回答）也算收尾
+        let ask = s(&[
+            r#"{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"要删吗？"}]}}"#,
+            r#"{"type":"event_msg","payload":{"type":"task_complete"}}"#,
+        ]);
+        assert_eq!(codex_tail_state(&ask), "confirm");
+        let aborted = s(&[
+            r#"{"type":"event_msg","payload":{"type":"user_message","message":"干活"}}"#,
+            r#"{"type":"event_msg","payload":{"type":"turn_aborted"}}"#,
+        ]);
+        assert_eq!(codex_tail_state(&aborted), "settled");
+        // 收尾之后又发了一句：新一轮在跑
+        let next = s(&[
+            r#"{"type":"event_msg","payload":{"type":"task_complete"}}"#,
+            r#"{"type":"event_msg","payload":{"type":"user_message","message":"再来"}}"#,
+        ]);
+        assert_eq!(codex_tail_state(&next), "working");
     }
 
     #[test]
@@ -9549,6 +10032,17 @@ mod tests {
             r#"{"type":"context.append_loop_event","event":{"type":"tool.call","name":"Bash","args":{}},"time":2}"#,
         ]);
         assert_eq!(kimi_tail_state(&k_tool), "working");
+        // Kimi Code 2.1 一轮的真实尾巴（2026-10-18 本机 wire.jsonl）：turn.ended 之后还有几行记账
+        let k_settled = s(&[
+            r#"{"type":"context.append_loop_event","event":{"type":"step.end","usage":{}},"time":2}"#,
+            r#"{"type":"agent.message.appended","time":3}"#,
+            r#"{"type":"agent.turn.ended","time":3}"#,
+            r#"{"type":"turn.ended","time":3}"#,
+            r#"{"type":"token_counting.turn_recorded","time":3}"#,
+            r#"{"type":"prompt.completed","time":3}"#,
+            r#"{"type":"file_history.checkpoint","time":3}"#,
+        ]);
+        assert_eq!(kimi_tail_state(&k_settled), "settled");
     }
 
     #[test]
@@ -9729,5 +10223,6 @@ mod tests {
         ));
     }
 }
+
 
 

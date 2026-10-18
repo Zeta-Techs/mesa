@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type {
   CSSProperties,
@@ -7,6 +7,7 @@ import type {
   PointerEvent as ReactPointerEvent,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type {
   UsageActivityAgentsDto,
   UsageActivityDayDto,
@@ -23,12 +24,8 @@ import {
   activeMainDays,
   buildRollingGrid,
   HEAT_CELL_MAX_PX,
-  HEAT_CHIP_COL_PX,
-  HEAT_MAIN_GAP_PX,
   HEAT_WELL_PAD_PX,
   heatCellPx,
-  heatRailLeft,
-  heatWideAside,
   levelOf,
   levelThresholds,
   mainTokens,
@@ -38,6 +35,7 @@ import {
   weekdayIndex,
   yearStats,
 } from "../usage-activity";
+import { InlineNotice } from "./PageFrame";
 
 /** 星期槽显一/三/五/七（隔行标注，2026-10-12 用户拍板加周日）；周几信息由每格 aria-label 承载 */
 const WEEKDAY_VISIBLE = new Set([0, 2, 4, 6]);
@@ -68,8 +66,8 @@ interface PopState {
 
 /**
  * 用量页「活跃度」区块：去年同月到今天的热力图 + 按 agent 筛选 + 点格下钻。
- * 独立时间窗（年份翻页），不跟随页顶 range；数据一次拉全历史非零日序列，
- * 窗口 / streak / 「显示内部活动」开关全部本地推导，零重查。
+ * 独立时间窗（去年同月 1 日到今天，不翻页），不跟随页顶 range；数据一次拉全
+ * 历史非零日序列，窗口 / streak / 「显示内部活动」开关全部本地推导，零重查。
  * 挂载在页面 empty 三元之外：页面级空态是 range 口径，历史有数据的用户
  * 恰恰要在空 range 下看到这张图。
  * 口径：着色/活跃/streak 恒只算非 internal（official 计入）；着色量=四类合计。
@@ -103,24 +101,22 @@ export default function ActivityHeatmap({
   const seq = useRef(0);
   const agentsSeq = useRef(0);
   const measureRef = useRef<HTMLDivElement>(null);
-  /** 布局只跟页面满宽哨兵走（始终 100%，与主区是否 hug 无关）。格子 11–16px
-   *  正方形：到 16 封顶（地砖禁令），主区收成内容宽、卡片保持列宽对齐兄弟卡。
-   *  ≥1020 胶囊改左侧双列；16px 网格右边还剩 ≥220px 时统计改挂右侧。
-   *  容器查询在本环境不稳，ResizeObserver 确定性切换 */
-  const [railLeft, setRailLeft] = useState(false);
-  const [wideAside, setWideAside] = useState(false);
+  /** 布局只跟页面满宽哨兵走（始终 100%，与主区是否 hug 无关）。单模布局
+   *  （2026-10-16 拍板）：胶囊全在卡头一行、主区无左栏，格子 11–28px 正方形
+   *  吃满卡宽；28 只是地砖闸，到顶后主区收成内容宽居中、卡片保持列宽对齐兄弟卡。
+   *  容器查询在本环境不稳，ResizeObserver 确定性写入 */
   const [cellPx, setCellPx] = useState(11);
-  const hasChipsRef = useRef(false);
   const weeksRef = useRef(53);
   const tableRef = useRef<HTMLTableElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
   const detailCache = useRef(new Map<string, UsageDayDetailDto>());
 
-  useEffect(() => {
-    // 数据即将重拉（进页/回页/页级刷新）：日详情缓存随之作废，已开的浮层一并关闭
-    detailCache.current.clear();
-    setPop(null);
-    if (!visible) return;
+  /** 冷启动兜底的自动补拉只许一次：事件→补拉→若仍超预算又发事件会自激成环
+   *  （2026-10-15 实证烧满后端），这里每个「旧数周期」最多自动补拉一回；
+   *  拿到非 refreshing 的新数后复位，下个周期（如再进页）重新计一次 */
+  const autoRefetchedRef = useRef(false);
+
+  const reloadDto = useCallback(() => {
     const s = ++seq.current;
     setLoading(true);
     invoke<UsageActivityDto>("usage_activity")
@@ -128,6 +124,7 @@ export default function ActivityHeatmap({
         if (s !== seq.current) return;
         setDto(res);
         setError(null);
+        if (!res.refreshing) autoRefetchedRef.current = false;
       })
       .catch((e) => {
         if (s === seq.current) setError(String(e));
@@ -135,7 +132,31 @@ export default function ActivityHeatmap({
       .finally(() => {
         if (s === seq.current) setLoading(false);
       });
-  }, [visible, refreshKey]);
+  }, []);
+
+  useEffect(() => {
+    // 数据即将重拉（进页/回页/页级刷新）：日详情缓存随之作废，已开的浮层一并关闭
+    detailCache.current.clear();
+    setPop(null);
+    if (!visible) return;
+    reloadDto();
+  }, [visible, refreshKey, reloadDto]);
+
+  // 冷启动兜底（2026-10-15）：后端重建超预算先回了旧数（refreshing）时，后台索引
+  // 刷完发这个事件——在页且本周期还没自动补拉过才补一次，图几秒内自动变新；
+  // 不在页由 visible 效果兜底。补拉后若仍 refreshing，本周期不再自动补（防环）
+  useEffect(() => {
+    if (!visible) return;
+    let unlisten: (() => void) | undefined;
+    listen("usage-activity-refreshed", () => {
+      if (autoRefetchedRef.current) return;
+      autoRefetchedRef.current = true;
+      reloadDto();
+    })
+      .then((u) => (unlisten = u))
+      .catch(() => {});
+    return () => unlisten?.();
+  }, [visible, reloadDto]);
 
   const today = dto?.today ?? "";
   const bounds = useMemo(
@@ -195,49 +216,28 @@ export default function ActivityHeatmap({
   if (grid) weeksRef.current = grid.weeks.length;
   const hasChips =
     agentsMatrix?.year === endYear && (agentsMatrix?.agents.length ?? 0) >= 2;
-  hasChipsRef.current = hasChips;
 
   useEffect(() => {
     const track = measureRef.current;
     if (!track || typeof ResizeObserver === "undefined") return;
-    let rail = false;
-    let wide = false;
     let cell = 11;
-    const sync = (closeFloats: boolean) => {
-      const weeks = weeksRef.current;
+    const sync = () => {
       const inner = Math.max(0, track.clientWidth - HEAT_WELL_PAD_PX);
-      const nextRail = heatRailLeft(inner);
-      const nextWide = heatWideAside(
-        inner,
-        weeks,
-        hasChipsRef.current,
-        wide,
-      );
-      const chipsW =
-        nextRail && hasChipsRef.current
-          ? HEAT_CHIP_COL_PX + HEAT_MAIN_GAP_PX
-          : 0;
-      const nextCell = heatCellPx(inner - chipsW, weeks);
-      if (nextRail === rail && nextWide === wide && nextCell === cell) return;
-      if (closeFloats && (nextRail !== rail || nextWide !== wide)) {
-        // 布局翻转（任何原因，不止窗口 resize）时锚定坐标全部作废，关掉两个浮层
-        setTip(null);
-        setPop(null);
-      }
-      rail = nextRail;
-      wide = nextWide;
+      const nextCell = heatCellPx(inner, weeksRef.current);
+      if (nextCell === cell) return;
+      // 格子边长变了，开着的浮层锚定坐标全部作废，一并关掉
       cell = nextCell;
-      setRailLeft(nextRail);
-      setWideAside(nextWide);
       setCellPx(nextCell);
+      setTip(null);
+      setPop(null);
     };
-    sync(false);
-    const ro = new ResizeObserver(() => sync(true));
+    sync();
+    const ro = new ResizeObserver(sync);
     ro.observe(track);
     return () => ro.disconnect();
     // dto 为 null 的首帧不渲染主区（早退骨架），数据到了哨兵出现时才挂观察器；
-    // 胶囊出现、周列数变了也要重算（哨兵宽度可能不变，观察器不响）
-  }, [dto, agentsMatrix]);
+    // dto 重拉（今天跨周）会让周列数变化，哨兵宽度可能不变、观察器不响，也要重算
+  }, [dto]);
   const dayMap = useMemo(() => {
     const m = new Map<string, UsageActivityDayDto>();
     if (dto) for (const d of dto.days) m.set(d.day, d);
@@ -545,7 +545,7 @@ export default function ActivityHeatmap({
   const chips = hasChips && agentsMatrix ? agentsMatrix.agents : [];
 
   const statsLine = (
-        <p className="ccode-heat-in mt-1.5 flex flex-wrap items-baseline gap-x-2 text-xs tabular-nums text-l3">
+        <p className="flex flex-wrap items-baseline gap-x-2 text-xs tabular-nums text-l3">
           <span
             title={
               selectedAgent
@@ -599,8 +599,8 @@ export default function ActivityHeatmap({
       className={`rounded-lg ccode-well p-4${hug ? " ccode-heat-hug" : ""}`}
       aria-label="活跃度"
     >
-      <div className={railLeft ? "ccode-heat-headgrid" : "flex flex-wrap items-center justify-between gap-2"}>
-        <div className="flex items-baseline gap-2">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <div className="flex shrink-0 items-baseline gap-2">
           <span
             className="text-xs font-medium tracking-wider text-l4"
             title="从去年同一个月的 1 日铺到今天（本机时区归日），最右边是今天。格子与四个数含订阅用量、不含 Mesa 内部活动；页顶「显示内部活动」只在悬浮和当日明细里追加注记，不改变格子颜色和统计。着色量为输入+输出+缓存读写四类合计，与页首 tokens 卡（只计输入+输出）口径不同。"
@@ -611,23 +611,9 @@ export default function ActivityHeatmap({
             <span className="text-micro text-warn-text">索引刷新失败，显示上次统计</span>
           )}
         </div>
-        {railLeft && !wideAside && <div className="-mt-1.5 min-w-0">{statsLine}</div>}
-        <span className="flex flex-wrap items-baseline justify-end gap-x-3">
-        {bounds && (
-          <span className="text-xs tabular-nums text-l3">
-            {`${bounds.start.slice(0, 4)}.${bounds.start.slice(5, 7)} – ${bounds.end.slice(0, 4)}.${bounds.end.slice(5, 7)}`}
-          </span>
-        )}
-        </span>
-      </div>
-
-      <div
-        className={`ccode-heat-main${railLeft ? " ccode-heat-rail-left" : ""}${wideAside ? " ccode-heat-wide" : ""}`}
-      >
         {chips.length > 0 && (
           <div
-            key={railLeft ? "rail" : "row"}
-            className="ccode-heat-agents ccode-heat-in"
+            className="ccode-heat-agents"
             role="group"
             aria-label="按 agent 筛选"
           >
@@ -664,8 +650,14 @@ export default function ActivityHeatmap({
             })}
           </div>
         )}
+        {bounds && (
+          <span className="ml-auto shrink-0 text-xs tabular-nums text-l3">
+            {`${bounds.start.slice(0, 4)}.${bounds.start.slice(5, 7)} – ${bounds.end.slice(0, 4)}.${bounds.end.slice(5, 7)}`}
+          </span>
+        )}
+      </div>
 
-      <div className="ccode-heat-gridwrap">
+      <div className="ccode-heat-main">
       <div
         className="ccode-heat-grid"
         onPointerOver={onPointerOver}
@@ -698,14 +690,6 @@ export default function ActivityHeatmap({
                 {grid.weeks.map((col, ci) => {
                   const g = col[row];
                   if (!g) return <td key={ci} />;
-                  // 未来日：视觉与空槽一致铺到年末，但无 data-day/aria——不可点、不悬浮、不聚焦
-                  if (g.future) {
-                    return (
-                      <td key={ci}>
-                        <span className="ccode-heat-cell ccode-heat-l0" data-level="0" />
-                      </td>
-                    );
-                  }
                   const c = cellInfo(g.day);
                   const lv = c.has ? levelOf(c.value, thresholds) : 0;
                   const who = selectedAgent ? agentLabel(selectedAgent) : "";
@@ -761,60 +745,24 @@ export default function ActivityHeatmap({
           </tfoot>
         </table>
       </div>
-      {!railLeft && statsLine}
-      </div>
-      {wideAside && (
-        <aside className="ccode-heat-aside ccode-heat-in" aria-label="色阶与年度统计">
-          <div className="ccode-heat-scale" title="颜色按所选范围内有用量的日子相对分档，越深当天用量越大">
-            <span className="text-micro text-l4">少</span>
-            {[0, 1, 2, 3, 4].map((lv) => (
-              <span
-                key={lv}
-                className={`ccode-heat-swatch ccode-heat-l${lv}`}
-                data-level={lv}
-              />
-            ))}
-            <span className="text-micro text-l4">多</span>
-          </div>
-          <div className="ccode-heat-stats">
-          {(
-            [
-              [
-                "活跃",
-                `${stats.activeDays} 天`,
-                selectedAgent
-                  ? `这一窗口内 ${agentLabel(selectedAgent)} 有用量的天数`
-                  : "这一窗口内有非内部用量的天数（订阅用量计入）",
-              ],
-              [
-                "连续",
-                `${stats.streak.current} 天`,
-                selectedAgent
-                  ? `这一窗口内 ${agentLabel(selectedAgent)} 连续有活动的天数；今天还没记录不清零`
-                  : "截至今日或昨日连续有活动的天数（全部历史，跨年不断档）；今天还没记录不清零",
-              ],
-              [
-                "最长",
-                `${stats.streak.longest} 天`,
-                selectedAgent
-                  ? `这一窗口内 ${agentLabel(selectedAgent)} 最长的一段连续活跃`
-                  : "全部历史里最长的一段连续活跃（跨年不断档）",
-              ],
-              [
-                "峰值",
-                `${compact(stats.peakTokens)}${peakSuffix ? ` · ${peakSuffix}` : ""}`,
-                `这一窗口单日四类 token 合计最高的一天${peakSuffix ? `（${peakSuffix}）` : ""}`,
-              ],
-            ] as const
-          ).map(([label, value, title]) => (
-            <div key={label} className="ccode-heat-stat" title={title}>
-              <span className="text-micro text-l4">{label}</span>
-              <b className="text-sm text-l1">{value}</b>
-            </div>
+      <div className="ccode-heat-foot">
+        {statsLine}
+        <span
+          className="ccode-heat-scale shrink-0"
+          title="颜色按所选范围内有用量的日子相对分档，越深当天用量越大"
+          aria-label="色阶：颜色越深当天用量越大"
+        >
+          <span className="text-micro text-l4">少</span>
+          {[0, 1, 2, 3, 4].map((lv) => (
+            <span
+              key={lv}
+              className={`ccode-heat-swatch ccode-heat-l${lv}`}
+              data-level={lv}
+            />
           ))}
-          </div>
-        </aside>
-      )}
+          <span className="text-micro text-l4">多</span>
+        </span>
+      </div>
       </div>
 
       {tip &&
@@ -880,7 +828,7 @@ export default function ActivityHeatmap({
               <div className="mt-3 h-3 w-2/3 animate-pulse rounded bg-l4/50" role="status" />
             )}
             {pop.failed && (
-              <p className="mt-2 text-xs text-warn-text">当日明细加载失败，请稍后再试。</p>
+              <InlineNotice tone="warn" className="mt-2">当日明细加载失败，请稍后再试。</InlineNotice>
             )}
             {pop.detail && (
               <>

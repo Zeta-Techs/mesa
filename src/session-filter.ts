@@ -9,6 +9,7 @@
  * 与 DOM/Tauri 解耦，node --test 直接测。
  */
 import { pathKey } from "./path-utils.ts";
+import { isScratchCwd } from "./quick-chat.ts";
 import type { SessionMetaDto } from "./types";
 
 /** 一行 chip 快筛的 id（互不排斥，可与作用域 chip 叠加） */
@@ -191,6 +192,22 @@ export function baseName(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
+/** 对话列表 meta 行的「哪个项目」：已添加项目用注册名，随手聊目录写「随手聊」，
+ *  其余目录用末段。范围已限定到单个项目时调用方不显示（同一事实不重复）。 */
+export function sessionProjectLabel(
+  projectPath: string,
+  names: ReadonlyMap<string, string>,
+  isWindows = false,
+): string | null {
+  if (!projectPath.trim()) return null;
+  const key = pathKey(projectPath, isWindows);
+  for (const [path, name] of names) {
+    if (pathKey(path, isWindows) === key && name.trim()) return name.trim();
+  }
+  if (isScratchCwd(projectPath, isWindows)) return "随手聊";
+  return baseName(projectPath) || null;
+}
+
 /** Mesa 无头 AI 的临时 cwd 名：`ccode-ai-<uuid>`（与 ai.rs 命名同步）。 */
 const CCODE_AI_TEMP_RE =
   /^ccode-ai-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -303,3 +320,49 @@ export const SCOPE_KIND_LABEL: Record<ScopeChip["kind"], string> = {
   agent: "Agent",
   day: "日期",
 };
+
+/** 对话页「范围」里的一行目录（项目 / 其他目录）。 */
+export interface ScopeDirRow {
+  path: string;
+  label: string;
+  count: number;
+}
+
+/**
+ * 「范围」选择面的目录分段（2026-10-17 重排）：已添加项目用注册名在上，其余目录（家目录、
+ * tmp、没添加的仓库）收进「其他目录」；随手聊目录不在这里（它有自己的一行）。
+ * 原来一张「按项目」表把 backend-admin（已添加，注册名「后端管理」）和 tongzhouhong（家目录）、
+ * tmp 混排，且组头计数是「项目个数」与别处「对话条数」口径不一。
+ */
+export function scopeDirRows(
+  groups: readonly ProjectGroup[],
+  projectNames: ReadonlyMap<string, string>,
+  home: string,
+  isWindows = false,
+): { projects: ScopeDirRow[]; others: ScopeDirRow[] } {
+  const projects: ScopeDirRow[] = [];
+  const others: ScopeDirRow[] = [];
+  const homeKey = home.trim() ? pathKey(home, isWindows) : null;
+  for (const g of groups) {
+    if (isScratchCwd(g.path, isWindows)) continue;
+    const key = pathKey(g.path, isWindows);
+    let registered: string | null = null;
+    for (const [path, name] of projectNames) {
+      if (pathKey(path, isWindows) === key) {
+        registered = name.trim() || baseName(path);
+        break;
+      }
+    }
+    if (registered) {
+      projects.push({ path: g.path, label: registered, count: g.list.length });
+    } else {
+      others.push({
+        path: g.path,
+        label: homeKey && key === homeKey ? "主目录" : baseName(g.path),
+        count: g.list.length,
+      });
+    }
+  }
+  // groups 已按最近活动降序，两段沿用
+  return { projects, others };
+}
