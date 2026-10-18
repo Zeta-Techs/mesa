@@ -2453,6 +2453,18 @@ mod tests {
         NaiveDate::from_ymd_opt(y, mo, d).unwrap()
     }
 
+    /// flock 属于打开文件描述，别的测试线程此刻 fork 出的子进程在 exec 前还抱着一份副本，
+    /// drop 后锁最多晚几毫秒才真正放开（CI 上偶发）。有界重试，不断言具体耗时
+    fn lock_released(mut try_acquire: impl FnMut() -> bool) -> bool {
+        for _ in 0..100 {
+            if try_acquire() {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        false
+    }
+
     fn tmp_schedules_path(tag: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
             "ccode-scheduler-test-{}-{}",
@@ -3079,7 +3091,7 @@ mod tests {
         assert!(execution_lock_at(&dir, "same schedule").is_err());
         assert!(execution_lock_at(&dir, "different schedule").is_ok());
         drop(first);
-        assert!(execution_lock_at(&dir, "same schedule").is_ok());
+        assert!(lock_released(|| execution_lock_at(&dir, "same schedule").is_ok()));
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -3092,7 +3104,7 @@ mod tests {
         assert!(project_lock_at(&dir, "/tmp/proj-a").is_err());
         assert!(project_lock_at(&dir, "/tmp/proj-b").is_ok());
         drop(first);
-        assert!(project_lock_at(&dir, "/tmp/proj-a").is_ok());
+        assert!(lock_released(|| project_lock_at(&dir, "/tmp/proj-a").is_ok()));
         fs::remove_dir_all(dir).unwrap();
     }
 

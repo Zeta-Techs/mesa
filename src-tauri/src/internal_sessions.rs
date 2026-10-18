@@ -292,6 +292,8 @@ mod tests {
         assert!(!is_eligible(&session("/tmp/ccode-ai-notauuid", true, false, old), cutoff));
     }
 
+    // 改目录 mtime 靠 File::open(dir)：Windows 打不开目录句柄（Access denied）
+    #[cfg(unix)]
     #[test]
     fn sweeps_only_empty_old_ccode_ai_claude_dirs() {
         let home = std::env::temp_dir().join(format!("ccode-sweep-{}", uuid::Uuid::new_v4()));
