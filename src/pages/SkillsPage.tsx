@@ -1,4 +1,23 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  Download,
+  Eye,
+  FileDown,
+  Folder,
+  FolderSearch,
+  Import,
+  Layers,
+  Link,
+  Pencil,
+  RefreshCw,
+  Tag,
+  Trash2,
+  WandSparkles,
+  Workflow,
+} from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { marked } from "marked";
+import { sanitizeDocumentHtml } from "../document-html";
+import { splitSkillFrontmatter } from "../skill-preview";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -29,6 +48,8 @@ import {
   secondaryActionClass,
   searchFieldClass,
   hoverRevealClass,
+  dangerActionClass,
+  NoticeBar,
 } from "../components/PageFrame";
 import type {
   DiscoveredSkillDto,
@@ -365,13 +386,13 @@ function ImportModal({
           <div className="mt-3 rounded-sm border border-field ccode-well p-3 text-xs">
             <p className="text-l2">{summary(result)}</p>
             {result.added.length > 0 && (
-              <p className="mt-1 break-words text-ok-text">
-                新增：{result.added.join("、")}
+              <p className="mt-1 break-words text-l2">
+                <span className="text-ok-text">新增</span>：{result.added.join("、")}
               </p>
             )}
             {result.updated.length > 0 && (
-              <p className="mt-1 break-words text-ok-text">
-                已覆盖：{result.updated.join("、")}
+              <p className="mt-1 break-words text-l2">
+                <span className="text-warn-text">已覆盖</span>：{result.updated.join("、")}
               </p>
             )}
             {result.skipped.length > 0 && (
@@ -446,7 +467,7 @@ function ImportModal({
             )}
           </div>
         )}
-        {error && <p className="mt-2 text-sm text-err-text">{error}</p>}
+        {error && <NoticeBar tone="err" className="mt-2">{error}</NoticeBar>}
         <div className="mt-4 flex justify-end gap-2">
           {tab === "dir" && (
             <button
@@ -571,11 +592,11 @@ function DiscoverModal({
             ))}
           </div>
         )}
-        {error && <p className="mb-2 text-sm text-err-text">{error}</p>}
+        {error && <NoticeBar tone="err" className="mb-2">{error}</NoticeBar>}
         <div className="flex justify-end gap-2">
           <button
             onClick={onClose}
-            className="rounded-sm px-3 py-1.5 text-sm text-l2 hover:bg-hover"
+            className={secondaryActionClass}
           >
             取消
           </button>
@@ -583,7 +604,7 @@ function DiscoverModal({
             <button
               onClick={importSelected}
               disabled={busy || checked.size === 0}
-              className="rounded-sm border border-cta-bd bg-cta px-3 py-1.5 text-sm text-cta-text hover:brightness-110 disabled:opacity-50"
+              className={primaryActionClass}
             >
               {busy ? "导入中…" : `导入选中（${checked.size}）`}
             </button>
@@ -653,19 +674,22 @@ function DeleteSkillModal({
         <p className="mb-1 text-xs leading-5 text-l4">
           删除前会把技能库目录自动备份（每个技能保留最近 5 份），需要时可从备份手动找回。
         </p>
-        {error && <p className="mb-2 text-sm text-err-text">{error}</p>}
+        {error && <NoticeBar tone="err" className="mb-2">{error}</NoticeBar>}
         <div className="mt-4 flex justify-end gap-2">
+          {/* 焦点默认给取消（HIG：破坏性动作不做默认按钮），与全局确认框同口径 */}
           <button
+            type="button"
             onClick={onClose}
-            className="rounded-sm px-3 py-1.5 text-sm text-l2 hover:bg-hover"
+            autoFocus
+            className={secondaryActionClass}
           >
             取消
           </button>
           <button
+            type="button"
             onClick={() => void submit()}
             disabled={busy}
-            autoFocus
-            className="rounded-sm bg-err px-3 py-1.5 text-sm text-err-text hover:brightness-110 disabled:opacity-50"
+            className={dangerActionClass}
           >
             {busy ? "删除中…" : "删除"}
           </button>
@@ -780,18 +804,18 @@ function SkillEditorModal({
             保存会先备份当前版本（保留最近 5 份），SKILL.md 之外的辅助文件不受影响。
           </p>
         )}
-        {error && <p className="mb-2 text-sm text-err-text">{error}</p>}
+        {error && <NoticeBar tone="err" className="mb-2">{error}</NoticeBar>}
         <div className="flex justify-end gap-2">
           <button
             onClick={onClose}
-            className="rounded-sm px-3 py-1.5 text-sm text-l2 hover:bg-hover"
+            className={secondaryActionClass}
           >
             取消
           </button>
           <button
             onClick={() => void submit()}
             disabled={busy || !name.trim() || !content.trim()}
-            className="rounded-sm border border-cta-bd bg-cta px-3 py-1.5 text-sm text-cta-text hover:brightness-110 disabled:opacity-50"
+            className={primaryActionClass}
           >
             {busy ? "保存中…" : mode === "create" ? "创建" : "保存"}
           </button>
@@ -892,7 +916,7 @@ function OptimizeModal({
           value={draft.content}
           onChange={(e) => setDraft({ ...draft, content: e.target.value })}
         />
-        {error && <p className="mb-2 text-sm text-err-text">{error}</p>}
+        {error && <NoticeBar tone="err" className="mb-2">{error}</NoticeBar>}
         <div className="flex justify-end gap-2">
           <button
             onClick={() => {
@@ -900,14 +924,14 @@ function OptimizeModal({
               setError(null);
             }}
             disabled={busy}
-            className="rounded-sm px-3 py-1.5 text-sm text-l2 hover:bg-hover disabled:opacity-50"
+            className={secondaryActionClass}
           >
             返回重选
           </button>
           <button
             onClick={() => void confirmCreate()}
             disabled={busy || !draft.content.trim() || !draft.name.trim()}
-            className="rounded-sm border border-cta-bd bg-cta px-3 py-1.5 text-sm text-cta-text hover:brightness-110 disabled:opacity-50"
+            className={primaryActionClass}
           >
             {busy ? "落库中…" : "确认落库为新技能"}
           </button>
@@ -977,18 +1001,18 @@ function OptimizeModal({
               : "优化方向，如：把我的检索习惯融进内置流程，保留严格档；检查清单按我们组的口径重写"
           }
         />
-        {error && <p className="mb-2 text-sm text-err-text">{error}</p>}
+        {error && <NoticeBar tone="err" className="mb-2">{error}</NoticeBar>}
         <div className="flex justify-end gap-2">
           <button
             onClick={onClose}
-            className="rounded-sm px-3 py-1.5 text-sm text-l2 hover:bg-hover"
+            className={secondaryActionClass}
           >
             取消
           </button>
           <button
             onClick={() => void submit()}
             disabled={busy || !opinion.trim() || (mode === "new" && sources.size === 0)}
-            className="rounded-sm border border-cta-bd bg-cta px-3 py-1.5 text-sm text-cta-text hover:brightness-110 disabled:opacity-50"
+            className={primaryActionClass}
           >
             {busy
               ? mode === "terminal"
@@ -1065,11 +1089,11 @@ function AdaptModal({
         ) : (
           <p className="py-8 text-center text-sm text-l4">还没有适配稿。</p>
         )}
-        {error && <p className="mb-2 text-sm text-err-text">{error}</p>}
+        {error && <NoticeBar tone="err" className="mb-2">{error}</NoticeBar>}
         <div className="flex justify-end gap-2">
           <button
             onClick={onClose}
-            className="rounded-sm px-3 py-1.5 text-sm text-l2 hover:bg-hover"
+            className={secondaryActionClass}
           >
             取消
           </button>
@@ -1077,7 +1101,7 @@ function AdaptModal({
             <button
               onClick={onRetry}
               disabled={busy}
-              className="rounded-sm px-3 py-1.5 text-sm text-l2 hover:bg-hover disabled:opacity-50"
+              className={secondaryActionClass}
             >
               重试
             </button>
@@ -1085,7 +1109,7 @@ function AdaptModal({
           <button
             onClick={() => void confirm()}
             disabled={busy || !content.trim()}
-            className="rounded-sm border border-cta-bd bg-cta px-3 py-1.5 text-sm text-cta-text hover:brightness-110 disabled:opacity-50"
+            className={primaryActionClass}
           >
             {busy ? "处理中…" : "确认写回技能库"}
           </button>
@@ -1241,11 +1265,11 @@ function BindToStepModal({
             </div>
           </>
         )}
-        {error && <p className="mt-2 text-sm text-err-text">{error}</p>}
+        {error && <NoticeBar tone="err" className="mt-2">{error}</NoticeBar>}
         <div className="mt-3 flex justify-end">
           <button
             onClick={onClose}
-            className="rounded-sm px-3 py-1.5 text-sm text-l2 hover:bg-hover"
+            className={secondaryActionClass}
           >
             关闭
           </button>
@@ -1305,6 +1329,23 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
   const translation = preview
     ? (translations[preview.skill.id] ?? null)
     : null;
+  // SKILL.md 预览默认按 Markdown 渲染（frontmatter 拆成字段表）；「源码」切回原文等宽
+  const [skillSourceView, setSkillSourceView] = useState(false);
+  const shownSkillText = preview
+    ? translation && !showOriginal
+      ? translation
+      : preview.content
+    : "";
+  const skillDoc = useMemo(() => {
+    const { fields, body } = splitSkillFrontmatter(shownSkillText);
+    return {
+      // name / description 面板顶部已经写过，不再列一遍
+      fields: fields.filter((f) => f.key !== "name" && f.key !== "description"),
+      html: sanitizeDocumentHtml(
+        marked.parse(body, { gfm: true, breaks: false, async: false }) as string,
+      ),
+    };
+  }, [shownSkillText]);
 
   async function toggleTranslation() {
     if (!preview) return;
@@ -1801,11 +1842,78 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
               </>
             }
           />
-          {builtinPreview && <section className="mb-3 rounded-md ccode-well p-3 text-xs" aria-label="内置技能更新预览">
-            <h3 className="font-medium text-l1">{builtinPreview.name}：本机与新版对照（不会自动覆盖）</h3>
-            {builtinPreview.files.map((file) => <details key={file.path} className="mt-2"><summary>{file.path}{file.current === file.proposed ? " · 未变" : " · 有差异"}</summary><div className="grid grid-cols-2 gap-2"><pre className="max-h-64 overflow-auto whitespace-pre-wrap bg-canvas p-2">本机：{file.current || "（尚无）"}</pre><pre className="max-h-64 overflow-auto whitespace-pre-wrap bg-canvas p-2">新版：{file.proposed}</pre></div></details>)}
-            <div className="mt-2 flex gap-3"><button type="button" onClick={() => setBuiltinPreview(null)}>保留本机版本</button><button type="button" disabled={builtinApplying !== null} onClick={async () => { if (await confirmDialog("将备份本机文件再更新所列技能文件。自改内容不会自动合并，确认采用新版？", { confirmText: "备份并更新" })) { await onApplyBuiltinUpdate(builtinPreview.name, builtinPreview.revision); setBuiltinPreview(null); } }}>备份并采用新版</button></div>
-          </section>}
+          {builtinPreview && (
+            <section
+              className="mb-3 rounded-md ccode-well p-3 text-xs"
+              aria-label="内置技能更新预览"
+            >
+              <h3 className="text-sm font-medium text-l1">
+                {builtinPreview.name}：本机与新版对照
+              </h3>
+              <p className="mt-0.5 text-l4">
+                不会自动覆盖。采用新版前会先备份本机文件；你自己改过的内容不会自动合并。
+              </p>
+              <div className="mt-2 space-y-1.5">
+                {builtinPreview.files.map((file) => {
+                  const same = file.current === file.proposed;
+                  return (
+                    <details
+                      key={file.path}
+                      className="rounded-md border border-hairline bg-canvas"
+                    >
+                      <summary className="flex cursor-pointer items-center gap-2 px-2.5 py-1.5 text-l2 hover:bg-hover">
+                        <span className="min-w-0 flex-1 truncate font-mono">{file.path}</span>
+                        <span className={same ? "text-l4" : "text-warn-text"}>
+                          {same ? "未变" : "有差异"}
+                        </span>
+                      </summary>
+                      <div className="grid grid-cols-2 gap-2 border-t border-hairline p-2">
+                        <div className="min-w-0">
+                          <div className="mb-1 text-micro text-l4">本机</div>
+                          <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-sm ccode-well p-2 font-mono text-l3">
+                            {file.current || "（尚无）"}
+                          </pre>
+                        </div>
+                        <div className="min-w-0">
+                          <div className="mb-1 text-micro text-l4">新版</div>
+                          <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-sm ccode-well p-2 font-mono text-l2">
+                            {file.proposed}
+                          </pre>
+                        </div>
+                      </div>
+                    </details>
+                  );
+                })}
+              </div>
+              <div className="mt-3 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  className={secondaryActionClass}
+                  onClick={() => setBuiltinPreview(null)}
+                >
+                  保留本机版本
+                </button>
+                <button
+                  type="button"
+                  className={primaryActionClass}
+                  disabled={builtinApplying !== null}
+                  onClick={async () => {
+                    if (
+                      await confirmDialog(
+                        "将备份本机文件再更新所列技能文件。自改内容不会自动合并，确认采用新版？",
+                        { confirmText: "备份并更新" },
+                      )
+                    ) {
+                      await onApplyBuiltinUpdate(builtinPreview.name, builtinPreview.revision);
+                      setBuiltinPreview(null);
+                    }
+                  }}
+                >
+                  {builtinApplying ? "更新中…" : "备份并采用新版"}
+                </button>
+              </div>
+            </section>
+          )}
           {builtinUpdates.length > 0 && (
             <div className="mb-3 rounded-md ccode-well px-3 py-2 text-xs text-l3">
               <p>
@@ -1836,8 +1944,8 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
               </div>
             </div>
           )}
-          {error && <p className="mb-3 text-sm text-err-text">{error}</p>}
-          {notice && <p className="mb-3 text-xs text-ok-text">{notice}</p>}
+          {error && <NoticeBar tone="err" className="mb-3" onDismiss={() => setError(null)}>{error}</NoticeBar>}
+          {notice && <NoticeBar className="mb-3" onDismiss={() => setNotice(null)}>{notice}</NoticeBar>}
           {loading ? (
             <LoadingRows />
           ) : skills.length === 0 ? (
@@ -1901,12 +2009,16 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                   const distinctSources = [
                     ...new Set(categorySkills.map((s) => sourceLabel(s))),
                   ];
+                  // 分组名已含来源字样（「Mesa 内置」组再标「内置」）时不重复
                   const groupSource =
-                    distinctSources.length === 1 ? distinctSources[0] : null;
+                    distinctSources.length === 1 &&
+                    !category.includes(distinctSources[0]!)
+                      ? distinctSources[0]
+                      : null;
                   return (
                     <section
                       key={category}
-                      className="mb-3 overflow-hidden rounded-md border border-field ccode-well"
+                      className="mb-3 overflow-hidden ccode-well ccode-card"
                     >
                       <button
                         type="button"
@@ -2280,8 +2392,14 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
               </span>
               {(() => {
                 const allKey = `${preview.skill.id}:__all__`;
+                // 与 applyAllAgents 同口径：检测数据就位时只数已安装的（未装的点了也会被跳过）
+                const installedIds = new Set(
+                  agents.filter((a) => a.binaryPath).map((a) => a.id),
+                );
                 const remaining = Object.keys(preview.skill.apps).filter(
-                  (a) => !preview.skill.apps[a],
+                  (a) =>
+                    !preview.skill.apps[a] &&
+                    (agents.length === 0 || installedIds.has(a)),
                 ).length;
                 if (remaining === 0) return null;
                 return (
@@ -2296,7 +2414,10 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                   </button>
                 );
               })()}
-              <span className="ml-auto text-xs text-l4">
+              <span
+                className="ml-auto text-xs text-l4"
+                title="已应用 / 全部 CLI"
+              >
                 {Object.values(preview.skill.apps).filter(Boolean).length}/
                 {AGENTS.length}
               </span>
@@ -2305,6 +2426,10 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
               {AGENTS.map((agent) => {
                 const enabled = !!preview.skill.apps[agent.id];
                 const key = `${preview.skill.id}:${agent.id}`;
+                // 本机没装的 CLI 降权显示：分发过去也没人读（已启用的仍照常显示，便于取消）
+                const notInstalled =
+                  agents.length > 0 &&
+                  !agents.some((a) => a.id === agent.id && a.binaryPath);
                 const mode = enabled
                   ? (preview.skill.appModes ?? {})[agent.id]
                   : undefined;
@@ -2319,13 +2444,17 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                     }
                     title={
                       enabled
-                        ? `${mode === "copy" ? "copy（有漂移检测）" : "symlink"}；点击取消应用`
-                        : `应用到 ${agent.label}`
+                        ? `${mode === "copy" ? "copy（有漂移检测）" : "symlink"}；点击取消应用${notInstalled ? "（本机未安装这个 CLI）" : ""}`
+                        : notInstalled
+                          ? `本机未安装 ${agent.label}，应用后也没有 CLI 读取；仍可点击预先分发`
+                          : `应用到 ${agent.label}`
                     }
                     className={`flex h-9 items-center gap-2 rounded-md border px-2 text-sm transition-colors disabled:opacity-50 ${
                       enabled
                         ? "border-cta-bd bg-inset text-l1"
-                        : "border-hairline bg-canvas text-l3 hover:bg-inset hover:text-l1"
+                        : notInstalled
+                          ? "border-hairline bg-canvas text-l4 hover:bg-inset hover:text-l3"
+                          : "border-hairline bg-canvas text-l3 hover:bg-inset hover:text-l1"
                     }`}
                   >
                     <span
@@ -2336,6 +2465,9 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                     <span className="min-w-0 flex-1 truncate text-left">
                       {agent.label}
                     </span>
+                    {notInstalled && !applying[key] && (
+                      <span className="shrink-0 text-micro text-l4">未安装</span>
+                    )}
                     {applying[key] && <span className="text-l4">…</span>}
                   </button>
                 );
@@ -2345,6 +2477,14 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
           <div className="p-4">
             <div className="mb-3 flex items-center gap-2 text-xs font-medium tracking-wide text-l4">
               SKILL.md
+              <button
+                type="button"
+                onClick={() => setSkillSourceView((v) => !v)}
+                title={skillSourceView ? "按 Markdown 排版显示" : "显示原文（含 YAML 头）"}
+                className="rounded-sm px-1.5 py-0.5 text-xs font-normal text-l3 hover:bg-hover hover:text-l1"
+              >
+                {skillSourceView ? "排版" : "源码"}
+              </button>
               {/* 英文技能一键翻译（◈ ai_prompt 一次性调用，结果随会话缓存；不改动库文件） */}
               <button
                 type="button"
@@ -2361,11 +2501,28 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                     : "◈ 翻译为中文"}
               </button>
             </div>
-            <pre className="whitespace-pre-wrap break-all font-mono text-sm leading-6 text-l2">
-              {translation && !showOriginal
-                ? translation
-                : preview.content}
-            </pre>
+            {skillSourceView ? (
+              <pre className="whitespace-pre-wrap break-all font-mono text-sm leading-6 text-l2">
+                {shownSkillText}
+              </pre>
+            ) : (
+              <>
+                {skillDoc.fields.length > 0 && (
+                  <dl className="mb-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 rounded-md ccode-well px-3 py-2 text-xs">
+                    {skillDoc.fields.map((f) => (
+                      <div key={f.key} className="contents">
+                        <dt className="font-mono text-l4">{f.key}</dt>
+                        <dd className="min-w-0 break-words text-l2">{f.value || "—"}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                )}
+                <div
+                  className="md-body"
+                  dangerouslySetInnerHTML={{ __html: skillDoc.html }}
+                />
+              </>
+            )}
           </div>
           </div>
         </div>
@@ -2472,12 +2629,14 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
           onClose={() => setTopMenu(null)}
           items={[
             {
+              icon: Import,
               label: "导入技能",
               onSelect: () => setModal({ kind: "import" }),
             },
             ...(skills.length
               ? [
                   {
+                    icon: FileDown,
                     label: "导出全部 ZIP",
                     onSelect: () =>
                       void onExport(
@@ -2487,8 +2646,14 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                   },
                 ]
               : []),
-            { label: "发现未纳管技能", onSelect: () => void onDiscover() },
+            { separator: true },
             {
+              icon: FolderSearch,
+              label: "发现未纳管技能",
+              onSelect: () => void onDiscover(),
+            },
+            {
+              icon: RefreshCw,
               label: checkingUpdates
                 ? "正在检查 GitHub 更新…"
                 : "检查 GitHub 更新",
@@ -2497,6 +2662,7 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
               },
             },
             {
+              icon: Layers,
               label: "无分类 GitHub 技能按仓库归组",
               onSelect: () => void onBackfillCategories(),
             },
@@ -2509,24 +2675,37 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
           y={rowMenu.y}
           onClose={() => setRowMenu(null)}
           items={[
-            { label: "查看详情", onSelect: () => void onView(rowMenu.skill) },
             {
+              icon: Eye,
+              label: "查看详情",
+              onSelect: () => void onView(rowMenu.skill),
+            },
+            {
+              icon: Pencil,
               label: "编辑内容",
               onSelect: () => void onEdit(rowMenu.skill),
             },
+            { separator: true },
             {
-              label: "◈ 优化",
+              icon: WandSparkles,
+              label: "优化",
+              hint: "AI",
               onSelect: () => setOptimize(rowMenu.skill),
             },
             {
-              label: "◈ 适配到流水线",
+              icon: Workflow,
+              label: "适配到流水线",
+              hint: "AI",
               onSelect: () => openAdapt(rowMenu.skill),
             },
             {
+              icon: Link,
               label: "挂载到步骤",
               onSelect: () => setBindSkill(rowMenu.skill),
             },
+            { separator: true },
             {
+              icon: Folder,
               label: "设置分类",
               onSelect: () =>
                 setCatEdit({
@@ -2535,6 +2714,7 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                 }),
             },
             {
+              icon: Tag,
               label: "设置标签",
               onSelect: () =>
                 setTagEdit({
@@ -2542,15 +2722,18 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                   value: (rowMenu.skill.tags ?? []).join("，"),
                 }),
             },
+            { separator: true },
             ...((rowMenu.skill.staleCopies ?? []).length > 0
               ? [
                   {
+                    icon: RefreshCw,
                     label: "重新分发副本",
                     onSelect: () => void onResync(rowMenu.skill),
                   },
                 ]
               : []),
             {
+              icon: FileDown,
               label: "导出 ZIP",
               onSelect: () =>
                 void onExport([rowMenu.skill.id], `${rowMenu.skill.name}.zip`),
@@ -2558,6 +2741,7 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
             ...(updates[rowMenu.skill.id]?.updateAvailable
               ? [
                   {
+                    icon: Download,
                     label: "一键应用 GitHub 更新",
                     onSelect: () => void onApplyUpdate(rowMenu.skill),
                   },
@@ -2566,6 +2750,7 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
             ...(rowMenu.skill.repo
               ? [
                   {
+                    icon: Import,
                     label: updates[rowMenu.skill.id]?.updateAvailable
                       ? "导入 GitHub 更新"
                       : "重新从 GitHub 导入",
@@ -2581,7 +2766,12 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                   },
                 ]
               : []),
-            { label: "删除", onSelect: () => setDeleteTarget(rowMenu.skill) },
+            {
+              icon: Trash2,
+              label: "删除",
+              danger: true,
+              onSelect: () => setDeleteTarget(rowMenu.skill),
+            },
           ]}
         />
       )}

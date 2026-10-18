@@ -80,6 +80,24 @@ export function groupInbox<T extends { key: string }>(
   })).filter((group) => group.items.length > 0);
 }
 
+/** 可一键已读的类别（2026-10-16 拍板）：纯信息通报，批量消掉不藏决策。
+ *  冲突/待确认/依赖/更新/配置失效/人工请求是决策或故障类——批量收走会把真要人
+ *  拍板的事藏起来（状态不变签名不变，不会自己回来），必须逐条处理，不进批量 */
+export const BULK_READABLE: ReadonlySet<InboxCategory> = new Set([
+  "lit",
+  "ready",
+  "artifacts",
+  "digest",
+  "skill",
+]);
+
+/** 一键已读的取数：当前可见条目里属于信息类的那些 */
+export function bulkReadableItems<T extends { key: string }>(
+  items: readonly T[],
+): T[] {
+  return items.filter((it) => BULK_READABLE.has(inboxCategoryOf(it.key)));
+}
+
 /** help: 条目屏蔽表的 localStorage 键：{ [root]: 条目签名 } */
 export const HELP_DISMISSED_KEY = "ccode.helpDismissed";
 

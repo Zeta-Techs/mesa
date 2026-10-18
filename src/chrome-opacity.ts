@@ -37,3 +37,11 @@ export function chromeOpacityLabel(pct: ChromeOpacity): string {
   if (pct === 0) return "0%（全透）";
   return `${pct}%`;
 }
+
+/** 分段按钮上的短标签（设置页一排六格，长标签挤不下）：两端用词、中间只写数，
+   完整说法仍走 chromeOpacityLabel（悬停 title）。 */
+export function chromeOpacityShortLabel(pct: ChromeOpacity): string {
+  if (pct === 100) return "原样";
+  if (pct === 0) return "全透";
+  return String(pct);
+}

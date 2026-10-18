@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef } from "react";
 import type { ReactNode } from "react";
+import { X } from "lucide-react";
 import { useExitRender } from "../exit-animation";
 
 type ModalSize = "sm" | "md" | "lg" | "xl";
@@ -24,6 +25,7 @@ export function Modal({
   panelClassName = "",
   contentClassName = "",
   overflow = "auto",
+  layer = "base",
 }: {
   open: boolean;
   title: ReactNode;
@@ -37,6 +39,9 @@ export function Modal({
   contentClassName?: string;
   /** hidden：预览类弹层自带滚动，外层再滚会撑破高度并在 WKWebView 里瓦片黑屏 */
   overflow?: "auto" | "hidden";
+  /** 层级：base＝z-40（普通页面上）；overlay＝z-60（压过评审覆盖层这类 z-50 全屏层）。
+   *  全局确认框是 z-70，始终在最上，不经这里。 */
+  layer?: "base" | "overlay";
 }) {
   const titleId = useId();
   const descriptionId = useId();
@@ -94,7 +99,7 @@ export function Modal({
   if (!render) return null;
   return (
     <div
-      className={`ccode-modal-backdrop fixed inset-0 z-40 flex items-center justify-center overflow-hidden overscroll-none bg-black/40 p-3 sm:p-4 ccode-fade${exiting ? " ccode-exiting" : ""}`}
+      className={`ccode-modal-backdrop fixed inset-0 ${layer === "overlay" ? "z-60" : "z-40"} flex items-center justify-center overflow-hidden overscroll-none bg-black/40 p-3 sm:p-4 ccode-fade${exiting ? " ccode-exiting" : ""}`}
       onMouseDown={(event) => {
         if (dismissOnBackdrop && event.target === event.currentTarget) onClose();
       }}
@@ -113,15 +118,7 @@ export function Modal({
       >
         <div className="flex items-start justify-between gap-3">
           <h2 id={titleId} className="min-w-0 text-base font-semibold text-l1">{title}</h2>
-          <button
-            type="button"
-            aria-label="关闭"
-            title="关闭"
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-base leading-none text-l4 hover:bg-hover hover:text-l1"
-            onClick={onClose}
-          >
-            ×
-          </button>
+          <CloseButton onClose={onClose} />
         </div>
         {description && (
           <p id={descriptionId} className="mt-1 text-xs leading-5 text-l3">
@@ -129,7 +126,8 @@ export function Modal({
           </p>
         )}
         <div className={`mt-4 min-h-0 ${contentClassName}`}>{children}</div>
-        {footer && <div className="mt-5 flex flex-wrap justify-end gap-2 border-t border-hairline pt-3">{footer}</div>}
+        {/* 页脚：按钮右对齐、主按钮放最右（调用方按「次 → 主」顺序传）；不画分隔线，靠留白分区 */}
+        {footer && <div className="mt-5 flex flex-wrap items-center justify-end gap-2">{footer}</div>}
       </div>
     </div>
   );
@@ -213,11 +211,26 @@ export function Sheet({
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between gap-3">
-          <h2 id={titleId} className="text-base font-semibold text-l1">{title}</h2>
-          <button type="button" aria-label="关闭" className="text-l3 hover:text-l1" onClick={onClose}>×</button>
+          <h2 id={titleId} className="min-w-0 text-base font-semibold text-l1">{title}</h2>
+          <CloseButton onClose={onClose} />
         </div>
         {children}
       </div>
     </div>
+  );
+}
+
+/** 弹窗/抽屉右上角关闭钮：Lucide X（原为文字「×」，字形随字体粗细飘，和全站线框图标不一套） */
+function CloseButton({ onClose }: { onClose: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label="关闭"
+      title="关闭（Esc）"
+      className="-mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1"
+      onClick={onClose}
+    >
+      <X size={15} strokeWidth={1.8} aria-hidden="true" />
+    </button>
   );
 }

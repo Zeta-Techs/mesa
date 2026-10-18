@@ -6,7 +6,9 @@
 //! 表单与正文结构两端共用（src/feedback.ts）。
 //!
 //! 隐私口径：只在用户点「发送」时出网，只寄表单里的字段 + 环境行（版本/平台/
-//! 架构/渠道），无任何自动采集；不注出网代理，不走更新检查之外的任何后台请求。
+//! 架构/渠道）+ 用户亲手加的附件（截图、诊断包），无任何自动采集；不注出网代理，
+//! 不走更新检查之外的任何后台请求。诊断包只认导出目录里的 Mesa 诊断包（见
+//! `checked_diagnostics_path`），前端传路径、后端自读。
 
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -42,6 +44,16 @@ pub struct FeedbackImageDto {
     pub data: String,
 }
 
+/// 随反馈附带的诊断包（端点通道：后端读盘编码，不经前端搬运）
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedbackFileDto {
+    pub name: String,
+    pub mime: String,
+    /// Base64，不含 data: 前缀
+    pub data: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedbackPayloadDto {
@@ -57,6 +69,52 @@ pub struct FeedbackPayloadDto {
     pub error_log: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub images: Option<Vec<FeedbackImageDto>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostics: Option<FeedbackFileDto>,
+}
+
+/// 诊断包附件上限：正常导出几百 KB，20MB 只兜异常大包
+const DIAGNOSTICS_MAX_BYTES: u64 = 20 * 1024 * 1024;
+
+/// 诊断包附件闸门：只认 `export_diagnostics_bundle` 的产物——导出目录里、名为
+/// `ccode-diagnostics-*.zip` 的普通文件（不跟符号链接），≤20MB。前端只传路径、
+/// 后端自读：IPC 不搬 Base64，也堵住借反馈通道把任意本地文件寄出去。
+pub(crate) fn checked_diagnostics_path(
+    raw: &str,
+    exports_dir: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    let path = std::path::PathBuf::from(raw);
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    if !(name.starts_with(crate::diagnostics::BUNDLE_FILE_PREFIX) && name.ends_with(".zip")) {
+        return Err("只能附 Mesa 导出的诊断包".into());
+    }
+    let parent = path
+        .parent()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if !crate::paths::same_path(&parent, &exports_dir.to_string_lossy()) {
+        return Err("诊断包不在导出目录里，请重新导出".into());
+    }
+    let meta = std::fs::symlink_metadata(&path)
+        .map_err(|_| "诊断包已不在原处（可能被移动或删除），请重新导出".to_string())?;
+    if !meta.file_type().is_file() {
+        return Err("只能附 Mesa 导出的诊断包".into());
+    }
+    if meta.len() > DIAGNOSTICS_MAX_BYTES {
+        return Err("诊断包超过 20MB，请改用邮件应用手动附上".into());
+    }
+    Ok(path)
+}
+
+/// 读诊断包（过闸后）：返回附件名与字节
+fn read_diagnostics(raw: &str) -> Result<(String, Vec<u8>), String> {
+    let path = checked_diagnostics_path(raw, &crate::diagnostics::bundle_dir()?)?;
+    let bytes = std::fs::read(&path).map_err(|e| format!("读取诊断包失败: {e}"))?;
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "ccode-diagnostics.zip".into());
+    Ok((name, bytes))
 }
 
 /// 反馈附带的最近错误日志摘录：最近 error 级 ≤5 条、每条按字符截 200，
@@ -170,22 +228,31 @@ pub fn clear_feedback_smtp_secret() -> Result<(), String> {
     crate::profiles::clear_shared_key(FEEDBACK_SMTP_KEY_ID)
 }
 
-/// 邮箱直发：用用户配置的 SMTP 账号把反馈寄给维护者，截图作为真实附件。
-/// 通道序（前端决策）：端点 > 邮箱直发 > mailto——本命令只在配置了 feedbackSmtp 时可用了。
+/// 邮箱直发：用用户配置的 SMTP 账号把反馈寄给维护者，截图与诊断包作为真实附件。
+/// 通道由用户在表单「发送方式」里选（端点已配置时只走端点）；本命令只在配置了 feedbackSmtp 时可用。
 #[tauri::command]
 pub async fn send_feedback_smtp(
     subject: String,
     body: String,
     images: Option<Vec<FeedbackImageDto>>,
+    diagnostics: Option<String>,
 ) -> Result<(), String> {
     let config = crate::settings::current_with_defaults()
         .feedback_smtp
-        .ok_or("未配置邮箱直发（反馈表单的「配置邮箱直发」里配置）")?;
+        .ok_or("未配置邮箱直发（反馈表单「发送方式」选邮箱直发后配置）")?;
     validate_smtp_config(&config)?;
     let secret = crate::profiles::get_shared_key(FEEDBACK_SMTP_KEY_ID)?
         .ok_or("授权码缺失，请重新保存邮箱配置")?;
     tauri::async_runtime::spawn_blocking(move || {
-        send_smtp_blocking(&config, &secret, &subject, &body, images.as_deref().unwrap_or(&[]))
+        let diag = diagnostics.as_deref().map(read_diagnostics).transpose()?;
+        send_smtp_blocking(
+            &config,
+            &secret,
+            &subject,
+            &body,
+            images.as_deref().unwrap_or(&[]),
+            diag.as_ref(),
+        )
     })
     .await
     .map_err(|e| format!("邮件发送任务失败: {e}"))?
@@ -254,12 +321,12 @@ fn send_smtp_blocking(
     subject: &str,
     body: &str,
     images: &[FeedbackImageDto],
+    diagnostics: Option<&(String, Vec<u8>)>,
 ) -> Result<(), String> {
     use base64::Engine;
     use lettre::message::header::ContentType;
     use lettre::message::{Attachment, MultiPart, SinglePart};
-    use lettre::transport::smtp::authentication::Credentials;
-    use lettre::{Message, SmtpTransport, Transport};
+    use lettre::{Message, Transport};
 
     let ctx = |e: String| format!("{}（{}）：{e}", config.provider, config.host);
     let mut builder = Message::builder()
@@ -295,6 +362,11 @@ fn send_smtp_blocking(
             .map_err(|e| format!("截图 {i} 类型解析失败: {e}"))?;
         mixed = mixed.singlepart(Attachment::new(image_name_with_ext(&clean, &img.mime)).body(bytes, ct));
     }
+    if let Some((name, bytes)) = diagnostics {
+        let ct = ContentType::parse("application/zip")
+            .map_err(|e| format!("诊断包类型解析失败: {e}"))?;
+        mixed = mixed.singlepart(Attachment::new(name.clone()).body(bytes.clone(), ct));
+    }
     let email = builder
         .multipart(mixed)
         .map_err(|e| ctx(format!("邮件组装失败 {e}")))?;
@@ -307,6 +379,7 @@ fn send_smtp_blocking(
 }
 
 /// 应用内提交：POST 到公司端点。只在用户点「发送」时被调用。
+/// `diagnostics` 是诊断包路径（过 checked_diagnostics_path 闸），后端读盘编码进负载。
 #[tauri::command]
 pub async fn submit_feedback(
     kind: String,
@@ -316,8 +389,23 @@ pub async fn submit_feedback(
     env: FeedbackEnvDto,
     error_log: Option<String>,
     images: Option<Vec<FeedbackImageDto>>,
+    diagnostics: Option<String>,
 ) -> Result<(), String> {
     let endpoint = FEEDBACK_ENDPOINT.ok_or_else(|| "未配置反馈端点（本版本走邮件通道）".to_string())?;
+    let diagnostics = match diagnostics {
+        Some(raw) => {
+            let (name, bytes) = tauri::async_runtime::spawn_blocking(move || read_diagnostics(&raw))
+                .await
+                .map_err(|e| format!("读取诊断包任务失败: {e}"))??;
+            use base64::Engine;
+            Some(FeedbackFileDto {
+                name,
+                mime: "application/zip".into(),
+                data: base64::engine::general_purpose::STANDARD.encode(bytes),
+            })
+        }
+        None => None,
+    };
     let payload = FeedbackPayloadDto {
         app: "mesa".into(),
         kind,
@@ -327,6 +415,7 @@ pub async fn submit_feedback(
         env,
         error_log,
         images,
+        diagnostics,
     };
     let client = reqwest::Client::builder()
         .timeout(SUBMIT_TIMEOUT)
@@ -452,6 +541,43 @@ mod tests {
         );
         assert_eq!(image_name_with_ext("shot", "image/jpeg"), "shot.jpg");
         assert_eq!(image_name_with_ext("shot", "weird/type"), "shot.png");
+    }
+
+    #[test]
+    fn diagnostics_attachment_gate_only_accepts_exported_bundles() {
+        let root = std::env::temp_dir().join(format!("ccode-fb-diag-{}", uuid::Uuid::new_v4()));
+        let exports = root.join("ccode-exports");
+        std::fs::create_dir_all(&exports).unwrap();
+        let ok = exports.join("ccode-diagnostics-2026-10-17T12-00-00Z.zip");
+        std::fs::write(&ok, b"PK").unwrap();
+        let s = |p: &std::path::Path| p.to_string_lossy().into_owned();
+
+        assert!(checked_diagnostics_path(&s(&ok), &exports).is_ok());
+        // 名字不对：别的导出物 / 任意文件一律拒
+        let other = exports.join("ccode-logs-2026.txt");
+        std::fs::write(&other, b"x").unwrap();
+        assert!(checked_diagnostics_path(&s(&other), &exports).is_err());
+        // 名字对但不在导出目录（含 .. 绕行）
+        let outside = root.join("ccode-diagnostics-x.zip");
+        std::fs::write(&outside, b"PK").unwrap();
+        assert!(checked_diagnostics_path(&s(&outside), &exports).is_err());
+        let sneaky = format!("{}/../ccode-diagnostics-x.zip", s(&exports));
+        assert!(checked_diagnostics_path(&sneaky, &exports).is_err());
+        // 已删除 / 超上限
+        let gone = exports.join("ccode-diagnostics-gone.zip");
+        assert!(checked_diagnostics_path(&s(&gone), &exports).is_err());
+        let big = exports.join("ccode-diagnostics-big.zip");
+        let f = std::fs::File::create(&big).unwrap();
+        f.set_len(DIAGNOSTICS_MAX_BYTES + 1).unwrap();
+        assert!(checked_diagnostics_path(&s(&big), &exports).is_err());
+        // 符号链接伪装成诊断包也拒（不跟链接读到别处）
+        #[cfg(unix)]
+        {
+            let link = exports.join("ccode-diagnostics-link.zip");
+            std::os::unix::fs::symlink(&outside, &link).unwrap();
+            assert!(checked_diagnostics_path(&s(&link), &exports).is_err());
+        }
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
 

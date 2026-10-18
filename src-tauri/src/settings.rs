@@ -98,6 +98,10 @@ const KNOWN_NAV_CAPSULE_DELAYS_MS: [u32; 5] = [0, 500, 1000, 2000, 5000];
 /// 这是外观设置，用户看得见自己调坏的样子，也能立刻调回来。
 const KNOWN_CHROME_OPACITIES: [u32; 6] = [0, 25, 50, 75, 85, 100];
 const KNOWN_NAV_CAPSULE_DISPLAY_MODES: [&str; 3] = ["both", "icons", "labels"];
+/// 应用图标外观（设置 → 外观 → 应用图标）：system = 交给打包资源（macOS 26+ 随系统外观），
+/// dark / light = 运行中强制换图。只影响运行中的程序坞 / 主窗 / 托盘，见 app_icon.rs
+pub(crate) const KNOWN_APP_ICON_STYLES: [&str; 3] = ["system", "dark", "light"];
+const DEFAULT_APP_ICON_STYLE: &str = "system";
 const KNOWN_NAV_CAPSULE_ITEMS: [&str; 10] = [
     "quick-chat",
     "workbench",
@@ -234,14 +238,30 @@ pub struct AppSettingsDto {
     /// 打开对话页的补名去重（ai_retitle_all_sessions）全停；已有标题保留，
     /// 手改标题（title_source=user）本就不被覆盖，与此开关无关。
     pub auto_title_sessions: Option<bool>,
+    /// 内部对话保留期自动清理（设置页「数据与存储」，默认开，2026-10-17 用户拍板）。
+    /// 只清 Mesa 自己的一次性后台对话，见 internal_sessions.rs
+    pub internal_auto_clean: Option<bool>,
+    /// 内部对话保留天数（7–365，默认 30）
+    pub internal_retention_days: Option<u32>,
+    /// 工作副本家目录的自定义基目录（2026-10-18）：实际根是 `<基目录>/ccode`，缺省 = `~/ccode`。
+    /// 不走 update_settings patch（merge 不搬运）——只由 set_workspace_root 校验后写入，
+    /// 清空也走它（Option 下 null 等价缺失）。语义与曾用根见 ccode_home.rs
+    pub workspace_root: Option<String>,
+    /// 曾用过的自定义基目录（换位置后旧树还在原处，「是不是 Mesa 自己的」判定要认）
+    pub workspace_root_history: Option<Vec<String>>,
     /// 反馈邮箱直发配置（非密钥部分；授权码存 keys.json 键 feedback-smtp，
     /// 由 feedback.rs 的 set_feedback_smtp_secret 管理，绝不进 settings）
     pub feedback_smtp: Option<crate::feedback::FeedbackSmtpConfigDto>,
     pub theme: Option<String>,
+    /// 主题跟随系统深浅（2026-10-17，缺省关）：开着时前端在系统外观变化时把 theme 换成
+    /// 同名 twin（xxx ↔ xxx-light）写回，theme 始终是生效值；自定义配色无 twin 不跟随
+    pub theme_follow_system: Option<bool>,
     /// 侧栏 / 顶栏罩色透明度（百分比挡位，见 KNOWN_CHROME_OPACITIES）。
     /// 乘在各主题自己的罩色基数上，所以这一个值同时管侧栏和顶栏、深浅两套；
     /// 100 = 各主题原有观感，是默认值，也就是「没调过和以前一模一样」。
     pub chrome_opacity: Option<u32>,
+    /// 应用图标外观（KNOWN_APP_ICON_STYLES），缺省 system
+    pub app_icon_style: Option<String>,
     /// 自定义主题三色（左栏/画布/强调）。theme 为 custom / custom-light 时由前端派生全套令牌
     pub custom_theme: Option<CustomThemeDto>,
     /// 另存的可点色卡（最多 12 套）
@@ -790,6 +810,12 @@ fn with_defaults(s: AppSettingsDto) -> AppSettingsDto {
         auto_title_sessions: s
             .auto_title_sessions
             .or(Some(DEFAULT_AUTO_TITLE_SESSIONS)),
+        internal_auto_clean: s.internal_auto_clean.or(Some(true)),
+        internal_retention_days: Some(
+            s.internal_retention_days
+                .filter(|d| (7..=365).contains(d))
+                .unwrap_or(crate::internal_sessions::DEFAULT_RETENTION_DAYS),
+        ),
         feedback_smtp: s.feedback_smtp,
         theme: Some(theme),
         chrome_opacity: Some(
@@ -797,6 +823,12 @@ fn with_defaults(s: AppSettingsDto) -> AppSettingsDto {
                 .filter(|pct| KNOWN_CHROME_OPACITIES.contains(pct))
                 .unwrap_or(DEFAULT_CHROME_OPACITY),
         ),
+        app_icon_style: Some(
+            s.app_icon_style
+                .filter(|v| KNOWN_APP_ICON_STYLES.contains(&v.as_str()))
+                .unwrap_or_else(|| DEFAULT_APP_ICON_STYLE.to_string()),
+        ),
+        theme_follow_system: Some(s.theme_follow_system.unwrap_or(false)),
         custom_theme,
         custom_themes,
         custom_theme_card_id,
@@ -865,6 +897,8 @@ fn with_defaults(s: AppSettingsDto) -> AppSettingsDto {
         outbound_no_proxy: s.outbound_no_proxy.filter(|v| !v.trim().is_empty()),
         institutional_prefix: s.institutional_prefix.filter(|v| !v.trim().is_empty()),
         institutional_login_url: s.institutional_login_url.filter(|v| !v.trim().is_empty()),
+        workspace_root: s.workspace_root.filter(|v| !v.trim().is_empty()),
+        workspace_root_history: s.workspace_root_history.filter(|v| !v.is_empty()),
     };
     prune_ai_model_choice(&mut out);
     out
@@ -899,6 +933,12 @@ fn merge(cur: &mut AppSettingsDto, patch: AppSettingsDto) {
     if patch.auto_title_sessions.is_some() {
         cur.auto_title_sessions = patch.auto_title_sessions;
     }
+    if patch.internal_auto_clean.is_some() {
+        cur.internal_auto_clean = patch.internal_auto_clean;
+    }
+    if patch.internal_retention_days.is_some() {
+        cur.internal_retention_days = patch.internal_retention_days;
+    }
     // 反馈邮箱直发配置（校验在 update_settings 入口做，merge 只搬运）。
     // 清空不走这里——Option<T> 下 null 等价于字段缺失，清除有专用命令
     if patch.feedback_smtp.is_some() {
@@ -928,6 +968,12 @@ fn merge(cur: &mut AppSettingsDto, patch: AppSettingsDto) {
     // 按功能配置整图覆盖（前端每次提交完整 map；空 map = 全部跟随默认）
     if patch.chrome_opacity.is_some() {
         cur.chrome_opacity = patch.chrome_opacity;
+    }
+    if patch.app_icon_style.is_some() {
+        cur.app_icon_style = patch.app_icon_style;
+    }
+    if patch.theme_follow_system.is_some() {
+        cur.theme_follow_system = patch.theme_follow_system;
     }
     if patch.start_page.is_some() {
         cur.start_page = patch.start_page;
@@ -1293,6 +1339,38 @@ pub async fn update_settings(patch: AppSettingsDto) -> Result<AppSettingsDto, St
     Ok(with_defaults(cur))
 }
 
+/// 设置工作副本家目录的位置（设置页「数据与存储」）。`path` 为空 = 恢复默认 `~/ccode`。
+/// 只管此后新建的工作树/副本；已有的留在原处照常用，旧位置记进曾用名单供归属判定。
+/// 校验见 ccode_home::validate_base；读-改-写与 update_settings 同锁
+#[tauri::command]
+pub async fn set_workspace_root(path: Option<String>) -> Result<AppSettingsDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let _g = crate::profiles::store_lock()?;
+        let settings_file = settings_path()?;
+        let new_base = match path.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+            Some(raw) => Some(
+                crate::ccode_home::validate_base(raw)?
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+            None => None,
+        };
+        let mut cur = read_checked(&settings_file)?;
+        let history = crate::ccode_home::next_history(
+            cur.workspace_root.as_deref(),
+            new_base.as_deref(),
+            cur.workspace_root_history.as_deref().unwrap_or_default(),
+        );
+        cur.workspace_root = new_base;
+        cur.workspace_root_history = (!history.is_empty()).then_some(history);
+        write_to(&settings_file, &cur)?;
+        crate::ccode_home::invalidate();
+        Ok(with_defaults(cur))
+    })
+    .await
+    .map_err(|e| format!("设置工作副本位置失败: {e}"))?
+}
+
 /// 清除反馈邮箱直发配置（settings 侧；授权码另有 clear_feedback_smtp_secret）。
 /// 不走 update_settings：Option<T> 下前端传 null 反序列化为 None、与字段缺失
 /// 无异，merge 不会触发——清空语义必须专用命令（clear_profile_refs_at 先例）。
@@ -1510,6 +1588,7 @@ mod tests {
                 startup_nav_mode: Some("nope".into()),
                 nav_capsule_hide_delay_ms: Some(999),
                 chrome_opacity: Some(999),
+                app_icon_style: Some("neon".into()),
                 nav_capsule_display_mode: Some("text".into()),
                 nav_capsule_visible_items: Some(vec!["workbench".into(), "unknown".into()]),
                 ..Default::default()
@@ -1520,6 +1599,7 @@ mod tests {
         assert_eq!(invalid_full.nav_capsule_hide_delay_ms, Some(1000));
         assert_eq!(invalid_full.nav_capsule_display_mode, None);
         assert_eq!(invalid_full.chrome_opacity, Some(100));
+        assert_eq!(invalid_full.app_icon_style.as_deref(), Some("system"));
         assert_eq!(
             invalid_full.nav_capsule_visible_items,
             Some(vec!["workbench".into()])
@@ -1572,6 +1652,31 @@ mod tests {
         // 未写过任何字段 → 默认开
         std::fs::remove_file(&p).unwrap();
         assert_eq!(with_defaults(read_from(&p)).status_bar, Some(true));
+        std::fs::remove_dir_all(p.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn workspace_root_survives_patches_and_is_not_patchable() {
+        let p = tmp();
+        let mut cur = read_from(&p);
+        cur.workspace_root = Some("D:/mesa".into());
+        cur.workspace_root_history = Some(vec!["E:/old".into()]);
+        write_to(&p, &cur).unwrap();
+        // 别的字段的 patch 不得动它；patch 里带这两个字段也不生效（只能经 set_workspace_root）
+        let mut cur = read_from(&p);
+        merge(
+            &mut cur,
+            AppSettingsDto {
+                scrollback: Some(5000),
+                workspace_root: Some("X:/hijack".into()),
+                workspace_root_history: Some(vec![]),
+                ..Default::default()
+            },
+        );
+        write_to(&p, &cur).unwrap();
+        let back = with_defaults(read_from(&p));
+        assert_eq!(back.workspace_root.as_deref(), Some("D:/mesa"));
+        assert_eq!(back.workspace_root_history, Some(vec!["E:/old".to_string()]));
         std::fs::remove_dir_all(p.parent().unwrap()).ok();
     }
 
@@ -2153,7 +2258,20 @@ pub struct StorageEntryDto {
     pub exists: bool,
     /// 可清理（快照与备份是可再生/可丢的；profiles/keys/app.db 一律 false）
     pub clearable: bool,
+    /// 清理用的条目键（= 配置目录下的相对名；工作副本两项为 `~worktrees` / `~workspaces`，不可清理）
+    pub id: String,
+    /// 目录太大、统计达到条目上限提前收手：bytes 是下限，前端显示「≥」
+    pub approx: bool,
+    /// 归属：config = Mesa 配置目录；home = 当前家目录（默认 ~/ccode）下的工作副本；
+    /// home-old = 换位置前遗留在旧家目录里的工作副本
+    pub root: String,
 }
+
+/// 可清理条目白名单（clear_storage_entry 只认这里的相对名，防前端传任意路径）。
+/// 2026-10-17 落地清理时逐项核过，只有快照能清：
+/// - backups 里有「恢复初始状态」要用的首次写入前原样（永久保留）与「撤销上次写入」批次
+/// - catalogs 被 Codex「设为全局默认」写进了 ~/.codex/config.toml，删了 Mesa 外直跑的 codex 读不到模型目录
+const CLEARABLE_STORAGE: [&str; 1] = ["snapshots"];
 
 /// 递归求目录大小；单个条目读失败按 0 计（宁可少算也不报错——这只是个信息展示）。
 /// 有界：最多下钻 2000 个条目，异常巨大的目录返回已累计值，不卡住设置页。
@@ -2197,25 +2315,90 @@ pub async fn app_storage_usage() -> Result<Vec<StorageEntryDto>, String> {
             ("配置（profiles.json）", "profiles.json", false),
             ("技能库", "skills", false),
             ("会话快照（pin 保留的）", "snapshots", true),
-            ("配置改写备份", "backups", true),
-            ("模型目录缓存", "catalogs", true),
+            ("配置改写备份", "backups", false),
+            ("Codex 模型目录", "catalogs", false),
             ("定时冻结证据与恢复备份", "watch-reviews", false),
         ];
         let mut out = Vec::new();
         for (label, rel, clearable) in items {
-            let p = root.join(rel);
-            let exists = p.exists();
-            let mut budget = 20_000u32;
-            out.push(StorageEntryDto {
-                label: label.to_string(),
-                path: p.to_string_lossy().to_string(),
-                bytes: if exists { dir_size(&p, &mut budget) } else { 0 },
-                exists,
-                clearable,
-            });
+            out.push(storage_entry(label, root.join(rel), rel, clearable, "config"));
+        }
+        // 工作副本（2026-10-17 补列）：往往才是大头，此前用户完全看不到。
+        // 不可在这里清——里面是正在用的工作树，删了会把进行中的目标弄坏，走项目页的归档/删除。
+        // 家目录可被用户换位置（2026-10-18）：当前根列 home，换走后仍留着旧树的位置列 home-old，
+        // 让人看得见 C 盘上还剩什么
+        let homes = crate::ccode_home::all_roots();
+        for (idx, home_root) in homes.iter().enumerate() {
+            let (root, tag) = if idx == 0 { ("home", "") } else { ("home-old", "old-") };
+            if idx > 0 && !home_root.exists() {
+                continue;
+            }
+            for (label, dir) in [
+                ("编程工作树", "worktrees"),
+                ("科研工作副本", "workspaces"),
+                ("定时隔离树", "watch-worktrees"),
+            ] {
+                let path = home_root.join(dir);
+                if idx > 0 && !path.exists() {
+                    continue;
+                }
+                out.push(storage_entry(
+                    label,
+                    path,
+                    &format!("~{tag}{dir}"),
+                    false,
+                    root,
+                ));
+            }
         }
         Ok(out)
     })
     .await
     .map_err(|e| format!("统计应用数据占用失败: {e}"))?
+}
+
+fn storage_entry(
+    label: &str,
+    path: std::path::PathBuf,
+    id: &str,
+    clearable: bool,
+    root: &str,
+) -> StorageEntryDto {
+    let exists = path.exists();
+    let mut budget = 20_000u32;
+    let bytes = if exists { dir_size(&path, &mut budget) } else { 0 };
+    StorageEntryDto {
+        label: label.to_string(),
+        path: path.to_string_lossy().to_string(),
+        bytes,
+        exists,
+        clearable,
+        id: id.to_string(),
+        approx: exists && budget == 0,
+        root: root.to_string(),
+    }
+}
+
+/// 清理一项可清理的应用数据（设置页「数据与存储」）：整目录移进系统回收站（可拖回），
+/// 再建回空目录——各写手按需 create_dir_all，空目录只是让「定位」仍有地方可去。
+/// 只认 CLEARABLE_STORAGE 白名单里的相对名，前端传不了任意路径
+#[tauri::command]
+pub async fn clear_storage_entry(id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !CLEARABLE_STORAGE.contains(&id.as_str()) {
+            return Err(format!("这一项不能在这里清理：{id}"));
+        }
+        let path = dirs::config_dir()
+            .ok_or("无法确定平台配置目录")?
+            .join("ccode")
+            .join(&id);
+        if !path.exists() {
+            return Ok(());
+        }
+        crate::projects::trash_delete_retry(&path, "应用数据目录")?;
+        std::fs::create_dir_all(&path).map_err(|e| format!("清理后重建空目录失败: {e}"))?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("清理应用数据失败: {e}"))?
 }

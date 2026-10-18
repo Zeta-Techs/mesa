@@ -32,10 +32,14 @@ fn current_os() -> HostOs {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DepItemDto {
-    /// ok | missing | clt_stub（clt_stub 仅 macOS git 可能出现：CLT 未装的系统占位）
+    /// ok | missing | clt_stub | broken（clt_stub 仅 macOS git：CLT 未装的系统占位；
+    /// broken 仅 quarto：找到了但跑不起来，见 quarto_status）
     pub status: String,
     pub version: Option<String>,
     pub path: Option<String>,
+    /// 未就绪的具体原因（目前只有 quarto 的残留环境变量），界面直接显示这一句
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -62,6 +66,7 @@ fn missing_item() -> DepItemDto {
         status: "missing".into(),
         version: None,
         path: None,
+        note: None,
     }
 }
 
@@ -72,6 +77,7 @@ fn ok_item(path: PathBuf) -> DepItemDto {
         status: "ok".into(),
         version,
         path: Some(path.to_string_lossy().into_owned()),
+        note: None,
     }
 }
 
@@ -117,6 +123,7 @@ fn probe_git(os: HostOs) -> DepItemDto {
             status: "clt_stub".into(),
             version: None,
             path: Some(path.to_string_lossy().into_owned()),
+            note: None,
         };
     }
     ok_item(path)
@@ -137,15 +144,74 @@ fn probe_named(name: &str) -> DepItemDto {
     }
 }
 
+/// Quarto 真能跑才算 ok：conda 等渠道会留下缺运行时（deno）的壳，`quarto --version`
+/// 退出码 0 却不输出版本（2026-10-17 本机实证）。只看文件在不在会把它报成正常，
+/// 综述/论文的渲染步骤要到最后才失败。
+fn quarto_status(version: Option<&str>) -> &'static str {
+    match version {
+        Some(v) if v.chars().any(|c| c.is_ascii_digit()) => "ok",
+        _ => "broken",
+    }
+}
+
+pub(crate) fn probe_quarto() -> DepItemDto {
+    let Some(path) = agents::resolve_binary("quarto") else {
+        return missing_item();
+    };
+    let mut item = ok_item(path);
+    item.status = quarto_status(item.version.as_deref()).into();
+    if item.status == "broken" {
+        let vars: Vec<(String, String)> = std::env::vars().collect();
+        item.note = stale_quarto_env_note(&stale_quarto_env(&vars, |p| Path::new(p).exists()));
+    }
+    item
+}
+
+/// 指向已不存在路径的 QUARTO_* 环境变量（2026-10-18 本机实证）：conda 版 quarto 的激活脚本
+/// 会导出 QUARTO_SHARE_PATH / QUARTO_DENO 等，卸载后已经在跑的进程（Mesa 自己、开着的终端）
+/// 还带着它们；官方版 quarto 认这些变量，读不到版本、渲染也会失败——装得再对也没用，
+/// 只有从新开的终端重启 Mesa 才清掉。
+fn stale_quarto_env(vars: &[(String, String)], exists: impl Fn(&str) -> bool) -> Vec<String> {
+    let mut out: Vec<String> = vars
+        .iter()
+        .filter(|(name, value)| {
+            let v = value.trim();
+            let looks_like_path = v.starts_with('/')
+                || (v.len() > 2 && v.as_bytes()[1] == b':' && v.as_bytes()[0].is_ascii_alphabetic());
+            name.starts_with("QUARTO_") && looks_like_path && !exists(v)
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+    out.sort();
+    out
+}
+
+fn stale_quarto_env_note(names: &[String]) -> Option<String> {
+    let first = names.first()?;
+    let more = if names.len() > 1 {
+        format!(" 等 {} 个变量", names.len())
+    } else {
+        String::new()
+    };
+    Some(format!(
+        "Quarto 本身没问题，是 Mesa 进程里的环境变量 {first}{more}指向已删除的路径（多半是卸载 conda 版 quarto 后留下的）；从新开的终端重启 Mesa 即可"
+    ))
+}
+
 fn probe_python_module(module: &str) -> DepItemDto {
     let python = agents::resolve_binary("python3").or_else(|| agents::resolve_binary("python"));
     let Some(path) = python else {
         return missing_item();
     };
+    // 顺带打印版本（设置页原先一律显示「版本未知」）：PIL 与新版 PyMuPDF 有 __version__，
+    // 旧版 PyMuPDF 只有 VersionBind；都没有就空行，照旧算已安装
+    let script = format!(
+        "import {module} as m; print(getattr(m, '__version__', '') or getattr(m, 'VersionBind', ''))"
+    );
     let child = crate::process::background_command(&path)
-        .args(["-c", &format!("import {module}")])
+        .args(["-c", &script])
         .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn();
     let mut child = match child {
@@ -156,10 +222,17 @@ fn probe_python_module(module: &str) -> DepItemDto {
     loop {
         match child.try_wait() {
             Ok(Some(status)) if status.success() => {
+                let mut out = String::new();
+                if let Some(mut stdout) = child.stdout.take() {
+                    use std::io::Read;
+                    let _ = stdout.read_to_string(&mut out);
+                }
+                let version = out.lines().next().map(str::trim).filter(|v| !v.is_empty());
                 return DepItemDto {
                     status: "ok".into(),
-                    version: None,
+                    version: version.map(String::from),
                     path: Some(path.to_string_lossy().into_owned()),
+                    note: None,
                 };
             }
             Ok(Some(_)) => return missing_item(),
@@ -201,7 +274,7 @@ fn check_dependencies_sync() -> Result<DepCheckDto, String> {
     let os = current_os();
     let git = probe_git(os);
     let node = probe_node();
-    let quarto = probe_named("quarto");
+    let quarto = probe_quarto();
     let tex = ["xelatex", "tectonic", "pdflatex"]
         .into_iter()
         .find_map(|name| {
@@ -537,6 +610,30 @@ mod tests {
             HostOs::Windows,
             Path::new("/usr/bin/git")
         ));
+    }
+
+    #[test]
+    fn stale_quarto_env_names_vars_pointing_at_missing_paths() {
+        let vars = vec![
+            ("QUARTO_SHARE_PATH".to_string(), "/gone/share/quarto".to_string()),
+            ("QUARTO_DENO".to_string(), "/gone/bin/deno".to_string()),
+            ("QUARTO_PRINT_STACK".to_string(), "true".to_string()),
+            ("QUARTO_ROOT_OK".to_string(), "/exists".to_string()),
+            ("PATH".to_string(), "/gone".to_string()),
+        ];
+        let stale = stale_quarto_env(&vars, |p| p == "/exists");
+        assert_eq!(stale, vec!["QUARTO_DENO", "QUARTO_SHARE_PATH"]);
+        let note = stale_quarto_env_note(&stale).unwrap();
+        assert!(note.contains("QUARTO_DENO 等 2 个变量"), "{note}");
+        assert!(note.contains("重启 Mesa"));
+        assert_eq!(stale_quarto_env_note(&[]), None);
+    }
+
+    #[test]
+    fn quarto_without_version_output_is_broken() {
+        assert_eq!(quarto_status(Some("1.6.40")), "ok");
+        assert_eq!(quarto_status(None), "broken");
+        assert_eq!(quarto_status(Some("cat: share/version: No such file")), "broken");
     }
 
     #[test]

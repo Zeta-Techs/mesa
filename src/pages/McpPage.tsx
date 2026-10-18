@@ -1,3 +1,7 @@
+import {
+  ClipboardPaste,
+  PackagePlus,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -36,6 +40,7 @@ import {
 import {
   EmptyState,
   FoldMark,
+  LoadingRows,
   PageFrame,
   PageHeader,
   primaryActionClass,
@@ -45,6 +50,8 @@ import {
   RowAction,
   Toggle,
   hoverRevealClass,
+  dangerActionClass,
+  NoticeBar,
 } from "../components/PageFrame";
 import {
   applyBlenderMcpProbe,
@@ -60,7 +67,8 @@ import {
 /** MCP 列表五列网格模板（表头与数据行共用，保证列严格对齐）：
  *  名称 | 类型 | 配置 | 分发 | 行内操作+启用开关（2026-08-25 设计评审：宽屏下左右信息不再跨整页） */
 const MCP_GRID =
-  "grid-cols-[minmax(150px,1.1fr)_64px_minmax(200px,1.4fr)_96px_140px]";
+  // 「用于」列 96→148px：要放下「8 个 CLI · 2 处异常」一行（96px 时折成两行、状态点被挤扁）
+  "grid-cols-[minmax(150px,1.1fr)_64px_minmax(200px,1.4fr)_148px_140px]";
 
 /** 行首健康状态点（v3.93）：未检测不渲染（无状态不渲染状态点）；检测过 = 绿/红点 + 延迟，
  *  悬浮看 detail/error 全文，点击重新检测。↯ 行内测试与这里是同一触发。
@@ -315,20 +323,24 @@ export default function McpPage({ visible }: { visible: boolean }) {
   const [distStatus, setDistStatus] = useState<
     Record<string, Record<string, string>>
   >({});
+  // 2026-10-17 起不只读展开那一条：收起的行也要能在「用于」列标出「N 处异常」，
+  // 否则外部删掉的条目只有点开才看得见。每条只在缓存缺失时读一次（同一份作废时机）
+  const distInflight = useRef(new Set<string>());
   useEffect(() => {
-    if (!visible || !expanded || distStatus[expanded]) return;
-    let stale = false;
-    invoke<Record<string, string>>("mcp_distribution_status", { id: expanded })
-      .then((m) => {
-        if (!stale) setDistStatus((prev) => ({ ...prev, [expanded]: m }));
-      })
-      .catch(() => {
-        if (!stale) toast("MCP 分发状态读取失败，可重新展开重试");
-      });
-    return () => {
-      stale = true;
-    };
-  }, [expanded, visible, distStatus]);
+    if (!visible) return;
+    for (const server of servers) {
+      if (!server.enabled || distStatus[server.id] || distInflight.current.has(server.id))
+        continue;
+      const id = server.id;
+      distInflight.current.add(id);
+      invoke<Record<string, string>>("mcp_distribution_status", { id })
+        .then((m) => setDistStatus((prev) => ({ ...prev, [id]: m })))
+        .catch(() => {
+          if (expanded === id) toast("MCP 分发状态读取失败，可重新展开重试");
+        })
+        .finally(() => distInflight.current.delete(id));
+    }
+  }, [servers, expanded, visible, distStatus]);
   // 回到本页时整体作废（展开中的条目会经上面的 effect 自动重读）
   useEffect(() => {
     if (visible) setDistStatus({});
@@ -473,6 +485,8 @@ export default function McpPage({ visible }: { visible: boolean }) {
   }
 
   const pendingMcpPreset = useAppStore((s) => s.pendingMcpPreset);
+  // 本机检测结果：分发格里未安装的 CLI 降权（写进去也没人读）；检测未就位时不降权
+  const detectedAgents = useAppStore((s) => s.agents);
   const setPendingMcpPreset = useAppStore((s) => s.setPendingMcpPreset);
   useEffect(() => {
     if (!visible || !pendingMcpPreset) return;
@@ -1075,10 +1089,10 @@ export default function McpPage({ visible }: { visible: boolean }) {
           </>
         }
       />
-      {error && <p role="alert" className="text-sm text-err-text">{error}</p>}
-      {notice && <p role="status" className="text-sm text-ok-text">{notice}</p>}
+      {error && <NoticeBar tone="err" className="mb-3" onDismiss={() => setError(null)}>{error}</NoticeBar>}
+      {notice && <NoticeBar className="mb-3" onDismiss={() => setNotice(null)}>{notice}</NoticeBar>}
       {loading ? (
-        <p className="py-8 text-center text-sm text-l4">加载中…</p>
+        <LoadingRows />
       ) : servers.length === 0 ? (
         <EmptyState
           title="还没有 MCP"
@@ -1096,7 +1110,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
       ) : (
         // 整表收进单张卡片容器（field 细边 + strip 底）+ 轻量表头：数据再少也有闭合边界，
         // 行间 hairline 分割；表头与数据行共用 MCP_GRID 保证列严格对齐
-        <div className="mt-1 overflow-hidden rounded-md border border-field ccode-well">
+        <div className="mt-1 overflow-hidden ccode-well ccode-card">
           <div
             className={`grid ${MCP_GRID} items-center gap-3 border-b border-hairline px-3 py-2 text-micro tracking-wider text-l4`}
           >
@@ -1212,15 +1226,42 @@ export default function McpPage({ visible }: { visible: boolean }) {
                         });
                       setExpanded(open ? null : s.id);
                     }}
-                    title="展开分发管理"
-                    className={`flex items-center gap-1.5 rounded-sm px-1.5 py-0.5 text-xs hover:bg-hover ${
+                    title={
+                      onCount > 0
+                        ? `已分发到：${AGENTS.filter((a) => s.apps[a.id]).map((a) => a.label).join("、")}\n点击展开分发管理`
+                        : "还没分发给任何 CLI；点击展开分发管理"
+                    }
+                    className={`flex min-w-0 items-center gap-1.5 whitespace-nowrap rounded-sm px-1.5 py-0.5 text-xs hover:bg-hover ${
                       onCount > 0 ? "text-l3" : "text-l4"
                     }`}
                   >
-                    {onCount > 0 && (
-                      <span className="size-1.5 rounded-full bg-ok-text" />
-                    )}
-                    {onCount > 0 ? `${onCount} 个 CLI` : "未用"}
+                    {(() => {
+                      const issues = s.enabled
+                        ? AGENTS.filter(
+                            (a) =>
+                              s.apps[a.id] &&
+                              mcpDistBadge(distStatus[s.id]?.[a.id]) !== null,
+                          )
+                        : [];
+                      return (
+                        <>
+                          {onCount > 0 && (
+                            <span
+                              className={`size-1.5 shrink-0 rounded-full ${issues.length ? "bg-warn-text" : "bg-ok-text"}`}
+                            />
+                          )}
+                          {onCount > 0 ? `${onCount} 个 CLI` : "未用"}
+                          {issues.length > 0 && (
+                            <span
+                              className="text-warn-text"
+                              title={`${issues.map((a) => `${a.label}：${mcpDistBadge(distStatus[s.id]?.[a.id])?.label}`).join("\n")}\n点击展开处理`}
+                            >
+                              · {issues.length} 处异常
+                            </span>
+                          )}
+                        </>
+                      );
+                    })()}
                   </button>
                   <span className="flex items-center justify-end gap-1">
                     {/* 行内悬浮操作（v3.93）：↯ 测试连通 / ✎ 编辑 / ✕ 删除。
@@ -1270,7 +1311,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
                   // 展开面板：浅底 + 细边 + 圆角的深层区，给嵌套内容（完整配置/变量/分发网格）
                   // 一个明确的空间落点，不再直接摊在行下方
                   <div className="px-3 pb-3">
-                    <div className="rounded-md border border-hairline ccode-well p-2.5">
+                    <div className="ccode-well ccode-card p-2.5">
                       <div className="break-all font-mono text-xs leading-5 text-l3">
                         {s.kind === "stdio"
                           ? `${s.command} ${s.args.join(" ")}`.trim()
@@ -1334,12 +1375,24 @@ export default function McpPage({ visible }: { visible: boolean }) {
                         {AGENTS.map((agent) => {
                           const on = !!s.apps[agent.id];
                           const key = `${s.id}:${agent.id}`;
+                          const notInstalled =
+                            detectedAgents.length > 0 &&
+                            !detectedAgents.some((a) => a.id === agent.id && a.binaryPath);
                           return (
                             <div
                               key={agent.id}
                               className="flex items-center justify-between gap-2 rounded-sm ccode-well px-2 py-1.5"
+                              title={
+                                notInstalled
+                                  ? `本机未安装 ${agent.label}：分发会写进它的配置目录，但现在没有 CLI 读取`
+                                  : undefined
+                              }
                             >
-                              <span className="flex min-w-0 items-center gap-1 text-xs text-l3">
+                              <span
+                                className={`flex min-w-0 items-center gap-1 text-xs ${
+                                  notInstalled && !on ? "text-l4" : "text-l3"
+                                }`}
+                              >
                                 {/* 分发状态徽标（v3.88 三态点扩为五态）：开关表达清单分发意图
                                     （apps 映射），点/徽标表达磁盘事实（mcp_distribution_status
                                     只读探测）。全局停用时条目是 Mesa 自己移除的，
@@ -1369,21 +1422,29 @@ export default function McpPage({ visible }: { visible: boolean }) {
                                         {/* modified 沿用原三态点提示；missing/disabled 是
                                             新增异常态，补文字徽标避免只靠颜色传达 */}
                                         {badge && state !== "modified" && (
-                                          <span
-                                            className="shrink-0 rounded-sm px-1 py-px text-micro"
+                                          // 开关已经是开着的，原提示「拨开开关重新写入」得先关再开才行——
+                                          // 徽标本身做成重写按钮，一步到位
+                                          <button
+                                            type="button"
+                                            className="shrink-0 rounded-sm px-1 py-px text-micro hover:brightness-110 disabled:opacity-50"
                                             style={{
                                               color: badge.color,
                                               background: badge.background,
                                             }}
-                                            title={badge.tip}
+                                            title={`${badge.tip}\n点击按 Mesa 清单重新写入 ${agent.label}`}
+                                            disabled={!!applying[key]}
+                                            onClick={() => void toggleApp(s, agent.id, true, true)}
                                           >
-                                            {badge.label}
-                                          </span>
+                                            {badge.label} · 重写
+                                          </button>
                                         )}
                                       </>
                                     );
                                   })()}
                                 <span className="truncate">{agent.label}</span>
+                                {notInstalled && (
+                                  <span className="shrink-0 text-micro text-l4">未安装</span>
+                                )}
                               </span>
                               {caps[agent.id] && !caps[agent.id].mcpWrite.supported ? (
                                 <span
@@ -1513,11 +1574,14 @@ export default function McpPage({ visible }: { visible: boolean }) {
                 {modal.note}
               </p>
             )}
+            {/* 字段都配小标题：原先只有占位字，填上值以后（blender / uv / 30）就看不出各格是什么 */}
             <div className="space-y-3">
-              <div className="flex items-center gap-2">
+              <div className="flex items-end gap-2">
+                <label className="min-w-0 flex-1">
+                <span className="mb-1 block text-xs text-l3">名称</span>
                 <input
                   className={`${fieldClass} min-w-0 flex-1`}
-                  placeholder="名称（字母/数字/连字符，如 fs-tools）"
+                  placeholder="字母/数字/连字符，如 fs-tools"
                   value={modal.form.name}
                   onChange={(e) =>
                     setModal({
@@ -1526,7 +1590,11 @@ export default function McpPage({ visible }: { visible: boolean }) {
                     })
                   }
                 />
-                <div className="flex shrink-0 gap-0.5 rounded-sm border border-field p-0.5">
+                </label>
+                <div
+                  className="flex shrink-0 gap-0.5 rounded-sm border border-field p-0.5"
+                  title="stdio：本机拉起一个进程；remote：连一个网址"
+                >
                   {(["stdio", "remote"] as const).map((k) => (
                     <button
                       key={k}
@@ -1550,10 +1618,12 @@ export default function McpPage({ visible }: { visible: boolean }) {
               </div>
               {modal.form.kind === "stdio" ? (
                 <>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-end gap-2">
+                    <label className="basis-40 shrink-0 grow-0">
+                    <span className="mb-1 block text-xs text-l3">命令</span>
                     <input
-                      className={`${fieldClass} basis-40 shrink-0 grow-0`}
-                      placeholder="命令，如 npx"
+                      className={fieldClass}
+                      placeholder="如 npx、uv"
                       value={modal.form.command}
                       onChange={(e) =>
                         setModal({
@@ -1562,9 +1632,13 @@ export default function McpPage({ visible }: { visible: boolean }) {
                         })
                       }
                     />
+                    </label>
+                    <label className="min-w-0 flex-1">
+                    <span className="mb-1 block text-xs text-l3">参数（空格分隔）</span>
                     <input
-                      className={`${fieldClass} min-w-0 flex-1 font-mono`}
-                      placeholder="参数（空格分隔）"
+                      className={`${fieldClass} font-mono`}
+                      title={modal.form.argsText}
+                      placeholder="如 -y @scope/server"
                       value={modal.form.argsText}
                       onChange={(e) =>
                         setModal({
@@ -1573,10 +1647,13 @@ export default function McpPage({ visible }: { visible: boolean }) {
                         })
                       }
                     />
+                    </label>
                   </div>
+                  <label className="block">
+                  <span className="mb-1 block text-xs text-l3">工作目录（可空）</span>
                   <input
                     className={fieldClass}
-                    placeholder="工作目录（可空；claude/codebuddy/cursor 不写此字段）"
+                    placeholder="Claude Code / CodeBuddy / Cursor 不写这一项"
                     value={modal.form.cwd}
                     onChange={(e) =>
                       setModal({
@@ -1585,10 +1662,12 @@ export default function McpPage({ visible }: { visible: boolean }) {
                       })
                     }
                   />
-                  <div>
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-xs text-l3">启动超时（秒，可空）</span>
                     <input
                       className={fieldClass}
-                      placeholder="启动超时（秒，可空）"
+                      placeholder="默认 8 秒"
                       title="体检等待该 server 启动的上限：默认 8 秒，填了按 8–30 秒生效"
                       value={modal.form.timeoutText}
                       onChange={(e) =>
@@ -1603,7 +1682,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
                       生效）；收编 Codex/Grok 配置时会自动带入其
                       startup_timeout_sec
                     </p>
-                  </div>
+                  </label>
                   <PairEditor
                     label="环境变量"
                     pairs={modal.form.env}
@@ -1614,9 +1693,11 @@ export default function McpPage({ visible }: { visible: boolean }) {
                 </>
               ) : (
                 <>
+                  <label className="block">
+                  <span className="mb-1 block text-xs text-l3">URL</span>
                   <input
                     className={`${fieldClass} font-mono`}
-                    placeholder="URL，如 https://example.com/mcp"
+                    placeholder="如 https://example.com/mcp"
                     value={modal.form.url}
                     onChange={(e) =>
                       setModal({
@@ -1625,6 +1706,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
                       })
                     }
                   />
+                  </label>
                   <PairEditor
                     label="请求头"
                     pairs={modal.form.headers}
@@ -1686,8 +1768,8 @@ export default function McpPage({ visible }: { visible: boolean }) {
               </button>
               <button
                 type="button"
-                // 危险次按钮：与 ConfirmDialog 危险钮同口径的 bg-err 系
-                className="inline-flex h-7 items-center justify-center rounded-md bg-err px-3 text-xs text-err-text transition-[filter] hover:brightness-110"
+                // 危险钮：与 ConfirmDialog 同一个 dangerActionClass
+                className={dangerActionClass}
                 onClick={() => void doDelete(deleteTarget, false, false)}
               >
                 连同 agent 配置一起删除
@@ -1757,10 +1839,12 @@ export default function McpPage({ visible }: { visible: boolean }) {
           onClose={() => setTopMenu(null)}
           items={[
             {
+              icon: PackagePlus,
               label: "收编现有配置",
               onSelect: () => void onDiscover(),
             },
             {
+              icon: ClipboardPaste,
               label: "粘贴导入",
               onSelect: () => setPasteOpen(true),
             },

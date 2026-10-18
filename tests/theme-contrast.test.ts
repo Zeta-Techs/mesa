@@ -464,54 +464,95 @@ function pct(re: RegExp, src: string, name: string): number {
   return Number(m[1]);
 }
 
-test("热力图五档色阶（cta 同色系 oklab 两段式）全主题可辨：递增 / 相邻 Δ≥8 / 顶档 ≥3:1", () => {
-  // 公式从 App.css 解析（单一出处）：改两段式百分比即改测试。
-  // 口径（2026-10-12 第七轮定稿）：色相经 var(--color-cta) 透传随主题切换
-  // （oklch 相对色语法在 Lightning/WKWebView 链上不跟主题，已否决）；
-  // 底档贴地是参考图的有意设计，最低档距卡底阈值 ≥14；相邻档与顶档对比从严。
+test("热力图五档色阶（cta 单极梯子）全主题可辨：方向单调 / 步进 / 彩度单调 / 色相恒定 / 顶档 ≥3:1", () => {
+  // 公式从 App.css 解析（单一出处）：改百分比即改测试。
+  // 2026-10-16 重做口径：全部只向无彩极点（黑/白）做 oklab 混合——色相恒定、
+  // 彩度按比例单调按构造成立，断言钉住防回潮（向画布/srgb 混会拉色相、塌彩度）。
+  // 深色 = cta→黑 54/69/84 + 纯 cta 顶档；terracotta 画布偏亮比例上调、neutral
+  // 深蓝 cta 锚点先向白抬（各主题块覆写）；浅色 = 白/黑双极倒转（越深越浓），
+  // 顶档 58%黑保任意 cta（含黄色）对近白卡底 ≥3:1。
   const themeSrc = /@theme \{(.*?)\n\}/s.exec(css)?.[1] ?? "";
-  const dp = (n: number) =>
-    pct(new RegExp(`--heat-d${n}: color-mix\\(in oklab, var\\(--color-cta\\) (\\d+)%, black\\)`), themeSrc, `--heat-d${n}`);
-  const hp = (n: number) =>
-    pct(new RegExp(`--heat-${n}: color-mix\\(in oklab, var\\(--heat-d${n}\\) (\\d+)%, var\\(--color-canvas\\)\\)`), themeSrc, `--heat-${n}`);
-  const D = [1, 2, 3].map(dp);
-  const H = [1, 2, 3].map(hp);
+  const darkP = [1, 2, 3].map((n) =>
+    pct(new RegExp(`--heat-${n}: color-mix\\(in oklab, var\\(--color-cta\\) (\\d+)%, black\\)`), themeSrc, `--heat-${n}`));
   assert.match(themeSrc, /--heat-4:\s*var\(--color-cta\)/, "深色顶档 = 纯 cta");
+  const l0P = pct(
+    /--heat-0: color-mix\(in oklab, var\(--color-inset\) (\d+)%, var\(--color-canvas\)\)/,
+    themeSrc,
+    "--heat-0",
+  );
 
   const lightSrc = /\[data-theme\$="-light"\] \{(.*?)\n\}/s.exec(css)?.[1] ?? "";
-  const lp = (n: number) =>
-    pct(new RegExp(`--heat-${n}: color-mix\\(in srgb, var\\(--color-cta\\) (\\d+)%, var\\(--color-canvas\\)\\)`), lightSrc, `浅色 --heat-${n}`);
-  const Lp = [1, 2, 3].map(lp);
-  const l4m = /--heat-4: color-mix\(in srgb, var\(--color-cta\) (\d+)%, var\(--color-l1\)\)/.exec(lightSrc);
-  assert.ok(l4m, "浅色最高档必须是 cta×l1（近白卡底上纯 cta 不足 3:1）");
+  const lightWhite = [1, 2].map((n) =>
+    pct(new RegExp(`--heat-${n}: color-mix\\(in oklab, var\\(--color-cta\\) (\\d+)%, white\\)`), lightSrc, `浅色 --heat-${n}`));
+  const lightBlack = [3, 4].map((n) =>
+    pct(new RegExp(`--heat-${n}: color-mix\\(in oklab, var\\(--color-cta\\) (\\d+)%, black\\)`), lightSrc, `浅色 --heat-${n}`));
+
+  const terrSrc = /\[data-theme="terracotta"\] \{(.*?)\n\}/s.exec(css)?.[1] ?? "";
+  const terrP = [1, 2, 3].map((n) =>
+    pct(new RegExp(`--heat-${n}: color-mix\\(in oklab, var\\(--color-cta\\) (\\d+)%, black\\)`), terrSrc, `terracotta --heat-${n}`));
+
+  const neutSrc = /\[data-theme="neutral"\] \{(.*?)\n\}/s.exec(css)?.[1] ?? "";
+  const anchorP = pct(/--heat-anchor: color-mix\(in oklab, var\(--color-cta\) (\d+)%, white\)/, neutSrc, "--heat-anchor");
+  const neutP = [1, 2, 3].map((n) =>
+    pct(new RegExp(`--heat-${n}: color-mix\\(in oklab, var\\(--heat-anchor\\) (\\d+)%, black\\)`), neutSrc, `neutral --heat-${n}`));
+  assert.match(neutSrc, /--heat-4:\s*var\(--heat-anchor\)/, "neutral 顶档 = 白抬锚点");
+
+  const chromaOf = (hex: string) => {
+    const [, a, b] = rgb2lab(hex2rgb(hex));
+    return Math.hypot(a, b);
+  };
+  const hueOf = (hex: string) => {
+    const [, a, b] = rgb2lab(hex2rgb(hex));
+    return (Math.atan2(b, a) * 180) / Math.PI;
+  };
+  const lightnessOf = (hex: string) => rgb2lab(hex2rgb(hex))[0];
 
   const failures: string[] = [];
-  function check(name: string, t: Record<string, string>, isLight: boolean) {
+  function check(name: string, id: string | null, t: Record<string, string>, isLight: boolean) {
     const bg = wellColor(t, "canvas");
-    const ladder = isLight
-      ? [
-          mixSrgbHex(t.cta, t.canvas, Lp[0]),
-          mixSrgbHex(t.cta, t.canvas, Lp[1]),
-          mixSrgbHex(t.cta, t.canvas, Lp[2]),
-          mixSrgbHex(t.cta, t.l1, Number(l4m![1])),
-        ]
-      : (() => {
-          const d = D.map((p) => mixOklab(t.cta, "#000000", p));
-          return [
-            mixOklab(d[0], t.canvas, H[0]),
-            mixOklab(d[1], t.canvas, H[1]),
-            mixOklab(d[2], t.canvas, H[2]),
-            t.cta,
-          ];
-        })();
-    const d = ladder.map((x) => Math.abs(lum(x) - lum(bg)));
-    if (!(d[0] < d[1] && d[1] < d[2] && d[2] < d[3]))
-      failures.push(`${name}: 档位距卡底不是严格递增`);
-    const minAdj = Math.min(d[1] - d[0], d[2] - d[1], d[3] - d[2]);
-    if (minAdj < 8) failures.push(`${name}: 相邻档亮度差最小 ${minAdj.toFixed(1)} < 8`);
-    if (d[0] < 14) failures.push(`${name}: 底档距卡底 ${d[0].toFixed(0)} < 14（贴地底档下限）`);
-    const c4 = contrast(ladder[3], bg);
-    if (c4 < 3) failures.push(`${name}: 顶档对卡底 ${c4.toFixed(2)}:1 < 3（WCAG 非文本）`);
+    const ladder =
+      id === "terracotta"
+        ? [...terrP.map((p) => mixOklab(t.cta, "#000000", p)), t.cta]
+        : id === "neutral"
+          ? (() => {
+              const anchor = mixOklab(t.cta, "#ffffff", anchorP);
+              return [...neutP.map((p) => mixOklab(anchor, "#000000", p)), anchor];
+            })()
+          : isLight
+            ? [
+                mixOklab(t.cta, "#ffffff", lightWhite[0]),
+                mixOklab(t.cta, "#ffffff", lightWhite[1]),
+                mixOklab(t.cta, "#000000", lightBlack[0]),
+                mixOklab(t.cta, "#000000", lightBlack[1]),
+              ]
+            : [...darkP.map((p) => mixOklab(t.cta, "#000000", p)), t.cta];
+    const L = ladder.map(lightnessOf);
+    const C = ladder.map(chromaOf);
+    const H = ladder.map(hueOf);
+    // 方向：深色 L 递增、浅色 L 递减（越深越浓）；相邻步进 ≥0.04（oklab L 单位）
+    const dir = isLight ? -1 : 1;
+    for (let i = 0; i < 3; i++) {
+      if (dir * (L[i + 1] - L[i]) < 0.04)
+        failures.push(`${name}: 档${i + 1}→${i + 2} 步进 ${(L[i + 1] - L[i]).toFixed(3)} 过小`);
+    }
+    // 彩度：深色全程不降；浅色前三档不降、深阶顶档 ≥0.55×l3（压深天然低彩）
+    if (isLight) {
+      if (C[1] < C[0] || C[2] < C[1]) failures.push(`${name}: 浅色前三档彩度不单调升`);
+      if (C[3] < 0.55 * C[2]) failures.push(`${name}: 顶档彩度 ${(C[3] / C[2]).toFixed(2)}×l3 塌方`);
+    } else {
+      for (let i = 0; i < 3; i++)
+        if (C[i + 1] < C[i] - 1e-9) failures.push(`${name}: 档${i + 1}→${i + 2} 彩度下降`);
+    }
+    // 色相恒定：无彩极点混合按构造成立；>3° 说明混进了带色相的东西（画布/srgb 回潮）
+    const spread = Math.max(...H) - Math.min(...H);
+    if (spread > 3) failures.push(`${name}: 梯内色相漂 ${spread.toFixed(1)}°`);
+    // 底档不贴死空槽：深色空槽是 --heat-0（inset×canvas 若隐若现），浅色仍是 inset
+    const l0 = isLight ? t.inset : mixOklab(t.inset, t.canvas, l0P);
+    const floor = Math.abs(L[0] - lightnessOf(l0)) + C[0] / 2;
+    if (floor < 0.05) failures.push(`${name}: 底档距空槽 ${floor.toFixed(3)} 贴死`);
+    // 顶档对卡底非文本 3:1（WCAG 1.4.11）
+    const topC = contrast(ladder[3], bg);
+    if (topC < 3) failures.push(`${name}: 顶档对卡底 ${topC.toFixed(2)}:1 < 3`);
   }
 
   const themeIds: (string | null)[] = [
@@ -519,11 +560,16 @@ test("热力图五档色阶（cta 同色系 oklab 两段式）全主题可辨：
     ...THEMES.map((t) => t.id).filter((id) => id !== "midnight"),
   ];
   for (const id of themeIds) {
-    check(id ?? "@theme", tokens(id), (id ?? "").endsWith("-light"));
+    check(id ?? "midnight(@theme)", id, tokens(id), (id ?? "").endsWith("-light"));
   }
-  for (const seeds of [DEFAULT_CUSTOM_THEME, { rail: "#f0f0f0", canvas: "#fcfcfc", accent: "#0169cc" }]) {
+  for (const seeds of [
+    DEFAULT_CUSTOM_THEME,
+    { rail: "#f0f0f0", canvas: "#fcfcfc", accent: "#0169cc" },
+    { rail: "#e7e4da", canvas: "#efede6", accent: "#ffcc00" }, // 黄强调 × 浅画布：浅色梯子的压力位
+    { rail: "#0b0e14", canvas: "#10141c", accent: "#ffcc00" }, // 黄强调 × 暗画布
+  ]) {
     const derived = deriveThemeTokens(seeds).tokens;
-    check(seeds.accent, derived, lum(derived.canvas) > 200);
+    check(`custom ${seeds.accent}`, null, derived, lum(derived.canvas) > 200);
   }
   assert.deepEqual(failures, [], `热力图色阶断档：\n${failures.join("\n")}`);
 });

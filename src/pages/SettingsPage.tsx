@@ -1,29 +1,47 @@
 import BackgroundTasksPanel from "../components/BackgroundTasksPanel";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Search, X } from "lucide-react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import {
+  ChartColumn,
+  Download,
+  Globe,
+  HardDrive,
+  Info,
+  Keyboard,
+  Palette,
+  Search,
+  SlidersHorizontal,
+  Sparkles,
+  SquareTerminal,
+  Stethoscope,
+  X,
+  type LucideIcon,
+} from "lucide-react";
+import appIconDark from "../assets/app-icon/dark.png";
+import appIconLight from "../assets/app-icon/light.png";
 import { searchSettings, type SettingSectionId } from "../settings-search.ts";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { exit, relaunch } from "@tauri-apps/plugin-process";
+import { exit } from "@tauri-apps/plugin-process";
 import { applyTheme, useAppStore } from "../store";
 import type { AppSettings } from "../store";
 import {
   compactPrimaryActionClass,
   fieldClass,
-  ghostActionClass,
   hoverRevealClass,
   PageFrame,
   PageHeader,
   primaryActionClass,
-  rowActionClass,
   Checkbox,
   FoldMark,
+  SegTabs,
   Toggle,
-  secondaryActionClass,
+  settingsPillClass,
+  InlineNotice,
 } from "../components/PageFrame";
 import { captureDecision, comboLabel, IS_MAC, IS_WINDOWS, PAGE_HOTKEY_DEFS } from "../hotkeys";
 import {
   canOneClickInstall,
+  depMissingReason,
   installGuidance,
   type DepItemDto,
   type DepPlatform,
@@ -44,14 +62,22 @@ import {
   selectedAiProfileChoice,
 } from "../ai-profile-choice";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { open as openDirectory } from "@tauri-apps/plugin-dialog";
 import {
   TERMINAL_FONT_CHOICES,
   isKnownTerminalFont,
+  monoFallbackStack,
+  terminalFontStack,
 } from "../terminal-font";
-import type { CustomRuntimeDto, StorageEntryDto } from "../types";
+import type { CustomRuntimeDto, StorageEntryDto, UnpricedModelDto } from "../types";
 import { AGENTS } from "../types";
 import { getVersion } from "@tauri-apps/api/app";
-import { collectFrontendDiagnostics } from "../diagnostics";
+import {
+  collectFrontendDiagnostics,
+  formatLogText,
+  logLocalTime,
+} from "../diagnostics";
+import { useAppUpdateInstall } from "../app-update-install";
 import {
   appUpdateProgressLabel,
   appUpdateProgressPct,
@@ -66,6 +92,7 @@ import {
   resolvePaletteId,
 } from "../terminal-palettes";
 import { THEMES, isCustomThemeId, isLightTheme } from "../themes";
+import { followedTheme } from "../theme-follow";
 import {
   DEFAULT_INST_LOGIN_URL,
   instOtherPanelDefaultOpen,
@@ -80,10 +107,13 @@ import {
 } from "../theme-swatch";
 import { alertDialog, confirmDialog } from "../components/ConfirmDialog";
 import FeedbackModal from "../components/FeedbackModal";
+import {
+  ThirdPartyNotices,
+  loadThirdPartyNotices,
+} from "../components/ThirdPartyNotices";
 import { Modal } from "../components/Modal";
 import {
   addCustomThemeCard,
-  chipInk,
   CUSTOM_THEME_CARDS_MAX,
   customThemeIdFromSeeds,
   DEFAULT_CUSTOM_THEME,
@@ -103,9 +133,13 @@ import { NAV_GROUPS, NAV_BOTTOM } from "../navigation";
 import {
   CHROME_OPACITIES,
   chromeOpacityLabel,
+  chromeOpacityShortLabel,
   normalizeChromeOpacity,
 } from "../chrome-opacity";
 import { toast } from "../toast";
+import { compact as compactTokens } from "../stats-insight";
+import { storageClearConfirmText, storageSegments, summarizeStorage } from "../settings-storage";
+import InternalSessionsCard from "../components/InternalSessionsCard";
 
 // 调色板清单单一出处在 ../terminal-palettes（PALETTE_LIST，含亮暗标记）
 
@@ -119,7 +153,8 @@ function paletteDots(id: string): string[] {
 
 
 
-/** 整块点开系统取色器；名称和色值只展示，不在色块上改 */
+/** 调色块：做成输入框形态（色块 + 名称 + 色值），整块点开系统取色器。
+ *  不与主题小窗同形——原先同尺寸同版式，被看成又一排可选主题（2026-10-17） */
 function ColorChip({
   label,
   value,
@@ -130,17 +165,15 @@ function ColorChip({
   onLive: (hex: string) => void;
 }) {
   const hex = normalizeHex(value) ?? "#000000";
-  const ink = chipInk(hex);
   return (
-    <label className="relative h-14 w-[6.5rem] shrink-0 cursor-pointer overflow-hidden rounded-md ring-1 ring-hairline hover:ring-field">
-      <span className="pointer-events-none block h-full" style={{ background: hex }} />
+    <label className="relative inline-flex h-8 shrink-0 cursor-pointer items-center gap-2 rounded-md border border-field bg-canvas pl-1 pr-2.5 text-xs hover:border-l4">
       <span
-        className="pointer-events-none absolute inset-x-0 bottom-0 px-1.5 py-1"
-        style={{ color: ink }}
-      >
-        <span className="block text-micro font-medium">{label}</span>
-        <span className="block font-mono text-micro leading-4">{hex}</span>
-      </span>
+        aria-hidden="true"
+        className="h-6 w-6 shrink-0 rounded-sm ring-1 ring-hairline"
+        style={{ background: hex }}
+      />
+      <span className="text-l3">{label}</span>
+      <span className="font-mono text-micro text-l2">{hex}</span>
       <input
         type="color"
         aria-label={label}
@@ -153,9 +186,142 @@ function ColorChip({
   );
 }
 
+/** 主题小窗：左栏竖条 + 画布 + 强调点，名称写在画布上用该主题自己的标题色。
+ *  内置主题、另存色卡、未存自定义三处共用（原先三份手抄） */
+function ThemeTile({
+  name,
+  rail,
+  canvas,
+  accent,
+  ink,
+  selected,
+  title,
+  onClick,
+  onDoubleClick,
+  nameSlot,
+}: {
+  name: string;
+  rail: string;
+  canvas: string;
+  accent: string;
+  ink: string;
+  selected: boolean;
+  title: string;
+  onClick: () => void;
+  onDoubleClick?: () => void;
+  /** 替换名称位（色卡改名输入框） */
+  nameSlot?: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      onDoubleClick={
+        onDoubleClick
+          ? (e) => {
+              e.preventDefault();
+              onDoubleClick();
+            }
+          : undefined
+      }
+      title={title}
+      aria-pressed={selected}
+      className={`h-14 w-full min-w-0 overflow-hidden rounded-md text-left ${
+        selected ? "ring-2 ring-l1" : "ring-1 ring-hairline hover:ring-field"
+      }`}
+      style={{ background: canvas }}
+    >
+      <span className="flex h-full">
+        <span className="w-2.5 shrink-0" style={{ background: rail }} aria-hidden="true" />
+        <span className="flex min-w-0 flex-1 flex-col justify-between px-1.5 py-1.5">
+          <span
+            className="h-1.5 w-1.5 self-end rounded-full"
+            style={{ background: accent }}
+            aria-hidden="true"
+          />
+          {nameSlot ?? (
+            <span className="truncate text-micro font-medium" style={{ color: ink }}>
+              {name}
+            </span>
+          )}
+        </span>
+      </span>
+    </button>
+  );
+}
+
+/** 系统当前是否深色。跟随态下窗口外观交还系统，媒体查询读到的就是系统值 */
+function systemIsDark(): boolean {
+  return typeof window.matchMedia === "function"
+    ? window.matchMedia("(prefers-color-scheme: dark)").matches
+    : true;
+}
+
+/** 终端分区顶部的预览：字体 / 字号 / 调色板改了当场看得到，不必切到运行页开一个标签。
+ *  底与字色取主题的 editor-bg/fg 令牌（深色主题与终端 XTERM_BG_FG 逐字相同，浅色主题终端
+ *  另取近白，差在肉眼分辨以下），ANSI 色取实际生效的调色板；中文行验证 CJK 回退 */
+function TerminalPreview({
+  family,
+  fontSize,
+  paletteId,
+}: {
+  family: string;
+  fontSize: number;
+  paletteId: string;
+}) {
+  const p = XTERM_PALETTES[paletteId] ?? XTERM_PALETTES["dark-plus"];
+  const lines: { text: string; color?: string }[][] = [
+    [{ text: "~/thesis ", color: p.blue }, { text: "$ ", color: p.brightBlack }, { text: "git status --short" }],
+    [{ text: " M ", color: p.red }, { text: "manuscript/intro.md" }],
+    [{ text: "?? ", color: p.red }, { text: "data/cleaned.csv" }],
+    [{ text: "✓ ", color: p.green }, { text: "12 项检查通过  " }, { text: "⚠ 1 条警告", color: p.yellow }],
+    [{ text: "→ ", color: p.cyan }, { text: "读取 references.bib  " }, { text: "0O 1lI {}[]", color: p.magenta }],
+  ];
+  return (
+    <div
+      aria-label="终端预览"
+      role="img"
+      className="mb-3 overflow-hidden rounded-xl px-4 py-3 ring-1 ring-hairline"
+      style={{
+        background: "var(--color-editor-bg)",
+        color: "var(--color-editor-fg)",
+        fontFamily: terminalFontStack(family, monoFallbackStack()),
+        fontSize: `${Math.min(18, Math.max(11, fontSize))}px`,
+        lineHeight: 1.35,
+      }}
+    >
+      {lines.map((segs, i) => (
+        <div key={i} className="whitespace-pre">
+          {segs.map((seg, j) => (
+            <span key={j} style={seg.color ? { color: seg.color } : undefined}>
+              {seg.text}
+            </span>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // fieldClass 自带 w-full：本页 Row 右列是收缩到内容的 auto 列，定宽控件（w-20/w-24/w-40）
 // 追加的宽度类在 Tailwind 排序中会被 w-full 覆盖，故用去掉 w-full 的本页变体保持原宽度
-const fieldFixed = fieldClass.replace("w-full ", "");
+// 2026-10-18 起设置页控件整体换「胶囊」手感：圆角放大、高度 36px、底色抬一档（借鉴 Codex 设置页）
+const fieldFixed = fieldClass
+  .replace("w-full ", "")
+  .replace("rounded-md", "rounded-lg")
+  .replace("bg-canvas", "bg-strip")
+  .replace("py-1.5", "h-9");
+
+/** 设置页按钮：抬底胶囊，行内操作与卡头动作统一一档（原 28px 无框 ghost / 描边次按钮并为一种） */
+const ghostActionClass = settingsPillClass;
+const secondaryActionClass = settingsPillClass;
+const rowActionClass = settingsPillClass;
+
+/** 下拉宽度只留三档（2026-10-17）：原先跟最长选项走，终端页三个下拉宽度差一倍多，
+ *  AI 专用配置更是顶出卡片右缘。短枚举 sm、一般 md、带配置名/字体说明的长选项 lg */
+const selectSm = `${fieldFixed} w-40 max-w-full`;
+const selectMd = `${fieldFixed} w-64 max-w-full`;
+const selectLg = `${fieldFixed} w-80 max-w-full`;
 
 /** 「外部终端」下拉的选项按平台给（navigator.platform 在 WKWebView/Chromium 均可用） */
 const EXTERNAL_TERMINALS: { id: string; label: string }[] = (() => {
@@ -188,21 +354,37 @@ function externalTerminalSelectValue(stored: string | undefined): string {
   return ids[0] ?? "auto";
 }
 
-/** 内置 AI 功能按功能独立配置的行（key 与后端 ai.rs FN_* 常量对应） */
-const AI_FN_ROWS: { key: string; label: string }[] = [
-  { key: "commit", label: "提交信息" },
-  { key: "summarize", label: "会话摘要 / 起名" },
-  { key: "pr", label: "PR 描述" },
-  { key: "distill", label: "沉淀为技能" },
-      { key: "skill-optimize", label: "优化合成技能" },
-  { key: "digest", label: "提炼接力 / 评审沉淀" },
-  { key: "conflict", label: "冲突建议" },
-  { key: "translate", label: "翻译" },
-  { key: "watch-explain", label: "雷达解读" },
+/** 内置 AI 功能按功能独立配置的行（key 与后端 ai.rs FN_* 常量对应）。
+ *  按用在哪里分三组，每行一句说明——「提炼接力」「雷达解读」这类名字不说用在哪，新用户无从判断要不要单配 */
+const AI_FN_GROUPS: { title: string; rows: { key: string; label: string; hint: string }[] }[] = [
+  {
+    title: "编程",
+    rows: [
+      { key: "commit", label: "提交信息", hint: "提交改动时起草说明" },
+      { key: "pr", label: "PR 描述", hint: "开拉取请求时起草描述" },
+      { key: "conflict", label: "冲突建议", hint: "合并冲突时给出选哪边的建议" },
+    ],
+  },
+  {
+    title: "对话与技能",
+    rows: [
+      { key: "summarize", label: "会话摘要 / 起名", hint: "对话列表的标题与摘要" },
+      { key: "digest", label: "接力与评审提炼", hint: "交接给下一个 Agent、评审结论沉淀" },
+      { key: "distill", label: "沉淀为技能", hint: "把一段对话整理成技能" },
+      { key: "skill-optimize", label: "优化合成技能", hint: "合并、改写已有技能" },
+    ],
+  },
+  {
+    title: "科研",
+    rows: [
+      { key: "translate", label: "翻译", hint: "阅读文献、技能页里的翻译" },
+      { key: "watch-explain", label: "雷达解读", hint: "定时文献雷达命中后的解读" },
+    ],
+  },
 ];
 
 const NAV_CAPSULE_SETTING_ITEMS: { id: NavCapsuleItemId; label: string }[] = [
-  { id: "quick-chat", label: "快速开聊" },
+  { id: "quick-chat", label: "新对话" },
   ...NAV_GROUPS.flatMap((group) =>
     group.items.map((item) => ({ id: item.id as NavCapsuleItemId, label: item.label })),
   ),
@@ -234,6 +416,16 @@ const INSTALLABLE_FONTS: Record<string, string> = {
 type FontStatus = { id: string; family: string; installed: boolean };
 type FontInstallResult = { ok: boolean; output: string };
 
+/** 「本机占用」条形图色阶：取主题令牌，换主题自动跟随；最后一档（灰）给「其他」 */
+const STORAGE_TONES = [
+  "var(--color-cta)",
+  "var(--color-ok-text)",
+  "var(--color-link)",
+  "var(--color-warn-text)",
+  "var(--color-err-text)",
+  "var(--color-l4)",
+];
+
 /** 字节数白话：设置页「数据与存储」用（1 位小数，KB 起跳） */
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -247,21 +439,25 @@ function formatBytes(n: number): string {
   return `${v.toFixed(v >= 10 ? 0 : 1)} ${units[i]}`;
 }
 
+/** 分区清单：顺序即导航顺序。description 是分区标题下那一行，回答「这里管什么」 */
 const SETTING_NAV: {
   id: SettingSectionId;
   label: string;
   group: "basic" | "management";
+  icon: LucideIcon;
+  description: string;
 }[] = [
-  { id: "appearance", label: "外观", group: "basic" },
-  { id: "startup", label: "启动行为", group: "basic" },
-  { id: "hotkeys", label: "快捷键", group: "basic" },
-  { id: "stats", label: "统计", group: "basic" },
-  { id: "integration", label: "集成", group: "management" },
-  { id: "network", label: "网络", group: "management" },
-  { id: "update", label: "更新", group: "management" },
-  { id: "diag", label: "诊断", group: "management" },
-  { id: "storage", label: "数据与存储", group: "management" },
-  { id: "about", label: "关于", group: "management" },
+  { id: "appearance", label: "外观", group: "basic", icon: Palette, description: "主题、透明度与应用图标" },
+  { id: "terminal", label: "终端", group: "basic", icon: SquareTerminal, description: "内嵌终端的显示、外部终端与自定义运行时" },
+  { id: "startup", label: "通用", group: "basic", icon: SlidersHorizontal, description: "启动页面、导航形态与系统通知" },
+  { id: "hotkeys", label: "快捷键", group: "basic", icon: Keyboard, description: "点绑定钮后按下新组合即保存，Esc 取消" },
+  { id: "integration", label: "AI 与 Agent", group: "management", icon: Sparkles, description: "内置 AI 功能用哪份配置，以及 Mesa 对各家 Agent 的约束" },
+  { id: "network", label: "网络", group: "management", icon: Globe, description: "出网代理、下载镜像与学校图书馆" },
+  { id: "stats", label: "用量", group: "management", icon: ChartColumn, description: "用量页折算费用用的汇率与价目" },
+  { id: "update", label: "更新", group: "management", icon: Download, description: "检查并安装 Mesa 新版本" },
+  { id: "diag", label: "诊断", group: "management", icon: Stethoscope, description: "排障用的诊断包、依赖体检与应用日志" },
+  { id: "storage", label: "数据与存储", group: "management", icon: HardDrive, description: "Mesa 在本机占用的目录，以及卸载" },
+  { id: "about", label: "关于", group: "management", icon: Info, description: "版本、许可、隐私与反馈" },
 ];
 
 /** 设置页低频折叠：校外前缀 / 其他方式。默认开闭由调用方按已填内容决定。 */
@@ -326,15 +522,15 @@ function DepStatusLine({
       </div>
     );
   }
-  const reason =
-    item.status === "clt_stub" ? "需要安装 Xcode 命令行工具" : "未安装";
+  const reason = depMissingReason(item);
   return (
     <div className="py-1 text-xs">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-err-text">✗</span>
         <span className="text-l2">{label}</span>
         <span className="text-l4">{reason}</span>
-        {canOneClickInstall(tool, channel) ? (
+        {/* 有具体原因（如残留环境变量）时装不装都一样，不给安装按钮误导人去重装 */}
+        {item.note ? null : canOneClickInstall(tool, channel) ? (
           <button
             onClick={() => onInstall(tool)}
             disabled={entry.running}
@@ -373,45 +569,111 @@ function buildInfoSuffix(
   return `${os} · ${arch}${b.channel === "dev" ? " · 开发模式" : ""}`;
 }
 
-/** 「开源许可」只读浮层：几百行清单文本，复用全站 Modal 壳
- *  （Esc / 遮罩 / 关闭钮 + 焦点陷阱，与确认框同一套行为）。 */
+/** 「开源许可与致谢」只读浮层：复用全站 Modal 壳（Esc / 遮罩 / 关闭钮 + 焦点陷阱）。
+ *  内容与帮助菜单 → 关于的许可内页同一个组件（ThirdPartyNotices）：致谢与数据来源一页、
+ *  组件许可一页（可搜索） */
 function NoticesOverlay({ text, onClose }: { text: string; onClose: () => void }) {
   return (
     <Modal
       open
       onClose={onClose}
-      title="开源许可"
-      description="Mesa 与第三方组件"
+      title="开源许可与致谢"
+      description="Mesa 按 Apache-2.0 发布；下面是它用到的开源组件、字体与数据来源。"
       size="lg"
     >
-      <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap text-xs leading-5 text-l2">
-        {text}
-      </pre>
+      <ThirdPartyNotices text={text} />
     </Modal>
   );
 }
 
-/** 导航选中的分区始终展开；分区标题不是折叠操作。 */
+/** 导航选中的分区始终展开；分区标题不是折叠操作。标题与说明取自 SETTING_NAV，两处不会写岔 */
 function Section({
-  title,
-  badge,
+  id,
   active,
+  badge,
   children,
 }: {
-  title: string;
+  id: SettingSectionId;
+  active: string;
   badge?: React.ReactNode;
-  active: boolean;
   children: React.ReactNode;
 }) {
-  if (!active) return null;
+  if (id !== active) return null;
+  const nav = SETTING_NAV.find((n) => n.id === id);
   return (
     <section>
-      <h2 className="mb-1 flex min-h-8 flex-wrap items-center gap-2 text-sm font-medium text-l1">
-        {title}
-        {badge}
-      </h2>
-      <div>{children}</div>
+      <header className="mb-5">
+        {/* 分区标题是页内最大的字（2026-10-18 借鉴 Codex 设置页：大标题 + 一行灰说明，
+            其下才是成组卡片）；原 text-base 与卡头只差一档，层级发闷 */}
+        <h2 className="flex min-h-9 flex-wrap items-center gap-2 text-xl font-semibold leading-9 tracking-tight text-l1">
+          {nav?.label}
+          {badge}
+        </h2>
+        {nav?.description && <p className="mt-1 text-sm leading-5 text-l3">{nav.description}</p>}
+      </header>
+      <div>{groupRows(children)}</div>
     </section>
+  );
+}
+
+/** 分区内的小节标题：只用留白和字重分组，不画线、不铺底（design-system 设置页口径） */
+function SubHeading({ title, hint }: { title: string; hint?: string }) {
+  return (
+    <div className="mt-8 mb-1 first:mt-0">
+      <h3 className="text-base font-semibold text-l1">{title}</h3>
+      {hint && <p className="mt-0.5 text-micro leading-4 text-l3">{hint}</p>}
+    </div>
+  );
+}
+
+/** 成组编辑器的统一内容卡：卡头 = 标题 + 一句说明 + 右侧动作，卡内放 CardRow 或自定义内容 */
+function Card({
+  title,
+  hint,
+  action,
+  children,
+}: {
+  title?: React.ReactNode;
+  hint?: React.ReactNode;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="mt-3 ccode-well ccode-card p-4">
+      {(title || action) && (
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            {title && <div className="text-sm font-medium text-l1">{title}</div>}
+            {hint && <p className="mt-0.5 text-micro leading-4 text-l3">{hint}</p>}
+          </div>
+          {action && <div className="flex shrink-0 items-center gap-2">{action}</div>}
+        </div>
+      )}
+      {children}
+    </div>
+  );
+}
+
+/** 卡内列表行：功能名在左、控件靠右，宽屏由外层 grid 排成双列 */
+function CardRow({
+  label,
+  hint,
+  title,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  title?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="group flex min-h-11 items-center justify-between gap-3 rounded-lg px-2.5 py-1.5 hover:bg-hover">
+      <div className="min-w-0" title={title}>
+        <div className="truncate text-sm text-l1">{label}</div>
+        {hint && <p className="mt-0.5 truncate text-micro leading-4 text-l3">{hint}</p>}
+      </div>
+      <div className="flex shrink-0 items-center gap-2">{children}</div>
+    </div>
   );
 }
 
@@ -420,26 +682,133 @@ function Row({
   hint,
   labelTitle,
   extra,
+  align = "center",
+  disabled = false,
   children,
 }: {
   label: string;
   hint?: string;
-  /** 文案克制（v3.88）：说不完的机制说明压成一句 hint，全文挂标签上悬浮可读 */
+  /** 文案克制（v3.88）：说不完的机制说明压成一句 hint，全文挂标签旁的 ⓘ 上悬浮可读 */
   labelTitle?: string;
   /** 行下方全宽区域（如字体安装的流式输出），不传不渲染 */
   extra?: React.ReactNode;
+  /** 右侧控件高于一行（按钮 + 折叠 / 候选列表 / 图标块）时用 start：
+   *  居中会让左标签掉到控件中段，看着和首个控件对不齐 */
+  align?: "center" | "start";
+  /** 前置条件不满足：整行弱化且不可点（灵动岛组在非隐藏导航形态下） */
+  disabled?: boolean;
   children: React.ReactNode;
 }) {
+  // 2026-10-18：行 = 左标题/说明 + 右控件靠右（Codex 设置页手感）；窄了控件自然折到标题下方。
+  // 行与行之间的发丝线、卡片外框由 RowGroup 给——Row 只管自己的内边距
   return (
-    <div className="grid grid-cols-1 items-start gap-x-5 gap-y-2 py-3 @min-[40rem]/settings:grid-cols-[minmax(12rem,20rem)_minmax(0,1fr)] @min-[40rem]/settings:items-center">
-      <div className="min-w-0">
-        <div className="text-sm text-l2" title={labelTitle}>
-          {label}
+    <div
+      aria-disabled={disabled || undefined}
+      className={`flex flex-wrap gap-x-6 gap-y-2.5 px-4 py-3.5 ${
+        align === "center" ? "items-center" : "items-start"
+      } ${disabled ? "pointer-events-none opacity-50" : ""}`}
+    >
+      <div className={`min-w-[12rem] flex-1 ${align === "start" ? "pt-1.5" : ""}`}>
+        <div className="flex items-center gap-1.5 text-sm font-medium text-l1">
+          <span>{label}</span>
+          {/* 悬浮说明原先只挂在标签文字上，没有任何视觉提示，等于藏起来了；
+              补一个可聚焦的 ⓘ，键盘与读屏也拿得到全文 */}
+          {labelTitle && (
+            <span
+              tabIndex={0}
+              role="img"
+              aria-label={labelTitle}
+              title={labelTitle}
+              className="inline-flex shrink-0 cursor-help rounded-sm text-l4 outline-none hover:text-l2 focus-visible:text-l1 focus-visible:ring-1 focus-visible:ring-field"
+            >
+              <Info aria-hidden="true" className="h-3 w-3" />
+            </span>
+          )}
         </div>
-        {hint && <p className="mt-0.5 max-w-lg text-micro leading-4 text-l4">{hint}</p>}
+        {hint && <p className="mt-0.5 max-w-lg text-micro leading-4 text-l3">{hint}</p>}
       </div>
-      <div className="flex min-w-0 flex-wrap items-center justify-start gap-2">{children}</div>
-      {extra && <div className="col-span-full mt-2">{extra}</div>}
+      <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2">{children}</div>
+      {extra && <div className="basis-full">{extra}</div>}
+    </div>
+  );
+}
+
+/** 连续的 Row 收成一张分组卡：外框 + 行间发丝线。Section 对直接子元素自动套用，
+ *  页面代码照旧只写 <Row>，不必手包 */
+function RowGroup({ children }: { children: React.ReactNode }) {
+  return <div className="mt-3 ccode-well ccode-card divide-y divide-hairline overflow-hidden">{children}</div>;
+}
+
+/** Section 的直接子元素里，相邻的 Row 合成一个 RowGroup；其余（SubHeading / Card / 自定义块）原样。
+ *  只认直接子元素：包在 Fragment / div 里的 Row 不会被合并，保持自身内边距、不带外框 */
+function groupRows(children: React.ReactNode): React.ReactNode[] {
+  const out: React.ReactNode[] = [];
+  let run: React.ReactElement[] = [];
+  const flush = () => {
+    if (run.length === 0) return;
+    out.push(<RowGroup key={`rows-${out.length}`}>{run}</RowGroup>);
+    run = [];
+  };
+  React.Children.toArray(children).forEach((child) => {
+    if (React.isValidElement(child) && child.type === Row) {
+      run.push(child);
+    } else {
+      flush();
+      out.push(child);
+    }
+  });
+  flush();
+  return out;
+}
+
+/** 应用图标外观三选一（设置 → 外观）。「跟随系统」预览深浅各半，说明它会自己变 */
+const APP_ICON_STYLES: { id: "system" | "dark" | "light"; label: string }[] = [
+  { id: "system", label: "跟随系统" },
+  { id: "dark", label: "深色" },
+  { id: "light", label: "浅色" },
+];
+
+function AppIconPicker({
+  value,
+  onChange,
+}: {
+  value: "system" | "dark" | "light";
+  onChange: (style: "system" | "dark" | "light") => void;
+}) {
+  return (
+    <div role="radiogroup" aria-label="应用图标" className="flex flex-wrap gap-2">
+      {APP_ICON_STYLES.map((opt) => {
+        const selected = value === opt.id;
+        return (
+          <button
+            key={opt.id}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            onClick={() => onChange(opt.id)}
+            className={`flex w-[5.5rem] flex-col items-center gap-1.5 rounded-md px-2 pb-1.5 pt-2.5 text-xs transition-colors ${
+              selected
+                ? "bg-seg-sel text-l1 ring-2 ring-l1"
+                : "text-l3 ring-1 ring-hairline hover:bg-hover hover:text-l1"
+            }`}
+          >
+            {opt.id === "system" ? (
+              <span aria-hidden="true" className="relative h-10 w-10">
+                <img src={appIconDark} alt="" className="absolute inset-0 h-10 w-10 [clip-path:inset(0_50%_0_0)]" />
+                <img src={appIconLight} alt="" className="absolute inset-0 h-10 w-10 [clip-path:inset(0_0_0_50%)]" />
+              </span>
+            ) : (
+              <img
+                src={opt.id === "dark" ? appIconDark : appIconLight}
+                alt=""
+                aria-hidden="true"
+                className="h-10 w-10"
+              />
+            )}
+            {opt.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -535,30 +904,34 @@ function HotkeyCapture({
         {listening ? "按下新快捷键…" : comboLabel(value)}
       </button>
       {conflict && <span className="text-err-text">与其他快捷键冲突</span>}
-      {value !== defaultValue && (
-        <button
-          type="button"
-          onClick={() => {
-            setCapturing(null);
-            onSave(defaultValue);
-          }}
-          className={`${ghostActionClass} shrink-0`}
-        >
-          恢复
-        </button>
-      )}
-      {value !== "" && (
-        <button
-          type="button"
-          onClick={() => {
-            setCapturing(null);
-            onSave("");
-          }}
-          className={`${ghostActionClass} shrink-0`}
-        >
-          禁用
-        </button>
-      )}
+      {/* 「恢复」「禁用」两格固定占位（不适用时 invisible）：条件渲染会让改过默认值的行
+          把快捷键钮往左挤，与同列其他行对不齐（2026-10-17 截图实证 ⌘L 比 ⌘9 左移一截）。
+          「禁用」低频，悬停行才显现 */}
+      <button
+        type="button"
+        tabIndex={value !== defaultValue ? undefined : -1}
+        aria-hidden={value !== defaultValue ? undefined : true}
+        onClick={() => {
+          setCapturing(null);
+          onSave(defaultValue);
+        }}
+        className={`${ghostActionClass} shrink-0 ${value !== defaultValue ? "" : "invisible"}`}
+        title={`恢复默认 ${comboLabel(defaultValue)}`}
+      >
+        恢复
+      </button>
+      <button
+        type="button"
+        tabIndex={value !== "" ? undefined : -1}
+        aria-hidden={value !== "" ? undefined : true}
+        onClick={() => {
+          setCapturing(null);
+          onSave("");
+        }}
+        className={`${ghostActionClass} shrink-0 ${value !== "" ? hoverRevealClass : "invisible"}`}
+      >
+        禁用
+      </button>
     </span>
   );
 }
@@ -583,63 +956,53 @@ function HotkeysSection({
 
   return (
     <>
-      <Row
-        label="页面切换"
-        hint="按侧栏顺序切页；关闭后九个绑定不生效"
-      >
-        <Toggle
-          checked={pageSwitchOn}
-          onChange={(v) => void patch({ hotkeyPageSwitch: v })}
-          label="页面切换"
-        />
-      </Row>
       {/* 成组编辑器统一内容卡（design-system 设置页条目）：「页面快捷键」「全局快捷键」
-          各收一张卡，卡内标准列表行 = 功能名在左、控件靠右，宽屏双列；行不铺底色块 */}
-      <div className="mt-2 rounded-lg ccode-well p-3">
+          各收一张卡，卡内标准列表行 = 功能名在左、控件靠右，宽屏双列；行不铺底色块。
+          「页面切换」总开关管的就是这张卡，放进卡头，不再单独占一行悬在卡外 */}
+      <Card
+        title="页面快捷键"
+        hint={pageSwitchOn ? "一键直达下面九个主页面" : "已关闭：下面九个绑定暂不生效，仍可先改好"}
+        action={
+          <Toggle
+            checked={pageSwitchOn}
+            onChange={(v) => void patch({ hotkeyPageSwitch: v })}
+            label="页面切换"
+          />
+        }
+      >
         {/* 总开关关闭时整组弱化示意（仍可编辑，方便先配好再开） */}
-        <div className={pageSwitchOn ? "" : "opacity-50"}>
-          <div className="mb-2 text-xs font-medium text-l3">页面快捷键</div>
-          <div className="grid grid-cols-1 gap-1 lg:grid-cols-2">
-            {PAGE_HOTKEY_DEFS.map((p) => (
-              <div
-                key={p.id}
-                className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-hover"
-              >
-                <span className="min-w-0 truncate text-sm text-l2">{p.label}</span>
-                <HotkeyCapture
-                  id={p.id}
-                  value={pageCombo(p.id)}
-                  defaultValue={p.combo}
-                  conflictsWith={[
-                    palette,
-                    chrome,
-                    ...PAGE_HOTKEY_DEFS.filter((x) => x.id !== p.id).map(
-                      (x) => pageCombo(x.id),
-                    ),
-                  ]}
-                  onSave={(combo) =>
-                    void patch({
-                      hotkeyPages: {
-                        ...(settings?.hotkeyPages ?? {}),
-                        [p.id]: combo,
-                      },
-                    })
-                  }
-                  capturing={capturing}
-                  setCapturing={setCapturing}
-                />
-              </div>
-            ))}
-          </div>
+        <div className={`grid grid-cols-1 gap-1 lg:grid-cols-2 ${pageSwitchOn ? "" : "opacity-50"}`}>
+          {PAGE_HOTKEY_DEFS.map((p) => (
+            <CardRow key={p.id} label={p.label}>
+              <HotkeyCapture
+                id={p.id}
+                value={pageCombo(p.id)}
+                defaultValue={p.combo}
+                conflictsWith={[
+                  palette,
+                  chrome,
+                  ...PAGE_HOTKEY_DEFS.filter((x) => x.id !== p.id).map(
+                    (x) => pageCombo(x.id),
+                  ),
+                ]}
+                onSave={(combo) =>
+                  void patch({
+                    hotkeyPages: {
+                      ...(settings?.hotkeyPages ?? {}),
+                      [p.id]: combo,
+                    },
+                  })
+                }
+                capturing={capturing}
+                setCapturing={setCapturing}
+              />
+            </CardRow>
+          ))}
         </div>
-      </div>
-      <div className="mt-2 rounded-lg ccode-well p-3">
-        <div className="mb-2 text-xs font-medium text-l3">全局快捷键</div>
+      </Card>
+      <Card title="全局快捷键" hint="在任何页面都生效">
         <div className="grid grid-cols-1 gap-1 lg:grid-cols-2">
-          <div className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-hover">
-            <span className="min-w-0 truncate text-sm text-l2" title="页面跳转 / 主题 / 侧栏">
-              命令面板
-            </span>
+          <CardRow label="命令面板" title="页面跳转 / 主题 / 侧栏">
             <HotkeyCapture
               id="palette"
               value={palette}
@@ -649,11 +1012,8 @@ function HotkeysSection({
               capturing={capturing}
               setCapturing={setCapturing}
             />
-          </div>
-          <div className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-hover">
-            <span className="min-w-0 truncate text-sm text-l2" title="界面只剩工作内容">
-              隐藏侧栏
-            </span>
+          </CardRow>
+          <CardRow label="隐藏侧栏" title="界面只剩工作内容">
             <HotkeyCapture
               id="chrome"
               value={chrome}
@@ -663,9 +1023,9 @@ function HotkeysSection({
               capturing={capturing}
               setCapturing={setCapturing}
             />
-          </div>
+          </CardRow>
         </div>
-      </div>
+      </Card>
     </>
   );
 }
@@ -703,11 +1063,11 @@ function UninstallRow() {
     }
   }
   return (
-    <div className="mt-3 rounded-lg ccode-well p-3">
+    <div className="mt-3 ccode-well ccode-card px-4 py-3.5">
       <div className="flex items-center gap-3">
         <span className="min-w-0 flex-1">
-          <span className="block text-sm text-l2">卸载 Mesa</span>
-          <span className="block text-micro text-l4">
+          <span className="block text-sm font-medium text-l1">卸载 Mesa</span>
+          <span className="mt-0.5 block text-micro leading-4 text-l3">
             本机数据移入回收站。课题文件夹保留。完成后应用退出。
           </span>
         </span>
@@ -724,7 +1084,7 @@ function UninstallRow() {
             );
             if (ok) setArmed(true);
           })()}
-          className="inline-flex h-7 shrink-0 items-center justify-center rounded-md border border-err-text/40 px-2.5 text-xs text-err-text transition-colors hover:bg-hover disabled:opacity-50"
+          className="inline-flex h-8 shrink-0 items-center justify-center rounded-lg border border-err-text/40 px-3.5 text-xs font-medium text-err-text transition-colors hover:bg-hover disabled:opacity-50"
         >
           卸载…
         </button>
@@ -770,6 +1130,8 @@ function UninstallRow() {
   );
 }
 
+/** 自定义运行时：低频功能，平时只列已登记的条目；表单点「＋ 添加」或「编辑」才展开
+ *  （原先五个空输入框常驻，是终端分区最占地方的东西，「添加」还被挤出首屏，2026-10-17） */
 function CustomRuntimeBlock({
   onError,
   onNotice,
@@ -784,6 +1146,7 @@ function CustomRuntimeBlock({
   const [cwd, setCwd] = useState("");
   const [envText, setEnvText] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
   async function reload() {
@@ -798,6 +1161,16 @@ function CustomRuntimeBlock({
     void reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function closeForm() {
+    setEditingId(null);
+    setName("");
+    setCommand("");
+    setArgs("");
+    setCwd("");
+    setEnvText("");
+    setFormOpen(false);
+  }
 
   async function save() {
     setBusy(true);
@@ -831,12 +1204,7 @@ function CustomRuntimeBlock({
         env,
         cwd: cwd.trim() || null,
       });
-      setName("");
-      setCommand("");
-      setArgs("");
-      setCwd("");
-      setEnvText("");
-      setEditingId(null);
+      closeForm();
       onNotice("已保存自定义运行时");
       await reload();
     } catch (e) {
@@ -847,30 +1215,57 @@ function CustomRuntimeBlock({
   }
 
   return (
-    <div className="mt-4 rounded-lg ccode-well p-3">
-      <div className="mb-1 text-sm text-l2">自定义运行时</div>
-      <p
-        className="mb-2 text-micro text-l4"
-        title="登记一条本机命令，在当前终端目录当普通终端跑。不注入密钥、不解析会话。相对路径命令不能用。默认工作目录只在随手聊或空目录时启用，不会覆盖项目根或工作树。"
-      >
-        登记本机命令当普通终端跑；命令须绝对路径
-      </p>
+    <Card
+      title="自定义运行时"
+      hint="把本机一条命令登记成终端里可选的运行时，当普通终端跑（不注入密钥、不解析会话）；命令写绝对路径或 PATH 里的命令名"
+      action={
+        !formOpen && (
+          <button
+            type="button"
+            className={`${ghostActionClass} shrink-0`}
+            onClick={() => setFormOpen(true)}
+          >
+            ＋ 添加
+          </button>
+        )
+      }
+    >
+      {list.length === 0 && !formOpen && (
+        <p className="px-1 py-1 text-xs text-l4">
+          还没有登记。需要在终端里直接跑某个本机工具（如自己的脚本、别的 CLI）时再加
+        </p>
+      )}
       {list.length > 0 && (
-        <ul className="mb-2 space-y-1">
+        <ul className="space-y-0.5">
           {list.map((r) => (
             <li
               key={r.id}
-              className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-hover"
+              className="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-hover"
             >
               <span className="min-w-0 flex-1 truncate text-sm text-l2">
                 {r.name}
                 <span className="ml-2 font-mono text-micro text-l4">
-                  {r.command}
+                  {[r.command, ...r.args].join(" ")}
                 </span>
               </span>
               <button
                 type="button"
-                className={`${ghostActionClass} shrink-0 text-micro`}
+                className={`${ghostActionClass} ${hoverRevealClass} shrink-0 text-micro`}
+                onClick={() => {
+                  setEditingId(r.id);
+                  setName(r.name);
+                  setCommand(r.command);
+                  setArgs(r.args.join(" "));
+                  setCwd(r.cwd ?? "");
+                  setEnvText(Object.entries(r.env ?? {}).map(([k, v]) => `${k}=${v}`).join("\n"));
+                  setFormOpen(true);
+                }}
+              >
+                编辑
+              </button>
+              <button
+                type="button"
+                className={`${ghostActionClass} ${hoverRevealClass} shrink-0 text-micro`}
                 onClick={() => {
                   void (async () => {
                     if (
@@ -892,66 +1287,73 @@ function CustomRuntimeBlock({
               >
                 删除
               </button>
-              <button
-                type="button"
-                className={`${ghostActionClass} shrink-0 text-micro`}
-                onClick={() => {
-                  setEditingId(r.id);
-                  setName(r.name);
-                  setCommand(r.command);
-                  setArgs(r.args.join(" "));
-                  setCwd(r.cwd ?? "");
-                  setEnvText(Object.entries(r.env ?? {}).map(([k, v]) => `${k}=${v}`).join("\n"));
-                }}
-              >
-                编辑
-              </button>
             </li>
           ))}
         </ul>
       )}
-      <div className="flex flex-wrap gap-2">
-        <input
-          className={`${fieldClass} h-8 min-w-28 flex-1 py-0`}
-          placeholder="名称"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-        />
-        <textarea
-          className={`${fieldClass} h-8 min-w-40 flex-1 py-1 font-mono text-micro`}
-          placeholder={"环境变量（可选，每行 KEY=VALUE）"}
-          value={envText}
-          onChange={(e) => setEnvText(e.target.value)}
-          rows={1}
-        />
-        <input
-          className={`${fieldClass} h-8 min-w-36 flex-1 py-0`}
-          placeholder="命令（绝对路径或 PATH 名）"
-          value={command}
-          onChange={(e) => setCommand(e.target.value)}
-        />
-        <input
-          className={`${fieldClass} h-8 min-w-40 flex-1 py-0`}
-          placeholder="默认工作目录（可选）"
-          value={cwd}
-          onChange={(e) => setCwd(e.target.value)}
-        />
-        <input
-          className={`${fieldClass} h-8 min-w-24 flex-1 py-0`}
-          placeholder="参数（可选，空格分开）"
-          value={args}
-          onChange={(e) => setArgs(e.target.value)}
-        />
-        <button
-          type="button"
-          className={`${rowActionClass} shrink-0`}
-          disabled={busy || !name.trim() || !command.trim()}
-          onClick={() => void save()}
+      {formOpen && (
+        <form
+          className={list.length > 0 ? "mt-3" : ""}
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!busy && name.trim() && command.trim()) void save();
+          }}
         >
-          {editingId ? "保存修改" : "添加"}
-        </button>
-      </div>
-    </div>
+          {/* 表单按「是什么 → 怎么跑 → 在哪跑」排成两列，环境变量多行占整宽 */}
+          <div className="grid grid-cols-1 gap-2 @min-[36rem]/settings:grid-cols-2">
+            <input
+              className={`${fieldClass} h-8 py-0`}
+              placeholder="名称"
+              aria-label="运行时名称"
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+            <input
+              className={`${fieldClass} h-8 py-0 font-mono text-xs`}
+              placeholder="命令（绝对路径或 PATH 里的命令名）"
+              aria-label="命令"
+              value={command}
+              onChange={(e) => setCommand(e.target.value)}
+            />
+            <input
+              className={`${fieldClass} h-8 py-0 font-mono text-xs`}
+              placeholder="参数（可选，空格分开）"
+              aria-label="参数"
+              value={args}
+              onChange={(e) => setArgs(e.target.value)}
+            />
+            <input
+              className={`${fieldClass} h-8 py-0 font-mono text-xs`}
+              placeholder="默认工作目录（可选，只在没有项目目录时用）"
+              aria-label="默认工作目录"
+              value={cwd}
+              onChange={(e) => setCwd(e.target.value)}
+            />
+            <textarea
+              className={`${fieldClass} py-1.5 font-mono text-micro @min-[36rem]/settings:col-span-2`}
+              placeholder={"环境变量（可选，每行 KEY=VALUE）"}
+              aria-label="环境变量"
+              value={envText}
+              onChange={(e) => setEnvText(e.target.value)}
+              rows={2}
+            />
+          </div>
+          <div className="mt-2 flex justify-end gap-2">
+            <button type="button" className={`${ghostActionClass} shrink-0`} onClick={closeForm}>
+              取消
+            </button>
+            <button
+              type="submit"
+              className={`${rowActionClass} shrink-0`}
+              disabled={busy || !name.trim() || !command.trim()}
+            >
+              {editingId ? "保存修改" : "添加"}
+            </button>
+          </div>
+        </form>
+      )}
+    </Card>
   );
 }
 
@@ -960,7 +1362,10 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
   const loadSettings = useAppStore((s) => s.loadSettings);
   const updateSettings = useAppStore((s) => s.updateSettings);
   const profiles = useAppStore((s) => s.profiles);
-  const aiChoices = aiProfileChoices(profiles);
+  const aiChoices = aiProfileChoices(
+    profiles,
+    (id) => AGENTS.find((a) => a.id === id)?.label ?? id,
+  );
   const loadAll = useAppStore((s) => s.loadAll);
   const appUpdate = useAppStore((s) => s.appUpdate);
   const appUpdateStatus = useAppStore((s) => s.appUpdateStatus);
@@ -978,16 +1383,29 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
   // 外部「跳设置页并选中分区」的一次性请求（收件箱 dep: 条目发起）
   const settingsSectionReq = useAppStore((s) => s.settingsSectionReq);
   const setSettingsSectionReq = useAppStore((s) => s.setSettingsSectionReq);
-  const [installing, setInstalling] = useState(false);
-  const [installProgress, setInstallProgress] = useState<{
-    downloaded: number;
-    total: number | null;
-  } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 下载并安装：与帮助菜单「检查更新」弹窗同一流程（app-update-install.ts）
+  const {
+    installing,
+    progress: installProgress,
+    install: installUpdate,
+  } = useAppUpdateInstall(setError);
   const autoOpenedUpdate = useRef(false);
   const [notice, setNotice] = useState<
     string | { text: string; openPath: string } | null
   >(null);
+  // 成功横幅统一在这里收：原先各处自己 setTimeout(清空)，后一条提示会被前一条的计时器提前抹掉。
+  // 停留时长随字数走（引导类长句要读得完），带「打开」的给足 10 秒；错误横幅不自动消失
+  useEffect(() => {
+    if (!notice) return;
+    const text = typeof notice === "string" ? notice : notice.text;
+    const ms =
+      typeof notice === "string"
+        ? Math.min(15000, Math.max(5000, text.length * 150))
+        : 10000;
+    const timer = window.setTimeout(() => setNotice(null), ms);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
   // 恢复上次查看的分区（HIG settings.md「Restore the most recently viewed pane」）：
   // 常改的设置往往连着改几次，每次都弹回「外观」要重新点。非法/清空的存量值回落外观。
   const [activeSection, setActiveSection] = useState(() => {
@@ -1058,6 +1476,15 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
     setPricingDirty(d);
   }
   const [savingPricing, setSavingPricing] = useState(false);
+  // 查不到价格的模型（用量页分区可见时拉一次，保存定价后重拉）
+  const [unpriced, setUnpriced] = useState<UnpricedModelDto[] | null>(null);
+  async function loadUnpriced() {
+    try {
+      setUnpriced(await invoke<UnpricedModelDto[]>("usage_unpriced_models"));
+    } catch {
+      setUnpriced(null); // 只是辅助清单，读不到就不显示，不打断定价编辑
+    }
+  }
   // 诊断日志（进程内环形缓冲，分区展开时拉最近 100 条）
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [diagnosticsExporting, setDiagnosticsExporting] = useState(false);
@@ -1104,6 +1531,17 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
   // 应用数据占用：选中「数据与存储」时读一次（递归求目录大小，不适合常驻轮询）
   const [storage, setStorage] = useState<StorageEntryDto[] | null>(null);
   const [storageError, setStorageError] = useState<string | null>(null);
+  // 真实用户家目录：工作副本可换到别的盘后，不能再从条目路径反推（会把组头错折成 ~/ccode）
+  const [homeDir, setHomeDir] = useState("");
+  async function loadStorage() {
+    try {
+      void invoke<string>("home_dir").then(setHomeDir).catch(() => {});
+      setStorage(await invoke<StorageEntryDto[]>("app_storage_usage"));
+    } catch {
+      setStorage(null);
+      setStorageError("存储占用统计失败，请稍后重试。");
+    }
+  }
   useEffect(() => {
     if (
       visible &&
@@ -1111,15 +1549,71 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
       storage === null
     ) {
       setStorageError(null);
-      invoke<StorageEntryDto[]>("app_storage_usage")
-        .then(setStorage)
-        .catch(() => {
-          setStorage(null);
-          setStorageError("存储占用统计失败，请稍后重试。");
-        });
+      void loadStorage();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, activeSection]);
+
+  /** 工作副本家目录换位置：选目录 → 说清只管新建的 → 后端校验落盘；path 为 null = 恢复默认 */
+  const [movingRoot, setMovingRoot] = useState(false);
+  async function changeWorkspaceRoot(restoreDefault: boolean) {
+    setError(null);
+    let target: string | null = null;
+    if (!restoreDefault) {
+      const picked = await openDirectory({
+        directory: true,
+        multiple: false,
+        title: "选择存放工作副本的文件夹（Mesa 会在里面建 ccode 目录）",
+      });
+      if (typeof picked !== "string") return;
+      target = picked;
+    }
+    const where = target ? `${target.replace(/[\\/]+$/, "")}${IS_WINDOWS ? "\\" : "/"}ccode` : "~/ccode";
+    const ok = await confirmDialog(
+      `此后新建的编程工作树、科研工作副本、定时隔离树放进：\n${where}\n\n` +
+        "已有的不会自动搬，继续留在原处照常使用；它们在下方「本机占用」里仍会列出，" +
+        "走项目页的归档 / 删除清掉后，空间才会释放。",
+      { confirmText: target ? "使用这个位置" : "恢复默认", focusCancel: false },
+    );
+    if (!ok) return;
+    setMovingRoot(true);
+    try {
+      const next = await invoke<AppSettings>("set_workspace_root", { path: target });
+      useAppStore.setState({ settings: next });
+      setNotice(target ? `工作副本位置已改为 ${where}` : "工作副本位置已恢复默认");
+      setStorage(null);
+      await loadStorage();
+    } catch (e) {
+      const message = String(e);
+      setError(message);
+      toast(`设置工作副本位置失败：${message}`, "error");
+    } finally {
+      setMovingRoot(false);
+    }
+  }
+
+  /** 清理一项可清理的应用数据（后端白名单把关，整目录移回收站）；先确认、后重统计 */
+  const [clearingStorage, setClearingStorage] = useState<string | null>(null);
+  async function clearStorage(entry: StorageEntryDto) {
+    const ok = await confirmDialog(
+      storageClearConfirmText(entry.id, entry.label, formatBytes(entry.bytes)),
+      { danger: true, confirmText: "移到回收站", focusCancel: true },
+    );
+    if (!ok) return;
+    setClearingStorage(entry.id);
+    setError(null);
+    try {
+      await invoke("clear_storage_entry", { id: entry.id });
+      setNotice(`已把「${entry.label}」移到回收站`);
+      await loadStorage();
+    } catch (e) {
+      const message = String(e);
+      setError(message);
+      toast(`清理失败：${message}`, "error");
+    } finally {
+      setClearingStorage(null);
+    }
+  }
 
   useEffect(() => {
     if (!visible) return;
@@ -1150,19 +1644,15 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
 
   /** 打开「开源许可」浮层：清单文本懒加载一次，失败提示不弹层 */
   async function openNotices() {
-    if (noticesText === null) {
-      try {
-        setNoticesText(await invoke<string>("read_third_party_notices"));
-      } catch (e) {
-        toast(`开源许可清单读取失败：${String(e)}`, "warning");
-        return;
-      }
-    }
+    const text = noticesText ?? (await loadThirdPartyNotices());
+    if (text === null) return;
+    setNoticesText(text);
     setNoticesOpen(true);
   }
 
   useEffect(() => {
     if (!visible || activeSection !== "stats") return;
+    void loadUnpriced();
     if (pricingDirtyRef.current) return;
     invoke<string>("read_pricing_file")
       .then((t) => {
@@ -1385,6 +1875,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
     settings?.customThemeCardId,
   );
   const customSelected = isCustomThemeId(settings?.theme) && !selectedCardId;
+  const followSystem = settings?.themeFollowSystem === true;
   const savedCustom = normalizeCustomTheme(settings?.customTheme);
   const customSeeds =
     customDraft ??
@@ -1522,6 +2013,24 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
     }
   }
 
+  /** 应用图标：先落设置再换图——设置没存上就不换，免得重启后与界面显示的不一致 */
+  async function setAppIcon(style: "system" | "dark" | "light") {
+    setError(null);
+    try {
+      await updateSettings({ appIconStyle: style });
+    } catch (e) {
+      const message = String(e);
+      setError(message);
+      toast(`设置保存失败：${message}`, "error");
+      return;
+    }
+    try {
+      await invoke("apply_app_icon", { style });
+    } catch (e) {
+      toast(`应用图标没换上：${String(e)}`, "warning");
+    }
+  }
+
   /** 按功能 AI 配置：改一键后整图提交；空值 = 删除该键（跟随默认） */
   function patchAiFnProfile(fnKey: string, value: string) {
     const next = { ...(settings?.aiProfiles ?? {}) };
@@ -1562,7 +2071,6 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           ? `已开启：${label} hooks 已写入 ${target ?? "其配置文件"}`
           : `已关闭：${label} hooks 已移除`,
       );
-      setTimeout(() => setNotice(null), 3000);
     } catch (e) {
       const message = String(e);
       setError(message);
@@ -1600,8 +2108,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         : "";
       await invoke("write_pricing_file", { text });
       markPricingDirty(false);
-      setNotice("已保存，下一次统计查询生效");
-      setTimeout(() => setNotice(null), 3000);
+      setNotice("已保存，用量页下次查询生效");
+      void loadUnpriced();
     } catch (e) {
       const message = String(e);
       setError(message);
@@ -1652,7 +2160,6 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
       if (res.ok) {
         await refreshFontStatus();
         setNotice("字体已安装，重新打开终端后生效");
-        setTimeout(() => setNotice(null), 4000);
       }
     } catch (e) {
       const message = String(e);
@@ -1699,7 +2206,6 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
       await invoke("clear_app_log");
       setLogs([]);
       setNotice("应用日志已清理");
-      setTimeout(() => setNotice(null), 3000);
     } catch (e) {
       const message = String(e);
       setError(message);
@@ -1707,68 +2213,11 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
     }
   }
 
-  // 下载并安装应用更新：成功后 relaunch 进新版本；失败恢复按钮可重试。
-  // 重启会杀掉后台无头任务，安装前先查一遍，有活着的任务必须用户明确点头
-  async function installUpdate() {
-    if (!appUpdate || installing) return;
-    try {
-      const active = await invoke<
-        { agent: string; taskRef: string | null }[]
-      >("active_background_runs");
-      if (active.length > 0) {
-        const first = active[0];
-        const label =
-          first.taskRef || first.agent || "后台任务";
-        const ok = await confirmDialog(
-          `有 ${active.length} 个后台任务正在运行（如「${label}」）。\n\n` +
-            "更新安装完成后应用会重启，这些任务会被直接中断，未保存的进度会丢失。\n\n" +
-            "可以先去「后台任务」停止它们再更新。仍要现在安装？",
-          { danger: true, confirmText: "仍然安装", focusCancel: true },
-        );
-        if (!ok) return;
-      }
-    } catch {
-      // 查询失败不拦更新：用户主动点的安装，别因诊断性查询挂掉主流程
-    }
-    setInstalling(true);
-    setInstallProgress({ downloaded: 0, total: null });
-    setError(null);
-    try {
-      await appUpdate.downloadAndInstall((ev) => {
-        if (ev.event === "Started") {
-          setInstallProgress({
-            downloaded: 0,
-            total: ev.data.contentLength ?? null,
-          });
-        } else if (ev.event === "Progress") {
-          setInstallProgress((prev) => ({
-            downloaded: (prev?.downloaded ?? 0) + ev.data.chunkLength,
-            total: prev?.total ?? null,
-          }));
-        } else if (ev.event === "Finished") {
-          setInstallProgress((prev) => ({
-            downloaded: prev?.total ?? prev?.downloaded ?? 0,
-            total: prev?.total ?? null,
-          }));
-        }
-      });
-      await relaunch();
-    } catch (e) {
-      const message = String(e);
-      setError(message);
-      toast(`更新安装失败：${message}`, "error");
-      setInstalling(false);
-    }
-  }
-
   async function copyLogs() {
-    const text = logs
-      .map((l) => `${l.ts} [${l.level}] ${l.source}: ${l.message}`)
-      .join("\n");
+    const text = formatLogText(logs);
     try {
       await navigator.clipboard.writeText(text);
       setNotice("已复制到剪贴板");
-      setTimeout(() => setNotice(null), 3000);
     } catch (e) {
       const message = String(e);
       setError(message);
@@ -1785,7 +2234,6 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         frontend: collectFrontendDiagnostics(),
       });
       setNotice({ text: `诊断包已导出：${path}`, openPath: path });
-      setTimeout(() => setNotice(null), 8000);
       await loadLogs();
     } catch (e) {
       const message = String(e);
@@ -1807,7 +2255,6 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         projectRoot: null,
       });
       setNotice({ text: `配置快照已导出：${path}`, openPath: path });
-      setTimeout(() => setNotice(null), 8000);
     } catch (e) {
       const message = String(e);
       setError(message);
@@ -1846,18 +2293,26 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
       Boolean(instStatus?.sessionPresent),
     );
 
-  return (
-    <PageFrame width="wide">
-      <PageHeader title="设置" meta="外观、终端与应用集成" />
-      {/* 结果横幅统一口径：well 底 + ✓/✗ 语义色文字，不铺整块 bg-ok/bg-err */}
+  // 结果横幅统一口径：well 底 + ✓/✗ 语义色文字，不铺整块 bg-ok/bg-err。
+  // 放进内容列并吸顶：原先挂在页头下方，分区一长、点了底部的按钮，结果出在视野外
+  const banners = (error || notice) && (
+    <div className="sticky top-14 z-10 mb-3 flex flex-col gap-2">
       {error && (
-        <div role="alert" className="mb-3 flex items-start gap-2 rounded-md ccode-well px-3 py-2.5 text-xs leading-5 text-l2">
+        <div role="alert" className="flex items-start gap-2 rounded-md ccode-well px-3 py-2.5 text-xs leading-5 text-l2 shadow-sm">
           <span className="shrink-0 text-err-text">✗</span>
           <span className="min-w-0 flex-1">{error}</span>
+          <button
+            type="button"
+            aria-label="关闭错误提示"
+            onClick={() => setError(null)}
+            className="shrink-0 rounded-sm text-l4 hover:text-l1"
+          >
+            <X aria-hidden="true" className="h-3.5 w-3.5" />
+          </button>
         </div>
       )}
       {notice && (
-        <div role="status" className="mb-3 flex items-start gap-2 rounded-md ccode-well px-3 py-2.5 text-xs leading-5 text-l2">
+        <div role="status" className="flex items-start gap-2 rounded-md ccode-well px-3 py-2.5 text-xs leading-5 text-l2 shadow-sm">
           <span className="shrink-0 text-ok-text">✓</span>
           <span className="min-w-0 flex-1">
             {typeof notice === "string" ? notice : notice.text}
@@ -1871,8 +2326,22 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
               打开
             </button>
           )}
+          <button
+            type="button"
+            aria-label="关闭提示"
+            onClick={() => setNotice(null)}
+            className="shrink-0 rounded-sm text-l4 hover:text-l1"
+          >
+            <X aria-hidden="true" className="h-3.5 w-3.5" />
+          </button>
         </div>
       )}
+    </div>
+  );
+
+  return (
+    <PageFrame width="wide">
+      <PageHeader title="设置" meta="外观、终端、AI 与应用管理" />
 
       <div className="@container">
         <div className="grid min-w-0 gap-5 @min-[48rem]:grid-cols-[11rem_minmax(0,1fr)] @min-[48rem]:gap-7">
@@ -1917,7 +2386,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                     {group.label}
                   </p>
                   <ul aria-labelledby={`settings-group-${group.id}`} className="flex flex-wrap gap-1 @min-[48rem]:flex-col">
-                    {items.map(({ id, label }) => (
+                    {items.map(({ id, label, icon: Icon }) => (
                       <li key={id} className="min-w-0">
                         <button
                           id={`settings-nav-${id}`}
@@ -1931,6 +2400,11 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                               : "text-l3 hover:bg-hover hover:text-l1"
                           }`}
                         >
+                          {/* 图标随选中态变色（同侧栏）：扫一眼就能认出分区，不用逐字读 */}
+                          <Icon
+                            aria-hidden="true"
+                            className={`h-3.5 w-3.5 shrink-0 ${activeSection === id ? "text-nav-accent" : "text-l4"}`}
+                          />
                           {label}
                           {id === "update" && appUpdate && (
                             <span className="inline-flex shrink-0 items-center gap-1 text-micro text-ok-text">
@@ -1960,261 +2434,277 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             aria-labelledby={`settings-nav-${activeSection}`}
             className="@container/settings min-w-0 scroll-mt-16"
           >
+            {banners}
 
-      <Section
-        title="外观"
-        active={activeSection === "appearance"}
-      >
-        {/* 主题：七列深浅成对。色卡是该主题的小窗（左栏 + 画布 + 强调点），
-            名称写在画布上用该主题自己的标题色，深浅一眼可辨。
-            成组编辑器收统一内容卡（同快捷键卡口径），块间分隔用留白不画横线。 */}
-        <div className="mb-3 rounded-lg ccode-well p-3">
-          <div className="mb-2 text-sm text-l2">主题</div>
-          <div className="grid grid-cols-7 gap-2 overflow-x-auto">
-            {themeSwatches.map((t) => {
-              const selected = settings?.theme === t.id;
-              return (
-              <button
+      <Section id="appearance" active={activeSection}>
+        {/* 主题卡（2026-10-17 细化）：内置十四套七列深浅成对 →「我的配色」同一网格（另存色卡 +
+            自定义入口）→ 选中自定义或某张色卡时才展开调色条。取色块改成输入框形态，
+            不再与主题小窗同形，免得被看成又一排主题；没在用自定义时不占版面。 */}
+        <div className="mb-3 ccode-well ccode-card p-4">
+          <div className="mb-2 flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-sm text-l2">主题</div>
+              <p className="mt-0.5 text-micro leading-4 text-l4">
+                {followSystem
+                  ? isCustomThemeId(settings?.theme)
+                    ? "自定义配色没有成对的另一套，不随系统切换；选内置主题后才跟随"
+                    : "点任一张只选配色，深浅随系统切换"
+                  : "上排深色，下排同名浅色"}
+              </p>
+            </div>
+            <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-l3">
+              跟随系统深浅
+              <Toggle
+                label="主题跟随系统深浅"
+                checked={followSystem}
+                onChange={(v) => void patch({ themeFollowSystem: v })}
+              />
+            </label>
+          </div>
+          <div className="grid grid-cols-[repeat(7,minmax(4.5rem,1fr))] gap-2 overflow-x-auto">
+            {themeSwatches.map((t) => (
+              <ThemeTile
                 key={t.id}
+                name={t.name}
+                rail={t.rail}
+                canvas={t.canvas}
+                accent={t.accent}
+                ink={t.ink}
+                selected={settings?.theme === t.id}
+                title={`切换到${t.name}`}
                 onClick={() => {
                   setCustomDraft(null);
-                  void patch({ theme: t.id, customThemeCardId: "" });
+                  const id = followSystem ? followedTheme(t.id, systemIsDark()) : t.id;
+                  void patch({ theme: id, customThemeCardId: "" });
                 }}
-                title={`切换到${t.name}`}
-                className={`min-w-0 overflow-hidden rounded-md text-left ${
-                  selected ? "ring-2 ring-l1" : "ring-1 ring-hairline hover:ring-field"
-                }`}
-                style={{ background: t.canvas }}
-              >
-                <span className="flex h-14">
-                  <span
-                    className="w-2.5 shrink-0"
-                    style={{ background: t.rail }}
-                    aria-hidden="true"
+              />
+            ))}
+          </div>
+
+          <div className="mb-1.5 mt-4 text-micro font-medium text-l3">我的配色</div>
+          <div className="grid grid-cols-[repeat(7,minmax(4.5rem,1fr))] gap-2 overflow-x-auto">
+            {customCards.map((card) => {
+              const derived = deriveThemeTokens(card);
+              return (
+                <div key={card.id} className="group relative min-w-0">
+                  <ThemeTile
+                    name={card.name}
+                    rail={derived.tokens.rail}
+                    canvas={derived.tokens.canvas}
+                    accent={derived.tokens.cta}
+                    ink={derived.tokens.l1}
+                    selected={selectedCardId === card.id}
+                    title={`${card.name}（双击改名）`}
+                    onClick={() => {
+                      if (renamingId === card.id) return;
+                      applySavedCard(card);
+                    }}
+                    onDoubleClick={() => {
+                      setRenamingId(card.id);
+                      setRenameDraft(card.name);
+                    }}
+                    nameSlot={
+                      renamingId === card.id ? (
+                        <input
+                          className="w-full border-0 bg-transparent p-0 text-micro font-medium outline-none"
+                          style={{ color: derived.tokens.l1 }}
+                          value={renameDraft}
+                          autoFocus
+                          maxLength={12}
+                          aria-label="色卡名称"
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => setRenameDraft(e.target.value)}
+                          onBlur={() => commitRename(card)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") e.currentTarget.blur();
+                            if (e.key === "Escape") setRenamingId(null);
+                          }}
+                        />
+                      ) : undefined
+                    }
                   />
-                  <span className="flex min-w-0 flex-1 flex-col justify-between px-1.5 py-1.5">
-                    <span
-                      className="h-1.5 w-1.5 self-end rounded-full"
-                      style={{ background: t.accent }}
-                      aria-hidden="true"
-                    />
-                    <span
-                      className="truncate text-micro font-medium"
-                      style={{ color: t.ink }}
-                    >
-                      {t.name}
-                    </span>
-                  </span>
-                </span>
-              </button>
+                  <button
+                    type="button"
+                    title="删除"
+                    aria-label={`删除色卡「${card.name}」`}
+                    className={`${hoverRevealClass} ${ghostActionClass} absolute right-0.5 top-0.5 z-10 h-6 w-6 text-l3 hover:text-l1`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void deleteSavedCard(card);
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
               );
             })}
-          </div>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => activateCustom(false)}
-              title="自定义主题"
-              className={`h-14 w-[7.5rem] overflow-hidden rounded-md text-left ${
-                customSelected
-                  ? "ring-2 ring-l1"
-                  : "ring-1 ring-hairline hover:ring-field"
-              }`}
-              style={{ background: customDerived.tokens.canvas }}
-            >
-              <span className="flex h-full">
-                <span
-                  className="w-2.5 shrink-0"
-                  style={{ background: customDerived.tokens.rail }}
-                  aria-hidden="true"
-                />
-                <span className="flex min-w-0 flex-1 flex-col justify-end px-1.5 py-1.5">
-                  <span
-                    className="truncate text-micro font-medium"
-                    style={{ color: customDerived.tokens.l1 }}
-                  >
-                    自定义
-                  </span>
-                </span>
-              </span>
-            </button>
-            <ColorChip
-              label="左栏"
-              value={customSeeds.rail}
-              onLive={(hex) => liveCustom({ ...customSeeds, rail: hex })}
-            />
-            <ColorChip
-              label="画布"
-              value={customSeeds.canvas}
-              onLive={(hex) => liveCustom({ ...customSeeds, canvas: hex })}
-            />
-            <ColorChip
-              label="强调"
-              value={customSeeds.accent}
-              onLive={(hex) => liveCustom({ ...customSeeds, accent: hex })}
-            />
-            <button
-              type="button"
-              className={`${rowActionClass} shrink-0`}
-              onClick={() => activateCustom(true)}
-            >
-              从当前主题拷入
-            </button>
-            {savingCard ? (
-              <span className="flex items-center gap-1.5">
-                <input
-                  className={`${fieldFixed} w-28`}
-                  value={cardNameDraft}
-                  autoFocus
-                  maxLength={12}
-                  onChange={(e) => setCardNameDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") confirmSaveCard();
-                    if (e.key === "Escape") setSavingCard(false);
-                  }}
-                />
-                <button
-                  type="button"
-                  className={rowActionClass}
-                  onClick={confirmSaveCard}
-                >
-                  保存
-                </button>
-                <button
-                  type="button"
-                  className={ghostActionClass}
-                  onClick={() => setSavingCard(false)}
-                >
-                  取消
-                </button>
-              </span>
+            {customSelected ? (
+              <ThemeTile
+                name="自定义 · 未存"
+                rail={customDerived.tokens.rail}
+                canvas={customDerived.tokens.canvas}
+                accent={customDerived.tokens.cta}
+                ink={customDerived.tokens.l1}
+                selected
+                title="当前的自定义配色（还没另存成色卡）"
+                onClick={() => {}}
+              />
             ) : (
               <button
                 type="button"
-                className={`${rowActionClass} shrink-0 disabled:opacity-40`}
-                disabled={customCards.length >= CUSTOM_THEME_CARDS_MAX}
-                title={
-                  customCards.length >= CUSTOM_THEME_CARDS_MAX
-                    ? `最多 ${CUSTOM_THEME_CARDS_MAX} 套`
-                    : "把当前三个颜色存成一张可点的色卡"
-                }
-                onClick={startSaveCard}
+                onClick={() => activateCustom(false)}
+                title="用三个颜色配一套自己的主题"
+                className="flex h-14 min-w-0 items-center justify-center rounded-md border border-dashed border-field text-micro text-l3 hover:border-l4 hover:text-l1"
               >
-                另存为色卡
+                ＋ 自定义
               </button>
             )}
           </div>
-          {customCards.length > 0 && (
-            <div className="mt-2 grid grid-cols-7 gap-2">
-              {customCards.map((card) => {
-                const derived = deriveThemeTokens(card);
-                const selected = selectedCardId === card.id;
-                return (
-                  <div key={card.id} className="group relative min-w-0">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (renamingId === card.id) return;
-                        applySavedCard(card);
+
+          {(customSelected || selectedCardId) && (
+            <div className="mt-3">
+              <p className="mb-1.5 text-micro leading-4 text-l4">
+                {selectedCardId
+                  ? "调色：改动后变成未存的自定义，满意了再另存为色卡"
+                  : "调色：点色块用系统取色器，立即生效"}
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <ColorChip
+                  label="左栏"
+                  value={customSeeds.rail}
+                  onLive={(hex) => liveCustom({ ...customSeeds, rail: hex })}
+                />
+                <ColorChip
+                  label="画布"
+                  value={customSeeds.canvas}
+                  onLive={(hex) => liveCustom({ ...customSeeds, canvas: hex })}
+                />
+                <ColorChip
+                  label="强调"
+                  value={customSeeds.accent}
+                  onLive={(hex) => liveCustom({ ...customSeeds, accent: hex })}
+                />
+                <button
+                  type="button"
+                  className={`${ghostActionClass} shrink-0`}
+                  onClick={() => activateCustom(true)}
+                  title="把正在显示的主题的三个颜色填进来，在它基础上改"
+                >
+                  从当前主题拷入
+                </button>
+                {savingCard ? (
+                  <span className="flex items-center gap-1.5">
+                    <input
+                      className={`${fieldFixed} w-28`}
+                      value={cardNameDraft}
+                      autoFocus
+                      maxLength={12}
+                      aria-label="新色卡名称"
+                      onChange={(e) => setCardNameDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") confirmSaveCard();
+                        if (e.key === "Escape") setSavingCard(false);
                       }}
-                      onDoubleClick={(e) => {
-                        e.preventDefault();
-                        setRenamingId(card.id);
-                        setRenameDraft(card.name);
-                      }}
-                      title={`${card.name}（双击改名）`}
-                      className={`h-14 w-full overflow-hidden rounded-md text-left ${
-                        selected
-                          ? "ring-2 ring-l1"
-                          : "ring-1 ring-hairline hover:ring-field"
-                      }`}
-                      style={{ background: derived.tokens.canvas }}
-                    >
-                      <span className="flex h-full">
-                        <span
-                          className="w-2.5 shrink-0"
-                          style={{ background: derived.tokens.rail }}
-                          aria-hidden="true"
-                        />
-                        <span className="flex min-w-0 flex-1 flex-col justify-between px-1.5 py-1.5">
-                          <span
-                            className="h-1.5 w-1.5 self-end rounded-full"
-                            style={{ background: derived.tokens.cta }}
-                            aria-hidden="true"
-                          />
-                          {renamingId === card.id ? (
-                            <input
-                              className="w-full border-0 bg-transparent p-0 text-micro font-medium outline-none"
-                              style={{ color: derived.tokens.l1 }}
-                              value={renameDraft}
-                              autoFocus
-                              maxLength={12}
-                              onClick={(e) => e.stopPropagation()}
-                              onChange={(e) => setRenameDraft(e.target.value)}
-                              onBlur={() => commitRename(card)}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  e.currentTarget.blur();
-                                }
-                                if (e.key === "Escape") {
-                                  setRenamingId(null);
-                                }
-                              }}
-                            />
-                          ) : (
-                            <span
-                              className="truncate text-micro font-medium"
-                              style={{ color: derived.tokens.l1 }}
-                            >
-                              {card.name}
-                            </span>
-                          )}
-                        </span>
-                      </span>
+                    />
+                    <button type="button" className={rowActionClass} onClick={confirmSaveCard}>
+                      保存
                     </button>
                     <button
                       type="button"
-                      title="删除"
-                      className={`${hoverRevealClass} ${ghostActionClass} absolute right-0.5 top-0.5 z-10 h-6 w-6 text-l3 hover:text-l1`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void deleteSavedCard(card);
-                      }}
+                      className={ghostActionClass}
+                      onClick={() => setSavingCard(false)}
                     >
-                      ✕
+                      取消
                     </button>
-                  </div>
-                );
-              })}
+                  </span>
+                ) : (
+                  customSelected && (
+                    <button
+                      type="button"
+                      className={`${rowActionClass} shrink-0 disabled:opacity-40`}
+                      disabled={customCards.length >= CUSTOM_THEME_CARDS_MAX}
+                      title={
+                        customCards.length >= CUSTOM_THEME_CARDS_MAX
+                          ? `最多 ${CUSTOM_THEME_CARDS_MAX} 套`
+                          : "把当前三个颜色存成一张可点的色卡"
+                      }
+                      onClick={startSaveCard}
+                    >
+                      另存为色卡
+                    </button>
+                  )
+                )}
+              </div>
+              {pickerDerived.warnings.length > 0 && customSelected && (
+                <p className="mt-1.5 text-micro text-l4">
+                  {pickerDerived.warnings.join("；")}
+                </p>
+              )}
             </div>
-          )}
-          {pickerDerived.warnings.length > 0 && customSelected && (
-            <p className="mt-1.5 text-micro text-l4">
-              {pickerDerived.warnings.join("；")}
-            </p>
           )}
         </div>
 
         <Row
           label="侧栏 / 顶栏透明度"
-          hint="立即生效。100% 是主题默认，0% 完全透出壁纸"
-          labelTitle="立即生效。100% 是各主题本来的样子，0% 则完全不铺罩色、文字直接压在壁纸上。侧栏选中行的底色也跟着一起变淡，最透时只剩文字和图标变色。深浅主题与图标态各有自己的底色，同一个百分数看起来的浓淡会不同"
+          hint="百分数是罩色浓度，立即生效；壁纸越花越往「原样」调"
+          labelTitle="原样（100%）是各主题本来的样子，越小越透出桌面磨砂，全透（0%）完全不铺罩色、文字直接压在壁纸上。侧栏选中行的底色也跟着一起变淡，最透时选中只剩文字和图标变色。深浅主题与图标态各有自己的底色，同一个百分数看起来的浓淡会不同"
         >
-          <select
-            className={`${fieldFixed} w-36`}
-            value={normalizeChromeOpacity(settings?.chromeOpacity)}
-            onChange={(e) =>
-              void patch({ chromeOpacity: Number(e.target.value) })
-            }
-          >
-            {CHROME_OPACITIES.map((pct) => (
-              <option key={pct} value={pct}>
-                {chromeOpacityLabel(pct)}
-              </option>
-            ))}
-          </select>
+          <SegTabs
+            items={CHROME_OPACITIES.map((pct) => ({
+              id: String(pct),
+              label: (
+                <span title={chromeOpacityLabel(pct)}>
+                  {pct === 0 || pct === 100
+                    ? chromeOpacityShortLabel(pct)
+                    : `${chromeOpacityShortLabel(pct)}%`}
+                </span>
+              ),
+            }))}
+            value={String(normalizeChromeOpacity(settings?.chromeOpacity))}
+            onChange={(id) => void patch({ chromeOpacity: Number(id) })}
+            className="flex-wrap"
+          />
         </Row>
 
+        <Row
+          label="应用图标"
+          align="start"
+          hint={
+            IS_MAC
+              ? "只换运行中的程序坞与托盘图标"
+              : IS_WINDOWS
+                ? "只换运行中的任务栏与托盘图标"
+                : "只换运行中的窗口与托盘图标"
+          }
+          labelTitle="安装包里的图标由系统决定：macOS 26 及以上随系统外观设置切深浅，更早的 macOS 与 Windows / Linux 是深色。这里选深色或浅色，只改 Mesa 运行期间程序坞（Windows 为任务栏）和托盘里的那一份，Finder、启动台、开始菜单不受影响；「跟随系统」= 不干预"
+        >
+          <AppIconPicker
+            value={settings?.appIconStyle ?? "system"}
+            onChange={(style) => void setAppIcon(style)}
+          />
+        </Row>
+
+        <Row
+          label="底部状态栏"
+          hint="关掉后终端和聊天都不显示"
+        >
+          <Toggle
+            label="底部状态栏"
+            checked={settings?.statusBar ?? true}
+            onChange={(checked) => patch({ statusBar: checked })}
+          />
+        </Row>
+      </Section>
+
+      <Section id="terminal" active={activeSection}>
+        <TerminalPreview
+          family={fontFamily === "__custom__" ? customFont : fontFamily}
+          fontSize={Number(fontSize) || settings?.terminalFontSize || 13}
+          paletteId={resolvePaletteId(
+            settings?.terminalPalette,
+            isLightTheme(settings?.theme),
+          )}
+        />
         <Row
           label="终端渲染"
           hint={
@@ -2224,7 +2714,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           }
         >
           <select
-            className={fieldFixed}
+            className={selectSm}
             value={settings?.terminalRenderer ?? "auto"}
             onChange={(e) => patch({ terminalRenderer: e.target.value })}
           >
@@ -2301,9 +2791,9 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             ) : undefined
           }
         >
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
             <select
-              className={fieldFixed}
+              className={selectLg}
               value={fontFamily}
               onChange={(e) => {
                 setFontFamily(e.target.value);
@@ -2365,51 +2855,55 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           </div>
         </Row>
 
-        <Row label="终端调色板" hint="立即生效">
-          {/* 只列出与当前主题亮暗匹配的四套：浅色主题配深色向 ANSI 会让 white/brightWhite
-              在近白底上隐形，不给用户配出不可读组合的机会。存的值不符时按 twin 现算生效值。 */}
-          {(() => {
-            const themeIsLight = isLightTheme(settings?.theme);
-            const stored = settings?.terminalPalette;
-            const effective = resolvePaletteId(stored, themeIsLight);
-            const options = PALETTE_LIST.filter((p) => p.light === themeIsLight);
-            return (
-              <div className="flex flex-col gap-1.5">
-                <div className="flex gap-2">
-                  {options.map((pl) => (
+        {/* 只列出与当前主题亮暗匹配的四套：浅色主题配深色向 ANSI 会让 white/brightWhite
+            在近白底上隐形，不给用户配出不可读组合的机会。存的值不符时按 twin 现算生效值。
+            每套标名字（原先只有色条、名字藏在悬浮里）；「已自动换成配对的那套」并进说明，
+            不再在浅色主题下常驻一行提示 */}
+        {(() => {
+          const themeIsLight = isLightTheme(settings?.theme);
+          const stored = settings?.terminalPalette;
+          const effective = resolvePaletteId(stored, themeIsLight);
+          const options = PALETTE_LIST.filter((p) => p.light === themeIsLight);
+          return (
+            <Row
+              label="终端调色板"
+              align="start"
+              hint={
+                stored && stored !== effective
+                  ? `立即生效；当前主题是${themeIsLight ? "浅色" : "深色"}，你选的那套已换成配对的${themeIsLight ? "浅色" : "深色"}版`
+                  : `立即生效；只列与${themeIsLight ? "浅色" : "深色"}主题相配的四套`
+              }
+            >
+              <div role="radiogroup" aria-label="终端调色板" className="flex flex-wrap gap-2">
+                {options.map((pl) => {
+                  const selected = effective === pl.id;
+                  return (
                     <button
                       key={pl.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
                       onClick={() => patch({ terminalPalette: pl.id })}
-                      title={pl.name}
-                      className={`rounded-md border p-1.5 text-xs ${
-                        effective === pl.id
+                      className={`flex flex-col items-start gap-1 rounded-md border px-1.5 pb-1 pt-1.5 text-micro ${
+                        selected
                           ? "border-cta-bd text-l1"
                           : "border-field text-l3 hover:text-l1"
                       }`}
                     >
                       {/* 8 色无缝色条：分段 flex-1 自适应固定宽度，色数变化也不撑破布局 */}
-                      <span className="flex h-3 w-16 overflow-hidden rounded-sm">
+                      <span className="flex h-3 w-20 overflow-hidden rounded-sm">
                         {paletteDots(pl.id).map((d) => (
-                          <span
-                            key={d}
-                            className="flex-1"
-                            style={{ background: d }}
-                          />
+                          <span key={d} className="flex-1" style={{ background: d }} />
                         ))}
                       </span>
+                      {pl.name}
                     </button>
-                  ))}
-                </div>
-                {stored && stored !== effective && (
-                  <div className="text-micro text-l4">
-                    当前主题是{themeIsLight ? "浅色" : "深色"}，已自动切换到配对的
-                    {themeIsLight ? "浅色" : "深色"}调色板
-                  </div>
-                )}
+                  );
+                })}
               </div>
-            );
-          })()}
-        </Row>
+            </Row>
+          );
+        })()}
 
         <Row label="滚动缓冲行数" hint="新开标签生效（1000–20000）">
           <input
@@ -2439,29 +2933,6 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           />
         </Row>
 
-        <Row
-          label="长任务 OS 通知"
-          hint="后台窗口的待确认通知"
-          labelTitle="窗口在后台、待你确认时通知，30 秒内不重复"
-        >
-          <Toggle
-            label="长任务 OS 通知"
-            checked={settings?.notificationsEnabled ?? true}
-            onChange={(checked) => patch({ notificationsEnabled: checked })}
-          />
-        </Row>
-
-        <Row
-          label="底部状态栏"
-          hint="关掉后终端和聊天都不显示"
-        >
-          <Toggle
-            label="底部状态栏"
-            checked={settings?.statusBar ?? true}
-            onChange={(checked) => patch({ statusBar: checked })}
-          />
-        </Row>
-
         {/* ConPTY 专属问题，非 Windows 平台 xterm.js 会如实应答 OSC 查询，不给这一行 */}
         {IS_WINDOWS && (
           <Row
@@ -2475,28 +2946,33 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             />
           </Row>
         )}
+
+        <SubHeading title="外部终端与运行时" />
+        <Row
+          label="外部终端"
+          hint="对话页「在外部终端恢复」、连接页外部启动用哪个终端；立即生效"
+          labelTitle="对话页「⇗ 外部恢复」使用的终端应用，立即生效。Windows 可在命令提示符和 PowerShell 之间切换：cmd 不经过 PowerShell，通常更快"
+        >
+          <select
+            className={selectLg}
+            value={externalTerminalSelectValue(settings?.externalTerminal)}
+            onChange={(e) => patch({ externalTerminal: e.target.value })}
+          >
+            {EXTERNAL_TERMINALS.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+        </Row>
+
+        <CustomRuntimeBlock onError={setError} onNotice={setNotice} />
       </Section>
 
-      {/* 快捷键：点击绑定钮进入录制态，按下新组合即保存；空串 = 禁用 */}
-      <Section
-        title="启动行为"
-        active={activeSection === "startup"}
-      >
-        <Row
-          label="想法期只读保护"
-          hint="聊想法时不让 agent 改文件（支持的 CLI 走进程级保护）"
-        >
-          {/* v3.66 当时定「设置页不加行」，前提是只有一个开关点；
-              现在它影响多条讨论路径，用户在卡片区之外找不到它（v3.88 补） */}
-          <Toggle
-            checked={settings?.discussReadonly ?? true}
-            onChange={(v) => patch({ discussReadonly: v })}
-            label="想法期只读保护"
-          />
-        </Row>
+      <Section id="startup" active={activeSection}>
         <Row label="启动时进入" hint="下次启动生效">
           <select
-            className={fieldFixed + " w-32"}
+            className={selectSm}
             value={settings?.startPage ?? "workbench"}
             onChange={(e) => patch({ startPage: e.target.value })}
           >
@@ -2512,7 +2988,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           hint="下次启动生效；运行中可临时切换"
         >
           <select
-            className={`${fieldFixed} w-52`}
+            className={selectMd}
             value={resolveStartupNavMode(
               settings?.startupNavMode,
               localStorage.getItem("ccode.navCollapsed") === "1",
@@ -2531,13 +3007,34 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             <option value="hidden">完全隐藏 + 顶部灵动岛</option>
           </select>
         </Row>
+
         <Row
-          label="顶部岛自动收起"
-          hint="完全隐藏时，鼠标移开后按此延时收起岛"
+          label="系统通知"
+          hint="Mesa 在后台、Agent 停下等你确认时弹系统通知"
+          labelTitle="窗口在后台、待你确认时通知，30 秒内不重复"
+        >
+          <Toggle
+            label="系统通知"
+            checked={settings?.notificationsEnabled ?? true}
+            onChange={(checked) => patch({ notificationsEnabled: checked })}
+          />
+        </Row>
+
+        <SubHeading
+          title="顶部灵动岛"
+          hint={
+            (settings?.hotkeyHideChrome ?? "mod+\\")
+              ? `侧栏隐藏时顶部出现的导航岛：默认导航形态选「完全隐藏」，或运行中按 ${comboLabel(settings?.hotkeyHideChrome ?? "mod+\\")} 临时隐藏`
+              : "侧栏隐藏时顶部出现的导航岛：默认导航形态选「完全隐藏」，或从命令面板临时隐藏侧栏"
+          }
+        />
+        <Row
+          label="自动收起"
+          hint="鼠标移开后多久收起展开的岛"
           labelTitle="完全隐藏时，岛始终停在顶部，只留「恢复侧栏」；鼠标移入或键盘聚焦展开完整导航，移开后按此延时收起。选「立即」适合只借岛点一下就走，不留停在半开的岛"
         >
           <select
-            className={`${fieldFixed} w-28`}
+            className={selectSm}
             value={normalizeNavCapsuleDelay(settings?.navCapsuleHideDelayMs)}
             onChange={(e) =>
               void patch({ navCapsuleHideDelayMs: Number(e.target.value) })
@@ -2551,8 +3048,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           </select>
         </Row>
         <Row
-          label="顶部岛跑完播报"
-          hint="Agent 跑完或断开时在顶部报一句，4 秒消失"
+          label="跑完播报"
+          hint="Agent 跑完或断开时在岛上报一句，4 秒消失"
           labelTitle="Agent 跑完一个回合或进程断开时，在休眠态那一行报一句，4 秒后自己消失。只报这两种「刚发生的事」——等待确认、冲突等待处理属于收件箱，岛不重复持有它们的计数"
         >
           <Toggle
@@ -2562,12 +3059,11 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           />
         </Row>
         <Row
-          label="顶部岛导航内容"
-          hint="完全隐藏时岛展开显示什么；立即生效"
-          labelTitle="完全隐藏时控制展开态里显示符号、文字，设置修改后立即生效"
+          label="展开内容"
+          hint="岛展开后的导航显示符号、文字还是两者；立即生效"
         >
           <select
-            className={`${fieldFixed} w-40`}
+            className={selectSm}
             value={normalizeNavCapsuleDisplayMode(settings?.navCapsuleDisplayMode)}
             onChange={(e) =>
               void patch({
@@ -2583,14 +3079,10 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             <option value="labels">仅显示文字</option>
           </select>
         </Row>
-        <div className="mt-2 rounded-lg ccode-well p-3">
-          <div className="mb-2 flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-sm text-l2">顶部导航显示项目</div>
-              <p className="mt-0.5 text-micro leading-4 text-l4">
-                恢复侧栏始终保留；隐藏当前页面时会临时保留该入口
-              </p>
-            </div>
+        <Card
+          title="岛上显示的入口"
+          hint="「恢复侧栏」始终保留；隐藏了当前所在页面时会临时保留它的入口"
+          action={
             <button
               type="button"
               className={`${ghostActionClass} shrink-0 text-xs`}
@@ -2598,7 +3090,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             >
               全部显示
             </button>
-          </div>
+          }
+        >
           {/* 密集短项固定五列对齐（design-system）：max-content 轨在整宽卡里右侧留死空间，
               等宽 1fr 轨填满卡宽（2026-10-03 用户反馈「右边空一块」） */}
           <div className="grid grid-cols-[repeat(5,minmax(0,1fr))] gap-2">
@@ -2609,10 +3102,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
               return (
                 <Checkbox
                   key={item.id}
-                  className={`h-8 rounded-md border px-2.5 text-xs ${
-                    selected
-                      ? "border-field bg-raised text-l1"
-                      : "border-hairline bg-canvas text-l3"
+                  className={`h-8 rounded-md px-2 text-xs hover:bg-hover ${
+                    selected ? "text-l1" : "text-l3"
                   }`}
                   checked={selected}
                   label={item.label}
@@ -2629,22 +3120,23 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
               );
             })}
           </div>
-        </div>
+        </Card>
       </Section>
 
+      {/* 快捷键：点击绑定钮进入录制态，按下新组合即保存；空串 = 禁用 */}
       <Section
-        title="快捷键"
-        active={activeSection === "hotkeys"}
+        id="hotkeys"
+        active={activeSection}
       >
         {/* 全部在用的绑定（命令面板/侧栏/九页切）在 HotkeysSection 内互判冲突 */}
         <HotkeysSection settings={settings} patch={patch} />
       </Section>
 
       <Section
-        title="统计"
-        active={activeSection === "stats"}
+        id="stats"
+        active={activeSection}
       >
-        <Row label="汇率（USD→CNY）" hint="统计页下次查询生效">
+        <Row label="汇率（USD→CNY）" hint="用量页下次查询生效">
           <input
             type="number"
             step={0.01}
@@ -2668,23 +3160,28 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         </Row>
 
         {/* 自定义定价：表格编辑（每行 = 模型前缀 + 输入/输出价），保存时序列化为 pricing.json */}
-        <div className="py-3">
-          <div className="mb-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span
-              className="text-sm text-l2"
-              title="按模型名前缀匹配，覆盖内置价目与模型能力库价目"
-            >
-              自定义定价
-            </span>
-            <span className="text-xs text-l4">美元 / 每百万 token</span>
-            <button
-              onClick={savePricing}
-              disabled={!pricingDirty || savingPricing}
-              className={`ml-auto ${rowActionClass}`}
-            >
-              {savingPricing ? "保存中…" : "保存"}
-            </button>
-          </div>
+        <Card
+          title="自定义定价"
+          hint="按模型名前缀匹配，覆盖内置价目；单位：美元 / 每百万 token"
+          action={
+            // 没改动时不放钮：一颗灰着的「已保存」看着像坏了（2026-10-17）
+            (pricingDirty || savingPricing) && (
+              <button
+                onClick={savePricing}
+                disabled={savingPricing}
+                className={rowActionClass}
+              >
+                {savingPricing ? "保存中…" : "保存"}
+              </button>
+            )
+          }
+        >
+          {pricingRows.length === 0 && (
+            // 空态说一句为什么是空的：内置价目已覆盖常见模型，这里只放例外
+            <p className="px-1 py-1 text-xs text-l4">
+              还没有自定义价目。常见模型已有内置价，只有用量页算不出价或价格不对时才需要加
+            </p>
+          )}
           {pricingRows.length > 0 && (
             <div className="mb-1 grid grid-cols-[minmax(140px,1fr)_7rem_7rem_28px] items-center gap-2 px-1 text-xs text-l4">
               <span>模型前缀</span>
@@ -2761,56 +3258,62 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           >
             + 添加模型
           </button>
-        </div>
+          {/* 待补清单：用量里出现过、三层价目都查不到的模型。原先只能对着用量页的「≥ / ~」猜是谁没价 */}
+          {(() => {
+            const listed = new Set(pricingRows.map((r) => r.prefix.trim().toLowerCase()));
+            const pending = (unpriced ?? []).filter(
+              (m) => !listed.has(m.model.toLowerCase()),
+            );
+            if (unpriced === null || pending.length === 0) return null;
+            return (
+              <div className="mt-3">
+                <p className="mb-1 px-1 text-micro font-medium text-l3">
+                  用量里查不到价格的模型
+                  <span className="ml-1.5 font-normal text-l4">这些模型的花费没算进用量页</span>
+                </p>
+                <ul>
+                  {pending.map((m) => (
+                    <li
+                      key={m.model}
+                      className="flex items-center gap-3 rounded-md px-1 py-1 text-xs hover:bg-hover"
+                    >
+                      <span className="min-w-0 flex-1 truncate font-mono text-l2">{m.model}</span>
+                      <span className="shrink-0 text-l4">
+                        {compactTokens(m.tokens)} token · 最近 {m.lastDay}
+                      </span>
+                      <button
+                        type="button"
+                        className={`${ghostActionClass} shrink-0`}
+                        onClick={() => {
+                          setPricingRows([
+                            ...pricingRows,
+                            { prefix: m.model, input: "", output: "" },
+                          ]);
+                          markPricingDirty(true);
+                        }}
+                      >
+                        填价
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })()}
+        </Card>
       </Section>
 
-      <Section
-        title="集成"
-        active={activeSection === "integration"}
-      >
-        {hookSupportError && (
-          <div className="mb-2 flex items-center gap-2 text-xs text-err-text">
-            <span>{hookSupportError}</span>
-            <button
-              type="button"
-              className={ghostActionClass}
-              onClick={() => void loadHookSupport()}
-            >
-              重试
-            </button>
-          </div>
-        )}
-        <Row
-          label="brew 镜像"
-          hint="安装/更新走国内镜像"
-          labelTitle="元数据走 TUNA，包体走南大 ghcr 代理"
-        >
-          <Toggle
-            label="brew 镜像"
-            checked={settings?.brewMirror ?? false}
-            onChange={(checked) => patch({ brewMirror: checked })}
-          />
-        </Row>
-
-        <Row
-          label="会话自动命名"
-          hint="关掉后不再自动起名"
-          labelTitle="起名跟下方「AI 专用配置」走，「会话摘要 / 起名」行可单独换。聊完起名、打开对话页补名去重；关掉后已有标题与你手改的标题都不受影响"
-        >
-          <Toggle
-            label="会话自动命名"
-            checked={settings?.autoTitleSessions ?? true}
-            onChange={(v) => patch({ autoTitleSessions: v })}
-          />
-        </Row>
-
+      <Section id="integration" active={activeSection}>
+        {/* 两件事分两节（2026-10-17）：内置 AI 功能用哪份配置 / Mesa 对各家 Agent 加的约束。
+            「会话自动命名」挪到配置卡后面，紧挨它用到的「会话摘要 / 起名」槽 */}
+        <SubHeading title="内置 AI 功能" hint="Mesa 自己发起的 AI 调用：起提交说明、给对话起名、翻译等" />
         <Row
           label="AI 专用配置"
           hint="留空自动用最近使用的配置"
           labelTitle="同一配置的每个模型各占一条"
         >
           <select
-            className={fieldFixed}
+            className={selectLg}
             value={selectedAiProfileChoice(
               settings?.aiProfileId,
               settings?.aiModel,
@@ -2827,107 +3330,124 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           </select>
         </Row>
 
-        {/* 同权控件分级（跨页三原则 #1）：按功能的七条收进一张卡，不再与上方默认行排成一堵墙；
-            行样式与快捷键卡同款（hover 高亮 + 宽屏双列） */}
-        <div className="rounded-lg ccode-well p-3">
-          <div className="mb-2 text-xs font-medium text-l3">
-            按功能单独配置（留空跟随上方默认）
-          </div>
-          <div className="grid grid-cols-1 gap-1 lg:grid-cols-2">
-            {AI_FN_ROWS.map((fn) => (
-              <div
-                key={fn.key}
-                className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-hover"
-              >
-                <span className="min-w-0 truncate text-sm text-l2">{fn.label}</span>
-                <select
-                  className={`${fieldFixed} w-56 shrink-0`}
-                  value={selectedAiProfileChoice(
+        {/* 同权控件分级（跨页三原则 #1）：按功能的几条收进一张卡，不与上方默认行排成一堵墙 */}
+        <Card title="按功能单独配置" hint="留空跟随上方「AI 专用配置」；某项想用更便宜或更强的模型时再单配">
+          {AI_FN_GROUPS.map((group) => (
+            <div key={group.title} className="mt-2 first:mt-0">
+              <p className="mb-0.5 px-2 text-micro font-medium text-l4">{group.title}</p>
+              <div className="grid grid-cols-1 gap-x-3 gap-y-0.5 xl:grid-cols-2">
+                {group.rows.map((fn) => {
+                  const value = selectedAiProfileChoice(
                     settings?.aiProfiles?.[fn.key],
                     settings?.aiProfileModels?.[fn.key],
                     profiles,
-                  )}
-                  onChange={(e) => patchAiFnProfile(fn.key, e.target.value)}
-                >
-                  <option value="">跟随默认</option>
-                  {aiChoices.map((choice) => (
-                    <option key={choice.value} value={choice.value}>
-                      {choice.label}
-                    </option>
-                  ))}
-                </select>
+                  );
+                  const chosen = aiChoices.find((c) => c.value === value);
+                  return (
+                    <CardRow key={fn.key} label={fn.label} hint={fn.hint}>
+                      <select
+                        className={`${fieldFixed} w-56 max-w-[45vw] shrink-0`}
+                        title={chosen?.label ?? "跟随默认"}
+                        value={value}
+                        onChange={(e) => patchAiFnProfile(fn.key, e.target.value)}
+                      >
+                        <option value="">跟随默认</option>
+                        {aiChoices.map((choice) => (
+                          <option key={choice.value} value={choice.value}>
+                            {choice.label}
+                          </option>
+                        ))}
+                      </select>
+                    </CardRow>
+                  );
+                })}
               </div>
-            ))}
-          </div>
-        </div>
+            </div>
+          ))}
+        </Card>
 
         <Row
-          label="外部终端"
-          hint="「⇗ 外部恢复」用哪个终端；立即生效"
-          labelTitle="对话页「⇗ 外部恢复」使用的终端应用，立即生效。Windows 可在命令提示符和 PowerShell 之间切换：cmd 不经过 PowerShell，通常更快"
+          label="会话自动命名"
+          hint="Agent 聊完自动给对话起标题；关掉后不再起名"
+          labelTitle="起名跟上方「AI 专用配置」走，「会话摘要 / 起名」行可单独换。聊完起名、打开对话页补名去重；关掉后已有标题与你手改的标题都不受影响"
         >
-          <select
-            className={fieldFixed}
-            value={externalTerminalSelectValue(settings?.externalTerminal)}
-            onChange={(e) => patch({ externalTerminal: e.target.value })}
-          >
-            {EXTERNAL_TERMINALS.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.label}
-              </option>
-            ))}
-          </select>
+          <Toggle
+            label="会话自动命名"
+            checked={settings?.autoTitleSessions ?? true}
+            onChange={(v) => patch({ autoTitleSessions: v })}
+          />
         </Row>
 
-        {/* 九家收一张卡：行标签只写 agent 名（「精确注意力标记」由卡头承担）；
-            写入路径整段挂标签悬浮（v3.88：机制说明不占版面），行样式与快捷键卡同款 */}
-        {hookSupport.length > 0 && (
-          <div className="rounded-lg ccode-well p-3">
-            <div className="mb-2 text-xs font-medium text-l3">精确注意力标记</div>
-            <div className="grid grid-cols-1 gap-1 lg:grid-cols-2">
-              {hookSupport.map((h) => {
-                const label = AGENTS.find((a) => a.id === h.agent)?.label ?? h.agent;
-                const hint = h.supported
-                  ? `写入配置，自动备份${h.note ? `；${h.note}` : ""}`
-                  : "暂不支持";
-                return (
-                  <div
-                    key={h.agent}
-                    className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-hover"
-                  >
-                    <div className="min-w-0" title={h.configPath ?? undefined}>
-                      <div className="truncate text-sm text-l2">{label}</div>
-                      <p className="mt-0.5 truncate text-micro leading-4 text-l4">{hint}</p>
-                    </div>
-                    {h.supported ? (
+        <SubHeading title="对 Agent 的约束" hint="Mesa 拉起各家 CLI 时额外加的保护与标记" />
+        <Row
+          label="想法期只读保护"
+          hint="聊想法时不让 agent 改文件（支持的 CLI 走进程级保护）"
+        >
+          {/* v3.66 当时定「设置页不加行」，前提是只有一个开关点；
+              现在它影响多条讨论路径，用户在卡片区之外找不到它（v3.88 补） */}
+          <Toggle
+            checked={settings?.discussReadonly ?? true}
+            onChange={(v) => patch({ discussReadonly: v })}
+            label="想法期只读保护"
+          />
+        </Row>
+
+        {hookSupportError && (
+          <div className="mt-3 flex items-center gap-2 text-xs text-err-text">
+            <span>{hookSupportError}</span>
+            <button
+              type="button"
+              className={ghostActionClass}
+              onClick={() => void loadHookSupport()}
+            >
+              重试
+            </button>
+          </div>
+        )}
+        {/* 卡头说一次机制，行标签只写 agent 名，写入路径挂行悬浮（v3.88：机制说明不占版面）。
+            不支持的几家不再各占一行灰开关，并成卡底一句 */}
+        {hookSupport.length > 0 && (() => {
+          const supported = hookSupport.filter((h) => h.supported);
+          const unsupported = hookSupport.filter((h) => !h.supported);
+          const labelOf = (agent: string) => AGENTS.find((a) => a.id === agent)?.label ?? agent;
+          return (
+            <Card
+              title="精确注意力标记"
+              hint="不开时 Mesa 读终端画面认出确认菜单；开启后由 CLI 自己报告何时停下等你，更准，Mesa 之外的终端里的对话也认得出。开启会写入该 CLI 的 hooks 配置，写前自动备份"
+            >
+              <div className="grid grid-cols-1 gap-1 lg:grid-cols-2">
+                {supported.map((h) => {
+                  const label = labelOf(h.agent);
+                  return (
+                    <CardRow
+                      key={h.agent}
+                      label={label}
+                      hint={h.note ?? undefined}
+                      title={h.configPath ? `写入 ${h.configPath}` : undefined}
+                    >
                       <Toggle
                         label={`精确注意力标记（${label}）`}
                         checked={settings?.hooksAttention?.[h.agent] ?? false}
                         onChange={(checked) => void toggleHooks(h.agent, label, checked)}
                       />
-                    ) : (
-                      <span className="pointer-events-none shrink-0 opacity-40">
-                        <Toggle
-                          label={`精确注意力标记（${label}）`}
-                          checked={false}
-                          onChange={() => {}}
-                        />
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
+                    </CardRow>
+                  );
+                })}
+              </div>
+              {unsupported.length > 0 && (
+                <p className="mt-2 px-2 text-micro text-l4">
+                  暂不支持：{unsupported.map((h) => labelOf(h.agent)).join("、")}
+                </p>
+              )}
+            </Card>
+          );
+        })()}
       </Section>
 
-      <Section
-        title="网络"
-        active={activeSection === "network"}
-      >
+      <Section id="network" active={activeSection}>
         <Row
           label="出网代理"
+          align="start"
           hint="官方登录与更新下载用；空 = 不使用"
           labelTitle="用于官方账号登录与安装/更新下载（网关启动不走；国内镜像自动直连不绕代理）。空 = 不使用。「检测」探测本机代理（Clash / V2Ray 等），点候选即填。"
         >
@@ -2957,7 +3477,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                 disabled={proxyDetecting}
                 className={`${secondaryActionClass} shrink-0`}
               >
-                {proxyDetecting ? "检测中…" : "检测"}
+                {proxyDetecting ? "检测中…" : "检测本机代理"}
               </button>
             </div>
             {proxyCandidates !== null &&
@@ -3018,8 +3538,25 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             }}
           />
         </Row>
+        {/* Homebrew 只在 macOS / Linux 上用；Windows 一键安装走 winget，这行对它没有意义 */}
+        {!IS_WINDOWS && (
+          <Row
+            label="brew 镜像"
+            hint="用 Homebrew 安装/更新时走国内镜像"
+            labelTitle="元数据走 TUNA，包体走南大 ghcr 代理"
+          >
+            <Toggle
+              label="brew 镜像"
+              checked={settings?.brewMirror ?? false}
+              onChange={(checked) => patch({ brewMirror: checked })}
+            />
+          </Row>
+        )}
+
+        <SubHeading title="文献全文" />
         <Row
           label="学校图书馆"
+          align="start"
           hint="登录一次即可下载全文；不存账号密码"
           labelTitle="登录一次，之后待获取清单点「浏览器」下载，PDF 自动进项目。不存账号密码。"
         >
@@ -3156,8 +3693,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
       </Section>
 
       <Section
-        title="更新"
-        active={activeSection === "update"}
+        id="update"
+        active={activeSection}
         badge={
           appUpdate ? (
             <span className="ml-1 inline-flex items-center gap-1 rounded-sm bg-inset px-1.5 py-0.5 text-xs font-normal text-l3">
@@ -3167,86 +3704,84 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           ) : undefined
         }
       >
-        <div className="py-3">
-          {appUpdate ? (
-            <>
-              <div className="mb-2 flex flex-wrap items-center gap-2">
-                <span className="text-sm text-l2">
-                  发现新版本{" "}
-                  <span className="text-l1">v{appUpdate.version}</span>
-                  <span className="ml-2 text-xs text-l4">
-                    当前 v{appUpdate.currentVersion}
-                  </span>
-                </span>
-                <button
-                  onClick={installUpdate}
-                  disabled={installing}
-                  className={`${primaryActionClass} shrink-0`}
-                >
-                  {installing
-                    ? appUpdateProgressLabel(
-                        installProgress?.downloaded ?? 0,
-                        installProgress?.total ?? null,
-                      )
-                    : "下载并安装"}
-                </button>
+        {appUpdate ? (
+          <Card
+            title={
+              <>
+                发现新版本 <span className="text-l1">v{appUpdate.version}</span>
+              </>
+            }
+            hint={`当前 v${appUpdate.currentVersion} · 安装完成后会自动重启，进行中的对话请先保存`}
+            action={
+              <button
+                onClick={() => {
+                  setError(null);
+                  void installUpdate();
+                }}
+                disabled={installing}
+                className={`${primaryActionClass} shrink-0`}
+              >
+                {installing
+                  ? appUpdateProgressLabel(
+                      installProgress?.downloaded ?? 0,
+                      installProgress?.total ?? null,
+                    )
+                  : "下载并安装"}
+              </button>
+            }
+          >
+            {installing && (
+              <div className="mb-2 h-1 overflow-hidden rounded-full bg-inset">
+                <div
+                  className="h-full bg-ok-text transition-[width]"
+                  style={{
+                    width: `${appUpdateProgressPct(
+                      installProgress?.downloaded ?? 0,
+                      installProgress?.total ?? null,
+                    ) ?? 15}%`,
+                  }}
+                />
               </div>
-              <p className="mb-2 text-xs text-l4">
-                安装完成后会自动重启。进行中的对话请先保存。
-              </p>
-              {installing && (
-                <div className="mb-2">
-                  <div className="h-1 overflow-hidden rounded-full bg-inset">
-                    <div
-                      className="h-full bg-ok-text transition-[width]"
-                      style={{
-                        width: `${appUpdateProgressPct(
-                          installProgress?.downloaded ?? 0,
-                          installProgress?.total ?? null,
-                        ) ?? 15}%`,
-                      }}
-                    />
-                  </div>
-                </div>
-              )}
-              {appUpdateError && (
-                <p className="mb-2 text-xs text-err-text">{appUpdateError}</p>
-              )}
-              {appUpdate.body && (
-                <div className="max-h-48 overflow-auto whitespace-pre-line rounded-sm ccode-well p-2 text-xs leading-5 text-l3">
+            )}
+            {appUpdateError && (
+              <InlineNotice tone="err" className="mb-2">{appUpdateError}</InlineNotice>
+            )}
+            {appUpdate.body && (
+              <>
+                <div className="mb-1 text-xs font-medium text-l3">更新说明</div>
+                <div className="max-h-48 overflow-auto whitespace-pre-line text-xs leading-5 text-l3">
                   {appUpdate.body}
                 </div>
-              )}
-            </>
-          ) : (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs text-l4">
-                {appUpdateStatus === "error"
-                  ? appUpdateError ?? appUpdateStatusHint("error")
-                  : appUpdateStatusHint(appUpdateStatus)}
-              </span>
-              {appUpdateStatus !== "dev" &&
-                appUpdateStatus !== "checking" &&
-                appUpdateStatus !== "idle" && (
-                  <button
-                    onClick={() => checkAppUpdate()}
-                    className={`shrink-0 ${rowActionClass}`}
-                  >
-                    重新检查
-                  </button>
-                )}
-              {(appUpdateStatus === "checking" ||
-                appUpdateStatus === "idle") && (
-                <span className="text-xs text-l4">请稍候</span>
-              )}
-            </div>
-          )}
-        </div>
+              </>
+            )}
+          </Card>
+        ) : (
+          <Row
+            label="检查更新"
+            hint={
+              appUpdateStatus === "error"
+                ? appUpdateError ?? appUpdateStatusHint("error")
+                : appUpdateStatusHint(appUpdateStatus)
+            }
+          >
+            {appUpdateStatus !== "dev" && (
+              <button
+                onClick={() => checkAppUpdate()}
+                disabled={appUpdateStatus === "checking" || appUpdateStatus === "idle"}
+                className={`shrink-0 ${rowActionClass}`}
+              >
+                {appUpdateStatus === "checking" || appUpdateStatus === "idle"
+                  ? "检查中…"
+                  : "重新检查"}
+              </button>
+            )}
+          </Row>
+        )}
       </Section>
 
       <Section
-        title="诊断"
-        active={activeSection === "diag"}
+        id="diag"
+        active={activeSection}
       >
         <Row
           label="诊断包"
@@ -3280,7 +3815,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         </Row>
         <Row
           label="依赖体检"
-          hint="Git / Node.js / Quarto / TeX / 拼图库"
+          hint="Git / Node.js / Quarto / TeX / PDF 处理库"
           extra={
             depCheck ? (
               <div className="rounded-sm ccode-well p-2">
@@ -3345,9 +3880,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                   </span>
                 </div>
                 {depCheckError && (
-                  <div className="py-1 text-xs text-err-text">
-                    上次检测失败：{depCheckError}，可重试
-                  </div>
+                  <InlineNotice tone="err" className="py-1">上次检测失败：{depCheckError}，可重试</InlineNotice>
                 )}
               </div>
             ) : depCheckError ? (
@@ -3368,61 +3901,55 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           </button>
         </Row>
         <BackgroundTasksPanel />
-        <div className="py-3">
-          <div className="group mb-2 flex items-center gap-2">
-            <span
-              className="text-xs text-l4"
-              title="进程内缓冲，重启即清空"
-            >
-              最近 100 条应用日志
-            </span>
-            {/* 诊断是低频区：行内按钮 hover 才现，Tab 聚焦同样显示 */}
-            <button
-              onClick={loadLogs}
-              className={`ml-auto rounded-sm px-2 py-0.5 text-xs text-l2 hover:bg-hover ${hoverRevealClass}`}
-            >
-              刷新
-            </button>
-            <button
-              onClick={copyLogs}
-              disabled={logs.length === 0}
-              className={`rounded-sm px-2 py-0.5 text-xs text-l2 hover:bg-hover disabled:opacity-50 ${hoverRevealClass}`}
-            >
-              复制全部
-            </button>
-            <button
-              onClick={async () => {
-                setError(null);
-                try {
-                  const path = await invoke<string>("export_app_log");
-                  setNotice({ text: `已导出：${path}`, openPath: path });
-                  setTimeout(() => setNotice(null), 8000);
-                } catch (e) {
-                  setError(String(e));
-                }
-              }}
-              disabled={logs.length === 0}
-              title="导出为 txt 到 ~/Downloads/ccode-exports/，反馈问题时发给开发者"
-              className={`rounded-sm px-2 py-0.5 text-xs text-l2 hover:bg-hover disabled:opacity-50 ${hoverRevealClass}`}
-            >
-              导出
-            </button>
-            <button
-              onClick={clearLogs}
-              disabled={logs.length === 0}
-              className={`rounded-sm px-2 py-0.5 text-xs text-l2 hover:bg-hover disabled:opacity-50 ${hoverRevealClass}`}
-            >
-              清空
-            </button>
-          </div>
+        <Card
+          title="应用日志"
+          hint="最近 100 条；进程内缓冲，重启即清空"
+          action={
+            <>
+              <button onClick={loadLogs} className="rounded-sm px-2 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50">
+                刷新
+              </button>
+              <button
+                onClick={copyLogs}
+                disabled={logs.length === 0}
+                className="rounded-sm px-2 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50"
+              >
+                复制全部
+              </button>
+              <button
+                onClick={async () => {
+                  setError(null);
+                  try {
+                    const path = await invoke<string>("export_app_log");
+                    setNotice({ text: `已导出：${path}`, openPath: path });
+                  } catch (e) {
+                    setError(String(e));
+                  }
+                }}
+                disabled={logs.length === 0}
+                title="导出为 txt 到 ~/Downloads/ccode-exports/，反馈问题时发给开发者"
+                className="rounded-sm px-2 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50"
+              >
+                导出
+              </button>
+              <button
+                onClick={clearLogs}
+                disabled={logs.length === 0}
+                className="rounded-sm px-2 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50"
+              >
+                清空
+              </button>
+            </>
+          }
+        >
           {logs.length === 0 ? (
-            <p className="text-xs text-l4">暂无日志</p>
+            <p className="px-1 text-xs text-l4">暂无日志</p>
           ) : (
-            <div className="max-h-64 overflow-auto rounded-sm ccode-well p-2 font-mono text-xs leading-5">
+            <div className="max-h-64 overflow-auto font-mono text-xs leading-5">
               {logs.map((l, i) => (
                 <div key={i} className="break-all">
                   <span className="text-l4">
-                    {l.ts.replace("T", " ").replace("Z", "")}{" "}
+                    {logLocalTime(l.ts)}{" "}
                   </span>
                   <span
                     className={
@@ -3441,133 +3968,245 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
               ))}
             </div>
           )}
-        </div>
+        </Card>
       </Section>
 
       <Section
-        title="数据与存储"
-        active={activeSection === "storage"}
+        id="storage"
+        active={activeSection}
       >
-        {/* 用户此前完全不知道 Mesa 在硬盘上占了多少、存在哪（v3.88 补） */}
-        {storageError ? (
-          <p className="py-2 text-xs text-err-text">{storageError}</p>
-        ) : storage === null ? (
-          <p className="py-2 text-xs text-l4">统计中…</p>
-        ) : (
-          <ul>
-            {storage.map((e) => (
-              <li key={e.path} className="group flex items-center gap-2 rounded-md px-2 py-2 hover:bg-hover">
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm text-l2">
-                    {e.label}
-                  </span>
-                  <span
-                    className="block truncate font-mono text-micro text-l4"
-                    title={e.path}
+        {/* 用户此前完全不知道 Mesa 在硬盘上占了多少、存在哪（v3.88 补）。
+            2026-10-17：分「Mesa 数据 / 工作副本」两组、组头写一次根目录、行里只写相对名；
+            卡头给总计；补列 ~/ccode 下的工作副本（往往才是大头）；快照可就地清理（移回收站）。
+            旧说明「快照 / 备份 / 缓存可以直接删」不对：备份里有「恢复初始状态」要用的原样，
+            模型目录被 Codex 全局配置引用着，逐项核过只剩快照能清 */}
+        {(() => {
+          const summary = storage ? summarizeStorage(storage, IS_WINDOWS, homeDir) : null;
+          const segments = storage ? storageSegments(storage) : [];
+          const customRoot = settings?.workspaceRoot?.trim();
+          const rootShown = customRoot
+            ? `${customRoot.replace(/[\\/]+$/, "")}${IS_WINDOWS ? "\\" : "/"}ccode`
+            : "~/ccode";
+          return (
+            <>
+              <SubHeading
+                title="工作副本位置"
+                hint="编程工作树、科研工作副本、定时隔离树都放在这里，用得越多占得越大；Windows 上默认在 C 盘，空间紧就换到别的盘。只管此后新建的，已有的留在原处照常用。"
+              />
+              <RowGroup>
+                <Row label="存放位置" hint={customRoot ? rootShown : `${rootShown}（默认）`}>
+                  {customRoot && (
+                    <button
+                      type="button"
+                      className={ghostActionClass}
+                      disabled={movingRoot}
+                      onClick={() => void changeWorkspaceRoot(true)}
+                    >
+                      恢复默认
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className={ghostActionClass}
+                    disabled={movingRoot}
+                    onClick={() => void changeWorkspaceRoot(false)}
                   >
-                    {e.path}
-                  </span>
-                </span>
-                <span className="shrink-0 font-mono text-xs text-l3">
-                  {e.exists ? formatBytes(e.bytes) : "—"}
-                </span>
-                {/* 行级低频动作：hover 才现的 ghost 钮，不再每行常驻描边次按钮 */}
-                <button
-                  type="button"
-                  disabled={!e.exists}
-                  onClick={() => void openStorageEntry(e.path)}
-                  title="在系统文件管理器中定位"
-                  className={`${ghostActionClass} ${hoverRevealClass} shrink-0 disabled:opacity-40`}
-                >
-                  定位
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-        <p className="pt-2 text-micro text-l4">
-          快照 / 备份 / 缓存可以直接删，配置与索引别手动删。
-        </p>
+                    {movingRoot ? "处理中…" : "更改位置…"}
+                  </button>
+                </Row>
+              </RowGroup>
+
+              <SubHeading
+                title="本机占用"
+                hint="Mesa 在本机的目录与大小；配置、索引和备份别手动删"
+              />
+              <div className="mt-3 ccode-well ccode-card p-4">
+                {storageError ? (
+                  <p className="py-2 text-xs text-err-text">{storageError}</p>
+                ) : summary === null ? (
+                  <p className="py-2 text-xs text-l4">统计中…</p>
+                ) : (
+                  <>
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-l1">
+                          Mesa 已占用 {summary.totalApprox ? "≥ " : ""}
+                          {formatBytes(summary.total)}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className={`${ghostActionClass} shrink-0`}
+                        onClick={() => {
+                          setStorage(null);
+                          setStorageError(null);
+                          void loadStorage();
+                        }}
+                      >
+                        重新统计
+                      </button>
+                    </div>
+                    {segments.length > 0 && (
+                      <>
+                        <div
+                          role="img"
+                          aria-label={`占用分布：${segments.map((g) => `${g.label} ${formatBytes(g.bytes)}`).join("，")}`}
+                          className="mt-3 flex h-2.5 gap-0.5 overflow-hidden rounded-full bg-inset"
+                        >
+                          {segments.map((g) => (
+                            <span
+                              key={g.key}
+                              style={{ width: `${Math.max(g.pct, 0.6)}%`, background: STORAGE_TONES[g.tone] ?? STORAGE_TONES[STORAGE_TONES.length - 1] }}
+                            />
+                          ))}
+                        </div>
+                        <ul className="mt-3 flex flex-wrap gap-x-6 gap-y-2">
+                          {segments.map((g) => (
+                            <li key={g.key} className="min-w-0">
+                              <p className="flex items-center gap-1.5 text-xs text-l2">
+                                <span
+                                  aria-hidden="true"
+                                  className="size-2 shrink-0 rounded-full"
+                                  style={{ background: STORAGE_TONES[g.tone] ?? STORAGE_TONES[STORAGE_TONES.length - 1] }}
+                                />
+                                {g.label}
+                              </p>
+                              <p className="mt-0.5 pl-3.5 font-mono text-micro text-l3">{formatBytes(g.bytes)}</p>
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                    {summary.groups.map((group) => (
+                      <div key={group.key} className="mt-4">
+                        <p className="flex items-baseline gap-2 pb-1 text-micro">
+                          <span className="font-medium text-l2">{group.title}</span>
+                          <span className="min-w-0 truncate font-mono text-l4" title={group.rootPath}>
+                            {group.rootLabel}
+                          </span>
+                        </p>
+                        <ul className="divide-y divide-hairline border-t border-hairline">
+                          {group.rows.map((e) => (
+                            <li key={e.path} className="group flex items-center gap-2 py-2">
+                              <span className="min-w-0 flex-1 truncate text-sm text-l1" title={e.path}>
+                                {e.label}
+                                <span className="ml-2 font-mono text-micro text-l4">{e.rel}</span>
+                              </span>
+                              <span className="w-16 shrink-0 text-right font-mono text-xs text-l3">
+                                {e.exists ? `${e.approx ? "≥ " : ""}${formatBytes(e.bytes)}` : "—"}
+                              </span>
+                              {/* 行级低频动作：hover 才现。「清理」每行都占位（不可清理时 invisible）：
+                                  只在快照行渲染会把那一行的大小挤到左边，整列对不齐（2026-10-17 截图实证） */}
+                              <button
+                                type="button"
+                                tabIndex={e.clearable ? undefined : -1}
+                                aria-hidden={e.clearable ? undefined : true}
+                                disabled={!e.clearable || !e.exists || e.bytes === 0 || clearingStorage !== null}
+                                onClick={() => void clearStorage(e)}
+                                className={`${ghostActionClass} shrink-0 ${e.clearable ? hoverRevealClass : "invisible"}`}
+                              >
+                                {clearingStorage === e.id ? "清理中…" : "清理"}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={!e.exists}
+                                onClick={() => void openStorageEntry(e.path)}
+                                title="在系统文件管理器中定位"
+                                className={`${ghostActionClass} ${hoverRevealClass} shrink-0`}
+                              >
+                                定位
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
+            </>
+          );
+        })()}
+        <InternalSessionsCard
+          autoClean={settings?.internalAutoClean ?? true}
+          retentionDays={settings?.internalRetentionDays ?? 30}
+          onPatch={(p) => patch(p)}
+        />
+        <SubHeading title="卸载" />
         <UninstallRow />
-        <CustomRuntimeBlock onError={setError} onNotice={setNotice} />
       </Section>
 
       <Section
-        title="关于"
-        active={activeSection === "about"}
+        id="about"
+        active={activeSection}
       >
-        <Row
-          label="版本"
-          hint={
-            appUpdate
-              ? `有新版本 v${appUpdate.version}，到「更新」分区安装`
-              : buildInfoSuffix(buildInfo)
-          }
-        >
-          <span className="flex items-center gap-2">
-            <span className="font-mono text-xs text-l2">
-              {appVersion ?? "…"}
-            </span>
+        {/* 关于页二次收拢（2026-10-17 用户「看着有点乱」）：只回答两件事——我装的是什么（身份卡）、
+            出了事找谁（反馈）。GitHub 主页与开源许可降为身份卡右侧两个轻链接；致谢与数据来源是
+            「用了谁的东西」，与第三方许可同一类，并进许可浮层；隐私压成页脚一句，全文挂悬浮 */}
+        <div className="mt-1 flex flex-wrap items-center gap-4 ccode-well ccode-card p-4">
+          <img
+            src={settings?.appIconStyle === "light" ? appIconLight : appIconDark}
+            alt=""
+            aria-hidden="true"
+            className="h-14 w-14 shrink-0"
+          />
+          <div className="min-w-0 flex-1">
+            <div
+              className="text-base font-semibold text-l1"
+              title="展示名 Mesa，内部身份 ccode（bundle ID com.ccode.dev，数据在 ~/ccode/）——报障找目录时对得上"
+            >
+              Mesa
+            </div>
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-l3">
+              <span className="font-mono text-l2">{appVersion ? `v${appVersion}` : "…"}</span>
+              {buildInfoSuffix(buildInfo) && <span>{buildInfoSuffix(buildInfo)}</span>}
+            </div>
+            <div className="mt-0.5 text-micro text-l4">
+              © 2026 泽塔前沿科技（杭州）有限公司 · Apache-2.0
+            </div>
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-1">
             {appUpdate && (
               <button
                 type="button"
-                className={rowActionClass}
+                className={`${rowActionClass} mr-1 shrink-0`}
                 onClick={() => setActiveSection("update")}
               >
-                去安装
+                v{appUpdate.version} 可更新 · 去安装
               </button>
             )}
-          </span>
-        </Row>
-        <Row
-          label="版权"
-          hint="展示名 Mesa，内部身份 ccode"
-          labelTitle="bundle ID com.ccode.dev，数据在 ~/ccode/——报障找目录时对得上"
-        >
-          <span className="text-xs text-l2">© 2026 泽塔前沿科技（杭州）有限公司</span>
-        </Row>
-        <Row
-          label="开源许可"
-          hint="第三方组件与字体的许可清单"
-          labelTitle="Mesa 按 Apache-2.0 发布"
-        >
-          <button
-            type="button"
-            className={secondaryActionClass}
-            onClick={() => void openNotices()}
-          >
-            查看开源许可
-          </button>
-        </Row>
-        <Row
-          label="致谢"
-          hint="字体 JetBrains Mono；图标 lobe-icons"
-          labelTitle="设计参考 cc-switch / waveterm / VS Code（学机制不抄代码）；平台图标 lobehub lobe-icons（MIT）"
-        >
-          <span className="text-xs text-l2">
-            cc-switch · waveterm · VS Code
-          </span>
-        </Row>
-        <Row
-          label="数据来源"
-          hint="文献元数据与指标服务，仅在同步 / 下载时访问"
-          labelTitle="期刊缩写 JabRef（CC0）与 NLM；期刊指标 ShowJCR；开放获取 Unpaywall；元数据 Crossref / OpenAlex"
-        >
-          <span className="text-xs text-l2">
-            JabRef · NLM · ShowJCR · Unpaywall · Crossref · OpenAlex
-          </span>
-        </Row>
-        <Row
-          label="隐私"
-          hint="密钥只存本机；数据去向看悬浮说明"
-          labelTitle="API 密钥只存本机（0600）；各 CLI 会话目录只读；更新检查向 GitHub 发版本请求，文献同步 / 下载 / 远查会把 DOI 或刊名发往「数据来源」所列服务；「反馈与提需求」按你点发送的内容寄出——此外不上传数据"
-        >
-          <span className="text-xs text-l2">密钥不出本机</span>
-        </Row>
+            <button
+              type="button"
+              className={`${ghostActionClass} gap-1.5`}
+              title="在浏览器打开 GitHub 仓库：源码与发布记录，顺手点个 Star"
+              onClick={() =>
+                void openUrl("https://github.com/hongtongzhou-design/ccode").catch(
+                  () => toast("浏览器没打开，稍后再试", "warning"),
+                )
+              }
+            >
+              <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden="true">
+                <path
+                  fill="currentColor"
+                  d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8"
+                />
+              </svg>
+              GitHub
+            </button>
+            <button
+              type="button"
+              className={ghostActionClass}
+              title="第三方组件与字体的许可、致谢、文献数据来源"
+              onClick={() => void openNotices()}
+            >
+              开源许可与致谢
+            </button>
+          </div>
+        </div>
         <Row
           label="反馈与提需求"
-          hint="表单或 GitHub Issue；未配收集端点时经系统邮件应用寄出。别贴密钥或 token"
-          labelTitle="诊断包已脱敏；自己复制的终端输出可能还带着密钥，发送前留意"
+          hint="遇到问题或想要的功能，直接告诉开发者"
+          labelTitle="别贴密钥或 token。诊断包已脱敏；自己复制的终端输出可能还带着密钥，发送前留意"
         >
           <button
             type="button"
@@ -3588,29 +4227,15 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             去 GitHub 提 Issue
           </button>
         </Row>
-        <Row label="项目主页" hint="Apache-2.0 许可">
-          <button
-            type="button"
-            className={`${secondaryActionClass} gap-1.5`}
-            onClick={() =>
-              void openUrl("https://github.com/hongtongzhou-design/ccode").catch(
-                () => toast("浏览器没打开，稍后再试", "warning"),
-              )
-            }
-          >
-            <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden="true">
-              <path
-                fill="currentColor"
-                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8"
-              />
-            </svg>
-            去点 Star
-          </button>
-        </Row>
-        <p className="pt-2 text-micro leading-4 text-l4">
-          Mesa 不是 Claude Code、Codex 等任何 CLI
-          的官方产品，各家名称与商标归其所有者。
-        </p>
+        <div className="space-y-1 pt-3 text-micro leading-4 text-l4">
+          <p title="API 密钥只存本机（仅本人可读的文件）；各 CLI 的会话目录只读。会联网的只有：检查更新（向 GitHub 问版本）、文献同步 / 下载 / 远查（把 DOI 或刊名发给 JabRef、NLM、ShowJCR、Unpaywall、Crossref、OpenAlex）、你主动发送的反馈">
+            隐私：密钥只存本机；除检查更新、文献检索和你发出的反馈外，不上传任何数据。
+          </p>
+          <p>
+            Mesa 不是 Claude Code、Codex 等任何 CLI
+            的官方产品，各家名称与商标归其所有者。
+          </p>
+        </div>
       </Section>
           </div>
         </div>

@@ -6,6 +6,7 @@ import {
   DEFAULT_CHROME_OPACITY,
   chromeOpacityLabel,
   chromeOpacityScale,
+  chromeOpacityShortLabel,
   normalizeChromeOpacity,
 } from "../src/chrome-opacity.ts";
 
@@ -106,4 +107,11 @@ test("顶栏不自己铺罩色：深色让窗口材质透出，浅色靠壳那�
   assert.ok(titlebar, "找不到 .ccode-titlebar 规则");
   assert.match(titlebar[0], /background:\s*transparent/);
   assert.ok(!titlebar[0].includes("color-mix"), "顶栏不该有 color-mix：会和壳那层叠起来");
+});
+
+test("分段短标签：两端用词、中间只写数", () => {
+  assert.deepEqual(
+    CHROME_OPACITIES.map((pct) => chromeOpacityShortLabel(pct)),
+    ["全透", "25", "50", "75", "85", "原样"],
+  );
 });

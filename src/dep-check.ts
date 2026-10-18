@@ -5,10 +5,13 @@
 
 /** 与 dep_check.rs DepItemDto 对应（camelCase 序列化） */
 export interface DepItemDto {
-  /** ok | missing | clt_stub（clt_stub 仅 macOS git：Xcode CLT 未装的系统占位） */
-  status: "ok" | "missing" | "clt_stub";
+  /** ok | missing | clt_stub | broken（clt_stub 仅 macOS git：Xcode CLT 未装的系统占位；
+   *  broken 仅 quarto：找到了但跑不起来，`--version` 没有版本输出） */
+  status: "ok" | "missing" | "clt_stub" | "broken";
   version: string | null;
   path: string | null;
+  /** 未就绪的具体原因（如 quarto 被残留环境变量带坏），有就直接显示 */
+  note?: string | null;
 }
 
 /** 与 dep_check.rs DepCheckDto 对应 */
@@ -66,6 +69,15 @@ const APT: Record<DepTool, string> = {
 
 /** 一键安装可行性。拼图库走本机 pip，不看 brew/winget。
  *  git 在 Mac 无 brew 时仍可弹系统安装窗口。其余项要有 brew 或 winget。 */
+/** 未就绪时的一句原因（设置页依赖行） */
+export function depMissingReason(item: Pick<DepItemDto, "status" | "path" | "note">): string {
+  if (item.note?.trim()) return item.note.trim();
+  if (item.status === "clt_stub") return "需要安装 Xcode 命令行工具";
+  if (item.status === "broken")
+    return `找到的 ${item.path ?? "程序"} 跑不起来；装好官方版后让它排在这个之前，或删掉这个`;
+  return "未安装";
+}
+
 export function canOneClickInstall(tool: DepTool, channel: string): boolean {
   if (tool === "pymupdf" || tool === "pillow") return true;
   if (tool === "git")

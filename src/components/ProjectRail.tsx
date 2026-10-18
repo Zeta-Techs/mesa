@@ -8,7 +8,7 @@ import type {
   ProjectDto,
   WorkspaceDto,
 } from "../types";
-import { FoldMark } from "./PageFrame";
+import { FoldMark, InlineNotice } from "./PageFrame";
 import { IS_WINDOWS } from "../hotkeys";
 import { pathWithin } from "../path-utils";
 import { normalizeWorkMode } from "../work-mode";
@@ -309,7 +309,7 @@ function ProjectRail({
               )}
             </div>
           ))}
-          {hint && <p className="px-2 py-0.5 text-micro text-warn-text">{hint}</p>}
+          {hint && <InlineNotice tone="warn" size="micro" className="px-2 py-0.5">{hint}</InlineNotice>}
         </div>
       )}
     </div>

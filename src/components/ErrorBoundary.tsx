@@ -1,6 +1,9 @@
 import { Component, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
+import {
+  secondaryActionClass,
+} from "./PageFrame";
 interface Props {
   children: ReactNode;
 }
@@ -35,7 +38,7 @@ export default class ErrorBoundary extends Component<Props, State> {
           </pre>
           <button
             onClick={() => this.setState({ error: null })}
-            className="rounded-sm border border-field px-3 py-1.5 text-sm text-l2 hover:bg-hover"
+            className={secondaryActionClass}
           >
             尝试恢复
           </button>

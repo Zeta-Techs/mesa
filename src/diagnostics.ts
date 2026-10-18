@@ -143,3 +143,55 @@ export function collectFrontendDiagnostics(): FrontendDiagnostics {
     webgl: probeWebGL(),
   };
 }
+
+/** 应用日志条目（与后端 logbuf::LogEntryDto 对应；level 已归一为 info/warn/error） */
+export interface AppLogEntry {
+  ts: string;
+  level: string;
+  source: string;
+  message: string;
+}
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+/** 应用日志时间：后端记的是 UTC ISO（…Z），原样去掉 T/Z 显示会比同页「上次检测」的本地时间
+ *  差出时区（东八区差 8 小时，2026-10-17 截图实证）。解析失败原样回落 */
+export function logLocalTime(ts: string): string {
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return ts.replace("T", " ").replace("Z", "");
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+}
+
+/** 列表里的短时间（本机时区 时:分:秒）；日志缓冲只保留本次运行，日期放悬浮完整时间里 */
+export function logClockTime(ts: string): string {
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return ts;
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+}
+
+/** 级别的中文短标：只给需要留意的两档，普通信息不加标（满屏「信息」等于没标） */
+export function logLevelLabel(level: string): string | null {
+  if (level === "error") return "错误";
+  if (level === "warn") return "警告";
+  return null;
+}
+
+export function logLevelCounts(logs: readonly AppLogEntry[]): {
+  error: number;
+  warn: number;
+} {
+  let error = 0;
+  let warn = 0;
+  for (const l of logs) {
+    if (l.level === "error") error += 1;
+    else if (l.level === "warn") warn += 1;
+  }
+  return { error, warn };
+}
+
+/** 复制/粘贴到反馈用的纯文本：一行一条，本机时间 + 级别 + 来源 */
+export function formatLogText(logs: readonly AppLogEntry[]): string {
+  return logs
+    .map((l) => `${logLocalTime(l.ts)} [${l.level}] ${l.source}: ${l.message}`)
+    .join("\n");
+}

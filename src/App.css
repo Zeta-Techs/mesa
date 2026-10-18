@@ -120,17 +120,20 @@
   --color-editor-fg: #b3b0aa;
   --color-editor-line: #57555c;
 
-  /* 活跃度热力图五档（2026-10-12 第七轮定稿，oklab 两段式）：色相经 var(--color-cta)
-     透传（同色系，随主题切换——oklch 相对色语法在 Lightning/WKWebView 链上不跟主题，
-     已否决）。两段派生：先向黑压深（oklab 保色相，srgb 直混近中性画布会把浅 cta
-     洗成灰彩墙），再小比例落回画布抬地板。底档贴地（参考图口径）；顶档纯 cta。
-     档差断言钉 tests/theme-contrast.test.ts */
-  --heat-d1: color-mix(in oklab, var(--color-cta) 64%, black);
-  --heat-d2: color-mix(in oklab, var(--color-cta) 70%, black);
-  --heat-d3: color-mix(in oklab, var(--color-cta) 88%, black);
-  --heat-1: color-mix(in oklab, var(--heat-d1) 68%, var(--color-canvas));
-  --heat-2: color-mix(in oklab, var(--heat-d2) 82%, var(--color-canvas));
-  --heat-3: color-mix(in oklab, var(--heat-d3) 95%, var(--color-canvas));
+  /* 活跃度热力图五档（2026-10-16 重做，cta 单极梯子）：色相经 var(--color-cta)
+     透传（oklch 相对色语法在 Lightning/WKWebView 链上不跟主题，仍否决），全部
+     走 oklab 向无彩极点（黑/白）混合——色相恒定、彩度按比例单调，不再把近中性
+     画布混进色阶（旧两段式在暖画布上拉色相、塌彩度，七主题里六主题发闷）。
+     深色梯子：50/68/86% → black，顶档纯 cta——底档收敛成石板色、中档起发力、
+     顶档发亮（凸彩度曲线）；空槽 --heat-0 比卡底微亮（inset×canvas 70:30），
+     若隐若现，日历形状在而极安静（2026-10-16 参考图口径）。cta 偏暗的主题
+     （neutral 深蓝）锚点先向白抬、画布偏亮的主题（terracotta）比例上调，见
+     各自主题块。浅色梯子（白/黑双极倒转，空槽仍用 inset——浅色空格该是可见
+     浅灰）在 [data-theme$="-light"] 段。档差断言钉 tests/theme-contrast.test.ts */
+  --heat-0: color-mix(in oklab, var(--color-inset) 70%, var(--color-canvas));
+  --heat-1: color-mix(in oklab, var(--color-cta) 50%, black);
+  --heat-2: color-mix(in oklab, var(--color-cta) 68%, black);
+  --heat-3: color-mix(in oklab, var(--color-cta) 86%, black);
   --heat-4: var(--color-cta);
 }
 
@@ -138,10 +141,6 @@
    覆盖同名 CSS 变量即可；状态/diff/tabline/link 颜色各主题共享。
    P0 校准：各变体 hairline 向更亮方向微调，补齐 raised/bubble/nav-accent；
    nav-accent 默认取各主题 CTA 色，保持各自性格 */
-
-/* 暖夜 */
-/* 墨绿 */
-/* 深紫 */
 
 [data-theme="terracotta"] {
   --color-rail: #232322; --color-rail2: #262624; --color-rail-sel: #3d3d3a;
@@ -156,6 +155,11 @@
   --color-folder: #ab9a85;
   --color-editor-bg: #2d2d2b; --color-editor-fg: #c9c9c4; --color-editor-line: #6a6a66;
   --color-done: #6d9a6f;
+  /* 热力图：inset 偏亮（L≈0.33）而 cta 中亮（L≈0.62），通用 54% 底档会贴死底色；
+     整梯比例上调到 66/78/89，步距保持均匀（2026-10-16） */
+  --heat-1: color-mix(in oklab, var(--color-cta) 66%, black);
+  --heat-2: color-mix(in oklab, var(--color-cta) 78%, black);
+  --heat-3: color-mix(in oklab, var(--color-cta) 89%, black);
 }
 [data-theme="ayu"] {
   --color-rail: #0b0e14; --color-rail2: #0d1118; --color-rail-sel: #1e232e;
@@ -198,6 +202,13 @@
   --color-folder: #999999;
   --color-editor-bg: #111111; --color-editor-fg: #c9c9c9; --color-editor-line: #616161;
   --color-done: #5c987a;
+  /* 热力图：深蓝 cta（L≈0.53）压不满暗底梯子（旧法顶档对卡底仅 3.3:1、整图发闷）——
+     锚点先向白抬 55%（亮 azure），梯子比例与通用档一致（2026-10-16） */
+  --heat-anchor: color-mix(in oklab, var(--color-cta) 55%, white);
+  --heat-1: color-mix(in oklab, var(--heat-anchor) 50%, black);
+  --heat-2: color-mix(in oklab, var(--heat-anchor) 68%, black);
+  --heat-3: color-mix(in oklab, var(--heat-anchor) 86%, black);
+  --heat-4: var(--heat-anchor);
 }
 [data-theme="dracula"] {
   --color-rail: #1e2029; --color-rail2: #22242e; --color-rail-sel: #3d3f4e;
@@ -364,12 +375,14 @@
   --color-switch-off: #ccd1da;
   --color-switch-knob: #ffffff;
 
-  /* 热力图浅色四档全覆写：方向倒转（用量越深越浓，GitHub 浅色口径）；
-     最高档 cta×l1 压深保住非文本 3:1（纯 cta 在近白卡底不足） */
-  --heat-1: color-mix(in srgb, var(--color-cta) 55%, var(--color-canvas));
-  --heat-2: color-mix(in srgb, var(--color-cta) 70%, var(--color-canvas));
-  --heat-3: color-mix(in srgb, var(--color-cta) 85%, var(--color-canvas));
-  --heat-4: color-mix(in srgb, var(--color-cta) 55%, var(--color-l1));
+  /* 热力图浅色四档（2026-10-16 重做）：方向倒转（越深越浓），oklab 向白/黑双极
+     混合——旧 srgb 直混画布把三档浅色挤成同亮度粉彩、顶档再猛跳深阶。梯子：
+     淡彩 36%白 → 浓彩 68%白 → 近本体 86% → 深阶 58%黑；顶档压深保住任意 cta
+     （含黄色系——纯 cta 黄对近白卡底只有 1.96:1）的非文本 3:1 */
+  --heat-1: color-mix(in oklab, var(--color-cta) 36%, white);
+  --heat-2: color-mix(in oklab, var(--color-cta) 68%, white);
+  --heat-3: color-mix(in oklab, var(--color-cta) 86%, black);
+  --heat-4: color-mix(in oklab, var(--color-cta) 58%, black);
 }
 
 /* 浅色浮层边界：raised 在浅色下是纯白、canvas 是米白，两者几乎同色，
@@ -648,10 +661,18 @@ body {
     background-color: color-mix(in srgb, var(--ccode-surface-base, var(--color-canvas)) 65%, var(--color-raised));
   }
 
+  /* 设置页分组卡（2026-10-18，借鉴 Codex 设置页）：大圆角 + 1px 发丝边，与 .ccode-well 连用给底色，
+     卡内行之间用发丝线分隔（RowGroup 的 divide-y），不再一行一块底色 */
+  .ccode-card {
+    border-radius: 0.875rem;
+    border: 1px solid var(--color-hairline);
+  }
+
   /* 活跃度热力图（用量页）· 格子边长由 --heat-cell 一个变量决定（2026-10-13）：
-     窗口变宽只让格子在 11–16px 的整数里变大，变高不再把格子拉成长方形。
+     窗口变宽只让格子在 11–28px 的整数里变大，变高不再把格子拉成长方形。
      11 是下限：再小就看不清档位，放不下时出横向滚动而不是继续缩小。
-     16 是上限：再大就是已否决的地砖。到顶后主区 `.ccode-heat-hug` 收成内容宽。
+     28 是上限（2026-10-16 单模拍板：胶囊全上卡头、主区无左栏，格子吃满卡宽；
+     1440 限宽页实际最大 ~22，28 只是放开限宽前的地砖闸）。到顶后主区 `.ccode-heat-hug` 收成内容宽。
      间距 3px（整数，2.5px 在非整数缩放下会把相邻列分出 1px 宽窄差）、圆角 18%、
      不逐格描边（状态才画环）。档位色 --heat-1..4 在 @theme（oklab 两段式）。
      --heat-weeks 由组件按当年实际周列数写入，年份之间列数差 1 时边长仍一致 */
@@ -716,69 +737,42 @@ body {
     outline-offset: -1px;
     filter: brightness(1.15);
   }
-  .ccode-heat-l0 { background-color: var(--color-inset); }
+  .ccode-heat-l0 { background-color: var(--heat-0, var(--color-inset)); }
   .ccode-heat-l1 { background-color: var(--heat-1); }
   .ccode-heat-l2 { background-color: var(--heat-2); }
   .ccode-heat-l3 { background-color: var(--heat-3); }
   .ccode-heat-l4 { background-color: var(--heat-4); }
-  /* 主区：组件 ResizeObserver 切类。格子边长由 --heat-cell 写入（11–16 的整数），
-     不跟行高走。主区 ≥1020（.ccode-heat-rail-left）胶囊转左侧双列；
-     16px 格子右边还剩 ≥220px 时（.ccode-heat-wide）统计改挂右侧。
-     到 16px 封顶后主区收成内容宽（图 + 右挂统计贴齐排），卡片保持列宽——
-     余量留卡内右缘（2026-10-13 修订：页面限宽居中后卡片再收窄会比兄弟卡短一截）。
-     观察器只盯页面满宽哨兵，禁止观察 hug 后的主区——会和自身宽度互相改、窗口一拉就抖。 */
+  /* 主区（2026-10-16 收成单模：胶囊全在卡头一行，左栏/头部栅格/右挂统计三档整档撤销）。
+     格子边长由组件按满宽哨兵写入 --heat-cell（11–28 的整数），不跟行高走。
+     到 28px 封顶后主区收成内容宽并整体在卡内居中；卡片保持列宽对齐兄弟卡，
+     余量左右均分（2026-10-13 晚口径保留）。观察器只盯页面满宽哨兵，
+     禁止观察 hug 后的主区——会和自身宽度互相改、窗口一拉就抖。 */
   .ccode-heat-main {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px 24px;
     margin-top: 12px;
-    align-items: flex-start;
   }
   .ccode-heat-agents {
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
-    /* 常规：胶囊独占一行，网格才能吃满卡宽，不会跟胶囊挤在同一行被挤窄 */
-    flex: 0 0 100%;
-  }
-  .ccode-heat-gridwrap {
-    flex: 1 1 0;
-    min-width: 0;
   }
   .ccode-heat-grid {
     overflow-x: auto;
   }
-  .ccode-heat-rail-left .ccode-heat-agents {
-    /* 九家 CLI + 「全部」= 10 个胶囊的适配位：定宽 256px、双列等分（5 行 ≈ 网格
-       自身高度，左栏不比图高）；胶囊内长名截断（组件 truncate + title 全名） */
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 3px 6px;
-    align-content: start;
-    width: 256px;
-    flex: 0 0 256px;
-  }
 
-  /* 封顶后主区收到图（和右侧统计）为止并整体在卡内居中；卡片保持列宽对齐
-     兄弟卡，余量左右均分（2026-10-13 晚修订：只留右缘被用户点名左右不均） */
+  /* 封顶后主区收到图为止并整体在卡内居中；卡片保持列宽对齐兄弟卡，余量左右均分 */
   .ccode-heat-hug .ccode-heat-main {
     width: max-content;
     max-width: 100%;
     margin-inline: auto;
   }
-  .ccode-heat-hug .ccode-heat-gridwrap {
-    flex: 0 0 auto;
-  }
-  .ccode-heat-aside {
-    display: none;
-    flex: 0 0 auto;
-    width: max-content;
-    padding-top: 2px;
-  }
-  .ccode-heat-wide .ccode-heat-aside {
+  /* 统计行 + 「少→多」色阶常驻网格下方（色阶原只活在超宽右挂里，随右挂撤销移下来） */
+  .ccode-heat-foot {
     display: flex;
-    flex-direction: column;
-    gap: 14px;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px 12px;
+    margin-top: 6px;
   }
   .ccode-heat-scale {
     display: flex;
@@ -789,42 +783,6 @@ body {
     width: 13px;
     height: 13px;
     border-radius: 18%;
-  }
-  .ccode-heat-stats {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-  .ccode-heat-stat {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 0;
-  }
-  .ccode-heat-stat b {
-    font-weight: 500;
-    font-variant-numeric: tabular-nums;
-  }
-
-  /* 头部三列栅格（宽模式）：首列 280px = 左栏 256 + 主区列间距 24，统计列左缘
-     恰与下方网格左缘对齐——两处数字联动改，别单动。超宽时统计改挂右侧，
-     中间列留空占位，对齐关系不变 */
-  .ccode-heat-headgrid {
-    display: grid;
-    grid-template-columns: 280px minmax(0, 1fr) auto;
-    align-items: baseline;
-  }
-
-  /* 宽窄切换时换位的块淡入（筛选横排↔左栏、统计行↔右侧栏）。
-     格子边长不参与：拖窗口时每像素都在变，缓动会拖在指针后面 */
-  .ccode-heat-in {
-    animation: ccode-fade 160ms var(--ccode-motion-ease);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .ccode-heat-in {
-    animation: none;
   }
 }
 
@@ -878,8 +836,8 @@ body {
    深浅两套才都成立（浅色侧栏 78% 已经很亮，实心 rail-sel 会糊成一块砖）。
 
    hover 与选中的强弱关系随系数变，这是有意的：k=1 时胶囊 88% 明显重于 hover（5% 白/黑）；
-   调到 0 后胶囊消失，两者只剩文字差——选中是 text-l1 + text-nav-accent 图标，hover 是
-   文字转 text-l2。0 档本来就是「完全不铺罩色、还看得到字」的档位，不该再靠一块实心
+   调到 0 后胶囊消失，选中靠 text-l1 + text-nav-accent 图标 + 实心选中左条（.ccode-rail-active，
+   不乘系数）认出，hover 是文字转 text-l2 加 5% 底色。0 档本来就是「完全不铺罩色、还看得到字」的档位，不该再靠一块实心
    胶囊把选中钉回来（那会让 0 档名不副实）。副作用是臂展/滑动浏览时选中项更依赖文字对比，
    照片壁纸上尤其明显——hint 里已经讲明 0 档文字会压在壁纸上。 */
 .ccode-app-rail .bg-rail-sel {
@@ -891,8 +849,44 @@ body {
   );
 }
 
+/* 选中左条：胶囊随透明度系数变淡、0 档消失，hover 底色却不变——没有这条，低档位下 hover 行
+   会比选中行更显眼。左条是实心强调色、不乘系数，0 档也认得出选中；它不是罩色，不违背
+   「0 档不铺罩色」。图标态同样画在左缘。 */
+.ccode-app-rail .ccode-rail-active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 7px;
+  bottom: 7px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--color-nav-accent);
+}
+
 .ccode-app-rail {
   border-color: var(--color-hairline);
+  /* 玻璃边缘：一圈 0.5px 内描边（前景色极淡一层），磨砂面才读得出「一块玻璃」而不是
+     「壁纸上的一片色」。零偏移零模糊的内描边，不违反零阴影（同 .ccode-float-surface）。 */
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--color-l1) 7%, transparent);
+}
+
+/* 侧栏内的搜索框（项目树）：玻璃上不能放实心输入框——fieldClass 的 canvas 底在侧栏上
+   是一块不透明补丁（浅色主题下尤其像贴了张便签）。改为前景色薄洗层：深色主题是一层
+   白雾、浅色是一层灰影，罩色透明度调到多少都跟着底色走；聚焦加深一档 + 描边提亮，
+   焦点反馈由容器承载（内部 input 已由 .ccode-search-shell 豁免全局焦点环）。 */
+.ccode-rail-search {
+  background: color-mix(in srgb, var(--color-l1) 6%, transparent);
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--color-l1) 9%, transparent);
+  transition:
+    background-color 150ms var(--ccode-motion-ease),
+    box-shadow 150ms var(--ccode-motion-ease);
+}
+.ccode-rail-search:hover {
+  background: color-mix(in srgb, var(--color-l1) 8%, transparent);
+}
+.ccode-rail-search:focus-within {
+  background: color-mix(in srgb, var(--color-l1) 10%, transparent);
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--color-l1) 22%, transparent);
 }
 
 /* 没有系统材质可透（Linux、系统「减少透明度」）：回到实心 rail，避免罩色直接透出窗口后的桌面。 */
@@ -1179,7 +1173,7 @@ body {
    用户不主动去摸就以为导航没了。现在岛常驻，只在休眠/展开两态之间收缩展开：
 
      dormant   恢复侧栏（恒带文字）+ 播报（若有），始终可见，宽度按内容自适应
-     expanded  完整导航（分组 / 快速开聊 / 恢复侧栏），悬停或聚焦时展开
+     expanded  完整导航（分组 / 新对话 / 恢复侧栏），悬停或聚焦时展开
 
    玻璃拟态三要素保留：低不透明度底 + 强 backdrop blur/saturate + 边缘高光。 */
 .ccode-nav-island {
@@ -1310,39 +1304,49 @@ body {
   pointer-events: auto;
 }
 
-/* 休眠面就是这个按钮本身：全收起时"恢复侧栏"是唯一退路，给一点常驻强调色。
-   休眠态只有它一个元素——先前还并排放一个当前页高亮块，两个圆图标挤在小胶囊里
-   读起来像开关，而且那个块没有点击语义（点回当前页是把页面设成它自己）。
-
-   它带文字、而且不跟 displayMode 走（见 TopNavCapsule 里那段）：一个没有文字的光
-   图标，看不出是入口，也看不出悬停会展开整排导航。文字用 l1 与图标同属"这是主
-   操作"的一档，不再另调——休眠面上就这一项，不必再分层级。
-   左右各多留 2px：它现在是一枚带字的胶囊，不是一枚方图标，7px 的横内距贴在字上会显挤。 */
-.ccode-nav-island-restore {
+/* 休眠面＝状态（2026-10-17 改版，取代「只有一颗恢复侧栏」）：当前页标签 + 活动状态 + 播报。
+   当前页标签带文字、不跟 displayMode 走——没有文字的光图标看不出是入口；文字 l1、图标走
+   导航强调色，读作「你在这里」。它是状态不是开关：点/聚焦只展开岛，不换页。
+   左右各多留 2px：带字胶囊用 7px 横内距会贴字显挤。 */
+.ccode-nav-island-current {
   color: var(--color-l1);
   padding: 0 9px;
 }
-.ccode-nav-island-restore svg {
+.ccode-nav-island-current svg {
   color: var(--color-nav-accent);
 }
-
-/* 角标以计数为 key 重挂载：数字变化时重播一次呼吸，作为计数变化的轻提示 */
-.ccode-nav-island-badge {
-  animation: ccode-island-badge 420ms var(--ccode-motion-ease);
-}
-@keyframes ccode-island-badge {
-  0% {
-    transform: scale(1);
-  }
-  40% {
-    transform: scale(1.28);
-  }
-  100% {
-    transform: scale(1);
-  }
+.ccode-nav-island-current:hover {
+  /* 指针一进岛就展开，这里的 hover 底只会闪一帧——不给，免得像可点的按钮 */
+  background: transparent;
 }
 
-/* 跑完/跑挂播报：贴着「恢复侧栏」排在休眠面行尾的一段字，不是岛的新形态。
+/* 休眠面的活动状态（只读，可点的胶囊在展开面）：与当前页之间用一颗中点分隔的语气，
+   字色比当前页弱一档（l2）；有 agent 等确认时整句转提醒色。 */
+.ccode-nav-island-status {
+  display: inline-flex;
+  min-height: 22px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 4px;
+  color: var(--color-l2);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.ccode-nav-island-status::before {
+  content: "";
+  width: 1px;
+  height: 12px;
+  margin-right: 4px;
+  background: var(--color-hairline);
+}
+.ccode-nav-island-status-warn {
+  color: var(--color-warn-text);
+}
+
+
+/* 跑完/跑挂播报：排在休眠面行尾的一句话（休眠面里只读，展开面里同一句是可点按钮），不是岛的新形态。
    颜色比导航项弱一档（l3 而非 l2）——它是刚过去的事，不该和入口抢注意力；
    只有失败用红点。不做入场动画：播报是「突然出现的一句话」，
    淡入反而让它显得像界面的一部分而不是刚发生的事。 */
@@ -1365,7 +1369,7 @@ body {
   text-overflow: ellipsis;
   transition: background-color 120ms var(--ccode-motion-ease);
 }
-.ccode-nav-island-announce:hover {
+button.ccode-nav-island-announce:hover {
   background: var(--color-hover, var(--color-strip));
   color: var(--color-l1);
 }
@@ -1374,10 +1378,10 @@ body {
   height: 6px;
   flex: none;
   border-radius: 999px;
-  background: #3fb950;
+  background: var(--color-ok-text);
 }
 .ccode-nav-island-announce-failed .ccode-nav-island-announce-dot {
-  background: #f85149;
+  background: var(--color-err-text);
 }
 
 /* ── 岛展开时，标题栏两侧的上下文让位 ───────────────────────────────────────
@@ -1503,18 +1507,6 @@ body {
   background: var(--color-hairline);
 }
 
-.ccode-top-nav-badge {
-  min-width: 14px;
-  height: 14px;
-  padding: 0 4px;
-  border-radius: 999px;
-  background: var(--color-cta-pill);
-  color: var(--color-cta-pill-text);
-  font-size: 10px;
-  line-height: 14px;
-  text-align: center;
-}
-
 /* Tab 从岛尾绕回岛头的落点：贴着标题栏下沿，看不见但可聚焦。
    top 跟栏高走，不再写死 40px——换了根字号或栏高，它不会掉到别处。 */
 .ccode-nav-capsule-sentinel {
@@ -1563,10 +1555,10 @@ body {
   .ccode-float-surface,
   .ccode-fade,
   .ccode-nav-island,
-  .ccode-nav-island-badge,
   .ccode-nav-island-hint,
   .ccode-app-main > div,
   .ccode-app-shell :where(.animate-spin),
+  :where(.animate-pulse),
   .ccode-working-spinner circle,
   .ccode-float-surface.ccode-exiting,
   .ccode-fade.ccode-exiting,
@@ -1581,7 +1573,9 @@ body {
 /* 强制配色（Windows 高对比）：颜色档位不可靠，格子改画渐大圆点表达用量档
    （GitHub forced-colors 同构）；WKWebView 不激活此媒体查询，纯 Windows 生效 */
 @media (forced-colors: active) {
-  .ccode-heat-cell {
+  /* 网格下方「少→多」图例样格与格子同一套渐大圆点，否则强制色彩下五个样格塌成空白 */
+  .ccode-heat-cell,
+  .ccode-heat-swatch {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1589,19 +1583,27 @@ body {
     box-shadow: none;
   }
   .ccode-heat-cell[data-level="1"]::after,
+  .ccode-heat-swatch[data-level="1"]::after,
   .ccode-heat-cell[data-level="2"]::after,
+  .ccode-heat-swatch[data-level="2"]::after,
   .ccode-heat-cell[data-level="3"]::after,
-  .ccode-heat-cell[data-level="4"]::after {
+  .ccode-heat-swatch[data-level="3"]::after,
+  .ccode-heat-cell[data-level="4"]::after,
+  .ccode-heat-swatch[data-level="4"]::after {
     content: "";
     display: block;
     border-radius: 9999px;
     background-color: CanvasText;
     forced-color-adjust: none;
   }
-  .ccode-heat-cell[data-level="1"]::after { width: 3px; height: 3px; }
-  .ccode-heat-cell[data-level="2"]::after { width: 5px; height: 5px; }
-  .ccode-heat-cell[data-level="3"]::after { width: 7px; height: 7px; }
-  .ccode-heat-cell[data-level="4"]::after { width: 9px; height: 9px; }
+  .ccode-heat-cell[data-level="1"]::after,
+  .ccode-heat-swatch[data-level="1"]::after { width: 3px; height: 3px; }
+  .ccode-heat-cell[data-level="2"]::after,
+  .ccode-heat-swatch[data-level="2"]::after { width: 5px; height: 5px; }
+  .ccode-heat-cell[data-level="3"]::after,
+  .ccode-heat-swatch[data-level="3"]::after { width: 7px; height: 7px; }
+  .ccode-heat-cell[data-level="4"]::after,
+  .ccode-heat-swatch[data-level="4"]::after { width: 9px; height: 9px; }
 }
 
 .ccode-toast-region {
@@ -1637,6 +1639,9 @@ body {
 .ccode-toast-success { border-left-color: var(--color-ok-text); }
 .ccode-toast-warning { border-left-color: var(--color-warn-text); }
 .ccode-toast-error { border-left-color: var(--color-err-text); }
+.ccode-toast-body { min-width: 0; overflow-wrap: anywhere; }
+.ccode-toast-headline { display: block; color: var(--color-l1); font-weight: 500; }
+.ccode-toast-detail { display: block; margin-top: 2px; color: var(--color-l3); }
 .ccode-toast button {
   flex: 0 0 auto;
   color: var(--color-l4);
@@ -1756,7 +1761,6 @@ body {
 /* 窄窗口优先保证主内容和弹层可操作：次栏由页面自己的开关恢复。 */
 @media (max-width: 900px) {
   .ccode-sessions-rail,
-  .ccode-workspaces-rail,
   .ccode-review-rail:not(.ccode-review-rail-open) {
     width: 0;
     min-width: 0;
@@ -1781,16 +1785,6 @@ body {
     z-index: 30;
     width: min(375px, 88vw);
     min-width: min(375px, 88vw);
-    overflow: auto;
-    border-right-width: 1px;
-    box-shadow: 12px 0 30px rgb(0 0 0 / 0.24);
-  }
-  .ccode-workspaces-rail.ccode-project-rail-open {
-    position: absolute;
-    inset: 0 auto 0 0;
-    z-index: 30;
-    width: min(208px, 88vw);
-    min-width: min(208px, 88vw);
     overflow: auto;
     border-right-width: 1px;
     box-shadow: 12px 0 30px rgb(0 0 0 / 0.24);
@@ -1863,6 +1857,12 @@ select:focus-visible {
 .ccode-file-list:focus,
 .ccode-file-list button:focus,
 .ccode-file-list button:focus-visible {
+  outline: none;
+}
+
+/* 右键菜单行（ContextMenu）：键盘焦点由行底色承载（同 hover），不再在圆角行外套直角环。 */
+.ccode-menu-item:focus,
+.ccode-menu-item:focus-visible {
   outline: none;
 }
 
@@ -2182,6 +2182,17 @@ select:focus-visible {
   padding-bottom: 0;
   border-bottom: none;
 }
+/* 对话里的标题只比正文略大：AI 爱用一级标题开头，按阅读页字号排会像一张海报 */
+.md-chat h1 {
+  font-size: 1.18em;
+}
+.md-chat h2 {
+  font-size: 1.1em;
+}
+.md-chat h3,
+.md-chat h4 {
+  font-size: 1em;
+}
 .md-chat > :first-child {
   margin-top: 0;
 }
@@ -2262,6 +2273,27 @@ select:focus-visible {
 }
 .animate-pulse-brief {
   animation: ccode-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) 3;
+}
+
+/* 聊天「正在回复」的 Mesa 字标（2026-10-18 用户：生成状态换成 Mesa 独有的设计）：M▁ 的琥珀光标
+   像终端插入符一样亮灭——「AI 正在往下写」就是光标在跳。阶跃（不渐变）才像插入符；只在生成中挂，
+   停了类名撤掉光标常亮。减弱动态效果时不闪，常亮 */
+@keyframes ccode-caret {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+.ccode-caret-blink {
+  animation: ccode-caret 1.06s steps(1, end) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ccode-caret-blink {
+    animation: none;
+  }
 }
 
 
@@ -2381,6 +2413,93 @@ select:focus-visible {
 }
 .ccode-reader-dark [data-page-num] {
   background-color: #141414;
+}
+
+/* 页内高亮层（查找命中 / 笔记标注 / 跳转一闪，2026-10-18）：页宿主直子级，排在文本层之前、
+   不接指针——选字、复制、拖选行为不变；矩形是页内百分比，缩放时随页盒伸缩。
+   页面恒为白纸（护眼档是反色后的近黑），高亮用荧光笔式半透明色，不走主题令牌 */
+[data-page-num] > .ccode-pdf-marks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.ccode-mark {
+  position: absolute;
+  border-radius: 2px;
+}
+.ccode-mark-note {
+  background: rgb(255 200 0 / 0.34);
+}
+.ccode-mark-find {
+  background: rgb(255 150 0 / 0.22);
+}
+.ccode-mark-find-active {
+  background: rgb(255 120 0 / 0.45);
+  box-shadow: 0 0 0 1px rgb(230 100 0 / 0.85);
+}
+.ccode-mark-flash {
+  background: rgb(0 120 255 / 0.28);
+  box-shadow: 0 0 0 1px rgb(0 100 230 / 0.6);
+  animation: ccode-mark-flash 2.4s ease-out forwards;
+}
+@keyframes ccode-mark-flash {
+  0%,
+  55% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* 阅读区右栏的聊天层露出终端（peek）：聊天层宿主排在上（自带 order-1 flex-1），终端画面
+   搬进同一槽位后排到下方、占 32%（终端页 CHAT_PEEK_RATIO 同值，最矮 7.5rem）。
+   终端节点归 TerminalView 管，类名动不了，只能按槽位属性摆 */
+[data-reader-surface="peek"] > [data-terminal-host] {
+  order: 2;
+  flex: 0 0 32%;
+  min-height: 7.5rem;
+  border-top: 1px solid var(--color-hairline);
+}
+
+/* 笔记里的页码/图表引用（p.3、Fig. 2、第 3 页）：点了跳到 PDF 对应处。虚下划线，不抢正文颜色 */
+.md-body .md-pdf-ref {
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-decoration-color: var(--color-l3);
+  text-underline-offset: 3px;
+}
+.md-body .md-pdf-ref:hover {
+  color: var(--color-l1);
+  text-decoration-color: var(--color-cta);
+}
+/* 从 PDF 高亮「在笔记里看」定位到的那一段：底色淡出 */
+.md-body .md-flash {
+  animation: md-flash 2.4s ease-out;
+  border-radius: 3px;
+}
+@keyframes md-flash {
+  0%,
+  45% {
+    background-color: color-mix(in srgb, var(--color-cta) 22%, transparent);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+/* 窄栏笔记（阅读区笔记栏）：标题字号收一档，长标题不再占三四行 */
+.md-body-compact h1 {
+  font-size: 1.22em;
+}
+/* 浮动「目录」钮钉在右上角：窄栏里首行标题会顶到它下面叠字，给首个块让出钮宽 */
+.md-body-compact > :first-child {
+  padding-right: 3.25rem;
+}
+.md-body-compact h2 {
+  font-size: 1.08em;
+}
+.md-body-compact h3 {
+  font-size: 1em;
 }
 
 /* ===== Monaco 查找控件窄栏适配（2026-10-14；当晚审查修订） ===== */

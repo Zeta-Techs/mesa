@@ -5,7 +5,7 @@
  */
 
 /** 页切绑定清单单一出处（App.tsx 全局监听与设置页录制 UI 同源）：
- *  顺序与侧栏一致（工作→资源→用量/设置）；combo 为该页默认绑定（settings.hotkeyPages 可按页覆盖） */
+ *  顺序与导航定义一致（工作→资源→用量/设置）；combo 为该页默认绑定（settings.hotkeyPages 可按页覆盖） */
 export const PAGE_HOTKEY_DEFS = [
   { id: "workbench", label: "工作台", combo: "mod+1" },
   { id: "workspaces", label: "项目", combo: "mod+2" },

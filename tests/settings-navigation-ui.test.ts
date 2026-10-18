@@ -14,6 +14,8 @@ const bundle = await build({
     resolveDir: process.cwd(), loader: "tsx",
   },
   bundle: true, write: false, format: "cjs", platform: "node", jsx: "automatic",
+  // 设置页「应用图标」预览图：内联成 data URL，打包不依赖 Vite 资源管线
+  loader: { ".png": "dataurl" },
   external: ["react", "react-dom", "react-dom/client", "react/jsx-runtime"],
   plugins: [{ name: "settings-host", setup(b) {
     const stubs: Record<string, string> = {
@@ -33,7 +35,7 @@ const bundle = await build({
   } }],
 });
 
-const sections = ["外观", "启动行为", "快捷键", "统计", "集成", "网络", "更新", "诊断", "数据与存储", "关于"];
+const sections = ["外观", "终端", "通用", "快捷键", "AI 与 Agent", "网络", "用量", "更新", "诊断", "数据与存储", "关于"];
 
 async function renderSettings(options: { request?: string; update?: boolean; visible?: boolean; storageError?: boolean } = {}) {
   const dom = new JSDOM('<div id="root"></div>', { url: "http://localhost/", pretendToBeVisual: true });
@@ -142,7 +144,7 @@ async function renderSettings(options: { request?: string; update?: boolean; vis
   };
 }
 
-test("设置导航：常用和管理十项始终可见，无高级总折叠或描边胶囊", async () => {
+test("设置导航：常用和管理十一项始终可见，无高级总折叠或描边胶囊", async () => {
   const view = await renderSettings();
   try {
     assert.deepEqual(Array.from(view.nav().querySelectorAll("button")).map((b) => b.textContent), sections);
@@ -164,7 +166,7 @@ test("设置导航：常用和管理十项始终可见，无高级总折叠或�
   } finally { await view.close(); }
 });
 
-test("十个分区可直接切换，只显示选中内容，并按需读取诊断与存储", async () => {
+test("十一个分区可直接切换，只显示选中内容，并按需读取诊断与存储", async () => {
   const view = await renderSettings();
   try {
     for (const label of sections) {
@@ -255,18 +257,18 @@ test("设置保存与错误反馈保持原逻辑；网络输入仍按 Enter 提�
   const storage = await renderSettings({ request: "storage", storageError: true });
   try {
     assert.match(storage.content().textContent!, /存储占用统计失败/);
-    assert.equal(storage.nav().querySelectorAll("button").length, 10);
+    assert.equal(storage.nav().querySelectorAll("button").length, 11);
   } finally { await storage.close(); }
 });
 
-test("会话自动命名开关在集成分区：默认开，点一下 patch autoTitleSessions=false", async () => {
+test("会话自动命名开关在 AI 与 Agent 分区：默认开，点一下 patch autoTitleSessions=false", async () => {
   const view = await renderSettings();
   try {
-    await view.select("集成");
+    await view.select("AI 与 Agent");
     const toggle = view.content().querySelector<HTMLButtonElement>(
       'button[role="switch"][aria-label="会话自动命名"]',
     )!;
-    assert.ok(toggle, "集成分区缺少「会话自动命名」开关");
+    assert.ok(toggle, "AI 与 Agent 分区缺少「会话自动命名」开关");
     // store 夹具没写 autoTitleSessions：断言的就是「缺省 = 默认开」这条路径
     assert.equal(toggle.getAttribute("aria-checked"), "true");
     await view.act(async () => toggle.click());
@@ -274,14 +276,14 @@ test("会话自动命名开关在集成分区：默认开，点一下 patch auto
   } finally { await view.close(); }
 });
 
-test("关于页项目主页：去点 Star 打开仓库", async () => {
+test("关于页身份卡 GitHub 链接：打开仓库", async () => {
   const view = await renderSettings();
   try {
     await view.select("关于");
     assert.equal(view.content().querySelector(".ccode-repo-star-stage"), null);
-    const button = view.button("去点 Star", view.content());
+    const button = view.button("GitHub", view.content());
     assert.ok(button.querySelector("svg"), "按钮上要有 GitHub 图标");
-    await view.click("去点 Star", view.content());
+    await view.click("GitHub", view.content());
     const open = view.calls.find((call) => call.command === "plugin:opener|open_url");
     assert.equal(open?.args?.url, "https://github.com/hongtongzhou-design/ccode");
   } finally { await view.close(); }

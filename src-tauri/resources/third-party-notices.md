@@ -367,6 +367,7 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | autocfg | 1.5.1 | Apache-2.0 OR MIT |
 | base64 | 0.21.7 | MIT OR Apache-2.0 |
 | base64 | 0.22.1 | MIT OR Apache-2.0 |
+| base64 | 0.23.1 | MIT OR Apache-2.0 |
 | bit-set | 0.8.0 | Apache-2.0 OR MIT |
 | bit-vec | 0.8.0 | Apache-2.0 OR MIT |
 | bitflags | 1.3.2 | MIT/Apache-2.0 |
@@ -455,6 +456,8 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | dunce | 1.0.5 | CC0-1.0 OR MIT-0 OR Apache-2.0 |
 | dyn-clone | 1.0.20 | MIT OR Apache-2.0 |
 | either | 1.17.0 | MIT OR Apache-2.0 |
+| email_address | 0.2.9 | MIT |
+| email-encoding | 0.4.2 | MIT OR Apache-2.0 |
 | embed_plist | 1.2.2 | MIT OR Apache-2.0 |
 | embed-resource | 3.0.11 | MIT |
 | encoding_rs | 0.8.35 | (Apache-2.0 OR MIT) AND BSD-3-Clause |
@@ -527,6 +530,7 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | http-body | 1.1.0 | MIT |
 | http-body-util | 0.1.4 | MIT |
 | httparse | 1.10.1 | MIT OR Apache-2.0 |
+| httpdate | 1.0.3 | MIT OR Apache-2.0 |
 | hyper | 1.11.0 | MIT |
 | hyper-rustls | 0.27.9 | Apache-2.0 OR ISC OR MIT |
 | hyper-util | 0.1.20 | MIT |
@@ -570,6 +574,7 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | kqueue | 1.2.0 | MIT |
 | kqueue-sys | 1.1.2 | MIT |
 | lazy_static | 1.5.0 | MIT OR Apache-2.0 |
+| lettre | 0.11.23 | MIT |
 | libappindicator | 0.9.0 | Apache-2.0 OR MIT |
 | libappindicator-sys | 0.9.0 | Apache-2.0 OR MIT |
 | libc | 0.2.189 | MIT OR Apache-2.0 |
@@ -600,6 +605,7 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | ndk-sys | 0.6.0+11769913 | MIT OR Apache-2.0 |
 | new_debug_unreachable | 1.0.6 | MIT |
 | nix | 0.28.0 | MIT |
+| nom | 8.0.0 | MIT |
 | notify | 6.1.1 | CC0-1.0 |
 | notify-rust | 4.18.0 | MIT OR Apache-2.0 |
 | ntapi | 0.4.3 | Apache-2.0 OR MIT |
@@ -668,6 +674,7 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | quinn-proto | 0.11.16 | MIT OR Apache-2.0 |
 | quinn-udp | 0.5.15 | MIT OR Apache-2.0 |
 | quote | 1.0.47 | MIT OR Apache-2.0 |
+| quoted_printable | 0.5.2 | 0BSD |
 | r-efi | 5.3.0 | MIT OR Apache-2.0 OR LGPL-2.1-or-later |
 | r-efi | 6.0.0 | MIT OR Apache-2.0 OR LGPL-2.1-or-later |
 | rand | 0.10.2 | MIT OR Apache-2.0 |

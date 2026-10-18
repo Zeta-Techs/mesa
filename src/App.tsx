@@ -1,8 +1,11 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { REPO_URL } from "./help-links";
 import {
   Activity,
   BookOpen,
   BookText,
+  CheckCheck,
+  ChevronsLeft,
   CircleHelp,
   ExternalLink,
   Inbox,
@@ -25,22 +28,24 @@ import {
 import { LIT_WATCH_SLOT } from "./skill-slots.ts";
 import ErrorBoundary from "./components/ErrorBoundary";
 import CommandPalette from "./components/CommandPalette";
-import QuickChatModal, {
-  launchQuickChatDirect,
-  quickChatSkipEnabled,
-  resumeSessionInTerminal,
-} from "./components/QuickChatModal";
+import { openQuickChat, resumeSessionInTerminal } from "./quick-chat-launch";
 import AskAiModal from "./components/AskAiModal";
 import FeedbackModal from "./components/FeedbackModal";
-import { HelpAboutDialog, HelpDiagnosticsDialog } from "./components/HelpDialogs";
+import {
+  HelpAboutDialog,
+  HelpDiagnosticsDialog,
+  HelpUpdateDialog,
+  type HelpDialogKind,
+} from "./components/HelpDialogs";
 import QuickChatHistoryMenu from "./components/QuickChatHistoryMenu";
 import TopNavCapsule from "./components/TopNavCapsule";
 import { pickQuickChatHistory } from "./quick-chat";
-import { ConfirmDialogHost, alertDialog, confirmDialog } from "./components/ConfirmDialog";
+import { ConfirmDialogHost } from "./components/ConfirmDialog";
 import { HoverTip, useHoverTip } from "./components/HoverTip";
 import { LoadingRows, rowActionClass } from "./components/PageFrame";
 import "./App.css";
 import { useAppStore, runInboxAction, visibleInboxItems } from "./store";
+import { bulkReadableItems } from "./inbox";
 import { groupInbox, type InboxCategory } from "./inbox";
 import {
   RUN_ANNOUNCE_LINGER_MS,
@@ -62,6 +67,9 @@ import {
 import { NAV_ICONS } from "./navigation-icons";
 import { NAV_GROUPS, NAV_BOTTOM } from "./navigation";
 import { isLightTheme } from "./themes";
+import ProjectTree, { TitlebarProjectChip } from "./components/ProjectTree";
+import { RunActivityButton, useRunActivity } from "./components/RunActivity";
+import { shellContextPlacement, shellMode } from "./shell-context";
 import { normalizeNavCapsuleDelay, resolveStartupNavMode } from "./nav-capsule";
 import { chromeOpacityScale } from "./chrome-opacity";
 import { macOverlayPadClass, useMacFullscreen } from "./mac-titlebar";
@@ -155,16 +163,19 @@ function RelayToasts(props: {
 }) {
   const [raised, setRaised] = useState<number | null>(null);
   if (!props.toasts.length) return null;
-  const ordered = raised == null
-    ? props.toasts
-    : [
-        ...props.toasts.filter((t) => t.id === raised),
-        ...props.toasts.filter((t) => t.id !== raised),
-      ];
+  const ordered =
+    raised == null
+      ? props.toasts
+      : [
+          ...props.toasts.filter((t) => t.id === raised),
+          ...props.toasts.filter((t) => t.id !== raised),
+        ];
   return (
     <div className="pointer-events-none fixed bottom-16 right-4 z-50 flex w-80 flex-col gap-1">
       {ordered.map((t) => {
-        const actionable = Boolean(t.collect || (t.choices && t.choices.length > 0));
+        const actionable = Boolean(
+          t.collect || (t.choices && t.choices.length > 0),
+        );
         const open = actionable || raised === t.id;
         return (
           <div
@@ -180,9 +191,13 @@ function RelayToasts(props: {
             onMouseLeave={() => setRaised((cur) => (cur === t.id ? null : cur))}
           >
             <div className="flex items-start gap-2">
-              <span className={`min-w-0 flex-1 ${open ? "whitespace-pre-wrap" : "truncate"}`}>
+              <span
+                className={`min-w-0 flex-1 ${open ? "whitespace-pre-wrap" : "truncate"}`}
+              >
                 {t.text}
-                {open && t.detail ? <span className="block text-micro text-l4">{t.detail}</span> : null}
+                {open && t.detail ? (
+                  <span className="block text-micro text-l4">{t.detail}</span>
+                ) : null}
               </span>
               <button
                 type="button"
@@ -225,12 +240,11 @@ function RelayToasts(props: {
 /** 页切顺序/逐页绑定/默认值的单一出处在 hotkeys.ts PAGE_HOTKEY_DEFS（与侧栏顺序一致） */
 
 /** 仓库对外地址：帮助菜单外链（文档 / 安全报告）都挂在这里，转 org 时同步 */
-const REPO_URL = "https://github.com/hongtongzhou-design/ccode";
 
-/** 顶栏帮助菜单清单：外链（文档/支持，带 ↗ 标记）、应用内动作（反馈表单、当场
- *  检查更新并弹窗报结果）与设置分区跳转混排分组。
+/** 顶栏帮助菜单清单：外链（文档/安全报告，带 ↗ 标记）与应用内弹窗（反馈表单、诊断、
+ *  检查更新、关于）分组混排。
  *  入口选型口径：只放「新用户第一次卡住时会找的东西」——文档、反馈、诊断、更新、关于；
- *  设置分区跳转沿收件箱 settings 动作的同一条路（settingsSectionReq）。 */
+ *  能装进弹窗的就地弹窗，弹窗里留去设置完整页的出口。 */
 const HELP_MENU: {
   label: string;
   items: {
@@ -239,10 +253,8 @@ const HELP_MENU: {
     url?: string;
     /** 应用内反馈表单（FeedbackModal）——不落外链也不跳设置分区 */
     feedback?: boolean;
-    /** 当场跑一次更新检查并弹窗报结果（不跳设置分区） */
-    updateCheck?: boolean;
-    /** 应用内弹窗（HelpDialogs）：诊断与日志 / 关于 */
-    dialog?: "diag" | "about";
+    /** 应用内弹窗（HelpDialogs）：诊断与日志 / 检查更新 / 关于 */
+    dialog?: HelpDialogKind;
   }[];
 }[] = [
   {
@@ -271,7 +283,7 @@ const HELP_MENU: {
   {
     label: "应用",
     items: [
-      { icon: RefreshCw, text: "检查更新", updateCheck: true },
+      { icon: RefreshCw, text: "检查更新", dialog: "update" },
       { icon: Info, text: "关于 Mesa", dialog: "about" },
     ],
   },
@@ -286,10 +298,8 @@ function App() {
   const exitChromeHidden = useAppStore((s) => s.exitChromeHidden);
   const toggleChromeHidden = useAppStore((s) => s.toggleChromeHidden);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  // 「快速开聊」弹层：侧栏常驻入口与 ⌘K 命令共用同一个宿主
-  const [quickChatOpen, setQuickChatOpen] = useState(false);
   const macFullscreen = useMacFullscreen(IS_MAC);
-  // 侧栏「快速开聊」右键 = scratch 随手聊历史（记住选择后左键直达，右键是回看口）
+  // 侧栏「快速开聊」右键 = scratch 随手聊历史（左键直接开空白对话，右键是回看口）
   const [quickChatMenu, setQuickChatMenu] = useState<{
     x: number;
     y: number;
@@ -298,7 +308,10 @@ function App() {
   // 收货反馈横幅（成功 8s 自动消失；失败/需注意常驻直到处理）
   const [relayToasts, setRelayToasts] = useState<RelayToast[]>([]);
   const relayToastId = useRef(0);
-  const pushRelayToast = (t: Omit<RelayToast, "id">, autoDismissMs?: number) => {
+  const pushRelayToast = (
+    t: Omit<RelayToast, "id">,
+    autoDismissMs?: number,
+  ) => {
     const id = ++relayToastId.current;
     setRelayToasts((cur) => {
       // 满员先挤最旧的自动消失类（ok）；attention/err 是「常驻直到处理」的补救
@@ -355,11 +368,8 @@ function App() {
       ),
     });
   }
-  // 运行状态镜像（任意页面可见）：顶栏显示总数，侧栏只在运行页显示提示。
+  // 运行状态镜像（任意页面可见）：播报与待确认提醒用；运行计数统一走 useRunActivity（shell-context 口径）
   const terminalRunInputs = useAppStore((s) => s.terminalRunInputs);
-  const runningCount = useAppStore((s) => Object.keys(s.liveSessions).length);
-  const visibleRunningCount = terminalRunInputs.filter((input) => input.running)
-    .length || runningCount;
 
   const [islandExpanded, setIslandExpanded] = useState(false);
   /* 岛收起 / 切回有侧栏时归位。有侧栏（!chromeHidden）时岛整个不挂载，
@@ -462,12 +472,22 @@ function App() {
   );
   const inboxCount = inboxItems.length;
   const contextLabel = useAppStore((s) => s.contextLabel);
+  const shellPlacement = shellContextPlacement(
+    shellMode(collapsed, chromeHidden),
+    page,
+  );
+  // 侧栏「运行」行的点：有人等确认时转黄（展开态顶栏不再报活动，确认信号落在这一行）
+  const runActivity = useRunActivity();
   const dismissHelpRequest = useAppStore((s) => s.dismissHelpRequest);
   const dismissInbox = useAppStore((s) => s.dismissInbox);
+  const dismissInboxBulk = useAppStore((s) => s.dismissInboxBulk);
   // 类别胶囊：按 key 前缀分组（固定顺序，空类不渲染）
   const inboxGroups = groupInbox(inboxItems);
+  const bulkInboxItems = bulkReadableItems(inboxItems);
   // 标题栏收件箱的展开态：当前展开的类别（Ghostty 式下拉；遮罩/Esc/再点关闭）
-  const [titleInboxCat, setTitleInboxCat] = useState<InboxCategory | null>(null);
+  const [titleInboxCat, setTitleInboxCat] = useState<InboxCategory | null>(
+    null,
+  );
   // 展开中的类别被清空（如最后一条 help 被忽略）时收起下拉
   useEffect(() => {
     if (
@@ -487,10 +507,13 @@ function App() {
   }, [titleInboxCat]);
   // 顶栏帮助菜单：开关态 + Esc 关闭，关闭范式与收件箱下拉一致（遮罩在 JSX 尾部 z-20）
   const [helpOpen, setHelpOpen] = useState(false);
-  // 帮助菜单/关于页共用的反馈表单弹层（FeedbackModal，双通道见 feedback.ts）
+  // 帮助菜单/关于页共用的反馈表单弹层（FeedbackModal，通道见 feedback.ts）
   const [feedbackOpen, setFeedbackOpen] = useState(false);
-  // 帮助菜单的三个内容弹窗（HelpDialogs）：快捷键 / 诊断与日志 / 关于
-  const [helpDialog, setHelpDialog] = useState<"diag" | "about" | null>(null);
+  // 诊断弹窗「附到反馈」带进反馈表单的诊断包路径（表单关闭即清）
+  const [feedbackDiag, setFeedbackDiag] = useState<string | null>(null);
+  // 帮助菜单的三个内容弹窗（HelpDialogs）：诊断与日志 / 检查更新 / 关于
+  const [helpDialog, setHelpDialog] = useState<HelpDialogKind | null>(null);
+  const appUpdateVersion = useAppStore((s) => s.appUpdate?.version ?? null);
   // 帮助菜单/收件箱下拉的包裹层 ref：「点外面关闭」要放行菜单与触发钮自身的按下
   const helpRootRef = useRef<HTMLDivElement | null>(null);
   const inboxRootRef = useRef<HTMLDivElement | null>(null);
@@ -525,55 +548,6 @@ function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [helpOpen]);
   const setSettingsSectionReq = useAppStore((s) => s.setSettingsSectionReq);
-  /** 帮助菜单 → 应用内目标：关菜单、跳设置分区（与收件箱 settings 动作同一条路） */
-  const openHelpSection = (section: string) => {
-    setHelpOpen(false);
-    setSettingsSectionReq(section);
-    setPage("settings");
-  };
-  /** 帮助菜单「检查更新」的结果弹窗：复用启动检查的同一条状态链（store），
-   *  命中给「去安装」（跳更新分区），none/error/dev 各给一句结果。 */
-  const reportUpdateResult = async () => {
-    const s = useAppStore.getState();
-    const upd = s.appUpdate;
-    if (upd) {
-      const go = await confirmDialog(
-        `发现新版本 v${upd.version}，到「更新」分区下载安装。`,
-        { confirmText: "去安装" },
-      );
-      if (go) openHelpSection("update");
-      return;
-    }
-    if (s.appUpdateStatus === "error") {
-      await alertDialog(`检查更新失败：${s.appUpdateError ?? "网络异常"}`);
-    } else if (s.appUpdateStatus === "dev") {
-      await alertDialog("开发模式不检查更新；安装版在设置 → 更新查看。");
-    } else if (s.appUpdateStatus === "checking" || s.appUpdateStatus === "idle") {
-      // 与启动/设置页的检查并发时本次可能被代际竞态作废，状态仍在 checking——
-      // 如实说「还在查」，不能误报「已是最新」
-      await alertDialog("检查还在进行中，稍等片刻再看结果。");
-    } else {
-      await alertDialog("已是最新版本。");
-    }
-  };
-  /** 帮助菜单「检查更新」：真检查 + 弹窗报结果（不跳转）。已有已知更新不重查。 */
-  const helpCheckBusyRef = useRef(false);
-  const checkUpdatesFromHelp = async () => {
-    setHelpOpen(false);
-    if (helpCheckBusyRef.current) return;
-    if (useAppStore.getState().appUpdate) {
-      void reportUpdateResult();
-      return;
-    }
-    helpCheckBusyRef.current = true;
-    toast("正在检查更新…");
-    try {
-      await useAppStore.getState().checkAppUpdate();
-    } finally {
-      helpCheckBusyRef.current = false;
-    }
-    await reportUpdateResult();
-  };
   /** 帮助菜单 → 外链（文档 / 安全报告）：关菜单再交系统浏览器打开 */
   const openHelpUrl = (url: string) => {
     setHelpOpen(false);
@@ -593,6 +567,11 @@ function App() {
   useEffect(() => {
     setVisited((v) => (v.has(page) ? v : new Set(v).add(page)));
   }, [page]);
+  // 项目页是收件箱条目与顶栏项目上下文的唯一写入方：首屏画出后就隐藏挂上，
+  // 否则停在默认首页（工作台）时「待你处理」与顶栏待处理恒空（2026-10-17 修）
+  useEffect(() => {
+    setVisited((v) => (v.has("workspaces") ? v : new Set(v).add("workspaces")));
+  }, []);
 
   useEffect(() => {
     if (page !== "schedules") return;
@@ -789,13 +768,15 @@ function App() {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     listen<SchedulerRunDonePayload>("scheduler-run-done", (e) => {
-      const enabled = useAppStore.getState().settings?.notificationsEnabled ?? true;
+      const enabled =
+        useAppStore.getState().settings?.notificationsEnabled ?? true;
       if (!enabled) return;
       void fireScheduleNotification(
         runDoneNotifyTitle(
           baseName(e.payload.projectRoot),
           e.payload.status,
-          e.payload.scheduleName || (e.payload.skill === LIT_WATCH_SLOT ? "文献雷达" : "定时任务"),
+          e.payload.scheduleName ||
+            (e.payload.skill === LIT_WATCH_SLOT ? "文献雷达" : "定时任务"),
         ),
         runDoneNotifyBody(e.payload.summary),
         {
@@ -819,52 +800,56 @@ function App() {
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
-    listen<{ path: string; size: number; projectRoot: string; fileNameHint: string }>(
-      "inst-pdf-relayed",
-      (e) => {
-        const { path, projectRoot, fileNameHint } = e.payload;
-        if (!projectRoot) {
-          void fireScheduleNotification(
-            "PDF 已在 Mesa 暂存",
-            "回到项目页用「关联本地 PDF」选中导入这份文件",
-            {},
+    listen<{
+      path: string;
+      size: number;
+      projectRoot: string;
+      fileNameHint: string;
+    }>("inst-pdf-relayed", (e) => {
+      const { path, projectRoot, fileNameHint } = e.payload;
+      if (!projectRoot) {
+        void fireScheduleNotification(
+          "PDF 已在 Mesa 暂存",
+          "回到项目页用「关联本地 PDF」选中导入这份文件",
+          {},
+        );
+        pushRelayToast(
+          {
+            kind: "attention",
+            text: "PDF 已在 Mesa 暂存",
+            detail: "回到项目页用「关联本地 PDF」选中导入这份文件",
+          },
+          15000,
+        );
+        return;
+      }
+      void invoke<{ name: string }>("inst_save_relayed_pdf", {
+        projectRoot,
+        path,
+        fileNameHint: fileNameHint || "paper",
+      })
+        .then((res) => {
+          fireScheduleNotification(
+            `已存进 papers/：${res.name}`,
+            "文献全文已落盘并登记进项目资源",
+            { projectRoot },
           );
           pushRelayToast(
-            {
-              kind: "attention",
-              text: "PDF 已在 Mesa 暂存",
-              detail: "回到项目页用「关联本地 PDF」选中导入这份文件",
-            },
-            15000,
+            { kind: "ok", text: `已存进 papers/：${res.name}` },
+            8000,
           );
-          return;
-        }
-        void invoke<{ name: string }>("inst_save_relayed_pdf", {
-          projectRoot,
-          path,
-          fileNameHint: fileNameHint || "paper",
         })
-          .then((res) => {
-            fireScheduleNotification(
-              `已存进 papers/：${res.name}`,
-              "文献全文已落盘并登记进项目资源",
-              { projectRoot },
-            );
-            pushRelayToast(
-              { kind: "ok", text: `已存进 papers/：${res.name}` },
-              8000,
-            );
-          })
-          .catch((err) => {
-            fireScheduleNotification("PDF 入库失败", String(err), { projectRoot });
-            pushRelayToast({
-              kind: "err",
-              text: "PDF 入库失败",
-              detail: `${String(err)}——原文件在回收站（收货通道）或下载文件夹，可用「关联本地 PDF」重新导入`,
-            });
+        .catch((err) => {
+          fireScheduleNotification("PDF 入库失败", String(err), {
+            projectRoot,
           });
-      },
-    )
+          pushRelayToast({
+            kind: "err",
+            text: "PDF 入库失败",
+            detail: `${String(err)}——原文件在回收站（收货通道）或下载文件夹，可用「关联本地 PDF」重新导入`,
+          });
+        });
+    })
       .then((u) => {
         if (cancelled) {
           u();
@@ -892,7 +877,8 @@ function App() {
       fileName: string;
       candidates?: { title: string; projectRoot: string }[];
     }>("inst-pdf-attention", (e) => {
-      const { reason, path, projectRoot, title, fileName, candidates } = e.payload;
+      const { reason, path, projectRoot, title, fileName, candidates } =
+        e.payload;
       if (reason === "fallback") {
         pushRelayToast(
           {
@@ -918,7 +904,8 @@ function App() {
         pushRelayToast({
           kind: "attention",
           text: `下载晚了，${fileName} 没被自动收进（90 秒窗已过）`,
-          detail: "文件还在下载文件夹；确认无误可一键收进，或到清单行用「关联本地 PDF」",
+          detail:
+            "文件还在下载文件夹；确认无误可一键收进，或到清单行用「关联本地 PDF」",
           collect: { projectRoot, path, title },
         });
       }
@@ -941,22 +928,37 @@ function App() {
   // 交互式 CLI 交付后不退出进程，没有这个通知用户无从知道可以验收了。
   useEffect(() => {
     let unlisten: (() => void) | undefined;
-    listen<{ taskId: string; runId: string; goalName: string; projectRoot: string }>(
-      "goal-review-ready",
-      (e) => {
-        const enabled = useAppStore.getState().settings?.notificationsEnabled ?? true;
-        if (!enabled) return;
-        void fireScheduleNotification(
-          `目标「${e.payload.goalName}」的产出待验收`,
-          "Agent 已完成一轮，去看看要不要写进项目",
-          { projectRoot: e.payload.projectRoot, taskId: e.payload.taskId },
-        );
-      },
-    )
+    listen<{
+      taskId: string;
+      runId: string;
+      goalName: string;
+      projectRoot: string;
+    }>("goal-review-ready", (e) => {
+      const enabled =
+        useAppStore.getState().settings?.notificationsEnabled ?? true;
+      if (!enabled) return;
+      void fireScheduleNotification(
+        `目标「${e.payload.goalName}」的产出待验收`,
+        "Agent 已完成一轮，去看看要不要写进项目",
+        { projectRoot: e.payload.projectRoot, taskId: e.payload.taskId },
+      );
+    })
       .then((u) => (unlisten = u))
       .catch(() => {});
     return () => unlisten?.();
   }, []);
+
+  // 启动底色跟随主题：把「浅色与否」持久化给 index.html 首帧前的同步脚本读
+  //（下次启动过渡与主题同色系，不深浅跳变；没存过值时脚本回落系统外观）。
+  // settings 未载入时不写——isLightTheme(undefined) 恒 false，会把浅色用户错记成深色
+  useEffect(() => {
+    if (!settings) return;
+    try {
+      localStorage.setItem("ccodeBootTheme", lightChrome ? "light" : "dark");
+    } catch {
+      /* 隐私模式写不进：下次启动回落系统外观 */
+    }
+  }, [settings, lightChrome]);
 
   // 启动页与导航形态（设置页可选）：设置载入后只应用一次，之后用户手动切换不受影响。
   const startPageAppliedRef = useRef(false);
@@ -966,7 +968,10 @@ function App() {
     const target = settings.startPage;
     if (target && target !== page) setPage(target);
     const legacyCollapsed = localStorage.getItem("ccode.navCollapsed") === "1";
-    const mode = resolveStartupNavMode(settings.startupNavMode, legacyCollapsed);
+    const mode = resolveStartupNavMode(
+      settings.startupNavMode,
+      legacyCollapsed,
+    );
     const store = useAppStore.getState();
     if (mode === "hidden") {
       store.enterChromeHidden();
@@ -977,21 +982,50 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings]);
 
+  // 启动过渡（2026-10-16 用户拍板）：首屏数据（连接/会话/项目/最近目录/设置）就位前
+  // 保持 index.html 同款呼吸占位，就位后应用树才挂载——工作台的项目和最近会话不再
+  // 先出空列表再弹出。2.5s 硬顶：后端卡死也放行（宁可空列表，不困在过渡里）。
+  // 更新检查/依赖体检不进闸（网络/外部命令不该拖长过渡）。
+  const [bootDataReady, setBootDataReady] = useState(false);
+  const [bootCapReached, setBootCapReached] = useState(false);
   useEffect(() => {
-    loadAll().catch((e) => toast(`连接加载失败：${String(e)}`, "warning"));
-    loadSessions().catch((e) => toast(`会话加载失败：${String(e)}`, "warning"));
-    loadProjects().catch(() => toast("项目列表加载失败，可稍后重试", "warning"));
-    loadRecentRepos().catch(() => toast("最近目录加载失败，可稍后重试", "warning"));
-    // 设置（含主题）在启动时加载并应用
-    loadSettings()
-      .then(() => {
-        // 设置失败时不绕过原代理策略出网；修复设置后再由用户检查更新。
-        checkAppUpdate().catch(() => toast("应用更新检查失败，可稍后重试", "warning"));
-      })
-      .catch((e) => toast(`设置加载失败：${String(e)}`, "warning"));
+    const cap = setTimeout(() => setBootCapReached(true), 2500);
+    return () => clearTimeout(cap);
+  }, []);
+
+  useEffect(() => {
+    // 各加载的 catch 已就地弹 toast 并把 promise 救回 resolved，allSettled 只等完成
+    void Promise.allSettled([
+      loadAll().catch((e) => toast(`连接加载失败：${String(e)}`, "warning")),
+      loadSessions().catch((e) =>
+        toast(`会话加载失败：${String(e)}`, "warning"),
+      ),
+      loadProjects().catch(() =>
+        toast("项目列表加载失败，可稍后重试", "warning"),
+      ),
+      loadRecentRepos().catch(() =>
+        toast("最近目录加载失败，可稍后重试", "warning"),
+      ),
+      // 设置（含主题）在启动时加载并应用——主题就位后应用树才亮相，无明暗闪变
+      loadSettings()
+        .then(() => {
+          // 设置失败时不绕过原代理策略出网；修复设置后再由用户检查更新。
+          checkAppUpdate().catch(() =>
+            toast("应用更新检查失败，可稍后重试", "warning"),
+          );
+        })
+        .catch((e) => toast(`设置加载失败：${String(e)}`, "warning")),
+    ]).then(() => setBootDataReady(true));
     // 依赖体检（git/node/安装渠道）：缺 git 时收件箱常驻「依赖」条目；失败静默不阻塞首屏
     useAppStore.getState().refreshDepCheck();
-  }, [loadAll, loadSessions, loadProjects, loadRecentRepos, loadSettings, checkAppUpdate]);
+  }, [
+    loadAll,
+    loadSessions,
+    loadProjects,
+    loadRecentRepos,
+    loadSettings,
+    checkAppUpdate,
+  ]);
 
   // 前端未捕获异常上报到进程内日志缓冲（设置页「诊断」可见）；同消息 5s 去重防刷屏
   useEffect(() => {
@@ -1047,7 +1081,9 @@ function App() {
       loadAll().catch(() => toast("配置同步失败，可稍后重试", "warning"));
       loadSettings().catch(() => toast("设置同步失败，可稍后重试", "warning"));
       loadProjects().catch(() => toast("项目同步失败，可稍后重试", "warning"));
-      loadRecentRepos().catch(() => toast("最近目录同步失败，可稍后重试", "warning"));
+      loadRecentRepos().catch(() =>
+        toast("最近目录同步失败，可稍后重试", "warning"),
+      );
     };
     const onVis = () => {
       if (document.visibilityState === "visible") sync();
@@ -1061,28 +1097,31 @@ function App() {
   }, [loadAll, loadProjects, loadRecentRepos, loadSettings]);
 
   return (
-    <ErrorBoundary>
-      <div
-        className="ccode-app-shell relative flex h-full flex-col overflow-hidden text-l2"
-        data-nav={collapsed ? "icons" : "expanded"}
-        data-chrome={lightChrome ? "light" : "dark"}
-        data-nav-hidden={chromeHidden ? "true" : undefined}
-        /* 侧栏 / 顶栏罩色的系数。只写这一个变量，各主题的基数留在 App.css 里乘——
+    <BootGate ready={bootDataReady || bootCapReached}>
+      <ErrorBoundary>
+        <div
+          className="ccode-app-shell relative flex h-full flex-col overflow-hidden text-l2"
+          data-nav={collapsed ? "icons" : "expanded"}
+          data-chrome={lightChrome ? "light" : "dark"}
+          data-nav-hidden={chromeHidden ? "true" : undefined}
+          /* 侧栏 / 顶栏罩色的系数。只写这一个变量，各主题的基数留在 App.css 里乘——
            深浅、图标态三套基数不同，JS 不该持有它们（见 chrome-opacity.ts）。
            值经 normalize 过：存量配置里可能是白名单外的数，直接乘会让罩色跑飞。 */
-        style={
-          {
-            "--ccode-chrome-scale": chromeOpacityScale(settings?.chromeOpacity),
-          } as React.CSSProperties
-        }
-      >
-        {/* 收货反馈横幅：成功自动消失，失败/需注意常驻可处理（见 RelayToasts 注释） */}
-        <RelayToasts
-          toasts={relayToasts}
-          onDismiss={dismissRelayToast}
-          onCollect={collectRelayToast}
-        />
-        {/* macOS 自绘标题栏（titleBarStyle: Overlay + hiddenTitle）：纯拖拽区 +
+          style={
+            {
+              "--ccode-chrome-scale": chromeOpacityScale(
+                settings?.chromeOpacity,
+              ),
+            } as React.CSSProperties
+          }
+        >
+          {/* 收货反馈横幅：成功自动消失，失败/需注意常驻可处理（见 RelayToasts 注释） */}
+          <RelayToasts
+            toasts={relayToasts}
+            onDismiss={dismissRelayToast}
+            onCollect={collectRelayToast}
+          />
+          {/* macOS 自绘标题栏（titleBarStyle: Overlay + hiddenTitle）：纯拖拽区 +
             Ghostty 式标题栏收件箱（按类别拆胶囊，点胶囊向下展开该类明细，遮罩/Esc/再点关闭）。
             窗口标题不在界面渲染（用户拍板删除，标题字符串仍保留在 tauri 配置里供自动化定位窗口）。
             Windows/Linux 用原生标题栏；客户端上下文栏仍统一承载项目、运行、命令面板与收件箱。
@@ -1091,66 +1130,44 @@ function App() {
             顶栏横贯整窗、压在侧栏上方（原结构），高度 h-9。侧栏是圆角玻璃，顶上给红绿灯留空。
             定位上下文与层级（position: relative + z-index）由 App.css 的 .ccode-titlebar 提供：
             导航岛嵌在这条栏里绝对定位居中，栏不构成层叠上下文时岛会掉进页面内容的层级里。 */}
-        <header
-          data-tauri-drag-region={IS_MAC ? true : undefined}
-          data-island={
-            chromeHidden ? (islandExpanded ? "expanded" : "hidden") : undefined
-          }
-          className={`ccode-titlebar flex h-9 shrink-0 items-center gap-2.5 pr-3 ${macOverlayPadClass(
-            IS_MAC,
-            macFullscreen,
-            "pl-3",
-          )}`}
-        >
-          {/* 项目上下文与运行数在两种外壳态下都常驻：执行态下它们曾被我一起门掉，
-              理由是岛浮在内容上、悬停会盖住顶栏——岛嵌进栏内居中后这个理由不成立，
-              而"我在哪个项目、几个 agent 在跑"恰是收起侧栏后最需要留在眼前的两条。
-              层级：这两个按钮在岛之下（岛 z-1），展开时会被盖住；右组 z-3 在岛之上，
-              命令面板与收件箱永不被挡。
-              两组的让位由 CSS 统一处理（.ccode-titlebar 上 data-island=expanded 时的
-              兄弟选择器）：岛一展开两侧一起淡出并停止接受指针。这不是为了躲播报——
-              展开面本来就宽，左组被盖、右组盖住岛的右端，这两件事与播报无关。
-              既然岛压着的时候它们本来也点不到，就别继续以可点的样子亮着。 */}
-          <div className="ccode-titlebar-side relative flex min-w-0 shrink items-center gap-2.5">
-            <button
-              type="button"
-              onClick={() => setPage("workspaces")}
-              title={
-                contextLabel
-                  ? `当前项目：${contextLabel.project}（点击回项目页）`
-                  : "还没有选中项目"
-              }
-              className="flex h-6 min-w-0 shrink items-center gap-1.5 rounded-md px-2 text-micro text-l3 hover:bg-hover hover:text-l1"
-            >
-              <NAV_ICONS.workspaces
-                size={14}
-                strokeWidth={1.8}
-                className="shrink-0 text-l4"
-                aria-hidden="true"
-              />
-              <span className="min-w-0 truncate">
-                {contextLabel?.project ?? "Mesa"}
-              </span>
-              {contextLabel?.step && (
-                <>
-                  <span className="shrink-0 text-l4">·</span>
-                  <span className="min-w-0 truncate">{contextLabel.step}</span>
-                </>
+          <header
+            data-tauri-drag-region={IS_MAC ? true : undefined}
+            data-island={
+              chromeHidden
+                ? islandExpanded
+                  ? "expanded"
+                  : "hidden"
+                : undefined
+            }
+            className={`ccode-titlebar flex h-9 shrink-0 items-center gap-2.5 pr-3 ${macOverlayPadClass(
+              IS_MAC,
+              macFullscreen,
+              "pl-3",
+            )}`}
+          >
+            {/* 层级：左组在岛之下（岛 z-1），岛展开时被盖住；右组 z-3 在岛之上，命令面板与收件箱
+                永不被挡。两组让位由 CSS 统一处理（.ccode-titlebar[data-island=expanded] 兄弟选择器）：
+                岛一展开两侧一起淡出并停止接受指针——岛压着的时候本来也点不到。 */}
+            {/* 左侧「位置与活动」：同一件事每种侧栏形态只出现一处（规则与单测见 shell-context.ts）。
+                展开态侧栏已有项目树与「运行」行，这里留空，只做拖拽区；图标态补项目芯片（不在
+                项目页时）与活动芯片；全隐藏时项目芯片常驻（唯一切项目入口），活动挪进灵动岛。 */}
+            <div className="ccode-titlebar-side relative flex min-w-0 shrink items-center gap-1.5">
+              {shellPlacement.projectChip && (
+                <TitlebarProjectChip
+                  name={contextLabel?.project ?? null}
+                  path={contextLabel?.projectPath ?? null}
+                  onProjectPage={page === "workspaces"}
+                  onSelect={(repoPath) => {
+                    useAppStore.getState().setSelectProjectReq(repoPath);
+                    setPage("workspaces");
+                  }}
+                />
               )}
-            </button>
-            {visibleRunningCount > 0 && (
-              <button
-                type="button"
-                onClick={() => setPage("terminal")}
-                title={`${visibleRunningCount} 个 agent 正在运行（点击去运行）`}
-                className="flex h-6 shrink-0 items-center gap-1 rounded-md px-2 text-micro text-l3 hover:bg-hover hover:text-l1"
-              >
-                <span className="text-l4">⑂</span>
-                {visibleRunningCount} 运行中
-              </button>
-            )}
-          </div>
-          <div className="ccode-titlebar-side relative z-3 ml-auto flex min-w-0 shrink-0 items-center gap-1.5">
+              {shellPlacement.activity === "titlebar" && (
+                <RunActivityButton variant="titlebar" />
+              )}
+            </div>
+            <div className="ccode-titlebar-side relative z-3 ml-auto flex min-w-0 shrink-0 items-center gap-1.5">
               {/* 帮助：命令面板左侧常驻入口。文档/支持走外链（↗ 标记），应用内
                   目标跳设置分区；下拉结构与关闭范式对齐收件箱（Esc / 遮罩 / 再点），
                   与收件箱/命令面板互斥（同锚区三个浮层不同时开）。
@@ -1196,7 +1213,9 @@ function App() {
                         ),
                       );
                       if (!items.length) return;
-                      const idx = items.indexOf(document.activeElement as HTMLElement);
+                      const idx = items.indexOf(
+                        document.activeElement as HTMLElement,
+                      );
                       const next =
                         e.key === "Home"
                           ? items[0]
@@ -1223,8 +1242,6 @@ function App() {
                               if (item.feedback) {
                                 setHelpOpen(false);
                                 setFeedbackOpen(true);
-                              } else if (item.updateCheck) {
-                                void checkUpdatesFromHelp();
                               } else if (item.url) {
                                 openHelpUrl(item.url);
                               } else if (item.dialog) {
@@ -1248,6 +1265,13 @@ function App() {
                                 className="shrink-0 text-l3"
                                 aria-hidden="true"
                               />
+                            )}
+                            {/* 已知有新版：「检查更新」行尾直接标出版本，点开就是安装弹窗 */}
+                            {item.dialog === "update" && appUpdateVersion && (
+                              <span className="flex shrink-0 items-center gap-1 text-micro text-l3">
+                                <span className="size-1.5 rounded-full bg-ok-text" aria-hidden="true" />
+                                v{appUpdateVersion} 可更新
+                              </span>
                             )}
                           </button>
                         ))}
@@ -1280,60 +1304,83 @@ function App() {
                     onClick={() => {
                       // 与帮助菜单互斥：同锚区两个下拉不同时开
                       setHelpOpen(false);
-                      setTitleInboxCat((v) => (v ? null : inboxGroups[0].category));
+                      setTitleInboxCat((v) =>
+                        v ? null : inboxGroups[0].category,
+                      );
                     }}
                     aria-expanded={titleInboxCat !== null}
                     className="flex h-6 shrink-0 items-center gap-1 rounded-md px-2 text-micro text-l3 hover:bg-hover hover:text-l1"
                     title="待处理"
                   >
-                    <Inbox size={13} strokeWidth={1.8} className="shrink-0" aria-hidden="true" />
+                    <Inbox
+                      size={13}
+                      strokeWidth={1.8}
+                      className="shrink-0"
+                      aria-hidden="true"
+                    />
                     <span className="hidden sm:inline">待处理</span>
                     {inboxCount}
                   </button>
                   {titleInboxCat !== null && (
                     <ul className="absolute right-0 top-full z-40 mt-1.5 max-h-80 w-[360px] max-w-[80vw] space-y-2 overflow-auto rounded-md border border-field ccode-float-surface p-1">
+                      <li className="flex items-center justify-between border-b border-hairline px-1.5 pb-1">
+                        <span className="text-micro text-l4">
+                          共 {inboxItems.length} 条
+                        </span>
+                        {bulkInboxItems.length > 0 && (
+                          <button
+                            type="button"
+                            className="rounded-sm p-1 text-l3 hover:bg-hover hover:text-l1"
+                            title="全部已读：一键收起信息类通报（文献 / 可合并 / 待核验 / 待发送 / 技能）；冲突、待确认这类要你拍板的不受影响，被收起的条目状态一变还会回来"
+                            aria-label="全部已读（仅信息类）"
+                            onClick={() => dismissInboxBulk(bulkInboxItems)}
+                          >
+                            <CheckCheck size={13} strokeWidth={1.8} aria-hidden="true" />
+                          </button>
+                        )}
+                      </li>
                       {inboxGroups.map((group) => (
                         <li key={group.category}>
                           <div className="px-2.5 py-1 text-micro text-l3">
                             {group.label} {group.items.length}
                           </div>
                           {group.items.map((item) => (
-                          <div
-                            key={item.key}
-                            className="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-xs hover:bg-hover"
-                          >
-                            <span
-                              className={`size-2 shrink-0 rounded-full ${item.dot}`}
-                            />
-                            <span className="min-w-0 flex-1 truncate text-l2">
-                              {item.text}
-                            </span>
-                            <button
-                              type="button"
-                              title="忽略（状态变化后会重新出现）"
-                              onClick={() =>
-                                item.key.startsWith("help:")
-                                  ? dismissHelpRequest(
-                                      item.key.slice("help:".length),
-                                      item.dismissSignature ?? "",
-                                    )
-                                  : dismissInbox(item)
-                              }
-                              className="shrink-0 text-l4 hover:text-l1"
+                            <div
+                              key={item.key}
+                              className="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-xs hover:bg-hover"
                             >
-                              ✕
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setTitleInboxCat(null);
-                                runInboxAction(item);
-                              }}
-                              className={rowActionClass}
-                            >
-                              {item.actionLabel}
-                            </button>
-                          </div>
+                              <span
+                                className={`size-2 shrink-0 rounded-full ${item.dot}`}
+                              />
+                              <span className="min-w-0 flex-1 truncate text-l2">
+                                {item.text}
+                              </span>
+                              <button
+                                type="button"
+                                title="忽略（状态变化后会重新出现）"
+                                onClick={() =>
+                                  item.key.startsWith("help:")
+                                    ? dismissHelpRequest(
+                                        item.key.slice("help:".length),
+                                        item.dismissSignature ?? "",
+                                      )
+                                    : dismissInbox(item)
+                                }
+                                className="shrink-0 text-l4 hover:text-l1"
+                              >
+                                ✕
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setTitleInboxCat(null);
+                                  runInboxAction(item);
+                                }}
+                                className={rowActionClass}
+                              >
+                                {item.actionLabel}
+                              </button>
+                            </div>
                           ))}
                         </li>
                       ))}
@@ -1342,78 +1389,85 @@ function App() {
                 </div>
               )}
             </div>
-          {/* 导航岛嵌在标题栏内部居中：栏本身始终横贯整窗，隐藏侧栏只改内容区，
+            {/* 导航岛嵌在标题栏内部居中：栏本身始终横贯整窗，隐藏侧栏只改内容区，
               栏宽不变，岛因此不会挪位；岛也不越出栏高，内容区不必再让位。 */}
-          {chromeHidden && (
-            <TopNavCapsule
-              page={page}
-              onPage={setPage}
-              onQuickChat={() => {
-                if (quickChatSkipEnabled()) {
-                  void launchQuickChatDirect().then((ok) => {
-                    if (!ok) setQuickChatOpen(true);
-                  });
-                } else {
-                  setQuickChatOpen(true);
-                }
-              }}
-              onQuickChatContextMenu={(e) => void openQuickChatMenu(e)}
-              onRestore={exitChromeHidden}
-              runningCount={visibleRunningCount}
-              inboxCount={inboxCount}
-              hideDelayMs={navCapsuleDelay}
-              displayMode={settings?.navCapsuleDisplayMode}
-              visibleItems={settings?.navCapsuleVisibleItems}
-              announcement={runAnnouncement}
-              onAnnouncementClick={() => setPage("terminal")}
-              onExpandedChange={setIslandExpanded}
-            />
-          )}
-        </header>
-        <div className="flex min-h-0 flex-1 gap-[5px] px-[5px] pb-[5px]">
-        {!chromeHidden && (
-        <aside
-          className={`ccode-app-rail flex min-h-0 shrink-0 flex-col overflow-hidden rounded-lg transition-[width] duration-150 ${
-            collapsed ? "w-14" : "w-44"
-          }`}
-        >
-          {/* 品牌区在展开与图标侧栏之间切换；完全隐藏由 ⌘\\、命令面板或顶部胶囊控制。 */}
-          <button
-            type="button"
-            onClick={cycleNavState}
-            title={collapsed ? "展开侧栏" : "收起为图标"}
-            className={`ccode-brand-bar mx-1.5 mt-1 flex h-11 shrink-0 select-none items-end rounded-md pb-1.5 text-left transition-colors hover:bg-hover ${
-              collapsed ? "justify-center" : "px-2"
-            }`}
-          >
-            <span className="ccode-brand-mark">
-              {collapsed ? "M" : "Mesa"}
-            </span>
-          </button>
-          <nav className="ccode-app-nav min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1.5 py-2">
-            {NAV_GROUPS.map((group, groupIndex) => (
-              <div key={group.label} className={groupIndex > 0 ? "mt-3" : ""}>
-                {!collapsed && (
-                  <div className="mb-1 mt-1 px-2 text-micro font-medium tracking-[0.08em] text-l3">
-                    {group.label}
-                  </div>
-                )}
-                {group.label === "工作" && (
-                  <RailTooltip label="快速开聊" collapsed={collapsed}>
+            {chromeHidden && (
+              <TopNavCapsule
+                page={page}
+                onPage={setPage}
+                onQuickChat={() => void openQuickChat()}
+                onQuickChatContextMenu={(e) => void openQuickChatMenu(e)}
+                onRestore={exitChromeHidden}
+                hideDelayMs={navCapsuleDelay}
+                displayMode={settings?.navCapsuleDisplayMode}
+                visibleItems={settings?.navCapsuleVisibleItems}
+                announcement={runAnnouncement}
+                onAnnouncementClick={() => setPage("terminal")}
+                onExpandedChange={setIslandExpanded}
+              />
+            )}
+          </header>
+          <div className="flex min-h-0 flex-1 gap-[5px] px-[5px] pb-[5px]">
+            {!chromeHidden && (
+              <aside
+                className={`ccode-app-rail flex min-h-0 shrink-0 flex-col overflow-hidden rounded-lg transition-[width] duration-150 ${
+                  collapsed ? "w-14" : "w-56"
+                }`}
+              >
+                {/* 品牌区 */}
+                <button
+                  type="button"
+                  onClick={cycleNavState}
+                  title={collapsed ? "展开侧栏" : "收起为图标"}
+                  className={`ccode-brand-bar group mx-1.5 mt-1 flex h-11 shrink-0 select-none items-center rounded-md text-left transition-colors hover:bg-hover ${
+                    collapsed ? "justify-center" : "px-2"
+                  }`}
+                >
+                  <span className="ccode-brand-mark">
+                    {collapsed ? "M" : "Mesa"}
+                  </span>
+                  {!collapsed && (
+                    <ChevronsLeft
+                      size={13}
+                      strokeWidth={1.8}
+                      className="ml-auto shrink-0 text-l3 opacity-0 transition-opacity group-hover:opacity-100"
+                    />
+                  )}
+                </button>
+
+                {/* 快速入口：贴品牌区（2026-10-16 用户拍板：工作台/新对话在 Mesa 下、项目标签之上；「新对话」原名「快速开聊」，2026-10-18 改） */}
+                <div className="shrink-0 px-1.5 pt-2">
+                  <RailTooltip label="工作台" collapsed={collapsed}>
                     <button
                       type="button"
-                      onClick={() => {
-                        if (quickChatSkipEnabled()) {
-                          void launchQuickChatDirect().then((ok) => {
-                            if (!ok) setQuickChatOpen(true);
-                          });
-                        } else {
-                          setQuickChatOpen(true);
-                        }
-                      }}
+                      onClick={() => setPage("workbench")}
+                      aria-current={page === "workbench" ? "page" : undefined}
+                      aria-label="工作台"
+                      title="工作台"
+                      className={`relative mb-0.5 flex h-8 w-full items-center rounded-md text-sm transition-colors ${
+                        collapsed ? "justify-center" : "px-2.5"
+                      } ${
+                        page === "workbench"
+                          ? "ccode-rail-active bg-rail-sel text-l1"
+                          : "text-l3 hover:bg-hover hover:text-l2"
+                      }`}
+                    >
+                      <NAV_ICONS.workbench
+                        size={16}
+                        strokeWidth={1.8}
+                        className={`${collapsed ? "" : "mr-2 shrink-0"} ${page === "workbench" ? "text-nav-accent" : ""}`}
+                        aria-hidden="true"
+                      />
+                      {!collapsed && <span className="truncate">工作台</span>}
+                    </button>
+                  </RailTooltip>
+                  <RailTooltip label="新对话" collapsed={collapsed}>
+                    <button
+                      type="button"
+                      onClick={() => void openQuickChat()}
                       onContextMenu={(e) => void openQuickChatMenu(e)}
-                      aria-label="快速开聊"
-                      title="快速开聊：不建项目直接开一个终端标签（右键看 scratch 里的随手聊）"
+                      aria-label="新对话"
+                      title="新对话：不建项目，直接开一段空白对话（右键看最近的随手聊）"
                       className={`relative mb-0.5 flex h-8 w-full items-center rounded-md text-sm text-l3 transition-colors hover:bg-hover hover:text-l2 ${
                         collapsed ? "justify-center" : "px-2.5"
                       }`}
@@ -1424,231 +1478,392 @@ function App() {
                         className={collapsed ? "" : "mr-2 shrink-0"}
                         aria-hidden="true"
                       />
-                      {!collapsed && <span className="truncate">快速开聊</span>}
+                      {!collapsed && <span className="truncate">新对话</span>}
                     </button>
                   </RailTooltip>
-                )}
-                {group.items.map((n) => (
-                  <RailTooltip key={n.id} label={n.label} collapsed={collapsed}>
+                  {/* 运行页常驻（原先只在有 agent 跑时出现，平时只能 ⌘3 进）：跑着时行尾绿点 + 数量；
+                      有 agent 等确认时点转黄、数字换成「N 待确认」——展开态顶栏不报活动，这行就是信号 */}
+                  <RailTooltip
+                    label={
+                      runActivity.tone === "idle"
+                        ? "运行"
+                        : `运行（${runActivity.label}）`
+                    }
+                    collapsed={collapsed}
+                  >
                     <button
                       type="button"
-                      onClick={() => setPage(n.id)}
-                      aria-current={page === n.id ? "page" : undefined}
-                      aria-label={n.label}
-                      title={
-                        n.id === "terminal" && visibleRunningCount > 0
-                          ? `${n.label}（${visibleRunningCount} 个 agent 运行中）`
-                          : n.id === "workspaces" && inboxCount > 0
-                            ? `${n.label}（${inboxCount} 件待处理）`
-                            : n.label
-                      }
+                      onClick={() => setPage("terminal")}
+                      aria-current={page === "terminal" ? "page" : undefined}
+                      aria-label="运行"
+                      title={runActivity.tone === "idle" ? "运行" : runActivity.label}
                       className={`relative mb-0.5 flex h-8 w-full items-center rounded-md text-sm transition-colors ${
                         collapsed ? "justify-center" : "px-2.5"
                       } ${
-                        page === n.id
-                          ? "bg-rail-sel text-l1"
+                        page === "terminal"
+                          ? "ccode-rail-active bg-rail-sel text-l1"
                           : "text-l3 hover:bg-hover hover:text-l2"
                       }`}
                     >
-                      <n.Icon
+                      <NAV_ICONS.terminal
                         size={16}
                         strokeWidth={1.8}
-                        className={`${collapsed ? "" : "mr-2 shrink-0"} ${page === n.id ? "text-nav-accent" : ""}`}
+                        className={`${collapsed ? "" : "mr-2 shrink-0"} ${page === "terminal" ? "text-nav-accent" : ""}`}
                         aria-hidden="true"
                       />
-                      {!collapsed && <span className="truncate">{n.label}</span>}
+                      {!collapsed && <span className="truncate">运行</span>}
+                      {runActivity.tone !== "idle" &&
+                        (collapsed ? (
+                          <span
+                            className={`absolute right-2 top-1.5 size-1.5 rounded-full ${
+                              runActivity.tone === "confirm" ? "bg-warn-text" : "bg-ok-text"
+                            }`}
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <span
+                            className={`ml-auto flex shrink-0 items-center gap-1 text-micro ${
+                              runActivity.tone === "confirm" ? "text-warn-text" : "text-l3"
+                            }`}
+                          >
+                            <span
+                              className={`size-1.5 rounded-full ${
+                                runActivity.tone === "confirm" ? "bg-warn-text" : "bg-ok-text"
+                              }`}
+                            />
+                            {runActivity.tone === "confirm"
+                              ? `${runActivity.confirm} 待确认`
+                              : runActivity.running}
+                          </span>
+                        ))}
                     </button>
                   </RailTooltip>
-                ))}
+                  <RailTooltip label="对话" collapsed={collapsed}>
+                    <button
+                      type="button"
+                      onClick={() => setPage("sessions")}
+                      aria-current={page === "sessions" ? "page" : undefined}
+                      aria-label="对话"
+                      title="对话"
+                      className={`relative mb-0.5 flex h-8 w-full items-center rounded-md text-sm transition-colors ${
+                        collapsed ? "justify-center" : "px-2.5"
+                      } ${
+                        page === "sessions"
+                          ? "ccode-rail-active bg-rail-sel text-l1"
+                          : "text-l3 hover:bg-hover hover:text-l2"
+                      }`}
+                    >
+                      <NAV_ICONS.sessions
+                        size={16}
+                        strokeWidth={1.8}
+                        className={`${collapsed ? "" : "mr-2 shrink-0"} ${page === "sessions" ? "text-nav-accent" : ""}`}
+                        aria-hidden="true"
+                      />
+                      {!collapsed && <span className="truncate">对话</span>}
+                    </button>
+                  </RailTooltip>
+                  {/* 图标态：项目树不可见，文件夹与其他图标一样只管「去项目页」；
+                      切换项目统一交给顶栏项目芯片（图标态下常驻，规则见 shell-context.ts） */}
+                  {collapsed && (
+                    <RailTooltip
+                      label={
+                        contextLabel?.project
+                          ? `项目 · ${contextLabel.project}`
+                          : "项目"
+                      }
+                      collapsed={collapsed}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setPage("workspaces")}
+                        aria-current={page === "workspaces" ? "page" : undefined}
+                        aria-label="项目"
+                        className={`relative mb-0.5 flex h-8 w-full items-center justify-center rounded-md transition-colors ${
+                          page === "workspaces"
+                            ? "ccode-rail-active bg-rail-sel text-l1"
+                            : "text-l3 hover:bg-hover hover:text-l2"
+                        }`}
+                      >
+                        <NAV_ICONS.workspaces
+                          size={16}
+                          strokeWidth={1.8}
+                          aria-hidden="true"
+                          className={page === "workspaces" ? "text-nav-accent" : ""}
+                        />
+                      </button>
+                    </RailTooltip>
+                  )}
+                </div>
+
+                {/* 项目区（展开态）：「项目」标签在搜索框上面，列表/搜索/右键管理都在 ProjectTree；
+                    flex 列容器让树拿到受限高度，课题多时在树内滚动而不是被侧栏裁掉 */}
+                {!collapsed && (
+                  <div className="flex min-h-0 flex-1 flex-col pt-3">
+                    <ProjectTree
+                      selectedRoot={contextLabel?.projectPath ?? null}
+                      active={page === "workspaces"}
+                      onSelect={(repoPath) => {
+                        useAppStore.getState().setSelectProjectReq(repoPath);
+                        setPage("workspaces");
+                      }}
+                    />
+                  </div>
+                )}
+                {collapsed && <div className="min-h-0 flex-1" />}
+
+                {/* 资源与管理段：连接/技能/MCP/用量/设置（对话已归上面的工作入口） */}
+                <div className="shrink-0 border-t border-white/5 px-1.5 py-2">
+                  {[
+                    ...NAV_GROUPS.find((g) => g.label === "资源")!.items,
+                    ...NAV_BOTTOM,
+                  ].map((n) => (
+                    <RailTooltip
+                      key={n.id}
+                      label={n.label}
+                      collapsed={collapsed}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setPage(n.id)}
+                        aria-current={page === n.id ? "page" : undefined}
+                        aria-label={n.label}
+                        title={n.label}
+                        className={`relative mb-0.5 flex h-8 items-center rounded-md text-sm transition-colors ${
+                          collapsed ? "w-11 justify-center" : "w-full px-2.5"
+                        } ${
+                          page === n.id
+                            ? "ccode-rail-active bg-rail-sel text-l1"
+                            : "text-l3 hover:bg-hover hover:text-l2"
+                        }`}
+                      >
+                        <n.Icon
+                          size={16}
+                          strokeWidth={1.8}
+                          className={`${collapsed ? "" : "mr-2 shrink-0"} ${page === n.id ? "text-nav-accent" : ""}`}
+                          aria-hidden="true"
+                        />
+                        {!collapsed && <span className="truncate">{n.label}</span>}
+                      </button>
+                    </RailTooltip>
+                  ))}
+                </div>
+              </aside>
+            )}
+            {titleInboxCat !== null && (
+              <div
+                className="fixed inset-0 z-20"
+                onClick={() => setTitleInboxCat(null)}
+              />
+            )}
+            {helpOpen && (
+              <div
+                className="fixed inset-0 z-20"
+                onClick={() => setHelpOpen(false)}
+              />
+            )}
+            <main className="ccode-app-main min-h-0 min-w-0 flex-1">
+              {/* 页面保持挂载，切换标签不销毁终端；未访问过的页不挂载（懒加载）。
+                  工作台=概览、项目=选中课题详情（选中经 selectProjectReq 一次性请求，
+                  由项目页消费选分组，与收件箱/对话页跳转同一条链） */}
+              <div
+                className={
+                  page === "workbench" ? "h-full overflow-auto" : "hidden"
+                }
+              >
+                {visited.has("workbench") && (
+                  <Suspense fallback={<PageLoading />}>
+                    <WorkbenchPage
+                      visible={page === "workbench"}
+                      onQuickChat={() => void openQuickChat()}
+                    />
+                  </Suspense>
+                )}
               </div>
-            ))}
-          </nav>
-          <div className="shrink-0 border-t border-white/5 px-1.5 py-2">
-            {NAV_BOTTOM.map((n) => (
-              <RailTooltip key={n.id} label={n.label} collapsed={collapsed}>
+              <div className={page === "workspaces" ? "h-full" : "hidden"}>
+                {visited.has("workspaces") && (
+                  <Suspense fallback={<PageLoading />}>
+                    <WorkspacesPage visible={page === "workspaces"} />
+                  </Suspense>
+                )}
+              </div>
+              <div
+                className={
+                  page === "profiles" ? "h-full overflow-auto" : "hidden"
+                }
+              >
+                {visited.has("profiles") && (
+                  <Suspense fallback={<PageLoading />}>
+                    <ProfilesPage visible={page === "profiles"} />
+                  </Suspense>
+                )}
+              </div>
+              <div className={page === "terminal" ? "h-full" : "hidden"}>
+                {visited.has("terminal") && (
+                  <Suspense fallback={<PageLoading />}>
+                    <TerminalPage visible={page === "terminal"} />
+                  </Suspense>
+                )}
+              </div>
+              <div className={page === "sessions" ? "h-full" : "hidden"}>
+                {visited.has("sessions") && (
+                  <Suspense fallback={<PageLoading />}>
+                    <SessionsPage visible={page === "sessions"} />
+                  </Suspense>
+                )}
+              </div>
+              <div className={page === "skills" ? "h-full" : "hidden"}>
+                {visited.has("skills") && (
+                  <Suspense fallback={<PageLoading />}>
+                    <SkillsPage visible={page === "skills"} />
+                  </Suspense>
+                )}
+              </div>
+              <div
+                className={page === "mcp" ? "h-full overflow-auto" : "hidden"}
+              >
+                {visited.has("mcp") && (
+                  <Suspense fallback={<PageLoading />}>
+                    <McpPage visible={page === "mcp"} />
+                  </Suspense>
+                )}
+              </div>
+              <div
+                className={page === "stats" ? "h-full overflow-auto" : "hidden"}
+              >
+                {visited.has("stats") && (
+                  <Suspense fallback={<PageLoading />}>
+                    <StatsPage visible={page === "stats"} />
+                  </Suspense>
+                )}
+              </div>
+              <div
+                className={
+                  page === "settings" ? "h-full overflow-auto" : "hidden"
+                }
+              >
+                {visited.has("settings") && (
+                  <Suspense fallback={<PageLoading />}>
+                    <SettingsPage visible={page === "settings"} />
+                  </Suspense>
+                )}
+              </div>
+            </main>
+          </div>
+          {paletteOpen && (
+            <CommandPalette
+              onClose={() => setPaletteOpen(false)}
+              onQuickChat={() => void openQuickChat()}
+              onHelp={(target) => {
+                if (target === "feedback") setFeedbackOpen(true);
+                else setHelpDialog(target);
+              }}
+            />
+          )}
+          <FeedbackModal
+            open={feedbackOpen}
+            attachDiagnostics={feedbackDiag}
+            onClose={() => {
+              setFeedbackOpen(false);
+              setFeedbackDiag(null);
+            }}
+          />
+          <HelpDiagnosticsDialog
+            open={helpDialog === "diag"}
+            onClose={() => setHelpDialog(null)}
+            onOpenFull={() => {
+              setHelpDialog(null);
+              setSettingsSectionReq("diag");
+              setPage("settings");
+            }}
+            onAttachToFeedback={(path) => {
+              setHelpDialog(null);
+              setFeedbackDiag(path);
+              setFeedbackOpen(true);
+            }}
+          />
+          <HelpUpdateDialog
+            open={helpDialog === "update"}
+            onClose={() => setHelpDialog(null)}
+          />
+          <HelpAboutDialog
+            open={helpDialog === "about"}
+            onClose={() => setHelpDialog(null)}
+            onFeedback={() => {
+              setHelpDialog(null);
+              setFeedbackOpen(true);
+            }}
+            onCheckUpdate={() => setHelpDialog("update")}
+          />
+          <AskAiModal />
+          {quickChatMenu && (
+            <QuickChatHistoryMenu
+              x={quickChatMenu.x}
+              y={quickChatMenu.y}
+              sessions={quickChatMenu.sessions}
+              onPick={resumeSessionInTerminal}
+              onClose={() => setQuickChatMenu(null)}
+            />
+          )}
+          {/* 全局确认框宿主（confirmDialog）：z-70，压过一切覆盖层 */}
+          <ConfirmDialogHost />
+          <ToastHost />
+          {/* 待确认跳转提醒条：通知正文点击无回调（桌面插件限制）的补位——
+            窗口激活时有待确认就出现在右下角，点「去处理」直达终端标签 */}
+          {confirmHint && (
+            <div className="pointer-events-none fixed bottom-5 right-5 z-100 flex flex-col items-end">
+              <div className="pointer-events-auto flex items-center gap-2.5 rounded-lg border border-field bg-raised px-3.5 py-2.5 shadow-lg">
+                <span className="size-2 shrink-0 animate-pulse rounded-full bg-warn-text" />
                 <button
                   type="button"
-                  onClick={() => setPage(n.id)}
-                  aria-current={page === n.id ? "page" : undefined}
-                  aria-label={n.label}
-                  title={n.label}
-                  className={`relative mb-0.5 flex h-8 items-center rounded-md text-sm transition-colors ${
-                    collapsed ? "w-11 justify-center" : "w-full px-2.5"
-                  } ${
-                    page === n.id
-                      ? "bg-rail-sel text-l1"
-                      : "text-l3 hover:bg-hover hover:text-l2"
-                  }`}
+                  className="min-w-0 text-left text-sm text-l1 hover:text-cta"
+                  onClick={() => {
+                    setPage("terminal");
+                    setFocusTabReq(confirmHint.tabId);
+                    setConfirmHint(null);
+                  }}
                 >
-                  <n.Icon
-                    size={16}
-                    strokeWidth={1.8}
-                    className={`${collapsed ? "" : "mr-2 shrink-0"} ${page === n.id ? "text-nav-accent" : ""}`}
-                    aria-hidden="true"
-                  />
-                  {!collapsed && <span>{n.label}</span>}
+                  {confirmHint.count > 1
+                    ? `${confirmHint.count} 个 Agent 在等确认`
+                    : "Agent 在等确认"}
+                  <span className="ml-1.5 text-micro text-l4">点此去处理</span>
                 </button>
-              </RailTooltip>
-            ))}
-          </div>
-        </aside>
-        )}
-        {titleInboxCat !== null && (
-          <div
-            className="fixed inset-0 z-20"
-            onClick={() => setTitleInboxCat(null)}
-          />
-        )}
-        {helpOpen && (
-          <div className="fixed inset-0 z-20" onClick={() => setHelpOpen(false)} />
-        )}
-        <main className="ccode-app-main min-h-0 min-w-0 flex-1">
-          {/* 页面保持挂载，切换标签不销毁终端；未访问过的页不挂载（懒加载） */}
-          <div className={page === "workbench" ? "h-full overflow-auto" : "hidden"}>
-            {visited.has("workbench") && (
-              <Suspense fallback={<PageLoading />}>
-                <WorkbenchPage
-                  visible={page === "workbench"}
-                  onQuickChat={() => setQuickChatOpen(true)}
-                />
-              </Suspense>
-            )}
-          </div>
-          <div
-            className={page === "profiles" ? "h-full overflow-auto" : "hidden"}
-          >
-            {visited.has("profiles") && (
-              <Suspense fallback={<PageLoading />}>
-                <ProfilesPage visible={page === "profiles"} />
-              </Suspense>
-            )}
-          </div>
-          <div className={page === "workspaces" ? "h-full" : "hidden"}>
-            {visited.has("workspaces") && (
-              <Suspense fallback={<PageLoading />}>
-                <WorkspacesPage visible={page === "workspaces"} />
-              </Suspense>
-            )}
-          </div>
-          <div className={page === "terminal" ? "h-full" : "hidden"}>
-            {visited.has("terminal") && (
-              <Suspense fallback={<PageLoading />}>
-                <TerminalPage visible={page === "terminal"} />
-              </Suspense>
-            )}
-          </div>
-          <div className={page === "sessions" ? "h-full" : "hidden"}>
-            {visited.has("sessions") && (
-              <Suspense fallback={<PageLoading />}>
-                <SessionsPage visible={page === "sessions"} />
-              </Suspense>
-            )}
-          </div>
-          <div className={page === "skills" ? "h-full" : "hidden"}>
-            {visited.has("skills") && (
-              <Suspense fallback={<PageLoading />}>
-                <SkillsPage visible={page === "skills"} />
-              </Suspense>
-            )}
-          </div>
-          <div className={page === "mcp" ? "h-full overflow-auto" : "hidden"}>
-            {visited.has("mcp") && (
-              <Suspense fallback={<PageLoading />}>
-                <McpPage visible={page === "mcp"} />
-              </Suspense>
-            )}
-          </div>
-          <div className={page === "stats" ? "h-full overflow-auto" : "hidden"}>
-            {visited.has("stats") && (
-              <Suspense fallback={<PageLoading />}>
-                <StatsPage visible={page === "stats"} />
-              </Suspense>
-            )}
-          </div>
-          <div
-            className={page === "settings" ? "h-full overflow-auto" : "hidden"}
-          >
-            {visited.has("settings") && (
-              <Suspense fallback={<PageLoading />}>
-                <SettingsPage visible={page === "settings"} />
-              </Suspense>
-            )}
-          </div>
-        </main>
-        </div>
-        {paletteOpen && (
-          <CommandPalette
-            onClose={() => setPaletteOpen(false)}
-            onQuickChat={() => setQuickChatOpen(true)}
-          />
-        )}
-        {quickChatOpen && (
-          <QuickChatModal onClose={() => setQuickChatOpen(false)} />
-        )}
-        <FeedbackModal open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
-        <HelpDiagnosticsDialog
-          open={helpDialog === "diag"}
-          onClose={() => setHelpDialog(null)}
-          onOpenFull={() => {
-            setHelpDialog(null);
-            setSettingsSectionReq("diag");
-            setPage("settings");
-          }}
-        />
-        <HelpAboutDialog
-          open={helpDialog === "about"}
-          onClose={() => setHelpDialog(null)}
-          onFeedback={() => {
-            setHelpDialog(null);
-            setFeedbackOpen(true);
-          }}
-        />
-        <AskAiModal />
-        {quickChatMenu && (
-          <QuickChatHistoryMenu
-            x={quickChatMenu.x}
-            y={quickChatMenu.y}
-            sessions={quickChatMenu.sessions}
-            onPick={resumeSessionInTerminal}
-            onClose={() => setQuickChatMenu(null)}
-          />
-        )}
-        {/* 全局确认框宿主（confirmDialog）：z-70，压过一切覆盖层 */}
-        <ConfirmDialogHost />
-        <ToastHost />
-        {/* 待确认跳转提醒条：通知正文点击无回调（桌面插件限制）的补位——
-            窗口激活时有待确认就出现在右下角，点「去处理」直达终端标签 */}
-        {confirmHint && (
-          <div className="pointer-events-none fixed bottom-5 right-5 z-100 flex flex-col items-end">
-            <div className="pointer-events-auto flex items-center gap-2.5 rounded-lg border border-field bg-raised px-3.5 py-2.5 shadow-lg">
-              <span className="size-2 shrink-0 animate-pulse rounded-full bg-warn-text" />
-              <button
-                type="button"
-                className="min-w-0 text-left text-sm text-l1 hover:text-cta"
-                onClick={() => {
-                  setPage("terminal");
-                  setFocusTabReq(confirmHint.tabId);
-                  setConfirmHint(null);
-                }}
-              >
-                {confirmHint.count > 1
-                  ? `${confirmHint.count} 个 Agent 在等确认`
-                  : "Agent 在等确认"}
-                <span className="ml-1.5 text-micro text-l4">点此去处理</span>
-              </button>
-              <button
-                type="button"
-                aria-label="关闭提醒"
-                className="ml-1 shrink-0 rounded px-1 text-l4 hover:bg-hover hover:text-l1"
-                onClick={() => setConfirmHint(null)}
-              >
-                ×
-              </button>
+                <button
+                  type="button"
+                  aria-label="关闭提醒"
+                  className="ml-1 shrink-0 rounded px-1 text-l4 hover:bg-hover hover:text-l1"
+                  onClick={() => setConfirmHint(null)}
+                >
+                  ×
+                </button>
+              </div>
             </div>
-          </div>
-        )}
-      </div>
-    </ErrorBoundary>
+          )}
+        </div>
+      </ErrorBoundary>
+    </BootGate>
+  );
+}
+
+/** 启动过渡闸（2026-10-16 用户拍板）：首屏数据未就位时渲染与 index.html 相同的
+ *  呼吸占位——同 class 让 html:has 选择器仍走实心底，与 pre-React 占位无缝衔接；
+ *  就位/硬顶后才挂载应用树，工作台的项目与最近会话直接满屏出现，不再先空后弹。
+ *  负 animation-delay 让呼吸从 HTML 占位的当前相位继续（周期须与 boot-breathe
+ *  的 2.4s 同步改），换手无跳变。 */
+function BootGate({
+  ready,
+  children,
+}: {
+  ready: boolean;
+  children: React.ReactNode;
+}) {
+  if (ready) return <>{children}</>;
+  return (
+    <div
+      className="boot-splash"
+      style={{ animationDelay: `${-(performance.now() % 2400)}ms` }}
+    >
+      Mesa
+    </div>
   );
 }
 

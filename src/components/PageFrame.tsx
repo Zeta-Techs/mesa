@@ -1,7 +1,8 @@
 import type { MouseEvent, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, CircleCheck, CircleX, Info, TriangleAlert } from "lucide-react";
+import { splitNoticeText } from "../notice-text";
 import { HoverTip, useHoverTip } from "./HoverTip";
 import { nextTabIndex, tabNavDelta, tabStopIndex } from "../tab-keys";
 import { useExitRender } from "../exit-animation";
@@ -68,7 +69,7 @@ export function PageHeader({
       <div className="flex min-w-0 items-center gap-2.5">
         {leading}
         <div className="flex min-w-0 items-baseline gap-2.5">
-          <h1 className="shrink-0 text-base font-semibold tracking-tight text-l1">
+          <h1 className="shrink-0 text-2xl font-semibold tracking-tight text-l1">
             {title}
           </h1>
           {meta && <span className="truncate text-micro text-l4">{meta}</span>}
@@ -80,41 +81,56 @@ export function PageHeader({
 }
 
 export const primaryActionClass =
-  "ccode-action-primary inline-flex h-8 items-center justify-center rounded-md border border-cta-bd bg-cta px-3 text-xs font-medium text-cta-text transition-[filter,opacity] hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50";
+  "ccode-action-primary inline-flex h-8 items-center justify-center rounded-lg border border-cta-bd bg-cta px-3 text-xs font-medium text-cta-text transition-[filter,opacity] hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50";
+
+/** 危险主按钮（删除/清除这类不可逆动作的确认钮）：实心错误色 + 画布色字，深浅主题都够对比。
+ *  替代旧「bg-err + text-err-text」淡粉小块——那是状态 pill 的配方，放在按钮上读不出「这下点了收不回」。
+ *  与之配对的取消钮用 secondaryActionClass，且焦点默认给取消（HIG：破坏性动作不做默认按钮）。 */
+export const dangerActionClass =
+  "ccode-action-danger inline-flex h-8 items-center justify-center rounded-lg bg-err-text px-3 text-xs font-medium text-canvas transition-[filter,opacity] hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50";
 
 export const secondaryActionClass =
-  "ccode-action-secondary inline-flex h-8 items-center justify-center rounded-md border border-field bg-strip px-3 text-xs text-l2 transition-colors hover:bg-inset hover:text-l1 disabled:cursor-not-allowed disabled:opacity-50";
+  "ccode-action-secondary inline-flex h-8 items-center justify-center rounded-lg border border-field bg-strip px-3 text-xs text-l2 transition-colors hover:bg-inset hover:text-l1 disabled:cursor-not-allowed disabled:opacity-50";
 
 /** 内容卡统一底色：由所在 PageFrame 画布派生，保留现有项目页公共类名 */
 export const projectWellClass = "ccode-well rounded-lg p-3";
 
 /** 行内 28px 描边次按钮：列表行/工具栏次级操作统一口径（原各页 secBtn 逐字复制的收敛点） */
 export const rowActionClass =
-  "inline-flex h-7 items-center justify-center rounded-md border border-field bg-strip px-2.5 text-xs text-l2 transition-colors hover:bg-inset hover:text-l1 disabled:opacity-50";
+  "inline-flex h-7 items-center justify-center rounded-lg border border-field bg-strip px-2.5 text-xs text-l2 transition-colors hover:bg-inset hover:text-l1 disabled:opacity-50";
+
+/** 弹窗页脚里的低调动作（跳过 / 忽略 / 稍后）：无框、与主次按钮同为 32px 高——
+ *  ghostActionClass 是 28px 行内尺寸，放进弹窗页脚会和旁边的主按钮高低不齐 */
+export const quietActionClass =
+  "ccode-action-quiet inline-flex h-8 items-center justify-center rounded-lg px-3 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:cursor-not-allowed disabled:opacity-50";
+
+/** 设置页按钮（2026-10-18，借鉴 Codex 设置页）：抬底胶囊，行内操作与卡头动作统一一档 */
+export const settingsPillClass =
+  "inline-flex h-8 items-center justify-center rounded-lg border border-hairline bg-raised px-3.5 text-xs font-medium text-l1 transition-colors hover:bg-seg-sel disabled:cursor-not-allowed disabled:opacity-50";
 
 /** 行内 28px 无框低调按钮：辅助/低频动作 */
 export const ghostActionClass =
-  "inline-flex h-7 items-center justify-center rounded-md px-2 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-50";
+  "inline-flex h-7 items-center justify-center rounded-lg px-2 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-50";
 
 /** 流程卡片内的轻量操作：与列表行操作共用 28px 热区，但不带描边。 */
 export const inlineActionClass =
-  "inline-flex h-7 items-center justify-center rounded-md px-2 text-xs text-l2 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-50";
+  "inline-flex h-7 items-center justify-center rounded-lg px-2 text-xs text-l2 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-50";
 
 /** 流程卡片内的紧凑主动作：仅用于卡片内部，不与页面主 CTA 抢层级。 */
 export const compactPrimaryActionClass =
-  "inline-flex h-7 items-center justify-center rounded-md border border-cta-bd bg-cta px-2 text-xs text-cta-text transition-[filter,opacity] hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex h-7 items-center justify-center rounded-lg border border-cta-bd bg-cta px-2 text-xs text-cta-text transition-[filter,opacity] hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50";
 
 /** 紧凑表单控件：与标准 field 同源，只收窄高度和字号。 */
 export const compactFieldClass =
-  "h-7 rounded-md border border-field bg-canvas px-2 text-xs text-l2 outline-none placeholder:text-l4 focus:border-l4";
+  "h-7 rounded-lg border border-field bg-canvas px-2 text-xs text-l2 outline-none placeholder:text-l4 focus:border-l4";
 
 /** 表单输入框：模态与内联表单统一（canvas 底 + field 边） */
 export const fieldClass =
-  "w-full rounded-md border border-field bg-canvas px-2 py-1.5 text-sm text-l2 outline-none placeholder:text-l4 focus:border-l4";
+  "w-full rounded-lg border border-field bg-canvas px-2 py-1.5 text-sm text-l2 outline-none placeholder:text-l4 focus:border-l4";
 
 /** 浮层/卡片上的输入：跟表面同底，避免 canvas 在 raised 上挖出一块黑。 */
 export const surfaceFieldClass =
-  "w-full rounded-md border border-field bg-strip px-2 py-1.5 text-sm text-l2 outline-none placeholder:text-l4 focus:border-l4";
+  "w-full rounded-lg border border-field bg-strip px-2 py-1.5 text-sm text-l2 outline-none placeholder:text-l4 focus:border-l4";
 
 export function MenuSelect({
   value,
@@ -238,7 +254,7 @@ export function MenuSelect({
 
 /** 搜索输入框：inset 底色分层（无描边，聚焦时底色加深一档），与表单输入区分开 */
 export const searchFieldClass =
-  "h-8 rounded-md bg-inset px-2.5 text-xs text-l2 outline-none transition-colors placeholder:text-l4 focus:bg-raised";
+  "h-8 rounded-lg bg-inset px-2.5 text-xs text-l2 outline-none transition-colors placeholder:text-l4 focus:bg-raised";
 
 /** hover 才现的低频操作：行挂 group，按钮用此类；键盘 Tab 聚焦（focus-visible）同样显示 */
 export const hoverRevealClass =
@@ -246,7 +262,7 @@ export const hoverRevealClass =
 
 /** 行内 28px 图标按钮：文件行 / 雷达条目 / 筛选工具 */
 export const iconActionClass =
-  "flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1 disabled:cursor-not-allowed disabled:opacity-50";
+  "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-l3 hover:bg-hover hover:text-l1 disabled:cursor-not-allowed disabled:opacity-50";
 
 /** 行内悬浮操作钮（v3.93）：自带「锚点上方」应用内 tooltip——原生 title 渲染在光标下方，
  *  与胶囊动作栏视觉脱节；点击先收 tooltip 再透传事件（⋯ 要取按钮锚点定位菜单）。
@@ -515,22 +531,53 @@ export function NoticeBar({
   onDismiss,
   className = "",
 }: {
-  /** ok = 完成（绿勾）；info = 中性说明（无图标）；warn = 需留意 */
-  tone?: "ok" | "info" | "warn";
+  /** ok = 完成；info = 中性说明；warn = 需留意；err = 失败（2026-10-17 加，替代整段红字） */
+  tone?: "ok" | "info" | "warn" | "err";
   children: React.ReactNode;
   /** 给了才显示「知道了」——不给就是随时间自动消失的那种 */
   onDismiss?: () => void;
   className?: string;
 }) {
-  const icon = tone === "ok" ? "✓" : tone === "warn" ? "!" : null;
+  // 语义色只上图标，正文保持中性前景色（整段绿字 / 红字读着刺眼，也分不出主次）
+  const Glyph =
+    tone === "ok" ? CircleCheck : tone === "warn" ? TriangleAlert : tone === "err" ? CircleX : Info;
   const iconCls =
-    tone === "ok" ? "text-ok-text" : tone === "warn" ? "text-warn-text" : "";
+    tone === "ok"
+      ? "text-ok-text"
+      : tone === "warn"
+        ? "text-warn-text"
+        : tone === "err"
+          ? "text-err-text"
+          : "text-l4";
+  // 纯文本自动分层：首句是结果（标题），其余按句成行（说明）
+  const parts = typeof children === "string" ? splitNoticeText(children) : null;
   return (
     <div
+      role={tone === "err" ? "alert" : "status"}
       className={`flex items-start gap-2 rounded-md ccode-well px-3 py-2.5 text-xs leading-5 text-l2 ${className}`}
     >
-      {icon && <span className={`shrink-0 ${iconCls}`}>{icon}</span>}
-      <span className="min-w-0 flex-1">{children}</span>
+      <Glyph
+        size={14}
+        strokeWidth={1.8}
+        aria-hidden="true"
+        className={`mt-[3px] shrink-0 ${iconCls}`}
+      />
+      <span className="min-w-0 flex-1 break-words">
+        {parts ? (
+          <>
+            <span className={parts.details.length ? "block font-medium text-l1" : undefined}>
+              {parts.headline}
+            </span>
+            {parts.details.map((line, i) => (
+              <span key={i} className="mt-0.5 block text-l3">
+                {line}
+              </span>
+            ))}
+          </>
+        ) : (
+          children
+        )}
+      </span>
       {onDismiss && (
         <button
           type="button"
@@ -540,6 +587,62 @@ export function NoticeBar({
           知道了
         </button>
       )}
+    </div>
+  );
+}
+
+/** 行内结果 / 错误 / 提醒（2026-10-17）：放在列表行、卡片角落、表单底部这类挤的地方，
+ *  不铺底色块（那是 NoticeBar 的事）。同一口径：语义色只上图标，正文中性色；
+ *  纯文本同样按「结果 + 说明行」分层。替代原来散落各处的整段 text-err-text / text-ok-text。 */
+export function InlineNotice({
+  tone = "err",
+  size = "xs",
+  children,
+  className = "",
+}: {
+  tone?: "ok" | "info" | "warn" | "err";
+  /** xs = 表单/面板；micro = 列表行内 */
+  size?: "xs" | "micro";
+  children: React.ReactNode;
+  className?: string;
+}) {
+  const Glyph =
+    tone === "ok" ? CircleCheck : tone === "warn" ? TriangleAlert : tone === "err" ? CircleX : Info;
+  const iconCls =
+    tone === "ok"
+      ? "text-ok-text"
+      : tone === "warn"
+        ? "text-warn-text"
+        : tone === "err"
+          ? "text-err-text"
+          : "text-l4";
+  const parts = typeof children === "string" ? splitNoticeText(children) : null;
+  const micro = size === "micro";
+  return (
+    <div
+      role={tone === "err" ? "alert" : undefined}
+      className={`flex items-start gap-1.5 ${micro ? "text-micro leading-4 text-l3" : "text-xs leading-5 text-l2"} ${className}`}
+    >
+      <Glyph
+        size={micro ? 11 : 13}
+        strokeWidth={1.9}
+        aria-hidden="true"
+        className={`shrink-0 ${micro ? "mt-[2px]" : "mt-[3px]"} ${iconCls}`}
+      />
+      <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">
+        {parts ? (
+          <>
+            {parts.headline}
+            {parts.details.map((line, i) => (
+              <span key={i} className="block text-l4">
+                {line}
+              </span>
+            ))}
+          </>
+        ) : (
+          children
+        )}
+      </span>
     </div>
   );
 }

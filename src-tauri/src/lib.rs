@@ -2,13 +2,17 @@ use tauri::{Emitter, Manager};
 
 mod about;
 mod agent_specs;
+mod client_open;
+mod app_icon;
 mod feedback;
 mod agents;
 mod ai;
 mod artifacts;
 mod citation;
+mod cli_permission;
 mod clipboard;
 mod terminal_replay;
+mod ccode_home;
 mod coding;
 mod combo;
 mod config_dump;
@@ -96,6 +100,7 @@ mod research_quality;
 mod research_tools;
 mod review_contract;
 mod runs;
+mod scan_persist;
 mod runtime;
 mod scheduler;
 mod session_search;
@@ -113,6 +118,7 @@ mod updater;
 mod usage;
 mod watch_review;
 mod workspaces;
+mod internal_sessions;
 mod ws_settings;
 mod zotero;
 
@@ -149,6 +155,8 @@ pub fn run() {
             }
             // 定时雷达：60s tick 调度，启动首 tick 自动补跑关闭期间漏掉的任务
             scheduler::start_scheduler(app.handle().clone());
+            // 内部对话保留期清理：开机两分钟后起，每天至多一次（设置页可关 / 改天数）
+            internal_sessions::spawn_auto_cleanup();
             // 收货监听：启动即恢复（盘上登记在重启前留下的也要有人接）
             download_inbox::ensure_watcher_at_startup(app.handle());
             // 浏览器桥自愈：清单写死的是安装当时的 helper 绝对路径，应用被移动
@@ -164,6 +172,8 @@ pub fn run() {
             if let Err(e) = tray::setup(app.handle()) {
                 logbuf::record("warn", "tray", &format!("托盘初始化失败: {e}"));
             }
+            // 托盘建好后再挂：应用图标外观要连托盘一起换
+            app_icon::apply_saved(app.handle());
             // macOS 菜单栏：应用子菜单带 About 面板（版权 / 许可入口）。set_menu 会
             // 整体替换默认菜单——编辑子菜单的复制粘贴等预置项必须显式带上，否则
             // 文本框的系统快捷键全失灵。仅 macOS：Windows 无菜单栏惯例。
@@ -410,6 +420,8 @@ pub fn run() {
             combo::combo_surface_for_gateway,
             combo::combo_surface_for_gateway_batch,
             tray::rebuild_tray,
+            app_icon::apply_app_icon,
+            cli_permission::cli_default_permission,
             profile_validation::validate_profile,
             profile_validation::probe_gateway,
             profile_validation::probe_gateway_slot,
@@ -418,7 +430,6 @@ pub fn run() {
             agents::official_account_status,
             agents::clear_account_conflicts,
             agents::session_resume_command,
-            agents::codex_client_config_providers,
             agents::resume_external_terminal,
             agents::new_external_terminal,
             agents::session_digest_command,
@@ -435,6 +446,9 @@ pub fn run() {
             global_config::codex_register_client_provider,
             global_config::codex_unregister_client_provider,
             global_config::codex_client_registered_profiles,
+            client_open::client_open_list,
+            client_open::client_open_plan,
+            client_open::client_open_launch,
             global_config::restore_global_backup,
             global_config::has_global_backup,
             global_config::has_original_backup,
@@ -512,6 +526,8 @@ pub fn run() {
             sessions::claim_next_session_for_card,
             sessions::claim_next_session_for_step,
             sessions::delete_session,
+            internal_sessions::internal_sessions_stats,
+            internal_sessions::cleanup_internal_sessions,
             sessions::delete_project_sessions,
             sessions::session_tail_state,
             sessions::export_session_markdown,
@@ -573,6 +589,7 @@ pub fn run() {
             fs_tree::fs_create_dir,
             fs_tree::fs_delete_path,
             fs_tree::home_dir,
+            fs_tree::default_project_parent,
             pdf::read_pdf_bytes,
             pdf::read_docx_bytes,
             sheet_preview::read_sheet_preview,
@@ -642,6 +659,7 @@ pub fn run() {
             projects::delete_project_dir,
             projects::purge_project_traces,
             projects::read_project_config,
+            projects::project_set_session_injection,
             projects::read_project_status,
             projects::write_project_config,
             projects::update_step_skills,
@@ -664,7 +682,8 @@ pub fn run() {
             zotero::zotero_match_dois,
             zotero::zotero_open_papers,
             projects::pdf_owner_project,
-            projects::append_workspace_inbox,
+            projects::append_notes_excerpt,
+            projects::append_project_clip,
             projects::list_pipeline_templates,
             projects::save_pipeline_template,
             projects::delete_pipeline_template,
@@ -729,15 +748,18 @@ pub fn run() {
             usage::top_sessions,
             usage::session_usage,
             usage::usage_by_gateway,
+            usage::usage_unpriced_models,
             usage::usage_activity,
             usage::usage_day_detail,
             usage::usage_activity_agents,
             settings::get_settings,
             settings::detect_outbound_proxy,
             settings::app_storage_usage,
+            settings::clear_storage_entry,
             uninstall::uninstall_mesa,
             mcp::mcp_distribution_status,
             settings::update_settings,
+            settings::set_workspace_root,
             hooks::set_hooks_attention,
             hooks::hooks_attention_support,
             hooks::session_confirm_detail,
@@ -775,13 +797,12 @@ pub fn run() {
             lit_watch::save_watch_explain,
             lit_watch::list_watch_subscriptions,
             lit_watch::save_watch_subscriptions,
+            lit_watch::ensure_watch_subscriptions_file,
             lit_watch::list_included_entries,
-            lit_watch::add_included_entry,
             lit_watch::list_reading_list_entries,
             lit_watch::add_reading_list_entry,
             lit_watch::remove_reading_list_entry,
             lit_watch::freeze_reading_list_intake,
-            lit_watch::remove_included_entry,
             lit_watch::download_paper_pdf,
             lit_watch::attach_paper_pdf,
             lit_watch::fetch_paper_fulltext,
@@ -798,6 +819,8 @@ pub fn run() {
             inst_access::inst_clear_session,
             fs_tree::drop_fetch_line,
             fs_tree::drop_ris_record,
+            fs_tree::read_research_ledger,
+            fs_tree::save_research_ledger,
             journal_metrics::lookup_journal_metrics,
             journal_metrics::journal_metrics_status,
             journal_metrics::download_journal_metrics,
@@ -814,6 +837,9 @@ pub fn run() {
             reader::append_glossary,
             reader::remove_glossary_entry,
             reader::append_note_translation,
+            reader::append_note_annotation,
+            reader::remove_note_annotation,
+            reader::reader_paper_title,
             about::read_third_party_notices,
             about::build_info,
             feedback::feedback_endpoint,
@@ -829,6 +855,11 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
+            // macOS 开发态 tauri 在 Ready 时自设一次程序坞图标，按设置再压一遍
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Ready = event {
+                app_icon::apply_saved(app);
+            }
             if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
                 if EXIT_READY.load(std::sync::atomic::Ordering::Acquire) {
                     return;

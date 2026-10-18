@@ -12,7 +12,7 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_notification::NotificationExt;
 
-const TRAY_ID: &str = "ccode-tray";
+pub(crate) const TRAY_ID: &str = "ccode-tray";
 
 static COST_CACHE: Mutex<Option<(Instant, HashMap<String, Option<f64>>)>> = Mutex::new(None);
 

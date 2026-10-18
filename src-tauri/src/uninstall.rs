@@ -1,6 +1,6 @@
 //! 一键卸载：把 Mesa 自己的数据移进系统回收站，并卸掉浏览器收货桥。
 //!
-//! 只动 Mesa 自己建的目录：配置目录 `ccode/`、主目录 `~/ccode/`（工作区、工作树、
+//! 只动 Mesa 自己建的目录：配置目录 `ccode/`、主目录 `~/ccode/`（含用户自定义的家目录，工作区、工作树、
 //! 快速开聊、复现记录）、本机数据目录 `ccode/task-runs`，以及这个应用身份留下的
 //! 网页数据（界面记住的最近项目和偏好）。课题文件夹、各家 CLI 的配置与会话一律不动。
 //! 应用本体由系统卸载（Mac 把 Mesa.app 拖进废纸篓）。
@@ -31,8 +31,11 @@ fn owned_roots() -> Vec<PathBuf> {
     if let Some(cfg) = dirs::config_dir() {
         out.push(cfg.join("ccode"));
     }
-    if let Some(home) = dirs::home_dir() {
-        out.push(home.join("ccode"));
+    // 默认 ~/ccode 与用户自定义过的家目录（<所选目录>/ccode，名字恒为 ccode）
+    for root in crate::ccode_home::all_roots() {
+        if !out.iter().any(|p| p == &root) {
+            out.push(root);
+        }
     }
     if let Some(local) = dirs::data_local_dir() {
         out.push(local.join("ccode"));

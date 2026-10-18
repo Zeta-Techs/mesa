@@ -12,26 +12,13 @@ import {
 } from "../nav-capsule";
 import { NAV_ICONS } from "../navigation-icons";
 import { announceLine, type RunAnnouncement } from "../run-announce";
+import {
+  RunActivityButton,
+  RunActivityStatus,
+  useRunActivity,
+} from "./RunActivity";
 
 const HINT_KEY = "ccode.navIslandHintSeen";
-
-function pageTitle(item: NavItem, runningCount: number, inboxCount: number) {
-  if (item.id === "terminal" && runningCount > 0)
-    return `${item.label}（${runningCount} 个 agent 运行中）`;
-  if (item.id === "workspaces" && inboxCount > 0)
-    return `${item.label}（${inboxCount} 件待处理）`;
-  return item.label;
-}
-
-/** 角标以计数为 key：数字一变就重播一次呼吸，当作计数变化的轻提示。 */
-function IslandBadge({ count }: { count: number }) {
-  if (count <= 0) return null;
-  return (
-    <span key={count} className="ccode-top-nav-badge ccode-nav-island-badge">
-      {count}
-    </span>
-  );
-}
 
 export default function TopNavCapsule({
   page,
@@ -39,8 +26,6 @@ export default function TopNavCapsule({
   onQuickChat,
   onQuickChatContextMenu,
   onRestore,
-  runningCount,
-  inboxCount,
   hideDelayMs,
   displayMode,
   visibleItems,
@@ -53,8 +38,6 @@ export default function TopNavCapsule({
   onQuickChat: () => void;
   onQuickChatContextMenu: (e: React.MouseEvent) => void;
   onRestore: () => void;
-  runningCount: number;
-  inboxCount: number;
   hideDelayMs: number;
   displayMode?: string;
   visibleItems?: unknown;
@@ -77,6 +60,8 @@ export default function TopNavCapsule({
     isNavCapsuleItemVisible(item.id, page, configuredItems),
   );
   const showQuickChat = configuredItems.includes("quick-chat");
+  // 运行活动胶囊在不在（展开面里要不要补一根分隔线）；胶囊本身自己读同一份摘要
+  const activityVisible = useRunActivity().tone !== "idle";
 
   const [island, dispatchIsland] = useReducer(
     reconcileIsland,
@@ -221,13 +206,6 @@ export default function TopNavCapsule({
       {showLabel && <span>{label}</span>}
     </>
   );
-  const badgeFor = (id: string) => (
-    <>
-      {id === "terminal" && <IslandBadge count={runningCount} />}
-      {id === "workspaces" && <IslandBadge count={inboxCount} />}
-    </>
-  );
-
   /** 展开面的导航项。`interactive` 决定是否可聚焦——休眠时整面 aria-hidden 且不可 Tab。 */
   const navItems = (interactive: boolean) => (
     <>
@@ -240,11 +218,11 @@ export default function TopNavCapsule({
           tabIndex={interactive ? 0 : -1}
           onClick={onQuickChat}
           onContextMenu={onQuickChatContextMenu}
-          aria-label="快速开聊"
-          title="快速开聊：右键查看随手聊历史"
+          aria-label="新对话"
+          title="新对话：右键看最近的随手聊"
           className="ccode-top-nav-item shrink-0"
         >
-          {itemContent(NAV_ICONS.quickChat, "快速开聊")}
+          {itemContent(NAV_ICONS.quickChat, "新对话")}
         </button>
       )}
       {showQuickChat && groups.length > 0 && (
@@ -265,11 +243,10 @@ export default function TopNavCapsule({
                 onClick={() => onPage(item.id)}
                 aria-current={active ? "page" : undefined}
                 aria-label={item.label}
-                title={pageTitle(item, runningCount, inboxCount)}
+                title={item.label}
                 className={`ccode-top-nav-item shrink-0 ${active ? "ccode-top-nav-item-active" : ""}`}
               >
                 {itemContent(item.Icon, item.label)}
-                {badgeFor(item.id)}
               </button>
             );
           })}
@@ -304,14 +281,9 @@ export default function TopNavCapsule({
     </>
   );
 
-  /* 恢复侧栏在两副面孔里都排最前：全收起时它是唯一的退路，键盘第一下就够得着。
-
-     休眠面**始终带文字**，不跟 displayMode 走：那个设置管的是展开态里那排导航项
-     显示符号还是文字，而休眠面本来就只有一个控件、不是一排。只显示符号时休眠面
-     会退回「一个孤零零的光图标」——看不出它是入口，也看不出悬停会展开整排导航。
-     展开面仍按模式走，所以两副面孔的字有时不一样（仅符号时展开面只剩图标），
-     这没问题：两副面孔是淡入淡出、各自量宽，不会同时在场。 */
-  const restoreItem = (interactive: boolean, collapsedFace: boolean) => (
+  /* 恢复侧栏只在展开面，排第一：展开后键盘第一下就够得着（revealForKeyboard 聚焦它）。
+     休眠面不再放它——那里只报状态（当前页 + 活动），见下方休眠面注释。 */
+  const restoreItem = (interactive: boolean) => (
     <button
       ref={(el) => {
         itemRefs.current["restore"] = el;
@@ -321,22 +293,53 @@ export default function TopNavCapsule({
       onClick={onRestore}
       aria-label="恢复侧栏"
       title="恢复侧栏"
-      className={`ccode-top-nav-item shrink-0 ${
-        collapsedFace ? "ccode-nav-island-restore" : ""
-      }`}
+      className="ccode-top-nav-item shrink-0"
     >
-      {collapsedFace ? (
-        <>
-          <PanelLeftOpen size={15} strokeWidth={1.8} aria-hidden="true" />
-          <span>恢复侧栏</span>
-        </>
-      ) : (
-        itemContent(PanelLeftOpen, "恢复侧栏")
-      )}
+      {itemContent(PanelLeftOpen, "恢复侧栏")}
     </button>
   );
 
+  // 休眠面的当前页：图标 + 页名（找不到的页回落「Mesa」）
+  const allNav: readonly NavItem[] = [
+    ...NAV_GROUPS.flatMap((g): readonly NavItem[] => g.items),
+    ...NAV_BOTTOM,
+  ];
+  const currentNav = allNav.find((item) => item.id === page);
+
   const hasNav = showQuickChat || groups.length > 0 || bottomItems.length > 0;
+
+  /** 跑完/跑挂播报（瞬时，停留时长由 App 管）：点了去运行页。 */
+  const announceItem = (interactive: boolean) =>
+    !announcement ? null : !interactive ? (
+      // 休眠面：只读一句话（休眠面控件指针够不着，可点的那份在展开面）
+      <span
+        className={`ccode-nav-island-announce shrink-0 ${
+          announcement.outcome === "failed"
+            ? "ccode-nav-island-announce-failed"
+            : ""
+        }`}
+      >
+        <span className="ccode-nav-island-announce-dot" aria-hidden="true" />
+        {announceLine(announcement)}
+      </span>
+    ) : (
+      <button
+        type="button"
+        tabIndex={interactive ? 0 : -1}
+        onClick={() => onAnnouncementClick?.(announcement)}
+        aria-label={announceLine(announcement)}
+        title={`${announceLine(announcement)}（点击去运行）`}
+        className={`ccode-nav-island-announce shrink-0 ${
+          announcement.outcome === "failed"
+            ? "ccode-nav-island-announce-failed"
+            : ""
+        }`}
+      >
+        <span className="ccode-nav-island-announce-dot" aria-hidden="true" />
+        {announceLine(announcement)}
+      </button>
+    );
+
   /* 目标宽度直接取量值：.ccode-nav-island 是 content-box，padding 与边框长在外侧，
      量到多宽就写多宽。用 border-box 反而要在这里加上 4+4+1+1，改 CSS 就会错位。 */
   const targetWidth = expanded
@@ -404,46 +407,51 @@ export default function TopNavCapsule({
         {/* 两副面孔绝对叠放：容器做宽高形变，面孔只做淡入淡出。
             这样不必给每个导航项做位移动画，切换时也不会互相挤压。 */}
         <div className="ccode-nav-island-face">
-          {/* 休眠面只有「恢复侧栏」。先前并排放一个当前页高亮块，两个圆图标挤在
-              小胶囊里读起来像开关，而且那个块点回当前页等于把页面设成它自己。
-              当前页信息页头本来就有，不需要在岛上再报一次。 */}
+          {/* 休眠面＝状态，展开面＝操作（灵动岛的本意）。休眠面只报两件事：在哪一页、
+              正在发生什么（活动 / 刚跑完的播报）；项目归顶栏左侧芯片，不在这里重复。
+              旧版休眠面只有一颗「恢复侧栏」：读起来是一个孤立按钮而不是一座岛，报的是
+              「你能做什么」而不是「现在怎样」。当前页这一格是**状态不是开关**——点它/聚焦它
+              只是把岛展开（旧版并排放可点的当前页块被否，是因为点它等于把页设成自己）。
+              这里的东西指针够不着（一进岛就展开），所以除了键盘入口外一律只读，可点的在展开面。
+              当前页始终带文字，不跟 displayMode 走：只剩图标时看不出这是入口。 */}
           <div
             ref={dormantRowRef}
             className="ccode-nav-island-row ccode-nav-island-row-dormant"
             aria-hidden={expanded}
           >
-            {restoreItem(!expanded, true)}
-            {/* 播报贴着「恢复侧栏」排在后面，与它同处一行。不做成独立面孔：
-                它是内容不是模式，为它加第三态就得再配一套宽高与过渡，
-                而休眠面本来就由 ResizeObserver 按内容量宽——多一句话自己会长宽。 */}
-            {announcement && (
-              <button
-                type="button"
-                tabIndex={!expanded ? 0 : -1}
-                onClick={() => onAnnouncementClick?.(announcement)}
-                aria-label={announceLine(announcement)}
-                title={`${announceLine(announcement)}（点击去运行）`}
-                className={`ccode-nav-island-announce shrink-0 ${
-                  announcement.outcome === "failed"
-                    ? "ccode-nav-island-announce-failed"
-                    : ""
-                }`}
-              >
-                <span className="ccode-nav-island-announce-dot" aria-hidden="true" />
-                {announceLine(announcement)}
-              </button>
-            )}
+            <button
+              type="button"
+              tabIndex={!expanded ? 0 : -1}
+              onClick={reveal}
+              onFocus={revealForKeyboard}
+              aria-label={`展开导航（当前：${currentNav?.label ?? "Mesa"}）`}
+              className="ccode-top-nav-item ccode-nav-island-current shrink-0"
+            >
+              {currentNav && (
+                <currentNav.Icon size={15} strokeWidth={1.8} aria-hidden="true" />
+              )}
+              <span>{currentNav?.label ?? "Mesa"}</span>
+            </button>
+            <RunActivityStatus />
+            {announceItem(false)}
           </div>
           <div
             ref={expandedRowRef}
             className="ccode-nav-island-row ccode-nav-island-row-expanded"
             aria-hidden={!expanded}
           >
-            {restoreItem(expanded, false)}
+            {restoreItem(expanded)}
             {hasNav && (
               <span className="ccode-top-nav-separator" aria-hidden="true" />
             )}
             {navItems(expanded)}
+            {/* 活动与播报在展开面里也要有：指针一进岛就展开、休眠面被藏起，
+                只放在休眠面的东西鼠标根本点不到（旧版播报正是这样「看得见点不着」）。 */}
+            {(activityVisible || announcement) && (
+              <span className="ccode-top-nav-separator" aria-hidden="true" />
+            )}
+            <RunActivityButton variant="island" tabIndex={expanded ? 0 : -1} />
+            {announceItem(expanded)}
           </div>
         </div>
       </nav>

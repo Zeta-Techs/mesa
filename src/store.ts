@@ -5,6 +5,7 @@ import { type Effect } from "@tauri-apps/api/window";
 import { IS_WINDOWS } from "./hotkeys";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { isCustomThemeId, isLightTheme } from "./themes";
+import { followedTheme } from "./theme-follow";
 import {
   applyCustomThemeVars,
   clearCustomThemeVars,
@@ -24,7 +25,9 @@ import { createSessionRefreshCoordinator } from "./session-refresh";
 import {
   dismissHelp,
   dismissInboxItem,
+  inboxSignature,
   filterDismissed,
+  INBOX_DISMISSED_KEY,
   loadHelpDismissed,
   loadInboxDismissed,
 } from "./inbox";
@@ -39,7 +42,6 @@ import {
 import type { RunOverviewInput } from "./run-overview";
 import type { DepCheckDto } from "./dep-check";
 import type { AskAiFile } from "./ask-ai";
-import { paperResourceFor } from "./lit-watch";
 import { toast } from "./toast";
 import type { ProjectSurfaceTab } from "./project-surface";
 import type {
@@ -90,6 +92,11 @@ export interface AppSettings {
   notificationsEnabled: boolean;
   /** 会话自动命名（默认开）：聊完起名 + 打开对话页补名去重；关 = 全停，手改标题不受影响 */
   autoTitleSessions?: boolean;
+  /** 内部对话保留期自动清理（默认开）与保留天数（默认 30），见 internal_sessions.rs */
+  internalAutoClean?: boolean;
+  internalRetentionDays?: number;
+  /** 工作副本家目录的自定义基目录（实际根 `<基目录>/ccode`）；缺省 = ~/ccode。只经 set_workspace_root 写 */
+  workspaceRoot?: string;
   /** 反馈邮箱直发配置（授权码另存 keys.json 0600，绝不在此对象/不回显） */
   feedbackSmtp?: {
     provider: string;
@@ -125,6 +132,11 @@ export interface AppSettings {
    *  乘在各主题自己的罩色基数上，一个值同时管侧栏与顶栏、深浅两套；
    *  100 = 各主题原有观感，也是缺省值。 */
   chromeOpacity?: number;
+  /** 应用图标外观：system（跟随系统，缺省）/ dark / light——只换运行中的程序坞、主窗与托盘图标 */
+  appIconStyle?: "system" | "dark" | "light";
+  /** 主题跟随系统深浅（缺省关）：开着时系统外观变化即把 theme 换成同名 twin 写回（theme-follow.ts）；
+   *  原生窗口外观交还系统（setTheme(null)），自定义配色不跟随 */
+  themeFollowSystem?: boolean;
   /** 顶部导航胶囊离开后的自动隐藏延迟（毫秒） */
   navCapsuleHideDelayMs?: number;
   /** 顶部导航胶囊**展开面**的内容显示：both（符号+文字）/icons（仅符号）/labels（仅文字）。
@@ -194,6 +206,7 @@ function syncWindowsMica(light: boolean) {
 export function applyTheme(
   id: string,
   customTheme?: CustomThemeSeeds | null,
+  followSystem = false,
 ) {
   const root = document.documentElement;
   clearCustomThemeVars(root);
@@ -218,10 +231,39 @@ export function applyTheme(
   // 判定走 themes.ts 的 isLightTheme（该文件声明它是「原生窗口外观、终端调色板 twin、
   // 浅色分支」的单一出处），不要在这里另写后缀判断。
   const light = isLightTheme(theme);
+  // 跟随系统时窗口外观交还系统（null）：强制外观会让 WebView 的 prefers-color-scheme
+  // 也跟着被钉死，再也收不到系统切换。跟随态下 theme 由 syncThemeWithSystem 校正成与
+  // 系统同深浅，材质与主题仍一致；自定义配色不跟随，上面分支照旧强制
   void getCurrentWebviewWindow()
-    .setTheme(light ? "light" : "dark")
+    .setTheme(followSystem ? null : light ? "light" : "dark")
     .catch(() => {});
   syncWindowsMica(light);
+}
+
+/** 系统当前是否深色。只在窗口外观为 null（跟随态）时读得到真实系统值 */
+function systemPrefersDark(): boolean | null {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return null;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches;
+}
+
+/** 跟随系统深浅：theme 与系统深浅不符时写回同名 twin（无变化即停，不会自激）。
+ *  调用点：设置读入/每次写入后（盖住命令面板直接切到反向主题），以及系统外观变化事件 */
+async function syncThemeWithSystem() {
+  const s = useAppStore.getState().settings;
+  if (!s?.themeFollowSystem) return;
+  const dark = systemPrefersDark();
+  if (dark === null) return;
+  const next = followedTheme(s.theme, dark);
+  if (next !== s.theme) await useAppStore.getState().updateSettings({ theme: next });
+}
+
+let themeFollowListening = false;
+function ensureThemeFollowListener() {
+  if (themeFollowListening || typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+  themeFollowListening = true;
+  window
+    .matchMedia("(prefers-color-scheme: dark)")
+    .addEventListener("change", () => void syncThemeWithSystem().catch(() => {}));
 }
 
 /** 工作区页 → 终端页的交接：新开一个标签，预填 cwd + 注入 env（如端口段） */
@@ -251,8 +293,8 @@ export interface PendingTerminal {
   agentId?: string;
   profileId?: string;
   model?: string;
-  /** 建好标签就直接启动（不用再点一次「启动」）。会话恢复隐含为 true；
-   *  「快速开聊」显式置 true——弹层里已经确认过 agent/配置/目录，再点一次纯属多余。
+  /** 建好标签就直接启动（不用再点一次「启动」）。会话恢复隐含为 true。
+   *  「快速开聊」2026-10-17 起不置 true：落聊天空态，发第一句时才带着它启动（输入框里还能改选择）。
    *  找不到对应 profile 时自动降级为「只预填、不启动」（见 TerminalView 的 autoStart 守卫）。 */
   autoStart?: boolean;
   /** 一键开步预填的首条指令：启动时注入 CLI，启动成功后清除（一次性） */
@@ -268,6 +310,9 @@ export interface PendingTerminal {
   previewRoot?: string;
   /** 对外权限政策：只讨论 / 可改这棵树。缺省 write_tree。 */
   permission?: "discuss" | "write_tree";
+  /** 可以改文件时的原生权限档（ask 请求批准 / auto / full）；缺省 = 按这家 CLI 本机设置。
+      阅读会话固定「请求批准」（改笔记以外的文件先问） */
+  permissionMode?: "ask" | "auto" | "full" | null;
   /** 开工弹层的本次思考档覆盖（2026-09-15）：随标签种子传递，launch 经
       pty_spawn effortOverride 注入；空 = 绑定逐模型策略/端点默认 */
   effort?: string | null;
@@ -275,9 +320,12 @@ export interface PendingTerminal {
   readonly?: boolean;
   /** 打开后切到聊天层（办公「问 AI」）；缺省沿用标签上次选择 / 默认终端 */
   surface?: "chat" | "terminal";
-  /** 复用键：已有同 key 标签时切换到它而不是新开（「快速开聊」「跟 AI 商量一下」等
+  /** 复用键：已有同 key 标签时切换到它而不是新开（「跟 AI 商量一下」等
       重复入口防标签堆积）。仅内存匹配，不进重启持久化白名单（恢复占位不参与复用） */
   reuseKey?: string;
+  /** 只复用空白标签（快速开聊）：有复用键以此开头、还没说过话的标签就切过去（不改它输入框里已换的选择），
+      没有就用 reuseKey 新开。说过话的不复用——快速开聊是开新对话 */
+  reuseBlank?: string;
   /** 步骤认领（「跟 AI 商量一下」）：启动 spawn 时以最终 agent/cwd 登记
       claim_next_session_for_step，让会话归到该步骤（项目「对话」页按 stepName 过滤）。
       不在发起时提前登记——启动栏还可改 agent/目录，spawn 时的实时值才作数 */
@@ -330,13 +378,7 @@ export interface InboxItem {
     | { type: "skillAdapt"; skillId: string }
     | { type: "artifacts"; workspaceId: string }
     | { type: "project"; projectRoot: string }
-    | {
-        type: "litWatch";
-        projectRoot: string;
-        entryId?: string;
-        title?: string;
-        url?: string;
-      }
+    | { type: "litWatch"; projectRoot: string }
     | { type: "help"; projectRoot: string }
     | { type: "run"; runId?: string; tabId?: string }
     | { type: "settings"; section: string }
@@ -395,38 +437,6 @@ export interface SkillAdaptJob {
   /** 技能本来就符合流水线，稿是原文，没有重写。 */
   unchanged: boolean;
   opened: boolean;
-}
-
-/** 收件箱按篇开读：先进积累账 papers/reading-list.md（不进 git，不影响流程），
-    再按已登记资源找 PDF——有则进沉浸阅读 */
-async function openLitInboxPaper(act: {
-  projectRoot: string;
-  title?: string;
-  url?: string;
-}) {
-  const title = act.title?.trim();
-  if (!title) return;
-  try {
-    await invoke("add_reading_list_entry", {
-      projectRoot: act.projectRoot,
-      title,
-      authorsYear: "待补",
-      source: "",
-      link: act.url ?? "",
-    });
-    const read = await invoke<{
-      config: { resources: { path: string; type: string }[] };
-    }>("read_project_config", { path: act.projectRoot });
-    const rel = paperResourceFor({ title }, read.config.resources ?? []);
-    if (!rel) return;
-    const root = act.projectRoot.replace(/[\\/]+$/, "");
-    const abs = /^([a-zA-Z]:[\\/]|\/)/.test(rel) ? rel : `${root}/${rel}`;
-    const s = useAppStore.getState();
-    s.setReaderReq({ pdfPath: abs, projectRoot: act.projectRoot });
-    s.setPage("terminal");
-  } catch {
-    /* 没有 PDF 就停在雷达那一条 */
-  }
 }
 
 /** 收件箱条目动作统一派发（工作区页 strip 与 App 标题栏收件箱共用） */
@@ -515,12 +525,8 @@ export function runInboxAction(item: InboxItem) {
       projectRoot: act.projectRoot,
       focus: "lit",
       token: Date.now(),
-      entryId: act.entryId,
     });
     s.setPage("workspaces");
-    if (act.title) {
-      void openLitInboxPaper(act);
-    }
   } else if (item.action.type === "help") {
     // 人工请求「去查看」：选中项目之外还要弹出完整内容层——请求全文在 strip 行里只有 40 字截断预览
     s.setSelectProjectReq(item.action.projectRoot);
@@ -544,6 +550,22 @@ interface AppState {
   projectPaths: string[];
   setProjectPaths: (paths: string[]) => void;
   loadProjects: () => Promise<void>;
+  /** 项目列表代数：任何一处的增删改（侧栏树管理动作、注册流程）自增，消费方据此重拉 */
+  projectsVersion: number;
+  bumpProjectsVersion: () => void;
+  /** 侧栏「＋ 添加项目」的一次性请求（token）：项目页消费后打开目录选择器 */
+  addProjectOpenReq: number | null;
+  setAddProjectOpenReq: (token: number | null) => void;
+  /** 「新建项目…」的一次性请求（token）：项目页消费后打开新建弹窗（起名 + 位置 + 工作方式，
+   *  建文件夹后走同一套注册），不弹系统选目录窗——那是「添加已有文件夹」 */
+  newProjectOpenReq: { token: number; returnTabId?: string } | null;
+  setNewProjectOpenReq: (req: { token: number; returnTabId?: string } | null) => void;
+  /** 「新建项目…」从聊天 / 终端标签发起时，建好后回到那个标签并把目录换成新项目（一次性） */
+  tabCwdReq: { tabId: string; cwd: string } | null;
+  setTabCwdReq: (req: { tabId: string; cwd: string } | null) => void;
+  /** 侧栏「＋ → 创建示例课题」的一次性请求（token）：项目页消费后执行创建 */
+  demoProjectOpenReq: number | null;
+  setDemoProjectOpenReq: (token: number | null) => void;
   /** 后端按最近会话活跃度排序的仓库；本地缓存用于终端首开即时展示。 */
   recentRepos: RepoDto[];
   recentReposLoading: boolean;
@@ -589,6 +611,7 @@ interface AppState {
   /** 通用条目屏蔽表（v3.88）：任意收件箱条目可忽略，状态变化后自动复现 */
   inboxDismissed: Record<string, string>;
   dismissInbox: (item: InboxItem) => void;
+  dismissInboxBulk: (items: InboxItem[]) => void;
   /** 依赖体检结果（git/node/安装渠道，dep_check.rs）：启动时静默探测一次，
       设置页诊断区「重新检测」与一键安装完成后就地刷新；null = 尚未探测/探测失败 */
   depCheck: DepCheckDto | null;
@@ -698,7 +721,6 @@ interface AppState {
     projectRoot: string;
     focus: "lit" | "schedule";
     token: number;
-    entryId?: string;
   } | null;
   setProjectFocusReq: (req: AppState["projectFocusReq"]) => void;
   /** 进项目页时切到指定页签（侧栏旧「定时巡检」→ 项目「定时任务」） */
@@ -793,6 +815,17 @@ export const useAppStore = create<AppState>((set, get) => {
     const list = await invoke<{ path: string }[]>("list_projects");
     set({ projectPaths: list.map((p) => p.path) });
   },
+  projectsVersion: 0,
+  bumpProjectsVersion: () =>
+    set((s) => ({ projectsVersion: s.projectsVersion + 1 })),
+  addProjectOpenReq: null,
+  setAddProjectOpenReq: (token) => set({ addProjectOpenReq: token }),
+  newProjectOpenReq: null,
+  setNewProjectOpenReq: (req) => set({ newProjectOpenReq: req }),
+  tabCwdReq: null,
+  setTabCwdReq: (req) => set({ tabCwdReq: req }),
+  demoProjectOpenReq: null,
+  setDemoProjectOpenReq: (token) => set({ demoProjectOpenReq: token }),
   recentRepos: cachedRecentRepos(),
   recentReposLoading: false,
   recentReposLoaded: false,
@@ -863,6 +896,19 @@ export const useAppStore = create<AppState>((set, get) => {
   inboxDismissed: loadInboxDismissed(),
   dismissInbox: (item) =>
     set((st) => ({ inboxDismissed: dismissInboxItem(item, st.inboxDismissed) })),
+  /** 一键已读（信息类批量，2026-10-16）：逐条签名写入忽略表，一次落盘；
+   *  白名单判定在调用侧（bulkReadableItems），决策类不进这里 */
+  dismissInboxBulk: (items) =>
+    set((st) => {
+      const next = { ...st.inboxDismissed };
+      for (const it of items) next[it.key] = inboxSignature(it);
+      try {
+        localStorage.setItem(INBOX_DISMISSED_KEY, JSON.stringify(next));
+      } catch {
+        /* 隐私模式写不进就只靠本次内存态 */
+      }
+      return { inboxDismissed: next };
+    }),
   depCheck: null,
   depCheckBusy: false,
   depCheckError: null,
@@ -1093,12 +1139,15 @@ export const useAppStore = create<AppState>((set, get) => {
   loadSettings: async () => {
     const s = await invoke<AppSettings>("get_settings");
     set({ settings: s });
-    applyTheme(s.theme, s.customTheme);
+    applyTheme(s.theme, s.customTheme, s.themeFollowSystem === true);
+    ensureThemeFollowListener();
+    void syncThemeWithSystem().catch(() => {});
   },
   updateSettings: async (patch) => {
     const s = await invoke<AppSettings>("update_settings", { patch });
     set({ settings: s });
-    applyTheme(s.theme, s.customTheme);
+    applyTheme(s.theme, s.customTheme, s.themeFollowSystem === true);
+    void syncThemeWithSystem().catch(() => {});
   },
 
   appUpdate: null,

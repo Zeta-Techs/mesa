@@ -13,6 +13,7 @@
 /** 设置分区 id，与 SettingsPage 的 SETTING_NAV 一一对应（那里是 string，收紧在这里） */
 export type SettingSectionId =
   | "appearance"
+  | "terminal"
   | "startup"
   | "hotkeys"
   | "stats"
@@ -32,8 +33,9 @@ export interface SettingsSearchEntry {
 
 /**
  * 索引。label 与 SETTING_NAV 一致，别名按各档实际内容写：
- * 外观档带终端渲染/字号/字体/调色板/滚动缓冲/通知/状态栏，
- * 集成档带外部终端、AI 配置与会话自动命名，网络档带代理与文献页登录，数据档带导出与项目目录。
+ * 外观档带主题/透明度/应用图标/状态栏，终端档带渲染/字号/字体/调色板/滚动缓冲/外部终端/运行时，
+ * 通用档带启动页/导航形态/通知/顶部岛，AI 与 Agent 档带 AI 配置、会话自动命名、只读保护与注意力标记，
+ * 网络档带代理、brew 镜像与文献页登录，数据档带导出与项目目录。
  * 顺序即界面顺序（常用在前、管理在后），无结果时按原序展示。
  */
 export const SETTINGS_SEARCH_INDEX: readonly SettingsSearchEntry[] = [
@@ -41,22 +43,32 @@ export const SETTINGS_SEARCH_INDEX: readonly SettingsSearchEntry[] = [
     id: "appearance",
     label: "外观",
     aliases: [
-      "主题", "深色", "浅色", "暗色", "配色", "颜色", "色卡", "自定义主题",
+      "主题", "深色", "浅色", "暗色", "配色", "颜色", "色卡", "自定义主题", "跟随系统", "自动深浅", "我的配色",
+      "状态栏", "底部状态栏",
+      "透明度", "磨砂", "毛玻璃", "侧栏透明", "顶栏透明", "玻璃", "透视", "壁纸",
+      "应用图标", "图标", "程序坞", "Dock", "任务栏图标", "托盘图标",
+      "theme", "appearance", "opacity", "blur", "icon",
+    ],
+  },
+  {
+    id: "terminal",
+    label: "终端",
+    aliases: [
       "字体", "字号", "字体大小", "等宽字体", "终端字体", "终端字号", "终端渲染",
       "渲染器", "画布", "GPU", "序列化", "性能", "卡顿", "流畅",
-      "调色板", "终端配色", "滚动缓冲", "回滚", "scrollback",
-      "通知", "系统通知", "播报", "状态栏", "底部状态栏", "底色",
-      "透明度", "磨砂", "毛玻璃", "侧栏透明", "顶栏透明", "玻璃", "透视", "壁纸",
-      "theme", "appearance", "font", "notification", "opacity", "blur",
+      "调色板", "终端配色", "滚动缓冲", "回滚", "scrollback", "底色", "预览",
+      "外部终端", "终端应用", "iTerm", "Ghostty", "PowerShell", "cmd",
+      "自定义运行时", "运行时", "命令",
+      "terminal", "font", "runtime",
     ],
   },
   {
     id: "startup",
-    label: "启动行为",
+    label: "通用",
     aliases: [
-      "启动", "开机自启", "默认页面", "启动时进入", "导航形态", "侧栏", "导航",
-      "顶部岛", "岛", "自动收起", "想法期", "只读", "保护",
-      "startup", "launch", "nav",
+      "启动", "启动行为", "开机自启", "默认页面", "启动时进入", "导航形态", "侧栏", "导航",
+      "顶部岛", "灵动岛", "岛", "自动收起", "通知", "系统通知", "播报",
+      "general", "startup", "launch", "nav", "notification",
     ],
   },
   {
@@ -69,22 +81,22 @@ export const SETTINGS_SEARCH_INDEX: readonly SettingsSearchEntry[] = [
   },
   {
     id: "stats",
-    label: "统计",
+    label: "用量",
     aliases: [
       "统计", "用量", "花费", "成本", "额度", "余额", "汇率", "货币", "内部活动",
-      "图表", "模型", "会话",
+      "图表", "价目", "定价", "价格", "没有价格", "算不出价",
       "stats", "usage", "cost", "quota",
     ],
   },
   {
     id: "integration",
-    label: "集成",
+    label: "AI 与 Agent",
     aliases: [
-      "集成", "外部终端", "终端应用", "iTerm", "Ghostty", "PowerShell", "cmd",
-      "AI 配置", "AI 专用", "镜像", "brew", "Homebrew", "CLI",
+      "集成", "AI", "AI 配置", "AI 专用", "模型", "按功能",
       "自动命名", "起名", "命名", "会话标题", "改标题", "标题",
-      "翻译",
-      "integration", "terminal",
+      "翻译", "提交信息", "摘要",
+      "想法期", "只读", "保护", "hooks", "注意力", "精确注意力",
+      "integration", "agent",
     ],
   },
   {
@@ -92,6 +104,7 @@ export const SETTINGS_SEARCH_INDEX: readonly SettingsSearchEntry[] = [
     label: "网络",
     aliases: [
       "网络", "代理", "出网代理", "proxy", "HTTP 代理", "不走代理", "白名单",
+      "镜像", "brew", "Homebrew", "国内镜像",
       "学校图书馆", "图书馆", "浏览器", "登录", "会话", "扩展", "抓取",
       "network", "library",
     ],
@@ -115,7 +128,8 @@ export const SETTINGS_SEARCH_INDEX: readonly SettingsSearchEntry[] = [
     label: "数据与存储",
     aliases: [
       "数据", "存储", "目录", "项目目录", "位置", "路径", "导出", "备份",
-      "清理", "缓存", "打开文件夹", "定位", "卸载", "删除", "回收站",
+      "清理", "缓存", "打开文件夹", "定位", "卸载", "删除", "回收站", "快照", "工作树", "工作副本", "占用", "磁盘", "C盘", "换盘", "存储位置", "自定义位置", "挪位置", "迁移",
+      "内部对话", "内部 AI", "后台对话", "清理对话", "保留天数", "自动清理",
       "storage", "data", "folder", "path",
     ],
   },

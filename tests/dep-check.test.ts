@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   canOneClickInstall,
   depInboxItem,
+  depMissingReason,
   installGuidance,
   isGitMissingError,
   type DepCheckDto,
@@ -94,4 +95,18 @@ test("depInboxItem：git ok / 整体 null / 仅 node 缺失 → 无条目", () =
   assert.equal(depInboxItem(null), null);
   // node 缺失不进收件箱（只在装 CLI 时提示）
   assert.equal(depInboxItem(dep({}, false)), null);
+});
+
+test("跑不起来的 quarto 点名路径，不报成「未安装」", () => {
+  assert.equal(depMissingReason({ status: "missing", path: null }), "未安装");
+  assert.match(
+    depMissingReason({ status: "broken", path: "/opt/conda/bin/quarto" }),
+    /\/opt\/conda\/bin\/quarto 跑不起来/,
+  );
+  assert.equal(depMissingReason({ status: "clt_stub", path: "/usr/bin/git" }), "需要安装 Xcode 命令行工具");
+  // 后端给了具体原因（残留环境变量）就照它说，不让人去重装
+  assert.equal(
+    depMissingReason({ status: "broken", path: "/x/quarto", note: "环境变量 QUARTO_SHARE_PATH 指向已删除的路径" }),
+    "环境变量 QUARTO_SHARE_PATH 指向已删除的路径",
+  );
 });

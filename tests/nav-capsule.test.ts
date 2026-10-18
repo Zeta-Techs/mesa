@@ -153,33 +153,39 @@ test("isIslandExpanded treats focus and hover as one judgement", () => {
   assert.equal(isIslandExpanded({ ...INITIAL_NAV_ISLAND, pointerInside: true }), true);
 });
 
-/* 休眠面恒带文字，不跟 displayMode 走。仅符号模式下若它也只剩图标，休眠面就退回
-   「一个孤零零的光图标」——看不出是入口，也看不出悬停会展开整排导航。
-   displayMode 管的是展开态那排导航项（那里是"一排"，才有符号/文字之分），
-   而休眠面只有一个控件、不是一排。 */
-test("休眠面恒带文字，不跟随 displayMode", () => {
+/* 灵动岛：休眠＝状态、展开＝操作（2026-10-17）。休眠面切出来单独断言，
+   防止有人把可点控件塞回休眠面——指针一进岛就展开，休眠面里的按钮鼠标点不到。 */
+function islandFaces() {
   const src = readFileSync(
     new URL("../src/components/TopNavCapsule.tsx", import.meta.url),
     "utf8",
   );
-  const m =
-    /const restoreItem = \(interactive: boolean, collapsedFace: boolean\) => \(([\s\S]*?)\n {2}\);/.exec(
-      src,
-    );
-  assert.ok(m, "找不到 restoreItem，可能被改名或改了签名");
-  const body = m[1];
+  const dormant = /ref=\{dormantRowRef\}([\s\S]*?)ref=\{expandedRowRef\}/.exec(src);
+  const expanded = /ref=\{expandedRowRef\}([\s\S]*?)<\/nav>/.exec(src);
+  assert.ok(dormant && expanded, "找不到休眠面/展开面，可能改了结构");
+  return { dormant: dormant[1], expanded: expanded[1] };
+}
 
-  // 休眠面走自己的字面量分支，绕开受 showIcon/showLabel 影响的 itemContent
-  assert.match(body, /collapsedFace \? \(/);
-  assert.match(body, /<span>恢复侧栏<\/span>/);
-  // 展开面仍按模式走
-  assert.match(body, /itemContent\(PanelLeftOpen, "恢复侧栏"\)/);
+test("休眠面报当前页且恒带文字（不走受 displayMode 影响的 itemContent）", () => {
+  const { dormant } = islandFaces();
+  assert.match(dormant, /<span>\{currentNav\?\.label \?\? "Mesa"\}<\/span>/);
+  assert.doesNotMatch(dormant, /itemContent\(/);
 });
 
-test("休眠面的按钮是一枚带字的胶囊，不是一枚方图标", () => {
+test("休眠面只放展示：恢复侧栏、可点活动胶囊都在展开面", () => {
+  const { dormant, expanded } = islandFaces();
+  assert.doesNotMatch(dormant, /restoreItem\(/, "恢复侧栏不放休眠面");
+  assert.doesNotMatch(dormant, /<RunActivityButton/, "休眠面用只读 RunActivityStatus");
+  assert.match(dormant, /<RunActivityStatus \/>/);
+  assert.match(dormant, /announceItem\(false\)/, "休眠面播报是只读那一份");
+  assert.match(expanded, /restoreItem\(expanded\)/);
+  assert.match(expanded, /<RunActivityButton variant="island"/);
+});
+
+test("当前页标签是一枚带字的胶囊，不是一枚方图标", () => {
   const css = readFileSync(new URL("../src/App.css", import.meta.url), "utf8");
-  const restore = /\.ccode-nav-island-restore\s*\{[^}]*\}/.exec(css);
-  assert.ok(restore, "找不到 .ccode-nav-island-restore 规则");
-  // 带字之后 7px 横内距贴在字上会显挤，需要比导航项宽一点
-  assert.match(restore[0], /padding:\s*0 9px/);
+  const current = /\.ccode-nav-island-current\s*\{[^}]*\}/.exec(css);
+  assert.ok(current, "找不到 .ccode-nav-island-current 规则");
+  // 带字后 7px 横内距贴在字上会显挤，需要比导航项宽一点
+  assert.match(current[0], /padding:\s*0 9px/);
 });

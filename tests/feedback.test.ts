@@ -14,6 +14,12 @@ import {
   feedbackPayload,
   mailtoTooLong,
   stripUnfilledTemplate,
+  FEEDBACK_CHANNELS,
+  channelCarriesAttachments,
+  feedbackDiagnosticsNote,
+  feedbackImageSrc,
+  initialFeedbackChannel,
+  initialWebmailTarget,
 } from "../src/feedback.ts";
 
 test("类型闭集四档，标签与引导语齐备", () => {
@@ -148,4 +154,33 @@ test("截图附件：随负载带上（有则序列化、无则不落字段）�
   assert.ok(note.includes("2 张截图"));
   assert.ok(note.includes("mesa-feedback-x"));
   assert.ok(note.includes("添加为附件"));
+});
+
+test("发送方式：记过的用记的；没记过（或值不在闭集）时配过直发用直发，否则邮件应用", () => {
+  assert.deepEqual(
+    FEEDBACK_CHANNELS.map((c) => c.id),
+    ["mail", "webmail", "smtp"],
+  );
+  assert.equal(initialFeedbackChannel("webmail", false), "webmail");
+  assert.equal(initialFeedbackChannel("mail", true), "mail", "用户选过邮件应用就不被直发配置覆盖");
+  assert.equal(initialFeedbackChannel(null, true), "smtp");
+  assert.equal(initialFeedbackChannel(null, false), "mail");
+  assert.equal(initialFeedbackChannel("endpoint", false), "mail", "端点不是可选项，脏值回落");
+  assert.equal(initialWebmailTarget("gmail"), "gmail");
+  assert.equal(initialWebmailTarget("yahoo"), WEBMAIL_TARGETS[0].id);
+  assert.equal(initialWebmailTarget(null), WEBMAIL_TARGETS[0].id);
+});
+
+test("附件能否随信：端点与邮箱直发是真实附件，邮件应用/网页邮箱只能落盘手动加", () => {
+  assert.equal(channelCarriesAttachments("endpoint"), true);
+  assert.equal(channelCarriesAttachments("smtp"), true);
+  assert.equal(channelCarriesAttachments("mail"), false);
+  assert.equal(channelCarriesAttachments("webmail"), false);
+  const note = feedbackDiagnosticsNote("/Users/x/Downloads/ccode-exports/ccode-diagnostics-1.zip");
+  assert.ok(note.includes("ccode-diagnostics-1.zip"));
+  assert.ok(note.includes("添加为附件"));
+  assert.equal(
+    feedbackImageSrc({ name: "a.png", mime: "image/png", data: "aGk=" }),
+    "data:image/png;base64,aGk=",
+  );
 });

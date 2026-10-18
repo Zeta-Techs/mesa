@@ -538,6 +538,16 @@ fn write_bundle(
     Ok(())
 }
 
+/// 诊断包文件名前缀：反馈附件闸门（feedback.rs）按它认「Mesa 导出的诊断包」
+pub(crate) const BUNDLE_FILE_PREFIX: &str = "ccode-diagnostics-";
+
+/// 诊断包导出目录（下载/ccode-exports）；反馈附件闸门与导出共用同一出处
+pub(crate) fn bundle_dir() -> Result<std::path::PathBuf, String> {
+    Ok(dirs::download_dir()
+        .ok_or("无法确定下载目录")?
+        .join("ccode-exports"))
+}
+
 #[tauri::command]
 pub async fn export_diagnostics_bundle(frontend: FrontendDiagnosticsDto) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -545,12 +555,10 @@ pub async fn export_diagnostics_bundle(frontend: FrontendDiagnosticsDto) -> Resu
         // 让进程监控线程有机会记录本次 PowerShell 采集进程及其退出时间。
         std::thread::sleep(Duration::from_millis(PROCESS_POLL_MS + 100));
         let (processes, active) = process_snapshots();
-        let dir = dirs::download_dir()
-            .ok_or("无法确定下载目录")?
-            .join("ccode-exports");
+        let dir = bundle_dir()?;
         fs::create_dir_all(&dir).map_err(|e| format!("创建导出目录失败: {e}"))?;
         let path = dir.join(format!(
-            "ccode-diagnostics-{}.zip",
+            "{BUNDLE_FILE_PREFIX}{}.zip",
             now_iso().replace([':', '.'], "-")
         ));
         write_bundle(&path, &frontend, &platform, &processes, &active)?;

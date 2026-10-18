@@ -4,8 +4,13 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  formatLogText,
   isCancellationRejection,
   isSoftwareRendererName,
+  logClockTime,
+  logLevelCounts,
+  logLevelLabel,
+  logLocalTime,
   webglUsable,
 } from "../src/diagnostics.ts";
 
@@ -71,4 +76,27 @@ test("monaco 剪贴板 workaround 仍是已知 cancel 形态", () => {
   );
   assert.ok(src.includes("installWebKitWriteTextWorkaround"));
   assert.ok(src.includes("this.webKitPendingClipboardWritePromise.cancel();"));
+});
+
+test("应用日志：UTC 时间转本机显示，解析失败原样回落", () => {
+  // 断言形状不断言时区（CI 机器时区不定）
+  assert.match(logLocalTime("2026-10-17T12:01:02.000Z"), /^2026-10-1[78] \d{2}:\d{2}:02$/);
+  assert.match(logClockTime("2026-10-17T12:01:02.000Z"), /^\d{2}:\d{2}:02$/);
+  assert.equal(logLocalTime("坏时间T1Z"), "坏时间 1");
+  assert.equal(logClockTime("坏时间"), "坏时间");
+});
+
+test("应用日志：只给错误/警告加标，计数与复制文本", () => {
+  assert.equal(logLevelLabel("error"), "错误");
+  assert.equal(logLevelLabel("warn"), "警告");
+  assert.equal(logLevelLabel("info"), null);
+  const logs = [
+    { ts: "x", level: "info", source: "a", message: "m1" },
+    { ts: "x", level: "error", source: "b", message: "m2" },
+    { ts: "x", level: "warn", source: "c", message: "m3" },
+    { ts: "x", level: "error", source: "d", message: "m4" },
+  ];
+  assert.deepEqual(logLevelCounts(logs), { error: 2, warn: 1 });
+  assert.deepEqual(logLevelCounts([]), { error: 0, warn: 0 });
+  assert.equal(formatLogText(logs.slice(0, 2)), "x [info] a: m1\nx [error] b: m2");
 });

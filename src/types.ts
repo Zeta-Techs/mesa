@@ -12,6 +12,8 @@ export interface Profile {
   baseUrl: string | null;
   /** 可用模型列表，首个为默认 */
   models: string[];
+  /** 模型分工：后台小模型 / 子 Agent（只有 Claude Code、Grok、OpenCode 消费）；不设 = 跟主模型 */
+  roleModels?: RoleModels;
   /** 附加环境变量，启动时注入，优先级高于 adapter 内置 env */
   extraEnv: Record<string, string>;
   requestPolicy: RequestPolicy;
@@ -46,6 +48,8 @@ export interface ComboSurfaceDto {
   showNativeEffort: boolean;
   /** 网关勾选的可切换档。空 = 用 CLI 整张档位表。 */
   effortLevels: string[];
+  /** 这次启动会注入的开场档；没注入（通道不通 / 没存策略）= null，状态栏不得冒充某一档 */
+  launchEffort: string | null;
   injectEffortAllowed: boolean;
   injectTemperatureAllowed: boolean;
   injectTopPAllowed: boolean;
@@ -174,6 +178,14 @@ export interface GatewayInput {
   walletUserId?: string | null;
 }
 
+/** 绑定的模型分工（profiles.rs RoleModels）。不设 = 跟主模型（这次启动选的模型） */
+export interface RoleModels {
+  /** 后台小模型：会话标题、摘要、输入提示这类小任务 */
+  small?: string | null;
+  /** 子 Agent 模型（Claude Code） */
+  subagent?: string | null;
+}
+
 export interface BindingInput {
   agent: string;
   /** 绑定级显示名；留空时后端回退网关名。 */
@@ -183,6 +195,7 @@ export interface BindingInput {
   protocol: string | null;
   apiBackend?: string | null;
   models: string[];
+  roleModels?: RoleModels;
   extraEnv: Record<string, string>;
 }
 
@@ -195,6 +208,8 @@ export interface ProfileInput {
   apiBackend?: string | null;
   baseUrl: string | null;
   models: string[];
+  /** 模型分工；不带 = 不改 */
+  roleModels?: RoleModels;
   extraEnv: Record<string, string>;
   requestPolicy?: RequestPolicy;
   /** 明文密钥，仅保存时提交；编辑时留空表示不修改 */
@@ -412,6 +427,8 @@ export interface DetectResult {
   /** 该 CLI 有进程级只读参数（--permission-mode plan / -s read-only 之类）。
    *  false（qwen / opencode）= 「只读保护」对它只剩 prompt 软约束，agent 可以无视 */
   readonlySupported: boolean;
+  /** 能在启动参数里指定的原生权限档（agent_specs permission_args）：ask 请求批准 / auto 帮我批准 / full 完全访问 */
+  permissionModes: string[];
   /** 运行中模型切换命令（终端状态栏模型菜单；null = 无机制不显示） */
   modelSwitch: { kind: "direct" | "picker"; command: string } | null;
   /** 运行中思考档调节（档位表 + 命令模板；null = 不显示「◈ 思考」控件） */
@@ -588,7 +605,8 @@ export interface HandoffBriefDto {
 }
 
 export interface BlockDto {
-  kind: "text" | "thinking" | "tool_use" | "tool_result";
+  /** command / command_output：Claude 斜杠命令、! 命令及其本地输出（sessions.rs claude_command_block） */
+  kind: "text" | "thinking" | "tool_use" | "tool_result" | "command" | "command_output";
   text: string;
   toolName: string | null;
 }
@@ -598,6 +616,8 @@ export interface ChatMessageDto {
   blocks: BlockDto[];
   timestamp: string | null;
   usage: TokenUsageDto | null;
+  /** 仅前端乐观消息：上一轮还在生成时发出、CLI 排队待处理（会话文件记下后由解析结果替换，不再带这个标记） */
+  queued?: boolean;
 }
 
 export interface ConversationPageDto {
@@ -1089,6 +1109,8 @@ export interface UsageActivityDto {
   days: UsageActivityDayDto[];
   /** 增量索引刷新失败但返回了已建索引数据 */
   stale: boolean;
+  /** 冷启动兜底：重建超预算仍在后台跑、先返回了旧数据（后台刷完发事件补拉） */
+  refreshing: boolean;
 }
 
 /** 按 agent 的单日分解（四类合计；非 internal） */
@@ -1364,6 +1386,12 @@ export interface ProjectConfigDto {
   skills?: string[];
   /** 工作方式：research / coding / office；缺省 research */
   workMode?: string;
+  /** 对话注入：＋新对话 / 问 AI 的 session 包开关。auto = 自动生成（缺省）；
+   *  custom = 按模板（占位符开对话时填入）；off = 不注入。
+   *  只管 session 包；开工/验收后写入/编程车道 goal 的目标包不受影响。 */
+  sessionInjectionMode?: "auto" | "custom" | "off";
+  /** 自定义模板全文；空 = 未编辑（按 auto 处理）。占位符清单见 project-context.ts SESSION_TEMPLATE_VARS。 */
+  sessionInjectionTemplate?: string;
 }
 
 export interface AcceptedGoalStatusDto {
@@ -1848,6 +1876,8 @@ export interface RunRecordDto {
 export interface ScheduleDto {
   id: string;
   runningRunId?: string | null;
+  /** 到点该跑但还没跑起来（并发上限或同项目互斥在等）；排队中标记的数据源 */
+  queued?: boolean;
   name: string;
   /** 项目根绝对路径（任务 cwd） */
   projectRoot: string;
@@ -1939,4 +1969,18 @@ export interface StorageEntryDto {
   exists: boolean;
   /** 可清理（快照/备份/缓存）；配置与索引一律 false */
   clearable: boolean;
+  /** 清理用的条目键（配置目录下的相对名；工作副本为 ~worktrees / ~workspaces） */
+  id: string;
+  /** 统计达到条目上限提前收手：bytes 是下限，显示「≥」 */
+  approx: boolean;
+  /** config = Mesa 配置目录；home = 当前家目录（默认 ~/ccode）下的工作副本；
+   *  home-old = 换位置前遗留在旧家目录里的工作副本 */
+  root: "config" | "home" | "home-old";
+}
+
+/** 用量里出现过、但查不到价格的模型（设置页「自定义定价」待补清单） */
+export interface UnpricedModelDto {
+  model: string;
+  tokens: number;
+  lastDay: string;
 }

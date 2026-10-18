@@ -1,10 +1,9 @@
 /**
- * 反馈与提需求的纯逻辑：类型枚举、正文拼装、mailto 通道。
+ * 反馈与提需求的纯逻辑：类型枚举、正文拼装、发送方式与各通道的链接/负载。
  *
- * 提交通道刻意隔离在这一个文件：现在是 mailto（零基建——表单在 Mesa 里填好，
- * 一键调起系统邮件应用，内容全部预填，不需要 GitHub 账号）；将来公司有收集
- * 端点时只改 submit 侧，表单与正文结构不动。正文结构同时服务于「复制全文」
- * （邮件没配好的用户粘贴到任意渠道，格式不散）。
+ * 通道：公司端点（配置后后台直发）；未配置时用户在表单里选发送方式——邮件应用
+ * （mailto，零基建、不需要 GitHub 账号）、网页邮箱、邮箱直发（自己的 SMTP）。
+ * 正文结构各通道一致，同时服务于「复制全文」（粘贴到任意渠道格式不散）。
  */
 
 /** 反馈直达邮箱（对外联系邮箱，2026-10-12 定） */
@@ -220,4 +219,55 @@ export function feedbackPayload(
  *  正文里注明目录让收件人知道去哪找、发件人记得在邮件里添加 */
 export function feedbackImageNote(dir: string, count: number): string {
   return `本反馈附有 ${count} 张截图，已存到：${dir}（请在邮件中把它们添加为附件）`;
+}
+
+/** 邮件类通道的诊断包注记（同截图：邮件应用 / 网页邮箱带不了附件） */
+export function feedbackDiagnosticsNote(path: string): string {
+  return `本反馈附有诊断包，已存到：${path}（请在邮件中添加为附件）`;
+}
+
+/** 截图缩略图的 data URL（表单里预览用，不出站） */
+export function feedbackImageSrc(img: FeedbackImage): string {
+  return `data:${img.mime};base64,${img.data}`;
+}
+
+/**
+ * 发送方式：公司端点未配置时由用户在表单里选，选择记在本机。
+ * - mail：调起系统邮件应用（mailto，内容全预填）
+ * - webmail：打开网页邮箱写信页（Gmail/Outlook 带正文，QQ/163 靠剪贴板）
+ * - smtp：用户自己的邮箱从 Mesa 里直接发（截图与诊断包是真实附件）
+ * 端点配置后不再给选择——后台直发就是最省事的那条。
+ */
+export type FeedbackChannel = "mail" | "webmail" | "smtp";
+
+export const FEEDBACK_CHANNELS: {
+  id: FeedbackChannel;
+  label: string;
+  hint: string;
+}[] = [
+  { id: "mail", label: "邮件应用", hint: "打开本机邮件应用，内容已填好，点发送即可" },
+  { id: "webmail", label: "网页邮箱", hint: "在浏览器里打开你的邮箱写信，已登录就能直接发" },
+  { id: "smtp", label: "邮箱直发", hint: "用你自己的邮箱从 Mesa 里直接发出，附件随信送达" },
+];
+
+export const FEEDBACK_CHANNEL_KEY = "ccode.feedback.channel";
+export const FEEDBACK_WEBMAIL_KEY = "ccode.feedback.webmail";
+
+/** 记住的发送方式 → 本次默认：没记过（或值不在闭集里）时，配过邮箱直发用直发，否则邮件应用 */
+export function initialFeedbackChannel(
+  stored: string | null,
+  smtpConfigured: boolean,
+): FeedbackChannel {
+  if (stored === "mail" || stored === "webmail" || stored === "smtp") return stored;
+  return smtpConfigured ? "smtp" : "mail";
+}
+
+/** 记住的网页邮箱 → 本次默认（不在清单里回落第一个） */
+export function initialWebmailTarget(stored: string | null): string {
+  return WEBMAIL_TARGETS.some((t) => t.id === stored) ? (stored as string) : WEBMAIL_TARGETS[0].id;
+}
+
+/** 附件能否随信送达：端点与邮箱直发是真实附件；邮件应用与网页邮箱只能落盘、由用户手动添加 */
+export function channelCarriesAttachments(channel: FeedbackChannel | "endpoint"): boolean {
+  return channel === "endpoint" || channel === "smtp";
 }
