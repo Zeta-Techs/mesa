@@ -1,10 +1,34 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
-import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
-import { Download, Trash2, Upload } from "lucide-react";
-import { IS_MAC, IS_WINDOWS } from "../hotkeys";
-import { codexThreadDeeplink } from "../codex-client";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import {
+  AppWindow,
+  Archive,
+  ArchiveRestore,
+  Copy,
+  Download,
+  FileText,
+  Forward,
+  Package,
+  Pencil,
+  Pin,
+  PinOff,
+  ScrollText,
+  SquareArrowOutUpRight,
+  SquareStack,
+  SquareTerminal,
+  ChevronDown,
+  Trash2,
+  Upload,
+  WandSparkles,
+  X,
+} from "lucide-react";
+import ContextMenu, { type ContextMenuItem } from "../components/ContextMenu";
+import { toast } from "../toast";
+import { IS_WINDOWS } from "../hotkeys";
+import { useClientOpen } from "../components/ClientOpenDialog";
+import { openButtonLabel } from "../client-open";
 import { sessionRuntimeKey, useAppStore } from "../store";
 import { absTime, relTime } from "../rel-time";
 import { agentBrandBadgeStyle } from "../agent-colors";
@@ -19,6 +43,8 @@ import {
   buildScopeSuggestions,
   groupSessionsByProjectPath,
   sessionLooksInternal,
+  sessionProjectLabel,
+  scopeDirRows,
   type QuickFilterId,
   type ScopeChip,
 } from "../session-filter";
@@ -43,18 +69,21 @@ import GitPanel from "../components/GitPanel";
 import HandoffPicker from "../components/HandoffPicker";
 import DigestPicker from "../components/DigestPicker";
 import { alertDialog, confirmDialog } from "../components/ConfirmDialog";
-import { resumeSessionInTerminal } from "../components/QuickChatModal";
+import { openQuickChat, resumeSessionInTerminal } from "../quick-chat-launch";
 import { isScratchCwd } from "../quick-chat";
 import SessionImportModal from "../components/SessionImportModal";
 import { SECRET_EXPORT_WARNING } from "../session-transfer";
 import {
   Checkbox,
+  dangerActionClass,
   EmptyState,
+  fieldClass,
   FoldMark,
   ghostActionClass,
   LoadingRows,
   rowActionClass,
   searchFieldClass,
+  InlineNotice,
 } from "../components/PageFrame";
 import type {
   ChatMessageDto,
@@ -69,17 +98,20 @@ import type {
 /** GitPanel 的 onTotals 占位（会话页不消费改动总量；稳定引用避免击穿 memo） */
 const NOOP_TOTALS = () => {};
 
-/** 复制恢复命令：Windows 默认交互 shell 是 PowerShell，后端产出的也是该方言 */
+/** 复制恢复命令：Windows 默认交互 shell 是 PowerShell，后端产出的也是该方言。
+ *  命令刻意不带密钥（session_resume_command），粘到终端里跑用的是那个终端的全局配置——不能写「粘贴即可」：
+ *  Mesa 连接开的 Codex 对话缺 CODEX_API_KEY 接不上，Claude 对话会换到全局配置的网关 / 模型上（2026-10-17 核对） */
 const COPY_RESUME_LABEL = IS_WINDOWS
-  ? "⧉ 复制恢复命令（PowerShell）"
-  : "⧉ 复制恢复命令";
-const COPY_RESUME_HINT = IS_WINDOWS
-  ? "复制 PowerShell 命令（粘贴到 PowerShell，不要粘到 cmd）"
-  : "复制恢复命令，粘贴到任意终端";
-const COPY_RESUME_DONE = IS_WINDOWS ? "已复制（PowerShell）" : "已复制";
-const COPY_RESUME_MENU = IS_WINDOWS
-  ? "在外部继续 · 复制命令（PowerShell）"
-  : "在外部继续 · 复制命令";
+  ? "复制恢复命令（PowerShell）"
+  : "复制恢复命令";
+const COPY_RESUME_HINT =
+  (IS_WINDOWS ? "复制 PowerShell 命令（粘贴到 PowerShell，不要粘到 cmd）。" : "复制一条恢复命令。") +
+  "在终端里运行时用的是终端自己的全局配置，不带 Mesa 的连接和密钥；要接着用这段对话原来的连接，选「在外部终端恢复」";
+const COPY_RESUME_DONE = IS_WINDOWS
+  ? "已复制恢复命令（PowerShell）。它用 PowerShell 里的全局配置，不带 Mesa 的连接"
+  : "已复制恢复命令。它用终端里的全局配置，不带 Mesa 的连接";
+const EXTERNAL_RESUME_HINT =
+  "用这段对话原来的连接（密钥随一次性启动脚本带过去），在设置「终端 → 外部终端」选的终端里接着聊";
 
 function deleteSessionPrompt(s: SessionMetaDto): string {
   if (s.agent === "opencode") {
@@ -149,6 +181,12 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
   const openSessionReq = useAppStore((s) => s.openSessionReq);
   const setOpenSessionReq = useAppStore((s) => s.setOpenSessionReq);
   const liveSessions = useAppStore((s) => s.liveSessions);
+  // 终端里正停在「等你确认」的标签（审批 / 信任 / 切换确认，读屏或 hooks 认出）：列表与详情把「进行中」换成「等你确认」
+  const terminalRunInputs = useAppStore((s) => s.terminalRunInputs);
+  const waitingTabs = useMemo(
+    () => new Set(terminalRunInputs.filter((r) => r.attention === "confirm").map((r) => r.tabId)),
+    [terminalRunInputs],
+  );
   const profiles = useAppStore((s) => s.profiles);
   const appSettings = useAppStore((s) => s.settings);
   const currentPage = useAppStore((s) => s.page);
@@ -168,6 +206,8 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
   const [taskPickerFor, setTaskPickerFor] = useState<SessionMetaDto | null>(
     null,
   );
+  // 「移到卡片…」就地弹在右键位置（原居中面板与触发点脱节）
+  const [taskPickerPos, setTaskPickerPos] = useState({ x: 0, y: 0 });
   const [query, setQuery] = useState("");
   const [contentHits, setContentHits] = useState<SessionSearchHitDto[] | null>(
     null,
@@ -201,7 +241,14 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
   // 当前展开项目子列表的 agent：只认显式点开/点收，不跟当前筛选（否则选中的 Agent 永远收不回去）
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
   /** 「范围」里「按项目」段默认展开，让项目分类不用再点一层 */
-  const [projectsOpen, setProjectsOpen] = useState(true);
+  const [projectsOpen, setProjectsOpen] = useState(false);
+  // 「主目录」行要认出家目录（问一次就够）
+  const [homeDir, setHomeDir] = useState("");
+  useEffect(() => {
+    void invoke<string>("home_dir")
+      .then(setHomeDir)
+      .catch(() => {});
+  }, []);
   // 批量删除：选择模式 + 勾选集合（键为 agent+sessionId 复合键，防跨 agent 撞 id）
   const [selecting, setSelecting] = useState(false);
   const [checked, setChecked] = useState<Set<string>>(new Set());
@@ -211,16 +258,14 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
   const [registeredProjectPaths, setRegisteredProjectPaths] = useState<Set<string>>(
     () => new Set(),
   );
-  // Codex 客户端跳转可行性：客户端打开会话时按记录的 provider 在 config.toml
-  // 找定义，找不到报「Model provider not found」（见 openInClient/clientOpenable）
-  const [codexClientProviders, setCodexClientProviders] = useState<Set<
-    string
-  > | null>(null);
+  /** 已添加项目路径 → 注册名：列表 meta 行与回放头部写「哪个项目」 */
+  const [projectNames, setProjectNames] = useState<ReadonlyMap<string, string>>(
+    () => new Map(),
+  );
+  const clientOpen = useClientOpen(visible);
   const [codexOfficialConnected, setCodexOfficialConnected] = useState<
     boolean | undefined
   >(undefined);
-  // 「复制恢复命令」按钮的已复制反馈以 agent+sessionId 区分，避免跨 CLI 同 id 误显示。
-  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessageDto[]>([]);
   const [conversationCursor, setConversationCursor] = useState<number | null>(
     null,
@@ -289,13 +334,16 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
   useEffect(() => {
     if (!visible) return;
     let cancelled = false;
-    void invoke<{ path: string }[]>("list_projects")
+    void invoke<{ path: string; name: string }[]>("list_projects")
       .then((projects) => {
-        if (!cancelled) setRegisteredProjectPaths(new Set(projects.map((p) => p.path)));
+        if (cancelled) return;
+        setRegisteredProjectPaths(new Set(projects.map((p) => p.path)));
+        setProjectNames(new Map(projects.map((p) => [p.path, p.name])));
       })
       .catch((reason) => {
         if (!cancelled) {
           setRegisteredProjectPaths(new Set());
+          setProjectNames(new Map());
           setError(`项目范围加载失败：${String(reason)}`);
         }
       });
@@ -458,8 +506,15 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
         provider: s.provider ?? null,
       });
       await navigator.clipboard.writeText(cmd);
-      setCopiedId(sessionRuntimeKey(s.agent, s.sessionId));
-      window.setTimeout(() => setCopiedId(null), 1500);
+      // 菜单点完即关，行内反馈看不到——走 toast。Mesa 连接开的 Codex 对话：命令里的渠道定义按名字取
+      // CODEX_API_KEY，终端里没设就接不上，要说在前面
+      const needsKey = s.agent === "codex" && Boolean(resumeBaseUrl(s));
+      toast(
+        needsKey
+          ? "已复制恢复命令。这段对话走的是 Mesa 的连接，终端里要先设好 CODEX_API_KEY 才能接上；直接用「在外部终端恢复」更省事"
+          : COPY_RESUME_DONE,
+        needsKey ? "warning" : "success",
+      );
     } catch (e) {
       await alertDialog(`复制失败：${e}`);
     }
@@ -482,37 +537,25 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     }
   }
 
-  /** A4. 在 Codex 桌面客户端中打开该会话（codex://threads/<id> 深链，0.151 实测）。
-   *  客户端与 CLI 共享本地 threads 库，CLI 发起的对话同样能跳过去继续聊 */
-  async function openInClient(s: SessionMetaDto) {
-    try {
-      await openUrl(codexThreadDeeplink(s.sessionId));
-    } catch (e) {
-      await alertDialog(`唤起 Codex 客户端失败：${e}`);
-    }
+  /** A4. 交给该 agent 自己的 GUI 客户端继续（预检与修复都在 useClientOpen / 后端 client_open.rs）。
+   *  客户端与 CLI 共享本地会话存储，CLI 发起的对话同样能跳过去继续聊 */
+  function openInClient(s: SessionMetaDto, clientId?: string) {
+    clientOpen.openSession(
+      s,
+      !!liveSessions[sessionRuntimeKey(s.agent, s.sessionId)],
+      clientId,
+    );
   }
 
-  // 页面保持挂载：挂载与每次回切本页都重查（「注册到 Codex 客户端」在连接页写入后，
-  // 回来要立即解禁「在客户端打开」；查询是本地 config.toml 只读解析，成本低）
+  // 页面保持挂载：每次回切本页都重查官方账号连接状态（连接页改动后回来立即生效）
   useEffect(() => {
     if (!visible) return;
-    invoke<string[]>("codex_client_config_providers")
-      .then((list) => setCodexClientProviders(new Set(list)))
-      .catch(() => setCodexClientProviders(new Set()));
     invoke<OfficialAccountStatusDto>("official_account_status", {
       agentId: "codex",
     })
       .then((st) => setCodexOfficialConnected(st.connected))
       .catch(() => setCodexOfficialConnected(undefined));
   }, [visible]);
-
-  /** 客户端打开会话时按 rollout 记录的 provider 在 config.toml 找定义，缺失即报
-   *  「Model provider not found」无法继续（内置 openai / 无记录的旧会话恒可跳） */
-  function clientOpenable(s: SessionMetaDto): boolean {
-    if (s.agent !== "codex" || !(IS_MAC || IS_WINDOWS)) return false;
-    if (!s.provider || s.provider === "openai") return true;
-    return codexClientProviders?.has(s.provider) ?? false;
-  }
 
   /** B. 「进行中」反向跳转：聚焦该会话所在的终端标签 */
   function jumpToLive(s: SessionMetaDto) {
@@ -593,6 +636,12 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     return tree.find((g) => g.agent === expandedAgent) ?? null;
   }, [expandedAgent, tree]);
 
+  // 范围已限定到单个项目（分类筛选或范围 chip）：列表行不再逐条写项目名
+  const projectScoped =
+    filter.kind === "project" ||
+    filter.kind === "projectPath" ||
+    filter.kind === "scratch" ||
+    scopes.some((chip) => chip.kind === "project");
   const sessionList = useMemo(() => {
     let src: SessionMetaDto[];
     if (q) {
@@ -1025,19 +1074,6 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
   }, [visible, loadSessions]);
 
   // 右键菜单打开时：Escape / 任意滚动关闭；点击空白由遮罩处理
-  useEffect(() => {
-    if (!menu) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setMenu(null);
-    };
-    const onScroll = () => setMenu(null);
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("scroll", onScroll, true);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("scroll", onScroll, true);
-    };
-  }, [menu]);
 
   // 批量删除二次确认 4s 后自动复原
   useEffect(() => {
@@ -1245,13 +1281,8 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     }
   }
 
-  const input =
-    "w-full rounded-sm border border-field bg-canvas px-2 py-1.5 text-sm text-l2 outline-none placeholder:text-l4 focus:border-l4";
-  const menuItem =
-    "block w-full px-3 py-1.5 text-left text-l2 hover:bg-hover";
-  // 菜单分组小标题（v3.88）：11 项平铺改三组，caps 式弱化小字，只作分段不可点
-  const menuGroupLabel =
-    "px-3 pb-0.5 pt-1.5 text-micro tracking-wider text-l4 first:pt-0.5";
+  // 编辑表单输入框：走共享 fieldClass（原为逐字复制的本地类，圆角/焦点与全站不齐）
+  const input = fieldClass;
   // 回放头部「恢复 ▾」下拉（外部恢复/复制命令），坐标定位 + 全屏遮罩点击关闭
   const [resumeMenu, setResumeMenu] = useState<{ x: number; y: number } | null>(
     null,
@@ -1275,36 +1306,6 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     if (hit) setDigestFor(hit);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [digestOpenReq]);
-
-  // 与右键菜单一致：Escape / 任意滚动关闭，避免滚动后浮层错位
-  useEffect(() => {
-    if (!resumeMenu) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setResumeMenu(null);
-    };
-    const onScroll = () => setResumeMenu(null);
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("scroll", onScroll, true);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("scroll", onScroll, true);
-    };
-  }, [resumeMenu]);
-
-  // 「移到卡片…」子面板：同右键菜单的关闭语义
-  useEffect(() => {
-    if (!taskPickerFor) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setTaskPickerFor(null);
-    };
-    const onScroll = () => setTaskPickerFor(null);
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("scroll", onScroll, true);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("scroll", onScroll, true);
-    };
-  }, [taskPickerFor]);
 
   /** 移到卡片 / 移出卡片：assign_session_task 落库后刷新列表（store 动作内完成） */
   async function assignTask(s: SessionMetaDto, taskId: string | null) {
@@ -1345,9 +1346,9 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
         : filter.kind === "agent"
         ? agentLabel(filter.agent)
         : filter.kind === "project"
-          ? `${agentLabel(filter.agent)} · ${basename(filter.path)}`
+          ? `${agentLabel(filter.agent)} · ${sessionProjectLabel(filter.path, projectNames, IS_WINDOWS) ?? basename(filter.path)}`
           : filter.kind === "projectPath"
-            ? basename(filter.path)
+            ? (sessionProjectLabel(filter.path, projectNames, IS_WINDOWS) ?? basename(filter.path))
             : null;
 
   return (
@@ -1384,7 +1385,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                   }}
                   className={
                     confirmBatch
-                      ? "inline-flex h-7 items-center justify-center rounded-md bg-err px-2 text-xs text-err-text hover:brightness-110 disabled:opacity-50"
+                      ? dangerActionClass.replace("h-8", "h-7").replace("px-3", "px-2")
                       : "inline-flex h-7 items-center justify-center rounded-md px-2 text-xs text-err-text hover:bg-hover disabled:opacity-50"
                   }
                 >
@@ -1536,7 +1537,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
             </div>
           )}
           {/* 一行 chip 快筛 + 当前分类下拉（不挤会话列表）：
-              常用 3 个常驻；近 7 天/内部 AI/已归档收进「更多 ▾」，激活的提到行内常显。
+              常用 3 个常驻；近 7 天/已归档收进「更多 ▾」，激活的提到行内常显（内部 AI 只在「范围 → 其他」一处）。
               分类是下拉而不是内嵌手风琴：展开时列表高度不变，点选项目后面板保持开（边筛边浏览）。 */}
           <div className="relative mt-2">
           <div className="flex flex-wrap items-center gap-1">
@@ -1568,7 +1569,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                     type="button"
                     onClick={() => setMoreFiltersOpen((v) => !v)}
                     aria-expanded={moreFiltersOpen}
-                    title="更多快筛（近 7 天 / 内部 AI / 已归档）"
+                    title="更多快筛（近 7 天 / 已归档）"
                     className="rounded-full px-2 py-0.5 text-micro text-l3 hover:bg-hover hover:text-l1"
                   >
                     更多 ▾
@@ -1581,7 +1582,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                       />
                       <div className="ccode-float-surface absolute left-0 top-full z-50 mt-1 w-36 rounded-md border border-field p-1">
                         {QUICK_FILTERS.filter(
-                          (f) => !PRIMARY_QUICK.has(f.id),
+                          (f) => !PRIMARY_QUICK.has(f.id) && f.id !== "internal",
                         ).map((f) => {
                           const on = quick.has(f.id);
                           return (
@@ -1643,7 +1644,12 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                 ×
               </span>
             )}
-            <span className="shrink-0 text-l4">{treeOpen ? "▴" : "▾"}</span>
+            <ChevronDown
+              size={13}
+              strokeWidth={1.8}
+              aria-hidden="true"
+              className={`shrink-0 text-l4 transition-transform ${treeOpen ? "rotate-180" : ""}`}
+            />
           </button>
           </div>
         </div>
@@ -1651,6 +1657,9 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
           <p className="shrink-0 px-3 py-1 text-xs text-err-text">{error}</p>
         )}
         {treeOpen ? (
+            // 范围选择面（2026-10-17 重排）：按「先找项目、再按 Agent、最后是特殊来源」分段，段头只是标题不带计数；
+            // 每行右侧数字统一是「对话条数」。原先 Agent 在上、项目在下且组头计数是项目个数，
+            // 已添加项目与家目录 / tmp 混排、名字用目录名，内部 AI 又和「更多」里的快筛重复。
             <div className="min-h-0 flex-1 overflow-auto py-1">
               <div className="mb-1 flex items-center justify-between px-3">
                 <span className="text-micro text-l4">选择范围</span>
@@ -1662,231 +1671,200 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                   完成
                 </button>
               </div>
-              <button
-                onClick={() => {
-                  pickScope({ kind: "all" });
-                }}
-                className={`mx-1 flex h-7 w-[calc(100%-8px)] items-center justify-between gap-1 rounded-md px-2 text-left text-xs ${
-                  filterActive({ kind: "all" })
-                    ? "bg-rail-sel text-l1"
-                    : "text-l3 hover:bg-hover"
-                }`}
-              >
-                <span className="truncate">全部对话</span>
-                <span
-                  className={`shrink-0 text-xs opacity-70 ${filterActive({ kind: "all" }) ? "text-l2" : "text-l4"}`}
-                >
-                  {regularVisible.length}
-                </span>
-              </button>
-              <button
-                onClick={() => {
-                  pickScope({ kind: "scratch" });
-                }}
-                className={`mx-1 flex h-7 w-[calc(100%-8px)] items-center justify-between gap-1 rounded-md px-2 text-left text-xs ${
-                  filterActive({ kind: "scratch" })
-                    ? "bg-rail-sel text-l1"
-                    : "text-l3 hover:bg-hover"
-                }`}
-              >
-                <span className="truncate">随手聊</span>
-                <span
-                  className={`shrink-0 text-xs opacity-70 ${filterActive({ kind: "scratch" }) ? "text-l2" : "text-l4"}`}
-                >
-                  {
-                    regularVisible.filter(
-                      (s) =>
-                        isScratchCwd(s.projectPath, IS_WINDOWS) &&
-                        s.workspace == null,
-                    ).length
-                  }
-                </span>
-              </button>
-              {internalVisible.length > 0 && (
-                <button
-                  onClick={() => {
-                    pickScope({ kind: "internal" });
-                  }}
-                  title="Mesa 自己调用 AI 生成提交信息、摘要等产生的内部对话"
-                  className={`mx-1 flex h-7 w-[calc(100%-8px)] items-center justify-between gap-1 rounded-md px-2 text-left text-xs ${
-                    filterActive({ kind: "internal" })
-                      ? "bg-rail-sel text-l1"
-                      : "text-l3 hover:bg-hover"
-                  }`}
-                >
-                  <span className="truncate">Mesa 内部 AI</span>
-                  <span
-                    className={`shrink-0 text-xs opacity-70 ${filterActive({ kind: "internal" }) ? "text-l2" : "text-l4"}`}
-                  >
-                    {internalVisible.length}
-                  </span>
-                </button>
-              )}
-              {tree.length > 0 && (
-                <div className="mx-2 my-1 border-t border-hairline" />
-              )}
-              {tree.map((g) => {
-                // 该 agent 是当前筛选（agent 或其下项目）才用选中填充
-                const active =
-                  (filter.kind === "agent" || filter.kind === "project") &&
-                  filter.agent === g.agent;
-                const open = expandedGroup?.agent === g.agent;
-                return (
-                  <div key={g.agent}>
+              {(() => {
+                const rowCls = (on: boolean) =>
+                  `mx-1 flex h-7 w-[calc(100%-8px)] items-center justify-between gap-2 rounded-md px-2 text-left text-xs ${
+                    on ? "bg-rail-sel text-l1" : "text-l2 hover:bg-hover"
+                  }`;
+                const countCls = (on: boolean) =>
+                  `shrink-0 text-xs tabular-nums ${on ? "text-l2" : "text-l4"}`;
+                const sectionCls = "mx-3 mb-0.5 mt-3 text-micro text-l4";
+                const scratchCount = regularVisible.filter(
+                  (s) => isScratchCwd(s.projectPath, IS_WINDOWS) && s.workspace == null,
+                ).length;
+                const dirs = scopeDirRows(projectGroups, projectNames, homeDir, IS_WINDOWS);
+                const dirRow = (row: { path: string; label: string; count: number }) => {
+                  const on = filterActive({ kind: "projectPath", path: row.path });
+                  return (
                     <button
-                      onClick={() => {
-                        setExpandedAgent(open ? null : g.agent);
-                      }}
-                      aria-expanded={open}
-                      title="展开或收起这个 Agent 的项目"
-                      className={`mx-1 flex h-7 w-[calc(100%-8px)] items-center gap-1.5 rounded-md px-2 text-left text-xs ${
-                        active
-                          ? "bg-rail-sel text-l1"
-                          : "text-l3 hover:bg-hover"
-                      }`}
+                      key={pathKey(row.path, IS_WINDOWS)}
+                      type="button"
+                      onClick={() => pickScope({ kind: "projectPath", path: row.path })}
+                      title={row.path}
+                      className={rowCls(on)}
                     >
-                      <FoldMark open={open} />
-                      <span className="min-w-0 flex-1 truncate">
-                        {agentLabel(g.agent)}
-                      </span>
-                      <span
-                        className={`shrink-0 text-xs opacity-70 ${active ? "text-l2" : "text-l4"}`}
-                      >
-                        {g.list.length}
+                      <span className="truncate">{row.label}</span>
+                      <span className={countCls(on)}>{row.count}</span>
+                    </button>
+                  );
+                };
+                return (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => pickScope({ kind: "all" })}
+                      className={rowCls(filterActive({ kind: "all" }))}
+                    >
+                      <span className="truncate">全部对话</span>
+                      <span className={countCls(filterActive({ kind: "all" }))}>
+                        {regularVisible.length}
                       </span>
                     </button>
-                    {open && (
-                      <div className="mx-1 mb-0.5 ml-4 border-l border-white/5 pl-1.5">
-                        <button
-                          onClick={() => {
-                            pickScope({ kind: "agent", agent: g.agent });
-                          }}
-                          className={`flex h-7 w-full items-center justify-between gap-2 rounded-md px-2 text-left text-xs ${
-                            filterActive({ kind: "agent", agent: g.agent })
-                              ? "bg-rail-sel text-l1"
-                              : "text-l3 hover:bg-hover"
-                          }`}
-                        >
-                          <span className="truncate">全部项目</span>
-                          <span
-                            className={`shrink-0 text-xs opacity-70 ${filterActive({ kind: "agent", agent: g.agent }) ? "text-l2" : "text-l4"}`}
-                          >
-                            {g.list.length}
-                          </span>
-                        </button>
-                        {g.projects.map((p) => {
-                          const pActive = filterActive({
-                            kind: "project",
-                            agent: g.agent,
-                            path: p.path,
-                          });
-                          return (
-                            <button
-                              key={p.path}
-                              onClick={() => {
-                                pickScope({
-                                  kind: "project",
-                                  agent: g.agent,
-                                  path: p.path,
-                                });
-                              }}
-                              onContextMenu={(e) => {
-                                e.preventDefault();
-                                // count 与列表所见口径一致（排除 internal、跟随归档开关）；
-                                // 后端按 agent+path 全删，口径外数量单独透出给确认文案
-                                const all = sessions.filter(
-                                  (session) =>
-                                    session.agent === g.agent &&
-                                    session.projectPath === p.path,
-                                );
-                                const visible = all.filter(
-                                  (session) =>
-                                    !session.internal &&
-                                    (showArchived || !session.archived),
-                                );
-                                setMenu({
-                                  x: e.clientX,
-                                  y: e.clientY,
-                                  kind: "project",
-                                  agent: g.agent,
-                                  path: p.path,
-                                  count: visible.length,
-                                  extra: all.length - visible.length,
-                                });
-                              }}
-                              title={p.path}
-                              className={`flex h-7 w-full items-center justify-between gap-2 rounded-md px-2 text-left text-xs ${
-                                pActive
-                                  ? "bg-rail-sel text-l1"
-                                  : "text-l3 hover:bg-hover"
-                              }`}
-                            >
-                              <span className="truncate">
-                                {basename(p.path)}
-                              </span>
-                              <span
-                                className={`shrink-0 text-xs opacity-70 ${pActive ? "text-l2" : "text-l4"}`}
-                              >
-                                {p.list.length}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
+                    {scratchCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => pickScope({ kind: "scratch" })}
+                        title="不属于任何项目的对话（新对话默认放在 ~/ccode/scratch）"
+                        className={rowCls(filterActive({ kind: "scratch" }))}
+                      >
+                        <span className="truncate">随手聊</span>
+                        <span className={countCls(filterActive({ kind: "scratch" }))}>
+                          {scratchCount}
+                        </span>
+                      </button>
                     )}
-                  </div>
-                );
-              })}
-              {projectGroups.length > 0 && (
-                <>
-                  <div className="mx-2 my-1 border-t border-hairline" />
-                  <button
-                    type="button"
-                    onClick={() => setProjectsOpen((v) => !v)}
-                    aria-expanded={projectsOpen}
-                    title="按项目筛选（不限 Agent）"
-                    className="mx-1 flex h-7 w-[calc(100%-8px)] items-center gap-1.5 rounded-md px-2 text-left text-xs text-l3 hover:bg-hover"
-                  >
-                    <FoldMark open={projectsOpen} />
-                    <span className="min-w-0 flex-1 truncate">按项目</span>
-                    <span className="shrink-0 text-xs text-l4 opacity-70">
-                      {projectGroups.length}
-                    </span>
-                  </button>
-                  {projectsOpen && (
-                    <div className="mx-1 mb-0.5 ml-4 border-l border-hairline pl-1.5">
-                      {projectGroups.map((p) => {
-                        const pActive = filterActive({
-                          kind: "projectPath",
-                          path: p.path,
-                        });
-                        return (
-                          <button
-                            key={pathKey(p.path, IS_WINDOWS)}
-                            type="button"
-                            onClick={() =>
-                              pickScope({ kind: "projectPath", path: p.path })
-                            }
-                            title={p.path}
-                            className={`flex h-7 w-full items-center justify-between gap-2 rounded-md px-2 text-left text-xs ${
-                              pActive
-                                ? "bg-rail-sel text-l1"
-                                : "text-l3 hover:bg-hover"
+
+                    {dirs.projects.length > 0 && (
+                      <>
+                        <div className={sectionCls}>项目</div>
+                        {dirs.projects.map(dirRow)}
+                      </>
+                    )}
+                    {dirs.others.length > 0 && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setProjectsOpen((v) => !v)}
+                          aria-expanded={projectsOpen}
+                          title="没添加到 Mesa 的目录：主目录、临时目录、外部仓库"
+                          className="mx-1 mt-0.5 flex h-7 w-[calc(100%-8px)] items-center gap-1.5 rounded-md px-2 text-left text-xs text-l3 hover:bg-hover"
+                        >
+                          <FoldMark open={projectsOpen} />
+                          <span className="min-w-0 flex-1 truncate">其他目录</span>
+                          <span className="shrink-0 text-micro text-l4">{dirs.others.length} 个</span>
+                        </button>
+                        {projectsOpen && (
+                          <div className="ml-4 border-l border-hairline pl-1">
+                            {dirs.others.map(dirRow)}
+                          </div>
+                        )}
+                      </>
+                    )}
+
+                    {tree.length > 0 && <div className={sectionCls}>Agent</div>}
+                    {tree.map((g) => {
+                      const on = filterActive({ kind: "agent", agent: g.agent });
+                      // 该 agent 下某个项目是当前筛选：行上弱提示，不抢「选中」填充
+                      const childOn = filter.kind === "project" && filter.agent === g.agent;
+                      const open = expandedGroup?.agent === g.agent;
+                      return (
+                        <div key={g.agent}>
+                          <div
+                            className={`mx-1 flex h-7 w-[calc(100%-8px)] items-center rounded-md text-xs ${
+                              on ? "bg-rail-sel text-l1" : "text-l2 hover:bg-hover"
                             }`}
                           >
-                            <span className="truncate">{basename(p.path)}</span>
-                            <span
-                              className={`shrink-0 text-xs opacity-70 ${pActive ? "text-l2" : "text-l4"}`}
+                            {/* 展开钮单独一格：点名字就是筛这家（原先点名字只展开，还要再点一层「全部项目」） */}
+                            <button
+                              type="button"
+                              onClick={() => setExpandedAgent(open ? null : g.agent)}
+                              aria-expanded={open}
+                              aria-label={open ? `收起 ${agentLabel(g.agent)} 的项目` : `展开 ${agentLabel(g.agent)} 的项目`}
+                              title="按项目细分"
+                              className="flex h-7 w-6 shrink-0 items-center justify-center rounded-md text-l4 hover:text-l1"
                             >
-                              {p.list.length}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </>
-              )}
+                              <FoldMark open={open} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => pickScope({ kind: "agent", agent: g.agent })}
+                              className="flex h-7 min-w-0 flex-1 items-center justify-between gap-2 pr-2 text-left"
+                            >
+                              <span className={`truncate ${childOn ? "text-l1" : ""}`}>
+                                {agentLabel(g.agent)}
+                              </span>
+                              <span className={countCls(on)}>{g.list.length}</span>
+                            </button>
+                          </div>
+                          {open && (
+                            <div className="mb-0.5 ml-6 border-l border-hairline pl-1">
+                              {g.projects.map((p) => {
+                                const pActive = filterActive({
+                                  kind: "project",
+                                  agent: g.agent,
+                                  path: p.path,
+                                });
+                                return (
+                                  <button
+                                    key={p.path}
+                                    type="button"
+                                    onClick={() => {
+                                      pickScope({
+                                        kind: "project",
+                                        agent: g.agent,
+                                        path: p.path,
+                                      });
+                                    }}
+                                    onContextMenu={(e) => {
+                                      e.preventDefault();
+                                      // count 与列表所见口径一致（排除 internal、跟随归档开关）；
+                                      // 后端按 agent+path 全删，口径外数量单独透出给确认文案
+                                      const all = sessions.filter(
+                                        (session) =>
+                                          session.agent === g.agent &&
+                                          session.projectPath === p.path,
+                                      );
+                                      const visible = all.filter(
+                                        (session) =>
+                                          !session.internal &&
+                                          (showArchived || !session.archived),
+                                      );
+                                      setMenu({
+                                        x: e.clientX,
+                                        y: e.clientY,
+                                        kind: "project",
+                                        agent: g.agent,
+                                        path: p.path,
+                                        count: visible.length,
+                                        extra: all.length - visible.length,
+                                      });
+                                    }}
+                                    title={`${p.path}\n右键可删除这家 Agent 在此目录的对话`}
+                                    className={rowCls(pActive)}
+                                  >
+                                    <span className="truncate">
+                                      {sessionProjectLabel(p.path, projectNames, IS_WINDOWS) ??
+                                        basename(p.path)}
+                                    </span>
+                                    <span className={countCls(pActive)}>{p.list.length}</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    {internalVisible.length > 0 && (
+                      <>
+                        <div className={sectionCls}>其他</div>
+                        <button
+                          type="button"
+                          onClick={() => pickScope({ kind: "internal" })}
+                          title="Mesa 自己调用 AI 生成提交信息、摘要、雷达解读等产生的后台对话，默认不在列表里。超过保留期（默认 30 天）的会自动清理，在 设置 → 数据与存储 里改"
+                          className={rowCls(filterActive({ kind: "internal" }))}
+                        >
+                          <span className="truncate">Mesa 内部 AI</span>
+                          <span className={countCls(filterActive({ kind: "internal" }))}>
+                            {internalVisible.length}
+                          </span>
+                        </button>
+                      </>
+                    )}
+                  </>
+                );
+              })()}
               {tree.length === 0 && (
                 <EmptyState
                   title="还没有对话"
@@ -2022,13 +2000,21 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                           !liveSessions[sessionRuntimeKey(s.agent, s.sessionId)]
                         }
                         title={
-                          liveSessions[sessionRuntimeKey(s.agent, s.sessionId)]
-                            ? "正在终端中进行，点击跳转"
-                            : "CLI 仍在外部终端中运行"
+                          waitingTabs.has(liveSessions[sessionRuntimeKey(s.agent, s.sessionId)] ?? "")
+                            ? "在等你确认（批准一个操作或选一项），点击跳到终端"
+                            : liveSessions[sessionRuntimeKey(s.agent, s.sessionId)]
+                              ? "正在终端中进行，点击跳转"
+                              : "CLI 仍在外部终端中运行"
                         }
-                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm disabled:cursor-default"
+                        className="-ml-1 flex h-6 w-4 shrink-0 items-center justify-center rounded-sm disabled:cursor-default"
                       >
-                        <span className="size-2 rounded-full bg-ok-text" />
+                        <span
+                          className={`size-2 rounded-full ${
+                            waitingTabs.has(liveSessions[sessionRuntimeKey(s.agent, s.sessionId)] ?? "")
+                              ? "bg-warn-text"
+                              : "bg-ok-text"
+                          }`}
+                        />
                       </button>
                     )}
                     {s.pinned && (
@@ -2142,6 +2128,16 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                     >
                       {agentLabel(s.agent)}
                     </span>
+                    {/* 哪个项目：范围已限定到单个项目时不写（同一事实不重复）；
+                        原先 meta 行常常只剩一枚 agent 胶囊，第二行几乎是空的 */}
+                    {!projectScoped && (() => {
+                      const label = sessionProjectLabel(s.projectPath, projectNames, IS_WINDOWS);
+                      return label ? (
+                        <span className="max-w-32 shrink-0 truncate text-l3" title={s.projectPath}>
+                          {label}
+                        </span>
+                      ) : null;
+                    })()}
                     {s.workspace && (
                       // 反向跳转（v3.88）：这个 badge 以前只能看不能点——会话与项目/步骤的
                       // 四条关联全是单向的。点它回工作区页并选中该项目
@@ -2230,7 +2226,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                 detail={
                   q || filter.kind !== "all"
                     ? "换个词试试。多个词用空格分开，会按相关程度和时间排。也可以搜对话里说过的话。"
-                    : "去终端页跑几个 agent 会话，回来就能在这里翻记录。"
+                    : "开一段新对话聊几句，回来就能在这里翻记录。"
                 }
                 action={
                   q || filter.kind !== "all" ? (
@@ -2247,10 +2243,10 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                   ) : (
                     <button
                       type="button"
-                      onClick={() => setPage("terminal")}
+                      onClick={() => void openQuickChat()}
                       className={rowActionClass}
                     >
-                      去终端快速开聊
+                      新对话
                     </button>
                   )
                 }
@@ -2264,133 +2260,182 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
       <div className="flex min-w-0 flex-1 flex-col bg-canvas">
         {selected ? (
           <div className="flex min-h-0 flex-1 flex-col">
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 bg-strip px-4 py-2">
-              <button
-                type="button"
-                className="flex h-7 items-center rounded-md px-2 text-xs text-l3 hover:bg-hover hover:text-l1 md:hidden"
-                onClick={() => setMobileRailOpen(true)}
-                aria-label="打开会话列表"
-              >
-                ☰ 列表
-              </button>
-              <span className="truncate text-sm font-medium text-l1">
-                {sessionTitle(selected)}
-              </span>
-              {selected.live && (
-                <span
-                  className="flex shrink-0 items-center gap-1 rounded-sm bg-inset px-1.5 py-0.5 text-xs text-l2"
-                  title="该对话的 CLI 进程仍在运行（外部探测）"
+            {/* 回放头部两行：上行「这是哪条对话 + 能做什么」，下行「谁、在哪个项目、多久前」+ 页签。
+                原先一行 flex-wrap，页签被挤到第二行最左、agent 名在头部和底栏各写一遍 */}
+            <div className="bg-strip px-4 pb-1.5 pt-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <button
+                  type="button"
+                  className="flex h-7 shrink-0 items-center rounded-md px-2 text-xs text-l3 hover:bg-hover hover:text-l1 md:hidden"
+                  onClick={() => setMobileRailOpen(true)}
+                  aria-label="打开会话列表"
                 >
-                  <span className="size-2 rounded-full bg-ok-text" />
-                  进行中
+                  ☰ 列表
+                </button>
+                <span
+                  className="min-w-0 truncate text-sm font-medium text-l1"
+                  title={sessionTitle(selected)}
+                >
+                  {sessionTitle(selected)}
                 </span>
-              )}
-              {selected.agent === "codex" &&
-                (() => {
-                  const chip = codexSessionChannelChip(selected.provider);
-                  if (!chip) return null;
-                  return (
+                {waitingTabs.has(liveSessions[sessionRuntimeKey(selected.agent, selected.sessionId)] ?? "") ? (
+                  <button
+                    type="button"
+                    onClick={() => jumpToLive(selected)}
+                    className="flex shrink-0 items-center gap-1 rounded-sm bg-inset px-1.5 py-0.5 text-xs text-warn-text hover:bg-hover"
+                    title="终端里在等你确认（批准一个操作或选一项），点击跳过去"
+                  >
+                    <span className="size-2 rounded-full bg-warn-text" />
+                    等你确认
+                  </button>
+                ) : (
+                  selected.live && (
                     <span
-                      className="shrink-0 rounded-sm bg-inset px-1.5 py-0.5 text-xs text-l2"
-                      title={chip.tip}
+                      className="flex shrink-0 items-center gap-1 rounded-sm bg-inset px-1.5 py-0.5 text-xs text-l2"
+                      title="该对话的 CLI 进程仍在运行（外部探测）"
                     >
-                      {chip.label}
+                      <span className="size-2 rounded-full bg-ok-text" />
+                      进行中
+                    </span>
+                  )
+                )}
+                <span className="ml-auto flex shrink-0 items-center">
+                  <button
+                    onClick={() => resumeInTerminal(selected)}
+                    disabled={!selected.alive && !selected.pinned}
+                    className="inline-flex h-7 items-center justify-center rounded-md bg-cta px-2.5 text-xs text-cta-text hover:brightness-110 disabled:opacity-50"
+                  >
+                    继续
+                  </button>
+                  <button
+                    onClick={() => setDigestFor(selected)}
+                    disabled={!selected.alive && !selected.pinned}
+                    className="ml-1 inline-flex h-7 items-center justify-center rounded-md px-2 text-xs text-l2 hover:bg-hover disabled:opacity-50"
+                    title="提炼成紧凑简报，供新会话继续"
+                  >
+                    ◈ 提炼简报
+                  </button>
+                  <button
+                    onClick={() => void onExport()}
+                    disabled={exporting || (!selected.alive && !selected.pinned)}
+                    className="ml-1 inline-flex h-7 items-center justify-center rounded-md px-2 text-xs text-l2 hover:bg-hover disabled:opacity-50"
+                  >
+                    {exporting ? "导出中…" : "导出"}
+                  </button>
+                  {exportPath && (
+                    <button
+                      type="button"
+                      onClick={() => void openExported()}
+                      className="ml-1 inline-flex h-7 items-center justify-center rounded-md px-2 text-xs text-l2 hover:bg-hover"
+                      title={exportPath}
+                    >
+                      打开
+                    </button>
+                  )}
+                  <button
+                    onClick={(e) => {
+                      const r = e.currentTarget.getBoundingClientRect();
+                      setResumeMenu({ x: r.right - 176, y: r.bottom + 4 });
+                    }}
+                    title="更多对话操作"
+                    className="ml-1 inline-flex h-7 w-7 items-center justify-center rounded-md text-xs text-l4 hover:bg-hover hover:text-l1"
+                  >
+                    ⋯
+                  </button>
+                </span>
+              </div>
+              <div className="mt-1 flex min-w-0 items-center gap-2 text-micro text-l3">
+                <span
+                  className="shrink-0 rounded-full px-1.5 py-px font-medium"
+                  style={agentBrandBadgeStyle(selected.agent)}
+                >
+                  {agentLabel(selected.agent)}
+                </span>
+                {(() => {
+                  const label = sessionProjectLabel(selected.projectPath, projectNames, IS_WINDOWS);
+                  if (!label) return null;
+                  // 已添加项目可点回项目页（原底栏「查看项目」挪到这里，就近于项目名）
+                  return registeredProjectPaths.has(selected.projectPath) ? (
+                    <button
+                      type="button"
+                      className="max-w-40 shrink-0 truncate rounded-sm hover:text-l1 hover:underline"
+                      title={`${selected.projectPath}\n点击回项目页`}
+                      onClick={() => {
+                        setSelectProjectReq(selected.projectPath);
+                        setPage("workspaces");
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ) : (
+                    <span className="max-w-40 shrink-0 truncate" title={selected.projectPath}>
+                      {label}
                     </span>
                   );
                 })()}
-              {selected.workspace && (
+                {selected.agent === "codex" &&
+                  (() => {
+                    const chip = codexSessionChannelChip(selected.provider);
+                    if (!chip) return null;
+                    return (
+                      <span
+                        className="shrink-0 rounded-sm bg-inset px-1.5 py-px text-l2"
+                        title={chip.tip}
+                      >
+                        {chip.label}
+                      </span>
+                    );
+                  })()}
+                {selected.workspace && (
+                  <span
+                    className="max-w-40 shrink-0 truncate rounded-sm bg-inset px-1.5 py-px text-l2"
+                    title={
+                      selected.stepName
+                        ? `研究步骤：${selected.stepName}（工作区：${selected.workspace}）`
+                        : `工作区：${selected.workspace}`
+                    }
+                  >
+                    ⎇ {selected.stepName ?? selected.workspace}
+                  </span>
+                )}
+                {selected.handoffFromAgent && (
+                  <span
+                    className="shrink-0 rounded-sm bg-inset px-1.5 py-px text-l2"
+                    title={`该对话由 ${agentLabel(selected.handoffFromAgent)} 会话接力生成（简报接力，非记忆转移）`}
+                  >
+                    ⇄ 接自 {agentLabel(selected.handoffFromAgent)}
+                  </span>
+                )}
                 <span
-                  className="shrink-0 rounded-sm bg-inset px-1.5 py-0.5 text-xs text-l2"
+                  className="min-w-0 truncate text-l4"
                   title={
-                    selected.stepName
-                      ? `研究步骤：${selected.stepName}（工作区：${selected.workspace}）`
-                      : `工作区：${selected.workspace}`
+                    selected.tokenUsage
+                      ? `${absTime(selected.updatedAt)} · ${fmtTokens(selected.tokenUsage)}`
+                      : absTime(selected.updatedAt)
                   }
                 >
-                  ⎇ {selected.stepName ?? selected.workspace}
+                  {relTime(selected.updatedAt)}
                 </span>
-              )}
-              {selected.handoffFromAgent && (
-                <span
-                  className="shrink-0 rounded-sm bg-inset px-1.5 py-0.5 text-xs text-l2"
-                  title={`该对话由 ${agentLabel(selected.handoffFromAgent)} 会话接力生成（简报接力，非记忆转移）`}
-                >
-                  ⇄ 接自 {agentLabel(selected.handoffFromAgent)}
-                </span>
-              )}
-              <span
-                className="shrink-0 text-xs text-l3"
-                title={
-                  selected.tokenUsage
-                    ? `${absTime(selected.updatedAt)} · ${fmtTokens(selected.tokenUsage)}`
-                    : absTime(selected.updatedAt)
-                }
-              >
-                {agentLabel(selected.agent)} · {relTime(selected.updatedAt)}
-              </span>
-              <span className="ml-auto flex shrink-0 items-center">
-                <button
-                  onClick={() => resumeInTerminal(selected)}
-                  disabled={!selected.alive && !selected.pinned}
-                  className="inline-flex h-7 items-center justify-center rounded-md bg-cta px-2.5 text-xs text-cta-text hover:brightness-110 disabled:opacity-50"
-                >
-                  继续
-                </button>
-                <button
-                  onClick={() => setDigestFor(selected)}
-                  disabled={!selected.alive && !selected.pinned}
-                  className="ml-1 inline-flex h-7 items-center justify-center rounded-md px-2 text-xs text-l2 hover:bg-hover disabled:opacity-50"
-                  title="提炼成紧凑简报，供新会话继续"
-                >
-                  ◈ 提炼简报
-                </button>
-                <button
-                  onClick={() => void onExport()}
-                  disabled={exporting || (!selected.alive && !selected.pinned)}
-                  className="ml-1 inline-flex h-7 items-center justify-center rounded-md px-2 text-xs text-l2 hover:bg-hover disabled:opacity-50"
-                >
-                  {exporting ? "导出中…" : "导出"}
-                </button>
-                {exportPath && (
-                  <button
-                    type="button"
-                    onClick={() => void openExported()}
-                    className="ml-1 inline-flex h-7 items-center justify-center rounded-md px-2 text-xs text-l2 hover:bg-hover"
-                    title={exportPath}
-                  >
-                    打开
-                  </button>
-                )}
-                <button
-                  onClick={(e) => {
-                    const r = e.currentTarget.getBoundingClientRect();
-                    setResumeMenu({ x: r.right - 176, y: r.bottom + 4 });
-                  }}
-                  title="更多对话操作"
-                  className="ml-1 inline-flex h-7 w-7 items-center justify-center rounded-md text-xs text-l4 hover:bg-hover hover:text-l1"
-                >
-                  ⋯
-                </button>
-              </span>
-              {/* 对话 / 当前项目改动 页签 */}
-              <div className="flex shrink-0 gap-1">
-                {(["chat", "diff"] as const).map((k) => (
-                  <button
-                    key={k}
-                    onClick={() => setReplayTab(k)}
-                    className={`inline-flex h-7 items-center justify-center rounded-md px-2.5 text-xs ${
-                      replayTab === k
-                        ? "bg-seg-sel text-l1"
-                        : "text-l3 hover:text-l1"
-                    }`}
-                  >
-                    {k === "chat" ? "对话" : "当前项目改动"}
-                  </button>
-                ))}
+                {/* 对话 / 当前项目改动 页签：固定在第二行右端 */}
+                <div className="ml-auto flex shrink-0 gap-1">
+                  {(["chat", "diff"] as const).map((k) => (
+                    <button
+                      key={k}
+                      onClick={() => setReplayTab(k)}
+                      className={`inline-flex h-6 items-center justify-center rounded-md px-2 text-xs ${
+                        replayTab === k
+                          ? "bg-seg-sel text-l1"
+                          : "text-l3 hover:text-l1"
+                      }`}
+                    >
+                      {k === "chat" ? "对话" : "当前项目改动"}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
             {error && (
-              <p className="px-4 py-1 text-xs text-err-text">{error}</p>
+              <InlineNotice tone="err" className="px-4 py-1">{error}</InlineNotice>
             )}
             {replayTab === "diff" ? (
               <div className="flex min-h-0 flex-1 flex-col">
@@ -2471,53 +2516,32 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                     )}
                   </div>
                 </div>
-                {/* 底部只读操作条：继续由头部主 CTA 负责，底部只保留外部路径和项目跳转。 */}
+                {/* 底部只读操作条：继续由头部主 CTA 负责；项目跳转与 agent 已在头部第二行，这里只留外部续聊 */}
                 <div className="shrink-0 px-4 pb-2 pt-2.5">
                   <div className="mx-auto flex max-w-3xl flex-wrap items-center gap-2 rounded-xl bg-inset px-3 py-2">
                     <span className="min-w-0 flex-1 truncate text-xs text-l4">
-                      历史回放只读 · 需要继续时使用上方「继续」
+                      历史回放 · 只读
                     </span>
                     <button
                       type="button"
                       onClick={() => void resumeExternal(selected)}
                       disabled={!selected.alive && !selected.pinned}
+                      title={EXTERNAL_RESUME_HINT}
                       className={ghostActionClass}
                     >
                       在外部继续
                     </button>
-                    {selected.agent === "codex" && (IS_MAC || IS_WINDOWS) && (
+                    {clientOpen.sessionClients(selected.agent).map((c) => (
                       <button
+                        key={c.clientId}
                         type="button"
-                        onClick={() => void openInClient(selected)}
-                        disabled={!clientOpenable(selected)}
-                        title={
-                          clientOpenable(selected)
-                            ? "唤起 Codex 桌面客户端直接打开这条对话，可接着聊"
-                            : `这条会话记录的渠道「${selected.provider}」在客户端 config.toml 里没有定义，客户端打开会报「Model provider not found」。想在客户端续聊：到连接页对这条 Codex 连接用「注册到客户端」（写入 config.toml 的渠道定义）；用上方「继续」则是在 Mesa 终端里续聊——启动时临时注入渠道定义，不改客户端配置`
-                        }
+                        onClick={() => openInClient(selected, c.clientId)}
+                        title={`交给 ${c.display} 接着聊。打开前会先检查渠道等是否对得上，需要时在弹层里一并处理`}
                         className={ghostActionClass}
                       >
-                        在客户端打开
+                        {openButtonLabel(c, "session")}
                       </button>
-                    )}
-                    {registeredProjectPaths.has(selected.projectPath) && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectProjectReq(selected.projectPath);
-                          setPage("workspaces");
-                        }}
-                        className={ghostActionClass}
-                      >
-                        查看项目
-                      </button>
-                    )}
-                    <span
-                      className="shrink-0 rounded-full px-2.5 py-0.5 text-micro font-medium"
-                      style={agentBrandBadgeStyle(selected.agent)}
-                    >
-                      {agentLabel(selected.agent)}
-                    </span>
+                    ))}
                   </div>
                   <p className="mt-1.5 text-center text-micro text-l4">
                     内容由 AI 生成，请核对后使用
@@ -2536,101 +2560,76 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
         )}
       </div>
 
-      {/* 回放头部更多操作：固定遮罩 + 按钮下方浮层 */}
-      {resumeMenu && selected && (
-        <div className="fixed inset-0 z-20" onClick={() => setResumeMenu(null)}>
-          <div
-            className="absolute w-44 rounded-sm border border-field ccode-float-surface py-1 text-sm"
-            style={{ left: resumeMenu.x, top: resumeMenu.y }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              className={`${menuItem} disabled:opacity-50`}
-              disabled={!selected.alive && !selected.pinned}
-              onClick={() => {
-                setResumeMenu(null);
-                void resumeExternal(selected);
-              }}
-            >
-              ⇗ 在外部终端恢复
-            </button>
-            <button
-              className={`${menuItem} disabled:opacity-50`}
-              disabled={!selected.alive && !selected.pinned}
-              title={COPY_RESUME_HINT}
-              onClick={() => {
-                setResumeMenu(null);
-                void copyResumeCommand(selected);
-              }}
-            >
-              {copiedId ===
-              sessionRuntimeKey(selected.agent, selected.sessionId)
-                ? COPY_RESUME_DONE
-                : COPY_RESUME_LABEL}
-            </button>
-            <button
-              className={`${menuItem} disabled:opacity-50`}
-              disabled={aiSummarizing || (!selected.alive && !selected.pinned)}
-              onClick={() => {
-                setResumeMenu(null);
-                void onSummarize();
-              }}
-            >
-              {aiSummarizing ? "◈ 摘要中…" : "◈ 生成摘要"}
-            </button>
-            <button
-              className={`${menuItem} disabled:opacity-50`}
-              disabled={!selected.alive && !selected.pinned}
-              onClick={() => {
-                setResumeMenu(null);
-                setHandoffFor(selected);
-              }}
-            >
-              ◈ 接力到…
-            </button>
-            <button
-              className={`${menuItem} disabled:opacity-50`}
-              disabled={!selected.alive && !selected.pinned}
-              title="AI 提炼全会话成紧凑简报，新会话读简报续作（不带旧上下文）"
-              onClick={() => {
-                setResumeMenu(null);
-                setDigestFor(selected);
-              }}
-            >
-              ◈ 提炼接力…
-            </button>
-            <button
-              className={`${menuItem} disabled:opacity-50`}
-              disabled={exporting || (!selected.alive && !selected.pinned)}
-              onClick={() => {
-                setResumeMenu(null);
-                void onExport();
-              }}
-            >
-              {exporting ? "导出中…" : "导出 Markdown"}
-            </button>
-            <button
-              className={`${menuItem} disabled:opacity-50`}
-              disabled={exportingPack || (!selected.alive && !selected.pinned)}
-              onClick={() => {
-                setResumeMenu(null);
-                void onExportPack([selected]);
-              }}
-            >
-              {exportingPack ? "导出中…" : "导出会话包"}
-            </button>
-            <button
-              className={menuItem}
-              onClick={() => {
-                setResumeMenu(null);
-                void togglePin(selected);
-              }}
-            >
-              {selected.pinned ? "取消保留" : "⚑ 保留"}
-            </button>
-          </div>
-        </div>
-      )}
+      {/* 回放头部更多操作：分三组——继续（外部恢复/复制命令）、AI（摘要/接力/提炼）、整理（导出/保留） */}
+      {resumeMenu && selected && (() => {
+        const readable = selected.alive || selected.pinned;
+        return (
+          <ContextMenu
+            x={resumeMenu.x}
+            y={resumeMenu.y}
+            onClose={() => setResumeMenu(null)}
+            items={[
+              {
+                label: "在外部终端恢复",
+                icon: SquareArrowOutUpRight,
+                disabled: !readable,
+                title: EXTERNAL_RESUME_HINT,
+                onSelect: () => void resumeExternal(selected),
+              },
+              {
+                label: COPY_RESUME_LABEL,
+                icon: Copy,
+                disabled: !readable,
+                title: COPY_RESUME_HINT,
+                onSelect: () => void copyResumeCommand(selected),
+              },
+              { separator: true },
+              {
+                label: aiSummarizing ? "摘要中…" : "生成摘要",
+                icon: WandSparkles,
+                hint: "AI",
+                disabled: aiSummarizing || !readable,
+                onSelect: () => void onSummarize(),
+              },
+              {
+                label: "接力到…",
+                icon: Forward,
+                hint: "AI",
+                disabled: !readable,
+                title: "把这段对话交给另一个 Agent 接着做",
+                onSelect: () => setHandoffFor(selected),
+              },
+              {
+                label: "提炼接力…",
+                icon: ScrollText,
+                hint: "AI",
+                disabled: !readable,
+                title: "AI 提炼全会话成紧凑简报，新会话读简报续作（不带旧上下文）",
+                onSelect: () => setDigestFor(selected),
+              },
+              { separator: true },
+              {
+                label: exporting ? "导出中…" : "导出 Markdown",
+                icon: FileText,
+                disabled: exporting || !readable,
+                onSelect: () => void onExport(),
+              },
+              {
+                label: exportingPack ? "导出中…" : "导出会话包",
+                icon: Package,
+                disabled: exportingPack || !readable,
+                onSelect: () => void onExportPack([selected]),
+              },
+              {
+                label: selected.pinned ? "取消保留" : "保留",
+                icon: selected.pinned ? PinOff : Pin,
+                title: "保留＝即使 CLI 清掉源文件，这条对话也留快照可读",
+                onSelect: () => void togglePin(selected),
+              },
+            ]}
+          />
+        );
+      })()}
 
       {/* 「◈ 接力到…」目标选择器 */}
       {handoffFor && (
@@ -2646,6 +2645,8 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
         />
       )}
 
+      {clientOpen.dialog}
+
       {/* 「◈ 提炼接力…」目标选择器（AI 蒸馏简报，三路径续作） */}
       {digestFor && (
         <DigestPicker
@@ -2660,211 +2661,158 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
         />
       )}
 
-      {/* 右键菜单：fixed 遮罩 + 光标处浮层 */}
+      {/* 右键菜单：会话 = 整理 / 继续 / 删除三组（v3.88 分组口径不变，改走共用菜单）；项目 = 删除全部 */}
       {menu && (
-        <div
-          className="fixed inset-0 z-20"
-          onClick={() => setMenu(null)}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            setMenu(null);
-          }}
-        >
-          <div
-            className="absolute min-w-36 rounded-sm border border-field ccode-float-surface py-1 text-sm"
-            style={{ left: menu.x, top: menu.y }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {menu.kind === "session" ? (
-              <>
-                {/* 11 项平铺 → 三组（v3.88，用户点名「一堆可选操作」）：
-                    整理（改这条对话的元数据）/ 继续（把它接着往下做）/ 危险。
-                    「保留」「在终端恢复」两个高频项已提到行内 hover，菜单里保留同项以便右键直达 */}
-                <div className={menuGroupLabel}>整理</div>
-                <button
-                  className={menuItem}
-                  onClick={() => {
-                    setMenu(null);
-                    void togglePin(menu.session);
-                  }}
-                >
-                  {menu.session.pinned ? "取消保留" : "保留"}
-                </button>
-                <button
-                  className={menuItem}
-                  onClick={() => {
-                    setMenu(null);
-                    void toggleArchive(menu.session);
-                  }}
-                >
-                  {menu.session.archived ? "取消归档" : "归档"}
-                </button>
-                <button
-                  className={menuItem}
-                  onClick={() => {
-                    setMenu(null);
-                    // 编辑表单在列表栏，先退出回放态
-                    setSelected(null);
-                    setEditing({
-                      agent: menu.session.agent,
-                      sessionId: menu.session.sessionId,
-                      title: menu.session.customTitle ?? "",
-                      tags: menu.session.tags.join(", "),
-                    });
-                  }}
-                >
-                  编辑
-                </button>
-                <button
-                  className={`${menuItem} disabled:opacity-50`}
-                  disabled={exportingPack || (!menu.session.alive && !menu.session.pinned)}
-                  onClick={() => {
-                    setMenu(null);
-                    void onExportPack([menu.session]);
-                  }}
-                >
-                  导出会话包
-                </button>
-                {/* 移到卡片：仅项目筛选下可用（此时才知道 project_root）——属「整理」 */}
-                {projectScopePath(filter) != null && (
-                  <button
-                    className={menuItem}
-                    title="把该对话归入本项目的一张话题"
-                    onClick={() => {
-                      setMenu(null);
-                      setTaskPickerFor(menu.session);
-                    }}
-                  >
-                    移到卡片…
-                  </button>
-                )}
-                {(menu.session.alive || menu.session.pinned) && (
-                  <>
-                    <div className={menuGroupLabel}>继续</div>
-                    <button
-                      className={menuItem}
-                      onClick={() => {
-                        setMenu(null);
-                        resumeInTerminal(menu.session);
-                      }}
-                    >
-                      在终端恢复
-                    </button>
-                    <button
-                      className={menuItem}
-                      title="在外部终端应用里恢复（同一件事的另一个出口，下面是复制命令自己粘）"
-                      onClick={() => {
-                        setMenu(null);
-                        void resumeExternal(menu.session);
-                      }}
-                    >
-                      在外部继续 · 打开终端
-                    </button>
-                    <button
-                      className={menuItem}
-                      title={COPY_RESUME_HINT}
-                      onClick={() => {
-                        setMenu(null);
-                        void copyResumeCommand(menu.session);
-                      }}
-                    >
-                      {COPY_RESUME_MENU}
-                    </button>
-                    {clientOpenable(menu.session) && (
-                      <button
-                        className={menuItem}
-                        title="唤起 Codex 桌面客户端直接打开这条对话（客户端与 CLI 共享本地会话库，可接着聊）"
-                        onClick={() => {
-                          setMenu(null);
-                          void openInClient(menu.session);
-                        }}
-                      >
-                        在客户端打开 · Codex
-                      </button>
-                    )}
-                    <button
-                      className={menuItem}
-                      title="AI 提炼全会话成紧凑简报，新会话读简报续作（不带旧上下文）"
-                      onClick={() => {
-                        setMenu(null);
-                        setDigestFor(menu.session);
-                      }}
-                    >
-                      ◈ 提炼接力…
-                    </button>
-                  </>
-                )}
-                <div className={menuGroupLabel}>危险</div>
-                <button
-                  className={`${menuItem} text-err-text`}
-                  onClick={() => {
-                    setMenu(null);
-                    void deleteSession(menu.session);
-                  }}
-                >
-                  删除对话
-                </button>
-              </>
-            ) : (
-              <button
-                className={`${menuItem} text-err-text`}
-                onClick={() => {
-                  setMenu(null);
-                  void deleteProjectSessions(
-                    menu.agent,
-                    menu.path,
-                    menu.count,
-                    menu.extra,
-                  );
-                }}
-              >
-                删除该项目全部对话
-              </button>
-            )}
-          </div>
-        </div>
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          items={
+            menu.kind === "session"
+              ? (() => {
+                  const ss = menu.session;
+                  const items: ContextMenuItem[] = [
+                    { header: "整理" },
+                    {
+                      label: ss.pinned ? "取消保留" : "保留",
+                      icon: ss.pinned ? PinOff : Pin,
+                      onSelect: () => void togglePin(ss),
+                    },
+                    {
+                      label: ss.archived ? "取消归档" : "归档",
+                      icon: ss.archived ? ArchiveRestore : Archive,
+                      onSelect: () => void toggleArchive(ss),
+                    },
+                    {
+                      label: "编辑标题与标签",
+                      icon: Pencil,
+                      onSelect: () => {
+                        // 编辑表单在列表栏，先退出回放态
+                        setSelected(null);
+                        setEditing({
+                          agent: ss.agent,
+                          sessionId: ss.sessionId,
+                          title: ss.customTitle ?? "",
+                          tags: ss.tags.join(", "),
+                        });
+                      },
+                    },
+                    // 移到卡片：仅项目筛选下可用（此时才知道 project_root）
+                    ...(projectScopePath(filter) != null
+                      ? [
+                          {
+                            label: "移到卡片…",
+                            icon: SquareStack,
+                            title: "把该对话归入本项目的一张话题",
+                            onSelect: () => {
+                              setTaskPickerPos({ x: menu.x, y: menu.y });
+                              setTaskPickerFor(ss);
+                            },
+                          },
+                        ]
+                      : []),
+                    {
+                      label: "导出会话包",
+                      icon: Package,
+                      disabled: exportingPack || (!ss.alive && !ss.pinned),
+                      onSelect: () => void onExportPack([ss]),
+                    },
+                  ];
+                  if (ss.alive || ss.pinned) {
+                    items.push(
+                      { header: "继续" },
+                      {
+                        label: "在终端恢复",
+                        icon: SquareTerminal,
+                        onSelect: () => resumeInTerminal(ss),
+                      },
+                      {
+                        label: "在外部终端恢复",
+                        icon: SquareArrowOutUpRight,
+                        title: "在外部终端应用里恢复（同一件事的另一个出口，下面是复制命令自己粘）",
+                        onSelect: () => void resumeExternal(ss),
+                      },
+                      {
+                        label: COPY_RESUME_LABEL,
+                        icon: Copy,
+                        title: COPY_RESUME_HINT,
+                        onSelect: () => void copyResumeCommand(ss),
+                      },
+                      ...clientOpen.sessionClients(ss.agent).map((c) => ({
+                        label: openButtonLabel(c, "session"),
+                        icon: AppWindow,
+                        title: `交给 ${c.display} 接着聊`,
+                        onSelect: () => openInClient(ss, c.clientId),
+                      })),
+                      {
+                        label: "提炼接力…",
+                        icon: ScrollText,
+                        hint: "AI",
+                        title: "AI 提炼全会话成紧凑简报，新会话读简报续作（不带旧上下文）",
+                        onSelect: () => setDigestFor(ss),
+                      },
+                    );
+                  }
+                  items.push({
+                    label: "删除对话…",
+                    icon: Trash2,
+                    danger: true,
+                    onSelect: () => void deleteSession(ss),
+                  });
+                  return items;
+                })()
+              : [
+                  {
+                    label: `删除该项目全部对话…`,
+                    icon: Trash2,
+                    danger: true,
+                    title: `列表里 ${menu.count} 条${menu.extra ? `，另有 ${menu.extra} 条归档/内部对话一并删除` : ""}`,
+                    onSelect: () =>
+                      void deleteProjectSessions(
+                        menu.agent,
+                        menu.path,
+                        menu.count,
+                        menu.extra,
+                      ),
+                  },
+                ]
+          }
+        />
       )}
-      {/* 「移到卡片…」子面板：列出当前筛选项目的卡片；无卡片给置灰提示 */}
+      {/* 「移到卡片…」：就地弹在右键位置；当前卡片打勾，已在卡片里时末尾给「移出卡片」 */}
       {taskPickerFor && scopePath != null && (
-        <div
-          className="fixed inset-0 z-20"
-          onClick={() => setTaskPickerFor(null)}
-        >
-          <div
-            className="absolute left-1/2 top-1/4 w-72 -translate-x-1/2 rounded-sm border border-field ccode-float-surface py-1 text-sm"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <p className="px-3 pb-1 pt-1.5 text-xs text-l4">
-              移到卡片（{basename(scopePath)}）
-            </p>
-            {(taskCards[scopePath] ?? []).length === 0 ? (
-              <p className="px-3 py-1.5 text-sm text-l4">
-                该项目还没有话题，可在项目页新建。
-              </p>
-            ) : (
-              (taskCards[scopePath] ?? []).map((c) => (
-                <button
-                  key={c.id}
-                  className={`${menuItem} flex items-center justify-between gap-2`}
-                  onClick={() => void assignTask(taskPickerFor, c.id)}
-                >
-                  <span className="min-w-0 truncate">▤ {c.name}</span>
-                  {taskPickerFor.taskId === c.id && (
-                    <span className="shrink-0 text-xs text-l4">当前</span>
-                  )}
-                </button>
-              ))
-            )}
-            {taskPickerFor.taskId && (
-              <button
-                className={menuItem}
-                onClick={() => void assignTask(taskPickerFor, null)}
-              >
-                移出卡片
-              </button>
-            )}
-          </div>
-        </div>
+        <ContextMenu
+          x={taskPickerPos.x}
+          y={taskPickerPos.y}
+          onClose={() => setTaskPickerFor(null)}
+          items={[
+            { header: `移到卡片 · ${basename(scopePath)}` },
+            ...((taskCards[scopePath] ?? []).length === 0
+              ? [
+                  {
+                    label: "这个项目还没有话题",
+                    disabled: true,
+                    title: "可在项目页新建话题卡",
+                  },
+                ]
+              : (taskCards[scopePath] ?? []).map((c) => ({
+                  label: c.name,
+                  icon: SquareStack,
+                  checked: taskPickerFor.taskId === c.id,
+                  onSelect: () => void assignTask(taskPickerFor, c.id),
+                }))),
+            ...(taskPickerFor.taskId
+              ? [
+                  { separator: true },
+                  {
+                    label: "移出卡片",
+                    icon: X,
+                    onSelect: () => void assignTask(taskPickerFor, null),
+                  },
+                ]
+              : []),
+          ]}
+        />
       )}
       {importOpen && (
         <SessionImportModal

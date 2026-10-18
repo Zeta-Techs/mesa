@@ -1,28 +1,30 @@
 import { useEffect, useMemo, useState } from "react";
-import type { ReactNode } from "react";
+import type { FormEvent, ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import {
+  CheckCheck,
   ChevronRight,
   CircleDot,
+  ClipboardCheck,
   FolderOpen,
+  Inbox,
   MessageSquare,
   MessagesSquare,
+  Plus,
   SquareArrowOutUpRight,
 } from "lucide-react";
 import { useAppStore, runInboxAction, visibleInboxItems } from "../store";
+import { bulkReadableItems } from "../inbox";
 import { pathWithin, samePath } from "../path-utils";
 import { IS_WINDOWS } from "../hotkeys";
-import {
-  canOpenCodexClient,
-  codexNewThreadDeeplink,
-} from "../codex-client";
+import { useClientOpen } from "../components/ClientOpenDialog";
 import { absTime, relTime } from "../rel-time";
 import { alertDialog } from "../components/ConfirmDialog";
 import { AGENTS } from "../types";
 import type {
   CodingOverviewDto,
+  ConversationPageDto,
   ProjectConfigReadDto,
   ProjectDto,
   ProjectStepDto,
@@ -36,10 +38,15 @@ import { visibleDeclaredTasks } from "../project-tasks";
 import {
   continueWorkbenchTarget,
   firstOpenStepName,
+  goalCaptureTargets,
   heroStatusLine,
+  inboxItemProjectRoot,
+  lastUserInstruction,
+  latestProjectSession,
   namedSessionTitle,
   pickWorkbenchHero,
   pickWorkbenchNow,
+  workbenchLoadFailureMessage,
   workbenchNowSectionTitle,
   workbenchNowSubtitle,
   workbenchRecentRows,
@@ -56,8 +63,11 @@ import {
 } from "../work-mode";
 import {
   EmptyState,
+  LoadingRows,
+  MenuSelect,
   PageFrame,
   PageHeader,
+  fieldClass,
   ghostActionClass,
   hoverRevealClass,
   primaryActionClass,
@@ -67,9 +77,24 @@ import {
 import { toast } from "../toast";
 
 const iconClass = "shrink-0 text-l4";
+/** 工作方式标签：描边不铺底（铺 bg-strip 在 well 上看不出边界，像一段错位的字） */
+const modeChipClass =
+  "inline-block shrink-0 rounded-full border border-hairline px-1.5 py-px text-micro leading-tight text-l3";
+/** 区块标题行的「查看全部」：文字链级别，不能比区块标题还醒目 */
+const sectionLinkClass = `${ghostActionClass} h-6 px-1.5 text-micro text-l4 hover:text-l2`;
 
 /** 不参与工作台「需要你」判定的自动登记任务类（见 nowSeeds 里的过滤注释） */
 const WORKBENCH_AUTO_TASK_KINDS = new Set(["pipeline_step", "coding_lane", "watch"]);
+
+/** 「上次停在」缓存：会话没更新就不重读尾页（键含 updatedAt，会话一动自然失效） */
+type LastSaid = {
+  text: string;
+  full: string;
+  timestamp: string | null;
+  agent: string;
+  sessionId: string;
+};
+const lastSaidCache = new Map<string, LastSaid | null>();
 
 function agentLabel(id: string | null): string | null {
   if (!id) return null;
@@ -114,6 +139,8 @@ function WorkbenchPage({
       : null,
     inboxDismissed,
   );
+  const bulkInboxItems = bulkReadableItems(inboxItems);
+  const dismissInboxBulk = useAppStore((s) => s.dismissInboxBulk);
   const sessions = useAppStore((s) => s.sessions);
   const recentRepos = useAppStore((s) => s.recentRepos);
   const loadRecentRepos = useAppStore((s) => s.loadRecentRepos);
@@ -141,13 +168,14 @@ function WorkbenchPage({
   }
 
   const [projects, setProjects] = useState<ProjectDto[]>([]);
+  /** 首轮项目列表回来之前不画空态（否则每次冷启动先闪「从一个项目开始」） */
+  const [projectsLoaded, setProjectsLoaded] = useState(false);
   const [workspaces, setWorkspaces] = useState<WorkspaceDto[]>([]);
-  const [steps, setSteps] = useState<ProjectStepDto[]>([]);
   const [codingByPath, setCodingByPath] = useState<
     Record<string, CodingOverviewDto>
   >({});
-  const [researchSteps, setResearchSteps] = useState<
-    Record<string, ProjectStepDto[]>
+  const [researchCfg, setResearchCfg] = useState<
+    Record<string, { steps: ProjectStepDto[]; pipelineOptOut: boolean }>
   >({});
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
@@ -158,6 +186,12 @@ function WorkbenchPage({
   const [userTasks, setUserTasks] = useState<TaskDto[]>([]);
   /** 「待你处理」默认只列 5 条，展开后全列出（页内展开，不跳收件箱浮层） */
   const [inboxExpanded, setInboxExpanded] = useState(false);
+  const [lastSaid, setLastSaid] = useState<Record<string, LastSaid | null>>({});
+  const [goalDraft, setGoalDraft] = useState("");
+  const [goalProject, setGoalProject] = useState("");
+  const [goalBusy, setGoalBusy] = useState(false);
+  /** 「记下目标」默认收成一行文字入口，点开才是输入框（常驻输入框像全局搜索，抢主卡的戏） */
+  const [goalOpen, setGoalOpen] = useState(false);
 
   useEffect(() => {
     if (!visible) return;
@@ -170,56 +204,24 @@ function WorkbenchPage({
     .filter((item) => item.running || item.attention === "confirm")
     .map((item) => item.cwd)
     .join("\n");
+  // 有运行刚跑完（done）才需要重读编程/流程状态；开始/待确认只影响轻量列表
+  const runDoneSig = terminalRunInputs
+    .filter((item) => item.attention === "done")
+    .map((item) => item.cwd)
+    .sort()
+    .join("\n");
 
+  // 轻量三件：项目注册表 / 工作区 / Run 账本。随运行启停重拉（都是单次本地查询）
   useEffect(() => {
     if (!visible) return;
     setLoadError(null);
     invoke<ProjectDto[]>("list_projects")
-      .then((list) => {
-        setProjects(list);
-        const coding = list.filter(
-          (p) => normalizeWorkMode(p.workMode) === "coding",
-        );
-        const research = list.filter(
-          (p) => normalizeWorkMode(p.workMode) === "research",
-        );
-        void Promise.all(
-          coding.map((p) =>
-            invoke<CodingOverviewDto>("coding_overview", { repoPath: p.path })
-              .then((ov) => [p.path, ov] as const)
-              .catch(() => {
-                toast(`项目「${p.name}」的编程状态未检测到`, "warning");
-                return null;
-              }),
-          ),
-        ).then((rows) => {
-          const next: Record<string, CodingOverviewDto> = {};
-          for (const row of rows) {
-            if (row) next[row[0]] = row[1];
-          }
-          setCodingByPath(next);
-        });
-        void Promise.all(
-          research.map((p) =>
-            invoke<ProjectConfigReadDto>("read_project_config", { path: p.path })
-              .then((read) => [p.path, read.config.steps ?? []] as const)
-              .catch(() => {
-                toast(`项目「${p.name}」的流程配置未检测到`, "warning");
-                return null;
-              }),
-          ),
-        ).then((rows) => {
-          const next: Record<string, ProjectStepDto[]> = {};
-          for (const row of rows) {
-            if (row) next[row[0]] = row[1];
-          }
-          setResearchSteps(next);
-        });
-      })
+      .then(setProjects)
       .catch(() => {
         setProjects([]);
         setLoadError("项目数据加载失败，可重试；其他工作台内容仍可继续使用。");
-      });
+      })
+      .finally(() => setProjectsLoaded(true));
     invoke<WorkspaceDto[]>("list_workspaces")
       .then(setWorkspaces)
       .catch(() => {
@@ -233,6 +235,67 @@ function WorkbenchPage({
       .then(setAllRuns)
       .catch(() => setAllRuns([]));
   }, [visible, runCwdSig, reloadToken]);
+
+  // 逐项目的重活（编程项目跑 git、科研项目读档案卡）：只在项目集合变化、有运行跑完、
+  // 回到本页或点重试时拉；失败按类合成一条提示，不再一个项目弹一条
+  const projectsSig = projects
+    .map((p) => `${p.path}\t${normalizeWorkMode(p.workMode)}`)
+    .join("\n");
+  useEffect(() => {
+    if (!visible || projects.length === 0) return;
+    let cancelled = false;
+    const coding = projects.filter(
+      (p) => normalizeWorkMode(p.workMode) === "coding",
+    );
+    const research = projects.filter(
+      (p) => normalizeWorkMode(p.workMode) === "research",
+    );
+    void Promise.all(
+      coding.map((p) =>
+        invoke<CodingOverviewDto>("coding_overview", { repoPath: p.path })
+          .then((ov) => ({ path: p.path, name: p.name, ov }))
+          .catch(() => ({ path: p.path, name: p.name, ov: null })),
+      ),
+    ).then((rows) => {
+      if (cancelled) return;
+      const next: Record<string, CodingOverviewDto> = {};
+      for (const row of rows) if (row.ov) next[row.path] = row.ov;
+      setCodingByPath(next);
+      const failed = workbenchLoadFailureMessage(
+        rows.filter((row) => !row.ov).map((row) => row.name),
+        "编程状态",
+      );
+      if (failed) toast(failed, "warning");
+    });
+    void Promise.all(
+      research.map((p) =>
+        invoke<ProjectConfigReadDto>("read_project_config", { path: p.path })
+          .then((read) => ({ path: p.path, name: p.name, config: read.config }))
+          .catch(() => ({ path: p.path, name: p.name, config: null })),
+      ),
+    ).then((rows) => {
+      if (cancelled) return;
+      const next: Record<string, { steps: ProjectStepDto[]; pipelineOptOut: boolean }> = {};
+      for (const row of rows) {
+        if (!row.config) continue;
+        next[row.path] = {
+          steps: row.config.steps ?? [],
+          pipelineOptOut: !!row.config.pipelineOptOut,
+        };
+      }
+      setResearchCfg(next);
+      const failed = workbenchLoadFailureMessage(
+        rows.filter((row) => !row.config).map((row) => row.name),
+        "流程配置",
+      );
+      if (failed) toast(failed, "warning");
+    });
+    return () => {
+      cancelled = true;
+    };
+    // projects 由 projectsSig 代表：轻量重拉换了数组引用但内容没变时不重跑 git
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, projectsSig, runDoneSig, reloadToken]);
 
   const nowSeeds = useMemo((): WorkbenchNowSeed[] => {
     // 「活着」只算真有交互活的运行：白名单（登录/定时巡检/无头不算）之上，
@@ -259,8 +322,8 @@ function WorkbenchPage({
           !WORKBENCH_AUTO_TASK_KINDS.has(task.kind),
       );
       if (mode === "research") {
-        // 流程只读本项目自己的；读取失败就是无步骤，不跨项目回落到主卡 steps
-        const st = researchSteps[p.path] ?? [];
+        // 流程只读本项目自己的；读取失败就是无步骤，不跨项目回落
+        const st = researchCfg[p.path]?.steps ?? [];
         subtitle = firstOpenStepName(st, mineWs);
         needsYou = mineWs.some((w) => w.status === "active" && !w.mergedAt);
       } else if (mode === "coding") {
@@ -346,7 +409,7 @@ function WorkbenchPage({
     projects,
     workspaces,
     codingByPath,
-    researchSteps,
+    researchCfg,
     sessions,
     terminalRunInputs,
     userTasks,
@@ -421,54 +484,157 @@ function WorkbenchPage({
   );
 
   useEffect(() => {
-    if (!visible || !hero?.registered) {
-      setSteps([]);
-      return;
-    }
-    let cancelled = false;
-    invoke<ProjectConfigReadDto>("read_project_config", { path: hero.path })
-      .then((read) => {
-        if (!cancelled) setSteps(read.config.steps ?? []);
-      })
-      .catch(() => {
-        if (!cancelled) setSteps([]);
-        if (!cancelled) toast("当前项目流程读取失败，可重试", "warning");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [visible, hero?.registered, hero?.path]);
-
-  useEffect(() => {
     if (!visible || projects.length === 0) {
       setUserTasks([]);
       setTaskProjectById({});
       return;
     }
     let cancelled = false;
+    // 一次取全量再按已添加项目过滤（原先每个项目各查一次）
+    invoke<TaskDto[]>("task_list", { projectRoot: null })
+      .catch(() => [] as TaskDto[])
+      .then((list) => {
+        if (cancelled) return;
+        const all = list.filter((task) =>
+          projects.some((project) =>
+            samePath(task.projectRoot ?? "", project.path, IS_WINDOWS),
+          ),
+        );
+        // 归属表用未过滤全集（含会话自动登记的任务），展示列表仍只留人声明的
+        const byId: Record<string, string> = {};
+        for (const task of all) {
+          if (task.projectRoot) byId[task.id] = task.projectRoot;
+        }
+        setTaskProjectById(byId);
+        setUserTasks(
+          visibleDeclaredTasks(all, new Set(["office_doc", "free_research"])),
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projects, visible, reloadToken]);
+
+  // 「上次停在」：主卡与紧凑行各取本项目最近一次对话的最后一句人话（尾页，Rust 层已脱敏）
+  const lastSaidTargets = useMemo(() => {
+    const paths = [
+      ...(hero ? [hero.path] : []),
+      ...nowItems.slice(1).map((item) => item.path),
+    ];
+    const out: { path: string; key: string; agent: string; sessionId: string; filePath: string }[] = [];
+    for (const path of paths) {
+      if (out.some((row) => samePath(row.path, path, IS_WINDOWS))) continue;
+      const session = latestProjectSession(sessions, path, IS_WINDOWS);
+      if (!session) continue;
+      out.push({
+        path,
+        key: `${session.agent}:${session.sessionId}:${session.updatedAt}`,
+        agent: session.agent,
+        sessionId: session.sessionId,
+        filePath: session.filePath,
+      });
+    }
+    return out;
+  }, [hero, nowItems, sessions]);
+  const lastSaidSig = lastSaidTargets.map((t) => `${t.path}=${t.key}`).join("\n");
+  useEffect(() => {
+    if (!visible) return;
+    let cancelled = false;
     void Promise.all(
-      projects.map((project) =>
-        invoke<TaskDto[]>("task_list", { projectRoot: project.path }).catch(
-          () => [] as TaskDto[],
-        ),
-      ),
-    ).then((lists) => {
-      if (cancelled) return;
-      const all = lists.flat();
-      // 归属表用未过滤全集（含会话自动登记的任务），展示列表仍只留人声明的
-      const byId: Record<string, string> = {};
-      for (const task of all) {
-        if (task.projectRoot) byId[task.id] = task.projectRoot;
-      }
-      setTaskProjectById(byId);
-      setUserTasks(
-        visibleDeclaredTasks(all, new Set(["office_doc", "free_research"])),
-      );
+      lastSaidTargets.map(async (target) => {
+        if (lastSaidCache.has(target.key)) {
+          return [target.path, lastSaidCache.get(target.key) ?? null] as const;
+        }
+        try {
+          const page = await invoke<ConversationPageDto>(
+            "get_session_conversation_page",
+            { agent: target.agent, filePath: target.filePath, before: null, around: null },
+          );
+          const hit = lastUserInstruction(page.messages);
+          const value: LastSaid | null = hit
+            ? { ...hit, agent: target.agent, sessionId: target.sessionId }
+            : null;
+          lastSaidCache.set(target.key, value);
+          return [target.path, value] as const;
+        } catch {
+          // 读不到就不显示这一行，不弹提示：它只是辅助线索
+          return [target.path, null] as const;
+        }
+      }),
+    ).then((entries) => {
+      if (!cancelled) setLastSaid(Object.fromEntries(entries));
     });
     return () => {
       cancelled = true;
     };
-  }, [projects, visible]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, lastSaidSig]);
+  function lastSaidFor(path: string): LastSaid | null {
+    for (const [key, value] of Object.entries(lastSaid)) {
+      if (samePath(key, path, IS_WINDOWS)) return value;
+    }
+    return null;
+  }
+  function openLastSaid(said: LastSaid) {
+    setOpenSessionReq({ agent: said.agent, sessionId: said.sessionId });
+    setPage("sessions");
+  }
+
+  // 「记下一个目标」：只记不开工，落到项目页目标列表，开工仍由人在项目页点
+  const goalTargets = useMemo(
+    () =>
+      goalCaptureTargets(
+        wbProjects,
+        Object.fromEntries(
+          Object.entries(researchCfg).map(([path, cfg]) => [
+            path,
+            { stepCount: cfg.steps.length, pipelineOptOut: cfg.pipelineOptOut },
+          ]),
+        ),
+      ),
+    [wbProjects, researchCfg],
+  );
+  // 默认落点：用户选过的 > 主卡项目 > 最近交互过的可记项目 > 列表第一个
+  const goalTarget =
+    goalTargets.find((t) => samePath(t.path, goalProject, IS_WINDOWS)) ??
+    (hero && goalTargets.find((t) => samePath(t.path, hero.path, IS_WINDOWS))) ??
+    recentRows
+      .map((row) => goalTargets.find((t) => samePath(t.path, row.path, IS_WINDOWS)))
+      .find((t) => t !== undefined) ??
+    goalTargets[0] ??
+    null;
+  async function captureGoal(event: FormEvent) {
+    event.preventDefault();
+    const name = goalDraft.trim();
+    if (!name || !goalTarget || goalBusy) return;
+    setGoalBusy(true);
+    try {
+      // 与项目页「新建目标 → 记下」同一组默认：整个项目当资料、验收后写回、Agent 开工时再选
+      await invoke<TaskDto>("task_create", {
+        input: {
+          projectRoot: goalTarget.path,
+          kind: goalTarget.goalKind,
+          name,
+          description: name,
+          inputPaths: ["."],
+          outputPaths: ["."],
+          permission: "write_tree",
+          agent: null,
+          profileId: null,
+          model: null,
+          skills: [],
+        },
+      });
+      setGoalDraft("");
+      setGoalOpen(false);
+      setReloadToken((n) => n + 1);
+      toast(`已记到「${goalTarget.name}」，去项目页开始`, "success");
+    } catch (reason) {
+      toast(`记下目标失败：${String(reason)}`, "error");
+    } finally {
+      setGoalBusy(false);
+    }
+  }
 
   async function enterRepo(repo: RepoDto) {
     const registered = projects.find((p) =>
@@ -489,15 +655,14 @@ function WorkbenchPage({
     setPage("terminal");
   }
 
-  async function openInCodex(absPath: string) {
-    try {
-      await openUrl(codexNewThreadDeeplink(absPath));
-    } catch (e) {
-      await alertDialog(`唤起 Codex 客户端失败：${e}`);
-    }
-  }
-
-  const showCodexJump = canOpenCodexClient();
+  // 项目级：只能打开目录、不能定位到某条对话；多个客户端时先问用哪个
+  const clientOpen = useClientOpen(visible !== false);
+  const showClientJump = clientOpen.projectClients.length > 0;
+  const clientJumpLabel =
+    clientOpen.projectClients.length === 1
+      ? `在 ${clientOpen.projectClients[0].display}打开`
+      : "在客户端打开";
+  const clientJumpTitle = `${clientJumpLabel}这个目录（只打开项目，不会定位到某条对话）`;
 
   /** 「继续」统一入口：主卡 / 紧凑行 / 未添加目录都先按 runId 找回原 Run，找不到再回落项目页或真进入。 */
   async function openContinueTarget(target: WorkbenchContinue) {
@@ -547,8 +712,11 @@ function WorkbenchPage({
     const mine = workspaces.filter((w) =>
       samePath(w.repoPath, hero.path, IS_WINDOWS),
     );
-    return firstOpenStepName(steps, mine);
-  }, [hero, steps, workspaces, nowItems]);
+    const cfg = Object.entries(researchCfg).find(([path]) =>
+      samePath(path, hero.path, IS_WINDOWS),
+    )?.[1];
+    return firstOpenStepName(cfg?.steps ?? [], mine);
+  }, [hero, researchCfg, workspaces, nowItems]);
 
   const recentSessions = useMemo(() => {
     return workbenchRecentSessions(sessions).map((session) => ({
@@ -561,6 +729,29 @@ function WorkbenchPage({
 
   const hasInbox = inboxItems.length > 0;
   const reviewTasks = userTasks.filter((task) => task.status === "pending_review");
+  /** 右栏「等你的事」：待你处理 + 待你验收，有一样就分两栏 */
+  const hasSide = hasInbox || reviewTasks.length > 0;
+  // 信息类（可一键已读）之外的条目要人拍板：按钮常驻，不靠悬停才现
+  const bulkKeys = new Set(bulkInboxItems.map((item) => item.key));
+  const tabCwds = Object.fromEntries(
+    terminalRunInputs.map((run) => [run.tabId, run.cwd]),
+  );
+  function inboxProjectName(item: (typeof inboxItems)[number]): string | null {
+    const root = inboxItemProjectRoot(item.action, {
+      projectPaths: projects.map((p) => p.path),
+      workspaces,
+      runProjects: runAttribution.runProjects,
+      tabCwds,
+      sessions,
+      isWindows: IS_WINDOWS,
+    });
+    const name = root
+      ? projects.find((p) => samePath(p.path, root, IS_WINDOWS))?.name?.trim()
+      : null;
+    // 条目正文已带项目名（如「某课题 · 待确认」）就不再重复
+    if (!name || item.text.includes(name)) return null;
+    return name;
+  }
   const statusText = hero
     ? heroStatusLine({
         runningCount: hero.runningCount,
@@ -583,17 +774,18 @@ function WorkbenchPage({
   }): string {
     if (item.attention === "confirm") return "bg-warn-text";
     if (item.runningCount > 0) return "bg-ok-text";
-    return "bg-l4";
+    return "bg-transparent";
   }
+  const heroSaid = hero ? lastSaidFor(hero.path) : null;
 
   return (
     <PageFrame width="fluid" className="pb-12">
+      {/* 页头不带副标题：当前步骤已在主卡里说过，同一事实只说一次 */}
       <PageHeader
         title="工作台"
-        meta={stepName ?? "从当前工作开始"}
         actions={
           <button type="button" className={secondaryActionClass} onClick={onQuickChat}>
-            快速开聊
+            新对话
           </button>
         }
       />
@@ -612,7 +804,7 @@ function WorkbenchPage({
 
       <div
         className={
-          hasInbox
+          hasSide
             ? "grid gap-8 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,0.42fr)]"
             : undefined
         }
@@ -636,17 +828,20 @@ function WorkbenchPage({
             <div className="rounded-lg ccode-well p-5 shadow-[0_1px_0_rgb(255_255_255_/_.02)]">
               <div className="flex flex-wrap items-start justify-between gap-5">
                 <div className="min-w-0">
-                  <p
-                    className="truncate text-xl font-medium tracking-tight text-l1"
-                    title={hero.path}
-                  >
-                    {hero.name}
-                  </p>
-                  {hero.workMode ? (
-                    <span className="mt-1 inline-block rounded-full bg-strip px-2 py-0.5 text-micro text-l3">
-                      {WORK_MODE_LABEL[hero.workMode]}
-                    </span>
-                  ) : null}
+                  {/* 方式标签与项目名同行、描边：well 上的 bg-strip 几乎看不见，单独一行像错位缩进的字 */}
+                  <div className="flex min-w-0 items-center gap-2">
+                    <p
+                      className="truncate text-xl font-medium tracking-tight text-l1"
+                      title={hero.path}
+                    >
+                      {hero.name}
+                    </p>
+                    {hero.workMode ? (
+                      <span className={modeChipClass}>
+                        {WORK_MODE_LABEL[hero.workMode]}
+                      </span>
+                    ) : null}
+                  </div>
                   {stepName && (
                     <p className="mt-1 text-sm text-l3">{stepName}</p>
                   )}
@@ -659,17 +854,37 @@ function WorkbenchPage({
                   继续工作
                 </button>
               </div>
+              {heroSaid && (
+                // 继续之前先知道停在哪：最近一次对话里你说的最后一句，点开看整段对话
+                <button
+                  type="button"
+                  className="mt-3 flex w-full min-w-0 items-baseline gap-2 rounded-md text-left text-xs text-l3 hover:text-l1"
+                  title={`上次停在：${heroSaid.full}\n点开查看这段对话`}
+                  onClick={() => openLastSaid(heroSaid)}
+                >
+                  <span className="shrink-0 text-l4">上次停在</span>
+                  <span className="min-w-0 flex-1 truncate">{heroSaid.text}</span>
+                  {heroSaid.timestamp && (
+                    <span
+                      className="shrink-0 text-micro text-l4"
+                      title={absTime(heroSaid.timestamp)}
+                    >
+                      {relTime(heroSaid.timestamp)}
+                    </span>
+                  )}
+                </button>
+              )}
               <div className="mt-4 flex items-center gap-2 border-t border-hairline pt-3 text-xs text-l4">
                 <span className={`size-1.5 rounded-full ${statusDot}`} />
                 <span className="min-w-0 flex-1 truncate">{statusText}</span>
-                {showCodexJump && (
+                {showClientJump && (
                   <button
                     type="button"
                     className={`${ghostActionClass} h-auto shrink-0 px-1.5 py-0.5 text-micro text-l4 hover:text-l2`}
-                    title="在 Codex 客户端打开这个目录"
-                    onClick={() => void openInCodex(hero.path)}
+                    title={clientJumpTitle}
+                    onClick={() => clientOpen.openProject(hero.path)}
                   >
-                    在 Codex 打开
+                    {clientJumpLabel}
                   </button>
                 )}
               </div>
@@ -716,26 +931,34 @@ function WorkbenchPage({
                 </ul>
               )}
             </div>
-            {nowItems.slice(1).map((item) => (
+            {nowItems.length > 1 && (
+            <div className="divide-y divide-hairline overflow-hidden rounded-lg ccode-well">
+            {nowItems.slice(1).map((item) => {
+              const said = lastSaidFor(item.path);
+              return (
               <div
                 key={item.path}
-                className="group flex min-h-10 w-full items-center gap-3 rounded-lg ccode-well px-4 py-2.5 hover:bg-hover"
+                className="group flex min-h-10 w-full items-center gap-3 px-4 py-2 hover:bg-hover"
               >
                 <button
                   type="button"
                   className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                  title={said ? `继续：${item.name}\n上次停在：${said.full}` : `继续：${item.name}`}
                   onClick={() =>
                     void openContinueTarget(continueWorkbenchTarget(item))
                   }
                 >
+                  {/* 没事不画点（同侧栏口径）：灰点不表达任何状态，留位保持对齐 */}
                   <span
                     className={`size-1.5 shrink-0 rounded-full ${itemDot(item)}`}
                   />
-                  <span className="shrink-0 rounded-full bg-strip px-2 py-0.5 text-micro text-l3">
-                    {item.workMode ? WORK_MODE_LABEL[item.workMode] : "项目"}
-                  </span>
                   <span className="min-w-0 flex-1 truncate text-sm text-l2">
                     {item.name}
+                    {item.workMode ? (
+                      <span className={`ml-2 align-[1px] ${modeChipClass}`}>
+                        {WORK_MODE_LABEL[item.workMode]}
+                      </span>
+                    ) : null}
                     {item.subtitle ? (
                       <span className="ml-2 text-l4">{item.subtitle}</span>
                     ) : null}
@@ -754,22 +977,33 @@ function WorkbenchPage({
                       运行中
                     </span>
                   ) : null}
-                  <span className="shrink-0 text-micro text-l4">继续</span>
+                  {/* 整行可点即「继续」，不再每行常驻同一个「继续」字 */}
+                  <ChevronRight
+                    size={14}
+                    strokeWidth={1.8}
+                    className={`text-l4 ${hoverRevealClass}`}
+                    aria-hidden="true"
+                  />
                 </button>
-                {showCodexJump && (
+                {showClientJump && (
                   <button
                     type="button"
                     className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-l4 hover:bg-hover hover:text-l1 ${hoverRevealClass}`}
-                    title="在 Codex 客户端打开这个目录"
-                    aria-label="在 Codex 客户端打开"
-                    onClick={() => void openInCodex(item.path)}
+                    title={clientJumpTitle}
+                    aria-label={clientJumpLabel}
+                    onClick={() => clientOpen.openProject(item.path)}
                   >
                     <SquareArrowOutUpRight size={14} strokeWidth={1.8} aria-hidden="true" />
                   </button>
                 )}
               </div>
-            ))}
+              );
+            })}
             </div>
+            )}
+            </div>
+          ) : !projectsLoaded ? (
+            <LoadingRows />
           ) : (
             <EmptyState
               compact
@@ -786,38 +1020,130 @@ function WorkbenchPage({
               }
             />
           )}
+
+          {goalTarget &&
+            (goalOpen ? (
+              // 想到就记：只记下不开工，落到该项目的目标列表；开工、选 Agent 仍在项目页由人来
+              <form
+                className="mt-3 flex flex-wrap items-center gap-2"
+                onSubmit={(event) => void captureGoal(event)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape" && !goalBusy) setGoalOpen(false);
+                }}
+              >
+                <input
+                  className={`${fieldClass} h-8 min-w-[12rem] flex-1 py-0`}
+                  value={goalDraft}
+                  onChange={(event) => setGoalDraft(event.target.value)}
+                  placeholder={
+                    goalTarget.goalKind === "office_doc"
+                      ? "要完成什么，例如：按公司模板写本周周报"
+                      : "要完成什么，例如：根据项目里的文献写一篇综述"
+                  }
+                  aria-label="记下一个目标"
+                  maxLength={500}
+                  autoFocus
+                />
+                {goalTargets.length > 1 ? (
+                  <div className="w-40 shrink-0">
+                    <MenuSelect
+                      value={goalTarget.path}
+                      onChange={setGoalProject}
+                      options={goalTargets.map((t) => ({ value: t.path, label: t.name }))}
+                      aria-label="记到哪个项目"
+                    />
+                  </div>
+                ) : (
+                  <span className="max-w-[11rem] shrink-0 truncate text-micro text-l4" title={goalTarget.path}>
+                    记到「{goalTarget.name}」
+                  </span>
+                )}
+                <button
+                  type="button"
+                  className={ghostActionClass}
+                  disabled={goalBusy}
+                  onClick={() => setGoalOpen(false)}
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  className={secondaryActionClass}
+                  disabled={goalBusy || !goalDraft.trim()}
+                >
+                  {goalBusy ? "记下…" : "记下"}
+                </button>
+              </form>
+            ) : (
+              <button
+                type="button"
+                className={`${ghostActionClass} mt-2 gap-1.5 text-l4`}
+                title="只记下不开工：记进项目的目标列表，之后在项目页选 Agent 再开始"
+                onClick={() => setGoalOpen(true)}
+              >
+                <Plus size={13} strokeWidth={1.8} aria-hidden="true" />
+                记下一个目标
+              </button>
+            ))}
         </section>
 
+        {hasSide && (
+        <div className="min-w-0 space-y-8">
         {hasInbox && (
         <section className="min-w-0">
           <SectionHeading
-            icon={CircleDot}
+            icon={Inbox}
             title="待你处理"
             action={
-              <span className="rounded-full bg-warn px-2 py-0.5 text-micro text-warn-text">
-                {inboxItems.length}
+              <span className="flex items-center gap-2">
+                {bulkInboxItems.length > 0 && (
+                  <button
+                    type="button"
+                    className="rounded-full p-1 text-l3 hover:bg-hover hover:text-l1"
+                    title="全部已读：一键收起信息类通报（文献 / 可合并 / 待核验 / 待发送 / 技能）；冲突、待确认这类要你拍板的不受影响，被收起的条目状态一变还会回来"
+                    aria-label="全部已读（仅信息类）"
+                    onClick={() => dismissInboxBulk(bulkInboxItems)}
+                  >
+                    <CheckCheck size={13} strokeWidth={1.8} aria-hidden="true" />
+                  </button>
+                )}
+                <span className="rounded-full bg-warn px-2 py-0.5 text-micro text-warn-text">
+                  {inboxItems.length}
+                </span>
               </span>
             }
           />
           <div className="space-y-0.5">
-            {(inboxExpanded ? inboxItems : inboxItems.slice(0, 5)).map((item) => (
+            {(inboxExpanded ? inboxItems : inboxItems.slice(0, 5)).map((item) => {
+              const projectName = inboxProjectName(item);
+              return (
               <div
                 key={item.key}
                 className="group flex min-h-10 items-center gap-2 rounded-md px-2.5 transition-colors hover:bg-hover"
               >
                 <span className={`size-1.5 shrink-0 rounded-full ${item.dot}`} />
-                <span className="min-w-0 flex-1 truncate text-xs text-l2">
+                <span className="min-w-0 flex-1 truncate text-xs text-l2" title={item.text}>
                   {item.text}
                 </span>
+                {projectName && (
+                  <span className="max-w-[8rem] shrink-0 truncate text-micro text-l4">
+                    {projectName}
+                  </span>
+                )}
                 <button
                   type="button"
-                  className={`${rowActionClass} ${hoverRevealClass}`}
+                  className={
+                    bulkKeys.has(item.key)
+                      ? `${rowActionClass} ${hoverRevealClass}`
+                      : rowActionClass
+                  }
                   onClick={() => runInboxAction(item)}
                 >
                   {item.actionLabel}
                 </button>
               </div>
-            ))}
+              );
+            })}
             {inboxItems.length > 5 && (
               // 截断必须留出口：早先只挂个「6」的数字徽标，用户看不到第 6 条是什么、
               // 也不知道去哪找。展开控制在页内，不跳到标题栏的收件箱浮层。
@@ -835,20 +1161,20 @@ function WorkbenchPage({
           </div>
         </section>
         )}
-      </div>
 
-      {reviewTasks.length > 0 && (
-        <section className="mt-8">
+        {reviewTasks.length > 0 && (
+        <section className="min-w-0">
           <SectionHeading
-            icon={CircleDot}
+            icon={ClipboardCheck}
             title="待你验收"
             action={
-              <span className="rounded-full bg-warn px-2 py-0.5 text-micro text-warn-text">
+              // 计数中性：紧迫感由「待你处理」的黄芯片承担，这里不再并排第二个黄块
+              <span className="rounded-full bg-inset px-2 py-0.5 text-micro text-l3">
                 {reviewTasks.length}
               </span>
             }
           />
-          <div className="grid gap-2 md:grid-cols-2">
+          <div className="space-y-2">
             {reviewTasks.map((task) => {
               const project = task.projectRoot
                 ? projects.find((item) =>
@@ -859,7 +1185,7 @@ function WorkbenchPage({
                 <button
                   key={task.id}
                   type="button"
-                  className="flex min-w-0 items-center gap-3 rounded-lg ccode-well px-3 py-2.5 text-left hover:bg-hover"
+                  className="flex w-full min-w-0 items-center gap-3 rounded-lg ccode-well px-3 py-2.5 text-left hover:bg-hover"
                   onClick={() => {
                     if (task.projectRoot) {
                       setSelectProjectReq(task.projectRoot);
@@ -891,7 +1217,10 @@ function WorkbenchPage({
             })}
           </div>
         </section>
-      )}
+        )}
+        </div>
+        )}
+      </div>
 
       <div className="mt-10 grid gap-8 lg:grid-cols-2">
         <section className="min-w-0">
@@ -899,7 +1228,7 @@ function WorkbenchPage({
             icon={FolderOpen}
             title="最近项目"
             action={
-              <button type="button" className={rowActionClass} onClick={() => setPage("workspaces")}>
+              <button type="button" className={sectionLinkClass} onClick={() => setPage("workspaces")}>
                 查看全部
               </button>
             }
@@ -943,23 +1272,17 @@ function WorkbenchPage({
                   >
                     {relTime(row.lastActive)}
                   </span>
-                  {showCodexJump && (
+                  {showClientJump && (
                     <button
                       type="button"
                       className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-l4 hover:bg-hover hover:text-l1 ${hoverRevealClass}`}
-                      title="在 Codex 客户端打开这个目录"
-                      aria-label="在 Codex 客户端打开"
-                      onClick={() => void openInCodex(row.path)}
+                      title={clientJumpTitle}
+                      aria-label={clientJumpLabel}
+                      onClick={() => clientOpen.openProject(row.path)}
                     >
                       <SquareArrowOutUpRight size={14} strokeWidth={1.8} aria-hidden="true" />
                     </button>
                   )}
-                  <ChevronRight
-                    size={14}
-                    strokeWidth={1.8}
-                    className={`text-l4 ${hoverRevealClass}`}
-                    aria-hidden="true"
-                  />
                 </div>
               ))}
             </div>
@@ -971,7 +1294,7 @@ function WorkbenchPage({
             icon={MessagesSquare}
             title="最近对话"
             action={
-              <button type="button" className={rowActionClass} onClick={() => setPage("sessions")}>
+              <button type="button" className={sectionLinkClass} onClick={() => setPage("sessions")}>
                 查看全部
               </button>
             }
@@ -1001,12 +1324,6 @@ function WorkbenchPage({
                   >
                     {relTime(session.updatedAt)}
                   </span>
-                  <ChevronRight
-                    size={14}
-                    strokeWidth={1.8}
-                    className={`text-l4 ${hoverRevealClass}`}
-                    aria-hidden="true"
-                  />
                 </button>
               ))}
             </div>
@@ -1014,6 +1331,7 @@ function WorkbenchPage({
         </section>
       </div>
 
+      {clientOpen.dialog}
     </PageFrame>
   );
 }
