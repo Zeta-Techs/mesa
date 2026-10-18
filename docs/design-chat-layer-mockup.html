@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>Mesa 聊天层设计稿（2026-10-17）</title>
+<style>
+  :root {
+    --canvas: #1f2024; --raised: #2b2c30; --composer: #3a3b3f; --float: #2e2f33;
+    --bubble: #3b3c41; --hover: rgb(255 255 255 / .06); --sel: rgb(255 255 255 / .09);
+    --hair: #34353a; --field: #48494e;
+    --l1: #ececea; --l2: #c9c8c4; --l3: #98979a; --l4: #6c6c70;
+    --warn: #f0b429; --cta: #c9a14e; --cta-text: #1d1608;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #151619; color: var(--l2); font: 14px/1.6 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif; }
+  header { max-width: 1480px; margin: 32px auto 8px; padding: 0 24px; }
+  header h1 { margin: 0; font-size: 20px; color: var(--l1); font-weight: 600; }
+  header p { margin: 6px 0 0; color: var(--l3); font-size: 13px; }
+  .grid { max-width: 1480px; margin: 0 auto; padding: 16px 24px 48px; display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+  .frame { background: var(--canvas); border: 1px solid #2a2b2f; border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; min-height: 640px; position: relative; }
+  .cap { position: absolute; top: 10px; left: 14px; font-size: 11px; color: var(--l4); letter-spacing: .02em; }
+  .cap b { color: var(--l3); font-weight: 600; }
+  .flow { flex: 1; padding: 44px 36px 12px; display: flex; flex-direction: column; gap: 14px; }
+  .u { align-self: flex-end; max-width: 70%; background: var(--bubble); padding: 8px 12px; border-radius: 10px; color: var(--l1); }
+  .a { color: var(--l2); }
+  .a h4 { margin: 0 0 4px; color: var(--l1); font-size: 15px; }
+  .fold { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border-radius: 7px; background: rgb(255 255 255 / .035); color: var(--l3); font-size: 12px; }
+  .fold i { color: var(--l4); font-style: normal; }
+  .cmd { display: flex; gap: 8px; font-size: 12px; color: var(--l4); }
+  .cmd code { color: var(--l3); font-family: ui-monospace, Menlo, monospace; display: block; }
+  .live { color: var(--l3); white-space: pre-wrap; }
+  .gen { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--l4); }
+  .dots span { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--l4); margin-right: 3px; }
+  .card { border: 1px solid var(--field); background: var(--raised); border-radius: 10px; padding: 10px 12px; }
+  .card .t { color: var(--l1); font-size: 13px; }
+  .card .d { color: var(--l4); font-size: 12px; margin-top: 2px; }
+  .card .row { display: flex; gap: 6px; margin-top: 8px; align-items: center; }
+  .btn { height: 26px; padding: 0 10px; border-radius: 7px; font-size: 12px; border: 1px solid var(--hair); color: var(--l2); display: inline-flex; align-items: center; }
+  .btn.sel { background: var(--sel); color: var(--l1); border-color: transparent; }
+  .btn.ghost { border-color: transparent; color: var(--l3); }
+  .composer { margin: 0 24px 10px; background: var(--composer); border-radius: 14px; border: 1px solid #4a4b50; }
+  .composer .in { padding: 12px 16px 6px; color: var(--l4); min-height: 46px; }
+  .composer .bar { display: flex; align-items: center; justify-content: space-between; padding: 4px 10px 8px; }
+  .side { display: flex; align-items: center; gap: 4px; }
+  .chip { height: 24px; padding: 0 7px; border-radius: 6px; display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--l3); }
+  .chip.on { background: var(--hover); color: var(--l1); }
+  .chip.warn { color: var(--warn); }
+  .ico { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+  .ico.s { width: 12px; height: 12px; }
+  .send { width: 32px; height: 32px; border-radius: 9px; background: var(--cta); color: var(--cta-text); display: inline-flex; align-items: center; justify-content: center; margin-left: 4px; }
+  .ring { width: 16px; height: 16px; }
+  .status { height: 28px; border-top: 1px solid var(--hair); display: flex; align-items: center; gap: 10px; padding: 0 30px; font: 11px ui-monospace, Menlo, monospace; color: var(--l4); }
+  .status .dot { width: 6px; height: 6px; border-radius: 50%; background: #4c8dff; }
+  .status .r { margin-left: auto; }
+  .menu { position: absolute; background: var(--float); border: 1px solid var(--field); border-radius: 12px; box-shadow: 0 12px 32px rgb(0 0 0 / .45); padding: 6px; z-index: 2; }
+  .menu .head { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px 8px; color: var(--l3); font-size: 12px; }
+  .menu .head a { color: var(--l3); text-decoration: underline; text-underline-offset: 3px; }
+  .opt { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border-radius: 8px; }
+  .opt:hover, .opt.hl { background: var(--hover); }
+  .opt .ico { width: 18px; height: 18px; margin-top: 2px; color: var(--l2); }
+  .opt .tt { color: var(--l1); font-size: 13.5px; }
+  .opt .tag { color: var(--l4); font-size: 11px; margin-left: 6px; }
+  .opt .dd { color: var(--l3); font-size: 12px; }
+  .opt .ck { margin-left: auto; color: var(--l2); margin-top: 3px; }
+  .opt.danger .ico, .opt.danger .tt, .opt.danger .dd { color: var(--warn); }
+  .opt.dis { opacity: .4; }
+  .sec { padding: 6px 10px 4px; font-size: 11px; color: var(--l4); }
+  .hr { height: 1px; background: var(--hair); margin: 4px 6px; }
+  .mrow { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px; border-radius: 7px; font-size: 13px; color: var(--l2); }
+  .mrow.hl { background: var(--hover); color: var(--l1); }
+  .mrow .meta { margin-left: auto; color: var(--l4); font-size: 11px; }
+  .mrow .ck { width: 12px; }
+  .seg { display: flex; margin: 2px 10px 6px; background: rgb(255 255 255 / .04); border-radius: 8px; padding: 2px; }
+  .seg span { flex: 1; text-align: center; height: 26px; line-height: 26px; font-size: 12px; color: var(--l3); border-radius: 6px; }
+  .seg span.on { background: var(--sel); color: var(--l1); }
+  .note { padding: 6px 10px; color: var(--l4); font-size: 11.5px; line-height: 1.5; }
+  .who { display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 10px; border-radius: 8px; color: var(--l1); font-size: 13px; }
+  .who .sub { color: var(--l3); }
+  .who .chev { margin-left: auto; color: var(--l4); }
+  .kbd { margin-left: auto; color: var(--l4); font: 11px ui-monospace, Menlo, monospace; }
+  .legend { max-width: 1480px; margin: 0 auto 40px; padding: 0 24px; color: var(--l3); font-size: 12.5px; }
+  .legend li { margin: 4px 0; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <symbol id="plus" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></symbol>
+    <symbol id="chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="chevr" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="eye" viewBox="0 0 24 24"><path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="hand" viewBox="0 0 24 24"><path d="M18 11V6a2 2 0 0 0-4 0"/><path d="M14 10V4a2 2 0 0 0-4 0v2"/><path d="M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-6-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></symbol>
+    <symbol id="shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></symbol>
+    <symbol id="shieldok" viewBox="0 0 24 24"><use href="#shield"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="shieldwarn" viewBox="0 0 24 24"><use href="#shield"/><path d="M12 8v4"/><path d="M12 16h.01"/></symbol>
+    <symbol id="clip" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></symbol>
+    <symbol id="at" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/></symbol>
+    <symbol id="spark" viewBox="0 0 24 24"><path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4z"/></symbol>
+    <symbol id="plug" viewBox="0 0 24 24"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></symbol>
+    <symbol id="term" viewBox="0 0 24 24"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></symbol>
+    <symbol id="up" viewBox="0 0 24 24"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></symbol>
+    <symbol id="slash" viewBox="0 0 24 24"><path d="M15 4 9 20"/></symbol>
+  </defs>
+</svg>
+
+<header>
+  <h1>Mesa 聊天层设计稿</h1>
+  <p>配合 docs/design-chat-layer.md。四个画面：运行中的对话（确认卡贴在末尾）、权限菜单（照 ChatGPT）、模型 · 思考菜单（开聊前后同形）、「+」与「/」两个入口。</p>
+</header>
+
+<div class="grid">
+
+  <!-- A 运行中 -->
+  <section class="frame">
+    <div class="cap"><b>A · 运行中</b>　确认卡在对话末尾、贴着输入框；实时预览浅一级字色</div>
+    <div class="flow">
+      <div class="u">把 settings.rs 里读配置的逻辑讲一下，再把默认值合并那段改得清楚点</div>
+      <div class="fold"><svg class="ico s"><use href="#chevr"/></svg>思考过程</div>
+      <div class="a">我先读一下文件。</div>
+      <div class="fold"><svg class="ico s"><use href="#chevr"/></svg>执行记录 · 2 次 <i>Read、Grep</i></div>
+      <div class="cmd"><svg class="ico s" style="margin-top:3px"><use href="#term"/></svg><div><code>/effort high</code>Set effort level to high (saved as your default for new sessions)</div></div>
+      <div class="a"><h4>结论</h4>配置读取在 <code>settings.rs</code>，<code>with_defaults</code> 负责合并默认值……</div>
+      <div class="live">现在把合并改成三步：先读文件、再补缺省、最后校验白名单
+- 第一步……</div>
+      <div class="card">
+        <div class="t">Claude Code 想改 1 个文件：src-tauri/src/settings.rs</div>
+        <div class="d">请求批准模式下，改文件前先问你</div>
+        <div class="row"><span class="btn sel">允许</span><span class="btn">这次对话都允许</span><span class="btn">拒绝</span><span class="btn ghost" style="margin-left:auto">打开终端</span></div>
+      </div>
+      <div class="gen"><span class="dots"><span></span><span></span><span></span></span>等你决定</div>
+    </div>
+    <div class="composer">
+      <div class="in">先在上面选一项，或者直接回复…</div>
+      <div class="bar">
+        <div class="side">
+          <span class="chip"><svg class="ico"><use href="#plus"/></svg></span>
+          <span class="chip"><svg class="ico s"><use href="#hand"/></svg>请求批准</span>
+        </div>
+        <div class="side">
+          <svg class="ring" viewBox="0 0 20 20" title="上下文已用 63%"><circle cx="10" cy="10" r="7" fill="none" stroke="#48494e" stroke-width="2.4"/><circle cx="10" cy="10" r="7" fill="none" stroke="#98979a" stroke-width="2.4" stroke-dasharray="27.7 44" transform="rotate(-90 10 10)"/></svg>
+          <span class="chip">glm-5.3-flash · high<svg class="ico s"><use href="#chev"/></svg></span>
+          <span class="send"><svg class="ico" style="width:11px;height:11px;fill:currentColor;stroke:none"><rect x="5" y="5" width="14" height="14" rx="2"/></svg></span>
+        </div>
+      </div>
+    </div>
+    <div class="status"><span class="dot"></span>Claude Code · GLM-flash<span>▸ Ccode</span><span class="r">1:01　75.2k↑ 3.7k↓ · $0.013</span></div>
+  </section>
+
+  <!-- B 权限菜单 -->
+  <section class="frame">
+    <div class="cap"><b>B · 权限</b>　四档；没手动选过时，本机设置对应的那档打勾并标「本机设置」</div>
+    <div class="flow"><div class="u">帮我把实验数据清洗脚本跑一遍</div></div>
+    <div class="menu" style="left:24px; bottom:96px; width:400px">
+      <div class="head"><span>AI 动手前怎么问你？</span><a href="#">了解更多</a></div>
+      <div class="opt"><svg class="ico"><use href="#eye"/></svg><div><div class="tt">只讨论</div><div class="dd">只看、只说，不改文件、不跑命令</div></div></div>
+      <div class="opt"><svg class="ico"><use href="#hand"/></svg><div><div class="tt">请求批准</div><div class="dd">改文件、跑命令前都先问你</div></div></div>
+      <div class="opt hl"><svg class="ico"><use href="#shieldok"/></svg><div><div class="tt">帮我批准</div><div class="dd">普通操作自动放行，有风险的才问你</div></div></div>
+      <div class="opt danger"><svg class="ico"><use href="#shieldwarn"/></svg><div><div class="tt">完全访问<span class="tag">本机设置</span></div><div class="dd">改文件、跑命令都不问你；选的时候会再确认一次</div></div><svg class="ico ck"><use href="#check"/></svg></div>
+      <div class="hr"></div>
+      <div class="note">只作用于这次对话的启动参数，不改 Claude Code 的配置。开聊后换会重开并接回这段对话。</div>
+    </div>
+    <div class="composer">
+      <div class="in">问一个问题…</div>
+      <div class="bar">
+        <div class="side">
+          <span class="chip"><svg class="ico"><use href="#plus"/></svg></span>
+          <span class="chip on warn"><svg class="ico s"><use href="#shieldwarn"/></svg>完全访问<svg class="ico s"><use href="#chev"/></svg></span>
+        </div>
+        <div class="side"><span class="chip">glm-5.3-flash · high<svg class="ico s"><use href="#chev"/></svg></span><span class="send"><svg class="ico"><use href="#up"/></svg></span></div>
+      </div>
+    </div>
+    <div class="status"><span class="dot" style="background:#6c6c70"></span>Claude Code · GLM-flash<span>▸ 测试项目</span></div>
+  </section>
+
+  <!-- C 模型 · 思考 -->
+  <section class="frame">
+    <div class="cap"><b>C · 模型 · 思考</b>　开聊前后同一个菜单；思考强度是分段控件</div>
+    <div class="flow"></div>
+    <div class="menu" style="right:24px; bottom:96px; width:340px">
+      <div class="who"><span>Claude Code</span><span class="sub">· GLM-flash</span><svg class="ico s chev"><use href="#chevr"/></svg></div>
+      <div class="hr"></div>
+      <div class="sec">模型</div>
+      <div class="mrow hl"><svg class="ico s ck"><use href="#check"/></svg>glm-5.3-flash<span class="meta">200K · 思考</span></div>
+      <div class="mrow"><span class="ck"></span>glm-5.3<span class="meta">200K · 思考 · 看图</span></div>
+      <div class="mrow"><span class="ck"></span>glm-5.2<span class="meta">128K · 思考</span></div>
+      <div class="mrow" style="color:var(--l4)"><span class="ck"></span>其他模型，输入后回车</div>
+      <div class="hr"></div>
+      <div class="sec">思考强度</div>
+      <div class="seg"><span>low</span><span>medium</span><span class="on">high</span><span>xhigh</span><span>max</span></div>
+      <div class="hr"></div>
+      <div class="note">开聊后切换会写进终端；Claude Code 会先问你确认，并把选择存成它新对话的默认。</div>
+    </div>
+    <div class="composer">
+      <div class="in">输入消息…</div>
+      <div class="bar">
+        <div class="side"><span class="chip"><svg class="ico"><use href="#plus"/></svg></span><span class="chip"><svg class="ico s"><use href="#shieldok"/></svg>帮我批准</span></div>
+        <div class="side"><span class="chip on">glm-5.3-flash · high<svg class="ico s"><use href="#chev"/></svg></span><span class="send"><svg class="ico"><use href="#up"/></svg></span></div>
+      </div>
+    </div>
+    <div class="status"><span class="dot"></span>Claude Code · GLM-flash<span>▸ Ccode</span></div>
+  </section>
+
+  <!-- D + 与 / -->
+  <section class="frame">
+    <div class="cap"><b>D · 添加与操作</b>　「+」给材料；「/」上半是 Mesa 操作，下半是这家 CLI 的命令</div>
+    <div class="flow"></div>
+    <div class="menu" style="left:24px; bottom:96px; width:250px">
+      <div class="mrow hl"><svg class="ico"><use href="#clip"/></svg>文件或图片</div>
+      <div class="mrow"><svg class="ico"><use href="#at"/></svg>引用项目文件<span class="meta">@</span></div>
+      <div class="hr"></div>
+      <div class="mrow"><svg class="ico"><use href="#spark"/></svg>技能<svg class="ico s" style="margin-left:auto;color:var(--l4)"><use href="#chevr"/></svg></div>
+      <div class="mrow"><svg class="ico"><use href="#plug"/></svg>MCP<svg class="ico s" style="margin-left:auto;color:var(--l4)"><use href="#chevr"/></svg></div>
+    </div>
+    <div class="menu" style="left:300px; bottom:96px; width:300px">
+      <div class="sec">Mesa</div>
+      <div class="mrow hl">新对话<span class="kbd">/new</span></div>
+      <div class="mrow">压缩上下文<span class="kbd">/compact</span></div>
+      <div class="mrow">分叉到新标签<span class="kbd">/fork</span></div>
+      <div class="mrow">查看改动<span class="kbd">/diff</span></div>
+      <div class="mrow">导出 Markdown<span class="kbd">/export</span></div>
+      <div class="mrow">打开终端<span class="kbd">/terminal</span></div>
+      <div class="hr"></div>
+      <div class="sec">Claude Code 命令</div>
+      <div class="mrow">/init<span class="meta">生成项目说明文件</span></div>
+      <div class="mrow">/review<span class="meta">让 AI 评审改动</span></div>
+      <div class="mrow">/help<span class="meta">查看 CLI 内置命令</span></div>
+    </div>
+    <div class="composer">
+      <div class="in" style="color:var(--l1)">/</div>
+      <div class="bar">
+        <div class="side"><span class="chip on"><svg class="ico"><use href="#plus"/></svg></span><span class="chip"><svg class="ico s"><use href="#hand"/></svg>请求批准</span></div>
+        <div class="side"><span class="chip">glm-5.3-flash · high<svg class="ico s"><use href="#chev"/></svg></span><span class="send"><svg class="ico"><use href="#up"/></svg></span></div>
+      </div>
+    </div>
+    <div class="status"><span class="dot"></span>Claude Code · GLM-flash<span>▸ Ccode</span></div>
+  </section>
+</div>
+
+<ul class="legend">
+  <li>颜色只表达一件事：橙 = 风险（完全访问、上下文将满）；状态点的蓝只给运行态；其余一律灰阶。</li>
+  <li>四个画面的输入框底栏同一条分界：左边「给什么、放多大权」，右边「谁来想、想多深、发出去」。</li>
+  <li>菜单、选项文字、档位名都是设计稿占位；实现时以 docs/design-chat-layer.md 与各家能力矩阵为准。</li>
+</ul>
+</body>
+</html>

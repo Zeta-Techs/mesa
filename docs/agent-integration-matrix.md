@@ -37,7 +37,7 @@
 | 会话格式 | JSONL `RolloutLine {timestamp, type, payload}`；首行 `session_meta`（含 **cwd** = 项目归属依据）；`response_item`（消息）、`event_msg`（含 token_count）、`turn_context`（每轮 model/cwd）。不按项目分目录，**项目归属靠 session_meta.cwd**。**易漂移**。`session_meta.model_provider` 记的是 **config 里的 provider 名，不记认证身份**：`requires_openai_auth=true` 时官方账号（ChatGPT 登录）对话同样落本地 rollout 且记该 provider 名（2026-08-31 实测）；同一 provider 名下换过 Key 的历史会话事后无法区分 |
 | 关键启动参数 | `-m`、`--profile`、`-c key=value`（最高优先级）、`codex exec`（非交互，`--json` 输出事件流）、`codex resume` |
 | 官方账号 | `codex login --device-auth`（设备码，0.152.1 核实；内嵌 PTY 比浏览器 OAuth 可靠）/ `codex login`（浏览器 OAuth）/ `codex logout`；凭证 `~/.codex/auth.json` 或 OS 钥匙串。内置 ChatGPT 渠道名是保留字 `openai`（读 ChatGPT 登录态）。磁盘 `config.toml` 的 `model_provider` 指向自定义网关会盖过 ChatGPT 登录（2026-09-02 本机：启动栏选官方账号仍走网关计费）。Ccode 官方启动注入 `-c model_provider="openai"`（`-c` 最高优先级，本进程、不改用户文件、不写 `[model_providers.*]`）。auth.json 顶层仅 `OPENAI_API_KEY` = API Key 模式，不算官方登录 |
-| 桌面客户端 | 内嵌于 ChatGPT.app（`Contents/Frameworks/Codex Framework/…/Helpers/Codex`，无独立 Codex.app；2026-08-31 实测 151.0.7922）。会话进统一注册表 `~/.codex/state_5.sqlite` 的 `threads` 表：cli/exec/vscode/桌面端来源混存、**不按登录身份分区**（host 仅 `local`）——切换登录方式不碰会话存储，双向实测对话不丢；`thread_history_1.sqlite` 为内容缓存。rollout→DB 有迁移机制，失败文件记 `rollout_migration_skipped_rollouts`（带 skip_reason）——**文件在盘但客户端不显示**，Ccode 直扫文件免疫。「换登录方式丢对话」的真凶多为云端线程（网页版/云任务不落本地），非本地过滤。登出即删 `auth.json`，客户端 UI 登录态可能滞后于磁盘（注销「没反应」多为已生效未刷新，重启客户端即正常）。深链 **`codex://threads/<session_id>`** 精确打开指定对话（macOS 实测跳转成功；Windows 待验证）——Ccode 对话页「在客户端打开 · Codex」用之；**客户端打开会话时校验 `model_provider` 须在 config.toml 有定义**——Ccode 内联 provider（`ccode`/`ccode-<短id>`）会话跳转会报「Model provider `ccode` not found」无法继续（2026-08-31 实测），Ccode 按 `codex_client_config_providers`（读 config.toml 的 model_providers 名单）对这类会话置灰跳转入口；连接页「注册到 Codex 客户端」写定义块补齐渠道（逆操作「移除注册」只删块）。**注册 / 设为全局认证口径（v3.250）**：定义块写 `experimental_bearer_token`（ChatGPT 自带 Codex 的 ModelProviderInfo 认这个字段），`requires_openai_auth = false`，**不写 auth.json**，也不写 `http_headers`（MCP 字段，写在 provider 上客户端加载失败报 Model provider not found）。密钥明文落 config.toml。旧 `http_headers` / `requires_openai_auth`+auth.json 再注册或再设为全局一次即迁移。正在当默认渠道时禁止「移除注册」（只删块会留下指向空渠道的 `model_provider`）。 |
+| 桌面客户端 | 内嵌于 ChatGPT.app（`Contents/Frameworks/Codex Framework/…/Helpers/Codex`，无独立 Codex.app；2026-08-31 实测 151.0.7922）。会话进统一注册表 `~/.codex/state_5.sqlite` 的 `threads` 表：cli/exec/vscode/桌面端来源混存、**不按登录身份分区**（host 仅 `local`）——切换登录方式不碰会话存储，双向实测对话不丢；`thread_history_1.sqlite` 为内容缓存。rollout→DB 有迁移机制，失败文件记 `rollout_migration_skipped_rollouts`（带 skip_reason）——**文件在盘但客户端不显示**，Ccode 直扫文件免疫。「换登录方式丢对话」的真凶多为云端线程（网页版/云任务不落本地），非本地过滤。登出即删 `auth.json`，客户端 UI 登录态可能滞后于磁盘（注销「没反应」多为已生效未刷新，重启客户端即正常）。深链 **`codex://threads/<session_id>`** 精确打开指定对话（macOS 实测跳转成功；Windows 待验证）——Mesa 对话页「在 Codex 客户端打开」用之（2026-10-18 起统一走 `client_open.rs` 预检，见 §13）；**客户端打开会话时校验 `model_provider` 须在 config.toml 有定义**——Ccode 内联 provider（`ccode`/`ccode-<短id>`）会话跳转会报「Model provider `ccode` not found」无法继续（2026-08-31 实测），Ccode 按 `codex_client_config_providers`（读 config.toml 的 model_providers 名单）对这类会话置灰跳转入口；连接页「注册到 Codex 客户端」写定义块补齐渠道（逆操作「移除注册」只删块）。**注册 / 设为全局认证口径（v3.250）**：定义块写 `experimental_bearer_token`（ChatGPT 自带 Codex 的 ModelProviderInfo 认这个字段），`requires_openai_auth = false`，**不写 auth.json**，也不写 `http_headers`（MCP 字段，写在 provider 上客户端加载失败报 Model provider not found）。密钥明文落 config.toml。旧 `http_headers` / `requires_openai_auth`+auth.json 再注册或再设为全局一次即迁移。正在当默认渠道时禁止「移除注册」（只删块会留下指向空渠道的 `model_provider`）。 |
 | 坑 | **只支持 Responses API**（`wire_api="chat"` 已移除并报错）——中转必须实现 `/v1/responses`；`codex exec` 默认要求 git 仓库（`--skip-git-repo-check`）；凭证可能存 OS keyring 而非 auth.json；auth.json 顶层只有 `OPENAI_API_KEY` = API Key 模式（官方 `--api-key` 与第三方中转同一形状，**不算官方账号登录**，检测见 v3.55）；TUI `/model` 选择器的模型目录来自 `model_catalog_json` 指定的 JSON 文件（**仅启动时读取**，Ccode 已为每条绑定生成 catalog：display_name = 「配置名 · 模型」，context_window/max_context_window 取自 model_registry；reasoning levels 全量模板 [low/medium/high]，与 cc-switch 同口径——模型不支持时端点忽略 effort）；**`/model` 无内联参数**（main 源码 `supports_inline_args` 名单不含 Model，0.154 核实，2026-09-15）——会话内换模型只能走选择器，Mesa 状态栏 picker 档点芯片即唤选择器、不摆模型假菜单；内置 `codex_apps` MCP（ChatGPT apps 连接器，0.153.0 起随启动拉起，只认 ChatGPT OAuth）——本机 auth.json 留有失效登录态时启动必刷 `401 token_revoked`；**关内置 apps：0.154 起网关不注 `features.apps=false`**（会把用户 HTTP MCP 收成 `mcp__<名>` 占位），改 `-c plugins.codex-app-tools@openai-bundled.enabled=false`；`mcp_servers.codex_apps.enabled=false` 报 `invalid transport` 不可用（内置 server 不接受 transport 反序列化）。官方账号保留 apps |
 | 兼容端点（2026-09-15 核实） | 智谱 GLM 的 Codex 专用 Responses 端点为 **`https://open.bigmodel.cn/api/v1`**（官方 docs.bigmodel.cn/cn/coding-plan/tool/codex，配套 `wire_api="responses"`）；`https://open.bigmodel.cn/api/paas/v4` 仅 `chat/completions`，Codex 打 `/responses` 实测 404（zai-org/GLM-5#39 同结论）。**模型目录只有 `paas/v4/models` 有**（api/v1 的 `/models` 对列表请求回 HTTP 200 包错误体，不出目录）——正确填法 = Base URL/OpenAI 槽 `paas/v4` + Responses 槽 `api/v1` 分槽填。预设表按 api/v1 收录；网关库 responses 槽/主输入命中 bigmodel paas/v4 时前端告警（`responsesSlotUrlWarning`）。智谱习惯把业务错误包成 HTTP 200（`{"code":…,"msg":…,"success":false}` / `{"error":{…}}`），fetch_models 已按错误体识别（`gateway_error_envelope`）不误报「0 个模型」。无 key 空探针只到鉴权层（三条路径同返 1001），分不出路由死活，别用未认证探针下结论 |
 
@@ -153,6 +153,45 @@
    grok（源码调研，待实机验证）：`--permission-mode dontAsk --sandbox read-only`（CI 严格白名单 + OS 级只读；
    `--permission-mode plan` 门控链路未确认，不用）。
    注册表落点：`agent_specs.rs` 的 `AgentSpec.readonly_args`，应用逻辑 `agents::readonly_launch_args`。
+   **模型路由端到端核对（2026-10-17，`scripts/e2e-model-routing/`）**：Claude 2.1.292 / CodeBuddy / Codex / Qwen / Kimi / OpenCode / Grok
+   的请求都带所选模型（Claude `/v1/messages`、Codex `/v1/responses`、其余 `/v1/chat/completions`，Grok 先 GET `/v1/models`；
+   OpenCode、Qwen 的标题 / 记忆小任务也用所选模型）。Claude 的 settings.json env 压过进程 env：用户级 env 里的
+   `ANTHROPIC_DEFAULT_HAIKU_MODEL`（会话标题 query_source=generate_session_title 用它）与 `CLAUDE_CODE_SUBAGENT_MODEL`（子 agent，
+   `[1m]` 后缀发请求时去掉）会盖过 Mesa 未填的槽——见 profiles.md 模型配置约定。Gemini 0.64：认证只看 settings 的
+   `security.auth.selectedType`（`configuredAuthType || getAuthTypeFromEnv()`），设了 `GOOGLE_GEMINI_BASE_URL` 时环境推断为 gateway 而
+   CLI 模式不收；`GEMINI_CLI_SYSTEM_SETTINGS_PATH` 文件须归 root（普通用户写的静默跳过）；无头模式在未信任目录要 `GEMINI_CLI_TRUST_WORKSPACE=true`。
+   **原生权限档（2026-10-17 本机 `--help` 实测，聊天权限菜单四档用）**：请求批准 / 帮我批准 / 完全访问 =
+   claude / codebuddy / grok `--permission-mode default|auto|bypassPermissions`（claude 2.1.292 PTY 实测：default 显示「manual mode on」，
+   auto 是它的新默认「auto mode on」，bypassPermissions 首次启动弹「WARNING: Bypass Permissions mode」确认菜单、默认高亮 No）；
+   codex `-a on-request` / `--approve-for-me`（帮助文字：经自动评审放行，用 workspace-write 沙箱）/ `-a never -s danger-full-access`
+   （ask 保留 Mesa 默认 `-s workspace-write`；auto、full 先剔原 -s——**`--approve-for-me` 与 `-s` 同给时 codex 0.163 拒绝启动**
+   「the argument '--sandbox' cannot be used with '--approve-for-me'」，2026-10-18 实录）；qwen `--approval-mode default|auto|yolo`（auto = LLM 分类器）；
+   gemini `--approval-mode default|yolo`（无分类器档；本机未装，按官方文档）；kimi 无「请求批准」参数，`--yolo`（Ask When Needed）/
+   `--auto`（Never Ask）；cursor `--auto-review`（服务端分类器）/ `--force`；opencode 只有 `--auto`。注册表落点
+   `AgentSpec.permission_args`，应用逻辑 `agents::permission_launch_args`。
+   **聊天层第三期逐家抓屏（2026-10-18，假 API + PTY，`scripts/e2e-model-routing/chat-capture.py`）**：
+   - 审批菜单（发「跑一条命令」的工具调用）：Claude 2.1.292「Do you want to proceed? / ❯ 1. Yes / 2. Yes, and always allow access to
+     <折行路径>…」（虚线框夹命令；**按 y 无效**，回车 / 数字 / 方向键有效）；Codex 0.163 沙箱内命令不问，申请出沙箱
+     （`sandbox_permissions: require_escalated` + `justification`；只给 justification 不给 sandbox_permissions 会被它退回）才弹
+     「Would you like to run the following command? / › 1. Yes, proceed (y)」，`--approve-for-me` 把出沙箱请求交给自动评审
+     （guardian，要真模型）；Qwen 0.25「Allow execution of: 'echo'? / › 1. Yes, allow once」，auto 档交给 LLM 分类器（分类器答不出时
+     退回问人并建议切 Default）；Gemini 0.64 整个审批画在 ╭│╰ 框里「Allow execution of [Shell]? / ● 1. Allow once」；
+     Kimi 2.2「▶ Run this command? / ▶ 1. Approve once」，`--yolo` 普通命令直接放行；CodeBuddy 2.168 ptc 模式只给一个 `REPL` 工具
+     （JS 里 `await Bash({ command })`），审批框「Confirm … Are you sure you want to do this? / > 1. Yes」，auto 档交给它的分类器；
+     Grok 1.0.62 单选「2 (●) Yes, proceed / 3 (○) No, reject」。七家方向键 + 回车都能选中（Kimi 的 CSI-u 回车也行）。
+   - 屏上流式：Claude、Codex、Qwen、Gemini、Grok、Kimi 都是逐行画出（各家行首符号与输入框形态见 `src/live-reply.ts` 文件头）；
+     **CodeBuddy 生成中只画「✹ Waking… (streaming · ↓ N tokens)」，写完才一次画出**；OpenCode 分栏整屏重绘，不按行排。
+   - 读回：Gemini `/model set x` 回显「ℹ Model set to x」，底栏右下也写模型；Codex 底栏「<模型> <档位> · <目录>」；Qwen 0.25.1
+     `/effort low` 后屏上只剩空的「●」，档位写在底栏「➜ 目录 · 模型 档位」；Grok 输入框下边写的是连接里的显示名（不一定是模型 id）。
+   - 中途换模型：Kimi 用 Mesa 接口连接（环境变量只带一个模型）时 `/model <别名>` 报「Unknown model alias」——只认它配置文件里的别名；
+     CodeBuddy `/model x` 只认它自家的模型清单。
+   - **中途切换会写回全局配置**（临时 HOME 里比对切换前后的配置文件）：Claude 2.1.292 `/model x` → settings.json `"model"`，`/effort l` →
+     settings.json 里该模型的 `effortLevel`（回显都写「saved as your default for new sessions」）；Codex 0.163 `/model` 选择器 → config.toml
+     `model` 与 `model_reasoning_effort`（回显「• Model changed to gpt-6.1-sol low」，选择器列官方模型不列自定义 provider 的 catalog）；
+     Grok 1.0.62 `/model x` → config.toml `[models] default`；Qwen 0.25 `/effort l` → settings.json `reasoningEffort`；Kimi 2.2 `/effort off` →
+     config.toml thinking `enabled = false`。不写的：Gemini 0.64 `/model set x`（只管这一段）、Grok `/effort`。Mesa 据此改为重开接回（switch-strategy.ts）。
+   **Claude 2.1.292 中途 `/model X`、`/effort L` 都先弹确认菜单**（「Switch model? / Change effort level?」，▔ 边框 + ❯ 1. Yes / 2. No），
+   确认后回显「Set model to X and saved as your default for new sessions」（写 settings.json 的 model；effort max 是 this session only）。
 7. **模型能力元数据统一走 `model_registry.rs`**（2026-08-17 起；2026-08-26 扩为分层数据源）：**逐字段**查询链 =
    用户覆盖文件（model-capabilities.json）> **网关实测缓存**（model-capabilities-relay.json，
    「获取模型」时 fetch_models 顺带解析 OpenRouter 风格 /models 元数据落盘，最准）> **公共能力库**
@@ -386,3 +425,36 @@ Ccode 清单模型只收公共子集：stdio（command/args/env/cwd）+ remote�
 - **写入防护**（同 global_config 约定）：写前备份（同前缀留 10 份）+ 原子写 + 只动 hooks 段/键 + 用户已有 hooks 合并
   而非覆盖 + 移除只删含状态日志路径（marker 子串，匹配前反斜杠归一化为正斜杠）的条目并回收空壳键 + 配置损坏拒绝写入；
   **grok 整文件形态例外**（文件归 Ccode，外来文件拒绝覆盖）。
+
+## 13. 桌面客户端接力调研（2026-10-18；实现 = client_open.rs，决策见 architecture §10 当日条目）
+
+V = 源码 / 官方文档 / 本机实测核实，I = 推断。Codex、Claude 两家直接读本机已装客户端的 app.asar 源码；其余七家由调研代理查官方文档与源码（含本机各 CLI 家目录与 VS Code 扩展）。
+
+### 13.1 总表
+
+| agent | GUI 客户端 | 共享 CLI 会话存储 | 按会话 id 打开 | 按目录打开 / 新开 | 本期 |
+|---|---|---|---|---|---|
+| codex | ChatGPT.app 内嵌（bundle `com.openai.codex`，scheme `codex`，本机 26.1013；V） | 是，`~/.codex/state_<N>.sqlite` 的 `threads` 表（V；不能用 rollout 文件在不在判断——`.jsonl` 会被压成 `.zst`） | `codex://threads/<id>`（V） | `codex://threads/new?path=<绝对路径>`（V，`path` 经 `mi()` 校验必须绝对路径；另认 `prompt` / `mode` / `projectId` / `originUrl`） | 做 |
+| claude-code | Claude 桌面版（`com.anthropic.claudefordesktop`，scheme `claude`，本机 2.42304；V）；VS Code 扩展 `anthropic.claude-code`（V） | 是，`~/.claude/projects`（V，桌面版 Code 标签就是 CLI 会话） | `claude://resume?session=<uuid>` = `importCliSession` 把 CLI 会话导入桌面版（V 源码）；VS Code `vscode://anthropic.claude-code/open?session=&prompt=`（V，但按窗口工作目录 `--resume`，落哪个窗口 Mesa 控制不了，**不做**） | `claude://code/new?folder=<路径>&q=<提示>`（V，folder 可多值） | 桌面版做 |
+| kimi | Kimi Code Desktop ≥1.1.0（macOS/Windows/Linux）、`kimi web`、VS Code 扩展 `moonshot-ai.kimi-code`（V 文档） | 是，`~/.kimi-code/sessions`（V） | **无**：`kimi-code://open` 只认 `root` 与 `new=1`（V 源码）；浏览器兜底 `kimi vis <id>` | `kimi-code://open?root=<编码路径>&new=1`（`kimi app [path]` 即用它；已有工作区开的是新草稿不是旧会话，V） | 项目级，后续 |
+| opencode | 桌面版（Electron beta，scheme `opencode`）、`opencode web`、VS Code 扩展（只在终端跑 CLI） | 是，`~/.local/share/opencode/opencode.db`（V 本机；桌面版内置 CLI 服务共用，I） | scheme 上无；TUI `opencode -s <id>`，web 路由 `/:dir/session/:id`（V） | `opencode://open-project?directory=` / `opencode://new-session?directory=&prompt=`（V，v1.19.3 源码；本机未装，版本待实测） | 项目级，后续 |
+| qwen | Tauri 版 Qwen Code Desktop（仓库 0.0.1，是否公开发布未确认）、`qwen serve` Web Shell、VS Code `qwenlm.qwen-code-vscode-ide-companion` | 是（daemon 扫 CLI 的 JSONL；VS Code 走 ACP `session/list`/`load`，V） | 仅浏览器 `http://127.0.0.1:4170/session/<id>?workspace=<id>`，桌面版无 scheme | `qwen serve --workspace <abs> --open`（实验性，cwd 与注册工作区不符返回 400） | 不做（要管服务进程） |
+| codebuddy | 内置 Web UI `codebuddy --serve --open`；VS Code/JetBrains 用 `--ide`。WorkBuddy.app 是另一套存储（`~/.workbuddy`，V 本机） | Web UI 同进程同存储（I） | 无 | `cd <dir> && codebuddy --serve --open` | 不做 |
+| gemini | **无会话级客户端**：VS Code / Antigravity 的 Gemini CLI Companion 只做 diff 与上下文（V）；Antigravity 是另一套存储，不读 Gemini CLI 会话（V 本机 `~/.gemini/antigravity*/conversations/*.db`） | 不适用 | 无 | `code <dir>` 再手动运行 | 不做 |
+| cursor | Cursor IDE / Agents Window（本机未装）。`cursor://anysphere.cursor-deeplink/` 只有 `prompt` / `command` / `rule` 三类（V 文档） | 未见读 CLI 会话（I；CLI 在 `~/.cursor/chats/<hash>/<id>/store.db`） | 无（`agent --resume <id>` 仅终端） | `cursor <dir>`（I，VS Code fork 惯例） | 不做；CLI 只认 Cursor 自家账号，不能走第三方网关（V） |
+| grok | **无已核实客户端**：文档只列 ACP 编辑器（Zed / Neovim / Emacs / marimo），JetBrains 即将（V）。本机 Grok Bot.app（`com.anysphere.sand`，schemes `grokbot` / `sand`）是 Cursor / SpaceXAI 的云电脑产品，与 `~/.grok` 无关，**不是** Grok Build 客户端（V） | 不适用 | 无 | 无 | 不做 |
+
+Zed 是唯一核实过的跨 agent 路线：可从已配置的 ACP agent 导入会话到 Thread History（V Zed 文档）；未核实其 URL scheme。
+
+### 13.2 Claude 桌面版深链细节（Claude.app 2.42304.0 app.asar 源码）
+
+- 路由：`claude://resume?session=<uuid>`（`Ml.Resume`）、`claude://code/new?folder=&q=`（`jl.Code` 的 `/new`，`q` 与 `prompt` 同义）、`claude://code/continue?session=<uuid|last>`、`claude://code/needs-input`、`claude://code/search`。`folder` 带 `src=external`，由桌面版自己处理工作区信任。
+- `resume` 只收 UUID 形态的 session；导入走 `LocalSessionManager.importCliSession` → `adoptCliSession`，要求已登录账号（无账号信息直接抛「Unable to import session」）、拒绝正在被删除 / 属于 Cowork 的 id。工作区未信任抛 `WorkspaceUntrusted`。
+- 失败全部在桌面版内 toast，类别 `auth_expired` / `network` / `transcript_missing` / `other`——**Mesa 看不到**，只能在发链接前预检 transcript 文件存在。
+- 桌面版继续时用自己的账号 / 推理配置，不带 Mesa 注入的 `ANTHROPIC_BASE_URL` 等环境变量（环境变量只对 Mesa 拉起的 CLI 进程生效）。
+
+### 13.3 共性结论
+
+1. **环境变量注入对所有 GUI 客户端无效**：它们都不带 Mesa 的注入启动。渠道能到达客户端的只有写盘配置（Codex 的 provider 定义块、「设为全局默认」）；claude 桌面版走自己的账号。
+2. 客户端是否「无缝」取决于三条：读不读同一份会话存储、能否按 id / 目录定位、渠道能否带过去；缺一档降一档。
+3. 本机 Codex 0.163 的 provider 支持 `command` 取令牌（`command / timeout_ms / refresh_interval_ms / cwd`，字符串表核实，**未实测 ChatGPT 内嵌客户端认不认**），若认则 `experimental_bearer_token` 明文落盘可替换为命令取密钥；单独起验证任务，不并入本期。

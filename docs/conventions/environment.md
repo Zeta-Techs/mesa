@@ -35,6 +35,20 @@
   color-scheme，适配宽度走 `nextFitScale` + `scrollbar-gutter: stable`，Windows 关掉 ImageDecoder。
   细则见 `docs/conventions/terminal.md`，勿退回 `page.render({ canvas })` 不预绑上下文、勿把
   ResizeObserver 当强制重挂信号。
+- **conda 里的 quarto 在 Apple 芯片上跑不起来**（2026-10-17 本机实证）：miniconda base 装的 quarto 1.9.38 只带
+  x86_64 的 deno（`bin/tools/aarch64/deno` 缺失），`quarto --version` 退出码 0 却不输出版本，`quarto pandoc`
+  直接报错——综述/论文的渲染与字体脚本都会失败，`tests/manuscript-font.test.ts` 也会红。conda base 在 PATH 前面时
+  它会盖过官方版。用官方 pkg（`brew install --cask quarto`，要管理员密码）并 `conda remove quarto` 去掉这个壳；
+  依赖体检对它报「跑不起来」（`dep_check::quarto_status`），不再只看文件在不在。
+  **官方 pkg 的 PATH 链接可能静默缺失**（2026-10-18 实证）：pkg 往 `/usr/local/bin` 建 `quarto` 链接，Apple 芯片
+  机器上这个目录常不存在，装完 PATH 上找不到 quarto（本体在 `/Applications/quarto/bin`）。Mesa 解析已把该目录
+  列进候选（`agent_specs::binary_candidate_dirs`），但终端里的 Agent 只认 PATH——开工工具检查会报「不在 PATH 上」；
+  本机已 `ln -s /Applications/quarto/bin/quarto ~/.local/bin/quarto`。**brew 下 GitHub Release 大包要带代理**：
+  本机系统代理在 127.0.0.1:10808，终端里的 brew/curl 不读系统代理，直连 GitHub 18MB 就断（HTTP/2 PROTOCOL_ERROR），
+  `https_proxy=http://127.0.0.1:10808 http_proxy=… brew install --cask quarto` 秒下。
+  **卸掉 conda 版 quarto 后要从新终端重启 Mesa**：conda 的激活脚本导出过 `QUARTO_SHARE_PATH`、`QUARTO_DENO`
+  等十来个变量，卸载后已经在跑的进程（`tauri dev` 和它拉起的 Mesa、Mesa 里开的终端与 Agent）仍带着，官方版
+  quarto 认这些变量，`--version` 读不到、渲染也会失败。依赖体检会点名这些残留变量（`dep_check::stale_quarto_env`）。
 - **dev 端口为 17575**（`vite.config.ts` + `tauri.conf.json` devUrl 两处同步；勿改回 1420——Codex 桌面版 NetworkService 占用）。vite 撞已占端口静默退出；**stdin EOF 也自杀**——后台拉起必须 `tail -f /dev/null | npm run tauri:dev`。
   **agent 不得自行改端口、加 `--port`/`--strictPort` 参数或另起配置外的 dev 实例**；17575 被占时先报出占用方（Windows 用
   `netstat -ano | findstr :17575`）交用户处理，不静默换端口。

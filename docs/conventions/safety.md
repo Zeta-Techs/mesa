@@ -6,6 +6,15 @@
 - **配置持久化（2026-09-08）**：profiles/keys/settings、schedules 和全局 CLI 配置分别在读改写全程持进程内锁与 OS 文件锁；取锁失败报错，不无锁继续。唯一同目录临时文件创建即 0600（Unix），通用写入保留原文件 mode，私有写入强制 0600；替换失败不得先删原件。Windows 只读属性仅临时放开，失败恢复属性。官方账号绑定不得嵌套获取同一把 profiles 锁。
 - **迁移与损坏（2026-09-08）**：拆层迁移先存 `gateway-split.pending.json`（私有恢复日志），所有文件和引用更新成功才删除；任何阶段可重放，保持日志中的 ID 不变。旧版半迁移只按仍有 key_hint 的网关与保留 binding ID 恢复密钥引用，不猜端点、不覆盖已有新密钥。损坏 keys/settings 保留原件并拒绝写入，不以默认值覆盖；密钥脱敏读取没有改名副作用，暂时失败沿用上次成功快照。
 - **权限诚实性（2026-09-08）**：新建与恢复都执行 discuss 参数约束；无只读/计划模式参数的 Agent 拒绝 discuss，不仅靠提示词。不把 CLI 计划模式称作 OS 级沙箱。定时任务显式连接失效时停下报错，不在无人确认时更换供应商；无头缺密钥拒绝启动。
+- **本机原生权限档（2026-10-17；同日收成四档）**：聊天权限菜单的「请求批准 ask / 帮我批准 auto / 完全访问 full」只经 `pty_spawn.permissionMode` 加在本次命令行
+  （`agent_specs.permission_args`，`agents::permission_launch_args`），不写任何 CLI 配置；这家没有该档 → 拒绝启动、不静默退回本机默认。
+  Run 的权限政策仍只有 discuss / write_tree。运行中换权限一律「停下再按原会话恢复」，不在进程里偷切；确认框必须写明会重开。**完全访问必须二次确认**（confirmDialog danger），且不进标签持久化白名单——重启后
+  恢复的标签不得自动带着完全访问再起。Claude Code 的 `/model`、`/effort` 会自己写 `~/.claude/settings.json` 的 model / effortLevel
+  （CLI 行为，非 Mesa 写入）：聊天芯片弹层必须明说，不得暗中替用户改回。本机设置探查（`cli_permission.rs`）只报**实际生效**的：
+  Mesa 启动 Codex 一律带 `-s workspace-write`，本机 `sandbox_mode` 被盖掉，不得据它报「完全访问」（只看 `approval_policy`）。
+  **沉浸阅读会话固定请求批准（2026-10-18）**：阅读区自动开的会话带 `permissionMode: "ask"`（这家没有 ask 档才按本机设置，
+  不能因此拒绝启动），本机设完全访问也收窄；Claude Code 再按 `reuse_key` 前缀 `reader:` 追加 `--allowedTools Edit(./notes/**)`，
+  只预放行项目 `notes/` 下的编辑。这条放行只跟着阅读会话走，不扩到别的会话、不写任何 CLI 配置。
 - **终端输入/输出（2026-09-08）**：每 PTY 独立有界队列（16 项，单次最多 1 MB），入队后后台等待，不能持全局表锁阻塞写入；聊天正文和延迟提交键是一项请求，不能交错。超时明确告知可能仍在写入，禁止自动重发。PTY 实际输出不等数据库：诊断副本经有界队列每 500ms 批量落盘、复用连接，每 Run 最多 100 条、全局最多 10000 条输出事件，不清除生命周期事件；尾部未闭合 token 不持久化，先脱敏后截尾。
 - **取消和退出（2026-09-08）**：无头任务有取消信号；定时行和设置→诊断均有停止入口。原生退出阶段拒绝新启动，并限时回收捕获进程与 PTY，不只依赖 React 卸载。Windows 受管理捕获命令先挂起创建，再加入 kill-on-close Job Object 后恢复，失败不无保护继续；打开 GitHub Desktop/浏览器的启动器不进入该 Job，也不继承输出管道，以免关闭用户打开的窗口。Windows 全应用/界面仍需实机验收。
 - **出站/预算（2026-09-08）**：普通日志查看、复制、导出与诊断包统一后端脱敏；模型目录响应最多 16 MB，公共模型库/期刊 CSV 最多 32 MB，按实际解压字节累计，不能只相信 Content-Length。配置读取失败不清空上次成功列表，必须提供原因与重试。
@@ -113,6 +122,13 @@
      连带成员文件）；
   4. 工作树文件删除（限定树当前根 + 重要路径黑名单：系统目录/关键用户目录/CLI 配置/.git 一律拒绝；黑名单 canonicalize
      双校验堵 symlink 绕过）；
+  6. **内部对话保留期清理**（2026-10-17，`internal_sessions.rs`）：设置「数据与存储」的自动清理开关（默认开、保留 30 天）
+     或「立即清理」即用户授权。目标三条件同时成立：provenance/会话 meta 标为 internal、cwd 是 `ccode-ai-<uuid>`
+     临时目录或定时雷达隔离 worktree 根下、未 pin；时间不明 / 源文件已不在（只剩快照）一律不删。删除复用会话删除的
+     白名单校验（`deletable_session_file`），但**永久删除**（`delete_source_file_mode(.., true)`）——成千上万条逐个进
+     回收站既慢又塞满回收站；session_meta 与搜索索引随删，用量行刻意保留。另扫 `~/.claude/projects` 下名字以
+     `ccode-ai-<uuid>` 结尾、无任何 .jsonl、一天内未改动的空壳目录。2026-10-17 在真实数据副本（HOME 指向 /tmp 拷贝）
+     完整跑过：Codex 654 条删掉、用户会话 253→253、内部用量行 1061→1061；路径不在副本会话目录内的被白名单拒删。
   5. **会话导入**（`session_transfer.rs`：用户显式选 zip 并确认目标目录后，才把会话文件写入各 CLI 会话数据目录）。防护：
      zip 解压防 zip-slip（`enclosed_name` + 禁 `..` / 绝对路径，条目只允许 `manifest.json` 与 `sessions/`）；单文件 200MB / 整包解压 512MB / 条目数 2 万上限；
      目标路径必须落在 `session_data_dirs_at` 白名单内（cursor 另限 `projects/*/agent-transcripts/**/*.jsonl`）；
@@ -120,7 +136,7 @@
      已存在同 agent 同 sessionId 一律跳过不覆盖；写入走 `atomic_write_bytes`（tmp+rename）；索引类读-改-写。
      导出是只读拷贝：会话原文进包（可能含密钥），弹层明示「分享前请自查」；密钥/网关/profile 不进包；B 机浏览仍过 `redact_sensitive_text`。
   6. **卸载 Mesa**（`uninstall.rs`：设置 → 数据与存储。两次确认，第二次须输入「卸载」）。
-     只把 Mesa 独占目录移入回收站：平台配置目录 `ccode/`、主目录 `~/ccode/`、本机数据目录
+     只把 Mesa 独占目录移入回收站：平台配置目录 `ccode/`、主目录 `~/ccode/`（含用户自定义过的工作副本家目录 `<所选>/ccode`，取 `ccode_home::all_roots`）、本机数据目录
      `ccode/`（目标副本），以及打包身份 `com.ccode.dev` 的网页数据（macOS 的
      `~/Library/WebKit/<身份>`、Caches、Saved Application State；Windows 的
      `%LOCALAPPDATA%\<身份>\EBWebView`）。进程退出前的最后一次写入可能把网页数据再建出来。
@@ -139,6 +155,10 @@
   语言与输入法、当前功能开关、应用日志及自应用启动后的子进程生命周期；进程记录为内存环形缓冲，不读取环境变量，命令参数
   与日志在导出前必须经 Rust 层脱敏。ZIP 内只放 UTF-8 JSON/TXT，保证从 Windows 带回 macOS 后无需 Mesa 或 Windows 工具
   即可离线分析。系统级活动只额外观察 CTF/TextInputHost，禁止借诊断之名采集无关应用的命令行。
+  **诊断包随反馈出站（2026-10-17）**：反馈表单（邮箱直发 / 公司端点）只把诊断包**路径**交给后端，后端经
+  `feedback::checked_diagnostics_path` 过闸后自读——只认 `diagnostics::bundle_dir()` 里、名为 `ccode-diagnostics-*.zip`
+  的普通文件（`symlink_metadata` 判定，不跟链接）且 ≤20MB；新增任何「把本地文件随反馈寄出」的入口都走这道闸，
+  禁止前端读文件转 Base64 上送，也禁止放宽成任意路径（否则反馈通道就是一条任意文件外发通道）。
 - **「是否 git 仓库」探测带 30s 负缓存**（`git_info::probe_is_work_tree`）：轮询入口（git_status/git_status_map）对非仓库
   cwd 不得每轮真 spawn git（诊断包实测 Windows 安装版 85 秒 73 次同目录探测）；只缓存否定结果，应用内 `git init` 成功后
   必须调 `invalidate_repo_probe` 主动失效。**跨来源路径比较一律走 `paths::path_key` 口径**（same_path/path_within，
@@ -162,15 +182,29 @@
 - **聊天区 Markdown 渲染（ChatMarkdown）**：会话内容可能含联网抓取文本，按不可信处理——独立 Marked 实例，
   原始 HTML 一律转义（raw `<img>`/`<script>` 是追踪/注入通道）；http(s) 图片不加载只显示文本，本地图片经
   `read_image_bytes` 白名单换 data URL，不新增任何读取通道。
+- **Mesa 自有档案不催人提交（2026-10-17）**：`.ccode/`（台账除外）与 `.gitignore`＝后端 `BOOTSTRAP_PATHS`。项目页「N 处改动
+  未存入历史」与开工弹层提醒用 `userWorkDirtyFiles`（剔除档案路径）；评审打开时若主仓脏，先调 `commit_project_bootstrap`
+  （同开工前一步、同提交信息，每次打开每主仓只试一次），剩下的才交提交面板。评审提交面板仍用 `userDirtyFiles`——挡合并的
+  一切都要能看见能提交。设置页改规则/选文献来源等写档案卡的动作不各自提交（避免一次点击一个提交）。
+- **雷达订阅清单只有「保存」才整表写（2026-10-17）**：`.ccode/watch/<任务id>/watchlist.md` 的整表覆盖写只允许来自订阅弹层的
+  「保存」（当前编辑行）。「编辑源文件」前只准走 `ensure_watch_subscriptions_file`（不存在才建空模板，存在一个字节不动）；
+  禁止拿弹层的 `initial` 或任何异步未落定的状态写回——从巡检行打开时 initial 恒为空，曾一点就把已有关键词清光（实证）。
+- **科研台账整份读写（2026-10-17，fs_tree.rs）**：`read_research_ledger` / `save_research_ledger` 只放行固定相对路径白名单
+  （`papers/` 下 included.json、included.md、to-fetch.md、to-fetch.ris、endnote-import.ris、screening.md，`notes/index.json`，
+  `references.bib`），canonicalize 后必须落在调用方给的项目根或工作区根内（`..` 与外链拒绝）；上限 16 MB；保存必须带读取时
+  的版本，磁盘已变即拒（与预览保存共用 `PREVIEW_SAVE_LOCK` + `config_lock("preview-save")`）。新增要整份读写的台账先加白名单，
+  不得为此放宽 256 KB 预览通道；台账读写也不得回落预览通道（截断会被当成「文件不存在」）。
 - **引用健康检查（v3.63，citation.rs）**：`check_citation_health` 只读扫描 .md 与 references.bib，目标目录沿用同一
   白名单口径（注册项目根 + 工作区工作树/主仓，canonicalize 后前缀判定，无 cwd hint 来源）；扫描有界（≤200 个 md、单文件 ≤1MB）。
 - **「整理为笔记」（P2b）**：归属判定只在后端 `pdf_owner_project`（登记资源 canonical 精确命中 → 项目根最长前缀命中，都未
   命中时前端询问是否把所在文件夹添加为项目并默认 `pipeline_opt_out`，家目录/盘符根拒绝；前端不做路径归属猜测）；
-  写入只走 `append_workspace_inbox`——目标固定为该目录根内 `notes/inbox.md`（不接受外部子路径），单次 ≤ 64KB、
-  读-改-原子写、已存在文件 canonicalize 双校验防 symlink 逃逸；落点由 `notesInboxTarget` 决定：`pipeline_opt_out`
-  或没有精读步骤 → 项目根；否则 `workspaceName === "lit-notes"` 优先、回落流水线第二步工作区。无活跃工作区时复用
-  一键开步链路（ensure_git_repo → create_workspace → TASK.md best-effort → 追加 inbox → pendingTerminal +
-  ORGANIZE_NOTES_PROMPT 预填）。
+  写入只走 `append_notes_excerpt`——目标固定为该目录根内 `notes/excerpts.md`（不接受外部子路径），单次 ≤ 64KB、
+  读-改-原子写、已存在文件 canonicalize 双校验防 symlink 逃逸；候选精读步由 `notesExcerptTarget` 决定（工作区名
+  `lit-notes` 或挂了 lit-notes 技能的步骤；`pipeline_opt_out` 或没有精读步 → 项目根）。**该步工作区正在跑**才写进
+  工作区并预填 ORGANIZE_NOTES_PROMPT；没在跑就写项目根，开工时随接驳（notes/*.md）带进工作区。
+  2026-10-17 审查修复：①不再写 `notes/inbox.md`——那是文献雷达收件箱，被 gitignore（摘录进不了合并、
+  删工作区即丢），主仓多出的行还会把雷达采纳卡死；②不再替人提前建精读工作区（旧口径绕开开工弹层、
+  基线可能还没合并检索结果，之后正式开工撞「工作区已存在且未合并」）；③候选不再盲取流水线第二步。
 - **MCP 分发（§6.15，规格 = matrix §10）**：Mesa 清单（<config>/ccode/mcp-servers.json）→ 八家用户级配置的映射写入（grok 首版只读不分发）。
   **只写用户级**（项目级各家都有审批闸）；目标文件多是混合状态文件，一律读-改-写一个键/段 + 写前备份 + 原子写 + 读回校验，
   绝不整文件覆盖；codex 走 toml_edit 保格式、gemini/qwen/opencode/codebuddy 走 JSONC 容错读；密钥一律用 `$VAR`/`${VAR}`

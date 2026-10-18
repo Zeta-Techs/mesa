@@ -366,6 +366,11 @@ Codex            → …
 
 「优先走 OpenAI 槽」只决定**网关库点一次「获取模型」时先拉哪一个槽**。每个槽的 HTTP 路径必须保留现状，尤其：
 
+- **Gemini 网关绑定要求 CLI 认证方式是 API Key（2026-10-17 端到端实测，gemini 0.64）**：认证只看用户 `~/.gemini/settings.json` 的
+  `security.auth.selectedType`，环境变量只在它没设时兜底。oauth-personal 时 Mesa 注入的密钥 / 地址全被无视（要开浏览器登录）；
+  没设但带了 `GOOGLE_GEMINI_BASE_URL` 时环境推断成 gateway 认证，CLI 报 Invalid auth method。能压过用户设置的系统设置层
+  （`GEMINI_CLI_SYSTEM_SETTINGS_PATH`）要求文件归 root，普通用户写的被静默跳过——走不通。所以启动前只读检查（`agents::gemini_auth_blocker`），
+  不是 `gemini-api-key` 就拒绝并给出改法（连接「设为全局默认」会写 selectedType 并先备份，或 gemini 里 /auth）；不替用户改文件。
 - Gemini：`/v1beta/models` 候选（`models.rs` 143–154 行），query `key=`，不是 `{base}/v1/models`。
 - Anthropic 槽：现 Claude/CodeBuddy 拉目录的路径与鉴权（Bearer）不得改成 OpenAI 形。
 - Cursor：继续拒绝通用 `/models`（现直接报错）。
@@ -435,14 +440,29 @@ Codex            → …
 
 > 2026-09-22 自 AGENTS.md「模型配置约定」整节迁入（原文未改）。改配置/注入/设为全局/模型能力前与本文件其余章节一起读。
 
-- Claude Code 启动必须用 `--settings` 覆盖本次连接的 base_url、密钥与模型选择，避免用户级 `settings.json.env` 覆盖 Mesa（三者必须同层配对：只提 base_url 会让磁盘上残留的旧 token 胜出，形成「新端点 + 旧令牌」而报 401）；密钥写 0600 临时文件后以路径传入，不进 argv；不得写 `CLAUDE_CODE_SUBAGENT_MODEL`，以保留 Task 参数、frontmatter 和主模型继承链。
+- Claude Code 启动必须用 `--settings` 覆盖本次连接的 base_url、密钥与模型选择，避免用户级 `settings.json.env` 覆盖 Mesa（三者必须同层配对：只提 base_url 会让磁盘上残留的旧 token 胜出，形成「新端点 + 旧令牌」而报 401）；密钥写 0600 临时文件后以路径传入，不进 argv。**覆盖层与进程 env 共用 `agents::claude_model_env` 一份（2026-10-17 端到端核对后定）**：
+  四个别名槽（SONNET / OPUS / HAIKU / FABLE）全填——绑定名单不够四个时空槽用这次选的模型补（名单为空则不补，沿用 Claude 自己的别名映射），
+  `ANTHROPIC_SMALL_FAST_MODEL` 跟 HAIKU 槽；`CLAUDE_CODE_SUBAGENT_MODEL(_FORCE)` 默认不写（保留 Task 参数、frontmatter 与主模型继承链），
+  **只在用户级 settings.json env 设了时盖成这次的模型**；上下文窗口确知 >200K 才声明，用户级设过而这次不确知时写回 200000。
+  依据：假网关实测，用户全局 settings 里的 HAIKU / 子 agent 模型原先会漏进 Mesa 会话（会话标题、子 agent 请求带着全局 glm-5.3 打到所选网关）。
+  用户级 env 只读键名（`claude_user_settings_env_keys`），单测经 thread_local 注入、不读本机。
+- **模型分工 RoleModels（2026-10-17 用户：补齐规则要在连接里看得见、能改）**：绑定字段 `role_models { small, subagent }`（None = 跟主模型），
+  连接表单「模型分工」只对能分开指定的家显示（`src/role-models.ts`）：Claude Code（small → HAIKU 槽 + `ANTHROPIC_SMALL_FAST_MODEL`；
+  subagent → 显式写 `CLAUDE_CODE_SUBAGENT_MODEL`）、Grok（small → overlay `[models].session_summary` + `prompt_suggestion`，
+  未指定时钉成这次的主模型——用户全局常把它们指到别的网关；small 并入 allowed_models）、OpenCode（small → `small_model`）。
+  选项只能是名单里的模型；名单删掉的模型对应分工自动作废。不改任何 CLI 配置文件；导出导入随绑定带走。
+- **别家模型适配（2026-10-17 假网关实测）**：Claude 主模型被能力库确知「不会思考」时写 `MAX_THINKING_TOKENS=0`（去掉 adaptive
+  thinking 字段；`CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING` 实测不去）。Grok 的思考档只对 config 里 `[model."<id>"]` 声明了档位的模型生效，
+  其余被忽略并警告——求交器在只绑 grok 时据 `agents::grok_model_declares_effort`（只读）关掉开聊前与运行中的档位。
+  CodeBuddy 自定义端点下 `--effort` 在线上不出现任何思考字段，effort 通道改 unsupported。
 - Anthropic 兼容槽只接受基础 URL；保存时拒绝以 `/messages` 结尾的完整资源地址。
 - CodeBuddy 的 `reasoning_effort` 通过当前 CLI 的 `--effort` 启动参数注入；Grok 的模型/思考档通过 `-m`/`--reasoning-effort` 注入。
 - Grok 的 `api_backend`、`context_window` 不得通过受限 `GROK_CONFIG` 猜测注入；若绑定声明非 `chat_completions`，必须先在 Grok `[model.<id>]` 配置中登记，否则启动和无头调用均 fail-closed。
 - Codex 网关端点必须实现 `/responses`（CLI 已移除 `wire_api="chat"`）：智谱专用端点是 `https://open.bigmodel.cn/api/v1`，`/api/paas/v4` 只有 `chat/completions`，Codex 打过去 404；且 api/v1 **不提供 `/models` 目录**（智谱把错误包成 HTTP 200），目录只有 `paas/v4/models` 有——网关库正确填法 = Base URL/OpenAI 槽 `paas/v4` + Responses 槽 `api/v1` 分槽填（预设与网关库告警已对齐；fetch_models 用 `gateway_error_envelope` 识别 200 包错误体，不误报「0 个模型」；qwen/kimi/opencode/grok 走 openai 槽用 `paas/v4` 不受影响；2026-09-15 实证）。
 - Codex 从步骤工作区启动时，pty_spawn 把主仓 `papers/` 预授权进沙箱（`-c sandbox_workspace_write.writable_roots=[...]`，`workspaces::papers_dir_for_worktree` 映射）：口径 C 允许原始文献直写主仓 papers/，不预授权则每写一篇 PDF 都停下等提权（2026-09-15 用户实测「总是让我授权」）。**只加 papers/ 子目录**——派生产物仍必须走工作区 + 评审合并，不得放宽到整个主仓。
 - 配置页查询模型能力必须带 `gatewayId`，网关级能力声明优先于公共/内置能力库；写 Grok 逐模型上下文时只使用显式声明值，不使用通用估值。
-- 思考档注入优先级（2026-09-15）：开工弹层的本次覆盖（`KickoffLaunch.effort` → PendingTerminal → Tab → `pty_spawn` 的 `effortOverride`）> 绑定逐模型策略（网关库 `reasoningEffort`）> 端点默认。弹层选择器按 `combo_surface.injectEffortAllowed` 判定显示（不给调不了的东西）；值只影响本次进程不写回绑定；运行中调整仍在状态栏（起点/运行两层同源 combo）。执行权限不做成弹层选项——步骤执行固定 write_tree + 沙箱，只读讨论走聊想法/商量（弹层只有一行权限边界可见性文案）。
+- **状态栏当前思考档（2026-10-17）**：`currentEffort` = TUI 屏上认出的档（`detectEffortInOutput(text, agentId)`，**按 CLI 分形态、只认带固定上下文的成句**，2026-10-17 本机 PTY 实录：Claude Code/CodeBuddy 横幅「with X effort」/输入框右上「◉ X · /effort」/回显「Set effort level to X」；Codex 0.163 底栏「<模型> X · <目录>」逐段 CUP 定位、没设档写 default（认出 default = 用默认，**不回落注入值**）；Grok 1.0.x 边框「<模型> (X) · <权限>」；Qwen 0.25 底栏不写档，只认 /effort 回显三句；Kimi 2.1 底栏「<模型> thinking  <目录>」= on；其余 CLI 不认。光标右移/CUP 先换空格再剥转义，含人手敲 /effort）> 本次开工覆盖（TabStatus.effortOverride）> `combo_surface.launchEffort`（逐模型策略开场档，**仅 injectEffortAllowed 时有值**——没注入就是 null）。都没有 = 不知道：滑块不点亮任何一格、标「默认」，**禁止再用「档位表第 N 格」冒充当前档**（原初值硬写下标 1，CLI 实跑 xhigh 时显示 low）。拖动后的本地选择在真值变化（回显到达/换 PTY）时让位。底栏不能切档（无 showNativeEffort）但模型会思考的 CLI 显示只读「◈ 档名 / ◈ 默认」。CLI 升级改了界面文案会认不出——认不出只是回落到覆盖/开场档/「默认」，不会显示错档；发现回落时重新 PTY 实录补形态。
+- 思考档注入优先级（2026-09-15；2026-10-17 聊天输入框开聊前选择器「思考」栏同样写 Tab.effort）：开工弹层 / 聊天选择器的本次覆盖（`KickoffLaunch.effort` → PendingTerminal → Tab → `pty_spawn` 的 `effortOverride`）> 绑定逐模型策略（网关库 `reasoningEffort`）> 端点默认。弹层选择器按 `combo_surface.injectEffortAllowed` 判定显示（不给调不了的东西）；值只影响本次进程不写回绑定；运行中调整仍在状态栏（起点/运行两层同源 combo）。执行权限不做成弹层选项——步骤执行固定 write_tree + 沙箱，只读讨论走聊想法/商量（弹层只有一行权限边界可见性文案）。
 - **能力声明与能力通道（2026-09-19，对照 cc-switch 补口）**：Claude 长上下文 `CLAUDE_CODE_MAX_CONTEXT_TOKENS` 与 `CLAUDE_CODE_AUTO_COMPACT_WINDOW` **同值成对**注入/清除（启动 + 设为全局；只抬上限不抬压缩窗口会把压缩触发点留在旧档，勿拆对）。Codex catalog **不写** `apply_patch_tool_type`（freeform=custom 工具会被原生 /responses 与 Anthropic 网关拒/丢，编辑走 `shell_type: "shell_command"`）。模型能力注册链四层全 miss 时用户可经网关库「能力声明」写覆盖（`model-capabilities.json` 最高层；表单只收 context/思考/视觉——output 的旋钮是策略字段 max output，能力层 output 只喂 opencode limit.output，与策略并排摆两个输出框属重复），`input_modalities` 等按注册链如实声明（宁缺毋滥）+ 覆盖层补口的口径不变。
 - **声明层与估值层分家（2026-09-26，硬规则）**：写进**别人家 CLI 配置文件**的能力值只能来自 `model_*_declared_for` 声明层访问器，兜底层（`fallback_context_size` 的 128K/256K/1M、关键词推断 thinking、内置表确知多模态清单）**一律不得**当声明写出——它只配喂 UI 显示与自己家状态的估算。分流按目标格式的必填性决定：**可省略的未知就不写**（codex catalog 的 `context_window`/`max_context_window`/`input_modalities`，实证可选；codex `-c model_context_window`/`model_auto_compact_token_limit`；kimi `KIMI_MODEL_MAX_CONTEXT_SIZE`，env 通道有 CLI 兜底不报错），**必填的写保守下限**（kimi `config.toml` 的 `max_context_size`；opencode 的 `limit.context`/`limit.output`）。理由：`-c model_context_window` 是硬覆盖，写 128K 猜测会把 codex 自带 registry 认得的 272K/1M 窗口压低（比不写更坏）；`input_modalities: ["text"]` 是替用户断言「纯文本」；未知≠假，凡**破坏性/删除性**决策（如 `combo::apply_to_profile` 剥 `reasoning_effort`）只认显式 `Some(false)`，未知一律保留。反面对照：凡是注释里出现「必填/强制/schema 要求」的说法，改前先去二进制或上游源码找非注释证据（本仓此类说法源头都是注释，文档/测试只是复述）。
   第三个分流维度是**目标键是不是「完备声明」**：`capabilities` 这类数组由 CLI 用 `some(===)` 判成员（不在表里 == 不支持），所以写进去就是替用户断言「不在此表即没有」，未确知不得写入；但**若该键有已知缺省集，就可以写「缺省集 ∪ 确知为真」，只可能加不可能减**。kimi env 通道正属此列：缺省 `["image_in","thinking"]` 是已知有限集（且**不含 `tool_use`**——省了就是丢工具），故恒写 `tool_use` 并保留未被声明为假的缺省成员；config.toml 通道的 `capabilities` 缺省由 CLI 按模型自身线索推导、边界不可知，故只在 `== Some(true)` 时写、未确知整键省略。**未确知的缺省集不许猜**：`["tool_use"]` 是 `CUSTOM_REGISTRY_DEFAULT_CAPABILITIES`（注册项路径）的缺省，曾被误当 env 通道缺省引用，勿再复述。

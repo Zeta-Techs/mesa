@@ -18,12 +18,17 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # ⠿ 拖出手柄经 tauri-plugin-drag 做 OS 级文件拖出——WebView HTML5 拖拽出不了窗口）、TaskCardsSection、FileTree、
                              # FilePreviewEditor、PdfPreview/DocxPreview/XlsxPreview/ImagePreview、ImagePairView、GitPanel、HandoffPicker/DigestPicker、
                              #   PDF 字节模块级 LRU 缓存（loadPdfBytes，上限 8 份）：预览⇄阅读区重挂载不再重走
-                             #   read_pdf_bytes IPC+atob+解析三程，骨架期只剩 pdf.js 解析一程）、
+                             #   read_pdf_bytes IPC+atob+解析三程，骨架期只剩 pdf.js 解析一程；PdfPageView 页内标记层 marks
+                             #   （查找/标注/跳转一闪：按摘句重定位、页内百分比矩形、文本层之前不接指针，scrollTo nonce 居中）、
                              # KickoffConfirmDialog（开工确认弹层：TASK.md 预览/编辑（草稿优先）+ 旧简报并入兜底 + 技能区（含 MCP 归处标记）+ 人工事项区 + 主仓提醒 +
                              # 上一步收尾软门：紧邻上一步非可选 after 事项未勾 → 「确认开始」二击变「仍要开工」才开，只确认不阻断）+
                              # 未存进历史软门（2026-09-20）：未提交改动与本步 inputs 相交（相交判定 src/kickoff-dirty-gate.ts）→ 列文件 +
-                             # 就地「存进历史」（git_commit 只提交命中子集）/二击开工；不相交仍只是主仓提醒行（想法期实验改动留在主仓合法））、
-                             # StepSkillsChips（步骤推荐技能 chip 区：只读/可编辑两态 + 产物冲突/跨步骤链路 ⚠ 警告行）、
+                             # 就地「存进历史」（git_commit 只提交命中子集）/二击开工；不相交仍只是主仓提醒行（想法期实验改动留在主仓合法）；
+                             # 2026-10-17 版式：KickoffRow 标签列（读入/产出/执行/思考档/技能/权限/任务书）同列对齐，按钮字号靠容器继承；
+                             # 上游未保存软门：unsavedUpstream（ProjectGroup 按步进器状态算）置顶 + 「去评审」，与收尾软门共用二击；
+                             # 工作区名在标题行，不挂弹层 title（会悬浮压正文））、
+                             # ResearchToolPreflight（开工技能/工具只读预检：全部就绪只出一行「已启用到 X」，有缺口才展开带分发/重测的块）、
+                             # StepSkillsChips（步骤推荐技能 chip 区：只读/可编辑两态 + 产物冲突/跨步骤链路 ⚠ 警告行；bare = 不画标题行，供开工弹层标签列用）、
                              # HumanTasksList（人工事项清单 + useHumanTasks 共享逻辑；待确认清完且未手动取消才自动勾）、StepFlow（步骤内协同流程线；付费墙行已登录显示「已登录」，未登录才是「登录学校账号」；拖进待获取清单按文件名、DOI 和 PDF 内标题对条目）、
                              # ScheduleSection（定时任务：有流程在项目设置抽屉；无流程主区雷达下；编程/办公右侧会话栏；
                              #   onSchedulesChanged = 任务集变更回调，定时任务页里喂 ProjectSchedulesView 的版本号桥）、
@@ -45,40 +50,102 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # ReaderOverlay（沉浸阅读区全屏覆盖层，v3.96：三栏「笔记｜PDF｜Agent 终端」，fixed inset-0 z-40，
                              #   左右栏收起＝栏块常挂载负 margin 滑出（ccode-reader-panel，宽度不变：Monaco/xterm 零重排零搬移，
                              #   PDF 适配重算在 PdfContinuousView 停稳防抖收口；禁止改回条件卸载），
-                             #   Esc 退出级联最优先，底下终端/PTY 保持挂载；右栏 = 阅读会话标签 xterm 宿主搬移，注入由 TerminalPage 供给；
+                             #   Esc 退出级联最优先（焦点在右栏时归右栏），底下终端/PTY 保持挂载；右栏 = 阅读会话标签的 xterm 宿主
+                             #   与聊天层宿主（data-chat-host）一起搬进同一槽位，标题行「聊天/终端」切 surface（ccode.readerSurface 记忆，
+                             #   peek 靠槽位 data-reader-surface 的 App.css 规则摆位），注入由 TerminalPage 供给（聊天层时不发送的进聊天输入框）；
                              #   跨页进入的退出回来源页（setReaderReq 在 store 层自动记 fromPage、closeReader 回跳）+
                              #   退出同时直接关阅读会话标签、不弹确认（正在生成的回应一并中断；requestCloseTab 的「进程活着」
                              #   判定对常驻交互式 CLI 恒真、每次退出都会弹，故不走它；2026-09-20 用户拍板）+
                              #   进入启动占位：标签派出前不闪「未在运行」卡、CLI 开屏前 xterm 黑底用遮面盖住（PDF 栏加载给页形骨架；
                              #   遮面重启触发器 = agentTabId——关掉旧标签重进后旧 startedAt 会原样带回来，
                              #   以它为触发器不重新挂遮面会露裸黑 xterm））+
-                             #   PdfContinuousView（连续滚动 PDF 栏：±2 页虚拟化懒渲染、选段浮动条（译/◈问 AI/＋生词/⋯）、▦ 圈选截图、
+                             #   PdfContinuousView（连续滚动 PDF 栏：±2 页虚拟化懒渲染、选段浮动条（译/高亮/◈问 AI/＋生词/⋯ 批注·直接发送）、▦ 圈选截图、
                              #   ⌘+点击段落对照（结果进同款浮卡）、进度记忆/护眼反色/术语淡高亮、
-                             #   ⌘/Ctrl+滚轮与触控板双指捏合对准指针缩放）、
+                             #   ⌘/Ctrl+滚轮与触控板双指捏合对准指针缩放；2026-10-18：查找条（findHotkey 接线才拦 ⌘F，
+                             #   capture 相止传播）/目录（PDF 自带书签）/页码点击跳页/标注列表与高亮小卡/外部 jumpReq（页码·图表）/
+                             #   页内标记 marks 按页 memo 交 PdfPageView）、
+                             #   阅读区 2026-10-18 补齐：笔记 watcher 自订一份（标注高亮与「让 AI 起草」显隐看盘上笔记）、
+                             #   reader_paper_title 顶栏真实题名、标注增删/在笔记里看/笔记→PDF 跳转接线、悬浮译文卡 floatBounds（PDF 栏边界）、
                              # TemplatePickModal（科研项目注册成功后的研究流程模板选择层：顶部课题主题 +
                              # 六套内置模板 + 「不使用研究流程」（写 pipeline_opt_out 标记；只读文献走这条）/
                              # 「稍后再选」（不留痕，已填主题仍落盘）两出口）、
-                             # CodingProjectView（编程左工作树右会话可收；工作树事后分组、行内图标动作）、
+                             # CodingProjectView（编程左分支地图右会话可收：基准作根、工作树/未检出分支经轨道挂主干；工作树事后分组、行内图标动作）、
                              # FuseDraftModal（「◈ 融合进任务书」预览编辑弹层：AI 融合稿可改后确认才写草稿）、
                              # TerminalStatusBar（终端底部常驻状态栏：未启动只留状态点 + 📂 目录胶囊；
-                             #   进程起来后才有模型/思考档可点切 + git 芯片/保存/推送 + 时长/token） 等
-  App.tsx                    # 应用壳：标题栏、侧栏、九页挂载。壳与标题栏/侧栏/缝透明，桌面磨砂从窗口底透上来；
+                             #   进程起来后才有模型/思考档可点切 + git 芯片/保存/推送 + 时长/token；阅读区搬进右栏时不出 git 胶囊；
+                             #   窄于 560px 自动收掉连接名/思考档/token、模型与目录截断，防叠字） 等
+  App.tsx                    # 应用壳：标题栏（收件箱/帮助/命令面板）、三段式侧栏（快速入口/项目树/系统段）、主区 page 驱动挂载、
+                             #   全局快捷键、启动过渡、跨实例同步、通知、确认框宿主。侧栏（2026-10-16 定稿）：品牌区下是快速入口
+                             #   （工作台 ⌘1 / 快速开聊＋右键历史 / N 运行中——只在有 agent 跑时出现），中段项目树（ProjectTree），
+                             #   底部系统段（对话/连接/技能/MCP/用量/设置）；收起态=图标条（项目树不可用，展开后才有）。
+                             #   主区：page==="workbench" 显示工作台概览、page==="workspaces" 显示选中课题详情（选中经 selectProjectReq
+                             #   一次性请求由项目页消费——与收件箱/对话页/统计页跳转同一条链，禁再拿它当持久选中态渲染）。
+                             #   壳与标题栏/侧栏/缝透明，桌面磨砂从窗口底透上来；
                              #   顶栏帮助菜单（HELP_MENU：命令面板左侧 ? 钮，分组下拉，关闭范式同收件箱）
+  components/InternalSessionsCard.tsx # 设置「数据与存储」→ Mesa 内部对话：条数/体积/最早、自动清理开关、保留天数、立即清理
+  components/InsertMenuItems.tsx # 「插入技能/MCP」菜单条目：运行页收缩行、标签栏 ✦、聊天输入框 ＋ 三处共用（只画 <li>，浮层由调用方定位）
+  components/ConversationView.tsx # 对话渲染（聊天层 / 对话页回放 / 项目对话预览共用）：气泡与正文、一轮过程收在「已工作 X 分 Y 秒」下，
+                             #   展开为动作行（点行看差异 / 命令输出 / 思考），回答露在外面；working 由聊天层传（进行中不收起）
+  components/ProjectTree.tsx # 侧栏项目树（展开态）：「项目」标签行（计数＋添加入口）+ 搜索框 + 按工作方式分组的课题列表
+                             #   （注册项目 + list_workspaces 推导的「未添加」仓库段；重拉触发=store.projectsVersion 管理动作代数
+                             #   与 projectPaths 签名变化）。行点击=onSelect(repoPath)（App 侧 setSelectProjectReq+setPage）；
+                             #   行右键=重命名/复制路径/从 Mesa 移除/清除痕迹/删除目录，动作自持（invoke+confirmDialog+toast），
+                             #   完成后 loadProjects+bumpProjectsVersion 通知本树与项目页重拉；绿点只认「此刻在跑」
+                             #   （2026-10-17）根节点 flex-1 吃满父 flex 列（否则长列表被 aside overflow-hidden 裁掉不滚动）；
+                             #   搜索框 .ccode-rail-search 玻璃薄雾、课题 >5 个才出；active=page 是项目页才铺选中底，
+                             #   否则当前课题只加粗；分组折叠记 localStorage ccode.projectTreeGroups；
+                             #   同文件 TitlebarProjectChip（顶栏项目芯片）+ useProjectSwitch + ProjectSwitchPanel 专用面板（不用 ContextMenu：
+                             #   自动聚焦搜索、>8 个先列「最近」5 个、分组可折叠且与树共用 GROUPS_KEY、搜索态扁平结果+命中加亮+
+                             #   方式标签、↑↓/回车/Esc、限高内滚、视口钳制）
+                             #   （projectRailStatus 复用），待处理黄点归顶栏收件箱不在此算。选中高亮吃 contextLabel.projectPath
+                             #   （项目页唯一写入方的当前项目镜像，单一事实源）。「＋ 添加项目」经 store.addProjectOpenReq
+                             #   一次性请求交项目页（完整注册流程在那里），同时 setPage("workspaces") 保证消费方已挂载。
+  components/RenameProjectModal.tsx # 重命名项目弹窗（register_project 幂等 upsert）：从 WorkspacesPage 拆出（页面是懒加载 chunk，
+                             #   侧栏树在主 chunk，静态引入会把整页拖进主包），树右键与页面共用同一份
+  navigation.ts              # 导航清单单一出处（九页全量）。侧栏本身不按本表渲染（App.tsx 自排三段），本表供隐藏态导航胶囊
+                             #   （TopNavCapsule）、设置页「导航项目」勾选与快捷键页序消费——删页会静默弄坏这三处
   App.css                    # 主题令牌与壳层样式。侧栏罩色：展开 42%、图标态 28%、选中行 88%；Linux 与减少透明度回落实心
-  feedback.ts                # 反馈与提需求纯逻辑：类型闭集/环境行/正文与主题拼装/mailto 通道/端点负载/截图常量（≤3 张 ≤2MB）与邮件附件注记（tests/feedback.test.ts）
-  components/FeedbackModal.tsx # 反馈表单弹层（帮助菜单与设置→关于双入口）：三通道自动降级（端点→邮箱直发 SMTP→mailto）+ 邮箱直发配置视图（预设/自定义按端口推 STARTTLS、换账号强制重填授权码、草稿回填）+ 截图附件 + 已发送记录
-  components/HelpDialogs.tsx # 帮助菜单两个内容弹窗：诊断与日志（get_app_log + export_diagnostics_bundle）、关于（含第三方许可内页，feedbackEnvLine 复用环境行）；快捷键速查曾短暂存在后按「不与命令面板/设置/说明书重复」删除（2026-10-12）
-  components/CommandPalette.tsx # ⌘K 面板
+  feedback.ts                # 反馈与提需求纯逻辑：类型闭集/环境行/正文与主题拼装/mailto 与网页邮箱链接/端点负载/截图常量（≤3 张 ≤2MB）/发送方式闭集与默认（记本机 ccode.feedback.channel）/附件注记（tests/feedback.test.ts）
+  components/FeedbackModal.tsx # 反馈表单弹层（帮助菜单、诊断弹窗「附到反馈」、设置→关于三入口）：端点已配只走端点，否则用户选发送方式（邮件应用/网页邮箱/邮箱直发）；附件=截图缩略图+诊断包（表单内现导出或 attachDiagnostics 带入，后端按路径白名单自读）；邮件类通道附件落盘+交接提示（清空/保留草稿由人定）；邮箱直发配置视图（保存并测试、结果就地显示、首存失败回滚授权码）
+  components/HelpDialogs.tsx # 帮助菜单三个内容弹窗：诊断与日志（日志按级别筛/计数/复制 + 导出诊断包 → 附到反馈）、检查更新（打开即查；状态/更新说明/下载进度/安装，安装走 useAppUpdateInstall）、关于（图标/版本复制/更新状态只读 store/仓库与许可入口，许可页同弹窗切换）；快捷键速查曾短暂存在后按「不与命令面板/设置/说明书重复」删除（2026-10-12）
+  components/ThirdPartyNotices.tsx # 「开源许可与致谢」内容区（帮助→关于、设置→关于共用）：致谢与数据来源（Markdown 阅读版式，许可全文收进 details，链接交系统浏览器）/ 组件许可（可搜索）两页签；清单读一次进程内缓存
+  third-party-notices.ts     # 随包许可清单解析纯逻辑：依赖表拆组拆行（跳过代码块里的 ##、丢弃文件头生成说明）+ 按名字/许可搜索（tests/third-party-notices.test.ts 含真文件格式守卫）
+  components/MesaMark.tsx    # Mesa 光标标志的字标版（去底板，M 跟文字色、光标品牌琥珀 + 深色底余辉，viewBox 裁到图形、底边即基线）；聊天空态问候在用
+  components/CommandPalette.tsx # ⌘K 面板：默认列表 快速操作/最近项目（list_projects 前 5）/页面（快捷键跟随设置）/外观/帮助；设置分区（SETTINGS_SEARCH_INDEX）、单个主题、较早项目、外链只在搜索时出现；「切换主题…」进主题网格（与设置页主题卡同长相、7 列深浅上下对齐、方向键四向移动、当前打勾；色样懒加载 App.css?raw；跟随系统只列与系统同深浅的一排并走 followedTheme）；输入法组词 Enter 不执行、↑↓ 循环、键盘移动跟随滚动；帮助类动作经 onHelp 交 App 的同一批弹窗
+  project-tree.ts            # 侧栏项目树置顶纯逻辑：togglePin / splitPinned（置顶段按先后、移出原分组）/ parsePins（坏数据当空表）；
+                             #   localStorage ccode.projectTreePins；tests/project-tree.test.ts
+  usage-dist.ts              # 用量页分布区纯逻辑：shareOf/barWidthPct/sharePctLabel、visibleDistRows（先露 10 行、≤12 行不折）、
+                             #   toTsv（复制表格，格内换行/制表符压空格）；tests/usage-dist.test.ts。StatsPage 的 DistList 统一渲染六个页签
+  components/ClientOpenDialog.tsx # useClientOpen 钩子 + 确认层：对话页底栏/右键菜单与工作台项目行共用；预检全过直接打开，有 note/warn/fix/block 才弹层（Codex 缺渠道「写入并打开」可选连接，Claude 渠道会变提示，被拦只给原因/下载入口）
+  components/ConfirmDialog.tsx # 全局确认/提示框（confirmDialog/alertDialog，126 处共用）：语气图标 + 结构化正文（标题/对照表/注意条，
+                             #   解析在 confirm-dialog.ts）+ 危险钮 dangerActionClass、按钮动词推断、危险默认焦点给取消
+  components/ContextMenu.tsx # 全站右键 / ⋯ 菜单（25 处共用）：fixed 全屏遮罩 + 视口钳制浮层、图标列按需、danger 沉底、
+                             #   键盘导航；条目形状与分组整理在 context-menu.ts（口径见 design-system「右键 / ⋯ 菜单统一口径」）
+  shell-context.ts           # 顶栏左侧/灵动岛分工（shellContextPlacement：按侧栏形态定项目芯片与活动落点；侧栏无项目树时芯片常驻）+ 运行摘要
+                             #   runActivitySummary（shell 不算、待确认排首、外部 live 会话回落计数；tests/shell-context.test.ts）
+  components/RunActivity.tsx # 活动芯片/岛胶囊 RunActivityButton + agent 列表浮层（portal 到 body，点行直达终端标签）；useRunActivity 供侧栏运行行
+  context-menu.ts            # ContextMenuItem 类型 + normalizeMenuItems（危险项自动补分隔、收首尾/连续分隔线；tests/context-menu.test.ts）
   components/LaunchMenu.tsx  # 启动栏下拉菜单组件：portal 到 body、分组标题、键盘导航，替代原生 select
                              # （Agent/配置/模型三段共用；隐藏配置沉「已停用（可手选）」组）
   components/StepEvidenceChip.tsx # 步骤卡证据徽标：读当前步骤报告，显示质量状态与未决标记计数（解析在 step-evidence.ts）
   components/ReviewDecisionList.tsx # 步骤上的审查/待核实清单：逐条接受、拒绝、修改，写回报告后再接回对话
   components/PendingConfirmList.tsx # 检索步文献清单：待确认纳入/排除、已纳入移出、已排除恢复；行上现查 IF/分区/TOP；
                              #   指标表状态与排序跟在「纳入所选 / 排除所选」右侧，没有待确认时单独靠右
+  components/ProjectFilesView.tsx # 项目面「文件」页：左目录树右预览（v3.231 三态合一）。watch_dir/fs-changed 自动跟上
+                             # Agent 产物（与终端树同一套，监听失败退回手动刷新）；刷新 = 根 + 已展开目录全部重读；
+                             # 预览三宿主（侧栏/窄屏/窗口弹层）同屏只挂一份（窗口态侧栏不双挂）；未保存编辑在换文件/
+                             # 关预览/关窗口前经 confirmLoseDirty 确认（dirtyRef 由 ProjectFilePreview.onDirtyChange 上报）；
+                             # 右键菜单（打开终端/新建文件夹/复制路径/删除走回收站 fs_delete_path）、「最近」视图（officeDocs
+                             # 后端已按修改时间降序）、搜索/筛选态预览头「定位」退回树视图展开父链；2000/400 截断点名
   components/CloseoutPack.tsx # 项目卡「完结文件」：按脉络列出已写出的文件，点开到文件页
   components/QuickChatHistoryMenu.tsx # 侧栏「快速开聊」右键的 scratch 历史浮层（继续上次）
-                             # 记住选择后左键直达、右键回看；行样式与弹层「继续上次」一致
-  reasoning-effort.ts        # 网关思考档：逗号多选 + @开场默认；单词旧值=单档（tests/reasoning-effort.test.ts）
+                             # 左键直接开空白对话、右键回看；行样式与聊天空态「最近的随手聊」一致
+  internal-sessions.ts       # 设置页「Mesa 内部对话」卡片纯逻辑：保留天数档、体积白话、立即清理确认文案（tests/internal-sessions.test.ts）
+  notice-text.ts             # 提示条 / 浮动提示正文分层（首句=结果标题，其余按句成说明行）+ 停留时长（tests/notice-text.test.ts）
+  skill-preview.ts           # 技能页预览：SKILL.md 拆 frontmatter 字段 + 正文（正文 marked 渲染）（tests/skill-preview.test.ts）
+  reasoning-effort.ts        # 网关思考档：逗号多选 + @开场默认；单词旧值=单档；状态栏当前档 currentEffort（屏上 > 本次覆盖 > 开场档）
+                             # 与 PTY 输出认档 detectEffortInOutput（Claude Code 三种成句形态）；读回模型 detectModelInOutput（回显句）/
+                             # detectModelOnScreen（整行底栏只从可视区读，Codex 差量重绘）；拼帧尾巴 outputTail（tests/reasoning-effort.test.ts）
   components/GatewayLibrary.tsx # 连接页网关库：五槽/密钥/获取模型/按槽体检/逐模型策略三态；
                              # 思考档勾多档，开场默认单选（reasoning-effort.ts）
                              # Base URL 主输入（2026-08-31）：空槽与仍等于旧主值的槽跟随主输入、手改即脱离；
@@ -86,10 +153,28 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   components/HoverTip.tsx      # 应用内 tooltip 共享件（v3.93 提取自 ProjectGroup）：useHoverTip + HoverTip，
                              # portal 到 body（免疫祖先 opacity/transform 的 fixed 包含块问题）、滚动/缩放即关、
                              # up 参数支持锚点上方弹出（行内动作栏 tooltip 专用）；PageFrame 的 RowAction 内置上方 tooltip
+  components/ProjectSettingsDrawer.tsx # 项目设置抽屉（三方式共用，2026-10-16 统一）：SettingsDrawerShell 外壳
+                             #   （ccode-sheet-right 滑入/退场 + Esc/Tab 焦点圈闭 + role=dialog + 遮罩 mousedown
+                             #   靶命中关闭，头带项目名副题）+ SettingsRulesSection「规则与验收」分区（规则/
+                             #   验收记录/对话注入，验收账本自取）；默认导出=编程/工作组装（再加项目长期知识）
+  components/SessionTemplateEditor.tsx # 对话注入「自定义」勾选编辑器（2026-10-17 用户三轮拍板：原文模板、可排序段落清单都嫌不便）：
+                             #   「带上哪些项目信息」9 枚开关标签（悬停看本项目此刻内容，勾着为空标「（空）」）+「我的补充」文本框；
+                             #   标签即存、补充失焦存；补充框自持原文（回流模板会裁空白）；放不进勾选形状的手工版式给
+                             #   「编辑源文本 / 改用勾选」两条出路（tests/session-template-editor-ui.test.ts）
+  components/ProjectInjectionPanel.tsx # 项目设置抽屉「对话注入」面板（2026-10-16）：三态 SegTabs（自动/自定义/不注入）+
+                             #   模板编辑（切到自定义且模板空 → 直接填默认版式并保存；恢复默认模板覆盖前确认；「插入」占位符小标签、
+                             #   未知占位符/单独 ---- 行点名、人清空时的不生效提示）+
+                             #   展开式预览（loadProjectContextPack + sessionOverride 按面板未保存的档位/草稿 400ms 防抖重渲，所见即所得，
+                             #   ↻ 手动按项目当前内容重读，previewSeq 序号守卫防并发旧读覆盖）；保存合并的最后一次入队放 ref（不得用每次渲染重置的 let）；
+                             #   保存走 project_set_session_injection（projects.rs 配置锁内单键读改写，不整卡——
+                             #   同分区规则面板等写者互不覆盖）+ 前端 saveChain 串行化保落盘顺序；touchedRef 防
+                             #   迟到的挂载读档覆盖用户刚改的表单；
+                             #   挂载三处共用 SettingsRulesSection「规则与验收」分区（科研抽屉与编程/工作抽屉
+                             #   同一份），影响一切 session 入口（＋新对话/问 AI/编程「进入」/定时巡检开聊）
   components/ActivityHeatmap.tsx  # 用量页「活跃度」热力图区块（2026-10-12）：真 table role=grid + CSS 格子（几何全在
                              #   App.css .ccode-heat*，档位色 --heat-1..4 令牌）；去年同月 1 日到今天、与 range 解耦；
-                             #   <1020 胶囊跟在「活跃度」后 / ≥1020 左栏紧凑双列（192px）；格子边长 11–20 整数；
-                             #   到顶后卡片 hug 内容宽；16px 右边还剩 ≥220px 时右侧色阶+四项统计；
+                             #   单模布局（2026-10-16）：胶囊全在卡头一行（标题后、窗口范围前），网格吃满卡宽；
+                             #   格子边长 11–28 整数、28 封顶后卡片 hug 内容宽；统计行+少多色阶常驻网格下方；
                              #   布局观察满宽哨兵（禁止观察 hug 主区，防抖动）
                              #   挂在 StatsPage empty 三元之外（页面空态是 range 口径）；共享单例 tooltip
                              #   （pointerover 委托 + 键盘焦点同款触发）+ roving tabindex 方向键漫游；
@@ -100,7 +185,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   数据自持（usage_activity 全历史非零日，refreshKey 由页级刷新驱动）
   pipeline-presets.ts        # 内置流水线模板 PIPELINE_TEMPLATES（六套，含 v3.97「LaTeX 论文」）；
                              #   每套 projectRules 纪律不同，settingsForTemplateApply 不落空表格
-  lit-project.ts             # 文献-only 项目：建议添加目录 / 家目录禁入 / 无流程时 inbox 落点
+  lit-project.ts             # 文献-only 项目：建议添加目录 / 家目录禁入 / 「整理为笔记」摘录落点（notesExcerptTarget：
+                             #   lit-notes 工作区名或挂 lit-notes 技能的步骤；工作区没在跑时调用方写项目根 notes/excerpts.md）
   task-md.ts                 # TASK.md 拼装纯函数（项目根/产物目录绝对路径）；pipeline-start 再导出
   pipeline-start.ts          # 一键开步共享链路（renderTaskMd/gatherTaskMdExtras 单一出处，弹层预览与落盘共用）；
                              # 工作区→终端交接单一出处 buildWorkspaceTerminalRequest（reuseKey 找回同工作区标签 +
@@ -138,17 +224,21 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # （不自动分派；tests/project-agents.test.ts）
   project-context.ts         # 项目环境包：名称/规则/顶层文件地图（启动注入）；
                              #   会话包 = 身份+目录+规则+跟用户走；目标包才带当前目标/技能/尚未完成/验收写回；
-                             #   空表格不进规则，有流程用模板纪律、无流程用工作方式默认条
+                             #   空表格不进规则，有流程用模板纪律、无流程用工作方式默认条；
+                             #   段落先拼成命名分块（packSections，空块为 ""）再拼版式——自动包与对话注入自定义模板
+                             #   （DEFAULT_SESSION_TEMPLATE + renderSessionInjection，{{课题主题}} 等占位符开对话时填入、
+                             #   未知占位符原样保留、空块消隐）共用同一出处，三态只管 session 包（2026-10-16 拍板）
                              # （tests/project-context.test.ts）
-  coding-lanes.ts            # 编程车道覆盖层：有树无行按分支现算、theme 分组、空闲/Agent
+  coding-lanes.ts            # 编程车道覆盖层：有树无行按分支现算、theme 分组、空闲/Agent；
+                             # arrangeBranchMap 分支地图（基准作根 / 其余树分组 / 未检出分支单列）
                              # （tests/coding-lanes.test.ts）
   agent-caps.ts              # 能力表前端消费：定时任务禁选未验证无头；Grok 标「会批准全部操作」
                              # （tests/agent-caps.test.ts）
   work-mode.ts               # 项目工作方式（科研/编程/办公）与编程状态归类、办公文档类型/预览形态；
                              # 文件行「进行中」只认 officeFileReuseKey 对上的活标签（仓级仍 isOfficeInProgress）；
                              # 顶栏课题主题可见性 headerShowsTopic（科研项目含无流程都展示，身份四件套之一）
-                             # （lockWorkModeFromConfig / codingFactChips / codingDivergenceBar /
-                             #   groupByWorkMode 项目栏分段 / projectSwitchRows 收起态课题名切换菜单行；tests/work-mode.test.ts）
+                             # （lockWorkModeFromConfig / codingFactChips / codingDivergenceLabel（领先·落后文案） /
+                             #   groupByWorkMode 项目栏分段（projectSwitchRows 收起态切换菜单行已随 2026-10-16 拆栏删除）；tests/work-mode.test.ts）
   session-title.ts           # 会话列表展示标题清洗（去 URL/绝对路径/中断/resume/未命名，取首句；不写回源文件）
                              # （tests/session-title.test.ts）
   project-status.ts          # 项目页状态行 / 工作区要你管排序 / 笔记过滤 / 办公继续上次与问 AI 建议
@@ -168,7 +258,10 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 副行优先待验收/进行中目标；最近对话先按可见范围过滤（归档/内部无头/问 AI/阅读注入不列，
                              # 与 filterProjectSessions 同口径）再与项目侧栏同一套清洗，未命名不列；
                              # workbenchRecentRows = 已添加项目 ∪ 会话扫仓库（办公/新建无会话也列出），
-                             # 与最近对话默认最多 10 条（tests/workbench-hero.test.ts）
+                             # 与最近对话默认最多 10 条；「上次停在」latestProjectSession + lastUserInstruction
+                             # （跳工具结果/系统注入，不按首句切）；待处理行归项目 inboxItemProjectRoot；
+                             # 「记下目标」可选项目 goalCaptureTargets（与 ProjectGroup liteResearch / 办公目标视图
+                             # 双端同口径）；加载失败合一条 workbenchLoadFailureMessage（tests/workbench-hero.test.ts）
   lit-watch.ts               # 文献雷达纯逻辑：日分组/关键词分组（groupEntriesByKeyword，取 keywordsHit 首词、
                              # 未分类恒末）/趋势/直链转换/全文可得性分流（fulltextLinkFor：arxiv abs 与 .pdf 直链=可下载，
                              # DOI/落地页=来源，不再摆禁用下载钮）/已读判定/雷达筛选（entryPassesFilter
@@ -176,6 +269,15 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # parseWatchExplain 五节学术口径；卡片展开按项目记忆（默认收起）；
                              # tests/lit-watch.test.ts）
   md-image-hydrate.ts        # md 阅读/聊天图片占位水合：每次 layout 扫 data-md-src，本地图缓存
+  md-pdf-refs.ts             # md 阅读视图里把 p.3/第 3 页/Fig. 2/Table 1 包成可点引用（每次布局幂等重扫，跳过 a/code/公式；
+                             # 标注行/译段引用块带上原文）+ 点中取跳转请求 + focusMdText（滚到含某段文字的块并闪）；
+                             # 只在阅读区笔记栏接线（FilePreviewEditor onPdfRef/focusText）（tests/reader-note.test.ts）
+  pdf-search.ts              # PDF 文本检索纯逻辑（2026-10-18）：页文本组装与归一（文本项原样拼、行尾补空格、断词复原、
+                             # 大小写/弯引号/短横线/连字）——页级计数与页内高亮同一口径；命中→文本项分段、同行碎矩形合并、
+                             # 标注重定位候选 quoteSearchCandidates（原样→去词内连字符→前 60 字）、图表定位 locateFigure（行首图注优先）、
+                             # 目录拍平与落点高度（tests/pdf-search.test.ts）
+  reader-note.ts             # 笔记 ↔ PDF 纯逻辑（2026-10-18）：「## 标注」行格式与解析（与 reader.rs 双端镜像，改动需同步）、
+                             # 八小节是否全空（让 AI 起草入口）与起草指令、页码/图表引用识别、标注 toast 口径（tests/reader-note.test.ts）
   agent-binding 体系（2026-10-15 定稿，全文 docs/conventions/agent-binding.md）：
   project-agents.ts          # 绑定纯逻辑单一出处：slotPrefs（discuss 槽>项目默认）/ taskBindingLaunch /
                              #   resolveStepLaunch（步骤槽>discuss）/ resolveTaskModel（目标三档回落）/
@@ -186,7 +288,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   reader.ts                  # 沉浸阅读区纯逻辑：分栏钳制与像素换算（含收起滑动量 readerPanelSlideMargin，栏宽不变负 margin 滑出）/
                              # 圈选命中与 canvas 映射/截图注入格式/
                              # glossary 表格契约（与 reader.rs 双端镜像，改动需同步）/段落边界提取/术语匹配/
-                             # 进度与护眼存储键/翻译面板高度键（readerSplitT，未拖过不落键 = 内容自适应）/译文卡钉位键（readerTlPinned）与悬浮球位键（readerTlBall，PDF 栏百分比 0–100、渲染层按球半径贴边兜底）/悬浮卡尺寸键（readerTlCard，240×140 下限、拖过才落键）/
+                             # 进度与护眼存储键/右栏显示层记忆（readerSurface，缺省聊天层）/翻译面板高度键（readerSplitT，未拖过不落键 = 内容自适应）/译文卡钉位键（readerTlPinned）与悬浮球位键（readerTlBall，PDF 栏百分比 0–100、渲染层按球半径贴边兜底）/悬浮卡尺寸键（readerTlCard，240×140 下限、拖过才落键）/
                              # PDF 适配宽度 nextFitScale（亚像素门槛，防滚动条槽振荡闪白）/
                              # 手势缩放 clampPdfScale、pdfWheelZoomFactor（组件绑定共享在
                              # components/use-pdf-zoom.ts：布局倍率即时重排、渲染倍率 renderScale 延迟重绘、
@@ -215,6 +317,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # （tests/task-cards.test.ts）
   step-flow.ts               # 步骤内协同流程线纯逻辑：种子→before→agent→during→after→评审节点链
                              # （v3.97 起 after 档一律进主干，可选项带徽标但不抢当前节点；
+                             #   「确定文献来源」= 选了非默认来源或这一步已开工（默认检索开工后不再钉住当前）；
                              #   demoReadPaperResource：「开读这一篇」仅示例课题精读步，普通模板只显示「开始」；
                              #   tests/step-flow.test.ts）
   skill-conflicts.ts         # 技能接口对账纯逻辑：产物冲突（skillOutputConflicts，outputs 两两相交）+
@@ -225,18 +328,26 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # （value 用目录名不是 UUID；tests/schedule-skill.test.ts）
   inbox.ts                   # 收件箱分类胶囊纯逻辑：key 前缀→类别、分组、help dismiss 签名、人工请求通知 edge-trigger（tests/inbox.test.ts）
   app-update.ts              # 应用自更新展示纯逻辑：收件箱字段/合并、检查失败文案、http(s) 代理、下载进度
+  app-update-install.ts      # 「下载并安装」hook（设置→更新与帮助菜单更新弹窗共用）：先查后台任务要人点头、进度累计、成功 relaunch；模块级闸防双下载
+  diagnostics.ts             # 前端诊断：WebGL 探针/软件渲染判定、monaco 取消拒绝识别、诊断包前端采集；应用日志展示纯逻辑（UTC→本机时间、错误/警告短标、计数、复制文本）（tests/diagnostics.test.ts）
                              # （tests/app-update.test.ts）；真正 check()/安装在 store.ts
   chat-handoff.ts            # 聊天⇄终端交接表：chat_ok / peek / must_switch、等待态文案、斜杠是否要窥视 TUI、
-                             # 聊天头状态 chatHeaderStatus（未开始不写「等待会话文件」，tests/chat-handoff.test.ts）
+                             # 聊天头状态 chatHeaderStatus（未开始不写「等待会话文件」，tests/chat-handoff.test.ts）；
+                             # 本地乐观消息放回解析结果的位置 placePendingUsers（排队中的接末尾，其余插在发送后的第一条新回复前）
   slash-commands.ts          # 聊天斜杠命令保守常用集（未全量调研的 agent 只给 /help；tests/slash-commands.test.ts）
   ime-guard.ts               # 聊天 Enter 是否处于输入法组词（WKWebView 确认候选时 isComposing 已假；tests/ime-guard.test.ts）
   notify.ts                  # 长任务 OS 通知（仅「待确认」跃迁 + 未聚焦 + 30s 去抖；「已回复」不通知）；
                              #   注意：通知插件桌面端无动作按钮/正文点击回调（App.tsx registerActionTypes/onAction 仅移动端生效，
                              #   2026-09-15 核对插件源码）——桌面点通知只激活窗口，「待确认」跳转由 App.tsx 窗口获焦时的
                              #   右下角提醒条补位（点「去处理」直达终端标签，按待确认集合去重）
-  git-status-groups.ts       # 改动列表状态分组/白话双层纯逻辑（含冲突 unmerged 组）
-  file-icons.ts              # 文件类型小徽标纯逻辑：扩展名 → 短标签 + 固定识别色；
+  git-status-groups.ts       # 改动列表状态分组/白话双层纯逻辑（含冲突 unmerged 组）；userDirtyFiles（剔台账，评审提交面板用）/
+                             #   userWorkDirtyFiles（再剔 Mesa 自有档案 .ccode/·.gitignore，项目页提醒与开工弹层用）
+  file-icons.ts              # 文件类型小徽标纯逻辑：扩展名 → 短标签 + 固定识别色（另按整名认点开头配置文件、按 .bak 段认备份副本）；
+                             # 未收录返回 null，FileTypeMark / GitPanel 画通用文件图标，不留空槽；
                              # isPreviewableImagePath（png/jpg/gif/webp/svg，tests/file-icons.test.ts）
+  project-files.ts           # 文件页纯逻辑：预览形态分流 / 类型筛选（recent 是视图不参与类型收窄）/
+                             # 展开链 ancestorDirsToReveal / 上下文件步进 / 沉浸阅读判据唯一落点 /
+                             # inTypingContext（方向键只在非打字焦点接管，Monaco/输入框放行；tests/project-files.test.ts）
   sheet-preview.ts           # Excel 预览纯逻辑：列字母 / 单元格引用 / 截断文案 /
                              #   合并区 clipSheetMerge / sheetCellHidden（tests/sheet-preview.test.ts）
   editor-languages.ts        # monaco 语言注册（批次 E）：monaco-editor 0.56 ESM 不带 latex，
@@ -261,8 +372,10 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   terminal-input.ts          # 终端输入侧纯逻辑：shell 路径转义 escapeShellPath、拖入多路径拼接 joinDroppedPaths、
                              # 聊天拖入 joinDroppedChatPaths、dropHitsRect、Kimi CSI-u 序列、
                              # Shift+标点补发（229 只补 ASCII 标点，中文上屏不补，避免一字两遍）、
+                             # Shift+Enter 换行改写 ptyShiftEnterRewrite（Claude/Grok/CodeBuddy ESC+CR，Codex/Cursor CSI-u）、
+                             # ⌘←/⌘→/⌘⌫ 照 iTerm 改写成 Ctrl+A/E/U 的 macLineEditKey、
                              # 剪贴板图片条目判定/MIME→扩展名/粘贴反馈文案（tests/terminal-input.test.ts）
-  terminal-welcome.ts        # 终端未启动空态：isTerminalIdle / 卡上「将在 … 启动」目录文案
+  terminal-welcome.ts        # 终端未启动空态：isTerminalIdle / 卡上「将在 … 启动」目录文案 / 点开的目录菜单 welcomeDirChoices
                              # （tests/terminal-welcome.test.ts）
   terminal-wheel-scroll.ts    # 触控板/滚轮合帧：capture 阶段截住 wheel，同帧多枚合成一枚再派回深层 target
                              # （滚动卡顿修复 2026-09-21，拍板记录 architecture.md §10；tests/terminal-wheel-scroll.test.ts）
@@ -288,19 +401,48 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # ANSI 16 色 + 光标 + 选区全在表内；resolvePaletteId 按主题亮暗自动换 twin
                              # （新增调色板须同步 settings.rs KNOWN_PALETTES，否则被静默丢弃，tests/terminal-palettes.test.ts）
   upstream-note.ts           # brew 最新但上游 npm 更高版本的提示
-  quick-chat.ts              # 快速开聊弹层「随手聊历史」纯逻辑：只列 ~/ccode/scratch（isScratchCwd），
-                             # 排除工作区/已注册项目/其他仓库/归档/内部/live/源文件已删；
-                             # pickQuickChatHistory 用 store 会话列表现算；sidebarLaunchesDirect
-                             # 侧栏记住选择后直达；pickRememberedProfileId 直达只认记住的那条
-                             # （tests/quick-chat.test.ts）
+  trust-prompt.ts            # 启动「是否信任这个目录」菜单识别（读 xterm 可视区文本；认 Claude / Kimi / CodeBuddy 方框 / Gemini 四种形态，信任只选范围最窄的那项）+ 代答按键序列（方向键挪到目标项再回车）；认不出返回 null 走 8 秒拉起终端的出口
+  chat-empty-start.ts        # 聊天空态纯逻辑：按目录类型的起手提示表（STARTER_PROMPTS）+ 时段问候（chatGreeting）；输入框目录芯片文字在 terminal-welcome.ts cwdChipLabel，UI 在 components/ChatEmptyStart.tsx（随手聊文件夹下另列最近 5 条随手聊；输入框居中版式在 ChatSurface）；输入框右下「模型 · 思考」菜单在 components/ChatModelMenu.tsx（开聊前 / 运行中 / 接着聊同一个单栏菜单），左下权限四档在 components/ChatPermissionBadge.tsx，对话末尾「等你决定」卡在 components/ChatDecisionCard.tsx（设计稿 docs/design-chat-layer.md）
+  model-caps-label.ts        # 模型菜单每行右侧的能力灰字（200K · 思考 · 看图），数据来自 model_capabilities
+  （scripts/e2e-model-routing/：假网关 + 驱动，用 agents.rs 的 e2e_dump_launch_plans 生成的真实启动计划拉起各家 CLI，核对请求里的模型与路径；
+   chat-capture.py 按权限四档拉起、发 TRIGGER_SLOW / TRIGGER_TOOL / 切换命令逐帧抓屏，聊天层第三期逐家核实用；见其 README）
+  composer-assist.ts         # 聊天输入框的纯逻辑：@ 引用（mentionQueryAt / applyMention，带空格加引号）、斜杠面板 Mesa 组（MesaCommand / filterMesaCommands）、
+                             # ↑ 取回上一句（lastUserText）、上下文圆环数据（lastContextTokens / contextUsage）；Mesa 组的内容由 TerminalPage mesaCommandsFor 组装，
+                             # 斜杠面板与标签条 ⋯ 同一份（tests/composer-assist.test.ts）
+  chat-decision.ts           # 「等你决定」卡的纯逻辑：连接出问题 → 卡片（connIssueDecision：同家连接最多三个「换到 X」按钮 / 去添加连接 / 先不换，提示按错误种类给另一条路）
+  role-models.ts             # 连接的「模型分工」（后台小模型 / 子 Agent）：哪些 Agent 有、各角色说明、保存前归一、Claude 别名指向（与 agents.rs claude_model_env 同规则）
+  help-links.ts              # 仓库与使用手册外链（REPO_URL / userGuideUrl）；仓库转 org 时与 updater endpoint、README 同步改
+  popover-side.ts            # 聊天输入框小弹层往哪边开（pickPopoverSide：下面放得下就往下，贴底时往上）
+  client-open.ts             # 客户端接力前端纯逻辑：目标 DTO、needsDialog（全部通过才免弹层）、检查项排序、主按钮文案、按钮/弹层标题措辞（项目级写「打开项目」）；预检与深链全在后端 client_open.rs
+  switch-strategy.ts         # 运行中换模型 / 思考档走命令还是重开接回：SWITCH_PERSISTS 记哪几家的切换命令会写回自己的全局配置（实测表），
+                             # 会写回且启动时注得进的改走 relaunchWith（runtime-model-effort.ts 消费；tests/switch-strategy.test.ts）
+  components/ContextRing.tsx # 上下文用量圆环：聊天输入框模型芯片左边与终端底栏右区共用（终端底栏传 xterm 调色板颜色）
+  runtime-model-effort.ts    # 运行中切模型 / 思考档的共用 hook（useRuntimeModelEffort）：终端底栏与聊天「模型 · 思考」芯片同用一份；切过的模型名按 ptyId 存模块级表，两处实例同步
+  conn-issue.ts              # 认终端画面里的连接错误（额度 / 限流 / 钥匙 / 服务 / 模型）：七家实录形态的 detectConnIssues、按次数判新错误的 newestConnIssue、给人看的 connIssueText
+  terminal-quote.ts          # 终端选中文字交给对话 / 存笔记的排版：quoteForChat（每行「> 」）、askAboutText、clipNoteEntry（notes/clips.md 小节）
+  live-reply.ts              # 聊天实时预览：按每家画面布局（LAYOUTS：Claude / Codex / Qwen / Gemini / Grok / Kimi，第三期抓屏定的）抽出这一轮正在写的段落
+                             # （extractLiveReply）+ 剔掉会话文件已有的行（unsyncedTail）；CodeBuddy / OpenCode / Cursor 返回 null。新增一家先抓屏、样本进测试
+  menu-key-nav.ts            # 聊天输入框小弹层的键盘操作（useMenuKeyNav：打开聚焦当前项、↑↓/Home/End、关闭还焦点）
+  model-history.ts           # 「这份连接能选哪些模型」：连接名单 + 按 Agent+连接记的手填历史；开聊前选择器、启动栏、模型芯片同源
+  tui-menu.ts                # 认屏上的 TUI 选择菜单（parseTuiMenu / menuAnswerKeys / sameTuiMenu / menuEchoesText）：切换命令后 5 秒、启动后 20 秒、
+                             # 以及这一轮没结束前都扫屏，切换确认与七家工具审批按原文给按钮；剥方框边与滚动条、Grok 单选改写成序号行、
+                             # 折行并回上一项、问句取贴着选项的发问行；回显的 /命令、⎿ 续行、用户刚发的编号清单都不算菜单
+  quick-chat.ts              # 快速开聊纯逻辑：默认选择 pickQuickChatDefault（记住的 → 同家另一条 → 上次启动 → 装了的第一家）、
+                             # 空白标签 isBlankChatTab（再点只复用没说过话的）、运行页「+」目录 newTabCwd（跟当前标签，隔离目录不跟）、
+                             # 随手聊历史只列 ~/ccode/scratch（isScratchCwd），排除工作区/已注册项目/其他仓库/归档/内部/live/源文件已删，
+                             # pickQuickChatHistory 用 store 会话列表现算（tests/quick-chat.test.ts）
+  quick-chat-launch.ts       # 快速开聊派发入口 openQuickChat（不弹窗，四个入口共用；每个标签自带 quickchat:<uuid> 复用键 + reuseBlank）、
+                             # saveQuickChatChoice（随手聊发第一句后记 Agent/连接/模型/思考档，不记文件夹和权限）、
+                             # resumeSessionInTerminal（接着聊一段旧对话：对话页 / 项目区 / 右键 / 聊天空态共用）
   confirm-dialog.ts          # 确认框键盘语义：Esc 取消，Enter 激活当前焦点钮；设为全局挡路可 focusCancel（tests/confirm-dialog.test.ts）
   custom-runtime.ts          # 自定义运行时默认 cwd：仅空目录/scratch 启用（tests/custom-runtime.test.ts）
   gateway-slot.ts            # Agent→协议槽与目录刷新优先槽（与 slot_for_agent 双端镜像，tests/gateway-slot.test.ts）
-  command-palette.ts         # 命令面板过滤纯逻辑
+  command-palette.ts         # 命令面板过滤与排序纯逻辑：searchOnly 默认不列、得分（标题全等/开头/「前缀：名字」开头/包含 > 别名 > 散字兜底）、组按最高分排且组内连续、matchedKeyword（tests/command-palette.test.ts）
   stats-insight.ts           # 统计页花费环比 / 缓存命中率 / 会话标题回落纯逻辑；compact/fmtCost 统计页统一数字方言（tests/stats-insight.test.ts）
-  usage-activity.ts          # 活跃度热力图纯逻辑：周一开头年网格 / 月份标签避让 / 非零天四分位分档（GitHub 同构）/
-                             #   streaks（今天宽限，跨年不断档）/ yearStats / 中文日期短语 /
-                             #   布局：heatCellPx 11–20 夹紧、heatRailLeft、heatWideAside（40px 回差）；
+  usage-activity.ts          # 活跃度热力图纯逻辑：周一开头滚动网格（去年同月 1 日到今天，不翻年；整年网格
+                             #   buildYearGrid/yearBounds/future 标记随 2026-10-15 时间窗改口移除）/ 月份标签避让 /
+                             #   非零天四分位分档（GitHub 同构）/ streaks（今天宽限，跨年不断档）/ yearStats / 中文日期短语 /
+                             #   布局：heatCellPx 11–28 夹紧（2026-10-16 单模，rail/wide 三档判定已撤销）；
                              #   口径铁律：着色、活跃、streak 恒只算非 internal（official 计入），着色量=四类合计（tests/usage-activity.test.ts）
   gateway-balance.ts         # 网关余额卡纯逻辑：主机命中 / 站点币种金额 / 已用百分比 /
                              #   大数字拆币种符号 splitBalanceAmount（整串 2xl 头重脚轻、tokens 更长）/
@@ -335,6 +477,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   hotkeys.ts                 # 快捷键组合串纯逻辑
   themes.ts                  # 主题清单单一出处 + isLightTheme() 亮暗判定单一出处（禁另造判定；
                              #   custom / custom-light 不进十四套清单）
+  theme-follow.ts            # 主题跟随系统深浅：同名 twin（xxx ↔ xxx-light）换算；store 在设置读写后与系统
+                             #   外观变化时调用，把 theme 写成生效值；自定义配色不跟随（tests/theme-follow.test.ts）
   theme-swatch.ts            # 设置页主题色卡预览色：从 App.css 源文本抽 rail/canvas/cta/l1，
                              #   禁止临时切 data-theme 再 getComputedStyle（tests/theme-swatch.test.ts）
   custom-theme.ts            # 自定义主题：三色种子派生全套令牌 + 另存色卡列表
@@ -348,36 +492,64 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   combo-field.ts             # 网关库逐模型策略三态（edit/readonly/hidden）纯逻辑（tests/combo-field.test.ts）
   ask-ai.ts                  # 项目区「问 AI」：选 Agent/配置/模型，可设为默认（tests/ask-ai.test.ts）
   ai-profile-choice.ts       # 设置页「AI 专用配置」选项拼装：一条配置的每个模型各占一项，value 用
-                             # 不可见分隔符拼 profile id 与模型名（tests/ai-profile-choice.test.ts）
-  conversation-tools.ts      # 对话回放：连续工具调用聚合成一条执行记录（tests/conversation-tools.test.ts）
+                             # 不可见分隔符拼 profile id 与模型名；agentLabel 把内部 id 换展示名（tests/ai-profile-choice.test.ts）
+  settings-storage.ts        # 设置「本机占用」卡纯逻辑：按归属分组（Mesa 数据 / 工作副本）、组根 ~ 折叠、相对名、
+                             #   总计与「≥」下限标记、快照清理确认文案（tests/settings-storage.test.ts）
+  conversation-tools.ts      # 对话按「轮」整理：助手一轮的过程（思考 / 工具调用+结果配对 / 中途说明）收成 turn 段、过程后的正文切成回答；
+                             #   连着的读/搜并成「查阅」，最后一轮进行中（working 或有没回结果的调用）不切回答；时长、收起摘要（tests 同名）
+  tool-activity.ts           # 一次工具调用 → 一行动作（编辑 文件 目录 +N −M / 运行 命令 / 搜索 …）：九家工具名归类、常见参数键取对象、
+                             #   Codex 补丁拆文件与脚本模式取 cmd、行级差异 lineDiff、结果状态只看开头（tests/tool-activity.test.ts）
   dep-check.ts               # 依赖体检前端镜像：DTO 判定与 DOM/Tauri 解耦（tests 同名）
   gateway-draft.ts           # 网关库槽位纯逻辑：effectiveSlotUrl 主输入跟随/脱离、slotsFollowMaster、firstProbeableSlot
   goal-review.ts             # 目标验收弹层分组与文案：科研按文献/笔记/数据/论文、工作按文档/表格/幻灯（tests/goal-review.test.ts）
   history-view.ts            # 历史时间线白话翻译层（✓保存进项目/⚙自动保存/◔保存，hash/分支名降为二级）
   step-review.ts             # 科研步骤评审档案闭集 screening/files/acceptance/default；一张审阅壳按类型拼区块（tests/step-review.test.ts）
   step-evidence.ts           # 步骤卡证据徽标纯逻辑：从报告文本解析质量状态与 [待核实]/[待确认] 计数
+                             #   （stepEvidenceSummaryOf：未决标记只数稿件正文，审查报告/改动记录里「描述」的不算）
                              # （报告自述，不是系统认证；tests/step-evidence.test.ts）
   review-save-copy.ts        # 科研保存链白话：保存进项目；不是编程合进基准、不是科研验收决定
-  kickoff-inputs.ts          # 开步确认弹层「上一步接到的输入」芯片；isDeclaredStepInput 排除已声明输入，不进未登记列表
+  kickoff-inputs.ts          # 开步确认弹层「上一步接到的输入」芯片；isDeclaredStepInput 排除已声明输入，不进未登记列表；
+                             #   unsavedUpstreamSteps：前面哪些步骤（进行中/待评审/有冲突）的产物与本步必读输入重叠、还没保存进项目
+                             #   （模式按首个 * 前缀互相覆盖判定，宁多认；tests/kickoff-upstream.test.ts）
   lit-list.ts                # 无流程科研文献/笔记列表：展示名、编号、状态与过滤纯逻辑
-  model-switch.ts            # 各 CLI 多模型注入能力表 + 启动栏提示纯逻辑（对应 agent_specs.model_switch）
+  model-switch.ts            # 各 CLI 多模型注入能力表 + 启动栏提示纯逻辑（对应 agent_specs.model_switch）；
+                             # runtimeModelSwitch 按连接收窄运行中切模型（Kimi 接口连接只带一个模型，/model 别名换不了）
+  components/TopNavCapsule.tsx # 隐藏侧栏时的灵动岛：休眠面＝状态（当前页标签 + RunActivityStatus 只读活动 + 只读播报，当前页格聚焦/点击只展开岛）；
+                             #   展开面＝操作（恢复侧栏居首 + 导航 + 可点活动胶囊 + 可点播报）。休眠面控件指针够不着，只放展示；不挂导航角标
   nav-capsule.ts             # 侧栏可配置胶囊入口（恢复侧栏始终保留，不在此列）
-  project-context-load.ts    # 启动环境说明拼装：读档案卡和顶层目录，失败仍返回能用的短包
+  session-template-blocks.ts # 对话注入模板 ↔ 勾选模型：[项目基本信息] → 勾中的内容段（固定标准顺序）→ 我的补充；
+                             #   parseSimpleTemplate（放不进返回 null）/ serializeSimpleTemplate / coerceSimpleTemplate（只丢顺序不丢字）/
+                             #   sectionSummary；盘上仍是同一份模板文本（tests/session-template-blocks.test.ts）
+  acceptance-log.ts          # 验收账本文案：kind → 人话（进主仓 ≠ 科学验收）；acceptanceEntryRow = 设置抽屉验收记录一行
+                             #   （lit-watch→文献雷达、版本短号进悬浮、系统备注「定时巡检采纳」不重复；AcceptanceLogList 渲染）
+  project-context-load.ts    # 启动环境说明拼装：读档案卡和顶层目录，失败仍返回能用的短包；
+                             #   session 包按档案卡对话注入三态分叉（off=空串 / custom=模板 / 其余=自动，空模板 fail-open 自动）；
+                             #   sessionOverride 只给设置面板预览用（按未保存草稿渲染），开对话一律读盘；
+                             #   loadSessionTemplateValues = 每个占位符此刻的内容（project-context.ts sessionTemplateValues，与渲染同一出处）
+  notes-progress.ts          # 精读进度：notes/index.json 按 reviewStatus=reviewed（旧索引的 done/read 同义）数已写笔记、按 fulltextStatus 分全文/仅摘要，
+                             #   StepFlow 精读步「AI 干活」行下一行进度（工作区优先、项目根兜底）；spotCheckPicks =
+                             #   「抽查 3 篇笔记」三篇候选（全文/仅摘要各取中间一篇再从尾部补，确定性；tests/notes-progress.test.ts）；
+                             #   excludedIncludedIds：included.json 里 decision=excluded 的篇不进进度分母
+  stepper-status.ts          # 步进器圆下状态小字的文案与色（待开始/检查中不写，进行中按终端注意力细分等你确认/等你查看；
+                             #   ProjectGroup 状态带唯一出处，tests/stepper-status.test.ts）
   research-report.ts         # 研究报告节抽取/相对路径解析（只认显式报告节，不认 TASK 指令或推断结论）
+  research-report-load.ts    # 研究文件读取：readResearchFile（256 KB 预览通道）/ readResearchLedger·saveResearchLedger
+                             #   （纳入清单、待获取、RIS、笔记索引、引文库整份读写，见 fs_tree.rs 台账白名单）+ 报告扫描
   screening-review.ts        # 检索/筛选评审主面：计数/待拍板/筛选决定、表默认 pending、文件分组；included.md/json 不与表并列摊 diff；
                              #   displayCitationTitle 只改清单显示（苹果字符、拆开的化学式），不回写 json
                              # 移出：removeToFetchEntry 不重排编号、removeRisRecord 按 DOI/标题删整条、notePathForRecord / bibMentionsRecord 只提示不删；
                              # 接口缓存、脚本、.gitignore 进「过程」，不进非 Git 产物清单；
                              # pendingConfirmCleared = 有篇且无 pending，步骤卡据此自动勾「核对待确认篇目」（tests/screening-review.test.ts）
   review-file-groups.ts      # 精读/写作评审文件分组：笔记/稿件/引文/待获取/过程（tests/review-file-groups.test.ts）
-  closeout-pack.ts           # 项目卡完结清单：最终稿 / 源稿 / 图 / 文献 / 核对 / 笔记（tests/closeout-pack.test.ts）
+  closeout-pack.ts           # 项目卡完结清单：最终稿 / 源稿 / 图 / 文献 / 核对 / 笔记（tests/closeout-pack.test.ts）；
+                             #   索引里没有的笔记（沉浸阅读建的）按 list_paper_notes 来源行配 PDF、题名取 PDF 文件名
   research-tools.ts          # 科研工具注入 withResearchTools；定稿步同时挂 output/endnote.docx 与 output/zotero.docx（LaTeX 不挂）；
   skill-slots.ts             # 技能位单一出处：{skill:锚名} 占位解析（provides 优先、名字兜底）、行为键判定、provides 映射 hook；锚名闭集见 pipeline.md（tests/skill-slots.test.ts）
                              # 域稿刷新收成一句可选「换样式时打开域稿」，不挂文献库同步按钮；来源只认 lit_source
   review-decisions.ts        # 审查报告 R/S 与待核实 V 的拆条、接受/拒绝/修改写回、点完后的继续提示
                              # （tests/review-decisions.test.ts）
   academic-mcp.ts            # 检索步「配置学术检索 MCP」：预设名、登录注入；登录态由 academic_mcp_login_status 回一句现状（tests/academic-mcp.test.ts）
-  session-filter.ts          # 对话页筛选纯逻辑（tests/session-filter.test.ts）
+  session-filter.ts          # 对话页筛选纯逻辑 + 列表行项目名 sessionProjectLabel（tests/session-filter.test.ts）
   session-search.ts          # 对话搜索纯逻辑：分词、元数据即时过滤、正文命中合并排序
   session-transfer.ts        # 会话导入向导纯逻辑：状态文案、目标目录预填、可否执行
   step-decisions.ts          # 决策项：答案落任务书草稿固定小节；isTaskMdStub = 空/仅决策/仅评审沉淀不算可执行正文，resolveTaskMdSource 走模板拼装并接沉淀（decisionGate/orderedAnswers/parseDecisions，tests/step-decisions.test.ts）
@@ -385,7 +557,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   terminal-geometry.ts       # 启动前收不收栏、没量到格子就不起进程、起来之后谁可以改行列
   store.ts                   # zustand 状态。applyTheme 同步原生窗口外观；Windows 上同时把整窗 Mica 切到 micaDark/micaLight
 src-tauri/src/
-  agent_specs.rs             # AgentSpec 中央注册表：一个 CLI 一张规格（detect/launch_plan/env/技能分发/安装更新/官方账号 login/readonly_args 只读模式参数/
+  agent_specs.rs             # AgentSpec 中央注册表：一个 CLI 一张规格（detect/launch_plan/env/技能分发/安装更新/官方账号 login/readonly_args 只读模式参数/permission_args 原生权限档（聊天权限徽标，agents::permission_launch_args）/
                              #   model_switch 运行中切模型（claude/gemini/kimi/grok 带参直切；codex/opencode 唤选择器——两家 CLI 无带参直切：
                              #   codex /model 无内联参数（源码 supports_inline_args 不含 Model）、opencode /models run 无参，2026-09-15 实证；
                              #   状态栏 picker 档点芯片即唤选择器、不摆模型假菜单）与
@@ -399,7 +571,7 @@ src-tauri/src/
                              #   inject=启动注入 / persist=仅设为全局 / tui=仅会话内命令 / unsupported / unknown；
                              #   只认二进制/配置 schema 实证，调研录 matrix §9 第 8 条；agents.rs
                              #   apply_request_policy_env 按表注入启动 env，未实证一律不注）；
-                             #   resolve_binary 兜底候选目录 binary_candidate_dirs 同在本模块（macOS 含 /Library/TeX/texbin）
+                             #   resolve_binary 兜底候选目录 binary_candidate_dirs 同在本模块（macOS 含 /Library/TeX/texbin、/Applications/quarto/bin；Linux /opt/quarto/bin；Windows Program Files\Quarto\bin）
   agents.rs                  # 适配器分发入口 + resolve_binary 二进制解析（GUI 短 PATH 兜底）+ readonly_launch_args（聊想法只读注入）；
                              # 官方账号 Codex：apply_official_inject 必带 -c model_provider="openai"（内置 ChatGPT 渠道；磁盘
                              #   config.toml 的网关默认会盖过订阅，不得省略；只影响本进程、不写 model_providers 块）；
@@ -507,6 +679,12 @@ src-tauri/src/
                              # 基础鉴权/裸流式 SSE 检测/带策略参数对比降级定位/自定义 Header 接受度，
                              # matrix §9 第 8 条）；请求策略字段校验（范围、claude effort 闭集、
                              # Header 名禁引号冒号、环境变量名 POSIX 字符集）
+  client_open.rs             # 客户端接力（设计 docs/design-client-handoff.md）：Mesa 的一条对话/一个项目交给该 agent 的 GUI 客户端接着做。
+                             # 探测（macOS 读 Info.plist 的 URL scheme + 版本，Windows 查 HKCR，30 秒缓存）→ 纯函数 build_plan 预检
+                             #   （ok/note/warn/fix/block；Codex 查 state_<N>.sqlite 的 threads 表与 config.toml 的 provider 定义块，
+                             #   Claude 查 transcript 文件与连接是否网关）→ client_open_list / client_open_plan / client_open_launch。
+                             #   红线：客户端侧失败看不见，判断全在发深链前；launch 每次现算、修复只能选预检候选；会话 id / 块名后端校验后才进 URL / TOML；
+                             #   读不到就不假装知道（Unknown 不出检查项）；深链模板与客户端规格数据在 agent_specs.rs 的 ClientSpec
   global_config.rs           # 「设为全局默认」：agent 级事务批次写入（备份/回滚/恢复）；写成功即记
                              # settings.active_global_profiles（配置页「全局生效」徽标数据源），恢复后清除；
                              # 恢复分两档——撤销上次写入（UI 名；最近批次，每 tag 轮换留 5 份）与恢复初始状态
@@ -537,6 +715,7 @@ src-tauri/src/
                              #   supports_reasoning_effort=false 时改回 true，否则菜单写了也不出。
                              #   中转目录不带 reasoning_efforts 时不写这段则 /effort 不出
   projects.rs                # 项目档案卡（§11.3）：project.toml 读写、注册、资源登记/发现、一键开步、append_workspace_inbox、
+                             # 终端摘记 append_project_clip（notes/clips.md，与文献摘录 excerpts.md 共用写入内核 append_notes_file_at）、
                              #   槽位专属绑定（task_bindings 列：reader=沉浸阅读对话，set/get_project_agent_binding；删连接时连带清理）、
                              # 稳定项目身份（档案卡顶层 `id` 跟随文件夹；register_at 同一 id 新路径 = 移动重连
                              # 改路径不建新行；write_config_at 保证卡片带 id；list 回填旧行）、
@@ -569,7 +748,11 @@ src-tauri/src/
                              # 50MB 上限 + 每次顺带清理 7 天前残留（机制约定见 conventions/terminal.md「输入侧」）；
                              # read_clipboard_files = 文件管理器复制文件的粘贴（mac NSPasteboard / win CF_HDROP / linux 空）
   sessions.rs                # 会话浏览：九 agent 会话扫描/解析（Codex .zst、OpenCode SQLite/JSON）、session_meta、pin 快照、
+                             # Codex 归档 zst 懒解压（read_head_only：列表只要头窗元数据、头窗满即停，
+                             #   归档 token_usage 宁缺毋滥给 None，2026-10-16）+
                              # 会话删除、注意力分类（session_tail_state）、步骤名映射（RX3a）、
+                             # Claude 斜杠命令 / ! 命令及本地输出拆成 command / command_output 块（claude_command_block，
+                             #   剥 ANSI；本地输出行在尾态里算 settled，2026-10-17）、
                              # codex rollout 元信息 model_provider 记进 SessionMetaDto.provider（恢复按它挑兼容 profile，
                              #   前端 pickResumeProfile 单一出处：ccode 或 ccode-<短id> 前缀按网关挑绑定）、
                              # sessions_for_card（融合进任务书的按卡取会话：与列表同一归属口径）；
@@ -590,7 +773,11 @@ src-tauri/src/
                              #   删除内置技能先落逐技能墓碑 .builtin-skill-tombstones（删除失败也不留「删了没记」），
                              #   种子版本升级补播跳过墓碑项——墓碑机制前的老删除靠 skill-backups 同名备份回填墓碑）、
                              # 内置技能更新（check_builtin_skill_updates 种子逐字节比对 + apply_builtin_skill_update
-                             # 覆盖前备份 SKILL.md.bak-<yyyymmdd> 后原子写入；quarto-render 随包 ieee.csl）、技能接口契约（frontmatter inputs/outputs
+                             # 覆盖前备份 SKILL.md.bak-<yyyymmdd> 后原子写入；2026-10-16 一次性数据收口：存量库早期
+                             # 以 local 进库的 14 个内置技能翻回 builtin 标签（备份 skills.json.bak-source-flip-*，
+                             # 逐条验证过内容即种子血统），source 单一口径成立——归组/更新检测/更新应用/删除墓碑
+                             # 全只认 source=builtin，local 同名＝用户自有豁免；quarto-render 随包 ieee.csl）、
+                             # 技能接口契约（frontmatter inputs/outputs
                              # 解析进 SkillDto，list 时现算；外部技能未声明时 infer_interface_from_body 正文推断兜底、
                              #   打 interface_inferred 标不回写；前端 skill-conflicts.ts 判定产物冲突 + 跨步骤链路
                              #   （skillChainWarnings：inputs 找供给/outputs 对账预期产物）+ StepSkillsChips 警告行）；
@@ -633,11 +820,16 @@ src-tauri/src/
                              #   命中存绝对路径 + cwd 规范化、不命中 fail-open 收进清单，分发试解失败才拒写）+
                              #   命令路径探测 mcp_command_path_status（ok/relative/missing 闭集，$VAR 引用不判）+
                              #   resolve_mcp_command_fix 一键修复候选（origin 推断来源 agent）
+  internal_sessions.rs       # Mesa 内部对话保留期清理：统计 / 立即清理 / 开机后台每日一次；只删 internal + ccode-ai 临时目录或雷达隔离目录 + 未保留，
+                             # 永久删除、用量行保留；顺扫 ~/.claude/projects 下 ccode-ai 空壳目录（2026-10-17）
   usage.rs                   # 用量统计（§6.11）：usage 事件提取、usage_daily 按天聚合、任务成本归因、订阅口径、
                              # rebuild_locked 进程互斥（DELETE→upsert 非事务，并发双跑会 ON CONFLICT 累加翻倍，
                              #   四个调用点 session_usage/rebuild_usage_index/get_usage_stats 首跑/usage_activity 全走它）；
                              # usage_activity 活跃度热力图：全历史非零日序列（day×agent×model 聚合 +
                              #   day×model 走 Bucket::cost 计价），先增量 rebuild 再查询、失败 stale=true 回落；
+                             #   冷启动兜底（2026-10-15）：rebuild 超 USAGE_REBUILD_BUDGET_MS 先出旧数（refreshing=true），
+                             #   后台刷完（USAGE_REBUILD_IN_FLIGHT 单飞）发 usage-activity-refreshed 前端补拉一次——
+                             #   事件只在「等的人超时离开」时发，前端每周期最多自动补拉一回，三闸防事件→补拉自激环；
                              #   二期：usage_day_detail 单日明细（总量+按 agent 分解+会话列表，internal 沉底、
                              #   标题过 redact_sensitive_text，不触发 rebuild）+ usage_activity_agents
                              #   年矩阵（day×agent 四类合计，胶囊筛选用）；
@@ -698,8 +890,10 @@ src-tauri/src/
                              #   改等待结构前先量单请求 TTFB（本机 status ≈1.0–1.5s / self ≈0.8s / token ≈0.7–2.0s），
                              #   慢的是串行 × 网关数，不是某一路慢
   pricing.rs                 # pricing.json 读写与校验（定价链最高层，原子写）
+  cli_permission.rs          # 各家 CLI 本机默认权限的只读探查（cli_default_permission：Claude permissions.defaultMode、Codex approval_policy/sandbox_mode → 白话一句），返回 {tier, short, detail}（tier = 对应权限菜单哪一档；Codex 因 Mesa 强制 workspace-write 只看 approval_policy），聊天权限菜单标「本机设置」用；不改任何 CLI 设置
+  app_icon.rs                # 设置 → 外观「应用图标」：跟随系统 / 深色 / 浅色，只换运行中的程序坞（NSApp）、主窗与托盘图标；图像由 scripts/gen-icons.mjs 生成在 icons/runtime/，打包图标不归这里管
   about.rs                   # 「关于」分区后端：read_third_party_notices（include_str! 嵌随包许可清单）+ build_info（平台/架构/渠道）；清单由 scripts/gen-third-party-notices.mjs 生成，改依赖后必须 npm run gen:notices 再提交
-  feedback.rs                # 反馈通道后端：FEEDBACK_ENDPOINT 常量（None=mailto 回落，公司端点上线改这一行）+ submit_feedback（POST JSON，15s 超时，表单+环境行+截图 Base64）+ save_feedback_images（邮件通道截图落盘 Downloads/ccode-exports/mesa-feedback-<时间>/）+ 邮箱直发（send_feedback_smtp：lettre+rustls，截图真实附件；授权码经 profiles::set_shared_key 存 keys.json 键 feedback-smtp，0600 持锁；配置存 settings feedbackSmtp）。端点启用前需验证 8MB 级 JSON 的 IPC 与超时
+  feedback.rs                # 反馈通道后端：FEEDBACK_ENDPOINT 常量（None=mailto 回落，公司端点上线改这一行）+ submit_feedback（POST JSON，15s 超时，表单+环境行+截图 Base64）+ save_feedback_images（邮件通道截图落盘 Downloads/ccode-exports/mesa-feedback-<时间>/）+ 邮箱直发（send_feedback_smtp：lettre+rustls，截图与诊断包真实附件；授权码经 profiles::set_shared_key 存 keys.json 键 feedback-smtp，0600 持锁；配置存 settings feedbackSmtp）。诊断包附件只收路径、后端经 checked_diagnostics_path 白名单（导出目录 + ccode-diagnostics-*.zip + 非链接 + ≤20MB）自读。端点启用前需验证 8MB 级 JSON 的 IPC 与超时
   settings.rs                # 应用设置（settings.json）：字体/scrollback/渲染器（terminal_renderer：auto/dom/webgl，Mac 默认清晰、Windows 默认流畅，读时闭集过滤）/汇率/镜像/主题/OS 通知/精确注意力
                              # （hooks_attention 按 agent map，旧 claude_hooks_attention 仅反序列化兼容迁移）/想法期只读保护
                              # /会话自动命名开关（auto_title_sessions 默认开，关 = ai.rs 起名/补名命令全停；
@@ -722,7 +916,8 @@ src-tauri/src/
                              #   损坏拒写；grok 整文件归 Mesa、外来文件拒覆盖），机制调研录 matrix §12；
                              # 事件日志解析双信封（snake_case/camelCase）+ 事件名去下划线小写归一 + grok Stop 只认
                              #   reason=end_turn + 会话归属双键匹配（session_id==文件主名 或 transcript_path==完整路径），
-                             #   10 分钟 TTL 回落尾部推断不变；settings 字段 hooks_attention: map<agent,bool>
+                             #   10 分钟 TTL 回落尾部推断不变；Stop / AfterAgent 判 settled（确定收尾，同会话文件
+                             #   turn_duration / task_complete）；settings 字段 hooks_attention: map<agent,bool>
                              #   （旧 claude_hooks_attention 仅保留反序列化兼容迁移）；
                              #   session_confirm_detail（2026-08-24）：confirm 时从 payload 提取「在等什么」摘要
                              #   （message/tool_name/title 尽力而为），聊天层审批卡片用
@@ -788,7 +983,7 @@ src-tauri/src/
                              #   + browser_bridge.rs（装 NativeMessagingHosts
                              #   清单）。内嵌窗漏斗保留为过渡，通道 C 稳定后退役——细则见 pipeline.md ⑧
   fonts.rs                   # 终端字体打包与 brew 一键安装（Maple/Sarasa/Iosevka）
-  ai.rs                      # 无头 AI 调用层：一次性 prompt + 提交信息/摘要/PR 描述/冲突建议/提炼接力简报/评审沉淀起草（只写下一步还没有的约束，无新约束返回空）；
+  ai.rs                      # 无头 AI 调用层（一次性调用对 claude/codex 不落盘 + JSON 记账：headless_oneshot_args / parse_oneshot_output）：一次性 prompt + 提交信息/摘要/PR 描述/冲突建议/提炼接力简报/评审沉淀起草（只写下一步还没有的约束，无新约束返回空）；
                              # resolve_profile_from 最近使用回落跳过官方账号（OAuth 过期会甩 CLI 日志；显式/专用仍尊重）；
                              # 失败走 summarize_headless_error，不把 stderr 整段回给前端；401 invalid_api_key 按
                              #   「报错 URL host × 绑定 base_url host」细分：发去 api.openai.com 而配置是网关 = 渠道路由错
@@ -800,7 +995,8 @@ src-tauri/src/
                              #   补名批循环逐轮复查闸门（中途关掉即停）；retitle impl 闸门收进参数是关停语义的单测锚点
   scheduler.rs               # 定时雷达（v3.75；v3.79 起技能可选；v3.218 新建巡检技能：草稿 .ccode/drafts/watch-*，确认才入库分发）：
                              # schedules.json（每日/每周+时分，本地时区）、60s tick + 启动补跑
-                             # （漏跑 coalesce 只补一次）、无头拉起 agent 在任务隔离 worktree 跑技能（先从主仓播种订阅/台账；项目根只用于归属与采纳；非 Git 项目明确失败；显式 sentinel 才允许主仓写入；人点「采纳进项目」才拷产出——2026-10-13 起：采纳前按评审「排除」决定剔除条目（watch_review::drop_excluded_from_snapshot）、已采纳记录明确拒绝重采纳（find_run_record）、run_marked_adopted 是 decide 的后端闸门；历史行可删（schedule_run_delete：账行/事件/历史行/冻结证据），删任务/移项目必级联（purge_schedule_side_effects，worktree 走回收站）；默认 lit-watch，prompt 按技能分派（lit-watch 文案明锁不写 included/index/references.bib）：
+                             # （漏跑 coalesce 只补一次）、执行模型 2026-10-16 起跨项目并行（due 各自 spawn；同项目 project_lock 互斥防并行写坏追加台账，tick 在跑 ≤2 防启动尖峰；手动立即跑不占额度但受同项目互斥；拉起发 scheduler-run-started、ScheduleDto.queued 支撑「排队中」；锁序恒 任务锁→项目锁、sched_lock 恒叶子）、
+                             # 无头拉起 agent 在任务隔离 worktree 跑技能（每轮先从主仓播种：收件箱/跟进/引文与只读种子 included.*/reading-list 镜像、watch-seen 取并集——seed_watch_isolation，2026-10-17 取代「没有才拷」；项目根只用于归属与采纳；非 Git 项目明确失败；显式 sentinel 才允许主仓写入；人点「采纳进项目」才把本轮新增并进主仓——watch_review::adopt_at 按条目追加、watch_path_denied 硬排除流程正典、lit_watch::adopt_watch_pdfs 只拷本轮新下未排除的 PDF；未钉连接按项目默认取连接（pick_project_default）；2026-10-13 起：已采纳记录明确拒绝重采纳（find_run_record）、run_marked_adopted 是 decide 的后端闸门；历史行可删（schedule_run_delete：账行/事件/历史行/冻结证据），删任务/移项目必级联（purge_schedule_side_effects，worktree 走回收站）；默认 lit-watch，prompt 按技能分派（lit-watch 文案明锁不写 included/index/references.bib）：
                              # lit-watch 专用文案不动、其他技能通用模板，非 lit-watch 跑前检查已分发，30 分钟超时（2026-10-03 由 600s 提高））、
                              # 历史留 20 条、跑完发 scheduler-run-done 事件（App.tsx 全局监听弹 OS 通知，复用长任务通知开关）；
                              # RunRecord.newEntries 新命中计数；2026-09-29 起界面不再写关联步骤，保存时清掉旧 linkedStep
@@ -809,7 +1005,7 @@ src-tauri/src/
   lit_watch.rs               # 文献雷达应用层（v3.95）：巡检产物解析 DTO（notes/inbox.md 有效文献块含 watch-run 批次标记日期、上限 500 条；
                              # 漏写批次时 stamp_undated_inbox 只插入标记行：冻结前按本次完成日、打开雷达时按最近已采纳成功巡检；
                              # repair_watch_batch_dates 供空态「按巡检日补记」，已有任一条带日期则不写；
-                             # papers/watch-followup.md 付费墙待办、watchlist.md 订阅读写整表写回保留注释行、included.md 精读清单
+                             # papers/watch-followup.md 付费墙待办、watchlist.md 订阅读写整表写回保留注释行（整表写只来自弹层「保存」；「编辑源文件」前走 ensure_watch_subscriptions_file，存在不动）、included.md 精读清单
                              # 增删去重）+ download_paper_pdf 白名单下载（仅 http/https、60MB 流式上限、%PDF- 魔数校验、
                              # adopt_watch_pdfs：采纳时把隔离树 papers/ 里主仓没有的 %PDF- 拷进项目根并登记，同名不覆盖；
                              # drop_inbox_entries：采纳过滤用，按行范围整段删被排除条目并清悬空批次标记；
@@ -838,9 +1034,10 @@ src-tauri/src/
                              # papers/endnote-import.xml、.ris、.enw。RIS 作者一人一行，期刊/缩写/卷/期/页/日期/ISSN/摘要/关键词
                              # 随 bib 字段写入；没有的不编造。按钮「同步到 EndNote」把 RIS 放到下载并 open -a 交给 EndNote。
   research_tools.rs          # 科研外部工具开工 preflight（research_tool_preflight）：Zotero 本地通道 / Origin 平台门槛
-                             #   （只做 Windows 实机，非 Windows 必需技能=阻塞）/ Blender 探测 / EndNote 桥；
+                             #   （只做 Windows 实机，非 Windows 必需技能=阻塞）/ Blender 探测 / EndNote 桥 /
+                             #   Quarto 能否真跑（quarto-render 步骤预报，不阻塞，dep_check::probe_quarto）；
                              #   只探测，不安装、不写个人库、不启动 GUI
-  reader.rs                  # 沉浸阅读区后端（v3.96）：ensure_paper_note 建档 notes/<slug>.md（精读八小节对齐 lit-notes 技能口径 + 机管「译段」「我的想法」两节，已存在不覆盖；
+  reader.rs                  # 沉浸阅读区后端（v3.96）：ensure_paper_note 建档 notes/<slug>.md（精读八小节对齐 lit-notes 技能口径 + 机管「译段」「我的想法」两节（「标注」首次高亮时建），已存在不覆盖；
                              # 建档前先扫 notes/ 头部「来源行」配对已有精读笔记，命中即复用不另建，空模板 slug 笔记顺带清回收站
                              # （锚点相对/绝对都认：agent 实测几乎全写成项目根绝对路径，配对统一解析成 canonical 再比，2026-09-20）；
                              # pdf_for_note 笔记→配对 PDF（来源行锚点优先；无锚点回落笔记 stem ×「type=paper 资源 + papers/ 顶层 PDF」
@@ -849,10 +1046,14 @@ src-tauri/src/
                              # read_image_bytes 图片通道（png/jpg/jpeg/gif/webp/svg、20MB，白名单判定复用 pdf.rs 内核）+
                              # save_reader_capture 圈选截图落 notes/assets/（PNG 魔数 + 同秒重名 -2/-3）/ append_note_image
                              # （追加进「我的想法」小节）+ 生词本 notes/glossary.md（list/append 术语小写去重/remove）+
-                             # append_note_translation（「译段」小节）；门槛 = gated_root 注册项目根 + canonicalize + 原子写
+                             # append_note_translation（「译段」小节）+ append/remove_note_annotation（「标注」小节：一行一条高亮/批注，
+                             # 建在「译段」前、同处再标只更新批注、删空连标题删；格式与 src/reader-note.ts 双端镜像）+
+                             # reader_paper_title（paper_title_for：配对笔记 H1→index.json→included.json→included.md/reading-list→雷达收件箱，
+                             # 截断文件名按 ≥24 字前缀认；新建档笔记标题同口径）；门槛 = gated_root 注册项目根 + canonicalize + 原子写
   citation.rs                # 引用健康检查：.md 引用键（[@key]/多键/[-@key]）对照 references.bib（白名单同 pdf.rs 口径）
   handoff.rs                 # 接力（§11.3 机制四）：简报生成（脱敏+64KB）、提炼接力（build_session_digest AI 蒸馏全会话 +
-                             # finalize_digest_brief 初稿写回）、handoff_links 接力链登记/固化
+                             # finalize_digest_brief 初稿写回）、handoff_links 接力链登记/固化；
+                             # build_handoff_brief 的 until_text = 聊天层「从这里分叉」，按正文截到那条助手回复（cut_messages_at，认不出报错不给全文）
   runs.rs                    # 一次干活身份（app.db runs 表）：交互 pty_spawn 必有 id，无头 internal；
                              # 关标签不删行；收件箱 action.run 可恢复；登录标签不建行；
                              # Run 可以没有 Goal（2026-09-09，§4.7）：scratch/reader/办公文件闲聊
@@ -869,7 +1070,7 @@ src-tauri/src/
                              # pending 恢复单（write/read/clear + recover_fact 补账只重放原事实不编造）、
                              # result_readiness 派生可审；2026-10-13 起承载合并闸门台账豁免 is_untracked_ledger_file
                              # （reading-list/watch-explains/pending-registrations 只豁免 ??；notes/*.md（index.json 除外）、
-                             # inbox/watch-seen/watch-followup/acceptance-log×2 双态全豁免）——workspaces 合并闸门与
+                             # notes/assets/（沉浸阅读截图，2026-10-17）、inbox/watch-seen/watch-followup/acceptance-log×2 双态全豁免）——workspaces 合并闸门与
                              # 开工脏文件点名、coding 改动计数、projects 迁移前置四处共用
   custom_runtime.rs          # 自定义 Runtime：用户登记命令，直接在已校验的隔离目录中运行；相对路径拒写；无密钥/会话/MCP；不支持恢复
   coding.rs                  # 编程项目 git 原语：worktree list / 从基准或已有本地·远程分支建树（~/ccode/worktrees）、
@@ -887,10 +1088,17 @@ src-tauri/src/
                              # MERGE_HEAD → merging + git_abort_merge；porcelain 冲突码归 U
   fs_tree.rs                 # 文件树与文件操作（删除走系统回收站 trash；重要路径删除保护，canonicalize 双校验；
                              # drop_ris_record / drop_fetch_line：移出时整份改写超过 256 KB 的 RIS 与 to-fetch.md
+                             # read_research_ledger / save_research_ledger：科研台账整份读写（16 MB 上限，白名单
+                             #   papers/included.json|included.md|to-fetch.md|to-fetch.ris|endnote-import.ris|screening.md、
+                             #   notes/index.json、references.bib；带版本防覆盖，与预览保存同锁）——预览通道 256 KB 截断，
+                             #   两百篇带摘要的纳入清单就超；台账读写禁止回落预览通道
                              #   家目录直下系统目录标 isSystem 供前端置灰）
   pdf.rs                     # PDF/docx 字节读取：read_pdf_bytes 白名单 + canonicalize + 上限，base64 传输
   sheet_preview.rs           # Excel/ODS 预览：同一套白名单读字节，calamine 抽指定工作表（200×256）+
                              #   xlsx 合并区（load_merged_regions，裁进窗口）
+  ccode_home.rs              # 工作副本家目录（默认 ~/ccode，可在设置换到别的盘，实际根 <所选>/ccode）：current()
+                             #   只管新建落点，all_roots()/all_sub() 管「是不是 Mesa 自己的」判定；进程内缓存，
+                             #   测试态恒默认；validate_base 校验、next_history 维护曾用根。红线见 architecture §10 2026-10-18
   storage.rs                 # 本机文件持久化原语：跨进程读改写锁、私有临时文件（0600）、安全替换
   uninstall.rs               # 一键卸载：Mesa 独占目录（配置 ccode/、~/ccode/、本机数据 ccode/、
                              #   com.ccode.dev 的网页数据）移入回收站；浏览器桥清单与 Windows
@@ -899,15 +1107,20 @@ src-tauri/src/
                              #   run_streaming_pty/run_streaming/emit_done/winget_args 为 pub(crate)，dep_check 复用同一管线
   watch_review.rs            # 定时巡检产物评审：工作目录可复用，但评审和采纳只读每次执行冻结的副本
                              #   （2026-10-13 起：new_hits_of 评审只列该次新命中=after−initial；watch_run_decide 校验冻结证据并对已采纳运行拒绝；
-                             #   决定存隔离树 .ccode/watch-review.json，文件损坏时写入 fail-closed；drop_excluded_from_snapshot 供采纳剔除被排除条目）
+                             #   决定存隔离树 .ccode/watch-review.json，文件损坏时写入 fail-closed）
+                             #   **采纳按条目追加合并**（2026-10-17）：四类台账 ledger_merge＝主仓当前 + 本轮新增
+                             #   （收件箱/跟进的切块在 lit_watch inbox_append_delta / followup_append_delta，已见逐行并集、
+                             #   引文按键），排除只对本轮新命中生效；自定义契约产出仍整文件写入并查冲突；流程正典
+                             #   （scheduler::watch_path_denied）展开与采纳都跳过；pdfsInitial/pdfsAfter 记本轮新下的 PDF
                              #   （基线文件 + 技能产出契约，与 task_review.rs 同构不合并）
   dep_check.rs               # 依赖体检 + 一键安装（git/node/quarto/tex/pymupdf/pillow）：check_dependencies（git 三态
-                             #   ok/missing/clt_stub，TeX 认 xelatex/tectonic/pdflatex 任一，拼图库问 python 能否导入）
+                             #   ok/missing/clt_stub，quarto 要 --version 有版本号才 ok、否则 broken，TeX 认 xelatex/tectonic/pdflatex 任一，
+                             #   拼图库问 python 能否导入）
                              #   + install_dependency（quarto 走 brew --cask / winget Posit.Quarto；tex 装 tectonic；
                              #   pymupdf/pillow 走 python -m pip，externally-managed 再加 --user；Linux 只给指引）；
                              #   缺 git 走收件箱 dep: 类别常驻提醒（不造横幅）
   logbuf.rs                  # 诊断日志环形缓冲
-  diagnostics.rs             # 诊断包：系统/WebView/GPU/输入法、功能开关、日志、进程生命周期采集与 ZIP 导出
+  diagnostics.rs             # 诊断包：系统/WebView/GPU/输入法、功能开关、日志、进程生命周期采集与 ZIP 导出；bundle_dir/BUNDLE_FILE_PREFIX 是反馈附件闸门的同一出处
   config_dump.rs             # 生效配置自省（只读，不建/不改任何用户配置文件）：dump_effective_config /
                              # export_effective_config（落 ~/Downloads/ccode-exports/ccode-effective-config-<时间戳>.json）——
                              # 快照含 generatedAt/appVersion/appSettings（with_defaults 完整 DTO）/profiles（仅 keyHint 尾号、

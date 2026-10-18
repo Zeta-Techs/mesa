@@ -18,6 +18,98 @@
 - **顶部终端标签（v3.135 / v3.153 / v3.177）**：终端标签名与「＋」放进同一个 Ghostty 式轻量圆角胶囊；显示层、成果面板、分屏、查找不并入标签胶囊。聊天/终端是同一位置的单击切换（图标显示当前层，再点切到另一层）；成果面板是标签栏右侧常驻按钮（与左侧文件树按钮对仗）；分屏对照与查找终端输出同样是标签栏右侧 lucide 图标（与聊天/终端、成果面板同一套描边），不再经过布局菜单。标签栏右侧到查找为止，不放 `⋯`。没有「专注终端」入口：需要干净画布时收起左边工作树。
 - **标签「生成中」虚线圆（2026-09-13）**：只表示这一轮正在出字，不是进程还活着。用户提交（聊天发送 / 回车）后才允许点亮；**启动或恢复会话不转圈**（TUI 启动/回放画面不是生成回答；只有新会话带了首条指令才点亮）。带指令的新启动同时拉起聊天「等回复」（`pendingReply`）：从终端切到聊天要立刻有「正在回复」和发送钮「进行中」，不能等会话文件落盘或用户再发一条。TUI 开屏算出字，但等回复未结束时不得因 PTY 静默熄灭转圈。PTY 有输出才续命。会话窗口最后一条已是助手正文（无待执行工具）或尾部 `done`/`confirm` 立刻停转——不等 PTY 静默、也不让会话文件 sticky `working` 续命；**但 PTY 还在出字时（`ptyLive`，8s）不得被 Codex 中途 `agent_message` / 助手正文把转圈掐掉**（2026-09-18：长工具回合标签与聊天层无运行态）。回合结束后的 TUI 残帧不得从 `done` 再点亮。**收尾被 ptyLive 推迟必须保证重试（2026-09-19）**：推迟后若会话文件再无新写入，5s 轮询的签名门会让收尾判定永远不再执行、转圈冻结（综述大纲跑完实测）——`scheduleSettleRetry` 在 `PTY_LIVE_MS+1s` 强制重判一次；**armed 静默硬上限 120s（2026-09-19）**：真实思考/执行期间 TUI 动画仍在出字，整轮完全无声超上限只可能是回合已结束或链路冻结——熄灭转圈但保留 armed（PTY 再出字立即复亮，不重演 2026-09-15 的「再也点不亮」）。样子是 12px、`text-l2`、`strokeWidth=3` 的虚线圆沿圆周爬，不上强调色。动画走合成器相位闪 opacity，禁止 CSS `rotate`（WKWebView 圆心会晃），也禁 dashoffset 关键帧。纯逻辑 `src/tab-working.ts`。
 - **终端菜单分工（v3.136 / v3.153 / v3.177）**：启动栏 `⋯` 只保留当前标签的启动动作（打开 Shell、高级启动选项、转为项目）。标签栏不设 `⋯`：停止走展开启动栏「停止」，恢复走空态「恢复任务」，接力/对话页走对话页。查找、分屏是标签栏图标；「修改启动配置」只留收缩状态行的「修改」。已有 PTY 时该钮改成「本次」，只开浮层，不把整条栏撑开（2026-10-10）；`⋯` 里的高级选项同样改成「查看本次启动」。未启动仍展开整条栏。不设布局菜单。**收缩状态行在会话运行中必须保持可见（2026-10-08 修复回归）**：`activePtyId` 一挂就把整条底栏（展开栏与收缩行）藏掉，`⋯`/修改/插入在会话存活期全部不可达，快速开聊的「转为项目…」出口随之消失。底栏高度归零是 design-embedded-terminal.md 方案 C（PR4）的形态，portal 与底栏身份补偿没做之前不得提前隐藏。
+- **启动信任菜单在聊天层代答（2026-10-17）**：聊天发首条会带着 prompt 拉起 Agent；Claude Code 在没信任过的目录（主目录最典型）
+  先弹「是否信任这个目录」，会话文件要等选完才出现，聊天层原先停在「已送出 / 等待会话文件」且菜单藏在终端里（用户截图）。
+  TerminalView 在会话文件接上之前，每帧输出后防抖 250ms 读 xterm 可视区文本，`parseTrustPrompt`（`src/trust-prompt.ts`）只认
+  明确问「信任」且选项以 Yes / No 开头的菜单，上报 `SessionLinkState.trustPrompt`；聊天层顶部给「信任此目录 / 不信任，退出 /
+  打开终端」，代答按当前高亮算方向键再回车（`trustAnswerKeys`，**每个键单独写、隔 80ms**——Ink 一次只认一个键；新版 Claude
+  默认高亮在 No，不能盲按回车）。认不出（Gemini 的 Trust folder、Codex 的免审批问题）返回 null，走原出口。**原出口修正**：
+  8 秒无会话文件的判定原要求 `messages.length === 0`，而聊天发送会先乐观显示用户那条，导致首条消息场景永不触发；改为
+  「除了自己刚发的用户消息没有别的」。
+- **切换命令后的确认菜单在聊天层给按钮（2026-10-17）**：聊天「模型 · 思考」芯片与底栏的切换命令都走标签动作
+  `runTuiCommand`（写命令 + Enter，按 submitCsiU 分派），**写之前记屏上已有的「像菜单」内容为基线**，之后 5 秒内每帧输出防抖
+  250ms 扫可视区（`parseTuiMenu`，`src/tui-menu.ts`），认出与基线不同的菜单才上报 `SessionLinkState.menuPrompt`；菜单挂着时继续扫到
+  它消失（用户在终端里自己选了也会清）。平时不扫——对话正文里「❯」开头的行不能当菜单；回显的 `/命令` 与 `⎿` 续行也排除。
+  聊天对话末尾的确认卡（`ChatDecisionCard`，2026-10-17 第一期由顶部横条改来）列出问句与全部选项，`answerMenu` 同信任菜单口径（方向键逐个、隔 80ms、再回车），选完再开 3 秒窗口接连续确认；
+  不替用户选默认项。只能在 CLI 选择器里选的（picker 型模型 / 无档表 effort）同时露出下方终端。
+  **启动后 20 秒也盯**（完全访问启动时 Claude 先弹「WARNING: Bypass Permissions mode」，默认高亮 No）。为防把对话记录里的
+  多行提问认成菜单，必须带序号 / 下方有按键提示（Enter to confirm…，该行本身不算选项）/ 上方有边框三者之一。
+  菜单问句取选项上方那段说明（到 ▔/─ 边框为止）的第一行，其余进 `detail`（Claude 2.1.292 实录「Switch model? / Your next
+  response will be slower…」；本机假 API + PTY 抓屏得来，样本在 tests/tui-menu.test.ts）。
+- **实时预览（2026-10-17；2026-10-18 第三期扩到六家）**：Agent 出字时节流 300ms 读可视区，`extractLiveReply`（`src/live-reply.ts`）
+  按每家「画面布局」读（输入框位置、回显、助手行首、续行缩进、工具 / 转圈 / 提示行）：Claude Code、Codex、Qwen、Gemini、Grok、Kimi。
+  CodeBuddy（生成中屏上只有转圈）与 OpenCode（分栏整屏重绘）不认，仍给「看实时输出」。新增一家必须先用 `chat-capture.py`
+  抓屏、样本进 `tests/live-reply.test.ts`，不凭帮助文字或印象加。
+  **必须看得见输入框**（启动信任菜单、登录页没有输入框，原先退回整屏，把「Accessing workspace / Quick safety check」当回复画进聊天层，
+  用户截图）；**这一轮没见过开头（回显 / ⏺）时续行不预览**；有「等你决定」卡时不预览
+  画面——最后一条「❯ 回显」之后、输入框上边框之前，去掉工具摘要（Read 1 file…）、⎿ 结果、转圈与「· /effort」提示行；
+  确认菜单挂着时不出。上报 `SessionLinkState.liveReply`，聊天层用 `unsyncedTail` 剔掉会话文件已有的行（只比字母数字汉字，
+  渲染过的 Markdown 对得上）。别家返回 null，仍给「看实时输出」。**长回复**（同日用户：显示一半后就没了）：回复长过一屏时
+  回显与「⏺」都滚出可视区，读到的是续行（`anchored: false`），`mergeLiveReply` 按「上次结尾 / 这次开头」最长重合接到上一次后面；
+  一时读不出保留上一次，用户发下一句时清空重攒（实录：Claude 流式时可视区只剩续行段落）。
+- **聊天分页首屏至少 6 条（2026-10-17）**：`plain_conversation_page` 原「解析出一条就停」，Claude 2.1.x 每轮写一行几百 KB 的
+  `prompt_snapshot` 附件，192KB 窗常只剩最后一句提问，聊天层只剩「加载更早的消息」+ 一个气泡（用户截图）。现在攒够
+  `CONVERSATION_PAGE_MIN_MESSAGES` 条或扫到上限 / 文件头才停。
+- **运行中换权限（2026-10-17 用户：发完消息权限就改不了了）**：各家权限都在启动参数里，换 = 父级先写标签 permission /
+  permissionMode，下一拍调标签动作 `restartWithPermission`：停下 Agent，回落 shell 后 effect 用最新 props
+  `launch(lastResume)` 按原会话恢复，对话不丢。权限徽标确认框写明「会重开」，正在生成时只显示不可点。
+- **屏上读回模型（2026-10-17；2026-10-18 补 Gemini「Model set to X」、Codex 底栏「<模型> <档位> · <目录>」，CodeBuddy 中途换不了不再读）**：
+  与思考档同一帧扫描，`detectModelInOutput` 按家认（Claude「Set model to X」，屏上无反引号），上报
+  `TabStatus.modelSeen`；芯片与底栏以它为真值，切换待确认记录按 ptyId 存模块级表。**不认「X with LEVEL effort」**——思考中的
+  转圈行「thinking with high effort」同句式，曾把 thinking 当模型名显示（同日用户截图，测试钉住）。
+  **整行底栏只从画好的屏上读**（`detectModelOnScreen`，节流 500ms 读可视区、自下往上取第一行）：Codex 差量重绘只重画变了的格子，
+  输出流里档位前面不一定是模型名（2026-10-18 用户截图：芯片显示「[14;5H好」＝输入框回显「你好」的光标定位 + 字）。
+  所有读回的名字须像模型名（可见 ASCII、不以「[」开头）；拼帧尾巴走 `outputTail`，不从转义序列中间开始。
+- **聊天层收尾与卡住判定（2026-10-17 用户截图两处）**：①「正在回复」永不熄灭——Claude 回合结束后 TUI 仍有状态行 / 计时重绘，
+  PTY 一直出字，原口径「会话说 done 但 PTY 8 秒内出过字就继续转圈」永远等不到静默。Claude 每轮结束写 `system/turn_duration`，
+  `claude_tail_state` 见到它（且其后没有新的 user）返回 **`settled`**＝确定收尾：`applyTailAttention` 不再看 ptyLive 直接 done，
+  且刚发的用户消息都已落盘时一并结束 pendingReply。普通 `done`（无标记、Codex 中途正文）仍按原口径等 PTY 静下来。
+  **2026-10-18 扩到所有写了确定收尾标记的来源**（用户截图：Codex 回答早已落盘，聊天层仍「正在回复」）：Codex `task_complete` /
+  `turn_aborted`、Kimi wire `turn.ended`、Cursor `turn_ended`，以及 hooks 精确注意力的 `Stop` / `AfterAgent`（hooks 开着时
+  事件日志优先于会话尾部，原先映射成 `done`，文件里的收尾标记被盖掉）都返回 `settled`。Gemini / Qwen / CodeBuddy / Grok
+  会话文件里没有回合级标记，仍按 `done` + PTY 静止收尾。
+  ②正常开聊也弹出半屏终端——「8 秒无会话文件就拉起终端」须再加 **PTY 静止 ≥4 秒**（`SessionLinkState.ptyQuiet`）：
+  模型慢时转圈动画一直在出字，那不是卡在菜单上。只在判定卡住的上升沿拉起一次；自动拉起的终端在会话接上后自动收回，
+  人手拉起的不动。
+- **读屏认出的菜单也是「等你确认」（2026-10-18 用户：终端里等你确认时 Mesa 不提醒，要做就九家都做）**：TerminalView 上报
+  `TabStatus.attention` 时，`menuPrompt`（工具审批 / 切换确认）或 `trustPrompt` 在就报 `confirm`——下游标签黄点、收件箱
+  「待确认」、系统通知、项目点、对话页 / 项目对话页签黄点（`terminalRunInputs` 里 confirm 的标签）全部沿用，不新造提醒通道。
+  原先 confirm 只来自 hooks 精确注意力（逐家手动开，Claude 默认关）或会话尾部推断，没开 hooks 的家在等批准时全链路静默。
+  hooks 仍有用：更准，且能认出 Mesa 之外的终端里的对话（读屏只看得见 Mesa 自己的标签）。聊天层在屏上认出菜单时不再自动拉起终端
+  （已有按原文给按钮的卡），审批 y/n 卡在 menuPrompt / trustPrompt 都没有时才出。
+- **运行中换模型 / 思考档：会写回 CLI 全局配置的改走重开接回（2026-10-18，`switch-strategy.ts`）**：逐家实测 Claude /model 写
+  settings.json model、/effort 写该模型 effortLevel；Codex 选择器写 config.toml model 与 model_reasoning_effort（而且列的是官方模型）；
+  Grok /model 写 config.toml default；Qwen /effort 写 settings.json reasoningEffort；Kimi /effort 写 thinking enabled。这几样改成
+  标签动作 `relaunchWith({model|effort})`：先写启动栏 state / 标签 effort，下一拍走 `restartWithPermission` 的停下 → 回落 shell →
+  按原会话带新参数接回。思考档要这个组合 `injectEffortAllowed` 才能走；注不进去的退回命令并在菜单底部写明会存成默认。生成中
+  （attention working）不让换（重开会打断这一轮）。Gemini /model set、Grok /effort 不写配置，照旧中途切。Codex 模型不再唤它的选择器，
+  Mesa 自己列连接里的模型。`chat-capture.py` 带 `ANSWER_MENU=1` 跑第三幕会比对临时 HOME 里的配置文件，新 CLI 版本先这样复核。
+- **信任菜单不走通用确认菜单（2026-10-18 用户：点完信任后同一个画面又出现一次）**：启动 20 秒的菜单扫描与这一轮的审批扫描都会把
+  启动信任菜单认成通用菜单；点完信任、按键还没生效的那一两帧，信任卡撤了、通用卡顶上来。扫描时屏上是信任菜单（`parseTrustPrompt`）
+  或选项与见过的信任菜单相同就不报；`answerTrust` 同时撤掉 menuPrompt。
+- **终端层与聊天层同步（2026-10-18 用户「全部都做」）**：①启动栏补「思考」「权限」两格（`LaunchMenu`，选项 `hint` / `tone: warn`），
+  与聊天输入框写同一份标签级选择（父级 `patchTabLaunch` → TerminalView `onPatchLaunch`）；权限四档名与确认话术共用
+  `ChatPermissionBadge` 导出的 `PERMISSION_TIERS` / `confirmPermissionChoice`（完全访问二次确认、运行中换档说明「会重开」）。
+  原先聊天里选的档终端点运行照样生效却看不见。②**「本次」按钮删掉，身份那一行字就是入口**：有进程时开「这次启动」卡（Agent / 连接
+  指纹 / 模型（读回优先）/ 思考 / 权限 / 目录 / 附加变量名），卡里「换权限」（`restartWithPermission`，生成中置灰）与「换连接接着聊」
+  （`switchConnection`，有会话才给）；没进程时展开启动栏。原卡首句「这次进程不会改。要换，先停止」已不成立，删。③⋯ 菜单补「对话操作」
+  分组，内容来自父级 `getConversationActions`（= `mesaCommandsFor` 去掉 /fork、/terminal，补「切到聊天」），⋯ 打开时现取。
+  ④底栏右区补上下文用量圆环 + 百分比（`ContextRing`，xterm 调色板色，≥80% 用 yellow），只在终端变体画，聊天变体在输入框里画。
+- **聊天层第二期（2026-10-18）**：①**排队**：生成中（`pendingReply` 或 attention working）发出的话照常写进 PTY、由 CLI 排队，
+  乐观消息带前端专用标记 `ChatMessageDto.queued`，气泡标「排队中 · 这一轮结束后处理」、无撤回钮；会话文件记下后由解析结果替换。
+  ②**乐观消息放回位置**（`placePendingUsers`，chat-handoff.ts）：排队中的接末尾；其余插在「发送那一刻还没有的第一条回复」前
+  （`pendingAssistantKeysRef`）。原口径插在整页第一条回复前，长对话里刚发的那句会跳到页顶。③**标签条 ⋯「对话操作」**
+  与斜杠面板 Mesa 组同一份 `mesaCommandsFor(tabId)`，只在聊天层活动标签显示，父级 `ContextMenu`。④**从这里分叉**：
+  `forkChat(tabId, untilText)` → `build_handoff_brief(untilText)` 按正文截到那条回复。⑤**连接出问题**：终端会话产出的
+  `SessionLinkState.connIssue` 在聊天层渲染成确认卡（`chat-decision.ts`），按钮调标签动作 `switchConnection` / `dismissConnIssue`。
+  ⑥**终端选中文字交给对话**：`onConversationInsert(tabId, text, {send})` 由父级按 `surfaceModeRef` 分派（聊天层 `externalInsert`
+  进输入框或直接发；终端层 bracketed paste / sendMessage）。
+- **恢复前核验会话已落盘（2026-10-17）**：claude-code / codebuddy 用 `--session-id` 预分配 id，但第一条消息前不落盘——
+  启动后没聊就停、启动即崩时，Run 上记着 id、盘上没有这段对话，按 id 恢复只会报「No conversation found」退出 1
+  （测试项目实测：同一条 Run 连续五次恢复失败）。`pty_spawn` 收到恢复请求先查 `sessions::fixed_id_session_exists`：
+  确定没有就丢掉恢复、开新 `--session-id`，并 `runs::replace_unwritten_session` 把 Run 的会话换成新 id（Run 当前会话是旧 id、
+  或同样没落盘才换，绑着真实对话的不碰），回传 `resumeUnwritten` 让终端提示一句。判不了的家（布局未核实）返回 None 照常恢复，
+  宁可放过不误判；配置目录搬迁变量（CLAUDE_CONFIG_DIR 等）与默认目录都查。
 - **收缩行提示与错误分家（2026-10-09）**：只陈述事实、不需要用户动手的消息（「已接回正在跑的进程，画面大小先不动」）走独立的 notice 态——灰字、不进 `compactBarUrgent`、进程退出即清。**禁止塞进 `error`**：error 会把收缩行强制顶出来（用户点「收起此行」永远收不起来，2026-10-09 实测）且飘红冒充故障，还会经 `error ?? "恢复会话失败…"` 兜底把接回提示错报成发送失败原因。需要用户动手的（「该 CLI 不支持启动注入：指令已复制」）才允许走 error 拦隐藏。
 - **启动栏窄宽度防覆盖（v3.137）**：Agent/连接/模型配置组允许收缩，控件宽度按窗口响应式钳制；技能/MCP/运行/更多动作保持独立不覆盖，恢复任务与 `⋯` 使用稳定间距。标签栏和启动栏不共享绝对定位或负边距，窄窗口只允许换行/截断，不允许按钮互相覆盖。
 - **启动栏层级间距（v3.138）**：启动配置条与顶部终端标签之间保留明确的垂直留白（TerminalView 上内边距），恢复态的技能/MCP/运行/更多状态行不再贴住上一栏下边框；Agent、连接、模型选择器使用较窄的响应式宽度，不因窗口变宽而放大到挤压动作区。
@@ -28,6 +120,12 @@
 - **项目 rail 图标语义（v3.129）**：主项目使用 `FolderOpen`；绑定研究流程的工作区使用两位流程序号（01、02…），让步骤先后可扫读；未绑定流程的手动工作区使用 `GitBranch`。不使用抽象斜线或重复 Unicode 符号冒充步骤图标。
 
 - **外部终端安全临时复现（2026-08-21；2026-08-31 Windows 收口）**：外部恢复/提炼接力不得把 profile 密钥拼进命令、剪贴板、前端 IPC 或普通日志。前端只传明确选中的 `profileId`、模型、provider、会话 ID/提示词等非敏感元数据；缺少 `profileId` 时后端必须 fail-closed，不能静默取第一个配置。后端从 `ProfileStore` 读取密钥，复用 `agents::launch_plan`/`prepare_launch` 生成一次性 wrapper。Unix wrapper 存于 `<config>/ccode/external-launch/`（目录 0700、文件 0600，通过 `/bin/sh` 按路径执行），启动首行自删，失败立即清理，60 秒兜底删除。Windows 由设置页二选一（立即生效）：**cmd**（默认）走 `start "Mesa" /D <cwd> cmd.exe /K <binary> <args>`，密钥在父进程环境块经 start 继承、不写 ps1（命令行超过约 7000 字才写无密钥的 `.cmd`——批处理必须单字节编码：前两行 ASCII + `chcp 65001` 后按 UTF-8 读，禁 UTF-16/带 BOM）；**powershell** 走一次性 UTF-8 BOM 的 `.ps1` wrapper + `start powershell.exe -NoExit -File`。两条都经 **`background_command("cmd")` + `raw_arg` 直投 start**。五个坑都别改回去：① 预加引号的复合命令不能走 `Command::args`（Rust 加壳成 `\"`，cmd 对 /C 后文本不认反斜杠转义，start 把 `\"\"` 当程序名）；② 不能直接 spawn powershell/cmd + CREATE_NEW_CONSOLE（dev 实例从 npm/Git Bash 链路继承的 std 句柄是管道不是控制台，会遗传给子进程——TUI 写进管道、读不到键盘，新窗口只剩黑屏光标、agent 随即退出，grok 实测复现；start 经 ShellExecute 拉起时子进程 std 才挂到自己的新控制台）；③ 启动热路径不要同步 icacls（`%APPDATA%\ccode` 默认 ACL 已是当前用户）；④ **start 的窗口标题必须非空**（空标题下 GetConsoleTitleW 返回 0，旧版 libuv <1.52 的 uv_get_process_title 会 assert(process_title) 直接 abort——kimi 这类内嵌旧运行时的 CLI 必崩，win/util.c:412，实测复现）；⑤ **拉起后不能 output()/pipe 收尾**（start 的子进程继承 cmd 的管道句柄，read-to-EOF 会阻塞到用户关掉外部窗口，同步 command 堵死、整个应用未响应；start 立即返回，只 spawn+wait 收外层 cmd，毫秒级）。外层 cmd CREATE_NO_WINDOW 不可见，可见窗口由 start 创建——这是「用户明确打开外部终端」例外。Ghostty 运行中实例使用其原生 AppleScript `new surface configuration`/`new window`：工作目录单独写入 `initial working directory`，先启动 `/bin/sh`，再经 `initial input` 发送带 shell 引号的 wrapper 路径；不能把 `Application Support` 等带空格路径直接放进 `command`。该路径不依赖 System Events 辅助功能权限或剪贴板；未运行实例使用 `open -na`。iTerm/Terminal.app 只接收不含密钥的启动命令。复制命令继续保持全局配置模式，不自动携带 profile 密钥；Windows 复制的是 PowerShell 方言。
+  **2026-10-17 外部终端补三条**：①应用探测认 `/Applications` 与 `~/Applications`（`mac_app_installed`，免管理员装的 iTerm / Ghostty 在后者）；
+  ②iTerm 写进 `create window` 返回的那个窗口（`iterm_script`），不写 `current window`（焦点在别的窗口时会打进用户正在用的窗口）；
+  iTerm 未运行时等它自己开的窗口（≤3 秒）再用，不另建第二个——本机未装 iTerm2，AppleScript 只有文本单测，**未实机验收**；
+  ③复制恢复命令的文案不得写「粘贴即可」：它用终端的全局配置，Claude 会换到全局网关 / 模型、Mesa 连接开的 Codex 对话缺
+  `CODEX_API_KEY` 接不上（toast 点名），要原连接走「在外部终端恢复」。**外部终端里正在跑的对话**（`SessionMetaDto.live`：
+  文件一分钟内有写入、Mesa 没开这个标签）在 Mesa 里点继续先 `confirmDialog`（默认焦点取消），防两个进程交错写同一段记录。
 
 - **定时历史评审（2026-09-07）**：有 watch Run 身份时先打开冻结产物对照，三列是执行前主仓、执行前隔离目录、本次结果；
   仅四类台账可在这里采纳。另点「查看当前工作目录」才进既有只读 Git 评审，标题明确不是历史快照，该视图不得保留旧的直接采纳按钮。
@@ -50,7 +148,8 @@
   `.claude` 配置永远搜不到）。噪声目录（`.git` / `node_modules` / `target` / `dist` / `Library`）仍始终跳过；
   `.ccode` 恒进。其余隐藏目录在三种情况下进入：工作树开了「显示隐藏文件」、查询以 `.` 开头、或目录名本身命中查询。
   点搜索结果若落在隐藏路径上，自动打开「显示隐藏文件」以便树内定位。根下隐藏**文件**（如 `.env`）本来就能搜到。
-- **空白运行标签默认家目录（v3.163，改 v3.159）**：无 `initialCwd` 的新标签（第一次进运行、关最后标签、「＋」）目录是 `~`，不预填当前项目主仓，也不继承 `ccode.lastLaunch.cwd`（那常是 lit-search 等工作树）。点项目 / 工作区才「真进入」该目录。已恢复的任务标签仍用自己记下的 cwd。
+- **空白运行标签默认家目录（v3.163，改 v3.159）**：无 `initialCwd` 的新标签（第一次进运行、关最后标签）目录是 `~`，不预填当前项目主仓，也不继承 `ccode.lastLaunch.cwd`（那常是 lit-search 等工作树）。点项目 / 工作区才「真进入」该目录。已恢复的任务标签仍用自己记下的 cwd。
+  **「＋」例外（2026-10-18 用户拍板）**：「＋」＝在当前项目里再开一个 Agent，目录跟当前标签走（`newTabCwd`）；当前标签在 `~` 或 Mesa 隔离目录（`ccode/workspaces|worktrees|watch-worktrees`）时仍是 `~`——隔离目录各有自己的入口和 Run 身份，v3.163 防的正是误入工作树。
 - **Excel 宽表预览（v3.164 / v3.211）**：`.xlsx`/`.xls`/`.ods` 只读网格（列字母 + 行号冻结、横滑看全列；点格子顶栏显示全文）。后端 `read_sheet_preview` 最多 200 行 × 256 列并回 `totalRows`/`totalCols`；xlsx 带合并区（`merges`，前端 `rowSpan`/`colSpan`）。办公弹层表格用更宽窗口、网格自己滚动（不要外层 `overflow-auto` 把表撑破再裁切）。多工作表底栏切换。复杂公式/图/宏仍以 Excel 为准。
 - **文件树按后缀搜（v3.158）**：`pdf` / `.pdf` / `*.pdf` 按扩展名匹配（大小写不敏感）；`doc` 同时覆盖 `.doc`/`.docx`
   （ppt/xls/jpg/htm/md 同组）。`.pdf` 与 `*.pdf` 只返回该后缀，避免 `pdf-notes.md` 凑数。后缀命中单独成桶、排在
@@ -130,25 +229,29 @@
 - **终端右栏统一称“对话”，有界实时视图（历史）**：仅最近 50 条；该实时视图已在 v3.125 移到主工作区聊天层，右栏只保留文件与改动。
 - **同会话双界面（v3.126 / v3.153 / v3.168）**：主工作区默认显示终端（2026-09-02 起，此前默认聊天；默认值单一出处 `DEFAULT_SURFACE_MODE`，TerminalPage.tsx），模式切换收进终端标签栏同一个单击按钮（图标显示当前层，再点切到另一层），不再单独占用一行、也不再并排两个按钮。两者共享同一个 TerminalView、xterm、PTY 和会话文件；聊天层隐藏终端画面但不卸载，切回终端不重建进程、不丢滚动缓冲。进入聊天模式自动退出分屏，切回终端不自动恢复分屏；聊天模式隐藏完整 TerminalStatusBar，必要上下文移到聊天头部与 composer，终端模式保留状态栏；该显示策略只存运行态，不增加持久化设置。右侧工作台只保留「文件 / 改动」，不再显示重复的对话面板。
 - **聊天层拉起终端（v3.168 / v3.177）**：聊天与终端仍是同一 PTY 的两层，不是两个会话。拉起 = 底栏真实分栏（约 32% 高度），终端按此高度 fit，TUI 才能画进可见区域。不能只裁全高 xterm 的底部——Codex 主对话是 inline viewport，内容靠上、底下是空行，裁底就是白板。切聊天/终端仍铺满同一容器、行列数不变；**只有拉起开合**会 SIGWINCH 一次（Codex 可能重放历史，这是能看见 TUI 的代价）。默认关；`attention === confirm`、8 秒无会话文件、斜杠 `/model` 无参 / `/models` / `/login`、以及聊天层点 picker 模型时自动打开。用户手动收起后本轮不再自动打开。开关只在聊天头部（「拉起终端」/「收起终端」），不在标签栏菜单重复。不复制九家 TUI 菜单解析器；交接表在 `src/chat-handoff.ts`（chat_ok / peek / must_switch）。
-- **聊天等待态与历史窗（v3.168）**：发送后的加载文案按交接表区分「已送出 / 正在写盘 / 正在用 {工具} / 会话文件还没出现」。工具块一旦进会话文件立即渲染，不必等 assistant 正文才结束等待。聊天主区展示会话文件尾窗（后端 192KB 分页），可「加载更早的消息」；完整回放仍走对话页。压缩会话（zstd）没有更早一页。JSONL 超长行（Codex 工具输出常 >192KB）必须整行跳过，且空窗在同一请求里继续往前，禁止把 cursor 钉在行尾。
-- **聊天空态（v3.214）**：未开始时头部不写「等待会话文件」（`chatHeaderStatus`：没跑、也没消息则空着；可恢复占位除外）。画布不写「从一个问题开始」、**不加点阵**。输入框占位「问一个问题…」，目录短句收进 composer 底栏「将在 … 开始」（点选目录，`welcomeCwdLine`）。＋新建 / 历史等会话建立后才出现。模型芯片未启动不做成假下拉。
+- **聊天等待态与历史窗（v3.168）**：发送后的加载文案按交接表区分「已送出 / 正在生成回复（原「正在写盘」，2026-10-17 改白话）/ 正在用 {工具} / 会话文件还没出现」，等待行带「看实时输出」（露出终端：聊天层按会话文件一段一段同步，终端是逐字的）。工具块一旦进会话文件立即渲染，不必等 assistant 正文才结束等待。聊天主区展示会话文件尾窗（后端 192KB 分页），可「加载更早的消息」；完整回放仍走对话页。压缩会话（zstd）没有更早一页。JSONL 超长行（Codex 工具输出常 >192KB）必须整行跳过，且空窗在同一请求里继续往前，禁止把 cursor 钉在行尾。
+- **聊天空态（v3.214）**：未开始时头部不写「等待会话文件」（`chatHeaderStatus`：没跑、也没消息则空着；可恢复占位除外）。画布不写「从一个问题开始」、**不加点阵**。输入框占位「问一个问题…」，目录短句收进 composer 底栏「将在 … 开始」（点选目录，`welcomeCwdLine`）。＋新建 / 历史等会话建立后才出现。模型芯片未启动不做成假下拉。画布内容见 design-system「聊天空态内容」（2026-10-17：最近在这个目录 + 试试，贴输入框上方）。
 - **聊天层模型/思考档与拖入（v3.168）**：头部模型菜单与状态栏同一套 `modelSwitch`/`effort`（直切写 PTY 命令；picker 写命令并窥视）。拖入文件进聊天输入框（一行一个路径），盖住终端的坐标不再写 PTY。Kimi 的 CSI-u Enter / Ctrl+V 序列集中在 `terminal-input.ts`（`KIMI_CSI_U_ENTER` / `KIMI_CSI_U_CTRL_V`）。
-- **表层默认（2026-09-02 起终端为默认）**：默认面层改为终端后，「落终端」不再是需要列举的例外；明确聊天意图的入口（分叉聊天等）仍显式落聊天层。纯 shell/脚本标签（官方账号登录、CLI 自更新、run 脚本——shellOnly/prefillCommand）创建时仍显式置终端面，守住「默认值再变也不回到 chat 盖住登录输出」的口径；agent 启动被会话前确认卡住（信任此目录/登录菜单，attention 门控要求 sessionFile 存在、管不到这段）时，聊天空态 8 秒无会话文件即显示「终端里可能有待处理的确认」+「打开终端处理」出口（8s 延迟防正常启动误闪现）。
+- **表层默认（2026-10-17 起聊天为默认，用户要求「点到运行默认显示聊天层」；2026-09-02–10-17 曾为终端默认）**：`DEFAULT_SURFACE_MODE = "chat"`。恢复占位标签在聊天层由空态「这个标签上次的对话」给接着聊 / 看离开时的画面，直接发送会先按原会话恢复、等 1.2s 再写入（恢复启动忽略首条注入，不能带 prompt 启动）。纯 shell/脚本标签（官方账号登录、CLI 自更新、run 脚本——shellOnly/prefillCommand）创建时仍显式置终端面，守住「默认值再变也不回到 chat 盖住登录输出」的口径；agent 启动被会话前确认卡住（信任此目录/登录菜单，attention 门控要求 sessionFile 存在、管不到这段）时，聊天空态 8 秒无会话文件即显示「终端里可能有待处理的确认」+「打开终端处理」出口（8s 延迟防正常启动误闪现）。
 - **聊天资源入口（v3.126，v3.130 修订）**：聊天 composer 与 TerminalView 复用当前 Agent 的技能/MCP 清单。点技能或 MCP 只把提示插入聊天输入框，不自动调用发送链路；用户补充后按 Enter 才写入当前 PTY（未启动时沿用自动启动/首条 prompt 语义），MCP 菜单可跳转 MCP 管理页；不复制终端专属 TUI 菜单解析器。
 - **聊天发送链路（v3.125）**：Enter 发送、Shift+Enter 换行；运行中的 Agent 直接写当前 PTY，已结束会话自动 resume，未启动标签自动启动并把首条消息作为启动 prompt。Kimi 等不支持启动注入的 CLI 自动切到终端并保留/复制待发送文本；终端专属确认、登录和选择器统一提示「需要终端操作」，不复制脆弱菜单解析器。
 - **聊天输入法 Enter（v3.168）**：组词未上屏时的回车只确认候选，不发送。WKWebView 上确认候选的 Enter 在 compositionend 之后、`isComposing` 已是 false，只看 `isComposing` 会误发——组词锁 + keyCode 229 + compositionend 后再留一帧（`ime-guard.ts`）。
 - **聊天回复反馈（v3.131）**：发送成功后先显示本地用户消息并展示「Agent 正在处理…」加载状态；会话文件刷新时保留尚未落盘的本地消息，只有检测到发送之后的真实 assistant 消息才结束加载。等待回复期间使用约 700ms 的短兜底刷新，防止单次 watcher 事件丢失导致回复永远不进入聊天层；回复到达后立即停止该兜底刷新。2026-08-24 起本地消息从单条改为队列（pendingUsersRef）：连发多条全部保留，已落盘的逐条移出，全部落盘且等到新回复才结束等待；兜底轮询有 3 分钟超时。
-- **聊天层审批卡片与暂停（2026-08-24；2026-09-13 停止与发送同体）**：注意力 confirm 时横幅升级为审批卡片——详情文案来自 hooks 日志 payload 的 `message`/`tool_name`/`title`（`session_confirm_detail` command，与 state_for_session_file 同一套门控；payload schema 各家未文档化，取不到回通用文案）；✓ 批准 / ✗ 拒绝 / Esc 取消三个按键经 `writePty` 写单字符（y/n/\x1b），是保守热键集，各家审批菜单形态未调研、按键无效引导「打开终端」，不复制菜单解析器（v3.125 决策不变）。独立「⏹ 打断」已删：正在生成时发送钮变「进行中」符号钮，点击写 `\x1b`（Esc 暂停当前回合，会话保留；不是 `\x03` 硬中断）。暂停后清掉「等待回复」，发送钮变回发送，下一句仍写进同一 PTY（和 Codex 按 Esc 再继续一样）。只在 `attention === working` 或等待回复时出现，进程活着但停在提示符时仍是发送；审批 confirm 时 Esc 归审批卡。
+- **聊天层审批卡片与暂停（2026-08-24；2026-09-13 停止与发送同体）**：注意力 confirm 时横幅升级为审批卡片——详情文案来自 hooks 日志 payload 的 `message`/`tool_name`/`title`（`session_confirm_detail` command，与 state_for_session_file 同一套门控；payload schema 各家未文档化，取不到回通用文案）；✓ 批准 / ✗ 拒绝 / Esc 取消三个按键经 `writePty` 写单字符（y/n/\x1b），是保守热键集，按键无效引导「打开终端」。
+  **2026-10-18 第三期修订**：七家审批菜单逐家抓屏后，这一轮没结束前（armed / pendingReply）一直扫屏认菜单（`parseTuiMenu`，排除用户刚发的
+  编号清单回显 `menuEchoesText`），认出来就按菜单原文给按钮、`answerMenu` 方向键 + 回车代选；y / n 两键只在认不出菜单时兜底——
+  Claude 2.1.292 按 y 没反应（实测），各家都只保证回车 / 方向键 / 序号。独立「⏹ 打断」已删：正在生成时发送钮变「进行中」符号钮，点击写 `\x1b`（Esc 暂停当前回合，会话保留；不是 `\x03` 硬中断）。暂停后清掉「等待回复」，发送钮变回发送，下一句仍写进同一 PTY（和 Codex 按 Esc 再继续一样）。只在 `attention === working` 或等待回复时出现，进程活着但停在提示符时仍是发送；审批 confirm 时 Esc 归审批卡。
 - **聊天写入 PTY（v3.133）**：聊天发送必须取 `TerminalView` 当前 `ptyIdRef/ptyKindRef` 作为目标，不依赖异步状态镜像；文本和提交键通过后端 `pty_write_submit` 写入，文本先遵守 bracketed-paste 规则。2026-08-24 起正文与提交键分两次写、中间留 60ms（spawn_blocking + thread::sleep，不占主线程）——背靠背写入时开了 bracketed paste 的 TUI 来不及把粘贴内容收进输入框，回车会被吞掉；恢复会话路径发送前再额外等 1.2s（进程引导/会话回放/信任提示期写入会落在未就绪的 TUI 上）。普通 CLI 使用 `\r`，Kimi 继续使用 CSI-u Enter。
 - **聊天层常驻挂载（2026-08-24）**：ChatSurface 不再随 chat⇄terminal 切换卸载（display:contents/none 仅隐藏），输入框草稿、滚动位置、ConversationView 展开状态切层不丢；ChatComposer 的一次性 autofocus 改为 `focusWhen` 可见性信号（隐藏态 focus() 被浏览器忽略，不会抢终端焦点）。AI 正文经 ChatMarkdown 渲染 Markdown（安全口径见 safety.md），超长未展开仍保持截断纯文本 + 展开按钮。
 - **会话同步（v3.125 / v3.168）**：关联成功后优先注册专用 session watcher，普通 JSONL 监听目标文件目录，OpenCode 监听数据库与 WAL；事件短防抖后通知前端，前端用会话文件尾窗替换最新一页并与已向前翻页的旧窗去重拼接。签名轮询保留为 watcher 失败或丢事件时的兜底，并以请求代次防止旧读取覆盖新消息。同步状态显式区分识别中、已监听、等待文件、兜底轮询。
 - **分叉聊天（v3.125）**：新建聊天只在已有 session 文件和 session ID 时启用；复用结构化接力简报与 handoff 链，不复制完整原始历史。新标签继承 Agent/连接/模型/目录，默认聊天模式、自动启动、只读；不支持原生只读参数的 CLI 标注「提示约束」。点击「允许修改」确认风险后停止只读 PTY，以同一摘要和配置重启可写会话，原会话保持不变。
 - **启动栏与状态栏分工（v3.91 / v3.213）**：启动栏主流程 Agent → 配置 → 模型 → 启动，技能/MCP 胶囊右对齐在启动行末端；
-  工作目录不占启动栏。未启动时：空态卡写「将在 … 启动/恢复」（点击选文件夹）；底栏只留状态点 + 目录胶囊
+  工作目录不占启动栏。未启动时：空态卡写「将在 … 启动/恢复」（点击弹目录菜单：随手聊 → 最近已添加项目 ≤6 → 主目录 → 选择文件夹…，当前项打勾，`welcomeDirChoices`；2026-10-17 起，原为直接弹系统选目录窗）；底栏只留状态点 + 目录胶囊
   （点开浮层可键入路径，支持 `~`）。运行/shell 中 cwd 由 pty_get_cwd 4s 回写跟随，shell 里 `cd` 即可；
   底栏此时才显示 agent · 配置 · 模型芯片 / git / token。
-  **空态卡（v3.93 收敛 + v3.213 去重）**：无顶部图标盒、无说明小字、**无 agent/配置身份行**
-  （同一事实只说一次，身份归启动栏）。卡片 `w-80` 走 `.ccode-well` + 极浅勾边，不加投影/毛玻璃；
+  **空态卡（v3.93 收敛 + v3.213 去重）**：无顶部图标盒、**无 agent/配置身份行**
+  （同一事实只说一次，身份归启动栏）。唯一一行说明是「在聊天里发出第一句时自动运行」，主按钮「现在运行」
+  （2026-10-18 用户：快速开聊落到聊天层，切到终端像没启动的坏标签；恢复占位不写这行、按钮仍是「恢复任务」）。卡片 `w-80` 走 `.ccode-well` + 极浅勾边，不加投影/毛玻璃；
   画布垫 18px 点阵。主按钮宽 `min-w-40 px-5` 自适应内容——勿按比例（w-2/3）随卡片宽缩放。
   纯逻辑 `src/terminal-welcome.ts`。
 - **文件树系统目录置灰（v3.91）**：`list_dir` 对家目录直下命中平台清单的目录（macOS：Library/Applications；
@@ -258,7 +361,8 @@
 
 ## 键盘流与分屏（v3.40/v3.41；v3.58 起页切逐页可自定义）
 
-- ⌘K 命令面板（过滤纯逻辑在 `command-palette.ts`）、页切（顺序同侧栏；
+- ⌘K 命令面板（过滤与排序纯逻辑在 `command-palette.ts`；默认列表只放高频入口，设置分区/单个主题/较早项目标 `searchOnly`
+  只在搜索时出现——新增命令先想清楚是常驻还是只供搜索，别让默认列表再被一类条目刷屏；面板内 Enter 必须过 `imeBlocksEnter`）、页切（顺序同侧栏；
   清单单一出处 `hotkeys.ts` PAGE_HOTKEY_DEFS，默认 mod+1..8，`hotkeyPages` map 按页覆盖、整组总开关 `hotkeyPageSwitch` 保留）、
   ⌘\ 执行态隐藏侧栏（`chromeHidden`，session 级）；⌘F 已被终端搜索占用。主题清单单一出处 `src/themes.ts`。绑定可自定义（设置页录制，
   `hotkeys.ts` 组合串，空串=禁用，settings.json 四字段；录制冲突判定对全部在用绑定互判）。通知动作 `ccode.attention` → 聚焦窗口 + 聚焦对应终端标签，
@@ -364,6 +468,26 @@
   **claude-code Shift+Enter 换行（2026-10-10 补）**：claude 官方 terminal-setup 给别家终端装的正是
   `ESC+CR`（Alacritty 键位表 `chars="\u001B\r"` / iTerm2 映射同款），它从不 push kitty 协议——
   改写为 `\x1b\r`（`CLAUDE_SHIFT_ENTER`），同挂点同吞 `\r` 哨兵。Ctrl+J（0x0A）本就可用。
+  **2026-10-17 按 Mesa 应答口径逐家 PTY 实测（假网关 + 应答 DA1 / XTVERSION / kitty 查询 / DECRQM）**：Claude 2.1.292 在 Mesa 里
+  会推 kitty（flags 5）并开同步输出（其调试日志「Terminal capabilities: …kittyKeyboard=yes, synchronizedOutput=yes」），
+  所以上面的旧改写对 Claude 只在协议推上来之前生效；Codex / Qwen / OpenCode / Kimi 同样推 kitty，Shift+Enter 走协议编码均换行。
+  **Grok、CodeBuddy 不推 kitty，Shift+Enter 原先发 `\r` 直接发送**——两家都认 `ESC+CR`（Grok 底栏自写「Opt+Enter:newline」），
+  已并入 `ptyShiftEnterRewrite`。Gemini（本机 Google 账号登录挡住）、Cursor（第三方网关拒绝启动）未实测。
+  **⌘← / ⌘→ / ⌘⌫（iTerm2「自然文本编辑」）**：xterm.js 对 ⌘+方向键不发任何字节、⌘⌫ 只发 DEL；kitty 推上来后编成 super
+  修饰，只有 Claude / OpenCode 认。`macLineEditKey` 在 kitty 编码之前改写为 Ctrl+A / Ctrl+E / Ctrl+U（kitty 已推时用
+  `CSI 97;5u` / `101;5u` / `117;5u`），同一测法下 Claude、Codex、Qwen、OpenCode、Kimi、Grok、CodeBuddy 七家全部生效；只管 macOS。
+  ⌥← / ⌥→ 走 xterm 自带的 `CSI 1;3D/C`，七家本就按词跳。
+  **选中终端文字交给对话（2026-10-17 用户选定）**：选区浮条与右键菜单在 Agent 运行时多「引用 / 问 AI」，调父级
+  `onConversationInsert(tabId, text, { send })`（父级分派归「聊天层」会话：聊天层进输入框、终端层 bracketed paste 写 TUI 输入行）；
+  排版在 `src/terminal-quote.ts`（每行「> 」、去行尾空格、压空行、超 12000 字截断并注明）。普通 Shell 不给。「存进笔记」写项目根
+  `notes/clips.md`（`append_project_clip`，与文献摘录 `excerpts.md` 分开，不进精读并稿），只在科研 / 办公项目显示。
+  **连接出问题换连接接着聊（同日）**：`src/conn-issue.ts` 按各家实录形态扫可视区（只认带固定上下文的错误行，正文聊到 429 不算），
+  分类 quota / rate_limit / auth / timeout / model_missing / other；基线按次数记「已看过」的错误（关提示、换连接、发下一句、
+  新进程接上时记入），倒计时重绘不算新错误；还在重试的那条从屏上消失即撤提示。上报 `SessionLinkState.connIssue`
+  （含 text / detail / alternatives），终端画面顶上 absolute 提示条（不改行数），聊天层画成对话末尾确认卡；动作
+  `switchConnection(profileId)`：先换标签连接与模型（新连接名单有原模型就留），再停 Agent，回落 shell 后按原会话接回；
+  Codex 跨连接（provider 名不同）接回已用假网关实测可行。Qwen 重试期静默，认不出。
+  **代答菜单的回车**：Kimi 开 kitty 后只认 CSI-u 回车，`answerTrust` / `answerMenu` 的 `\r` 按 `submitCsiU` 换成 `KIMI_CSI_U_ENTER`。
   **Shift+标点丢字**：xterm 的 keydown 只发送 `keyCode ≥ 48` 的单个字符。WKWebView 上 Shift+`/`
   实测报 **229**（不是 191），这一下 xterm 走 composition 的 `setTimeout(…, 0)` 分支、读到的
   textarea 还没被 `input` 事件写长 → 不发 → 第一下丢字，再按一下才出来。`printableKeyFallback`：
@@ -415,7 +539,7 @@
   `clamp(18px, x%, calc(100% - 18px))` 按球半径兜住），位移 <4px 判点击）。**球与卡挂覆盖层根（fixed inset-0），
   坐标域是整窗**——当日审查实证挂 PDF 栏内会被栏界挡住（右栏展开时球到不了窗口边，正是用户报障）；卡的锚定
   left/right 用与球同一份 clamp 值（裸百分比锚位在贴边时压球，默认 xp=100 实测压 14px），宽度再按锚定侧可用
-  空间限幅；卡顶/卡高共用同一活钳 min()（窗口变小后存档高被压缩，卡顶按裸存档算会探出窗顶、表头不可点）。
+  空间限幅（2026-10-18 起锚定边与宽度另受 PDF 栏边界 `floatBounds` 约束：卡不盖笔记栏/对话栏，球照旧整窗可拖）；卡顶/卡高共用同一活钳 min()（窗口变小后存档高被压缩，卡顶按裸存档算会探出窗顶、表头不可点）。
   拖动状态留在球组件内不惊动三栏树。悬浮卡 absolute 锚在球旁（右半区贴左展开/左半区贴右，宽 ≤26rem、高 60% 封顶 min() 钳底）、
   默认只看译文（原文要点开对照）、历史抽屉按球位上下弹、× 直接收球不落「一行动作条」、
   表头没有「只折正文」chevron（点球/× 已是完全收起，纯标识行，窄卡时表头折行）。
@@ -441,7 +565,7 @@
   `readerReq: { pdfPath, projectRoot }`：PDF 预览工具条「⛶ 沉浸阅读」、文献雷达精读清单「开读」、文件树 PDF 右键。
   **未归属项目**：`pdf_owner_project` 未命中时，询问是否把 PDF 所在文件夹（若在当前终端目录内则用该目录）
   添加为项目并 `pipeline_opt_out`，随后直接进阅读区；家目录/盘符根拒绝。无研究流程时「整理为笔记」
-  写项目根 `notes/inbox.md`，不要求 lit-notes 步骤。
+  写项目根 `notes/excerpts.md`，不要求 lit-notes 步骤（2026-10-17 由 notes/inbox.md 改名：那是雷达收件箱）。
 - **指定笔记入口（v3.98，精读笔记产物）**：`readerReq`/阅读区 state 增加可选 `notePath`——`notePath` 非空时
   ReaderOverlay **跳过 ensure_paper_note 建档**、笔记栏直接编辑这份 md（否则会按 PDF slug 再建一份模板笔记，
   与 lit-notes 的 `<序号-短标题>.md` 并存打架）。md 入口三处：产物核验清单 md 就地预览弹层「⛶ 沉浸阅读」、
@@ -451,16 +575,28 @@
   配对 = 笔记 stem 与 project.toml `type="paper"` 资源的文件 stem 做 `normalize_title`（lit_watch.rs，已提
   pub(crate) 复用）**互相包含**（与前端 lit-watch.ts `paperResourceFor` 同口径），多命中取规范化最长者，
   无命中报错透出。另有根已知的变体 `pdf_for_note`（返回 Option，供已知 projectRoot 的调用方）。
-- **右栏 = 阅读会话标签的 xterm 终端画面**（2026-08-18 用户拍板：右栏从结构化对话视图改为真实终端，
-  用户看着终端直接敲）：TerminalPage 用 `useLayoutEffect` 把该标签的 xterm 宿主节点（TerminalView 容器 div，
+- **右栏可切「聊天 / 终端」（2026-10-18 用户要求补上聊天层切换）**：对话卡标题行右侧分段钮切阅读会话标签的
+  surface（与终端页同一份 `surfaceModeByTab`，不走 switchSurface——它按焦点标签改、切聊天会退出分屏），选择记
+  `ccode.readerSurface`（缺省聊天层，与新标签默认同口径；阅读会话每次进入新开，派发时带 `surface`）。
+  TerminalPage 把 pane 里的聊天层宿主（`data-chat-host`，包着 ChatSurface）与 xterm 宿主一起搬进同一个槽位：
+  聊天层 `absolute inset-0 z-20` 叠在 xterm 之上（终端几何不变，不触发 SIGWINCH 重放）；露出终端（peek）时聊天层宿主
+  改 `relative order-1 flex-1`，终端画面靠槽位属性 `data-reader-surface="peek"` 的 App.css 规则排到下方占 32%
+  （TerminalView 的节点类名动不了）；终端画面档聊天层宿主 hidden。开屏遮面只给终端画面档（聊天层有自己的连接态）。
+  注入路由（injectToReader）：「放进输入框不发送」在聊天层进聊天输入框（`chatInsertByTab`），终端档写终端输入行；
+  直接发送（简报/让 AI 起草）两层都走 PTY，出错能报回。**焦点在右栏里时 Esc 一律归右栏**（xterm 本就就地消化；
+  聊天输入框/菜单里的 Esc 关阅读区会连带关掉阅读会话），阅读区开着时按 focusedId 把阅读会话拉成焦点
+  （分屏时焦点在右 pane 也拉回：聊天层发送/打断/审批都发给焦点标签）。
+- **右栏的终端画面 = 阅读会话标签的 xterm**（2026-08-18 用户拍板：右栏从结构化对话视图改为真实终端，
+  用户看着终端直接敲；2026-10-18 起与聊天层可切换，见上条）：TerminalPage 用 `useLayoutEffect` 把该标签的 xterm 宿主节点（TerminalView 容器 div，
   `data-terminal-host=<tabId>`）appendChild 进覆盖层右栏槽位（槽位经回调 ref + state 上报；右栏收起不卸槽位——
   栏块滑出隐藏、宿主尺寸不变，effect 只在覆盖层开/关、标签更替时搬），关闭时插回原槽位最前——FilePreviewEditor 的 Monaco 宿主移动同款先例，PTY/xterm/scrollback
   不重建不丢；容器上既有 ResizeObserver 在尺寸变化时自动 fit，无需额外触发。阅读区打开时该标签被提到活跃。
   没有独立的对话视图与输入框：「◈ 问 AI」/圈选截图注入仍写该标签 PTY（`injectToReader`），文字出现在终端
   输入行里正好可见。无配置引导卡、标签被关的「重新启动会话」卡片行为保留。标签的 ⌘F 搜索条与粘贴反馈小条
-  留在终端页原区域（阅读区里看不见，退出后可用）。**同日拍板：不做扩展性功能，只做场景必需**——快捷 chips
+  留在终端页原区域（阅读区里看不见，退出后可用；阅读区里 ⌘F 归 PDF 查找，见下）。**同日拍板：不做扩展性功能，只做场景必需**——快捷 chips
   （图导游/总结这页/帮我改笔记）与「✦ 工具」页签（译历史/生词本表格/大纲三段）砍掉待需求，
   `ReaderToolsPanel` 已删；⌘+点击段落对照的结果改在点击位置旁的选区同款浮卡呈现（可保存译段）。
+  **2026-10-18 用户点名补齐九项（「全部都做」，见下方「查找/目录/标注/互跳」各条）**——属场景必需，不是恢复上面砍掉的扩展件。
 - **Esc 级联阅读区最优先**：阅读区自己的 keydown 监听带 `isComposing` 守卫（中文输入法组词中按 Esc 是取消候选）；
   TerminalPage 的专注/右栏全宽 Esc 在阅读区打开期间直接放行不拦（`if (reader) return`）；圈选模式内的 Esc 用
   capture 相 + stopPropagation 抢在关阅读区之前（先退圈选，再退阅读区）。**焦点在右栏 xterm 里时 Esc 被 xterm
@@ -475,13 +611,63 @@
   明说「笔记栏有未保存改动，保存后可见」（dirty 状态经 FilePreviewEditor `onDirtyChange` 上报 ReaderOverlay，
   文案口径纯函数 `translationSavedToast` 在 reader.ts，tests/reader.test.ts 锚定）；失败一律 loud
   （PDF 栏顶部 hint 条 + toast ✗）。
-- **Agent 上下文简报**：note 就绪且 `agentStatus.running` 为真时，ReaderOverlay 自动向阅读会话**直发**一行
-  简报（「【阅读上下文】在读 PDF：<pdfPath>；配套笔记：<note.path>…」），按 note.path 去重一次性
-  （换 PDF 后 note.path 变 → 重新简报；发送失败不标记，下次 running 跃迁重试）。已知竞态：send=true 会把
-  用户输入行未发完的文字一起带出，running 守门后窗口极小，接受（注释在 ReaderOverlay 同效应处）。
+- **Agent 上下文简报**：note 就绪、`agentStatus.running` 为真**且开屏遮面已撤**（会话联动到 ≈ TUI 已开屏，
+  8s 兜底）时，ReaderOverlay 自动向阅读会话**直发**一行简报（「【阅读上下文】在读 PDF：<pdfPath>；配套笔记：<note.path>…」）。
+  **先占位再发**（briefedRef 记 note.path，失败才撤）、换会话标签（重启）清占位——2026-10-18 修「简报打两遍、
+  还落在 CLI 开屏之前」：进程活着不等于 CLI 能收输入；回包才记账会让 effect 重跑时同一段进两次。
+  已知竞态：send=true 会把用户输入行未发完的文字一起带出，窗口极小，接受（注释在 ReaderOverlay 同效应处）。
+- **PDF 查找 / 目录 / 跳页（2026-10-18）**：PdfContinuousView 自带，所有宿主都有工具条放大镜，⌘/Ctrl+F 只在
+  `findHotkey` 接线宿主（阅读区）生效——window capture 相拦截并 stopPropagation（终端页对活跃标签也挂了 ⌘F，
+  会呼出阅读区里看不见的终端搜索条），焦点在 `.monaco-editor` / `.xterm` 里不拦。检索走 `src/pdf-search.ts`
+  一套归一口径：文本项原样拼接、行尾补一个空格、行尾「字母+连字符」断词复原（en/em dash 不并字）、大小写/弯引号/
+  各式短横线/连字归一——**页级计数（getTextContent 文本项）与页内高亮（textLayer 的 span/br[role=presentation]）
+  同一套组装，第 k 处在两边是同一处**，勿各写一套。文字索引首次查找时逐页取、按文档缓存；全文抽不出字明说
+  「扫描件」。目录 = PDF 自带书签（`flattenPdfOutline` 三层 300 条），没有书签不出按钮；落点高度按 XYZ/FitH/FitR
+  换算到页内偏移。页码可点输入跳页。查找条/跳页输入/下拉/高亮小卡的 Esc 都在 capture 相先收自己，不连带关阅读区。
+- **页内高亮层（PdfPageView `marks`）**：查找命中 / 标注 / 跳转一闪共用——标记只存**摘句**不存坐标，textLayer
+  落地后按 pdf-search 口径重定位、Range.getClientRects 量矩形（同行碎盒 `mergeLineRects` 合并，WebKit 一片两盒），
+  换算成**页内百分比**画在文本层之前（pointer-events:none，选字/复制不变；缩放未停稳时与文本层同进退）。
+  标注/一闪的摘句按候选写法依次试（见下条），查找命中只认原样（第 k 处要与页级计数对齐）。标记数组按页 memo、内容键比较，同内容换引用不重算。
+- **标注 = 笔记「## 标注」小节（2026-10-18）**：高亮/批注不另存坐标库、不进 localStorage——一行一条
+  `- p.3 「摘句」` / `- p.3 「摘句」 —— 批注`，写在当前笔记里（随笔记走 git、跨机器在、Agent 读得到）。
+  格式契约 `src/reader-note.ts` ↔ `reader.rs`（`annotation_quote`/`parse_annotation_line`）双端镜像：摘句行尾
+  「字母-换行」接回同一行且**保留连字符**（断词还是复合词分不清，照原样读；当晚真笔记干跑见过「argonfilled」）、
+  空白折叠、「」换“”、500 字上限；页内重定位按 `quoteSearchCandidates` 依次试原样 → 去词内连字符 → 前 60 字；解析只认「## 标注」小节内的行，「」定界取「后面只跟 —— 或行尾的」那个 」。
+  小节不存在时建在「## 译段」之前（机管两节保持收尾），列表紧凑不留空行；同页同摘句再标只更新批注；删到空连标题删。
+  写入门槛同译段（项目已登记 + 笔记在 notes/ 内，canonical 双校验，原子写）。点 PDF 高亮出小卡（批注 /
+  在笔记里看 / 删掉高亮），工具条「标注 N」列全部。lit-notes 技能与精读步合同把「标注」与「译段」「我的想法」
+  并列为用户笔记原样保留。阅读区另订一份笔记 watcher（FilePreviewEditor 编辑态 dirty 会停订，高亮不能跟着停）。
+- **笔记 ↔ PDF 互跳**：笔记栏（只在显示本篇笔记时）阅读态把 `p.3 / pp. 3–5 / 第 3 页 / page 3 / Fig. 2 / Figure 2a /
+  图 2 / Table 1 / 表 1` 包成 `.md-pdf-ref`（`md-pdf-refs.ts`，每次布局幂等重扫，跳过 a/code/pre/公式）；页码在
+  标注行或译段引用块里时带上那段原文，跳过去闪一下。图表编号走 `locateFigure`：行首图注优先，其次第一次提及。
+  反向：PDF 高亮「在笔记里看」→ `focusText`（阅读态滚到含该行的块并闪，编辑态 Monaco 选中居中）。
+- **让 AI 起草**：`noteDraftEmpty`（八小节标题出现过且都没有正文）时笔记栏顶一行入口，直发 `buildNoteDraftPrompt`
+  给阅读会话（lit-notes 写法、原地编辑、来源行与三节机管小节不动）；会话没开好（running 且遮面已撤）给 toast 不发。
+- **阅读会话权限（2026-10-18）**：dispatchReaderSession 带 `permissionMode: "ask"`（这家 CLI 的 permissionModes 有 ask
+  才带，否则按本机设置）——本机设完全访问也收窄成先问。Claude Code 另由 pty_spawn 识别 `reuse_key` 前缀 `reader:`
+  在 ask 档追加 `--allowedTools Edit(./notes/**)`（cwd=项目根），改笔记不必逐次批准、改别处照常先问。
+  PendingTerminal / addTab 因此透传 `permissionMode`（仍只进内存不进持久化白名单）。
+- **阅读区里的状态栏不出 git 胶囊**：阅读会话的 TerminalStatusBar 整个搬进右栏，Commit & Push 在读文献时只会误点——
+  TerminalPage 对 `reader && readerTabId === t.id` 的标签传 `git=null`。
+- **状态栏与聊天输入框的窄栏排法（2026-10-18 阅读区截图：模型芯片与目录胶囊叠字）**：TerminalStatusBar 量自己的宽度，
+  窄于 560px（`STATUS_BAR_NARROW_PX`）收掉连接名 / 思考档 / token，模型与目录限宽截断——各段 nowrap 不能收缩，
+  放不下就互相盖住（左区不能 overflow-hidden：模型菜单从这里往上弹）。聊天输入框左下角的状态注记
+  （「等待会话文件」等）同理改为可截断。阅读区笔记栏首个块右侧让出浮动「目录」钮的宽度。
+- **顶栏题名**：`reader_paper_title`（reader.rs `paper_title_for`）在题录里找真实题名——配对笔记 H1（不是文件名本身时）
+  → notes/index.json → papers/included.json（fulltext 字段写着这个文件名的优先）→ included.md / reading-list.md →
+  雷达收件箱；匹配 = `normalize_title` 相等，或文件名规范化后 ≥24 字且是题名前缀（雷达限长截断）。新建档笔记的
+  H1 同口径。悬浮译文卡只在 PDF 栏里展开（`floatBounds` = PDF 栏离覆盖层左右边的 px，RO 按帧合并），球仍整窗可拖；
+  笔记栏 md 用 `compact` 排版（标题收一档）。
 - **注入单一内核 `injectToTab(tabId, data, send)`**：原 `injectToActiveAgent` 抽成按 tabId 的共用内核，
-  右栏选段（活跃标签）与阅读区注入（阅读会话标签）走同一条链路，行为口径不变（缺省不自动回车、`send=true`
-  一次拼接 `\r`）；选段「◈ 问 AI」/「↵ 直接发送」/圈选「发给 agent」全部经此。
+  右栏选段（活跃标签）与阅读区注入（阅读会话标签）走同一条链路（缺省只写输入行不回车）；选段「◈ 问 AI」/
+  「↵ 直接发送」/圈选「发给 agent」/阅读区简报/让 AI 起草全部经此。**`send=true` 必须走标签的 `sendMessage`**
+  （`pty_write_submit`：正文按粘贴写入、提交键单独补写，同聊天层发送）——**禁止把正文和 `\r` 一次 `pty_write`**：
+  Claude Code 把整段连同回车当成粘贴，字躺在输入行里没发出去，聊天层却已记成「正在回复」一直转
+  （2026-10-18 阅读区简报实测；此前「简报两段」的另一半就是这个）。**拉起后的第一次发送要等 CLI 能收键**
+  （TerminalView `waitAgentInputReady`：出过字后安静 400ms，一直不出字的接管进程等满 3 秒，最多 8 秒；之后的发送不等）：
+  进程刚起来时写进去的字先被终端行规程回显，回车成了开屏前预输入的一部分，字落进输入框没提交、聊天层却记成已发出。
+  假网关 PTY 实测：Claude Code 拉起后 50ms 内写入必现，等就绪后 3/3 正常。阅读区遮面以会话联动为撤除条件，
+  Claude 拉起即预登记会话 id、联动几乎立刻就有，不能当「能收键」用。
 - **阅读会话 reuseKey 口径**：进入阅读区自动起一个阅读会话标签（项目根 + autoStart，快速开聊同款
   机制），`reuseKey = reader:<projectRoot>`（`src/reader.ts readerReuseKey` 单一出处）——退出再进找回同一标签
   接着聊；恢复出的占位标签不带 reuseKey 不参与复用；用户手动关掉标签后不连环重建（一次性标记，栏内给
