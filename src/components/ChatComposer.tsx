@@ -1,8 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Plus, Square } from "lucide-react";
+import { AtSign, FileText, Paperclip, Plus, Square } from "lucide-react";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import type { McpServerDto, SkillDto } from "../types";
+import type { SearchResultDto } from "./FileTree";
+import {
+  applyMention,
+  filterMesaCommands,
+  mentionQueryAt,
+  type MesaCommand,
+} from "../composer-assist";
 import { firstImageItem, imageExtFromMime } from "../terminal-input";
 import {
   filterSlashCommands,
@@ -11,20 +19,33 @@ import {
 } from "../slash-commands";
 import { imeBlocksEnter } from "../ime-guard";
 import { escInterruptSafe } from "../agent-caps";
+import InsertMenuItems from "./InsertMenuItems";
 
-function InsertMenu({
+/**
+ * 「+」添加菜单（docs/design-chat-layer.md §4.1，2026-10-17 第二期）：文件或图片 / 引用项目文件 / 技能 / MCP。
+ * 原先只能插技能、MCP，加文件只能拖或粘，用户不知道能给 AI 文件。
+ */
+function AddMenu({
   skills,
   mcps,
   disabled,
+  canMention,
   onInsert,
+  onPickFiles,
+  onMention,
 }: {
   skills: SkillDto[];
   mcps: McpServerDto[];
   disabled: boolean;
+  /** 有工作目录才能引用项目文件 */
+  canMention: boolean;
   onInsert: (text: string) => void;
+  onPickFiles: () => void;
+  onMention: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const empty = skills.length === 0 && mcps.length === 0;
+  const row =
+    "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs text-l2 hover:bg-hover hover:text-l1 disabled:cursor-not-allowed disabled:opacity-40";
 
   return (
     <span className="relative">
@@ -35,8 +56,8 @@ function InsertMenu({
         className={`inline-flex size-7 items-center justify-center rounded-md transition-colors hover:bg-hover hover:text-l1 disabled:cursor-not-allowed disabled:opacity-40 ${
           open ? "bg-hover text-l1" : "text-l3"
         }`}
-        title="插入技能或 MCP 提示"
-        aria-label="插入技能或 MCP 提示"
+        title="添加文件、引用项目文件、技能或 MCP"
+        aria-label="添加"
       >
         <Plus size={14} strokeWidth={1.8} aria-hidden="true" />
       </button>
@@ -44,62 +65,56 @@ function InsertMenu({
         <>
           <button
             type="button"
-            aria-label="关闭插入菜单"
+            aria-label="关闭添加菜单"
             className="fixed inset-0 z-40 cursor-default"
             onClick={() => setOpen(false)}
           />
-          <div className="absolute bottom-full left-0 z-50 mb-2 w-72 overflow-hidden rounded-lg border border-field ccode-float-surface">
-            {empty ? (
-              <div className="px-2 py-3 text-xs text-l4">
-                当前 Agent 没有可插入的技能或 MCP
-              </div>
-            ) : (
-              <div className="max-h-64 overflow-auto p-1">
-                {skills.length > 0 && (
-                  <div className="px-2 py-1.5 text-micro text-l4">技能</div>
-                )}
-                {skills.map((skill) => (
-                  <button
-                    key={skill.id}
-                    type="button"
-                    onClick={() => {
-                      setOpen(false);
-                      onInsert(`使用 ${skill.name} 技能：`);
-                    }}
-                    className="flex w-full flex-col gap-0.5 rounded-md px-2 py-2 text-left hover:bg-hover"
-                  >
-                    <span className="text-xs text-l1">{skill.name}</span>
-                    {skill.description && (
-                      <span className="truncate text-micro text-l4">
-                        {skill.description}
-                      </span>
-                    )}
-                  </button>
-                ))}
-                {mcps.length > 0 && (
-                  <div className="px-2 py-1.5 text-micro text-l4">MCP</div>
-                )}
-                {mcps.map((mcp) => (
-                  <button
-                    key={mcp.id}
-                    type="button"
-                    onClick={() => {
-                      setOpen(false);
-                      onInsert(`使用 ${mcp.name} 这个 MCP server 提供的工具：`);
-                    }}
-                    className="flex w-full flex-col gap-0.5 rounded-md px-2 py-2 text-left hover:bg-hover"
-                  >
-                    <span className="text-xs text-l1">{mcp.name}</span>
-                    <span className="truncate font-mono text-micro text-l4">
-                      {mcp.kind === "stdio"
-                        ? `${mcp.command} ${mcp.args.join(" ")}`
-                        : mcp.url}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          <ul className="absolute bottom-full left-0 z-50 mb-2 max-h-80 w-72 overflow-auto rounded-lg border border-field ccode-float-surface p-1">
+            <li>
+              <button
+                type="button"
+                className={row}
+                onClick={() => {
+                  setOpen(false);
+                  onPickFiles();
+                }}
+              >
+                <Paperclip size={14} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l3" />
+                文件或图片
+                <span className="ml-auto text-micro text-l4">也可以拖进来、粘贴</span>
+              </button>
+            </li>
+            <li>
+              <button
+                type="button"
+                className={row}
+                disabled={!canMention}
+                title={canMention ? undefined : "先选项目或文件夹"}
+                onClick={() => {
+                  setOpen(false);
+                  onMention();
+                }}
+              >
+                <AtSign size={14} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l3" />
+                引用项目文件
+                <span className="ml-auto font-mono text-micro text-l4">@</span>
+              </button>
+            </li>
+            <li className="mx-1 my-1 h-px bg-hairline" aria-hidden="true" />
+            {/* 技能 / MCP 条目与运行页收缩行 / 标签栏 ✦ 同一组件，三处长一样 */}
+            <InsertMenuItems
+              skills={skills}
+              mcps={mcps}
+              onSkill={(name) => {
+                setOpen(false);
+                onInsert(`使用 ${name} 技能：`);
+              }}
+              onMcp={(name) => {
+                setOpen(false);
+                onInsert(`使用 ${name} 这个 MCP server 提供的工具：`);
+              }}
+            />
+          </ul>
         </>
       )}
     </span>
@@ -121,8 +136,13 @@ export default function ChatComposer({
   cwdTitle,
   onChooseCwd,
   leftExtras,
+  rightExtras,
   running,
   onInterrupt,
+  narrow = false,
+  cwd = null,
+  mesaCommands = [],
+  recallText = null,
 }: {
   disabled?: boolean;
   busy?: boolean;
@@ -143,12 +163,22 @@ export default function ChatComposer({
   onChooseCwd?: () => void;
   /** 左下角扩展位（原聊天头部功能迁入：状态注记 / 只读分叉） */
   leftExtras?: ReactNode;
+  /** 发送钮左边（开聊前 Agent·模型选择 / 开聊后「模型 · 思考」芯片） */
+  rightExtras?: ReactNode;
   /** 正在生成：发送钮本体变成「进行中」停止钮（符号），点击走 onInterrupt。
    *  进程活着但停在提示符时不要传 true——那时要点发送，Esc 会误伤 TUI。
    *  Grok Build 不适用（非 prompt 态 Esc 会退出整进程），调用方按 agent 过滤。 */
   running?: boolean;
+  /** 聊天空态居中时收窄到约 720px（与问候、起手提示同宽）；开聊后回到正常宽度 */
+  narrow?: boolean;
   /** 暂停当前生成（往终端写 Esc——不是退出会话；输入文字后仍可用 Enter 发送） */
   onInterrupt?: () => void;
+  /** 工作目录：@ 引用项目文件在这里搜 */
+  cwd?: string | null;
+  /** 斜杠面板上半组「Mesa」操作（由 Mesa 执行，不写进终端） */
+  mesaCommands?: MesaCommand[];
+  /** 输入框为空时按 ↑ 取回的上一句 */
+  recallText?: string | null;
 }) {
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -184,15 +214,16 @@ export default function ChatComposer({
   );
   // 图片附件（缩略卡）：粘贴的图片经 save_clipboard_image 落盘后按路径随消息发送，
   // url 是本地 object URL 只用于输入框里的预览缩略图
+  // url 为 null = 「+ → 文件或图片」选来的文件：不做缩略图，显示文件名卡
   const [attachments, setAttachments] = useState<
-    { path: string; url: string }[]
+    { path: string; url: string | null }[]
   >([]);
   const attachmentsRef = useRef(attachments);
   attachmentsRef.current = attachments;
   // 卸载时回收所有 object URL
   useEffect(
     () => () => {
-      attachmentsRef.current.forEach((a) => URL.revokeObjectURL(a.url));
+      attachmentsRef.current.forEach((a) => a.url && URL.revokeObjectURL(a.url));
     },
     [],
   );
@@ -200,7 +231,7 @@ export default function ChatComposer({
   function removeAttachment(path: string) {
     setAttachments((cur) => {
       const hit = cur.find((a) => a.path === path);
-      if (hit) URL.revokeObjectURL(hit.url);
+      if (hit?.url) URL.revokeObjectURL(hit.url);
       return cur.filter((a) => a.path !== path);
     });
   }
@@ -232,6 +263,85 @@ export default function ChatComposer({
       el.focus();
       el.style.height = "0";
       el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+    });
+  }
+
+  /** 「+ → 文件或图片」：系统选文件，按路径随消息发出（与拖入同口径） */
+  async function pickFiles() {
+    try {
+      const picked = await openDialog({ multiple: true, directory: false, defaultPath: cwd ?? undefined });
+      const paths = picked == null ? [] : Array.isArray(picked) ? picked : [picked];
+      if (paths.length === 0) return;
+      setAttachments((cur) => [
+        ...cur,
+        ...paths.filter((p) => !cur.some((a) => a.path === p)).map((p) => ({ path: p, url: null })),
+      ]);
+      requestAnimationFrame(() => ref.current?.focus());
+    } catch (reason) {
+      setError(`选文件失败：${String(reason)}`);
+    }
+  }
+
+  // ---- @ 引用项目文件 ----
+  const [caret, setCaret] = useState(0);
+  const [mentionDismissed, setMentionDismissed] = useState(false);
+  const mention = cwd && !mentionDismissed ? mentionQueryAt(value, caret) : null;
+  const [mentionHits, setMentionHits] = useState<SearchResultDto[]>([]);
+  const [mentionIdx, setMentionIdx] = useState(0);
+  const mentionQuery = mention?.query ?? null;
+  useEffect(() => {
+    if (mentionQuery === null || !cwd) {
+      setMentionHits([]);
+      return;
+    }
+    if (!mentionQuery) {
+      setMentionHits([]);
+      return;
+    }
+    let stale = false;
+    const t = window.setTimeout(() => {
+      invoke<SearchResultDto[]>("search_files", { root: cwd, query: mentionQuery, showHidden: false })
+        .then((hits) => {
+          if (!stale) {
+            setMentionHits(hits.slice(0, 8));
+            setMentionIdx(0);
+          }
+        })
+        .catch(() => {
+          if (!stale) setMentionHits([]);
+        });
+    }, 150);
+    return () => {
+      stale = true;
+      window.clearTimeout(t);
+    };
+  }, [mentionQuery, cwd]);
+  function pickMention(hit: SearchResultDto) {
+    if (!mention) return;
+    const next = applyMention(value, caret, mention, hit.rel.replace(/\\/g, "/"));
+    setValue(next.value);
+    setCaret(next.caret);
+    requestAnimationFrame(() => {
+      const el = ref.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(next.caret, next.caret);
+    });
+  }
+  /** 「+ → 引用项目文件」：在光标处补一个 @ 打开搜索 */
+  function startMention() {
+    const el = ref.current;
+    const at = el?.selectionStart ?? value.length;
+    const needSpace = at > 0 && !/\s/.test(value[at - 1]);
+    const insert = needSpace ? " @" : "@";
+    const next = value.slice(0, at) + insert + value.slice(at);
+    setValue(next);
+    setMentionDismissed(false);
+    setCaret(at + insert.length);
+    requestAnimationFrame(() => {
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(at + insert.length, at + insert.length);
     });
   }
 
@@ -270,7 +380,7 @@ export default function ChatComposer({
     setValue("");
     setSlashDismissed(false);
     setAttachments((cur) => {
-      cur.forEach((a) => URL.revokeObjectURL(a.url));
+      cur.forEach((a) => a.url && URL.revokeObjectURL(a.url));
       return [];
     });
   }
@@ -279,14 +389,27 @@ export default function ChatComposer({
   const [slashIdx, setSlashIdx] = useState(0);
   const [slashDismissed, setSlashDismissed] = useState(false);
   const slashQuery = slashDismissed ? null : slashQueryOf(value);
-  const slashList =
+  // 上半组 Mesa 操作（Mesa 自己执行），下半组 CLI 命令（写进终端）；同一套 ↑↓ 选择
+  const mesaList = slashQuery === null ? [] : filterMesaCommands(mesaCommands, slashQuery);
+  const cliList =
     slashQuery === null
       ? []
       : filterSlashCommands(slashCommandsFor(agentId), slashQuery);
+  const slashList: { cmd: string; hint: string; mesa?: MesaCommand }[] = [
+    ...mesaList.map((m) => ({ cmd: m.cmd, hint: m.label, mesa: m })),
+    ...cliList,
+  ];
   const slashActive = Math.min(slashIdx, Math.max(0, slashList.length - 1));
 
   function pickSlash(cmd: string, send: boolean) {
     setSlashDismissed(true);
+    const mesa = slashList.find((c) => c.cmd === cmd)?.mesa;
+    if (mesa) {
+      // Mesa 操作不进输入框也不写终端：清掉「/xx」再执行
+      setValue("");
+      mesa.run();
+      return;
+    }
     if (send) {
       void submit(cmd);
     } else {
@@ -297,28 +420,78 @@ export default function ChatComposer({
 
   return (
     <div className="ccode-chat-composer shrink-0 bg-canvas px-4 pb-2 pt-2.5">
-      <div className="mx-auto w-full max-w-4xl">
+      <div className={`mx-auto w-full ${narrow ? "max-w-[45rem]" : "max-w-4xl"}`}>
         <div className="overflow-visible rounded-xl border border-hairline bg-raised transition-colors focus-within:border-l4">
           {/* 斜杠命令面板：/ 开头弹出（命令表是各家 CLI 的保守常用集，见 src/slash-commands.ts） */}
           {slashList.length > 0 && (
             <div className="border-b border-hairline px-1.5 py-1.5">
               {slashList.map((c, i) => (
-                <button
-                  key={c.cmd}
-                  type="button"
-                  onMouseEnter={() => setSlashIdx(i)}
-                  onClick={() => pickSlash(c.cmd, false)}
-                  className={`flex w-full items-baseline gap-2 rounded-sm px-2 py-1 text-left text-xs ${
-                    i === slashActive ? "bg-hover text-l1" : "text-l2"
-                  }`}
-                >
-                  <span className="shrink-0 font-mono">{c.cmd}</span>
-                  <span className="min-w-0 truncate text-l4">{c.hint}</span>
-                </button>
+                <div key={`${c.mesa ? "m" : "c"}${c.cmd}`}>
+                  {i === 0 && mesaList.length > 0 && (
+                    <div className="px-2 pb-0.5 pt-0.5 text-micro text-l4">Mesa</div>
+                  )}
+                  {i === mesaList.length && cliList.length > 0 && (
+                    <div
+                      className={`px-2 pb-0.5 pt-1 text-micro text-l4 ${
+                        mesaList.length > 0 ? "mt-1 border-t border-hairline" : ""
+                      }`}
+                    >
+                      {agentId ? "命令（写进终端）" : "命令"}
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onMouseEnter={() => setSlashIdx(i)}
+                    onClick={() => pickSlash(c.cmd, Boolean(c.mesa))}
+                    className={`flex w-full items-baseline gap-2 rounded-sm px-2 py-1 text-left text-xs ${
+                      i === slashActive ? "bg-hover text-l1" : "text-l2"
+                    }`}
+                  >
+                    {c.mesa ? (
+                      <>
+                        <span className="shrink-0">{c.mesa.label}</span>
+                        <span className="min-w-0 truncate text-l4">{c.mesa.hint}</span>
+                        <span className="ml-auto shrink-0 font-mono text-micro text-l4">{c.cmd}</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="shrink-0 font-mono">{c.cmd}</span>
+                        <span className="min-w-0 truncate text-l4">{c.hint}</span>
+                      </>
+                    )}
+                  </button>
+                </div>
               ))}
               <p className="px-2 pt-1 text-micro text-l4">
                 Enter 发送选中命令 · Tab 只补全不发送 · Esc 收起
               </p>
+            </div>
+          )}
+          {/* @ 引用项目文件：光标前是「@查询」时弹出，在工作目录里搜（search_files） */}
+          {mention && (
+            <div className="border-b border-hairline px-1.5 py-1.5">
+              {mention.query === "" ? (
+                <p className="px-2 py-1 text-micro text-l4">输入文件名的一部分，在这个文件夹里找</p>
+              ) : mentionHits.length === 0 ? (
+                <p className="px-2 py-1 text-micro text-l4">没找到「{mention.query}」</p>
+              ) : (
+                mentionHits.map((h, i) => (
+                  <button
+                    key={h.path}
+                    type="button"
+                    onMouseEnter={() => setMentionIdx(i)}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => pickMention(h)}
+                    className={`flex w-full items-baseline gap-2 rounded-sm px-2 py-1 text-left text-xs ${
+                      i === mentionIdx ? "bg-hover text-l1" : "text-l2"
+                    }`}
+                  >
+                    <span className="shrink-0">{h.name}{h.isDir ? "/" : ""}</span>
+                    <span className="min-w-0 truncate font-mono text-micro text-l4">{h.rel}</span>
+                  </button>
+                ))
+              )}
+              <p className="px-2 pt-1 text-micro text-l4">Enter 选中 · Esc 收起 · 引用的是相对路径，AI 会自己去读</p>
             </div>
           )}
           {/* 图片附件缩略卡（粘贴落盘后展示，× 移除；发送时按路径随消息发出） */}
@@ -330,15 +503,22 @@ export default function ChatComposer({
                   className="relative inline-flex"
                   title={a.path}
                 >
-                  <img
-                    src={a.url}
-                    alt={a.path.split(/[\\/]/).pop() ?? "图片"}
-                    className="h-14 w-auto rounded-md border border-hairline object-cover"
-                  />
+                  {a.url ? (
+                    <img
+                      src={a.url}
+                      alt={a.path.split(/[\\/]/).pop() ?? "图片"}
+                      className="h-14 w-auto rounded-md border border-hairline object-cover"
+                    />
+                  ) : (
+                    <span className="flex h-9 max-w-[14rem] items-center gap-1.5 rounded-md border border-hairline bg-canvas px-2 text-xs text-l2">
+                      <FileText size={13} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l3" />
+                      <span className="truncate">{a.path.split(/[\\/]/).pop()}</span>
+                    </span>
+                  )}
                   <button
                     type="button"
                     onClick={() => removeAttachment(a.path)}
-                    aria-label="移除图片"
+                    aria-label={a.url ? "移除图片" : "移除文件"}
                     className="absolute -right-1.5 -top-1.5 flex size-4 cursor-pointer items-center justify-center rounded-full border border-field bg-raised text-micro leading-none text-l3 hover:text-l1"
                   >
                     ×
@@ -362,13 +542,16 @@ export default function ChatComposer({
             }}
             onChange={(e) => {
               setValue(e.target.value);
+              setCaret(e.target.selectionStart ?? e.target.value.length);
               if (error) setError(null);
               if (slashDismissed) setSlashDismissed(false);
+              if (mentionDismissed) setMentionDismissed(false);
               // 随内容自动增高（max-h-40 封顶，超出内部滚动）
               const el = e.target;
               el.style.height = "0";
               el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
             }}
+            onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
             onCompositionStart={lockIme}
             onCompositionEnd={unlockImeAfterFrame}
             onKeyDown={(e) => {
@@ -380,6 +563,38 @@ export default function ChatComposer({
                   composingLock: composingLockRef.current,
                 })
               ) {
+                return;
+              }
+              // @ 引用面板开着时：↑/↓ 移动、Enter / Tab 选中、Esc 收起
+              if (mention && mentionHits.length > 0) {
+                if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                  e.preventDefault();
+                  const delta = e.key === "ArrowDown" ? 1 : -1;
+                  setMentionIdx((mentionIdx + delta + mentionHits.length) % mentionHits.length);
+                  return;
+                }
+                if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") {
+                  e.preventDefault();
+                  pickMention(mentionHits[Math.min(mentionIdx, mentionHits.length - 1)]);
+                  return;
+                }
+              }
+              if (mention && e.key === "Escape") {
+                e.preventDefault();
+                setMentionDismissed(true);
+                return;
+              }
+              // 输入框为空时按 ↑：取回自己上一句来改（终端里的历史同习惯）
+              if (e.key === "ArrowUp" && !value && recallText && slashList.length === 0) {
+                e.preventDefault();
+                setValue(recallText);
+                requestAnimationFrame(() => {
+                  const el = ref.current;
+                  if (!el) return;
+                  el.style.height = "0";
+                  el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+                  el.setSelectionRange(recallText.length, recallText.length);
+                });
                 return;
               }
               // 斜杠面板开着时：↑/↓ 移动、Enter 选中并发送、Tab 仅补全、Esc 收起
@@ -419,11 +634,14 @@ export default function ChatComposer({
           />
           <div className="flex min-h-10 items-center justify-between gap-2 px-3 pb-1.5">
             <div className="flex min-w-0 items-center gap-0.5">
-              <InsertMenu
+              <AddMenu
                 skills={skills}
                 mcps={mcps}
                 disabled={Boolean(disabled || busy)}
+                canMention={Boolean(cwd)}
                 onInsert={insertResourceText}
+                onPickFiles={() => void pickFiles()}
+                onMention={startMention}
               />
               {cwdHint && !error && !busy ? (
                 onChooseCwd ? (
@@ -451,7 +669,8 @@ export default function ChatComposer({
               )}
               {leftExtras}
             </div>
-            <div className="flex shrink-0 items-center gap-1.5">
+            <div className="flex min-w-0 shrink items-center gap-1.5">
+              {rightExtras}
               {running &&
               onInterrupt &&
               !busy &&

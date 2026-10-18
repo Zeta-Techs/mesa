@@ -146,7 +146,8 @@ export function chatWaitText(
     case "sent":
       return "已送出";
     case "writing":
-      return "正在写盘";
+      // 会话文件一段写完聊天层才看得到；终端里是实时的（聊天层另给「看实时输出」）
+      return "正在生成回复";
     case "using_tool":
       return toolName ? `正在用 ${toolName}` : "正在调用工具";
     case "no_session":
@@ -224,6 +225,27 @@ export function mergeConversationPages(
   const seen = new Set(latest.map(chatMessageKey));
   const head = older.filter((message) => !seen.has(chatMessageKey(message)));
   return [...head, ...latest];
+}
+
+/**
+ * 把会话文件还没记下的本地消息放回解析结果里（聊天层乐观显示）。排队中的（上一轮还在生成时发的）
+ * 一律接在末尾；其余插在「发送之后才出现的第一条回复」前面——后端暂时只解析到回复时阅读顺序仍对。
+ * knownReplyKeys = 发送那一刻已有的回复（JSON.stringify(blocks)）。原先插在整页第一条回复前，
+ * 长对话里刚发的那句会跳到页顶（2026-10-18 修）。
+ */
+export function placePendingUsers(
+  parsed: ChatMessageDto[],
+  missing: ChatMessageDto[],
+  knownReplyKeys: ReadonlySet<string>,
+): ChatMessageDto[] {
+  if (missing.length === 0) return parsed;
+  const next = [...parsed];
+  const replyIndex = next.findIndex(
+    (message) => message.role !== "user" && !knownReplyKeys.has(JSON.stringify(message.blocks)),
+  );
+  next.splice(replyIndex < 0 ? next.length : replyIndex, 0, ...missing.filter((m) => !m.queued));
+  next.push(...missing.filter((m) => m.queued));
+  return next;
 }
 
 /** kimi /model 吃的是别名：非法字符清洗为 _，与状态栏 / global_config 同规则 */

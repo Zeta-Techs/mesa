@@ -3,11 +3,15 @@ import test from "node:test";
 import {
   confirmChoices,
   mentionedProjectFiles,
+  REPLY_FOLD_MIN_CHARS,
   splitReplySections,
 } from "../src/chat-reply.ts";
 
+/** 把正文垫到可折长度：分节只给长回复 */
+const pad = (text: string) => `${text}\n\n${"补充说明。".repeat(Math.ceil(REPLY_FOLD_MIN_CHARS / 5))}`;
+
 test("两个以上小标题才折叠", () => {
-  const sections = splitReplySections("开头\n\n验收摘要：\n565 条\n\n尚未验证：\n7 篇");
+  const sections = splitReplySections(pad("开头\n\n验收摘要：\n565 条\n\n尚未验证：\n7 篇"));
   assert.equal(sections?.length, 3);
   assert.equal(sections?.[1]?.title, "验收摘要：");
   assert.equal(splitReplySections("只有一段话"), null);
@@ -27,13 +31,32 @@ test("围栏代码块里的行不当小标题，代码不拆进折叠区", () =>
     "部署步骤：",
     "1. npm run build",
   ].join("\n");
-  const sections = splitReplySections(text);
+  const sections = splitReplySections(pad(text));
   // 只有「配置如下：」「部署步骤：」两个真标题；YAML 键行必须留在正文里
   assert.equal(sections?.length, 2);
   assert.equal(sections?.[0]?.title, "配置如下：");
   assert.ok(sections?.[0]?.body.includes("server:"));
   assert.ok(sections?.[0]?.body.includes("```yaml"));
   assert.ok(!sections?.some((s) => s.title === "db:" || s.title === "server:"));
+});
+
+test("短回答不分节；句子里的冒号引子、列表项、加粗开头都不当小标题", () => {
+  // 2026-10-17 用户截图：解释 API 的回答被折成一串空标题
+  const api = [
+    "# API 是什么？",
+    "想象你去餐厅吃饭：",
+    "- 你（顾客）想吃饭",
+    "## 生活中的例子",
+    "你手机上的天气 App 并不是自己测天气的。它做的事是：",
+    "1. 向气象服务发请求",
+  ].join("\n");
+  assert.equal(splitReplySections(api), null);
+  const long = splitReplySections(pad(api));
+  const titles = long?.map((s) => s.title) ?? [];
+  assert.ok(titles.includes("API 是什么？"));
+  assert.ok(titles.includes("生活中的例子"));
+  assert.ok(!titles.some((t) => t.includes("它做的事是")), "带句号的长句不是标题");
+  assert.ok(!titles.some((t) => t.startsWith("-") || t.startsWith("1.")));
 });
 
 test("相对文件路径可点，网址不是；./ 前缀对齐 git 状态", () => {

@@ -182,31 +182,3 @@ export function buildRunOverview(inputs: RunOverviewInput[]): {
   }
   return { items, summary };
 }
-
-/** 项目归属根：repoPath + 各工作区 worktreePath（终端 cwd 落在工作树内也归该项目） */
-export interface ProjectRoot {
-  key: string;
-  roots: string[];
-}
-
-/** 把路径归属到项目（分隔符归一 + 段边界的最长前缀命中）；不命中任何项目返回 null。
- *  工作区页项目导航的「待处理」计数用它把终端/外部会话的注意力事项摊到项目上。 */
-export function attributeToProject(
-  path: string,
-  groups: readonly ProjectRoot[],
-): string | null {
-  const target = path.replace(/\\/g, "/").replace(/\/+$/, "");
-  if (!target) return null;
-  let best: { key: string; len: number } | null = null;
-  for (const g of groups) {
-    for (const r of g.roots) {
-      const root = r.replace(/\\/g, "/").replace(/\/+$/, "");
-      if (!root) continue;
-      // 段边界：root 本身或 root/ 前缀（防 /repo/proj 误中 /repo/proj2）
-      if (target === root || target.startsWith(`${root}/`)) {
-        if (!best || root.length > best.len) best = { key: g.key, len: root.length };
-      }
-    }
-  }
-  return best?.key ?? null;
-}

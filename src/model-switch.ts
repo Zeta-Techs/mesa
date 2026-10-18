@@ -140,3 +140,18 @@ export function modelOnProfileSwitch(
   // 用户手填且新表里没有：保留，界面提示「仍会按原样注入」
   return { model: cur, kept: true };
 }
+
+/**
+ * 运行中能不能用命令切模型：DetectResult.modelSwitch 按 CLI 定，这里再按连接收窄。
+ * Kimi 用 Mesa 的接口连接启动时只经环境变量带一个模型，`/model 别名` 只认它自己配置文件里的别名——
+ * 2026-10-18 聊天层第三期 PTY 实录：切到连接里的另一个模型报「Error: Unknown model alias」。
+ * 把连接「设为全局」写进 Kimi 配置后才能在它的模型页里换；官方账号照常用命令切。
+ */
+export function runtimeModelSwitch<T>(
+  modelSwitch: T | null,
+  agentId: string | null | undefined,
+  accountType: "api" | "official" | null | undefined,
+): T | null {
+  if (agentId === "kimi" && accountType !== "official") return null;
+  return modelSwitch;
+}

@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  attributeToProject,
   buildRunOverview,
   cwdBasename,
   itemRank,
@@ -216,39 +215,6 @@ test("buildRunOverview 摘要不计已回复", () => {
   ]);
   assert.deepEqual(summary, { confirm: 2, working: 1 });
 });
-
-test("attributeToProject 最长前缀命中 + 段边界", () => {
-  const groups = [
-    { key: "p:a", roots: ["/repo/a", "/repo/a-ws/lit"] },
-    { key: "p:b", roots: ["/repo/b"] },
-  ];
-  // 工作树内路径归到该项目（roots 含 worktreePath）
-  assert.equal(attributeToProject("/repo/a-ws/lit/notes", groups), "p:a");
-  // 项目根本身命中
-  assert.equal(attributeToProject("/repo/b", groups), "p:b");
-  // 段边界：/repo/a2 不得误中 /repo/a
-  assert.equal(
-    attributeToProject("/repo/a2/x", [{ key: "p:a", roots: ["/repo/a"] }]),
-    null,
-  );
-  // 嵌套根取最长前缀
-  assert.equal(
-    attributeToProject("/repo/a/sub/deep", [
-      { key: "outer", roots: ["/repo/a"] },
-      { key: "inner", roots: ["/repo/a/sub"] },
-    ]),
-    "inner",
-  );
-  // Windows 分隔符归一 + 尾部斜杠
-  assert.equal(
-    attributeToProject("C:\\repo\\a\\sub", [{ key: "p:a", roots: ["C:/repo/a/"] }]),
-    "p:a",
-  );
-  // 不命中 / 空路径
-  assert.equal(attributeToProject("/elsewhere", groups), null);
-  assert.equal(attributeToProject("", groups), null);
-});
-
 
 test("stepAttention：在跑工作区的注意力派生（任务卡继续/去终端互斥的判据）", () => {
   const ws = { worktreePath: "/repo/.mesa/ws-lit-search" };

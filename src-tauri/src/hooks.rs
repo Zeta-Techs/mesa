@@ -591,7 +591,9 @@ fn normalize_event(raw: &str) -> String {
 fn event_state(normalized: &str) -> Option<&'static str> {
     match normalized {
         "userpromptsubmit" | "beforeagent" => Some("working"),
-        "stop" | "afteragent" => Some("done"),
+        // 回合确定结束：同会话文件里的 turn_duration / task_complete 判 settled，前端不再等 PTY 静下来
+        // （2026-10-18 用户截图：Codex 开着精确注意力，回答落盘后聊天层仍「正在回复」）
+        "stop" | "afteragent" => Some("settled"),
         "notification" | "permissionrequest" => Some("confirm"),
         _ => None,
     }
@@ -1155,9 +1157,9 @@ mod tests {
             ("UserPromptSubmit", "working"),
             ("BeforeAgent", "working"),
             ("user_prompt_submit", "working"),
-            ("Stop", "done"),
-            ("AfterAgent", "done"),
-            ("stop", "done"),
+            ("Stop", "settled"),
+            ("AfterAgent", "settled"),
+            ("stop", "settled"),
             ("Notification", "confirm"),
             ("PermissionRequest", "confirm"),
             ("notification", "confirm"),
@@ -1174,7 +1176,7 @@ mod tests {
                     300 {\"session_id\": \"s1\", \"hook_event_name\": \"Stop\"}\n";
         assert_eq!(
             state_from_text(text, "s1", "/x/s1.jsonl", 310).as_deref(),
-            Some("done"),
+            Some("settled"),
             "取最新事件"
         );
         assert_eq!(
@@ -1206,7 +1208,7 @@ mod tests {
                     300 {\"sessionId\": \"s1\", \"hookEventName\": \"stop\", \"reason\": \"shutdown\"}\n";
         assert_eq!(
             state_from_text(text, "s1", "/x/updates.jsonl", 310).as_deref(),
-            Some("done"),
+            Some("settled"),
             "teardown 的 shutdown stop 跳过，取 end_turn"
         );
         // 只有 teardown 记录 → 最近有效事件仍是 working
@@ -1220,7 +1222,7 @@ mod tests {
         let plain = "100 {\"session_id\": \"s1\", \"hook_event_name\": \"Stop\"}";
         assert_eq!(
             state_from_text(plain, "s1", "/x/s1.jsonl", 110).as_deref(),
-            Some("done")
+            Some("settled")
         );
     }
 

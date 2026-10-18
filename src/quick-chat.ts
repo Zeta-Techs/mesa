@@ -1,5 +1,6 @@
-/** 「快速开聊」随手聊历史纯逻辑（tests/quick-chat.test.ts）。
- *  只排除「点了也没法恢复」的——归档 / Mesa 内部无头会话 / 源文件已不在的 /
+/** 「快速开聊」纯逻辑（tests/quick-chat.test.ts）：默认选择、空白标签复用、随手聊历史，以及运行页「+」的目录。
+ *  2026-10-18 用户拍板：快速开聊＝新对话（不弹窗、选择全在输入框里），「+」＝在当前项目里再开一个 Agent。
+ *  随手聊历史只排除「点了也没法恢复」的——归档 / Mesa 内部无头会话 / 源文件已不在的 /
  *  进程仍活着的（live，resume 同会话会被 CLI 拒：active writer 冲突）。 */
 import type { SessionMetaDto } from "./types";
 import { pathKey } from "./path-utils.ts";
@@ -26,13 +27,83 @@ export function profileCanAutoStart(
   );
 }
 
-/** 侧栏直达只接受记住的那条配置本身；失效时退回弹层，不改用同 Agent 另一条。 */
-export function pickRememberedProfileId(
-  rememberedId: string | undefined,
-  usableIds: readonly string[],
-): string | null {
-  if (!rememberedId) return null;
-  return usableIds.includes(rememberedId) ? rememberedId : null;
+/** 快速开聊标签的复用键前缀：每个标签带自己的 `quickchat:<uuid>`（后端按复用键认 Run，不能共用一个），
+ *  再点快速开聊时按前缀找还没说过话的那个 */
+export const QUICK_CHAT_KEY_PREFIX = "quickchat:";
+
+export type QuickChatChoice = {
+  agentId?: string;
+  profileId?: string;
+  model?: string;
+  effort?: string | null;
+};
+
+/**
+ * 快速开聊直接开的那个空白对话用谁（不弹窗，选择都在输入框里，开出来能看见、能改）：
+ * 上次快速开聊发出第一句时用的 → 同一家的另一条可用连接 → 运行页上次启动的 → 本机装了的第一家里第一条可用连接 →
+ * 任意一条可用连接。一条可用连接都没有时仍给出一家 Agent（输入框里提示先去「连接」页添加）。
+ * 模型只在连接就是记住的那条、且它的模型名单里有（或名单为空）时沿用；思考档跟着模型走。
+ * 取代 2026-09-06「直达只接受记住的那条，失效退回弹层」：弹层没了，换成别的连接时输入框里写着是哪条。
+ */
+export function pickQuickChatDefault(input: {
+  remembered: QuickChatChoice;
+  lastLaunch: { agentId?: string; profileId?: string };
+  /** 可用的连接（已按 profileCanAutoStart 过滤） */
+  usable: readonly { id: string; agent: string; models: readonly string[] }[];
+  /** 本机装了的 Agent，按界面顺序 */
+  installed: readonly string[];
+  /** 全部 Agent，按界面顺序（都没装时取第一家） */
+  agentOrder: readonly string[];
+}): QuickChatChoice & { agentId: string } {
+  const { remembered, lastLaunch, usable, installed, agentOrder } = input;
+  const exact = usable.find(
+    (p) => p.id === remembered.profileId && p.agent === remembered.agentId,
+  );
+  if (exact) {
+    const keepModel =
+      Boolean(remembered.model) &&
+      (exact.models.length === 0 || exact.models.includes(remembered.model!));
+    return {
+      agentId: exact.agent,
+      profileId: exact.id,
+      ...(keepModel ? { model: remembered.model, effort: remembered.effort ?? null } : {}),
+    };
+  }
+  const sameAgent = usable.find((p) => p.agent === remembered.agentId);
+  if (sameAgent) return { agentId: sameAgent.agent, profileId: sameAgent.id };
+  const last = usable.find(
+    (p) => p.id === lastLaunch.profileId && p.agent === lastLaunch.agentId,
+  );
+  if (last) return { agentId: last.agent, profileId: last.id };
+  for (const agent of installed) {
+    const first = usable.find((p) => p.agent === agent);
+    if (first) return { agentId: agent, profileId: first.id };
+  }
+  if (usable[0]) return { agentId: usable[0].agent, profileId: usable[0].id };
+  return {
+    agentId: remembered.agentId || installed[0] || agentOrder[0] || "claude-code",
+  };
+}
+
+/** 还没说过话的标签：没起过进程、没接上会话、不是重启后等接回的占位。再点快速开聊只复用这种 */
+export function isBlankChatTab(
+  tab: { resumeSessionId?: string | null },
+  status?: { alive?: boolean; running?: boolean; sessionId?: string | null } | null,
+): boolean {
+  if (tab.resumeSessionId) return false;
+  if (!status) return true;
+  return !status.alive && !status.running && !status.sessionId;
+}
+
+/** 运行页「+」的目录：跟当前标签走（在同一个项目里再开一个 Agent）。当前标签在主目录、没有目录，
+ *  或在 Mesa 管的隔离目录（科研工作副本 / 编程工作树 / 定时隔离树，各有自己的入口和 Run 身份）里时，
+ *  不跟，照旧开在主目录 */
+export function newTabCwd(focusedCwd: string | null | undefined, isWindows = false): string | undefined {
+  const cwd = focusedCwd?.trim();
+  if (!cwd || cwd === "~") return undefined;
+  const k = pathKey(cwd, isWindows);
+  if (/\/ccode\/(workspaces|worktrees|watch-worktrees)\//.test(`${k}/`)) return undefined;
+  return cwd;
 }
 
 /** 「没法恢复」的会话统一排除口径 */
@@ -46,15 +117,6 @@ export function isScratchCwd(path: string, isWindows = false): boolean {
   if (!path) return false;
   const k = pathKey(path, isWindows);
   return k.endsWith("/ccode/scratch") || k.includes("/ccode/scratch/");
-}
-
-/** 侧栏「快速开聊」是否直达终端：记住过选择且没有勾「每次都先问我」。
- *  ⌘K / 工作台页头永远开弹层，不走这条。 */
-export function sidebarLaunchesDirect(opts: {
-  hasRemembered: boolean;
-  alwaysAsk: boolean;
-}): boolean {
-  return opts.hasRemembered && !opts.alwaysAsk;
 }
 
 /** 快速开聊（随手聊）历史：只列 `~/ccode/scratch` 里可恢复的会话。
@@ -102,7 +164,7 @@ export function withLiveSessionFlags(
   });
 }
 
-/** 弹层 / 右键菜单共用：本机会话列表现算随手聊历史，不 round-trip */
+/** 聊天空态 / 右键菜单共用：本机会话列表现算随手聊历史，不 round-trip */
 export function pickQuickChatHistory(
   sessions: SessionMetaDto[],
   projectPaths: string[],

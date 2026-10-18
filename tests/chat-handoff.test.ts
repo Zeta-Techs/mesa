@@ -10,6 +10,7 @@ import {
   chatWaitText,
   composerShowsInterrupt,
   confirmHandoffEvent,
+  placePendingUsers,
   handoffFor,
   hasAssistantText,
   kimiModelArg,
@@ -89,7 +90,7 @@ test("审批附加说明：codex 点名 /hooks，无 hooks 引导去终端", () 
 
 test("等待态三句人话 + 工具名", () => {
   assert.equal(chatWaitText("sent"), "已送出");
-  assert.equal(chatWaitText("writing"), "正在写盘");
+  assert.equal(chatWaitText("writing"), "正在生成回复");
   assert.equal(chatWaitText("using_tool", "Bash"), "正在用 Bash");
   assert.equal(chatWaitText("using_tool"), "正在调用工具");
   assert.match(chatWaitText("no_session"), /会话文件还没出现/);
@@ -268,4 +269,35 @@ test("kimi 模型别名与 /model 命令模板", () => {
     modelSwitchCommand("/model {model}", "gpt-4.1", "claude"),
     "/model gpt-4.1",
   );
+});
+
+test("本地消息放回：普通发送插在新回复前，长对话不跳到页顶；排队中的接在末尾", () => {
+  const msg = (role: string, text: string, queued = false) => ({
+    role,
+    blocks: [{ kind: "text" as const, text, toolName: null }],
+    timestamp: null,
+    usage: null,
+    ...(queued ? { queued: true } : {}),
+  });
+  const old = [msg("user", "第一问"), msg("assistant", "第一答"), msg("user", "第二问"), msg("assistant", "第二答")];
+  const known = new Set(old.filter((m) => m.role !== "user").map((m) => JSON.stringify(m.blocks)));
+  const sent = msg("user", "第三问");
+  // 长对话：刚发的那句还没落盘、回复也还没出 → 接在末尾（原先会插到「第一答」前面）
+  assert.deepEqual(
+    placePendingUsers(old, [sent], known).map((m) => m.blocks[0].text),
+    ["第一问", "第一答", "第二问", "第二答", "第三问"],
+  );
+  // 回复先落盘、用户那句还没有 → 插在新回复前
+  const reply = msg("assistant", "第三答");
+  assert.deepEqual(
+    placePendingUsers([...old, reply], [sent], known).map((m) => m.blocks[0].text),
+    ["第一问", "第一答", "第二问", "第二答", "第三问", "第三答"],
+  );
+  // 排队中的：即便后面又长出新回复，也在末尾
+  const queued = msg("user", "补一句", true);
+  assert.deepEqual(
+    placePendingUsers([...old, reply], [queued], known).map((m) => m.blocks[0].text),
+    ["第一问", "第一答", "第二问", "第二答", "第三答", "补一句"],
+  );
+  assert.equal(placePendingUsers(old, [], known), old);
 });

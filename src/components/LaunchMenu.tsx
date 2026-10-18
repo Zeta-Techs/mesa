@@ -18,6 +18,12 @@ export interface LaunchMenuOption {
   /** 非空时在该项上方画分组标题；连续同组只画一次 */
   group?: string;
   disabled?: boolean;
+  /** 行尾小灰字（如权限格的「本机设置」「没有这一档」） */
+  hint?: string;
+  /** warn = 风险项整行橙色（权限格的「完全访问」） */
+  tone?: "warn";
+  /** 悬停说明 */
+  title?: string;
 }
 
 /** 锚点下沿的浮层盒子。关闭后保持 150ms 退场（exiting 供退场样式），box 持续指向
@@ -284,10 +290,13 @@ export default function LaunchMenu({
                     role="option"
                     aria-selected={selected}
                     disabled={item.disabled}
+                    title={item.title}
                     className={`flex h-8 w-full items-center gap-2 px-2.5 text-left text-sm disabled:opacity-40 ${
-                      selected
-                        ? "bg-hover text-l1"
-                        : "text-l2 hover:bg-hover hover:text-l1"
+                      item.tone === "warn"
+                        ? `text-warn-text ${selected ? "bg-hover" : "hover:bg-hover"}`
+                        : selected
+                          ? "bg-hover text-l1"
+                          : "text-l2 hover:bg-hover hover:text-l1"
                     }`}
                     onClick={() => {
                       onChange(item.value);
@@ -297,6 +306,9 @@ export default function LaunchMenu({
                     }}
                   >
                     <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                    {item.hint && (
+                      <span className="shrink-0 text-micro text-l4">{item.hint}</span>
+                    )}
                     {selected && (
                       <Check
                         size={14}

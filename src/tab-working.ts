@@ -65,8 +65,15 @@ export function applyTailAttention(input: {
   pendingReply?: boolean;
 }): { attention: TabAttention; armed: boolean } {
   if (input.tail === "confirm") return { attention: "confirm", armed: false };
+  // settled = 会话文件里有确定的回合结束标记（Claude 的 system/turn_duration）：
+  // 不再看 PTY 是否还在出字——状态行、计时等重绘会让 PTY 一直有输出，
+  // 按「静下来才收尾」会让聊天层永远停在「正在回复」（2026-10-17 用户截图）
+  if (input.tail === "settled" && !input.pendingReply) {
+    return { attention: "done", armed: false };
+  }
   const fileSaysOver =
-    !input.pendingReply && (input.tail === "done" || Boolean(input.turnSettled));
+    !input.pendingReply &&
+    (input.tail === "done" || input.tail === "settled" || Boolean(input.turnSettled));
   if (fileSaysOver) {
     if (input.ptyLive && (input.armed || input.prev === "working")) {
       return { attention: "working", armed: input.armed };

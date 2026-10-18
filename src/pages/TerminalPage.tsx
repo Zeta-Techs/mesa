@@ -49,6 +49,7 @@ import {
   printableKeyFallback,
   takePrintableEcho,
   ptyShiftEnterRewrite,
+  macLineEditKey,
   shouldReportTerminalColors,
   xtermOscColorReport,
 } from "../terminal-input";
@@ -66,6 +67,7 @@ import {
   confirmHandoffEvent,
   hasAssistantText,
   mergeConversationPages,
+  placePendingUsers,
   shouldAutoPeek,
 } from "../chat-handoff";
 import { AGENTS, type CustomRuntimeDto, type OfficialAccountStatusDto } from "../types";
@@ -78,6 +80,17 @@ import { exitCodeClause, exitCodeSummary, exitToneClass } from "../exit-code";
 import ChatSurface from "../components/ChatSurface";
 import { confirmDialog, alertDialog } from "../components/ConfirmDialog";
 import ContextMenu from "../components/ContextMenu";
+import InsertMenuItems from "../components/InsertMenuItems";
+import {
+  detectEffortInOutput,
+  detectModelInOutput,
+  detectModelOnScreen,
+  modelOnScreenSupported,
+  outputTail,
+} from "../reasoning-effort";
+import { QUICK_CHAT_KEY_PREFIX, isBlankChatTab, newTabCwd } from "../quick-chat";
+import { resumeSessionInTerminal, saveQuickChatChoice } from "../quick-chat-launch";
+import { connectionModels, readModelHistory } from "../model-history";
 import FileTree, { type DirEntryDto } from "../components/FileTree";
 import GitPanel, { type GitSummary } from "../components/GitPanel";
 import TerminalStatusBar from "../components/TerminalStatusBar";
@@ -90,8 +103,13 @@ import LaunchMenu, {
 import ProjectRail from "../components/ProjectRail";
 import WorkspaceReviewView from "../components/WorkspaceReviewView";
 import ReaderOverlay from "../components/ReaderOverlay";
-import { renderTaskMd, wireWorkspaceLaunchGuard } from "../pipeline-start";
-import { formatPdfExcerptPrompt, readerReuseKey } from "../reader";
+import { wireWorkspaceLaunchGuard } from "../pipeline-start";
+import {
+  formatPdfExcerptPrompt,
+  loadReaderSurface,
+  readerReuseKey,
+  saveReaderSurface,
+} from "../reader";
 import {
   READER_BINDING_SLOT,
   stepSlotKey,
@@ -112,10 +130,34 @@ import {
   type ResizeLatch,
 } from "../terminal-geometry";
 import { toast } from "../toast";
+import {
+  menuAnswerKeys,
+  menuEchoesText,
+  parseTuiMenu,
+  sameTuiMenu,
+  type TuiMenu,
+} from "../tui-menu";
+import { lastContextTokens, type MesaCommand } from "../composer-assist";
+import { slashCommandsFor } from "../slash-commands";
+import { extractLiveReply, liveReplySupported, mergeLiveReply } from "../live-reply";
+import {
+  connIssueCounts,
+  connIssueText,
+  detectConnIssues,
+  newestConnIssue,
+  type ConnIssueKind,
+} from "../conn-issue";
+import { askAboutText, clipNoteEntry, quoteForChat } from "../terminal-quote";
+import {
+  parseTrustPrompt,
+  sameTrustPrompt,
+  trustAnswerKeys,
+  type TrustPrompt,
+} from "../trust-prompt";
 import { ORGANIZE_NOTES_PROMPT } from "../pipeline-presets";
 import {
   isUnsafeLitProjectDir,
-  notesInboxTarget,
+  notesExcerptTarget,
   suggestLitProjectDir,
 } from "../lit-project";
 import { isPreviewableImagePath } from "../file-icons";
@@ -131,26 +173,46 @@ import {
   looksLikeModelId,
   modelOnProfileSwitch,
   officialModelAllowed,
+  runtimeModelSwitch,
 } from "../model-switch";
 import { isSoftwareWebGL } from "../diagnostics";
 import {
+  ChevronDown,
+  ClipboardPaste,
   Columns2,
+  MessageCircleQuestion,
+  MessageSquareQuote,
+  NotebookPen,
+  TriangleAlert,
+  Copy,
   Eye,
   EyeOff,
   FolderOpen,
+  FolderPlus,
+  GitFork,
   MessageSquare,
+  MessagesSquare,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
-  ChevronDown,
   PanelTopClose,
   PanelTopOpen,
   RefreshCw,
   Search,
+  SlidersHorizontal,
   Sparkles,
   SquareTerminal,
+  SquarePen,
+  Minimize2,
+  Download,
+  GitCompare,
 } from "lucide-react";
+import {
+  PERMISSION_TIERS,
+  confirmPermissionChoice,
+  type PermissionTier,
+} from "../components/ChatPermissionBadge";
 import {
   attentionTransition,
   debounceAllows,
@@ -169,6 +231,7 @@ import {
   idleTabTitle,
   isTerminalIdle,
   welcomeCwdActionLabel,
+  welcomeDirChoices,
 } from "../terminal-welcome";
 import {
   PTY_WORKING_SILENCE_MS,
@@ -272,9 +335,9 @@ const ImagePreview = lazy(() => import("../components/ImagePreview"));
 
 type PtyKind = "agent" | "shell";
 
-/** 主工作区默认面层：新标签未显式切层时落终端（聊天层交互尚未完善），
-    分叉聊天等明确聊天意图的入口仍显式置 "chat"，不受默认值影响 */
-const DEFAULT_SURFACE_MODE: SurfaceMode = "terminal";
+/** 主工作区默认面层：2026-10-17 起默认聊天层（用户要求「点到运行默认显示聊天层」）。
+    纯 shell / 脚本 / 登录标签仍显式落终端（pendingTerminal 消费处），用户手切过的按标签记住 */
+const DEFAULT_SURFACE_MODE: SurfaceMode = "chat";
 /** 聊天层窥视终端：底栏占主区高度的比例。必须是真实分栏（终端按此高度 fit），
     不能只裁全高 xterm 的底部——Codex 主对话是 inline，内容靠上、底下是空行，裁底就是白板。 */
 const CHAT_PEEK_RATIO = 0.32;
@@ -317,6 +380,12 @@ export interface TabStatus {
   /** agent 启动成功时刻（ms epoch；终端状态栏运行时长用；shell/未启动为 null） */
   startedAt: number | null;
   runId: string | null;
+  /** 从 TUI 画面认出的当前思考档（含人在终端里敲 /effort 改的）；没认到为 null */
+  effortSeen: string | null;
+  /** 从 TUI 画面认出的当前模型（/model 回显、开场横幅；reasoning-effort.ts detectModelInOutput）；没认到为 null */
+  modelSeen: string | null;
+  /** 本次进程的开工弹层思考档覆盖；没有为 null */
+  effortOverride: string | null;
 }
 
 /** TerminalView 暴露给父级的动作表（查找图标 / 聊天发送 / 改目录等；回调经 ref 转发，始终最新） */
@@ -326,8 +395,8 @@ export interface FocusTabActions {
   openConversationPage: () => void;
   search: () => void;
   modify: () => void;
-  /** 运行中的「插入」在标签栏，菜单本身仍由这个终端画 */
-  toggleInsert: () => void;
+  /** 运行中的「插入」在标签栏，菜单本身仍由这个终端画；anchor = 标签栏按钮外框，菜单贴它弹出 */
+  toggleInsert: (anchor?: { left: number; bottom: number }) => void;
   /** 往 xterm 画面写一行浅灰日志（状态栏 Commit & Push 的回显；走终端缓冲区不经 PTY，
       运行中的 TUI 会在下一帧覆盖它——只是即时反馈，不是持久日志） */
   logLine: (text: string) => void;
@@ -344,6 +413,28 @@ export interface FocusTabActions {
   noteUserTurn: () => void;
   /** 聊天层向前翻页（会话文件 cursor；压缩会话可能没有更早一页） */
   loadOlderConversation: () => Promise<void>;
+  /** 聊天层替用户回答启动时的「是否信任这个目录」菜单 */
+  answerTrust: (accept: boolean) => void;
+  /** 聊天输入框的开聊前选择（与启动栏同一写入口） */
+  pickLaunchAgent: (id: string) => void;
+  pickLaunchProfile: (id: string) => void;
+  pickLaunchModel: (model: string) => void;
+  /** 恢复占位标签接回上次的会话（同终端空态卡「恢复任务」） */
+  restoreHere: () => void;
+  /** 在指定位置弹出目录菜单（项目 / 随手聊 / 主目录 / 选择文件夹… / 新建项目…；聊天输入框目录芯片用） */
+  openDirMenu: (x: number, y: number) => void;
+  /** 写一条 TUI 命令并盯屏 5 秒，CLI 弹确认菜单时上报 menuPrompt（切模型 / 思考档用） */
+  runTuiCommand: (cmd: string) => void;
+  /** 替用户在确认菜单里选第 index 项 */
+  answerMenu: (index: number) => void;
+  /** 运行中换权限：停下 Agent，带着新权限接回原来那段对话（权限在启动参数里，只能重开兑现） */
+  restartWithPermission: () => void;
+  /** 停下 Agent，带着新模型 / 思考档接回原来那段对话（会写回 CLI 全局配置的切换走这条，switch-strategy.ts） */
+  relaunchWith: (patch: { model?: string; effort?: string | null }) => void;
+  /** 换一条连接接着这段对话：停下 Agent，换成 profileId 那条连接（模型按新连接的名单），再按原会话接回 */
+  switchConnection: (profileId: string) => void;
+  /** 关掉「连接出问题」提示：此刻屏上的错误记作已看过，同一个错误不再提示，新的照常 */
+  dismissConnIssue: () => void;
 }
 
 async function resolveLaunchCwdForCustom(
@@ -355,6 +446,66 @@ async function resolveLaunchCwdForCustom(
   const resolved = resolveCustomRuntimeCwd(tabCwd, runtime?.cwd, IS_WINDOWS);
   if (!resolved) throw new Error("未指定工作目录");
   return resolved;
+}
+
+/** 开聊前选择：聊天输入框底栏用，与终端启动栏同一份状态 */
+export interface LaunchPickState {
+  editable: boolean;
+  /** 恢复占位：这个标签上次的会话还没接回（聊天空态给「接着聊」而不是新对话入口） */
+  resumeSessionId: string | null;
+  agentId: string;
+  profileId: string;
+  model: string;
+  profiles: LaunchMenuOption[];
+  models: string[];
+  /** 本次思考档覆盖（"" = 按连接设置）；effortLevels 为空 = 这个组合调不了，不显示思考栏 */
+  effort: string;
+  effortLevels: string[];
+  /** 本次权限：可以改文件 / 只讨论（各家 CLI 用自己的只读或计划模式实现） */
+  permission: "discuss" | "write_tree";
+  /** 可以改文件时的原生权限档：null = 按本机设置；ask / auto / full 只加在本次命令行上 */
+  permissionMode: NativePermissionMode | null;
+  /** 这家 CLI 能指定的原生权限档（agent_specs permission_args） */
+  permissionModes: string[];
+  readonlySupported: boolean;
+  /** 这家 CLI 本机默认权限（short 上徽标、detail 整句；如 Claude「完全访问」）；默认档为 null */
+  permissionNote: CliPermissionNote | null;
+}
+
+/** 聊天权限菜单的原生档：ask 请求批准 / auto 帮我批准 / full 完全访问（agent_specs permission_args） */
+export type NativePermissionMode = "ask" | "auto" | "full";
+
+/** 标签级的本次启动选择（思考档 / 权限）：聊天输入框、终端启动栏、「这次启动」卡都写这一份 */
+export interface TabLaunchPatch {
+  effort?: string | null;
+  permission?: "discuss" | "write_tree";
+  permissionMode?: NativePermissionMode | null;
+}
+
+/** 这家 CLI 本机权限设置（cli_permission.rs）：tier = 对应菜单哪一档，认不出为 null */
+export interface CliPermissionNote {
+  tier: "discuss" | NativePermissionMode | null;
+  short: string;
+  detail: string;
+}
+
+/** 连接出问题时给聊天层 / 终端顶栏的那一份（2026-10-17 用户选定「出错时换个连接接着聊」） */
+export interface ConnIssueState {
+  kind: ConnIssueKind;
+  status: number | null;
+  /** 网关 / CLI 原文 */
+  message: string;
+  /** CLI 还在自动重试 */
+  retrying: boolean;
+  sig: string;
+  /** 出问题的那条连接的名字 */
+  profileName: string;
+  /** 给人看的一句话（connIssueText） */
+  text: string;
+  /** 原文一行（含状态码、是否还在重试） */
+  detail: string;
+  /** 同一家 Agent 的其他可用连接（不含当前这条、不含已停用的）；label = 连接名 · 默认模型 */
+  alternatives: { profileId: string; label: string }[];
 }
 
 /** TerminalView 上报的当前会话联动数据（主工作区聊天层与阅读区 Agent 栏渲染用） */
@@ -374,12 +525,33 @@ export interface SessionLinkState {
   pendingReply: boolean;
   /** hooks 精确注意力为 confirm 时的「在等什么」摘要（无 hooks/无详情字段为 null） */
   confirmDetail: string | null;
+  /** 屏幕上正停着「是否信任这个目录」菜单（会话文件出现之前才扫） */
+  trustPrompt: TrustPrompt | null;
+  /** 聊天层发切换命令后，CLI 弹出的确认 / 选择菜单（发命令后几秒内才扫，tui-menu.ts） */
+  menuPrompt: TuiMenu | null;
+  /** 连接出问题（额度 / 限流 / 钥匙 / 服务 / 模型；conn-issue.ts 扫终端画面认出）+ 可换的同家连接 */
+  connIssue: ConnIssueState | null;
+  /** 终端画面里这一轮正在写的回复（live-reply.ts；只认 Claude Code / CodeBuddy，别家 null） */
+  liveReply: string[] | null;
+  /** Agent 在跑但 PTY 已 4 秒没出字：TUI 静止（多半停在菜单 / 登录上），不是模型还在想 */
+  ptyQuiet: boolean;
+  /** 开聊前的 Agent / 配置 / 模型选择（与启动栏同一份） */
+  launchPick: LaunchPickState;
   /** 当前 agent 可从聊天界面直接调用的技能 / MCP 资源。 */
   skills: SkillDto[];
   mcps: McpServerDto[];
 }
 
 const agentLabel = (id: string) => AGENTS.find((a) => a.id === id)?.label ?? id;
+
+/** 终端 ⋯「对话操作」各项的图标（命令名见 mesaCommandsFor） */
+const CONVERSATION_ACTION_ICONS: Record<string, typeof SquarePen | undefined> = {
+  "/new": SquarePen,
+  "/compact": Minimize2,
+  "/export": Download,
+  "/diff": GitCompare,
+  "/chat": MessageSquare,
+};
 
 const RIGHT_PANEL_WIDTH_KEY = "ccode.terminalRightWidth";
 const RIGHT_PANEL_DEFAULT_WIDTH = 460;
@@ -500,6 +672,7 @@ const TerminalView = memo(function TerminalView({
   initialPrompt: presetPrompt,
   readonly,
   permission,
+  permissionMode = null,
   effortOverride,
   submitCsiU = false,
   restored,
@@ -517,6 +690,9 @@ const TerminalView = memo(function TerminalView({
   onRestoreComplete,
   onConsumeResume,
   onForkChat,
+  onConversationInsert,
+  onPatchLaunch,
+  getConversationActions,
   onOpenPath,
   onProgress,
 }: {
@@ -569,6 +745,8 @@ const TerminalView = memo(function TerminalView({
   /** 「聊想法」只读模式：pty_spawn 透传（支持的 CLI 注入只读/计划模式参数） */
   readonly?: boolean;
   permission?: "discuss" | "write_tree";
+  /** 可以改文件时的原生权限档（聊天权限徽标）：pty_spawn permissionMode 透传；null = 按本机设置 */
+  permissionMode?: NativePermissionMode | null;
   /** 开工弹层的本次思考档覆盖：launch 经 pty_spawn effortOverride 注入（空 = 绑定默认） */
   effortOverride?: string | null;
   /** 当前 Agent 的提交键是否使用 kitty CSI-u（目前 Kimi） */
@@ -600,6 +778,13 @@ const TerminalView = memo(function TerminalView({
   /** 从当前会话摘要开一个只读分叉标签（启动行 ⋯，不进聊天 ＋）。带 tabId：
    *  页面侧可传稳定回调，避免内联箭头击穿 memo(TerminalView)。 */
   onForkChat?: (tabId: string) => void;
+  /** 选中的终端文字交给对话（引用到输入框 / 问 AI）：父级按这个标签当前在聊天层还是终端层分派。
+   *  带 tabId 的稳定回调，避免击穿 memo(TerminalView) */
+  onConversationInsert?: (tabId: string, text: string, opts: { send: boolean }) => void;
+  /** 启动栏「思考」「权限」格与「这次启动」卡写回标签级选择（与聊天输入框同一份）。带 tabId 的稳定回调 */
+  onPatchLaunch?: (tabId: string, patch: TabLaunchPatch) => void;
+  /** ⋯ 菜单里的「对话操作」（与聊天层斜杠面板 Mesa 组同一份，去掉终端层用不着的）。带 tabId 的稳定回调 */
+  getConversationActions?: (tabId: string) => MesaCommand[];
   /** 终端里的绝对路径点开到右侧预览。 */
   onOpenPath?: (path: string, line: number | null) => void;
   /** 终端上报的任务进度（OSC 9;4，kimi/grok/codebuddy 发）→ 标签条小徽章。
@@ -743,13 +928,24 @@ const TerminalView = memo(function TerminalView({
   );
   /** 本次启动实际注入的模型（状态栏求交用它，不跟 CLI 内 /model 或启动栏事后改选） */
   const [launchModel, setLaunchModel] = useState<string | null>(null);
+  // 状态栏思考档的真值来源之一：CLI 自己画在屏上的档位（detectEffortInOutput）
+  const [effortSeen, setEffortSeen] = useState<string | null>(null);
+  const [modelSeen, setModelSeen] = useState<string | null>(null);
+  const effortTailRef = useRef("");
+  // 输出监听是启动时挂的闭包：认档用「这个进程启动时的 agent」，不跟启动栏后来的选择
+  const launchAgentRef = useRef(agentId);
   const selectedProfile = profiles.find(
     (p) => p.id === profileId && p.agent === agentId,
   );
+  // 扫屏回调里要拿「出错时用的是哪条连接」，不能读闭包里的旧值
+  const selectedProfileRef = useRef(selectedProfile);
+  selectedProfileRef.current = selectedProfile;
   // 模型 combo：下拉开合状态 + 选项来源（profile 预设 + 本 agent 历史，去重）
   const [modelOpen, setModelOpen] = useState(false);
   // Agent / 配置同时只开一个，且不跟模型清单叠在一起
-  const [openPick, setOpenPick] = useState<null | "agent" | "profile">(null);
+  const [openPick, setOpenPick] = useState<
+    null | "agent" | "profile" | "effort" | "permission"
+  >(null);
   const modelAnchorRef = useRef<HTMLSpanElement>(null);
   // 换 profile 时保留了手填模型：说明行据此提示「仍按原样注入」（选中预设即消）
   const [modelKept, setModelKept] = useState(false);
@@ -768,20 +964,26 @@ const TerminalView = memo(function TerminalView({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profileId, selectedProfile?.accountType]);
+  // 模型选项 = 这份连接自己的模型名单 + 用这份连接手填用过的模型。
+  // 历史按「Agent + 连接」分开记：原先按 Agent 混记，别的连接用过的模型（gpt-6-sol、deepseek…）
+  // 会出现在 GLM 连接的名单里，选了也调不通（2026-10-17 用户截图）
   const modelOptions = useMemo(() => {
-    let history: string[] = [];
-    try {
-      history = JSON.parse(
-        localStorage.getItem(`ccode.modelHistory.${agentId}`) ?? "[]",
-      ) as string[];
-    } catch {
-      /* 损坏按空历史 */
-    }
-    return [
-      ...new Set([...(selectedProfile?.models ?? []), ...history]),
-    ].filter(Boolean);
+    return connectionModels(selectedProfile?.models ?? [], readModelHistory(agentId, profileId));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agentId, selectedProfile, model]);
+  }, [agentId, profileId, selectedProfile, model]);
+  // 新标签的模型种子来自「上次启动」，可能是另一份连接的模型（上次用 Codex-GPT 的 gpt-5.6-luna，
+  // 这次落到 Codex-Deepseek）。配置定下来后核一次：不在这份连接的名单 / 历史里就换成它的默认模型
+  const modelSeededRef = useRef(!initialModel && !initialProfileId && Boolean(saved.model));
+  useEffect(() => {
+    if (running || !modelSeededRef.current || !selectedProfile) return;
+    modelSeededRef.current = false;
+    const cur = model.trim();
+    if (cur && !modelOptions.includes(cur)) {
+      setModel(selectedProfile.models[0] ?? "");
+      setModelKept(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProfile, modelOptions]);
   const {
     box: modelMenuBox,
     exiting: modelMenuExiting,
@@ -943,6 +1145,13 @@ const TerminalView = memo(function TerminalView({
     x: number;
     y: number;
   } | null>(null);
+  // 空态卡「将在 … 启动」点开的目录菜单（随手聊 / 最近项目 / 主目录 / 选择文件夹…）
+  const [welcomeDirMenu, setWelcomeDirMenu] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+  const storeProjectPaths = useAppStore((s) => s.projectPaths);
+  const storeRecentRepos = useAppStore((s) => s.recentRepos);
   // 终端画布右键菜单（复制/粘贴/全选/清屏/查找）
   const [termCtxMenu, setTermCtxMenu] = useState<{ x: number; y: number } | null>(
     null,
@@ -1312,6 +1521,171 @@ const TerminalView = memo(function TerminalView({
         group: "已停用（可手选）",
       })),
   ];
+  // 启动栏三段选择的唯一写入口：终端启动栏与聊天输入框的开聊前选择共用，两边改的是同一份
+  function pickLaunchAgent(id: string) {
+    setAgentId(id);
+    setProfileId("");
+    setModel("");
+    setModelKept(false);
+  }
+  function pickLaunchProfile(id: string) {
+    const prevModels = profiles.find((p) => p.id === profileId)?.models ?? [];
+    const prof = profiles.find((p) => p.id === id);
+    setProfileId(id);
+    // 手填的模型不再被静默清掉：不在新配置模型表里就保留，
+    // 并由下方说明行告知「仍会按原样注入」
+    const next = modelOnProfileSwitch(model, prevModels, prof?.models ?? []);
+    setModel(next.model);
+    setModelKept(next.kept);
+  }
+  function pickLaunchModel(m: string) {
+    setModel(m);
+    setModelKept(false);
+  }
+  // 开聊前的思考档（2026-10-17 用户选定）：与开工弹层同一判定——只有该 agent + 连接 + 模型
+  // 有启动注入通道（combo_surface.injectEffortAllowed）才给档位；值是本次覆盖（标签 effort），不写回连接
+  const launchAgents = useAppStore((s) => s.agents);
+  const effectiveLaunchModel = model.trim() || selectedProfile?.models[0] || "";
+  const [launchEffortInjectable, setLaunchEffortInjectable] = useState(false);
+  useEffect(() => {
+    if (running || !profileId || !effectiveLaunchModel) {
+      setLaunchEffortInjectable(false);
+      return;
+    }
+    let stale = false;
+    invoke<{ injectEffortAllowed?: boolean }>("combo_surface", {
+      profileId,
+      model: effectiveLaunchModel,
+    })
+      .then((c) => {
+        if (!stale) setLaunchEffortInjectable(c.injectEffortAllowed === true);
+      })
+      .catch(() => {
+        if (!stale) setLaunchEffortInjectable(false);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [running, profileId, effectiveLaunchModel]);
+  const launchAgentDet = launchAgents.find((a) => a.id === agentId);
+  const launchEffortLevels = useMemo(
+    () => {
+      const levels = launchAgentDet?.effort?.levels;
+      // 只有注入通道、没有原生档表的 agent（codex 配置注入）给通用三档（同开工弹层）
+      return levels?.length ? levels : ["low", "medium", "high"];
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [launchAgentDet?.effort?.levels?.join(",")],
+  );
+  // 这家 CLI 本机默认权限（只读探查，cli_permission.rs）：如实告诉用户会不会先问
+  const [cliPermissionNote, setCliPermissionNote] = useState<CliPermissionNote | null>(null);
+  useEffect(() => {
+    let stale = false;
+    invoke<CliPermissionNote | null>("cli_default_permission", {
+      agent: agentId,
+    })
+      .then((note) => {
+        if (!stale) setCliPermissionNote(note ?? null);
+      })
+      .catch(() => {
+        if (!stale) setCliPermissionNote(null);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [agentId]);
+  // 开聊前选择给聊天层的那一份：恢复占位 / 自定义运行时 / 已在跑的标签不可改
+  const launchPickEditable =
+    !running && !shellActive && !restored && !customRuntimeId && !resumeSessionId;
+  const launchPick = useMemo<LaunchPickState>(
+    () => ({
+      editable: launchPickEditable,
+      resumeSessionId:
+        !running && !shellActive && !customRuntimeId ? (resumeSessionId ?? null) : null,
+      agentId,
+      profileId,
+      model,
+      profiles: profileMenuOptions,
+      models: modelOptions,
+      effort: effortOverride?.trim() ?? "",
+      effortLevels: launchEffortInjectable ? launchEffortLevels : [],
+      permission: permission ?? (readonly ? "discuss" : "write_tree"),
+      permissionMode,
+      permissionModes: launchAgentDet?.permissionModes ?? [],
+      readonlySupported: launchAgentDet?.readonlySupported ?? false,
+      permissionNote: cliPermissionNote,
+    }),
+    // profileMenuOptions 每次渲染新建，按其内容签名判等
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      launchPickEditable,
+      running,
+      shellActive,
+      resumeSessionId,
+      agentId,
+      profileId,
+      model,
+      modelOptions,
+      profileMenuOptions.map((o) => `${o.value}\t${o.label}\t${o.group ?? ""}`).join("\n"),
+      effortOverride,
+      launchEffortInjectable,
+      launchEffortLevels,
+      permission,
+      permissionMode,
+      readonly,
+      launchAgentDet?.readonlySupported,
+      launchAgentDet?.permissionModes?.join(","),
+      cliPermissionNote,
+    ],
+  );
+  // 启动栏「权限」格与「这次启动」卡（2026-10-18 与聊天输入框同步）：值 = 只讨论 / 手选的原生档 /
+  // 本机设置对应的那档；都没有为 ""（本机设置对应不上四档）。改档写标签（onPatchLaunch），与聊天输入框同一份
+  const permFollowsLocal =
+    launchPick.permission !== "discuss" && launchPick.permissionMode === null;
+  const permTier: PermissionTier | "" =
+    launchPick.permission === "discuss"
+      ? "discuss"
+      : (launchPick.permissionMode ?? cliPermissionNote?.tier ?? "");
+  const permAvailable = (id: PermissionTier) =>
+    id === "discuss" ? launchPick.readonlySupported : launchPick.permissionModes.includes(id);
+  const permOptions = PERMISSION_TIERS.map((t) => {
+    const ok = permAvailable(t.id);
+    return {
+      value: t.id,
+      label: t.label,
+      disabled: !ok,
+      title: ok ? t.desc : `${agentLabel(agentId)} 没有这一档的启动参数`,
+      hint: !ok
+        ? "没有这一档"
+        : permFollowsLocal && cliPermissionNote?.tier === t.id
+          ? "本机设置"
+          : undefined,
+      tone: t.id === "full" ? ("warn" as const) : undefined,
+    };
+  });
+  const permText =
+    PERMISSION_TIERS.find((t) => t.id === permTier)?.label ??
+    cliPermissionNote?.short ??
+    "默认权限";
+  // 「这次启动」卡里可换的连接：同一家 Agent 的其他连接（不含当前、不含已停用的；与连接出错提示同口径）
+  const launchInfoAlternatives = profiles.filter(
+    (p) =>
+      p.agent === agentId &&
+      p.id !== profileId &&
+      !(settings?.hiddenProfiles ?? []).includes(p.id),
+  );
+  /** 改权限：完全访问二次确认；live = 进程在跑（换了要重开接回）。返回是否真改了 */
+  async function pickLaunchPermission(id: PermissionTier, live: boolean): Promise<boolean> {
+    if (!(await confirmPermissionChoice(agentLabel(agentId), id, live))) return false;
+    onPatchLaunch?.(
+      tabId,
+      id === "discuss"
+        ? { permission: "discuss", permissionMode: null }
+        : { permission: "write_tree", permissionMode: id },
+    );
+    return true;
+  }
+
   const [skillCount, setSkillCount] = useState(0);
   // 当前 agent 已启用的技能清单（技能页开关同步）；「插入」菜单一键使用
   const [agentSkills, setAgentSkills] = useState<SkillDto[]>([]);
@@ -1319,7 +1693,10 @@ const TerminalView = memo(function TerminalView({
   const [agentMcps, setAgentMcps] = useState<McpServerDto[]>([]);
   // 技能 + MCP 合并为一颗「插入」pill（聊天输入条「插入」菜单同口径），
   // 收缩态右侧只留 插入/修改/⋯ 三件，替代原先两粒常驻计数胶囊
-  const [insertMenuOpen, setInsertMenuOpen] = useState(false);
+  // 菜单只有一份状态，但有两个锚点：收缩状态行「插入」(bar) 与标签栏 ✦ (tab)。
+  // 原先共用一个布尔，两处弹层同时渲染——运行中点插入出现两个列表（2026-10-17 修）
+  const [insertMenuFrom, setInsertMenuFrom] = useState<"bar" | "tab" | null>(null);
+  const [insertTabAnchor, setInsertTabAnchor] = useState<{ left: number; bottom: number } | null>(null);
   // 高级启动项默认收起：主栏回答「用谁、用哪个模型、在哪运行」；
   // 首条指令收进高级选项，技能/MCP 保留为运行时常驻入口。
   const [advancedLaunchOpen, setAdvancedLaunchOpen] = useState(!!presetPrompt);
@@ -1365,7 +1742,7 @@ const TerminalView = memo(function TerminalView({
       setAdvancedLaunchOpen(true);
       setPromptText((t) => (t ? `${t}\n${text}` : text));
     }
-    setInsertMenuOpen(false);
+    setInsertMenuFrom(null);
   }
 
   /** 一键提及 MCP server：同技能注入机制（提示 agent 调用其工具；分发变更对新会话生效） */
@@ -1378,7 +1755,24 @@ const TerminalView = memo(function TerminalView({
       setAdvancedLaunchOpen(true);
       setPromptText((t) => (t ? `${t}\n${text}` : text));
     }
-    setInsertMenuOpen(false);
+    setInsertMenuFrom(null);
+  }
+
+  /** 插入菜单的条目（技能 / MCP 两段 + 管理分发）：状态行与标签栏两个锚点共用同一份，
+      原先标签栏那份是没有分段标题和说明的简版，两处长得不一样 */
+  function renderInsertItems() {
+    return (
+      <InsertMenuItems
+        skills={agentSkills}
+        mcps={agentMcps}
+        onSkill={useSkill}
+        onMcp={useMcp}
+        onManageMcp={() => {
+          setInsertMenuFrom(null);
+          setPage("mcp");
+        }}
+      />
+    );
   }
 
   /** 「插入」pill：技能 + MCP 合并为一颗（聊天输入条「插入」菜单同口径）。
@@ -1392,86 +1786,29 @@ const TerminalView = memo(function TerminalView({
           type="button"
           onClick={() => {
             // 打开（向上弹）时按锚点上方空间重新限高
-            if (up && !insertMenuOpen)
+            if (up && insertMenuFrom !== "bar")
               setInsertMenuMaxH(upMaxH(insertAnchor.current));
-            setInsertMenuOpen((v) => !v);
+            setInsertMenuFrom((v) => (v === "bar" ? null : "bar"));
           }}
           title={`已启用 ${skillCount} 个技能、${agentMcps.length} 个 MCP，点击插入`}
-          aria-expanded={insertMenuOpen}
+          aria-expanded={insertMenuFrom === "bar"}
           className="rounded-sm px-1.5 py-0.5 text-l3 hover:bg-hover hover:text-l1"
         >
           插入
         </button>
-        {insertMenuOpen && (
+        {insertMenuFrom === "bar" && (
           <>
             {/* 点击浮层外任意处关闭 */}
             <div
               className="fixed inset-0 z-40"
-              onClick={() => setInsertMenuOpen(false)}
+              onClick={() => setInsertMenuFrom(null)}
             />
             {/* 高度随锚点上方空间收缩，防顶出屏幕 */}
             <ul
               style={{ maxHeight: up ? insertMenuMaxH : 224 }}
               className={`absolute ${up ? "bottom-full mb-1" : "top-full mt-1"} ${alignRight ? "right-0" : "left-0"} z-50 w-72 overflow-auto rounded-md border border-field ccode-float-surface p-1`}
             >
-              {agentSkills.length > 0 && (
-                <li className="px-2 pb-0.5 pt-1.5 text-micro text-l4">技能</li>
-              )}
-              {agentSkills.map((s) => (
-                <li key={s.id}>
-                  <button
-                    type="button"
-                    onClick={() => useSkill(s.name)}
-                    className="flex w-full flex-col gap-0.5 rounded-sm px-2 py-1.5 text-left hover:bg-hover"
-                  >
-                    <span className="text-xs text-l1">{s.name}</span>
-                    {s.description && (
-                      <span className="truncate text-micro text-l4">
-                        {s.description}
-                      </span>
-                    )}
-                  </button>
-                </li>
-              ))}
-              {agentMcps.length > 0 && (
-                <li
-                  className={`px-2 pb-0.5 pt-1.5 text-micro text-l4 ${
-                    agentSkills.length > 0
-                      ? "mt-1 border-t border-hairline"
-                      : ""
-                  }`}
-                >
-                  MCP
-                </li>
-              )}
-              {agentMcps.map((s) => (
-                <li key={s.id}>
-                  <button
-                    type="button"
-                    onClick={() => useMcp(s.name)}
-                    className="flex w-full flex-col gap-0.5 rounded-sm px-2 py-1.5 text-left hover:bg-hover"
-                  >
-                    <span className="text-xs text-l1">{s.name}</span>
-                    <span className="truncate font-mono text-micro text-l4">
-                      {s.kind === "stdio"
-                        ? `${s.command} ${s.args.join(" ")}`
-                        : s.url}
-                    </span>
-                  </button>
-                </li>
-              ))}
-              <li className="mt-1 border-t border-hairline">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setInsertMenuOpen(false);
-                    setPage("mcp");
-                  }}
-                  className="flex w-full rounded-sm px-2 py-1.5 text-left text-micro text-l4 hover:bg-hover hover:text-l2"
-                >
-                  管理 MCP 分发 →（变更对新会话生效）
-                </button>
-              </li>
+              {renderInsertItems()}
             </ul>
           </>
         )}
@@ -1503,6 +1840,8 @@ const TerminalView = memo(function TerminalView({
           .join(" · ")
       : "";
   const title =
+    // 随手聊：发第一句前输入框里还能换 Agent，标题跟着当前选的那家走
+    (reuseKey?.startsWith(QUICK_CHAT_KEY_PREFIX) ? `随手聊 · ${agentLabel(agentId)}` : "") ||
     initialTitle?.trim() ||
     launchIdentity ||
     startedIdentity ||
@@ -1587,14 +1926,23 @@ const TerminalView = memo(function TerminalView({
   const [attention, setAttention] = useState<TabStatus["attention"]>(null);
   // PTY 输出静默计时：working 标由输出事件打起，静默后按 onPtyWorkingSilence 熄灭
   const lastOutputAtRef = useRef(0);
+  // 拉起后的第一次发送要等 CLI 进入读键状态：进程刚起来时写进去的字先被终端行规程回显、
+  // 回车跟着成了「开屏前预输入」的一部分——字落进输入框却没提交，聊天层还记成已发出
+  // （2026-10-18 阅读区简报实测：Claude Code 拉起后 50ms 内写入必现，等它画出界面再安静 400ms 后 3/3 正常）
+  const ptyAttachedAtRef = useRef(0);
+  const inputReadyRef = useRef(true);
   // 用户刚提交一轮（聊天发送 / 回车 / 带指令的新启动）：允许 PTY 点亮转圈。
   // 启动或恢复会话本身不点亮——TUI 启动画面不是「正在生成回答」。
   const ptyWorkingArmedRef = useRef(false);
   const hadPtyWorkingOutputRef = useRef(false);
   function armPtyWorking() {
+    // 发了下一句：屏上已有的错误算看过，这一轮再出错才提示
+    if (rawConnIssueRef.current) dismissConnIssue();
     ptyWorkingArmedRef.current = true;
     hadPtyWorkingOutputRef.current = false;
     setAttention("working");
+    // 这一轮里弹出的审批菜单要认；发送前屏上已有的「像菜单」的东西记作基线
+    menuBaselineRef.current = screenMenu();
   }
   function disarmPtyWorking() {
     ptyWorkingArmedRef.current = false;
@@ -1610,6 +1958,261 @@ const TerminalView = memo(function TerminalView({
   }
   // hooks 精确注意力 confirm 时的「在等什么」摘要（审批卡片用；无 hooks/无详情字段为 null）
   const [confirmDetail, setConfirmDetail] = useState<string | null>(null);
+  // 启动时的「是否信任这个目录」菜单：会话文件出现前它挡在前面，聊天层看不到（trust-prompt.ts）
+  const [trustPrompt, setTrustPrompt] = useState<TrustPrompt | null>(null);
+  const trustPromptRef = useRef<TrustPrompt | null>(null);
+  // PTY 静止：聊天层判断「等不到会话文件」是卡在菜单上，还是模型只是慢（转圈动画一直在出字）
+  const [ptyQuiet, setPtyQuiet] = useState(false);
+  const ptyQuietRef = useRef(false);
+  const trustScanTimerRef = useRef<number | null>(null);
+  function scanTrustPromptSoon() {
+    // 会话已接上就不会再有信任菜单；正挂着一个时继续扫，菜单消失要能撤掉
+    if (linkCtxRef.current?.filePath && !trustPromptRef.current) return;
+    if (trustScanTimerRef.current) window.clearTimeout(trustScanTimerRef.current);
+    trustScanTimerRef.current = window.setTimeout(() => {
+      trustScanTimerRef.current = null;
+      const term = termRef.current;
+      if (!term || ptyKindRef.current !== "agent") return;
+      const buf = term.buffer.active;
+      const lines: string[] = [];
+      for (let i = 0; i < term.rows; i++) {
+        lines.push(buf.getLine(buf.viewportY + i)?.translateToString(true) ?? "");
+      }
+      const next = parseTrustPrompt(lines);
+      if (next) trustOptionsRef.current = next.options;
+      if (sameTrustPrompt(trustPromptRef.current, next)) return;
+      trustPromptRef.current = next;
+      setTrustPrompt(next);
+    }, 250);
+  }
+  useEffect(() => {
+    if (!running) {
+      if (ptyQuietRef.current) {
+        ptyQuietRef.current = false;
+        setPtyQuiet(false);
+      }
+      return;
+    }
+    const timer = window.setInterval(() => {
+      if (ptyQuietRef.current) return;
+      if (Date.now() - lastOutputAtRef.current >= 4000) {
+        ptyQuietRef.current = true;
+        setPtyQuiet(true);
+      }
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [running]);
+  // 切模型 / 思考档的确认菜单：runTuiCommand 写完命令开 5 秒窗口扫屏；菜单挂着时继续扫到它消失。
+  // 2026-10-18 第三期起，用户发出一句后、这一轮没结束前也扫：工具审批（Claude「Do you want to proceed?」、
+  // Codex「Would you like to run…」、Qwen / Gemini「Allow execution…」、Kimi「Run this command?」、Grok 单选）都是
+  // 带序号的菜单，聊天层按原文给按钮。各家只认回车 / 方向键 / 序号，按 y 不一定管用（Claude 2.1.292 实测按 y 没反应）
+  const [menuPrompt, setMenuPrompt] = useState<TuiMenu | null>(null);
+  const menuPromptRef = useRef<TuiMenu | null>(null);
+  const menuWatchUntilRef = useRef(0);
+  const menuScanTimerRef = useRef<number | null>(null);
+  // 发命令那一刻屏上已经「像菜单」的东西（如对话记录里一段多行提问）：之后再认出同一个不算
+  const menuBaselineRef = useRef<TuiMenu | null>(null);
+  // 最近一次从聊天发出的话：扫审批菜单时排除它的回显
+  const lastSentRef = useRef("");
+  // 见过的启动信任菜单的选项：同一组选项以后不再当通用确认菜单报
+  const trustOptionsRef = useRef<string[] | null>(null);
+  function screenMenu(): TuiMenu | null {
+    const term = termRef.current;
+    if (!term) return null;
+    const buf = term.buffer.active;
+    const lines: string[] = [];
+    for (let i = 0; i < term.rows; i++) {
+      lines.push(buf.getLine(buf.viewportY + i)?.translateToString(true) ?? "");
+    }
+    return parseTuiMenu(lines);
+  }
+  function scanMenuSoon() {
+    const turnLive = ptyWorkingArmedRef.current || pendingReplyRef.current;
+    if (!menuPromptRef.current && Date.now() > menuWatchUntilRef.current && !turnLive) return;
+    if (menuScanTimerRef.current) window.clearTimeout(menuScanTimerRef.current);
+    menuScanTimerRef.current = window.setTimeout(() => {
+      menuScanTimerRef.current = null;
+      if (!termRef.current || ptyKindRef.current !== "agent") return;
+      const lines = screenLines();
+      const found = parseTuiMenu(lines);
+      // 用户自己发的多行编号清单回显在屏上（「❯ 1. … / 2. …」）也是这个形状：选项全在刚发的话里就不算
+      const echoed = found ? menuEchoesText(found, lastSentRef.current) : false;
+      // 启动信任菜单归信任卡管（trust-prompt.ts）：这里再认一遍，点完信任后菜单还在屏上的那一两帧
+      // 会以通用确认卡再冒出来一次（2026-10-18 用户截图「Accessing workspace… No, exit / Yes, I trust」）
+      const trustMenu =
+        found !== null &&
+        (parseTrustPrompt(lines) !== null ||
+          (trustOptionsRef.current !== null &&
+            found.options.join("\n") === trustOptionsRef.current.join("\n")));
+      const next =
+        echoed || trustMenu || sameTuiMenu(found, menuBaselineRef.current) ? null : found;
+      if (sameTuiMenu(menuPromptRef.current, next)) return;
+      menuPromptRef.current = next;
+      setMenuPrompt(next);
+    }, 250);
+  }
+  // 实时预览：Agent 出字时节流 300ms 读一次可视区，抽出这一轮正在写的回复给聊天层（会话文件一段写完才落盘）
+  const [liveReply, setLiveReply] = useState<string[] | null>(null);
+  const liveReplyRef = useRef<string[] | null>(null);
+  const liveScanAtRef = useRef(0);
+  const liveScanTimerRef = useRef<number | null>(null);
+  function scanLiveReplySoon() {
+    if (!liveReplySupported(launchAgentRef.current)) return;
+    if (liveScanTimerRef.current) return;
+    const wait = Math.max(0, liveScanAtRef.current + 300 - Date.now());
+    liveScanTimerRef.current = window.setTimeout(() => {
+      liveScanTimerRef.current = null;
+      liveScanAtRef.current = Date.now();
+      const term = termRef.current;
+      if (!term || ptyKindRef.current !== "agent") return;
+      const buf = term.buffer.active;
+      const lines: string[] = [];
+      for (let i = 0; i < term.rows; i++) {
+        lines.push(buf.getLine(buf.viewportY + i)?.translateToString(true) ?? "");
+      }
+      // 长回复滚出屏后只看得见续行：接到上一次读到的整段后面（mergeLiveReply）
+      const read = extractLiveReply(lines, launchAgentRef.current);
+      const prev = liveReplyRef.current;
+      // 一时读不出（菜单挂着、重绘半帧）保留上一次的，免得预览闪没；新一轮发送时清
+      if (!read) return;
+      const next = mergeLiveReply(prev, read);
+      if (!next) return;
+      if ((prev?.join("\n") ?? null) === (next?.join("\n") ?? null)) return;
+      liveReplyRef.current = next;
+      setLiveReply(next);
+    }, wait);
+  }
+  // 连接出问题（conn-issue.ts）：Agent 出字时节流 500ms 扫一次可视区。基线 = 「已经看过」的错误（按次数）：
+  // 关提示、换连接、发下一句、新进程接上时把屏上已有的记进去，之后同一个错误次数涨了才算新的
+  const [rawConnIssue, setRawConnIssue] = useState<
+    (ReturnType<typeof detectConnIssues>[number] & { profileName: string }) | null
+  >(null);
+  const rawConnIssueRef = useRef(rawConnIssue);
+  rawConnIssueRef.current = rawConnIssue;
+  const connBaselineRef = useRef<Map<string, number>>(new Map());
+  const connScanTimerRef = useRef<number | null>(null);
+  function screenLines(): string[] {
+    const term = termRef.current;
+    if (!term) return [];
+    const buf = term.buffer.active;
+    const lines: string[] = [];
+    for (let i = 0; i < term.rows; i++) {
+      lines.push(buf.getLine(buf.viewportY + i)?.translateToString(true) ?? "");
+    }
+    return lines;
+  }
+  // 底栏上的模型（Codex「模型 档位 · 目录」）：差量重绘只重画变了的格子，输出流里档位前面不一定是模型名，
+  // 只能从画好的屏上读（reasoning-effort.ts detectModelOnScreen）。节流 500ms
+  const footerScanTimerRef = useRef<number | null>(null);
+  function scanFooterModelSoon() {
+    if (footerScanTimerRef.current || !modelOnScreenSupported(launchAgentRef.current)) return;
+    footerScanTimerRef.current = window.setTimeout(() => {
+      footerScanTimerRef.current = null;
+      if (ptyKindRef.current !== "agent") return;
+      const seen = detectModelOnScreen(screenLines(), launchAgentRef.current);
+      if (seen) setModelSeen((prev) => (prev === seen ? prev : seen));
+    }, 500);
+  }
+  function scanConnIssueSoon() {
+    if (connScanTimerRef.current) return;
+    connScanTimerRef.current = window.setTimeout(() => {
+      connScanTimerRef.current = null;
+      if (ptyKindRef.current !== "agent") return;
+      const found = detectConnIssues(screenLines(), launchAgentRef.current);
+      const cur = rawConnIssueRef.current;
+      // 还在重试的那条从屏上消失了：CLI 自己缓过来了（或转成了最终报错，那会作为新错误出现）
+      if (cur?.retrying && !found.some((f) => f.sig === cur.sig)) setRawConnIssue(null);
+      const next = newestConnIssue(found, connBaselineRef.current);
+      if (!next || next.sig === cur?.sig) return;
+      setRawConnIssue({ ...next, profileName: selectedProfileRef.current?.name ?? "" });
+    }, 500);
+  }
+  /** 屏上现有的错误全部记作已看过（不再提示），并收起当前提示 */
+  function dismissConnIssue() {
+    const counts = connIssueCounts(detectConnIssues(screenLines(), launchAgentRef.current));
+    connBaselineRef.current = counts;
+    setRawConnIssue(null);
+  }
+  const hiddenProfileKey = (settings?.hiddenProfiles ?? []).join("\n");
+  const connIssue = useMemo<ConnIssueState | null>(() => {
+    if (!rawConnIssue) return null;
+    const hidden = hiddenProfileKey ? hiddenProfileKey.split("\n") : [];
+    const alternatives = profiles
+      .filter((p) => p.agent === agentId && p.id !== profileId && !hidden.includes(p.id))
+      .map((p) => ({ profileId: p.id, label: p.models[0] ? `${p.name} · ${p.models[0]}` : p.name }));
+    const detail = `${rawConnIssue.status ? `${rawConnIssue.status} · ` : ""}${rawConnIssue.message}${
+      rawConnIssue.retrying ? "（它还在自动重试）" : ""
+    }`;
+    return {
+      kind: rawConnIssue.kind,
+      status: rawConnIssue.status,
+      message: rawConnIssue.message,
+      retrying: rawConnIssue.retrying,
+      sig: rawConnIssue.sig,
+      profileName: rawConnIssue.profileName,
+      text: connIssueText(rawConnIssue.kind, rawConnIssue.profileName),
+      detail,
+      alternatives,
+    };
+  }, [rawConnIssue, profiles, agentId, profileId, hiddenProfileKey]);
+  const [connPick, setConnPick] = useState("");
+  /** 写一条 TUI 命令（聊天层 / 底栏切模型、思考档），随后盯 5 秒屏幕看 CLI 有没有弹确认 */
+  function runTuiCommand(cmd: string) {
+    const id = ptyIdRef.current;
+    if (!id) return;
+    const enter = submitCsiU ? KIMI_CSI_U_ENTER : "\r";
+    menuBaselineRef.current = screenMenu();
+    writeInteractivePty(id, `${cmd}${enter}`);
+    menuWatchUntilRef.current = Date.now() + 5000;
+    scanMenuSoon();
+  }
+  function answerMenu(index: number) {
+    const menu = menuPromptRef.current;
+    const id = ptyIdRef.current;
+    if (!menu || !id) return;
+    menuPromptRef.current = null;
+    setMenuPrompt(null);
+    // Kimi 开了 kitty 键盘后只认 CSI-u 回车（submitCsiU）；方向键仍是传统写法
+    const keys = menuAnswerKeys(menu, index).map((k) =>
+      k === "\r" && submitCsiU ? KIMI_CSI_U_ENTER : k,
+    );
+    keys.forEach((key, i) => {
+      window.setTimeout(() => {
+        if (ptyIdRef.current === id) writeInteractivePty(id, key);
+      }, i * 80);
+    });
+    // 一个确认之后可能还有下一个（选完模型再问思考档）：再开一小段窗口
+    menuWatchUntilRef.current = Date.now() + 3000;
+    window.setTimeout(scanMenuSoon, keys.length * 80 + 400);
+  }
+  function clearTrustPrompt() {
+    if (trustScanTimerRef.current) window.clearTimeout(trustScanTimerRef.current);
+    trustScanTimerRef.current = null;
+    trustPromptRef.current = null;
+    setTrustPrompt(null);
+  }
+  /** 聊天层替用户在信任菜单里选：方向键挪到目标项再回车，每个键单独写、隔一拍 */
+  function answerTrust(accept: boolean) {
+    const prompt = trustPromptRef.current;
+    const id = ptyIdRef.current;
+    if (!prompt || !id) return;
+    clearTrustPrompt();
+    // 同一屏信任菜单可能已被通用菜单扫描认出过：一并撤掉，免得点完信任又冒出一张同样的卡
+    trustOptionsRef.current = prompt.options;
+    menuPromptRef.current = null;
+    setMenuPrompt(null);
+    const keys = trustAnswerKeys(prompt, accept).map((k) =>
+      k === "\r" && submitCsiU ? KIMI_CSI_U_ENTER : k,
+    );
+    keys.forEach((key, i) => {
+      window.setTimeout(() => {
+        if (ptyIdRef.current === id) writeInteractivePty(id, key);
+      }, i * 80);
+    });
+    if (accept) armPtyWorking();
+    // 选完之后屏幕会变；再扫一次，万一按键没生效菜单还在，按钮要回来
+    window.setTimeout(scanTrustPromptSoon, keys.length * 80 + 400);
+  }
   // PTY 输出静默：已经出过字则熄灭；还在等首字（思考中）保持转圈。
   // 熄灭后会话文件 sticky working 不得重新点亮（applyTailAttention）。
   useEffect(() => {
@@ -1644,8 +2247,12 @@ const TerminalView = memo(function TerminalView({
       cwd,
       ptyId: activePtyId,
       // 注意力：confirm/done 认会话尾部/hooks；working 认「用户刚提交 + PTY 出字」，
-      // 会话文件 sticky working 不能单独维持。running 不兜底——「进程在跑」≠「正在生成」
-      attention: running && !shellActive ? attention : null,
+      // 会话文件 sticky working 不能单独维持。running 不兜底——「进程在跑」≠「正在生成」。
+      // 屏上认出了等你选的菜单（工具审批 / 启动信任 / 切换确认，tui-menu.ts、trust-prompt.ts）也算 confirm
+      // （2026-10-18）：原先「等你确认」只靠 hooks 精确注意力（要在设置里逐家打开）或会话尾部推断，没开 hooks 的家
+      // 在等你批准时收件箱、标签黄点、系统通知全都不响；读屏认得出的七家（tui-menu.ts 样本）不用装 hooks
+      attention:
+        running && !shellActive ? (menuPrompt || trustPrompt ? "confirm" : attention) : null,
       canResume: shellActive && lastResumeRef.current != null,
       startedAt,
       sessionId:
@@ -1655,6 +2262,9 @@ const TerminalView = memo(function TerminalView({
         resumeSessionId ??
         null,
       runId,
+      effortSeen,
+      modelSeen,
+      effortOverride: effortOverride?.trim() || null,
     };
     const key = JSON.stringify(s);
     if (key !== lastReportRef.current) {
@@ -1672,10 +2282,15 @@ const TerminalView = memo(function TerminalView({
     cwd,
     activePtyId,
     attention,
+    menuPrompt,
+    trustPrompt,
     sessionFile,
     resumeSessionId,
     startedAt,
     runId,
+    effortSeen,
+    modelSeen,
+    effortOverride,
     onStatus,
   ]);
 
@@ -1693,6 +2308,12 @@ const TerminalView = memo(function TerminalView({
       loadingOlder,
       pendingReply,
       confirmDetail,
+      trustPrompt,
+      menuPrompt,
+      connIssue,
+      liveReply,
+      ptyQuiet,
+      launchPick,
       skills: agentSkills,
       mcps: agentMcps,
     });
@@ -1708,6 +2329,12 @@ const TerminalView = memo(function TerminalView({
     loadingOlder,
     pendingReply,
     confirmDetail,
+    trustPrompt,
+    menuPrompt,
+    connIssue,
+    liveReply,
+    ptyQuiet,
+    launchPick,
     agentSkills,
     agentMcps,
     onSessionUpdate,
@@ -1885,6 +2512,23 @@ const TerminalView = memo(function TerminalView({
           invoke("pty_write", { ptyId: id, data }).catch((e) => setError(String(e)));
         }
         return false;
+      }
+      // ⌘← / ⌘→ / ⌘⌫ 照 iTerm2「自然文本编辑」改写成 Ctrl+A / E / U（macLineEditKey）；
+      // 要排在 kitty 编码前面——那条路会把它们编成 super 修饰，多数 CLI 不认
+      if (IS_MAC) {
+        const lineEdit = macLineEditKey(e, kkpArmedRef.current);
+        if (lineEdit) {
+          if (e.type === "keydown") {
+            const id = ptyIdRef.current;
+            if (id) {
+              markInteraction();
+              invoke("pty_write", { ptyId: id, data: lineEdit }).catch((err) =>
+                setError(String(err)),
+              );
+            }
+          }
+          return false;
+        }
       }
       // ⌘/Ctrl+Enter 空态直启：终端聚焦时按键到不了 window 监听，必须在 xterm 键盘层拦
       if (
@@ -2606,6 +3250,10 @@ const TerminalView = memo(function TerminalView({
     unlistenRef.current.forEach((u) => u());
     ptyIdRef.current = ptyId;
     ptyKindRef.current = kind;
+    if (kind === "agent") {
+      ptyAttachedAtRef.current = Date.now();
+      inputReadyRef.current = false;
+    }
     kkpArmedRef.current = false;
     queryPendingRef.current = "";
     hostPendingRef.current = "";
@@ -2613,6 +3261,18 @@ const TerminalView = memo(function TerminalView({
     signalPendingRef.current = "";
     setInlineImageUrl(null);
     setActivePtyId(ptyId);
+    setEffortSeen(null);
+    setModelSeen(null);
+    effortTailRef.current = "";
+    launchAgentRef.current = agentId;
+    // 启动后 20 秒也盯确认菜单：完全访问启动时 Claude Code 先弹「Bypass Permissions mode」警告，
+    // 默认高亮在 No——聊天层不给按钮就卡在「已送出」（2026-10-17 本机 PTY 实录）。不替用户选
+    if (kind === "agent") {
+      menuBaselineRef.current = null;
+      menuWatchUntilRef.current = Date.now() + 20_000;
+      // 换连接 / 重开接回后，xterm 里还留着上一个进程画的错误：记作已看过，不再提示
+      connBaselineRef.current = connIssueCounts(detectConnIssues(screenLines(), agentId));
+    }
     unlistenRef.current = [
       await listen<string>(`pty-output-${ptyId}`, (e) => {
         const queried = consumeTerminalQueries(queryPendingRef.current, e.payload);
@@ -2645,6 +3305,25 @@ const TerminalView = memo(function TerminalView({
           setInlineImageUrl(`data:${image.mime};base64,${image.payload}`);
         }
         if (host.text) term.write(host.text);
+        if (kind === "agent" && host.text) {
+          scanTrustPromptSoon();
+          scanMenuSoon();
+          scanLiveReplySoon();
+          scanConnIssueSoon();
+          if (ptyQuietRef.current) {
+            ptyQuietRef.current = false;
+            setPtyQuiet(false);
+          }
+          // 帧会把一句话切开：拼上上一帧尾巴再认，只留最后 160 字当下一帧的前缀（不从转义序列中间开始）
+          const scan = effortTailRef.current + host.text;
+          effortTailRef.current = outputTail(scan, 160);
+          // 认档形态按 CLI 分（各家把档写在不同位置、不同句式）
+          const seen = detectEffortInOutput(scan, launchAgentRef.current);
+          if (seen) setEffortSeen((prev) => (prev === seen ? prev : seen));
+          const seenModel = detectModelInOutput(scan, launchAgentRef.current);
+          if (seenModel) setModelSeen((prev) => (prev === seenModel ? prev : seenModel));
+          scanFooterModelSoon();
+        }
         // PTY 出字即活动：静默计时器量的是真实输出，与「这帧算不算 working」分开——
         // 切聊天/点输入框引发的焦点重绘有 300ms 抑制窗，窗内的 TUI 重绘若不计入活动，
         // 突发渲染间隙 ≥2s 就会在切换瞬间误熄灭 attention，且 armed 已耗尽、
@@ -2760,6 +3439,11 @@ const TerminalView = memo(function TerminalView({
     ptyWorkingArmedRef.current = false;
     hadPtyWorkingOutputRef.current = false;
     setAttention(null); // agent 退出：清除注意力标记
+    clearTrustPrompt();
+    menuPromptRef.current = null;
+    setMenuPrompt(null);
+    liveReplyRef.current = null;
+    setLiveReply(null);
     if (kind === "agent") {
       // 记录可恢复的会话 id（一键恢复按钮用）
       lastResumeRef.current = linkCtxRef.current?.sessionId ?? null;
@@ -2957,15 +3641,11 @@ const TerminalView = memo(function TerminalView({
         );
       const missing = pendingUsers.filter((pu) => !isRecorded(pu));
       pendingUsersRef.current = missing;
-      const mergedMessages =
-        missing.length > 0
-          ? (() => {
-              const next = [...parsedMessages];
-              const replyIndex = next.findIndex((message) => message.role !== "user");
-              next.splice(replyIndex < 0 ? next.length : replyIndex, 0, ...missing);
-              return next;
-            })()
-          : parsedMessages;
+      const mergedMessages = placePendingUsers(
+        parsedMessages,
+        missing,
+        pendingAssistantKeysRef.current,
+      );
       latestWindowRef.current = mergedMessages;
       if (olderRef.current.length === 0) {
         convCursorRef.current = page.cursor;
@@ -3023,8 +3703,15 @@ const TerminalView = memo(function TerminalView({
       // 收尾判定被 ptyLive 推迟（PTY 8 秒窗内还出过字）时必须保证一次重试：
       // 之后会话文件若再无新写入，签名门会让 5s 轮询永远不再重跑 fetch，
       // 「已收尾但被推迟」就冻结成永久转圈（2026-09-19 综述大纲跑完实测）
-      const fileSaysOver = state === "done" || turnSettled;
+      const fileSaysOver = state === "done" || state === "settled" || turnSettled;
       const ptyLive = Date.now() - lastOutputAtRef.current < PTY_LIVE_MS;
+      // 回合确定结束、且刚发的用户消息都已落盘（不是上一轮残留的收尾标记）：
+      // 等回复就此结束，不再靠逐条比对正文（正文比对有漏判就会一直挂着「等待回复」）
+      let pendingNow = pendingReplyRef.current;
+      if (state === "settled" && pendingNow && pendingUsersRef.current.length === 0) {
+        pendingNow = false;
+        setPendingReply(false);
+      }
       setAttention((prev) => {
         const next = applyTailAttention({
           prev,
@@ -3032,7 +3719,7 @@ const TerminalView = memo(function TerminalView({
           armed: ptyWorkingArmedRef.current,
           turnSettled,
           ptyLive,
-          pendingReply: pendingReplyRef.current,
+          pendingReply: pendingNow,
         });
         ptyWorkingArmedRef.current = next.armed;
         if (fileSaysOver && ptyLive && next.attention === "working") {
@@ -3274,6 +3961,11 @@ const TerminalView = memo(function TerminalView({
     hadPtyWorkingOutputRef.current = false;
     setAttention(null);
     setConfirmDetail(null);
+    clearTrustPrompt();
+    menuPromptRef.current = null;
+    setMenuPrompt(null);
+    liveReplyRef.current = null;
+    setLiveReply(null);
   }
 
   /** 布局提交之后再读格子。高度没变时当前帧就能量到；变了就等下一次尺寸。 */
@@ -3463,6 +4155,7 @@ const TerminalView = memo(function TerminalView({
         model: string | null;
         runId: string | null;
         adopted?: boolean;
+        resumeUnwritten?: boolean;
       }>("pty_spawn", {
         agentId,
         profileId,
@@ -3493,6 +4186,11 @@ const TerminalView = memo(function TerminalView({
           (options?.readonly ?? readonly ? "discuss" : "write_tree"),
         // 开工弹层的本次思考档覆盖（空 = 绑定逐模型策略）；后端在读绑定策略处用本值优先
         effortOverride: effortOverride?.trim() || null,
+        // 聊天权限徽标选的原生权限档（只讨论时不传；null = 按本机设置）
+        permissionMode:
+          (permission ?? (options?.readonly ?? readonly ? "discuss" : "write_tree")) === "discuss"
+            ? null
+            : permissionMode,
         reuseKey: reuseKey ?? null,
         runId: runId ?? initialRunId ?? null,
         taskId: taskId ?? null,
@@ -3501,6 +4199,11 @@ const TerminalView = memo(function TerminalView({
       });
       if (res.adopted) resizeLatchRef.current = { kind: "frozen" };
       if (res.runId) setRunId(res.runId);
+      // 要接的那段对话从没落盘（上次启动没聊就退出 / 启动即崩），后端已改开新会话：说一句，
+      // 免得用户以为接上了上次的上下文
+      if (res.resumeUnwritten) {
+        toast("上次那段对话没有留下记录（Agent 没来得及保存就退出了），已在原目录开了新会话", "info");
+      }
       // 后端兜底模型回传（前端留空 = profile 首个模型）：同步进标签状态，
       // 否则状态栏/对话头部在兜底路径下没有模型可显示；lastLaunch/模型历史也记生效值
       const effectiveModel = res.model ?? model;
@@ -3510,10 +4213,19 @@ const TerminalView = memo(function TerminalView({
         "ccode.lastLaunch",
         JSON.stringify({ agentId, profileId, model: effectiveModel, cwd }),
       );
-      // 模型历史（本 agent 维度，去重前置，上限 10 条）：模型 combo 下拉的可选项来源之一
-      if (effectiveModel.trim()) {
+      // 随手聊发出第一句、Agent 起来了：下次快速开聊照这次的 Agent / 连接 / 模型 / 思考档开
+      if (reuseKey?.startsWith(QUICK_CHAT_KEY_PREFIX)) {
+        saveQuickChatChoice({
+          agentId,
+          profileId,
+          model: effectiveModel.trim() || undefined,
+          effort: effortOverride?.trim() || null,
+        });
+      }
+      // 模型历史（Agent + 连接维度，去重前置，上限 10 条）：模型 combo 下拉的可选项来源之一
+      if (effectiveModel.trim() && profileId) {
         try {
-          const key = `ccode.modelHistory.${agentId}`;
+          const key = `ccode.modelHistory.${agentId}.${profileId}`;
           const list = JSON.parse(
             localStorage.getItem(key) ?? "[]",
           ) as string[];
@@ -3555,7 +4267,7 @@ const TerminalView = memo(function TerminalView({
       const launchedPrompt = (options?.prompt ?? promptText).trim();
       const armWorking = shouldArmWorkingOnLaunch({
         prompt: launchedPrompt,
-        isResume: Boolean(resumeId ?? resumeSessionId),
+        isResume: Boolean(resumeId ?? resumeSessionId) && !res.resumeUnwritten,
       });
       if (armWorking) {
         armPtyWorking();
@@ -3662,6 +4374,56 @@ const TerminalView = memo(function TerminalView({
   }
 
   /** 停止 agent：杀掉 PTY 后由退出事件自动回落到 shell */
+  // 运行中换权限（2026-10-17 用户：发完消息权限就改不了了）：各家权限都在启动参数里，
+  // 只能停下再带新参数接回原会话。父级先改标签的 permission / permissionMode，再调这里；
+  // 进程退出回落 shell 后（下方 effect）用最新 props 按原会话恢复，对话内容不丢
+  const permissionRestartRef = useRef(false);
+  /** 换模型 / 思考档的重开接回（2026-10-18）：先把新值写进启动栏 state 与标签，下一拍再停；回落 shell 后
+   *  下方 effect 按原会话带新参数接回。不用 CLI 的 /model、/effort——它们会写回 CLI 自己的全局配置 */
+  function relaunchWith(patch: { model?: string; effort?: string | null }) {
+    if (ptyKindRef.current !== "agent" || !ptyIdRef.current) return;
+    if (patch.model !== undefined) {
+      setModel(patch.model);
+      setModelKept(false);
+    }
+    if (patch.effort !== undefined) onPatchLaunch?.(tabId, { effort: patch.effort });
+    window.setTimeout(restartWithPermission, 0);
+  }
+  function restartWithPermission() {
+    if (ptyKindRef.current !== "agent" || !ptyIdRef.current) return;
+    permissionRestartRef.current = true;
+    void stop();
+  }
+  useEffect(() => {
+    if (!permissionRestartRef.current || running || !shellActive) return;
+    permissionRestartRef.current = false;
+    void launch(lastResumeRef.current ?? undefined, { prompt: "" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running, shellActive]);
+
+  // 出错换连接（2026-10-17）：先把标签的连接 / 模型换成新的，再停下 Agent；回落 shell 后（下方 effect）
+  // 按原会话接回。Agent 已经停了（还能接着聊）就直接接回。模型：新连接名单里有当前模型就留着，没有用它的第一个
+  const switchPendingRef = useRef<string | null>(null);
+  function switchConnection(id: string) {
+    const target = profiles.find((p) => p.id === id && p.agent === agentId);
+    if (!target) return;
+    dismissConnIssue();
+    setProfileId(id);
+    const cur = model.trim();
+    setModel(cur && target.models.includes(cur) ? cur : (target.models[0] ?? ""));
+    setModelKept(false);
+    switchPendingRef.current = id;
+    if (ptyKindRef.current === "agent" && ptyIdRef.current) void stop();
+  }
+  useEffect(() => {
+    const target = switchPendingRef.current;
+    if (!target || running || !shellActive || profileId !== target) return;
+    switchPendingRef.current = null;
+    if (!lastResumeRef.current) return;
+    void launch(lastResumeRef.current, { prompt: "" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running, shellActive, profileId]);
+
   async function stop() {
     const id = ptyIdRef.current;
     if (!id) return;
@@ -3672,7 +4434,24 @@ const TerminalView = memo(function TerminalView({
     }
   }
 
+  /** 等刚拉起的 Agent 能收键：出过字后安静 400ms（一直没出字的接管进程等满 3 秒），最多等 8 秒；
+      只在拉起后的第一次发送等，之后直接写 */
+  async function waitAgentInputReady(ptyId: string) {
+    while (!inputReadyRef.current && ptyIdRef.current === ptyId) {
+      const now = Date.now();
+      const since = now - ptyAttachedAtRef.current;
+      const drew = lastOutputAtRef.current > ptyAttachedAtRef.current;
+      if ((now - lastOutputAtRef.current >= 400 && (drew || since >= 3000)) || since >= 8000) {
+        inputReadyRef.current = true;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
+
   async function writeChatMessage(ptyId: string, text: string): Promise<ChatSendResult> {
+    await waitAgentInputReady(ptyId);
+    if (ptyIdRef.current !== ptyId) return { error: "终端已重新启动，这句没有发出，请再发一次" };
     try {
       await invoke("pty_write_submit", {
         ptyId,
@@ -3685,14 +4464,20 @@ const TerminalView = memo(function TerminalView({
     }
   }
 
-  function showOptimisticUserMessage(text: string) {
+  /** queued = 上一轮还在生成时发的：CLI 自己排队，这一轮结束才处理（聊天层气泡标「排队中」） */
+  function showOptimisticUserMessage(text: string, queued = false) {
+    lastSentRef.current = text;
     // 发送发生在后台读取途中时，令旧读取失效，避免它把刚显示的本地消息覆盖掉。
     conversationRequestRef.current += 1;
+    // 实时预览从这一轮重新攒（上一轮的长回复不能接到这一轮前面）
+    liveReplyRef.current = null;
+    setLiveReply(null);
     const message: ChatMessageDto = {
       role: "user",
       blocks: [{ kind: "text", text, toolName: null }],
       timestamp: new Date().toISOString(),
       usage: null,
+      ...(queued ? { queued: true } : {}),
     };
     pendingAssistantKeysRef.current = new Set(
       conv
@@ -3716,10 +4501,11 @@ const TerminalView = memo(function TerminalView({
     // 聊天层与终端层共享这个 PTY；刚启动或刚从 shell 回落时，React 状态可能尚未完成一帧更新。
     const currentPtyId = ptyIdRef.current;
     if (ptyKindRef.current === "agent" && currentPtyId) {
+      const queued = pendingReplyRef.current || attention === "working";
       armPtyWorking();
       const result = await writeChatMessage(currentPtyId, message);
       if (result.error) disarmPtyWorking();
-      else showOptimisticUserMessage(message);
+      else showOptimisticUserMessage(message, queued);
       return result;
     }
 
@@ -3739,7 +4525,32 @@ const TerminalView = memo(function TerminalView({
       return result;
     }
 
-    if (!profileId) return { error: "请先在底部状态栏选择一个连接配置" };
+    // 恢复占位（重启后留下、还没接回的标签）：先按原会话恢复，再把这句写进去。
+    // 恢复启动会忽略首条指令注入，直接带 prompt 启动这句话会被吞掉
+    if (!running && !shellActive && resumeSessionId && !customRuntimeId) {
+      if (!selectedProfile) {
+        return { error: "上次使用的配置已不存在，切到终端在启动栏重新选择" };
+      }
+      const res = await launch(undefined, { prompt: "" });
+      if (!res) return { error: error ?? "恢复会话失败，请切到终端检查" };
+      await new Promise((r) => setTimeout(r, 1200));
+      if (!mountedRef.current || ptyIdRef.current !== res.ptyId)
+        return { error: null };
+      armPtyWorking();
+      const result = await writeChatMessage(res.ptyId, message);
+      if (result.error) disarmPtyWorking();
+      else showOptimisticUserMessage(message);
+      return result;
+    }
+
+    if (!profileId) {
+      return {
+        error:
+          agentProfiles.length === 0
+            ? `${agentLabel(agentId)} 还没有连接：先去「连接」页添加，或点输入框右下的模型菜单换一家 Agent`
+            : "还没选连接：点输入框右下的模型菜单，在顶部选一条连接",
+      };
+    }
     setPromptText(message);
     setShowPrompt(true);
     const res = await launch(undefined, { prompt: message });
@@ -3798,6 +4609,18 @@ const TerminalView = memo(function TerminalView({
     writeCommand: () => {},
     noteUserTurn: () => {},
     loadOlderConversation: async () => {},
+    answerTrust: () => {},
+    pickLaunchAgent: () => {},
+    pickLaunchProfile: () => {},
+    pickLaunchModel: () => {},
+    restoreHere: () => {},
+    openDirMenu: () => {},
+    runTuiCommand: () => {},
+    answerMenu: () => {},
+    restartWithPermission: () => {},
+    relaunchWith: () => {},
+    switchConnection: () => {},
+    dismissConnIssue: () => {},
   });
   actionsRef.current = {
     stop: () => void stop(),
@@ -3807,7 +4630,10 @@ const TerminalView = memo(function TerminalView({
     },
     openConversationPage,
     search: () => setSearchOpen(true),
-    toggleInsert: () => setInsertMenuOpen((open) => !open),
+    toggleInsert: (anchor) => {
+      setInsertTabAnchor(anchor ?? null);
+      setInsertMenuFrom((from) => (from === "tab" ? null : "tab"));
+    },
     modify: () => {
       if (ptyIdRef.current) {
         setLaunchInfoOpen(true);
@@ -3840,6 +4666,18 @@ const TerminalView = memo(function TerminalView({
     },
     noteUserTurn: () => armPtyWorking(),
     loadOlderConversation: () => loadOlderConversation(),
+    answerTrust: (accept) => answerTrust(accept),
+    pickLaunchAgent,
+    pickLaunchProfile,
+    pickLaunchModel,
+    restoreHere: () => void restoreTask(),
+    openDirMenu: (x, y) => setWelcomeDirMenu({ x, y }),
+    runTuiCommand,
+    answerMenu,
+    restartWithPermission,
+    relaunchWith,
+    switchConnection,
+    dismissConnIssue,
   };
   useEffect(() => {
     onActions?.(tabId, {
@@ -3849,7 +4687,7 @@ const TerminalView = memo(function TerminalView({
         actionsRef.current.openConversationPage(),
       search: () => actionsRef.current.search(),
       modify: () => actionsRef.current.modify(),
-      toggleInsert: () => actionsRef.current.toggleInsert(),
+      toggleInsert: (anchor) => actionsRef.current.toggleInsert(anchor),
       logLine: (t) => actionsRef.current.logLine(t),
       setCwd: (c) => actionsRef.current.setCwd(c),
       chooseCwd: () => actionsRef.current.chooseCwd(),
@@ -3859,6 +4697,18 @@ const TerminalView = memo(function TerminalView({
       writeCommand: (cmd) => actionsRef.current.writeCommand(cmd),
       noteUserTurn: () => actionsRef.current.noteUserTurn(),
       loadOlderConversation: () => actionsRef.current.loadOlderConversation(),
+      answerTrust: (accept) => actionsRef.current.answerTrust(accept),
+      pickLaunchAgent: (id) => actionsRef.current.pickLaunchAgent(id),
+      pickLaunchProfile: (id) => actionsRef.current.pickLaunchProfile(id),
+      pickLaunchModel: (m) => actionsRef.current.pickLaunchModel(m),
+      restoreHere: () => actionsRef.current.restoreHere(),
+      openDirMenu: (x, y) => actionsRef.current.openDirMenu(x, y),
+      runTuiCommand: (cmd) => actionsRef.current.runTuiCommand(cmd),
+      answerMenu: (i) => actionsRef.current.answerMenu(i),
+      restartWithPermission: () => actionsRef.current.restartWithPermission(),
+      relaunchWith: (patch) => actionsRef.current.relaunchWith(patch),
+      switchConnection: (id) => actionsRef.current.switchConnection(id),
+      dismissConnIssue: () => actionsRef.current.dismissConnIssue(),
     });
   }, [onActions, tabId]);
 
@@ -3875,13 +4725,22 @@ const TerminalView = memo(function TerminalView({
     setTerminalActionMenu({ x: rect.right - 176, y: rect.bottom + 4 });
   }
 
+  // ⋯ 打开时现取（父级按这一刻的会话 / 运行状态组装，与斜杠面板同源）
+  const conversationActions = terminalActionMenu ? (getConversationActions?.(tabId) ?? []) : [];
   const terminalMenuItems = [
     ...(!running && !shellActive
-      ? [{ label: "打开 Shell", onSelect: () => void openShell() }]
+      ? [
+          {
+            icon: SquareTerminal,
+            label: "打开 Shell",
+            onSelect: () => void openShell(),
+          },
+        ]
       : []),
     ...(!ptyIdRef.current
       ? [
           {
+            icon: SlidersHorizontal,
             label: advancedLaunchOpen ? "收起高级启动选项" : "显示高级启动选项",
             onSelect: () => {
               setBarExpanded(true);
@@ -3891,7 +4750,9 @@ const TerminalView = memo(function TerminalView({
         ]
       : [
           {
-            label: "查看本次启动",
+            icon: Eye,
+            label: "这次启动…",
+            title: "看这次用的连接、模型、思考档和权限；可以换权限、换连接接着聊",
             onSelect: () => setLaunchInfoOpen(true),
           },
         ]),
@@ -3900,21 +4761,38 @@ const TerminalView = memo(function TerminalView({
           ...(onForkChat
             ? [
                 {
+                  icon: GitFork,
                   label: "新建分叉聊天",
                   onSelect: () => onForkChat?.(tabId),
                 },
               ]
             : []),
           {
+            icon: MessagesSquare,
             label: "在对话页回放",
             onSelect: () => openConversationPage(),
           },
         ]
       : []),
+    // 对话操作（2026-10-18 与聊天层斜杠面板 Mesa 组同步）：新对话、压缩、导出、看改动、切到聊天
+    ...(conversationActions.length > 0
+      ? [
+          { separator: true },
+          { header: "对话操作" },
+          ...conversationActions.map((c) => ({
+            icon: CONVERSATION_ACTION_ICONS[c.cmd],
+            label: c.label,
+            title: c.hint,
+            onSelect: c.run,
+          })),
+        ]
+      : []),
+    { separator: true },
     // 「快速开聊」的转正出口：把当前目录登记成项目，会话历史天然跟 cwd 走、
     // 自动归到新项目下（ProjectAggregator 既有归并口径，不需要迁移任何东西）。
     // 只登记，不建工作区、不选模板——模板从项目页的引导横幅或 ⋯ 里选。
     {
+      icon: FolderPlus,
       label: "转为项目…",
       onSelect: () => {
         void (async () => {
@@ -3941,18 +4819,104 @@ const TerminalView = memo(function TerminalView({
     },
   ];
 
+  // 选中终端文字交给对话 / 存进笔记（2026-10-17 用户选定）。只在 Agent 在跑时给「引用 / 问 AI」：
+  // 普通 Shell 的输出没有对话可交；分派（聊天层进输入框、终端层写进 TUI 输入行）在父级 conversationInsert
+  const canHandToChat = running && Boolean(onConversationInsert);
+  function handSelectionToChat(text: string, ask: boolean) {
+    const payload = ask ? askAboutText(text) : quoteForChat(text);
+    if (!payload) return;
+    onConversationInsert?.(tabId, payload, { send: ask });
+    termRef.current?.clearSelection();
+    setTermPick(null);
+  }
+  // 「存进笔记」写项目根的 notes/clips.md：只在科研 / 办公项目里（编程仓库不往里塞 notes/，随手聊目录没有项目可存）
+  const projectsVersion = useAppStore((st) => st.projectsVersion);
+  const [clipRoot, setClipRoot] = useState<string | null>(null);
+  useEffect(() => {
+    let stale = false;
+    invoke<ProjectDto[]>("list_projects")
+      .then((list) => {
+        if (stale) return;
+        const owner = list
+          .filter((p) => pathWithin(cwd, p.path) && normalizeWorkMode(p.workMode) !== "coding")
+          .sort((a, b) => b.path.length - a.path.length)[0];
+        setClipRoot(owner?.path ?? null);
+      })
+      .catch(() => {
+        if (!stale) setClipRoot(null);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [cwd, projectsVersion]);
+  async function saveSelectionClip(text: string) {
+    if (!clipRoot) return;
+    const content = clipNoteEntry({
+      text,
+      when: new Date(),
+      agentLabel: running ? agentLabel(agentId) : null,
+      sessionTitle: linkedSessionTitle,
+    });
+    if (!content) return;
+    try {
+      await invoke("append_project_clip", { projectRoot: clipRoot, content });
+      flashInputNote("已存进项目的 notes/clips.md");
+      termRef.current?.clearSelection();
+      setTermPick(null);
+    } catch (e) {
+      flashInputNote(`没存上：${String(e)}`);
+    }
+  }
+
   // 终端画布右键菜单：复制按打开菜单那一刻的选区裁剪（setTermCtxMenu 触发重渲染即取到最新值）
   const ctxSelection = termRef.current?.getSelection() ?? "";
   const termCtxMenuItems = [
     {
+      icon: Copy,
       label: "复制",
       disabled: !ctxSelection,
       title: ctxSelection ? undefined : "先在终端里选中一段输出",
       onSelect: () =>
         void navigator.clipboard.writeText(ctxSelection).catch(() => {}),
     },
-    { label: "粘贴", onSelect: () => void pasteFromClipboard() },
-    { label: "查找输出", onSelect: () => setSearchOpen(true) },
+    {
+      icon: ClipboardPaste,
+      label: "粘贴",
+      onSelect: () => void pasteFromClipboard(),
+    },
+    ...(ctxSelection.trim() && canHandToChat
+      ? [
+          { separator: true },
+          {
+            icon: MessageSquareQuote,
+            label: "引用到输入框",
+            title: "把选中的这段加上引用符号放进输入框，接着写你的话",
+            onSelect: () => handSelectionToChat(ctxSelection, false),
+          },
+          {
+            icon: MessageCircleQuestion,
+            label: "问 AI 这是什么意思",
+            title: "带着这段直接问这里的 AI",
+            onSelect: () => handSelectionToChat(ctxSelection, true),
+          },
+        ]
+      : []),
+    ...(ctxSelection.trim() && clipRoot
+      ? [
+          {
+            icon: NotebookPen,
+            label: "存进笔记",
+            title: "追加到这个项目的 notes/clips.md",
+            onSelect: () => void saveSelectionClip(ctxSelection),
+          },
+        ]
+      : []),
+    { separator: true },
+    {
+      icon: Search,
+      label: "查找输出",
+      onSelect: () => setSearchOpen(true),
+    },
   ];
 
   // 收缩行被隐藏时，出现必须看见的失败信息（错误 / 目录问题）则临时自动显示——
@@ -3968,89 +4932,183 @@ const TerminalView = memo(function TerminalView({
         <>
           <button
             type="button"
-            aria-label="关闭本次启动"
+            aria-label="关闭这次启动"
             className="fixed inset-0 z-40"
             onClick={() => setLaunchInfoOpen(false)}
           />
-          <div className="ccode-float-surface absolute left-3 top-10 z-50 w-72 rounded-md border border-field bg-raised p-3 text-xs text-l2">
-            <p className="text-l1">这次进程不会改。要换，先停止。</p>
-            <p className="mt-2">
-              {agentLabel(agentId)}
-              {selectedProfile ? ` · ${selectedProfile.name}` : ""}
-              {model ? ` · ${model}` : ""}
-            </p>
-            {/* 配置指纹（借鉴 VS Code 环境信息层）：托盘/设置切了全局默认后，
-                跑着的终端仍是旧网关——这里能看到本进程到底吃的哪碗饭。
-                只显标识与尾号，密钥值永不出现 */}
-            {selectedProfile && (
-              <p className="mt-1 truncate text-l4" title="本进程生效的配置指纹">
-                {(() => {
-                  if (selectedProfile.accountType === "official") {
-                    return "官方账号登录";
-                  }
-                  const parts = [
-                    selectedProfile.gatewayId
-                      ? `网关 ${gatewayNameOf(selectedProfile.gatewayId)}`
-                      : null,
-                    selectedProfile.keyHint
-                      ? `密钥 ${selectedProfile.keyHint}`
-                      : null,
-                  ].filter((s): s is string => Boolean(s));
-                  return parts.length > 0 ? parts.join(" · ") : null;
-                })()}
-              </p>
-            )}
-            {selectedProfile &&
-              Object.keys(selectedProfile.extraEnv ?? {}).length > 0 && (
-                <p
-                  className="mt-1 truncate text-l4"
-                  title={`附加环境变量（值不显示）：${Object.keys(selectedProfile.extraEnv).join("、")}`}
-                >
-                  附加变量：{Object.keys(selectedProfile.extraEnv).join("、")}
-                </p>
+          {/* 「这次启动」卡（2026-10-18 重做）：原先只读、首句写「这次进程不会改。要换，先停止」——模型 / 思考档现在
+              底栏就能切，权限可以重开接回，连接可以换了接着聊，那句话已经不对。现在列全这次的五样，
+              并把换权限、换连接放在卡里（与聊天输入框、连接出错提示同一套动作） */}
+          <div
+            role="dialog"
+            aria-label="这次启动"
+            className="ccode-float-surface absolute left-2 top-9 z-50 w-[19rem] rounded-xl border border-field p-1 text-sm shadow-lg"
+          >
+            <div className="px-2 pb-1 pt-1 text-xs text-l3">这次启动</div>
+            <dl className="grid grid-cols-[3.25rem_minmax(0,1fr)] gap-x-2 gap-y-1 px-2 pb-1.5 text-xs">
+              <dt className="text-l4">Agent</dt>
+              <dd className="truncate text-l1">{agentLabel(agentId)}</dd>
+              <dt className="text-l4">连接</dt>
+              <dd className="min-w-0">
+                <span className="block truncate text-l1">{selectedProfile?.name ?? "—"}</span>
+                {/* 配置指纹（借鉴 VS Code 环境信息层）：托盘/设置切了全局默认后，跑着的终端仍是旧网关——
+                    这里能看到本进程到底用的哪一套。只显标识与尾号，密钥值永不出现 */}
+                {selectedProfile && (
+                  <span className="block truncate text-l4" title="本进程生效的配置指纹">
+                    {selectedProfile.accountType === "official"
+                      ? "官方账号登录"
+                      : [
+                          selectedProfile.gatewayId
+                            ? `网关 ${gatewayNameOf(selectedProfile.gatewayId)}`
+                            : null,
+                          selectedProfile.keyHint ? `密钥 ${selectedProfile.keyHint}` : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                  </span>
+                )}
+              </dd>
+              <dt className="text-l4">模型</dt>
+              <dd className="truncate text-l1" title="运行中可在底栏或聊天输入框换">
+                {modelSeen ?? launchModel ?? (model || "CLI 默认")}
+              </dd>
+              <dt className="text-l4">思考</dt>
+              <dd className="truncate text-l1">
+                {effortSeen ?? effortOverride ?? "按连接设置"}
+              </dd>
+              <dt className="text-l4">权限</dt>
+              <dd className={`truncate ${permTier === "full" ? "text-warn-text" : "text-l1"}`}>
+                {permText}
+                {permFollowsLocal && cliPermissionNote && (
+                  <span className="ml-1 text-l4">（本机设置）</span>
+                )}
+              </dd>
+              <dt className="text-l4">目录</dt>
+              <dd className="truncate text-l2" title={cwd}>
+                {cwd}
+              </dd>
+              {selectedProfile && Object.keys(selectedProfile.extraEnv ?? {}).length > 0 && (
+                <>
+                  <dt className="text-l4">附加变量</dt>
+                  <dd
+                    className="truncate text-l2"
+                    title={`附加环境变量（值不显示）：${Object.keys(selectedProfile.extraEnv).join("、")}`}
+                  >
+                    {Object.keys(selectedProfile.extraEnv).join("、")}
+                  </dd>
+                </>
               )}
-            <p className="mt-1 truncate text-l3" title={cwd}>
-              {cwd}
-            </p>
+            </dl>
+            {onPatchLaunch && !customRuntimeId && (
+              <div className="mx-1 border-t border-hairline px-1 pb-1.5 pt-1.5">
+                <div className="mb-1 text-xs text-l3">
+                  换权限
+                  <span className="ml-1.5 text-micro text-l4">会停下 Agent，带新权限接回这段对话</span>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {PERMISSION_TIERS.map((t) => {
+                    const ok = permAvailable(t.id);
+                    const current = t.id === permTier;
+                    const busy = attention === "working";
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        disabled={!ok || current || busy}
+                        title={
+                          !ok
+                            ? `${agentLabel(agentId)} 没有这一档的启动参数`
+                            : busy
+                              ? "正在生成，等这一轮结束再换权限"
+                              : t.desc
+                        }
+                        onClick={() =>
+                          void (async () => {
+                            if (!(await pickLaunchPermission(t.id, true))) return;
+                            setLaunchInfoOpen(false);
+                            // 先让新权限写进标签、下一拍再重开：重开时读的是新 props（同聊天层）
+                            window.setTimeout(restartWithPermission, 0);
+                          })()
+                        }
+                        className={`h-6 rounded-md px-2 text-xs disabled:cursor-default ${
+                          current
+                            ? `bg-seg-sel ${t.id === "full" ? "text-warn-text" : "text-l1"}`
+                            : `border border-hairline hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent ${
+                                t.id === "full" ? "text-warn-text" : "text-l2 hover:text-l1"
+                              }`
+                        }`}
+                      >
+                        {t.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {linkedSessionId && launchInfoAlternatives.length > 0 && (
+              <div className="mx-1 border-t border-hairline px-1 pb-0.5 pt-1.5">
+                <div className="mb-0.5 text-xs text-l3">
+                  换连接接着聊
+                  <span className="ml-1.5 text-micro text-l4">聊过的内容不会丢</span>
+                </div>
+                <ul>
+                  {launchInfoAlternatives.map((p) => (
+                    <li key={p.id}>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void (async () => {
+                            const ok = await confirmDialog(
+                              `换到「${p.name}」接着这段对话？\n\nMesa 会停下 ${agentLabel(agentId)}，换成这条连接后接回原来这段对话，聊过的内容不会丢。${
+                                model.trim() && !p.models.includes(model.trim()) && p.models[0]
+                                  ? `\n\n这条连接里没有 ${model.trim()}，会改用 ${p.models[0]}。`
+                                  : ""
+                              }`,
+                              { confirmText: "换连接" },
+                            );
+                            if (!ok) return;
+                            setLaunchInfoOpen(false);
+                            switchConnection(p.id);
+                          })()
+                        }
+                        className="flex h-7 w-full min-w-0 items-center gap-1.5 rounded-lg px-1.5 text-left text-xs text-l2 hover:bg-hover hover:text-l1"
+                      >
+                        <span className="truncate">{p.name}</span>
+                        {p.models[0] && <span className="truncate text-l4">{p.models[0]}</span>}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         </>
       )}
-      {activePtyId && insertMenuOpen && (
-        <div className="fixed right-3 top-12 z-50">
+      {activePtyId && insertMenuFrom === "tab" && (
+        <>
           <button
             type="button"
             aria-label="关闭插入菜单"
-            className="fixed inset-0 z-40"
-            onClick={() => setInsertMenuOpen(false)}
+            className="fixed inset-0 z-40 cursor-default"
+            onClick={() => setInsertMenuFrom(null)}
           />
-          <ul className="relative z-50 max-h-56 w-72 overflow-auto rounded-md border border-field ccode-float-surface p-1">
-            {agentSkills.map((s) => (
-              <li key={s.id}>
-                <button
-                  type="button"
-                  onClick={() => useSkill(s.name)}
-                  className="flex w-full rounded-sm px-2 py-1.5 text-left text-xs text-l1 hover:bg-hover"
-                >
-                  {s.name}
-                </button>
-              </li>
-            ))}
-            {agentMcps.map((m) => (
-              <li key={m.id}>
-                <button
-                  type="button"
-                  onClick={() => useMcp(m.name)}
-                  className="flex w-full rounded-sm px-2 py-1.5 text-left text-xs text-l1 hover:bg-hover"
-                >
-                  {m.name}
-                </button>
-              </li>
-            ))}
-            {agentSkills.length === 0 && agentMcps.length === 0 && (
-              <li className="px-2 py-1.5 text-xs text-l4">还没有可插入的技能或 MCP</li>
-            )}
+          {/* 贴标签栏 ✦ 按钮下沿弹出（原先钉在窗口右上角，离按钮很远）；右缘留 12px 不出屏 */}
+          <ul
+            className="fixed z-50 max-h-72 w-72 overflow-auto rounded-md border border-field ccode-float-surface p-1"
+            style={{
+              left: Math.max(
+                8,
+                Math.min(
+                  insertTabAnchor?.left ?? window.innerWidth - 300,
+                  window.innerWidth - 300,
+                ),
+              ),
+              top: (insertTabAnchor?.bottom ?? 44) + 4,
+            }}
+          >
+            {renderInsertItems()}
           </ul>
-        </div>
+        </>
       )}
       {/* 底栏在会话运行中也保持可见（v3.213 运行态 = 收缩行）：运行中要能点到
           修改/插入/⋯（转为项目…、停止都在里面）。顶部高度归零是
@@ -4074,12 +5132,7 @@ const TerminalView = memo(function TerminalView({
                 setOpenPick(next ? "agent" : null);
                 if (next) setModelOpen(false);
               }}
-              onChange={(id) => {
-                setAgentId(id);
-                setProfileId("");
-                setModel("");
-                setModelKept(false);
-              }}
+              onChange={pickLaunchAgent}
               className={`${seg} w-[clamp(7.5rem,12vw,10rem)] min-w-[7.5rem] max-w-[10rem] shrink`}
             />
             <LaunchMenu
@@ -4094,27 +5147,13 @@ const TerminalView = memo(function TerminalView({
                 setOpenPick(next ? "profile" : null);
                 if (next) setModelOpen(false);
               }}
-              onChange={(id) => {
-                const prevModels =
-                  profiles.find((p) => p.id === profileId)?.models ?? [];
-                const prof = profiles.find((p) => p.id === id);
-                setProfileId(id);
-                // 手填的模型不再被静默清掉：不在新配置模型表里就保留，
-                // 并由下方说明行告知「仍会按原样注入」
-                const next = modelOnProfileSwitch(
-                  model,
-                  prevModels,
-                  prof?.models ?? [],
-                );
-                setModel(next.model);
-                setModelKept(next.kept);
-              }}
+              onChange={pickLaunchProfile}
               buttonRef={profileSelectRef}
               className={`${seg} w-[clamp(6.5rem,12vw,9rem)] min-w-[6.5rem] max-w-[9rem] shrink`}
             />
             {selectedProfile && (
               // 模型 combo-box：可输可选（profile 预设 + 本 agent 历史），输入即筛选，
-              // 自由输入的模型启动成功后记入历史（ccode.modelHistory.<agent>），下次直接可选
+              // 自由输入的模型启动成功后记入历史（ccode.modelHistory.<agent>.<连接>），下次直接可选
               <>
               <span
                 ref={modelAnchorRef}
@@ -4202,6 +5241,46 @@ const TerminalView = memo(function TerminalView({
                 </DownMenu>
               </span>
               </>
+            )}
+            {/* 思考 / 权限两格（2026-10-18 与聊天输入框同步）：原先只在聊天层能选，终端里点运行照样生效却看不见 */}
+            {selectedProfile && launchPick.effortLevels.length > 0 && onPatchLaunch && (
+              <LaunchMenu
+                label="思考"
+                value={launchPick.effort}
+                placeholder="默认"
+                options={[
+                  { value: "", label: "默认", title: "按连接给这个模型设的思考档" },
+                  ...launchPick.effortLevels.map((l) => ({ value: l, label: l })),
+                ]}
+                disabled={running}
+                open={openPick === "effort"}
+                onOpenChange={(next) => {
+                  setOpenPick(next ? "effort" : null);
+                  if (next) setModelOpen(false);
+                }}
+                onChange={(v) => onPatchLaunch(tabId, { effort: v || null })}
+                preferredWidth={180}
+                className={`${seg} w-[clamp(5rem,8vw,6.5rem)] min-w-[5rem] max-w-[6.5rem] shrink`}
+              />
+            )}
+            {!customRuntimeId && onPatchLaunch && (
+              <LaunchMenu
+                label="权限"
+                value={permTier}
+                placeholder={permText}
+                options={permOptions}
+                disabled={running}
+                open={openPick === "permission"}
+                onOpenChange={(next) => {
+                  setOpenPick(next ? "permission" : null);
+                  if (next) setModelOpen(false);
+                }}
+                onChange={(v) => void pickLaunchPermission(v as PermissionTier, false)}
+                preferredWidth={220}
+                className={`${
+                  permTier === "full" ? seg.replace("text-l2", "text-warn-text") : seg
+                } w-[clamp(6rem,9vw,7.5rem)] min-w-[6rem] max-w-[7.5rem] shrink`}
+              />
             )}
             </div>
             <span className="ml-auto flex shrink-0 items-center gap-1.5">
@@ -4354,7 +5433,23 @@ const TerminalView = memo(function TerminalView({
       ) : compactBarHidden && !compactBarUrgent ? null : (
         /* 收缩态只保留启动配置入口；聊天统一从主工作区进入。 */
         <div className="mt-1 mb-1 flex h-7 items-center gap-2 text-xs text-l4">
-          <span className="truncate">
+          {/* 身份这一行本身就是入口（2026-10-18：原先右边另有「本次 / 修改」按钮，和这行字说的是同一件事）：
+              有进程时打开「这次启动」卡（看连接 / 模型 / 思考 / 权限，可换权限、换连接接着聊），没进程时展开启动栏 */}
+          <button
+            type="button"
+            onClick={() => {
+              // 已有进程时只开浮层。展开整条栏会把 xterm 垫高，
+              // Ink 回合中不重排，输入行停在半截。
+              if (ptyIdRef.current) setLaunchInfoOpen(true);
+              else setBarExpanded(true);
+            }}
+            title={
+              ptyIdRef.current
+                ? "这次启动：连接、模型、思考档、权限；可换权限、换连接接着聊"
+                : "修改启动配置"
+            }
+            className="-ml-1 min-w-0 truncate rounded-sm px-1 py-0.5 text-left text-l4 hover:bg-hover hover:text-l2"
+          >
             {agentLabel(agentId)}
             {selectedProfile ? ` · ${selectedProfile.name}` : ""}
             {model ? ` · ${model}` : ""}
@@ -4374,29 +5469,16 @@ const TerminalView = memo(function TerminalView({
               : ""}
             {restored && !customRuntimeId && !running && !shellActive ? " · 上次任务，可恢复" : ""}
             {restored && customRuntimeId && !running && !shellActive ? " · 自定义 Runtime 不支持恢复" : ""}
-          </span>
+          </button>
           {error ? (
             <span className="truncate text-err-text">{error}</span>
           ) : notice ? (
             <span className="truncate text-l3">{notice}</span>
           ) : null}
           <span className="ml-auto flex shrink-0 items-center gap-1">
-            {/* 技能/MCP 合并为一颗「插入」（运行时快捷入口，收缩状态行常驻）；
-                首条指令等低频启动项进入高级配置。 */}
-            {renderInsertMenu(false, true)}
-            <button
-              type="button"
-              onClick={() => {
-                // 已有进程时只开浮层。展开整条栏会把 xterm 垫高，
-                // Ink 回合中不重排，输入行停在半截。
-                if (ptyIdRef.current) setLaunchInfoOpen(true);
-                else setBarExpanded(true);
-              }}
-              title={ptyIdRef.current ? "查看本次启动" : "修改启动配置"}
-              className="rounded-sm px-2 py-1 text-l3 hover:bg-hover hover:text-l1"
-            >
-              {ptyIdRef.current ? "本次" : "修改"}
-            </button>
+            {/* 技能/MCP「插入」：进程活着时入口在当前标签的 ✦（标签栏），这一行不再摆第二个；
+                没有进程（已退出/可恢复）时才在这里，注入落进首条指令。 */}
+            {!activePtyId && renderInsertMenu(false, true)}
             <button
               type="button"
               onClick={openTerminalActionMenu}
@@ -4561,6 +5643,70 @@ const TerminalView = memo(function TerminalView({
             setTermCtxMenu({ x: e.clientX, y: e.clientY });
           }}
         />
+        {/* 连接出问题（conn-issue.ts）：盖在画面顶上（absolute，不改终端行数），按钮与聊天层确认卡同一个动作 */}
+        {connIssue && (
+          <div
+            role="alert"
+            className="absolute inset-x-3 top-2 z-30 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-field ccode-float-surface px-2.5 py-1.5 text-xs"
+          >
+            <TriangleAlert size={14} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-warn-text" />
+            <span className="font-medium text-l1">{connIssue.text}</span>
+            <span className="min-w-0 flex-1 truncate text-l3" title={connIssue.detail}>
+              {connIssue.detail}
+            </span>
+            {connIssue.alternatives.length > 0 ? (
+              <span className="flex shrink-0 items-center gap-1">
+                <select
+                  aria-label="换到哪条连接"
+                  value={
+                    connIssue.alternatives.some((a) => a.profileId === connPick)
+                      ? connPick
+                      : connIssue.alternatives[0].profileId
+                  }
+                  onChange={(e) => setConnPick(e.target.value)}
+                  className="h-6 max-w-[14rem] rounded-sm border border-field bg-inset px-1 text-xs text-l2"
+                >
+                  {connIssue.alternatives.map((a) => (
+                    <option key={a.profileId} value={a.profileId}>
+                      {a.label}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() =>
+                    switchConnection(
+                      connIssue.alternatives.some((a) => a.profileId === connPick)
+                        ? connPick
+                        : connIssue.alternatives[0].profileId,
+                    )
+                  }
+                  title="停下 AI，换成这条连接，再接回原来这段对话"
+                  className="h-6 rounded-sm bg-cta px-2 text-xs text-cta-text hover:opacity-90"
+                >
+                  换这条接着聊
+                </button>
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setPage("profiles")}
+                className="h-6 shrink-0 rounded-sm px-2 text-xs text-l2 hover:bg-hover"
+                title="这家 AI 没有别的可用连接"
+              >
+                去连接页添加一条
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={dismissConnIssue}
+              aria-label="关闭提示"
+              className="h-6 shrink-0 rounded-sm px-1.5 text-l4 hover:bg-hover hover:text-l2"
+            >
+              ✕
+            </button>
+          </div>
+        )}
         {/* 粘贴图片/拖入文件的瞬态轻反馈（不挡画布，3s 自消） */}
         {inputNote && (
           <div className="pointer-events-none absolute bottom-3 right-4 z-20 max-w-[80%] truncate rounded-sm border border-field ccode-float-surface px-2 py-1 text-xs text-l2">
@@ -4614,6 +5760,37 @@ const TerminalView = memo(function TerminalView({
             >
               查看
             </button>
+            {canHandToChat && (
+              <>
+                <span className="mx-0.5 w-px self-stretch bg-hairline" aria-hidden="true" />
+                <button
+                  type="button"
+                  className="rounded-sm px-2 py-1 text-xs text-l1 hover:bg-hover"
+                  title="把选中的这段加上引用符号放进输入框，接着写你的话"
+                  onClick={() => handSelectionToChat(termPick.text, false)}
+                >
+                  引用
+                </button>
+                <button
+                  type="button"
+                  className="rounded-sm px-2 py-1 text-xs text-l1 hover:bg-hover"
+                  title="带着这段直接问这里的 AI「这是什么意思」"
+                  onClick={() => handSelectionToChat(termPick.text, true)}
+                >
+                  问 AI
+                </button>
+              </>
+            )}
+            {clipRoot && (
+              <button
+                type="button"
+                className="rounded-sm px-2 py-1 text-xs text-l1 hover:bg-hover"
+                title="追加到这个项目的 notes/clips.md"
+                onClick={() => void saveSelectionClip(termPick.text)}
+              >
+                存进笔记
+              </button>
+            )}
           </div>
         )}
         {/* 未启动空态引导（v3.91 / v3.213）：画布中央一张卡，只回答「在这个目录运行」。
@@ -4667,9 +5844,18 @@ const TerminalView = memo(function TerminalView({
               )}
               <button
                 type="button"
-                onClick={() => void chooseWorkingDirectory()}
+                onClick={(event) => {
+                  // 有家目录才能拼出随手聊/主目录候选；问不到时退回系统选目录窗
+                  if (!homeDir) {
+                    void chooseWorkingDirectory();
+                    return;
+                  }
+                  const r = event.currentTarget.getBoundingClientRect();
+                  setWelcomeDirMenu({ x: r.left, y: r.bottom + 4 });
+                }}
                 disabled={cwdChecking}
-                title={`${cwd === "~" && homeDir ? homeDir : cwd}\n点击选择工作目录`}
+                aria-haspopup="menu"
+                title={`${cwd === "~" && homeDir ? homeDir : cwd}\n点击换目录`}
                 className="flex max-w-full cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 font-mono text-xs text-l3 hover:bg-hover hover:text-l1 disabled:cursor-default disabled:opacity-50"
               >
                 <FolderOpen
@@ -4694,21 +5880,27 @@ const TerminalView = memo(function TerminalView({
                   去连接页
                 </button>
               ) : (
-                <button
-                  type="button"
-                  onClick={() =>
-                    restored && !customRuntimeId ? void restoreTask() : void launch()
-                  }
-                  disabled={!profileId || cwdChecking || !!profiles.find((p) => p.id === profileId)?.slotMissing}
-                  className="inline-flex h-9 min-w-40 cursor-pointer items-center justify-center gap-2 rounded-md border border-cta-bd bg-cta px-5 text-sm text-cta-text hover:brightness-110 disabled:cursor-default disabled:opacity-50"
-                >
-                  {restored && !customRuntimeId ? "恢复任务" : "运行"}
-                  {/* 快捷键说明：括号小字随按钮文字整体居中，不加胶囊底色
-                      （18% 混合底在纯色按钮上是块显眼补丁，用户否为「色差」）；勿绝对定位钉右缘 */}
-                  <span className="text-micro opacity-80">
-                    （{IS_MAC ? "⌘ + Enter" : "Ctrl + Enter"}）
-                  </span>
-                </button>
+                <>
+                  {/* 2026-10-18 用户：快速开聊落到聊天层、终端这一面像没启动的坏标签。说清楚它在等什么 */}
+                  {!(restored && !customRuntimeId) && (
+                    <p className="text-xs text-l3">在聊天里发出第一句时自动运行</p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      restored && !customRuntimeId ? void restoreTask() : void launch()
+                    }
+                    disabled={!profileId || cwdChecking || !!profiles.find((p) => p.id === profileId)?.slotMissing}
+                    className="inline-flex h-9 min-w-40 cursor-pointer items-center justify-center gap-2 rounded-md border border-cta-bd bg-cta px-5 text-sm text-cta-text hover:brightness-110 disabled:cursor-default disabled:opacity-50"
+                  >
+                    {restored && !customRuntimeId ? "恢复任务" : "现在运行"}
+                    {/* 快捷键说明：括号小字随按钮文字整体居中，不加胶囊底色
+                        （18% 混合底在纯色按钮上是块显眼补丁，用户否为「色差」）；勿绝对定位钉右缘 */}
+                    <span className="text-micro opacity-80">
+                      （{IS_MAC ? "⌘ + Enter" : "Ctrl + Enter"}）
+                    </span>
+                  </button>
+                </>
               )}
               <button
                 type="button"
@@ -4727,6 +5919,52 @@ const TerminalView = memo(function TerminalView({
           y={terminalActionMenu.y}
           onClose={() => setTerminalActionMenu(null)}
           items={terminalMenuItems}
+        />
+      )}
+      {welcomeDirMenu && (
+        <ContextMenu
+          x={welcomeDirMenu.x}
+          y={welcomeDirMenu.y}
+          onClose={() => setWelcomeDirMenu(null)}
+          items={[
+            ...welcomeDirChoices({
+              cwd,
+              home: homeDir,
+              projectPaths: storeProjectPaths,
+              recentRepos: storeRecentRepos,
+              isWindows: IS_WINDOWS,
+            }).map((choice) => ({
+              label: choice.label,
+              checked: choice.current,
+              title: choice.path,
+              hint: choice.kind === "home" ? "~" : undefined,
+              onSelect: () => {
+                if (choice.kind === "scratch") {
+                  // 随手聊目录可能还没建：与快速开聊同一个后端入口创建
+                  void invoke<string>("ensure_scratch_dir")
+                    .then((dir) => setWorkingDirectory(dir))
+                    .catch((reason) => setError(`随手聊目录创建失败：${String(reason)}`));
+                  return;
+                }
+                setWorkingDirectory(choice.kind === "home" ? "~" : choice.path);
+              },
+            })),
+            { separator: true },
+            {
+              icon: FolderOpen,
+              label: "选择文件夹…",
+              onSelect: () => void chooseWorkingDirectory(),
+            },
+            {
+              icon: FolderPlus,
+              label: "新建项目…",
+              title: "起个名字建一个新文件夹，定好工作方式后登记为项目（在项目页完成）",
+              onSelect: () => {
+                setPage("workspaces");
+                useAppStore.getState().setNewProjectOpenReq({ token: Date.now(), returnTabId: tabId });
+              },
+            },
+          ]}
         />
       )}
       {termPickView !== null && (
@@ -4791,6 +6029,8 @@ interface Tab {
   /** 「聊想法」只读模式标签：pty_spawn 注入只读/计划模式参数（不进持久化白名单） */
   readonly?: boolean;
   permission?: "discuss" | "write_tree";
+  /** 聊天权限徽标选的原生权限档（不进持久化白名单：完全访问不该跨重启自动带上）；null = 按本机设置 */
+  permissionMode?: NativePermissionMode | null;
   /** 开工弹层的本次思考档覆盖（不进持久化白名单）：launch 经 pty_spawn
       effortOverride 注入；空 = 绑定逐模型策略/端点默认 */
   effort?: string | null;
@@ -5090,6 +6330,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   const [rightTab, setRightTab] = useState<RightTab>("preview");
   // 主工作区模式按标签隔离；切换只改变显示层，不改变标签/PTY/会话。
   const [surfaceModeByTab, setSurfaceModeByTab] = useState<Record<string, SurfaceMode>>({});
+  // 稳定回调（conversationInsert）里读当前层，不随渲染重建
+  const surfaceModeRef = useRef(surfaceModeByTab);
+  surfaceModeRef.current = surfaceModeByTab;
   const [peekByTab, setPeekByTab] = useState<Record<string, boolean>>({});
   const [peekLocked, setPeekLocked] = useState<Record<string, boolean>>({});
   const [writableForks, setWritableForks] = useState<Record<string, boolean>>({});
@@ -5274,6 +6517,125 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     setSurfaceModeByTab((prev) => ({ ...prev, [focusedId]: mode }));
   }
 
+  // 聊天层「Mesa」操作（斜杠面板上半组，docs/design-chat-layer.md §6）：由 Mesa 执行，不写进终端
+  function mesaCommandsFor(tabId: string): MesaCommand[] {
+    const st = statuses[tabId];
+    const link = sessionByTab[tabId];
+    const agent = st?.agentId ?? tabs.find((x) => x.id === tabId)?.initialAgentId ?? null;
+    const list: MesaCommand[] = [
+      {
+        cmd: "/new",
+        label: "新对话",
+        hint: "在这个文件夹另开一段，原来的不动",
+        run: () => {
+          const id = addTab({
+            cwd: st?.cwd ?? tabs.find((x) => x.id === tabId)?.initialCwd,
+            agentId: st?.agentId,
+            profileId: st?.profileId,
+            model: st?.launchModel ?? undefined,
+          });
+          setSurfaceModeByTab((prev) => ({ ...prev, [id]: "chat" }));
+        },
+      },
+    ];
+    if (st?.running && agent && slashCommandsFor(agent).some((c) => c.cmd === "/compact")) {
+      list.push({
+        cmd: "/compact",
+        label: "压缩上下文",
+        hint: "把前面的对话压成摘要，腾出上下文",
+        run: () => void tabActionsRef.current.get(tabId)?.sendMessage("/compact"),
+      });
+    }
+    if (link?.file && link.sessionId) {
+      list.push({
+        cmd: "/fork",
+        label: "分叉到新标签",
+        hint: "带着这段对话的摘要另开一个只讨论的标签",
+        run: () => void forkChat(tabId),
+      });
+      list.push({
+        cmd: "/export",
+        label: "导出 Markdown",
+        hint: "存到下载文件夹",
+        run: () => {
+          if (!link.agentId || !link.sessionId || !link.file) return;
+          invoke<string>("export_session_markdown", {
+            agent: link.agentId,
+            sessionId: link.sessionId,
+            filePath: link.file,
+            title: link.title ?? null,
+          })
+            .then((path) => toast(`已导出：${path}`, "success"))
+            .catch((e) => toast(`导出失败：${String(e)}`, "error"));
+        },
+      });
+    }
+    list.push(
+      {
+        cmd: "/diff",
+        label: "查看改动",
+        hint: "在右侧打开这个项目的改动",
+        run: () => {
+          setRightOpen(true);
+          setRightTab("git");
+        },
+      },
+      {
+        cmd: "/terminal",
+        label: "打开终端",
+        hint: "切到这段对话的终端画面",
+        run: () => setSurfaceModeByTab((prev) => ({ ...prev, [tabId]: "terminal" })),
+      },
+    );
+    return list;
+  }
+
+  // 标签条 ⋯「对话操作」：与斜杠面板「Mesa」组同一份（mesaCommandsFor），给不习惯打 / 的人
+  const [convMenu, setConvMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
+
+  // 终端选中文字交给对话（「Mesa内嵌终端优化」会话的右键菜单 / 选区浮条调 onConversationInsert）：
+  // 这个标签在聊天层 → 进聊天输入框（send=true 直接发）；在终端层 → bracketed paste 写进 TUI 输入行，send 时补回车
+  const [chatInsertByTab, setChatInsertByTab] = useState<
+    Record<string, { text: string; send: boolean; token: number }>
+  >({});
+  const conversationInsert = useCallback(
+    (tabId: string, text: string, opts: { send: boolean }) => {
+      const mode = surfaceModeRef.current[tabId] ?? DEFAULT_SURFACE_MODE;
+      if (mode === "chat") {
+        setChatInsertByTab((prev) => ({
+          ...prev,
+          [tabId]: { text, send: opts.send, token: Date.now() },
+        }));
+        return;
+      }
+      const actions = tabActionsRef.current.get(tabId);
+      if (!actions) return;
+      if (opts.send) void actions.sendMessage(text);
+      else actions.writePty(`\x1b[200~${text}\x1b[201~`);
+    },
+    [],
+  );
+
+  // 终端启动栏「思考」「权限」与「这次启动」卡写回标签级选择——与聊天输入框写的是同一份（2026-10-18 终端层同步）
+  const patchTabLaunch = useCallback((tabId: string, patch: TabLaunchPatch) => {
+    setTabs((prev) => prev.map((x) => (x.id === tabId ? { ...x, ...patch } : x)));
+  }, []);
+  // 终端 ⋯ 里的「对话操作」：斜杠面板 Mesa 组去掉终端层用不着的（分叉已有「新建分叉聊天」、「打开终端」），补「切到聊天」
+  const mesaCommandsRef = useRef(mesaCommandsFor);
+  mesaCommandsRef.current = mesaCommandsFor;
+  const getConversationActions = useCallback(
+    (tabId: string): MesaCommand[] => [
+      ...mesaCommandsRef.current(tabId).filter((c) => c.cmd !== "/terminal" && c.cmd !== "/fork"),
+      {
+        cmd: "/chat",
+        label: "切到聊天",
+        hint: "同一段对话换成聊天的样子看",
+        run: () => setSurfaceModeByTab((prev) => ({ ...prev, [tabId]: "chat" })),
+      },
+    ],
+    [],
+  );
+
   function setPeek(tabId: string, open: boolean, userToggle = false) {
     if (open && peekLocked[tabId] && !userToggle) return;
     setPeekByTab((prev) =>
@@ -5295,6 +6657,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   useEffect(() => {
     if ((surfaceModeByTab[focusedId] ?? DEFAULT_SURFACE_MODE) !== "chat") return;
     if (statuses[focusedId]?.attention !== "confirm") return;
+    // 屏上认出了菜单（审批 / 信任 / 切换确认）：聊天层已经有一张按原文给按钮的卡，不必再把终端拉出来
+    if (sessionByTab[focusedId]?.menuPrompt || sessionByTab[focusedId]?.trustPrompt) return;
     if (
       !shouldAutoPeek(
         confirmHandoffEvent(
@@ -5312,7 +6676,13 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     setPeek(focusedId, true);
     // peekLocked / 用户手动收起由 setPeek 守
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statuses[focusedId]?.attention, focusedId, surfaceModeByTab[focusedId]]);
+  }, [
+    statuses[focusedId]?.attention,
+    focusedId,
+    surfaceModeByTab[focusedId],
+    sessionByTab[focusedId]?.menuPrompt,
+    sessionByTab[focusedId]?.trustPrompt,
+  ]);
 
   useEffect(() => {
     const att = statuses[focusedId]?.attention;
@@ -5476,6 +6846,12 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         cur.convCursor === s.convCursor &&
         cur.loadingOlder === s.loadingOlder &&
         cur.confirmDetail === s.confirmDetail &&
+        cur.trustPrompt === s.trustPrompt &&
+        cur.menuPrompt === s.menuPrompt &&
+        cur.liveReply === s.liveReply &&
+        cur.connIssue === s.connIssue &&
+        cur.ptyQuiet === s.ptyQuiet &&
+        cur.launchPick === s.launchPick &&
         cur.skills === s.skills &&
         cur.mcps === s.mcps
       ) {
@@ -5649,10 +7025,17 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         return "当前标签没有运行中的 Agent，请先启动再试";
       }
       try {
-        if (send) tabActionsRef.current.get(tabId)?.noteUserTurn();
+        // 直接发送走聊天层同一条发送链（pty_write_submit：正文按粘贴写入、提交键单独补写）。
+        // 正文与 \r 一次写进去时，Claude Code 把整段连同回车当成粘贴——字留在输入行里没发出去，
+        // 聊天层却已记成「正在回复」一直转（2026-10-18 阅读区简报实测）
+        if (send) {
+          const action = tabActionsRef.current.get(tabId);
+          if (!action) return "当前终端标签尚未准备好";
+          return (await action.sendMessage(data)).error;
+        }
         await invoke("pty_write", {
           ptyId: s.ptyId,
-          data: send ? `${data}\r` : data,
+          data,
         });
         return null;
       } catch (reason) {
@@ -5801,6 +7184,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       /** 「聊想法」只读模式：pty_spawn 透传，支持的 CLI 注入只读/计划模式参数 */
       readonly?: boolean;
       permission?: "discuss" | "write_tree";
+      /** 原生权限档（pendingTerminal.permissionMode 透传；阅读会话用「请求批准」） */
+      permissionMode?: NativePermissionMode | null;
       effort?: string | null;
       forkSource?: { agent: string; sessionId: string };
       /** 复用键（pendingTerminal.reuseKey 透传）：重复入口切标签而不是新开 */
@@ -5827,6 +7212,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         initialPrompt: init?.initialPrompt,
         readonly: init?.readonly,
         permission: init?.permission,
+        permissionMode: init?.permissionMode,
         effort: init?.effort,
         forkSource: init?.forkSource,
         reuseKey: init?.reuseKey,
@@ -5854,7 +7240,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       : target;
   }
 
-  async function forkChat(fromTabId = focusedId) {
+  /** untilText：聊天层「从这里分叉」——简报只取到这条助手回复为止（后端按正文认） */
+  async function forkChat(fromTabId = focusedId, untilText?: string) {
     const source = sessionByTab[fromTabId];
     const status = statuses[fromTabId];
     if (!source?.file || !source.sessionId || !source.agentId || !status) return;
@@ -5869,6 +7256,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           cwd: status.cwd,
           title: source.title,
           targetPath: null,
+          untilText: untilText ?? null,
         },
       );
       await invoke("mark_handoff", {
@@ -6079,7 +7467,18 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           );
         }
       };
-      if (pt.reuseKey) {
+      if (pt.reuseBlank) {
+        // 快速开聊：只切到还没说过话的随手聊标签，不改它输入框里已经换过的选择；说过话的不复用（开新对话）
+        const blank = tabsRef.current.find(
+          (t) =>
+            t.reuseKey?.startsWith(pt.reuseBlank!) &&
+            isBlankChatTab(t, statusesRef.current[t.id]),
+        );
+        if (blank) {
+          tabId = blank.id;
+          setActiveId(blank.id);
+        }
+      } else if (pt.reuseKey) {
         const existing = tabsRef.current.find((t) => t.reuseKey === pt.reuseKey);
         if (existing) adoptExisting(existing);
       }
@@ -6129,6 +7528,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         initialPrompt: pt.resume ? undefined : pt.initialPrompt,
         readonly: pt.readonly ?? pt.permission === "discuss",
         permission: pt.permission ?? (pt.readonly ? "discuss" : "write_tree"),
+        permissionMode: pt.permissionMode ?? null,
+        effort: pt.effort ?? null,
         reuseKey: pt.reuseKey,
         stepName: pt.stepName,
         runId: pt.runId,
@@ -6210,6 +7611,19 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     setFocusTabReq(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, focusTabReq, tabs, setFocusTabReq]);
+
+  // 「新建项目…」从某个标签发起：建好后回到这个标签，目录换成新项目（还没启动才换得了）
+  const tabCwdReq = useAppStore((s) => s.tabCwdReq);
+  const setTabCwdReq = useAppStore((s) => s.setTabCwdReq);
+  useEffect(() => {
+    if (!visible || !tabCwdReq) return;
+    const req = tabCwdReq;
+    setTabCwdReq(null);
+    if (!tabs.some((t) => t.id === req.tabId)) return;
+    activateTab(req.tabId);
+    tabActionsRef.current.get(req.tabId)?.setCwd(req.cwd);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, tabCwdReq, tabs, setTabCwdReq]);
 
   // 资源面板「查看」交来的预览请求：绝对路径（未必在任何文件树根内），
   // root 留空——PDF 走后端白名单校验，不需要预览根
@@ -6361,6 +7775,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   }): Promise<boolean> {
     const launch = await resolveReaderLaunch(r.projectRoot);
     if (!launch.profileId) return false;
+    // 阅读会话按「请求批准」起（本机设成完全访问也收窄）：改笔记以外的文件先问；
+    // Claude Code 另由 pty_spawn 预放行 notes/（reuseKey reader: 识别）。没有这一档的 CLI 按本机设置
+    const det = useAppStore.getState().agents.find((a) => a.id === launch.agentId);
     setPendingTerminal({
       cwd: r.projectRoot,
       extraEnv: {},
@@ -6368,6 +7785,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       agentId: launch.agentId,
       profileId: launch.profileId,
       ...(launch.model ? { model: launch.model } : {}),
+      ...(det?.permissionModes.includes("ask") ? { permissionMode: "ask" as const } : {}),
+      // 右栏看聊天层还是终端画面：按上次在阅读区的选择（缺省聊天层）
+      surface: loadReaderSurface(),
       autoStart: true,
       reuseKey: readerReuseKey(r.projectRoot),
     });
@@ -6398,11 +7818,34 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
 
   /** 阅读区注入（选段「↵ 直接发送」/ 输入框回车）：走与右栏选段同一条 injectToTab 链路，目标换成阅读会话标签 */
   const injectToReader = useCallback(
-    (data: string, send?: boolean): Promise<string | null> =>
-      readerTabId
-        ? injectToTab(readerTabId, data, send)
-        : Promise.resolve("阅读会话还没建好，稍等片刻再试"),
+    (data: string, send?: boolean): Promise<string | null> => {
+      if (!readerTabId) return Promise.resolve("阅读会话还没建好，稍等片刻再试");
+      // 聊天层时「放进输入框、不发送」要进聊天输入框（终端输入行被聊天层盖着，看不见）；
+      // 直接发送两层都走 PTY，出错能报回来（简报失败要重试）
+      if (!send && (surfaceModeRef.current[readerTabId] ?? DEFAULT_SURFACE_MODE) === "chat") {
+        setChatInsertByTab((prev) => ({
+          ...prev,
+          [readerTabId]: { text: data, send: false, token: Date.now() },
+        }));
+        return Promise.resolve(null);
+      }
+      return injectToTab(readerTabId, data, send);
+    },
     [injectToTab, readerTabId],
+  );
+
+  /** 阅读区右栏切聊天层 / 终端画面：只动阅读会话标签（不走 switchSurface——它按焦点标签改、
+      切聊天还会退出分屏），并记下选择给下次进入 */
+  const readerSurface: SurfaceMode = readerTabId
+    ? (surfaceModeByTab[readerTabId] ?? DEFAULT_SURFACE_MODE)
+    : loadReaderSurface();
+  const setReaderSurface = useCallback(
+    (mode: SurfaceMode) => {
+      saveReaderSurface(mode);
+      if (!readerTabId) return;
+      setSurfaceModeByTab((prev) => ({ ...prev, [readerTabId]: mode }));
+    },
+    [readerTabId],
   );
 
   /** 阅读会话标签被手动关掉后的「重新启动」：清一次性标记再派一次 */
@@ -6429,11 +7872,12 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
 
   // 阅读区打开时把阅读会话标签提到活跃（右栏 xterm 就是那个标签的画面；
   // 退出阅读区时该标签随 closeReader 一起关掉，不再「正好落在它上面」）
+  // 按 focusedId 判：分屏时焦点在右 pane 也要拉回来——聊天层发送/打断/审批都发给焦点标签
   useEffect(() => {
-    if (!reader || !readerTabId || activeId === readerTabId) return;
+    if (!reader || !readerTabId || focusedId === readerTabId) return;
     activateTab(readerTabId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reader, readerTabId, activeId]);
+  }, [reader, readerTabId, focusedId]);
 
   // 阅读区打开期间：阅读会话标签的 xterm 宿主节点移进覆盖层右栏槽位，关闭时移回原标签槽位
   // （Monaco 宿主移动同款先例：DOM 搬移不重建，PTY/xterm/scrollback 全程不丢；
@@ -6469,6 +7913,19 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         hostHome = home;
       }
     }
+    // 聊天层宿主跟着搬进同一个槽位（叠在 xterm 之上，显隐与摆位由标签的 surface/peek 决定，
+    // 见 pane 里 data-chat-host 的类名）：右栏可以在聊天层与终端画面之间切换
+    const chat = root?.querySelector<HTMLElement>(
+      `[data-chat-host="${readerTabId}"]`,
+    );
+    let chatHome: HTMLElement | null = null;
+    if (chat && readerTermSlot) {
+      const home = chat.parentElement;
+      if (home && home !== readerTermSlot) {
+        readerTermSlot.appendChild(chat);
+        chatHome = home;
+      }
+    }
     // 状态栏随宿主一起搬（同 DOM 搬移口径）：右栏底部槽位存在才搬，槽位缺席（引导卡等）留在原 pane
     const bar = root?.querySelector<HTMLElement>(
       `[data-statusbar-host="${readerTabId}"]`,
@@ -6487,6 +7944,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       // 搬走的节点不在其中），isConnected 跳过硬挂
       if (host && hostHome?.isConnected)
         hostHome.insertBefore(host, hostHome.firstChild);
+      // 聊天层宿主原是包装层唯一的孩子
+      if (chat && chatHome?.isConnected) chatHome.appendChild(chat);
       if (bar && barHome?.isConnected) barHome.appendChild(bar);
     };
   }, [reader, readerTabId, readerTermSlot, readerStatusSlot]);
@@ -6549,8 +8008,10 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     setEnterCwd(enterCwdReq);
   }, [visible, enterCwdReq, setEnterCwdReq]);
 
-  /** PDF 选段「整理为笔记」（§11.4 P2b）：有精读步骤则写入对应工作区 inbox 并预填终端；
-      无研究流程时写入项目根 notes/inbox.md。 */
+  /** PDF 选段「整理为笔记」（§11.4 P2b）：精读步骤的工作区正在跑就写进它的 notes/excerpts.md
+      并预填终端；没在跑（或没有研究流程）就写项目根 notes/excerpts.md，开工时随接驳带进工作区。
+      2026-10-17 审查修复：不再替人提前建精读工作区（绕开开工弹层、基线可能还没合并检索结果，
+      之后正式开工撞「工作区已存在」），也不再写 notes/inbox.md（那是文献雷达的收件箱）。 */
   const organizePdfExcerpt = useCallback(
     async (
       text: string,
@@ -6576,62 +8037,35 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       const cfg = read.config;
       const date = new Date().toLocaleDateString("sv-SE");
       const chunk = `\n## ${fileName} · 第 ${page} 页 · ${date}\n\n${text}\n`;
-      const target = notesInboxTarget(cfg);
-      if (target.kind === "project-root") {
-        await invoke("append_workspace_inbox", {
+      const target = notesExcerptTarget(cfg);
+      const step =
+        target.kind === "workspace"
+          ? cfg.steps.find((s) => s.workspaceName === target.name)
+          : undefined;
+      const all =
+        target.kind === "workspace"
+          ? await invoke<WorkspaceDto[]>("list_workspaces")
+          : [];
+      const ws = all.find(
+        (w) =>
+          samePath(w.repoPath, owner.path, IS_WINDOWS) &&
+          target.kind === "workspace" &&
+          w.name === target.name &&
+          w.status === "active",
+      );
+      if (!ws || !step) {
+        await invoke("append_notes_excerpt", {
           worktreePath: owner.path,
           content: chunk,
         });
         return {
           ok: true,
-          msg: "已写入项目 notes/inbox.md。可在文件树打开这份笔记继续写。",
+          msg: step
+            ? `已写入项目 notes/excerpts.md。「${step.name}」开工时会带进工作区，AI 精读到这篇时并进笔记。`
+            : "已写入项目 notes/excerpts.md。可在文件树打开这份摘录继续写。",
         };
       }
-      const step =
-        cfg.steps.find((s) => s.workspaceName === target.name) ?? cfg.steps[1];
-      // 已有活跃工作区直接追加；没有则走一键开步链路（同 ProjectGroup.startStep）
-      const all = await invoke<WorkspaceDto[]>("list_workspaces");
-      const samePath = (a: string, b: string) =>
-        a.replace(/[\\/]+$/, "") === b.replace(/[\\/]+$/, "");
-      let ws = all.find(
-        (w) =>
-          samePath(w.repoPath, owner.path) &&
-          w.name === target.name &&
-          w.status === "active",
-      );
-      if (!ws) {
-        await invoke("ensure_git_repo", { path: owner.path });
-        ws = await invoke<WorkspaceDto>("create_workspace", {
-          repoPath: owner.path,
-          name: target.name,
-        });
-        let skillMeta: Record<string, string> | undefined;
-        let providesByName: Record<string, string[]> | undefined;
-        if (step?.skills.length) {
-          try {
-            const lib = await invoke<SkillDto[]>("list_skills");
-            skillMeta = Object.fromEntries(
-              lib.map((skill) => [skill.name, skill.description]),
-            );
-            providesByName = Object.fromEntries(
-              lib.map((skill) => [skill.name, skill.provides ?? []]),
-            );
-          } catch {
-            /* 技能库不可读时只列技能名 */
-          }
-        }
-        if (step) {
-          try {
-            await invoke("write_workspace_task_md", {
-              worktreePath: ws.worktreePath,
-              content: renderTaskMd(step, cfg, owner.path, undefined, skillMeta, providesByName),
-            });
-          } catch {
-            /* 简报仍可在 project.toml 与步骤「编辑简报」中查看 */
-          }
-        }
-      }
-      await invoke("append_workspace_inbox", {
+      await invoke("append_notes_excerpt", {
         worktreePath: ws.worktreePath,
         content: chunk,
       });
@@ -6656,7 +8090,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           "get_project_agent_binding",
           {
             projectRoot: owner.path,
-            slot: stepSlotKey((step ?? cfg.steps[1]).name),
+            slot: stepSlotKey(step.name),
           },
         );
         stepL = taskBindingLaunch(useAppStore.getState().profiles, b);
@@ -6675,7 +8109,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       });
       return {
         ok: true,
-        msg: `已写入工作区「${ws.name}」的 notes/inbox.md，并预填了终端启动（确认配置后点「启动」）`,
+        msg: `已写入工作区「${ws.name}」的 notes/excerpts.md，并预填了终端启动（确认配置后点「启动」）`,
       };
     },
     [preview, focusedId, statuses, setPendingTerminal],
@@ -6798,6 +8232,26 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     void invoke("drop_terminal_replay", { tabId: id }).catch(() => {});
     doCloseTab(id);
   }
+
+  /** 空白随手聊里点「最近的随手聊」一条：接着聊那段（开 / 切到它的标签），这个还没说过话的空白标签随后收掉，
+   *  免得留一排空标签。等新标签切到前台再关（doCloseTab 读当次渲染的 tabs，同拍关会把刚加的标签一起丢掉） */
+  const dropBlankAfterOpenRef = useRef<string | null>(null);
+  function openRecentChat(blankTabId: string, s: SessionMetaDto) {
+    dropBlankAfterOpenRef.current = blankTabId;
+    resumeSessionInTerminal(s, {
+      onSkipped: () => {
+        if (dropBlankAfterOpenRef.current === blankTabId) dropBlankAfterOpenRef.current = null;
+      },
+    });
+  }
+  useEffect(() => {
+    const id = dropBlankAfterOpenRef.current;
+    if (!id || activeId === id) return;
+    dropBlankAfterOpenRef.current = null;
+    const tab = tabs.find((t) => t.id === id);
+    if (tab && isBlankChatTab(tab, statusesRef.current[id])) doCloseTab(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, tabs]);
 
   function doCloseTab(id: string) {
     const idx = tabs.findIndex((t) => t.id === id);
@@ -7296,6 +8750,24 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                     </span>
                   );
                 })()}
+                {active &&
+                  (surfaceModeByTab[t.id] ?? DEFAULT_SURFACE_MODE) === "chat" && (
+                    <button
+                      type="button"
+                      title="对话操作（新对话、压缩、分叉、导出、看改动…；输入框里打 / 也能找到）"
+                      aria-label="对话操作"
+                      aria-haspopup="menu"
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        const r = event.currentTarget.getBoundingClientRect();
+                        setConvMenu({ tabId: t.id, x: r.left, y: r.bottom + 4 });
+                      }}
+                      className="flex size-5 shrink-0 items-center justify-center rounded-full text-sm leading-none text-l4 hover:bg-hover hover:text-l2"
+                    >
+                      ⋯
+                    </button>
+                  )}
                 {active && s?.ptyId && (
                   <button
                     type="button"
@@ -7304,7 +8776,10 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                     onPointerDown={(event) => event.stopPropagation()}
                     onClick={(event) => {
                       event.stopPropagation();
-                      tabActionsRef.current.get(t.id)?.toggleInsert();
+                      const r = event.currentTarget.getBoundingClientRect();
+                      tabActionsRef.current
+                        .get(t.id)
+                        ?.toggleInsert({ left: r.left, bottom: r.bottom });
                     }}
                     className="flex size-5 shrink-0 items-center justify-center rounded-full text-l4 hover:bg-hover hover:text-l2"
                   >
@@ -7343,9 +8818,27 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           })}
             </div>
           </div>
+          {convMenu && (
+            <ContextMenu
+              x={convMenu.x}
+              y={convMenu.y}
+              onClose={() => setConvMenu(null)}
+              items={[
+                { header: "对话操作" },
+                ...mesaCommandsFor(convMenu.tabId).map((c) => ({
+                  label: c.label,
+                  hint: c.cmd,
+                  title: c.hint,
+                  onSelect: c.run,
+                })),
+              ]}
+            />
+          )}
           <button
-            onClick={() => addTab()}
-            title="新建终端标签"
+            // 「+」＝在当前项目里再开一个 Agent：目录跟当前标签走（2026-10-18 用户拍板；原先一律主目录）。
+            // 随手问用侧栏「快速开聊」
+            onClick={() => addTab({ cwd: newTabCwd(statuses[focusedId]?.cwd, IS_WINDOWS) })}
+            title="新建标签：在当前标签的目录里再开一个 Agent"
             className="flex size-8 shrink-0 items-center justify-center rounded-full border border-hairline bg-inset text-sm text-l4 hover:border-field hover:bg-raised hover:text-l2"
           >
             ＋
@@ -7512,6 +9005,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                     : t.permission ?? (t.readonly ? "discuss" : "write_tree")
                 }
                 effortOverride={t.effort ?? undefined}
+                permissionMode={writableForks[t.id] ? null : (t.permissionMode ?? null)}
                 submitCsiU={
                   agents.find(
                     (a) => a.id === (statuses[t.id]?.agentId ?? t.initialAgentId),
@@ -7531,6 +9025,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                 onRestoreComplete={finishRestore}
                 onConsumeResume={clearResumeSession}
                 onForkChat={handleTabForkChat}
+                onConversationInsert={conversationInsert}
+                onPatchLaunch={patchTabLaunch}
+                getConversationActions={getConversationActions}
                 onOpenPath={handleTerminalOpenPath}
                 onProgress={handleTabProgress}
               />
@@ -7610,6 +9107,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                       (surfaceModeByTab[t.id] ?? DEFAULT_SURFACE_MODE) ===
                       "chat";
                     const peek = Boolean(peekByTab[t.id]);
+                    // 阅读区打开时聊天层宿主搬进右栏槽位：在那里要自己定位（pane 里交给包装层）
+                    const inReader = Boolean(reader) && readerTabId === t.id;
                     const agentKey =
                       sessionByTab[t.id]?.agentId ??
                       statuses[t.id]?.agentId ??
@@ -7649,6 +9148,18 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                             : "absolute inset-0 z-20"
                       }
                     >
+                      <div
+                        data-chat-host={t.id}
+                        className={
+                          !inReader
+                            ? "h-full"
+                            : !chatOn
+                              ? "hidden"
+                              : peek
+                                ? "relative order-1 min-h-0 min-w-0 flex-1"
+                                : "absolute inset-0 z-20"
+                        }
+                      >
                       <ChatSurface
                         messages={sessionByTab[t.id]?.conv ?? []}
                         state={sessionByTab[t.id]?.state ?? "idle"}
@@ -7665,18 +9176,51 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         mcps={sessionByTab[t.id]?.mcps ?? []}
                         onSend={sendChatToActive}
                         onAllowWrite={() => void allowWritableFork()}
-                        onOpenTerminal={() => switchSurface("terminal")}
+                        onOpenTerminal={() =>
+                          inReader ? setReaderSurface("terminal") : switchSurface("terminal")
+                        }
                         active={chatOn}
                         agentId={agentKey ?? null}
                         confirmDetail={
                           sessionByTab[t.id]?.confirmDetail ?? null
+                        }
+                        trustPrompt={sessionByTab[t.id]?.trustPrompt ?? null}
+                        ptyQuiet={sessionByTab[t.id]?.ptyQuiet ?? false}
+                        launchPick={sessionByTab[t.id]?.launchPick ?? null}
+                        onRestore={() => tabActionsRef.current.get(t.id)?.restoreHere()}
+                        onPickRecent={(s) => openRecentChat(t.id, s)}
+                        onOpenDirMenu={(x, y) => tabActionsRef.current.get(t.id)?.openDirMenu(x, y)}
+                        onPickLaunch={{
+                          agent: (id) => tabActionsRef.current.get(t.id)?.pickLaunchAgent(id),
+                          profile: (id) => tabActionsRef.current.get(t.id)?.pickLaunchProfile(id),
+                          model: (m) => tabActionsRef.current.get(t.id)?.pickLaunchModel(m),
+                          // 思考档与权限是标签级的本次选择（开工弹层同口径），写回标签、下次启动生效
+                          effort: (lv) =>
+                            setTabs((prev) =>
+                              prev.map((x) => (x.id === t.id ? { ...x, effort: lv || null } : x)),
+                            ),
+                          permission: (perm, mode) =>
+                            setTabs((prev) =>
+                              prev.map((x) =>
+                                x.id === t.id
+                                  ? { ...x, permission: perm, permissionMode: mode ?? null }
+                                  : x,
+                              ),
+                            ),
+                        }}
+                        onAnswerTrust={(accept) =>
+                          tabActionsRef.current.get(t.id)?.answerTrust(accept)
                         }
                         onInterrupt={chatInterrupt}
                         onApprovalKey={chatApprovalKey}
                         peek={peek}
                         onTogglePeek={() => setPeek(t.id, !peek, true)}
                         onRequestPeek={() => setPeek(t.id, true)}
-                        modelSwitch={det?.modelSwitch ?? null}
+                        modelSwitch={runtimeModelSwitch(
+                          det?.modelSwitch ?? null,
+                          agentKey,
+                          profiles.find((p) => p.id === statuses[t.id]?.profileId)?.accountType,
+                        )}
                         hooksEnabled={Boolean(
                           appSettings?.hooksAttention?.[agentKey ?? ""],
                         )}
@@ -7690,7 +9234,52 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         onChooseCwd={() =>
                           tabActionsRef.current.get(t.id)?.chooseCwd()
                         }
+                        runtime={(() => {
+                          const st = statuses[t.id] ?? null;
+                          const runDet = st ? agents.find((a) => a.id === st.agentId) : null;
+                          return {
+                            status: st,
+                            profileModels:
+                              (st && profiles.find((p) => p.id === st.profileId)?.models) ?? [],
+                            effort: runDet?.effort ?? null,
+                            submitCsiU: runDet?.submitCsiU ?? false,
+                            onRelaunch: (patch: { model?: string; effort?: string | null }) =>
+                              tabActionsRef.current.get(t.id)?.relaunchWith(patch),
+                          };
+                        })()}
+                        onTuiCommand={(cmd) =>
+                          tabActionsRef.current.get(t.id)?.runTuiCommand(cmd)
+                        }
+                        menuPrompt={sessionByTab[t.id]?.menuPrompt ?? null}
+                        liveReply={sessionByTab[t.id]?.liveReply ?? null}
+                        mesaCommands={mesaCommandsFor(t.id)}
+                        externalInsert={chatInsertByTab[t.id] ?? null}
+                        onExternalInsertConsumed={() =>
+                          setChatInsertByTab((prev) => {
+                            const next = { ...prev };
+                            delete next[t.id];
+                            return next;
+                          })
+                        }
+                        onRestartPermission={() =>
+                          // 先让上面的 permission 写进标签、下一帧再重开：重开时读的是新 props
+                          window.setTimeout(
+                            () => tabActionsRef.current.get(t.id)?.restartWithPermission(),
+                            0,
+                          )
+                        }
+                        onAnswerMenu={(i) => tabActionsRef.current.get(t.id)?.answerMenu(i)}
+                        onForkFrom={(text) => void forkChat(t.id, text)}
+                        connIssue={sessionByTab[t.id]?.connIssue ?? null}
+                        onSwitchConnection={(id) =>
+                          tabActionsRef.current.get(t.id)?.switchConnection(id)
+                        }
+                        onDismissConnIssue={() =>
+                          tabActionsRef.current.get(t.id)?.dismissConnIssue()
+                        }
+                        onOpenProfiles={() => setPage("profiles")}
                       />
+                      </div>
                     </div>
                   </div>
                       );
@@ -7723,6 +9312,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                       ? agents.find((a) => a.id === st.agentId)
                       : null;
                     const focused = t.id === focusedId;
+                    // 阅读会话的状态栏搬进了阅读区右栏：读文献时用不上提交推送，git 胶囊不出
+                    const gitOk = focused && !(reader && readerTabId === t.id);
                     // 聊天原生变体：聊天层且 peek 未开（peek 里嵌的是终端画面，仍用终端同底语言）
                     const chatBar =
                       (surfaceModeByTab[t.id] ?? DEFAULT_SURFACE_MODE) ===
@@ -7736,10 +9327,14 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         profileName={prof?.name ?? null}
                         profileModels={prof?.models ?? []}
                         launchModel={st?.launchModel ?? null}
-                        modelSwitch={det?.modelSwitch ?? null}
+                        modelSwitch={runtimeModelSwitch(
+                          det?.modelSwitch ?? null,
+                          st?.agentId,
+                          prof?.accountType,
+                        )}
                         effort={det?.effort ?? null}
-                        git={focused ? gitTotals : null}
-                        mergeReady={focused ? mergeReadyWs : []}
+                        git={gitOk ? gitTotals : null}
+                        mergeReady={gitOk ? mergeReadyWs : []}
                         gitCwd={gitPanelCwd}
                         submitCsiU={det?.submitCsiU ?? false}
                         onOpenGit={() => {
@@ -7754,6 +9349,11 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         onTermLog={(line) =>
                           tabActionsRef.current.get(t.id)?.logLine(line)
                         }
+                        onTuiCommand={(cmd) =>
+                          tabActionsRef.current.get(t.id)?.runTuiCommand(cmd)
+                        }
+                        contextUsed={lastContextTokens(sessionByTab[t.id]?.conv ?? [])}
+                        onRelaunch={(patch) => tabActionsRef.current.get(t.id)?.relaunchWith(patch)}
                         colors={statusBarColors}
                       />
                     );
@@ -8033,6 +9633,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           onClose={closeReader}
           termSlot={bindReaderTermSlot}
           statusBarSlot={bindReaderStatusSlot}
+          agentSurface={readerSurface}
+          agentPeek={Boolean(readerTabId && peekByTab[readerTabId])}
+          onAgentSurface={setReaderSurface}
         />
       )}
     </div>

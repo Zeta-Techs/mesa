@@ -301,3 +301,21 @@ test("启动注入等回复时，TUI 开屏算出字也不能熄灭转圈", () =
     { attention: "working", armed: true, clearHadOutput: false },
   );
 });
+
+test("settled（Claude 回合收尾标记）不看 PTY 是否还在出字，立即收尾", () => {
+  // 状态行 / 计时重绘让 PTY 一直出字时，「正在回复」曾永远不灭（2026-10-17 用户截图）
+  assert.deepEqual(
+    applyTailAttention({ prev: "working", tail: "settled", armed: true, ptyLive: true }),
+    { attention: "done", armed: false },
+  );
+  // 同一情形若只是普通 done，仍按原口径等 PTY 静下来（Codex 中途的助手正文不算收尾）
+  assert.equal(
+    applyTailAttention({ prev: "working", tail: "done", armed: true, ptyLive: true }).attention,
+    "working",
+  );
+  // 还在等这一轮回复时不收（收尾标记可能是上一轮的）
+  assert.equal(
+    applyTailAttention({ prev: "working", tail: "settled", armed: true, ptyLive: true, pendingReply: true }).attention,
+    "working",
+  );
+});

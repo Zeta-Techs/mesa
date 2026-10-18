@@ -71,12 +71,34 @@ export const CLAUDE_SHIFT_ENTER = "\x1b\r";
 /** Cursor 的输入解析接受 CSI-u 13;2u（chunk 9969.index.js 实证），且从不查询/推送 kitty 协议。 */
 export const CURSOR_CSI_U_SHIFT_ENTER = "\x1b[13;2u";
 
-/** Shift+Enter 要改写成非 `\r` 的序列时返回载荷；不需要改写返回 null（让 xterm 原样穿透）。 */
+/** Shift+Enter 要改写成非 `\r` 的序列时返回载荷；不需要改写返回 null（让 xterm 原样穿透）。
+ *  Grok Build / CodeBuddy 在 Mesa 里不推 kitty 键盘协议，Shift+Enter 原先发 `\r` 直接把半截话发出去；
+ *  两家都认 ESC+CR 为换行（Grok 底栏写「Opt+Enter:newline」，CodeBuddy 是 Claude Code 的 fork）——
+ *  2026-10-17 按 Mesa 应答口径 PTY 实测。kitty 推上来的家（Claude/Codex/Qwen/OpenCode/Kimi）走协议编码，到不了这里。 */
 export function ptyShiftEnterRewrite(agentId: string): string | null {
   if (agentId === "codex") return CODEX_CSI_U_SHIFT_ENTER;
   if (agentId === "cursor") return CURSOR_CSI_U_SHIFT_ENTER;
-  if (agentId === "claude-code") return CLAUDE_SHIFT_ENTER;
+  if (agentId === "claude-code" || agentId === "grok" || agentId === "codebuddy") {
+    return CLAUDE_SHIFT_ENTER;
+  }
   return null;
+}
+
+/** macOS 上 iTerm2「自然文本编辑」那三个键：⌘← 行首、⌘→ 行尾、⌘⌫ 删到行首。
+ *  xterm.js 对 ⌘+方向键什么都不发、⌘⌫ 只发一个 DEL；kitty 协议推上来时编成 super 修饰，只有 Claude / OpenCode 认。
+ *  改写成九家输入框和 shell 都认的 Ctrl+A / Ctrl+E / Ctrl+U——2026-10-17 按 Mesa 应答口径 PTY 实测
+ *  Claude、Codex、Qwen、OpenCode、Kimi、Grok、CodeBuddy 七家全部生效；kitty 已推上来时用它的 CSI-u 写法。
+ *  返回 null = 不是这三个键，交给后面的路径。 */
+export function macLineEditKey(
+  e: { key: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean },
+  kittyArmed: boolean,
+): string | null {
+  if (!e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return null;
+  const letter =
+    e.key === "ArrowLeft" ? "a" : e.key === "ArrowRight" ? "e" : e.key === "Backspace" ? "u" : null;
+  if (!letter) return null;
+  const code = letter.charCodeAt(0);
+  return kittyArmed ? `\x1b[${code};5u` : String.fromCharCode(code - 96);
 }
 
 /** Shift+标点丢字的补发决议。xterm 在 keyCode 229 时不自己发字符，等 textarea。

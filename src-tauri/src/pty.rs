@@ -347,6 +347,8 @@ pub struct SpawnResult {
     /// 交回这条 Run 上已经在跑的 PTY，没有新开进程。
     /// 前端据此不收启动栏、不改行列。
     pub adopted: bool,
+    /// 要恢复的会话从没落盘（上次启动没聊就退出），改开了新会话；前端据此提示一句
+    pub resume_unwritten: bool,
 }
 
 /// 支持 --session-id <uuid> 的 agent（AgentSpec.fixed_session_id；matrix：claude-code、qwen、codebuddy），
@@ -550,6 +552,8 @@ pub fn pty_spawn(
     // 开工弹层的本次思考档覆盖（2026-09-15）：非空时盖过绑定逐模型策略，
     // 只影响本次进程、不写回绑定；后续 launch_plan 照常按 policy 注入
     effort_override: Option<String>,
+    // 可写时的本机原生权限档（ask 请求批准 / auto 帮我批准 / full 完全访问）；None = 按 CLI 本机设置
+    permission_mode: Option<String>,
     // 已由任务入口创建的 Run 所属 Task。
     task_id: Option<String>,
     // 当前 xterm 格子。恢复会话按这个宽度重放；缺省保持 24×80。
@@ -602,13 +606,40 @@ pub fn pty_spawn(
             ));
         }
     }
+    // 预分配 id 的会话在第一条消息前不落盘：上次启动即退出 / 启动即崩时，Run 记着 id、盘上没有
+    // 这段对话，按 id 恢复只会报「No conversation found」退出 1。没有可接的对话就在原目录开新会话，
+    // Run 的会话换成新 id（恢复入口一律经这里，工作台「继续工作」、收件箱、运行页同一条路）
+    let mut resume_session_id = resume_session_id;
+    let mut unwritten_session: Option<String> = None;
+    if let Some(sid) = resume_session_id.clone() {
+        if crate::sessions::fixed_id_session_exists(&agent_id, &sid, &plan.env) == Some(false) {
+            resume_session_id = None;
+            unwritten_session = Some(sid);
+        }
+    }
     // 恢复模式：hint = 被恢复的会话；普通模式：claude/qwen 生成新 id 固定文件名
     let session_hint = match &resume_session_id {
         Some(sid) => Some(sid.clone()),
         None => session_id_for(&agent_id),
     };
+    if let (Some(old), Some(rid), Some(new)) = (
+        unwritten_session.as_deref(),
+        run_id.as_deref(),
+        session_hint.as_deref(),
+    ) {
+        crate::runs::replace_unwritten_session(rid, old, new, |sid| {
+            crate::sessions::fixed_id_session_exists(&agent_id, sid, &plan.env) == Some(false)
+        })?;
+    }
     // 每-agent 启动前文件准备（codex：写模型 catalog，让 /model 选择器列出全部模型）
     let extra_args = agents::prepare_launch(&profile)?;
+    // 可写时的原生权限档（聊天权限徽标，2026-10-17）：ask / auto / full 只加在本次命令行上；
+    // 缺省 = 按这家 CLI 本机设置。Run 的权限政策仍只有 discuss / write_tree 两种，不受影响
+    let native_mode = match permission_mode.as_deref().map(str::trim) {
+        None | Some("") => None,
+        Some(mode @ ("ask" | "auto" | "full")) => Some(mode),
+        Some(other) => return Err(format!("不支持的权限档: {other}")),
+    };
     let discuss = match permission.as_deref() {
         Some("discuss") => true,
         Some("write_tree") => false,
@@ -622,9 +653,23 @@ pub fn pty_spawn(
         agents::readonly_launch_args(&agent_id, &plan.args).ok_or(
             "此 Agent 不支持只讨论启动约束，请换支持只读/计划模式的 Agent 或明确选择可写权限",
         )?
+    } else if let Some(mode) = native_mode {
+        agents::permission_launch_args(&agent_id, &plan.args, mode)
+            .ok_or("这家 Agent 没有所选的权限档，请换一档或改回「按本机设置」")?
     } else {
         plan.args.clone()
     };
+    // 沉浸阅读会话（reuse_key = reader:<项目根>）按「请求批准」启动时，Claude Code 预放行
+    // 改项目 notes/ 下的文件：读文献时让它写笔记不必一次次批准，改别处照常先问（2026-10-18）
+    let mut plan_args = plan_args;
+    if agent_id == "claude-code"
+        && !discuss
+        && native_mode == Some("ask")
+        && reuse_key.as_deref().is_some_and(|k| k.starts_with("reader:"))
+    {
+        plan_args.push("--allowedTools".into());
+        plan_args.push("Edit(./notes/**)".into());
+    }
 
     let mut command_args = Vec::new();
     if let Some(sid) = &resume_session_id {
@@ -704,6 +749,7 @@ pub fn pty_spawn(
                 model,
                 run_id: opened_id,
                 adopted: true,
+                resume_unwritten: unwritten_session.is_some(),
             });
         }
         crate::runs::claim_interactive_start(id, false)?;
@@ -769,6 +815,7 @@ pub fn pty_spawn(
         model,
         run_id: opened_id,
         adopted: false,
+        resume_unwritten: unwritten_session.is_some(),
     })
 }
 
@@ -923,6 +970,7 @@ pub fn pty_spawn_custom(
         model: None,
         run_id: Some(run_id),
         adopted: false,
+        resume_unwritten: false,
     })
 }
 

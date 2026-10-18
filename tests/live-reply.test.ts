@@ -1,0 +1,234 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { extractLiveReply, liveReplySupported, mergeLiveReply, unsyncedTail } from "../src/live-reply.ts";
+
+const RULE = "─".repeat(100);
+// Claude Code 2.1.292 本机 PTY 实录（流式写到一半；假 API 慢速吐字）
+const STREAMING = [
+  " ▐▛███▛█   Claude Code v2.1.292",
+  "▝▜██████▀  glm-test · API Usage Billing",
+  "",
+  "❯ 请读文件 a.txt",
+  "",
+  "⏺ 我先读一下文件。",
+  "",
+  "  Read 1 file",
+  "",
+  "⏺ 好的，我先看一下结构。",
+  "",
+  "  结论",
+  "",
+  "  - 第一点：配置读取在 settings.rs，这里负责合并默认值。",
+  "  -",
+  "",
+  "",
+  RULE,
+  "❯",
+  RULE,
+  "  ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt · ← for agents",
+];
+
+test("读出这一轮正在写的回复：去掉工具摘要、转圈行、输入框", () => {
+  assert.deepEqual(extractLiveReply(STREAMING, "claude-code")?.lines, [
+    "我先读一下文件。",
+    "",
+    "好的，我先看一下结构。",
+    "",
+    "结论",
+    "",
+    "- 第一点：配置读取在 settings.rs，这里负责合并默认值。",
+    "-",
+  ]);
+  const withSpinner = [
+    "❯ hello",
+    "⏺ 我先读一下文件。",
+    "  Read 1 file",
+    "⏺",
+    "✻ Twisting… (0s · ↓ 18 tokens)",
+    "                                                  ● high · /effort",
+    RULE,
+    "❯",
+    RULE,
+  ];
+  assert.deepEqual(extractLiveReply(withSpinner, "claude-code")?.lines, ["我先读一下文件。"]);
+});
+
+test("别家、确认菜单挂着、还没有回复时不预览", () => {
+  assert.equal(extractLiveReply(STREAMING, "codex"), null);
+  assert.equal(extractLiveReply(["❯ hello", "▔".repeat(80), "   Switch model?", "   ❯ 1. Yes"], "claude-code"), null);
+  assert.equal(extractLiveReply(["❯ hello", "", RULE, "❯", RULE], "claude-code"), null);
+  // 启动信任菜单（Claude 2.1.292 实录）：没有输入框，整屏都不是回复
+  assert.equal(
+    extractLiveReply(
+      [
+        " Accessing workspace:",
+        " /Users/tongzhouhong",
+        " Quick safety check: Is this a project you created or one you trust?",
+        " ❯ No, exit",
+        "   Yes, I trust this folder",
+        " Enter to confirm · Esc to cancel",
+      ],
+      "claude-code",
+    ),
+    null,
+  );
+});
+
+test("会话文件追上的行让位，只留聊天层还没有的部分", () => {
+  const live = extractLiveReply(STREAMING, "claude-code")!.lines;
+  // 会话文件里已经有第一段（Markdown 原文带 ## 和反引号也对得上）
+  assert.deepEqual(unsyncedTail(live, "我先读一下文件。"), live.slice(2));
+  assert.deepEqual(
+    unsyncedTail(live, "我先读一下文件。好的，我先看一下结构。\n\n## 结论\n\n- 第一点：配置读取在 `settings.rs`，这里负责合并默认值。\n-"),
+    [],
+  );
+});
+
+test("长回复开头滚出屏后，屏上这一截接到上一次后面，不丢前半段", () => {
+  // Claude Code 2.1.292 实录：回复长过一屏时，回显和「⏺」都滚出去了，屏上只有续行
+  const para = (n: number) => `  第${n}段：这是一段用来撑满屏幕的长回复。`;
+  const screen = (from: number, to: number) => {
+    const rows: string[] = [""];
+    for (let n = from; n <= to; n++) rows.push(para(n), "");
+    return [...rows, "", RULE, "❯", RULE, "  ⏵⏵ auto mode on · esc to interrupt"];
+  };
+  const first = extractLiveReply(
+    ["❯ 请给我一个长回复", "", "⏺ 第1段：这是一段用来撑满屏幕的长回复。", "", para(2), "", RULE, "❯", RULE],
+    "claude-code",
+  )!;
+  assert.equal(first.anchored, true);
+  const later = extractLiveReply(screen(2, 5), "claude-code")!;
+  assert.equal(later.anchored, false);
+  assert.equal(later.lines[0], "第2段：这是一段用来撑满屏幕的长回复。");
+  const merged = mergeLiveReply(first.lines, later)!;
+  assert.deepEqual(merged.filter((l) => l.trim()).map((l) => l.slice(0, 3)), ["第1段", "第2段", "第3段", "第4段", "第5段"]);
+  // 再往后滚：继续接
+  const more = mergeLiveReply(merged, extractLiveReply(screen(4, 8), "claude-code")!)!;
+  assert.equal(more.filter((l) => l.trim()).length, 8);
+  // 看得见开头时以整段为准
+  assert.deepEqual(mergeLiveReply(more, first), first.lines);
+  // 这一轮还没见过开头：续行不知道属于谁，不预览
+  assert.equal(mergeLiveReply(null, later), null);
+});
+
+// 2026-10-18 聊天层第三期：假 API 慢慢流出 10 行，PTY 抓屏（scripts/e2e-model-routing/chat-capture.py）。
+// 各家都是流到一半（第二个要点刚出来）的那一帧，边框截短
+const HALF = ["第一段：这是一段慢慢流出来的回复。", "", "• 要点一：终端先画出来", "• 要点二：会话文件后落盘"];
+const HALF_DASH = HALF.map((l) => l.replace(/^• /, "- "));
+const BOX = (inner: string) => [`  ╭${"─".repeat(30)}╮`, `  │ ${inner.padEnd(29)}│`, `  ╰${"─".repeat(30)}╯`];
+
+test("Codex 0.163：› 回显 / • 正文 / 没有边框的输入行", () => {
+  const screen = [
+    "› 讲一段",
+    "",
+    "• 第一段：这是一段慢慢流出来的回复。",
+    "",
+    "  • 要点一：终端先画出来",
+    "  • 要点二：会话文件后落盘",
+    "",
+    "• Working (2s • esc to interrupt)",
+    "",
+    "› Ask Codex to do anything",
+    "",
+    "  e2e-picked high · /tmp/work",
+    "  ? for shortcuts",
+  ];
+  assert.deepEqual(extractLiveReply(screen, "codex")?.lines, HALF);
+  // 工具调用和它的输出不进预览
+  const withTool = ["› 看看", "• Ran ls -la", "  └ total 8", "    a.txt", "• 目录里只有 a.txt。", "› Ask Codex to do anything"];
+  assert.deepEqual(extractLiveReply(withTool, "codex")?.lines, ["目录里只有 a.txt。"]);
+});
+
+test("Qwen Code 0.25：  > 回显 / ◆ 正文 / 横线框住的输入框", () => {
+  const screen = [
+    "  > 讲一段",
+    "",
+    "  ◆ 第一段：这是一段慢慢流出来的回复。",
+    "",
+    "     - 要点一：终端先画出来",
+    "     - 要点二：会话文件后落盘",
+    "",
+    "  ⠏ Blowing on the cartridge... (2s · ↓ 11 tokens · esc to cancel)",
+    "─".repeat(60),
+    ">   Type your message or @path/to/file",
+    "─".repeat(60),
+    "  ➜ work · e2e-picked xhigh",
+  ];
+  assert.deepEqual(extractLiveReply(screen, "qwen")?.lines, HALF_DASH);
+  // 「  ? Shell …」这类工具行不进预览
+  const withTool = ["  > 跑一下", "  ? Shell echo mesa > a.txt (写文件) ←", "     echo mesa > a.txt", "─".repeat(60), ">   Type", "─".repeat(60)];
+  assert.equal(extractLiveReply(withTool, "qwen"), null);
+});
+
+test("Gemini CLI 0.64：回显与输入框都在 ▄▄ / ▀▀ 半格框里，最后一个才是输入框", () => {
+  const screen = [
+    "▄".repeat(60),
+    " > 讲一段",
+    "▀".repeat(60),
+    "✦ 第一段：这是一段慢慢流出来的回复。",
+    "",
+    "   - 要点一：终端先画出来",
+    "   - 要点二：会话文件后落盘",
+    "",
+    "  Thinking... (esc to cancel, 2s)                     ? for shortcuts",
+    "─".repeat(60),
+    " Shift+Tab to accept edits                            4 MCP servers",
+    "▄".repeat(60),
+    " >   Type your message or @path/to/file",
+    "▀".repeat(60),
+  ];
+  assert.deepEqual(extractLiveReply(screen, "gemini")?.lines, HALF_DASH);
+});
+
+test("Grok Build 1.0：正文没有行首符号，右侧时间与滚动条去掉", () => {
+  const screen = [
+    "     ❯ 讲一段                                              1:13 AM",
+    "",
+    "     第一段：这是一段慢慢流出来的回复。                     1:13 AM  █",
+    "",
+    "     • 要点一：终端先画出来",
+    "     • 要点二：会话文件后落盘",
+    "",
+    "    ⠙ Responding… 2.0s                          2.1s ⇣1.44k [stop]",
+    "",
+    ...BOX("❯"),
+    "  Shift+Tab:mode  │  Ctrl+c:cancel",
+  ];
+  assert.deepEqual(extractLiveReply(screen, "grok")?.lines, HALF);
+});
+
+test("Kimi Code 2.2：❯ 回显 / ● 正文 / 方框输入框；工具调用整块跳过", () => {
+  const screen = [
+    " ❯ 讲一段",
+    "",
+    " ● 第一段：这是一段慢慢流出来的回复。",
+    "",
+    "   • 要点一：终端先画出来",
+    "   • 要点二：会话文件后落盘",
+    "",
+    "  ⠼ Working… · Tip: ! to run a shell command",
+    ...BOX(">"),
+    " E2E · e2e-picked thinking  …/work",
+  ];
+  assert.deepEqual(extractLiveReply(screen, "kimi")?.lines, HALF);
+  const withTool = [
+    " ❯ 跑一下",
+    " ● Running a command · $ echo mesa > a.txt",
+    "   Press Ctrl+B to run in background",
+    " ● 好了。",
+    ...BOX(">"),
+  ];
+  assert.deepEqual(extractLiveReply(withTool, "kimi")?.lines, ["好了。"]);
+});
+
+test("CodeBuddy 2.168 生成中屏上只有转圈、OpenCode 是分栏整屏重绘：不预览", () => {
+  assert.equal(liveReplySupported("codebuddy"), false);
+  assert.equal(liveReplySupported("opencode"), false);
+  assert.equal(
+    extractLiveReply(["> 讲一段", "", "✸ Waking… (2s · streaming · ↓ 14 tokens)", "─".repeat(60), ">", "─".repeat(60)], "codebuddy"),
+    null,
+  );
+  for (const agent of ["claude-code", "codex", "qwen", "gemini", "grok", "kimi"]) {
+    assert.equal(liveReplySupported(agent), true, agent);
+  }
+});

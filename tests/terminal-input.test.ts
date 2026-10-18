@@ -13,6 +13,7 @@ import {
   KIMI_CSI_U_ENTER,
   KIMI_CSI_U_CTRL_V,
   ptyShiftEnterRewrite,
+  macLineEditKey,
   armPrintableEcho,
   printableKeyFallback,
   takePrintableEcho,
@@ -103,8 +104,26 @@ test("Shift+Enter 换行改写：codex/cursor 走 CSI-u，claude 走 ESC+CR，�
   assert.equal(ptyShiftEnterRewrite("cursor"), "\x1b[13;2u");
   // claude 官方 terminal-setup 给别家终端装的正是 ESC+CR；xterm 默认发 \r 会直接提交
   assert.equal(ptyShiftEnterRewrite("claude-code"), "\x1b\r");
+  // Grok / CodeBuddy 不推 kitty，原先发 \r 把半截话发出去（2026-10-17 PTY 实测两家都认 ESC+CR）
+  assert.equal(ptyShiftEnterRewrite("grok"), "\x1b\r");
+  assert.equal(ptyShiftEnterRewrite("codebuddy"), "\x1b\r");
   assert.equal(ptyShiftEnterRewrite("kimi"), null);
   assert.equal(ptyShiftEnterRewrite("gemini"), null);
+});
+
+test("⌘← / ⌘→ / ⌘⌫ 照 iTerm 自然文本编辑改写成 Ctrl+A / E / U，kitty 推上来时用 CSI-u", () => {
+  const k = (key: string, mods: Partial<Record<"metaKey" | "ctrlKey" | "altKey" | "shiftKey", boolean>> = {}) => ({
+    key, metaKey: true, ctrlKey: false, altKey: false, shiftKey: false, ...mods,
+  });
+  assert.equal(macLineEditKey(k("ArrowLeft"), false), "\x01");
+  assert.equal(macLineEditKey(k("ArrowRight"), false), "\x05");
+  assert.equal(macLineEditKey(k("Backspace"), false), "\x15");
+  assert.equal(macLineEditKey(k("ArrowLeft"), true), "\x1b[97;5u");
+  assert.equal(macLineEditKey(k("Backspace"), true), "\x1b[117;5u");
+  // ⌘⇧← 是选区、⌥← 是按词跳：不归这里
+  assert.equal(macLineEditKey(k("ArrowLeft", { shiftKey: true }), false), null);
+  assert.equal(macLineEditKey(k("ArrowLeft", { metaKey: false, altKey: true }), false), null);
+  assert.equal(macLineEditKey(k("a"), false), null);
 });
 
 test("printableKeyFallback：keyCode 0 与 229 都当场补发", () => {

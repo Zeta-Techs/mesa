@@ -62,6 +62,9 @@ const TABLE: Record<string, SlashCommand[]> = {
   grok: [HELP],
 };
 
+// Claude Code 的 agent id 是 claude-code：表里原只登记了 claude，Claude Code 用户的斜杠面板只剩 /help（2026-10-17 发现）
+TABLE["claude-code"] = TABLE.claude!;
+
 /** 该 agent 的斜杠命令清单；未收录的 agent 只给 /help 兜底 */
 export function slashCommandsFor(
   agentId: string | null | undefined,

@@ -6,6 +6,7 @@ import {
   looksLikeModelId,
   modelOnProfileSwitch,
   officialModelAllowed,
+  runtimeModelSwitch,
 } from "../src/model-switch.ts";
 import { AGENTS } from "../src/types.ts";
 
@@ -95,4 +96,11 @@ test("官方账号不接受中转 DeepSeek 等模型名", () => {
   assert.equal(officialModelAllowed("kimi", "kimi-code/k3"), true);
   assert.equal(officialModelAllowed("kimi", "kimi-k3"), true);
   assert.equal(officialModelAllowed("kimi", "deepseek-chat"), false);
+});
+
+test("Kimi 用接口连接启动时运行中不能用命令切模型（只认配置文件里的别名），官方账号照常", () => {
+  const ms = { kind: "direct" as const, command: "/model {model}" };
+  assert.equal(runtimeModelSwitch(ms, "kimi", "api"), null);
+  assert.equal(runtimeModelSwitch(ms, "kimi", "official"), ms);
+  assert.equal(runtimeModelSwitch(ms, "claude-code", "api"), ms);
 });

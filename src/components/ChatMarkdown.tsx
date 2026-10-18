@@ -46,19 +46,27 @@ export default function ChatMarkdown({
   const sections = useMemo(() => splitReplySections(text), [text]);
   const files = useMemo(() => mentionedProjectFiles(text), [text]);
   const setDiffFocusReq = useAppStore((s) => s.setDiffFocusReq);
-  const [openSections, setOpenSections] = useState<Set<number>>(() => new Set([0]));
+  // 默认全部展开、点小节标题收起：原先只开第一节，长回答大半被藏在一串标题后面，
+  // 读起来像内容丢了（2026-10-17 用户截图）
+  const [closedSections, setClosedSections] = useState<Set<number>>(() => new Set());
   if (sections && sections.length > 1) {
     return (
       <div>
         {sections.map((section, index) => {
-          const open = openSections.has(index);
+          const open = !closedSections.has(index);
+          // 第一个小标题之前的引子没有标题（chat-reply 记作「正文」）：照常排版，不配折叠钮
+          if (section.title === "正文") {
+            return <MarkdownBody key={`lead-${index}`} text={section.body} cwd={cwd} />;
+          }
           return (
-            <div key={`${section.title}-${index}`} className="my-1">
+            <div key={`${section.title}-${index}`} className="mt-3 first:mt-0">
               <button
                 type="button"
-                className="flex items-center gap-1 rounded-sm px-1 text-xs text-l2 hover:bg-hover hover:text-l1"
+                aria-expanded={open}
+                title={open ? "收起这一节" : "展开这一节"}
+                className="-ml-1 flex items-center gap-1 rounded-sm px-1 text-sm font-medium text-l1 hover:bg-hover"
                 onClick={() =>
-                  setOpenSections((prev) => {
+                  setClosedSections((prev) => {
                     const next = new Set(prev);
                     if (next.has(index)) next.delete(index);
                     else next.add(index);

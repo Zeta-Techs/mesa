@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { FolderOpen } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { AGENTS } from "../types";
-import { KIMI_CSI_U_ENTER } from "../terminal-input";
 import { isTerminalIdle } from "../terminal-welcome";
-import type { ComboSurfaceDto, DetectResult, GitCommitResultDto, SessionUsageDto } from "../types";
+import { useRuntimeModelEffort } from "../runtime-model-effort";
+import ContextRing from "./ContextRing";
+import type { DetectResult, GitCommitResultDto, SessionUsageDto } from "../types";
 import type { GitSummary } from "./GitPanel";
 import type { TabStatus } from "../pages/TerminalPage";
 
@@ -39,6 +40,9 @@ export function fmtTokens(n: number): string {
   return String(n);
 }
 
+/** 状态栏窄于这个宽度按窄栏排（阅读区右栏默认约 450px，终端页单栏远宽于此） */
+const STATUS_BAR_NARROW_PX = 560;
+
 function fmtDuration(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
   const h = Math.floor(s / 3600);
@@ -70,6 +74,9 @@ export default function TerminalStatusBar({
   onTermLog,
   colors,
   variant = "terminal",
+  onTuiCommand,
+  contextUsed = null,
+  onRelaunch,
 }: {
   /** null = 终端尚未上报（刚挂载）：显示 cwd + 未启动占位 */
   status: TabStatus | null;
@@ -98,6 +105,12 @@ export default function TerminalStatusBar({
   colors: StatusBarColors;
   /** terminal（默认）= 与 xterm 画布同底无缝卡；chat = 聊天页原生变体（画布同色 + 居中列 + 灰调胶囊） */
   variant?: "terminal" | "chat";
+  /** 写一条 TUI 命令（标签动作 runTuiCommand：写完盯屏，CLI 弹确认菜单时聊天层给按钮）；缺省直写 PTY */
+  onTuiCommand?: (cmd: string) => void;
+  /** 上一轮请求喂进去的 token（输入 + 缓存）：终端变体右区画上下文用量圆环（聊天变体在输入框里画，这里不重复） */
+  contextUsed?: number | null;
+  /** 停下 Agent、带新模型 / 思考档接回原对话（会写回 CLI 全局配置的切换走这条，switch-strategy.ts） */
+  onRelaunch?: (patch: { model?: string; effort?: string | null }) => void;
 }) {
   const agentLabel = status
     ? (AGENTS.find((a) => a.id === status.agentId)?.label ?? status.agentId)
@@ -109,18 +122,34 @@ export default function TerminalStatusBar({
   // 浮层底：终端变体沿用 xterm 底色（与画面同源）；chat 变体走主题 raised 令牌（与聊天浮层同语言）
   const floatBg = chat ? "var(--color-raised)" : colors.background;
 
-  // 模型显示名：用户经状态栏切换后的内存态覆盖（CLI 内部状态 Mesa 不回读）
-  const [modelOverride, setModelOverride] = useState<string | null>(null);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
-  const tabKey = status
-    ? `${status.agentId}:${status.profileId}:${status.cwd}`
-    : "";
-  const lastTabKey = useRef(tabKey);
-  if (lastTabKey.current !== tabKey) {
-    lastTabKey.current = tabKey;
-    setModelOverride(null);
+  const rt = useRuntimeModelEffort({
+    status,
+    profileId,
+    launchModel,
+    modelSwitch,
+    effort,
+    submitCsiU,
+    send: onTuiCommand,
+    relaunch: onRelaunch,
+  });
+  const {
+    shownModel,
+    writeCmd,
+    combo,
+    effortLive,
+    levels,
+    knownEffort,
+    effortSeenDefault,
+    effortIdx,
+    setDraftIdx,
+    effortLabel,
+    commitEffort,
+  } = rt;
+  function pickModel(m: string) {
+    setModelMenuOpen(false);
+    rt.pickModel(m);
   }
-  const shownModel = modelOverride ?? status?.model ?? "";
 
   // 运行时长：运行中每秒走时，退出后定格
   const [now, setNow] = useState(() => Date.now());
@@ -162,77 +191,6 @@ export default function TerminalStatusBar({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, usageAgent, attention]);
 
-  function writeCmd(cmd: string) {
-    if (status?.ptyId) {
-      // Enter 形式按各家 TUI 键盘协议分派：kimi 开了 kitty 协议只认 CSI-u（\x1b[13u），
-      // 其余认 \r（与 injectToActiveAgent 的「send 补 \r」同口径）
-      const enter = submitCsiU ? KIMI_CSI_U_ENTER : "\r";
-      invoke("pty_write", { ptyId: status.ptyId, data: `${cmd}${enter}` }).catch(
-        () => {},
-      );
-    }
-  }
-
-  function pickModel(m: string) {
-    setModelMenuOpen(false);
-    if (!modelSwitch || modelSwitch.kind !== "direct") return;
-    // kimi 的 /model 参数是 config.toml 的 [models.*] 别名（非法字符清洗为 _，
-    // 与 global_config.rs 的 kimi_model_alias 同规则）；别家直接吃模型 id
-    const arg =
-      status?.agentId === "kimi" ? m.replace(/[^A-Za-z0-9_-]/g, "_") : m;
-    writeCmd(modelSwitch.command.replace("{model}", arg));
-    setModelOverride(m);
-  }
-
-  const [combo, setCombo] = useState<ComboSurfaceDto | null>(null);
-  const [comboReady, setComboReady] = useState(false);
-  useEffect(() => {
-    if (!profileId || !launchModel) {
-      setCombo(null);
-      setComboReady(true);
-      return;
-    }
-    let cancelled = false;
-    setComboReady(false);
-    invoke<ComboSurfaceDto>("combo_surface", {
-      profileId,
-      model: launchModel,
-    })
-      .then((c) => {
-        if (!cancelled) {
-          setCombo(c);
-          setComboReady(true);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setCombo(null);
-          setComboReady(true);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [profileId, launchModel]);
-  // 未确认不显示：combo 未加载或求交明确不允许时藏 /effort
-  const effortLive =
-    comboReady && combo?.showNativeEffort === true ? effort : null;
-
-  // 思考强度 step 滑块：隐形原生 range 负责拖动/键盘，自定义轨道负责视觉；松手才写命令
-  const levels =
-    combo?.effortLevels && combo.effortLevels.length > 0
-      ? combo.effortLevels
-      : (effortLive?.levels ?? []);
-  const [effortIdxRaw, setEffortIdx] = useState(() =>
-    Math.min(1, Math.max(0, levels.length - 1)),
-  );
-  // 切到档位更少的 agent 后旧下标可能越界：渲染/写命令一律用钳制值
-  const effortIdx = Math.min(effortIdxRaw, Math.max(0, levels.length - 1));
-  function commitEffort() {
-    if (effortLive && levels[effortIdx]) {
-      writeCmd(effortLive.command.replace("{level}", levels[effortIdx]));
-    }
-  }
 
   // ===== Commit & Push 状态机：idle → generating → review(倒计时) → pushing → success =====
   type CpPhase = "idle" | "generating" | "review" | "pushing" | "success";
@@ -428,8 +386,24 @@ export default function TerminalStatusBar({
   const [cwdMenuOpen, setCwdMenuOpen] = useState(false);
   const [cwdDraft, setCwdDraft] = useState("");
 
+  // 窄栏（阅读区右栏、窄分屏）：一行放不下时各段不能收缩，会互相叠字——只留状态点、Agent、
+  // 模型、目录、时长与上下文环，连接名 / 思考档 / token 收掉，模型与目录限宽截断。
+  // 量自己的宽度（节点会被搬进阅读区右栏，搬移后 RO 照样报）
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const measure = () => setNarrow(el.clientWidth > 0 && el.clientWidth < STATUS_BAR_NARROW_PX);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   return (
     <div
+      ref={rootRef}
       className={`relative h-8 shrink-0 overflow-visible rounded-b-xl text-micro whitespace-nowrap select-none ${
         // chat 变体通栏涂画布色（上方 ChatSurface 同为 bg-canvas，接缝消失），
         // px-4 + 内层 max-w-4xl 与 ChatComposer 同构，内容与输入卡同一左缘。
@@ -460,12 +434,14 @@ export default function TerminalStatusBar({
           title={dotTitle}
         />
         {!idle && agentLabel && <span style={{ color: fg }}>{agentLabel}</span>}
-        {!idle && profileName && (
+        {!idle && profileName && !narrow && (
           <span className="truncate">· {profileName}</span>
         )}
-        {!idle && shownModel &&
-          (modelSwitch && profileModels.length > 0 ? (
-            modelSwitch.kind === "picker" ? (
+        {/* 聊天变体不摆模型 / 思考：它们在输入框右侧的「模型 · 思考」芯片里（2026-10-17），同一件事只放一处 */}
+        {!idle && !chat && shownModel &&
+          ((modelSwitch || rt.modelByRelaunch) && profileModels.length > 0 ? (
+            // 会写回 CLI 全局配置的家（Codex 选择器、Claude / Grok /model）改走重开接回：底栏自己列连接里的模型
+            modelSwitch?.kind === "picker" && !rt.modelByRelaunch ? (
               /* picker 档（codex /model、opencode /models）不摆模型菜单：
                  两家 CLI 的切换命令都不吃参数（codex 源码 supports_inline_args
                  不含 Model；opencode run 无参），点哪个模型都只是唤选择器——
@@ -479,7 +455,7 @@ export default function TerminalStatusBar({
                     ? "在终端打开模型选择器（这家 CLI 不支持带参直切，模型去选择器里选）"
                     : "启动终端后可切换模型"
                 }
-                className="rounded-full border-0 px-2 py-0.5 font-mono"
+                className={`rounded-full border-0 px-2 py-0.5 font-mono${narrow ? " max-w-[8rem] truncate align-middle" : ""}`}
                 style={{
                   color: chat ? dim : colors.blue,
                   background: `${fg}0f`,
@@ -496,12 +472,16 @@ export default function TerminalStatusBar({
                   onClick={() => setModelMenuOpen((v) => !v)}
                   disabled={!status?.ptyId}
                   title={
-                    status?.ptyId
-                      ? "切换模型（写入终端执行）"
-                      : "启动终端后可切换模型"
+                    !status?.ptyId
+                      ? "启动终端后可切换模型"
+                      : rt.modelByRelaunch
+                        ? rt.relaunchBlocked
+                          ? "正在生成，等这一轮结束再换模型"
+                          : "切换模型（停下 Agent，用新模型接回这段对话；不改它的全局配置）"
+                        : "切换模型（写入终端执行）"
                   }
                   aria-expanded={modelMenuOpen}
-                  className="rounded-full border-0 px-2 py-0.5 font-mono"
+                  className={`rounded-full border-0 px-2 py-0.5 font-mono${narrow ? " max-w-[8rem] truncate align-middle" : ""}`}
                   style={{
                     // chat 变体去掉蓝色强调：与目录胶囊同一套灰调语法（蓝色只留给状态点）
                     color: chat ? dim : colors.blue,
@@ -530,7 +510,8 @@ export default function TerminalStatusBar({
                           <button
                             type="button"
                             onClick={() => pickModel(m)}
-                            className="flex w-full items-center gap-1 rounded-sm px-2 py-1 text-left font-mono text-micro"
+                            disabled={rt.modelByRelaunch && rt.relaunchBlocked}
+                            className="flex w-full items-center gap-1 rounded-sm px-2 py-1 text-left font-mono text-micro disabled:opacity-50"
                             style={{ color: m === shownModel ? fg : dim }}
                             onMouseEnter={(e) => {
                               e.currentTarget.style.background = `${fg}1a`;
@@ -557,11 +538,15 @@ export default function TerminalStatusBar({
             换模请重开
           </span>
         )}
-        {effortLive && running && levels.length > 1 && (
+        {!chat && !narrow && rt.effortSwitchable && running && (
           <span
             className="ml-1 flex items-center gap-1.5 rounded-full px-2 py-0.5"
             style={{ background: `${fg}0f` }}
-            title={`思考档位：${levels[effortIdx]}（${levels.join(" / ")}；松手即写入终端生效）`}
+            title={
+              knownEffort
+                ? `思考档位：${effortLabel}（${levels.join(" / ")}；松手即写入终端生效）`
+                : `启动时没有指定思考档，用的是 CLI 自己的默认（${levels.join(" / ")}；拖动松手即写入终端生效）`
+            }
           >
             <span style={{ color: faint }}>◈</span>
             <span className="relative block h-5 w-24">
@@ -574,7 +559,7 @@ export default function TerminalStatusBar({
               <span
                 className="absolute top-1/2 left-0 h-1 -translate-y-1/2 rounded-full"
                 style={{
-                  width: `${(effortIdx / (levels.length - 1)) * 100}%`,
+                  width: `${(Math.max(0, effortIdx) / (levels.length - 1)) * 100}%`,
                   background: "linear-gradient(90deg, #3b82f6, #8b5cf6)",
                 }}
               />
@@ -601,30 +586,57 @@ export default function TerminalStatusBar({
                 min={0}
                 max={levels.length - 1}
                 step={1}
-                value={effortIdx}
-                onChange={(e) => setEffortIdx(Number(e.target.value))}
+                value={Math.max(0, effortIdx)}
+                onChange={(e) => setDraftIdx(Number(e.target.value))}
                 onPointerUp={commitEffort}
                 onKeyUp={commitEffort}
                 className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
                 aria-label="思考档位"
               />
             </span>
-            <span className="font-mono" style={{ color: colors.blue }}>
-              {levels[effortIdx]}
+            <span
+              className="font-mono"
+              style={{ color: effortIdx >= 0 ? colors.blue : faint }}
+            >
+              {effortLabel}
             </span>
           </span>
         )}
-        {effortLive && running && levels.length <= 1 && (
+        {!chat && !narrow && effortLive && running && levels.length <= 1 && (
           <button
             type="button"
             onClick={() => writeCmd(effortLive.command)}
-            title="切换思考档位（在终端里打开选择器）"
+            title={
+              knownEffort
+                ? `思考档位：${knownEffort}（点开终端里的选择器切换）`
+                : "切换思考档位（在终端里打开选择器）"
+            }
             className="ml-1 cursor-pointer border-0 bg-transparent p-0 font-mono"
             style={{ color: colors.blue }}
           >
-            ◈ 思考 ▾
+            ◈ {knownEffort ?? "思考"} ▾
           </button>
         )}
+        {/* 底栏不能切档的 CLI（Codex / OpenCode / CodeBuddy…）也如实写出当前档：
+            屏上认出的 > 本次覆盖 > 注入的开场档；屏上明写 default 写「默认」。只读，切换去 CLI 自己的入口 */}
+        {!chat &&
+          !narrow &&
+          !effortLive &&
+          running &&
+          combo?.thinking &&
+          (knownEffort || effortSeenDefault) && (
+            <span
+              className="ml-1 font-mono"
+              style={{ color: knownEffort ? colors.blue : faint }}
+              title={
+                knownEffort
+                  ? `思考档位：${knownEffort}（这个客户端在 Mesa 底栏不能切换，到它自己的模型/思考设置里改）`
+                  : "客户端显示没有指定思考档，用的是它自己的默认"
+              }
+            >
+              ◈ {knownEffort ?? "默认"}
+            </span>
+          )}
       </span>
 
       {/* 中区：目录胶囊常驻（点击浮层改目录，仅未启动可编辑）+ git 连体胶囊（有改动/未推送时）。
@@ -650,7 +662,7 @@ export default function TerminalStatusBar({
           }}
         >
           <FolderOpen aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
-          {cwdBase}
+          <span className={narrow ? "min-w-0 max-w-[8rem] truncate" : undefined}>{cwdBase}</span>
         </button>
         {cwdMenuOpen && !cwdLocked && onCwdChange && (
           <>
@@ -1036,7 +1048,23 @@ export default function TerminalStatusBar({
         {startedAt != null && running && (
           <span title="本次启动的运行时长">{fmtDuration(now - startedAt)}</span>
         )}
-        {usage && (usage.input > 0 || usage.output > 0) && (
+        {/* 上下文用量（2026-10-18 与聊天层同步）：窗口大小来自模型能力库，读不到就不画 */}
+        {!chat && running && combo?.context && contextUsed ? (
+          <span className="flex items-center gap-0.5">
+            <ContextRing
+              ratio={Math.min(1, contextUsed / combo.context)}
+              used={contextUsed}
+              window={combo.context}
+              agentId={status?.agentId ?? ""}
+              color={faint}
+              warnColor={colors.yellow}
+              trackColor={`${fg}26`}
+              className="size-4"
+            />
+            {Math.round(Math.min(1, contextUsed / combo.context) * 100)}%
+          </span>
+        ) : null}
+        {!narrow && usage && (usage.input > 0 || usage.output > 0) && (
           <span title="本会话累计 token（随索引节奏更新，约 1 分钟粒度）">
             {fmtTokens(usage.input)}↑ {fmtTokens(usage.output)}↓
             {usage.priced && ` · $${usage.costUsd.toFixed(3)}`}

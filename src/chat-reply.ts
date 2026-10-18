@@ -5,10 +5,24 @@ export interface ReplySection {
   body: string;
 }
 
-const HEADING = /^(#{1,3} .+|[^\n]{2,48}[：:])\s*$/;
+const MD_HEADING = /^#{1,3}\s+\S/;
+/** 冒号收尾的独立短行（「验收摘要：」「尚未验证：」这类报告小节）。
+ *  句子里带句读、列表项、加粗开头的都是正文里的引子（「想象你去餐厅吃饭：」「它做的事是：」），
+ *  当小标题会把下面的列表折走（2026-10-17 用户截图：解释 API 的回答被折成一串空标题）。 */
+const COLON_HEADING = /^[^\s#>*\-+\d`|][^。！？.!?，,；;]{1,17}[：:]$/;
 
-/** 有两个以上小标题才折叠。否则整段照常显示。 */
+/** 回复够长才分节可折：短回答整段照常排版，折叠只帮长报告理结构 */
+export const REPLY_FOLD_MIN_CHARS = 1500;
+
+function isHeadingLine(line: string): boolean {
+  const t = line.trim();
+  if (MD_HEADING.test(t)) return t.length <= 64;
+  return COLON_HEADING.test(t);
+}
+
+/** 长回复按小标题分节（两个以上才分）；短回复或标题不够返回 null，整段照常显示。 */
 export function splitReplySections(text: string): ReplySection[] | null {
+  if (text.length < REPLY_FOLD_MIN_CHARS) return null;
   const lines = text.split("\n");
   const sections: ReplySection[] = [];
   let title = "";
@@ -27,7 +41,7 @@ export function splitReplySections(text: string): ReplySection[] | null {
       body.push(line);
       continue;
     }
-    if (!fenced && HEADING.test(line.trim()) && line.trim().length <= 48) {
+    if (!fenced && isHeadingLine(line)) {
       flush();
       title = line.trim().replace(/^#{1,3}\s+/, "");
       continue;
