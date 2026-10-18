@@ -4,6 +4,7 @@ import {
   ancestorDirsToReveal,
   fileMatchesProjectFilter,
   flattenVisibleFiles,
+  inTypingContext,
   neighborFile,
   artifactPreviewSurface,
   projectFilePreviewKind,
@@ -55,6 +56,24 @@ test("type filter keeps original office categories", () => {
   assert.equal(fileMatchesProjectFilter("a.pdf", "pdf"), true);
   assert.equal(fileMatchesProjectFilter("a.xlsx", "sheet"), true);
   assert.equal(fileMatchesProjectFilter("a.pptx", "slide"), true);
+});
+
+test("recent 是视图不是类型：不参与按类型收窄（搜索命中在最近视图下全保留）", () => {
+  assert.equal(fileMatchesProjectFilter("a.rs", "recent"), true);
+  assert.equal(fileMatchesProjectFilter("notes/a.md", "recent"), true);
+  assert.equal(fileMatchesProjectFilter("papers/a.pdf", "recent"), true);
+});
+
+test("inTypingContext：方向键只在非打字焦点接管", () => {
+  // 打字面：input / textarea（Monaco 编辑面）/ contenteditable / role=textbox
+  const hit = { closest: () => ({}) } as unknown as HTMLElement;
+  assert.equal(inTypingContext(hit), true);
+  // 非打字面：文件行 button、普通 div
+  const miss = { closest: () => null } as unknown as HTMLElement;
+  assert.equal(inTypingContext(miss), false);
+  // 焦点在 window/document（closest 不存在）：可接管
+  assert.equal(inTypingContext(null), false);
+  assert.equal(inTypingContext({} as HTMLElement), false);
 });
 
 test("flattenVisibleFiles only walks expanded directories", () => {

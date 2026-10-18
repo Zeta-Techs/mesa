@@ -3358,6 +3358,46 @@ pub fn attach_session_impl(id: &str, session_id: &str) -> Result<(), String> {
     }
     Ok(())
 }
+/// 预分配的会话 id 从没落盘（CLI 在第一条消息前就退出了）：恢复时换成新 id 开新会话。
+/// Run 当前的会话是 `old`，或者同样从没落盘（上一次兜底换上的新 id 也没聊就退了，
+/// 标签重启又拿最初那个 id 来恢复）才改——绑着一段真实对话的 Run 不碰
+pub fn replace_unwritten_session(
+    id: &str,
+    old: &str,
+    new: &str,
+    is_unwritten: impl Fn(&str) -> bool,
+) -> Result<(), String> {
+    replace_unwritten_session_at(&db()?, id, old, new, is_unwritten)
+}
+fn replace_unwritten_session_at(
+    conn: &Connection,
+    id: &str,
+    old: &str,
+    new: &str,
+    is_unwritten: impl Fn(&str) -> bool,
+) -> Result<(), String> {
+    let current: Option<Option<String>> = conn
+        .query_row("SELECT session_id FROM runs WHERE id=?1", [id], |row| row.get(0))
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let Some(Some(current)) = current else {
+        return Ok(());
+    };
+    if current != old && !is_unwritten(&current) {
+        return Ok(());
+    }
+    if conn
+        .execute(
+            "UPDATE runs SET session_id=?3 WHERE id=?1 AND session_id=?2",
+            params![id, current, new],
+        )
+        .map_err(|e| e.to_string())?
+        > 0
+    {
+        record_event(conn, id, "run.session_replaced", Some(&current))?;
+    }
+    Ok(())
+}
 const OUTPUT_EVENT_CAP: usize = 100;
 
 fn output_tail(text: &str) -> String {
@@ -4268,6 +4308,43 @@ mod tests {
         assert!(requires_isolated_write_tree("pipeline_step", false));
         assert!(requires_isolated_write_tree("watch", false));
         assert!(!requires_isolated_write_tree("watch", true));
+    }
+
+    #[test]
+    fn unwritten_session_is_replaced_so_the_run_reopens_fresh() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+        conn.execute("INSERT INTO runs(id,task_kind,isolation_path,runtime,agent,permission,created_at,status,closed_at,session_id) VALUES('run','chat','/tmp/ccode-x','local_cli','claude-code','write_tree','now','failed','later','s1')", []).unwrap();
+        // 旧 id 对不上、Run 上的会话又是真实对话：不动
+        replace_unwritten_session_at(&conn, "run", "other", "s2", |_| false).unwrap();
+        let sid: String = conn.query_row("SELECT session_id FROM runs WHERE id='run'", [], |r| r.get(0)).unwrap();
+        assert_eq!(sid, "s1");
+        replace_unwritten_session_at(&conn, "run", "s1", "s2", |_| false).unwrap();
+        // 标签重启又拿最初的 s1 来恢复，而 Run 上的 s2 同样没落盘：照样换掉
+        replace_unwritten_session_at(&conn, "run", "s1", "s3", |sid| sid == "s2").unwrap();
+        let sid: String = conn.query_row("SELECT session_id FROM runs WHERE id='run'", [], |r| r.get(0)).unwrap();
+        assert_eq!(sid, "s3");
+        let input = OpenRunInput {
+            id: Some("run".into()),
+            task_id: None,
+            project_root: None,
+            task_kind: None,
+            task_ref: None,
+            isolation_path: "/tmp/ccode-x".into(),
+            runtime: Some("local_cli".into()),
+            agent: "claude-code".into(),
+            profile_id: None,
+            permission: Some("write_tree".into()),
+            reuse_key: None,
+            session_id: Some("s3".into()),
+            custom_runtime_id: None,
+            internal: Some(false),
+            sentinel: Some(false),
+        };
+        // 换过会话后同一条 Run 能以新会话重新打开，不再报「恢复会话与原 Run 不一致」
+        let reopened = open_at(&conn, input).unwrap();
+        assert_eq!(reopened.id, "run");
+        assert_eq!(reopened.session_id.as_deref(), Some("s3"));
     }
 
     #[test]

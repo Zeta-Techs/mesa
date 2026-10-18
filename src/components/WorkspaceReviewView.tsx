@@ -34,21 +34,37 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
+  Archive,
   ArrowLeft,
+  Check,
   ChevronDown,
   ChevronRight,
   File,
   FolderClosed,
   FolderOpen,
   GitBranch,
+  GitCommitHorizontal,
+  GitMerge,
+  GitPullRequest,
   RefreshCw,
   Search,
+  CircleCheck,
+  CircleX,
 } from "lucide-react";
 import ContextMenu from "./ContextMenu";
 import { confirmDialog } from "./ConfirmDialog";
 import ImagePairView, { isImagePath } from "./ImagePairView";
 import { loadArtifactRows } from "./ArtifactChecklist";
-import { Checkbox, LoadingRows, secondaryActionClass } from "./PageFrame";
+import {
+  Checkbox,
+  fieldClass,
+  LoadingRows,
+  primaryActionClass,
+  secondaryActionClass,
+  InlineNotice,
+  NoticeBar,
+} from "./PageFrame";
+import { Modal } from "./Modal";
 import {
   freezeReviewedSha,
   reviewedShaAfterCommit,
@@ -974,7 +990,7 @@ function MainRepoCommitPanel({
               取消
             </button>
           </div>
-          {error && <p className="mt-1.5 text-xs text-err-text">✗ {error}</p>}
+          {error && <InlineNotice tone="err" className="mt-1.5">{error}</InlineNotice>}
         </>
       )}
     </div>
@@ -1196,6 +1212,24 @@ function LiveWorkspaceReviewView({
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // 主文件夹「脏」若来自 Mesa 自有档案（.ccode/、.gitignore：设置页改规则、选文献来源都会写），
+  // 评审前由 Mesa 自己提交——与开工前 commit_project_bootstrap 同一动作、同一提交信息。
+  // 不提交的话「保存进项目」被「主文件夹里还有没保存的改动」拦住，要人去提交一份自己没碰过的文件。
+  // 每个主仓每次打开评审只试一次；剩下的才是你的改动，照旧走提交面板。
+  const cardCommitTriedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!health?.mainDirty || !repoPath) return;
+    if (cardCommitTriedRef.current === repoPath) return;
+    cardCommitTriedRef.current = repoPath;
+    void invoke<{ committed: boolean }>("commit_project_bootstrap", { repoPath })
+      .then((out) => {
+        if (out.committed) void refresh(true);
+      })
+      .catch(() => {
+        /* 提交不了就留给提交面板，由人处理 */
+      });
+  }, [health?.mainDirty, repoPath, refresh]);
 
   useEffect(() => {
     signatureRef.current = "";
@@ -2369,7 +2403,7 @@ function LiveWorkspaceReviewView({
                   conflictBusy || busy || (hasUncommitted && !message.trim())
                 }
                 title="两边改了同一个地方，需要你逐个文件选一边"
-                className="rounded-sm border border-cta-bd bg-cta px-3 py-1.5 text-sm text-cta-text hover:brightness-110 disabled:opacity-50"
+                className={primaryActionClass}
               >
                 {busy || conflictBusy
                   ? "处理中…"
@@ -2383,7 +2417,7 @@ function LiveWorkspaceReviewView({
                   type="button"
                   onClick={() => void startConflictResolution(true)}
                   disabled={conflictBusy}
-                  className="rounded-sm border border-cta-bd bg-cta px-3 py-1.5 text-sm text-cta-text hover:brightness-110 disabled:opacity-50"
+                  className={primaryActionClass}
                 >
                   {conflictBusy
                     ? "重新同步中…"
@@ -2820,7 +2854,7 @@ function LiveWorkspaceReviewView({
 
         </div>
       )}
-      {deliveryFollowup && <p role="status" className="border-b border-hairline px-3 py-2 text-xs text-warn-text">{deliveryFollowup}</p>}
+      {deliveryFollowup && <InlineNotice tone="warn" className="px-3 py-2">{deliveryFollowup}</InlineNotice>}
       {ledgerPending && diff && (
         <div className="flex shrink-0 items-center gap-2 border-b border-hairline bg-inset px-3 py-1.5 text-xs text-err-text">
           <span className="min-w-0 truncate">
@@ -2853,12 +2887,13 @@ function LiveWorkspaceReviewView({
         </div>
       )}
       {result && !ledgerPending && (
-        <div className="flex shrink-0 items-center gap-2 border-b border-hairline bg-inset px-3 py-1.5 text-xs text-ok-text">
+        <div className="flex shrink-0 items-center gap-2 border-b border-hairline bg-inset px-3 py-1.5 text-xs text-l2">
+          <CircleCheck size={13} strokeWidth={1.9} className="shrink-0 text-ok-text" aria-hidden="true" />
           <span
             className="min-w-0 truncate"
             title={mergeDone ? result : undefined}
           >
-            ✓ {mergeDone
+            {mergeDone
               ? mergeAdmissionText({
                   ledgerWritten: true,
                   versionId: mergeVersionId,
@@ -2946,13 +2981,15 @@ function LiveWorkspaceReviewView({
         </form>
       )}
       {distillMsg && (
-        <div className="flex shrink-0 items-center gap-2 border-b border-hairline bg-inset px-3 py-1.5 text-xs text-ok-text">
-          <span className="min-w-0 truncate">✓ {distillMsg}</span>
+        <div className="flex shrink-0 items-center gap-2 border-b border-hairline bg-inset px-3 py-1.5 text-xs text-l2">
+          <CircleCheck size={13} strokeWidth={1.9} className="shrink-0 text-ok-text" aria-hidden="true" />
+          <span className="min-w-0 truncate" title={distillMsg}>{distillMsg}</span>
         </div>
       )}
       {error && (
-        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-hairline bg-inset px-3 py-1.5 text-xs text-err-text">
-          <span className="min-w-0 flex-1">✗ {error}</span>
+        <div role="alert" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-hairline bg-inset px-3 py-1.5 text-xs text-l2">
+          <CircleX size={13} strokeWidth={1.9} className="shrink-0 text-err-text" aria-hidden="true" />
+          <span className="min-w-0 flex-1 break-words">{error}</span>
         </div>
       )}
 
@@ -3068,7 +3105,7 @@ function LiveWorkspaceReviewView({
                     type="button"
                     onClick={() => void startConflictResolution(true)}
                     disabled={conflictBusy}
-                    className="rounded-sm border border-cta-bd bg-cta px-3 py-1.5 text-sm text-cta-text hover:brightness-110 disabled:opacity-50"
+                    className={primaryActionClass}
                   >
                     {conflictBusy
                       ? "重新同步中…"
@@ -3305,6 +3342,7 @@ function LiveWorkspaceReviewView({
             conflictMode
               ? [
                   {
+                    icon: Check,
                     label: "仅保存解决结果",
                     onSelect: () => void finishConflict(false),
                   },
@@ -3313,6 +3351,7 @@ function LiveWorkspaceReviewView({
                   ...(hasUncommitted
                     ? [
                         {
+                          icon: GitCommitHorizontal,
                           label: "仅提交",
                           onSelect: () => void finish("commit"),
                         },
@@ -3321,21 +3360,31 @@ function LiveWorkspaceReviewView({
                   ...(!hardBlocked
                     ? [
                         {
+                          icon: GitMerge,
                           label: REVIEW_SAVE.keepWorkspace,
                           onSelect: () => void finish("merge"),
                         },
                         {
+                          icon: Archive,
                           label: REVIEW_SAVE.saveAndArchive,
                           onSelect: () => void finish("merge-archive"),
                         },
                       ]
                     : []),
                   ...(hasCommitted
-                    ? [{ label: "创建 PR", onSelect: () => setPrOpen(true) }]
+                    ? [
+                        { separator: true },
+                        {
+                          label: "创建 PR",
+                          icon: GitPullRequest,
+                          onSelect: () => setPrOpen(true),
+                        },
+                      ]
                     : []),
                   ...(!health?.conflict && !unmerged?.merging
                     ? [
                         {
+                          icon: Archive,
                           label: "归档工作区",
                           onSelect: () => setArchiveOpen(true),
                         },
@@ -3347,31 +3396,57 @@ function LiveWorkspaceReviewView({
       )}
 
       {prOpen && diff && (
-        <div
-          className="fixed inset-0 z-60 flex items-center justify-center bg-black/40 p-4 ccode-fade"
-          onClick={() => {
-            // 请求在途时不响应遮罩关闭，避免关框重开导致重复建 PR
+        <Modal
+          open
+          size="md"
+          layer="overlay"
+          title="创建 PR"
+          description={
+            <span
+              className="block truncate font-mono"
+              title={`${diff.branch} → ${diff.baseBranch}`}
+            >
+              {diff.branch} → {diff.baseBranch}
+            </span>
+          }
+          // 请求在途时 Esc / 点遮罩都不关，避免关框重开导致重复建 PR
+          dismissOnBackdrop={!prBusy}
+          onClose={() => {
             if (!prBusy) closePrDialog();
           }}
+          footer={
+            <>
+              <button
+                type="button"
+                onClick={closePrDialog}
+                className={secondaryActionClass}
+              >
+                {prUrl ? "关闭" : "取消"}
+              </button>
+              {!prUrl && (
+                // 提交钮在页脚、表单在正文：form 属性把它接回表单，回车提交照常
+                <button
+                  type="submit"
+                  form="ccode-review-pr-form"
+                  disabled={prBusy || !prTitle.trim()}
+                  className={primaryActionClass}
+                >
+                  {prBusy ? "创建中…" : prPushed ? "重试创建 PR" : "创建 PR"}
+                </button>
+              )}
+            </>
+          }
         >
           <form
-            onClick={(event) => event.stopPropagation()}
+            id="ccode-review-pr-form"
             onSubmit={(event) => {
               event.preventDefault();
               void submitPr();
             }}
-            className="w-full max-w-[26rem] rounded-md border border-field ccode-float-surface p-5"
           >
-            <h2 className="mb-1 text-base font-semibold text-l1">创建 PR</h2>
-            <p
-              className="mb-4 truncate font-mono text-xs text-l4"
-              title={`${diff.branch} → ${diff.baseBranch}`}
-            >
-              {diff.branch} → {diff.baseBranch}
-            </p>
             {prUrl ? (
               <div className="mb-4">
-                <p className="mb-2 text-sm text-ok-text">✓ PR 已创建</p>
+                <NoticeBar className="mb-2">PR 已创建</NoticeBar>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
@@ -3404,10 +3479,10 @@ function LiveWorkspaceReviewView({
                     required
                     value={prTitle}
                     onChange={(event) => setPrTitle(event.target.value)}
-                    className="w-full rounded-sm border border-field bg-canvas px-2 py-1.5 text-sm text-l2 outline-none placeholder:text-l4 focus:border-l4"
+                    className={fieldClass}
                   />
                 </label>
-                <label className="mb-4 block text-sm">
+                <label className="block text-sm">
                   <span className="mb-1 flex items-center justify-between">
                     <span className="text-xs text-l3">描述</span>
                     <button
@@ -3424,60 +3499,66 @@ function LiveWorkspaceReviewView({
                     value={prBody}
                     onChange={(event) => setPrBody(event.target.value)}
                     placeholder="留空自动生成提交摘要"
-                    className="h-24 w-full resize-y rounded-sm border border-field bg-canvas px-2 py-1.5 text-sm text-l2 outline-none placeholder:text-l4 focus:border-l4"
+                    className={`${fieldClass} h-24 resize-y`}
                   />
                 </label>
-                {error && <p className="mb-3 text-xs text-err-text">{error}</p>}
+                {error && <InlineNotice tone="err" className="mb-3">{error}</InlineNotice>}
               </>
             )}
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={closePrDialog}
-                className="rounded-sm px-3 py-1.5 text-sm text-l2 hover:bg-hover"
-              >
-                {prUrl ? "关闭" : "取消"}
-              </button>
-              {!prUrl && (
-                <button
-                  type="submit"
-                  disabled={prBusy || !prTitle.trim()}
-                  className="rounded-sm border border-cta-bd bg-cta px-3 py-1.5 text-sm text-cta-text hover:brightness-110 disabled:opacity-50"
-                >
-                  {prBusy ? "创建中…" : prPushed ? "重试创建 PR" : "创建 PR"}
-                </button>
-              )}
-            </div>
           </form>
-        </div>
+        </Modal>
       )}
 
       {archiveOpen && diff && (
-        <div
-          className="fixed inset-0 z-60 flex items-center justify-center bg-black/40 p-4 ccode-fade"
-          onClick={() => {
-            // 请求在途时不响应遮罩关闭，避免关框重开导致重复提交/归档
+        <Modal
+          open
+          size="md"
+          layer="overlay"
+          title={hasUncommitted ? "提交并归档" : "归档工作区"}
+          description={
+            hasUncommitted
+              ? `先将改动提交到 ${diff.branch}，再移除工作树；分支仍保留以便恢复。`
+              : "worktree 会被移除，分支仍保留以便恢复。"
+          }
+          // 请求在途时 Esc / 点遮罩都不关，避免关框重开导致重复提交/归档
+          dismissOnBackdrop={!busy}
+          onClose={() => {
             if (!busy) setArchiveOpen(false);
           }}
+          footer={
+            <>
+              <button
+                type="button"
+                onClick={() => setArchiveOpen(false)}
+                disabled={busy}
+                className={secondaryActionClass}
+              >
+                取消
+              </button>
+              <button
+                type="submit"
+                form="ccode-review-archive-form"
+                disabled={busy}
+                className={primaryActionClass}
+              >
+                {busy
+                  ? "处理中…"
+                  : hasUncommitted
+                    ? "提交并归档"
+                    : "归档工作区"}
+              </button>
+            </>
+          }
         >
           <form
-            onClick={(event) => event.stopPropagation()}
+            id="ccode-review-archive-form"
             onSubmit={(event) => {
               event.preventDefault();
               void finish("archive");
             }}
-            className="w-full max-w-[26rem] rounded-md border border-field ccode-float-surface p-5"
           >
-            <h2 className="mb-2 text-base font-semibold text-l1">
-              {hasUncommitted ? "提交并归档" : "归档工作区"}
-            </h2>
-            <p className="mb-4 text-xs text-l3">
-              {hasUncommitted
-                ? `先将改动提交到 ${diff.branch}，再移除工作树；分支仍保留以便恢复。`
-                : "worktree 会被移除，分支仍保留以便恢复。"}
-            </p>
             {hasUncommitted && (
-              <label className="mb-4 block">
+              <label className="block">
                 <span className="mb-1 block text-xs text-l3">
                   这次改了什么（可留空，自动写一句）
                 </span>
@@ -3487,34 +3568,13 @@ function LiveWorkspaceReviewView({
                   onChange={(event) => setMessage(event.target.value)}
                   disabled={busy}
                   placeholder={`chore: 保存 ${diff.workspaceName}`}
-                  className="w-full rounded-sm border border-field bg-canvas px-2 py-1.5 text-sm text-l2 outline-none placeholder:text-l4 focus:border-l4"
+                  className={fieldClass}
                 />
               </label>
             )}
-            {error && <p className="mb-3 text-xs text-err-text">✗ {error}</p>}
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setArchiveOpen(false)}
-                disabled={busy}
-                className="rounded-sm px-3 py-1.5 text-sm text-l2 hover:bg-hover disabled:opacity-50"
-              >
-                取消
-              </button>
-              <button
-                type="submit"
-                disabled={busy}
-                className="rounded-sm border border-cta-bd bg-cta px-3 py-1.5 text-sm text-cta-text hover:brightness-110 disabled:opacity-50"
-              >
-                {busy
-                  ? "处理中…"
-                  : hasUncommitted
-                    ? "提交并归档"
-                    : "归档工作区"}
-              </button>
-            </div>
+            {error && <InlineNotice tone="err" className="mb-3">{error}</InlineNotice>}
           </form>
-        </div>
+        </Modal>
       )}
     </div>
   );

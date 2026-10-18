@@ -1,7 +1,8 @@
 /**
  * 文件类型小图标（改动面板等文件列表的行首标识）：扩展名 → 短标签 + 固定识别色。
  * 颜色不随主题变化（同 VS Code 文件图标的固定配色，靠颜色认类型）；
- * 未收录的类型返回 null，调用方留空槽位保持对齐。纯逻辑，无渲染依赖。
+ * 未收录的类型返回 null，调用方画通用文件图标（FileTypeMark），不留空槽——
+ * 空槽让一列文件里有的有符号、有的没有，看着像漏渲染（2026-10-17 用户截图）。纯逻辑，无渲染依赖。
  */
 
 export interface FileTypeIcon {
@@ -35,7 +36,23 @@ const EXT_ICONS: Record<string, FileTypeIcon> = {
   cxx: { label: "C+", color: "#649ad2" },
   json: { label: "{}", color: "#a8a832" },
   jsonc: { label: "{}", color: "#a8a832" },
+  jsonl: { label: "{}", color: "#a8a832" },
+  ndjson: { label: "{}", color: "#a8a832" },
   toml: { label: "⚙", color: "#9c9c9c" },
+  ini: { label: "⚙", color: "#9c9c9c" },
+  cfg: { label: "⚙", color: "#9c9c9c" },
+  conf: { label: "⚙", color: "#9c9c9c" },
+  env: { label: "⚙", color: "#9c9c9c" },
+  lock: { label: "⚙", color: "#9c9c9c" },
+  xml: { label: "<>", color: "#e37933" },
+  csl: { label: "<>", color: "#e37933" },
+  tex: { label: "TeX", color: "#4a9e8e" },
+  ltx: { label: "TeX", color: "#4a9e8e" },
+  sty: { label: "TeX", color: "#4a9e8e" },
+  cls: { label: "TeX", color: "#4a9e8e" },
+  bst: { label: "TeX", color: "#4a9e8e" },
+  ipynb: { label: "Py", color: "#f37626" },
+  r: { label: "R", color: "#276dc3" },
   yaml: { label: "Y", color: "#cc3e44" },
   yml: { label: "Y", color: "#cc3e44" },
   html: { label: "<>", color: "#e34c26" },
@@ -50,6 +67,7 @@ const EXT_ICONS: Record<string, FileTypeIcon> = {
   log: { label: "≡", color: "#9c9c9c" },
   bib: { label: "B", color: "#d4a017" },
   ris: { label: "RIS", color: "#d4a017" },
+  enw: { label: "RIS", color: "#d4a017" },
   png: { label: "▨", color: "#a074c4" },
   jpg: { label: "▨", color: "#a074c4" },
   jpeg: { label: "▨", color: "#a074c4" },
@@ -77,8 +95,23 @@ function extOf(path: string): string | null {
   return name.slice(dot + 1).toLowerCase();
 }
 
+/** 点开头的配置文件（extOf 认不出扩展名）按整名认 */
+const NAME_ICONS: Record<string, FileTypeIcon> = {
+  ".gitignore": { label: "⚙", color: "#9c9c9c" },
+  ".gitattributes": { label: "⚙", color: "#9c9c9c" },
+  ".editorconfig": { label: "⚙", color: "#9c9c9c" },
+  ".env": { label: "⚙", color: "#9c9c9c" },
+};
+
+/** 备份副本（inbox.md.bak-xxx、x.bak）：认名字里的 .bak 段，不按原扩展名冒充原文件 */
+const BACKUP_ICON: FileTypeIcon = { label: "BAK", color: "#9c9c9c" };
+
 /** 按路径取文件类型图标；无扩展名或未收录类型返回 null */
 export function fileTypeIcon(path: string): FileTypeIcon | null {
+  const name = (path.split(/[\\/]/).pop() ?? path).toLowerCase();
+  if (/\.bak(?:$|[-.~_])/.test(name)) return BACKUP_ICON;
+  const named = NAME_ICONS[name];
+  if (named) return named;
   const ext = extOf(path);
   return ext ? (EXT_ICONS[ext] ?? null) : null;
 }

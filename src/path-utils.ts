@@ -94,3 +94,10 @@ export function abbrevHome(
     ? `~${shown.slice(h.length).replace(/\\/g, "/")}`
     : shown;
 }
+
+/** 「在系统文件管理器中显示」的平台叫法（右键菜单/图标钮共用；平台显式传参，禁模块内读平台） */
+export function revealFolderLabel(isMac: boolean, isWindows: boolean): string {
+  if (isMac) return "在访达中显示";
+  if (isWindows) return "在资源管理器中显示";
+  return "在文件管理器中显示";
+}

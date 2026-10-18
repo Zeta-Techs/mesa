@@ -98,3 +98,21 @@ test("徽标悬浮 title：字母保留 + 白话说明", () => {
   assert.equal(statusBadgeTitle("UU"), "UU · 未合并（冲突）");
   assert.equal(statusBadgeTitle("U"), "U · 未合并（冲突）");
 });
+
+test("项目页提醒不把 Mesa 自有档案（.ccode/、.gitignore）当成你的改动", async () => {
+  const { isMesaCardPath, userWorkDirtyFiles, userDirtyFiles } = await import("../src/git-status-groups.ts");
+  const files = [
+    { path: ".ccode/project.toml", status: "M" },
+    { path: ".ccode/drafts/lit-notes.md", status: "??" },
+    { path: ".gitignore", status: "M" },
+    { path: "papers/included.md", status: "M" },
+    { path: "notes/inbox.md", status: "M" },
+  ];
+  assert.ok(isMesaCardPath(".ccode/project.toml"));
+  assert.ok(!isMesaCardPath(".ccodex/a.md"));
+  assert.ok(!isMesaCardPath("papers/.gitignore"));
+  // 项目页 / 开工弹层：只剩你自己的改动（开工与评审前 Mesa 会自己提交档案）
+  assert.deepEqual(userWorkDirtyFiles(files).map((f) => f.path), ["papers/included.md"]);
+  // 评审提交面板照旧能看见档案卡——挡合并的东西都要能提交
+  assert.ok(userDirtyFiles(files).some((f) => f.path === ".ccode/project.toml"));
+});

@@ -9,21 +9,33 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import {
+  AppWindow,
   ArrowDownToLine,
+  ArrowUpFromLine,
   ArrowUpToLine,
   CloudOff,
   Copy,
+  Cpu,
   Download,
   FileDiff,
   FolderOpen,
   GitBranch,
+  GitBranchPlus,
   GitCompare,
+  GitCompareArrows,
+  GitMerge,
   GitPullRequest,
+  Layers,
+  Play,
   RefreshCw,
   Terminal,
+  Trash2,
+  Undo2,
+  Ungroup,
   Upload,
 } from "lucide-react";
 import { confirmDialog } from "./ConfirmDialog";
+import { Modal } from "./Modal";
 import ContextMenu, { type ContextMenuItem } from "./ContextMenu";
 import { HoverTip, useHoverTip } from "./HoverTip";
 import {
@@ -37,7 +49,7 @@ import {
   secondaryActionClass,
 } from "./PageFrame";
 import { useAppStore } from "../store";
-import { pathWithin } from "../path-utils";
+import { pathWithin, revealFolderLabel } from "../path-utils";
 import { IS_MAC, IS_WINDOWS } from "../hotkeys";
 import {
   nextLaneBranchName,
@@ -46,7 +58,7 @@ import {
   shouldWarnEnterPrimaryBase,
 } from "../coding-git";
 import {
-  groupLanesByTheme,
+  arrangeBranchMap,
   laneActivityLabel,
   lastLaneTheme,
   overlayLanes,
@@ -60,7 +72,6 @@ import { loadProjectContextPack } from "../project-context-load";
 import { absTime, relTime } from "../rel-time";
 import { imeBlocksEnter } from "../ime-guard";
 import {
-  codingDivergenceBar,
   codingDivergenceLabel,
   codingDivergenceTip,
   codingFactChips,
@@ -74,6 +85,7 @@ import ProjectSettingsDrawer from "./ProjectSettingsDrawer";
 import PortsSection from "./PortsSection";
 import { AGENTS } from "../types";
 import type {
+  CodingBranchDto,
   CodingMergeDto,
   CodingOpDto,
   CodingOverviewDto,
@@ -115,22 +127,28 @@ function chipToneClass(tone: CodingFactChip["tone"]): string {
   return "text-l4";
 }
 
-function revealFolderLabel(): string {
-  if (IS_MAC) return "在访达中显示";
-  if (IS_WINDOWS) return "在资源管理器中显示";
-  return "在文件管理器中显示";
-}
-
 function BranchLabel({
   name,
   detached,
+  icon = true,
+  strong = false,
 }: {
   name: string;
   detached?: boolean;
+  /** 地图节点旁不再重复分支图标（节点本身就表示分支） */
+  icon?: boolean;
+  /** 地图根（基准）用正文字号高亮 */
+  strong?: boolean;
 }) {
   return (
-    <span className="inline-flex min-w-0 max-w-full items-center gap-1 font-mono text-xs text-l2">
-      <GitBranch size={12} strokeWidth={1.8} className="shrink-0 text-l4" />
+    <span
+      className={`inline-flex min-w-0 max-w-full items-center gap-1 font-mono ${
+        strong ? "text-sm font-medium text-l1" : "text-xs text-l2"
+      }`}
+    >
+      {icon && (
+        <GitBranch size={12} strokeWidth={1.8} className="shrink-0 text-l4" />
+      )}
       <span className="truncate">
         {detached ? "游离 HEAD" : name || "（无分支）"}
       </span>
@@ -138,14 +156,25 @@ function BranchLabel({
   );
 }
 
-function FactMarkIcon({ mark }: { mark: CodingFactMark }) {
-  const props = { size: 12, strokeWidth: 1.8, className: "shrink-0" as const };
+function FactMarkIcon({
+  mark,
+  className,
+}: {
+  mark: CodingFactMark;
+  className: string;
+}) {
+  const props = {
+    size: 12,
+    strokeWidth: 1.8,
+    className: `shrink-0 ${className}`,
+  };
   if (mark === "dirty") return <FileDiff {...props} />;
   if (mark === "unpushed") return <Upload {...props} />;
   if (mark === "upstreamBehind") return <Download {...props} />;
   return <CloudOff {...props} />;
 }
 
+/** 事实行：图标承担语义色，正文中性（不铺底色胶囊，避免整行琥珀色）。 */
 function FactChipView({ chip }: { chip: CodingFactChip }) {
   const ref = useRef<HTMLSpanElement>(null);
   const { tip, show, hide } = useHoverTip(ref);
@@ -154,16 +183,17 @@ function FactChipView({ chip }: { chip: CodingFactChip }) {
       ref={ref}
       onMouseEnter={show}
       onMouseLeave={hide}
-      className={`inline-flex items-center gap-0.5 rounded-full bg-raised px-1.5 py-px text-micro ${chipToneClass(chip.tone)}`}
+      className="inline-flex items-center gap-1 text-micro text-l3"
     >
-      <FactMarkIcon mark={chip.mark} />
+      <FactMarkIcon mark={chip.mark} className={chipToneClass(chip.tone)} />
       <span className="tabular-nums">{chip.label}</span>
       <HoverTip tip={tip} text={chip.tip} />
     </span>
   );
 }
 
-function DivergenceBar({
+/** 相对基准的领先/落后：数字加重，落后数（需要同步的那部分）用警示色。 */
+function BaseDelta({
   ahead,
   behind,
   baseBranch,
@@ -172,40 +202,43 @@ function DivergenceBar({
   behind: number;
   baseBranch: string;
 }) {
-  const bar = codingDivergenceBar(ahead, behind);
   const ref = useRef<HTMLSpanElement>(null);
   const { tip, show, hide } = useHoverTip(ref);
-  if (!bar) return null;
-  const left = `${Math.max(bar.behindShare * 50, bar.behind > 0 ? 4 : 0)}%`;
-  const right = `${Math.max(bar.aheadShare * 50, bar.ahead > 0 ? 4 : 0)}%`;
+  const a = Math.max(0, ahead);
+  const b = Math.max(0, behind);
+  if (a === 0 && b === 0) return null;
+  const base = baseBranch.trim() || "基准";
   return (
     <span
       ref={ref}
       onMouseEnter={show}
       onMouseLeave={hide}
-      className="inline-flex min-w-0 max-w-full items-center gap-1"
+      aria-label={codingDivergenceLabel(a, b, base)}
+      className="inline-flex min-w-0 items-center gap-1 text-micro text-l3"
     >
-      <span
-        aria-hidden="true"
-        className="relative h-1.5 w-9 shrink-0 overflow-hidden rounded-full bg-inset"
-      >
-        <span className="absolute left-1/2 top-0 h-full w-px bg-hairline" />
-        <span
-          className="absolute right-1/2 top-0 h-full rounded-l-full bg-warn-text"
-          style={{ width: left }}
-        />
-        <span
-          className="absolute left-1/2 top-0 h-full rounded-r-full bg-ok-text"
-          style={{ width: right }}
-        />
-      </span>
-      <span className={`min-w-0 break-words text-micro ${bar.behind > 0 ? "text-warn-text" : "text-ok-text"}`}>
-        {codingDivergenceLabel(bar.ahead, bar.behind, baseBranch)}
-      </span>
-      <HoverTip
-        tip={tip}
-        text={codingDivergenceTip(bar.ahead, bar.behind, baseBranch)}
+      <GitCompareArrows
+        size={12}
+        strokeWidth={1.8}
+        className={`shrink-0 ${b > 0 ? "text-warn-text" : "text-ok-text"}`}
       />
+      <span className="min-w-0">
+        比 <span className="font-mono text-l2">{base}</span>
+        {a > 0 && (
+          <>
+            {" 领先 "}
+            <span className="font-medium tabular-nums text-l1">{a}</span>
+          </>
+        )}
+        {a > 0 && b > 0 && <span className="text-l4">{" · "}</span>}
+        {b > 0 && (
+          <>
+            {a > 0 ? "落后 " : " 落后 "}
+            <span className="font-medium tabular-nums text-warn-text">{b}</span>
+          </>
+        )}
+        {" 个提交"}
+      </span>
+      <HoverTip tip={tip} text={codingDivergenceTip(a, b, base)} />
     </span>
   );
 }
@@ -258,13 +291,13 @@ function FactChips({
     baseBranch,
     hostKind,
   });
-  const bar = codingDivergenceBar(facts.ahead, facts.behind);
-  if (chips.length === 0 && !bar) {
+  const diverged = facts.ahead > 0 || facts.behind > 0;
+  if (chips.length === 0 && !diverged) {
     return cleanLabel ? <span className="text-micro text-l4">无未提交改动</span> : null;
   }
   return (
-    <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
-      <DivergenceBar
+    <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-x-3 gap-y-1">
+      <BaseDelta
         ahead={facts.ahead}
         behind={facts.behind}
         baseBranch={baseBranch}
@@ -273,6 +306,123 @@ function FactChips({
         <FactChipView key={chip.key} chip={chip} />
       ))}
     </span>
+  );
+}
+
+/* ── 分支地图的轨道 ────────────────────────────────────────────────
+ * 主干竖线 x∈[7,8]；根节点 11px 居中于主干；子节点经圆角肘线（7→20）接到 9px 节点。
+ * 所有尺寸取整像素：线条在 1x 屏也不糊。nodeY = 节点所对齐那行的竖向中心。 */
+const CARD_NODE_Y = 26; // 卡片 p-3(12) + 首行 h-7 一半(14)
+const ROW_NODE_Y = 16; // 轻行首行 min-h-8 一半
+
+type RailTone = "idle" | "active" | "conflict";
+
+function railToneClass(tone: RailTone): string {
+  if (tone === "conflict") return "text-warn-text";
+  if (tone === "active") return "text-ok-text";
+  return "text-l3";
+}
+
+/** base = 基准（环 + 芯）；tree = 已检出（实心）；loose = 未检出（空心环）。 */
+function RailNode({
+  kind,
+  tone = "idle",
+}: {
+  kind: "base" | "tree" | "loose";
+  tone?: RailTone;
+}) {
+  const halo = tone === "active" ? "ring-[3px] ring-ok-text/20" : "";
+  if (kind === "base") {
+    return (
+      <span
+        className={`flex size-[11px] items-center justify-center rounded-full border-[1.5px] border-current ${halo} ${
+          tone === "idle" ? "text-l2" : railToneClass(tone)
+        }`}
+      >
+        <span className="size-[3px] rounded-full bg-current" />
+      </span>
+    );
+  }
+  if (kind === "loose") {
+    return (
+      <span className="block size-[9px] rounded-full border-[1.5px] border-l4" />
+    );
+  }
+  return (
+    <span
+      className={`block size-[9px] rounded-full bg-current ${halo} ${railToneClass(tone)}`}
+    />
+  );
+}
+
+function RailRow({
+  rail,
+  variant,
+  last,
+  nodeY,
+  node,
+  label,
+  children,
+}: {
+  /** 没有基准可作根时退回普通列表，不画轨道 */
+  rail: boolean;
+  variant: "root" | "child" | "caption";
+  last: boolean;
+  nodeY: number;
+  node?: ReactNode;
+  label?: string;
+  children: ReactNode;
+}) {
+  const gap = last ? "" : "pb-2";
+  if (!rail) {
+    return (
+      <li aria-label={label} className={gap}>
+        {children}
+      </li>
+    );
+  }
+  const isRoot = variant === "root";
+  return (
+    <li
+      aria-label={label}
+      className={`relative ${isRoot ? "pl-[22px]" : "pl-[34px]"} ${gap}`}
+    >
+      {isRoot
+        ? !last && (
+            <span
+              aria-hidden="true"
+              className="absolute bottom-0 left-[7px] w-px bg-field"
+              style={{ top: nodeY + 6 }}
+            />
+          )
+        : !last && (
+            <span
+              aria-hidden="true"
+              className="absolute bottom-0 left-[7px] top-0 w-px bg-field"
+            />
+          )}
+      {!isRoot && (variant === "child" || last) && (
+        <span
+          aria-hidden="true"
+          className="absolute left-[7px] top-0 w-[13px] rounded-bl-[6px] border-b border-l border-field"
+          style={{ height: nodeY + 1 }}
+        />
+      )}
+      {node && (
+        <span
+          aria-hidden="true"
+          className="absolute"
+          style={
+            isRoot
+              ? { left: 2, top: nodeY - 5 }
+              : { left: 20, top: nodeY - 4 }
+          }
+        >
+          {node}
+        </span>
+      )}
+      {children}
+    </li>
   );
 }
 
@@ -320,7 +470,7 @@ function PathActions({
         <Copy size={13} strokeWidth={1.8} />
       </IconBtn>
       <IconBtn
-        label={revealFolderLabel()}
+        label={revealFolderLabel(IS_MAC, IS_WINDOWS)}
         onClick={() => {
           void revealItemInDir(path).catch((e) => onError(String(e)));
         }}
@@ -332,6 +482,13 @@ function PathActions({
 }
 
 type LaneTree = CodingWorktreeDto & { lane: LaneOverlay };
+
+/** 分支地图根以下的一行：主题组头 / 工作树卡 / 未检出折叠头 / 未检出分支 */
+type MapEntry =
+  | { kind: "caption"; key: string; label: string }
+  | { kind: "tree"; key: string; tree: LaneTree }
+  | { kind: "fold"; key: string }
+  | { kind: "loose"; key: string; branch: CodingBranchDto };
 
 export default function CodingProjectView({
   project,
@@ -374,7 +531,8 @@ export default function CodingProjectView({
     onChromeConsumed?.();
   }, [chromeReq, project, onChromeConsumed]);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [branchesOpen, setBranchesOpen] = useState(false);
+  /** 未检出分支折叠：null = 未手动切过，按数量给默认（少则展开、多则收起） */
+  const [looseOpenPick, setLooseOpenPick] = useState<boolean | null>(null);
   const [groupingPath, setGroupingPath] = useState<string | null>(null);
   const [groupingTheme, setGroupingTheme] = useState("");
   const [pickerQuery, setPickerQuery] = useState("");
@@ -456,8 +614,13 @@ export default function CodingProjectView({
     });
   }, [ov]);
 
-  const laneGroups = useMemo(
-    () => groupLanesByTheme(overlayLanes(trees, ov?.lanes ?? [], IS_WINDOWS)),
+  const branchMap = useMemo(
+    () =>
+      arrangeBranchMap(
+        overlayLanes(trees, ov?.lanes ?? [], IS_WINDOWS),
+        ov?.branches ?? [],
+        ov?.baseBranch ?? "",
+      ),
     [trees, ov],
   );
 
@@ -925,25 +1088,444 @@ export default function CodingProjectView({
     | "github"
     | "other"
     | null;
-  const hasBaseTree = trees.some((w) => w.isBase);
   const primaryOffBase = trees.some((w) => w.isPrimary && !w.isBase);
   const pickerRows = remotePickerRows(
     branches.map((b) => ({ name: b.name, occupiedPath: b.worktreePath })),
     ov?.remoteBranches ?? [],
     pickerQuery,
   );
+  const hasRail = !!branchMap.root;
+  const looseOpen = looseOpenPick ?? branchMap.loose.length <= 3;
+  // 只有用户分过组才出组头；全未分组时不写「未分组」占一行
+  const showThemeCaptions = branchMap.groups.some((g) => !!g.theme);
+  const mapEntries: MapEntry[] = [];
+  for (const group of branchMap.groups) {
+    if (showThemeCaptions && group.label !== "主仓") {
+      mapEntries.push({
+        kind: "caption",
+        key: `theme:${group.label}`,
+        label: group.label,
+      });
+    }
+    for (const t of group.items) {
+      mapEntries.push({ kind: "tree", key: t.path, tree: t });
+    }
+  }
+  if (branchMap.loose.length > 0) {
+    mapEntries.push({ kind: "fold", key: "loose-fold" });
+    if (looseOpen) {
+      for (const b of branchMap.loose) {
+        mapEntries.push({ kind: "loose", key: `br:${b.name}`, branch: b });
+      }
+    }
+  }
+
+  function treeNames(w: LaneTree) {
+    const label = w.detached ? "游离 HEAD" : w.branch || "（无分支）";
+    return {
+      label,
+      displayName: w.isPrimary ? "主仓" : w.lane.name || label,
+    };
+  }
+
+  function treeAria(w: LaneTree): string {
+    const { label, displayName } = treeNames(w);
+    return w.isPrimary ? `主仓 ${label}` : `工作树 ${displayName}`;
+  }
+
+  function treeTone(w: LaneTree): RailTone {
+    if (ov?.merging && ov.mergingCwd === w.path) return "conflict";
+    return laneActivityLabel(w.path, terminalRunInputs, IS_WINDOWS) === "空闲"
+      ? "idle"
+      : "active";
+  }
+
+  function treeCard(w: LaneTree) {
+    const { label, displayName } = treeNames(w);
+    const activity = laneActivityLabel(w.path, terminalRunInputs, IS_WINDOWS);
+    const activityText =
+      activity === "空闲"
+        ? "空闲"
+        : (AGENTS.find((a) => a.id === activity)?.label ?? activity);
+    const merging = !!ov?.merging && ov.mergingCwd === w.path;
+    const moreItems: ContextMenuItem[] = [];
+    if (w.isPrimary && !merging) {
+      moreItems.push(
+        {
+          icon: FileDiff,
+          label: "查看改动",
+          onSelect: () => openGit(w.path, label),
+        },
+        {
+          icon: ArrowDownToLine,
+          label: "拉取",
+          disabled: !!busy,
+          onSelect: () => void runRemote("coding_pull", w.path, "已拉取"),
+        },
+        {
+          icon: ArrowUpFromLine,
+          label: "推送",
+          disabled: !!busy,
+          onSelect: () => void runRemote("coding_push", w.path, "已推送"),
+        },
+      );
+    }
+    if (merging) {
+      moreItems.push({
+        icon: Undo2,
+        label: "取消合并",
+        onSelect: () => void abortMerge(),
+      });
+    }
+    // 合并入口跟着工作树走（原先只在已收掉的「本地分支」列表里）
+    if (!w.isBase && !w.detached && w.branch && !merging) {
+      moreItems.push({
+        icon: GitMerge,
+        label: `合并进 ${base || "基准"}`,
+        disabled: !!busy,
+        onSelect: () => void mergeBranch(w.branch),
+      });
+    }
+    if (!w.isPrimary && !w.detached) {
+      moreItems.push({
+        icon: GitBranchPlus,
+        label: "再开一条",
+        onSelect: () => {
+          const next = nextLaneBranchName(w.branch || "feature/work");
+          if (!next) return;
+          setBranchName(next);
+          branchInputRef.current?.focus();
+          branchInputRef.current?.scrollIntoView({
+            block: "nearest",
+          });
+        },
+      });
+    }
+    moreItems.push({ separator: true });
+    moreItems.push({
+      icon: Copy,
+      label: "复制路径",
+      onSelect: () => {
+        void navigator.clipboard
+          .writeText(w.path)
+          .catch(() => onError("复制路径失败"));
+      },
+    });
+    moreItems.push({
+      icon: FolderOpen,
+      label: revealFolderLabel(IS_MAC, IS_WINDOWS),
+      onSelect: () => {
+        void revealItemInDir(w.path).catch((e) => onError(String(e)));
+      },
+    });
+    moreItems.push({
+      icon: AppWindow,
+      label: w.isPrimary
+        ? "在 GitHub Desktop 打开主仓这一目录"
+        : "用 GitHub Desktop 打开这一目录",
+      onSelect: () => void openDesktop(w.path),
+    });
+    moreItems.push({ separator: true });
+    if (customRuntimes.length === 0) {
+      moreItems.push({
+        icon: Cpu,
+        label: "用自定义运行时…",
+        onSelect: () =>
+          void startCustomRuntime(w.path, undefined, w.lane.name || label),
+      });
+    } else {
+      for (const r of customRuntimes) {
+        moreItems.push({
+          icon: Play,
+          label: `运行「${r.name}」`,
+          onSelect: () => void startCustomRuntime(w.path, r, w.lane.name || label),
+        });
+      }
+    }
+    if (!w.isPrimary) {
+      moreItems.push({ separator: true });
+      moreItems.push({
+        icon: Layers,
+        label: w.lane.theme ? "改分组…" : "分组…",
+        onSelect: () => beginGroup(w),
+      });
+      if (w.lane.theme) {
+        moreItems.push({
+          icon: Ungroup,
+          label: "取消分组",
+          onSelect: () => void saveLane(w, ""),
+        });
+      }
+      moreItems.push({
+        icon: Trash2,
+        label: "删除工作树",
+        danger: true,
+        disabled: !!busy,
+        onSelect: () => void removeTree(w),
+      });
+    }
+    return (
+      <div className={projectWellClass}>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="min-w-0 flex-1">
+            <p
+              className="flex min-w-0 items-center gap-2 text-sm font-medium text-l1"
+              title={w.path}
+            >
+              <span className="min-w-0 truncate">{displayName}</span>
+              {!w.isPrimary &&
+                w.lane.branch &&
+                w.lane.branch !== displayName && (
+                  <BranchLabel name={w.lane.branch} detached={w.detached} />
+                )}
+              {w.isPrimary && <BranchLabel name={label} detached={w.detached} />}
+              {w.isBase && (
+                <span className="shrink-0 rounded bg-inset px-1 text-micro font-normal text-l4">
+                  基准
+                </span>
+              )}
+              {(!w.isPrimary || activity !== "空闲") && (
+                <span
+                  className={`shrink-0 text-micro font-normal ${
+                    activity === "空闲" ? "text-l4" : "text-l2"
+                  }`}
+                >
+                  {activityText}
+                </span>
+              )}
+              {merging && <span className="text-xs text-warn-text">有冲突</span>}
+            </p>
+          </div>
+          <div className="ml-auto flex shrink-0 flex-wrap items-center gap-0.5">
+            {merging ? (
+              <button
+                type="button"
+                className={compactPrimaryActionClass}
+                onClick={() => openGit(w.path, "解决冲突")}
+              >
+                去解决
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className={`${w.isPrimary ? ghostActionClass : rowActionClass} gap-1`}
+                  onClick={() => void enterTree(w, w.lane.name || label)}
+                >
+                  <Terminal size={13} strokeWidth={1.8} />
+                  进入
+                </button>
+                {!w.isPrimary && (
+                  <>
+                    <IconBtn label="查看改动" onClick={() => openGit(w.path, label)}>
+                      <GitCompare size={13} strokeWidth={1.8} />
+                    </IconBtn>
+                    <IconBtn
+                      label="拉取"
+                      disabled={!!busy}
+                      onClick={() => void runRemote("coding_pull", w.path, "已拉取")}
+                    >
+                      <ArrowDownToLine size={13} strokeWidth={1.8} />
+                    </IconBtn>
+                    <IconBtn
+                      label={
+                        w.hasUpstream
+                          ? `推送到 origin/${w.branch || "HEAD"}`
+                          : "第一次会推到 origin 并设上游"
+                      }
+                      disabled={!!busy}
+                      onClick={() => void runRemote("coding_push", w.path, "已推送")}
+                    >
+                      <ArrowUpToLine size={13} strokeWidth={1.8} />
+                    </IconBtn>
+                  </>
+                )}
+              </>
+            )}
+            {hostKind === "github" && (
+              <IconBtn
+                label={
+                  w.hasUpstream
+                    ? busy === `pr:${w.path}`
+                      ? "打开中…"
+                      : "打开 Pull Request"
+                    : "先推送才能开 PR"
+                }
+                disabled={!!busy || !w.hasUpstream}
+                onClick={() => void openPr(w.path)}
+              >
+                <GitPullRequest size={13} strokeWidth={1.8} />
+              </IconBtn>
+            )}
+            {moreItems.length > 0 && (
+              <button
+                type="button"
+                className={iconBtnClass}
+                aria-label={`更多操作：${label}`}
+                title="更多操作"
+                onClick={(e) => openMenu(e, moreItems)}
+              >
+                ⋯
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-micro">
+          <FactChips
+            facts={w}
+            baseBranch={base}
+            hostKind={hostKind}
+            cleanLabel={w.isPrimary && !merging}
+          />
+          {w.isPrimary && (
+            <TipWrap text={absTime(w.lastCommitAt ?? null)} up={false}>
+              <span className="text-l4">
+                {w.lastCommitAt ? `最近提交 ${relTime(w.lastCommitAt)}` : "还没有提交"}
+              </span>
+            </TipWrap>
+          )}
+        </div>
+        {groupingPath === w.path && (
+          <form
+            className="mt-2 flex gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void saveLane(w, groupingTheme);
+            }}
+          >
+            <input
+              className={`${fieldClass} h-8 min-w-0 flex-1 py-0`}
+              value={groupingTheme}
+              placeholder="分组名，例如登录"
+              aria-label="主题分组"
+              autoFocus
+              onChange={(e) => setGroupingTheme(e.target.value)}
+            />
+            <button type="submit" className={rowActionClass} disabled={!!busy}>
+              分组
+            </button>
+            <button
+              type="button"
+              className={ghostActionClass}
+              onClick={() => setGroupingPath(null)}
+            >
+              取消
+            </button>
+          </form>
+        )}
+        {!w.isPrimary && (
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-micro text-l4">
+            <TipWrap text={absTime(w.lastCommitAt ?? null)} up={false}>
+              <span>
+                {w.lastCommitAt ? `最近提交 ${relTime(w.lastCommitAt)}` : "还没有提交"}
+              </span>
+            </TipWrap>
+            <TipWrap text={w.path}>
+              <button
+                type="button"
+                className={`${ghostActionClass} gap-1`}
+                aria-label={`打开工作树目录：${label}`}
+                onClick={() =>
+                  void revealItemInDir(w.path).catch((e) => onError(String(e)))
+                }
+              >
+                <FolderOpen size={12} strokeWidth={1.8} />
+                目录
+              </button>
+            </TipWrap>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  /** 基准还没检出：地图根退成轻行，建树入口就放在根上（原身份段的孤立按钮与「主仓不在基准」芯片收进这里）。 */
+  function baseRow(root: { name: string; branch: CodingBranchDto | null }) {
+    return (
+      <div>
+        <div className="flex min-h-8 flex-wrap items-center gap-2">
+          <span className="flex min-w-0 flex-1 items-center gap-2">
+            <BranchLabel name={root.name} icon={false} strong />
+            <span className="shrink-0 rounded bg-inset px-1 text-micro text-l4">
+              基准
+            </span>
+            <span className="shrink-0 text-micro text-l4">未检出</span>
+          </span>
+          <TipWrap
+            text={
+              primaryOffBase
+                ? `主仓不在 ${root.name}。给基准建一棵工作树再合并，不要把主仓切回去。`
+                : `给 ${root.name} 建一棵工作树；合并进基准要用到它。`
+            }
+          >
+            <button
+              type="button"
+              className={ghostActionClass}
+              disabled={creating || !!busy}
+              onClick={() => void createTree(root.name, { kind: "local" })}
+            >
+              建工作树
+            </button>
+          </TipWrap>
+        </div>
+        {root.branch && (
+          <FactChips facts={root.branch} baseBranch={base} hostKind={hostKind} />
+        )}
+      </div>
+    );
+  }
+
+  function looseRow(b: CodingBranchDto) {
+    return (
+      <div>
+        <div className="flex min-h-8 items-center gap-2">
+          <span className="min-w-0 flex-1">
+            <BranchLabel name={b.name} icon={false} />
+          </span>
+          <button
+            type="button"
+            className={ghostActionClass}
+            disabled={creating || !!busy}
+            onClick={() => void createTree(b.name, { kind: "local" })}
+          >
+            建工作树
+          </button>
+          <button
+            type="button"
+            className={iconBtnClass}
+            aria-label={`更多操作：${b.name}`}
+            title="更多操作"
+            onClick={(e) =>
+              openMenu(e, [
+                {
+                  icon: GitMerge,
+                  label: `合并进 ${base || "基准"}`,
+                  disabled: !!busy,
+                  onSelect: () => void mergeBranch(b.name),
+                },
+                {
+                  icon: Trash2,
+                  label: "删除分支",
+                  danger: true,
+                  disabled: !!busy,
+                  onSelect: () => void deleteBranch(b.name),
+                },
+              ])
+            }
+          >
+            ⋯
+          </button>
+        </div>
+        <FactChips facts={b} baseBranch={base} hostKind={hostKind} />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">
       <div className="min-w-0 space-y-5">
         <section>
           <p className="flex flex-wrap items-center gap-2 text-xs text-l3">
-            {base && (
-              <span className="inline-flex items-center gap-1 text-l4">
-                基准
-                <BranchLabel name={base} />
-              </span>
-            )}
             {origin ? (
               <span
                 className="truncate font-mono text-micro text-l3"
@@ -964,20 +1546,8 @@ export default function CodingProjectView({
                 </button>
               )
             )}
+            {origin && statusLine && <span className="text-l4">·</span>}
             {statusLine && <span className="text-micro text-l4">{statusLine}</span>}
-            {primaryOffBase && (
-              <TipWrap
-                text={`主仓不在 ${base}。给基准建一棵工作树再合并，不要把主仓切回去。`}
-              >
-                <button
-                  type="button"
-                  className="rounded-full bg-raised px-2 py-0.5 text-micro text-l4"
-                  onClick={() => void createTree(base, { kind: "local" })}
-                >
-                  主仓不在基准
-                </button>
-              </TipWrap>
-            )}
             <span className="ml-auto flex items-center gap-1">
               <PathActions path={repoPath} onError={onError} />
               {origin && (
@@ -1003,16 +1573,6 @@ export default function CodingProjectView({
               </IconBtn>
             </span>
           </p>
-          {!hasBaseTree && ov?.isRepo && base && (
-            <button
-              type="button"
-              className={`${ghostActionClass} mt-1`}
-              disabled={creating || !!busy}
-              onClick={() => void createTree(base, { kind: "local" })}
-            >
-              为 {base} 建工作树
-            </button>
-          )}
           {initNote && (
             <p className="mt-2 text-xs text-l3">
               这个仓库还没有提交，已自动写了一条空的初始提交，才能建工作树。
@@ -1030,9 +1590,9 @@ export default function CodingProjectView({
             <section>
               <div className="mb-2.5 flex items-center gap-2">
                 <GitBranch size={14} strokeWidth={1.8} className="text-l4" />
-                <h2 className="text-xs font-medium text-l2">工作树</h2>
+                <h2 className="text-xs font-medium text-l2">分支与工作树</h2>
               </div>
-              <div className="mb-3 flex flex-wrap items-center gap-2">
+              <div className="mb-4 flex flex-wrap items-center gap-2">
                 <input
                   ref={branchInputRef}
                   className={`${fieldClass} h-8 min-w-32 flex-1 py-0`}
@@ -1120,428 +1680,104 @@ export default function CodingProjectView({
                   </ul>
                 </div>
               )}
-              <ul className="flex flex-col gap-2">
-                {laneGroups.flatMap((group) => {
-                  const head =
-                    group.label === "主仓" ? null : (
-                      <li
-                        key={`theme:${group.label}`}
-                        className="px-0.5 pt-1 text-micro font-medium text-l4"
-                      >
-                        {group.label}
-                      </li>
-                    );
-                  const rows = group.items.map((w) => {
-                  const label = w.detached
-                    ? "游离 HEAD"
-                    : w.branch || "（无分支）";
-                  const displayName = w.isPrimary
-                    ? "主仓"
-                    : w.lane.name || label;
-                  const activity = laneActivityLabel(
-                    w.path,
-                    terminalRunInputs,
-                    IS_WINDOWS,
-                  );
-                  const activityText =
-                    activity === "空闲"
-                      ? "空闲"
-                      : (AGENTS.find((a) => a.id === activity)?.label ??
-                        activity);
-                  const merging = !!ov?.merging && ov.mergingCwd === w.path;
-                  const moreItems: ContextMenuItem[] = [];
-                  if (w.isPrimary && !merging) {
-                    moreItems.push(
-                      { label: "查看改动", onSelect: () => openGit(w.path, label) },
-                      {
-                        label: "拉取",
-                        disabled: !!busy,
-                        onSelect: () => void runRemote("coding_pull", w.path, "已拉取"),
-                      },
-                      {
-                        label: "推送",
-                        disabled: !!busy,
-                        onSelect: () => void runRemote("coding_push", w.path, "已推送"),
-                      },
-                    );
-                  }
-                  if (merging) {
-                    moreItems.push({
-                      label: "取消合并",
-                      onSelect: () => void abortMerge(),
-                    });
-                  }
-                  if (!w.isPrimary && !w.detached) {
-                    moreItems.push({
-                      label: "再开一条",
-                      onSelect: () => {
-                        const next = nextLaneBranchName(
-                          w.branch || "feature/work",
-                        );
-                        if (!next) return;
-                        setBranchName(next);
-                        branchInputRef.current?.focus();
-                        branchInputRef.current?.scrollIntoView({
-                          block: "nearest",
-                        });
-                      },
-                    });
-                  }
-                  moreItems.push({
-                    label: "复制路径",
-                    onSelect: () => {
-                      void navigator.clipboard
-                        .writeText(w.path)
-                        .catch(() => onError("复制路径失败"));
-                    },
-                  });
-                  moreItems.push({
-                    label: revealFolderLabel(),
-                    onSelect: () => {
-                      void revealItemInDir(w.path).catch((e) =>
-                        onError(String(e)),
-                      );
-                    },
-                  });
-                  moreItems.push({
-                    label: w.isPrimary
-                      ? "在 GitHub Desktop 打开主仓这一目录"
-                      : "用 GitHub Desktop 打开这一目录",
-                    onSelect: () => void openDesktop(w.path),
-                  });
-                  if (customRuntimes.length === 0) {
-                    moreItems.push({
-                      label: "用自定义运行时…",
-                      onSelect: () =>
-                        void startCustomRuntime(
-                          w.path,
-                          undefined,
-                          w.lane.name || label,
-                        ),
-                    });
-                  } else {
-                    for (const r of customRuntimes) {
-                      moreItems.push({
-                        label: `运行「${r.name}」`,
-                        onSelect: () =>
-                          void startCustomRuntime(
-                            w.path,
-                            r,
-                            w.lane.name || label,
-                          ),
-                      });
+              <ul className="flex flex-col" aria-label="分支地图">
+                {branchMap.root && (
+                  <RailRow
+                    rail
+                    variant="root"
+                    last={mapEntries.length === 0}
+                    nodeY={branchMap.root.tree ? CARD_NODE_Y : ROW_NODE_Y}
+                    node={
+                      <RailNode
+                        kind="base"
+                        tone={branchMap.root.tree ? treeTone(branchMap.root.tree) : "idle"}
+                      />
                     }
-                  }
-                  if (!w.isPrimary) {
-                    moreItems.push({ separator: true });
-                    moreItems.push({
-                      label: w.lane.theme ? "改分组…" : "分组…",
-                      onSelect: () => beginGroup(w),
-                    });
-                    if (w.lane.theme) {
-                      moreItems.push({
-                        label: "取消分组",
-                        onSelect: () => void saveLane(w, ""),
-                      });
+                    label={
+                      branchMap.root.tree
+                        ? treeAria(branchMap.root.tree)
+                        : `基准 ${branchMap.root.name}`
                     }
-                    moreItems.push({
-                      label: "删除工作树",
-                      danger: true,
-                      disabled: !!busy,
-                      onSelect: () => void removeTree(w),
-                    });
-                  }
-                  return (
-                    <li
-                      key={w.path}
-                      aria-label={w.isPrimary ? `主仓 ${label}` : `工作树 ${displayName}`}
-                      className={projectWellClass}
-                    >
-                      <div className="flex flex-wrap items-center gap-2">
-                        <div className="min-w-0 flex-1">
-                          <p
-                            className="flex min-w-0 items-center gap-2 text-sm font-medium text-l1"
-                            title={w.path}
-                          >
-                            <span className="min-w-0 truncate">{displayName}</span>
-                            {!w.isPrimary &&
-                              w.lane.branch &&
-                              w.lane.branch !== displayName && (
-                                <BranchLabel
-                                  name={w.lane.branch}
-                                  detached={w.detached}
-                                />
-                              )}
-                            {w.isPrimary && (
-                              <BranchLabel name={label} detached={w.detached} />
-                            )}
-                            {w.isBase && (
-                              <span className="shrink-0 rounded bg-inset px-1 text-micro font-normal text-l4">
-                                基准
-                              </span>
-                            )}
-                            {(!w.isPrimary || activity !== "空闲") && (
-                              <span className="shrink-0 text-micro font-normal text-l4">
-                                {activityText}
-                              </span>
-                            )}
-                            {merging && (
-                              <span className="text-xs text-warn-text">
-                                有冲突
-                              </span>
-                            )}
-                          </p>
-                        </div>
-                        <div className="ml-auto flex shrink-0 flex-wrap items-center gap-0.5">
-                          {merging ? (
-                            <button
-                              type="button"
-                              className={compactPrimaryActionClass}
-                              onClick={() => openGit(w.path, "解决冲突")}
-                            >
-                              去解决
-                            </button>
-                          ) : (
-                            <>
-                              <button
-                                type="button"
-                                className={`${w.isPrimary ? ghostActionClass : rowActionClass} gap-1`}
-                                onClick={() => void enterTree(w, w.lane.name || label)}
-                              >
-                                <Terminal size={13} strokeWidth={1.8} />
-                                进入
-                              </button>
-                              {!w.isPrimary && (
-                                <>
-                                  <IconBtn
-                                    label="查看改动"
-                                    onClick={() => openGit(w.path, label)}
-                                  >
-                                    <GitCompare size={13} strokeWidth={1.8} />
-                                  </IconBtn>
-                                  <IconBtn
-                                    label="拉取"
-                                    disabled={!!busy}
-                                    onClick={() =>
-                                      void runRemote("coding_pull", w.path, "已拉取")
-                                    }
-                                  >
-                                    <ArrowDownToLine size={13} strokeWidth={1.8} />
-                                  </IconBtn>
-                                  <IconBtn
-                                    label={
-                                      w.hasUpstream
-                                        ? `推送到 origin/${w.branch || "HEAD"}`
-                                        : "第一次会推到 origin 并设上游"
-                                    }
-                                    disabled={!!busy}
-                                    onClick={() =>
-                                      void runRemote("coding_push", w.path, "已推送")
-                                    }
-                                  >
-                                    <ArrowUpToLine size={13} strokeWidth={1.8} />
-                                  </IconBtn>
-                                </>
-                              )}
-                            </>
-                          )}
-                          {hostKind === "github" && (
-                            <IconBtn
-                              label={w.hasUpstream
-                                ? busy === `pr:${w.path}` ? "打开中…" : "打开 Pull Request"
-                                : "先推送才能开 PR"}
-                              disabled={!!busy || !w.hasUpstream}
-                              onClick={() => void openPr(w.path)}
-                            >
-                              <GitPullRequest size={13} strokeWidth={1.8} />
-                            </IconBtn>
-                          )}
-                          {moreItems.length > 0 && (
-                            <button
-                              type="button"
-                              className={iconBtnClass}
-                              aria-label={`更多操作：${label}`}
-                              title="更多操作"
-                              onClick={(e) => openMenu(e, moreItems)}
-                            >
-                              ⋯
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-micro">
-                        <FactChips
-                          facts={w}
-                          baseBranch={base}
-                          hostKind={hostKind}
-                          cleanLabel={w.isPrimary && !merging}
-                        />
-                        {w.isPrimary && (
-                          <TipWrap text={absTime(w.lastCommitAt ?? null)} up={false}>
-                            <span className="text-l4">
-                              {w.lastCommitAt ? `最近提交 ${relTime(w.lastCommitAt)}` : "还没有提交"}
-                            </span>
-                          </TipWrap>
-                        )}
-                      </div>
-                      {groupingPath === w.path && (
-                        <form
-                          className="mt-2 flex gap-2"
-                          onSubmit={(event) => {
-                            event.preventDefault();
-                            void saveLane(w, groupingTheme);
-                          }}
-                        >
-                          <input
-                            className={`${fieldClass} h-8 min-w-0 flex-1 py-0`}
-                            value={groupingTheme}
-                            placeholder="分组名，例如登录"
-                            aria-label="主题分组"
-                            autoFocus
-                            onChange={(e) => setGroupingTheme(e.target.value)}
-                          />
-                          <button
-                            type="submit"
-                            className={rowActionClass}
-                            disabled={!!busy}
-                          >
-                            分组
-                          </button>
-                          <button
-                            type="button"
-                            className={ghostActionClass}
-                            onClick={() => setGroupingPath(null)}
-                          >
-                            取消
-                          </button>
-                        </form>
-                      )}
-                      {!w.isPrimary && (
-                        <div className="mt-1 flex flex-wrap items-center gap-2 text-micro text-l4">
-                          <TipWrap text={absTime(w.lastCommitAt ?? null)} up={false}>
-                            <span>
-                              {w.lastCommitAt ? `最近提交 ${relTime(w.lastCommitAt)}` : "还没有提交"}
-                            </span>
-                          </TipWrap>
-                          <TipWrap text={w.path}>
-                            <button
-                              type="button"
-                              className={`${ghostActionClass} gap-1`}
-                              aria-label={`打开工作树目录：${label}`}
-                              onClick={() => void revealItemInDir(w.path).catch((e) => onError(String(e)))}
-                            >
-                              <FolderOpen size={12} strokeWidth={1.8} />
-                              目录
-                            </button>
-                          </TipWrap>
-                        </div>
-                      )}
-                    </li>
-                  );
-                  });
-                  return head ? [head, ...rows] : rows;
-                })}
-              </ul>
-            </section>
-
-            <section>
-              <button
-                type="button"
-                className="mb-2.5 flex w-full items-center gap-2 text-xs font-medium text-l2 hover:text-l1"
-                aria-label="本地分支"
-                aria-expanded={branchesOpen}
-                onClick={() => setBranchesOpen((open) => !open)}
-              >
-                <FoldMark open={branchesOpen} />
-                本地分支
-                <span className="font-normal text-l4">{branches.length}</span>
-                {branches.length > 0 && (
-                  <span className="ml-auto text-micro font-normal text-l4">
-                    {branches.some((b) => !b.worktreePath)
-                      ? `${branches.filter((b) => !b.worktreePath).length} 个未检出`
-                      : "均已检出"}
-                  </span>
+                  >
+                    {branchMap.root.tree
+                      ? treeCard(branchMap.root.tree)
+                      : baseRow(branchMap.root)}
+                  </RailRow>
                 )}
-              </button>
-              {branchesOpen &&
-                (branches.length === 0 ? (
-                <p className="py-4 text-sm text-l3">还没有本地分支。</p>
-              ) : (
-                <ul className="space-y-0.5">
-                  {branches.map((b) => {
+                {mapEntries.map((entry, i) => {
+                  const last = i === mapEntries.length - 1;
+                  if (entry.kind === "caption") {
                     return (
-                      <li
-                        key={b.name}
-                        aria-label={`本地分支 ${b.name}`}
-                        className="flex min-h-10 items-center gap-2 rounded-md px-2.5 hover:bg-hover"
+                      <RailRow
+                        key={entry.key}
+                        rail={hasRail}
+                        variant="caption"
+                        last={last}
+                        nodeY={ROW_NODE_Y}
                       >
-                        <div className="min-w-0 flex-1">
-                          <div className="flex min-w-0 items-center gap-2">
-                            <BranchLabel name={b.name} />
-                            {b.isBase && (
-                              <span className="text-micro text-l4">基准</span>
-                            )}
-                            <TipWrap text={b.worktreePath || "尚未创建工作树"} up={false}>
-                              <span className="shrink-0 text-micro text-l4">
-                                {b.worktreePath ? (b.isPrimary ? "主仓" : "已建工作树") : "未检出"}
-                              </span>
-                            </TipWrap>
-                          </div>
-                          {!b.worktreePath && (
-                            <p className="mt-0.5 flex flex-wrap items-center gap-1.5">
-                              <FactChips facts={b} baseBranch={base} hostKind={hostKind} />
-                            </p>
-                          )}
-                        </div>
-                        {!b.worktreePath && (
-                          <button
-                            type="button"
-                            className={ghostActionClass}
-                            disabled={creating || !!busy}
-                            onClick={() =>
-                              void createTree(b.name, { kind: "local" })
-                            }
-                          >
-                            建工作树
-                          </button>
-                        )}
+                        <p className="flex h-8 items-center text-micro font-medium text-l4">
+                          {entry.label}
+                        </p>
+                      </RailRow>
+                    );
+                  }
+                  if (entry.kind === "fold") {
+                    return (
+                      <RailRow
+                        key={entry.key}
+                        rail={hasRail}
+                        variant="caption"
+                        last={last}
+                        nodeY={ROW_NODE_Y}
+                      >
+                        {/* 字号写在内层 span：全站 button { font: inherit } 会吞掉按钮上的 text-* */}
                         <button
                           type="button"
-                          className="flex h-7 w-7 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1"
-                          aria-label={`更多操作：${b.name}`}
-                          title="更多操作"
-                          onClick={(e) =>
-                            openMenu(e, [
-                              {
-                                label: "合并进基准",
-                                disabled: !!busy || b.isBase,
-                                title: b.isBase
-                                  ? "基准分支不能合并进自己"
-                                  : undefined,
-                                onSelect: () => void mergeBranch(b.name),
-                              },
-                              {
-                                label: "删除分支",
-                                danger: true,
-                                disabled:
-                                  !!busy || b.isBase || !!b.worktreePath,
-                                title: b.isBase
-                                  ? "基准分支不能删"
-                                  : b.worktreePath
-                                    ? "先删工作树再删分支"
-                                    : undefined,
-                                onSelect: () => void deleteBranch(b.name),
-                              },
-                            ])
-                          }
+                          className="-ml-1 flex h-8 items-center gap-0.5 rounded-md pr-1.5 text-l4 hover:text-l2"
+                          aria-expanded={looseOpen}
+                          onClick={() => setLooseOpenPick(!looseOpen)}
                         >
-                          ⋯
+                          <FoldMark open={looseOpen} />
+                          <span className="text-micro font-medium">
+                            未检出的分支{" "}
+                            <span className="ml-0.5 font-normal tabular-nums">
+                              {branchMap.loose.length}
+                            </span>
+                          </span>
                         </button>
-                      </li>
+                      </RailRow>
                     );
-                  })}
-                </ul>
-              ))}
+                  }
+                  if (entry.kind === "loose") {
+                    return (
+                      <RailRow
+                        key={entry.key}
+                        rail={hasRail}
+                        variant="child"
+                        last={last}
+                        nodeY={ROW_NODE_Y}
+                        node={<RailNode kind="loose" />}
+                        label={`本地分支 ${entry.branch.name}`}
+                      >
+                        {looseRow(entry.branch)}
+                      </RailRow>
+                    );
+                  }
+                  return (
+                    <RailRow
+                      key={entry.key}
+                      rail={hasRail}
+                      variant="child"
+                      last={last}
+                      nodeY={CARD_NODE_Y}
+                      node={<RailNode kind="tree" tone={treeTone(entry.tree)} />}
+                      label={treeAria(entry.tree)}
+                    >
+                      {treeCard(entry.tree)}
+                    </RailRow>
+                  );
+                })}
+              </ul>
             </section>
             {ledgerPendingBranch && (
               <div className="flex flex-wrap items-center gap-2 text-xs text-err-text">
@@ -1567,6 +1803,7 @@ export default function CodingProjectView({
           open={settingsOpen}
           onClose={() => setSettingsOpen(false)}
           projectPath={project.path}
+          projectName={project.name}
           workMode="coding"
           onError={onError}
         />
@@ -1582,44 +1819,46 @@ export default function CodingProjectView({
         />
       )}
 
-      {originOpen && (
-        <div
-          className="fixed inset-0 z-40 flex items-center justify-center bg-black/40"
-          onClick={() => setOriginOpen(false)}
-        >
-          <div
-            className="ccode-float-surface w-full max-w-[500px] rounded-lg border border-field p-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <p className="text-sm font-medium text-l1">连接远程</p>
-            <p className="mt-1 text-xs text-l4">远程名固定 origin</p>
-            <input
-              className={`${fieldClass} mt-3`}
-              value={originUrl}
-              placeholder="https://github.com/org/repo.git"
-              onChange={(e) => setOriginUrl(e.target.value)}
-              autoFocus
-            />
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                type="button"
-                className={ghostActionClass}
-                onClick={() => setOriginOpen(false)}
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                className={primaryActionClass}
-                disabled={!originUrl.trim() || !!busy}
-                onClick={() => void addOrigin()}
-              >
-                添加
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <Modal
+        open={originOpen}
+        title="连接远程"
+        description="远程名固定 origin"
+        size="md"
+        onClose={() => setOriginOpen(false)}
+        footer={
+          <>
+            <button
+              type="button"
+              className={secondaryActionClass}
+              onClick={() => setOriginOpen(false)}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              className={primaryActionClass}
+              disabled={!originUrl.trim() || !!busy}
+              onClick={() => void addOrigin()}
+            >
+              添加
+            </button>
+          </>
+        }
+      >
+        <label className="block text-sm">
+          <span className="mb-1 block text-xs text-l3">仓库地址</span>
+          <input
+            className={fieldClass}
+            value={originUrl}
+            placeholder="https://github.com/org/repo.git"
+            onChange={(e) => setOriginUrl(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && originUrl.trim() && !busy) void addOrigin();
+            }}
+            autoFocus
+          />
+        </label>
+      </Modal>
     </div>
   );
 }

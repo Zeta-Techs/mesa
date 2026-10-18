@@ -134,6 +134,10 @@ fn require_inside_root(path: &str, root: &str) -> Result<(), String> {
 }
 
 pub(crate) fn read_file_preview_sync(path: &str, root: &str) -> Result<FilePreviewDto, String> {
+    read_capped_sync(path, root, PREVIEW_CAP)
+}
+
+fn read_capped_sync(path: &str, root: &str, cap: usize) -> Result<FilePreviewDto, String> {
     let root_exp = expand_tilde(root);
     let path_exp = expand_tilde(path);
     // 保留用户从树中预览外链 symlink 的能力，但不允许 ../ 绕过词法根边界。
@@ -157,19 +161,22 @@ pub(crate) fn read_file_preview_sync(path: &str, root: &str) -> Result<FilePrevi
     }
     let f = fs::File::open(&path_c).map_err(|e| format!("打开文件失败: {e}"))?;
     let mut buf = Vec::new();
-    f.take((PREVIEW_CAP + 1) as u64)
+    f.take((cap + 1) as u64)
         .read_to_end(&mut buf)
         .map_err(|e| format!("读取文件失败: {e}"))?;
     // 二进制检测：前 8KB 出现 NUL 即判二进制
     if buf.iter().take(BINARY_SNIFF).any(|b| *b == 0) {
         return Err("二进制文件不支持预览".into());
     }
-    let truncated = buf.len() > PREVIEW_CAP;
+    let truncated = buf.len() > cap;
     if truncated {
-        buf.truncate(PREVIEW_CAP);
+        buf.truncate(cap);
     }
     let read_only_reason = if truncated {
-        Some("文件超过 256 KB，仅预览开头部分，不能保存".into())
+        Some(format!(
+            "文件超过 {} KB，仅预览开头部分，不能保存",
+            cap / 1024
+        ))
     } else if !(crate::paths::path_within_path(&path_c, &root_c)
         || root_c == std::path::Path::new("/"))
     {
@@ -276,6 +283,107 @@ fn save_file_preview_sync(
     }
     crate::profiles::atomic_write(&path_c, text)?;
     Ok(preview_revision(text.as_bytes()))
+}
+
+/// 科研台账（纳入清单、待获取、两份 RIS、笔记索引、引文库）的整份读写上限。
+/// 预览通道 256 KB 封顶，但检索一轮带摘要的 included.json 两百篇就到 300 KB：
+/// 截断后待确认清单整块读不出来（界面误报「还没有 included.json」），纳入/排除也存不回去。
+const LEDGER_CAP: usize = 16 * 1024 * 1024;
+
+/// 只认这几份台账（项目根或工作区根下的相对路径）：别的文件照旧走 256 KB 预览通道。
+const LEDGER_FILES: &[&str] = &[
+    "papers/included.json",
+    "papers/included.md",
+    "papers/to-fetch.md",
+    "papers/to-fetch.ris",
+    "papers/endnote-import.ris",
+    "papers/screening.md",
+    "notes/index.json",
+    "references.bib",
+];
+
+/// 校验路径落在根内且是白名单台账，返回规范化后的绝对路径。
+fn ledger_target(path: &str, root: &str) -> Result<(PathBuf, PathBuf), String> {
+    let root_c = crate::paths::canonicalize_plain(std::path::Path::new(&expand_tilde(root)))
+        .map_err(|e| format!("项目根目录无效: {e}"))?;
+    let path_exp = PathBuf::from(expand_tilde(path));
+    if path_exp
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err("路径超出项目根目录，拒绝读写".into());
+    }
+    let path_c = crate::paths::canonicalize_plain(&path_exp)
+        .map_err(|e| format!("文件不存在或不可读: {e}"))?;
+    if !crate::paths::path_within_path(&path_c, &root_c) {
+        return Err("符号链接或路径指向项目根目录之外，拒绝读写".into());
+    }
+    let rel = path_c
+        .strip_prefix(&root_c)
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_default();
+    if !LEDGER_FILES.iter().any(|name| *name == rel) {
+        return Err(format!("不是科研台账文件：{rel}"));
+    }
+    Ok((path_c, root_c))
+}
+
+fn read_research_ledger_sync(path: &str, root: &str) -> Result<FilePreviewDto, String> {
+    let (path_c, root_c) = ledger_target(path, root)?;
+    read_capped_sync(
+        &path_c.to_string_lossy(),
+        &root_c.to_string_lossy(),
+        LEDGER_CAP,
+    )
+}
+
+fn save_research_ledger_sync(
+    path: &str,
+    root: &str,
+    text: &str,
+    expected_revision: &str,
+) -> Result<String, String> {
+    if text.len() > LEDGER_CAP {
+        return Err("台账超过 16 MB，不能在 Mesa 里改".into());
+    }
+    let (path_c, root_c) = ledger_target(path, root)?;
+    // 与预览保存同一把锁：两条通道改的可能是同一份文件
+    let _guard = PREVIEW_SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _file_guard = crate::storage::config_lock("preview-save")?;
+    let current = read_capped_sync(
+        &path_c.to_string_lossy(),
+        &root_c.to_string_lossy(),
+        LEDGER_CAP,
+    )?;
+    if let Some(reason) = current.read_only_reason {
+        return Err(reason);
+    }
+    if current.revision.as_deref() != Some(expected_revision) {
+        return Err("文件已被 Agent 或其他程序修改，未覆盖磁盘内容。请重新打开清单再改。".into());
+    }
+    crate::profiles::atomic_write(&path_c, text)?;
+    Ok(preview_revision(text.as_bytes()))
+}
+
+#[tauri::command]
+pub async fn read_research_ledger(path: String, root: String) -> Result<FilePreviewDto, String> {
+    tauri::async_runtime::spawn_blocking(move || read_research_ledger_sync(&path, &root))
+        .await
+        .map_err(|e| format!("读取文件失败: {e}"))?
+}
+
+#[tauri::command]
+pub async fn save_research_ledger(
+    path: String,
+    root: String,
+    text: String,
+    expected_revision: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        save_research_ledger_sync(&path, &root, &text, &expected_revision)
+    })
+    .await
+    .map_err(|e| format!("保存文件失败: {e}"))?
 }
 
 /// 从整份 RIS 里拿掉 DOI 或标题对得上的条目。预览通道只读 256 KB，
@@ -647,6 +755,54 @@ mod tests {
         .is_err());
         assert_eq!(fs::read_to_string(&f).unwrap(), "new content\n");
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn research_ledger_reads_and_saves_past_preview_cap() {
+        let dir = tmpdir("ledger");
+        fs::create_dir_all(dir.join("papers")).unwrap();
+        let json = dir.join("papers").join("included.json");
+        // 两百篇带摘要的纳入清单量级：超过预览上限
+        let big = format!("[{}]", "\"x\",".repeat(PREVIEW_CAP / 4) + "\"y\"");
+        fs::write(&json, &big).unwrap();
+        let root = dir.to_str().unwrap();
+        let path = json.to_str().unwrap();
+        assert!(read_file_preview_sync(path, root).unwrap().truncated);
+        let read = read_research_ledger_sync(path, root).unwrap();
+        assert!(!read.truncated);
+        assert_eq!(read.text, big);
+        let revision = read.revision.unwrap();
+        let next = format!("{big}\n");
+        let saved = save_research_ledger_sync(path, root, &next, &revision).unwrap();
+        assert_eq!(fs::read_to_string(&json).unwrap(), next);
+        // 旧版本再存一次：拒绝，不覆盖
+        assert!(save_research_ledger_sync(path, root, "[]", &revision)
+            .unwrap_err()
+            .contains("已被 Agent"));
+        assert_eq!(saved, preview_revision(next.as_bytes()));
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn research_ledger_rejects_files_outside_whitelist() {
+        let dir = tmpdir("ledger-deny");
+        fs::create_dir_all(dir.join("papers")).unwrap();
+        fs::write(dir.join("papers").join("notes.txt"), "x").unwrap();
+        fs::write(dir.join("included.json"), "[]").unwrap();
+        let root = dir.to_str().unwrap();
+        for rel in ["papers/notes.txt", "included.json"] {
+            let path = dir.join(rel);
+            assert!(read_research_ledger_sync(path.to_str().unwrap(), root)
+                .unwrap_err()
+                .contains("不是科研台账"));
+        }
+        let outside = tmpdir("ledger-outside");
+        fs::create_dir_all(outside.join("papers")).unwrap();
+        fs::write(outside.join("papers").join("included.json"), "[]").unwrap();
+        let escaped = dir.join("..").join(outside.file_name().unwrap()).join("papers/included.json");
+        assert!(read_research_ledger_sync(escaped.to_str().unwrap(), root).is_err());
+        fs::remove_dir_all(dir).ok();
+        fs::remove_dir_all(outside).ok();
     }
 
     #[test]
@@ -1641,6 +1797,15 @@ pub async fn fs_create_dir(root: String, name: String) -> Result<String, String>
 #[tauri::command]
 pub fn home_dir() -> String {
     dirs::home_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// 新建项目的默认父目录：系统「文档」，取不到退回家目录（与示例课题同一落点）
+#[tauri::command]
+pub fn default_project_parent() -> String {
+    dirs::document_dir()
+        .or_else(dirs::home_dir)
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default()
 }

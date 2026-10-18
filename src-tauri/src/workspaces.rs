@@ -138,10 +138,13 @@ const PORT_HIGH: i64 = 4300; // 块起点上限，每块 10 个端口
 // ===== 路径与 DB =====
 
 fn workspaces_root() -> Result<PathBuf, String> {
-    Ok(dirs::home_dir()
-        .ok_or("无法确定用户主目录")?
-        .join("ccode")
-        .join("workspaces"))
+    Ok(crate::ccode_home::current()?.join("workspaces"))
+}
+
+/// 定时雷达隔离 worktree 根（~/ccode/watch-worktrees/<项目>/<任务id>）：Mesa 自管的
+/// 派生目录，里面的会话一律是无头自动活动，不得冒充「仓库候选 / 最近项目」。
+pub(crate) fn watch_worktrees_root() -> Result<PathBuf, String> {
+    Ok(crate::ccode_home::current()?.join("watch-worktrees"))
 }
 
 fn app_db_path() -> Result<PathBuf, String> {
@@ -1250,7 +1253,10 @@ pub(crate) fn base_ref(_repo: &Path, base: &str) -> String {
 }
 
 /// git ≥2.38 的 merge-tree --write-tree：退出码 0=干净 1=冲突；只写对象库，不碰工作区/索引/
-/// 引用。--name-only 时 stdout 首行是树 OID，其余行是冲突文件路径
+/// 引用。--name-only 时 stdout 首行是树 OID，其后到第一个空行是冲突文件路径；空行之后是
+/// 「Auto-merging / CONFLICT」说明——中文系统上 git 会把它们本地化（「自动合并 x」），
+/// 按英文前缀过滤会把说明行当成文件名（2026-10-17 git 2.55 实测），所以用 --no-messages
+/// 关掉说明并在第一个空行处截断，两道都不依赖语言。
 fn conflict_probe(repo: &Path, base: &str, branch: &str) -> (Option<bool>, Vec<String>) {
     let Some(git) = crate::agents::resolve_binary("git") else {
         return (None, vec![]);
@@ -1258,7 +1264,14 @@ fn conflict_probe(repo: &Path, base: &str, branch: &str) -> (Option<bool>, Vec<S
     let mut cmd = crate::process::background_command(git);
     cmd.arg("-C")
         .arg(repo)
-        .args(["merge-tree", "--write-tree", "--name-only", base, branch])
+        .args([
+            "merge-tree",
+            "--write-tree",
+            "--name-only",
+            "--no-messages",
+            base,
+            branch,
+        ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let Ok(out) = run_cmd_full(cmd, Duration::from_secs(30)) else {
@@ -1270,18 +1283,26 @@ fn conflict_probe(repo: &Path, base: &str, branch: &str) -> (Option<bool>, Vec<S
         _ => None, // 旧版 git 没有该参数（退出码 129 等），或超时/启动失败
     };
     let files = if conflict == Some(true) {
-        String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .skip(1) // 首行树 OID
-            .map(|l| l.trim().to_string())
-            .filter(|l| {
-                !l.is_empty() && !l.starts_with("Auto-merging") && !l.starts_with("CONFLICT")
-            })
-            .collect()
+        conflict_files_from_merge_tree(&String::from_utf8_lossy(&out.stdout))
     } else {
         vec![]
     };
     (conflict, files)
+}
+
+/// merge-tree --name-only 输出 → 冲突文件：跳过首行树 OID，读到第一个空行为止，去重保序。
+fn conflict_files_from_merge_tree(stdout: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for line in stdout.lines().skip(1) {
+        let path = line.trim();
+        if path.is_empty() {
+            break;
+        }
+        if !out.iter().any(|p| p == path) {
+            out.push(path.to_string());
+        }
+    }
+    out
 }
 
 fn health_impl(conn: &Connection, id: &str) -> Result<WsHealthDto, String> {
@@ -2275,6 +2296,15 @@ fn acceptance_record_ids(
     }
     let mut ids = std::collections::HashSet::new();
     for row in rows {
+        // 人在评审里排除的篇目留在 included.json（decision=excluded）：不参与对账——
+        // 否则精读步要么给排除篇建索引行（进度永远写不满），要么机器验收不过（2026-10-17）
+        let excluded = row
+            .get("decision")
+            .and_then(Value::as_str)
+            .is_some_and(|d| matches!(d.trim().to_ascii_lowercase().as_str(), "excluded" | "exclude"));
+        if excluded {
+            continue;
+        }
         let id = row.get("id")?.as_str()?;
         if id.trim().is_empty() || !ids.insert(id.to_owned()) {
             return None;
@@ -2286,7 +2316,8 @@ fn acceptance_record_ids(
 /// 机器验收语法（仅处理显式 `machine:` 条目，普通自然语言条件仍展示给人）：
 /// `machine:file:path`、`machine:glob:path/*.md`、`machine:contains:path::文本`、
 /// `machine:not-contains:path::文本`（文件在且不含该文本）、
-/// `machine:count:path/*.pdf>=N`、`machine:same-ids:reference.json::delivered.json`。
+/// `machine:count:path/*.pdf>=N`（可带 `::except=a.md,b.md` 不计入的文件名）、
+/// `machine:same-ids:reference.json::delivered.json`（decision=excluded 的行不参与对账）。
 /// 路径始终限制在项目根内；same-ids 只核对非空唯一字符串 ID 集合，不验证研究结论。
 fn machine_acceptance_satisfied(root: &Path, criteria: &[String], since: SystemTime) -> bool {
     criteria
@@ -2330,6 +2361,20 @@ fn machine_acceptance_satisfied(root: &Path, criteria: &[String], since: SystemT
                     .unwrap_or(false);
             }
             if let Some(rest) = rule.strip_prefix("count:") {
+                // 可选尾巴 `::except=a.md,b.md`：不计入的文件名（如精读步的 handoff.md——
+                // 它本身是必交产物，不剔掉「至少写了 1 篇笔记」就被它自己满足）
+                let (rest, except) = match rest.split_once("::") {
+                    Some((head, tail)) => match tail.strip_prefix("except=") {
+                        Some(names) => (head, names),
+                        None => return false,
+                    },
+                    None => (rest, ""),
+                };
+                let except: Vec<String> = except
+                    .split(',')
+                    .map(|n| n.trim().to_lowercase())
+                    .filter(|n| !n.is_empty())
+                    .collect();
                 let Some((pattern, n)) = rest.rsplit_once(">=") else {
                     return false;
                 };
@@ -2351,9 +2396,11 @@ fn machine_acceptance_satisfied(root: &Path, criteria: &[String], since: SystemT
                     .flatten()
                     .filter_map(|entry| {
                         let meta = entry.metadata().ok()?;
+                        let name = entry.file_name().to_string_lossy().into_owned();
                         (meta.is_file()
                             && meta.len() > 0
-                            && wildcard_match(file_pattern, &entry.file_name().to_string_lossy())
+                            && wildcard_match(file_pattern, &name)
+                            && !except.contains(&name.to_lowercase())
                             && meta.modified().ok().map(|t| t >= since).unwrap_or(false))
                         .then_some(())
                     })
@@ -2803,7 +2850,27 @@ fn to_fetch_entry_count(root: &Path, target: &str) -> Option<usize> {
         return None;
     }
     let text = fs::read_to_string(root.join("papers").join("to-fetch.md")).ok()?;
-    Some(text.lines().filter(|l| to_fetch_line_is_entry(l)).count())
+    Some(to_fetch_entries_in(&text))
+}
+
+/// 条目数：条目开始后遇到分隔线（--- / *** / ___）即止——之后是别的内容（如精读汇总的
+/// 「待跟进引用线索」），不是待获取（2026-10-18 实测 42 条被数成 108）。与前端同口径。
+fn to_fetch_entries_in(text: &str) -> usize {
+    let mut count = 0;
+    for raw in text.lines() {
+        let line = raw.trim();
+        let rule = line.len() >= 3
+            && (line.chars().all(|c| c == '-')
+                || line.chars().all(|c| c == '*')
+                || line.chars().all(|c| c == '_'));
+        if count > 0 && rule {
+            break;
+        }
+        if to_fetch_line_is_entry(line) {
+            count += 1;
+        }
+    }
+    count
 }
 
 /// to-fetch.md 单行是否算一条条目（to_fetch_entry_count 的口径内核）。
@@ -4890,17 +4957,32 @@ pub async fn list_repos() -> Vec<RepoDto> {
         // 折成同一口径再比。此前 home 用 canonicalize 对齐过，ws_root 漏了：
         // starts_with 恒假 ⇒ 每个 worktree 都会作为「仓库候选」冒出来。
         let home = dirs::home_dir().map(|h| crate::paths::path_key(&h.to_string_lossy()));
-        let ws_root = workspaces_root().unwrap_or_default();
-        let ws_root_key = crate::paths::path_key(&ws_root.to_string_lossy());
+        // 家目录可被用户换位置：旧位置里的工作副本/隔离树仍在，各根都要排除
+        let ws_root_keys: Vec<String> = crate::ccode_home::all_sub("workspaces")
+            .iter()
+            .map(|p| crate::paths::path_key(&p.to_string_lossy()))
+            .collect();
+        // 定时隔离 worktree 同理排除：它们是真 git 仓库（rev-parse 必过），不排除就会
+        // 以任务 UUID 当目录名冒充「最近项目」（2026-10-16 实证）
+        let watch_root_keys: Vec<String> = crate::ccode_home::all_sub("watch-worktrees")
+            .iter()
+            .map(|p| crate::paths::path_key(&p.to_string_lossy()))
+            .collect();
+        let under_any = |key: &str, roots: &[String]| {
+            roots
+                .iter()
+                .any(|r| key == r || key.starts_with(&format!("{r}/")))
+        };
         let mut activity = std::collections::HashMap::<PathBuf, Option<String>>::new();
         for session in crate::sessions::cached_scan().sessions {
             let Ok(path) = std::fs::canonicalize(&session.project_path) else {
                 continue;
             };
             let path_key = crate::paths::path_key(&path.to_string_lossy());
-            let in_ws_root =
-                path_key == ws_root_key || path_key.starts_with(&format!("{ws_root_key}/"));
-            if !path.is_dir() || Some(&path_key) == home.as_ref() || in_ws_root {
+            let in_ws_root = under_any(&path_key, &ws_root_keys);
+            let in_watch_root = under_any(&path_key, &watch_root_keys);
+            if !path.is_dir() || Some(&path_key) == home.as_ref() || in_ws_root || in_watch_root
+            {
                 continue;
             }
             let updated = session.updated_at;
@@ -7212,6 +7294,51 @@ mod tests {
     }
 
     #[cfg(unix)]
+    #[test]
+    fn to_fetch_count_stops_at_rule_after_entries() {
+        let text = "# 清单\n\n---\n1. A — 10.1/a\n2. [已补 2026-09-24] B — 10.1/b\n\n---\n\n## 线索\n- C — 说明\n- D — 说明\n";
+        assert_eq!(to_fetch_entries_in(text), 2);
+    }
+
+    #[test]
+    fn merge_tree_conflict_files_ignore_localized_messages() {
+        // 中文系统上 git 把说明行本地化；文件列表到第一个空行为止，与语言无关
+        let zh = "abc123\nfeature.txt\n\n自动合并 feature.txt\n冲突（添加/添加）：合并冲突于 feature.txt\n";
+        assert_eq!(conflict_files_from_merge_tree(zh), vec!["feature.txt"]);
+        let en = "abc123\na.txt\nb.txt\na.txt\n\nAuto-merging a.txt\nCONFLICT (content): Merge conflict in a.txt\n";
+        assert_eq!(conflict_files_from_merge_tree(en), vec!["a.txt", "b.txt"]);
+        // --no-messages 时没有说明段
+        assert_eq!(conflict_files_from_merge_tree("abc123\nx.md\n"), vec!["x.md"]);
+    }
+
+    #[test]
+    fn machine_acceptance_skips_excluded_rows_and_count_exceptions() {
+        let dir = std::env::temp_dir().join(format!("ccode-excluded-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(dir.join("notes")).unwrap();
+        // 评审里排除的篇目留在 included.json：精读索引不必给它建行
+        fs::write(
+            dir.join("included.json"),
+            r#"[{"id":"a","decision":"included"},{"id":"b","decision":"excluded"},{"id":"c","decision":"pending"}]"#,
+        )
+        .unwrap();
+        fs::write(dir.join("index.json"), r#"[{"id":"a"},{"id":"c"}]"#).unwrap();
+        let since = SystemTime::UNIX_EPOCH + Duration::from_secs(1);
+        let same = vec!["machine:same-ids:included.json::index.json".into()];
+        assert!(machine_acceptance_satisfied(&dir, &same, since));
+        fs::write(dir.join("index.json"), r#"[{"id":"a"}]"#).unwrap();
+        assert!(!machine_acceptance_satisfied(&dir, &same, since), "待确认篇仍要有索引行");
+        // 「至少写了 1 篇笔记」不被必交的 handoff.md 自己满足
+        fs::write(dir.join("notes/handoff.md"), "## 写作约束\n无\n").unwrap();
+        let count = vec!["machine:count:notes/*.md>=1::except=handoff.md,glossary.md".into()];
+        assert!(!machine_acceptance_satisfied(&dir, &count, since));
+        fs::write(dir.join("notes/01-paper.md"), "笔记").unwrap();
+        assert!(machine_acceptance_satisfied(&dir, &count, since));
+        // 尾巴不是 except= 的写法一律不认
+        let bad = vec!["machine:count:notes/*.md>=1::handoff.md".into()];
+        assert!(!machine_acceptance_satisfied(&dir, &bad, since));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn machine_acceptance_same_ids_rejects_outside_paths_and_symlinks() {
         use std::os::unix::fs::symlink;

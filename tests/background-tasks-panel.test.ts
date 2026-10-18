@@ -30,7 +30,7 @@ test("后台任务：展示当前执行并投递停止，不自动再次运行",
   const root=createRoot(host);
   try {
     await act(async()=>root.render(h(Panel)));
-    assert.match(host.textContent!,/codex · 摘要/);
+    assert.match(host.textContent!,/Codex · 摘要/);
     await act(async()=>host.querySelector("button")!.click());
     assert.deepEqual(calls.filter(([command])=>command==="run_cancel"),[["run_cancel",{id:"run-test"}]]);
     assert.ok(!calls.some(([command])=>command.includes("spawn")));

@@ -43,6 +43,8 @@ import {
   type MdEditResult,
 } from "../md-edit";
 import { hydrateMdImages } from "../md-image-hydrate";
+import { focusMdText, linkifyPdfRefs, pdfRefFromTarget } from "../md-pdf-refs";
+import type { PdfJumpRef } from "../reader-note";
 import { isPreviewableImagePath } from "../file-icons";
 import { isHtmlPath, isMarkdownPath } from "../md-path";
 import { hasMermaidFence } from "../mermaid-blocks";
@@ -133,9 +135,18 @@ function MarkdownView({
   onAnnotate,
   onOpenFile,
   onJumpToSource,
+  compact,
+  onPdfRef,
+  focusText,
 }: {
   text: string;
   large?: boolean;
+  /** 窄栏排版（阅读区笔记栏）：标题字号收一档 */
+  compact?: boolean;
+  /** 正文里的页码/图表引用可点（阅读区笔记栏：点了跳 PDF） */
+  onPdfRef?: (ref: PdfJumpRef) => void;
+  /** 滚到含这段文字的块并闪一下（nonce 递增即执行一次） */
+  focusText?: { text: string; nonce: number } | null;
   fileName: string;
   /** 当前 md 文件绝对路径：相对图片/链接的解析基准 */
   filePath: string;
@@ -263,6 +274,20 @@ function MarkdownView({
     decorateMdCodeBlocks(host);
   });
 
+  // 页码/图表引用链接化：同图片水合，每次布局都扫（幂等，已包过的跳过）
+  useLayoutEffect(() => {
+    const host = bodyRef.current;
+    if (host && onPdfRef) linkifyPdfRefs(host);
+  });
+
+  // 外部定位（PDF 高亮「在笔记里看」）：正文换过（html 变）后也要能落位
+  const focusedNonceRef = useRef(0);
+  useEffect(() => {
+    const host = bodyRef.current;
+    if (!host || !focusText || focusedNonceRef.current === focusText.nonce) return;
+    if (focusMdText(host, focusText.text)) focusedNonceRef.current = focusText.nonce;
+  }, [focusText, html]);
+
   // 公式升级（批次 E）：.md-math 占位换 KaTeX 排版；无公式时函数直接返回、不加载 katex
   useEffect(() => {
     const host = bodyRef.current;
@@ -275,6 +300,12 @@ function MarkdownView({
   function onBodyClick(e: React.MouseEvent<HTMLDivElement>) {
     if (handleMdCodeCopyClick(e.target)) {
       e.preventDefault();
+      return;
+    }
+    const ref = onPdfRef ? pdfRefFromTarget(e.target) : null;
+    if (ref) {
+      e.preventDefault();
+      onPdfRef!(ref);
       return;
     }
     const a = (e.target as HTMLElement).closest("a");
@@ -302,7 +333,7 @@ function MarkdownView({
     const target = e.target;
     if (!(target instanceof Element) || target === host) return;
     // 链接/图片/代码条的双击保持原语义（单击已处理打开/复制），不抢成跳编辑
-    if (target.closest("a, img, button, input, .md-code-bar")) return;
+    if (target.closest("a, img, button, input, .md-code-bar, .md-pdf-ref")) return;
     // 批注草稿表单开着时双击不跳编辑——跳转会卸载阅读态、把已输入的意见静默丢掉
     if (annotateDraft !== null) return;
     // 双击默认选词会让划选浮条闪一帧——跳转前先清选区
@@ -336,8 +367,8 @@ function MarkdownView({
           ref={bodyRef}
           onClick={onBodyClick}
           onDoubleClick={onJumpToSource ? onBodyDoubleClick : undefined}
-          className={`md-body${large ? " md-body-lg" : ""} ${
-            large ? "mx-auto max-w-3xl px-8 py-10" : "px-5 py-4"
+          className={`md-body${large ? " md-body-lg" : ""}${compact ? " md-body-compact" : ""} ${
+            large ? "mx-auto max-w-3xl px-8 py-10" : compact ? "px-4 py-3" : "px-5 py-4"
           }`}
           dangerouslySetInnerHTML={{ __html: html }}
         />
@@ -453,9 +484,19 @@ function TextFilePreviewEditor({
   onOpenReader,
   modeTick,
   leading,
+  mainRepoIsHome,
+  compact,
+  onPdfRef,
+  focusText,
 }: {
   path: string;
   root: string;
+  /** 窄栏排版（阅读区笔记栏）：md 阅读态标题字号收一档 */
+  compact?: boolean;
+  /** md 阅读态正文里的页码/图表引用可点（阅读区笔记栏：点了跳 PDF） */
+  onPdfRef?: (ref: PdfJumpRef) => void;
+  /** 定位到含这段文字的地方：阅读态滚到那一块并闪一下，编辑态选中并居中（nonce 递增即执行） */
+  focusText?: { text: string; nonce: number } | null;
   onDirtyChange?: (dirty: boolean) => void;
   /** 打开后滚到这一行。终端路径点击传入。 */
   revealLine?: number | null;
@@ -471,6 +512,9 @@ function TextFilePreviewEditor({
     fileName: string,
     comment: string,
   ) => string | null;
+  /** 宿主声明「主仓库就是这份文件的正常落点」（阅读区笔记栏：笔记本来就记在项目里，属日常积累面，
+   *  不进任何工作区分支）：不挂琥珀色「主仓库（非分支）」、保存不再每次弹危险确认。 */
+  mainRepoIsHome?: boolean;
   /** 嵌入阅读区笔记栏等宿主时置 true：自带的 ⺆ 全宽沉浸层是 z-30，压在阅读区 z-40 下面会失灵。
    *  例外：md 阅读态 + onOpenReader 的「进阅读区」按钮照常显示——它跳去真正的 z-40 阅读区，
    *  不经过 z-30 层（文件页 md 预览就靠这个入口，2026-09-20） */
@@ -844,6 +888,24 @@ function TextFilePreviewEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jumpReveal, ready, mode]);
 
+  // 外部定位的编辑态分支（阅读态交给 MarkdownView）：找到这段文字选中并居中
+  const focusDoneRef = useRef(0);
+  useEffect(() => {
+    if (!focusText || mode !== "edit" || !ready) return;
+    if (focusDoneRef.current === focusText.nonce) return;
+    const ed = editorRef.current;
+    const model = ed?.getModel();
+    if (!ed || !model) return;
+    focusDoneRef.current = focusText.nonce;
+    const needle = focusText.text.replace(/\s+/g, " ").trim().slice(0, 40);
+    const hit = needle
+      ? model.findMatches(needle, false, false, false, null, false)[0]
+      : undefined;
+    if (!hit) return;
+    ed.revealRangeInCenter(hit.range);
+    ed.setSelection(hit.range);
+  }, [focusText, mode, ready]);
+
   // md 编辑快捷键（2026-10-14 补齐；当晚全量审查改版）：行内标记 ⌘B/⌘I/⌘⇧X/⌘⇧C 与
   // 回车续列表全走编辑器 DOM 的 capture 监听（与 ⌘E 同模式）。不用 addCommand——它
   // 挂在全局单例 keybinding 服务上：无 when 子句会跨编辑器串扰（别的预览 Enter 被
@@ -1040,6 +1102,7 @@ function TextFilePreviewEditor({
     try {
       if (
         ctx?.kind === "main" &&
+        !mainRepoIsHome &&
         !(await confirmDialog(
           "这是主仓库（非工作区分支）的文件，保存会直接改动主项目。确认保存？",
           { danger: true },
@@ -1082,7 +1145,7 @@ function TextFilePreviewEditor({
             分支 {ctx.branch}
           </span>
         )}
-        {ctx?.kind === "main" && (
+        {ctx?.kind === "main" && !mainRepoIsHome && (
           <span
             className="flex shrink-0 items-center gap-1 text-warn-text"
             title={`该文件在主仓库（${ctx.branch}）里，改动不属于任何工作区分支——要改分支请从工作区进入`}
@@ -1145,15 +1208,15 @@ function TextFilePreviewEditor({
               onClick={onSave}
               disabled={!dirty || saving}
               title={
-                ctx?.kind === "main"
+                ctx?.kind === "main" && !mainRepoIsHome
                   ? "直接修改主项目（不属于任何分支），保存前会再确认"
                   : undefined
               }
               className={`shrink-0 rounded-sm px-2 py-0.5 hover:bg-hover disabled:opacity-50 ${
-                ctx?.kind === "main" ? "text-warn-text" : "text-l2"
+                ctx?.kind === "main" && !mainRepoIsHome ? "text-warn-text" : "text-l2"
               }`}
             >
-              {saving ? "保存中…" : ctx?.kind === "main" ? "保存到主仓库" : "保存"}
+              {saving ? "保存中…" : ctx?.kind === "main" && !mainRepoIsHome ? "保存到主仓库" : "保存"}
             </button>
           )}
         </div>
@@ -1258,6 +1321,9 @@ function TextFilePreviewEditor({
             onAnnotate={onAnnotate}
             onOpenFile={onOpenFile}
             onJumpToSource={isMd && !truncated && !readOnlyReason ? jumpToSource : undefined}
+            compact={compact}
+            onPdfRef={isMd ? onPdfRef : undefined}
+            focusText={focusText}
           />
         )
       )}

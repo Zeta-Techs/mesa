@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   codingFactChips,
-  codingDivergenceBar,
   codingDivergenceLabel,
   codingDivergenceTip,
   deriveCodingKind,
@@ -15,7 +14,6 @@ import {
   lockWorkModeFromConfig,
   normalizeWorkMode,
   headerShowsTopic,
-  projectSwitchRows,
   officeDocKind,
   officeDocMatchesQuery,
   officePreviewMode,
@@ -67,42 +65,6 @@ test("项目栏按科研/编程/办公分段，未添加沉底，空组不出现
     groupByWorkMode([], () => "research"),
     [],
   );
-});
-
-test("收起态切换菜单：分段压平、每段首行带段头标签、当前课题唯一打勾", () => {
-  const sections = groupByWorkMode(
-    [
-      { key: "r:a", mode: "research", name: "综述A", repoPath: "/p/a" },
-      { key: "r:b", mode: "research", name: "综述B", repoPath: "/p/b" },
-      { key: "c:c", mode: "coding", name: "网页C", repoPath: "/p/c" },
-      { key: "u:d", mode: "unregistered", name: "仓D", repoPath: "/p/d" },
-    ],
-    (x) => x.mode,
-  ).map((section) => ({
-    label: RAIL_WORK_MODE_LABEL[section.mode],
-    items: section.items,
-  }));
-  const rows = projectSwitchRows(sections, "r:b");
-  assert.deepEqual(
-    rows.map((r) => [r.key, r.label, r.current, r.sectionLabelBefore]),
-    [
-      // 每段首行携带组头标签（首段也带，LaunchMenu 同法），段内其余行为 null
-      ["r:a", "综述A", false, "科研"],
-      ["r:b", "综述B", true, null],
-      ["c:c", "网页C", false, "编程"],
-      ["u:d", "仓D", false, "未添加"],
-    ],
-  );
-  // repoPath 逐行带上（菜单 title 用），当前项缺失时不勾任何行
-  assert.deepEqual(
-    rows.map((r) => r.repoPath),
-    ["/p/a", "/p/b", "/p/c", "/p/d"],
-  );
-  assert.equal(
-    projectSwitchRows(sections, null).filter((r) => r.current).length,
-    0,
-  );
-  assert.deepEqual(projectSwitchRows([], "r:b"), []);
 });
 
 test("已注册或档案卡已落盘则锁定工作方式，空档案卡不锁", () => {
@@ -349,7 +311,7 @@ test("编程事实芯片：干净已推送不占位，只亮异常", () => {
     [
       {
         key: "upstreamBehind",
-        label: "GitHub有 2 个新提交",
+        label: "GitHub 有 2 个新提交",
         mark: "upstreamBehind",
         tone: "warn",
         tip: "GitHub 上该分支有 2 个新提交，可拉取",
@@ -358,32 +320,28 @@ test("编程事实芯片：干净已推送不占位，只亮异常", () => {
   );
 });
 
-test("分支领先落后用状态条比例，两侧按较大值对齐", () => {
-  assert.equal(codingDivergenceBar(0, 0), null);
-  assert.deepEqual(codingDivergenceBar(2, 1), {
-    ahead: 2,
-    behind: 1,
-    aheadShare: 1,
-    behindShare: 0.5,
-  });
+test("领先落后的悬停说明点名基准，并说明哪边有对方没有的提交", () => {
   assert.equal(
     codingDivergenceTip(2, 1, "main"),
-    "比基准 main 多 2 个提交，落后 1 个",
+    "领先基准 main 2 个提交（待合入），落后 1 个（main 上的新提交这里还没有）",
   );
   assert.equal(
     codingDivergenceTip(3, 0, "main"),
-    "待合入：比基准 main 多 3 个提交",
+    "领先基准 main 3 个提交，待合入",
+  );
+  assert.equal(
+    codingDivergenceTip(0, 4, "dev"),
+    "落后基准 dev 4 个提交：dev 上的新提交这里还没有",
   );
 });
-
 
 test("基准差异有完整短文案，双向分叉与零值不混淆", () => {
   assert.equal(codingDivergenceLabel(0, 0, "main"), "");
   assert.equal(codingDivergenceLabel(-1, -2, "main"), "");
-  assert.equal(codingDivergenceLabel(0, 1, "master"), "比 master 少 1 个提交");
-  assert.equal(codingDivergenceLabel(3, 0, "main"), "比 main 多 3 个提交");
-  assert.equal(codingDivergenceLabel(3, 2, "main"), "比 main 多 3、少 2 个提交");
-  assert.equal(codingDivergenceLabel(1, 0, " "), "比 基准 多 1 个提交");
+  assert.equal(codingDivergenceLabel(0, 1, "master"), "比 master 落后 1 个提交");
+  assert.equal(codingDivergenceLabel(3, 0, "main"), "比 main 领先 3 个提交");
+  assert.equal(codingDivergenceLabel(3, 2, "main"), "比 main 领先 3 · 落后 2 个提交");
+  assert.equal(codingDivergenceLabel(1, 0, " "), "比 基准 领先 1 个提交");
 });
 
 test("无上游不推断从未推送，远程与未提交文件有独立文案", () => {

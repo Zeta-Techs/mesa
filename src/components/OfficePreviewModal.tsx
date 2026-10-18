@@ -7,7 +7,7 @@ import { hydrateMdImages } from "../md-image-hydrate";
 import { renderMathInto } from "../md-math";
 import { rewriteMdImageHtml } from "../reader";
 import { officePreviewMode } from "../work-mode";
-import { rowActionClass } from "./PageFrame";
+import { rowActionClass, InlineNotice } from "./PageFrame";
 import { Modal } from "./Modal";
 import PdfContinuousView from "./PdfContinuousView";
 import DocxPreview from "./DocxPreview";
@@ -209,7 +209,7 @@ export default function OfficePreviewModal({
               : "min-h-0 flex-1 overflow-auto"
           }
         >
-          {truncated && <p className="mb-2 text-xs text-warn-text">只显示文件前半部分，不能据此确认完整内容。</p>}
+          {truncated && <InlineNotice tone="warn" className="mb-2">只显示文件前半部分，不能据此确认完整内容。</InlineNotice>}
           {body}
         </div>
         <div

@@ -64,38 +64,6 @@ export function normalizeWorkMode(value?: string | null): WorkMode {
   return "research";
 }
 
-/** 收起态课题名下拉的行：分段压平、每段首行携带段头标签（组头同款，首段也带——LaunchMenu 同法）、当前课题打 current。
- *  顺序与项目栏分段一致（railSections 直传），保证菜单与列表同一序。 */
-export interface ProjectSwitchRow {
-  key: string;
-  label: string;
-  repoPath: string;
-  current: boolean;
-  sectionLabelBefore: string | null;
-}
-
-export function projectSwitchRows(
-  sections: readonly {
-    label: string;
-    items: readonly { key: string; name: string; repoPath: string }[];
-  }[],
-  currentKey: string | null,
-): ProjectSwitchRow[] {
-  const rows: ProjectSwitchRow[] = [];
-  sections.forEach((section) => {
-    section.items.forEach((item, itemIndex) => {
-      rows.push({
-        key: item.key,
-        label: item.name,
-        repoPath: item.repoPath,
-        current: item.key === currentKey,
-        sectionLabelBefore: itemIndex === 0 ? section.label : null,
-      });
-    });
-  });
-  return rows;
-}
-
 /** 已选定或档案卡已落盘的工作方式不可改选（终身一张主界面）。 */
 export function lockWorkModeFromConfig(input: {
   existingMode?: WorkMode | null;
@@ -175,22 +143,8 @@ export interface CodingFactChip {
   tip: string;
 }
 
-export function codingDivergenceBar(
-  ahead: number,
-  behind: number,
-): { ahead: number; behind: number; aheadShare: number; behindShare: number } | null {
-  const a = Math.max(0, ahead);
-  const b = Math.max(0, behind);
-  if (a === 0 && b === 0) return null;
-  const cap = Math.max(a, b, 1);
-  return {
-    ahead: a,
-    behind: b,
-    aheadShare: a / cap,
-    behindShare: b / cap,
-  };
-}
-
+/** 相对基准的领先/落后：用 GitHub 中文界面的「领先/落后」口径，句中点名基准，
+ *  不与相对上游的「待推送 / 远程有新提交」混成一套坐标。负数按 0。 */
 export function codingDivergenceLabel(
   ahead: number,
   behind: number,
@@ -199,9 +153,9 @@ export function codingDivergenceLabel(
   const base = baseBranch.trim() || "基准";
   const a = Math.max(0, ahead);
   const b = Math.max(0, behind);
-  if (a > 0 && b > 0) return `比 ${base} 多 ${a}、少 ${b} 个提交`;
-  if (a > 0) return `比 ${base} 多 ${a} 个提交`;
-  if (b > 0) return `比 ${base} 少 ${b} 个提交`;
+  if (a > 0 && b > 0) return `比 ${base} 领先 ${a} · 落后 ${b} 个提交`;
+  if (a > 0) return `比 ${base} 领先 ${a} 个提交`;
+  if (b > 0) return `比 ${base} 落后 ${b} 个提交`;
   return "";
 }
 
@@ -213,9 +167,11 @@ export function codingDivergenceTip(
   const base = baseBranch.trim() || "基准";
   const a = Math.max(0, ahead);
   const b = Math.max(0, behind);
-  if (a > 0 && b > 0) return `比基准 ${base} 多 ${a} 个提交，落后 ${b} 个`;
-  if (a > 0) return `待合入：比基准 ${base} 多 ${a} 个提交`;
-  return `落后基准 ${base} ${b} 个提交`;
+  if (a > 0 && b > 0) {
+    return `领先基准 ${base} ${a} 个提交（待合入），落后 ${b} 个（${base} 上的新提交这里还没有）`;
+  }
+  if (a > 0) return `领先基准 ${base} ${a} 个提交，待合入`;
+  return `落后基准 ${base} ${b} 个提交：${base} 上的新提交这里还没有`;
 }
 
 export function codingFactChips(facts: {
@@ -263,7 +219,7 @@ export function codingFactChips(facts: {
   if (facts.hasUpstream && upstreamBehind > 0) {
     chips.push({
       key: "upstreamBehind",
-      label: `${remoteWord}有 ${upstreamBehind} 个新提交`,
+      label: `${gh ? "GitHub 有" : "远程有"} ${upstreamBehind} 个新提交`,
       mark: "upstreamBehind",
       tone: "warn",
       tip: gh

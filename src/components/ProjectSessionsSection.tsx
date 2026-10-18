@@ -5,6 +5,10 @@ import {
   MessageSquare,
   PanelRightClose,
   PanelRightOpen,
+  Pencil,
+  Pin,
+  PinOff,
+  Trash2,
 } from "lucide-react";
 import { confirmDialog } from "./ConfirmDialog";
 import ContextMenu from "./ContextMenu";
@@ -27,7 +31,7 @@ import {
   splitRecentItems,
   tidySessionTitle,
 } from "../session-title";
-import { resumeSessionInTerminal } from "./QuickChatModal";
+import { resumeSessionInTerminal } from "../quick-chat-launch";
 import { projectBoundProfileId } from "../project-agents";
 import type { SessionMetaDto } from "../types";
 
@@ -501,10 +505,12 @@ export default function ProjectSessionsSection({
           onClose={() => setMenu(null)}
           items={[
             {
+              icon: menu.session.pinned ? PinOff : Pin,
               label: menu.session.pinned ? "取消保留" : "保留",
               onSelect: () => void togglePin(menu.session),
             },
             {
+              icon: Pencil,
               label: "重命名",
               onSelect: () =>
                 setEditing({
@@ -517,6 +523,7 @@ export default function ProjectSessionsSection({
             },
             { separator: true },
             {
+              icon: Trash2,
               label: "删除",
               danger: true,
               onSelect: () => void removeSession(menu.session),

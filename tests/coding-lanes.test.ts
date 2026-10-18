@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  arrangeBranchMap,
   groupLanesByTheme,
   laneActivityLabel,
   lastLaneTheme,
@@ -64,4 +65,44 @@ test("laneActivityLabel：树上有活 Agent 才不是空闲", () => {
     ]),
     "空闲",
   );
+});
+
+test("arrangeBranchMap：基准作根，其余工作树挂在根下，未检出分支单列", () => {
+  const branch = (name: string, worktreePath: string | null, isBase = false) => ({
+    name, worktreePath, isBase,
+  });
+  // 基准 dev 没检出：主仓停在功能分支上
+  const off = overlayLanes(
+    [{ path: "/repo", branch: "feat/chat", isPrimary: true, isBase: false }],
+    [],
+  );
+  const offMap = arrangeBranchMap(
+    off,
+    [branch("dev", null, true), branch("feat/chat", "/repo"), branch("fix/forum", null)],
+    "dev",
+  );
+  assert.equal(offMap.root?.name, "dev");
+  assert.equal(offMap.root?.tree, null);
+  assert.equal(offMap.root?.branch?.name, "dev");
+  assert.deepEqual(offMap.groups.map((g) => g.items.map((t) => t.branch)), [["feat/chat"]]);
+  assert.deepEqual(offMap.loose.map((b) => b.name), ["fix/forum"]);
+
+  // 基准检出在主仓：主仓就是根，不再出现在子节点里
+  const on = overlayLanes(
+    [
+      { path: "/repo", branch: "main", isPrimary: true, isBase: true },
+      { path: "/wt/ui", branch: "feature/ui", isPrimary: false, isBase: false },
+    ],
+    [],
+  );
+  const onMap = arrangeBranchMap(on, [branch("main", "/repo", true), branch("feature/ui", "/wt/ui")], "main");
+  assert.equal(onMap.root?.tree?.path, "/repo");
+  assert.deepEqual(onMap.groups.flatMap((g) => g.items.map((t) => t.path)), ["/wt/ui"]);
+  assert.deepEqual(onMap.loose, []);
+
+  // 基准只在远程、本地没有分支行：根仍按名字给出
+  const bare = arrangeBranchMap(on.slice(1), [], "main");
+  assert.equal(bare.root?.name, "main");
+  assert.equal(bare.root?.branch, null);
+  assert.equal(arrangeBranchMap([], [], " ").root, null);
 });

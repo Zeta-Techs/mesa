@@ -2,7 +2,19 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { File, FolderClosed, FolderOpen } from "lucide-react";
+import {
+  BookOpen,
+  Copy,
+  File,
+  Folder,
+  FolderClosed,
+  FolderOpen,
+  FolderPlus,
+  GitBranch,
+  SquareTerminal,
+  Trash2,
+} from "lucide-react";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import ContextMenu from "./ContextMenu";
 import { confirmDialog } from "./ConfirmDialog";
 import { FoldMark, ghostActionClass, LoadingRows } from "./PageFrame";
@@ -12,7 +24,9 @@ import {
   normSep,
   normalizeStatusKeys,
   parentDir,
+  revealFolderLabel,
 } from "../path-utils";
+import { IS_MAC, IS_WINDOWS } from "../hotkeys";
 import { directoryErrorMessage } from "../terminal-cwd";
 
 export interface SearchResultDto {
@@ -775,10 +789,12 @@ function FileTree({
               ? [
                   {
                     label: "在此打开新终端",
+                    icon: SquareTerminal,
                     onSelect: () => onOpenTerminal(menu.path),
                   },
                   {
                     label: "新建文件夹",
+                    icon: FolderPlus,
                     onSelect: async () => {
                       setNewFolderFor(menu.path);
                     },
@@ -788,13 +804,35 @@ function FileTree({
             ...(!menu.isDir && /\.(pdf|md)$/i.test(menu.path) && onOpenReader
               ? [
                   {
-                    label: "⛶ 沉浸阅读",
+                    label: "沉浸阅读",
+                    icon: BookOpen,
                     onSelect: () =>
                       onOpenReader(menu.path, basenameOf(menu.path), root),
                   },
                 ]
               : []),
+            { separator: true },
             {
+              label: revealFolderLabel(IS_MAC, IS_WINDOWS),
+              icon: FolderOpen,
+              onSelect: () => {
+                void revealItemInDir(menu.path).catch((e) =>
+                  setError(String(e)),
+                );
+              },
+            },
+            {
+              label: "复制路径",
+              icon: Copy,
+              onSelect: () => {
+                void navigator.clipboard
+                  .writeText(menu.path)
+                  .catch(() => setError("复制路径失败"));
+              },
+            },
+            {
+              icon: Trash2,
+              danger: true,
               label: menu.isDir ? "删除目录" : "删除文件",
               onSelect: async () => {
                 if (
@@ -826,12 +864,14 @@ function FileTree({
             ...(ctx.kind === "worktree" && ctx.repoPath
               ? [
                   {
+                    icon: Folder,
                     label: `主项目（${basenameOf(ctx.repoPath)}）`,
                     onSelect: () => switchTo(ctx.repoPath!),
                   },
                 ]
               : []),
             ...ctx.siblings.map((s) => ({
+              icon: GitBranch,
               label: `分支「${s.workspaceName}」`,
               onSelect: () => switchTo(s.worktreePath),
             })),

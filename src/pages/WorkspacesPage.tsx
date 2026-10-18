@@ -7,7 +7,20 @@ import {
   requestPermission,
   sendNotification,
 } from "@tauri-apps/plugin-notification";
-import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import {
+  Archive,
+  ArchiveRestore,
+  CheckCheck,
+  ClipboardCheck,
+  Copy,
+  Eraser,
+  GitPullRequest,
+  Link,
+  LocateFixed,
+  MessagesSquare,
+  Play,
+  Trash2,
+} from "lucide-react";
 import {
   appUpdateInboxEntry,
   runInboxAction,
@@ -25,7 +38,7 @@ import {
   isHelpDismissed,
   filterDismissed,
 } from "../inbox";
-import ContextMenu from "../components/ContextMenu";
+import ContextMenu, { type ContextMenuItem } from "../components/ContextMenu";
 import { confirmDialog } from "../components/ConfirmDialog";
 import ProjectGroup from "../components/ProjectGroup";
 import ArtifactChecklist from "../components/ArtifactChecklist";
@@ -48,30 +61,28 @@ import { buildWorkspaceTerminalRequest, resolveStepLaunchByWorkspace } from "../
 import {
   EmptyState,
   fieldClass,
+  hoverRevealClass,
   inlineActionClass,
   NoticeBar,
   PageFrame,
   primaryActionClass,
+  quietActionClass,
   rowActionClass,
-  hoverRevealClass,
   secondaryActionClass,
+  InlineNotice,
 } from "../components/PageFrame";
 import {
-  attributeToProject,
   buildRunOverview,
-  projectRailStatus,
   runIdForPath,
   workspaceAgentBusy,
   workspaceReviewInboxEligible,
 } from "../run-overview";
 import { depInboxItem, type DepCheckDto } from "../dep-check";
+import { bulkReadableItems } from "../inbox";
 import {
   litInboxCandidates,
   litInboxForRegisteredProjects,
-  papersForLitCandidate,
   type LitInboxCandidate,
-  type WatchEntryDto,
-  type WatchInboxDto,
 } from "../lit-watch";
 import { IS_MAC, IS_WINDOWS } from "../hotkeys";
 import type {
@@ -95,11 +106,8 @@ import {
   WORK_MODE_HINT,
   WORK_MODE_LABEL,
   WORK_MODES,
-  RAIL_WORK_MODE_LABEL,
-  groupByWorkMode,
   lockWorkModeFromConfig,
   normalizeWorkMode,
-  projectSwitchRows,
   type WorkMode,
 } from "../work-mode";
 import { sortWorkspacesByAttention } from "../project-status";
@@ -138,8 +146,6 @@ function pathBaseName(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
-const PROJECT_RAIL_COLLAPSED_KEY = "ccode.projectRailCollapsed";
-
 /** 人工请求新来源的系统通知：macOS 首次发送前必须显式申请权限（系统级弹窗，仅首次）；
     被拒则静默跳过。复用「长任务 OS 通知」设置开关，不新增设置项。 */
 async function fireHelpNotification(sourceCount: number) {
@@ -152,14 +158,15 @@ async function fireHelpNotification(sourceCount: number) {
   });
 }
 
-/** 添加项目：选目录后填名称并选工作方式（科研 / 编程 / 工作） */
+/** 添加项目：选目录后填名称并选工作方式（科研 / 编程 / 工作）。
+ *  path 为 null = 「新建项目」：不弹系统选目录窗，填名字 + 位置（默认「文档」），提交时先建文件夹再走同一套注册 */
 function AddProjectModal({
-  path,
+  path: pickedPath,
   existingMode,
   onClose,
   onRegistered,
 }: {
-  path: string;
+  path: string | null;
   /** 已注册项目的工作方式；有值则禁止改选（终身一张主界面） */
   existingMode: WorkMode | null;
   onClose: () => void;
@@ -171,13 +178,25 @@ function AddProjectModal({
   ) => void;
 }) {
   const depCheck = useAppStore((s) => s.depCheck);
-  const [name, setName] = useState(pathBaseName(path));
+  const creating = pickedPath === null;
+  const [name, setName] = useState(pickedPath ? pathBaseName(pickedPath) : "");
+  // 新建：父目录（默认系统「文档」）；建好文件夹后 createdPath 生效，注册失败重试不再重复建
+  const [parent, setParent] = useState("");
+  const [createdPath, setCreatedPath] = useState<string | null>(null);
+  const path = pickedPath ?? createdPath ?? "";
+  useEffect(() => {
+    if (!creating) return;
+    invoke<string>("default_project_parent")
+      .then((dir) => setParent((cur) => cur || dir))
+      .catch(() => {});
+  }, [creating]);
   const [mode, setMode] = useState<WorkMode>(existingMode ?? "research");
   const [modeLocked, setModeLocked] = useState(existingMode != null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
+    if (!path) return;
     let cancelled = false;
     invoke<ProjectConfigReadDto>("read_project_config", { path })
       .then((read) => {
@@ -207,6 +226,18 @@ function AddProjectModal({
     e.preventDefault();
     setBusy(true);
     setError(null);
+    let path = pickedPath ?? createdPath ?? "";
+    if (!path) {
+      // 新建：项目名即文件夹名（文件名规则由后端 validate_fs_name 把关，报错原样给出）
+      try {
+        path = await invoke<string>("fs_create_dir", { root: parent, name: name.trim() });
+        setCreatedPath(path);
+      } catch (reason) {
+        setError(String(reason));
+        setBusy(false);
+        return;
+      }
+    }
     try {
       // 提交时再读一遍档案卡：弹窗打开后立刻点添加时，预填 effect 可能还没回来，
       // 不能把已是编程/工作的项目静默写回科研。
@@ -323,15 +354,37 @@ function AddProjectModal({
   }
 
   return (
-    <Modal open title="添加项目" onClose={onClose} size="md">
+    <Modal open title={creating ? "新建项目" : "添加项目"} onClose={onClose} size="md">
       <form onSubmit={submit}>
-        <h2 className="sr-only">添加项目</h2>
-        <p
-          className="mb-3 truncate font-mono text-xs text-l3"
-          title={path}
-        >
-          {path}
-        </p>
+        <h2 className="sr-only">{creating ? "新建项目" : "添加项目"}</h2>
+        {creating ? (
+          <div className="mb-3 flex items-center gap-2 text-xs text-l3">
+            <span className="shrink-0">建在</span>
+            <span className="min-w-0 flex-1 truncate font-mono" title={parent}>
+              {createdPath ?? (parent ? `${parent.replace(/[\\/]+$/, "")}/${name.trim() || "…"}` : "…")}
+            </span>
+            {!createdPath && (
+              <button
+                type="button"
+                className="shrink-0 rounded-md px-2 py-1 text-xs text-l2 hover:bg-hover hover:text-l1"
+                onClick={() =>
+                  void open({ directory: true, multiple: false }).then((dir) => {
+                    if (typeof dir === "string" && dir.trim()) setParent(dir);
+                  })
+                }
+              >
+                更改位置…
+              </button>
+            )}
+          </div>
+        ) : (
+          <p
+            className="mb-3 truncate font-mono text-xs text-l3"
+            title={path}
+          >
+            {path}
+          </p>
+        )}
         <label className="mb-4 block text-sm">
           <span className="mb-1 block text-xs text-l3">项目名</span>
           <input
@@ -339,8 +392,13 @@ function AddProjectModal({
             required
             value={name}
             onChange={(e) => setName(e.target.value)}
+            disabled={creating && createdPath !== null}
+            placeholder={creating ? "比如：HER 催化综述" : undefined}
             autoFocus
           />
+          {creating && (
+            <span className="mt-1 block text-micro text-l4">也是文件夹名</span>
+          )}
         </label>
         <p className="mb-1 text-xs text-l3">工作方式</p>
         <div
@@ -372,90 +430,21 @@ function AddProjectModal({
             </button>
           ))}
         </div>
-        {error && <p className="mb-3 text-sm text-err-text">{error}</p>}
+        {error && <NoticeBar tone="err" className="mb-3">{error}</NoticeBar>}
         <div className="flex justify-end gap-2">
           <button
             type="button"
             onClick={onClose}
-            className="rounded-sm px-3 py-1.5 text-sm text-l2 hover:bg-hover"
+            className={secondaryActionClass}
           >
             取消
           </button>
           <button
             type="submit"
             disabled={busy || !name.trim()}
-            className="rounded-sm border border-cta-bd bg-cta px-3 py-1.5 text-sm text-cta-text hover:brightness-110 disabled:opacity-50"
+            className={primaryActionClass}
           >
-            {busy ? "添加中…" : "添加"}
-          </button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
-/** 重命名项目弹窗（项目导航行右键「重命名项目」）：register_project 是幂等 upsert，同名改不改都行 */
-function RenameProjectModal({
-  path,
-  initialName,
-  onClose,
-  onRenamed,
-}: {
-  path: string;
-  initialName: string;
-  onClose: () => void;
-  onRenamed: () => void;
-}) {
-  const [name, setName] = useState(initialName);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      await invoke("register_project", { path, name: name.trim() });
-      onRenamed();
-    } catch (reason) {
-      setError(String(reason));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Modal open title="重命名项目" onClose={onClose} size="md">
-      <form onSubmit={submit}>
-        <h2 className="sr-only">重命名项目</h2>
-        <p className="mb-3 truncate font-mono text-xs text-l3" title={path}>
-          {path}
-        </p>
-        <label className="mb-4 block text-sm">
-          <span className="mb-1 block text-xs text-l3">项目名</span>
-          <input
-            className={fieldClass}
-            required
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            autoFocus
-          />
-        </label>
-        {error && <p className="mb-3 text-sm text-err-text">{error}</p>}
-        <div className="flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-sm px-3 py-1.5 text-sm text-l2 hover:bg-hover"
-          >
-            取消
-          </button>
-          <button
-            type="submit"
-            disabled={busy || !name.trim()}
-            className="rounded-sm border border-cta-bd bg-cta px-3 py-1.5 text-sm text-cta-text hover:brightness-110 disabled:opacity-50"
-          >
-            {busy ? "保存中…" : "保存"}
+            {busy ? (creating ? "创建中…" : "添加中…") : creating ? "创建" : "添加"}
           </button>
         </div>
       </form>
@@ -539,19 +528,19 @@ function NewWorkspaceModal({
             </span>
           )}
         </label>
-        {error && <p className="mb-3 text-sm text-err-text">{error}</p>}
+        {error && <NoticeBar tone="err" className="mb-3">{error}</NoticeBar>}
         <div className="flex justify-end gap-2">
           <button
             type="button"
             onClick={onClose}
-            className="rounded-sm px-3 py-1.5 text-sm text-l2 hover:bg-hover"
+            className={secondaryActionClass}
           >
             取消
           </button>
           <button
             type="submit"
             disabled={creating || !name.trim()}
-            className="rounded-sm border border-cta-bd bg-cta px-3 py-1.5 text-sm text-cta-text hover:brightness-110 disabled:opacity-50"
+            className={primaryActionClass}
           >
             {creating ? "创建中…" : "创建"}
           </button>
@@ -796,9 +785,7 @@ function WorkspaceDetailsPopover({
         </div>
         {/* 上游漂移提醒（启发式，只提醒不阻断）：上游步骤晚于本步最后推进时间合并 */}
         {workspace.staleUpstream && (
-          <p className="mb-2 text-warn-text">
-            上游「{workspace.staleUpstream}」有更新，产物可能过期
-          </p>
+          <InlineNotice tone="warn" className="mb-2">上游「{workspace.staleUpstream}」有更新，产物可能过期</InlineNotice>
         )}
         <dl className="space-y-1.5 border-t border-hairline pt-2 text-l3">
           {rows.map(([label, value, hint]) => (
@@ -864,24 +851,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
     path: string;
     name: string;
   } | null>(null);
-  // 项目导航行右键菜单（重命名/复制路径/移除注册）与改名弹窗
-  const [railMenu, setRailMenu] = useState<{
-    x: number;
-    y: number;
-    groupKey: string;
-  } | null>(null);
-  const [renameTarget, setRenameTarget] = useState<{
-    path: string;
-    name: string;
-  } | null>(null);
-  // rail 头部 + 菜单（添加项目 / 创建示例课题）
-  const [addMenu, setAddMenu] = useState<{ x: number; y: number } | null>(
-    null,
-  );  const [created, setCreated] = useState<WorkspaceDto | null>(null);
-  // 收起态课题名下拉（切换项目）：锚点来自 ProjectIdentityHeader 报回的按钮矩形
-  const [switchMenu, setSwitchMenu] = useState<{ x: number; y: number } | null>(
-    null,
-  );
+  const [created, setCreated] = useState<WorkspaceDto | null>(null);
   // 创建成功横幅是瞬态反馈：10s 自动消退（setup 失败除外——失败详情要人看，不自动收）
   useEffect(() => {
     if (!created || (created.setupResult && !created.setupResult.ok)) return;
@@ -898,6 +868,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
       .catch(() => toast("无法读取主目录，部分路径提示可能不完整", "warning"));
   }, []);
   const [addProjectPath, setAddProjectPath] = useState<string | null>(null);
+  const [creatingProject, setCreatingProject] = useState(false);
   // 刚注册的项目路径：对应分组显示一次性 git 初始化引导
   const [freshProjectPath, setFreshProjectPath] = useState<string | null>(null);
   /** 注册时自动扫到的资源条数：注册后立刻弹模板选择层会盖住页面顶部的 notice，
@@ -937,13 +908,6 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   const [projectSurfaceTabs, setProjectSurfaceTabs] = useState<
     Record<string, ProjectSurfaceTab>
   >({});
-  const [projectRailCollapsed, setProjectRailCollapsed] = useState(() => {
-    try {
-      return localStorage.getItem(PROJECT_RAIL_COLLAPSED_KEY) === "1";
-    } catch {
-      return false;
-    }
-  });
   // 任务行产物清单手风琴：按工作区 id 记忆展开态，切项目时清空
   const [artifactsOpen, setArtifactsOpen] = useState<Set<string>>(new Set());
   const openInTerminal = useOpenInTerminal();
@@ -982,30 +946,11 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   const [helpRequests, setHelpRequests] = useState<HelpRequestDto[]>([]);
   // 文献雷达新命中（收件箱「文献」胶囊）：随 refresh 同频次拉 schedules，判定纯逻辑在 lit-watch.ts
   const [litCandidates, setLitCandidates] = useState<LitInboxCandidate[]>([]);
-  const [litEntriesByRoot, setLitEntriesByRoot] = useState<
-    Record<string, WatchEntryDto[]>
-  >({});
 
   async function loadLitInbox() {
     try {
       const list = await invoke<ScheduleDto[]>("list_schedules");
-      const cands = litInboxCandidates(list);
-      setLitCandidates(cands);
-      const roots = [...new Set(cands.map((c) => c.projectRoot))];
-      const entries: Record<string, WatchEntryDto[]> = {};
-      await Promise.all(
-        roots.map(async (root) => {
-          try {
-            const inbox = await invoke<WatchInboxDto>("list_watch_entries", {
-              projectRoot: root,
-            });
-            entries[root] = inbox.entries;
-          } catch {
-            entries[root] = [];
-          }
-        }),
-      );
-      setLitEntriesByRoot(entries);
+      setLitCandidates(litInboxCandidates(list));
     } catch {
       /* 下轮重试 */
     }
@@ -1014,6 +959,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   const helpDismissed = useAppStore((s) => s.helpDismissed);
   const dismissHelpRequest = useAppStore((s) => s.dismissHelpRequest);
   const dismissInbox = useAppStore((s) => s.dismissInbox);
+  const dismissInboxBulk = useAppStore((s) => s.dismissInboxBulk);
   // 人工请求「去查看」的完整内容层（v3.97）：strip 行只有 40 字截断预览，
   // 「选中项目」单独作为动作反馈太弱（已选中时像没反应）——弹出该来源的全部请求全文
   const helpViewReq = useAppStore((s) => s.helpViewReq);
@@ -1029,13 +975,18 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   const sessions = useAppStore((s) => s.sessions);
   // 外部 live 会话（无终端标签可跳）的尾部注意力：后端直查 session_tail_state，
   // 补齐收件箱在终端页未挂载时的盲区；只查 live 且非内部的少量会话（上限 10 条）
+  // 收件箱条目只由本页派生（store.inboxItems 唯一写入方），而工作台是默认首页：
+  // 开机时 App 会把本页隐藏挂上，这里在工作台可见时也刷新，否则冷启动「待你处理」恒空、
+  // 停在工作台时状态也不再更新（2026-10-17 修）
+  const workbenchVisible = useAppStore((s) => s.page === "workbench");
+  const inboxLive = visible || workbenchVisible;
   const [liveTail, setLiveTail] = useState<Record<string, string>>({});
   const liveSig = sessions
     .filter((s) => s.live && !s.internal)
     .map((s) => `${s.agent}:${s.sessionId}`)
     .join("\n");
   useEffect(() => {
-    if (!visible) return;
+    if (!inboxLive) return;
     const targets = sessions
       .filter((s) => s.live && !s.internal)
       .slice(0, 10);
@@ -1062,7 +1013,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, liveSig]);
+  }, [inboxLive, liveSig]);
 
   async function refresh() {
     try {
@@ -1200,16 +1151,56 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   }
 
   useEffect(() => {
-    if (!visible) return;
+    if (!inboxLive) return;
     void refresh();
-  }, [visible]);
+  }, [inboxLive]);
+
+  // 侧栏项目树的管理动作（重命名/移除/清除痕迹/删除）后自增的代数：重拉本页全部数据。
+  // 初值直接记档不触发（挂载时 visible 效应已刷过一次，避免双拉）
+  const projectsVersion = useAppStore((s) => s.projectsVersion);
+  const lastVersionRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (lastVersionRef.current === null) {
+      lastVersionRef.current = projectsVersion;
+      return;
+    }
+    if (lastVersionRef.current === projectsVersion) return;
+    lastVersionRef.current = projectsVersion;
+    void refresh();
+  }, [projectsVersion]);
+  // 侧栏「＋ 添加项目」的一次性请求：完整注册流程（选目录→命名→模板）在本页，消费后清空
+  const addProjectOpenReq = useAppStore((s) => s.addProjectOpenReq);
+  useEffect(() => {
+    if (!addProjectOpenReq) return;
+    useAppStore.getState().setAddProjectOpenReq(null);
+    void onAddProject();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addProjectOpenReq]);
+  // 「新建项目…」的一次性请求：打开新建弹窗（不弹系统选目录窗）
+  const newProjectOpenReq = useAppStore((s) => s.newProjectOpenReq);
+  useEffect(() => {
+    if (!newProjectOpenReq) return;
+    useAppStore.getState().setNewProjectOpenReq(null);
+    newProjectReturnRef.current = newProjectOpenReq.returnTabId ?? null;
+    setCreatingProject(true);
+  }, [newProjectOpenReq]);
+  // 从聊天 / 终端标签发起的新建：建好就回那个标签（用户：新建完要回到原来的聊天框）
+  const newProjectReturnRef = useRef<string | null>(null);
+  // 侧栏「＋ → 创建示例课题」的一次性请求（创建逻辑含选中+刷新，在本页）
+  const demoProjectOpenReq = useAppStore((s) => s.demoProjectOpenReq);
+  useEffect(() => {
+    if (!demoProjectOpenReq) return;
+    useAppStore.getState().setDemoProjectOpenReq(null);
+    void onCreateDemo();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [demoProjectOpenReq]);
 
   // 「agent 已跑完」跃迁触发一次 refresh（v3.97）：步骤状态只从 git 派生，agent 干完若已提交，
   // 不重拉 health 就永远停在「进行中」。terminalRunInputs 是 TerminalPage 镜像进 store 的既有信号，
   // 这里只认「上次非 done → 本次 done」的跃迁（按 cwd 记已触发，回落后再 done 可再触发），不轮询。
   const doneSeenRef = useRef<Record<string, boolean>>({});
   useEffect(() => {
-    if (!visible) return;
+    if (!inboxLive) return;
     let hit = false;
     for (const input of terminalRunInputs) {
       const cwd = input.cwd;
@@ -1219,7 +1210,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
     }
     if (hit) void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, terminalRunInputs]);
+  }, [inboxLive, terminalRunInputs]);
 
   // 定时巡检跑完：重拉 schedules 刷新收件箱「文献」胶囊（ScheduleSection 同款监听模式；
   // 全局 OS 通知在 App.tsx 另行监听，这里只管收件箱条目）
@@ -1355,10 +1346,6 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
         list: workspaces.filter((w) => w.repoPath === repoPath),
       })),
   ];
-  // 栏内按工作方式分段；groups 本身仍是 last_opened 序，默认选中最近打开的那一项
-  const railSections = groupByWorkMode(groups, (g) =>
-    g.project ? g.project.workMode : "unregistered",
-  );
   const selectedGroup =
     groups.find((group) => group.key === selectedGroupKey) ?? groups[0] ?? null;
   const selectedProjectPath = selectedGroup?.project?.path ?? null;
@@ -1465,38 +1452,6 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
     setArtifactsOpen(new Set());
   }, [shownGroupKey]);
 
-  function toggleProjectRail() {
-    setProjectRailCollapsed((collapsed) => {
-      const next = !collapsed;
-      try {
-        localStorage.setItem(PROJECT_RAIL_COLLAPSED_KEY, next ? "1" : "0");
-      } catch {
-        // 本地存储失败不应阻断界面切换。
-      }
-      return next;
-    });
-  }
-
-  // 课题状态（rail 行与收起态切换菜单同口径）：
-  // 待处理 = 工作区冲突/可合并 + 归属本项目的终端待确认/外部 live 待确认；
-  // 绿点只认此刻还在跑的 Agent，未归档工作区本身不亮。
-  function groupRailStatus(group: (typeof groups)[number]) {
-    const needsAttention =
-      group.list.filter((workspace) => {
-        const state = health[workspace.id];
-        return state?.conflict || state?.readyToMerge;
-      }).length + (navAttention.get(group.key) ?? 0);
-    const railDot = projectRailStatus({
-      needsAttention,
-      roots: [
-        group.repoPath,
-        ...group.list.map((workspace) => workspace.worktreePath),
-      ],
-      runs: terminalRunInputs,
-    });
-    return { needsAttention, railDot };
-  }
-
   function toggleArtifacts(wsId: string) {
     setArtifactsOpen((prev) => {
       const next = new Set(prev);
@@ -1599,59 +1554,38 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
         },
       })),
     // 文献雷达新命中（lit:<scheduleId>:<lastRunAt>；24h 窗口与 newEntries 判定在
-    // lit-watch.ts 的 litInboxCandidates）：点击经 selectProjectReq 跳该项目详情。
+    // lit-watch.ts 的 litInboxCandidates）：一次推送只出一条（2026-10-15 拍板，
+    // 不再按篇展开——逐篇的加积累/开读在雷达卡里由人发起，收件箱只报数和带路）。
+    // 点击经 selectProjectReq 跳该项目详情并聚焦雷达卡。
     // 已删项目的定时任务可能还在 schedules.json，不能拿文件夹名继续提示。
     ...litInboxForRegisteredProjects(
       litCandidates,
       projects.map((p) => p.path),
       IS_WINDOWS,
-    ).flatMap((c): InboxItem[] => {
+    ).map((c): InboxItem => {
       const projectName =
         projects.find((p) => samePath(p.path, c.projectRoot))?.name ??
         pathBaseName(c.projectRoot);
       if (c.isolationPath && !c.adopted) {
-        return [
-          {
-            key: `lit:${c.scheduleId}:${c.at}`,
-            dot: "bg-ok-text",
-            text: inboxTaskLine(projectName, `有${c.count}条新命中待评审`),
-            actionLabel: "去评审",
-            action: {
-              type: "review" as const,
-              worktreePath: c.isolationPath,
-              runId: c.runId ?? null,
-            },
+        return {
+          key: `lit:${c.scheduleId}:${c.at}`,
+          dot: "bg-ok-text",
+          text: inboxTaskLine(projectName, `有${c.count}条新命中待评审`),
+          actionLabel: "去评审",
+          action: {
+            type: "review" as const,
+            worktreePath: c.isolationPath,
+            runId: c.runId ?? null,
           },
-        ];
+        };
       }
-      const papers = papersForLitCandidate(
-        c,
-        litEntriesByRoot[c.projectRoot] ?? [],
-      );
-      if (papers.length === 0) {
-        return [
-          {
-            key: `lit:${c.scheduleId}:${c.at}`,
-            dot: "bg-ok-text",
-            text: inboxTaskLine(projectName, `有${c.count}条新命中`),
-            actionLabel: "去看看",
-            action: { type: "litWatch" as const, projectRoot: c.projectRoot },
-          },
-        ];
-      }
-      return papers.map((paper) => ({
-        key: `lit:${c.scheduleId}:${paper.id}`,
+      return {
+        key: `lit:${c.scheduleId}:${c.at}`,
         dot: "bg-ok-text",
-        text: paper.zhSummary || paper.title,
-        actionLabel: "开读",
-        action: {
-          type: "litWatch" as const,
-          projectRoot: c.projectRoot,
-          entryId: paper.id,
-          title: paper.title,
-          url: paper.url,
-        },
-      }));
+        text: inboxTaskLine(projectName, `有${c.count}条新命中`),
+        actionLabel: "去看看",
+        action: { type: "litWatch" as const, projectRoot: c.projectRoot },
+      };
     }),
     ...active
       .filter((w) =>
@@ -1757,30 +1691,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
     ...(updateItem ? [updateItem] : []),
   ] as InboxItem[];
 
-  // 项目导航行的「待处理」分布（收件箱同款口径按项目摊开）：终端待确认 +
-  // 外部 live 待确认，cwd 经最长前缀归属项目根/工作树（attributeToProject 纯逻辑）
-  const projectRoots = groups.map((g) => ({
-    key: g.key,
-    roots: [g.repoPath, ...g.list.map((w) => w.worktreePath)],
-  }));
-  const navAttention = new Map<string, number>();
-  const bumpAttention = (path: string) => {
-    const key = attributeToProject(path, projectRoots);
-    if (key) navAttention.set(key, (navAttention.get(key) ?? 0) + 1);
-  };
-  for (const it of runItems) {
-    if (it.attention === "confirm") bumpAttention(it.cwd);
-  }
-  for (const s of sessions) {
-    if (
-      s.live &&
-      !s.internal &&
-      liveTail[`${s.agent}:${s.sessionId}`] === "confirm"
-    )
-      bumpAttention(s.projectPath);
-  }
-
-  // 收件箱条目镜像进 store（本页常驻挂载，签名变更才写，防每 render 抖动订阅方）
+  // 收件箱条目镜像进 store（App 开机即隐藏挂载本页、此后常驻；签名变更才写，防每 render 抖动订阅方）
   const inboxSig = inboxItems.map((it) => `${it.key}=${it.text}`).join("|");
   useEffect(() => {
     setInboxItems(filterDismissed(inboxItems, useAppStore.getState().inboxDismissed));
@@ -1875,6 +1786,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   // Windows/Linux 页内收件箱：与标题栏同一套「待处理 N」单入口，点开列出全部分组
   const [inboxOpen, setInboxOpen] = useState(false);
   const inboxGroups = groupInbox(filterDismissed(inboxItems, inboxDismissed));
+  const bulkInboxItems = bulkReadableItems(inboxItems);
   useEffect(() => {
     if (inboxOpen && inboxGroups.length === 0) setInboxOpen(false);
   }, [inboxGroups, inboxOpen]);
@@ -1932,16 +1844,12 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
         conflict ||
         !!driftFailed[workspace.id]);
     const merged = isMerged(workspace, workspaceHealth);
-    const items: {
-      label: string;
-      onSelect?: () => void;
-      disabled?: boolean;
-      title?: string;
-    }[] = [];
+    const items: ContextMenuItem[] = [];
 
     // 普通评审收进更多；正在发生的冲突保留行内直达入口。
     if (canOpenWorkspace && !merged && !conflict) {
       items.push({
+        icon: ClipboardCheck,
         label: "评审",
         onSelect: () => openReview(workspace),
       });
@@ -1957,6 +1865,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
         // nonconcurrent 互斥时渲染禁用项并说明原因，不静默消失
         items.push(
           ...scripts.map((script) => ({
+            icon: Play,
             label: `运行：${script.name}`,
             disabled: true,
             title: "已有运行中的脚本（nonconcurrent 模式）",
@@ -1965,6 +1874,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
       } else {
         items.push(
           ...scripts.map((script) => ({
+            icon: Play,
             label: `运行：${script.name}`,
             onSelect: () => void runScript(workspace, script),
           })),
@@ -1973,12 +1883,14 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
       // 健康检查失败导致 ahead 未知时也保留入口，由评审视图按实际状态处理
       if ((workspaceHealth?.ahead ?? 0) > 0 || healthUnknown) {
         items.push({
+          icon: GitPullRequest,
           label: "在评审中创建 PR",
           onSelect: () => openReview(workspace, "pr"),
         });
       }
       if (!workspaceHealth?.conflict) {
         items.push({
+          icon: Archive,
           label: "在评审中归档",
           onSelect: () => openReview(workspace, "archive"),
         });
@@ -1986,26 +1898,31 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
     }
 
     if (workspaceDrift && !workspaceDrift.healthy) {
+      items.push({ separator: true });
       if (workspaceDrift.canRemount) {
         items.push({
+          icon: Link,
           label: "重新挂载工作树",
           onSelect: () => void onRepairRemount(workspace),
         });
       }
       if (workspaceDrift.canRelocate) {
         items.push({
+          icon: LocateFixed,
           label: "重新定位仓库",
           onSelect: () => void onRelocate(workspace),
         });
       }
       if (workspaceDrift.canMarkArchived) {
         items.push({
+          icon: Archive,
           label: "标记为已归档",
           onSelect: () => void onMarkArchived(workspace),
         });
       }
       if (workspaceDrift.canCleanRecord) {
         items.push({
+          icon: Eraser,
           label: "清理 Mesa 记录",
           onSelect: () => void onCleanRecord(workspace),
         });
@@ -2014,13 +1931,16 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
 
     if (workspace.status === "archived" && healthy) {
       items.push({
+        icon: ArchiveRestore,
         label: "恢复",
         onSelect: () => void onRestore(workspace),
       });
     }
 
     items.push(
+      { separator: true },
       {
+        icon: MessagesSquare,
         label: "查看对话",
         onSelect: () => {
           setSessionsQuery(workspace.name);
@@ -2028,6 +1948,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
         },
       },
       {
+        icon: Copy,
         label: "复制工作树路径",
         onSelect: () => {
           void navigator.clipboard
@@ -2040,7 +1961,9 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
     );
     if (healthy) {
       items.push({
+        icon: Trash2,
         label: "删除工作区",
+        danger: true,
         onSelect: () => void onDelete(workspace),
       });
     }
@@ -2073,106 +1996,6 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
     }
   }
 
-  /** 项目导航行右键菜单项：重命名/复制路径/移除注册/删除目录（后两者互斥粒度不同，删除目录对未注册分组也可用） */
-  function railMenuItems(group: (typeof groups)[number]) {
-    return [
-      {
-        label: "重命名项目",
-        disabled: !group.project,
-        title: group.project ? undefined : "这个文件夹还没添加到 Mesa",
-        onSelect: () =>
-          group.project &&
-          setRenameTarget({ path: group.repoPath, name: group.project.name }),
-      },
-      {
-        label: "复制项目路径",
-        onSelect: () => {
-          void navigator.clipboard
-            .writeText(group.repoPath)
-            .catch(() => setError("复制项目路径失败"));
-        },
-      },
-      {
-        label: "从 Mesa 移除",
-        disabled: !group.project,
-        title: group.project ? undefined : "这个文件夹还没添加到 Mesa",
-        onSelect: () => group.project && void removeRegistration(group),
-      },
-      {
-        label: "清除 Mesa 痕迹（保留文件夹）…",
-        danger: true,
-        title: "保留文件夹与你的全部文件；清掉工作区、.ccode 与注册记录",
-        onSelect: () => void purgeTraces(group),
-      },
-      {
-        label: "删除项目目录…",
-        danger: true,
-        onSelect: () => void deleteProjectDir(group),
-      },
-    ];
-  }
-
-  /** 清除 Mesa 痕迹（中间档）：文件夹与用户文件保留；工作区/分支彻底删，.ccode 入回收站，注册摘除 */
-  async function purgeTraces(group: (typeof groups)[number]) {
-    const name = group.project?.name ?? group.repoName;
-    if (
-      !(await confirmDialog(
-        `清除「${name}」的 Mesa 痕迹？\n\n` +
-          `文件夹与你的文件：保留\n` +
-          `.ccode/（档案卡、任务卡、各步骤 TASK.md 内容）：移入回收站（可找回）\n` +
-          `工作区 worktree 与分支、注册记录：彻底删除\n\n` +
-          `注意：如果 .ccode 曾被 git 跟踪，改动面板会显示对应删除，需要你自行提交。请先关闭该项目内正在运行的终端标签。`,
-        { danger: true },
-      ))
-    )
-      return;
-    try {
-      const msg = await invoke<string>("purge_project_traces", {
-        path: group.repoPath,
-      });
-      setNotice(msg);
-      await refresh();
-    } catch (reason) {
-      setError(String(reason));
-    }
-  }
-
-  /** 删除项目：工作区（彻底删）+ 主目录（移入回收站）+ 注册记录（未注册分组同样可用） */
-  async function deleteProjectDir(group: (typeof groups)[number]) {
-    const name = group.project?.name ?? group.repoName;
-    if (
-      !(await confirmDialog(
-        `删除项目「${name}」？\n\n目录：${group.repoPath}\n工作区：${group.list.length} 个\n\n目录将移入系统回收站（可找回）；工作区的 worktree 与分支将彻底删除、不可恢复。请先关闭该项目内正在运行的终端标签。`,
-        { danger: true },
-      ))
-    )
-      return;
-    try {
-      await invoke<string>("delete_project_dir", { path: group.repoPath });
-      // 删掉的是当前选中分组时，selectedGroupKey 回落由分组表 effect 处理
-      await refresh();
-    } catch (reason) {
-      setError(String(reason));
-    }
-  }
-
-  /** 移除项目注册（只删注册记录，不动磁盘目录与工作区） */
-  async function removeRegistration(group: (typeof groups)[number]) {
-    const name = group.project?.name ?? group.repoName;
-    if (
-      !(await confirmDialog(
-        `只移除「${name}」的项目注册，不删除磁盘目录；项目内工作区保留。继续？`,
-      ))
-    )
-      return;
-    try {
-      await invoke("remove_project", { path: group.repoPath });
-      await refresh();
-    } catch (reason) {
-      setError(String(reason));
-    }
-  }
-
   return (
     <div className="relative flex h-full flex-col bg-rail2">
       {/* 待你处理（全局收件箱）：文档流单行 strip（只占 32px，不顶开工作台）；
@@ -2201,6 +2024,25 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
             </button>
             {inboxOpen && (
               <ul className="absolute left-0 top-full z-20 mt-1 max-h-80 w-[360px] max-w-[80vw] space-y-2 overflow-auto rounded-md border border-field ccode-float-surface p-1">
+                <li className="flex items-center justify-between border-b border-hairline px-1.5 pb-1">
+                  <span className="text-micro text-l4">
+                    共 {inboxItems.length} 条
+                  </span>
+                  {bulkInboxItems.length > 0 && (
+                    <button
+                      type="button"
+                      className="rounded-sm p-1 text-l3 hover:bg-hover hover:text-l1"
+                      title="全部已读：一键收起信息类通报（文献 / 可合并 / 待核验 / 待发送 / 技能）；冲突、待确认这类要你拍板的不受影响，被收起的条目状态一变还会回来"
+                      aria-label="全部已读（仅信息类）"
+                      onClick={() => {
+                        dismissInboxBulk(bulkInboxItems);
+                        setInboxOpen(false);
+                      }}
+                    >
+                      <CheckCheck size={13} strokeWidth={1.8} aria-hidden="true" />
+                    </button>
+                  )}
+                </li>
                 {inboxGroups.map((group) => (
                   <li key={group.category}>
                     <div className="px-2.5 py-1 text-micro text-l4">
@@ -2251,114 +2093,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
           </div>
         </section>
       )}
-      <div className="flex min-h-0 flex-1">
-      <aside
-        className={`flex shrink-0 flex-col transition-[width,background-color,border-color] duration-150 ${
-          projectRailCollapsed
-            ? "w-0 overflow-hidden border-r-0 bg-transparent"
-            : "ccode-workspaces-rail ccode-project-rail-open w-[208px] border-r border-hairline bg-rail2"
-        }`}
-      >
-        {!projectRailCollapsed && (
-          <>
-            <div className="flex h-12 shrink-0 items-center gap-2 px-3">
-              <span className="text-sm font-medium text-l1">项目</span>
-              <span className="text-xs text-l4">{groups.length}</span>
-              {/* 添加项目收进 rail 头部 + 菜单（含示例课题常驻入口）；页头实心 CTA 不变 */}
-              <button
-                type="button"
-                onClick={(e) => {
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  setAddMenu({ x: rect.right - 176, y: rect.bottom + 4 });
-                }}
-                title="添加项目 / 创建示例课题"
-                aria-label="添加项目 / 创建示例课题"
-                className="ml-auto flex h-7 w-7 items-center justify-center rounded-md text-sm text-l3 hover:bg-hover hover:text-l1"
-              >
-                +
-              </button>
-              <button
-                type="button"
-                onClick={toggleProjectRail}
-                title="隐藏项目列表"
-                aria-label="隐藏项目列表"
-                className="flex h-7 w-7 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1"
-              >
-                <PanelLeftClose aria-hidden="true" size={16} strokeWidth={1.8} />
-              </button>
-            </div>
-            <div className="min-h-0 flex-1 overflow-auto py-1.5">
-              {railSections.map((section, sectionIndex) => (
-                <section
-                  key={section.mode}
-                  aria-label={RAIL_WORK_MODE_LABEL[section.mode]}
-                >
-                  <p
-                    className={`px-4 text-micro text-l4 ${
-                      sectionIndex === 0 ? "pb-0.5 pt-0.5" : "pb-0.5 pt-2.5"
-                    }`}
-                  >
-                    {RAIL_WORK_MODE_LABEL[section.mode]}
-                  </p>
-                  {section.items.map((group) => {
-                    const { needsAttention, railDot } = groupRailStatus(group);
-                    const selected = selectedGroup?.key === group.key;
-                    return (
-                      <button
-                        key={group.key}
-                        type="button"
-                        onClick={() => setSelectedGroupKey(group.key)}
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          setRailMenu({
-                            x: e.clientX,
-                            y: e.clientY,
-                            groupKey: group.key,
-                          });
-                        }}
-                        title={group.repoPath}
-                        className={`mx-1.5 mb-0.5 flex w-[calc(100%-12px)] items-start gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors ${
-                          selected
-                            ? "bg-rail-sel text-l1"
-                            : "text-l3 hover:bg-hover hover:text-l2"
-                        }`}
-                      >
-                        {/* 状态点只在「有话说」时出现：待处理=黄 / 此刻 Agent 在跑=绿；
-                            未归档工作区、闲置都不渲染（设计系统「无状态不渲染状态点」），占位保行对齐 */}
-                        {railDot ? (
-                          <span
-                            className={`mt-1 size-2 shrink-0 rounded-full ${
-                              railDot === "warn" ? "bg-warn-text" : "bg-ok-text"
-                            }`}
-                            title={railDot === "warn" ? "待处理" : "运行中"}
-                          />
-                        ) : (
-                          <span className="mt-1 size-2 shrink-0" aria-hidden="true" />
-                        )}
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-medium">
-                            {group.project?.name ?? group.repoName}
-                          </span>
-                          {/* 副行只留「待处理」（与收件箱同口径）；类型已在组头，不逐行重复 */}
-                          {needsAttention > 0 && (
-                            <span className="mt-0.5 block truncate text-xs text-l4">
-                              {needsAttention} 个待处理
-                            </span>
-                          )}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </section>
-              ))}
-              {groups.length === 0 && (
-                <p className="px-3 py-4 text-xs text-l4">还没有项目</p>
-              )}
-            </div>
-          </>
-        )}
-      </aside>
-
+      {/* 课题列表已上移侧栏项目树（ProjectTree）：本页只保留选中课题的详情 */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <PageFrame width="fluid" surface="workspace" fill>
       {selectedGroup && (
@@ -2369,27 +2104,13 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
           homeDir={homeDir}
           refreshToken={refreshToken}
           chromeReq={identityChrome}
-          leading={
-            projectRailCollapsed ? (
-              <button
-                type="button"
-                onClick={toggleProjectRail}
-                title="显示项目列表"
-                aria-label="显示项目列表"
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1"
-              >
-                <PanelLeftOpen aria-hidden="true" size={16} strokeWidth={1.8} />
-              </button>
-            ) : undefined
-          }
-          onOpenProjectSwitch={projectRailCollapsed ? setSwitchMenu : undefined}
           onRegisterProject={setAddProjectPath}
           onRefresh={refresh}
           onError={setError}
           onChromeAction={requestIdentityChrome}
         />
       )}
-      {error && <p role="alert" className="mb-4 text-sm text-err-text">{error}</p>}
+      {error && <NoticeBar tone="err" className="mb-4" onDismiss={() => setError(null)}>{error}</NoticeBar>}
       {notice && (
         <NoticeBar className="mb-4" onDismiss={() => setNotice(null)}>
           {notice}
@@ -2484,9 +2205,6 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
             project={selectedGroup.project}
             focusToken={
               projectFocusReq?.focus === "lit" ? projectFocusReq.token : null
-            }
-            focusEntryId={
-              projectFocusReq?.focus === "lit" ? projectFocusReq.entryId : null
             }
             onError={setError}
             onFocusHandled={() => setProjectFocusReq(null)}
@@ -2822,12 +2540,16 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
         )}
         </ProjectSurfaceTabs>
       ) : null}
-      {addProjectPath && (
+      {(addProjectPath || creatingProject) && (
         <AddProjectModal
           path={addProjectPath}
-          onClose={() => setAddProjectPath(null)}
+          onClose={() => {
+            setAddProjectPath(null);
+            setCreatingProject(false);
+            newProjectReturnRef.current = null;
+          }}
           existingMode={
-            projects.find((p) => samePath(p.path, addProjectPath))
+            addProjectPath && projects.find((p) => samePath(p.path, addProjectPath))
               ? normalizeWorkMode(
                   projects.find((p) => samePath(p.path, addProjectPath))
                     ?.workMode,
@@ -2836,6 +2558,27 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
           }
           onRegistered={(project, scan, mode, skipTemplate) => {
             setAddProjectPath(null);
+            setCreatingProject(false);
+            const returnTabId = newProjectReturnRef.current;
+            newProjectReturnRef.current = null;
+            if (returnTabId) {
+              // 回到发起的标签，目录换成新项目；流程模板之后在项目页挑（科研项目无步骤时项目页有选模板入口）
+              const s = useAppStore.getState();
+              s.setProjectPaths([
+                project.path,
+                ...s.projectPaths.filter((p) => !samePath(p, project.path)),
+              ]);
+              s.bumpProjectsVersion();
+              s.setTabCwdReq({ tabId: returnTabId, cwd: project.path });
+              s.setPage("terminal");
+              toast(
+                mode === "research"
+                  ? `已新建「${project.name}」，在这里接着聊；流程模板可以之后在项目页挑`
+                  : `已新建「${project.name}」，在这里接着聊`,
+                "success",
+              );
+              return;
+            }
             setFreshProjectPath(project.path);
             setJustScanned(scan);
             // 先落进列表再选中：分组表由 projects 派生，反了会被空表 effect
@@ -2905,85 +2648,6 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
           }}
         />
       )}
-      {addMenu && (
-        <ContextMenu
-          x={addMenu.x}
-          y={addMenu.y}
-          onClose={() => setAddMenu(null)}
-          items={[
-            { label: "添加项目…", onSelect: () => void onAddProject() },
-            {
-              label: demoBusy ? "正在创建…" : "✦ 创建示例课题（演示）",
-              disabled: demoBusy,
-              title: "在 文档/Mesa 示例课题 生成带演示数据的完整研究流程项目。以前建在「Ccode 示例课题」里的，再点仍打开那一份",
-              onSelect: () => void onCreateDemo(),
-            },
-          ]}
-        />
-      )}
-      {railMenu &&
-        (() => {          const group = groups.find((g) => g.key === railMenu.groupKey);
-          if (!group) return null;
-          return (
-            <ContextMenu
-              x={railMenu.x}
-              y={railMenu.y}
-              onClose={() => setRailMenu(null)}
-              items={railMenuItems(group)}
-            />
-          );
-        })()}
-      {/* 收起态课题名下拉：镜像左栏——同分段同序（段头组头同款）、状态点同口径、
-          当前课题 checked（行尾勾+行底），选中即切（列表保持收起） */}
-      {switchMenu &&
-        (() => {
-          const statusByKey = new Map(
-            groups.map((group) => [group.key, groupRailStatus(group)]),
-          );
-          const items = projectSwitchRows(
-            railSections.map((section) => ({
-              label: RAIL_WORK_MODE_LABEL[section.mode],
-              items: section.items.map((group) => ({
-                key: group.key,
-                name: group.project?.name ?? group.repoName,
-                repoPath: group.repoPath,
-              })),
-            })),
-            selectedGroup?.key ?? null,
-          ).flatMap((row) => {
-            const dot = statusByKey.get(row.key)?.railDot;
-            const item = {
-              label: row.label,
-              title: row.repoPath,
-              checked: row.current,
-              mark: dot === "warn" || dot === "running" ? dot : undefined,
-              onSelect: () => setSelectedGroupKey(row.key),
-            };
-            return row.sectionLabelBefore
-              ? [{ header: row.sectionLabelBefore }, item]
-              : [item];
-          });
-          if (items.length === 0) return null;
-          return (
-            <ContextMenu
-              x={switchMenu.x}
-              y={switchMenu.y}
-              onClose={() => setSwitchMenu(null)}
-              items={items}
-            />
-          );
-        })()}
-      {renameTarget && (
-        <RenameProjectModal
-          path={renameTarget.path}
-          initialName={renameTarget.name}
-          onClose={() => setRenameTarget(null)}
-          onRenamed={() => {
-            setRenameTarget(null);
-            void refresh();
-          }}
-        />
-      )}
       {newWsRepoPath && (
         <NewWorkspaceModal
           repoPath={newWsRepoPath}
@@ -3031,32 +2695,14 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
       {/* 人工请求完整内容层（v3.97）：收件箱行只放 40 字预览，全文在这里看。
           主动作是跳到对应终端回答；不回它会按每条自带的兜底方案继续，不停工 */}
       {helpView && (
-        <div
-          className="ccode-fade fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          onClick={() => setHelpView(null)}
-        >
-          <div
-            className="ccode-float-surface flex max-h-[70vh] w-full max-w-lg flex-col rounded-md border border-field p-5"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="mb-1 shrink-0 text-base font-semibold text-l1">
-              人工请求 · {helpView.repoName}
-              {helpView.workspaceName ? ` / ${helpView.workspaceName}` : ""}
-            </h2>
-            <p className="mb-3 shrink-0 text-xs text-l4">
-              Agent 干到一半需要你拍板。去对应终端直接告诉它；它还在干活时先打断再回答。不回它会按每条兜底继续。
-            </p>
-            <ol className="min-h-0 flex-1 list-decimal space-y-2 overflow-auto pl-5">
-              {helpView.items.map((item, i) => (
-                <li
-                  key={i}
-                  className="whitespace-pre-wrap text-sm leading-6 text-l1"
-                >
-                  {item}
-                </li>
-              ))}
-            </ol>
-            <div className="mt-4 flex shrink-0 items-center justify-end gap-2">
+        <Modal
+          open
+          size="md"
+          title={`人工请求 · ${helpView.repoName}${helpView.workspaceName ? ` / ${helpView.workspaceName}` : ""}`}
+          description="Agent 干到一半需要你拍板。去对应终端直接告诉它；它还在干活时先打断再回答。不回它会按每条兜底继续。"
+          onClose={() => setHelpView(null)}
+          footer={
+            <>
               <button
                 type="button"
                 title="忽略此来源（请求内容变化后会重新出现）"
@@ -3064,7 +2710,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                   dismissHelpRequest(helpView.root, helpSignature(helpView.items));
                   setHelpView(null);
                 }}
-                className="rounded-sm px-3 py-1.5 text-sm text-l4 hover:bg-hover hover:text-l2"
+                className={quietActionClass}
               >
                 忽略此来源
               </button>
@@ -3105,16 +2751,26 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                   });
                   setPage("terminal");
                 }}
-                className="rounded-sm border border-cta-bd bg-cta px-3 py-1.5 text-sm text-cta-text hover:brightness-110"
+                className={primaryActionClass}
               >
                 去终端回答
               </button>
-            </div>
-          </div>
-        </div>
+            </>
+          }
+        >
+            <ol className="list-decimal space-y-2 pl-5">
+              {helpView.items.map((item, i) => (
+                <li
+                  key={i}
+                  className="whitespace-pre-wrap text-sm leading-6 text-l1"
+                >
+                  {item}
+                </li>
+              ))}
+            </ol>
+        </Modal>
       )}
         </PageFrame>
-      </div>
       </div>
     </div>
   );

@@ -1,6 +1,11 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import {
+  FolderMinus,
+  History,
+  Settings2,
+  Workflow,
+} from "lucide-react";
+import { useEffect, useState, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ChevronsUpDown } from "lucide-react";
 import ContextMenu from "./ContextMenu";
 import { confirmDialog } from "./ConfirmDialog";
 import {
@@ -25,9 +30,7 @@ export default function ProjectIdentityHeader({
   repoName,
   homeDir,
   refreshToken,
-  leading,
   chromeReq,
-  onOpenProjectSwitch,
   onRegisterProject,
   onRefresh,
   onError,
@@ -38,10 +41,7 @@ export default function ProjectIdentityHeader({
   repoName: string;
   homeDir: string;
   refreshToken: number;
-  leading?: ReactNode;
   chromeReq?: { action: ProjectChromeAction; token: number } | null;
-  /** 项目栏收起时传入：课题名变成切换下拉的入口，锚点坐标由这里报给调用方弹菜单 */
-  onOpenProjectSwitch?: (anchor: { x: number; y: number }) => void;
   onRegisterProject: (repoPath: string) => void;
   onRefresh: () => Promise<void>;
   onError: (message: string) => void;
@@ -153,7 +153,6 @@ export default function ProjectIdentityHeader({
   return (
     <header className="ccode-page-header sticky top-0 z-20 mb-4 py-1.5">
       <div className="flex min-h-9 min-w-0 items-center gap-2">
-        {leading}
         {renaming ? (
           <form onSubmit={submitRename} className="flex min-w-0 items-center gap-1">
             <input
@@ -174,31 +173,8 @@ export default function ProjectIdentityHeader({
               取消
             </button>
           </form>
-        ) : onOpenProjectSwitch ? (
-          // 项目栏收起态：课题名即切换入口（常驻 ⇅ 示意可点），点击把锚点报给页面弹菜单；
-          // 展开态不传该 prop，课题名仍是纯标题——列表本身就是切换器，不重复摆第二个
-          <h1 className="shrink-0 text-base font-semibold tracking-tight text-l1">
-            <button
-              type="button"
-              aria-label={`切换课题，当前：${displayName}`}
-              title="点击切换课题"
-              onClick={(event) => {
-                const rect = event.currentTarget.getBoundingClientRect();
-                onOpenProjectSwitch({ x: rect.left, y: rect.bottom + 4 });
-              }}
-              className="-ml-1.5 flex items-center gap-1 rounded-md px-1.5 py-0.5 hover:bg-hover"
-            >
-              {displayName}
-              <ChevronsUpDown
-                aria-hidden="true"
-                size={14}
-                strokeWidth={1.8}
-                className="shrink-0 text-l4"
-              />
-            </button>
-          </h1>
         ) : (
-          <h1 className="shrink-0 text-base font-semibold tracking-tight text-l1">
+          <h1 className="shrink-0 text-xl font-semibold tracking-tight text-l1">
             {displayName}
           </h1>
         )}
@@ -331,6 +307,7 @@ export default function ProjectIdentityHeader({
             ...(workMode === "research" && !liteResearch
               ? [
                   {
+                    icon: Workflow,
                     label: "编辑研究流程",
                     disabled: !cfg,
                     title: cfg
@@ -341,6 +318,7 @@ export default function ProjectIdentityHeader({
                 ]
               : []),
             {
+              icon: Settings2,
               label: "项目设置…",
               title: "规则、验收记录和项目低频项",
               onSelect: () => onChromeAction("settings"),
@@ -348,6 +326,7 @@ export default function ProjectIdentityHeader({
             ...(workMode === "research" && !liteResearch
               ? [
                   {
+                    icon: History,
                     label: "历史",
                     title: "项目的白话保存时间线（只读）",
                     onSelect: () => onChromeAction("history"),
@@ -355,6 +334,7 @@ export default function ProjectIdentityHeader({
                 ]
               : []),
             {
+              icon: FolderMinus,
               label: "从 Mesa 移除",
               title:
                 "只把项目从 Mesa 列表里摘掉，不动磁盘文件；清除痕迹与删除目录在左侧项目栏右键菜单里",

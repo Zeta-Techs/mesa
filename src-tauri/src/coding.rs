@@ -21,10 +21,7 @@ pub(crate) fn worktrees_root() -> Result<PathBuf, String> {
     if let Some(p) = TEST_WT_ROOT.with(|c| c.borrow().clone()) {
         return Ok(p);
     }
-    Ok(dirs::home_dir()
-        .ok_or("无法确定用户主目录")?
-        .join("ccode")
-        .join("worktrees"))
+    Ok(crate::ccode_home::current()?.join("worktrees"))
 }
 
 #[cfg(test)]

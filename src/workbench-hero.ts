@@ -13,7 +13,12 @@ import {
 import { goalBucket } from "./project-tasks.ts";
 import { projectNowLine } from "./project-status.ts";
 import { sessionExcludedFromProjectList } from "./session-filter.ts";
-import { tidySessionTitle } from "./session-title.ts";
+import {
+  replaceAbsFsPaths,
+  stripTitleMarkdown,
+  tidySessionTitle,
+  unwrapPromptTags,
+} from "./session-title.ts";
 
 export type WorkbenchHeroSource =
   | "running"
@@ -664,9 +669,10 @@ export function firstOpenStepName(
   return steps[steps.length - 1]!.name;
 }
 
-/** 区块标题：有活进程才叫「正在进行」，可恢复但不在跑叫「继续工作」。 */
-export function workbenchNowSectionTitle(runningCount: number): "正在进行" | "继续工作" {
-  return runningCount > 0 ? "正在进行" : "继续工作";
+/** 区块标题：有活进程才叫「正在进行」，可恢复但不在跑叫「最近在做」。 */
+export function workbenchNowSectionTitle(runningCount: number): "正在进行" | "最近在做" {
+  // 没在跑时不叫「继续工作」：主卡按钮就是「继续工作」，标题再说一遍是同一事实说两次（2026-10-17）
+  return runningCount > 0 ? "正在进行" : "最近在做";
 }
 
 export function heroStatusLine(opts: {
@@ -745,7 +751,184 @@ export function workbenchNowSubtitle(input: {
     const bucket = goalBucket(task.status);
     return bucket === "review" || bucket === "running" || bucket === "stuck";
   });
-  const line = projectNowLine(urgent);
+  // 工作台每行前面已经是项目名，「项目现在：」标签去掉，句子本身与任务页一致
+  const line = projectNowLine(urgent)?.replace(/^项目现在：/, "");
   if (line) return { subtitle: line, needsYou: true };
   return { subtitle: input.fallback, needsYou: false };
+}
+
+// ---- 工作台第二批（2026-10-17）：上次停在 / 待处理归属 / 记下目标 / 加载失败汇总 ----
+
+/** 「上次停在」取哪条会话：该项目最近一次人参与的对话。归档、内部无头 / 问 AI / 阅读注入
+ *  （与项目侧栏同一套 sessionExcludedFromProjectList）、源文件没了又没快照的都跳过。 */
+export function latestProjectSession<T extends {
+  projectPath: string;
+  updatedAt: string | null;
+  title: string | null;
+  customTitle: string | null;
+  archived?: boolean;
+  internal?: boolean;
+  source?: string;
+  alive?: boolean;
+  pinned?: boolean;
+}>(sessions: readonly T[], projectPath: string, isWindows = false): T | null {
+  let best: T | null = null;
+  for (const session of sessions) {
+    if (session.archived || !session.updatedAt) continue;
+    if (session.alive === false && !session.pinned) continue;
+    if (!samePath(session.projectPath, projectPath, isWindows)) continue;
+    if (
+      sessionExcludedFromProjectList({
+        internal: session.internal,
+        source: session.source,
+        projectPath: session.projectPath,
+        title: session.title,
+        customTitle: session.customTitle,
+      })
+    )
+      continue;
+    if (!best || compareRecent(session.updatedAt, best.updatedAt) < 0) best = session;
+  }
+  return best;
+}
+
+const LAST_SAID_INJECTED_RE = /^(?:<[a-z][\w-]*[\s>]|caveat:)/i;
+const LAST_SAID_INTERRUPT_RE =
+  /\[?\s*request interrupted by user[^\]]*\]?|请求(?:已)?中断|被用户中断/gi;
+
+function clampLastSaid(text: string): string {
+  const chars = [...text];
+  const cjk = chars.filter((c) => (c.codePointAt(0) ?? 0) > 0xff).length;
+  const max = cjk >= chars.length / 2 ? 60 : 100;
+  if (chars.length <= max) return text;
+  return `${chars.slice(0, max).join("").trimEnd()}…`;
+}
+
+/**
+ * 「上次停在」：会话里最后一条人说的话（只看 text 块；工具结果、系统注入的
+ * `<system-reminder>` / `<command-…>` / Caveat、单独的「中断」提示都跳过）。
+ * 不按首句切——要的是「当时让它干什么」，切成首词就没信息了。消息已在 Rust 层脱敏。
+ */
+export function lastUserInstruction(
+  messages: readonly {
+    role: string;
+    blocks: readonly { kind: string; text: string }[];
+    timestamp?: string | null;
+  }[],
+): { text: string; full: string; timestamp: string | null } | null {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i]!;
+    if (message.role !== "user") continue;
+    const raw = message.blocks
+      .filter((block) => block.kind === "text")
+      .map((block) => block.text)
+      .join("\n")
+      .trim();
+    if (!raw) continue;
+    const unwrapped = unwrapPromptTags(raw);
+    if (LAST_SAID_INJECTED_RE.test(unwrapped)) continue;
+    let full = replaceAbsFsPaths(unwrapped.replace(LAST_SAID_INTERRUPT_RE, " "));
+    full = stripTitleMarkdown(full.replace(/\s+/g, " ").trim());
+    if (!full) continue;
+    return { text: clampLastSaid(full), full, timestamp: message.timestamp ?? null };
+  }
+  return null;
+}
+
+/** 收件箱条目归到哪个已添加项目（工作台「待你处理」行尾标项目名用）。归不到返回 null。 */
+export function inboxItemProjectRoot(
+  action:
+    | { type: string; [key: string]: unknown }
+    | null
+    | undefined,
+  ctx: {
+    projectPaths: readonly string[];
+    workspaces: readonly { id: string; repoPath: string; worktreePath: string }[];
+    runProjects?: Readonly<Record<string, string>>;
+    tabCwds?: Readonly<Record<string, string>>;
+    sessions?: readonly { agent: string; sessionId: string; projectPath: string }[];
+    isWindows?: boolean;
+  },
+): string | null {
+  if (!action) return null;
+  const isWindows = ctx.isWindows ?? false;
+  const str = (v: unknown) => (typeof v === "string" && v.trim() ? v : null);
+  const toProject = (path: string | null): string | null => {
+    if (!path) return null;
+    let best: { path: string; len: number } | null = null;
+    for (const root of ctx.projectPaths) {
+      if (!pathWithin(path, root, isWindows)) continue;
+      const len = pathKey(root, isWindows).length;
+      if (!best || len > best.len) best = { path: root, len };
+    }
+    return best?.path ?? null;
+  };
+  const byRun = (runId: string | null) =>
+    runId ? toProject(ctx.runProjects?.[runId] ?? null) : null;
+  switch (action.type) {
+    case "project":
+    case "litWatch":
+    case "help":
+      return toProject(str(action.projectRoot));
+    case "artifacts": {
+      const ws = ctx.workspaces.find((w) => w.id === str(action.workspaceId));
+      return toProject(ws?.repoPath ?? null);
+    }
+    case "review": {
+      const tree = str(action.worktreePath);
+      const ws = tree
+        ? ctx.workspaces.find((w) => samePath(w.worktreePath, tree, isWindows))
+        : undefined;
+      return toProject(ws?.repoPath ?? null) ?? byRun(str(action.runId)) ?? toProject(tree);
+    }
+    case "run": {
+      const tabId = str(action.tabId);
+      return byRun(str(action.runId)) ?? toProject(tabId ? ctx.tabCwds?.[tabId] ?? null : null);
+    }
+    case "session": {
+      const hit = ctx.sessions?.find(
+        (s) => s.agent === action.agent && s.sessionId === action.sessionId,
+      );
+      return toProject(hit?.projectPath ?? null);
+    }
+    default:
+      return null;
+  }
+}
+
+/** 工作台「记下目标」能落到哪些项目：与项目页目标视图同一口径——办公项目，或科研里
+ *  显式选了「不使用研究流程」且没有步骤的（ProjectGroup liteResearch）。编程项目走车道，不进。 */
+export function goalCaptureTargets<P extends {
+  path: string;
+  name: string;
+  workMode?: string | null;
+}>(
+  projects: readonly P[],
+  researchCfg: Readonly<Record<string, { stepCount: number; pipelineOptOut: boolean }>>,
+): (P & { goalKind: "office_doc" | "free_research" })[] {
+  const out: (P & { goalKind: "office_doc" | "free_research" })[] = [];
+  for (const project of projects) {
+    if (project.workMode === "office") {
+      out.push({ ...project, goalKind: "office_doc" });
+      continue;
+    }
+    if (project.workMode === "coding") continue;
+    const cfg = researchCfg[project.path];
+    if (cfg?.pipelineOptOut && cfg.stepCount === 0) {
+      out.push({ ...project, goalKind: "free_research" });
+    }
+  }
+  return out;
+}
+
+/** 多个项目同类加载失败合成一条提示（原先一个项目弹一条 toast，项目一多就刷屏）。 */
+export function workbenchLoadFailureMessage(
+  names: readonly string[],
+  what: string,
+): string | null {
+  if (names.length === 0) return null;
+  if (names.length === 1) return `项目「${names[0]}」的${what}没读到，可稍后重试`;
+  const shown = names.slice(0, 3).map((name) => `「${name}」`).join("");
+  const more = names.length > 3 ? `等 ${names.length} 个项目` : "";
+  return `${shown}${more}的${what}没读到，可稍后重试`;
 }

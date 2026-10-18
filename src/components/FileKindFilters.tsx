@@ -1,4 +1,5 @@
 import {
+  Clock,
   FileSpreadsheet,
   FileText,
   Image,
@@ -10,7 +11,9 @@ import { OFFICE_FILTERS } from "../work-mode";
 import type { OfficeDocKind } from "../work-mode";
 import type { ProjectFileFilter } from "../project-files";
 
-const ICONS: Record<ProjectFileFilter, LucideIcon | "pdf"> = {
+type KindFilter = (typeof OFFICE_FILTERS)[number]["id"];
+
+const ICONS: Record<KindFilter, LucideIcon | "pdf"> = {
   all: LayoutGrid,
   doc: FileText,
   sheet: FileSpreadsheet,
@@ -20,7 +23,7 @@ const ICONS: Record<ProjectFileFilter, LucideIcon | "pdf"> = {
   other: FileText,
 };
 
-const LABELS: Record<ProjectFileFilter, string> = {
+const LABELS: Record<KindFilter, string> = {
   all: "全部",
   doc: "文档",
   sheet: "表格",
@@ -34,11 +37,20 @@ export default function FileKindFilters({
   filter,
   counts,
   onChange,
+  recent,
+  onToggleRecent,
 }: {
   filter: ProjectFileFilter;
   counts: Record<OfficeDocKind | "all", number>;
   onChange: (id: ProjectFileFilter) => void;
+  /** 「最近修改」视图是否激活（与类型筛选互斥的单选语义） */
+  recent?: boolean;
+  onToggleRecent?: () => void;
 }) {
+  const capsule = (selected: boolean) =>
+    `flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-xs ${
+      selected ? "bg-seg-sel text-l1" : "text-l3 hover:bg-hover hover:text-l1"
+    }`;
   return (
     <div
       className="flex min-w-0 flex-1 flex-wrap items-center gap-1"
@@ -61,9 +73,7 @@ export default function FileKindFilters({
             aria-checked={selected}
             title={label}
             aria-label={count > 0 ? `${label} ${count}` : label}
-            className={`flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-xs ${
-              selected ? "bg-seg-sel text-l1" : "text-l3 hover:bg-hover hover:text-l1"
-            }`}
+            className={capsule(selected)}
             onClick={() => onChange(item.id)}
           >
             {Icon === "pdf" ? (
@@ -75,6 +85,19 @@ export default function FileKindFilters({
           </button>
         );
       })}
+      {onToggleRecent && (
+        <button
+          type="button"
+          role="radio"
+          aria-checked={!!recent}
+          title="按最近修改排列"
+          className={capsule(!!recent)}
+          onClick={onToggleRecent}
+        >
+          <Clock size={13} strokeWidth={1.8} />
+          最近
+        </button>
+      )}
     </div>
   );
 }

@@ -33,6 +33,8 @@ test("项目知识：人工修订传版本，作废确认，保存失败不丢�
   });
   try {
     await act(async () => root.render(h("div", null, h(Panel, { projectPath: "/project" }), h(ConfirmDialogHost))));
+    // 面板默认折叠（摘要给有效条数），先点开再进条目操作
+    await act(async () => [...dom.window.document.querySelectorAll("button")].find((b) => b.textContent!.includes("项目长期知识"))!.click());
     assert.match(host.textContent!, /来源已变化/);
     await act(async () => button("修订 / 重新确认").click());
     await input(host.querySelector("textarea")!, "新结论"); await input(host.querySelector("input")!, "复算后确认");

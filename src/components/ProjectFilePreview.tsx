@@ -15,6 +15,7 @@ export default function ProjectFilePreview({
   onOpenReader,
   leading,
   onAnnotate,
+  onDirtyChange,
 }: {
   path: string;
   root: string;
@@ -29,6 +30,8 @@ export default function ProjectFilePreview({
     fileName: string,
     comment: string,
   ) => string | null;
+  /** 脏状态上报（只有文本编辑态会脏）：宿主用来在切换/关闭预览前确认丢弃 */
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const kind = projectFilePreviewKind(path);
   const frame = "flex min-h-0 flex-1 flex-col";
@@ -89,6 +92,7 @@ export default function ProjectFilePreview({
           onOpenReader={onOpenReader}
           leading={leading}
           onAnnotate={onAnnotate}
+          onDirtyChange={onDirtyChange}
         />
       </Suspense>
     </div>

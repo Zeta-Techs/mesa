@@ -76,6 +76,35 @@ export function groupLanesByTheme<T extends { isPrimary: boolean; lane: LaneOver
   return groups;
 }
 
+/**
+ * 分支地图：领先/落后都是相对基准算的，所以基准作根，其余分支挂在根下。
+ * 根 = 检出基准的那棵树；基准没检出时用本地分支行（可能缺行，只剩名字）。
+ * 子节点 = 其余工作树（主仓在前，按主题分组）；未检出的本地分支收在 loose。
+ */
+export function arrangeBranchMap<
+  T extends { isPrimary: boolean; isBase: boolean; lane: LaneOverlay },
+  B extends { name: string; worktreePath: string | null; isBase: boolean },
+>(
+  trees: readonly T[],
+  branches: readonly B[],
+  baseBranch: string,
+): {
+  root: { name: string; tree: T | null; branch: B | null } | null;
+  groups: { theme: string | null; label: string; items: T[] }[];
+  loose: B[];
+} {
+  const base = baseBranch.trim();
+  const isBaseBranch = (b: B) => b.isBase || (!!base && b.name === base);
+  const rootTree = trees.find((t) => t.isBase) ?? null;
+  const rootBranch = rootTree ? null : (branches.find(isBaseBranch) ?? null);
+  const rootName = rootTree?.lane.branch || base || rootBranch?.name || "";
+  return {
+    root: rootName ? { name: rootName, tree: rootTree, branch: rootBranch } : null,
+    groups: groupLanesByTheme(trees.filter((t) => t !== rootTree)),
+    loose: branches.filter((b) => !b.worktreePath && !isBaseBranch(b)),
+  };
+}
+
 export function lastLaneTheme(
   lanes: readonly { theme: string | null }[],
 ): string {

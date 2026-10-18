@@ -4,7 +4,7 @@ import { Archive, Pencil } from "lucide-react";
 import { agentBrandBadgeStyle } from "../agent-colors";
 import { beginProjectChat } from "./AskAiModal";
 import ConversationView from "./ConversationView";
-import { resumeSessionInTerminal } from "./QuickChatModal";
+import { resumeSessionInTerminal } from "../quick-chat-launch";
 import { projectBoundProfileId, slotPrefs, CHAT_BINDING_SLOT } from "../project-agents";
 import {
   compactFieldClass,
@@ -16,7 +16,7 @@ import {
   rowActionClass,
 } from "./PageFrame";
 import { loadCodingOverview } from "./CodingProjectView";
-import { useAppStore } from "../store";
+import { sessionRuntimeKey, useAppStore } from "../store";
 import { IS_WINDOWS } from "../hotkeys";
 import { absTime, relTime } from "../rel-time";
 import { imeBlocksEnter } from "../ime-guard";
@@ -50,6 +50,13 @@ export default function ProjectChatsView({
   onError?: (msg: string) => void;
 }) {
   const sessions = useAppStore((s) => s.sessions);
+  const liveSessions = useAppStore((s) => s.liveSessions);
+  // 终端里正停在「等你确认」的标签：绿点换成黄点（同对话页）
+  const terminalRunInputs = useAppStore((s) => s.terminalRunInputs);
+  const waitingTabs = useMemo(
+    () => new Set(terminalRunInputs.filter((r) => r.attention === "confirm").map((r) => r.tabId)),
+    [terminalRunInputs],
+  );
   const profiles = useAppStore((s) => s.profiles);
   const loadSessions = useAppStore((s) => s.loadSessions);
   const setPage = useAppStore((s) => s.setPage);
@@ -356,6 +363,9 @@ export default function ProjectChatsView({
       );
     }
     const canResume = !!(s.alive || s.pinned);
+    const isLive = s.live || !!liveSessions[sessionRuntimeKey(s.agent, s.sessionId)];
+    // 步骤工作区里的对话标出是哪一步（检索/精读…），编程工作树标树名；主仓对话不标
+    const where = s.stepName ?? s.workspace;
     return (
       <div
         data-session-key={sessionKey(s)}
@@ -368,9 +378,31 @@ export default function ProjectChatsView({
           className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left"
           onClick={() => setSelectedKey(sessionKey(s))}
         >
+          {isLive &&
+            (waitingTabs.has(liveSessions[sessionRuntimeKey(s.agent, s.sessionId)] ?? "") ? (
+              <span
+                className="size-2 shrink-0 rounded-full bg-warn-text"
+                title="在等你确认（批准一个操作或选一项）"
+                aria-label="等你确认"
+              />
+            ) : (
+              <span
+                className="size-2 shrink-0 rounded-full bg-ok-text"
+                title="这条对话的 CLI 还在运行"
+                aria-label="进行中"
+              />
+            ))}
           <span className="min-w-0 flex-1 truncate text-sm text-l2">
             {projectSessionLabel(shown)}
           </span>
+          {!hideAgent && where && (
+            <span
+              className="max-w-[12rem] shrink-0 truncate text-micro text-l4"
+              title={s.stepName ? `研究步骤：${s.stepName}` : `工作区：${where}`}
+            >
+              {where}
+            </span>
+          )}
           {!hideAgent && (
             <span
               className="shrink-0 rounded-full px-1.5 py-px text-micro font-medium"

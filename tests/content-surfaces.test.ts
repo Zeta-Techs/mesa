@@ -64,7 +64,7 @@ test("科研子卡/设置卡/知识条目统一，独立画布不继承项目底
       }
     }
   }
-  for (const name of ["ProjectGroup", "ProjectSettingsDrawer", "PipelineEditor", "HistoryOverlay", "WorkspaceReviewView", "GatewayLibrary"]) {
+  for (const name of ["ProjectSettingsDrawer", "PipelineEditor", "HistoryOverlay", "WorkspaceReviewView", "GatewayLibrary"]) {
     assert.match(source(`components/${name}.tsx`), /data-surface="canvas"/, `${name}: 独立画布需重置卡片基色`);
   }
 });

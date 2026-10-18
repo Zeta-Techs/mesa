@@ -10,14 +10,27 @@ export type ProjectFilePreviewKind =
   | "legacy-doc"
   | "text";
 
-export type ProjectFileFilter = "all" | OfficeDocKind;
+/** recent 是「最近修改」视图不是类型筛选：不参与按类型收窄 */
+export type ProjectFileFilter = "all" | OfficeDocKind | "recent";
 
 export function fileMatchesProjectFilter(
   path: string,
   filter: ProjectFileFilter,
 ): boolean {
-  if (filter === "all") return true;
+  if (filter === "all" || filter === "recent") return true;
   return officeDocKind(path) === filter;
+}
+
+/**
+ * 方向键是否该让给正在打字的控件（会话列表「↑/↓ 仅非打字焦点」同款口径）。
+ * Monaco 的编辑面是 textarea，一并覆盖；target 为 null（焦点在 window/document）时视为可接管。
+ */
+const TYPING_SELECTOR =
+  "input, textarea, select, [contenteditable='true'], [contenteditable=''], [role='textbox']";
+export function inTypingContext(
+  target: { closest(selector: string): unknown } | null,
+): boolean {
+  return !!target?.closest?.(TYPING_SELECTOR);
 }
 
 export function flattenVisibleFiles<T extends { path: string; isDir: boolean }>(

@@ -4,6 +4,11 @@ import type { RunOverviewInput } from "../src/run-overview.ts";
 import {
   continueWorkbenchTarget,
   firstOpenStepName,
+  goalCaptureTargets,
+  inboxItemProjectRoot,
+  lastUserInstruction,
+  latestProjectSession,
+  workbenchLoadFailureMessage,
   heroStatusLine,
   workbenchNowSectionTitle,
   namedSessionTitle,
@@ -293,7 +298,7 @@ test("firstOpenStepName 取第一个未合并步骤，全完成回末步", () =>
 });
 
 test("区块标题：没在跑不算正在进行", () => {
-  assert.equal(workbenchNowSectionTitle(0), "继续工作");
+  assert.equal(workbenchNowSectionTitle(0), "最近在做");
   assert.equal(workbenchNowSectionTitle(1), "正在进行");
   assert.equal(workbenchNowSectionTitle(3), "正在进行");
 });
@@ -367,14 +372,14 @@ test("workbenchNowSubtitle prefers pending review over step fallback", () => {
       tasks: [{ name: "整理数据", status: "pending_review" }],
       fallback: "文献检索",
     }),
-    { subtitle: "项目现在：整理数据待验收", needsYou: true },
+    { subtitle: "整理数据待验收", needsYou: true },
   );
   assert.deepEqual(
     workbenchNowSubtitle({
       tasks: [{ name: "写周报", status: "running" }],
       fallback: "最近有文档对话",
     }),
-    { subtitle: "项目现在：写周报进行中", needsYou: true },
+    { subtitle: "写周报进行中", needsYou: true },
   );
   assert.deepEqual(
     workbenchNowSubtitle({
@@ -852,5 +857,105 @@ test("最近对话：内部 / 归档 / 无头 / 阅读注入会话不进列表",
   assert.deepEqual(
     listed.map((s) => s.customTitle),
     ["正常对话"],
+  );
+});
+
+test("lastUserInstruction：取最后一条人说的话，跳过工具结果与系统注入", () => {
+  const msg = (role: string, ...blocks: [string, string][]) => ({
+    role,
+    timestamp: "2026-10-17T01:00:00Z",
+    blocks: blocks.map(([kind, text]) => ({ kind, text })),
+  });
+  const hit = lastUserInstruction([
+    msg("user", ["text", "先读一下 /Users/me/proj/papers/a.pdf 再写笔记"]),
+    msg("assistant", ["text", "好的"]),
+    msg("user", ["tool_result", "ok"]),
+    msg("user", ["text", "<system-reminder>ignore</system-reminder>"]),
+    msg("user", ["text", "[Request interrupted by user]"]),
+  ]);
+  assert.equal(hit?.text, "先读一下 a.pdf 再写笔记");
+  assert.equal(hit?.timestamp, "2026-10-17T01:00:00Z");
+  // Grok 包裹拆掉后仍是人话
+  assert.equal(
+    lastUserInstruction([msg("user", ["text", "<user_query>把第三节改短</user_query>"])])?.text,
+    "把第三节改短",
+  );
+  assert.equal(lastUserInstruction([msg("assistant", ["text", "x"])]), null);
+  const long = lastUserInstruction([msg("user", ["text", "长".repeat(80)])]);
+  assert.equal([...long!.text].length, 61);
+  assert.equal(long!.full.length, 80);
+});
+
+test("latestProjectSession：同项目最近一次人参与的对话，内部/归档/失效不算", () => {
+  const base = { title: "写综述", customTitle: null, alive: true, pinned: false };
+  const picked = latestProjectSession(
+    [
+      { ...base, projectPath: "/p", updatedAt: "2026-10-16T01:00:00Z", sessionId: "old" },
+      { ...base, projectPath: "/p", updatedAt: "2026-10-17T01:00:00Z", sessionId: "internal", internal: true },
+      { ...base, projectPath: "/p", updatedAt: "2026-10-17T02:00:00Z", sessionId: "arch", archived: true },
+      { ...base, projectPath: "/p", updatedAt: "2026-10-17T03:00:00Z", sessionId: "gone", alive: false },
+      { ...base, projectPath: "/q", updatedAt: "2026-10-17T04:00:00Z", sessionId: "other" },
+      { ...base, projectPath: "/p", updatedAt: "2026-10-16T05:00:00Z", sessionId: "new" },
+    ],
+    "/p",
+  );
+  assert.equal(picked?.sessionId, "new");
+});
+
+test("inboxItemProjectRoot：按动作类型归到已添加项目", () => {
+  const ctx = {
+    projectPaths: ["/p", "/q"],
+    workspaces: [{ id: "w1", repoPath: "/p", worktreePath: "/wt/p-step" }],
+    runProjects: { r1: "/q" },
+    tabCwds: { t1: "/q/sub" },
+    sessions: [{ agent: "codex", sessionId: "s1", projectPath: "/p" }],
+  };
+  assert.equal(inboxItemProjectRoot({ type: "review", worktreePath: "/wt/p-step" }, ctx), "/p");
+  assert.equal(inboxItemProjectRoot({ type: "artifacts", workspaceId: "w1" }, ctx), "/p");
+  assert.equal(inboxItemProjectRoot({ type: "run", runId: "r1" }, ctx), "/q");
+  assert.equal(inboxItemProjectRoot({ type: "run", tabId: "t1" }, ctx), "/q");
+  assert.equal(inboxItemProjectRoot({ type: "session", agent: "codex", sessionId: "s1" }, ctx), "/p");
+  assert.equal(inboxItemProjectRoot({ type: "litWatch", projectRoot: "/q" }, ctx), "/q");
+  assert.equal(inboxItemProjectRoot({ type: "settings", section: "diag" }, ctx), null);
+  assert.equal(inboxItemProjectRoot({ type: "help", projectRoot: "/elsewhere" }, ctx), null);
+});
+
+test("goalCaptureTargets：办公 + 不用流程的科研，编程与有流程科研不进", () => {
+  const targets = goalCaptureTargets(
+    [
+      { path: "/office", name: "周报", workMode: "office" },
+      { path: "/lite", name: "读文献", workMode: "research" },
+      { path: "/flow", name: "写论文", workMode: "research" },
+      { path: "/fresh", name: "新课题", workMode: "research" },
+      { path: "/code", name: "仓库", workMode: "coding" },
+    ],
+    {
+      "/lite": { stepCount: 0, pipelineOptOut: true },
+      "/flow": { stepCount: 5, pipelineOptOut: false },
+      "/fresh": { stepCount: 0, pipelineOptOut: false },
+    },
+  );
+  assert.deepEqual(
+    targets.map((t) => [t.path, t.goalKind]),
+    [
+      ["/office", "office_doc"],
+      ["/lite", "free_research"],
+    ],
+  );
+});
+
+test("workbenchLoadFailureMessage：多项目失败合成一条", () => {
+  assert.equal(workbenchLoadFailureMessage([], "编程状态"), null);
+  assert.equal(
+    workbenchLoadFailureMessage(["甲"], "编程状态"),
+    "项目「甲」的编程状态没读到，可稍后重试",
+  );
+  assert.equal(
+    workbenchLoadFailureMessage(["甲", "乙", "丙", "丁"], "流程配置"),
+    "「甲」「乙」「丙」等 4 个项目的流程配置没读到，可稍后重试",
+  );
+  assert.equal(
+    workbenchLoadFailureMessage(["甲", "乙"], "编程状态"),
+    "「甲」「乙」的编程状态没读到，可稍后重试",
   );
 });

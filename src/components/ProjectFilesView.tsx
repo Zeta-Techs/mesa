@@ -7,15 +7,20 @@ import {
   type ReactNode,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import {
   BookOpen,
   ChevronRight,
+  Copy,
   Folder,
   FolderOpen,
+  FolderPlus,
+  Locate,
   Maximize2,
   MessageSquare,
   RefreshCw,
   SquareTerminal,
+  Trash2,
 } from "lucide-react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useAppStore } from "../store";
@@ -29,13 +34,16 @@ import {
   searchFieldClass,
 } from "./PageFrame";
 import FileKindFilters from "./FileKindFilters";
-import { IS_WINDOWS } from "../hotkeys";
-import { pathWithin, samePath } from "../path-utils";
+import ContextMenu from "./ContextMenu";
+import { confirmDialog, confirmDialogOpen } from "./ConfirmDialog";
+import { IS_MAC, IS_WINDOWS } from "../hotkeys";
+import { pathWithin, revealFolderLabel, samePath } from "../path-utils";
 import { absTime, relTime } from "../rel-time";
 import {
   ancestorDirsToReveal,
   fileMatchesProjectFilter,
   flattenVisibleFiles,
+  inTypingContext,
   neighborFile,
   projectFilePreviewKind,
   supportsImmersiveReader,
@@ -56,16 +64,37 @@ import { Modal } from "./Modal";
 
 type EntryCache = Record<string, DirEntryDto[]>;
 
+/** 目录重载的短路比较：字段级一致就当没变（name 由 path 派生，不重复比） */
+function sameEntries(a: DirEntryDto[], b: DirEntryDto[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i];
+    const y = b[i];
+    if (
+      x.path !== y.path ||
+      x.isDir !== y.isDir ||
+      x.size !== y.size ||
+      x.modified !== y.modified
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function modifiedLabel(iso: string | null | undefined): string {
   return relTime(iso ?? null);
 }
 
+/** 修改时间：行悬停时让位给行内图标（图标排在行尾、不再浮层压在上面——
+ *  悬停底色是半透明的，压上去时间会从图标底下透出来，2026-10-17 用户截图） */
 function FileModified({ iso }: { iso: string | null | undefined }) {
   const label = modifiedLabel(iso);
   if (!label) return null;
   return (
     <span
-      className="shrink-0 text-micro text-l4"
+      className="shrink-0 text-micro text-l4 group-hover:hidden group-focus-within:hidden"
       title={absTime(iso ?? null) || undefined}
     >
       {label}
@@ -125,22 +154,70 @@ export default function ProjectFilesView({
   const [goalMarks, setGoalMarks] = useState<
     { relative: string; goalName: string; pending: boolean }[]
   >([]);
+  const [menu, setMenu] = useState<{
+    x: number;
+    y: number;
+    path: string;
+    isDir: boolean;
+  } | null>(null);
+  const [newFolderFor, setNewFolderFor] = useState<string | null>(null);
+  const [newFolderName, setNewFolderName] = useState("");
+  /** 命中 2000 项展示上限的目录（点名提示；低于上限的重载解除） */
+  const [truncDir, setTruncDir] = useState<string | null>(null);
   const pendingMark = goalReviewCopy(workMode).fileMark;
   const listRef = useRef<HTMLDivElement>(null);
+  /** 当前预览的未保存编辑（编辑器上报；换/关预览经 confirmLoseDirty 确认） */
+  const dirtyRef = useRef(false);
 
-  const load = useCallback(async (path: string) => {
-    try {
-      const entries = await invoke<DirEntryDto[]>("list_dir", {
-        path,
-        showHidden: false,
-      });
-      setCache((current) => ({ ...current, [path]: entries }));
-      return entries;
-    } catch (reason) {
-      onError(`读取项目文件失败：${String(reason)}`);
-      return [] as DirEntryDto[];
-    }
-  }, [onError]);
+  /** quiet=true 给监听器的后台重载用：失败不弹错（目录多半已被 agent 删/改名），
+   *  并把该目录从展开集合与缓存里收掉——否则每轮 fs 事件都重拉死路径、反复报错 */
+  const load = useCallback(
+    async (path: string, quiet = false) => {
+      try {
+        const entries = await invoke<DirEntryDto[]>("list_dir", {
+          path,
+          showHidden: false,
+        });
+        setCache((current) => {
+          // 内容没变就保留旧引用：agent 持续写盘期间监听器每轮重载，
+          // 不短路的话每 500ms 全树重渲一次
+          const old = current[path];
+          if (old && sameEntries(old, entries)) return current;
+          return { ...current, [path]: entries };
+        });
+        setTruncDir((cur) =>
+          entries.length >= 2000 ? path : cur === path ? null : cur,
+        );
+        return entries;
+      } catch (reason) {
+        if (quiet) {
+          setExpanded((cur) => {
+            if (!cur.has(path)) return cur;
+            const next = new Set(cur);
+            next.delete(path);
+            return next;
+          });
+          setCache((cur) => {
+            if (!(path in cur)) return cur;
+            const next = { ...cur };
+            delete next[path];
+            return next;
+          });
+        } else {
+          onError(`读取项目文件失败：${String(reason)}`);
+        }
+        return [] as DirEntryDto[];
+      }
+    },
+    [onError],
+  );
+
+  /** 办公类清单（类型计数 + 「最近」视图的数据源，后端按修改时间降序） */
+  const reloadOffice = useCallback((root: string) => {
+    void invoke<OfficeDocDto[]>("list_office_docs", { root })
+      .then(setOfficeDocs)
+      .catch(() => setOfficeDocs([]));
+  }, []);
 
   useEffect(() => {
     setCache({});
@@ -150,11 +227,16 @@ export default function ProjectFilesView({
     setQuery("");
     setFilter("all");
     setSearchHits(null);
+    // 截断提示/右键菜单/新建输入也是项目局部状态，切课题一起清；
+    // 脏标志不清会带着旧项目的「没保存修改」去误拦新项目
+    setTruncDir(null);
+    setMenu(null);
+    setNewFolderFor(null);
+    setNewFolderName("");
+    dirtyRef.current = false;
     setLoading(true);
     void load(projectPath).finally(() => setLoading(false));
-    void invoke<OfficeDocDto[]>("list_office_docs", { root: projectPath })
-      .then(setOfficeDocs)
-      .catch(() => setOfficeDocs([]));
+    reloadOffice(projectPath);
     const kinds = declaredTaskKindsForMode(workMode);
     if (kinds.size === 0) {
       setGoalMarks([]);
@@ -194,7 +276,7 @@ export default function ProjectFilesView({
         })
         .catch(() => setGoalMarks([]));
     }
-  }, [load, projectPath, workMode]);
+  }, [load, projectPath, reloadOffice, workMode]);
 
   const cacheRef = useRef(cache);
   cacheRef.current = cache;
@@ -203,10 +285,50 @@ export default function ProjectFilesView({
   const onFocusHandledRef = useRef(onFocusHandled);
   onFocusHandledRef.current = onFocusHandled;
 
+  // 文件监听（与终端树同一套 watch_dir/fs-changed，后端 500ms 防抖）：
+  // Agent 写完的产物自动出现；监听失败退回手动刷新
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    let watchId: string | null = null;
+    void (async () => {
+      try {
+        watchId = await invoke<string>("watch_dir", { path: projectPath });
+        if (cancelled) {
+          invoke("unwatch_dir", { id: watchId }).catch(() => {});
+          return;
+        }
+        unlisten = await listen(`fs-changed-${watchId}`, () => {
+          for (const p of [projectPath, ...expandedRef.current])
+            void load(p, true);
+          reloadOffice(projectPath);
+        });
+      } catch {
+        // 目录不可读等：静默退回手动刷新
+      }
+    })();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+      if (watchId) invoke("unwatch_dir", { id: watchId }).catch(() => {});
+    };
+  }, [projectPath, load, reloadOffice]);
+
+  /** 刷新 = 根目录 + 已展开目录全部重拉（旧实现只重载根，子目录永远停在第一次展开） */
+  function refresh() {
+    for (const p of [projectPath, ...expandedRef.current]) void load(p);
+    reloadOffice(projectPath);
+  }
+
   useEffect(() => {
     if (!focusPath || focusToken == null || loading) return;
     let cancelled = false;
     void (async () => {
+      // 当前预览有未保存编辑且用户拒绝丢弃：不替换预览，深链照常消费掉
+      if (!(await confirmLoseDirty())) {
+        onFocusHandledRef.current?.();
+        return;
+      }
       const dirs = ancestorDirsToReveal(projectPath, focusPath, IS_WINDOWS);
       const nextExpanded = new Set(expandedRef.current);
       let listing = cacheRef.current[projectPath] ?? [];
@@ -256,7 +378,7 @@ export default function ProjectFilesView({
             entry.name === focusName),
       );
       if (file) setPreview(file);
-      else if (/\.[A-Za-z0-9]+$/.test(focusName)) openPath(focusPath);
+      else if (/\.[A-Za-z0-9]+$/.test(focusName)) void openPath(focusPath);
       setFilter("all");
       setQuery("");
       setWindowed(false);
@@ -307,7 +429,8 @@ export default function ProjectFilesView({
     if (filter === "all") return [];
     const q = query.trim().toLowerCase();
     return officeDocs.filter((doc) => {
-      if (!fileMatchesProjectFilter(doc.path, filter)) return false;
+      if (filter !== "recent" && !fileMatchesProjectFilter(doc.path, filter))
+        return false;
       if (!q) return true;
       return (
         doc.name.toLowerCase().includes(q) || doc.rel.toLowerCase().includes(q)
@@ -336,9 +459,33 @@ export default function ProjectFilesView({
     setExpanded(next);
   }
 
-  function openFile(entry: DirEntryDto) {
+  /** 有未保存编辑时先经确认再换/关预览（终端页预览页签与终端树切根同款保护）。
+   *  确认「继续」即视为丢弃已拍板：清掉脏标志，后续换文件不再重复问 */
+  async function confirmLoseDirty(): Promise<boolean> {
+    if (!dirtyRef.current) return true;
+    const ok = await confirmDialog(
+      "当前预览有没保存的修改，继续就会丢掉这些修改。仍要继续？",
+      { danger: true, confirmText: "继续" },
+    );
+    if (ok) dirtyRef.current = false;
+    return ok;
+  }
+
+  /** keepWindow=true 只换文件不动窗口态：窗口预览里 ↑/↓ 步进、点 md 链接
+   *  跳转时大窗保持打开（旧行为；收窗口只发生在点列表行与关预览） */
+  function applyPreview(entry: DirEntryDto | null, keepWindow = false) {
+    dirtyRef.current = false;
     setPreview(entry);
-    setWindowed(false);
+    if (!keepWindow) setWindowed(false);
+  }
+
+  async function pickFile(entry: DirEntryDto) {
+    if (preview && samePath(preview.path, entry.path, IS_WINDOWS)) {
+      setWindowed(false);
+      return;
+    }
+    if (!(await confirmLoseDirty())) return;
+    applyPreview(entry);
   }
 
   const visibleFilesRef = useRef(visibleFiles);
@@ -346,19 +493,35 @@ export default function ProjectFilesView({
   const previewPathRef = useRef(preview?.path);
   previewPathRef.current = preview?.path;
 
-  function openPath(absPath: string) {
-    const name = absPath.split(/[\\/]/).pop() ?? absPath;
-    setPreview({ path: absPath, name, isDir: false, size: 0, modified: null });
+  async function openPath(absPath: string) {
+    if (preview && samePath(preview.path, absPath, IS_WINDOWS)) return;
+    if (!(await confirmLoseDirty())) return;
+    applyPreview(
+      {
+        path: absPath,
+        name: absPath.split(/[\\/]/).pop() ?? absPath,
+        isDir: false,
+        size: 0,
+        modified: null,
+      },
+      true,
+    );
   }
 
-  function stepPreview(delta: -1 | 1) {
+  async function closePreview() {
+    if (!(await confirmLoseDirty())) return;
+    applyPreview(null);
+  }
+
+  async function stepPreview(delta: -1 | 1) {
     const next = neighborFile(
       visibleFilesRef.current,
       previewPathRef.current,
       delta,
     );
     if (!next) return;
-    setPreview(asFileEntry(next));
+    if (!(await confirmLoseDirty())) return;
+    applyPreview(asFileEntry(next), true);
     const active = document.activeElement;
     if (active instanceof HTMLElement && active.closest("[data-file-path]")) {
       active.blur();
@@ -410,6 +573,96 @@ export default function ProjectFilesView({
     else void readNote(entry);
   }
 
+  /** 搜索/筛选平铺里丢掉了目录上下文：定位 = 展开父链、退回树视图、滚到这一行。
+   *  预览不换文件，未保存编辑不受影响 */
+  async function locateInTree(absPath: string) {
+    const dirs = ancestorDirsToReveal(projectPath, absPath, IS_WINDOWS);
+    let listing = cacheRef.current[projectPath] ?? [];
+    for (const dir of dirs) {
+      const name = dir.split(/[\\/]/).pop() ?? dir;
+      const hit = listing.find(
+        (entry) =>
+          entry.isDir &&
+          (samePath(entry.path, dir, IS_WINDOWS) || entry.name === name),
+      );
+      if (!hit) break;
+      // 必须用 load 的返回值：await 后 cacheRef 要到下一次渲染才刷新，
+      // 立刻读会拿到旧缓存，父链连续两层未缓存时定位静默失败
+      listing = cacheRef.current[hit.path] ?? (await load(hit.path));
+      setExpanded((prev) => new Set(prev).add(hit.path));
+    }
+    setFilter("all");
+    setQuery("");
+    requestAnimationFrame(() => {
+      const el = listRef.current?.querySelector(
+        `[data-file-path="${CSS.escape(absPath)}"]`,
+      );
+      el?.scrollIntoView({ block: "nearest" });
+    });
+  }
+
+  /** 右键删除：确认后走系统回收站（fs_delete_path 后端有保护路径/根目录护栏） */
+  async function deleteMenuTarget(m: { path: string; isDir: boolean }) {
+    const name = m.path.split(/[\\/]/).pop() ?? m.path;
+    if (
+      !(await confirmDialog(
+        `删除「${name}」${m.isDir ? "（含全部内容）" : ""}？将移入系统回收站。`,
+        { danger: true },
+      ))
+    )
+      return;
+    try {
+      await invoke("fs_delete_path", { path: m.path, root: projectPath });
+      // 把被删路径（含其下的展开项）从展开集合与缓存里收掉，
+      // 否则 refresh 与后续 fs 事件还会重拉死路径、弹出成功删除却报错的提示
+      setExpanded((cur) => {
+        const next = new Set<string>();
+        for (const p of cur) {
+          if (p === m.path || pathWithin(p, m.path, IS_WINDOWS)) continue;
+          next.add(p);
+        }
+        return next;
+      });
+      setCache((cur) => {
+        const next: EntryCache = {};
+        for (const [k, v] of Object.entries(cur)) {
+          if (k === m.path || pathWithin(k, m.path, IS_WINDOWS)) continue;
+          next[k] = v;
+        }
+        return next;
+      });
+      // 删的就是当前预览（或其所在目录）：直接关掉，不存在丢编辑的问题
+      if (
+        preview &&
+        (samePath(preview.path, m.path, IS_WINDOWS) ||
+          pathWithin(preview.path, m.path, IS_WINDOWS))
+      ) {
+        dirtyRef.current = false;
+        setPreview(null);
+        setWindowed(false);
+      }
+      refresh();
+    } catch (reason) {
+      onError(`删除失败：${String(reason)}`);
+    }
+  }
+
+  async function submitNewFolder() {
+    const parent = newFolderFor;
+    const name = newFolderName.trim();
+    setNewFolderFor(null);
+    setNewFolderName("");
+    if (!parent || !name) return;
+    try {
+      await invoke("fs_create_dir", { root: parent, name });
+      // 新夹落在被右键的目录里：展开它才看得见
+      setExpanded((prev) => new Set(prev).add(parent));
+      refresh();
+    } catch (reason) {
+      onError(`新建文件夹失败：${String(reason)}`);
+    }
+  }
+
   useEffect(() => {
     if (!preview) return;
     const node = listRef.current?.querySelector(
@@ -421,28 +674,55 @@ export default function ProjectFilesView({
   useEffect(() => {
     if (!preview) return;
     function onKey(event: KeyboardEvent) {
-      if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
       if (event.isComposing) return;
       const target = event.target as HTMLElement | null;
-      if (target?.closest("input[type='search']")) return;
-      const next = neighborFile(
-        visibleFilesRef.current,
-        previewPathRef.current,
-        event.key === "ArrowUp" ? -1 : 1,
-      );
-      if (!next) return;
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-      setPreview(asFileEntry(next));
-      const active = document.activeElement;
-      if (active instanceof HTMLElement && active.closest("[data-file-path]")) {
-        active.blur();
+      if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+        // 打字焦点（Monaco/输入框）与组合键不接管（会话列表「仅非打字焦点」同口径）；
+        // 右键菜单、全局确认框开着时不换文件。别的 Modal（问 AI 等）打开时让位，
+        // 但窗口预览是自己的 Modal——大窗里 ↑/↓ 步进正是它的用法，放行
+        if (event.ctrlKey || event.metaKey || event.altKey) return;
+        if (inTypingContext(target) || menu || confirmDialogOpen()) return;
+        if (!windowed && document.querySelector(".ccode-modal-backdrop")) return;
+        const next = neighborFile(
+          visibleFilesRef.current,
+          previewPathRef.current,
+          event.key === "ArrowUp" ? -1 : 1,
+        );
+        if (!next) return;
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        void (async () => {
+          if (!(await confirmLoseDirty())) return;
+          applyPreview(asFileEntry(next), true);
+          const active = document.activeElement;
+          if (
+            active instanceof HTMLElement &&
+            active.closest("[data-file-path]")
+          ) {
+            active.blur();
+          }
+        })();
+      } else if (event.key === "Escape") {
+        // 打字控件（搜索框/新建文件夹输入/Monaco）各自处理自己的 Esc；
+        // 预览内、窗口态、右键菜单、全局确认框与任何 Modal 打开时都不接管
+        if (
+          inTypingContext(target) ||
+          windowed ||
+          menu ||
+          confirmDialogOpen() ||
+          document.querySelector(".ccode-modal-backdrop") ||
+          target?.closest("[data-project-file-preview]")
+        )
+          return;
+        event.preventDefault();
+        event.stopPropagation();
+        void closePreview();
       }
     }
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [preview]);
+  }, [preview, menu, windowed]);
 
   function goalMarkFor(absPath: string) {
     return markForProjectFile(relativeProjectPath(projectPath, absPath), goalMarks);
@@ -460,6 +740,15 @@ export default function ProjectFilesView({
               selected ? "bg-hover" : "hover:bg-hover"
             }`}
             style={{ paddingLeft: 8 + depth * 16 }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setMenu({
+                x: e.clientX,
+                y: e.clientY,
+                path: entry.path,
+                isDir: entry.isDir,
+              });
+            }}
           >
             {entry.isDir ? (
               <button
@@ -485,7 +774,7 @@ export default function ProjectFilesView({
                 type="button"
                 className="flex min-w-0 flex-1 items-center gap-2 text-left text-xs text-l2 outline-none focus:outline-none focus-visible:outline-none"
                 data-file-path={entry.path}
-                onClick={() => openFile(entry)}
+                onClick={() => void pickFile(entry)}
                 title={entry.path}
               >
                 <span className="w-[13px] shrink-0" />
@@ -497,7 +786,7 @@ export default function ProjectFilesView({
                 <FileModified iso={entry.modified} />
               </button>
             )}
-            <span className="absolute inset-y-0 right-1 hidden items-center bg-hover pl-1 group-hover:flex group-focus-within:flex">
+            <span className="hidden shrink-0 items-center group-hover:flex group-focus-within:flex">
               <button
                 type="button"
                 className={iconActionClass}
@@ -571,12 +860,21 @@ export default function ProjectFilesView({
               className={`group relative flex min-h-9 items-center gap-2 rounded-md px-2 ${
                 preview?.path === file.path ? "bg-hover" : "hover:bg-hover"
               }`}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setMenu({
+                  x: e.clientX,
+                  y: e.clientY,
+                  path: file.path,
+                  isDir: false,
+                });
+              }}
             >
               <button
                 type="button"
                 className="flex min-w-0 flex-1 items-center gap-2 text-left text-xs text-l2 outline-none focus:outline-none focus-visible:outline-none"
                 data-file-path={file.path}
-                onClick={() => openFile(asFileEntry(file))}
+                onClick={() => void pickFile(asFileEntry(file))}
                 title={file.path}
               >
                 <FileTypeMark path={file.path} />
@@ -591,7 +889,7 @@ export default function ProjectFilesView({
                 )}
                 <FileModified iso={file.modified} />
               </button>
-              <span className="absolute inset-y-0 right-1 hidden items-center bg-hover pl-1 group-hover:flex group-focus-within:flex">
+              <span className="hidden shrink-0 items-center group-hover:flex group-focus-within:flex">
                 <button
                   type="button"
                   className={iconActionClass}
@@ -647,7 +945,7 @@ export default function ProjectFilesView({
         <button
           type="button"
           className={rowActionClass}
-          onClick={() => stepPreview(-1)}
+          onClick={() => void stepPreview(-1)}
           disabled={!prevFile}
           title="上一个文件（↑）"
         >
@@ -656,16 +954,33 @@ export default function ProjectFilesView({
         <button
           type="button"
           className={rowActionClass}
-          onClick={() => stepPreview(1)}
+          onClick={() => void stepPreview(1)}
           disabled={!nextFile}
           title="下一个文件（↓）"
         >
           ↓
         </button>
+        {filtering && (
+          <button
+            type="button"
+            className={`${rowActionClass} gap-1`}
+            onClick={() => void locateInTree(preview.path)}
+            title="在目录树中显示（展开所在文件夹并退回目录视图）"
+          >
+            <Locate size={12} aria-hidden="true" />
+            定位
+          </button>
+        )}
         <button
           type="button"
           className={`${rowActionClass} gap-1`}
-          onClick={() => setWindowed(true)}
+          onClick={() => {
+            // 开窗同样重挂编辑器（侧栏实例卸载、Modal 挂新实例）：脏编辑先过确认
+            void (async () => {
+              if (!(await confirmLoseDirty())) return;
+              setWindowed(true);
+            })();
+          }}
         >
           <Maximize2 size={12} aria-hidden="true" />
           窗口预览
@@ -673,10 +988,7 @@ export default function ProjectFilesView({
         <button
           type="button"
           className={ghostActionClass}
-          onClick={() => {
-            setPreview(null);
-            setWindowed(false);
-          }}
+          onClick={() => void closePreview()}
           aria-label="关闭预览"
         >
           ×
@@ -699,13 +1011,17 @@ export default function ProjectFilesView({
                 filter={filter}
                 counts={kindCounts}
                 onChange={setFilter}
+                recent={filter === "recent"}
+                onToggleRecent={() =>
+                  setFilter(filter === "recent" ? "all" : "recent")
+                }
               />
               <button
                 type="button"
                 className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1"
                 title="刷新"
                 aria-label="刷新"
-                onClick={() => void load(projectPath)}
+                onClick={() => refresh()}
               >
                 <RefreshCw size={13} strokeWidth={1.8} />
               </button>
@@ -714,10 +1030,48 @@ export default function ProjectFilesView({
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="搜索"
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setQuery("");
+              }}
+              placeholder="搜索文件名或后缀（pdf / .docx）"
               className={`${searchFieldClass} w-full`}
               aria-label="搜索文件"
             />
+            {newFolderFor && (
+              <div className="flex items-center gap-1">
+                <span className="shrink-0 text-xs text-l4">
+                  新建于 {newFolderFor.split(/[\\/]/).pop()}:
+                </span>
+                <input
+                  autoFocus
+                  value={newFolderName}
+                  onChange={(event) => setNewFolderName(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") void submitNewFolder();
+                    if (event.key === "Escape") {
+                      setNewFolderFor(null);
+                      setNewFolderName("");
+                    }
+                  }}
+                  onBlur={() => void submitNewFolder()}
+                  placeholder="文件夹名称"
+                  className="min-w-0 flex-1 rounded-sm border border-field bg-inset px-1.5 py-0.5 text-xs text-l2 outline-none"
+                />
+              </div>
+            )}
+            {truncDir && (
+              <p
+                className="truncate px-1 text-micro text-warn-text"
+                title={truncDir}
+              >
+                这个目录有 2000 项展示上限，部分文件没列出；用搜索查找，或进入更小的子目录。
+              </p>
+            )}
+            {filtering && !searchHits && officeDocs.length >= 400 && (
+              <p className="px-1 text-micro text-l4">
+                文件较多，只列出最新 400 个。
+              </p>
+            )}
           </div>
           <div
             ref={listRef}
@@ -735,8 +1089,9 @@ export default function ProjectFilesView({
             )}
           </div>
         </section>
-        {preview && (
+        {preview && !windowed && (
           <section
+            data-project-file-preview=""
             className={`ml-0 hidden h-full min-h-0 min-w-0 flex-1 flex-col lg:flex ${projectWellClass}`}
           >
             {previewChrome()}
@@ -745,26 +1100,35 @@ export default function ProjectFilesView({
                 key={preview.path}
                 path={preview.path}
                 root={projectPath}
-                onOpenFile={openPath}
+                onOpenFile={(p) => void openPath(p)}
                 onOpenReader={
                   supportsImmersiveReader(preview.name)
                     ? () => openImmersive(preview)
                     : undefined
                 }
+                onDirtyChange={(d) => {
+                  dirtyRef.current = d;
+                }}
               />
             </div>
           </section>
         )}
       </div>
       {preview && !windowed && (
-        <section className={`mt-4 lg:hidden ${projectWellClass}`}>
+        <section
+          data-project-file-preview=""
+          className={`mt-4 lg:hidden ${projectWellClass}`}
+        >
           {previewChrome()}
           <div className="flex h-[70vh] min-h-0 flex-col overflow-hidden overscroll-none">
             <ProjectFilePreview
               key={preview.path}
               path={preview.path}
               root={projectPath}
-              onOpenFile={openPath}
+              onOpenFile={(p) => void openPath(p)}
+              onDirtyChange={(d) => {
+                dirtyRef.current = d;
+              }}
             />
           </div>
         </section>
@@ -773,7 +1137,13 @@ export default function ProjectFilesView({
         <Modal
           open
           title={preview.name}
-          onClose={() => setWindowed(false)}
+          onClose={() => {
+            // 关窗会退回侧栏预览（重挂载、重读盘）：脏编辑先经确认
+            void (async () => {
+              if (!(await confirmLoseDirty())) return;
+              setWindowed(false);
+            })();
+          }}
           overflow="hidden"
           size={windowXl ? "xl" : "lg"}
           panelClassName={
@@ -787,7 +1157,7 @@ export default function ProjectFilesView({
             <button
               type="button"
               className={`${rowActionClass} ml-auto`}
-              onClick={() => stepPreview(-1)}
+              onClick={() => void stepPreview(-1)}
               disabled={!prevFile}
               title="上一个文件（↑）"
             >
@@ -796,7 +1166,7 @@ export default function ProjectFilesView({
             <button
               type="button"
               className={rowActionClass}
-              onClick={() => stepPreview(1)}
+              onClick={() => void stepPreview(1)}
               disabled={!nextFile}
               title="下一个文件（↓）"
             >
@@ -807,14 +1177,68 @@ export default function ProjectFilesView({
             key={preview.path}
             path={preview.path}
             root={projectPath}
-            onOpenFile={openPath}
+            onOpenFile={(p) => void openPath(p)}
             onOpenReader={
               supportsImmersiveReader(preview.name)
                 ? () => openImmersive(preview)
                 : undefined
             }
+            onDirtyChange={(d) => {
+              dirtyRef.current = d;
+            }}
           />
         </Modal>
+      )}
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          items={[
+            ...(menu.isDir
+              ? [
+                  {
+                    label: "在此打开新终端",
+                    icon: SquareTerminal,
+                    onSelect: () => {
+                      setEnterCwdReq(menu.path);
+                      setPage("terminal");
+                    },
+                  },
+                  {
+                    label: "新建文件夹",
+                    icon: FolderPlus,
+                    onSelect: () => setNewFolderFor(menu.path),
+                  },
+                  { separator: true },
+                ]
+              : []),
+            {
+              label: revealFolderLabel(IS_MAC, IS_WINDOWS),
+              icon: FolderOpen,
+              onSelect: () => {
+                void revealItemInDir(menu.path).catch((e) =>
+                  onError(String(e)),
+                );
+              },
+            },
+            {
+              label: "复制路径",
+              icon: Copy,
+              onSelect: () => {
+                void navigator.clipboard
+                  .writeText(menu.path)
+                  .catch(() => onError("复制路径失败"));
+              },
+            },
+            {
+              icon: Trash2,
+              label: menu.isDir ? "删除文件夹" : "删除文件",
+              danger: true,
+              onSelect: () => void deleteMenuTarget(menu),
+            },
+          ]}
+        />
       )}
     </>
   );

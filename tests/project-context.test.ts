@@ -1,16 +1,20 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  DEFAULT_SESSION_TEMPLATE,
   composeLaunchPrompt,
   defaultContextRules,
   effectiveProjectRules,
   formatTopLevelMap,
   isGoalContextPack,
+  isSessionTemplateKey,
   isSettingPlaceholder,
+  normalizeSessionInjectionMode,
   projectHomeHint,
   projectShowsProtectedPaths,
   projectUsesSkillPool,
   renderProjectContextPack,
+  renderSessionInjection,
 } from "../src/project-context.ts";
 
 test("research pack names the project, lists files, and states write-review", () => {
@@ -250,4 +254,130 @@ test("writeReview session still uses the goal pack", () => {
 test("coding rules warn against writing the primary tree", () => {
   assert.match(defaultContextRules("coding").join("\n"), /主仓/);
   assert.match(projectHomeHint("office").join("\n"), /文档风格/);
+});
+
+// ===== 对话注入三态（2026-10-16 拍板）=====
+
+test("injection mode garbage falls back to auto", () => {
+  assert.equal(normalizeSessionInjectionMode(null), "auto");
+  assert.equal(normalizeSessionInjectionMode(undefined), "auto");
+  assert.equal(normalizeSessionInjectionMode("loud"), "auto");
+  assert.equal(normalizeSessionInjectionMode("custom"), "custom");
+  assert.equal(normalizeSessionInjectionMode("off"), "off");
+});
+
+const FULL_SESSION_INPUT = {
+  name: "综述流程测试",
+  path: "/Users/me/综述流程测试",
+  workMode: "research",
+  topic: "镁硫电池",
+  settings: ["优先使用项目里已有的 papers/，不要虚构文献。"],
+  topLevel: [
+    { name: "papers", isDir: true },
+    { name: "notes", isDir: true },
+  ],
+  kind: "session" as const,
+  decisions: ["综述角度聚焦负极"],
+  memory: "只用项目内文献。",
+  accepted: [{ name: "文献检索", outputs: ["papers/included.md"] }],
+};
+
+test("default template renders byte-identical to the auto session pack", () => {
+  // 单一代码路径的回归守卫：默认模板 = 自动包版式
+  assert.equal(
+    renderSessionInjection(DEFAULT_SESSION_TEMPLATE, FULL_SESSION_INPUT),
+    renderProjectContextPack(FULL_SESSION_INPUT),
+  );
+  // 稀疏输入：空段消隐后相邻段仍恰好隔一空行，不多出空行
+  const sparse = {
+    name: "空项目",
+    path: "/tmp/empty",
+    workMode: "research",
+    topLevel: [],
+    kind: "session" as const,
+  };
+  assert.equal(
+    renderSessionInjection(DEFAULT_SESSION_TEMPLATE, sparse),
+    renderProjectContextPack(sparse),
+  );
+});
+
+test("custom template fills placeholders and collapses empty sections", () => {
+  const rendered = renderSessionInjection(
+    "{{课题主题}}\n\n{{项目规则}}\n\n回答先给结论。",
+    FULL_SESSION_INPUT,
+  );
+  assert.match(rendered, /^课题主题：\n镁硫电池/);
+  assert.match(rendered, /项目规则：\n1\. 优先使用项目里已有的/);
+  assert.match(rendered, /回答先给结论。$/);
+  // 有内容的相邻段之间恰好一个空行（空段不留多余空行）
+  assert.doesNotMatch(rendered, /\n{3,}/);
+  // 空段整段省略：没有 settings 时项目规则段不出现
+  const noRules = renderSessionInjection(
+    "A\n\n{{项目规则}}\n\nB",
+    { ...FULL_SESSION_INPUT, settings: [] },
+  );
+  assert.equal(noRules, "A\n\nB");
+});
+
+test("custom template keeps unknown placeholders verbatim", () => {
+  const rendered = renderSessionInjection(
+    "你好 {{不存在的段}} {{课题主题}}",
+    FULL_SESSION_INPUT,
+  );
+  assert.match(rendered, /\{\{不存在的段\}\}/);
+  assert.match(rendered, /课题主题：/);
+});
+
+test("prototype-chain names are not placeholders", () => {
+  // {{constructor}}/{{__proto__}} 一类若直接查普通对象会拿到原生函数/对象，
+  // 必须按清单判、原样保留（2026-10-16 审查实证过的坑）
+  const rendered = renderSessionInjection(
+    "A {{constructor}} B {{__proto__}} C {{toString}} D",
+    FULL_SESSION_INPUT,
+  );
+  assert.equal(
+    rendered,
+    "A {{constructor}} B {{__proto__}} C {{toString}} D",
+  );
+  assert.doesNotMatch(rendered, /native code/);
+  assert.equal(isSessionTemplateKey("constructor"), false);
+  assert.equal(isSessionTemplateKey("项目名"), true);
+});
+
+test("spaced placeholders share one criterion between renderer and panel", () => {
+  // 渲染端键先 trim：{{ 项目名 }} 是已知占位符、会被替换；
+  // 面板点名「未识别」必须同一判据，不能整串精确匹配
+  const rendered = renderSessionInjection(
+    "A {{ 项目名 }} B",
+    FULL_SESSION_INPUT,
+  );
+  assert.equal(rendered, "A 综述流程测试 B");
+  assert.equal(isSessionTemplateKey(tokenInner("{{ 项目名 }}")), true);
+  assert.equal(isSessionTemplateKey(tokenInner("{{ 真未知 }}")), false);
+});
+
+function tokenInner(token: string): string {
+  return token.slice(2, -2);
+}
+
+test("equivalence holds for regular data; block-internal blank-line runs are custom-mode collapsed", () => {
+  // 等价性的已知边界：段内容自带连续空行（如 memory 条目间空两行）时，
+  // auto 包原样保留、custom 渲染统一折叠为一段空行——排版级差异、预览可见，
+  // 在此钉住语义，防止被当成等价性破绽误修
+  const airy = { ...FULL_SESSION_INPUT, memory: "第一条结论。\n\n\n\n第二条结论。" };
+  const auto = renderProjectContextPack(airy);
+  assert.match(auto, /第一条结论。\n\n\n\n第二条结论。/);
+  const custom = renderSessionInjection(DEFAULT_SESSION_TEMPLATE, airy);
+  assert.match(custom, /第一条结论。\n\n第二条结论。/);
+});
+
+test("memory cap applies inside the placeholder block", () => {
+  const long = "x".repeat(6100);
+  const rendered = renderSessionInjection("{{长期知识}}", {
+    ...FULL_SESSION_INPUT,
+    memory: long,
+  });
+  assert.match(rendered, /已按最新有效知识优先/);
+  assert.ok(rendered.length < 6200);
 });

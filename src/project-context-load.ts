@@ -2,18 +2,21 @@ import { invoke } from "@tauri-apps/api/core";
 import type { DirEntryDto } from "./components/FileTree";
 import {
   isGoalContextPack,
+  normalizeSessionInjectionMode,
   projectShowsProtectedPaths,
   projectUsesSkillPool,
   renderProjectContextPack,
+  renderSessionInjection,
+  sessionTemplateValues,
   type ContextPackEntry,
   type ContextPackKind,
   type ProjectSkillPack,
+  type SessionInjectionMode,
 } from "./project-context";
 import { acceptedGoalOutputs, isDeclaredTask } from "./project-tasks";
 import type { ProjectConfigReadDto, ProjectStatusDto, SkillDto, TaskDto } from "./types";
 
-/** 读档案卡和顶层目录，拼启动用的环境说明。失败时仍返回能用的短包。 */
-export async function loadProjectContextPack(input: {
+type PackRequest = {
   name: string;
   path: string;
   workMode?: string | null;
@@ -24,7 +27,12 @@ export async function loadProjectContextPack(input: {
   goalSkills?: readonly string[];
   /** session = 对话/问 AI；缺省与 writeReview 视为目标包。 */
   kind?: ContextPackKind;
-}): Promise<string> {
+  /** 设置面板预览用：按面板里还没保存的档位/模板渲染（只管 session 包，所见即所得） */
+  sessionOverride?: { mode: SessionInjectionMode; template: string };
+};
+
+/** 读档案卡、顶层目录、长期知识与验收状态，备好拼包的原料（失败时尽量返回能用的短包原料）。 */
+async function gatherPack(input: PackRequest) {
   const isGoal = isGoalContextPack(input.kind, input.writeReview);
   let topic: string | null = null;
   let settings: string[] = [];
@@ -32,6 +40,9 @@ export async function loadProjectContextPack(input: {
   let protectedPaths: string[] = [];
   let skillNames: string[] = [];
   let topLevel: ContextPackEntry[] = [];
+  // 对话注入三态只管 session 包（2026-10-16 拍板）；档案卡读不到时按 auto 走现状
+  let injectionMode: SessionInjectionMode = "auto";
+  let injectionTemplate = "";
   try {
     const read = await invoke<ProjectConfigReadDto>("read_project_config", {
       path: input.path,
@@ -40,6 +51,11 @@ export async function loadProjectContextPack(input: {
     topic = read.config.topic ?? null;
     settings = read.config.settings ?? [];
     rulesOwned = read.config.rulesOwned === true;
+    injectionMode = normalizeSessionInjectionMode(
+      read.config.sessionInjectionMode,
+    );
+    injectionTemplate =
+      read.config.sessionInjectionTemplate?.trim() ?? "";
     const mode = input.workMode ?? read.config.workMode;
     const stepCount = read.config.steps?.length ?? 0;
     protectedPaths =
@@ -143,7 +159,7 @@ export async function loadProjectContextPack(input: {
       ];
     }
   }
-  return renderProjectContextPack({
+  const packInput = {
     name: input.name,
     path: input.path,
     workMode: input.workMode,
@@ -153,12 +169,39 @@ export async function loadProjectContextPack(input: {
     topLevel,
     goal: input.goal,
     writeReview: input.writeReview,
-    kind: isGoal ? "goal" : "session",
+    kind: (isGoal ? "goal" : "session") as ContextPackKind,
     accepted,
     openGoals,
     protectedPaths,
     feedback: input.feedback,
     memory,
     skills,
-  });
+  };
+  if (input.sessionOverride) {
+    injectionMode = input.sessionOverride.mode;
+    injectionTemplate = input.sessionOverride.template.trim();
+  }
+  return { isGoal, packInput, injectionMode, injectionTemplate };
+}
+
+/** 读档案卡和顶层目录，拼启动用的环境说明。失败时仍返回能用的短包。 */
+export async function loadProjectContextPack(input: PackRequest): Promise<string> {
+  const { isGoal, packInput, injectionMode, injectionTemplate } = await gatherPack(input);
+  // 对话注入三态：off = 不注入；custom = 按模板（空模板 fail-open 回自动）。
+  // goal 包（开工任务书/验收后写入/编程车道目标）不经过这里，保持验收合同行。
+  if (!isGoal && injectionMode === "off") return "";
+  if (!isGoal && injectionMode === "custom" && injectionTemplate) {
+    return renderSessionInjection(injectionTemplate, packInput);
+  }
+  return renderProjectContextPack(packInput);
+}
+
+/** 对话注入分段编辑器的逐段内容：每个占位符在这个项目下此刻会填进去什么（会话包口径）。 */
+export async function loadSessionTemplateValues(input: {
+  name: string;
+  path: string;
+  workMode?: string | null;
+}): Promise<Record<string, string>> {
+  const { packInput } = await gatherPack({ ...input, kind: "session" });
+  return sessionTemplateValues(packInput);
 }

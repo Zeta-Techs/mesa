@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { FoldMark } from "./PageFrame";
+import { FoldMark, NoticeBar } from "./PageFrame";
 import { confirmDialog } from "./ConfirmDialog";
 import { IS_WINDOWS } from "../hotkeys";
 import { filterPortsForRepo } from "../project-status";
@@ -94,7 +94,7 @@ export default function PortsSection({
       </div>
       {open && (
         <div className="pb-1">
-          {error && <p className="mt-2 text-sm text-err-text">{error}</p>}
+          {error && <NoticeBar tone="err" className="mt-2">{error}</NoticeBar>}
           {list.length === 0 && !loading && (
             <p className="px-1 py-2 text-xs text-l4">这个项目没有监听中的端口。</p>
           )}

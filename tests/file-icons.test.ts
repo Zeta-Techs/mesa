@@ -36,9 +36,24 @@ test("表格与幻灯扩展名走固定识别色", () => {
 
 test("Windows 反斜杠路径与无扩展名/未知类型的兜底", () => {
   assert.equal(fileTypeIcon("src\\components\\GitPanel.tsx")?.label, "⚛");
+  // 未收录返回 null，界面画通用文件图标（FileTypeMark），不留空槽
   assert.equal(fileTypeIcon("Makefile"), null);
-  assert.equal(fileTypeIcon(".gitignore"), null);
   assert.equal(fileTypeIcon("archive.tar.unknownext"), null);
+});
+
+test("项目文件夹里常见的无图标文件都有符号（2026-10-17 用户截图）", () => {
+  assert.equal(fileTypeIcon(".ccode/acceptance-log.jsonl")?.label, "{}");
+  assert.equal(fileTypeIcon(".ccode/acceptance-log.lock")?.label, "⚙");
+  assert.equal(fileTypeIcon(".gitignore")?.label, "⚙");
+  // 备份副本按 .bak 认，不冒充原文件（inbox.md.bak-xxx 不是 Markdown）
+  assert.equal(fileTypeIcon("notes/inbox.md.bak-1791881432")?.label, "BAK");
+  assert.equal(fileTypeIcon("notes/inbox.md.bak-adopt-32664ebd")?.label, "BAK");
+  assert.equal(fileTypeIcon("papers/watch-seen.md.bak-align-20261014")?.label, "BAK");
+  assert.equal(fileTypeIcon("x.bak")?.label, "BAK");
+  assert.equal(fileTypeIcon("notes/bakery.md")?.label, "M↓");
+  assert.equal(fileTypeIcon("manuscript/template/elsarticle.cls")?.label, "TeX");
+  assert.equal(fileTypeIcon("styles/nature.csl")?.label, "<>");
+  assert.equal(fileTypeIcon("papers/endnote-import.enw")?.label, "RIS");
 });
 
 test("isPreviewableImagePath 覆盖 png/gif 大小写与 Windows 路径", () => {

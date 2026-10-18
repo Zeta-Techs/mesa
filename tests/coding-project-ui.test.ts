@@ -14,7 +14,7 @@ function tree(branch: string, primary = false): CodingWorktreeDto {
   };
 }
 
-test("编程页：工作树主次、分支去重、菜单原操作与主仓确认", async () => {
+test("编程页：分支地图以基准为根、分支不重复、菜单原操作与主仓确认", async () => {
   const bundle = await build({
     stdin: {
       contents: `export {createElement, act} from 'react';
@@ -133,21 +133,18 @@ test("编程页：工作树主次、分支去重、菜单原操作与主仓确�
     assert.match(main.textContent!, /最近提交/);
     assert.equal(main.querySelectorAll("button").length, 2);
     assert.match(work.textContent!, /空闲/);
-    assert.match(work.textContent!, /比 master 少 1 个提交/);
+    assert.match(work.textContent!, /比 master 落后 1 个提交/);
     assert.match(work.textContent!, /未关联远程分支/);
     assert.ok(button("进入", work));
     assert.equal(container.querySelector('button[aria-label="再开一条"]'), null);
-    assert.equal(button("本地分支").getAttribute("aria-expanded"), "false");
-    assert.match(button("本地分支").textContent!, /均已检出/);
-
-    await click("本地分支");
-    assert.match(row("本地分支 master").textContent!, /主仓/);
-    assert.match(row("本地分支 test").textContent!, /已建工作树/);
-    assert.doesNotMatch(row("本地分支 test").textContent!, /少 1 个提交|未关联远程/);
-    assert.doesNotMatch(row("本地分支 test").textContent!, /建工作树$/);
-    assert.equal(row("本地分支 test").querySelector('button[aria-label="更多操作：test"]')?.textContent, "⋯");
+    // 地图：基准（主仓 master）是根，已检出的分支只出现一次，全部检出时没有折叠头
+    const map = container.querySelector('ul[aria-label="分支地图"]')!;
+    assert.equal(map.firstElementChild, main);
+    assert.equal(container.querySelector('li[aria-label^="本地分支"]'), null);
+    assert.ok(![...container.querySelectorAll("button")].some((b) => /未检出的分支/.test(b.textContent ?? "")));
 
     await click("更多操作：test", work);
+    assert.equal(button("合并进 master").disabled, false);
     await click("再开一条");
     const branchInput = container.querySelector<HTMLInputElement>('input[aria-label="新分支名（从基准拉出）"]')!;
     assert.equal(branchInput.value, "test-2");
@@ -185,10 +182,13 @@ test("编程页：工作树主次、分支去重、菜单原操作与主仓确�
         dirty: false, ahead: 3, behind: 0, unpushed: 0, hasUpstream: false }],
     });
     assert.equal(row("工作树 test").textContent!.match(/2 个文件未提交/g)?.length, 1);
-    assert.match(button("本地分支").textContent!, /1 个未检出/);
-    await click("本地分支");
-    assert.match(row("本地分支 waiting").textContent!, /比 master 多 3 个提交/);
+    const fold = [...container.querySelectorAll("button")].find((b) => /未检出的分支/.test(b.textContent ?? ""))!;
+    assert.match(fold.textContent!, /未检出的分支\s*1/);
+    assert.equal(fold.getAttribute("aria-expanded"), "true");
+    assert.match(row("本地分支 waiting").textContent!, /比 master 领先 3 个提交/);
     assert.ok(button("建工作树", row("本地分支 waiting")));
+    await act(async () => fold.click());
+    assert.equal(container.querySelector('li[aria-label="本地分支 waiting"]'), null);
 
     store.terminalRunInputs = [{ cwd: "/worktrees/test", agentId: "codex", running: true }];
     await render({
@@ -209,6 +209,26 @@ test("编程页：工作树主次、分支去重、菜单原操作与主仓确�
 
     await render({ worktrees: [{ ...tree("feature/main", true), isBase: false }], branches: [] });
     assert.doesNotMatch(row("主仓 feature/main").textContent!, /基准/);
+
+    // 基准没检出：根退成轻行，建树入口在根上；主仓挂在根下显示领先/落后
+    await render({
+      baseBranch: "dev",
+      origin: { name: "origin", url: "https://github.com/example/project.git", display: "example/project", hostKind: "github" },
+      worktrees: [{ ...tree("feat/chat", true), isBase: false, ahead: 2, behind: 33, dirty: true, dirtyCount: 2 }],
+      branches: [
+        { name: "dev", worktreePath: null, isPrimary: false, isBase: true, dirty: false,
+          ahead: 0, behind: 0, unpushed: 0, hasUpstream: true, upstreamBehind: 3 },
+        { name: "feat/chat", worktreePath: "/project", isPrimary: true, isBase: false, dirty: true,
+          ahead: 2, behind: 33, unpushed: 0, hasUpstream: false },
+      ],
+    });
+    const baseRoot = row("基准 dev");
+    assert.equal(container.querySelector('ul[aria-label="分支地图"]')!.firstElementChild, baseRoot);
+    assert.match(baseRoot.textContent!, /未检出/);
+    assert.match(baseRoot.textContent!, /GitHub 有 3 个新提交/);
+    assert.ok(button("建工作树", baseRoot));
+    assert.match(row("主仓 feat/chat").textContent!, /比 dev 领先 2 · 落后 33 个提交/);
+    assert.doesNotMatch(container.textContent!, /主仓不在基准/);
     assert.deepEqual(errors, []);
     assert.ok(!commands.some((call) => /^(coding_create|coding_remove|coding_merge|coding_delete)/.test(call.command)));
   } finally {

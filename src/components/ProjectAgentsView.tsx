@@ -1,6 +1,28 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ArrowUpRight, Check, ChevronDown, Star } from "lucide-react";
+import {
+  ArrowUpRight,
+  BookOpen,
+  Check,
+  ChevronDown,
+  Circle,
+  ClipboardList,
+  Clock3,
+  Database,
+  FlaskConical,
+  GitBranch,
+  House,
+  Lightbulb,
+  MessageSquare,
+  PenLine,
+  Search,
+  Sparkles,
+  Star,
+  Target,
+  TrendingUp,
+  TriangleAlert,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { useAppStore } from "../store";
 import { toast } from "../toast";
 import { AGENTS, type CodingOverviewDto, type ProjectDto, type ScheduleDto, type TaskDto } from "../types";
@@ -52,7 +74,9 @@ export default function ProjectAgentsView({
   );
   const [tasks, setTasks] = useState<TaskDto[]>([]);
   const [schedules, setSchedules] = useState<ScheduleDto[]>([]);
-  const [worktrees, setWorktrees] = useState<{ key: string; label: string }[]>([]);
+  const [worktrees, setWorktrees] = useState<
+    { key: string; label: string; isPrimary: boolean }[]
+  >([]);
   const [scheduleCaps, setScheduleCaps] = useState<Record<string, AgentCapabilitiesDto>>({});
 
   useEffect(() => {
@@ -113,6 +137,7 @@ export default function ProjectAgentsView({
           (overview.worktrees ?? []).map((tree) => ({
             key: tree.path,
             label: tree.isPrimary ? "主仓" : tree.branch || tree.path,
+            isPrimary: Boolean(tree.isPrimary),
           })),
         );
       })
@@ -495,6 +520,25 @@ export default function ProjectAgentsView({
     };
   }, [defaultAgent, defaultModels, defaultProfiles, profiles]);
 
+  /** 没钉连接的定时任务实际会用什么（与后端 scheduler::pick_project_default 同口径，
+   *  2026-10-17）：项目默认那家能无头写盘就跟随项目默认；不能、或项目没设默认，
+   *  运行时回落设置页 AI 专用配置 / 最近用过的连接。 */
+  const scheduleFallback = useMemo(() => {
+    const launch = projectAgentLaunch(profiles, defaultAgent, defaultProfiles, defaultModels);
+    if (!launch) {
+      return { tag: "自动", line: "运行时再决定", detail: "设置页 AI 专用配置，或最近用过的连接", option: "自动" };
+    }
+    if (headlessWriteBlocked(scheduleCaps[launch.agentId]?.headlessWrite)) {
+      return {
+        tag: "自动",
+        line: "项目默认不能用于定时任务",
+        detail: "运行时改用设置页 AI 专用配置或最近用过的连接",
+        option: "自动",
+      };
+    }
+    return { tag: "跟随默认", line: inherited.line, detail: `${inherited.detail} · 跟随项目默认`, option: "项目默认" };
+  }, [defaultAgent, defaultModels, defaultProfiles, profiles, scheduleCaps, inherited]);
+
   /** 步骤槽可选清单与精读槽同款（跨 agent 拍平 + 停用尊重 + 绑定项保留） */
   const stepSlotProfiles = useMemo(() => {
     const boundIds = new Set(
@@ -637,7 +681,7 @@ export default function ProjectAgentsView({
         </div>
         <ul className="grid grid-cols-1 items-start gap-2 md:grid-cols-2">
           <SlotCard
-            glyph="💬"
+            Icon={MessageSquare}
             label="项目对话"
             tag={chatBinding ? "已专属" : "跟随默认"}
             marked={Boolean(chatBinding)}
@@ -651,7 +695,7 @@ export default function ProjectAgentsView({
             onAdd={() => setPage("profiles")}
           />
           <SlotCard
-            glyph="💡"
+            Icon={Lightbulb}
             label={workMode === "research" ? "问 AI / 聊想法" : "问 AI"}
             tag={discussBinding ? "已专属" : "跟随默认"}
             marked={Boolean(discussBinding)}
@@ -666,7 +710,7 @@ export default function ProjectAgentsView({
           />
           {workMode === "research" && (
             <SlotCard
-              glyph="📖"
+              Icon={BookOpen}
               label="沉浸阅读对话"
               tag={readerBinding ? "已专属" : "跟随默认"}
               marked={Boolean(readerBinding)}
@@ -701,7 +745,12 @@ export default function ProjectAgentsView({
                   key={slot}
                   className="flex min-w-0 items-center gap-2 rounded-lg ccode-well p-3"
                 >
-                  <span aria-hidden="true" className="shrink-0 text-sm leading-none">⚠</span>
+                  <TriangleAlert
+                    size={14}
+                    strokeWidth={1.8}
+                    aria-hidden="true"
+                    className="shrink-0 text-warn-text"
+                  />
                   <span className="min-w-0 flex-1 truncate text-sm text-l2">
                     {slot === READER_BINDING_SLOT
                       ? "沉浸阅读对话"
@@ -725,7 +774,7 @@ export default function ProjectAgentsView({
           <div className="mb-4">
             <SectionHeading
               title="定时任务"
-              hint="每条任务自己选连接。和定时任务页改的是同一份。"
+              hint="每条任务可以单独钉连接；不钉就跟随项目默认。和定时任务页改的是同一份。"
             />
           </div>
           <ul className="grid grid-cols-1 items-start gap-2 md:grid-cols-2">
@@ -738,7 +787,7 @@ export default function ProjectAgentsView({
               return (
               <SlotCard
                 key={item.id}
-                glyph={schedStale ? "⚠" : "⏰"}
+                Icon={schedStale ? TriangleAlert : Clock3}
                 label={item.name}
                 tag={!item.enabled
                   ? "已暂停"
@@ -746,7 +795,7 @@ export default function ProjectAgentsView({
                     ? "已失效"
                     : item.profileId
                       ? "已指定"
-                      : "自动"}
+                      : scheduleFallback.tag}
                 marked={Boolean(item.profileId) && item.enabled && !schedStale}
                 stale={schedStale}
                 binding={
@@ -754,9 +803,9 @@ export default function ProjectAgentsView({
                     ? { profile: item.profileId, model: item.model }
                     : undefined
                 }
-                unboundLine={schedStale ? "连接已删除，下次运行会失败；可换绑或改回自动" : "运行时再决定"}
-                unboundDetail={schedStale ? "" : "未钉连接"}
-                defaultOptionLabel="自动"
+                unboundLine={schedStale ? "连接已删除，下次运行会失败；可换绑或改回跟随项目默认" : scheduleFallback.line}
+                unboundDetail={schedStale ? "" : scheduleFallback.detail}
+                defaultOptionLabel={scheduleFallback.option}
                 choices={scheduleChoices}
                 disabled={saving || scheduleChoices.length === 0}
                 onPick={(pid, mid) => void saveScheduleLaunch(item, pid, mid)}
@@ -778,7 +827,15 @@ export default function ProjectAgentsView({
               {worktrees.map((tree) => (
                 <li key={tree.key} className="min-w-0 rounded-lg ccode-well p-3">
                   <div className="flex items-center gap-2">
-                    <span aria-hidden="true" className="shrink-0 text-sm leading-none">🌿</span>
+                    {/* 与专属绑定 SlotCard 同一符号语言（2026-10-16 用户拍板弃 emoji 换专业线条）：
+                        主仓=House（项目之家）、工作树=GitBranch（分支） */}
+                    <span aria-hidden="true" className="shrink-0 text-l3">
+                      {tree.isPrimary ? (
+                        <House size={14} strokeWidth={1.8} />
+                      ) : (
+                        <GitBranch size={14} strokeWidth={1.8} />
+                      )}
+                    </span>
                     <h3 className="min-w-0 flex-1 truncate text-sm font-medium text-l1">{tree.label}</h3>
                     <span className="shrink-0 text-xs text-l4">项目默认</span>
                   </div>
@@ -823,7 +880,7 @@ export default function ProjectAgentsView({
                 return (
                 <SlotCard
                   key={goal.id}
-                  glyph={goalStale ? "⚠" : "🎯"}
+                  Icon={goalStale ? TriangleAlert : Target}
                   label={goal.name}
                   tag={goalStale ? "已失效" : goal.agent || goal.profileId ? taskStatusLabel(goal.status) : "项目默认"}
                   marked={Boolean(goal.profileId) && !goalStale}
@@ -865,7 +922,7 @@ export default function ProjectAgentsView({
                 return (
                   <SlotCard
                     key={row.slot}
-                    glyph={row.stale ? "⚠" : stepGlyphFor(row.stepName, row.skills)}
+                    Icon={row.stale ? TriangleAlert : stepIconFor(row.stepName, row.skills)}
                     label={row.stepName}
                     tag={row.stale ? "已失效" : binding ? "已专属" : "跟随默认"}
                     marked={Boolean(binding) && !row.stale}
@@ -935,17 +992,17 @@ export default function ProjectAgentsView({
 }
 
 /** 步骤符号按名称和技能推导，同一步永远同一个。 */
-function stepGlyphFor(name: string, skills: string[]): string {
+function stepIconFor(name: string, skills: string[]): LucideIcon {
   const all = [name, ...skills].join(" ").toLowerCase();
-  if (/检索|筛选|search|screen/.test(all)) return "🔍";
-  if (/精读|阅读|笔记|note|read|paper/.test(all)) return "📖";
-  if (/大纲|outline|框架/.test(all)) return "📋";
-  if (/初稿|综述|写作|draft|writ|review/.test(all)) return "📝";
-  if (/润色|定稿|polish|format|final/.test(all)) return "✨";
-  if (/数据|清洗|clean|dataset/.test(all)) return "📊";
-  if (/图|plot|fig|chart|visual/.test(all)) return "📈";
-  if (/复现|reproduc/.test(all)) return "🔬";
-  return "◇";
+  if (/检索|筛选|search|screen/.test(all)) return Search;
+  if (/精读|阅读|笔记|note|read|paper/.test(all)) return BookOpen;
+  if (/大纲|outline|框架/.test(all)) return ClipboardList;
+  if (/初稿|综述|写作|draft|writ|review/.test(all)) return PenLine;
+  if (/润色|定稿|polish|format|final/.test(all)) return Sparkles;
+  if (/数据|清洗|clean|dataset/.test(all)) return Database;
+  if (/图|plot|fig|chart|visual/.test(all)) return TrendingUp;
+  if (/复现|reproduc/.test(all)) return FlaskConical;
+  return Circle;
 }
 
 function stepGroupSummary(total: number, bound: number, stale: number): string {
@@ -970,7 +1027,7 @@ function SectionHeading({ title, hint }: { title: string; hint: string }) {
 
 /** 与名册卡同一套：标题在左，状态标签在右，下面是连接和模型。已指定用选中底。 */
 function SlotCard({
-  glyph,
+  Icon,
   label,
   tag,
   marked,
@@ -985,7 +1042,7 @@ function SlotCard({
   onClear,
   onAdd,
 }: {
-  glyph: string;
+  Icon: LucideIcon;
   label: string;
   tag: string;
   marked?: boolean;
@@ -994,7 +1051,7 @@ function SlotCard({
   unboundLine?: string;
   /** 未绑定时第二行，用来对齐已绑卡片的模型行 */
   unboundDetail?: string;
-  /** 下拉第一项。专属绑定是「项目默认」；定时任务未钉连接是「自动」。 */
+  /** 下拉第一项。专属绑定是「项目默认」；定时任务未钉连接是「项目默认」（那家不能定时写盘或项目没设默认时是「自动」）。 */
   defaultOptionLabel?: string;
   choices: readonly {
     id: string;
@@ -1015,9 +1072,12 @@ function SlotCard({
       }`}
     >
       <div className="flex items-center gap-2">
-        <span aria-hidden="true" className="shrink-0 text-sm leading-none text-l3">
-          {glyph}
-        </span>
+        <Icon
+          size={14}
+          strokeWidth={1.8}
+          aria-hidden="true"
+          className={`shrink-0 ${stale ? "text-warn-text" : "text-l3"}`}
+        />
         <h3 className="min-w-0 flex-1 truncate text-sm font-medium text-l1">{label}</h3>
         <span
           className={`shrink-0 text-xs ${marked ? "font-medium text-l1" : "text-l4"}`}

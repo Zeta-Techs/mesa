@@ -34,7 +34,7 @@ export function isAcceptanceLedgerPath(path: string): boolean {
 }
 
 /** 积累面台账（2026-10-13 双台账口径，与后端合并闸门 review_contract.rs 同口径镜像）：
- * 雷达台账（inbox/watch-seen/watch-followup）、用户笔记（notes/*.md）、验收账本的任何
+ * 雷达台账（inbox/watch-seen/watch-followup）、用户笔记（notes/*.md 与配图 notes/assets/）、验收账本的任何
  * 常规状态都不算「你的改动未存入历史」；reading-list / watch-explains /
  * pending-registrations 只豁免未跟踪态（防呆：agent 违规提交后变 tracked 的 M 要显形）。 */
 export function isAccumulationLedgerPath(path: string, status: string): boolean {
@@ -46,6 +46,7 @@ export function isAccumulationLedgerPath(path: string, status: string): boolean 
     p === ".ccode/acceptance-log.jsonl" ||
     p === ".ccode/acceptance-log.lock" ||
     (p.startsWith("notes/") && p.endsWith(".md")) ||
+    p.startsWith("notes/assets/") ||
     p.startsWith(".ccode/watch/");
   if (anyState) return true;
   return (
@@ -69,6 +70,21 @@ export function userDirtyFiles<T extends { path: string; status: string }>(
     if (isAccumulationLedgerPath(file.path, file.status)) return false;
     return !(file.status === "??" && isAcceptanceLedgerPath(file.path));
   });
+}
+
+/** Mesa 自有的项目档案路径（`.ccode/` 与 `.gitignore`，与后端 commit_project_bootstrap 的
+ *  BOOTSTRAP_PATHS 同口径）：开工前、评审前由 Mesa 自己提交，不该当成「你的改动」催你存。 */
+export function isMesaCardPath(path: string): boolean {
+  const p = path.replace(/\\/g, "/").replace(/^"|"$/g, "");
+  return p === ".gitignore" || p === ".ccode" || p.startsWith(".ccode/");
+}
+
+/** 项目页「N 处改动未存入历史」与开工弹层提醒的口径：你的改动，去掉 Mesa 自有档案。
+ *  评审页的主文件夹提交面板仍用 userDirtyFiles——那里要能看见并提交一切挡合并的改动。 */
+export function userWorkDirtyFiles<T extends { path: string; status: string }>(
+  files: readonly T[],
+): T[] {
+  return userDirtyFiles(files).filter((file) => !isMesaCardPath(file.path));
 }
 
 export function statusBadgeTitle(status: string): string {

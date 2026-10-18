@@ -1,3 +1,10 @@
+import {
+  Copy,
+  Files,
+  SquareTerminal,
+  Unlink,
+  Workflow,
+} from "lucide-react";
 import { researchToolsFromSettings, settingsWithResearchTools, withResearchTools, type ResearchTools } from "../research-tools";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
@@ -5,6 +12,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import ContextMenu from "./ContextMenu";
 import { confirmDialog } from "./ConfirmDialog";
+import { Modal } from "./Modal";
 import PipelineEditor from "./PipelineEditor";
 import HistoryOverlay from "./HistoryOverlay";
 
@@ -20,8 +28,7 @@ import TaskCardsSection from "./TaskCardsSection";
 
 import ResourceListSection from "./ResourceListSection";
 import ProjectUserTasksView from "./ProjectUserTasksView";
-import AcceptanceLogList from "./AcceptanceLogList";
-import ProjectRulesPanel from "./ProjectRulesPanel";
+import { SettingsDrawerShell, SettingsRulesSection } from "./ProjectSettingsDrawer";
 import KickoffConfirmDialog from "./KickoffConfirmDialog";
 import { HoverTip, useHoverTip } from "./HoverTip";
 import {
@@ -29,9 +36,11 @@ import {
   compactFieldClass,
   FoldMark,
   compactPrimaryActionClass,
+  ghostActionClass,
   hoverRevealClass,
   inlineActionClass,
   NoticeBar,
+  secondaryActionClass,
 } from "./PageFrame";
 import { useAppStore } from "../store";
 import { RESOURCE_TYPE_LABELS, settingsForTemplateApply } from "../pipeline-presets";
@@ -39,10 +48,12 @@ import { startPipelineStep, type IntakeBridgeDecision } from "../pipeline-start"
 import type { KickoffLaunch } from "../kickoff-launch";
 import { upsertLitSourceSection, upsertPendingSettingsSection } from "../task-md-sections";
 import { isTaskMdStub } from "../step-decisions";
-import { userDirtyFiles } from "../git-status-groups";
+import { userWorkDirtyFiles } from "../git-status-groups";
 import { demoReadPaperResource } from "../step-flow";
 import { useSkillProvides } from "../skill-slots.ts";
 import { stepAttention } from "../run-overview";
+import { stepperStatusText } from "../stepper-status";
+import { unsavedUpstreamSteps } from "../kickoff-inputs";
 import { beginAskAi } from "./AskAiModal";
 import {
   projectAgentPrefs,
@@ -68,13 +79,15 @@ import type {
   WorkspaceDto,
   WorkspaceDriftDto,
   WorkspaceHealthDto,
-  AcceptanceLogEntryDto,
   GitFileDto,
 } from "../types";
 
 const actionBtn = inlineActionClass;
 const ctaSm = compactPrimaryActionClass;
 const fieldSm = compactFieldClass;
+// 危险向行内钮：平时与普通行内钮同灰，悬停才转红（「不使用研究流程」一类带确认的低频退出动作）
+const dangerBtn =
+  "inline-flex h-7 items-center rounded-md px-2 text-xs text-l3 transition-colors hover:bg-hover hover:text-err-text disabled:opacity-50";
 
 // 家目录（项目路径缩略 ~ 显示用）：模块级缓存，全部项目组共用一次查询
 
@@ -392,7 +405,7 @@ export default function ProjectGroup({
   const [cfg, setCfg] = useState<ProjectConfigDto | null>(null);
   const [cfgWarnings, setCfgWarnings] = useState<string[]>([]);
   const [cfgLoadError, setCfgLoadError] = useState<string | null>(null);
-  const [acceptLog, setAcceptLog] = useState<AcceptanceLogEntryDto[]>([]);
+
   /** 从磁盘重读档案卡并同步本地状态：档案卡的唯一读入口。
    *  原先四处各写一遍「read → setCfg + setCfgWarnings」，漏掉 warnings 的那处会让
    *  ⚠ 徽标停在上一次的结果；收成一个函数后本地与磁盘只有这一条同步路径。
@@ -434,25 +447,6 @@ export default function ProjectGroup({
     };
   }, [project, refreshToken]);
 
-  useEffect(() => {
-    if (!project) {
-      setAcceptLog([]);
-      return;
-    }
-    let stale = false;
-    invoke<AcceptanceLogEntryDto[]>("read_acceptance_log", {
-      path: project.path,
-    })
-      .then((rows) => {
-        if (!stale) setAcceptLog(rows);
-      })
-      .catch(() => {
-        if (!stale) setAcceptLog([]);
-      });
-    return () => {
-      stale = true;
-    };
-  }, [project, refreshToken]);
 
   const reloadMainDirty = useCallback(() => {
     if (!project) {
@@ -463,7 +457,7 @@ export default function ProjectGroup({
       cwd: project.path,
     })
       .then((status) => {
-        setMainDirty(status.isRepo ? userDirtyFiles(status.files).length : null);
+        setMainDirty(status.isRepo ? userWorkDirtyFiles(status.files).length : null);
       })
       .catch(() => {});
   }, [project]);
@@ -479,7 +473,7 @@ export default function ProjectGroup({
       cwd: project.path,
     })
       .then((status) => {
-        if (!stale) setMainDirty(status.isRepo ? userDirtyFiles(status.files).length : null);
+        if (!stale) setMainDirty(status.isRepo ? userWorkDirtyFiles(status.files).length : null);
       })
       .catch(() => {});
     return () => {
@@ -838,6 +832,7 @@ export default function ProjectGroup({
       st.ws && st.ws.status === "active" ? st.ws : undefined;
     return [
       {
+        icon: Workflow,
         label: "编辑步骤",
         title: "打开研究流程编辑器并定位到该步骤",
         onSelect: () => openEditor(index),
@@ -845,6 +840,7 @@ export default function ProjectGroup({
       ...(st.ws
         ? [
             {
+              icon: Files,
               label: artifactsStep === index ? "收起本步文件" : "本步文件",
               title: "打开这一步已经写出的文件",
               onSelect: () =>
@@ -855,7 +851,8 @@ export default function ProjectGroup({
       ...(activeWs
         ? [
             {
-              label: "◫ 定位目录",
+              icon: SquareTerminal,
+              label: "在终端定位目录",
               title: "跳到终端页，文件树定位到该工作区目录",
               onSelect: () => {
                 setEnterCwdReq(activeWs.worktreePath);
@@ -891,7 +888,7 @@ export default function ProjectGroup({
   // 落点统一是这一处面板（导入只此一处），高亮解决「到了之后点哪个」
   const [resFocus, setResFocus] = useState<"zotero" | "files" | null>(null);
   /** 「文献与数据」面板锚点：流程线里的「到「文献与数据」导入」展开后滚到这里 */
-  const resPanelRef = useRef<HTMLDivElement>(null);
+  const resPanelRef = useRef<HTMLElement>(null);
   /** 「◔ 定时任务」面板锚点：文献雷达卡片「◔ 定时」开抽屉后滚到这里 */
 
   const stepperScrollerRef = useRef<HTMLDivElement>(null);
@@ -1240,6 +1237,7 @@ export default function ProjectGroup({
     const r = cfg.resources[index];
     return [
       {
+        icon: Copy,
         label: "复制路径",
         onSelect: () =>
           copyText(
@@ -1247,7 +1245,13 @@ export default function ProjectGroup({
             "复制资源路径失败",
           ),
       },
-      { label: "移除资源", onSelect: () => void removeResource(index) },
+      { separator: true },
+      {
+        icon: Unlink,
+        label: "移除资源",
+        title: "只从资源清单摘掉，不删磁盘文件",
+        onSelect: () => void removeResource(index),
+      },
     ];
   }
 
@@ -1293,6 +1297,14 @@ export default function ProjectGroup({
   const artMerged = artSt?.key === "done";
   // 每步完成态（带级虚线链按列区间着色）+ 末端菱形：全部步骤完成才点亮（与完成圆同一 done 绿）
   const stepDoneFlags = stepStatuses.map((st) => st.key === "done");
+  // 圆下状态小字（2026-10-17 用户拍板）：圆只有颜色，待评审/进行中一眼分不清；
+  // 进行中再按终端注意力细分「等你确认 / 等你查看」。待开始与检查中不写
+  const stepperTexts = stepStatuses.map((st) =>
+    stepperStatusText(st.key, {
+      archived: st.key === "pending" && !!st.ws,
+      attention: st.key === "active" ? stepAttention(st.ws, terminalRunInputs) : null,
+    }),
+  );
   const allStepsDone =
     stepDoneFlags.length > 0 && stepDoneFlags.every(Boolean);
   /** 步骤状态快照：白话状态短语 + 主推进动作（聚焦头部与流程线节点入口共用口径；
@@ -1825,6 +1837,32 @@ export default function ProjectGroup({
                   />
                 </span>
               </div>
+              {/* 状态带：圆正下方一行小字，与名称带、步进器带同列同隙；一个都没有（全待开始）不占行 */}
+              {stepperTexts.some(Boolean) && (
+                <div className="flex items-center gap-[6px]">
+                  <ol
+                    aria-label="步骤状态"
+                    className="grid min-w-0 flex-1 gap-[6px]"
+                    style={{
+                      gridTemplateColumns: `repeat(${cfg.steps.length}, minmax(9rem, 1fr))`,
+                    }}
+                  >
+                    {stepperTexts.map((text, i) => (
+                      <li
+                        key={`${i}-${cfg.steps[i]?.name ?? ""}`}
+                        className="flex h-4 min-w-0 items-center justify-center"
+                      >
+                        {text && (
+                          <span className={`truncate text-micro leading-4 ${text.tone}`}>
+                            {text.text}
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ol>
+                  <span className="w-3.5 shrink-0" aria-hidden />
+                </div>
+              )}
             </div>
           </div>
           {stepperOverflows && (
@@ -1933,209 +1971,180 @@ export default function ProjectGroup({
       )}
 
       {/* ───── 项目设置抽屉（右侧滑出，不是页面、不进侧栏、不占路由） ─────
-          容纳全部项目级低频配置：基本 / 研究流程模板 / 文献与数据 / 定时巡检。
-          内部各块沿用原有的 state 与 handler，只是从详情页的常驻带搬进抽屉。 */}
-      {settingsOpen && (
-        <div
-          className="fixed inset-0 z-40 flex justify-end bg-black/40 ccode-fade"
-          onClick={() => setSettingsOpen(false)}
-        >
-          <aside
-            data-surface="canvas"
-            className="flex h-full w-[34rem] max-w-[92vw] flex-col bg-canvas"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <header className="flex h-12 shrink-0 items-center gap-2 px-5">
-              <h2 className="min-w-0 flex-1 truncate text-base font-semibold text-l1">
-                项目设置
-              </h2>
-              <button
-                type="button"
-                className={actionBtn}
-                onClick={() => setSettingsOpen(false)}
-                aria-label="关闭项目设置"
-              >
-                ✕
-              </button>
-            </header>
-            <div className="min-h-0 flex-1 space-y-5 overflow-auto px-5 pb-6">
-              {project && (
-                <section>
-                  <h3 className="mb-2 text-xs font-medium text-l3">基本</h3>
-                  <div className="rounded-lg ccode-well p-3">
-                    <div className="mb-2 flex items-center gap-2">
-                      <span className="w-20 shrink-0 text-xs text-l3">
-                        项目名
-                      </span>
-                      <span className="min-w-0 flex-1 truncate text-sm text-l1">
-                        {displayName}
-                      </span>
-                      <button
-                        type="button"
-                        className={actionBtn}
-                        onClick={() => {
-                          setSettingsOpen(false);
-                          onIdentityAction?.("rename");
-                        }}
-                      >
-                        重命名
-                      </button>
-                    </div>
-                    <div className="mb-2 flex items-center gap-2">
-                      <span className="w-20 shrink-0 text-xs text-l3">
-                        课题主题
-                      </span>
-                      <span className="min-w-0 flex-1 truncate text-sm text-l2">
-                        {cfg?.topic?.trim() || (
-                          <span className="text-l4">未填写</span>
-                        )}
-                      </span>
-                      <button
-                        type="button"
-                        className={actionBtn}
-                        disabled={!cfg}
-                        onClick={() => {
-                          setSettingsOpen(false);
-                          onIdentityAction?.("topic");
-                        }}
-                      >
-                        编辑
-                      </button>
-                    </div>
-                    {cfg && project && (
-                      <div className="mb-3">
-                        <ProjectRulesPanel
-                          projectPath={project.path}
-                          workMode={cfg.workMode ?? project.workMode}
-                          compact
-                          defaultOpen
-                          onSaved={() => void reloadCfg(projectPath)}
-                          onError={onError}
-                        />
-                        <AcceptanceLogList entries={acceptLog} />
-                      </div>
-                    )}
-                    <div className="flex items-center gap-2">
-                      <span className="w-20 shrink-0 text-xs text-l3">
-                        项目路径
-                      </span>
-                      <span
-                        className="min-w-0 flex-1 truncate font-mono text-micro text-l4"
-                        title={project.path}
-                      >
-                        {project.path}
-                      </span>
-                      <button
-                        type="button"
-                        className={actionBtn}
-                        onClick={() =>
-                          copyText(project.path, "复制项目路径失败")
-                        }
-                      >
-                        复制
-                      </button>
-                    </div>
-                  </div>
-                </section>
-              )}
+          外壳与「规则与验收」分区走 ProjectSettingsDrawer 的共用件，三种工作方式
+          同一入场/退场/Esc/焦点口径；科研独有分区：基本 / 研究流程 / 文献与数据。 */}
+      <SettingsDrawerShell
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        subtitle={displayName}
+      >
+        {project && (
+          <section>
+            <h3 className="mb-2 text-xs font-medium text-l3">基本</h3>
+            {/* 容器定 text-xs：全站 button { font: inherit } 吞掉按钮上的 text-*，
+                「重命名 / 编辑 / 复制」原先比左侧标签大一号（2026-10-17 截图） */}
+            <div className="space-y-2 rounded-lg ccode-well p-3 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="w-20 shrink-0 text-xs text-l3">项目名</span>
+                <span className="min-w-0 flex-1 truncate text-sm text-l1">
+                  {displayName}
+                </span>
+                <button
+                  type="button"
+                  className={actionBtn}
+                  onClick={() => {
+                    setSettingsOpen(false);
+                    onIdentityAction?.("rename");
+                  }}
+                >
+                  重命名
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="w-20 shrink-0 text-xs text-l3">课题主题</span>
+                <span className="min-w-0 flex-1 truncate text-sm text-l2">
+                  {cfg?.topic?.trim() || (
+                    <span className="text-l4">未填写</span>
+                  )}
+                </span>
+                <button
+                  type="button"
+                  className={actionBtn}
+                  disabled={!cfg}
+                  onClick={() => {
+                    setSettingsOpen(false);
+                    onIdentityAction?.("topic");
+                  }}
+                >
+                  编辑
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="w-20 shrink-0 text-xs text-l3">项目路径</span>
+                <span
+                  className="min-w-0 flex-1 truncate font-mono text-micro text-l3"
+                  title={project.path}
+                >
+                  {project.path}
+                </span>
+                <button
+                  type="button"
+                  className={actionBtn}
+                  onClick={() => copyText(project.path, "复制项目路径失败")}
+                >
+                  复制
+                </button>
+              </div>
+            </div>
+          </section>
+        )}
 
-              {registered && cfg && (
-                <section>
-                  <h3 className="mb-2 text-xs font-medium text-l3">研究流程</h3>
-                  <div className="rounded-lg ccode-well p-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="min-w-0 flex-1 text-xs text-l4">
-                        当前 {cfg.steps.length} 个步骤
-                      </span>
-                      <button
-                        type="button"
-                        className={actionBtn}
-                        onClick={() => setPickerOpen((v) => !v)}
-                        title={
-                          cfg.steps.length === 0
-                            ? "打开模板库选一套研究流程写入项目"
-                            : "另选一个模板；写入时现有步骤被替换，绑定的工作区与资源不受影响"
-                        }
-                      >
-                        {pickerOpen
-                          ? "收起模板库"
-                          : cfg.steps.length === 0
-                            ? "选择模板"
-                            : "更换模板"}
-                      </button>
-                      <button
-                        type="button"
-                        className={actionBtn}
-                        disabled={cfg.steps.length === 0}
-                        title={
-                          cfg.steps.length > 0 ? undefined : "没有可保存的研究步骤"
-                        }
-                        onClick={() => {
-                          setTplSavedMsg(null);
-                          setSavingTemplate(true);
-                          setSettingsOpen(false);
-                        }}
-                      >
-                        另存为模板
-                      </button>
-                      {cfg.steps.length > 0 && (
-                        <button
-                          type="button"
-                          className={actionBtn}
-                          disabled={optingOut}
-                          title="去掉步进器，这个文件夹只用来读文献、写笔记；步骤表清空，文件保留"
-                          onClick={() => void optOutPipeline()}
-                        >
-                          {optingOut ? "保存中…" : "不使用研究流程"}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </section>
-              )}
-
-      {/* 模板库选择器：项目菜单与空研究流程「选择研究流程模板」共用的唯一实例 */}
-      {registered && cfg && pickerOpen && (
-        <div className="ccode-well mb-4 rounded-md p-2">
-          <TemplatePicker
-            applying={applyingTemplate}
-            onApply={(item) => void applyTemplate(item)}
+        {project && (
+          <SettingsRulesSection
+            projectPath={project.path}
+            projectName={displayName}
+            workMode={cfg?.workMode ?? project.workMode}
+            onSaved={() => void reloadCfg(projectPath)}
             onError={onError}
           />
-        </div>
-      )}
+        )}
+
+        {registered && cfg && (
+          <section>
+            <h3 className="mb-2 text-xs font-medium text-l3">研究流程</h3>
+            <div className="rounded-lg ccode-well p-3 text-xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="min-w-0 flex-1 text-xs text-l4">
+                  当前 {cfg.steps.length} 个步骤
+                </span>
+                <button
+                  type="button"
+                  className={secondaryActionClass}
+                  onClick={() => setPickerOpen((v) => !v)}
+                  title={
+                    cfg.steps.length === 0
+                      ? "打开模板库选一套研究流程写入项目"
+                      : "另选一个模板；写入时现有步骤被替换，绑定的工作区与资源不受影响"
+                  }
+                >
+                  {pickerOpen
+                    ? "收起模板库"
+                    : cfg.steps.length === 0
+                      ? "选择模板"
+                      : "更换模板"}
+                </button>
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-1">
+                <button
+                  type="button"
+                  className={ghostActionClass}
+                  disabled={cfg.steps.length === 0}
+                  title={
+                    cfg.steps.length > 0 ? undefined : "没有可保存的研究步骤"
+                  }
+                  onClick={() => {
+                    setTplSavedMsg(null);
+                    setSavingTemplate(true);
+                    setSettingsOpen(false);
+                  }}
+                >
+                  另存为模板
+                </button>
+                {cfg.steps.length > 0 && (
+                  <button
+                    type="button"
+                    className={dangerBtn}
+                    disabled={optingOut}
+                    title="去掉步进器，这个文件夹只用来读文献、写笔记；步骤表清空，文件保留"
+                    onClick={() => void optOutPipeline()}
+                  >
+                    {optingOut ? "保存中…" : "不使用研究流程"}
+                  </button>
+                )}
+              </div>
+              {/* 模板库选择器：项目菜单与空研究流程「选择研究流程模板」共用的唯一实例 */}
+              {pickerOpen && (
+                <div className="mt-3 rounded-lg ccode-well p-2">
+                  <TemplatePicker
+                    applying={applyingTemplate}
+                    onApply={(item) => void applyTemplate(item)}
+                    onError={onError}
+                  />
+                </div>
+              )}
+            </div>
+          </section>
+        )}
 
       {/* 文献与数据（原「资源面板」）：三个进料口收在一处——注册时已自动扫过一遍，
           这里回答「扫到了什么」+「还能从哪儿补」。新注册的项目自动展开：
           原先提示挂在页面底部、又被模板选择层挡住，用户根本看不到扫描发生过 */}
       {registered && cfg && (
-        <div className="mb-4" ref={resPanelRef}>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              className="flex items-center gap-1 text-xs text-l3 hover:text-l1"
-              onClick={() => setResOpen((v) => !v)}
-              aria-expanded={resOpen}
-            >
-              <FoldMark open={resOpen} boxed />
-              文献与数据（{cfg.resources.length}）
-            </button>
+        <section ref={resPanelRef} className="text-xs">
+          <button
+            type="button"
+            className="mb-2 flex w-full items-center gap-1.5 text-left text-xs font-medium text-l3 hover:text-l1"
+            onClick={() => setResOpen((v) => !v)}
+            aria-expanded={resOpen}
+          >
+            <FoldMark open={resOpen} />
+            文献与数据（{cfg.resources.length}）
             {/* 折叠态也要说清「有什么」和「还能补」：只在新注册或零资源时才提示，
                 等于对老项目和已有资源的项目永远沉默——那正是用户看不到扫描发生过的原因 */}
             {!resOpen && (
-              <span className="min-w-0 truncate text-micro text-l4">
+              <span className="min-w-0 flex-1 truncate text-micro font-normal text-l4">
                 {resourceSummary}
                 <span className="text-l4"> · 展开可从 Zotero / 检索结果补充</span>
               </span>
             )}
-          </div>
+          </button>
           {resOpen && (
-            <div className="ccode-well mt-1 rounded-md p-2">
+            <div className="space-y-2 rounded-lg ccode-well p-3 text-xs">
               {/* 「文献来源」选择器已移到流程线「定方向」的输入准备块（v3.86）——
                   它是开工前必须拍板的事，藏在抽屉三层下面本身就是错的位置，
                   而且当时与决策项、人工事项一起把同一个问题问了四遍。
                   这里只留当前值的只读回显 + 跳转，导入动作两处都保留（这里是二级入口）。 */}
-              <div className="mb-2 flex flex-wrap items-center gap-1.5">
+              <div className="flex flex-wrap items-center gap-1.5">
                 <span className="text-micro text-l4">文献来源</span>
                 <span className="rounded-full bg-inset px-2 py-0.5 text-micro text-l2">
                   {{
@@ -2150,13 +2159,13 @@ export default function ProjectGroup({
                 </span>
               </div>
               {(cfg.litSource?.trim() || "search") !== "search" && (
-                <p className="mb-2 text-micro leading-5 text-l4">
+                <p className="text-micro leading-5 text-l4">
                   检索步骤已改为「盘点已有 + 查漏补缺」，筛选这一步不会跳过。
                 </p>
               )}
               {/* 进料口三选一：agent 自己扫 / 你已有的库 / 你手动检索的结果。
                   一行摆齐，用户不必在界面里找第二处入口 */}
-              <div className="mb-2 flex flex-wrap items-center gap-1.5">
+              <div className="flex flex-wrap items-center gap-1.5">
                 <span className="text-micro text-l4">从哪儿补</span>
                 <button
                   type="button"
@@ -2203,7 +2212,7 @@ export default function ProjectGroup({
                 }}
               />
               {discoverState && (
-                <div className="mt-3">
+                <div>
                   {discoverState.items.length === 0 ? (
                     <p className="text-xs text-l4">
                       未扫描到 PDF / CSV / parquet / bib 等资源文件。
@@ -2283,12 +2292,12 @@ export default function ProjectGroup({
                 </div>
               )}
               {importMsg && (
-                <NoticeBar className="mt-2" onDismiss={() => setImportMsg(null)}>
+                <NoticeBar onDismiss={() => setImportMsg(null)}>
                   {importMsg}
                 </NoticeBar>
               )}
               {zoteroMsg && (
-                <div className="mt-2 flex items-start gap-2 rounded-md ccode-well px-3 py-2.5 text-xs leading-5 text-l2">
+                <div className="flex items-start gap-2 rounded-md ccode-well px-3 py-2.5 text-xs leading-5 text-l2">
                   <span className="min-w-0 flex-1">
                     {zoteroMsg}
                     {zoteroMsg.includes("没找到") &&
@@ -2315,19 +2324,14 @@ export default function ProjectGroup({
               {gitignoreHint && (
                 <NoticeBar
                   tone="info"
-                  className="mt-2"
                   onDismiss={() => setGitignoreHint(false)}
                 >数据与产物类大文件建议加进 .gitignore。</NoticeBar>
               )}
             </div>
           )}
-        </div>
+        </section>
       )}
-
-            </div>
-          </aside>
-        </div>
-      )}
+      </SettingsDrawerShell>
       {/* ───── 项目设置抽屉结束 ───── */}
 
       {!liteResearch &&
@@ -2384,24 +2388,36 @@ export default function ProjectGroup({
       )}
       {/* Zotero 分类选择：只读适配器的唯一交互点——选一个分类（或整库）导入 */}
       {zoteroLib && (
-        <div
-          className="ccode-fade fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          onClick={() => setZoteroLib(null)}
+        <Modal
+          open
+          size="md"
+          title="从 Zotero 导入"
+          onClose={() => setZoteroLib(null)}
+          footer={
+            <>
+              <span
+                className="mr-auto min-w-0 flex-1 truncate font-mono text-micro text-l4"
+                title={zoteroLib.dbPath}
+              >
+                {zoteroLib.dbPath}
+              </span>
+              <button
+                type="button"
+                onClick={() => setZoteroLib(null)}
+                className={secondaryActionClass}
+              >
+                取消
+              </button>
+            </>
+          }
         >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="ccode-float-surface flex max-h-[70vh] w-[30rem] flex-col rounded-md border border-field p-5"
-          >
-            <h2 className="shrink-0 text-base font-semibold text-l1">
-              从 Zotero 导入
-            </h2>
-            <p className="mt-1 shrink-0 text-xs text-l3">生成 references.bib；PDF 只登记位置，不复制。<span className="text-l4">你的 Zotero 库只读不改。</span>
+            <p className="text-xs text-l3">生成 references.bib；PDF 只登记位置，不复制。<span className="text-l4">你的 Zotero 库只读不改。</span>
             </p>
-            <button type="button" className="mt-2 text-left text-xs text-l3" onClick={async () => {
+            <button type="button" className="mt-2 text-left text-xs text-l3 hover:text-l1" onClick={async () => {
               const picked = await open({ directory: true, multiple: false, title: "选择 Zotero 链接附件基目录（可选）" });
               if (typeof picked === "string") setZoteroAttachmentBase(picked);
             }}>链接附件基目录：{zoteroAttachmentBase ?? "未指定（使用相对链接附件时选择）"}</button>
-            <div className="mt-3 min-h-0 flex-1 space-y-1 overflow-auto">
+            <div className="mt-3 space-y-1">
               {zoteroLib.collections.map((c) => (
                 <button
                   key={c.id}
@@ -2432,20 +2448,7 @@ export default function ProjectGroup({
                 </span>
               </button>
             </div>
-            <div className="mt-3 flex shrink-0 items-center gap-2">
-              <span className="min-w-0 flex-1 truncate font-mono text-micro text-l4">
-                {zoteroLib.dbPath}
-              </span>
-              <button
-                type="button"
-                onClick={() => setZoteroLib(null)}
-                className="shrink-0 rounded-sm px-3 py-1.5 text-sm text-l2 hover:bg-hover"
-              >
-                取消
-              </button>
-            </div>
-          </div>
-        </div>
+        </Modal>
       )}
       {/* 开工确认弹层：确认后才走建工作区链路（runStartStep） */}
       {kickoff && project && cfg && cfg.steps[kickoff.index] && (
@@ -2464,6 +2467,20 @@ export default function ProjectGroup({
             void runStartStep(index, taskMd, launch, decisionPauseAcknowledged, intake);
           }}
           onCfgChange={(next) => setCfg(next)}
+          unsavedUpstream={unsavedUpstreamSteps(cfg.steps, kickoff.index, (i) => {
+            const st = statusAt(i);
+            return st ? { key: st.key, worktreePath: st.ws?.worktreePath ?? null } : null;
+          })}
+          onOpenUpstreamReview={(upstream) => {
+            setKickoff(null);
+            setWorkspaceReviewRequest({
+              worktreePath: upstream.worktreePath,
+              runId: runIdForPath(terminalRunInputs, upstream.worktreePath),
+              action: upstream.status === "blocked" ? "resolve-conflict" : undefined,
+              requestId: crypto.randomUUID(),
+            });
+            setPage("terminal");
+          }}
         />
       )}
     </section>

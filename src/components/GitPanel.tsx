@@ -1,14 +1,22 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Maximize2 } from "lucide-react";
+import { File, Maximize2 } from "lucide-react";
 import type {
   ArtifactEntryDto,
   GitCommitResultDto,
   GitFileDto,
   WorkspaceDiffDto,
 } from "../types";
-import { Checkbox, EmptyState, FoldMark, hoverRevealClass, LoadingRows } from "./PageFrame";
+import {
+  Checkbox,
+  EmptyState,
+  fieldClass,
+  FoldMark,
+  hoverRevealClass,
+  LoadingRows,
+  InlineNotice,
+} from "./PageFrame";
 import { confirmDialog } from "./ConfirmDialog";
 import ImagePairView, { isImagePath } from "./ImagePairView";
 import { useAppStore } from "../store";
@@ -92,20 +100,23 @@ function formatSize(n: number): string {
   return `${(n / 1024 / 1024 / 1024).toFixed(1)} GB`;
 }
 
-/** 文件类型小徽标（固定识别色，不随主题）；未收录类型留空槽位保持行对齐 */
+/** 文件类型小徽标（固定识别色，不随主题）；未收录类型画通用文件图标（与 FileTypeMark 同口径） */
 function FileTypeBadge({ path }: { path: string }) {
   const icon = fileTypeIcon(path);
+  if (!icon) {
+    return (
+      <span aria-hidden="true" className="flex h-4 min-w-4 shrink-0 items-center justify-center text-l4">
+        <File size={13} strokeWidth={1.6} />
+      </span>
+    );
+  }
   return (
     <span
       aria-hidden="true"
       className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-sm px-0.5 font-mono text-micro leading-4"
-      style={
-        icon
-          ? { color: icon.color, backgroundColor: `${icon.color}26` }
-          : undefined
-      }
+      style={{ color: icon.color, backgroundColor: `${icon.color}26` }}
     >
-      {icon?.label ?? ""}
+      {icon.label}
     </span>
   );
 }
@@ -695,14 +706,10 @@ function GitPanel({
           // 逐 hunk 验收：未暂存改动按块展示，块头右侧「丢弃 / 暂存」
           <div>
             {diffError && (
-              <p className="border-b border-hairline px-2 py-1 text-micro text-err-text">
-                {diffError}
-              </p>
+              <InlineNotice tone="err" size="micro" className="border-b border-hairline px-2 py-1">{diffError}</InlineNotice>
             )}
             {hunksStaged && (
-              <p className="border-b border-hairline px-2 py-1 text-micro text-warn-text">
-                该文件已有部分内容暂存；勾选它「保存到任务分支」时只提交已暂存的块，下方的块留在工作区
-              </p>
+              <InlineNotice tone="warn" size="micro" className="border-b border-hairline px-2 py-1">该文件已有部分内容暂存；勾选它「保存到任务分支」时只提交已暂存的块，下方的块留在工作区</InlineNotice>
             )}
             {hunks.map((h) => {
               const body = hunkBodyLines(h.patch);
@@ -1041,7 +1048,7 @@ function GitPanel({
               }}
               placeholder="说明（可空）"
               disabled={running !== null || aiBusy}
-              className="w-full rounded-sm border border-field bg-canvas px-2 py-1.5 text-sm text-l2 outline-none placeholder:text-l4 focus:border-l4 disabled:opacity-50"
+              className={`${fieldClass} disabled:opacity-50`}
             />
             <button
               onClick={genMessage}

@@ -218,12 +218,21 @@ pub struct ProjectConfigDto {
     /// 项目技能池（技能库 name，审计 §4.9）：无流程科研 / 办公 / 编程进上下文包；
     /// 有研究步骤的科研不用此字段（技能以 steps[].skills 为准）。空 = 不写行。
     pub skills: Vec<String>,
+    /// 对话注入（2026-10-16 拍板）：＋新对话 / 问 AI 的 session 包开关。
+    /// auto = 自动生成（缺省）；custom = 按模板；off = 不注入。
+    /// 只管 session 包；开工任务书 / 验收后写入 / 编程车道 goal 的目标包不受影响。
+    pub session_injection_mode: Option<String>,
+    /// 自定义模板全文；占位符（{{课题主题}} 等，清单见前端 project-context.ts）
+    /// 开对话时按项目当时数据填入。空模板按 auto 处理；非空即写盘（切 mode 不清草稿）。
+    pub session_injection_template: Option<String>,
 }
 
 /// 文献来源合法值；非法值解析期归一为 search
 pub const LIT_SOURCES: [&str; 4] = ["search", "zotero", "endnote", "folder"];
 pub const SUBMISSION_MODES: [&str; 2] = ["initial", "revision"];
 pub const WORK_MODES: [&str; 3] = ["research", "coding", "office"];
+/// 对话注入合法值；非法值解析期按 auto（现状行为）
+pub const SESSION_INJECTION_MODES: [&str; 3] = ["auto", "custom", "off"];
 
 pub(crate) fn normalize_work_mode(value: &str) -> String {
     let v = value.trim();
@@ -251,6 +260,8 @@ impl Default for ProjectConfigDto {
             lit_watch_filter: None,
             work_mode: "research".into(),
             skills: Vec::new(),
+            session_injection_mode: None,
+            session_injection_template: None,
         }
     }
 }
@@ -496,6 +507,42 @@ fn register_at(
         default_models: project_string_map(&conn, &key, "default_models"),
         task_bindings: project_task_bindings(&conn, &key),
     }))
+}
+
+/// 项目名册默认（Agents 页「项目默认」）：默认 Agent + 名册给这家绑的连接与点选模型。
+/// 定时任务未钉连接时据此取连接（scheduler::pick_project_default）。
+pub(crate) struct ProjectDefaultPrefs {
+    pub agent: String,
+    pub profile: Option<String>,
+    pub model: Option<String>,
+}
+
+/// 读项目默认；项目没注册或没设默认 Agent 返回 None。
+pub(crate) fn project_default_prefs(root: &Path) -> Option<ProjectDefaultPrefs> {
+    let conn = db().ok()?;
+    let key = canonical_key(root);
+    let agent: Option<String> = conn
+        .query_row(
+            "SELECT default_agent FROM projects WHERE path=?1",
+            params![key],
+            |r| r.get(0),
+        )
+        .ok()
+        .flatten();
+    let agent = agent.map(|a| a.trim().to_string()).filter(|a| !a.is_empty())?;
+    let pick = |column: &str| {
+        project_string_map(&conn, &key, column)
+            .get(&agent)
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    };
+    let profile = pick("default_profiles");
+    let model = pick("default_models");
+    Some(ProjectDefaultPrefs {
+        agent,
+        profile,
+        model,
+    })
 }
 
 fn project_string_map(conn: &Connection, path: &str, column: &str) -> BTreeMap<String, String> {
@@ -1372,6 +1419,26 @@ fn parse_config(text: &str) -> (ProjectConfigDto, Vec<String>) {
         }
         Some(_) => warnings.push("skills 不是字符串数组，已忽略".to_string()),
     }
+    // 对话注入：非法值告警并按 auto（现状行为），不阻断开对话
+    match value.get("session_injection_mode") {
+        None => {}
+        Some(toml::Value::String(s)) if SESSION_INJECTION_MODES.contains(&s.trim()) => {
+            config.session_injection_mode = Some(s.trim().to_string())
+        }
+        Some(toml::Value::String(s)) => warnings.push(format!(
+            "session_injection_mode 取值无效（{s}），已按自动生成处理"
+        )),
+        Some(_) => warnings.push("session_injection_mode 不是字符串，已忽略".to_string()),
+    }
+    // 模板空白视为未填写（同 topic 口径，不告警）
+    match value.get("session_injection_template") {
+        None => {}
+        Some(toml::Value::String(s)) if !s.trim().is_empty() => {
+            config.session_injection_template = Some(s.clone())
+        }
+        Some(toml::Value::String(_)) => {}
+        Some(_) => warnings.push("session_injection_template 不是字符串，已忽略".to_string()),
+    }
     match value.get("artifact_dir") {
         None => {}
         Some(toml::Value::String(s)) if !s.trim().is_empty() => config.artifact_dir = s.clone(),
@@ -1897,6 +1964,34 @@ fn render_config(existing: Option<&str>, config: &ProjectConfigDto) -> Result<St
             arr.push(skill.as_str());
         }
         doc["skills"] = value(arr);
+    }
+    // 对话注入：auto 是缺省不写行（同 pipeline_opt_out 口径）；
+    // 模板非空就写、不随 mode 清（切到 off/auto 保留草稿，切回来不丢）
+    match config
+        .session_injection_mode
+        .as_deref()
+        .map(str::trim)
+        .filter(|mode| SESSION_INJECTION_MODES.contains(mode) && *mode != "auto")
+    {
+        Some(mode) => {
+            doc["session_injection_mode"] = value(mode);
+        }
+        None => {
+            doc.remove("session_injection_mode");
+        }
+    }
+    match config
+        .session_injection_template
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+    {
+        Some(text) => {
+            doc["session_injection_template"] = value(text);
+        }
+        None => {
+            doc.remove("session_injection_template");
+        }
     }
     let artifact_dir = if config.artifact_dir.trim().is_empty() {
         DEFAULT_ARTIFACT_DIR
@@ -3482,6 +3577,53 @@ pub async fn write_project_config(path: String, config: ProjectConfigDto) -> Res
     .map_err(|e| format!("写入项目配置失败: {e}"))?
 }
 
+/// 对话注入两键的原子单键写（2026-10-16 审查补审拍板）：设置抽屉里注入面板与规则面板
+/// 同卡片并存，走整份 write_project_config 的前端「读最新→改→写」往返会让两个写者
+/// 的窗口互相覆盖。本命令在配置锁内读改写，只动 session_injection_mode/template
+/// 两个键，其余字段（含未知键与用户手写内容）由 render_config 原样保留。
+#[tauri::command]
+pub async fn project_set_session_injection(
+    path: String,
+    mode: String,
+    template: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let project = PathBuf::from(crate::sessions::expand_tilde(&path));
+        let mode_arg = mode.trim().to_string();
+        if !SESSION_INJECTION_MODES.contains(&mode_arg.as_str()) {
+            return Err(format!("对话注入模式取值无效：{mode_arg}"));
+        }
+        let root = ensure_task_project_root(&project)?;
+        set_session_injection_at(&root, &mode_arg, &template)
+    })
+    .await
+    .map_err(|e| format!("保存对话注入设置失败: {e}"))?
+}
+
+/// 读-改-原子写对话注入两键（root 需已过项目门槛校验；测试直接调这里）。
+/// mode = auto 不写行；template 空白 = 清除；模板非空即写（切 mode 不清草稿）。
+/// 锁罩住整段读改写：与规则面板等整卡写者的交错窗口里，本命令总是基于最新盘面落笔。
+pub(crate) fn set_session_injection_at(
+    root: &Path,
+    mode: &str,
+    template: &str,
+) -> Result<(), String> {
+    let template = template.trim();
+    let _guard = project_config_lock(root)?;
+    let mut cfg = read_config_at(root).config;
+    cfg.session_injection_mode = if mode == "auto" {
+        None
+    } else {
+        Some(mode.to_string())
+    };
+    cfg.session_injection_template = if template.is_empty() {
+        None
+    } else {
+        Some(template.to_string())
+    };
+    write_config_at(root, &cfg)
+}
+
 /// 步骤推荐技能的读-改-原子写（开工确认弹层技能区增删写回 steps[].skills，v3.67）：
 /// 不走整份 write_project_config 往返——read_config_at 读出现有配置，只改目标步骤的 skills，
 /// 其余字段（含未知键）由 render_config 原样保留。
@@ -4035,6 +4177,8 @@ fn demo_project_config() -> ProjectConfigDto {
         submission_round: None,
         lit_watch_filter: None,
         work_mode: "research".into(),
+        session_injection_mode: None,
+        session_injection_template: None,
     }
 }
 
@@ -4304,7 +4448,7 @@ pub(crate) fn exclude_task_md(worktree_root: &Path) {
     let _ = crate::profiles::atomic_write(&exclude, &content);
 }
 
-// ===== P2b「整理为笔记」：PDF 选段 → 笔记工作区 notes/inbox.md =====
+// ===== P2b「整理为笔记」：PDF 选段 → notes/excerpts.md（精读工作区在跑写工作区，否则写项目根） =====
 
 /// 归属判定（纯函数，测试友好）：登记资源精确命中优先，其次项目根前缀命中；
 /// 前缀取最长匹配（项目嵌套时归内层）。输入均为 canonical 路径。
@@ -4362,15 +4506,35 @@ pub async fn pdf_owner_project(pdf_path: String) -> Result<Option<ProjectDto>, S
     .map_err(|e| format!("查询 PDF 归属项目失败: {e}"))?
 }
 
-/// 首次创建 inbox.md 时的文件头（注明来源与用途）
-const INBOX_HEADER: &str = "# 文献摘录收件箱\n\n\
-     > 由 Mesa「整理为笔记」从 PDF 选段自动追加；整理进结构化笔记后可清理对应条目。\n";
+/// 首次创建 excerpts.md 时的文件头（注明来源与用途）
+const EXCERPTS_HEADER: &str = "# 文献摘录\n\n\
+     > 由 Mesa「整理为笔记」从 PDF 选段自动追加；精读时并进对应文献的笔记，这份摘录原样保留。\n";
+
+/// 摘录文件（2026-10-17 审查修复）：原先写 notes/inbox.md，那是文献雷达的收件箱——
+/// 被 gitignore（摘录进不了合并、删工作区即丢），还会让雷达采纳把主仓多出的行当冲突。
+const EXCERPTS_FILE: &str = "excerpts.md";
 
 /// 追加语义 + 白名单（同步函数供测试）：
-/// 目标固定为工作区根内 notes/inbox.md（不接受外部传入子路径），单次追加 ≤ 64 KB；
+/// 目标固定为根内 notes/excerpts.md（不接受外部传入子路径），单次追加 ≤ 64 KB；
 /// 读-改-原子写（atomic_write 走 tmp+rename，symlink 会被整体替换而非穿透）；
-/// 已存在的 inbox.md 先 canonicalize 双校验仍在根内，堵符号链接逃逸。
-fn append_inbox_at(worktree_path: &Path, content: &str) -> Result<(), String> {
+/// 已存在的摘录文件先 canonicalize 双校验仍在根内，堵符号链接逃逸。
+fn append_excerpt_at(worktree_path: &Path, content: &str) -> Result<(), String> {
+    append_notes_file_at(worktree_path, EXCERPTS_FILE, EXCERPTS_HEADER, content)
+}
+
+/// 终端摘记（2026-10-17 用户：选中终端文字「存进笔记」）：独立一份 notes/clips.md，不混进文献摘录——
+/// 摘录会被精读步并进文献笔记，终端输出不是文献。前端只在科研 / 办公项目里给这个按钮
+const CLIPS_HEADER: &str = "# 终端摘记\n\n\
+     > 由 Mesa 从运行页终端「存进笔记」追加，最新的在最后。\n";
+const CLIPS_FILE: &str = "clips.md";
+
+/// notes/<file> 追加的公共内核（摘录 / 摘记共用写入规则，见上）
+fn append_notes_file_at(
+    worktree_path: &Path,
+    file: &str,
+    header: &str,
+    content: &str,
+) -> Result<(), String> {
     const CAP: usize = 64 * 1024;
     if content.len() > CAP {
         return Err("追加内容超过 64 KB".into());
@@ -4381,28 +4545,43 @@ fn append_inbox_at(worktree_path: &Path, content: &str) -> Result<(), String> {
     }
     let notes_dir = root.join("notes");
     fs::create_dir_all(&notes_dir).map_err(|e| format!("创建 notes 目录失败: {e}"))?;
-    let target = notes_dir.join("inbox.md");
+    let target = notes_dir.join(file);
     if target.exists() {
         let canon_target =
-            fs::canonicalize(&target).map_err(|e| format!("读取 inbox.md 失败: {e}"))?;
+            fs::canonicalize(&target).map_err(|e| format!("读取 {file} 失败: {e}"))?;
         if !canon_target.starts_with(&root) {
-            return Err("notes/inbox.md 指向工作区之外，拒绝写入".into());
+            return Err(format!("notes/{file} 指向目录之外，拒绝写入"));
         }
     }
     let mut text = if target.exists() {
-        fs::read_to_string(&target).map_err(|e| format!("读取 inbox.md 失败: {e}"))?
+        fs::read_to_string(&target).map_err(|e| format!("读取 {file} 失败: {e}"))?
     } else {
-        INBOX_HEADER.to_string()
+        header.to_string()
     };
     text.push_str(content);
     crate::profiles::atomic_write(&target, &text)
 }
 
-/// 把选段追加到工作区 notes/inbox.md（P2b）；写入规则见 append_inbox_at。
+/// 把终端里选中的一段追加到项目 notes/clips.md；写入规则同 append_excerpt_at
 #[tauri::command]
-pub async fn append_workspace_inbox(worktree_path: String, content: String) -> Result<(), String> {
+pub async fn append_project_clip(project_root: String, content: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        append_inbox_at(
+        append_notes_file_at(
+            Path::new(&crate::sessions::expand_tilde(&project_root)),
+            CLIPS_FILE,
+            CLIPS_HEADER,
+            &content,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 把选段追加到 notes/excerpts.md（P2b；根 = 在跑的精读工作区或项目根）；写入规则见 append_excerpt_at。
+#[tauri::command]
+pub async fn append_notes_excerpt(worktree_path: String, content: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        append_excerpt_at(
             Path::new(&crate::sessions::expand_tilde(&worktree_path)),
             &content,
         )
@@ -5034,6 +5213,8 @@ mod tests {
             submission_round: None,
             lit_watch_filter: None,
             work_mode: "research".into(),
+            session_injection_mode: None,
+            session_injection_template: None,
         }
     }
 
@@ -5279,6 +5460,8 @@ type = "paper"
             submission_round: None,
             lit_watch_filter: None,
             work_mode: "research".into(),
+            session_injection_mode: None,
+            session_injection_template: None,
         };
         let rendered = render_config(Some(existing), &config).unwrap();
         assert!(
@@ -5345,6 +5528,105 @@ type = "paper"
         let (config, warnings) = parse_config("topic = 42\n");
         assert_eq!(config.topic, None);
         assert_eq!(warnings.len(), 1, "坏 topic 要报告: {warnings:?}");
+    }
+
+    #[test]
+    fn session_injection_round_trip_and_bad_value() {
+        let text = r#"session_injection_mode = "custom"
+session_injection_template = "你正在项目「{{项目名}}」中工作。\n{{项目规则}}"
+"#;
+        let (config, warnings) = parse_config(text);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(config.session_injection_mode.as_deref(), Some("custom"));
+        assert!(config
+            .session_injection_template
+            .as_deref()
+            .unwrap()
+            .contains("{{项目名}}"));
+        let rendered = render_config(Some(text), &config).unwrap();
+        let (back, _) = parse_config(&rendered);
+        assert_eq!(back.session_injection_mode, config.session_injection_mode);
+        assert_eq!(
+            back.session_injection_template,
+            config.session_injection_template
+        );
+        // 切到 off：mode 行改写，模板草稿保留
+        let switched = ProjectConfigDto {
+            session_injection_mode: Some("off".into()),
+            ..config
+        };
+        let rendered = render_config(Some(&rendered), &switched).unwrap();
+        assert!(rendered.contains(r#"session_injection_mode = "off""#));
+        assert!(rendered.contains("session_injection_template"));
+        let (back, _) = parse_config(&rendered);
+        assert_eq!(back.session_injection_mode.as_deref(), Some("off"));
+        assert_eq!(
+            back.session_injection_template,
+            switched.session_injection_template
+        );
+        // 切回 auto：mode 行移除，模板仍保留；空模板 = 清除
+        let auto = ProjectConfigDto {
+            session_injection_mode: None,
+            ..switched
+        };
+        let rendered = render_config(Some(&rendered), &auto).unwrap();
+        assert!(!rendered.contains("session_injection_mode"));
+        assert!(rendered.contains("session_injection_template"));
+        let cleared = ProjectConfigDto {
+            session_injection_template: None,
+            ..auto
+        };
+        let rendered = render_config(Some(&rendered), &cleared).unwrap();
+        assert!(!rendered.contains("session_injection_template"));
+        // 非法 mode：告警并按 auto；空白模板视为未填写
+        let (config, warnings) = parse_config("session_injection_mode = \"loud\"\n");
+        assert_eq!(config.session_injection_mode, None);
+        assert_eq!(warnings.len(), 1, "坏 mode 要报告: {warnings:?}");
+        let (config, warnings) =
+            parse_config("session_injection_template = \"  \"\n");
+        assert_eq!(config.session_injection_template, None);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        // 模板首尾空白：parse 存原文（面板读回所见即所存），render 写 trim 后——落盘一轮归一
+        let (config, _) = parse_config("session_injection_template = \"  前后空白  \"\n");
+        assert_eq!(
+            config.session_injection_template.as_deref(),
+            Some("  前后空白  ")
+        );
+        let rendered = render_config(None, &config).unwrap();
+        assert!(rendered.contains("\"前后空白\""), "{rendered}");
+        let (back, _) = parse_config(&rendered);
+        assert_eq!(back.session_injection_template.as_deref(), Some("前后空白"));
+        // 非字符串模板：告警不阻断
+        let (config, warnings) = parse_config("session_injection_template = 42\n");
+        assert_eq!(config.session_injection_template, None);
+        assert_eq!(warnings.len(), 1, "坏模板类型要报告: {warnings:?}");
+    }
+
+    #[test]
+    fn set_session_injection_at_touches_only_its_two_keys() {
+        let root = temp_dir("injection-atomic");
+        let toml_path = root.join(".ccode").join("project.toml");
+        write(
+            &toml_path,
+            "topic = \"旧主题\"\nsettings = [\"只写中文\"]\n# 用户手写注释\n",
+        );
+        // 单键原子写：只动两个注入键，topic/settings/手写注释原样保留
+        set_session_injection_at(&root, "custom", "你正在项目「{{项目名}}」中工作。").unwrap();
+        let text = fs::read_to_string(&toml_path).unwrap();
+        assert!(text.contains("topic = \"旧主题\""), "{text}");
+        assert!(text.contains("settings = [\"只写中文\"]"), "{text}");
+        assert!(text.contains("# 用户手写注释"), "{text}");
+        assert!(text.contains("session_injection_mode = \"custom\""), "{text}");
+        assert!(text.contains("session_injection_template"), "{text}");
+        // off 写行；空白模板 = 显式清除
+        set_session_injection_at(&root, "off", "  ").unwrap();
+        let text = fs::read_to_string(&toml_path).unwrap();
+        assert!(text.contains(r#"session_injection_mode = "off""#), "{text}");
+        assert!(!text.contains("session_injection_template"), "{text}");
+        // 坏档不覆盖：现有文件解析失败时停止写入
+        write(&toml_path, "topic = ");
+        assert!(set_session_injection_at(&root, "auto", "").is_err());
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
@@ -6267,56 +6549,71 @@ resources = ["ghost.pdf"]
     }
 
     #[test]
-    fn append_inbox_creates_with_header_then_appends() {
+    fn append_excerpt_creates_with_header_then_appends() {
         let dir = temp_dir("inbox");
         let wt = dir.join("wt");
         fs::create_dir_all(&wt).unwrap();
-        append_inbox_at(&wt, "## a.pdf · 第 3 页 · 2026-08-05\n\n选段一\n").unwrap();
-        let target = wt.join("notes/inbox.md");
+        append_excerpt_at(&wt, "## a.pdf · 第 3 页 · 2026-08-05\n\n选段一\n").unwrap();
+        let target = wt.join("notes/excerpts.md");
         let text = fs::read_to_string(&target).unwrap();
         assert!(
-            text.starts_with("# 文献摘录收件箱"),
+            text.starts_with("# 文献摘录"),
             "首次写入要有文件头: {text}"
         );
         assert!(text.contains("选段一"));
         // 第二次：追加不覆盖，文件头不重复
-        append_inbox_at(&wt, "## b.pdf · 第 1 页 · 2026-08-05\n\n选段二\n").unwrap();
+        append_excerpt_at(&wt, "## b.pdf · 第 1 页 · 2026-08-05\n\n选段二\n").unwrap();
         let text = fs::read_to_string(&target).unwrap();
         assert!(
             text.contains("选段一") && text.ends_with("选段二\n"),
             "追加语义: {text}"
         );
         assert_eq!(
-            text.matches("文献摘录收件箱").count(),
+            text.matches("# 文献摘录").count(),
             1,
             "文件头只出现一次: {text}"
         );
         // 目录不存在要报错而不是静默
-        assert!(append_inbox_at(&dir.join("missing"), "x").is_err());
+        assert!(append_excerpt_at(&dir.join("missing"), "x").is_err());
         std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
-    fn append_inbox_rejects_oversize() {
+    fn terminal_clips_go_to_their_own_file_not_excerpts() {
+        let dir = temp_dir("clips");
+        let root = dir.join("proj");
+        fs::create_dir_all(&root).unwrap();
+        append_notes_file_at(&root, CLIPS_FILE, CLIPS_HEADER, "\n## 片段一\n").unwrap();
+        append_notes_file_at(&root, CLIPS_FILE, CLIPS_HEADER, "\n## 片段二\n").unwrap();
+        let text = fs::read_to_string(root.join("notes/clips.md")).unwrap();
+        assert!(text.starts_with("# 终端摘记"));
+        assert_eq!(text.matches("# 终端摘记").count(), 1);
+        assert!(text.ends_with("## 片段二\n"));
+        assert!(!root.join("notes/excerpts.md").exists(), "终端输出不混进文献摘录");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn append_excerpt_rejects_oversize() {
         let dir = temp_dir("inbox-cap");
         fs::create_dir_all(&dir).unwrap();
         let big = "x".repeat(64 * 1024 + 1);
-        let err = append_inbox_at(&dir, &big).unwrap_err();
+        let err = append_excerpt_at(&dir, &big).unwrap_err();
         assert!(err.contains("64 KB"), "{err}");
         std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     #[cfg(unix)] // 符号链接语义仅 unix；Windows 无权限创建
-    fn append_inbox_rejects_symlink_escape() {
+    fn append_excerpt_rejects_symlink_escape() {
         let dir = temp_dir("inbox-sym");
         let outside = dir.join("outside");
         fs::create_dir_all(&outside).unwrap();
         fs::write(outside.join("inbox.md"), "外部内容").unwrap();
         let wt = dir.join("wt");
         fs::create_dir_all(wt.join("notes")).unwrap();
-        std::os::unix::fs::symlink(outside.join("inbox.md"), wt.join("notes/inbox.md")).unwrap();
-        let err = append_inbox_at(&wt, "追加").unwrap_err();
+        std::os::unix::fs::symlink(outside.join("inbox.md"), wt.join("notes/excerpts.md")).unwrap();
+        let err = append_excerpt_at(&wt, "追加").unwrap_err();
         assert!(err.contains("拒绝写入"), "{err}");
         // 外部文件未被改动
         assert_eq!(
