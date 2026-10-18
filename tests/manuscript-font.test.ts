@@ -19,9 +19,9 @@ const script = resolve("src-tauri/resources/skills/quarto-render/scripts/manuscr
 /** `quarto --version` 输出版本号才算能用（与 dep_check.rs quarto_status 同口径） */
 const quartoWorks = () => /\d/.test(spawnSync("quarto", ["--version"], { encoding: "utf8" }).stdout ?? "");
 
-/** 不经 quarto，直接调脚本的 YAML 改写函数 */
-const rewriteYaml = (front: string, reference = "reference.docx") =>
-  spawnSync(
+/** 不经 quarto，直接调脚本的 YAML 改写函数。Windows 上 Python 的 print 会把 \n 写成 \r\n，统一还原再断言 */
+const rewriteYaml = (front: string, reference = "reference.docx") => {
+  const r = spawnSync(
     python,
     [
       "-c",
@@ -32,6 +32,8 @@ const rewriteYaml = (front: string, reference = "reference.docx") =>
     ],
     { encoding: "utf8" },
   );
+  return { ...r, stdout: (r.stdout ?? "").replace(/\r\n/g, "\n") };
+};
 
 test("确认字体的提示同时改 PDF 和 Word", () => {
   const ask = manuscriptFontPrompt("manuscript/draft.md", "Times New Roman", "宋体");
