@@ -219,7 +219,7 @@ fn new_skill(
 /// marker 是库目录下的 . 开头文件（发现逻辑跳过），记录已播种到的版本；
 /// 用户删掉某个内置技能后不会被复活——逐技能删除墓碑（BUILTIN_TOMBSTONE_FILE）
 /// 记下用户删过的内置技能名，版本升级补播时跳过墓碑项。
-const BUILTIN_SEED_VERSION: u32 = 8;
+const BUILTIN_SEED_VERSION: u32 = 13;
 const BUILTIN_SEED_MARKER: &str = ".builtin-seed-version";
 
 /// 内置技能删除墓碑（库目录下 . 开头文件，一行一个技能名）：删除内置技能先落墓碑，
@@ -523,6 +523,8 @@ fn builtin_update_lock() -> Result<BuiltinUpdateGuard, String> {
 /// 只提示 skills.json 里 source == "builtin" 的项（同名用户自建技能不算）；
 /// 库目录缺失/文件读失败 = 跳过（缺失归播种器管）。用户在内置技能上的自改同样算差异，
 /// 照样提示，由用户决定是否更新（更新前自动备份）。
+/// 2026-10-16 一次性把存量库早期以 local 进库的 14 个内置技能翻回 builtin 标签后，
+/// source 单一口径重新成立，不再需要名单现算比对。
 fn check_builtin_skill_updates_impl(store: &SkillStore) -> Vec<String> {
     let skills = store.read();
     let mut outdated = Vec::new();
@@ -1914,13 +1916,7 @@ fn list_skills_impl(store: &SkillStore, dirs: &HashMap<String, PathBuf>) -> Vec<
         // 内置技能默认归「Mesa 内置」分组：二十来个内置技能全落「未分类」里翻找费劲
         // （2026-10-11 用户拍板）。只补展示层、不写盘——用户自己设过分组的（Some）不动，
         // 清空自定义分组后回落到默认组而不是「未分类」。
-        // 除 source=builtin 外，名字在内置名单里的 local 技能也算：早期版本的种子用 local
-        // 身份进库（同名的先占了位，内置种子按「不覆盖用户技能」跳过），这一批元老同样归组。
-        if s.category.is_none()
-            && (s.source == "builtin"
-                || (s.source == "local"
-                    && BUILTIN_SKILLS.iter().any(|(name, _)| *name == s.name)))
-        {
+        if s.category.is_none() && s.source == "builtin" {
             s.category = Some("Mesa 内置".to_string());
         }
         // 老技能的 apps 表是创建时的注册表快照：后来接入的 agent（codebuddy/cursor/grok）
@@ -3392,7 +3388,8 @@ mod tests {
         let fx = Fx::new();
         seed_builtin_skills_impl(&fx.store).unwrap();
         fx.add_lib_skill("my-local-skill", "本地导入的技能");
-        // 早期种子身份：内置名单里的技能以 local 身份进库，同样要归「Mesa 内置」
+        // 2026-10-16 起存量库早期以 local 进库的内置技能已一次性翻回 builtin 标签：
+        // 归组只认 source=builtin，local 同名（用户自有版本）不再归「Mesa 内置」
         {
             let mut skills = fx.store.read();
             let old = skills
@@ -3413,8 +3410,8 @@ mod tests {
             .iter()
             .filter(|s| s.category.as_deref() == Some("Mesa 内置"))
             .count();
-        // 20 个内置：18 个默认归组（含 local 身份的元老）+ zotero-sync 用户自定义 + 被改成 local 的那个也归组 = 19
-        assert_eq!(mesa, BUILTIN_SKILLS.len() - 1, "除用户自定义的那条，其余内置（含 local 身份）都应归组");
+        // 20 个内置：18 个默认归组 + zotero-sync 用户自定义 + 被改成 local（用户自有）不归组 = 18
+        assert_eq!(mesa, BUILTIN_SKILLS.len() - 2, "除用户自定义与 local 同名（用户自有），其余内置归组");
         assert_eq!(
             listed.iter().filter(|s| s.category.as_deref() == Some("我的文献组")).count(),
             1
@@ -3616,7 +3613,9 @@ mod tests {
     #[test]
     fn builtin_update_check_ignores_user_owned_same_name() {
         let fx = Fx::new();
-        // 用户自建与内置同名的技能（source=local）：内容与种子不同，但不得提示
+        // 用户自建与内置同名的技能（source=local）：内容与种子不同，但不得提示。
+        // 2026-10-16 存量库早期以 local 进库的 14 个内置技能已一次性翻回 builtin 标签，
+        // local 同名重新稳定意味着用户自有版本，豁免成立。
         let first = BUILTIN_SKILLS[0].0;
         fx.add_lib_skill(first, "用户自己的版本");
         assert!(

@@ -10,13 +10,11 @@ import type { ProjectConfigDto, ProjectDto } from "../types";
 export default function ProjectSchedulesView({
   project,
   focusToken = null,
-  focusEntryId = null,
   onFocusHandled,
   onError,
 }: {
   project: ProjectDto;
   focusToken?: number | null;
-  focusEntryId?: string | null;
   onFocusHandled?: () => void;
   onError?: (msg: string) => void;
 }) {
@@ -61,7 +59,6 @@ export default function ProjectSchedulesView({
           projectRoot={project.path}
           cfg={cfg}
           focusToken={focusToken}
-          focusEntryId={focusEntryId}
           schedulesVersion={schedulesVersion}
           onConfigChanged={reloadCfg}
           onSubscriptionsChanged={() => setSubsVersion((v) => v + 1)}

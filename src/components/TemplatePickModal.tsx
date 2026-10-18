@@ -11,7 +11,13 @@ import {
   type SubmissionMode,
 } from "../pipeline-presets";
 import type { AppendStepsResultDto, ProjectConfigReadDto } from "../types";
-import { fieldClass, primaryActionClass, secondaryActionClass } from "./PageFrame";
+import {
+  fieldClass,
+  primaryActionClass,
+  quietActionClass,
+  secondaryActionClass,
+  NoticeBar,
+} from "./PageFrame";
 import { Modal } from "./Modal";
 
 /**
@@ -254,7 +260,7 @@ export default function TemplatePickModal({
                 </span>
               </label>
             </div>
-            {error && <p className="mt-3 text-sm text-err-text">{error}</p>}
+            {error && <NoticeBar tone="err" className="mt-3">{error}</NoticeBar>}
             <div className="mt-4 flex items-center justify-between">
               <button
                 type="button"
@@ -263,7 +269,7 @@ export default function TemplatePickModal({
                   setSubmissionTpl(null);
                   setError(null);
                 }}
-                className="rounded-sm px-3 py-1.5 text-sm text-l3 hover:bg-hover hover:text-l2 disabled:opacity-50"
+                className={quietActionClass}
               >
                 ‹ 换个模板
               </button>
@@ -320,7 +326,7 @@ export default function TemplatePickModal({
                 );
               })}
             </div>
-            {error && <p className="mt-3 text-sm text-err-text">{error}</p>}
+            {error && <NoticeBar tone="err" className="mt-3">{error}</NoticeBar>}
             <div className="mt-4 flex items-center justify-between">
               <button
                 type="button"
@@ -329,7 +335,7 @@ export default function TemplatePickModal({
                   setSettingsTpl(null);
                   setError(null);
                 }}
-                className="rounded-sm px-3 py-1.5 text-sm text-l3 hover:bg-hover hover:text-l2 disabled:opacity-50"
+                className={quietActionClass}
               >
                 ‹ 换个模板
               </button>
@@ -400,7 +406,7 @@ export default function TemplatePickModal({
                 </li>
               ))}
             </ul>
-            {error && <p className="mt-3 text-sm text-err-text">{error}</p>}
+            {error && <NoticeBar tone="err" className="mt-3">{error}</NoticeBar>}
             {/* 「不使用」显式写 pipeline_opt_out 标记（隐藏模板引导）；「稍后」只关闭不留痕，
                 两者事后都可从项目组 ⋯「选择研究流程模板」/编辑器「＋ 从模板追加」补 */}
             <div className="mt-4 flex items-center justify-between">
@@ -409,7 +415,7 @@ export default function TemplatePickModal({
                 disabled={busy !== null}
                 onClick={() => void optOut()}
                 title="不挂步进器，只把这个文件夹当文献库：沉浸阅读和笔记都写在这里（记住选择，不再显示模板引导）"
-                className="rounded-sm px-3 py-1.5 text-sm text-l3 hover:bg-hover hover:text-l2 disabled:opacity-50"
+                className={quietActionClass}
               >
                 {busy === "__optout__" ? "保存中…" : "不使用研究流程"}
               </button>
@@ -417,7 +423,7 @@ export default function TemplatePickModal({
                 type="button"
                 onClick={() => void closeLater()}
                 title="之后可从项目组 ⋯「选择研究流程模板」或编辑器「＋ 从模板追加」随时添加"
-                className="rounded-sm px-3 py-1.5 text-sm text-l2 hover:bg-hover"
+                className={secondaryActionClass}
               >
                 稍后再选
               </button>

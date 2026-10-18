@@ -44,7 +44,7 @@ quarto render manuscript/<稿件>.md --to pdf --output-dir output
   link-citations: true
   ```
   项目根 `_quarto.yml` 则 `bibliography: references.bib` 与 `csl: manuscript/citation.csl`。换形式按流程线上那一句改 csl 再重渲。不要手写文末文献表。源稿仍写 `[@bib键]`。
-- 正文字体在初稿开工时问人一次，写在本步工作区。默认英文 Times New Roman、中文宋体。用 `scripts/manuscript_font.py` 写入 YAML 的 `mainfont` / `CJKmainfont`，并生成 `manuscript/reference.docx` 与 `manuscript/typeface.md`。商量任务书的会话只改任务书，不要在那里写这两份。PDF 用 `pdf-engine: xelatex`，并加载 `booktabs`，表格是三线表。正文首行缩进 `2em`，节后第一段也缩进。Word 必须加 `--reference-doc manuscript/reference.docx`，否则仍是 Quarto 默认的等线。这份参考文档同时带标题 1–3 的字号和段前段后、正文行距。EndNote 与 Zotero 域稿的表格同样只有顶线、表头下横线和底线，没有竖线。本机没有指定字体就停，不改用别的。Quarto 见到 Mg²⁺ 这类 Unicode 会自己改走 lualatex，Mac 上 luaotfload 扫字体常卡死；xelatex 不嵌字体则整页乱码。定稿读初稿留下的 `manuscript/typeface.md`，按里面的字体名渲，不要另选字体，也不要重问；第一次渲染就用这套字，不要先用默认字体渲完再重渲。
+- 正文字体在初稿开工时问人一次，写在本步工作区。默认英文 Times New Roman、中文宋体。用 `scripts/manuscript_font.py` 写入 YAML 的 `mainfont` / `CJKmainfont`，并生成 `manuscript/reference.docx` 与 `manuscript/typeface.md`。商量任务书的会话只改任务书，不要在那里写这两份。PDF 用 `pdf-engine: xelatex`，并加载 `booktabs`，表格是三线表。正文首行缩进 `2em`，节后第一段也缩进。脚本同时把 `reference-doc` 写进 YAML 的 `format.docx`（路径相对稿件所在目录），所以无论流程线的 run 脚本还是手敲的 `quarto render`，出 Word 都自动套 `manuscript/reference.docx`；Word 出来是 Quarto 默认的等线，就是 YAML 里少了这一行，补上再渲。这份参考文档同时带标题 1–3 的字号和段前段后、正文行距。EndNote 与 Zotero 域稿的表格同样只有顶线、表头下横线和底线，没有竖线。本机没有指定字体就停，不改用别的。Quarto 见到 Mg²⁺ 这类 Unicode 会自己改走 lualatex，Mac 上 luaotfload 扫字体常卡死；xelatex 不嵌字体则整页乱码。定稿读初稿留下的 `manuscript/typeface.md`，按里面的字体名渲，不要另选字体，也不要重问；第一次渲染就用这套字，不要先用默认字体渲完再重渲。
 - `number-sections: true` 时，markdown 标题写 `## Introduction`，不要自带 `## 1.`。
 - 渲染产物统一写入 **本工作区 `output/`**（相对路径；评审合并进主仓时自动带到项目根同名目录）；该目录必须在 `.gitignore` 中，**产物不进 git**。
 - 缺产物目录时先建 `output/` 并补 `.gitignore`，再渲染。

@@ -4,7 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { marked } from "marked";
 import { renderMathInto } from "../md-math";
-import { rowActionClass } from "./PageFrame";
+import {
+  primaryActionClass,
+  rowActionClass,
+  secondaryActionClass,
+} from "./PageFrame";
 import { Modal } from "./Modal";
 import { confirmDialog } from "./ConfirmDialog";
 import type { DirEntryDto } from "./FileTree";
@@ -601,7 +605,7 @@ export default function ArtifactChecklist({
                 <button
                   type="button"
                   onClick={() => void closeInlinePreview()}
-                  className="rounded-sm px-3 py-1.5 text-sm text-l2 hover:bg-hover"
+                  className={secondaryActionClass}
                 >
                   取消
                 </button>
@@ -618,7 +622,7 @@ export default function ArtifactChecklist({
                         ? "没有改动"
                         : "保存改动"
                     }
-                    className="rounded-sm border border-cta-bd bg-cta px-3 py-1.5 text-sm text-cta-text hover:brightness-110 disabled:opacity-50"
+                    className={primaryActionClass}
                   >
                     {inlinePreview.saving ? "保存中…" : "保存"}
                   </button>

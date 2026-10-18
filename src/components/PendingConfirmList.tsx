@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { DirEntryDto } from "./FileTree";
 import { researchAbsolutePath } from "../research-report";
-import { readResearchFile } from "../research-report-load";
+import { readResearchFile, readResearchLedger, saveResearchLedger } from "../research-report-load";
 import {
   cachedJournalMetric,
   forgetJournalMetrics,
@@ -40,11 +40,14 @@ import {
   syncIncludedSummary,
   type IncludedRecord,
 } from "../screening-review";
+import { InlineNotice } from "./PageFrame";
 
+/** 读台账：工作区优先、项目根兜底。走台账通道整份读——预览通道 256 KB 截断后
+ *  这里曾把「文件太大」当成「文件不存在」，两百篇的清单显示「还没有 included.json」。 */
 async function readFirst(roots: string[], rel: string) {
   for (const root of roots) {
     try {
-      const file = await readResearchFile(root, rel);
+      const file = await readResearchLedger(root, rel);
       if (!file.truncated) return { root, file };
     } catch {
       /* 试下一处 */
@@ -105,7 +108,7 @@ export default forwardRef<PendingConfirmHandle, {
     const json = await readFirst(roots, "papers/included.json");
     if (!json) {
       setRecords([]);
-      setError("还没有 included.json。Agent 筛完会出现待确认清单。");
+      setError("还没有纳入清单。Agent 筛完，待确认篇目会出现在这里。");
       return;
     }
     setJsonRoot(json.root);
@@ -250,24 +253,14 @@ export default forwardRef<PendingConfirmHandle, {
     let next = file.file.text;
     for (const row of rows) next = appendEndnoteImportRecord(next, row, source);
     if (next !== file.file.text) {
-      await invoke<string>("save_file_preview", {
-        path: researchAbsolutePath(file.root, "papers/endnote-import.ris"),
-        root: file.root,
-        text: next,
-        expectedRevision: file.file.revision,
-      });
+      await saveResearchLedger(file.root, "papers/endnote-import.ris", next, file.file.revision);
     }
     const zotero = await readFirst([file.root, ...roots], "papers/to-fetch.ris");
     if (!zotero?.file.revision) return;
     let znext = zotero.file.text;
     for (const row of rows) znext = appendZoteroImportRecord(znext, row, source);
     if (znext === zotero.file.text) return;
-    await invoke<string>("save_file_preview", {
-      path: researchAbsolutePath(zotero.root, "papers/to-fetch.ris"),
-      root: zotero.root,
-      text: znext,
-      expectedRevision: zotero.file.revision,
-    });
+    await saveResearchLedger(zotero.root, "papers/to-fetch.ris", znext, zotero.file.revision);
   }
 
   async function dropOne(
@@ -331,12 +324,7 @@ export default forwardRef<PendingConfirmHandle, {
     setError(null);
     try {
       const nextJson = patchIncludedJson(jsonText, key, "excluded", removeReason(row.reason));
-      const nextJsonRev = await invoke<string>("save_file_preview", {
-        path: researchAbsolutePath(jsonRoot, "papers/included.json"),
-        root: jsonRoot,
-        text: nextJson,
-        expectedRevision: jsonRevision,
-      });
+      const nextJsonRev = await saveResearchLedger(jsonRoot, "papers/included.json", nextJson, jsonRevision);
       setJsonText(nextJson);
       setJsonRevision(nextJsonRev);
       const nextRecords = parseIncludedRecords(nextJson);
@@ -351,12 +339,7 @@ export default forwardRef<PendingConfirmHandle, {
           patchIncludedMd(mdText, row.title, "excluded", includedMdLine(row)),
           parseIncludedRecords(nextJson),
         );
-        const nextMdRev = await invoke<string>("save_file_preview", {
-          path: researchAbsolutePath(jsonRoot, "papers/included.md"),
-          root: jsonRoot,
-          text: nextMd,
-          expectedRevision: mdRevision,
-        });
+        const nextMdRev = await saveResearchLedger(jsonRoot, "papers/included.md", nextMd, mdRevision);
         setMdText(nextMd);
         setMdRevision(nextMdRev);
       }
@@ -380,12 +363,7 @@ export default forwardRef<PendingConfirmHandle, {
     setError(null);
     try {
       const nextJson = patchIncludedJson(jsonText, key, "pending", restorePendingReason(row.reason));
-      const nextJsonRev = await invoke<string>("save_file_preview", {
-        path: researchAbsolutePath(jsonRoot, "papers/included.json"),
-        root: jsonRoot,
-        text: nextJson,
-        expectedRevision: jsonRevision,
-      });
+      const nextJsonRev = await saveResearchLedger(jsonRoot, "papers/included.json", nextJson, jsonRevision);
       setJsonText(nextJson);
       setJsonRevision(nextJsonRev);
       setRecords(parseIncludedRecords(nextJson));
@@ -394,12 +372,7 @@ export default forwardRef<PendingConfirmHandle, {
           patchIncludedMd(mdText, row.title, "pending", includedMdLine(row)),
           parseIncludedRecords(nextJson),
         );
-        const nextMdRev = await invoke<string>("save_file_preview", {
-          path: researchAbsolutePath(jsonRoot, "papers/included.md"),
-          root: jsonRoot,
-          text: nextMd,
-          expectedRevision: mdRevision,
-        });
+        const nextMdRev = await saveResearchLedger(jsonRoot, "papers/included.md", nextMd, mdRevision);
         setMdText(nextMd);
         setMdRevision(nextMdRev);
       }
@@ -419,12 +392,7 @@ export default forwardRef<PendingConfirmHandle, {
     const reason = confirmReason(decision, row.reason);
     try {
       const nextJson = patchIncludedJson(jsonText, key, decision, reason);
-      const nextJsonRev = await invoke<string>("save_file_preview", {
-        path: researchAbsolutePath(jsonRoot, "papers/included.json"),
-        root: jsonRoot,
-        text: nextJson,
-        expectedRevision: jsonRevision,
-      });
+      const nextJsonRev = await saveResearchLedger(jsonRoot, "papers/included.json", nextJson, jsonRevision);
       setJsonText(nextJson);
       setJsonRevision(nextJsonRev);
       setRecords(parseIncludedRecords(nextJson));
@@ -433,12 +401,7 @@ export default forwardRef<PendingConfirmHandle, {
         patchIncludedMd(mdText, row.title, decision, includedMdLine(row)),
         parseIncludedRecords(nextJson),
       );
-        const nextMdRev = await invoke<string>("save_file_preview", {
-          path: researchAbsolutePath(jsonRoot, "papers/included.md"),
-          root: jsonRoot,
-          text: nextMd,
-          expectedRevision: mdRevision,
-        });
+        const nextMdRev = await saveResearchLedger(jsonRoot, "papers/included.md", nextMd, mdRevision);
         setMdText(nextMd);
         setMdRevision(nextMdRev);
       }
@@ -452,12 +415,7 @@ export default forwardRef<PendingConfirmHandle, {
         } else {
           const nextFetch = appendToFetchEntry(fetch.file.text, row);
           if (nextFetch !== fetch.file.text) {
-            await invoke<string>("save_file_preview", {
-              path: researchAbsolutePath(fetch.root, "papers/to-fetch.md"),
-              root: fetch.root,
-              text: nextFetch,
-              expectedRevision: fetch.file.revision,
-            });
+            await saveResearchLedger(fetch.root, "papers/to-fetch.md", nextFetch, fetch.file.revision);
           }
         }
       }
@@ -485,12 +443,7 @@ export default forwardRef<PendingConfirmHandle, {
         decision,
         reasonFor,
       );
-      const nextJsonRev = await invoke<string>("save_file_preview", {
-        path: researchAbsolutePath(jsonRoot, "papers/included.json"),
-        root: jsonRoot,
-        text: nextJson,
-        expectedRevision: jsonRevision,
-      });
+      const nextJsonRev = await saveResearchLedger(jsonRoot, "papers/included.json", nextJson, jsonRevision);
       setJsonText(nextJson);
       setJsonRevision(nextJsonRev);
       setRecords(parseIncludedRecords(nextJson));
@@ -501,12 +454,7 @@ export default forwardRef<PendingConfirmHandle, {
           nextMd = patchIncludedMd(nextMd, row.title, decision, includedMdLine(row));
         }
         nextMd = syncIncludedSummary(nextMd, parseIncludedRecords(nextJson));
-        nextMdRev = await invoke<string>("save_file_preview", {
-          path: researchAbsolutePath(jsonRoot, "papers/included.md"),
-          root: jsonRoot,
-          text: nextMd,
-          expectedRevision: nextMdRev,
-        });
+        nextMdRev = await saveResearchLedger(jsonRoot, "papers/included.md", nextMd, nextMdRev);
         setMdText(nextMd);
         setMdRevision(nextMdRev);
       }
@@ -521,12 +469,7 @@ export default forwardRef<PendingConfirmHandle, {
             let nextFetch = fetch.file.text;
             for (const row of missing) nextFetch = appendToFetchEntry(nextFetch, row);
             if (nextFetch !== fetch.file.text) {
-              await invoke<string>("save_file_preview", {
-                path: researchAbsolutePath(fetch.root, "papers/to-fetch.md"),
-                root: fetch.root,
-                text: nextFetch,
-                expectedRevision: fetch.file.revision,
-              });
+              await saveResearchLedger(fetch.root, "papers/to-fetch.md", nextFetch, fetch.file.revision);
             }
           }
         }
@@ -552,12 +495,7 @@ export default forwardRef<PendingConfirmHandle, {
     setError(null);
     try {
       const nextJson = includeAllPendingJson(jsonText);
-      const nextJsonRev = await invoke<string>("save_file_preview", {
-        path: researchAbsolutePath(jsonRoot, "papers/included.json"),
-        root: jsonRoot,
-        text: nextJson,
-        expectedRevision: jsonRevision,
-      });
+      const nextJsonRev = await saveResearchLedger(jsonRoot, "papers/included.json", nextJson, jsonRevision);
       setJsonText(nextJson);
       setJsonRevision(nextJsonRev);
       setRecords(parseIncludedRecords(nextJson));
@@ -568,12 +506,7 @@ export default forwardRef<PendingConfirmHandle, {
           nextMd = patchIncludedMd(nextMd, row.title, "included", includedMdLine(row));
         }
         nextMd = syncIncludedSummary(nextMd, parseIncludedRecords(nextJson));
-        nextMdRev = await invoke<string>("save_file_preview", {
-          path: researchAbsolutePath(jsonRoot, "papers/included.md"),
-          root: jsonRoot,
-          text: nextMd,
-          expectedRevision: nextMdRev,
-        });
+        nextMdRev = await saveResearchLedger(jsonRoot, "papers/included.md", nextMd, nextMdRev);
         setMdText(nextMd);
         setMdRevision(nextMdRev);
       }
@@ -587,12 +520,7 @@ export default forwardRef<PendingConfirmHandle, {
           let nextFetch = fetch.file.text;
           for (const row of missing) nextFetch = appendToFetchEntry(nextFetch, row);
           if (nextFetch !== fetch.file.text) {
-            await invoke<string>("save_file_preview", {
-              path: researchAbsolutePath(fetch.root, "papers/to-fetch.md"),
-              root: fetch.root,
-              text: nextFetch,
-              expectedRevision: fetch.file.revision,
-            });
+            await saveResearchLedger(fetch.root, "papers/to-fetch.md", nextFetch, fetch.file.revision);
           }
         }
       }
@@ -672,10 +600,13 @@ export default forwardRef<PendingConfirmHandle, {
     });
   }
 
+  /** 一篇一行。`side` = 动作放行尾、悬停才现（已纳入的「移出」、已排除的「恢复」——
+   *  低频，且勾选 +「移出所选」已能批量做）；待确认的纳入/排除是要做的决定，放标题下常显。 */
   function rowBody(
     row: IncludedRecord,
     actions: ReactNode,
     selection?: { picked: Set<string>; toggle: (key: string) => void },
+    side = false,
   ) {
     const key = includedRecordKey(row);
     const pdfPath = matchPaperPdf(row, pdfFiles, papersDir);
@@ -683,7 +614,7 @@ export default forwardRef<PendingConfirmHandle, {
     const title = displayCitationTitle(row.title);
     const metric = metrics.get(key);
     return (
-      <li key={key} className="flex gap-2 border-t border-hairline pt-2">
+      <li key={key} className="group flex gap-2 border-t border-hairline pt-2">
         {selection && (
           <label className={`mt-0.5 flex h-4 w-4 shrink-0 ${includingAll ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}>
             <input
@@ -711,6 +642,7 @@ export default forwardRef<PendingConfirmHandle, {
           <button
             type="button"
             className="text-left text-xs leading-5 text-cta-pill-text hover:underline"
+            title="已有 PDF，点击在文件页预览"
             onClick={() => onOpenPdf(pdfPath)}
           >
             {title}
@@ -719,10 +651,11 @@ export default forwardRef<PendingConfirmHandle, {
           <p className="text-xs leading-5 text-l1">{title}</p>
         )}
         <p className="mt-0.5 flex flex-wrap items-center gap-1 text-micro text-l4">
-          {meta && <span>{meta}</span>}
+          {meta && <span title={row.authors || undefined}>{meta}</span>}
           <JournalBadges metric={metric} tableReady={metricsReady} loading={metricsLoading} />
+          {/* 有全文只占一个小记号，不再单起一行（标题本身就是打开入口） */}
+          {pdfPath && <span className="text-ok-text">· 有 PDF</span>}
         </p>
-        {pdfPath && <p className="mt-0.5 text-micro text-ok-text">已有 PDF，点标题在文件页预览</p>}
         {!pdfPath && row.url && (
           <button
             type="button"
@@ -733,8 +666,13 @@ export default forwardRef<PendingConfirmHandle, {
           </button>
         )}
         {row.reason && <p className="mt-0.5 text-micro leading-5 text-l3">{row.reason}</p>}
-        {actions}
+        {!side && actions}
         </div>
+        {side && (
+          <div className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+            {actions}
+          </div>
+        )}
       </li>
     );
   }
@@ -760,7 +698,7 @@ export default forwardRef<PendingConfirmHandle, {
       {showListTools && pending.length === 0 && (
         <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">{listTools}</div>
       )}
-      {error && <p className="text-micro text-err-text">{error}</p>}
+      {error && <InlineNotice tone="err" size="micro">{error}</InlineNotice>}
       {pending.length > 0 && (
         <section>
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -857,18 +795,17 @@ export default forwardRef<PendingConfirmHandle, {
               const key = includedRecordKey(row);
               return rowBody(
                 row,
-                <div className="mt-1">
-                  <button
-                    type="button"
-                    disabled={busyKey === key || includingAll}
-                    onClick={() => void removeRow(row)}
-                    title="改成排除，并从纳入清单和待获取里拿掉。笔记和引文不动。"
-                    className="rounded-sm border border-field px-1.5 py-0.5 text-micro text-l2 hover:bg-hover disabled:opacity-50"
-                  >
-                    移出
-                  </button>
-                </div>,
+                <button
+                  type="button"
+                  disabled={busyKey === key || includingAll}
+                  onClick={() => void removeRow(row)}
+                  title="改成排除，并从纳入清单和待获取里拿掉。笔记和引文不动。"
+                  className="rounded-sm px-1.5 py-0.5 text-micro text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50"
+                >
+                  {busyKey === key ? "移出中…" : "移出"}
+                </button>,
                 { picked: pickedIncluded, toggle: (key) => toggleIn(setPickedIncluded, key) },
+                true,
               );
             })}
           </ul>
@@ -890,17 +827,17 @@ export default forwardRef<PendingConfirmHandle, {
                 const key = includedRecordKey(row);
                 return rowBody(
                   row,
-                  <div className="mt-1">
-                    <button
-                      type="button"
-                      disabled={busyKey === key || includingAll}
-                      onClick={() => void restoreRow(row)}
-                      title="改回待确认。待获取和两份 RIS 不自动写回，再次纳入才会补。"
-                      className="rounded-sm border border-field px-1.5 py-0.5 text-micro text-l2 hover:bg-hover disabled:opacity-50"
-                    >
-                      恢复为待确认
-                    </button>
-                  </div>,
+                  <button
+                    type="button"
+                    disabled={busyKey === key || includingAll}
+                    onClick={() => void restoreRow(row)}
+                    title="改回待确认。待获取和两份 RIS 不自动写回，再次纳入才会补。"
+                    className="rounded-sm px-1.5 py-0.5 text-micro text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50"
+                  >
+                    恢复为待确认
+                  </button>,
+                  undefined,
+                  true,
                 );
               })}
             </ul>

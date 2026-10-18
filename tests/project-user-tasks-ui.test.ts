@@ -274,7 +274,7 @@ test("完整历程默认收起，展开保留意见与版本，内部执行不�
     await view.click(`目标详情：${task.name}`);
     const history = view.host.querySelector('[aria-label^="目标历程详情"]')!;
     assert.deepEqual(Array.from(history.querySelectorAll("li")).map((item) => ({
-      label: item.querySelector("p")?.textContent,
+      label: item.querySelector("p > span")?.textContent,
       body: item.querySelectorAll("p")[1]?.textContent ?? "",
     })), [
       { label: "生成", body: "" },
@@ -282,6 +282,11 @@ test("完整历程默认收起，展开保留意见与版本，内部执行不�
       { label: "第 2 版", body: "" },
       { label: "已采纳", body: "" },
     ]);
+    // 每一版、每条意见旁带时间（悬浮给绝对时间）；采纳没有可靠时间不标
+    assert.deepEqual(
+      Array.from(history.querySelectorAll("li")).map((item) => Boolean(item.querySelector("p > span[title]"))),
+      [true, true, true, false],
+    );
     assert.equal(view.button(`目标详情：${task.name}`).getAttribute("aria-expanded"), "true");
     await view.click(`目标详情：${task.name}`);
     assert.equal(view.host.querySelector('[aria-label^="目标历程详情"]'), null);

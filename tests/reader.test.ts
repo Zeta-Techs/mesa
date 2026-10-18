@@ -65,6 +65,9 @@ import {
   clampReaderTlCard,
   loadReaderTlCard,
   saveReaderTlCard,
+  READER_SURFACE_KEY,
+  loadReaderSurface,
+  saveReaderSurface,
   type TlHistoryEntry,
 } from "../src/reader.ts";
 
@@ -729,4 +732,24 @@ test("reflowBlockText：组合场景（断词 + 段内换行 + 空行 + trim）"
     reflowBlockText(raw, { cjk: false }),
     "Redox mediators show promise.\nThey stabilize sulfur.",
   );
+});
+
+test("阅读区右栏显示层记忆：缺省聊天层，只记终端这一个改动值", () => {
+  const store = new Map<string, string>();
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    },
+  });
+  assert.equal(loadReaderSurface(), "chat");
+  saveReaderSurface("terminal");
+  assert.equal(store.get(READER_SURFACE_KEY), "terminal");
+  assert.equal(loadReaderSurface(), "terminal");
+  saveReaderSurface("chat");
+  assert.equal(store.has(READER_SURFACE_KEY), false);
+  store.set(READER_SURFACE_KEY, "garbage");
+  assert.equal(loadReaderSurface(), "chat");
 });

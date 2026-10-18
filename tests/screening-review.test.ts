@@ -45,6 +45,7 @@ import {
   screeningNowLine,
   shouldPrioritizeScreeningFiles,
   sortReviewPaths,
+  shortAuthors,
 } from "../src/screening-review.ts";
 
 test("待确认清完：每篇都是纳入或排除才算；空清单和空白判定不算", () => {
@@ -570,4 +571,17 @@ test("Git 拦截直接写原因，不报问题计数", () => {
     ]),
     "主文件夹里还有没保存的改动（另有 1 项）",
   );
+});
+
+test("清单行作者缩成前 3 位 + 等 N 人，三种写法都认", () => {
+  assert.equal(
+    shortAuthors("Zhang, Duo, Sun, Yukun, Liu, Xiaoshuo, Zhang, Yang, Wang, Rui"),
+    "Zhang, Duo; Sun, Yukun; Liu, Xiaoshuo 等 5 人",
+  );
+  assert.equal(shortAuthors("Siyu Song; Xiaogang Li; Zhouyang Xu; Wei Wang"), "Siyu Song; Xiaogang Li; Zhouyang Xu 等 4 人");
+  assert.equal(shortAuthors("D. Aurbach, Z. Lu, A. Schechter, Y. Gofer"), "D. Aurbach; Z. Lu; A. Schechter 等 4 人");
+  // 少于等于 3 人、已带 et al. 的原样
+  assert.equal(shortAuthors("Hu, Jinlong, Que, Ziwei"), "Hu, Jinlong, Que, Ziwei");
+  assert.equal(shortAuthors("Song S et al."), "Song S et al.");
+  assert.equal(shortAuthors(""), "");
 });

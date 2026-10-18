@@ -44,7 +44,7 @@ export function inlineDecisionLine(
   kind: ReviewItemKind,
   state: "open" | "empty" | "done",
 ): string {
-  if (state === "done") return "都已决定，点下面回到原来的对话。";
+  if (state === "done") return "都已决定，点旁边的按钮回到原来的对话继续。";
   if (kind === "verify") {
     return state === "empty"
       ? "没有待核实或存疑条目，勾上跳过。"

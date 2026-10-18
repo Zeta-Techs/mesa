@@ -4,7 +4,7 @@ import { clampReaderTlBall, loadReaderTlBall, saveReaderTlBall } from "../reader
 
 type PanelProps = Omit<
   ComponentProps<typeof ReaderTranslatePanel>,
-  "heightPct" | "floatAnchor" | "onClose"
+  "heightPct" | "floatAnchor" | "floatBounds" | "onClose"
 >;
 
 /**
@@ -23,6 +23,7 @@ export default function ReaderTlFloat({
   hasContent,
   openTick,
   startOpen,
+  bounds,
 }: {
   /** 译文卡除摆位外的全部 props（ReaderOverlay 的 tlPanelProps） */
   panelProps: PanelProps;
@@ -32,6 +33,8 @@ export default function ReaderTlFloat({
   openTick: number;
   /** 挂载即展开（从看得见的卡点「钉住」的接续：卡搬家到球旁，不是缩成球） */
   startOpen?: boolean;
+  /** 卡的横向活动范围（PDF 栏离窗口左右边的 px）：卡只在 PDF 栏里展开，不盖笔记栏 */
+  bounds?: { left: number; right: number };
 }) {
   const [pos, setPos] = useState(() => loadReaderTlBall());
   const posRef = useRef(pos);
@@ -130,6 +133,7 @@ export default function ReaderTlFloat({
           {...panelProps}
           heightPct={null}
           floatAnchor={pos}
+          floatBounds={bounds}
           onClose={() => setOpen(false)}
         />
       )}

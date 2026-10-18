@@ -874,7 +874,27 @@ export function filterIncludedRecords(
 }
 
 export function includedRecordMeta(row: IncludedRecord): string {
-  return [row.year, row.authors, row.source].filter(Boolean).join(" · ");
+  return [row.year, shortAuthors(row.authors), row.source].filter(Boolean).join(" · ");
+}
+
+/** 作者串缩成前 keep 位 +「等 N 人」：清单行一行放得下（完整作者进悬停）。
+ *  认三种写法：`;` 分隔；「姓, 名, 姓, 名」逗号对（每段都是单个词且段数为偶数时两两成对）；
+ *  「名 姓, 名 姓」每段一人。已带 et al. / 等 的原样返回。 */
+export function shortAuthors(authors: string | undefined | null, keep = 3): string {
+  const raw = (authors ?? "").trim();
+  if (!raw || /(?:et al\.?|等)\s*$/i.test(raw)) return raw;
+  let names: string[];
+  if (raw.includes(";") || raw.includes("；")) {
+    names = raw.split(/[;；]/).map((s) => s.trim()).filter(Boolean);
+  } else {
+    const parts = raw.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
+    const paired = parts.length >= 4 && parts.length % 2 === 0 && parts.every((p) => !/\s/.test(p));
+    names = paired
+      ? parts.flatMap((p, i) => (i % 2 === 0 ? [`${p}, ${parts[i + 1]}`] : []))
+      : parts;
+  }
+  if (names.length <= keep) return raw;
+  return `${names.slice(0, keep).join("; ")} 等 ${names.length} 人`;
 }
 
 export function includedRecordKey(row: Pick<IncludedRecord, "id" | "title">): string {

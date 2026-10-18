@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { TaskStorageReviewDto } from "../types";
 import { Modal } from "./Modal";
 import { confirmDialog } from "./ConfirmDialog";
-import { primaryActionClass, secondaryActionClass } from "./PageFrame";
+import { primaryActionClass, secondaryActionClass, InlineNotice } from "./PageFrame";
 
 function size(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -57,10 +57,10 @@ export default function GoalStorageModal({ taskId, onClose, onChanged }: {
     <div className="space-y-4 text-xs">
       <p className="text-l3">仅清理这个目标的内部副本，主项目成果、目标和接受记录始终保留。占用按文件内容统计，实际释放空间可能不同。</p>
       {loading && <p role="status" className="text-l3">统计并核对副本…</p>}
-      {error && <p role="alert" className="break-words text-err-text">{error}</p>}
+      {error && <InlineNotice tone="err">{error}</InlineNotice>}
       {notice && <p role="status" className="text-l3">{notice}</p>}
       {!loading && review && <>
-        {review.blockedReason && <p className="text-warn-text">{review.blockedReason}</p>}
+        {review.blockedReason && <InlineNotice tone="warn">{review.blockedReason}</InlineNotice>}
         {review.pending && <div className="space-y-2 rounded-md border border-field p-3">
           <p>有未完成的{review.pending.scope === "workspace" ? "工作副本" : "历史版本"}清理。请继续原操作；完成前不能启动或返修。</p>
           <button type="button" className={primaryActionClass} disabled={busy || !!review.blockedReason}

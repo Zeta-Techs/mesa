@@ -28,14 +28,17 @@ export function isUnsafeLitProjectDir(
   return false;
 }
 
-/** 无研究流程或没有精读步骤时，选段写入项目根 notes/inbox.md。 */
-export function notesInboxTarget(cfg: {
+/** PDF 选段摘录（notes/excerpts.md）该写进哪个精读步骤的工作区：工作区名为 lit-notes、
+ *  或挂了 lit-notes 技能的步骤。没有研究流程、没有精读步骤时写项目根。
+ *  只给出候选——工作区没在跑时调用方仍写项目根，不替人提前开工。 */
+export function notesExcerptTarget(cfg: {
   pipelineOptOut?: boolean;
-  steps: { workspaceName: string }[];
+  steps: { workspaceName: string; skills?: string[] }[];
 }): { kind: "workspace"; name: string } | { kind: "project-root" } {
   if (cfg.pipelineOptOut) return { kind: "project-root" };
   const step =
-    cfg.steps.find((s) => s.workspaceName === "lit-notes") ?? cfg.steps[1];
+    cfg.steps.find((s) => s.workspaceName === "lit-notes") ??
+    cfg.steps.find((s) => s.skills?.includes("lit-notes"));
   if (step?.workspaceName) return { kind: "workspace", name: step.workspaceName };
   return { kind: "project-root" };
 }

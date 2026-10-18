@@ -46,8 +46,9 @@ fn is_untracked_only_ledger(path: &str) -> bool {
     )
 }
 
-/// 日常积累面：雷达台账、用户精读笔记、本机验收台账、雷达订阅——任何常规状态都不拦合并。
-/// notes/index.json 是流程正典（.json），不在此列。
+/// 日常积累面：雷达台账、用户精读笔记（含沉浸阅读截图 notes/assets/）、本机验收台账、
+/// 雷达订阅——任何常规状态都不拦合并。notes/index.json 是流程正典（.json），不在此列。
+/// notes/assets/ 2026-10-17 补入：截图未提交时曾把所有工作区合并拦住。
 fn is_accumulation_ledger(path: &str) -> bool {
     matches!(
         path,
@@ -57,6 +58,7 @@ fn is_accumulation_ledger(path: &str) -> bool {
             | ".ccode/acceptance-log.jsonl"
             | ".ccode/acceptance-log.lock"
     ) || (path.starts_with("notes/") && path.ends_with(".md"))
+        || path.starts_with("notes/assets/")
         || path.starts_with(".ccode/watch/")
 }
 
@@ -374,6 +376,9 @@ mod tests {
         assert!(is_untracked_ledger_file(" M papers/watch-followup.md"));
         assert!(is_untracked_ledger_file("?? notes/my-note.md"));
         assert!(is_untracked_ledger_file(" M notes/slug/我的笔记.md"));
+        // 沉浸阅读截图：笔记的配图，与笔记同口径
+        assert!(is_untracked_ledger_file("?? notes/assets/capture-1.png"));
+        assert!(is_untracked_ledger_file("?? notes/assets/"));
         assert!(is_untracked_ledger_file("?? papers/reading-list.md"));
         // 雷达订阅目录（.ccode/watch/<任务id>/watchlist.md）同属积累面
         assert!(is_untracked_ledger_file("?? .ccode/watch/s1/watchlist.md"));

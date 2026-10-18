@@ -1,8 +1,23 @@
+import {
+  FilePenLine,
+  MessageCircle,
+  Pencil,
+  Trash2,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ContextMenu from "./ContextMenu";
 import { confirmDialog } from "./ConfirmDialog";
-import { hoverRevealClass, inlineActionClass, RoleBadge, Toggle } from "./PageFrame";
+import {
+  hoverRevealClass,
+  inlineActionClass,
+  primaryActionClass,
+  RoleBadge,
+  secondaryActionClass,
+  Toggle,
+  InlineNotice,
+} from "./PageFrame";
+import { Modal } from "./Modal";
 import StepEvidenceChip from "./StepEvidenceChip";
 import StepFlow from "./StepFlow";
 import FuseDraftModal from "./FuseDraftModal";
@@ -42,7 +57,7 @@ import { isSettingPlaceholder } from "../project-context";
 import { upsertPendingSettingsSection } from "../task-md-sections";
 import { researchToolAskFieldsForStep, researchToolsFromSettings } from "../research-tools";
 import { useSkillProvides } from "../skill-slots.ts";
-import { statusBadgeTitle, userDirtyFiles } from "../git-status-groups";
+import { statusBadgeTitle, userWorkDirtyFiles } from "../git-status-groups";
 import {
   historySaveBlockedReason,
   historySaveMessage,
@@ -303,7 +318,7 @@ export default function TaskCardsSection({
     )
       .then((status) => {
         if (stale) return;
-        setDirtyFiles(status.isRepo ? userDirtyFiles(status.files) : []);
+        setDirtyFiles(status.isRepo ? userWorkDirtyFiles(status.files) : []);
         setDirtyMerging(status.merging === true);
       })
       .catch((reason) => {
@@ -969,7 +984,7 @@ export default function TaskCardsSection({
         )}
         {/* 「想法期只读保护」开关已迁入聚焦态想法区标题行（它只管想法卡的只读纯聊一路） */}
       </div>
-      {error && <p className="mt-1 text-xs text-err-text">{error}</p>}
+      {error && <InlineNotice tone="err" className="mt-1">{error}</InlineNotice>}
       {dirtyOpen && mainDirty !== null && mainDirty > 0 && (
         <div className="ccode-well mt-1.5 rounded-md px-2.5 py-2">
           {dirtyLoading && (
@@ -995,7 +1010,7 @@ export default function TaskCardsSection({
             <p className="mt-1 text-micro text-l3">{dirtyBlocked}</p>
           )}
           {dirtyError && (
-            <p className="mt-1 text-micro text-err-text">{dirtyError}</p>
+            <InlineNotice tone="err" size="micro" className="mt-1">{dirtyError}</InlineNotice>
           )}
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
             <button
@@ -1300,6 +1315,7 @@ export default function TaskCardsSection({
             ...(menu.card.kind === "idea"
               ? [
                   {
+                    icon: MessageCircle,
                     label: "聊想法",
                     title:
                       "在项目根开终端聊聊这张卡（不建工作区，只读纯聊），新会话自动归入本卡",
@@ -1311,6 +1327,7 @@ export default function TaskCardsSection({
             ...(discussGuard && menu.card.kind === "idea"
               ? [
                   {
+                    icon: FilePenLine,
                     label: "聊想法（允许改文件）",
                     title:
                       "只此一次以普通模式启动（不注入只读参数、不带不动文件约束）；开关保持开",
@@ -1319,11 +1336,13 @@ export default function TaskCardsSection({
                 ]
               : []),
             {
+              icon: Pencil,
               label: "重命名",
               onSelect: () =>
                 setRenaming({ id: menu.card.id, name: menu.card.name }),
             },
             {
+              icon: Trash2,
               label: "删除卡片",
               danger: true,
               onSelect: () => void onDelete(menu.card),
@@ -1332,23 +1351,38 @@ export default function TaskCardsSection({
         />
       )}
       {carryAsk && (
-        <div
-          className="fixed inset-0 z-70 flex items-center justify-center bg-black/40 p-6"
-          onClick={() => {
+        <Modal
+          open
+          size="sm"
+          layer="overlay"
+          title={`上次是 ${AGENTS.find((a) => a.id === carryAsk.fromAgent)?.label ?? carryAsk.fromAgent}`}
+          // 整理在途时 Esc / 点遮罩都不关，避免关框后后台还在写
+          dismissOnBackdrop={!carryBusy}
+          onClose={() => {
             if (!carryBusy) setCarryAsk(null);
           }}
+          footer={
+            <>
+              <button
+                type="button"
+                disabled={carryBusy}
+                onClick={() => void continueWithoutCarry()}
+                className={secondaryActionClass}
+              >
+                不带，直接开
+              </button>
+              <button
+                type="button"
+                disabled={carryBusy}
+                onClick={() => void carryAndContinue()}
+                className={primaryActionClass}
+              >
+                {carryBusy ? "正在整理…" : "带上上次对话"}
+              </button>
+            </>
+          }
         >
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="continue-carry-title"
-            className="w-full max-w-[26rem] rounded-lg border border-hairline ccode-float-surface p-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 id="continue-carry-title" className="text-sm font-medium text-l1">
-              上次是 {AGENTS.find((a) => a.id === carryAsk.fromAgent)?.label ?? carryAsk.fromAgent}
-            </h2>
-            <p className="mt-2 text-sm leading-6 text-l2">
+            <p className="text-sm leading-6 text-l2">
               这次用 {AGENTS.find((a) => a.id === carryAsk.launch.agentId)?.label ?? carryAsk.launch.agentId} 开新一轮。要不要把上次对话里的用户原话逐条带上？原话不改写，助手正文附在后面供核对。旧对话还留在原来那家。
             </p>
             {!digestReady() && (
@@ -1361,26 +1395,7 @@ export default function TaskCardsSection({
                 {carryError}
               </p>
             )}
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                type="button"
-                disabled={carryBusy}
-                onClick={() => void continueWithoutCarry()}
-                className="inline-flex h-7 items-center justify-center rounded-md border border-field bg-strip px-3 text-xs text-l2 hover:bg-inset hover:text-l1 disabled:opacity-50"
-              >
-                不带，直接开
-              </button>
-              <button
-                type="button"
-                disabled={carryBusy}
-                onClick={() => void carryAndContinue()}
-                className="inline-flex h-7 items-center justify-center rounded-md border border-cta-bd bg-cta px-3 text-xs font-medium text-cta-text hover:brightness-110 disabled:opacity-50"
-              >
-                {carryBusy ? "正在整理…" : "带上上次对话"}
-              </button>
-            </div>
-          </section>
-        </div>
+        </Modal>
       )}
     </div>
   );

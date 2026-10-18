@@ -1,3 +1,8 @@
+import {
+  Pencil,
+  Sparkles,
+  Trash2,
+} from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
@@ -6,13 +11,17 @@ import ContextMenu from "./ContextMenu";
 import { Modal } from "./Modal";
 import { confirmDialog } from "./ConfirmDialog";
 import {
+  fieldClass,
   FoldMark,
   hoverRevealClass,
   iconActionClass,
   inlineActionClass,
+  primaryActionClass,
   projectWellClass,
+  secondaryActionClass,
   Toggle,
-  fieldClass,
+  InlineNotice,
+  NoticeBar,
 } from "./PageFrame";
 import { useAppStore } from "../store";
 import { IS_WINDOWS } from "../hotkeys";
@@ -342,7 +351,7 @@ function CreateScheduleModal({
               setModelId("");
             }}
           >
-            <option value="">自动（跟随默认解析）</option>
+            <option value="">跟随项目默认</option>
             {profiles.map((p) => {
               const meta = profileScheduleMeta(p, caps);
               return (
@@ -382,19 +391,19 @@ function CreateScheduleModal({
               <p className="mb-3 text-xs text-warn-text">⚠ {caution}</p>
             ) : null;
           })()}
-        {error && <p className="mb-3 text-sm text-err-text">{error}</p>}
+        {error && <NoticeBar tone="err" className="mb-3">{error}</NoticeBar>}
         <div className="flex justify-end gap-2">
           <button
             type="button"
             onClick={onClose}
-            className="rounded-sm px-3 py-1.5 text-sm text-l2 hover:bg-hover"
+            className={secondaryActionClass}
           >
             取消
           </button>
           <button
             type="submit"
             disabled={busy || !time || (isNew && !intent.trim())}
-            className="rounded-sm border border-cta-bd bg-cta px-3 py-1.5 text-sm text-cta-text hover:brightness-110 disabled:opacity-50"
+            className={primaryActionClass}
           >
             {busy
               ? isNew
@@ -595,11 +604,11 @@ function EditScheduleModal({
           {frequency === "weekly" && <label className="block flex-1 text-sm"><span className="mb-1 block text-xs text-l3">星期</span><select className={fieldClass} value={weekday} onChange={(e) => setWeekday(Number(e.target.value))}>{["一","二","三","四","五","六","日"].map((d, i) => <option key={d} value={i + 1}>周{d}</option>)}</select></label>}
           <label className="block flex-1 text-sm"><span className="mb-1 block text-xs text-l3">时间</span><input className={fieldClass} type="time" required value={time} onChange={(e) => setTime(e.target.value)} /></label>
         </div>
-        <label className="mb-3 block text-sm"><span className="mb-1 block text-xs text-l3">运行配置</span><span className="mb-1 block text-micro text-l4">文献雷达选 Codex。没有后缀的只在课题目录里写。</span><select className={fieldClass} value={profileId} onChange={(e) => { setProfileId(e.target.value); setModelId(""); }}><option value="">自动</option>{profiles.map((p) => { const meta = profileScheduleMeta(p, caps); return <option key={p.id} value={p.id} disabled={meta.disabled}>{meta.label}</option>; })}</select></label>
+        <label className="mb-3 block text-sm"><span className="mb-1 block text-xs text-l3">运行配置</span><span className="mb-1 block text-micro text-l4">文献雷达选 Codex。没有后缀的只在课题目录里写。</span><select className={fieldClass} value={profileId} onChange={(e) => { setProfileId(e.target.value); setModelId(""); }}><option value="">跟随项目默认</option>{profiles.map((p) => { const meta = profileScheduleMeta(p, caps); return <option key={p.id} value={p.id} disabled={meta.disabled}>{meta.label}</option>; })}</select></label>
         <label className="mb-3 block text-sm"><span className="mb-1 block text-xs text-l3">模型</span><select className={fieldClass} value={modelId} disabled={!profileId} onChange={(e) => setModelId(e.target.value)}><option value="">{profileId ? "默认（名单第一个）" : "跟随执行时解析"}</option>{profileId && (profiles.find((p) => p.id === profileId)?.models ?? []).map((m) => <option key={m} value={m}>{m}</option>)}</select></label>
-        {profileId && (() => { const p = profiles.find((x) => x.id === profileId); const caution = p ? headlessWriteCaution(caps[p.agent]?.headlessWrite) : null; return caution ? <p className="mb-3 text-xs text-warn-text">⚠ {caution}</p> : null; })()}
-        {error && <p className="mb-3 text-sm text-err-text">{error}</p>}
-        <div className="flex justify-end gap-2"><button type="button" onClick={onClose} className="rounded-sm px-3 py-1.5 text-sm text-l2 hover:bg-hover">取消</button><button type="submit" disabled={busy} className="rounded-sm border border-cta-bd bg-cta px-3 py-1.5 text-sm text-cta-text">{busy ? "保存中…" : "保存"}</button></div>
+        {profileId && (() => { const p = profiles.find((x) => x.id === profileId); const caution = p ? headlessWriteCaution(caps[p.agent]?.headlessWrite) : null; return caution ? <InlineNotice tone="warn" className="mb-3">{caution}</InlineNotice> : null; })()}
+        {error && <NoticeBar tone="err" className="mb-3">{error}</NoticeBar>}
+        <div className="flex justify-end gap-2"><button type="button" onClick={onClose} className={secondaryActionClass}>取消</button><button type="submit" disabled={busy} className={primaryActionClass}>{busy ? "保存中…" : "保存"}</button></div>
       </form>
     </Modal>
     </FloatLayer>
@@ -677,15 +686,15 @@ function CommitWatchDraftModal({
           value={text}
           onChange={(e) => setText(e.target.value)}
         />
-        {error && <p className="mt-2 text-sm text-err-text">{error}</p>}
+        {error && <NoticeBar tone="err" className="mt-2">{error}</NoticeBar>}
         <div className="mt-3 flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="rounded-sm px-3 py-1.5 text-sm text-l2 hover:bg-hover">
+          <button type="button" onClick={onClose} className={secondaryActionClass}>
             取消
           </button>
           <button
             type="submit"
             disabled={busy || !text.trim()}
-            className="rounded-sm border border-cta-bd bg-cta px-3 py-1.5 text-sm text-cta-text hover:brightness-110 disabled:opacity-50"
+            className={primaryActionClass}
           >
             {busy ? "保存中…" : "确认落盘"}
           </button>
@@ -738,15 +747,15 @@ function EditWatchSkillModal({
           value={text}
           onChange={(e) => setText(e.target.value)}
         />
-        {error && <p className="mt-2 text-sm text-err-text">{error}</p>}
+        {error && <NoticeBar tone="err" className="mt-2">{error}</NoticeBar>}
         <div className="mt-3 flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="rounded-sm px-3 py-1.5 text-sm text-l2 hover:bg-hover">
+          <button type="button" onClick={onClose} className={secondaryActionClass}>
             取消
           </button>
           <button
             type="submit"
             disabled={busy || !text.trim()}
-            className="rounded-sm border border-cta-bd bg-cta px-3 py-1.5 text-sm text-cta-text disabled:opacity-50"
+            className={primaryActionClass}
           >
             {busy ? "保存中…" : "保存"}
           </button>
@@ -790,6 +799,8 @@ export default function ScheduleSection({
   const caps = useAgentCaps();
   /** 手动「立即跑」中的任务 id：靠 scheduler-run-done 事件清除并触发重拉 */
   const [running, setRunning] = useState<Set<string>>(new Set());
+  /** 全部项目里正在跑的雷达数（排队中 tooltip 用：排队的原因是它们占着闸门） */
+  const [runningCount, setRunningCount] = useState(0);
   const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(
     null,
   );
@@ -803,6 +814,8 @@ export default function ScheduleSection({
   const [skills, setSkills] = useState<SkillDto[]>([]);
   /** 每条文献雷达自己的关键词数。缺这一项 = 还没拉到，不拦立即跑 */
   const [subCounts, setSubCounts] = useState<Record<string, number>>({});
+  /** 同一份订阅的关键词原文：只有 1 个时行内直接显示内容（2026-10-16 优化计划 2b），其余回计数 */
+  const [subKeywords, setSubKeywords] = useState<Record<string, string[]>>({});
   const [keywordFor, setKeywordFor] = useState<ScheduleDto | null>(null);
 
   async function load() {
@@ -815,6 +828,7 @@ export default function ScheduleSection({
         invoke<SkillDto[]>("list_skills").catch(() => [] as SkillDto[]),
       ]);
       const mine = schedulesForProject(list, projectRoot, IS_WINDOWS);
+      setRunningCount(list.filter((t) => t.runningRunId).length);
       const counts = await Promise.all(
         mine
           .filter((s) => isLitWatchSkill(s.skill))
@@ -824,7 +838,7 @@ export default function ScheduleSection({
                 "list_watch_subscriptions",
                 { projectRoot, scheduleId: s.id },
               );
-              return [s.id, subs.length] as const;
+              return [s.id, subs.length, subs.map((x) => x.keyword)] as const;
             } catch {
               return null;
             }
@@ -837,6 +851,20 @@ export default function ScheduleSection({
         const next = { ...cur };
         for (const item of counts) {
           if (item) next[item[0]] = item[1];
+        }
+        return next;
+      });
+      setSubKeywords((cur) => {
+        const next = { ...cur };
+        for (const item of counts) {
+          if (item) next[item[0]] = item[2];
+        }
+        return next;
+      });
+      setSubKeywords((cur) => {
+        const next = { ...cur };
+        for (const item of counts) {
+          if (item) next[item[0]] = item[2];
         }
         return next;
       });
@@ -865,6 +893,11 @@ export default function ScheduleSection({
     })
       .then((u) => (unlisten = u))
       .catch(() => toast("定时任务完成事件监听失败，列表可能不会自动刷新", "warning"));
+    // tick/手动拉起即刷新：排队中的卡要能翻成运行中（不发这条事件的旧后端无此刷新）
+    let unlistenStarted: (() => void) | undefined;
+    listen("scheduler-run-started", onDone)
+      .then((u) => (unlistenStarted = u))
+      .catch(() => {});
     let unlistenAdopt: (() => void) | undefined;
     listen("watch-run-adopted", onDone)
       .then((u) => (unlistenAdopt = u))
@@ -873,6 +906,7 @@ export default function ScheduleSection({
       stale = true;
       unlisten?.();
       unlistenAdopt?.();
+      unlistenStarted?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectRoot]);
@@ -915,7 +949,7 @@ export default function ScheduleSection({
     }
   }
 
-  /** 行内改运行配置：空串 = 清掉绑定回到「自动」（后端归一为 None，每次运行现解析） */
+  /** 行内改运行配置：空串 = 清掉绑定回到「跟随项目默认」（后端归一为 None，每次运行现解析） */
   async function changeProfile(s: ScheduleDto, profileId: string) {
     const picked = profiles.find((p) => p.id === profileId);
     if (picked) {
@@ -1047,7 +1081,7 @@ export default function ScheduleSection({
       )}
       {(isCard || open) && (
         <div className={isCard ? "" : "mt-1 rounded-md ccode-well p-2"}>
-          {error && <p className="py-1 text-xs text-err-text">{error}</p>}
+          {error && <InlineNotice tone="err" className="py-1">{error}</InlineNotice>}
           {schedules !== null &&
             schedules.length === 0 &&
             drafts.length === 0 &&
@@ -1134,6 +1168,14 @@ export default function ScheduleSection({
                     >
                       {s.name}
                     </span>
+                    {s.queued && !s.runningRunId && !running.has(s.id) && !needsKeywords && (
+                      <span
+                        className="shrink-0 text-micro text-l3"
+                        title={`到点了，正在排队：${runningCount > 0 ? `${runningCount} 个雷达在跑` : "上一条还没收尾"}，空出来就自动接上（同一项目一次只跑一条）`}
+                      >
+                        排队中
+                      </span>
+                    )}
                     <span className="shrink-0 text-micro text-l4">
                       {frequencyLabel(s.frequency, s.weekday, s.hour, s.minute)}
                     </span>
@@ -1143,20 +1185,26 @@ export default function ScheduleSection({
                       <button
                         type="button"
                         className={actionBtn}
+                        title={
+                          subCounts[s.id] === 1 && subKeywords[s.id]?.[0]
+                            ? `唯一关键词：${subKeywords[s.id][0]}（点击管理）`
+                            : "管理这条巡检的关键词"
+                        }
                         onClick={() => setKeywordFor(s)}
                       >
-                        关键词
-                        {subCounts[s.id] != null ? ` ${subCounts[s.id]}` : ""}
+                        {subCounts[s.id] === 1 && subKeywords[s.id]?.[0]
+                          ? subKeywords[s.id][0]
+                          : `关键词${subCounts[s.id] != null ? ` ${subCounts[s.id]}` : ""}`}
                       </button>
                     )}
                     <span aria-hidden="true" className="text-micro text-l4">·</span>
                     <select
                       value={s.profileId ?? ""}
                       onChange={(e) => void changeProfile(s, e.target.value)}
-                      title="运行配置：「自动」= 跟随默认解析（设置页 AI 专用配置 → 最近使用）；钉住的连接被删后下次运行会失败并在此标出——不会静默换一家出站"
+                      title="运行配置：「跟随项目默认」= 用项目 Agents 页的默认连接；项目没设默认、或那家不能定时写盘时，用设置页 AI 专用配置 → 最近使用。钉住的连接被删后下次运行会失败并在此标出——不会静默换一家出站"
                       className="min-w-0 max-w-52 shrink cursor-pointer truncate rounded-sm border border-transparent bg-transparent px-1 py-0.5 text-micro text-l4 outline-none hover:border-field hover:text-l2"
                     >
-                      <option value="">自动</option>
+                      <option value="">跟随项目默认</option>
                       {s.profileId &&
                         !profiles.some((p) => p.id === s.profileId) && (
                           <option value={s.profileId}>
@@ -1287,6 +1335,7 @@ export default function ScheduleSection({
           onClose={() => setMenu(null)}
           items={[
             {
+              icon: Pencil,
               label: "编辑任务",
               onSelect: () => {
                 const s = schedules.find((t) => t.id === menu.id);
@@ -1300,12 +1349,14 @@ export default function ScheduleSection({
               if (!sk) return [];
               return [
                 {
+                  icon: Sparkles,
                   label: "编辑技能",
                   onSelect: () => setEditSkill({ id: sk.id, name: sk.name }),
                 },
               ];
             })(),
             {
+              icon: Trash2,
               label: "删除任务",
               danger: true,
               onSelect: () => {

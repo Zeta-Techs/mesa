@@ -1,7 +1,7 @@
 import { useMemo, useEffect, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { confirmDialog } from "./ConfirmDialog";
-import { secondaryActionClass } from "./PageFrame";
+import { secondaryActionClass, NoticeBar } from "./PageFrame";
 import { watchAdoptText, watchLedgerFailed } from "../acceptance-log";
 import { journalMetricTone } from "../lit-watch";
 import type { RunDto } from "../types";
@@ -99,8 +99,8 @@ export default function WatchRunReview({ run, onClose, locked = false, currentDi
       !retry &&
       !(await confirmDialog(
         counts.excluded > 0
-          ? `将这次运行的产物采纳进项目？你排除的 ${counts.excluded} 篇不会写入，其余新命中进入项目的雷达收件箱（日常积累，不进科研流程的精读清单）。保存前会检查版本冲突和保护路径，并备份原文件；冲突时不自动覆盖。`
-          : "将这次运行的产物采纳进项目？新命中进入项目的雷达收件箱（日常积累，不进科研流程的精读清单）。保存前会检查版本冲突和保护路径，并备份原文件；冲突时不自动覆盖。",
+          ? `将这次运行的产物采纳进项目？你排除的 ${counts.excluded} 篇不会写入（它的待获取题录和免费全文也不进），其余新命中接在项目雷达收件箱后面（日常积累，不进科研流程的精读清单）。项目里已有的内容不动，已收过的同一篇不重复加；保存前检查保护路径并备份原文件。`
+          : "将这次运行的产物采纳进项目？新命中接在项目雷达收件箱后面（日常积累，不进科研流程的精读清单）。项目里已有的内容不动，已收过的同一篇不重复加；保存前检查保护路径并备份原文件。",
         { confirmText: "采纳进项目" },
       ))
     )
@@ -112,7 +112,7 @@ export default function WatchRunReview({ run, onClose, locked = false, currentDi
       setAdopted(true);
       setLedgerPending(false);
       setAdoptedNote(
-        `已采纳：新命中进入项目页「文献雷达」的清单，PDF 进 papers/。被排除的条目没有写入。项目里若有进行中的科研流程，PDF 的资源登记会在流程收尾后自动补记，不会卡它的合并。`,
+        `已采纳：新命中进入项目页「文献雷达」的清单，这次新下的 PDF 进 papers/。被排除的条目没有写入。项目里若有进行中的科研流程，PDF 的资源登记会在流程收尾后自动补记，不会卡它的合并。`,
       );
     } catch (reason) {
       const message = String(reason);
@@ -165,9 +165,9 @@ export default function WatchRunReview({ run, onClose, locked = false, currentDi
           </button>
           <span className="text-l4">排除的不会写进项目；留下是你的标记，未定与留下的一起进项目的雷达收件箱。雷达只是日常积累，不进科研流程的精读清单。</span>
         </div>
-        {adoptedNote && <p className="mb-3 rounded-md border border-hairline px-3 py-2 text-sm text-ok-text">✓ {adoptedNote}</p>}
-        {entryError && <p role="alert" className="mb-3 whitespace-pre-wrap text-sm text-err-text">{entryError}</p>}
-        {error && <p role="alert" className="mb-3 whitespace-pre-wrap text-sm text-err-text">{error}</p>}
+        {adoptedNote && <NoticeBar className="mb-3">{adoptedNote}</NoticeBar>}
+        {entryError && <NoticeBar tone="err" className="mb-3">{entryError}</NoticeBar>}
+        {error && <NoticeBar tone="err" className="mb-3" onDismiss={() => setError(null)}>{error}</NoticeBar>}
         {entries == null && !entryError && <p className="text-sm text-l3">正在读取这次巡检的命中…</p>}
         {entries != null && shown.length === 0 && !error && (
           <p className="text-sm text-l3">

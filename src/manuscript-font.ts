@@ -7,5 +7,5 @@ export function manuscriptFontPrompt(markdown: string, latin: string, cjk: strin
   const source = markdown.trim() || "manuscript/draft.md";
   const en = latin.trim() || DEFAULT_LATIN_FONT;
   const zh = cjk.trim() || DEFAULT_CJK_FONT;
-  return `正文字体定为英文 ${en}、中文 ${zh}。渲染前运行 quarto-render 技能的 scripts/manuscript_font.py：python3 <技能目录>/scripts/manuscript_font.py --root <任务书里的项目根绝对路径> --markdown ${source} --latin "${en}" --cjk "${zh}"。写完再渲这一次 PDF 和 Word，不要先渲完再重渲。Word 必须加 --reference-doc manuscript/reference.docx。本机没有这套字体就停下来告诉我，不要改用别的字体。渲完告诉我两份成稿用的字体。`;
+  return `正文字体定为英文 ${en}、中文 ${zh}。渲染前运行 quarto-render 技能的 scripts/manuscript_font.py：python3 <技能目录>/scripts/manuscript_font.py --root <任务书里的项目根绝对路径> --markdown ${source} --latin "${en}" --cjk "${zh}"。写完再渲这一次 PDF 和 Word，不要先渲完再重渲。脚本会把 reference-doc 写进 YAML 的 format.docx，Word 自动套 manuscript/reference.docx 的字体与样式。本机没有这套字体就停下来告诉我，不要改用别的字体。渲完告诉我两份成稿用的字体。`;
 }

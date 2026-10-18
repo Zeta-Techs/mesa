@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { loadResearchReports, readResearchFile, type ResearchReportLoad, type ReportPreview } from "../research-report-load";
 import { evidenceFingerprint } from "../step-decisions";
 import type { ResearchReportKind } from "../research-report";
+import { InlineNotice } from "./PageFrame";
 
 /** Shared read-only report viewer inside kickoff and review; report prose is never a machine verdict. */
 export default function ResearchEvidencePanel({ root, patterns, kind, refreshKey = 0, onFingerprint }: {
@@ -66,7 +67,7 @@ export default function ResearchEvidencePanel({ root, patterns, kind, refreshKey
     {preview?.key === key && <div className="mt-2 rounded border border-field p-2" role="region" aria-label="报告原文">
       <div className="flex items-start justify-between gap-2"><span className="break-all text-l2">{preview.path}</span><button type="button" onClick={() => setPreview(null)} className="shrink-0 text-l3">关闭原文</button></div>
       {preview.error ? <p className="text-err-text">{preview.error}</p> : !preview.value ? <p>正在读取…</p> : <>
-        {preview.value.truncated && <p className="text-warn-text">内容截断，不能据此认定检查完整。</p>}
+        {preview.value.truncated && <InlineNotice tone="warn">内容截断，不能据此认定检查完整。</InlineNotice>}
         <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-micro text-l2">{preview.value.text}</pre>
       </>}
     </div>}

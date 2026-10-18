@@ -32,6 +32,30 @@ export function acceptanceEntryHeadline(entry: {
   return sha ? `${kind} · ${name} · ${sha}` : `${kind} · ${name}`;
 }
 
+/** 账本里按技能名记的条目（定时巡检写 goalName = 技能名），列表上换成人认得的名字 */
+const LEDGER_NAME_LABEL: Record<string, string> = { "lit-watch": "文献雷达" };
+/** 系统自动写的备注：与条目类型说的是同一件事，列表不再另起一行重复 */
+const AUTO_NOTES = new Set(["定时巡检采纳"]);
+
+/** 设置抽屉验收记录的一行（2026-10-17 用户截图：原先三行一条——「巡检已采纳 · lit-watch ·
+ *  f04cb236」「定时巡检采纳」「1 天前」，技能名、版本号是内部词，备注与类型重复）。
+ *  title = 「对象 · 发生了什么」；版本短号只进悬浮；系统备注不重复显示。 */
+export function acceptanceEntryRow(entry: {
+  kind?: string;
+  goalName: string;
+  versionId?: string;
+  note?: string | null;
+}): { title: string; version: string; note: string } {
+  const raw = entry.goalName.trim();
+  const name = LEDGER_NAME_LABEL[raw] ?? (raw || "目标");
+  const note = entry.note?.trim() ?? "";
+  return {
+    title: `${name} · ${acceptanceKindLabel(entry.kind)}`,
+    version: shortVersionId(entry.versionId),
+    note: AUTO_NOTES.has(note) ? "" : note,
+  };
+}
+
 /** Git 合并成功文案：进主仓 ≠ 科学验收。 */
 export function mergeAdmissionText(input: {
   ledgerWritten?: boolean;

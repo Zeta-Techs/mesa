@@ -16,12 +16,21 @@ import { renderMathInto } from "../md-math";
 import { useAppStore } from "../store";
 import { absoluteResourcePath } from "./ArtifactChecklist";
 import { confirmDialog } from "./ConfirmDialog";
-import { Checkbox, FoldMark, ghostActionClass, inlineActionClass } from "./PageFrame";
+import {
+  Checkbox,
+  FoldMark,
+  ghostActionClass,
+  inlineActionClass,
+  primaryActionClass,
+  secondaryActionClass,
+  InlineNotice,
+} from "./PageFrame";
 import {
   buildStepFlow,
   discussChatLabel,
   isPaywallTaskTitle,
   isPendingConfirmTaskTitle,
+  isSpotCheckTaskTitle,
   missingToFetchCount,
   parseToFetchItems,
   recalledToFetchDone,
@@ -38,6 +47,8 @@ import {
   type ResearchTools,
 } from "../research-tools";
 import { displayCitationTitle } from "../screening-review";
+import { readResearchLedger } from "../research-report-load";
+import { excludedIncludedIds, notesProgress, notesProgressLine, spotCheckPicks, type SpotCheckPick } from "../notes-progress";
 import { stepNodeAction, stepNodeReady } from "../step-node-actions.ts";
 import {
   DECISION_STATUS,
@@ -258,6 +269,109 @@ function rememberToFetchPlace(root: string, ul: HTMLUListElement | null): void {
   writeToFetchScroll(root, ul.scrollTop);
   const pane = ul.closest("[data-project-main-scroll]");
   if (pane instanceof HTMLElement) writeToFetchPageScroll(root, pane.scrollTop);
+}
+
+/** 精读步「AI 干活」行下的进度（notes/index.json，工作区优先、项目根兜底）。
+ *  Agent 分批写、中途提交后接着读：跑着时 20 秒重读一次，窗口回到前台也重读。 */
+function NotesProgressLine({ roots, live }: { roots: string[]; live: boolean }) {
+  const [line, setLine] = useState<string | null>(null);
+  const rootsKey = roots.join("\n");
+  useEffect(() => {
+    let stale = false;
+    const load = async () => {
+      for (const root of rootsKey.split("\n")) {
+        try {
+          const file = await readResearchLedger(root, "notes/index.json");
+          if (file.truncated) continue;
+          // 评审里排除的篇不算进度（旧索引可能给它们建过行）；读不到纳入清单就不扣
+          const excluded = await readResearchLedger(root, "papers/included.json")
+            .then((f) => (f.truncated ? new Set<string>() : excludedIncludedIds(f.text)))
+            .catch(() => new Set<string>());
+          const progress = notesProgress(file.text, excluded);
+          if (!stale) setLine(progress ? notesProgressLine(progress) : null);
+          return;
+        } catch {
+          /* 这一处还没有索引，试下一处 */
+        }
+      }
+      if (!stale) setLine(null);
+    };
+    void load();
+    const onFocus = () => void load();
+    window.addEventListener("focus", onFocus);
+    const timer = live ? window.setInterval(() => void load(), 20000) : null;
+    return () => {
+      stale = true;
+      window.removeEventListener("focus", onFocus);
+      if (timer != null) window.clearInterval(timer);
+    };
+  }, [rootsKey, live]);
+  if (!line) return null;
+  return (
+    <p
+      className="mt-1 pl-9 text-micro tabular-nums text-l4"
+      title="按 notes/index.json 数：标成已读完的才算写完；仅摘要的篇目补到全文后再精读"
+    >
+      {line}
+    </p>
+  );
+}
+
+/** 「抽查 3 篇笔记」就地给出三篇候选（notes/index.json，工作区优先、项目根兜底）：
+ *  点一篇在运行页预览打开——保存进项目前笔记还只在工作区里，文件页看不到。 */
+function SpotCheckPicks({ roots }: { roots: string[] }) {
+  const setPreviewReq = useAppStore((s) => s.setPreviewReq);
+  const setPage = useAppStore((s) => s.setPage);
+  const [picks, setPicks] = useState<{ root: string; items: SpotCheckPick[] } | null>(null);
+  const rootsKey = roots.join("\n");
+  useEffect(() => {
+    let stale = false;
+    void (async () => {
+      for (const root of rootsKey.split("\n")) {
+        try {
+          const file = await readResearchLedger(root, "notes/index.json");
+          if (file.truncated) continue;
+          const items = spotCheckPicks(file.text);
+          if (!stale) setPicks(items.length > 0 ? { root, items } : null);
+          return;
+        } catch {
+          /* 这一处还没有索引，试下一处 */
+        }
+      }
+      if (!stale) setPicks(null);
+    })();
+    return () => {
+      stale = true;
+    };
+  }, [rootsKey]);
+  if (!picks) return null;
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+      <span className="text-micro text-l4">抽这几篇：</span>
+      {picks.items.map((pick) => {
+        const rel = pick.notePath.replace(/\\/g, "/");
+        const abs = /^(?:[A-Za-z]:)?\//.test(rel)
+          ? rel
+          : `${picks.root.replace(/[\\/]+$/, "")}/${rel.replace(/^\.?\//, "")}`;
+        const name = rel.split("/").pop() ?? rel;
+        return (
+          <button
+            key={pick.notePath}
+            type="button"
+            className="inline-flex max-w-[16rem] items-center gap-1 rounded-sm px-1 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1"
+            title={`在运行页预览 ${rel}`}
+            onClick={() => {
+              setPreviewReq({ path: abs, name, root: picks.root });
+              setPage("terminal");
+            }}
+          >
+            <span className="min-w-0 truncate underline decoration-dotted underline-offset-2">{name}</span>
+            <span className="shrink-0 text-micro text-l4">{pick.fulltext ? "全文" : "仅摘要"}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 /** 按钮没说的那一句：可选/跳过的后果。做法进行内按钮 title。 */
@@ -973,7 +1087,7 @@ export default function StepFlow({
         ];
     for (const c of candidates) {
       try {
-        const p = await invoke<{ text: string }>("read_file_preview", {
+        const p = await invoke<{ text: string }>("read_research_ledger", {
           path: c.path,
           root: c.root,
         });
@@ -1378,6 +1492,7 @@ export default function StepFlow({
   }
 
   if (!states) return null;
+  const notesStep = stepFillsAnySlot(step.skills, ["lit-notes"], skillProvides);
   const flow = buildStepFlow({
     step,
     states,
@@ -1391,7 +1506,7 @@ export default function StepFlow({
       step.workspaceName === "journal-format" ||
       step.workspaceName === "submission-materials" ||
       /^rebuttal-r\d+$/.test(step.workspaceName ?? ""),
-    continueNotes: stepFillsAnySlot(step.skills, ["lit-notes"], skillProvides),
+    continueNotes: notesStep,
   });
   const seeds = step.discussionSeeds ?? [];
 
@@ -1438,7 +1553,7 @@ export default function StepFlow({
   /** 节点圆点：同一族形状，靠「空心 → 实心」表达进度，不引入第二种字形。
    *  原来完成态用绿 ✓——勾号在一列圆点里是异类，而且 ok-text 的亮绿在暗色主题下发飘。
    *  改用实心圆 + done 色（与上方大圆步进器的 bg-done 同一枚绿），全站一套语言；
-   *  「已完成」的语义还有标题的删除线与降级色兜着，不靠图标独扛 */
+   *  「已完成」的语义还有标题的降级色兜着（人工事项另有删除线），不靠图标独扛 */
   /** 主干节点的序号（可选区不编号——它们不在时间线上；人工事项行也不参与编号——
    *  人工序用复选框表达状态、从不显示序号，把它们算进去会让可见序号断档：
    *  ① ② [复选框行] ④，用户实测「可选项占用了一个计数但没显示」）：
@@ -1749,8 +1864,12 @@ export default function StepFlow({
             className={`min-w-0 flex-1 truncate ${
               dense ? "text-xs" : "text-sm"
             } ${
+              // 删除线只给打勾的人工事项（清单打勾的惯例）；「AI 干活」「确定文献来源」
+              // 完成后划掉读起来像「取消了 / 跳过了」（用户截图），完成态交给左侧空心圆
               done
-                ? "text-l4 line-through"
+                ? node.kind === "human"
+                  ? "text-l4 line-through"
+                  : "text-l4"
                 : isCurrent
                   ? "text-l1"
                   : dense
@@ -1761,12 +1880,15 @@ export default function StepFlow({
             {node.label}
           </span>
           {/* 可选事项标记：不做也不影响这一步跑完。没有这个标记的话，
-              一个永远不打勾的条目看起来就像没做完的必办项 */}
+              一个永远不打勾的条目看起来就像没做完的必办项。
+              待确认还有篇目时不标可选：模板里「没有待确认可跳过」，有就得人拍板，
+              换成待确认篇数（清单折着也看得见还剩几篇） */}
           {node.section === "main" &&
             node.kind === "human" &&
             human?.optional &&
             !node.done &&
-            !isPaywallTaskTitle(human.title) && (
+            !isPaywallTaskTitle(human.title) &&
+            !(isPendingConfirmTaskTitle(human.title) && pendingMeta.count > 0) && (
             <span
               className="shrink-0 rounded-sm bg-raised px-1.5 py-0.5 text-micro text-l4"
               title="可选：不做也能跑完这一步"
@@ -1777,7 +1899,16 @@ export default function StepFlow({
 
           {/* 付费墙进度只认清单已存/总数，不拿 papers/ 里全部 PDF 当「已见到」——
               那会把无关文件算进来，和清单「已存 21/89」对不上。 */}
-          {node.kind === "human" && human && isPendingConfirmTaskTitle(human.title) ? null : node.kind === "human" && human && isPaywallTaskTitle(human.title) ? (
+          {node.kind === "human" && human && isPendingConfirmTaskTitle(human.title) ? (
+            !node.done && pendingMeta.count > 0 ? (
+              <span
+                className="shrink-0 text-micro tabular-nums text-warn-text"
+                title="这些篇目要你点纳入或排除；拍板前不进待获取、不写精读笔记"
+              >
+                待确认 {pendingMeta.count} 篇
+              </span>
+            ) : null
+          ) : node.kind === "human" && human && isPaywallTaskTitle(human.title) ? (
             toFetchItems.length > 0 ? (
               <span
                 className="shrink-0 text-micro tabular-nums text-l4"
@@ -2222,9 +2353,7 @@ export default function StepFlow({
                   </form>
                 )}
                 {decisionError && (
-                  <p className="text-micro text-err-text">
-                    {decisionError}
-                  </p>
+                  <InlineNotice tone="err" size="micro">{decisionError}</InlineNotice>
                 )}
               </div>
             )}
@@ -2308,7 +2437,7 @@ export default function StepFlow({
               </div>
             )}
             {chatError && (
-              <p className="text-micro text-err-text">{chatError}</p>
+              <InlineNotice tone="err" size="micro">{chatError}</InlineNotice>
             )}
             {!draft && draftLoadError && (
               <p className="text-micro text-err-text">{draftLoadError}</p>
@@ -2342,6 +2471,12 @@ export default function StepFlow({
         )}
         {node.kind === "agent" && agentContent && (
           <div className="mt-1.5 pl-9">{agentContent}</div>
+        )}
+        {node.kind === "agent" && notesStep && (ws || runStatus === "done") && (
+          <NotesProgressLine
+            roots={ws ? [ws.worktreePath, projectPath] : [projectPath]}
+            live={runStatus === "active"}
+          />
         )}
         {/* 说明只在当前节点显示：一屏同时摊开五段说明是这一页最大的噪音源。
             非当前节点的说明挂在行的 title 上（悬停可见），信息不丢。
@@ -2483,7 +2618,7 @@ export default function StepFlow({
                   if (human.target) void continueAfterDecisions(human.target, human.title);
                 }}
               />
-              {decisionNote && <p className="mt-1 text-micro text-err-text">{decisionNote}</p>}
+              {decisionNote && <InlineNotice tone="err" size="micro" className="mt-1">{decisionNote}</InlineNotice>}
             </div>
           )}
         {!dense &&
@@ -2517,6 +2652,9 @@ export default function StepFlow({
                     </details>
                   )}
                 </>
+              )}
+              {isSpotCheckTaskTitle(human.title) && !node.done && (
+                <SpotCheckPicks roots={ws ? [ws.worktreePath, projectPath] : [projectPath]} />
               )}
               {/* 付费墙：清单就是入口。折叠标题带缺篇数；做法进行内按钮 title，
                   不再在清单上下各写一段说明书。 */}
@@ -2755,7 +2893,7 @@ export default function StepFlow({
           className="pl-1"
         />
       )}
-      {error && <p className="mt-1 pl-1 text-micro text-err-text">{error}</p>}
+      {error && <InlineNotice tone="err" size="micro" className="mt-1 pl-1">{error}</InlineNotice>}
       {/* TASK.md 就地编辑弹层：不跳终端页。背景点击在有未保存改动时会先确认 */}
       {draftEdit && (
         <div
@@ -2827,7 +2965,7 @@ export default function StepFlow({
                 <button
                   type="button"
                   onClick={() => void closeDraftInline()}
-                  className="rounded-sm px-3 py-1.5 text-sm text-l2 hover:bg-hover"
+                  className={secondaryActionClass}
                 >
                   取消
                 </button>
@@ -2842,7 +2980,7 @@ export default function StepFlow({
                       ? "没有改动"
                       : "保存为开工用的 TASK.md 内容"
                   }
-                  className="rounded-sm border border-cta-bd bg-cta px-3 py-1.5 text-sm text-cta-text hover:brightness-110 disabled:opacity-50"
+                  className={primaryActionClass}
                 >
                   {draftEdit.saving ? "保存中…" : "保存"}
                 </button>

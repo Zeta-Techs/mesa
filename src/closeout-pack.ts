@@ -154,11 +154,20 @@ export function parseCloseoutIndex(text: string): CloseoutNoteIndex[] {
   }
 }
 
-/** 每篇笔记一行：优先用索引里的题名，并按题名或 DOI 配上全文 PDF。 */
+/** 笔记头部来源行指向的 PDF（list_paper_notes）：索引里没有的笔记（沉浸阅读自己建的）靠它配全文、取题名 */
+export interface CloseoutNoteSource {
+  noteName: string;
+  pdfRel?: string | null;
+}
+
+/** 每篇笔记一行：优先用索引里的题名，并按题名或 DOI 配上全文 PDF；索引里没有的
+ *  （沉浸阅读建的笔记）按笔记头部来源行配 PDF，题名取 PDF 文件名——原先显示成
+ *  「A-Mg2+Li+-hybrid-…」这样的文件名、还标「无全文」（2026-10-18 用户截图）。 */
 export function closeoutNoteRows(
   notes: readonly CloseoutFile[],
   index: readonly CloseoutNoteIndex[],
   pdfs: readonly CloseoutFile[],
+  sources: readonly CloseoutNoteSource[] = [],
 ): CloseoutNoteRow[] {
   const byPath = new Map<string, CloseoutNoteIndex>();
   const byKey = new Map<string, CloseoutNoteIndex>();
@@ -172,23 +181,31 @@ export function closeoutNoteRows(
     .map((note) => {
       const stem = note.name.replace(/\.md$/i, "");
       const item = byPath.get(note.rel) ?? byKey.get(stem);
-      const title = item?.title?.trim() || closeoutNoteLabel(note.name);
-      const pdfPath = item
-        ? matchPaperPdf(
-            { title: item.title ?? "", id: item.doi || item.id || "", url: "", reason: "" },
-            files,
-          )
-        : null;
+      if (!item) {
+        const sourceRel = sources.find((src) => src.noteName === note.name)?.pdfRel?.replace(/\\/g, "/");
+        const sourceName = sourceRel?.split("/").pop() ?? "";
+        const pdf = sourceName
+          ? (pdfs.find((file) => file.name === sourceName) ?? null)
+          : null;
+        const title = sourceName ? sourceName.replace(/\.pdf$/i, "") : closeoutNoteLabel(note.name);
+        return { note, title, pdf };
+      }
+      const title = item.title?.trim() || closeoutNoteLabel(note.name);
+      const pdfPath = matchPaperPdf(
+        { title: item.title ?? "", id: item.doi || item.id || "", url: "", reason: "" },
+        files,
+      );
       return { note, title, pdf: pdfs.find((file) => file.abs === pdfPath) ?? null };
     })
     .sort((a, b) => a.title.localeCompare(b.title, "zh"));
 }
 
-/** `alotaibi2026probing.md` 显示成「alotaibi 2026 probing」。对不上的原样去掉后缀。 */
+/** `alotaibi2026probing.md` 显示成「alotaibi 2026 probing」；沉浸阅读按标题起的
+ *  `A-Mg2+Li+-hybrid-….md` 把连字符还原成空格。 */
 export function closeoutNoteLabel(name: string): string {
   const stem = name.replace(/\.md$/i, "");
   const matched = stem.match(/^([A-Za-z]+)(\d{4})(.*)$/);
-  if (!matched) return stem;
+  if (!matched) return stem.includes(" ") ? stem : stem.replace(/-+/g, " ").trim();
   const rest = matched[3].replace(/[-_]+/g, " ").trim();
   return [matched[1], matched[2], rest].filter(Boolean).join(" ");
 }

@@ -313,6 +313,27 @@ export function readerReuseKey(projectRoot: string): string {
   return `reader:${projectRoot}`;
 }
 
+/** 阅读区右栏看聊天层还是终端画面（全局记一份：阅读会话每次进入都新开，选择要跨次保留） */
+export const READER_SURFACE_KEY = "ccode.readerSurface";
+
+/** 读右栏显示层记忆：缺省聊天层（与终端页新标签默认同口径），只认 "terminal" 一个改动值 */
+export function loadReaderSurface(): "chat" | "terminal" {
+  try {
+    return localStorage.getItem(READER_SURFACE_KEY) === "terminal" ? "terminal" : "chat";
+  } catch {
+    return "chat";
+  }
+}
+
+export function saveReaderSurface(mode: "chat" | "terminal"): void {
+  try {
+    if (mode === "terminal") localStorage.setItem(READER_SURFACE_KEY, "terminal");
+    else localStorage.removeItem(READER_SURFACE_KEY);
+  } catch {
+    /* 存不进就不记 */
+  }
+}
+
 /** PDF 选段「◈ 问 AI」的注入格式（与 TerminalPage.askAiFromPdf 同一出处，勿分叉）：
  *  `> 「≤60 字摘要」（file，第 N 页）` + 空行 + 正文（>6000 截断） */
 export function formatPdfExcerptPrompt(

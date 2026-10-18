@@ -33,8 +33,10 @@ test("审阅摘要只出示计数和筛选决定，不摊纳入表", async () =>
   }
   Object.assign(dom.window, { __TAURI_INTERNALS__: { invoke: async (command: string, args: any) => {
     if (command === "list_dir") return [];
-    if (command !== "read_file_preview") throw new Error(command);
-    assert.equal(args.requireWithinRoot, true);
+    // 台账走整份读通道；预览通道 256 KB 封顶，两百篇带摘要的清单在那边恒是截断的——
+    // 曾把截断当「没有 included.json」，待确认整块读不出来（2026-10-17 用户实测）
+    if (command === "read_file_preview") return { text: "[", truncated: true, revision: null, readOnlyReason: "文件超过 256 KB，仅预览开头部分，不能保存" };
+    if (command !== "read_research_ledger") throw new Error(command);
     if (String(args.path).endsWith("included.json")) return { text: INCLUDED, truncated: false, revision: "j1" };
     if (String(args.path).endsWith("to-fetch.md")) return { text: TO_FETCH, truncated: false, revision: "t1" };
     if (String(args.path).endsWith("screening.md")) return { text: SCREENING, truncated: false, revision: "s1" };
@@ -132,7 +134,7 @@ test("检索步评审先出待确认与筛选决定，不重复摊 included.md",
     if (command === "research_source") return { root: "/tree", projectId: "p", resultVersion: "v1", revision: "source-v1", warnings: [] };
     if (command === "research_get_run") throw new Error("no run");
     if (command === "workspace_file_diff") return `diff --git a/${args.path} b/${args.path}\n--- a/${args.path}\n+++ b/${args.path}\n@@ -0,0 +1 @@\n+ok\n`;
-    if (command === "read_file_preview") {
+    if (command === "read_file_preview" || command === "read_research_ledger") {
       const path = String(args.path);
       if (path.endsWith("included.json")) return { text: INCLUDED, truncated: false, revision: "j1" };
       if (path.endsWith("to-fetch.md")) return { text: TO_FETCH, truncated: false, revision: "t1" };

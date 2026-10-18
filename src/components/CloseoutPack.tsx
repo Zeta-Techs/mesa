@@ -14,6 +14,7 @@ import {
   type CloseoutFile,
   type CloseoutGroupId,
   type CloseoutNoteIndex,
+  type CloseoutNoteSource,
 } from "../closeout-pack";
 
 function relFromRoot(root: string, abs: string): string {
@@ -57,6 +58,7 @@ export default function CloseoutPack({
   const [files, setFiles] = useState<CloseoutFile[] | null>(null);
   const [index, setIndex] = useState<CloseoutNoteIndex[]>([]);
   const [pdfs, setPdfs] = useState<CloseoutFile[]>([]);
+  const [sources, setSources] = useState<CloseoutNoteSource[]>([]);
   const [open, setOpen] = useState<"figures" | "notes" | null>(null);
   const [packOpen, setPackOpen] = useState(false);
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
@@ -111,6 +113,13 @@ export default function CloseoutPack({
         }
       }
       if (!stale) setPdfs(pdfsFound);
+      // 索引里没有的笔记（沉浸阅读建的）靠头部来源行配 PDF；读不到就按文件名显示
+      try {
+        const links = await invoke<CloseoutNoteSource[]>("list_paper_notes", { projectRoot });
+        if (!stale) setSources(links);
+      } catch {
+        /* 来源行读不到不影响清单 */
+      }
     })();
     return () => {
       stale = true;
@@ -131,7 +140,7 @@ export default function CloseoutPack({
 
   const finals = byId.get("final")?.files ?? [];
   const figures = closeoutFigureCards(byId.get("figures")?.files ?? []);
-  const noteRows = closeoutNoteRows(byId.get("notes")?.files ?? [], index, pdfs);
+  const noteRows = closeoutNoteRows(byId.get("notes")?.files ?? [], index, pdfs, sources);
   const needle = query.trim().toLowerCase();
   const shownNotes = needle
     ? noteRows.filter((row) => `${row.title} ${row.note.name}`.toLowerCase().includes(needle))

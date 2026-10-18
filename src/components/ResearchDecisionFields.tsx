@@ -9,6 +9,7 @@ import {
   type DecisionStatus,
 } from "../step-decisions";
 import type { StepDecisionDto } from "../types";
+import { InlineNotice } from "./PageFrame";
 
 const STATUSES = Object.keys(DECISION_STATUS) as DecisionStatus[];
 
@@ -69,7 +70,7 @@ export default function ResearchDecisionFields({ decisions, text, disabled, evid
             placeholder="例如：按已精读笔记写，没全文的只写到摘要"
             className="w-full rounded border border-field bg-canvas px-2 py-1 text-xs text-l1 disabled:opacity-50" />
         </label>
-        {stale && <p className="text-micro text-warn-text">{draft.legacy ? "这是旧的纯文本记录，请重新选择状态，不会自动视为已批准。" : "依据版本已变化，需要重新确认。"}</p>}
+        {stale && <InlineNotice tone="warn" size="micro">{draft.legacy ? "这是旧的纯文本记录，请重新选择状态，不会自动视为已批准。" : "依据版本已变化，需要重新确认。"}</InlineNotice>}
       </div>;
     })}
   </fieldset>;

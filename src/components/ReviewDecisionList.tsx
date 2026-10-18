@@ -12,6 +12,7 @@ import {
   type ReviewItemKind,
   type ReviewVerdict,
 } from "../review-decisions";
+import { InlineNotice } from "./PageFrame";
 
 async function readFirst(roots: string[], rel: string) {
   for (const root of roots) {
@@ -153,7 +154,7 @@ export default function ReviewDecisionList({
 
   return (
     <div>
-      {error && <p className="mb-1 text-micro text-err-text">{error}</p>}
+      {error && <InlineNotice tone="err" size="micro" className="mb-1">{error}</InlineNotice>}
       {open.length === 0 ? (
         <div className="flex flex-wrap items-center gap-2">
           <p className="text-micro text-l4">{inlineDecisionLine(kind, "done")}</p>

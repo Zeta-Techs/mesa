@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 use tauri::Emitter;
@@ -22,6 +23,11 @@ use tauri::Emitter;
 const RUN_TIMEOUT: Duration = Duration::from_secs(1800);
 /// 调度 tick 间隔
 const TICK_INTERVAL: Duration = Duration::from_secs(60);
+/// tick 同时拉起的运行上限（2026-10-16 跨项目并行拍板）：不同项目的雷达并行跑、
+/// 同一项目仍互斥（见 project_lock）。上限防启动补跑把所有 daily 任务在同一瞬间
+/// 拉起一堆 CLI（token 尖峰 + 外部检索源限流）。只管 tick 拉起的运行；
+/// 手动「立即运行」是显式用户意图，不占额度（同项目互斥仍然生效）。
+const MAX_CONCURRENT_TICK_RUNS: usize = 2;
 /// 历史只留最近 20 条（新的在前）
 const HISTORY_CAP: usize = 20;
 /// 简报脱敏后截 2000 字符
@@ -29,7 +35,7 @@ const SUMMARY_CAP: usize = 2000;
 
 /// 任务 prompt 模板按技能分派：lit-watch 用文献巡检专用文案（一字不动），
 /// 其他技能用通用模板（技能自有规范为准，调度器不复制关键词/路径口径）
-const TASK_PROMPT_LIT_WATCH: &str = "请使用 {skill} 技能执行一次文献巡检：按 papers/watchlist.md 的订阅清单检索新文献，去重、精选后把命中追加到 notes/inbox.md。追加本次条目前必须先单独写一行 <!-- watch-run: YYYY-MM-DD -->（本次巡检的本地日期，上海时区），已有批次标记的旧条目不要改。能免费直接下载的 PDF（arXiv /pdf/ 直链或以 .pdf 结尾）在结束前用 curl 下到项目根 papers/，文件名用标题，并确认以 %PDF- 开头；出版商页、DOI 落地页和付费墙不要下，题录留在 papers/watch-followup.md。不要写 papers/included.md、notes/index.json 或 references.bib——雷达文献是项目的日常积累，精读与引文库由人发起检索/科研流程后才动。结束时输出三行以内的简报（检索了几条关键词/来源、新命中几篇、其中推荐几篇、哪些来源未达、免费全文下了几篇）。本任务由 Mesa 定时雷达自动触发。";
+const TASK_PROMPT_LIT_WATCH: &str = "请使用 {skill} 技能执行一次文献巡检：按 papers/watchlist.md 的订阅清单检索新文献，并按规范跑关联推荐通道，去重、精选后把命中追加到 notes/inbox.md。追加本次条目前必须先单独写一行 <!-- watch-run: YYYY-MM-DD -->（本次巡检的本地日期，上海时区），已有批次标记的旧条目不要改。免费全文按规范以 OpenAlex 的 best_oa_location.pdf_url、arXiv /pdf/ 直链或 .pdf 结尾直链为准，在结束前用 curl 下到项目根 papers/，文件名用标题，并确认以 %PDF- 开头；下载带硬时间盒：每篇 curl 加 --max-time 60，全部下载合计不超过 5 分钟，到点放弃、残文件删掉、题录留在 papers/watch-followup.md，同一链接不重试；出版商页、DOI 落地页和付费墙不要下。不要写 papers/included.md、notes/index.json 或 references.bib——雷达文献是项目的日常积累，精读与引文库由人发起检索/科研流程后才动。结束时输出三行以内的简报（检索了几条关键词/来源、关联推荐是否跑/命中几篇、新命中几篇、其中推荐几篇、哪些来源未达、免费全文下了几篇）。本任务由 Mesa 定时雷达自动触发。";
 const TASK_PROMPT_GENERIC: &str = "请使用 {skill} 技能在项目内执行一次定时巡检，按该技能的既定规范产出结果，结束时输出三行以内简报。本任务由 Mesa 定时雷达自动触发。";
 
 // ===== 数据模型 =====
@@ -102,6 +108,10 @@ pub struct Schedule {
 pub struct ScheduleDto {
     pub id: String,
     pub running_run_id: Option<String>,
+    /// 到点该跑但还没跑起来（并发上限或同项目互斥在等）——前端「排队中」标记的数据源。
+    /// 关键词/注册表闸门不在这层：无关键词的雷达由前端 needsKeywords 单独呈现。
+    #[serde(default)]
+    pub queued: bool,
     pub name: String,
     pub project_root: String,
     pub skill: String,
@@ -122,6 +132,7 @@ impl From<Schedule> for ScheduleDto {
     fn from(s: Schedule) -> Self {
         Self {
             running_run_id: None,
+            queued: false,
             id: s.id,
             name: s.name,
             project_root: s.project_root,
@@ -335,6 +346,10 @@ fn unmark_running(id: &str) {
     });
 }
 
+/// tick 已拉起、还在跑的运行数（并发上限计数）；spawn 线程结束时递减，所有出口都走
+/// spawn_blocking 的 await 收尾，不会泄漏
+static TICK_INFLIGHT: AtomicUsize = AtomicUsize::new(0);
+
 /// 文件锁在进程退出时由 OS 释放，防双实例同时改同一巡检工作目录。
 fn execution_lock_at(dir: &Path, id: &str) -> Result<fs::File, String> {
     fs::create_dir_all(dir).map_err(|e| format!("创建任务锁目录失败：{e}"))?;
@@ -353,6 +368,30 @@ fn execution_lock_at(dir: &Path, id: &str) -> Result<fs::File, String> {
 
 fn execution_lock(id: &str) -> Result<fs::File, String> {
     execution_lock_at(&schedules_path()?.with_file_name("schedule-locks"), id)
+}
+
+/// 同项目互斥锁（2026-10-16 跨项目并行拍板）：同一项目根上多条雷达并行会抢同一个
+/// 主仓的 git 操作、采纳时写同一份追加式台账（无并发控制；2026-10-15 实测并行写坏
+/// watch-seen）。锁键走 canonical_key 归一大小写/斜杠差异；与任务锁同目录、
+/// 文件名加 project- 前缀区分。锁顺序恒为 任务锁 → 项目锁，sched_lock 永远是叶子。
+fn project_lock_at(dir: &Path, project_root: &str) -> Result<fs::File, String> {
+    fs::create_dir_all(dir).map_err(|e| format!("创建任务锁目录失败：{e}"))?;
+    let key = crate::projects::canonical_key(Path::new(project_root));
+    let name = format!("project-{:x}.lock", md5::compute(key.as_bytes()));
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(dir.join(name))
+        .map_err(|e| format!("打开项目锁失败：{e}"))?;
+    file.try_lock()
+        .map_err(|_| "该项目已有雷达在运行".to_string())?;
+    Ok(file)
+}
+
+fn project_lock(project_root: &str) -> Result<fs::File, String> {
+    project_lock_at(&schedules_path()?.with_file_name("schedule-locks"), project_root)
 }
 
 fn resolve_git_common_dir(repo: &Path, value: &str) -> String {
@@ -694,9 +733,7 @@ fn schedule_isolation(task: &Schedule) -> Result<PathBuf, String> {
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("project");
-    let path = dirs::home_dir()
-        .ok_or("无法确定用户主目录")?
-        .join("ccode/watch-worktrees")
+    let path = crate::workspaces::watch_worktrees_root()?
         .join(repo_name)
         .join(&task.id);
     if path.exists() {
@@ -755,23 +792,65 @@ fn schedule_isolation(task: &Schedule) -> Result<PathBuf, String> {
 }
 
 /// 旧口径曾每次从主仓刷新 papers/watchlist.md。2026-10-13 起订阅按任务一份
-/// （.ccode/watch/<id>/watchlist.md），播种时由 seed_watch_isolation 单独写入。
-/// 隔离树没有才拷：台账/收件箱/跟进/引文，避免冲掉本日程已处理记录。
-pub(crate) const WATCH_SEED_IF_ABSENT: &[&str] = &[
-    "papers/watch-seen.md",
-    "papers/watch-followup.md",
+/// （.ccode/watch/<id>/watchlist.md），播种时由 seed_schedule_watchlist 单独写入。
+///
+/// 台账每轮开跑前以主仓为真源重新播种（2026-10-17 审查修复）：旧口径「隔离树没有才拷」让
+/// 隔离树一旦与主仓分叉（同项目第二条雷达的采纳、人手改删、补批次标记）就永远对不上，
+/// 整文件采纳从此被冲突拦死。收件箱/跟进/引文照主仓镜像（主仓没有就删隔离副本）；
+/// 已见台账见 WATCH_SEEN_FILE。
+pub(crate) const WATCH_MIRROR_FILES: &[&str] = &[
     "notes/inbox.md",
+    "papers/watch-followup.md",
     "notes/references.bib",
 ];
-/// 采纳进主仓的产出文件。订阅在 .ccode/watch/<id>/，不从隔离树回写。
+/// 已见台账取主仓 ∪ 隔离树：隔离树里还没采纳的运行见过的标识要留着，否则下一轮把同一批
+/// 又当新命中；主仓里别的雷达见过的也并进来，同项目多条雷达不再互相重复入箱。
+pub(crate) const WATCH_SEEN_FILE: &str = "papers/watch-seen.md";
+/// 流程正典的只读副本：关联推荐通道（技能 §2b）的种子。隔离 worktree 停在建任务那一刻的
+/// HEAD，积累账又不进 git——不每轮镜像就只能读到旧种子或读不到。只读输入，永不采纳（WATCH_DENY_FILES）。
+pub(crate) const WATCH_SEED_INPUTS: &[&str] = &[
+    "papers/included.json",
+    "papers/included.md",
+    "papers/reading-list.md",
+];
+/// 采纳进主仓的产出文件：四类台账，按条目追加合并（watch_review::adopt_at）。订阅在
+/// .ccode/watch/<id>/，不从隔离树回写。免费全文 PDF 是二进制，由 lit_watch::adopt_watch_pdfs
+/// 只拷本轮新下的那几篇——旧口径的 `papers/` 整目录把流程正典也放进了可采纳范围。
 pub(crate) const WATCH_ADOPT_FILES: &[&str] = &[
     "notes/inbox.md",
     "papers/watch-seen.md",
     "papers/watch-followup.md",
     "notes/references.bib",
-    // 巡检结束时收下的免费全文。目录模式：采纳时按隔离树里新增的 PDF 拷进主仓。
-    "papers/",
 ];
+/// 雷达永不采纳的流程正典与 Mesa 内部路径（2026-10-17 审查修复）：「雷达不写 included.md /
+/// notes/index.json / references.bib」原先只靠 prompt 守，自定义巡检技能还能在 outputs 里
+/// 声明这些路径。契约展开与采纳两处都过这道闸。
+const WATCH_DENY_FILES: &[&str] = &[
+    "papers/included.md",
+    "papers/included.json",
+    "papers/screening.md",
+    "papers/to-fetch.md",
+    "papers/to-fetch.ris",
+    "papers/endnote-import.ris",
+    "papers/zotero-sync.md",
+    "papers/reading-list.md",
+    "notes/index.json",
+    "notes/handoff.md",
+    "references.bib",
+    "outline.md",
+    "task.md",
+];
+const WATCH_DENY_DIRS: &[&str] = &["manuscript/", ".ccode/", ".git/"];
+
+/// 流程正典/内部路径判定（大小写折叠：APFS/NTFS 上 Papers/ 与 papers/ 是同一目录）
+pub(crate) fn watch_path_denied(rel: &str) -> bool {
+    let p = rel.trim().replace('\\', "/");
+    let p = p.trim_start_matches("./").to_lowercase();
+    WATCH_DENY_FILES.iter().any(|d| p == *d)
+        || WATCH_DENY_DIRS
+            .iter()
+            .any(|d| p.starts_with(d) || p == d.trim_end_matches('/'))
+}
 
 /// 某次巡检的可采纳契约（§4.9 后半）：四类文献台账是基线；非 lit-watch 技能并上其
 /// SKILL.md frontmatter 声明的产出（outputs；目录带尾斜杠）。契约外路径永不自动采纳。
@@ -780,7 +859,7 @@ pub(crate) fn watch_adopt_patterns_for(skill: &str) -> Vec<String> {
     if skill != "lit-watch" {
         for out in crate::skills::skill_declared_outputs(skill) {
             let rel = out.trim().replace('\\', "/");
-            if watch_rel_ok(&rel) && !patterns.contains(&rel) {
+            if watch_rel_ok(&rel) && !watch_path_denied(&rel) && !patterns.contains(&rel) {
                 patterns.push(rel);
             }
         }
@@ -820,7 +899,6 @@ pub(crate) fn copy_watch_rel(
         return Err(format!("不允许的相对路径: {rel}"));
     }
     let src = from.join(rel);
-    let dest = to.join(rel);
     let src_meta = match std::fs::symlink_metadata(&src) {
         Ok(m) => m,
         Err(_) => return Ok(false),
@@ -828,6 +906,27 @@ pub(crate) fn copy_watch_rel(
     if src_meta.file_type().is_symlink() || !src_meta.is_file() {
         return Ok(false);
     }
+    let dest = watch_dest_checked(to, rel)?;
+    if dest.exists() && !overwrite {
+        return Ok(false);
+    }
+    let from_c =
+        crate::paths::canonicalize_plain(from).map_err(|e| format!("源目录无法解析: {e}"))?;
+    let src_c =
+        crate::paths::canonicalize_plain(&src).map_err(|e| format!("源文件无法解析: {e}"))?;
+    if !crate::paths::path_within_path(&src_c, &from_c) {
+        return Err(format!("源文件不在允许目录内: {rel}"));
+    }
+    fs::copy(&src, &dest).map_err(|e| format!("复制 {rel} 失败: {e}"))?;
+    Ok(true)
+}
+
+/// 隔离树里的写入目标：拒绝符号链接、建好父目录并确认父目录仍在隔离树内。
+fn watch_dest_checked(to: &Path, rel: &str) -> Result<PathBuf, String> {
+    if !watch_rel_ok(rel) {
+        return Err(format!("不允许的相对路径: {rel}"));
+    }
+    let dest = to.join(rel);
     if dest
         .symlink_metadata()
         .map(|m| m.file_type().is_symlink())
@@ -835,18 +934,8 @@ pub(crate) fn copy_watch_rel(
     {
         return Err(format!("拒绝写入符号链接: {rel}"));
     }
-    if dest.exists() && !overwrite {
-        return Ok(false);
-    }
-    let from_c =
-        crate::paths::canonicalize_plain(from).map_err(|e| format!("源目录无法解析: {e}"))?;
     let to_c =
         crate::paths::canonicalize_plain(to).map_err(|e| format!("目标目录无法解析: {e}"))?;
-    let src_c =
-        crate::paths::canonicalize_plain(&src).map_err(|e| format!("源文件无法解析: {e}"))?;
-    if !crate::paths::path_within_path(&src_c, &from_c) {
-        return Err(format!("源文件不在允许目录内: {rel}"));
-    }
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("创建目标目录失败: {e}"))?;
         let parent_c = crate::paths::canonicalize_plain(parent)
@@ -855,15 +944,81 @@ pub(crate) fn copy_watch_rel(
             return Err(format!("目标路径逃出允许目录: {rel}"));
         }
     }
-    fs::copy(&src, &dest).map_err(|e| format!("复制 {rel} 失败: {e}"))?;
-    Ok(true)
+    Ok(dest)
+}
+
+/// 主仓有就覆盖拷进隔离树；主仓没有就删掉隔离树里的旧副本（只删普通文件）。
+fn mirror_watch_rel(from: &Path, to: &Path, rel: &str) -> Result<(), String> {
+    if copy_watch_rel(from, to, rel, true)? {
+        return Ok(());
+    }
+    let dest = watch_dest_checked(to, rel)?;
+    match fs::symlink_metadata(&dest) {
+        Ok(meta) if meta.is_file() => {
+            fs::remove_file(&dest).map_err(|e| format!("清理隔离副本 {rel} 失败: {e}"))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// 已见台账：主仓全文在前，隔离树独有的标识行续在后面（逐行去重，空行不算）。
+fn merge_seen_into_isolation(from: &Path, to: &Path) -> Result<(), String> {
+    let read = |root: &Path| -> Result<Option<String>, String> {
+        let path = root.join(WATCH_SEEN_FILE);
+        match fs::symlink_metadata(&path) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                Err(format!("拒绝读取符号链接: {WATCH_SEEN_FILE}"))
+            }
+            Ok(meta) if meta.is_file() => fs::read_to_string(&path)
+                .map(Some)
+                .map_err(|e| format!("读取 {WATCH_SEEN_FILE} 失败: {e}")),
+            _ => Ok(None),
+        }
+    };
+    let main = read(from)?;
+    let iso = read(to)?;
+    let merged = merge_seen_text(main.as_deref(), iso.as_deref());
+    if merged.as_deref() == iso.as_deref() {
+        return Ok(());
+    }
+    let Some(text) = merged else {
+        return Ok(());
+    };
+    let dest = watch_dest_checked(to, WATCH_SEEN_FILE)?;
+    crate::profiles::atomic_write(&dest, &text)
+        .map_err(|e| format!("写入隔离 {WATCH_SEEN_FILE} 失败: {e}"))
+}
+
+/// merge_seen_into_isolation 的纯文本部分（单测钉住）。两边都没有返回 None。
+fn merge_seen_text(main: Option<&str>, iso: Option<&str>) -> Option<String> {
+    let (main, iso) = match (main, iso) {
+        (None, None) => return None,
+        (Some(m), None) => return Some(m.to_string()),
+        (None, Some(i)) => return Some(i.to_string()),
+        (Some(m), Some(i)) => (m, i),
+    };
+    let mut have: HashSet<&str> = main.lines().map(str::trim).collect();
+    let extra: Vec<&str> = iso
+        .lines()
+        .filter(|l| !l.trim().is_empty() && have.insert(l.trim()))
+        .collect();
+    if extra.is_empty() {
+        return Some(main.to_string());
+    }
+    let mut out = main.to_string();
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str(&extra.join("\n"));
+    out.push('\n');
+    Some(out)
 }
 
 pub(crate) fn seed_watch_isolation(project_root: &Path, isolation: &Path) -> Result<(), String> {
-    for rel in WATCH_SEED_IF_ABSENT {
-        copy_watch_rel(project_root, isolation, rel, false)?;
+    for rel in WATCH_MIRROR_FILES.iter().chain(WATCH_SEED_INPUTS) {
+        mirror_watch_rel(project_root, isolation, rel)?;
     }
-    Ok(())
+    merge_seen_into_isolation(project_root, isolation)
 }
 
 /// 文献雷达这次跑只看这一份订阅。空清单也写入，巡检据此停下来，
@@ -955,17 +1110,18 @@ pub fn adopt_watch_run(app: tauri::AppHandle, run_id: String) -> Result<Vec<Stri
     if crate::paths::path_within_path(&isolation, &project) {
         return Err("隔离路径落在主仓内，拒绝采纳".into());
     }
-    let mut snapshot = crate::watch_review::load_at(&crate::watch_review::review_dir()?, &run_id)?;
+    let snapshot = crate::watch_review::load_at(&crate::watch_review::review_dir()?, &run_id)?;
     if !crate::paths::same_path(&snapshot.project_root, &project.to_string_lossy()) {
         return Err("冻结证据所属项目与运行记录不一致".into());
     }
-    // 评审里被「排除」的条目不进项目：采纳前从冻结的收件箱文本里整段剔除。
+    // 评审里被「排除」的条目不进项目：收件箱/跟进/引文的追加段剔掉，PDF 也不拷。
     // 雷达文献只是项目内的日常积累，纳入/排除不写科研流程的精读清单与引用库，
-    // 这里只决定这批积累里哪些留在项目的收件箱（2026-10-13 用户拍板口径）。
-    if schedule.skill == "lit-watch" {
-        let excluded = crate::watch_review::excluded_entry_ids(&isolation);
-        crate::watch_review::drop_excluded_from_snapshot(&mut snapshot, &excluded);
-    }
+    // 这里只决定这批积累里哪些留在项目里（2026-10-13 用户拍板口径）。
+    let excluded = if schedule.skill == "lit-watch" {
+        crate::watch_review::excluded_entry_ids(&isolation)
+    } else {
+        Vec::new()
+    };
     // 保护清单读不出来 = 不可信，fail-closed 拒绝采纳（与 runs.rs 验收写回同一口径）
     let protected = crate::projects::protected_paths_at(&project)?;
     let copied = crate::watch_review::adopt_at(
@@ -974,11 +1130,20 @@ pub fn adopt_watch_run(app: tauri::AppHandle, run_id: String) -> Result<Vec<Stri
         &project,
         &protected,
         &patterns,
+        &excluded,
     )?;
-    // 免费全文是二进制，文本冻结带不走。隔离树 papers/ 里主仓还没有的 PDF 直接拷过来并登记。
+    // 免费全文是二进制，文本冻结带不走：只拷本轮新下、且没被排除的 PDF 并登记。
+    // 隔离树里以前各轮的 PDF 不再拷——主仓里被精读步改名或被人删掉的，不会再被拷回来。
     let mut copied = copied;
     if schedule.skill == "lit-watch" {
-        match crate::lit_watch::adopt_watch_pdfs(&isolation, &project) {
+        let new_pdfs = crate::watch_review::new_pdfs_of(&snapshot);
+        let excluded_titles = crate::watch_review::excluded_titles_of(&snapshot, &excluded);
+        match crate::lit_watch::adopt_watch_pdfs(
+            &isolation,
+            &project,
+            new_pdfs.as_deref(),
+            &excluded_titles,
+        ) {
             Ok(pdfs) => copied.extend(pdfs),
             Err(e) => {
                 return Err(format!(
@@ -1014,6 +1179,48 @@ fn is_timeout_error(err: &str) -> bool {
     err.contains("AI 调用超时")
 }
 
+/// 未钉连接的定时任务按项目默认取连接（2026-10-17 审查修复）。旧口径直接跳到设置页
+/// AI 专用配置 / 最近用过的连接，Agents 页又只写「自动」——无人值守的雷达用哪家供应商，
+/// 取决于你最近在别处点了什么。与前端 projectAgentLaunch 同口径：项目默认 Agent 的绑定
+/// 连接还在就用它，否则该 Agent 的第一条。
+enum ProjectDefaultPick {
+    /// 项目没设默认 Agent（或任务已钉连接）：走既有自动链
+    Unset,
+    /// 用项目默认：连接 + 名册里点选的模型（可能为空）
+    Use(crate::profiles::Profile, Option<String>),
+    /// 设了默认但用不上：回落自动链，原因写进运行历史
+    Skip(String),
+}
+
+fn pick_project_default(
+    profiles: &[crate::profiles::Profile],
+    prefs: Option<&crate::projects::ProjectDefaultPrefs>,
+    blocked: impl Fn(&str) -> Option<String>,
+) -> ProjectDefaultPick {
+    let Some(prefs) = prefs else {
+        return ProjectDefaultPick::Unset;
+    };
+    let for_agent: Vec<&crate::profiles::Profile> =
+        profiles.iter().filter(|p| p.agent == prefs.agent).collect();
+    let picked = prefs
+        .profile
+        .as_deref()
+        .and_then(|id| for_agent.iter().find(|p| p.id == id).copied())
+        .or_else(|| for_agent.first().copied());
+    let Some(profile) = picked else {
+        return ProjectDefaultPick::Skip(format!(
+            "项目默认 Agent（{}）没有可用连接，本次按自动规则选连接；",
+            prefs.agent
+        ));
+    };
+    if let Some(reason) = blocked(&profile.agent) {
+        return ProjectDefaultPick::Skip(format!(
+            "项目默认连接不能用于定时任务（{reason}），本次按自动规则选连接；"
+        ));
+    }
+    ProjectDefaultPick::Use(profile.clone(), prefs.model.clone())
+}
+
 /// 无头/定时写盘能力闸（数据单一出处 = agent_specs 能力表，不另抄名单）：
 /// 最终解析出的 agent supported=false（如 qwen 未验证）返回用户可见原因；
 /// 支持（含「按该工具默认权限写文件 / 会批准全部操作」警示档）与表外 agent 放行。
@@ -1036,7 +1243,6 @@ fn headless_write_block_reason(agent: &str) -> Option<String> {
 /// 找不到二进制/项目目录不存在）同样记 history（status="error"）。
 /// 绝不真的在测试里调用（会拉起 CLI）。
 fn execute_one(id: &str) -> RunDonePayload {
-    let started = std::time::SystemTime::now();
     let started_at = crate::sessions::now_iso();
     let path = match schedules_path() {
         Ok(p) => p,
@@ -1106,6 +1312,8 @@ fn execute_one(id: &str) -> RunDonePayload {
         }
         Ok(path)
     });
+    // 「本次改了哪些文件」从播种之后算起：每轮播种都会改写台账与只读种子，不能算成巡检产物
+    let artifacts_since = std::time::SystemTime::now();
     // 项目配了雷达筛选时，新增计数只算通过筛选的条目（推送口径 = 用户要看的口径）
     let lit_filter = if is_lit_watch {
         crate::projects::lit_watch_filter_for(Path::new(&task.project_root))
@@ -1143,28 +1351,48 @@ fn execute_one(id: &str) -> RunDonePayload {
             .into_iter()
             .collect();
         let pinned = task.profile_id.clone().filter(|v| !v.trim().is_empty());
-        let profile = match crate::ai::resolve_profile_from(
-            profiles,
-            pinned.clone(),
-            None,
-            dedicated.clone(),
-            &hidden,
-        ) {
-            Ok(profile) => profile,
-            Err(error) => {
-                // Profile resolution is part of the Run lifecycle too: keep a durable
-                // failed Run even though no agent process can be started.
-                let failed = crate::runs::open_headless_with_root(
-                    Some(&task.project_root),
-                    "scheduler",
-                    "",
-                    &root.to_string_lossy(),
-                    &format!("watch:{}:{}", task.id, task.project_root),
-                    false,
-                    "write_tree",
-                )?;
-                run_id = Some(failed.id.clone());
-                return Err(error);
+        // 未钉连接先按项目默认（解析塔 L4 未钉 → L2）；项目没设默认、或默认那家不能无头写盘，
+        // 才回落既有自动链（设置页 AI 专用配置 → 最近用过的连接），并在运行历史里说一句
+        let project_pick = if pinned.is_none() {
+            pick_project_default(
+                &profiles,
+                crate::projects::project_default_prefs(Path::new(&task.project_root)).as_ref(),
+                headless_write_block_reason,
+            )
+        } else {
+            ProjectDefaultPick::Unset
+        };
+        let (profile, project_model) = match project_pick {
+            ProjectDefaultPick::Use(profile, model) => (profile, Some(model)),
+            other => {
+                if let ProjectDefaultPick::Skip(note) = other {
+                    model_note.push_str(&note);
+                }
+                let resolved = crate::ai::resolve_profile_from(
+                    profiles,
+                    pinned.clone(),
+                    None,
+                    dedicated.clone(),
+                    &hidden,
+                );
+                match resolved {
+                    Ok(profile) => (profile, None),
+                    Err(error) => {
+                        // Profile resolution is part of the Run lifecycle too: keep a durable
+                        // failed Run even though no agent process can be started.
+                        let failed = crate::runs::open_headless_with_root(
+                            Some(&task.project_root),
+                            "scheduler",
+                            "",
+                            &root.to_string_lossy(),
+                            &format!("watch:{}:{}", task.id, task.project_root),
+                            false,
+                            "write_tree",
+                        )?;
+                        run_id = Some(failed.id.clone());
+                        return Err(error);
+                    }
+                }
             }
         };
         // 无头写盘 fail-loud：手动列表的禁选只在 UI 层，选「自动」时回落解析可能落到
@@ -1234,6 +1462,9 @@ fn execute_one(id: &str) -> RunDonePayload {
                     }
                 }
             }
+        } else if let Some(project_model) = project_model {
+            // 走项目默认：用名册里给这家点选的模型（还在名单里），否则名单第一——与前端 projectAgentLaunch 同口径
+            crate::ai::pick_listed_model(&profile.models, project_model.as_deref())
         } else {
             crate::ai::preferred_ai_model(
                 &profile.id,
@@ -1342,7 +1573,7 @@ fn execute_one(id: &str) -> RunDonePayload {
                 .as_deref()
                 .map(Path::new)
                 .unwrap_or_else(|| Path::new(&task.project_root)),
-            started,
+            artifacts_since,
         )
     } else {
         Vec::new()
@@ -1393,6 +1624,48 @@ fn emit_done(app: &tauri::AppHandle, payload: RunDonePayload) {
             &format!("发送 scheduler-run-done 事件失败: {e}"),
         );
     }
+}
+
+/// `scheduler-run-started` 事件载荷：tick/手动拉起即发，前端据此刷新「排队中/运行中」
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RunStartedPayload {
+    schedule_id: String,
+}
+
+fn emit_started(app: &tauri::AppHandle, id: &str) {
+    if let Err(e) = app.emit("scheduler-run-started", &RunStartedPayload { schedule_id: id.to_string() }) {
+        crate::logbuf::record(
+            "warn",
+            "scheduler",
+            &format!("发送 scheduler-run-started 事件失败: {e}"),
+        );
+    }
+}
+
+/// claim 后读任务的项目根（同项目互斥锁的键）。任务在 claim 与执行之间被删则 None。
+fn schedule_project_root(id: &str) -> Option<String> {
+    let _g = sched_lock().ok()?;
+    read_schedules_at(&schedules_path().ok()?)
+        .ok()?
+        .into_iter()
+        .find(|t| t.id == id)
+        .map(|t| t.project_root)
+}
+
+/// 排队中 = 到点该跑（enabled 且 due）但当前没有在跑的 Run。等的是并发上限或同项目
+/// 互斥，闸门一过下一 tick 自动接上。list_schedules 出口用，纯函数可测。
+fn queued_for_list(s: &Schedule, now: NaiveDateTime, running: bool) -> bool {
+    s.enabled
+        && !running
+        && is_due(
+            &s.frequency,
+            s.weekday,
+            s.hour,
+            s.minute,
+            parse_last_run_local(s.last_run_at.as_deref()),
+            now,
+        )
 }
 
 /// 收集本轮 due 的任务 id（enabled 且未在跑）
@@ -1458,15 +1731,21 @@ fn claim_due_after_lock(id: &str, due: &[String]) -> bool {
 }
 
 /// 启动调度引擎（lib.rs setup 里调用一次）：后台线程每 60s 一个 tick，
-/// 启动即先跑一轮——天然补跑应用关闭期间错过的任务；多条 due 任务串行执行，
-/// 避免并发拉起一堆 CLI。用 spawn_blocking + thread::sleep（参照 diagnostics 后台循环），
-/// 不为一个 sleep 引入 tokio 依赖。
+/// 启动即先跑一轮——天然补跑应用关闭期间错过的任务。due 任务**跨项目并行**执行
+/// （2026-10-16 拍板，取代 v3.75 的全串行）：每条任务自己 spawn，同一项目用
+/// project_lock 互斥，tick 同时在跑的运行数封顶 MAX_CONCURRENT_TICK_RUNS——
+/// 两个闸门没过的任务保持 due，下一 tick 自动重试（界面呈「排队中」）。
+/// 用 spawn_blocking + thread::sleep（参照 diagnostics 后台循环），不为一个 sleep 引入 tokio 依赖。
 pub fn start_scheduler(app: tauri::AppHandle) {
     tauri::async_runtime::spawn_blocking(move || loop {
         if crate::process::shutting_down() {
             break;
         }
         for id in collect_due_ids() {
+            // 并发上限：满了本轮不再接新任务（break 而非 continue——后面的也一样接不上）
+            if TICK_INFLIGHT.load(Ordering::SeqCst) >= MAX_CONCURRENT_TICK_RUNS {
+                break;
+            }
             let lease = match execution_lock(&id) {
                 Ok(lease) => lease,
                 Err(error) => {
@@ -1478,10 +1757,43 @@ pub fn start_scheduler(app: tauri::AppHandle) {
             if !claim_due_after_lock(&id, &collect_due_ids()) {
                 continue;
             }
-            let payload = execute_one(&id);
-            drop(lease);
-            unmark_running(&id);
-            emit_done(&app, payload);
+            let Some(project) = schedule_project_root(&id) else {
+                // claim 与执行之间任务被删：不执行也不报事件（任务已不存在）
+                unmark_running(&id);
+                continue;
+            };
+            // 同项目互斥：锁被占说明这个项目另一条雷达在跑，本轮让位、保持 due
+            let project_lease = match project_lock(&project) {
+                Ok(lock) => lock,
+                Err(_) => {
+                    unmark_running(&id);
+                    continue;
+                }
+            };
+            TICK_INFLIGHT.fetch_add(1, Ordering::SeqCst);
+            let app2 = app.clone();
+            tauri::async_runtime::spawn(async move {
+                emit_started(&app2, &id);
+                let id2 = id.clone();
+                let outcome = tauri::async_runtime::spawn_blocking(move || {
+                    let _lease = lease;
+                    let _project_lease = project_lease;
+                    execute_one(&id2)
+                })
+                .await;
+                TICK_INFLIGHT.fetch_sub(1, Ordering::SeqCst);
+                unmark_running(&id);
+                match outcome {
+                    Ok(payload) => emit_done(&app2, payload),
+                    Err(e) => {
+                        crate::logbuf::record(
+                            "error",
+                            "scheduler",
+                            &format!("任务执行线程异常: {e}"),
+                        );
+                    }
+                }
+            });
         }
         std::thread::sleep(TICK_INTERVAL);
     });
@@ -1516,18 +1828,28 @@ pub fn list_schedules() -> Result<Vec<ScheduleDto>, String> {
     }
     drop(_g);
     let runs = crate::runs::run_list(None)?;
+    let now = Local::now().naive_local();
     Ok(list
         .into_iter()
         .map(|schedule| {
+            let running = runs.iter().any(|r| {
+                r.task_ref.as_deref() == Some(&schedule.id)
+                    && r.task_kind == "watch"
+                    && crate::process::capture_active(&r.id)
+            });
+            let queued = queued_for_list(&schedule, now, running);
             let mut dto = ScheduleDto::from(schedule);
-            dto.running_run_id = runs
-                .iter()
-                .find(|r| {
-                    r.task_ref.as_deref() == Some(&dto.id)
-                        && r.task_kind == "watch"
-                        && crate::process::capture_active(&r.id)
-                })
-                .map(|r| r.id.clone());
+            if running {
+                dto.running_run_id = runs
+                    .iter()
+                    .find(|r| {
+                        r.task_ref.as_deref() == Some(&dto.id)
+                            && r.task_kind == "watch"
+                            && crate::process::capture_active(&r.id)
+                    })
+                    .map(|r| r.id.clone());
+            }
+            dto.queued = queued;
             dto
         })
         .collect())
@@ -1595,11 +1917,9 @@ fn purge_schedule_side_effects(task: &Schedule) {
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("project");
-    if let Some(home) = dirs::home_dir() {
-        let worktree = home
-            .join("ccode/watch-worktrees")
-            .join(repo_name)
-            .join(&task.id);
+    // 家目录可换位置：任务的隔离树可能留在旧位置，各根都找
+    for watch_root in crate::ccode_home::all_sub("watch-worktrees") {
+        let worktree = watch_root.join(repo_name).join(&task.id);
         if worktree.is_dir() {
             if let Err(e) = crate::projects::trash_delete_retry(&worktree, "定时隔离目录") {
                 crate::logbuf::record("warn", "scheduler", &e);
@@ -1695,7 +2015,7 @@ fn schedule_has_keywords(task: &Schedule) -> bool {
 /// 立即触发一次（不等结果）：走同一执行路径与防重入集合，结果经 scheduler-run-done 事件回前端
 #[tauri::command]
 pub fn run_schedule_now(app: tauri::AppHandle, id: String) -> Result<(), String> {
-    {
+    let project = {
         let _g = sched_lock()?;
         let list = read_schedules_at(&schedules_path()?)?;
         let task = list
@@ -1705,7 +2025,8 @@ pub fn run_schedule_now(app: tauri::AppHandle, id: String) -> Result<(), String>
         if task.skill == "lit-watch" && !schedule_has_keywords(task) {
             return Err("先给这个巡检添加关键词，再立即运行".into());
         }
-    }
+        task.project_root.clone()
+    };
     if !mark_running(&id) {
         return Err("该任务正在运行中".into());
     }
@@ -1716,10 +2037,20 @@ pub fn run_schedule_now(app: tauri::AppHandle, id: String) -> Result<(), String>
             return Err(error);
         }
     };
+    // 手动运行不占 tick 并发上限，但同项目互斥同样生效（并行写同一份台账会坏账）
+    let project_lease = match project_lock(&project) {
+        Ok(lock) => lock,
+        Err(_) => {
+            unmark_running(&id);
+            return Err("这个项目已有雷达在跑，等它结束或先停止它".into());
+        }
+    };
     tauri::async_runtime::spawn(async move {
+        emit_started(&app, &id);
         let id2 = id.clone();
         let outcome = tauri::async_runtime::spawn_blocking(move || {
             let _lease = lease;
+            let _project_lease = project_lease;
             execute_one(&id2)
         })
         .await;
@@ -2461,10 +2792,10 @@ mod tests {
 
     #[test]
     fn prompt_template_dispatches_by_skill() {
-        // lit-watch 专用文案一字不动（回归钉死）
+        // lit-watch 专用文案一字不动（回归钉死；2026-10-16 拍板两批修订：下载硬时间盒 + 关联推荐/OA 直链）
         assert_eq!(
             build_task_prompt("lit-watch"),
-            "请使用 lit-watch 技能执行一次文献巡检：按 papers/watchlist.md 的订阅清单检索新文献，去重、精选后把命中追加到 notes/inbox.md。追加本次条目前必须先单独写一行 <!-- watch-run: YYYY-MM-DD -->（本次巡检的本地日期，上海时区），已有批次标记的旧条目不要改。能免费直接下载的 PDF（arXiv /pdf/ 直链或以 .pdf 结尾）在结束前用 curl 下到项目根 papers/，文件名用标题，并确认以 %PDF- 开头；出版商页、DOI 落地页和付费墙不要下，题录留在 papers/watch-followup.md。不要写 papers/included.md、notes/index.json 或 references.bib——雷达文献是项目的日常积累，精读与引文库由人发起检索/科研流程后才动。结束时输出三行以内的简报（检索了几条关键词/来源、新命中几篇、其中推荐几篇、哪些来源未达、免费全文下了几篇）。本任务由 Mesa 定时雷达自动触发。"
+            "请使用 lit-watch 技能执行一次文献巡检：按 papers/watchlist.md 的订阅清单检索新文献，并按规范跑关联推荐通道，去重、精选后把命中追加到 notes/inbox.md。追加本次条目前必须先单独写一行 <!-- watch-run: YYYY-MM-DD -->（本次巡检的本地日期，上海时区），已有批次标记的旧条目不要改。免费全文按规范以 OpenAlex 的 best_oa_location.pdf_url、arXiv /pdf/ 直链或 .pdf 结尾直链为准，在结束前用 curl 下到项目根 papers/，文件名用标题，并确认以 %PDF- 开头；下载带硬时间盒：每篇 curl 加 --max-time 60，全部下载合计不超过 5 分钟，到点放弃、残文件删掉、题录留在 papers/watch-followup.md，同一链接不重试；出版商页、DOI 落地页和付费墙不要下。不要写 papers/included.md、notes/index.json 或 references.bib——雷达文献是项目的日常积累，精读与引文库由人发起检索/科研流程后才动。结束时输出三行以内的简报（检索了几条关键词/来源、关联推荐是否跑/命中几篇、新命中几篇、其中推荐几篇、哪些来源未达、免费全文下了几篇）。本任务由 Mesa 定时雷达自动触发。"
         );
         // 其他技能走通用模板：替换技能名、不带文献巡检的路径口径
         let p = build_task_prompt("data-clean");
@@ -2541,8 +2872,9 @@ mod tests {
         std::fs::create_dir_all(project.join("papers")).unwrap();
         std::fs::create_dir_all(project.join("notes")).unwrap();
         std::fs::create_dir_all(&isolation).unwrap();
+        let old = "<!-- watch-run: 2026-10-12 -->\n\n## old\n- 来源：期刊 — 2026-10-11 — 10.1/old\n";
         std::fs::write(project.join("papers/watchlist.md"), "kw\n").unwrap();
-        std::fs::write(project.join("notes/inbox.md"), "## old\n").unwrap();
+        std::fs::write(project.join("notes/inbox.md"), old).unwrap();
         seed_watch_isolation(&project, &isolation).unwrap();
         // 订阅不再从主仓播种：隔离树的 watchlist 由 seed_schedule_watchlist 按任务写入
         assert!(!isolation.join("papers/watchlist.md").is_file());
@@ -2555,7 +2887,10 @@ mod tests {
             &watch_adopt_patterns_for("lit-watch"),
         )
         .unwrap();
-        std::fs::write(isolation.join("notes/inbox.md"), "## old\n## new\n").unwrap();
+        let after = format!(
+            "{old}\n<!-- watch-run: 2026-10-13 -->\n\n## new\n- 来源：期刊 — 2026-10-12 — 10.1/new\n"
+        );
+        std::fs::write(isolation.join("notes/inbox.md"), &after).unwrap();
         let reviews = root.join("reviews");
         crate::watch_review::freeze_at(
             &reviews,
@@ -2571,14 +2906,139 @@ mod tests {
             &project,
             &[],
             &watch_adopt_patterns_for("lit-watch"),
+            &[],
         )
         .unwrap();
         assert!(copied.iter().any(|p| p == "notes/inbox.md"));
-        assert_eq!(
-            std::fs::read_to_string(project.join("notes/inbox.md")).unwrap(),
-            "## old\n## new\n"
-        );
+        assert_eq!(std::fs::read_to_string(project.join("notes/inbox.md")).unwrap(), after);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn seeding_mirrors_main_every_run_and_unions_seen() {
+        // 2026-10-17 审查修复：每轮以主仓为真源重播种（旧口径「隔离树没有才拷」一旦分叉永不再对齐）
+        let root = std::env::temp_dir().join(format!("ccode-watch-mirror-{}", uuid::Uuid::new_v4()));
+        let project = root.join("project");
+        let isolation = root.join("iso");
+        for dir in [&project, &isolation] {
+            std::fs::create_dir_all(dir.join("papers")).unwrap();
+            std::fs::create_dir_all(dir.join("notes")).unwrap();
+        }
+        std::fs::write(project.join("notes/inbox.md"), "main inbox\n").unwrap();
+        std::fs::write(isolation.join("notes/inbox.md"), "stale inbox\n").unwrap();
+        // 主仓没有跟进清单：隔离树旧副本删掉
+        std::fs::write(isolation.join("papers/watch-followup.md"), "stale\n").unwrap();
+        std::fs::write(project.join("papers/watch-seen.md"), "10.1/a\n10.1/b\n").unwrap();
+        std::fs::write(isolation.join("papers/watch-seen.md"), "10.1/a\n10.1/unadopted\n").unwrap();
+        // 关联推荐的种子：流程正典与积累账的只读副本
+        std::fs::write(project.join("papers/included.json"), "[1]").unwrap();
+        std::fs::write(project.join("papers/reading-list.md"), "积累\n").unwrap();
+        std::fs::write(isolation.join("papers/included.json"), "[old]").unwrap();
+        seed_watch_isolation(&project, &isolation).unwrap();
+        let read = |rel: &str| std::fs::read_to_string(isolation.join(rel)).unwrap();
+        assert_eq!(read("notes/inbox.md"), "main inbox\n");
+        assert!(!isolation.join("papers/watch-followup.md").exists());
+        assert_eq!(read("papers/watch-seen.md"), "10.1/a\n10.1/b\n10.1/unadopted\n");
+        assert_eq!(read("papers/included.json"), "[1]");
+        assert_eq!(read("papers/reading-list.md"), "积累\n");
+        // 再播一次幂等
+        seed_watch_isolation(&project, &isolation).unwrap();
+        assert_eq!(read("papers/watch-seen.md"), "10.1/a\n10.1/b\n10.1/unadopted\n");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn merge_seen_text_keeps_main_then_isolation_only_lines() {
+        assert_eq!(merge_seen_text(None, None), None);
+        assert_eq!(merge_seen_text(Some("a"), None).as_deref(), Some("a"));
+        assert_eq!(merge_seen_text(None, Some("b\n")).as_deref(), Some("b\n"));
+        assert_eq!(merge_seen_text(Some("a"), Some("a\n\nb\nb\n")).as_deref(), Some("a\nb\n"));
+    }
+
+    fn test_profile(id: &str, agent: &str, models: &[&str]) -> crate::profiles::Profile {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "agent": agent, "name": id, "models": models, "hasKey": true,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn unpinned_schedule_follows_project_default() {
+        let profiles = vec![
+            test_profile("c1", "claude-code", &["opus", "sonnet"]),
+            test_profile("c2", "claude-code", &["sonnet"]),
+            test_profile("q1", "qwen-code", &[]),
+        ];
+        let never = |_: &str| None;
+        assert!(matches!(
+            pick_project_default(&profiles, None, never),
+            ProjectDefaultPick::Unset
+        ));
+        // 绑定连接还在：用它，带名册点选的模型
+        let prefs = crate::projects::ProjectDefaultPrefs {
+            agent: "claude-code".into(),
+            profile: Some("c2".into()),
+            model: Some("sonnet".into()),
+        };
+        match pick_project_default(&profiles, Some(&prefs), never) {
+            ProjectDefaultPick::Use(p, model) => {
+                assert_eq!(p.id, "c2");
+                assert_eq!(model.as_deref(), Some("sonnet"));
+            }
+            _ => panic!("应按项目默认"),
+        }
+        // 绑定连接被删：该 Agent 第一条（与前端 projectAgentLaunch 同口径）
+        let gone = crate::projects::ProjectDefaultPrefs {
+            profile: Some("deleted".into()),
+            ..prefs
+        };
+        assert!(matches!(
+            pick_project_default(&profiles, Some(&gone), never),
+            ProjectDefaultPick::Use(p, _) if p.id == "c1"
+        ));
+        // 默认那家不能无头写盘 / 没有连接：回落自动链并说明
+        let qwen = crate::projects::ProjectDefaultPrefs {
+            agent: "qwen-code".into(),
+            profile: None,
+            model: None,
+        };
+        let block = |agent: &str| (agent == "qwen-code").then(|| "未验证".to_string());
+        assert!(matches!(
+            pick_project_default(&profiles, Some(&qwen), block),
+            ProjectDefaultPick::Skip(note) if note.contains("未验证")
+        ));
+        let none = crate::projects::ProjectDefaultPrefs {
+            agent: "codex".into(),
+            profile: None,
+            model: None,
+        };
+        assert!(matches!(
+            pick_project_default(&profiles, Some(&none), never),
+            ProjectDefaultPick::Skip(note) if note.contains("codex")
+        ));
+    }
+
+    #[test]
+    fn flow_canon_and_internal_paths_are_denied_for_radar_adoption() {
+        for rel in [
+            "papers/included.md",
+            "Papers/Included.json",
+            "notes/index.json",
+            "references.bib",
+            "manuscript/draft.md",
+            ".ccode/project.toml",
+            "./outline.md",
+        ] {
+            assert!(watch_path_denied(rel), "{rel}");
+        }
+        for rel in [
+            "notes/inbox.md",
+            "papers/watch-seen.md",
+            "notes/references.bib",
+            "results/summary.md",
+        ] {
+            assert!(!watch_path_denied(rel), "{rel}");
+        }
     }
 
     #[test]
@@ -2621,6 +3081,53 @@ mod tests {
         drop(first);
         assert!(execution_lock_at(&dir, "same schedule").is_ok());
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn project_lock_excludes_same_project_not_others() {
+        let dir = tmp_schedules_path("project-lock");
+        fs::create_dir_all(&dir).unwrap();
+        let first = project_lock_at(&dir, "/tmp/proj-a").unwrap();
+        // 同一项目第二条雷达：互斥；不同项目：各自可入
+        assert!(project_lock_at(&dir, "/tmp/proj-a").is_err());
+        assert!(project_lock_at(&dir, "/tmp/proj-b").is_ok());
+        drop(first);
+        assert!(project_lock_at(&dir, "/tmp/proj-a").is_ok());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn queued_marks_due_enabled_idle_tasks_only() {
+        use chrono::TimeZone;
+        // last_run_at 经 parse_last_run_local 落到本地时区——用 Local 构造时间戳，
+        // 断言才不随 runner 时区漂移（sample_task 应跑时刻 = 每天 08:00 本地）
+        let now = NaiveDate::from_ymd_opt(2026, 10, 16)
+            .unwrap()
+            .and_hms_opt(10, 0, 0)
+            .unwrap();
+        // 从没跑过、已过应跑时刻 → 排队中
+        let due = sample_task("q-due", "/tmp/x");
+        assert!(queued_for_list(&due, now, false));
+        // 今天 09:30 已跑（晚于 08:00 应跑时刻）→ 不排
+        let mut ran_today = due.clone();
+        ran_today.last_run_at =
+            Some(Local.with_ymd_and_hms(2026, 10, 16, 9, 30, 0).unwrap().to_rfc3339());
+        assert!(!queued_for_list(&ran_today, now, false));
+        // 到点但在跑 → 不排（运行中另有标记）
+        assert!(!queued_for_list(&due, now, true));
+        // 停用的任务到点也不排
+        let mut disabled = due.clone();
+        disabled.enabled = false;
+        assert!(!queued_for_list(&disabled, now, false));
+        // 还没到今天的应跑时刻（07:59，今天 07:00 跑过）→ 不排
+        let before_now = NaiveDate::from_ymd_opt(2026, 10, 16)
+            .unwrap()
+            .and_hms_opt(7, 59, 0)
+            .unwrap();
+        let mut ran_earlier_today = due.clone();
+        ran_earlier_today.last_run_at =
+            Some(Local.with_ymd_and_hms(2026, 10, 16, 7, 0, 0).unwrap().to_rfc3339());
+        assert!(!queued_for_list(&ran_earlier_today, before_now, false));
     }
 
     #[test]

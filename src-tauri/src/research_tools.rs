@@ -147,12 +147,81 @@ pub async fn research_tool_preflight(
             false,
         ));
     }
+    if step.skills.iter().any(|s| s == "quarto-render") {
+        // 不挡开工（写稿用不到 Quarto），但要在写完才渲染失败之前就说出来
+        let quarto = crate::dep_check::probe_quarto();
+        // 能找到不等于 Agent 能用：终端里的 Agent 只认 PATH（which），候选目录兜底它看不到
+        let on_path = which::which("quarto").is_ok();
+        let (status, mut detail) = quarto_check_detail(
+            &quarto.status,
+            quarto.version.as_deref(),
+            quarto.path.as_deref(),
+            on_path,
+        );
+        // 残留环境变量导致的「跑不起来」：照实说原因，别让人去重装
+        if let Some(note) = quarto.note {
+            detail = note;
+        }
+        out.push(check("Quarto 渲染", status, detail, false));
+    }
     Ok(out)
+}
+
+/// Quarto 检查的白话（纯函数，单测钉住）
+fn quarto_check_detail(
+    status: &str,
+    version: Option<&str>,
+    path: Option<&str>,
+    on_path: bool,
+) -> (&'static str, String) {
+    match status {
+        "ok" if !on_path => (
+            "not-on-path",
+            format!(
+                "Quarto 装在 {}，但不在 PATH 上，终端里的 Agent 调不到 quarto；在 ~/.local/bin 建一个指向它的链接后重开终端",
+                path.unwrap_or("未知路径")
+            ),
+        ),
+        "ok" => (
+            "available",
+            format!("Quarto {}；渲染前仍按技能先跑 quarto check", version.unwrap_or("")),
+        ),
+        "broken" => (
+            "broken",
+            format!(
+                "找到的 quarto（{}）跑不起来，最后的 PDF/Word 渲染会失败；先装好官方 Quarto，并让它排在这个之前（设置页「依赖」可查）",
+                path.unwrap_or("未知路径")
+            ),
+        ),
+        _ => (
+            "missing",
+            "没装 Quarto，最后的 PDF/Word 渲染会失败；可以先开工写稿，渲染前到设置页「依赖」安装".to_string(),
+        ),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quarto_preflight_names_the_broken_binary() {
+        assert_eq!(quarto_check_detail("ok", Some("1.6.40"), None, true).0, "available");
+        let (status, detail) =
+            quarto_check_detail("broken", None, Some("/opt/conda/bin/quarto"), true);
+        assert_eq!(status, "broken");
+        assert!(detail.contains("/opt/conda/bin/quarto"));
+        assert_eq!(quarto_check_detail("missing", None, None, false).0, "missing");
+        // 官方 pkg 的 /usr/local/bin 链接没建出来：Mesa 找得到，终端里的 Agent 找不到
+        let (status, detail) = quarto_check_detail(
+            "ok",
+            Some("1.10.19"),
+            Some("/Applications/quarto/bin/quarto"),
+            false,
+        );
+        assert_eq!(status, "not-on-path");
+        assert!(detail.contains("/Applications/quarto/bin/quarto"));
+    }
 
     #[test]
     fn zotero_channel_maps_status_codes_without_guessing_write() {

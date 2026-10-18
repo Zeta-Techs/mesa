@@ -187,6 +187,15 @@ test("接驳摘要：清单 md 数主仓非注释行、笔记按份数，标签�
   assert.equal(countNonCommentLines("# 注释\n正文\n\n"), 1);
 });
 
+test("沉浸阅读截图跟笔记一起接驳，标签单列「笔记配图」", () => {
+  assert.equal(intakeBridgeSurfaceKind("notes/assets/capture-1.png"), "asset");
+  const files = intakeBridgeHits([{ path: "notes/a.md" }, { path: "notes/assets/c1.png" }, { path: "notes/assets/c2.png" }]);
+  assert.equal(intakeBridgeLabel(summarizeIntakeBridge(files, {}), 0), "1 篇未提交笔记 / 2 张笔记配图");
+  // 整个目录未跟踪时 git 只报一行目录，数不清张数
+  const dir = intakeBridgeHits([{ path: "notes/assets/" }]);
+  assert.equal(intakeBridgeLabel(summarizeIntakeBridge(dir, {}), 0), "笔记配图");
+});
+
 test("积累芯片：N 条才出场，标签固定「积累 N 条」", () => {
   assert.equal(accumulationChip(0, "/p/papers/reading-list.md"), null);
   const chip = accumulationChip(3, "/p/papers/reading-list.md")!;

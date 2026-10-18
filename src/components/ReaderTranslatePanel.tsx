@@ -47,6 +47,7 @@ function ReaderTranslatePanel({
   canSave,
   heightPct,
   floatAnchor,
+  floatBounds,
   onTogglePlacement,
   onClose,
   onResize,
@@ -73,6 +74,9 @@ function ReaderTranslatePanel({
   /** 悬浮档锚点（悬浮球在 PDF 栏内的百分比坐标，球心）：传入即悬浮形态——卡在球旁
    *  展开（球在右半区贴球左侧展开、左半区贴右侧），宽 ≤26rem、高 60% 封顶贴边钳制 */
   floatAnchor?: { xp: number; yp: number };
+  /** 悬浮卡的横向活动范围：PDF 栏离窗口左/右边的距离（px）。卡只在 PDF 栏里展开，
+   *  不盖笔记栏和对话栏（球仍可拖到整窗任何位置）；不传 = 整窗 */
+  floatBounds?: { left: number; right: number };
   /** 表头「钉住/回栏」；不传则不出现该钮（未接线的占位用法） */
   onTogglePlacement?: () => void;
   /** 悬浮档的 ×：收回球（由球组件接管）；不传则 × 走原位档的「一行动作条」退场 */
@@ -90,7 +94,7 @@ function ReaderTranslatePanel({
   onSaveEntry: (entry: TlHistoryEntry) => void;
   /** 轻反馈（复制结果等；上层接 toast） */
   onHint: (msg: string) => void;
-  /** 把当前译文放进下方对话的输入行，不发送。 */
+  /** 把当前译文放进下方对话的输入框，不发送。 */
   onAsk?: (entry: TlHistoryEntry) => void;
   canAsk?: boolean;
 }) {
@@ -270,22 +274,24 @@ function ReaderTranslatePanel({
   // 球心距某侧窗边的钳制距离（与球渲染同款）：dist = clamp(18px, pct%, 100%-18px)
   const ballDist = (pct: number) =>
     `clamp(18px, ${pct}%, calc(100% - 18px))`;
+  // 锚定边：贴球那一侧（球距 + 22px），且不越过 PDF 栏边（floatBounds）；
+  // 宽度 = 锚定边到 PDF 栏另一侧边的可用空间（各留 8px）
+  const growLeft = floating && floatAnchor.xp > 50;
+  const nearInset = floatBounds ? (growLeft ? floatBounds.right : floatBounds.left) + 8 : 0;
+  const farInset = floatBounds ? (growLeft ? floatBounds.left : floatBounds.right) + 8 : 8;
+  const edge = floating
+    ? `max(calc(${ballDist(growLeft ? 100 - floatAnchor.xp : floatAnchor.xp)} + 22px), ${nearInset}px)`
+    : "0px";
   const anchorStyle = floating
     ? {
-        left:
-          floatAnchor.xp <= 50
-            ? `calc(${ballDist(floatAnchor.xp)} + 22px)`
-            : undefined,
-        right:
-          floatAnchor.xp > 50
-            ? `calc(${ballDist(100 - floatAnchor.xp)} + 22px)`
-            : undefined,
+        left: growLeft ? undefined : edge,
+        right: growLeft ? edge : undefined,
         top: cardSize
           ? `min(${floatAnchor.yp}%, calc(100% - min(${cardSize.h}px, calc(100% - 16px)) - 8px))`
           : `min(${floatAnchor.yp}%, calc(100% - 60% - 8px))`,
         width: cardSize
-          ? `min(${cardSize.w}px, calc(100% - 16px), calc(100% - ${floatAnchor.xp > 50 ? ballDist(100 - floatAnchor.xp) : ballDist(floatAnchor.xp)} - 30px))`
-          : `min(26rem, calc(100% - 44px), calc(100% - ${floatAnchor.xp > 50 ? ballDist(100 - floatAnchor.xp) : ballDist(floatAnchor.xp)} - 30px))`,
+          ? `min(${cardSize.w}px, calc(100% - 16px), calc(100% - ${edge} - ${farInset}px))`
+          : `min(26rem, calc(100% - 44px), calc(100% - ${edge} - ${farInset}px))`,
         // 显式尺寸走 height（60% 封顶会让拖大的卡被裁）；自适应走 60% 封顶
         ...(cardSize
           ? { height: `min(${cardSize.h}px, calc(100% - 16px))` }
@@ -348,7 +354,7 @@ function ReaderTranslatePanel({
                     <button
                       type="button"
                       disabled={!canAsk}
-                      title={canAsk ? "放进下方对话的输入行，不发送" : "对话还没准备好"}
+                      title={canAsk ? "放进下方对话的输入框，不发送" : "对话还没准备好"}
                       onClick={() => onAsk(current)}
                       className="rounded-sm px-1.5 py-0.5 text-l2 hover:bg-hover hover:text-l1 disabled:opacity-40"
                     >

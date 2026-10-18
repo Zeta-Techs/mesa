@@ -27,6 +27,7 @@ export default function StepSkillsChips({
   stepOutputs,
   brief,
   hint,
+  bare = false,
 }: {
   /** 步骤当前挂载的技能名（project.toml steps[].skills） */
   skills: string[];
@@ -54,6 +55,8 @@ export default function StepSkillsChips({
   brief?: string;
   /** 标题旁小字；false = 不写（开工弹层用 tooltip 承担） */
   hint?: string | false;
+  /** 不画「技能」标题行与外边距：开工弹层把标签放在左侧标签列，与读入/产出/执行同列对齐 */
+  bare?: boolean;
 }) {
   // 只读模式下点击 chip 展开描述（按技能名记忆展开态）
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -70,8 +73,8 @@ export default function StepSkillsChips({
       : [];
   if (skills.length === 0 && !editable) return null;
   return (
-    <div className="mb-3 shrink-0">
-      <div className="mb-1 flex items-center gap-2">
+    <div className={bare ? "min-w-0" : "mb-3 shrink-0"}>
+      {!bare && <div className="mb-1 flex items-center gap-2">
         <span
           className="text-xs text-l3"
           title={
@@ -90,8 +93,8 @@ export default function StepSkillsChips({
                 : "点击看说明")}
           </span>
         )}
-      </div>
-      <div className="flex flex-wrap items-center gap-1">
+      </div>}
+      <div className="flex flex-wrap items-center gap-1 text-micro">
         {skills.map((name) => {
           const desc = skillMeta?.[name];
           const open = expanded === name && !editable;

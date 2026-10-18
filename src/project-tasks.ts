@@ -411,6 +411,8 @@ export function goalRevisionLabel(runCount: number): string | null {
 export type GoalTimelineItem = {
   kind: "generated" | "feedback" | "revision" | "accepted";
   text: string;
+  /** 这一版开跑 / 这条意见写下的时间（详情里与「生成」「第 2 版」并排显示）；接受没有可靠时间，不填 */
+  at?: string;
 };
 
 export type GoalTimelineRun = {
@@ -474,13 +476,13 @@ export function goalTimeline(input: {
   runs.forEach((run, index) => {
     items.push(
       index === 0
-        ? { kind: "generated", text: "生成" }
-        : { kind: "revision", text: `第 ${index + 1} 版` },
+        ? { kind: "generated", text: "生成", at: run.createdAt }
+        : { kind: "revision", text: `第 ${index + 1} 版`, at: run.createdAt },
     );
     for (const event of events) {
       if (event.runId !== run.id || event.eventType !== "task.review_notes") continue;
       const note = parseReviewNote(event.payload);
-      if (note) items.push({ kind: "feedback", text: `意见：${note}` });
+      if (note) items.push({ kind: "feedback", text: `意见：${note}`, at: event.createdAt });
     }
   });
   if (input.status === "completed") {

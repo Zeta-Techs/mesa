@@ -5,7 +5,7 @@ import ResearchToolPreflight from "./ResearchToolPreflight";
 import ResearchEvidencePanel from "./ResearchEvidencePanel";
 import ResearchDecisionFields from "./ResearchDecisionFields";
 import { researchReportPatterns } from "../research-report";
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import { toast } from "../toast";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -15,6 +15,7 @@ import {
   compactFieldClass,
   primaryActionClass,
   secondaryActionClass,
+  InlineNotice,
 } from "./PageFrame";
 import StepSkillsChips from "./StepSkillsChips";
 import HumanTasksList from "./HumanTasksList";
@@ -28,7 +29,7 @@ import {
   intakeBridgeLabel,
   summarizeIntakeBridge,
 } from "../kickoff-dirty-gate";
-import { userDirtyFiles } from "../git-status-groups";
+import { userWorkDirtyFiles } from "../git-status-groups";
 import { loadAskAiRemembered } from "../ask-ai";
 import {
   kickoffLaunchLabel,
@@ -44,11 +45,13 @@ import {
 } from "../project-agents";
 import {
   accumulationChip,
+  chipFileName,
   expectedDeliverNames,
   formatKickoffChip,
   isFlowDeclaredPath,
   isOwnDeliverable,
   type KickoffInputChip,
+  type UnsavedUpstream,
 } from "../kickoff-inputs";
 import {
   blockingHumanTasks,
@@ -71,6 +74,24 @@ import type {
   ProjectStepDto,
   SkillDto,
 } from "../types";
+
+/** 弹层一行「标签 | 内容」：读入、产出、执行、思考档、技能、权限、任务书同列对齐
+ *  （2026-10-17 用户截图：原先每块标签各占一行、间距各异，读不出结构）。
+ *  内容区定 text-xs：全站 `button { font: inherit }` 会吞掉按钮上的 text-*，字号只能从容器继承。 */
+function KickoffRow({ label, title, children }: { label: string; title?: string; children: ReactNode }) {
+  return (
+    <div className="mb-2.5 grid grid-cols-[3.25rem_minmax(0,1fr)] items-start gap-x-3">
+      <span className="pt-[3px] text-micro text-l4" title={title}>{label}</span>
+      <div className="min-w-0 text-xs text-l2">{children}</div>
+    </div>
+  );
+}
+
+const UPSTREAM_STATUS_TEXT: Record<UnsavedUpstream["status"], string> = {
+  review: "AI 已交付、等你评审",
+  active: "还在进行",
+  blocked: "有冲突没解决",
+};
 
 /** git_status 返回（未提交改动提醒 + 开工软门都从这里取数） */
 interface GitStatusBrief {
@@ -106,6 +127,8 @@ export default function KickoffConfirmDialog({
   onCancel,
   onConfirm,
   onCfgChange,
+  unsavedUpstream = [],
+  onOpenUpstreamReview,
 }: {
   projectPath: string;
   step: ProjectStepDto;
@@ -133,6 +156,10 @@ export default function KickoffConfirmDialog({
   ) => void;
   /** 技能区增删写回 project.toml 后同步父级 cfg（保持步进器/下次打开一致） */
   onCfgChange?: (cfg: ProjectConfigDto) => void;
+  /** 这一步要读、但上游还没保存进项目的步骤（unsavedUpstreamSteps；ProjectGroup 按步进器状态算） */
+  unsavedUpstream?: UnsavedUpstream[];
+  /** 「去评审」：关弹层、打开上游那一步的评审（冲突时直达处理冲突） */
+  onOpenUpstreamReview?: (upstream: UnsavedUpstream) => void;
 }) {
   // 档案卡本地副本：技能区增删写回 project.toml 后重读替换（步骤其余字段以后端回读为准）
   const [cfgLocal, setCfgLocal] = useState(cfg);
@@ -183,7 +210,7 @@ export default function KickoffConfirmDialog({
   const [mainDirtyFiles, setMainDirtyFiles] = useState<GitFileDto[] | null>(
     null,
   );
-  // 接驳候选必须看原始清单：userDirtyFiles 已把积累面（notes/*.md 等）剔除，
+  // 接驳候选必须看原始清单：userWorkDirtyFiles 已把积累面（notes/*.md 等）剔除，
   // 从过滤后的表取会让「未提交笔记」臂永远空转——intakeBridgeSurfaceKind 自带 inbox.md 排除
   const [mainRawFiles, setMainRawFiles] = useState<GitFileDto[] | null>(null);
   const [mainDirtyMerging, setMainDirtyMerging] = useState(false);
@@ -444,7 +471,7 @@ export default function KickoffConfirmDialog({
     invoke<GitStatusBrief>("git_status", { cwd: projectPath })
       .then((status) => {
         if (stale) return;
-        const dirty = status.isRepo ? userDirtyFiles(status.files) : [];
+        const dirty = status.isRepo ? userWorkDirtyFiles(status.files) : [];
         setMainDirtyFiles(status.isRepo ? dirty : null);
         setMainRawFiles(status.isRepo ? status.files : null);
         setMainDirtyMerging(status.merging === true);
@@ -745,7 +772,7 @@ export default function KickoffConfirmDialog({
       const status = await invoke<GitStatusBrief>("git_status", {
         cwd: projectPath,
       });
-      const dirty = status.isRepo ? userDirtyFiles(status.files) : [];
+      const dirty = status.isRepo ? userWorkDirtyFiles(status.files) : [];
       setMainDirtyFiles(status.isRepo ? dirty : null);
       setMainRawFiles(status.isRepo ? status.files : null);
       setMainDirtyMerging(status.merging === true);
@@ -794,35 +821,56 @@ export default function KickoffConfirmDialog({
       <div
         className="flex max-h-[85vh] w-full max-w-xl flex-col rounded-lg border border-field ccode-float-surface"
         onClick={(event) => event.stopPropagation()}
-        title={step.workspaceName ? `工作区 ${step.workspaceName}` : undefined}
       >
-        <div className="shrink-0 px-5 pt-5">
-          <h2 className="text-base font-semibold text-l1">开始 {step.name}</h2>
+        {/* 工作区名写在标题行右侧：原先挂在整个弹层的 title 上，鼠标停在任务书里就冒出一个
+            「工作区 lit-notes」悬浮框压在正文上（2026-10-17 用户截图） */}
+        <div className="flex shrink-0 items-baseline gap-3 px-5 pt-5">
+          <h2 className="min-w-0 truncate text-base font-semibold text-l1">开始 {step.name}</h2>
+          {step.workspaceName && (
+            <span
+              className="ml-auto shrink-0 font-mono text-micro text-l4"
+              title="这一步在独立工作区里做，保存进项目之前不动项目里的文件"
+            >
+              工作区 {step.workspaceName}
+            </span>
+          )}
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-3">
-        {(() => {
-          const deliver = expectedDeliverNames(stepNow.expectedArtifacts);
-          return deliver.length > 0 ? (
-            <div className="mb-3">
-              <p className="mb-1 text-micro text-l4">本步产物</p>
-              <div className="flex flex-wrap gap-1">
-                {deliver.map((name) => (
-                  <span
-                    key={name}
-                    className="rounded-sm bg-inset px-1.5 py-0.5 text-micro text-l2"
-                  >
-                    {name}
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-4">
+        {/* 上游还没保存进项目（2026-10-17）：放最上面——下面「读入」的篇数读的是项目里的旧版，
+            不先点破，人会照着旧清单开工。只确认不阻断，与上一步收尾软门共用二击 */}
+        {unsavedUpstream.length > 0 && (
+          <div className="mb-4 rounded-md ccode-well px-3 py-2 text-xs leading-5 text-l2">
+            {unsavedUpstream.map((u) => (
+              <div key={u.name} className="flex items-start gap-2">
+                <span className="w-2 shrink-0 text-center text-warn-text">!</span>
+                <p className="min-w-0 flex-1">
+                  上一步「{u.name}」{UPSTREAM_STATUS_TEXT[u.status]}，还没保存进项目。这一步要读的{" "}
+                  {u.inputs.map(chipFileName).join("、")} 现在还是项目里的旧版。
+                </p>
+                {onOpenUpstreamReview && (
+                  <span className="shrink-0 text-micro">
+                    <button
+                      type="button"
+                      onClick={() => onOpenUpstreamReview(u)}
+                      className="rounded-sm border border-field px-1.5 py-0.5 text-l2 hover:bg-hover hover:text-l1"
+                    >
+                      {u.status === "blocked" ? "去处理冲突" : "去评审"}
+                    </button>
                   </span>
-                ))}
+                )}
               </div>
-            </div>
-          ) : null;
-        })()}
+            ))}
+            <p className="mt-1 pl-4 text-micro text-l4">
+              {closingAcked
+                ? "再点一次「仍要开工」即按现状开工。"
+                : "建议先保存进项目再开工；要按现状开工就点「确认开始」，按钮会再问你一次。"}
+            </p>
+          </div>
+        )}
         {chipsView && chipsView.some((chip) => formatKickoffChip(chip)) && (
-          <div className="mb-3">
-            <p className="mb-1 text-micro text-l4">已有材料</p>
-            <div className="flex flex-wrap gap-1">
+          <KickoffRow label="读入" title="这一步开工时项目里已有的输入；点芯片看开头">
+            <div className="flex flex-wrap gap-1 text-micro">
               {chipsView.map((chip) => {
                 if (isOwnDeliverable(chip.pattern, stepNow.expectedArtifacts)) return null;
                 const view = formatKickoffChip(chip);
@@ -852,7 +900,7 @@ export default function KickoffConfirmDialog({
                           }),
                         );
                     }}
-                    className={`rounded-sm px-1.5 py-0.5 text-micro ${
+                    className={`rounded-sm px-1.5 py-0.5 ${
                       view.missing
                         ? "bg-warn text-warn-text"
                         : "bg-inset text-l2 hover:bg-hover"
@@ -870,13 +918,24 @@ export default function KickoffConfirmDialog({
                 {chipPreview.text}
               </pre>
             )}
-          </div>
+          </KickoffRow>
         )}
+        {(() => {
+          const deliver = expectedDeliverNames(stepNow.expectedArtifacts);
+          return deliver.length > 0 ? (
+            <KickoffRow label="产出" title="这一步要交的文件；评审时逐个核对">
+              <div className="flex flex-wrap gap-1 text-micro">
+                {deliver.map((name) => (
+                  <span key={name} className="rounded-sm bg-inset px-1.5 py-0.5 text-l2">
+                    {name}
+                  </span>
+                ))}
+              </div>
+            </KickoffRow>
+          ) : null;
+        })()}
 
-        {staleTools && <p role="alert" className="my-2 text-xs text-warn-text">旧任务书的工具合同与当前选择不同。请展开 TASK.md 对照，或「恢复默认拼装」后重新确认；未覆盖你的草稿。</p>}
-        {/* 技能预检跟随弹层当前选的 agentId（不依赖 launch——无连接时也展示，
-            切换 Agent 后重查；key 含 agentId 使组件重挂刷新检查结果） */}
-        {stepNow.skills.length > 0 && <ResearchToolPreflight key={`${stepNow.name}:${stepNow.skills.join(",")}:${agentId}`} projectRoot={projectPath} stepName={stepNow.name} agent={agentId} onBlocked={setToolsBlocked} />}
+        {staleTools && <InlineNotice tone="warn" className="my-2">旧任务书的工具合同与当前选择不同。请展开 TASK.md 对照，或「恢复默认拼装」后重新确认；未覆盖你的草稿。</InlineNotice>}
         {(stepNow.decisions?.length ?? 0) > 0 && <>
           <UpstreamResearchAcceptance projectRoot={projectPath} stepName={stepNow.name} decisions={stepNow.decisions ?? []} text={editor.text} evidenceRevision={evidenceRevision} onChange={(text) => dispatchEditor({ type: "edit", text })} />
           <ResearchEvidencePanel key={`${projectPath}:${stepNow.workspaceName}`} root={projectPath} patterns={researchReportPatterns(stepNow, "decision")} kind="decision"
@@ -886,8 +945,11 @@ export default function KickoffConfirmDialog({
             onChange={(text) => dispatchEditor({ type: "edit", text })} />
         </>}
 
+        {/* 材料（读入/产出）与执行（谁做/怎么做）两组之间只靠留白分开，不画线 */}
+        <div className="mt-3">
+        <KickoffRow label="执行" title="这一步用哪家 AI、哪条连接、哪个模型">
         {profiles.length === 0 ? (
-          <p className="mb-3 text-xs text-l2">
+          <p>
             还没有可用连接。
             <button
               type="button"
@@ -901,7 +963,7 @@ export default function KickoffConfirmDialog({
             </button>
           </p>
         ) : launch && !editingLaunch ? (
-          <div className="mb-3 flex items-center gap-2 text-xs text-l2">
+          <div className="flex min-w-0 items-center gap-2 pt-px">
             <span className="min-w-0 truncate" title={launchLine}>
               {launchLine}
             </span>
@@ -913,16 +975,18 @@ export default function KickoffConfirmDialog({
                 · 本步骤默认
               </span>
             )}
-            <button
-              type="button"
-              className="shrink-0 text-micro text-l4 hover:text-l1"
-              onClick={() => setEditingLaunch(true)}
-            >
-              更换
-            </button>
+            <span className="shrink-0 text-micro">
+              <button
+                type="button"
+                className="rounded-sm px-1 py-0.5 text-l3 hover:bg-hover hover:text-l1"
+                onClick={() => setEditingLaunch(true)}
+              >
+                更换
+              </button>
+            </span>
           </div>
         ) : (
-          <div className="mb-3">
+          <div>
             <div className="grid grid-cols-3 gap-1.5">
               <label className="min-w-0 text-micro text-l4">
                 Agent
@@ -998,18 +1062,16 @@ export default function KickoffConfirmDialog({
             )}
           </div>
         )}
+        </KickoffRow>
 
-        {/* 本次思考档 + 运行权限可见性（2026-09-15）：思考档只在有注入通道时出现
-            （见上方 combo 判定）；权限不做成选项——步骤执行必然可写，边界用一句话说清 */}
+        {/* 本次思考档（2026-09-15）：只在有注入通道时出现（见上方 combo 判定） */}
         {launch && effortInjectable && (
-          <div className="-mt-1.5 mb-3 flex items-center gap-2 text-micro">
-            <label className="flex min-w-0 items-center gap-1.5 text-l4">
-              本次思考档
+          <KickoffRow label="思考档" title="只影响这一次运行，不改绑定的默认策略；运行中还可在底部状态栏调整">
+            <div className="text-micro">
               <select
-                className="h-6 rounded-md border border-field bg-canvas px-1 text-micro text-l2 outline-none focus:border-l4"
+                className="h-6 rounded-md border border-field bg-canvas px-1 text-l2 outline-none focus:border-l4"
                 value={kickEffort}
                 onChange={(e) => setKickEffort(e.target.value)}
-                title="只影响这一次运行，不改绑定的默认策略；运行中还可在底部状态栏调整"
               >
                 <option value="">不设（用绑定默认）</option>
                 {effortLevels.map((lv) => (
@@ -1018,14 +1080,50 @@ export default function KickoffConfirmDialog({
                   </option>
                 ))}
               </select>
-            </label>
-          </div>
+            </div>
+          </KickoffRow>
         )}
+
+        {/* 技能：挂载芯片（增删写回步骤定义）+ 只读预检。预检全部就绪只留一行小字，
+            有缺口才展开成块——原先就绪时也摆一整块，和技能芯片把同一件事说两遍 */}
+        <KickoffRow label="技能" title="增删会写回这一步的技能，以后开工都用这份">
+          <StepSkillsChips
+            bare
+            hint={false}
+            skills={stepNow.skills}
+            requiredSkills={stepNow.requiredSkills}
+            skillMeta={skillMeta}
+            available={skillLib?.map((s) => s.name)}
+            mcpRecommended={skillLib
+              ?.filter((s) => s.mentionsMcp)
+              .map((s) => s.name)}
+            skillLib={skillLib}
+            chainSupply={chainSupply}
+            expectedArtifacts={stepNow.expectedArtifacts}
+            stepOutputs={researchToolArtifacts(stepNow.brief)}
+            brief={stepNow.brief}
+            onChange={(next) => void onSkillsChange(next)}
+          />
+          {/* 技能预检跟随弹层当前选的 agentId（不依赖 launch——无连接时也展示，
+              切换 Agent 后重查；key 含 agentId 使组件重挂刷新检查结果） */}
+          {stepNow.skills.length > 0 && <ResearchToolPreflight key={`${stepNow.name}:${stepNow.skills.join(",")}:${agentId}`} projectRoot={projectPath} stepName={stepNow.name} agent={agentId} onBlocked={setToolsBlocked} />}
+          {skillError && (
+            <InlineNotice tone="err" className="mt-1">{skillError}</InlineNotice>
+          )}
+        </KickoffRow>
+
+        {/* 运行权限（2026-09-15）：不做成选项——步骤执行必然可写，边界一句话，细节进悬浮 */}
         {launch && (
-          <p className="-mt-1 mb-3 text-micro text-l4">
-            运行权限：写步骤工作区 + 主仓 papers/（原始文献）；派生产物经评审合并进主仓
-          </p>
+          <KickoffRow label="权限">
+            <p
+              className="pt-px text-micro text-l3"
+              title="原始文献 PDF 直接放项目根 papers/；清洗后的数据、图、成稿等派生产物写在步骤工作区，经你评审后才合并进项目"
+            >
+              可写：步骤工作区、项目根 papers/（原始文献）
+            </p>
+          </KickoffRow>
         )}
+        </div>
 
         {dirtyHits.length > 0 && (
           <p className="mb-3 text-xs leading-5 text-l3">
@@ -1087,7 +1185,7 @@ export default function KickoffConfirmDialog({
               </button>
             </div>
             {legacyError && (
-              <p className="mt-1 text-xs text-err-text">✗ {legacyError}</p>
+              <InlineNotice tone="err" className="mt-1">{legacyError}</InlineNotice>
             )}
           </div>
         )}
@@ -1157,7 +1255,7 @@ export default function KickoffConfirmDialog({
               </span>
             </div>
             {resError && (
-              <p className="mt-1 text-xs text-err-text">✗ {resError}</p>
+              <InlineNotice tone="err" className="mt-1">{resError}</InlineNotice>
             )}
           </div>
         )}
@@ -1188,60 +1286,39 @@ export default function KickoffConfirmDialog({
           </div>
         )}
 
-        {/* 推荐技能区（可编辑）：增删写回步骤定义（project.toml），预览即时联动；
-            mentionsMcp 的技能带「推荐 MCP」标记（点击跳 MCP 页配置） */}
-        <StepSkillsChips
-          hint={false}
-          skills={stepNow.skills}
-          requiredSkills={stepNow.requiredSkills}
-          skillMeta={skillMeta}
-          available={skillLib?.map((s) => s.name)}
-          mcpRecommended={skillLib
-            ?.filter((s) => s.mentionsMcp)
-            .map((s) => s.name)}
-          skillLib={skillLib}
-          chainSupply={chainSupply}
-          expectedArtifacts={stepNow.expectedArtifacts}
-          stepOutputs={researchToolArtifacts(stepNow.brief)}
-          brief={stepNow.brief}
-          onChange={(next) => void onSkillsChange(next)}
-        />
-        {skillError && (
-          <p className="mb-2 shrink-0 text-xs text-err-text">✗ {skillError}</p>
-        )}
-
         {/* TASK.md 编辑区：默认折叠——它由模板+已定方向+资源自动拼装，绝大多数情况不用改；
             摆在正中会暗示「你得编辑这个」，反而让人不敢开工。人改过（dirty）时保持展开，
             避免改完一折叠就看不见自己写了什么 */}
-        <div className="mb-1 flex shrink-0 items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setTaskMdOpen((v) => !v)}
-            title={
-              taskMdOpen ? "收起 TASK.md" : "展开查看/编辑本步交给 agent 的合同"
-            }
-            className="flex items-center gap-1 rounded-sm px-1 py-0.5 text-xs text-l3 hover:bg-hover hover:text-l1"
-          >
-            <FoldMark open={taskMdOpen} boxed />
-            任务书
-            {editor.dirty ? (
-              <span className="ml-1 text-micro text-l4">已改</span>
-            ) : null}
-          </button>
-          {taskMdOpen && editor.dirty && (
+        <KickoffRow label="任务书" title="TASK.md：交给 AI 的这一步合同，由模板、已定方向和项目资源自动拼好">
+          <div className="flex items-center gap-2 text-micro">
             <button
               type="button"
-              onClick={() =>
-                assembled !== null &&
-                dispatchEditor({ type: "reset", text: appendUpstreamAcceptance(assembled, extras?.upstream ?? []) })
+              onClick={() => setTaskMdOpen((v) => !v)}
+              aria-expanded={taskMdOpen}
+              title={
+                taskMdOpen ? "收起 TASK.md" : "展开查看/编辑本步交给 agent 的合同"
               }
-              title="放弃修改，回到模板的默认拼装"
-              className="ml-auto shrink-0 rounded-sm px-1.5 py-0.5 text-xs text-l4 hover:bg-hover hover:text-l2"
+              className="-ml-1 flex items-center gap-1 rounded-sm px-1 py-0.5 text-l3 hover:bg-hover hover:text-l1"
             >
-              恢复默认拼装
+              <FoldMark open={taskMdOpen} />
+              {taskMdOpen ? "收起 TASK.md" : "查看 TASK.md"}
             </button>
-          )}
-        </div>
+            {editor.dirty && <span className="text-l4">已改</span>}
+            {taskMdOpen && editor.dirty && (
+              <button
+                type="button"
+                onClick={() =>
+                  assembled !== null &&
+                  dispatchEditor({ type: "reset", text: appendUpstreamAcceptance(assembled, extras?.upstream ?? []) })
+                }
+                title="放弃修改，回到模板的默认拼装"
+                className="ml-auto shrink-0 rounded-sm px-1.5 py-0.5 text-l4 hover:bg-hover hover:text-l2"
+              >
+                恢复默认拼装
+              </button>
+            )}
+          </div>
+        </KickoffRow>
         {taskMdOpen && (
           <>
             {draftText?.trim() && !isTaskMdStub(draftText) && (
@@ -1249,7 +1326,7 @@ export default function KickoffConfirmDialog({
                 内容来自你编辑过的 TASK.md（{draftRel ?? ""}；改这里只影响本次落盘，不回写该文件）
               </p>
             )}
-            <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-field bg-canvas">
+            <div className="mb-3 min-h-0 flex-1 overflow-hidden rounded-md border border-field bg-canvas">
               {!editorReady ? (
                 <div className="p-3">
                   <LoadingRows compact />
@@ -1311,7 +1388,7 @@ export default function KickoffConfirmDialog({
                 setDecisionAck(decisionSignature);
                 return;
               }
-              if (prevClosing.length > 0 && !closingAcked) {
+              if ((prevClosing.length > 0 || unsavedUpstream.length > 0) && !closingAcked) {
                 setClosingAcked(true);
                 return;
               }
@@ -1331,7 +1408,7 @@ export default function KickoffConfirmDialog({
                 ? "先加连接"
                 : gate.needsAck && !needsDecisionAck
                   ? gate.prepareOnly ? "仅开始准备" : "先做无依赖工作"
-                  : prevClosing.length > 0 && closingAcked
+                  : (prevClosing.length > 0 || unsavedUpstream.length > 0) && closingAcked
                   ? "仍要开工"
                   : dirtyHits.length > 0
                     ? "记下并开始"

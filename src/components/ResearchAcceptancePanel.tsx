@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { loadResearchReports, readResearchFile } from "../research-report-load";
 import { researchReportPatterns } from "../research-report";
 import type { ProjectStepDto, ResearchAcceptanceDto, ResearchAcceptedFile, ResearchSourceDto, ResearchWorkspaceRef } from "../types";
+import { InlineNotice } from "./PageFrame";
 
 const VERDICTS = [
   { value: "accept", label: "接受" },
@@ -120,7 +121,7 @@ export default function ResearchAcceptancePanel({ workspace, step, runId = null,
           <textarea value={scope} onChange={(e) => setScope(e.target.value)} rows={2} className="mt-1 w-full rounded border border-field bg-canvas p-1" placeholder="例如：纳入的可以精读；缺全文的先按摘要。" />
         </label>
         <button type="button" disabled={busy || !verdict || !source || !scope.trim() || (verdict !== "return" && files.length === 0)} onClick={() => void save()} className="mt-2 rounded border border-field px-2 py-1 text-l2 disabled:opacity-50">{busy ? "保存中…" : "记下"}</button>
-        {error && <p role="alert" className="mt-2 text-err-text">{error}</p>}
+        {error && <InlineNotice tone="err" className="mt-2">{error}</InlineNotice>}
       </details>
     </section>;
   }
@@ -148,6 +149,6 @@ export default function ResearchAcceptancePanel({ workspace, step, runId = null,
     {runId && <label className="mt-2 block text-l3"><input type="checkbox" checked={linkRun} disabled={busy} onChange={(e) => setLinkRun(e.target.checked)} /> 关联本次复现记录（版本不一致时请重跑或取消关联，不会把运行结束当成科学通过）</label>}
     {files.length > 0 && <p className="mt-2 break-all text-micro text-l4">绑定文件：{files.map((f) => `${f.path}（${f.revision.slice(0, 8)}）`).join("、")}</p>}
     <button type="button" disabled={busy || !verdict || !source || !scope.trim() || (verdict !== "return" && files.length === 0)} onClick={() => void save()} className="mt-2 rounded border border-field px-2 py-1 text-l2 disabled:opacity-50">{busy ? "保存中…" : "记下验收决定"}</button>
-    {error && <p role="alert" className="mt-2 text-err-text">{error}</p>}
+    {error && <InlineNotice tone="err" className="mt-2">{error}</InlineNotice>}
   </section>;
 }

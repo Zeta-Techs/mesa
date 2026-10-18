@@ -45,7 +45,11 @@ test("任务书减重不靠删阶段/门禁：共用摘要一次，格式适配�
   // 2026-10-13：双台账拍板——三条检索链各加「积累进料」句（handoff-lit-intake.md/reading-list.md
   // 统一去重并入、不回写不清空）＋「开工时清单存量条目=进料口」句。实测 review 25365、论文 34310、
   // 学位 32115，上限提到 25700 / 34700 / 32500。
-  const before: Record<string, number> = { review: 25700, "research-paper": 34700, "data-processing": 12100, thesis: 32500, "submission-rebuttal": 8600, "latex-paper": 13200 };
+  // 2026-10-17 审查修复：精读步写明「排除篇不建索引行」「notes/excerpts.md 摘录并进笔记」（三模板同一句）；
+  // 综述初稿先读 handoff「写作约束」；引用样式统一由流程线选（不再「开工先问」）；Word 模板改由
+  // YAML 的 format.docx 承载的说明句。实测 review 25933、论文 34591、学位 32543，
+  // 上限提到 26100 / 34800 / 32700。
+  const before: Record<string, number> = { review: 26100, "research-paper": 34800, "data-processing": 12100, thesis: 32700, "submission-rebuttal": 8600, "latex-paper": 13200 };
   for (const t of PIPELINE_TEMPLATES) {
     const tasks = md(t.id);
     assert.ok(tasks.reduce((n, s) => n+s.length, 0) < before[t.id], t.id);

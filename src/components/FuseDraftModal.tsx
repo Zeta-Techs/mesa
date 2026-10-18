@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { LoadingRows } from "./PageFrame";
+import {
+  LoadingRows,
+  primaryActionClass,
+  secondaryActionClass,
+} from "./PageFrame";
 import type { TaskCardDto } from "../types";
 import { Modal } from "./Modal";
 
@@ -116,7 +120,7 @@ export default function FuseDraftModal({
             type="button"
             onClick={onClose}
             disabled={writing}
-            className="rounded-sm px-3 py-1.5 text-sm text-l2 hover:bg-hover disabled:opacity-50"
+            className={secondaryActionClass}
           >
             取消
           </button>
@@ -124,7 +128,7 @@ export default function FuseDraftModal({
             type="button"
             disabled={writing || draft === null || !text.trim()}
             onClick={() => void confirm()}
-            className="rounded-sm border border-cta-bd bg-cta px-3 py-1.5 text-sm text-cta-text hover:brightness-110 disabled:opacity-50"
+            className={primaryActionClass}
           >
             {writing ? "写入中…" : "追加到 TASK.md"}
           </button>

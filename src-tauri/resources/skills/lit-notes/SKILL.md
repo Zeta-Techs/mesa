@@ -29,7 +29,7 @@ provides: [lit-notes]
 
 - **配对成功**：就在这份文件上补全/优化八段内容，`notes/index.json` 的 `notePath` 指向它；不新建平行文件，不因序号/命名规范重命名用户笔记（新文件才按「序号-短标题」起名）。
 - **来源锚点行**保持标题下第一行，不删不改格式（沉浸阅读区靠它认回笔记）。
-- **「译段」「我的想法」两节是用户自己的笔记**：原样保留，不删、不改写、不重述概括；确有需要只在节末追加，不与用户内容混写。
+- **「标注」「译段」「我的想法」三节是用户自己的笔记**：原样保留，不删、不改写、不重述概括；确有需要只在节末追加，不与用户内容混写。「标注」是沉浸阅读区的高亮与批注（`- p.3 「摘句」 —— 批注`，一行一条，阅读区靠这个格式在 PDF 上画回高亮），行格式不要改；用户的批注是读这篇时的真实疑问，写八段时可以吸收进「疑问与待跟进」。
 - 用户在八段里手写的句子（个人判断、批注、口语化记录）**不从零重写整节**——更新用增补和明确标注（如「（更新：…）」）的方式，需要更正时写清改了什么、依据什么。
 - 配不上对的才新建笔记；雷达收进来的文献没有笔记很正常（雷达只是日常积累，不做精读），不要为了凑八段给没读过的篇生成占位文件。
 
@@ -62,7 +62,7 @@ provides: [lit-notes]
 
 **全文不可得时**，按摘要 + 可见元数据写笔记，开头标注「仅摘要」。无实际 PDF 不伪造来源锚点，改记 DOI/URL 及访问日期。无法核实的页码、方法细节、数值和因果主张写不可核验，不凑齐八段。核心结论依赖全文时暂停该结论或缩窄范围；获取全文后复核并记录影响的大纲/稿件。
 
-在 `notes/index.json` 写与 `papers/included.json` 全部 id 对应的记录（包括 pending）：`id`、`bibKey`、`fulltextStatus`、`reviewStatus`；已写笔记才填 `notePath`。`fulltextStatus` 为 fulltext/abstract-only/unavailable，`reviewStatus` 为 pending/blocked/reviewed；未读完不得写 reviewed。不能靠文件存在冒充读完。独立运行未有 included.json 时从清单建立稳定 id 并记录来源。
+在 `notes/index.json` 写与 `papers/included.json` 全部 id 对应的记录（包括 pending；`decision=excluded` 的排除篇不建行）：`id`、`bibKey`、`fulltextStatus`、`reviewStatus`；已写笔记才填 `notePath`。`fulltextStatus` 为 fulltext/abstract-only/unavailable，`reviewStatus` 为 pending/blocked/reviewed；未读完不得写 reviewed。不能靠文件存在冒充读完。独立运行未有 included.json 时从清单建立稳定 id 并记录来源。
 
 ### 3. 同步引文库
 

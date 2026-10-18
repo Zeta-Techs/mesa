@@ -145,6 +145,20 @@ test("runStatus 映射：review/done 都算 agent 节点完成；评审节点只
   assert.equal(done.currentKey, null, "全部完成时无当前节点");
 });
 
+test("确定文献来源：默认检索开工后算交代过，当前不再钉在这一行（2026-10-17 用户截图）", () => {
+  const lit = step({ asksLitSource: true });
+  const before = buildStepFlow({ step: lit, states: [], hasDraft: false, runStatus: "pending", litSource: "" });
+  assert.equal(before.currentKey, "input", "还没开工、来源没交代：先问来源");
+  for (const runStatus of ["active", "review", "done"] as const) {
+    const flow = buildStepFlow({ step: lit, states: [], hasDraft: false, runStatus, litSource: "search" });
+    assert.equal(flow.nodes.find((n) => n.key === "input")?.done, true, runStatus);
+  }
+  const review = buildStepFlow({ step: lit, states: [], hasDraft: false, runStatus: "review", litSource: "" });
+  assert.equal(review.currentKey, "review", "AI 交付后当前是去评审，不是来源");
+  const picked = buildStepFlow({ step: lit, states: [], hasDraft: false, runStatus: "pending", litSource: "zotero" });
+  assert.equal(picked.currentKey, "agent");
+});
+
 test("after 事项未完成时卡在 after 节点（评审之前）", () => {
   const flow = buildStepFlow({
     step: step({}),
@@ -612,4 +626,29 @@ test("formatZoteroAttachSummary：界面只留一句，失败明细另放", () =
     mixed.detail,
     "Paper A：error decoding；Paper B：timeout；Paper C：x 等",
   );
+});
+
+test("parseToFetchItems：「[已补 …]」前缀记已补齐、标题不带它；分隔线后的线索段不算待获取", () => {
+  const md = [
+    "# 待获取清单",
+    "",
+    "1. A Bismuth-Based Protective Layer — https://doi.org/10.1021/acsenergylett.1c01243",
+    "2. [已补 2026-09-24] An artificial interphase — https://doi.org/10.1016/j.cej.2021.130751 — 全文 papers/x.pdf",
+    "3. [已补·全文已在项目根 2026-09-24] A practical perspective — 10.1039/D2EE04121A",
+    "",
+    "---",
+    "",
+    "## 精读中发现的待跟进引用",
+    "- Zhang J. et al., Energy Environ. Sci. 2023 — 界面钝化起源",
+    "- Gao T. et al., ACS AMI 2018 — XPS 证据",
+  ].join("\n");
+  const items = parseToFetchItems(md);
+  assert.equal(items.length, 3);
+  assert.equal(items[1].title, "An artificial interphase");
+  assert.equal(items[1].done, true);
+  assert.equal(items[2].title, "A practical perspective");
+  assert.equal(items[2].done, true);
+  assert.equal(items[0].done, false);
+  // 条目开始前的分隔线不截断
+  assert.equal(parseToFetchItems("说明\n\n---\n\n1. T — 10.1/x\n").length, 1);
 });

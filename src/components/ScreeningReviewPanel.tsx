@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { readResearchFile } from "../research-report-load";
+import { readResearchLedger } from "../research-report-load";
 import {
   parseIncludedRecords,
   screeningCountLine,
@@ -9,6 +9,7 @@ import {
 } from "../screening-review";
 import { countToFetchEntries } from "../step-flow";
 import PendingConfirmList from "./PendingConfirmList";
+import { InlineNotice } from "./PageFrame";
 
 export default function ScreeningReviewPanel({
   root,
@@ -44,9 +45,9 @@ export default function ScreeningReviewPanel({
     void (async () => {
       try {
         const [json, fetchMd, screening] = await Promise.all([
-          readResearchFile(root, "papers/included.json").catch(() => null),
-          readResearchFile(root, "papers/to-fetch.md").catch(() => null),
-          readResearchFile(root, "papers/screening.md").catch(() => null),
+          readResearchLedger(root, "papers/included.json").catch(() => null),
+          readResearchLedger(root, "papers/to-fetch.md").catch(() => null),
+          readResearchLedger(root, "papers/screening.md").catch(() => null),
         ]);
         if (cancelled) return;
         if (!json) {
@@ -100,8 +101,8 @@ export default function ScreeningReviewPanel({
               刷新
             </button>
           </div>
-          {truncated && <p className="mt-1 text-xs text-warn-text">清单截断，摘要可能不完整。</p>}
-          {error && <p className="mt-1 text-xs text-warn-text">{error}</p>}
+          {truncated && <InlineNotice tone="warn" className="mt-1">清单截断，摘要可能不完整。</InlineNotice>}
+          {error && <InlineNotice tone="warn" className="mt-1">{error}</InlineNotice>}
           <p className="mt-3 text-xs text-l4">待确认可以纳入或排除。已纳入不想要就点移出。</p>
           {records.length > 0 && (
             <div className="mt-2">

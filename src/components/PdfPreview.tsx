@@ -18,6 +18,16 @@ import {
   pdfCanvasOutputScale,
   type GlossaryEntry,
 } from "../reader";
+import {
+  buildSearchStream,
+  findAllInStream,
+  matchSegments,
+  mergeLineRects,
+  quoteSearchCandidates,
+  type PdfMarkRect,
+  type PdfTextPiece,
+} from "../pdf-search";
+import { InlineNotice } from "./PageFrame";
 
 // vite 惯例：worker 走 ?url 资源，不进主包（本组件整体被动态 import）
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -100,6 +110,107 @@ function basename(p: string): string {
  *  补渲爆发被拆到不同帧，等闸页旧位图 CSS 拉伸兜底（机制见 render-gate.ts） */
 const pageRenderGate = new RenderGate(2);
 
+/** 页内高亮：查找命中、笔记标注、跳转时的一闪。quote 为原文摘句（页内按 pdf-search 口径重定位，
+ *  不存坐标——缩放、重渲后都能重新落位）；nth = 第几处命中（0 起），"all" = 本页全部 */
+export interface PdfPageMark {
+  id: string;
+  quote: string;
+  nth: number | "all";
+  kind: "find" | "find-active" | "note" | "flash";
+}
+
+/** 页内高亮的矩形（页内百分比坐标） */
+interface MarkBox {
+  id: string;
+  kind: PdfPageMark["kind"];
+  rects: PdfMarkRect[];
+}
+
+/** 文本层里一个文本片内 [from, to) 的 Range（片内可能被生词高亮拆成多个文本节点） */
+function rangeInSpan(span: Element, from: number, to: number): Range | null {
+  const walker = document.createTreeWalker(span, NodeFilter.SHOW_TEXT);
+  let pos = 0;
+  let startNode: Text | null = null;
+  let startOff = 0;
+  const range = document.createRange();
+  while (walker.nextNode()) {
+    const node = walker.currentNode as Text;
+    const len = node.data.length;
+    if (!startNode && from < pos + len) {
+      startNode = node;
+      startOff = from - pos;
+      range.setStart(node, startOff);
+    }
+    if (startNode && to <= pos + len) {
+      range.setEnd(node, to - pos);
+      return range;
+    }
+    pos += len;
+  }
+  return null;
+}
+
+/** 在已渲染的文本层里给标记算矩形（页宿主百分比坐标）。找不到的标记跳过；
+ *  摘句按 quoteCandidates 依次试（原样 → 去掉词内连字符 → 前 60 字） */
+function measureMarks(
+  host: HTMLElement,
+  layer: HTMLElement,
+  marks: readonly PdfPageMark[],
+): MarkBox[] {
+  const pieces: PdfTextPiece[] = [];
+  const spans: Element[] = [];
+  layer
+    .querySelectorAll('span[role="presentation"], br[role="presentation"]')
+    .forEach((el) => {
+      if (el.tagName === "BR") {
+        if (pieces.length > 0) pieces[pieces.length - 1].eol = true;
+        return;
+      }
+      pieces.push({ text: el.textContent ?? "", eol: false });
+      spans.push(el);
+    });
+  if (pieces.length === 0) return [];
+  const stream = buildSearchStream(pieces);
+  const hr = host.getBoundingClientRect();
+  if (hr.width <= 0 || hr.height <= 0) return [];
+  const out: MarkBox[] = [];
+  for (const mark of marks) {
+    let q = "";
+    let starts: number[] = [];
+    // 查找命中只认原样（第 k 处要与页级计数对齐）；标注/一闪按候选写法依次试
+    const exact = mark.kind === "find" || mark.kind === "find-active";
+    for (const cand of quoteSearchCandidates(mark.quote, exact)) {
+      starts = findAllInStream(stream, cand);
+      if (starts.length > 0) {
+        q = cand;
+        break;
+      }
+    }
+    const picked =
+      mark.nth === "all" ? starts : starts[mark.nth] === undefined ? [] : [starts[mark.nth]];
+    for (const at of picked) {
+      const px: PdfMarkRect[] = [];
+      for (const seg of matchSegments(stream, at, q.length)) {
+        const range = rangeInSpan(spans[seg.piece], seg.from, seg.to);
+        if (!range) continue;
+        for (const r of Array.from(range.getClientRects())) {
+          px.push({ x: r.left - hr.left, y: r.top - hr.top, w: r.width, h: r.height });
+        }
+      }
+      const rects = mergeLineRects(px).map((r) => ({
+        x: (r.x / hr.width) * 100,
+        y: (r.y / hr.height) * 100,
+        w: (r.w / hr.width) * 100,
+        h: (r.h / hr.height) * 100,
+      }));
+      if (rects.length > 0) out.push({ id: mark.id, kind: mark.kind, rects });
+    }
+  }
+  return out;
+}
+
+const NO_MARKS: readonly PdfPageMark[] = [];
+
 export const PdfPageView = memo(function PdfPageView({
   doc,
   pageNum,
@@ -108,6 +219,9 @@ export const PdfPageView = memo(function PdfPageView({
   active,
   glossTerms,
   fillParent,
+  marks = NO_MARKS,
+  scrollTo,
+  onScrolledTo,
 }: {
   doc: pdfjs.PDFDocumentProxy;
   pageNum: number;
@@ -120,6 +234,12 @@ export const PdfPageView = memo(function PdfPageView({
   glossTerms?: readonly GlossaryEntry[];
   /** 连续滚动页盒已定尺寸时填满父级，backing store 仍按渲染倍率渲染 */
   fillParent?: boolean;
+  /** 页内高亮（查找/标注/跳转一闪），同内容换引用不重算 */
+  marks?: readonly PdfPageMark[];
+  /** 把某个标记滚到视野中央（nonce 每次跳转递增，同一处再跳也生效） */
+  scrollTo?: { id: string; nonce: number } | null;
+  /** 滚过去了：上层据此清掉这次跳转——否则页离窗卸载、再滚回来重挂时会又被拽一次 */
+  onScrolledTo?: (nonce: number) => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -130,6 +250,9 @@ export const PdfPageView = memo(function PdfPageView({
   /** scale=1 的页尺寸缓存：布局倍率变化时同步换算页盒，不等渲染链路 */
   const baseSizeRef = useRef<{ w: number; h: number } | null>(null);
   const rs = renderScale ?? scale;
+  const [markBoxes, setMarkBoxes] = useState<MarkBox[]>([]);
+  const marksKey = JSON.stringify(marks);
+  const scrolledNonceRef = useRef(0);
 
   // 页盒尺寸立即跟随布局倍率（不等 canvas 重绘，缩放手感的跟手性来自这里）
   useLayoutEffect(() => {
@@ -325,6 +448,29 @@ export const PdfPageView = memo(function PdfPageView({
     };
   }, [textRendered, glossTerms]);
 
+  // 页内高亮：textLayer 落地后（或标记变化后）按摘句重定位算矩形；矩形存页内百分比，
+  // 布局倍率先行的缩放过程中不失位，重渲落地再按新文本层重算一次
+  useEffect(() => {
+    const host = hostRef.current;
+    const layer = textRef.current;
+    if (!host || !layer || textRendered === 0 || marks.length === 0) {
+      setMarkBoxes((prev) => (prev.length === 0 ? prev : []));
+      return;
+    }
+    setMarkBoxes(measureMarks(host, layer, marks));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [textRendered, marksKey]);
+
+  // 跳转定位：目标标记落地后滚到视野中央（同一 nonce 只滚一次）
+  useEffect(() => {
+    if (!scrollTo || scrolledNonceRef.current === scrollTo.nonce) return;
+    const el = hostRef.current?.querySelector(`[data-mark-id="${scrollTo.id}"]`);
+    if (!el) return;
+    scrolledNonceRef.current = scrollTo.nonce;
+    el.scrollIntoView({ block: "center", inline: "nearest" });
+    onScrolledTo?.(scrollTo.nonce);
+  }, [scrollTo, markBoxes, onScrolledTo]);
+
   return (
     <div
       ref={hostRef}
@@ -332,12 +478,33 @@ export const PdfPageView = memo(function PdfPageView({
       className={`relative bg-white ${fillParent ? "h-full w-full" : ""} ${active ? "" : "hidden"}`}
     >
       <canvas ref={canvasRef} className="block h-full w-full bg-white" />
+      {markBoxes.length > 0 && (
+        // 高亮层在文本层之下、不接指针：选字/复制行为不变；缩放未停稳时与文本层同进退
+        <div
+          className="ccode-pdf-marks"
+          style={{ visibility: rs === scale ? undefined : "hidden" }}
+        >
+          {markBoxes.flatMap((b) =>
+            b.rects.map((r, i) => (
+              <div
+                key={`${b.id}-${i}`}
+                data-mark-id={b.id}
+                className={`ccode-mark ccode-mark-${b.kind}`}
+                style={{
+                  left: `${r.x}%`,
+                  top: `${r.y}%`,
+                  width: `${r.w}%`,
+                  height: `${r.h}%`,
+                }}
+              />
+            )),
+          )}
+        </div>
+      )}
       {/* selectionRendering：关掉原生 ::selection（透明化），高亮由 DrawLayer 自绘 */}
       <div ref={textRef} className="textLayer selectionRendering" />
       {error && (
-        <p className="absolute inset-x-0 top-0 bg-strip px-3 py-1 text-xs text-err-text">
-          第 {pageNum} 页渲染失败：{error}
-        </p>
+        <InlineNotice tone="err" className="absolute inset-x-0 top-0 bg-strip px-3 py-1">第 {pageNum} 页渲染失败：{error}</InlineNotice>
       )}
     </div>
   );
@@ -361,7 +528,7 @@ interface Hint {
  * 只渲染当前页与相邻页（大 PDF 不做整本渲染）。
  * 字节经 read_pdf_bytes 加载（后端四类白名单约束）；选中文字出现浮动按钮：
  * 「◈ 问 AI」把选段 + 出处交给调用方写入活跃终端输入（「↵ 直接发送」立即回车发送）；
- * 「整理为笔记」把选段追加到归属项目 notes/inbox.md（P2b，由调用方实现）。
+ * 「整理为笔记」把选段追加到归属项目的 notes/excerpts.md（P2b，由调用方实现：精读工作区在跑写工作区，否则写项目根）。
  */
 function PdfPreview({
   path,

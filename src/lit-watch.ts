@@ -208,7 +208,7 @@ export interface IncludedEntryDto {
   rawLine: string;
 }
 
-/** add_included_entry 返回：added=false = 规范化标题已存在（去重） */
+/** add_reading_list_entry 返回：added=false = 规范化标题已存在（去重） */
 export interface AddIncludedResultDto {
   added: boolean;
 }
@@ -297,6 +297,12 @@ export const UNCATEGORIZED_KEYWORD = "未分类";
 export interface KeywordGroup {
   keyword: string;
   entries: WatchEntryDto[];
+}
+
+/** 关键词展示名：数据里的来源后缀不进界面——「关联推荐（S2）」显示为「关联推荐」
+ *  （2026-10-16 用户反馈括号多余）。数据仍存全称留溯源，筛选/分组匹配用原值。 */
+export function watchKeywordLabel(keyword: string): string {
+  return keyword.replace(/（S2）$/, "");
 }
 
 /** 按关键词分组：每条只归入 keywordsHit 的第一个关键词（多命中不重复出现），
@@ -510,6 +516,41 @@ function bucketLabel(mode: TrendMode, start: Date): string {
   if (mode === "day") return `${start.getMonth() + 1}/${start.getDate()}`;
   if (mode === "month") return `${start.getMonth() + 1}月`;
   return `${start.getMonth() + 1}月${start.getDate()}日周`;
+}
+
+/** 趋势横轴刻度：日/周都写「月/日」（周 = 周一起点），月写「N月」。
+ *  完整的「8月24日周」留给 label（悬浮提示与读屏），横轴只要短的 */
+export function trendTickLabel(mode: TrendMode, start: Date): string {
+  if (mode === "month") return `${start.getMonth() + 1}月`;
+  return `${start.getMonth() + 1}/${start.getDate()}`;
+}
+
+/** 稀疏趋势的一句话：有数的桶不超过 3 个时，图大半是空横线，压成一行文字
+ *  （「近 8 周只有本周有新命中，共 3 篇」）；有数桶 ≥4 或全空返回 null（照常出图/走 note）。
+ *  桶序旧→新，末桶即当前周期，写「本周/今天/本月」 */
+export function trendSparseLine(
+  buckets: readonly Pick<WeekBucket, "start" | "count">[],
+  mode: TrendMode,
+): string | null {
+  const hit = buckets
+    .map((b, i) => ({ b, i }))
+    .filter(({ b }) => b.count > 0);
+  if (hit.length === 0 || hit.length > 3) return null;
+  const span = mode === "day" ? "近 14 天" : mode === "month" ? "近 6 月" : "近 8 周";
+  const current = mode === "day" ? "今天" : mode === "month" ? "本月" : "本周";
+  const suffix = mode === "week" ? " 那周" : "";
+  const names = hit.map(({ b, i }) =>
+    i === buckets.length - 1 ? current : `${trendTickLabel(mode, b.start)}${suffix}`,
+  );
+  const total = hit.reduce((n, { b }) => n + b.count, 0);
+  return `${span}只有${names.join("和")}有新命中，共 ${total} 篇`;
+}
+
+/** 命中行右端的发表日期：当年的 YYYY-MM-DD 省年份写 MM-DD，跨年或非标准格式原样 */
+export function compactPubDate(pub: string, now: Date = new Date()): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(pub.trim());
+  if (!m || Number(m[1]) !== now.getFullYear()) return pub.trim();
+  return `${m[2]}-${m[3]}`;
 }
 
 /** 多粒度计数桶（旧→新）；含推荐计数与筛选键 */
@@ -812,7 +853,9 @@ export interface LitInboxCandidate {
   adopted?: boolean;
 }
 
-/** 收件箱候选：最近一次成功 run 有新命中，且最近运行时间在 24h 内（逾期不再打扰） */
+/** 收件箱候选：最近一次「成功且未采纳且有新命中」的 run，且该 run 时间在 24h 内（逾期不再打扰）。
+ *  不能只看最近一次成功 run——同一天后跑的 0 命中轮会把前一轮未采纳的命中整个遮住
+ *  （2026-10-16 实证：10-34 轮 1 篇待采纳被 11-23 轮 0 命中盖掉，收件箱与雷达卡同时失去提示）。 */
 export function litInboxCandidates(
   schedules: readonly ScheduleDto[],
   nowMs: number = Date.now(),
@@ -822,20 +865,20 @@ export function litInboxCandidates(
   for (const s of schedules) {
     if (s.skill !== LIT_WATCH_SLOT) continue;
     if (s.lastStatus !== "ok") continue;
-    const lastOk = s.history.find((r) => r.status === "ok");
-    if (!lastOk) continue;
-    const at = Date.parse(lastOk.at);
+    const pending = s.history.find(
+      (r) => r.status === "ok" && !r.adopted && (r.newEntries ?? 0) > 0,
+    );
+    if (!pending) continue;
+    const at = Date.parse(pending.at);
     if (Number.isNaN(at) || nowMs - at >= windowMs || nowMs - at < 0) continue;
-    const count = lastOk?.newEntries ?? 0;
-    if (count <= 0) continue;
     out.push({
       scheduleId: s.id,
       projectRoot: s.projectRoot,
-      count,
-      at: lastOk.at,
-      runId: lastOk.runId ?? null,
-      isolationPath: lastOk.isolationPath ?? null,
-      adopted: Boolean(lastOk.adopted),
+      count: pending.newEntries ?? 0,
+      at: pending.at,
+      runId: pending.runId ?? null,
+      isolationPath: pending.isolationPath ?? null,
+      adopted: false,
     });
   }
   return out;
@@ -922,17 +965,6 @@ export function litInboxForRegisteredProjects(
   return candidates.filter((c) =>
     projectPaths.some((p) => samePath(c.projectRoot, p, isWindows)),
   );
-}
-
-/** 收件箱按篇展开：取 inbox 末尾 count 条（新命中追加在后），每项目最多 maxPer 篇。 */
-export function papersForLitCandidate(
-  candidate: LitInboxCandidate,
-  entries: readonly WatchEntryDto[],
-  maxPer = 5,
-): WatchEntryDto[] {
-  const n = Math.min(Math.max(candidate.count, 0), maxPer, entries.length);
-  if (n <= 0) return [];
-  return entries.slice(-n).reverse();
 }
 
 // ===== 条目忽略（dismiss） =====

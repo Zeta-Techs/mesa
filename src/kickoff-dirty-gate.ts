@@ -51,10 +51,10 @@ export function dirtyInputHits(
 
 /** 开工接驳面（2026-10-13 双台账拍板）：这些路径的未提交改动属于「积累面」——
  *  流程正典清单（papers/included.md、included.json、to-fetch.md、to-fetch.ris）与用户笔记
- *  （notes/ 下任意深度 .md）。papers/reading-list.md 是 gitignored 的积累账，不在此列：
+ *  （notes/ 下任意深度 .md，及其配图 notes/assets/）。papers/reading-list.md 是 gitignored 的积累账，不在此列：
  *  它经 freeze_reading_list_intake 冻结快照进工作区，不走 git。inbox.md 已被 gitignore，
  *  porcelain 里本就不会出现，这里显式排除是双保险。 */
-export type IntakeBridgeKind = "ledger" | "notes";
+export type IntakeBridgeKind = "ledger" | "notes" | "asset";
 
 export interface IntakeBridgeHit {
   path: string;
@@ -75,6 +75,8 @@ export function intakeBridgeSurfaceKind(path: string): IntakeBridgeKind | null {
   if (p.startsWith("notes/") && p.endsWith(".md") && p !== "notes/inbox.md") {
     return "notes";
   }
+  // 沉浸阅读截图（笔记里引用的配图）跟笔记一起带进基准，否则工作区里的笔记图是断的
+  if (p.startsWith("notes/assets/")) return "asset";
   return null;
 }
 
@@ -95,6 +97,10 @@ export interface IntakeBridgeSummary {
   ledgerLines: number;
   /** 未提交笔记份数（积累面里的 notes/*.md 个数） */
   notesCount: number;
+  /** 未提交的笔记配图（notes/assets/ 下的文件；整个目录未跟踪时 git 只报一行目录） */
+  assetsCount: number;
+  /** 配图里有整目录的一行（数不清张数，只说「笔记配图」） */
+  assetsDir: boolean;
 }
 
 /** 非注释行口径与后端 count_list_lines 一致：去空白后非空、且不以 # 开头 */
@@ -113,16 +119,23 @@ export function summarizeIntakeBridge(
 ): IntakeBridgeSummary {
   let ledgerLines = 0;
   let notesCount = 0;
+  let assetsCount = 0;
+  let assetsDir = false;
   for (const hit of hits) {
     if (hit.kind === "notes") {
       notesCount += 1;
+      continue;
+    }
+    if (hit.kind === "asset") {
+      assetsCount += 1;
+      if (hit.path.endsWith("/")) assetsDir = true;
       continue;
     }
     if (hit.path.endsWith(".md")) {
       ledgerLines += countNonCommentLines(texts[hit.path] ?? "");
     }
   }
-  return { ledgerLines, notesCount };
+  return { ledgerLines, notesCount, assetsCount, assetsDir };
 }
 
 /** 弹层一行的白话摘要：「清单 N 条新行 / M 篇未提交笔记」（哪段有命中才出现哪段） */
@@ -135,6 +148,9 @@ export function intakeBridgeLabel(summary: IntakeBridgeSummary, ledgerHitCount: 
   }
   if (summary.notesCount > 0) {
     parts.push(`${summary.notesCount} 篇未提交笔记`);
+  }
+  if (summary.assetsCount > 0) {
+    parts.push(summary.assetsDir ? "笔记配图" : `${summary.assetsCount} 张笔记配图`);
   }
   return parts.join(" / ");
 }

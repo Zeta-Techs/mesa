@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   isUnsafeLitProjectDir,
-  notesInboxTarget,
+  notesExcerptTarget,
   suggestLitProjectDir,
 } from "../src/lit-project.ts";
 
@@ -38,23 +38,33 @@ test("家目录和盘符根不能当文献项目", () => {
 
 test("无流程或没有精读步骤时笔记写入项目根", () => {
   assert.deepEqual(
-    notesInboxTarget({ pipelineOptOut: true, steps: [{ workspaceName: "lit-notes" }] }),
+    notesExcerptTarget({ pipelineOptOut: true, steps: [{ workspaceName: "lit-notes" }] }),
     { kind: "project-root" },
   );
   assert.deepEqual(
-    notesInboxTarget({ steps: [] }),
+    notesExcerptTarget({ steps: [] }),
     { kind: "project-root" },
   );
   assert.deepEqual(
-    notesInboxTarget({ steps: [{ workspaceName: "only" }] }),
+    notesExcerptTarget({ steps: [{ workspaceName: "only" }] }),
     { kind: "project-root" },
   );
   assert.deepEqual(
-    notesInboxTarget({ steps: [{ workspaceName: "lit-search" }, { workspaceName: "lit-notes" }] }),
+    notesExcerptTarget({ steps: [{ workspaceName: "lit-search" }, { workspaceName: "lit-notes" }] }),
     { kind: "workspace", name: "lit-notes" },
   );
+  // 没有 lit-notes 工作区名时按技能认精读步；第二步不再被盲目当成精读步
   assert.deepEqual(
-    notesInboxTarget({ steps: [{ workspaceName: "one" }, { workspaceName: "two" }] }),
-    { kind: "workspace", name: "two" },
+    notesExcerptTarget({ steps: [{ workspaceName: "one" }, { workspaceName: "two" }] }),
+    { kind: "project-root" },
+  );
+  assert.deepEqual(
+    notesExcerptTarget({
+      steps: [
+        { workspaceName: "lit-survey-search", skills: ["lit-search"] },
+        { workspaceName: "lit-survey-gap", skills: ["lit-notes"] },
+      ],
+    }),
+    { kind: "workspace", name: "lit-survey-gap" },
   );
 });

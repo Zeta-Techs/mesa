@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { researchRelativePath } from "../research-report";
 import { readResearchFile } from "../research-report-load";
-import { stepEvidenceLabel, stepEvidenceSummary } from "../step-evidence";
+import { stepEvidenceLabel, stepEvidenceSummaryOf } from "../step-evidence";
 import type { ProjectStepDto, WorkspaceDto } from "../types";
 
 /** 当前步骤卡上的一行：报告自述的质量状态，以及未决标记数量。 */
@@ -35,13 +35,13 @@ export default function StepEvidenceChip({
     Promise.all(
       paths.map(async (path) => {
         try {
-          return (await readResearchFile(root, path)).text;
+          return { path, text: (await readResearchFile(root, path)).text };
         } catch {
-          return "";
+          return { path, text: "" };
         }
       }),
-    ).then((parts) => {
-      if (!cancelled) setLabel(stepEvidenceLabel(stepEvidenceSummary(parts.join("\n"))));
+    ).then((files) => {
+      if (!cancelled) setLabel(stepEvidenceLabel(stepEvidenceSummaryOf(files)));
     });
     return () => {
       cancelled = true;

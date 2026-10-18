@@ -25,6 +25,7 @@ import {
   rowActionClass,
   secondaryActionClass,
   SegTabs,
+  InlineNotice,
 } from "./PageFrame";
 import { Modal } from "./Modal";
 import { agentBrand } from "../agent-colors";
@@ -451,7 +452,7 @@ export default function ProjectUserTasksView({
             <RotateCw size={14} aria-hidden="true" />
           </button>
         </div>
-        {error && <p role="alert" className="mb-2 text-xs text-err-text">{error}</p>}
+        {error && <InlineNotice tone="err" className="mb-2">{error}</InlineNotice>}
         {!loaded ? (
           <p role="status" className={`${projectWellClass} text-xs text-l3`}>正在读取目标…</p>
         ) : tasks.length === 0 ? (
@@ -603,7 +604,14 @@ export default function ProjectUserTasksView({
                                       const row = timelineRow(item);
                                       return (
                                         <li key={index}>
-                                          <p className="text-xs text-l3">{row.label}</p>
+                                          <p className="flex items-baseline gap-2 text-xs text-l3">
+                                            <span>{row.label}</span>
+                                            {item.at && (
+                                              <span className="text-micro text-l4" title={absTime(item.at)}>
+                                                {relTime(item.at)}
+                                              </span>
+                                            )}
+                                          </p>
                                           {row.body ? (
                                             <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-l2 [overflow-wrap:anywhere]">{row.body}</p>
                                           ) : null}
@@ -703,6 +711,7 @@ export default function ProjectUserTasksView({
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         projectPath={project.path}
+        projectName={project.name}
         workMode={project.workMode}
         onError={setError}
       />
@@ -974,7 +983,7 @@ function CreateTaskModal({
             </div>
             <div>
               <p className="mb-1 text-xs text-l3">权限</p>
-              {discussUnsupported && <p className="mb-2 text-xs text-warn-text">所选 Agent 不支持只读/计划模式，不能以“只讨论”启动。</p>}
+              {discussUnsupported && <InlineNotice tone="warn" className="mb-2">所选 Agent 不支持只读/计划模式，不能以“只讨论”启动。</InlineNotice>}
               <SegTabs
                 items={[
                   { id: "write_tree" as const, label: copy.writeTab },
@@ -1095,7 +1104,7 @@ function CreateTaskModal({
               )}
           </div>
         )}
-        {formError && <p className="text-xs text-err-text">{formError}</p>}
+        {formError && <InlineNotice tone="err">{formError}</InlineNotice>}
         <div className="flex justify-end gap-2">
           <button type="button" className={rowActionClass} onClick={onClose}>
             取消
@@ -1233,7 +1242,7 @@ function TaskMaterialsPicker({
           ))}
         </div>
       )}
-      {error && <p className="mb-1 text-micro text-err-text">{error}</p>}
+      {error && <InlineNotice tone="err" size="micro" className="mb-1">{error}</InlineNotice>}
       <div className="max-h-56 overflow-auto rounded-md border border-hairline bg-canvas py-1">
         {cache[projectPath] ? (
           <ul>{renderEntries(projectPath, 0)}</ul>

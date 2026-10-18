@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Checkbox } from "./PageFrame";
+import { Checkbox, InlineNotice } from "./PageFrame";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type {
@@ -552,7 +552,7 @@ export default function HumanTasksList({
             ))}
         </div>
       )}
-      {note && <p className="mt-1 text-micro text-ok-text">{note}</p>}
+      {note && <InlineNotice tone="ok" size="micro" className="mt-1">{note}</InlineNotice>}
       {registerOffer && (
         <RegisterOfferRow
           destRels={registerOffer.destRels}
@@ -560,7 +560,7 @@ export default function HumanTasksList({
           onDismiss={dismissRegisterOffer}
         />
       )}
-      {error && <p className="mt-1 text-micro text-err-text">{error}</p>}
+      {error && <InlineNotice tone="err" size="micro" className="mt-1">{error}</InlineNotice>}
     </div>
   );
 }

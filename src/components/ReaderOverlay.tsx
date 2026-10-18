@@ -3,10 +3,12 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { IS_MAC, IS_WINDOWS, eventMatchesCombo, READER_MODE_HOTKEY } from "../hotkeys";
 import { macOverlayPadClass, useMacFullscreen } from "../mac-titlebar";
@@ -48,6 +50,15 @@ import {
 import ReaderTranslatePanel, {
   type TlPending,
 } from "./ReaderTranslatePanel";
+import {
+  annotationSavedToast,
+  buildNoteDraftPrompt,
+  noteDraftEmpty,
+  parseNoteAnnotations,
+  type PdfAnnotation,
+  type PdfJumpRef,
+  type PdfJumpReq,
+} from "../reader-note";
 import ReaderTlFloat from "./ReaderTlFloat";
 import type { SessionLinkState, TabStatus } from "../pages/TerminalPage";
 
@@ -96,6 +107,9 @@ export default function ReaderOverlay({
   onClose,
   termSlot,
   statusBarSlot,
+  agentSurface,
+  agentPeek,
+  onAgentSurface,
 }: {
   pdfPath: string;
   projectRoot: string;
@@ -111,7 +125,8 @@ export default function ReaderOverlay({
   agentSession: SessionLinkState | null;
   /** 没有任何可用配置：右栏显示引导卡 */
   needsProfile: boolean;
-  /** 写入阅读会话 PTY（send=true 补 \r 直接发送；缺省写进终端输入行，用户看着回车）；
+  /** 写入阅读会话（send=true 走 PTY 补 \r 直接发送；缺省放进输入框不发送——聊天层时进聊天输入框，
+      终端画面时写进终端输入行，路由在 TerminalPage injectToReader）；
       返回 null 成功，否则为提示 */
   onInject: (
     data: string,
@@ -125,9 +140,17 @@ export default function ReaderOverlay({
   termSlot: (el: HTMLDivElement | null) => void;
   /** 右栏底部终端状态栏槽位的回调 ref（同一标签的 TerminalStatusBar 节点，随宿主一起搬） */
   statusBarSlot: (el: HTMLDivElement | null) => void;
+  /** 右栏显示聊天层还是终端画面（阅读会话标签的 surface；聊天层宿主也由 TerminalPage 搬进 termSlot） */
+  agentSurface: "chat" | "terminal";
+  /** 聊天层露出终端（peek）：聊天在上、终端画面在下 */
+  agentPeek: boolean;
+  onAgentSurface: (mode: "chat" | "terminal") => void;
 }) {
   const stem = stemOf(pdfPath);
   const macFullscreen = useMacFullscreen(IS_MAC);
+
+  /** 右栏（翻译面板 + 对话卡）：焦点在这里时 Esc / ⌘E 都归它 */
+  const rightColRef = useRef<HTMLDivElement>(null);
 
   // Esc 退出（阅读区优先于专注模式等退出：TerminalPage 的专注 Esc 在阅读区打开时不拦）；
   // isComposing 守卫：中文输入法组词中按 Esc 是取消候选，不关阅读区。
@@ -136,6 +159,8 @@ export default function ReaderOverlay({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.isComposing) return;
+      // 焦点在右栏（终端或聊天输入框）时 Esc 归它们：xterm 本就就地消化，聊天层输入框也一样不关阅读区
+      if (rightColRef.current?.contains(e.target as Node)) return;
       onClose();
     };
     window.addEventListener("keydown", onKey);
@@ -147,7 +172,6 @@ export default function ReaderOverlay({
   // 焦点在右栏 xterm 里时不拦（Ctrl+E 是 readline 行尾；与 Esc 级联「键归终端」同语义，
   // mac 下 ⌘E 对终端无语义，但统一按焦点规则跳过最稳）
   const [noteModeTick, setNoteModeTick] = useState(0);
-  const rightColRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!eventMatchesCombo(e, READER_MODE_HOTKEY)) return;
@@ -280,6 +304,76 @@ export default function ReaderOverlay({
       的 toast 口径要用——dirty 时 watcher 停订，界面不会回显刚写入的内容 */
   const [noteDirty, setNoteDirty] = useState(false);
 
+  // ===== 笔记正文（盘上那份）：标注高亮、「让 AI 起草」显隐都看它。笔记栏收起/让位、
+  // 编辑态有未保存改动时 FilePreviewEditor 的 watcher 会停订，这里单独订一份 =====
+  const [noteText, setNoteText] = useState<string | null>(null);
+  const refreshNoteRef = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    setNoteText(null);
+    if (!note) return;
+    const path = note.path;
+    let cancelled = false;
+    let gen = 0;
+    let watchId: string | null = null;
+    let unlisten: (() => void) | undefined;
+    const read = () => {
+      const my = ++gen;
+      invoke<{ text: string }>("read_file_preview", { path, root: projectRoot })
+        .then((p) => {
+          if (!cancelled && my === gen) setNoteText(p.text);
+        })
+        .catch(() => {
+          /* 读不到保持现状（被删/改名时笔记栏自己会报） */
+        });
+    };
+    refreshNoteRef.current = read;
+    read();
+    void (async () => {
+      try {
+        watchId = await invoke<string>("watch_dir", {
+          path: path.replace(/[\\/][^\\/]*$/, ""),
+        });
+        if (cancelled) {
+          invoke("unwatch_dir", { id: watchId }).catch(() => {});
+          return;
+        }
+        const off = await listen(`fs-changed-${watchId}`, read);
+        if (cancelled) off();
+        else unlisten = off;
+      } catch {
+        /* 目录监听不了：只在本区自己写盘后主动刷新 */
+      }
+    })();
+    return () => {
+      cancelled = true;
+      refreshNoteRef.current = null;
+      unlisten?.();
+      if (watchId) invoke("unwatch_dir", { id: watchId }).catch(() => {});
+    };
+  }, [note, projectRoot]);
+  const annotations = useMemo(
+    () => (noteText === null ? [] : parseNoteAnnotations(noteText)),
+    [noteText],
+  );
+
+  // ===== 顶栏题名：题录里的真实题名（文件名常被截断/改写），查不到用文件名 =====
+  const [paperTitle, setPaperTitle] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setPaperTitle(null);
+    invoke<string | null>("reader_paper_title", { projectRoot, pdfPath })
+      .then((t) => {
+        if (!cancelled) setPaperTitle(t?.trim() || null);
+      })
+      .catch(() => {
+        /* 查不到就用文件名 */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectRoot, pdfPath]);
+  const displayTitle = paperTitle ?? stem;
+
   // ===== 右栏启动占位（2026-09-20）：退出即关标签后，每次进入都新派 CLI 会话——
   // 头几帧标签还没建出来（hasAgentTab=false，不能闪「阅读会话未在运行」引导卡），
   // 起来后到 CLI 开屏出字前 xterm 也是一段黑底。两段都用占位盖住，超时兜底回落真状态 */
@@ -392,6 +486,41 @@ export default function ReaderOverlay({
    *  OR 右栏收起/让位（兜底：终端栏收着时译文有地方看，展开即回原位，无需提前钉） */
   const [tlPinned, setTlPinned] = useState(() => loadReaderTlPinned());
   const tlFloat = tlPinned || !mountRight || !rightOpen;
+  /** 悬浮译文卡只在 PDF 栏里展开（不盖笔记栏/对话栏）：量 PDF 栏离覆盖层左右边的距离。
+   *  栏宽随收起滑动、分隔条拖拽变化，RO 逐帧报、按帧合并；只在悬浮档量 */
+  const rootRef = useRef<HTMLDivElement>(null);
+  const pdfColRef = useRef<HTMLDivElement>(null);
+  const [pdfBounds, setPdfBounds] = useState<{ left: number; right: number } | undefined>(
+    undefined,
+  );
+  useEffect(() => {
+    const col = pdfColRef.current;
+    const root = rootRef.current;
+    if (!tlFloat || !col || !root) return;
+    let raf = 0;
+    const measure = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const c = col.getBoundingClientRect();
+        const r = root.getBoundingClientRect();
+        const next = {
+          left: Math.max(0, Math.round(c.left - r.left)),
+          right: Math.max(0, Math.round(r.right - c.right)),
+        };
+        setPdfBounds((prev) =>
+          prev && prev.left === next.left && prev.right === next.right ? prev : next,
+        );
+      });
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(col);
+    ro.observe(root);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
+  }, [tlFloat]);
   const [tlHistory, setTlHistory] = useState<TlHistoryEntry[]>([]);
   const [tlPending, setTlPending] = useState<TlPending | null>(null);
   const [tlSaving, setTlSaving] = useState(false);
@@ -459,6 +588,11 @@ export default function ReaderOverlay({
       }
     },
     [requestTranslate, pdfPath],
+  );
+  /** PDF 栏的翻译触发（稳定引用：PdfContinuousView 是 memo） */
+  const translateFromPdf = useCallback(
+    (text: string, page: number) => void runTranslate(text, page),
+    [runTranslate],
   );
 
 
@@ -540,7 +674,7 @@ export default function ReaderOverlay({
     [projectRoot],
   );
 
-  // ===== Agent 栏（右栏 = 终端画面）：选段/截图注入写阅读会话 PTY（文字出现在终端输入行里，正好可见） =====
+  // ===== Agent 栏（右栏 = 聊天层或终端画面，可切换）：选段/截图注入阅读会话的输入框（正好可见） =====
 
   /** PDF 选段「◈ 问 AI」：格式出处后注入（缺省不发送；↵ 直接发送 send=true） */
   const askAiFromPdf = useCallback(
@@ -554,19 +688,28 @@ export default function ReaderOverlay({
   // （按 note.path 去重；换 PDF → note.path 变 → 重新简报；发送失败不标记，
   // 下次 running 跃迁重试）。已知竞态：send=true 会把用户输入行里未发完的文字
   // 一起带出去（注入语义如此），agentStatus.running 守门后窗口极小，接受。
+  // 2026-10-18 修「简报打了两遍、还落在 CLI 开屏之前」：①等遮面撤掉（会话联动到 ≈ TUI 已开屏，
+  // 8s 兜底）再发——进程活着不等于 CLI 能收输入，早发的字会落进开屏前的 shell、回车丢失；
+  // ②发之前先占位：note / onInject 身份在首发返回前变化会让 effect 重跑，旧写法回包才记账，
+  // 于是同一段简报进了输入行两次。失败才撤占位；换会话标签（重启）清占位重发。
   const briefedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!note || !agentStatus?.running) return;
+    briefedRef.current = null;
+  }, [agentTabId]);
+  useEffect(() => {
+    if (!note || !agentStatus?.running || sessionVeil) return;
     if (briefedRef.current === note.path) return;
+    const target = note.path;
+    briefedRef.current = target;
     void Promise.resolve(
       onInject(
-        `【阅读上下文】我在沉浸阅读区读 PDF：${pdfPath}；配套笔记：${note.path}。之后我说「这篇」「笔记」都指它们；要改笔记就直接编辑这个文件。`,
+        `【阅读上下文】我在沉浸阅读区读 PDF：${pdfPath}；配套笔记：${target}。之后我说「这篇」「笔记」都指它们；要改笔记就直接编辑这个文件。`,
         true,
       ),
     ).then((err) => {
-      if (!err) briefedRef.current = note.path;
+      if (err && briefedRef.current === target) briefedRef.current = null;
     });
-  }, [note, agentStatus?.running, pdfPath, onInject]);
+  }, [note, agentStatus?.running, sessionVeil, pdfPath, onInject]);
 
   // ===== 圈选截图去向（批次 B2）：裁好的 PNG 由 PdfContinuousView 交来 =====
 
@@ -612,6 +755,100 @@ export default function ReaderOverlay({
     [note, projectRoot],
   );
 
+  // ===== 标注（高亮/批注记进笔记「## 标注」）与笔记 ↔ PDF 互跳 =====
+
+  const addAnnotation = useCallback(
+    async (text: string, page: number, comment: string): Promise<string | null> => {
+      if (!note) return "笔记还没建好，稍等片刻再试";
+      try {
+        await invoke("append_note_annotation", {
+          projectRoot,
+          notePath: note.path,
+          page,
+          quote: text,
+          comment,
+        });
+        refreshNoteRef.current?.();
+        showToast(annotationSavedToast(noteDirty, Boolean(comment)));
+        return null;
+      } catch (e) {
+        const msg = `标注没记上：${String(e)}`;
+        showToast(msg, false);
+        return msg;
+      }
+    },
+    [note, noteDirty, projectRoot],
+  );
+
+  const removeAnnotation = useCallback(
+    async (a: PdfAnnotation): Promise<string | null> => {
+      if (!note) return "笔记还没建好，稍等片刻再试";
+      try {
+        const removed = await invoke<boolean>("remove_note_annotation", {
+          projectRoot,
+          notePath: note.path,
+          page: a.page,
+          quote: a.quote,
+        });
+        refreshNoteRef.current?.();
+        showToast(removed ? "已删掉这条标注" : "笔记里已经没有这条了");
+        return null;
+      } catch (e) {
+        const msg = `删除标注失败：${String(e)}`;
+        showToast(msg, false);
+        return msg;
+      }
+    },
+    [note, projectRoot],
+  );
+
+  /** PDF 高亮「在笔记里看」：笔记栏回到本篇笔记、收着就展开，定位到那条标注 */
+  const [noteFocus, setNoteFocus] = useState<{ text: string; nonce: number } | null>(null);
+  const noteFocusNonceRef = useRef(0);
+  const revealAnnotation = useCallback(
+    (a: PdfAnnotation) => {
+      setNoteViewPath(null);
+      if (!leftOpen) {
+        setLeftOpen(true);
+        setLeftSlide(true);
+      }
+      setNoteFocus({ text: `p.${a.page} 「${a.quote}`, nonce: ++noteFocusNonceRef.current });
+    },
+    [leftOpen],
+  );
+
+  /** 笔记里点 p.3 / Fig. 2：交给 PDF 栏跳过去 */
+  const [jumpReq, setJumpReq] = useState<PdfJumpReq | null>(null);
+  const jumpNonceRef = useRef(0);
+  const jumpToPdf = useCallback((ref: PdfJumpRef) => {
+    setJumpReq({ ...ref, nonce: ++jumpNonceRef.current });
+  }, []);
+
+  /** 「让 AI 起草」：八小节全空时笔记栏顶上给一行入口，直发给右栏阅读会话 */
+  const draftEmpty = noteText !== null && noteDraftEmpty(noteText);
+  const [draftAskedFor, setDraftAskedFor] = useState<string | null>(null);
+  async function askDraft() {
+    if (!note) return;
+    if (!agentStatus?.running || sessionVeil) {
+      showToast("右栏的对话还没准备好，稍等片刻再点", false);
+      return;
+    }
+    // 右栏收着时顺手带滑入展开：起草过程要看得见
+    if (!rightOpen) {
+      setRightOpen(true);
+      setRightSlide(true);
+    }
+    const err = await Promise.resolve(
+      onInject(buildNoteDraftPrompt(pdfPath, note.path), true),
+    );
+    if (err) {
+      showToast(err, false);
+      return;
+    }
+    setDraftAskedFor(note.path);
+    showToast("已交给右栏的 Agent，写好后笔记会自动刷新");
+  }
+
   // ===== 顶栏 tooltip（应用内 HoverTip，禁原生 title） =====
   const backRef = useRef<HTMLButtonElement>(null);
   const backTip = useHoverTip(backRef);
@@ -623,6 +860,8 @@ export default function ReaderOverlay({
   const darkTip = useHoverTip(darkRef);
   const gestureRef = useRef<HTMLSpanElement>(null);
   const gestureTip = useHoverTip(gestureRef);
+  const titleRef = useRef<HTMLSpanElement>(null);
+  const titleTip = useHoverTip(titleRef);
 
   // ===== Agent 栏顶部状态行：agent 名 · 模型 · 启动中/运行中状态点（终端页同语义） =====
   const agentName = agentStatus
@@ -708,7 +947,7 @@ export default function ReaderOverlay({
   };
 
   return (
-    <div className="fixed inset-0 z-40 flex flex-col bg-canvas">
+    <div ref={rootRef} className="fixed inset-0 z-40 flex flex-col bg-canvas">
       {/* 40px 顶栏：← 返回（Esc 同效）/ 《文献标题》/ 收起左右栏。
           覆盖层会盖住 App 的自绘标题栏，此条必须自己承担两件事（口径同 App.tsx 顶栏）：
           可拖动 + macOS Overlay 红绿灯让位（窗口态 pl-[78px]，全屏收起按钮后取消让位）。
@@ -740,8 +979,13 @@ export default function ReaderOverlay({
         >
           ← 返回
         </button>
-        <span className="min-w-0 flex-1 truncate px-2 text-center text-sm text-l1">
-          《{stem}》
+        <span
+          ref={titleRef}
+          onMouseEnter={titleTip.show}
+          onMouseLeave={titleTip.hide}
+          className="min-w-0 flex-1 truncate px-2 text-center text-sm text-l1"
+        >
+          《{displayTitle}》
         </span>
         <button
           ref={darkRef}
@@ -792,12 +1036,16 @@ export default function ReaderOverlay({
         </button>
         <HoverTip tip={backTip.tip} text="退出沉浸阅读（Esc；焦点在终端里时 Esc 归终端）" />
         <HoverTip
+          tip={titleTip.tip}
+          text={paperTitle ? `${paperTitle}（文件：${stem}.pdf）` : `${stem}.pdf`}
+        />
+        <HoverTip
           tip={darkTip.tip}
           text={readerDark ? "关闭护眼反色" : "护眼反色（按文件记忆）"}
         />
         <HoverTip
           tip={gestureTip.tip}
-          text="⌘/Ctrl + 点击正文段落：整段对照翻译"
+          text={`⌘/Ctrl + 点击正文段落：整段对照翻译；${IS_MAC ? "⌘" : "Ctrl+"}F 在 PDF 里查找`}
         />
         <HoverTip
           tip={leftTip.tip}
@@ -863,13 +1111,40 @@ export default function ReaderOverlay({
                         </button>
                       </div>
                     )}
+                    {draftEmpty && (!noteViewPath || noteViewPath === note.path) && (
+                      // 八小节还空着：一行入口，让右栏的 Agent 按精读写法起草（写盘后自动刷新、这行随之消失）
+                      <div className="flex shrink-0 items-center gap-2 border-b border-hairline bg-strip px-3 py-1.5 text-xs">
+                        <span className="min-w-0 flex-1 text-l3">
+                          {draftAskedFor === note.path
+                            ? "已交给右栏的 Agent，写好后自动刷新"
+                            : "八个小节还空着"}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => void askDraft()}
+                          className={
+                            draftAskedFor === note.path
+                              ? "shrink-0 rounded-sm px-2 py-0.5 text-l3 hover:bg-hover hover:text-l1"
+                              : "shrink-0 rounded-sm border border-cta-bd bg-cta px-2 py-0.5 text-cta-text hover:brightness-110"
+                          }
+                        >
+                          {draftAskedFor === note.path ? "再发一次" : "让 AI 起草"}
+                        </button>
+                      </div>
+                    )}
                     <FilePreviewEditor
                       path={noteViewPath ?? note.path}
                       root={projectRoot}
                       hideImmersive
+                      mainRepoIsHome
+                      compact
                       onOpenFile={setNoteViewPath}
                       modeTick={noteModeTick}
                       onDirtyChange={setNoteDirty}
+                      onPdfRef={
+                        !noteViewPath || noteViewPath === note.path ? jumpToPdf : undefined
+                      }
+                      focusText={noteFocus}
                     />
                   </Suspense>
                 )}
@@ -878,7 +1153,7 @@ export default function ReaderOverlay({
           </div>
         )}
 
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div ref={pdfColRef} className="flex min-w-0 flex-1 flex-col">
           <Suspense
             fallback={
               <div className="p-3">
@@ -896,8 +1171,14 @@ export default function ReaderOverlay({
               glossTerms={glossary}
               dark={readerDark}
               onRequestTranslate={requestTranslate}
-              onTranslate={(text, page) => void runTranslate(text, page)}
+              onTranslate={translateFromPdf}
               onAddGlossary={addGlossary}
+              annotations={annotations}
+              onAddAnnotation={addAnnotation}
+              onRemoveAnnotation={removeAnnotation}
+              onRevealAnnotation={revealAnnotation}
+              jumpReq={jumpReq}
+              findHotkey
             />
           </Suspense>
         </div>
@@ -980,19 +1261,46 @@ export default function ReaderOverlay({
                         }`}
                       />
                       <span className="text-l2">对话</span>
-                      <span className="min-w-0 truncate text-l4">
+                      <span className="min-w-0 flex-1 truncate text-l4">
                         {needsProfile
                           ? "还没有配置"
                           : `${agentName ?? "Agent"}${agentModel ? ` · ${agentModel}` : ""} · ${agentStateText}`}
                       </span>
+                      {/* 聊天层 / 终端画面切换（终端页同一份标签状态；选择记住，下次进入沿用） */}
+                      <div
+                        role="group"
+                        aria-label="对话显示方式"
+                        className="flex shrink-0 items-center rounded-sm bg-inset p-0.5"
+                      >
+                        {(["chat", "terminal"] as const).map((m) => (
+                          <button
+                            key={m}
+                            type="button"
+                            aria-pressed={agentSurface === m}
+                            onClick={() => onAgentSurface(m)}
+                            className={`rounded-sm px-1.5 py-px ${
+                              agentSurface === m
+                                ? "bg-seg-sel text-l1"
+                                : "text-l3 hover:text-l2"
+                            }`}
+                          >
+                            {m === "chat" ? "聊天" : "终端"}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                     <div
                       ref={termSlot}
+                      // 聊天层露出终端时由 App.css 按此属性把终端画面排到下方（聊天层宿主自带摆位类）
+                      data-reader-surface={
+                        agentSurface === "chat" ? (agentPeek ? "peek" : "chat") : "terminal"
+                      }
                       className="relative flex min-h-0 flex-1 flex-col"
                     >
                       {/* CLI 开屏遮面：会话联动出现（≈TUI 已开屏）前盖住 xterm 黑底；
-                          搬移是 appendChild，遮面作为槽位孩子与宿主共存 */}
-                      {sessionVeil && (
+                          搬移是 appendChild，遮面作为槽位孩子与宿主共存。
+                          聊天层自己有「正在连接」的样子，遮面只给终端画面 */}
+                      {sessionVeil && agentSurface === "terminal" && (
                         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-raised">
                           <span className="size-2 animate-pulse rounded-full bg-l3" />
                           <p className="text-sm text-l3">
@@ -1021,6 +1329,7 @@ export default function ReaderOverlay({
           hasContent={Boolean(tlHistory[0] || tlPending)}
           openTick={tlOpenTick}
           startOpen={tlStartOpenRef.current}
+          bounds={pdfBounds}
         />
       )}
 

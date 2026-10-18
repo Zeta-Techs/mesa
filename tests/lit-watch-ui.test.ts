@@ -117,13 +117,25 @@ test("文献雷达真实卡片：趋势标题、已知日期柱与缺日期空�
 
     const now = new Date();
     const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    const dayAgo = (n: number) => {
+      const d = new Date(now);
+      d.setDate(d.getDate() - n);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    };
     await render([entry("a", day), entry("b", null)]);
-    // 通栏等分列：8 列；今天 1 篇 = 上层 CTA 段 1 根；0 值列是 bg-field 底座
+    // 2026-10-16 稀疏态：有数桶 ≤3 压成一句话（含「· 展开图」），不出图；
+    // 缺日期说明与补记入口不因收起消失
+    assert.equal(chart(), null, "稀疏时不直接出图");
+    assert.match(host.textContent!, /近 8 周只有本周有新命中，共 1 篇/);
+    assert.match(host.textContent!, /另有 1 条缺少有效巡检日期，未计入趋势/);
+    const expandBtn = () =>
+      [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("展开图")) as HTMLButtonElement;
+    await click(expandBtn());
     const cols = () => chart()?.querySelectorAll("button[data-trend-col]");
+    // 通栏等分列：8 列；今天 1 篇 = 上层 CTA 段 1 根；0 值列是 bg-field 底座
     assert.equal(cols()!.length, 8);
     assert.equal(chart()?.querySelectorAll(".bg-cta").length, 1);
     assert.equal(chart()?.querySelectorAll(".bg-field").length, 7);
-    assert.match(host.textContent!, /另有 1 条缺少有效巡检日期，未计入趋势/);
     // 点今天的柱子 → 列表只剩这篇，工具栏出时间筛选胶囊；再点同柱或点胶囊清除
     const todayCol = [...cols()!].find((c) => !c.hasAttribute("disabled"))!;
     await click(todayCol as HTMLButtonElement);
@@ -136,19 +148,25 @@ test("文献雷达真实卡片：趋势标题、已知日期柱与缺日期空�
       ![...host.querySelectorAll("button")].some((b) => (b.textContent ?? "").trim().endsWith("×")),
       "再点同柱清除",
     );
+    await click(byText("收起"));
+    assert.equal(chart(), null, "收起回稀疏一句话");
 
     await render([entry("a", "2000-01-01")]);
     assert.equal(chart()?.querySelectorAll(".bg-field").length, 8);
-    // 日/月切换：标题与桶数跟着变；今天的命中落进日模式最后一根 CTA 柱
-    const now2 = new Date();
-    const today2 = `${now2.getFullYear()}-${String(now2.getMonth() + 1).padStart(2, "0")}-${String(now2.getDate()).padStart(2, "0")}`;
-    await render([entry("a", today2)]);
+    // ≥4 个有数桶不再压缩，数据一出直接出图（近 8 周每周都有）
+    await render([entry("a", day), entry("b", dayAgo(7)), entry("c", dayAgo(14)), entry("d", dayAgo(21))]);
+    assert.ok(![...host.querySelectorAll("button")].some((b) => b.textContent?.includes("展开图")), "不稀疏不出展开入口");
+    assert.equal(cols()!.length, 8);
+    assert.equal(chart()?.querySelectorAll(".bg-cta").length, 4, "四周各 1 篇");
+    // 日/月切换：标题与桶数跟着变（近四天数据在周视角仍是稀疏，先展开出切换钮）
+    await render([entry("a", day), entry("b", dayAgo(1)), entry("c", dayAgo(2)), entry("d", dayAgo(3))]);
+    await click(expandBtn());
     await click(byText("日"));
     assert.ok(chartBy("近 14 天新命中数"), "日模式容器");
     assert.equal(chartBy("近 14 天新命中数")?.querySelectorAll("button[data-trend-col]").length, 14);
-    assert.equal(chartBy("近 14 天新命中数")?.querySelectorAll(".bg-cta").length, 1, "今天 1 篇");
+    assert.equal(chartBy("近 14 天新命中数")?.querySelectorAll(".bg-cta").length, 4, "近四天各 1 篇");
     await click(byText("月"));
-    assert.ok(chartBy("近 6 月新命中数"), "月模式容器");
+    assert.ok(chartBy("近 6 月新命中数"), "月模式容器（展开态保持）");
     await click(byText("周"));
     assert.ok(chart(), "切回周模式");
     assert.doesNotMatch(host.textContent!, /缺少有效巡检日期|暂无文献命中/);
@@ -442,13 +460,14 @@ test("雷达空态入口只认有任务的卡：没雷达巡检不摆「订阅�
   }
   let schedules: Record<string, unknown>[] = [];
   let skills: { name: string; provides?: string[] }[] = [];
+  let entries: WatchEntryDto[] = [];
   Object.assign(dom.window, {
     __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener() {} },
     __TAURI_INTERNALS__: {
     transformCallback: () => 1,
     unregisterCallback() {},
     invoke: async (command: string) => {
-      if (command === "list_watch_entries") return { entries: [], followups: [] };
+      if (command === "list_watch_entries") return { entries, followups: [] };
       if (command === "list_watch_subscriptions") return []; // 没订阅读
       if (command === "list_included_entries") return [];
       if (command === "list_schedules") return schedules;
@@ -524,6 +543,19 @@ test("雷达空态入口只认有任务的卡：没雷达巡检不摆「订阅�
     });
     await render();
     assert.match(host.textContent!, /还没订阅读/);
+
+    // 关键词被清空、但雷达已经攒下命中：整张卡照常出（命中还在），另起一行提示补关键词——
+    // 收成一行「还没订阅读」会把攒下的命中一起藏掉，看着像雷达没了（2026-10-17 用户实测）
+    entries = [entry("x", null)];
+    version = 4;
+    await render();
+    assert.doesNotMatch(host.textContent!, /还没订阅读/);
+    assert.match(host.textContent!, /文献雷达 · 1 篇/);
+    assert.match(host.textContent!, /还没有订阅关键词：下面是以前攒下的命中，巡检不会再有新命中/);
+    assert.ok(
+      [...host.querySelectorAll("button")].some((b) => b.textContent?.trim() === "订阅关键词"),
+      "提示行带订阅关键词入口",
+    );
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

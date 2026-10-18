@@ -291,6 +291,13 @@ test("goalTimeline is generate → notes → revision → accepted", () => {
   });
   assert.equal(goalTimelineLabel(items), "生成 → 意见：引用太少 → 第 2 版 → 已接受");
   assert.equal(goalTimelinePath(items), "生成 → 意见 → 第 2 版 → 已接受");
+  // 详情里每一版、每条意见都带时间；接受没有可靠时间不填
+  assert.deepEqual(items.map((item) => item.at ?? null), [
+    "2026-09-01T00:00:00Z",
+    "2026-09-01T01:00:00Z",
+    "2026-09-02T00:00:00Z",
+    null,
+  ]);
 });
 
 test("groupGoalsByBucket splits open / running / review / done", () => {

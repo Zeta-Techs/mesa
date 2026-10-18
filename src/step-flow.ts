@@ -120,6 +120,9 @@ export function buildStepFlow(args: {
   // 0.5 输入准备：文献从哪来（模板声明 asksLitSource 的步骤才有）。
   //     独立成节点、排在 agent 之前——它是**开工的前提**（决定 AI 要不要去检索），
   //     挂在 agent 节点内容区会让「开始」按钮出现在它上方，变成「先出发再问路」（用户实测）。
+  //     完成口径：选了非默认来源，或这一步已经开工——开工即按当时的来源执行了。
+  //     默认「让 agent 检索」不落值，旧口径只认非 search，AI 跑完待评审了「当前」
+  //     竖线还钉在这一行，真正该做的「去评审」反而不是当前（2026-10-17 用户截图）。
   if (step.asksLitSource) {
     nodes.push({
       key: "input",
@@ -127,8 +130,9 @@ export function buildStepFlow(args: {
       section: "main",
       label: "确定文献来源",
       hint: undefined,
-      // 已声明来源（非默认 search）或已有登记资源 = 这一步交代清楚了
-      done: (args.litSource ?? "").trim() !== "" && args.litSource !== "search",
+      done:
+        ((args.litSource ?? "").trim() !== "" && args.litSource !== "search") ||
+        runStatus !== "pending",
     });
   }
   // 0.6 稿件载体会换本步正式稿，是开工前提，排在 agent 前（与「确定文献来源」同形）。
@@ -321,6 +325,12 @@ export function isPendingConfirmTaskTitle(title: string): boolean {
   return title.includes("待确认") && !QUOTED_PENDING.test(title);
 }
 
+/** 精读步「抽查 3 篇笔记」：就地挂三篇候选（StepFlow SpotCheckPicks）。按标题关键词识别，
+ *  与付费墙/待确认同款口径（模板常量 SPOT_CHECK_TASK_TITLE）。 */
+export function isSpotCheckTaskTitle(title: string): boolean {
+  return title.includes("抽查");
+}
+
 export function isEndnoteTaskTitle(title: string): boolean {
   return title.includes("EndNote");
 }
@@ -469,51 +479,68 @@ export function venueFromSegment(segment: string, link: string): string {
  *  - 旧裸行：`标题 — DOI`（无编号无符号——必须带「 — DOI/链接」尾巴才认，挡住说明文字）。
  *  ✓ 记 done；末段不像 DOI/http 链接则 url 留空（获取钮不摆）。
  *  全空时调用方回落原文预览 */
+/** 精读步补齐后写在标题前的标记：`[已补 2026-09-24]`、`[已补·全文已在项目根 …]`、`【已补】` */
+const TO_FETCH_DONE_PREFIX = /^(?:\[|【)\s*已补[^\]】]*(?:\]|】)\s*/;
+
 export function parseToFetchItems(text: string): ToFetchItem[] {
   const out: ToFetchItem[] = [];
-  text.split("\n").forEach((raw, i) => {
-    const line = raw.trim();
-    if (!line || line.startsWith("#")) return;
-    let body = line;
-    let done = false;
-    const numbered = /^(\d+)[.、)]\s+(✓\s*)?(.+)$/.exec(line);
-    const bulleted = /^[-*+]\s+(✓\s*)?(.+)$/.exec(line);
-    if (numbered) {
-      done = Boolean(numbered[2]);
-      body = numbered[3] ?? "";
-    } else if (bulleted) {
-      done = Boolean(bulleted[1]);
-      body = bulleted[2] ?? "";
-    }
-    body = body.trim().replace(/^(?:\[\s*\]|【\s*】)\s*/, "");
-    if (!body) return;
-    const segs = body.split(/\s+—\s+|\s+--\s+/);
-    let url = "";
-    let venue = "";
-    let linkAt = -1;
-    for (let s = 1; s < segs.length; s += 1) {
-      const token = linkTokenFromSegment(segs[s] ?? "");
-      if (!token) continue;
-      url = token;
-      venue = venueFromSegment(segs[s] ?? "", token);
-      const next = (segs[s + 1] ?? "").trim();
-      if (!venue && next && !linkTokenFromSegment(next)) {
-        venue = venueFromSegment(next, "");
-      }
-      linkAt = s;
-      break;
-    }
-    if (linkAt < 1) {
-      // 编号/列表行没链接也保留（url 空占位）；裸行必须带链接尾巴才算条目
-      if (!numbered && !bulleted) return;
-      out.push({ line: i + 1, title: body, url: "", done, venue: "" });
-      return;
-    }
-    // 标题 = 链接段之前的全部（标题内含「 — 」不丢字）
-    const title = segs.slice(0, linkAt).join(" — ").trim();
-    out.push({ line: i + 1, title, url, done, venue });
-  });
+  const lines = text.split("\n");
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = (lines[i] ?? "").trim();
+    // 条目开始后的分隔线（---）之后是别的内容（如精读汇总的「待跟进引用线索」），不是待获取
+    //（2026-10-18 实测：42 条待获取 + 66 条线索被数成 108）
+    if (out.length > 0 && /^(?:-{3,}|\*{3,}|_{3,})$/.test(line)) break;
+    const item = parseToFetchLine(line, i);
+    if (item) out.push(item);
+  }
   return out;
+}
+
+function parseToFetchLine(line: string, i: number): ToFetchItem | null {
+  if (!line || line.startsWith("#")) return null;
+  let body = line;
+  let done = false;
+  const numbered = /^(\d+)[.、)]\s+(✓\s*)?(.+)$/.exec(line);
+  const bulleted = /^[-*+]\s+(✓\s*)?(.+)$/.exec(line);
+  if (numbered) {
+    done = Boolean(numbered[2]);
+    body = numbered[3] ?? "";
+  } else if (bulleted) {
+    done = Boolean(bulleted[1]);
+    body = bulleted[2] ?? "";
+  }
+  body = body.trim().replace(/^(?:\[\s*\]|【\s*】)\s*/, "");
+  // 「[已补 …]」前缀：已补齐，标题里不带这段（带着会对不上 papers/ 里的 PDF）
+  const donePrefix = TO_FETCH_DONE_PREFIX.exec(body);
+  if (donePrefix) {
+    done = true;
+    body = body.slice(donePrefix[0].length).trim();
+  }
+  if (!body) return null;
+  const segs = body.split(/\s+—\s+|\s+--\s+/);
+  let url = "";
+  let venue = "";
+  let linkAt = -1;
+  for (let s = 1; s < segs.length; s += 1) {
+    const token = linkTokenFromSegment(segs[s] ?? "");
+    if (!token) continue;
+    url = token;
+    venue = venueFromSegment(segs[s] ?? "", token);
+    const next = (segs[s + 1] ?? "").trim();
+    if (!venue && next && !linkTokenFromSegment(next)) {
+      venue = venueFromSegment(next, "");
+    }
+    linkAt = s;
+    break;
+  }
+  if (linkAt < 1) {
+    // 编号/列表行没链接也保留（url 空占位）；裸行必须带链接尾巴才算条目
+    if (!numbered && !bulleted) return null;
+    return { line: i + 1, title: body, url: "", done, venue: "" };
+  }
+  // 标题 = 链接段之前的全部（标题内含「 — 」不丢字）
+  const title = segs.slice(0, linkAt).join(" — ").trim();
+  return { line: i + 1, title, url, done, venue };
 }
 
 /** 本步上次商量会话：活着的优先，否则最近一条。归档 / 无头不计。 */

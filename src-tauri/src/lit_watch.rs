@@ -112,7 +112,7 @@ pub struct IncludedEntryDto {
     pub raw_line: String,
 }
 
-/// add_included_entry 返回：added=false 表示规范化标题已存在（去重）
+/// add_reading_list_entry 返回：added=false 表示规范化标题已存在（去重）
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AddIncludedResultDto {
@@ -165,7 +165,7 @@ fn resolve_inside(root: &Path, rel: &str) -> Result<PathBuf, String> {
     Ok(p)
 }
 
-fn read_text_inside(root: &Path, rel: &str) -> Result<Option<String>, String> {
+pub(crate) fn read_text_inside(root: &Path, rel: &str) -> Result<Option<String>, String> {
     let p = resolve_inside(root, rel)?;
     match fs::read_to_string(&p) {
         Ok(t) => Ok(Some(t)),
@@ -623,6 +623,202 @@ pub(crate) fn drop_inbox_entries(text: &str, excluded_ids: &std::collections::Ha
     result
 }
 
+fn is_inbox_batch_line(line: &str) -> bool {
+    line.trim().starts_with("<!-- watch-run:") || parse_batch_heading(line).is_some()
+}
+
+/// 雷达采纳的收件箱追加段（2026-10-17 审查修复，取代整文件覆盖）：只取本轮新写的文献条目——
+/// id 不在起跑线里、没被排除、标题也不在主仓现有条目里（同项目另一条雷达已收进来的不重复）——
+/// 连同各自所属的批次标记按原顺序拼起来。主仓现有内容由调用方原样保留；起跑线里的旧条目
+/// 即使被改写也不回灌。主仓还没有收件箱时带上 Agent 写的文件头。没有新条目返回 None。
+pub(crate) fn inbox_append_delta(
+    current: Option<&str>,
+    initial: Option<&str>,
+    after: &str,
+    drop_ids: &std::collections::HashSet<&str>,
+) -> Option<String> {
+    let old_ids: std::collections::HashSet<String> = initial
+        .map(|text| {
+            parse_inbox_entries_with_cap(text, false)
+                .into_iter()
+                .map(|entry| entry.id)
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut have_titles: std::collections::HashSet<String> = current
+        .map(|text| {
+            parse_inbox_entries_with_cap(text, false)
+                .into_iter()
+                .map(|entry| normalize_title(&entry.title))
+                .filter(|t| !t.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    let lines: Vec<&str> = after.lines().collect();
+    let mut out: Vec<&str> = Vec::new();
+    let mut emitted_marker: Option<usize> = None;
+    for entry in parse_inbox_entries_with_cap(after, false) {
+        if old_ids.contains(&entry.id) || drop_ids.contains(entry.id.as_str()) {
+            continue;
+        }
+        let norm = normalize_title(&entry.title);
+        if !norm.is_empty() && !have_titles.insert(norm) {
+            continue;
+        }
+        let start = entry.raw_line_range[0] as usize - 1;
+        let end = (entry.raw_line_range[1] as usize - 1).min(lines.len().saturating_sub(1));
+        if start > end {
+            continue;
+        }
+        if let Some(marker) = (0..start).rev().find(|&i| is_inbox_batch_line(lines[i])) {
+            if emitted_marker != Some(marker) {
+                if !out.is_empty() {
+                    out.push("");
+                }
+                out.push(lines[marker]);
+                emitted_marker = Some(marker);
+            }
+        }
+        if !out.is_empty() {
+            out.push("");
+        }
+        out.extend_from_slice(&lines[start..=end]);
+    }
+    if out.is_empty() {
+        return None;
+    }
+    let mut text = out.join("\n");
+    if current.is_none_or(|c| c.trim().is_empty()) {
+        let head_end = lines
+            .iter()
+            .position(|l| is_inbox_batch_line(l) || l.starts_with("## "))
+            .unwrap_or(0);
+        let head = lines[..head_end].join("\n");
+        if !head.trim().is_empty() {
+            text = format!("{}\n\n{text}", head.trim_end());
+        }
+    }
+    Some(text)
+}
+
+/// 跟进清单的追加段：本轮新写的行（按出现次数与起跑线逐行抵消，旧条目先出现先抵）切成待办，
+/// 丢掉被排除条目与主仓里已有同名待办的，悬空的批次分组标题一并去掉。没有新待办返回 None。
+pub(crate) fn followup_append_delta(
+    current: Option<&str>,
+    initial: Option<&str>,
+    after: &str,
+    drop_titles: &[String],
+) -> Option<String> {
+    let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for line in initial.unwrap_or("").lines() {
+        *counts.entry(line.trim_end()).or_default() += 1;
+    }
+    let fresh: Vec<&str> = after
+        .lines()
+        .filter(|line| match counts.get_mut(line.trim_end()) {
+            Some(n) if *n > 0 => {
+                *n -= 1;
+                false
+            }
+            _ => true,
+        })
+        .collect();
+    let drop: std::collections::HashSet<String> = drop_titles
+        .iter()
+        .map(|t| normalize_title(t))
+        .filter(|t| !t.is_empty())
+        .collect();
+    let mut have: std::collections::HashSet<String> = current
+        .map(|text| {
+            parse_followups(text)
+                .into_iter()
+                .map(|item| normalize_title(&item.title))
+                .filter(|t| !t.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    // (行, 是否批次分组标题)
+    let mut out: Vec<(&str, bool)> = Vec::new();
+    let mut item: Vec<&str> = Vec::new();
+    let mut item_title = String::new();
+    fn flush<'a>(
+        out: &mut Vec<(&'a str, bool)>,
+        item: &mut Vec<&'a str>,
+        title: &mut String,
+        drop: &std::collections::HashSet<String>,
+        have: &mut std::collections::HashSet<String>,
+    ) {
+        if item.is_empty() {
+            return;
+        }
+        let norm = normalize_title(title);
+        let keep = norm.is_empty() || (!drop.contains(&norm) && have.insert(norm));
+        if keep {
+            out.extend(item.iter().map(|l| (*l, false)));
+        }
+        item.clear();
+        title.clear();
+    }
+    for line in fresh {
+        let t = line.trim();
+        if let Some(heading) = t.strip_prefix("## ") {
+            flush(&mut out, &mut item, &mut item_title, &drop, &mut have);
+            let heading = heading.trim();
+            if is_batch_heading(heading) {
+                out.push((line, true));
+            } else {
+                item.push(line);
+                item_title = heading.to_string();
+            }
+            continue;
+        }
+        if let Some(title) = numbered_followup_title(t) {
+            flush(&mut out, &mut item, &mut item_title, &drop, &mut have);
+            item.push(line);
+            item_title = title;
+            continue;
+        }
+        let indented = line.starts_with(' ') || line.starts_with('\t');
+        if let Some(body) = t.strip_prefix("- ") {
+            let field = labeled_followup_field(body).is_some();
+            if !(indented || field) || item.is_empty() {
+                flush(&mut out, &mut item, &mut item_title, &drop, &mut have);
+                item.push(line);
+                item_title = body
+                    .split(" — ")
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                continue;
+            }
+        }
+        if item.is_empty() {
+            out.push((line, false));
+        } else {
+            item.push(line);
+        }
+    }
+    flush(&mut out, &mut item, &mut item_title, &drop, &mut have);
+    // 分组标题后面（到下一个分组标题或文末）没有任何内容的，去掉
+    let mut pruned: Vec<&str> = Vec::new();
+    for (idx, (line, batch)) in out.iter().enumerate() {
+        if *batch {
+            let has_body = out[idx + 1..]
+                .iter()
+                .take_while(|(_, b)| !*b)
+                .any(|(l, _)| !l.trim().is_empty());
+            if !has_body {
+                continue;
+            }
+        }
+        pruned.push(line);
+    }
+    let text = pruned.join("\n");
+    let text = text.trim_matches('\n');
+    (!text.trim().is_empty()).then(|| text.to_string())
+}
+
 /// scheduler 用：lit-watch 运行前后各数一次条目数取差值（`## ` 标题计数，文件缺失按 0）
 pub(crate) fn count_inbox_entries(root: &Path) -> u32 {
     let Ok(text) = fs::read_to_string(root.join("notes").join("inbox.md")) else {
@@ -1031,7 +1227,7 @@ fn included_line_id(raw: &str) -> String {
 
 /// 精读清单：`标题 — 作者, 年份 — 来源 — 链接/DOI`（splitn(4)，链接段含 " — " 不砍）。
 /// 跳过空行与 `#` 注释行；缺段容错为空串。
-fn parse_included(text: &str) -> Vec<IncludedEntryDto> {
+pub(crate) fn parse_included(text: &str) -> Vec<IncludedEntryDto> {
     let mut out = Vec::new();
     for line in text.lines() {
         let t = line.trim();
@@ -1062,80 +1258,6 @@ pub(crate) fn normalize_title(t: &str) -> String {
         .filter(|c| c.is_alphanumeric())
         .flat_map(|c| c.to_lowercase())
         .collect()
-}
-
-pub(crate) fn add_included_at(
-    root: &Path,
-    title: &str,
-    authors_year: &str,
-    source: &str,
-    link: &str,
-) -> Result<AddIncludedResultDto, String> {
-    let title = title.trim();
-    if title.is_empty() {
-        return Err("标题不能为空".into());
-    }
-    const REL: &str = "papers/included.md";
-    let existing = read_text_inside(root, REL)?;
-    let want = normalize_title(title);
-    if let Some(text) = &existing {
-        if parse_included(text)
-            .iter()
-            .any(|e| normalize_title(&e.title) == want)
-        {
-            return Ok(AddIncludedResultDto { added: false });
-        }
-    }
-    // 字段空缺按 lit-search 口径标「待补」，不留空段
-    fn fill_or_tbd(s: &str) -> &str {
-        let s = s.trim();
-        if s.is_empty() {
-            "待补"
-        } else {
-            s
-        }
-    }
-    let new_line = format!(
-        "{} — {} — {} — {}",
-        title,
-        fill_or_tbd(authors_year),
-        fill_or_tbd(source),
-        fill_or_tbd(link)
-    );
-    let mut text = existing.unwrap_or_default();
-    if !text.is_empty() && !text.ends_with('\n') {
-        text.push('\n');
-    }
-    text.push_str(&new_line);
-    text.push('\n');
-    write_text_inside(root, REL, &text)?;
-    Ok(AddIncludedResultDto { added: true })
-}
-
-fn remove_included_at(root: &Path, line_id: &str) -> Result<(), String> {
-    const REL: &str = "papers/included.md";
-    let text = read_text_inside(root, REL)?.ok_or("精读清单不存在")?;
-    let mut removed = false;
-    let kept: Vec<&str> = text
-        .lines()
-        .filter(|line| {
-            // 按行内容哈希精确匹配，只删第一处（重复行逐次删）
-            if !removed && included_line_id(line) == line_id {
-                removed = true;
-                false
-            } else {
-                true
-            }
-        })
-        .collect();
-    if !removed {
-        return Err("该行已不存在（清单可能已变动，请刷新后重试）".into());
-    }
-    let mut out = kept.join("\n");
-    if !out.is_empty() {
-        out.push('\n');
-    }
-    write_text_inside(root, REL, &out)
 }
 
 // ===== PDF 下载 =====
@@ -1257,12 +1379,23 @@ fn sanitize_pdf_name(hint: &str) -> String {
 
 /// 采纳时把隔离树 papers/ 里主仓还没有的 PDF 拷进项目根并登记。
 /// 只收文件头是 %PDF- 的；主仓已有同名文件则跳过，不覆盖人已有的全文。
-pub(crate) fn adopt_watch_pdfs(isolation: &Path, project: &Path) -> Result<Vec<String>, String> {
+/// 采纳免费全文：`only` = 本轮新下的文件名（冻结证据记录；旧证据没有记录时 None，回落
+/// 「隔离 papers/ 里主仓没有的都拷」）。被排除条目的 PDF（文件名按标题对上）不拷——
+/// 2026-10-17 审查修复：旧口径整目录比文件名，排除的照进，主仓里被精读步改名或被人删掉的
+/// 每次采纳都会被拷回来。
+pub(crate) fn adopt_watch_pdfs(
+    isolation: &Path,
+    project: &Path,
+    only: Option<&[String]>,
+    excluded_titles: &[String],
+) -> Result<Vec<String>, String> {
     let src_dir = isolation.join("papers");
     if !src_dir.is_dir() {
         return Ok(Vec::new());
     }
     let dest_dir = papers_dir(project)?;
+    let wanted: Option<std::collections::HashSet<&str>> =
+        only.map(|names| names.iter().map(String::as_str).collect());
     let mut copied = Vec::new();
     let entries = fs::read_dir(&src_dir).map_err(|e| format!("读取隔离 papers/ 失败: {e}"))?;
     for entry in entries.flatten() {
@@ -1279,7 +1412,17 @@ pub(crate) fn adopt_watch_pdfs(isolation: &Path, project: &Path) -> Result<Vec<S
         if !name.to_ascii_lowercase().ends_with(".pdf") {
             continue;
         }
+        if wanted.as_ref().is_some_and(|set| !set.contains(name)) {
+            continue;
+        }
         if meta.len() == 0 || meta.len() > DOWNLOAD_CAP as u64 {
+            continue;
+        }
+        let stem = name.trim_end_matches(".pdf").trim_end_matches(".PDF");
+        if excluded_titles
+            .iter()
+            .any(|title| pdf_name_matches_title(stem, title))
+        {
             continue;
         }
         let dest = dest_dir.join(name);
@@ -1291,12 +1434,24 @@ pub(crate) fn adopt_watch_pdfs(isolation: &Path, project: &Path) -> Result<Vec<S
             continue;
         }
         fs::write(&dest, &bytes).map_err(|e| format!("写入 {name} 失败: {e}"))?;
-        let stem = name.trim_end_matches(".pdf").trim_end_matches(".PDF");
         register_pdf(project, &dest, stem, "")?;
         copied.push(format!("papers/{name}"));
     }
     copied.sort();
     Ok(copied)
+}
+
+/// 雷达按标题给 PDF 起名（可能被截短、去掉标点）：规范化后相等，或一方是另一方的前缀
+/// 且前缀够长（≥ 12 个字母数字，免得短名误伤）。
+fn pdf_name_matches_title(stem: &str, title: &str) -> bool {
+    let a = normalize_title(stem);
+    let b = normalize_title(title);
+    if a.is_empty() || b.is_empty() {
+        return false;
+    }
+    a == b
+        || (a.chars().count() >= 12 && b.starts_with(&a))
+        || (b.chars().count() >= 12 && a.starts_with(&b))
 }
 
 /// 重名避让：x.pdf → x-2.pdf → x-3.pdf …
@@ -2478,6 +2633,30 @@ pub async fn save_watch_subscriptions(
     .map_err(|e| format!("写入订阅清单失败: {e}"))?
 }
 
+/// 文件不存在才建一份空模板；已存在一个字节都不动。
+/// 「编辑源文件」打开前用它保证文件在——曾用「把弹层初始订阅写回去」代替，
+/// 从巡检行打开时初始订阅是空的（弹层异步自己读），一点就把已有关键词清光（2026-10-17 实证）。
+pub(crate) fn ensure_schedule_watchlist(root: &Path, schedule_id: &str) -> Result<(), String> {
+    let rel = schedule_watchlist_rel(schedule_id)?;
+    if read_text_inside(root, &rel)?.is_some() {
+        return Ok(());
+    }
+    write_text_inside(root, &rel, &render_watchlist(None, &[]))
+}
+
+#[tauri::command]
+pub async fn ensure_watch_subscriptions_file(
+    project_root: String,
+    schedule_id: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = gated_root(&project_root)?;
+        ensure_schedule_watchlist(&root, &schedule_id)
+    })
+    .await
+    .map_err(|e| format!("准备订阅清单失败: {e}"))?
+}
+
 #[tauri::command]
 pub async fn list_included_entries(project_root: String) -> Result<Vec<IncludedEntryDto>, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -2489,32 +2668,6 @@ pub async fn list_included_entries(project_root: String) -> Result<Vec<IncludedE
     })
     .await
     .map_err(|e| format!("读取精读清单失败: {e}"))?
-}
-
-#[tauri::command]
-pub async fn add_included_entry(
-    project_root: String,
-    title: String,
-    authors_year: String,
-    source: String,
-    link: String,
-) -> Result<AddIncludedResultDto, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let root = gated_root(&project_root)?;
-        add_included_at(&root, &title, &authors_year, &source, &link)
-    })
-    .await
-    .map_err(|e| format!("追加精读清单失败: {e}"))?
-}
-
-#[tauri::command]
-pub async fn remove_included_entry(project_root: String, line_id: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let root = gated_root(&project_root)?;
-        remove_included_at(&root, &line_id)
-    })
-    .await
-    .map_err(|e| format!("删除精读清单行失败: {e}"))?
 }
 
 // ===== papers/reading-list.md（积累账，2026-10-13 双台账拍板）=====
@@ -3576,6 +3729,107 @@ HER — arxiv,openalex
     }
 
     #[test]
+    fn ensure_schedule_watchlist_never_touches_existing_keywords() {
+        let root = std::env::temp_dir().join(format!(
+            "ccode-watch-ensure-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let id = "33333333-3333-3333-3333-333333333333";
+        // 已有关键词：「编辑源文件」前的准备一个字节都不动（曾经整表写空，2026-10-17 实证）
+        write_schedule_subscriptions(
+            &root,
+            id,
+            &[
+                WatchSubscriptionDto { keyword: "镁硫电池".into(), sources: vec![], note: String::new() },
+                WatchSubscriptionDto { keyword: "球磨法".into(), sources: vec![], note: String::new() },
+            ],
+        )
+        .unwrap();
+        let path = root.join(schedule_watchlist_rel(id).unwrap());
+        let before = std::fs::read_to_string(&path).unwrap();
+        ensure_schedule_watchlist(&root, id).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+        assert_eq!(read_schedule_subscriptions(&root, id).unwrap().len(), 2);
+        // 还没有文件：建一份只有格式说明的空清单
+        let fresh = "44444444-4444-4444-4444-444444444444";
+        ensure_schedule_watchlist(&root, fresh).unwrap();
+        assert!(read_schedule_subscriptions(&root, fresh).unwrap().is_empty());
+        assert!(std::fs::read_to_string(root.join(schedule_watchlist_rel(fresh).unwrap()))
+            .unwrap()
+            .starts_with("# 文献雷达订阅"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn inbox_append_delta_takes_only_new_entries_with_their_marker() {
+        let base = "# 文献雷达收件箱\n\n<!-- watch-run: 2026-10-12 -->\n\n## 旧\n- 来源：期刊 — 2026-10-11 — 10.1/old\n";
+        let after = format!(
+            "{base}\n<!-- watch-run: 2026-10-13 -->\n\n## 甲\n- 来源：期刊 — 2026-10-12 — 10.1/a\n\n## 乙\n- 来源：期刊 — 2026-10-12 — 10.1/b\n"
+        );
+        let none = std::collections::HashSet::new();
+        // 主仓已有：只追加新条目，不带文件头
+        let delta = inbox_append_delta(Some(base), Some(base), &after, &none).unwrap();
+        assert!(delta.starts_with("<!-- watch-run: 2026-10-13 -->"));
+        assert!(delta.contains("## 甲") && delta.contains("## 乙") && !delta.contains("## 旧"));
+        assert!(!delta.contains("文献雷达收件箱"));
+        // 主仓还没有收件箱：带上文件头
+        let fresh = inbox_append_delta(None, None, &after, &none).unwrap();
+        assert!(fresh.starts_with("# 文献雷达收件箱"));
+        // 排除乙、主仓已有甲（同名）：没有可追加的，连批次标记也不留
+        let ids: Vec<String> = watch_inbox_from_text(&after)
+            .into_iter()
+            .filter(|e| e.title == "乙")
+            .map(|e| e.id)
+            .collect();
+        let drop: std::collections::HashSet<&str> = ids.iter().map(String::as_str).collect();
+        let main_has_a = format!("{base}\n## 甲\n- 来源：期刊 — 2026-10-12 — 10.1/a\n");
+        assert_eq!(inbox_append_delta(Some(&main_has_a), Some(base), &after, &drop), None);
+    }
+
+    #[test]
+    fn followup_append_delta_handles_one_liners_and_drops_excluded() {
+        let initial = "- 旧 — 10.1/old — 付费墙\n";
+        let after = "- 旧 — 10.1/old — 付费墙\n- 新甲 — 10.1/a — 付费墙\n- 新乙 — 10.1/b — 无摘要\n";
+        let delta =
+            followup_append_delta(Some(initial), Some(initial), after, &["新乙".into()]).unwrap();
+        assert_eq!(delta, "- 新甲 — 10.1/a — 付费墙");
+        // 主仓已有同名待办：不重复
+        let main = "- 旧 — 10.1/old — 付费墙\n- 新甲 — 10.1/a — 付费墙\n";
+        assert_eq!(followup_append_delta(Some(main), Some(initial), after, &["新乙".into()]), None);
+    }
+
+    #[test]
+    fn adopt_watch_pdfs_copies_only_this_runs_kept_downloads() {
+        let root = tmpdir("watch-pdfs");
+        let iso = root.join("iso");
+        let project = root.join("project");
+        std::fs::create_dir_all(iso.join("papers")).unwrap();
+        std::fs::create_dir_all(project.join("papers")).unwrap();
+        for name in [
+            "Kept Paper About Magnesium Sulfur.pdf",
+            "Excluded Paper About Ball Milling.pdf",
+            "Renamed Long Ago.pdf",
+        ] {
+            std::fs::write(iso.join("papers").join(name), b"%PDF-1.4 test").unwrap();
+        }
+        let only = vec![
+            "Kept Paper About Magnesium Sulfur.pdf".to_string(),
+            "Excluded Paper About Ball Milling.pdf".to_string(),
+        ];
+        // 排除条目的标题比文件名长（雷达起名会截短）：前缀对上也算
+        let excluded = vec!["Excluded paper about ball milling: a review".to_string()];
+        let copied = adopt_watch_pdfs(&iso, &project, Some(&only), &excluded).unwrap();
+        assert_eq!(copied, vec!["papers/Kept Paper About Magnesium Sulfur.pdf"]);
+        // 以前各轮下的（主仓里已被改名/删掉）不再拷回
+        assert!(!project.join("papers/Renamed Long Ago.pdf").exists());
+        // 旧证据没有记录时回落旧口径，但排除的仍不拷
+        let legacy = adopt_watch_pdfs(&iso, &project, None, &excluded).unwrap();
+        assert_eq!(legacy, vec!["papers/Renamed Long Ago.pdf"]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn followups_parse_numbered_batch() {
         // 实际巡检写成编号列表：## 只是批次名，标题在「1. 」后，
         // 作者和原因缩进挂在下面，DOI 写成「DOI: 10.xxxx/…」而不是链接。
@@ -3645,36 +3899,9 @@ lone keyword
     }
 
     #[test]
-    fn included_add_list_remove_round_trip_and_dedup() {
-        let dir = tmpdir("included");
-        // add：文件/父目录不存在则建
-        let r = add_included_at(
-            &dir,
-            "Perovskite Solar Cells: A Review",
-            "Zhang S, 2025",
-            "Adv. Mater.",
-            "10.1000/x1",
-        )
-        .unwrap();
-        assert!(r.added);
-        assert!(dir.join("papers/included.md").exists());
-        // 同标题第二次（大小写/标点差异）→ 去重 added:false
-        let r2 = add_included_at(
-            &dir,
-            "perovskite solar cells a review",
-            "Li M, 2026",
-            "JACS",
-            "10.1000/x2",
-        )
-        .unwrap();
-        assert!(!r2.added);
-        // 不同标题正常追加；空字段标「待补」
-        let r3 = add_included_at(&dir, "另一篇论文", "", "", "").unwrap();
-        assert!(r3.added);
-        let text = fs::read_to_string(dir.join("papers/included.md")).unwrap();
-        assert!(text.contains("另一篇论文 — 待补 — 待补 — 待补"), "{text}");
-        // list
-        let list = parse_included(&text);
+    fn included_lines_parse_fields_and_stable_ids() {
+        let text = "Perovskite Solar Cells: A Review — Zhang S, 2025 — Adv. Mater. — 10.1000/x1\n另一篇论文 — 待补 — 待补 — 待补\n";
+        let list = parse_included(text);
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].title, "Perovskite Solar Cells: A Review");
         assert_eq!(list[0].authors_year, "Zhang S, 2025");
@@ -3685,14 +3912,7 @@ lone keyword
             list[0].raw_line,
             "Perovskite Solar Cells: A Review — Zhang S, 2025 — Adv. Mater. — 10.1000/x1"
         );
-        // remove：按 line_id 精确匹配
-        remove_included_at(&dir, &list[0].line_id).unwrap();
-        let text2 = fs::read_to_string(dir.join("papers/included.md")).unwrap();
-        assert!(!text2.contains("Perovskite"), "{text2}");
-        assert!(text2.contains("另一篇论文"));
-        // 再删同一 id → 报错
-        assert!(remove_included_at(&dir, &list[0].line_id).is_err());
-        fs::remove_dir_all(&dir).ok();
+        assert_eq!(list[1].title, "另一篇论文");
     }
 
     #[test]
@@ -3707,7 +3927,7 @@ lone keyword
         let r2 = add_reading_list_at(&dir, "radar paper one!", "X", "Y", "Z").unwrap();
         assert!(!r2.added);
         // 已在正典 included.md 的篇也不重复记（两表并集去重域）
-        add_included_at(&dir, "Canon Paper", "A, 2025", "JACS", "10.1/b").unwrap();
+        fs::write(dir.join("papers/included.md"), "Canon Paper — A, 2025 — JACS — 10.1/b\n").unwrap();
         let r3 = add_reading_list_at(&dir, "Canon Paper", "", "", "").unwrap();
         assert!(!r3.added);
         // list / remove 与 included 同一套解析

@@ -2,7 +2,8 @@
 //! 图片通道（B2）：白名单读图片字节（read_image_bytes）、圈选截图落 notes/assets/
 //! （save_reader_capture）、截图链接追加进笔记「## 我的想法」小节（append_note_image）；
 //! 生词本与译段（B3）：notes/glossary.md 表格的 list/append/remove（机管文件，表外内容保留），
-//! 译段追加进笔记「## 译段」小节（append_note_translation）。
+//! 译段追加进笔记「## 译段」小节（append_note_translation）；高亮与批注一行一条记进「## 标注」小节
+//! （append/remove_note_annotation，格式与 src/reader-note.ts 双端镜像）；顶栏真实题名（reader_paper_title）。
 //! 门槛同 lit_watch（gated_root 口径：已注册项目或含 .ccode/project.toml，返回 canonical 根）；
 //! pdf_path canonicalize 后必须在项目根内或精确匹配已登记只读 PDF 资源；已存在的笔记**永不覆盖**（created:false 原样返回）；
 //! 新建/写回走 profiles::atomic_write（tmp+rename），symlink 会被整体替换而非穿透。
@@ -153,7 +154,9 @@ fn ensure_paper_note_sync(project_root: &str, pdf_path: &str) -> Result<PaperNot
         });
     }
     let date = chrono::Local::now().format("%Y-%m-%d").to_string();
-    crate::profiles::atomic_write(&target, &note_template(&stem, &rel_pdf, &date))?;
+    // 标题用题录里的真实题名（文件名常被截断/改写），查不到才用文件名
+    let title = paper_title_for(&root, &pdf).unwrap_or(stem);
+    crate::profiles::atomic_write(&target, &note_template(&title, &rel_pdf, &date))?;
     Ok(PaperNoteDto {
         path: target.to_string_lossy().into_owned(),
         created: true,
@@ -387,7 +390,11 @@ fn list_paper_notes_sync(project_root: &str) -> Result<Vec<PaperNoteLinkDto>, St
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        if name.eq_ignore_ascii_case("glossary.md") || name.eq_ignore_ascii_case("inbox.md") {
+        // 机管/流程文件不是某一篇的笔记：生词本、雷达收件箱、选段摘录、精读交棒
+        if ["glossary.md", "inbox.md", "excerpts.md", "handoff.md"]
+            .iter()
+            .any(|n| name.eq_ignore_ascii_case(n))
+        {
             continue;
         }
         let pdf_rel = fs::read_to_string(&path)
@@ -994,6 +1001,366 @@ pub async fn append_note_translation(
     })
     .await
     .map_err(|e| format!("写入笔记失败: {e}"))?
+}
+
+// ===== 标注：笔记「## 标注」小节（高亮与批注，一行一条；格式契约与 src/reader-note.ts 双端镜像） =====
+
+const ANNOT_SECTION: &str = "标注";
+/// 摘句上限（字符）：选一整页进来也只记开头，重定位靠前半段足够唯一
+const ANNOT_QUOTE_MAX: usize = 500;
+
+/// 笔记路径门槛：必须在项目 notes/ 内（canonical 双校验，同 append_note_translation 口径）
+fn gated_note(project_root: &str, note_path: &str) -> Result<PathBuf, String> {
+    let root = gated_root(project_root)?;
+    let note =
+        crate::paths::canonicalize_plain(Path::new(&crate::sessions::expand_tilde(note_path)))
+            .map_err(|e| format!("笔记不存在或不可读: {e}"))?;
+    let canon_notes = crate::paths::canonicalize_plain(&root.join("notes"))
+        .map_err(|e| format!("notes 目录无效: {e}"))?;
+    if !inside(&note, &canon_notes) {
+        return Err("笔记必须在项目 notes/ 目录内，拒绝写入".into());
+    }
+    Ok(note)
+}
+
+/// 选段原文 → 落盘摘句：行尾「字母-换行」接回同一行（连字符保留：断词还是复合词分不清，留着照原样读；
+/// 页内重定位时另试去掉连字符的写法）、空白折成单空格、「」换成“”（行格式靠「」定界）、截到上限
+fn annotation_quote(raw: &str) -> String {
+    let chars: Vec<char> = raw.chars().collect();
+    let mut joined = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '-' && i > 0 && chars[i - 1].is_alphabetic() {
+            let mut j = i + 1;
+            if j < chars.len() && chars[j] == '\r' {
+                j += 1;
+            }
+            if j < chars.len() && chars[j] == '\n' {
+                j += 1;
+                while j < chars.len() && chars[j].is_whitespace() {
+                    j += 1;
+                }
+                joined.push('-');
+                i = j;
+                continue;
+            }
+        }
+        joined.push(c);
+        i += 1;
+    }
+    joined
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace('「', "“")
+        .replace('」', "”")
+        .chars()
+        .take(ANNOT_QUOTE_MAX)
+        .collect()
+}
+
+/// `- p.3 「摘句」` 或 `- p.3 「摘句」 —— 批注`
+fn annotation_line(page: u32, quote: &str, comment: &str) -> String {
+    let comment = comment.split_whitespace().collect::<Vec<_>>().join(" ");
+    if comment.is_empty() {
+        format!("- p.{page} 「{quote}」")
+    } else {
+        format!("- p.{page} 「{quote}」 —— {comment}")
+    }
+}
+
+/// 解析一行标注（页码 + 摘句）；不是标注行返回 None
+fn parse_annotation_line(line: &str) -> Option<(u32, String)> {
+    let t = line.trim_start();
+    let t = t.strip_prefix("- ").or_else(|| t.strip_prefix("* "))?.trim_start();
+    let t = t.strip_prefix('p')?;
+    let t = t.strip_prefix('.').unwrap_or(t).trim_start();
+    let digits: String = t.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if digits.is_empty() || digits.len() > 5 {
+        return None;
+    }
+    let page: u32 = digits.parse().ok()?;
+    let rest = t[digits.len()..].trim_start().strip_prefix('「')?;
+    // 摘句止于第一个后面只跟空白再接「——」或行尾的 」（批注里出现 」 不截错）
+    let mut from = 0;
+    while let Some(pos) = rest[from..].find('」') {
+        let end = from + pos;
+        let after = rest[end + '」'.len_utf8()..].trim_start();
+        if after.is_empty() || after.starts_with("——") {
+            let quote = rest[..end].trim();
+            return (page > 0 && !quote.is_empty()).then(|| (page, quote.to_string()));
+        }
+        from = end + '」'.len_utf8();
+    }
+    None
+}
+
+/// 二级小节的行区间：(标题行, 小节结束 = 下一个二级标题或文件尾)
+fn section_bounds(lines: &[&str], section: &str) -> Option<(usize, usize)> {
+    let header = format!("## {section}");
+    let h = lines.iter().position(|l| l.trim() == header)?;
+    let end = lines
+        .iter()
+        .enumerate()
+        .skip(h + 1)
+        .find(|(_, l)| l.starts_with("## "))
+        .map(|(i, _)| i)
+        .unwrap_or(lines.len());
+    Some((h, end))
+}
+
+/// 追加一条标注：同页同摘句已在 → 有新批注就改写该行，否则原样不动（返回 None）。
+/// 小节不存在时建在「## 译段」之前（机管两节保持收尾），没有译段就建在文件末尾。
+/// 列表项之间不留空行（紧凑列表）
+fn add_annotation_to_text(text: &str, page: u32, quote: &str, comment: &str) -> Option<String> {
+    let new_line = annotation_line(page, quote, comment);
+    let lines: Vec<&str> = text.split('\n').collect();
+    if let Some((h, end)) = section_bounds(&lines, ANNOT_SECTION) {
+        if let Some(i) = (h + 1..end)
+            .find(|&i| parse_annotation_line(lines[i]).is_some_and(|(p, q)| p == page && q == quote))
+        {
+            if comment.trim().is_empty() || lines[i] == new_line {
+                return None;
+            }
+            let mut out = lines.clone();
+            out[i] = &new_line;
+            return Some(out.join("\n"));
+        }
+        let mut tail = end;
+        while tail > h + 1 && lines[tail - 1].trim().is_empty() {
+            tail -= 1;
+        }
+        let mut out: Vec<&str> = lines[..tail].to_vec();
+        if tail == h + 1 {
+            out.push("");
+        }
+        out.push(&new_line);
+        out.push("");
+        out.extend_from_slice(&lines[end..]);
+        return Some(out.join("\n"));
+    }
+    let block = format!("## {ANNOT_SECTION}\n\n{new_line}\n");
+    if let Some(k) = lines.iter().position(|l| l.trim() == "## 译段") {
+        let mut head = k;
+        while head > 0 && lines[head - 1].trim().is_empty() {
+            head -= 1;
+        }
+        let before = lines[..head].join("\n");
+        let after = lines[k..].join("\n");
+        return Some(if before.trim().is_empty() {
+            format!("{block}\n{after}")
+        } else {
+            format!("{before}\n\n{block}\n{after}")
+        });
+    }
+    Some(format!("{}\n\n{block}", text.trim_end()))
+}
+
+/// 删一条标注（同页同摘句的第一行）；删完小节空了连标题一起删。没找到返回 None
+fn remove_annotation_from_text(text: &str, page: u32, quote: &str) -> Option<String> {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let (h, end) = section_bounds(&lines, ANNOT_SECTION)?;
+    let i = (h + 1..end)
+        .find(|&i| parse_annotation_line(lines[i]).is_some_and(|(p, q)| p == page && q == quote))?;
+    let rest_empty = (h + 1..end).all(|j| j == i || lines[j].trim().is_empty());
+    if !rest_empty {
+        let mut out = lines.clone();
+        out.remove(i);
+        return Some(out.join("\n"));
+    }
+    // 整节只剩这一条：连标题删掉，衔接处只留一个空行
+    let mut head = h;
+    while head > 0 && lines[head - 1].trim().is_empty() {
+        head -= 1;
+    }
+    let before = lines[..head].join("\n");
+    if end >= lines.len() {
+        return Some(format!("{}\n", before.trim_end()));
+    }
+    let after = lines[end..].join("\n");
+    Some(if before.trim().is_empty() {
+        after
+    } else {
+        format!("{before}\n\n{after}")
+    })
+}
+
+fn append_note_annotation_sync(
+    project_root: &str,
+    note_path: &str,
+    page: u32,
+    quote: &str,
+    comment: &str,
+) -> Result<(), String> {
+    let note = gated_note(project_root, note_path)?;
+    let quote = annotation_quote(quote);
+    if quote.is_empty() || page == 0 {
+        return Err("没有选中文字，未写入标注".into());
+    }
+    let text = fs::read_to_string(&note).map_err(|e| format!("读取笔记失败: {e}"))?;
+    match add_annotation_to_text(&text, page, &quote, comment) {
+        Some(next) => crate::profiles::atomic_write(&note, &next),
+        None => Ok(()),
+    }
+}
+
+/// 高亮/批注记进笔记「## 标注」小节（读-改-原子写；同一处再标只更新批注）
+#[tauri::command]
+pub async fn append_note_annotation(
+    project_root: String,
+    note_path: String,
+    page: u32,
+    quote: String,
+    comment: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        append_note_annotation_sync(&project_root, &note_path, page, &quote, &comment)
+    })
+    .await
+    .map_err(|e| format!("写入标注失败: {e}"))?
+}
+
+fn remove_note_annotation_sync(
+    project_root: &str,
+    note_path: &str,
+    page: u32,
+    quote: &str,
+) -> Result<bool, String> {
+    let note = gated_note(project_root, note_path)?;
+    let quote = annotation_quote(quote);
+    let text = fs::read_to_string(&note).map_err(|e| format!("读取笔记失败: {e}"))?;
+    match remove_annotation_from_text(&text, page, &quote) {
+        Some(next) => crate::profiles::atomic_write(&note, &next).map(|_| true),
+        None => Ok(false),
+    }
+}
+
+/// 从笔记「## 标注」删一条（返回 false = 笔记里已经没有这条，比如手动删过）
+#[tauri::command]
+pub async fn remove_note_annotation(
+    project_root: String,
+    note_path: String,
+    page: u32,
+    quote: String,
+) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        remove_note_annotation_sync(&project_root, &note_path, page, &quote)
+    })
+    .await
+    .map_err(|e| format!("删除标注失败: {e}"))?
+}
+
+// ===== 文献题名：顶栏《》与新笔记标题 =====
+
+/// 截断文件名认题名的最短前缀（规范化后字符数）：太短的前缀会撞上别的篇
+const TITLE_PREFIX_MIN: usize = 24;
+
+/// 题名对得上 PDF 文件名：规范化后相等，或文件名够长且是题名前缀（雷达下载限长截断、`/` 改 `_` 都吃得下）
+fn title_matches_stem(title: &str, stem_norm: &str) -> bool {
+    let t = crate::lit_watch::normalize_title(title);
+    !t.is_empty()
+        && !stem_norm.is_empty()
+        && (t == stem_norm
+            || (stem_norm.chars().count() >= TITLE_PREFIX_MIN && t.starts_with(stem_norm)))
+}
+
+/// 笔记头部的一级标题
+fn note_h1(content: &str) -> Option<String> {
+    content
+        .lines()
+        .take(5)
+        .find_map(|l| l.trim().strip_prefix("# ").map(|t| t.trim().to_string()))
+        .filter(|t| !t.is_empty())
+}
+
+/// 清单行的题名去掉列表前缀
+fn clean_list_title(t: &str) -> String {
+    t.trim()
+        .trim_start_matches(['-', '*'])
+        .trim()
+        .to_string()
+}
+
+/// 在项目题录里找这份 PDF 的真实题名：配对笔记的标题（不是文件名本身时）→ notes/index.json →
+/// papers/included.json（fulltext 字段直接写着这个文件名的优先）→ included.md / reading-list.md →
+/// 雷达收件箱。都对不上返回 None（调用方回落文件名）
+fn paper_title_for(root: &Path, pdf: &Path) -> Option<String> {
+    let file_name = pdf.file_name()?.to_string_lossy().into_owned();
+    let stem = pdf.file_stem()?.to_string_lossy().into_owned();
+    let stem_norm = crate::lit_watch::normalize_title(&stem);
+    if let Some(note) = find_note_by_source(&root.join("notes"), root, pdf) {
+        if let Some(h1) = fs::read_to_string(&note).ok().and_then(|c| note_h1(&c)) {
+            let n = crate::lit_watch::normalize_title(&h1);
+            // 阅读区建档的笔记标题就是文件名（可能已截断），那不算题名
+            if !n.is_empty() && !stem_norm.starts_with(&n) {
+                return Some(h1);
+            }
+        }
+    }
+    let read = |rel: &str| crate::lit_watch::read_text_inside(root, rel).ok().flatten();
+    for rel in ["notes/index.json", "papers/included.json"] {
+        let Some(list) = read(rel)
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+            .and_then(|v| v.as_array().cloned())
+        else {
+            continue;
+        };
+        let titled = list.iter().filter_map(|e| {
+            let title = e.get("title")?.as_str()?.trim();
+            (!title.is_empty()).then(|| (title.to_string(), e))
+        });
+        let titled: Vec<_> = titled.collect();
+        if let Some((t, _)) = titled.iter().find(|(_, e)| {
+            ["fulltext", "pdf", "pdfPath"].iter().any(|k| {
+                e.get(*k)
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|s| s.contains(&file_name))
+            })
+        }) {
+            return Some(t.clone());
+        }
+        if let Some((t, _)) = titled.iter().find(|(t, _)| title_matches_stem(t, &stem_norm)) {
+            return Some(t.clone());
+        }
+    }
+    for rel in ["papers/included.md", "papers/reading-list.md"] {
+        if let Some(t) = read(rel).and_then(|text| {
+            crate::lit_watch::parse_included(&text)
+                .into_iter()
+                .map(|e| clean_list_title(&e.title))
+                .find(|t| title_matches_stem(t, &stem_norm))
+        }) {
+            return Some(t);
+        }
+    }
+    read("notes/inbox.md").and_then(|text| {
+        crate::lit_watch::watch_inbox_from_text(&text)
+            .into_iter()
+            .map(|e| e.title.trim().to_string())
+            .find(|t| title_matches_stem(t, &stem_norm))
+    })
+}
+
+fn reader_paper_title_sync(project_root: &str, pdf_path: &str) -> Result<Option<String>, String> {
+    let root = gated_root(project_root)?;
+    let pdf = crate::paths::canonicalize_plain(Path::new(&crate::sessions::expand_tilde(pdf_path)))
+        .map_err(|e| format!("PDF 不存在或不可读: {e}"))?;
+    if !readable_project_pdf(&root, &pdf) {
+        return Ok(None);
+    }
+    Ok(paper_title_for(&root, &pdf))
+}
+
+/// 阅读区顶栏用的真实题名（文件名常被截断/改写）；查不到返回 None，前端回落文件名
+#[tauri::command]
+pub async fn reader_paper_title(
+    project_root: String,
+    pdf_path: String,
+) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || reader_paper_title_sync(&project_root, &pdf_path))
+        .await
+        .map_err(|e| format!("读取文献题名失败: {e}"))?
 }
 
 #[cfg(test)]
@@ -1777,5 +2144,131 @@ mod tests {
         )
         .is_err());
         fs::remove_dir_all(&outside).ok();
+    }
+
+    // ===== 标注（## 标注 小节） =====
+
+    #[test]
+    fn annotation_quote_joins_broken_lines_collapses_and_escapes_brackets() {
+        assert_eq!(
+            annotation_quote("electro-\n  chemical  「window」\nopen"),
+            "electro-chemical “window” open"
+        );
+        // 范围号与数字后的连字符不是断词
+        assert_eq!(annotation_quote("pages 3-\n5"), "pages 3- 5");
+        assert_eq!(annotation_quote(&"a".repeat(800)).chars().count(), ANNOT_QUOTE_MAX);
+    }
+
+    #[test]
+    fn parse_annotation_line_handles_comment_and_brackets_in_comment() {
+        assert_eq!(
+            parse_annotation_line("- p.3 「the cell」"),
+            Some((3, "the cell".into()))
+        );
+        assert_eq!(
+            parse_annotation_line("- p.12 「Mg anode」 —— 这里「钝化」说法存疑"),
+            Some((12, "Mg anode".into()))
+        );
+        assert_eq!(parse_annotation_line("- 普通列表"), None);
+        assert_eq!(parse_annotation_line("- p.0 「x」"), None);
+    }
+
+    #[test]
+    fn add_annotation_creates_section_before_translation_and_keeps_tight_list() {
+        let text = "# T\n\n## 疑问与待跟进\n\n## 译段\n\n> a（第 1 页）\n\n甲\n\n## 我的想法\n";
+        let once = add_annotation_to_text(text, 3, "first quote", "").unwrap();
+        assert_eq!(
+            once,
+            "# T\n\n## 疑问与待跟进\n\n## 标注\n\n- p.3 「first quote」\n\n## 译段\n\n> a（第 1 页）\n\n甲\n\n## 我的想法\n"
+        );
+        let twice = add_annotation_to_text(&once, 5, "second", "要核对").unwrap();
+        assert!(twice.contains("- p.3 「first quote」\n- p.5 「second」 —— 要核对\n\n## 译段"));
+        // 同一处再标：无批注不动，有批注改写该行
+        assert_eq!(add_annotation_to_text(&twice, 3, "first quote", ""), None);
+        let updated = add_annotation_to_text(&twice, 3, "first quote", "补一句").unwrap();
+        assert!(updated.contains("- p.3 「first quote」 —— 补一句\n- p.5"));
+    }
+
+    #[test]
+    fn add_annotation_appends_section_at_end_without_translation() {
+        assert_eq!(
+            add_annotation_to_text("# T\n\n正文\n", 2, "q", "").unwrap(),
+            "# T\n\n正文\n\n## 标注\n\n- p.2 「q」\n"
+        );
+    }
+
+    #[test]
+    fn remove_annotation_drops_line_then_empty_section() {
+        let text = "# T\n\n## 标注\n\n- p.3 「a」\n- p.5 「b」 —— c\n\n## 译段\n";
+        let one = remove_annotation_from_text(text, 3, "a").unwrap();
+        assert_eq!(one, "# T\n\n## 标注\n\n- p.5 「b」 —— c\n\n## 译段\n");
+        let none = remove_annotation_from_text(&one, 5, "b").unwrap();
+        assert_eq!(none, "# T\n\n## 译段\n");
+        assert_eq!(remove_annotation_from_text(&none, 5, "b"), None);
+        // 小节在文件尾
+        let tail = remove_annotation_from_text("# T\n\n## 标注\n\n- p.1 「x」\n", 1, "x").unwrap();
+        assert_eq!(tail, "# T\n");
+    }
+
+    #[test]
+    fn annotation_commands_write_note_and_reject_outside() {
+        let (root, note) = project_with_note("annot");
+        let r = root.to_string_lossy().into_owned();
+        let n = note.to_string_lossy().into_owned();
+        append_note_annotation_sync(&r, &n, 4, "solid-\nelectrolyte  interphase", "").unwrap();
+        let text = fs::read_to_string(&note).unwrap();
+        assert!(text.contains("## 标注\n\n- p.4 「solid-electrolyte interphase」\n\n## 译段"), "{text}");
+        assert!(remove_note_annotation_sync(&r, &n, 4, "solid-electrolyte interphase").unwrap());
+        assert!(!remove_note_annotation_sync(&r, &n, 4, "solid-electrolyte interphase").unwrap());
+        assert!(append_note_annotation_sync(&r, &n, 4, "   ", "").is_err());
+        let outside = tmpdir("annot-outside");
+        let foreign = outside.join("x.md");
+        fs::write(&foreign, "# x\n").unwrap();
+        assert!(append_note_annotation_sync(&r, &foreign.to_string_lossy(), 1, "q", "").is_err());
+        fs::remove_dir_all(&outside).ok();
+    }
+
+    // ===== 真实题名 =====
+
+    #[test]
+    fn paper_title_matches_truncated_file_name_from_reading_list() {
+        let (root, pdf) = project_with_pdf(
+            "title-trunc",
+            "A Mg2+Li+ hybrid electrolyte with regulated interfacial chemistry for highly reversible and stable rechargeabl.pdf",
+        );
+        fs::write(
+            root.join("papers/reading-list.md"),
+            "A Mg2+/Li+ hybrid electrolyte with regulated interfacial chemistry for highly reversible and stable rechargeable magnesium batteries — Siyu Song et al., 2026 — 期刊 — DOI: 10.1016/x\n",
+        )
+        .unwrap();
+        let pdf_c = crate::paths::canonicalize_plain(&pdf).unwrap();
+        assert_eq!(
+            paper_title_for(&root, &pdf_c).as_deref(),
+            Some("A Mg2+/Li+ hybrid electrolyte with regulated interfacial chemistry for highly reversible and stable rechargeable magnesium batteries")
+        );
+        // 新建笔记的标题也用它
+        let dto = ensure_paper_note_sync(&root.to_string_lossy(), &pdf.to_string_lossy()).unwrap();
+        let text = fs::read_to_string(&dto.path).unwrap();
+        assert!(text.starts_with("# A Mg2+/Li+ hybrid electrolyte"), "{text}");
+    }
+
+    #[test]
+    fn paper_title_prefers_json_fulltext_and_ignores_short_prefix() {
+        let (root, pdf) = project_with_pdf("title-json", "chu2017-clustering.pdf");
+        fs::write(
+            root.join("papers/included.json"),
+            r#"[{"title":"Other","fulltext":"需自行获取"},{"title":"Clustering of Magnesium Surfaces","fulltext":"全文已在项目根（chu2017-clustering.pdf）"}]"#,
+        )
+        .unwrap();
+        let pdf_c = crate::paths::canonicalize_plain(&pdf).unwrap();
+        assert_eq!(
+            paper_title_for(&root, &pdf_c).as_deref(),
+            Some("Clustering of Magnesium Surfaces")
+        );
+        // 文件名太短不按前缀认题名
+        let (root2, pdf2) = project_with_pdf("title-short", "Mg.pdf");
+        fs::write(root2.join("papers/included.md"), "- Mg batteries review — A, 2020 — J — x\n").unwrap();
+        let pdf2_c = crate::paths::canonicalize_plain(&pdf2).unwrap();
+        assert_eq!(paper_title_for(&root2, &pdf2_c), None);
     }
 }

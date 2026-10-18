@@ -2,11 +2,14 @@
 """把正文字体写进源稿 YAML，并做出 Word 用的 reference.docx。
 
 英文默认 Times New Roman，中文默认宋体。PDF 读 YAML 的 mainfont / CJKmainfont；
-Word 读 reference.docx 的主题字体。找不到指定字体就退出，不改成另一套。
+Word 读 reference.docx 的主题字体——同时把 `reference-doc` 写进 YAML 的 format.docx，
+任何渲染入口（流程线 run 脚本、Agent 手敲的命令）出 Word 都自动套用，不靠记得加参数。
+找不到指定字体就退出，不改成另一套。
 """
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -121,7 +124,41 @@ def set_pdf_font(block: str, key: str, value: str) -> str:
     return "\n".join(out)
 
 
-def write_markdown(path: Path, latin: str, cjk: str) -> None:
+def ensure_docx_reference(block: str, reference: str) -> str:
+    """format.docx 写上 reference-doc（路径相对稿件所在目录）。已写了就不动人改过的值。"""
+    lines = block.splitlines()
+    out = []
+    in_docx = False
+    found_docx = False
+    has_ref = False
+    for line in lines:
+        if line.startswith("  docx:"):
+            found_docx = True
+            in_docx = True
+            if line.strip() != "docx:":
+                # `docx: default` 这类标量写法改成映射，才能挂参数
+                out.append("  docx:")
+                continue
+        elif line.startswith("  ") and not line.startswith("    "):
+            in_docx = False
+        elif not line.startswith(" "):
+            in_docx = False
+        if in_docx and line.strip().startswith("reference-doc:"):
+            has_ref = True
+        out.append(line)
+    if has_ref:
+        return "\n".join(out)
+    if found_docx:
+        result = []
+        for line in out:
+            result.append(line)
+            if line == "  docx:":
+                result.append(f"    reference-doc: {reference}")
+        return "\n".join(result)
+    return "\n".join(out) + f"\n  docx:\n    reference-doc: {reference}\n"
+
+
+def write_markdown(path: Path, latin: str, cjk: str, reference: str = "reference.docx") -> None:
     text = path.read_text(encoding="utf-8")
     front, body = split_frontmatter(text)
     if not front:
@@ -130,7 +167,31 @@ def write_markdown(path: Path, latin: str, cjk: str) -> None:
     front = set_pdf_font(front, "mainfont", latin)
     front = set_pdf_font(front, "CJKmainfont", cjk)
     front = ensure_booktabs(front)
+    front = ensure_docx_reference(front, reference)
     path.write_text(f"---\n{front.strip()}\n---{body if body.startswith(chr(10)) else chr(10) + body}", encoding="utf-8")
+
+
+def theme_fonts(theme: str, latin: str, cjk: str) -> str:
+    """把 Word 主题的标题/正文字体槽（majorFont/minorFont）换成指定字体。
+
+    槽的范围到对应的闭合标签为止。旧写法从开标签后一位找结束位置，找到的是开标签自己，
+    整段换字体从没生效过，Word 一直是默认的 Aptos / 等线（2026-10-18 用 Quarto 1.10 实测）。
+    """
+    latin_xml = escape(latin)
+    cjk_xml = escape(cjk)
+    for tag in ("majorFont", "minorFont"):
+        opening = theme.find(f":{tag}>")
+        start = theme.rfind("<", 0, opening) if opening >= 0 else -1
+        end = theme.find(f":{tag}>", opening + len(tag) + 2) if opening >= 0 else -1
+        if start < 0 or end < 0:
+            raise SystemExit("Word 主题里没有字体槽")
+        block = theme[start:end]
+        block = replace_attr(block, "latin", latin_xml)
+        block = replace_attr(block, "ea", cjk_xml)
+        block = replace_script(block, "Hans", cjk_xml)
+        block = replace_script(block, "Hant", cjk_xml)
+        theme = theme[:start] + block + theme[end:]
+    return theme
 
 
 def reference_docx(dest: Path, latin: str, cjk: str) -> None:
@@ -151,21 +212,9 @@ def reference_docx(dest: Path, latin: str, cjk: str) -> None:
             raise SystemExit(1)
         if run.returncode != 0 or not made.is_file():
             raise SystemExit(run.stderr.strip() or "做不出 Word 字体模板")
-        theme = zipfile.ZipFile(made).read("word/theme/theme1.xml").decode("utf-8")
-        latin_xml = escape(latin)
-        cjk_xml = escape(cjk)
-        for tag in ("majorFont", "minorFont"):
-            start = theme.find(f":{tag}>")
-            start = theme.rfind("<", 0, start) if start >= 0 else -1
-            end = theme.find(f":{tag}>", start + 1) if start >= 0 else -1
-            if start < 0 or end < 0:
-                raise SystemExit("Word 主题里没有字体槽")
-            block = theme[start:end]
-            block = replace_attr(block, "latin", latin_xml)
-            block = replace_attr(block, "ea", cjk_xml)
-            block = replace_script(block, "Hans", cjk_xml)
-            block = replace_script(block, "Hant", cjk_xml)
-            theme = theme[:start] + block + theme[end:]
+        theme = theme_fonts(
+            zipfile.ZipFile(made).read("word/theme/theme1.xml").decode("utf-8"), latin, cjk
+        )
         styles = zipfile.ZipFile(made).read("word/styles.xml").decode("utf-8")
         styles = style_spacing(styles, "Normal", after="160", line="360")
         for level, size, before, after, outline in (
@@ -281,8 +330,10 @@ def apply(root: Path, markdown: str, latin: str, cjk: str) -> int:
     if installed and cjk not in installed:
         print(f"本机没有中文正文字体：{cjk}", file=sys.stderr)
         return 1
-    write_markdown(source, latin, cjk)
-    reference_docx(root / "manuscript" / "reference.docx", latin, cjk)
+    reference = root / "manuscript" / "reference.docx"
+    rel = Path(os.path.relpath(reference, source.parent)).as_posix()
+    write_markdown(source, latin, cjk, rel)
+    reference_docx(reference, latin, cjk)
     (root / "manuscript" / "typeface.md").write_text(
         f"英文：{latin}\n中文：{cjk}\n", encoding="utf-8"
     )

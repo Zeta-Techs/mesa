@@ -111,3 +111,17 @@ test("完结清单在项目卡，不进评审页签", () => {
   assert.ok(entries.includes("papers/included.md"));
   assert.equal(entries.includes("output/figures/fig1.png"), false);
 });
+
+test("索引里没有的笔记（沉浸阅读建的）按来源行配 PDF、题名取 PDF 文件名", () => {
+  const notes = [{ rel: "notes/A-Mg-hybrid-electrolyte.md", name: "A-Mg-hybrid-electrolyte.md", abs: "/p/notes/A-Mg-hybrid-electrolyte.md", label: "" }];
+  const pdfs = [{ rel: "A Mg hybrid electrolyte.pdf", name: "A Mg hybrid electrolyte.pdf", abs: "/p/papers/A Mg hybrid electrolyte.pdf", label: "" }];
+  const rows = closeoutNoteRows(notes, [], pdfs, [
+    { noteName: "A-Mg-hybrid-electrolyte.md", pdfRel: "papers/A Mg hybrid electrolyte.pdf" },
+  ]);
+  assert.equal(rows[0].title, "A Mg hybrid electrolyte");
+  assert.equal(rows[0].pdf?.abs, "/p/papers/A Mg hybrid electrolyte.pdf");
+  // 来源行也没有：连字符还原成空格
+  const bare = closeoutNoteRows(notes, [], pdfs);
+  assert.equal(bare[0].title, "A Mg hybrid electrolyte");
+  assert.equal(bare[0].pdf, null);
+});

@@ -12,6 +12,19 @@ export async function readResearchFile(root: string, path: string): Promise<Repo
   return value;
 }
 
+/** 科研台账整份读（纳入清单/待获取/两份 RIS/笔记索引/引文库，后端白名单）：
+ *  预览通道 256 KB 封顶，两百篇带摘要的 included.json 就超了——截断后清单整块读不出来。 */
+export async function readResearchLedger(root: string, path: string): Promise<ReportPreview> {
+  const value = await invoke<ReportPreview>("read_research_ledger", { root, path: researchAbsolutePath(root, path) });
+  if (value.readOnlyReason && !value.truncated) throw new Error(value.readOnlyReason);
+  return value;
+}
+
+/** 台账整份写回：带读取时的版本，磁盘已被 Agent 改过就拒绝。返回新版本。 */
+export async function saveResearchLedger(root: string, path: string, text: string, expectedRevision: string): Promise<string> {
+  return invoke<string>("save_research_ledger", { root, path: researchAbsolutePath(root, path), text, expectedRevision });
+}
+
 export async function loadResearchReports(root: string, patterns: string[], kind: ResearchReportKind): Promise<ResearchReportLoad> {
   const warnings: string[] = [];
   const paths = new Set<string>();

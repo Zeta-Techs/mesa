@@ -7,6 +7,7 @@ import {
   pendingDownloads,
   fulltextLinkFor,
   groupEntriesByDay,
+  watchKeywordLabel,
   groupEntriesByKeyword,
   includedLineFor,
   isRead,
@@ -14,7 +15,6 @@ import {
   normalizedTitleSet,
   litInboxCandidates,
   litInboxForRegisteredProjects,
-  papersForLitCandidate,
   litWatchFilterActive,
   litWatchFilterLabel,
   metricsTooltip,
@@ -30,6 +30,9 @@ import {
   weeklyBuckets,
   entryInTrendBucket,
   trendBuckets,
+  trendSparseLine,
+  trendTickLabel,
+  compactPubDate,
   weeklyTrend,
   shanghaiDay,
   undatedWatchRuns,
@@ -540,6 +543,32 @@ test("litInboxCandidates：最近一次成功 run 有新命中且 24h 内才入�
   });
   assert.deepEqual(litInboxCandidates([pending], now)[0]?.isolationPath, "/Users/me/ccode/watch-worktrees/repo/s-7");
   assert.equal(litInboxCandidates([pending], now)[0]?.adopted, false);
+  // 2026-10-16 回归：后跑的 0 命中轮不得遮住前一轮未采纳的命中
+  const zeroHidesNothing = schedule({
+    id: "s-8",
+    lastRunAt: "2026-08-18T11:00:00Z",
+    lastStatus: "ok",
+    history: [
+      { at: "2026-08-18T11:00:00Z", status: "ok", summary: "", newEntries: 0 },
+      { at: "2026-08-18T10:00:00Z", status: "ok", summary: "", newEntries: 1, adopted: false },
+    ],
+  });
+  assert.deepEqual(litInboxCandidates([zeroHidesNothing], now).map((c) => [c.scheduleId, c.count, c.at]), [
+    ["s-8", 1, "2026-08-18T10:00:00Z"],
+  ]);
+  // 最新一轮已采纳、更早一轮未采纳：提示指向未采纳的那轮
+  const adoptedLatest = schedule({
+    id: "s-9",
+    lastRunAt: "2026-08-18T11:00:00Z",
+    lastStatus: "ok",
+    history: [
+      { at: "2026-08-18T11:00:00Z", status: "ok", summary: "", newEntries: 3, adopted: true },
+      { at: "2026-08-18T10:00:00Z", status: "ok", summary: "", newEntries: 1, adopted: false },
+    ],
+  });
+  assert.deepEqual(litInboxCandidates([adoptedLatest], now).map((c) => [c.count, c.at]), [
+    [1, "2026-08-18T10:00:00Z"],
+  ]);
 });
 
 test("litInboxForRegisteredProjects：已删项目不进收件箱", () => {
@@ -554,27 +583,10 @@ test("litInboxForRegisteredProjects：已删项目不进收件箱", () => {
   assert.deepEqual(litInboxForRegisteredProjects(candidates, []), []);
 });
 
-test("papersForLitCandidate：取末尾 count 条、新的在前", () => {
-  const entries = [
-    entry({ id: "old", title: "Old" }),
-    entry({ id: "mid", title: "Mid" }),
-    entry({ id: "new", title: "New" }),
-  ];
-  const papers = papersForLitCandidate(
-    { scheduleId: "s", projectRoot: "/p", count: 2, at: "t" },
-    entries,
-  );
-  assert.deepEqual(
-    papers.map((p) => p.id),
-    ["new", "mid"],
-  );
-  assert.deepEqual(
-    papersForLitCandidate(
-      { scheduleId: "s", projectRoot: "/p", count: 0, at: "t" },
-      entries,
-    ),
-    [],
-  );
+test("watchKeywordLabel：来源后缀不进界面，数据原值保留", () => {
+  assert.equal(watchKeywordLabel("关联推荐（S2）"), "关联推荐");
+  assert.equal(watchKeywordLabel("镁硫电池"), "镁硫电池");
+  assert.equal(watchKeywordLabel("关联推荐(S2)"), "关联推荐(S2)", "只剥全角括号后缀");
 });
 
 test("followupMatchesDismissed：忽略命中后，同标题的待人工下载一并算消失", () => {
@@ -646,6 +658,50 @@ test("sourceDisplayName：剥出版商括号尾巴", () => {
   // 无尾巴原样返回；整串就是括号（剥完为空）不剥
   assert.equal(sourceDisplayName("arxiv"), "arxiv");
   assert.equal(sourceDisplayName("(Wiley)"), "(Wiley)");
+});
+
+test("trendSparseLine：有数桶 ≤3 压成一句话，≥4 或全空出图", () => {
+  const mk = (counts: number[]) =>
+    counts.map((count, i) => ({
+      start: new Date(2026, 7, 24 + i * 7),
+      label: "",
+      count,
+      key: "",
+      recommendedCount: 0,
+    }));
+  // 全空：不出一句话（走 note 空态）
+  assert.equal(trendSparseLine(mk([0, 0, 0, 0, 0, 0, 0, 0]), "week"), null);
+  // 只有本周有数：末桶写「本周」
+  assert.equal(
+    trendSparseLine(mk([0, 0, 0, 0, 0, 0, 0, 3]), "week"),
+    "近 8 周只有本周有新命中，共 3 篇",
+  );
+  // 两桶有数：旧桶用短刻度 +「那周」，合计篇数
+  assert.equal(
+    trendSparseLine(mk([2, 0, 0, 0, 0, 0, 0, 5]), "week"),
+    "近 8 周只有8/24 那周和本周有新命中，共 7 篇",
+  );
+  // 三桶有数：仍收起（阈值 ≤3）
+  assert.ok(trendSparseLine(mk([1, 0, 1, 0, 0, 0, 0, 1]), "week") !== null);
+  // 四桶有数：出图，不再压行
+  assert.equal(trendSparseLine(mk([1, 1, 1, 0, 0, 0, 1, 1]), "week"), null);
+});
+
+test("trendTickLabel：日/周横轴写月/日，月写 N月；完整周名仍在 label", () => {
+  const mon = new Date(2026, 7, 24);
+  assert.equal(trendTickLabel("week", mon), "8/24");
+  assert.equal(trendTickLabel("day", mon), "8/24");
+  assert.equal(trendTickLabel("month", new Date(2026, 9, 1)), "10月");
+  const week = trendBuckets([], "week", new Date(2026, 7, 26));
+  assert.equal(week[7]!.label, "8月24日周", "悬浮提示/读屏用的长名不变");
+});
+
+test("compactPubDate：当年省年份，跨年与非标准格式原样", () => {
+  const now = new Date(2026, 9, 16);
+  assert.equal(compactPubDate("2026-10-09", now), "10-09");
+  assert.equal(compactPubDate("2025-12-30", now), "2025-12-30");
+  assert.equal(compactPubDate("2026-10", now), "2026-10");
+  assert.equal(compactPubDate(" 2026-01-02 ", now), "01-02");
 });
 
 test("trendBuckets：日/周/月三粒度按日历对齐计数", () => {

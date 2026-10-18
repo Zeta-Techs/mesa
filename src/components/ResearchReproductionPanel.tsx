@@ -12,6 +12,7 @@ import {
   type ReproductionContract,
 } from "../research-report";
 import type { ProjectStepDto, ResearchRunDto, ResearchSourceDto, ResearchWorkspaceRef, RunScriptDto, WsSettingsDto } from "../types";
+import { InlineNotice } from "./PageFrame";
 
 interface Choice {
   key: string;
@@ -164,7 +165,7 @@ export default function ResearchReproductionPanel({ workspace, step, onLaunched,
     {run && <div className="mt-2 rounded border border-field p-2">
       <p className="text-l2">{statusLabel(run)}</p>
       <p className="break-all text-micro text-l4">来源版本：{run.resultVersion ?? "旧记录未绑定"} · 来源指纹：{run.sourceRevision?.slice(0, 12) ?? "未知"} · 结果指纹：{run.resultRevision?.slice(0, 12) ?? "未绑定"}</p>
-      {run.sourceChanged && <p className="text-warn-text">运行期间来源已变化，这次不能作为原版本的验收证据。</p>}
+      {run.sourceChanged && <InlineNotice tone="warn">运行期间来源已变化，这次不能作为原版本的验收证据。</InlineNotice>}
       <p className="break-all text-micro text-l4">运行 {run.id} · 代码 {run.entryRevision?.slice(0, 12) ?? "未知"} · 退出码 {run.exitCode ?? "无"}。这不是计算检查通过，也不是人工科研验收通过。</p>
       <p className="mt-1 break-all font-mono text-micro text-l3">{run.command.join(" ")}</p>
       {run.stderr && <pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-words text-micro text-err-text">{run.stderr}</pre>}
@@ -174,10 +175,10 @@ export default function ResearchReproductionPanel({ workspace, step, onLaunched,
     {result && <div role="region" aria-label="复现文件预览" className="mt-2 rounded border border-field p-2">
       <div className="flex justify-between gap-2"><span className="break-all text-l2">{result.path}</span><button type="button" onClick={() => setResult(null)}>关闭预览</button></div>
       {result.error ? <p role="alert" className="text-err-text">{result.error}</p> : !result.value ? <p>正在读取…</p> : <>
-        {result.value.truncated && <p className="text-warn-text">仅显示部分内容，不能据此判定完整。</p>}
+        {result.value.truncated && <InlineNotice tone="warn">仅显示部分内容，不能据此判定完整。</InlineNotice>}
         <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words text-micro text-l2">{result.value.text}</pre>
       </>}
     </div>}
-    {error && <p role="alert" className="mt-2 text-err-text">{error}</p>}
+    {error && <InlineNotice tone="err" className="mt-2">{error}</InlineNotice>}
   </section>;
 }

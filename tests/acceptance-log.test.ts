@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   acceptanceEntryHeadline,
+  acceptanceEntryRow,
   acceptanceEntryKey,
   acceptanceKindLabel,
   freezeReviewedSha,
@@ -104,4 +105,16 @@ test("successful merge still explains skipped non-Git deliverables", () => {
   assert.equal(deliveryFollowupText({}), "");
   assert.match(deliveryFollowupText({ conflicts: ["papers/report.pdf"] }), /未覆盖.*papers\/report.pdf/);
   assert.match(deliveryFollowupText({ failed: ["磁盘写入失败"] }), /仍需处理.*不能归档/);
+});
+
+test("验收记录一行：技能名换人话、版本号只进悬浮、系统备注不重复", () => {
+  assert.deepEqual(
+    acceptanceEntryRow({ kind: "watch_adopt", goalName: "lit-watch", versionId: "f04cb236-dfe0-48ce", note: "定时巡检采纳" }),
+    { title: "文献雷达 · 巡检已采纳", version: "f04cb236", note: "" },
+  );
+  assert.deepEqual(
+    acceptanceEntryRow({ kind: "pipeline_merge", goalName: "文献检索与筛选", note: "清单核对过" }),
+    { title: "文献检索与筛选 · 文件已进入项目", version: "", note: "清单核对过" },
+  );
+  assert.equal(acceptanceEntryRow({ goalName: " " }).title, "目标 · 已接受");
 });
