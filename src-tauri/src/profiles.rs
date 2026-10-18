@@ -27,6 +27,34 @@ pub struct RequestPolicy {
     pub header_env: BTreeMap<String, String>,
 }
 
+/// 绑定的「模型分工」（2026-10-17 用户：补齐槽位、子 agent 的规则要在连接里看得见、能自定义）。
+/// 只有能分开指定的 CLI 才消费：Claude Code（haiku 槽 / 子 agent）、Grok（会话标题与摘要、输入提示）、
+/// OpenCode（small_model）。None = 跟主模型（这次启动选的模型；没选用名单第一个）
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoleModels {
+    /// 后台小模型：会话标题、摘要、输入提示这类小任务
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub small: Option<String>,
+    /// 子 Agent 模型（Claude Code Task / Agent 工具派出的子任务）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent: Option<String>,
+}
+
+impl RoleModels {
+    pub fn is_empty(&self) -> bool {
+        self.small.is_none() && self.subagent.is_none()
+    }
+    /// 去空白；空串当没设
+    pub fn normalized(self) -> Self {
+        let clean = |v: Option<String>| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        Self {
+            small: clean(self.small),
+            subagent: clean(self.subagent),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Profile {
@@ -48,6 +76,9 @@ pub struct Profile {
     /// 可用模型列表，首个为默认；同一端点下通常有多个模型可切换
     #[serde(default)]
     pub models: Vec<String>,
+    /// 模型分工（后台小模型 / 子 Agent），见 RoleModels
+    #[serde(default)]
+    pub role_models: RoleModels,
     /// 附加环境变量，启动时注入且优先级高于 adapter 内置 env（供覆盖）
     #[serde(default)]
     pub extra_env: std::collections::HashMap<String, String>,
@@ -253,6 +284,8 @@ pub struct Binding {
     pub api_backend: Option<String>,
     #[serde(default)]
     pub models: Vec<String>,
+    #[serde(default, skip_serializing_if = "RoleModels::is_empty")]
+    pub role_models: RoleModels,
     #[serde(default)]
     pub extra_env: std::collections::HashMap<String, String>,
     #[serde(default)]
@@ -306,6 +339,8 @@ pub struct BindingInput {
     #[serde(default)]
     pub models: Vec<String>,
     #[serde(default)]
+    pub role_models: RoleModels,
+    #[serde(default)]
     pub extra_env: std::collections::HashMap<String, String>,
 }
 
@@ -324,6 +359,9 @@ pub struct ProfileInput {
     pub base_url: Option<String>,
     #[serde(default)]
     pub models: Vec<String>,
+    /// 模型分工；None = 不改（旧调用方不带这个键时保留已存的分工）
+    #[serde(default)]
+    pub role_models: Option<RoleModels>,
     #[serde(default)]
     pub extra_env: std::collections::HashMap<String, String>,
     #[serde(default)]
@@ -671,6 +709,7 @@ impl ProfileStore {
                 protocol: None,
                 api_backend: None,
                 models: normalize_models(input.models),
+                role_models: input.role_models.clone().unwrap_or_default().normalized(),
                 extra_env: input.extra_env,
                 last_used_at: None,
             };
@@ -729,6 +768,7 @@ impl ProfileStore {
             protocol: input.protocol.clone(),
             api_backend: input.api_backend.clone(),
             models: models.clone(),
+            role_models: input.role_models.clone().unwrap_or_default().normalized(),
             extra_env: input.extra_env.clone(),
             last_used_at: None,
         };
@@ -798,6 +838,7 @@ impl ProfileStore {
             protocol: src.protocol.clone(),
             api_backend: src.api_backend.clone(),
             models: src.models.clone(),
+            role_models: Default::default(),
             extra_env: src.extra_env.clone(),
             last_used_at: None,
         };
@@ -863,6 +904,7 @@ impl ProfileStore {
             // grok 专用字段不跨 agent 携带；绑到 grok 时取缺省（chat_completions）
             api_backend: None,
             models,
+            role_models: src.role_models.clone(),
             extra_env: src.extra_env.clone(),
             last_used_at: None,
         };
@@ -910,6 +952,17 @@ impl ProfileStore {
         bindings[idx].protocol = input.protocol.clone();
         bindings[idx].api_backend = input.api_backend.clone();
         bindings[idx].models = normalize_models(input.models.clone());
+        // 模型分工：调用方带了才改；名单里已没有的分工作废（回到「跟主模型」）
+        if let Some(roles) = input.role_models.clone() {
+            bindings[idx].role_models = roles.normalized();
+        }
+        let listed = bindings[idx].models.clone();
+        let roles = &mut bindings[idx].role_models;
+        for slot in [&mut roles.small, &mut roles.subagent] {
+            if slot.as_ref().is_some_and(|m| !listed.contains(m)) {
+                *slot = None;
+            }
+        }
         bindings[idx].extra_env = input.extra_env.clone();
         let gateways = crate::gateway_store::load_gateways()?;
         if bindings[idx].kind == BindingKind::Official {
@@ -1249,6 +1302,7 @@ impl ProfileStore {
                 api_backend: None,
                 base_url: None,
                 models: input.models,
+                role_models: Some(input.role_models.clone()),
                 extra_env: input.extra_env,
                 request_policy: RequestPolicy::default(),
                 api_key: None,
@@ -1266,6 +1320,7 @@ impl ProfileStore {
             protocol: input.protocol.clone(),
             api_backend: input.api_backend.clone(),
             models,
+            role_models: input.role_models.clone().normalized(),
             extra_env: input.extra_env.clone(),
             last_used_at: None,
         };
@@ -1946,6 +2001,7 @@ pub fn import_profiles(
             api_backend: p.api_backend,
             base_url: p.base_url,
             models: p.models,
+            role_models: Default::default(),
             extra_env: p.extra_env,
             request_policy: p.request_policy,
             api_key: None,
@@ -2000,6 +2056,8 @@ struct BindingExportV2 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     api_backend: Option<String>,
     models: Vec<String>,
+    #[serde(default, skip_serializing_if = "RoleModels::is_empty")]
+    role_models: RoleModels,
     extra_env: std::collections::HashMap<String, String>,
 }
 
@@ -2071,6 +2129,7 @@ fn build_export_v2(
                 protocol: b.protocol.clone(),
                 api_backend: b.api_backend.clone(),
                 models: b.models.clone(),
+                role_models: b.role_models.clone(),
                 extra_env: extra_env_for_export(&b.extra_env),
             })
         })
@@ -2261,6 +2320,7 @@ fn apply_import_v2(
             protocol: b.protocol.clone(),
             // 落盘用归一后的模型（原先只拿归一值查重、落盘却是脏列表）
             models: incoming_models,
+            role_models: b.role_models.clone().normalized(),
             extra_env: b.extra_env.clone(),
             last_used_at: None,
         };
@@ -2820,6 +2880,7 @@ mod tests {
             api_backend: None,
             base_url: None,
             models: vec![],
+            role_models: Default::default(),
             extra_env: Default::default(),
             request_policy: RequestPolicy::default(),
             key_hint: None,
@@ -2916,6 +2977,7 @@ mod tests {
             api_backend: None,
             base_url: Some("https://example.com".into()),
             models: vec![],
+            role_models: Default::default(),
             extra_env: Default::default(),
             request_policy: RequestPolicy::default(),
             key_hint: None,
@@ -2992,6 +3054,7 @@ mod tests {
             protocol: None,
             api_backend: None,
             models: models.iter().map(|s| (*s).to_string()).collect(),
+            role_models: Default::default(),
             extra_env: Default::default(),
             last_used_at: None,
         }
@@ -3090,6 +3153,7 @@ mod tests {
                 protocol: protocol.map(str::to_string),
                 api_backend: None,
                 models: models.iter().map(|s| (*s).to_string()).collect(),
+                role_models: Default::default(),
                 extra_env: env
                     .iter()
                     .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
@@ -3220,6 +3284,7 @@ mod tests {
                 protocol: Some("anthropic".into()),
                 api_backend: None,
                 models: vec!["m2".into()],
+                role_models: Default::default(),
                 extra_env: {
                     let mut e = std::collections::HashMap::new();
                     e.insert("HTTPS_PROXY".into(), "http://127.0.0.1:7890".into());
@@ -3496,6 +3561,7 @@ mod tests {
             protocol: None,
             api_backend: None,
             models: vec![],
+            role_models: Default::default(),
             extra_env: Default::default(),
         };
         let profile = store.bind_gateway(binding_input).unwrap();

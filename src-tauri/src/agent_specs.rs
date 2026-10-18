@@ -32,6 +32,14 @@ pub struct AgentSpec {
     /// 见 agents::readonly_launch_args）、gemini --approval-mode plan、kimi/cursor --plan；
     /// qwen 0.21.1 无 approval/plan 参数、opencode 无据，保持空
     pub readonly_args: &'static [&'static str],
+    /// 聊天输入框权限徽标的各家原生权限档（2026-10-17 用户：各家权限开关加上；同日照 ChatGPT 收成四档）：(档, 追加参数)。
+    /// 档是 Mesa 统一名：ask = 请求批准（改文件、跑命令前都问）、auto = 帮我批准（AI 判断哪些安全自动放行，
+    /// 有风险的才问：Claude/CodeBuddy/Grok/Qwen `auto`、Codex `--approve-for-me`、Cursor `--auto-review`、
+    /// Kimi `--yolo`「Ask When Needed」）、full = 完全访问；只讨论走 readonly_args。不在表里 = 这家没有该档的
+    /// 启动参数，徽标里置灰。2026-10-17 本机 `--help` 实测（gemini 本机未装，按官方文档；Claude 2.1.292 的
+    /// default 实测显示为 manual）。codex 的 ask / auto 保留 Mesa 默认的 `-s workspace-write`；full 先剔除原 -s
+    /// 再追加（agents::permission_launch_args）。只作用于本次进程的命令行，不写任何 CLI 配置文件
+    pub permission_args: &'static [(&'static str, &'static [&'static str])],
     /// 支持 --session-id 固定新会话文件名（pty 启动即锁定会话关联，matrix：claude-code、qwen、codebuddy）
     pub fixed_session_id: bool,
     /// 按 ID 恢复会话的参数格式
@@ -63,6 +71,42 @@ pub struct AgentSpec {
     pub mcp_write: McpWriteCap,
     /// 技能分发方式（skills.rs allow_symlink_for 的判定依据）
     pub skill_dist: SkillDist,
+    /// 该 CLI 对应的 GUI 客户端（client_open.rs 的接力规格）。空 = 没有可接力的客户端：
+    /// gemini / qwen / opencode / kimi / codebuddy / cursor / grok 本期都为空，原因与分档见
+    /// docs/design-client-handoff.md §1（无客户端、存储不共享，或只能打开项目，后续分期补）
+    pub clients: &'static [ClientSpec],
+}
+
+/// 一个 GUI 客户端的接力规格。深链模板里 `{session}` / `{path}` 由 client_open.rs 校验后代入
+pub struct ClientSpec {
+    /// 客户端 id（前端路由键、日志、诊断）
+    pub id: &'static str,
+    /// 界面展示名
+    pub display: &'static str,
+    /// 会话级深链；None = 客户端不能按会话 id 定位（只有项目级）
+    pub session_url: Option<&'static str>,
+    /// 项目级深链：在该目录新开对话；None = 不支持
+    pub project_url: Option<&'static str>,
+    /// 客户端注册的 URL scheme（macOS 读 Info.plist、Windows 查注册表来判断是否已安装）
+    pub scheme: &'static str,
+    /// macOS bundle id（Spotlight 兜底找应用）
+    pub mac_bundle_ids: &'static [&'static str],
+    /// macOS 应用名（/Applications 与 ~/Applications 下的 .app，不含扩展名）
+    pub mac_app_names: &'static [&'static str],
+    /// 下载页（未安装时给用户的出口）；没有把握的不填
+    pub download_url: Option<&'static str>,
+    /// 渠道（API 配置）如何到达客户端
+    pub channel: ChannelPolicy,
+}
+
+/// 渠道到达客户端的方式；决定预检里「渠道」一项怎么判
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelPolicy {
+    /// 客户端只认自己配置文件里有定义的渠道（codex：config.toml 的 model_providers）。
+    /// Mesa 用 -c 内联的渠道客户端不认识，需先写入定义块
+    RegisteredProvider,
+    /// 客户端用它自己的账号 / 推理配置继续，不会带上 Mesa 里选的网关（claude 桌面版）
+    OwnAccount,
 }
 
 /// 「设为全局默认」能力：把 profile 写入 CLI 自己的配置文件
@@ -325,6 +369,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
         launch: LaunchSpec::Special(SpecialLaunch::ClaudeModelSlots(CLAUDE_ENV)),
         prompt_inject: PromptInject::Positional,
         readonly_args: &["--permission-mode", "plan"],
+        permission_args: &[("ask", &["--permission-mode", "default"]), ("auto", &["--permission-mode", "auto"]), ("full", &["--permission-mode", "bypassPermissions"])],
         fixed_session_id: true,
         resume: ResumeSpec { prepend: false, args: &["-r", "{session}"] },
         skills_dir: &[".claude", "skills"],
@@ -361,6 +406,18 @@ static AGENT_SPECS: &[AgentSpec] = &[
         set_global: SetGlobalCap::Supported,
         mcp_write: McpWriteCap::Full,
         skill_dist: SkillDist::SymlinkOrCopy,
+        clients: &[ClientSpec {
+            id: "claude-desktop",
+            display: "Claude 桌面版",
+            // resume = 把 ~/.claude/projects 里的 CLI 会话导入桌面版 Code 标签（Claude.app 2.42 源码核实）
+            session_url: Some("claude://resume?session={session}"),
+            project_url: Some("claude://code/new?folder={path}"),
+            scheme: "claude",
+            mac_bundle_ids: &["com.anthropic.claudefordesktop"],
+            mac_app_names: &["Claude"],
+            download_url: Some("https://claude.ai/download"),
+            channel: ChannelPolicy::OwnAccount,
+        }],
     },
     AgentSpec {
         id: "codex",
@@ -374,6 +431,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
         }),
         prompt_inject: PromptInject::Positional,
         readonly_args: &["-s", "read-only"],
+        permission_args: &[("ask", &["-a", "on-request"]), ("auto", &["--approve-for-me"]), ("full", &["-a", "never", "-s", "danger-full-access"])],
         fixed_session_id: false,
         resume: ResumeSpec { prepend: true, args: &["resume", "{session}"] },
         skills_dir: &[".codex", "skills"],
@@ -410,6 +468,18 @@ static AGENT_SPECS: &[AgentSpec] = &[
         set_global: SetGlobalCap::Supported,
         mcp_write: McpWriteCap::Full,
         skill_dist: SkillDist::SymlinkOrCopy,
+        clients: &[ClientSpec {
+            id: "codex-desktop",
+            display: "Codex 客户端",
+            session_url: Some("codex://threads/{session}"),
+            project_url: Some("codex://threads/new?path={path}"),
+            scheme: "codex",
+            // 内嵌于 ChatGPT.app（无独立 Codex.app，bundle id com.openai.codex，matrix §2）
+            mac_bundle_ids: &["com.openai.codex"],
+            mac_app_names: &["ChatGPT", "Codex"],
+            download_url: None,
+            channel: ChannelPolicy::RegisteredProvider,
+        }],
     },
     AgentSpec {
         id: "gemini",
@@ -426,6 +496,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
         }),
         prompt_inject: PromptInject::Flag("-i"),
         readonly_args: &["--approval-mode", "plan"],
+        permission_args: &[("ask", &["--approval-mode", "default"]), ("full", &["--approval-mode", "yolo"])],
         fixed_session_id: false,
         resume: ResumeSpec { prepend: false, args: &["-r", "{session}"] },
         skills_dir: &[".gemini", "skills"],
@@ -460,6 +531,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
         set_global: SetGlobalCap::Supported,
         mcp_write: McpWriteCap::Full,
         skill_dist: SkillDist::SymlinkOrCopy,
+        clients: &[],
     },
     AgentSpec {
         id: "qwen",
@@ -477,6 +549,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
         ]),
         prompt_inject: PromptInject::Flag("-i"),
         readonly_args: &[],
+        permission_args: &[("ask", &["--approval-mode", "default"]), ("auto", &["--approval-mode", "auto"]), ("full", &["--approval-mode", "yolo"])],
         fixed_session_id: true,
         resume: ResumeSpec { prepend: false, args: &["-r", "{session}"] },
         skills_dir: &[".qwen", "skills"],
@@ -530,6 +603,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
         set_global: SetGlobalCap::Supported,
         mcp_write: McpWriteCap::Full,
         skill_dist: SkillDist::SymlinkOrCopy,
+        clients: &[],
     },
     AgentSpec {
         id: "opencode",
@@ -545,6 +619,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
         // an interactive session with an initial prompt.
         prompt_inject: PromptInject::Flag("--prompt"),
         readonly_args: &[],
+        permission_args: &[("full", &["--auto"])],
         fixed_session_id: false,
         resume: ResumeSpec { prepend: false, args: &["--session", "{session}"] },
         skills_dir: &[".config", "opencode", "skills"],
@@ -577,6 +652,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
         set_global: SetGlobalCap::Supported,
         mcp_write: McpWriteCap::Full,
         skill_dist: SkillDist::SymlinkOrCopy,
+        clients: &[],
     },
     AgentSpec {
         id: "kimi",
@@ -587,6 +663,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
         launch: LaunchSpec::Special(SpecialLaunch::KimiDualChannel),
         prompt_inject: PromptInject::Unsupported,
         readonly_args: &["--plan"],
+        permission_args: &[("auto", &["--yolo"]), ("full", &["--auto"])],
         fixed_session_id: false,
         resume: ResumeSpec { prepend: false, args: &["-S", "{session}"] },
         skills_dir: &[".kimi-code", "skills"],
@@ -651,6 +728,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
         set_global: SetGlobalCap::Supported,
         mcp_write: McpWriteCap::Full,
         skill_dist: SkillDist::SymlinkOrCopy,
+        clients: &[],
     },
     AgentSpec {
         id: "codebuddy",
@@ -668,6 +746,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
         }),
         prompt_inject: PromptInject::Positional,
         readonly_args: &["--permission-mode", "plan"],
+        permission_args: &[("ask", &["--permission-mode", "default"]), ("auto", &["--permission-mode", "auto"]), ("full", &["--permission-mode", "bypassPermissions"])],
         // --session-id <uuid> 实测支持固定会话文件名
         fixed_session_id: true,
         // -r|--resume [sessionId] 可带 id；-c 是续最近（不带 id 的场景前端不用）
@@ -702,6 +781,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
         set_global: SetGlobalCap::Supported,
         mcp_write: McpWriteCap::Full,
         skill_dist: SkillDist::SymlinkOrCopy,
+        clients: &[],
     },
     AgentSpec {
         id: "cursor",
@@ -720,6 +800,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
         // 初始 prompt 是 argv 末尾位置参数；非交互模式为 -p/--print + --output-format
         prompt_inject: PromptInject::Positional,
         readonly_args: &["--plan"],
+        permission_args: &[("auto", &["--auto-review"]), ("full", &["--force"])],
         fixed_session_id: false,
         // --resume <uuid> 必须带 id（无参会卡 Ink TUI）；--continue 续最近（前端不用）
         resume: ResumeSpec { prepend: false, args: &["--resume", "{session}"] },
@@ -757,6 +838,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
         skill_dist: SkillDist::CopyOnly(
             "~/.cursor/skills-cursor 未验证 CLI 是否真读、且 ~/.cursor 与 IDE 共享，保守强制 copy",
         ),
+        clients: &[],
     },
     AgentSpec {
         id: "grok",
@@ -782,6 +864,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
         //（非白名单工具请求直接 Cancelled）+ read-only 是 OS 级只读（只能写 ~/.grok 和临时目录）；
         // --permission-mode plan 的值被接受但主会话门控链路未确认，不用
         readonly_args: &["--permission-mode", "dontAsk", "--sandbox", "read-only"],
+        permission_args: &[("ask", &["--permission-mode", "default"]), ("auto", &["--permission-mode", "auto"]), ("full", &["--permission-mode", "bypassPermissions"])],
         // -s/--session-id <UUID> 仅新建会话可用（matrix §9）
         fixed_session_id: true,
         // -r/--resume [ID_OR_TITLE] 按 ID 恢复；-c/--continue 续最近（前端不用）
@@ -830,6 +913,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
             "Grok 的 MCP 分发暂不支持（TOML [mcp_servers] 段与 model 同文件）；请用 `grok mcp add` 或编辑 ~/.grok/config.toml",
         ),
         skill_dist: SkillDist::CopyOnly("~/.grok/skills 首版未经实机验证，保守强制 copy"),
+        clients: &[],
     },
 ];
 
@@ -1019,9 +1103,11 @@ pub(crate) fn request_policy_support(agent: &str) -> RequestPolicySupportDto {
         // effort=CLAUDE_CODE_EFFORT_LEVEL（同 /effort）；headers=ANTHROPIC_CUSTOM_HEADERS
         "claude-code" => row("inject", "inject", "inject", "inject", "inject"),
         // codebuddy 是 claude-code fork 但 env 前缀独立：
-        // CODEBUDDY_CODE_MAX_OUTPUT_TOKENS / CODEBUDDY_CUSTOM_HEADERS 实证；
-        // --effort 是当前版本的启动参数通道，temperature/top_p 仍无入口。
-        "codebuddy" => row("unsupported", "unsupported", "inject", "inject", "inject"),
+        // CODEBUDDY_CODE_MAX_OUTPUT_TOKENS / CODEBUDDY_CUSTOM_HEADERS 实证；temperature/top_p 无入口。
+        // effort：2026-10-17 假网关实测，自定义端点（CODEBUDDY_BASE_URL，走 /chat/completions）下
+        // `--effort high` 在线上不出现任何思考 / 档位字段——对网关连接等于没有通道，标 unsupported，
+        // 别让开聊前摆出点了没用的档（官方账号走 CodeBuddy 自家模型，不经求交器）
+        "codebuddy" => row("unsupported", "unsupported", "inject", "unsupported", "inject"),
         // gemini settings schema 无 temperature/topP/maxOutputTokens 键（bundle 实证），
         // generationConfig 仅出现在 API 请求构造路径，非用户配置通道
         "gemini" => row(
@@ -1161,6 +1247,9 @@ pub(crate) fn binary_candidate_dirs() -> Vec<std::path::PathBuf> {
         out.push("/opt/homebrew/bin".into()); // Apple Silicon brew
         out.push("/usr/local/bin".into()); // Intel brew / 手动安装
         out.push("/Library/TeX/texbin".into()); // MacTeX/TeXLive（latexmk/pdflatex；GUI 短 PATH 兜底）
+        // Quarto 官方 pkg 的本体目录：它往 /usr/local/bin 建链接，Apple 芯片机器上这个目录
+        // 常常不存在，链接静默建不出来（2026-10-18 本机实证），装完 PATH 上找不到 quarto
+        out.push("/Applications/quarto/bin".into());
     }
     #[cfg(target_os = "linux")]
     {
@@ -1172,6 +1261,7 @@ pub(crate) fn binary_candidate_dirs() -> Vec<std::path::PathBuf> {
             out.push(h.join(".local/share/mise/shims")); // mise（node 版本管理器）固定 shim 目录
         }
         out.push("/usr/local/bin".into());
+        out.push("/opt/quarto/bin".into()); // Quarto 官方 .deb / tarball 落点
     }
     #[cfg(target_os = "windows")]
     {
@@ -1207,6 +1297,12 @@ pub(crate) fn binary_candidate_dirs() -> Vec<std::path::PathBuf> {
         for key in ["ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"] {
             if let Some(root) = std::env::var_os(key) {
                 out.push(std::path::PathBuf::from(root).join("Git").join("cmd"));
+            }
+        }
+        // Quarto 官方安装器默认落点（GUI 启动时 PATH 可能未继承）
+        for key in ["ProgramW6432", "ProgramFiles"] {
+            if let Some(root) = std::env::var_os(key) {
+                out.push(std::path::PathBuf::from(root).join("Quarto").join("bin"));
             }
         }
     }
@@ -1279,6 +1375,36 @@ mod tests {
         "cursor",
         "grok",
     ];
+
+    /// 客户端规格：id 全局唯一，深链模板带对应占位且以自己的 scheme 开头，至少能开一种目标
+    #[test]
+    fn client_specs_are_well_formed() {
+        let mut ids = std::collections::HashSet::new();
+        for spec in all_agent_specs() {
+            for c in spec.clients {
+                assert!(ids.insert(c.id), "客户端 id 重复: {}", c.id);
+                assert!(!c.display.is_empty() && !c.scheme.is_empty(), "{} 缺展示名或 scheme", c.id);
+                assert!(
+                    c.session_url.is_some() || c.project_url.is_some(),
+                    "{} 既不能开会话也不能开项目",
+                    c.id
+                );
+                let prefix = format!("{}://", c.scheme);
+                if let Some(u) = c.session_url {
+                    assert!(u.starts_with(&prefix) && u.contains("{session}"), "{} 会话深链模板有误", c.id);
+                }
+                if let Some(u) = c.project_url {
+                    assert!(u.starts_with(&prefix) && u.contains("{path}"), "{} 项目深链模板有误", c.id);
+                }
+                assert!(
+                    !c.mac_app_names.is_empty() || !c.mac_bundle_ids.is_empty(),
+                    "{} 缺 macOS 探测线索",
+                    c.id
+                );
+            }
+        }
+        assert_eq!(ids.len(), 2, "本期只有 claude-desktop 与 codex-desktop");
+    }
 
     /// 注册表完整性：全部已知 agent 都有规格，必填字段非空
     #[test]
@@ -1661,7 +1787,8 @@ mod tests {
             .unwrap();
         assert_eq!(codebuddy_dto.request_policy.temperature, "unsupported");
         assert_eq!(codebuddy_dto.request_policy.custom_headers, "inject");
-        assert_eq!(codebuddy_dto.request_policy.reasoning_effort, "inject");
+        // 自定义端点下 --effort 不上线（2026-10-17 假网关实测）
+        assert_eq!(codebuddy_dto.request_policy.reasoning_effort, "unsupported");
         assert_eq!(codebuddy_dto.request_policy.max_output_tokens, "inject");
         assert_eq!(codebuddy_dto.request_policy.top_p, "unsupported");
         let gemini_dto = agent_capabilities()

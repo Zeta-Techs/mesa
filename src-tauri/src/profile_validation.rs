@@ -1207,6 +1207,7 @@ pub async fn probe_gateway_slot(
         protocol: None,
         api_backend: None,
         models: gw.models.iter().map(|m| m.id.clone()).collect(),
+        role_models: Default::default(),
         extra_env: Default::default(),
         last_used_at: None,
     };
@@ -1740,6 +1741,7 @@ mod tests {
             api_backend: None,
             base_url: Some("https://relay.example.com/v1".into()),
             models: vec!["model-a".into()],
+            role_models: Default::default(),
             extra_env: Default::default(),
             request_policy: crate::profiles::RequestPolicy::default(),
             key_hint: None,

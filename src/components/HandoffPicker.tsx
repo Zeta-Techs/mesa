@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "../store";
 import { AGENTS } from "../types";
 import type { HandoffBriefDto, HandoffTargetDto } from "../types";
+import { InlineNotice } from "./PageFrame";
 
 /** 接力来源会话（终端标签 / 对话页回放共用） */
 export interface HandoffSource {
@@ -138,7 +139,7 @@ export default function HandoffPicker({
             选中后才生成。用户原话逐条原文带上，助手正文附在文末供核对。要一份「该接上什么」的结论，用「提炼接力」。
           </p>
         </div>
-        {error && <p className="px-3 pb-1 text-xs text-err-text">{error}</p>}
+        {error && <InlineNotice tone="err" className="px-3 pb-1">{error}</InlineNotice>}
         {ready ? (
           <div className="px-3 pb-1">
             <p className="text-xs text-l2">

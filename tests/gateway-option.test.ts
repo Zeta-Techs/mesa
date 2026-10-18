@@ -95,3 +95,19 @@ test("gatewayPickerRows 同名同址才补密钥尾号", () => {
   assert.ok(rows[0]?.detail.includes("···AAA"));
   assert.ok(rows[1]?.detail.includes("···BBB"));
 });
+
+test("gatewayPickerRows 协议槽超过 3 种时收成「前两种 等 N 种协议」", () => {
+  const rows = gatewayPickerRows([
+    gw({
+      id: "a",
+      name: "GLM",
+      slots: {
+        anthropic: "https://open.bigmodel.cn/api/anthropic",
+        openai: "https://open.bigmodel.cn/api/paas/v4",
+        responses: "https://open.bigmodel.cn/api/paas/v4",
+        gemini: "https://open.bigmodel.cn/api/gemini",
+      },
+    }),
+  ]);
+  assert.equal(rows[0]?.detail, "open.bigmodel.cn · Anthropic、OpenAI 等 4 种协议");
+});

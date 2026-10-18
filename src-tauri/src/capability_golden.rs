@@ -90,6 +90,7 @@ mod tests {
             api_backend: None,
             base_url: case.string("base_url").map(str::to_string),
             models: vec![],
+            role_models: Default::default(),
             extra_env: Default::default(),
             request_policy: crate::profiles::RequestPolicy::default(),
             key_hint: None,

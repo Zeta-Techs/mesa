@@ -46,12 +46,12 @@ pub(crate) fn profile_for_register(
     store: &ProfileStore,
     profile_id: &str,
 ) -> Result<(Profile, String), String> {
-    let profile = profile_for_global_write(store, profile_id)?;
+    let profile = profile_for_write(store, profile_id)?;
     let key = crate::profiles::get_key_for_profile(&profile)?.ok_or("该配置没有已保存的密钥")?;
     Ok((profile, key))
 }
 
-fn profile_for_global_write(store: &ProfileStore, profile_id: &str) -> Result<Profile, String> {
+pub(crate) fn profile_for_write(store: &ProfileStore, profile_id: &str) -> Result<Profile, String> {
     let mut profile = store.get_with_model(profile_id, None)?;
     let first = profile.models.first().cloned();
     crate::combo::apply_to_profile(&mut profile, first.as_deref());
@@ -69,7 +69,7 @@ pub(crate) fn dry_run_matches(store: &ProfileStore, profile: &Profile) -> Option
     if profile.account_type == crate::profiles::AccountType::Official {
         return None;
     }
-    let profile = profile_for_global_write(store, &profile.id).ok()?;
+    let profile = profile_for_write(store, &profile.id).ok()?;
     let key = crate::profiles::get_key_for_profile(&profile)
         .ok()
         .flatten();
@@ -1985,7 +1985,7 @@ pub(crate) fn drift_status(store: &ProfileStore, agent: &str) -> crate::drift::G
     else {
         return crate::drift::classify(true, None, Vec::new());
     };
-    let profile = match profile_for_global_write(store, &pid) {
+    let profile = match profile_for_write(store, &pid) {
         Ok(p) => p,
         Err(e) => return crate::drift::classify(false, Some(e), Vec::new()),
     };
@@ -2044,7 +2044,7 @@ pub async fn apply_profile_global(
     store: tauri::State<'_, ProfileStore>,
     profile_id: String,
 ) -> Result<GlobalApplyResultDto, String> {
-    let profile = profile_for_global_write(&store, &profile_id)?;
+    let profile = profile_for_write(&store, &profile_id)?;
     if profile.account_type == crate::profiles::AccountType::Official {
         let agent = profile.agent.clone();
         let result = tauri::async_runtime::spawn_blocking(move || {
@@ -2119,7 +2119,7 @@ pub async fn codex_register_client_provider(
     profile_id: String,
     provider_name: Option<String>,
 ) -> Result<Vec<String>, String> {
-    let profile = profile_for_global_write(&store, &profile_id)?;
+    let profile = profile_for_write(&store, &profile_id)?;
     let key = profiles::get_key_for_profile(&profile)?.ok_or("该配置没有已保存的密钥")?;
     let block = provider_name
         .filter(|s| !s.trim().is_empty())
@@ -2181,7 +2181,7 @@ pub async fn codex_unregister_client_provider(
     store: tauri::State<'_, ProfileStore>,
     profile_id: String,
 ) -> Result<Vec<String>, String> {
-    let profile = profile_for_global_write(&store, &profile_id)?;
+    let profile = profile_for_write(&store, &profile_id)?;
     if profile.agent != "codex" {
         return Err("只有 Codex 绑定有客户端注册可移除".into());
     }
@@ -2337,6 +2337,7 @@ mod tests {
             api_backend: None,
             base_url: Some("https://relay.example.com".into()),
             models: vec!["m1".into()],
+            role_models: Default::default(),
             extra_env: Default::default(),
             request_policy: crate::profiles::RequestPolicy::default(),
             key_hint: None,

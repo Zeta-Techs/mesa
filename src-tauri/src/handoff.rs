@@ -346,6 +346,37 @@ fn handoff_target_path(cwd: &str, target_path: Option<&str>) -> Result<PathBuf, 
     }
 }
 
+/// 只比较正文骨架（空白一律压成一个空格）：前端拼正文用 `\n\n`、这里用 `\n`，换行差异不算不同
+fn text_skeleton(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// 聊天层「从这里分叉」（2026-10-18）：截到用户点的那条助手回复为止（含）。按正文认，不按下标——
+/// 聊天层只载入了尾部几页，下标对不上全文。同样的正文出现多次取最后一次；认不出就报错，不悄悄给全文
+fn cut_messages_at(
+    messages: Vec<ChatMessageDto>,
+    until_text: &str,
+) -> Result<Vec<ChatMessageDto>, String> {
+    let want = text_skeleton(until_text);
+    if want.is_empty() {
+        return Err("选中的这段回复没有正文，没法从这里分叉".into());
+    }
+    let at = messages.iter().rposition(|m| {
+        m.role != "user" && {
+            let have = text_skeleton(&message_text(m));
+            have == want || have.contains(&want)
+        }
+    });
+    match at {
+        Some(i) => {
+            let mut messages = messages;
+            messages.truncate(i + 1);
+            Ok(messages)
+        }
+        None => Err("在会话记录里找不到这段回复（可能还没写进会话文件），稍等几秒再试".into()),
+    }
+}
+
 fn build_handoff_brief_impl(
     agent: &str,
     session_id: &str,
@@ -353,9 +384,14 @@ fn build_handoff_brief_impl(
     cwd: &str,
     title: Option<&str>,
     target_path: Option<&str>,
+    until_text: Option<&str>,
 ) -> Result<HandoffBriefDto, String> {
     // 全文解析。用户原话与助手正文都逐条写入，不抽样。
     let messages = sessions::conversation_impl(agent, file_path);
+    let messages = match until_text {
+        Some(text) => cut_messages_at(messages, text)?,
+        None => messages,
+    };
     let git = crate::git_info::git_status_sync(cwd).ok();
     let brief = render_handoff_brief(agent, session_id, cwd, title, &messages, git.as_ref());
     let text = redact_and_cap(&brief);
@@ -381,7 +417,8 @@ fn build_handoff_brief_impl(
     })
 }
 
-/// 从源会话生成接力简报并原子写入目标路径，返回文件路径与一句话概述
+/// 从源会话生成接力简报并原子写入目标路径，返回文件路径与一句话概述。
+/// `until_text`：聊天层「从这里分叉」——只取到这条助手回复为止
 #[tauri::command]
 pub async fn build_handoff_brief(
     agent: String,
@@ -390,6 +427,7 @@ pub async fn build_handoff_brief(
     cwd: String,
     title: Option<String>,
     target_path: Option<String>,
+    until_text: Option<String>,
 ) -> Result<HandoffBriefDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
         build_handoff_brief_impl(
@@ -399,6 +437,7 @@ pub async fn build_handoff_brief(
             &cwd,
             title.as_deref(),
             target_path.as_deref(),
+            until_text.as_deref(),
         )
     })
     .await
@@ -755,6 +794,35 @@ mod tests {
             timestamp: None,
             usage: None,
         }
+    }
+
+    #[test]
+    fn fork_here_cuts_at_the_chosen_reply() {
+        let messages = vec![
+            msg("user", "第一问"),
+            msg("assistant", "第一段回复\n\n第二行"),
+            msg("user", "第二问"),
+            msg("assistant", "第二段回复"),
+        ];
+        // 前端用 \n\n 拼正文、这里用 \n：空白差异不影响认出
+        let cut = cut_messages_at(messages.clone(), "第一段回复\n第二行").unwrap();
+        assert_eq!(cut.len(), 2);
+        assert_eq!(message_text(&cut[1]), "第一段回复\n\n第二行");
+        // 认不出 / 空正文：报错，不悄悄给全文
+        assert!(cut_messages_at(messages.clone(), "没有这段").is_err());
+        assert!(cut_messages_at(messages, "   ").is_err());
+    }
+
+    #[test]
+    fn fork_here_takes_the_latest_duplicate_reply() {
+        let messages = vec![
+            msg("user", "a"),
+            msg("assistant", "好的"),
+            msg("user", "b"),
+            msg("assistant", "好的"),
+            msg("user", "c"),
+        ];
+        assert_eq!(cut_messages_at(messages, "好的").unwrap().len(), 4);
     }
 
     fn git_dto() -> GitStatusDto {

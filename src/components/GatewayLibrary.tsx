@@ -4,7 +4,7 @@ import { useAppStore } from "../store";
 import { AGENTS, AGENT_PROTOCOLS } from "../types";
 import { PROVIDER_PRESETS, type ProviderPreset } from "../presets";
 import { mergeGatewayCatalog } from "../gateway-catalog";
-import { Checkbox, fieldClass, FoldMark, primaryActionClass, searchFieldClass, secondaryActionClass } from "./PageFrame";
+import { Checkbox, fieldClass, FoldMark, ghostActionClass, primaryActionClass, searchFieldClass, secondaryActionClass, NoticeBar, InlineNotice } from "./PageFrame";
 import { parseReasoningEffort, reasoningEffortValue } from "../reasoning-effort";
 import { confirmDialog } from "./ConfirmDialog";
 import { policyFieldHint, policyFieldMode } from "../combo-field";
@@ -961,9 +961,15 @@ export default function GatewayLibrary({
       >
         <div className="mb-3 flex items-center justify-between">
           <h2 id="gateway-library-title" className="text-base font-medium text-l1">网关库</h2>
-          <div className="flex gap-2">
-            <button type="button" className={secondaryActionClass} onClick={() => void undoMerge()}>
-              拆开自动合并
+          <div className="flex items-center gap-2">
+            {/* 少用的恢复动作：原先与「新建网关」同级的次按钮、名字又是内部词，降为带说明的文字钮 */}
+            <button
+              type="button"
+              className={`${ghostActionClass} text-l4`}
+              title="把旧版本升级时自动合并到同一网关的连接拆回各自的网关（只在合并结果不对时用）"
+              onClick={() => void undoMerge()}
+            >
+              拆开自动合并的连接
             </button>
             <button type="button" className={primaryActionClass} onClick={() => openEdit("new")}>
               + 新建网关
@@ -973,8 +979,8 @@ export default function GatewayLibrary({
             </button>
           </div>
         </div>
-        {error && <p className="mb-2 text-sm text-err-text">{error}</p>}
-        {notice && <p className="mb-2 text-sm text-ok-text">{notice}</p>}
+        {error && <NoticeBar tone="err" className="mb-3" onDismiss={() => setError(null)}>{error}</NoticeBar>}
+        {notice && <NoticeBar className="mb-3" onDismiss={() => setNotice(null)}>{notice}</NoticeBar>}
         {editing ? (
           <div className="space-y-2">
             {editing === "new" && (
@@ -1029,7 +1035,7 @@ export default function GatewayLibrary({
               />
             </label>
             {responsesUrlWarn && (
-              <p className="text-micro text-warn-text">{responsesUrlWarn}</p>
+              <InlineNotice tone="warn" size="micro">{responsesUrlWarn}</InlineNotice>
             )}
             <div className="flex flex-wrap items-center gap-2">
               <button
@@ -1382,7 +1388,7 @@ export default function GatewayLibrary({
                         {open && (
                           <div className="mt-1 space-y-1 pl-5">
                             {combo?.probeNote && (
-                              <p className="text-micro text-warn-text">{combo.probeNote}</p>
+                              <InlineNotice tone="warn" size="micro">{combo.probeNote}</InlineNotice>
                             )}
                             {combo?.policyChannelNote && (
                               <p className="text-micro text-l4">{combo.policyChannelNote}</p>
@@ -1597,7 +1603,7 @@ export default function GatewayLibrary({
                 <li key={g.id} className="flex items-center gap-3 py-2 text-sm">
                   <span className="min-w-0 flex-1">
                     <span className="font-medium text-l1">{row.name}</span>
-                    <span className="ml-2 text-l3">{n} 条配置</span>
+                    <span className="ml-2 text-l3">{n ? `${n} 个连接在用` : "没有连接在用"}</span>
                     <span className="mt-0.5 block truncate text-micro text-l4" title={row.detail}>
                       {row.detail}
                     </span>
@@ -1611,9 +1617,10 @@ export default function GatewayLibrary({
                       </button>
                     )}
                   </span>
+                  {/* 按钮分级：编辑是这一行的主动作；获取模型是辅助；删除不与它们同权（原先三颗同款次按钮） */}
                   <button
                     type="button"
-                    className={secondaryActionClass}
+                    className={ghostActionClass}
                     disabled={listFetchingId === g.id}
                     title="重新拉取这个网关的模型目录并保存"
                     onClick={() => void refreshListedCatalog(g)}
@@ -1623,7 +1630,11 @@ export default function GatewayLibrary({
                   <button type="button" className={secondaryActionClass} onClick={() => openEdit(g)}>
                     编辑
                   </button>
-                  <button type="button" className={secondaryActionClass} onClick={() => void onDelete(g)}>
+                  <button
+                    type="button"
+                    className={`${ghostActionClass} hover:text-err-text`}
+                    onClick={() => void onDelete(g)}
+                  >
                     删除
                   </button>
                 </li>

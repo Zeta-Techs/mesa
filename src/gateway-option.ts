@@ -57,7 +57,9 @@ function rowFrom(gateway: Gateway): GatewayPickerRow {
   const slots = gatewayFilledSlots(gateway.slots);
   const parts: string[] = [];
   parts.push(hosts.length ? hosts.join(" / ") : "未填端点");
-  if (slots.length) parts.push(slots.join("、"));
+  // 协议槽多了一行装不下（网关库里截成「…、Cur…」）：超过 3 种只列前两种 + 总数
+  if (slots.length > 3) parts.push(`${slots.slice(0, 2).join("、")} 等 ${slots.length} 种协议`);
+  else if (slots.length) parts.push(slots.join("、"));
   const models = gateway.models.filter((model) => model.status !== "stale").length;
   if (models) parts.push(`${models} 个模型`);
   return { id: gateway.id, name: gateway.name, detail: parts.join(" · ") };

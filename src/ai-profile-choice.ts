@@ -17,15 +17,18 @@ export interface AiProfileChoice {
 /** 配置 id 与模型名之间的分隔。两边都可能含普通标点，用不可见分隔符。 */
 const SEP = "\u001f";
 
+/** agentLabel：把内部 id（claude-code）换成展示名（Claude Code）；不传则原样显示 id */
 export function aiProfileChoices(
   profiles: AiProfileChoiceSource[],
+  agentLabel: (agentId: string) => string = (id) => id,
 ): AiProfileChoice[] {
   const out: AiProfileChoice[] = [];
   for (const profile of profiles) {
     const models = profile.models.map((m) => m.trim()).filter(Boolean);
+    const agent = agentLabel(profile.agent);
     const head = profile.name.trim()
-      ? `${profile.name.trim()}（${profile.agent}`
-      : `（${profile.agent}`;
+      ? `${profile.name.trim()}（${agent}`
+      : `（${agent}`;
     if (models.length === 0) {
       out.push({
         value: profile.id,

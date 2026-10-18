@@ -23,6 +23,9 @@ pub struct ComboSurfaceDto {
     pub show_native_effort: bool,
     /// 网关里勾选的可切换档。空 = 用 CLI 自己的整张档位表。
     pub effort_levels: Vec<String>,
+    /// 这次启动会注入的开场档（绑定逐模型策略 `@` 默认档；通道不通 = None）。
+    /// 状态栏「当前思考档」的兜底来源——没注入就是 None，不能拿档位表第几格冒充
+    pub launch_effort: Option<String>,
     /// 启动注入是否写入 effort（通道 supported 且体检未失败且用户存了值时由 launch 再判）
     pub inject_effort_allowed: bool,
     pub inject_temperature_allowed: bool,
@@ -197,9 +200,14 @@ pub fn surface_for_agents(
     let probe_temp = probe_status_any(gateway, slot, "temperature", model);
     let probe_headers = probe_status_any(gateway, slot, "headers", model);
 
+    // Grok：模型没在 config 里声明档位时，启动参数和 /effort 都被它忽略（agents::grok_model_declares_effort）。
+    // 只绑了 grok 的组合按「这次给不了档」算，不在开聊前 / 运行中摆一排点了没用的档位
+    let grok_only = !agents.is_empty() && agents.iter().all(|(a, _)| *a == "grok");
+    let grok_blocks = grok_only && !crate::agents::grok_model_declares_effort(model);
     let inject_effort_allowed =
-        thinking && channel_ok(channel_effort) && !probe_blocks(probe_effort);
-    let show_native_effort = thinking && has_native_effort && !probe_blocks(probe_effort);
+        thinking && channel_ok(channel_effort) && !probe_blocks(probe_effort) && !grok_blocks;
+    let show_native_effort =
+        thinking && has_native_effort && !probe_blocks(probe_effort) && !grok_blocks;
     // 不会思考 → 隐藏思考档；persist/tui 的已存值仍可改/可见，不算「通道不通」
     let effort_readonly = stored_effort && thinking && !channel_carries(channel_effort);
 
@@ -267,6 +275,7 @@ pub fn surface_for_agents(
         probe_headers: probe_headers.as_str(),
         probe_note: probe_note_for(gateway, probe_effort),
         effort_levels: effort_levels.to_vec(),
+        launch_effort: None,
         policy_channel_note: {
             let mut notes: Vec<&str> = agents
                 .iter()
@@ -341,7 +350,18 @@ pub fn surface_for_profile(profile: &Profile, model: Option<&str>) -> ComboSurfa
     let stored_top_p = profile.request_policy.top_p.is_some() || gm.and_then(|m| m.top_p).is_some();
     let stored_max = profile.request_policy.max_output_tokens.is_some()
         || gm.and_then(|m| m.max_output_tokens).is_some();
-    surface_for_agents(
+    // 开场档与 materialize 同口径：所选模型在网关上的逐模型策略优先，其次绑定物化出的策略
+    let launch_effort = gm
+        .and_then(|m| m.reasoning_effort.as_deref())
+        .and_then(crate::agent_specs::launch_reasoning_effort)
+        .or_else(|| {
+            profile
+                .request_policy
+                .reasoning_effort
+                .as_deref()
+                .and_then(crate::agent_specs::launch_reasoning_effort)
+        });
+    let mut surface = surface_for_agents(
         &[(profile.agent.as_str(), profile.protocol.as_deref())],
         model,
         gw.as_ref(),
@@ -355,7 +375,12 @@ pub fn surface_for_profile(profile: &Profile, model: Option<&str>) -> ComboSurfa
         &gm.and_then(|m| m.reasoning_effort.as_deref())
             .map(crate::agent_specs::reasoning_effort_levels)
             .unwrap_or_default(),
-    )
+    );
+    // 通道不通（不会思考 / 体检失败 / 该家无注入通道）时启动不会注入，开场档就是「不知道」
+    if surface.inject_effort_allowed {
+        surface.launch_effort = launch_effort;
+    }
+    surface
 }
 
 #[tauri::command]
@@ -516,6 +541,7 @@ mod tests {
             api_backend: None,
             base_url: Some("https://relay.example.com".into()),
             models: models.iter().map(|s| s.to_string()).collect(),
+            role_models: Default::default(),
             extra_env: Default::default(),
             request_policy: crate::profiles::RequestPolicy {
                 reasoning_effort: effort.map(str::to_string),

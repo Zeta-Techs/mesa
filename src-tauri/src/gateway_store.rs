@@ -418,6 +418,7 @@ pub fn restore_merged_bindings(
             protocol: e.protocol.clone(),
             api_backend: None,
             models: e.models.clone(),
+            role_models: Default::default(),
             extra_env: e.extra_env.clone(),
             last_used_at: None,
         });
@@ -512,6 +513,7 @@ pub fn materialize(
         api_backend: binding.api_backend.clone(),
         base_url: slot_url,
         models: binding.models.clone(),
+        role_models: binding.role_models.clone(),
         extra_env: binding.extra_env.clone(),
         request_policy,
         key_hint,
@@ -729,6 +731,7 @@ pub fn migrate_from_profiles(
                 protocol: None,
                 api_backend: None,
                 models: p.models,
+                role_models: p.role_models,
                 extra_env: p.extra_env,
                 last_used_at: p.last_used_at,
             });
@@ -861,6 +864,7 @@ pub fn migrate_from_profiles(
                     protocol: kept.protocol.clone(),
                     api_backend: None,
                     models: models_list,
+                    role_models: kept.role_models.clone(),
                     extra_env: kept.extra_env.clone(),
                     last_used_at: kept.last_used_at.clone(),
                 });
@@ -935,6 +939,7 @@ mod tests {
             api_backend: None,
             base_url: Some(url.into()),
             models: models.iter().map(|s| s.to_string()).collect(),
+            role_models: Default::default(),
             extra_env: HashMap::new(),
             request_policy: RequestPolicy {
                 reasoning_effort: Some("high".into()),
@@ -1254,6 +1259,7 @@ mod tests {
             protocol: None,
             api_backend: None,
             models: vec!["m1".into()],
+            role_models: Default::default(),
             extra_env: HashMap::new(),
             last_used_at: None,
         }];
@@ -1312,6 +1318,7 @@ mod tests {
             protocol: None,
             api_backend: None,
             models: vec!["m-work".into()],
+            role_models: Default::default(),
             extra_env: HashMap::new(),
             last_used_at: None,
         }];
@@ -1380,6 +1387,7 @@ mod tests {
             protocol: None,
             api_backend: None,
             models: vec!["first".into(), "second".into()],
+            role_models: Default::default(),
             extra_env: HashMap::new(),
             last_used_at: None,
         };
@@ -1434,6 +1442,7 @@ mod tests {
             protocol: None,
             api_backend: None,
             models: vec!["gpt-6-sol".into()],
+            role_models: Default::default(),
             extra_env: HashMap::new(),
             last_used_at: None,
         };
@@ -1635,6 +1644,7 @@ mod tests {
             protocol: None,
             api_backend: None,
             models: vec![model.into()],
+            role_models: Default::default(),
             extra_env: Default::default(),
             last_used_at: None,
         };

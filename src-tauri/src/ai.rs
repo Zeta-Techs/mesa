@@ -162,6 +162,159 @@ fn headless_args(agent: &str, prompt: &str) -> Vec<String> {
     }
 }
 
+/// 一次性内部调用（起标题 / 提交信息 / 摘要 / 翻译…，ai_prompt_impl 专用）能否不落盘：
+/// 2026-10-17 本机 `--help` 实证——claude `--no-session-persistence`（仅 -p 有效）、
+/// codex exec `--ephemeral`。其余 CLI 没有同类开关，照旧落盘，由内部对话保留期清理兜底。
+/// 不落盘就没有会话文件可抽用量，所以同时切 JSON 输出，从结果里直接记账。
+pub(crate) fn oneshot_is_ephemeral(agent: &str) -> bool {
+    matches!(agent, "claude-code" | "codex")
+}
+
+/// ai_prompt_impl 的无头参数：可不落盘的 CLI 走不落盘 + JSON 输出，其余与 headless_args 同形。
+/// 定时任务（headless_task_args）不走这里——巡检运行事后要能回看。
+fn headless_oneshot_args(agent: &str, prompt: &str) -> Vec<String> {
+    match agent {
+        "claude-code" => vec![
+            "-p".into(),
+            prompt.into(),
+            "--output-format".into(),
+            "json".into(),
+            "--no-session-persistence".into(),
+        ],
+        "codex" => vec![
+            "exec".into(),
+            "--skip-git-repo-check".into(),
+            "--ephemeral".into(),
+            "--json".into(),
+            "-s".into(),
+            "read-only".into(),
+            prompt.into(),
+        ],
+        other => headless_args(other, prompt),
+    }
+}
+
+/// 解析不落盘调用的 JSON 输出 → (正文, 用量事件)。格式 2026-10-17 本机实录：
+/// - claude `--output-format json`：单个对象，`result` 是正文，`is_error` 为真时 `result` 是错误句；
+///   用量优先 `modelUsage`（按模型分），没有就用顶层 `usage` 记在所选模型上
+/// - codex `exec --json`：JSONL 事件流，`item.completed` 且 `item.type=agent_message` 的 `text`
+///   是正文（取最后一条）；`turn.completed.usage` 是本轮用量；`type=error` 的 item 是告警
+///   （配置项过时之类），只有拿不到正文时才当错误原因
+pub(crate) fn parse_oneshot_output(
+    agent: &str,
+    raw: &str,
+    model: Option<&str>,
+    day: &str,
+) -> Result<(String, Vec<crate::usage::UsageEvent>), String> {
+    use serde_json::Value;
+    let num = |v: &Value, k: &str| v.get(k).and_then(Value::as_u64).unwrap_or(0);
+    let ev = |model: &str, input: u64, output: u64, cache_read: u64, cache_write: u64| {
+        crate::usage::UsageEvent {
+            day: day.to_string(),
+            model: model.to_string(),
+            input,
+            output,
+            cache_read,
+            cache_write,
+            ..Default::default()
+        }
+    };
+    match agent {
+        "claude-code" => {
+            let v: Value = raw
+                .lines()
+                .rev()
+                .find_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
+                .filter(|v| v.get("type").and_then(Value::as_str) == Some("result"))
+                .ok_or_else(|| tail_chars(raw.trim(), 240))?;
+            let text = v.get("result").and_then(Value::as_str).unwrap_or("").trim().to_string();
+            if v.get("is_error").and_then(Value::as_bool) == Some(true) {
+                return Err(if text.is_empty() { "AI 调用失败（CLI 未给出原因）".into() } else { text });
+            }
+            let mut events = Vec::new();
+            if let Some(by_model) = v.get("modelUsage").and_then(Value::as_object) {
+                for (m, u) in by_model {
+                    events.push(ev(
+                        m,
+                        num(u, "inputTokens"),
+                        num(u, "outputTokens"),
+                        num(u, "cacheReadInputTokens"),
+                        num(u, "cacheCreationInputTokens"),
+                    ));
+                }
+            }
+            if events.is_empty() {
+                if let Some(u) = v.get("usage") {
+                    events.push(ev(
+                        model.unwrap_or(""),
+                        num(u, "input_tokens"),
+                        num(u, "output_tokens"),
+                        num(u, "cache_read_input_tokens"),
+                        num(u, "cache_creation_input_tokens"),
+                    ));
+                }
+            }
+            events.retain(|e| e.input + e.output + e.cache_read + e.cache_write > 0);
+            if text.is_empty() {
+                return Err("AI 返回为空（无文本输出）".into());
+            }
+            Ok((text, events))
+        }
+        "codex" => {
+            let mut text: Option<String> = None;
+            let mut warning: Option<String> = None;
+            let mut events = Vec::new();
+            for line in raw.lines() {
+                let Ok(v) = serde_json::from_str::<Value>(line.trim()) else {
+                    continue;
+                };
+                match v.get("type").and_then(Value::as_str) {
+                    Some("item.completed") => {
+                        let item = v.get("item").cloned().unwrap_or(Value::Null);
+                        match item.get("type").and_then(Value::as_str) {
+                            Some("agent_message") => {
+                                text = item.get("text").and_then(Value::as_str).map(str::to_string);
+                            }
+                            Some("error") => {
+                                warning = item.get("message").and_then(Value::as_str).map(str::to_string);
+                            }
+                            _ => {}
+                        }
+                    }
+                    Some("turn.completed") => {
+                        if let Some(u) = v.get("usage") {
+                            events.push(ev(
+                                model.unwrap_or(""),
+                                num(u, "input_tokens"),
+                                num(u, "output_tokens") + num(u, "reasoning_output_tokens"),
+                                num(u, "cached_input_tokens"),
+                                num(u, "cache_write_input_tokens"),
+                            ));
+                        }
+                    }
+                    Some("turn.failed") | Some("error") => {
+                        let msg = v
+                            .get("error")
+                            .and_then(|e| e.get("message"))
+                            .or_else(|| v.get("message"))
+                            .and_then(Value::as_str);
+                        if let Some(m) = msg {
+                            warning = Some(m.to_string());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            events.retain(|e| e.input + e.output + e.cache_read + e.cache_write > 0);
+            match text.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()) {
+                Some(t) => Ok((t, events)),
+                None => Err(warning.unwrap_or_else(|| "AI 返回为空（无文本输出）".into())),
+            }
+        }
+        _ => Ok((raw.trim().to_string(), Vec::new())),
+    }
+}
+
 /// 定时任务（scheduler）的无头参数：与 headless_args 同形，唯一区别是 codex 用
 /// workspace-write 沙箱、grok 加 --yolo——定时任务要在项目里写文件（如 lit-watch 的
 /// notes/inbox.md、papers/watch-seen.md），read-only 跑不了；grok headless 默认权限模式
@@ -423,14 +576,20 @@ pub(crate) fn ai_prompt_impl(
     agents::validate_launch_compatibility(&profile, selected.as_deref())?;
     let plan = agents::launch_plan(&profile, key, selected.as_deref())?;
     let mut cmd = crate::process::background_command(&binary_path);
-    let (lock_id, lock_args) = lock_headless_session(&profile.agent);
+    let ephemeral = oneshot_is_ephemeral(&profile.agent);
+    // 不落盘就没有会话文件，锁会话 id / 标 internal 都无对象
+    let (lock_id, lock_args) = if ephemeral {
+        (None, Vec::new())
+    } else {
+        lock_headless_session(&profile.agent)
+    };
     if let Some(id) = &lock_id {
         let _ = crate::sessions::mark_session_internal(&profile.agent, id);
     }
     for a in compose_headless_args(
         &profile.agent,
         &plan.args,
-        &headless_args(&profile.agent, &prompt),
+        &headless_oneshot_args(&profile.agent, &prompt),
     ) {
         cmd.arg(a);
     }
@@ -496,6 +655,29 @@ pub(crate) fn ai_prompt_impl(
         AI_TIMEOUT,
         Some(&run.id),
     );
+    // 不落盘调用：JSON 里拆出正文与用量，用量直接记账（扫描不到会话文件，重建补不回来）
+    let result = if ephemeral {
+        result.and_then(|raw| {
+            let (text, events) = parse_oneshot_output(
+                &profile.agent,
+                &raw,
+                selected.as_deref(),
+                &crate::usage::today_local(),
+            )?;
+            if let Err(e) = crate::usage::record_ephemeral_usage(
+                &profile.agent,
+                &format!("ephemeral-{}", run.id),
+                &cwd.to_string_lossy(),
+                profile.account_type == crate::profiles::AccountType::Official,
+                &events,
+            ) {
+                eprintln!("[ai] {e}");
+            }
+            Ok(text)
+        })
+    } else {
+        result
+    };
     let status = if result.is_ok() {
         "completed"
     } else if result.as_ref().err().is_some_and(|e| e.contains("已取消")) {
@@ -1890,6 +2072,7 @@ mod tests {
             api_backend: None,
             base_url: None,
             models: vec![],
+            role_models: Default::default(),
             extra_env: std::collections::HashMap::new(),
             request_policy: crate::profiles::RequestPolicy::default(),
             key_hint: None,
@@ -2196,6 +2379,57 @@ ERROR: Your access token could not be refreshed because your refresh token was r
                 .as_deref(),
             Some("abcdef12-3456-7890-abcd-ef1234567890")
         );
+    }
+
+    #[test]
+    fn oneshot_args_are_ephemeral_only_for_claude_and_codex() {
+        let claude = headless_oneshot_args("claude-code", "你好");
+        assert!(claude.contains(&"--no-session-persistence".to_string()));
+        assert!(claude.windows(2).any(|w| w == ["--output-format", "json"]));
+        let codex = headless_oneshot_args("codex", "你好");
+        assert_eq!(&codex[..2], &["exec", "--skip-git-repo-check"], "compose_headless_args 依赖前两项");
+        assert!(codex.contains(&"--ephemeral".to_string()) && codex.contains(&"--json".to_string()));
+        assert_eq!(headless_oneshot_args("kimi", "你好"), headless_args("kimi", "你好"));
+        // 定时任务不受影响：巡检运行事后要能回看
+        assert!(!headless_task_args("claude-code", "你好").contains(&"--no-session-persistence".to_string()));
+        assert!(!headless_task_args("codex", "你好").contains(&"--ephemeral".to_string()));
+    }
+
+    #[test]
+    fn parse_oneshot_claude_json() {
+        // 2026-10-17 本机实录形态（字段裁剪）
+        let ok = r#"{"type":"result","is_error":false,"result":"  好的 ","usage":{"input_tokens":5,"output_tokens":2,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"modelUsage":{"glm-5.3":{"inputTokens":120,"outputTokens":8,"cacheReadInputTokens":30,"cacheCreationInputTokens":4}}}"#;
+        let (text, ev) = parse_oneshot_output("claude-code", ok, Some("glm-5.3"), "2026-10-17").unwrap();
+        assert_eq!(text, "好的");
+        assert_eq!(ev.len(), 1);
+        assert_eq!((ev[0].model.as_str(), ev[0].input, ev[0].output, ev[0].cache_read, ev[0].cache_write), ("glm-5.3", 120, 8, 30, 4));
+        assert_eq!(ev[0].day, "2026-10-17");
+        // 没有 modelUsage 时用顶层 usage 记在所选模型上
+        let flat = r#"{"type":"result","is_error":false,"result":"x","usage":{"input_tokens":5,"output_tokens":2}}"#;
+        let (_, ev) = parse_oneshot_output("claude-code", flat, Some("m"), "d").unwrap();
+        assert_eq!((ev[0].model.as_str(), ev[0].input, ev[0].output), ("m", 5, 2));
+        // is_error：result 就是错误句（实录：未登录）
+        let err = r#"{"type":"result","is_error":true,"result":"Not logged in · Please run /login","usage":{}}"#;
+        assert_eq!(
+            parse_oneshot_output("claude-code", err, None, "d").unwrap_err(),
+            "Not logged in · Please run /login"
+        );
+    }
+
+    #[test]
+    fn parse_oneshot_codex_jsonl() {
+        // 2026-10-17 本机实录：配置告警以 error item 出现，不影响正文
+        let raw = r#"{"type":"thread.started","thread_id":"t"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Codex is ignoring 1 unrecognized configuration setting."}}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"好的"}}
+{"type":"turn.completed","usage":{"input_tokens":20513,"cached_input_tokens":9088,"cache_write_input_tokens":0,"output_tokens":23,"reasoning_output_tokens":16}}"#;
+        let (text, ev) = parse_oneshot_output("codex", raw, Some("gpt-5"), "2026-10-17").unwrap();
+        assert_eq!(text, "好的");
+        assert_eq!((ev[0].input, ev[0].output, ev[0].cache_read), (20513, 39, 9088), "与 rollout 抽取同口径：输出含推理");
+        // 没有正文：拿最后一条告警/失败当原因
+        let failed = r#"{"type":"turn.failed","error":{"message":"401 Unauthorized"}}"#;
+        assert_eq!(parse_oneshot_output("codex", failed, None, "d").unwrap_err(), "401 Unauthorized");
     }
 
     #[test]

@@ -186,6 +186,7 @@ mod tests {
             api_backend: None,
             base_url: Some(base_url.into()),
             models: vec!["claude-sonnet".into()],
+            role_models: Default::default(),
             extra_env: Default::default(),
             request_policy: crate::profiles::RequestPolicy::default(),
             key_hint: Some("···3456".into()),

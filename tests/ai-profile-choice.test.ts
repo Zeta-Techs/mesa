@@ -51,3 +51,9 @@ test("配置列表还没到时保留已存选择", () => {
     model: "glm-5.3-flashx",
   });
 });
+
+test("选项里的 agent 写展示名而不是内部 id", () => {
+  const choices = aiProfileChoices([glm], (id) => (id === "claude-code" ? "Claude Code" : id));
+  assert.equal(choices[0].label, "GLM（Claude Code · glm-5.3）");
+  assert.equal(aiProfileChoices([glm])[0].label, "GLM（claude-code · glm-5.3）", "不传映射原样显示 id");
+});

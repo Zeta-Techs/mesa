@@ -4,6 +4,7 @@ import {
   fieldClass,
   primaryActionClass,
   secondaryActionClass,
+  InlineNotice,
 } from "./PageFrame";
 import { useAppStore } from "../store";
 import { AGENTS } from "../types";
@@ -324,7 +325,7 @@ export default function AskAiModal() {
             onChange={setUseDefault}
             label="设为默认"
           />
-          {startError && <p role="alert" className="mb-2 text-xs text-err-text">{startError}</p>}
+          {startError && <InlineNotice tone="err" className="mb-2">{startError}</InlineNotice>}
           <div className="flex items-center justify-end gap-2">
             <button
               type="button"

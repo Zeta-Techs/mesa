@@ -32,6 +32,8 @@ pub struct DetectResult {
     /// false = 「聊想法只读保护」对它只剩 prompt 里的软约束，agent 可以无视——
     /// UI 据此如实标注，不让开关沉默降级（用户在头脑风暴时最依赖「它不会动我文件」这个假设）
     pub readonly_supported: bool,
+    /// 能直接在启动参数里指定的原生权限档（ask 请求批准 / auto 帮我批准 / full 完全访问，注册表 permission_args）
+    pub permission_modes: Vec<String>,
     /// 运行中模型切换命令形态（终端状态栏模型菜单；None = 无机制不显示）
     pub model_switch: Option<ModelSwitchDto>,
     /// 运行中思考档调节（档位表 + 命令模板；None = 不显示「◈ 思考」控件）
@@ -496,12 +498,20 @@ fn grok_config_overlay(profile: &Profile, model: Option<&str>) -> Option<serde_j
     // 一个都不匹配）；选中模型兜底并入，防选择器与默认模型脱节
     if !profile.models.is_empty() {
         let mut allowed = profile.models.clone();
-        if let Some(m) = model {
+        for m in model.into_iter().chain(profile.role_models.small.as_deref()) {
             if !allowed.iter().any(|x| x == m) {
                 allowed.push(m.into());
             }
         }
         models.insert("allowed_models".into(), serde_json::json!(allowed));
+    }
+    // 后台小任务的模型（grok 1.0.62 内置配置参考：models.session_summary「会话标题与摘要」、
+    // models.prompt_suggestion「输入框的下一句提示，未设走远端下发再到会话模型」）：用户全局 config 常把它们
+    // 指到别的网关 / 第一方模型（本机实例：session_summary = 另一家网关的 claude-opus），Mesa 会话的标题与摘要
+    // 就被送去那家计费。钉成连接「模型分工」的后台小模型，没指定用这次的主模型（都在 allowed_models 内）
+    if let Some(m) = profile.role_models.small.as_deref().or(model) {
+        models.insert("session_summary".into(), serde_json::json!(m));
+        models.insert("prompt_suggestion".into(), serde_json::json!(m));
     }
     // 请求策略 → [models] 全局默认（effort 键名 default_reasoning_effort，
     // 档位集见 agent_specs::effort_options）
@@ -542,6 +552,120 @@ fn grok_overlay_note() -> String {
     "api_backend / context_window 不在 grok overlay 白名单内（[model.*] 表会被静默丢弃）；渠道有二：中转 /models 目录条目带 apiBackend / contextWindow 字段，或绑定设「API 后端」后经「设为全局默认」写入 ~/.grok/config.toml 的 [model.*] 段；目录缺 contextWindow 时 grok 按 256000 计".into()
 }
 
+/// 用户级 ~/.claude/settings.json（或 CLAUDE_CONFIG_DIR）env 里出现的键名（只读，不取值）。
+/// settings 的 env 优先于进程环境：这些键 Mesa 不在 --settings 里盖掉，就会从用户全局漏进 Mesa 的会话
+fn claude_user_settings_env_keys(profile: &Profile) -> Vec<String> {
+    // 单测不读本机真实配置（结果会随机器变）：由 TEST_CLAUDE_USER_KEYS 注入
+    #[cfg(test)]
+    {
+        let _ = profile;
+        return tests::TEST_CLAUDE_USER_KEYS.with(|k| k.borrow().clone());
+    }
+    #[cfg(not(test))]
+    read_claude_user_settings_env_keys(profile)
+}
+
+#[cfg_attr(test, allow(dead_code))]
+fn read_claude_user_settings_env_keys(profile: &Profile) -> Vec<String> {
+    let dir = profile
+        .extra_env
+        .get("CLAUDE_CONFIG_DIR")
+        .cloned()
+        .or_else(|| std::env::var("CLAUDE_CONFIG_DIR").ok())
+        .filter(|d| !d.trim().is_empty())
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|h| h.join(".claude")));
+    let Some(text) = dir.and_then(|d| std::fs::read_to_string(d.join("settings.json")).ok()) else {
+        return Vec::new();
+    };
+    serde_json::from_str::<serde_json::Value>(&text)
+        .ok()
+        .and_then(|v| v.get("env").and_then(|e| e.as_object()).map(|m| m.keys().cloned().collect()))
+        .unwrap_or_default()
+}
+
+/// Claude Code 的「谁用哪个模型」整套 env（--settings 覆盖层与进程 env 共用这一份，2026-10-17 端到端核对后重写）。
+///
+/// 假网关实测（Claude 2.1.292）：Mesa 原先只按绑定名单填前几个槽位，用户全局 settings.json 里的
+/// ANTHROPIC_DEFAULT_HAIKU_MODEL / CLAUDE_CODE_SUBAGENT_MODEL 照样生效——会话标题生成、子 agent 的请求带着
+/// 全局的 glm-5.3 打到 Mesa 选的网关，换成别家网关就直接失败。所以：
+/// - 四个槽位全填：绑定名单不够四个时，空槽用这次选的模型（没选用名单第一个）补上；ANTHROPIC_SMALL_FAST_MODEL 跟 HAIKU 槽。
+/// - 子 agent 模型只在用户全局设了时才盖（设成这次的模型）：没设时保持 Claude 原生「继承主模型 / 按 frontmatter 选」。
+/// - 上下文窗口：确知 >200K 时声明；用户全局设过而这次不确知时写回 Claude 对未知模型的默认 200000，免得沿用全局的 1M。
+fn claude_model_env(profile: &Profile, model: Option<&str>, user_keys: &[String]) -> Vec<(String, String)> {
+    let mut env = Vec::new();
+    let selected = model.map(str::trim).filter(|m| !m.is_empty());
+    let fill = selected.or_else(|| profile.models.iter().map(String::as_str).find(|m| !m.trim().is_empty()));
+    // 空槽只在绑定列了模型（第三方网关）时补：没列模型 = 用 Claude 自己的别名映射，不去改它
+    let slot_fill = if profile.models.is_empty() { None } else { fill };
+    // 连接里「模型分工」指定的后台小模型 / 子 Agent 模型（RoleModels）：指定了就用，没指定跟主模型
+    let small = profile.role_models.small.as_deref();
+    let subagent = profile.role_models.subagent.as_deref();
+    const SLOTS: [&str; 4] = ["SONNET", "OPUS", "HAIKU", "FABLE"];
+    let mut haiku = None;
+    for (i, slot) in SLOTS.iter().enumerate() {
+        // haiku 别名就是 Claude 的「后台小模型」：会话标题、网页摘要等小任务用它
+        let pinned = if *slot == "HAIKU" { small } else { None };
+        let Some(m) = pinned.or(profile.models.get(i).map(String::as_str)).or(slot_fill) else {
+            continue;
+        };
+        if *slot == "HAIKU" {
+            haiku = Some(m.to_string());
+        }
+        env.push((format!("ANTHROPIC_DEFAULT_{slot}_MODEL"), m.to_string()));
+        env.push((format!("ANTHROPIC_DEFAULT_{slot}_MODEL_NAME"), format!("{} · {m}", profile.name)));
+    }
+    if let Some(fifth) = profile.models.get(4) {
+        env.push(("ANTHROPIC_CUSTOM_MODEL_OPTION".into(), fifth.clone()));
+        env.push(("ANTHROPIC_CUSTOM_MODEL_OPTION_NAME".into(), format!("{} · {fifth}", profile.name)));
+    }
+    if let Some(m) = selected {
+        env.push(("ANTHROPIC_MODEL".into(), m.to_string()));
+    }
+    if let Some(h) = haiku {
+        env.push(("ANTHROPIC_SMALL_FAST_MODEL".into(), h));
+    }
+    let user_has = |k: &str| user_keys.iter().any(|x| x == k);
+    if let Some(m) = subagent {
+        // 连接里指定了子 Agent 模型：明确写（非 FORCE，Task 参数 / frontmatter 显式选的仍可盖过它）
+        env.push(("CLAUDE_CODE_SUBAGENT_MODEL".into(), m.to_string()));
+        if user_has("CLAUDE_CODE_SUBAGENT_MODEL_FORCE") {
+            env.push(("CLAUDE_CODE_SUBAGENT_MODEL_FORCE".into(), m.to_string()));
+        }
+    } else if let Some(m) = fill {
+        for k in ["CLAUDE_CODE_SUBAGENT_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL_FORCE"] {
+            if user_has(k) {
+                env.push((k.into(), m.to_string()));
+            }
+        }
+    }
+    // 模型能力库确知「不会思考」的主模型：不发思考参数（Claude 对不认识的模型默认带 adaptive thinking，
+    // 不收这个参数的网关会 400）。假网关实测 MAX_THINKING_TOKENS=0 去掉 thinking 字段，
+    // CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING 不去（2026-10-17）
+    if selected.is_some_and(|m| {
+        crate::model_registry::model_thinking_declared_for(m, profile.gateway_id.as_deref()) == Some(false)
+    }) {
+        env.push(("MAX_THINKING_TOKENS".into(), "0".into()));
+    }
+    // 用 declared 视图：门限是 >200K，估值不当声明（见进程 env 旧注释，口径不变）
+    let declared = selected.and_then(|m| {
+        crate::model_registry::model_context_size_declared_for(m, profile.gateway_id.as_deref())
+    });
+    let ctx = match declared {
+        Some(c) if c > 200_000 => Some(c),
+        _ if user_has("CLAUDE_CODE_MAX_CONTEXT_TOKENS") || user_has("CLAUDE_CODE_AUTO_COMPACT_WINDOW") => {
+            Some(declared.unwrap_or(200_000))
+        }
+        _ => None,
+    };
+    if let Some(c) = ctx {
+        // 自动压缩窗口与上限成对注入、同值（cc-switch 校准口径）
+        env.push(("CLAUDE_CODE_MAX_CONTEXT_TOKENS".into(), c.to_string()));
+        env.push(("CLAUDE_CODE_AUTO_COMPACT_WINDOW".into(), c.to_string()));
+    }
+    env
+}
+
 /// Claude Code 的 settings.json env 会覆盖父进程 shell env。用 --settings 传入一个高优先级
 /// 覆盖层，避免用户全局配置把 Mesa 当前连接静默改回另一家模型**或另一把密钥**。
 ///
@@ -566,29 +690,8 @@ fn claude_settings_override(
             env.insert("ANTHROPIC_AUTH_TOKEN".into(), serde_json::json!(secret));
         }
     }
-    const SLOTS: [&str; 4] = ["SONNET", "OPUS", "HAIKU", "FABLE"];
-    for (model, slot) in profile.models.iter().take(4).zip(SLOTS) {
-        env.insert(
-            format!("ANTHROPIC_DEFAULT_{slot}_MODEL"),
-            serde_json::json!(model),
-        );
-        env.insert(
-            format!("ANTHROPIC_DEFAULT_{slot}_MODEL_NAME"),
-            serde_json::json!(format!("{} · {model}", profile.name)),
-        );
-    }
-    if let Some(fifth) = profile.models.get(4) {
-        env.insert(
-            "ANTHROPIC_CUSTOM_MODEL_OPTION".into(),
-            serde_json::json!(fifth),
-        );
-        env.insert(
-            "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME".into(),
-            serde_json::json!(format!("{} · {fifth}", profile.name)),
-        );
-    }
-    if let Some(selected) = model.map(str::trim).filter(|m| !m.is_empty()) {
-        env.insert("ANTHROPIC_MODEL".into(), serde_json::json!(selected));
+    for (k, v) in claude_model_env(profile, model, &claude_user_settings_env_keys(profile)) {
+        env.insert(k, serde_json::json!(v));
     }
     let body = serde_json::json!({ "env": env }).to_string();
     // 覆盖层含密钥载体：必须 0600 落盘（与 write_external_wrapper 同口径）
@@ -613,6 +716,66 @@ fn claude_settings_override(
         })?;
     schedule_wrapper_cleanup(path.clone());
     Ok(path.to_string_lossy().into_owned())
+}
+
+/// Gemini CLI 的认证方式只看用户 settings 的 `security.auth.selectedType`，环境变量只在它没设时兜底
+/// （0.64 validateNonInteractiveAuth：`configuredAuthType || getAuthTypeFromEnv()`）。2026-10-17 端到端实测：
+/// - 用户本机选过 Google 账号登录（oauth-personal）：Mesa 注入的 GEMINI_API_KEY / GOOGLE_GEMINI_BASE_URL 全被无视，
+///   拉起后直接要开浏览器登录，请求到不了所选网关；
+/// - 没选过、但注入了 GOOGLE_GEMINI_BASE_URL：环境推断出 gateway 认证，CLI 模式报「Invalid auth method selected」；
+/// - selectedType = gemini-api-key：请求按所选模型打到网关（/v1beta/models/<模型>:streamGenerateContent）。
+/// 能盖过用户设置的系统设置层（GEMINI_CLI_SYSTEM_SETTINGS_PATH）要求文件归 root 所有，普通用户写的会被静默跳过，走不通；
+/// 不替用户改配置文件——拦下来说清楚怎么改（「设为全局默认」会写 selectedType 并先备份）。
+fn gemini_auth_blocker(profile: &Profile) -> Option<String> {
+    let has_base = profile.base_url.as_deref().is_some_and(|u| !u.trim().is_empty());
+    gemini_auth_blocker_for(gemini_selected_auth_type(profile).as_deref(), has_base)
+}
+
+/// 用户 Gemini settings 的 security.auth.selectedType（只读）；单测不读本机（TEST_GEMINI_AUTH 注入）
+fn gemini_selected_auth_type(profile: &Profile) -> Option<String> {
+    #[cfg(test)]
+    {
+        let _ = profile;
+        return tests::TEST_GEMINI_AUTH.with(|k| k.borrow().clone());
+    }
+    #[cfg(not(test))]
+    {
+    let dir = profile
+        .extra_env
+        .get("GEMINI_CLI_HOME")
+        .cloned()
+        .or_else(|| std::env::var("GEMINI_CLI_HOME").ok())
+        .filter(|d| !d.trim().is_empty())
+        .map(PathBuf::from)
+        .or_else(dirs::home_dir)?;
+    let selected = std::fs::read_to_string(dir.join(".gemini").join("settings.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| {
+            v.pointer("/security/auth/selectedType")
+                .and_then(|x| x.as_str())
+                .map(str::to_string)
+        });
+    selected
+    }
+}
+
+fn gemini_auth_blocker_for(selected: Option<&str>, has_base: bool) -> Option<String> {
+    match selected {
+        Some("gemini-api-key") => None,
+        None if !has_base => None,
+        other => {
+            let now = match other {
+                Some("oauth-personal") => "用 Google 账号登录",
+                Some("vertex-ai") => "用 Vertex AI",
+                Some(_) => "用别的认证方式",
+                None => "没有选认证方式",
+            };
+            Some(format!(
+                "Gemini CLI 现在{now}，会无视这条连接的密钥和地址，请求到不了这个网关。先把 Gemini 的认证方式换成 API Key：在这条连接上点「设为全局默认」（会先备份 ~/.gemini/settings.json），或在终端运行 gemini、输入 /auth 选「Use Gemini API Key」。"
+            ))
+        }
+    }
 }
 
 pub fn launch_plan(
@@ -660,6 +823,12 @@ pub fn launch_plan(
         match &spec.launch {
             LaunchSpec::Env(env) => {
                 apply_env_inject(&mut plan, env, profile, key.as_deref(), model);
+                // gemini：认证方式不是 API Key 时注入的密钥和地址全被无视——拦下来说清楚（gemini_auth_blocker）
+                if profile.agent == "gemini" && (key.is_some() || profile.base_url.is_some()) {
+                    if let Some(msg) = gemini_auth_blocker(profile) {
+                        return Err(msg);
+                    }
+                }
                 // grok：GROK_CONFIG 是 JSON overlay（深合并进 config.toml）——模型名单
                 // 收敛 + 请求策略 [models] 全局默认，构建与白名单口径见 grok_config_overlay
                 if profile.agent == "grok" {
@@ -708,54 +877,11 @@ pub fn launch_plan(
                         plan.args.push("--effort".into());
                         plan.args.push(effort.into());
                     }
-                    // 把模型列表注册进 /model 选择器（否则选择器里只有内置别名可用）：
-                    // 前 4 个占用 opus/sonnet/haiku/fable 别名槽，_NAME 让选择器显示友好名
-                    // （profile 名 · 模型，与 kimi/codex/opencode 同口径）；
-                    // 第 5 个走唯一的 CUSTOM_MODEL_OPTION；更多模型只能靠 /model <id> 手输
-                    const SLOTS: [&str; 4] = ["SONNET", "OPUS", "HAIKU", "FABLE"];
-                    for (m, slot) in profile.models.iter().take(4).zip(SLOTS) {
-                        plan.env
-                            .push((format!("ANTHROPIC_DEFAULT_{slot}_MODEL"), m.clone()));
-                        plan.env.push((
-                            format!("ANTHROPIC_DEFAULT_{slot}_MODEL_NAME"),
-                            format!("{} · {m}", profile.name),
-                        ));
-                    }
-                    if let Some(fifth) = profile.models.get(4) {
-                        plan.env
-                            .push(("ANTHROPIC_CUSTOM_MODEL_OPTION".into(), fifth.clone()));
-                        plan.env.push((
-                            "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME".into(),
-                            format!("{} · {fifth}", profile.name),
-                        ));
-                    }
-                    // 不强行设置 CLAUDE_CODE_SUBAGENT_MODEL：Claude Code 默认让 Task
-                    // 子 agent 继承主模型，且 frontmatter/Task 参数仍可按任务显式选择。
-                    // 把绑定列表的第三个模型写入全局环境会压过这些原生选择，可能造成能力丢失。
-                    // 长上下文声明（与设为全局同条件同键）：claude 对不认识的第三方模型按
-                    // 200K 上下文假设，注册链确知更大时必须显式声明，否则长会话提前 compact
-                    if let Some(m) = model {
-                        // 用 declared 视图：门限是 >200K，而 fallback 的 256K/1M 两档
-                        // 与 BUILTIN_CAPS 里 kimi-k2.6/2.7/k3 的声明值重复，对真实模型
-                        // 两视图同值；差别只在中转改名模型——那时 fallback 的 128K 本就
-                        // 过不了门限，所以切换不改变任何现有行为，只是不再把估值当声明。
-                        if let Some(ctx) = crate::model_registry::model_context_size_declared_for(
-                            m,
-                            profile.gateway_id.as_deref(),
-                        ) {
-                            if ctx > 200_000 {
-                                plan.env.push((
-                                    "CLAUDE_CODE_MAX_CONTEXT_TOKENS".into(),
-                                    ctx.to_string(),
-                                ));
-                                // 自动压缩窗口与上限成对注入、同值（cc-switch 校准口径）：
-                                // Claude Code 用它算 auto-compact 触发点，只抬上限不抬它，
-                                // 长会话的压缩触发点仍留在旧窗口档
-                                plan.env.push((
-                                    "CLAUDE_CODE_AUTO_COMPACT_WINDOW".into(),
-                                    ctx.to_string(),
-                                ));
-                            }
+                    // 槽位注册（/model 选择器列出绑定的模型）、空槽补齐、子 agent / 上下文窗口防全局泄漏：
+                    // 与 --settings 覆盖层同一份（claude_model_env）。进程 env 也写一份，给不读 settings 的子进程用
+                    for (k, v) in claude_model_env(profile, model, &claude_user_settings_env_keys(profile)) {
+                        if k != "ANTHROPIC_MODEL" {
+                            plan.env.push((k, v));
                         }
                     }
                 }
@@ -846,6 +972,11 @@ pub fn launch_plan(
                     let mut config = serde_json::json!({ "provider": providers });
                     if let Some(m) = model {
                         config["model"] = serde_json::json!(format!("{pid}/{m}"));
+                    }
+                    // 连接「模型分工」的后台小模型 → small_model（会话标题这类小任务）；没指定时不写，
+                    // opencode 对自定义 provider 回落到主模型（假网关实测标题请求带主模型，2026-10-17）
+                    if let Some(small) = profile.role_models.small.as_deref() {
+                        config["small_model"] = serde_json::json!(format!("{pid}/{small}"));
                     }
                     // 请求策略（config schema 实证：model options 含 temperature/topP/
                     // maxOutputTokens/reasoningEffort；provider options 支持 headers）。
@@ -1156,6 +1287,41 @@ pub fn validate_launch_compatibility(
     Ok(())
 }
 
+/// Grok 的思考档只对「目录 / config 里声明了档位」的模型生效：别家模型（网关里的 glm、deepseek…）
+/// `--reasoning-effort` 与 `[models].default_reasoning_effort` 都被忽略，CLI 原话
+/// 「<模型> has no effort levels; ignoring --effort/--reasoning-effort」（1.0.62 假网关实测，2026-10-17）。
+/// 声明的唯一可达位置是用户 ~/.grok/config.toml 的 [model."<id>"]（overlay 白名单不收），
+/// 「设为全局默认」会写 supports_reasoning_effort + reasoning_efforts。只读判断，供求交器决定给不给档
+pub(crate) fn grok_model_declares_effort(model: &str) -> bool {
+    #[cfg(test)]
+    {
+        let _ = model;
+        return false;
+    }
+    #[cfg(not(test))]
+    {
+        let home = std::env::var_os("GROK_HOME")
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| dirs::home_dir().map(|h| h.join(".grok")));
+        let Some(text) = home.and_then(|h| std::fs::read_to_string(h.join("config.toml")).ok()) else {
+            return false;
+        };
+        let Ok(v) = toml::from_str::<toml::Value>(&text) else {
+            return false;
+        };
+        v.get("model")
+            .and_then(|m| m.get(model))
+            .is_some_and(|entry| {
+                entry.get("supports_reasoning_effort").and_then(|x| x.as_bool()) == Some(true)
+                    || entry
+                        .get("reasoning_efforts")
+                        .and_then(|x| x.as_array())
+                        .is_some_and(|a| !a.is_empty())
+            })
+    }
+}
+
 fn grok_model_config_matches(
     text: &str,
     model: &str,
@@ -1191,33 +1357,56 @@ fn grok_model_config_matches(
 /// 注册表 readonly_args。codex 特殊：只读要替换默认的 `-s workspace-write`
 ///（重复 -s 哪个生效未文档化，不赌后者生效——先剔除原沙箱参数对再追加）。
 /// 返回 None = 该 CLI 无只读/计划模式参数；discuss 启动必须拒绝，不得沿用可写参数。
+/// 剔除 `-s/--sandbox <值>` 参数对（值是分离的下一个参数）：codex 重复 -s 的生效顺序未文档化，换沙箱前先剔
+fn without_sandbox_pair(base_args: &[String]) -> Vec<String> {
+    let mut filtered = Vec::with_capacity(base_args.len());
+    let mut skip_next = false;
+    for a in base_args {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        if a == "-s" || a == "--sandbox" {
+            skip_next = true;
+            continue;
+        }
+        filtered.push(a.clone());
+    }
+    filtered
+}
+
 pub fn readonly_launch_args(agent_id: &str, base_args: &[String]) -> Option<Vec<String>> {
     let spec = agent_spec(agent_id)?;
     if spec.readonly_args.is_empty() {
         return None;
     }
     let mut args: Vec<String> = if agent_id == "codex" {
-        // 剔除 `-s/--sandbox <值>` 参数对（值是分离的下一个参数）
-        let mut filtered = Vec::with_capacity(base_args.len());
-        let mut skip_next = false;
-        for a in base_args {
-            if skip_next {
-                skip_next = false;
-                continue;
-            }
-            if a == "-s" || a == "--sandbox" {
-                skip_next = true;
-                continue;
-            }
-            filtered.push(a.clone());
-        }
-        filtered
+        without_sandbox_pair(base_args)
     } else {
         base_args.to_vec()
     };
     for a in spec.readonly_args {
         args.push((*a).into());
     }
+    Some(args)
+}
+
+/// 本机原生权限档（ask / auto / full）的启动参数；这家没有该档返回 None（调用方拒绝启动，不静默降级）。
+/// 自带 `-s` 的档（codex full）先剔除 Mesa 默认注入的沙箱参数对
+pub fn permission_launch_args(agent_id: &str, base_args: &[String], mode: &str) -> Option<Vec<String>> {
+    let spec = agent_spec(agent_id)?;
+    let (_, extra) = spec.permission_args.iter().find(|(m, _)| *m == mode)?;
+    // 自带沙箱的档要先剔掉默认的 `-s workspace-write`：codex `--approve-for-me` 自己用 workspace-write，
+    // 与 -s 同给时 codex 0.163 直接拒绝启动（2026-10-18 聊天层第三期 PTY 实录：「--sandbox cannot be used with --approve-for-me」）
+    let mut args = if extra
+        .iter()
+        .any(|a| *a == "-s" || *a == "--sandbox" || *a == "--approve-for-me")
+    {
+        without_sandbox_pair(base_args)
+    } else {
+        base_args.to_vec()
+    };
+    args.extend(extra.iter().map(|a| (*a).to_string()));
     Some(args)
 }
 
@@ -2193,7 +2382,6 @@ pub fn resume_command_line(agent_id: &str, session_id: &str, cwd: &str) -> Resul
 /// model_provider 在 config.toml 里找定义，缺失即报「Model provider `X` not found」
 /// 拒绝继续（2026-08-31 实测）。内置 "openai" 恒可用、不在表内；
 /// 文件缺失/损坏返回空表，前端对内置名以外的渠道保守置灰。
-#[tauri::command]
 pub fn codex_client_config_providers() -> Vec<String> {
     let Some(home) = dirs::home_dir() else {
         return Vec::new();
@@ -2389,6 +2577,14 @@ pub fn digest_external_terminal(
     )
 }
 
+/// 应用装在哪：/Applications 或用户自己的 ~/Applications（不用管理员权限装的 iTerm / Ghostty 常在后者，
+/// 原先只认 /Applications，装在 ~/Applications 的报「未安装」）
+#[cfg(target_os = "macos")]
+fn mac_app_installed(bundle: &str) -> bool {
+    std::path::Path::new("/Applications").join(bundle).exists()
+        || dirs::home_dir().is_some_and(|h| h.join("Applications").join(bundle).exists())
+}
+
 #[cfg(target_os = "macos")]
 fn open_external_terminal(cmd: &str, pref: &str, cwd: &str, wrapper: &Path) -> Result<(), String> {
     match pref {
@@ -2396,17 +2592,15 @@ fn open_external_terminal(cmd: &str, pref: &str, cwd: &str, wrapper: &Path) -> R
         "iterm" => open_iterm(cmd),
         "terminal" => open_terminal_app(cmd),
         // auto：Ghostty → iTerm → Terminal.app
-        _ if std::path::Path::new("/Applications/Ghostty.app").exists() => {
-            open_ghostty(cmd, cwd, wrapper)
-        }
-        _ if std::path::Path::new("/Applications/iTerm.app").exists() => open_iterm(cmd),
+        _ if mac_app_installed("Ghostty.app") => open_ghostty(cmd, cwd, wrapper),
+        _ if mac_app_installed("iTerm.app") => open_iterm(cmd),
         _ => open_terminal_app(cmd),
     }
 }
 
 #[cfg(target_os = "macos")]
 fn open_ghostty(cmd: &str, cwd: &str, wrapper: &Path) -> Result<(), String> {
-    if !std::path::Path::new("/Applications/Ghostty.app").exists() {
+    if !mac_app_installed("Ghostty.app") {
         return Err("未安装 Ghostty（设置页改选其他终端）".into());
     }
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
@@ -2466,25 +2660,51 @@ fn open_ghostty(cmd: &str, cwd: &str, wrapper: &Path) -> Result<(), String> {
 
 #[cfg(target_os = "macos")]
 fn open_iterm(cmd: &str) -> Result<(), String> {
-    if !std::path::Path::new("/Applications/iTerm.app").exists() {
+    if !mac_app_installed("iTerm.app") {
         return Err("未安装 iTerm2（设置页改选其他终端）".into());
     }
-    let escaped = applescript_escape(cmd);
-    spawn_status(
-        Command::new("osascript").args([
-            "-e",
-            "tell application \"iTerm\"",
-            "-e",
-            "activate",
-            "-e",
-            "create window with default profile",
-            "-e",
-            &format!("tell current session of current window to write text \"{escaped}\""),
-            "-e",
-            "end tell",
-        ]),
-        "iTerm",
-    )
+    // iTerm2 的进程名是 iTerm2（应用名 iTerm）
+    let running = Command::new("pgrep")
+        .args(["-x", "iTerm2"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    let mut args = Vec::new();
+    for line in iterm_script(cmd, running) {
+        args.push("-e".to_string());
+        args.push(line);
+    }
+    spawn_status(Command::new("osascript").args(&args), "iTerm")
+}
+
+/// iTerm2 AppleScript：命令写进**刚建的那个窗口**（用 create window 的返回值，不用 current window——
+/// 别的窗口抢到焦点时，旧写法会把命令打进用户正在用的窗口）。iTerm 没在运行时，拉起后它自己会开一个窗口：
+/// 等它出来直接用，免得一次出现两个窗口（等 3 秒还没有再自己建）。
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+fn iterm_script(cmd: &str, running: bool) -> Vec<String> {
+    let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
+    let mut lines = vec!["tell application \"iTerm\"".to_string(), "activate".to_string()];
+    if running {
+        lines.push("set w to (create window with default profile)".into());
+    } else {
+        lines.extend(
+            [
+                "repeat 30 times",
+                "if (count of windows) > 0 then exit repeat",
+                "delay 0.1",
+                "end repeat",
+                "if (count of windows) > 0 then",
+                "set w to current window",
+                "else",
+                "set w to (create window with default profile)",
+                "end if",
+            ]
+            .map(String::from),
+        );
+    }
+    lines.push(format!("tell current session of w to write text \"{escaped}\""));
+    lines.push("end tell".into());
+    lines
 }
 
 /// 系统自带 Terminal.app 兜底（do script 本身跑在 login shell 里）
@@ -2766,6 +2986,11 @@ fn detect_one(spec: &'static AgentSpec) -> DetectResult {
         binary_path,
         version,
         readonly_supported: !spec.readonly_args.is_empty(),
+        permission_modes: spec
+            .permission_args
+            .iter()
+            .map(|(m, _)| (*m).to_string())
+            .collect(),
         model_switch: match spec.model_switch {
             crate::agent_specs::ModelSwitch::Direct(t) => {
                 Some(ModelSwitchDto::Direct(t.to_string()))
@@ -3296,6 +3521,7 @@ mod tests {
             api_backend: None,
             base_url: base_url.map(|s| s.into()),
             models: vec![],
+            role_models: Default::default(),
             extra_env: std::collections::HashMap::new(),
             request_policy: crate::profiles::RequestPolicy::default(),
             key_hint: None,
@@ -3309,6 +3535,174 @@ mod tests {
             model_sync_note: None,
             provider_override: None,
         }
+    }
+
+    thread_local! {
+        pub(super) static TEST_CLAUDE_USER_KEYS: std::cell::RefCell<Vec<String>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+        // 默认当作已选 API Key（其余 gemini 单测测的是注入本身）
+        pub(super) static TEST_GEMINI_AUTH: std::cell::RefCell<Option<String>> =
+            std::cell::RefCell::new(Some("gemini-api-key".into()));
+    }
+
+    #[test]
+    fn gemini_api_binding_refuses_when_cli_auth_ignores_env() {
+        // 端到端实测：oauth-personal 时 Mesa 注入的密钥和地址全被无视；没选认证方式但带地址时 CLI 报 Invalid auth
+        assert!(gemini_auth_blocker_for(Some("oauth-personal"), true).unwrap().contains("Google 账号"));
+        assert!(gemini_auth_blocker_for(None, true).is_some());
+        assert!(gemini_auth_blocker_for(Some("gemini-api-key"), true).is_none());
+        assert!(gemini_auth_blocker_for(None, false).is_none(), "官方 Gemini API（不带地址）靠环境变量就行");
+        let p = profile("gemini", Some("https://gw.example"));
+        TEST_GEMINI_AUTH.with(|k| *k.borrow_mut() = Some("oauth-personal".into()));
+        let err = launch_plan(&p, Some("sk".into()), Some("m")).unwrap_err();
+        TEST_GEMINI_AUTH.with(|k| *k.borrow_mut() = Some("gemini-api-key".into()));
+        assert!(err.contains("设为全局默认"));
+    }
+
+    #[test]
+    fn claude_fills_empty_slots_and_blocks_global_leaks() {
+        // 两个模型的绑定：HAIKU / FABLE 槽原先空着，用户全局的 glm-5.3 会漏进会话标题、小模型任务
+        let mut p = profile("claude-code", Some("https://gw.example/anthropic"));
+        p.models = vec!["m1".into(), "m2".into()];
+        let plan = launch_plan(&p, Some("sk".into()), Some("m2")).unwrap();
+        let settings = read_settings_override(&plan);
+        assert_eq!(settings["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"], "m1");
+        assert_eq!(settings["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"], "m2");
+        assert_eq!(settings["env"]["ANTHROPIC_DEFAULT_HAIKU_MODEL"], "m2", "空槽用这次选的模型补");
+        assert_eq!(settings["env"]["ANTHROPIC_DEFAULT_FABLE_MODEL"], "m2");
+        assert_eq!(settings["env"]["ANTHROPIC_SMALL_FAST_MODEL"], "m2");
+        // 用户全局没设子 agent 模型：不盖，保留 Claude 原生继承
+        assert!(settings["env"].get("CLAUDE_CODE_SUBAGENT_MODEL").is_none());
+        // 用户全局设了（实测会把子 agent 请求带到全局模型上）：盖成这次的模型；上下文窗口写回默认 200K
+        TEST_CLAUDE_USER_KEYS.with(|k| {
+            *k.borrow_mut() = vec![
+                "CLAUDE_CODE_SUBAGENT_MODEL".into(),
+                "CLAUDE_CODE_MAX_CONTEXT_TOKENS".into(),
+            ]
+        });
+        let plan = launch_plan(&p, Some("sk".into()), Some("m2")).unwrap();
+        TEST_CLAUDE_USER_KEYS.with(|k| k.borrow_mut().clear());
+        let settings = read_settings_override(&plan);
+        assert_eq!(settings["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "m2");
+        assert_eq!(settings["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "200000");
+        assert_eq!(settings["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "200000");
+    }
+
+    #[test]
+    fn role_models_route_small_and_subagent_per_agent() {
+        let roles = crate::profiles::RoleModels {
+            small: Some("cheap".into()),
+            subagent: Some("sub".into()),
+        };
+        // Claude：haiku 槽 + SMALL_FAST 用后台小模型；子 Agent 显式写
+        let mut p = profile("claude-code", Some("https://gw.example/anthropic"));
+        p.models = vec!["main".into(), "cheap".into(), "sub".into()];
+        p.role_models = roles.clone();
+        let plan = launch_plan(&p, Some("sk".into()), Some("main")).unwrap();
+        let settings = read_settings_override(&plan);
+        assert_eq!(settings["env"]["ANTHROPIC_DEFAULT_HAIKU_MODEL"], "cheap");
+        assert_eq!(settings["env"]["ANTHROPIC_SMALL_FAST_MODEL"], "cheap");
+        assert_eq!(settings["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "sub");
+        // Grok：会话标题 / 输入提示钉到后台小模型；没指定时钉主模型（防用户全局指到别家网关）
+        let mut g = profile("grok", Some("https://gw.example/v1"));
+        g.models = vec!["main".into(), "cheap".into()];
+        g.role_models = roles.clone();
+        let overlay = grok_config_overlay(&g, Some("main")).unwrap();
+        assert_eq!(overlay["models"]["session_summary"], "cheap");
+        assert_eq!(overlay["models"]["prompt_suggestion"], "cheap");
+        g.role_models = Default::default();
+        let overlay = grok_config_overlay(&g, Some("main")).unwrap();
+        assert_eq!(overlay["models"]["session_summary"], "main");
+        // OpenCode：small_model
+        let mut o = profile("opencode", Some("https://gw.example/v1"));
+        o.models = vec!["main".into(), "cheap".into()];
+        o.role_models = roles;
+        let plan = launch_plan(&o, Some("sk".into()), Some("main")).unwrap();
+        let cfg: serde_json::Value = serde_json::from_str(
+            &plan.env.iter().find(|(k, _)| k == "OPENCODE_CONFIG_CONTENT").unwrap().1,
+        )
+        .unwrap();
+        assert!(cfg["small_model"].as_str().unwrap().ends_with("/cheap"));
+    }
+
+    #[test]
+    fn claude_skips_thinking_for_models_declared_non_thinking() {
+        // deepseek-chat 内置能力表确知不会思考：不发 adaptive thinking（不收的网关会 400）
+        let mut p = profile("claude-code", Some("https://gw.example/anthropic"));
+        p.models = vec!["deepseek-chat".into()];
+        let plan = launch_plan(&p, Some("sk".into()), Some("deepseek-chat")).unwrap();
+        let settings = read_settings_override(&plan);
+        assert_eq!(settings["env"]["MAX_THINKING_TOKENS"], "0");
+        let mut p = profile("claude-code", Some("https://gw.example/anthropic"));
+        p.models = vec!["glm-5.3".into()];
+        let plan = launch_plan(&p, Some("sk".into()), Some("glm-5.3")).unwrap();
+        assert!(read_settings_override(&plan)["env"].get("MAX_THINKING_TOKENS").is_none());
+    }
+
+    /// 手动跑的端到端核对（2026-10-17 用户：查清各家 CLI 里 Mesa 能否正确配置模型）：
+    /// 按假网关地址给每家生成真实启动计划，写成 JSON，由 scripts/e2e-model-routing/drive.py 拿去真起 CLI，
+    /// 看请求里带的模型、打到的路径对不对。`E2E_BASE=http://127.0.0.1:端口 E2E_OUT=计划.json
+    /// cargo test --lib e2e_dump_launch_plans -- --ignored`
+    #[test]
+    #[ignore = "手动跑：配合 scripts/e2e-model-routing/"]
+    fn e2e_dump_launch_plans() {
+        let base = std::env::var("E2E_BASE").expect("E2E_BASE");
+        let out = std::env::var("E2E_OUT").expect("E2E_OUT");
+        // (agent, 协议, base_url 后缀)：Anthropic 协议的 base 不带 /v1（CLI 自己拼 /v1/messages），
+        // OpenAI / Responses 协议带 /v1，Gemini 由 CLI 拼 /v1beta
+        let cases: [(&str, Option<&str>, &str); 9] = [
+            ("claude-code", None, ""),
+            ("codebuddy", None, "/v1"),
+            ("codex", None, "/v1"),
+            ("qwen", Some("openai"), "/v1"),
+            ("kimi", Some("openai"), "/v1"),
+            ("opencode", None, "/v1"),
+            ("grok", None, "/v1"),
+            ("gemini", None, ""),
+            ("cursor", None, ""),
+        ];
+        let mut all = serde_json::Map::new();
+        for (agent, proto, suffix) in cases {
+            let mut p = profile(agent, Some(&format!("{base}/{agent}{suffix}")));
+            // 端到端要看真实机器上的全局配置会不会漏进来：读本机 ~/.claude/settings.json 的键名
+            let keys = read_claude_user_settings_env_keys(&p);
+            TEST_CLAUDE_USER_KEYS.with(|k| *k.borrow_mut() = keys);
+            p.protocol = proto.map(Into::into);
+            p.name = "E2E".into();
+            p.models = vec!["e2e-default".into(), "e2e-picked".into()];
+            // E2E_SMALL=e2e-default：核对「模型分工」的后台小模型是否真被用于标题 / 摘要
+            if let Ok(small) = std::env::var("E2E_SMALL") {
+                p.role_models.small = Some(small);
+            }
+            // E2E_EFFORT=high：同时核对思考档在各家线上的形态（别家模型能不能吃到）
+            if let Ok(effort) = std::env::var("E2E_EFFORT") {
+                p.request_policy.reasoning_effort = Some(effort);
+            }
+            let plan = launch_plan(&p, Some("sk-e2e-test".into()), Some("e2e-picked"));
+            all.insert(
+                agent.into(),
+                match plan {
+                    Ok(plan) => {
+                        // 聊天层权限四档的启动参数（pty.rs 同一处拼法），第三期逐家抓屏用
+                        let tiers: serde_json::Map<String, serde_json::Value> = ["ask", "auto", "full"]
+                            .iter()
+                            .filter_map(|m| {
+                                permission_launch_args(agent, &plan.args, m)
+                                    .map(|a| ((*m).to_string(), serde_json::json!(a)))
+                            })
+                            .collect();
+                        serde_json::json!({
+                            "env": plan.env,
+                            "args": plan.args,
+                            "env_remove": plan.env_remove,
+                            "permission": tiers,
+                        })
+                    }
+                    Err(e) => serde_json::json!({ "error": e }),
+                },
+            );
+        }
+        std::fs::write(out, serde_json::to_string_pretty(&all).unwrap()).unwrap();
     }
 
     #[test]
@@ -3343,7 +3737,7 @@ mod tests {
             "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME".into(),
             "测试 · m5".into()
         )));
-        // 子 agent 不被 Mesa 固定到绑定列表中的任意模型，保留 Claude 原生选择链
+        // 用户全局没设子 agent 模型时，不被 Mesa 固定到绑定列表中的任意模型，保留 Claude 原生选择链
         assert!(!plan
             .env
             .iter()
@@ -3970,6 +4364,44 @@ api_backend = "responses"
         let bare = launch_plan(&p, None, None).unwrap();
         assert!(bare.args.is_empty());
         assert!(bare.env.is_empty());
+    }
+
+    #[test]
+    fn permission_launch_args_per_agent() {
+        assert_eq!(
+            permission_launch_args("claude-code", &[], "full").unwrap(),
+            vec!["--permission-mode", "bypassPermissions"]
+        );
+        assert_eq!(
+            permission_launch_args("claude-code", &[], "auto").unwrap(),
+            vec!["--permission-mode", "auto"]
+        );
+        assert_eq!(
+            permission_launch_args("qwen", &[], "auto").unwrap(),
+            vec!["--approval-mode", "auto"]
+        );
+        assert_eq!(permission_launch_args("kimi", &[], "auto").unwrap(), vec!["--yolo"]);
+        assert_eq!(permission_launch_args("cursor", &[], "auto").unwrap(), vec!["--auto-review"]);
+        // 没有该档：拒绝，不静默退回本机默认
+        assert!(permission_launch_args("cursor", &[], "ask").is_none());
+        assert!(permission_launch_args("gemini", &[], "auto").is_none());
+        assert!(permission_launch_args("opencode", &[], "auto").is_none());
+        // 旧的「自动改文件」档已并掉
+        assert!(permission_launch_args("claude-code", &[], "auto_edit").is_none());
+        // codex：ask 保留默认沙箱；auto（--approve-for-me 自带 workspace-write，与 -s 互斥）与 full 换掉 -s workspace-write
+        let base: Vec<String> = vec!["-c".into(), "x=1".into(), "-s".into(), "workspace-write".into()];
+        assert_eq!(
+            permission_launch_args("codex", &base, "ask").unwrap(),
+            vec!["-c", "x=1", "-s", "workspace-write", "-a", "on-request"]
+        );
+        assert_eq!(
+            permission_launch_args("codex", &base, "auto").unwrap(),
+            vec!["-c", "x=1", "--approve-for-me"]
+        );
+        assert_eq!(
+            permission_launch_args("codex", &base, "full").unwrap(),
+            vec!["-c", "x=1", "-a", "never", "-s", "danger-full-access"]
+        );
     }
 
     #[test]
@@ -5426,6 +5858,21 @@ api_backend = "responses"
     }
 
     #[cfg(unix)]
+    #[test]
+    fn iterm_script_writes_into_the_window_it_created() {
+        let cmd = r#"cd '/Users/a/Mesa project' && /bin/sh '/x/launch "q".sh'"#;
+        let warm = iterm_script(cmd, true);
+        assert!(warm.contains(&"set w to (create window with default profile)".to_string()));
+        assert!(!warm.iter().any(|l| l.contains("current window")), "不能写进当前焦点窗口");
+        let last = &warm[warm.len() - 2];
+        assert!(last.starts_with("tell current session of w to write text \""));
+        assert!(last.contains(r#"launch \"q\".sh"#), "双引号要转义：{last}");
+        // 冷启动：等 iTerm 自己开的窗口，不另建第二个
+        let cold = iterm_script(cmd, false);
+        assert!(cold.iter().any(|l| l == "set w to current window"));
+        assert!(cold.iter().any(|l| l.starts_with("repeat 30 times")));
+    }
+
     #[test]
     fn external_wrapper_command_does_not_single_quote_tilde() {
         let wrapper = Path::new("/tmp/ccode-wrapper.sh");
