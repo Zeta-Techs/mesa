@@ -5873,6 +5873,7 @@ api_backend = "responses"
         assert!(cold.iter().any(|l| l.starts_with("repeat 30 times")));
     }
 
+    #[cfg(unix)]
     #[test]
     fn external_wrapper_command_does_not_single_quote_tilde() {
         let wrapper = Path::new("/tmp/ccode-wrapper.sh");

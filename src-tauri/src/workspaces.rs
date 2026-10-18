@@ -7339,6 +7339,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    #[cfg(unix)]
     #[test]
     fn machine_acceptance_same_ids_rejects_outside_paths_and_symlinks() {
         use std::os::unix::fs::symlink;
