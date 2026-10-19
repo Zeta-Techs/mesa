@@ -5573,6 +5573,45 @@ pub async fn session_tail_state(agent: String, file_path: String) -> String {
         .unwrap_or_else(|_| "unknown".into())
 }
 
+/// Claude 会话里最近一次记下的权限模式（`permission-mode` 行，或 user 行上的 permissionMode 字段）。
+/// 运行中在终端切了模式（审批菜单里「切到 auto」、Shift+Tab）时，聊天层权限徽标靠它跟上
+/// （2026-10-19 用户：点了切换，终端变了，聊天层还是原来那档）。别家暂不读，返回 None。
+fn claude_permission_mode(lines: &[String]) -> Option<String> {
+    for line in lines.iter().rev() {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if v.get("isSidechain").and_then(|x| x.as_bool()) == Some(true) {
+            continue;
+        }
+        if get_str(&v, "type") == Some("permission-mode") {
+            if let Some(m) = get_str(&v, "permissionMode") {
+                return Some(m.to_string());
+            }
+        }
+        if get_str(&v, "type") == Some("user") {
+            if let Some(m) = get_str(&v, "permissionMode") {
+                return Some(m.to_string());
+            }
+        }
+    }
+    None
+}
+
+#[tauri::command]
+pub async fn session_permission_mode(agent: String, file_path: String) -> Option<String> {
+    if agent != "claude-code" {
+        return None;
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        // Claude 每轮可能写一行几百 KB 的附件，窗口放宽些；permission-mode 行每轮都会再写
+        claude_permission_mode(&last_lines(Path::new(&file_path), 512 * 1024))
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 #[tauri::command]
 pub async fn get_session_conversation(agent: String, file_path: String) -> Vec<ChatMessageDto> {
     conversation_impl(&agent, &file_path)
@@ -7965,6 +8004,20 @@ mod tests {
         assert_eq!(flags, vec![true, false]);
         let json = serde_json::to_string(&msgs).unwrap();
         assert_eq!(json.matches("isError").count(), 1, "没出错的块不带这个字段：{json}");
+    }
+
+    #[test]
+    fn claude_permission_mode_reads_latest_switch() {
+        // 2026-10-19 用户会话：审批时选了切到 auto，文件尾部写 permission-mode auto
+        let lines = s(&[
+            r#"{"type":"permission-mode","permissionMode":"default"}"#,
+            r#"{"type":"user","permissionMode":"default","message":{"role":"user","content":"Mesa是什么"}}"#,
+            r#"{"type":"mode","mode":"normal"}"#,
+            r#"{"type":"permission-mode","permissionMode":"auto"}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"好"}]}}"#,
+        ]);
+        assert_eq!(claude_permission_mode(&lines).as_deref(), Some("auto"));
+        assert_eq!(claude_permission_mode(&s(&[r#"{"type":"assistant","message":{}}"#])), None);
     }
 
     #[test]

@@ -528,6 +528,7 @@ pub fn run() {
             internal_sessions::cleanup_internal_sessions,
             sessions::delete_project_sessions,
             sessions::session_tail_state,
+            sessions::session_permission_mode,
             sessions::export_session_markdown,
             session_slim::session_slim_inspect,
             session_slim::session_slim_apply,

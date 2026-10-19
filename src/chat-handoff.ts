@@ -216,6 +216,24 @@ export function slashCommandRecorded(
   });
 }
 
+/**
+ * Claude 会话文件里的权限模式 → 聊天权限徽标的档（与 cli_permission.rs claude_note 同一张表）。
+ * 只认三档能对上的；plan（只讨论由 Mesa 启动参数保证）、acceptEdits、dontAsk 对不上，返回 null 不动徽标。
+ */
+export function claudeModeTier(mode: string | null | undefined): "ask" | "auto" | "full" | null {
+  switch (mode) {
+    case "default":
+    case "manual":
+      return "ask";
+    case "auto":
+      return "auto";
+    case "bypassPermissions":
+      return "full";
+    default:
+      return null;
+  }
+}
+
 /** 斜杠发出后要不要露出 TUI：无参 /model、/models、/login 会唤选择器或登录页 */
 export function slashHandoff(
   text: string,

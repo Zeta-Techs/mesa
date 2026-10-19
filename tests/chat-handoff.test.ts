@@ -5,6 +5,7 @@ import {
   agentHasHooks,
   approvalExtraHint,
   chatMessageKey,
+  claudeModeTier,
   chatHeaderStatus,
   chatWaitKind,
   chatWaitText,
@@ -347,4 +348,13 @@ test("普通提问、没有时间戳、助手的命令块都不走这条路", ()
     ]),
     true,
   );
+});
+
+test("Claude 会话里的权限模式对上聊天徽标三档；对不上的不动徽标", () => {
+  assert.equal(claudeModeTier("default"), "ask");
+  assert.equal(claudeModeTier("auto"), "auto");
+  assert.equal(claudeModeTier("bypassPermissions"), "full");
+  assert.equal(claudeModeTier("acceptEdits"), null);
+  assert.equal(claudeModeTier("plan"), null);
+  assert.equal(claudeModeTier(null), null);
 });

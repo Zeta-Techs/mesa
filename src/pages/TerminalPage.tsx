@@ -67,6 +67,7 @@ import {
   confirmHandoffEvent,
   hasAssistantText,
   mergeConversationPages,
+  claudeModeTier,
   placePendingUsers,
   shouldAutoPeek,
   slashCommandRecorded,
@@ -531,6 +532,9 @@ export interface SessionLinkState {
   trustPrompt: TrustPrompt | null;
   /** 聊天层发切换命令后，CLI 弹出的确认 / 选择菜单（发命令后几秒内才扫，tui-menu.ts） */
   menuPrompt: TuiMenu | null;
+  /** 运行中在终端里换了权限模式（Claude 审批菜单里「切到 auto」、Shift+Tab）：会话文件记下的新模式 + 序号，
+   *  父级按序号只应用一次到标签的权限档（聊天徽标跟上）；没换过为 null */
+  cliModeSwitch: { mode: string; seq: number } | null;
   /** 终端里开着一个只能在终端看、按 Esc 关的面板（/cost、/usage 的 Settings 面板等，tui-panel.ts） */
   tuiPanel: boolean;
   /** 连接出问题（额度 / 限流 / 钥匙 / 服务 / 模型；conn-issue.ts 扫终端画面认出）+ 可换的同家连接 */
@@ -2030,6 +2034,9 @@ const TerminalView = memo(function TerminalView({
     }
     return parseTuiMenu(lines);
   }
+  // 终端里换权限模式的跟随（fetchConversation 读会话文件；基线 = 这个文件第一次读到的模式）
+  const permBaselineRef = useRef<{ file: string; mode: string } | null>(null);
+  const [cliModeSwitch, setCliModeSwitch] = useState<{ mode: string; seq: number } | null>(null);
   // 终端里开着的面板（tui-panel.ts）：跟菜单同一次扫屏认；开着时一直扫到它关掉
   const [tuiPanel, setTuiPanel] = useState(false);
   const tuiPanelRef = useRef(false);
@@ -2330,6 +2337,7 @@ const TerminalView = memo(function TerminalView({
       confirmDetail,
       trustPrompt,
       menuPrompt,
+      cliModeSwitch,
       tuiPanel,
       connIssue,
       liveReply,
@@ -2352,6 +2360,7 @@ const TerminalView = memo(function TerminalView({
     confirmDetail,
     trustPrompt,
     menuPrompt,
+    cliModeSwitch,
     tuiPanel,
     connIssue,
     liveReply,
@@ -3465,6 +3474,8 @@ const TerminalView = memo(function TerminalView({
     menuPromptRef.current = null;
     setMenuPrompt(null);
     setPanelOpen(false);
+    // 换权限重开 / 退出：下一次接上的运行重新取基线，旧运行的切换不再上报
+    permBaselineRef.current = null;
     liveReplyRef.current = null;
     setLiveReply(null);
     if (kind === "agent") {
@@ -3715,6 +3726,22 @@ const TerminalView = memo(function TerminalView({
       }
     } catch {
       // 会话文件可能写到一半，下轮再试
+    }
+    // 权限模式跟随：这个会话文件第一次读到的模式是基线，之后变了才上报（终端里切过）。
+    // 2026-10-19 用户：审批时点了「切换」，终端已是 auto，聊天层徽标还是「请求批准」
+    if (ctx.agentId === "claude-code") {
+      const mode = await invoke<string | null>("session_permission_mode", {
+        agent: ctx.agentId,
+        filePath: ctx.filePath,
+      }).catch(() => null);
+      if (linkCtxRef.current !== ctx) return;
+      const base = permBaselineRef.current;
+      if (mode && (!base || base.file !== ctx.filePath)) {
+        permBaselineRef.current = { file: ctx.filePath, mode };
+      } else if (mode && base && mode !== base.mode) {
+        permBaselineRef.current = { file: ctx.filePath, mode };
+        setCliModeSwitch((prev) => ({ mode, seq: (prev?.seq ?? 0) + 1 }));
+      }
     }
     // P3c：同一路径顺带轮询会话尾部状态（done/working/confirm/unknown）
     try {
@@ -3989,6 +4016,8 @@ const TerminalView = memo(function TerminalView({
     menuPromptRef.current = null;
     setMenuPrompt(null);
     setPanelOpen(false);
+    // 换权限重开 / 退出：下一次接上的运行重新取基线，旧运行的切换不再上报
+    permBaselineRef.current = null;
     liveReplyRef.current = null;
     setLiveReply(null);
   }
@@ -6708,6 +6737,28 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     sessionByTab[focusedId]?.menuPrompt,
     sessionByTab[focusedId]?.trustPrompt,
   ]);
+
+  // 终端里换了权限模式（cliModeSwitch）：标签的权限档跟上，聊天徽标与之后接着聊的启动参数都按新档。
+  // 按序号只应用一次——用户随后在徽标里自己换档时，旧运行留下的值不能把它改回去。只讨论档不动（由启动参数保证）
+  const appliedModeSwitchRef = useRef<Record<string, number>>({});
+  useEffect(() => {
+    const updates: Record<string, "ask" | "auto" | "full"> = {};
+    for (const [tabId, snap] of Object.entries(sessionByTab)) {
+      const sw = snap?.cliModeSwitch;
+      if (!sw || appliedModeSwitchRef.current[tabId] === sw.seq) continue;
+      appliedModeSwitchRef.current[tabId] = sw.seq;
+      const tier = claudeModeTier(sw.mode);
+      if (tier) updates[tabId] = tier;
+    }
+    if (Object.keys(updates).length === 0) return;
+    setTabs((prev) =>
+      prev.map((x) =>
+        updates[x.id] && x.permission !== "discuss" && x.permissionMode !== updates[x.id]
+          ? { ...x, permission: "write_tree", permissionMode: updates[x.id] }
+          : x,
+      ),
+    );
+  }, [sessionByTab]);
 
   useEffect(() => {
     const att = statuses[focusedId]?.attention;
