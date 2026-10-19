@@ -341,11 +341,25 @@ export default function ChatSurface({
   const genElapsed = genStartedAt === null ? 0 : Math.floor((Date.now() - genStartedAt) / 1000);
   const extraHint = approvalExtraHint(agentId, hooksEnabled);
   const liveReplyCapable = liveReplySupported(agentId ?? "");
-  // 实时预览：终端里已经出来、会话文件还没落盘的那几行（只在生成中显示，追上了自动让位）
+  // 一轮刚结束、会话文件还没把最后一段写进来：预览和展开的过程再留一会儿，追上了（或 4 秒到了）再收。
+  // 原先一停就撤预览、过程同时收起，最后一段落盘前画面空一下才出来（2026-10-19 用户 Codex 实测）
+  const [settling, setSettling] = useState(false);
+  const wasGeneratingRef = useRef(generating);
+  useEffect(() => {
+    if (wasGeneratingRef.current && !generating) setSettling(true);
+    if (generating) setSettling(false);
+    wasGeneratingRef.current = generating;
+  }, [generating]);
+  useEffect(() => {
+    if (!settling) return;
+    const t = window.setTimeout(() => setSettling(false), 4000);
+    return () => window.clearTimeout(t);
+  }, [settling]);
+  // 实时预览：终端里已经出来、会话文件还没落盘的那几行（生成中与刚结束的那一会儿显示，追上了自动让位）
   const livePreview = (() => {
     // 有「等你决定」时屏上是菜单，不是回复（decision 在下方算，这里直接看三个来源）
     if (
-      !generating ||
+      !(generating || settling) ||
       !liveReply?.length ||
       attention === "confirm" ||
       trustPrompt ||
@@ -365,6 +379,15 @@ export default function ChatSurface({
       .join("\n");
     return unsyncedTail(liveReply, synced);
   })();
+  // 会话文件追上了（预览全被盖掉，或者新内容进来了）就收；终端渲染与原文对不上的零星几行不再多挂 4 秒
+  const settledMessagesRef = useRef(messages);
+  useEffect(() => {
+    if (!settling) {
+      settledMessagesRef.current = messages;
+      return;
+    }
+    if (livePreview.length === 0 || messages !== settledMessagesRef.current) setSettling(false);
+  }, [settling, messages, livePreview.length]);
 
   // 「等你决定」：审批 > 启动信任 > 连接出问题 > 确认菜单（同一时刻只出一张卡）。
   // 屏上认出了审批菜单（menuPrompt）就按菜单原文给按钮，不再给「批准 / 拒绝」两个按键——
@@ -570,7 +593,7 @@ export default function ChatSurface({
             <ConversationView
               messages={messages}
               cwd={cwd}
-              working={generating}
+              working={generating || settling}
               onEditResend={(text) => setSeedInsert(text)}
               onForkHere={onForkFrom}
             />

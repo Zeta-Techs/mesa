@@ -306,9 +306,14 @@ test("Codex：多行提问的回显续行不进预览", () => {
     "",
     "› Ask Codex to do anything",
   ];
-  assert.equal(extractLiveReply(screen, "codex"), null);
+  // 回显在第一行，可能是钉住的提问：这一轮刚开始（还没有上一次）时按真回显读，走与 TerminalPage 相同的 merge
+  const live = (rows: string[]) => {
+    const read = extractLiveReply(rows, "codex");
+    return read ? mergeLiveReply(null, read) : null;
+  };
+  assert.equal(live(screen), null);
   const answering = [...screen.slice(0, 4), "• ## Markdown 语法基础", "", "› Ask Codex to do anything"];
-  assert.deepEqual(extractLiveReply(answering, "codex")?.lines, ["## Markdown 语法基础"]);
+  assert.deepEqual(live(answering), ["## Markdown 语法基础"]);
 });
 
 test("Codex：审批结果行与失败命令（含续行）不进预览", () => {
@@ -335,4 +340,51 @@ test("Codex：审批结果行与失败命令（含续行）不进预览", () => 
     "",
     "已确认。查询结果如下：",
   ]);
+});
+
+// 2026-10-19 用户：Codex 长回复预览卡在第 22 行 / 只剩下半截。抓屏（chat-capture.py，REPLY_PROMPT=TRIGGER_LONG）：
+// 回复长过一屏后 Codex 把提问钉在第一行（多行提问拼成一行），下一行直接是回复中段
+const CODEX_BOTTOM = ["", "", "› Ask Codex to do anything", "", "  e2e-picked high · /tmp/work"];
+const nth = (a: number, b: number) => Array.from({ length: b - a + 1 }, (_, i) => `第 ${a + i} 行：长回复逐行流出。`);
+
+test("Codex：钉在屏顶的提问不当这一轮的开头，接着上一次往下拼", () => {
+  const first = extractLiveReply(
+    ["› TRIGGER_LONG 写长一点", "", "", ...nth(1, 5).map((l, i) => (i ? `  ${l}` : `• ${l}`)), ...CODEX_BOTTOM],
+    "codex",
+  )!;
+  assert.deepEqual(first.lines, nth(1, 5));
+  const pinned = extractLiveReply(["› TRIGGER_LONG 写长一点", ...nth(3, 8).map((l) => `  ${l}`), ...CODEX_BOTTOM], "codex")!;
+  assert.equal(pinned.anchored, false);
+  assert.deepEqual(mergeLiveReply(first.lines, pinned), nth(1, 8));
+  // 回复第一行刚好贴在钉住的提问下面（真回显下面总有空行）
+  const touching = extractLiveReply(["› TRIGGER_LONG 写长一点", `• ${nth(1, 1)[0]}`, ...nth(2, 6).map((l) => `  ${l}`), ...CODEX_BOTTOM], "codex")!;
+  assert.deepEqual(mergeLiveReply(first.lines, touching), nth(1, 6));
+});
+
+test("Codex：钉住的提问下面正好是回复里的空行，不把下半截当整段", () => {
+  const prev = ["## 第一节", "第一节正文", "", "## 第二节", "第二节正文"];
+  const screen = ["› 按清单输出一段 Markdown", "", "  第二节正文", "", "  - 列表项", ...CODEX_BOTTOM];
+  const read = extractLiveReply(screen, "codex")!;
+  assert.equal(read.anchored, false);
+  assert.deepEqual(mergeLiveReply(prev, read), [...prev, "", "- 列表项"]);
+});
+
+test("Codex：多行提问的真回显刚好滚到第一行，续行仍不进预览", () => {
+  const prev = nth(1, 2);
+  const screen = [
+    "› TRIGGER_LONG 第一行提问",
+    "    1. 第二行清单",
+    "",
+    "",
+    `• ${nth(1, 1)[0]}`,
+    ...nth(2, 3).map((l) => `  ${l}`),
+    ...CODEX_BOTTOM,
+  ];
+  const read = extractLiveReply(screen, "codex")!;
+  assert.deepEqual(mergeLiveReply(prev, read), nth(1, 3));
+});
+
+test("接续时上一次的最后一行只写了半截，写全后不重复", () => {
+  const merged = mergeLiveReply(["第一行写完了", "第二行写到一"], { lines: ["第二行写到一半又写完", "第三行"], anchored: false });
+  assert.deepEqual(merged, ["第一行写完了", "第二行写到一半又写完", "第三行"]);
 });

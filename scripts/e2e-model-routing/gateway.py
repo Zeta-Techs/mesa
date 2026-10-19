@@ -10,6 +10,8 @@ MODELS = ["e2e-default", "e2e-picked"]
 # 拿到结果后再回 done（看各家权限档是先问还是直接放行）
 SLOW_LINES = ["第一段：这是一段慢慢流出来的回复。", "", "- 要点一：终端先画出来", "- 要点二：会话文件后落盘",
               "", "```bash", "echo mesa", "```", "", "最后一行：完毕。"]
+# TRIGGER_LONG = 比一屏还长的回复（看回复开头滚出屏后预览还接不接得上，2026-10-19 用户：Codex 第 22 行卡住）
+LONG_LINES = [f"第 {i} 行：长回复逐行流出。" for i in range(1, 61)]
 PROBE = "echo mesa > mesa_probe.txt"
 SHELLISH = ("bash", "shell", "run_shell_command", "exec_command", "run_command", "terminal", "execute", "command")
 
@@ -130,6 +132,8 @@ class H(BaseHTTPRequestHandler):
         # 后一幕的触发词在前：第二幕的请求历史里还带着第一幕的 TRIGGER_SLOW
         if tools and b"TRIGGER_TOOL" in raw:
             mode = "done" if has_tool_result(body, raw) else ("tool" if pick_shell(tools) else "notool")
+        elif tools and b"TRIGGER_LONG" in raw:
+            mode = "long"
         elif tools and b"TRIGGER_SLOW" in raw:
             mode = "slow"
         log(method="POST", path=self.path.split("?")[0], model=model, stream=bool(body.get("stream")), params=params,
@@ -141,10 +145,10 @@ class H(BaseHTTPRequestHandler):
             hint=("SUBTASK" if "SUBTASK" in msgs else "") + " | " + (sysp or "")[:0] + msgs[-90:].replace("\n", " "))
         p = self.path
         text = "ok"
-        lines = SLOW_LINES if mode == "slow" else [("done" if mode == "done" else "ok")]
+        lines = SLOW_LINES if mode == "slow" else LONG_LINES if mode == "long" else [("done" if mode == "done" else "ok")]
         shell = pick_shell(tools) if mode == "tool" else None
         call_args = json.dumps(shell_args(shell[1], b"TRIGGER_ESC" in raw), ensure_ascii=False) if shell else None
-        delay = 0.6 if mode == "slow" else 0
+        delay = 0.6 if mode == "slow" else 0.25 if mode == "long" else 0
         if "count_tokens" in p:
             return self._send(200, {"input_tokens": 10})
         if p.split("?")[0].endswith("/messages"):

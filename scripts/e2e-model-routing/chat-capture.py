@@ -133,8 +133,8 @@ for _ in range(4):
         break
 record["scenes"]["ready"] = [{"t": 0, "lines": lines()}]
 
-send("TRIGGER_SLOW 讲一段")
-record["scenes"]["reply"] = film(12)
+send(os.environ.get("REPLY_PROMPT", "TRIGGER_SLOW 讲一段"))
+record["scenes"]["reply"] = film(float(os.environ.get("REPLY_SECS", "12")))
 pump(1)
 
 probe = os.path.join(work, "mesa_probe.txt")

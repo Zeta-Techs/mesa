@@ -33,6 +33,11 @@ interface Layout {
   indent: number;
   /** 行尾要去掉的东西（Grok 右侧的时间） */
   tail?: RegExp;
+  /**
+   * 回复长过一屏后，这家把提问钉在屏幕第一行（Codex 0.163：「› 提问」顶格、多行提问拼成一行，
+   * 下一行直接接回复中段，2026-10-19 抓屏）。第一行的回显就不一定是这一轮的开头
+   */
+  pinnedEcho?: boolean;
 }
 
 // 横线、半格边框，以及方框的上下边（画到一半的输入框「╭────」也算）
@@ -82,6 +87,7 @@ const LAYOUTS: Record<string, Layout> = {
     tool: new RegExp(`^•\\s+(?:${TOOL_VERB}|Failed)\\b|^[✔✓✗✘■]\\s+You\\s`),
     skip: /^•\s+Working\b|esc to interrupt|^\s*(?:─+\s*)?Worked for\b|^\s*└/,
     indent: 2,
+    pinnedEcho: true,
   },
   qwen: {
     boxTop: (rows) => lastBox(rows, (i) => (i > 0 && /^>\s/.test(rows[i]) && BORDER.test(rows[i - 1].trim()) ? i - 1 : -1)),
@@ -147,6 +153,11 @@ export function terminalHasInputBox(lines: readonly string[], agentId: string): 
 export interface LiveReplyRead {
   lines: string[];
   anchored: boolean;
+  /**
+   * 屏顶那条回显认不准时的另一种读法：按「真回显刚好滚到第一行」读（多行提问的续行要跳过）。
+   * lines 是按「钉在屏顶的提问」读的（anchored = false），{@link mergeLiveReply} 接不上上一次时才改用它
+   */
+  ifRealEcho?: LiveReplyRead | null;
 }
 
 export function extractLiveReply(lines: readonly string[], agentId: string): LiveReplyRead | null {
@@ -162,27 +173,51 @@ export function extractLiveReply(lines: readonly string[], agentId: string): Liv
   if (boxTop < 0) return null;
   const region = rows.slice(0, boxTop);
   // 最后一条用户回显之后才是这一轮的回复；回显滚出屏幕时从第一段助手行首起
-  let start = -1;
+  let echoAt = -1;
   for (let i = region.length - 1; i >= 0; i--) {
     if (layout.echo.test(region[i])) {
-      start = i + 1;
+      echoAt = i;
       break;
     }
   }
-  if (start < 0 && layout.lead) {
-    const lead = layout.lead;
-    start = region.findIndex((l) => lead.test(l) && !layout.tool.test(l));
+  // 屏幕第一行的回显可能是钉住的提问（下面接的是回复中段，2026-10-19 用户：Codex 第 22 行起预览卡住、
+  // 或者只剩下半截）。真回显下面先是续行、再空行、再是「•」开头的一段；对不上这个形状的一定是钉住的
+  if (layout.pinnedEcho && echoAt === 0 && region.length > 1) {
+    const pinned = readReply(layout, region, 1, false);
+    if (!realEchoShape(layout, region)) return pinned;
+    const real = readReply(layout, region, echoStart(layout, region, 1), true);
+    return pinned ? { ...pinned, ifRealEcho: real } : real;
   }
-  // 多行提问的回显：「› 第一行」之后的续行（缩进）也是用户的话，到第一个空行或助手行首为止都跳过
-  // （2026-10-19 用户截图：Codex 里发九行清单，后八行被当成回复显示在下面）
-  if (start >= 0 && layout.lead) {
+  if (echoAt >= 0) return readReply(layout, region, echoStart(layout, region, echoAt + 1), true);
+  if (layout.lead) {
     const lead = layout.lead;
-    while (start < region.length && region[start].trim() && !lead.test(region[start])) start++;
+    const first = region.findIndex((l) => lead.test(l) && !layout.tool.test(l));
+    if (first >= 0) return readReply(layout, region, first, true);
   }
   // 开头都滚出屏了（长回复，2026-10-17 用户：显示一半后就没了）：屏上这一截全是续行
-  const anchored = start >= 0;
-  if (!anchored) start = 0;
+  return readReply(layout, region, 0, false);
+}
 
+/** 多行提问的回显：「› 第一行」之后的续行（缩进）也是用户的话，到第一个空行或助手行首为止都跳过
+ *  （2026-10-19 用户截图：Codex 里发九行清单，后八行被当成回复显示在下面） */
+function echoStart(layout: Layout, region: readonly string[], start: number): number {
+  const lead = layout.lead;
+  if (!lead) return start;
+  while (start < region.length && region[start].trim() && !lead.test(region[start])) start++;
+  return start;
+}
+
+/** 第一行的回显后面像不像真回显：续行 → 至少一个空行 → 下一个有字的行是助手行首（或屏到底了） */
+function realEchoShape(layout: Layout, region: readonly string[]): boolean {
+  const lead = layout.lead;
+  if (!lead) return true;
+  let i = echoStart(layout, region, 1);
+  if (i < region.length && region[i].trim()) return false;
+  while (i < region.length && !region[i].trim()) i++;
+  return i >= region.length || lead.test(region[i]);
+}
+
+function readReply(layout: Layout, region: readonly string[], start: number, anchored: boolean): LiveReplyRead | null {
   const dedent = (raw: string) => {
     let n = 0;
     while (n < layout.indent && raw[n] === " ") n++;
@@ -223,25 +258,29 @@ export function extractLiveReply(lines: readonly string[], agentId: string): Liv
 
 /**
  * 把屏上这一截接到上一次读到的整段后面：找「上一次的结尾」与「这一截的开头」最长的重合，
- * 重合部分只留一份。找不到重合（两次读之间滚过了一整屏）就直接接上——宁可漏几行也不重复。
+ * 重合部分只留一份。上一次的最后一行可能只写了半截（逐字出的几家），这一截里同一行写全了也算重合。
+ * 找不到重合（两次读之间滚过了一整屏）就直接接上——宁可漏几行也不重复。
  */
 export function mergeLiveReply(prev: readonly string[] | null, read: LiveReplyRead): string[] | null {
   if (read.anchored) return read.lines;
+  const real = read.ifRealEcho ?? null;
   // 没见过这一轮的开头（回显 / ⏺），屏上这一截不知道是不是这一轮的：不预览
-  if (!prev?.length) return null;
+  if (!prev?.length) return real?.lines ?? null;
   const next = read.lines;
   const max = Math.min(prev.length, next.length);
   for (let k = max; k > 0; k--) {
     let same = true;
     for (let i = 0; i < k; i++) {
-      if (prev[prev.length - k + i] !== next[i]) {
-        same = false;
-        break;
-      }
+      const p = prev[prev.length - k + i];
+      if (p === next[i] || (i === k - 1 && p.trim().length >= 4 && next[i].startsWith(p))) continue;
+      same = false;
+      break;
     }
     // 只靠空行重合不算数
-    if (same && next.slice(0, k).some((l) => l.trim())) return [...prev, ...next.slice(k)];
+    if (same && next.slice(0, k).some((l) => l.trim())) return [...prev.slice(0, prev.length - k), ...next];
   }
+  // 屏顶的回显其实是真回显（多行提问刚好滚到第一行）：屏上就是整段，开头应与上一次相同
+  if (real && real.lines[0] === prev[0]) return real.lines;
   return [...prev, ...next];
 }
 

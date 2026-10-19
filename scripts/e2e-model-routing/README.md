@@ -47,6 +47,8 @@ PYTE_DIR=/tmp/pyte python3 -I scripts/e2e-model-routing/chat-capture.py /tmp/e2e
 APPROVE_KEYS='\x1b[B|\r' PYTE_DIR=/tmp/pyte python3 -I scripts/e2e-model-routing/chat-capture.py /tmp/e2e-plans.json grok ask /tmp/cap/grok.json
 # Codex 沙箱里的命令不问人，要申请出沙箱才走审批：
 TOOL_PROMPT="TRIGGER_TOOL TRIGGER_ESC 跑一下" PYTE_DIR=/tmp/pyte python3 -I scripts/e2e-model-routing/chat-capture.py /tmp/e2e-plans.json codex ask /tmp/cap/codex.json /model
+# 比一屏还长的回复（60 行，看开头滚出屏后预览接不接得上）：第一幕换成 TRIGGER_LONG、拍久一点
+REPLY_PROMPT="TRIGGER_LONG 写长一点" REPLY_SECS=25 PYTE_DIR=/tmp/pyte python3 -I scripts/e2e-model-routing/chat-capture.py /tmp/e2e-plans.json codex ask /tmp/cap/codex-long.json
 ```
 
 **生成计划后马上跑**：Claude 的连接全在计划里的 `--settings` 文件中，Mesa 会清理 external-launch 下的旧文件；文件不在时脚本直接停下。
