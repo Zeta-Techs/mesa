@@ -429,9 +429,11 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 折行并回上一项、问句取贴着选项的发问行；回显的 /命令、⎿ 续行、用户刚发的编号清单都不算菜单
   quick-chat.ts              # 快速开聊纯逻辑：默认选择 pickQuickChatDefault（记住的 → 同家另一条 → 上次启动 → 装了的第一家）、
                              # 空白标签 isBlankChatTab（再点只复用没说过话的）、运行页「+」目录 newTabCwd（跟当前标签，隔离目录不跟）、
+                             # 连接页「新对话」chatChoiceForProfile（点哪条用哪条，模型取名单第一个，不看记住的默认）、
                              # 随手聊历史只列 ~/ccode/scratch（isScratchCwd），排除工作区/已注册项目/其他仓库/归档/内部/live/源文件已删，
                              # pickQuickChatHistory 用 store 会话列表现算（tests/quick-chat.test.ts）
   quick-chat-launch.ts       # 快速开聊派发入口 openQuickChat（不弹窗，四个入口共用；每个标签自带 quickchat:<uuid> 复用键 + reuseBlank）、
+                             # openChatWithProfile（连接页行上「新对话」：同一落点但点名要这条连接，reseedBlank 把已有空白标签的输入框改过去）、
                              # saveQuickChatChoice（随手聊发第一句后记 Agent/连接/模型/思考档，不记文件夹和权限）、
                              # resumeSessionInTerminal（接着聊一段旧对话：对话页 / 项目区 / 右键 / 聊天空态共用）
   confirm-dialog.ts          # 确认框键盘语义：Esc 取消，Enter 激活当前焦点钮；设为全局挡路可 focusCancel（tests/confirm-dialog.test.ts）

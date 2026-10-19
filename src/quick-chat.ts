@@ -39,6 +39,25 @@ export type QuickChatChoice = {
 };
 
 /**
+ * 连接页「新对话」：点哪条连接就用哪条开空白对话，不走「记住的 / 上次启动的」那套默认。
+ * 模型取这条连接名单里的第一个（名单首个即启动默认），名单为空则不预选、交给输入框里的默认。
+ * 目的是让人快速验证这条连接能不能用：开出来写着的就是点的那条，发一句话看有没有回复。
+ */
+export function chatChoiceForProfile(profile: {
+  id: string;
+  agent: string;
+  models?: readonly string[] | null;
+}): QuickChatChoice & { agentId: string; profileId: string } {
+  const model = profile.models?.find((m) => m.trim()) ?? undefined;
+  return {
+    agentId: profile.agent,
+    profileId: profile.id,
+    ...(model ? { model } : {}),
+    effort: null,
+  };
+}
+
+/**
  * 快速开聊直接开的那个空白对话用谁（不弹窗，选择都在输入框里，开出来能看见、能改）：
  * 上次快速开聊发出第一句时用的 → 同一家的另一条可用连接 → 运行页上次启动的 → 本机装了的第一家里第一条可用连接 →
  * 任意一条可用连接。一条可用连接都没有时仍给出一家 Agent（输入框里提示先去「连接」页添加）。

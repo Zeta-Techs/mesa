@@ -252,7 +252,7 @@ catalog 条目不写 `apply_patch_tool_type`（freeform＝type=custom 工具会�
 - **官方账号模型（v3.186）**：启动不得把中转/国产网关模型名（deepseek / qwen / glm…）注入官方通道。Codex 官方只接受 `gpt-` / `o1`/`o3`/`o4` / 含 `codex` 的模型；否则不传 `-m`，避免 ChatGPT 订阅的 `service_tier=priority` 打到 DeepSeek 上。前端 `officialModelAllowed` 与 `agents.rs official_model_allowed` 双端镜像。
 - **全局生效**：上次由 Mesa 写入该 CLI 文件的绑定（`active_global_profiles`）。口径仍是「上次写入」不是绝对生效态；托盘见 §12。
 
-行内：编辑绑定（模型名单 / 默认模型 / extraEnv）· 在终端使用 · 写入 CLI 全局默认 · 停用 · 解绑。每条配置展示一句：网关 · 协议 · 默认模型 · 影响 Mesa 启动预选还是外部 CLI。
+行内：编辑绑定（模型名单 / 默认模型 / extraEnv）· 新对话（跳到新对话页并预选这条连接，用来验证可用性） · 写入 CLI 全局默认 · 停用 · 解绑。每条配置展示一句：网关 · 协议 · 默认模型 · 影响 Mesa 启动预选还是外部 CLI。
 
 操作分口（不得混用「应用到 Agent」）：
 

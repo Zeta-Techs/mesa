@@ -7475,8 +7475,13 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
             isBlankChatTab(t, statusesRef.current[t.id]),
         );
         if (blank) {
-          tabId = blank.id;
-          setActiveId(blank.id);
+          // 点名要某条连接（连接页「新对话」）时把空白标签的输入框改过去；快速开聊不改
+          if (pt.reseedBlank) {
+            adoptExisting(blank);
+          } else {
+            tabId = blank.id;
+            setActiveId(blank.id);
+          }
         }
       } else if (pt.reuseKey) {
         const existing = tabsRef.current.find((t) => t.reuseKey === pt.reuseKey);

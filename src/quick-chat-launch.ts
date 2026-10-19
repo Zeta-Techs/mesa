@@ -14,6 +14,7 @@ import { confirmDialog } from "./components/ConfirmDialog";
 import {
   QUICK_CHAT_KEY_PREFIX,
   pickQuickChatDefault,
+  chatChoiceForProfile,
   profileCanAutoStart,
   sessionDisplayTitle,
   type QuickChatChoice,
@@ -51,9 +52,37 @@ function loadLastLaunch(): { agentId?: string; profileId?: string } {
   }
 }
 
-/** 开一个空白随手聊（或切到还没说过话的那个）。随手聊目录建不出来时退回主目录，不拦着人开聊 */
+/** 开一个空白随手聊标签（落到聊天层，文件夹「随手聊」，发第一句才启动）。
+ *  随手聊目录建不出来时退回主目录，不拦着人开聊。
+ *  reseedBlank：已有还没说过话的随手聊标签时，是否把它的输入框改成 pick（快速开聊不改、连接页点名要连接才改） */
+async function openBlankChat(
+  pick: QuickChatChoice & { agentId: string },
+  reseedBlank: boolean,
+): Promise<void> {
+  const { setPendingTerminal, setPage } = useAppStore.getState();
+  const cwd = await invoke<string>("ensure_scratch_dir").catch(() => "~");
+  setPendingTerminal({
+    cwd,
+    extraEnv: {},
+    title: "随手聊",
+    agentId: pick.agentId,
+    profileId: pick.profileId,
+    model: pick.model,
+    effort: pick.effort ?? null,
+    autoStart: false,
+    surface: "chat",
+    clean: true,
+    // 每个随手聊标签一把自己的复用键（后端按它认 Run）；再点快速开聊按前缀找还没说过话的那个
+    reuseKey: `${QUICK_CHAT_KEY_PREFIX}${crypto.randomUUID()}`,
+    reuseBlank: QUICK_CHAT_KEY_PREFIX,
+    reseedBlank,
+  });
+  setPage("terminal");
+}
+
+/** 开一个空白随手聊（或切到还没说过话的那个）。选谁见 pickQuickChatDefault */
 export async function openQuickChat(): Promise<void> {
-  const { profiles, settings, agents, setPendingTerminal, setPage } = useAppStore.getState();
+  const { profiles, settings, agents } = useAppStore.getState();
   for (const key of RETIRED_KEYS) {
     try {
       localStorage.removeItem(key);
@@ -73,23 +102,18 @@ export async function openQuickChat(): Promise<void> {
     installed: agentOrder.filter((id) => installedSet.has(id)),
     agentOrder,
   });
-  const cwd = await invoke<string>("ensure_scratch_dir").catch(() => "~");
-  setPendingTerminal({
-    cwd,
-    extraEnv: {},
-    title: "随手聊",
-    agentId: pick.agentId,
-    profileId: pick.profileId,
-    model: pick.model,
-    effort: pick.effort ?? null,
-    autoStart: false,
-    surface: "chat",
-    clean: true,
-    // 每个随手聊标签一把自己的复用键（后端按它认 Run）；再点快速开聊按前缀找还没说过话的那个
-    reuseKey: `${QUICK_CHAT_KEY_PREFIX}${crypto.randomUUID()}`,
-    reuseBlank: QUICK_CHAT_KEY_PREFIX,
-  });
-  setPage("terminal");
+  await openBlankChat(pick, false);
+}
+
+/** 连接页「新对话」：用点的这条连接开空白对话，输入框里写着的就是它，发一句话看有没有回复，用来快速检查连接可不可用。
+ *  不看「记住的」默认，也不预先挡不可用的连接（缺端点 / 缺密钥 / 已停用都照样打开，问题由输入框和启动提示如实说出来）；
+ *  已有空白随手聊标签时复用它但把选择改成这条（不然会落在选着别的连接的标签上，检查就白做了） */
+export async function openChatWithProfile(profile: {
+  id: string;
+  agent: string;
+  models?: readonly string[] | null;
+}): Promise<void> {
+  await openBlankChat(chatChoiceForProfile(profile), true);
 }
 
 /** 恢复一条历史会话进终端（聊天空态的随手聊列表、侧栏右键、项目区「继续」、对话页共用）：不开新会话。

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  chatChoiceForProfile,
   isBlankChatTab,
   isScratchCwd,
   newTabCwd,
@@ -253,5 +254,28 @@ test("pickQuickChatHistory：正在跑的随手聊不进列表", () => {
   assert.deepEqual(
     out.map((s) => s.sessionId),
     ["s-ok"],
+  );
+});
+
+test("连接页「新对话」：点哪条用哪条，模型取名单第一个，不看记住的默认", () => {
+  assert.deepEqual(
+    chatChoiceForProfile({ id: "p2", agent: "codex", models: ["gpt-5.6", "gpt-5.5"] }),
+    { agentId: "codex", profileId: "p2", model: "gpt-5.6", effort: null },
+  );
+});
+
+test("连接页「新对话」：名单为空或全是空白时不预选模型，也不带 model 键", () => {
+  for (const models of [[], ["", "  "], null, undefined]) {
+    const pick = chatChoiceForProfile({ id: "p", agent: "kimi", models });
+    assert.equal(pick.agentId, "kimi");
+    assert.equal(pick.profileId, "p");
+    assert.ok(!("model" in pick), JSON.stringify(models));
+  }
+});
+
+test("连接页「新对话」：跳过名单里的空白项取第一个有内容的", () => {
+  assert.equal(
+    chatChoiceForProfile({ id: "p", agent: "qwen", models: ["", "qwen3-coder"] }).model,
+    "qwen3-coder",
   );
 });

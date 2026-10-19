@@ -15,13 +15,14 @@ import {
   RotateCcw,
   ShieldCheck,
   SquareArrowOutUpRight,
-  SquareTerminal,
   Star,
   Trash2,
   Undo2,
 } from "lucide-react";
 import { useAppStore } from "../store";
 import { AGENTS, AGENT_PROTOCOLS, type ScheduleDto } from "../types";
+import { NAV_ICONS } from "../navigation-icons";
+import { openChatWithProfile } from "../quick-chat-launch";
 import { presetsForAgent, NO_PRESET_REASON, type ProviderPreset } from "../presets";
 import {
   extraBindTargets,
@@ -2843,26 +2844,10 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   const updateSettings = useAppStore((s) => s.updateSettings);
   const loadSettings = useAppStore((s) => s.loadSettings);
 
-  /** 「在终端使用」：新开标签并直接启动（与快速开聊共用 pendingTerminal 链路）。
-   *  目录取上次启动过的，没有就交给启动栏留空由用户填 */
-  function useTerminalWith(profile: Profile) {
-    let cwd = "";
-    try {
-      cwd =
-        (JSON.parse(localStorage.getItem("ccode.lastLaunch") ?? "{}") as {
-          cwd?: string;
-        }).cwd ?? "";
-    } catch {
-      /* 读不到就留空 */
-    }
-    setPendingTerminal({
-      cwd,
-      extraEnv: {},
-      agentId: profile.agent,
-      profileId: profile.id,
-      autoStart: !!cwd,
-    });
-    setPage("terminal");
+  /** 「新对话」：用这条连接开一段空白对话（与侧栏「新对话」同一落点），发一句话就能看出连接可不可用。
+   *  不预先挡缺端点 / 缺密钥 / 已停用的连接——问题由输入框和启动提示如实说出来 */
+  function openChatWith(profile: Profile) {
+    void openChatWithProfile(profile);
   }
 
   async function useExternalWith(profile: Profile) {
@@ -3483,18 +3468,18 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                             </span>
                             )}
                             <span className="flex items-center justify-end gap-1 whitespace-nowrap">
-                              {/* 「在终端使用」（v3.88）：配置页原本没有任何通往终端的路——
-                                  建完配置只能自己去终端页再选一遍。
+                              {/* 「新对话」（2026-10-19 取代 v3.88 的「在终端使用」）：建完连接立刻验证它能不能用——
+                                  跳到新对话页、输入框里已选好这条连接，发一句话看有没有回复。
                                   低频入口 = hover 才现的 28px 图标 ghost 钮（常驻位只留「编辑」），
                                   操作列才塞得下、行高不被撑乱 */}
                               <button
                                 type="button"
-                                onClick={() => useTerminalWith(profile)}
-                                title="在终端使用：用这个连接新开一个终端标签"
-                                aria-label={`在终端使用：${profile.name}`}
+                                onClick={() => openChatWith(profile)}
+                                title="新对话：用这个连接开一段新对话，发一句话就能看出它能不能用"
+                                aria-label={`新对话：${profile.name}`}
                                 className={`flex h-7 w-7 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1 ${hoverRevealClass}`}
                               >
-                                <SquareTerminal size={14} strokeWidth={1.8} aria-hidden="true" />
+                                <NAV_ICONS.quickChat size={14} strokeWidth={1.8} aria-hidden="true" />
                               </button>
                               <button
                                 type="button"

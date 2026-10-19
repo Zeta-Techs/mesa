@@ -326,6 +326,9 @@ export interface PendingTerminal {
   /** 只复用空白标签（快速开聊）：有复用键以此开头、还没说过话的标签就切过去（不改它输入框里已换的选择），
       没有就用 reuseKey 新开。说过话的不复用——快速开聊是开新对话 */
   reuseBlank?: string;
+  /** 与 reuseBlank 配合：切到空白标签时把它的输入框改成这次指定的 Agent / 连接 / 模型。
+      默认（不设）不改——快速开聊要保留人在输入框里已换过的选择；连接页「新对话」是点名要这条连接，必须改 */
+  reseedBlank?: boolean;
   /** 步骤认领（「跟 AI 商量一下」）：启动 spawn 时以最终 agent/cwd 登记
       claim_next_session_for_step，让会话归到该步骤（项目「对话」页按 stepName 过滤）。
       不在发起时提前登记——启动栏还可改 agent/目录，spawn 时的实时值才作数 */
