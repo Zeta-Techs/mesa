@@ -16,9 +16,12 @@ import {
   hasAssistantText,
   kimiModelArg,
   latestToolName,
+  localCommandRecord,
+  mergeLocalRecords,
   mergeConversationPages,
   modelSwitchCommand,
   slashCommandRecorded,
+  slashSettledLocally,
   shouldAutoPeek,
   slashHandoff,
 } from "../src/chat-handoff.ts";
@@ -357,4 +360,34 @@ test("Claude 会话里的权限模式对上聊天徽标三档；对不上的不�
   assert.equal(claudeModeTier("acceptEdits"), null);
   assert.equal(claudeModeTier("plan"), null);
   assert.equal(claudeModeTier(null), null);
+});
+
+test("Codex 的 /status 只画在终端里：发出 1.5 秒后终端静了 1 秒就算本机处理完；Claude 与开着面板时不算", () => {
+  const sent = cmdMsg("user", "text", "/status", "2026-10-19T12:00:00.000Z");
+  const at = Date.parse("2026-10-19T12:00:00.000Z");
+  const base = { agentId: "codex", sent, panelOpen: false };
+  assert.equal(slashSettledLocally({ ...base, now: at + 2500, lastOutputAt: at + 1200 }), true);
+  assert.equal(slashSettledLocally({ ...base, now: at + 1000, lastOutputAt: at + 100 }), false, "太早");
+  assert.equal(slashSettledLocally({ ...base, now: at + 2500, lastOutputAt: at + 2000 }), false, "终端还在出字");
+  assert.equal(slashSettledLocally({ ...base, agentId: "claude-code", now: at + 9000, lastOutputAt: at }), false);
+  assert.equal(slashSettledLocally({ ...base, panelOpen: true, now: at + 9000, lastOutputAt: at }), false);
+  const plain = cmdMsg("user", "text", "你好", "2026-10-19T12:00:00.000Z");
+  assert.equal(slashSettledLocally({ ...base, sent: plain, now: at + 9000, lastOutputAt: at }), false);
+});
+
+test("本机命令记录：结果取终端里命令回显之后的几行，按时间插回对话", () => {
+  const sent = cmdMsg("user", "text", "/status", "2026-10-19T12:00:05.000Z");
+  const rec = localCommandRecord(sent, ["ok", "", "/status", "", ">_ OpenAI Codex (v0.163.0)", "", "Model:  glm-5.3-flash", ""]);
+  assert.deepEqual(
+    rec.blocks.map((b) => [b.kind, b.text]),
+    [["command", "/status"], ["command_output", ">_ OpenAI Codex (v0.163.0)\n\nModel:  glm-5.3-flash"]],
+  );
+  assert.equal(localCommandRecord(sent, null).blocks.length, 1, "读不到屏就只留命令");
+  const parsed = [
+    cmdMsg("user", "text", "你好", "2026-10-19T12:00:00.000Z"),
+    cmdMsg("assistant", "text", "你好！", "2026-10-19T12:00:02.000Z"),
+    cmdMsg("user", "text", "下一句", "2026-10-19T12:00:09.000Z"),
+  ];
+  const merged = mergeLocalRecords(parsed as never, [rec]);
+  assert.deepEqual(merged.map((m) => m.blocks[0].text), ["你好", "你好！", "/status", "下一句"]);
 });

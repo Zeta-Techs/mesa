@@ -234,6 +234,77 @@ export function claudeModeTier(mode: string | null | undefined): "ask" | "auto" 
   }
 }
 
+/** 会把斜杠命令记进会话文件的家（slashCommandRecorded 认得出）：不在本机提前收尾，免得同一条记两遍 */
+const RECORDS_SLASH_COMMANDS = new Set(["claude-code"]);
+/** 发出后至少这么久、终端至少静了这么久，才算本机已经处理完 */
+export const SLASH_LOCAL_SETTLE_MS = 1500;
+export const SLASH_LOCAL_QUIET_MS = 1000;
+
+/**
+ * 斜杠 / ! 命令在本机已经处理完、不必再等会话文件：Codex 的 /status 这类命令只画在终端里，会话文件里永远没有，
+ * 原先「正在生成回复」一直挂着，之后几轮都收不了尾（2026-10-19 用户截图：联网那轮结束后还写「正在用 exec_command 5 分钟」）。
+ * 终端里开着面板时不算（面板关掉命令才结束，Claude 那条路由 tui-panel 管）。
+ */
+export function slashSettledLocally(input: {
+  agentId: string;
+  sent: Pick<ChatMessageDto, "blocks" | "timestamp">;
+  now: number;
+  lastOutputAt: number;
+  panelOpen: boolean;
+}): boolean {
+  if (RECORDS_SLASH_COMMANDS.has(input.agentId) || input.panelOpen) return false;
+  const text = (input.sent.blocks[0]?.text ?? "").trim();
+  if (!/^[/!]\S/.test(text)) return false;
+  const since = Date.parse(input.sent.timestamp ?? "");
+  if (!Number.isFinite(since)) return false;
+  return (
+    input.now - since >= SLASH_LOCAL_SETTLE_MS && input.now - input.lastOutputAt >= SLASH_LOCAL_QUIET_MS
+  );
+}
+
+/**
+ * 本机处理完的斜杠命令留成一条「命令 + 结果」（结果取那一刻终端里这条命令后面的几行，聊天层实时预览读出来的那段）。
+ * 只在这次打开的聊天里有：会话文件里没有，重开后看不到，以终端为准
+ */
+export function localCommandRecord(
+  sent: Pick<ChatMessageDto, "blocks" | "timestamp">,
+  screen: readonly string[] | null,
+): ChatMessageDto {
+  const text = (sent.blocks[0]?.text ?? "").trim();
+  let lines = [...(screen ?? [])];
+  const echo = lines.map((l) => l.trim()).lastIndexOf(text);
+  if (echo >= 0) lines = lines.slice(echo + 1);
+  while (lines.length && !lines[0].trim()) lines.shift();
+  while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+  const output = lines.slice(0, 80).join("\n");
+  return {
+    role: "user",
+    blocks: [
+      { kind: "command", text, toolName: null },
+      ...(output ? [{ kind: "command_output" as const, text: output, toolName: null }] : []),
+    ],
+    timestamp: sent.timestamp,
+    usage: null,
+  };
+}
+
+/** 本机命令记录按时间插回解析结果（插在第一条比它晚的消息前；都比它早就接在最后） */
+export function mergeLocalRecords(
+  parsed: readonly ChatMessageDto[],
+  locals: readonly ChatMessageDto[],
+): ChatMessageDto[] {
+  const out = [...parsed];
+  for (const local of locals) {
+    const at = Date.parse(local.timestamp ?? "");
+    const idx = Number.isFinite(at)
+      ? out.findIndex((m) => Date.parse(m.timestamp ?? "") > at)
+      : -1;
+    if (idx < 0) out.push(local);
+    else out.splice(idx, 0, local);
+  }
+  return out;
+}
+
 /** 斜杠发出后要不要露出 TUI：无参 /model、/models、/login 会唤选择器或登录页 */
 export function slashHandoff(
   text: string,

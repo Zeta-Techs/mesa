@@ -8,6 +8,7 @@ import { Marked } from "marked";
 import { useAppStore } from "../store";
 import { classifyMdHref, resolveMdPath, rewriteMdImageHtml } from "../reader";
 import { hydrateMdImages } from "../md-image-hydrate";
+import { decorateMdCodeBlocks, handleMdCodeCopyClick } from "../md-code-chrome";
 
 /**
  * 聊天消息 Markdown 渲染（AI 回复正文；用户气泡保持纯文本）。
@@ -216,10 +217,13 @@ function MarkdownBody({
       cwdHint: cwd,
       allowHttps: false,
     });
+    // 代码块头栏（语言名 + 复制），与笔记预览同一套（2026-10-19 用户：聊天里的代码块没有复制按钮）
+    decorateMdCodeBlocks(host);
   });
 
   /** 链接：锚点默认；外链系统浏览器；本地路径跳终端页预览。图片点击 = 预览放大 */
   function onBodyClick(e: React.MouseEvent<HTMLDivElement>) {
+    if (handleMdCodeCopyClick(e.target)) return;
     const target = e.target as HTMLElement;
     const img = target.closest("img");
     if (img?.dataset.ccodePath && cwd) {

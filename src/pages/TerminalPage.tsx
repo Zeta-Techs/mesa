@@ -68,9 +68,12 @@ import {
   hasAssistantText,
   mergeConversationPages,
   claudeModeTier,
+  localCommandRecord,
+  mergeLocalRecords,
   placePendingUsers,
   shouldAutoPeek,
   slashCommandRecorded,
+  slashSettledLocally,
 } from "../chat-handoff";
 import { AGENTS, type CustomRuntimeDto, type OfficialAccountStatusDto } from "../types";
 import { resolveCustomRuntimeCwd } from "../custom-runtime";
@@ -2036,6 +2039,8 @@ const TerminalView = memo(function TerminalView({
   }
   // 终端里换权限模式的跟随（fetchConversation 读会话文件；基线 = 这个文件第一次读到的模式）
   const permBaselineRef = useRef<{ file: string; mode: string } | null>(null);
+  // 本机处理完、会话文件里没有的斜杠命令记录（只在这次打开的聊天里；换了会话文件就清）
+  const localRecordsRef = useRef<{ file: string; records: ChatMessageDto[] }>({ file: "", records: [] });
   const [cliModeSwitch, setCliModeSwitch] = useState<{ mode: string; seq: number } | null>(null);
   // 终端里开着的面板（tui-panel.ts）：跟菜单同一次扫屏认；开着时一直扫到它关掉
   const [tuiPanel, setTuiPanel] = useState(false);
@@ -3674,10 +3679,29 @@ const TerminalView = memo(function TerminalView({
               );
             }),
         );
-      const missing = pendingUsers.filter((pu) => !isRecorded(pu));
+      // 只画在终端里的斜杠命令（Codex /status…）：本机处理完就留成「命令 + 结果」记录，不再挡着等回复
+      if (localRecordsRef.current.file !== ctx.filePath) {
+        localRecordsRef.current = { file: ctx.filePath, records: [] };
+      }
+      const now = Date.now();
+      const settledLocal = pendingUsers.filter(
+        (pu) =>
+          !isRecorded(pu) &&
+          slashSettledLocally({
+            agentId: ctx.agentId,
+            sent: pu,
+            now,
+            lastOutputAt: lastOutputAtRef.current,
+            panelOpen: tuiPanelRef.current,
+          }),
+      );
+      for (const pu of settledLocal) {
+        localRecordsRef.current.records.push(localCommandRecord(pu, liveReplyRef.current));
+      }
+      const missing = pendingUsers.filter((pu) => !isRecorded(pu) && !settledLocal.includes(pu));
       pendingUsersRef.current = missing;
       const mergedMessages = placePendingUsers(
-        parsedMessages,
+        mergeLocalRecords(parsedMessages, localRecordsRef.current.records),
         missing,
         pendingAssistantKeysRef.current,
       );
@@ -6708,9 +6732,20 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     }
   }
 
+  // 刚在聊天卡上替用户答过（批准 / 信任 / 菜单）：菜单当场清掉，「在等确认」要等会话文件 / hooks 下一拍才撤，
+  // 这几秒不自动露出终端（2026-10-19 用户：点批准时底部终端有时弹起来）；过了还在等确认、又认不出菜单才露
+  const PEEK_HOLD_AFTER_ANSWER_MS = 4000;
+  const peekHoldUntilRef = useRef<Record<string, number>>({});
+  const [peekRecheck, setPeekRecheck] = useState(0);
+  function holdAutoPeek(tabId: string) {
+    peekHoldUntilRef.current[tabId] = Date.now() + PEEK_HOLD_AFTER_ANSWER_MS;
+    window.setTimeout(() => setPeekRecheck((n) => n + 1), PEEK_HOLD_AFTER_ANSWER_MS + 50);
+  }
+
   useEffect(() => {
     if ((surfaceModeByTab[focusedId] ?? DEFAULT_SURFACE_MODE) !== "chat") return;
     if (statuses[focusedId]?.attention !== "confirm") return;
+    if (Date.now() < (peekHoldUntilRef.current[focusedId] ?? 0)) return;
     // 屏上认出了菜单（审批 / 信任 / 切换确认）：聊天层已经有一张按原文给按钮的卡，不必再把终端拉出来
     if (sessionByTab[focusedId]?.menuPrompt || sessionByTab[focusedId]?.trustPrompt) return;
     if (
@@ -6736,6 +6771,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     surfaceModeByTab[focusedId],
     sessionByTab[focusedId]?.menuPrompt,
     sessionByTab[focusedId]?.trustPrompt,
+    peekRecheck,
   ]);
 
   // 终端里换了权限模式（cliModeSwitch）：标签的权限档跟上，聊天徽标与之后接着聊的启动参数都按新档。
@@ -9289,11 +9325,15 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                               ),
                             ),
                         }}
-                        onAnswerTrust={(accept) =>
-                          tabActionsRef.current.get(t.id)?.answerTrust(accept)
-                        }
+                        onAnswerTrust={(accept) => {
+                          holdAutoPeek(t.id);
+                          tabActionsRef.current.get(t.id)?.answerTrust(accept);
+                        }}
                         onInterrupt={chatInterrupt}
-                        onApprovalKey={chatApprovalKey}
+                        onApprovalKey={(key) => {
+                          holdAutoPeek(t.id);
+                          chatApprovalKey(key);
+                        }}
                         peek={peek}
                         onTogglePeek={() => setPeek(t.id, !peek, true)}
                         onRequestPeek={() => setPeek(t.id, true)}
@@ -9350,7 +9390,10 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                             0,
                           )
                         }
-                        onAnswerMenu={(i) => tabActionsRef.current.get(t.id)?.answerMenu(i)}
+                        onAnswerMenu={(i) => {
+                          holdAutoPeek(t.id);
+                          tabActionsRef.current.get(t.id)?.answerMenu(i);
+                        }}
                         onForkFrom={(text) => void forkChat(t.id, text)}
                         connIssue={sessionByTab[t.id]?.connIssue ?? null}
                         onSwitchConnection={(id) =>

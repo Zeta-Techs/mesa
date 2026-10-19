@@ -294,3 +294,45 @@ test("工具输出里折叠的「… +12 lines (ctrl+o to expand)」也不进预
   const rows = ["❯ hi", "⏺ Bash(ls)", "  ⎿  a.txt", "     … +12 lines (ctrl+o to expand)", "", "⏺ 列好了。", RULE, "❯", RULE];
   assert.deepEqual(extractLiveReply(rows, "claude-code")?.lines, ["列好了。"]);
 });
+
+// 2026-10-19 用户截图（Codex 0.163）：多行提问的回显续行、审批结果行、失败命令行都不是回复
+test("Codex：多行提问的回显续行不进预览", () => {
+  const screen = [
+    "› 不要调用任何工具。请按下面清单原样输出一段 Markdown：",
+    "  1. 三个二级标题（## 开头）",
+    "  2. 一个两层嵌套的无序列表，和一个有序列表",
+    "",
+    "• Working (6s • esc to interrupt)",
+    "",
+    "› Ask Codex to do anything",
+  ];
+  assert.equal(extractLiveReply(screen, "codex"), null);
+  const answering = [...screen.slice(0, 4), "• ## Markdown 语法基础", "", "› Ask Codex to do anything"];
+  assert.deepEqual(extractLiveReply(answering, "codex")?.lines, ["## Markdown 语法基础"]);
+});
+
+test("Codex：审批结果行与失败命令（含续行）不进预览", () => {
+  const screen = [
+    "› 联网搜索 Tauri v2 当前最新的版本号",
+    "",
+    '• Failed (exit 6) curl -s --max-time 20 -o /tmp/r.json "https://api.g…',
+    "  └ + Show details",
+    "",
+    "• 网络又临时失败了，重试一次：",
+    "",
+    '✔ You approved codex to run curl -s --max-time 20 -o /tmp/r.json "HTTP …',
+    "  this time",
+    "",
+    "• Ran curl -s --max-time 20 -o /tmp/r.json",
+    "  └ published_at: 2026-10-14T18:52:14Z",
+    "",
+    "• 已确认。查询结果如下：",
+    "",
+    "› Ask Codex to do anything",
+  ];
+  assert.deepEqual(extractLiveReply(screen, "codex")?.lines, [
+    "网络又临时失败了，重试一次：",
+    "",
+    "已确认。查询结果如下：",
+  ]);
+});

@@ -74,9 +74,12 @@ const LAYOUTS: Record<string, Layout> = {
   codex: {
     // 没有边框：最后一条「›」行就是输入行（占位字「Ask Codex to do anything」或草稿）
     boxTop: (rows) => lastBox(rows, (i) => (/^›(?:\s|$)/.test(rows[i]) ? i : -1)),
-    echo: /^›\s+\S/,
+    // 斜杠命令回显成顶格的「/status」（不带 ›），后面是它的结果块
+    echo: /^(?:›\s+\S|\/[a-z][\w-]*(?:\s|$))/,
     lead: /^•\s/,
-    tool: new RegExp(`^•\\s+${TOOL_VERB}\\b`),
+    // 失败的命令写成「• Failed (exit 6) curl …」；审批结果「✔ You approved codex to run … / this time」不带 • 也不是回复，
+    // 当工具行连同续行一起跳过（2026-10-19 用户截图：这两种行混进预览，预览从它们起整段重贴）
+    tool: new RegExp(`^•\\s+(?:${TOOL_VERB}|Failed)\\b|^[✔✓✗✘■]\\s+You\\s`),
     skip: /^•\s+Working\b|esc to interrupt|^\s*(?:─+\s*)?Worked for\b|^\s*└/,
     indent: 2,
   },
@@ -169,6 +172,12 @@ export function extractLiveReply(lines: readonly string[], agentId: string): Liv
   if (start < 0 && layout.lead) {
     const lead = layout.lead;
     start = region.findIndex((l) => lead.test(l) && !layout.tool.test(l));
+  }
+  // 多行提问的回显：「› 第一行」之后的续行（缩进）也是用户的话，到第一个空行或助手行首为止都跳过
+  // （2026-10-19 用户截图：Codex 里发九行清单，后八行被当成回复显示在下面）
+  if (start >= 0 && layout.lead) {
+    const lead = layout.lead;
+    while (start < region.length && region[start].trim() && !lead.test(region[start])) start++;
   }
   // 开头都滚出屏了（长回复，2026-10-17 用户：显示一半后就没了）：屏上这一截全是续行
   const anchored = start >= 0;
