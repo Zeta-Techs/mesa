@@ -274,7 +274,7 @@ catalog 条目不写 `apply_patch_tool_type`（freeform＝type=custom 工具会�
 - **「同时绑到」**：新建网关时勾选额外 Agent，保存走 saveGateway → bindGateway×N（**不走 create_profile**——它一次只建一条绑定且只填一个槽）。槽位由 `gatewayDraftSlots` 拼装：主槽永远 = 表单 Base URL（预设不覆盖用户正在填的地址）；预设定义的其他槽以预设值为准（智谱 responses 专用端点不被同址回落盖掉）；无预设时额外 Agent 的槽回落同一地址（中转同址惯例）。额外绑定的协议由 `extraBindTargets` 推导（复用 `apiKindOf` 同族过滤；多协议 Agent 优先 openai——第三方端点最稳；kimi 官方 kimi 协议只认预设 `protocolByAgent` 显式给）。绑定失败**不回滚网关**，错误文案指路网关库补绑（避免重试再建重复网关）。
 - **网关库新建即绑**：新建表单同样可选预设（同址只填主输入、分槽直填并展开槽区；推荐模型仅在目录为空时播种，不动手填内容）；新建保存后自动展开 Agent 配置区，打开零绑定网关同样自动展开——消除「保存 → 再编辑 → 找折叠项」往返。`save_gateway` / `bind_gateway` command 返回保存后的 DTO（store 透传），前端禁止再用「列表末位」猜新建网关。
 
-官方账号收进组头芯片（已安装才显示）：未连接是「连接」ghost 钮（终端跑 CLI 登录），已连接是「官方已连接」。不占一整行。启动栏里官方也是一条绑定。
+官方账号收进组头芯片（已安装才显示）：未连接是「登录」钮（终端跑 CLI 登录），已连接是绿点 +「官方」。不占一整行。启动栏里官方也是一条绑定。
 
 网关库（同页工具条，不是新的一级导航）：密钥、五个协议槽、Header、获取模型、按模型展开策略、按槽体检。连接弹层保持窄；网关编辑可以更宽。默认只露名称、无密钥、Base URL、测试/获取模型、密钥和保存；协议槽 / Header / Agent 配置 / 模型策略收进折叠。填完即可测、可拉目录，测的是当前表单；草稿探测不写 lastProbe，也不落密钥。模型策略与添加 Agent 配置勾选模型按厂商分类筛选（`groupModelsByVendor` / `visibleVendorGroups`），不整表摊开。保存是唯一主 CTA。
 

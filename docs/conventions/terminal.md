@@ -332,7 +332,7 @@
   那条否决的是新增垂直占用，而这条栏在 Overlay 模式下恒占 40px 且不可省（红绿灯靠 `pl-[78px]` 让位），
   这里是利用既有空间。`chromeHidden` 执行态下左中两段隐藏，只留让位与收件箱。
 - **首页「待你处理」收件箱（v3.39；v3.42 起横跨项目导航与详情两栏之上；v3.59 起文档流单行 strip + macOS 收进自绘标题栏；v3.60 扩四类新来源）**：聚合工作区冲突/可合并
-  + 终端注意力（仅待确认），排序 冲突 > 待确认 > 可合并 > 待核验 > 待发送 > 配置失效，为空整块不渲染；条目为可序列化 `InboxItem`（action 描述非闭包），
+  + 终端注意力（仅待确认），固定顺序 冲突 > 待确认 > 依赖 > 更新 > 文献 > 可合并 > 待核验 > 待发送 > 技能 > 配置失效 > 人工请求（`INBOX_CATEGORIES`），为空整块不渲染；条目为可序列化 `InboxItem`（action 描述非闭包），
   由 WorkspacesPage 签名去抖镜像进 store（唯一写入方），点击统一走 `runInboxAction` 派发（review/tab/session/digest/artifacts/profiles 都走 store 一次性请求）。
   **v3.60 新来源（全部过「是否阻塞人的决策」闸）**：**产物待核验**（后端 `pending_artifact_checks`：活跃工作区绑定步骤的
   expectedArtifacts 全部产出且 mtime ≥ 工作区创建时间，可合并/冲突已覆盖的不重复报——产物多为 gitignore 的 *.pdf，git 状态看不见，
