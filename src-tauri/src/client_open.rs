@@ -427,7 +427,7 @@ fn plan_codex_session(
                     checks.push(check(
                         "provider_unregistered",
                         "fix",
-                        "Codex 客户端不认识这条对话的渠道，直接打开会报「Model provider not found」。需要把这个连接的端点和密钥写进 ~/.codex/config.toml（密钥明文，写前自动备份，可在连接页撤销）。",
+                        "Codex 客户端不认识这条对话的渠道，直接打开会报「Model provider not found」。需要把这个连接的端点和密钥写进 ~/.codex/config.toml（密钥明文，写前自动备份，可在连接页用「撤销上次写入」还原）。",
                     ));
                     *fix = Some(FixDto {
                         kind: "codexRegister".into(),

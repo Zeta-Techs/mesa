@@ -1,6 +1,6 @@
 # 客户端接力（Client Handoff）整体设计
 
-> 状态：**P1 + P2 已实现**（2026-10-18，用户「按推荐做」）；真机点验清单见文末 §11。决策已沉淀进 architecture §10 当日条目，调研事实见 matrix §13。**与本稿原方案的差异**：①后端文件名 `client_open.rs`（避免与既有 `handoff.rs` 跨 Agent 接力混淆）；②命令是 `client_open_list / client_open_plan / client_open_launch`，launch 无 plan_token，每次现算；③P2 的「VS Code 扩展作第二客户端」**没做**（见 §7）。
+> 状态：**P1 + P2 已实现**（2026-10-19：连接页「注册 / 移除注册」入口已删，见 §6）（2026-10-18，用户「按推荐做」）；真机点验清单见文末 §11。决策已沉淀进 architecture §10 当日条目，调研事实见 matrix §13。**与本稿原方案的差异**：①后端文件名 `client_open.rs`（避免与既有 `handoff.rs` 跨 Agent 接力混淆）；②命令是 `client_open_list / client_open_plan / client_open_launch`，launch 无 plan_token，每次现算；③P2 的「VS Code 扩展作第二客户端」**没做**（见 §7）。
 > 事实来源：本机 ChatGPT.app 26.1013 / Claude.app 2.42304 的 app.asar 源码、本机 `~/.codex/state_5.sqlite`、七家 CLI 的官方文档与源码调研（标注 V=已核实 / I=推断）。
 
 ## 0. 结论
@@ -87,7 +87,7 @@ ClientSpec {
 ## 6. 各家具体做法
 
 **Codex（A 档，先做，修现有痛点）**
-- 现有 `codex_register_client_provider` 等后端函数原样复用，只是触发点从连接页搬进预检浮层；连接页保留「已注册渠道」管理与「移除注册」，不再是必经之路。
+- 沿用 `register_codex_client_provider_named` 写渠道定义块，触发点从连接页搬进预检浮层。**2026-10-19 连接页的「注册到 / 移除 Codex 客户端注册」两项已删**（未发版，没有存量注册记录）；撤销走连接页 Codex 组头「撤销上次写入」。
 - 查 `state_5.sqlite` 的 `threads` 表（只读）确认对话在客户端注册表里。本机现状：1811 条 thread，其中 1395 条活跃对话的原文已被压成 `.zst`，所以**不能用「rollout 文件在不在」判断**，必须查表。
 - 可选后续（**未实测**）：本机 Codex 0.163 的 provider 支持 `command` 取令牌（字段 `command / timeout_ms / refresh_interval_ms / cwd`）。若 ChatGPT 内嵌客户端认它，可让密钥不再明文落 `config.toml`。需单独起一个验证小任务，不进首批。
 
@@ -133,7 +133,7 @@ ClientSpec {
 用 `npm run tauri:dev` 的 Mesa Dev 热更新窗口。先备好：一条 Codex 官方 / 无渠道记录的对话、一条用 Mesa 的 API 连接开的 Codex 对话（provider 形如 `ccode-xxxx`）、一条 Claude Code 对话。
 
 1. **Codex 直通**：对话页选一条官方渠道的 Codex 对话 → 点底部「在 Codex 客户端打开」。应直接拉起，右下角提示「已交给 Codex 客户端」，无弹层。
-2. **Codex 缺渠道**：选 `ccode-xxxx` 那条 → 点同一按钮。应弹层说明要写入 `~/.codex/config.toml`，点「写入并打开」后客户端打开该对话且不再报 Model provider not found；再点一次应直接拉起、不再弹层；连接页那条连接行尾「移除 Codex 客户端注册」能撤销。
+2. **Codex 缺渠道**：选 `ccode-xxxx` 那条 → 点同一按钮。应弹层说明要写入 `~/.codex/config.toml`，点「写入并打开」后客户端打开该对话且不再报 Model provider not found；再点一次应直接拉起、不再弹层；连接页 Codex 组头 ⋯「撤销上次写入」能还原这次写入。
 3. **Claude 桌面版**：选一条 Claude Code 对话 → 点「在 Claude 桌面版打开」。用 Mesa 连接开的会先弹「会换账号」提示；点「打开」后桌面版 Code 标签应出现这条对话（**这会往你的桌面版新增一条会话记录**）。回来看 Mesa 的回放是否同步。
 4. **双写提示**：对一条正在 Mesa 终端里跑的对话点按钮，应出现「还在终端里运行」警告和「仍然打开」。
 5. **被拦**：对一条已被 CLI 清掉源文件、又没保留的 Claude 对话点按钮，应只显示原因、没有主按钮。

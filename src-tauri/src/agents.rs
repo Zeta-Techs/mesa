@@ -2381,7 +2381,7 @@ pub fn resume_command_line(agent_id: &str, session_id: &str, cwd: &str) -> Resul
 /// Codex 桌面客户端可识别的 provider 名单：客户端打开会话时按 rollout 记录的
 /// model_provider 在 config.toml 里找定义，缺失即报「Model provider `X` not found」
 /// 拒绝继续（2026-08-31 实测）。内置 "openai" 恒可用、不在表内；
-/// 文件缺失/损坏返回空表，前端对内置名以外的渠道保守置灰。
+/// 文件缺失/损坏返回空表（client_open 预检据此判断渠道是否需要补写）。
 pub fn codex_client_config_providers() -> Vec<String> {
     let Some(home) = dirs::home_dir() else {
         return Vec::new();

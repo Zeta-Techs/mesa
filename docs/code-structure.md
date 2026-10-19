@@ -690,7 +690,7 @@ src-tauri/src/
                              # 恢复分两档——撤销上次写入（UI 名；最近批次，每 tag 轮换留 5 份）与恢复初始状态
                              #   （backups/<agent>/original/ 永久快照，首次 apply 时落、不参与轮换，
                              #   has_original_backup/restore_original_backup）；
-                             # codex 轻量注册 codex_register_client_provider：只写 config.toml provider 定义块
+                             # codex 渠道定义块补写 register_codex_client_provider_named（客户端接力「写入并打开」与会话导入调用；连接页入口 2026-10-19 已删）：只写 config.toml provider 定义块
                              #   （顶层 model_provider/model 不动、不记 active_global）；认证与「设为全局」
                              #   共用 experimental_bearer_token（ChatGPT 自带 Codex 的 ModelProviderInfo 认这个字段），
                              #   **不写 auth.json**，也不写 http_headers（MCP 字段，写在 provider 上客户端加载失败报 not found）；

@@ -457,6 +457,16 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-19 · 删连接页「注册到 / 移除 Codex 客户端注册」，渠道补写只走客户端接力
+
+用户问连接页的注册入口还要不要：对话与项目在客户端打开已不依赖它。核对后定下：①项目级打开不涉及 Mesa 连接，Claude 桌面版用自己的账号，
+二者本就与注册无关；②Codex 里用 Mesa 连接开的对话仍需要 `config.toml` 有渠道定义块，但由「在 Codex 客户端打开」弹层的「写入并打开」
+当场补写（`register_codex_client_provider_named`），不再需要手动步骤；③应用未发版，没有存量注册记录（本机 config.toml 只有 `custom`），
+按「未发布不养闲机器」把「注册 / 移除注册」两个菜单项连同 `codex_register_client_provider` / `codex_unregister_client_provider` /
+`codex_client_registered_profiles` 三条命令、`patch_codex_config_unregister`、`codex_default_is` 及其测试一并删除；④撤销改走连接页
+Codex 组头「撤销上次写入」（补写与「设为全局」共用备份批次，只能回到最近一次写入前，写过几次要撤几次），弹层与文档照此措辞。
+会话包导入弹窗里的「注册到 Codex 客户端」勾选是另一条路径，保留。
+
 ### 2026-10-18 · 客户端接力：预检再发深链；对话级只有 Codex / Claude，其余不显示按钮
 
 用户：Mesa 的对话和项目能在 Codex 客户端打开但常出错、配置绕，问九家是否都能在各自客户端无缝打开。逐家查源码后结论是**不能**，

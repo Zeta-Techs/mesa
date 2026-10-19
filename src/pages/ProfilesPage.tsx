@@ -3,7 +3,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import {
-  AppWindow,
   CopyPlus,
   Database,
   Eye,
@@ -20,7 +19,6 @@ import {
   Star,
   Trash2,
   Undo2,
-  Unlink,
 } from "lucide-react";
 import { useAppStore } from "../store";
 import { AGENTS, AGENT_PROTOCOLS, type ScheduleDto } from "../types";
@@ -2515,23 +2513,6 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     refreshGlobalBackups().catch(() => toast("全局配置备份状态读取失败", "warning"));
   }, [profiles]);
 
-  /** 已注册到 Codex 客户端的 profile id 集（config.toml 里有其 provider 定义块）：
-      驱动连接行菜单「注册到客户端 ⇄ 移除注册」状态化 */
-  const [clientRegistered, setClientRegistered] = useState<Set<string>>(
-    () => new Set(),
-  );
-  async function refreshClientRegistrations() {
-    try {
-      const ids = await invoke<string[]>("codex_client_registered_profiles");
-      setClientRegistered(new Set(ids));
-    } catch {
-      /* 检测失败按「未注册」显示，不阻断页面 */
-    }
-  }
-  useEffect(() => {
-    refreshClientRegistrations().catch(() => toast("Codex 客户端注册状态读取失败", "warning"));
-  }, [profiles]);
-
   /** 能力表（agent_capabilities）：「设为全局」按 setGlobal 置灰 + 原因提示，与后端报错同源 */
   const [caps, setCaps] = useState<Record<string, AgentCapabilitiesDto>>({});
   useEffect(() => {
@@ -2573,7 +2554,6 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
       await loadSettings();
       mirrorValidation(p, applied.validation);
       rememberValidation(p.id, applied.validation);
-      await refreshClientRegistrations();
       setApplyDialog({ profile: p, running: false, applied, error: null });
       setError(null);
     } catch (e) {
@@ -2629,55 +2609,6 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
         error: String(e),
         conflict: null,
       });
-    }
-  }
-
-  /** 注册到 Codex 客户端（不切换默认渠道）：只写 config.toml 的 provider 定义块
-      （认证用 experimental_bearer_token，不动 auth.json、不影响客户端自身登录态），
-      之后此网关发起的会话可在桌面客户端续聊；与「设为全局」共用备份，可「撤销上次写入」 */
-  async function onRegisterClient(p: Profile) {
-    if (
-      !(await confirmDialog(
-        "将把此网关的 provider 定义写入 codex 的 config.toml（密钥写在定义块的 experimental_bearer_token，先备份、可撤销）。**默认渠道不动，auth.json 与客户端登录态也不动**——之后 Mesa 里此网关发起的会话，可以在 Codex / ChatGPT 桌面客户端直接打开续聊。继续？",
-      ))
-    )
-      return;
-    try {
-      const files = await invoke<string[]>("codex_register_client_provider", {
-        profileId: p.id,
-        providerName: null,
-      });
-      // 注册也产生备份批次，「撤销上次写入」入口可能由灰变可用
-      await refreshGlobalBackups();
-      await refreshClientRegistrations();
-      setNotice(`已注册到 Codex 客户端：${files.join("、")}`);
-      setTimeout(() => setNotice(null), 5000);
-      setError(null);
-    } catch (e) {
-      setError(String(e));
-    }
-  }
-
-  /** 移除客户端注册（注册的逆操作）：只删 config.toml 的 provider 定义块，
-      块内静态认证头随块一并删除（即完成密钥清理）；auth.json 本就不动 */
-  async function onUnregisterClient(p: Profile) {
-    if (
-      !(await confirmDialog(
-        "将从 codex 的 config.toml 删除此网关的 provider 定义块（含块内密钥，先备份、可撤销）。之后此网关发起的会话在 Codex 桌面客户端又会无法打开；Mesa 内使用与客户端登录态都不受影响。继续？",
-      ))
-    )
-      return;
-    try {
-      const files = await invoke<string[]>("codex_unregister_client_provider", {
-        profileId: p.id,
-      });
-      await refreshGlobalBackups();
-      await refreshClientRegistrations();
-      setNotice(`已移除客户端注册：${files.join("、")}`);
-      setTimeout(() => setNotice(null), 5000);
-      setError(null);
-    } catch (e) {
-      setError(String(e));
     }
   }
 
@@ -3843,34 +3774,6 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                       "修改外部 CLI 的配置文件（先备份、失败自动回滚）。不改 Mesa 启动栏预选，也不改项目默认。已打开的进程需要新开才会读到。"),
               onSelect: () => void onApplyGlobal(rowMenu.profile),
             },
-            // 轻量版：只注册 provider 定义不切换默认，让此网关的会话能在 Codex 桌面客户端续聊；
-            // 已注册的同位变「移除注册」（config.toml 里存在其 provider 块即视为已注册）
-            ...(rowMenu.profile.agent === "codex" &&
-            rowMenu.profile.accountType !== "official"
-              ? [
-                  clientRegistered.has(rowMenu.profile.id)
-                    ? {
-                        icon: Unlink,
-                        label: "移除 Codex 客户端注册…",
-                        danger: true,
-                        title:
-                          "从 config.toml 删除此网关的 provider 定义块（含块内密钥，先备份、可撤销）；之后此渠道发起的会话在客户端又打不开了，Mesa 内与客户端登录态都不受影响",
-                        onSelect: () => void onUnregisterClient(rowMenu.profile),
-                      }
-                    : {
-                        icon: AppWindow,
-                        label: "注册到 Codex 客户端（不切换默认渠道）…",
-                        disabled:
-                          rowMenu.profile.noAuth || !!rowMenu.profile.slotMissing,
-                        title: rowMenu.profile.noAuth
-                          ? "无密钥连接没有可注册的凭证"
-                          : rowMenu.profile.slotMissing
-                            ? "这个网关还没配该协议的端点"
-                            : "只把 provider 定义写进 codex 的 config.toml（密钥用 experimental_bearer_token，先备份、可撤销），默认渠道与客户端登录态都不动；之后此网关发起的会话可在 Codex / ChatGPT 直接续聊",
-                        onSelect: () => void onRegisterClient(rowMenu.profile),
-                      },
-                ]
-              : []),
             { separator: true },
             {
               icon: Trash2,
@@ -3906,7 +3809,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
               label: "撤销上次写入",
               disabled: !globalBackups[groupMenu.agentId],
               title: globalBackups[groupMenu.agentId]
-                ? "回到最近一次写入（设为全局默认 / 注册到客户端）前的状态；写了几遍就要撤销几遍。想彻底回到 Mesa 介入前的手工配置，用下面的「恢复初始状态」"
+                ? "回到最近一次写入（设为全局默认 / 在客户端打开时补写的渠道定义）前的状态；写了几遍就要撤销几遍。想彻底回到 Mesa 介入前的手工配置，用下面的「恢复初始状态」"
                 : "还没有可撤销的写入",
               onSelect: () => void onRestoreBackup(groupMenu.agentId),
             },

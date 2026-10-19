@@ -91,7 +91,7 @@ pub const CODEX_SET_GLOBAL_CONFLICT: &str = "\
 \n\
 当前 config.toml 里已有 cc-switch 的配置（custom 渠道或它的模型目录），或本机装着 cc-switch。不要两边同时改默认渠道。\n\
 \n\
-要在 ChatGPT 里续 Mesa 开的对话，用「注册到客户端」，不必设为全局。\n\
+要在 Codex 客户端里续 Mesa 开的对话，用对话页的「在 Codex 客户端打开」（缺渠道定义时会当场补写），不必设为全局。\n\
 \n\
 仍要设为全局？";
 
@@ -635,34 +635,6 @@ fn patch_codex_config_register(
     set_codex_provider_static_auth(blk, key);
     blk["wire_api"] = value("responses");
     Ok(doc.to_string())
-}
-
-/// 「移除客户端注册」的 config.toml 补丁（注册的逆操作）：只删目标 provider 定义块，
-/// 顶层 model_provider/model 与其余块一律不动。返回 (新内容, 是否真的删到了)——
-/// 块不存在时调用方应跳过写入（不制造空备份批次）
-fn patch_codex_config_unregister(
-    existing: Option<&str>,
-    provider_id: &str,
-) -> Result<(String, bool), String> {
-    let mut doc = parse_toml_doc(existing)?;
-    let removed = doc
-        .get_mut("model_providers")
-        .and_then(|i| i.as_table_mut())
-        .map(|t| t.remove(provider_id).is_some())
-        .unwrap_or(false);
-    Ok((doc.to_string(), removed))
-}
-
-fn codex_default_is(existing: &Option<String>, provider_id: &str) -> bool {
-    existing
-        .as_deref()
-        .and_then(|t| t.parse::<toml_edit::DocumentMut>().ok())
-        .and_then(|doc| {
-            doc.get("model_provider")
-                .and_then(|i| i.as_str())
-                .map(|s| s == provider_id)
-        })
-        .unwrap_or(false)
 }
 
 /// kimi 模型别名：清洗为 TOML 裸键字符集 [A-Za-z0-9_-]，无需引号
@@ -2108,31 +2080,9 @@ pub async fn apply_profile_global(
     result
 }
 
-/// 注册到 Codex 客户端（不切换默认渠道）：只写 config.toml 的 provider 定义块
-/// （认证与「设为全局」相同：experimental_bearer_token，**不动 auth.json**），之后
-/// Mesa 里此网关发起的会话可在 Codex 桌面客户端直接续聊（深链
-/// codex://threads/<id>）。与「设为全局」共用备份/原子写/事务回滚，后悔走
-/// 「撤销上次写入」；不 record_active_global——没有切换默认渠道，不产生「全局生效」语义
-#[tauri::command]
-pub async fn codex_register_client_provider(
-    store: tauri::State<'_, ProfileStore>,
-    profile_id: String,
-    provider_name: Option<String>,
-) -> Result<Vec<String>, String> {
-    let profile = profile_for_write(&store, &profile_id)?;
-    let key = profiles::get_key_for_profile(&profile)?.ok_or("该配置没有已保存的密钥")?;
-    let block = provider_name
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| profile.provider_name());
-    tauri::async_runtime::spawn_blocking(move || {
-        register_codex_client_provider_named(profile, key, block)
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
 /// 把绑定的 base_url + 密钥写成 config.toml 里名为 `block_name` 的 provider 定义块。
-/// 会话导入可传入 rollout 记录的原始名（A 机 `ccode-<A短id>`）。
+/// 调用方：客户端接力的「写入并打开」（client_open_launch）与会话导入（传入 rollout 记录的原始名，如 A 机 `ccode-<A短id>`）。
+/// 只写 config.toml 的定义块（认证走 experimental_bearer_token，不动 auth.json），与「设为全局」共用备份，可「撤销上次写入」。
 pub(crate) fn register_codex_client_provider_named(
     profile: Profile,
     key: String,
@@ -2170,69 +2120,6 @@ pub(crate) fn register_codex_client_provider_named(
     }];
     let backups_dir = backups_root()?.join("codex");
     apply_plans(&backups_dir, &home, &plans)
-}
-
-/// 移除 Codex 客户端注册（注册的逆操作）：只删 config.toml 里该网关的 provider 定义块
-/// （块内静态认证头随块一起删除，即完成密钥清理）。
-/// 移除后客户端回到「Model provider not found」——此渠道的会话又无法在客户端续聊，
-/// Mesa 内启动注入不受影响。与注册共用备份/原子写
-#[tauri::command]
-pub async fn codex_unregister_client_provider(
-    store: tauri::State<'_, ProfileStore>,
-    profile_id: String,
-) -> Result<Vec<String>, String> {
-    let profile = profile_for_write(&store, &profile_id)?;
-    if profile.agent != "codex" {
-        return Err("只有 Codex 绑定有客户端注册可移除".into());
-    }
-    tauri::async_runtime::spawn_blocking(move || {
-        let _guard = GLOBAL_CONFIG_MUTEX
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let _file_guard = crate::storage::config_lock("global-config")?;
-        let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
-        let cfg_path = home.join(".codex/config.toml");
-        let existing = read_existing(&cfg_path)?;
-        if codex_default_is(&existing, &profile.provider_name()) {
-            return Err(
-                "此渠道是 Codex 当前默认（「设为全局」写入）。只删定义块会让 ChatGPT 报 Model provider not found。请用「撤销上次写入」或「恢复初始状态」。"
-                    .into(),
-            );
-        }
-        let (content, removed) =
-            patch_codex_config_unregister(existing.as_deref(), &profile.provider_name())?;
-        if !removed {
-            return Err("该渠道未注册到客户端（config.toml 里找不到它的定义块）".into());
-        }
-        let plans = vec![PlannedWrite {
-            tag: "config.toml",
-            path: cfg_path,
-            content,
-        }];
-        let backups_dir = backups_root()?.join("codex");
-        apply_plans(&backups_dir, &home, &plans)
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-/// 当前已注册到 Codex 客户端的 profile id 列表：config.toml 里存在其派生 provider
-/// 定义块即视为已注册（名字单一出处 provider_id.rs，与会话 rollout 记录同口径）
-#[tauri::command]
-pub fn codex_client_registered_profiles(
-    store: tauri::State<'_, ProfileStore>,
-) -> Result<Vec<String>, String> {
-    let names = crate::agents::codex_client_config_providers();
-    let profiles = store.list()?;
-    Ok(profiles
-        .into_iter()
-        .filter(|p| {
-            p.agent == "codex"
-                && p.account_type != crate::profiles::AccountType::Official
-                && names.contains(&p.provider_name())
-        })
-        .map(|p| p.id)
-        .collect())
 }
 
 #[tauri::command]
@@ -2597,36 +2484,6 @@ mod tests {
     }
 
     #[test]
-    fn codex_unregister_patch_removes_only_target_block() {
-        // 移除注册：只删目标 provider 块，顶层默认与其余块原样保留
-        let existing = "model_provider = \"custom\"\nmodel = \"gpt-5.6-luna\"\n\n[model_providers.custom]\nbase_url = \"https://a.example.com/v1\"\n\n[model_providers.ccode-a1b2c3d4]\nbase_url = \"https://b.example.com/v1\"\nrequires_openai_auth = true\n";
-        let (out, removed) =
-            patch_codex_config_unregister(Some(existing), "ccode-a1b2c3d4").unwrap();
-        assert!(removed);
-        let doc: toml_edit::DocumentMut = out.parse().unwrap();
-        assert_eq!(
-            doc["model_provider"].as_str(),
-            Some("custom"),
-            "默认渠道不动"
-        );
-        assert!(
-            doc["model_providers"].get("custom").is_some(),
-            "其余 provider 块不动"
-        );
-        assert!(
-            doc["model_providers"].get("ccode-a1b2c3d4").is_none(),
-            "目标块已删除"
-        );
-        // 块不存在：removed=false，调用方跳过写入
-        let (_out2, removed2) =
-            patch_codex_config_unregister(Some(existing), "ccode-absent").unwrap();
-        assert!(!removed2);
-        // 空文档同样安全
-        let (_out3, removed3) = patch_codex_config_unregister(None, "ccode-x").unwrap();
-        assert!(!removed3);
-    }
-
-    #[test]
     fn codex_other_switcher_marks_catalog_and_custom() {
         assert!(codex_other_switcher_marks(
             "model_catalog_json = \"cc-switch-model-catalog.json\"\n"
@@ -2669,17 +2526,6 @@ mod tests {
             set_global_conflict_reason("opencode", true, None),
             Some(SET_GLOBAL_CC_SWITCH_CONFLICT)
         );
-    }
-
-    #[test]
-    fn codex_unregister_blocked_when_provider_is_default() {
-        let existing = Some(
-            "model_provider = \"ccode-a1b2c3d4\"\n\n[model_providers.ccode-a1b2c3d4]\nbase_url = \"https://a\"\n"
-                .into(),
-        );
-        assert!(codex_default_is(&existing, "ccode-a1b2c3d4"));
-        assert!(!codex_default_is(&existing, "custom"));
-        assert!(!codex_default_is(&None, "ccode-a1b2c3d4"));
     }
 
     #[test]
