@@ -1768,12 +1768,67 @@ pub fn prepare_launch(profile: &Profile) -> Result<Vec<String>, String> {
             SpecialLaunch::CodexInlineProvider { .. }
         ))
     );
+    let mut args = Vec::new();
     if is_codex {
         if let Some(path) = write_codex_catalog(profile)? {
-            return Ok(catalog_args(&path));
+            args.extend(catalog_args(&path));
+        }
+        // 只给交互式启动（内嵌终端 / 外部终端，都经这里）：exec 不认这个参数，无头调用不走这里。
+        // Mesa 一律用 -c 注入，codex 0.163 只能不走共享后台服务，不明说就每次报一条
+        // 「Running without the shared background server」（2026-10-19 用户：终端里 3 条 warning）
+        if codex_modern() {
+            args.push("--no-daemon".into());
         }
     }
-    Ok(vec![])
+    Ok(args)
+}
+
+/// 本机实测过的新版行为起点（0.163）：`--no-daemon` 可用；模型目录 / 兜底元数据没声明的档位
+/// CLI 自己丢掉（配置里的 priority 不会再带到中转），不必再用 -c 强塞 service_tier
+const CODEX_MODERN: (u32, u32, u32) = (0, 163, 0);
+
+fn codex_modern() -> bool {
+    codex_cli_version().is_some_and(|v| v >= CODEX_MODERN)
+}
+
+/// 「codex-cli 0.163.0」→ (0, 163, 0)：取第一个「数字.数字.数字」
+fn parse_cli_semver(text: &str) -> Option<(u32, u32, u32)> {
+    text.split(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .find_map(|tok| {
+            let mut it = tok.split('.');
+            let (a, b, c) = (it.next()?, it.next()?, it.next()?);
+            Some((a.parse().ok()?, b.parse().ok()?, c.parse().ok()?))
+        })
+}
+
+/// 本机 codex 的版本。检测缓存里有就用（不看有效期：版本只在更新后变，更新时缓存会清），
+/// 没有再现查一次 --version（实测几十毫秒）。查不到 = None，按旧版参数启动，保证起得来
+#[cfg(not(test))]
+fn codex_cli_version() -> Option<(u32, u32, u32)> {
+    let cached = DETECT_CACHE.lock().ok().and_then(|cache| {
+        cache
+            .as_ref()
+            .and_then(|(_, results)| results.iter().find(|r| r.id == "codex"))
+            .and_then(|r| r.version.clone())
+    });
+    let text = cached.or_else(|| {
+        let spec = agent_spec("codex")?;
+        let path = resolve_binary(spec.binary)?;
+        version_args_with_timeout(&path, spec.version_args, std::time::Duration::from_secs(3))
+    })?;
+    parse_cli_semver(&text)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// 单测钉住版本：默认 None（旧版行为，与开发机装没装 codex 无关）
+    static CODEX_VERSION_FOR_TEST: std::cell::Cell<Option<(u32, u32, u32)>> =
+        const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+fn codex_cli_version() -> Option<(u32, u32, u32)> {
+    CODEX_VERSION_FOR_TEST.with(|c| c.get())
 }
 
 pub fn binary_for(agent_id: &str) -> Option<&'static str> {
@@ -1799,20 +1854,22 @@ pub(crate) fn resume_args(agent_id: &str, session_id: &str) -> (bool, Vec<String
 /// 中转 Codex 盖掉磁盘/ChatGPT 登录带进本进程的官方能力（不写 config.toml）。
 /// `web_search` 默认开，catalog 的 `supports_search_tool` 挡不住请求（cc-switch 同结论）；
 /// DeepSeek 等会拒服务端搜索（有的中转转成 Anthropic `web_search_20250305`）。
-/// `service_tier=priority` 是订阅档，中转模型不声明，CLI 警告后省略——改 `auto` 不再带 priority。
+/// `service_tier=priority` 是订阅档，中转模型不声明——旧版 codex 照发，改 `auto` 不再带 priority；
+/// 0.163 起 CLI 自己丢掉没声明的档，再塞 `auto` 反而每次报「not advertised」warning，只给旧版塞。
 /// 中转不盖掉 `features.apps`：0.154 上 `features.apps=false` 会把用户 HTTP MCP
 /// （Consensus / Undermind）收成 `mcp__<名>` 占位，调用即 `unsupported call`，
 /// 即使 CONSENSUS_API_KEY 已注入、端点可达。内置 ChatGPT `codex_apps` 改关插件，
 /// 避免失效登录态 401 token_revoked（`mcp_servers.codex_apps.enabled=false` 报 invalid transport）。
 fn codex_relay_compat_args() -> Vec<String> {
-    vec![
-        "-c".into(),
-        r#"web_search="disabled""#.into(),
-        "-c".into(),
-        r#"service_tier="auto""#.into(),
+    let mut args = vec!["-c".into(), r#"web_search="disabled""#.into()];
+    if !codex_modern() {
+        args.extend(["-c".into(), r#"service_tier="auto""#.into()]);
+    }
+    args.extend([
         "-c".into(),
         r#"plugins.codex-app-tools@openai-bundled.enabled=false"#.into(),
-    ]
+    ]);
+    args
 }
 
 /// Codex 内联 provider 的 -c 定义参数（启动注入与外部恢复命令同一出处）。
@@ -4441,6 +4498,34 @@ api_backend = "responses"
         assert!(readonly_launch_args("qwen", &[]).is_none());
         assert!(readonly_launch_args("opencode", &[]).is_none());
         assert!(readonly_launch_args("nope", &[]).is_none());
+    }
+
+    #[test]
+    fn codex_modern_drops_service_tier_and_adds_no_daemon_only_when_interactive() {
+        // 2026-10-19 用户：Codex 终端 3 条 warning，其中两条是 Mesa 的参数引起的（本机 0.163 PTY 实录）
+        assert_eq!(parse_cli_semver("codex-cli 0.163.0"), Some((0, 163, 0)));
+        assert_eq!(parse_cli_semver("codex-cli 0.98.1-beta"), Some((0, 98, 1)));
+        assert_eq!(parse_cli_semver("unknown"), None);
+        let p = profile("codex", Some("https://relay.example.com/v1"));
+        let set = |v| CODEX_VERSION_FOR_TEST.with(|c| c.set(v));
+        // 新版：不塞 service_tier；交互式启动（prepare_launch）带 --no-daemon
+        set(Some((0, 163, 0)));
+        let joined = launch_plan(&p, Some("sk".into()), Some("glm-5.3")).unwrap().args.join(" ");
+        assert!(!joined.contains("service_tier"));
+        assert!(joined.contains(r#"web_search="disabled""#));
+        assert!(!joined.contains("--no-daemon"), "launch_plan 也给 exec 用，exec 不认 --no-daemon");
+        assert!(prepare_launch(&p).unwrap().contains(&"--no-daemon".to_string()));
+        // 旧版与查不到版本：照旧塞 auto、不带 --no-daemon（旧版不认这个参数，带了起不来）
+        for v in [Some((0, 154, 0)), None] {
+            set(v);
+            let joined = launch_plan(&p, Some("sk".into()), Some("glm-5.3")).unwrap().args.join(" ");
+            assert!(joined.contains(r#"service_tier="auto""#));
+            assert!(!prepare_launch(&p).unwrap().contains(&"--no-daemon".to_string()));
+        }
+        // 别家不受影响
+        set(Some((0, 163, 0)));
+        assert!(!prepare_launch(&profile("claude-code", Some("https://x"))).unwrap().contains(&"--no-daemon".to_string()));
+        set(None);
     }
 
     #[test]
