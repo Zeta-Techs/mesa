@@ -357,7 +357,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   git-commit-message.ts      # 空提交信息的本地默认信息生成
   main-history-save.ts       # 科研步骤卡一键「存进历史」：冲突拦截 / 白话说明 / 路径（tests/main-history-save.test.ts）
   text-fences.ts             # 纯文本消息（用户气泡）的围栏代码拆分 splitFenced：只认行首的 ``` / ~~~，行中间的三个反引号是行内写法不开围栏（旧实现按任意位置切会吞掉后面整段）；未收尾按代码到结尾（tests/text-fences.test.ts）
-  chat-reply.ts              # 聊天长回复按小标题分段（识别代码围栏）、正文里的项目文件、确认按钮是否给出（tests/chat-reply.test.ts）
+  chat-reply.ts              # 聊天长回复按小标题分段（识别代码围栏；有 ## 时冒号行不当标题）、正文里的项目文件与本机音频（mentionedAudioFiles →
+                             # ChatMarkdown 播放条）、确认按钮是否给出（tests/chat-reply.test.ts）
   paste-guard.ts             # 终端粘贴防线：剪收尾回车、shell 多行先确认、备用屏原样（tests/paste-guard.test.ts）
   terminal-links.ts          # 终端行绝对/相对路径与行列号（`:行:列`、句尾标点不吞、lookbehind 起点
                              # 让行首边界字符后的路径也命中；相对候选点击时经 terminal_link_target 终审）
@@ -1056,6 +1057,7 @@ src-tauri/src/
                              # read_image_bytes 图片通道（png/jpg/jpeg/gif/webp/svg、20MB，白名单判定复用 pdf.rs 内核）+
                              # save_reader_capture 圈选截图落 notes/assets/（PNG 魔数 + 同秒重名 -2/-3）/ append_note_image
                              # （追加进「我的想法」小节）+ 生词本 notes/glossary.md（list/append 术语小写去重/remove）+
+                             # read_audio_bytes 聊天层音频通道（mp3/wav/m4a/aac/aiff/flac/ogg、20MB、文件头校验，同一套白名单）+
                              # append_note_translation（「译段」小节）+ append/remove_note_annotation（「标注」小节：一行一条高亮/批注，
                              # 建在「译段」前、同处再标只更新批注、删空连标题删；格式与 src/reader-note.ts 双端镜像）+
                              # reader_paper_title（paper_title_for：配对笔记 H1→index.json→included.json→included.md/reading-list→雷达收件箱，

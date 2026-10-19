@@ -481,6 +481,10 @@ export function rewriteMdImageHtml(html: string): string {
     const src = matchHtmlAttr(attrs, "src");
     if (!src || /^(data:|blob:)/i.test(src)) return _full;
     const alt = matchHtmlAttr(attrs, "alt") ?? "";
+    // ![读音](mesa.aiff) 这种把音频写成图片的：不去读图（必报「只支持图片」），留文字，聊天层在下方给播放条
+    if (/\.(?:mp3|wav|m4a|aac|aiff?|aifc|flac|ogg|oga|opus)$/i.test(src.split(/[?#]/)[0])) {
+      return `<span>🔊 ${escapeHtmlAttr(alt || src)}</span>`;
+    }
     return `<span class="md-img-pending" data-md-src="${escapeHtmlAttr(src)}" data-md-alt="${escapeHtmlAttr(alt)}">图片加载中…</span>`;
   });
 }

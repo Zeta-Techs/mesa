@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   confirmChoices,
+  mentionedAudioFiles,
   mentionedProjectFiles,
   REPLY_FOLD_MIN_CHARS,
   splitReplySections,
@@ -93,4 +94,20 @@ test("登录确认不提供批准按钮", () => {
   assert.equal(confirmChoices("select a model")[0]?.key, undefined);
   // 「选择」不再当菜单词——真 y/n 确认题含它时按钮照常给（2026-10-11 修误伤）
   assert.equal(confirmChoices("选择是否继续？[y/n]")[0]?.key, "y");
+});
+
+test("回复里提到的本机音频给播放条：相对 / 绝对 / ~/ 都认，网址不认，音频不再出文件小标签", () => {
+  const text = [
+    "已把读音存成 `mesa_probe/mesa.aiff`，西语版在 /Users/me/ccode/scratch/mesa-es.m4a。",
+    "也可以听 ~/Music/mesa.mp3，或在线版 https://example.com/mesa.mp3",
+    "Markdown 写法：[英语读音](mesa_probe/mesa.aiff)、**out/voice.wav**；文本 notes/demo.md 照旧。",
+  ].join("\n");
+  assert.deepEqual(mentionedAudioFiles(text), [
+    "mesa_probe/mesa.aiff",
+    "/Users/me/ccode/scratch/mesa-es.m4a",
+    "~/Music/mesa.mp3",
+    "out/voice.wav",
+  ]);
+  assert.deepEqual(mentionedProjectFiles(text), ["notes/demo.md"]);
+  assert.deepEqual(mentionedAudioFiles("没有音频的回复。say Mesa"), []);
 });

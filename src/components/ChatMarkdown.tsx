@@ -1,4 +1,4 @@
-import { mentionedProjectFiles, splitReplySections } from "../chat-reply";
+import { mentionedAudioFiles, mentionedProjectFiles, splitReplySections } from "../chat-reply";
 import { FoldMark } from "./PageFrame";
 import { sanitizeDocumentHtml } from "../document-html";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -45,6 +45,7 @@ export default function ChatMarkdown({
 }) {
   const sections = useMemo(() => splitReplySections(text), [text]);
   const files = useMemo(() => mentionedProjectFiles(text), [text]);
+  const audios = useMemo(() => mentionedAudioFiles(text), [text]);
   const setDiffFocusReq = useAppStore((s) => s.setDiffFocusReq);
   // 默认全部展开、点小节标题收起：原先只开第一节，长回答大半被藏在一串标题后面，
   // 读起来像内容丢了（2026-10-17 用户截图）
@@ -81,6 +82,7 @@ export default function ChatMarkdown({
             </div>
           );
         })}
+        <MentionedAudios paths={audios} cwd={cwd} />
         <MentionedFiles files={files} cwd={cwd} onOpen={setDiffFocusReq} />
       </div>
     );
@@ -88,6 +90,7 @@ export default function ChatMarkdown({
   return (
     <div>
       <MarkdownBody text={text} cwd={cwd} />
+      <MentionedAudios paths={audios} cwd={cwd} />
       <MentionedFiles files={files} cwd={cwd} onOpen={setDiffFocusReq} />
     </div>
   );
@@ -116,6 +119,74 @@ function MentionedFiles({
           {path}
         </button>
       ))}
+    </div>
+  );
+}
+
+function MentionedAudios({ paths, cwd }: { paths: string[]; cwd?: string | null }) {
+  if (paths.length === 0) return null;
+  return (
+    <div className="mt-2 flex flex-col gap-1.5">
+      {paths.slice(0, 6).map((path) => (
+        <ChatAudioCard key={path} path={path} cwd={cwd} />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * 音频播放条：经 read_audio_bytes 白名单读出字节，拼成 Blob 交给网页自带播放器（可暂停、拖进度、重播）。
+ * 文件不在可读范围、已删除、这台电脑的网页内核放不了这种格式（如 Windows 上的 aiff），都如实写出来
+ */
+export function ChatAudioCard({ path, cwd }: { path: string; cwd?: string | null }) {
+  const [src, setSrc] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  // ~/ 与绝对路径原样交后端（expand_tilde）；相对路径以会话目录为基准
+  const abs = path.startsWith("~") || !cwd ? path : resolveMdPath(`${cwd}/_`, path);
+  const name = abs.split(/[\\/]/).pop() ?? abs;
+
+  useEffect(() => {
+    let stale = false;
+    let url: string | null = null;
+    setSrc(null);
+    setError(null);
+    invoke<{ mime: string; data: string }>("read_audio_bytes", { path: abs, cwdHint: cwd ?? null })
+      .then((dto) => {
+        if (stale) return;
+        const bytes = Uint8Array.from(atob(dto.data), (c) => c.charCodeAt(0));
+        url = URL.createObjectURL(new Blob([bytes], { type: dto.mime }));
+        setSrc(url);
+      })
+      .catch((e) => {
+        if (!stale) setError(String(e));
+      });
+    return () => {
+      stale = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [abs, cwd]);
+
+  return (
+    <div
+      className="flex max-w-md flex-col gap-1 rounded-md border border-hairline bg-inset px-2.5 py-2"
+      title={abs}
+    >
+      <span className="truncate text-micro text-l3">🔊 {name}</span>
+      {error ? (
+        <span className="text-micro text-l4">
+          {/只支持|不是有效|超过/.test(error) ? error : "读不到这个文件（不在可读取范围或已删除）"}
+        </span>
+      ) : src ? (
+        <audio
+          controls
+          preload="metadata"
+          src={src}
+          className="h-8 w-full"
+          onError={() => setError("这台电脑的网页内核放不了这种格式，请用别的播放器打开")}
+        />
+      ) : (
+        <span className="text-micro text-l4">音频加载中…</span>
+      )}
     </div>
   );
 }

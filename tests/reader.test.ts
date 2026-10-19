@@ -753,3 +753,10 @@ test("阅读区右栏显示层记忆：缺省聊天层，只记终端这一个�
   store.set(READER_SURFACE_KEY, "garbage");
   assert.equal(loadReaderSurface(), "chat");
 });
+
+test("rewriteMdImageHtml：把音频写成图片的不去读图，留文字（聊天层另给播放条）", () => {
+  const html = rewriteMdImageHtml('<p><img src="mesa.aiff" alt="读音"><img src="a.png" alt="x"></p>');
+  assert.ok(html.includes("🔊 读音"));
+  assert.ok(!html.includes('data-md-src="mesa.aiff"'));
+  assert.ok(html.includes('data-md-src="a.png"'));
+});

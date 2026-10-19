@@ -61,6 +61,24 @@ export function splitReplySections(text: string): ReplySection[] | null {
   return sections.filter((section) => section.title === "正文" ? section.body : true);
 }
 
+/** 聊天层能放的音频（与 reader.rs audio_mime_for 同一张表） */
+const AUDIO_EXT = /\.(?:mp3|wav|m4a|aac|aiff?|aifc|flac|ogg|oga|opus)$/i;
+
+/**
+ * 回复里提到的本机音频文件（相对、绝对、~/ 都算；网址不算），聊天层在正文下给播放条——
+ * 终端只能显示文字，放不了声音（2026-10-19 用户：读音能不能在聊天里直接播）。
+ * 按空白、引号、括号、中文标点切词，去掉词尾英文标点与 Markdown 的 * _ 包裹。
+ */
+export function mentionedAudioFiles(text: string): string[] {
+  const found = new Set<string>();
+  for (const raw of text.split(/[\s`'"()（）<>[\]，。；：！？、「」]+/)) {
+    const token = raw.replace(/^[*_]+/, "").replace(/[*_.,;:!?]+$/, "");
+    if (!token || token.includes("://") || !AUDIO_EXT.test(token)) continue;
+    found.add(token);
+  }
+  return [...found];
+}
+
 const FILE_MENTION =
   /(?:^|[\s`'"(（])((?:[\w.-]+\/)+[\w.-]+\.[A-Za-z0-9]{1,8})/g;
 
@@ -69,7 +87,8 @@ export function mentionedProjectFiles(text: string): string[] {
   const found = new Set<string>();
   for (const match of text.matchAll(FILE_MENTION)) {
     const raw = match[1];
-    if (!raw || raw.startsWith("http")) continue;
+    // 音频另给播放条（mentionedAudioFiles），不再出一个打开文件的小标签
+    if (!raw || raw.startsWith("http") || AUDIO_EXT.test(raw)) continue;
     // git 状态里的路径没有 ./ 前缀，对齐后再比对
     found.add(raw.replace(/^\.\//, ""));
   }

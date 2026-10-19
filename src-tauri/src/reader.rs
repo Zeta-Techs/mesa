@@ -563,6 +563,71 @@ pub async fn read_image_bytes(
         .map_err(|e| format!("读取图片失败: {e}"))?
 }
 
+// ===== 聊天层音频通道（2026-10-19）=====
+// AI 把朗读 / 生成的声音存成文件（say -o、TTS 脚本）后，聊天回复里提到它就给播放条——
+// 终端只能显示文字、放不了声音，这是聊天层独有的。可读范围与图片同一套白名单。
+
+/// 音频单文件上限 20MB（与图片同档；整段读进内存再交给网页播放）
+const AUDIO_CAP: u64 = 20 * 1024 * 1024;
+
+/// 扩展名白名单 → mime；不在名单内返回 None（读取前就拒绝）。
+/// aiff 是 macOS `say -o` 的默认格式（WKWebView 能放；Windows 的 WebView2 放不了，前端如实提示）
+fn audio_mime_for(path: &Path) -> Option<&'static str> {
+    match path.extension()?.to_string_lossy().to_lowercase().as_str() {
+        "mp3" => Some("audio/mpeg"),
+        "wav" => Some("audio/wav"),
+        "m4a" => Some("audio/mp4"),
+        "aac" => Some("audio/aac"),
+        "aif" | "aiff" | "aifc" => Some("audio/aiff"),
+        "flac" => Some("audio/flac"),
+        "ogg" | "oga" | "opus" => Some("audio/ogg"),
+        _ => None,
+    }
+}
+
+/// 文件头确实是这种音频：扩展名对、内容不对的（改了后缀的别的文件）不交给播放器
+fn audio_magic_ok(mime: &str, bytes: &[u8]) -> bool {
+    let at = |offset: usize, magic: &[u8]| bytes.get(offset..offset + magic.len()) == Some(magic);
+    match mime {
+        // ID3 标签开头，或直接是 MPEG 帧同步（0xFFEx / 0xFFFx）
+        "audio/mpeg" => at(0, b"ID3") || (bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] & 0xE0 == 0xE0),
+        "audio/wav" => at(0, b"RIFF") && at(8, b"WAVE"),
+        "audio/mp4" => at(4, b"ftyp"),
+        "audio/aac" => at(0, b"ID3") || (bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] & 0xF6 == 0xF0),
+        "audio/aiff" => at(0, b"FORM") && (at(8, b"AIFF") || at(8, b"AIFC")),
+        "audio/flac" => at(0, b"fLaC"),
+        "audio/ogg" => at(0, b"OggS"),
+        _ => false,
+    }
+}
+
+fn read_audio_sync(path: &str, cwd_hint: Option<&str>) -> Result<ImageBytesDto, String> {
+    let expanded = crate::sessions::expand_tilde(path);
+    let mime = audio_mime_for(Path::new(&expanded))
+        .ok_or("只支持 mp3/wav/m4a/aac/aiff/flac/ogg 音频")?;
+    let (bytes, _size) = crate::pdf::read_whitelisted_sync(path, cwd_hint, AUDIO_CAP, |mb| {
+        format!("音频超过 20 MB（{mb:.1} MB），请用别的播放器打开")
+    })?;
+    if !audio_magic_ok(mime, &bytes) {
+        return Err("文件内容不是有效的音频（扩展名对但内容对不上）".into());
+    }
+    Ok(ImageBytesDto {
+        mime: mime.into(),
+        data: base64::engine::general_purpose::STANDARD.encode(&bytes),
+    })
+}
+
+/// 聊天层播放条：白名单内音频字节（mime + base64，前端拼 Blob 播放）
+#[tauri::command]
+pub async fn read_audio_bytes(
+    path: String,
+    cwd_hint: Option<String>,
+) -> Result<ImageBytesDto, String> {
+    tauri::async_runtime::spawn_blocking(move || read_audio_sync(&path, cwd_hint.as_deref()))
+        .await
+        .map_err(|e| format!("读取音频失败: {e}"))?
+}
+
 /// save_reader_capture 返回：项目根相对路径（notes/assets/…）与绝对路径
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1787,6 +1852,33 @@ mod tests {
         )
         .unwrap();
         (root, PathBuf::from(dto.path))
+    }
+
+    #[test]
+    fn read_audio_checks_extension_and_header() {
+        let dir = tmpdir("audio");
+        let hint = Some(dir.to_str().unwrap());
+        // say -o 的默认产物：FORM....AIFF
+        let aiff = dir.join("mesa.aiff");
+        fs::write(&aiff, b"FORM\x00\x00\x00\x10AIFFCOMM").unwrap();
+        assert_eq!(read_audio_sync(aiff.to_str().unwrap(), hint).unwrap().mime, "audio/aiff");
+        let wav = dir.join("a.wav");
+        fs::write(&wav, b"RIFF\x00\x00\x00\x00WAVEfmt ").unwrap();
+        assert_eq!(read_audio_sync(wav.to_str().unwrap(), hint).unwrap().mime, "audio/wav");
+        let mp3 = dir.join("a.mp3");
+        fs::write(&mp3, b"ID3\x04\x00").unwrap();
+        assert_eq!(read_audio_sync(mp3.to_str().unwrap(), hint).unwrap().mime, "audio/mpeg");
+        let m4a = dir.join("a.m4a");
+        fs::write(&m4a, b"\x00\x00\x00\x20ftypM4A ").unwrap();
+        assert_eq!(read_audio_sync(m4a.to_str().unwrap(), hint).unwrap().mime, "audio/mp4");
+        // 改了后缀的文本文件、不在名单里的扩展名都拒绝
+        let fake = dir.join("fake.mp3");
+        fs::write(&fake, "not audio").unwrap();
+        assert!(read_audio_sync(fake.to_str().unwrap(), hint).unwrap_err().contains("不是有效的音频"));
+        let txt = dir.join("a.txt");
+        fs::write(&txt, "x").unwrap();
+        assert!(read_audio_sync(txt.to_str().unwrap(), hint).unwrap_err().contains("只支持"));
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
