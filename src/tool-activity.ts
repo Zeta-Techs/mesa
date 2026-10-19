@@ -446,9 +446,11 @@ export function orphanResultActivity(): ToolActivity {
 
 export type ResultStatus = "ok" | "failed" | "denied" | "interrupted";
 
-/** 工具结果是不是失败 / 被拒绝 / 被中断（只看开头，免得读到的文件正文里碰巧有「Error」） */
-export function resultStatus(text: string | null): ResultStatus {
-  if (!text) return "ok";
+/** 工具结果是不是失败 / 被拒绝 / 被中断（只看开头，免得读到的文件正文里碰巧有「Error」）。
+ *  isError = CLI 自己标的出错（Claude is_error）：拒绝 / 中断照旧认出来，其余一律算失败——
+ *  WebFetch 被拦「Unable to verify if domain …」开头不像报错，原先显示成成功（2026-10-19 实测） */
+export function resultStatus(text: string | null, isError = false): ResultStatus {
+  if (!text) return isError ? "failed" : "ok";
   const head = text.slice(0, 400);
   if (/doesn't want to proceed|tool use was rejected|user rejected|denied by (?:the )?user|用户拒绝/i.test(head)) return "denied";
   if (/^\s*\[?(?:request )?interrupted/i.test(head) || /interrupted by user|已中断/i.test(head)) return "interrupted";
@@ -463,7 +465,7 @@ export function resultStatus(text: string | null): ResultStatus {
   ) {
     return "failed";
   }
-  return "ok";
+  return isError ? "failed" : "ok";
 }
 
 export function resultStatusLabel(s: ResultStatus): string | null {

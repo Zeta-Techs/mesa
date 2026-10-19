@@ -14,10 +14,12 @@ const COLON_HEADING = /^[^\s#>*\-+\d`|][^。！？.!?，,；;]{1,17}[：:]$/;
 /** 回复够长才分节可折：短回答整段照常排版，折叠只帮长报告理结构 */
 export const REPLY_FOLD_MIN_CHARS = 1500;
 
-function isHeadingLine(line: string): boolean {
+/** colonTitles = 冒号行也算小标题。回复里已经用 # 标题分节时不算：那时冒号行是正文里引出下文的话
+ *  （2026-10-19 用户实测排版题：「标注语言的代码块示例如下：」被折成一节，把后面的代码块和引用收了进去） */
+function isHeadingLine(line: string, colonTitles: boolean): boolean {
   const t = line.trim();
   if (MD_HEADING.test(t)) return t.length <= 64;
-  return COLON_HEADING.test(t);
+  return colonTitles && COLON_HEADING.test(t);
 }
 
 /** 长回复按小标题分节（两个以上才分）；短回复或标题不够返回 null，整段照常显示。 */
@@ -33,6 +35,11 @@ export function splitReplySections(text: string): ReplySection[] | null {
     sections.push({ title: title || "正文", body: body.join("\n").trim() });
     body = [];
   };
+  let inFence = false;
+  const hasMdHeading = lines.some((line) => {
+    if (/^[ \t]*(?:```|~~~)/.test(line)) inFence = !inFence;
+    return !inFence && MD_HEADING.test(line.trim());
+  });
   for (const line of lines) {
     // 围栏代码块（``` / ~~~，含列表里缩进 ≥4 空格的围栏）里的行不是小标题：
     // def foo():、YAML 键、# 注释都会误判
@@ -41,7 +48,7 @@ export function splitReplySections(text: string): ReplySection[] | null {
       body.push(line);
       continue;
     }
-    if (!fenced && isHeadingLine(line)) {
+    if (!fenced && isHeadingLine(line, !hasMdHeading)) {
       flush();
       title = line.trim().replace(/^#{1,3}\s+/, "");
       continue;

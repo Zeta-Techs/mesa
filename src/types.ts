@@ -638,6 +638,8 @@ export interface BlockDto {
   kind: "text" | "thinking" | "tool_use" | "tool_result" | "command" | "command_output";
   text: string;
   toolName: string | null;
+  /** 工具结果被 CLI 自己标成出错（Claude 的 is_error；没出错不带这个字段） */
+  isError?: boolean;
 }
 
 export interface ChatMessageDto {

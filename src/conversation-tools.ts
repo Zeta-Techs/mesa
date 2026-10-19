@@ -97,7 +97,7 @@ function buildItems(
       open.push(tools);
       for (const tool of tools) items.push({ kind: "tool", tool, index });
     } else if (block.kind === "tool_result") {
-      const status = resultStatus(block.text);
+      const status = resultStatus(block.text, block.isError);
       const tools = open.shift();
       if (tools) {
         for (const t of tools) {
@@ -205,8 +205,25 @@ function allTools(items: readonly ProcessItem[]): ProcessTool[] {
   return items.flatMap((it) => (it.kind === "tool" ? [it.tool] : it.kind === "explore" ? it.tools : []));
 }
 
+/**
+ * 没顺利完成的几步怎么说：被你拒绝的单说「被拒绝」，不混进「没成功」——拒绝是你的决定，不是出错
+ * （2026-10-19 用户实测：拒绝一条命令后收起行写「1 步没成功」）
+ */
+export function problemText(statuses: readonly ResultStatus[], unit = "步"): string | null {
+  const denied = statuses.filter((s) => s === "denied").length;
+  const failed = statuses.filter((s) => s === "failed" || s === "interrupted").length;
+  const parts: string[] = [];
+  if (failed) parts.push(`${failed} ${unit}没成功`);
+  if (denied) parts.push(`${denied} ${unit}被拒绝`);
+  return parts.length ? parts.join(" · ") : null;
+}
+
 /** 收起时跟在「已工作」后面的一句：改了几个文件、跑了几条命令；都没有才说查阅了几次 */
-export function turnSummary(items: readonly ProcessItem[]): { text: string; problems: number } {
+export function turnSummary(items: readonly ProcessItem[]): {
+  text: string;
+  problems: number;
+  problem: string | null;
+} {
   const tools = allTools(items);
   const files = new Set(
     tools
@@ -221,7 +238,11 @@ export function turnSummary(items: readonly ProcessItem[]): { text: string; prob
     const looked = tools.filter((t) => EXPLORE.has(t.activity.kind) || t.activity.kind === "web").length;
     if (looked) parts.push(`查阅 ${looked} 次`);
   }
-  return { text: parts.join(" · "), problems: tools.filter((t) => t.status !== "ok").length };
+  return {
+    text: parts.join(" · "),
+    problems: tools.filter((t) => t.status !== "ok").length,
+    problem: problemText(tools.map((t) => t.status)),
+  };
 }
 
 /** 一组「查阅」的说明：「读了 3 个文件，搜索 2 次」 */

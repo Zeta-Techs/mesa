@@ -139,6 +139,9 @@ pub struct BlockDto {
     pub kind: String, // text | thinking | tool_use | tool_result
     pub text: String,
     pub tool_name: Option<String>,
+    /// 工具结果被 CLI 自己标成出错（Claude 的 is_error）：前端按失败显示，不再只靠猜结果开头的文字
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub is_error: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -169,6 +172,7 @@ fn text_block(text: String) -> BlockDto {
         kind: "text".into(),
         text,
         tool_name: None,
+        is_error: false,
     }
 }
 
@@ -923,6 +927,7 @@ fn claude_command_block(text: &str) -> Option<Option<BlockDto>> {
             kind: kind.into(),
             text,
             tool_name: None,
+            is_error: false,
         }))
     };
     if t.starts_with("<command-name>") || t.starts_with("<command-message>") {
@@ -1059,6 +1064,7 @@ fn parse_claude(lines: &[String]) -> Vec<ChatMessageDto> {
                                     kind: "tool_result".into(),
                                     text: claude_tool_result_text(b),
                                     tool_name: None,
+                                    is_error: b.get("is_error").and_then(Value::as_bool) == Some(true),
                                 }),
                                 _ => {}
                             }
@@ -1106,6 +1112,7 @@ fn parse_claude(lines: &[String]) -> Vec<ChatMessageDto> {
                                         kind: "thinking".into(),
                                         text: t.to_string(),
                                         tool_name: None,
+                                        is_error: false,
                                     });
                                 }
                             }
@@ -1113,6 +1120,7 @@ fn parse_claude(lines: &[String]) -> Vec<ChatMessageDto> {
                                 kind: "tool_use".into(),
                                 text: b.get("input").map(|i| i.to_string()).unwrap_or_default(),
                                 tool_name: get_str(b, "name").map(String::from),
+                                is_error: false,
                             }),
                             _ => {}
                         }
@@ -1336,6 +1344,7 @@ fn parse_codex(lines: &[String]) -> Vec<ChatMessageDto> {
                                 .unwrap_or("")
                                 .to_string(),
                             tool_name: get_str(p, "name").map(String::from),
+                            is_error: false,
                         }],
                         timestamp: ts,
                         usage: None,
@@ -1348,6 +1357,7 @@ fn parse_codex(lines: &[String]) -> Vec<ChatMessageDto> {
                                 kind: "tool_result".into(),
                                 text,
                                 tool_name: None,
+                                is_error: false,
                             }],
                             ts,
                         );
@@ -1644,12 +1654,14 @@ fn parse_gemini(lines: &[String]) -> Vec<ChatMessageDto> {
                             kind: "tool_use".into(),
                             text: c.get("args").map(|a| a.to_string()).unwrap_or_default(),
                             tool_name: get_str(c, "name").map(String::from),
+                            is_error: false,
                         });
                         if let Some(result) = c.get("result") {
                             blocks.push(BlockDto {
                                 kind: "tool_result".into(),
                                 text: stringify_payload(Some(result)),
                                 tool_name: None,
+                                is_error: false,
                             });
                         }
                     }
@@ -1695,6 +1707,7 @@ fn qwen_parts_blocks(msg: &Value) -> Vec<BlockDto> {
                 kind: "tool_use".into(),
                 text: fc.get("args").map(|a| a.to_string()).unwrap_or_default(),
                 tool_name: get_str(fc, "name").map(String::from),
+                is_error: false,
             });
         } else if let Some(fr) = p.get("functionResponse") {
             let text = stringify_payload(fr.get("response"));
@@ -1706,6 +1719,7 @@ fn qwen_parts_blocks(msg: &Value) -> Vec<BlockDto> {
                     text
                 },
                 tool_name: None,
+                is_error: false,
             });
         } else if let Some(t) = get_str(p, "text") {
             let kind = if p.get("thought").and_then(|x| x.as_bool()) == Some(true) {
@@ -1717,6 +1731,7 @@ fn qwen_parts_blocks(msg: &Value) -> Vec<BlockDto> {
                 kind: kind.into(),
                 text: t.to_string(),
                 tool_name: None,
+                is_error: false,
             });
         }
     }
@@ -1918,6 +1933,7 @@ fn kimi_content_blocks(c: &Value) -> Vec<BlockDto> {
                                 kind: "thinking".into(),
                                 text: t.to_string(),
                                 tool_name: None,
+                                is_error: false,
                             });
                         }
                     }
@@ -1954,6 +1970,7 @@ fn kimi_tool_call_blocks(m: &Value) -> Vec<BlockDto> {
                     .unwrap_or("")
                     .to_string(),
                 tool_name: f.and_then(|f| get_str(f, "name")).map(String::from),
+                is_error: false,
             }
         })
         .collect()
@@ -2103,6 +2120,7 @@ fn parse_kimi(lines: &[String]) -> Vec<ChatMessageDto> {
                                         kind: "thinking".into(),
                                         text: t.to_string(),
                                         tool_name: None,
+                                        is_error: false,
                                     });
                                 }
                             }
@@ -2120,6 +2138,7 @@ fn parse_kimi(lines: &[String]) -> Vec<ChatMessageDto> {
                             kind: "tool_use".into(),
                             text: e.get("args").map(|a| a.to_string()).unwrap_or_default(),
                             tool_name: get_str(e, "name").map(String::from),
+                            is_error: false,
                         });
                     }
                     Some("tool.result") => {
@@ -2136,6 +2155,7 @@ fn parse_kimi(lines: &[String]) -> Vec<ChatMessageDto> {
                             kind: "tool_result".into(),
                             text,
                             tool_name: None,
+                            is_error: false,
                         };
                         match cur {
                             Some(i) => msgs[i].blocks.push(block),
@@ -2201,6 +2221,7 @@ fn parse_kimi(lines: &[String]) -> Vec<ChatMessageDto> {
                                 kind: "tool_result".into(),
                                 text,
                                 tool_name: None,
+                                is_error: false,
                             }],
                             ts,
                         );
@@ -2386,6 +2407,7 @@ fn parse_kimi_legacy(lines: &[String]) -> Vec<ChatMessageDto> {
                         kind: "tool_result".into(),
                         text,
                         tool_name: None,
+                        is_error: false,
                     }],
                     None,
                 );
@@ -3305,6 +3327,7 @@ fn opencode_part_blocks(data: &Value) -> Vec<BlockDto> {
                         kind: "thinking".into(),
                         text: t.to_string(),
                         tool_name: None,
+                        is_error: false,
                     });
                 }
             }
@@ -3316,6 +3339,7 @@ fn opencode_part_blocks(data: &Value) -> Vec<BlockDto> {
                 kind: "tool_use".into(),
                 text: input.map(|i| i.to_string()).unwrap_or_default(),
                 tool_name: get_str(data, "tool").map(String::from),
+                is_error: false,
             });
             // 完成给 output、失败给 error；进行中的调用只有 tool_use
             let result = state
@@ -3334,6 +3358,7 @@ fn opencode_part_blocks(data: &Value) -> Vec<BlockDto> {
                     kind: "tool_result".into(),
                     text,
                     tool_name: None,
+                    is_error: false,
                 });
             }
         }
@@ -7924,6 +7949,25 @@ mod tests {
     }
 
     #[test]
+    fn claude_tool_result_is_error_flag_passes_through() {
+        // 2026-10-19 实测：WebFetch 被拦「Unable to verify if domain … is safe to fetch」开头不像报错，只有 is_error 标着
+        let lines = s(&[
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"WebFetch","input":{"url":"https://crates.io"}}]}}"#,
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"Unable to verify if domain crates.io is safe to fetch."}]}}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t2","name":"Bash","input":{"command":"echo ok"}}]}}"#,
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t2","is_error":false,"content":"ok"}]}}"#,
+        ]);
+        let msgs = parse_claude(&lines);
+        let flags: Vec<bool> = msgs
+            .iter()
+            .flat_map(|m| m.blocks.iter().filter(|b| b.kind == "tool_result").map(|b| b.is_error))
+            .collect();
+        assert_eq!(flags, vec![true, false]);
+        let json = serde_json::to_string(&msgs).unwrap();
+        assert_eq!(json.matches("isError").count(), 1, "没出错的块不带这个字段：{json}");
+    }
+
+    #[test]
     fn claude_interrupt_marker_is_not_a_user_bubble() {
         let lines = s(&[
             r#"{"type":"user","message":{"role":"user","content":"运行 rm 一下"}}"#,
@@ -10286,6 +10330,7 @@ mod tests {
                     kind: kind.into(),
                     text: text.into(),
                     tool_name: tool.map(|t| t.into()),
+                    is_error: false,
                 })
                 .collect(),
             timestamp: ts.map(|t| t.into()),

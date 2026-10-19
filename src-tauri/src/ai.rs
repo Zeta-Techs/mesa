@@ -2726,6 +2726,7 @@ ERROR: Your access token could not be refreshed because your refresh token was r
                 kind: "text".into(),
                 text: text.into(),
                 tool_name: None,
+                is_error: false,
             }],
             timestamp: ts.map(String::from),
             usage: None,

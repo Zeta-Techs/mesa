@@ -59,6 +59,27 @@ test("短回答不分节；句子里的冒号引子、列表项、加粗开头�
   assert.ok(!titles.some((t) => t.startsWith("-") || t.startsWith("1.")));
 });
 
+test("已经用 ## 分节的回复里，冒号句是引出下文的话，不当小标题", () => {
+  // 2026-10-19 用户实测排版题：「标注语言的代码块示例如下：」被折成一节，代码块和引用收进去
+  const reply = [
+    "## 二、列表与代码",
+    "正文一段。",
+    "标注语言的代码块示例如下：",
+    "",
+    "```python",
+    "# 注释",
+    "def render(src):",
+    "```",
+    "引用一句：",
+    "> 格式是为内容服务的",
+    "## 三、公式与图片",
+    "正文。",
+  ].join("\n");
+  const titles = splitReplySections(pad(reply))?.map((s) => s.title) ?? [];
+  assert.deepEqual(titles, ["二、列表与代码", "三、公式与图片"]);
+  // 没有 ## 标题的报告体（「验收摘要：」「尚未验证：」）仍按冒号行分节——见「两个以上小标题才折叠」
+});
+
 test("相对文件路径可点，网址不是；./ 前缀对齐 git 状态", () => {
   const files = mentionedProjectFiles(
     "见 papers/screening.md 和 ./scripts/run.py，https://a.com/b.md 不算",

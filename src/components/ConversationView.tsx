@@ -31,6 +31,7 @@ import {
   exploreLabel,
   formatSeconds,
   groupConversationSegments,
+  problemText,
   segmentContainsIndex,
   turnSummary,
   type ConversationSegment,
@@ -569,13 +570,12 @@ export default function ConversationView({
       );
     }
     if (item.kind === "tool") return toolRow(key, item.tool);
-    const problems = item.tools.filter((t) => t.status !== "ok").length;
     return processRow(key, {
       icon: Search,
       verb: "查阅",
       target: exploreLabel(item.tools),
       plain: true,
-      problem: problems ? `${problems} 处没成功` : null,
+      problem: problemText(item.tools.map((t) => t.status), "处"),
       detail: () => <div>{item.tools.map((t, i) => toolRow(`${key}:${i}`, t))}</div>,
     });
   }
@@ -611,8 +611,8 @@ export default function ConversationView({
           >
             <span className="shrink-0">{label}</span>
             {summary.text && <span className="min-w-0 truncate text-l4">· {summary.text}</span>}
-            {summary.problems > 0 && (
-              <span className="shrink-0 text-warn-text">· {summary.problems} 步没成功</span>
+            {summary.problem && (
+              <span className="shrink-0 text-warn-text">· {summary.problem}</span>
             )}
             <FoldMark open={open} />
           </button>

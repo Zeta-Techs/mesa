@@ -5,6 +5,7 @@ import {
   formatSeconds,
   groupConversationSegments,
   isProcessBlock,
+  problemText,
   segmentContainsIndex,
   turnSummary,
   type ConversationSegment,
@@ -50,7 +51,7 @@ test("一轮：过程收成一组（思考、工具、中途说明），最后�
   assert.equal(segmentContainsIndex(t, 1), true);
   assert.equal(segmentContainsIndex(t, 4), true);
   assert.equal(segmentContainsIndex(t, 0), false);
-  assert.deepEqual(turnSummary(t.items), { text: "改了 1 个文件", problems: 0 });
+  assert.deepEqual(turnSummary(t.items), { text: "改了 1 个文件", problems: 0, problem: null });
 });
 
 test("没有过程的回答照原样一条一条，不加「已工作」", () => {
@@ -91,7 +92,7 @@ test("连着的读文件 / 搜索并成一行「查阅」，夹着别的动作�
   const t = turnOf(groupConversationSegments(messages));
   assert.deepEqual(t.items.map((i) => i.kind), ["explore", "tool", "tool"]);
   if (t.items[0].kind === "explore") assert.equal(exploreLabel(t.items[0].tools), "读了 2 个文件，搜索 1 次");
-  assert.deepEqual(turnSummary(t.items), { text: "运行 1 条命令", problems: 1 });
+  assert.deepEqual(turnSummary(t.items), { text: "运行 1 条命令", problems: 1, problem: "1 步没成功" });
 });
 
 test("结果没处挂、后端给成「用户」的工具结果仍算这一轮；分页截断处的孤立结果也有一行", () => {
@@ -121,4 +122,36 @@ test("时长写法", () => {
   assert.equal(formatSeconds(253), "4 分 13 秒");
   assert.equal(formatSeconds(120), "2 分");
   assert.equal(formatSeconds(3900), "1 小时 5 分");
+});
+
+test("被拒绝单说，不混进「没成功」；CLI 标了 is_error 的结果算失败", () => {
+  assert.equal(problemText(["ok", "denied"]), "1 步被拒绝");
+  assert.equal(problemText(["failed", "interrupted", "denied"]), "2 步没成功 · 1 步被拒绝");
+  assert.equal(problemText(["ok"]), null);
+  assert.equal(problemText(["failed"], "处"), "1 处没成功");
+  const msgs: ChatMessageDto[] = [
+    { role: "user", blocks: [{ kind: "text", text: "查一下", toolName: null }], timestamp: "t0", usage: null },
+    {
+      role: "assistant",
+      blocks: [
+        { kind: "tool_use", text: '{"url":"https://crates.io","prompt":"x"}', toolName: "WebFetch" },
+        { kind: "tool_result", text: "Unable to verify if domain crates.io is safe to fetch.", toolName: null, isError: true },
+      ],
+      timestamp: "t1",
+      usage: null,
+    },
+    {
+      role: "assistant",
+      blocks: [
+        { kind: "tool_use", text: '{"command":"echo approve-2"}', toolName: "Bash" },
+        { kind: "tool_result", text: "The user doesn't want to proceed with this tool use.", toolName: null, isError: true },
+      ],
+      timestamp: "t2",
+      usage: null,
+    },
+  ];
+  const statuses = groupConversationSegments(msgs)
+    .flatMap((s) => (s.kind === "turn" ? s.items : []))
+    .flatMap((it) => (it.kind === "tool" ? [it.tool.status] : it.kind === "explore" ? it.tools.map((t) => t.status) : []));
+  assert.deepEqual(statuses, ["failed", "denied"]);
 });

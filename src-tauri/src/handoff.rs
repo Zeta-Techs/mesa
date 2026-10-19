@@ -790,6 +790,7 @@ mod tests {
                 kind: "text".into(),
                 text: text.into(),
                 tool_name: None,
+                is_error: false,
             }],
             timestamp: None,
             usage: None,
