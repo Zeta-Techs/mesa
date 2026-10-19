@@ -59,6 +59,11 @@
   出版商风控识别并连坐全校 IP）——只有用户在独立登录窗里自己完成的 SSO 会话可复用，且只由人在 UI 上逐篇触发
   下载，scheduler/无头 Run 不携带该会话。会话只在请求头按域名匹配注入（`cookie_header_for`），不写进任何
   agent env、不进 shell。
+- **聊天层旁路的秘密与边界（2026-10-20，chat_channel.rs）**：OpenCode 服务口令、Codex app-server 能力令牌每标签随机生成，
+  **只经环境变量**交给 CLI（Codex 的 app-server 参数里只有令牌的 SHA-256），不落盘、不进 Run 记录 / 日志 / 诊断包；两者都只监听
+  127.0.0.1，无口令 / 错令牌一律 401（已实测）。旁路目录 0700、事件 / 输入文件 0600，标签退出即删。hooks 日志每条 payload 截到 64KB
+  （PostToolUse 2KB，带整份工具结果），截断记录按字段名兜底取事件名与会话 id；审批卡的命令 / 差异 / 实时文字出站前过
+  `redact_sensitive_text`。hook 只记录不决策，不阻塞 TUI；回复审批只在用户点按钮后发生，不做「免确认自动选第一项」。
 - **会话文本出站前必须在 Rust 层脱敏**：标题/摘要、结构化回放、AI 摘要、Markdown 导出均不得把已保存密钥或常见密钥前缀
   送到 React；只作用于 DTO/导出副本，不得回写会话源文件；前端遮盖不是安全边界。**AI 提交信息（ai_commit_message）
   的 git status/numstat/diff 同样先过 redact_sensitive_text 再进 prompt**（v3.92 补齐——diff 可能含误提交的 .env/密钥）。
@@ -106,7 +111,9 @@
   auth.json 形状相同，文件层面无法区分，不得冒充官方账号。
 - **各 CLI 会话/配置目录一律只读**；例外仅限用户显式操作：
   1. 「设为全局默认」（写前必须备份）；
-  2. **精确注意力标记开关**（hooks.rs 按 agent 写七家 hooks 配置——claude `~/.claude/settings.json`、
+  2. **精确注意力标记开关**（2026-10-20 起只剩 Gemini / Kimi / Grok 三家给开关：其余五家在 Mesa 里启动时用启动参数 / CLI 自带通道
+     注入、不写用户配置，以前写过的由 `hooks::migrate_launch_injected` 启动时收回（同一套「只删 marker 条目 + 写前备份」）；
+     下列七家配置路径与防护口径不变）（hooks.rs 按 agent 写七家 hooks 配置——claude `~/.claude/settings.json`、
      qwen `~/.qwen/settings.json`、codebuddy `~/.codebuddy/settings.json`、gemini `~/.gemini/settings.json`
      （qwen/gemini 走 JSONC 容错读）、kimi `~/.kimi-code/config.toml`（`[[hooks]]` 表，toml_edit 保格式）、
      grok `~/.grok/hooks/ccode.json`、codex `~/.codex/hooks.json`；统一防护口径：写前备份（同前缀留 10 份）+

@@ -5,8 +5,10 @@ import {
   formatSeconds,
   groupConversationSegments,
   isProcessBlock,
+  planEntries,
   problemText,
   segmentContainsIndex,
+  turnPlan,
   turnSummary,
   type ConversationSegment,
 } from "../src/conversation-tools.ts";
@@ -109,7 +111,7 @@ test("结果没处挂、后端给成「用户」的工具结果仍算这一轮�
     t.items.map((i) => (i.kind === "tool" ? [i.tool.activity.verb, i.tool.result] : i.kind)),
     [
       ["工具结果", "前一页的结果"],
-      ["运行", "a\nb"],
+      ["查看目录", "a\nb"],
     ],
   );
   assert.equal(isProcessBlock(think("x")), true);
@@ -154,4 +156,49 @@ test("被拒绝单说，不混进「没成功」；CLI 标了 is_error 的结果
     .flatMap((s) => (s.kind === "turn" ? s.items : []))
     .flatMap((it) => (it.kind === "tool" ? [it.tool.status] : it.kind === "explore" ? it.tools.map((t) => t.status) : []));
   assert.deepEqual(statuses, ["failed", "denied"]);
+});
+
+test("调用与结果按调用 id 配对：并行调用的结果乱序回来也挂对（2026-10-20）", () => {
+  const useId = (name: string, input: unknown, callId: string) => ({ ...use(name, input), callId });
+  const resultId = (t: string, callId: string) => ({ ...result(t), callId });
+  const messages = [
+    msg("user", [text("看看")]),
+    msg("assistant", [useId("Read", { file_path: "/w/a.ts" }, "c1"), useId("Read", { file_path: "/w/b.ts" }, "c2")]),
+    msg("user", [resultId("B 的内容", "c2"), resultId("A 的内容", "c1")]),
+    msg("assistant", [text("好了")]),
+  ];
+  const t = turnOf(groupConversationSegments(messages));
+  const explore = t.items.find((i) => i.kind === "explore");
+  assert.ok(explore && explore.kind === "explore");
+  assert.deepEqual(
+    explore.tools.map((x) => [x.activity.target, x.result]),
+    [
+      ["a.ts", "A 的内容"],
+      ["b.ts", "B 的内容"],
+    ],
+  );
+});
+
+test("计划：各家待办参数收成同一份清单，一轮只取最后一次（2026-10-20）", () => {
+  assert.deepEqual(
+    planEntries(JSON.stringify({ todos: [{ content: "读代码", status: "completed" }, { content: "改", status: "in_progress" }] })),
+    [
+      { text: "读代码", status: "completed" },
+      { text: "改", status: "in_progress" },
+    ],
+  );
+  assert.deepEqual(planEntries(JSON.stringify({ plan: [{ step: "跑测试", status: "pending" }] })), [
+    { text: "跑测试", status: "pending" },
+  ]);
+  assert.equal(planEntries("not json"), null);
+  const messages = [
+    msg("user", [text("做吧")]),
+    msg("assistant", [use("TodoWrite", { todos: [{ content: "A", status: "pending" }] })]),
+    msg("user", [result("ok")]),
+    msg("assistant", [use("TodoWrite", { todos: [{ content: "A", status: "completed" }] })]),
+    msg("user", [result("ok")]),
+    msg("assistant", [text("好了")]),
+  ];
+  const t = turnOf(groupConversationSegments(messages));
+  assert.deepEqual(turnPlan(t.items), [{ text: "A", status: "completed" }]);
 });

@@ -310,7 +310,23 @@
 
 ## 收件箱与注意力
 
-- **精确注意力标记（hooks 桥接，七家）**：`session_tail_state` 对设置页已开启的 agent 优先读 hooks 事件日志
+- **聊天层结构化旁路（2026-10-20，`chat_channel.rs` + `src/chat-channel.ts`；设计与实测 docs/design-chat-structured-channels.md）**：
+  运行方式不变（PTY + TUI，终端是事实来源），`pty_spawn` 起进程前按家改启动参数接 CLI 自带的结构化旁路，快照以
+  `chat-channel-<tabId>` 推给前端（150ms 合并）；**任一旁路起不来就照旧启动、不接**，聊天层退回会话文件 + 读屏。逐家：
+  Claude Code / CodeBuddy = `--settings` 带 hooks（`hooks::launch_hooks_value`，与用户 hooks 合并）；Qwen = Dual Output；
+  OpenCode = `--port` + `OPENCODE_SERVER_PASSWORD`；Codex = 私有 app-server（ws + 能力令牌）+ TUI `--remote`；开了全局开关的
+  Gemini / Kimi / Grok = 同一份状态日志按标签号过滤。PTY 一律注入 `CCODE_TAB_ID`（hook 命令记进日志第二段，旧格式无此段照读）。
+  **规则**：①同一事实取精度最高的来源：旁路有回合状态时，`applyTailAttention`、PTY 出字点亮、PTY 静默熄灭都让位（不删兜底）；
+  ②hook 一律不阻塞、不输出决定，审批只在用户点按钮后经官方通道回（Qwen input 文件 / OpenCode 接口 / Codex JSON-RPC），
+  其余家照旧按菜单原文写按键；「先答者算」，卡片等 CLI 回「已处理」才撤；③会话跟随：旁路给了文件路径就锁定（文件未落盘先记 id），
+  `sessionSeq` 增大且路径变了（/clear、恢复别的会话）就 `relinkTo` 改盯新文件并在对话流记一行；④实时文字有旁路的家（Qwen / OpenCode /
+  Codex）不再读屏；⑤Codex 恢复时远程 TUI 拒收权限参数，`split_codex_args` 改成 app-server 的 `-c` 配置，新开会话仍由 TUI 带；
+  新线程 rollout 未落盘前 `thread/resume` 会失败，线程转 active 时再订；⑥旁路目录 `<config>/ccode/chat-channels/<pid>-<tab>-<随机>/`
+  0700，标签退出即删，启动只清进程已不在的（打包版与 Mesa Dev 共用配置目录）；Codex app-server 自成进程组，随 PTY 退出 /
+  应用退出一并杀。改任一家旁路前先跑 `scripts/e2e-model-routing/README.md`「聊天层结构化旁路」两层核对。
+
+- **精确注意力标记（hooks 桥接，七家；2026-10-20 起 Claude Code / CodeBuddy / Qwen / OpenCode / Codex 改为 Mesa 里启动时自动带上，
+  设置页只给 Gemini / Kimi / Grok 开关，见上条）**：`session_tail_state` 对设置页已开启（或启动时自动注入）的 agent 优先读 hooks 事件日志
   （`<config>/ccode/hooks-state/<tag>-hooks.jsonl`，尾部窗口读取），日志缺失或超 10 分钟无更新回落尾部文本推断——
   TTL 与回落语义不变，消费侧（终端注意力点/运行中聚合/OS 通知/收件箱）零改动。事件映射：用户提交→working /
   轮次结束→done / 等待确认→confirm；各家原生事件名与 matcher 以 hooks.rs 的 BRIDGE_SPECS 为单一出处

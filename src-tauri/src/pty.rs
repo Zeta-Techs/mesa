@@ -489,6 +489,7 @@ fn spawn_tracked(
         coalescer.finish();
         // 等发送线程把尾帧发完，再发退出事件，保证输出先于退出到达
         let _ = emitter.join();
+        crate::chat_channel::close_for_pty(&id);
         // 输出流结束视为进程结束；谁先移除 entry 谁负责回收并发退出事件
         let entry = entries.lock().unwrap().remove(&id);
         if let Some(mut entry) = entry {
@@ -690,28 +691,9 @@ pub fn pty_spawn(
             command_args.push("--session-id".into());
             command_args.push(sid.clone());
         }
-        // 初始 prompt 放最后：位置参数形态（claude/codex）必须是命令行最后一个参数
-        for arg in &plan.prompt_args {
-            command_args.push(arg.clone());
-        }
-    }
-    let mut cmd = crate::process::pty_command(&binary_path, &command_args);
-    for (k, v) in &plan.env {
-        cmd.env(k, v);
-    }
-    // 官方账号模式：剔除继承环境里的残留 API 密钥变量（防静默覆盖账号登录）
-    for k in &plan.env_remove {
-        cmd.env_remove(k);
     }
     // MCP 密钥（mcp-keys.json）：清单只留 ${VAR}，启动时注入给各家 MCP 客户端展开
-    for (k, v) in crate::mcp::spawn_env_secrets() {
-        cmd.env(k, v);
-    }
-    if let Some(extra) = &extra_env {
-        for (k, v) in extra {
-            cmd.env(k, v);
-        }
-    }
+    let mcp_env = crate::mcp::spawn_env_secrets();
     let registered_claim = if session_hint.is_none() {
         link_claim_id.as_deref().map(|claim_id| {
             crate::sessions::register_session_claim(claim_id, &agent_id, &cwd);
@@ -757,6 +739,47 @@ pub fn pty_spawn(
     if let (Some(id), Some(sid)) = (opened_id.as_deref(), session_hint.as_deref()) {
         let _ = crate::runs::attach_session_impl(id, sid);
     }
+    // 聊天层结构化旁路（chat_channel.rs）：按这家改启动参数 / 加环境变量，Codex 先拉起私有 app-server。
+    // 起不来就照旧启动；参数里还没有初始 prompt（位置参数必须在最后）
+    let mut channel_env_full: Vec<(String, String)> = plan.env.clone();
+    channel_env_full.extend(mcp_env.iter().map(|(k, v)| (k.clone(), v.clone())));
+    if let Some(extra) = &extra_env {
+        channel_env_full.extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));
+    }
+    let (channel_env, channel) = crate::chat_channel::prepare(
+        &agent_id,
+        link_claim_id.as_deref(),
+        &expand_tilde(&cwd),
+        &binary_path,
+        &mut command_args,
+        &channel_env_full,
+        &plan.env_remove,
+    );
+    if resume_session_id.is_none() {
+        // 初始 prompt 放最后：位置参数形态（claude/codex）必须是命令行最后一个参数
+        for arg in &plan.prompt_args {
+            command_args.push(arg.clone());
+        }
+    }
+    let mut cmd = crate::process::pty_command(&binary_path, &command_args);
+    for (k, v) in &plan.env {
+        cmd.env(k, v);
+    }
+    // 官方账号模式：剔除继承环境里的残留 API 密钥变量（防静默覆盖账号登录）
+    for k in &plan.env_remove {
+        cmd.env_remove(k);
+    }
+    for (k, v) in &mcp_env {
+        cmd.env(k, v);
+    }
+    if let Some(extra) = &extra_env {
+        for (k, v) in extra {
+            cmd.env(k, v);
+        }
+    }
+    for (k, v) in &channel_env {
+        cmd.env(k, v);
+    }
     let pty_id = match spawn_tracked(
         &app,
         manager.inner(),
@@ -768,6 +791,9 @@ pub fn pty_spawn(
     ) {
         Ok(pty_id) => pty_id,
         Err(error) => {
+            if let Some(channel) = channel {
+                channel.abort();
+            }
             if let Some(claim_id) = registered_claim {
                 crate::sessions::release_session_claim_impl(&claim_id);
             }
@@ -783,6 +809,9 @@ pub fn pty_spawn(
             return Err(error);
         }
     };
+    if let Some(channel) = channel {
+        crate::chat_channel::start(&app, &pty_id, channel);
+    }
     if let Some(id) = opened_id.as_deref() {
         if let Err(error) = crate::runs::mark_started(id) {
             discard_spawned_pty(&app, manager.inner(), &pty_id);

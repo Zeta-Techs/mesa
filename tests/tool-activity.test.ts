@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { lineDiff, parsePatch, resultStatus, splitPath, toolActivities } from "../src/tool-activity.ts";
+import { commandCategory, lineDiff, parsePatch, resultStatus, splitPath, toolActivities } from "../src/tool-activity.ts";
 
 const CWD = "/Users/me/proj";
 const one = (name: string | null, input: unknown) => {
@@ -54,7 +54,32 @@ test("运行：有说明就先说说明，命令放旁边；Codex 的 bash -lc �
   const c = one("shell", { command: ["bash", "-lc", "cargo test"], workdir: "/x" });
   assert.equal(c.target, "cargo test");
   assert.equal(c.note, null);
-  assert.equal(one("exec_command", { cmd: "cat a.md" }).target, "cat a.md");
+  // 只读命令归进查阅（2026-10-20，docs/design-chat-structured-channels.md §4）：读文件写文件名、原命令放旁边
+  const r = one("exec_command", { cmd: "cat a.md" });
+  assert.equal(r.kind, "read");
+  assert.equal(r.target, "a.md");
+  assert.equal(r.note, "cat a.md");
+  assert.equal(r.command, "cat a.md");
+});
+
+test("shell 命令再分类：读 / 搜 / 看目录归查阅，改文件、取网页、其余照旧", () => {
+  assert.equal(commandCategory("sed -n '1,120p' src/a.ts"), "read");
+  assert.equal(commandCategory("sed -i 's/a/b/' x"), "edit");
+  assert.equal(commandCategory("rg -n foo src | head -20"), "search");
+  assert.equal(commandCategory("ls -la"), "list");
+  assert.equal(commandCategory("cd src && ls"), "list");
+  assert.equal(commandCategory("/bin/zsh -lc 'cat a.md'"), "read");
+  assert.equal(commandCategory("echo mesa > mesa_probe.txt"), "edit");
+  assert.equal(commandCategory("npm test 2>&1 | tail -5"), "other");
+  assert.equal(commandCategory("cargo test > /dev/null"), "other");
+  assert.equal(commandCategory("rm -rf build"), "edit");
+  assert.equal(commandCategory("curl -s https://x.y"), "fetch");
+  assert.equal(commandCategory("git status"), "read");
+  assert.equal(commandCategory("git commit -m x"), "other");
+  const s = one("Bash", { command: "rg -n TODO src", description: "找待办" });
+  assert.equal(s.kind, "search");
+  assert.equal(s.target, "找待办");
+  assert.equal(s.note, "rg -n TODO src");
 });
 
 test("Codex 脚本模式：从 tools.exec_command({cmd}) 里取出命令", () => {

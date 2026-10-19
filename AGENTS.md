@@ -132,7 +132,8 @@ docs/            architecture.md（总体设计 + §10 决策记录 + §12 当�
   送到 React；只作用于 DTO/导出副本，不得回写会话源文件；前端遮盖不是安全边界。
 - **gitignored 科研产物最终落点是项目根，但分两类走法**（2026-09-09 口径 C）：文献 PDF 与人工导入属**原始资料**，直写项目根 `papers/`；清洗后数据、实验结果、渲染成品等 **Agent 派生产物**写工作区产物目录或 `output/`（不进 git），评审时经 `workspace_review_deliverables` 冻结非 Git 文件，合并只由 `apply_delivery_review` 带回所审副本（同名冲突点名交人、保护路径跳过；有未接收产物不得归档）。派生产物直写项目根 = 未验收产物。TASK.md 必须给出项目根绝对路径（读提货单、写 papers/）。
 - **Codex 全局写入不碰 `~/.codex/auth.json`**（v3.249 / v3.250）：「设为全局」与客户端接力的渠道补写（`register_codex_client_provider_named`）都只写 `config.toml` 的 provider 块，认证用 `experimental_bearer_token`（ChatGPT 自带 Codex 认这个字段）。禁止写 `http_headers`（MCP 字段，写在 provider 上客户端加载失败报 Model provider not found）。禁止退回 `requires_openai_auth=true` + 改 auth.json。
-- **各 CLI 会话/配置目录一律只读**；例外仅限用户显式操作（设为全局默认、hooks 精确注意力开关（七家，见 hooks.rs）、会话删除、工作树文件删除、**会话导入**、
+- **各 CLI 会话/配置目录一律只读**；例外仅限用户显式操作（设为全局默认、hooks 精确注意力开关（2026-10-20 起只剩 Gemini / Kimi / Grok 三家；其余五家改为启动时注入，
+  以前写过的启动时收回，见 hooks.rs）、会话删除、工作树文件删除、**会话导入**、
   **内部对话保留期清理**（2026-10-17：设置「数据与存储」开关即授权，默认开 30 天；只删 Mesa 自己的后台对话——
   登记为内部 + cwd 是 `ccode-ai-<uuid>` 临时目录或雷达隔离目录 + 未保留，永久删除不进回收站，见 `internal_sessions.rs`）、
   **会话瘦身**（2026-10-19：仅 Claude Code，用户在弹层确认后原地去掉较早的截图，写前完整备份，见 `session_slim.rs`）——
@@ -142,6 +143,11 @@ docs/            architecture.md（总体设计 + §10 决策记录 + §12 当�
   只清有 `seen:` 标记、能从文件重抽的行（不落盘调用的 `ephemeral-*` 行与已消失会话的行重抽不回来）。
 - **一次性内部调用不落盘**：`ai_prompt_impl` 对 Claude Code 用 `-p --output-format json --no-session-persistence`、
   Codex 用 `exec --ephemeral --json`，花费从输出直接记账（`record_ephemeral_usage`）；定时任务等事后要回看的无头运行照旧落盘。
+- **聊天层结构化旁路（2026-10-20，`chat_channel.rs`；设计与实测 `docs/design-chat-structured-channels.md`）**：聊天层取数优先 CLI 自带的
+  结构化旁路，其次会话文件，最后读屏；旁路**不写用户配置**（只用启动参数 / 环境变量 / Mesa 目录下的临时文件），起不来照旧启动。
+  hook 只记录、不阻塞、不替用户决定；审批只在用户点按钮后经 CLI 官方通道回，终端里先答也算。Codex 在 Mesa 里经私有 app-server 运行
+  （本机 ws + 能力令牌，TUI `--remote`），OpenCode 带口令的自带服务；口令 / 令牌只经环境变量。改任一家旁路或升级 CLI 前先跑
+  `scripts/e2e-model-routing/README.md`「聊天层结构化旁路」两层核对。细则 terminal.md、safety.md 同名条，matrix §14。
 - **二进制解析统一走 `agents::resolve_binary`**：先 which（继承 PATH），miss 时按平台候选目录兜底；新增 CLI/工具调用点一律
   用它，禁直接 `which::which` 或裸名 spawn（候选目录清单见 `docs/conventions/safety.md` 对应实现 `agents.rs`）。
 - **发版版本号三处同步**：`package.json` / `src-tauri/Cargo.toml` / `src-tauri/tauri.conf.json` 的 `version` 必须与

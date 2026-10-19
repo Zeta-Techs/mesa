@@ -70,12 +70,22 @@ import {
   claudeModeTier,
   localCommandRecord,
   mergeLocalRecords,
+  messageKey,
   placePendingUsers,
   shouldAutoPeek,
   slashCommandRecorded,
   slashSettledLocally,
 } from "../chat-handoff";
 import { AGENTS, type CustomRuntimeDto, type OfficialAccountStatusDto } from "../types";
+import {
+  channelAttention,
+  channelLiveLines,
+  channelRelink,
+  channelTurnOpen,
+  sessionSwitchNote,
+  type ChannelReplyDecision,
+  type ChatChannelSnapshot,
+} from "../chat-channel";
 import { resolveCustomRuntimeCwd } from "../custom-runtime";
 import { samePath } from "../path-utils";
 import { cwdIsCodingWorktree } from "../coding-git";
@@ -551,6 +561,8 @@ export interface SessionLinkState {
   /** 当前 agent 可从聊天界面直接调用的技能 / MCP 资源。 */
   skills: SkillDto[];
   mcps: McpServerDto[];
+  /** 结构化旁路快照（chat_channel.rs：hooks / Qwen Dual Output / OpenCode 服务 / Codex app-server）；没接上为 null */
+  channel: ChatChannelSnapshot | null;
 }
 
 const agentLabel = (id: string) => AGENTS.find((a) => a.id === id)?.label ?? id;
@@ -1438,6 +1450,12 @@ const TerminalView = memo(function TerminalView({
   const [linkState, setLinkState] = useState<SessionLinkState["state"]>("idle");
   const [syncState, setSyncState] = useState<SessionLinkState["sync"]>("waiting");
   const [conv, setConv] = useState<ChatMessageDto[]>([]);
+  // 结构化旁路快照（下方「聊天层结构化旁路」一节；前面几个 effect 要用到，所以声明放这里）
+  const [channel, setChannel] = useState<ChatChannelSnapshot | null>(null);
+  const channelRef = useRef<ChatChannelSnapshot | null>(null);
+  const channelSeqSeenRef = useRef(0);
+  const channelEndHandledRef = useRef<number | null>(null);
+  const lastSendAtRef = useRef(0);
   const olderRef = useRef<ChatMessageDto[]>([]);
   const latestWindowRef = useRef<ChatMessageDto[]>([]);
   const convCursorRef = useRef<number | null>(null);
@@ -2090,6 +2108,9 @@ const TerminalView = memo(function TerminalView({
   const liveScanTimerRef = useRef<number | null>(null);
   function scanLiveReplySoon() {
     if (!liveReplySupported(launchAgentRef.current)) return;
+    // 旁路直接送实时文字的家（Qwen / OpenCode / Codex）不再读屏
+    const ch = channelRef.current;
+    if (ch && ch.kind !== "hooks" && channelTurnOpen(ch)) return;
     if (liveScanTimerRef.current) return;
     const wait = Math.max(0, liveScanAtRef.current + 300 - Date.now());
     liveScanTimerRef.current = window.setTimeout(() => {
@@ -2250,6 +2271,8 @@ const TerminalView = memo(function TerminalView({
   useEffect(() => {
     if (attention !== "working") return;
     const timer = window.setInterval(() => {
+      // 旁路说这一轮还在进行（长命令静默跑着、等批准）：不按 PTY 静默熄灭
+      if (channelTurnOpen(channelRef.current)) return;
       const silenceMs = Date.now() - lastOutputAtRef.current;
       if (silenceMs <= PTY_WORKING_SILENCE_MS) return;
       const next = onPtyWorkingSilence({
@@ -2350,6 +2373,7 @@ const TerminalView = memo(function TerminalView({
       launchPick,
       skills: agentSkills,
       mcps: agentMcps,
+      channel,
     });
   }, [
     sessionFile,
@@ -2373,6 +2397,7 @@ const TerminalView = memo(function TerminalView({
     launchPick,
     agentSkills,
     agentMcps,
+    channel,
     onSessionUpdate,
   ]);
 
@@ -3369,6 +3394,8 @@ const TerminalView = memo(function TerminalView({
           lastOutputAtRef.current = Date.now();
           hadPtyWorkingOutputRef.current = true;
           setAttention((prev) => {
+            // 旁路说这一轮已经结束：TUI 收尾的重绘不再点亮转圈
+            if (channelRef.current?.turn && !channelTurnOpen(channelRef.current)) return prev;
             if (
               !ptyOutputMarksWorking({
                 prev,
@@ -3715,7 +3742,7 @@ const TerminalView = memo(function TerminalView({
         (message) =>
           message.role !== "user" &&
           hasAssistantText([message]) &&
-          !pendingAssistantKeysRef.current.has(JSON.stringify(message.blocks)),
+          !pendingAssistantKeysRef.current.has(messageKey(message)),
       );
       if (
         pendingReplyRef.current &&
@@ -3788,6 +3815,9 @@ const TerminalView = memo(function TerminalView({
         setPendingReply(false);
       }
       setAttention((prev) => {
+        // 旁路在报回合状态：以它为准，会话尾部 / PTY 出字的推断不再改
+        const fromChannel = channelAttention(channelRef.current);
+        if (fromChannel) return fromChannel;
         const next = applyTailAttention({
           prev,
           tail: state,
@@ -3915,6 +3945,127 @@ const TerminalView = memo(function TerminalView({
       sessionWatchStartingRef.current = false;
     }
   }
+
+  // ===== 聊天层结构化旁路（chat_channel.rs / chat-channel.ts，docs/design-chat-structured-channels.md）=====
+  // 后端按各家 CLI 自己吐的结构化事件推快照。旁路说了算的事（会话归属与跟随、回合状态、审批内容、实时文字）
+  // 优先于读会话文件 / 读屏的推断；旁路没接上的家（或这次没接上）照旧走原来那套
+
+  /** CLI 换了会话（Claude /clear、恢复别的会话）：改盯新文件，对话流换成「已开始新对话」一行 */
+  function relinkTo(filePath: string, sessionId: string | null, source: string | null) {
+    const ctx = linkCtxRef.current;
+    if (!ctx) return;
+    stopSessionWatcher();
+    if (ctx.sessionId) setLiveSession(ctx.agentId, ctx.sessionId, null);
+    ctx.filePath = null;
+    ctx.sessionId = null;
+    ctx.hint = sessionId;
+    const note: ChatMessageDto = {
+      role: "user",
+      blocks: [{ kind: "command_output", text: sessionSwitchNote(source), toolName: null }],
+      timestamp: new Date().toISOString(),
+      usage: null,
+    };
+    localRecordsRef.current = { file: filePath, records: [note] };
+    convSigRef.current = "";
+    setConv([note]);
+    lockLink(filePath, sessionId ?? "", null);
+  }
+
+  function applyChannel(snap: ChatChannelSnapshot | null) {
+    const prev = channelRef.current;
+    channelRef.current = snap;
+    setChannel(snap);
+    if (!snap) return;
+    const ctx = linkCtxRef.current;
+    if (ctx && snap.agent === ctx.agentId) {
+      const rel = channelRelink(
+        snap,
+        { filePath: ctx.filePath, hint: ctx.hint, seenSeq: channelSeqSeenRef.current },
+        IS_WINDOWS,
+      );
+      channelSeqSeenRef.current = snap.sessionSeq;
+      if (rel.kind === "switch") {
+        relinkTo(rel.path, rel.sessionId, snap.sessionSource);
+      } else if (rel.kind === "lock") {
+        // 新会话的文件在第一条消息之后才落盘：在了就直接锁，不在就先记 id，等文件出现按 id 认
+        const path = rel.path;
+        const sid = rel.sessionId;
+        void invoke<[number, number] | null>("session_file_sig", { filePath: path })
+          .then((sig) => {
+            const cur = linkCtxRef.current;
+            if (!cur || cur.filePath) return;
+            if (sig && sid) lockLink(path, sid, null);
+            else if (sid) cur.hint = sid;
+          })
+          .catch(() => {});
+      } else if (rel.kind === "hint") {
+        ctx.hint = rel.sessionId;
+      }
+    }
+    // 回合状态 → 标签注意力（working / confirm / done）
+    const att = channelAttention(snap);
+    if (att && (prev?.turn?.status !== snap.turn?.status || prev?.turn?.seq !== snap.turn?.seq)) {
+      if (att === "working") ptyWorkingArmedRef.current = true;
+      setAttention(att);
+    }
+    // 回合结束：马上读一次会话文件；刚发的话都已落盘的，结束「等待回复」（文件稍慢于事件，留 2.5 秒）
+    const turn = snap.turn;
+    if (turn?.endedAt && turn.endedAt !== channelEndHandledRef.current) {
+      channelEndHandledRef.current = turn.endedAt;
+      void fetchConversation(true);
+      if (pendingReplyRef.current && turn.startedAt >= lastSendAtRef.current - 2000) {
+        window.setTimeout(() => {
+          void fetchConversation(true).then(() => {
+            if (pendingReplyRef.current && pendingUsersRef.current.length === 0) setPendingReply(false);
+          });
+        }, 2500);
+      }
+    }
+    // 旁路的提示（压缩上下文）：在对话流里记一行灰字，只在这次打开的聊天里保留
+    if (snap.notice && snap.notice.seq !== prev?.notice?.seq && ctx?.filePath) {
+      if (localRecordsRef.current.file !== ctx.filePath) {
+        localRecordsRef.current = { file: ctx.filePath, records: [] };
+      }
+      localRecordsRef.current.records.push({
+        role: "user",
+        blocks: [{ kind: "command_output", text: snap.notice.text, toolName: null }],
+        timestamp: new Date().toISOString(),
+        usage: null,
+      });
+      void fetchConversation(true);
+    }
+    // 旁路送来的实时文字（Qwen / OpenCode / Codex）取代读屏预览
+    const live = channelLiveLines(snap);
+    if (live && channelTurnOpen(snap)) {
+      const prevLive = liveReplyRef.current?.join("\n") ?? null;
+      if (prevLive !== live.join("\n")) {
+        liveReplyRef.current = live;
+        setLiveReply(live);
+      }
+    }
+  }
+  const applyChannelRef = useRef(applyChannel);
+  applyChannelRef.current = applyChannel;
+  useEffect(() => {
+    let off: (() => void) | null = null;
+    let disposed = false;
+    void listen<ChatChannelSnapshot | null>(`chat-channel-${tabId}`, (e) => {
+      applyChannelRef.current(e.payload ?? null);
+    }).then((fn) => {
+      if (disposed) fn();
+      else off = fn;
+    });
+    // 热更新 / 重新挂载：先取一次当前快照
+    void invoke<ChatChannelSnapshot | null>("chat_channel_snapshot", { tabId })
+      .then((s) => {
+        if (s && !disposed) applyChannelRef.current(s);
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      off?.();
+    };
+  }, [tabId]);
 
   async function linkTick() {
     const ctx = linkCtxRef.current;
@@ -4330,6 +4481,8 @@ const TerminalView = memo(function TerminalView({
         );
       }
       // SessionLink：记录启动上下文，开始轮询会话文件
+      channelSeqSeenRef.current = 0;
+      channelEndHandledRef.current = null;
       linkCtxRef.current = {
         agentId,
         cwd,
@@ -4545,6 +4698,7 @@ const TerminalView = memo(function TerminalView({
   /** queued = 上一轮还在生成时发的：CLI 自己排队，这一轮结束才处理（聊天层气泡标「排队中」） */
   function showOptimisticUserMessage(text: string, queued = false) {
     lastSentRef.current = text;
+    lastSendAtRef.current = Date.now();
     // 发送发生在后台读取途中时，令旧读取失效，避免它把刚显示的本地消息覆盖掉。
     conversationRequestRef.current += 1;
     // 实时预览从这一轮重新攒（上一轮的长回复不能接到这一轮前面）
@@ -4560,7 +4714,7 @@ const TerminalView = memo(function TerminalView({
     pendingAssistantKeysRef.current = new Set(
       conv
         .filter((item) => item.role !== "user")
-        .map((item) => JSON.stringify(item.blocks)),
+        .map((item) => messageKey(item)),
     );
     pendingUsersRef.current = [...pendingUsersRef.current, message];
     setConv((current) => {
@@ -6755,7 +6909,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           Boolean(
             useAppStore.getState().settings?.hooksAttention?.[
               statuses[focusedId]?.agentId ?? ""
-            ],
+            ] || sessionByTab[focusedId]?.channel,
           ),
         ),
       )
@@ -6942,6 +7096,16 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   }, []);
 
   /** TerminalView 镜像当前对话数据；引用没变就不更新 */
+  /** 聊天层「等你决定」卡上点了按钮：经这家 CLI 官方的回复通道送回（Qwen / OpenCode / Codex）；
+   *  终端里已经答过的，CLI 会丢掉这条，卡片随「已处理」事件消失 */
+  async function replyChannel(tabId: string, requestId: string, decision: ChannelReplyDecision) {
+    try {
+      await invoke("chat_channel_reply", { tabId, requestId, decision });
+    } catch (e) {
+      toast(`没能送到：${String(e)}，可以在终端里回答`, "error");
+    }
+  }
+
   const reportSession = useCallback((id: string, s: SessionLinkState) => {
     setSessionByTab((prev) => {
       const cur = prev[id];
@@ -6965,7 +7129,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         cur.ptyQuiet === s.ptyQuiet &&
         cur.launchPick === s.launchPick &&
         cur.skills === s.skills &&
-        cur.mcps === s.mcps
+        cur.mcps === s.mcps &&
+        cur.channel === s.channel
       ) {
         return prev;
       }
@@ -9343,8 +9508,13 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                           profiles.find((p) => p.id === statuses[t.id]?.profileId)?.accountType,
                         )}
                         hooksEnabled={Boolean(
-                          appSettings?.hooksAttention?.[agentKey ?? ""],
+                          appSettings?.hooksAttention?.[agentKey ?? ""] || sessionByTab[t.id]?.channel,
                         )}
+                        channel={sessionByTab[t.id]?.channel ?? null}
+                        onChannelReply={(requestId, decision) => {
+                          holdAutoPeek(t.id);
+                          void replyChannel(t.id, requestId, decision);
+                        }}
                         hasOlder={sessionByTab[t.id]?.convCursor != null}
                         loadingOlder={sessionByTab[t.id]?.loadingOlder ?? false}
                         onLoadOlder={() =>

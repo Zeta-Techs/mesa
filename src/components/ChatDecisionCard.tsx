@@ -1,4 +1,6 @@
 import { CircleHelp, SquareTerminal } from "lucide-react";
+import type { DecisionPreview } from "../chat-channel";
+import { DiffView, OutputView } from "./ConversationView";
 
 export interface DecisionOption {
   label: string;
@@ -14,6 +16,8 @@ export interface ChatDecision {
   title: string;
   detail?: string | null;
   hint?: string | null;
+  /** 要你批准的是什么：命令原文 / 要改的差异 / 参数（结构化旁路给的，chat-channel.ts approvalPreview） */
+  preview?: DecisionPreview | null;
   options: DecisionOption[];
 }
 
@@ -55,6 +59,18 @@ export default function ChatDecisionCard({
           )}
         </div>
       </div>
+      {decision.preview && (
+        <div className="mt-2 pl-[1.4rem]">
+          {decision.preview.kind === "diff" ? (
+            <DiffView lines={decision.preview.lines} />
+          ) : (
+            <OutputView
+              command={decision.preview.kind === "command" ? decision.preview.text : null}
+              text={decision.preview.kind === "text" ? decision.preview.text : undefined}
+            />
+          )}
+        </div>
+      )}
       <div className="mt-2.5 flex flex-wrap items-center gap-1.5 pl-[1.4rem]">
         {decision.options.map((opt, i) => (
           <button

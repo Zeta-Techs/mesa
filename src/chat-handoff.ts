@@ -7,9 +7,11 @@
 
 import type { ChatMessageDto, SessionSyncState } from "./types.ts";
 
-/** 已接入 hooks 精确注意力的七家（cursor / opencode 无等价事件） */
+/** 有精确状态（hooks 或结构化旁路，docs/design-chat-structured-channels.md）的八家；cursor 没有等价事件。
+ *  键是 agent id（原先误写成 claude，Claude Code 一直被当成「没有精确注意力」，2026-10-20 改正） */
 export const HOOKS_AGENTS: ReadonlySet<string> = new Set([
-  "claude",
+  "claude-code",
+  "opencode",
   "qwen",
   "codebuddy",
   "gemini",
@@ -77,9 +79,7 @@ export function approvalExtraHint(
   agentId: string | null | undefined,
   hooksEnabled: boolean,
 ): string | null {
-  if (agentId === "codex") {
-    return "若按键无效，请到终端里打开 /hooks，确认已信任该 hook";
-  }
+  // Codex 原先走全局 hooks（要在 /hooks 面板信任）；2026-10-20 起 Mesa 里改走私有 app-server，不再提示
   if (!agentHasHooks(agentId) || !hooksEnabled) {
     return "这家 Agent 没有精确注意力标记，批准菜单请在露出的终端里操作";
   }
@@ -322,8 +322,9 @@ export function slashHandoff(
 }
 
 export function chatMessageKey(
-  message: Pick<ChatMessageDto, "role" | "blocks" | "timestamp">,
+  message: Pick<ChatMessageDto, "role" | "blocks" | "timestamp" | "id">,
 ): string {
+  if (message.id) return `${message.role}:id:${message.id}`;
   const firstText = message.blocks.find((block) => block.kind === "text")?.text ?? "";
   return `${message.role}:${message.timestamp ?? ""}:${message.blocks.length}:${firstText.slice(0, 24)}`;
 }
@@ -341,9 +342,14 @@ export function mergeConversationPages(
 /**
  * 把会话文件还没记下的本地消息放回解析结果里（聊天层乐观显示）。排队中的（上一轮还在生成时发的）
  * 一律接在末尾；其余插在「发送之后才出现的第一条回复」前面——后端暂时只解析到回复时阅读顺序仍对。
- * knownReplyKeys = 发送那一刻已有的回复（JSON.stringify(blocks)）。原先插在整页第一条回复前，
+ * knownReplyKeys = 发送那一刻已有的回复（messageKey：有 id 用 id，否则按内容）。原先插在整页第一条回复前，
  * 长对话里刚发的那句会跳到页顶（2026-10-18 修）。
  */
+/** 消息身份：来源给了 id 就用 id（同样一句「好的」也分得开），没有就按内容 */
+export function messageKey(message: ChatMessageDto): string {
+  return message.id ? `id:${message.id}` : JSON.stringify(message.blocks);
+}
+
 export function placePendingUsers(
   parsed: ChatMessageDto[],
   missing: ChatMessageDto[],
@@ -352,7 +358,7 @@ export function placePendingUsers(
   if (missing.length === 0) return parsed;
   const next = [...parsed];
   const replyIndex = next.findIndex(
-    (message) => message.role !== "user" && !knownReplyKeys.has(JSON.stringify(message.blocks)),
+    (message) => message.role !== "user" && !knownReplyKeys.has(messageKey(message)),
   );
   next.splice(replyIndex < 0 ? next.length : replyIndex, 0, ...missing.filter((m) => !m.queued));
   next.push(...missing.filter((m) => m.queued));

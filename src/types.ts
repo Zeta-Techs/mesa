@@ -640,6 +640,8 @@ export interface BlockDto {
   toolName: string | null;
   /** 工具结果被 CLI 自己标成出错（Claude 的 is_error；没出错不带这个字段） */
   isError?: boolean;
+  /** 工具调用 id（tool_use / tool_result 两头都带，按它配对；来源没有就不带，退回按顺序配对） */
+  callId?: string;
 }
 
 export interface ChatMessageDto {
@@ -647,6 +649,8 @@ export interface ChatMessageDto {
   blocks: BlockDto[];
   timestamp: string | null;
   usage: TokenUsageDto | null;
+  /** 来源给的消息 id（Claude 行 uuid、Codex 条目 id …）：稳定身份，没有就不带 */
+  id?: string;
   /** 仅前端乐观消息：上一轮还在生成时发出、CLI 排队待处理（会话文件记下后由解析结果替换，不再带这个标记） */
   queued?: boolean;
 }

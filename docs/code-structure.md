@@ -333,7 +333,10 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # （tests/app-update.test.ts）；真正 check()/安装在 store.ts
   chat-handoff.ts            # 聊天⇄终端交接表：chat_ok / peek / must_switch、等待态文案、斜杠是否要窥视 TUI、
                              # 聊天头状态 chatHeaderStatus（未开始不写「等待会话文件」，tests/chat-handoff.test.ts）；
-                             # 本地乐观消息放回解析结果的位置 placePendingUsers（排队中的接末尾，其余插在发送后的第一条新回复前）
+                             # 本地乐观消息放回解析结果的位置 placePendingUsers（排队中的接末尾，其余插在发送后的第一条新回复前）；
+                             # messageKey / chatMessageKey 有来源 id 用 id；HOOKS_AGENTS 键是 agent id（2026-10-20 改正 claude-code）
+  chat-channel.ts            # 结构化旁路快照的前端纯逻辑：回合状态 → 注意力、会话跟随（lock / switch / hint）、实时文字、
+                             # 审批卡标题 / 预览（命令 / 差异）/ 可回复的按钮（tests/chat-channel.test.ts）；TerminalView 的 applyChannel 消费
   slash-commands.ts          # 聊天斜杠命令保守常用集（未全量调研的 agent 只给 /help；tests/slash-commands.test.ts）
   ime-guard.ts               # 聊天 Enter 是否处于输入法组词（WKWebView 确认候选时 isComposing 已假；tests/ime-guard.test.ts）
   notify.ts                  # 长任务 OS 通知（仅「待确认」跃迁 + 未聚焦 + 30s 去抖；「已回复」不通知）；
@@ -503,8 +506,10 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   总计与「≥」下限标记、快照清理确认文案（tests/settings-storage.test.ts）
   conversation-tools.ts      # 对话按「轮」整理：助手一轮的过程（思考 / 工具调用+结果配对 / 中途说明）收成 turn 段、过程后的正文切成回答；
                              #   连着的读/搜并成「查阅」，最后一轮进行中（working 或有没回结果的调用）不切回答；时长、收起摘要（tests 同名）
+                             # 2026-10-20：调用与结果按 callId 配对（没有 id 退回先后）；turnPlan / planEntries = 计划卡（各家待办参数收成一份，一轮取最后一次）
   tool-activity.ts           # 一次工具调用 → 一行动作（编辑 文件 目录 +N −M / 运行 命令 / 搜索 …）：九家工具名归类、常见参数键取对象、
                              #   Codex 补丁拆文件与脚本模式取 cmd、行级差异 lineDiff、结果状态只看开头（tests/tool-activity.test.ts）
+                             # 2026-10-20：commandCategory（借 vibe-kanban）——只读命令（cat / sed -n / rg / ls …）归进查阅，改文件 / 取网页 / 其余照旧算运行
   dep-check.ts               # 依赖体检前端镜像：DTO 判定与 DOM/Tauri 解耦（tests 同名）
   gateway-draft.ts           # 网关库槽位纯逻辑：effectiveSlotUrl 主输入跟随/脱离、slotsFollowMaster、firstProbeableSlot
   goal-review.ts             # 目标验收弹层分组与文案：科研按文献/笔记/数据/论文、工作按文档/表格/幻灯（tests/goal-review.test.ts）
@@ -748,6 +753,13 @@ src-tauri/src/
                              # pty_report_terminal_colors = Windows 底色告知（win32-input-mode 记录逐条投递，
                              #   条间 2ms；ConPTY 双向吞 OSC 的实测结论见 conventions/terminal.md，别改回 OSC）
   pty_input.rs               # 每个终端独立的有界输入队列：一个不读 stdin 的 CLI 不得占住 PTY 全局锁
+  chat_channel.rs            # 聊天层结构化旁路（2026-10-20，docs/design-chat-structured-channels.md）：pty_spawn 起进程前
+                             #   prepare 按家改参数（Claude / CodeBuddy --settings hooks、Qwen Dual Output、OpenCode --port + 口令、
+                             #   Codex 私有 app-server + TUI --remote，split_codex_args 恢复时把权限参数改成服务配置），
+                             #   start 起读取线程（状态日志 / 事件文件追加读、OpenCode SSE、Codex ws 客户端，手写最小 WebSocket），
+                             #   Tracker = 回合状态机（幂等开始 / 结束、审批、实时文字、会话跟随），快照推 chat-channel-<tabId>；
+                             #   chat_channel_reply 经官方通道回审批；close_for_pty 随 PTY 退出收旁路；e2e::e2e_channel（ignored）=
+                             #   真 CLI + 假网关端到端（scripts/e2e-model-routing/README.md）
   terminal_replay.rs         # 终端画面回放：<config>/ccode/terminal-replay/replay-<标签>.txt，
                              # 单份 256KB、出站先 redact_sensitive_text、0600；重启占位标签读回，不是会话档案；
                              # prune_terminal_replays 启动后只留当前标签集合（清崩溃残留孤儿）
@@ -931,7 +943,11 @@ src-tauri/src/
                              #   turn_duration / task_complete）；settings 字段 hooks_attention: map<agent,bool>
                              #   （旧 claude_hooks_attention 仅保留反序列化兼容迁移）；
                              #   session_confirm_detail（2026-08-24）：confirm 时从 payload 提取「在等什么」摘要
-                             #   （message/tool_name/title 尽力而为），聊天层审批卡片用
+                             #   （message/tool_name/title 尽力而为），聊天层审批卡片用；
+                             # 2026-10-20：hook 命令整行一次写入、记 CCODE_TAB_ID（日志第二段，旧格式照读）、payload 截 64KB
+                             #   （PostToolUse 2KB，截断按字段名兜底）；launch_hooks_value = Claude / CodeBuddy 每次启动注入的 hooks；
+                             #   launch_injected 五家设置页不给开关、precise_enabled 门控；migrate_launch_injected 启动收回以前写的全局条目；
+                             #   real_data_dry_run_migrate（ignored）= 对真实配置的拷贝干跑
   inst_access.rs             # 机构访问通道（2026-09-16）：人登录一次、系统复用会话——登录窗（Tauri WebviewWindow
                              #   label=inst-login）Cookie 落 0600 inst-session.json（值绝不出站，状态 DTO 只有
                              #   域名/条数/时间）；EZproxy/OpenAthens 前缀 ?url= 改写（settings institutional_prefix，

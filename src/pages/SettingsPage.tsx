@@ -403,6 +403,8 @@ type HookSupport = {
   supported: boolean;
   note?: string | null;
   configPath?: string | null;
+  /** Mesa 拉起时自动带精确事件（启动参数 / CLI 自带通道，不改用户配置），不给开关 */
+  auto?: boolean;
 };
 
 /** 可一键安装的字体预设：下拉字体名 → 后端字体 id（内置/系统/自定义不在安装范围） */
@@ -3405,16 +3407,29 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           </div>
         )}
         {/* 卡头说一次机制，行标签只写 agent 名，写入路径挂行悬浮（v3.88：机制说明不占版面）。
-            不支持的几家不再各占一行灰开关，并成卡底一句 */}
+            不支持的几家不再各占一行灰开关，并成卡底一句。
+            2026-10-20 起五家在 Mesa 里启动时自动带上（docs/design-chat-structured-channels.md），不再给开关；
+            只剩只认全局配置的三家（Gemini / Kimi / Grok）要开关 */}
         {hookSupport.length > 0 && (() => {
-          const supported = hookSupport.filter((h) => h.supported);
+          const auto = hookSupport.filter((h) => h.auto);
+          const supported = hookSupport.filter((h) => h.supported && !h.auto);
           const unsupported = hookSupport.filter((h) => !h.supported);
           const labelOf = (agent: string) => AGENTS.find((a) => a.id === agent)?.label ?? agent;
           return (
             <Card
               title="精确注意力标记"
-              hint="不开时 Mesa 读终端画面认出确认菜单；开启后由 CLI 自己报告何时停下等你，更准，Mesa 之外的终端里的对话也认得出。开启会写入该 CLI 的 hooks 配置，写前自动备份"
+              hint="由 CLI 自己报告进度、何时停下等你确认，比读终端画面准，审批卡上还能看到要运行的命令和要改的内容"
             >
+              {auto.length > 0 && (
+                <p className="mb-2 px-2 text-xs leading-5 text-l3">
+                  {auto.map((h) => labelOf(h.agent)).join("、")}：在 Mesa 里启动时自动带上，不改你的配置。
+                </p>
+              )}
+              {supported.length > 0 && (
+                <p className="mb-1 px-2 text-micro text-l4">
+                  下面几家只认全局配置里的 hooks，开了才有；开启会写入该 CLI 的 hooks 配置，写前自动备份
+                </p>
+              )}
               <div className="grid grid-cols-1 gap-1 lg:grid-cols-2">
                 {supported.map((h) => {
                   const label = labelOf(h.agent);

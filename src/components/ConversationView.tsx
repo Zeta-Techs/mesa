@@ -4,6 +4,9 @@ import {
   BookOpen,
   Brain,
   Check,
+  Circle,
+  CircleCheck,
+  CircleDot,
   Copy,
   FileMinus2,
   FilePlus2,
@@ -33,8 +36,10 @@ import {
   groupConversationSegments,
   problemText,
   segmentContainsIndex,
+  turnPlan,
   turnSummary,
   type ConversationSegment,
+  type PlanEntry,
   type ProcessItem,
   type ProcessTool,
 } from "../conversation-tools";
@@ -95,7 +100,7 @@ const ACTIVITY_ICON: Record<ActivityKind, LucideIcon> = {
 };
 
 /** 编辑 / 写入的差异：增删行只铺底、正文中性（design-system「diff 行」口径），未改动段折成 ⋯ */
-function DiffView({ lines }: { lines: DiffLine[] }) {
+export function DiffView({ lines }: { lines: DiffLine[] }) {
   const shown = lines.slice(0, DETAIL_LINES);
   return (
     <div className="max-h-80 overflow-auto rounded-md border border-hairline bg-inset py-1 font-mono text-xs leading-5">
@@ -131,14 +136,15 @@ function DiffView({ lines }: { lines: DiffLine[] }) {
 }
 
 /** 命令与输出 / 工具结果：等宽、可滚动，太长截断并写明 */
-function OutputView({ command, text }: { command?: string | null; text: string | null }) {
+export function OutputView({ command, text }: { command?: string | null; text?: string | null }) {
   const body = text ?? "";
   const lines = body.split("\n");
   const cut = lines.length > DETAIL_LINES ? lines.slice(0, DETAIL_LINES).join("\n") : body;
   return (
     <div className="max-h-80 overflow-auto rounded-md border border-hairline bg-inset px-2.5 py-2 font-mono text-xs leading-5">
       {command && <div className="whitespace-pre-wrap break-all text-l2">$ {command}</div>}
-      {body.trim() ? (
+      {/* text 不传（审批卡只看命令）就不画结果那一栏 */}
+      {text === undefined ? null : body.trim() ? (
         <div className={`whitespace-pre-wrap break-all text-l3 ${command ? "mt-1.5" : ""}`}>{cut}</div>
       ) : (
         <div className={`text-l4 ${command ? "mt-1.5" : ""}`}>{text === null ? "还没有结果" : "没有输出"}</div>
@@ -146,6 +152,41 @@ function OutputView({ command, text }: { command?: string | null; text: string |
       {lines.length > DETAIL_LINES && (
         <div className="mt-1 text-l4">还有 {lines.length - DETAIL_LINES} 行没画出来</div>
       )}
+    </div>
+  );
+}
+
+/** 这一轮的计划（各家待办 / update_plan 收成一份；同一轮只画最新那份，ACP plan 语义） */
+function PlanCard({ entries, compact }: { entries: PlanEntry[]; compact?: boolean }) {
+  const done = entries.filter((e) => e.status === "completed").length;
+  return (
+    <div className={`my-2 rounded-md border border-hairline px-3 py-2 ${compact ? "text-xs" : "text-sm"}`}>
+      <div className="mb-1 flex items-center gap-1.5 text-micro text-l4">
+        <ListTodo size={12} strokeWidth={1.8} aria-hidden="true" />
+        计划 · {done}/{entries.length} 已完成
+      </div>
+      <ul className="space-y-0.5">
+        {entries.map((e, i) => {
+          const Icon = e.status === "completed" ? CircleCheck : e.status === "in_progress" ? CircleDot : Circle;
+          return (
+            <li key={i} className="flex items-start gap-2">
+              <Icon
+                size={13}
+                strokeWidth={1.8}
+                aria-hidden="true"
+                className={`mt-[3px] shrink-0 ${e.status === "in_progress" ? "text-l1" : "text-l4"}`}
+              />
+              <span
+                className={
+                  e.status === "completed" ? "text-l4 line-through" : e.status === "in_progress" ? "text-l1" : "text-l2"
+                }
+              >
+                {e.text}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }
@@ -293,6 +334,7 @@ export default function ConversationView({
   /** 消息稳定键：角色+时间戳+块数+首段文本特征。前插分页/轮询刷新后数组下标会移位，
    *  展开状态（过程/工具行/长文本）必须跟随内容而非位置 */
   function msgKey(m: ChatMessageDto, mi: number): string {
+    if (m.id) return `${m.role}:id:${m.id}`;
     const firstText = m.blocks.find((b) => b.kind === "text")?.text ?? "";
     return `${m.role}:${m.timestamp ?? `#${mi}`}:${m.blocks.length}:${firstText.length}:${firstText.slice(0, 24)}`;
   }
@@ -434,6 +476,8 @@ export default function ConversationView({
       added?: number | null;
       removed?: number | null;
       problem?: string | null;
+      /** 还在跑（进行中的一轮里没回结果的调用） */
+      pending?: boolean;
       detail?: () => ReactNode;
     },
   ) {
@@ -457,6 +501,7 @@ export default function ConversationView({
         {(row.added ?? 0) > 0 && <span className="shrink-0 tabular-nums text-add">+{row.added}</span>}
         {(row.removed ?? 0) > 0 && <span className="shrink-0 tabular-nums text-del">−{row.removed}</span>}
         {row.problem && <span className="shrink-0 text-err-text">{row.problem}</span>}
+        {row.pending && !row.problem && <span className="shrink-0 text-l4">进行中…</span>}
       </>
     );
     const rowCls = `flex min-w-0 items-center gap-2 ${compact ? "min-h-6" : "min-h-8"} py-0.5 ${rowText}`;
@@ -482,9 +527,11 @@ export default function ConversationView({
     );
   }
 
-  function toolRow(key: string, t: ProcessTool) {
+  function toolRow(key: string, t: ProcessTool, live = false) {
     const a = t.activity;
     const problem = resultStatusLabel(t.status);
+    // 进行中这一轮里还没回结果的调用：正在跑（或等你批准）
+    const pending = live && t.result === null && a.verb !== "工具结果";
     const inCwd = Boolean(cwd && a.path && a.dir !== null && !/^[~/]|^[A-Za-z]:/.test(a.dir));
     const detail = () => {
       if (a.diff && a.diff.length) {
@@ -529,7 +576,7 @@ export default function ConversationView({
       return (
         <>
           {a.path && <div className="mb-1 truncate text-micro text-l4">{a.path}</div>}
-          <OutputView text={t.result} />
+          <OutputView command={a.command} text={t.result} />
         </>
       );
     };
@@ -544,11 +591,12 @@ export default function ConversationView({
       added: a.added,
       removed: a.removed,
       problem,
+      pending,
       detail,
     });
   }
 
-  function renderItem(item: ProcessItem, key: string) {
+  function renderItem(item: ProcessItem, key: string, live = false) {
     if (item.kind === "thinking") {
       return processRow(key, {
         icon: Brain,
@@ -569,14 +617,15 @@ export default function ConversationView({
         </div>
       );
     }
-    if (item.kind === "tool") return toolRow(key, item.tool);
+    if (item.kind === "tool") return toolRow(key, item.tool, live);
     return processRow(key, {
       icon: Search,
       verb: "查阅",
       target: exploreLabel(item.tools),
       plain: true,
       problem: problemText(item.tools.map((t) => t.status), "处"),
-      detail: () => <div>{item.tools.map((t, i) => toolRow(`${key}:${i}`, t))}</div>,
+      pending: live && item.tools.some((t) => t.result === null),
+      detail: () => <div>{item.tools.map((t, i) => toolRow(`${key}:${i}`, t, live))}</div>,
     });
   }
 
@@ -585,6 +634,9 @@ export default function ConversationView({
     const hit = segmentContainsIndex(seg, focusIndex);
     const open = seg.live || hit || expanded.has(key);
     const summary = turnSummary(seg.items);
+    const plan = turnPlan(seg.items);
+    // 有计划卡就不再一行行列「更新待办」（同一份清单反复改，画最新那份就够）
+    const items = plan ? seg.items.filter((it) => !(it.kind === "tool" && it.tool.activity.kind === "todo")) : seg.items;
     const answerKey = `${key}:answer`;
     // 只想了想、没动手的一轮：写「已思考」，展开直接是思考正文，不再套一行「思考」
     const thoughtOnly = seg.items.every((item) => item.kind === "thinking");
@@ -619,13 +671,14 @@ export default function ConversationView({
         )}
         {open && (
           <div className={seg.live ? "" : "mb-3 mt-1 border-t border-hairline pt-2"}>
+            {plan && <PlanCard entries={plan} compact={compact} />}
             {thoughtOnly && !seg.live
               ? richText(
                   `${key}:thought`,
                   seg.items.map((item) => (item.kind === "thinking" ? item.text : "")).join("\n\n"),
                   `whitespace-pre-wrap border-l border-hairline pl-3 ${rowText} leading-relaxed text-l3`,
                 )
-              : seg.items.map((item, i) => renderItem(item, `${key}:${i}`))}
+              : items.map((item, i) => renderItem(item, `${key}:${i}`, seg.live))}
           </div>
         )}
         {seg.answer && (

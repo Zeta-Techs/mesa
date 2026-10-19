@@ -273,6 +273,72 @@ function commandOf(args: Args | null): string | null {
   return null;
 }
 
+/** shell 命令再分类（借 vibe-kanban 的 CommandCategory）：读 / 搜 / 看目录的命令归进「查阅」，
+ *  改文件的、取网页的、其余照旧算运行。Codex 几乎所有动作都是 exec_command，不分就只能说「运行 6 次」 */
+export type CommandCategory = "read" | "search" | "list" | "edit" | "fetch" | "other";
+
+const READ_CMDS = new Set(["cat", "head", "tail", "nl", "less", "more", "wc", "stat", "file", "bat", "jq", "realpath"]);
+const SEARCH_CMDS = new Set(["grep", "egrep", "fgrep", "rg", "ag", "ack", "find", "fd", "awk", "which", "locate"]);
+const LIST_CMDS = new Set(["ls", "tree", "pwd", "du"]);
+const EDIT_CMDS = new Set(["rm", "rmdir", "mv", "cp", "touch", "mkdir", "chmod", "chown", "tee", "truncate", "ln", "patch"]);
+const FETCH_CMDS = new Set(["curl", "wget"]);
+
+/** 去掉 `bash -lc '…'` / `zsh -lc "…"` 外壳 */
+function unwrapShell(command: string): string {
+  const m = /^\s*(?:\/\S*\/)?(?:ba|z)?sh\s+-l?c\s+(['"])([\s\S]*)\1\s*$/.exec(command);
+  return m ? m[2] : command;
+}
+
+function segmentCategory(seg: string): CommandCategory {
+  const words = seg.trim().split(/\s+/).filter(Boolean);
+  // 跳过前置的环境变量赋值（FOO=1 cmd）与 cd 之外的前缀
+  while (words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0])) words.shift();
+  const head = (words[0] ?? "").replace(/^.*\//, "").toLowerCase();
+  if (!head) return "other";
+  if (head === "cd") return "list";
+  if (head === "sed") return words.some((w) => /^-[a-z]*i/.test(w)) ? "edit" : "read";
+  if (head === "git") {
+    const sub = words[1] ?? "";
+    return ["status", "log", "diff", "show", "blame", "branch", "rev-parse"].includes(sub) ? "read" : "other";
+  }
+  if (READ_CMDS.has(head)) return "read";
+  if (SEARCH_CMDS.has(head)) return "search";
+  if (LIST_CMDS.has(head)) return "list";
+  if (EDIT_CMDS.has(head)) return "edit";
+  if (FETCH_CMDS.has(head)) return "fetch";
+  return "other";
+}
+
+export function commandCategory(command: string): CommandCategory {
+  const body = unwrapShell(command.trim());
+  if (!body) return "other";
+  // 写到真实文件的重定向就是改文件（2>&1、>/dev/null 不算）
+  if (/(^|[^0-9&])>{1,2}\s*(?!&|\/dev\/null)[^\s|&;]+/.test(body.replace(/2>&1|&>\/dev\/null|>\s*\/dev\/null/g, ""))) {
+    return "edit";
+  }
+  const segs = body.split(/&&|\|\||;|\|/).filter((x) => x.trim());
+  const cats = segs.map(segmentCategory);
+  if (cats.includes("edit")) return "edit";
+  const looks = cats.filter((c) => c !== "list" || cats.length === 1);
+  if (cats.length && cats.every((c) => c === "read" || c === "search" || c === "list")) {
+    return (looks.find((c) => c !== "list") ?? cats[0]) as CommandCategory;
+  }
+  if (cats.includes("fetch") && cats.every((c) => c === "fetch" || c === "read" || c === "search")) return "fetch";
+  return "other";
+}
+
+/** 读文件类命令里的文件（最后一个不是选项、不像数字范围的参数） */
+function commandFileArg(command: string): string | null {
+  const body = unwrapShell(command).split(/&&|\|\||;|\|/)[0] ?? "";
+  const words = body.trim().split(/\s+/).slice(1).map((w) => w.replace(/^['"]|['"]$/g, ""));
+  for (let i = words.length - 1; i >= 0; i--) {
+    const w = words[i];
+    if (!w || w.startsWith("-") || /^\d+(,\d+)?p?$/.test(w) || /^['"]?\d/.test(w)) continue;
+    if (/[/.]/.test(w)) return w;
+  }
+  return null;
+}
+
 function base(kind: ActivityKind, toolName: string, input: string): ToolActivity {
   return {
     kind,
@@ -335,6 +401,8 @@ export function toolActivities(toolName: string | null, input: string, cwd: stri
     const cmds = [...input.matchAll(/\bcmd\s*:\s*"((?:[^"\\]|\\.)*)"/g)].map((m) => unescapeJs(m[1]));
     const a = base("run", name, input);
     if (!cmds.length) return [{ ...a, target: "运行脚本", command: input }];
+    const look = cmds.length === 1 ? lookActivity(a, cmds[0], cwd) : null;
+    if (look) return [look];
     return [
       {
         ...a,
@@ -393,6 +461,8 @@ export function toolActivities(toolName: string | null, input: string, cwd: stri
     case "run": {
       const command = commandOf(args) ?? "";
       const desc = str(args, "description");
+      const look = command ? lookActivity(a, command, cwd, desc) : null;
+      if (look) return [look];
       return [
         {
           ...a,
@@ -433,10 +503,35 @@ export function toolActivities(toolName: string | null, input: string, cwd: stri
       // 认不出的工具：照名字，参数里有路径 / 命令 / 关键词就挑一个当对象
       const command = commandOf(args);
       if (filePath) return [{ ...withPath(a, filePath, cwd), verb: `调用 ${name}` }];
-      if (command) return [{ ...a, kind: "run", verb: "运行", target: firstLine(command), command }];
+      if (command) {
+        const look = lookActivity({ ...a, kind: "run" }, command, cwd);
+        return [look ?? { ...a, kind: "run", verb: "运行", target: firstLine(command), command }];
+      }
       return [{ ...a, target: name }];
     }
   }
+}
+
+/** 只读的命令（cat / sed -n / rg / ls …）当成查阅：并进「查阅 · 读了 3 个文件，搜索 2 次」那一行 */
+function lookActivity(
+  a: ToolActivity,
+  command: string,
+  cwd: string | null,
+  desc: string | null = null,
+): ToolActivity | null {
+  const cat = commandCategory(command);
+  if (cat !== "read" && cat !== "search" && cat !== "list") return null;
+  const line = firstLine(unwrapShell(command));
+  const file = cat === "read" ? commandFileArg(command) : null;
+  const out: ToolActivity = {
+    ...a,
+    kind: cat,
+    verb: VERB[cat],
+    target: desc ?? line,
+    command,
+    note: desc ? line : null,
+  };
+  return file ? { ...withPath(out, file, cwd), note: desc ?? line } : out;
 }
 
 /** 前面那页里调用、这页只剩结果的工具（分页截断处） */

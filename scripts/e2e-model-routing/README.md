@@ -58,3 +58,36 @@ Gemini 的临时 HOME 里会把登录方式改成 API Key（Mesa 只在这种情
 
 切换会不会写回 CLI 的全局配置：第三幕带 `ANSWER_MENU=1`（Codex 选择器要连按两次用 `ANSWER_MENU=2`），脚本会在弹确认时按回车选默认项，
 最后比对临时 HOME 里各家配置文件切换前后的差异（`config_changed`，也打印到屏上）。2026-10-18 的结论见 src/switch-strategy.ts 文件头。
+
+## 聊天层结构化旁路（2026-10-20）
+
+设计与结论见 docs/design-chat-structured-channels.md。两层核对，都只打本机假网关、临时 HOME：
+
+**一、Mesa 自己的实现（推荐）**：Rust 端到端测试走真实的 `chat_channel::prepare` / 旁路读取 / 审批回复，看快照里会话、回合、审批对不对。
+
+```bash
+python3 -I scripts/e2e-model-routing/gateway.py 18950 /tmp/e2e-gw.log &
+cd src-tauri && E2E_BASE=http://127.0.0.1:18950 E2E_OUT=/tmp/e2e-plans.json cargo test --lib e2e_dump_launch_plans -- --ignored
+# E2E_AGENT 取 claude-code / codebuddy / qwen / opencode / codex；生成计划后马上跑（Claude 的 --settings 文件 60 秒后会被清）
+MESA_E2E_REAL_CLI=1 E2E_PLANS=/tmp/e2e-plans.json E2E_AGENT=codex cargo test --lib e2e_channel -- --ignored --nocapture
+# 可加：E2E_CLEAR=1（走完再发 /clear，看会话跟随）、E2E_RESUME=1（停掉后按 Mesa 的恢复参数接回再跑一轮）、
+#       E2E_TIER=auto|full（换权限档）、MESA_CHANNEL_DEBUG=1（打印 Codex app-server 收到的每条消息）
+```
+
+**二、CLI 本身的机制（换版本时先跑这个）**：不经 Mesa，直接看每家旁路还在不在、形状变没变。
+
+```bash
+# hooks：每次启动注入（Claude / CodeBuddy 的 --settings，Qwen 的系统默认设置路径；Gemini 同法会被拒——系统设置文件必须属 root）
+python3 -I scripts/e2e-model-routing/channel-probe.py /tmp/e2e-plans.json claude-code hooks /tmp/cp/claude.json
+FULL_LOG=1 ...   # 记下整份 hook 日志，看各事件 payload
+# Qwen Dual Output（审批从 input 文件答）
+python3 -I scripts/e2e-model-routing/channel-probe.py /tmp/e2e-plans.json qwen dual /tmp/cp/qwen.json
+# OpenCode 自带服务（OPENCODE_ASK=1 在 Mesa 注入的配置上加「跑命令先问」，不能整份覆盖 OPENCODE_CONFIG_CONTENT——会丢网关、打到真实服务）
+OPENCODE_ASK=1 python3 -I scripts/e2e-model-routing/channel-probe.py /tmp/e2e-plans.json opencode opencode /tmp/cp/oc.json
+# Codex：私有 app-server + TUI --remote + 第二个客户端；TRANSPORT=ws 走本机 TCP + 能力令牌（Mesa 用的就是这条）
+TRANSPORT=ws python3 -I scripts/e2e-model-routing/codex-appserver-probe.py /tmp/e2e-plans.json /tmp/cp/codex.json
+```
+
+2026-10-20 结论：五家（Claude Code 2.1.292、CodeBuddy 2.169.0、Qwen 0.25.2、OpenCode 1.19.3、Codex 0.163.0）能不写用户配置地默认接上；
+Gemini 0.64.0（系统设置文件须属 root）、Kimi 2.2.0（无指定配置的参数）、Grok 1.0.62（GROK_CONFIG 覆盖层不收 hooks）只能写全局配置；Cursor 无等价事件。
+Codex 远程 TUI 恢复会话时拒收权限参数（Permission overrides are not supported when resuming a remote task），Mesa 改成 app-server 的 `-c` 配置。

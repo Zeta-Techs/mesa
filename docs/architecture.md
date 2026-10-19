@@ -457,6 +457,24 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-20 · 聊天层结构化旁路：TUI 照跑，逐家接 CLI 自带的结构化事件；精确注意力五家改为启动时自动带
+
+用户问聊天层（CLI 的解析渲染层）有没有可借鉴的开源项目，要求「只做正确借鉴」出方案，随后「按推荐的来，一次性做完」，并追问
+「默认带上每次注入的 hooks 都可以做吗，是不是设置页不要开关了」。方案与实施记录：`docs/design-chat-structured-channels.md`。定下：
+一，**运行方式不变**（PTY + TUI、终端是事实来源、两层共用一个进程）；聊天层取数优先级 = CLI 自带结构化旁路 > 会话文件 > 读屏，
+旁路起不来照旧启动、功能不减。借 Qwen Dual Output（「终端 + 聊天双界面」本就是它的首要用例）、happy 的 SessionStart 注入与幂等回合、
+vibe-kanban 的工具状态与 shell 命令再分类、ACP 的工具 kind / status / diff / plan 模型；**不借**切界面就重启进程、拦截 CLI fetch、
+交互对话改走无头或 ACP、免确认时自动选第一项、阻塞式 hook、AGPL 项目实现。
+二，**逐家旁路**（chat_channel.rs）：Claude Code / CodeBuddy 用 `--settings` 带 hooks（与用户 hooks 合并）；Qwen 用 Dual Output；
+OpenCode 用 TUI 自带服务（每标签随机端口 + 口令）；Codex 用私有 app-server（本机 WebSocket + 能力令牌，TUI `--remote` 连上去，Mesa 作为
+第二个客户端；恢复时权限参数改成服务配置）。hook 一律不阻塞、不替用户回答；审批只在用户点按钮后经 CLI 官方通道送回（Qwen / OpenCode /
+Codex），其余照旧按菜单原文写按键，卡上补命令原文 / 差异。hook 命令记标签号（PTY 注入 `CCODE_TAB_ID`），按标签认会话、跟随 `/clear`。
+三，**设置页开关**：逐家实测后不能全撤——Gemini（系统设置文件须属 root）、Kimi（无指定配置的入口）、Grok（覆盖层不收 hooks）只能写
+全局配置，保留开关；其余五家不再给开关，启动时收回以前写进全局配置的 Mesa 条目（写前备份）。用户 `~/.codex/hooks.json` 的收回在开发中
+被 Mesa Dev 热重启先于干跑执行，事后核对备份只含 Mesa 的三条。四，消息与工具调用带来源 id（`ChatMessageDto.id` / `BlockDto.callId`），
+前端以 id 当身份并按 id 配对调用与结果；没另起增量补丁协议（一条消息常跨多行，按偏移增量解析会切坏）。五，过程里加计划卡、只读命令
+并进「查阅」、在跑的一步标「进行中…」。细则：`docs/conventions/terminal.md`「聊天层结构化旁路」、safety.md 同名条、matrix §14。
+
 ### 2026-10-19 · 连接行「在终端使用」换成「新对话」：点哪条连接用哪条，发一句话验证可用
 
 用户：连接页的「在终端使用」统一换成跳到新对话页，这样能快速检查配置的连接是否可用。原入口新开终端标签（有上次目录就直接启动），

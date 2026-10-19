@@ -142,6 +142,10 @@ pub struct BlockDto {
     /// 工具结果被 CLI 自己标成出错（Claude 的 is_error）：前端按失败显示，不再只靠猜结果开头的文字
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub is_error: bool,
+    /// 工具调用 id（tool_use 与 tool_result 两头都带）：前端按它配对、判断还在不在跑；
+    /// 来源没有就不带（前端退回按顺序配对）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -151,6 +155,9 @@ pub struct ChatMessageDto {
     pub blocks: Vec<BlockDto>,
     pub timestamp: Option<String>,
     pub usage: Option<TokenUsageDto>,
+    /// 来源给的消息 id（Claude 的行 uuid、Codex 的条目 id …）：前端拿它当稳定身份
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -173,6 +180,7 @@ fn text_block(text: String) -> BlockDto {
         text,
         tool_name: None,
         is_error: false,
+        call_id: None,
     }
 }
 
@@ -481,6 +489,7 @@ fn push_tool_result(msgs: &mut Vec<ChatMessageDto>, blocks: Vec<BlockDto>, ts: O
         blocks,
         timestamp: ts,
         usage: None,
+        id: None,
     });
 }
 
@@ -928,6 +937,7 @@ fn claude_command_block(text: &str) -> Option<Option<BlockDto>> {
             text,
             tool_name: None,
             is_error: false,
+            call_id: None,
         }))
     };
     if t.starts_with("<command-name>") || t.starts_with("<command-message>") {
@@ -1000,7 +1010,12 @@ fn is_claude_interrupt_marker(text: &str) -> bool {
 
 /// 一条字符串内容的 Claude 用户 / 本地命令行：命令标签拆成 command / command_output 块，
 /// 命令输出并进紧挨着的那条命令（聊天里一行「命令 → 结果」），其余是用户文本
-fn push_claude_user_string(msgs: &mut Vec<ChatMessageDto>, s: &str, ts: Option<String>) {
+fn push_claude_user_string(
+    msgs: &mut Vec<ChatMessageDto>,
+    s: &str,
+    ts: Option<String>,
+    id: Option<String>,
+) {
     if let Some(cmd) = claude_command_block(s) {
         let Some(block) = cmd else {
             return;
@@ -1017,6 +1032,7 @@ fn push_claude_user_string(msgs: &mut Vec<ChatMessageDto>, s: &str, ts: Option<S
                 blocks: vec![block],
                 timestamp: ts,
                 usage: None,
+                id,
             });
         }
     } else if !s.trim().is_empty() && !is_claude_interrupt_marker(s) {
@@ -1025,6 +1041,7 @@ fn push_claude_user_string(msgs: &mut Vec<ChatMessageDto>, s: &str, ts: Option<S
             blocks: vec![text_block(s.to_string())],
             timestamp: ts,
             usage: None,
+            id,
         });
     }
 }
@@ -1048,7 +1065,7 @@ fn parse_claude(lines: &[String]) -> Vec<ChatMessageDto> {
                     continue;
                 };
                 match content {
-                    Value::String(s) => push_claude_user_string(&mut msgs, s, ts),
+                    Value::String(s) => push_claude_user_string(&mut msgs, s, ts, get_str(&v, "uuid").map(String::from)),
                     Value::Array(arr) => {
                         let mut blocks = Vec::new();
                         for b in arr {
@@ -1065,6 +1082,7 @@ fn parse_claude(lines: &[String]) -> Vec<ChatMessageDto> {
                                     text: claude_tool_result_text(b),
                                     tool_name: None,
                                     is_error: b.get("is_error").and_then(Value::as_bool) == Some(true),
+                                    call_id: get_str(b, "tool_use_id").map(String::from),
                                 }),
                                 _ => {}
                             }
@@ -1080,6 +1098,7 @@ fn parse_claude(lines: &[String]) -> Vec<ChatMessageDto> {
                                 blocks,
                                 timestamp: ts,
                                 usage: None,
+                                id: get_str(&v, "uuid").map(String::from),
                             });
                         }
                     }
@@ -1090,7 +1109,7 @@ fn parse_claude(lines: &[String]) -> Vec<ChatMessageDto> {
             // content 是同一套 <command-name> / <local-command-stdout> 标签（旧版是 user 行）
             Some("system") if get_str(&v, "subtype") == Some("local_command") => {
                 if let Some(text) = get_str(&v, "content") {
-                    push_claude_user_string(&mut msgs, text, ts);
+                    push_claude_user_string(&mut msgs, text, ts, get_str(&v, "uuid").map(String::from));
                 }
             }
             Some("assistant") => {
@@ -1113,6 +1132,7 @@ fn parse_claude(lines: &[String]) -> Vec<ChatMessageDto> {
                                         text: t.to_string(),
                                         tool_name: None,
                                         is_error: false,
+                                        call_id: None,
                                     });
                                 }
                             }
@@ -1121,6 +1141,7 @@ fn parse_claude(lines: &[String]) -> Vec<ChatMessageDto> {
                                 text: b.get("input").map(|i| i.to_string()).unwrap_or_default(),
                                 tool_name: get_str(b, "name").map(String::from),
                                 is_error: false,
+                                call_id: get_str(b, "id").map(String::from),
                             }),
                             _ => {}
                         }
@@ -1134,6 +1155,7 @@ fn parse_claude(lines: &[String]) -> Vec<ChatMessageDto> {
                     blocks,
                     timestamp: ts,
                     usage: msg.get("usage").map(claude_usage),
+                    id: get_str(&v, "uuid").map(String::from),
                 });
             }
             _ => {} // summary / ai-title / file-history-snapshot 等非对话类型
@@ -1356,6 +1378,7 @@ fn parse_codex(lines: &[String]) -> Vec<ChatMessageDto> {
                                 blocks: vec![text_block(text)],
                                 timestamp: ts,
                                 usage: None,
+                                id: get_str(p, "id").map(String::from),
                             });
                         }
                     }
@@ -1369,9 +1392,11 @@ fn parse_codex(lines: &[String]) -> Vec<ChatMessageDto> {
                                 .to_string(),
                             tool_name: get_str(p, "name").map(String::from),
                             is_error: false,
+                            call_id: get_str(p, "call_id").map(String::from),
                         }],
                         timestamp: ts,
                         usage: None,
+                        id: get_str(p, "id").map(String::from),
                     }),
                     Some("function_call_output") | Some("custom_tool_call_output") => {
                         let text = stringify_payload(p.get("output"));
@@ -1382,6 +1407,7 @@ fn parse_codex(lines: &[String]) -> Vec<ChatMessageDto> {
                                 text,
                                 tool_name: None,
                                 is_error: false,
+                                call_id: get_str(p, "call_id").map(String::from),
                             }],
                             ts,
                         );
@@ -1412,6 +1438,7 @@ fn parse_codex(lines: &[String]) -> Vec<ChatMessageDto> {
                                 blocks: vec![text_block(t.to_string())],
                                 timestamp: ts,
                                 usage: None,
+                                id: None,
                             });
                         }
                     }
@@ -1663,6 +1690,7 @@ fn parse_gemini(lines: &[String]) -> Vec<ChatMessageDto> {
                         blocks: vec![text_block(text)],
                         timestamp: ts,
                         usage: None,
+                        id: id.clone(),
                     });
                     ids.push(id);
                 }
@@ -1674,11 +1702,13 @@ fn parse_gemini(lines: &[String]) -> Vec<ChatMessageDto> {
                 }
                 if let Some(calls) = v.get("toolCalls").and_then(|t| t.as_array()) {
                     for c in calls {
+                        let call = get_str(c, "id").map(String::from);
                         blocks.push(BlockDto {
                             kind: "tool_use".into(),
                             text: c.get("args").map(|a| a.to_string()).unwrap_or_default(),
                             tool_name: get_str(c, "name").map(String::from),
                             is_error: false,
+                            call_id: call.clone(),
                         });
                         if let Some(result) = c.get("result") {
                             blocks.push(BlockDto {
@@ -1686,6 +1716,7 @@ fn parse_gemini(lines: &[String]) -> Vec<ChatMessageDto> {
                                 text: stringify_payload(Some(result)),
                                 tool_name: None,
                                 is_error: false,
+                                call_id: call,
                             });
                         }
                     }
@@ -1698,6 +1729,7 @@ fn parse_gemini(lines: &[String]) -> Vec<ChatMessageDto> {
                     blocks,
                     timestamp: ts,
                     usage: v.get("tokens").map(gemini_usage),
+                    id: id.clone(),
                 });
                 ids.push(id);
             }
@@ -1732,6 +1764,7 @@ fn qwen_parts_blocks(msg: &Value) -> Vec<BlockDto> {
                 text: fc.get("args").map(|a| a.to_string()).unwrap_or_default(),
                 tool_name: get_str(fc, "name").map(String::from),
                 is_error: false,
+                call_id: get_str(fc, "id").map(String::from),
             });
         } else if let Some(fr) = p.get("functionResponse") {
             let text = stringify_payload(fr.get("response"));
@@ -1744,6 +1777,7 @@ fn qwen_parts_blocks(msg: &Value) -> Vec<BlockDto> {
                 },
                 tool_name: None,
                 is_error: false,
+                call_id: get_str(fr, "id").map(String::from),
             });
         } else if let Some(t) = get_str(p, "text") {
             let kind = if p.get("thought").and_then(|x| x.as_bool()) == Some(true) {
@@ -1756,6 +1790,7 @@ fn qwen_parts_blocks(msg: &Value) -> Vec<BlockDto> {
                 text: t.to_string(),
                 tool_name: None,
                 is_error: false,
+                call_id: None,
             });
         }
     }
@@ -1889,6 +1924,7 @@ fn parse_qwen(lines: &[String]) -> Vec<ChatMessageDto> {
                     blocks,
                     timestamp: ts,
                     usage: v.get("usageMetadata").map(qwen_usage),
+                    id: get_str(&v, "uuid").map(String::from),
                 });
             }
             // 独立 tool_result 记录并入上一条 assistant（视觉跟随调用）
@@ -1958,6 +1994,7 @@ fn kimi_content_blocks(c: &Value) -> Vec<BlockDto> {
                                 text: t.to_string(),
                                 tool_name: None,
                                 is_error: false,
+                                call_id: None,
                             });
                         }
                     }
@@ -1995,6 +2032,7 @@ fn kimi_tool_call_blocks(m: &Value) -> Vec<BlockDto> {
                     .to_string(),
                 tool_name: f.and_then(|f| get_str(f, "name")).map(String::from),
                 is_error: false,
+                call_id: get_str(c, "id").map(String::from),
             }
         })
         .collect()
@@ -2115,6 +2153,7 @@ fn parse_kimi(lines: &[String]) -> Vec<ChatMessageDto> {
                         blocks: vec![text_block(text.clone())],
                         timestamp: ts,
                         usage: None,
+                        id: None,
                     });
                     last_prompt = Some(text);
                 }
@@ -2131,6 +2170,7 @@ fn parse_kimi(lines: &[String]) -> Vec<ChatMessageDto> {
                             blocks: Vec::new(),
                             timestamp: ts,
                             usage: None,
+                            id: None,
                         });
                         cur = Some(msgs.len() - 1);
                     }
@@ -2145,6 +2185,7 @@ fn parse_kimi(lines: &[String]) -> Vec<ChatMessageDto> {
                                         text: t.to_string(),
                                         tool_name: None,
                                         is_error: false,
+                                        call_id: None,
                                     });
                                 }
                             }
@@ -2163,6 +2204,7 @@ fn parse_kimi(lines: &[String]) -> Vec<ChatMessageDto> {
                             text: e.get("args").map(|a| a.to_string()).unwrap_or_default(),
                             tool_name: get_str(e, "name").map(String::from),
                             is_error: false,
+                            call_id: None,
                         });
                     }
                     Some("tool.result") => {
@@ -2180,6 +2222,7 @@ fn parse_kimi(lines: &[String]) -> Vec<ChatMessageDto> {
                             text,
                             tool_name: None,
                             is_error: false,
+                            call_id: None,
                         };
                         match cur {
                             Some(i) => msgs[i].blocks.push(block),
@@ -2218,6 +2261,7 @@ fn parse_kimi(lines: &[String]) -> Vec<ChatMessageDto> {
                             blocks: vec![text_block(text)],
                             timestamp: ts,
                             usage: None,
+                            id: None,
                         });
                     }
                     Some("assistant") => {
@@ -2232,6 +2276,7 @@ fn parse_kimi(lines: &[String]) -> Vec<ChatMessageDto> {
                             blocks,
                             timestamp: ts,
                             usage: None,
+                            id: None,
                         });
                     }
                     Some("tool") => {
@@ -2246,6 +2291,7 @@ fn parse_kimi(lines: &[String]) -> Vec<ChatMessageDto> {
                                 text,
                                 tool_name: None,
                                 is_error: false,
+                                call_id: None,
                             }],
                             ts,
                         );
@@ -2404,6 +2450,7 @@ fn parse_kimi_legacy(lines: &[String]) -> Vec<ChatMessageDto> {
                         blocks: vec![text_block(text)],
                         timestamp: None,
                         usage: None,
+                        id: None,
                     });
                 }
             }
@@ -2418,6 +2465,7 @@ fn parse_kimi_legacy(lines: &[String]) -> Vec<ChatMessageDto> {
                     blocks,
                     timestamp: None,
                     usage: None,
+                    id: None,
                 });
             }
             "tool" => {
@@ -2432,6 +2480,7 @@ fn parse_kimi_legacy(lines: &[String]) -> Vec<ChatMessageDto> {
                         text,
                         tool_name: None,
                         is_error: false,
+                        call_id: None,
                     }],
                     None,
                 );
@@ -2581,6 +2630,7 @@ fn parse_codebuddy(lines: &[String]) -> Vec<ChatMessageDto> {
                     blocks: vec![text_block(text)],
                     timestamp: ts,
                     usage: None,
+                    id: None,
                 });
             }
             Some("assistant") => {
@@ -2592,6 +2642,7 @@ fn parse_codebuddy(lines: &[String]) -> Vec<ChatMessageDto> {
                     blocks: vec![text_block(text)],
                     timestamp: ts,
                     usage: None,
+                    id: None,
                 });
             }
             _ => {}
@@ -2750,6 +2801,7 @@ fn parse_cursor(lines: &[String]) -> Vec<ChatMessageDto> {
                     blocks: vec![text_block(text)],
                     timestamp: ts,
                     usage: None,
+                    id: None,
                 });
             }
             // 助手正文是否带独立 type 未实证，多候选；tool_call 等事件行不渲染成消息
@@ -2762,6 +2814,7 @@ fn parse_cursor(lines: &[String]) -> Vec<ChatMessageDto> {
                     blocks: vec![text_block(text)],
                     timestamp: ts,
                     usage: None,
+                    id: None,
                 });
             }
             _ => {} // tool_call/tool_result/turn_ended/turn_id/message_id 及未知 type 跳过
@@ -2953,6 +3006,7 @@ fn parse_grok(lines: &[String]) -> Vec<ChatMessageDto> {
                         blocks: vec![text_block(text)],
                         timestamp: ts,
                         usage: None,
+                        id: None,
                     });
                 }
                 break_run = false;
@@ -3018,6 +3072,7 @@ fn parse_grok_history(lines: &[String]) -> Vec<ChatMessageDto> {
             blocks: vec![text_block(text)],
             timestamp: None,
             usage: None,
+            id: None,
         });
     }
     messages
@@ -3352,6 +3407,7 @@ fn opencode_part_blocks(data: &Value) -> Vec<BlockDto> {
                         text: t.to_string(),
                         tool_name: None,
                         is_error: false,
+                        call_id: None,
                     });
                 }
             }
@@ -3364,6 +3420,7 @@ fn opencode_part_blocks(data: &Value) -> Vec<BlockDto> {
                 text: input.map(|i| i.to_string()).unwrap_or_default(),
                 tool_name: get_str(data, "tool").map(String::from),
                 is_error: false,
+                call_id: None,
             });
             // 完成给 output、失败给 error；进行中的调用只有 tool_use
             let result = state
@@ -3383,6 +3440,7 @@ fn opencode_part_blocks(data: &Value) -> Vec<BlockDto> {
                     text,
                     tool_name: None,
                     is_error: false,
+                    call_id: None,
                 });
             }
         }
@@ -3439,6 +3497,7 @@ fn opencode_message(
                 blocks: vec![text_block(text)],
                 timestamp: ts,
                 usage: None,
+                id: None,
             })
         }
         Some("assistant") => {
@@ -3471,6 +3530,7 @@ fn opencode_message(
                 blocks,
                 timestamp: ts,
                 usage,
+                id: None,
             })
         }
         _ => None,
@@ -8030,6 +8090,36 @@ mod tests {
         assert_eq!(json.matches("isError").count(), 1, "没出错的块不带这个字段：{json}");
     }
 
+    /// 消息 id 与工具调用 id 透传给前端（聊天层按 id 配对调用和结果、当稳定身份；docs/design-chat-structured-channels.md §4）
+    #[test]
+    fn message_and_call_ids_pass_through() {
+        let lines = s(&[
+            r#"{"type":"user","uuid":"u-1","message":{"role":"user","content":"跑一下"}}"#,
+            r#"{"type":"assistant","uuid":"a-1","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]}}"#,
+            r#"{"type":"user","uuid":"u-2","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}"#,
+        ]);
+        let msgs = parse_claude(&lines);
+        assert_eq!(msgs[0].id.as_deref(), Some("u-1"));
+        assert_eq!(msgs[1].id.as_deref(), Some("a-1"));
+        let calls: Vec<Option<&str>> = msgs[1].blocks.iter().map(|b| b.call_id.as_deref()).collect();
+        assert_eq!(calls, vec![Some("t1"), Some("t1")], "结果并进调用那条消息，两头都带 id");
+        let codex = s(&[
+            r#"{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{}","call_id":"c1"}}"#,
+            r#"{"type":"response_item","payload":{"type":"function_call_output","call_id":"c1","output":"ok"}}"#,
+        ]);
+        let msgs = parse_codex(&codex);
+        assert!(msgs
+            .iter()
+            .flat_map(|m| &m.blocks)
+            .all(|b| b.call_id.as_deref() == Some("c1")));
+        // 没有 id 的来源不带这个字段
+        let json = serde_json::to_string(&parse_claude(&s(&[
+            r#"{"type":"user","message":{"role":"user","content":"hi"}}"#,
+        ])))
+        .unwrap();
+        assert!(!json.contains("\"id\"") && !json.contains("callId"), "{json}");
+    }
+
     #[test]
     fn claude_permission_mode_reads_latest_switch() {
         // 2026-10-19 用户会话：审批时选了切到 auto，文件尾部写 permission-mode auto
@@ -8462,6 +8552,7 @@ mod tests {
                 blocks: vec![text_block("你好".into())],
                 timestamp: None,
                 usage: None,
+                id: None,
             },
             ChatMessageDto {
                 role: "assistant".into(),
@@ -8471,6 +8562,7 @@ mod tests {
                 )],
                 timestamp: None,
                 usage: None,
+                id: None,
             },
         ];
         redact_conversation(&mut messages);
@@ -10409,10 +10501,12 @@ mod tests {
                     text: text.into(),
                     tool_name: tool.map(|t| t.into()),
                     is_error: false,
+                    call_id: None,
                 })
                 .collect(),
             timestamp: ts.map(|t| t.into()),
             usage: None,
+            id: None,
         }
     }
 

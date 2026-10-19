@@ -95,6 +95,7 @@ mod projects;
 mod provider_id;
 mod pty;
 mod pty_input;
+mod chat_channel;
 mod reader;
 mod research_quality;
 mod research_tools;
@@ -148,6 +149,9 @@ pub fn run() {
         .manage(pty::PtyManager::default())
         // 内置技能种子：启动时把库里没有的内置技能补进去（幂等，不覆盖用户已有同名技能）
         .setup(|app| {
+            // 聊天层旁路：清上次崩溃留下的旁路目录；改为每次启动注入的几家，收回以前写进全局配置的 hooks
+            chat_channel::prune_on_startup();
+            hooks::migrate_launch_injected();
             if let Err(e) = runs::reconcile_stale_runs() {
                 logbuf::record("warn", "runs", &format!("收口上次未完成 Run 失败: {e}"));
             }
@@ -764,6 +768,8 @@ pub fn run() {
             hooks::set_hooks_attention,
             hooks::hooks_attention_support,
             hooks::session_confirm_detail,
+            chat_channel::chat_channel_snapshot,
+            chat_channel::chat_channel_reply,
             ai::ai_prompt,
             ai::ai_commit_message,
             ai::ai_summarize_session,
@@ -874,6 +880,7 @@ pub fn run() {
                 std::thread::spawn(move || {
                     process::shutdown_captures();
                     app.state::<pty::PtyManager>().shutdown();
+                    chat_channel::shutdown_all();
                     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
                     while process::capture_count() > 0 && std::time::Instant::now() < deadline {
                         std::thread::sleep(std::time::Duration::from_millis(20));

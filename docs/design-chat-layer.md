@@ -7,6 +7,7 @@
 | 范围 | 运行页聊天层：输入框（模型 / 思考 / 权限 / 添加 / 操作）、对话流、等待与确认、运行中切换、各家能力差异 |
 | 参照 | ChatGPT 桌面版、Codex 客户端、Claude 客户端的输入框与权限菜单（用户 2026-10-17 截图） |
 | 配套 | 视觉稿 `docs/design-chat-layer-mockup.html`（浏览器打开） |
+| 后续 | 数据来源结构化升级（会话归属 / 回合状态 / 审批内容 / 增量推送，借鉴 Qwen Dual Output、happy、vibe-kanban、ACP）：`docs/design-chat-structured-channels.md`，2026-10-20 已实现 |
 
 落地时同步改 `docs/guide/user-guide.md` §8.1、`docs/conventions/design-system.md`（开聊前选择那一条）、`docs/conventions/terminal.md`、`docs/architecture.md` §10。
 

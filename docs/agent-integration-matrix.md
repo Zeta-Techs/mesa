@@ -458,3 +458,29 @@ Zed 是唯一核实过的跨 agent 路线：可从已配置的 ACP agent 导入�
 1. **环境变量注入对所有 GUI 客户端无效**：它们都不带 Mesa 的注入启动。渠道能到达客户端的只有写盘配置（Codex 的 provider 定义块、「设为全局默认」）；claude 桌面版走自己的账号。
 2. 客户端是否「无缝」取决于三条：读不读同一份会话存储、能否按 id / 目录定位、渠道能否带过去；缺一档降一档。
 3. 本机 Codex 0.163 的 provider 支持 `command` 取令牌（`command / timeout_ms / refresh_interval_ms / cwd`，字符串表核实，**未实测 ChatGPT 内嵌客户端认不认**），若认则 `experimental_bearer_token` 明文落盘可替换为命令取密钥；单独起验证任务，不并入本期。
+
+## 14. 聊天层结构化旁路（2026-10-20；实现 = chat_channel.rs + hooks.rs launch_hooks_value，设计 docs/design-chat-structured-channels.md）
+
+**目标**：TUI 照常跑在 PTY 里，同时让 CLI 自己把「会话是哪个、这一轮在哪步、在等批准什么、正在写什么」用结构化事件交给 Mesa；
+**不写用户配置**（只用启动参数 / 环境变量 / Mesa 自己目录下的临时文件）。核实工具：`scripts/e2e-model-routing/channel-probe.py`、
+`codex-appserver-probe.py`（CLI 机制），`chat_channel::e2e::e2e_channel`（Mesa 实现）。
+
+| CLI（核实版本） | 旁路 | 会话 | 回合边界 | 审批 | 实时文字 | 回复审批 |
+|---|---|---|---|---|---|---|
+| claude-code 2.1.292 | `--settings` 带 hooks（并进 Mesa 的 0600 覆盖文件；没有覆盖文件时内联 JSON）；与用户 `~/.claude/settings.json` 的 hooks **合并、都触发**（V） | SessionStart：`session_id` + `transcript_path` + `source`（startup / resume / **clear** / compact）（V） | UserPromptSubmit / Stop（带 `last_assistant_message`）（V） | PreToolUse 带 `tool_name` / `tool_input` / `tool_use_id`；Notification `notification_type=permission_prompt` 比 PreToolUse 晚约 6 秒（V） | 无 | 只能终端菜单 |
+| codebuddy 2.169.0 | `--settings <JSON>`（帮助未列，二进制有 `--settings <file-or-json>`）（V） | 同 Claude（V） | 同 Claude（V） | ptc 模式只有 `REPL` 工具，参数是 JS 代码（V） | 无 | 只能终端菜单 |
+| qwen 0.25.2 | Dual Output：`--json-file <事件>` + `--input-file <命令>`；首行 `system/session_start` 带 `protocol_version: 2` 与 `supported_events`（V）。另：`QWEN_CODE_SYSTEM_DEFAULTS_PATH` 注入 hooks 也通（V，未用） | `session_start.session_id`（V） | 用户消息 / **交互态不发 `result`**：一次模型回复里没有 `tool_use` = 本轮结束（V） | `control_request{subtype:can_use_tool, tool_name, tool_use_id, input, permission_suggestions}`（V） | `stream_event` 的 `text_delta`（V） | input 文件追加 `{"type":"confirmation_response","request_id","allowed"}`，哪边先答算哪边（V） |
+| opencode 1.19.3 | TUI 自带服务 `--port <n>`，`OPENCODE_SERVER_PASSWORD` 开 Basic 鉴权（用户名 opencode；无口令 401）（V） | SSE `session.created`（只给 id）（V） | `session.status` busy / idle、`session.idle`（V） | `permission.asked{id, permission, patterns, metadata.command, tool.callID}`（V） | `message.part.delta`（V） | `POST /permission/<id>/reply {"reply":"once"\|"always"\|"reject"}`（V） |
+| codex 0.163.0 | 私有 `codex app-server --listen ws://127.0.0.1:<n> --ws-auth capability-token --ws-token-sha256 <hex>`（带 Mesa 的 `-c` 注入）+ TUI `--remote ws://… --remote-auth-token-env <变量>`；Mesa 作为第二个客户端（V） | `thread/started` 带 `thread.path`（rollout 路径）；恢复的会话不广播，靠 `thread/loaded/list`（V） | `turn/started` / `turn/completed`；未订阅前也广播 `thread/status/changed` active / idle（V） | 服务端请求 `item/commandExecution/requestApproval` / `item/fileChange/requestApproval`；`serverRequest/resolved` 撤卡（V） | `item/agentMessage/delta`（V） | JSON-RPC 响应 `{"decision":"accept"\|"acceptForSession"\|"decline"}`（V） |
+| gemini 0.64.0 | **无**：系统设置 / 系统默认设置路径（`GEMINI_CLI_SYSTEM_SETTINGS_PATH` / `_DEFAULTS_PATH`）注入的 hooks 被丢——文件必须属 root（`isFileAndDirectorySecureSync`）（V） | — | — | — | — | — |
+| kimi 2.2.0 | **无**：没有指定配置文件的参数或环境变量（二进制环境变量清单核实）（V） | — | — | — | — | — |
+| grok 1.0.62 | **无**：`GROK_CONFIG` 覆盖层按白名单只收 models / features / toolset / shell_environment_policy，hooks 被丢（随包文档）（I） | — | — | — | — | — |
+| cursor | 无「等待确认」事件 | — | — | — | — | — |
+
+**陷阱（实证）**：
+- **Codex `-c hooks.<事件>=…`** 认得出（来源记作 Session flags），但每次都要在 /hooks 面板审核信任才执行——不能当默认通道。
+- **Codex 新线程第一条消息前没有 rollout**：`thread/resume` 报「no rollout found」；线程转 active 时再订，resume 会重放挂着的审批。
+- **Codex 远程 TUI 恢复会话拒收权限参数**（`Permission overrides are not supported when resuming a remote task`）：改成 app-server 的
+  `-c sandbox_mode / approval_policy / approvals_reviewer="auto_review"`；`-m` 照收。
+- **Codex app-server 的工具在服务进程里跑**：环境变量（连接密钥、MCP 密钥、工作区端口段）要和 TUI 同一份；代理变量同理。
+- **OpenCode 的 `OPENCODE_CONFIG_CONTENT` 不能整份覆盖**：Mesa 用它注入连接，覆盖会打到 OpenCode 自己的免费模型（2026-10-20 探针误触一次）。

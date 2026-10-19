@@ -46,6 +46,13 @@ import { connIssueDecision } from "../chat-decision";
 import { cwdChipLabel } from "../terminal-welcome";
 import { escInterruptSafe } from "../agent-caps";
 import type { TrustPrompt } from "../trust-prompt";
+import {
+  approvalChoices,
+  approvalPreview,
+  approvalTitle,
+  type ChannelReplyDecision,
+  type ChatChannelSnapshot,
+} from "../chat-channel";
 
 export default function ChatSurface({
   messages,
@@ -101,6 +108,8 @@ export default function ChatSurface({
   onDismissConnIssue,
   onOpenProfiles,
   onForkFrom,
+  channel = null,
+  onChannelReply,
 }: {
   messages: ChatMessageDto[];
   state: "idle" | "detecting" | "linked" | "timeout";
@@ -191,6 +200,10 @@ export default function ChatSurface({
   onOpenProfiles?: () => void;
   /** 助手消息「从这里分叉」：带着到这条为止的对话开一个分叉标签 */
   onForkFrom?: (text: string) => void;
+  /** 结构化旁路快照（chat-channel.ts）：审批的结构化内容、能否从聊天层答 */
+  channel?: ChatChannelSnapshot | null;
+  /** 经 CLI 官方通道回复审批（Qwen / OpenCode / Codex） */
+  onChannelReply?: (requestId: string, decision: ChannelReplyDecision) => void;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -392,13 +405,32 @@ export default function ChatSurface({
   // 「等你决定」：审批 > 启动信任 > 连接出问题 > 确认菜单（同一时刻只出一张卡）。
   // 屏上认出了审批菜单（menuPrompt）就按菜单原文给按钮，不再给「批准 / 拒绝」两个按键——
   // 各家审批多是带序号的菜单，只认回车 / 方向键 / 序号，按 y 不一定管用（2026-10-18 Claude 2.1.292 实测）
+  // 旁路给了这次审批的结构化内容（命令原文 / 要改的差异）：卡片上画出来；能从聊天层答的直接给按钮
+  const channelApproval = channel?.approval ?? null;
+  const preview = approvalPreview(channelApproval);
+  const channelChoices = channelApproval ? approvalChoices(channelApproval, agentId ?? null) : [];
   const decision: ChatDecision | null =
-    attention === "confirm" && !menuPrompt && !trustPrompt
+    channelApproval && channelChoices.length && !trustPrompt
+      ? {
+          key: `channel:${channelApproval.requestId ?? ""}`,
+          title: approvalTitle(channelApproval, agentLabel(agentId)),
+          detail: channelApproval.kind === "execute" ? channelApproval.detail : channelApproval.path,
+          hint: "终端里也在等这一问，哪边先答算哪边",
+          preview,
+          options: channelChoices.map((c) => ({
+            label: c.label,
+            primary: c.primary,
+            title: c.decision === "deny" ? "不让它做，它会接着想别的办法" : undefined,
+            onClick: () => onChannelReply?.(channelApproval.requestId!, c.decision),
+          })),
+        }
+      : attention === "confirm" && !menuPrompt && !trustPrompt
       ? {
           key: `approval:${confirmDetail ?? ""}`,
-          title: `${agentLabel(agentId)} 在等你确认`,
+          title: channelApproval ? approvalTitle(channelApproval, agentLabel(agentId)) : `${agentLabel(agentId)} 在等你确认`,
           detail: confirmDetail ?? "终端里有待处理的批准、登录或菜单选择",
           hint: extraHint,
+          preview,
           options: [
             ...confirmChoices(confirmDetail).map((choice) => ({
               label: choice.label,
@@ -446,6 +478,8 @@ export default function ChatSurface({
               key: `menu:${menuPrompt.question ?? ""}:${menuPrompt.options.join("|")}`,
               title: menuPrompt.question ?? "终端里在等你选一项",
               detail: menuPrompt.detail,
+              // 审批菜单：旁路给了要做的事（命令 / 差异）就画在卡上，选项仍照终端原文
+              preview: channel?.turn?.status === "awaiting_approval" ? preview : null,
               hint: "选项照终端原文；高亮的是终端当前默认的那一项",
               // 不替用户选：把 CLI 的选项原样摆出来（tui-menu.ts）
               options: menuPrompt.options.map((opt, i) => ({

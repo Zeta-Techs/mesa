@@ -1805,18 +1805,39 @@ fn parse_cli_semver(text: &str) -> Option<(u32, u32, u32)> {
 /// 没有再现查一次 --version（实测几十毫秒）。查不到 = None，按旧版参数启动，保证起得来
 #[cfg(not(test))]
 fn codex_cli_version() -> Option<(u32, u32, u32)> {
+    cli_version_uncached_ok("codex")
+}
+
+/// 本机装着的这家 CLI 版本：优先取检测缓存，没有就跑一次 `--version`（3 秒超时）
+#[cfg_attr(test, allow(dead_code))]
+fn cli_version_uncached_ok(agent: &str) -> Option<(u32, u32, u32)> {
     let cached = DETECT_CACHE.lock().ok().and_then(|cache| {
         cache
             .as_ref()
-            .and_then(|(_, results)| results.iter().find(|r| r.id == "codex"))
+            .and_then(|(_, results)| results.iter().find(|r| r.id == agent))
             .and_then(|r| r.version.clone())
     });
     let text = cached.or_else(|| {
-        let spec = agent_spec("codex")?;
+        let spec = agent_spec(agent)?;
         let path = resolve_binary(spec.binary)?;
         version_args_with_timeout(&path, spec.version_args, std::time::Duration::from_secs(3))
     })?;
     parse_cli_semver(&text)
+}
+
+/// 聊天层旁路要看版本的几家（chat_channel.rs）：测试态一律当查不到，不跑本机二进制
+#[cfg(not(test))]
+pub(crate) fn cli_version(agent: &str) -> Option<(u32, u32, u32)> {
+    cli_version_uncached_ok(agent)
+}
+
+#[cfg(test)]
+pub(crate) fn cli_version(agent: &str) -> Option<(u32, u32, u32)> {
+    // 端到端测试（chat_channel e2e，--ignored）要按本机真实版本走
+    std::env::var("MESA_E2E_REAL_CLI")
+        .is_ok()
+        .then(|| cli_version_uncached_ok(agent))
+        .flatten()
 }
 
 #[cfg(test)]

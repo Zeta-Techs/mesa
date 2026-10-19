@@ -147,6 +147,126 @@ fn spec_for(agent: &str) -> Option<&'static BridgeSpec> {
     BRIDGE_SPECS.iter().find(|s| s.agent == agent)
 }
 
+// ===== 每次启动注入（不写用户配置）=====
+//
+// 2026-10-20 逐家核实（docs/design-chat-structured-channels.md 附录）：Mesa 里拉起时能不碰用户配置、
+// 默认就拿到精确事件的五家——Claude Code / CodeBuddy 用 `--settings` 带 hooks（与用户自己的 hooks 合并、
+// 都会触发）；Qwen 用 Dual Output、OpenCode 用自带服务、Codex 用私有 app-server（chat_channel.rs）。
+// 其余三家只能写全局配置：Gemini 的系统设置文件必须属 root、Kimi 没有指定配置的参数、Grok 的
+// GROK_CONFIG 覆盖层不收 hooks——它们仍走设置页开关（BRIDGE_SPECS 写全局）。
+
+/// 用 `--settings` 注入 hooks 的两家与挂的事件（matcher 同 Claude 语义）。
+/// Notification 只收权限确认（idle_prompt 是「空闲 60 秒提醒」，不是等批准）；
+/// PostToolUse 的 payload 带整个工具结果，命令里截到 PAYLOAD_CAP_SMALL。
+fn launch_hook_events(agent: &str) -> Option<&'static [(&'static str, &'static str)]> {
+    match agent {
+        "claude-code" => Some(&[
+            ("SessionStart", ""),
+            ("UserPromptSubmit", ""),
+            ("PreToolUse", ""),
+            ("PostToolUse", ""),
+            ("Notification", "permission_prompt|elicitation_dialog"),
+            ("Stop", ""),
+            ("PreCompact", ""),
+        ]),
+        "codebuddy" => Some(&[
+            ("SessionStart", ""),
+            ("UserPromptSubmit", ""),
+            ("PreToolUse", ""),
+            ("PostToolUse", ""),
+            ("Notification", "permission_prompt"),
+            ("Stop", ""),
+        ]),
+        _ => None,
+    }
+}
+
+/// Mesa 拉起时自带精确事件、设置页不再给开关的几家
+pub(crate) fn launch_injected(agent: &str) -> bool {
+    matches!(agent, "claude-code" | "codebuddy" | "qwen" | "opencode" | "codex")
+}
+
+/// 精确注意力是否可用：开关打开（写了全局配置），或这家由 Mesa 每次启动注入
+fn precise_enabled(agent: &str) -> bool {
+    launch_injected(agent)
+        || crate::settings::hooks_attention_enabled(&crate::settings::read_current(), agent)
+}
+
+/// 这家注入用的 `{"hooks": {...}}`（并进 Claude Code / CodeBuddy 的 `--settings`）；不支持的家 None
+pub(crate) fn launch_hooks_value(agent: &str) -> Option<Value> {
+    let events = launch_hook_events(agent)?;
+    let spec = spec_for(agent)?;
+    let log = hooks_log_path(spec).ok()?;
+    let mut hooks = serde_json::Map::new();
+    for &(event, matcher) in events {
+        let cap = if event == "PostToolUse" {
+            PAYLOAD_CAP_SMALL
+        } else {
+            PAYLOAD_CAP
+        };
+        hooks.insert(
+            event.into(),
+            json!([{ "matcher": matcher, "hooks": [{ "type": "command", "command": hook_command_capped(&log, cap) }] }]),
+        );
+    }
+    Some(json!({ "hooks": hooks }))
+}
+
+/// 这家的状态日志（聊天层旁路按标签号过滤读同一份）
+pub(crate) fn log_path_for(agent: &str) -> Option<PathBuf> {
+    hooks_log_path(spec_for(agent)?).ok()
+}
+
+/// 状态日志超过 8MB 就只留最后 2MB（日志只增不删；读取只看尾部 256KB）
+pub(crate) fn rotate_log_if_large(path: &Path) {
+    const MAX: u64 = 8 * 1024 * 1024;
+    const KEEP: u64 = 2 * 1024 * 1024;
+    let Ok(meta) = fs::metadata(path) else {
+        return;
+    };
+    if meta.len() <= MAX {
+        return;
+    }
+    let Ok(mut f) = fs::File::open(path) else {
+        return;
+    };
+    if f.seek(SeekFrom::Start(meta.len() - KEEP)).is_err() {
+        return;
+    }
+    let mut buf = Vec::new();
+    if f.read_to_end(&mut buf).is_err() {
+        return;
+    }
+    // 从第一个完整行开始留
+    let start = buf.iter().position(|b| *b == b'\n').map(|i| i + 1).unwrap_or(0);
+    let _ = crate::profiles::atomic_write(path, &String::from_utf8_lossy(&buf[start..]));
+}
+
+/// 改为每次启动注入的几家，若以前在设置页开过开关（写了全局 hooks），启动时替用户移除 Mesa 写进去的条目
+/// 并关掉开关——设置页已不再给这几家开关，不收回就再也没有入口关。只删含状态日志路径的条目，写前备份。
+pub(crate) fn migrate_launch_injected() {
+    let settings = crate::settings::read_current();
+    let Some(home) = dirs::home_dir() else {
+        return;
+    };
+    let Ok(backups) = backups_dir() else {
+        return;
+    };
+    for spec in BRIDGE_SPECS {
+        if !launch_injected(spec.agent)
+            || !crate::settings::hooks_attention_enabled(&settings, spec.agent)
+        {
+            continue;
+        }
+        let Ok(log) = hooks_log_path(spec) else {
+            continue;
+        };
+        if apply_hooks_at(spec, &home, &log, &backups, false).is_ok() {
+            let _ = crate::settings::set_hooks_attention_entry(spec.agent, false);
+        }
+    }
+}
+
 fn hooks_state_dir() -> Result<PathBuf, String> {
     Ok(dirs::config_dir()
         .ok_or("无法确定平台配置目录")?
@@ -185,15 +305,28 @@ fn shell_quote(p: &Path) -> String {
     format!("'{}'", p.to_string_lossy().replace('\'', "''"))
 }
 
-/// hook 命令：读 stdin 事件 JSON，加 unix 秒前缀后单行追加到状态日志。
+/// 一条记录最多收多少字节的事件 JSON（PreToolUse 带完整工具参数，审批卡要看命令和差异）
+const PAYLOAD_CAP: usize = 64 * 1024;
+/// PostToolUse 带整个工具结果（读文件时是整份文件），只要事件名和会话 id，截短免得日志暴涨
+const PAYLOAD_CAP_SMALL: usize = 2048;
+
+/// hook 命令：读 stdin 事件 JSON，前缀「unix 秒 + 标签号」后单行追加到状态日志。
+/// 标签号取 hook 子进程继承的 CCODE_TAB_ID（Mesa 拉起时注入；Mesa 外的终端没有，记 `-`），
+/// 聊天层旁路据此认出是哪个标签的事件（docs/design-chat-structured-channels.md §6）。
+/// 整行拼好后一次写入：同一份日志有多个 CLI 并发追加，分三次写会互相穿插。
+/// payload 超过上限就截断（解析侧对截断的记录按字段名兜底取事件名和会话 id）。
 /// unix 走 sh（各 CLI 以 sh -c 执行），Windows 走 powershell；命令内 mkdir -p 兜底目录不存在。
 fn hook_command(log_path: &Path) -> String {
+    hook_command_capped(log_path, PAYLOAD_CAP)
+}
+
+fn hook_command_capped(log_path: &Path, cap: usize) -> String {
     let log = shell_quote(log_path);
     let dir = shell_quote(log_path.parent().unwrap_or_else(|| Path::new(".")));
     #[cfg(not(windows))]
     {
         format!(
-            "umask 077; mkdir -p {dir}; {{ printf '%s ' \"$(date +%s)\"; cat; printf '\\n'; }} >> {log}"
+            "umask 077; mkdir -p {dir}; l=\"$(date +%s) ${{CCODE_TAB_ID:--}} $({{ head -c {cap}; cat >/dev/null; }} | tr -d '\\r\\n')\"; printf '%s\\n' \"$l\" >> {log}"
         )
     }
     #[cfg(windows)]
@@ -211,8 +344,10 @@ fn hook_command(log_path: &Path) -> String {
         format!(
             "powershell -NoProfile -Command \"$d={dir};New-Item -ItemType Directory -Force -Path $d|Out-Null;\
              $u=New-Object Text.UTF8Encoding $false;\
+             $t=$env:CCODE_TAB_ID;if(-not $t){{$t='-'}};\
              $l=(New-Object IO.StreamReader ([Console]::OpenStandardInput()),$u).ReadToEnd();\
-             [IO.File]::AppendAllText({log},(([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()).ToString()+' '+($l -replace '\\s+',' ')+[Environment]::NewLine),$u)\""
+             if($l.Length -gt {cap}){{$l=$l.Substring(0,{cap})}};\
+             [IO.File]::AppendAllText({log},(([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()).ToString()+' '+$t+' '+($l -replace '\\s+',' ')+[Environment]::NewLine),$u)\""
         )
     }
 }
@@ -568,16 +703,20 @@ fn apply_hooks_at(
 
 // ===== 状态日志读取（注意力分类数据源） =====
 
-struct HookRecord {
-    ts: i64,
-    session_id: String,
-    transcript_path: Option<String>,
+pub(crate) struct HookRecord {
+    pub(crate) ts: i64,
+    /// 拉起这个 CLI 的 Mesa 标签（hook 命令记下的 CCODE_TAB_ID）；旧格式记录与 Mesa 外的终端为 None
+    pub(crate) tab: Option<String>,
+    pub(crate) session_id: String,
+    pub(crate) transcript_path: Option<String>,
     /// 归一化事件名（去下划线 + 全小写；grok 值是 snake_case，其余 PascalCase）
-    event: String,
+    pub(crate) event: String,
     reason: Option<String>,
     /// 「在等什么」的人类可读摘要（claude Notification 的 message、PermissionRequest 的工具名等）；
     /// 尽力提取，schema 各家不同且未文档化，取不到就 None
     detail: Option<String>,
+    /// 整条事件 JSON（超过上限被截断的记录为 None，只剩上面几个按字段名兜底取到的值）
+    pub(crate) payload: Option<Value>,
 }
 
 fn normalize_event(raw: &str) -> String {
@@ -591,6 +730,8 @@ fn normalize_event(raw: &str) -> String {
 fn event_state(normalized: &str) -> Option<&'static str> {
     match normalized {
         "userpromptsubmit" | "beforeagent" => Some("working"),
+        // 工具开始 / 结束：批准之后工具还在跑，不能停在上一条「待确认」上
+        "pretooluse" | "posttooluse" | "beforetool" | "aftertool" => Some("working"),
         // 回合确定结束：同会话文件里的 turn_duration / task_complete 判 settled，前端不再等 PTY 静下来
         // （2026-10-18 用户截图：Codex 开着精确注意力，回答落盘后聊天层仍「正在回复」）
         "stop" | "afteragent" => Some("settled"),
@@ -599,22 +740,71 @@ fn event_state(normalized: &str) -> Option<&'static str> {
     }
 }
 
-/// 防御式解析日志：一行一条 `<unix秒> <事件JSON>`；容忍坏行、末行截断与 pretty JSON 续行
-/// （hook stdin 若非单行 JSON，续行拼回上一条记录再解析）。
+/// 截断的 JSON 里按字段名取字符串值（payload 超上限时 hook 命令截了尾，事件名和会话 id 在前面）
+fn loose_str_field(body: &str, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        let needle = format!("\"{key}\"");
+        let Some(at) = body.find(&needle) else {
+            continue;
+        };
+        let rest = body[at + needle.len()..].trim_start();
+        let Some(rest) = rest.strip_prefix(':') else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        let Some(rest) = rest.strip_prefix('"') else {
+            continue;
+        };
+        let mut out = String::new();
+        let mut chars = rest.chars();
+        while let Some(c) = chars.next() {
+            match c {
+                '"' => return Some(out),
+                '\\' => {
+                    if let Some(n) = chars.next() {
+                        out.push(match n {
+                            'n' => '\n',
+                            't' => '\t',
+                            other => other,
+                        });
+                    }
+                }
+                c => out.push(c),
+            }
+        }
+    }
+    None
+}
+
+/// 防御式解析日志：一行一条 `<unix秒> [<标签号>] <事件JSON>`；容忍坏行、末行截断与 pretty JSON 续行
+/// （hook stdin 若非单行 JSON，续行拼回上一条记录再解析）。标签号段是 2026-10-20 起的新格式，
+/// 旧记录没有这一段（第二段直接是 `{`）。
 /// 信封兼容：claude/qwen/codebuddy/gemini/codex/kimi 用 snake_case 键，grok 用 camelCase 键。
-fn parse_log_records(text: &str) -> Vec<HookRecord> {
+pub(crate) fn parse_log_records(text: &str) -> Vec<HookRecord> {
     fn push(out: &mut Vec<HookRecord>, buf: &str) {
-        let Some((ts_s, body)) = buf.split_once(' ') else {
+        let Some((ts_s, rest)) = buf.split_once(' ') else {
             return;
         };
         let Ok(ts) = ts_s.parse::<i64>() else { return };
-        let Ok(v) = serde_json::from_str::<Value>(body) else {
-            return;
+        let rest = rest.trim_start();
+        let (tab, body) = if rest.starts_with('{') {
+            (None, rest)
+        } else {
+            let Some((tab, body)) = rest.split_once(' ') else {
+                return;
+            };
+            ((tab != "-" && !tab.is_empty()).then(|| tab.to_string()), body)
         };
-        let get = |snake: &str, camel: &str| {
-            v.get(snake)
-                .or_else(|| v.get(camel))
-                .and_then(|x| x.as_str())
+        let payload = serde_json::from_str::<Value>(body).ok();
+        let get = |snake: &str, camel: &str| -> Option<String> {
+            match &payload {
+                Some(v) => v
+                    .get(snake)
+                    .or_else(|| v.get(camel))
+                    .and_then(|x| x.as_str())
+                    .map(String::from),
+                None => loose_str_field(body, &[snake, camel]),
+            }
         };
         let (Some(sid), Some(ev)) = (
             get("session_id", "sessionId"),
@@ -624,17 +814,21 @@ fn parse_log_records(text: &str) -> Vec<HookRecord> {
         };
         out.push(HookRecord {
             ts,
-            session_id: sid.to_string(),
-            transcript_path: get("transcript_path", "transcriptPath").map(String::from),
-            event: normalize_event(ev),
-            reason: v.get("reason").and_then(|x| x.as_str()).map(String::from),
+            tab,
+            session_id: sid,
+            transcript_path: get("transcript_path", "transcriptPath"),
+            event: normalize_event(&ev),
+            reason: get("reason", "reason"),
             // 「在等什么」详情：各家 payload 字段未文档化，按已知形态尽力提取——
             // claude/qwen/codebuddy/gemini Notification 有 message；kimi/codex PermissionRequest
             // 可能带 tool_name/title；都取不到就 None（横幅退回通用文案）
             detail: ["message", "tool_name", "toolName", "title"]
                 .iter()
-                .find_map(|k| v.get(*k).and_then(|x| x.as_str()))
-                .map(String::from),
+                .find_map(|k| match &payload {
+                    Some(v) => v.get(*k).and_then(|x| x.as_str()).map(String::from),
+                    None => loose_str_field(body, &[k]),
+                }),
+            payload,
         });
     }
     let mut out = Vec::new();
@@ -720,7 +914,7 @@ fn read_log_tail(path: &Path) -> String {
 /// 其余情况 None 回落尾部推断。
 pub(crate) fn state_for_session_file(agent: &str, file_path: &str) -> Option<String> {
     let spec = spec_for(agent)?;
-    if !crate::settings::hooks_attention_enabled(&crate::settings::read_current(), agent) {
+    if !precise_enabled(agent) {
         return None;
     }
     let session_id = Path::new(file_path)
@@ -745,15 +939,18 @@ pub struct HookSupportDto {
     pub note: Option<String>,
     /// 支持的 agent 的配置文件展示路径（设置页提示用）
     pub config_path: Option<String>,
+    /// Mesa 拉起时自动带精确事件（不写用户配置），设置页不给开关
+    pub auto: bool,
 }
 
 /// 注意事项/不支持原因（None = 支持且无额外提示）
 fn support_note(agent: &str) -> Option<&'static str> {
     match agent {
-        "codex" => Some("首次生效需在 Codex /hooks 面板信任该 hook"),
-        "codebuddy" => Some("已运行的会话需重启后生效"),
-        "cursor" => Some("无「等待确认」原生事件，机制未实机验证"),
-        "opencode" => Some("无 shell hooks 形态（仅 JS 插件），暂未接入"),
+        "claude-code" | "codebuddy" => Some("在 Mesa 里启动时自动带上（启动参数注入，不改你的配置）"),
+        "qwen" => Some("在 Mesa 里启动时自动带上（Qwen 自带的结构化输出通道）"),
+        "opencode" => Some("在 Mesa 里启动时自动带上（OpenCode 自带的本机服务）"),
+        "codex" => Some("在 Mesa 里启动时自动带上（Codex 自带的 app-server 通道）"),
+        "cursor" => Some("无「等待确认」原生事件，暂不支持"),
         _ => None,
     }
 }
@@ -765,11 +962,13 @@ pub async fn hooks_attention_support() -> Vec<HookSupportDto> {
         .iter()
         .map(|s| {
             let spec = spec_for(s.id);
+            let auto = launch_injected(s.id);
             HookSupportDto {
                 agent: s.id.to_string(),
-                supported: spec.is_some(),
+                supported: auto || spec.is_some(),
                 note: support_note(s.id).map(String::from),
-                config_path: spec.map(|sp| sp.display()),
+                config_path: if auto { None } else { spec.map(|sp| sp.display()) },
+                auto,
             }
         })
         .collect()
@@ -783,7 +982,7 @@ pub async fn hooks_attention_support() -> Vec<HookSupportDto> {
 pub async fn session_confirm_detail(agent: String, file_path: String) -> Option<String> {
     tauri::async_runtime::spawn_blocking(move || {
         let spec = spec_for(&agent)?;
-        if !crate::settings::hooks_attention_enabled(&crate::settings::read_current(), &agent) {
+        if !precise_enabled(&agent) {
             return None;
         }
         let session_id = Path::new(&file_path)
@@ -814,6 +1013,9 @@ pub async fn set_hooks_attention(
     enabled: bool,
 ) -> Result<crate::settings::AppSettingsDto, String> {
     let spec = spec_for(&agent).ok_or_else(|| format!("{agent} 暂不支持精确注意力标记"))?;
+    if enabled && launch_injected(&agent) {
+        return Err(format!("{agent} 在 Mesa 里启动时已自动带上，不需要写全局配置"));
+    }
     let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
     let log = hooks_log_path(spec)?;
     let backups = backups_dir()?;
@@ -1386,5 +1588,144 @@ mod tests {
             assert!(support_note(id).is_some(), "{id} 不支持须带备注");
         }
         assert!(support_note("codex").is_some() && support_note("codebuddy").is_some());
+    }
+
+    /// 每次启动注入：Claude / CodeBuddy 两家带 hooks；其余三家（Qwen / OpenCode / Codex）走各自通道；
+    /// Gemini / Kimi / Grok 仍要全局开关（2026-10-20 逐家核实）
+    #[test]
+    fn launch_injection_covers_five_and_leaves_three_to_the_switch() {
+        let v = launch_hooks_value("claude-code").expect("claude");
+        let hooks = v["hooks"].as_object().unwrap();
+        for ev in ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Notification", "Stop"] {
+            assert!(hooks.contains_key(ev), "{ev}");
+        }
+        let post = hooks["PostToolUse"][0]["hooks"][0]["command"].as_str().unwrap();
+        let pre = hooks["PreToolUse"][0]["hooks"][0]["command"].as_str().unwrap();
+        #[cfg(not(windows))]
+        {
+            assert!(post.contains(&format!("head -c {PAYLOAD_CAP_SMALL}")));
+            assert!(pre.contains(&format!("head -c {PAYLOAD_CAP}")));
+        }
+        assert!(pre.contains("CCODE_TAB_ID"));
+        assert_eq!(hooks["Notification"][0]["matcher"], "permission_prompt|elicitation_dialog");
+        assert!(launch_hooks_value("codebuddy").is_some());
+        for id in ["gemini", "kimi", "grok", "qwen", "codex", "cursor", "opencode"] {
+            assert!(launch_hooks_value(id).is_none(), "{id}");
+        }
+        for id in ["claude-code", "codebuddy", "qwen", "opencode", "codex"] {
+            assert!(launch_injected(id), "{id}");
+        }
+        for id in ["gemini", "kimi", "grok", "cursor"] {
+            assert!(!launch_injected(id), "{id}");
+        }
+    }
+
+    #[test]
+    fn parse_log_records_reads_tab_token_and_truncated_payload() {
+        let text = concat!(
+            "1700000000 tab-a {\"session_id\":\"s1\",\"hook_event_name\":\"Stop\"}\n",
+            "1700000001 - {\"session_id\":\"s2\",\"hook_event_name\":\"Stop\"}\n",
+            "1700000002 {\"session_id\":\"s3\",\"hook_event_name\":\"Stop\"}\n",
+            // 超过上限被截断：JSON 不完整，事件名和会话 id 仍能按字段名取到
+            "1700000003 tab-b {\"session_id\":\"s4\",\"transcript_path\":\"/p/s4.jsonl\",\"hook_event_name\":\"PostToolUse\",\"tool_response\":{\"content\":\"aaaa\n"
+        );
+        let recs = parse_log_records(text);
+        assert_eq!(recs.len(), 4);
+        assert_eq!(recs[0].tab.as_deref(), Some("tab-a"));
+        assert_eq!(recs[1].tab, None, "Mesa 外的终端记 -");
+        assert_eq!(recs[2].tab, None, "旧格式没有标签段");
+        assert_eq!(recs[2].session_id, "s3");
+        assert_eq!(recs[3].tab.as_deref(), Some("tab-b"));
+        assert_eq!(recs[3].event, "posttooluse");
+        assert_eq!(recs[3].transcript_path.as_deref(), Some("/p/s4.jsonl"));
+        assert!(recs[3].payload.is_none());
+    }
+
+    /// 真跑一遍 hook 命令（sh）：整行一次写入、带标签号、超长截断后仍能认出事件
+    #[cfg(unix)]
+    #[test]
+    fn hook_command_runs_and_records_tab() {
+        use std::io::Write as _;
+        let dir = tmpdir("hookcmd");
+        let log = dir.join("hooks-state").join("x-hooks.jsonl");
+        let run = |cmd: &str, tab: Option<&str>, stdin: &str| {
+            let mut c = std::process::Command::new("sh");
+            c.arg("-c").arg(cmd).stdin(std::process::Stdio::piped());
+            match tab {
+                Some(t) => c.env("CCODE_TAB_ID", t),
+                None => c.env_remove("CCODE_TAB_ID"),
+            };
+            let mut child = c.spawn().unwrap();
+            child.stdin.take().unwrap().write_all(stdin.as_bytes()).unwrap();
+            assert!(child.wait().unwrap().success());
+        };
+        run(
+            &hook_command(&log),
+            Some("tab-9"),
+            "{\n  \"session_id\": \"s1\",\n  \"hook_event_name\": \"UserPromptSubmit\",\n  \"prompt\": \"你好\"\n}",
+        );
+        run(&hook_command(&log), None, r#"{"session_id":"s2","hook_event_name":"Stop"}"#);
+        let big = format!(
+            r#"{{"session_id":"s3","hook_event_name":"PostToolUse","tool_response":"{}"}}"#,
+            "x".repeat(10_000)
+        );
+        run(&hook_command_capped(&log, PAYLOAD_CAP_SMALL), Some("tab-9"), &big);
+        let text = std::fs::read_to_string(&log).unwrap();
+        assert_eq!(text.lines().count(), 3, "每条一行");
+        let recs = parse_log_records(&text);
+        assert_eq!(recs.len(), 3);
+        assert_eq!(recs[0].tab.as_deref(), Some("tab-9"));
+        assert_eq!(recs[0].payload.as_ref().unwrap()["prompt"], "你好");
+        assert_eq!(recs[1].tab, None);
+        assert_eq!(recs[2].event, "posttooluse");
+        assert!(text.lines().nth(2).unwrap().len() < PAYLOAD_CAP_SMALL + 64);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// 迁移收回的就是用户机器上那份 Codex hooks.json 的形状（2026-10-20 干跑：只剩 Mesa 三条 → 收成 {}）
+    #[test]
+    fn remove_codex_mesa_entries_from_real_shape() {
+        let spec = spec_for("codex").unwrap();
+        let cmd = "umask 077; mkdir -p '/Users/u/Library/Application Support/ccode/hooks-state'; { printf '%s ' \"$(date +%s)\"; cat; printf '\\n'; } >> '/Users/u/Library/Application Support/ccode/hooks-state/codex-hooks.jsonl'";
+        let group = json!([{ "hooks": [{ "async": true, "command": cmd, "type": "command" }], "matcher": "" }]);
+        let doc = json!({ "hooks": { "PermissionRequest": group, "Stop": group, "UserPromptSubmit": group } });
+        let out = remove_json_doc(spec, Some(&doc.to_string())).unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&out).unwrap(), json!({}));
+        // 用户自己的 hook 留着
+        let mut mixed = doc.clone();
+        mixed["hooks"]["Stop"].as_array_mut().unwrap().push(json!({ "hooks": [{ "type": "command", "command": "say done" }] }));
+        let out: Value = serde_json::from_str(&remove_json_doc(spec, Some(&mixed.to_string())).unwrap()).unwrap();
+        assert_eq!(out["hooks"]["Stop"][0]["hooks"][0]["command"], "say done");
+        assert!(out["hooks"].get("UserPromptSubmit").is_none());
+    }
+
+    /// 干跑：把本机真实的 ~/.codex/hooks.json 拷进临时 HOME，按启动迁移同一条路径收回 Mesa 的条目，
+    /// 打印前后对照；不碰真实文件（`cargo test --lib real_data_dry_run_migrate -- --ignored --nocapture`）
+    #[test]
+    #[ignore]
+    fn real_data_dry_run_migrate() {
+        let home = dirs::home_dir().unwrap();
+        let tmp = tmpdir("dryrun");
+        for spec in BRIDGE_SPECS {
+            if !launch_injected(spec.agent) {
+                continue;
+            }
+            let real = home.join(spec.config_rel);
+            let Some(before) = read_existing(&real) else { continue };
+            if !has_marker(&before, &spec.marker()) {
+                println!("{}（{}）: 没有 Mesa 的条目，迁移不动它", spec.display(), real.display());
+                continue;
+            }
+            let fake = tmp.join(spec.config_rel);
+            std::fs::create_dir_all(fake.parent().unwrap()).unwrap();
+            std::fs::write(&fake, &before).unwrap();
+            let log = tmp.join("log.jsonl");
+            apply_hooks_at(spec, &tmp, &log, &tmp.join("backups"), false).unwrap();
+            let after = std::fs::read_to_string(&fake).unwrap();
+            println!("== {}\n-- 迁移前\n{before}\n-- 迁移后\n{after}", spec.display());
+            assert!(!has_marker(&after, &spec.marker()));
+            assert_eq!(std::fs::read_to_string(&real).unwrap(), before, "真实文件不得被改");
+        }
+        std::fs::remove_dir_all(tmp).ok();
     }
 }

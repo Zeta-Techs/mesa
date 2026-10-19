@@ -59,11 +59,12 @@ test("发送钮变暂停：正在出字或等首个回复；停在提示符或�
 });
 
 test("七家有 hooks，cursor/opencode 没有", () => {
-  assert.equal(HOOKS_AGENTS.size, 7);
-  assert.equal(agentHasHooks("claude"), true);
+  assert.equal(HOOKS_AGENTS.size, 8);
+  assert.equal(agentHasHooks("claude-code"), true);
+  assert.equal(agentHasHooks("claude"), false, "键是 agent id");
   assert.equal(agentHasHooks("codex"), true);
   assert.equal(agentHasHooks("cursor"), false);
-  assert.equal(agentHasHooks("opencode"), false);
+  assert.equal(agentHasHooks("opencode"), true);
   assert.equal(agentHasHooks(null), false);
 });
 
@@ -82,15 +83,15 @@ test("交接表：能聊天完成 / 窥视 / 必须切走", () => {
 });
 
 test("confirm 事件按 hooks 开关分流", () => {
-  assert.equal(confirmHandoffEvent("claude", true), "hooks_confirm");
-  assert.equal(confirmHandoffEvent("claude", false), "no_hooks_confirm");
+  assert.equal(confirmHandoffEvent("claude-code", true), "hooks_confirm");
+  assert.equal(confirmHandoffEvent("claude-code", false), "no_hooks_confirm");
   assert.equal(confirmHandoffEvent("cursor", true), "no_hooks_confirm");
 });
 
-test("审批附加说明：codex 点名 /hooks，无 hooks 引导去终端", () => {
-  assert.match(approvalExtraHint("codex", true) ?? "", /\/hooks/);
+test("审批附加说明：没有精确状态的家引导去终端", () => {
+  assert.equal(approvalExtraHint("codex", true), null, "Codex 改走 app-server，不再提 /hooks");
   assert.match(approvalExtraHint("cursor", false) ?? "", /精确注意力/);
-  assert.equal(approvalExtraHint("claude", true), null);
+  assert.equal(approvalExtraHint("claude-code", true), null);
 });
 
 test("等待态三句人话 + 工具名", () => {

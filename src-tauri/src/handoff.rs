@@ -791,9 +791,11 @@ mod tests {
                 text: text.into(),
                 tool_name: None,
                 is_error: false,
+                call_id: None,
             }],
             timestamp: None,
             usage: None,
+            id: None,
         }
     }
 

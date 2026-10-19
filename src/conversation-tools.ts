@@ -78,8 +78,9 @@ function buildItems(
   cwd: string | null,
 ): ProcessItem[] {
   const items: ProcessItem[] = [];
-  // 调用与结果按先后配对：并行调用的结果也按调用顺序回来
+  // 调用与结果配对：两头都带调用 id 的按 id（并行调用的结果可能乱序回来）；没有 id 的按先后
   const open: ProcessTool[][] = [];
+  const byCall = new Map<string, ProcessTool[]>();
   for (const { block, index } of entries) {
     if (block.kind === "thinking") {
       if (!block.text.trim()) continue;
@@ -95,11 +96,16 @@ function buildItems(
         (activity): ProcessTool => ({ activity, result: null, status: "ok" }),
       );
       open.push(tools);
+      if (block.callId) byCall.set(block.callId, tools);
       for (const tool of tools) items.push({ kind: "tool", tool, index });
     } else if (block.kind === "tool_result") {
       const status = resultStatus(block.text, block.isError);
-      const tools = open.shift();
+      const matched = block.callId ? byCall.get(block.callId) : undefined;
+      const tools = matched ?? open[0];
       if (tools) {
+        const at = open.indexOf(tools);
+        if (at >= 0) open.splice(at, 1);
+        for (const [id, group] of byCall) if (group === tools) byCall.delete(id);
         for (const t of tools) {
           t.result = block.text;
           t.status = status;
@@ -255,4 +261,55 @@ export function exploreLabel(tools: readonly ProcessTool[]): string {
   if (searches) parts.push(`搜索 ${searches} 次`);
   if (lists) parts.push(`看了 ${lists} 个目录`);
   return parts.join("，");
+}
+
+export interface PlanEntry {
+  text: string;
+  status: "pending" | "in_progress" | "completed";
+}
+
+function planStatus(raw: unknown): PlanEntry["status"] {
+  const s = String(raw ?? "").toLowerCase().replace(/[-\s]/g, "_");
+  if (["completed", "complete", "done", "finished", "success"].includes(s)) return "completed";
+  if (["in_progress", "inprogress", "active", "running", "doing"].includes(s)) return "in_progress";
+  return "pending";
+}
+
+/** 一次「更新待办 / 计划」调用里的清单（Claude TodoWrite、Codex update_plan、Qwen todo_write、
+ *  OpenCode todowrite、Gemini write_todos、Kimi SetTodoList 的参数形状都收） */
+export function planEntries(input: string): PlanEntry[] | null {
+  let args: unknown;
+  try {
+    args = JSON.parse(input);
+  } catch {
+    return null;
+  }
+  if (!args || typeof args !== "object") return null;
+  const obj = args as Record<string, unknown>;
+  const list = obj.todos ?? obj.plan ?? obj.items ?? obj.steps;
+  if (!Array.isArray(list)) return null;
+  const out: PlanEntry[] = [];
+  for (const it of list) {
+    if (typeof it === "string") {
+      out.push({ text: it, status: "pending" });
+      continue;
+    }
+    if (!it || typeof it !== "object") continue;
+    const e = it as Record<string, unknown>;
+    const text = [e.content, e.step, e.description, e.title, e.text, e.task].find(
+      (v): v is string => typeof v === "string" && v.trim().length > 0,
+    );
+    if (text) out.push({ text: text.trim(), status: planStatus(e.status ?? e.state) });
+  }
+  return out.length ? out : null;
+}
+
+/** 这一轮最后一次更新的计划（同一轮里计划整表替换，只画最新那份；ACP plan 语义） */
+export function turnPlan(items: readonly ProcessItem[]): PlanEntry[] | null {
+  const tools = allTools(items).filter((t) => t.activity.kind === "todo");
+  for (let i = tools.length - 1; i >= 0; i--) {
+    const entries = planEntries(tools[i].activity.input);
+    if (entries) return entries;
+  }
+  return null;
 }
