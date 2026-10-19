@@ -2841,7 +2841,7 @@ export default function StepFlow({
                         <button
                           type="button"
                           onClick={() => void openPapersDir()}
-                          title="打开课题的 papers/。PDF 在这里，拖进 Zotero 或 EndNote"
+                          title="打开课题的 papers/。PDF 在这里；要挂附件，拖到 Zotero 或 EndNote 里对应的那条文献上"
                           className={`${ghostActionClass} shrink-0`}
                         >
                           打开 papers/

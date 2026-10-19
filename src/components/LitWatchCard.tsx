@@ -928,7 +928,7 @@ export function SubscriptionsModal({
           >
             <div className="flex h-10 shrink-0 items-center gap-2 px-3">
               <span className="text-sm text-l1">watchlist.md</span>
-              <span className="text-micro text-l4">papers/ · 保存后下次巡检生效</span>
+              <span className="text-micro text-l4">.ccode/watch/ · 这条巡检自己的清单，保存后下次巡检生效</span>
               <button
                 type="button"
                 className={`${ghostActionClass} ml-auto`}
@@ -947,7 +947,7 @@ export function SubscriptionsModal({
                 }
               >
                 <FilePreviewEditor
-                  path={`${projectRoot}/papers/watchlist.md`}
+                  path={`${projectRoot}/.ccode/watch/${scheduleId}/watchlist.md`}
                   root={projectRoot}
                 />
               </Suspense>
@@ -1697,7 +1697,7 @@ export default function LitWatchCard({
     }
   }
 
-  // 雷达筛选（存 project.toml）：只过滤新命中；指标未知的条目放行不误伤。
+  // 雷达筛选（存 project.toml）：只过滤新命中；设了条件而指标未知的条目不显示。
   // 趋势柱点选是第三层过滤（时间桶），与指标筛选、搜索叠加
   const filter = cfg.litWatchFilter;
   const filterOn = litWatchFilterActive(filter);
