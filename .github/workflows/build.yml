@@ -87,7 +87,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: 'Ccode ${{ github.ref_name }}'
+          releaseName: 'Mesa ${{ github.ref_name }}'
           releaseDraft: true
 
   # updater 查 latest.json 用的是裸键 windows-x86_64（插件不做 -nsis/-msi 后缀回退）。
