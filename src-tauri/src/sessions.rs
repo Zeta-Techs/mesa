@@ -1192,6 +1192,30 @@ fn codex_token_usage(v: &Value) -> Option<TokenUsageDto> {
     })
 }
 
+/// 聊天消息上挂的用量：最后一次请求（last_token_usage），口径同别家——input 只算没命中缓存的部分、
+/// 命中的记 cache_read（codex 的 input_tokens 已经含 cached_input_tokens）。聊天层上下文圆环取
+/// 「input + cache」= 这一次请求塞进上下文的量。原先挂的是整场累计（total），会话一长就超过窗口，
+/// 圆环一下满到 100%（2026-10-19 用户截图：1.1M / 1M；codex /status 写 40.9K / 996K）。
+/// 会话列表的整场用量仍走 codex_token_usage（累计）。旧版没有 last_token_usage 就不挂
+fn codex_last_request_usage(v: &Value) -> Option<TokenUsageDto> {
+    if get_str(v, "type") != Some("event_msg") {
+        return None;
+    }
+    let p = v.get("payload")?;
+    if get_str(p, "type") != Some("token_count") {
+        return None;
+    }
+    let t = p.get("info")?.get("last_token_usage")?;
+    let num = |k: &str| t.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
+    let cached = num("cached_input_tokens");
+    Some(TokenUsageDto {
+        input: num("input_tokens").saturating_sub(cached),
+        output: num("output_tokens") + num("reasoning_output_tokens"),
+        cache_read: cached,
+        cache_write: num("cache_write_input_tokens"),
+    })
+}
+
 /// 返回值附带 forked_from_id（resume/fork 链的父线程 id，可能不存在），供扫描时合并链
 fn codex_file_meta(
     path: &Path,
@@ -1392,7 +1416,7 @@ fn parse_codex(lines: &[String]) -> Vec<ChatMessageDto> {
                         }
                     }
                     Some("token_count") => {
-                        if let Some(u) = codex_token_usage(&v) {
+                        if let Some(u) = codex_last_request_usage(&v) {
                             last_usage = Some(u);
                         }
                     }
@@ -1403,7 +1427,7 @@ fn parse_codex(lines: &[String]) -> Vec<ChatMessageDto> {
         }
     }
     let mut msgs = if has_response_message { msgs } else { legacy };
-    // token_count 的总量挂在最后一条 assistant 消息上，代表整场用量
+    // 最后一次请求的用量挂在最后一条 assistant 消息上（聊天层上下文圆环读它）
     if let Some(u) = last_usage {
         if let Some(m) = msgs.iter_mut().rev().find(|m| m.role == "assistant") {
             if m.usage.is_none() {
@@ -8466,7 +8490,7 @@ mod tests {
             r#"{"timestamp":"2026-07-20T00:00:03Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hello"}]}}"#,
             r#"{"timestamp":"2026-07-20T00:00:04Z","type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{\"cmd\":\"ls\"}"}}"#,
             r#"{"timestamp":"2026-07-20T00:00:05Z","type":"response_item","payload":{"type":"function_call_output","output":"total 0"}}"#,
-            r#"{"timestamp":"2026-07-20T00:00:06Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"output_tokens":20,"reasoning_output_tokens":5,"cached_input_tokens":10,"cache_write_input_tokens":0}}}}"#,
+            r#"{"timestamp":"2026-07-20T00:00:06Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1599907,"output_tokens":12313,"reasoning_output_tokens":6571,"cached_input_tokens":1479104,"cache_write_input_tokens":0},"last_token_usage":{"input_tokens":100,"output_tokens":20,"reasoning_output_tokens":5,"cached_input_tokens":10,"cache_write_input_tokens":0}}}}"#,
         ]);
         let msgs = parse_codex(&lines);
         assert_eq!(msgs.len(), 3, "developer 消息跳过，tool_result 并入上一条");
@@ -8479,11 +8503,12 @@ mod tests {
         assert_eq!(msgs[2].blocks[0].tool_name.as_deref(), Some("shell"));
         assert_eq!(msgs[2].blocks[1].kind, "tool_result");
         assert_eq!(msgs[2].blocks[1].text, "total 0");
-        // 最后一条 token_count 的总量挂在最后一条 assistant 上；reasoning 计入 output
+        // 最后一次请求（last_token_usage）挂在最后一条 assistant 上，不是整场累计（total 那 160 万）；
+        // input 去掉缓存命中的部分（codex 的 input 含 cached），reasoning 计入 output
         let u = msgs[2].usage.as_ref().unwrap();
         assert_eq!(
             (u.input, u.output, u.cache_read, u.cache_write),
-            (100, 25, 10, 0)
+            (90, 25, 10, 0)
         );
     }
 
