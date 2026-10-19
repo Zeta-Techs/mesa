@@ -17,6 +17,7 @@ import {
   latestToolName,
   mergeConversationPages,
   modelSwitchCommand,
+  slashCommandRecorded,
   shouldAutoPeek,
   slashHandoff,
 } from "../src/chat-handoff.ts";
@@ -300,4 +301,50 @@ test("本地消息放回：普通发送插在新回复前，长对话不跳到�
     ["第一问", "第一答", "第二问", "第二答", "第三答", "补一句"],
   );
   assert.equal(placePendingUsers(old, [], known), old);
+});
+
+const cmdMsg = (role: string, kind: string, text: string, timestamp: string | null) => ({
+  role,
+  blocks: [{ kind, text, toolName: null }],
+  timestamp,
+});
+
+test("斜杠命令发送后只要出现命令块就算已落盘（Claude 把 /cost 记成 /usage）", () => {
+  const sent = cmdMsg("user", "text", "/cost", "2026-10-19T07:11:00.000Z");
+  const parsed = [
+    cmdMsg("user", "text", "你好", "2026-10-19T07:00:00.000Z"),
+    cmdMsg("user", "command", "/usage", "2026-10-19T07:11:03.000Z"),
+  ];
+  assert.equal(slashCommandRecorded(sent, parsed), true);
+});
+
+test("发送之前就有的命令块不算（上一次的 /usage 不能冒充这一次）", () => {
+  const sent = cmdMsg("user", "text", "/cost", "2026-10-19T07:11:00.000Z");
+  const parsed = [cmdMsg("user", "command", "/usage", "2026-10-19T07:05:00.000Z")];
+  assert.equal(slashCommandRecorded(sent, parsed), false);
+});
+
+test("几秒时钟偏差内的命令块照认", () => {
+  const sent = cmdMsg("user", "text", "/model x", "2026-10-19T07:11:00.000Z");
+  const parsed = [cmdMsg("user", "command", "/model x", "2026-10-19T07:10:57.000Z")];
+  assert.equal(slashCommandRecorded(sent, parsed), true);
+});
+
+test("普通提问、没有时间戳、助手的命令块都不走这条路", () => {
+  const later = [cmdMsg("user", "command", "/usage", "2026-10-19T07:12:00.000Z")];
+  assert.equal(slashCommandRecorded(cmdMsg("user", "text", "解释 /usage 是什么", "2026-10-19T07:11:00.000Z"), later), false);
+  assert.equal(slashCommandRecorded(cmdMsg("user", "text", "/cost", null), later), false);
+  assert.equal(
+    slashCommandRecorded(cmdMsg("user", "text", "/cost", "2026-10-19T07:11:00.000Z"), [
+      cmdMsg("assistant", "command", "/usage", "2026-10-19T07:12:00.000Z"),
+    ]),
+    false,
+  );
+  // ! 命令同样处理
+  assert.equal(
+    slashCommandRecorded(cmdMsg("user", "text", "!ls", "2026-10-19T07:11:00.000Z"), [
+      cmdMsg("user", "command", "! ls", "2026-10-19T07:11:01.000Z"),
+    ]),
+    true,
+  );
 });

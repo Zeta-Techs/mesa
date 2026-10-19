@@ -69,6 +69,7 @@ import {
   mergeConversationPages,
   placePendingUsers,
   shouldAutoPeek,
+  slashCommandRecorded,
 } from "../chat-handoff";
 import { AGENTS, type CustomRuntimeDto, type OfficialAccountStatusDto } from "../types";
 import { resolveCustomRuntimeCwd } from "../custom-runtime";
@@ -140,6 +141,7 @@ import {
 import { lastContextTokens, type MesaCommand } from "../composer-assist";
 import { slashCommandsFor } from "../slash-commands";
 import { extractLiveReply, liveReplySupported, mergeLiveReply } from "../live-reply";
+import { parseTuiPanel } from "../tui-panel";
 import {
   connIssueCounts,
   connIssueText,
@@ -529,6 +531,8 @@ export interface SessionLinkState {
   trustPrompt: TrustPrompt | null;
   /** 聊天层发切换命令后，CLI 弹出的确认 / 选择菜单（发命令后几秒内才扫，tui-menu.ts） */
   menuPrompt: TuiMenu | null;
+  /** 终端里开着一个只能在终端看、按 Esc 关的面板（/cost、/usage 的 Settings 面板等，tui-panel.ts） */
+  tuiPanel: boolean;
   /** 连接出问题（额度 / 限流 / 钥匙 / 服务 / 模型；conn-issue.ts 扫终端画面认出）+ 可换的同家连接 */
   connIssue: ConnIssueState | null;
   /** 终端画面里这一轮正在写的回复（live-reply.ts；只认 Claude Code / CodeBuddy，别家 null） */
@@ -2026,9 +2030,23 @@ const TerminalView = memo(function TerminalView({
     }
     return parseTuiMenu(lines);
   }
+  // 终端里开着的面板（tui-panel.ts）：跟菜单同一次扫屏认；开着时一直扫到它关掉
+  const [tuiPanel, setTuiPanel] = useState(false);
+  const tuiPanelRef = useRef(false);
+  function setPanelOpen(open: boolean) {
+    if (tuiPanelRef.current === open) return;
+    tuiPanelRef.current = open;
+    setTuiPanel(open);
+  }
   function scanMenuSoon() {
     const turnLive = ptyWorkingArmedRef.current || pendingReplyRef.current;
-    if (!menuPromptRef.current && Date.now() > menuWatchUntilRef.current && !turnLive) return;
+    if (
+      !menuPromptRef.current &&
+      !tuiPanelRef.current &&
+      Date.now() > menuWatchUntilRef.current &&
+      !turnLive
+    )
+      return;
     if (menuScanTimerRef.current) window.clearTimeout(menuScanTimerRef.current);
     menuScanTimerRef.current = window.setTimeout(() => {
       menuScanTimerRef.current = null;
@@ -2046,6 +2064,8 @@ const TerminalView = memo(function TerminalView({
             found.options.join("\n") === trustOptionsRef.current.join("\n")));
       const next =
         echoed || trustMenu || sameTuiMenu(found, menuBaselineRef.current) ? null : found;
+      // 菜单（审批 / 切换确认）也带 Esc to cancel：认出菜单时不再当面板
+      setPanelOpen(found === null && parseTuiPanel(lines, launchAgentRef.current));
       if (sameTuiMenu(menuPromptRef.current, next)) return;
       menuPromptRef.current = next;
       setMenuPrompt(next);
@@ -2310,6 +2330,7 @@ const TerminalView = memo(function TerminalView({
       confirmDetail,
       trustPrompt,
       menuPrompt,
+      tuiPanel,
       connIssue,
       liveReply,
       ptyQuiet,
@@ -2331,6 +2352,7 @@ const TerminalView = memo(function TerminalView({
     confirmDetail,
     trustPrompt,
     menuPrompt,
+    tuiPanel,
     connIssue,
     liveReply,
     ptyQuiet,
@@ -3442,6 +3464,7 @@ const TerminalView = memo(function TerminalView({
     clearTrustPrompt();
     menuPromptRef.current = null;
     setMenuPrompt(null);
+    setPanelOpen(false);
     liveReplyRef.current = null;
     setLiveReply(null);
     if (kind === "agent") {
@@ -3623,6 +3646,7 @@ const TerminalView = memo(function TerminalView({
         ? pendingUsersRef.current
         : [];
       const isRecorded = (pu: ChatMessageDto) =>
+        slashCommandRecorded(pu, parsedMessages) ||
         parsedMessages.some(
           (message) =>
             message.role === "user" &&
@@ -3964,6 +3988,7 @@ const TerminalView = memo(function TerminalView({
     clearTrustPrompt();
     menuPromptRef.current = null;
     setMenuPrompt(null);
+    setPanelOpen(false);
     liveReplyRef.current = null;
     setLiveReply(null);
   }
@@ -9256,6 +9281,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                           tabActionsRef.current.get(t.id)?.runTuiCommand(cmd)
                         }
                         menuPrompt={sessionByTab[t.id]?.menuPrompt ?? null}
+                        tuiPanel={sessionByTab[t.id]?.tuiPanel ?? false}
                         liveReply={sessionByTab[t.id]?.liveReply ?? null}
                         mesaCommands={mesaCommandsFor(t.id)}
                         externalInsert={chatInsertByTab[t.id] ?? null}

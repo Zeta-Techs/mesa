@@ -428,6 +428,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   tui-menu.ts                # 认屏上的 TUI 选择菜单（parseTuiMenu / menuAnswerKeys / sameTuiMenu / menuEchoesText）：切换命令后 5 秒、启动后 20 秒、
                              # 以及这一轮没结束前都扫屏，切换确认与七家工具审批按原文给按钮；剥方框边与滚动条、Grok 单选改写成序号行、
                              # 折行并回上一项、问句取贴着选项的发问行；回显的 /命令、⎿ 续行、用户刚发的编号清单都不算菜单
+  tui-panel.ts               # 认「终端里开着一个面板」（parseTuiPanel：没有该家输入框 + Esc to cancel/close 一类关闭提示；/cost、/usage 的 Settings 面板）：
+                             # 与菜单同一次扫屏，认出菜单时不算面板；聊天层给「结果在终端面板里」卡，不再挂「正在生成回复」（tests/tui-panel.test.ts）
   quick-chat.ts              # 快速开聊纯逻辑：默认选择 pickQuickChatDefault（记住的 → 同家另一条 → 上次启动 → 装了的第一家）、
                              # 空白标签 isBlankChatTab（再点只复用没说过话的）、运行页「+」目录 newTabCwd（跟当前标签，隔离目录不跟）、
                              # 连接页「新对话」chatChoiceForProfile（点哪条用哪条，模型取名单第一个，不看记住的默认）、

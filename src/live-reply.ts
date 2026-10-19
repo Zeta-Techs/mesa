@@ -39,8 +39,11 @@ interface Layout {
 const BORDER = /^[╭╰]?[─━═▄▀]{8,}[╮╯]?$/;
 const MENU_BORDER = /^[▔▁]{8,}$/;
 const SPINNER = /^\s*[\u2800-\u28ff]\s/;
-// Claude：转圈 / 用时 / 右对齐的思考档提示：✻ Sautéed for 7s · done、✶ Thinking…、● high · /effort
-const CLAUDE_STATUS = /^\s*(?:[✻✶✳✢✽✺*·●◈]\s|.*·\s*\/effort\s*$)/;
+// Claude：转圈 / 用时 / 右对齐的思考档提示：✻ Sautéed for 7s · done、✶ Thinking…、● high · /effort；
+// 还有两种界面提示，聊天层里按不了、也不是回复：「Thought for 7s (ctrl+o to expand)」（思考折叠行，不带行首符号，
+// 会被当成上一段的续行）和任何「(ctrl+o to expand)」「(ctrl+r to …)」这类快捷键提示（2026-10-19 用户截图）
+const CLAUDE_STATUS =
+  /^\s*(?:[✻✶✳✢✽✺∴*·●◈]\s|Thought for \d|.*·\s*\/effort\s*$)|\(ctrl\+[a-z] to [^)]*\)\s*$/;
 // Claude 2.1.x 把工具调用折成一行摘要：Read 1 file、Ran 2 commands、Searched for 3 patterns…
 const TOOL_SUMMARY =
   /^\s*(?:Read|Ran|Searched|Listed|Wrote|Edited|Updated|Fetched|Called|Created|Deleted|Found)\b.*\b(?:files?|commands?|patterns?|director(?:y|ies)|lines?|tools?|pages?|results?)\b/;
@@ -62,7 +65,9 @@ const LAYOUTS: Record<string, Layout> = {
     boxTop: (rows) => lastBox(rows, (i) => (i > 0 && /^❯/.test(rows[i]) && BORDER.test(rows[i - 1].trim()) ? i - 1 : -1)),
     echo: /^❯\s+\S/,
     lead: /^⏺\s?/,
-    tool: new RegExp(`^⏺\\s+[A-Z][A-Za-z]*\\(|${TOOL_SUMMARY.source}`),
+    // 工具名可以是两个词：「Web Search(…)」「Notebook Edit(…)」（旧写法 [A-Za-z]* 漏掉带空格的，整行被当成正文）；
+    // 括号必须紧跟字母，「⏺ Note (important)…」这种正文不会误判
+    tool: new RegExp(`^⏺\\s+[A-Z][A-Za-z]*(?: [A-Z][A-Za-z]*)*\\(|${TOOL_SUMMARY.source}`),
     skip: new RegExp(`${CLAUDE_STATUS.source}|^\\s*⎿`),
     indent: 2,
   },
@@ -119,6 +124,17 @@ const LAYOUTS: Record<string, Layout> = {
 
 export function liveReplySupported(agentId: string): boolean {
   return agentId in LAYOUTS;
+}
+
+/**
+ * 这一屏有没有该家的聊天输入框：true = 在对话界面，false = 被别的全屏界面顶掉了（/usage 的 Settings 面板、
+ * 登录页、全屏选择器），null = 这家没有画面布局表、不知道。tui-panel.ts 用它认「终端里开着一个面板」。
+ */
+export function terminalHasInputBox(lines: readonly string[], agentId: string): boolean | null {
+  const layout = LAYOUTS[agentId];
+  if (!layout) return null;
+  const rows = lines.map((l) => l.replace(/[\s█]+$/, ""));
+  return layout.boxTop(rows) >= 0;
 }
 
 /**

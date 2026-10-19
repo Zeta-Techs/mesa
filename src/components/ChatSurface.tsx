@@ -90,6 +90,7 @@ export default function ChatSurface({
   onTuiCommand,
   menuPrompt = null,
   onAnswerMenu,
+  tuiPanel = false,
   liveReply = null,
   onRestartPermission,
   mesaCommands = [],
@@ -170,6 +171,8 @@ export default function ChatSurface({
   /** 切换命令之后 CLI 弹出的确认 / 选择菜单 */
   menuPrompt?: TuiMenu | null;
   onAnswerMenu?: (index: number) => void;
+  /** 终端里开着一个只能在终端看的面板（/cost、/usage 的 Settings 面板等，tui-panel.ts） */
+  tuiPanel?: boolean;
   /** 终端画面里这一轮正在写的回复（live-reply.ts）；会话文件追上的行由这里剔掉 */
   liveReply?: string[] | null;
   /** 运行中换权限：停下 Agent、带新权限接回原会话（标签动作 restartWithPermission） */
@@ -347,7 +350,8 @@ export default function ChatSurface({
       attention === "confirm" ||
       trustPrompt ||
       connIssue ||
-      menuPrompt
+      menuPrompt ||
+      tuiPanel
     )
       return [];
     let lastUser = -1;
@@ -428,7 +432,18 @@ export default function ChatSurface({
                 onClick: () => onAnswerMenu?.(i),
               })),
             }
-          : null;
+          : tuiPanel
+            ? {
+                // 面板开着时会话文件不动，原先这里一直写「正在生成回复」（2026-10-19 用户发 /cost 实测）
+                key: "tui-panel",
+                title: "这条命令的结果显示在终端的面板里",
+                detail: "像 /cost、/usage 这类命令会在终端里打开一个面板，聊天层读不到里面的内容。看完关掉面板就能接着聊。",
+                // Grok 非 prompt 态 Esc 会触发整进程退出确认（escInterruptSafe）：只留「露出终端 / 打开终端」
+                options: escInterruptSafe(agentId)
+                  ? [{ label: "关闭面板", title: "往终端按 Esc", onClick: () => onApprovalKey?.("esc") }]
+                  : [],
+              }
+            : null;
   // 出了新问题就滚到底：卡片贴着输入框，不能藏在视口外
   const decisionKey = decision?.key ?? null;
   useEffect(() => {

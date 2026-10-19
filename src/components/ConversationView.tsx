@@ -39,6 +39,8 @@ import {
 } from "../conversation-tools";
 import { resultStatusLabel, type ActivityKind, type DiffLine } from "../tool-activity";
 
+/** 纯文本块：保留换行，超长不带空格的串（长 URL、一串 aaaa）在气泡内折行，不撑出气泡（2026-10-19 用户截图） */
+const WRAP_TEXT = "whitespace-pre-wrap [overflow-wrap:anywhere]";
 /** 文本块超过该长度先截断，点「展开全部」再看完整内容 */
 const TEXT_CAP = 4000;
 /** 展开后的差异 / 输出最多画这么多行，再多写明还剩几行 */
@@ -377,7 +379,7 @@ export default function ConversationView({
     if (isUser) {
       return (
         <div key={key} className="my-1">
-          {bodyText && richText(key, bodyText, "whitespace-pre-wrap", forceOpen)}
+          {bodyText && richText(key, bodyText, WRAP_TEXT, forceOpen)}
           {imageRow}
         </div>
       );
@@ -387,7 +389,7 @@ export default function ConversationView({
     if (bodyText.length > TEXT_CAP && !forceOpen && !expanded.has(key)) {
       return (
         <div key={key} className="my-1">
-          {richText(key, bodyText, `whitespace-pre-wrap ${compact ? "text-xs" : "text-sm"}`)}
+          {richText(key, bodyText, `${WRAP_TEXT} ${compact ? "text-xs" : "text-sm"}`)}
           {imageRow}
         </div>
       );

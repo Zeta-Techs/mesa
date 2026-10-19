@@ -232,3 +232,65 @@ test("CodeBuddy 2.168 生成中屏上只有转圈、OpenCode 是分栏整屏重�
     assert.equal(liveReplySupported(agent), true, agent);
   }
 });
+
+// 2026-10-19 用户截图：Claude 2.1.29x 联网搜索结束后的一屏。回显已经滚出屏，工具名带空格（Web Search），
+// 思考折叠行「Thought for 5s (ctrl+o to expand)」不带行首符号
+const AFTER_WEB_SEARCH = [
+  "  Thought for 7s (ctrl+o to expand)",
+  "",
+  "⏺ Fetch(https://v2.tauri.app/release/tauri/)",
+  "  ⎿  Error: Unable to verify if domain v2.tauri.app is safe to fetch. This may be due to network restrictions or",
+  "     enterprise security policies blocking claude.ai.",
+  "",
+  "  Thought for 6s (ctrl+o to expand)",
+  "",
+  '⏺ Web Search("tauri 2.12.1 crates.io 版本发布")',
+  "  ⎿  Did 1 search in 15s",
+  "",
+  "  Thought for 5s (ctrl+o to expand)",
+  "",
+  "⏺ Tauri v2 当前最新版本为 2.12 系列（最新补丁 2.12.1），其中 2.12.0 于 2026 年 9 月 26 日发布。",
+  "  另外 3.0.0-alpha.2 已处于早期预览阶段，但不属于稳定版。",
+  "",
+  "  来源链接：",
+  "  - Announcing Tauri 2.12（官方博客） (https://v2.tauri.app/blog/tauri-2.12)",
+  "  - crates.io — tauri (https://crates.io/crates/tauri)",
+  "",
+  "✻ Baked for 1m 19s · done 3:15 PM",
+  "",
+  RULE,
+  "❯ 再搜下 Tauri 3.0 alpha 的新特性",
+  RULE,
+  "  glm-5.3 | ccode/scratch | 65.3k tok | 6% ctx",
+];
+
+test("两个词的工具名（Web Search）算工具调用；「Thought for … (ctrl+o to expand)」不进预览", () => {
+  const read = extractLiveReply(AFTER_WEB_SEARCH, "claude-code");
+  assert.deepEqual(read?.lines, [
+    "Tauri v2 当前最新版本为 2.12 系列（最新补丁 2.12.1），其中 2.12.0 于 2026 年 9 月 26 日发布。",
+    "另外 3.0.0-alpha.2 已处于早期预览阶段，但不属于稳定版。",
+    "",
+    "来源链接：",
+    "- Announcing Tauri 2.12（官方博客） (https://v2.tauri.app/blog/tauri-2.12)",
+    "- crates.io — tauri (https://crates.io/crates/tauri)",
+  ]);
+  const text = (read?.lines ?? []).join("\n");
+  assert.ok(!/Thought for|ctrl\+o|Web Search\(|Fetch\(|Baked for/.test(text), text);
+});
+
+test("会话里已经有这段回复时，预览整段让位（不再把同一段话在下面又贴一遍）", () => {
+  const live = extractLiveReply(AFTER_WEB_SEARCH, "claude-code")?.lines ?? [];
+  const synced =
+    "**Tauri v2 当前最新版本为 2.12 系列（最新补丁 2.12.1）**，其中 2.12.0 于 2026 年 9 月 26 日发布。\n另外 3.0.0-alpha.2 已处于早期预览阶段，但不属于稳定版。\n\n来源链接：\n- [Announcing Tauri 2.12（官方博客）](https://v2.tauri.app/blog/tauri-2.12)\n- [crates.io — tauri](https://crates.io/crates/tauri)";
+  assert.deepEqual(unsyncedTail(live, synced), []);
+});
+
+test("正文里以「⏺ Note (…)」这类带括号的英文开头不会被当成工具调用", () => {
+  const rows = ["❯ hi", "⏺ Note (important): 先备份再操作。", "  第二行。", RULE, "❯", RULE];
+  assert.deepEqual(extractLiveReply(rows, "claude-code")?.lines, ["Note (important): 先备份再操作。", "第二行。"]);
+});
+
+test("工具输出里折叠的「… +12 lines (ctrl+o to expand)」也不进预览", () => {
+  const rows = ["❯ hi", "⏺ Bash(ls)", "  ⎿  a.txt", "     … +12 lines (ctrl+o to expand)", "", "⏺ 列好了。", RULE, "❯", RULE];
+  assert.deepEqual(extractLiveReply(rows, "claude-code")?.lines, ["列好了。"]);
+});

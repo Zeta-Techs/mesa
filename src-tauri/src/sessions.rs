@@ -984,6 +984,46 @@ fn claude_command_block(text: &str) -> Option<Option<BlockDto>> {
     None
 }
 
+/// Claude 拒绝 / 打断工具时另写一条 user 文本「[Request interrupted by user for tool use]」：
+/// 那是它自己的机读标记，不是用户说的话，当成气泡显示会冒充用户发言（2026-10-19 用户截图）。
+/// 被拒的那一步已经在过程里标成「被拒绝」，这里直接丢掉。
+fn is_claude_interrupt_marker(text: &str) -> bool {
+    let t = text.trim();
+    t.eq_ignore_ascii_case("[Request interrupted by user]")
+        || t.eq_ignore_ascii_case("[Request interrupted by user for tool use]")
+}
+
+/// 一条字符串内容的 Claude 用户 / 本地命令行：命令标签拆成 command / command_output 块，
+/// 命令输出并进紧挨着的那条命令（聊天里一行「命令 → 结果」），其余是用户文本
+fn push_claude_user_string(msgs: &mut Vec<ChatMessageDto>, s: &str, ts: Option<String>) {
+    if let Some(cmd) = claude_command_block(s) {
+        let Some(block) = cmd else {
+            return;
+        };
+        let joins = block.kind == "command_output"
+            && msgs.last().is_some_and(|m: &ChatMessageDto| {
+                m.role == "user" && m.blocks.last().is_some_and(|b| b.kind == "command")
+            });
+        if joins {
+            msgs.last_mut().unwrap().blocks.push(block);
+        } else {
+            msgs.push(ChatMessageDto {
+                role: "user".into(),
+                blocks: vec![block],
+                timestamp: ts,
+                usage: None,
+            });
+        }
+    } else if !s.trim().is_empty() && !is_claude_interrupt_marker(s) {
+        msgs.push(ChatMessageDto {
+            role: "user".into(),
+            blocks: vec![text_block(s.to_string())],
+            timestamp: ts,
+            usage: None,
+        });
+    }
+}
+
 fn parse_claude(lines: &[String]) -> Vec<ChatMessageDto> {
     let mut msgs = Vec::new();
     for line in lines {
@@ -1003,43 +1043,16 @@ fn parse_claude(lines: &[String]) -> Vec<ChatMessageDto> {
                     continue;
                 };
                 match content {
-                    Value::String(s) => {
-                        if let Some(cmd) = claude_command_block(s) {
-                            let Some(block) = cmd else {
-                                continue;
-                            };
-                            // 命令输出并进紧挨着的那条命令，聊天里是一行「命令 → 结果」
-                            let joins = block.kind == "command_output"
-                                && msgs.last().is_some_and(|m: &ChatMessageDto| {
-                                    m.role == "user"
-                                        && m.blocks.last().is_some_and(|b| b.kind == "command")
-                                });
-                            if joins {
-                                msgs.last_mut().unwrap().blocks.push(block);
-                            } else {
-                                msgs.push(ChatMessageDto {
-                                    role: "user".into(),
-                                    blocks: vec![block],
-                                    timestamp: ts,
-                                    usage: None,
-                                });
-                            }
-                        } else if !s.trim().is_empty() {
-                            msgs.push(ChatMessageDto {
-                                role: "user".into(),
-                                blocks: vec![text_block(s.clone())],
-                                timestamp: ts,
-                                usage: None,
-                            });
-                        }
-                    }
+                    Value::String(s) => push_claude_user_string(&mut msgs, s, ts),
                     Value::Array(arr) => {
                         let mut blocks = Vec::new();
                         for b in arr {
                             match get_str(b, "type") {
                                 Some("text") => {
                                     if let Some(t) = get_str(b, "text") {
-                                        blocks.push(text_block(t.to_string()));
+                                        if !is_claude_interrupt_marker(t) {
+                                            blocks.push(text_block(t.to_string()));
+                                        }
                                     }
                                 }
                                 Some("tool_result") => blocks.push(BlockDto {
@@ -1065,6 +1078,13 @@ fn parse_claude(lines: &[String]) -> Vec<ChatMessageDto> {
                         }
                     }
                     _ => {}
+                }
+            }
+            // 新版 Claude 把本地斜杠命令（/model、/usage、/context…）记成 system/local_command 行，
+            // content 是同一套 <command-name> / <local-command-stdout> 标签（旧版是 user 行）
+            Some("system") if get_str(&v, "subtype") == Some("local_command") => {
+                if let Some(text) = get_str(&v, "content") {
+                    push_claude_user_string(&mut msgs, text, ts);
                 }
             }
             Some("assistant") => {
@@ -4737,16 +4757,18 @@ fn ends_with_question(text: &str) -> bool {
     t.ends_with('?') || t.ends_with('？')
 }
 
+fn claude_local_output_text(t: &str) -> bool {
+    let t = t.trim_start();
+    ["<local-command-stdout>", "<local-command-stderr>", "<bash-stdout>", "<bash-stderr>"]
+        .iter()
+        .any(|tag| t.starts_with(tag))
+}
+
 fn claude_local_output_line(v: &Value) -> bool {
     v.get("message")
         .and_then(|m| m.get("content"))
         .and_then(|c| c.as_str())
-        .is_some_and(|t| {
-            let t = t.trim_start();
-            ["<local-command-stdout>", "<local-command-stderr>", "<bash-stdout>", "<bash-stderr>"]
-                .iter()
-                .any(|tag| t.starts_with(tag))
-        })
+        .is_some_and(claude_local_output_text)
 }
 
 fn claude_tail_state(lines: &[String]) -> &'static str {
@@ -4766,6 +4788,14 @@ fn claude_tail_state(lines: &[String]) -> &'static str {
         match get_str(&v, "type") {
             Some("system") if get_str(&v, "subtype") == Some("turn_duration") => {
                 turn_ended = true;
+                continue;
+            }
+            // 新版把本地命令写成 system/local_command（命令、输出各一行）：输出行同下方 user 输出行，
+            // 命令在本机跑完了。会话里第一件事就是 /cost 时没有 turn_duration 可依，不认它就一直「unknown」
+            Some("system") if get_str(&v, "subtype") == Some("local_command") => {
+                if get_str(&v, "content").is_some_and(claude_local_output_text) {
+                    return "settled";
+                }
                 continue;
             }
             // 回合已结束后往回只遇到 user（被打断、只有工具回执）也算收尾
@@ -7855,6 +7885,55 @@ mod tests {
             usable_title(raw).as_deref(),
             Some("不要调用任何工具。 1. 三个标题")
         );
+    }
+
+    #[test]
+    fn claude_new_style_local_command_rows_replay_as_command_blocks() {
+        // 新版 Claude（2026-10-19 实测）：本地命令记成 system/local_command，不是 user 行
+        let lines = s(&[
+            r#"{"type":"user","timestamp":"2026-10-19T07:00:00Z","message":{"role":"user","content":"你好"}}"#,
+            r#"{"type":"system","subtype":"local_command","timestamp":"2026-10-19T07:01:00Z","content":"<command-name>/usage</command-name>\n            <command-message>usage</command-message>\n            <command-args></command-args>","isMeta":false}"#,
+            r#"{"type":"system","subtype":"local_command","timestamp":"2026-10-19T07:01:05Z","content":"<local-command-stdout>Settings dialog dismissed</local-command-stdout>","isMeta":false,"commandRun":{"command":"usage","args":""}}"#,
+            r#"{"type":"system","subtype":"turn_duration","timestamp":"2026-10-19T07:01:06Z"}"#,
+        ]);
+        let msgs = parse_claude(&lines);
+        assert_eq!(msgs.len(), 2, "命令与输出并成一条：{msgs:?}");
+        assert_eq!(msgs[1].role, "user");
+        assert_eq!(msgs[1].timestamp.as_deref(), Some("2026-10-19T07:01:00Z"));
+        let kinds: Vec<_> = msgs[1].blocks.iter().map(|b| (b.kind.as_str(), b.text.as_str())).collect();
+        assert_eq!(
+            kinds,
+            vec![("command", "/usage"), ("command_output", "Settings dialog dismissed")]
+        );
+        // 其他 system 子类型（turn_duration 等）不进对话
+        assert!(msgs.iter().all(|m| m.blocks.iter().all(|b| b.kind != "text" || !b.text.contains("turn_duration"))));
+    }
+
+    #[test]
+    fn claude_new_style_local_command_output_settles_tail() {
+        // 会话第一件事就是 /cost：没有 turn_duration，只有两行 system/local_command
+        let only_cmd = s(&[
+            r#"{"type":"system","subtype":"local_command","content":"<command-name>/usage</command-name>\n<command-args></command-args>"}"#,
+        ]);
+        assert_eq!(claude_tail_state(&only_cmd), "unknown", "面板还开着、输出没写：不判收尾");
+        let done = s(&[
+            r#"{"type":"system","subtype":"local_command","content":"<command-name>/usage</command-name>\n<command-args></command-args>"}"#,
+            r#"{"type":"system","subtype":"local_command","content":"<local-command-stdout>Settings dialog dismissed</local-command-stdout>"}"#,
+        ]);
+        assert_eq!(claude_tail_state(&done), "settled");
+    }
+
+    #[test]
+    fn claude_interrupt_marker_is_not_a_user_bubble() {
+        let lines = s(&[
+            r#"{"type":"user","message":{"role":"user","content":"运行 rm 一下"}}"#,
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]}}"#,
+            r#"{"type":"user","message":{"role":"user","content":"[Request interrupted by user]"}}"#,
+            r#"{"type":"user","message":{"role":"user","content":"[Request interrupted by user] 但这句有别的话"}}"#,
+        ]);
+        let msgs = parse_claude(&lines);
+        let texts: Vec<_> = msgs.iter().flat_map(|m| m.blocks.iter().map(|b| b.text.as_str())).collect();
+        assert_eq!(texts, vec!["运行 rm 一下", "[Request interrupted by user] 但这句有别的话"]);
     }
 
     #[test]

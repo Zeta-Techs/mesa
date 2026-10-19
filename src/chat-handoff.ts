@@ -194,6 +194,28 @@ export function composerShowsInterrupt(input: {
   return input.attention === "working" || Boolean(input.pendingReply);
 }
 
+/**
+ * 发出去的是斜杠 / ! 命令时，会话文件里记的不是原话：Claude 把 /cost 记成 /usage、拆成命令标签、
+ * 新版还写成 system 行（解析成 command 块）。所以不比文字，只看「发送之后出现了命令块」。
+ * 不这样认，本地命令永远「没落盘」，聊天层的「正在生成回复」就一直挂着（2026-10-19 用户发 /cost 实测，
+ * 之后别的提问都跑完了还在转圈）。
+ */
+export function slashCommandRecorded(
+  sent: Pick<ChatMessageDto, "blocks" | "timestamp">,
+  parsed: readonly Pick<ChatMessageDto, "role" | "blocks" | "timestamp">[],
+  skewMs = 5000,
+): boolean {
+  const text = (sent.blocks[0]?.text ?? "").trim();
+  if (!/^[/!]/.test(text)) return false;
+  const since = Date.parse(sent.timestamp ?? "");
+  if (!Number.isFinite(since)) return false;
+  return parsed.some((message) => {
+    if (message.role !== "user" || !message.blocks.some((b) => b.kind === "command")) return false;
+    const at = Date.parse(message.timestamp ?? "");
+    return Number.isFinite(at) && at >= since - skewMs;
+  });
+}
+
 /** 斜杠发出后要不要露出 TUI：无参 /model、/models、/login 会唤选择器或登录页 */
 export function slashHandoff(
   text: string,
