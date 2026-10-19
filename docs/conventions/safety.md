@@ -135,6 +135,13 @@
      额外放行的索引写点仅 `~/.kimi-code/session_index.jsonl`、`~/.kimi/kimi.json`、gemini `.project_root`、grok 组目录 `.cwd`（codex `config.toml` 走现有注册命令，不经本模块直写）；
      已存在同 agent 同 sessionId 一律跳过不覆盖；写入走 `atomic_write_bytes`（tmp+rename）；索引类读-改-写。
      导出是只读拷贝：会话原文进包（可能含密钥），弹层明示「分享前请自查」；密钥/网关/profile 不进包；B 机浏览仍过 `redact_sensitive_text`。
+  7. **会话瘦身**（2026-10-19，`session_slim.rs`：仅 Claude Code。用户在弹层点确认才写；撞网关 413 的根因与取舍见 architecture §10 当日条目）。
+     **原地**把较早的 base64 截图/文档附件换成文字占位、只留最近 6 张，没动的行逐字节原样。防护：路径 canonicalize 后必须落在
+     `~/.claude/projects` 内且过会话文件白名单；写前**完整备份**到 `<配置目录>/ccode/backups/session-slim/<会话id>-<时间>.jsonl`
+     （目录 0700、文件 0600、同会话留最近 3 份；备份失败即中止、写失败即删备份与临时文件）；文件最近 60 秒有写入拒绝，写完前复核源文件
+     长度与 mtime 没变；同目录 `.ccode-slim-<uuid>.tmp`（0600）+ `sync_all` + `storage::replace` 原子替换，并把 mtime 还原成原值；
+     同一时刻只跑一次；Mesa 自己的终端标签里正在运行该会话时前端拒绝。只检测不写盘的 `session_slim_inspect` 对小于 8 MB 的文件免扫描。
+     测试走 `*_at(home, …)` 注入假 home，真实数据干跑用被忽略的 `real_data_dry_run`（环境变量 `CCODE_SLIM_DRYRUN_FILE` 指向副本）。
   6. **卸载 Mesa**（`uninstall.rs`：设置 → 数据与存储。两次确认，第二次须输入「卸载」）。
      只把 Mesa 独占目录移入回收站：平台配置目录 `ccode/`、主目录 `~/ccode/`（含用户自定义过的工作副本家目录 `<所选>/ccode`，取 `ccode_home::all_roots`）、本机数据目录
      `ccode/`（目标副本），以及打包身份 `com.ccode.dev` 的网页数据（macOS 的

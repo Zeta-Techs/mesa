@@ -515,6 +515,35 @@ export interface SessionMetaDto {
   profileId: string | null;
 }
 
+/** 会话瘦身检测结果（session_slim.rs，只读估算；level 由后端按请求体大小判定） */
+export interface SlimInspectDto {
+  /** false = 不是 Claude Code 会话文件 / 不在白名单内：不显示任何瘦身入口 */
+  supported: boolean;
+  fileBytes: number;
+  /** false = 文件小，没扫描（下面的数字是 0，不代表没有图） */
+  scanned: boolean;
+  /** 下次请求会带上的截图/文档附件张数（最近一次压缩之后） */
+  mediaCount: number;
+  mediaBytes: number;
+  /** 下次请求体估算字节数 */
+  bodyBytes: number;
+  level: "ok" | "warn" | "danger";
+  /** 按默认保留数可移除多少张 */
+  removable: number;
+  keep: number;
+  recentlyWritten: boolean;
+}
+
+export interface SlimApplyDto {
+  removed: number;
+  kept: number;
+  bytesBefore: number;
+  bytesAfter: number;
+  bodyBefore: number;
+  bodyAfter: number;
+  backupPath: string;
+}
+
 export interface SessionSearchHitDto {
   agent: string;
   sessionId: string;
@@ -1404,7 +1433,7 @@ export interface ProjectStatusDto {
   accepted: AcceptedGoalStatusDto[];
 }
 
-/** 文献雷达筛选（存 project.toml；指标未知的条目放行不误伤，口径见 lit-watch.ts entryPassesFilter） */
+/** 文献雷达筛选（存 project.toml；设了条件而指标未知的条目不显示，口径见 lit-watch.ts entryPassesFilter） */
 export interface LitWatchFilterDto {
   /** 只看 IF ≥ 此值的期刊；null/缺省 = 不限 */
   minIf?: number | null;

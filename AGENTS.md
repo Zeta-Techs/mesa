@@ -134,8 +134,9 @@ docs/            architecture.md（总体设计 + §10 决策记录 + §12 当�
 - **Codex 全局写入不碰 `~/.codex/auth.json`**（v3.249 / v3.250）：「设为全局」与客户端接力的渠道补写（`register_codex_client_provider_named`）都只写 `config.toml` 的 provider 块，认证用 `experimental_bearer_token`（ChatGPT 自带 Codex 认这个字段）。禁止写 `http_headers`（MCP 字段，写在 provider 上客户端加载失败报 Model provider not found）。禁止退回 `requires_openai_auth=true` + 改 auth.json。
 - **各 CLI 会话/配置目录一律只读**；例外仅限用户显式操作（设为全局默认、hooks 精确注意力开关（七家，见 hooks.rs）、会话删除、工作树文件删除、**会话导入**、
   **内部对话保留期清理**（2026-10-17：设置「数据与存储」开关即授权，默认开 30 天；只删 Mesa 自己的后台对话——
-  登记为内部 + cwd 是 `ccode-ai-<uuid>` 临时目录或雷达隔离目录 + 未保留，永久删除不进回收站，见 `internal_sessions.rs`）——
-  工作树文件删除走系统回收站（trash crate）可反悔；六类均有备份/白名单防护口径，见 `docs/conventions/safety.md`）。
+  登记为内部 + cwd 是 `ccode-ai-<uuid>` 临时目录或雷达隔离目录 + 未保留，永久删除不进回收站，见 `internal_sessions.rs`）、
+  **会话瘦身**（2026-10-19：仅 Claude Code，用户在弹层确认后原地去掉较早的截图，写前完整备份，见 `session_slim.rs`）——
+  工作树文件删除走系统回收站（trash crate）可反悔；七类均有备份/白名单防护口径，见 `docs/conventions/safety.md`）。
 - **用量历史永久保留（2026-10-17 用户拍板）**：会话文件消失（CLI 自己清理 / 内部对话清理）不得删 `usage_daily` 行，
   重建只撤 `seen:` 标记；只有用户在 Mesa 亲手删除对话才 `forget_session_usage`。用量表版本升级**禁止整表清空**，
   只清有 `seen:` 标记、能从文件重抽的行（不落盘调用的 `ephemeral-*` 行与已消失会话的行重抽不回来）。

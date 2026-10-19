@@ -14,6 +14,7 @@ import {
   Pencil,
   Pin,
   PinOff,
+  Scissors,
   ScrollText,
   SquareArrowOutUpRight,
   SquareStack,
@@ -72,6 +73,8 @@ import { alertDialog, confirmDialog } from "../components/ConfirmDialog";
 import { openQuickChat, resumeSessionInTerminal } from "../quick-chat-launch";
 import { isScratchCwd } from "../quick-chat";
 import SessionImportModal from "../components/SessionImportModal";
+import SessionSlimDialog from "../components/SessionSlimDialog";
+import { slimMenuAvailable, slimNotice } from "../session-slim";
 import { SECRET_EXPORT_WARNING } from "../session-transfer";
 import {
   Checkbox,
@@ -92,6 +95,7 @@ import type {
   SessionExportKey,
   SessionMetaDto,
   SessionSearchHitDto,
+  SlimInspectDto,
   TokenUsageDto,
 } from "../types";
 
@@ -1287,6 +1291,35 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
   const [resumeMenu, setResumeMenu] = useState<{ x: number; y: number } | null>(
     null,
   );
+  // 会话瘦身：选中 Claude Code 会话时只读估算请求体（撞网关 413 的前兆）；瘦身成功后 tick+1 重测
+  const [slimInspect, setSlimInspect] = useState<SlimInspectDto | null>(null);
+  const [slimOpen, setSlimOpen] = useState(false);
+  const [slimTick, setSlimTick] = useState(0);
+  useEffect(() => {
+    setSlimInspect(null);
+    if (
+      !selected ||
+      selected.agent !== "claude-code" ||
+      !selected.alive ||
+      selected.internal
+    ) {
+      return;
+    }
+    let cancelled = false;
+    invoke<SlimInspectDto>("session_slim_inspect", {
+      agent: selected.agent,
+      filePath: selected.filePath,
+    })
+      .then((r) => {
+        if (!cancelled) setSlimInspect(r);
+      })
+      .catch(() => {
+        /* 检测只是提示，失败不打扰 */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected?.agent, selected?.filePath, selected?.alive, selected?.internal, slimTick]);
   // 「◈ 接力到…」目标选择器（回放头部 ⋯ 菜单进入）
   const [handoffFor, setHandoffFor] = useState<SessionMetaDto | null>(null);
   // 「◈ 提炼接力…」目标选择器（AI 蒸馏简报；回放头部下拉与行内 ⋯ 菜单进入）
@@ -2467,6 +2500,29 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
               </div>
             ) : (
               <>
+                {(() => {
+                  const notice = slimNotice(slimInspect);
+                  if (!notice) return null;
+                  return (
+                    <div className="px-4">
+                      <div className="mx-auto mt-2 flex max-w-3xl items-start gap-3 rounded-sm ccode-well p-3">
+                        <InlineNotice tone={notice.tone} className="min-w-0 flex-1">
+                          <span>
+                            <span className="font-medium">{notice.title}。</span>
+                            {notice.detail}
+                          </span>
+                        </InlineNotice>
+                        <button
+                          type="button"
+                          onClick={() => setSlimOpen(true)}
+                          className={`${rowActionClass} shrink-0`}
+                        >
+                          瘦身…
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
                 {summary && (
                   <div className="px-4">
                     <div className="mx-auto mt-2 max-w-3xl rounded-sm ccode-well p-3 text-sm text-l2">
@@ -2608,6 +2664,17 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                 onSelect: () => setDigestFor(selected),
               },
               { separator: true },
+              ...(slimMenuAvailable(slimInspect)
+                ? [
+                    {
+                      label: "瘦身会话…",
+                      icon: Scissors,
+                      title:
+                        "把较早的截图换成文字占位、只留最近几张，缩小每次发送的请求体（撞网关 413 时用）；写入前先备份",
+                      onSelect: () => setSlimOpen(true),
+                    },
+                  ]
+                : []),
               {
                 label: exporting ? "导出中…" : "导出 Markdown",
                 icon: FileText,
@@ -2630,6 +2697,23 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
           />
         );
       })()}
+
+      {slimOpen && selected && slimInspect && (
+        <SessionSlimDialog
+          agent={selected.agent}
+          filePath={selected.filePath}
+          inspect={slimInspect}
+          runningInMesaTab={
+            !!liveSessions[sessionRuntimeKey(selected.agent, selected.sessionId)]
+          }
+          onClose={() => setSlimOpen(false)}
+          onApplied={() => {
+            setSlimTick((t) => t + 1);
+            void loadSessions(true);
+          }}
+          onResume={() => resumeInTerminal(selected)}
+        />
+      )}
 
       {/* 「◈ 接力到…」目标选择器 */}
       {handoffFor && (

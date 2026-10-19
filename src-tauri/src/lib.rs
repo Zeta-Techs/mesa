@@ -104,6 +104,7 @@ mod scan_persist;
 mod runtime;
 mod scheduler;
 mod session_search;
+mod session_slim;
 mod session_transfer;
 mod sessions;
 mod settings;
@@ -528,6 +529,8 @@ pub fn run() {
             sessions::delete_project_sessions,
             sessions::session_tail_state,
             sessions::export_session_markdown,
+            session_slim::session_slim_inspect,
+            session_slim::session_slim_apply,
             session_transfer::export_sessions,
             session_transfer::import_sessions_inspect,
             session_transfer::import_sessions_apply,

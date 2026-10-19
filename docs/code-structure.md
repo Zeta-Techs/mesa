@@ -16,7 +16,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   components/                # WorkspaceReviewView、PipelineEditor（含「＋ 从模板追加」）、ProjectGroup/ProjectRail、ArtifactChecklist（文本类产物就地预览层；pdf/docx/表格/图同页弹层 +
                              # md 笔记「⛶ 沉浸阅读」入口（v3.98：pdf_for_note 配对后发 readerReq 带 notePath 进阅读区）+
                              # ⠿ 拖出手柄经 tauri-plugin-drag 做 OS 级文件拖出——WebView HTML5 拖拽出不了窗口）、TaskCardsSection、FileTree、
-                             # FilePreviewEditor、PdfPreview/DocxPreview/XlsxPreview/ImagePreview、ImagePairView、GitPanel、HandoffPicker/DigestPicker、
+                             # FilePreviewEditor、PdfPreview/DocxPreview/XlsxPreview/ImagePreview、ImagePairView、GitPanel、HandoffPicker/DigestPicker、SessionSlimDialog（会话瘦身确认弹层：先讲清动什么、结果页给备份位置与「客户端里需归档再恢复」提醒；提示条与菜单项在 SessionsPage 回放头部）、
                              #   PDF 字节模块级 LRU 缓存（loadPdfBytes，上限 8 份）：预览⇄阅读区重挂载不再重走
                              #   read_pdf_bytes IPC+atob+解析三程，骨架期只剩 pdf.js 解析一程；PdfPageView 页内标记层 marks
                              #   （查找/标注/跳转一闪：按摘句重定位、页内百分比矩形、文本层之前不接指针，scrollTo nonce 居中）、
@@ -551,6 +551,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   academic-mcp.ts            # 检索步「配置学术检索 MCP」：预设名、登录注入；登录态由 academic_mcp_login_status 回一句现状（tests/academic-mcp.test.ts）
   session-filter.ts          # 对话页筛选纯逻辑 + 列表行项目名 sessionProjectLabel（tests/session-filter.test.ts）
   session-search.ts          # 对话搜索纯逻辑：分词、元数据即时过滤、正文命中合并排序
+  session-slim.ts            # 会话瘦身纯逻辑（撞网关 413）：提示条/菜单项出现条件、拦路原因（Mesa 终端在跑 / 最近一分钟有写入）、瘦身后体积预告、结果文案（tests/session-slim.test.ts）
   session-transfer.ts        # 会话导入向导纯逻辑：状态文案、目标目录预填、可否执行
   step-decisions.ts          # 决策项：答案落任务书草稿固定小节；isTaskMdStub = 空/仅决策/仅评审沉淀不算可执行正文，resolveTaskMdSource 走模板拼装并接沉淀（decisionGate/orderedAnswers/parseDecisions，tests/step-decisions.test.ts）
   terminal-resume.ts         # 终端会话恢复的标签复用与配置挑选纯逻辑（2026-09-08 审计修复）
@@ -759,6 +760,10 @@ src-tauri/src/
                              # 无头 AI 按 session id 标 session_meta.internal（雷达解读/定时巡检不进本项目会话，
                              # 禁止把项目路径写入 usage_provenance.internal）
   session_search.rs          # 会话正文搜索：多关键词按「命中多少 + 落在哪」打分、同分按更新时间；正文不进前端
+  session_slim.rs            # 会话瘦身（仅 Claude Code，撞网关 413 Request body too large）：inspect 只读估算下次请求体大小与较早截图数（<8MB 免扫描，
+                             #   压缩边界之前不算）；apply 原地把较早的 base64 截图/文档换文字占位、留最近 6 张，没动的行逐字节原样，写前完整备份
+                             #   到 <配置目录>/ccode/backups/session-slim/、最近 60 秒有写入拒绝、复核源文件未变、tmp+rename 保持 mtime；
+                             #   不另存副本（会撞 sessionId、用量重复计）；安全口径 safety.md 例外清单第 7 条；干跑用 ignored 的 real_data_dry_run
   session_transfer.rs        # 会话包导出/导入（.ccode-sessions.zip，八家不含 opencode）：原文打包装、导入时改写 cwd 并按 B 机
                              #   目录重建落位；zip-slip/大小/后缀/白名单；同 id 跳过不覆盖；Mesa 元数据写 app.db；
                              #   kimi 新版 wd_<basename>_<sha256[:12]> + session_index.jsonl；grok URL 编码 cwd
