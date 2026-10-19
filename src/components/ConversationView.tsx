@@ -25,6 +25,7 @@ import type { BlockDto, ChatMessageDto } from "../types";
 import { FoldMark } from "./PageFrame";
 import ChatMarkdown, { ChatImageCard } from "./ChatMarkdown";
 import { splitImagePaths } from "../chat-image";
+import { splitFenced } from "../text-fences";
 import { useAppStore } from "../store";
 import {
   exploreLabel,
@@ -42,34 +43,6 @@ import { resultStatusLabel, type ActivityKind, type DiffLine } from "../tool-act
 const TEXT_CAP = 4000;
 /** 展开后的差异 / 输出最多画这么多行，再多写明还剩几行 */
 const DETAIL_LINES = 200;
-
-/** 围栏代码段拆分结果：普通文本段与代码段交替 */
-type TextPart =
-  | { code: false; text: string }
-  | { code: true; lang: string; text: string };
-
-/** 按 ``` 围栏拆分文本；奇数个围栏时末段按未闭合代码块处理（会话尾部截断常见） */
-function splitFenced(text: string): TextPart[] {
-  const parts: TextPart[] = [];
-  const segments = text.split("```");
-  for (let i = 0; i < segments.length; i++) {
-    const seg = segments[i];
-    if (i % 2 === 0) {
-      if (seg) parts.push({ code: false, text: seg });
-      continue;
-    }
-    // 代码段首行可能是语言标记；不像语言标记（含空白/超长）则整段按代码处理
-    const nl = seg.indexOf("\n");
-    const head = nl === -1 ? seg.trim() : seg.slice(0, nl).trim();
-    const valid = /^[\w#+.-]{1,20}$/.test(head);
-    parts.push({
-      code: true,
-      lang: valid ? head : "",
-      text: valid ? (nl === -1 ? "" : seg.slice(nl + 1)) : seg,
-    });
-  }
-  return parts;
-}
 
 /** 代码块：inset 底 + hairline 细边，头部语言名 + hover/focus 显现的 ⧉ 复制 */
 function CodeBlock({ lang, text }: { lang: string; text: string }) {

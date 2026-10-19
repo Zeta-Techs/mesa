@@ -356,6 +356,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # tests/workspace-visibility.test.ts）
   git-commit-message.ts      # 空提交信息的本地默认信息生成
   main-history-save.ts       # 科研步骤卡一键「存进历史」：冲突拦截 / 白话说明 / 路径（tests/main-history-save.test.ts）
+  text-fences.ts             # 纯文本消息（用户气泡）的围栏代码拆分 splitFenced：只认行首的 ``` / ~~~，行中间的三个反引号是行内写法不开围栏（旧实现按任意位置切会吞掉后面整段）；未收尾按代码到结尾（tests/text-fences.test.ts）
   chat-reply.ts              # 聊天长回复按小标题分段（识别代码围栏）、正文里的项目文件、确认按钮是否给出（tests/chat-reply.test.ts）
   paste-guard.ts             # 终端粘贴防线：剪收尾回车、shell 多行先确认、备用屏原样（tests/paste-guard.test.ts）
   terminal-links.ts          # 终端行绝对/相对路径与行列号（`:行:列`、句尾标点不吞、lookbehind 起点

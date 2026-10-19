@@ -2046,6 +2046,23 @@ select:focus-visible {
   margin: 0.7em 0;
   padding-left: 1.6em;
 }
+/* Tailwind 预设把 ul/ol 的 list-style 清成 none，这里补回圆点与序号（2026-10-19 实测列表标记整个不显示）。
+   嵌套换圆圈 / 方块；GFM 任务列表（li 里自带复选框）不再叠一个圆点 */
+.md-body ul {
+  list-style-type: disc;
+}
+.md-body ul ul {
+  list-style-type: circle;
+}
+.md-body ul ul ul {
+  list-style-type: square;
+}
+.md-body ol {
+  list-style-type: decimal;
+}
+.md-body li:has(> input[type="checkbox"]) {
+  list-style-type: none;
+}
 .md-body li {
   margin: 0.25em 0;
 }

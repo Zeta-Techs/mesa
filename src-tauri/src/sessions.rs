@@ -228,6 +228,64 @@ fn unwrap_prompt_tags(text: &str) -> String {
 }
 
 /// 列表标题：折叠空白后截断到约 60 字符，避免多行 prompt 撑高列表。
+/// Claude Code 把多行粘贴的提问包成 `<pasted_content id="79fb">…</pasted_content id="79fb">` 写进会话文件
+/// （开头还带两个空行）。Mesa 聊天层发多行提问就是一次粘贴，所以几乎每条多行提问都带；
+/// 回放和标题只要里面的话。只认标签名后紧跟 `>` 或空白、且标签行内不换行的，防误伤正文里谈到这个词。
+/// 没找到收尾标签（尾部截断）就只去掉开头标签。无包装时原样返回，不动缩进。
+fn unwrap_pasted_content(text: &str) -> String {
+    const OPEN: &str = "<pasted_content";
+    const CLOSE: &str = "</pasted_content";
+    if find_ascii_ci(text, OPEN).is_none() {
+        return text.to_string();
+    }
+    // 取出一个完整标签 `<name ...>` 的结束下标（含 `>`）；属性里不得有换行或再开一个 `<`
+    fn tag_end(s: &str, name_end: usize) -> Option<usize> {
+        let next = s[name_end..].chars().next()?;
+        if next != '>' && !next.is_whitespace() {
+            return None;
+        }
+        let gt = s[name_end..].find('>')?;
+        let attrs = &s[name_end..name_end + gt];
+        (!attrs.contains('\n') && !attrs.contains('<')).then_some(name_end + gt + 1)
+    }
+    let mut s = text.to_string();
+    let mut from = 0;
+    let mut changed = false;
+    while let Some(rel) = find_ascii_ci(&s[from..], OPEN) {
+        let start = from + rel;
+        let Some(open_end) = tag_end(&s, start + OPEN.len()) else {
+            from = start + OPEN.len();
+            continue;
+        };
+        let (inner_end, after) = match find_ascii_ci(&s[open_end..], CLOSE)
+            .and_then(|r| tag_end(&s, open_end + r + CLOSE.len()).map(|e| (open_end + r, e)))
+        {
+            Some(pair) => pair,
+            None => (s.len(), s.len()),
+        };
+        let inner = s[open_end..inner_end].trim_matches('\n').to_string();
+        s = format!("{}{}{}", &s[..start], inner, &s[after..]);
+        from = start + inner.len();
+        changed = true;
+    }
+    if changed {
+        s.trim().to_string()
+    } else {
+        s
+    }
+}
+
+/// 一段文本块在展示前的清洗：所有人都剥 `<user_query>` / `<turn_aborted>`；
+/// 粘贴包装只在**用户**消息里剥（助手正文可能正在讲这个标签，不能动）
+fn clean_block_text(role: &str, text: &str) -> String {
+    let t = unwrap_prompt_tags(text);
+    if role == "user" {
+        unwrap_pasted_content(&t)
+    } else {
+        t
+    }
+}
+
 fn truncate_title(text: &str) -> String {
     const MAX: usize = 60;
     let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -269,7 +327,7 @@ fn is_generic_greeting(text: &str) -> bool {
 }
 
 fn usable_title(text: &str) -> Option<String> {
-    let title = truncate_title(&unwrap_prompt_tags(text));
+    let title = truncate_title(&unwrap_pasted_content(&unwrap_prompt_tags(text)));
     let lower = title.trim().to_ascii_lowercase();
     let generic = matches!(
         lower.as_str(),
@@ -395,7 +453,7 @@ fn redact_conversation(messages: &mut Vec<ChatMessageDto>) {
     for message in messages.iter_mut() {
         for block in &mut message.blocks {
             if block.kind == "text" {
-                block.text = unwrap_prompt_tags(&block.text);
+                block.text = clean_block_text(&message.role, &block.text);
             }
             block.text = redact_sensitive_text_with(&block.text, &secrets);
         }
@@ -7770,6 +7828,46 @@ mod tests {
         ]));
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0].role, "user");
+    }
+
+    #[test]
+    fn pasted_content_wrapper_is_unwrapped_for_user_text_and_titles() {
+        // 2026-10-19 用户实测：聊天里发多行提问，气泡里露出 <pasted_content id="79fb">
+        let raw = "\n\n<pasted_content id=\"79fb\">\n不要调用任何工具。\n1. 三个标题\n</pasted_content id=\"79fb\">";
+        assert_eq!(unwrap_pasted_content(raw), "不要调用任何工具。\n1. 三个标题");
+        // 前后还有别的话、多段粘贴、缺收尾（尾部截断）
+        assert_eq!(
+            unwrap_pasted_content("先看这个：<pasted_content id=\"a\">\nA\n</pasted_content id=\"a\">，再看<pasted_content id=\"b\">\nB\n</pasted_content id=\"b\">"),
+            "先看这个：A，再看B"
+        );
+        assert_eq!(unwrap_pasted_content("<pasted_content id=\"c\">\n只有开头"), "只有开头");
+        // 无包装原样返回（缩进不动）；正文里谈到这个词（不是完整标签）也不动
+        assert_eq!(unwrap_pasted_content("  缩进保留\n第二行"), "  缩进保留\n第二行");
+        assert_eq!(unwrap_pasted_content("<pasted_content_x>不是</pasted_content_x>"), "<pasted_content_x>不是</pasted_content_x>");
+        assert_eq!(unwrap_pasted_content("用 <pasted_content 这种写法"), "用 <pasted_content 这种写法");
+        // 宽度会变的字符不能 panic
+        assert_eq!(unwrap_pasted_content("İ<PASTED_CONTENT id=\"x\">ß好</PASTED_CONTENT id=\"x\">"), "İß好");
+        // 只对用户消息生效；助手正文原样
+        assert_eq!(clean_block_text("user", raw), "不要调用任何工具。\n1. 三个标题");
+        assert_eq!(clean_block_text("assistant", raw), raw.trim());
+        // 标题取包装里的第一句，而不是被当成「<」开头的占位丢掉
+        assert_eq!(
+            usable_title(raw).as_deref(),
+            Some("不要调用任何工具。 1. 三个标题")
+        );
+    }
+
+    #[test]
+    fn claude_pasted_prompt_replays_without_wrapper() {
+        let lines = s(&[
+            r#"{"type":"user","message":{"role":"user","content":"\n\n<pasted_content id=\"79fb\">\n第一行\n第二行\n</pasted_content id=\"79fb\">"}}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"收到"}]}}"#,
+        ]);
+        let mut msgs = parse_claude(&lines);
+        redact_conversation(&mut msgs);
+        assert_eq!(msgs[0].role, "user");
+        assert_eq!(msgs[0].blocks[0].text, "第一行\n第二行");
+        assert!(!msgs[0].blocks[0].text.contains("pasted_content"));
     }
 
     #[test]
