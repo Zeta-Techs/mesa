@@ -52,6 +52,8 @@ import { addConnectionDefaults, endpointHost, gatewayPickerRows } from "../gatew
 import ContextMenu from "../components/ContextMenu";
 import GatewayLibrary from "../components/GatewayLibrary";
 import { OnboardingPageStrip } from "../components/OnboardingGuide";
+import VendorIcon from "../components/VendorIcon";
+import { vendorForUrl } from "../vendor-icon";
 import { HoverTip, useHoverTip } from "../components/HoverTip";
 import { alertDialog, confirmDialog } from "../components/ConfirmDialog";
 import { Modal } from "../components/Modal";
@@ -3414,7 +3416,13 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                             key={profile.id}
                             className={`group grid min-h-14 ${PROFILE_GRID} items-center gap-3 px-4 text-sm transition-colors hover:bg-hover/60`}
                           >
-                            <span className="min-w-0">
+                            <span className="flex min-w-0 items-start gap-2">
+                              <VendorIcon
+                                vendor={vendorForUrl(profile.baseUrl)}
+                                name={profile.name}
+                                className="mt-0.5"
+                              />
+                              <span className="min-w-0 flex-1">
                               <span
                                 className="block truncate font-medium text-l1"
                                 title={profile.name}
@@ -3437,6 +3445,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                   ))}
                                 </span>
                               )}
+                              </span>
                             </span>
                             <span
                               className={`min-w-0 truncate text-xs ${profile.baseUrl ? "text-l2" : "text-l4"}`}

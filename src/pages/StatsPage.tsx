@@ -72,16 +72,8 @@ import {
   toTsv,
   visibleDistRows,
 } from "../usage-dist";
-import zhipuIcon from "../assets/plan-icons/zhipu.svg";
-import kimiIcon from "../assets/plan-icons/kimi.svg";
-import minimaxIcon from "../assets/plan-icons/minimax.svg";
-
-// 各家官方图标（SVG，取自 cc-switch 提取的官方 logo，仅用于标识对应平台）
-const PLAN_PROVIDER_ICON: Record<string, string | undefined> = {
-  zhipu: zhipuIcon,
-  kimi: kimiIcon,
-  minimax: minimaxIcon,
-};
+import VendorIcon from "../components/VendorIcon";
+import { vendorForPlanProvider } from "../vendor-icon";
 import {
   Checkbox,
   EmptyState,
@@ -1228,11 +1220,11 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                     <span className="text-xs text-l2">{row.gatewayName}</span>
                   )}
                   <span className="flex items-center gap-1.5 text-xs text-l2">
-                    {PLAN_PROVIDER_ICON[row.provider] && (
-                      <img
-                        src={PLAN_PROVIDER_ICON[row.provider]}
-                        alt=""
-                        className="h-3.5 w-3.5 rounded-[3px]"
+                    {vendorForPlanProvider(row.provider) && (
+                      <VendorIcon
+                        vendor={vendorForPlanProvider(row.provider)}
+                        name={planProviderLabel(row.provider)}
+                        className="h-3.5 w-3.5"
                       />
                     )}
                     {planProviderLabel(row.provider)}

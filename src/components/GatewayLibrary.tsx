@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "../store";
 import { AGENTS, AGENT_PROTOCOLS } from "../types";
 import { PROVIDER_PRESETS, type ProviderPreset } from "../presets";
+import { vendorForSlots } from "../vendor-icon";
+import VendorIcon from "./VendorIcon";
 import { mergeGatewayCatalog } from "../gateway-catalog";
 import { Checkbox, fieldClass, FoldMark, ghostActionClass, primaryActionClass, searchFieldClass, secondaryActionClass, NoticeBar, InlineNotice } from "./PageFrame";
 import { parseReasoningEffort, reasoningEffortValue } from "../reasoning-effort";
@@ -1666,6 +1668,7 @@ export default function GatewayLibrary({
               const usage = usageLine(g);
               return (
                 <li key={g.id} className="flex items-center gap-3 py-2 text-sm">
+                  <VendorIcon vendor={vendorForSlots(g.slots)} name={row.name} />
                   <span className="min-w-0 flex-1">
                     <span className="font-medium text-l1">{row.name}</span>
                     <span className="ml-2 text-l3">{n ? `${n} 个连接在用` : "没有连接在用"}</span>

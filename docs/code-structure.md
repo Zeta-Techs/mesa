@@ -158,6 +158,9 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   reasoning-effort.ts        # 网关思考档：逗号多选 + @开场默认；单词旧值=单档；状态栏当前档 currentEffort（屏上 > 本次覆盖 > 开场档）
                              # 与 PTY 输出认档 detectEffortInOutput（Claude Code 三种成句形态）；读回模型 detectModelInOutput（回显句）/
                              # detectModelOnScreen（整行底栏只从可视区读，Codex 差量重绘）；拼帧尾巴 outputTail（tests/reasoning-effort.test.ts）
+  vendor-icon.ts             # 端点主机 → 厂商标识（官方域名后缀表，不认第三方中转；localhost:11434=Ollama），网关取槽顺序首个命中；
+                             # 单色图标集合（currentColor 的要 mask 渲染）；tests/vendor-icon.test.ts
+  components/VendorIcon.tsx  # 厂商小图标：单色用 mask 按文字色画、彩色用 img、认不出给首字占位；素材 assets/vendor-icons/（署名见 THIRD-PARTY）
   components/GatewayLibrary.tsx # 连接页网关库：五槽/密钥/获取模型/按槽体检/逐模型策略三态；
                              # 思考档勾多档，开场默认单选（reasoning-effort.ts）
                              # Base URL 主输入（2026-08-31）：空槽与仍等于旧主值的槽跟随主输入、手改即脱离；
