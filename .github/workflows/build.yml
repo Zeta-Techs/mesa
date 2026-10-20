@@ -131,6 +131,25 @@ jobs:
             cat release-notes.md
             echo 'RELEASE_NOTES_EOF'
           } >> "$GITHUB_OUTPUT"
+      # 应用内更新的国内镜像（docs/release.md）：仓库变量 UPDATE_MIRROR_BASE 配了才把镜像清单加到 updater
+      # 地址的最前面（Tauri 按顺序试，镜像连不上再试 GitHub）；没配就只有 GitHub，源码里不写死不存在的域名
+      - name: 更新镜像地址（配了 UPDATE_MIRROR_BASE 才加）
+        if: vars.UPDATE_MIRROR_BASE != ''
+        shell: bash
+        env:
+          MIRROR_BASE: ${{ vars.UPDATE_MIRROR_BASE }}
+        run: |
+          node --input-type=module -e '
+            import { readFileSync, writeFileSync } from "node:fs";
+            import { normalizeMirrorBase } from "./scripts/mirror-latest-json.mjs";
+            const p = "src-tauri/tauri.conf.json";
+            const c = JSON.parse(readFileSync(p, "utf8"));
+            const mirror = normalizeMirrorBase(process.env.MIRROR_BASE) + "/latest.json";
+            const rest = c.plugins.updater.endpoints.filter((e) => e !== mirror);
+            c.plugins.updater.endpoints = [mirror, ...rest];
+            writeFileSync(p, JSON.stringify(c, null, 2) + "\n");
+            console.log("updater endpoints:", c.plugins.updater.endpoints);
+          '
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

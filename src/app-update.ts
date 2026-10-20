@@ -56,14 +56,14 @@ export function summarizeUpdateCheckError(raw: string): string {
   )
     return "未读到有效的更新清单，请稍后重试";
   // 插件原文：the platform `darwin-x86_64` was not found in the response `platforms` object
-  // / None of the fallback platforms … were found —— 只发 Apple 芯片包，Intel Mac 自构建版
+  // / None of the fallback platforms … were found —— 自行构建的平台（如 Linux、ARM Windows）
   // 每次启动都会撞上，归成一句可行动的话而不是「失败」
   if (
     s.includes("was not found in the response") ||
     s.includes("fallback platforms") ||
     s.includes("targetnotfound")
   )
-    return "本机平台没有对应的更新包（如 Intel Mac 需自行构建），不会收到应用内更新";
+    return "这台电脑的平台没有对应的更新包（如自行构建的版本），不会收到应用内更新，请到发布页下载安装包";
   if (
     s.includes("network") ||
     s.includes("dns") ||
@@ -72,7 +72,7 @@ export function summarizeUpdateCheckError(raw: string): string {
     s.includes("resolve") ||
     s.includes("error sending request")
   )
-    return "无法连接更新源（GitHub），请检查网络后重试";
+    return "无法连接更新源：请检查网络，或在设置 → 网络填出网代理后重试";
   return "检查更新失败，请稍后重试";
 }
 
