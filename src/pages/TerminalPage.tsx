@@ -4250,7 +4250,9 @@ const TerminalView = memo(function TerminalView({
 
   async function launch(
     resumeId?: string,
-    options?: { prompt?: string; readonly?: boolean },
+    /** typeDroppedPrompt：CLI 没有启动注入参数（Kimi）时由调用方等 TUI 就绪后把指令打进输入框，
+        这里按「已发出」收起启动栏、不复制不报错 */
+    options?: { prompt?: string; readonly?: boolean; typeDroppedPrompt?: boolean },
   ): Promise<{ ptyId: string; promptDropped: boolean } | null> {
     setError(null);
     setNotice(null);
@@ -4538,6 +4540,13 @@ const TerminalView = memo(function TerminalView({
       setStartedAt(Date.now());
       if (res.adopted) {
         setNotice("已接回正在跑的进程，画面大小先不动");
+      } else if (res.promptDropped && !isResume && options?.typeDroppedPrompt) {
+        // 调用方随后写进 PTY 并自己点亮「进行中」
+        disarmPtyWorking();
+        setPromptText("");
+        setShowPrompt(false);
+        setAdvancedLaunchOpen(false);
+        setBarExpanded(false);
       } else if (res.promptDropped && !isResume) {
         disarmPtyWorking();
         setPendingReply(false);
@@ -4813,13 +4822,16 @@ const TerminalView = memo(function TerminalView({
     }
     setPromptText(message);
     setShowPrompt(true);
-    const res = await launch(undefined, { prompt: message });
+    const res = await launch(undefined, { prompt: message, typeDroppedPrompt: true });
     if (!res) return { error: "启动 Agent 失败，请切到终端查看详细信息" };
     if (res.promptDropped) {
-      return {
-        error: "该 CLI 不支持自动发送首条指令，已切到终端；请粘贴并发送输入框中的指令",
-        needsTerminal: true,
-      };
+      // Kimi 没有带首条指令启动的参数：等输入框就绪后照普通消息写进去（与之后每句同一条路）
+      if (!mountedRef.current || ptyIdRef.current !== res.ptyId) return { error: null };
+      armPtyWorking();
+      const result = await writeChatMessage(res.ptyId, message);
+      if (result.error) disarmPtyWorking();
+      else showOptimisticUserMessage(message);
+      return result;
     }
     showOptimisticUserMessage(message);
     return { error: null };
@@ -4830,13 +4842,14 @@ const TerminalView = memo(function TerminalView({
     if (!prompt) return { error: "当前标签没有可重建的分叉摘要" };
     setPromptText(prompt);
     setShowPrompt(true);
-    const res = await launch(undefined, { prompt, readonly: false });
+    const res = await launch(undefined, { prompt, readonly: false, typeDroppedPrompt: true });
     if (!res) return { error: "重启可写会话失败，请切到终端查看详细信息" };
     if (res.promptDropped) {
-      return {
-        error: "该 CLI 不支持自动发送分叉指令，已切到终端；请手动发送摘要指令",
-        needsTerminal: true,
-      };
+      if (!mountedRef.current || ptyIdRef.current !== res.ptyId) return { error: null };
+      armPtyWorking();
+      const result = await writeChatMessage(res.ptyId, prompt);
+      if (result.error) disarmPtyWorking();
+      return result;
     }
     return { error: null };
   }
@@ -6775,6 +6788,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       setActivePane("left");
     }
     setSurfaceModeByTab((prev) => ({ ...prev, [focusedId]: mode }));
+    // 上手引导「切到终端看看」：真切过一次就算会了
+    if (mode === "terminal") useAppStore.getState().ackOnboarding("terminal");
   }
 
   // 聊天层「Mesa」操作（斜杠面板上半组，docs/design-chat-layer.md §6）：由 Mesa 执行，不写进终端
@@ -6844,7 +6859,10 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         cmd: "/terminal",
         label: "打开终端",
         hint: "切到这段对话的终端画面",
-        run: () => setSurfaceModeByTab((prev) => ({ ...prev, [tabId]: "terminal" })),
+        run: () => {
+          setSurfaceModeByTab((prev) => ({ ...prev, [tabId]: "terminal" }));
+          useAppStore.getState().ackOnboarding("terminal");
+        },
       },
     );
     return list;
@@ -7938,6 +7956,15 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     setFocusTabReq(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, focusTabReq, tabs, setFocusTabReq]);
+
+  // 上手引导「切到终端」交来的请求：当前标签切聊天 / 终端（与标签栏切换钮同一个动作）
+  const surfaceSwitchReq = useAppStore((s) => s.surfaceSwitchReq);
+  useEffect(() => {
+    if (!visible || !surfaceSwitchReq) return;
+    useAppStore.getState().setSurfaceSwitchReq(null);
+    switchSurface(surfaceSwitchReq.mode);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, surfaceSwitchReq]);
 
   // 「新建项目…」从某个标签发起：建好后回到这个标签，目录换成新项目（还没启动才换得了）
   const tabCwdReq = useAppStore((s) => s.tabCwdReq);
