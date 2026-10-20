@@ -174,7 +174,8 @@ docs/            architecture.md（总体设计 + §10 决策记录 + §12 当�
 - 三平台兼容：禁写平台特定路径，用 `dirs`/`keyring`/`portable-pty` 的抽象；unix 专属函数加
   `#[cfg_attr(not(any(unix, test)), allow(dead_code))]` 或 cfg 门控（Windows 编译不过就是漏了）；起子进程统一
   `process::background_command`（后台）/ `process::pty_command`（PTY），超时终止用 `kill_process_tree` +
-  `join_with_timeout`，禁裸 kill + 无限 join。
+  `join_with_timeout`，禁裸 kill + 无限 join。子进程不继承 Mesa 自己的 `PWD`（后台删掉、PTY 设成工作目录；
+  `opencode run` 按 PWD 取目录，2026-10-20 实证写错地方）。前端往 shell 写 `cd` 走 `pty_cd`（按标签的 shell 方言），不自己拼。
 - **客户端接力（2026-10-18）**：对话 / 项目交给 agent 自己的 GUI 客户端打开，一律走 `client_open.rs`（客户端规格 `ClientSpec` 声明在 `agent_specs.rs`），**前端不得自己拼深链**。客户端侧的失败 Mesa 看不见，所以判断全在发深链**之前**（`client_open_plan` 只读预检；`client_open_launch` 每次现算、修复只能选预检候选）；读不到的不假装知道；会话 id / 写进 TOML 的块名后端校验后才拼进 URL / 配置；按钮文案如实写层级（项目级写「打开项目」）、没装客户端就不显示。新增客户端先按 `docs/design-client-handoff.md` §1 分档（读不读同一份会话存储、能否按 id / 目录定位、渠道能否带过去），并在 matrix §13 记依据。
 - UI 文案用中文；代码注释用中文、只在非显而易见处写（参照现有文件风格）。
 - 前端不直接碰文件系统，一切经 Tauri command；流式输出走 `pty-output-<id>` 等事件。

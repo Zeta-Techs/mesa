@@ -247,6 +247,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # arrangeBranchMap 分支地图（基准作根 / 其余树分组 / 未检出分支单列）
                              # （tests/coding-lanes.test.ts）
   agent-caps.ts              # 能力表前端消费：定时任务禁选未验证无头；Grok 标「会批准全部操作」
+                             #   （Windows 上 Codex 的沙箱提示与「了解并开启」在 components/CodexWinSandboxNotice.tsx：说明文字单一出处，
+                             #   确认才写设置 codexWinSandboxConsent；定时任务弹层与设置页共用）
                              # （tests/agent-caps.test.ts）
   work-mode.ts               # 项目工作方式（科研/编程/办公）与编程状态归类、办公文档类型/预览形态；
                              # 文件行「进行中」只认 officeFileReuseKey 对上的活标签（仓级仍 isOfficeInProgress）；
@@ -424,7 +426,11 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   chat-empty-start.ts        # 聊天空态纯逻辑：按目录类型的起手提示表（STARTER_PROMPTS）+ 时段问候（chatGreeting）；输入框目录芯片文字在 terminal-welcome.ts cwdChipLabel，UI 在 components/ChatEmptyStart.tsx（随手聊文件夹下另列最近 5 条随手聊；输入框居中版式在 ChatSurface）；输入框右下「模型 · 思考」菜单在 components/ChatModelMenu.tsx（开聊前 / 运行中 / 接着聊同一个单栏菜单），左下权限四档在 components/ChatPermissionBadge.tsx，对话末尾「等你决定」卡在 components/ChatDecisionCard.tsx（设计稿 docs/design-chat-layer.md）
   model-caps-label.ts        # 模型菜单每行右侧的能力灰字（200K · 思考 · 看图），数据来自 model_capabilities
   （scripts/e2e-model-routing/：假网关 + 驱动，用 agents.rs 的 e2e_dump_launch_plans 生成的真实启动计划拉起各家 CLI，核对请求里的模型与路径；
-   chat-capture.py 按权限四档拉起、发 TRIGGER_SLOW / TRIGGER_TOOL / 切换命令逐帧抓屏，聊天层第三期逐家核实用；见其 README）
+   chat-capture.py 按权限四档拉起、发 TRIGGER_SLOW / TRIGGER_TOOL / 切换命令逐帧抓屏，聊天层第三期逐家核实用（2026-10-20 起
+   Windows 走 ConPTY / pywinpty）；capture-check.ts 把抓屏交给 tui-menu / live-reply 解析器看读不读得出；见其 README）
+  （scripts/mirror-latest-json.mjs：应用内更新国内镜像——把 Release 的 latest.json 下载地址改写成镜像地址，签名原样、缺签名拒绝；
+   .github/workflows/mirror-release.yml 在 Release 发布时调用，build.yml 打包时按仓库变量 UPDATE_MIRROR_BASE 把镜像加到 updater 地址最前；
+   开通步骤 docs/release.md）
   composer-assist.ts         # 聊天输入框的纯逻辑：@ 引用（mentionQueryAt / applyMention，带空格加引号）、斜杠面板 Mesa 组（MesaCommand / filterMesaCommands）、
                              # ↑ 取回上一句（lastUserText）、上下文圆环数据（lastContextTokens / contextUsage）；Mesa 组的内容由 TerminalPage mesaCommandsFor 组装，
                              # 斜杠面板与标签条 ⋯ 同一份（tests/composer-assist.test.ts）
@@ -724,7 +730,8 @@ src-tauri/src/
                              # matrix §9 第 8 条）；请求策略字段校验（范围、claude effort 闭集、
                              # Header 名禁引号冒号、环境变量名 POSIX 字符集）
   client_open.rs             # 客户端接力（设计 docs/design-client-handoff.md）：Mesa 的一条对话/一个项目交给该 agent 的 GUI 客户端接着做。
-                             # 探测（macOS 读 Info.plist 的 URL scheme + 版本，Windows 查 HKCR，30 秒缓存）→ 纯函数 build_plan 预检
+                             # 探测（macOS 读 Info.plist 的 URL scheme + 版本，Windows 查 HKCR 的 scheme、版本取当前用户应用包仓库的
+                             #   MSIX 包全名（两家 Windows 客户端都是 MSIX，2026-10-20 本机核实），30 秒缓存）→ 纯函数 build_plan 预检
                              #   （ok/note/warn/fix/block；Codex 查 state_<N>.sqlite 的 threads 表与 config.toml 的 provider 定义块，
                              #   Claude 查 transcript 文件与连接是否网关）→ client_open_list / client_open_plan / client_open_launch。
                              #   红线：客户端侧失败看不见，判断全在发深链前；launch 每次现算、修复只能选预检候选；会话 id / 块名后端校验后才进 URL / TOML；
@@ -784,6 +791,11 @@ src-tauri/src/
                              # terminal_link_target = 终端相对路径点击的终审（cwd 拼 + ~ 展开 + 存在性）；
                              # pty_report_terminal_colors = Windows 底色告知（win32-input-mode 记录逐条投递，
                              #   条间 2ms；ConPTY 双向吞 OSC 的实测结论见 conventions/terminal.md，别改回 OSC）
+                             # 内置终端 shell 可选（2026-10-20，设置 terminal_shell）：shell_candidates 只列本机找得到的
+                             #   （Windows PowerShell / PowerShell 7 / Git Bash / cmd；macOS zsh / bash / fish），interactive_shell 选不上回落
+                             #   login_shell_argv；run 脚本不走这里（script_shell_argv）。Windows 跟随 cd：attach_cwd_tracking 给
+                             #   PowerShell 包 prompt、给 Git Bash 设 PROMPT_COMMAND，把当前目录写进 <config>/ccode/pty-cwd/<uuid>.txt，
+                             #   process_cwd 先读它、没有再读进程 PEB（cmd）；文件随标签退出删、启动清残留；pty_cd 按标签的 shell 方言写 cd
   pty_input.rs               # 每个终端独立的有界输入队列：一个不读 stdin 的 CLI 不得占住 PTY 全局锁
   context_breakdown.rs       # 上下文分类明细（2026-10-20）：用标签同一套启动参数在后台跑 CLI 自带的 /context（Claude Code `-p --resume --no-session-persistence`，
                              # 关 hooks；Qwen `-p --resume`），解析分类表；不调用模型、不改会话文件。只有这两家能无头跑，其余家前端只显示总量
@@ -979,6 +991,10 @@ src-tauri/src/
                              #   session_confirm_detail（2026-08-24）：confirm 时从 payload 提取「在等什么」摘要
                              #   （message/tool_name/title 尽力而为），聊天层审批卡片用；
                              # 2026-10-20：hook 命令整行一次写入、记 CCODE_TAB_ID（日志第二段，旧格式照读）、payload 截 64KB
+                             # 2026-10-20 二：Windows 上每次启动注入的两家（Claude / CodeBuddy）有原生 hook 程序就用它——
+                             #   native_hook_exe 找随包的 mesa_helper（hook 模式，开发态在 target/debug/deps/），试跑 --probe 确认；
+                             #   找到就同步跑（launch_hooks_async 返回 false），找不到照旧 PowerShell 脚本 + 后台；写全局配置的三家
+                             #   用 global_hook_command：helper 拷成 hooks-state/ccode-hook.exe、路径不加引号（三种宿主都认），不行退回 .ps1
                              #   （PostToolUse 2KB，截断按字段名兜底）；launch_hooks_value = Claude / CodeBuddy 每次启动注入的 hooks；
                              #   launch_injected 五家设置页不给开关、precise_enabled 门控；migrate_launch_injected 启动收回以前写的全局条目；
                              #   real_data_dry_run_migrate（ignored）= 对真实配置的拷贝干跑
@@ -1040,7 +1056,8 @@ src-tauri/src/
                              #   （设置页「学校图书馆」主路径「登录学校账号」，内嵌窗留回落）；C extension/（MV3，ID 固定
                              #   dmjplopfhbdamkihimfllomdmkfainnn）+ bin/mesa_helper.rs（native messaging，读 helper-context.json
                              #   当前项目+打开篇标题/DOI 调 ccode_lib::helper_ingest；PDF 阅读器空标题不得落 paper-5.pdf；
-                             #   工具栏图标优先走页内「存到 Mesa」，chrome.downloads 只作无 content script 末路）
+                             #   工具栏图标优先走页内「存到 Mesa」，chrome.downloads 只作无 content script 末路；
+                             #   2026-10-20 起另有 `hook <日志> <截断字节>` 模式：Windows 上给 CLI hooks 写状态日志，只用标准库，见 hooks.rs）
                              #   + browser_bridge.rs（装 NativeMessagingHosts
                              #   清单）。内嵌窗漏斗保留为过渡，通道 C 稳定后退役——细则见 pipeline.md ⑧
   fonts.rs                   # 终端字体打包与 brew 一键安装（Maple/Sarasa/Iosevka）
@@ -1055,6 +1072,8 @@ src-tauri/src/
                              #   settings::auto_title_sessions_enabled 关 = 两命令入口直接跳过（最终闸门在此，前端跳过只为省白跑），
                              #   补名批循环逐轮复查闸门（中途关掉即停）；retitle impl 闸门收进参数是关停语义的单测锚点
   scheduler.rs               # 定时雷达（v3.75；v3.79 起技能可选；v3.218 新建巡检技能：草稿 .ccode/drafts/watch-*，确认才入库分发）：
+                             # 2026-10-20：Windows 上 Codex 用非提权沙箱时任务说明追加「读写文件用绝对路径」（codex_win_unelevated_note）；
+                             #   沙箱覆盖参数本身由 ai.rs codex_win_sandbox_for_run 加（用户确认过、自己没配才加），判定在 agent_specs.rs
                              # schedules.json（每日/每周+时分，本地时区）、60s tick + 启动补跑
                              # （漏跑 coalesce 只补一次）、执行模型 2026-10-16 起跨项目并行（due 各自 spawn；同项目 project_lock 互斥防并行写坏追加台账，tick 在跑 ≤2 防启动尖峰；手动立即跑不占额度但受同项目互斥；拉起发 scheduler-run-started、ScheduleDto.queued 支撑「排队中」；锁序恒 任务锁→项目锁、sched_lock 恒叶子）、
                              # 无头拉起 agent 在任务隔离 worktree 跑技能（每轮先从主仓播种：收件箱/跟进/引文与只读种子 included.*/reading-list 镜像、watch-seen 取并集——seed_watch_isolation，2026-10-17 取代「没有才拷」；项目根只用于归属与采纳；非 Git 项目明确失败；显式 sentinel 才允许主仓写入；人点「采纳进项目」才把本轮新增并进主仓——watch_review::adopt_at 按条目追加、watch_path_denied 硬排除流程正典、lit_watch::adopt_watch_pdfs 只拷本轮新下未排除的 PDF；未钉连接按项目默认取连接（pick_project_default）；2026-10-13 起：已采纳记录明确拒绝重采纳（find_run_record）、run_marked_adopted 是 decide 的后端闸门；历史行可删（schedule_run_delete：账行/事件/历史行/冻结证据），删任务/移项目必级联（purge_schedule_side_effects，worktree 走回收站）；默认 lit-watch，prompt 按技能分派（lit-watch 文案明锁不写 included/index/references.bib）：
@@ -1180,7 +1199,11 @@ src-tauri/src/
                              #   拼图库问 python 能否导入）
                              #   + install_dependency（quarto 走 brew --cask / winget Posit.Quarto；tex 装 tectonic；
                              #   pymupdf/pillow 走 python -m pip，externally-managed 再加 --user；Linux 只给指引）；
-                             #   缺 git 走收件箱 dep: 类别常驻提醒（不造横幅）
+                             #   缺 git 走收件箱 dep: 类别常驻提醒（不造横幅）；
+                             #   2026-10-20：macOS 没有 Homebrew 时 Node.js / Python / Quarto 走官方 .pkg（mac_pkg_url 从各家版本索引挑
+                             #   地址，curl 下载后 osascript「with administrator privileges」跑 installer，Mesa 碰不到密码）；
+                             #   TeX 两平台都可由 Quarto 装 TinyTeX（install_tex_via_quarto，Windows 写 PATH、macOS 不写）
+  win_snap.rs                # Windows 11 贴靠布局：自绘最大化按钮悬停够久，替用户按一次 Win+Z（只在 Win11、Mesa 在前台时）
   logbuf.rs                  # 诊断日志环形缓冲
   diagnostics.rs             # 诊断包：系统/WebView/GPU/输入法、功能开关、日志、进程生命周期采集与 ZIP 导出；bundle_dir/BUNDLE_FILE_PREFIX 是反馈附件闸门的同一出处
   config_dump.rs             # 生效配置自省（只读，不建/不改任何用户配置文件）：dump_effective_config /
@@ -1189,9 +1212,12 @@ src-tauri/src/
                              # 剔除 extra_env，绝无密钥）/hooksAttention/capabilities（复用 agent_capabilities）/
                              # workspaceSettings（传 root 时 ws_settings 三层合并终值 + 每键来源层标注）；
                              # 整份出站前过 sessions::redact_sensitive_text；设置页「诊断」区「生效配置快照」卡片消费
-  process.rs                 # 后台子进程统一创建（Windows CREATE_NO_WINDOW 防 conhost 闪窗）+
+  process.rs                 # 后台子进程统一创建（Windows CREATE_NO_WINDOW 防 conhost 闪窗；三平台都删掉继承的 PWD——
+                             #   opencode run 按 PWD 取目录，2026-10-20；PTY 那边 spawn_tracked 把 PWD 设成工作目录）+
                              # pty_command（Windows .cmd/.bat shim 深化：npm 系 CLI 解析出 JS 入口改 node 直启，
-                             #   npm.cmd 走固定布局 special case，解析失败回落 cmd /c call；updater 与终端拉起共用）
+                             #   npm.cmd 走固定布局 special case；Cursor CLI 的 Windows 启动器 cursor-agent.cmd
+                             #   （转手 PowerShell 脚本挑最新版本目录）由 cursor_entry_from_launcher 照同一挑法直启自带 node.exe + index.js；
+                             #   解析失败回落 cmd /c call；updater 与终端拉起共用）
   models.rs                  # fetch_models 拉目录（候选链 model_list_candidates：gemini 先剥版本段再拼 /v1beta/models，
                              #   strip_trailing_version_segment / ends_with_version_segment 版本段判据单一出处）+ 目录缓存 + 共享 DTO
   lib.rs                     # 模块与 Tauri command 注册

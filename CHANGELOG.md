@@ -7,6 +7,21 @@
 
 ## 未发布
 
+- **Windows 上内置终端可以换 shell，`cd` 之后文件树也跟着走**：**设置 → 终端 → 内置终端 shell** 里能选 Windows PowerShell、PowerShell 7、Git Bash 或命令提示符（只列你电脑上装了的），Mac 上能选 zsh、bash、fish。以前在 Windows 的终端里 `cd` 到别处，右侧文件树和 Git 面板还停在原地，现在会跟过去（四种 shell 都一样）。
+- **Windows 上 Agent 记录进度更快**：Claude Code、CodeBuddy，以及开了精确注意力的 Gemini、Kimi、Grok，每次调用工具前后 Mesa 要记一笔进度，以前每次都要起一个 PowerShell，约 1 秒，Gemini 的屏上会一直挂着「Executing Hook」、审批菜单要等很久才出来。现在改用 Mesa 自带的小程序，每次约 0.1 秒。已经开着精确注意力的，下次打开 Mesa 会自动换成新写法（改之前先备份配置）。
+- **Windows 上聊天层更认得清 Claude Code 和 Grok 的屏幕**：Claude Code 回复的第一行、Grok 的审批选项与回复，以前在 Windows 上会漏读或读错（这两家在 Windows 上换了一套符号），现在和 Mac 一样。Gemini 等 MCP 初始化、提问还在排队时，聊天里不再把启动横幅当成回复显示出来（Mac 同样修正）。
+- **Windows 11 上把鼠标停在最大化按钮上，会弹出分屏布局菜单**，和别的应用一样选一格就能摆好窗口。
+- **Cursor CLI 可以在 Windows 上一键安装**：连接页 Cursor 卡片的 **安装** 改用它官方的 Windows 安装器（以前只说「请用 WSL」）。运行时需要 Git for Windows。
+- **Mac 上没装 Homebrew 也能一键装依赖**：**设置 → 诊断 → 依赖体检** 里 Node.js、Python 3、Quarto 会下载官网的安装包来装，装的时候系统会弹窗要开机密码（这是 macOS 自己的授权框）；TeX 由 Quarto 装 TinyTeX。连接页缺 Node.js 时的「一键安装 Node.js」同样能用了。
+- **Windows 上聊天里的 aiff 音频能放了**：Mac 上 `say -o` 存的读音文件（未压缩的 aiff）以前在 Windows 上放不了，现在 Mesa 先转成 wav 再放。
+- **LaTeX 论文模板在 Windows 上，Agent 也能跑编译脚本**：「本步骤脚本」写进任务书，给出 PowerShell 与 Git Bash 两种写法，Codex 这类用 PowerShell 跑命令的 Agent 不再照抄 bash 写法失败。你点「运行脚本」照旧用 Git Bash。
+- **Windows 的客户端接力显示客户端版本**：连接页里 Codex 客户端、Claude 桌面版的版本号在 Windows 上也能读出来了。
+- **Windows 上的定时任务可以让 Codex 跑命令了（要你先确认）**：Codex 在 Windows 上没开它自己的沙箱时，无人值守的定时任务里命令会被一律拦下（联网检索、下载都做不了）。现在建或改定时任务选了 Codex，会说明开沙箱意味着什么（只给定时任务的隔离副本里的文件加访问权限、第一次约 20–30 秒、不改 Codex 的配置文件），点 **了解并开启** 确认后才生效；也可以在 **设置 → AI 与 Agent** 里开关。你在 Codex 里自己开过沙箱的，直接用你的设置。
+- **国内检查更新更快（发布方配好镜像后）**：之后的版本会先从 Mesa 在国内的更新镜像查新版本、下载安装包，连不上再回到 GitHub。安装包签名照旧校验。检查更新失败时，提示里会引导你在 **设置 → 网络** 填出网代理。
+- **综述 / 论文的正文字体脚本在中文 Windows 上不再出错**：以前读 Quarto 输出时按 GBK 解码会崩，装了 TinyTeX 的电脑上还会把所有字体都认成「没有」。
+- **无头运行的 Agent 不再跑到 Mesa 的启动目录干活**：Mesa 从终端启动时，后台跑的 OpenCode（会话摘要、定时任务等）会按 Mesa 自己的启动目录写文件，现在照它该在的工作目录。macOS 与 Windows 相同。
+- **Intel 芯片的 Mac 有安装包了**：从下一个版本起，发布页多一个 `Mesa_x.y.z_x64.dmg`，应用内更新也能收到。Windows 安装时若被「Windows 已保护你的电脑」拦住，点 **更多信息** → **仍要运行**（README 与说明书已写明）。
+
 - **三个按钮改成直白的叫法**：开始一步前确认窗口里的勾选项「开工接驳」改叫「一并带上未保存的清单与笔记」，评审保存后的「沉淀到下一步」改叫「带到下一步」，想法卡上的「◈ 沉淀进任务书」改叫「◈ 写入任务书」。功能不变。使用教程和产品说明书同步统一了用词，说明书新增「常用词对照」表（第 14.1 节）。
 
 - **装了 Gemini CLI 却没用过的电脑上，`~/.gemini` 里不再越积越多 `projects.json.<一串编号>.tmp`**：这是 Gemini CLI 0.64 查版本时的老毛病（还没有 `projects.json` 时，每查一次版本留两个），Mesa 检测连接、检查更新时会查版本，于是越积越多。现在 Mesa 查 Gemini 版本时改用自己的临时目录，不再碰你的 `~/.gemini`。已经留下的这些 `.tmp` 文件没有用处，可以直接删掉。

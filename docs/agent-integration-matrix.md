@@ -119,7 +119,7 @@
 | 会话格式 | JSONL 带 type 字段，源码枚举：`user_message`/`tool_call`/`tool_result`/`turn_ended`/`turn_id`/`message_id` 等（**完整字段样本未验证——防御式解析，未知 type 跳过**） |
 | 官方账号 | `cursor-agent login`（浏览器 OAuth）；凭证**默认 macOS 钥匙串**，设 `AGENT_CLI_CREDENTIAL_STORE=file` 时落 `~/.cursor/auth.json`（检测需双通道：auth.json + 钥匙串只读查询）；官方账号拉起 `env_remove CURSOR_API_KEY` |
 | 技能 | `~/.cursor/skills-cursor/`（**未验证 CLI 是否真读，分发走 copy 模式**）；`~/.cursor` 与 IDE 共享——**会话删除白名单必须限定 `projects/*/agent-transcripts/**/*.jsonl`** |
-| 安装 / 更新 | 官方安装脚本（`curl -fsSL https://cursor.com/install | bash`）；自更新 `cursor-agent update`（非交互）；无 brew/npm 官方包。**Windows 安装/数据路径未验证** |
+| 安装 / 更新 | 官方安装脚本（`curl -fsSL https://cursor.com/install | bash`）；自更新 `cursor-agent update`（非交互）；无 brew/npm 官方包。**Windows（2026-10-20 核实）**：官方有原生安装器 `irm 'https://cursor.com/install?win32=true' \| iex`，装到 `%LOCALAPPDATA%\cursor-agent`（写进用户 PATH），`cursor-agent.cmd` → PowerShell `cursor-agent.ps1` → 挑 `versions\<YYYY.M.D-提交>` 最新目录跑自带 `node.exe index.js`（Mesa 直启后两者，`process::cursor_entry_from_launcher`）；安装器提示运行需要 Git for Windows。本机 2026.10.19-6bbf2c4 版本探测已核；**登录、会话目录（预计仍是 `~/.cursor/projects/...`）需要 Cursor 账号，未核** |
 
 ## 9. Grok Build（本机 1.0.13 实测，2026-09-05）
 
@@ -458,6 +458,11 @@ Zed 是唯一核实过的跨 agent 路线：可从已配置的 ACP agent 导入�
 1. **环境变量注入对所有 GUI 客户端无效**：它们都不带 Mesa 的注入启动。渠道能到达客户端的只有写盘配置（Codex 的 provider 定义块、「设为全局默认」）；claude 桌面版走自己的账号。
 2. 客户端是否「无缝」取决于三条：读不读同一份会话存储、能否按 id / 目录定位、渠道能否带过去；缺一档降一档。
 3. 本机 Codex 0.163 的 provider 支持 `command` 取令牌（`command / timeout_ms / refresh_interval_ms / cwd`，字符串表核实，**未实测 ChatGPT 内嵌客户端认不认**），若认则 `experimental_bearer_token` 明文落盘可替换为命令取密钥；单独起验证任务，不并入本期。
+
+4. **Windows（2026-10-20 本机核实）**：Codex 客户端（MSIX 包 OpenAI.Codex 26.1013.4894.0）与 Claude 桌面版（MSIX 包 Claude 2.42304.2.0）的
+   scheme 都注册在 `HKCR\<scheme>`（含 `URL Protocol` 值；Claude 另有 shell\open\command 指向 WindowsApps 下的 Claude.exe，Codex 没有，靠应用包激活）。
+   版本从 `HKCU\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages` 的子键名（包全名）读，
+   不起 PowerShell。深链打开本身仍需人点验（会真的拉起客户端）。
 
 ## 14. 聊天层结构化旁路（2026-10-20；实现 = chat_channel.rs + hooks.rs launch_hooks_value，设计 docs/design-chat-structured-channels.md）
 

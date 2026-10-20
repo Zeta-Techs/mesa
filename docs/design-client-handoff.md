@@ -114,6 +114,8 @@ ClientSpec {
 1. `claude://resume` 导入一条**走第三方网关**的会话：导入成功与否、续聊走哪个账号/模型、桌面版是否改写或复制原 jsonl。会往你的 Claude 桌面版里新增一条会话记录，需要你同意再做。
 2. Codex：对话不在 threads 表时客户端的实际表现；`codex://threads/new?path=` 对未登记目录的表现（是否弹工作区信任）。
 3. Windows 上 `codex://`、`claude://` 的注册表项位置与版本读取方式（本机是 macOS，Windows 全靠文档，须在 Windows 机器上验）。
+   **2026-10-20 已在 Windows 11 上核实**：两家都是 MSIX 包，scheme 在 `HKCR\<scheme>`（Codex 没有 shell\open\command，靠应用包激活）；
+   版本改读当前用户应用包仓库的包全名（matrix §13.3 第 4 条，`client_open.rs windows_client_version`）。深链打开仍按 §11 由人点验。
 4. OpenCode 桌面版真机：scheme 与 `open-project` 路由在当前发行版是否仍有效。
 
 ## 9. 测试与验收

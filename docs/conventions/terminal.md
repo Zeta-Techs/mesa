@@ -328,6 +328,12 @@
   0700，标签退出即删，启动只清进程已不在的（打包版与 Mesa Dev 共用配置目录）；Codex app-server 自成进程组，随 PTY 退出 /
   应用退出一并杀。改任一家旁路前先跑 `scripts/e2e-model-routing/README.md`「聊天层结构化旁路」两层核对。
 
+- **内置终端 shell 与跟随 cd（2026-10-20）**：普通 shell 标签用设置 `terminal_shell`（自动 / 本机找得到的几种），run 脚本不受影响
+  （Windows 固定 Git Bash）。文件树 / Git 面板跟随 shell 里的 `cd` 靠 `pty_get_cwd`：macOS lsof、Linux /proc；Windows 由 shell 每次出提示符
+  把当前目录写进 `<config>/ccode/pty-cwd/<uuid>.txt`（PowerShell 包一层 prompt 函数，保留用户 profile 的提示符；Git Bash 用
+  PROMPT_COMMAND `pwd -W`），cmd 没有提示符钩子、读进程 PEB。前端往 shell 写 cd 一律走 `pty_cd`（按标签的 shell 方言），不得自己拼
+  `cd '…'`——cmd 不认单引号、跨盘还要 `/d`。
+
 - **精确注意力标记（hooks 桥接，七家；2026-10-20 起 Claude Code / CodeBuddy / Qwen / OpenCode / Codex 改为 Mesa 里启动时自动带上，
   设置页只给 Gemini / Kimi / Grok 开关，见上条）**：`session_tail_state` 对设置页已开启（或启动时自动注入）的 agent 优先读 hooks 事件日志
   （`<config>/ccode/hooks-state/<tag>-hooks.jsonl`，尾部窗口读取），日志缺失或超 10 分钟无更新回落尾部文本推断——

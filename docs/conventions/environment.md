@@ -47,6 +47,27 @@
   - 界面：自绘标题栏恒在最上，页内全屏层与 z≥40 遮罩在 Windows 从标题栏下沿起铺，要整窗覆盖的层（沉浸阅读）
     加 `ccode-covers-titlebar` 且自带拖拽区与 `WindowControls`；WebView2 的刷新 / 打印 / 查找 / 后退快捷键与默认右键
     由 `windows-shell.ts` 收口；Windows 10 无 Mica 时 `data-material=none` 回实心底。
+- **Windows 二批（2026-10-20，用户「全部做」）**：
+  - hooks 原生小程序：每次启动注入的 Claude Code / CodeBuddy 的 hook 命令用随包的 `mesa_helper hook`（~0.1 秒，PowerShell 约 1.2 秒），
+    找到就同步跑；**开发态** `target/debug/mesa_helper.exe` 会被 tauri-build 的 0 字节占位反复覆盖，要用就先
+    `cargo build --bin mesa_helper`（真身在 `target/debug/deps/`，`hooks::native_hook_exe` 会去那里找），没建就退回 PowerShell 脚本。
+    写进全局配置的三家（Gemini / Kimi / Grok）用拷到 `hooks-state/ccode-hook.exe` 的那份、程序路径**不加引号、用正斜杠**——
+    Gemini 在 PowerShell 里跑 hook，双引号开头的命令它不认；这种写法 cmd /s /c、powershell -Command、bash -c 都认（实测）。
+    路径带空格或 `&()%` 之类就退回 `.ps1`。启动时开关已开的几家按当前该用的写法重写一次（写前备份）。
+  - 内置终端 shell 可选（设置 → 终端），`cd` 后的目录靠 shell 写记录文件（PowerShell 包 prompt、Git Bash 用 PROMPT_COMMAND 跑 `pwd -W`），
+    cmd 读进程 PEB——PowerShell 的 Set-Location 不改进程工作目录，读 PEB 拿不到。
+  - Cursor CLI 有 Windows 原生安装器：`irm 'https://cursor.com/install?win32=true' | iex`，装到 `%LOCALAPPDATA%\cursor-agent`，
+    `cursor-agent.cmd` 转手 PowerShell 再起 `versions\<版本>\node.exe index.js`；Mesa 直启后两者（`--version` 2.6 秒 → 0.9 秒）。
+  - Codex 无头 `exec -s workspace-write` 在 Windows 上靠 Codex 自己的沙箱：`config.toml` 没有 `[windows] sandbox` 时命令一律
+    「blocked by policy」，定时任务跑不了命令；`unelevated` 能跑（第一次约 20–30 秒，给工作树每个文件加一条给沙箱身份的「修改」权限，
+    主仓与 .git 不动），但 Codex 0.163 下 shell 起在 PowerShell 自己的安装目录（5.1 / 7 都是），相对路径写被拒、绝对路径正常；
+    `elevated` 正常但要管理员初始化，Codex 没有命令行能做。用户确认（设置 `codex_win_sandbox_consent`）后 Mesa 给定时运行加
+    `-c windows.sandbox="unelevated"` 并在任务说明里要求写绝对路径；用户自己配了照用户的（agent_specs.rs / ai.rs / scheduler.rs）。
+    核对时用临时 CODEX_HOME；用真实 CODEX_HOME 跑会往 `~/.codex/cap_sid` 记下工作目录。**不要**在测试里配 `elevated`（初始化会弹 UAC）。
+  - 本机跑 `npm test`：PATH 上第一个 `python` 是应用商店占位（退出码 9009），依赖 Python 的十几条测试会红；把
+    `%LOCALAPPDATA%\Programs\Python\Python313` 放到 PATH 前面再跑。不是代码问题。
+  - Agent 在 Git Bash 里用 heredoc（`<<'EOF'`）生成含 `\\` 的源码或脚本时反斜杠会被吞一半（2026-10-20 实证：写进去的 `'\\'`
+    变成 `'\'`、`\b` 变成退格符），含反斜杠的改动用编辑工具直接改。
 - **Windows PDF 预览白屏**：WebView2 + 全局 `color-scheme:dark` 下，pdf.js 默认不透明 2d canvas 与
   `.textLayer { color-scheme:only light }` 会合成整页白块；经典滚动条改 clientWidth 再叠加
   `key={renderKey}` 会拆掉 canvas 振荡闪白。渲染前必须先绑 `alpha:true` 上下文，页宿主锁定 light

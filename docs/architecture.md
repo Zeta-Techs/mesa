@@ -457,6 +457,64 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-20 · Windows / Mac 两端完善批（用户：盘点后「全部做」）
+
+先盘点两端各自还缺什么（8 月底 Windows 审计的优先级表前 11 项已修，只剩第 6 项一半），用户「全部做」。定下与实测：
+
+一，**流程 run 脚本在 Windows**：人点「运行脚本」本来就走 Git Bash（`script_shell_argv`），盘点时说「点了必错」不准；真正的缺口是
+Agent 照简报跑 `render-pdf` 时，命令工具是 PowerShell 的几家（Codex 等）跑不了 bash 写法。步骤 run 条目加 `command_windows`
+（PowerShell 写法，编译器经 `cmd /c` 跑并在 cmd 里重定向——日志按原字节落盘、不走 5.1 的 UTF-16；失败用 `cmd /c exit` 收尾，非零退出又
+不关交互 shell；本机 TinyTeX 实跑成功 / 失败 / 无 TeX 三种）。TASK.md 只在 Windows、只列简报点名的脚本，给 PowerShell 与 Git Bash
+两种写法——macOS 任务书长度不变（`research-usability` 的篇幅上限钉着）。
+二，**内置终端 shell 可选**（设置 `terminal_shell`，只列本机找得到的）+ **Windows 跟随 cd**：PowerShell 的 Set-Location 不改进程工作目录，
+所以由 shell 每次出提示符写目录记录文件（PowerShell 包 prompt、Git Bash `PROMPT_COMMAND` 跑 `pwd -W`），cmd 读进程 PEB；四种 shell
+在 ConPTY 里真起、`cd` 后读回已有测试。前端写 cd 改走 `pty_cd`（cmd 不认单引号、跨盘要 `/d`）。
+三，**hooks 原生小程序**：随包的 `mesa_helper` 加 `hook` 模式（只用标准库），Windows 上每次启动注入的 Claude Code / CodeBuddy 找得到它就用它、
+同步跑；`e2e_channel` 实跑 Claude（网关 / 官方账号 + 带 `|%^` 的首条消息）与 CodeBuddy 全通过，Stop hook 87–109ms（PowerShell 1241ms）。
+没用新 sidecar。同日应统筹会话要求，写全局配置的三家（Gemini / Kimi / Grok）也换上：helper 拷成 `hooks-state/ccode-hook.exe`，命令里程序路径
+不加引号、用正斜杠——Gemini 在 PowerShell 里跑 hook 不认双引号开头的命令，这种写法 cmd / PowerShell / bash 三种宿主都认；路径有空格等退回 `.ps1`，
+启动时按该用的写法重写（写前备份）。Gemini 实跑（假网关、临时 HOME）hooks 照常记录，整轮 2.8 秒（原先每个事件约 1 秒、屏上挂「Executing Hook」）。
+四，**读屏兜底在 ConPTY 下核对**（`chat-capture.py` 加 Windows 分支，`capture-check.ts` 用 Mesa 自己的解析器读逐帧画面）：Claude / Gemini / Kimi /
+Grok 的审批菜单与实时预览都认得出，前提是补上 Windows 字形——Claude 正文行首 `●`（Mac 是 `⏺`，原 `CLAUDE_STATUS` 把顶格 `●` 当状态吞掉）、
+Grok `>` / `♦` / `○` / 单选 `•`；没有回显也没有行首、屏顶是没缩进的字（启动横幅、排队中的提问）时不再预览（两平台同一条）。
+五，**Win11 贴靠布局**：自绘最大化按钮悬停 500ms 替用户按 Win+Z（只在 build ≥ 22000、Mesa 在前台时），系统给前台窗口弹同一个布局菜单。
+六，**客户端接力 Windows 事实**（设计稿 §8 第 3 条）：本机 Codex（OpenAI.Codex 26.1013.4894.0）与 Claude（2.42304.2.0）都是 MSIX 包，scheme 注册在
+HKCR 下（Codex 没有 shell\open\command，靠应用包激活）；版本改从当前用户应用包仓库的子键名读，不起 PowerShell。打开动作本身仍留给人点。
+七，**Cursor CLI 在 Windows 上能装能用**：官方其实有原生安装器（`irm 'https://cursor.com/install?win32=true' | iex`，装到 `%LOCALAPPDATA%\cursor-agent`），
+此前「只支持 WSL」的口径作废。`PackagingSpec.install_script_win` 走 PowerShell；启动器 `cursor-agent.cmd` 转手 PowerShell 再起自带 node，
+Mesa 照同一挑法直启 `node.exe index.js`。本机已装并核对版本探测；登录与会话目录需要 Cursor 账号，未核。
+八，**Codex 无头写盘在 Windows**（定时雷达用）：临时 CODEX_HOME + 假网关实测——没配 `[windows] sandbox` 时 `exec -s workspace-write` 的命令一律
+「blocked by policy」；`unelevated` 能跑但 pwsh 7 下命令落在 pwsh 安装目录、相对路径写错地方；`elevated` 要 UAC 初始化，没在测试里起。
+能力表按用户配置给提示，不改启动参数（要不要在 Windows 上给 Codex 定时任务放开沙箱是安全取舍，留给用户定——同日已拍板，见下下条）。
+九，**其余 Windows 小项**：未压缩 aiff 后端转 wav 再给 WebView2 放；setup / archive 钩子测试三平台同跑（Windows 走 Git Bash）；SmartScreen 写进
+README 与说明书；`manuscript_font.py` 两处 Windows 毛病（子进程输出按 GBK 解码崩、fc-list 的 `C:` 盘符让族名全认不出）。
+十，**Mac 没有 Homebrew 也能一键装依赖**：Node.js / Python / Quarto 走各家官网 .pkg（查版本索引 → curl → osascript 提权跑 installer，系统密码框，
+Mesa 碰不到密码），TeX 由 Quarto 装 TinyTeX。只在 Windows 上编译与单测过解析逻辑，Mac 实机未跑。
+十一，**发布**：推翻 v1.3「Intel 包暂缓」——Apple 芯片 runner 交叉编译 `x86_64-apple-darwin`，`verify-release` 加 `darwin-x86_64` 校验；
+macOS 签名公证接进 workflow，六个 `APPLE_*` secrets 配齐才启用（缺一个就照旧出未签名包），开通步骤见 docs/release.md。
+十二，**子进程不继承 Mesa 的 PWD**（同日另一会话报：`opencode run` 用 `process.env.PWD ?? cwd`，无头 opencode 把文件写进了 src-tauri/src）：
+`background_command` 删掉 PWD，PTY 拉起时 PWD 设成工作目录，三平台同口径。
+**没做**：应用内更新的国内镜像（当时要先定托管方；同日用户拍板后已接上，见下一条）；CI 里的
+「CLI 版本 × 平台」端到端（`e2e_channel` 依赖本机各家 CLI 的首次启动状态，要在 GitHub 上迭代，本地端到端仍是闸门）；
+界面点验（清单在 docs/qa/acceptance-2026-10.md）。
+
+### 2026-10-20 · 用户拍板两件：Windows 上 Codex 定时任务确认后开沙箱；应用内更新国内镜像「配齐就启用」
+
+一，**Codex 定时任务的 Windows 沙箱**（上条第八条的取舍）。补测（假网关、git 工作树作工作目录，同定时任务的隔离副本）：
+`-c windows.sandbox="unelevated"`（非提权，不要管理员）命令能跑，第一次约 20–30 秒，给工作树里每个文件加一条给 Codex 沙箱身份的
+「修改」权限，主仓与 `.git` 不动；但 Codex 0.163 在这种模式下 shell 起在 PowerShell 自己的安装目录（5.1 与 7 都是），相对路径写
+被拒、绝对路径正常。用户本机已配的 elevated（提权）命令与相对路径都正常（多一个 CodexSandboxUsers 组的权限；`~/.codex/cap_sid`
+记下这次的工作目录）。Codex 没有命令行做 elevated 的初始化（要管理员 UAC），所以 Mesa 能替用户开的只有 unelevated。定下：
+用户在定时任务弹层（选了 Codex 时出「了解并开启」）或 **设置 → AI 与 Agent** 看过说明、点确认，设置 `codex_win_sandbox_consent`
+（全局一个：权限只动 Mesa 自己建的隔离副本，与哪个任务无关）才生效；生效时定时运行加 `-c windows.sandbox="unelevated"`（只对这次
+运行，不改 `config.toml`），任务说明追加「读写文件用绝对路径」一句（`scheduler::codex_win_unelevated_note`）。用户在 Codex 里自己配了
+`[windows] sandbox` 时照用户的、不问。没确认 = 现状（提示会被拦、不开）。
+二，**更新镜像**：托管 = 公司自有对象存储 + CDN（S3 兼容接口，阿里云 OSS 一类），不用第三方加速域名。应用侧：仓库变量
+`UPDATE_MIRROR_BASE` 配了，打包时把 `<镜像>/latest.json` 加到 updater 地址最前、GitHub 第二（Tauri 按顺序试）；没配就只有 GitHub，
+源码不写死域名。同步：新 workflow `mirror-release.yml` 在 Release **published** 时触发（草稿阶段不同步），取 `latest.json` 改写下载地址
+（`scripts/mirror-latest-json.mjs`，签名原样、缺签名拒绝）、先传包后传清单、读回核对；凭据走 secrets，没配齐跳过并写日志。改写逻辑
+对现有已发布的 `latest.json` 干跑过；工作流本身没在真实对象存储上跑过（开通步骤见 docs/release.md）。只对配好后打出的版本生效。
+
 ### 2026-10-20 · Gemini 版本探测不再往用户 ~/.gemini 里留 projects.json.*.tmp
 
 新用户沙盒里发现 `~/.gemini` 十几分钟积了 28 个 `projects.json.<uuid>.tmp`。定因（本机 gemini 0.64 复现 + 读源码
@@ -2210,9 +2268,10 @@ Claude Code 用量无法恢复。
 - **定时任务与研究流程结合（核心路径已落地，细目见架构 §11.4 历史记录）**：边界已定——不给每步配定时任务，
   结合点是「产出回流」而非「配置下沉」。产出回流三件套已上线（v3.95：lit_watch.rs 解析巡检产物 + LitWatchCard
   雷达卡片 + 收件箱 lit: 文献胶囊 / Schedule.linkedStep 关联步骤 + RunRecord.newEntries / staleLitHint 复用
-  staleUpstream 口径只提醒不阻断）。
-  当前规则：默认定时任务进入隔离 worktree，无法创建或校验失败则 fail-closed；启动前登记 Run，启动失败也保留 failed Run 记录；超时与真失败分列。成功产物经只读评审，人点「采纳进主仓」才拷回项目根，不自动合并。当前没有主仓 sentinel 配置入口，不能把定时成功理解为已写入主仓。不同 Agent 的无头权限差异仍以能力表和实机验证为准。关标签后交互 Run 按 `runId` 从工作台「继续」或收件箱找回。
-- macOS 签名公证（暂缓，需 Apple Developer 会员 + CI 配 6 个 APPLE_* secrets，见架构 v1.3）
+- macOS 签名公证：**workflow 已接好**（2026-10-20），六个 APPLE_* secrets 配齐自动启用；剩开通 Apple Developer 账号与配 secrets（docs/release.md）
+- Intel macOS 安装包 ✅（2026-10-20 用户「全部做」推翻暂缓：Apple 芯片 runner 交叉编译 x86_64，latest.json 带 darwin-x86_64，verify-release 校验）
+- Windows 代码签名（未做：要证书；SmartScreen 的点法已写进 README 与说明书）
+- 应用内更新的国内镜像：**流程已接好**（2026-10-20 拍板：公司对象存储 + CDN，Release 发布时同步）；剩建桶、绑域名、配变量与 secrets（docs/release.md）
 - Intel macOS 安装包（暂缓：CI macos-latest 只出 aarch64；加 `x86_64-apple-darwin` target 构建时间翻倍，真有 Intel 用户再加，
   见架构 v1.3 / README 安装节）
 - OpenCode Windows 数据路径 ✅：`sessions.rs` 依次探测 `OPENCODE_DB` / `%LOCALAPPDATA%\opencode` / `%APPDATA%\opencode` / `~/.local/share/opencode`（2026-08-31）
