@@ -5738,6 +5738,67 @@ pub fn release_session_claim(claim_id: String) {
     release_session_claim_impl(&claim_id);
 }
 
+/// 已认领的标签，CLI 换了会话文件之后接着跟：Gemini / Kimi / Grok 打 /clear 会另开新会话文件（2026-10-20 三家实测），
+/// 它们默认没有旁路报「换了会话」，标签一直盯着旧文件、聊天层看不到新回复（三平台都有）。
+/// 同 agent 同目录出现了比当前认领更新、启动前没有、也没被任何标签认领过的会话就改认它（取最新的）；
+/// 同 agent 同目录还有别的标签登记着时不猜——分不清是哪个标签开的新对话，宁可不跟也不抢
+#[tauri::command]
+pub async fn claim_session_successor(claim_id: String) -> Option<SessionMetaDto> {
+    let scan = tauri::async_runtime::spawn_blocking(cached_scan)
+        .await
+        .ok()?;
+    let mut registry = session_claims().lock().ok()?;
+    let mut found = pick_claim_successor(&mut registry, &claim_id, scan.sessions)?;
+    drop(registry);
+    redact_session_meta(std::slice::from_mut(&mut found));
+    Some(found)
+}
+
+fn claim_time(session: &SessionMetaDto) -> &str {
+    session
+        .created_at
+        .as_deref()
+        .unwrap_or(session.updated_at.as_deref().unwrap_or(""))
+}
+
+fn pick_claim_successor(
+    registry: &mut SessionClaimRegistry,
+    claim_id: &str,
+    sessions: Vec<SessionMetaDto>,
+) -> Option<SessionMetaDto> {
+    let context = registry.contexts.get(claim_id)?.clone();
+    let current = registry.assignments.get(claim_id)?.clone();
+    let rivals = registry.contexts.iter().any(|(id, other)| {
+        id != claim_id
+            && other.agent == context.agent
+            && crate::paths::same_path(&other.project_path, &context.project_path)
+    });
+    if rivals {
+        return None;
+    }
+    let current_time = sessions
+        .iter()
+        .find(|s| s.agent == current.0 && s.session_id == current.1)
+        .map(|s| claim_time(s).to_string())?;
+    let mut taken = registry.used_sessions.clone();
+    taken.extend(registry.assignments.values().cloned());
+    let next = sessions
+        .into_iter()
+        .filter(|s| {
+            s.agent == context.agent
+                && crate::paths::same_path(&s.project_path, &context.project_path)
+                && !context.excluded.contains(&s.session_id)
+                && !taken.contains(&(s.agent.clone(), s.session_id.clone()))
+                && claim_time(s) > current_time.as_str()
+        })
+        .max_by(|a, b| claim_time(a).cmp(claim_time(b)).then(a.session_id.cmp(&b.session_id)))?;
+    registry.used_sessions.insert(current);
+    registry
+        .assignments
+        .insert(claim_id.to_string(), (next.agent.clone(), next.session_id.clone()));
+    Some(next)
+}
+
 /// 注意力标记 v1（§6.11）：读会话文件尾部分类 done/working/confirm/unknown
 #[tauri::command]
 pub async fn session_tail_state(agent: String, file_path: String) -> String {
@@ -10058,6 +10119,50 @@ mod tests {
             provider: None,
             profile_id: None,
         }
+    }
+
+    #[test]
+    fn claim_successor_follows_clear_only_when_unambiguous() {
+        let ctx = |since: &str, excluded: &[&str]| SessionClaimContext {
+            agent: "gemini".into(),
+            project_path: "/p".into(),
+            since_iso: since.into(),
+            excluded: excluded.iter().map(|s| s.to_string()).collect(),
+        };
+        let s = |id: &str, t: &str| claim_test_session("gemini", id, "/p", t);
+        let mut reg = SessionClaimRegistry::default();
+        reg.contexts.insert("tab1".into(), ctx("2026-10-20T10:00:00Z", &["old"]));
+        reg.assignments.insert("tab1".into(), ("gemini".into(), "s1".into()));
+        let all = || {
+            vec![
+                s("old", "2026-10-20T11:00:00Z"), // 启动前就有：不认（时间新也不认）
+                s("s1", "2026-10-20T10:00:05Z"),
+                s("s2", "2026-10-20T10:05:00Z"),
+                claim_test_session("kimi", "k1", "/p", "2026-10-20T10:06:00Z"), // 别家
+                claim_test_session("gemini", "x1", "/q", "2026-10-20T10:07:00Z"), // 别的目录
+            ]
+        };
+        // 没有更新的会话：不动
+        assert!(pick_claim_successor(&mut reg, "tab1", vec![s("s1", "2026-10-20T10:00:05Z")]).is_none());
+        // /clear 后出现 s2：改认它，旧的记为用过
+        let next = pick_claim_successor(&mut reg, "tab1", all()).unwrap();
+        assert_eq!(next.session_id, "s2");
+        assert_eq!(reg.assignments["tab1"].1, "s2");
+        assert!(reg.used_sessions.contains(&("gemini".into(), "s1".into())));
+        // 再问一次：已经是最新，不再跳
+        assert!(pick_claim_successor(&mut reg, "tab1", all()).is_none());
+        // 同目录同家还有别的标签登记着：分不清是谁开的新对话，不猜
+        let mut reg2 = SessionClaimRegistry::default();
+        reg2.contexts.insert("tab1".into(), ctx("2026-10-20T10:00:00Z", &["old"]));
+        reg2.contexts.insert("tab2".into(), ctx("2026-10-20T10:01:00Z", &["old"]));
+        reg2.assignments.insert("tab1".into(), ("gemini".into(), "s1".into()));
+        assert!(pick_claim_successor(&mut reg2, "tab1", all()).is_none());
+        // 别的标签已认领的会话不抢
+        let mut reg3 = SessionClaimRegistry::default();
+        reg3.contexts.insert("tab1".into(), ctx("2026-10-20T10:00:00Z", &["old"]));
+        reg3.assignments.insert("tab1".into(), ("gemini".into(), "s1".into()));
+        reg3.used_sessions.insert(("gemini".into(), "s2".into()));
+        assert!(pick_claim_successor(&mut reg3, "tab1", all()).is_none());
     }
 
     #[test]

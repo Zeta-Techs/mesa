@@ -4150,6 +4150,14 @@ const TerminalView = memo(function TerminalView({
         return;
       }
       lockLink(hit.filePath, hit.sessionId, hit.title, hit.createdAt);
+    } else if (!channelRef.current?.sessionId) {
+      // 没有旁路报「换了会话」的家（Gemini / Kimi / Grok 默认）：/clear 后 CLI 另开新文件，按认领规则接着跟
+      const next = await invoke<SessionMetaDto | null>("claim_session_successor", { claimId: tabId }).catch(() => null);
+      const cur = linkCtxRef.current;
+      if (next && cur?.filePath && !samePath(next.filePath, cur.filePath, IS_WINDOWS)) {
+        relinkTo(next.filePath, next.sessionId, null);
+        return;
+      }
     }
     const linkedCtx = linkCtxRef.current;
     if (linkedCtx?.filePath && !sessionWatchIdRef.current) {

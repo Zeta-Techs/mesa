@@ -835,6 +835,9 @@ src-tauri/src/
                              # codex rollout 元信息 model_provider 记进 SessionMetaDto.provider（恢复按它挑兼容 profile，
                              #   前端 pickResumeProfile 单一出处：ccode 或 ccode-<短id> 前缀按网关挑绑定）、
                              # sessions_for_card（融合进任务书的按卡取会话：与列表同一归属口径）；
+                             # 标签认领会话（register_session_claim / claim_session_for）；claim_session_successor：没有旁路报换会话的家
+                             #   （Gemini / Kimi / Grok 默认）/clear 后另开新文件，同 agent 同目录只有这一个标签登记时改认更新、启动前没有、
+                             #   没人认领过的会话（多个标签不猜），前端 linkTick 在无旁路会话时每轮问一次；
                              # Grok 回放优先读 chat_history.jsonl（parse_grok_history）：文字 + tool_calls → tool_use 块（带 call_id）+
                              #   tool_result 并进发起调用的助手消息；updates.jsonl 回落（parse_grok）只取文字；
                              # 无头 AI 按 session id 标 session_meta.internal（雷达解读/定时巡检不进本项目会话，

@@ -515,6 +515,18 @@ macOS 签名公证接进 workflow，六个 `APPLE_*` secrets 配齐才启用（�
 （`scripts/mirror-latest-json.mjs`，签名原样、缺签名拒绝）、先传包后传清单、读回核对；凭据走 secrets，没配齐跳过并写日志。改写逻辑
 对现有已发布的 `latest.json` 干跑过；工作流本身没在真实对象存储上跑过（开通步骤见 docs/release.md）。只对配好后打出的版本生效。
 
+### 2026-10-20 · 没有旁路的家 /clear 后跟到新会话；多 Agent 聊天层核对统筹结论
+
+用户让本会话统筹几个并行核对 Agent CLI 聊天层的会话，补做没人核对的「会话跟随」。Windows 上六家（Gemini / Kimi / Grok / Qwen /
+OpenCode / CodeBuddy）在含中文与空格的目录里实跑（假网关、临时家目录），Mesa 解析出的项目路径都与启动目录 same_path 相等、消息都读得出
+（Gemini 存的是全小写路径，same_path 在 Windows 不分大小写，照样对上）。**查出三平台共有的缺口**：Gemini / Kimi / Grok 打 `/clear`
+都另开新会话文件（三家实测），这三家默认没有旁路报「换了会话」，标签一直盯旧文件，之后的回复聊天层看不到。用户拍板修：
+`sessions::claim_session_successor`——已认领的标签，同 agent 同目录出现比当前认领更新、启动前没有、没被任何标签认领过的会话就改认
+（取最新）；**同 agent 同目录还有别的标签登记时不猜**（分不清谁开的新对话，宁可不跟也不串）；前端 `linkTick` 在旁路没给会话 id 时
+每轮问一次，换过去走 `relinkTo`（「已切到新的会话」）。按会话 id 恢复的标签不登记认领，仍不跟随（已知限制）。
+同批分派：Grok 回放丢工具调用（分叉会话修，见上条）、`opencode run` 取 `PWD` 当工作目录（待完善项会话修 process.rs）、Windows 上
+cmd 内建 `del` 等不带外壳也算改文件（tool-activity.ts）。
+
 ### 2026-10-20 · Grok 回放 / 聊天层带上工具调用：chat_history.jsonl 的 tool_calls 与 tool_result 不再丢
 
 用户问「除了 Codex，其他 Agent CLI 改文件有什么问题、是否只在 Windows」。Windows 上六家真网关实跑同一条「新建→改→删」

@@ -531,6 +531,7 @@ pub fn run() {
             sessions::list_sessions,
             session_search::search_sessions,
             sessions::claim_session_for,
+            sessions::claim_session_successor,
             sessions::release_session_claim,
             sessions::get_session_conversation,
             sessions::get_session_conversation_page,
