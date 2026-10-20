@@ -133,7 +133,7 @@ Mesa 的机制设计参考了三个开源项目（学机制与取舍，未复制
 - [waveterm](https://github.com/wavetermdev/waveterm)（Apache-2.0）— block/workspace 对象模型与注意力标记思路
 - [VS Code](https://github.com/microsoft/vscode)（MIT）— 文件树、编辑器标签与面板布局
 
-等宽字体 [JetBrains Mono](https://www.jetbrains.com/lp/mono/)（OFL 1.1）；部分平台图标来自 [lobe-icons](https://github.com/lobehub/lobe-icons)（MIT，经 cc-switch 引入）。
+等宽字体 [JetBrains Mono](https://www.jetbrains.com/lp/mono/)（OFL 1.1）；平台标识图标来自 [lobe-icons](https://github.com/lobehub/lobe-icons)（MIT，经 cc-switch 引入），用于标明套餐 / 网关所属平台；许可全文见 [THIRD-PARTY.md](docs/licenses/THIRD-PARTY.md)。
 
 ## 技术栈
 

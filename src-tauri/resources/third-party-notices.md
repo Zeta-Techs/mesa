@@ -117,11 +117,63 @@ DEALINGS IN THE FONT SOFTWARE.
 
 - 用途：统计页标识对应平台的订阅套餐（`src/assets/plan-icons/{zhipu,kimi,minimax}.svg`），
   指示性使用（nominative use），不构成对该平台的关联或背书
-- 来源链条：[lobe-icons](https://github.com/lobehub/lobe-icons)（MIT，© lobehub）
-  → [cc-switch](https://github.com/farion1231/cc-switch)（MIT，© 2025 Jason Young）
+- 来源链条：[lobe-icons](https://github.com/lobehub/lobe-icons)（MIT，Copyright (c) 2023 LobeHub）
+  → [cc-switch](https://github.com/farion1231/cc-switch)（MIT，Copyright (c) 2025 Jason Young）
   `src/icons/extracted/` → 本仓库逐字节引入
-- 许可：MIT——再分发需附版权与许可声明（本条目即该声明）
+- 许可：MIT——再分发需随附版权声明与许可全文，两份原文如下
 - 商标：三个 logo 本身分别是智谱 / Moonshot AI / MiniMax 的商标
+
+lobe-icons 的许可原文（取自其仓库 LICENSE）：
+
+```text
+MIT License
+
+Copyright (c) 2023 LobeHub
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+cc-switch 的许可原文（取自其仓库 LICENSE）：
+
+```text
+MIT License
+
+Copyright (c) 2025 Jason Young
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
 
 ## 数据来源（运行期外联，不随包分发）
 
@@ -139,7 +191,7 @@ DEALINGS IN THE FONT SOFTWARE.
 Mesa 的机制设计参考了三个开源项目（学机制与取舍，未复制代码；唯一例外是上文的
 三个平台图标文件）：
 
-- [cc-switch](https://github.com/farion1231/cc-switch)（MIT，© 2025 Jason Young）— provider 预设、配置同步、订阅余量解析口径
+- [cc-switch](https://github.com/farion1231/cc-switch)（MIT，Copyright (c) 2025 Jason Young）— provider 预设、配置同步、订阅余量解析口径
 - [waveterm](https://github.com/wavetermdev/waveterm)（Apache-2.0，© 2025 Command Line Inc.）— block/workspace 对象模型、注意力标记与滚动缓冲恢复思路
 - [VS Code](https://github.com/microsoft/vscode)（MIT，© Microsoft Corporation）— 文件树、编辑器标签与面板布局
 
