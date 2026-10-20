@@ -2361,11 +2361,11 @@ Claude Code 用量无法恢复。
 - **定时任务与研究流程结合（核心路径已落地，细目见架构 §11.4 历史记录）**：边界已定——不给每步配定时任务，
   结合点是「产出回流」而非「配置下沉」。产出回流三件套已上线（v3.95：lit_watch.rs 解析巡检产物 + LitWatchCard
   雷达卡片 + 收件箱 lit: 文献胶囊 / Schedule.linkedStep 关联步骤 + RunRecord.newEntries / staleLitHint 复用
+  staleUpstream 口径只提醒不阻断）。
+  当前规则：默认定时任务进入隔离 worktree，无法创建或校验失败则 fail-closed；启动前登记 Run，启动失败也保留 failed Run 记录；超时与真失败分列。成功产物经只读评审，人点「采纳进主仓」才拷回项目根，不自动合并。当前没有主仓 sentinel 配置入口，不能把定时成功理解为已写入主仓。不同 Agent 的无头权限差异仍以能力表和实机验证为准。关标签后交互 Run 按 `runId` 从工作台「继续」或收件箱找回。
 - macOS 签名公证：**workflow 已接好**（2026-10-20），六个 APPLE_* secrets 配齐自动启用；剩开通 Apple Developer 账号与配 secrets（docs/release.md）
 - Intel macOS 安装包 ✅（2026-10-20 用户「全部做」推翻暂缓：Apple 芯片 runner 交叉编译 x86_64，latest.json 带 darwin-x86_64，verify-release 校验）
 - Windows 代码签名（未做：要证书；SmartScreen 的点法已写进 README 与说明书）
 - 应用内更新的国内镜像：**流程已接好**（2026-10-20 拍板：公司对象存储 + CDN，Release 发布时同步）；剩建桶、绑域名、配变量与 secrets（docs/release.md）
-- Intel macOS 安装包（暂缓：CI macos-latest 只出 aarch64；加 `x86_64-apple-darwin` target 构建时间翻倍，真有 Intel 用户再加，
-  见架构 v1.3 / README 安装节）
 - OpenCode Windows 数据路径 ✅：`sessions.rs` 依次探测 `OPENCODE_DB` / `%LOCALAPPDATA%\opencode` / `%APPDATA%\opencode` / `~/.local/share/opencode`（2026-08-31）
 - Skills 一键更新 ✅：更新检测（check_skill_updates）+ 检测后一键应用更新（apply_skill_update，v3.53）均已落地
