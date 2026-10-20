@@ -515,6 +515,18 @@ macOS 签名公证接进 workflow，六个 `APPLE_*` secrets 配齐才启用（�
 （`scripts/mirror-latest-json.mjs`，签名原样、缺签名拒绝）、先传包后传清单、读回核对；凭据走 secrets，没配齐跳过并写日志。改写逻辑
 对现有已发布的 `latest.json` 干跑过；工作流本身没在真实对象存储上跑过（开通步骤见 docs/release.md）。只对配好后打出的版本生效。
 
+### 2026-10-20 · 聊天层 Windows 实测反馈：Claude 审批答完即收卡、实时预览滤掉折行提示（两处 Mac 共有）
+
+用户在 Mesa Dev 里按测试提示词逐条点 Claude Code，报三件事，定因后两件是 Mac 共有、Windows 上更显眼，一件与 Mesa 无关：
+一，**审批卡先英文后中文**：英文是读屏认出的终端菜单卡；答完后 Claude 不报「已答」，旁路要等那个工具跑完（PostToolUse）才撤，
+期间屏上没菜单、注意力仍是「等确认」，冒出中文兜底卡（WebFetch 批准后挂了 14 秒；Windows 上 hooks 后台跑，快命令也多挂约 1 秒）。
+定下：**屏上回到这家的输入框、没有菜单 = 已答**（`chat-channel.ts hooksApprovalAnswered`，注意力回 working；旁路报「等批准」时补扫一次屏，
+聊天层点了菜单按钮先按已答、下一次扫屏纠正）。只作用于读屏认得出输入框的 hooks 家（Claude Code），CodeBuddy 与能从聊天层答的家不变。
+二，**实时预览一直挂着一行英文**：转圈下「⎿  Tip: …」（Claude 2.1.304 的 workflow 提示）长过一行，第二行没有 ⎿、被当成回复；
+`live-reply.ts` 加 `wrapSkip`，⎿ 行折下来、比正文缩进深的续行一并跳过。三，**Claude 说「本会话没有写文件 / shell 工具」**：
+Claude 自己的会话记录里每次请求都带着 Bash / Read / Write / Edit 等全套工具，Mesa 的「请求批准」档不删工具，Windows 上假网关端到端也照常调用工具；
+是 glm-5.3-flash（经智谱网关）只认出 ToolSearch、拿它搜不到内置工具就断定没有，换平台结果一样。不改 Mesa；换模型复测。
+
 ### 2026-10-20 · 聊天层 Windows 适配：CLI 绕开 cmd 直启、Claude hooks 在 Windows 后台跑、app-server 随 Mesa 同生共死
 
 用户在 Windows 上要求核对 Mac 上做的聊天层（结构化旁路）是否适配、需要什么完善，并要求**不影响 Mac 端**。把 `chat_channel::e2e`

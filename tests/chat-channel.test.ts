@@ -10,6 +10,7 @@ import {
   channelRelink,
   channelTurnOpen,
   displayCommand,
+  hooksApprovalAnswered,
   sessionSwitchNote,
   type ChannelApproval,
   type ChatChannelSnapshot,
@@ -62,6 +63,21 @@ test("回合状态 → 标签注意力；旁路没说过就交回原来的推断
   assert.equal(channelAttention(snap({ turn: turn("cancelled") })), "done");
   assert.equal(channelTurnOpen(snap({ turn: turn("awaiting_approval") })), true);
   assert.equal(channelTurnOpen(snap({ turn: turn("failed") })), false);
+});
+
+test("hooks 还说等批准、屏上已回到输入框：认作答过了；能从聊天层答的、不在等批准的不经这里", () => {
+  const waiting = snap({ turn: turn("awaiting_approval"), approval: approval({ toolName: "WebFetch", kind: "fetch" }) });
+  assert.equal(hooksApprovalAnswered(waiting, true), true);
+  assert.equal(hooksApprovalAnswered(waiting, false), false, "屏上还挂着菜单 / 认不出输入框：照旧等");
+  assert.equal(hooksApprovalAnswered(snap({ turn: turn("running") }), true), false);
+  assert.equal(hooksApprovalAnswered(null, true), false);
+  const codex = snap({
+    agent: "codex",
+    kind: "codex",
+    turn: turn("awaiting_approval"),
+    approval: approval({ requestId: "r1", replyable: true }),
+  });
+  assert.equal(hooksApprovalAnswered(codex, true), false);
 });
 
 test("跟会话：直接给路径就锁定；/clear 换了文件就改盯；只给 id 交给按 id 找", () => {

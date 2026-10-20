@@ -83,6 +83,7 @@ import {
   channelLiveLines,
   channelRelink,
   channelTurnOpen,
+  hooksApprovalAnswered,
   sessionSwitchNote,
   type ChannelReplyDecision,
   type ChatChannelSnapshot,
@@ -155,7 +156,7 @@ import {
 } from "../tui-menu";
 import { lastContextTokens, type MesaCommand } from "../composer-assist";
 import { slashCommandsFor } from "../slash-commands";
-import { extractLiveReply, liveReplySupported, mergeLiveReply } from "../live-reply";
+import { extractLiveReply, liveReplySupported, mergeLiveReply, terminalHasInputBox } from "../live-reply";
 import { parseTuiPanel } from "../tui-panel";
 import {
   connIssueCounts,
@@ -2072,6 +2073,8 @@ const TerminalView = memo(function TerminalView({
     tuiPanelRef.current = open;
     setTuiPanel(open);
   }
+  // 最近一次扫屏：看得见这家的输入框、没有菜单（hooksApprovalAnswered：旁路还说「等批准」时据此认作已经答过）
+  const [promptIdle, setPromptIdle] = useState(false);
   function scanMenuSoon() {
     const turnLive = ptyWorkingArmedRef.current || pendingReplyRef.current;
     if (
@@ -2100,6 +2103,7 @@ const TerminalView = memo(function TerminalView({
         echoed || trustMenu || sameTuiMenu(found, menuBaselineRef.current) ? null : found;
       // 菜单（审批 / 切换确认）也带 Esc to cancel：认出菜单时不再当面板
       setPanelOpen(found === null && parseTuiPanel(lines, launchAgentRef.current));
+      setPromptIdle(next === null && terminalHasInputBox(lines, launchAgentRef.current) === true);
       if (sameTuiMenu(menuPromptRef.current, next)) return;
       menuPromptRef.current = next;
       setMenuPrompt(next);
@@ -2229,6 +2233,8 @@ const TerminalView = memo(function TerminalView({
     if (!menu || !id) return;
     menuPromptRef.current = null;
     setMenuPrompt(null);
+    // 答完到下一次扫屏之间，别让旁路还没撤的「等批准」顶上来一张兜底卡（扫屏会纠正：菜单还在就回来）
+    if (liveReplySupported(launchAgentRef.current)) setPromptIdle(true);
     // Kimi 开了 kitty 键盘后只认 CSI-u 回车（submitCsiU）；方向键仍是传统写法
     const keys = menuAnswerKeys(menu, index).map((k) =>
       k === "\r" && submitCsiU ? KIMI_CSI_U_ENTER : k,
@@ -2309,9 +2315,16 @@ const TerminalView = memo(function TerminalView({
       // 会话文件 sticky working 不能单独维持。running 不兜底——「进程在跑」≠「正在生成」。
       // 屏上认出了等你选的菜单（工具审批 / 启动信任 / 切换确认，tui-menu.ts、trust-prompt.ts）也算 confirm
       // （2026-10-18）：原先「等你确认」只靠 hooks 精确注意力（要在设置里逐家打开）或会话尾部推断，没开 hooks 的家
-      // 在等你批准时收件箱、标签黄点、系统通知全都不响；读屏认得出的七家（tui-menu.ts 样本）不用装 hooks
+      // 在等你批准时收件箱、标签黄点、系统通知全都不响；读屏认得出的七家（tui-menu.ts 样本）不用装 hooks。
+      // 反过来，hooks 还说「等批准」、屏上却已回到输入框：答过了，工具在跑（hooksApprovalAnswered）
       attention:
-        running && !shellActive ? (menuPrompt || trustPrompt ? "confirm" : attention) : null,
+        running && !shellActive
+          ? menuPrompt || trustPrompt
+            ? "confirm"
+            : attention === "confirm" && hooksApprovalAnswered(channel, promptIdle)
+              ? "working"
+              : attention
+          : null,
       canResume: shellActive && lastResumeRef.current != null,
       startedAt,
       sessionId:
@@ -2343,6 +2356,8 @@ const TerminalView = memo(function TerminalView({
     attention,
     menuPrompt,
     trustPrompt,
+    channel,
+    promptIdle,
     sessionFile,
     resumeSessionId,
     startedAt,
@@ -4035,6 +4050,11 @@ const TerminalView = memo(function TerminalView({
     if (att && (prev?.turn?.status !== snap.turn?.status || prev?.turn?.seq !== snap.turn?.seq)) {
       if (att === "working") ptyWorkingArmedRef.current = true;
       setAttention(att);
+    }
+    // hooks 报来「等批准」：看一眼屏上还在不在等（Windows 上 hooks 在后台跑，报到时可能已经在终端里答完了）
+    if (snap.kind === "hooks" && att === "confirm") {
+      menuWatchUntilRef.current = Math.max(menuWatchUntilRef.current, Date.now() + 3000);
+      scanMenuSoon();
     }
     // 回合结束：马上读一次会话文件；刚发的话都已落盘的，结束「等待回复」（文件稍慢于事件，留 2.5 秒）
     const turn = snap.turn;

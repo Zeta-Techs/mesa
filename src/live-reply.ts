@@ -29,6 +29,12 @@ interface Layout {
   tool: RegExp;
   /** 转圈、用时、提示、装饰行 */
   skip: RegExp;
+  /**
+   * 这种行折行时，续行（比正文缩进深、不带符号）也跳过，到空行或下一段为止。Claude 转圈下面的「⎿  Tip: …」
+   * 长过一行时，第二行「     it with "use at most 5 agents", …」原先被当成回复，一直挂在预览里（2026-10-20 用户 Windows 实测，
+   * Claude Code 2.1.304；终端窄一点 Mac 上同样会折行）
+   */
+  wrapSkip?: RegExp;
   /** 续行去掉的缩进（空格数，最多去这么多） */
   indent: number;
   /** 行尾要去掉的东西（Grok 右侧的时间） */
@@ -75,7 +81,8 @@ const LAYOUTS: Record<string, Layout> = {
     // 工具名可以是两个词：「Web Search(…)」「Notebook Edit(…)」（旧写法 [A-Za-z]* 漏掉带空格的，整行被当成正文）；
     // 括号必须紧跟字母，「⏺ Note (important)…」这种正文不会误判
     tool: new RegExp(`^[⏺●]\\s+[A-Z][A-Za-z]*(?: [A-Z][A-Za-z]*)*\\(|${TOOL_SUMMARY.source}`),
-    skip: new RegExp(`${CLAUDE_STATUS.source}|^\\s*⎿`),
+    skip: CLAUDE_STATUS,
+    wrapSkip: /^\s*⎿/,
     indent: 2,
   },
   codex: {
@@ -232,6 +239,7 @@ function readReply(layout: Layout, region: readonly string[], start: number, anc
   };
   const out: string[] = [];
   let inTool = false;
+  let inWrapSkip = false;
   for (const raw0 of region.slice(start)) {
     const raw = layout.tail ? raw0.replace(layout.tail, "") : raw0;
     const t = raw.trim();
@@ -241,7 +249,9 @@ function readReply(layout: Layout, region: readonly string[], start: number, anc
       inTool = layout.lead !== null;
       continue;
     }
-    if (layout.skip.test(raw)) continue;
+    if (inWrapSkip && t && raw.length - raw.trimStart().length > layout.indent && !layout.lead?.test(raw)) continue;
+    inWrapSkip = Boolean(layout.wrapSkip?.test(raw));
+    if (inWrapSkip || layout.skip.test(raw)) continue;
     if (layout.lead?.test(raw)) {
       inTool = false;
       const text = raw.replace(layout.lead, "");

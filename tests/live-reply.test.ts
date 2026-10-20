@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extractLiveReply, liveReplySupported, mergeLiveReply, unsyncedTail } from "../src/live-reply.ts";
+import { extractLiveReply, liveReplySupported, mergeLiveReply, terminalHasInputBox, unsyncedTail } from "../src/live-reply.ts";
 
 const RULE = "─".repeat(100);
 // Claude Code 2.1.292 本机 PTY 实录（流式写到一半；假 API 慢速吐字）
@@ -293,6 +293,52 @@ test("正文里以「⏺ Note (…)」这类带括号的英文开头不会被当
 test("工具输出里折叠的「… +12 lines (ctrl+o to expand)」也不进预览", () => {
   const rows = ["❯ hi", "⏺ Bash(ls)", "  ⎿  a.txt", "     … +12 lines (ctrl+o to expand)", "", "⏺ 列好了。", RULE, "❯", RULE];
   assert.deepEqual(extractLiveReply(rows, "claude-code")?.lines, ["列好了。"]);
+});
+
+// 2026-10-20 用户 Windows 实测（Claude Code 2.1.304）：转圈下面的提示长过一行，折下来的第二行没有「⎿」，
+// 原先被当成回复一直挂在预览里
+test("Claude 转圈下「⎿  Tip:」折行的续行不进预览", () => {
+  const rows = [
+    "❯ 你好",
+    "",
+    "⏺ 我先想一想。",
+    "  第二行。",
+    "    - 缩进深的列表项照常保留",
+    "",
+    "✻ Pondering… (3s · ↓ 20 tokens)",
+    "  ⎿  Tip: You can control how big a workflow is just by prompting. Ask for a small workflow, cap",
+    '     it with "use at most 5 agents", or set a default with Dynamic workflow size in /config.',
+    "",
+    RULE,
+    "❯",
+    RULE,
+  ];
+  assert.deepEqual(extractLiveReply(rows, "claude-code")?.lines, [
+    "我先想一想。",
+    "第二行。",
+    "  - 缩进深的列表项照常保留",
+  ]);
+});
+
+// 聊天层据此认「审批已经答过」（chat-channel.ts hooksApprovalAnswered）：Claude 的审批菜单顶掉输入框，
+// 答完输入框回来（菜单样本同 tests/tui-menu.test.ts，Claude Code 2.1.292 PTY 实录）
+test("Claude：审批菜单挂着时屏上没有输入框，答完回到输入框", () => {
+  const approving = [
+    "❯ 写个文件",
+    "",
+    "⏺ Bash(echo mesa > a.txt)",
+    "  ⎿  Waiting…",
+    RULE,
+    " Bash command",
+    " echo mesa > a.txt",
+    " Do you want to proceed?",
+    " ❯ 1. Yes",
+    "   2. No",
+    " Esc to cancel · Tab to amend",
+  ];
+  assert.equal(terminalHasInputBox(approving, "claude-code"), false);
+  assert.equal(terminalHasInputBox(STREAMING, "claude-code"), true);
+  assert.equal(terminalHasInputBox(STREAMING, "codebuddy"), null, "没有画面布局的家：不知道");
 });
 
 // 2026-10-19 用户截图（Codex 0.163）：多行提问的回显续行、审批结果行、失败命令行都不是回复

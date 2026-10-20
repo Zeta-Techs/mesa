@@ -42,7 +42,8 @@
   抓屏、样本进 `tests/live-reply.test.ts`，不凭帮助文字或印象加。
   **必须看得见输入框**（启动信任菜单、登录页没有输入框，原先退回整屏，把「Accessing workspace / Quick safety check」当回复画进聊天层，
   用户截图）；**这一轮没见过开头（回显 / ⏺）时续行不预览**；有「等你决定」卡时不预览
-  画面——最后一条「❯ 回显」之后、输入框上边框之前，去掉工具摘要（Read 1 file…）、⎿ 结果、转圈与「· /effort」提示行；
+  画面——最后一条「❯ 回显」之后、输入框上边框之前，去掉工具摘要（Read 1 file…）、⎿ 结果与提示（折行的续行一并去掉，`wrapSkip`：
+  转圈下的「⎿  Tip: …」长过一行时第二行没有符号，原先一直挂在预览里，2026-10-20 用户实测）、转圈与「· /effort」提示行；
   确认菜单挂着时不出。上报 `SessionLinkState.liveReply`，聊天层用 `unsyncedTail` 剔掉会话文件已有的行（只比字母数字汉字，
   渲染过的 Markdown 对得上）。别家返回 null，仍给「看实时输出」。**长回复**（同日用户：显示一半后就没了）：回复长过一屏时
   回显与「⏺」都滚出可视区，读到的是续行（`anchored: false`），`mergeLiveReply` 按「上次结尾 / 这次开头」最长重合接到上一次后面；
@@ -321,7 +322,10 @@
   Gemini / Kimi / Grok = 同一份状态日志按标签号过滤。PTY 一律注入 `CCODE_TAB_ID`（hook 命令记进日志第二段，旧格式无此段照读）。
   **规则**：①同一事实取精度最高的来源：旁路有回合状态时，`applyTailAttention`、PTY 出字点亮、PTY 静默熄灭都让位（不删兜底）；
   ②hook 一律不阻塞、不输出决定，审批只在用户点按钮后经官方通道回（Qwen input 文件 / OpenCode 接口 / Codex JSON-RPC），
-  其余家照旧按菜单原文写按键；「先答者算」，卡片等 CLI 回「已处理」才撤；③会话跟随：旁路给了文件路径就锁定（文件未落盘先记 id），
+  其余家照旧按菜单原文写按键；「先答者算」，卡片等 CLI 回「已处理」才撤。只能在终端菜单里答的 hooks 家（Claude Code）CLI 不报「已答」，
+  旁路要等那个工具跑完（PostToolUse）才撤——批准后工具跑多久「等你确认」就挂多久（WebFetch 实测 14 秒，菜单英文卡之后又冒一张中文兜底卡）：
+  **屏上回到输入框、没有菜单 = 已答**（`hooksApprovalAnswered`，标签注意力回 working、不出兜底卡；旁路报「等批准」时补扫一次屏；
+  读屏认不出输入框的家照旧等旁路）；③会话跟随：旁路给了文件路径就锁定（文件未落盘先记 id），
   `sessionSeq` 增大且路径变了（/clear、恢复别的会话）就 `relinkTo` 改盯新文件并在对话流记一行；④实时文字有旁路的家（Qwen / OpenCode /
   Codex）不再读屏；⑤Codex 恢复时远程 TUI 拒收权限参数，`split_codex_args` 改成 app-server 的 `-c` 配置，新开会话仍由 TUI 带；
   新线程 rollout 未落盘前 `thread/resume` 会失败，线程转 active 时再订；⑥旁路目录 `<config>/ccode/chat-channels/<pid>-<tab>-<随机>/`

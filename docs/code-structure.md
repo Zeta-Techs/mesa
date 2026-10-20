@@ -352,7 +352,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 本地乐观消息放回解析结果的位置 placePendingUsers（排队中的接末尾，其余插在发送后的第一条新回复前）；
                              # messageKey / chatMessageKey 有来源 id 用 id；HOOKS_AGENTS 键是 agent id（2026-10-20 改正 claude-code）
   chat-channel.ts            # 结构化旁路快照的前端纯逻辑：回合状态 → 注意力、会话跟随（lock / switch / hint）、实时文字、
-                             # 审批卡标题 / 预览（命令 / 差异）/ 可回复的按钮（tests/chat-channel.test.ts）；TerminalView 的 applyChannel 消费
+                             # 审批卡标题 / 预览（命令 / 差异）/ 可回复的按钮、hooks 审批「屏上回到输入框 = 已答」（hooksApprovalAnswered）
+                             # （tests/chat-channel.test.ts）；TerminalView 的 applyChannel 消费
   slash-commands.ts          # 聊天斜杠命令保守常用集（未全量调研的 agent 只给 /help；tests/slash-commands.test.ts）
   ime-guard.ts               # 聊天 Enter 是否处于输入法组词（WKWebView 确认候选时 isComposing 已假；tests/ime-guard.test.ts）
   notify.ts                  # 长任务 OS 通知（仅「待确认」跃迁 + 未聚焦 + 30s 去抖；「已回复」不通知）；
@@ -449,7 +450,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   conn-issue.ts              # 认终端画面里的连接错误（额度 / 限流 / 钥匙 / 服务 / 模型）：七家实录形态的 detectConnIssues、按次数判新错误的 newestConnIssue、给人看的 connIssueText
   terminal-quote.ts          # 终端选中文字交给对话 / 存笔记的排版：quoteForChat（每行「> 」）、askAboutText、clipNoteEntry（notes/clips.md 小节）
   live-reply.ts              # 聊天实时预览：按每家画面布局（LAYOUTS：Claude / Codex / Qwen / Gemini / Grok / Kimi，第三期抓屏定的）抽出这一轮正在写的段落
-                             # （extractLiveReply）+ 剔掉会话文件已有的行（unsyncedTail）；CodeBuddy / OpenCode / Cursor 返回 null。新增一家先抓屏、样本进测试
+                             # （extractLiveReply）+ 剔掉会话文件已有的行（unsyncedTail）+ 屏上有没有输入框（terminalHasInputBox）；
+                             # CodeBuddy / OpenCode / Cursor 返回 null。新增一家先抓屏、样本进测试
   menu-key-nav.ts            # 聊天输入框小弹层的键盘操作（useMenuKeyNav：打开聚焦当前项、↑↓/Home/End、关闭还焦点）
   model-history.ts           # 「这份连接能选哪些模型」：连接名单 + 按 Agent+连接记的手填历史；开聊前选择器、启动栏、模型芯片同源
   tui-menu.ts                # 认屏上的 TUI 选择菜单（parseTuiMenu / menuAnswerKeys / sameTuiMenu / menuEchoesText）：切换命令后 5 秒、启动后 20 秒、

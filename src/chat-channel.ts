@@ -64,6 +64,23 @@ export function channelAttention(snap: ChatChannelSnapshot | null): "working" | 
 }
 
 /**
+ * hooks 家（Claude Code）的审批答完了没有：CLI 不报「答了」，旁路要等那个工具跑完（PostToolUse）才撤卡，
+ * 批准后工具跑多久「等你确认」就挂多久——卡片从终端菜单的英文原文换成一张中文的「要访问网络」，
+ * 标签黄点也一直亮着（2026-10-20 用户 Windows 实测：WebFetch 批准后又挂了 14 秒；Windows 上 hooks 在后台跑，
+ * 快命令也要多挂约 1 秒，Mac 上慢命令同样如此）。
+ * promptIdle = 最近一次扫屏看见这家的输入框、没有菜单：终端里已经不在等这一问（在聊天层点的、在终端里答的都算）。
+ * 读屏认不出输入框的家（CodeBuddy）promptIdle 恒为 false，照旧等旁路撤卡；能从聊天层答的（Qwen / Codex）不经这里
+ */
+export function hooksApprovalAnswered(snap: ChatChannelSnapshot | null, promptIdle: boolean): boolean {
+  return Boolean(
+    promptIdle &&
+      snap?.kind === "hooks" &&
+      snap.turn?.status === "awaiting_approval" &&
+      !snap.approval?.replyable,
+  );
+}
+
+/**
  * 旁路告诉的会话与聊天层现在盯的文件对不上时怎么办：
  * - lock：还没认出会话文件，旁路直接给了路径 → 按它锁定（不再按目录排队猜）
  * - switch：已经盯着一个文件，CLI 换了会话（/clear、恢复别的会话）→ 改盯新文件
