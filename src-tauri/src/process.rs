@@ -60,12 +60,19 @@ pub fn background_command<S: AsRef<OsStr>>(program: S) -> BackgroundCommand {
         Command::new(program)
     };
     configure_background(&mut command);
+    // 不把 Mesa 自己的 PWD 带给子进程（理由见非 Windows 版）
+    command.env_remove("PWD");
     BackgroundCommand { inner: command }
 }
 
+/// 子进程不继承 Mesa 的 PWD：tauri dev / 从 shell 启动时 Mesa 带着启动它那个 shell 的 PWD，
+/// 而 `opencode run` 取工作目录用 `process.env.PWD ?? cwd`——设了 current_dir 也照样跑到 Mesa 的启动目录去干活
+/// （2026-10-20 实证：无头 opencode 把文件写进了 src-tauri/src）。删掉后 CLI 回落到真实工作目录，shell 会自己重算 PWD
 #[cfg(not(windows))]
 pub fn background_command<S: AsRef<OsStr>>(program: S) -> BackgroundCommand {
-    Command::new(program)
+    let mut command = Command::new(program);
+    command.env_remove("PWD");
+    command
 }
 
 /// 构建 PTY 命令。Windows 上 npm 系 CLI（npm 自己、npm 全局装的 codex 等）是
@@ -756,6 +763,43 @@ pub(crate) fn join_with_timeout(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 子进程不继承 Mesa 的 PWD（opencode run 按 PWD 取目录）：环境里显式删掉，三平台同口径
+    #[test]
+    fn background_command_drops_inherited_pwd() {
+        let c = background_command("definitely-not-a-real-program");
+        #[cfg(windows)]
+        let envs: Vec<_> = c.inner.get_envs().map(|(k, v)| (k.to_os_string(), v.map(|v| v.to_os_string()))).collect();
+        #[cfg(not(windows))]
+        let envs: Vec<_> = c.get_envs().map(|(k, v)| (k.to_os_string(), v.map(|v| v.to_os_string()))).collect();
+        assert!(
+            envs.iter().any(|(k, v)| k == "PWD" && v.is_none()),
+            "PWD 应被删掉: {envs:?}"
+        );
+    }
+
+    /// 真起一个子进程：设了工作目录、Mesa 自己又带着别的 PWD 时，子进程看不到那个 PWD
+    #[test]
+    fn child_does_not_see_parent_pwd() {
+        let dir = std::env::temp_dir();
+        #[cfg(windows)]
+        let out = {
+            let mut c = background_command("cmd.exe");
+            c.args(["/d", "/c", "set PWD"]).current_dir(&dir).env("MESA_PROBE", "1");
+            c.output().unwrap()
+        };
+        #[cfg(not(windows))]
+        let out = {
+            let mut c = background_command("/usr/bin/env");
+            c.current_dir(&dir);
+            c.output().unwrap()
+        };
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            !text.lines().any(|l| l.starts_with("PWD=")),
+            "子进程不该看到继承来的 PWD: {text}"
+        );
+    }
 
     #[test]
     fn cursor_version_pick_matches_launcher_rules() {
