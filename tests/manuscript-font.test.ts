@@ -47,6 +47,8 @@ test("确认字体的提示同时改 PDF 和 Word", () => {
 });
 
 test("初稿字体写入 YAML：英文新罗马，中文宋体", () => {
+  // 指定一个本机真有的中文宋体：脚本找得到 fc-list 时会核对字体在不在（Windows 上 TinyTeX 自带 fc-list）
+  const cjkFont = process.platform === "win32" ? "SimSun" : "Songti SC";
   const root = mkdtempSync(join(tmpdir(), "mesa-font-"));
   try {
     mkdirSync(join(root, "manuscript"));
@@ -57,7 +59,7 @@ test("初稿字体写入 YAML：英文新罗马，中文宋体", () => {
     );
     const result = spawnSync(
       python,
-      [script, "--root", root, "--markdown", "manuscript/draft.md", "--latin", "Times New Roman", "--cjk", "Songti SC"],
+      [script, "--root", root, "--markdown", "manuscript/draft.md", "--latin", "Times New Roman", "--cjk", cjkFont],
       { encoding: "utf8" },
     );
     const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
@@ -67,7 +69,7 @@ test("初稿字体写入 YAML：英文新罗马，中文宋体", () => {
     assert.equal(result.status, 0, result.stderr);
     const text = readFileSync(md, "utf8");
     assert.match(text, /mainfont: "Times New Roman"/);
-    assert.match(text, /CJKmainfont: "Songti SC"/);
+    assert.match(text, new RegExp(`CJKmainfont: "${cjkFont}"`));
     assert.match(text, /booktabs/);
     assert.match(text, /parindent\}\{2em\}/);
     assert.match(readFileSync(join(root, "manuscript/typeface.md"), "utf8"), /英文：Times New Roman/);
@@ -78,7 +80,7 @@ test("初稿字体写入 YAML：英文新罗马，中文宋体", () => {
       { encoding: "utf8" },
     );
     assert.match(theme.stdout, /<a:latin typeface="Times New Roman"\/>/);
-    assert.match(theme.stdout, /<a:ea typeface="Songti SC"\/>/);
+    assert.match(theme.stdout, new RegExp(`<a:ea typeface="${cjkFont}"/>`));
     assert.doesNotMatch(theme.stdout, /typeface="Aptos/);
     const styles = zipXml(join(root, "manuscript/reference.docx"));
     assert.match(styles.stdout, /Heading1/);

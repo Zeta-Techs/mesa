@@ -30,11 +30,18 @@ def families() -> set[str]:
             check=False,
             capture_output=True,
             text=True,
+            # 中文 Windows 默认按 GBK 解码子进程输出，quarto / pandoc 吐的是 UTF-8
+            encoding="utf-8",
+            errors="replace",
         ).stdout
     except OSError:
         return set()
     found = set()
     for line in out.splitlines():
+        # 每行「路径: 族名:style=…」。Windows 的路径带盘符（C:/WINDOWS/fonts/times.ttf），先去掉盘符，
+        # 不然按冒号切到的是路径的后半截，一个族名都认不出来（2026-10-20 TinyTeX 自带的 fc-list 实测）
+        if re.match(r"^[A-Za-z]:[\\/]", line):
+            line = line[2:]
         parts = line.split(":")
         if len(parts) < 2:
             continue
@@ -204,6 +211,9 @@ def reference_docx(dest: Path, latin: str, cjk: str) -> None:
                 ["quarto", "pandoc", str(sample), "-o", str(made), "-t", "docx"],
                 capture_output=True,
                 text=True,
+                # 中文 Windows 默认按 GBK 解码子进程输出，quarto / pandoc 吐的是 UTF-8
+                encoding="utf-8",
+                errors="replace",
             )
         except OSError:
             # 先打一行 ASCII。英文 Windows 的 stderr 是 cp1252，中文 SystemExit 会变成
