@@ -7,6 +7,8 @@ import { mergeGatewayCatalog } from "../gateway-catalog";
 import { Checkbox, fieldClass, FoldMark, ghostActionClass, primaryActionClass, searchFieldClass, secondaryActionClass, NoticeBar, InlineNotice } from "./PageFrame";
 import { parseReasoningEffort, reasoningEffortValue } from "../reasoning-effort";
 import { confirmDialog } from "./ConfirmDialog";
+import { toast } from "../toast";
+import { scheduleWarnText, sumRefs, usageWarnText, type UnbindRefs } from "../unbind-impact";
 import { policyFieldHint, policyFieldMode } from "../combo-field";
 import {
   EMPTY_CAPS_FORM,
@@ -29,6 +31,7 @@ import {
   parseHeaderEnv,
   probeDtoToSummary,
   responsesSlotUrlWarning,
+  zhipuOpenAiSlotBillingHint,
   slotsFollowMaster,
 } from "../gateway-draft";
 import { gatewayPickerRows } from "../gateway-option";
@@ -45,7 +48,9 @@ import type {
   GatewayUsageRow,
   ModelCapabilityDto,
   ModelCapsOverrideDto,
+  Profile,
   ProtocolSlots,
+  ScheduleDto,
   SlotProbeSummary,
 } from "../types";
 
@@ -258,10 +263,13 @@ export default function GatewayLibrary({
   onClose,
   onJumpUsage,
   initialId,
+  initialNew,
 }: {
   onClose: () => void;
   onJumpUsage?: (gatewayId: string) => void;
   initialId?: string | null;
+  /** 打开即进「新建网关」表单（上手引导「打开网关库」） */
+  initialNew?: boolean;
 }) {
   const gateways = useAppStore((s) => s.gateways);
   const profiles = useAppStore((s) => s.profiles);
@@ -312,6 +320,8 @@ export default function GatewayLibrary({
   const [bindVendor, setBindVendor] = useState("all");
   const [bindOpenVendors, setBindOpenVendors] = useState<ReadonlySet<string>>(new Set());
   const modelSurfaceGen = useRef(0);
+  // 「Agent 配置」区：新建网关保存后滚到这里接着绑
+  const bindSectionRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     void loadGateways().catch((e) => {
@@ -324,13 +334,19 @@ export default function GatewayLibrary({
 
   const openedInitial = useRef(false);
   useEffect(() => {
-    if (!initialId || openedInitial.current) return;
+    if (openedInitial.current) return;
+    if (initialNew && !initialId) {
+      openedInitial.current = true;
+      openEdit("new");
+      return;
+    }
+    if (!initialId) return;
     const g = gateways.find((x) => x.id === initialId);
     if (g) {
       openedInitial.current = true;
       openEdit(g);
     }
-  }, [initialId, gateways]);
+  }, [initialId, initialNew, gateways]);
 
   const rate = useAppStore((s) => s.settings?.rateUsdCny) ?? 7.2;
 
@@ -603,12 +619,18 @@ export default function GatewayLibrary({
         .gateways.find((g) => g.id === saved.id);
       if (fresh) setEditing(fresh);
       // 新建即绑：保存后直接展开 Agent 配置区（此时 editing 已切到保存后的网关），
-      // 消除「保存 → 重新找入口 → 展开折叠 → 选 Agent」的往返
+      // 消除「保存 → 重新找入口 → 展开折叠 → 选 Agent」的往返。保存钮在表单最底下，
+      // 结果提示在吸顶的头部里（原先在表单顶上，点完保存看不见），绑定区滚进视野
       if (!id) {
         setShowBind(true);
         setNotice(
           `网关「${saved.name}」已保存。接着在下方 Agent 配置里选要用的 Agent 和模型。`,
         );
+        requestAnimationFrame(() =>
+          bindSectionRef.current?.scrollIntoView({ block: "nearest" }),
+        );
+      } else {
+        toast(`网关「${saved.name}」已保存`, "success");
       }
     } catch (e) {
       setError(String(e));
@@ -702,7 +724,7 @@ export default function GatewayLibrary({
   async function onDelete(g: Gateway) {
     const bound = profiles.filter((p) => p.gatewayId === g.id);
     if (bound.length) {
-      setError(`还有 Agent 绑着「${g.name}」，请先解绑`);
+      await onUnbindAndDelete(g, bound);
       return;
     }
     if (!(await confirmDialog(`删除网关「${g.name}」？密钥一并删除。`, { danger: true })))
@@ -711,6 +733,39 @@ export default function GatewayLibrary({
       await removeGateway(g.id);
     } catch (e) {
       setError(String(e));
+    }
+  }
+
+  // 解绑并删除：把挂在这个网关上的连接逐条解绑（与连接页「解绑」同一后端命令与清理口径），
+  // 再删网关。事前摊开影响面，定时任务仍按 fail-loud 不改投。
+  async function onUnbindAndDelete(g: Gateway, bound: Profile[]) {
+    const ids = new Set(bound.map((p) => p.id));
+    const schedules = await invoke<ScheduleDto[]>("list_schedules")
+      .then((all) => all.filter((s) => s.profileId && ids.has(s.profileId)))
+      .catch(() => [] as ScheduleDto[]);
+    const refs = await Promise.all(
+      bound.map((p) =>
+        invoke<UnbindRefs>("profile_usage_refs", { id: p.id }).catch(() => null),
+      ),
+    ).then((list) => sumRefs(list.filter((r): r is UnbindRefs => r !== null)));
+    const lines = bound
+      .slice(0, 8)
+      .map((p) => `· ${AGENTS.find((a) => a.id === p.agent)?.label ?? p.agent}「${p.name}」`)
+      .join("\n");
+    const more = bound.length > 8 ? `\n· 等共 ${bound.length} 个` : "";
+    const ok = await confirmDialog(
+      `「${g.name}」还有 ${bound.length} 个连接在用：\n${lines}${more}\n\n` +
+        `将先解绑这些连接，再删除网关，密钥一并删除。${usageWarnText(refs)}${scheduleWarnText(schedules)}`,
+      { danger: true, confirmText: "解绑并删除" },
+    );
+    if (!ok) return;
+    try {
+      for (const p of bound) await invoke("delete_profile", { id: p.id });
+      await removeGateway(g.id);
+      await useAppStore.getState().loadAll();
+    } catch (e) {
+      await useAppStore.getState().loadAll();
+      setError(`解绑并删除没有全部完成：${String(e)}`);
     }
   }
 
@@ -939,6 +994,9 @@ export default function GatewayLibrary({
   const responsesUrlWarn = responsesSlotUrlWarning(
     effectiveSlotUrl(slots, "responses", masterUrl),
   );
+  const openaiBillingHint = zhipuOpenAiSlotBillingHint(
+    effectiveSlotUrl(slots, "openai", masterUrl),
+  );
 
   function usageLine(g: Gateway): string | null {
     const row = monthUsage.find((r) => r.bucket === "gateway" && r.gatewayId === g.id);
@@ -959,7 +1017,10 @@ export default function GatewayLibrary({
         className="max-h-[90vh] w-full max-w-2xl overflow-auto rounded-lg border border-hairline bg-canvas p-4 shadow-lg"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-3 flex items-center justify-between">
+        {/* 头部吸顶：标题、关闭与结果提示随时看得见——表单很长、保存钮在最底下，
+            提示原先落在表单顶上，点完保存看不见。负边距抵掉面板内边距，底色盖住滚过去的内容 */}
+        <div className="sticky -top-4 z-10 -mx-4 -mt-4 space-y-3 bg-canvas px-4 pb-3 pt-4">
+        <div className="flex items-center justify-between">
           <h2 id="gateway-library-title" className="text-base font-medium text-l1">网关库</h2>
           <div className="flex items-center gap-2">
             {/* 少用的恢复动作：原先与「新建网关」同级的次按钮、名字又是内部词，降为带说明的文字钮 */}
@@ -979,8 +1040,9 @@ export default function GatewayLibrary({
             </button>
           </div>
         </div>
-        {error && <NoticeBar tone="err" className="mb-3" onDismiss={() => setError(null)}>{error}</NoticeBar>}
-        {notice && <NoticeBar className="mb-3" onDismiss={() => setNotice(null)}>{notice}</NoticeBar>}
+        {error && <NoticeBar tone="err" onDismiss={() => setError(null)}>{error}</NoticeBar>}
+        {notice && <NoticeBar onDismiss={() => setNotice(null)}>{notice}</NoticeBar>}
+        </div>
         {editing ? (
           <div className="space-y-2">
             {editing === "new" && (
@@ -1036,6 +1098,9 @@ export default function GatewayLibrary({
             </label>
             {responsesUrlWarn && (
               <InlineNotice tone="warn" size="micro">{responsesUrlWarn}</InlineNotice>
+            )}
+            {openaiBillingHint && (
+              <InlineNotice tone="warn" size="micro">{openaiBillingHint}</InlineNotice>
             )}
             <div className="flex flex-wrap items-center gap-2">
               <button
@@ -1199,7 +1264,7 @@ export default function GatewayLibrary({
               )}
             </div>
             {editing !== "new" && (
-              <div>
+              <div ref={bindSectionRef} className="scroll-mt-36">
                 <button
                   type="button"
                   className="flex min-h-7 w-full items-center gap-2 text-left text-sm text-l2"

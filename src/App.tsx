@@ -7,6 +7,7 @@ import {
   CheckCheck,
   ChevronsLeft,
   CircleHelp,
+  Compass,
   ExternalLink,
   Inbox,
   Info,
@@ -74,6 +75,12 @@ import { normalizeNavCapsuleDelay, resolveStartupNavMode } from "./nav-capsule";
 import { chromeOpacityScale } from "./chrome-opacity";
 import { macOverlayPadClass, useMacFullscreen } from "./mac-titlebar";
 import ToastHost from "./components/ToastHost";
+import {
+  OnboardingHost,
+  OnboardingRing,
+  openOnboardingGuide,
+  useOnboardingRail,
+} from "./components/OnboardingGuide";
 import { toast } from "./toast";
 import { isCancellationRejection } from "./diagnostics";
 
@@ -255,11 +262,14 @@ const HELP_MENU: {
     feedback?: boolean;
     /** 应用内弹窗（HelpDialogs）：诊断与日志 / 检查更新 / 关于 */
     dialog?: HelpDialogKind;
+    /** 上手引导清单（OnboardingGuide；收起过的会重新打开） */
+    guide?: boolean;
   }[];
 }[] = [
   {
     label: "使用",
     items: [
+      { icon: Compass, text: "上手引导", guide: true },
       {
         icon: BookOpen,
         text: "使用教程",
@@ -478,6 +488,9 @@ function App() {
   );
   // 侧栏「运行」行的点：有人等确认时转黄（展开态顶栏不再报活动，确认信号落在这一行）
   const runActivity = useRunActivity();
+  // 侧栏「上手引导」行：引导进行中才有（进度 + 下一步，点开清单浮层）
+  const onboardingRail = useOnboardingRail();
+  const setOnboardingPanelOpen = useAppStore((s) => s.setOnboardingPanelOpen);
   const dismissHelpRequest = useAppStore((s) => s.dismissHelpRequest);
   const dismissInbox = useAppStore((s) => s.dismissInbox);
   const dismissInboxBulk = useAppStore((s) => s.dismissInboxBulk);
@@ -1242,6 +1255,9 @@ function App() {
                               if (item.feedback) {
                                 setHelpOpen(false);
                                 setFeedbackOpen(true);
+                              } else if (item.guide) {
+                                setHelpOpen(false);
+                                openOnboardingGuide();
                               } else if (item.url) {
                                 openHelpUrl(item.url);
                               } else if (item.dialog) {
@@ -1611,6 +1627,54 @@ function App() {
                 )}
                 {collapsed && <div className="min-h-0 flex-1" />}
 
+                {/* 上手引导（新装才有，做完 / 收起即消失）：贴在系统段上方，进度环 + 下一步，
+                    点开清单浮层向右展开（OnboardingGuide 按 data-onboarding-anchor 定位） */}
+                {onboardingRail && (
+                  <div className="shrink-0 px-1.5 pb-1.5">
+                    <RailTooltip
+                      label={`上手引导 ${onboardingRail.done}/${onboardingRail.total}${
+                        onboardingRail.next ? ` · 下一步：${onboardingRail.next}` : ""
+                      }`}
+                      collapsed={collapsed}
+                    >
+                      <button
+                        type="button"
+                        data-onboarding-anchor
+                        onClick={() => setOnboardingPanelOpen(!onboardingRail.open)}
+                        aria-expanded={onboardingRail.open}
+                        aria-label="上手引导"
+                        className={`relative flex w-full items-center rounded-md text-left transition-colors ${
+                          collapsed ? "h-8 justify-center" : "gap-2 px-2.5 py-1.5"
+                        } ${
+                          onboardingRail.open
+                            ? "bg-rail-sel text-l1"
+                            : "text-l2 hover:bg-hover hover:text-l1"
+                        }`}
+                      >
+                        <OnboardingRing
+                          done={onboardingRail.done}
+                          total={onboardingRail.total}
+                        />
+                        {!collapsed && (
+                          <span className="min-w-0 flex-1">
+                            <span className="flex items-baseline justify-between gap-2 text-sm">
+                              <span className="truncate">上手引导</span>
+                              <span className="shrink-0 text-micro tabular-nums text-l3">
+                                {onboardingRail.done}/{onboardingRail.total}
+                              </span>
+                            </span>
+                            {onboardingRail.next && (
+                              <span className="block truncate text-micro text-l3">
+                                下一步：{onboardingRail.next}
+                              </span>
+                            )}
+                          </span>
+                        )}
+                      </button>
+                    </RailTooltip>
+                  </div>
+                )}
+
                 {/* 资源与管理段：连接/技能/MCP/用量/设置（对话已归上面的工作入口） */}
                 <div className="shrink-0 border-t border-white/5 px-1.5 py-2">
                   {[
@@ -1806,6 +1870,8 @@ function App() {
           )}
           {/* 全局确认框宿主（confirmDialog）：z-70，压过一切覆盖层 */}
           <ConfirmDialogHost />
+          {/* 上手引导：首次判定、欢迎页、清单浮层、每做完一步的「下一步」提示 */}
+          <OnboardingHost ready={bootDataReady} />
           <ToastHost />
           {/* 待确认跳转提醒条：通知正文点击无回调（桌面插件限制）的补位——
             窗口激活时有待确认就出现在右下角，点「去处理」直达终端标签 */}

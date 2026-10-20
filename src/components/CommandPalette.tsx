@@ -5,6 +5,7 @@ import {
   BookOpen,
   BookText,
   Check,
+  Compass,
   Download,
   ExternalLink,
   FolderOpen,
@@ -23,6 +24,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useAppStore } from "../store";
+import { openOnboardingGuide } from "./OnboardingGuide";
 import { filterCommands, matchedKeyword, type PaletteCommand } from "../command-palette";
 import { THEMES } from "../themes";
 import { followedTheme } from "../theme-follow";
@@ -423,6 +425,16 @@ export default function CommandPalette({
             current: o.current,
             run: o.apply,
           })),
+          {
+            cmd: {
+              id: "help:guide",
+              title: "上手引导",
+              group: "帮助",
+              keywords: ["onboarding", "guide", "上手", "引导", "新手", "入门", "第一次", "shangshou"],
+            },
+            icon: icon(Compass),
+            run: () => openOnboardingGuide(),
+          },
           {
             cmd: {
               id: "help:feedback",

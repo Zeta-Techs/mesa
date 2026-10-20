@@ -1,4 +1,5 @@
 import type { Gateway, ProtocolSlots } from "./types.ts";
+import { slotForAgent } from "./gateway-slot.ts";
 
 const SLOT_SHORT: { key: keyof ProtocolSlots; label: string }[] = [
   { key: "anthropic", label: "Anthropic" },
@@ -78,4 +79,36 @@ export function gatewayPickerRows(gateways: readonly Gateway[]): GatewayPickerRo
     const hint = gateways[index]?.keyHint?.trim();
     return hint ? { ...row, detail: `${row.detail} · ${hint}` } : row;
   });
+}
+
+/** 这家 Agent 能不能接这个网关：它要的协议槽填了没有（qwen / kimi 两种协议都认） */
+function gatewayServesAgent(slots: ProtocolSlots, agent: string): boolean {
+  const filled = (key: keyof ProtocolSlots) => Boolean(slots[key]?.trim());
+  if (agent === "qwen" || agent === "kimi") return filled("openai") || filled("anthropic");
+  return filled(slotForAgent(agent, null));
+}
+
+/**
+ * 「添加连接」弹窗打开时的默认选择（2026-10-20，上手引导）：还没有连接在用的网关多半是刚在
+ * 网关库里建的——默认「选用已有网关」并选中最后一个这样的网关；Agent 优先挑已装好、且这个
+ * 网关填了它协议槽的那家（有 Claude Code 先选它）。没有这样的网关就照旧「新建网关」。
+ */
+export function addConnectionDefaults(input: {
+  gateways: readonly Pick<Gateway, "id" | "slots">[];
+  /** 现有连接各自绑的网关 id（官方账号为空） */
+  boundGatewayIds: readonly (string | null | undefined)[];
+  /** 已安装的 agent id，按 AGENTS 顺序 */
+  installed: readonly string[];
+  /** 从某家 agent 组发起时预选的 agent，优先于一切推断 */
+  presetAgent?: string | null;
+}): { gatewayId: string | null; agent: string } {
+  const bound = new Set(input.boundGatewayIds.filter(Boolean));
+  const gateway = [...input.gateways].reverse().find((g) => !bound.has(g.id)) ?? null;
+  if (input.presetAgent) return { gatewayId: gateway?.id ?? null, agent: input.presetAgent };
+  const usable = gateway
+    ? input.installed.filter((agent) => gatewayServesAgent(gateway.slots, agent))
+    : [...input.installed];
+  const pool = usable.length ? usable : input.installed;
+  const agent = pool.includes("claude-code") ? "claude-code" : (pool[0] ?? "claude-code");
+  return { gatewayId: gateway?.id ?? null, agent };
 }

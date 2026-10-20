@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { scheduleWarnText, usageWarnText, type UnbindRefs } from "../unbind-impact";
 import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import {
@@ -20,9 +21,9 @@ import {
   Undo2,
 } from "lucide-react";
 import { useAppStore } from "../store";
-import { AGENTS, AGENT_PROTOCOLS, type ScheduleDto } from "../types";
 import { NAV_ICONS } from "../navigation-icons";
 import { openChatWithProfile } from "../quick-chat-launch";
+import { AGENTS, AGENT_PROTOCOLS, type ScheduleDto } from "../types";
 import { presetsForAgent, NO_PRESET_REASON, type ProviderPreset } from "../presets";
 import {
   extraBindTargets,
@@ -42,14 +43,15 @@ import { interactiveUpdatePrefill } from "../update-routing";
 import { absTime, relTime } from "../rel-time";
 import { toast } from "../toast";
 import { slotForAgent } from "../gateway-slot";
-import { catalogCapabilityNote } from "../gateway-draft";
+import { catalogCapabilityNote, zhipuOpenAiSlotBillingHint } from "../gateway-draft";
 import {
   profileConnectionCaptions,
   showCatalogSyncAction,
 } from "../profile-connection-ui";
-import { endpointHost, gatewayPickerRows } from "../gateway-option";
+import { addConnectionDefaults, endpointHost, gatewayPickerRows } from "../gateway-option";
 import ContextMenu from "../components/ContextMenu";
 import GatewayLibrary from "../components/GatewayLibrary";
+import { OnboardingPageStrip } from "../components/OnboardingGuide";
 import { HoverTip, useHoverTip } from "../components/HoverTip";
 import { alertDialog, confirmDialog } from "../components/ConfirmDialog";
 import { Modal } from "../components/Modal";
@@ -115,22 +117,37 @@ function ProfileModal({
   const saveGateway = useAppStore((s) => s.saveGateway);
   const gateways = useAppStore((s) => s.gateways);
   const loadGateways = useAppStore((s) => s.loadGateways);
+  // 新建时的默认选择只在打开那一刻算一次：没有连接在用的网关（多半刚在网关库建好）直接选上，
+  // Agent 先挑装好的（gateway-option.ts addConnectionDefaults）
+  const [opening] = useState(() => {
+    if (initial) return null;
+    const s = useAppStore.getState();
+    const installed = new Set(s.agents.filter((a) => a.binaryPath).map((a) => a.id));
+    const pick = addConnectionDefaults({
+      gateways: s.gateways,
+      boundGatewayIds: s.profiles.map((p) => p.gatewayId),
+      installed: AGENTS.map((a) => a.id).filter((id) => installed.has(id)),
+      presetAgent,
+    });
+    const gw = pick.gatewayId ? s.gateways.find((g) => g.id === pick.gatewayId) : undefined;
+    return { agent: pick.agent, gateway: gw ?? null };
+  });
   // 一键接入：选中的 provider 预设（含完整槽位与推荐模型）；null = 手填
   const [appliedPreset, setAppliedPreset] = useState<ProviderPreset | null>(null);
   // 「同时绑到」勾选的额外 Agent：保存时用同一份网关一次建多条绑定
   const [extraAgents, setExtraAgents] = useState<string[]>([]);
   const [bindMode, setBindMode] = useState<"new" | "existing">(
-    initial ? "new" : "new",
+    opening?.gateway ? "existing" : "new",
   );
-  const [bindGatewayId, setBindGatewayId] = useState("");
+  const [bindGatewayId, setBindGatewayId] = useState(opening?.gateway?.id ?? "");
   const [combo, setCombo] = useState<ComboSurfaceDto | null>(null);
   const [form, setForm] = useState({
-    agent: initial?.agent ?? presetAgent ?? "claude-code",
-    name: initial?.name ?? "",
+    agent: initial?.agent ?? opening?.agent ?? "claude-code",
+    name: initial?.name ?? opening?.gateway?.name ?? "",
     accountType: (initial?.accountType ?? "api") as "api" | "official",
     noAuth: initial?.noAuth ?? false,
     protocol: (initial?.protocol ??
-      AGENT_PROTOCOLS[initial?.agent ?? "claude-code"]?.default ??
+      AGENT_PROTOCOLS[initial?.agent ?? opening?.agent ?? "claude-code"]?.default ??
       null) as string | null,
     apiBackend: (initial?.apiBackend ?? null) as string | null,
     baseUrl: initial?.baseUrl ?? "",
@@ -158,8 +175,10 @@ function ProfileModal({
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
   const [fetchedCapabilityCount, setFetchedCapabilityCount] = useState(0);
   const [fetchError, setFetchError] = useState<string | null>(null);
-  // 获取模型的厂商分组面板：开关 / 筛选词 / 展开的厂商组
-  const [pickerOpen, setPickerOpen] = useState(false);
+  // 获取模型的厂商分组面板：开关 / 筛选词 / 展开的厂商组（预选了已有网关且它有目录时直接展开）
+  const [pickerOpen, setPickerOpen] = useState(
+    Boolean(opening?.gateway && opening.gateway.models.length > 0),
+  );
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [pickerFilter, setPickerFilter] = useState("");
   const [openVendors, setOpenVendors] = useState<ReadonlySet<string>>(new Set());
@@ -757,6 +776,11 @@ function ProfileModal({
           form.baseUrl.trim().replace(/\/+$/, "").endsWith("/v1") && (
           <p className="-mt-2 mb-3 text-xs text-warn-text">
             Anthropic 客户端会自动在 Base URL 后拼 /v1/messages，以 /v1 结尾将打成 /v1/v1/messages 报 404（此时「测试」仍能成功，不代表运行可用）——请去掉末尾的 /v1
+          </p>
+        )}
+        {zhipuOpenAiSlotBillingHint(form.baseUrl) && (
+          <p className="-mt-2 mb-3 text-xs text-warn-text">
+            {zhipuOpenAiSlotBillingHint(form.baseUrl)}
           </p>
         )}
         {testResult && (
@@ -2180,6 +2204,28 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   } | null>(null);
   const [gwLib, setGwLib] = useState(false);
   const [gwFocus, setGwFocus] = useState<string | null>(null);
+  // 网关库「打开即新建」（上手引导发起）；gwOpenToken 换 key 让已开着的库按新请求重开
+  const [gwNew, setGwNew] = useState(false);
+  const [gwOpenToken, setGwOpenToken] = useState(0);
+  // 别处（上手引导 / 下一步提示）发来的一次性请求：打开网关库 / 添加连接弹窗
+  const gatewayLibraryReq = useAppStore((s) => s.gatewayLibraryReq);
+  useEffect(() => {
+    if (!gatewayLibraryReq) return;
+    useAppStore.getState().setGatewayLibraryReq(null);
+    setModal(null);
+    setGwFocus(null);
+    setGwNew(gatewayLibraryReq.create);
+    setGwOpenToken(gatewayLibraryReq.token);
+    setGwLib(true);
+  }, [gatewayLibraryReq]);
+  const profileModalReq = useAppStore((s) => s.profileModalReq);
+  useEffect(() => {
+    if (!profileModalReq) return;
+    useAppStore.getState().setProfileModalReq(null);
+    setGwLib(false);
+    setGwFocus(null);
+    setModal({ initial: null });
+  }, [profileModalReq]);
   const [topMenu, setTopMenu] = useState<{ x: number; y: number } | null>(null);
   const [rowMenu, setRowMenu] = useState<{
     x: number;
@@ -2754,27 +2800,11 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     const affected = await invoke<ScheduleDto[]>("list_schedules")
       .then((all) => all.filter((s) => s.profileId === p.id))
       .catch(() => [] as ScheduleDto[]);
-    const warn =
-      affected.length > 0
-        ? `\n\n注意：有 ${affected.length} 条定时任务正在用这个配置` +
-          `（${affected
-            .slice(0, 3)
-            .map((s) => `「${s.name}」`)
-            .join("、")}${affected.length > 3 ? " 等" : ""}）。` +
-          `解绑后它们不会自动改用别的配置，会在下次运行时停下并提示重选连接。`
-        : "";
+    const warn = scheduleWarnText(affected);
     // 删连接清点（W2b）：把「删了会怎样」说在事前——项目侧引用会被级联清理、
     // 目标回落项目默认、定时按上句 fail-loud。数不出来（命令失败）不拦删除。
-    const usageWarn = await invoke<{
-      projects: number;
-      goals: number;
-    }>("profile_usage_refs", { id: p.id })
-      .then((refs) =>
-        refs.projects + refs.goals > 0
-          ? `\n\n另有 ${refs.projects} 个项目的默认/专属绑定引用它（删除后自动清理），` +
-            `${refs.goals} 条目标钉着它（删除后跟随项目默认）。`
-          : "",
-      )
+    const usageWarn = await invoke<UnbindRefs>("profile_usage_refs", { id: p.id })
+      .then((refs) => usageWarnText(refs))
       .catch(() => "");
     if (
       !(await confirmDialog(
@@ -2947,7 +2977,10 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
             <>
               <button
                 type="button"
-                onClick={() => setGwLib(true)}
+                onClick={() => {
+                  setGwNew(false);
+                  setGwLib(true);
+                }}
                 className={secondaryActionClass}
               >
                 网关库
@@ -2974,6 +3007,9 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
             </>
           }
         />
+
+        {/* 上手引导走到安装 / 网关 / 连接 / 第一段对话时，这一步在本页怎么做 */}
+        <OnboardingPageStrip />
 
         {/* 过滤条：状态筛选胶囊（选中=实心 seg-sel）+ 右侧搜索框 */}
         <PageToolbar>
@@ -3611,15 +3647,19 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
         })()}
       {gwLib && (
         <GatewayLibrary
+          key={gwOpenToken}
           initialId={gwFocus}
+          initialNew={gwNew}
           onClose={() => {
             setGwLib(false);
             setGwFocus(null);
+            setGwNew(false);
           }}
           onJumpUsage={(id) => {
             sessionStorage.setItem("ccode.statsGateway", id);
             setGwLib(false);
             setGwFocus(null);
+            setGwNew(false);
             setPage("stats");
           }}
         />
@@ -3635,6 +3675,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
           onOpenGateway={(id) => {
             setModal(null);
             setGwFocus(id);
+            setGwNew(false);
             setGwLib(true);
           }}
           onSaved={(agent, name) => {

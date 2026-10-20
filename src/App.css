@@ -1639,16 +1639,17 @@ button.ccode-nav-island-announce:hover {
 .ccode-toast-success { border-left-color: var(--color-ok-text); }
 .ccode-toast-warning { border-left-color: var(--color-warn-text); }
 .ccode-toast-error { border-left-color: var(--color-err-text); }
-.ccode-toast-body { min-width: 0; overflow-wrap: anywhere; }
+.ccode-toast-body { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .ccode-toast-headline { display: block; color: var(--color-l1); font-weight: 500; }
 .ccode-toast-detail { display: block; margin-top: 2px; color: var(--color-l3); }
-.ccode-toast button {
+/* 只管右上角的 ×；提示里的动作按钮走 PageFrame 按钮令牌 */
+.ccode-toast-close {
   flex: 0 0 auto;
   color: var(--color-l4);
   font-size: 16px;
   line-height: 1;
 }
-.ccode-toast button:hover { color: var(--color-l1); }
+.ccode-toast-close:hover { color: var(--color-l1); }
 
 @media (max-width: 900px) {
   .ccode-page-frame { padding-inline: 16px; }

@@ -43,6 +43,13 @@ import type { RunOverviewInput } from "./run-overview";
 import type { DepCheckDto } from "./dep-check";
 import type { AskAiFile } from "./ask-ai";
 import { toast } from "./toast";
+import {
+  ONBOARDING_STORAGE_KEY,
+  parseOnboarding,
+  serializeOnboarding,
+  type OnboardingState,
+  type OnboardingStepId,
+} from "./onboarding";
 import type { ProjectSurfaceTab } from "./project-surface";
 import type {
   BindingInput,
@@ -55,6 +62,7 @@ import type {
   RepoDto,
   RunDto,
   SessionMetaDto,
+  SurfaceMode,
   TaskCardDto,
 } from "./types";
 
@@ -75,6 +83,14 @@ function cachedRecentRepos(): RepoDto[] {
       : [];
   } catch {
     return [];
+  }
+}
+
+function loadOnboardingState(): OnboardingState {
+  try {
+    return parseOnboarding(localStorage.getItem(ONBOARDING_STORAGE_KEY));
+  } catch {
+    return parseOnboarding(null);
   }
 }
 
@@ -628,6 +644,24 @@ interface AppState {
   /** 一次性「跳设置页并选中分区」请求（收件箱 dep: 条目发起），设置页消费并清空 */
   settingsSectionReq: string | null;
   setSettingsSectionReq: (section: string | null) => void;
+  /** 上手引导状态（onboarding.ts；localStorage ccode.onboarding 持久化）。完成与否由数据现算，这里只存
+   *  判定结果、欢迎页看过没有、两步人工确认 */
+  onboarding: OnboardingState;
+  updateOnboarding: (patch: Partial<OnboardingState>) => void;
+  /** 记一步人工确认（已记过不重写）；运行页真切到终端时也调它 */
+  ackOnboarding: (id: OnboardingStepId) => void;
+  /** 上手清单浮层开关（侧栏「上手引导」行 / 帮助菜单 / 命令面板共用） */
+  onboardingPanelOpen: boolean;
+  setOnboardingPanelOpen: (open: boolean) => void;
+  /** 一次性「打开网关库」请求（连接页消费并清空）；create = 打开即进新建表单 */
+  gatewayLibraryReq: { token: number; create: boolean } | null;
+  setGatewayLibraryReq: (req: { token: number; create: boolean } | null) => void;
+  /** 一次性「打开添加连接弹窗」请求（token；连接页消费并清空） */
+  profileModalReq: number | null;
+  setProfileModalReq: (token: number | null) => void;
+  /** 一次性「当前标签切聊天 / 终端」请求（上手引导「切到终端」；运行页可见时消费并清空） */
+  surfaceSwitchReq: { mode: SurfaceMode; token: number } | null;
+  setSurfaceSwitchReq: (req: { mode: SurfaceMode; token: number } | null) => void;
   /** 一次性「跳终端页并激活标签」请求（首页待办点击发起），终端页可见时消费并清空 */
   focusTabReq: string | null;
   setFocusTabReq: (tabId: string | null) => void;
@@ -932,6 +966,29 @@ export const useAppStore = create<AppState>((set, get) => {
   },
   settingsSectionReq: null,
   setSettingsSectionReq: (section) => set({ settingsSectionReq: section }),
+  onboarding: loadOnboardingState(),
+  updateOnboarding: (patch) => {
+    const onboarding = { ...get().onboarding, ...patch };
+    set({ onboarding });
+    try {
+      localStorage.setItem(ONBOARDING_STORAGE_KEY, serializeOnboarding(onboarding));
+    } catch {
+      /* 存不下只影响下次启动：会重新判定，有连接即收起，不会反复打扰 */
+    }
+  },
+  ackOnboarding: (id) => {
+    const { onboarding, updateOnboarding } = get();
+    if (onboarding.acks[id]) return;
+    updateOnboarding({ acks: { ...onboarding.acks, [id]: true } });
+  },
+  onboardingPanelOpen: false,
+  setOnboardingPanelOpen: (open) => set({ onboardingPanelOpen: open }),
+  gatewayLibraryReq: null,
+  setGatewayLibraryReq: (req) => set({ gatewayLibraryReq: req }),
+  profileModalReq: null,
+  setProfileModalReq: (token) => set({ profileModalReq: token }),
+  surfaceSwitchReq: null,
+  setSurfaceSwitchReq: (req) => set({ surfaceSwitchReq: req }),
   helpDismissed: loadHelpDismissed(),
   dismissHelpRequest: (root, signature) =>
     set({ helpDismissed: dismissHelp(root, signature) }),
