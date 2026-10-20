@@ -71,6 +71,10 @@ pub struct StepRunDto {
     pub command: String,
     #[serde(rename = "default")]
     pub is_default: bool,
+    /// Windows 上给 Agent 用的 PowerShell 写法（command 是 bash 写法）。人点「运行脚本」
+    /// 仍走 Git Bash + command；这一份只进 TASK.md，供命令工具是 PowerShell 的 Agent 照跑
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command_windows: Option<String>,
 }
 
 /// 人工事项（步骤的一等属性，人机分工清单）：人要做的事 + 引导说明 + 交付落点 + 时机。
@@ -1200,6 +1204,8 @@ struct TomlStepRun {
     command: String,
     #[serde(default)]
     default: bool,
+    #[serde(default)]
+    command_windows: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1637,6 +1643,9 @@ fn parse_config(text: &str) -> (ProjectConfigDto, Vec<String>) {
                                 name,
                                 command: r.command,
                                 is_default: r.default,
+                                command_windows: r
+                                    .command_windows
+                                    .filter(|c| !c.trim().is_empty()),
                             })
                             .collect(),
                         human_tasks,
@@ -2155,6 +2164,9 @@ fn render_config(existing: Option<&str>, config: &ProjectConfigDto) -> Result<St
                     entry["command"] = value(&r.command);
                     if r.is_default {
                         entry["default"] = value(true);
+                    }
+                    if let Some(win) = r.command_windows.as_deref().filter(|c| !c.trim().is_empty()) {
+                        entry["command_windows"] = value(win);
                     }
                     run[&r.name] = Item::Table(entry);
                 }
@@ -5199,11 +5211,13 @@ mod tests {
                         name: "dev".into(),
                         command: "echo hi".into(),
                         is_default: true,
+                        command_windows: None,
                     },
                     StepRunDto {
                         name: "test".into(),
                         command: "echo test".into(),
                         is_default: false,
+                        command_windows: Some("Write-Output test".into()),
                     },
                 ],
             }],
@@ -5279,7 +5293,7 @@ expected_artifacts = ["notes/"]
 skills = ["paper-notes"]
 [steps.run]
 dev = { command = "echo hi", default = true }
-test = { command = "echo test" }
+test = { command = "echo test", command_windows = "Write-Output test" }
 "#;
         let (config, warnings) = parse_config(text);
         assert!(warnings.is_empty(), "合法配置不应有警告: {warnings:?}");
@@ -6656,6 +6670,7 @@ resources = ["ghost.pdf"]
                     name: "dev".into(),
                     command: "echo hi".into(),
                     is_default: true,
+                    command_windows: None,
                 }],
             },
             StepDto {

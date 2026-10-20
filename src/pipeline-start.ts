@@ -10,6 +10,7 @@ import {
 } from "./workspace-resume";
 import { DEFAULT_KICKOFF_PROMPT } from "./pipeline-presets";
 import { renderTaskMd } from "./task-md";
+import { IS_WINDOWS } from "./hotkeys";
 import { stepSlotKey, taskBindingLaunch, workspaceLaunchChain } from "./project-agents";
 export { renderTaskMd };
 import type { KickoffLaunch } from "./kickoff-launch";
@@ -92,7 +93,7 @@ export async function buildTaskMdPreview(
     step,
   );
   return appendUpstreamAcceptance(
-    renderTaskMd(step, cfg, projectPath, artifacts, skillMeta, providesByName, decisions),
+    renderTaskMd(step, cfg, projectPath, artifacts, skillMeta, providesByName, decisions, IS_WINDOWS),
     upstream,
   );
 }
@@ -222,6 +223,7 @@ export async function startPipelineStep({
       skillMeta,
       providesByName,
       decisions,
+      IS_WINDOWS,
     );
   }
   content = appendUpstreamAcceptance(content, upstream);

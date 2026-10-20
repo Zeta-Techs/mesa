@@ -442,3 +442,43 @@ test("wsLast 记忆层闸门：停用连接不被自动预填（autoStart 落空
     (globalThis as { __pipelineStartHost?: unknown }).__pipelineStartHost = prevHost;
   }
 });
+
+test("TASK.md 本步骤脚本：只在 Windows、只列简报点名的 run 脚本；有 PowerShell 写法时两种都给", () => {
+  const latex = PIPELINE_TEMPLATES.flatMap((t) => t.steps).find((s) =>
+    s.run.some((r) => r.name === "render-pdf"),
+  );
+  assert.ok(latex, "LaTeX 模板应带 render-pdf");
+  const render = latex.run.find((r) => r.name === "render-pdf")!;
+  assert.ok(render.commandWindows, "render-pdf 必须带 PowerShell 写法");
+  // PowerShell 5.1 不认 bash 语法；&& 只出现在 cmd /c 里
+  assert.doesNotMatch(render.commandWindows!, /mkdir -p|command -v|\bfi\b|\/dev\/null/);
+  assert.match(render.commandWindows!, /cmd \/d \/c exit \$rpExit/);
+
+  const mac = renderTaskMd(latex, cfg(), "/p", undefined, undefined, undefined, undefined, false);
+  assert.doesNotMatch(mac, /## 本步骤脚本/, "macOS 不占任务书篇幅");
+
+  const win = renderTaskMd(latex, cfg(), "C:\\p", undefined, undefined, undefined, undefined, true);
+  assert.match(win, /## 本步骤脚本（Windows）/);
+  assert.match(win, /命令工具是 PowerShell 时：`New-Item -ItemType Directory -Force output/);
+  assert.match(win, /命令工具是 Git Bash 时：`mkdir -p output/);
+  assert.doesNotMatch(win, /没有给 PowerShell 写法的条目/);
+});
+
+test("TASK.md 本步骤脚本：简报没点名的不列；只有 bash 写法的条目点名用 Git Bash", () => {
+  const s = step({
+    brief: "改完跑一次 run 脚本 prep，再跑 render-draft。",
+    run: [
+      { name: "render-draft", command: "quarto render manuscript/draft.md --to pdf", default: true },
+      { name: "prep", command: "mkdir -p out && cp a out/", default: false },
+      { name: "export-docx", command: "quarto render manuscript/draft.md --to docx", default: false },
+    ],
+  });
+  const win = renderTaskMd(s, cfg(), "C:\\p", undefined, undefined, undefined, undefined, true);
+  assert.match(win, /- render-draft：`quarto render manuscript\/draft\.md --to pdf`/);
+  assert.match(win, /- prep：`mkdir -p out/);
+  assert.doesNotMatch(win, /export-docx/, "简报没点名");
+  assert.match(win, /用 Git Bash 执行/);
+  const quartoOnly = step({ brief: "跑 render-draft。", run: [s.run[0]] });
+  assert.doesNotMatch(renderTaskMd(quartoOnly, cfg(), "C:\\p", undefined, undefined, undefined, undefined, true), /用 Git Bash 执行/);
+  assert.doesNotMatch(renderTaskMd(step(), cfg(), "/p"), /## 本步骤脚本/);
+});

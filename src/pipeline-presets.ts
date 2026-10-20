@@ -1484,6 +1484,25 @@ const LATEX_RENDER_PDF_CMD =
   'latexmk "$engine" -interaction=nonstopmode -outdir=../output -auxdir=../output main.tex; ' +
   'else echo "未检测到 LaTeX 编译环境：安装 tectonic 或 TeX Live/MiKTeX 获得 latexmk"; exit 1; fi) > output/compile.log 2>&1; status=$?; cat output/compile.log; (exit "$status")';
 
+/** 同一脚本的 PowerShell 写法（5.1 与 7 都能跑）：命令工具是 PowerShell 的 Agent（Codex 等）在 Windows 上照这份跑，
+ *  人点「运行脚本」仍走 Git Bash + 上面的 bash 写法。编译器经 `cmd /c` 跑并在 cmd 里重定向：日志按原字节落盘，
+ *  不经 PowerShell 5.1 的 UTF-16 重定向；失败用 `cmd /c exit` 收尾——非零退出又不关掉交互 shell */
+const LATEX_RENDER_PDF_CMD_WINDOWS =
+  "New-Item -ItemType Directory -Force output | Out-Null; $rpExit = 1; " +
+  'if (Get-Command tectonic -ErrorAction SilentlyContinue) { cmd /d /c "cd manuscript && tectonic --keep-logs --outdir ..\\output main.tex > ..\\output\\compile.log 2>&1"; $rpExit = $LASTEXITCODE } ' +
+  "elseif (Get-Command latexmk -ErrorAction SilentlyContinue) { $rpEngine = '-pdf'; if (Select-String -Path manuscript/main.tex -Pattern 'ctex|xeCJK|fontspec' -Quiet) { $rpEngine = '-xelatex' }; " +
+  'cmd /d /c "cd manuscript && latexmk $rpEngine -interaction=nonstopmode -outdir=..\\output -auxdir=..\\output main.tex > ..\\output\\compile.log 2>&1"; $rpExit = $LASTEXITCODE } ' +
+  "else { Set-Content -Path output/compile.log -Encoding UTF8 -Value '未检测到 LaTeX 编译环境：安装 tectonic 或 TeX Live/MiKTeX 获得 latexmk' }; " +
+  'Get-Content -Encoding UTF8 output/compile.log; if ($rpExit -ne 0) { Write-Host "render-pdf 失败（退出码 $rpExit）"; cmd /d /c exit $rpExit }';
+
+/** LaTeX 四步共用的 run 脚本条目 */
+const LATEX_RENDER_PDF_RUN = {
+  name: "render-pdf",
+  command: LATEX_RENDER_PDF_CMD,
+  commandWindows: LATEX_RENDER_PDF_CMD_WINDOWS,
+  default: true,
+};
+
 const LATEX_PAPER_STEPS: ProjectStepDto[] = [
   {
     name: "搭建骨架",
@@ -1510,7 +1529,7 @@ const LATEX_PAPER_STEPS: ProjectStepDto[] = [
       ...MANUSCRIPT_FINALS,
     ],
     skills: [],
-    run: [{ name: "render-pdf", command: LATEX_RENDER_PDF_CMD, default: true }],
+    run: [LATEX_RENDER_PDF_RUN],
     humanTasks: [
       {
         title: "把期刊官方模板解压到 manuscript/template/",
@@ -1552,7 +1571,7 @@ const LATEX_PAPER_STEPS: ProjectStepDto[] = [
     optionalInputs: ["notes/", "references.bib", "figures/*", "design.md", "analysis/", "results/"],
     skills: ["research-writing", "bib-check"],
     requiredSkills: ["bib-check"],
-    run: [{ name: "render-pdf", command: LATEX_RENDER_PDF_CMD, default: true }],
+    run: [LATEX_RENDER_PDF_RUN],
     discussionSeeds: [
       "卖点怎么讲：贡献如何简洁陈述且不超过证据，Introduction 往哪个方向带？",
     ],
@@ -1573,7 +1592,7 @@ const LATEX_PAPER_STEPS: ProjectStepDto[] = [
     inputs: ["manuscript/"],
     optionalInputs: ["references.bib"],
     skills: [],
-    run: [{ name: "render-pdf", command: LATEX_RENDER_PDF_CMD, default: true }],
+    run: [LATEX_RENDER_PDF_RUN],
     humanTasks: [
       {
         title: "安装 LaTeX 编译环境",
@@ -1610,7 +1629,7 @@ const LATEX_PAPER_STEPS: ProjectStepDto[] = [
     inputs: ["manuscript/"],
     optionalInputs: ["references.bib", "figures/*", "notes/", "design.md", "analysis/", "results/"],
     skills: ["bib-check"],
-    run: [{ name: "render-pdf", command: LATEX_RENDER_PDF_CMD, default: true }],
+    run: [LATEX_RENDER_PDF_RUN],
     humanTasks: [
       {
         ...reviewDecisionTask("manuscript/review-report.md"),

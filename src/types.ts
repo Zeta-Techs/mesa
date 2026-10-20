@@ -1335,6 +1335,8 @@ export interface ProjectStepRunDto {
   name: string;
   command: string;
   default: boolean;
+  /** Windows 上给 Agent 的 PowerShell 写法（command 是 bash 写法）；只进 TASK.md，人点运行仍走 Git Bash */
+  commandWindows?: string;
 }
 
 /** 步骤决策项（模板预置的「开工前要拍板的选择题」）：答案可枚举的走这里——点一下就答完，
