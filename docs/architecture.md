@@ -515,6 +515,17 @@ macOS 签名公证接进 workflow，六个 `APPLE_*` secrets 配齐才启用（�
 （`scripts/mirror-latest-json.mjs`，签名原样、缺签名拒绝）、先传包后传清单、读回核对；凭据走 secrets，没配齐跳过并写日志。改写逻辑
 对现有已发布的 `latest.json` 干跑过；工作流本身没在真实对象存储上跑过（开通步骤见 docs/release.md）。只对配好后打出的版本生效。
 
+### 2026-10-20 · 新标签默认随手聊；Windows 上 Codex 在主目录启动先确认；聊天层提交间隔 250ms
+
+用户在 Mesa Dev 里测 Codex 聊天层，报两件事。一，**发出去的话留在终端输入框**：聊天发送是正文、隔 60ms、回车，Codex 把连着到达的字当粘贴，
+粘贴后 120ms 内的回车只换行（codex-rs `paste_burst.rs`）；Windows 端到端实测 60ms 复现、150ms 通过，`pty_input::SUBMIT_GAP` 取 250ms（terminal.md 同步）。
+二，**Codex 执行任务时 Mesa 直接退出**：新标签默认目录是主目录，用户配置了 Codex Windows 沙箱（`[windows] sandbox = "elevated"`），第一条沙箱命令前
+Codex 给工作目录下每一项改访问权限（`~/.codex/cap_sid` 记了 89 个路径，含 Desktop），一路改进 Mesa 源码；tauri dev 把权限变动当源码改动，
+杀掉 Mesa 重编译重启，app-server 随任务组一起被收，Codex 目标续跑又触发同一条命令，循环三次（只改权限、不改内容即可复现）。打包版不退出，
+但同样会改整个用户文件夹的权限。用户拍板：**新标签没给目录时默认随手聊**（`ensure_scratch_dir`，恢复标签 / 接回会话不动，主目录要人在目录菜单里选）；
+**Windows + Codex + 主目录 + 非完全访问启动前弹确认**（`quick-chat.ts codexSandboxCoversHome`），取消时聊天层报具体原因。仓库上 Codex 遗留的
+继承权限已用 `icacls /reset /T` 清回（36889 个文件）。开发时测 Codex 不要用包住 Mesa 仓库的目录（主目录、Desktop、仓库本身）。
+
 ### 2026-10-20 · 聊天层 Windows 实测反馈：Claude 审批答完即收卡、实时预览滤掉折行提示（两处 Mac 共有）
 
 用户在 Mesa Dev 里按测试提示词逐条点 Claude Code，报三件事，定因后两件是 Mac 共有、Windows 上更显眼，一件与 Mesa 无关：

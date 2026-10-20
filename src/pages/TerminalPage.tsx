@@ -105,7 +105,12 @@ import {
   modelOnScreenSupported,
   outputTail,
 } from "../reasoning-effort";
-import { QUICK_CHAT_KEY_PREFIX, isBlankChatTab, newTabCwd } from "../quick-chat";
+import {
+  QUICK_CHAT_KEY_PREFIX,
+  codexSandboxCoversHome,
+  isBlankChatTab,
+  newTabCwd,
+} from "../quick-chat";
 import { resumeSessionInTerminal, saveQuickChatChoice } from "../quick-chat-launch";
 import { connectionModels, readModelHistory } from "../model-history";
 import FileTree, { type DirEntryDto } from "../components/FileTree";
@@ -1040,6 +1045,24 @@ const TerminalView = memo(function TerminalView({
       .then(setHomeDir)
       .catch(() => {});
   }, []);
+  // 没给目录的新标签默认随手聊（~/ccode/scratch，与快速开聊同口径），不再默认主目录：Codex 在 Windows 上会给
+  // 工作目录下每一项改访问权限，主目录 = 整个用户文件夹（2026-10-20 实测）。主目录仍可在目录菜单里选。
+  // 恢复的标签与接回会话保持原目录；人在这之前已经换过目录的不覆盖
+  useEffect(() => {
+    if (initialCwd || restored || resumeSessionId) return;
+    let cancelled = false;
+    void invoke<string>("ensure_scratch_dir")
+      .then((dir) => {
+        if (!cancelled && dir) setCwd((cur) => (cur === "~" ? dir : cur));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  /** launch 里人主动取消（如主目录提醒点了取消）时的说明，给聊天层发送失败时显示，代替笼统的「启动失败」 */
+  const launchCancelRef = useRef<string | null>(null);
 
   async function checkWorkingDirectory(path = cwd): Promise<boolean> {
     const seq = ++cwdCheckSeqRef.current;
@@ -4276,6 +4299,7 @@ const TerminalView = memo(function TerminalView({
   ): Promise<{ ptyId: string; promptDropped: boolean } | null> {
     setError(null);
     setNotice(null);
+    launchCancelRef.current = null;
     if (customRuntimeId) {
       if (restored) {
         setError("自定义 Runtime 不支持恢复；点击“运行”会创建新的 Run");
@@ -4351,6 +4375,28 @@ const TerminalView = memo(function TerminalView({
     if (!(await checkWorkingDirectory(cwd))) {
       setBarExpanded(true);
       return null;
+    }
+    if (
+      codexSandboxCoversHome({
+        agentId,
+        cwd,
+        home: homeDir,
+        permissionMode:
+          (permission ?? (options?.readonly ?? readonly ? "discuss" : "write_tree")) === "discuss"
+            ? null
+            : permissionMode,
+        isWindows: IS_WINDOWS,
+      })
+    ) {
+      const ok = await confirmDialog(
+        "Codex 要在主目录里运行\n\nCodex 在 Windows 上跑命令前，会给工作目录里的每个文件改访问权限。现在的目录是主目录，会改到整个用户文件夹（文档、桌面、AppData 等）：第一次跑命令会很慢，Codex 的沙箱账户也会留下这些文件的写权限。\n\n建议点「取消」，在目录芯片里换成「随手聊」或某个项目文件夹再开始。",
+        { confirmText: "仍在主目录运行" },
+      );
+      if (!ok) {
+        launchCancelRef.current = "没有启动：Codex 不建议在主目录运行，请在输入框下方的目录芯片里换一个文件夹再发";
+        setBarExpanded(true);
+        return null;
+      }
     }
     if (!visible || !everVisible) {
       setError("这次没能按画面大小启动");
@@ -4801,7 +4847,7 @@ const TerminalView = memo(function TerminalView({
     // Agent 已回落 shell：聊天框继续沿用最后一个会话，而不是启动新上下文。
     if (!running && shellActive && lastResumeRef.current) {
       const res = await launch(lastResumeRef.current, { prompt: "" });
-      if (!res) return { error: error ?? "恢复会话失败，请切到终端检查" };
+      if (!res) return { error: launchCancelRef.current ?? error ?? "恢复会话失败，请切到终端检查" };
       // 恢复启动要经历进程引导/会话回放（可能还有信任提示）：等一拍再写，
       // 否则正文+提交键落在尚未就绪的 TUI 上，表现为消息躺在输入框里没发出去
       await new Promise((r) => setTimeout(r, 1200));
@@ -4821,7 +4867,7 @@ const TerminalView = memo(function TerminalView({
         return { error: "上次使用的配置已不存在，切到终端在启动栏重新选择" };
       }
       const res = await launch(undefined, { prompt: "" });
-      if (!res) return { error: error ?? "恢复会话失败，请切到终端检查" };
+      if (!res) return { error: launchCancelRef.current ?? error ?? "恢复会话失败，请切到终端检查" };
       await new Promise((r) => setTimeout(r, 1200));
       if (!mountedRef.current || ptyIdRef.current !== res.ptyId)
         return { error: null };
@@ -4843,7 +4889,7 @@ const TerminalView = memo(function TerminalView({
     setPromptText(message);
     setShowPrompt(true);
     const res = await launch(undefined, { prompt: message, typeDroppedPrompt: true });
-    if (!res) return { error: "启动 Agent 失败，请切到终端查看详细信息" };
+    if (!res) return { error: launchCancelRef.current ?? "启动 Agent 失败，请切到终端查看详细信息" };
     if (res.promptDropped) {
       // Kimi 没有带首条指令启动的参数：等输入框就绪后照普通消息写进去（与之后每句同一条路）
       if (!mountedRef.current || ptyIdRef.current !== res.ptyId) return { error: null };

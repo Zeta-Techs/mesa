@@ -460,7 +460,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   tui-panel.ts               # 认「终端里开着一个面板」（parseTuiPanel：没有该家输入框 + Esc to cancel/close 一类关闭提示；/cost、/usage 的 Settings 面板）：
                              # 与菜单同一次扫屏，认出菜单时不算面板；聊天层给「结果在终端面板里」卡，不再挂「正在生成回复」（tests/tui-panel.test.ts）
   quick-chat.ts              # 快速开聊纯逻辑：默认选择 pickQuickChatDefault（记住的 → 同家另一条 → 上次启动 → 装了的第一家）、
-                             # 空白标签 isBlankChatTab（再点只复用没说过话的）、运行页「+」目录 newTabCwd（跟当前标签，隔离目录不跟）、
+                             # 空白标签 isBlankChatTab（再点只复用没说过话的）、运行页「+」目录 newTabCwd（跟当前标签，隔离目录不跟，不跟时落随手聊）、
+                             # Windows 上 Codex 在主目录启动前要不要确认 codexSandboxCoversHome（完全访问不提醒）、
                              # 连接页「新对话」chatChoiceForProfile（点哪条用哪条，模型取名单第一个，不看记住的默认）、
                              # 随手聊历史只列 ~/ccode/scratch（isScratchCwd），排除工作区/已注册项目/其他仓库/归档/内部/live/源文件已删，
                              # pickQuickChatHistory 用 store 会话列表现算（tests/quick-chat.test.ts）

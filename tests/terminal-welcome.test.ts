@@ -37,6 +37,8 @@ test("未启动且目录是 ~ 时标签写成未启动", () => {
   assert.equal(idleTabTitle("~", true), "未启动");
   assert.equal(idleTabTitle("", true), "未启动");
   assert.equal(idleTabTitle("/Users/me/src", true), null);
+  assert.equal(idleTabTitle("/Users/me/ccode/scratch", true), "未启动");
+  assert.equal(idleTabTitle("C:\\Users\\me\\ccode\\scratch", true), "未启动");
   assert.equal(idleTabTitle("~", false), null);
 });
 

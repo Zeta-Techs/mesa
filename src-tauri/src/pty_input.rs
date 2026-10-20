@@ -6,6 +6,11 @@ use std::sync::{
 };
 use std::time::Duration;
 
+/// 正文与提交键之间的间隔。Codex 把连着到达的字当粘贴，粘贴后 120ms 内的回车只换行不发送
+/// （codex-rs tui paste_burst.rs PASTE_ENTER_SUPPRESS_WINDOW）——间隔不够时字留在输入框里没发出去
+/// （2026-10-20 Windows 实测：60ms 复现，150ms 通过；留余量取 250ms，chat_channel e2e 可用 E2E_SUBMIT_GAP_MS 复核）
+const SUBMIT_GAP: Duration = Duration::from_millis(250);
+
 struct Request {
     bytes: Vec<u8>,
     submit: Option<Vec<u8>>,
@@ -26,7 +31,7 @@ impl PtyInput {
                     writer.write_all(&request.bytes)?;
                     writer.flush()?;
                     if let Some(submit) = &request.submit {
-                        std::thread::sleep(Duration::from_millis(60));
+                        std::thread::sleep(SUBMIT_GAP);
                         writer.write_all(submit)?;
                         writer.flush()?;
                     }
