@@ -534,7 +534,7 @@ function DepStatusLine({
     );
   }
   const reason = depMissingReason(item);
-  const hint = installButtonHint(tool, item.prereq);
+  const hint = installButtonHint(tool, item.prereq, channel);
   return (
     <div className="py-1 text-xs">
       <div className="flex flex-wrap items-center gap-2">
@@ -3944,7 +3944,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                   {depCheck.channel === "brew" && "Homebrew（可一键安装）"}
                   {depCheck.channel === "winget" && "winget（可一键安装）"}
                   {depCheck.channel === "xcode" &&
-                    "无 Homebrew（Git 可走系统安装窗口）"}
+                    "无 Homebrew：Git 走系统安装窗口，其余用官网安装包（可一键安装）"}
                   {depCheck.channel === "none" &&
                     "无自动安装渠道（按指引手动安装）"}
                   <span className="ml-auto shrink-0">

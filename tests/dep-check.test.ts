@@ -35,33 +35,27 @@ test("isGitMissingError：命中后端固定错误串，误伤不识别", () => 
   assert.ok(!isGitMissingError(""));
 });
 
-test("canOneClickInstall：git 三渠道可，node/quarto/tex 仅 brew/winget，拼图库始终可", () => {
-  for (const ch of ["brew", "winget", "xcode"])
-    assert.ok(canOneClickInstall("git", ch), `git/${ch}`);
-  assert.ok(!canOneClickInstall("git", "none"));
-  assert.ok(!canOneClickInstall("git", "unknown"));
-  for (const tool of ["node", "quarto", "tex"] as const) {
-    for (const ch of ["brew", "winget"])
+test("canOneClickInstall：brew / winget / xcode（Mac 无 Homebrew 走官方 .pkg）都能一键，none 不能", () => {
+  for (const tool of ["git", "node", "quarto", "tex"] as const) {
+    for (const ch of ["brew", "winget", "xcode"])
       assert.ok(canOneClickInstall(tool, ch), `${tool}/${ch}`);
-    assert.ok(!canOneClickInstall(tool, "xcode"));
     assert.ok(!canOneClickInstall(tool, "none"));
+    assert.ok(!canOneClickInstall(tool, "unknown"));
   }
   assert.ok(canOneClickInstall("pymupdf", "none"));
   assert.ok(canOneClickInstall("pillow", "xcode"));
 });
 
-test("拼图库缺 Python：有 winget / brew 才能一键补齐，否则给装 Python 的出口", () => {
-  for (const ch of ["winget", "brew"])
+test("拼图库缺 Python：有 winget / brew / Mac 官方包才能一键补齐，否则给装 Python 的出口", () => {
+  for (const ch of ["winget", "brew", "xcode"])
     assert.ok(canOneClickInstall("pymupdf", ch, "python"), ch);
-  for (const ch of ["none", "xcode"])
-    assert.ok(!canOneClickInstall("pillow", ch, "python"), ch);
+  assert.ok(!canOneClickInstall("pillow", "none", "python"));
   assert.equal(depMissingReason({ status: "missing", path: null, prereq: "python" }), "还缺 Python 3");
   assert.match(installButtonHint("pymupdf", "python") ?? "", /先装好 Python 3.*一起装 PyMuPDF 和 Pillow/);
   assert.match(installButtonHint("pillow") ?? "", /一起装/);
   assert.equal(installButtonHint("git", "python"), null);
   const win = installGuidance("pymupdf", "none", "win", "python");
   assert.ok(win.includes("python.org") && win.includes("Add python.exe to PATH"));
-  assert.ok(installGuidance("pillow", "xcode", "mac", "python").includes("Homebrew"));
   assert.ok(installGuidance("pillow", "none", "linux", "python").includes("apt install python3"));
 });
 

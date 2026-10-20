@@ -259,12 +259,13 @@ pub(crate) fn usable_python() -> Option<PathBuf> {
         .find(|p| run_python(p, "import sys").is_some())
 }
 
-/// 没有 Python 时一键补齐用哪条渠道装它（纯函数）：Windows 走 winget，macOS 走 Homebrew；
-/// 都没有就只能请人去 python.org
+/// 没有 Python 时一键补齐用哪条渠道装它（纯函数）：Windows 走 winget；macOS 有 Homebrew 走 brew，
+/// 没有就用 python.org 的官方 .pkg（系统密码框提权）；Windows 没有 winget 只能请人去 python.org
 fn python_install_channel(os: HostOs, has_brew: bool, has_winget: bool) -> Option<&'static str> {
     match os {
         HostOs::Windows if has_winget => Some("winget"),
         HostOs::Macos if has_brew => Some("brew"),
+        HostOs::Macos => Some("pkg"),
         _ => None,
     }
 }
@@ -324,8 +325,8 @@ fn probe_python_module(modules: &[&str]) -> DepItemDto {
 }
 
 /// 一键安装渠道判定（纯函数，可用性注入以便测试）：
-/// macOS = 有 brew 走 brew，否则 git 走 xcode（node 无自动渠道，安装时按此报错）；
-/// Windows = 有 winget 走 winget 否则 none；Linux = none（提示发行版包管理器）
+/// macOS = 有 brew 走 brew，否则「xcode」——git 弹系统安装窗、Node.js / Python / Quarto 走官方 .pkg、
+/// TeX 由 Quarto 装 TinyTeX；Windows = 有 winget 走 winget 否则 none；Linux = none（提示发行版包管理器）
 fn channel_for(os: HostOs, has_brew: bool, has_winget: bool) -> &'static str {
     match os {
         HostOs::Macos => {
@@ -558,6 +559,10 @@ fn install_python(app: &AppHandle, tool: &str) -> Result<(bool, String, &'static
         &format!("agent-update-output-{}", dep_key(tool)),
         "还没有可用的 Python 3，先安装它（约 1–3 分钟），装好后接着装 PDF 处理库…\n",
     );
+    if channel == "pkg" {
+        let (ok, output) = run_mac_pkg(app, tool, "python")?;
+        return Ok((ok, output, channel));
+    }
     let (program, args) = python_install_command(channel);
     let (ok, output) = updater::run_streaming(app, &dep_key(tool), program, &args);
     Ok((ok, output, channel))
@@ -683,25 +688,167 @@ fn install_macos(app: &AppHandle, tool: &str) -> Result<UpdateResultDto, String>
             version_after: None,
         });
     }
-    if !has_brew || spec.brew.is_empty() {
+    if !has_brew {
+        // 没有 Homebrew：Node.js / Quarto 走官方 .pkg，TeX 走 Quarto 自带的 TinyTeX（同 Windows）
+        return match tool {
+            "node" | "quarto" => install_mac_pkg(app, tool, tool),
+            "tex" => install_tex_via_quarto(app, false),
+            _ => Err(no_brew_msg(tool)),
+        };
+    }
+    if spec.brew.is_empty() {
         return Err(no_brew_msg(tool));
     }
     Ok(install_with_brew(app, tool, spec.brew, spec.brew_cask))
 }
 
-/// Windows 的 TeX：winget 源里没有 Tectonic（2026-10-19 实测 `winget search tectonic` 无结果，
-/// 原先的 TectonicTypesetting.Tectonic 一装就「找不到程序包」），改用 Quarto 官方推荐的
-/// TinyTeX——Mesa 装 TeX 只为 Quarto 渲染 PDF，TinyTeX 还能在渲染时自动补缺失的宏包。
-/// 装到 %APPDATA%\TinyTeX；--update-path 写进用户 PATH，Mesa 自己靠 binary_candidate_dirs 找到。
-fn install_tex_windows(app: &AppHandle) -> Result<UpdateResultDto, String> {
+// ===== macOS 没有 Homebrew：官方安装包（.pkg）=====
+//
+// 科研用户的 Mac 多半没装 Homebrew，原先 Node.js / Python / Quarto / TeX 都只能「去官网下」。
+// 三家官网都发 macOS .pkg：先查出当前版本的下载地址（Node 读 dist/index.json 的最新 LTS、Python 读
+// python.org/downloads/macos/ 页上最高的正式版、Quarto 读 GitHub 最新 Release 的 -macos.pkg），
+// curl 下载（走设置里的出网代理），再用系统 installer 装——osascript「with administrator privileges」
+// 弹系统密码框，Mesa 碰不到密码。TeX 用 Quarto 的 `install tinytex`（装在用户目录，不要密码）。
+
+/// 每家官方包的版本索引地址与站点（报错时给人看）
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+fn mac_pkg_index(tool: &str) -> Option<&'static str> {
+    match tool {
+        "node" => Some("https://nodejs.org/dist/index.json"),
+        "python" => Some("https://www.python.org/downloads/macos/"),
+        "quarto" => Some("https://api.github.com/repos/quarto-dev/quarto-cli/releases/latest"),
+        _ => None,
+    }
+}
+
+/// 从索引正文挑出 .pkg 下载地址（纯函数，三家各一种格式）
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+fn mac_pkg_url(tool: &str, body: &str) -> Option<String> {
+    match tool {
+        "node" => {
+            let list: Vec<serde_json::Value> = serde_json::from_str(body).ok()?;
+            // 按发布时间倒序；lts 是代号字符串（"Jod"）或 false
+            let ver = list
+                .iter()
+                .find(|v| v.get("lts").is_some_and(|l| l.is_string()))?
+                .get("version")?
+                .as_str()?;
+            if !ver.starts_with('v') || !ver[1..].split('.').all(|p| p.parse::<u32>().is_ok()) {
+                return None;
+            }
+            Some(format!("https://nodejs.org/dist/{ver}/node-{ver}.pkg"))
+        }
+        "python" => {
+            // 页上同时列着预发布（3.15.0a1 这种），只认纯数字的 3.x.y 且文件名与目录版本一致
+            const PREFIX: &str = "https://www.python.org/ftp/python/";
+            body.match_indices(PREFIX)
+                .filter_map(|(at, _)| {
+                    let rest = &body[at + PREFIX.len()..];
+                    let (ver, tail) = rest.split_once('/')?;
+                    let parts: Vec<u32> = ver.split('.').map(|p| p.parse().ok()).collect::<Option<_>>()?;
+                    let file = format!("python-{ver}-macos11.pkg");
+                    (parts.len() == 3 && parts[0] == 3 && tail.starts_with(&file))
+                        .then(|| (parts, format!("{PREFIX}{ver}/{file}")))
+                })
+                .max_by(|a, b| a.0.cmp(&b.0))
+                .map(|(_, url)| url)
+        }
+        "quarto" => {
+            let rel: serde_json::Value = serde_json::from_str(body).ok()?;
+            rel.get("assets")?
+                .as_array()?
+                .iter()
+                .filter_map(|a| a.get("browser_download_url")?.as_str())
+                .find(|u| u.starts_with("https://github.com/") && u.ends_with("-macos.pkg"))
+                .map(str::to_string)
+        }
+        _ => None,
+    }
+}
+
+/// 下载并安装：参数位传地址与落盘路径，脚本里不拼用户数据；installer 由 osascript 提权（系统密码框）
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+const MAC_PKG_SCRIPT: &str = "set -e\n\
+echo \"下载 $1\"\n\
+curl -fL --retry 2 --connect-timeout 20 -o \"$2\" \"$1\"\n\
+echo \"下载完成，接下来系统会弹窗要开机密码（安装到 /usr/local 需要管理员权限）\"\n\
+osascript -e 'on run argv' -e 'do shell script \"/usr/sbin/installer -pkg \" & quoted form of (item 1 of argv) & \" -target /\" with administrator privileges' -e 'end run' \"$2\"\n\
+rm -f \"$2\"\n";
+
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+fn mac_pkg_site(tool: &str) -> &'static str {
+    match tool {
+        "python" => "python.org",
+        "quarto" => "quarto.org",
+        _ => "nodejs.org",
+    }
+}
+
+/// 查版本索引（有界、走出网代理）；失败给出可行动的话
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+fn fetch_mac_pkg_url(pkg: &str) -> Result<String, String> {
+    let index = mac_pkg_index(pkg).ok_or("没有这一项的官方安装包")?;
+    let site = mac_pkg_site(pkg);
+    let mut cmd = crate::process::background_command("curl");
+    cmd.args(["-fsSL", "--max-time", "30", index]);
+    for (k, v) in crate::settings::download_proxy_env(&[]) {
+        cmd.env(k, v);
+    }
+    let out = crate::process::capture_command(&mut cmd, std::time::Duration::from_secs(40), 8 * 1024 * 1024)
+        .map_err(|e| format!("查 {site} 的版本信息失败：{e}"))?;
+    if out.timed_out || !out.status.is_some_and(|s| s.success()) {
+        return Err(format!(
+            "连不上 {site} 查版本信息：检查网络或在设置 → 网络填出网代理，也可以自己到 {site} 下载安装包，装完点「重新检测」"
+        ));
+    }
+    mac_pkg_url(pkg, &String::from_utf8_lossy(&out.stdout))
+        .ok_or_else(|| format!("没从 {site} 读到 macOS 安装包地址，请自己到 {site} 下载安装，装完点「重新检测」"))
+}
+
+/// tool = 界面上的依赖（日志与完成事件的 key），pkg = 实际装哪家（拼图库一键补齐时是 python）
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn install_mac_pkg(app: &AppHandle, tool: &str, pkg: &str) -> Result<UpdateResultDto, String> {
+    let (ok, output) = run_mac_pkg(app, tool, pkg)?;
+    Ok(finish_install(tool, ok, output, "pkg"))
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn run_mac_pkg(app: &AppHandle, tool: &str, pkg: &str) -> Result<(bool, String), String> {
+    use tauri::Emitter;
+    let _ = app.emit(
+        &format!("agent-update-output-{}", dep_key(tool)),
+        format!(
+            "没有 Homebrew：改用 {} 的官方安装包。先查最新版本…\n",
+            mac_pkg_site(pkg)
+        ),
+    );
+    let url = fetch_mac_pkg_url(pkg)?;
+    let file = std::env::temp_dir().join(format!("mesa-{pkg}-{}.pkg", std::process::id()));
+    let args = vec![
+        "-c".to_string(),
+        MAC_PKG_SCRIPT.to_string(),
+        "sh".to_string(),
+        url,
+        file.to_string_lossy().into_owned(),
+    ];
+    Ok(updater::run_streaming(app, &dep_key(tool), "/bin/sh", &args))
+}
+
+/// TeX 走 Quarto 自带的 TinyTeX（Windows 一直这样；macOS 没有 Homebrew 时也这样）。
+/// update_path：Windows 写进用户 PATH；macOS 不写（要往 /usr/local/bin 建链接、需要管理员），
+/// Quarto 渲染 PDF 自己认得 TinyTeX，Mesa 靠 binary_candidate_dirs 的 ~/Library/TinyTeX 找到
+fn install_tex_via_quarto(app: &AppHandle, update_path: bool) -> Result<UpdateResultDto, String> {
     let quarto = probe_quarto();
     let Some(path) = quarto.path.filter(|_| quarto.status == "ok") else {
-        return Err("Windows 上的 TeX 由 Quarto 安装（TinyTeX）：先一键安装 Quarto，再装 TeX".into());
+        return Err("TeX 由 Quarto 安装（TinyTeX）：先一键安装 Quarto，再装 TeX".into());
     };
-    let args: Vec<String> = ["install", "tinytex", "--no-prompt", "--update-path"]
+    let mut args: Vec<String> = ["install", "tinytex", "--no-prompt"]
         .iter()
         .map(|s| s.to_string())
         .collect();
+    if update_path {
+        args.push("--update-path".into());
+    }
     let (ok, output) = updater::run_streaming(app, &dep_key("tex"), &path, &args);
     Ok(finish_install("tex", ok, output, "quarto"))
 }
@@ -711,7 +858,9 @@ fn install_windows(app: &AppHandle, tool: &str) -> Result<UpdateResultDto, Strin
         return install_with_pip(app, tool);
     }
     if tool == "tex" {
-        return install_tex_windows(app);
+        // Windows 的 TeX：winget 源里没有 Tectonic（2026-10-19 实测 `winget search tectonic` 无结果），
+        // 改用 Quarto 官方推荐的 TinyTeX，装到 %APPDATA%\TinyTeX，--update-path 写进用户 PATH
+        return install_tex_via_quarto(app, true);
     }
     if agents::resolve_binary("winget").is_none() {
         return Err(no_winget_msg(tool));
@@ -885,11 +1034,11 @@ mod tests {
 
     #[test]
     fn python_prereq_install_channels_and_commands() {
-        // 没有 Python 时的代装渠道：Windows 只认 winget，macOS 只认 brew，Linux 不代装
+        // 没有 Python 时的代装渠道：Windows 只认 winget；macOS 有 brew 走 brew、没有走官方 .pkg；Linux 不代装
         assert_eq!(python_install_channel(HostOs::Windows, false, true), Some("winget"));
         assert_eq!(python_install_channel(HostOs::Windows, true, false), None);
         assert_eq!(python_install_channel(HostOs::Macos, true, false), Some("brew"));
-        assert_eq!(python_install_channel(HostOs::Macos, false, true), None);
+        assert_eq!(python_install_channel(HostOs::Macos, false, true), Some("pkg"));
         assert_eq!(python_install_channel(HostOs::Linux, true, true), None);
         // winget：只装当前用户（不弹 UAC）、写进 PATH（排在应用商店占位前面）
         let (prog, args) = python_install_command("winget");
@@ -902,6 +1051,39 @@ mod tests {
         assert!(no_python_msg(HostOs::Windows).contains("python.org"));
         assert!(no_python_msg(HostOs::Macos).contains("Homebrew"));
         assert!(no_python_msg(HostOs::Linux).contains("apt install python3"));
+    }
+
+    /// 三家官方 .pkg 的地址从各自的版本索引里挑（2026-10 实际格式的节选）
+    #[test]
+    fn mac_pkg_urls_from_official_indexes() {
+        let node = r#"[{"version":"v25.1.0","lts":false},{"version":"v24.11.1","lts":"Krypton"},{"version":"v22.21.1","lts":"Jod"}]"#;
+        assert_eq!(
+            mac_pkg_url("node", node).as_deref(),
+            Some("https://nodejs.org/dist/v24.11.1/node-v24.11.1.pkg"),
+            "取最新的 LTS，跳过 Current"
+        );
+        assert_eq!(mac_pkg_url("node", r#"[{"version":"v25.1.0","lts":false}]"#), None);
+        let page = r#"<a href="https://www.python.org/ftp/python/3.15.0/python-3.15.0a1-macos11.pkg">3.15.0a1</a>
+<a href="https://www.python.org/ftp/python/3.14.0/python-3.14.0-macos11.pkg">macOS 64-bit universal2 installer</a>
+<a href="https://www.python.org/ftp/python/3.13.9/python-3.13.9-macos11.pkg">macOS</a>
+<a href="https://www.python.org/ftp/python/3.9.13/python-3.9.13-macosx10.9.pkg">old</a>"#;
+        assert_eq!(
+            mac_pkg_url("python", page).as_deref(),
+            Some("https://www.python.org/ftp/python/3.14.0/python-3.14.0-macos11.pkg"),
+            "最高的正式版，预发布和旧式包名不算"
+        );
+        let quarto = r#"{"tag_name":"v1.8.25","assets":[
+{"browser_download_url":"https://github.com/quarto-dev/quarto-cli/releases/download/v1.8.25/quarto-1.8.25-win.msi"},
+{"browser_download_url":"https://github.com/quarto-dev/quarto-cli/releases/download/v1.8.25/quarto-1.8.25-macos.pkg"}]}"#;
+        assert_eq!(
+            mac_pkg_url("quarto", quarto).as_deref(),
+            Some("https://github.com/quarto-dev/quarto-cli/releases/download/v1.8.25/quarto-1.8.25-macos.pkg")
+        );
+        assert_eq!(mac_pkg_url("git", "{}"), None);
+        // 安装脚本只用位置参数，地址与路径不拼进脚本正文；提权由系统密码框完成
+        assert!(MAC_PKG_SCRIPT.contains("\"$1\"") && MAC_PKG_SCRIPT.contains("\"$2\""));
+        assert!(MAC_PKG_SCRIPT.contains("with administrator privileges"));
+        assert!(!MAC_PKG_SCRIPT.contains("sudo"));
     }
 
     #[test]

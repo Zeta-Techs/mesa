@@ -1254,6 +1254,9 @@ pub(crate) fn binary_candidate_dirs() -> Vec<std::path::PathBuf> {
             out.push(h.join(".grok/bin")); // Grok Build 官方安装器（x.ai/cli/install.sh）
             out.push(h.join(".volta/bin")); // Volta（node 版本管理器）固定 shim 目录
             out.push(h.join(".local/share/mise/shims")); // mise（node 版本管理器）固定 shim 目录
+            // `quarto install tinytex` 在 macOS 的落点（没有 Homebrew 时 Mesa 这样装 TeX，不写 PATH）
+            out.push(h.join("Library/TinyTeX/bin/universal-darwin"));
+            out.push(h.join("Library/TinyTeX/bin/x86_64-darwin"));
         }
         out.push("/opt/homebrew/bin".into()); // Apple Silicon brew
         out.push("/usr/local/bin".into()); // Intel brew / 手动安装
@@ -1261,6 +1264,8 @@ pub(crate) fn binary_candidate_dirs() -> Vec<std::path::PathBuf> {
         // Quarto 官方 pkg 的本体目录：它往 /usr/local/bin 建链接，Apple 芯片机器上这个目录
         // 常常不存在，链接静默建不出来（2026-10-18 本机实证），装完 PATH 上找不到 quarto
         out.push("/Applications/quarto/bin".into());
+        // python.org 官方 pkg 的本体（同理，/usr/local/bin 的链接可能没建成）
+        out.push("/Library/Frameworks/Python.framework/Versions/Current/bin".into());
     }
     #[cfg(target_os = "linux")]
     {

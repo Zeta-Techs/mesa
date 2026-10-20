@@ -88,18 +88,29 @@ export function canOneClickInstall(
   channel: string,
   prereq?: DepItemDto["prereq"],
 ): boolean {
+  // xcode = macOS 没有 Homebrew：Git 弹系统安装窗，Node.js / Python / Quarto 用官方 .pkg（系统密码框），
+  // TeX 由 Quarto 装 TinyTeX——都还能一键（2026-10-20 起；此前只有 Git 能点）
   if (tool === "pymupdf" || tool === "pillow")
-    return prereq === "python" ? channel === "brew" || channel === "winget" : true;
-  if (tool === "git")
-    return channel === "brew" || channel === "winget" || channel === "xcode";
-  return channel === "brew" || channel === "winget";
+    return prereq === "python"
+      ? channel === "brew" || channel === "winget" || channel === "xcode"
+      : true;
+  return channel === "brew" || channel === "winget" || channel === "xcode";
 }
 
 /** 一键安装按钮旁的白话说明：拼图库会顺带装 Python、且两个库一起装，事先讲清楚 */
 export function installButtonHint(
   tool: DepTool,
   prereq?: DepItemDto["prereq"],
+  channel?: string,
 ): string | null {
+  // Mac 没有 Homebrew：装法不一样，点之前讲清楚（会弹系统密码框 / 要先有 Quarto）
+  if (channel === "xcode") {
+    if (tool === "node" || tool === "quarto")
+      return "没有 Homebrew：下载官方安装包，装的时候系统会要开机密码";
+    if (tool === "tex") return "由 Quarto 安装 TinyTeX，先装好 Quarto";
+    if ((tool === "pymupdf" || tool === "pillow") && prereq === "python")
+      return "会先用 python.org 的官方安装包装 Python 3（要开机密码），再一起装 PyMuPDF 和 Pillow";
+  }
   if (tool !== "pymupdf" && tool !== "pillow") return null;
   return prereq === "python"
     ? "会先装好 Python 3，再一起装 PyMuPDF 和 Pillow，几分钟"
