@@ -120,6 +120,7 @@ mod uninstall;
 mod updater;
 mod usage;
 mod watch_review;
+mod win_snap;
 mod workspaces;
 mod internal_sessions;
 mod ws_settings;
@@ -525,6 +526,7 @@ pub fn run() {
             pty::pty_get_cwd,
             pty::terminal_shell_options,
             pty::pty_cd,
+            win_snap::window_show_snap_layouts,
             pty::pty_has_running_process,
             sessions::list_sessions,
             session_search::search_sessions,
