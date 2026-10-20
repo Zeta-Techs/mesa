@@ -88,6 +88,8 @@ Binding
 | Grok / OpenCode | `openai` | grok：`GROK_MODELS_BASE_URL`；opencode：`OPENCODE_CONFIG_CONTENT` 内联 JSON |
 | Qwen / Kimi | 绑定 `protocol` → `openai` 或 `anthropic` | kimi 官方协议仍用 openai 槽 URL + `provider_type=kimi`；kimi 双写 `KIMI_MODEL_BASE_URL` / `KIMI_BASE_URL` |
 
+**自拼版本段的槽位地址归一（2026-10-19 定）**：gemini CLI 对 `GOOGLE_GEMINI_BASE_URL` 无条件追加 `/v1beta/models/<模型>:…`、Claude Code 对 `ANTHROPIC_BASE_URL` 自拼 `/v1/messages`（当日本机探针实测：base 带 `/v1` 分别拼出 `/v1/v1beta/…`、`/v1/v1/messages?beta=true`，中转 404，gemini 报「Model … not found or is invalid」）。用户把 OpenAI 风格 `/v1` 地址填进这两槽是常态——网关保存把主地址折进全部槽，同址网关必然如此。所以 `gateway_store::materialize` 对 **gemini / claude-code** 绑定剥掉槽位末尾版本段（`models::strip_trailing_version_segment`），启动注入 / 设为全局 / 验证拉目录拿到的都是 CLI 真正要的 base；gemini 拉目录候选链（`models::model_list_candidates`）同口径。**仅限已实证的两家**——codebuddy 与 qwen / kimi 的 anthropic 协议通道未实证自拼行为，不剥，等实测后再收；openai 系（codex / grok / opencode / qwen / kimi 的 openai 协议）版本段是约定的一部分，原样保留。
+
 显示名：绑定无独立名字，列表用网关名（一对一）。官方绑定固定叫「官方账号」。
 
 「复制到其他 agent」改为：**把该网关绑到目标 Agent**。缺槽当场补 URL，不复制密钥。
@@ -238,7 +240,7 @@ catalog 条目不写 `apply_patch_tool_type`（freeform＝type=custom 工具会�
 
 ## 9. 删除网关 / 清槽 / 悬挂绑定
 
-- **有绑定的网关禁止删除**。按钮置灰，提示先解绑。不解绑不级联删绑定（绑定 id 是 schedules / 会话锚）。
+- **有绑定的网关后端禁止删除**（`delete_gateway` 仍拒，是最终闸门）。**前端「解绑并删除」（2026-10-19 用户要求，免去逐条连接解绑）**：网关库点删除、该网关有绑定时弹确认，列出连接并摊开影响面（定时/项目/目标，文案与连接页「解绑」同一出处 `unbind-impact.ts`），确认后前端逐条走 `delete_profile`（与手动解绑完全同一清理口径，包括 schedules 不置空）再 `delete_gateway`；非原子，中途失败会刷新并提示「没有全部完成」，已解绑的不回滚。不是后端级联——绑定 id 是 schedules / 会话锚，不得在 `delete_gateway` 里偷偷删绑定。
 - **槽可清空**。依赖该槽的绑定进入 **缺槽态**：配置页行 ⚠「这个网关还没配该协议的端点」；启动栏该项禁选；设为全局 / 托盘该项禁用。绑定记录保留（id 不断）。
 - **解绑**：删除绑定行。先走 `clear_profile_refs` 清理 **settings 五字段**：`ai_profile_id`、`ai_profiles`、`default_profiles`、`hidden_profiles`、`active_global_profiles`（漏清会留下永远指不到实体的幽灵 id，停用/默认徽标跟着脏）。挂在这些 id 上的 `ai_model` / `ai_profile_models` 一起清。catalog 文件可删。不解绑网关、不动密钥。
 - **schedules 不置空**（2026-09-20 拍板，改原先「置空」口径）：定时任务的 `profile_id` 是**显式连接声明**，解绑只删绑定行、保留该引用，于是运行时硬 pin 拒绝静默回落（`scheduler` 留一条失败 Run，原因写明配置不存在）。理由：无人确认时替用户换供应商/认证出站，比让任务停下更糟。配套**前端义务**：解绑确认弹窗按 `list_schedules` 现算并列出受影响任务条数与名称，不得只说「其它 Agent 的绑定不受影响」。
@@ -370,7 +372,7 @@ Codex            → …
   没设但带了 `GOOGLE_GEMINI_BASE_URL` 时环境推断成 gateway 认证，CLI 报 Invalid auth method。能压过用户设置的系统设置层
   （`GEMINI_CLI_SYSTEM_SETTINGS_PATH`）要求文件归 root，普通用户写的被静默跳过——走不通。所以启动前只读检查（`agents::gemini_auth_blocker`），
   不是 `gemini-api-key` 就拒绝并给出改法（连接「设为全局默认」会写 selectedType 并先备份，或 gemini 里 /auth）；不替用户改文件。
-- Gemini：`/v1beta/models` 候选（`models.rs` 143–154 行），query `key=`，不是 `{base}/v1/models`。
+- Gemini：`/v1beta/models` 候选（`models.rs` `model_list_candidates`），query `key=`，不是 `{base}/v1/models`；槽位带版本段先剥掉再拼候选（CLI 自拼 `/v1beta`，见 §2 归一口径）。
 - Anthropic 槽：现 Claude/CodeBuddy 拉目录的路径与鉴权（Bearer）不得改成 OpenAI 形。
 - Cursor：继续拒绝通用 `/models`（现直接报错）。
 - OpenAI / Responses：现 `{base}/v1/models` 或 `{base}/models` 候选链。
@@ -458,6 +460,7 @@ Codex            → …
 - CodeBuddy 的 `reasoning_effort` 通过当前 CLI 的 `--effort` 启动参数注入；Grok 的模型/思考档通过 `-m`/`--reasoning-effort` 注入。
 - Grok 的 `api_backend`、`context_window` 不得通过受限 `GROK_CONFIG` 猜测注入；若绑定声明非 `chat_completions`，必须先在 Grok `[model.<id>]` 配置中登记，否则启动和无头调用均 fail-closed。
 - Codex 网关端点必须实现 `/responses`（CLI 已移除 `wire_api="chat"`）：智谱专用端点是 `https://open.bigmodel.cn/api/v1`，`/api/paas/v4` 只有 `chat/completions`，Codex 打过去 404；且 api/v1 **不提供 `/models` 目录**（智谱把错误包成 HTTP 200），目录只有 `paas/v4/models` 有——网关库正确填法 = Base URL/OpenAI 槽 `paas/v4` + Responses 槽 `api/v1` 分槽填（预设与网关库告警已对齐；fetch_models 用 `gateway_error_envelope` 识别 200 包错误体，不误报「0 个模型」；qwen/kimi/opencode/grok 走 openai 槽用 `paas/v4` 不受影响；2026-09-15 实证）。
+- **智谱 OpenAI 槽按计费方式分址（2026-10-20 实测）**：`/api/paas/v4` 按量扣账户余额，`/api/coding/paas/v4` 才抵扣 Coding Plan 套餐；套餐 key 打前者报 HTTP 429 + `1113 余额不足或无可用资源包`（Grok 当限流重试后显示「Retry failed」），`/api/anthropic` 与 `/api/v1`（Responses）两种计费都通——所以「Claude/Codex 能用、OpenAI 协议 Agent 不能用」就是这一条。两址 `/models` 都 200，探测与拉目录区分不了，只能靠地址：预设拆成「Coding Plan（套餐）」「按量付费」两条，网关库与添加连接表单对 `open.bigmodel.cn`/`api.z.ai` 的 `/api/paas/v4` 给黄色提示（`zhipuOpenAiSlotBillingHint`）。coding 端点同样不实现 `/responses`（404），Codex 仍走 `api/v1`。
 - Codex 从步骤工作区启动时，pty_spawn 把主仓 `papers/` 预授权进沙箱（`-c sandbox_workspace_write.writable_roots=[...]`，`workspaces::papers_dir_for_worktree` 映射）：口径 C 允许原始文献直写主仓 papers/，不预授权则每写一篇 PDF 都停下等提权（2026-09-15 用户实测「总是让我授权」）。**只加 papers/ 子目录**——派生产物仍必须走工作区 + 评审合并，不得放宽到整个主仓。
 - 配置页查询模型能力必须带 `gatewayId`，网关级能力声明优先于公共/内置能力库；写 Grok 逐模型上下文时只使用显式声明值，不使用通用估值。
 - **状态栏当前思考档（2026-10-17）**：`currentEffort` = TUI 屏上认出的档（`detectEffortInOutput(text, agentId)`，**按 CLI 分形态、只认带固定上下文的成句**，2026-10-17 本机 PTY 实录：Claude Code/CodeBuddy 横幅「with X effort」/输入框右上「◉ X · /effort」/回显「Set effort level to X」；Codex 0.163 底栏「<模型> X · <目录>」逐段 CUP 定位、没设档写 default（认出 default = 用默认，**不回落注入值**）；Grok 1.0.x 边框「<模型> (X) · <权限>」；Qwen 0.25 底栏不写档，只认 /effort 回显三句；Kimi 2.1 底栏「<模型> thinking  <目录>」= on；其余 CLI 不认。光标右移/CUP 先换空格再剥转义，含人手敲 /effort）> 本次开工覆盖（TabStatus.effortOverride）> `combo_surface.launchEffort`（逐模型策略开场档，**仅 injectEffortAllowed 时有值**——没注入就是 null）。都没有 = 不知道：滑块不点亮任何一格、标「默认」，**禁止再用「档位表第 N 格」冒充当前档**（原初值硬写下标 1，CLI 实跑 xhigh 时显示 low）。拖动后的本地选择在真值变化（回显到达/换 PTY）时让位。底栏不能切档（无 showNativeEffort）但模型会思考的 CLI 显示只读「◈ 档名 / ◈ 默认」。CLI 升级改了界面文案会认不出——认不出只是回落到覆盖/开场档/「默认」，不会显示错档；发现回落时重新 PTY 实录补形态。

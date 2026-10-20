@@ -12,7 +12,7 @@
 | 项 | 值 |
 |---|---|
 | 二进制 / 检测 | `claude`；`claude --version`；`claude auth status`（JSON，exit 0=已登录，适合预检） |
-| 注入 env | `ANTHROPIC_BASE_URL`（中转端点）、`ANTHROPIC_AUTH_TOKEN`（Bearer，网关场景首选）、`ANTHROPIC_API_KEY`（X-Api-Key；交互模式首次使用会弹一次性确认）、`ANTHROPIC_MODEL` |
+| 注入 env | `ANTHROPIC_BASE_URL`（中转端点；**CLI 自己拼 `/v1/messages`，base 不得带版本段**——2026-10-19 探针实测带 `/v1` 会请求 `/v1/v1/messages?beta=true`，Mesa 物化 Profile 时剥掉槽位末尾版本段）、`ANTHROPIC_AUTH_TOKEN`（Bearer，网关场景首选）、`ANTHROPIC_API_KEY`（X-Api-Key；交互模式首次使用会弹一次性确认）、`ANTHROPIC_MODEL` |
 | 全局配置 | `~/.claude/settings.json`：`{"env": {...}, "model": "..."}`。**注意：settings 的 env 块会覆盖 shell env**；也可用 `--settings <file-or-json>` 注入不落地 |
 | 会话存储 | `~/.claude/projects/<sanitize(cwd)>/<session-uuid>.jsonl`；目录名 = 路径中所有非字母数字字符替换为 `-` |
 | 会话格式 | JSONL。envelope：`uuid/parentUuid/timestamp/sessionId/cwd/gitBranch/version/isSidechain/type`；`type=user/assistant`，assistant 的 `message` 是原始 API 响应（content blocks + usage）；另有 `ai-title`（会话标题）、`summary`、`file-history-snapshot` 等类型，未知 type 必须跳过。**多行粘贴包装**（2026-10-19 实测，2.1.29x）：Mesa 聊天层发多行提问等于一次终端粘贴，Claude 把它记成 `"\n\n<pasted_content id=\"79fb\">\n…\n</pasted_content id=\"79fb\">"`（user 行 content 为字符串，收尾标签也带 id）；单行提问不包。回放与标题只要里面的话（`sessions.rs unwrap_pasted_content`，仅用户消息）。**易漂移** |
@@ -45,8 +45,8 @@
 
 | 项 | 值 |
 |---|---|
-| 二进制 / 检测 | `gemini`（npm `@google/gemini-cli`，Node ≥ 20）；`gemini --version` |
-| 注入 env | `GEMINI_API_KEY`、`GOOGLE_GEMINI_BASE_URL`（设了即进入 GATEWAY 模式，官方支持中转；要求 HTTPS 或 localhost）、`GEMINI_MODEL`。env 优先级仅次于 CLI 参数 |
+| 二进制 / 检测 | `gemini`（npm `@google/gemini-cli`，Node ≥ 20）；`gemini --version`。**0.64 实测（2026-10-20）**：`~/.gemini/projects.json` 不存在时，每次启动都异步「写 `projects.json.<uuid>.tmp` + 改名」登记项目，`--version` 先退出、改名来不及做，tmp 文件留在 `~/.gemini` 越积越多（每次两个；已有 projects.json 时不写，交互跑过一次后自然消失）。Mesa 的无头探测（版本、启动预检）因此带 `GEMINI_CLI_HOME=<系统临时目录>/ccode-gemini-probe` 并预放 projects.json（`agents::quiet_cli_probe`），不碰用户目录 |
+| 注入 env | `GEMINI_API_KEY`、`GOOGLE_GEMINI_BASE_URL`（设了即进入 GATEWAY 模式，官方支持中转；要求 HTTPS 或 localhost；**CLI 对 base 无条件自拼 `/v1beta/models/<模型>:…`——2026-10-19 探针实测带 `/v1` 的 base 会请求 `/v1/v1beta/…` 被中转 404、CLI 报「Model … not found or is invalid」，Mesa 物化 Profile 与拉目录时剥掉槽位末尾版本段**）、`GEMINI_MODEL`。env 优先级仅次于 CLI 参数 |
 | 全局配置 | `~/.gemini/settings.json`（`model.name`、`security.auth.selectedType`）；`GEMINI_CLI_HOME` 可整体搬迁 |
 | 会话存储 | `~/.gemini/tmp/<slug>/chats/session-<时间>-<id8>.jsonl`；**slug 映射读 `~/.gemini/projects.json` 和目录内 `.project_root` 标记，不要自己推导**（旧版是 sha256 目录，有迁移） |
 | 会话格式 | JSONL。首行 metadata；消息 `{id, timestamp, content, type: user/info/error/warning/gemini}`，gemini 类型带 `toolCalls` 和 `tokens{input,output,cached,thoughts,tool,total}`；**控制记录 `$rewindTo`（截断后续消息）和 `$set`（patch 元数据）必须处理**，不能简单拼接。旧版单 JSON 文件仍需兼容。若多个落盘文件声明同一 `sessionId`，按最新文件作为唯一会话代表。**易漂移** |

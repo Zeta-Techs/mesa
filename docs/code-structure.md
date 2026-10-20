@@ -81,7 +81,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   主区：page==="workbench" 显示工作台概览、page==="workspaces" 显示选中课题详情（选中经 selectProjectReq
                              #   一次性请求由项目页消费——与收件箱/对话页/统计页跳转同一条链，禁再拿它当持久选中态渲染）。
                              #   壳与标题栏/侧栏/缝透明，桌面磨砂从窗口底透上来；
-                             #   顶栏帮助菜单（HELP_MENU：命令面板左侧 ? 钮，分组下拉，关闭范式同收件箱）
+                             #   顶栏帮助菜单（HELP_MENU：命令面板左侧 ? 钮，分组下拉，关闭范式同收件箱；首项「上手引导」）；
+                             #   侧栏系统段上方「上手引导」行（useOnboardingRail，引导进行中才渲染，data-onboarding-anchor 供清单定位）
   components/InternalSessionsCard.tsx # 设置「数据与存储」→ Mesa 内部对话：条数/体积/最早、自动清理开关、保留天数、立即清理
   components/InsertMenuItems.tsx # 「插入技能/MCP」菜单条目：运行页收缩行、标签栏 ✦、聊天输入框 ＋ 三处共用（只画 <li>，浮层由调用方定位）
   components/ConversationView.tsx # 对话渲染（聊天层 / 对话页回放 / 项目对话预览共用）：气泡与正文、一轮过程收在「已工作 X 分 Y 秒」下，
@@ -107,11 +108,12 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   App.css                    # 主题令牌与壳层样式。侧栏罩色：展开 42%、图标态 28%、选中行 88%；Linux 与减少透明度回落实心
   feedback.ts                # 反馈与提需求纯逻辑：类型闭集/环境行/正文与主题拼装/mailto 与网页邮箱链接/端点负载/截图常量（≤3 张 ≤2MB）/发送方式闭集与默认（记本机 ccode.feedback.channel）/附件注记（tests/feedback.test.ts）
   components/FeedbackModal.tsx # 反馈表单弹层（帮助菜单、诊断弹窗「附到反馈」、设置→关于三入口）：端点已配只走端点，否则用户选发送方式（邮件应用/网页邮箱/邮箱直发）；附件=截图缩略图+诊断包（表单内现导出或 attachDiagnostics 带入，后端按路径白名单自读）；邮件类通道附件落盘+交接提示（清空/保留草稿由人定）；邮箱直发配置视图（保存并测试、结果就地显示、首存失败回滚授权码）
+  components/UpdateNotes.tsx # 更新说明渲染（Markdown→浅底框，原始 HTML 转义、链接/图片只留文字）；设置→更新卡片与帮助「检查更新」弹窗共用
   components/HelpDialogs.tsx # 帮助菜单三个内容弹窗：诊断与日志（日志按级别筛/计数/复制 + 导出诊断包 → 附到反馈）、检查更新（打开即查；状态/更新说明/下载进度/安装，安装走 useAppUpdateInstall）、关于（图标/版本复制/更新状态只读 store/仓库与许可入口，许可页同弹窗切换）；快捷键速查曾短暂存在后按「不与命令面板/设置/说明书重复」删除（2026-10-12）
   components/ThirdPartyNotices.tsx # 「开源许可与致谢」内容区（帮助→关于、设置→关于共用）：致谢与数据来源（Markdown 阅读版式，许可全文收进 details，链接交系统浏览器）/ 组件许可（可搜索）两页签；清单读一次进程内缓存
   third-party-notices.ts     # 随包许可清单解析纯逻辑：依赖表拆组拆行（跳过代码块里的 ##、丢弃文件头生成说明）+ 按名字/许可搜索（tests/third-party-notices.test.ts 含真文件格式守卫）
   components/MesaMark.tsx    # Mesa 光标标志的字标版（去底板，M 跟文字色、光标品牌琥珀 + 深色底余辉，viewBox 裁到图形、底边即基线）；聊天空态问候在用
-  components/CommandPalette.tsx # ⌘K 面板：默认列表 快速操作/最近项目（list_projects 前 5）/页面（快捷键跟随设置）/外观/帮助；设置分区（SETTINGS_SEARCH_INDEX）、单个主题、较早项目、外链只在搜索时出现；「切换主题…」进主题网格（与设置页主题卡同长相、7 列深浅上下对齐、方向键四向移动、当前打勾；色样懒加载 App.css?raw；跟随系统只列与系统同深浅的一排并走 followedTheme）；输入法组词 Enter 不执行、↑↓ 循环、键盘移动跟随滚动；帮助类动作经 onHelp 交 App 的同一批弹窗
+  components/CommandPalette.tsx # ⌘K 面板：默认列表 快速操作/最近项目（list_projects 前 5）/页面（快捷键跟随设置）/外观/帮助；设置分区（SETTINGS_SEARCH_INDEX）、单个主题、较早项目、外链只在搜索时出现；「切换主题…」进主题网格（与设置页主题卡同长相、7 列深浅上下对齐、方向键四向移动、当前打勾；色样懒加载 App.css?raw；跟随系统只列与系统同深浅的一排并走 followedTheme）；输入法组词 Enter 不执行、↑↓ 循环、键盘移动跟随滚动；帮助类动作经 onHelp 交 App 的同一批弹窗（「上手引导」直接调 openOnboardingGuide）
   project-tree.ts            # 侧栏项目树置顶纯逻辑：togglePin / splitPinned（置顶段按先后、移出原分组）/ parsePins（坏数据当空表）；
                              #   localStorage ccode.projectTreePins；tests/project-tree.test.ts
   usage-dist.ts              # 用量页分布区纯逻辑：shareOf/barWidthPct/sharePctLabel、visibleDistRows（先露 10 行、≤12 行不折）、
@@ -142,6 +144,16 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 左键直接开空白对话、右键回看；行样式与聊天空态「最近的随手聊」一致
   internal-sessions.ts       # 设置页「Mesa 内部对话」卡片纯逻辑：保留天数档、体积白话、立即清理确认文案（tests/internal-sessions.test.ts）
   notice-text.ts             # 提示条 / 浮动提示正文分层（首句=结果标题，其余按句成说明行）+ 停留时长（tests/notice-text.test.ts）
+  toast.ts                   # 右下角浮动提示总线：toast(msg, tone, { actions, sticky, key }) / dismissToast(key)；带动作按钮、
+                             #   常驻不自动消失、同 key 顶替旧的（上手引导「下一步」只留一条）。ToastHost 渲染，满员先挤会自动消失的
+  onboarding.ts              # 上手引导纯逻辑（2026-10-20）：七步步骤表与文案、完成判定（全由数据现算，只有「切到终端看看」
+                             #   「认识对话标题」「官方账号跳过网关」靠确认——终端那步运行页真切过一次也记，store.ackOnboarding）、进度/当前步、新完成集合、首次判定（有连接=老用户收起）、
+                             #   「结果 + 下一步」提示文案、localStorage ccode.onboarding 存取（tests/onboarding.test.ts）
+  components/OnboardingGuide.tsx # 上手引导界面：OnboardingHost（App 根部；首屏数据齐后首次判定、步骤完成跃迁弹 sticky 「下一步」
+                             #   toast、欢迎页 Modal、清单浮层——贴侧栏 data-onboarding-anchor 行向右展开，侧栏全隐藏时挂帮助下方）+
+                             #   useOnboardingRail / OnboardingRing（App 侧栏行用）+ OnboardingPageStrip（连接页页头下方当前步引导条）+
+                             #   openOnboardingGuide（帮助菜单 / ⌘K）。各步动作走既有一次性请求（gatewayLibraryReq / profileModalReq /
+                             #   newProjectOpenReq / settingsSectionReq / openQuickChat），不自己开弹窗
   skill-preview.ts           # 技能页预览：SKILL.md 拆 frontmatter 字段 + 正文（正文 marked 渲染）（tests/skill-preview.test.ts）
   reasoning-effort.ts        # 网关思考档：逗号多选 + @开场默认；单词旧值=单档；状态栏当前档 currentEffort（屏上 > 本次覆盖 > 开场档）
                              # 与 PTY 输出认档 detectEffortInOutput（Claude Code 三种成句形态）；读回模型 detectModelInOutput（回显句）/
@@ -150,6 +162,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 思考档勾多档，开场默认单选（reasoning-effort.ts）
                              # Base URL 主输入（2026-08-31）：空槽与仍等于旧主值的槽跟随主输入、手改即脱离；
                              # 全部测速按 URL 去重（同址只探一次，摘要前端镜像给同址槽）
+                             # 头部（标题/关闭/错误与结果提示）吸顶（2026-10-20：保存钮在长表单底下，提示原先看不见）；
+                             # initialNew = 打开即进新建表单；新建保存后「Agent 配置」滚进视野，改已有网关保存弹 toast
   components/HoverTip.tsx      # 应用内 tooltip 共享件（v3.93 提取自 ProjectGroup）：useHoverTip + HoverTip，
                              # portal 到 body（免疫祖先 opacity/transform 的 fixed 包含块问题）、滚动/缩放即关、
                              # up 参数支持锚点上方弹出（行内动作栏 tooltip 专用）；PageFrame 的 RowAction 内置上方 tooltip
@@ -448,7 +462,11 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # resumeSessionInTerminal（接着聊一段旧对话：对话页 / 项目区 / 右键 / 聊天空态共用）
   confirm-dialog.ts          # 确认框键盘语义：Esc 取消，Enter 激活当前焦点钮；设为全局挡路可 focusCancel（tests/confirm-dialog.test.ts）
   custom-runtime.ts          # 自定义运行时默认 cwd：仅空目录/scratch 启用（tests/custom-runtime.test.ts）
+  unbind-impact.ts           # 解绑/删网关前「会怎样」文案（定时任务/项目/目标；连接页解绑与网关库「解绑并删除」共用，tests/unbind-impact.test.ts）
   gateway-slot.ts            # Agent→协议槽与目录刷新优先槽（与 slot_for_agent 双端镜像，tests/gateway-slot.test.ts）
+  gateway-option.ts          # 网关选择器行（主机/协议槽/模型数，同名同址补尾号）+ addConnectionDefaults（「＋ 添加连接」默认：
+                             #   没有连接在用的网关取最后建的、预选「选用已有网关」；Agent 挑已装且网关填了其协议槽的，
+                             #   有 Claude Code 先选它）（tests/gateway-option.test.ts）
   command-palette.ts         # 命令面板过滤与排序纯逻辑：searchOnly 默认不列、得分（标题全等/开头/「前缀：名字」开头/包含 > 别名 > 散字兜底）、组按最高分排且组内连续、matchedKeyword（tests/command-palette.test.ts）
   stats-insight.ts           # 统计页花费环比 / 缓存命中率 / 会话标题回落纯逻辑；compact/fmtCost 统计页统一数字方言（tests/stats-insight.test.ts）
   usage-activity.ts          # 活跃度热力图纯逻辑：周一开头滚动网格（去年同月 1 日到今天，不翻年；整年网格
@@ -686,7 +704,9 @@ src-tauri/src/
                              #   混注提示覆盖思考与采样两种不一致（换模不重注）；
                              # policy_channel_note 通道形态说明（qwen 仅设为全局 / grok overlay 边界）随 DTO 下发
   drift.rs                   # 全局配置漂移：只比对 Mesa 写入键的子集，无关字段不算漂移
-  gateway_store.rs           # 网关/绑定落盘与迁移；每槽体检摘要 latest-per-slot（摘要可按槽，绑定状态徽标
+  gateway_store.rs           # 网关/绑定落盘与迁移；materialize 单一漏斗把绑定+网关物化成 Profile（gemini/claude-code
+                             #   剥槽位末尾版本段——两家 CLI 自拼 /v1beta、/v1/messages，口径见 profiles.md §2 归一段）；
+                             #   每槽体检摘要 latest-per-slot（摘要可按槽，绑定状态徽标
                              #   必须按「绑定默认模型 + URL/密钥指纹」取体检，禁「该槽最近一条」株连，§8）
   provider_id.rs             # provider 名 ccode-<网关短id> 单一出处；LEGACY="ccode" 仅旧 rollout
   tray.rs                    # 系统托盘：按 Agent 列绑定一键设为全局；选中态 dry-run 子集比对；不改启动栏默认
@@ -1077,9 +1097,9 @@ src-tauri/src/
                              # 做 normalize_title 互相包含（2026-09-20 起 papers/ 直扫：agent 直下全文没走登记通道也能配），多命中取最长，无命中返回 None；lit_watch.rs normalize_title 提 pub(crate) 复用）+
                              # reader_for_note 归属反查版（注册项目根直含 / 工作区 worktree 映射主仓副本，未合并明确报错）+
                              # read_image_bytes 图片通道（png/jpg/jpeg/gif/webp/svg、20MB，白名单判定复用 pdf.rs 内核）+
+                             # read_audio_bytes 聊天层音频通道（mp3/wav/m4a/aac/aiff/flac/ogg、20MB、文件头校验，同一套白名单）+
                              # save_reader_capture 圈选截图落 notes/assets/（PNG 魔数 + 同秒重名 -2/-3）/ append_note_image
                              # （追加进「我的想法」小节）+ 生词本 notes/glossary.md（list/append 术语小写去重/remove）+
-                             # read_audio_bytes 聊天层音频通道（mp3/wav/m4a/aac/aiff/flac/ogg、20MB、文件头校验，同一套白名单）+
                              # append_note_translation（「译段」小节）+ append/remove_note_annotation（「标注」小节：一行一条高亮/批注，
                              # 建在「译段」前、同处再标只更新批注、删空连标题删；格式与 src/reader-note.ts 双端镜像）+
                              # reader_paper_title（paper_title_for：配对笔记 H1→index.json→included.json→included.md/reading-list→雷达收件箱，
@@ -1164,6 +1184,7 @@ src-tauri/src/
   process.rs                 # 后台子进程统一创建（Windows CREATE_NO_WINDOW 防 conhost 闪窗）+
                              # pty_command（Windows .cmd/.bat shim 深化：npm 系 CLI 解析出 JS 入口改 node 直启，
                              #   npm.cmd 走固定布局 special case，解析失败回落 cmd /c call；updater 与终端拉起共用）
-  models.rs                  # 共享 DTO
+  models.rs                  # fetch_models 拉目录（候选链 model_list_candidates：gemini 先剥版本段再拼 /v1beta/models，
+                             #   strip_trailing_version_segment / ends_with_version_segment 版本段判据单一出处）+ 目录缓存 + 共享 DTO
   lib.rs                     # 模块与 Tauri command 注册
 ```

@@ -104,6 +104,7 @@
   不进 `THEMES` 十四套、不进 `App.css` 新块。成功/失败/警告、hover、开关仍走 `[data-theme$="-light"]` 共享段。
   设置页 `KNOWN_THEMES` 须含这两个 id，否则会被静默丢回沉浸黑。另存色卡最多 12 套，存在 `customThemes`；
   当前选中卡 `customThemeCardId`，改三个取色器即清空（不覆盖已存卡）。
+  **「＋ 自定义」一律从当前显示的主题三色出发**（2026-10-19 用户反馈：原先有上次自定义就直接跳到那套，外观突变；原「从当前主题拷入」钮因此冗余已删）。
 - **字体渲染按平台分口径（v3.60 后 Windows 糊字修复）**：入口（main.tsx）在 `<html>` 上落 `data-platform`
   （mac/windows/linux，判定在 hotkeys.ts `IS_MAC`/`IS_WINDOWS`）。Windows Chromium 下 `text-rendering:
   optimizeLegibility` 会走 DirectWrite natural 模式丢 hinting，小字号发糊——`[data-platform="windows"]` 覆写回 `auto`，
@@ -337,6 +338,10 @@
   把不透明度加回去（加回去就退回实心条）。
 - **弹层规格台账**：宽度两档——简单对话/短表单 `w-[26rem]`、富表单 `w-[36rem]`（命令面板 `w-[30rem]` 为独立规格）；
   遮罩统一 `bg-black/40` + `ccode-fade`。
+  **锚定小弹层限高（2026-10-20 用户：模型菜单溢出窗口）**：芯片/输入框上弹出的菜单按锚点那一边的空间限高
+  （`popover-side.ts` `popoverRoom`，余量 12px、封顶），内部分「顶部固定 / 中段唯一滚动区 / 底部固定」三段——
+  禁止多段名单各自 `max-h` 套娃滚动（叠起来照样溢出）；名单短而项少（如九家 Agent）排两列压高度。
+  滑块类控件的滑块走 `bg-switch-knob` + 描边，不用 `bg-l1`、不加投影（同开关令牌口径）。
   **z 轴台账**（全局档，逐档不可越）：sticky 页头 z-20（基准）/ 页面模态 z-40（必须压过页头，用 z-10 会被
   页头白底戳穿遮罩）/ 右键菜单·命令面板·下拉 z-50 / 评审内弹层 z-60 / 确认框 z-70。
   之上还有**顶栏档 z-100**：`.ccode-toast-region` 与「待确认跳转提醒条」——它们不是弹层而是结果回执，
@@ -415,6 +420,7 @@
   **浮层/卡片禁用原生 `<select>`**：系统菜单在 macOS 上是蓝条，和主题脱节。用 `MenuSelect`（portal +
   `.ccode-float-surface`）。浮层输入用 `surfaceFieldClass`（strip 底），不要 `fieldClass` 的 canvas 底在 raised 上挖黑块。
   未勾选 Checkbox 用透明底，不用 canvas。流程线命中计数用 `text-l4`，不用 `text-done` 绿字。
+  **`sr-only` 输入的外层 label 必须 `relative`**（2026-10-19 实证）：绝对定位的隐藏复选框若找不到更近的定位祖先，既不被外层 `overflow-auto` 列表裁剪、也不随它滚动，会按「列表内容坐标」撑高更外层的滚动容器——科研任务页待确认 214 篇时多出约 17000px 空白页。共用 `Checkbox` 与待确认行复选框已加 `relative`；新写 sr-only 输入同口径。
 - **对话页三栏固定（P1a）**：应用导航 ｜ 会话列表栏（375px，rail2 底：标题+「当前 N · 总计 M」副题 + 深色次按钮 + 搜索框 +
   折叠分类筛选——v3.37 定稿单列纵向手风琴：点 agent 只展开/收起项目子列表（左侧缩进线表达层级），「全部项目」/单项目行
   落筛选且面板保持展开（v3.43：边筛边浏览，选中不收起），计数保持）｜回放区（canvas 底，常驻，未选中为空态）；列表与回放并列常驻，禁止恢复“列表/回放二选一”
@@ -658,6 +664,13 @@ aria-live）。上下文圆环说明改自绘浮层（portal + 外层定位 / �
   只出一行「已启用到 X」，有缺口才展开成块（就绪时整块与技能芯片说同一件事两遍）。工作区名写在标题行右侧，**弹层容器
   不挂 title**（悬浮会压在任务书正文上）。全站 `button { font: inherit }` 吞掉按钮上的 `text-*`：芯片/小按钮字号写在
   外层容器上（内容区 text-xs、芯片行 text-micro）。
+- **上手引导（2026-10-20）**：入口只有三处——侧栏系统段上方一行（`OnboardingRing` 进度环 + 「下一步：…」，引导进行中才渲染，
+  做完 / 收起即消失；收起态只剩进度环，走 `RailTooltip`）、顶栏帮助菜单首项、⌘K「上手引导」。清单是贴这一行向右展开的浮层
+  （`ccode-float-surface`，z-50 浮层档，Esc / 点外面关，按 `data-onboarding-anchor` 定位；侧栏全隐藏时挂顶栏帮助下方），
+  当前步自动展开、只有它带实心主钮。页内提示只在连接页页头下方一条（`OnboardingPageStrip`，`ccode-well` 圆角卡），
+  按钮一律次级样式——页头已有「+ 添加连接」主 CTA。每做完一步的「下一步」走 toast。**禁止聚光灯遮罩式导览，禁止在别的页面
+  再铺引导横幅**。toast 可带动作（`toast(msg, tone, { actions, sticky, key })`）：动作点了先执行再收起这条；sticky 不自动消失；
+  同 key 顶替旧的；满员先挤会自动消失的那条；动作区字号挂容器（`text-xs`）。
 
 ## 预览组件与步进器
 

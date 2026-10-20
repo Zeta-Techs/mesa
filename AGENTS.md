@@ -155,6 +155,9 @@ docs/            architecture.md（总体设计 + §10 决策记录 + §12 当�
   `latest.json`，不认 git tag / architecture 决策号；不 bump 则已安装用户永远看不到「可更新」。内部决策记录
   （v3.x）不是应用版本。有可用更新时提示走收件箱 `update:`（不造顶部横幅、侧栏不挂徽标），设置页「更新」分区
   是安装入口。
+- **更新说明来自 CHANGELOG（2026-10-19）**：用户在应用里看到的「更新说明」是 `latest.json` 的 `notes`，打包时由 CI 取自 `CHANGELOG.md`
+  （`scripts/release-notes.mjs`，优先 `## v<版本>` 段、其次 `## 未发布` 段，都空则 CI 失败）。**发版前必须先把本版本的用户可见改动写进
+  CHANGELOG 对应段**；事后改 GitHub Release 草稿正文不会同步进 `latest.json`，用户仍看不到。
 - **嵌套进 camelCase DTO 的结构体必须整体 `#[serde(rename_all = "camelCase")]`**（2026-10-03 实证：`RunRecord` 以蛇形
   `isolation_path` 出线、前端 `isolationPath` 恒 undefined，雷达「去评审」从未出现）。与磁盘共用一个结构体时加蛇形
   `alias` 兼容读旧档；单词字段天然一致不算，逐字段 rename 只修一个字段是这类 bug 的温床——新增多词字段时整结构体统一。

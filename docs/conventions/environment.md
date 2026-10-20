@@ -57,3 +57,9 @@
   用户指定的**仓库路径**（两个 clone 内容相同，开工先 `git rev-parse --show-toplevel` 自报并与用户指定路径对照）+
   **窗口标题**（17575 实例 = 「Mesa Dev - 热更新」，17576 实例 = 「Mesa Dev - 热更新 :17576」）+ **devUrl 端口**。
   用户指定了哪个实例就只核验哪个，其余窗口不算数；还要第三实例时照此加 conf 文件（端口连续顺延），不即兴改配置。
+  **新用户沙盒实例（2026-10-20）**：`scripts/dev-sandbox.sh`（`--reset` 清空重来）+ `src-tauri/tauri.dev.17577.conf.json`
+  （devUrl 17577，窗口标题「Mesa Dev - 新用户沙盒 :17577」，**identifier 独立 `com.ccode.dev.sandbox`**——网页存储不与主实例
+  共用）。脚本把 `HOME` / `CFFIXED_USER_HOME` 指到 `~/.ccode-sandbox/home`：Mesa 数据、各 CLI 会话与配置、新建项目默认位置全空，
+  用来走「第一次打开」（上手引导、CLI 首次启动画面）；工具链变量（CARGO_HOME / RUSTUP_HOME / npm 缓存）指回真实家目录，
+  `CARGO_TARGET_DIR` 独立在 `~/.ccode-sandbox/target`（共用主 target 会因嵌入配置不同来回重编、抢构建锁），首次构建要几分钟。
+  不隔离：系统里已装的 Agent（PATH 照旧）、沙盒里点「安装」装的系统级 CLI、API 请求计费。清理 = `rm -rf ~/.ccode-sandbox`。

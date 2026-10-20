@@ -457,6 +457,35 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-20 · Gemini 版本探测不再往用户 ~/.gemini 里留 projects.json.*.tmp
+
+新用户沙盒里发现 `~/.gemini` 十几分钟积了 28 个 `projects.json.<uuid>.tmp`。定因（本机 gemini 0.64 复现 + 读源码
+`ProjectRegistry.save`）：`projects.json` 不存在时 CLI 每次启动都异步写 tmp 再改名，`gemini --version` 打完版本就退出，
+改名没做成；已有 projects.json 时不写。Mesa 的连接检测（2 分钟缓存过期就重探）、更新检查、启动预检都跑 `--version`，
+在没交互跑过 Gemini 的新装机器上每次留两个。定下：一，**无头探测不得在用户的 CLI 目录里留东西**——Gemini 的探测
+带 `GEMINI_CLI_HOME` 指到 Mesa 自己的临时目录并预放一份 projects.json（`agents::quiet_cli_probe`，版本探测与启动预检
+共用；实测这样零 tmp），交互启动不动。二，已经留在用户 ~/.gemini 里的 tmp 不替用户删（CLI 目录只读口径），矩阵与
+CHANGELOG 写明成因，可放心删；交互跑一次 Gemini 后也不再增加。三，问题在上游（退出前没等异步写完），Mesa 侧只做绕开。
+
+### 2026-10-20 · 新用户上手引导：欢迎页 + 侧栏进度行 + 清单浮层 + 连接页引导条 + 「下一步」提示
+
+用户要求做新用户初次使用引导（连接页装 Agent、可能要配代理、新建网关、保存后加连接、新对话、提醒对话改名、建项目），形式交由我定。
+定下：一，**形式**：新装第一次打开弹一次欢迎页（七步一览，主按钮直接去做第一个没做的步骤）；之后由侧栏系统段上方的「上手引导」行
+（进度环 + 「下一步：…」）承载，点开是贴侧栏向右展开的清单浮层（当前步自动展开，写做法 + 能直接点的按钮）；连接页页头下方有当前这一步
+在本页怎么做的引导条（装 Agent / 网关 / 连接 / 第一段对话四步）；每做完一步右下角弹「结果 + 下一步」提示，带那一步的按钮。**不做聚光灯
+遮罩式导览**：步骤散在好几页、装 Agent 要等几分钟，遮罩一离开预设路线就失效。二，**完成状态由真实数据现算**（装没装 Agent、网关数、
+连接数、非内部对话数、已添加项目数），不存「做到第几步」——可跳着做、在别处做完自动打勾、删掉变回没做；只有「切到终端看看」「认识对话标题」与「用官方
+账号跳过网关」没有数据可推，靠确认。持久化只存判定结果 / 欢迎页看过 / 三个确认（localStorage `ccode.onboarding`）。
+三，**谁会看到**：首屏数据到齐后判定一次——已有连接的老用户直接收起（不弹、不占侧栏），其余当新用户；判定结果写死，之后不按数据回头改。
+帮助菜单与 ⌘K「上手引导」随时可再打开（收起过的恢复）。四，**第一段对话出现那一刻先提示「可以切到终端看」**（同日用户追加：聊天和终端是同一段对话的两种画面，提示里一键切过去；
+运行页真切过一次终端——标签栏切换钮或 `/terminal`——即自动确认，经 `store.ackOnboarding` / `surfaceSwitchReq`），**接着是对话改名提醒**：提示讲清自动起名（临时标题 →
+「月日|类型|主题」、会用少量 token）和手动改名入口（对话页右键「编辑标题与标签」、项目对话页签铅笔），点「知道了」才算这一步完成。
+五，**顺带修路上的坑**：网关库头部（标题、关闭、错误 / 结果提示）改为吸顶——原先提示在长表单顶上，点最底下的「保存网关」看不见；新建保存
+后「Agent 配置」滚进视野；改已有网关保存补右下角「已保存」。「＋ 添加连接」打开时，有还没连接在用的网关就默认「选用已有网关」并选中它
+（取最后建的），Agent 默认挑已装好、该网关填了它协议槽的那家（`gateway-option.ts addConnectionDefaults`），对上「网关库建好 → 关掉 → 添加连接」
+这条路。六，toast 加能力：带动作按钮、常驻（sticky）、同 key 顶替（`toast.ts`），引导的「下一步」只留最新一条，收起引导即撤。
+实现：`src/onboarding.ts`（步骤表 / 判定 / 文案，tests/onboarding.test.ts）+ `src/components/OnboardingGuide.tsx`。界面手感未在 Mesa Dev 实机点验。
+
 ### 2026-10-20 · Mac 上 Gemini 标签自动档改走 WebGL：半格方块留白在 DOM 渲染器下断成细线加缝
 
 用户截图问 Gemini 终端为什么显示成这样（每个对话框上下各一条灰线、中间隔着缝），选了「Gemini 标签自动用流畅渲染」。定因：gemini 0.64
@@ -479,6 +508,15 @@ WebGL（`src/terminal-renderer.ts` 名单，代价是这类标签文字略软）
 颜色跟着分类固定、不按大小排；快满只让标题数字变橙。这是「颜色只表达风险」在数据图上的有意例外。
 四，点开才读、同一轮（用量不变）缓存，数字标「估算」。
 
+### 2026-10-20 · 智谱预设按计费方式拆两条：套餐 OpenAI 槽走 /api/coding/paas/v4
+
+用户问对话里启动 Grok 为什么报「Retry failed: 余额不足或无可用资源包，请充值」，同一网关在别的 agent 能用。实测：同一把 key
+打 `open.bigmodel.cn/api/paas/v4/chat/completions` 回 `1113 余额不足`，打 `/api/coding/paas/v4` 正常；`/api/anthropic`、`/api/v1`
+（Responses）两种计费都通——按量端点不抵扣 Coding Plan 套餐，所以走 OpenAI 槽的 Grok / Qwen / OpenCode / Kimi 挂、Claude / Codex 不挂。
+定下：一，原「智谱 GLM」预设拆为「智谱 GLM Coding Plan（套餐）」（OpenAI 槽 coding 端点）与「智谱 GLM（按量付费）」（paas/v4），
+Anthropic / Responses 槽两条相同。二，两址 `/models` 都 200，探测和拉目录分不出来，只在地址上提示：网关库与添加连接表单对智谱
+（含 `api.z.ai`）`/api/paas/v4` 出黄色提示。三，不自动改用户已存的地址（Mesa 不知道用户买没买套餐）；本机这条网关按用户情况手工改过。
+
 ### 2026-10-20 · 聊天层结构化旁路：TUI 照跑，逐家接 CLI 自带的结构化事件；精确注意力五家改为启动时自动带
 
 用户问聊天层（CLI 的解析渲染层）有没有可借鉴的开源项目，要求「只做正确借鉴」出方案，随后「按推荐的来，一次性做完」，并追问
@@ -496,6 +534,20 @@ Codex），其余照旧按菜单原文写按键，卡上补命令原文 / 差异
 被 Mesa Dev 热重启先于干跑执行，事后核对备份只含 Mesa 的三条。四，消息与工具调用带来源 id（`ChatMessageDto.id` / `BlockDto.callId`），
 前端以 id 当身份并按 id 配对调用与结果；没另起增量补丁协议（一条消息常跨多行，按偏移增量解析会切坏）。五，过程里加计划卡、只读命令
 并进「查阅」、在跑的一步标「进行中…」。细则：`docs/conventions/terminal.md`「聊天层结构化旁路」、safety.md 同名条、matrix §14。
+
+### 2026-10-19 · 自拼版本段的槽位地址归一：gemini / claude-code 物化时剥掉末尾 `/v1` 一类版本段
+
+用户报告：gemini 绑定（中转 `ent.zetatechs.com`、模型 `gemini-4-argon`）一开口就报 `Model "gemini-4-argon" was not found or is invalid`。
+探针实测定因：gemini CLI 0.64 对 `GOOGLE_GEMINI_BASE_URL` **无条件**追加 `/v1beta/models/<模型>:streamGenerateContent`——槽位里填的
+OpenAI 风格 `/v1` 地址会拼出 `/v1/v1beta/…`，中转 404，CLI 只报「模型不存在」；同日实测 Claude Code 对 `ANTHROPIC_BASE_URL` 同病
+（`/v1` → `POST /v1/v1/messages?beta=true`）。用户把 `/v1` 地址填进这两槽是常态：网关保存把主地址折进全部五个槽，同址网关必然如此。
+定下：`gateway_store::materialize` 对 **gemini / claude-code** 绑定剥掉槽位末尾版本段（`models::strip_trailing_version_segment`，
+复用 `ends_with_version_segment` 判据），启动注入、`--settings` 覆盖层、设为全局（`~/.gemini/.env` 的 `GOOGLE_GEMINI_BASE_URL`）全走
+materialize 单一漏斗；gemini 拉目录候选链（`models::model_list_candidates` 抽成纯函数）同口径先剥再拼 `/v1beta/models` → `/models`，
+与 CLI 真实请求对齐。**只收已实证的两家**：codebuddy、qwen / kimi 的 anthropic 协议通道未实证自拼行为，不剥（避免未实证就注）；
+openai 系（codex / grok / opencode / qwen / kimi 的 openai 协议）`/v1` 是约定一部分，原样保留。槽位存储不动（slots 是唯一真相，
+anthropic / openai 槽合法带 `/v1`），归一只发生在物化出口。端到端复验：根地址 + 真密钥 gemini 0.64 正常回话。细则进
+`docs/conventions/profiles.md` §2 归一段；matrix 两个注入行同步；user-guide §9.2 常见坑改口。
 
 ### 2026-10-19 · 连接行「在终端使用」换成「新对话」：点哪条连接用哪条，发一句话验证可用
 
