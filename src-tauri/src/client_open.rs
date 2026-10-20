@@ -557,9 +557,45 @@ fn probe_client_fresh(spec: &ClientSpec) -> ClientProbe {
         .unwrap_or(false);
     ClientProbe {
         installed: ok,
-        version: None,
+        version: ok.then(|| windows_client_version(spec)).flatten(),
         reason: (!ok).then(|| format!("没有检测到 {}。", spec.display)),
     }
+}
+
+/// Windows 客户端版本：两家都是 MSIX 包（2026-10-20 本机：OpenAI.Codex 26.1013.4894.0、Claude 2.42304.2.0），
+/// 包全名带版本，登记在当前用户的应用包仓库键下；列子键名即可，不起 PowerShell。读不到返回 None（只影响展示）
+#[cfg(windows)]
+fn windows_client_version(spec: &ClientSpec) -> Option<String> {
+    const REPO: &str = r"HKCU\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages";
+    let out = crate::process::background_command("reg")
+        .args(["query", REPO])
+        .output()
+        .ok()?;
+    msix_version(&String::from_utf8_lossy(&out.stdout), spec.win_package_names)
+}
+
+/// 从包仓库子键列表里取某个包名的最高版本：子键名是 `<包名>_<版本>_<架构>__<发布者号>`
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn msix_version(listing: &str, names: &[&str]) -> Option<String> {
+    let mut best: Option<(Vec<u64>, String)> = None;
+    for line in listing.lines() {
+        let full = line.trim().rsplit('\\').next().unwrap_or("");
+        for name in names {
+            let Some(rest) = full.strip_prefix(name).and_then(|r| r.strip_prefix('_')) else {
+                continue;
+            };
+            let Some(ver) = rest.split('_').next().filter(|v| !v.is_empty()) else {
+                continue;
+            };
+            let Ok(parts) = ver.split('.').map(str::parse::<u64>).collect::<Result<Vec<_>, _>>() else {
+                continue;
+            };
+            if best.as_ref().is_none_or(|(b, _)| parts > *b) {
+                best = Some((parts, ver.to_string()));
+            }
+        }
+    }
+    best.map(|(_, v)| v)
 }
 
 #[cfg(not(any(target_os = "macos", windows)))]
@@ -1172,6 +1208,34 @@ mod tests {
         }
         let p: OpenTarget = serde_json::from_str(r#"{"kind":"project","path":"/p"}"#).unwrap();
         assert!(matches!(p, OpenTarget::Project { .. }));
+    }
+
+    #[test]
+    fn msix_version_picks_highest_of_named_package() {
+        let listing = "\r\nHKEY_CURRENT_USER\\Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\CurrentVersion\\AppModel\\Repository\\Packages\\Claude_2.42304.2.0_x64__pzs8sxrjxfjjc\r\n\
+HKEY_CURRENT_USER\\...\\Packages\\Claude_2.9.1.0_x64__pzs8sxrjxfjjc\r\n\
+HKEY_CURRENT_USER\\...\\Packages\\ClaudeHelper_9.0.0.0_x64__zzz\r\n\
+HKEY_CURRENT_USER\\...\\Packages\\OpenAI.Codex_26.1013.4894.0_x64__2p2nqsd0c76g0\r\n";
+        assert_eq!(msix_version(listing, &["Claude"]).as_deref(), Some("2.42304.2.0"));
+        assert_eq!(msix_version(listing, &["OpenAI.Codex"]).as_deref(), Some("26.1013.4894.0"));
+        assert_eq!(msix_version(listing, &["Nope"]), None);
+    }
+
+    /// 本机真查一次（装了哪家就核对哪家；没装就只确认不报错）
+    #[cfg(windows)]
+    #[test]
+    fn windows_probe_reads_installed_client_versions() {
+        for spec in [codex(), claude()] {
+            let probe = probe_client_fresh(spec);
+            eprintln!("{}: installed={} version={:?}", spec.id, probe.installed, probe.version);
+            if probe.installed {
+                if let Some(v) = &probe.version {
+                    assert!(v.split('.').all(|p| p.parse::<u64>().is_ok()), "{v}");
+                }
+            } else {
+                assert!(probe.reason.is_some());
+            }
+        }
     }
 
     #[test]

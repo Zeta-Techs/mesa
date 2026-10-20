@@ -93,6 +93,10 @@ pub struct ClientSpec {
     pub mac_bundle_ids: &'static [&'static str],
     /// macOS 应用名（/Applications 与 ~/Applications 下的 .app，不含扩展名）
     pub mac_app_names: &'static [&'static str],
+    /// Windows 应用包名（MSIX 包全名的前段，如 OpenAI.Codex_26.1013.4894.0_x64__… 的 OpenAI.Codex）：
+    /// 读版本用（2026-10-20 本机核实：两家 Windows 客户端都是 MSIX 包，scheme 注册在 HKCR 下）
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub win_package_names: &'static [&'static str],
     /// 下载页（未安装时给用户的出口）；没有把握的不填
     pub download_url: Option<&'static str>,
     /// 渠道（API 配置）如何到达客户端
@@ -418,6 +422,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
             scheme: "claude",
             mac_bundle_ids: &["com.anthropic.claudefordesktop"],
             mac_app_names: &["Claude"],
+            win_package_names: &["Claude"],
             download_url: Some("https://claude.ai/download"),
             channel: ChannelPolicy::OwnAccount,
         }],
@@ -480,6 +485,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
             // 内嵌于 ChatGPT.app（无独立 Codex.app，bundle id com.openai.codex，matrix §2）
             mac_bundle_ids: &["com.openai.codex"],
             mac_app_names: &["ChatGPT", "Codex"],
+            win_package_names: &["OpenAI.Codex"],
             download_url: None,
             channel: ChannelPolicy::RegisteredProvider,
         }],
