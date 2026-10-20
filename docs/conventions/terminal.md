@@ -267,10 +267,7 @@
   xterm 的字形图集→GPU 纹理采样在 WKWebView 里整体偏软发糊（A/B 截屏实测 DOM 渲染明显更锐利，
   Safari 同引擎复现一致；2026-09-21 复测到量化证据：图集按整数设备像素取整单元格（DPR 2 即 0.5px 步进），
   同一字体同一字号实测字宽 7.8 被压成 7.5（−3.8%，字形横向压缩并对齐到更粗的栅格）），故 macOS 默认用
-  xterm 默认 DOM 渲染器；Windows 默认 WebGL 加速。**自动档按 agent 例外（2026-10-20）**：Mac 上 Gemini 标签走 WebGL——
-  gemini 用半格方块 ▄ / ▀ 做消息框上下留白，DOM 渲染器按字体画、行高 1.2 下断成细线加缝，WebGL 自绘方块铺满整格。
-  名单单一出处 `src/terminal-renderer.ts`（`wantsWebglRenderer`），只认「自动」档；进程接上时按实际 agent 对齐（换 agent 重开会加载 /
-  卸下 WebGL，卸下后重挂滚动按行挪位）。新增名单前先实测该 TUI 确实画方块留白，别把清晰档整体让掉。
+  xterm 默认 DOM 渲染器；Windows 默认 WebGL 加速。
   滚动流畅度是另一面的真实诉求（DOM 渲染器滚动时要逐行建/拆 DOM，体感不如原生终端）——
   设置页「终端 → 终端渲染」提供 auto（默认，平台分流如上）/ webgl（流畅，Mac 上文字可能略软）/
   dom（清晰）；选择在**新开的终端**生效，选 webgl 仍过 `isSoftwareWebGL` 探针（TerminalPage.tsx）

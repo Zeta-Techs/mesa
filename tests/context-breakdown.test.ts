@@ -49,23 +49,56 @@ const claude: ContextBreakdown = {
   ],
 };
 
-test("有分类：对话打头，固定开销按大小排，再是自动压缩预留与剩余", () => {
+test("有分类：四大类各一色、固定顺序（不按大小排），小类同灰，再是自动压缩预留与剩余", () => {
   const v = contextView(claude, { used: 300_000, window: 1_000_000 });
   assert.deepEqual(
-    v.rows.map((r) => [r.label, r.tokens, r.tone]),
+    v.rows.map((r) => [r.label, r.tokens, r.tone, r.color]),
     [
-      ["对话", 272_300, "conversation"],
-      ["内置工具", 26_400, "overhead"],
-      ["系统提示", 2_200, "overhead"],
-      ["技能", 2_000, "overhead"],
-      ["自动压缩预留", 33_000, "reserve"],
-      ["剩余", 664_100, "free"],
+      ["对话", 272_300, "series", "#3987e5"],
+      ["内置工具", 26_400, "series", "#199e70"],
+      ["系统提示", 2_200, "series", "#c98500"],
+      ["技能", 2_000, "minor", null],
+      ["自动压缩预留", 33_000, "reserve", null],
+      ["剩余", 664_100, "free", null],
     ],
   );
-  assert.equal(v.bar.conversation, 0.2723);
-  assert.equal(Math.round(v.bar.overhead * 10000), 306);
+  // 横条：已占用的各段同序，剩余是底色
+  assert.deepEqual(
+    v.bar.segments.map((s) => [s.tone, s.color]),
+    [
+      ["series", "#3987e5"],
+      ["series", "#199e70"],
+      ["series", "#c98500"],
+      ["minor", null],
+    ],
+  );
+  assert.equal(v.bar.segments[0].ratio, 0.2723);
   assert.equal(v.bar.compactAt, 0.967);
   assert.equal(v.untilCompact, 664_100);
+});
+
+test("颜色跟着分类走：换主题换一套深浅、MCP 工具有自己的颜色、小到看不见的段不进横条", () => {
+  const withMcp: ContextBreakdown = {
+    ...claude,
+    categories: [{ key: "Memory files", tokens: 346 }, { key: "MCP tools", tokens: 62_100 }, ...claude.categories],
+  };
+  const v = contextView(withMcp, { used: 1, window: 1 }, true);
+  assert.deepEqual(
+    v.rows.slice(0, 3).map((r) => [r.label, r.color]),
+    [
+      ["对话", "#2a78d6"],
+      ["MCP 工具", "#eb6834"],
+      ["内置工具", "#1baf7a"],
+    ],
+  );
+  assert.ok(v.rows.some((r) => r.label === "记忆文件"), "列表里照列");
+  assert.equal(v.bar.segments.length, 5, "记忆文件 346 / 100 万不到 0.2%，横条上略去");
+  // Qwen 的内置工具与 Claude 的同色
+  const qwen = contextView(
+    { window: 200_000, used: 5_000, untilCompact: null, categories: [{ key: "Built-in tools", tokens: 5_000 }] },
+    { used: 1, window: 1 },
+  );
+  assert.equal(qwen.rows.find((r) => r.label === "内置工具")?.color, "#199e70");
 });
 
 test("没有分类：只有已用 / 剩余，横条一段，不画压缩线", () => {
@@ -77,7 +110,7 @@ test("没有分类：只有已用 / 剩余，横条一段，不画压缩线", ()
       ["剩余", 150_000, "free"],
     ],
   );
-  assert.deepEqual(v.bar, { conversation: 0.25, overhead: 0, compactAt: null });
+  assert.deepEqual(v.bar, { segments: [{ ratio: 0.25, tone: "used", color: null }], compactAt: null });
   assert.equal(v.untilCompact, null);
 });
 

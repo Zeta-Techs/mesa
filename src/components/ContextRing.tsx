@@ -45,13 +45,15 @@ function loadBreakdown(req: ContextBreakdownRequest, key: string): Promise<Conte
   return p;
 }
 
+/** 四大类用分类色（行内 style）；这里只管主题灰：没有分类时的「已用」快满变橙，小类同一种灰 */
 function toneClass(tone: ContextTone, warn: boolean): string {
   switch (tone) {
-    case "conversation":
+    case "series":
+      return "";
     case "used":
       return warn ? "bg-warn-text" : "bg-l2";
-    case "overhead":
-      return warn ? "bg-warn-text/50" : "bg-l4";
+    case "minor":
+      return "bg-l3";
     case "reserve":
       return "border border-l4";
     case "free":
@@ -165,7 +167,8 @@ export default function ContextRing({
     };
   }, [panel]);
 
-  const view = contextView(detail.state === "ok" ? detail.data : null, { used, window: win });
+  const light = typeof document !== "undefined" && (document.documentElement.dataset.theme ?? "").endsWith("-light");
+  const view = contextView(detail.state === "ok" ? detail.data : null, { used, window: win }, light);
   const supported = breakdownSupported(agentId);
   const note =
     detail.state === "ok"
@@ -237,14 +240,15 @@ export default function ContextRing({
                 </span>
               </div>
               <div className="relative mt-2 h-1.5">
-                <div className="flex h-full overflow-hidden rounded-full bg-field">
-                  {view.bar.overhead > 0 && (
-                    <div className={toneClass("overhead", warn)} style={{ width: `${view.bar.overhead * 100}%` }} />
-                  )}
-                  <div
-                    className={toneClass("conversation", warn)}
-                    style={{ width: `${view.bar.conversation * 100}%` }}
-                  />
+                {/* 段与段之间留 2px 底色缝，相邻两色不糊在一起 */}
+                <div className="flex h-full gap-0.5 overflow-hidden rounded-full bg-field">
+                  {view.bar.segments.map((seg, i) => (
+                    <div
+                      key={i}
+                      className={`shrink-0 ${toneClass(seg.tone, warn)}`}
+                      style={{ width: `${seg.ratio * 100}%`, ...(seg.color ? { background: seg.color } : {}) }}
+                    />
+                  ))}
                 </div>
                 {view.bar.compactAt !== null && (
                   <div
@@ -257,7 +261,10 @@ export default function ContextRing({
               <div className="mt-2.5 space-y-1">
                 {view.rows.map((row) => (
                   <div key={row.label} className="flex items-center gap-2 tabular-nums">
-                    <span className={`size-2 shrink-0 rounded-xs ${toneClass(row.tone, warn)}`} />
+                    <span
+                      className={`size-2 shrink-0 rounded-xs ${toneClass(row.tone, warn)}`}
+                      style={row.color ? { background: row.color } : undefined}
+                    />
                     <span className="min-w-0 flex-1 truncate text-l2">{row.label}</span>
                     <span className="text-l3">{contextFmtTokens(row.tokens)}</span>
                     <span className="w-12 text-right text-l4">{fmtRatio(row.ratio)}</span>

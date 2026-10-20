@@ -193,7 +193,6 @@ import {
   runtimeModelSwitch,
 } from "../model-switch";
 import { isSoftwareWebGL } from "../diagnostics";
-import { wantsWebglRenderer } from "../terminal-renderer";
 import {
   ChevronDown,
   ClipboardPaste,
@@ -959,8 +958,6 @@ const TerminalView = memo(function TerminalView({
   const effortTailRef = useRef("");
   // 输出监听是启动时挂的闭包：认档用「这个进程启动时的 agent」，不跟启动栏后来的选择
   const launchAgentRef = useRef(agentId);
-  /** xterm 建好后挂上：进程接上时按实际 agent 对齐渲染器（见 terminal-renderer.ts） */
-  const rendererSyncRef = useRef<((agent: string | undefined) => void) | null>(null);
   const selectedProfile = profiles.find(
     (p) => p.id === profileId && p.agent === agentId,
   );
@@ -2728,18 +2725,12 @@ const TerminalView = memo(function TerminalView({
     // 上下文丢失不再永久退 DOM（借鉴 Tabby）：终端标签长寿命、常驻后台，正是丢失高发场景；
     // 窗口重新聚焦/可见时预算重试（≤3 次），再丢才认命回落——Windows 默认 webgl 的用户
     // 不会「流畅档悄悄变糊」。
-    // 自动档另按 agent 例外（terminal-renderer.ts）：先按启动栏选的 agent 定，进程接上后再按实际 agent 对齐。
     const renderer = settingsRef.current?.terminalRenderer ?? "auto";
-    let wantWebgl = wantsWebglRenderer({
-      setting: renderer,
-      isMac: IS_MAC,
-      agentId: launchAgentRef.current,
-    });
+    const wantWebgl = renderer === "webgl" || (renderer === "auto" && !IS_MAC);
     let webglRecoveryLeft = 3;
     // webglActive：当前已加载且健康——没有它，每次窗口聚焦都会重建 renderer、
     // 新开 WebGL 上下文（2026-10-11 复核实证）。软件渲染探针也只开一次。
     let webglActive = false;
-    let webglAddon: WebglAddon | null = null;
     let softwareWebgl: boolean | null = null;
     const loadWebgl = (): boolean => {
       if (!wantWebgl || webglActive || webglRecoveryLeft <= 0) return false;
@@ -2750,32 +2741,16 @@ const TerminalView = memo(function TerminalView({
         webgl.onContextLoss(() => {
           webgl.dispose();
           webglActive = false;
-          webglAddon = null;
           webglRecoveryLeft -= 1;
         });
         term.loadAddon(webgl);
         webglActive = true;
-        webglAddon = webgl;
         return true;
       } catch {
         return false;
       }
     };
     loadWebgl();
-    // 同一标签换 agent 重开：按新 agent 加载或卸下 WebGL（卸下后 xterm 自动回到 DOM 渲染器）
-    rendererSyncRef.current = (agent: string | undefined) => {
-      wantWebgl = wantsWebglRenderer({ setting: renderer, isMac: IS_MAC, agentId: agent });
-      if (wantWebgl) {
-        loadWebgl();
-      } else if (webglAddon) {
-        webglAddon.dispose();
-        webglAddon = null;
-        webglActive = false;
-        // 换回的是新建的 DOM 渲染器：滚动按行挪位要重新挂上
-        teardownRowReuse();
-        teardownRowReuse = installDomScrollRowReuse(term);
-      }
-    };
     const recoverWebgl = () => {
       if (wantWebgl && webglRecoveryLeft > 0) loadWebgl();
     };
@@ -2795,7 +2770,7 @@ const TerminalView = memo(function TerminalView({
     // 压到每帧最多一次写入与重绘；备用屏/鼠标上报/带修饰键仍原样交给 xterm。
     const teardownWheelCoalescing = installTrackpadWheelCoalescing(term);
     // 滚轮一格也是整屏重画。视口平移不到一屏时把还在屏幕上的行挪走，只重画新行。
-    let teardownRowReuse = installDomScrollRowReuse(term);
+    const teardownRowReuse = installDomScrollRowReuse(term);
 
     // 链接可点击：点击经 opener 插件打开系统浏览器（不泄进 PTY，与技能页同源）
     term.loadAddon(
@@ -3061,7 +3036,6 @@ const TerminalView = memo(function TerminalView({
       teardownWheelCoalescing();
       teardownRowReuse();
       teardownWebglRecovery();
-      rendererSyncRef.current = null;
       term.dispose();
       termRef.current = null;
     };
@@ -3353,7 +3327,6 @@ const TerminalView = memo(function TerminalView({
     setModelSeen(null);
     effortTailRef.current = "";
     launchAgentRef.current = agentId;
-    rendererSyncRef.current?.(kind === "agent" ? agentId : undefined);
     // 启动后 20 秒也盯确认菜单：完全访问启动时 Claude Code 先弹「Bypass Permissions mode」警告，
     // 默认高亮在 No——聊天层不给按钮就卡在「已送出」（2026-10-17 本机 PTY 实录）。不替用户选
     if (kind === "agent") {

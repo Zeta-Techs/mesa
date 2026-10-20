@@ -141,7 +141,7 @@
 
 模型芯片左边一个 14px 圆环，表示上一轮输入占模型上下文窗口的比例；悬停写「已用 63%（12.6 万 / 20 万）」。超过 80% 圆环变橙。数据：上一条助手消息的 input + cache 用量（会话文件里有）÷ 模型能力库的 context。读不到窗口大小就不显示圆环。
 
-**点开是上下文浮层（2026-10-20，用户要 Claude 客户端那样的面板，按推荐做）**：标题行已用 / 窗口；横条只分三段——对话、固定开销、剩余（深浅灰，≥80% 变橙；设计规范「颜色只表达风险」，六种灰在横条上分不清，所以细分只进列表），竖线标自动压缩点；列表逐类列 token 与占比；底部「离自动压缩还有 X」+「压缩上下文」（斜杠面板 Mesa 组同一个动作，这家有压缩命令且在运行时才给）。分类来自 CLI 自己的 `/context`，Mesa 用标签同一套启动参数在后台跑一次（`context_breakdown.rs`）：Claude Code `-p "/context" --resume <id> --no-session-persistence`（关 hooks）、Qwen Code `-p "/context" --resume <id>`，2026-10-20 实测拿 2.8MB 真实对话副本跑，对话文件一字节未变、不调用模型。CodeBuddy 有 `/context` 但无头模式把它当普通提问发给模型；其余家没有这类命令——浮层只有已用 / 剩余。点开才读、同一轮缓存；数字标「估算」。
+**点开是上下文浮层（2026-10-20，用户要 Claude 客户端那样的面板，按推荐做）**：标题行已用 / 窗口；横条按分类上色——对话 / MCP 工具 / 内置工具 / 系统提示四大类各一色、小类同灰、剩余是底色，顺序固定不按大小排（同日用户看过三段灰的版本后改要每类一色；配色见 `context-breakdown.ts` SERIES，改色先用 dataviz 校验器重验），≥80% 只让标题数字变橙，竖线标自动压缩点；列表逐类列 token 与占比；底部「离自动压缩还有 X」+「压缩上下文」（斜杠面板 Mesa 组同一个动作，这家有压缩命令且在运行时才给）。分类来自 CLI 自己的 `/context`，Mesa 用标签同一套启动参数在后台跑一次（`context_breakdown.rs`）：Claude Code `-p "/context" --resume <id> --no-session-persistence`（关 hooks）、Qwen Code `-p "/context" --resume <id>`，2026-10-20 实测拿 2.8MB 真实对话副本跑，对话文件一字节未变、不调用模型。CodeBuddy 有 `/context` 但无头模式把它当普通提问发给模型；其余家没有这类命令——浮层只有已用 / 剩余。点开才读、同一轮缓存；数字标「估算」。
 
 ### 4.5 发送、排队、停止
 
@@ -228,7 +228,7 @@
 
 - 输入框：圆角 `rounded-xl`，底 `bg-raised`，1px `border-field`；底栏高 40px，芯片高 24px、字号 micro、灰调 `text-l3`，悬停 `bg-hover`。
 - 菜单：`ccode-float-surface`，宽 18–20rem，行高 28–44px（带说明的两行项 44px），分段控件高 28px；分组之间 1px `border-hairline`。
-- 颜色只表达一件事：橙（warn）= 风险（完全访问、上下文将满）；蓝只给状态点；其余全部灰阶。
+- 颜色只表达一件事：橙（warn）= 风险（完全访问、上下文将满）；蓝只给状态点；其余全部灰阶。例外：上下文浮层的分类横条按分类上色（2026-10-20 用户要）。
 - 图标统一 lucide 1.8 线宽、12–14px：眼睛 / 手掌 / ShieldCheck / ShieldAlert / Paperclip / AtSign / Sparkles / Plug / SquareTerminal。
 - 动效：菜单 120ms 淡入；实时预览不做打字机动画（终端本来就是逐行到）。
 
