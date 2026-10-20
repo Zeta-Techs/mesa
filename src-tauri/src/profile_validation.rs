@@ -654,7 +654,7 @@ fn cli_check(profile: &Profile, key: Option<&str>, injected: bool) -> Validation
             key.map(ToOwned::to_owned),
             profile.models.first().map(String::as_str),
         )?;
-        let mut cmd = crate::process::background_command(binary);
+        let mut cmd = crate::process::background_command(&binary);
         if injected {
             for (name, value) in &plan.env {
                 cmd.env(name, value);
@@ -686,6 +686,8 @@ fn cli_check(profile: &Profile, key: Option<&str>, injected: bool) -> Validation
             }
             "gemini" => {
                 cmd.arg("--version");
+                // 不在用户 ~/.gemini 留 projects.json.*.tmp（见 agents::quiet_cli_probe）
+                crate::agents::quiet_cli_probe(&mut cmd, &binary);
                 "Gemini 启动预检（CLI 暂无 doctor）"
             }
             "qwen" => {

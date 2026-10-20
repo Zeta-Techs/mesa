@@ -336,6 +336,31 @@ fn find_in_dirs(name: &str, dirs: &[std::path::PathBuf]) -> Option<std::path::Pa
 /// --version 探测的统一超时：正常 CLI 毫秒级返回，卡死的 CLI 不能拖住检测/更新流程
 pub(crate) const VERSION_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// 无头探测（--version / 启动预检）不在用户的 CLI 目录里留垃圾。
+///
+/// Gemini CLI 0.64：`~/.gemini/projects.json` 不存在时每次启动都异步「写 tmp + 改名」登记项目，
+/// `--version` 打完就退出、改名来不及做，`projects.json.<uuid>.tmp` 留在 ~/.gemini 里越积越多——
+/// 没交互跑过 Gemini 的新装机器上，Mesa 每次探版本留两个（2026-10-20 新用户沙盒实证，
+/// 已有 projects.json 时不写）。探测时把 GEMINI_CLI_HOME 指到 Mesa 自己的临时目录并预放一份
+/// projects.json：版本照样读到，用户的 ~/.gemini 一个字节不碰。其余 CLI 不动。
+pub(crate) fn quiet_cli_probe(cmd: &mut crate::process::BackgroundCommand, binary: &std::path::Path) {
+    let is_gemini = binary
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .is_some_and(|s| s.eq_ignore_ascii_case("gemini"));
+    if !is_gemini {
+        return;
+    }
+    let home = std::env::temp_dir().join("ccode-gemini-probe");
+    let registry = home.join(".gemini").join("projects.json");
+    if !registry.is_file() {
+        // 建不出来也照样指过去：最坏是 tmp 留在 Mesa 的临时目录，而不是用户目录
+        let _ = std::fs::create_dir_all(home.join(".gemini"));
+        let _ = std::fs::write(&registry, "{\n  \"projects\": {}\n}");
+    }
+    cmd.env("GEMINI_CLI_HOME", &home);
+}
+
 /// 带超时跑 `<binary> --version` 并取首行输出；超时或失败杀掉子进程返回 None。
 /// agents::detect 与 updater::version_of 共用（原实现无超时，CLI 卡死会无限阻塞）
 pub(crate) fn version_with_timeout(
@@ -351,7 +376,9 @@ fn version_args_with_timeout(
     args: &[&str],
     timeout: std::time::Duration,
 ) -> Option<String> {
-    let mut child = crate::process::background_command(path)
+    let mut cmd = crate::process::background_command(path);
+    quiet_cli_probe(&mut cmd, path);
+    let mut child = cmd
         .args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
@@ -5923,6 +5950,36 @@ api_backend = "responses"
             version_with_timeout(&bin, std::time::Duration::from_secs(5)),
             None
         );
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gemini_version_probe_uses_mesa_scratch_home() {
+        let base = std::env::temp_dir().join(format!("ccode-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&base).unwrap();
+        // 叫 gemini 的假 CLI：版本行里回显它看到的 GEMINI_CLI_HOME
+        let gemini = base.join("gemini");
+        let other = base.join("qwen");
+        for bin in [&gemini, &other] {
+            std::fs::write(bin, "#!/bin/sh\necho \"9.9.9 ${GEMINI_CLI_HOME:-unset}\"\n").unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let probe_home = std::env::temp_dir().join("ccode-gemini-probe");
+        assert_eq!(
+            version_with_timeout(&gemini, std::time::Duration::from_secs(5)),
+            Some(format!("9.9.9 {}", probe_home.display()))
+        );
+        // 预放的登记文件在 Mesa 的临时目录里，Gemini 因此不再写 projects.json.*.tmp
+        assert!(probe_home.join(".gemini").join("projects.json").is_file());
+        // 别家 CLI 不受影响（环境里本来没有就还是没有）
+        if std::env::var_os("GEMINI_CLI_HOME").is_none() {
+            assert_eq!(
+                version_with_timeout(&other, std::time::Duration::from_secs(5)),
+                Some("9.9.9 unset".into())
+            );
+        }
         std::fs::remove_dir_all(&base).ok();
     }
 
