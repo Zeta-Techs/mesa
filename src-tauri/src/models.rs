@@ -136,6 +136,43 @@ pub(crate) fn ends_with_version_segment(input: &str) -> bool {
     }
 }
 
+/// 剥掉 URL 路径末尾的版本段（`/v1`、`/v1beta`、`/v4` …），返回归一后的字符串。
+/// 供「CLI 自己拼版本段」的端点用：gemini CLI 对 GOOGLE_GEMINI_BASE_URL 无条件追加
+/// `/v1beta/models/<模型>:…`（2026-10-19 本机 0.64.0 探针实测：base 带 `/v1` 会拼出
+/// `/v1/v1beta/…` 被中转 404，CLI 报「Model not found or is invalid」）；Claude Code 对
+/// ANTHROPIC_BASE_URL 同样自拼 `/v1/messages`（同日实测 `/v1/v1/messages?beta=true`）。
+/// 用户把 OpenAI 风格的 `/v1` 地址填进这两个槽是常态（网关保存还把主地址折进全部槽），
+/// 剥掉后 CLI 拼出的才是端点真身。只剥一段；非版本段结尾原样返回。
+pub(crate) fn strip_trailing_version_segment(input: &str) -> String {
+    let trimmed = input.trim_end_matches('/');
+    if !ends_with_version_segment(trimmed) {
+        return input.to_string();
+    }
+    match trimmed.rfind('/') {
+        Some(idx) => trimmed[..idx].to_string(),
+        // 末段是版本段且前面没有 '/'：整个路径就是版本段（如 "v1"），剥成空
+        None => String::new(),
+    }
+}
+
+/// 拉目录候选地址链（fetch_models 用）：
+/// - 末段是版本段（/v1、/v1beta、/v4 …）直接拼 /models；否则先试 /v1/models 再试 /models。
+///   v3/v4 等非常规版本段（GLM /api/paas/v4）资源直接挂版本段下为主选，保留 /v1/models 作次选兜底。
+/// - gemini 例外：CLI 对 base 无条件自拼 /v1beta/…，槽位带版本段（用户把 OpenAI
+///   风格 /v1 地址填进 gemini 槽）先剥掉，候选链与 CLI 实际请求路径对齐
+fn model_list_candidates(base: &str, gemini: bool) -> Vec<String> {
+    if gemini {
+        let base = strip_trailing_version_segment(base);
+        vec![format!("{base}/v1beta/models"), format!("{base}/models")]
+    } else if base.ends_with("/v1") {
+        vec![format!("{base}/models")]
+    } else if ends_with_version_segment(base) {
+        vec![format!("{base}/models"), format!("{base}/v1/models")]
+    } else {
+        vec![format!("{base}/v1/models"), format!("{base}/models")]
+    }
+}
+
 /// fetch_models 的返回：模型列表 + 是否命中缓存 + 拉取时间（前端展示「缓存 · HH:MM」）
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -214,22 +251,7 @@ pub async fn fetch_models(
             });
         }
     }
-    // 候选地址：末段是版本段（/v1、/v1beta、/v4 …）直接拼 /models；
-    // 否则先试 /v1/models 再试 /models。v3/v4 等非常规版本段（GLM /api/paas/v4）
-    // 资源直接挂版本段下为主选，保留 /v1/models 作次选兜底
-    let candidates: Vec<String> = if gemini {
-        if ends_with_version_segment(base) {
-            vec![format!("{base}/models")]
-        } else {
-            vec![format!("{base}/v1beta/models"), format!("{base}/models")]
-        }
-    } else if base.ends_with("/v1") {
-        vec![format!("{base}/models")]
-    } else if ends_with_version_segment(base) {
-        vec![format!("{base}/models"), format!("{base}/v1/models")]
-    } else {
-        vec![format!("{base}/v1/models"), format!("{base}/models")]
-    };
+    let candidates = model_list_candidates(base, gemini);
 
     // 30s：大网关全量模型列表（400+ 条带元数据）传输+解压可能超过 10s，压线即超时
     let client = reqwest::Client::builder()
@@ -480,6 +502,72 @@ pub async fn fetch_gateway_catalog(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn strips_trailing_version_segment() {
+        assert_eq!(
+            strip_trailing_version_segment("https://relay.example.com/v1"),
+            "https://relay.example.com"
+        );
+        assert_eq!(
+            strip_trailing_version_segment("https://relay.example.com/v1/"),
+            "https://relay.example.com"
+        );
+        assert_eq!(
+            strip_trailing_version_segment("https://relay.example.com/v1beta"),
+            "https://relay.example.com"
+        );
+        assert_eq!(
+            strip_trailing_version_segment("https://relay.example.com/gemini/v4"),
+            "https://relay.example.com/gemini"
+        );
+        // 非版本段结尾：原样返回（含末尾斜杠）
+        assert_eq!(
+            strip_trailing_version_segment("https://relay.example.com"),
+            "https://relay.example.com"
+        );
+        assert_eq!(
+            strip_trailing_version_segment("https://relay.example.com/"),
+            "https://relay.example.com/"
+        );
+        assert_eq!(
+            strip_trailing_version_segment("https://open.bigmodel.cn/api/paas/v4"),
+            "https://open.bigmodel.cn/api/paas"
+        );
+    }
+
+    #[test]
+    fn model_list_candidates_rules() {
+        // gemini：槽位带 /v1（OpenAI 风格同址折槽的常态）先剥，候选对齐 CLI 自拼路径
+        assert_eq!(
+            model_list_candidates("https://relay.example.com/v1", true),
+            vec![
+                "https://relay.example.com/v1beta/models",
+                "https://relay.example.com/models",
+            ]
+        );
+        // gemini 根地址：与旧链一致
+        assert_eq!(
+            model_list_candidates("https://relay.example.com", true),
+            vec![
+                "https://relay.example.com/v1beta/models",
+                "https://relay.example.com/models",
+            ]
+        );
+        // openai 系不变：/v1 结尾直接拼 /models
+        assert_eq!(
+            model_list_candidates("https://relay.example.com/v1", false),
+            vec!["https://relay.example.com/v1/models"]
+        );
+        // openai 系不变：GLM /api/paas/v4 版本段主选 + /v1 兜底
+        assert_eq!(
+            model_list_candidates("https://open.bigmodel.cn/api/paas/v4", false),
+            vec![
+                "https://open.bigmodel.cn/api/paas/v4/models",
+                "https://open.bigmodel.cn/api/paas/v4/v1/models",
+            ]
+        );
+    }
 
     #[test]
     fn parses_glm_codex_slug_catalog() {

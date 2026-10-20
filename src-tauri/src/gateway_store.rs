@@ -449,7 +449,19 @@ pub fn materialize(
             )
         } else if let Some(g) = gateway {
             let slot = slot_for_agent(&binding.agent, binding.protocol.as_deref());
-            let url = slot_url(&g.slots, slot).map(str::to_string);
+            let url = slot_url(&g.slots, slot).map(str::to_string).map(|u| {
+                // gemini CLI 对 GOOGLE_GEMINI_BASE_URL 无条件自拼 /v1beta/…、Claude Code 对
+                // ANTHROPIC_BASE_URL 自拼 /v1/messages（2026-10-19 本机探针实测，双版本段 404）。
+                // 用户把 OpenAI 风格 /v1 地址填进这两个槽是常态（网关保存还把主地址折进全部槽），
+                // 物化时剥掉末尾版本段，启动注入 / 设为全局 / 拉目录拿到的都是 CLI 真正要的 base。
+                // 仅限已实证自拼版本段的两家；codebuddy / qwen、kimi 的 anthropic 协议通道未实证，不动。
+                match binding.agent.as_str() {
+                    "gemini" | "claude-code" => {
+                        crate::models::strip_trailing_version_segment(&u)
+                    }
+                    _ => u,
+                }
+            });
             let missing = url.is_none();
             let model_id = selected_model
                 .filter(|m| !m.is_empty())
@@ -1403,6 +1415,77 @@ mod tests {
             Some("high")
         );
         assert_eq!(second.request_policy.temperature, Some(0.9));
+    }
+
+    #[test]
+    fn materialize_strips_version_segment_for_self_versioning_agents() {
+        // 同址网关（保存时主地址折进全部槽，OpenAI 风格 /v1 结尾）：
+        // gemini / claude-code 的 CLI 自拼版本段，物化时剥掉；openai 系 CLI 直接拼
+        // 资源名，/v1 是约定的一部分，原样保留
+        let gw = Gateway {
+            id: "g".into(),
+            name: "G".into(),
+            no_auth: false,
+            key_hint: None,
+            wallet_user_id: None,
+            wallet_key_hint: None,
+            slots: ProtocolSlots {
+                anthropic: Some("https://relay.example.com/v1".into()),
+                openai: Some("https://relay.example.com/v1".into()),
+                responses: Some("https://relay.example.com/v1".into()),
+                gemini: Some("https://relay.example.com/v1".into()),
+                cursor: None,
+            },
+            header_env: Default::default(),
+            models: vec![],
+            catalog_fetched_at: None,
+            catalog_from_slot: None,
+            last_probe: Vec::new(),
+            slot_probes: Vec::new(),
+            revision: String::new(),
+        };
+        let mk = |agent: &str| Binding {
+            id: format!("b-{agent}"),
+            agent: agent.into(),
+            name: agent.into(),
+            kind: BindingKind::Api,
+            gateway_id: Some("g".into()),
+            protocol: None,
+            api_backend: None,
+            models: vec!["m".into()],
+            role_models: Default::default(),
+            extra_env: HashMap::new(),
+            last_used_at: None,
+        };
+        assert_eq!(
+            materialize(&mk("gemini"), Some(&gw), None).base_url.as_deref(),
+            Some("https://relay.example.com")
+        );
+        assert_eq!(
+            materialize(&mk("claude-code"), Some(&gw), None)
+                .base_url
+                .as_deref(),
+            Some("https://relay.example.com")
+        );
+        // 对照组：v1beta 结尾也剥；openai 系原样
+        let mut gw_beta = gw.clone();
+        gw_beta.slots.gemini = Some("https://relay.example.com/v1beta".into());
+        assert_eq!(
+            materialize(&mk("gemini"), Some(&gw_beta), None)
+                .base_url
+                .as_deref(),
+            Some("https://relay.example.com")
+        );
+        assert_eq!(
+            materialize(&mk("codex"), Some(&gw), None).base_url.as_deref(),
+            Some("https://relay.example.com/v1")
+        );
+        assert_eq!(
+            materialize(&mk("opencode"), Some(&gw), None)
+                .base_url
+                .as_deref(),
+            Some("https://relay.example.com/v1")
+        );
     }
 
     #[test]

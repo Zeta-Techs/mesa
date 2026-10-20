@@ -102,7 +102,7 @@ test("gatewayDraftSlots：主槽 = 表单地址，额外 Agent 缺省同址回�
 });
 
 test("gatewayDraftSlots：智谱分槽端点以预设值为准，不被同址回落盖掉", () => {
-  const glm = PROVIDER_PRESETS.find((p) => p.name === "智谱 GLM")!;
+  const glm = PROVIDER_PRESETS.find((p) => p.name === "智谱 GLM（按量付费）")!;
   const slots = gatewayDraftSlots(
     {
       agent: "qwen",

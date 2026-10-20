@@ -57,8 +57,28 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     },
     confidence: "official",
   },
+  // 智谱按计费方式分两条：OpenAI 兼容端点套餐与按量不是同一个地址。
+  // 套餐 key 打 /api/paas/v4 不抵扣套餐额度、只扣账户余额，余额为 0 时报
+  // 1113「余额不足或无可用资源包」（2026-10-20 实测：同 key 打 /api/coding/paas/v4 正常，
+  // /api/anthropic 与 /api/v1 两种计费都通，所以 Claude / Codex 能用、Grok / Qwen 等挂）。
   {
-    name: "智谱 GLM",
+    name: "智谱 GLM Coding Plan（套餐）",
+    slots: {
+      anthropic: "https://open.bigmodel.cn/api/anthropic",
+      openai: "https://open.bigmodel.cn/api/coding/paas/v4",
+      responses: "https://open.bigmodel.cn/api/v1",
+    },
+    models: ["glm-5.3", "glm-5.3-flash"],
+    slotNotes: {
+      openai: "套餐专用 OpenAI 兼容端点；/api/paas/v4 走按量计费，不抵扣套餐额度",
+      responses: "Codex 专用 Responses 端点；paas/v4 会 404",
+      anthropic:
+        "Anthropic 兼容端点；Claude 用 ANTHROPIC_AUTH_TOKEN、CodeBuddy 用 CODEBUDDY_API_KEY 鉴权",
+    },
+    confidence: "official",
+  },
+  {
+    name: "智谱 GLM（按量付费）",
     slots: {
       anthropic: "https://open.bigmodel.cn/api/anthropic",
       openai: "https://open.bigmodel.cn/api/paas/v4",
@@ -66,6 +86,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     },
     models: ["glm-5.3", "glm-5.3-flash"],
     slotNotes: {
+      openai: "按量计费端点，从账户余额扣费；买的是 Coding Plan 套餐请选上一条",
       responses: "Codex 专用 Responses 端点；paas/v4 会 404",
       anthropic:
         "Anthropic 兼容端点；Claude 用 ANTHROPIC_AUTH_TOKEN、CodeBuddy 用 CODEBUDDY_API_KEY 鉴权",

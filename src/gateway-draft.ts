@@ -36,8 +36,29 @@ export function responsesSlotUrlWarning(url: string): string | null {
     return null;
   }
   if (parsed.hostname !== "open.bigmodel.cn") return null;
-  if (!parsed.pathname.includes("/api/paas/v4")) return null;
-  return "智谱 /api/paas/v4 只有 chat/completions，Codex 打 /responses 会 404。正确填法：Base URL 保持 /api/paas/v4（「获取模型」走它拉目录），展开「协议槽」把 Responses 单独填 https://open.bigmodel.cn/api/v1（该端点不出模型目录）";
+  if (!parsed.pathname.includes("/paas/v4")) return null;
+  return "智谱 paas/v4 只有 chat/completions，Codex 打 /responses 会 404。正确填法：Base URL 保持 paas/v4 端点（「获取模型」走它拉目录），展开「协议槽」把 Responses 单独填 https://open.bigmodel.cn/api/v1（该端点不出模型目录）";
+}
+
+/** 智谱 OpenAI 兼容端点按计费方式分两个地址：/api/paas/v4 按量扣账户余额，
+ * /api/coding/paas/v4 才抵扣 Coding Plan 套餐。套餐 key 填了按量端点，Grok / Qwen /
+ * OpenCode 等走 OpenAI 协议的 Agent 一发请求就报 1113「余额不足或无可用资源包」，
+ * 而 Claude（/api/anthropic）、Codex（/api/v1）照常能用——极易误诊成 Agent 的问题。
+ * 两个端点 /models 都能拉，「测试」「获取模型」看不出差别，只能在地址上提示。 */
+export function zhipuOpenAiSlotBillingHint(url: string): string | null {
+  const trimmed = url.trim();
+  if (!trimmed) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  const host = parsed.hostname;
+  if (host !== "open.bigmodel.cn" && host !== "api.z.ai") return null;
+  if (!parsed.pathname.startsWith("/api/paas/v4")) return null;
+  const coding = `${parsed.origin}/api/coding/paas/v4`;
+  return `智谱 /api/paas/v4 是按量计费端点，从账户余额扣费，不抵扣 Coding Plan 套餐。买的是套餐就把 OpenAI 槽改成 ${coding}——否则 Grok、Qwen 等走 OpenAI 协议的 Agent 会报「余额不足或无可用资源包」，而 Claude、Codex 照常能用`;
 }
 
 /** 五个槽都空、或都等于主输入（含主输入同步进槽的同址情况）。 */

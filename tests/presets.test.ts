@@ -35,12 +35,17 @@ test("Qwen 与 Kimi 的兼容预设选 openai 协议；kimi 对 Moonshot 走官�
   assert.equal(kimiMoonshot?.baseUrl, "https://api.moonshot.cn/v1");
 });
 
-test("智谱分槽：Codex 走 Responses 专用端点 api/v1，其余走 paas/v4", () => {
-  const glmCodex = presetsForAgent("codex").find((p) => p.name === "智谱 GLM");
-  assert.equal(glmCodex?.baseUrl, "https://open.bigmodel.cn/api/v1");
-  assert.equal(glmCodex?.wireApi, "responses");
-  const glmQwen = presetsForAgent("qwen").find((p) => p.name === "智谱 GLM");
-  assert.equal(glmQwen?.baseUrl, "https://open.bigmodel.cn/api/paas/v4");
+test("智谱分槽：Codex 走 Responses 专用端点 api/v1，其余按计费方式分端点", () => {
+  for (const name of ["智谱 GLM Coding Plan（套餐）", "智谱 GLM（按量付费）"]) {
+    const glmCodex = presetsForAgent("codex").find((p) => p.name === name);
+    assert.equal(glmCodex?.baseUrl, "https://open.bigmodel.cn/api/v1", name);
+    assert.equal(glmCodex?.wireApi, "responses", name);
+  }
+  // 套餐 key 打 /api/paas/v4 报 1113 余额不足（2026-10-20 实测），套餐必须走 coding 端点
+  const plan = presetsForAgent("grok").find((p) => p.name === "智谱 GLM Coding Plan（套餐）");
+  assert.equal(plan?.baseUrl, "https://open.bigmodel.cn/api/coding/paas/v4");
+  const payg = presetsForAgent("qwen").find((p) => p.name === "智谱 GLM（按量付费）");
+  assert.equal(payg?.baseUrl, "https://open.bigmodel.cn/api/paas/v4");
 });
 
 test("Claude/CodeBuddy 走 Anthropic 兼容端点", () => {

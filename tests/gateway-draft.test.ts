@@ -14,6 +14,7 @@ import {
   primaryProbeSlot,
   probeDtoToSummary,
   responsesSlotUrlWarning,
+  zhipuOpenAiSlotBillingHint,
   slotsFollowMaster,
 } from "../src/gateway-draft.ts";
 import { agentForSlot } from "../src/gateway-slot.ts";
@@ -176,4 +177,16 @@ test("responsesSlotUrlWarning：智谱 paas/v4 无 /responses 才报警", () => 
   assert.equal(responsesSlotUrlWarning("https://relay.example.com/api/paas/v4"), null);
   assert.equal(responsesSlotUrlWarning(""), null);
   assert.equal(responsesSlotUrlWarning("not-a-url"), null);
+});
+
+test("zhipuOpenAiSlotBillingHint：只对智谱按量 paas/v4 提示，coding 端点与他家不提示", () => {
+  const cn = zhipuOpenAiSlotBillingHint("https://open.bigmodel.cn/api/paas/v4/");
+  assert.ok(cn?.includes("https://open.bigmodel.cn/api/coding/paas/v4"));
+  const intl = zhipuOpenAiSlotBillingHint("https://api.z.ai/api/paas/v4");
+  assert.ok(intl?.includes("https://api.z.ai/api/coding/paas/v4"));
+  assert.equal(zhipuOpenAiSlotBillingHint("https://open.bigmodel.cn/api/coding/paas/v4"), null);
+  assert.equal(zhipuOpenAiSlotBillingHint("https://open.bigmodel.cn/api/anthropic"), null);
+  assert.equal(zhipuOpenAiSlotBillingHint("https://relay.example.com/api/paas/v4"), null);
+  assert.equal(zhipuOpenAiSlotBillingHint(""), null);
+  assert.equal(zhipuOpenAiSlotBillingHint("not-a-url"), null);
 });
