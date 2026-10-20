@@ -154,6 +154,54 @@ fn js_entry_from_shim(content: &str) -> Option<String> {
     })
 }
 
+/// Cursor CLI 的 Windows 启动器（官方 `irm https://cursor.com/install?win32=true | iex` 装到
+/// %LOCALAPPDATA%\cursor-agent）：cursor-agent.cmd → PowerShell 跑 cursor-agent.ps1 → 在 versions\ 里挑最新版本目录，
+/// 用其中自带的 node.exe 跑 index.js。这里照同一挑法直接拿到 (node.exe, index.js)：省掉 cmd 与 PowerShell
+/// 两层转手（实测 --version 2.6 秒 → 0.9 秒），参数也不经 cmd / PowerShell 5.1 的引号规则
+#[cfg(windows)]
+fn cursor_entry_from_launcher(program: &Path) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+    let content = std::fs::read_to_string(program).ok()?;
+    if !content.to_ascii_lowercase().contains("cursor-agent.ps1") {
+        return None;
+    }
+    let versions = program.parent()?.join("versions");
+    let names: Vec<String> = std::fs::read_dir(&versions)
+        .ok()?
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect();
+    let dir = versions.join(pick_cursor_version(&names)?);
+    let (node, entry) = (dir.join("node.exe"), dir.join("index.js"));
+    (node.is_file() && entry.is_file()).then_some((node, entry))
+}
+
+/// 照 cursor-agent.ps1 的口径挑版本目录：名字形如 `YYYY.M.D-<提交>` 或 `YYYY.M.D-HH-MM-SS-<提交>`
+/// （.staged / .previous 之类不算），按日期取最新，同日再按名字
+#[cfg(any(windows, test))]
+fn pick_cursor_version(names: &[String]) -> Option<String> {
+    let key = |name: &str| -> Option<(u32, String)> {
+        let (date, rest) = name.split_once('-')?;
+        let parts: Vec<&str> = date.split('.').collect();
+        if parts.len() != 3 || parts.iter().any(|p| p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit())) {
+            return None;
+        }
+        let segs: Vec<&str> = rest.split('-').collect();
+        let commit = segs.last()?;
+        let stamp_ok = match segs.len() {
+            1 => true,
+            4 => segs[..3].iter().all(|s| s.len() == 2 && s.bytes().all(|b| b.is_ascii_digit())),
+            _ => false,
+        };
+        if !stamp_ok || commit.is_empty() || !commit.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()) {
+            return None;
+        }
+        let num = format!("{}{:0>2}{:0>2}", parts[0], parts[1], parts[2]).parse().ok()?;
+        Some((num, name.to_string()))
+    };
+    names.iter().filter_map(|n| key(n)).max().map(|(_, n)| n)
+}
+
 /// .cmd shim → (node 绝对路径, JS 入口绝对路径)：入口文件必须真实存在；
 /// node 优先取 shim 同目录的 node.exe（官方 Node 布局），否则全局解析。
 /// npm.cmd / npx.cmd 是 Node 安装器的变量化脚本，布局固定为
@@ -168,6 +216,9 @@ pub(crate) fn node_entry_from_cmd_shim(
 ) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
     if !is_cmd_batch_shim(program) {
         return None;
+    }
+    if let Some(found) = cursor_entry_from_launcher(program) {
+        return Some(found);
     }
     let dir = program.parent()?;
     let name = program
@@ -705,6 +756,45 @@ pub(crate) fn join_with_timeout(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cursor_version_pick_matches_launcher_rules() {
+        let names: Vec<String> = [
+            "2026.10.1-aaaa111",
+            "2026.10.19-6bbf2c4",
+            "2026.10.19-6bbf2c4.staged",
+            "2026.10.19-12-30-00-ffff000",
+            "2026.9.30-bbbb222",
+            "notes",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        // 同日（10.19）两个都合规时按名字取大的；.staged 不算
+        assert_eq!(pick_cursor_version(&names).as_deref(), Some("2026.10.19-6bbf2c4"));
+        assert_eq!(
+            pick_cursor_version(&["2026.9.30-bbbb222".into(), "2026.10.1-aaaa111".into()]).as_deref(),
+            Some("2026.10.1-aaaa111"),
+            "按日期数值比，不按字符串"
+        );
+        assert_eq!(pick_cursor_version(&["x".into()]), None);
+    }
+
+    /// 本机装了 Cursor CLI（官方 Windows 安装器）时：启动器解析到它自带的 node.exe + index.js
+    #[cfg(windows)]
+    #[test]
+    fn cursor_launcher_resolves_to_bundled_node() {
+        let Some(local) = dirs::data_local_dir() else { return };
+        let launcher = local.join("cursor-agent").join("cursor-agent.cmd");
+        if !launcher.is_file() {
+            return;
+        }
+        let (node, entry) = node_entry_from_cmd_shim(&launcher).expect("应解析到版本目录");
+        assert!(node.ends_with("node.exe") && entry.ends_with("index.js"), "{node:?} {entry:?}");
+        let out = background_command(&launcher).arg("--version").output().unwrap();
+        assert!(out.status.success());
+        assert!(String::from_utf8_lossy(&out.stdout).trim().starts_with("20"), "{out:?}");
+    }
 
     #[cfg(unix)]
     #[test]

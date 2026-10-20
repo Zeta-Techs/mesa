@@ -309,6 +309,8 @@ pub struct PackagingSpec {
     pub interactive_tui: bool,
     /// 官方安装脚本（bash -c 内容）
     pub install_script: Option<&'static str>,
+    /// Windows 上的官方安装脚本（powershell -Command 内容）；None = Windows 不走脚本渠道
+    pub install_script_win: Option<&'static str>,
     /// 安装脚本 URL 兼作最新版查询口：脚本正文烙着当前版本（如 cursor 的
     /// downloads.cursor.com/lab/<年.月.日-哈希>/ 下载地址），抓正文提取即可，
     /// 无包管理器渠道也能判定「已最新」；None = 脚本不带版本，不查
@@ -330,6 +332,7 @@ const NO_PACKAGING: PackagingSpec = PackagingSpec {
     self_update: None,
     interactive_tui: false,
     install_script: None,
+    install_script_win: None,
     script_latest: None,
     update_fallback: &[],
     legacy_variant: None,
@@ -808,8 +811,10 @@ static AGENT_SPECS: &[AgentSpec] = &[
         skills_dir: &[".cursor", "skills-cursor"],
         packaging: PackagingSpec {
             // 无 brew/npm 官方包：官方安装脚本装到 ~/.local/share/cursor-agent/versions/<ver>/
-            // Windows 安装渠道官方不支持（updater pick_install 直接 None，文案指 WSL）
             install_script: Some("curl -fsSL https://cursor.com/install | bash"),
+            // Windows 原生安装器（2026-10-20 核实：装到 %LOCALAPPDATA%\cursor-agent，自带 node.exe，
+            // 运行要 Git for Windows；此前文档只写 WSL）
+            install_script_win: Some("irm 'https://cursor.com/install?win32=true' | iex"),
             // 安装脚本正文烙着当前版本（downloads.cursor.com/lab/<版本>/），作最新版查询口
             script_latest: Some("https://cursor.com/install"),
             // cursor-agent update 是非交互自更新
@@ -1273,6 +1278,8 @@ pub(crate) fn binary_candidate_dirs() -> Vec<std::path::PathBuf> {
             out.push(local.join("Microsoft").join("WindowsApps"));
             // GitHub Desktop 捆绑 CLI github.bat（打开指定工作树）
             out.push(local.join("GitHubDesktop").join("bin"));
+            // Cursor CLI 官方 Windows 安装器（cursor-agent.cmd 启动器，进程直启见 process::cursor_entry_from_launcher）
+            out.push(local.join("cursor-agent"));
         }
         if let Some(roaming) = dirs::data_dir() {
             out.push(roaming.join("npm"));

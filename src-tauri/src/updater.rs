@@ -822,20 +822,25 @@ fn install_specs(agent_id: &str) -> Vec<InstallSpec> {
         // kimi 的 uv 包装的是旧版 kimi-cli（Python）
         out.push(spec("uv", "uv", "uv", &["tool", "install", pkg]));
     }
-    if let Some(script) = p.install_script {
-        out.push(spec("script", "script", "bash", &["-c", script]));
+    // 脚本渠道：Windows 上有官方 PowerShell 安装器（如 Cursor）就只用它；没有的仍可在 Git Bash 里跑
+    // bash 脚本（Claude Code 的 install.sh 在 MINGW 下装到 ~/.local/bin）
+    match (cfg!(windows), p.install_script_win, p.install_script) {
+        (true, Some(script), _) => out.push(spec(
+            "script",
+            "script",
+            "powershell",
+            &["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+        )),
+        (_, _, Some(script)) => out.push(spec("script", "script", "bash", &["-c", script])),
+        _ => {}
     }
     out
 }
 
 /// 按工具可用性挑第一个候选；available 可注入以便测试
 fn pick_install(agent_id: &str, available: &dyn Fn(&str) -> bool) -> Option<InstallSpec> {
-    // Cursor 官方安装渠道只有 curl|bash，Windows 上既无 npm 包也无 winget；
-    // 即便 Git Bash 能跑脚本，落点 ~/.local/bin 的 symlink 也无法被 ConPTY spawn。
-    if cfg!(windows) && agent_id == "cursor" {
-        return None;
-    }
     install_specs(agent_id).into_iter().find(|s| match s.tool {
+        "script" if s.program == "powershell" => available("powershell"),
         "script" => available("bash") && available("curl"),
         tool => available(tool),
     })
@@ -865,15 +870,6 @@ fn install_agent_sync(app: &AppHandle, agent_id: &str) -> Result<UpdateResultDto
         });
     }
     let available = |tool: &str| agents::resolve_binary(tool).is_some();
-    if cfg!(windows) && agent_id == "cursor" {
-        return Ok(UpdateResultDto {
-            ok: false,
-            output: "Cursor CLI 官方仅支持 macOS/Linux。Windows 请在 WSL 中安装 cursor-agent，或改用其他 Agent。".into(),
-            method: "none".into(),
-            version_before: None,
-            version_after: None,
-        });
-    }
     let Some(s) = pick_install(agent_id, &available) else {
         let tools = if cfg!(windows) {
             "npm / winget / uv / curl"
@@ -1604,11 +1600,18 @@ DOWNLOAD_URL="https://downloads.cursor.com/lab/2026.10.01-e373342/${OS}/${ARCH}/
         }
         #[cfg(windows)]
         {
+            // Windows 上 Cursor 走官方 PowerShell 安装器；curl|bash 脚本不得出现在 Windows 上
             let all = |_: &str| true;
-            assert!(
-                pick_install("cursor", &all).is_none(),
-                "Windows 上不得把 cursor 的 curl|bash 脚本亮成可执行安装方式"
-            );
+            let s = pick_install("cursor", &all).expect("Windows 上 Cursor 有官方安装器");
+            assert_eq!(s.program, "powershell");
+            assert!(s.args.iter().any(|a| a.contains("cursor.com/install?win32=true")), "{:?}", s.args);
+            let no_ps = |t: &str| t != "powershell";
+            assert!(pick_install("cursor", &no_ps).is_none(), "Cursor 的 bash 脚本不认 MINGW，不得回落");
+        }
+        #[cfg(not(windows))]
+        {
+            let s = pick_install("cursor", &|_: &str| true).unwrap();
+            assert_eq!(s.program, "bash");
         }
     }
 

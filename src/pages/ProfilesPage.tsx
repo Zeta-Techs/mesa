@@ -1602,7 +1602,7 @@ const WINGET_AGENTS = new Set(["claude-code", "codex", "opencode", "kimi", "grok
 function installToolHelp(agentId: string): string {
   if (/Windows/i.test(navigator.userAgent)) {
     if (agentId === "cursor") {
-      return "Cursor CLI 官方仅支持 macOS/Linux，Windows 请在 WSL 中安装 cursor-agent，或改用其他 Agent。";
+      return "Cursor CLI 在 Windows 上用官方的 PowerShell 安装器，但这台电脑找不到 PowerShell。也可以在 PowerShell 里手动运行：irm 'https://cursor.com/install?win32=true' | iex，装好后重新打开 Mesa。";
     }
     if (WINGET_AGENTS.has(agentId)) {
       return "未找到可用的安装工具：winget 与 Node.js 都不可用。该 agent 在 Windows 上有两条路——① 系统自带 winget：若被卸载，请在 Microsoft Store 安装「应用安装程序」；② 安装 Node.js LTS 走 npm 渠道（下载：https://nodejs.org/en/download）。完成后完全退出并重新打开 Mesa。";

@@ -1514,7 +1514,7 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
 
   /** 一键应用：把技能分发到所有尚未启用的 agent（仅限该技能 apps 表中列出的，即规格声明了技能目录的）。
    *  未安装的 agent 跳过并告知——CLI 不在时分发只会往它的配置目录塞没人读的副本
-   *  （如 cursor-agent 在 Windows 无安装渠道）。detect 数据未就位（agents 为空）时不过滤，退回旧行为 */
+   *  （如这台电脑没装的 cursor-agent）。detect 数据未就位（agents 为空）时不过滤，退回旧行为 */
   async function applyAllAgents(skill: SkillDto) {
     const key = `${skill.id}:__all__`;
     if (applying[key]) return;
