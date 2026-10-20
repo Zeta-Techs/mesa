@@ -127,6 +127,17 @@ DEALINGS IN THE FONT SOFTWARE.
 - 许可：MIT——再分发需附版权与许可声明（本条目即该声明）
 - 商标：三个 logo 本身分别是智谱 / Moonshot AI / MiniMax 的商标
 
+### Codex CLI 默认系统提示词（Apache-2.0）
+
+- 用途：Mesa 为第三方连接生成的 Codex 模型清单里的 `base_instructions` 的**兜底**
+  （`src-tauri/src/codex_base_instructions.md`，编译进二进制）。清单必须填这一项，
+  填了就整段替换 Codex 自己的提示词，所以照搬 Codex 对未登记模型用的默认原文；
+  平时取用户本机所装 Codex 的同一段原文（不随包），取不到时才用这份
+- 来源：[openai/codex](https://github.com/openai/codex) 0.163.0 的默认提示词（© OpenAI），
+  从该版本会话文件的 `session_meta.base_instructions` 取出，只把换行统一为 LF；
+  Windows 上另拼接 Mesa 自己写的补充说明（`codex_windows_patch_note.md`，不属上游）
+- 许可：Apache License 2.0（与 Mesa 本体同许可，全文见仓库 [LICENSE](../../LICENSE)）
+
 ## 主要依赖（前端，随安装包分发）
 
 | 组件 | 用途 | 许可 |

@@ -96,6 +96,10 @@ test("Windows：PowerShell 外壳与 cmdlet 也按读 / 搜 / 看目录 / 改 / 
   assert.equal(commandCategory("powershell.exe -NoProfile -Command \"rg -n foo\""), "search");
   // 没有 PowerShell 外壳时别名不认（macOS 的 type 是 shell 内建，不算读文件）
   assert.equal(commandCategory("type ls"), "other");
+  // cmd 内建不带外壳也认（Qwen 在 Windows 上删文件的原样命令）；Unix 上没有同名别义
+  assert.equal(commandCategory('del "C:\\Users\\me\\proj\\notes.txt"'), "edit");
+  assert.equal(commandCategory("copy a.txt b.txt"), "edit");
+  assert.equal(commandCategory("dir /b"), "list");
   // 数组形态（Codex shell 工具）
   const r = one("shell", { command: ["C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "-Command", "Get-Content a.md"] });
   assert.equal(r.command, "Get-Content a.md");
@@ -137,6 +141,29 @@ test("补丁：一次改多个文件拆成多行，新建 / 删除分开说", ()
     ],
   );
   assert.equal(parsePatch(patch.replace(/\n/g, "\\n")).length, 3, "脚本里转义过的补丁也认");
+});
+
+test("shell 里调 apply_patch：bash heredoc 当改文件画差异，PowerShell 里调的不算（Codex 接不住、文件没改）", () => {
+  // 2026-10-20 Windows 实跑 Codex 0.163 的原样参数
+  const heredoc = "apply_patch <<'PATCH'\n*** Begin Patch\n*** Update File: notes.txt\n@@\n-banana\n+blueberry\n*** End Patch\nPATCH";
+  const viaBash = toolActivities("exec_command", JSON.stringify({ cmd: heredoc, shell: "bash", workdir: CWD }), CWD, true);
+  assert.deepEqual(
+    viaBash.map((a) => [a.kind, a.target, a.added, a.removed]),
+    [["edit", "notes.txt", 1, 1]],
+  );
+  // mac 上不带 shell 参数（默认就是 zsh / bash）
+  assert.equal(toolActivities("exec_command", JSON.stringify({ cmd: heredoc }), CWD)[0].kind, "edit");
+  // Windows 不带 shell = PowerShell；显式 powershell 也一样
+  const ps = 'apply_patch "*** Begin Patch\\r\\n*** Add File: notes.txt\\r\\n+apple\\r\\n*** End Patch"';
+  assert.equal(toolActivities("exec_command", JSON.stringify({ cmd: ps }), CWD, true)[0].kind, "run");
+  assert.equal(toolActivities("exec_command", JSON.stringify({ cmd: heredoc, shell: "powershell" }), CWD)[0].kind, "run");
+  // 补丁前后串了别的命令：Codex 不接（bash 里 apply_patch 不在 PATH，实跑报 command not found）
+  for (const cmd of [`mkdir -p src && ${heredoc}`, `${heredoc}\npython count.py`]) {
+    assert.equal(toolActivities("exec_command", JSON.stringify({ cmd, shell: "bash" }), CWD, true)[0].kind, "run", cmd);
+  }
+  // argv 形式（Codex 文档里的写法）
+  const argv = toolActivities("shell", JSON.stringify({ command: ["apply_patch", "*** Begin Patch\n*** Add File: a.md\n+hi\n*** End Patch"] }), CWD);
+  assert.deepEqual(argv.map((a) => [a.verb, a.target, a.added]), [["新建", "a.md", 1]]);
 });
 
 test("搜索 / 读取 / 网页 / MCP / 认不出的工具", () => {

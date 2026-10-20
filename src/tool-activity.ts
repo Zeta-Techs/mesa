@@ -284,6 +284,24 @@ function commandOf(args: Args | null): string | null {
   return null;
 }
 
+/**
+ * 命令里直接调 apply_patch（Mesa 的连接没有 apply_patch 工具，Codex 让模型在 shell 里调：
+ * exec_command {cmd:"apply_patch <<'PATCH'\n*** Begin Patch…", shell:"bash"}），取出补丁正文。
+ * 只认 Codex 会接住的写法——argv 形式 ["apply_patch", 补丁]，或 bash / zsh 里整条就是一个 heredoc；
+ * PowerShell 里调的、heredoc 前后还串了别的命令的都接不住、文件没改（2026-10-20 Windows 实跑：
+ * 这几种都报错，模型改成单独一条 bash heredoc 才改成），不当改文件画
+ */
+function shellPatchOf(args: Args | null, isWindows: boolean): string | null {
+  const raw = args?.command ?? args?.cmd;
+  if (Array.isArray(raw) && raw[0] === "apply_patch" && typeof raw[1] === "string") return raw[1];
+  const cmd = commandOf(args);
+  if (!cmd || !cmd.includes("*** Begin Patch")) return null;
+  const shell = str(args, "shell")?.toLowerCase() ?? null;
+  const posix = shell ? !/powershell|pwsh|cmd/.test(shell) : !isWindows && unwrapPowerShell(cmd) === null;
+  const m = /^apply_patch\s+<<-?\s*(['"]?)(\w+)\1[ \t]*\r?\n([\s\S]*?)\r?\n\2$/.exec(unwrapShell(cmd).trim());
+  return posix && m ? m[3] : null;
+}
+
 /** PowerShell 程序名（可带 Windows 路径与 .exe） */
 const POWERSHELL_EXE = /(?:^|[\\/])(?:pwsh|powershell)(?:\.exe)?$/i;
 
@@ -328,6 +346,13 @@ const PS_ALIASES: Record<string, CommandCategory> = {
   sl: "list", del: "edit", erase: "edit", rd: "edit", ri: "edit", md: "edit", ni: "edit", mi: "edit",
   move: "edit", copy: "edit", cpi: "edit", ren: "edit", sc: "edit", ac: "edit", iwr: "fetch", irm: "fetch",
 };
+/**
+ * cmd 内建命令：Windows 上不套 PowerShell 外壳也会直接发（Qwen 删文件发 `del "…\notes.txt"`，2026-10-20 实跑）。
+ * 只收 Unix 上没有同名别义的；`type` 在 bash 里是查命令类型，仍只在 PowerShell 下认
+ */
+const CMD_BUILTINS: Record<string, CommandCategory> = {
+  del: "edit", erase: "edit", rd: "edit", md: "edit", ren: "edit", rename: "edit", copy: "edit", move: "edit", dir: "list",
+};
 
 /** 去掉 `bash -lc '…'` / `zsh -lc "…"` 外壳；Windows 上再认 PowerShell 外壳 */
 function unwrapShell(command: string): string {
@@ -345,6 +370,7 @@ function segmentCategory(seg: string, ps = false): CommandCategory {
   if (!head) return "other";
   if (PS_CMDLETS[head]) return PS_CMDLETS[head];
   if (ps && PS_ALIASES[head]) return PS_ALIASES[head];
+  if (CMD_BUILTINS[head]) return CMD_BUILTINS[head];
   if (head === "cd") return "list";
   if (head === "sed") return words.some((w) => /^-[a-z]*i/.test(w)) ? "edit" : "read";
   if (head === "git") {
@@ -434,10 +460,11 @@ export function toolActivities(
   const mcp = /^mcp__(.+?)__(.+)$/.exec(name);
   if (mcp) return [{ ...base("mcp", name, input), target: mcp[2], note: mcp[1] }];
 
-  // 补丁：Codex apply_patch（原文）/ OpenCode patch{patchText} / 脚本里调 apply_patch
+  // 补丁：Codex apply_patch（原文）/ OpenCode patch{patchText} / 脚本里调 apply_patch / shell 命令里调 apply_patch
   const patchText =
     n === "applypatch" || n === "patch" ? (str(args, "input", "patch", "patchText", "patch_text") ?? input) : null;
-  const scriptPatch = n === "exec" && input.includes("*** Begin Patch") ? input : null;
+  const scriptPatch =
+    n === "exec" && input.includes("*** Begin Patch") ? input : patchText === null ? shellPatchOf(args, isWindows) : null;
   if (patchText !== null || scriptPatch) {
     const files = parsePatch(patchText ?? scriptPatch ?? "");
     if (files.length) {

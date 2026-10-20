@@ -515,6 +515,25 @@ macOS 签名公证接进 workflow，六个 `APPLE_*` secrets 配齐才启用（�
 （`scripts/mirror-latest-json.mjs`，签名原样、缺签名拒绝）、先传包后传清单、读回核对；凭据走 secrets，没配齐跳过并写日志。改写逻辑
 对现有已发布的 `latest.json` 干跑过；工作流本身没在真实对象存储上跑过（开通步骤见 docs/release.md）。只对配好后打出的版本生效。
 
+### 2026-10-20 · Codex 模型清单的基础指令换回 Codex 默认原文：模型才会用 apply_patch，聊天层才有差异
+
+用户问「Codex 不显示写入删除的 diff，是读不到还是要完善」，要求先实跑再修。用户今天 5 个 Codex 会话（智谱网关 glm-5.3）里改文件
+全是 PowerShell 的 Set-Content / Remove-Item，会话文件与 app-server 都没有改动前后内容；8 月不经 Mesa 清单的会话全走 apply_patch、差异正常。
+原因是 Mesa 写的 catalog `base_instructions` = 「You are a coding agent.」，整段替换了 Codex 的系统提示词，模型不知道 apply_patch。
+实跑（同网关同模型、隔离 CODEX_HOME，`codex exec`）：一句话版 5 次改文件全走 PowerShell；换 Codex 默认原文后走 apply_patch，
+**但 Windows 上只有「整条命令就是一个 bash heredoc」Codex 才接住**（出 FileChange、带差异），PowerShell 的引号串 / here-string / 管道、
+heredoc 前后串别的命令都失败，模型先试错几轮。0.163 的 `apply_patch_tool_type` 只认 `freeform`（中转拒收，维持不声明）。定下：
+一，catalog 填 Codex 对未登记模型的默认提示词原文（不得换回一句话占位）。**同日追加（用户：做根因第 1 条）**：原文改为
+**向本机 Codex 取、按版本缓存**（`<配置根>/catalogs/codex-base-instructions-<版本>.md`，新版本取到后删旧缓存）——Codex 没有导出命令
+（`debug models` 只有 GPT 专用条目），做法是一次性 CODEX_HOME 里跑 `codex exec`、渠道密钥变量故意不给：会话首行 session_meta 已带原文，
+发请求前报缺变量退出，不联网、实测 0.5–2 秒、每版本一次；取不到才用随包 0.163 原文（`codex_base_instructions.md`，Apache-2.0，
+THIRD-PARTY 有条目），本进程内不再重试该版本。Windows 上 codex 退出后约 1.3 秒目录句柄才放，临时目录放后台重试删、下次取前先扫；二，**只在 Windows** 另拼 `codex_windows_patch_note.md`（只用单独一条
+bash heredoc 调 apply_patch、不经 PowerShell、报 command not found 就单独重发），实跑 glm-5.3 改文件一次成功，glm-5.3-flash 偶尔仍先
+串命令、按提示自行纠正；三，前端 `tool-activity.ts` 认 shell 里的 apply_patch（argv 形式或整条 heredoc，PowerShell 里调的不算——
+文件没改），会话回放画成新建 / 编辑 + 差异；四，app-server `fileChange` 的新建 / 删除差异是文件原文，`chat_channel.rs` 补 + / − 再给审批卡。
+代价：每次请求输入多约 5 千 token。用 Remove-Item 删文件、用脚本改文件仍只有命令，属正常。实跑时注意：`codex exec` 不关 stdin 会一直等输入；
+CODEX_HOME 放在系统临时目录下 Codex 不建 apply_patch 别名，结论会失真。
+
 ### 2026-10-20 · 新标签默认随手聊；Windows 上 Codex 在主目录启动先确认；聊天层提交间隔 250ms
 
 用户在 Mesa Dev 里测 Codex 聊天层，报两件事。一，**发出去的话留在终端输入框**：聊天发送是正文、隔 60ms、回车，Codex 把连着到达的字当粘贴，

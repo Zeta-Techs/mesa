@@ -497,6 +497,18 @@ fn redact_cap(text: &str) -> String {
     crate::sessions::redact_sensitive_text(&cap(text, PREVIEW_CAP))
 }
 
+/// 整个文件新建 / 删除：每行补上 + / -。已经是带符号的差异（每行都以该符号开头，或有 @@ 段头）就原样返回
+fn mark_whole_file(text: &str, sign: char) -> String {
+    let body = text.strip_suffix('\n').unwrap_or(text);
+    if body.is_empty()
+        || body.lines().any(|l| l.starts_with("@@"))
+        || body.lines().all(|l| l.starts_with(sign))
+    {
+        return text.to_string();
+    }
+    body.lines().map(|l| format!("{sign}{l}")).collect::<Vec<_>>().join("\n")
+}
+
 fn str_field(v: &Value, keys: &[&str]) -> Option<String> {
     keys.iter().find_map(|k| match v.get(*k) {
         Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
@@ -559,6 +571,18 @@ pub(crate) fn approval_from_tool(name: &str, input: &Value) -> ApprovalDto {
                 .map(|c| {
                     let p = str_field(c, &["path"]).unwrap_or_default();
                     let d = str_field(c, &["diff", "unified_diff"]).unwrap_or_default();
+                    // 新建 / 删除时 app-server 的 diff 可能是文件原文（kind 为 {type:"add"|"delete"}），
+                    // 不补符号前端会画成没变的上下文行
+                    let kind = c
+                        .get("kind")
+                        .and_then(|k| k.get("type").or(Some(k)))
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("");
+                    let d = match kind {
+                        "add" => mark_whole_file(&d, '+'),
+                        "delete" => mark_whole_file(&d, '-'),
+                        _ => d,
+                    };
                     match (many, d.is_empty()) {
                         (true, true) => format!("*** {p}"),
                         (true, false) => format!("*** {p}\n{d}"),
@@ -2567,6 +2591,26 @@ mod tests {
         assert_eq!(turn.status, "completed");
         assert_eq!(turn.stop_reason.as_deref(), Some("end_turn"));
         assert_eq!(t.snap.live_text.as_deref(), Some("done"));
+    }
+
+    #[test]
+    fn codex_file_change_marks_whole_file_add_and_delete() {
+        // app-server FileUpdateChange：kind 是 {type}，新建 / 删除的 diff 是文件原文
+        let a = approval_from_tool(
+            "fileChange",
+            &json!({"changes":[
+                {"path":"/w/a.txt","kind":{"type":"add"},"diff":"apple\nbanana\n"},
+                {"path":"/w/b.txt","kind":{"type":"delete"},"diff":"old\n"},
+                {"path":"/w/c.txt","kind":{"type":"update","move_path":null},"diff":"@@ -1 +1 @@\n-x\n+y\n"},
+            ]}),
+        );
+        assert_eq!(
+            a.diff.as_deref(),
+            Some("*** /w/a.txt\n+apple\n+banana\n*** /w/b.txt\n-old\n*** /w/c.txt\n@@ -1 +1 @@\n-x\n+y\n")
+        );
+        // 已带符号的不再补
+        assert_eq!(mark_whole_file("+hello", '+'), "+hello");
+        assert_eq!(mark_whole_file("", '+'), "");
     }
 
     #[test]

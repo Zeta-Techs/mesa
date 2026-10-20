@@ -649,7 +649,14 @@ src-tauri/src/
                              # claude 不写 CLAUDE_CODE_SUBAGENT_MODEL（保留 Task 参数/frontmatter/inherit 原生选择链），
                              #   用 --settings 只覆盖本次连接的非敏感模型选择；
                              # claude 长上下文声明 CLAUDE_CODE_MAX_CONTEXT_TOKENS + CLAUDE_CODE_AUTO_COMPACT_WINDOW
-                             #   同值成对（启动注入与设为全局同键同条件；注册链确知 >200K 才注，防第三方模型被按 200K 提前 compact）
+                             #   同值成对（启动注入与设为全局同键同条件；注册链确知 >200K 才注，防第三方模型被按 200K 提前 compact）；
+                             # codex catalog 的 base_instructions = 本机 Codex 对未登记模型的默认提示词原文：按版本取一次缓存到
+                             #   <配置根>/catalogs/codex-base-instructions-<版本>.md（一次性 CODEX_HOME 跑 codex exec、密钥变量故意不给，
+                             #   会话首行 session_meta 取原文、发请求前就退出，不联网）；取不到用随包 codex_base_instructions.md 兜底；
+                             #   不得换回一句话占位：模型会不知道 apply_patch，改文件全走 Set-Content / 重定向，没有差异；
+                             #   Windows 另拼 codex_windows_patch_note.md（只认整条 bash heredoc 的 apply_patch）
+  codex_base_instructions.md # Codex 0.163 默认系统提示词原文（Apache-2.0，THIRD-PARTY 有条目），只在取不到本机原文时兜底
+  codex_windows_patch_note.md # Windows 上 apply_patch 的调用口径（Mesa 自写，英文给模型看）
   model_registry.rs          # 模型能力注册表：逐字段查询链 = 用户覆盖 > 网关实测缓存（fetch_models 顺带沉淀
                              # OpenRouter 风格 /models 元数据）> 公共能力库（配置页 ⋯ 下载，models.dev 优先
                              # OpenRouter 回落，download_model_db/model_db_status）> 内置前缀表 > 关键词兜底；
