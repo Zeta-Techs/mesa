@@ -39,7 +39,7 @@ jobs:
       - run: npm run build
 
   package:
-    name: tauri build (${{ matrix.os }})
+    name: tauri build (${{ matrix.label }})
     needs: test
     # 仅 tag 推送（含手动 dispatch 选择 tag ref）才打包建 Release 草稿；
     # 否则主线推送会以 tagName=main 建草稿甚至创建 main tag
@@ -48,8 +48,22 @@ jobs:
       fail-fast: false
       matrix:
         # Linux 本版本不发安装包（2026-09-22，与 test 矩阵同批移除）；
-        # 恢复时把 ubuntu-latest 加回即可（Linux 系统依赖步骤保留未删）
-        os: [macos-latest, windows-latest]
+        # 恢复时加一项 os: ubuntu-latest 即可（Linux 系统依赖步骤保留未删）
+        # Intel Mac（2026-10-20 起出包）：在 Apple 芯片 runner 上交叉编译 x86_64，tauri-action
+        # 把它并进同一个 latest.json 的 darwin-x86_64；mesa_helper 由 stage-sidecar 按目标三元组编
+        include:
+          - os: macos-latest
+            label: macOS Apple 芯片
+            args: ''
+            rust_targets: ''
+          - os: macos-latest
+            label: macOS Intel
+            args: --target x86_64-apple-darwin
+            rust_targets: x86_64-apple-darwin
+          - os: windows-latest
+            label: Windows
+            args: ''
+            rust_targets: ''
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -57,12 +71,40 @@ jobs:
         with:
           node-version: 22
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
       - name: Linux Tauri 系统依赖
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - run: npm ci
+      # macOS 签名公证：六个 APPLE_* secrets 配齐才启用（缺任一个就照旧出未签名包，首次打开要 xattr）。
+      # 不能把空 secret 直接写进 tauri-action 的 env——值为空串的 APPLE_SIGNING_IDENTITY 也会让打包去签名、
+      # 然后失败。配齐时经 GITHUB_ENV 交给后面的步骤（多行的证书 base64 用随机分隔符）
+      - name: macOS 签名公证（配齐 APPLE_* secrets 才启用）
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          keys="APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID"
+          for k in $keys; do
+            if [ -z "$(printenv "$k")" ]; then
+              echo "::notice::没有配 $k：本次 macOS 包不签名、不公证"
+              exit 0
+            fi
+          done
+          for k in $keys; do
+            d="APPLE_EOF_$(openssl rand -hex 8)"
+            { echo "$k<<$d"; printenv "$k"; echo "$d"; } >> "$GITHUB_ENV"
+          done
+          echo "已启用 macOS 签名公证"
       - name: 校验 tag 与应用版本一致
         shell: bash
         run: |
@@ -101,6 +143,7 @@ jobs:
           releaseName: 'Mesa ${{ github.ref_name }}'
           releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: true
+          args: ${{ matrix.args }}
 
   # updater 查 latest.json 用的是裸键 windows-x86_64（插件不做 -nsis/-msi 后缀回退）。
   # 2026-10-01 审计：targets:"all" 时该键曾指向 MSI，NSIS 装机的用户更新会装出第二份
@@ -142,8 +185,14 @@ jobs:
             if (!mac || !String(mac.url ?? "").endsWith(".app.tar.gz") || !mac.signature) {
               errs.push("darwin-aarch64 缺失，或不是 app.tar.gz + 签名");
             }
+            const intel = p["darwin-x86_64"];
+            if (!intel || !String(intel.url ?? "").endsWith(".app.tar.gz") || !intel.signature) {
+              errs.push("darwin-x86_64（Intel Mac）缺失，或不是 app.tar.gz + 签名");
+            } else if (mac && intel.url === mac.url) {
+              errs.push("darwin-x86_64 与 darwin-aarch64 指向同一个包：Intel 构建的更新包被 Apple 芯片的覆盖了");
+            }
             if (errs.length) { console.error(errs.join("\n")); process.exit(1); }
-            console.log("latest.json 校验通过：Windows → NSIS setup.exe，macOS → app.tar.gz");
+            console.log("latest.json 校验通过：Windows → NSIS setup.exe，macOS Apple 芯片 / Intel 各一个 app.tar.gz");
           '
       - name: 发版提醒
         run: |
