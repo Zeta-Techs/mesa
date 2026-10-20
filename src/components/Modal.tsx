@@ -125,9 +125,15 @@ export function Modal({
             {description}
           </p>
         )}
-        <div className={`mt-4 min-h-0 ${contentClassName}`}>{children}</div>
+        {/* 不撑满（非 flex-1）的内容区禁收缩：面板 flex-col 到 max-h 时 min-h-0 会让内容区被压扁、
+            自身又不滚动，内容溢出压到页脚按钮上；撑满的调用方自带滚动容器，照旧可收缩 */}
+        <div
+          className={`mt-4 min-h-0 ${/\bflex-1\b/.test(contentClassName) ? "" : "shrink-0"} ${contentClassName}`}
+        >
+          {children}
+        </div>
         {/* 页脚：按钮右对齐、主按钮放最右（调用方按「次 → 主」顺序传）；不画分隔线，靠留白分区 */}
-        {footer && <div className="mt-5 flex flex-wrap items-center justify-end gap-2">{footer}</div>}
+        {footer && <div className="mt-5 flex shrink-0 flex-wrap items-center justify-end gap-2">{footer}</div>}
       </div>
     </div>
   );

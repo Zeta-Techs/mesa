@@ -209,7 +209,6 @@ export default function FeedbackModal({
     initialWebmailTarget(readStored(FEEDBACK_WEBMAIL_KEY)),
   );
   const [handoff, setHandoff] = useState<Handoff | null>(null);
-  const handoffRef = useRef<HTMLDivElement | null>(null);
   // 「查看将发送的内容」预览开关：展示自动附带段的逐字内容（透明感）
   const [autoPreviewOpen, setAutoPreviewOpen] = useState(false);
   // 邮箱直发设置视图与草稿
@@ -293,10 +292,6 @@ export default function FeedbackModal({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, attachDiagnostics]);
-
-  useEffect(() => {
-    if (handoff) handoffRef.current?.scrollIntoView({ block: "nearest" });
-  }, [handoff]);
 
   const effective: FeedbackChannel | "endpoint" = endpoint ? "endpoint" : channel;
   const webmail = WEBMAIL_TARGETS.find((t) => t.id === webmailId) ?? WEBMAIL_TARGETS[0];
@@ -696,6 +691,64 @@ export default function FeedbackModal({
               {smtpSaving ? "保存中…" : smtpTesting ? "测试中…" : "保存并测试"}
             </button>
           </>
+        ) : handoff ? (
+          // 交给邮件应用 / 网页邮箱之后：提示钉在按钮正上方，按钮换成「发没发」两个决定；
+          // 想重开邮箱先点「还没发，保留」回到原按钮
+          <>
+            <div className="basis-full">
+              <NoticeBar tone="info">
+                <span className="block font-medium text-l1">{handoff.headline}</span>
+                {(handoff.imageDir || handoff.diagnostics) && (
+                  <span className="mt-0.5 block text-l3">
+                    附件需要你在邮件里手动添加：
+                    {handoff.imageDir && (
+                      <button
+                        type="button"
+                        className="ml-1 underline decoration-dotted underline-offset-2 hover:text-l1"
+                        onClick={() => void openPath(handoff.imageDir as string).catch(() => {})}
+                      >
+                        打开截图文件夹
+                      </button>
+                    )}
+                    {handoff.diagnostics && (
+                      <button
+                        type="button"
+                        className="ml-2 underline decoration-dotted underline-offset-2 hover:text-l1"
+                        onClick={() =>
+                          void revealItemInDir(handoff.diagnostics as string).catch(() => {})
+                        }
+                      >
+                        诊断包：{revealFolderLabel(IS_MAC, IS_WINDOWS)}
+                      </button>
+                    )}
+                  </span>
+                )}
+              </NoticeBar>
+            </div>
+            <button
+              type="button"
+              className={`${quietActionClass} mr-auto`}
+              onClick={() => void copyAll()}
+              title="主题 + 正文一起复制，粘贴到任意渠道"
+            >
+              复制全文
+            </button>
+            <button type="button" className={secondaryActionClass} onClick={() => setHandoff(null)}>
+              还没发，保留
+            </button>
+            {/* 刚点的「打开邮箱」随交接卸载，焦点接到这里，免得落回 body */}
+            <button
+              type="button"
+              autoFocus
+              className={primaryActionClass}
+              onClick={() => {
+                resetDraft();
+                onClose();
+              }}
+            >
+              已发出，清空草稿
+            </button>
+          </>
         ) : (
           <>
             <button
@@ -718,6 +771,9 @@ export default function FeedbackModal({
           </>
         )
       }
+      // 正文自己滚、页脚钉底：长表单下发送按钮和交接提示始终看得见。滚动条 6px 常驻占位：
+      // 外扩 12px、内补 6px，正文右沿与页脚按钮对齐，滚动条落进面板内边距
+      contentClassName="min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable] -mr-3 pr-1.5"
     >
       {view === "smtp" ? (
         <div className="space-y-3">
@@ -1026,57 +1082,6 @@ export default function FeedbackModal({
             )}
           </div>
 
-          {handoff && (
-            <div ref={handoffRef}>
-              <NoticeBar tone="info">
-                <span className="block font-medium text-l1">{handoff.headline}</span>
-                {(handoff.imageDir || handoff.diagnostics) && (
-                  <span className="mt-0.5 block text-l3">
-                    附件需要你在邮件里手动添加：
-                    {handoff.imageDir && (
-                      <button
-                        type="button"
-                        className="ml-1 underline decoration-dotted underline-offset-2 hover:text-l1"
-                        onClick={() => void openPath(handoff.imageDir as string).catch(() => {})}
-                      >
-                        打开截图文件夹
-                      </button>
-                    )}
-                    {handoff.diagnostics && (
-                      <button
-                        type="button"
-                        className="ml-2 underline decoration-dotted underline-offset-2 hover:text-l1"
-                        onClick={() =>
-                          void revealItemInDir(handoff.diagnostics as string).catch(() => {})
-                        }
-                      >
-                        诊断包：{revealFolderLabel(IS_MAC, IS_WINDOWS)}
-                      </button>
-                    )}
-                  </span>
-                )}
-                <span className="mt-1.5 flex gap-1.5">
-                  <button
-                    type="button"
-                    className={rowActionClass}
-                    onClick={() => {
-                      resetDraft();
-                      onClose();
-                    }}
-                  >
-                    已发出，清空草稿
-                  </button>
-                  <button
-                    type="button"
-                    className={rowActionClass}
-                    onClick={() => setHandoff(null)}
-                  >
-                    还没发，保留
-                  </button>
-                </span>
-              </NoticeBar>
-            </div>
-          )}
         </div>
       )}
     </Modal>

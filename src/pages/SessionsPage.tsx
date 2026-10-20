@@ -1397,15 +1397,26 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
             关闭列表
           </button>
           {selecting ? (
-            <div className="flex min-h-7 flex-wrap items-center justify-between gap-2">
-              <span className="text-xs text-l3">已选 {checkedInView} 项</span>
+            <div className="flex flex-col gap-1.5">
+              <div className="flex min-h-7 items-center justify-between gap-2">
+                <span className="whitespace-nowrap text-xs text-l3">已选 {checkedInView} 项</span>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={toggleSelectAll}
+                    className={`${ghostActionClass} whitespace-nowrap`}
+                    title="对当前筛选结果全选或取消"
+                  >
+                    {allChecked ? "取消全选" : "全选筛选结果"}
+                  </button>
+                  <button
+                    onClick={exitSelectMode}
+                    className={`${ghostActionClass} whitespace-nowrap`}
+                  >
+                    取消
+                  </button>
+                </div>
+              </div>
               <div className="flex items-center gap-1">
-                <button
-                  onClick={toggleSelectAll}
-                  className={ghostActionClass}
-                >
-                  {allChecked ? "取消全选" : "全选（当前筛选结果）"}
-                </button>
                 <button
                   disabled={checkedInView === 0 || batchDeleting}
                   onClick={() => {
@@ -1416,16 +1427,16 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                       setConfirmBatch(true);
                     }
                   }}
-                  className={
+                  className={`whitespace-nowrap ${
                     confirmBatch
-                      ? dangerActionClass.replace("h-8", "h-7").replace("px-3", "px-2")
+                      ? `${dangerActionClass.replace("h-8", "h-7").replace("px-3", "px-2")} min-w-0 flex-1`
                       : "inline-flex h-7 items-center justify-center rounded-md px-2 text-xs text-err-text hover:bg-hover disabled:opacity-50"
-                  }
+                  }`}
                 >
                   {batchDeleting
                     ? "删除中…"
                     : confirmBatch
-                      ? `确认删除 ${checkedInView} 项（含 pin 快照）？`
+                      ? `确认删除 ${checkedInView} 项（含 pin 快照）`
                       : `删除 ${checkedInView} 项`}
                 </button>
                 <button
@@ -1436,7 +1447,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                     );
                     void onExportPack(targets);
                   }}
-                  className={`${ghostActionClass} gap-1`}
+                  className={`${ghostActionClass} gap-1 whitespace-nowrap`}
                 >
                   {exportingPack ? (
                     "导出中…"
@@ -1451,18 +1462,12 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                   <button
                     type="button"
                     onClick={() => void openExported()}
-                    className={ghostActionClass}
+                    className={`${ghostActionClass} whitespace-nowrap`}
                     title={exportPath}
                   >
                     打开
                   </button>
                 )}
-                <button
-                  onClick={exitSelectMode}
-                  className={ghostActionClass}
-                >
-                  取消
-                </button>
               </div>
             </div>
           ) : (

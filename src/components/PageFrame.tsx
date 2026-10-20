@@ -483,7 +483,7 @@ export function Checkbox({
   return (
     <label
       title={title}
-      className={`flex gap-1.5 ${disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"} ${align === "start" ? "items-start" : "items-center"} ${className}`}
+      className={`relative flex gap-1.5 ${disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"} ${align === "start" ? "items-start" : "items-center"} ${className}`}
     >
       <input
         type="checkbox"
