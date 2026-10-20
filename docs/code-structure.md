@@ -572,6 +572,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   terminal-geometry.ts       # 启动前收不收栏、没量到格子就不起进程、起来之后谁可以改行列
   store.ts                   # zustand 状态。applyTheme 同步原生窗口外观；Windows 上同时把整窗 Mica 切到 micaDark/micaLight
 src-tauri/src/
+  terminal-renderer.ts       # 用哪种渲染器：设置「终端渲染」+ 平台 + agent（自动档 Mac 上 Gemini 例外走 WebGL）（tests/terminal-renderer.test.ts）
   agent_specs.rs             # AgentSpec 中央注册表：一个 CLI 一张规格（detect/launch_plan/env/技能分发/安装更新/官方账号 login/readonly_args 只读模式参数/permission_args 原生权限档（聊天权限徽标，agents::permission_launch_args）/
                              #   model_switch 运行中切模型（claude/gemini/kimi/grok 带参直切；codex/opencode 唤选择器——两家 CLI 无带参直切：
                              #   codex /model 无内联参数（源码 supports_inline_args 不含 Model）、opencode /models run 无参，2026-09-15 实证；

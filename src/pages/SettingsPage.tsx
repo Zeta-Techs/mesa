@@ -2711,7 +2711,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           label="终端渲染"
           hint={
             IS_MAC
-              ? "重开终端生效。清晰更锐，流畅更快"
+              ? "重开终端生效。清晰更锐，流畅更快；自动档下 Gemini 标签用流畅"
               : "重开终端生效。自动：Windows 流畅，Mac 清晰"
           }
         >
