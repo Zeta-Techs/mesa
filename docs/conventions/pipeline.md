@@ -179,7 +179,7 @@
   绝不带走），防评审合并被主仓脏拦截；默认 .gitignore 含 `*.pdf` 与 `.ccode/handoff-*.md`。
   **开工接驳与进料冻结（2026-10-13 双台账）**：①**接驳提交**（bootstrap 之后、create_workspace 之前）——主仓有
   未提交的清单存量（`papers/included.md`/`included.json`/`to-fetch.md`/`to-fetch.ris`）或用户笔记（`notes/*.md`，
-  inbox.md 除外——它 gitignored 不会出现）时，开工确认弹层出「开工接驳：清单 N 条新行 / M 篇未提交笔记」区块，
+  inbox.md 除外——它 gitignored 不会出现）时，开工确认弹层出「一并带上未保存的清单与笔记：清单 N 条新行 / M 篇未提交笔记」区块（2026-10-20 界面由「开工接驳」改名，内部仍称接驳），
   **默认勾选、可取消**；勾选即随开工做 scoped 提交（只提交这些路径，用户其他改动绝不带走）把它们并入基准分支，
   本轮工作区带上最新积累；取消则按现状开工（积累面台账豁免不拦合并，开工后仍可从改动面板存入历史）。
   ②**冻结快照**（create_workspace 与任务书落盘之后执行，best-effort 不阻断开工）——`papers/reading-list.md` 非空时原样复制为工作区 `.ccode/handoff-lit-intake.md`
@@ -490,7 +490,7 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   卡片区点「N 处改动未存入历史」就地展开文件名，主按钮「存进历史」（`git_commit` 不推送，说明用当前步骤名，纯逻辑 `main-history-save.ts`）；
   「打开改动」才去终端页改动面板。冲突/正在合并禁用一键保存。只提醒不阻断，不自动提交。对话页项目筛选下按卡片分组 + meta 行「▤ 卡片名」chip
   （点击经一次性 `selectProjectReq` 跳工作区页选中项目，WorkspacesPage 消费）+ ⋯「移到卡片…」（仅项目筛选下显示）。
-  评审合并成功横幅「▶ 开始下一步」旁「沉淀到下一步」：评审结论 → `append_step_draft` 追加进下一步草稿（v3.72 起，
+  评审合并成功横幅「▶ 开始下一步」旁「带到下一步」（2026-10-20 由「沉淀到下一步」改名；写进 TASK.md 的小节标题「评审沉淀」是解析标记，不改）：评审结论 → `append_step_draft` 追加进下一步草稿（v3.72 起，
   详见「任务书草稿」节），成功提示 10s 自收。**认领机制（聊想法/开工/继续发起前）**：`card_claims` 表 +
   `claim_next_session_for_card` command——按 agent+cwd 登记（同键覆盖，created_at 时间口径排除登记前旧会话），
   会话扫描时（`apply_card_claims`，list_sessions 内 apply_handoff 之后）固化进 `session_meta.task_id` 并消费登记，

@@ -2455,7 +2455,7 @@ export default function StepFlow({
                     key={seed}
                     type="button"
                     onClick={() => onSeed(seed)}
-                    title="就这个问题开聊，结论可以沉淀进任务书"
+                    title="就这个问题开聊，结论可以写入任务书"
                     className="rounded-full bg-strip px-2 py-0.5 text-xs text-l3 hover:bg-hover hover:text-l1"
                   >
                     {seed}

@@ -197,7 +197,7 @@ export async function startPipelineStep({
         paths: intakeBridge.paths,
       });
     } catch (reason) {
-      onError(`开工接驳提交失败（不影响开步，积累与笔记留在项目根未提交）：${String(reason)}`);
+      onError(`带上未保存的清单与笔记失败（不影响开步，积累与笔记留在项目根未提交）：${String(reason)}`);
     }
   }
   const ws = await invoke<WorkspaceDto>("create_workspace", {

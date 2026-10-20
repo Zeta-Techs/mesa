@@ -84,7 +84,7 @@ export default function FuseDraftModal({
   }
 
   return (
-    <Modal open title="◈ 沉淀进任务书" onClose={onClose} size="lg">
+    <Modal open title="◈ 写入任务书" onClose={onClose} size="lg">
         <p className="mb-3 text-xs text-l3">
           把「{card.name}」的讨论结论追加到「{stepName}」的 TASK.md
           {draft ? `（${draft.relPath}）` : ""}末尾；可改后再写入，已有内容不会被动。

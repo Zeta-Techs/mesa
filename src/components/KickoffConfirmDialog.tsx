@@ -1144,7 +1144,7 @@ export default function KickoffConfirmDialog({
               onChange={setIntakeChecked}
               label={
                 <span className="text-xs text-l2">
-                  开工接驳{intakeLine ? `：${intakeLine}` : ""}
+                  一并带上未保存的清单与笔记{intakeLine ? `：${intakeLine}` : ""}
                 </span>
               }
             />
@@ -1155,7 +1155,7 @@ export default function KickoffConfirmDialog({
             >
               {intakeChecked
                 ? "将随开工提交进基准分支，供检索步/精读步直接使用你的积累与笔记。"
-                : "未接驳：这批积累与笔记不进本轮基准分支，工作区里用不到；仍留在项目根（不拦合并），需要时可在终端自行提交。"}
+                : "不带上：这批积累与笔记不进本轮基准分支，工作区里用不到；仍留在项目根（不拦合并），需要时可在终端自行提交。"}
             </p>
             <p
               className="mt-1 break-all pl-5 font-mono text-micro leading-4 text-l4"

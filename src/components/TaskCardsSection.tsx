@@ -800,7 +800,7 @@ export default function TaskCardsSection({
               title="AI 把这张卡的讨论结论织进当前步骤的 TASK.md；先出稿给你改，确认后才写入"
               className={`${actionBtn} shrink-0`}
             >
-              ◈ 沉淀进任务书
+              ◈ 写入任务书
             </button>
           )}
           <button
@@ -1147,7 +1147,7 @@ export default function TaskCardsSection({
                         setIdeaName("");
                         setIdeaFormOpen(true);
                       }}
-                      title="自己起个话题开聊（如综述角度、创新点）；聊完点卡片上的「◈ 沉淀进任务书」才追加进 TASK.md。要直接改任务书用「跟 AI 商量一下」"
+                      title="自己起个话题开聊（如综述角度、创新点）；聊完点卡片上的「◈ 写入任务书」才追加进 TASK.md。要直接改任务书用「跟 AI 商量一下」"
                       className={`${actionBtn} ${ideaCards.length === 0 ? "text-l3" : `text-l4 ${hoverRevealClass}`} hover:text-l1`}
                     >
                       ＋ 话题

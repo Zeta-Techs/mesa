@@ -1499,7 +1499,7 @@ function LiveWorkspaceReviewView({
       if (!text) {
         setDistillText("");
         setDistillDraftError(
-          "没有下一步还缺的约束。这一步不必沉淀，直接去下一步即可。",
+          "没有下一步还缺的约束。这一步不必带到下一步，直接去下一步即可。",
         );
         return;
       }
@@ -1530,7 +1530,7 @@ function LiveWorkspaceReviewView({
       });
       setDistillOpen(false);
       setDistillText("");
-      setDistillMsg(`已沉淀进下一步 TASK.md：${rel}`);
+      setDistillMsg(`已带到下一步 TASK.md：${rel}`);
     } catch (reason) {
       setDistillDraftError(String(reason));
     } finally {
@@ -2917,7 +2917,7 @@ function LiveWorkspaceReviewView({
               title={`把本次评审结论写进「${nextStep.step.name}」的 TASK.md`}
               className="inline-flex h-7 shrink-0 items-center justify-center rounded-md px-2 text-xs text-l2 hover:bg-hover hover:text-l1"
             >
-              沉淀到下一步
+              带到下一步
             </button>
           )}
         </div>
@@ -2968,7 +2968,7 @@ function LiveWorkspaceReviewView({
               disabled={distillBusy || !distillText.trim()}
               className="inline-flex h-7 items-center justify-center rounded-md border border-cta-bd bg-cta px-2 text-xs text-cta-text hover:brightness-110 disabled:opacity-50"
             >
-              {distillBusy ? "沉淀中…" : "写进下一步 TASK.md"}
+              {distillBusy ? "写入中…" : "写进下一步 TASK.md"}
             </button>
             <button
               type="button"
