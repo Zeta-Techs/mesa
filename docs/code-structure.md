@@ -421,7 +421,10 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   client-open.ts             # 客户端接力前端纯逻辑：目标 DTO、needsDialog（全部通过才免弹层）、检查项排序、主按钮文案、按钮/弹层标题措辞（项目级写「打开项目」）；预检与深链全在后端 client_open.rs
   switch-strategy.ts         # 运行中换模型 / 思考档走命令还是重开接回：SWITCH_PERSISTS 记哪几家的切换命令会写回自己的全局配置（实测表），
                              # 会写回且启动时注得进的改走 relaunchWith（runtime-model-effort.ts 消费；tests/switch-strategy.test.ts）
-  components/ContextRing.tsx # 上下文用量圆环：聊天输入框模型芯片左边与终端底栏右区共用（终端底栏传 xterm 调色板颜色）
+  components/ContextRing.tsx # 上下文用量圆环：聊天输入框模型芯片左边与终端底栏右区共用（终端底栏传 xterm 调色板颜色）；点开是上下文浮层
+                             # （总量 + 三段横条 + 分类列表 + 离自动压缩还有多少 + 压缩上下文），同一轮的分类明细模块级缓存
+  context-breakdown.ts       # 上下文浮层纯逻辑：哪几家能读分类（breakdownSupported）、标签状态 → 读取参数（breakdownRequest）、
+                             # 分类中文名、行与横条（contextView：对话 / 固定开销 / 压缩预留 / 剩余；横条只分三段灰，设计规范「颜色只表达风险」）
   runtime-model-effort.ts    # 运行中切模型 / 思考档的共用 hook（useRuntimeModelEffort）：终端底栏与聊天「模型 · 思考」芯片同用一份；切过的模型名按 ptyId 存模块级表，两处实例同步
   conn-issue.ts              # 认终端画面里的连接错误（额度 / 限流 / 钥匙 / 服务 / 模型）：七家实录形态的 detectConnIssues、按次数判新错误的 newestConnIssue、给人看的 connIssueText
   terminal-quote.ts          # 终端选中文字交给对话 / 存笔记的排版：quoteForChat（每行「> 」）、askAboutText、clipNoteEntry（notes/clips.md 小节）
@@ -753,6 +756,8 @@ src-tauri/src/
                              # pty_report_terminal_colors = Windows 底色告知（win32-input-mode 记录逐条投递，
                              #   条间 2ms；ConPTY 双向吞 OSC 的实测结论见 conventions/terminal.md，别改回 OSC）
   pty_input.rs               # 每个终端独立的有界输入队列：一个不读 stdin 的 CLI 不得占住 PTY 全局锁
+  context_breakdown.rs       # 上下文分类明细（2026-10-20）：用标签同一套启动参数在后台跑 CLI 自带的 /context（Claude Code `-p --resume --no-session-persistence`，
+                             # 关 hooks；Qwen `-p --resume`），解析分类表；不调用模型、不改会话文件。只有这两家能无头跑，其余家前端只显示总量
   chat_channel.rs            # 聊天层结构化旁路（2026-10-20，docs/design-chat-structured-channels.md）：pty_spawn 起进程前
                              #   prepare 按家改参数（Claude / CodeBuddy --settings hooks、Qwen Dual Output、OpenCode --port + 口令、
                              #   Codex 私有 app-server + TUI --remote，split_codex_args 恢复时把权限参数改成服务配置），

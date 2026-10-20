@@ -1526,6 +1526,31 @@ fn gemini_content_text(c: &Value) -> Option<String> {
     }
 }
 
+/// Gemini 开会话时先记一条 type=user 的环境上下文（`<session_context>`，hook 注入的是
+/// `<hook_context>`），不是用户说的话；CLI 自己的界面也按这两个前缀跳过。
+fn gemini_is_injected_context(v: &Value) -> bool {
+    gemini_display_text(v).is_some_and(|t| {
+        let head = t.trim_start();
+        head.starts_with("<session_context>") || head.starts_with("<hook_context>")
+    })
+}
+
+/// 界面文字：有 displayContent 用它（content 里可能是展开后的 @文件），否则用 content
+fn gemini_display_text(v: &Value) -> Option<String> {
+    v.get("displayContent")
+        .and_then(gemini_content_text)
+        .or_else(|| v.get("content").and_then(gemini_content_text))
+}
+
+/// 用户真正说的话：注入的上下文、只有工具结果（functionResponse）的记录都返回 None
+fn gemini_user_text(v: &Value) -> Option<String> {
+    if gemini_is_injected_context(v) {
+        None
+    } else {
+        gemini_display_text(v)
+    }
+}
+
 fn gemini_usage(t: &Value) -> TokenUsageDto {
     let num = |k: &str| t.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
     TokenUsageDto {
@@ -1584,7 +1609,7 @@ fn gemini_file_meta(
             continue;
         }
         if title.is_none() && get_str(&v, "type") == Some("user") {
-            if let Some(t) = v.get("content").and_then(gemini_content_text) {
+            if let Some(t) = gemini_user_text(&v) {
                 title = title_from_text(&t);
             }
         }
@@ -1662,6 +1687,31 @@ fn dedupe_gemini_sessions(metas: Vec<SessionMetaDto>) -> Vec<SessionMetaDto> {
     latest.into_values().collect()
 }
 
+/// 同一 id 会重记（先记正文、工具调用落定后带 toolCalls 再记一遍）：CLI 按 id 原位覆盖，
+/// 这里同样原位替换，否则聊天层同一段回复出现两次；新记录为空则删掉旧的
+fn gemini_upsert(
+    msgs: &mut Vec<ChatMessageDto>,
+    ids: &mut Vec<Option<String>>,
+    id: Option<String>,
+    msg: Option<ChatMessageDto>,
+) {
+    let pos = id
+        .as_deref()
+        .and_then(|key| ids.iter().position(|x| x.as_deref() == Some(key)));
+    match (pos, msg) {
+        (Some(i), Some(m)) => msgs[i] = m,
+        (Some(i), None) => {
+            msgs.remove(i);
+            ids.remove(i);
+        }
+        (None, Some(m)) => {
+            msgs.push(m);
+            ids.push(id);
+        }
+        (None, None) => {}
+    }
+}
+
 fn parse_gemini(lines: &[String]) -> Vec<ChatMessageDto> {
     let mut msgs: Vec<ChatMessageDto> = Vec::new();
     let mut ids: Vec<Option<String>> = Vec::new(); // 与 msgs 平行，供 $rewindTo 定位
@@ -1684,16 +1734,15 @@ fn parse_gemini(lines: &[String]) -> Vec<ChatMessageDto> {
         let id = get_str(&v, "id").map(String::from);
         match get_str(&v, "type") {
             Some("user") => {
-                if let Some(text) = v.get("content").and_then(gemini_content_text) {
-                    msgs.push(ChatMessageDto {
-                        role: "user".into(),
-                        blocks: vec![text_block(text)],
-                        timestamp: ts,
-                        usage: None,
-                        id: id.clone(),
-                    });
-                    ids.push(id);
-                }
+                // 注入的环境上下文、只有工具结果（functionResponse）的记录都不进对话视图
+                let msg = gemini_user_text(&v).map(|text| ChatMessageDto {
+                    role: "user".into(),
+                    blocks: vec![text_block(text)],
+                    timestamp: ts,
+                    usage: None,
+                    id: id.clone(),
+                });
+                gemini_upsert(&mut msgs, &mut ids, id, msg);
             }
             Some("gemini") => {
                 let mut blocks = Vec::new();
@@ -1721,17 +1770,14 @@ fn parse_gemini(lines: &[String]) -> Vec<ChatMessageDto> {
                         }
                     }
                 }
-                if blocks.is_empty() {
-                    continue;
-                }
-                msgs.push(ChatMessageDto {
+                let msg = (!blocks.is_empty()).then(|| ChatMessageDto {
                     role: "assistant".into(),
                     blocks,
                     timestamp: ts,
                     usage: v.get("tokens").map(gemini_usage),
                     id: id.clone(),
                 });
-                ids.push(id);
+                gemini_upsert(&mut msgs, &mut ids, id, msg);
             }
             _ => {} // metadata / info / error / warning 不进对话视图
         }
@@ -5022,6 +5068,8 @@ fn gemini_tail_state(lines: &[String]) -> &'static str {
             continue;
         }
         match get_str(&v, "type") {
+            // 开会话时的环境上下文不是提问：只开了会话还没说话时不能算「干活中」
+            Some("user") if gemini_is_injected_context(&v) => continue,
             Some("user") => return "working",
             Some("gemini") => {
                 let text = v
@@ -8992,6 +9040,39 @@ mod tests {
     }
 
     #[test]
+    fn gemini_parse_hides_session_context_and_collapses_rerecorded_ids() {
+        // 形状取自 gemini 0.64 实录（~/.gemini/tmp/scratch/chats，2026-10-20）
+        let lines = s(&[
+            r#"{"sessionId":"g1","projectHash":"h","startTime":"2026-10-20T03:23:18Z","kind":"main"}"#,
+            r#"{"id":"c0","type":"user","content":[{"text":"<session_context>\nThis is the Gemini CLI. We are setting up the context for our chat.\n</session_context>"}]}"#,
+            r#"{"id":"h0","type":"user","content":"  <hook_context>来自 hook</hook_context>"}"#,
+            r#"{"id":"u1","type":"user","content":[{"text":"新建 hello.py"}]}"#,
+            r#"{"id":"a1","type":"gemini","content":""}"#,
+            r#"{"id":"a1","type":"gemini","content":"","toolCalls":[{"id":"t1","name":"write_file","args":{"path":"hello.py"}}]}"#,
+            r#"{"id":"r1","type":"user","content":[{"functionResponse":{"id":"t1","name":"write_file","response":{"output":"ok"}}}]}"#,
+            r#"{"id":"a2","type":"gemini","content":"1. 已新建 hello.py"}"#,
+            r#"{"id":"a2","type":"gemini","content":"1. 已新建 hello.py","toolCalls":[{"id":"t2","name":"list_directory","args":{}}]}"#,
+            r#"{"id":"u2","type":"user","content":"展开后的 @a.md 全文","displayContent":[{"text":"看看 @a.md"}]}"#,
+        ]);
+        let msgs = parse_gemini(&lines);
+        let texts: Vec<(&str, &str)> = msgs
+            .iter()
+            .map(|m| (m.role.as_str(), m.blocks[0].text.as_str()))
+            .collect();
+        assert_eq!(
+            texts,
+            vec![
+                ("user", "新建 hello.py"),
+                ("assistant", r#"{"path":"hello.py"}"#),
+                ("assistant", "1. 已新建 hello.py"),
+                ("user", "看看 @a.md"),
+            ]
+        );
+        // 重记的那条带着后来补上的工具调用
+        assert_eq!(msgs[2].blocks[1].tool_name.as_deref(), Some("list_directory"));
+    }
+
+    #[test]
     fn gemini_slug_map_from_projects_json_and_marker() {
         let dir = std::env::temp_dir().join(format!("ccode-test-{}", uuid::Uuid::new_v4()));
         let tmp = dir.join(".gemini").join("tmp");
@@ -10404,6 +10485,12 @@ mod tests {
         assert_eq!(gemini_tail_state(&g_done), "done");
         let g_confirm = s(&[r#"{"id":"m1","type":"gemini","content":"要我继续吗？"}"#]);
         assert_eq!(gemini_tail_state(&g_confirm), "confirm");
+        // 刚开会话只有环境上下文、还没提问：不算干活中
+        let g_fresh = s(&[
+            r#"{"id":"c0","type":"user","content":[{"text":"<session_context>\nThis is the Gemini CLI.\n</session_context>"}]}"#,
+            r#"{"id":"i1","type":"info","content":"Waiting for MCP servers"}"#,
+        ]);
+        assert_eq!(gemini_tail_state(&g_fresh), "unknown");
 
         let q_user = s(&[r#"{"type":"user","message":{"role":"user","parts":[{"text":"问"}]}}"#]);
         assert_eq!(qwen_tail_state(&q_user), "working");

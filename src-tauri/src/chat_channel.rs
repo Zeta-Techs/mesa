@@ -1329,19 +1329,24 @@ fn version_at_least(agent: &str, min: (u32, u32, u32)) -> bool {
 /// 把 hooks 并进 Claude Code 的 `--settings`：参数是 Mesa 刚写的 0600 覆盖文件就改文件，是内联 JSON 就改内联，
 /// 没有这个参数就加一个内联的
 fn merge_settings_hooks(args: &mut Vec<String>, hooks: &Value) -> bool {
+    merge_settings_key(args, "hooks", hooks["hooks"].clone())
+}
+
+/// 往 Claude Code / CodeBuddy 的 `--settings` 里并一个顶层键（同上：覆盖文件改文件、内联改内联、没有就加内联）
+pub(crate) fn merge_settings_key(args: &mut Vec<String>, key: &str, value: Value) -> bool {
     if let Some(i) = args.iter().position(|a| a == "--settings") {
-        let Some(value) = args.get(i + 1).cloned() else {
+        let Some(current) = args.get(i + 1).cloned() else {
             return false;
         };
-        let path = Path::new(&value);
-        let from_file = !value.trim_start().starts_with('{') && path.is_file();
+        let path = Path::new(&current);
+        let from_file = !current.trim_start().starts_with('{') && path.is_file();
         let text = if from_file {
             match std::fs::read_to_string(path) {
                 Ok(t) => t,
                 Err(_) => return false,
             }
         } else {
-            value.clone()
+            current.clone()
         };
         let Ok(mut v) = serde_json::from_str::<Value>(&text) else {
             return false;
@@ -1349,7 +1354,7 @@ fn merge_settings_hooks(args: &mut Vec<String>, hooks: &Value) -> bool {
         let Some(obj) = v.as_object_mut() else {
             return false;
         };
-        obj.insert("hooks".into(), hooks["hooks"].clone());
+        obj.insert(key.into(), value);
         let merged = v.to_string();
         if from_file {
             // 覆盖文件含密钥：原地改写保留 0600
@@ -1361,7 +1366,9 @@ fn merge_settings_hooks(args: &mut Vec<String>, hooks: &Value) -> bool {
         }
         return true;
     }
-    args.insert(0, hooks.to_string());
+    let mut obj = serde_json::Map::new();
+    obj.insert(key.into(), value);
+    args.insert(0, Value::Object(obj).to_string());
     args.insert(0, "--settings".into());
     true
 }

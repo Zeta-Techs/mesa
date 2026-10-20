@@ -10,6 +10,7 @@ import { connectionModels, readModelHistory } from "../model-history";
 import { modelCapsLabel } from "../model-caps-label";
 import { pickPopoverSide } from "../popover-side";
 import ContextRing from "./ContextRing";
+import { breakdownRequest } from "../context-breakdown";
 import type {
   LaunchPickState,
   NativePermissionMode,
@@ -49,6 +50,8 @@ type RuntimeProps = {
   next?: NextLaunchPick | null;
   /** 上一轮请求喂进去的 token（输入 + 缓存），画上下文用量圆环用；没有为 null */
   contextUsed?: number | null;
+  /** 上下文浮层里的「压缩上下文」（斜杠面板 Mesa 组同一个动作；这家没有压缩命令或没在运行时不给） */
+  onCompact?: (() => void) | null;
   /** 停下 Agent、带新模型 / 思考档接回原对话（会写回 CLI 全局配置的切换走这条，switch-strategy.ts） */
   onRelaunch?: (patch: { model?: string; effort?: string | null }) => void;
 };
@@ -389,7 +392,14 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
   return (
     <div ref={rootRef} className="relative flex min-w-0 items-center gap-1">
       {ctxRatio !== null && ctxWindow && ctxUsed && (
-        <ContextRing ratio={ctxRatio} used={ctxUsed} window={ctxWindow} agentId={agentId} />
+        <ContextRing
+          ratio={ctxRatio}
+          used={ctxUsed}
+          window={ctxWindow}
+          agentId={agentId}
+          breakdown={breakdownRequest(runtime?.status ?? null)}
+          onCompact={runtime?.onCompact}
+        />
       )}
       <button
         type="button"

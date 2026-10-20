@@ -96,6 +96,7 @@ mod provider_id;
 mod pty;
 mod pty_input;
 mod chat_channel;
+mod context_breakdown;
 mod reader;
 mod research_quality;
 mod research_tools;
@@ -770,6 +771,7 @@ pub fn run() {
             hooks::session_confirm_detail,
             chat_channel::chat_channel_snapshot,
             chat_channel::chat_channel_reply,
+            context_breakdown::context_breakdown,
             ai::ai_prompt,
             ai::ai_commit_message,
             ai::ai_summarize_session,

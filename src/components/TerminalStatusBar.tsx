@@ -5,6 +5,8 @@ import { AGENTS } from "../types";
 import { isTerminalIdle } from "../terminal-welcome";
 import { useRuntimeModelEffort } from "../runtime-model-effort";
 import ContextRing from "./ContextRing";
+import { breakdownRequest } from "../context-breakdown";
+import { slashCommandsFor } from "../slash-commands";
 import type { DetectResult, GitCommitResultDto, SessionUsageDto } from "../types";
 import type { GitSummary } from "./GitPanel";
 import type { TabStatus } from "../pages/TerminalPage";
@@ -1056,6 +1058,12 @@ export default function TerminalStatusBar({
               used={contextUsed}
               window={combo.context}
               agentId={status?.agentId ?? ""}
+              breakdown={breakdownRequest(status)}
+              onCompact={
+                onTuiCommand && status && slashCommandsFor(status.agentId).some((c) => c.cmd === "/compact")
+                  ? () => onTuiCommand("/compact")
+                  : null
+              }
               color={faint}
               warnColor={colors.yellow}
               trackColor={`${fg}26`}

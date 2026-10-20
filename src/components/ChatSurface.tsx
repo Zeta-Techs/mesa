@@ -810,6 +810,7 @@ export default function ChatSurface({
               onTuiCommand={onTuiCommand}
               onPicker={onRequestPeek}
               contextUsed={contextUsed}
+              onCompact={mesaCommands.find((c) => c.cmd === "/compact")?.run ?? null}
               onRelaunch={runtime.onRelaunch}
               // 进程退出、还能接着聊：改选「接着聊用哪个模型」，写标签的启动选择（与终端启动栏同一份）
               next={
