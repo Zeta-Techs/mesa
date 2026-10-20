@@ -457,6 +457,16 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-20 · 聊天层 Windows 八家抓屏核对：读屏与 macOS 同形；Grok 多行改写 CR
+
+用户要求看 Windows 上各家在聊天层的显示与交互问题、Mac 是否同样存在。`chat-capture.py` 在 Windows 上走 ConPTY（pywinpty）跑八家
+（Cursor 未装），逐帧喂给 Mesa 自己的读屏函数（parseTuiMenu / parseTrustPrompt / extractLiveReply / terminalHasInputBox / detectModelOnScreen）。
+结论：读屏实时预览、审批菜单、信任提示、Codex 底栏模型都与 macOS 同形（Claude / Gemini / Kimi / Grok 的 Windows 字形差异另一批已收进 live-reply.ts /
+tui-menu.ts）；聊天层的答题键实际按下去七家都放行。**唯一要改的：Windows 上 Grok 把粘贴包里的 LF 丢掉**（多行连成一行，网关收到的也是连着的），
+CR 才算换行；八家逐个试 CR，Codex 会把第一行单独发出、CodeBuddy / OpenCode 把字写错位，所以只对 Windows 的 Grok 改写
+（`pty_write_submit` 加 `paste_newline`，pty.rs `chat_paste_body`；前端 writeChatMessage 点名），macOS 不动。另记：Gemini 开着全局精确注意力时
+hook 同步跑 PowerShell，每个事件约一秒，工具调用的审批菜单约 10 秒才出（Windows 独有，交给 Gemini 那一批）。
+
 ### 2026-10-20 · Windows / Mac 两端完善批（用户：盘点后「全部做」）
 
 先盘点两端各自还缺什么（8 月底 Windows 审计的优先级表前 11 项已修，只剩第 6 项一半），用户「全部做」。定下与实测：

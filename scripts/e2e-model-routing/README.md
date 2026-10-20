@@ -74,6 +74,16 @@ node --experimental-strip-types scripts/e2e-model-routing/capture-check.ts "$(cy
 2026-10-20 Windows 结论：Claude / Gemini / Kimi / Grok 的审批菜单与实时预览都读得出（Claude 正文行首在 Windows 上是 `●`、Grok 换了一套字形，
 已补进 src/live-reply.ts / src/tui-menu.ts 与对应测试）。
 
+**多行消息**：`REPLY_PROMPT` 里写 `\n`（字面两个字符）就发两行；子进程开了 bracketed paste（结果里 `bracketed_paste`）时照 Mesa 包成一次粘贴。
+
+**Windows 上跑**（2026-10-20）：依赖装到临时目录 `python -m pip install --target <目录> pyte pywinpty`，`PYTE_DIR` / `PYWINPTY_DIR` 都指向它；
+三个坑——①中文系统必须 `python -I -X utf8`（不加时读计划 JSON 按 GBK 报错；`-I` 会忽略 `PYTHONUTF8` 环境变量）；
+②在 Git Bash 里带斜杠命令参数（`/model`）要 `MSYS_NO_PATHCONV=1`，否则变成 `C:/Program Files/Git/model` 被当成一句话发出去，
+关了转换后脚本路径、计划路径都要写 `C:/...`；③`python3` 若是应用商店占位程序（退出码 49 / 9009），改用 `py -0p` 列出的真解释器。
+2026-10-20 八家结论（Claude 2.1.304 / Codex 0.163 / Qwen 0.25.3 / Gemini 0.64 / Kimi 2.2 / CodeBuddy 2.170 / Grok 1.0.62 / OpenCode 1.19.3）：
+ConPTY 转出 `?2004h`，读屏实时预览、审批菜单、信任提示与 macOS 同形；聊天层的答题键（回车 / Kimi CSI-u）七家都真放行（Gemini 菜单出得晚未测到）；
+多行粘贴里的 LF 只有 Grok 丢换行（改写 CR 后正常，见 docs/conventions/terminal.md「聊天写入 PTY」）。
+
 ## 聊天层结构化旁路（2026-10-20）
 
 设计与结论见 docs/design-chat-structured-channels.md。两层核对，都只打本机假网关、临时 HOME：

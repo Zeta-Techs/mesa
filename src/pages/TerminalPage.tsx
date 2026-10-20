@@ -4799,6 +4799,8 @@ const TerminalView = memo(function TerminalView({
         ptyId,
         text,
         submit: submitCsiU ? KIMI_CSI_U_ENTER : "\r",
+        // Windows 上 Grok 收粘贴包里的 LF 会把两行连成一行，CR 才算换行；别家 CR 会被当提交，只给 Grok 改（pty.rs chat_paste_body）
+        pasteNewline: IS_WINDOWS && launchAgentRef.current === "grok" ? "\r" : null,
       });
       return { error: null };
     } catch (e) {

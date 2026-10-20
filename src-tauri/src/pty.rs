@@ -372,6 +372,18 @@ fn wrap_bracketed_paste(data: &str, paste_mode_on: bool) -> std::borrow::Cow<'_,
     }
 }
 
+/// 聊天发送的正文：照 bracketed paste 规则包好；`cr_newlines` = 包里的换行改写成 CR。
+/// Windows（ConPTY）上 Grok 收到粘贴包里的 LF 会把换行丢掉（两行连成一行），CR 才算换行；
+/// 其余几家 CR 会被当成提交或把字写错位（2026-10-20 八家逐个实测），所以只按调用方点名改，没包的不动
+fn chat_paste_body(text: &str, paste_mode_on: bool, cr_newlines: bool) -> String {
+    let body = wrap_bracketed_paste(text, paste_mode_on);
+    if cr_newlines && body.starts_with("\x1b[200~") {
+        body.replace("\r\n", "\r").replace('\n', "\r")
+    } else {
+        body.into_owned()
+    }
+}
+
 /// 把文本编码成 win32-input-mode 按键记录（`ESC [ Vk;Sc;Uc;Kd;Cs;Rc _`），每字符一条 key-down。
 ///
 /// Windows/ConPTY 会把写进 PTY 输入的**成形 OSC 序列整段剥掉**（ST / BEL 收尾都一样），
@@ -1432,13 +1444,20 @@ pub fn pty_report_terminal_colors(
 /// 将聊天消息和提交键作为同一个输入队列请求，避免其它输入插入中间。
 /// 文本仍遵守 bracketed-paste 规则，提交键在粘贴包结束后单独写入，
 /// 避免前端两个 IPC 调用之间被 TUI 切帧，也避免多行消息把回车吞进粘贴文本。
+/// `paste_newline`：粘贴包里的换行写成什么，只认 "\r"（见 chat_paste_body），缺省照原样 LF
 #[tauri::command]
 pub async fn pty_write_submit(
     manager: tauri::State<'_, PtyManager>,
     pty_id: String,
     text: String,
     submit: String,
+    paste_newline: Option<String>,
 ) -> Result<(), String> {
+    let cr_newlines = match paste_newline.as_deref() {
+        None | Some("\n") => false,
+        Some("\r") => true,
+        Some(_) => return Err("无效的粘贴换行".into()),
+    };
     let (writer, paste_on) = {
         let entries = manager.entries.lock().unwrap();
         let entry = entries.get(&pty_id).ok_or("终端不存在或已退出")?;
@@ -1448,7 +1467,7 @@ pub async fn pty_write_submit(
         )
     };
     let receipt = writer.enqueue_submit(
-        wrap_bracketed_paste(&text, paste_on).as_bytes(),
+        chat_paste_body(&text, paste_on, cr_newlines).as_bytes(),
         submit.as_bytes(),
     )?;
     tauri::async_runtime::spawn_blocking(move || receipt.wait())
@@ -1962,6 +1981,20 @@ mod tests {
         // 序列跨两块切开也应命中
         assert!(!scan_bracketed_paste_on(&mut tail, b"prompt \x1b[?20"));
         assert!(scan_bracketed_paste_on(&mut tail, b"04h rest"));
+    }
+
+    #[test]
+    fn chat_paste_body_cr_only_when_named_and_wrapped() {
+        // 点名 CR：只改粘贴包里的换行（含 CRLF），包标记不动
+        assert_eq!(
+            chat_paste_body("一\n二\r\n三", true, true),
+            "\x1b[200~一\r二\r三\x1b[201~"
+        );
+        // 没点名：与原规则一致
+        assert_eq!(chat_paste_body("一\n二", true, false), "\x1b[200~一\n二\x1b[201~");
+        // 子进程没开粘贴模式（不包）：换行原样，不能改成 CR——那就成了逐行提交
+        assert_eq!(chat_paste_body("一\n二", false, true), "一\n二");
+        assert_eq!(chat_paste_body("单行", true, true), "单行");
     }
 
     #[test]

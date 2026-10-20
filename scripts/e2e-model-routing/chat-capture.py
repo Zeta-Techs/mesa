@@ -133,7 +133,7 @@ else:
 
     def pty_write(data):
         os.write(fd, data)
-kitty = [False]; alive = [True]
+kitty = [False]; alive = [True]; paste = [False]
 
 
 def pump(sec):
@@ -143,6 +143,9 @@ def pump(sec):
         except OSError:
             alive[0] = False; return
         if not data: continue
+        # 子进程开 / 关 bracketed paste（同 pty.rs 的检测口径）：Windows 上要看 ConPTY 有没有把它转出来
+        if b"\x1b[?2004h" in data: paste[0] = True
+        if b"\x1b[?2004l" in data: paste[0] = False
         # 应答口径同 src/terminal-protocols.ts（DA1 / XTVERSION / kitty 查询 / DECRQM / DSR / OSC 10/11）
         for m in re.finditer(rb"\x1b\[(0?c|>0?q|\?u|>4;\?m|\?(\d+)\$p|\??6n|>(\d*)u|<(\d*)u)|\x1b\](1[01]);\?(\x07|\x1b\\)", data):
             q = m.group(0)
@@ -167,8 +170,11 @@ def lines():
 def send(text, submit=True):
     if not alive[0]: return
     try:
-        # 同 Mesa 聊天发送（pty_write_submit）：正文后跟提交键；kitty 推上来时 Enter 走 CSI-u
-        pty_write(text.encode())
+        # 同 Mesa 聊天发送（pty_write_submit）：正文后跟提交键；kitty 推上来时 Enter 走 CSI-u；
+        # 多行且子进程开了 bracketed paste 才包成一次粘贴（pty.rs wrap_bracketed_paste）。REPLY_PROMPT 里写 \n 可测多行
+        body = text.replace("\\n", "\n").encode()
+        if paste[0] and b"\n" in body: body = b"\x1b[200~" + body + b"\x1b[201~"
+        pty_write(body)
         pump(0.4)
         if submit: pty_write(b"\x1b[13u" if kitty[0] else b"\r")
     except OSError:
@@ -248,7 +254,7 @@ for rel in COPY + [".gemini/settings.json", ".grok/config.toml", ".qwen/settings
     if now != before.get(rel):
         changed[rel] = "".join(difflib.unified_diff((before.get(rel) or "").splitlines(True), now.splitlines(True), n=0))[:1500]
 record["config_changed"] = changed
-record["kitty"] = kitty[0]; record["alive"] = alive[0]
+record["kitty"] = kitty[0]; record["alive"] = alive[0]; record["bracketed_paste"] = paste[0]
 json.dump(record, open(out_path, "w"), ensure_ascii=False, indent=1)
 try: proc.terminate(force=True) if WIN else os.kill(pid, signal.SIGKILL)
 except OSError: pass
