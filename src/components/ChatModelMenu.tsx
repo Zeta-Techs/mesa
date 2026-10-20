@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, Info } from "lucide-react";
 import { AGENTS } from "../types";
@@ -8,7 +8,7 @@ import { useMenuKeyNav } from "../menu-key-nav";
 import { useRuntimeModelEffort } from "../runtime-model-effort";
 import { connectionModels, readModelHistory } from "../model-history";
 import { modelCapsLabel } from "../model-caps-label";
-import { pickPopoverSide } from "../popover-side";
+import { pickPopoverSide, popoverRoom } from "../popover-side";
 import ContextRing from "./ContextRing";
 import { breakdownRequest } from "../context-breakdown";
 import type {
@@ -56,6 +56,9 @@ type RuntimeProps = {
   onRelaunch?: (patch: { model?: string; effort?: string | null }) => void;
 };
 
+/** 菜单最高多少（px）：大屏上也不一路拉长，名单多了在中间那段里滚 */
+const MENU_CAP = 460;
+
 /**
  * 聊天输入框右下的「模型 · 思考」菜单（docs/design-chat-layer.md §4.3）：开聊前、运行中、停了可接着聊三种情形
  * 同一个单栏菜单——顶部一行「Agent · 配置」（开聊前点进二级换），中间模型（名字下一行是能力灰字），下面思考强度滑块，
@@ -71,17 +74,34 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   useMenuKeyNav(menuRef, open, view);
-  // 下面放得下就往下开（开聊前输入框在屏幕中间），贴底时往上（popover-side.ts，2026-10-18 用户）
+  // 下面放得下就往下开（开聊前输入框在屏幕中间），贴底时往上（popover-side.ts，2026-10-18 用户）。
+  // 两边都放不下时按那一边的空间限高，中间的名单区自己滚动，不再溢出窗口（2026-10-20 用户）
+  const bodyRef = useRef<HTMLDivElement>(null);
   const [side, setSide] = useState<"above" | "below">("above");
+  const [room, setRoom] = useState(MENU_CAP);
   useLayoutEffect(() => {
-    if (!open || !rootRef.current || !menuRef.current) return;
-    setSide(
-      pickPopoverSide(
-        rootRef.current.getBoundingClientRect(),
-        window.innerHeight,
-        menuRef.current.offsetHeight,
-      ),
-    );
+    if (!open) return;
+    const place = () => {
+      const menu = menuRef.current;
+      if (!rootRef.current || !menu) return;
+      const anchor = rootRef.current.getBoundingClientRect();
+      const body = bodyRef.current;
+      // 已被限高时 offsetHeight 偏小：滚动区按内容全高补回来，才是「不限高要多高」
+      const natural = menu.offsetHeight + (body ? body.scrollHeight - body.clientHeight : 0);
+      const s = pickPopoverSide(anchor, window.innerHeight, Math.min(natural, MENU_CAP));
+      setSide(s);
+      setRoom(popoverRoom(anchor, window.innerHeight, s, MENU_CAP));
+    };
+    place();
+    // 打开时把当前选中的那一行滚进可视区（名单长、选的在后面时）
+    const body = bodyRef.current;
+    const selected = body?.querySelector<HTMLElement>('[data-selected="true"]');
+    if (body && selected) {
+      const top = selected.offsetTop; // 滚动区自带 relative，offsetTop 就是相对它的
+      if (top + selected.offsetHeight > body.clientHeight) body.scrollTop = top - body.clientHeight / 2;
+    }
+    window.addEventListener("resize", place);
+    return () => window.removeEventListener("resize", place);
   }, [open, view]);
   const profiles = useAppStore((s) => s.profiles);
   const agents = useAppStore((s) => s.agents);
@@ -217,7 +237,9 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
   );
   const section = "px-2 pb-1 pt-1.5 text-xs text-l3";
   const note = "px-2 pb-1.5 pt-0.5 text-xs leading-[18px] text-l4";
-  const divider = <div className="mx-1 my-1 h-px bg-hairline" />;
+  const divider = <div className="mx-1 my-1 h-px shrink-0 bg-hairline" />;
+  // 中段滚动区：至少留出两三行，再矮就让整块溢出也比名单缩成一条缝强
+  const scrollBody = "relative min-h-[4.5rem] flex-1 overflow-y-auto overscroll-contain";
 
   function pickModel(m: string) {
     if (launch) launch.onModel(m);
@@ -237,9 +259,10 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
   }
 
   // ---- 模型段：开聊前 / 接着聊 = 选启动参数；运行中 = 按这家的切换机制 ----
+  // 名单不再自己限高：整个中段是一个滚动区（原先名单、配置各自 max-h 套娃滚动，叠起来照样溢出窗口）
   const modelSection = (() => {
     const list = (
-      <ul className="max-h-64 overflow-auto">
+      <ul>
         {models.length === 0 && <li className={note}>用配置默认的模型</li>}
         {models.map((m) => (
           <li key={m}>
@@ -267,34 +290,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
         ))}
       </ul>
     );
-    if (launch) {
-      return (
-        <>
-          {list}
-          {/* 名单里没有的模型照样能用（与启动栏模型输入框同口径：按原样注入） */}
-          <form
-            // 全站 input { font: inherit } 会吞掉 input 自己的 text-*：字号挂在外层
-            className="mx-1 mb-1 mt-1 text-xs"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const m = customModel.trim();
-              if (!m) return;
-              launch.onModel(m);
-              setCustomModel("");
-              setOpen(false);
-            }}
-          >
-            <input
-              value={customModel}
-              onChange={(e) => setCustomModel(e.target.value)}
-              placeholder="其他模型，输入后回车"
-              aria-label="输入其他模型"
-              className="h-7 w-full rounded-lg border border-hairline bg-transparent px-2 text-l2 outline-none placeholder:text-l4 focus:border-field"
-            />
-          </form>
-        </>
-      );
-    }
+    if (launch) return list;
     if (next) return list;
     if ((rt.modelByRelaunch || runtime?.modelSwitch?.kind === "direct") && models.length > 0) return list;
     if (runtime?.modelSwitch?.kind === "picker") {
@@ -420,9 +416,11 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
           role="dialog"
           aria-label={next ? "接着聊用的模型与思考强度" : "模型与思考强度"}
           // 字号挂在容器上：全站 button / input { font: inherit } 会吞掉按钮自己的 text-*
-          className={`absolute right-0 z-30 w-[19rem] rounded-xl border border-field ccode-float-surface p-1 text-sm shadow-lg ${
-            side === "below" ? "top-full mt-2" : "bottom-full mb-2"
+          // 限高（room）+ 纵向三段：顶部 Agent 行与底部思考 / 说明固定，中间名单区滚动
+          className={`absolute right-0 z-30 flex w-[19rem] flex-col overflow-y-auto rounded-xl border border-field ccode-float-surface p-1 text-sm shadow-lg ${
+            side === "below" ? "top-full mt-2 origin-top-right" : "bottom-full mb-2 origin-bottom-right"
           }`}
+          style={{ maxHeight: room }}
         >
           {view === "who" && launch ? (
             <WhoView
@@ -447,6 +445,8 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
                 launch.onProfile(id);
                 setView("main");
               }}
+              bodyRef={bodyRef}
+              bodyClass={scrollBody}
               item={item}
               mark={mark}
               section={section}
@@ -457,7 +457,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
               {launch ? (
                 <button
                   type="button"
-                  className="flex h-8 w-full items-center gap-1.5 rounded-lg px-2 text-left text-l1 outline-none hover:bg-hover focus-visible:bg-hover"
+                  className="flex h-8 w-full shrink-0 items-center gap-1.5 rounded-lg px-2 text-left text-l1 outline-none hover:bg-hover focus-visible:bg-hover"
                   onClick={() => setView("who")}
                   title="换 Agent 或配置"
                 >
@@ -470,7 +470,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
                 </button>
               ) : (
                 <div
-                  className="flex h-8 items-center gap-1.5 px-2 text-l1"
+                  className="flex h-8 shrink-0 items-center gap-1.5 px-2 text-l1"
                   title="换 Agent 或配置请新开一段对话"
                 >
                   {next && <span className="shrink-0 text-xs text-l4">接着聊用</span>}
@@ -479,23 +479,48 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
                 </div>
               )}
               {divider}
-              <h4 className={section}>模型</h4>
-              {modelSection}
-              {!launch && !next && rt.modelState === "unverifiable" && (
-                <p className={note}>{agentLabel} 不回显当前模型，切完以终端里显示的为准。</p>
+              <h4 className={`${section} shrink-0`}>模型</h4>
+              <div ref={bodyRef} className={scrollBody}>
+                {modelSection}
+                {!launch && !next && rt.modelState === "unverifiable" && (
+                  <p className={note}>{agentLabel} 不回显当前模型，切完以终端里显示的为准。</p>
+                )}
+                {!launch && rt.combo?.mixedModelsNote && <p className={note}>{rt.combo.mixedModelsNote}</p>}
+              </div>
+              {launch && (
+                // 名单里没有的模型照样能用（与启动栏模型输入框同口径：按原样注入）；钉在名单下面，名单再长也不用滚下去找
+                <form
+                  // 全站 input { font: inherit } 会吞掉 input 自己的 text-*：字号挂在外层
+                  className="mx-1 mb-1 mt-1 shrink-0 text-xs"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const m = customModel.trim();
+                    if (!m) return;
+                    launch.onModel(m);
+                    setCustomModel("");
+                    setOpen(false);
+                  }}
+                >
+                  <input
+                    value={customModel}
+                    onChange={(e) => setCustomModel(e.target.value)}
+                    placeholder="其他模型，输入后回车"
+                    aria-label="输入其他模型"
+                    className="h-7 w-full rounded-lg border border-hairline bg-transparent px-2 text-l2 outline-none placeholder:text-l4 focus:border-field"
+                  />
+                </form>
               )}
-              {!launch && rt.combo?.mixedModelsNote && <p className={note}>{rt.combo.mixedModelsNote}</p>}
               {effortSection && (
-                <>
+                <div className="shrink-0">
                   {divider}
                   {/* 滑块自带「思考强度 … 当前档」一行；其余形态（终端里换 / 只读说明）才要单独标题 */}
                   {!effortChoices && <h4 className={section}>思考强度</h4>}
                   {effortSection}
-                </>
+                </div>
               )}
               {footer && (
                 <p
-                  className="mx-1 mt-1 flex gap-1.5 border-t border-hairline px-1 pb-0.5 pt-1.5 text-micro leading-4 text-l4"
+                  className="mx-1 mt-1 flex shrink-0 gap-1.5 border-t border-hairline px-1 pb-0.5 pt-1.5 text-micro leading-4 text-l4"
                   title={footer.full}
                 >
                   <Info size={12} strokeWidth={1.8} aria-hidden="true" className="mt-0.5 shrink-0" />
@@ -516,6 +541,8 @@ function WhoView({
   onBack,
   onAgent,
   onProfile,
+  bodyRef,
+  bodyClass,
   item,
   mark,
   section,
@@ -526,6 +553,8 @@ function WhoView({
   onBack: () => void;
   onAgent: (id: string) => void;
   onProfile: (id: string) => void;
+  bodyRef: RefObject<HTMLDivElement | null>;
+  bodyClass: string;
   item: (selected: boolean) => string;
   mark: (selected: boolean) => ReactNode;
   section: string;
@@ -537,58 +566,62 @@ function WhoView({
       <button
         type="button"
         onClick={onBack}
-        className="flex h-8 w-full items-center gap-1 rounded-lg px-2 text-left text-xs text-l3 outline-none hover:bg-hover hover:text-l1 focus-visible:bg-hover"
+        className="flex h-8 w-full shrink-0 items-center gap-1 rounded-lg px-2 text-left text-xs text-l3 outline-none hover:bg-hover hover:text-l1 focus-visible:bg-hover"
       >
         <ChevronLeft size={14} strokeWidth={1.8} aria-hidden="true" />
         <span className="text-xs">模型与思考强度</span>
       </button>
-      <div className="mx-1 my-1 h-px bg-hairline" />
-      <h4 className={section}>Agent</h4>
-      <ul className="max-h-48 overflow-auto">
-        {AGENTS.map((a) => {
-          const installed = agents.find((x) => x.id === a.id)?.binaryPath != null;
-          return (
-            <li key={a.id}>
+      <div className="mx-1 my-1 h-px shrink-0 bg-hairline" />
+      {/* Agent 与配置同在一个滚动区里：原先两段各自 max-h 再叠起来，九家 Agent 一摆就顶出窗口（2026-10-20 用户） */}
+      <div ref={bodyRef} className={bodyClass}>
+        <h4 className={section}>Agent</h4>
+        {/* 九家排成两列：名字都短，单列一家一行太占高度 */}
+        <div className="grid grid-cols-2 gap-x-0.5">
+          {AGENTS.map((a) => {
+            const installed = agents.find((x) => x.id === a.id)?.binaryPath != null;
+            const selected = a.id === pick.agentId;
+            return (
               <button
+                key={a.id}
                 type="button"
-                data-selected={a.id === pick.agentId}
-                className={item(a.id === pick.agentId)}
+                data-selected={selected}
+                className={`${item(selected)} ${selected ? "bg-seg-sel hover:bg-seg-sel" : ""}`}
+                title={installed ? a.label : `${a.label}（本机还没装）`}
                 onClick={() => onAgent(a.id)}
               >
-                <span className="min-w-0 flex-1 truncate">{a.label}</span>
-                {!installed && <span className="shrink-0 text-xs text-l4">未安装</span>}
-                {mark(a.id === pick.agentId)}
+                <span className={`min-w-0 flex-1 truncate ${installed ? "" : "text-l4"}`}>{a.label}</span>
+                {!installed && <span className="shrink-0 text-micro text-l4">未安装</span>}
               </button>
-            </li>
-          );
-        })}
-      </ul>
-      <div className="mx-1 my-1 h-px bg-hairline" />
-      <h4 className={section}>配置</h4>
-      <ul className="max-h-48 overflow-auto">
-        {pick.profiles.length === 0 && (
-          <li className={note}>这个 Agent 还没有配置，去「连接」页添加</li>
-        )}
-        {pick.profiles.map((p) => {
-          const header = p.group && p.group !== lastGroup ? p.group : null;
-          lastGroup = p.group;
-          return (
-            <li key={p.value}>
-              {header && <div className="px-2 pb-0.5 pt-1.5 text-micro text-l4">{header}</div>}
-              <button
-                type="button"
-                disabled={p.disabled}
-                data-selected={p.value === pick.profileId}
-                className={`${item(p.value === pick.profileId)} disabled:opacity-40`}
-                onClick={() => onProfile(p.value)}
-              >
-                <span className="min-w-0 flex-1 truncate">{p.label}</span>
-                {mark(p.value === pick.profileId)}
-              </button>
-            </li>
-          );
-        })}
-      </ul>
+            );
+          })}
+        </div>
+        <div className="mx-1 my-1 h-px bg-hairline" />
+        <h4 className={section}>配置</h4>
+        <ul>
+          {pick.profiles.length === 0 && (
+            <li className={note}>这个 Agent 还没有配置，去「连接」页添加</li>
+          )}
+          {pick.profiles.map((p) => {
+            const header = p.group && p.group !== lastGroup ? p.group : null;
+            lastGroup = p.group;
+            return (
+              <li key={p.value}>
+                {header && <div className="px-2 pb-0.5 pt-1.5 text-micro text-l4">{header}</div>}
+                <button
+                  type="button"
+                  disabled={p.disabled}
+                  data-selected={p.value === pick.profileId}
+                  className={`${item(p.value === pick.profileId)} disabled:opacity-40`}
+                  onClick={() => onProfile(p.value)}
+                >
+                  <span className="min-w-0 flex-1 truncate">{p.label}</span>
+                  {mark(p.value === pick.profileId)}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
     </>
   );
 }
@@ -650,36 +683,44 @@ function EffortSlider({
   }
   // 档不多（≤6，含「默认」）时每个刻度下都写档名，一眼看出在哪一格、点名字也能选；Grok 那种八档只写两端，当前档写在右上
   const labelAll = choices.length <= 6;
+  const dragging = draft !== null;
+  // 拖动时滑块跟手；点刻度 / 点档名 / 键盘跳格时滑过去（120ms，动效口径 200ms 内）
+  const glide = dragging ? "" : "transition-[left,width,scale] duration-[120ms] ease-[var(--ccode-motion-ease)]";
   return (
-    <div className={`px-2 pb-1.5 pt-1 ${disabled ? "opacity-50" : ""}`}>
-      <div className="mb-1.5 flex items-baseline justify-between">
+    <div className={`group/effort px-2 pb-2 pt-1.5 ${disabled ? "opacity-50" : ""}`}>
+      <div className="mb-2 flex items-baseline justify-between">
         <span className="text-xs text-l3">思考强度</span>
         {!labelAll && <span className={`text-xs font-medium ${idx >= 0 ? "text-l1" : "text-l4"}`}>{label}</span>}
       </div>
-      <div className="relative mx-1.5 h-4">
-        <span className="absolute top-1/2 left-0 h-[3px] w-full -translate-y-1/2 rounded-full bg-field" />
+      {/* 左右各缩进半个滑块，两端的滑块不贴边；原生 range 向两边各伸出半个滑块，它的停靠点才与画出来的刻度对齐 */}
+      <div className="relative mx-2 h-5">
+        <span className="absolute top-1/2 left-0 h-1 w-full -translate-y-1/2 rounded-full bg-field" />
         {idx >= 0 && (
           <span
-            className="absolute top-1/2 left-0 h-[3px] -translate-y-1/2 rounded-full bg-l3"
+            className={`absolute top-1/2 left-0 h-1 -translate-y-1/2 rounded-full bg-l3 ${glide}`}
             style={{ width: `${pct(idx)}%` }}
           />
         )}
+        {/* 没走到的档画成灰点，一眼数得出还差几档；走过的被已选段盖住，不再挖点（挖了像虚线） */}
         {choices.map((c, i) =>
-          i === idx ? (
+          i <= idx ? null : (
             <span
               key={c.value || "default"}
               aria-hidden="true"
-              className="absolute top-1/2 size-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-l1 shadow-[0_1px_3px_rgba(0,0,0,0.35)] ring-[3px] ring-raised"
-              style={{ left: `${pct(i)}%` }}
-            />
-          ) : (
-            <span
-              key={c.value || "default"}
-              aria-hidden="true"
-              className={`absolute top-1/2 size-1 -translate-x-1/2 -translate-y-1/2 rounded-full ${i < idx ? "bg-l2" : "bg-l4"}`}
+              className="absolute top-1/2 size-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-l4"
               style={{ left: `${pct(i)}%` }}
             />
           ),
+        )}
+        {idx >= 0 && (
+          <span
+            aria-hidden="true"
+            // 滑块走开关同一套令牌（design-system：禁 bg-l1 当滑块，浅色主题会变成黑疙瘩）；靠描边浮起，不加投影
+            className={`pointer-events-none absolute top-1/2 size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border border-l4 bg-switch-knob ${glide} ${
+              disabled ? "" : "group-hover/effort:scale-110"
+            } group-has-[input:focus-visible]/effort:outline group-has-[input:focus-visible]/effort:outline-1 group-has-[input:focus-visible]/effort:outline-offset-2 group-has-[input:focus-visible]/effort:outline-l3`}
+            style={{ left: `${pct(idx)}%` }}
+          />
         )}
         <input
           type="range"
@@ -695,20 +736,20 @@ function EffortSlider({
           onKeyUp={(e) => {
             if (e.key.startsWith("Arrow") || e.key === "Home" || e.key === "End") commit();
           }}
-          className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-default"
+          className="absolute inset-y-0 -right-2 -left-2 m-0 h-full cursor-pointer appearance-none bg-transparent opacity-0 disabled:cursor-default [&::-moz-range-thumb]:size-4 [&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:appearance-none"
         />
       </div>
       {labelAll ? (
-        <div className="relative mx-1.5 mt-1.5 h-4 text-micro">
+        <div className="relative mx-2 mt-1.5 h-4 text-micro">
           {choices.map((c, i) => (
-            // 读屏走上面的 range；这里是给鼠标的快捷点选
+            // 读屏走上面的 range；这里是给鼠标的快捷点选。外层 px-2 + mx-2 给两端居中的档名留了位置
             <span
               key={c.value || "default"}
               aria-hidden="true"
               onClick={() => (disabled || i === knownIdx ? undefined : onCommit(c.value))}
-              className={`absolute top-0 cursor-pointer whitespace-nowrap leading-4 ${
-                i === 0 ? "" : i === last ? "-translate-x-full" : "-translate-x-1/2"
-              } ${i === idx ? "font-medium text-l1" : "text-l4 hover:text-l2"}`}
+              className={`absolute top-0 -translate-x-1/2 cursor-pointer whitespace-nowrap leading-4 ${
+                i === idx ? "font-medium text-l1" : "text-l4 hover:text-l2"
+              }`}
               style={{ left: `${pct(i)}%` }}
             >
               {c.label}
@@ -716,7 +757,7 @@ function EffortSlider({
           ))}
         </div>
       ) : (
-        <div className="mx-1.5 mt-1.5 flex justify-between text-micro leading-4 text-l4">
+        <div className="mt-1.5 flex justify-between text-micro leading-4 text-l4">
           <span>{choices[0]?.label}</span>
           <span>{choices[last]?.label}</span>
         </div>

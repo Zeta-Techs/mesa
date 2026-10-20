@@ -15,3 +15,19 @@ export function pickPopoverSide(
   if (above >= menuHeight) return "above";
   return below > above ? "below" : "above";
 }
+
+/**
+ * 弹层在选定那一边最多能有多高（2026-10-20 用户：模型菜单太长溢出界面）：锚点到窗口边缘的空间，
+ * 再留出离边的余量；封顶 cap，免得大屏上一路拉到底。弹层自己按这个限高、内部滚动。
+ */
+export function popoverRoom(
+  anchor: { top: number; bottom: number },
+  viewportHeight: number,
+  side: "above" | "below",
+  cap: number,
+  gap = 8,
+  margin = 12,
+): number {
+  const space = side === "below" ? viewportHeight - anchor.bottom - gap : anchor.top - gap;
+  return Math.max(0, Math.min(cap, space - margin));
+}
