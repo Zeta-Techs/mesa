@@ -5,9 +5,11 @@ import {
   approvalPreview,
   approvalTitle,
   channelAttention,
+  channelCanAnswer,
   channelLiveLines,
   channelRelink,
   channelTurnOpen,
+  displayCommand,
   sessionSwitchNote,
   type ChannelApproval,
   type ChatChannelSnapshot,
@@ -128,4 +130,26 @@ test("能从聊天层答的才给按钮；「都允许」只给支持的家", ()
     approvalChoices(approval({ replyable: true, requestId: "r" }), "codex").map((c) => c.decision),
     ["allow", "allow_always", "deny"],
   );
+});
+
+test("聊天卡上能答的审批不再拉起终端；只能在终端菜单里答的交回原来的判断", () => {
+  const asking = (a: ChannelApproval) => snap({ agent: "codex", kind: "codex", turn: turn("awaiting_approval"), approval: a });
+  assert.equal(channelCanAnswer(asking(approval({ replyable: true, requestId: "r" })), "codex"), true);
+  assert.equal(channelCanAnswer(asking(approval({ replyable: false, requestId: "r" })), "claude-code"), false);
+  assert.equal(channelCanAnswer(snap({ turn: turn("awaiting_approval") }), "codex"), false, "旁路没给审批内容");
+  assert.equal(channelCanAnswer(null, "codex"), false);
+});
+
+test("审批卡上的命令剥掉外层 shell 包装", () => {
+  // 2026-10-20 用户截图里 Codex 审批的原样
+  assert.equal(
+    displayCommand(`/bin/zsh -lc "/bin/zsh -lc 'printf \\"ok\\\\n\\" > ~/mesa-codex-check.txt'"`),
+    `printf "ok\\n" > ~/mesa-codex-check.txt`,
+  );
+  assert.equal(displayCommand("bash -lc 'ls -la'"), "ls -la");
+  assert.equal(displayCommand("rm -rf build"), "rm -rf build");
+  // 外层 shell 先展开的不剥；包装后面还跟着别的也不剥
+  assert.equal(displayCommand(`bash -c "echo $HOME"`), `bash -c "echo $HOME"`);
+  assert.equal(displayCommand("sh -c 'a' && rm x"), "sh -c 'a' && rm x");
+  assert.deepEqual(approvalPreview(approval({ command: "/bin/zsh -lc 'echo hi'" })), { kind: "command", text: "echo hi" });
 });

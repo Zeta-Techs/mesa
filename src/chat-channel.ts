@@ -111,7 +111,7 @@ export type DecisionPreview =
 /** 审批卡上画什么：命令原文 / 要改的差异 / 参数原文 */
 export function approvalPreview(a: ChannelApproval | null): DecisionPreview | null {
   if (!a) return null;
-  if (a.command) return { kind: "command", text: a.command };
+  if (a.command) return { kind: "command", text: displayCommand(a.command) };
   if (a.diff) {
     const files = parsePatch(a.diff);
     const lines = files.length ? files.flatMap((f) => f.lines) : diffTextLines(a.diff);
@@ -122,6 +122,26 @@ export function approvalPreview(a: ChannelApproval | null): DecisionPreview | nu
   }
   if (a.kind === "other" && a.detail) return { kind: "text", text: a.detail };
   return null;
+}
+
+/**
+ * 命令去掉外层 shell 包装再给人看：Codex 把模型的命令再包一层登录 shell，审批里是
+ * `/bin/zsh -lc "/bin/zsh -lc 'printf …'"`（2026-10-20 用户截图）。只剥「整条就是 sh -c 加一个引号串」的；
+ * 双引号串里有没转义的 $ 或反引号就不剥（那要外层 shell 先展开，剥了含义会变）
+ */
+export function displayCommand(command: string): string {
+  let cur = command.trim();
+  for (let i = 0; i < 3; i++) {
+    const m = /^(?:\/\S*\/)?(?:ba|z)?sh\s+-l?c\s+(?:'([^']*)'|"((?:[^"\\]|\\.)*)")$/.exec(cur);
+    if (!m) break;
+    if (m[1] !== undefined) {
+      cur = m[1].trim();
+    } else {
+      if (/(^|[^\\])[$`]/.test(m[2])) break;
+      cur = m[2].replace(/\\(["\\$`])/g, "$1").trim();
+    }
+  }
+  return cur;
 }
 
 /** 统一差异文本 → 行（没有补丁头的裸差异：+ / - / 空格开头；改多个文件时后端每段前加「*** 路径」，画成分隔） */
@@ -155,6 +175,11 @@ export function approvalTitle(a: ChannelApproval, agentLabel: string): string {
   if (a.kind === "edit" && name) return `${base} · ${name}`;
   if (a.kind === "other" && a.toolName) return `${agentLabel} 要用 ${a.toolName}`;
   return base;
+}
+
+/** 眼下这一问聊天层卡上就能答（Codex / Qwen / OpenCode 经官方通道）：不必再把终端拉出来 */
+export function channelCanAnswer(snap: ChatChannelSnapshot | null, agent: string | null): boolean {
+  return Boolean(snap?.approval && approvalChoices(snap.approval, agent).length);
 }
 
 /** 可从聊天层答的审批给哪几个按钮（只摆 CLI 支持的，不替用户选） */

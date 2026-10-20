@@ -79,6 +79,7 @@ import {
 import { AGENTS, type CustomRuntimeDto, type OfficialAccountStatusDto } from "../types";
 import {
   channelAttention,
+  channelCanAnswer,
   channelLiveLines,
   channelRelink,
   channelTurnOpen,
@@ -6896,12 +6897,28 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     window.setTimeout(() => setPeekRecheck((n) => n + 1), PEEK_HOLD_AFTER_ANSWER_MS + 50);
   }
 
+  // 「在等确认」刚出现时先等一会儿再决定弹不弹：旁路的审批事件比屏上画出菜单早到，读屏认菜单还有 250ms 防抖，
+  // 认出来了卡上就有按钮（2026-10-20 用户：Codex 聊天卡上能批准时，底部终端也同步弹出来）
+  const CONFIRM_PEEK_GRACE_MS = 1500;
+  const confirmSinceRef = useRef<Record<string, number>>({});
   useEffect(() => {
+    if (statuses[focusedId]?.attention !== "confirm") {
+      delete confirmSinceRef.current[focusedId];
+      return;
+    }
     if ((surfaceModeByTab[focusedId] ?? DEFAULT_SURFACE_MODE) !== "chat") return;
-    if (statuses[focusedId]?.attention !== "confirm") return;
     if (Date.now() < (peekHoldUntilRef.current[focusedId] ?? 0)) return;
-    // 屏上认出了菜单（审批 / 信任 / 切换确认）：聊天层已经有一张按原文给按钮的卡，不必再把终端拉出来
-    if (sessionByTab[focusedId]?.menuPrompt || sessionByTab[focusedId]?.trustPrompt) return;
+    // 聊天层卡上就能答的不拉终端：旁路经官方通道答（Codex / Qwen / OpenCode），或屏上认出了菜单（审批 / 信任 /
+    // 切换确认，卡上按原文给按钮）。「等确认就弹终端」是聊天层能答之前的兜底，只留给卡上答不了的情形
+    const link = sessionByTab[focusedId];
+    if (channelCanAnswer(link?.channel ?? null, statuses[focusedId]?.agentId ?? null)) return;
+    if (link?.menuPrompt || link?.trustPrompt) return;
+    const since = (confirmSinceRef.current[focusedId] ??= Date.now());
+    const wait = since + CONFIRM_PEEK_GRACE_MS - Date.now();
+    if (wait > 0) {
+      window.setTimeout(() => setPeekRecheck((n) => n + 1), wait + 50);
+      return;
+    }
     if (
       !shouldAutoPeek(
         confirmHandoffEvent(
@@ -6925,6 +6942,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     surfaceModeByTab[focusedId],
     sessionByTab[focusedId]?.menuPrompt,
     sessionByTab[focusedId]?.trustPrompt,
+    sessionByTab[focusedId]?.channel?.approval,
     peekRecheck,
   ]);
 
