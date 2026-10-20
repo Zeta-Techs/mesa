@@ -1761,10 +1761,27 @@ fn is_protected_str(p: &str) -> bool {
     {
         dir_prefixes.extend(windows_system_dirs());
         let appdata = protect_key(&format!("{home}/AppData"));
-        let temp = protect_key(&std::env::temp_dir().to_string_lossy());
-        let in_temp = pn.starts_with(&format!("{temp}/"));
-        if !in_temp && (pn == appdata || pn.starts_with(&format!("{appdata}/"))) {
-            return true;
+        // %TEMP% 可能是 8.3 短名（CI 上 C:\Users\RUNNER~1\…，家目录却是长名 runneradmin）：
+        // 临时目录与被检路径都按「原样」和「canonicalize 后的长名」两种写法比，才不会把临时工作区误判进 AppData
+        let long_key = |p: &std::path::Path| {
+            crate::paths::canonicalize_plain(p)
+                .ok()
+                .map(|c| protect_key(&c.to_string_lossy()))
+        };
+        let temp_dir = std::env::temp_dir();
+        let temps: Vec<String> = [Some(protect_key(&temp_dir.to_string_lossy())), long_key(temp_dir.as_path())]
+            .into_iter()
+            .flatten()
+            .collect();
+        let cands: Vec<String> = [Some(pn.to_string()), long_key(std::path::Path::new(p))]
+            .into_iter()
+            .flatten()
+            .collect();
+        for c in &cands {
+            let in_temp = temps.iter().any(|t| c.starts_with(&format!("{t}/")));
+            if !in_temp && (*c == appdata || c.starts_with(&format!("{appdata}/"))) {
+                return true;
+            }
         }
     }
     if exact.iter().any(|e| pn == e)
