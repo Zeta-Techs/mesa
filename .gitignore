@@ -68,3 +68,5 @@ src-tauri/extension-src/
 
 # Mesa 接力简报（过程文件，不进版本库）
 .ccode/handoff-*.md
+src/__conv-harness.tsx
+client-harness.html
