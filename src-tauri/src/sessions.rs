@@ -3103,6 +3103,26 @@ fn parse_grok_history(lines: &[String]) -> Vec<ChatMessageDto> {
             continue;
         };
         let role = get_str(&value, "type");
+        // 工具结果：并进发起调用的那条助手消息，按 tool_call_id 与调用配对
+        if role == Some("tool_result") {
+            let text = match value.get("content") {
+                Some(Value::String(s)) => s.clone(),
+                Some(other) => grok_history_text(other).unwrap_or_else(|| other.to_string()),
+                None => String::new(),
+            };
+            push_tool_result(
+                &mut messages,
+                vec![BlockDto {
+                    kind: "tool_result".into(),
+                    text,
+                    tool_name: None,
+                    is_error: false,
+                    call_id: get_str(&value, "tool_call_id").map(String::from),
+                }],
+                None,
+            );
+            continue;
+        }
         let is_user_prompt = role == Some("user")
             && value.get("prompt_index").is_some()
             && value.get("synthetic_reason").is_none();
@@ -3110,12 +3130,33 @@ fn parse_grok_history(lines: &[String]) -> Vec<ChatMessageDto> {
         if !is_user_prompt && !is_assistant {
             continue;
         }
-        let Some(text) = grok_history_text(value.get("content").unwrap_or(&Value::Null)) else {
+        let mut blocks: Vec<BlockDto> = grok_history_text(value.get("content").unwrap_or(&Value::Null))
+            .map(text_block)
+            .into_iter()
+            .collect();
+        // 助手的工具调用（Grok 1.0.62：{id, name, arguments: JSON 串}；兼容 OpenAI 式 function 包一层）。
+        // 以前只取文字，Grok 对话里读文件 / 改文件 / 跑命令一条都看不到（2026-10-20 Windows 实跑发现，与平台无关）
+        if is_assistant {
+            for call in value.get("tool_calls").and_then(Value::as_array).into_iter().flatten() {
+                let f = call.get("function").unwrap_or(call);
+                let Some(name) = get_str(f, "name") else {
+                    continue;
+                };
+                blocks.push(BlockDto {
+                    kind: "tool_use".into(),
+                    text: stringify_payload(f.get("arguments")),
+                    tool_name: Some(name.into()),
+                    is_error: false,
+                    call_id: get_str(call, "id").map(String::from),
+                });
+            }
+        }
+        if blocks.is_empty() {
             continue;
-        };
+        }
         messages.push(ChatMessageDto {
             role: if is_user_prompt { "user" } else { "assistant" }.into(),
-            blocks: vec![text_block(text)],
+            blocks,
             timestamp: None,
             usage: None,
             id: None,
@@ -8002,7 +8043,7 @@ mod tests {
             r#"{"type":"user","synthetic_reason":"system_reminder","content":"hidden"}"#,
             r#"{"type":"user","prompt_index":0,"content":[{"type":"text","text":"第一问"}]}"#,
             r#"{"type":"assistant","content":"第一答"}"#,
-            r#"{"type":"tool_result","content":"不要显示"}"#,
+            r#"{"type":"tool_result","content":"并进上一条助手消息"}"#,
             r#"{"type":"user","prompt_index":1,"content":[{"type":"text","text":"第二问"},{"type":"image","data":"..."}]}"#,
             r#"{"type":"assistant","content":"第二答"}"#,
         ]);
@@ -8011,6 +8052,35 @@ mod tests {
         assert_eq!(messages[0].role, "user");
         assert_eq!(messages[0].blocks[0].text, "第一问");
         assert_eq!(messages[3].blocks[0].text, "第二答");
+    }
+
+    /// Grok 1.0.62 chat_history.jsonl 的原样形状（2026-10-20 Windows 实跑「新建→改→删」，路径脱敏）：
+    /// 助手行只有 tool_calls、content 为空；tool_result 带 tool_call_id
+    #[test]
+    fn grok_history_keeps_tool_calls_and_results_paired() {
+        let lines = s(&[
+            r#"{"type":"user","prompt_index":0,"content":[{"type":"text","text":"<user_query>\n新建 notes.txt 再把 banana 改成 blueberry\n</user_query>"}]}"#,
+            r#"{"type":"reasoning","id":"r1","summary":""}"#,
+            r#"{"type":"assistant","content":"","tool_calls":[{"id":"call_1","name":"write","arguments":"{\"content\":\"apple\\nbanana\\n\",\"file_path\":\"C:\\\\w\\\\notes.txt\"}"}],"model_id":"glm-5.3-flash"}"#,
+            r#"{"type":"tool_result","tool_call_id":"call_1","content":"The file C:\\w\\notes.txt has been created."}"#,
+            r#"{"type":"assistant","content":"","tool_calls":[{"id":"call_2","name":"search_replace","arguments":"{\"file_path\":\"C:\\\\w\\\\notes.txt\",\"new_string\":\"blueberry\",\"old_string\":\"banana\"}"}]}"#,
+            r#"{"type":"tool_result","tool_call_id":"call_2","content":"The file C:\\w\\notes.txt has been updated successfully."}"#,
+            r#"{"type":"assistant","content":"完成。","tool_calls":[{"id":"call_3","function":{"name":"run_terminal_command","arguments":{"command":"Remove-Item notes.txt"}}}]}"#,
+        ]);
+        let messages = parse_grok_history(&lines);
+        assert_eq!(messages.len(), 4, "一问 + 三条助手消息，工具结果并进各自的助手消息");
+        assert_eq!(messages[0].blocks[0].text, "新建 notes.txt 再把 banana 改成 blueberry");
+        let call = &messages[1].blocks[0];
+        assert_eq!((call.kind.as_str(), call.tool_name.as_deref()), ("tool_use", Some("write")));
+        assert!(call.text.contains("\"file_path\""), "参数原样保留给前端画差异：{}", call.text);
+        assert_eq!(call.call_id.as_deref(), Some("call_1"));
+        let result = &messages[1].blocks[1];
+        assert_eq!((result.kind.as_str(), result.call_id.as_deref()), ("tool_result", Some("call_1")));
+        assert_eq!(messages[2].blocks[0].tool_name.as_deref(), Some("search_replace"));
+        // 有文字也有工具调用：文字在前；function 包一层、参数是对象的也认
+        assert_eq!(messages[3].blocks[0].text, "完成。");
+        assert_eq!(messages[3].blocks[1].tool_name.as_deref(), Some("run_terminal_command"));
+        assert!(messages[3].blocks[1].text.contains("Remove-Item"));
     }
 
     #[test]

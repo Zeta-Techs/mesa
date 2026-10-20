@@ -515,6 +515,18 @@ macOS 签名公证接进 workflow，六个 `APPLE_*` secrets 配齐才启用（�
 （`scripts/mirror-latest-json.mjs`，签名原样、缺签名拒绝）、先传包后传清单、读回核对；凭据走 secrets，没配齐跳过并写日志。改写逻辑
 对现有已发布的 `latest.json` 干跑过；工作流本身没在真实对象存储上跑过（开通步骤见 docs/release.md）。只对配好后打出的版本生效。
 
+### 2026-10-20 · Grok 回放 / 聊天层带上工具调用：chat_history.jsonl 的 tool_calls 与 tool_result 不再丢
+
+用户问「除了 Codex，其他 Agent CLI 改文件有什么问题、是否只在 Windows」。Windows 上六家真网关实跑同一条「新建→改→删」
+（Claude / Qwen / OpenCode / Kimi / Grok 智谱 glm-5.3-flash，Gemini Zeta gemini-4-argon，临时 HOME、无头），按 Mesa 的会话解析
++ tool-activity 渲染核对：五家新建 / 修改走各自的 Write / Edit 类工具、差异正常；删除各家都只有 shell 命令（CLI 没有删除工具，
+三平台同）。**Grok 例外**：Mesa 读 Grok 优先用 `chat_history.jsonl`（`parse_grok_history`），只取文字，`assistant.tool_calls`
+与 `tool_result` 整个丢掉，回放和聊天层看不到任何工具调用——数据本身完整（Grok 1.0.62：`tool_calls[{id,name,arguments 串}]`，
+`tool_result{tool_call_id,content}`），与平台无关。用户拍板修：工具调用解析成 tool_use 块（参数原样、带 call_id），结果并进发起调用的
+助手消息并按 call_id 配对；兼容 OpenAI 式 `function` 包一层、参数为对象。`updates.jsonl` 回落解析（`parse_grok`，没有 chat_history 时用）
+仍只取文字，未改。同批另两条：Qwen 在 Windows 上用 cmd 内建 `del` 删文件，摘要不算改文件（tool-activity 补 cmd 内建表）；
+OpenCode `run` 取目录用 `process.env.PWD ?? cwd`，Mesa 进程带 PWD 时无头运行会跑错目录（另行处理）。
+
 ### 2026-10-20 · Codex 模型清单的基础指令换回 Codex 默认原文：模型才会用 apply_patch，聊天层才有差异
 
 用户问「Codex 不显示写入删除的 diff，是读不到还是要完善」，要求先实跑再修。用户今天 5 个 Codex 会话（智谱网关 glm-5.3）里改文件
