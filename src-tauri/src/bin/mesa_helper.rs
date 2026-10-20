@@ -9,6 +9,59 @@
 
 use std::io::{Read, Write};
 
+/// hook 模式：读 stdin 的事件 JSON（超过 cap 字节截断、其余读掉），删回车换行，前缀
+/// 「unix 秒 + 标签号」后一次追加到日志——与 hooks.rs 的 unix 命令、ccode-hook.ps1 同一语义。
+/// 只用标准库：每次工具调用都要起一次，启动要快。`--probe` 只回 ok，主程序据此确认这份 helper 认 hook 模式。
+fn run_hook(args: &[String]) -> i32 {
+    if args.first().map(String::as_str) == Some("--probe") {
+        println!("ok");
+        return 0;
+    }
+    let Some(log) = args.first() else {
+        return 2;
+    };
+    let cap: usize = args.get(1).and_then(|c| c.parse().ok()).unwrap_or(65536);
+    let mut payload = Vec::new();
+    let mut buf = [0u8; 8192];
+    let mut stdin = std::io::stdin().lock();
+    loop {
+        match stdin.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                let room = cap.saturating_sub(payload.len());
+                payload.extend_from_slice(&buf[..n.min(room)]);
+            }
+        }
+    }
+    payload.retain(|b| *b != b'\r' && *b != b'\n');
+    let tab = std::env::var("CCODE_TAB_ID")
+        .ok()
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| "-".into());
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut line = format!("{ts} {tab} ").into_bytes();
+    line.extend_from_slice(&payload);
+    line.push(b'\n');
+    let path = std::path::Path::new(log);
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    // 追加句柄一次 write：多个 hook 进程同时写也不会互相穿插；打开失败（杀毒 / 索引短暂占用）稍等重试
+    for i in 0..60u64 {
+        let opened = std::fs::OpenOptions::new().create(true).append(true).open(path);
+        if let Ok(mut f) = opened {
+            if f.write_all(&line).is_ok() {
+                return 0;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10 + (i * 7) % 31));
+    }
+    1
+}
+
 fn read_frame(stdin: &mut impl Read) -> Option<Vec<u8>> {
     let mut len_buf = [0u8; 4];
     stdin.read_exact(&mut len_buf).ok()?;
@@ -109,6 +162,12 @@ fn load_helper_ctx() -> Result<HelperCtx, String> {
 }
 
 fn main() {
+    // `mesa_helper hook <日志路径> <截断字节数>`：Windows 上给 CLI hooks 写状态日志（代替每次起一个
+    // PowerShell，~1 秒 → 几十毫秒）。浏览器拉起 native messaging 时第一个参数是扩展来源，不会是 hook
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("hook") {
+        std::process::exit(run_hook(&args[2..]));
+    }
     let mut stdin = std::io::stdin().lock();
     let mut stdout = std::io::stdout().lock();
     while let Some(frame) = read_frame(&mut stdin) {
