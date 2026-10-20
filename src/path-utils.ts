@@ -101,3 +101,17 @@ export function revealFolderLabel(isMac: boolean, isWindows: boolean): string {
   if (isWindows) return "在资源管理器中显示";
   return "在文件管理器中显示";
 }
+
+/** filePath 落在 root 内时给相对路径（正斜杠，写进给 agent 的指令），否则原样（剥 verbatim）。
+ *  跨方言判定走 pathWithin：Windows 上后端给 `\` 分隔，旧写法拼 `${root}/` 永不命中。 */
+export function relativeUnder(
+  filePath: string,
+  root: string,
+  isWindows: boolean,
+): string {
+  const shown = stripVerbatim(filePath);
+  if (!root || !pathWithin(filePath, root, isWindows)) return shown;
+  const c = normSep(shown);
+  const r = normSep(stripVerbatim(root)).replace(/\/+$/, "");
+  return c.length > r.length + 1 ? c.slice(r.length + 1) : shown;
+}

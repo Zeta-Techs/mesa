@@ -165,7 +165,19 @@ pub(crate) fn replace(tmp: &Path, path: &Path) -> Result<(), String> {
             writable.set_readonly(false);
             fs::set_permissions(path, writable).map_err(|e| e.to_string())?;
         }
-        let result = fs::rename(tmp, path);
+        let mut attempt = 0;
+        let result = loop {
+            match fs::rename(tmp, path) {
+                Ok(()) => break Ok(()),
+                Err(e) => match replace_retry_delay(e.raw_os_error(), attempt) {
+                    Some(delay) => {
+                        std::thread::sleep(delay);
+                        attempt += 1;
+                    }
+                    None => break Err(e),
+                },
+            }
+        };
         if readonly {
             if let Some(permissions) = original {
                 let _ = fs::set_permissions(path, permissions);
@@ -175,6 +187,26 @@ pub(crate) fn replace(tmp: &Path, path: &Path) -> Result<(), String> {
     }
     #[cfg(not(windows))]
     fs::rename(tmp, path).map_err(|e| e.to_string())
+}
+
+/// Windows 上 rename 的瞬时失败码：5 拒绝访问 / 32 共享冲突 / 33 锁冲突——
+/// Defender、索引器、OneDrive 同步或 Office 刚好打开目标文件时的典型表现，稍等即可成功。
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+const TRANSIENT_REPLACE_ERRORS: [i32; 3] = [5, 32, 33];
+/// 重试退避（毫秒）：首次失败后最多再试这么多次，总等待约 0.7s，有界不死等
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+const REPLACE_BACKOFF_MS: [u64; 5] = [30, 60, 120, 200, 250];
+
+/// 第 attempt 次（从 0 计）失败后是否重试、等多久；非瞬时错误或次数用尽返回 None
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn replace_retry_delay(raw_os_error: Option<i32>, attempt: usize) -> Option<std::time::Duration> {
+    let code = raw_os_error?;
+    if !TRANSIENT_REPLACE_ERRORS.contains(&code) {
+        return None;
+    }
+    REPLACE_BACKOFF_MS
+        .get(attempt)
+        .map(|ms| std::time::Duration::from_millis(*ms))
 }
 
 // ===== 有界读取（慢/无响应文件系统防线） =====
@@ -358,6 +390,29 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 原子替换重试：只认瞬时错误码、次数有界、退避递增
+    #[test]
+    fn replace_retry_only_transient_and_bounded() {
+        for code in [5, 32, 33] {
+            assert_eq!(
+                replace_retry_delay(Some(code), 0),
+                Some(std::time::Duration::from_millis(30))
+            );
+        }
+        // 非瞬时错误（如 2 文件不存在、183 已存在）与无系统码：不重试
+        assert_eq!(replace_retry_delay(Some(2), 0), None);
+        assert_eq!(replace_retry_delay(Some(183), 0), None);
+        assert_eq!(replace_retry_delay(None, 0), None);
+        // 有界：总尝试 = 1 + 退避次数，用尽即放弃，不死循环
+        let delays: Vec<_> = (0..20)
+            .map_while(|i| replace_retry_delay(Some(32), i))
+            .collect();
+        assert_eq!(delays.len(), REPLACE_BACKOFF_MS.len());
+        assert!(delays.windows(2).all(|w| w[0] <= w[1]), "退避应单调不减");
+        assert!(delays.iter().map(|d| d.as_millis()).sum::<u128>() < 1000);
+    }
+
     #[test]
     fn concurrent_read_modify_write_lock_preserves_both_updates() {
         let dir = std::env::temp_dir().join(format!("ccode-lock-test-{}", uuid::Uuid::new_v4()));

@@ -29,6 +29,24 @@
   （ESC[6n）并读 stdin 等回答，无人应答永久挂起——`run_streaming_pty` 的 reader 代答 ESC[24;120R。
   shim 深化（解析 JS 入口改 node 直启）统一在 `process.rs`：`pty_command`（PTY）与 `background_command`（后台）
   双入口同一口径，npm.cmd 自身走固定布局 special case。
+- **Windows 硬化规则（2026-10-19 全量排查定稿）**：
+  - 路径：`fs::canonicalize` 在 Windows 产出 `\\?\` 前缀，存库 / 回给前端 / 写进给 Agent 的指令前一律走
+    `paths::canonicalize_plain`；跨来源比较一律 `paths::same_path` / `path_within`；前端相对化用 `path-utils.relativeUnder`。
+  - 删工作区：Windows 不能删除正被进程当作 cwd 的目录（`git worktree remove --force` 会删一半），有任何终端
+    （含普通 shell）开在工作树里先拒绝并点名，不强删（`pty::ensure_workspace_free`）。
+  - 原子写：`storage::replace` 只对 os error 5/32/33（杀毒、索引、OneDrive 短暂占用）有限重试；git 调用一律带
+    `core.longpaths=true`（`git_info::PLATFORM_GIT_CONFIG`）。
+  - 命令输出：禁止按本地化文案判断成败（中文 Windows 是 GBK），用退出码；PowerShell 脚本开头先切 UTF-8；
+    `clip.exe` 写 UTF-16LE+BOM；每个 Python 子进程带 `PYTHONUTF8=1` / `PYTHONIOENCODING=utf-8`；netstat 按列位置解析且
+    同时查 `tcp` 与 `tcpv6`；Windows 上结束进程一律 `kill_process_tree` / `taskkill /T /F`。
+  - 写进 CLI 配置的 Windows hooks 不得含内联 PowerShell、`$` 或单引号（会被 bash / PowerShell / cmd 宿主吞掉），
+    逻辑放 `.ps1`、命令只带双引号路径；读任何 CLI 配置（JSON / TOML）先 `mcp::strip_bom`；读失败报错，不得当文件不存在。
+  - 外部 cmd 拉起用 `/S /K "<整行>"` + 外层 `^` 转义；带 `%` 或换行的参数走 `.cmd` 包装，只有包装里才把 `%` 翻倍。
+  - 内嵌终端的 PowerShell 带 `-ExecutionPolicy Bypass`（仅本进程）；复制给用户粘贴的命令写 `.exe` / `.cmd` 绝对路径，
+    不写裸名（裸名先命中 npm 的 `.ps1`，被 Restricted 策略拦）；往 shell 写命令以 `\r` 结尾、单引号用 `''` 转义。
+  - 界面：自绘标题栏恒在最上，页内全屏层与 z≥40 遮罩在 Windows 从标题栏下沿起铺，要整窗覆盖的层（沉浸阅读）
+    加 `ccode-covers-titlebar` 且自带拖拽区与 `WindowControls`；WebView2 的刷新 / 打印 / 查找 / 后退快捷键与默认右键
+    由 `windows-shell.ts` 收口；Windows 10 无 Mica 时 `data-material=none` 回实心底。
 - **Windows PDF 预览白屏**：WebView2 + 全局 `color-scheme:dark` 下，pdf.js 默认不透明 2d canvas 与
   `.textLayer { color-scheme:only light }` 会合成整页白块；经典滚动条改 clientWidth 再叠加
   `key={renderKey}` 会拆掉 canvas 振荡闪白。渲染前必须先绑 `alpha:true` 上下文，页宿主锁定 light

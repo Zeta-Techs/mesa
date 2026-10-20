@@ -7,6 +7,8 @@ provides: [blender-research]
 
 # 科研 Blender 示意
 
+> 命令里的 `python3` 指本机 Python 3：**Windows 上改用 `python`**（Windows 的 `python3` 是应用商店占位程序，一运行就失败）；macOS / Linux 用 `python3`。
+
 ## 科学与授权边界
 
 先确认图要说明什么、数据或结构来源、单位、比例、素材许可和哪些部分仅为示意。

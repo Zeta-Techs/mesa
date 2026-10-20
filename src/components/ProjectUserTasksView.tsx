@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Archive, Play, Plus, RotateCw } from "lucide-react";
-import { runInboxAction, useAppStore } from "../store";
+import { runInboxAction, selectHiddenProfiles, useAppStore } from "../store";
 import {
   AGENTS,
   type ProjectDto,
@@ -117,7 +117,7 @@ export default function ProjectUserTasksView({
   onUrgentGoals?: (urgent: boolean) => void;
 }) {
   const profiles = useAppStore((state) => state.profiles);
-  const hiddenProfiles = useAppStore((state) => state.settings?.hiddenProfiles ?? []);
+  const hiddenProfiles = useAppStore(selectHiddenProfiles);
   const setPage = useAppStore((state) => state.setPage);
   const setPendingTerminal = useAppStore((state) => state.setPendingTerminal);
   const [tasks, setTasks] = useState<TaskDto[]>([]);

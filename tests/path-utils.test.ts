@@ -10,6 +10,7 @@ import {
   samePath,
   stripVerbatim,
   abbrevHome,
+  relativeUnder,
 } from "../src/path-utils.ts";
 
 test("normSep 统一反斜杠为正斜杠", () => {
@@ -106,4 +107,23 @@ test("abbrevHome 把家目录前缀折成 ~", () => {
     abbrevHome("C:\\Users\\me\\src", "C:\\Users\\me", true),
     "~/src",
   );
+});
+
+test("relativeUnder：Windows 反斜杠 / 大小写 / verbatim 前缀都能截成相对路径", () => {
+  assert.equal(
+    relativeUnder(String.raw`C:\Users\Me\proj\.ccode\handoff-1.md`, String.raw`c:\users\me\proj`, true),
+    ".ccode/handoff-1.md",
+  );
+  assert.equal(
+    relativeUnder(String.raw`\\?\C:\Users\Me\proj\notes\a.md`, String.raw`C:\Users\Me\proj\ `.trim(), true),
+    "notes/a.md",
+  );
+  // 不在根内：原样（剥 verbatim）
+  assert.equal(
+    relativeUnder(String.raw`\\?\D:\other\a.md`, String.raw`C:\Users\Me\proj`, true),
+    String.raw`D:\other\a.md`,
+  );
+  // macOS / Linux 大小写敏感
+  assert.equal(relativeUnder("/Users/me/proj/a.md", "/Users/me/proj", false), "a.md");
+  assert.equal(relativeUnder("/users/me/proj/a.md", "/Users/me/proj", false), "/users/me/proj/a.md");
 });

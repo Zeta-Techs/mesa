@@ -14,6 +14,8 @@ struct FontSpec {
     family: &'static str,
     /// brew cask 名
     cask: &'static str,
+    /// 官方发布页：Windows 无 brew，只能指引用户手动下载
+    download_url: &'static str,
     /// 文件名小写包含任一关键字即视为已安装
     keywords: &'static [&'static str],
 }
@@ -23,6 +25,7 @@ static FONT_SPECS: &[FontSpec] = &[
         id: "maple",
         family: "Maple Mono NF CN",
         cask: "font-maple-mono-nf-cn",
+        download_url: "https://github.com/subframe7536/maple-font/releases",
         keywords: &["maplemono", "maple-mono"],
     },
     FontSpec {
@@ -30,18 +33,32 @@ static FONT_SPECS: &[FontSpec] = &[
         family: "Sarasa Mono SC",
         // sarasa-gothic 包含 Mono SC
         cask: "font-sarasa-gothic",
+        download_url: "https://github.com/be5invis/Sarasa-Gothic/releases",
         keywords: &["sarasa"],
     },
     FontSpec {
         id: "iosevka",
         family: "Iosevka",
         cask: "font-iosevka",
+        download_url: "https://github.com/be5invis/Iosevka/releases",
         keywords: &["iosevka"],
     },
 ];
 
 fn spec_for(font_id: &str) -> Option<&'static FontSpec> {
     FONT_SPECS.iter().find(|s| s.id == font_id)
+}
+
+/// 应用内一键安装只走 brew cask；Windows 没有这条路，前端据 `canInstall` 隐藏「安装」按钮
+const CAN_INSTALL: bool = !cfg!(windows);
+
+/// Windows 上的手动安装指引（也是误调 install_font 时的返回文案）
+fn manual_install_hint(spec: &FontSpec) -> String {
+    format!(
+        "Windows 暂不支持在 Mesa 内一键安装字体。请到官方发布页下载 {}：{}
+         解压后选中字体文件，右键选「安装」或「为所有用户安装」，装好后回到设置页刷新即可。",
+        spec.family, spec.download_url
+    )
 }
 
 /// 平台字体目录：用户目录走 dirs 抽象；系统目录无 dirs 对应抽象，按 cfg 给标准路径
@@ -124,6 +141,10 @@ pub struct FontStatusDto {
     pub id: String,
     pub family: String,
     pub installed: bool,
+    /// 本平台能否应用内安装（Windows 为 false）
+    pub can_install: bool,
+    /// 官方下载页，供手动安装
+    pub download_url: String,
 }
 
 #[tauri::command]
@@ -134,6 +155,8 @@ pub fn font_status() -> Vec<FontStatusDto> {
             id: s.id.into(),
             family: s.family.into(),
             installed: font_installed(s),
+            can_install: CAN_INSTALL,
+            download_url: s.download_url.into(),
         })
         .collect()
 }
@@ -150,6 +173,12 @@ fn install_font_sync(app: &AppHandle, spec: &'static FontSpec) -> FontInstallDto
         return FontInstallDto {
             ok: true,
             output: format!("{} 已安装，无需重复安装", spec.family),
+        };
+    }
+    if !CAN_INSTALL {
+        return FontInstallDto {
+            ok: false,
+            output: manual_install_hint(spec),
         };
     }
     if agents::resolve_binary("brew").is_none() {
@@ -201,6 +230,16 @@ mod tests {
         assert!(spec_for("menlo").is_none());
         assert!(spec_for("Maple").is_none());
         assert!(spec_for("").is_none());
+    }
+
+    #[test]
+    fn manual_hint_points_to_official_release_page() {
+        for spec in FONT_SPECS {
+            assert!(spec.download_url.starts_with("https://github.com/"), "{}", spec.id);
+            let hint = manual_install_hint(spec);
+            assert!(hint.contains(spec.download_url) && hint.contains(spec.family), "{hint}");
+        }
+        assert_eq!(CAN_INSTALL, !cfg!(windows));
     }
 
     #[test]

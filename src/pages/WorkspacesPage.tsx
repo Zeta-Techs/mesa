@@ -113,6 +113,7 @@ import {
 import { sortWorkspacesByAttention } from "../project-status";
 import { samePath as samePathKey } from "../path-utils";
 import { toast } from "../toast";
+import { GitInstallOffer } from "../dep-install";
 import {
   DEFAULT_PROJECT_SURFACE_TAB,
   projectSurfaceStorageKey,
@@ -1475,7 +1476,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   ) {
     setWorkspaceReviewRequest({
       worktreePath: workspace.worktreePath,
-      runId: runIdForPath(terminalRunInputs, workspace.worktreePath),
+      runId: runIdForPath(terminalRunInputs, workspace.worktreePath, IS_WINDOWS),
       action,
       requestId: crypto.randomUUID(),
     });
@@ -1510,7 +1511,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
         action: {
           type: "review" as const,
           worktreePath: w.worktreePath,
-          runId: runIdForPath(terminalRunInputs, w.worktreePath),
+          runId: runIdForPath(terminalRunInputs, w.worktreePath, IS_WINDOWS),
           intent: "resolve-conflict" as const,
         },
       })),
@@ -1595,6 +1596,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
           agentBusy: workspaceAgentBusy(
             w.worktreePath,
             terminalRunInputs,
+            IS_WINDOWS,
           ),
         }),
       )
@@ -1606,7 +1608,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
         action: {
           type: "review" as const,
           worktreePath: w.worktreePath,
-          runId: runIdForPath(terminalRunInputs, w.worktreePath),
+          runId: runIdForPath(terminalRunInputs, w.worktreePath, IS_WINDOWS),
         },
       })),
     // 产物待核验：预期产物已全部产出但尚无提交（可合并/冲突已覆盖的情形不重复报）——
@@ -2000,14 +2002,14 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
     <div className="relative flex h-full flex-col bg-rail2">
       {/* 待你处理（全局收件箱）：文档流单行 strip（只占 32px，不顶开工作台）；
           全空不渲染。按类别拆胶囊，点胶囊展开该类明细（悬浮下拉，遮罩/Esc 关闭）。
-          macOS 上收件箱收进自绘标题栏（Ghostty 式），页内 strip 不渲染（Windows/Linux 保留本 strip） */}
-      {!IS_MAC && inboxOpen && (
+          macOS / Windows 上收件箱收进自绘标题栏（Ghostty 式），页内 strip 不渲染（仅 Linux 保留本 strip） */}
+      {!IS_MAC && !IS_WINDOWS && inboxOpen && (
         <div
           className="fixed inset-0 z-10"
           onClick={() => setInboxOpen(false)}
         />
       )}
-      {!IS_MAC && inboxItems.length > 0 && (
+      {!IS_MAC && !IS_WINDOWS && inboxItems.length > 0 && (
         <section className="relative z-20 shrink-0 px-6 pt-2">
           <div className="relative mx-auto w-full">
             <button
@@ -2110,7 +2112,17 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
           onChromeAction={requestIdentityChrome}
         />
       )}
-      {error && <NoticeBar tone="err" className="mb-4" onDismiss={() => setError(null)}>{error}</NoticeBar>}
+      {error && (
+        <NoticeBar tone="err" className="mb-4" onDismiss={() => setError(null)}>
+          {error}
+          {/* 开步时缺 Git（ensure_git_repo 报「找不到 git 可执行文件」）：就地一键安装，装好再开工 */}
+          <GitInstallOffer
+            error={error}
+            onInstalled={() => setError(null)}
+            retryHint="Git 装好了，再点一次「开工」即可"
+          />
+        </NoticeBar>
+      )}
       {notice && (
         <NoticeBar className="mb-4" onDismiss={() => setNotice(null)}>
           {notice}
@@ -2358,6 +2370,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                   workspaceAgentBusy(
                     workspace.worktreePath,
                     terminalRunInputs,
+                    IS_WINDOWS,
                   ),
                 );
                 const canResolveConflict =
@@ -2682,6 +2695,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
             workspaceAgentBusy(
               detailsPopover.ws.worktreePath,
               terminalRunInputs,
+              IS_WINDOWS,
             ),
           )}
           diagFailed={

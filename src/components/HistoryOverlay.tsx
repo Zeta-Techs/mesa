@@ -7,6 +7,7 @@ import {
   type WsStepMap,
 } from "../history-view";
 import { EmptyState } from "./PageFrame";
+import { GitInstallOffer } from "../dep-install";
 import type { HistoryEntryDto } from "../types";
 
 /**
@@ -28,6 +29,8 @@ export default function HistoryOverlay({
 }) {
   const [entries, setEntries] = useState<HistoryEntryDto[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 一键装好 Git 后重新读取
+  const [reloadTick, setReloadTick] = useState(0);
 
   // Esc 关闭（与应用内其他浮层一致）
   useEffect(() => {
@@ -40,6 +43,7 @@ export default function HistoryOverlay({
 
   useEffect(() => {
     let stale = false;
+    setError(null);
     invoke<HistoryEntryDto[]>("project_history", { repoPath, limit: 100 })
       .then((list) => {
         if (!stale) setEntries(list);
@@ -50,7 +54,7 @@ export default function HistoryOverlay({
     return () => {
       stale = true;
     };
-  }, [repoPath]);
+  }, [repoPath, reloadTick]);
 
   const groups = useMemo(
     () => (entries ? groupHistoryByDay(entries) : []),
@@ -79,10 +83,13 @@ export default function HistoryOverlay({
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="mx-auto w-full max-w-3xl px-8 py-4">
           {error ? (
-            <p className="rounded-sm ccode-well p-3 text-xs">
-              <span className="mr-1 text-err-text">✗</span>
-              <span className="text-l2">{error}</span>
-            </p>
+            <div className="rounded-sm ccode-well p-3 text-xs">
+              <p>
+                <span className="mr-1 text-err-text">✗</span>
+                <span className="text-l2">{error}</span>
+              </p>
+              <GitInstallOffer error={error} onInstalled={() => setReloadTick((n) => n + 1)} />
+            </div>
           ) : entries === null ? (
             <p className="text-xs text-l4">读取中…</p>
           ) : entries.length === 0 ? (

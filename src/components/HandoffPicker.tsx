@@ -4,6 +4,8 @@ import { useAppStore } from "../store";
 import { AGENTS } from "../types";
 import type { HandoffBriefDto, HandoffTargetDto } from "../types";
 import { InlineNotice } from "./PageFrame";
+import { IS_WINDOWS } from "../hotkeys";
+import { relativeUnder } from "../path-utils";
 
 /** 接力来源会话（终端标签 / 对话页回放共用） */
 export interface HandoffSource {
@@ -60,10 +62,7 @@ export default function HandoffPicker({
 
   /** 简报路径相对项目目录（默认落 cwd/.ccode/ 下），指令里用相对路径 */
   function relPath(filePath: string): string {
-    const root = source.cwd.replace(/[\\/]+$/, "");
-    return filePath.startsWith(`${root}/`)
-      ? filePath.slice(root.length + 1)
-      : filePath;
+    return relativeUnder(filePath, source.cwd, IS_WINDOWS);
   }
 
   /** 开新终端标签预填启动（同 cwd、目标 agent、接力指令为首条 prompt） */

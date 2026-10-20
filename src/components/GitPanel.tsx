@@ -21,10 +21,10 @@ import { confirmDialog } from "./ConfirmDialog";
 import ImagePairView, { isImagePath } from "./ImagePairView";
 import { useAppStore } from "../store";
 import { defaultCommitMessage } from "../git-commit-message";
-import { isGitMissingError } from "../dep-check";
-import { DepInstallLog, useDepInstall } from "../dep-install";
+import { GitInstallOffer } from "../dep-install";
 import { fileTypeIcon } from "../file-icons";
 import { groupFilesByStatus, statusBadgeTitle } from "../git-status-groups";
+import { IS_MAC } from "../hotkeys";
 
 interface GitStatusDto {
   isRepo: boolean;
@@ -283,14 +283,7 @@ function GitPanel({
     });
   }, [cwd, onTotals]);
 
-  // git 缺失时的一键安装（与设置页诊断区共用 dep-install 管线）：
-  // 装完重试面板刷新 + 刷新依赖体检（收件箱「依赖」条目随之消失）
-  const refreshDepCheck = useAppStore((s) => s.refreshDepCheck);
-  const depInstall = useDepInstall((_tool, res) => {
-    if (!res.ok) return;
-    void refreshDepCheck();
-    void refresh();
-  });
+  // git 缺失时的一键安装出口见 GitInstallOffer（与设置页诊断区共用 dep-install 管线）
 
   // cwd / 可见性变化：重置勾选与展开的 diff 并立即刷新；可见时每 8s 轮询
   useEffect(() => {
@@ -893,18 +886,7 @@ function GitPanel({
           <div className="p-3">
             <p className="text-xs text-err-text">{error}</p>
             {/* git 缺失（后端固定错误串，见 dep-check.ts）：错误行旁给一键安装出口 */}
-            {isGitMissingError(error) && (
-              <div className="mt-2">
-                <button
-                  onClick={() => void depInstall.install("git")}
-                  disabled={depInstall.entries.git.running}
-                  className="rounded-sm bg-strip px-2 py-1 text-xs text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50"
-                >
-                  {depInstall.entries.git.running ? "安装中…" : "一键安装 Git"}
-                </button>
-                <DepInstallLog entry={depInstall.entries.git} />
-              </div>
-            )}
+            <GitInstallOffer error={error} onInstalled={() => void refresh()} />
           </div>
         ) : !status ? (
           <div className="p-2"><LoadingRows compact /></div>
@@ -1065,7 +1047,7 @@ function GitPanel({
             <button
               onClick={() => void doCommit(false)}
               disabled={!canCommit}
-              title="git commit：把勾选的改动提交到任务分支（⌘Enter）"
+              title={`git commit：把勾选的改动提交到任务分支（${IS_MAC ? "⌘" : "Ctrl+"}Enter）`}
               className={`flex-1 rounded-sm border px-3 py-1.5 text-sm disabled:opacity-50 ${
                 canCommit
                   ? "border-cta-bd bg-cta text-cta-text hover:brightness-110"

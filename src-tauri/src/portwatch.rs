@@ -149,7 +149,9 @@ fn parse_lsof_cwd(text: &str) -> Vec<(u32, PathBuf)> {
     out
 }
 
-/// 解析 `netstat -ano -p tcp`（Windows）：LISTENING 行取本地端口与 pid
+/// 解析 `netstat -ano -p tcp` / `-p tcpv6`（Windows）：监听行取本地端口与 pid。
+/// 只按列位置判定，不认本地化文字：状态列在德/法等语言版 Windows 上会被翻译（如 ABHÖREN），
+/// 而监听套接字的外部地址端口恒为 0（`0.0.0.0:0` / `[::]:0`），以此作为语言无关的判据。
 /// cfg：生产路径仅 Windows 调用；保留 test 变体让解析测试在 unix CI 上也能跑
 #[cfg(any(windows, test))]
 fn parse_netstat_listeners(text: &str) -> Vec<Listener> {
@@ -157,10 +159,12 @@ fn parse_netstat_listeners(text: &str) -> Vec<Listener> {
     for line in text.lines() {
         let tokens: Vec<&str> = line.split_whitespace().collect();
         // 列：协议 本地地址 外部地址 状态 PID
-        if tokens.len() < 5
-            || !tokens[0].eq_ignore_ascii_case("tcp")
-            || !tokens[3].eq_ignore_ascii_case("listening")
-        {
+        if tokens.len() != 5 || !tokens[0].eq_ignore_ascii_case("tcp") {
+            continue;
+        }
+        let listening = tokens[3].eq_ignore_ascii_case("listening")
+            || tokens[2].rsplit(':').next() == Some("0");
+        if !listening {
             continue;
         }
         let Ok(pid) = tokens[4].parse::<u32>() else {
@@ -172,7 +176,7 @@ fn parse_netstat_listeners(text: &str) -> Vec<Listener> {
         let Ok(port) = port_str.parse::<u16>() else {
             continue;
         };
-        if out.iter().any(|l| l.pid == pid && l.port == port) {
+        if port == 0 || out.iter().any(|l| l.pid == pid && l.port == port) {
             continue;
         }
         out.push(Listener {
@@ -238,13 +242,19 @@ fn collect_listeners() -> Result<Vec<Listener>, String> {
 #[cfg(windows)]
 fn collect_listeners() -> Result<Vec<Listener>, String> {
     // netstat/tasklist 是 System32 系统组件（同 workspaces.rs 的 cmd），不经 resolve_binary
-    let mut cmd = crate::process::background_command("netstat");
-    cmd.args(["-ano", "-p", "tcp"]);
-    let (ok, out, err) = run_capture(cmd, Duration::from_secs(15))?;
-    if !ok {
-        return Err(format!("netstat 执行失败: {}", err.trim()));
+    // `-p tcp` 只列 IPv4；Node 17+ 的 localhost 默认绑 [::1]，必须再查 tcpv6 才看得见
+    let mut text = String::new();
+    for proto in ["tcp", "tcpv6"] {
+        let mut cmd = crate::process::background_command("netstat");
+        cmd.args(["-ano", "-p", proto]);
+        let (ok, out, err) = run_capture(cmd, Duration::from_secs(15))?;
+        if !ok {
+            return Err(format!("netstat 执行失败: {}", err.trim()));
+        }
+        text.push_str(&out);
+        text.push('\n');
     }
-    let mut listeners = parse_netstat_listeners(&out);
+    let mut listeners = parse_netstat_listeners(&text);
     let mut cmd = crate::process::background_command("tasklist");
     cmd.args(["/fo", "csv", "/nh"]);
     // tasklist 失败时保留空进程名展示，不阻断端口列表
@@ -415,11 +425,12 @@ fn terminate(pid: u32) -> Result<(), String> {
     }
 }
 
-/// 不带 /F：相当于优雅退出请求，与 unix TERM 对齐；进程不退由用户自行处理
+/// 必须 /T /F：不带 /F 的 taskkill 只向窗口发 WM_CLOSE，无窗口的控制台进程（node/python 服务）
+/// 直接拒绝退出；/T 连带子进程。pid 复用已由调用方 ensure_still_listening 重新校验。
 #[cfg(windows)]
 fn terminate(pid: u32) -> Result<(), String> {
     let mut cmd = crate::process::background_command("taskkill");
-    cmd.args(["/PID", &pid.to_string()]);
+    cmd.args(["/T", "/F", "/PID", &pid.to_string()]);
     let (ok, out, err) = run_capture(cmd, Duration::from_secs(10))?;
     if ok {
         Ok(())
@@ -572,6 +583,32 @@ n/Users/tz/work/myrepo
         assert_eq!(
             got.iter().map(|l| (l.pid, l.port)).collect::<Vec<_>>(),
             vec![(1234, 4000), (5678, 3000)]
+        );
+    }
+
+    #[test]
+    fn parses_netstat_ipv6_and_localized_states() {
+        // `-p tcp` 与 `-p tcpv6` 输出拼接；状态列为德语（ABHÖREN）时按外部端口 0 识别监听
+        let sample = "\
+Aktive Verbindungen
+
+  Proto  Lokale Adresse         Remoteadresse          Status           PID
+  TCP    0.0.0.0:135            0.0.0.0:0              ABHÖREN         1100
+  TCP    127.0.0.1:52000        127.0.0.1:52001        HERGESTELLT     2200
+
+Active Connections
+
+  Proto  Local Address          Foreign Address        State           PID
+  TCP    [::1]:5173             [::]:0                 LISTENING       4321
+  TCP    [::]:135               [::]:0                 ABHÖREN         1100
+  TCP    [fe80::1%12]:7680      [::]:0                 LISTENING       880
+  TCP    [::1]:5173             [::1]:60123            ESTABLISHED     4321
+  TCP    [::1]:60123            [::1]:5173             TIME_WAIT       0
+";
+        let got = parse_netstat_listeners(sample);
+        assert_eq!(
+            got.iter().map(|l| (l.pid, l.port)).collect::<Vec<_>>(),
+            vec![(1100, 135), (4321, 5173), (880, 7680)]
         );
     }
 

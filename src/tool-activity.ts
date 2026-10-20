@@ -7,6 +7,8 @@
  * Kimi StrReplaceFile{path,edit} …），按名字归类、按常见参数键取对象；认不出的照「调用 工具名」，原参数展开可看。
  */
 
+import { normSep, pathWithin, stripVerbatim } from "./path-utils.ts";
+
 export type ActivityKind =
   | "edit"
   | "write"
@@ -123,19 +125,24 @@ function lineCount(text: string): number {
 
 const HOME_RE = /^(?:\/Users\/[^/]+|\/home\/[^/]+|[A-Za-z]:\/Users\/[^/]+)(?=\/|$)/;
 
-/** 文件名与目录：工作目录内写相对路径，家目录折成 ~，目录带尾斜杠 */
-export function splitPath(path: string, cwd: string | null): { name: string; dir: string } {
-  let p = path.replace(/\\/g, "/");
-  const root = cwd ? cwd.replace(/\\/g, "/").replace(/\/+$/, "") : "";
-  if (root && (p === root || p.startsWith(`${root}/`))) p = p.slice(root.length + 1);
+/** 文件名与目录：工作目录内写相对路径，家目录折成 ~，目录带尾斜杠。
+ *  「在工作目录内」走 path-utils（verbatim/分隔符统一，Windows 折叠大小写；isWindows 显式传入） */
+export function splitPath(
+  path: string,
+  cwd: string | null,
+  isWindows = false,
+): { name: string; dir: string } {
+  let p = normSep(stripVerbatim(path));
+  const root = cwd ? normSep(stripVerbatim(cwd)).replace(/\/+$/, "") : "";
+  if (root && cwd && pathWithin(path, cwd, isWindows)) p = p.slice(root.length + 1);
   else p = p.replace(HOME_RE, "~");
   const idx = p.lastIndexOf("/");
   if (idx < 0) return { name: p, dir: "" };
   return { name: p.slice(idx + 1), dir: p.slice(0, idx + 1) };
 }
 
-function shortPath(path: string, cwd: string | null): string {
-  const { name, dir } = splitPath(path, cwd);
+function shortPath(path: string, cwd: string | null, isWindows: boolean): string {
+  const { name, dir } = splitPath(path, cwd, isWindows);
   return dir + name;
 }
 
@@ -290,8 +297,8 @@ function base(kind: ActivityKind, toolName: string, input: string): ToolActivity
   };
 }
 
-function withPath(a: ToolActivity, path: string, cwd: string | null): ToolActivity {
-  const { name, dir } = splitPath(path, cwd);
+function withPath(a: ToolActivity, path: string, cwd: string | null, isWindows: boolean): ToolActivity {
+  const { name, dir } = splitPath(path, cwd, isWindows);
   return { ...a, target: name, dir, path };
 }
 
@@ -300,7 +307,12 @@ function firstLine(text: string): string {
 }
 
 /** 一次工具调用拆成的动作（补丁一次改多个文件时是多行） */
-export function toolActivities(toolName: string | null, input: string, cwd: string | null): ToolActivity[] {
+export function toolActivities(
+  toolName: string | null,
+  input: string,
+  cwd: string | null,
+  isWindows = false,
+): ToolActivity[] {
   const name = toolName ?? "tool";
   const args = parseArgs(input);
   const n = normName(name);
@@ -320,7 +332,7 @@ export function toolActivities(toolName: string | null, input: string, cwd: stri
         const kind: ActivityKind = f.op === "add" ? "write" : f.op === "delete" ? "delete" : "edit";
         const counts = countDiff(f.lines);
         return {
-          ...withPath(base(kind, name, input), f.path, cwd),
+          ...withPath(base(kind, name, input), f.path, cwd, isWindows),
           verb: f.op === "add" ? "新建" : VERB[kind],
           added: f.op === "delete" ? null : counts.added,
           removed: f.op === "delete" ? null : counts.removed,
@@ -349,13 +361,13 @@ export function toolActivities(toolName: string | null, input: string, cwd: stri
   if (n === "strreplacebasededittool" || n === "strreplaceeditor") {
     const cmd = str(args, "command") ?? "";
     const path = str(args, "path", "file_path") ?? "";
-    if (cmd === "view") return [withPath(base("read", name, input), path, cwd)];
+    if (cmd === "view") return [withPath(base("read", name, input), path, cwd, isWindows)];
     if (cmd === "create") {
       const content = str(args, "file_text", "content") ?? "";
-      return [{ ...withPath(base("write", name, input), path, cwd), added: lineCount(content), diff: lineDiff("", content) }];
+      return [{ ...withPath(base("write", name, input), path, cwd, isWindows), added: lineCount(content), diff: lineDiff("", content) }];
     }
     const diff = lineDiff(str(args, "old_str") ?? "", str(args, "new_str") ?? "");
-    return [{ ...withPath(base("edit", name, input), path, cwd), ...countDiff(diff), diff }];
+    return [{ ...withPath(base("edit", name, input), path, cwd, isWindows), ...countDiff(diff), diff }];
   }
 
   const kind = kindOf(name);
@@ -372,23 +384,23 @@ export function toolActivities(toolName: string | null, input: string, cwd: stri
         if (i > 0) diff.push({ op: "~", text: "" });
         diff.push(...lineDiff(before, after));
       });
-      const out = filePath ? withPath(a, filePath, cwd) : { ...a, target: name };
+      const out = filePath ? withPath(a, filePath, cwd, isWindows) : { ...a, target: name };
       return [diff.length ? { ...out, ...countDiff(diff), diff } : out];
     }
     case "write": {
       const content = str(args, "content", "file_text", "contents", "text") ?? "";
-      const out = filePath ? withPath(a, filePath, cwd) : { ...a, target: name };
+      const out = filePath ? withPath(a, filePath, cwd, isWindows) : { ...a, target: name };
       return [{ ...out, added: lineCount(content), removed: null, diff: content ? lineDiff("", content) : null }];
     }
     case "delete":
     case "read":
-      return [filePath ? withPath(a, filePath, cwd) : { ...a, target: name }];
+      return [filePath ? withPath(a, filePath, cwd, isWindows) : { ...a, target: name }];
     case "list":
-      return [{ ...a, target: filePath ? shortPath(filePath, cwd) || "." : "." }];
+      return [{ ...a, target: filePath ? shortPath(filePath, cwd, isWindows) || "." : "." }];
     case "search": {
       const pattern = str(args, "pattern", "query", "regex", "glob", "q", "search") ?? name;
       const where = str(args, "path", "dir_path", "directory", "include");
-      return [{ ...a, target: pattern, note: where ? shortPath(where, cwd) || null : null }];
+      return [{ ...a, target: pattern, note: where ? shortPath(where, cwd, isWindows) || null : null }];
     }
     case "run": {
       const command = commandOf(args) ?? "";
@@ -432,7 +444,7 @@ export function toolActivities(toolName: string | null, input: string, cwd: stri
     default: {
       // 认不出的工具：照名字，参数里有路径 / 命令 / 关键词就挑一个当对象
       const command = commandOf(args);
-      if (filePath) return [{ ...withPath(a, filePath, cwd), verb: `调用 ${name}` }];
+      if (filePath) return [{ ...withPath(a, filePath, cwd, isWindows), verb: `调用 ${name}` }];
       if (command) return [{ ...a, kind: "run", verb: "运行", target: firstLine(command), command }];
       return [{ ...a, target: name }];
     }

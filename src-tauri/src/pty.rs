@@ -107,20 +107,92 @@ impl PtyManager {
             .map(|(pty_id, _)| pty_id.clone())
     }
 
-    /// 返回指定工作区里仍存活的 agent/run 脚本类型；普通登录 shell 不阻止归档。
+    /// 返回指定工作区里仍存活、会阻止移除工作树的终端类型。
+    /// macOS/Linux：普通登录 shell 不阻止（归档后前端把它 cd 回主仓库）。
+    /// Windows：进程所在目录删不掉，且 PowerShell 的 cd（Set-Location）不改进程 cwd——
+    /// 切回主仓库也解不开占用，`git worktree remove` 会删掉一半文件后失败；shell 一并拦下。
     pub(crate) fn active_workspace_tasks(&self, worktree_path: &str) -> Vec<&'static str> {
-        self.entries
+        let entries = self.entries.lock().unwrap();
+        workspace_blockers(
+            entries
+                .values()
+                .map(|entry| (entry.purpose, entry.initial_cwd.as_str())),
+            worktree_path,
+            cfg!(windows),
+        )
+    }
+
+    /// 移除工作树前的占用闸：有阻止项时给出可操作的中文报错（action 如「归档」「删除」）。
+    pub(crate) fn ensure_workspace_free(&self, worktree_path: &str, action: &str) -> Result<(), String> {
+        match workspace_busy_message(&self.active_workspace_tasks(worktree_path), action) {
+            Some(msg) => Err(msg),
+            None => Ok(()),
+        }
+    }
+}
+
+/// 应用唯一的 PTY 管理器（首次拉起终端时登记）。删除项目目录这类拿不到 tauri State 的
+/// 移除路径用它复查占用；从未开过终端时为 None = 无占用。
+static LIVE_MANAGER: std::sync::OnceLock<PtyManager> = std::sync::OnceLock::new();
+
+/// 不经命令层的工作树移除（如彻底删除项目时级联删工作区）调用：仅 Windows 有占用问题，
+/// 其它平台恒放行，行为不变。
+pub(crate) fn ensure_workspace_free_global(worktree_path: &str, action: &str) -> Result<(), String> {
+    if !cfg!(windows) {
+        return Ok(());
+    }
+    match LIVE_MANAGER.get() {
+        Some(m) => m.ensure_workspace_free(worktree_path, action),
+        None => Ok(()),
+    }
+}
+
+/// 启动目录落在 root 内的存活终端数（任意用途，含普通 shell）。从未开过终端时为 0。
+pub(crate) fn live_ptys_within(root: &str) -> usize {
+    LIVE_MANAGER.get().map_or(0, |m| {
+        m.entries
             .lock()
             .unwrap()
             .values()
-            .filter(|entry| path_within(&entry.initial_cwd, worktree_path))
-            .filter_map(|entry| match entry.purpose {
-                PtyPurpose::Agent => Some("agent"),
-                PtyPurpose::Script => Some("run 脚本"),
-                PtyPurpose::Shell => None,
-            })
-            .collect()
+            .filter(|entry| path_within(&entry.initial_cwd, root))
+            .count()
+    })
+}
+
+/// 纯判定：哪些终端落在工作树内且会阻止移除。shells_hold_dir = Windows 语义（shell 也占目录）。
+fn workspace_blockers<'a>(
+    entries: impl Iterator<Item = (PtyPurpose, &'a str)>,
+    worktree_path: &str,
+    shells_hold_dir: bool,
+) -> Vec<&'static str> {
+    entries
+        .filter(|(_, cwd)| path_within(cwd, worktree_path))
+        .filter_map(|(purpose, _)| match purpose {
+            PtyPurpose::Agent => Some("agent"),
+            PtyPurpose::Script => Some("run 脚本"),
+            PtyPurpose::Shell if shells_hold_dir => Some("终端"),
+            PtyPurpose::Shell => None,
+        })
+        .collect()
+}
+
+/// 阻止项 → 报错文案；空 = 放行
+fn workspace_busy_message(kinds: &[&str], action: &str) -> Option<String> {
+    if kinds.is_empty() {
+        return None;
     }
+    let shells = kinds.iter().filter(|k| **k == "终端").count();
+    if shells == 0 {
+        return Some(format!(
+            "工作区仍有 {} 个 agent/run 脚本在运行，请先停止或关闭对应终端标签再{action}",
+            kinds.len()
+        ));
+    }
+    Some(format!(
+        "工作区目录正被 {} 个终端标签使用（其中 {shells} 个是普通终端）。Windows 不能删除正在使用中的目录，\
+         强行{action}只会删掉一半。请先在终端页关闭在这个工作区里打开的标签（标签目录在该工作区下的那些），再{action}",
+        kinds.len()
+    ))
 }
 
 /// 从缓冲头部取出尽可能多的完整 UTF-8 文本，返回 (文本, 消耗字节数)。
@@ -425,6 +497,7 @@ fn spawn_tracked(
     let visible = Arc::new(AtomicBool::new(false)); // 默认不可见：前端随即按标签状态标记
     let backlog = Arc::new(Mutex::new(Vec::new()));
     let bracketed_paste = Arc::new(AtomicBool::new(false));
+    LIVE_MANAGER.get_or_init(|| manager.clone());
     manager.entries.lock().unwrap().insert(
         pty_id.clone(),
         PtyEntry {
@@ -989,12 +1062,19 @@ pub fn pty_id_for_run(manager: tauri::State<'_, PtyManager>, run_id: String) -> 
 /// 选 PowerShell 而非 cmd：它是 Windows 10+ 标配与 Windows Terminal 的默认交互 shell，
 /// 且单引号引用语义与 POSIX 接近，前端预填的 `cd '<路径>'` 无需另写一套转义。
 /// `-l` 是 POSIX 登录 shell 专属参数，Windows 侧不传。
+/// `-ExecutionPolicy Bypass` 只作用于这个进程：客户端 Windows 默认策略 Restricted，
+/// 用户在内置终端敲 `codex`/`claude` 会命中 npm 生成的 `.ps1` 垫片并报「禁止运行脚本」。
+/// 不改用户机器/账户级策略；组策略强制的策略仍优先（PowerShell 自身语义）。
 #[cfg(windows)]
 fn login_shell_argv() -> (String, Vec<String>) {
     if let Some(ps) = crate::agents::resolve_binary("powershell") {
         return (
             ps.to_string_lossy().into_owned(),
-            vec!["-NoLogo".to_string()],
+            vec![
+                "-NoLogo".to_string(),
+                "-ExecutionPolicy".to_string(),
+                "Bypass".to_string(),
+            ],
         );
     }
     (
@@ -1560,6 +1640,14 @@ mod tests {
                 std::path::Path::new(&shell).exists() || shell.eq_ignore_ascii_case("cmd.exe"),
                 "选出的 shell 必须真实存在: {shell}"
             );
+            if shell.to_ascii_lowercase().contains("powershell") {
+                // 回归：默认 Restricted 策略下 npm 的 .ps1 垫片（codex/claude）跑不起来
+                let pos = args.iter().position(|a| a == "-ExecutionPolicy");
+                assert!(
+                    pos.is_some_and(|i| args.get(i + 1).map(String::as_str) == Some("Bypass")),
+                    "PowerShell 须以进程级 -ExecutionPolicy Bypass 启动: {args:?}"
+                );
+            }
         }
         #[cfg(not(windows))]
         assert_eq!(args, vec!["-l".to_string()], "POSIX 侧保持登录 shell 语义");
@@ -1685,5 +1773,50 @@ mod tests {
         // 退出状态被缓存：再次探测仍为 false，且 wait 能取到真实状态
         assert!(!child_running(&mut child));
         assert!(child.try_wait().unwrap().is_some());
+    }
+
+    /// 工作树移除闸：Windows 语义下普通 shell 也占目录（否则 git worktree remove 删一半后失败）；
+    /// 非 Windows 语义保持旧行为——只拦 agent / run 脚本
+    #[test]
+    fn workspace_blockers_shell_semantics_per_platform() {
+        let wt = "/ws/task";
+        let entries = [
+            (PtyPurpose::Shell, "/ws/task"),
+            (PtyPurpose::Shell, "/ws/task/sub"),
+            (PtyPurpose::Agent, "/ws/task"),
+            (PtyPurpose::Script, "/ws/task2"), // 段边界：不是 /ws/task 内
+            (PtyPurpose::Shell, "/repo"),
+        ];
+        let posix = workspace_blockers(entries.iter().copied(), wt, false);
+        assert_eq!(posix, vec!["agent"]);
+        let win = workspace_blockers(entries.iter().copied(), wt, true);
+        assert_eq!(win, vec!["终端", "终端", "agent"]);
+        // 跨方言（Windows 分隔符/大小写由 path_within 处理）
+        #[cfg(windows)]
+        {
+            let e = [(PtyPurpose::Shell, r"C:\Users\A\ws\Task\src")];
+            assert_eq!(
+                workspace_blockers(e.iter().copied(), r"\\?\c:\users\a\ws\task", true),
+                vec!["终端"]
+            );
+        }
+    }
+
+    #[test]
+    fn workspace_busy_message_names_action_and_shells() {
+        assert_eq!(workspace_busy_message(&[], "归档"), None);
+        let agent = workspace_busy_message(&["agent"], "归档").unwrap();
+        assert!(agent.contains("agent/run 脚本") && agent.ends_with("再归档"), "{agent}");
+        let shell = workspace_busy_message(&["终端", "agent"], "删除").unwrap();
+        assert!(shell.contains("2 个终端标签"), "{shell}");
+        assert!(shell.contains("1 个是普通终端"), "{shell}");
+        assert!(shell.contains("关闭") && shell.ends_with("再删除"), "{shell}");
+    }
+
+    #[test]
+    fn empty_manager_never_blocks() {
+        assert!(PtyManager::default()
+            .ensure_workspace_free("/ws/task", "归档")
+            .is_ok());
     }
 }

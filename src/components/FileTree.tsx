@@ -24,6 +24,7 @@ import {
   normSep,
   normalizeStatusKeys,
   parentDir,
+  pathWithin,
   revealFolderLabel,
 } from "../path-utils";
 import { IS_MAC, IS_WINDOWS } from "../hotkeys";
@@ -71,12 +72,6 @@ const STATUS_WORD: Record<string, string> = {
 function basenameOf(p: string): string {
   const parts = p.replace(/[\\/]+$/, "").split(/[\\/]/);
   return parts[parts.length - 1] || p;
-}
-
-function pathWithin(path: string, base: string): boolean {
-  const normalizedPath = path.replace(/\\/g, "/").replace(/\/+$/, "");
-  const normalizedBase = base.replace(/\\/g, "/").replace(/\/+$/, "");
-  return normalizedPath === normalizedBase || normalizedPath.startsWith(`${normalizedBase}/`);
 }
 
 /** 搜索结果是否落在隐藏目录/文件上（`.ccode` 本来就显示，不算） */
@@ -564,7 +559,7 @@ function FileTree({
 
   // 当前项目已在下方文件树中，不在“最近”里重复；最多保留四个真正可切换的目标。
   const recent = recentRepos
-    .filter((repo) => !pathWithin(root, repo.path))
+    .filter((repo) => !pathWithin(root, repo.path, IS_WINDOWS))
     .slice(0, 4);
   return (
     <div className="flex min-h-0 flex-1 flex-col">

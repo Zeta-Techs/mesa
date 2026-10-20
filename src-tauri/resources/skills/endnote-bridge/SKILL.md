@@ -8,6 +8,8 @@ provides: [endnote-bridge]
 
 # EndNote 格式桥接（endnote-bridge）
 
+> 命令里的 `python3` 指本机 Python 3：**Windows 上改用 `python`**（Windows 的 `python3` 是应用商店占位程序，一运行就失败）；macOS / Linux 用 `python3`。
+
 本技能规定「项目 references.bib ⇄ EndNote 库」以及「定稿 Markdown → 可换样式的 Word 域稿」的桥接口径。采用文件交换：生成导入 XML、从 `[@键]` 写出真正的 `ADDIN EN.CITE` 域（traveling library，不依赖记录号）、解析 EndNote 导出回流。
 **禁止** Word COM / 模拟点击 Insert Citation；**禁止**把 `{Author, Year}` 写进可见正文（EndNote 会弹「Select Matching Reference」）。人只打开域稿点一次 Update Citations and Bibliography。
 

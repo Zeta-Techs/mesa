@@ -36,6 +36,7 @@ import { workspaceCarrySource } from "../workspace-resume";
 import { filterProjectSessions } from "../project-status";
 import { pickDiscussResume } from "../step-flow";
 import { IS_WINDOWS } from "../hotkeys";
+import { normSep, relativeUnder } from "../path-utils";
 import { AGENTS } from "../types";
 import {
   projectAgentLaunch,
@@ -642,9 +643,8 @@ export default function TaskCardsSection({
   }
 
   function briefRel(worktreePath: string, filePath: string): string {
-    const root = worktreePath.replace(/[\\/]+$/, "").replace(/\\/g, "/");
-    const norm = filePath.replace(/\\/g, "/");
-    return norm.startsWith(`${root}/`) ? norm.slice(root.length + 1) : norm;
+    // 工作树外的原样路径也统一正斜杠（写进给 agent 的指令，沿用旧口径）
+    return normSep(relativeUnder(filePath, worktreePath, IS_WINDOWS));
   }
 
   async function carryAndContinue() {
@@ -858,7 +858,7 @@ export default function TaskCardsSection({
     // 在跑闸门（与聚焦步骤「AI 干活」行同款互斥）：Agent 正在出字/等确认时点「继续」
     // 会在同一工作区并行拉起第二条会话——两个 Agent 并发写一棵树。此时只给「去终端
     // 看看」回到在跑的对话（reuseKey 命中活标签只聚焦）；跑完/闲置才恢复「继续」。
-    const attention = boundWs ? stepAttention(boundWs, terminalRunInputs) : null;
+    const attention = boundWs ? stepAttention(boundWs, terminalRunInputs, IS_WINDOWS) : null;
     const agentLive = attention === "working" || attention === "confirm";
     return (
       <li key={card.id} className="group">

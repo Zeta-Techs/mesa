@@ -316,6 +316,11 @@ pub fn resolve_git_bash() -> Option<std::path::PathBuf> {
 
 /// 在候选目录里按序找第一个存在的文件；Windows 下 npm 全局包是 .cmd shim，补扩展名匹配
 fn find_in_dirs(name: &str, dirs: &[std::path::PathBuf]) -> Option<std::path::PathBuf> {
+    find_all_in_dirs(name, dirs).into_iter().next()
+}
+
+/// 每个目录取一个命中（扩展名优先级同 find_in_dirs），按目录顺序返回全部
+fn find_all_in_dirs(name: &str, dirs: &[std::path::PathBuf]) -> Vec<std::path::PathBuf> {
     let names: Vec<String> = if cfg!(windows) {
         // Windows 上可执行的是 .exe/.cmd/.bat；npm 系目录里的裸名是 shell 脚本，
         // CreateProcess 直接起会报 os error 193——扩展名匹配必须优先，裸名只作兜底
@@ -329,8 +334,27 @@ fn find_in_dirs(name: &str, dirs: &[std::path::PathBuf]) -> Option<std::path::Pa
         vec![name.into()]
     };
     dirs.iter()
-        .flat_map(|d| names.iter().map(move |n| d.join(n)))
-        .find(|p| p.is_file())
+        .filter_map(|d| names.iter().map(|n| d.join(n)).find(|p| p.is_file()))
+        .collect()
+}
+
+/// 同名程序的全部候选：PATH 顺序在前、候选目录在后，去重。只给「PATH 上第一个可能是
+/// 占位程序」的场景用（Windows 应用商店的 python 占位）——调用方逐个验证能不能跑；
+/// 常规解析仍走 resolve_binary。
+pub fn resolve_binary_all(name: &str) -> Vec<std::path::PathBuf> {
+    let mut out: Vec<std::path::PathBuf> = which::which_all(name)
+        .map(|it| it.collect())
+        .unwrap_or_default();
+    for p in find_all_in_dirs(name, &crate::agent_specs::binary_candidate_dirs()) {
+        let key = p.to_string_lossy();
+        if !out
+            .iter()
+            .any(|q| crate::paths::same_path(&q.to_string_lossy(), &key))
+        {
+            out.push(p);
+        }
+    }
+    out
 }
 
 /// --version 探测的统一超时：正常 CLI 毫秒级返回，卡死的 CLI 不能拖住检测/更新流程
@@ -2416,6 +2440,23 @@ fn codex_config_provider_names(text: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// 复制给用户粘贴进自己 PowerShell 的命令：裸名 `codex` 会先命中 npm 生成的 codex.ps1，
+/// 被 Windows 客户端默认执行策略（Restricted）拦下「禁止运行脚本」。改写成解析出的
+/// .exe / .cmd 绝对路径，不经 .ps1；解析不到（或解析到无扩展名的 shell 脚本）退回裸名
+#[cfg(windows)]
+fn windows_paste_binary(binary: &str) -> String {
+    resolve_binary(binary)
+        .filter(|p| {
+            p.extension().is_some_and(|e| {
+                e.eq_ignore_ascii_case("exe")
+                    || e.eq_ignore_ascii_case("cmd")
+                    || e.eq_ignore_ascii_case("bat")
+            })
+        })
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| binary.to_string())
+}
+
 /// 复制用：返回该会话的恢复命令行。
 /// base_url：codex 会话走 Mesa 内联 provider（rollout 记 model_provider="ccode"）时必须
 /// 补上 provider 定义才能在外部恢复——定义不含密钥（env_key 是变量名引用）
@@ -2430,7 +2471,13 @@ pub fn session_resume_command(
     let binary = binary_for(agent_id).ok_or_else(|| format!("未知 agent: {agent_id}"))?;
     let extra = resume_extra_args(agent_id, base_url.as_deref(), provider.as_deref());
     #[cfg(target_os = "windows")]
-    return windows_resume_command_line(agent_id, session_id, cwd, binary, &extra);
+    return windows_resume_command_line(
+        agent_id,
+        session_id,
+        cwd,
+        &windows_paste_binary(binary),
+        &extra,
+    );
     #[cfg(not(target_os = "windows"))]
     resume_command_line_with(agent_id, session_id, cwd, binary, &extra)
 }
@@ -2549,7 +2596,7 @@ fn windows_digest_command_line(
 pub fn session_digest_command(agent_id: &str, cwd: &str, prompt: &str) -> Result<String, String> {
     let binary = binary_for(agent_id).ok_or_else(|| format!("未知 agent: {agent_id}"))?;
     #[cfg(target_os = "windows")]
-    return windows_digest_command_line(agent_id, cwd, prompt, binary);
+    return windows_digest_command_line(agent_id, cwd, prompt, &windows_paste_binary(binary));
     #[cfg(not(target_os = "windows"))]
     digest_command_line_with(agent_id, cwd, prompt, binary)
 }
@@ -2741,7 +2788,9 @@ fn spawn_status(cmd: &mut Command, what: &str) -> Result<(), String> {
     }
 }
 
-/// cmd.exe 参数引用：无特殊字符原样；否则双引号包裹，内嵌 `"` 加倍、`%` 加倍防展开。
+/// cmd.exe 参数引用：无特殊字符原样；否则双引号包裹，内嵌 `"` 加倍。
+/// 不处理 `%`：命令行上（非批处理）`%%` 不是转义、原样留两个 %，也挡不住 %VAR% 展开——
+/// 含 `%`/换行的参数不走内联命令行，改写批处理包装（batch_quote_arg）。
 #[cfg(any(windows, test))]
 fn cmd_quote_arg(s: &str) -> String {
     let special = s.is_empty()
@@ -2758,11 +2807,42 @@ fn cmd_quote_arg(s: &str) -> String {
     for c in s.chars() {
         match c {
             '"' => out.push_str("\"\""),
-            '%' => out.push_str("%%"),
             _ => out.push(c),
         }
     }
     out.push('"');
+    out
+}
+
+/// .cmd 批处理正文里的参数：批处理里 `%%` 才是字面 `%`（防 %VAR% 展开）；
+/// 换行在 cmd 里无法表示（批处理按行执行），折成空格保住其余内容
+#[cfg(any(windows, test))]
+fn batch_quote_arg(s: &str) -> String {
+    let flat = s.replace("\r\n", " ").replace(['\r', '\n'], " ");
+    cmd_quote_arg(&flat).replace('%', "%%")
+}
+
+/// 内联 `cmd /K` 命令行放不下的参数：`%` 会被两层 cmd 各展开一次，换行会截断命令行
+#[cfg(any(windows, test))]
+fn cmd_inline_unsafe(s: &str) -> bool {
+    s.contains(['%', '\n', '\r'])
+}
+
+/// 外层 `cmd /C start …` 对内层 `/S /K "<inner>"` 的转义：外层看来引号奇偶与内层相反
+///（多包了一对引号），内层引号里的 `& | < > ^ ( )` 在外层是裸露的，要加 `^` 让外层原样交给 start
+#[cfg(any(windows, test))]
+fn cmd_outer_escape(inner: &str) -> String {
+    let mut out = String::with_capacity(inner.len() + 8);
+    // 进入 inner 之前已有一个开引号：外层视角初始在引号内
+    let mut quoted = true;
+    for c in inner.chars() {
+        if c == '"' {
+            quoted = !quoted;
+        } else if !quoted && matches!(c, '&' | '|' | '<' | '>' | '^' | '(' | ')') {
+            out.push('^');
+        }
+        out.push(c);
+    }
     out
 }
 
@@ -2780,16 +2860,47 @@ fn windows_start_prefix(cwd: &str) -> String {
 }
 
 /// 设置「命令提示符」：可见宿主是 cmd，密钥走父进程环境块经 start 继承，不经 PowerShell。
+///
+/// 必须 `/S /K "<整行>"`：不带 /S 时，只要整行引号多于两个（程序路径含空格、
+/// 参数也要引号），cmd 会剥掉首尾两个引号把路径拆坏（`C:\Program Files (x86)\…`、
+/// `C:\Users\John Smith\…` 实证）；/S 语义固定为只剥最外一对。
 #[cfg(any(windows, test))]
 fn windows_external_start_line_cmd(cwd: &str, binary: &str, args: &[String]) -> String {
-    let mut line = windows_start_prefix(cwd);
-    line.push_str(" cmd.exe /K ");
-    line.push_str(&cmd_quote_arg(binary));
+    windows_cmd_start_line_with(cwd, "", "/K", binary, args)
+}
+
+/// start_flags / switch 只为测试可换成 `/B /WAIT` + `/C`（不开可见窗口、跑完即退）
+#[cfg(any(windows, test))]
+fn windows_cmd_start_line_with(
+    cwd: &str,
+    start_flags: &str,
+    switch: &str,
+    binary: &str,
+    args: &[String],
+) -> String {
+    let mut inner = cmd_quote_arg(binary);
     for a in args {
-        line.push(' ');
-        line.push_str(&cmd_quote_arg(a));
+        inner.push(' ');
+        inner.push_str(&cmd_quote_arg(a));
     }
+    let mut line = windows_start_prefix(cwd);
+    if !start_flags.is_empty() {
+        line.push(' ');
+        line.push_str(start_flags);
+    }
+    line.push_str(&format!(" cmd.exe /S {switch} \"{}\"", cmd_outer_escape(&inner)));
     line
+}
+
+/// cmd 宿主的启动行：能内联就内联；含 `%`/换行或超长时返回 None，由调用方改写批处理包装
+#[cfg(any(windows, test))]
+#[cfg_attr(not(windows), allow(dead_code))]
+fn windows_external_cmd_inline(cwd: &str, binary: &str, args: &[String]) -> Option<String> {
+    if cmd_inline_unsafe(binary) || args.iter().any(|a| cmd_inline_unsafe(a)) {
+        return None;
+    }
+    let line = windows_external_start_line_cmd(cwd, binary, args);
+    (line.len() <= WINDOWS_START_LINE_MAX).then_some(line)
 }
 
 /// 设置「PowerShell」：可见宿主是 powershell -NoExit -File wrapper；
@@ -2810,19 +2921,26 @@ fn windows_external_start_line_ps(cwd: &str, wrapper: &Path) -> String {
 #[cfg_attr(not(windows), allow(dead_code))]
 const WINDOWS_START_LINE_MAX: usize = 7000;
 
+/// .cmd 包装器正文。批处理必须是单字节编码（UTF-16 会被读成乱码）；前两行 ASCII，chcp 65001 之后
+/// cmd 按 UTF-8 解码后续行——命令行里的中文 prompt 靠这个存活，别写成 UTF-16/带 BOM
+#[cfg(any(windows, test))]
+#[cfg_attr(not(windows), allow(dead_code))]
+fn external_cmd_wrapper_body(binary: &str, args: &[String]) -> String {
+    let mut body = String::from("@echo off\r\nchcp 65001 >nul\r\n");
+    body.push_str(&batch_quote_arg(binary));
+    for a in args {
+        body.push(' ');
+        body.push_str(&batch_quote_arg(a));
+    }
+    body.push_str("\r\n");
+    body
+}
+
 #[cfg(windows)]
 fn write_external_cmd_wrapper(binary: &str, args: &[String]) -> Result<PathBuf, String> {
     let dir = external_wrapper_dir()?;
     let path = dir.join(format!("launch-{}.cmd", uuid::Uuid::new_v4()));
-    // cmd 批处理必须是单字节编码（UTF-16 会被读成乱码）；前两行 ASCII，chcp 65001 之后
-    // cmd 按 UTF-8 解码后续行——命令行里的中文 prompt 靠这个存活，别写成 UTF-16/带 BOM
-    let mut body = String::from("@echo off\r\nchcp 65001 >nul\r\n");
-    body.push_str(&cmd_quote_arg(binary));
-    for a in args {
-        body.push(' ');
-        body.push_str(&cmd_quote_arg(a));
-    }
-    body.push_str("\r\n");
+    let body = external_cmd_wrapper_body(binary, args);
     std::fs::write(&path, body.as_bytes()).map_err(|e| format!("写入外部启动包装器失败: {e}"))?;
     // 只含 binary+args（密钥走环境块不经这里），无需额外 ACL；60s 兜底清理
     schedule_wrapper_cleanup(path.clone());
@@ -2887,12 +3005,12 @@ fn open_windows_external(
     }
     // cmd / auto：密钥放在父进程环境块，start 继承进可见 cmd。不经 PowerShell，
     // 避免 5.1 当 conhost 把 TUI 卡住，也避免 AMSI 扫描每次新写的 ps1。
-    let line = windows_external_start_line_cmd(&cwd, binary, args);
-    let line = if line.len() <= WINDOWS_START_LINE_MAX {
-        line
-    } else {
-        let wrapper = write_external_cmd_wrapper(binary, args)?;
-        windows_external_start_line_cmd(&cwd, &wrapper.to_string_lossy(), &[])
+    let line = match windows_external_cmd_inline(&cwd, binary, args) {
+        Some(line) => line,
+        None => {
+            let wrapper = write_external_cmd_wrapper(binary, args)?;
+            windows_external_start_line_cmd(&cwd, &wrapper.to_string_lossy(), &[])
+        }
     };
     spawn_windows_start(&line, env, env_remove)
 }
@@ -5768,7 +5886,7 @@ api_backend = "responses"
         );
         assert_eq!(
             line,
-            r#"start "Mesa" /D "C:\work\my proj" cmd.exe /K C:\tools\claude.cmd -r abc"#
+            r#"start "Mesa" /D "C:\work\my proj" cmd.exe /S /K "C:\tools\claude.cmd -r abc""#
         );
         assert!(!line.contains("powershell"));
         let spaced = windows_external_start_line_cmd(
@@ -5776,10 +5894,85 @@ api_backend = "responses"
             r"C:\Program Files\kimi\kimi.exe",
             &["-S".into(), "sid".into()],
         );
-        assert!(spaced.contains(r#""C:\Program Files\kimi\kimi.exe""#));
-        assert!(spaced.contains(" -S sid"));
+        // /S 只剥最外一对引号：路径自己的引号完整留给内层 cmd
+        assert!(spaced.ends_with(r#"cmd.exe /S /K ""C:\Program Files\kimi\kimi.exe" -S sid""#));
         assert_eq!(cmd_quote_arg(r#"a"b"#), r#""a""b""#);
-        assert_eq!(cmd_quote_arg("a%PATH%"), r#""a%%PATH%%""#);
+        // 内联命令行上 %% 不是转义：cmd_quote_arg 不再加倍，批处理正文才加倍
+        assert_eq!(cmd_quote_arg("a%PATH%"), r#""a%PATH%""#);
+        assert_eq!(batch_quote_arg("a%PATH%"), r#""a%%PATH%%""#);
+        assert_eq!(batch_quote_arg("l1\r\nl2\nl3"), r#""l1 l2 l3""#);
+    }
+
+    #[test]
+    fn windows_external_cmd_escapes_outer_layer_and_routes_percent_to_wrapper() {
+        // 外层 cmd /C 看来内层引号里的内容是裸露的：特殊字符要加 ^，路径括号也算
+        let line = windows_external_start_line_cmd(
+            r"C:\w",
+            r"C:\Program Files (x86)\n\codex.cmd",
+            &["a&b".into(), "plain".into()],
+        );
+        assert!(
+            line.ends_with(r#"/S /K ""C:\Program Files ^(x86^)\n\codex.cmd" "a^&b" plain""#),
+            "{line}"
+        );
+        assert_eq!(
+            windows_external_cmd_inline(r"C:\w", "codex", &["-r".into(), "id".into()]),
+            Some(r#"start "Mesa" /D "C:\w" cmd.exe /S /K "codex -r id""#.to_string())
+        );
+        for bad in ["100%", "%PATH%", "l1\nl2", "a\rb"] {
+            assert!(
+                windows_external_cmd_inline(r"C:\w", "codex", &[bad.into()]).is_none(),
+                "{bad:?} 必须改走批处理包装"
+            );
+        }
+        assert!(windows_external_cmd_inline(r"C:\w", r"C:\100%\codex.cmd", &[]).is_none());
+        let long = "x".repeat(WINDOWS_START_LINE_MAX);
+        assert!(windows_external_cmd_inline(r"C:\w", "codex", &[long]).is_none());
+        let body = external_cmd_wrapper_body(r"C:\Program Files\c.cmd", &["50% off".into()]);
+        assert_eq!(
+            body,
+            "@echo off\r\nchcp 65001 >nul\r\n\"C:\\Program Files\\c.cmd\" \"50%% off\"\r\n"
+        );
+    }
+
+    /// 真机：外层 cmd /C start（与生产同一 spawn_windows_start）→ 内层 cmd /S，程序在含空格和括号的
+    /// 目录里，参数含空格/&/|/^/括号/引号；包装器路径验证 % 原样到达。用 /B /WAIT + /C 不开可见窗口
+    #[cfg(windows)]
+    #[test]
+    fn windows_cmd_start_line_survives_real_cmd() {
+        let root = std::env::temp_dir().join(format!("ccode-start-{}", uuid::Uuid::new_v4()));
+        let bin_dir = root.join("Program Files (x86)").join("my tool");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        let out = bin_dir.join("out.txt");
+        let echo = bin_dir.join("echo args.cmd");
+        std::fs::write(&echo, "@echo %*> \"%~dp0out.txt\"\r\n").unwrap();
+        let echo_s = echo.to_string_lossy().into_owned();
+        let cwd = root.to_string_lossy().into_owned();
+
+        let args: Vec<String> = [
+            "a b", "x&y", "a^b", "p|q", "(paren)", "<lt>", r#"say "hi""#, "plain",
+        ]
+        .map(String::from)
+        .to_vec();
+        let line = windows_cmd_start_line_with(&cwd, "/B /WAIT", "/C", &echo_s, &args);
+        spawn_windows_start(&line, &[], &[]).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&out).unwrap().trim_end(),
+            r#""a b" "x&y" "a^b" "p|q" "(paren)" "<lt>" "say ""hi""" plain"#
+        );
+
+        std::fs::remove_file(&out).unwrap();
+        let wrapper = bin_dir.join("launch wrapper.cmd");
+        let pct: Vec<String> = ["100%", "%PATH%", "l1\nl2"].map(String::from).to_vec();
+        std::fs::write(&wrapper, external_cmd_wrapper_body(&echo_s, &pct)).unwrap();
+        let line =
+            windows_cmd_start_line_with(&cwd, "/B /WAIT", "/C", &wrapper.to_string_lossy(), &[]);
+        spawn_windows_start(&line, &[], &[]).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&out).unwrap().trim_end(),
+            r#""100%" "%PATH%" "l1 l2""#
+        );
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
@@ -5913,11 +6106,34 @@ api_backend = "responses"
 
     #[cfg(windows)]
     #[test]
+    fn paste_binary_avoids_ps1_shims() {
+        // 解析得到的必须是 .exe / .cmd 绝对路径（不经 npm 的 .ps1，躲开 Restricted 执行策略）
+        let node = windows_paste_binary("node");
+        assert!(
+            node.to_ascii_lowercase().ends_with("node.exe"),
+            "{node}"
+        );
+        // 解析不到就退回裸名
+        assert_eq!(windows_paste_binary("ccode-no-such-cli-7f3a"), "ccode-no-such-cli-7f3a");
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn candidate_dirs_cover_git_for_windows() {
         let dirs = crate::agent_specs::binary_candidate_dirs();
         // winget Git.Git / 官方安装器默认落点 %ProgramFiles%\Git\cmd
         assert!(dirs
             .iter()
             .any(|d| d.ends_with(std::path::Path::new("Git").join("cmd"))));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn candidate_dirs_cover_tinytex_from_quarto() {
+        let dirs = crate::agent_specs::binary_candidate_dirs();
+        // quarto install tinytex 落点 %APPDATA%\TinyTeX\bin\windows（旧版 win32）
+        let tinytex = std::path::Path::new("TinyTeX").join("bin");
+        assert!(dirs.iter().any(|d| d.ends_with(tinytex.join("windows"))));
+        assert!(dirs.iter().any(|d| d.ends_with(tinytex.join("win32"))));
     }
 }

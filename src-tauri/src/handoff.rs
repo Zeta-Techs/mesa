@@ -303,8 +303,9 @@ fn with_handoff_rule(existing: &str) -> Option<String> {
 /// 解析简报写入路径：默认 <cwd>/.ccode/handoff-<时间>.md；
 /// 自定义路径（相对则基于 cwd）的父目录必须 canonicalize 后仍在项目根内，防符号链接逃逸。
 fn handoff_target_path(cwd: &str, target_path: Option<&str>) -> Result<PathBuf, String> {
-    let root =
-        fs::canonicalize(sessions::expand_tilde(cwd)).map_err(|e| format!("项目目录无效: {e}"))?;
+    // 剥 verbatim：返回值会作为 filePath 交给前端与下一个 agent，`\\?\C:\…` 不能外漏
+    let root = crate::paths::canonicalize_plain(Path::new(&sessions::expand_tilde(cwd)))
+        .map_err(|e| format!("项目目录无效: {e}"))?;
     if !root.is_dir() {
         return Err("项目路径不是目录".into());
     }
@@ -333,15 +334,15 @@ fn handoff_target_path(cwd: &str, target_path: Option<&str>) -> Result<PathBuf, 
                 let Some(a) = ancestor else {
                     return Err("目标路径无效".into());
                 };
-                match fs::canonicalize(&a) {
+                match crate::paths::canonicalize_plain(&a) {
                     Ok(c) => break c,
                     Err(_) => ancestor = a.parent().map(Path::to_path_buf),
                 }
             };
-            if !canon.starts_with(&root) {
+            if !crate::paths::path_within_path(&canon, &root) {
                 return Err("目标路径必须位于项目目录内".into());
             }
-            Ok(candidate)
+            Ok(crate::paths::strip_verbatim(candidate))
         }
     }
 }
@@ -993,7 +994,11 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         let cwd = root.to_string_lossy().into_owned();
         let default = handoff_target_path(&cwd, None).unwrap();
-        assert!(default.starts_with(fs::canonicalize(&root).unwrap()));
+        assert!(default.starts_with(crate::paths::canonicalize_plain(&root).unwrap()));
+        assert!(
+            !default.to_string_lossy().starts_with(r"\\?\"),
+            "返回给前端/agent 的路径不得带 verbatim 前缀"
+        );
         assert!(default.to_string_lossy().contains(".ccode"));
         assert!(default.extension().is_some_and(|e| e == "md"));
         // 相对路径基于项目根

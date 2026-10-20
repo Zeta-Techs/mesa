@@ -10,10 +10,22 @@
     "core:window:allow-set-theme",
     "core:window:allow-title",
     "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
     "opener:default",
     {
       "identifier": "opener:allow-open-url",
       "allow": [{ "url": "codex://*" }]
+    },
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [
+        { "path": "$HOME/**" },
+        { "path": "$DOCUMENT/**" },
+        { "path": "$DESKTOP/**" },
+        { "path": "$DOWNLOAD/**" },
+        { "path": "$TEMP/**" }
+      ]
     },
     "dialog:default",
     "updater:default",

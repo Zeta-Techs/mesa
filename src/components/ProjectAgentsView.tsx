@@ -23,7 +23,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useAppStore } from "../store";
+import { selectHiddenProfiles, useAppStore } from "../store";
 import { toast } from "../toast";
 import { AGENTS, type CodingOverviewDto, type ProjectDto, type ScheduleDto, type TaskDto } from "../types";
 import { ghostActionClass } from "./PageFrame";
@@ -62,7 +62,7 @@ export default function ProjectAgentsView({
   onError: (message: string) => void;
 }) {
   const profiles = useAppStore((state) => state.profiles);
-  const hiddenProfiles = useAppStore((state) => state.settings?.hiddenProfiles ?? []);
+  const hiddenProfiles = useAppStore(selectHiddenProfiles);
   const setPage = useAppStore((state) => state.setPage);
   const [saving, setSaving] = useState(false);
   const [defaultAgent, setDefaultAgent] = useState(project.defaultAgent ?? "");

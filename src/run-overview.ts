@@ -1,8 +1,10 @@
-import { normSep } from "./path-utils.ts";
+import { pathWithin, samePath } from "./path-utils.ts";
 /**
  * 运行中总览（P5 聚合视图）的聚合/排序纯逻辑。
  * 输入全部由终端页现有 statuses 上报派生（TerminalView 本地轮询后镜像），
  * 不新增任何后端轮询；node --test 可直接单测。
+ * 路径比较一律走 path-utils（分隔符 / verbatim 统一，Windows 折叠大小写）；
+ * 平台由调用方显式传 isWindows，缺省 false = 大小写敏感（旧口径）。
  */
 
 /** 工作区的终端注意力：cwd 落在该工作区内的运行标签。confirm > working > done。
@@ -12,13 +14,12 @@ import { normSep } from "./path-utils.ts";
 export function stepAttention(
   ws: { worktreePath: string } | undefined,
   inputs: RunOverviewInput[],
+  isWindows = false,
 ): "confirm" | "done" | "working" | null {
   if (!ws) return null;
-  const root = normSep(ws.worktreePath).replace(/\/+$/, "");
   let found: "confirm" | "done" | "working" | null = null;
   for (const input of inputs) {
-    const cwd = normSep(input.cwd).replace(/\/+$/, "");
-    if (cwd !== root && !cwd.startsWith(`${root}/`)) continue;
+    if (!pathWithin(input.cwd, ws.worktreePath, isWindows)) continue;
     if (input.attention === "confirm") return "confirm";
     if (input.attention === "working") {
       found = "working";
@@ -61,13 +62,12 @@ export interface RunOverviewInput {
 export function runIdForPath(
   inputs: readonly RunOverviewInput[],
   path: string,
+  isWindows = false,
 ): string | null {
-  const key = path.replace(/\\/g, "/").replace(/\/+$/, "");
-  if (!key) return null;
-  const matches = inputs.filter((input) => {
-    const cwd = input.cwd.replace(/\\/g, "/").replace(/\/+$/, "");
-    return input.runId != null && cwd === key;
-  });
+  if (!path.replace(/[\\/]+$/, "")) return null;
+  const matches = inputs.filter(
+    (input) => input.runId != null && samePath(input.cwd, path, isWindows),
+  );
   // A path is not a Run identity. Only use this legacy bridge when it is
   // unambiguous; otherwise the review entry must remain explicitly unbound.
   return matches.length === 1 ? matches[0]!.runId ?? null : null;
@@ -100,13 +100,12 @@ export function cwdBasename(p: string): string {
 export function workspaceHasLiveAgent(
   worktreePath: string | undefined,
   inputs: readonly RunOverviewInput[],
+  isWindows = false,
 ): boolean {
   if (!worktreePath) return false;
-  const root = worktreePath.replace(/\\/g, "/").replace(/\/+$/, "");
   return inputs.some((input) => {
     if (!input.running || input.shell) return false;
-    const cwd = input.cwd.replace(/\\/g, "/").replace(/\/+$/, "");
-    return cwd === root || cwd.startsWith(`${root}/`);
+    return pathWithin(input.cwd, worktreePath, isWindows);
   });
 }
 
@@ -114,15 +113,14 @@ export function workspaceHasLiveAgent(
 export function workspaceAgentBusy(
   worktreePath: string | undefined,
   inputs: readonly RunOverviewInput[],
+  isWindows = false,
 ): boolean {
   if (!worktreePath) return false;
-  const root = worktreePath.replace(/\\/g, "/").replace(/\/+$/, "");
   return inputs.some((input) => {
     if (input.attention !== "working" && input.attention !== "confirm") {
       return false;
     }
-    const cwd = input.cwd.replace(/\\/g, "/").replace(/\/+$/, "");
-    return cwd === root || cwd.startsWith(`${root}/`);
+    return pathWithin(input.cwd, worktreePath, isWindows);
   });
 }
 
@@ -132,15 +130,15 @@ export function projectRailStatus(input: {
   needsAttention: number;
   roots: readonly string[];
   runs: readonly RunOverviewInput[];
+  /** 平台显式传入（Windows 折叠大小写）；缺省按大小写敏感比较 */
+  isWindows?: boolean;
 }): "warn" | "running" | null {
   if (input.needsAttention > 0) return "warn";
-  const roots = input.roots
-    .map((root) => root.replace(/\\/g, "/").replace(/\/+$/, ""))
-    .filter((root) => root.length > 0);
+  const isWindows = input.isWindows ?? false;
+  const roots = input.roots.filter((root) => root.replace(/[\\/]+$/, "").length > 0);
   const running = input.runs.some((run) => {
     if (!run.running || run.shell) return false;
-    const cwd = run.cwd.replace(/\\/g, "/").replace(/\/+$/, "");
-    return roots.some((root) => cwd === root || cwd.startsWith(`${root}/`));
+    return roots.some((root) => pathWithin(run.cwd, root, isWindows));
   });
   return running ? "running" : null;
 }

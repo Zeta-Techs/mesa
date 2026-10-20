@@ -193,7 +193,10 @@ function syncWindowsMica(light: boolean) {
     .setEffects({
       effects: [(light ? "micaLight" : "micaDark") as Effect],
     })
-    .catch(() => {});
+    // 挂不上（Windows 10 等）：App.css 的 data-material=none 回到实心底，不让桌面透出来
+    .catch(() => {
+      document.documentElement.dataset.material = "none";
+    });
 }
 
 /** 运行时切主题：Tailwind v4 @theme 的工具类引用 CSS 变量，覆盖 dataset.theme 即生效；
@@ -1270,3 +1273,10 @@ export const useAppStore = create<AppState>((set, get) => {
 export function useProfilesByAgent(agentId: string): Profile[] {
   return useAppStore((s) => s.profiles).filter((p) => p.agent === agentId);
 }
+
+const NO_HIDDEN_PROFILES: string[] = [];
+/** zustand 5 的选择器结果按引用比较：`?? []` 每次给新数组，hiddenProfiles 为 null 时组件
+ *  一挂载就无限重渲染（Maximum update depth exceeded，2026-10-19 Windows 实证：项目页起不来）。
+ *  缺省必须回落到同一个常量——选择器里一律不写 `?? []` / `?? {}`（tests/store-selector-lint 钉住） */
+export const selectHiddenProfiles = (s: AppState): string[] =>
+  s.settings?.hiddenProfiles ?? NO_HIDDEN_PROFILES;

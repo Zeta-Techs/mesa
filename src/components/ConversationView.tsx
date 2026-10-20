@@ -37,6 +37,7 @@ import {
   type ProcessTool,
 } from "../conversation-tools";
 import { resultStatusLabel, type ActivityKind, type DiffLine } from "../tool-activity";
+import { IS_WINDOWS } from "../hotkeys";
 
 /** 文本块超过该长度先截断，点「展开全部」再看完整内容 */
 const TEXT_CAP = 4000;
@@ -665,7 +666,7 @@ export default function ConversationView({
 
   return (
     <>
-      {groupConversationSegments(messages, { live: working, cwd: cwd ?? null }).map((seg) => {
+      {groupConversationSegments(messages, { live: working, cwd: cwd ?? null, isWindows: IS_WINDOWS }).map((seg) => {
         if (seg.kind === "turn") return renderTurn(seg);
         const m = seg.message;
         const mi = seg.index;

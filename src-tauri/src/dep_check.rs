@@ -40,6 +40,9 @@ pub struct DepItemDto {
     /// 未就绪的具体原因（目前只有 quarto 的残留环境变量），界面直接显示这一句
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// 还缺的前置依赖（目前只有 "python"：拼图库要先有 Python 3）。一键安装会先补上它
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prereq: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -67,6 +70,7 @@ fn missing_item() -> DepItemDto {
         version: None,
         path: None,
         note: None,
+        prereq: None,
     }
 }
 
@@ -78,6 +82,7 @@ fn ok_item(path: PathBuf) -> DepItemDto {
         version,
         path: Some(path.to_string_lossy().into_owned()),
         note: None,
+        prereq: None,
     }
 }
 
@@ -124,6 +129,7 @@ fn probe_git(os: HostOs) -> DepItemDto {
             version: None,
             path: Some(path.to_string_lossy().into_owned()),
             note: None,
+            prereq: None,
         };
     }
     ok_item(path)
@@ -198,26 +204,15 @@ fn stale_quarto_env_note(names: &[String]) -> Option<String> {
     ))
 }
 
-fn probe_python_module(module: &str) -> DepItemDto {
-    let python = agents::resolve_binary("python3").or_else(|| agents::resolve_binary("python"));
-    let Some(path) = python else {
-        return missing_item();
-    };
-    // 顺带打印版本（设置页原先一律显示「版本未知」）：PIL 与新版 PyMuPDF 有 __version__，
-    // 旧版 PyMuPDF 只有 VersionBind；都没有就空行，照旧算已安装
-    let script = format!(
-        "import {module} as m; print(getattr(m, '__version__', '') or getattr(m, 'VersionBind', ''))"
-    );
-    let child = crate::process::background_command(&path)
-        .args(["-c", &script])
+/// 跑一段 python 脚本，成功则回 stdout（5 秒超时）
+fn run_python(path: &Path, script: &str) -> Option<String> {
+    let mut child = crate::process::background_command(path)
+        .args(["-c", script])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
-        .spawn();
-    let mut child = match child {
-        Ok(child) => child,
-        Err(_) => return missing_item(),
-    };
+        .spawn()
+        .ok()?;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         match child.try_wait() {
@@ -227,23 +222,104 @@ fn probe_python_module(module: &str) -> DepItemDto {
                     use std::io::Read;
                     let _ = stdout.read_to_string(&mut out);
                 }
-                let version = out.lines().next().map(str::trim).filter(|v| !v.is_empty());
-                return DepItemDto {
-                    status: "ok".into(),
-                    version: version.map(String::from),
-                    path: Some(path.to_string_lossy().into_owned()),
-                    note: None,
-                };
+                return Some(out);
             }
-            Ok(Some(_)) => return missing_item(),
+            Ok(Some(_)) => return None,
             Ok(None) if std::time::Instant::now() >= deadline => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return missing_item();
+                return None;
             }
             Ok(None) => std::thread::sleep(std::time::Duration::from_millis(20)),
-            Err(_) => return missing_item(),
+            Err(_) => return None,
         }
+    }
+}
+
+/// macOS 的 /usr/bin/python3 与 /usr/bin/git 同为 CLT 占位：CLT 没装时一运行就弹系统安装窗，
+/// 不能拿它试跑
+fn is_python_stub_candidate(os: HostOs, path: &Path) -> bool {
+    os == HostOs::Macos && path == Path::new("/usr/bin/python3")
+}
+
+/// 真能跑的 Python。Windows 没装 Python 时 PATH 上的 python/python3 是应用商店占位程序
+/// （WindowsApps 下的 AppInstallerPythonRedirector），一运行就以错误码退出、什么也不输出
+/// ——只看文件在不在会拿它去跑 pip，界面只剩一句「安装失败」（2026-10-19 本机实证）。
+/// 所以把 PATH 与候选目录里的同名程序全列出来逐个试跑：一键补齐刚装好的 Python 不在
+/// 已运行 Mesa 的 PATH 上，也要靠候选目录找到。
+pub(crate) fn usable_python() -> Option<PathBuf> {
+    let os = current_os();
+    let mut stub_blocked: Option<bool> = None;
+    ["python3", "python"]
+        .into_iter()
+        .flat_map(agents::resolve_binary_all)
+        .filter(|p| {
+            !is_python_stub_candidate(os, p) || !*stub_blocked.get_or_insert_with(clt_missing)
+        })
+        .find(|p| run_python(p, "import sys").is_some())
+}
+
+/// 没有 Python 时一键补齐用哪条渠道装它（纯函数）：Windows 走 winget，macOS 走 Homebrew；
+/// 都没有就只能请人去 python.org
+fn python_install_channel(os: HostOs, has_brew: bool, has_winget: bool) -> Option<&'static str> {
+    match os {
+        HostOs::Windows if has_winget => Some("winget"),
+        HostOs::Macos if has_brew => Some("brew"),
+        _ => None,
+    }
+}
+
+fn no_python_msg(os: HostOs) -> String {
+    match os {
+        HostOs::Windows => "没有可用的 Python 3，也没有 winget 可以代装：请到 python.org 安装 Python 3（安装时勾选 Add python.exe to PATH），装完点「重新检测」".into(),
+        HostOs::Macos => "没有可用的 Python 3，也没有 Homebrew 可以代装：请到 python.org 安装 Python 3，或先安装 Homebrew，装完点「重新检测」".into(),
+        HostOs::Linux => "没有可用的 Python 3：请用发行版包管理器安装（如 sudo apt install python3 python3-pip），装完点「重新检测」".into(),
+    }
+}
+
+/// PyMuPDF 的导入名：新名优先，旧版退回 fitz
+const PYMUPDF_MODULES: &[&str] = &["pymupdf", "fitz"];
+
+/// 按顺序试导入，第一个成功的打印版本。PyMuPDF 新名 `pymupdf`（1.24+），旧版只有 `fitz`——
+/// 新版用 `fitz` 导入会先往 stdout 打一句弃用警告，设置页曾把它当成版本号显示（2026-10-19 实证）
+fn module_version_script(modules: &[&str]) -> String {
+    let names = modules
+        .iter()
+        .map(|m| format!("'{m}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "import importlib\nm = None\nfor n in [{names}]:\n    try:\n        m = importlib.import_module(n)\n        break\n    except ImportError:\n        pass\nif m is None:\n    raise SystemExit(1)\nprint(getattr(m, '__version__', '') or getattr(m, 'VersionBind', ''))"
+    )
+}
+
+/// 版本号取最后一个非空行：导入时库自己打的提示都在它前面
+fn last_line(out: &str) -> Option<String> {
+    out.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .last()
+        .map(String::from)
+}
+
+fn probe_python_module(modules: &[&str]) -> DepItemDto {
+    let Some(path) = usable_python() else {
+        return DepItemDto {
+            prereq: Some("python".into()),
+            ..missing_item()
+        };
+    };
+    // 顺带打印版本（设置页原先一律显示「版本未知」）：PIL 与新版 PyMuPDF 有 __version__，
+    // 旧版 PyMuPDF 只有 VersionBind；都没有就空行，照旧算已安装
+    match run_python(&path, &module_version_script(modules)) {
+        Some(out) => DepItemDto {
+            status: "ok".into(),
+            version: last_line(&out),
+            path: Some(path.to_string_lossy().into_owned()),
+            note: None,
+            prereq: None,
+        },
+        None => missing_item(),
     }
 }
 
@@ -282,8 +358,8 @@ fn check_dependencies_sync() -> Result<DepCheckDto, String> {
             (item.status == "ok").then_some(item)
         })
         .unwrap_or_else(missing_item);
-    let pymupdf = probe_python_module("fitz");
-    let pillow = probe_python_module("PIL");
+    let pymupdf = probe_python_module(PYMUPDF_MODULES);
+    let pillow = probe_python_module(&["PIL"]);
     let has_brew = os == HostOs::Macos && agents::resolve_binary("brew").is_some();
     let has_winget = os == HostOs::Windows && agents::resolve_binary("winget").is_some();
     Ok(DepCheckDto {
@@ -354,7 +430,8 @@ fn install_spec(tool: &str) -> InstallSpec {
         "tex" => InstallSpec {
             brew: "tectonic",
             brew_cask: false,
-            winget: "TectonicTypesetting.Tectonic",
+            // Windows 不走 winget（源里没有 Tectonic），见 install_tex_windows
+            winget: "",
             apt: "tectonic",
             site: "tectonic-typesetting.github.io",
         },
@@ -417,26 +494,26 @@ fn installed_after(tool: &str) -> bool {
         "tex" => ["xelatex", "tectonic", "pdflatex"]
             .into_iter()
             .any(|name| probe_named(name).status == "ok"),
-        "pymupdf" => probe_python_module("fitz").status == "ok",
-        "pillow" => probe_python_module("PIL").status == "ok",
+        "pymupdf" => probe_python_module(PYMUPDF_MODULES).status == "ok",
+        "pillow" => probe_python_module(&["PIL"]).status == "ok",
         other => probe_named(other).status == "ok",
     }
 }
 
 /// 装完成功：失效探测缓存后再探一次。Python 库和 TeX 没有单一二进制版本号。
 fn finish_install(tool: &str, ok: bool, output: String, method: &str) -> UpdateResultDto {
-    let version_after = if ok {
-        agents::invalidate_detect_cache();
-        updater::invalidate_check_cache();
-        if installed_after(tool) {
-            match tool {
-                "pymupdf" | "pillow" | "tex" => Some("已安装".into()),
-                other => agents::resolve_binary(other)
-                    .and_then(|p| agents::version_with_timeout(&p, agents::VERSION_QUERY_TIMEOUT))
-                    .or(Some("已安装".into())),
-            }
-        } else {
-            None
+    agents::invalidate_detect_cache();
+    updater::invalidate_check_cache();
+    let present = installed_after(tool);
+    // 命令报错但东西其实已就位（winget「已安装 / 没有可用升级」、Mesa 先前因 PATH 没认出
+    // 已装的程序等）也算装好——否则用户点了安装只看到「安装失败」，再点也一样
+    let ok = ok || present;
+    let version_after = if ok && present {
+        match tool {
+            "pymupdf" | "pillow" | "tex" => Some("已安装".into()),
+            other => agents::resolve_binary(other)
+                .and_then(|p| agents::version_with_timeout(&p, agents::VERSION_QUERY_TIMEOUT))
+                .or(Some("已安装".into())),
         }
     } else {
         None
@@ -460,44 +537,125 @@ fn install_with_brew(app: &AppHandle, tool: &str, package: &str, cask: bool) -> 
     finish_install(tool, ok, output, "brew")
 }
 
-fn python_for_install() -> Option<std::path::PathBuf> {
-    agents::resolve_binary("python3").or_else(|| agents::resolve_binary("python"))
+/// 拼图两个库一起装：普通用户分不清 PyMuPDF / Pillow，点任一行的「一键安装」都补齐两个
+const PIP_PACKAGES: [&str; 2] = ["pymupdf", "pillow"];
+
+/// winget 上的 Python 包：3.12 已停出安装包，用 3.13
+const WINGET_PYTHON_ID: &str = "Python.Python.3.13";
+
+/// 没有可用 Python 时先装 Python（一键补齐的第一步）。Windows 走 winget：只装当前用户
+/// （--scope user，不弹管理员确认），PrependPath=1 让它排在应用商店占位前面，新开的终端
+/// 和 agent 直接用上；macOS 走 brew install python。没有渠道返回 Err（界面按原因提示）。
+fn install_python(app: &AppHandle, tool: &str) -> Result<(bool, String, &'static str), String> {
+    let os = current_os();
+    let has_brew = os == HostOs::Macos && agents::resolve_binary("brew").is_some();
+    let has_winget = os == HostOs::Windows && agents::resolve_binary("winget").is_some();
+    let Some(channel) = python_install_channel(os, has_brew, has_winget) else {
+        return Err(no_python_msg(os));
+    };
+    use tauri::Emitter;
+    let _ = app.emit(
+        &format!("agent-update-output-{}", dep_key(tool)),
+        "还没有可用的 Python 3，先安装它（约 1–3 分钟），装好后接着装 PDF 处理库…\n",
+    );
+    let (program, args) = python_install_command(channel);
+    let (ok, output) = updater::run_streaming(app, &dep_key(tool), program, &args);
+    Ok((ok, output, channel))
 }
 
-fn pip_module(tool: &str) -> &'static str {
-    if tool == "pillow" { "pillow" } else { "pymupdf" }
+/// 装 Python 的命令行（纯函数，便于测试参数）
+fn python_install_command(channel: &str) -> (&'static str, Vec<String>) {
+    if channel == "winget" {
+        let mut args = updater::winget_args("install", WINGET_PYTHON_ID);
+        args.extend(["--scope", "user", "--custom", "PrependPath=1"].map(String::from));
+        ("winget", args)
+    } else {
+        ("brew", vec!["install".into(), "python".into()])
+    }
 }
 
-/// 拼图库走当前 python 的 pip。先普通装；本机禁止装进系统 Python 时再加 --user。
+/// pip 参数：externally_managed（PEP 668，Homebrew / 部分 Linux 的 Python）时装进用户目录。
+/// PEP 668 连 `--user` 也拦，必须同时带 --break-system-packages——只加 --user 的旧重试必然再失败
+fn pip_args(externally_managed: bool) -> Vec<String> {
+    let mut args: Vec<String> = ["-m", "pip", "install", "--disable-pip-version-check", "--no-input"]
+        .map(String::from)
+        .to_vec();
+    if externally_managed {
+        args.extend(["--user", "--break-system-packages"].map(String::from));
+    }
+    args.extend(PIP_PACKAGES.map(String::from));
+    args
+}
+
+/// 拼图库一键补齐：没有可用 Python 先装 Python，再用它的 pip 把两个库一起装上。
 fn install_with_pip(app: &AppHandle, tool: &str) -> Result<UpdateResultDto, String> {
-    let python = python_for_install().ok_or_else(|| {
-        "未找到 Python：先安装 Python 3，再点「一键安装」".to_string()
-    })?;
-    let module = pip_module(tool);
+    // 两行按钮装的是同一批东西（dep-pymupdf / dep-pillow 两个 key 各自不互斥），
+    // 并发会装两遍 Python
+    static FIGURE_LIBS_BUSY: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+    struct BusyGuard;
+    impl Drop for BusyGuard {
+        fn drop(&mut self) {
+            FIGURE_LIBS_BUSY.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    if FIGURE_LIBS_BUSY.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return Err("PyMuPDF 和 Pillow 正在一起安装，等它装完".into());
+    }
+    let _busy = BusyGuard;
+    let python = match usable_python() {
+        Some(p) => p,
+        None => {
+            let (ok, output, method) = install_python(app, tool)?;
+            if !ok {
+                return Ok(finish_install(tool, false, output, method));
+            }
+            agents::invalidate_detect_cache();
+            match usable_python() {
+                Some(p) => p,
+                None => {
+                    return Ok(finish_install(
+                        tool,
+                        false,
+                        format!("{output}\nPython 已装好，但 Mesa 这次还找不到它：重启 Mesa 后再点一次「一键安装」"),
+                        method,
+                    ))
+                }
+            }
+        }
+    };
     let program = python.to_string_lossy().into_owned();
-    let plain = vec![
-        "-m".into(),
-        "pip".into(),
-        "install".into(),
-        "--disable-pip-version-check".into(),
-        "--no-input".into(),
-        module.into(),
-    ];
-    let (ok, output) = updater::run_streaming(app, &dep_key(tool), &program, &plain);
+    let (ok, output) = updater::run_streaming(app, &dep_key(tool), &program, &pip_args(false));
     if ok {
         return Ok(finish_install(tool, true, output, "pip"));
     }
     if output.contains("externally-managed-environment") {
-        let mut args = plain.clone();
-        args.push("--user".into());
-        let (ok2, output2) = updater::run_streaming(app, &dep_key(tool), &program, &args);
+        let (ok2, output2) =
+            updater::run_streaming(app, &dep_key(tool), &program, &pip_args(true));
         return Ok(finish_install(tool, ok2, output2, "pip"));
     }
     Ok(finish_install(tool, false, output, "pip"))
 }
 
+/// winget 安装参数（纯函数）。Node.js 钉死系统级（MSI）：它的「仅当前用户」安装包是绿色
+/// 解压版，只在 WinGet\Links 挂 node 快捷方式、没有 npm.cmd——winget 设置偏好用户范围时会被
+/// 选中，装完 Agent CLI 照样装不了。
+fn winget_install_args(tool: &str, winget_id: &str) -> Vec<String> {
+    let mut args = updater::winget_args("install", winget_id);
+    if tool == "node" {
+        args.extend(["--scope", "machine"].map(String::from));
+    }
+    args
+}
+
 fn install_with_winget(app: &AppHandle, tool: &str, winget_id: &str) -> UpdateResultDto {
-    let args = updater::winget_args("install", winget_id);
+    // 系统级安装包（Git / Node.js / Quarto）会弹 UAC；普通用户不知道要点，先说一句
+    use tauri::Emitter;
+    let _ = app.emit(
+        &format!("agent-update-output-{}", dep_key(tool)),
+        "安装过程中 Windows 可能弹出「你要允许此应用对你的设备进行更改吗？」，请点「是」。\n",
+    );
+    let args = winget_install_args(tool, winget_id);
     let (ok, output) = updater::run_streaming(app, &dep_key(tool), "winget", &args);
     finish_install(tool, ok, output, "winget")
 }
@@ -531,9 +689,29 @@ fn install_macos(app: &AppHandle, tool: &str) -> Result<UpdateResultDto, String>
     Ok(install_with_brew(app, tool, spec.brew, spec.brew_cask))
 }
 
+/// Windows 的 TeX：winget 源里没有 Tectonic（2026-10-19 实测 `winget search tectonic` 无结果，
+/// 原先的 TectonicTypesetting.Tectonic 一装就「找不到程序包」），改用 Quarto 官方推荐的
+/// TinyTeX——Mesa 装 TeX 只为 Quarto 渲染 PDF，TinyTeX 还能在渲染时自动补缺失的宏包。
+/// 装到 %APPDATA%\TinyTeX；--update-path 写进用户 PATH，Mesa 自己靠 binary_candidate_dirs 找到。
+fn install_tex_windows(app: &AppHandle) -> Result<UpdateResultDto, String> {
+    let quarto = probe_quarto();
+    let Some(path) = quarto.path.filter(|_| quarto.status == "ok") else {
+        return Err("Windows 上的 TeX 由 Quarto 安装（TinyTeX）：先一键安装 Quarto，再装 TeX".into());
+    };
+    let args: Vec<String> = ["install", "tinytex", "--no-prompt", "--update-path"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let (ok, output) = updater::run_streaming(app, &dep_key("tex"), &path, &args);
+    Ok(finish_install("tex", ok, output, "quarto"))
+}
+
 fn install_windows(app: &AppHandle, tool: &str) -> Result<UpdateResultDto, String> {
     if matches!(tool, "pymupdf" | "pillow") {
         return install_with_pip(app, tool);
+    }
+    if tool == "tex" {
+        return install_tex_windows(app);
     }
     if agents::resolve_binary("winget").is_none() {
         return Err(no_winget_msg(tool));
@@ -699,11 +877,71 @@ mod tests {
         assert_eq!(install_spec("quarto").winget, "Posit.Quarto");
         assert_eq!(install_spec("tex").brew, "tectonic");
         assert!(!install_spec("tex").brew_cask);
-        assert_eq!(install_spec("tex").winget, "TectonicTypesetting.Tectonic");
-        assert_eq!(pip_module("pymupdf"), "pymupdf");
-        assert_eq!(pip_module("pillow"), "pillow");
+        // winget 源里没有 Tectonic：Windows 的 TeX 走 quarto install tinytex，不留 winget id
+        assert!(install_spec("tex").winget.is_empty());
         assert!(install_spec("pymupdf").brew.is_empty());
         assert!(install_spec("pillow").winget.is_empty());
+    }
+
+    #[test]
+    fn python_prereq_install_channels_and_commands() {
+        // 没有 Python 时的代装渠道：Windows 只认 winget，macOS 只认 brew，Linux 不代装
+        assert_eq!(python_install_channel(HostOs::Windows, false, true), Some("winget"));
+        assert_eq!(python_install_channel(HostOs::Windows, true, false), None);
+        assert_eq!(python_install_channel(HostOs::Macos, true, false), Some("brew"));
+        assert_eq!(python_install_channel(HostOs::Macos, false, true), None);
+        assert_eq!(python_install_channel(HostOs::Linux, true, true), None);
+        // winget：只装当前用户（不弹 UAC）、写进 PATH（排在应用商店占位前面）
+        let (prog, args) = python_install_command("winget");
+        assert_eq!(prog, "winget");
+        assert!(args.windows(2).any(|w| w == ["--id", WINGET_PYTHON_ID]));
+        assert!(args.windows(2).any(|w| w == ["--scope", "user"]));
+        assert!(args.windows(2).any(|w| w == ["--custom", "PrependPath=1"]));
+        assert_eq!(python_install_command("brew"), ("brew", vec!["install".to_string(), "python".to_string()]));
+        // 没有渠道时的提示都给出口
+        assert!(no_python_msg(HostOs::Windows).contains("python.org"));
+        assert!(no_python_msg(HostOs::Macos).contains("Homebrew"));
+        assert!(no_python_msg(HostOs::Linux).contains("apt install python3"));
+    }
+
+    #[test]
+    fn pip_installs_both_figure_libs_and_handles_pep668() {
+        let plain = pip_args(false);
+        assert!(plain.ends_with(&["pymupdf".to_string(), "pillow".to_string()]));
+        assert!(!plain.contains(&"--user".to_string()));
+        // PEP 668 连 --user 也拦，必须带 --break-system-packages
+        let managed = pip_args(true);
+        assert!(managed.contains(&"--user".to_string()));
+        assert!(managed.contains(&"--break-system-packages".to_string()));
+        assert!(managed.ends_with(&["pymupdf".to_string(), "pillow".to_string()]));
+    }
+
+    #[test]
+    fn winget_pins_node_to_machine_scope_only() {
+        let node = winget_install_args("node", "OpenJS.NodeJS.LTS");
+        assert!(node.windows(2).any(|w| w == ["--id", "OpenJS.NodeJS.LTS"]));
+        assert!(node.windows(2).any(|w| w == ["--scope", "machine"]));
+        let git = winget_install_args("git", "Git.Git");
+        assert!(!git.contains(&"--scope".to_string()));
+    }
+
+    #[test]
+    fn pymupdf_probe_prefers_new_import_name_and_skips_import_warnings() {
+        // 新名优先、旧名兜底；版本取最后一行，导入时打出的弃用警告不当版本号
+        assert_eq!(PYMUPDF_MODULES, &["pymupdf", "fitz"]);
+        let script = module_version_script(PYMUPDF_MODULES);
+        assert!(script.contains("for n in ['pymupdf', 'fitz']:"), "{script}");
+        assert!(script.contains("raise SystemExit(1)"));
+        let out = "warning: The `fitz` API is deprecated and will be removed in future.\nUse `import pymupdf` instead.\n1.28.2\n";
+        assert_eq!(last_line(out).as_deref(), Some("1.28.2"));
+        assert_eq!(last_line("\n  \n"), None);
+    }
+
+    #[test]
+    fn python_stub_candidate_is_macos_usr_bin_python3_only() {
+        assert!(is_python_stub_candidate(HostOs::Macos, Path::new("/usr/bin/python3")));
+        assert!(!is_python_stub_candidate(HostOs::Macos, Path::new("/opt/homebrew/bin/python3")));
+        assert!(!is_python_stub_candidate(HostOs::Windows, Path::new("/usr/bin/python3")));
     }
 
     #[test]

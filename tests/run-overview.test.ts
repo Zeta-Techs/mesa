@@ -5,6 +5,7 @@ import {
   cwdBasename,
   itemRank,
   projectRailStatus,
+  runIdForPath,
   stepAttention,
   workspaceAgentBusy,
   workspaceHasLiveAgent,
@@ -232,4 +233,28 @@ test("stepAttention：在跑工作区的注意力派生（任务卡继续/去终
   // 进程在跑（非 shell）时的 done 不算「已跑完」
   assert.equal(stepAttention(ws, [mk("done", ws.worktreePath, { running: true, shell: false })]), null);
   assert.equal(stepAttention(ws, [mk("done", ws.worktreePath, { running: true, shell: true })]), "done");
+});
+
+test("Windows 路径方言：反斜杠 / 大小写 / verbatim 前缀都算同一工作区（isWindows 显式传入）", () => {
+  const wt = String.raw`C:\Users\Me\ccode\workspaces\lit`;
+  const cwd = "c:/users/me/ccode/workspaces/lit/sub";
+  const busy = input({ cwd, attention: "working", running: true, runId: "r1" });
+  assert.equal(stepAttention({ worktreePath: wt }, [busy], true), "working");
+  assert.equal(workspaceAgentBusy(wt, [busy], true), true);
+  assert.equal(workspaceHasLiveAgent(wt, [busy], true), true);
+  assert.equal(
+    projectRailStatus({ needsAttention: 0, roots: [wt], runs: [busy], isWindows: true }),
+    "running",
+  );
+  const exact = input({ cwd: String.raw`\\?\C:\Users\Me\ccode\workspaces\lit`, runId: "r1" });
+  assert.equal(runIdForPath([exact], wt.toLowerCase(), true), "r1");
+  // 缺省（非 Windows 语义）保持大小写敏感
+  assert.equal(stepAttention({ worktreePath: wt }, [busy]), null);
+  assert.equal(runIdForPath([exact], wt.toLowerCase()), null);
+  assert.equal(runIdForPath([exact], wt), "r1", "分隔符/verbatim 统一不依赖平台");
+  // 段边界：lit2 不算 lit 内
+  assert.equal(
+    workspaceAgentBusy(wt, [input({ cwd: `${wt}2`, attention: "working" })], true),
+    false,
+  );
 });

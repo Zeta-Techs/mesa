@@ -1299,11 +1299,53 @@ pub(crate) fn binary_candidate_dirs() -> Vec<std::path::PathBuf> {
                 out.push(std::path::PathBuf::from(root).join("Git").join("cmd"));
             }
         }
+        // 只给当前用户装的 Git（winget 偏好用户范围 / 安装器选「仅为我安装」）
+        if let Some(local) = dirs::data_local_dir() {
+            out.push(local.join("Programs").join("Git").join("cmd"));
+        }
         // Quarto 官方安装器默认落点（GUI 启动时 PATH 可能未继承）
         for key in ["ProgramW6432", "ProgramFiles"] {
             if let Some(root) = std::env::var_os(key) {
                 out.push(std::path::PathBuf::from(root).join("Quarto").join("bin"));
             }
+        }
+        // `quarto install tinytex` 的落点（Quarto 源码 tinyTexInstallDir/BinDir）：%APPDATA%\TinyTeX，
+        // APPDATA 含非 ASCII 时退到 %ProgramData%；bin\windows（TeX Live 2023+）或旧版 bin\win32。
+        // 装完写进用户 PATH，但已在跑的 Mesa 进程拿不到，依赖体检靠这里认出 xelatex
+        for key in ["APPDATA", "ProgramData"] {
+            if let Some(root) = std::env::var_os(key) {
+                let tinytex = std::path::PathBuf::from(root).join("TinyTeX").join("bin");
+                out.push(tinytex.join("windows"));
+                out.push(tinytex.join("win32"));
+            }
+        }
+        // python.org 安装器落点（winget Python.Python.3.x 同）：当前用户装在
+        // %LOCALAPPDATA%\Programs\Python\Python3xx，全机装在 %ProgramFiles%\Python3xx。
+        // 一键补齐装完 Python 后，已在跑的 Mesa 进程 PATH 里只有应用商店占位，靠这里找到真身；
+        // 新版本排前面
+        let mut python_roots: Vec<std::path::PathBuf> = Vec::new();
+        if let Some(local) = dirs::data_local_dir() {
+            python_roots.push(local.join("Programs").join("Python"));
+        }
+        for key in ["ProgramW6432", "ProgramFiles"] {
+            if let Some(root) = std::env::var_os(key) {
+                python_roots.push(std::path::PathBuf::from(root));
+            }
+        }
+        for root in python_roots {
+            let Ok(entries) = std::fs::read_dir(&root) else {
+                continue;
+            };
+            let mut found: Vec<(u32, std::path::PathBuf)> = entries
+                .flatten()
+                .filter_map(|e| {
+                    let name = e.file_name().to_string_lossy().into_owned();
+                    let minor: u32 = name.strip_prefix("Python3")?.parse().ok()?;
+                    Some((minor, e.path()))
+                })
+                .collect();
+            found.sort_by(|a, b| b.0.cmp(&a.0));
+            out.extend(found.into_iter().map(|(_, p)| p));
         }
     }
     out
@@ -1315,16 +1357,18 @@ fn env_path(var: &str) -> Option<std::path::PathBuf> {
         .map(std::path::PathBuf::from)
 }
 
+/// `CLAUDE_CONFIG_DIR` 整体替换 `~/.claude`（不是替换家目录）：技能在 `$CLAUDE_CONFIG_DIR/skills`
+fn claude_skills_dir(config_dir: Option<std::path::PathBuf>, home: std::path::PathBuf) -> std::path::PathBuf {
+    config_dir.unwrap_or_else(|| home.join(".claude")).join("skills")
+}
+
 /// 该 agent 的技能目录：搬迁变量优先，缺省 = home + `skills_dir` 段。
 /// MCP 的 agent_paths 用同一套搬迁变量；两处必须同源，避免 `KIMI_CODE_HOME` 等
 /// 只对 MCP 生效、技能静默落到默认家目录。
 pub fn skills_dir_for(spec: &AgentSpec) -> Option<std::path::PathBuf> {
     let home = dirs::home_dir()?;
     match spec.id {
-        "claude-code" => {
-            let base = env_path("CLAUDE_CONFIG_DIR").unwrap_or(home);
-            Some(base.join(".claude").join("skills"))
-        }
+        "claude-code" => Some(claude_skills_dir(env_path("CLAUDE_CONFIG_DIR"), home)),
         "codex" => {
             let base = env_path("CODEX_HOME").unwrap_or_else(|| home.join(".codex"));
             Some(base.join("skills"))
@@ -1452,6 +1496,17 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn claude_config_dir_replaces_dot_claude() {
+        let home = std::path::PathBuf::from("home");
+        assert_eq!(
+            claude_skills_dir(None, home.clone()),
+            home.join(".claude").join("skills")
+        );
+        let moved = std::path::PathBuf::from("moved-claude");
+        assert_eq!(claude_skills_dir(Some(moved.clone()), home), moved.join("skills"));
     }
 
     #[test]

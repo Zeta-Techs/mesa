@@ -616,7 +616,7 @@ export default forwardRef<PendingConfirmHandle, {
     return (
       <li key={key} className="group flex gap-2 border-t border-hairline pt-2">
         {selection && (
-          <label className={`mt-0.5 flex h-4 w-4 shrink-0 ${includingAll ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}>
+          <label className={`relative mt-0.5 flex h-4 w-4 shrink-0 ${includingAll ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}>
             <input
               type="checkbox"
               className="sr-only"

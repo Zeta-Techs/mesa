@@ -481,9 +481,12 @@ export function Checkbox({
   title?: string;
 }) {
   return (
+    // relative：sr-only 的 input 是绝对定位，必须以本 label 为定位基准。否则它落在外层
+    // 定位祖先的静态位置（不随列表滚动），点勾选聚焦时浏览器会去滚 overflow:hidden 的主面板，
+    // 整页被推走只剩空白（对话页批量管理实证）。
     <label
       title={title}
-      className={`flex gap-1.5 ${disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"} ${align === "start" ? "items-start" : "items-center"} ${className}`}
+      className={`relative flex gap-1.5 ${disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"} ${align === "start" ? "items-start" : "items-center"} ${className}`}
     >
       <input
         type="checkbox"

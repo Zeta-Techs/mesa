@@ -332,6 +332,7 @@ pub(crate) fn run_git(repo: &Path, args: &[&str], timeout: Duration) -> Result<S
     cmd.arg("-C")
         .arg(repo)
         .args(["-c", "core.quotepath=false"])
+        .args(crate::git_info::PLATFORM_GIT_CONFIG)
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -344,6 +345,7 @@ pub(crate) fn git_is_ancestor(repo: &Path, branch: &str, head: &str) -> Result<b
     let mut cmd = crate::process::background_command(git);
     cmd.arg("-C")
         .arg(repo)
+        .args(crate::git_info::PLATFORM_GIT_CONFIG)
         .args(["merge-base", "--is-ancestor", branch, head])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -1036,6 +1038,8 @@ fn restore_impl(conn: &Connection, id: &str) -> Result<(), String> {
 fn delete_impl(conn: &Connection, id: &str) -> Result<(), String> {
     let w = get_workspace(conn, id)?;
     if Path::new(&w.worktree_path).exists() {
+        // Windows：终端占着目录时 --force 也只能删掉一半，先拦（其它平台恒放行）
+        crate::pty::ensure_workspace_free_global(&w.worktree_path, "删除")?;
         run_git(
             Path::new(&w.repo_path),
             &["worktree", "remove", "--force", &w.worktree_path],
@@ -2117,17 +2121,8 @@ pub async fn archive_workspace(
         tauri::async_runtime::spawn_blocking(move || -> Result<(String, String), String> {
             let conn = db()?;
             let w = get_workspace(&conn, &id)?;
-            let ensure_idle = |worktree_path: &str| {
-                let active = manager.active_workspace_tasks(worktree_path);
-                if active.is_empty() {
-                    Ok(())
-                } else {
-                    Err(format!(
-                        "工作区仍有 {} 个 agent/run 脚本在运行，请先停止或关闭对应终端标签",
-                        active.len()
-                    ))
-                }
-            };
+            let ensure_idle =
+                |worktree_path: &str| manager.ensure_workspace_free(worktree_path, "归档");
             ensure_idle(&w.worktree_path)?; // 快速预检；归档内部在移除 worktree 前还会复查
             archive_impl_with_guard(&conn, &id, &ensure_idle)?;
             Ok((w.worktree_path, w.repo_path))
@@ -2596,27 +2591,44 @@ fn ensure_human_task_checks_table(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+/// 按项目读手动勾选。项目键跨方言比较（same_path）：存量库可能混有 verbatim / 大小写不同的
+/// 写法，精确等值查询在 Windows 上会漏行。同一事项多行并存时，精确键优先，其次取最新一行。
 fn manual_checks_at(
     conn: &Connection,
     project_path: &str,
 ) -> std::collections::HashMap<(String, String), bool> {
-    let mut out = std::collections::HashMap::new();
+    let mut best: std::collections::HashMap<(String, String), (bool, String, bool)> =
+        std::collections::HashMap::new();
     if ensure_human_task_checks_table(conn).is_err() {
-        return out;
+        return std::collections::HashMap::new();
     }
     if let Ok(mut stmt) =
-        conn.prepare("SELECT step, title, checked FROM human_task_checks WHERE project_path = ?1")
+        conn.prepare("SELECT project_path, step, title, checked, updated_at FROM human_task_checks")
     {
-        if let Ok(rows) = stmt.query_map(params![project_path], |r| {
+        if let Ok(rows) = stmt.query_map([], |r| {
             Ok((
-                (r.get::<_, String>(0)?, r.get::<_, String>(1)?),
-                r.get::<_, i64>(2)? != 0,
+                r.get::<_, String>(0)?,
+                (r.get::<_, String>(1)?, r.get::<_, String>(2)?),
+                r.get::<_, i64>(3)? != 0,
+                r.get::<_, Option<String>>(4)?.unwrap_or_default(),
             ))
         }) {
-            out.extend(rows.flatten());
+            for (path, key, checked, updated) in rows.flatten() {
+                if !crate::paths::same_path(&path, project_path) {
+                    continue;
+                }
+                let exact = path == project_path;
+                let better = match best.get(&key) {
+                    None => true,
+                    Some((e, u, _)) => (exact, &updated) > (*e, u),
+                };
+                if better {
+                    best.insert(key, (exact, updated, checked));
+                }
+            }
         }
     }
-    out
+    best.into_iter().map(|(k, (_, _, v))| (k, v)).collect()
 }
 
 /// 极简通配匹配：仅支持 `*`（任意字符序列），大小写敏感（两指针 + 星号回退点）
@@ -3150,7 +3162,10 @@ fn human_detection_roots(
             for w in rows {
                 if w.status == "active"
                     && w.name == workspace_name
-                    && crate::projects::canonical_key(Path::new(&w.repo_path)) == key
+                    && crate::paths::same_path(
+                        &crate::projects::canonical_key(Path::new(&w.repo_path)),
+                        &key,
+                    )
                 {
                     roots.push(PathBuf::from(w.worktree_path));
                 }
@@ -3236,7 +3251,10 @@ pub async fn list_human_task_states(
 ) -> Result<Vec<HumanTaskStateDto>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let root = PathBuf::from(crate::sessions::expand_tilde(&project_root));
-        let root = fs::canonicalize(&root).map_err(|e| format!("项目目录无效: {e}"))?;
+        // 与 set_human_task_check（ensure_task_project_root）同口径剥 verbatim：
+        // Windows 上 `\\?\C:\…` 当键查不到普通形式写入的勾选行，勾完一刷新就丢
+        let root =
+            crate::paths::canonicalize_plain(&root).map_err(|e| format!("项目目录无效: {e}"))?;
         // list 口径同 list_task_cards：非项目（无档案卡）返回空表，不设门槛
         Ok(list_human_task_states_at(&root))
     })
@@ -4050,17 +4068,8 @@ pub async fn merge_workspace(
     let (out, paths) = tauri::async_runtime::spawn_blocking(move || -> Result<_, String> {
         let conn = db()?;
         let w = get_workspace(&conn, &id)?;
-        let ensure_idle = |worktree_path: &str| {
-            let active = manager.active_workspace_tasks(worktree_path);
-            if active.is_empty() {
-                Ok(())
-            } else {
-                Err(format!(
-                    "工作区仍有 {} 个 agent/run 脚本在运行，请先停止或关闭对应终端标签",
-                    active.len()
-                ))
-            }
-        };
+        let ensure_idle =
+            |worktree_path: &str| manager.ensure_workspace_free(worktree_path, "合并并归档");
         if archive {
             ensure_idle(&w.worktree_path)?; // 快速预检；归档内部在移除 worktree 前还会复查
         }
@@ -4117,16 +4126,30 @@ pub struct PathContextDto {
     pub siblings: Vec<SwitchTargetDto>,
 }
 
+/// 剥过 verbatim 的 canonicalize；目标还不存在（新建文件）时退到父目录 canonicalize 再拼回文件名，
+/// 都失败才原样返回。两侧同一口径，Windows 上才不会出现 `\\?\C:\…` 与 `C:\…` 永不相等。
+fn canonical_or_parent_plain(path: &Path) -> PathBuf {
+    if let Ok(p) = crate::paths::canonicalize_plain(path) {
+        return p;
+    }
+    if let (Some(parent), Some(name)) = (path.parent(), path.file_name()) {
+        if let Ok(p) = crate::paths::canonicalize_plain(parent) {
+            return p.join(name);
+        }
+    }
+    path.to_path_buf()
+}
+
 /// 判断路径落在哪个上下文，供预览编辑器提示「你在改主仓库还是分支」。
 /// 双方都 canonicalize 再比前缀（防 symlink 误判）；工作树优先于主仓库命中
 ///（工作树在 ~/ccode/workspaces/ 下不在主仓库内，理论上不会重叠，取确定语义）
 fn path_context_impl(conn: &Connection, path: &str) -> Result<PathContextDto, String> {
-    let target = std::fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
+    let target = canonical_or_parent_plain(Path::new(path));
     let actives: Vec<WorkspaceDto> = query_workspaces(conn)?
         .into_iter()
         .filter(|w| w.status == "active")
         .collect();
-    let canon = |p: &str| std::fs::canonicalize(p).unwrap_or_else(|_| PathBuf::from(p));
+    let canon = |p: &str| canonical_or_parent_plain(Path::new(p));
     let to_target = |o: &WorkspaceDto| SwitchTargetDto {
         workspace_name: o.name.clone(),
         branch: o.branch.clone(),
@@ -4134,7 +4157,7 @@ fn path_context_impl(conn: &Connection, path: &str) -> Result<PathContextDto, St
     };
     // 工作树命中（优先）：同仓库其他活跃工作区作为切换目标
     for w in &actives {
-        if target.starts_with(canon(&w.worktree_path)) {
+        if crate::paths::path_within_path(&target, &canon(&w.worktree_path)) {
             return Ok(PathContextDto {
                 kind: "worktree".into(),
                 workspace_name: Some(w.name.clone()),
@@ -4152,7 +4175,7 @@ fn path_context_impl(conn: &Connection, path: &str) -> Result<PathContextDto, St
     // 主仓库命中：该仓库全部活跃工作区都是切换目标
     if let Some(w) = actives
         .iter()
-        .find(|w| target.starts_with(canon(&w.repo_path)))
+        .find(|w| crate::paths::path_within_path(&target, &canon(&w.repo_path)))
     {
         return Ok(PathContextDto {
             kind: "main".into(),
@@ -4647,6 +4670,7 @@ pub(crate) fn run_git_raw(repo: &Path, args: &[&str]) -> Result<String, String> 
     cmd.arg("-C")
         .arg(repo)
         .args(["-c", "core.quotepath=false"])
+        .args(crate::git_info::PLATFORM_GIT_CONFIG)
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -5181,7 +5205,8 @@ fn file_md5_and_size(path: &Path) -> Result<(String, u64), String> {
 /// 工作区外的路径谈不上被本仓库跟踪，git 不可用/非仓库时放行（防御式，不阻断登记）。
 fn ensure_artifact_not_tracked(worktree: &Path, artifact: &Path) -> Result<(), String> {
     // artifact 已 canonicalize，worktree 同步 canonicalize 再比前缀（/var→/private/var 这类符号链接）
-    let worktree = fs::canonicalize(worktree).unwrap_or_else(|_| worktree.to_path_buf());
+    let worktree =
+        crate::paths::canonicalize_plain(worktree).unwrap_or_else(|_| worktree.to_path_buf());
     let Ok(rel) = artifact.strip_prefix(&worktree) else {
         return Ok(());
     };
@@ -5210,8 +5235,8 @@ fn register_artifact_impl(
     if name.is_empty() {
         return Err("产物名称不能为空".into());
     }
-    // canonicalize 同时完成存在性校验与绝对路径化
-    let artifact = fs::canonicalize(artifact)
+    // canonicalize 同时完成存在性校验与绝对路径化；剥 verbatim 再落清单（提货单给人和下一步 agent 看）
+    let artifact = crate::paths::canonicalize_plain(artifact)
         .map_err(|e| format!("产物文件不存在或不可读 {}: {e}", artifact.display()))?;
     if !artifact.is_file() {
         return Err(format!("产物路径不是文件: {}", artifact.display()));
@@ -5231,7 +5256,11 @@ fn register_artifact_impl(
     let existing = fs::read_to_string(&manifest).unwrap_or_default();
     let (preserved, mut entries) = parse_manifest(&existing);
     // 同路径重复登记 = 更新（内容/hash/时间都可能变），不产生重复条目
-    match entries.iter_mut().find(|e| e.path == entry.path) {
+    // 跨方言比较：存量清单里可能是 verbatim / 大小写不同的同一文件，按字符串比会登记出重复条目
+    match entries
+        .iter_mut()
+        .find(|e| crate::paths::same_path(&e.path, &entry.path))
+    {
         Some(slot) => *slot = entry.clone(),
         None => entries.push(entry.clone()),
     }
@@ -6500,6 +6529,22 @@ mod tests {
         assert_eq!(c.branch.as_deref(), Some("ccode/ctx"));
         assert_eq!(c.siblings.len(), 1);
         assert_eq!(c.siblings[0].workspace_name, "ctx2");
+        // 还不存在的新文件同样命中（父目录 canonicalize，口径与根一致——Windows 曾因
+        // 目标保持普通形式、根是 verbatim 而落成 other）
+        let new_file = PathBuf::from(&w.worktree_path).join("notes").join("new.md");
+        let c = path_context_impl(&fx.conn, new_file.to_str().unwrap()).unwrap();
+        assert_eq!(c.kind, "worktree", "不存在的目标也要按工作树归类");
+        let new_top = PathBuf::from(&w.worktree_path).join("draft.md");
+        let c = path_context_impl(&fx.conn, new_top.to_str().unwrap()).unwrap();
+        assert_eq!(c.kind, "worktree");
+        #[cfg(windows)]
+        {
+            // 大小写不同 / verbatim 写法都是同一目录
+            let upper = wt_readme.to_string_lossy().to_uppercase();
+            assert_eq!(path_context_impl(&fx.conn, &upper).unwrap().kind, "worktree");
+            let verbatim = format!(r"\\?\{}", wt_readme.to_string_lossy());
+            assert_eq!(path_context_impl(&fx.conn, &verbatim).unwrap().kind, "worktree");
+        }
         // 主仓库内 → main（分支给的是基准分支）；siblings = 全部活跃工作区
         let c = path_context_impl(&fx.conn, fx.repo.join("README.md").to_str().unwrap()).unwrap();
         assert_eq!(c.kind, "main");
@@ -7066,6 +7111,16 @@ mod tests {
         assert_eq!(entries.len(), 1, "同路径不得重复登记");
         assert_eq!(entries[0].name, "图一（修订）");
         assert_eq!(entries[0].hash, second.hash);
+        assert!(!second.path.starts_with(r"\\?\"), "清单路径不得带 verbatim 前缀");
+        // 存量清单里是 verbatim 写法的同一文件：再登记仍是更新，不追加重复条目
+        let manifest = fx.repo.join(ARTIFACTS_FILE);
+        let (preserved, mut old) = parse_manifest(&fs::read_to_string(&manifest).unwrap());
+        old[0].path = format!(r"\\?\{}", old[0].path);
+        fs::write(&manifest, render_manifest(&preserved, &old)).unwrap();
+        let third = register_artifact_impl(&fx.repo, "图一（三）", &data, "plot").unwrap();
+        let entries = read_artifacts_manifest_impl(&fx.repo);
+        assert_eq!(entries.len(), 1, "跨方言同一文件不得重复登记");
+        assert_eq!(entries[0].path, third.path);
         // 已跟踪文件随分支走，登记提货单会误导下一步
         let err =
             register_artifact_impl(&fx.repo, "自述", &fx.repo.join("README.md"), "ws").unwrap_err();
@@ -7788,6 +7843,47 @@ mod tests {
             Some(&false),
             "显式取消要留痕，不能删行",
         );
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 勾选按项目路径跨方言匹配：Windows 上读侧曾用 verbatim、写侧用普通形式，勾完刷新即丢
+    #[test]
+    fn human_task_checks_match_across_path_dialects() {
+        let dir = std::env::temp_dir().join(format!("ccode-htcd-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let conn = db_at(&dir.join("app.db")).unwrap();
+        ensure_human_task_checks_table(&conn).unwrap();
+        let proj = dir.join("p1").to_string_lossy().into_owned();
+        let verbatim = format!(r"\\?\{proj}");
+        let ins = |path: &str, title: &str, checked: i64, at: &str| {
+            conn.execute(
+                "INSERT OR REPLACE INTO human_task_checks(project_path, step, title, updated_at, checked)
+                 VALUES(?1,?2,?3,?4,?5)",
+                params![path, "检索", title, at, checked],
+            )
+            .unwrap();
+        };
+        // 存量 verbatim 行：普通形式查询也要读到
+        ins(&verbatim, "下载全文", 1, "2026-10-01T00:00:00Z");
+        let m = manual_checks_at(&conn, &proj);
+        assert_eq!(m.get(&("检索".into(), "下载全文".into())), Some(&true));
+        // 同一事项两种写法并存：精确键优先（即便另一行更新）
+        ins(&proj, "下载全文", 0, "2026-09-01T00:00:00Z");
+        let m = manual_checks_at(&conn, &proj);
+        assert_eq!(m.get(&("检索".into(), "下载全文".into())), Some(&false));
+        // 段边界：p1 的行不串到 p10
+        let other = dir.join("p10").to_string_lossy().into_owned();
+        assert!(manual_checks_at(&conn, &other).is_empty());
+        #[cfg(windows)]
+        {
+            let upper = proj.to_uppercase();
+            // 两行都不是精确键 → 取最新一行（verbatim 行 10-01 勾上）
+            assert_eq!(
+                manual_checks_at(&conn, &upper).get(&("检索".into(), "下载全文".into())),
+                Some(&true),
+                "NTFS 大小写不敏感，大小写不同也是同一项目",
+            );
+        }
         fs::remove_dir_all(&dir).ok();
     }
 

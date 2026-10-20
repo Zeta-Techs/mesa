@@ -4,6 +4,7 @@ import {
   canOneClickInstall,
   depInboxItem,
   depMissingReason,
+  installButtonHint,
   installGuidance,
   isGitMissingError,
   type DepCheckDto,
@@ -47,6 +48,21 @@ test("canOneClickInstall：git 三渠道可，node/quarto/tex 仅 brew/winget，
   }
   assert.ok(canOneClickInstall("pymupdf", "none"));
   assert.ok(canOneClickInstall("pillow", "xcode"));
+});
+
+test("拼图库缺 Python：有 winget / brew 才能一键补齐，否则给装 Python 的出口", () => {
+  for (const ch of ["winget", "brew"])
+    assert.ok(canOneClickInstall("pymupdf", ch, "python"), ch);
+  for (const ch of ["none", "xcode"])
+    assert.ok(!canOneClickInstall("pillow", ch, "python"), ch);
+  assert.equal(depMissingReason({ status: "missing", path: null, prereq: "python" }), "还缺 Python 3");
+  assert.match(installButtonHint("pymupdf", "python") ?? "", /先装好 Python 3.*一起装 PyMuPDF 和 Pillow/);
+  assert.match(installButtonHint("pillow") ?? "", /一起装/);
+  assert.equal(installButtonHint("git", "python"), null);
+  const win = installGuidance("pymupdf", "none", "win", "python");
+  assert.ok(win.includes("python.org") && win.includes("Add python.exe to PATH"));
+  assert.ok(installGuidance("pillow", "xcode", "mac", "python").includes("Homebrew"));
+  assert.ok(installGuidance("pillow", "none", "linux", "python").includes("apt install python3"));
 });
 
 test("installGuidance：mac 无 brew 时 node 指 nodejs.org、git 指系统弹窗", () => {

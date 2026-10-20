@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { researchToolsFromSettings, settingsWithResearchTools, withResearchTools, type ResearchTools } from "../research-tools";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { IS_WINDOWS } from "../hotkeys";
 import type { ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -314,7 +315,7 @@ function deriveStepStatus(
     return { key: "blocked", ws };
   }
   // Agent 还在跑：即使已经有待合并提交，也还是进行中，不能提前「去评审」
-  if (workspaceHasLiveAgent(ws.worktreePath, liveInputs)) {
+  if (workspaceHasLiveAgent(ws.worktreePath, liveInputs, IS_WINDOWS)) {
     return { key: "active", ws };
   }
   // 衔接工作区「已合并」规则：merged_at 置位且没有新的待合并提交
@@ -1302,7 +1303,7 @@ export default function ProjectGroup({
   const stepperTexts = stepStatuses.map((st) =>
     stepperStatusText(st.key, {
       archived: st.key === "pending" && !!st.ws,
-      attention: st.key === "active" ? stepAttention(st.ws, terminalRunInputs) : null,
+      attention: st.key === "active" ? stepAttention(st.ws, terminalRunInputs, IS_WINDOWS) : null,
     }),
   );
   const allStepsDone =
@@ -1317,7 +1318,7 @@ export default function ProjectGroup({
       if (!st.ws) return;
       setWorkspaceReviewRequest({
         worktreePath: st.ws.worktreePath,
-        runId: runIdForPath(terminalRunInputs, st.ws.worktreePath),
+        runId: runIdForPath(terminalRunInputs, st.ws.worktreePath, IS_WINDOWS),
         action: intent,
         requestId: crypto.randomUUID(),
       });
@@ -1480,6 +1481,7 @@ export default function ProjectGroup({
       ? focusDesc.st.ws
       : undefined,
     terminalRunInputs,
+    IS_WINDOWS,
   );
   // 聚焦步骤的已归档工作区（pending + ws）：流程线 agent 节点此时主入口是「恢复工作区」而非「开始」
   const focusArchivedWs =
@@ -1926,6 +1928,7 @@ export default function ProjectGroup({
           focusRunId={runIdForPath(
             terminalRunInputs,
             focusAttention ? (focusDesc?.st.ws?.worktreePath ?? "") : "",
+            IS_WINDOWS,
           )}
           focusDraft={
             focusDraft && focusDraft.stepName === focusStepName
@@ -2475,7 +2478,7 @@ export default function ProjectGroup({
             setKickoff(null);
             setWorkspaceReviewRequest({
               worktreePath: upstream.worktreePath,
-              runId: runIdForPath(terminalRunInputs, upstream.worktreePath),
+              runId: runIdForPath(terminalRunInputs, upstream.worktreePath, IS_WINDOWS),
               action: upstream.status === "blocked" ? "resolve-conflict" : undefined,
               requestId: crypto.randomUUID(),
             });

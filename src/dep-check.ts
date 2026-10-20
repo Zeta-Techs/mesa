@@ -12,6 +12,8 @@ export interface DepItemDto {
   path: string | null;
   /** 未就绪的具体原因（如 quarto 被残留环境变量带坏），有就直接显示 */
   note?: string | null;
+  /** 还缺的前置依赖（目前只有 "python"：拼图库要先有 Python 3），一键安装会先补上它 */
+  prereq?: "python" | null;
 }
 
 /** 与 dep_check.rs DepCheckDto 对应 */
@@ -67,22 +69,41 @@ const APT: Record<DepTool, string> = {
   pillow: "python3-pil",
 };
 
-/** 一键安装可行性。拼图库走本机 pip，不看 brew/winget。
- *  git 在 Mac 无 brew 时仍可弹系统安装窗口。其余项要有 brew 或 winget。 */
+/** 一键安装可行性。拼图库走本机 pip：有 Python 时总能装；还缺 Python（prereq）时要靠
+ *  winget / brew 先代装 Python。git 在 Mac 无 brew 时仍可弹系统安装窗口。其余项要有 brew 或 winget。 */
 /** 未就绪时的一句原因（设置页依赖行） */
-export function depMissingReason(item: Pick<DepItemDto, "status" | "path" | "note">): string {
+export function depMissingReason(
+  item: Pick<DepItemDto, "status" | "path" | "note" | "prereq">,
+): string {
   if (item.note?.trim()) return item.note.trim();
+  if (item.prereq === "python") return "还缺 Python 3";
   if (item.status === "clt_stub") return "需要安装 Xcode 命令行工具";
   if (item.status === "broken")
     return `找到的 ${item.path ?? "程序"} 跑不起来；装好官方版后让它排在这个之前，或删掉这个`;
   return "未安装";
 }
 
-export function canOneClickInstall(tool: DepTool, channel: string): boolean {
-  if (tool === "pymupdf" || tool === "pillow") return true;
+export function canOneClickInstall(
+  tool: DepTool,
+  channel: string,
+  prereq?: DepItemDto["prereq"],
+): boolean {
+  if (tool === "pymupdf" || tool === "pillow")
+    return prereq === "python" ? channel === "brew" || channel === "winget" : true;
   if (tool === "git")
     return channel === "brew" || channel === "winget" || channel === "xcode";
   return channel === "brew" || channel === "winget";
+}
+
+/** 一键安装按钮旁的白话说明：拼图库会顺带装 Python、且两个库一起装，事先讲清楚 */
+export function installButtonHint(
+  tool: DepTool,
+  prereq?: DepItemDto["prereq"],
+): string | null {
+  if (tool !== "pymupdf" && tool !== "pillow") return null;
+  return prereq === "python"
+    ? "会先装好 Python 3，再一起装 PyMuPDF 和 Pillow，几分钟"
+    : "PyMuPDF 和 Pillow 一起装";
 }
 
 /** 不可一键装时的指引文案（口径与 dep_check.rs 的无渠道报错文案一致）；
@@ -91,7 +112,15 @@ export function installGuidance(
   tool: DepTool,
   _channel: string,
   platform: DepPlatform,
+  prereq?: DepItemDto["prereq"],
 ): string {
+  if (prereq === "python") {
+    if (platform === "win")
+      return "没有可用的 Python 3，也没有 winget 可以代装：请到 python.org 安装 Python 3（安装时勾选 Add python.exe to PATH），装完点「重新检测」";
+    if (platform === "mac")
+      return "没有可用的 Python 3，也没有 Homebrew 可以代装：请到 python.org 安装 Python 3，或先安装 Homebrew，装完点「重新检测」";
+    return "没有可用的 Python 3：请用发行版包管理器安装（如 sudo apt install python3 python3-pip），装完点「重新检测」";
+  }
   if (platform === "mac") {
     if (tool === "git") {
       return "未检测到 Homebrew：点「安装」触发系统安装窗口（Xcode 命令行工具），装完点「重新检测」";

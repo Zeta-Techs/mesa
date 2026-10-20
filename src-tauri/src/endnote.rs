@@ -5,10 +5,25 @@ use std::path::{Path, PathBuf};
 
 const BRIDGE_PY: &str = include_str!("../resources/skills/endnote-bridge/scripts/bridge.py");
 
+/// 找真能跑的 Python（dep_check::usable_python）：Windows 上 `python3` 永远先命中应用商店
+/// 占位程序，python.org 安装包又只提供 python.exe，按名字先找 python3 必然拿到占位
 fn python_bin() -> Result<PathBuf, String> {
-    crate::agents::resolve_binary("python3")
-        .or_else(|| crate::agents::resolve_binary("python"))
-        .ok_or_else(|| "本机找不到 python3，无法生成 EndNote 导入文件".to_string())
+    crate::dep_check::usable_python().ok_or_else(|| {
+        "本机找不到 python 3，无法生成 EndNote 导入文件（设置 → 诊断可一键安装 Python）".to_string()
+    })
+}
+
+/// Python 子进程统一强制 UTF-8：中文 Windows 上 stdout 与 open() 默认编码是 cp936，
+/// 读含中文的 UTF-8 bib 会 UnicodeDecodeError、输出成乱码。UTF-8 系统上是空操作
+fn python_command(py: &Path) -> crate::process::BackgroundCommand {
+    let mut cmd = crate::process::background_command(py);
+    cmd.env("PYTHONUTF8", "1").env("PYTHONIOENCODING", "utf-8");
+    cmd
+}
+
+/// 转换脚本的有界执行：离线转换给 2 分钟；--enrich 要逐条查 Crossref，给 10 分钟
+fn bridge_timeout(enrich: bool) -> std::time::Duration {
+    std::time::Duration::from_secs(if enrich { 600 } else { 120 })
 }
 
 fn wants_endnote_export(project_root: &Path) -> bool {
@@ -56,7 +71,7 @@ fn run_bridge_args(
 ) -> Result<(), String> {
     let out_tmp = papers.join(format!(".ccode-endnote-{stamp}.{kind}"));
     let report_tmp = papers.join(format!(".ccode-endnote-{stamp}-{kind}.json"));
-    let mut cmd = crate::process::background_command(py);
+    let mut cmd = python_command(py);
     cmd.arg(script);
     if enrich {
         cmd.arg("--enrich");
@@ -68,10 +83,15 @@ fn run_bridge_args(
         .arg("--report")
         .arg(&report_tmp)
         .current_dir(root);
-    let out = cmd.output().map_err(|e| format!("无法启动转换: {e}"))?;
-    if !out.status.success() {
+    let out = crate::process::capture_command(&mut cmd, bridge_timeout(enrich), 1024 * 1024)
+        .map_err(|e| format!("无法启动转换: {e}"))?;
+    let success = !out.timed_out && out.status.is_some_and(|s| s.success());
+    if !success {
         let _ = std::fs::remove_file(&out_tmp);
         let _ = std::fs::remove_file(&report_tmp);
+        if out.timed_out {
+            return Err("生成 EndNote 导入文件超时，已中止".into());
+        }
         let err = String::from_utf8_lossy(&out.stderr);
         let err = err.trim();
         return Err(if err.is_empty() {
@@ -138,13 +158,17 @@ pub fn export_ris_only(project_root: &Path) -> Result<(PathBuf, String), String>
         )
         .is_ok()
         {
-            if let Ok(out) = crate::process::background_command(&py)
+            let mut check = python_command(&py);
+            check
                 .arg(&script)
                 .arg("--check-endnote-library")
-                .arg(&enl)
-                .output()
-            {
-                if out.status.success() {
+                .arg(&enl);
+            if let Ok(out) = crate::process::capture_command(
+                &mut check,
+                std::time::Duration::from_secs(60),
+                1024 * 1024,
+            ) {
+                if !out.timed_out && out.status.is_some_and(|s| s.success()) {
                     health = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 }
             }
@@ -382,18 +406,43 @@ fn copy_path_to_clipboard(path: &Path) {
         use std::process::Stdio;
         if let Ok(mut child) = crate::process::background_command("clip")
             .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .spawn()
         {
             if let Some(mut stdin) = child.stdin.take() {
-                let _ = stdin.write_all(text.as_bytes());
+                let _ = stdin.write_all(&clip_utf16_payload(&text));
             }
-            let _ = child.wait();
+            // clip 读到 EOF 即退；有界等待，卡住就杀，不钉死调用线程
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+            loop {
+                match child.try_wait() {
+                    Ok(Some(_)) | Err(_) => break,
+                    Ok(None) if std::time::Instant::now() >= deadline => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        break;
+                    }
+                    Ok(None) => std::thread::sleep(std::time::Duration::from_millis(20)),
+                }
+            }
         }
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     {
         let _ = (path, text);
     }
+}
+
+/// clip.exe 按 ANSI 代码页（中文系统 GBK）解读 stdin，直接喂 UTF-8 会把中文路径变乱码；
+/// 带 BOM 的 UTF-16LE 它按 Unicode 收
+#[cfg(any(windows, test))]
+fn clip_utf16_payload(text: &str) -> Vec<u8> {
+    let mut bytes = vec![0xFF, 0xFE];
+    for unit in text.encode_utf16() {
+        bytes.extend_from_slice(&unit.to_le_bytes());
+    }
+    bytes
 }
 
 fn launch_endnote_with_file(file: &Path) -> Result<(), String> {
@@ -413,13 +462,15 @@ fn launch_endnote_with_file(file: &Path) -> Result<(), String> {
     }
     #[cfg(windows)]
     {
-        let status = crate::process::background_command(&app)
+        // 只拉起不等待：EndNote 原本没开时，等它的退出码要等到用户关掉 EndNote，
+        // 且关闭时的非零退出码会被误报成同步失败。句柄丢弃即脱离，进程照常运行
+        crate::process::background_command(&app)
             .arg(file)
-            .status()
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
             .map_err(|e| format!("没法打开 EndNote: {e}"))?;
-        if !status.success() {
-            return Err("请把产物里的 papers/endnote-import.ris 拖到 EndNote 图标上。".into());
-        }
         Ok(())
     }
     #[cfg(not(any(target_os = "macos", windows)))]
@@ -495,6 +546,40 @@ pub async fn endnote_export_xml(project_root: String) -> Result<String, String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// clip.exe 吃带 BOM 的 UTF-16LE；中文路径逐码元小端写入
+    #[test]
+    fn clip_payload_is_utf16le_with_bom() {
+        assert_eq!(
+            clip_utf16_payload(r"C:\文献\a.ris"),
+            [
+                0xFF, 0xFE, b'C', 0, b':', 0, b'\\', 0, 0x87, 0x65, 0x2E, 0x73, b'\\', 0, b'a', 0,
+                b'.', 0, b'r', 0, b'i', 0, b's', 0
+            ]
+        );
+    }
+
+    /// 中文条目必须原样进 RIS：中文 Windows 上 Python 默认 cp936，靠 PYTHONUTF8 兜住
+    #[test]
+    fn chinese_entries_survive_conversion() {
+        let dir = std::env::temp_dir().join(format!("ccode-endnote-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("papers")).unwrap();
+        std::fs::write(
+            dir.join("references.bib"),
+            "@article{c,\n  title = {镁电池穿梭效应研究},\n  author = {张, 三},\n  year = {2025},\n  journal = {化学学报},\n}\n",
+        )
+        .unwrap();
+        let ris = export_ris_only(&dir);
+        let text = std::fs::read_to_string(dir.join("papers/endnote-import.ris")).ok();
+        let _ = std::fs::remove_dir_all(&dir);
+        if ris.as_ref().is_err_and(|e| e.contains("找不到 python")) {
+            return;
+        }
+        ris.expect("ris export");
+        let text = text.expect("ris");
+        assert!(text.contains("镁电池穿梭效应研究"), "{text}");
+        assert!(text.contains("化学学报"), "{text}");
+    }
 
     #[test]
     fn quoted_shuttle_is_not_tex_accent() {

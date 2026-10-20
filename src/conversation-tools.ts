@@ -76,6 +76,7 @@ function buildItems(
   messages: readonly ChatMessageDto[],
   entries: Array<{ block: BlockDto; index: number }>,
   cwd: string | null,
+  isWindows: boolean,
 ): ProcessItem[] {
   const items: ProcessItem[] = [];
   // 调用与结果按先后配对：并行调用的结果也按调用顺序回来
@@ -91,7 +92,7 @@ function buildItems(
       const prev = index > 0 ? messages[index - 1].timestamp : null;
       items.push({ kind: "thinking", text: block.text, seconds: secondsBetween(prev, messages[index].timestamp), index });
     } else if (block.kind === "tool_use") {
-      const tools = toolActivities(block.toolName, block.text, cwd).map(
+      const tools = toolActivities(block.toolName, block.text, cwd, isWindows).map(
         (activity): ProcessTool => ({ activity, result: null, status: "ok" }),
       );
       open.push(tools);
@@ -135,7 +136,8 @@ function buildItems(
  */
 export function groupConversationSegments(
   messages: readonly ChatMessageDto[],
-  opts: { live?: boolean; cwd?: string | null } = {},
+  // isWindows 显式传入（纯逻辑不读平台）：工具路径相对化走 Windows 方言（反斜杠、不分大小写）
+  opts: { live?: boolean; cwd?: string | null; isWindows?: boolean } = {},
 ): ConversationSegment[] {
   const out: ConversationSegment[] = [];
   let i = 0;
@@ -171,7 +173,7 @@ export function groupConversationSegments(
       kind: "turn",
       start,
       end,
-      items: buildItems(messages, entries.slice(0, cut + 1), opts.cwd ?? null),
+      items: buildItems(messages, entries.slice(0, cut + 1), opts.cwd ?? null, opts.isWindows ?? false),
       answer: answerBlocks.length
         ? { role: "assistant", blocks: answerBlocks, timestamp: messages[end].timestamp, usage: null }
         : null,
