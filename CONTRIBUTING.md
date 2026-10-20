@@ -21,6 +21,10 @@ npm run tauri:dev
 
 开发窗口标题是 **Mesa Dev - 热更新**，端口 17575。不要用已经安装的 Mesa.app 验收界面。
 
+要走「第一次打开」的流程（上手引导、CLI 首次启动画面），用 `scripts/dev-sandbox.sh`：空家目录、独立端口 17577，`--reset` 清空重来。
+
+发版前把本版本的用户可见改动写进 [CHANGELOG.md](CHANGELOG.md)，应用内的「更新说明」取自那里。
+
 ## 提交前
 
 一个主题一个提交。提交前这三样都要过：
