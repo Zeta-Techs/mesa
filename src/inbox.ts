@@ -16,6 +16,7 @@ export type InboxCategory =
   | "ready"
   | "artifacts"
   | "digest"
+  | "phone"
   | "skill"
   | "profile"
   | "help";
@@ -28,7 +29,7 @@ export interface InboxCategoryMeta {
 /** 固定展示顺序（与原 strip 摘要口径一致，confirm: 与 live: 合并为「待确认」；
  *  dep: 依赖缺失紧随「待确认」（git 不在 = 工作区/评审停工，与待确认同级紧迫）；
  *  update: 应用可更新（不阻断干活，但必须能看见）；lit: 文献雷达新命中随后；
- *  help 追加在末尾） */
+ *  phone: 手机发来还没处理的（从手机添加，2026-10-20）跟在「待发送」后；help 追加在末尾） */
 export const INBOX_CATEGORIES: readonly InboxCategoryMeta[] = [
   { id: "conflict", label: "冲突" },
   { id: "confirm", label: "待确认" },
@@ -38,6 +39,7 @@ export const INBOX_CATEGORIES: readonly InboxCategoryMeta[] = [
   { id: "ready", label: "可合并" },
   { id: "artifacts", label: "待核验" },
   { id: "digest", label: "待发送" },
+  { id: "phone", label: "手机" },
   { id: "skill", label: "技能" },
   { id: "profile", label: "配置失效" },
   { id: "help", label: "人工请求" },
@@ -53,6 +55,7 @@ export function inboxCategoryOf(key: string): InboxCategory {
   if (key.startsWith("ready:")) return "ready";
   if (key.startsWith("artifacts:")) return "artifacts";
   if (key.startsWith("digest")) return "digest";
+  if (key.startsWith("phone:")) return "phone";
   if (key.startsWith("skill:")) return "skill";
   if (key.startsWith("profile:")) return "profile";
   if (key.startsWith("help:")) return "help";
@@ -88,6 +91,7 @@ export const BULK_READABLE: ReadonlySet<InboxCategory> = new Set([
   "ready",
   "artifacts",
   "digest",
+  "phone",
   "skill",
 ]);
 

@@ -26,6 +26,8 @@ test("inboxCategoryOf：key 前缀推导类别，confirm: 与 live: 合并为待
   assert.equal(inboxCategoryOf("lit:s-1:2026-08-18"), "lit");
   assert.equal(inboxCategoryOf("dep:git"), "dep");
   assert.equal(inboxCategoryOf("update:0.1.1"), "update");
+  assert.equal(inboxCategoryOf("phone:pending"), "phone");
+  assert.equal(inboxCategoryLabel("phone"), "手机");
 });
 
 test("inboxTaskLine：名字紧贴状态，和项目现在同一句式", () => {

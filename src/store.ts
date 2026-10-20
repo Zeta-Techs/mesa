@@ -43,6 +43,8 @@ import type { RunOverviewInput } from "./run-overview";
 import type { DepCheckDto } from "./dep-check";
 import type { AskAiFile } from "./ask-ai";
 import { toast } from "./toast";
+import { phoneInboxFields } from "./phone-drop";
+import { usePhoneDropStore } from "./phone-drop-store";
 import {
   ONBOARDING_STORAGE_KEY,
   parseOnboarding,
@@ -404,6 +406,7 @@ export interface InboxItem {
     | { type: "help"; projectRoot: string }
     | { type: "run"; runId?: string; tabId?: string }
     | { type: "settings"; section: string }
+    | { type: "phoneDrop" }
     | { type: "profiles" };
 }
 
@@ -422,14 +425,29 @@ export function appUpdateInboxEntry(
   };
 }
 
-/** 标题栏 / 工作台可见收件箱：业务条目 + 现算的应用更新（项目页未挂载也能看到） */
+/** 「从手机添加」还没处理的条数 → 收件箱「手机」条目（点开弹层列表，不重新开始接收） */
+export function phoneDropInboxEntry(pending: number): InboxItem | null {
+  const fields = phoneInboxFields(pending);
+  if (!fields) return null;
+  return {
+    key: fields.key,
+    dot: "bg-ok-text",
+    text: fields.text,
+    actionLabel: "去处理",
+    action: { type: "phoneDrop" },
+  };
+}
+
+/** 标题栏 / 工作台可见收件箱：业务条目 + 现算的应用更新与手机待处理（项目页未挂载也能看到） */
 export function visibleInboxItems(
   items: InboxItem[],
   update: { version: string; currentVersion: string } | null,
   dismissed: Record<string, string>,
+  phonePending = 0,
 ): InboxItem[] {
+  const phone = phoneDropInboxEntry(phonePending);
   return filterDismissed(
-    mergeAppUpdateInbox(items, appUpdateInboxEntry(update)),
+    [...mergeAppUpdateInbox(items, appUpdateInboxEntry(update)), ...(phone ? [phone] : [])],
     dismissed,
   );
 }
@@ -554,6 +572,8 @@ export function runInboxAction(item: InboxItem) {
     s.setSelectProjectReq(item.action.projectRoot);
     s.setHelpViewReq(item.action.projectRoot);
     s.setPage("workspaces");
+  } else if (item.action.type === "phoneDrop") {
+    usePhoneDropStore.getState().openDialog(null, { start: false });
   } else if (item.action.type === "settings") {
     // 依赖体检条目：跳设置页并选中目标分区（设置页消费 settingsSectionReq 后清空）
     s.setSettingsSectionReq(item.action.section);

@@ -406,6 +406,7 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | android_system_properties | 0.1.5 | MIT/Apache-2.0 |
 | anyhow | 1.0.104 | MIT OR Apache-2.0 |
 | arbitrary | 1.4.2 | MIT OR Apache-2.0 |
+| ascii | 1.1.0 | Apache-2.0 OR MIT |
 | async-broadcast | 0.7.2 | MIT OR Apache-2.0 |
 | async-channel | 2.5.0 | Apache-2.0 OR MIT |
 | async-compression | 0.4.43 | MIT OR Apache-2.0 |
@@ -456,6 +457,7 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | cfg-if | 1.0.4 | MIT OR Apache-2.0 |
 | chacha20 | 0.10.1 | MIT OR Apache-2.0 |
 | chrono | 0.4.45 | MIT OR Apache-2.0 |
+| chunked_transfer | 1.5.0 | MIT OR Apache-2.0 |
 | cipher | 0.4.4 | MIT OR Apache-2.0 |
 | codepage | 0.1.2 | Apache-2.0 OR MIT |
 | combine | 4.6.7 | MIT |
@@ -603,6 +605,7 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | ident_case | 1.0.1 | MIT/Apache-2.0 |
 | idna | 1.1.0 | MIT OR Apache-2.0 |
 | idna_adapter | 1.2.2 | Apache-2.0 OR MIT |
+| if-addrs | 0.15.0 | MIT OR BSD-3-Clause |
 | indexmap | 1.9.3 | Apache-2.0 OR MIT |
 | indexmap | 2.14.0 | Apache-2.0 OR MIT |
 | infer | 0.19.0 | MIT |
@@ -724,6 +727,7 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | proc-macro-error | 1.0.4 | MIT OR Apache-2.0 |
 | proc-macro-error-attr | 1.0.4 | MIT OR Apache-2.0 |
 | proc-macro2 | 1.0.107 | MIT OR Apache-2.0 |
+| qrcode | 0.14.1 | MIT OR Apache-2.0 |
 | quick-xml | 0.31.0 | MIT |
 | quick-xml | 0.41.0 | MIT |
 | quinn | 0.11.11 | MIT OR Apache-2.0 |
@@ -852,6 +856,7 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | time | 0.3.54 | MIT OR Apache-2.0 |
 | time-core | 0.1.9 | MIT OR Apache-2.0 |
 | time-macros | 0.2.32 | MIT OR Apache-2.0 |
+| tiny_http | 0.12.0 | MIT OR Apache-2.0 |
 | tinystr | 0.8.3 | Unicode-3.0 |
 | tinyvec | 1.12.0 | Zlib OR Apache-2.0 OR MIT |
 | tinyvec_macros | 0.1.1 | MIT OR Apache-2.0 OR Zlib |

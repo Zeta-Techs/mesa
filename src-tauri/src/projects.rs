@@ -4522,11 +4522,17 @@ fn append_excerpt_at(worktree_path: &Path, content: &str) -> Result<(), String> 
     append_notes_file_at(worktree_path, EXCERPTS_FILE, EXCERPTS_HEADER, content)
 }
 
-/// 终端摘记（2026-10-17 用户：选中终端文字「存进笔记」）：独立一份 notes/clips.md，不混进文献摘录——
-/// 摘录会被精读步并进文献笔记，终端输出不是文献。前端只在科研 / 办公项目里给这个按钮
-const CLIPS_HEADER: &str = "# 终端摘记\n\n\
-     > 由 Mesa 从运行页终端「存进笔记」追加，最新的在最后。\n";
+/// 摘记（2026-10-17 用户：选中终端文字「存进笔记」）：独立一份 notes/clips.md，不混进文献摘录——
+/// 摘录会被精读步并进文献笔记，终端输出不是文献。前端只在科研 / 办公项目里给这个按钮。
+/// 2026-10-20 起手机发来的话也存这里（phone_drop），新建时文件头写通用的「摘记」；已有文件不改写
+const CLIPS_HEADER: &str = "# 摘记\n\n\
+     > 由 Mesa「存进笔记」追加（终端里选中的文字、手机发来的话），最新的在最后。\n";
 const CLIPS_FILE: &str = "clips.md";
+
+/// 手机发来的话追加进 notes/clips.md（phone_drop 用；root 须已过项目根门槛）
+pub(crate) fn append_clip_at(root: &Path, content: &str) -> Result<(), String> {
+    append_notes_file_at(root, CLIPS_FILE, CLIPS_HEADER, content)
+}
 
 /// notes/<file> 追加的公共内核（摘录 / 摘记共用写入规则，见上）
 fn append_notes_file_at(
@@ -6586,8 +6592,8 @@ resources = ["ghost.pdf"]
         append_notes_file_at(&root, CLIPS_FILE, CLIPS_HEADER, "\n## 片段一\n").unwrap();
         append_notes_file_at(&root, CLIPS_FILE, CLIPS_HEADER, "\n## 片段二\n").unwrap();
         let text = fs::read_to_string(root.join("notes/clips.md")).unwrap();
-        assert!(text.starts_with("# 终端摘记"));
-        assert_eq!(text.matches("# 终端摘记").count(), 1);
+        assert!(text.starts_with("# 摘记"));
+        assert_eq!(text.matches("# 摘记").count(), 1);
         assert!(text.ends_with("## 片段二\n"));
         assert!(!root.join("notes/excerpts.md").exists(), "终端输出不混进文献摘录");
         std::fs::remove_dir_all(&dir).ok();

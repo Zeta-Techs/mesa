@@ -69,6 +69,11 @@ pub(crate) fn read_whitelisted_sync(
     {
         roots.push(c);
     }
+    // 「从手机添加」暂存区（phone_drop.rs：只收不出的局域网服务写入，文件名清洗 + 上限 + 7 天清理）——
+    // 附到对话的手机图片走同一读取通道出缩略图
+    if let Some(c) = crate::phone_drop::stage_dir_path().and_then(|p| canon(&p)) {
+        roots.push(c);
+    }
     roots.extend(
         crate::workspaces::worktree_rows()
             .into_iter()

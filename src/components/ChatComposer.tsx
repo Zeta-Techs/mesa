@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { AtSign, FileText, Paperclip, Plus, Square } from "lucide-react";
+import { AtSign, FileText, Paperclip, Plus, Smartphone, Square } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import type { McpServerDto, SkillDto } from "../types";
 import type { SearchResultDto } from "./FileTree";
@@ -20,6 +20,8 @@ import {
 import { imeBlocksEnter } from "../ime-guard";
 import { escInterruptSafe } from "../agent-caps";
 import InsertMenuItems from "./InsertMenuItems";
+import { usePhoneDropStore } from "../phone-drop-store";
+import type { PhoneItem } from "../phone-drop";
 
 /**
  * 「+」添加菜单（docs/design-chat-layer.md §4.1，2026-10-17 第二期）：文件或图片 / 引用项目文件 / 技能 / MCP。
@@ -33,6 +35,7 @@ function AddMenu({
   onInsert,
   onPickFiles,
   onMention,
+  onPhone,
 }: {
   skills: SkillDto[];
   mcps: McpServerDto[];
@@ -42,6 +45,8 @@ function AddMenu({
   onInsert: (text: string) => void;
   onPickFiles: () => void;
   onMention: () => void;
+  /** 「从手机添加」：扫码传照片 / 文件 / 一句话，收到的直接附到这个输入框 */
+  onPhone: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const row =
@@ -82,6 +87,20 @@ function AddMenu({
                 <Paperclip size={14} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l3" />
                 文件或图片
                 <span className="ml-auto text-micro text-l4">也可以拖进来、粘贴</span>
+              </button>
+            </li>
+            <li>
+              <button
+                type="button"
+                className={row}
+                onClick={() => {
+                  setOpen(false);
+                  onPhone();
+                }}
+              >
+                <Smartphone size={14} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l3" />
+                从手机添加
+                <span className="ml-auto text-micro text-l4">扫码传照片和文件</span>
               </button>
             </li>
             <li>
@@ -215,8 +234,9 @@ export default function ChatComposer({
   // 图片附件（缩略卡）：粘贴的图片经 save_clipboard_image 落盘后按路径随消息发送，
   // url 是本地 object URL 只用于输入框里的预览缩略图
   // url 为 null = 「+ → 文件或图片」选来的文件：不做缩略图，显示文件名卡
+  // phoneId：「从手机添加」送来的（× 掉时退回手机列表的「还没处理」）
   const [attachments, setAttachments] = useState<
-    { path: string; url: string | null }[]
+    { path: string; url: string | null; phoneId?: string }[]
   >([]);
   const attachmentsRef = useRef(attachments);
   attachmentsRef.current = attachments;
@@ -229,11 +249,53 @@ export default function ChatComposer({
   );
 
   function removeAttachment(path: string) {
+    const hit = attachmentsRef.current.find((a) => a.path === path);
+    if (hit?.phoneId) {
+      void invoke<PhoneItem>("phone_drop_set_status", { id: hit.phoneId, status: "new" })
+        .then((item) => usePhoneDropStore.getState().patchItem(item))
+        .catch(() => undefined);
+    }
     setAttachments((cur) => {
-      const hit = cur.find((a) => a.path === path);
-      if (hit?.url) URL.revokeObjectURL(hit.url);
+      const found = cur.find((a) => a.path === path);
+      if (found?.url) URL.revokeObjectURL(found.url);
       return cur.filter((a) => a.path !== path);
     });
+  }
+
+  // ---- 从手机添加：本输入框是接收目标时，收到的东西变成附件卡 / 文字（不自动发送） ----
+  const composerId = useId();
+  const phoneIsTarget = usePhoneDropStore((s) => s.target?.composerId === composerId);
+  const phoneReceiving = usePhoneDropStore((s) => s.status.receiving);
+  const phoneDialogOpen = usePhoneDropStore((s) => s.open);
+  const phoneReceived = usePhoneDropStore((s) => s.status.received);
+  const phoneDeliveries = usePhoneDropStore((s) => s.deliveries);
+  useEffect(() => {
+    const mine = usePhoneDropStore.getState().takeDeliveries(composerId);
+    for (const item of mine) {
+      if (item.kind === "text") {
+        if (item.text) insertResourceText(item.text);
+        continue;
+      }
+      const path = item.path;
+      if (!path || attachmentsRef.current.some((a) => a.path === path)) continue;
+      setAttachments((cur) => [...cur, { path, url: null, phoneId: item.id }]);
+      if (item.kind === "image") {
+        // 缩略图走白名单读图（暂存区已在白名单）；HEIC 等读不了的就保持文件名卡
+        void invoke<{ mime: string; data: string }>("read_image_bytes", { path })
+          .then((img) =>
+            setAttachments((cur) =>
+              cur.map((a) => (a.path === path ? { ...a, url: `data:${img.mime};base64,${img.data}` } : a)),
+            ),
+          )
+          .catch(() => undefined);
+      }
+    }
+    // insertResourceText 每次渲染重建，只按送达队列翻转
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phoneDeliveries, composerId]);
+  useEffect(() => () => usePhoneDropStore.getState().releaseTarget(composerId), [composerId]);
+  function openPhoneDrop() {
+    usePhoneDropStore.getState().openDialog({ composerId, cwd: cwd ?? null });
   }
 
   /** 剪贴板图片落盘（与终端粘贴同一通道 save_clipboard_image）→ 附件卡 */
@@ -494,6 +556,29 @@ export default function ChatComposer({
               <p className="px-2 pt-1 text-micro text-l4">Enter 选中 · Esc 收起 · 引用的是相对路径，AI 会自己去读</p>
             </div>
           )}
+          {/* 从手机添加：弹层收起后接收照常，这一行可展开或停止（30 分钟没新东西自动停） */}
+          {phoneIsTarget && phoneReceiving && !phoneDialogOpen && (
+            <div className="flex items-center gap-2 px-3 pt-2.5 text-micro text-l3">
+              <Smartphone size={12} strokeWidth={1.8} aria-hidden="true" className="shrink-0" />
+              <span className="min-w-0 truncate">
+                手机接收中{phoneReceived > 0 ? ` · 已收 ${phoneReceived}` : ""}
+              </span>
+              <button
+                type="button"
+                className="ml-auto hover:text-l1"
+                onClick={() => usePhoneDropStore.getState().openDialog({ composerId, cwd: cwd ?? null }, { start: false })}
+              >
+                展开
+              </button>
+              <button
+                type="button"
+                className="hover:text-l1"
+                onClick={() => void usePhoneDropStore.getState().stop()}
+              >
+                停止
+              </button>
+            </div>
+          )}
           {/* 图片附件缩略卡（粘贴落盘后展示，× 移除；发送时按路径随消息发出） */}
           {attachments.length > 0 && (
             <div className="flex flex-wrap gap-2 px-3 pt-3">
@@ -642,6 +727,7 @@ export default function ChatComposer({
                 onInsert={insertResourceText}
                 onPickFiles={() => void pickFiles()}
                 onMention={startMention}
+                onPhone={openPhoneDrop}
               />
               {cwdHint && !error && !busy ? (
                 onChooseCwd ? (

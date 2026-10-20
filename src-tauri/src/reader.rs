@@ -636,15 +636,40 @@ pub struct ReaderCaptureDto {
     pub abs_path: String,
 }
 
-/// 同秒连截的重名避让：capture-<stamp>.png 已存在则 -2/-3 递增
-fn next_capture_name(dir: &Path, stamp: &str) -> String {
-    let mut name = format!("capture-{stamp}.png");
+/// 同秒连截的重名避让：<prefix>-<stamp>.<ext> 已存在则 -2/-3 递增
+fn next_asset_name(dir: &Path, prefix: &str, stamp: &str, ext: &str) -> String {
+    let mut name = format!("{prefix}-{stamp}.{ext}");
     let mut n = 2;
     while dir.join(&name).exists() {
-        name = format!("capture-{stamp}-{n}.png");
+        name = format!("{prefix}-{stamp}-{n}.{ext}");
         n += 1;
     }
     name
+}
+
+/// notes/assets/ 写入内核（圈选截图与「从手机添加」共用）：root 须已过 gated_root；
+/// notes/assets 若是指向根外的 symlink 要拦下（同 ensure_paper_note 的双校验口径）
+pub(crate) fn write_notes_asset(
+    root: &Path,
+    prefix: &str,
+    ext: &str,
+    bytes: &[u8],
+) -> Result<ReaderCaptureDto, String> {
+    let assets = root.join("notes").join("assets");
+    fs::create_dir_all(&assets).map_err(|e| format!("创建 notes/assets 目录失败: {e}"))?;
+    let canon_assets = crate::paths::canonicalize_plain(&assets)
+        .map_err(|e| format!("notes/assets 目录无效: {e}"))?;
+    if !inside(&canon_assets, root) {
+        return Err("notes/assets 指向项目目录之外，拒绝写入".into());
+    }
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+    let name = next_asset_name(&canon_assets, prefix, &stamp, ext);
+    let target = canon_assets.join(&name);
+    fs::write(&target, bytes).map_err(|e| format!("保存图片失败: {e}"))?;
+    Ok(ReaderCaptureDto {
+        rel_path: format!("notes/assets/{name}"),
+        abs_path: target.to_string_lossy().into_owned(),
+    })
 }
 
 fn save_reader_capture_sync(
@@ -668,22 +693,7 @@ fn save_reader_capture_sync(
     if !bytes.starts_with(b"\x89PNG") {
         return Err("只接受 PNG 截图".into());
     }
-    let assets = root.join("notes").join("assets");
-    fs::create_dir_all(&assets).map_err(|e| format!("创建 notes/assets 目录失败: {e}"))?;
-    // notes/assets 若是指向根外的 symlink 要拦下（同 ensure_paper_note 的双校验口径）
-    let canon_assets = crate::paths::canonicalize_plain(&assets)
-        .map_err(|e| format!("notes/assets 目录无效: {e}"))?;
-    if !inside(&canon_assets, &root) {
-        return Err("notes/assets 指向项目目录之外，拒绝写入".into());
-    }
-    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
-    let name = next_capture_name(&canon_assets, &stamp);
-    let target = canon_assets.join(&name);
-    fs::write(&target, &bytes).map_err(|e| format!("保存截图失败: {e}"))?;
-    Ok(ReaderCaptureDto {
-        rel_path: format!("notes/assets/{name}"),
-        abs_path: target.to_string_lossy().into_owned(),
-    })
+    write_notes_asset(&root, "capture", "png", &bytes)
 }
 
 /// 圈选截图落盘：项目根门槛 + PNG 魔数 + 20MB 上限，返回相对/绝对路径
@@ -1962,7 +1972,7 @@ mod tests {
         let dir = tmpdir("cap-name");
         fs::write(dir.join("capture-t.png"), b"x").unwrap();
         fs::write(dir.join("capture-t-2.png"), b"x").unwrap();
-        assert_eq!(next_capture_name(&dir, "t"), "capture-t-3.png");
+        assert_eq!(next_asset_name(&dir, "capture", "t", "png"), "capture-t-3.png");
         fs::remove_dir_all(&dir).ok();
     }
 

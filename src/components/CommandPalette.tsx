@@ -20,10 +20,12 @@ import {
   Search,
   Settings2,
   ShieldAlert,
+  Smartphone,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useAppStore } from "../store";
+import { usePhoneDropStore } from "../phone-drop-store";
 import { openOnboardingGuide } from "./OnboardingGuide";
 import { filterCommands, matchedKeyword, type PaletteCommand } from "../command-palette";
 import { THEMES } from "../themes";
@@ -339,6 +341,16 @@ export default function CommandPalette({
               s.setPage("workspaces");
               s.setAddProjectOpenReq(Date.now());
             },
+          },
+          {
+            cmd: {
+              id: "phone-drop",
+              title: "从手机添加…",
+              group: "快速操作",
+              keywords: ["phone", "mobile", "手机", "扫码", "上传", "传文件", "照片", "拍照", "shouji", "sj"],
+            },
+            icon: icon(Smartphone),
+            run: () => usePhoneDropStore.getState().openDialog(null),
           },
           ...(appUpdate
             ? [

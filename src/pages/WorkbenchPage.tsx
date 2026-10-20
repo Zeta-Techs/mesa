@@ -15,6 +15,8 @@ import {
   SquareArrowOutUpRight,
 } from "lucide-react";
 import { useAppStore, runInboxAction, visibleInboxItems } from "../store";
+import { usePhoneDropStore } from "../phone-drop-store";
+import { phonePendingCount } from "../phone-drop";
 import { bulkReadableItems } from "../inbox";
 import { pathWithin, samePath } from "../path-utils";
 import { IS_WINDOWS } from "../hotkeys";
@@ -132,12 +134,14 @@ function WorkbenchPage({
   const rawInboxItems = useAppStore((s) => s.inboxItems);
   const appUpdate = useAppStore((s) => s.appUpdate);
   const inboxDismissed = useAppStore((s) => s.inboxDismissed);
+  const phonePending = usePhoneDropStore((s) => (s.open ? 0 : phonePendingCount(s.items)));
   const inboxItems = visibleInboxItems(
     rawInboxItems,
     appUpdate
       ? { version: appUpdate.version, currentVersion: appUpdate.currentVersion }
       : null,
     inboxDismissed,
+    phonePending,
   );
   const bulkInboxItems = bulkReadableItems(inboxItems);
   const dismissInboxBulk = useAppStore((s) => s.dismissInboxBulk);

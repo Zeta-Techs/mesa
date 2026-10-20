@@ -82,6 +82,9 @@ import {
   useOnboardingRail,
 } from "./components/OnboardingGuide";
 import WindowControls from "./components/WindowControls";
+import PhoneDropDialog from "./components/PhoneDropDialog";
+import { usePhoneDropEvents, usePhoneDropStore } from "./phone-drop-store";
+import { phonePendingCount } from "./phone-drop";
 import { toast } from "./toast";
 import { isCancellationRejection } from "./diagnostics";
 
@@ -474,12 +477,16 @@ function App() {
   const rawInboxItems = useAppStore((s) => s.inboxItems);
   const appUpdate = useAppStore((s) => s.appUpdate);
   const inboxDismissed = useAppStore((s) => s.inboxDismissed);
+  // 从手机添加：后端事件全局接一次；弹层开着时不在收件箱重复提醒
+  usePhoneDropEvents();
+  const phonePending = usePhoneDropStore((s) => (s.open ? 0 : phonePendingCount(s.items)));
   const inboxItems = visibleInboxItems(
     rawInboxItems,
     appUpdate
       ? { version: appUpdate.version, currentVersion: appUpdate.currentVersion }
       : null,
     inboxDismissed,
+    phonePending,
   );
   const inboxCount = inboxItems.length;
   const contextLabel = useAppStore((s) => s.contextLabel);
@@ -1829,6 +1836,7 @@ function App() {
               }}
             />
           )}
+          <PhoneDropDialog />
           <FeedbackModal
             open={feedbackOpen}
             attachDiagnostics={feedbackDiag}

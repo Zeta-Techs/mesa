@@ -118,6 +118,14 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   localStorage ccode.projectTreePins；tests/project-tree.test.ts
   usage-dist.ts              # 用量页分布区纯逻辑：shareOf/barWidthPct/sharePctLabel、visibleDistRows（先露 10 行、≤12 行不折）、
                              #   toTsv（复制表格，格内换行/制表符压空格）；tests/usage-dist.test.ts。StatsPage 的 DistList 统一渲染六个页签
+  phone-drop.ts              # 从手机添加纯逻辑（docs/design-phone-drop.md）：条目动作可用性（其他文件不放进项目）、放进哪个项目
+                             #   （对话目录所在科研/办公项目最长匹配，否则最近打开；编程不放）、状态/收件箱/停止原因文案（tests/phone-drop.test.ts）
+  phone-drop-store.ts        # 从手机添加界面状态（独立 zustand）：接收状态、收到的列表、弹层、目标输入框；后端三事件只在
+                             #   usePhoneDropEvents（App 挂一次）里接，输入框只从 deliveries 取自己那份（防多监听器各改各的）；
+                             #   starting 期间丢弃旧会话迟到的「已停止」事件
+  components/PhoneDropDialog.tsx # 从手机添加弹层（App 全局一处；入口：聊天输入框「+」/ ⌘K / 收件箱「手机」）：二维码（后端 SVG，
+                             #   data: URL 进 img）+ 地址复制 + 多网卡换地址 + 「扫了打不开？」+ 收到的列表（附到输入框/放进项目/另存为/复制/删除）；
+                             #   从输入框打开的「收起」接收继续，⌘K 打开的「完成」即停止
   components/ClientOpenDialog.tsx # useClientOpen 钩子 + 确认层：对话页底栏/右键菜单与工作台项目行共用；预检全过直接打开，有 note/warn/fix/block 才弹层（Codex 缺渠道「写入并打开」可选连接，Claude 渠道会变提示，被拦只给原因/下载入口）
   components/ConfirmDialog.tsx # 全局确认/提示框（confirmDialog/alertDialog，126 处共用）：语气图标 + 结构化正文（标题/对照表/注意条，
                              #   解析在 confirm-dialog.ts）+ 危险钮 dangerActionClass、按钮动词推断、危险默认焦点给取消
@@ -343,7 +351,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   schedule-tasks.ts          # 定时任务纯逻辑：周期白话/相对时间/按 projectRoot 过滤（tests/schedule-tasks.test.ts）
   schedule-skill.ts          # 定时巡检种类：文献雷达 + 分类「巡检」的技能；新建种子 prompt / 草稿路径
                              # （value 用目录名不是 UUID；tests/schedule-skill.test.ts）
-  inbox.ts                   # 收件箱分类胶囊纯逻辑：key 前缀→类别、分组、help dismiss 签名、人工请求通知 edge-trigger（tests/inbox.test.ts）
+  inbox.ts                   # 收件箱分类胶囊纯逻辑：key 前缀→类别、分组、help dismiss 签名、人工请求通知 edge-trigger（tests/inbox.test.ts）；
+                             #   phone: 类别（从手机添加还没处理的）与 update: 一样由 store.ts visibleInboxItems 现算合并
   app-update.ts              # 应用自更新展示纯逻辑：收件箱字段/合并、检查失败文案、http(s) 代理、下载进度
   app-update-install.ts      # 「下载并安装」hook（设置→更新与帮助菜单更新弹窗共用）：先查后台任务要人点头、进度累计、成功 relaunch；模块级闸防双下载
   diagnostics.ts             # 前端诊断：WebGL 探针/软件渲染判定、monaco 取消拒绝识别、诊断包前端采集；应用日志展示纯逻辑（UTC→本机时间、错误/警告短标、计数、复制文本）（tests/diagnostics.test.ts）
@@ -762,7 +771,8 @@ src-tauri/src/
                              #   supports_reasoning_effort=false 时改回 true，否则菜单写了也不出。
                              #   中转目录不带 reasoning_efforts 时不写这段则 /effort 不出
   projects.rs                # 项目档案卡（§11.3）：project.toml 读写、注册、资源登记/发现、一键开步、append_workspace_inbox、
-                             # 终端摘记 append_project_clip（notes/clips.md，与文献摘录 excerpts.md 共用写入内核 append_notes_file_at）、
+                             # 摘记 append_project_clip（notes/clips.md，与文献摘录 excerpts.md 共用写入内核 append_notes_file_at；
+                             #   手机文字走 append_clip_at；新建文件头 2026-10-20 起为通用「摘记」）、
                              #   槽位专属绑定（task_bindings 列：reader=沉浸阅读对话，set/get_project_agent_binding；删连接时连带清理）、
                              # 稳定项目身份（档案卡顶层 `id` 跟随文件夹；register_at 同一 id 新路径 = 移动重连
                              # 改路径不建新行；write_config_at 保证卡片带 id；list 回填旧行）、
@@ -1109,7 +1119,8 @@ src-tauri/src/
                              # reader_for_note 归属反查版（注册项目根直含 / 工作区 worktree 映射主仓副本，未合并明确报错）+
                              # read_image_bytes 图片通道（png/jpg/jpeg/gif/webp/svg、20MB，白名单判定复用 pdf.rs 内核）+
                              # read_audio_bytes 聊天层音频通道（mp3/wav/m4a/aac/aiff/flac/ogg、20MB、文件头校验，同一套白名单）+
-                             # save_reader_capture 圈选截图落 notes/assets/（PNG 魔数 + 同秒重名 -2/-3）/ append_note_image
+                             # save_reader_capture 圈选截图落 notes/assets/（PNG 魔数 + 同秒重名 -2/-3；写入内核 write_notes_asset
+                             #   与 phone_drop 共用）/ append_note_image
                              # （追加进「我的想法」小节）+ 生词本 notes/glossary.md（list/append 术语小写去重/remove）+
                              # append_note_translation（「译段」小节）+ append/remove_note_annotation（「标注」小节：一行一条高亮/批注，
                              # 建在「译段」前、同处再标只更新批注、删空连标题删；格式与 src/reader-note.ts 双端镜像）+
@@ -1159,6 +1170,13 @@ src-tauri/src/
                              #   两百篇带摘要的纳入清单就超；台账读写禁止回落预览通道
                              #   家目录直下系统目录标 isSystem 供前端置灰）
   pdf.rs                     # PDF/docx 字节读取：read_pdf_bytes 白名单 + canonicalize + 上限，base64 传输
+                             #   （白名单根含 ccode/tmp 粘贴图与 phone_drop 暂存区）
+  phone_drop.rs              # 从手机添加（2026-10-20，docs/design-phone-drop.md；安全口径 safety.md 同名条）：人点了才在选中网卡的
+                             #   私网 IPv4 上起 tiny_http 收件服务（令牌在路径、Host 校验、错令牌/未知路径同一个 404、只收不出），
+                             #   停止 / 30 分钟无新内容 / 退出（lib.rs ExitRequested）即关；手机页 resources/phone-drop/ 三文件 include_str!；
+                             #   收到的落 <配置根>/phone-inbox/（索引 items.json 进程锁+文件锁+原子写，7 天清理，.part 1 小时）；
+                             #   place_into 只走已有入口（PDF save_paper_bytes / 图片 reader::write_notes_asset / 文字 projects::append_clip_at，
+                             #   编程项目与其他文件拒）；事件 phone-drop-state / -incoming / -item；ignored 测试 live_lan_session 供真机点验
   sheet_preview.rs           # Excel/ODS 预览：同一套白名单读字节，calamine 抽指定工作表（200×256）+
                              #   xlsx 合并区（load_merged_regions，裁进窗口）
   ccode_home.rs              # 工作副本家目录（默认 ~/ccode，可在设置换到别的盘，实际根 <所选>/ccode）：current()

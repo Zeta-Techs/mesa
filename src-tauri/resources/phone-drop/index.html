@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
+<title>发到 Mesa</title>
+<link rel="stylesheet" href="app.css">
+<script src="app.js" defer></script>
+</head>
+<body>
+<main>
+  <header>
+    <h1>发到 Mesa</h1>
+    <p id="status" class="status">已连上你的电脑。发出的东西会出现在 Mesa 里。</p>
+  </header>
+
+  <section class="picks">
+    <label class="pick">
+      <input id="camera" type="file" accept="image/*" capture="environment">
+      <span>拍照</span>
+    </label>
+    <label class="pick">
+      <input id="files" type="file" multiple>
+      <span>照片或文件</span>
+    </label>
+  </section>
+
+  <form id="note" class="note" autocomplete="off">
+    <textarea id="text" rows="3" placeholder="写一句话…" maxlength="20000"></textarea>
+    <button id="send" type="submit" disabled>发送</button>
+  </form>
+
+  <ol id="sent" class="sent" aria-live="polite"></ol>
+
+  <p class="foot">只在同一网络内传输，没有加密。在公共 Wi-Fi 上别传敏感文件。</p>
+</main>
+</body>
+</html>

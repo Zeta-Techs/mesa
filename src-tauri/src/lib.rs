@@ -85,6 +85,7 @@ mod model_registry;
 mod models;
 mod paths;
 mod pdf;
+mod phone_drop;
 mod portwatch;
 mod pricing;
 mod process;
@@ -871,6 +872,14 @@ pub fn run() {
             feedback::clear_feedback_smtp_secret,
             feedback::send_feedback_smtp,
             settings::clear_feedback_smtp_config,
+            phone_drop::phone_drop_start,
+            phone_drop::phone_drop_stop,
+            phone_drop::phone_drop_status,
+            phone_drop::phone_drop_list,
+            phone_drop::phone_drop_set_status,
+            phone_drop::phone_drop_place,
+            phone_drop::phone_drop_save_as,
+            phone_drop::phone_drop_delete,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -893,6 +902,7 @@ pub fn run() {
                     process::shutdown_captures();
                     app.state::<pty::PtyManager>().shutdown();
                     chat_channel::shutdown_all();
+                    phone_drop::shutdown();
                     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
                     while process::capture_count() > 0 && std::time::Instant::now() < deadline {
                         std::thread::sleep(std::time::Duration::from_millis(20));
