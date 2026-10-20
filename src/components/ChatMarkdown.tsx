@@ -137,7 +137,8 @@ function MentionedAudios({ paths, cwd }: { paths: string[]; cwd?: string | null 
 
 /**
  * 音频播放条：经 read_audio_bytes 白名单读出字节，拼成 Blob 交给网页自带播放器（可暂停、拖进度、重播）。
- * 文件不在可读范围、已删除、这台电脑的网页内核放不了这种格式（如 Windows 上的 aiff），都如实写出来
+ * 文件不在可读范围、已删除、这台电脑的网页内核放不了这种格式（如 Windows 上压缩过的 aifc；
+ * 未压缩的 aiff 后端已转成 wav），都如实写出来
  */
 export function ChatAudioCard({ path, cwd }: { path: string; cwd?: string | null }) {
   const [src, setSrc] = useState<string | null>(null);
