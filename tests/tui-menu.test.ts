@@ -281,3 +281,20 @@ test("CodeBuddy 2.168 审批：框顶标题「Confirm」，问句取贴着选项
   assert.equal(menu.options.length, 3);
   assert.equal(menu.selected, 0);
 });
+
+test("Windows：Grok 单选的选中点画成 •（2026-10-20 ConPTY 抓屏）", () => {
+  const menu = parseTuiMenu([
+    "  │  >  写一个探针文件",
+    "  │  │ echo mesa > mesa_probe.txt",
+    "  │",
+    "  │  1 (○) Yes, and don't ask again for anything (always-approve mode)",
+    "  │  2 (•) Yes, proceed",
+    "  │  3 (○) No, reject (type to add feedback)",
+    "  │  4 (○) Never allow: echo",
+    "  │",
+    "  1/4:select  │  Tab:next option  │  ←/→:scope  │  Ctrl+c:cancel",
+  ]);
+  assert.equal(menu?.selected, 1);
+  assert.equal(menu?.options[1], "Yes, proceed");
+  assert.equal(menu?.options.length, 4);
+});

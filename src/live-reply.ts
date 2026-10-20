@@ -47,8 +47,9 @@ const SPINNER = /^\s*[\u2800-\u28ff]\s/;
 // Claude：转圈 / 用时 / 右对齐的思考档提示：✻ Sautéed for 7s · done、✶ Thinking…、● high · /effort；
 // 还有两种界面提示，聊天层里按不了、也不是回复：「Thought for 7s (ctrl+o to expand)」（思考折叠行，不带行首符号，
 // 会被当成上一段的续行）和任何「(ctrl+o to expand)」「(ctrl+r to …)」这类快捷键提示（2026-10-19 用户截图）
+// ● 只在缩进行里算状态（右对齐的「● high · /effort」）：顶格的 ● 是 Windows 上 Claude 的正文行首
 const CLAUDE_STATUS =
-  /^\s*(?:[✻✶✳✢✽✺∴*·●◈]\s|Thought for \d|.*·\s*\/effort\s*$)|\(ctrl\+[a-z] to [^)]*\)\s*$/;
+  /^\s*(?:[✻✶✳✢✽✺∴*·◈]\s|Thought for \d|.*·\s*\/effort\s*$)|^\s+●\s|\(ctrl\+[a-z] to [^)]*\)\s*$/;
 // Claude 2.1.x 把工具调用折成一行摘要：Read 1 file、Ran 2 commands、Searched for 3 patterns…
 const TOOL_SUMMARY =
   /^\s*(?:Read|Ran|Searched|Listed|Wrote|Edited|Updated|Fetched|Called|Created|Deleted|Found)\b.*\b(?:files?|commands?|patterns?|director(?:y|ies)|lines?|tools?|pages?|results?)\b/;
@@ -69,10 +70,11 @@ const LAYOUTS: Record<string, Layout> = {
     // 输入框上边框：最后一条「❯」行的上一行是横线
     boxTop: (rows) => lastBox(rows, (i) => (i > 0 && /^❯/.test(rows[i]) && BORDER.test(rows[i - 1].trim()) ? i - 1 : -1)),
     echo: /^❯\s+\S/,
-    lead: /^⏺\s?/,
+    // 行首符号：macOS / Linux 是 ⏺，Windows 上 Claude Code 画 ●（控制台字体没有 ⏺，2026-10-20 ConPTY 抓屏）
+    lead: /^[⏺●]\s?/,
     // 工具名可以是两个词：「Web Search(…)」「Notebook Edit(…)」（旧写法 [A-Za-z]* 漏掉带空格的，整行被当成正文）；
     // 括号必须紧跟字母，「⏺ Note (important)…」这种正文不会误判
-    tool: new RegExp(`^⏺\\s+[A-Z][A-Za-z]*(?: [A-Z][A-Za-z]*)*\\(|${TOOL_SUMMARY.source}`),
+    tool: new RegExp(`^[⏺●]\\s+[A-Z][A-Za-z]*(?: [A-Z][A-Za-z]*)*\\(|${TOOL_SUMMARY.source}`),
     skip: new RegExp(`${CLAUDE_STATUS.source}|^\\s*⎿`),
     indent: 2,
   },
@@ -111,12 +113,13 @@ const LAYOUTS: Record<string, Layout> = {
     indent: 3,
   },
   grok: {
+    // Windows 上 Grok 换了一套字形（2026-10-20 ConPTY 抓屏）：回显与输入框 ❯ → >，工具 ◆ → ♦，代码块标签 ◇ → ○
     boxTop: (rows) =>
-      lastBox(rows, (i) => (/^\s*╭[─━]+╮$/.test(rows[i]) && /^\s*│\s*❯/.test(rows[i + 1] ?? "") ? i : -1)),
-    echo: /^\s+❯\s+\S/,
+      lastBox(rows, (i) => (/^\s*╭[─━]+╮$/.test(rows[i]) && /^\s*│\s*[❯>]/.test(rows[i + 1] ?? "") ? i : -1)),
+    echo: /^\s+[❯>]\s+\S/,
     lead: null,
-    tool: /^\s*◆\s/,
-    skip: /Responding…|^\s*Worked for\b|^\s*◇\s+\S+\s+\[Copy\]$/,
+    tool: /^\s*[◆♦]\s/,
+    skip: /Responding…|^\s*Worked for\b|^\s*[◇○]\s+\S+\s+\[Copy\]$/,
     indent: 5,
     tail: /\s{2,}\d{1,2}:\d{2}\s?[AP]M$/,
   },
@@ -194,7 +197,11 @@ export function extractLiveReply(lines: readonly string[], agentId: string): Liv
     const first = region.findIndex((l) => lead.test(l) && !layout.tool.test(l));
     if (first >= 0) return readReply(layout, region, first, true);
   }
-  // 开头都滚出屏了（长回复，2026-10-17 用户：显示一半后就没了）：屏上这一截全是续行
+  // 开头都滚出屏了（长回复，2026-10-17 用户：显示一半后就没了）：屏上这一截全是续行——续行都有缩进。
+  // 顶上是没缩进的字（启动横幅、「Tips for getting started」、排队中的提问）说明这一轮的回复还没出来，
+  // 不预览（2026-10-20 Windows 抓屏：Gemini 等 MCP 初始化时提问排着队、屏上还没有回显，横幅被当成回复）
+  const firstText = region.find((l) => l.trim() && !BORDER.test(l.trim()));
+  if (firstText !== undefined && firstText.length - firstText.trimStart().length < 2) return null;
   return readReply(layout, region, 0, false);
 }
 

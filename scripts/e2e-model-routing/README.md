@@ -59,6 +59,21 @@ Gemini 的临时 HOME 里会把登录方式改成 API Key（Mesa 只在这种情
 切换会不会写回 CLI 的全局配置：第三幕带 `ANSWER_MENU=1`（Codex 选择器要连按两次用 `ANSWER_MENU=2`），脚本会在弹确认时按回车选默认项，
 最后比对临时 HOME 里各家配置文件切换前后的差异（`config_changed`，也打印到屏上）。2026-10-18 的结论见 src/switch-strategy.ts 文件头。
 
+**Windows（2026-10-20，ConPTY）**：同一脚本走 pywinpty（`pip install --target <目录> pywinpty pyte`，`PYTE_DIR` 与 `PYWINPTY_DIR` 都指向它），
+npm 的 `.cmd` 垫片按 Mesa 同口径直启。在 Git Bash 里跑，路径用 `cygpath -w` 转；Python 要用安装目录下的 `python.exe` 并加 `-X utf8`
+（`-I` 会忽略 PYTHONUTF8，计划文件按 GBK 读会报错）；Gemini 的工具幕可能要 `TOOL_SECS=25`（本机全局 hooks、MCP 初始化拖慢审批菜单）：
+
+```bash
+PYTE_DIR=$(cygpath -w /tmp/pywin) PYWINPTY_DIR=$(cygpath -w /tmp/pywin) \
+  "/c/Users/<你>/AppData/Local/Programs/Python/Python313/python.exe" -I -X utf8 \
+  scripts/e2e-model-routing/chat-capture.py "$(cygpath -w /tmp/e2e-plans.json)" claude-code ask "$(cygpath -w /tmp/cap/claude-ask.json)"
+# 用 Mesa 自己的解析器读抓屏：实时预览读到多少行、审批菜单认没认出来（macOS 抓的也能读，用来比两平台）
+node --experimental-strip-types scripts/e2e-model-routing/capture-check.ts "$(cygpath -w /tmp/cap/claude-ask.json)"
+```
+
+2026-10-20 Windows 结论：Claude / Gemini / Kimi / Grok 的审批菜单与实时预览都读得出（Claude 正文行首在 Windows 上是 `●`、Grok 换了一套字形，
+已补进 src/live-reply.ts / src/tui-menu.ts 与对应测试）。
+
 ## 聊天层结构化旁路（2026-10-20）
 
 设计与结论见 docs/design-chat-structured-channels.md。两层核对，都只打本机假网关、临时 HOME：

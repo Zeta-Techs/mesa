@@ -388,3 +388,64 @@ test("接续时上一次的最后一行只写了半截，写全后不重复", ()
   const merged = mergeLiveReply(["第一行写完了", "第二行写到一"], { lines: ["第二行写到一半又写完", "第三行"], anchored: false });
   assert.deepEqual(merged, ["第一行写完了", "第二行写到一半又写完", "第三行"]);
 });
+
+// 2026-10-20 Windows 11 ConPTY 抓屏（scripts/e2e-model-routing/chat-capture.py + pywinpty，假网关慢速吐字）
+test("Windows：Claude Code 的正文行首是 ●（不是 ⏺），右对齐的「● high · /effort」仍算状态", () => {
+  const rows = [
+    " ▐▛███▛█   Claude Code v2.1.304",
+    "▝▜██████▀  e2e-picked with high effort · API Usage Billing",
+    " ▝▝   ▝▝   ~\work",
+    "❯ TRIGGER_SLOW 讲一段",
+    "● 第一段：这是一段慢慢流出来的回复。",
+    "  - 要点一：终端先画出来",
+    "  - 要点二：会话文件后落盘",
+    "                                                  ● high · /effort",
+    "✻ Worked for 6s · done 21:12",
+    RULE,
+    "❯",
+    RULE,
+    "  ⏸ manual mode on · ? for shortcuts",
+  ];
+  const read = extractLiveReply(rows, "claude-code");
+  assert.deepEqual(read?.lines, ["第一段：这是一段慢慢流出来的回复。", "- 要点一：终端先画出来", "- 要点二：会话文件后落盘"]);
+});
+
+test("Windows：Grok 回显与输入框是 >、工具是 ♦、代码块标签是 ○", () => {
+  const box = "─".repeat(60);
+  const rows = [
+    "  ~/work                                                     6 / 256K │ [Dashboard]",
+    "     > TRIGGER_SLOW 讲一段                                    9:13 PM",
+    "     第一段：这是一段慢慢流出来的回复。                         9:13 PM",
+    "     • 要点一：终端先画出来",
+    "     echo mesa",
+    "     ○ bash   [Copy]",
+    "     ♦ Running 写一个探针文件",
+    "     最后一行：完毕。",
+    "     Worked for 6.3s",
+    `  ╭${box}╮`,
+    "  │ > ok" + " ".repeat(54) + "│",
+    `  ╰${box}╯`,
+    "  Tab/→:accept suggestion  │  Shift+Tab:mode  │  Ctrl+x:shortcuts",
+  ];
+  const read = extractLiveReply(rows, "grok");
+  assert.deepEqual(read?.lines, ["第一段：这是一段慢慢流出来的回复。", "• 要点一：终端先画出来", "echo mesa", "最后一行：完毕。"]);
+});
+
+test("回显还没出来（提问排着队）、屏顶是启动横幅时不预览——横幅不是回复", () => {
+  const top = "▄".repeat(60);
+  const bottom = "▀".repeat(60);
+  const rows = [
+    " ▝▜▄     Gemini CLI v0.64.0",
+    "   ▝▜▄",
+    "Tips for getting started:",
+    "1. Create GEMINI.md files to customize your interactions",
+    "ℹ Waiting for MCP servers to initialize... Slash commands are still available and prompts will be queued.",
+    "  Queued (press ↑ to edit):",
+    "    TRIGGER_SLOW 讲一段",
+    " Shift+Tab to accept edits                                   1 MCP server",
+    top,
+    " >   Type your message or @path/to/file",
+    bottom,
+  ];
+  assert.equal(extractLiveReply(rows, "gemini"), null);
+});

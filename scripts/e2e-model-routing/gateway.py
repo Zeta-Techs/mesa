@@ -1,5 +1,5 @@
 """假网关：记录每个请求打到哪个路径、带的什么模型；按协议回一个最小可用的回复（让 CLI 至少能走完一轮）。"""
-import json, sys, time
+import json, os, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LOG = open(sys.argv[2], "a", buffering=1)
@@ -12,7 +12,8 @@ SLOW_LINES = ["第一段：这是一段慢慢流出来的回复。", "", "- 要�
               "", "```bash", "echo mesa", "```", "", "最后一行：完毕。"]
 # TRIGGER_LONG = 比一屏还长的回复（看回复开头滚出屏后预览还接不接得上，2026-10-19 用户：Codex 第 22 行卡住）
 LONG_LINES = [f"第 {i} 行：长回复逐行流出。" for i in range(1, 61)]
-PROBE = "echo mesa > mesa_probe.txt"
+# E2E_PROBE_CMD 换探针命令（如写绝对路径，看沙箱里的工作目录对不对）
+PROBE = os.environ.get("E2E_PROBE_CMD", "echo mesa > mesa_probe.txt")
 SHELLISH = ("bash", "shell", "run_shell_command", "exec_command", "run_command", "terminal", "execute", "command")
 
 
