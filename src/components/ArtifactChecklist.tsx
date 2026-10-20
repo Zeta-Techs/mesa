@@ -17,6 +17,7 @@ import { useAppStore } from "../store";
 import type { ProjectConfigReadDto } from "../types";
 import { artifactPreviewSurface } from "../project-files";
 import ProjectFilePreview from "./ProjectFilePreview";
+import { IS_MAC, IS_WINDOWS } from "../hotkeys";
 
 /** 拖出会话的悬浮图标（48×48 文档形 PNG，生成脚本见 git 历史；只是拖拽时的视觉反馈，不要求精美） */
 const DRAG_ICON_DATA_URL =
@@ -41,7 +42,7 @@ function DragOutHandle({ path }: { path: string }) {
     <span
       role="button"
       aria-label="拖出到其他应用"
-      title="按住拖进其他应用（如 Zotero、Finder）"
+      title={`按住拖进其他应用（如 Zotero、${IS_MAC ? "Finder" : IS_WINDOWS ? "资源管理器" : "文件管理器"}）`}
       className="shrink-0 cursor-grab select-none px-0.5 text-micro text-l4 hover:text-l2"
       onMouseDown={(e) => {
         if (e.button !== 0) return;

@@ -363,10 +363,18 @@ fn list_outputs(root: &Path) -> Result<Vec<String>, String> {
     Ok(out)
 }
 
+/// 找真能跑的 Python（dep_check::usable_python，Windows 上 python3 是应用商店占位）
 fn python_bin() -> Result<PathBuf, String> {
-    crate::agents::resolve_binary("python3")
-        .or_else(|| crate::agents::resolve_binary("python"))
-        .ok_or_else(|| "未找到 python3/python，无法执行复现脚本".into())
+    crate::dep_check::usable_python()
+        .ok_or_else(|| "未找到可用的 Python 3，无法执行复现脚本（设置 → 诊断可一键安装 Python）".into())
+}
+
+/// Python 子进程统一强制 UTF-8：中文 Windows 上 stdout 与 open() 默认编码是 cp936，
+/// 读写含中文的 UTF-8 数据会 UnicodeDecodeError、输出成乱码。UTF-8 系统上是空操作
+fn python_command(python: &Path) -> crate::process::BackgroundCommand {
+    let mut cmd = crate::process::background_command(python);
+    cmd.env("PYTHONUTF8", "1").env("PYTHONIOENCODING", "utf-8");
+    cmd
 }
 
 #[tauri::command]
@@ -482,7 +490,7 @@ pub async fn research_run_reproduce(
             result_revision: None,
         };
         save_run(&out, &run)?;
-        let mut cmd = crate::process::background_command(&python);
+        let mut cmd = python_command(&python);
         cmd.current_dir(&tree);
         cmd.args(&args);
         let captured = match crate::process::capture_command(&mut cmd, RUN_TIMEOUT, OUTPUT_CAP) {
@@ -1031,7 +1039,7 @@ mod tests {
         .unwrap();
         let python = python_bin().unwrap();
         let out = tmp.join("outside");
-        let mut cmd = crate::process::background_command(&python);
+        let mut cmd = python_command(&python);
         cmd.current_dir(&tmp);
         cmd.args([
             "experiments/reproduce.py",
@@ -1051,6 +1059,29 @@ mod tests {
         assert!(out.join("verification.json").is_file());
         assert!(!tmp.join("verification.json").exists());
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// 默认编码读 UTF-8 中文文件、打印中文：中文 Windows（cp936）上不强制 UTF-8 会报错或乱码
+    #[test]
+    fn python_children_use_utf8_for_files_and_stdout() {
+        let Ok(python) = python_bin() else {
+            return;
+        };
+        let tmp = std::env::temp_dir().join(format!("mesa-utf8-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        fs::write(tmp.join("zh.txt"), "镁电池·数据".as_bytes()).unwrap();
+        let mut cmd = python_command(&python);
+        cmd.current_dir(&tmp);
+        cmd.args(["-c", "print(open('zh.txt').read())"]);
+        let captured =
+            crate::process::capture_command(&mut cmd, Duration::from_secs(20), 4096).unwrap();
+        let _ = fs::remove_dir_all(&tmp);
+        assert!(
+            captured.status.unwrap().success(),
+            "{}",
+            String::from_utf8_lossy(&captured.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&captured.stdout).trim(), "镁电池·数据");
     }
 
     #[test]

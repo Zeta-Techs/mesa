@@ -197,6 +197,9 @@ pub(crate) fn launch_hooks_value(agent: &str) -> Option<Value> {
     let events = launch_hook_events(agent)?;
     let spec = spec_for(agent)?;
     let log = hooks_log_path(spec).ok()?;
+    // 启动注入没有「开启开关」那一步写脚本：Windows 命令引用 ccode-hook.ps1，这里保证它在且是当前正文
+    #[cfg(windows)]
+    ensure_win_hook_script(&log).ok()?;
     let mut hooks = serde_json::Map::new();
     for &(event, matcher) in events {
         let cap = if event == "PostToolUse" {
@@ -299,10 +302,67 @@ fn shell_quote(p: &Path) -> String {
     format!("'{}'", p.to_string_lossy().replace('\'', "'\\''"))
 }
 
+/// Windows hook 脚本文件名：与状态日志同目录（hooks-state/），七家共用一份，日志路径走参数
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+const WIN_HOOK_SCRIPT: &str = "ccode-hook.ps1";
+
+/// Windows hook 脚本正文：读 stdin 事件 JSON，前缀「unix 秒 + 标签号」后单行追加到参数给的日志，超过 Cap 截断（语义同 unix 命令）。
+///
+/// 读写都必须显式钉 UTF-8，不能用 [Console]::In / Add-Content：那两者按系统 ANSI
+/// 代码页（中文机器 = GBK936）解码再编码，UTF-8 的中文字节被错位配对后会把紧跟的
+/// ASCII 字符当 trail byte 吞掉。实测 {"message":"新项目"} 往返后闭合引号消失，
+/// serde_json 解析失败 ⇒ 整条 hook 记录被丢弃（transcript_path 一旦中招，
+/// grok 这类只能靠它归属会话的 agent 会永久丢失精确注意力标记）。
+/// 用 UTF8Encoding::new($false) 而非 -Encoding utf8：PS 5.1 的后者会写 BOM，
+/// 首行多出 U+FEFF 会让读取侧的 unix 秒 parse::<i64>() 失败。\s+ 折叠换行保证一行一条记录。
+/// 正文保持纯 ASCII：PS 5.1 按 ANSI 代码页读无 BOM 脚本，ASCII 在任何代码页下都无损。
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+const WIN_HOOK_SCRIPT_BODY: &str = "param([string]$LogPath, [int]$Cap = 65536)\r\n\
+$u = New-Object Text.UTF8Encoding $false\r\n\
+[void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($LogPath))\r\n\
+$t = $env:CCODE_TAB_ID\r\n\
+if (-not $t) { $t = '-' }\r\n\
+$l = (New-Object IO.StreamReader ([Console]::OpenStandardInput()), $u).ReadToEnd()\r\n\
+if ($l.Length -gt $Cap) { $l = $l.Substring(0, $Cap) }\r\n\
+$ts = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()\r\n\
+[IO.File]::AppendAllText($LogPath, ($ts.ToString() + ' ' + $t + ' ' + ($l -replace '\\s+', ' ') + [Environment]::NewLine), $u)\r\n";
+
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn win_hook_script_path(log_path: &Path) -> PathBuf {
+    log_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(WIN_HOOK_SCRIPT)
+}
+
+/// 命令行里的路径：正斜杠 + 双引号。正斜杠 PowerShell 照认，又不会被 bash 双引号当转义；
+/// 不含 `$`/反引号/单引号，bash、cmd、PowerShell 三种宿主 shell 解析结果一致
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn win_cmdline_path(p: &Path) -> String {
+    let plain = crate::paths::strip_verbatim(p.to_path_buf());
+    format!(
+        "\"{}\"",
+        plain.to_string_lossy().replace('\\', "/").replace('"', "")
+    )
+}
+
+/// 每次启动都会调：正文没变就不写，免得多个 CLI 同时拉起时改名撞上正在被 hook 进程读取的脚本
 #[cfg(windows)]
-fn shell_quote(p: &Path) -> String {
-    // PowerShell 单引号字符串内的单引号双写转义
-    format!("'{}'", p.to_string_lossy().replace('\'', "''"))
+fn ensure_win_hook_script(log_path: &Path) -> Result<(), String> {
+    if fs::read_to_string(win_hook_script_path(log_path)).is_ok_and(|t| t == WIN_HOOK_SCRIPT_BODY) {
+        return Ok(());
+    }
+    write_win_hook_script(log_path)
+}
+
+/// 写（覆盖）Windows hook 脚本；开启时调用，保证脚本与当前版本正文一致
+#[cfg(windows)]
+fn write_win_hook_script(log_path: &Path) -> Result<(), String> {
+    let script = win_hook_script_path(log_path);
+    if let Some(dir) = script.parent() {
+        fs::create_dir_all(dir).map_err(|e| format!("创建 {} 失败: {e}", dir.display()))?;
+    }
+    crate::profiles::atomic_write(&script, WIN_HOOK_SCRIPT_BODY)
 }
 
 /// 一条记录最多收多少字节的事件 JSON（PreToolUse 带完整工具参数，审批卡要看命令和差异）
@@ -315,48 +375,46 @@ const PAYLOAD_CAP_SMALL: usize = 2048;
 /// 聊天层旁路据此认出是哪个标签的事件（docs/design-chat-structured-channels.md §6）。
 /// 整行拼好后一次写入：同一份日志有多个 CLI 并发追加，分三次写会互相穿插。
 /// payload 超过上限就截断（解析侧对截断的记录按字段名兜底取事件名和会话 id）。
-/// unix 走 sh（各 CLI 以 sh -c 执行），Windows 走 powershell；命令内 mkdir -p 兜底目录不存在。
+/// unix 走 sh（各 CLI 以 sh -c 执行），命令内 mkdir -p 兜底目录不存在。
+///
+/// Windows 各家 CLI 用不同宿主 shell 跑 hook：Claude Code 走 Git Bash，Gemini 走
+/// `powershell -Command`，Qwen 等经 Node 走 `cmd /d /s /c`。内联 `-Command "$d=…"` 的旧写法
+/// 在 bash 里 `$变量` 被提前展开、在 cmd/PowerShell 里内层引号被拆，日志一行都写不出来。
+/// 现在逻辑全放进 hooks-state/ccode-hook.ps1，命令行只剩双引号路径和一个截断字节数，三种宿主都原样传参。
+/// 日志路径作为参数留在命令里——marker 识别（更新/移除我们的条目）照旧生效，新旧两种写法都认。
 fn hook_command(log_path: &Path) -> String {
     hook_command_capped(log_path, PAYLOAD_CAP)
 }
 
 fn hook_command_capped(log_path: &Path, cap: usize) -> String {
-    let log = shell_quote(log_path);
-    let dir = shell_quote(log_path.parent().unwrap_or_else(|| Path::new(".")));
     #[cfg(not(windows))]
     {
+        let log = shell_quote(log_path);
+        let dir = shell_quote(log_path.parent().unwrap_or_else(|| Path::new(".")));
         format!(
             "umask 077; mkdir -p {dir}; l=\"$(date +%s) ${{CCODE_TAB_ID:--}} $({{ head -c {cap}; cat >/dev/null; }} | tr -d '\\r\\n')\"; printf '%s\\n' \"$l\" >> {log}"
         )
     }
     #[cfg(windows)]
     {
-        // \s+ 折叠换行，保证一行一条记录（hook stdin 可能是 pretty JSON）。
-        //
-        // 读写都必须显式钉 UTF-8，不能用 [Console]::In / Add-Content：那两者按系统 ANSI
-        // 代码页（中文机器 = GBK936）解码再编码，UTF-8 的中文字节被错位配对后会把紧跟的
-        // ASCII 字符当 trail byte 吞掉。实测 {"message":"新项目"} 往返后闭合引号消失，
-        // serde_json 解析失败 ⇒ 整条 hook 记录被丢弃（transcript_path 一旦中招，
-        // grok 这类只能靠它归属会话的 agent 会永久丢失精确注意力标记）。
-        // 是否触发取决于具体汉字的字节序列，是数据相关的间歇故障。
-        // 用 UTF8Encoding::new($false) 而非 -Encoding utf8：PS 5.1 的后者会写 BOM，
-        // 首行多出 U+FEFF 会让读取侧的 unix 秒 parse::<i64>() 失败。
-        format!(
-            "powershell -NoProfile -Command \"$d={dir};New-Item -ItemType Directory -Force -Path $d|Out-Null;\
-             $u=New-Object Text.UTF8Encoding $false;\
-             $t=$env:CCODE_TAB_ID;if(-not $t){{$t='-'}};\
-             $l=(New-Object IO.StreamReader ([Console]::OpenStandardInput()),$u).ReadToEnd();\
-             if($l.Length -gt {cap}){{$l=$l.Substring(0,{cap})}};\
-             [IO.File]::AppendAllText({log},(([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()).ToString()+' '+$t+' '+($l -replace '\\s+',' ')+[Environment]::NewLine),$u)\""
-        )
+        win_hook_command(log_path, cap)
     }
+}
+
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn win_hook_command(log_path: &Path, cap: usize) -> String {
+    format!(
+        "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {} {} {cap}",
+        win_cmdline_path(&win_hook_script_path(log_path)),
+        win_cmdline_path(log_path)
+    )
 }
 
 // ===== JSON 文档族（settings.json / hooks.json）：hooks 段合并/移除（纯函数） =====
 
 fn parse_json_doc(existing: Option<&str>, spec: &BridgeSpec) -> Result<Value, String> {
     let display = spec.display();
-    let v: Value = match existing {
+    let v: Value = match existing.map(crate::mcp::strip_bom) {
         Some(t) if !t.trim().is_empty() => {
             // qwen/gemini 的 settings.json 实为 JSONC：先去注释与尾逗号（mcp.rs 同款容错读）
             let text = match spec.family {
@@ -482,8 +540,7 @@ fn remove_json_doc(spec: &BridgeSpec, existing: Option<&str>) -> Result<String, 
 // ===== kimi TOML 文档族（[[hooks]] 扁平表，strict 四字段） =====
 
 fn parse_toml_doc(existing: Option<&str>, display: &str) -> Result<toml_edit::DocumentMut, String> {
-    existing
-        .unwrap_or("")
+    crate::mcp::strip_bom(existing.unwrap_or(""))
         .parse::<toml_edit::DocumentMut>()
         .map_err(|e| format!("{display} 解析失败，已停止写入以免破坏: {e}"))
 }
@@ -580,10 +637,21 @@ fn has_marker(text: &str, marker: &str) -> bool {
 
 // ===== 备份与事务写入 =====
 
-fn read_existing(path: &Path) -> Option<String> {
-    fs::read_to_string(path)
-        .ok()
-        .filter(|t| !t.trim().is_empty())
+/// 读现有配置：不存在/空白 = None；BOM 剥掉（写回不带 BOM，原字节由备份保留）。
+/// 读失败（非 UTF-8、无权限等）必须报错停写——当成「不存在」会拿只含 hooks 的新文件
+/// 覆盖掉用户整份配置，且因 existing=None 连备份都不做（global_config 同口径）。
+fn read_existing(path: &Path) -> Result<Option<String>, String> {
+    match fs::read_to_string(path) {
+        Ok(t) => {
+            let t = crate::mcp::strip_bom(&t);
+            Ok((!t.trim().is_empty()).then(|| t.to_string()))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!(
+            "读取 {} 失败，已停止写入以免覆盖: {e}",
+            path.display()
+        )),
+    }
 }
 
 /// 写前备份到 <config>/ccode/backups/<tag>-hooks-settings-<纳秒>.<ext>，按前缀保留最近 N 份
@@ -622,6 +690,45 @@ fn backup_config(spec: &BridgeSpec, backups: &Path, config: &Path) -> Result<(),
     Ok(())
 }
 
+/// 旧版 Windows 钩子特征：内联 `powershell -Command "$d=…"`（JSON / TOML 转义后子串仍在）
+#[cfg(any(windows, test))]
+fn is_legacy_win_hook(config_text: &str) -> bool {
+    config_text.contains("-Command") && config_text.contains("$d=") && config_text.contains("hooks-state")
+}
+
+/// Windows 老用户迁移：旧版内联钩子在 bash / PowerShell 宿主下会被吞掉 `$变量`、从不生效。
+/// 启动时对开关已开的 agent，配置里仍是旧写法才按新写法重写一次（apply_hooks_at 自带备份 +
+/// 替换旧条目）；已是新写法不动，不会每次启动多出一份备份。失败只记日志，不挡启动
+#[cfg(windows)]
+pub(crate) fn migrate_legacy_windows_hooks() {
+    let Some(home) = dirs::home_dir() else {
+        return;
+    };
+    let Ok(backups) = backups_dir() else {
+        return;
+    };
+    let settings = crate::settings::read_current();
+    for s in crate::agent_specs::all_agent_specs() {
+        let Some(spec) = spec_for(s.id) else {
+            continue;
+        };
+        if !crate::settings::hooks_attention_enabled(&settings, s.id) {
+            continue;
+        }
+        let Ok(text) = fs::read_to_string(home.join(spec.config_rel)) else {
+            continue;
+        };
+        if !is_legacy_win_hook(&text) {
+            continue;
+        }
+        let result = hooks_log_path(spec)
+            .and_then(|log| apply_hooks_at(spec, &home, &log, &backups, true));
+        if let Err(e) = result {
+            crate::logbuf::record("warn", "hooks", &format!("{} 旧版钩子迁移失败: {e}", s.id));
+        }
+    }
+}
+
 /// 应用开关：enabled=true 合并 hooks 配置，false 移除我们的条目；写前备份 + 原子写。
 /// 关闭时顺带清理状态日志；未安装过（文件不存在）时关闭是无操作。
 /// grok 整文件形态：开启=写文件（已存在且不含 marker 则报错拒绝覆盖），关闭=删文件。
@@ -634,9 +741,13 @@ fn apply_hooks_at(
 ) -> Result<(), String> {
     let config_path = home.join(spec.config_rel);
     let marker = spec.marker();
+    #[cfg(windows)]
+    if enabled {
+        write_win_hook_script(log_path)?;
+    }
     if spec.family == DocFamily::HooksFileJson {
-        let existing = read_existing(&config_path);
         if enabled {
+            let existing = read_existing(&config_path)?;
             if let Some(t) = &existing {
                 if !has_marker(t, &marker) {
                     return Err(format!(
@@ -656,7 +767,8 @@ fn apply_hooks_at(
             )?;
             return Ok(());
         }
-        return match existing {
+        // 关闭：读不了的文件（非 UTF-8 等）不可能是我们写的，按「不是我们的」处理
+        return match read_existing(&config_path).unwrap_or(None) {
             None => Ok(()), // 未安装过：无操作
             Some(t) if has_marker(&t, &marker) => {
                 backup_config(spec, backups, &config_path)?;
@@ -672,7 +784,7 @@ fn apply_hooks_at(
             }
         };
     }
-    let existing = read_existing(&config_path);
+    let existing = read_existing(&config_path)?;
     if !enabled && existing.is_none() {
         return Ok(());
     }
@@ -1561,6 +1673,167 @@ mod tests {
         fs::remove_dir_all(&dir).ok();
     }
 
+    /// Windows 新命令形态：只有两个双引号路径，无 `$`/单引号；日志路径留在命令里，marker 照常命中；
+    /// 旧版内联 `-Command "$d=…"` 条目在重新开启时被替换而不是叠加
+    #[test]
+    fn legacy_win_hook_detection_matches_old_form_only() {
+        let old_json = r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"powershell -NoProfile -Command \"$d='C:\\Users\\x\\AppData\\Roaming\\ccode\\hooks-state';\""}]}]}}"#;
+        assert!(is_legacy_win_hook(old_json));
+        let new_json = r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"C:/x/hooks-state/ccode-hook.ps1\" \"C:/x/hooks-state/claude-hooks.jsonl\""}]}]}}"#;
+        assert!(!is_legacy_win_hook(new_json));
+        assert!(!is_legacy_win_hook("{}"));
+    }
+
+    /// 旧版内联 `-Command "$d=…"` 条目在重新开启时被替换而不是叠加
+    #[test]
+    fn win_hook_command_is_shell_neutral_and_replaces_old_form() {
+        let (log, root) = if cfg!(windows) {
+            (
+                r"C:\Users\张 三\AppData\Roaming\ccode\hooks-state\claude-hooks.jsonl",
+                "C:/Users/张 三/AppData/Roaming",
+            )
+        } else {
+            (
+                "/home/张 三/.config/ccode/hooks-state/claude-hooks.jsonl",
+                "/home/张 三/.config",
+            )
+        };
+        let cmd = win_hook_command(Path::new(log), PAYLOAD_CAP);
+        assert_eq!(
+            cmd,
+            format!(
+                "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \
+                 \"{root}/ccode/hooks-state/ccode-hook.ps1\" \
+                 \"{root}/ccode/hooks-state/claude-hooks.jsonl\" {PAYLOAD_CAP}"
+            )
+        );
+        assert!(!cmd.contains('$') && !cmd.contains('\'') && !cmd.contains('\\'));
+        let spec = claude();
+        assert!(has_marker(&cmd, &spec.marker()));
+        assert!(WIN_HOOK_SCRIPT_BODY.is_ascii(), "PS 5.1 按 ANSI 读无 BOM 脚本，正文必须纯 ASCII");
+        assert!(
+            WIN_HOOK_SCRIPT_BODY.contains("CCODE_TAB_ID") && WIN_HOOK_SCRIPT_BODY.contains("$Cap"),
+            "脚本要带标签号并按 Cap 截断，语义同 unix 命令"
+        );
+
+        let old = r#"powershell -NoProfile -Command "$d='C:\Users\x\AppData\Roaming\ccode\hooks-state';New-Item -ItemType Directory -Force -Path $d|Out-Null;$u=New-Object Text.UTF8Encoding $false;$l=(New-Object IO.StreamReader ([Console]::OpenStandardInput()),$u).ReadToEnd();[IO.File]::AppendAllText('C:\Users\x\AppData\Roaming\ccode\hooks-state\claude-hooks.jsonl',(([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()).ToString()+' '+($l -replace '\s+',' ')+[Environment]::NewLine),$u)""#;
+        let existing = merge_json_doc(spec, None, old).unwrap();
+        let out = merge_json_doc(spec, Some(&existing), &cmd).unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        for (event, _) in spec.events {
+            let arr = v["hooks"][event].as_array().unwrap();
+            assert_eq!(arr.len(), 1, "{event} 旧条目被替换");
+            assert_eq!(arr[0]["hooks"][0]["command"], cmd.as_str());
+        }
+        // 旧形态也能被关闭移除
+        let removed = remove_json_doc(spec, Some(&existing)).unwrap();
+        assert!(serde_json::from_str::<Value>(&removed).unwrap().get("hooks").is_none());
+        // kimi TOML 同理
+        let kimi = spec_for("kimi").unwrap();
+        let old_kimi = old.replace("claude-hooks", "kimi-hooks");
+        let new_kimi = cmd.replace("claude-hooks", "kimi-hooks");
+        let t = merge_kimi_toml(kimi, None, &old_kimi).unwrap();
+        let t = merge_kimi_toml(kimi, Some(&t), &new_kimi).unwrap();
+        let doc = t.parse::<toml_edit::DocumentMut>().unwrap();
+        let arr = doc["hooks"].as_array_of_tables().unwrap();
+        assert_eq!(arr.len(), 3);
+        assert!(arr
+            .iter()
+            .all(|h| h["command"].as_str() == Some(new_kimi.as_str())));
+    }
+
+    /// BOM 开头的配置（PowerShell 5.1 / 旧记事本）照常合并，写回不带 BOM；读不了的配置拒写不覆盖
+    #[test]
+    fn bom_configs_merge_and_undecodable_config_is_refused() {
+        let dir = tmpdir("bom");
+        let home = dir.join("home");
+        let log = dir.join("hooks-state").join("claude-hooks.jsonl");
+        let backups = dir.join("backups");
+        let spec = claude();
+        let settings = home.join(spec.config_rel);
+        fs::create_dir_all(settings.parent().unwrap()).unwrap();
+        fs::write(&settings, "\u{feff}{\"env\": {\"KEEP\": \"1\"}}").unwrap();
+        apply_hooks_at(spec, &home, &log, &backups, true).unwrap();
+        let text = fs::read_to_string(&settings).unwrap();
+        assert!(!text.starts_with('\u{feff}'));
+        let v: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["env"]["KEEP"], "1");
+        assert!(v["hooks"]["Stop"].is_array());
+
+        // JSONC 容错族与 kimi TOML 同样容忍 BOM
+        let qwen = spec_for("qwen").unwrap();
+        assert!(merge_json_doc(qwen, Some("\u{feff}{\"a\": 1,}"), "x").is_ok());
+        let kimi = spec_for("kimi").unwrap();
+        assert!(merge_kimi_toml(kimi, Some("\u{feff}default_model = \"m\"\n"), "x").is_ok());
+
+        // 非 UTF-8：不能当成「不存在」拿只含 hooks 的新文件覆盖
+        let bad = [0xff, 0xfe, b'{', 0xfd];
+        fs::write(&settings, bad).unwrap();
+        assert!(apply_hooks_at(spec, &home, &log, &backups, true).is_err());
+        assert!(apply_hooks_at(spec, &home, &log, &backups, false).is_err());
+        assert_eq!(fs::read(&settings).unwrap(), bad, "原文件原样保留");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 真机执行：生成的命令分别经 cmd /d /s /c（Qwen 等 Node 系）、powershell -Command（Gemini）、
+    /// Git Bash -c（Claude Code）三种宿主跑一遍，日志都要写出可解析的记录（含中文不乱码）
+    #[cfg(windows)]
+    #[test]
+    fn win_hook_command_runs_under_cmd_powershell_and_bash() {
+        use std::io::Write;
+        let dir = tmpdir("exec").join("带 空格 目录");
+        let log = dir.join("hooks-state").join("claude-hooks.jsonl");
+        write_win_hook_script(&log).unwrap();
+        let cmd = win_hook_command(&log, PAYLOAD_CAP);
+
+        let run = |host: &str, mut c: crate::process::BackgroundCommand| {
+            c.env("CCODE_TAB_ID", "tab-w")
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            let mut child = c.spawn().unwrap_or_else(|e| panic!("{host} 起不来: {e}"));
+            let payload = format!(
+                "{{\n  \"session_id\": \"{host}\",\n  \"hook_event_name\": \"Notification\",\n  \"message\": \"新项目\"\n}}\n"
+            );
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(payload.as_bytes())
+                .unwrap();
+            let out = child.wait_with_output().unwrap();
+            assert!(
+                out.status.success(),
+                "{host} 退出码 {:?}: {}",
+                out.status.code(),
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+
+        let mut hosts = vec!["cmd", "powershell"];
+        let mut c = crate::process::background_command("cmd.exe");
+        c.raw_arg(format!("/d /s /c \"{cmd}\""));
+        run("cmd", c);
+        let mut c = crate::process::background_command("powershell.exe");
+        c.args(["-NoProfile", "-NonInteractive", "-Command", &cmd]);
+        run("powershell", c);
+        if let Some(bash) = crate::agents::resolve_git_bash() {
+            let mut c = crate::process::background_command(bash);
+            c.args(["-c", &cmd]);
+            run("bash", c);
+            hosts.push("bash");
+        }
+
+        let records = parse_log_records(&fs::read_to_string(&log).unwrap());
+        let ids: Vec<&str> = records.iter().map(|r| r.session_id.as_str()).collect();
+        assert_eq!(ids, hosts, "每种宿主各写一条可解析记录");
+        assert!(records
+            .iter()
+            .all(|r| r.detail.as_deref() == Some("新项目") && r.ts > 0));
+        assert!(records.iter().all(|r| r.tab.as_deref() == Some("tab-w")), "标签号照记");
+        fs::remove_dir_all(dir.parent().unwrap()).ok();
+    }
+
     /// 支持清单：七家在桥接注册表内，cursor/opencode 不支持且带备注
     #[test]
     fn support_list_covers_all_nine() {
@@ -1606,6 +1879,13 @@ mod tests {
             assert!(post.contains(&format!("head -c {PAYLOAD_CAP_SMALL}")));
             assert!(pre.contains(&format!("head -c {PAYLOAD_CAP}")));
         }
+        #[cfg(windows)]
+        {
+            assert!(post.ends_with(&format!(" {PAYLOAD_CAP_SMALL}")));
+            assert!(pre.ends_with(&format!(" {PAYLOAD_CAP}")));
+            assert!(WIN_HOOK_SCRIPT_BODY.contains("CCODE_TAB_ID"));
+        }
+        #[cfg(not(windows))]
         assert!(pre.contains("CCODE_TAB_ID"));
         assert_eq!(hooks["Notification"][0]["matcher"], "permission_prompt|elicitation_dialog");
         assert!(launch_hooks_value("codebuddy").is_some());
@@ -1711,7 +1991,7 @@ mod tests {
                 continue;
             }
             let real = home.join(spec.config_rel);
-            let Some(before) = read_existing(&real) else { continue };
+            let Ok(Some(before)) = read_existing(&real) else { continue };
             if !has_marker(&before, &spec.marker()) {
                 println!("{}（{}）: 没有 Mesa 的条目，迁移不动它", spec.display(), real.display());
                 continue;

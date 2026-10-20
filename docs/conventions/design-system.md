@@ -236,6 +236,14 @@
   浅色主题文字梯队按平台压深 l3/l4 两档（正文 l2、标题 l1 保持主题原值）：Windows 压最多（补偿 DirectWrite 小字号灰化），
   macOS 取原值→Windows 值 65% 的中间档（CoreText 字干较重，但原始 l3/l4 在 canvas 上仅 4.0/2.2:1 不过 WCAG AA；
   中间档 l3 ≥ 4.7、l4 ≥ 3.1，数值由 tests/theme-contrast.test.ts 锁定），Linux 保持主题原值。
+  **Windows 再加深一档（2026-10-19 用户拍板，深浅主题都做）**：在原 Windows 值（深色主题即主题原值）上
+  l3 向 l2 收 35%、l4 向 l3 收 50%——浅色压深、深色提亮，`[data-platform="windows"][data-theme=…]` 每主题一块，
+  14 块紧挨着放在 macOS 块之前（深色 shadcn 的 l3/l4 块须排在其强调色块之前，测试取首个匹配块）。
+  效果：浅色 l3 ≈ 6–7:1、l4 ≈ 4.4–5.2:1；深色 l3 ≈ 6.3–8.3:1、l4 ≈ 3.9–5:1。自定义配色走内联变量，不受影响。
+  **Windows 保持灰度抗锯齿（2026-10-19 定论）**：透明窗口（Mica）下 WebView2 只画灰度字。曾用页面容器独立合成拿到
+  ClearType，用户实看彩边像马赛克，已撤回；Claude 客户端正文同样是灰度，清楚靠高对比。**Windows 清晰度只从文字对比度
+  与字重上补，不走 ClearType 合成层路线。** 浅色主题下侧栏子树 l3 抬到 l2 补对比（规则须排在基础 `.ccode-app-rail` 之后，
+  chrome-opacity 测试按文本取第一条）。
   **强调色也可按平台微调**（2026-08-31：灰蓝正红的红在 Windows WebView2 直出 sRGB 下比 macOS P3 色彩管理显鲜，
   `[data-platform="windows"]` 覆写 shadcn/shadcn-light 的 cta 族只降饱和度不动色相，macOS/Linux 原值不变；
   平台覆写块必须排在 l3/l4 覆写之后——theme-contrast.test.ts 按选择器首个匹配块解析）。

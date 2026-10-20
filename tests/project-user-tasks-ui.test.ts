@@ -16,7 +16,8 @@ const bundle = await build({
     const stubs: Record<string, string> = {
       "../store": `export const useAppStore = select => select(window.__goalUi.store);
         useAppStore.getState = () => window.__goalUi.store;
-        export const runInboxAction = action => window.__goalUi.continues.push(action);`,
+        export const runInboxAction = action => window.__goalUi.continues.push(action);
+        export const selectHiddenProfiles = s => s.settings?.hiddenProfiles ?? [];`,
       "../goal-run": `export const prepareGoalRun = async input => {
           window.__goalUi.starts.push(input);
           if (window.__goalUi.startError) throw new Error('准备失败');

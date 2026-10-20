@@ -4,6 +4,7 @@ import { useAppStore } from "../store";
 import { AGENTS } from "../types";
 import type { HandoffBriefDto, HandoffTargetDto } from "../types";
 import type { HandoffSource } from "./HandoffPicker";
+import { relativeUnder } from "../path-utils";
 import { IS_WINDOWS } from "../hotkeys";
 import { hoverRevealClass } from "./PageFrame";
 
@@ -140,10 +141,7 @@ export default function DigestPicker({
 
   /** 简报路径相对项目目录（默认落 cwd/.ccode/ 下），指令里用相对路径 */
   function relPath(filePath: string): string {
-    const root = source.cwd.replace(/[\\/]+$/, "");
-    return filePath.startsWith(`${root}/`)
-      ? filePath.slice(root.length + 1)
-      : filePath;
+    return relativeUnder(filePath, source.cwd, IS_WINDOWS);
   }
 
   function promptFor(b: HandoffBriefDto): string {

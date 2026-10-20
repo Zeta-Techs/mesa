@@ -1374,9 +1374,10 @@ pub fn refresh_library_ris(project_root: &Path) -> Result<(Option<PathBuf>, Stri
         include_bytes!("../resources/journal-abbreviations.csv"),
         true,
     )?;
-    let py = crate::agents::resolve_binary("python3")
-        .or_else(|| crate::agents::resolve_binary("python"))
-        .ok_or_else(|| "本机找不到 python3，无法生成 Zotero 导入文件".to_string())?;
+    // 找真能跑的 Python（dep_check::usable_python，Windows 上 python3 是应用商店占位）
+    let py = crate::dep_check::usable_python().ok_or_else(|| {
+        "本机找不到 python 3，无法生成 Zotero 导入文件（设置 → 诊断可一键安装 Python）".to_string()
+    })?;
     let out = crate::process::background_command(&py)
         .arg(&script)
         .arg("--library-ris")

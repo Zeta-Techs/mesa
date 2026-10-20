@@ -105,6 +105,7 @@ pub const SET_GLOBAL_CC_SWITCH_CONFLICT: &str = "\
 
 /// 磁盘 Codex 配置是否像被 cc-switch（或其他 custom 渠道）占用默认位。
 pub fn codex_other_switcher_marks(config: &str) -> bool {
+    let config = crate::mcp::strip_bom(config);
     if config.contains("cc-switch-model-catalog") {
         return true;
     }
@@ -189,7 +190,7 @@ fn target_specs(agent: &str) -> Vec<(&'static str, &'static str)> {
 // ===== JSON 补丁 =====
 
 fn parse_json_doc(existing: Option<&str>) -> Result<Value, String> {
-    let v: Value = match existing {
+    let v: Value = match existing.map(crate::mcp::strip_bom) {
         Some(t) if !t.trim().is_empty() => serde_json::from_str(t)
             .map_err(|e| format!("现有配置不是合法 JSON，已停止写入以免破坏: {e}"))?,
         _ => json!({}),
@@ -547,8 +548,7 @@ fn overlay_opencode_per_model(provider: &mut Value, profile: &Profile) {
 // ===== TOML 补丁（toml_edit 保留文档其余部分） =====
 
 fn parse_toml_doc(existing: Option<&str>) -> Result<toml_edit::DocumentMut, String> {
-    existing
-        .unwrap_or("")
+    crate::mcp::strip_bom(existing.unwrap_or(""))
         .parse::<toml_edit::DocumentMut>()
         .map_err(|e| format!("现有 TOML 配置解析失败，已停止写入: {e}"))
 }
@@ -964,7 +964,9 @@ fn patch_env_file(existing: Option<&str>, pairs: &[(String, String)]) -> Result<
 
 fn read_existing(path: &Path) -> Result<Option<String>, String> {
     match fs::read_to_string(path) {
-        Ok(text) => Ok(Some(text)),
+        // BOM 在读入口统一剥掉：各 patch_* 解析前不必各自处理，写回也不再带 BOM
+        //（原文件字节已由备份按 fs::read 原样保留）
+        Ok(text) => Ok(Some(crate::mcp::strip_bom(&text).to_string())),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(format!(
             "读取 {} 失败，已停止写入以免覆盖成空白配置: {error}",
@@ -2329,6 +2331,32 @@ mod tests {
         let err = read_existing(&path).unwrap_err();
         assert!(err.contains("已停止写入"), "{err}");
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn bom_prefixed_configs_are_patched_not_rejected() {
+        // PowerShell 5.1 Set-Content -Encoding UTF8 / 旧记事本会给配置加 UTF-8 BOM
+        let dir = tmpdir("read-existing-bom");
+        let path = dir.join("settings.json");
+        fs::write(&path, "\u{feff}{\"keep\": 1}").unwrap();
+        let text = read_existing(&path).unwrap().unwrap();
+        assert!(!text.starts_with('\u{feff}'));
+        let out = patch_claude_settings(Some(&text), Some("https://x"), None, &[], None, None)
+            .unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["keep"], 1);
+        assert_eq!(v["env"]["ANTHROPIC_BASE_URL"], "https://x");
+        fs::remove_dir_all(&dir).ok();
+        // 解析函数自身也容忍（调用方没走 read_existing 时）
+        let out =
+            patch_claude_settings(Some("\u{feff}{\"keep\": 2}"), None, None, &[], None, None)
+                .unwrap();
+        assert!(!out.starts_with('\u{feff}'));
+        let out = patch_gemini_settings(Some("\u{feff}{\"keep\": 3}"), "n", &[], None).unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&out).unwrap()["keep"], 3);
+        let doc = parse_toml_doc(Some("\u{feff}model = \"m\"\n")).unwrap();
+        assert_eq!(doc["model"].as_str(), Some("m"));
+        assert!(codex_other_switcher_marks("\u{feff}model_provider = \"custom\"\n"));
     }
 
     #[test]

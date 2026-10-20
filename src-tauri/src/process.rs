@@ -114,24 +114,50 @@ fn is_cmd_batch_shim(program: &Path) -> bool {
 /// 从 npm 系 .cmd shim 文本提取相对 shim 目录的 JS 入口路径。
 /// 兼容 cmd-shim 包的两代写法（`%~dp0\` 与 `%dp0%\`）；只认 .js 入口，
 /// 跳过 shim 里对 node.exe 自身的引用。cfg(test) 下跨平台可测。
+///
+/// Node 官方安装器的 npm.cmd / npx.cmd 是变量化写法：`SET "NPX_CLI_JS=%~dp0\…\npx-cli.js"`，
+/// 末行 `"%NODE_EXE%" "%NPX_CLI_JS%" %*` 才是真入口。同文件里 npm-prefix.js 也被
+/// FOR /F 子命令以 `%NPM_PREFIX_JS%` 引用，所以取**最后一次**被引用的 .js 变量，不取第一个赋值。
 #[cfg(any(windows, test))]
 fn js_entry_from_shim(content: &str) -> Option<String> {
-    for token in content.split(|c: char| c == '"' || c.is_whitespace()) {
+    fn rel_js(value: &str) -> Option<String> {
         for prefix in ["%~dp0\\", "%~dp0/", "%dp0%\\", "%dp0%/"] {
-            if let Some(rest) = token.strip_prefix(prefix) {
+            if let Some(rest) = value.strip_prefix(prefix) {
                 if rest.to_ascii_lowercase().ends_with(".js") {
                     return Some(rest.replace('/', "\\"));
                 }
             }
         }
+        None
     }
-    None
+    let tokens: Vec<&str> = content
+        .split(|c: char| c == '"' || c.is_whitespace())
+        .filter(|t| !t.is_empty())
+        .collect();
+    let mut vars: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for token in &tokens {
+        if let Some((name, value)) = token.split_once('=') {
+            if !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                if let Some(rel) = rel_js(value) {
+                    vars.insert(name.to_ascii_uppercase(), rel);
+                }
+                continue;
+            }
+        }
+        if let Some(rel) = rel_js(token) {
+            return Some(rel);
+        }
+    }
+    tokens.iter().rev().find_map(|token| {
+        let name = token.strip_prefix('%')?.strip_suffix('%')?;
+        vars.get(&name.to_ascii_uppercase()).cloned()
+    })
 }
 
 /// .cmd shim → (node 绝对路径, JS 入口绝对路径)：入口文件必须真实存在；
 /// node 优先取 shim 同目录的 node.exe（官方 Node 布局），否则全局解析。
-/// npm.cmd 自身是 Node 安装器的变量化脚本（SET NPM_CLI_JS=...，文本解析拿不到
-/// 入口），但布局固定为 node_modules/npm/bin/npm-cli.js，走特殊 case；
+/// npm.cmd / npx.cmd 是 Node 安装器的变量化脚本，布局固定为
+/// node_modules/npm/bin/{npm,npx}-cli.js，按文件名走特殊 case（文本解析兜底同样能认）；
 /// 其余 shim（cmd-shim 包生成，如 codex.cmd）直接解析文本里的 %~dp0 入口。
 ///
 /// MCP 分发也走这里：各 CLI 的 stdio server 必须落成 `node + js`，不能把 `.cmd`
@@ -144,18 +170,21 @@ pub(crate) fn node_entry_from_cmd_shim(
         return None;
     }
     let dir = program.parent()?;
-    let entry = if program
+    let name = program
         .file_name()
         .and_then(|n| n.to_str())
-        .is_some_and(|n| n.eq_ignore_ascii_case("npm.cmd"))
-    {
-        dir.join("node_modules")
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let entry = match name.as_str() {
+        "npm.cmd" | "npx.cmd" => dir
+            .join("node_modules")
             .join("npm")
             .join("bin")
-            .join("npm-cli.js")
-    } else {
-        let content = std::fs::read_to_string(program).ok()?;
-        dir.join(js_entry_from_shim(&content)?)
+            .join(format!("{}-cli.js", &name[..3])),
+        _ => {
+            let content = std::fs::read_to_string(program).ok()?;
+            dir.join(js_entry_from_shim(&content)?)
+        }
     };
     if !entry.is_file() {
         return None;
@@ -855,13 +884,58 @@ endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\node_
     }
 
     #[test]
-    fn installer_style_npm_cmd_is_not_text_parseable() {
-        // Node 官方安装器的 npm.cmd 用变量间接引用入口（实机采样）：
-        // 文本解析应返回 None，由 node_entry_from_cmd_shim 的固定布局 special case 接管
-        let installer_style =
-            "SET \"NPM_PREFIX_JS=%~dp0\\node_modules\\npm\\bin\\npm-prefix.js\"\n\
-             SET \"NPM_CLI_JS=%~dp0\\node_modules\\npm\\bin\\npm-cli.js\"\n\
-             \"%NODE_EXE%\" \"%NPM_CLI_JS%\" %*\n";
-        assert_eq!(js_entry_from_shim(installer_style), None);
+    fn installer_style_shims_resolve_last_invoked_variable() {
+        // Node 官方安装器的 npm.cmd / npx.cmd 用变量间接引用入口（实机采样）：
+        // npm-prefix.js 先赋值也先被 FOR /F 引用，真入口是末行引用的 *_CLI_JS
+        let installer = |var: &str, js: &str| {
+            format!(
+                ":: Created by npm, please don't edit manually.\r\n@ECHO OFF\r\n\r\nSETLOCAL\r\n\r\n\
+                 SET \"NODE_EXE=%~dp0\\node.exe\"\r\nIF NOT EXIST \"%NODE_EXE%\" (\r\n  SET \"NODE_EXE=node\"\r\n)\r\n\r\n\
+                 SET \"NPM_PREFIX_JS=%~dp0\\node_modules\\npm\\bin\\npm-prefix.js\"\r\n\
+                 SET \"{var}=%~dp0\\node_modules\\npm\\bin\\{js}\"\r\n\
+                 FOR /F \"delims=\" %%F IN ('CALL \"%NODE_EXE%\" \"%NPM_PREFIX_JS%\"') DO (\r\n\
+                 \x20 SET \"NPM_PREFIX_{var}=%%F\\node_modules\\npm\\bin\\{js}\"\r\n)\r\n\
+                 IF EXIST \"%NPM_PREFIX_{var}%\" (\r\n  SET \"{var}=%NPM_PREFIX_{var}%\"\r\n)\r\n\r\n\
+                 \"%NODE_EXE%\" \"%{var}%\" %*\r\n"
+            )
+        };
+        assert_eq!(
+            js_entry_from_shim(&installer("NPX_CLI_JS", "npx-cli.js")).as_deref(),
+            Some(r"node_modules\npm\bin\npx-cli.js")
+        );
+        assert_eq!(
+            js_entry_from_shim(&installer("NPM_CLI_JS", "npm-cli.js")).as_deref(),
+            Some(r"node_modules\npm\bin\npm-cli.js")
+        );
+        // 只有赋值、没有被引用的变量不算入口
+        assert_eq!(
+            js_entry_from_shim("SET \"X_JS=%~dp0\\a.js\"\r\n\"%NODE_EXE%\" %*"),
+            None
+        );
+    }
+
+    /// 本机真实 Node 安装（C:\Program Files\nodejs）：npx.cmd 必须深化成 node + npx-cli.js，
+    /// 不能把 .cmd 原样交回（MCP 分发写进 CLI 配置会 os error 193）
+    #[cfg(windows)]
+    #[test]
+    fn real_npx_and_npm_cmd_resolve_to_node_entry() {
+        for shim in ["npx.cmd", "npm.cmd"] {
+            let Some(path) = crate::agents::resolve_binary(shim) else {
+                continue;
+            };
+            if !path.is_file() {
+                continue;
+            }
+            let (node, entry) = node_entry_from_cmd_shim(&path)
+                .unwrap_or_else(|| panic!("{} 应解析出 node 入口", path.display()));
+            assert!(node.is_file());
+            let want = format!("{}-cli.js", &shim[..3]);
+            assert!(entry.ends_with(std::path::Path::new(&want)), "{}", entry.display());
+            // 文本解析兜底与按名 special case 一致
+            let text = std::fs::read_to_string(&path).unwrap();
+            if let Some(rel) = js_entry_from_shim(&text) {
+                assert!(rel.ends_with(&want), "{rel}");
+            }
+        }
     }
 }

@@ -159,3 +159,15 @@ test("行级差异：首尾相同的行收成上下文，远处折成 ⋯", () =
   );
   assert.deepEqual(lineDiff("", "a\nb").map((l) => l.op), ["+", "+"]);
 });
+
+test("splitPath：Windows 下工作目录内判定跨大小写/分隔符/verbatim（isWindows 显式传入）", () => {
+  const cwd = String.raw`C:\Users\Me\Proj`;
+  assert.deepEqual(splitPath(String.raw`c:\users\me\proj\src\a.ts`, cwd, true), { name: "a.ts", dir: "src/" });
+  assert.deepEqual(splitPath(String.raw`\\?\C:\Users\Me\Proj\b.md`, cwd, true), { name: "b.md", dir: "" });
+  // 段边界：Proj2 不在 Proj 内
+  assert.deepEqual(splitPath(String.raw`C:\Users\Me\Proj2\c.md`, cwd, true), { name: "c.md", dir: "~/Proj2/" });
+  // 缺省大小写敏感（旧口径）：大小写不同不算工作目录内
+  assert.equal(splitPath("c:/users/me/proj/a.ts", cwd).dir, "c:/users/me/proj/");
+  const list = toolActivities("Read", JSON.stringify({ file_path: String.raw`c:\users\me\proj\src\a.ts` }), cwd, true);
+  assert.equal(list[0].dir, "src/");
+});

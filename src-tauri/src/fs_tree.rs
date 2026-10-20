@@ -1701,7 +1701,7 @@ fn is_protected_str(p: &str) -> bool {
             .map(|h| h.to_string_lossy().into_owned())
             .unwrap_or_default(),
     );
-    let exact: Vec<String> = [
+    let mut exact: Vec<String> = [
         home.clone(),
         format!("{home}/Documents"),
         format!("{home}/Desktop"),
@@ -1715,10 +1715,16 @@ fn is_protected_str(p: &str) -> bool {
     .into_iter()
     .map(|s| protect_key(&s))
     .collect();
+    // 系统报告的「文档/桌面/下载」：Windows 上常被 OneDrive 或中文目录重定向，不一定是 ~/Documents
+    exact.extend(
+        [dirs::document_dir(), dirs::desktop_dir(), dirs::download_dir()]
+            .into_iter()
+            .flatten()
+            .map(|d| protect_key(&d.to_string_lossy())),
+    );
     let pn = protect_key(p);
     let pn = pn.as_str();
     // 精确匹配保护 home 与 shell 配置；关键目录（Library/ssh/CLI 配置/Mesa 数据）连同子路径一并保护
-    #[allow(unused_mut)]
     let mut dir_prefixes: Vec<String> = [
         format!("{home}/Library"),
         format!("{home}/.ssh"),
@@ -1728,14 +1734,39 @@ fn is_protected_str(p: &str) -> bool {
         format!("{home}/.qwen"),
         format!("{home}/.kimi"),
         format!("{home}/.kimi-code"),
+        format!("{home}/.grok"),
+        format!("{home}/.cursor"),
+        format!("{home}/.codebuddy"),
+        format!("{home}/.config"),
+        format!("{home}/.local/share/opencode"),
         format!("{home}/Library/Application Support/ccode"),
     ]
     .into_iter()
     .map(|s| protect_key(&s))
     .collect();
-    // Windows 的系统目录不在 POSIX PREFIXES 里，单独并入（macOS 不编译此段）
+    // Mesa 自己的数据目录按系统口径取（Windows = %APPDATA%\ccode、%LOCALAPPDATA%\ccode 与
+    // 网页数据 %LOCALAPPDATA%\com.ccode.dev；macOS 上这些都已落在 ~/Library 之下，只是重复项）
+    for base in [dirs::config_dir(), dirs::data_local_dir(), dirs::data_dir()]
+        .into_iter()
+        .flatten()
+    {
+        for name in ["ccode", "com.ccode.dev"] {
+            dir_prefixes.push(protect_key(&base.join(name).to_string_lossy()));
+        }
+    }
+    // Windows 的 AppData 相当于 macOS 的 ~/Library，连同子路径保护；但 %TEMP% 就在
+    // AppData\Local\Temp 下，里面是临时工作区（内部对话目录、测试夹具等），放行其子路径
+    // （临时目录本身仍受保护）。系统目录不在 POSIX PREFIXES 里，单独并入（macOS 不编译此段）
     #[cfg(windows)]
-    dir_prefixes.extend(windows_system_dirs());
+    {
+        dir_prefixes.extend(windows_system_dirs());
+        let appdata = protect_key(&format!("{home}/AppData"));
+        let temp = protect_key(&std::env::temp_dir().to_string_lossy());
+        let in_temp = pn.starts_with(&format!("{temp}/"));
+        if !in_temp && (pn == appdata || pn.starts_with(&format!("{appdata}/"))) {
+            return true;
+        }
+    }
     if exact.iter().any(|e| pn == e)
         || dir_prefixes
             .iter()
@@ -1952,5 +1983,39 @@ mod system_dir_tests {
         assert!(is_protected_str(&format!(r"{sysroot}\System32")));
         // 盘符大小写不同也要命中（Windows 文件系统大小写不敏感）
         assert!(is_protected_str(&under_home(".ssh").to_uppercase()));
+    }
+
+    /// 其余 CLI 家目录、系统报告的文档/桌面目录与 Mesa 数据目录（按系统口径取）都受保护
+    #[test]
+    fn protected_list_covers_cli_homes_and_platform_data_dirs() {
+        for rel in [".grok", ".cursor/auth.json", ".codebuddy", ".config/opencode"] {
+            assert!(is_protected_str(&under_home(rel)), "{rel} 必须受保护");
+        }
+        for d in [dirs::document_dir(), dirs::desktop_dir()].into_iter().flatten() {
+            assert!(is_protected_str(&d.to_string_lossy()), "{}", d.display());
+        }
+        if let Some(cfg) = dirs::config_dir() {
+            let mesa = cfg.join("ccode").join("app.db");
+            assert!(is_protected_str(&mesa.to_string_lossy()), "{}", mesa.display());
+        }
+        if let Some(local) = dirs::data_local_dir() {
+            let web = local.join("com.ccode.dev").join("EBWebView");
+            assert!(is_protected_str(&web.to_string_lossy()), "{}", web.display());
+        }
+        // 文档目录本身受保护，但里面的普通项目不受影响（精确匹配，不是前缀）
+        if let Some(doc) = dirs::document_dir() {
+            assert!(!is_protected_str(&doc.join("my-research").to_string_lossy()));
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn protected_list_covers_windows_appdata() {
+        assert!(is_protected_str(&under_home(r"AppData\Roaming\Code")));
+        assert!(is_protected_str(&under_home(r"AppData\Local")));
+        // %TEMP% 在 AppData\Local\Temp 下：临时目录本身受保护，里面的临时工作区放行
+        let temp = std::env::temp_dir();
+        assert!(is_protected_str(&temp.to_string_lossy()));
+        assert!(!is_protected_str(&temp.join("ccode-ai-1234").to_string_lossy()));
     }
 }

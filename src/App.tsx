@@ -81,6 +81,7 @@ import {
   openOnboardingGuide,
   useOnboardingRail,
 } from "./components/OnboardingGuide";
+import WindowControls from "./components/WindowControls";
 import { toast } from "./toast";
 import { isCancellationRejection } from "./diagnostics";
 
@@ -1137,14 +1138,14 @@ function App() {
           {/* macOS 自绘标题栏（titleBarStyle: Overlay + hiddenTitle）：纯拖拽区 +
             Ghostty 式标题栏收件箱（按类别拆胶囊，点胶囊向下展开该类明细，遮罩/Esc/再点关闭）。
             窗口标题不在界面渲染（用户拍板删除，标题字符串仍保留在 tauri 配置里供自动化定位窗口）。
-            Windows/Linux 用原生标题栏；客户端上下文栏仍统一承载项目、运行、命令面板与收件箱。
+            Windows 去掉原生标题栏、与 macOS 同构（自绘拖拽区 + 右侧自绘窗口按钮）；Linux 仍用原生标题栏；客户端上下文栏仍统一承载项目、运行、命令面板与收件箱。
             执行态（chromeHidden）下也必须保留这条栏：窗口态 Overlay 红绿灯靠 pl-[78px] 让位；
             全屏时系统收起三个按钮，让位取消（否则左边空一块）。整条隐藏会导致岛消失。
             顶栏横贯整窗、压在侧栏上方（原结构），高度 h-9。侧栏是圆角玻璃，顶上给红绿灯留空。
             定位上下文与层级（position: relative + z-index）由 App.css 的 .ccode-titlebar 提供：
             导航岛嵌在这条栏里绝对定位居中，栏不构成层叠上下文时岛会掉进页面内容的层级里。 */}
           <header
-            data-tauri-drag-region={IS_MAC ? true : undefined}
+            data-tauri-drag-region={IS_MAC || IS_WINDOWS ? true : undefined}
             data-island={
               chromeHidden
                 ? islandExpanded
@@ -1152,7 +1153,9 @@ function App() {
                   : "hidden"
                 : undefined
             }
-            className={`ccode-titlebar flex h-9 shrink-0 items-center gap-2.5 pr-3 ${macOverlayPadClass(
+            className={`ccode-titlebar flex h-9 shrink-0 items-center gap-2.5 ${
+              IS_WINDOWS ? "pr-0" : "pr-3"
+            } ${macOverlayPadClass(
               IS_MAC,
               macFullscreen,
               "pl-3",
@@ -1405,6 +1408,9 @@ function App() {
                 </div>
               )}
             </div>
+            {/* Windows 去掉了原生标题栏，窗口按钮自绘在命令面板/收件箱右侧；
+                不进上面的右组，岛展开时那组会淡出，窗口按钮必须始终可点。 */}
+            {IS_WINDOWS && <WindowControls className="relative z-3 ml-1" />}
             {/* 导航岛嵌在标题栏内部居中：栏本身始终横贯整窗，隐藏侧栏只改内容区，
               栏宽不变，岛因此不会挪位；岛也不越出栏高，内容区不必再让位。 */}
             {chromeHidden && (

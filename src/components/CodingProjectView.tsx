@@ -48,7 +48,7 @@ import {
   rowActionClass,
   secondaryActionClass,
 } from "./PageFrame";
-import { useAppStore } from "../store";
+import { selectHiddenProfiles, useAppStore } from "../store";
 import { pathWithin, revealFolderLabel } from "../path-utils";
 import { IS_MAC, IS_WINDOWS } from "../hotkeys";
 import {
@@ -509,7 +509,7 @@ export default function CodingProjectView({
   const setPage = useAppStore((s) => s.setPage);
   const setPendingTerminal = useAppStore((s) => s.setPendingTerminal);
   const profiles = useAppStore((s) => s.profiles);
-  const hiddenProfiles = useAppStore((s) => s.settings?.hiddenProfiles ?? []);
+  const hiddenProfiles = useAppStore(selectHiddenProfiles);
   const branchInputRef = useRef<HTMLInputElement>(null);
   const [ov, setOv] = useState<CodingOverviewDto | null>(
     () => overviewCache.get(repoPath) ?? null,

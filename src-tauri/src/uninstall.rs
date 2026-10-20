@@ -23,6 +23,9 @@ pub struct UninstallResultDto {
     pub bridge_removed: Vec<String>,
     /// 某一步失败，其余继续
     pub errors: Vec<String>,
+    /// Mesa 运行期间被自身占用、只能退出后再删的目录（Windows 的 WebView2 网页数据）。
+    /// 不算失败：调用方应在退出前把这些路径告诉用户
+    pub deferred: Vec<String>,
 }
 
 /// Mesa 独占的数据根。课题路径不在这里。
@@ -86,6 +89,17 @@ fn bridge_manifests() -> Vec<PathBuf> {
         .collect()
 }
 
+/// 注册表键是否存在：只看 `reg query` 退出码（0 在 / 1 不在）。不匹配 reg 的输出文本——
+/// 中文 Windows 上那是 GBK，按 UTF-8 解出来是乱码，「找不到」永远匹配不上，
+/// 曾把「键本来就没有」误报成「浏览器桥注册表未删除」。None = reg 本身跑不起来。
+fn reg_key_exists(key: &str) -> Option<bool> {
+    crate::process::background_command("reg")
+        .args(["query", key])
+        .output()
+        .ok()
+        .map(|out| out.status.success())
+}
+
 fn remove_windows_bridge_keys() -> Vec<String> {
     if !cfg!(windows) {
         return Vec::new();
@@ -95,24 +109,50 @@ fn remove_windows_bridge_keys() -> Vec<String> {
         let Some(key) = crate::browser_bridge::windows_bridge_reg_key(browser) else {
             continue;
         };
-        let output = crate::process::background_command("reg")
+        match reg_key_exists(&key) {
+            Some(false) => continue, // 键本来就没有：不算失败
+            None => {
+                errors.push(format!("浏览器桥注册表未删除（{key}）：无法运行 reg"));
+                continue;
+            }
+            Some(true) => {}
+        }
+        let deleted = crate::process::background_command("reg")
             .args(["delete", &key, "/f"])
             .output();
-        match output {
-            Ok(out) if out.status.success() => {}
-            Ok(out) => {
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                // 键本来就没有：不算失败
-                if !stderr.to_lowercase().contains("unable to find")
-                    && !stderr.contains("找不到")
-                {
-                    errors.push(format!("浏览器桥注册表未删除（{key}）"));
-                }
-            }
-            Err(e) => errors.push(format!("浏览器桥注册表未删除（{key}）：{e}")),
+        // 以删后复查为准：退出码之外不读任何本地化输出
+        if reg_key_exists(&key) != Some(false) {
+            let detail = match deleted {
+                Err(e) => format!("：{e}"),
+                Ok(_) => String::new(),
+            };
+            errors.push(format!("浏览器桥注册表未删除（{key}）{detail}"));
         }
     }
     errors
+}
+
+/// 某个数据根这次怎么处理（纯判定，便于测试）
+#[derive(Debug, PartialEq, Eq)]
+enum RootPlan {
+    Trash,
+    /// 运行中被 Mesa 自己占着，退出后才能删
+    DeferUntilExit,
+    /// 还有终端标签开在里面（Windows 删不掉进程所在目录），先关标签
+    BlockedByTerminals(usize),
+}
+
+fn plan_root(is_windows: bool, is_webview_dir: bool, live_terminals_inside: usize) -> RootPlan {
+    if !is_windows {
+        return RootPlan::Trash; // macOS/Linux：打开着的目录照样能移走，行为不变
+    }
+    if is_webview_dir {
+        RootPlan::DeferUntilExit
+    } else if live_terminals_inside > 0 {
+        RootPlan::BlockedByTerminals(live_terminals_inside)
+    } else {
+        RootPlan::Trash
+    }
 }
 
 fn trash_dir(path: &Path, result: &mut UninstallResultDto) {
@@ -147,27 +187,65 @@ fn remove_file(path: &Path, result: &mut UninstallResultDto) {
 #[tauri::command]
 pub async fn uninstall_mesa() -> Result<UninstallResultDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let roots = owned_roots();
+        let webview = webview_data_dirs();
+        let plans: Vec<(PathBuf, RootPlan)> = roots
+            .into_iter()
+            .map(|root| {
+                let plan = plan_root(
+                    cfg!(windows),
+                    webview.iter().any(|w| w == &root),
+                    crate::pty::live_ptys_within(&root.to_string_lossy()),
+                );
+                (root, plan)
+            })
+            .collect();
+        // 先整体预检再动手：配置目录一旦移走，应用不退出就会写出半套新数据，不能删一半停下
+        let blocked: Vec<String> = plans
+            .iter()
+            .filter_map(|(root, plan)| match plan {
+                RootPlan::BlockedByTerminals(n) => Some(format!("{}（{n} 个终端）", root.display())),
+                _ => None,
+            })
+            .collect();
+        if !blocked.is_empty() {
+            return Err(format!(
+                "还有终端标签开在 Mesa 的数据目录里，Windows 不能移走正在使用的目录：{}。\
+                 请先在终端页关闭这些标签再卸载，这次什么都没动",
+                blocked.join("、")
+            ));
+        }
         let mut result = UninstallResultDto {
             trashed: Vec::new(),
             missing: Vec::new(),
             bridge_removed: Vec::new(),
             errors: Vec::new(),
+            deferred: Vec::new(),
         };
         for path in bridge_manifests() {
             remove_file(&path, &mut result);
         }
         result.errors.extend(remove_windows_bridge_keys());
-        for root in owned_roots() {
-            trash_dir(&root, &mut result);
+        for (root, plan) in plans {
+            match plan {
+                RootPlan::DeferUntilExit if root.exists() => {
+                    result.deferred.push(root.to_string_lossy().into_owned())
+                }
+                RootPlan::DeferUntilExit => {
+                    result.missing.push(root.to_string_lossy().into_owned())
+                }
+                _ => trash_dir(&root, &mut result),
+            }
         }
         crate::logbuf::record(
             "info",
             "uninstall",
             &format!(
-                "卸载：回收站 {} 项，桥清单 {} 项，失败 {} 项",
+                "卸载：回收站 {} 项，桥清单 {} 项，失败 {} 项，退出后待删 {} 项",
                 result.trashed.len(),
                 result.bridge_removed.len(),
-                result.errors.len()
+                result.errors.len(),
+                result.deferred.len()
             ),
         );
         Ok(result)
@@ -190,6 +268,16 @@ mod tests {
                 || name == format!("{APP_ID}.savedState");
             assert!(owned, "卸载碰到了不该动的目录：{}", path.display());
         }
+    }
+
+    /// Windows：网页数据退出后再删、终端占着的目录整体拦下；其它平台一律照旧移入回收站
+    #[test]
+    fn plan_root_handles_windows_in_use_dirs() {
+        assert_eq!(plan_root(false, true, 3), RootPlan::Trash);
+        assert_eq!(plan_root(false, false, 2), RootPlan::Trash);
+        assert_eq!(plan_root(true, true, 0), RootPlan::DeferUntilExit);
+        assert_eq!(plan_root(true, false, 2), RootPlan::BlockedByTerminals(2));
+        assert_eq!(plan_root(true, false, 0), RootPlan::Trash);
     }
 
     #[test]

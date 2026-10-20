@@ -19,6 +19,7 @@ import {
 } from "../project-tasks";
 import { normalizeWorkMode } from "../work-mode";
 import { samePath } from "../path-utils";
+import { IS_WINDOWS } from "../hotkeys";
 import type { DirEntryDto } from "./FileTree";
 import type { ProjectConfigDto, ProjectConfigReadDto, SkillDto } from "../types";
 import {
@@ -234,7 +235,7 @@ export default function ProjectRulesPanel({
       );
   // 文件只列已选路径；新增的子目录文件也能立即显示，不依赖重新读取目录。
   const protectedFiles = protectedPaths
-    .filter((path) => !folders.some((entry) => samePath(entry.path, path)))
+    .filter((path) => !folders.some((entry) => samePath(entry.path, path, IS_WINDOWS)))
     .map((path) => ({ path, isDir: false }));
   const addableSkills = librarySkills.filter((skill) => !skillNames.includes(skill.name));
   const query = skillQuery.trim().toLowerCase();

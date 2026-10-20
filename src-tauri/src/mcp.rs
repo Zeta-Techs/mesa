@@ -356,8 +356,11 @@ fn validate_server_name(name: &str) -> Result<(), String> {
 
 // ===== JSONC 容错读（gemini/qwen/opencode/codebuddy 容忍注释与尾逗号） =====
 
-/// 去注释 + 尾逗号（字符串/转义状态机，不动字符串内容）；hooks.rs 的 JSONC 容错读也复用
+/// 去注释 + 尾逗号（字符串/转义状态机，不动字符串内容）；hooks.rs 的 JSONC 容错读也复用。
+/// 开头的 UTF-8 BOM 一并去掉：PowerShell 5.1 `Set-Content -Encoding UTF8`、旧记事本存的
+/// settings.json 带 BOM，serde_json 不认，会被误判成「配置损坏」拒写。
 pub(crate) fn strip_jsonc(text: &str) -> String {
+    let text = strip_bom(text);
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     let mut in_str = false;
@@ -437,6 +440,12 @@ pub(crate) fn strip_jsonc(text: &str) -> String {
         i += 1;
     }
     result
+}
+
+/// 去掉开头的 UTF-8 BOM（U+FEFF）。CLI 配置（JSON/TOML）读入后、解析前一律先过这里；
+/// 写回时不再带 BOM（两种格式的规范都不要求，各家 CLI 也都能读无 BOM 文件）。
+pub(crate) fn strip_bom(text: &str) -> &str {
+    text.trim_start_matches('\u{feff}')
 }
 
 fn jsonc_read(path: &Path) -> Result<serde_json::Value, String> {
@@ -1207,7 +1216,8 @@ fn write_codex_entry(name: &str, entry: Option<toml_edit::Table>) -> Result<(), 
     let mut doc = if path.exists() {
         let text = std::fs::read_to_string(&path)
             .map_err(|e| format!("读取 {} 失败: {e}", path.display()))?;
-        text.parse::<toml_edit::DocumentMut>()
+        strip_bom(&text)
+            .parse::<toml_edit::DocumentMut>()
             .map_err(|e| format!("{} 解析失败: {e}（已拒写，请先手工修复）", path.display()))?
     } else {
         toml_edit::DocumentMut::new()
@@ -1325,7 +1335,7 @@ fn agent_entries(agent: &str) -> Result<Vec<(String, serde_json::Value)>, String
             return Ok(Vec::new());
         };
         let text = std::fs::read_to_string(path).map_err(|e| format!("读取失败: {e}"))?;
-        let doc = text
+        let doc = strip_bom(&text)
             .parse::<toml_edit::DocumentMut>()
             .map_err(|e| format!("{} 解析失败: {e}", path.display()))?;
         return Ok(doc
@@ -2188,6 +2198,35 @@ mod tests {
     }
 
     #[test]
+    fn bom_prefixed_agent_config_reads_and_writes() {
+        // PowerShell 5.1 Set-Content -Encoding UTF8 / 旧记事本存的配置带 BOM，不能被当成损坏拒写
+        let v: serde_json::Value =
+            serde_json::from_str(&strip_jsonc("\u{feff}{\"a\": 1,}")).unwrap();
+        assert_eq!(v["a"], 1);
+        let doc = strip_bom("\u{feff}[mcp_servers.x]\ncommand = \"y\"\n")
+            .parse::<toml_edit::DocumentMut>()
+            .unwrap();
+        assert_eq!(doc["mcp_servers"]["x"]["command"].as_str(), Some("y"));
+
+        let fx = Fixture::new();
+        let path = fx.seed_cursor_config();
+        let original = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, format!("\u{feff}{original}")).unwrap();
+        let names: Vec<String> = agent_entries("cursor")
+            .unwrap()
+            .into_iter()
+            .map(|(k, _)| k)
+            .collect();
+        assert_eq!(names, vec!["adopted".to_string()]);
+        write_json_entry("cursor", "added", Some(serde_json::json!({"command": "x"}))).unwrap();
+        let back = std::fs::read_to_string(&path).unwrap();
+        assert!(!back.starts_with('\u{feff}'), "写回不带 BOM");
+        let v: serde_json::Value = serde_json::from_str(&back).unwrap();
+        assert!(v["mcpServers"]["adopted"].is_object(), "既有条目保留");
+        assert_eq!(v["mcpServers"]["added"]["command"], "x");
+    }
+
+    #[test]
     fn env_ref_parses_two_forms() {
         assert_eq!(env_ref("$FOO"), Some("FOO"));
         assert_eq!(env_ref("${FOO}"), Some("FOO"));
@@ -2458,6 +2497,23 @@ mod tests {
         assert!(!is_node_shim(&other));
         assert!(!is_node_shim(&dir.join("missing")), "读不到不算 shim");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 本机装了 Node 时：裸名 npx 落盘必须是 node.exe + npx-cli.js，绝不是 npx.cmd
+    #[cfg(windows)]
+    #[test]
+    fn npx_command_deepens_to_node_entry_on_windows() {
+        if crate::agents::resolve_binary("npx").is_none() {
+            return;
+        }
+        let (command, args) = resolve_command_deep("npx", &["-y".into(), "some-mcp".into()]);
+        assert!(
+            !command.to_ascii_lowercase().ends_with(".cmd"),
+            "不能把 .cmd 写进 CLI 配置: {command}"
+        );
+        assert!(command.to_ascii_lowercase().ends_with("node.exe"), "{command}");
+        assert!(args[0].ends_with("npx-cli.js"), "{args:?}");
+        assert_eq!(&args[1..], ["-y", "some-mcp"]);
     }
 
     #[test]

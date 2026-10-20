@@ -1833,7 +1833,11 @@ pub async fn coding_remove_worktree(
     delete_branch: bool,
     force: bool,
 ) -> Result<(), String> {
-    if !manager.active_workspace_tasks(&worktree_path).is_empty() {
+    let blockers = manager.active_workspace_tasks(&worktree_path);
+    if blockers.contains(&"终端") {
+        // Windows：普通终端也占着目录（见 active_workspace_tasks）
+        manager.ensure_workspace_free(&worktree_path, "删除")?;
+    } else if !blockers.is_empty() {
         return Err("工作树中仍有任务运行，请先停止后再删除".into());
     }
     if crate::runs::has_active_run_in(&worktree_path)? {

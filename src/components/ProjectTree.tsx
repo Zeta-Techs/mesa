@@ -355,6 +355,7 @@ export default function ProjectTree({
     // needsAttention 恒 0：黄点归顶栏收件箱，树里只认「此刻在跑」
     const running =
       projectRailStatus({
+        isWindows: IS_WINDOWS,
         needsAttention: 0,
         roots: [
           row.repoPath,
@@ -641,6 +642,7 @@ export function useProjectSwitch(
           selectedRoot != null && samePath(selectedRoot, p.path, IS_WINDOWS),
         running:
           projectRailStatus({
+            isWindows: IS_WINDOWS,
             needsAttention: 0,
             roots: [
               p.path,

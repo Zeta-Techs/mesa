@@ -42,6 +42,7 @@ import { captureDecision, comboLabel, IS_MAC, IS_WINDOWS, PAGE_HOTKEY_DEFS } fro
 import {
   canOneClickInstall,
   depMissingReason,
+  installButtonHint,
   installGuidance,
   type DepItemDto,
   type DepPlatform,
@@ -141,6 +142,7 @@ import { toast } from "../toast";
 import { compact as compactTokens } from "../stats-insight";
 import { storageClearConfirmText, storageSegments, summarizeStorage } from "../settings-storage";
 import InternalSessionsCard from "../components/InternalSessionsCard";
+import { collapseCarriageReturns } from "../stream-text";
 
 // 调色板清单单一出处在 ../terminal-palettes（PALETTE_LIST，含亮暗标记）
 
@@ -498,6 +500,8 @@ const DEP_PLATFORM: DepPlatform = IS_MAC ? "mac" : IS_WINDOWS ? "win" : "linux";
  *  一键安装钮（渠道允许时）或指引文案；安装进行/结果跟随该行展示 */
 function DepStatusLine({
   label,
+  purpose,
+  busy = false,
   item,
   tool,
   channel,
@@ -505,6 +509,10 @@ function DepStatusLine({
   onInstall,
 }: {
   label: string;
+  /** 白话用途（普通用户不认识 PyMuPDF / Pillow 这类名字），缺失时跟在名字后面 */
+  purpose?: string;
+  /** 同一批安装正在别的行进行（拼图两库一起装），本行按钮也锁住 */
+  busy?: boolean;
   item: DepItemDto;
   tool: DepTool;
   channel: string;
@@ -526,28 +534,33 @@ function DepStatusLine({
     );
   }
   const reason = depMissingReason(item);
+  const hint = installButtonHint(tool, item.prereq);
   return (
     <div className="py-1 text-xs">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-err-text">✗</span>
         <span className="text-l2">{label}</span>
+        {purpose && <span className="text-l3">{purpose}</span>}
         <span className="text-l4">{reason}</span>
         {/* 有具体原因（如残留环境变量）时装不装都一样，不给安装按钮误导人去重装 */}
-        {item.note ? null : canOneClickInstall(tool, channel) ? (
-          <button
-            onClick={() => onInstall(tool)}
-            disabled={entry.running}
-            className={`${rowActionClass} shrink-0`}
-          >
-            {entry.running
-              ? "安装中…"
-              : item.status === "clt_stub"
-                ? "安装"
-                : "一键安装"}
-          </button>
+        {item.note ? null : canOneClickInstall(tool, channel, item.prereq) ? (
+          <>
+            <button
+              onClick={() => onInstall(tool)}
+              disabled={entry.running || busy}
+              className={`${rowActionClass} shrink-0`}
+            >
+              {entry.running || busy
+                ? "安装中…"
+                : item.status === "clt_stub"
+                  ? "安装"
+                  : "一键安装"}
+            </button>
+            {hint && !entry.running && !busy && <span className="text-l4">{hint}</span>}
+          </>
         ) : (
           <span className="text-l4">
-            {installGuidance(tool, channel, DEP_PLATFORM)}
+            {installGuidance(tool, channel, DEP_PLATFORM, item.prereq)}
           </span>
         )}
       </div>
@@ -1041,16 +1054,11 @@ function UninstallRow() {
   async function uninstall() {
     if (busy || typed.trim() !== "卸载") return;
     setBusy(true);
-    // 界面记忆（最近项目、偏好等 ccode.* 键）在 WebView 的 localStorage 里，
-    // 后端够不到；两次确认都已通过，就在动手前同步清掉。应用马上退出，无需保留
-    for (let i = localStorage.length - 1; i >= 0; i--) {
-      const key = localStorage.key(i);
-      if (key?.startsWith("ccode.")) localStorage.removeItem(key);
-    }
     try {
       const result = await invoke<{
         trashed: string[];
         errors: string[];
+        deferred: string[];
       }>("uninstall_mesa");
       if (result.errors.length > 0) {
         await alertDialog(
@@ -1058,6 +1066,18 @@ function UninstallRow() {
         );
         setBusy(false);
         return;
+      }
+      // 界面记忆（最近项目、偏好等 ccode.* 键）在 WebView 的 localStorage 里，后端够不到。
+      // 卸载真正成功后才清：后端中途拒绝（如 Windows 上还有终端开在 Mesa 目录里）时设置不该丢
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const key = localStorage.key(i);
+        if (key?.startsWith("ccode.")) localStorage.removeItem(key);
+      }
+      // Windows：网页数据目录被 Mesa 自己占着，运行中删不掉，退出前告诉用户手动删
+      if (result.deferred.length > 0) {
+        await alertDialog(
+          `以下目录 Mesa 运行时被自身占用，退出后请手动删除：\n${result.deferred.join("\n")}`,
+        );
       }
       await exit(0);
     } catch (reason) {
@@ -2759,7 +2779,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                     }}
                     className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-sm bg-inset p-2 font-mono text-xs text-l3"
                   >
-                    {fontInstallOutput || "安装中，等待输出…"}
+                    {collapseCarriageReturns(fontInstallOutput) || "安装中，等待输出…"}
                   </pre>
                 )}
                 {!fontInstalling && fontInstallResult && (
@@ -2829,8 +2849,10 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                 }}
               />
             )}
-            {/* 选中可安装预设且检测未安装时显示一键安装（已装/内置/系统/自定义不显示） */}
-            {INSTALLABLE_FONTS[fontFamily] &&
+            {/* 选中可安装预设且检测未安装时显示一键安装（已装/内置/系统/自定义不显示）。
+                字体安装只走 Homebrew，Windows 上点了必然失败，不显示 */}
+            {!IS_WINDOWS &&
+              INSTALLABLE_FONTS[fontFamily] &&
               fontStatus[INSTALLABLE_FONTS[fontFamily]] === false && (
                 <button
                   onClick={() => installFont(INSTALLABLE_FONTS[fontFamily])}
@@ -3851,6 +3873,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                 />
                 <DepStatusLine
                   label="PyMuPDF"
+                  purpose="（综述拼图：从 PDF 里裁图）"
+                  busy={depInstall.entries.pymupdf.running || depInstall.entries.pillow.running}
                   item={depCheck.pymupdf}
                   tool="pymupdf"
                   channel={depCheck.channel}
@@ -3859,6 +3883,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                 />
                 <DepStatusLine
                   label="Pillow"
+                  purpose="（综述拼图：把图排成一版）"
+                  busy={depInstall.entries.pymupdf.running || depInstall.entries.pillow.running}
                   item={depCheck.pillow}
                   tool="pillow"
                   channel={depCheck.channel}

@@ -55,6 +55,7 @@ import { OnboardingPageStrip } from "../components/OnboardingGuide";
 import { HoverTip, useHoverTip } from "../components/HoverTip";
 import { alertDialog, confirmDialog } from "../components/ConfirmDialog";
 import { Modal } from "../components/Modal";
+import { collapseCarriageReturns } from "../stream-text";
 import {
   PageFrame,
   NoticeBar,
@@ -2107,11 +2108,16 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   // npm 渠道不可用时的「一键安装 Node.js」：渠道判定用依赖体检结果（dep-check.ts）
   const depCheck = useAppStore((s) => s.depCheck);
   const refreshDepCheck = useAppStore((s) => s.refreshDepCheck);
-  const [nodeInstallOffer, setNodeInstallOffer] = useState(false);
+  // 记住是哪个 Agent 因缺 Node.js 装不了：Node.js 装好后清掉报错、接着走它的安装确认，
+  // 不让用户再找一遍按钮
+  const [nodeInstallFor, setNodeInstallFor] = useState<string | null>(null);
   const depInstall = useDepInstall((_tool, res) => {
     if (res.ok) {
       void refreshDepCheck();
-      setNodeInstallOffer(false);
+      const pending = nodeInstallFor;
+      setNodeInstallFor(null);
+      setError(null);
+      if (pending) void onInstall(pending);
     }
   });
   // 各 agent 官方账号连接状态（P1a；仅 supported 的 agent 会展示状态行）
@@ -2503,7 +2509,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
 
   /** 安装未装的 agent：先亮出将执行的命令，用户确认后才跑 */
   async function onInstall(agentId: string) {
-    setNodeInstallOffer(false);
+    setNodeInstallFor(null);
     try {
       const method = await invoke<string | null>("install_method_preview", {
         agentId,
@@ -2512,7 +2518,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
         setError(installToolHelp(agentId));
         // 文案之外给出口：渠道允许时错误旁追加「一键安装 Node.js」；尚未体检先探测一次
         if (!useAppStore.getState().depCheck) void refreshDepCheck();
-        setNodeInstallOffer(true);
+        setNodeInstallFor(agentId);
         return;
       }
       if (
@@ -3054,18 +3060,25 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
         {error && <NoticeBar tone="err" className="mt-4" onDismiss={() => setError(null)}>{error}</NoticeBar>}
         {/* npm 渠道不可用（无 Node.js）时的一键安装出口：渠道由依赖体检判定，
             渠道不允许（无 brew/winget）时保持纯文案不画按钮 */}
-        {nodeInstallOffer && (
+        {nodeInstallFor && (
           <div className="mt-2">
             {depCheck && canOneClickInstall("node", depCheck.channel) && (
-              <button
-                onClick={() => void depInstall.install("node")}
-                disabled={depInstall.entries.node.running}
-                className={`${secondaryActionClass} text-xs`}
-              >
-                {depInstall.entries.node.running
-                  ? "安装中…"
-                  : "一键安装 Node.js"}
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => void depInstall.install("node")}
+                  disabled={depInstall.entries.node.running}
+                  className={`${secondaryActionClass} text-xs`}
+                >
+                  {depInstall.entries.node.running
+                    ? "安装中…"
+                    : "一键安装 Node.js"}
+                </button>
+                {!depInstall.entries.node.running && (
+                  <span className="text-xs text-l3">
+                    装好后接着安装 {labelOf(nodeInstallFor)}
+                  </span>
+                )}
+              </div>
             )}
             <DepInstallLog entry={depInstall.entries.node} />
           </div>
@@ -3266,7 +3279,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                           }}
                           className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-t border border-hairline border-b-0 bg-canvas p-2 font-mono text-xs text-l2"
                         >
-                          {liveOutput[agent.id] || "运行中，等待输出…"}
+                          {collapseCarriageReturns(liveOutput[agent.id] ?? "") || "运行中，等待输出…"}
                         </pre>
                         {(() => {
                           // 120s 无新输出给提示；新块到达（时间戳刷新）或 run 结束（整块隐藏）自动消失
@@ -3592,7 +3605,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
               <div
                 onClick={(e) => e.stopPropagation()}
                 className="absolute w-80 rounded-md border border-field ccode-float-surface p-3 text-xs"
-                // 防出屏：往左/往上收（卡片 w-80 约 320px、高约 180px）
+                // 防出屏：往左/往上收（卡片 w-80 约 320px、高约 270px）
                 style={{
                   left: Math.max(
                     8,
@@ -3600,7 +3613,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                   ),
                   top: Math.max(
                     8,
-                    Math.min(conflictPop.y, window.innerHeight - 190),
+                    Math.min(conflictPop.y, window.innerHeight - 280),
                   ),
                 }}
               >
@@ -3620,7 +3633,14 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                 </ul>
                 <p className="mt-2 leading-5 text-l3">
                   这些文件里残留的密钥会覆盖官方账号登录并产生 API
-                  计费；请编辑对应文件删除后，点状态行的 ⟳ 重新检测。
+                  计费，只在你点「登录」改用官方账号时才碍事；平时用上面的 API
+                  连接，Mesa 启动时自带注入，不受影响。
+                </p>
+                <p className="mt-1.5 leading-5 text-l3">
+                  <span className="text-l2">只用 API 连接</span>：点「忽略」。
+                  <span className="text-l2">要用官方账号</span>
+                  ：点「备份后清理已识别项」（会去掉这些键，在 Mesa 外直接敲命令也不再走它们；清理前会先备份），
+                  或自行编辑文件后点状态行 ⟳ 重新检测。
                 </p>
                 <div className="mt-2 flex items-center gap-2">
                   {st.cleanupSupported && (

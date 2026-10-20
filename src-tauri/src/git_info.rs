@@ -40,12 +40,21 @@ fn expand_tilde(path: &str) -> String {
     crate::paths::expand_tilde(path)
 }
 
+/// 平台 git 配置：Windows 打开 core.longpaths（MAX_PATH 260），深目录下的工作树/检出才不会报
+/// "Filename too long"。命令行 -c 只作用于这次调用，不改用户 gitconfig；其它平台为空，行为不变。
+pub(crate) const PLATFORM_GIT_CONFIG: &[&str] = if cfg!(windows) {
+    &["-c", "core.longpaths=true"]
+} else {
+    &[]
+};
+
 pub(crate) fn run_git(cwd: &str, args: &[&str]) -> Result<Output, String> {
     let git = crate::agents::resolve_binary("git").ok_or("找不到 git 可执行文件，请先安装 git")?;
     crate::process::background_command(git)
         .arg("-C")
         .arg(cwd)
         .args(["-c", "core.quotepath=false"])
+        .args(PLATFORM_GIT_CONFIG)
         .args(args)
         .output()
         .map_err(|e| format!("执行 git 失败: {e}"))
@@ -412,6 +421,7 @@ fn run_git_owned(cwd: &str, args: &[String]) -> Result<Output, String> {
         .arg("-C")
         .arg(cwd)
         .args(["-c", "core.quotepath=false"])
+        .args(PLATFORM_GIT_CONFIG)
         .args(args)
         .output()
         .map_err(|e| format!("执行 git 失败: {e}"))

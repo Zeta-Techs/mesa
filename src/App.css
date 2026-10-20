@@ -411,35 +411,64 @@
   box-shadow: inset 0 0 0 0.5px var(--color-hairline);
 }
 
-/* Windows 浅色主题：DirectWrite 下浅灰小字更容易显得发虚，
-   只压深 l3/l4 两档（正文 l2、标题 l1 保持主题原值），不改变 macOS/Linux 或深色主题。 */
+/* Windows：透明窗口下 WebView2 只画灰度抗锯齿字（ClearType 彩边已否决，见 design-system），浅灰小字
+   显得发虚，靠抬对比补：l3/l4 两档向更强一档靠（l3 向 l2 收 35%、l4 向 l3 收 50%；2026-10-19 用户要求
+   在原 Windows 值上再加深一档）。正文 l2、标题 l1 保持主题原值；macOS/Linux 不走这里。浅色压深、深色提亮。 */
 [data-platform="windows"][data-theme="midnight-light"] {
-  --color-l3: #5c5850;
-  --color-l4: #6f6b63;
+  --color-l3: #524e47;
+  --color-l4: #66625a;
 }
 [data-platform="windows"][data-theme="terracotta-light"] {
-  --color-l3: #68615b;
-  --color-l4: #766f68;
+  --color-l3: #5c554f;
+  --color-l4: #6f6862;
 }
 [data-platform="windows"][data-theme="ayu-light"] {
-  --color-l3: #5d6370;
-  --color-l4: #727780;
+  --color-l3: #535966;
+  --color-l4: #686d78;
 }
 [data-platform="windows"][data-theme="mocha-light"] {
-  --color-l3: #5b5870;
-  --color-l4: #736f86;
+  --color-l3: #56536b;
+  --color-l4: #67647b;
 }
 [data-platform="windows"][data-theme="neutral-light"] {
-  --color-l3: #5c5c5c;
-  --color-l4: #6e6e6e;
+  --color-l3: #505050;
+  --color-l4: #656565;
 }
 [data-platform="windows"][data-theme="dracula-light"] {
-  --color-l3: #625b70;
-  --color-l4: #736d80;
+  --color-l3: #564f64;
+  --color-l4: #6b6478;
 }
 [data-platform="windows"][data-theme="shadcn-light"] {
-  --color-l3: #555e72;
-  --color-l4: #687282;
+  --color-l3: #495468;
+  --color-l4: #5f687a;
+}
+[data-platform="windows"][data-theme="midnight"] {
+  --color-l3: #a3a2a3;
+  --color-l4: #808086;
+}
+[data-platform="windows"][data-theme="terracotta"] {
+  --color-l3: #b0b0aa;
+  --color-l4: #898984;
+}
+[data-platform="windows"][data-theme="ayu"] {
+  --color-l3: #a4a29b;
+  --color-l4: #7d7c76;
+}
+[data-platform="windows"][data-theme="mocha"] {
+  --color-l3: #98a1c7;
+  --color-l4: #757da3;
+}
+[data-platform="windows"][data-theme="neutral"] {
+  --color-l3: #acacac;
+  --color-l4: #838383;
+}
+[data-platform="windows"][data-theme="dracula"] {
+  --color-l3: #b2b2ac;
+  --color-l4: #898987;
+}
+[data-platform="windows"][data-theme="shadcn"] {
+  --color-l3: #9c9ca7;
+  --color-l4: #757580;
 }
 
 /* macOS 浅色主题：CoreText 字干渲染比 DirectWrite 重，不需要 Windows 那么深，
@@ -818,6 +847,14 @@ body {
   );
 }
 
+/* Windows 浅色侧栏：罩色半透明、灰度抗锯齿的细字压在上面，l3 档对比只有 ~5:1，
+   和深色侧栏（近 10:1）并排时读成「发糊」。侧栏子树内把 l3 抬到 l2（选中行仍是 l1 + 底衬 + 强调色，
+   层次不丢）；只作用于 Windows 浅色，macOS / Linux / 深色主题不动，全局 l3 令牌不变。
+   须排在上面那条基础 .ccode-app-rail 之后：chrome-opacity 测试按文本取第一条 .ccode-app-rail。 */
+[data-platform="windows"][data-theme$="-light"] .ccode-app-rail {
+  --color-l3: var(--color-l2);
+}
+
 /* 浅色（含自定义浅色）侧栏与四周缝同一层罩。
    顶栏贴上沿，侧栏贴左沿、不另做圆角。data-chrome 由当前主题深浅写入，切换即换这一套。
 
@@ -920,6 +957,33 @@ body {
   .ccode-app-rail .bg-rail-sel {
     background-color: var(--color-rail-sel);
   }
+}
+
+/* Windows 10 没有 Mica（或 setEffects 失败）：同「减少透明度」回到实心底，否则深色主题下
+   标题栏与四周缝直接透出桌面。data-material 由 main.tsx 按系统版本 / store.ts 按挂材质结果写入 */
+html[data-material="none"],
+html[data-material="none"] body,
+html[data-material="none"] #root {
+  background: var(--color-canvas);
+}
+html[data-material="none"] .ccode-app-shell,
+html[data-material="none"] .ccode-titlebar,
+html[data-material="none"] .ccode-app-rail,
+html[data-material="none"] .ccode-app-shell[data-nav="icons"] .ccode-app-rail {
+  background: var(--color-rail);
+}
+html[data-material="none"] .ccode-app-rail .bg-rail-sel {
+  background-color: var(--color-rail-sel);
+}
+
+/* Windows 自绘标题栏（含最小化/最大化/关闭）恒在最上：页内全屏层与弹窗遮罩一律从标题栏下沿起铺，
+   否则 z-30 全屏页（流水线编辑器 / 历史 / 沉浸编辑）的右上角按钮压在窗口按钮底下——点「关闭」
+   会关掉整个 Mesa；z≥40 的弹窗遮罩则让用户开着弹窗时无法最小化 / 拖动窗口。
+   自带窗口按钮与拖拽区、要整窗覆盖的层（沉浸阅读）加 ccode-covers-titlebar 豁免。macOS 不走这里。 */
+[data-platform="windows"]
+  .ccode-app-shell
+  .fixed.inset-0:is(.z-30, .z-40, .z-50, .z-60, .z-70):not(.ccode-covers-titlebar) {
+  top: var(--ccode-titlebar-h);
 }
 
 /* 品牌区与侧栏同底不画线（Codex 式：侧栏只有全高竖分界 + 底部栏一根横线，分区间靠留白）。

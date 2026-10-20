@@ -357,8 +357,9 @@ fn process_snapshots() -> (Vec<ProcessRecord>, Vec<ProcessRecord>) {
 #[cfg(windows)]
 fn collect_platform_info() -> Value {
     let script = r#"
-$ErrorActionPreference='SilentlyContinue'
 [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false)
+$ErrorActionPreference='SilentlyContinue'
+$OutputEncoding=[System.Text.UTF8Encoding]::new($false)
 $cv=Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
 $wvPath=(Get-Process msedgewebview2 | Select-Object -First 1 -ExpandProperty Path)
 $wvVersion=if($wvPath){(Get-Item $wvPath).VersionInfo.ProductVersion}else{$null}
@@ -390,13 +391,19 @@ $active=[pscustomobject]@{threadId=$thread;keyboardLayout=('0x{0:X8}' -f ($hkl -
 } | ConvertTo-Json -Depth 7 -Compress
 "#;
     let mut cmd = crate::process::background_command("powershell");
-    let output = cmd
-        .args(["-NoProfile", "-NonInteractive", "-Command", script])
-        .output();
+    cmd.args(["-NoProfile", "-NonInteractive", "-Command", script]);
+    // WMI / Add-Type 偶发很慢甚至挂住：有界执行，超时杀树，诊断包照出只记一条错误
+    let output = crate::process::capture_command(
+        &mut cmd,
+        std::time::Duration::from_secs(30),
+        1024 * 1024,
+    );
     match output {
-        Ok(out) if out.status.success() => {
+        Ok(out) if out.timed_out => json!({"error": "采集 Windows 诊断信息超时（30 秒），已中止"}),
+        Ok(out) if out.status.is_some_and(|s| s.success()) => {
+            // 脚本首行已把输出编码切到 UTF-8（PS 5.1 默认按 GBK 等 ANSI 代码页写管道）
             let text = String::from_utf8_lossy(&out.stdout);
-            serde_json::from_str(text.trim()).unwrap_or_else(|e| {
+            serde_json::from_str(text.trim().trim_start_matches('\u{feff}')).unwrap_or_else(|e| {
                 json!({"error": format!("解析 Windows 诊断信息失败: {e}"), "raw": redact_arg(&text)})
             })
         }

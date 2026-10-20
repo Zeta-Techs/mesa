@@ -21,7 +21,7 @@ const bundle = await build({
   plugins: [{ name: "store-boundary", setup(b) {
     b.onResolve({ filter: /^\.\.\/store$/ }, () => ({ path: "store", namespace: "test-store" }));
     b.onLoad({ filter: /.*/, namespace: "test-store" }, () => ({
-      contents: "export const useAppStore = selector => selector(window.__projectAgentsStore);",
+      contents: "export const useAppStore = selector => selector(window.__projectAgentsStore); export const selectHiddenProfiles = s => s.settings?.hiddenProfiles ?? [];",
       loader: "js",
     }));
   } }],

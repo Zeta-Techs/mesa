@@ -44,6 +44,7 @@ import {
   type ProcessTool,
 } from "../conversation-tools";
 import { resultStatusLabel, type ActivityKind, type DiffLine } from "../tool-activity";
+import { IS_WINDOWS } from "../hotkeys";
 
 /** 纯文本块：保留换行，超长不带空格的串（长 URL、一串 aaaa）在气泡内折行，不撑出气泡（2026-10-19 用户截图） */
 const WRAP_TEXT = "whitespace-pre-wrap [overflow-wrap:anywhere]";
@@ -693,7 +694,7 @@ export default function ConversationView({
 
   return (
     <>
-      {groupConversationSegments(messages, { live: working, cwd: cwd ?? null }).map((seg) => {
+      {groupConversationSegments(messages, { live: working, cwd: cwd ?? null, isWindows: IS_WINDOWS }).map((seg) => {
         if (seg.kind === "turn") return renderTurn(seg);
         const m = seg.message;
         const mi = seg.index;

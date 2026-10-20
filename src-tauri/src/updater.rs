@@ -87,19 +87,34 @@ pub struct UpdateResultDto {
 /// 内部也带 node_modules，不能被 npm 规则抢走；homebrew prefix 下的 npm 全局包
 /// （/opt/homebrew/lib/node_modules）仍命中 npm 规则
 fn detect_method(resolved_path: &str) -> &'static str {
+    // Windows 路径大小写不敏感、分隔符是 `\`：统一成小写 + 正斜杠再匹配
+    let p = resolved_path.replace('\\', "/").to_lowercase();
+    let has = |s: &str| p.contains(s);
     if resolved_path.contains("Caskroom") || resolved_path.contains("Cellar") {
         "brew"
-    } else if resolved_path.contains("node_modules") {
+    } else if has("node_modules") {
         "npm"
-    } else if resolved_path.to_lowercase().contains("homebrew") {
+    } else if has("homebrew") {
         "brew"
-    } else if resolved_path.contains("uv/tools") || resolved_path.contains(".local/share/uv") {
+    } else if has("uv/tools") || has(".local/share/uv") {
+        // 含 Windows 的 %APPDATA%\uv\tools
         "uv"
-    } else if resolved_path.to_lowercase().contains(r"roaming\npm\") {
-        // Windows npm 全局 prefix（%APPDATA%\npm）下的 .cmd shim：路径不含 node_modules，
-        // 显式识别，否则会被当成自安装而走错更新渠道
+    } else if resolved_path.contains('\\')
+        && (has("/roaming/npm/")
+            || has("/nvm4w/")
+            || has("/nvm/")
+            || has("/volta/")
+            || has("/nodejs/")
+            || has("/scoop/apps/nodejs")
+            || has("/scoop/persist/nodejs"))
+    {
+        // Windows 的 npm 全局 prefix 下的 .cmd/.exe shim，路径不含 node_modules，须显式识别：
+        // 默认 %APPDATA%\npm、nvm-windows（%APPDATA%\nvm\vX、C:\nvm4w\nodejs）、Volta、
+        // Node 安装目录本身、scoop 的 nodejs（apps\…\current\bin / persist\…\bin）。
+        // npm_for 优先取同目录的 npm，装回的正是这一份。scoop\shims 是 scoop 自管应用，不算 npm。
+        // 只认反斜杠路径：unix 上同名目录（如 Debian /usr/share/nodejs）保持原判定
         "npm"
-    } else if resolved_path.to_lowercase().contains("winget") {
+    } else if has("winget") {
         // winget portable：Links\codex.exe 及其 canonicalize 后的 Packages\ 实体路径
         "winget"
     } else {
@@ -317,17 +332,42 @@ pub fn updater_write(agent_id: String, data: String) -> Result<(), String> {
 /// CSI（ESC [ … 最终字节 0x40-0x7E）、OSC（ESC ] … BEL 或 ESC \）、两字节序列；
 /// \r 丢弃本行已写内容（\r\n 视为正常换行）。输入必须是合法 UTF-8。
 pub(crate) fn strip_ansi(input: &str) -> String {
+    collapse_cr(&strip_ansi_keep_cr(input))
+}
+
+/// 按终端语义展开 \r：每行只留最后一个 \r 之后的内容（行尾 \r 属于 \r\n，不算重绘）。
+/// 流式输出必须对**拼接后**的全文做：进度条/转圈字符常把 \r 放在下一块开头，
+/// 逐块展开时上一块已发出的半行撤不回，会一帧帧堆成一大片（winget 实证）。
+pub(crate) fn collapse_cr(text: &str) -> String {
+    text.split('\n')
+        .map(|line| {
+            let line = line.trim_end_matches('\r');
+            line.rsplit('\r').next().unwrap_or(line)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// 只剥 ANSI 转义、保留 \r（交给 collapse_cr 在全文上展开）。
+/// 「光标回到第 1 列」（CSI G 无参或参数 1）等价于 \r，换成 \r 保留重绘语义。
+pub(crate) fn strip_ansi_keep_cr(input: &str) -> String {
     let b = input.as_bytes();
     let mut out = String::with_capacity(input.len());
-    let mut line_start = 0usize;
     let mut i = 0;
     while i < b.len() {
         match b[i] {
             0x1b if i + 1 < b.len() => match b[i + 1] {
                 b'[' => {
+                    let params_start = i + 2;
                     i += 2;
                     while i < b.len() && !(0x40..=0x7e).contains(&b[i]) {
                         i += 1;
+                    }
+                    if i < b.len() && b[i] == b'G' {
+                        let params = &input[params_start..i];
+                        if params.is_empty() || params == "1" || params == "0" {
+                            out.push('\r');
+                        }
                     }
                     i += (i < b.len()) as usize; // 跳过最终字节
                 }
@@ -349,21 +389,10 @@ pub(crate) fn strip_ansi(input: &str) -> String {
             },
             // 末尾孤立 ESC：半个序列无从解析，原样输出会污染展示文本，直接丢弃
             0x1b => i += 1,
-            b'\r' => {
-                if i + 1 < b.len() && b[i + 1] == b'\n' {
-                    i += 1; // \r\n：跳过 \r，\n 照常处理
-                } else {
-                    out.truncate(line_start); // 行内重绘：回本行开头
-                    i += 1;
-                }
-            }
             c => {
                 let len = utf8_len(c).min(b.len() - i);
                 out.push_str(&input[i..i + len]);
                 i += len;
-                if c == b'\n' {
-                    line_start = out.len();
-                }
             }
         }
     }
@@ -422,6 +451,23 @@ pub(crate) fn auto_confirm_prompt(text: &str) -> bool {
         || lower.contains("proceed with the installation")
 }
 
+/// 把 dir 排到 PATH 最前（已在其中则原样返回，路径比较走方言层）
+pub(crate) fn prepend_path(current: Option<&std::ffi::OsStr>, dir: &std::path::Path) -> std::ffi::OsString {
+    let original = current.map(|c| c.to_os_string()).unwrap_or_default();
+    let mut parts: Vec<std::path::PathBuf> = current
+        .map(|c| std::env::split_paths(c).collect())
+        .unwrap_or_default();
+    let key = dir.to_string_lossy();
+    if parts
+        .iter()
+        .any(|p| crate::paths::same_path(&p.to_string_lossy(), &key))
+    {
+        return original;
+    }
+    parts.insert(0, dir.to_path_buf());
+    std::env::join_paths(parts).unwrap_or(original)
+}
+
 /// 同一 key 同时只允许一个 run：入口抢占，并发请求直接拒绝。
 /// updater（key=agent_id）与 fonts（key="fonts"）共用本函数。
 pub(crate) fn run_streaming_pty<F: Fn(&str) + Send + 'static>(
@@ -451,6 +497,12 @@ pub(crate) fn run_streaming_pty<F: Fn(&str) + Send + 'static>(
         Err(e) => return (false, format!("创建 PTY 失败: {e}")),
     };
     let mut cmd = crate::process::pty_command(&program_path, args);
+    // 刚装好的工具（一键补齐的 Node.js / Python 等）不在已运行 Mesa 的 PATH 上：把程序所在
+    // 目录排到子进程 PATH 最前，npm 安装后脚本里的 `node`（如 opencode-ai 的 postinstall）
+    // 才找得到。裸名（没解析到）不动
+    if let Some(dir) = program_path.parent().filter(|d| d.is_absolute()) {
+        cmd.env("PATH", prepend_path(std::env::var_os("PATH").as_deref(), dir));
+    }
     let mirror = crate::settings::brew_mirror_enabled();
     let mut extra_no_proxy: Vec<&str> = Vec::new();
     for (k, v) in brew_env_pairs(program, mirror) {
@@ -524,9 +576,10 @@ pub(crate) fn run_streaming_pty<F: Fn(&str) + Send + 'static>(
                             let _ = w.write_all(b"\x1b[24;120R");
                             let _ = w.flush();
                         }
-                        let text = strip_ansi(&text);
+                        // \r 保留到拼接后再展开（见 collapse_cr）；前端同样按全文展开
+                        let text = strip_ansi_keep_cr(&text);
                         // HOMEBREW_NO_ASK 没盖住时，诊断页仍会停在 [y/n]。代答 y，最多 5 次。
-                        if confirms < 5 && auto_confirm_prompt(&text) {
+                        if confirms < 5 && auto_confirm_prompt(&collapse_cr(&text)) {
                             confirms += 1;
                             let mut w = writer.lock().unwrap();
                             let _ = w.write_all(b"y\n");
@@ -543,7 +596,7 @@ pub(crate) fn run_streaming_pty<F: Fn(&str) + Send + 'static>(
             }
         }
         if !pending.is_empty() {
-            let text = strip_ansi(&String::from_utf8_lossy(&pending));
+            let text = strip_ansi_keep_cr(&String::from_utf8_lossy(&pending));
             if !text.is_empty() {
                 emit(&text);
                 collected2.lock().unwrap().push_str(&text);
@@ -563,10 +616,10 @@ pub(crate) fn run_streaming_pty<F: Fn(&str) + Send + 'static>(
                 );
                 deadline_hit = pty_deadline_kind(start.elapsed(), idle);
                 if deadline_hit.is_some() {
-                    // unix 下杀整个进程组：brew/npm 拉起的子孙（curl 等）与父同组
-                    #[cfg(unix)]
+                    // 连子孙一起杀：unix 杀进程组（brew/npm 拉起的 curl 等与父同组）；Windows 走
+                    // taskkill /T——只杀 ConPTY 直接子进程时 npm/node/msiexec 孙进程照跑，继续锁着 npm 目录
                     if let Some(pid) = child.process_id() {
-                        crate::pty::kill_process_group(pid);
+                        crate::pty::kill_process_tree(pid);
                     }
                     let _ = child.kill();
                     let _ = child.wait();
@@ -579,7 +632,7 @@ pub(crate) fn run_streaming_pty<F: Fn(&str) + Send + 'static>(
     };
     // 给 reader 最多 1 秒收残余输出，之后放弃该线程（见函数文档）
     let _ = done_rx.recv_timeout(Duration::from_secs(1));
-    let tail = tail_lines(&collected.lock().unwrap(), 30);
+    let tail = tail_lines(&collapse_cr(&collected.lock().unwrap()), 30);
     if let Some(kind) = deadline_hit {
         let mut msg = match kind {
             PtyDeadline::Hard => format!("命令超时（{} 秒）", TIMEOUT.as_secs()),
@@ -596,7 +649,15 @@ pub(crate) fn run_streaming_pty<F: Fn(&str) + Send + 'static>(
         }
         return (false, msg);
     }
-    let success = status.map(|s| s.success()).unwrap_or(false);
+    let success = status.as_ref().map(|s| s.success()).unwrap_or(false);
+    // 失败却一个字没输出时（如 Windows 的 python 应用商店占位程序），界面只剩「安装失败」，
+    // 至少把退出码交代清楚
+    if !success && tail.trim().is_empty() {
+        let code = status
+            .map(|s| s.exit_code().to_string())
+            .unwrap_or_else(|| "未知".into());
+        return (false, format!("{program} 退出码 {code}，没有任何输出"));
+    }
     (success, tail)
 }
 
@@ -926,12 +987,15 @@ fn npm_latest(pkg: &str) -> Option<String> {
     for (k, v) in crate::settings::download_proxy_env(&[]) {
         cmd.env(k, v);
     }
-    let out = cmd.output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let out = capture_ok(&mut cmd, Duration::from_secs(20))?;
+    let v = String::from_utf8_lossy(&out).trim().to_string();
     (!v.is_empty()).then_some(v)
+}
+
+/// 最新版查询的有界执行：超时杀树、非零退出或超时一律 None（查询失败只让 UI 回落普通「更新」按钮）
+fn capture_ok(cmd: &mut crate::process::BackgroundCommand, timeout: Duration) -> Option<Vec<u8>> {
+    let out = crate::process::capture_command(cmd, timeout, 1024 * 1024).ok()?;
+    (!out.timed_out && out.status.is_some_and(|s| s.success())).then_some(out.stdout)
 }
 
 /// 从官方安装脚本正文提取当前版本。cursor 的脚本把版本烙在下载地址里
@@ -1011,15 +1075,22 @@ fn winget_show_version(output: &str) -> Option<String> {
 fn winget_latest(id: &str) -> Option<String> {
     let winget = agents::resolve_binary("winget")?;
     let mut c = crate::process::background_command(winget);
-    c.args(["show", "--id", id]);
-    for a in WINGET_COMMON_ARGS {
-        c.arg(a);
-    }
-    let out = c.output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    winget_show_version(&String::from_utf8_lossy(&out.stdout))
+    c.args(winget_show_args(id));
+    // 首次查询可能要先刷新源索引，给足余量但必须有界
+    let out = capture_ok(&mut c, Duration::from_secs(45))?;
+    winget_show_version(&String::from_utf8_lossy(&out))
+}
+
+/// `--accept-package-agreements` 只属于 install/upgrade，`show` 带上会被拒（最新版恒未知）
+fn winget_show_args(id: &str) -> Vec<&str> {
+    let mut args = vec!["show", "--id", id];
+    args.extend(
+        WINGET_COMMON_ARGS
+            .iter()
+            .copied()
+            .filter(|a| *a != "--accept-package-agreements"),
+    );
+    args
 }
 
 /// 最新版查询口与 update_commands 同渠道（包管理器装的查包管理器）；
@@ -1470,6 +1541,28 @@ DOWNLOAD_URL="https://downloads.cursor.com/lab/2026.10.01-e373342/${OS}/${ARCH}/
         );
     }
 
+    /// Windows 的各家安装位置：分隔符/大小写归一后识别，scoop 自管应用与官方原生安装仍算 self
+    #[test]
+    fn detects_windows_install_locations() {
+        let cases = [
+            (r"C:\Users\x\AppData\Roaming\uv\tools\kimi-cli\Scripts\kimi.exe", "uv"),
+            (r"\\?\C:\Users\x\APPDATA\ROAMING\NPM\codex.cmd", "npm"),
+            (r"C:\Users\x\AppData\Roaming\nvm\v22.11.0\codex.cmd", "npm"),
+            (r"C:\nvm4w\nodejs\gemini.cmd", "npm"),
+            (r"C:\Users\x\AppData\Local\Volta\bin\qwen.exe", "npm"),
+            (r"C:\Program Files\nodejs\opencode.cmd", "npm"),
+            (r"C:\Users\x\scoop\apps\nodejs-lts\current\bin\codex.cmd", "npm"),
+            (r"C:\Users\x\scoop\persist\nodejs\bin\codex.cmd", "npm"),
+            (r"C:\Users\x\scoop\shims\gh.exe", "self"),
+            (r"C:\Users\x\.local\bin\claude.exe", "self"),
+        ];
+        for (path, want) in cases {
+            assert_eq!(detect_method(path), want, "{path}");
+        }
+        // unix 上同名目录不受 Windows 规则影响
+        assert_eq!(detect_method("/usr/share/nodejs/foo/bin/foo"), "self");
+    }
+
     #[test]
     fn install_selection_follows_brew_npm_uv_script_priority() {
         let all = |_: &str| true;
@@ -1532,6 +1625,19 @@ DOWNLOAD_URL="https://downloads.cursor.com/lab/2026.10.01-e373342/${OS}/${ARCH}/
             winget_show_version("Found Codex CLI [OpenAI.Codex]\nPublisher: OpenAI"),
             None
         );
+    }
+
+    /// show 不得带 install 专属的协议参数；源协议与禁交互保留，install/upgrade 照旧全带
+    #[test]
+    fn winget_show_omits_package_agreements() {
+        let show = winget_show_args("OpenAI.Codex");
+        assert_eq!(&show[..3], ["show", "--id", "OpenAI.Codex"]);
+        assert!(!show.contains(&"--accept-package-agreements"));
+        assert!(show.contains(&"--accept-source-agreements"));
+        assert!(show.contains(&"--disable-interactivity"));
+        assert!(winget_args("upgrade", "OpenAI.Codex")
+            .iter()
+            .any(|a| a == "--accept-package-agreements"));
     }
 
     /// winget 渠道的安装/更新/fallback 全链路（仅 Windows 有这些候选）
@@ -1623,6 +1729,42 @@ DOWNLOAD_URL="https://downloads.cursor.com/lab/2026.10.01-e373342/${OS}/${ARCH}/
         assert_eq!(strip_ansi("abc\x1b["), "abc");
         // 纯文本原样
         assert_eq!(strip_ansi("plain text\n"), "plain text\n");
+        // 光标回第 1 列等价于 \r
+        assert_eq!(strip_ansi("old line\x1b[1Gnew"), "new");
+        assert_eq!(strip_ansi("old\x1b[Gnew"), "new");
+        // 其他列的 CHA 只剥离不重绘
+        assert_eq!(strip_ansi("ab\x1b[5Gc"), "abc");
+    }
+
+    /// 刚装好的 Node.js 不在 Mesa 的 PATH 上：子进程 PATH 前插程序目录，且不重复
+    #[test]
+    fn prepend_path_puts_tool_dir_first_once() {
+        let tool = std::env::temp_dir().join("ccode-prepend-test");
+        let other = std::env::temp_dir().join("ccode-other");
+        let current = std::env::join_paths([other.clone()]).unwrap();
+        let out = prepend_path(Some(&current), &tool);
+        let parts: Vec<_> = std::env::split_paths(&out).collect();
+        assert_eq!(parts, vec![tool.clone(), other.clone()]);
+        // 已在 PATH 里就不重复
+        assert_eq!(prepend_path(Some(&out), &tool), out);
+        // 原来没有 PATH 也能用
+        let only: Vec<_> = std::env::split_paths(&prepend_path(None, &tool)).collect();
+        assert_eq!(only, vec![tool]);
+    }
+
+    /// 进度条跨块重绘：逐块各自展开会把每一帧都堆下来（winget 实证），
+    /// 必须保留 \r 拼完再展开
+    #[test]
+    fn carriage_returns_collapse_across_chunks() {
+        let chunks = ["  -", "\r  \\", "\r  |", "\r 1024 KB / 3.62 MB", "\r 3.62 MB / 3.62 MB\r\n", "done\n"];
+        let joined: String = chunks.iter().map(|c| strip_ansi_keep_cr(c)).collect();
+        assert_eq!(collapse_cr(&joined), " 3.62 MB / 3.62 MB\ndone\n");
+        // \r 与 \n 被拆在两块里也算正常换行
+        let split: String = ["line\r", "\nnext"].iter().map(|c| strip_ansi_keep_cr(c)).collect();
+        assert_eq!(collapse_cr(&split), "line\nnext");
+        // 逐块展开（旧做法）确实会堆帧——钉住这条回归的成因
+        let per_chunk: String = chunks.iter().map(|c| strip_ansi(c)).collect();
+        assert!(per_chunk.contains("  -"), "{per_chunk}");
     }
 
     /// 冒烟测试：验证 PTY 流式输出——3 行各自间隔 1s 到达，而非退出时一次性到齐。

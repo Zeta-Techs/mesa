@@ -88,7 +88,7 @@ import {
   type ChatChannelSnapshot,
 } from "../chat-channel";
 import { resolveCustomRuntimeCwd } from "../custom-runtime";
-import { samePath } from "../path-utils";
+import { normSep, pathWithin as pathWithinDialect, samePath, stripVerbatim } from "../path-utils";
 import { cwdIsCodingWorktree } from "../coding-git";
 import { loadCodingOverview } from "../components/CodingProjectView";
 import { normalizeWorkMode } from "../work-mode";
@@ -365,11 +365,9 @@ function basename(p: string): string {
   return parts[parts.length - 1] || p;
 }
 
-/** 归一化后判断 path 是否落在 base 内（含相等），与 FileTree/ProjectRail 的口径一致 */
+/** path 是否落在 base 内（含相等）：走 path-utils 方言层，Windows 不分大小写、认 \\?\ 前缀 */
 function pathWithin(path: string, base: string): boolean {
-  const p = path.replace(/\\/g, "/").replace(/\/+$/, "");
-  const b = base.replace(/\\/g, "/").replace(/\/+$/, "");
-  return p === b || p.startsWith(`${b}/`);
+  return pathWithinDialect(path, base, IS_WINDOWS);
 }
 
 /** 标签页状态：由 TerminalView 上报，标签条 / 首页收件箱镜像（terminalRunInputs）/ 工作树根目录都用它 */
@@ -591,12 +589,19 @@ const clampSplitPct = (pct: number) =>
   Math.min(SPLIT_MAX_PCT, Math.max(SPLIT_MIN_PCT, pct));
 const RIGHT_TABS = [
   { key: "preview", label: "文件", symbol: "▤" },
-  { key: "git", label: "改动", symbol: "⌘" },
+  // ⌘ 只在 macOS 有意义，Windows / Linux 换成中性的增减号
+  { key: "git", label: "改动", symbol: IS_MAC ? "⌘" : "±" },
 ] as const;
 type RightTab = (typeof RIGHT_TABS)[number]["key"];
 
-/** shell 单引号转义（向 PTY 写 cd 命令用） */
-const shQuote = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
+/** shell 单引号转义（向 PTY 写 cd 命令用）。Windows 内嵌终端默认是 PowerShell：单引号内
+ *  用 '' 转义，POSIX 的 '\'' 在 PowerShell 里是坏语法 */
+const shQuote = (s: string) =>
+  IS_WINDOWS ? `'${s.replace(/'/g, "''")}'` : `'${s.replace(/'/g, "'\\''")}'`;
+
+/** 往 shell 写完整命令后的「回车」：ConPTY 把裸 LF 当 Ctrl+Enter，PowerShell 只换行不执行；
+ *  Windows 用 \r（VS Code sendText 同口径），其他平台保持 \n */
+const SHELL_ENTER = IS_WINDOWS ? "\r" : "\n";
 
 /** 发系统通知：macOS 首次发送前必须显式申请权限（系统级弹窗，仅首次）；被拒则静默跳过。
  *  带「去处理」动作按钮（ccode.attention，App.tsx 注册）；extra 携带 tabId/cwd，
@@ -2552,6 +2557,9 @@ const TerminalView = memo(function TerminalView({
         if (selected) {
           e.preventDefault();
           void navigator.clipboard.writeText(selected).catch(() => {});
+          // Windows 的 Ctrl+C 兼任复制与打断：复制完清掉选区，下一次 Ctrl+C 才能打断 Agent
+          // （Windows Terminal 同口径）。macOS 复制走 ⌘C，不清
+          if (IS_WINDOWS) term.clearSelection();
           return false;
         }
       }
@@ -2700,7 +2708,9 @@ const TerminalView = memo(function TerminalView({
       // 当场补发，再由下面的哨兵吞掉 xterm 可能补发的那一次。keyCode >= 48 交给 xterm：它认识
       // Shift+标点（evaluateKeyboardEvent 的 191:["/","?"] 等键位表），无需宿主插手。
       if (e.type === "keydown") {
-        const fallback = printableKeyFallback(e);
+        // 只为 WKWebView / WebKitGTK 兜底：Windows 中文输入法（微软拼音中文标点）的 Shift+1 也报
+        // keyCode 229，补发 ASCII「!」后输入法再上屏「！」，CLI 收到「!！」
+        const fallback = IS_WINDOWS ? null : printableKeyFallback(e);
         if (fallback) {
           const id = ptyIdRef.current;
           // PTY 还没就绪时不能补发，但**更不能把这一记吞掉**：原实现无论有没有 id 都设哨兵并
@@ -3154,7 +3164,7 @@ const TerminalView = memo(function TerminalView({
       if (shellActive && activePtyId) {
         invoke("pty_write", {
           ptyId: activePtyId,
-          data: `cd ${shQuote(externalCwd)}\n`,
+          data: `cd ${shQuote(externalCwd)}${SHELL_ENTER}`,
         }).catch(() => {});
       }
       onConsumeExternalCwd?.();
@@ -3173,13 +3183,13 @@ const TerminalView = memo(function TerminalView({
     listen<{ worktreePath: string; repoPath: string }>("ws-archived", (e) => {
       const { worktreePath, repoPath } = e.payload;
       const cur = cwdRef.current;
-      if (cur !== worktreePath && !cur.startsWith(`${worktreePath}/`)) return;
+      if (!pathWithin(cur, worktreePath)) return;
       setCwd(repoPath);
       const s = shellRef.current;
       if (s.shellActive && !s.running && s.activePtyId) {
         invoke("pty_write", {
           ptyId: s.activePtyId,
-          data: `cd ${shQuote(repoPath)}\n`,
+          data: `cd ${shQuote(repoPath)}${SHELL_ENTER}`,
         }).catch(() => {});
       }
     }).then((u) => (un = u));
@@ -3239,7 +3249,7 @@ const TerminalView = memo(function TerminalView({
         // 与「启动后自动收缩」一致：脚本已接管终端，启动栏收成一行
         setBarExpanded(false);
         if (!customRuntimeId && prefillCommand) {
-          await invoke("pty_write", { ptyId, data: `${prefillCommand}\n` });
+          await invoke("pty_write", { ptyId, data: `${prefillCommand}${SHELL_ENTER}` });
         }
       } catch (e) {
         const rid = runId ?? initialRunId;
@@ -7568,14 +7578,13 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   );
 
   function relativeBriefPath(filePath: string, cwd: string): string {
-    // Tauri 在 Windows 返回反斜杠路径；prompt 中统一用 `/`，同时用不区分大小写
-    // 的比较处理盘符大小写差异。超出 cwd 时保留原路径，避免错误地截掉前缀。
-    const normalize = (value: string) => value.replace(/\\/g, "/").replace(/\/+$/, "");
+    // Tauri 在 Windows 返回反斜杠（偶尔带 \\?\ 前缀）路径；prompt 中统一用 `/`。
+    // 落在 cwd 内才截成相对路径（方言层比较：Windows 不分大小写），超出时保留原路径
+    const normalize = (value: string) =>
+      normSep(stripVerbatim(value)).replace(/\/+$/, "");
     const root = normalize(cwd);
     const target = normalize(filePath);
-    const rootCmp = root.toLowerCase();
-    const targetCmp = target.toLowerCase();
-    return targetCmp.startsWith(`${rootCmp}/`)
+    return target !== root && pathWithinDialect(target, root, IS_WINDOWS)
       ? target.slice(root.length + 1)
       : target;
   }

@@ -33,7 +33,8 @@ test("编程页：分支地图以基准为根、分支不重复、菜单原操�
           loader: "js",
           contents: path === "../store"
             ? `export const useAppStore = select => select(globalThis.__codingUiHost.store);
-              useAppStore.getState = () => globalThis.__codingUiHost.store;`
+              useAppStore.getState = () => globalThis.__codingUiHost.store;
+              export const selectHiddenProfiles = s => s.settings?.hiddenProfiles ?? [];`
             : path === "../project-context-load"
               ? "export const loadProjectContextPack = async () => 'project context';"
               : path === "./ConfirmDialog"

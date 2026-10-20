@@ -21,40 +21,36 @@ fn buf() -> &'static Mutex<VecDeque<LogEntryDto>> {
     BUF.get_or_init(|| Mutex::new(VecDeque::with_capacity(CAP)))
 }
 
-/// 追加一条日志；level 归一化为 info/warn/error，超长消息截断防刷屏
-pub fn record(level: &str, source: &str, message: &str) {
+/// level 归一化为 info/warn/error，超长消息截断防刷屏
+fn make_entry(level: &str, source: &str, message: &str) -> LogEntryDto {
     let level = match level {
         "warn" | "error" => level,
         _ => "info",
     };
-    let message: String = message.chars().take(2000).collect();
-    let entry = LogEntryDto {
+    LogEntryDto {
         ts: now_iso(),
         level: level.into(),
         source: source.into(),
-        message,
-    };
-    if let Ok(mut q) = buf().lock() {
-        if q.len() >= CAP {
-            q.pop_front();
-        }
-        q.push_back(entry);
+        message: message.chars().take(2000).collect(),
     }
 }
 
-#[tauri::command]
-pub fn get_app_log(limit: usize) -> Vec<LogEntryDto> {
-    let q = match buf().lock() {
-        Ok(q) => q,
-        Err(_) => return Vec::new(),
-    };
+/// 满 CAP 丢最旧一条再追加
+fn push_capped(q: &mut VecDeque<LogEntryDto>, entry: LogEntryDto) {
+    if q.len() >= CAP {
+        q.pop_front();
+    }
+    q.push_back(entry);
+}
+
+/// 取最近 limit 条（上限 CAP）
+fn tail(q: &VecDeque<LogEntryDto>, limit: usize) -> Vec<LogEntryDto> {
     let limit = limit.min(CAP);
-    let entries: Vec<_> = q
-        .iter()
-        .skip(q.len().saturating_sub(limit))
-        .cloned()
-        .collect();
-    drop(q);
+    q.iter().skip(q.len().saturating_sub(limit)).cloned().collect()
+}
+
+/// 出缓冲前脱敏（只作用于副本）
+fn redacted(entries: Vec<LogEntryDto>) -> Vec<LogEntryDto> {
     entries
         .into_iter()
         .map(|mut entry| {
@@ -63,6 +59,23 @@ pub fn get_app_log(limit: usize) -> Vec<LogEntryDto> {
             entry
         })
         .collect()
+}
+
+/// 追加一条日志
+pub fn record(level: &str, source: &str, message: &str) {
+    let entry = make_entry(level, source, message);
+    if let Ok(mut q) = buf().lock() {
+        push_capped(&mut q, entry);
+    }
+}
+
+#[tauri::command]
+pub fn get_app_log(limit: usize) -> Vec<LogEntryDto> {
+    let entries = match buf().lock() {
+        Ok(q) => tail(&q, limit),
+        Err(_) => return Vec::new(),
+    };
+    redacted(entries)
 }
 
 #[tauri::command]
@@ -109,35 +122,49 @@ pub fn log_event(level: String, source: String, message: String) {
 mod tests {
     use super::*;
 
-    // 缓冲是全局单例，相关断言合并到一个测试里串行跑，避免并行互相干扰
+    // 全局缓冲被其他测试（经 record 记日志的代码路径）并行写入，断言只针对本地缓冲上的纯逻辑
+    fn local(entries: impl IntoIterator<Item = LogEntryDto>) -> VecDeque<LogEntryDto> {
+        let mut q = VecDeque::new();
+        for e in entries {
+            push_capped(&mut q, e);
+        }
+        q
+    }
+
     #[test]
     fn ring_buffer_caps_normalizes_and_truncates() {
-        clear_app_log();
-        record("error", "test", "key sk-syntheticlogsecret123456");
-        assert!(!get_app_log(1)[0].message.contains("sk-syntheticlogsecret"));
-        clear_app_log();
-        for i in 0..(CAP + 20) {
-            record("info", "test", &format!("m{i}"));
-        }
-        let all = get_app_log(CAP);
+        let q = local([make_entry("error", "test", "key sk-syntheticlogsecret123456")]);
+        assert!(!redacted(tail(&q, 1))[0].message.contains("sk-syntheticlogsecret"));
+
+        let q = local((0..(CAP + 20)).map(|i| make_entry("info", "test", &format!("m{i}"))));
+        let all = tail(&q, CAP);
         assert_eq!(all.len(), CAP, "超过容量时只留最新 {CAP} 条");
         assert_eq!(all[0].message, "m20");
         assert_eq!(all[all.len() - 1].message, format!("m{}", CAP + 19));
-        // limit 取最近 N 条
-        let last3 = get_app_log(3);
+        // limit 取最近 N 条；超过 CAP 的 limit 按 CAP 截
+        let last3 = tail(&q, 3);
         assert_eq!(last3.len(), 3);
         assert_eq!(last3[2].message, format!("m{}", CAP + 19));
+        assert_eq!(tail(&q, CAP * 2).len(), CAP);
 
         // 未知级别归一为 info；超长消息截断
-        clear_app_log();
-        record("debug", "test", "x");
-        record("error", "test", &"y".repeat(5000));
-        let all = get_app_log(10);
+        let all = tail(
+            &local([make_entry("debug", "test", "x"), make_entry("error", "test", &"y".repeat(5000))]),
+            10,
+        );
         assert_eq!(all[0].level, "info");
         assert_eq!(all[1].level, "error");
         assert_eq!(all[1].message.chars().count(), 2000);
+    }
 
-        clear_app_log();
-        assert!(get_app_log(CAP).is_empty());
+    /// 全局入口：按唯一 source 标签找回自己写的那条并确认已脱敏，不假设缓冲里只有自己
+    #[test]
+    fn record_and_read_back_through_global_buffer() {
+        let tag = format!("logbuf-test-pid{}", std::process::id());
+        record("warn", &tag, "key sk-syntheticlogsecret654321");
+        let mine: Vec<_> = get_app_log(CAP).into_iter().filter(|e| e.source == tag).collect();
+        assert_eq!(mine.len(), 1);
+        assert_eq!(mine[0].level, "warn");
+        assert!(!mine[0].message.contains("sk-syntheticlogsecret"));
     }
 }

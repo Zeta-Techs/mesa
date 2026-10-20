@@ -8,6 +8,8 @@ provides: [review-figures]
 
 # 综述文献图拼板
 
+> 命令里的 `python3` 指本机 Python 3：**Windows 上改用 `python`**（Windows 的 `python3` 是应用商店占位程序，一运行就失败）；macOS / Linux 用 `python3`。
+
 把别人论文里的图变成综述用图：**先裁准，再排齐**。裁哪一块只认大纲用图计划 + 笔记可引用图。美观用随包脚本（对齐、panel 字母、留白），不重绘曲线、不拉伸比例尺。
 
 ## 何时使用
@@ -26,8 +28,8 @@ provides: [review-figures]
 技能目录 `scripts/extract_figure.py`：
 
 ```bash
-python scripts/extract_figure.py --pdf <来源PDF> --fig 3 --out figures/src/<bibKey>-fig3.png
-python scripts/extract_figure.py --pdf <来源PDF> --fig 2 --panel f --out figures/src/<bibKey>-fig2f.png
+python3 scripts/extract_figure.py --pdf <来源PDF> --fig 3 --out figures/src/<bibKey>-fig3.png
+python3 scripts/extract_figure.py --pdf <来源PDF> --fig 2 --panel f --out figures/src/<bibKey>-fig2f.png
 ```
 
 题注认**单独成行、并且以题注开头**的那一行：`Figure n` / `Fig. n` / `图 n`。题注常和上一行正文粘在同一个文本块里，所以不要求整块开头就是题注。行内「Figure n shows」不算。裁切只取该行同一栏、直到相邻题注为止、离题注更近那一侧的**嵌入图像对象**（图可能在题注上，也可能在题注下），再按这些矩形的外沿渲图。过窄的页眉行不当题注。页面上的正文不在图像矩形里，不会进 PNG。没有图像对象的矢量图退出码 5，该板改「见 [@键] Fig.n」，不改回「题注上方切一条页面」。用图计划点名某一块（如 Fig.2f）时必须加 `--panel f`。退出码 6 = 这张多联图切不出那一块，正文改成「见 [@键] Fig.n(f)」，禁止把整张十几联图放进拼板、图注却写只引用了其中一块。退出码 3 = 无题注，4 = 图像对象接近整页。缺 PyMuPDF 则打印安装提示后停裁，不假装已裁。
@@ -39,7 +41,7 @@ python scripts/extract_figure.py --pdf <来源PDF> --fig 2 --panel f --out figur
 ≥2 块都裁到才组图，否则正文只写「见 [@键] Fig. n」。
 
 ```bash
-python scripts/assemble_panels.py --out figures/fig2.png --width-cm 8.5 --inputs figures/src/a.png figures/src/b.png
+python3 scripts/assemble_panels.py --out figures/fig2.png --width-cm 8.5 --inputs figures/src/a.png figures/src/b.png
 ```
 
 默认：白底、300 dpi、间隙 2.5 mm。宽度用 figure-forge 的通用投稿规格（单栏约 8.5 cm / 双栏约 17 cm）。同一行按各图宽高比分这块栏宽，字母写在图上方，不压在曲线上。不再把每张图拉成一样高后再整页缩小。一行最多 4 块；第 5 块起改 `--rows "a.png b.png c.png" "d.png e.png"`。文献拼板**不做 hero 放大某一篇**。脚本不得改源图像素里的曲线或数值。

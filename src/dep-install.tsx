@@ -7,6 +7,10 @@ import { useCallback, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { DepTool, UpdateResultDto } from "./dep-check";
+import { isGitMissingError } from "./dep-check";
+import { useAppStore } from "./store";
+import { toast } from "./toast";
+import { collapseCarriageReturns } from "./stream-text";
 
 export interface DepInstallEntry {
   running: boolean;
@@ -105,7 +109,7 @@ export function DepInstallLog({ entry }: { entry: DepInstallEntry }) {
           }}
           className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-sm bg-inset p-2 font-mono text-xs text-l3"
         >
-          {entry.output || "安装中，等待输出…"}
+          {collapseCarriageReturns(entry.output) || "安装中，等待输出…"}
         </pre>
       )}
       {!entry.running && entry.result && (
@@ -124,6 +128,47 @@ export function DepInstallLog({ entry }: { entry: DepInstallEntry }) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/** 「用到时再装」的 Git 出口：错误是「找不到 git 可执行文件」时，就地给一键安装 + 安装日志。
+ *  改动面板、科研步骤「历史」浮层、开步失败的项目页报错共用，免得普通用户被一句
+ *  「请先安装 git」打发去设置页找入口。装好后刷新依赖体检并交给调用方重试 */
+export function GitInstallOffer({
+  error,
+  onInstalled,
+  retryHint = "Git 装好了，可以继续了",
+}: {
+  error: string | null | undefined;
+  onInstalled?: () => void;
+  retryHint?: string;
+}) {
+  const refreshDepCheck = useAppStore((s) => s.refreshDepCheck);
+  const depInstall = useDepInstall((_tool, res) => {
+    if (!res.ok) return;
+    // Mac 无 Homebrew 时只是弹出系统安装窗口（Xcode 命令行工具），此刻还没装好
+    if (res.method === "xcode") {
+      toast("已打开系统安装窗口，装完后再试一次", "info");
+      return;
+    }
+    void refreshDepCheck();
+    toast(retryHint, "success");
+    onInstalled?.();
+  });
+  if (!error || !isGitMissingError(error)) return null;
+  const entry = depInstall.entries.git;
+  return (
+    <div className="mt-2">
+      <button
+        type="button"
+        onClick={() => void depInstall.install("git")}
+        disabled={entry.running}
+        className="rounded-sm bg-strip px-2 py-1 text-xs text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50"
+      >
+        {entry.running ? "安装中…" : "一键安装 Git"}
+      </button>
+      <DepInstallLog entry={entry} />
     </div>
   );
 }

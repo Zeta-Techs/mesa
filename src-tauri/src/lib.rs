@@ -180,6 +180,9 @@ pub fn run() {
             }
             // 托盘建好后再挂：应用图标外观要连托盘一起换
             app_icon::apply_saved(app.handle());
+            // Windows 老用户：已开的精确注意力钩子若还是旧版内联写法（从不生效），后台换成新写法
+            #[cfg(windows)]
+            std::thread::spawn(hooks::migrate_legacy_windows_hooks);
             // macOS 菜单栏：应用子菜单带 About 面板（版权 / 许可入口）。set_menu 会
             // 整体替换默认菜单——编辑子菜单的复制粘贴等预置项必须显式带上，否则
             // 文本框的系统快捷键全失灵。仅 macOS：Windows 无菜单栏惯例。
@@ -280,6 +283,13 @@ pub fn run() {
             }
             // 配置里的 windowEffects 在建窗时就会套。这里再挂一次，兜住没带上的情况。
             if let Some(window) = app.get_webview_window("main") {
+                // Windows：去掉原生标题栏，前端自绘拖拽区与窗口按钮（与 macOS Overlay 同构）。
+                // 不能放进 tauri.conf：titleBarStyle 只在 macOS 生效，dev 配置覆盖时
+                // windows 数组整体替换，平台配置会丢。
+                #[cfg(target_os = "windows")]
+                if let Err(e) = window.set_decorations(false) {
+                    logbuf::record("warn", "window", &format!("原生标题栏未去掉: {e}"));
+                }
                 // 窗口外观必须先于材质定下来：underWindowBackground 是 NSVisualEffectView，
                 // 底色由 NSAppearance 决定，不跟应用主题走。系统深色 + 应用浅色时材质本体
                 // 是近黑的，浅色那层罩色压不住，四周缝与圆角处就渗黑边。

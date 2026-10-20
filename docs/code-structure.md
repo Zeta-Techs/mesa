@@ -532,6 +532,12 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   Codex 补丁拆文件与脚本模式取 cmd、行级差异 lineDiff、结果状态只看开头（tests/tool-activity.test.ts）
                              # 2026-10-20：commandCategory（借 vibe-kanban）——只读命令（cat / sed -n / rg / ls …）归进查阅，改文件 / 取网页 / 其余照旧算运行
   dep-check.ts               # 依赖体检前端镜像：DTO 判定与 DOM/Tauri 解耦（tests 同名）
+  dep-install.tsx            # 依赖一键安装管线 useDepInstall + 日志块 DepInstallLog + 缺 Git 就地安装出口
+                             #   GitInstallOffer（改动面板 / 历史浮层 / 开步报错条共用）
+  stream-text.ts             # 流式命令输出的 \r 展开（镜像 updater.rs collapse_cr）：后端保留 \r 原样推，
+                             #   前端存原文、显示前对全文展开；依赖安装 / CLI 更新 / 字体安装三处日志共用
+  windows-shell.ts           # Windows WebView2 默认行为收口纯判定（刷新/打印/查找/后退快捷键、鼠标侧键、默认右键、
+                             #   Win11 判定）；挂载在 main.tsx，仅 Windows
   gateway-draft.ts           # 网关库槽位纯逻辑：effectiveSlotUrl 主输入跟随/脱离、slotsFollowMaster、firstProbeableSlot
   goal-review.ts             # 目标验收弹层分组与文案：科研按文献/笔记/数据/论文、工作按文档/表格/幻灯（tests/goal-review.test.ts）
   history-view.ts            # 历史时间线白话翻译层（✓保存进项目/⚙自动保存/◔保存，hash/分支名降为二级）
@@ -549,6 +555,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   components/TopNavCapsule.tsx # 隐藏侧栏时的灵动岛：休眠面＝状态（当前页标签 + RunActivityStatus 只读活动 + 只读播报，当前页格聚焦/点击只展开岛）；
                              #   展开面＝操作（恢复侧栏居首 + 导航 + 可点活动胶囊 + 可点播报）。休眠面控件指针够不着，只放展示；不挂导航角标
   nav-capsule.ts             # 侧栏可配置胶囊入口（恢复侧栏始终保留，不在此列）
+  components/WindowControls.tsx # Windows 自绘窗口按钮（最小化/最大化-还原/关闭，46px 宽、关闭悬停红）；仅 Windows 渲染，
+                             #   App 标题栏与 ReaderOverlay 顶栏（盖住标题栏）各挂一份；对应 Rust lib.rs setup 的 set_decorations(false)
   session-template-blocks.ts # 对话注入模板 ↔ 勾选模型：[项目基本信息] → 勾中的内容段（固定标准顺序）→ 我的补充；
                              #   parseSimpleTemplate（放不进返回 null）/ serializeSimpleTemplate / coerceSimpleTemplate（只丢顺序不丢字）/
                              #   sectionSummary；盘上仍是同一份模板文本（tests/session-template-blocks.test.ts）
@@ -606,7 +614,7 @@ src-tauri/src/
                              #   只认二进制/配置 schema 实证，调研录 matrix §9 第 8 条；agents.rs
                              #   apply_request_policy_env 按表注入启动 env，未实证一律不注）；
                              #   resolve_binary 兜底候选目录 binary_candidate_dirs 同在本模块（macOS 含 /Library/TeX/texbin、/Applications/quarto/bin；Linux /opt/quarto/bin；Windows Program Files\Quarto\bin）
-  agents.rs                  # 适配器分发入口 + resolve_binary 二进制解析（GUI 短 PATH 兜底）+ readonly_launch_args（聊想法只读注入）；
+  agents.rs                  # 适配器分发入口 + resolve_binary 二进制解析（GUI 短 PATH 兜底；resolve_binary_all 列全部候选给占位程序场景）+ readonly_launch_args（聊想法只读注入）；
                              # 官方账号 Codex：apply_official_inject 必带 -c model_provider="openai"（内置 ChatGPT 渠道；磁盘
                              #   config.toml 的网关默认会盖过订阅，不得省略；只影响本进程、不写 model_providers 块）；
                              #   login_cmd = login --device-auth（CLI 自带设备码，不抄 cc-switch 的 in-app OAuth）；

@@ -11,6 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { IS_MAC, IS_WINDOWS, eventMatchesCombo, READER_MODE_HOTKEY } from "../hotkeys";
+import WindowControls from "./WindowControls";
 import { macOverlayPadClass, useMacFullscreen } from "../mac-titlebar";
 import { HoverTip, useHoverTip } from "./HoverTip";
 import { LoadingRows } from "./PageFrame";
@@ -947,7 +948,7 @@ export default function ReaderOverlay({
   };
 
   return (
-    <div ref={rootRef} className="fixed inset-0 z-40 flex flex-col bg-canvas">
+    <div ref={rootRef} className="ccode-covers-titlebar fixed inset-0 z-40 flex flex-col bg-canvas">
       {/* 40px 顶栏：← 返回（Esc 同效）/ 《文献标题》/ 收起左右栏。
           覆盖层会盖住 App 的自绘标题栏，此条必须自己承担两件事（口径同 App.tsx 顶栏）：
           可拖动 + macOS Overlay 红绿灯让位（窗口态 pl-[78px]，全屏收起按钮后取消让位）。
@@ -958,11 +959,20 @@ export default function ReaderOverlay({
           if (e.button !== 0) return;
           if ((e.target as HTMLElement).closest("button, a, input, select, textarea"))
             return;
+          // Windows 无原生标题栏：手动拖拽吞掉了双击最大化，这里补上
+          if (IS_WINDOWS && e.detail === 2) {
+            void getCurrentWindow()
+              .toggleMaximize()
+              .catch(() => {});
+            return;
+          }
           void getCurrentWindow()
             .startDragging()
             .catch(() => {});
         }}
-        className={`flex h-10 shrink-0 items-center gap-1 border-b border-hairline pr-2 ${macOverlayPadClass(
+        className={`flex h-10 shrink-0 items-center gap-1 border-b border-hairline ${
+          IS_WINDOWS ? "pr-0" : "pr-2"
+        } ${macOverlayPadClass(
           IS_MAC,
           macFullscreen,
           "pl-2",
@@ -1034,6 +1044,7 @@ export default function ReaderOverlay({
         >
           {rightOpen ? "›" : "‹"}
         </button>
+        {IS_WINDOWS && <WindowControls className="ml-1" />}
         <HoverTip tip={backTip.tip} text="退出沉浸阅读（Esc；焦点在终端里时 Esc 归终端）" />
         <HoverTip
           tip={titleTip.tip}
