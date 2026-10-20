@@ -78,6 +78,7 @@ import {
   logLocalTime,
 } from "../diagnostics";
 import { useAppUpdateInstall } from "../app-update-install";
+import UpdateNotes from "../components/UpdateNotes";
 import {
   appUpdateProgressLabel,
   appUpdateProgressPct,
@@ -1925,14 +1926,11 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
     persistCustom(next);
   }
 
-  function activateCustom(fromCurrent: boolean) {
+  // 进入自定义＝把正在显示的主题三色拷进来、外观不跳变；取不到才回落上次的自定义 / 默认
+  function activateCustom() {
     const saved = normalizeCustomTheme(settings?.customTheme);
     const computed = seedsFromComputed(getComputedStyle(document.documentElement));
-    const next =
-      fromCurrent || !saved
-        ? (computed ?? saved ?? DEFAULT_CUSTOM_THEME)
-        : saved;
-    commitCustom(next);
+    commitCustom(computed ?? saved ?? DEFAULT_CUSTOM_THEME);
   }
 
   function applySavedCard(card: CustomThemeCard) {
@@ -2554,8 +2552,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             ) : (
               <button
                 type="button"
-                onClick={() => activateCustom(false)}
-                title="用三个颜色配一套自己的主题"
+                onClick={activateCustom}
+                title="从当前主题的三个颜色出发，配一套自己的主题"
                 className="flex h-14 min-w-0 items-center justify-center rounded-md border border-dashed border-field text-micro text-l3 hover:border-l4 hover:text-l1"
               >
                 ＋ 自定义
@@ -2586,14 +2584,6 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                   value={customSeeds.accent}
                   onLive={(hex) => liveCustom({ ...customSeeds, accent: hex })}
                 />
-                <button
-                  type="button"
-                  className={`${ghostActionClass} shrink-0`}
-                  onClick={() => activateCustom(true)}
-                  title="把正在显示的主题的三个颜色填进来，在它基础上改"
-                >
-                  从当前主题拷入
-                </button>
                 {savingCard ? (
                   <span className="flex items-center gap-1.5">
                     <input
@@ -3761,14 +3751,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             {appUpdateError && (
               <InlineNotice tone="err" className="mb-2">{appUpdateError}</InlineNotice>
             )}
-            {appUpdate.body && (
-              <>
-                <div className="mb-1 text-xs font-medium text-l3">更新说明</div>
-                <div className="max-h-48 overflow-auto whitespace-pre-line text-xs leading-5 text-l3">
-                  {appUpdate.body}
-                </div>
-              </>
-            )}
+            {appUpdate.body?.trim() && <UpdateNotes text={appUpdate.body.trim()} />}
           </Card>
         ) : (
           <Row

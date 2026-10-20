@@ -49,6 +49,7 @@ import { useAppStore } from "../store";
 import { toast } from "../toast";
 import appIconDark from "../assets/app-icon/dark.png";
 import appIconLight from "../assets/app-icon/light.png";
+import UpdateNotes from "./UpdateNotes";
 
 /** 帮助菜单弹窗族：诊断与日志 / 检查更新 / 关于。帮助菜单不跳设置页——
  *  内容能装进弹窗的都就地弹窗，弹窗里留「去完整页」的出口。 */
@@ -406,14 +407,7 @@ export function HelpUpdateDialog({ open, onClose }: { open: boolean; onClose: ()
         {installError && !installing && (
           <InlineNotice tone="err">{`安装失败：${installError}`}</InlineNotice>
         )}
-        {appUpdate.body?.trim() && (
-          <div>
-            <div className="mb-1 text-xs font-medium text-l3">更新说明</div>
-            <div className="max-h-56 overflow-auto whitespace-pre-line rounded-md ccode-well px-3 py-2 text-xs leading-5 text-l2">
-              {appUpdate.body.trim()}
-            </div>
-          </div>
-        )}
+        {appUpdate.body?.trim() && <UpdateNotes text={appUpdate.body.trim()} />}
       </div>
     );
     footer = (

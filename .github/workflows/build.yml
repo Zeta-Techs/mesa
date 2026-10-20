@@ -78,6 +78,17 @@ jobs:
               process.exit(1);
             }
           '
+      # 更新说明取自 CHANGELOG.md（latest.json 的 notes 在打包时生成，事后改 Release 草稿不会同步）
+      - name: 取本版本更新说明
+        id: notes
+        shell: bash
+        run: |
+          node scripts/release-notes.mjs "${GITHUB_REF_NAME}" > release-notes.md
+          {
+            echo 'body<<RELEASE_NOTES_EOF'
+            cat release-notes.md
+            echo 'RELEASE_NOTES_EOF'
+          } >> "$GITHUB_OUTPUT"
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -88,6 +99,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'Mesa ${{ github.ref_name }}'
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: true
 
   # updater 查 latest.json 用的是裸键 windows-x86_64（插件不做 -nsis/-msi 后缀回退）。
