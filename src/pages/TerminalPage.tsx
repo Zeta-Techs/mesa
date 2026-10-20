@@ -594,11 +594,6 @@ const RIGHT_TABS = [
 ] as const;
 type RightTab = (typeof RIGHT_TABS)[number]["key"];
 
-/** shell 单引号转义（向 PTY 写 cd 命令用）。Windows 内嵌终端默认是 PowerShell：单引号内
- *  用 '' 转义，POSIX 的 '\'' 在 PowerShell 里是坏语法 */
-const shQuote = (s: string) =>
-  IS_WINDOWS ? `'${s.replace(/'/g, "''")}'` : `'${s.replace(/'/g, "'\\''")}'`;
-
 /** 往 shell 写完整命令后的「回车」：ConPTY 把裸 LF 当 Ctrl+Enter，PowerShell 只换行不执行；
  *  Windows 用 \r（VS Code sendText 同口径），其他平台保持 \n */
 const SHELL_ENTER = IS_WINDOWS ? "\r" : "\n";
@@ -3162,10 +3157,8 @@ const TerminalView = memo(function TerminalView({
     if (visible && externalCwd && !running) {
       setCwd(externalCwd);
       if (shellActive && activePtyId) {
-        invoke("pty_write", {
-          ptyId: activePtyId,
-          data: `cd ${shQuote(externalCwd)}${SHELL_ENTER}`,
-        }).catch(() => {});
+        // 按这个标签实际用的 shell 拼 cd（设置里可换成 cmd / Git Bash，写法各不相同）
+        invoke("pty_cd", { ptyId: activePtyId, path: externalCwd }).catch(() => {});
       }
       onConsumeExternalCwd?.();
     }
@@ -3187,10 +3180,7 @@ const TerminalView = memo(function TerminalView({
       setCwd(repoPath);
       const s = shellRef.current;
       if (s.shellActive && !s.running && s.activePtyId) {
-        invoke("pty_write", {
-          ptyId: s.activePtyId,
-          data: `cd ${shQuote(repoPath)}${SHELL_ENTER}`,
-        }).catch(() => {});
+        invoke("pty_cd", { ptyId: s.activePtyId, path: repoPath }).catch(() => {});
       }
     }).then((u) => (un = u));
     return () => un?.();

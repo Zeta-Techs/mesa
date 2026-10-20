@@ -40,6 +40,11 @@ struct PtyEntry {
     initial_cwd: String,
     /// 交互 Run 身份；进程退出时 close。
     run_id: Option<String>,
+    /// Windows 普通 shell 标签的目录记录文件（shell 每次出提示符时写当前目录，pty_get_cwd 读）；
+    /// 标签退出时删
+    cwd_file: Option<std::path::PathBuf>,
+    /// 普通 shell 标签用的哪种 shell（pty_cd 按它拼 cd）；agent 与 run 脚本为 None
+    shell_kind: Option<ShellKind>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -454,6 +459,7 @@ fn spawn_tracked(
     purpose: PtyPurpose,
     run_id: Option<String>,
     size: PtySize,
+    cwd_file: Option<std::path::PathBuf>,
 ) -> Result<String, String> {
     if crate::process::shutting_down() {
         return Err("应用正在退出，拒绝启动终端".into());
@@ -510,6 +516,8 @@ fn spawn_tracked(
             purpose,
             initial_cwd: cwd.to_string(),
             run_id: run_id.clone(),
+            cwd_file,
+            shell_kind: None,
         },
     );
 
@@ -566,6 +574,7 @@ fn spawn_tracked(
         // 输出流结束视为进程结束；谁先移除 entry 谁负责回收并发退出事件
         let entry = entries.lock().unwrap().remove(&id);
         if let Some(mut entry) = entry {
+            forget_cwd_file(&mut entry);
             // wait 失败按异常退出（-1）上报，不误报正常退出
             let deadline = Instant::now() + Duration::from_secs(2);
             let code = loop {
@@ -861,6 +870,7 @@ pub fn pty_spawn(
         PtyPurpose::Agent,
         opened_id.clone(),
         pty_size_from(cols, rows),
+        None,
     ) {
         Ok(pty_id) => pty_id,
         Err(error) => {
@@ -936,12 +946,16 @@ pub fn shell_spawn(
     cols: Option<u16>,
     rows: Option<u16>,
 ) -> Result<String, String> {
-    let (shell, shell_args) = if purpose.as_deref() == Some("script") {
-        script_shell_argv()?
+    let (shell, mut shell_args, kind) = if purpose.as_deref() == Some("script") {
+        let (shell, args) = script_shell_argv()?;
+        (shell, args, None)
     } else {
-        login_shell_argv()
+        let setting = crate::settings::read_current().terminal_shell;
+        let (shell, args, kind) = interactive_shell(setting.as_deref());
+        (shell, args, Some(kind))
     };
     let mut cmd = CommandBuilder::new(&shell);
+    let cwd_file = kind.and_then(|k| attach_cwd_tracking(&mut cmd, &mut shell_args, k));
     for arg in &shell_args {
         cmd.arg(arg);
     }
@@ -967,8 +981,12 @@ pub fn shell_spawn(
         purpose,
         run_id.clone(),
         pty_size_from(cols, rows),
+        cwd_file,
     ) {
         Ok(id) => {
+            if let Some(entry) = manager.inner().entries.lock().unwrap().get_mut(&id) {
+                entry.shell_kind = kind;
+            }
             if let Some(run_id) = run_id.as_deref() {
                 if let Err(error) = crate::runs::mark_started(run_id) {
                     discard_spawned_pty(&app, manager.inner(), &id);
@@ -1041,6 +1059,7 @@ pub fn pty_spawn_custom(
         PtyPurpose::Agent,
         Some(run_id.clone()),
         pty_size_from(cols, rows),
+        None,
     ) {
         Ok(id) => id,
         Err(error) => {
@@ -1121,6 +1140,189 @@ fn login_shell_argv() -> (String, Vec<String>) {
     (shell, vec!["-l".to_string()])
 }
 
+// ===== 内置终端 shell 选择（设置 → 终端 → 内置终端 shell）=====
+
+/// shell 的种类：决定启动参数与「跟随 cd」怎么接（只有 Windows 需要接，macOS / Linux 直接读进程 cwd）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(windows), allow(dead_code))]
+enum ShellKind {
+    PowerShell,
+    GitBash,
+    Cmd,
+    Posix,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShellOptionDto {
+    /// 落 settings.terminal_shell 的值
+    pub id: &'static str,
+    pub label: &'static str,
+    pub path: String,
+}
+
+/// 本机找得到的可选 shell：(id, 显示名, 程序, 种类)。顺序即设置页下拉顺序
+#[cfg(windows)]
+fn shell_candidates() -> Vec<(&'static str, &'static str, std::path::PathBuf, ShellKind)> {
+    let mut out = Vec::new();
+    if let Some(p) = crate::agents::resolve_binary("powershell") {
+        out.push(("powershell", "Windows PowerShell", p, ShellKind::PowerShell));
+    }
+    if let Some(p) = crate::agents::resolve_binary("pwsh") {
+        out.push(("pwsh", "PowerShell 7", p, ShellKind::PowerShell));
+    }
+    if let Some(p) = crate::agents::resolve_git_bash() {
+        out.push(("git-bash", "Git Bash", p, ShellKind::GitBash));
+    }
+    let cmd = std::env::var_os("COMSPEC")
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.is_file())
+        .or_else(|| crate::agents::resolve_binary("cmd"));
+    if let Some(p) = cmd {
+        out.push(("cmd", "命令提示符（cmd）", p, ShellKind::Cmd));
+    }
+    out
+}
+
+#[cfg(not(windows))]
+fn shell_candidates() -> Vec<(&'static str, &'static str, std::path::PathBuf, ShellKind)> {
+    let mut out = Vec::new();
+    for (id, fixed) in [("zsh", "/bin/zsh"), ("bash", "/bin/bash")] {
+        let p = std::path::PathBuf::from(fixed);
+        let found = if p.is_file() {
+            Some(p)
+        } else {
+            crate::agents::resolve_binary(id)
+        };
+        if let Some(p) = found {
+            out.push((id, id, p, ShellKind::Posix));
+        }
+    }
+    if let Some(p) = crate::agents::resolve_binary("fish") {
+        out.push(("fish", "fish", p, ShellKind::Posix));
+    }
+    out
+}
+
+/// 某个 shell 的启动参数（PowerShell 带进程级 Bypass，理由见 login_shell_argv）
+fn shell_args_for(kind: ShellKind) -> Vec<String> {
+    match kind {
+        ShellKind::PowerShell => ["-NoLogo", "-ExecutionPolicy", "Bypass"]
+            .map(String::from)
+            .to_vec(),
+        ShellKind::GitBash | ShellKind::Posix => vec!["-l".to_string()],
+        ShellKind::Cmd => Vec::new(),
+    }
+}
+
+/// 内置终端（普通 shell 标签）实际用的 shell：设置里选了且本机找得到就用它，否则平台默认。
+/// run 脚本不走这里（script_shell_argv：Windows 固定 Git Bash，其余平台登录 shell）
+fn interactive_shell(setting: Option<&str>) -> (String, Vec<String>, ShellKind) {
+    if let Some(id) = setting.filter(|v| !v.is_empty() && *v != "auto") {
+        if let Some((_, _, path, kind)) = shell_candidates().into_iter().find(|c| c.0 == id) {
+            return (path.to_string_lossy().into_owned(), shell_args_for(kind), kind);
+        }
+    }
+    let (program, args) = login_shell_argv();
+    let lower = program.to_ascii_lowercase();
+    let kind = if lower.contains("powershell") || lower.contains("pwsh") {
+        ShellKind::PowerShell
+    } else if cfg!(windows) && lower.ends_with("cmd.exe") {
+        ShellKind::Cmd
+    } else {
+        ShellKind::Posix
+    };
+    (program, args, kind)
+}
+
+/// 设置页「内置终端 shell」下拉的候选（只列本机找得到的；「自动」由前端固定加在最前）
+#[tauri::command]
+pub fn terminal_shell_options() -> Vec<ShellOptionDto> {
+    shell_candidates()
+        .into_iter()
+        .map(|(id, label, path, _)| ShellOptionDto {
+            id,
+            label,
+            path: crate::paths::strip_verbatim(path).to_string_lossy().into_owned(),
+        })
+        .collect()
+}
+
+// ===== Windows：shell 里 cd 后文件树 / Git 面板跟随 =====
+//
+// macOS 用 lsof、Linux 读 /proc 拿进程 cwd；Windows 没有轻量办法，而且 PowerShell 的 Set-Location
+// 根本不改进程工作目录。所以由 shell 自己在每次出提示符时把当前目录写进一个小文件
+// （PowerShell 包一层 prompt 函数，Git Bash 用 PROMPT_COMMAND 跑 `pwd -W`），pty_get_cwd 读它；
+// cmd 的 cd 会改进程工作目录，读不到文件时从进程环境块（PEB）里取。文件随标签退出删除，启动时清残留。
+
+/// PowerShell 的 prompt 包装：先记目录再交回原来的 prompt（用户 profile 里的主题照常生效）。
+/// 只用单引号：整段经 CreateProcess 命令行传，不能含双引号
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+const PS_CWD_HOOK: &str = "$global:__ccodeCwdFile = $env:CCODE_CWD_FILE; \
+$global:__ccodePrompt = $function:prompt; \
+function global:prompt { if ($global:__ccodeCwdFile -and $PWD.Provider.Name -eq 'FileSystem') { \
+try { [IO.File]::WriteAllText($global:__ccodeCwdFile, $PWD.ProviderPath) } catch { } }; & $global:__ccodePrompt }";
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn cwd_track_dir() -> Option<std::path::PathBuf> {
+    crate::storage::config_root().map(|r| r.join("pty-cwd"))
+}
+
+/// 启动时清掉上次没删成的目录记录文件（崩溃 / 强杀留下的）
+pub(crate) fn purge_cwd_track_files() {
+    if let Some(dir) = cwd_track_dir() {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+/// 给这个 shell 接上目录记录：返回记录文件路径（不支持或建目录失败返回 None，照常启动）
+#[cfg(windows)]
+fn attach_cwd_tracking(
+    cmd: &mut CommandBuilder,
+    args: &mut Vec<String>,
+    kind: ShellKind,
+) -> Option<std::path::PathBuf> {
+    if kind == ShellKind::Cmd || kind == ShellKind::Posix {
+        return None;
+    }
+    let dir = cwd_track_dir()?;
+    std::fs::create_dir_all(&dir).ok()?;
+    let file = dir.join(format!("{}.txt", uuid::Uuid::new_v4()));
+    cmd.env("CCODE_CWD_FILE", &file);
+    match kind {
+        ShellKind::PowerShell => {
+            args.extend(["-NoExit", "-Command", PS_CWD_HOOK].map(String::from));
+        }
+        ShellKind::GitBash => {
+            let posix = file.to_string_lossy().replace('\\', "/").replace('\'', "'\\''");
+            cmd.env("PROMPT_COMMAND", format!("pwd -W > '{posix}' 2>/dev/null"));
+        }
+        ShellKind::Cmd | ShellKind::Posix => {}
+    }
+    Some(file)
+}
+
+#[cfg(not(windows))]
+fn attach_cwd_tracking(
+    _cmd: &mut CommandBuilder,
+    _args: &mut Vec<String>,
+    _kind: ShellKind,
+) -> Option<std::path::PathBuf> {
+    None
+}
+
+/// 读 shell 写下的目录记录：正斜杠转回反斜杠，必须是存在的目录
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn read_cwd_track_file(file: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(file).ok()?;
+    let p = text.trim().trim_start_matches('\u{feff}');
+    if p.is_empty() {
+        return None;
+    }
+    let p = if cfg!(windows) { p.replace('/', "\\") } else { p.to_string() };
+    std::path::Path::new(&p).is_dir().then_some(p)
+}
+
 /// 流水线 run 脚本（render-pdf 等）是 bash。Windows 交互 shell 是 PowerShell，
 /// 必须改走 Git Bash，否则 `mkdir -p` / `command -v` 整链失败。
 #[cfg(windows)]
@@ -1152,6 +1354,41 @@ pub async fn pty_write(
     };
     // 先按 IPC 到达次序入队，再后台等待；不能让线程池调度把按键顺序打乱。
     let receipt = writer.enqueue(wrap_bracketed_paste(&data, paste_on).as_bytes(), None)?;
+    tauri::async_runtime::spawn_blocking(move || receipt.wait())
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// 按 shell 方言拼一行「切到这个目录」（含回车）：PowerShell / POSIX 单引号，Git Bash 转正斜杠，
+/// cmd 用 `cd /d` + 双引号（cmd 不认单引号，跨盘还得带 /d）
+fn cd_line(kind: ShellKind, path: &str) -> String {
+    let enter = if cfg!(windows) { "\r" } else { "\n" };
+    match kind {
+        ShellKind::PowerShell => format!("cd '{}'{enter}", path.replace('\'', "''")),
+        ShellKind::Cmd => format!("cd /d \"{}\"{enter}", path.replace('"', "")),
+        ShellKind::GitBash => format!(
+            "cd '{}'{enter}",
+            path.replace('\\', "/").replace('\'', "'\\''")
+        ),
+        ShellKind::Posix => format!("cd '{}'{enter}", path.replace('\'', "'\\''")),
+    }
+}
+
+/// 让普通 shell 标签切到某个目录（工作区归档后切回主仓、最近项目「真进入」）：按这个标签实际
+/// 用的 shell 写 cd——用户在设置里换成 cmd / Git Bash 后，前端拼的 PowerShell 写法会失败
+#[tauri::command]
+pub async fn pty_cd(
+    manager: tauri::State<'_, PtyManager>,
+    pty_id: String,
+    path: String,
+) -> Result<(), String> {
+    let (writer, line) = {
+        let entries = manager.entries.lock().unwrap();
+        let entry = entries.get(&pty_id).ok_or("终端不存在或已退出")?;
+        let kind = entry.shell_kind.unwrap_or_else(|| interactive_shell(None).2);
+        (entry.writer.clone(), cd_line(kind, &path))
+    };
+    let receipt = writer.enqueue(line.as_bytes(), None)?;
     tauri::async_runtime::spawn_blocking(move || receipt.wait())
         .await
         .map_err(|e| e.to_string())?
@@ -1258,10 +1495,16 @@ pub fn pty_resize(
         .map_err(|e| format!("调整终端尺寸失败: {e}"))
 }
 
-/// 进程的真实 cwd：macOS 走 lsof，Linux 读 /proc，Windows 无轻量途径返回 None
-///（前端对 None 回落启动栏 cwd）
+/// 标签退出：删掉目录记录文件（先 take，entry 随后会被拆开消费）
+fn forget_cwd_file(entry: &mut PtyEntry) {
+    if let Some(file) = entry.cwd_file.take() {
+        let _ = std::fs::remove_file(file);
+    }
+}
+
+/// 进程的真实 cwd：macOS 走 lsof，Linux 读 /proc，Windows 见下（读不到返回 None，前端回落启动栏 cwd）
 #[cfg(target_os = "macos")]
-fn process_cwd(pid: u32) -> Option<String> {
+fn process_cwd(pid: u32, _cwd_file: Option<&std::path::Path>) -> Option<String> {
     let out = std::process::Command::new("lsof")
         .args(["-a", "-p", &pid.to_string(), "-d", "cwd", "-Fn"])
         .output()
@@ -1275,15 +1518,94 @@ fn process_cwd(pid: u32) -> Option<String> {
 }
 
 #[cfg(target_os = "linux")]
-fn process_cwd(pid: u32) -> Option<String> {
+fn process_cwd(pid: u32, _cwd_file: Option<&std::path::Path>) -> Option<String> {
     std::fs::read_link(format!("/proc/{pid}/cwd"))
         .ok()
         .map(|p| p.to_string_lossy().into_owned())
 }
 
+/// Windows：先读 shell 写下的目录记录（PowerShell / Git Bash），没有再从进程环境块取（cmd 的 cd 改的就是它）
 #[cfg(target_os = "windows")]
-fn process_cwd(_pid: u32) -> Option<String> {
+fn process_cwd(pid: u32, cwd_file: Option<&std::path::Path>) -> Option<String> {
+    cwd_file
+        .and_then(read_cwd_track_file)
+        .or_else(|| peb_current_directory(pid))
+}
+
+/// 读另一个进程的当前目录：PEB → RTL_USER_PROCESS_PARAMETERS.CurrentDirectory.DosPath。
+/// 偏移按 64 位布局（PEB+0x20 = ProcessParameters，参数块 +0x38 = DosPath 的 UNICODE_STRING）；
+/// 只读自己拉起的子进程，读不到返回 None
+#[cfg(all(target_os = "windows", target_pointer_width = "64"))]
+fn peb_current_directory(pid: u32) -> Option<String> {
+    use std::ffi::c_void;
+    use windows_sys::Wdk::System::Threading::{NtQueryInformationProcess, ProcessBasicInformation};
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Diagnostics::Debug::ReadProcessMemory;
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
+    };
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, pid);
+        if handle.is_null() {
+            return None;
+        }
+        let read = |addr: usize, buf: *mut c_void, len: usize| -> bool {
+            let mut got = 0usize;
+            ReadProcessMemory(handle, addr as *const c_void, buf, len, &mut got) != 0 && got == len
+        };
+        let result = (|| {
+            // PROCESS_BASIC_INFORMATION：6 个指针宽的槽，第 2 个是 PebBaseAddress
+            let mut pbi = [0usize; 6];
+            let mut ret = 0u32;
+            let status = NtQueryInformationProcess(
+                handle,
+                ProcessBasicInformation,
+                pbi.as_mut_ptr() as *mut c_void,
+                std::mem::size_of_val(&pbi) as u32,
+                &mut ret,
+            );
+            if status < 0 || pbi[1] == 0 {
+                return None;
+            }
+            let mut params = 0usize;
+            if !read(pbi[1] + 0x20, &mut params as *mut usize as *mut c_void, 8) || params == 0 {
+                return None;
+            }
+            // UNICODE_STRING：Length(u16) MaximumLength(u16) 填充(4) Buffer(ptr)
+            let mut ustr = [0u8; 16];
+            if !read(params + 0x38, ustr.as_mut_ptr() as *mut c_void, 16) {
+                return None;
+            }
+            let len = u16::from_le_bytes([ustr[0], ustr[1]]) as usize;
+            let buf = usize::from_le_bytes(ustr[8..16].try_into().ok()?);
+            if len == 0 || len > 0x8000 || buf == 0 {
+                return None;
+            }
+            let mut wide = vec![0u16; len / 2];
+            if !read(buf, wide.as_mut_ptr() as *mut c_void, len) {
+                return None;
+            }
+            Some(trim_dir_backslash(String::from_utf16_lossy(&wide)))
+        })();
+        CloseHandle(handle);
+        result
+    }
+}
+
+#[cfg(all(target_os = "windows", not(target_pointer_width = "64")))]
+fn peb_current_directory(_pid: u32) -> Option<String> {
     None
+}
+
+/// PEB 里的目录带结尾反斜杠（`C:\work\`）；盘根保留（`C:\`）
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn trim_dir_backslash(p: String) -> String {
+    let trimmed = p.trim_end_matches('\\');
+    if trimmed.len() <= 2 && trimmed.ends_with(':') {
+        format!("{trimmed}\\")
+    } else {
+        trimmed.to_string()
+    }
 }
 
 /// 活动 PTY 进程的真实工作目录（文件树/git 面板跟随 shell 内的 cd）
@@ -1291,7 +1613,8 @@ fn process_cwd(_pid: u32) -> Option<String> {
 pub fn pty_get_cwd(manager: tauri::State<'_, PtyManager>, pty_id: String) -> Option<String> {
     let mut entries = manager.entries.lock().unwrap();
     let entry = entries.get_mut(&pty_id)?;
-    process_cwd(entry.child.process_id()?)
+    let file = entry.cwd_file.clone();
+    process_cwd(entry.child.process_id()?, file.as_deref())
 }
 
 /// 终端里点到的路径能不能打开：相对路径按 cwd 拼、`~` 按 home 展开，
@@ -1413,7 +1736,8 @@ fn terminate_pty_child(mut child: Box<dyn Child + Send + Sync>) {
 
 fn discard_spawned_pty(app: &AppHandle, manager: &PtyManager, id: &str) {
     let entry = manager.entries.lock().unwrap().remove(id);
-    if let Some(entry) = entry {
+    if let Some(mut entry) = entry {
+        forget_cwd_file(&mut entry);
         terminate_pty_child(entry.child);
         let _ = app.emit(&format!("pty-exit-{id}"), -1);
     }
@@ -1426,7 +1750,8 @@ pub fn pty_kill(
     pty_id: String,
 ) -> Result<(), String> {
     let entry = manager.entries.lock().unwrap().remove(&pty_id);
-    if let Some(entry) = entry {
+    if let Some(mut entry) = entry {
+        forget_cwd_file(&mut entry);
         terminate_pty_child(entry.child);
         if let Some(run_id) = entry.run_id {
             let _ = crate::runs::close_run_with_result(
@@ -1457,7 +1782,7 @@ mod tests {
     #[test]
     fn process_cwd_reads_own_process() {
         // lsof//proc 读自己进程的 cwd，与 current_dir 一致（canonicalize 归一化）
-        let got = process_cwd(std::process::id()).expect("应能读取本进程 cwd");
+        let got = process_cwd(std::process::id(), None).expect("应能读取本进程 cwd");
         let expect = std::env::current_dir().unwrap().canonicalize().unwrap();
         assert_eq!(std::path::Path::new(&got).canonicalize().unwrap(), expect);
     }
@@ -1705,6 +2030,148 @@ mod tests {
                 );
             }
             Err(e) => assert!(e.contains("Git Bash"), "{e}"),
+        }
+    }
+
+    // ===== 内置终端 shell 选择 + Windows 跟随 cd =====
+
+    #[test]
+    fn interactive_shell_falls_back_to_platform_default() {
+        let (default_shell, default_args) = login_shell_argv();
+        for setting in [None, Some("auto"), Some(""), Some("no-such-shell")] {
+            let (shell, args, _) = interactive_shell(setting);
+            assert_eq!(shell, default_shell, "{setting:?}");
+            assert_eq!(args, default_args, "{setting:?}");
+        }
+        // 候选里有的都能选上，且参数合该 shell 的口径
+        for opt in terminal_shell_options() {
+            let (shell, args, kind) = interactive_shell(Some(opt.id));
+            assert!(std::path::Path::new(&shell).is_file(), "{shell}");
+            match kind {
+                ShellKind::PowerShell => assert!(args.iter().any(|a| a == "Bypass"), "{args:?}"),
+                ShellKind::GitBash | ShellKind::Posix => assert_eq!(args, vec!["-l".to_string()]),
+                ShellKind::Cmd => assert!(args.is_empty()),
+            }
+            assert!(crate::settings::KNOWN_TERMINAL_SHELLS.contains(&opt.id), "{}", opt.id);
+        }
+    }
+
+    #[test]
+    fn cd_line_follows_shell_dialect() {
+        let enter = if cfg!(windows) { "\r" } else { "\n" };
+        assert_eq!(
+            cd_line(ShellKind::PowerShell, r"C:\it's\proj"),
+            format!(r"cd 'C:\it''s\proj'{enter}")
+        );
+        assert_eq!(
+            cd_line(ShellKind::Cmd, r"D:\work dir"),
+            format!("cd /d \"D:\\work dir\"{enter}")
+        );
+        assert_eq!(
+            cd_line(ShellKind::GitBash, r"C:\it's\proj"),
+            format!("cd 'C:/it'\\''s/proj'{enter}")
+        );
+        assert_eq!(
+            cd_line(ShellKind::Posix, "/Users/me/it's"),
+            format!("cd '/Users/me/it'\\''s'{enter}")
+        );
+    }
+
+    #[test]
+    fn dir_backslash_trim_keeps_drive_root() {
+        assert_eq!(trim_dir_backslash(r"C:\work\proj\".into()), r"C:\work\proj");
+        assert_eq!(trim_dir_backslash(r"C:\".into()), r"C:\");
+        assert_eq!(trim_dir_backslash(r"\\server\share\x\".into()), r"\\server\share\x");
+    }
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("ccode-pty-{tag}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn cwd_track_file_reads_existing_dir_only() {
+        let dir = scratch("cwdfile");
+        let file = dir.join("cwd.txt");
+        assert_eq!(read_cwd_track_file(&file), None, "文件还没写");
+        let target = dir.join("a b");
+        std::fs::create_dir(&target).unwrap();
+        // Git Bash 的 pwd -W 写正斜杠；PowerShell 写反斜杠；两种都认，结尾换行忽略
+        let fwd = target.to_string_lossy().replace('\\', "/");
+        std::fs::write(&file, format!("{fwd}\n")).unwrap();
+        let got = read_cwd_track_file(&file).unwrap();
+        assert!(crate::paths::same_path(&got, &target.to_string_lossy()), "{got}");
+        std::fs::write(&file, dir.join("gone").to_string_lossy().as_bytes()).unwrap();
+        assert_eq!(read_cwd_track_file(&file), None, "目录已不在");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 真起一个 PowerShell / Git Bash（ConPTY），cd 之后记录文件跟着变；cmd 从进程环境块读
+    #[cfg(windows)]
+    #[test]
+    fn windows_shells_report_cwd_after_cd() {
+        let root = scratch("shells");
+        let _guard = crate::storage::TestConfigRoot::redirect_to(&root);
+        let start = root.join("start");
+        let target = root.join("目标 dir");
+        std::fs::create_dir_all(&start).unwrap();
+        std::fs::create_dir_all(&target).unwrap();
+        for opt in terminal_shell_options() {
+            let (shell, mut args, kind) = interactive_shell(Some(opt.id));
+            let mut cmd = CommandBuilder::new(&shell);
+            let file = attach_cwd_tracking(&mut cmd, &mut args, kind);
+            for a in &args {
+                cmd.arg(a);
+            }
+            cmd.cwd(&start);
+            let pair = native_pty_system()
+                .openpty(PtySize { rows: 30, cols: 120, pixel_width: 0, pixel_height: 0 })
+                .unwrap();
+            let mut child = pair.slave.spawn_command(cmd).unwrap();
+            let mut reader = pair.master.try_clone_reader().unwrap();
+            // 读端要一直抽走，不然 ConPTY 输出管道写满会把 shell 卡住；顺带应答光标位置查询
+            let mut writer = pair.master.take_writer().unwrap();
+            let pid = child.process_id().unwrap();
+            let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+            std::thread::spawn(move || {
+                let mut buf = [0u8; 8192];
+                while let Ok(n) = reader.read(&mut buf) {
+                    if n == 0 || tx.send(buf[..n].to_vec()).is_err() {
+                        break;
+                    }
+                }
+            });
+            let pump = |writer: &mut Box<dyn std::io::Write + Send>, secs: u64| {
+                let end = Instant::now() + Duration::from_secs(secs);
+                while Instant::now() < end {
+                    if let Ok(chunk) = rx.recv_timeout(Duration::from_millis(100)) {
+                        if chunk.windows(4).any(|w| w == b"\x1b[6n") {
+                            let _ = writer.write_all(b"\x1b[1;1R");
+                        }
+                    }
+                }
+            };
+            pump(&mut writer, 6);
+            let quoted = match kind {
+                ShellKind::GitBash => format!("cd '{}'\r", target.to_string_lossy().replace('\\', "/")),
+                ShellKind::Cmd => format!("cd /d \"{}\"\r", target.to_string_lossy()),
+                _ => format!("cd '{}'\r", target.to_string_lossy()),
+            };
+            writer.write_all(quoted.as_bytes()).unwrap();
+            pump(&mut writer, 4);
+            let got = process_cwd(pid, file.as_deref());
+            let _ = child.kill();
+            if let Some(f) = &file {
+                let _ = std::fs::remove_file(f);
+            }
+            let got = got.unwrap_or_else(|| panic!("{}：读不到目录", opt.id));
+            assert!(
+                crate::paths::same_path(&got, &target.to_string_lossy()),
+                "{}：cd 后应是 {}，实际 {got}",
+                opt.id,
+                target.display()
+            );
         }
     }
 

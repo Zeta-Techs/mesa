@@ -153,6 +153,8 @@ pub fn run() {
             // 聊天层旁路：清上次崩溃留下的旁路目录；改为每次启动注入的几家，收回以前写进全局配置的 hooks
             chat_channel::prune_on_startup();
             hooks::migrate_launch_injected();
+            // Windows 普通 shell 标签的目录记录文件：上次崩溃 / 强杀没删成的清掉
+            pty::purge_cwd_track_files();
             if let Err(e) = runs::reconcile_stale_runs() {
                 logbuf::record("warn", "runs", &format!("收口上次未完成 Run 失败: {e}"));
             }
@@ -521,6 +523,8 @@ pub fn run() {
             terminal_replay::prune_terminal_replays,
             pty::pty_set_visible,
             pty::pty_get_cwd,
+            pty::terminal_shell_options,
+            pty::pty_cd,
             pty::pty_has_running_process,
             sessions::list_sessions,
             session_search::search_sessions,

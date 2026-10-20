@@ -68,6 +68,9 @@ const KNOWN_PALETTES: [&str; 8] = [
 ];
 /// 终端渲染器闭集（terminal_renderer）：auto = 平台默认（Windows 流畅优先 / macOS 清晰优先）
 const KNOWN_RENDERERS: [&str; 3] = ["auto", "dom", "webgl"];
+/// 内置终端 shell 闭集（terminal_shell）：两个平台的选项放一张表，跨机同步的设置里留着对方平台的值也不丢
+pub(crate) const KNOWN_TERMINAL_SHELLS: [&str; 8] =
+    ["auto", "powershell", "pwsh", "git-bash", "cmd", "zsh", "bash", "fish"];
 /// 会话页「⇗ 外部恢复」可选的终端应用；auto = 按平台优先级探测
 const KNOWN_EXTERNAL_TERMINALS: [&str; 10] = [
     "auto",
@@ -227,6 +230,10 @@ pub struct AppSettingsDto {
     /// 终端渲染器：auto（默认，Windows 流畅优先 / macOS 清晰优先）| webgl（流畅）| dom（清晰）。
     /// 未知值读时静默丢弃（同 KNOWN_PALETTES 口径）
     pub terminal_renderer: Option<String>,
+    /// 内置终端用哪个 shell：auto（默认，Windows = Windows PowerShell，macOS / Linux = $SHELL）|
+    /// powershell | pwsh | git-bash | cmd（Windows）| zsh | bash | fish（macOS / Linux）。
+    /// 未知值读时回落 auto；选了本机没有的，启动时也回落 auto（pty::login_shell_argv）
+    pub terminal_shell: Option<String>,
     /// 终端 16 色调色板预设：dark-plus（默认）| solarized | one-dark | catppuccin
     pub terminal_palette: Option<String>,
     pub scrollback: Option<u32>,
@@ -798,6 +805,11 @@ fn with_defaults(s: AppSettingsDto) -> AppSettingsDto {
         terminal_renderer: s
             .terminal_renderer
             .filter(|r| KNOWN_RENDERERS.contains(&r.as_str())),
+        terminal_shell: Some(
+            s.terminal_shell
+                .filter(|v| KNOWN_TERMINAL_SHELLS.contains(&v.as_str()))
+                .unwrap_or_else(|| "auto".into()),
+        ),
         terminal_palette: s
             .terminal_palette
             .filter(|p| KNOWN_PALETTES.contains(&p.as_str())),
@@ -914,6 +926,9 @@ fn merge(cur: &mut AppSettingsDto, patch: AppSettingsDto) {
     }
     if patch.terminal_renderer.is_some() {
         cur.terminal_renderer = patch.terminal_renderer;
+    }
+    if patch.terminal_shell.is_some() {
+        cur.terminal_shell = patch.terminal_shell;
     }
     if patch.terminal_palette.is_some() {
         cur.terminal_palette = patch.terminal_palette;

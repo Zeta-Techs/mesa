@@ -1047,6 +1047,49 @@ function HotkeysSection({
 }
 
 /** 一键卸载：清 Mesa 自己的数据，课题文件夹不动。确认两次，第二次要原样输入「卸载」。 */
+/** 内置终端用哪个 shell：候选只列本机找得到的（后端 terminal_shell_options），选了没装的启动时回落自动 */
+function TerminalShellRow({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  const [options, setOptions] = useState<{ id: string; label: string; path: string }[]>([]);
+  useEffect(() => {
+    invoke<{ id: string; label: string; path: string }[]>("terminal_shell_options")
+      .then(setOptions)
+      .catch(() => setOptions([]));
+  }, []);
+  const missing = value !== "auto" && options.length > 0 && !options.some((o) => o.id === value);
+  return (
+    <Row
+      label="内置终端 shell"
+      hint={
+        missing
+          ? "选的 shell 本机找不到，新开的终端用自动"
+          : IS_WINDOWS
+            ? "新开的终端生效。自动 = Windows PowerShell；运行脚本固定用 Git Bash"
+            : "新开的终端生效。自动 = 系统默认 shell（$SHELL）"
+      }
+      labelTitle={options.map((o) => `${o.label}：${o.path}`).join("\n") || undefined}
+    >
+      <select
+        className={selectSm}
+        value={missing ? "auto" : value}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        <option value="auto">自动</option>
+        {options.map((o) => (
+          <option key={o.id} value={o.id}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </Row>
+  );
+}
+
 function UninstallRow() {
   const [busy, setBusy] = useState(false);
   const [armed, setArmed] = useState(false);
@@ -2735,6 +2778,11 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             <option value="dom">清晰（默认渲染）</option>
           </select>
         </Row>
+
+        <TerminalShellRow
+          value={settings?.terminalShell ?? "auto"}
+          onChange={(next) => patch({ terminalShell: next })}
+        />
 
         <Row label="终端字号" hint="立即生效（11–18）">
           <input
