@@ -267,7 +267,7 @@ function unescapeJs(s: string): string {
   }
 }
 
-/** shell 参数可能是数组（Codex shell：["bash","-lc","…"]） */
+/** shell 参数可能是数组（Codex shell：["bash","-lc","…"]；Windows 上 ["…\\pwsh.exe","-Command","…"]） */
 function commandOf(args: Args | null): string | null {
   if (!args) return null;
   const c = args.command ?? args.cmd;
@@ -275,9 +275,32 @@ function commandOf(args: Args | null): string | null {
   if (Array.isArray(c) && c.every((x) => typeof x === "string")) {
     const parts = c as string[];
     if (parts.length >= 3 && /(?:^|\/)(?:ba|z)?sh$/.test(parts[0]) && /^-l?c$/.test(parts[1])) return parts.slice(2).join(" ");
+    if (POWERSHELL_EXE.test(parts[0])) {
+      const at = parts.findIndex((p, i) => i > 0 && /^-(?:command|c)$/i.test(p));
+      if (at > 0 && at < parts.length - 1) return parts.slice(at + 1).join(" ");
+    }
     return parts.join(" ");
   }
   return null;
+}
+
+/** PowerShell 程序名（可带 Windows 路径与 .exe） */
+const POWERSHELL_EXE = /(?:^|[\\/])(?:pwsh|powershell)(?:\.exe)?$/i;
+
+/**
+ * 去掉 Windows 上 Codex 给命令套的 PowerShell 外壳：`"D:\…\pwsh.exe" -Command 'echo …'`、
+ * `powershell.exe -NoProfile -Command "…"`（2026-10-20 Windows 实测审批里就是这个样子）。
+ * 认不出返回 null；双引号串里有 `$` 不剥（要外层 PowerShell 先展开，剥了含义会变）
+ */
+export function unwrapPowerShell(command: string): string | null {
+  const m =
+    /^\s*(?:"[^"]*[\\/]|[A-Za-z]:[\\/](?:[^\s"]*[\\/])?)?(?:pwsh|powershell)(?:\.exe)?"?(?:\s+-(?:NoProfile|NoLogo|NonInteractive|ExecutionPolicy\s+\S+))*\s+-(?:Command|c)\s+(?:'((?:[^']|'')*)'|"((?:[^"`]|`.)*)")\s*$/i.exec(
+      command,
+    );
+  if (!m) return null;
+  if (m[1] !== undefined) return m[1].replace(/''/g, "'").trim();
+  if (m[2].includes("$")) return null;
+  return m[2].replace(/`(.)/g, "$1").trim();
 }
 
 /** shell 命令再分类（借 vibe-kanban 的 CommandCategory）：读 / 搜 / 看目录的命令归进「查阅」，
@@ -290,18 +313,38 @@ const LIST_CMDS = new Set(["ls", "tree", "pwd", "du"]);
 const EDIT_CMDS = new Set(["rm", "rmdir", "mv", "cp", "touch", "mkdir", "chmod", "chown", "tee", "truncate", "ln", "patch"]);
 const FETCH_CMDS = new Set(["curl", "wget"]);
 
-/** 去掉 `bash -lc '…'` / `zsh -lc "…"` 外壳 */
+/** PowerShell 命令（Windows 上 Codex 的命令都是这个）：完整 cmdlet 名任何时候都认，别名只在确认是 PowerShell 时认 */
+const PS_CMDLETS: Record<string, CommandCategory> = {
+  "get-content": "read", "get-item": "read", "get-itemproperty": "read", "test-path": "read",
+  "resolve-path": "read", "format-hex": "read", "get-filehash": "read",
+  "select-string": "search", "get-command": "search", "where-object": "search",
+  "get-childitem": "list", "get-location": "list", "set-location": "list", "push-location": "list",
+  "set-content": "edit", "add-content": "edit", "out-file": "edit", "new-item": "edit", "remove-item": "edit",
+  "move-item": "edit", "copy-item": "edit", "rename-item": "edit", "clear-content": "edit",
+  "invoke-webrequest": "fetch", "invoke-restmethod": "fetch",
+};
+const PS_ALIASES: Record<string, CommandCategory> = {
+  gc: "read", type: "read", gi: "read", sls: "search", findstr: "search", gci: "list", dir: "list",
+  sl: "list", del: "edit", erase: "edit", rd: "edit", ri: "edit", md: "edit", ni: "edit", mi: "edit",
+  move: "edit", copy: "edit", cpi: "edit", ren: "edit", sc: "edit", ac: "edit", iwr: "fetch", irm: "fetch",
+};
+
+/** 去掉 `bash -lc '…'` / `zsh -lc "…"` 外壳；Windows 上再认 PowerShell 外壳 */
 function unwrapShell(command: string): string {
   const m = /^\s*(?:\/\S*\/)?(?:ba|z)?sh\s+-l?c\s+(['"])([\s\S]*)\1\s*$/.exec(command);
-  return m ? m[2] : command;
+  return m ? m[2] : (unwrapPowerShell(command) ?? command);
 }
 
-function segmentCategory(seg: string): CommandCategory {
+function segmentCategory(seg: string, ps = false): CommandCategory {
   const words = seg.trim().split(/\s+/).filter(Boolean);
   // 跳过前置的环境变量赋值（FOO=1 cmd）与 cd 之外的前缀
   while (words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0])) words.shift();
-  const head = (words[0] ?? "").replace(/^.*\//, "").toLowerCase();
+  let head = (words[0] ?? "").replace(/^.*\//, "").toLowerCase();
+  // Windows 路径写法的程序（C:\…\rg.exe）只留程序名
+  if (/^[a-z]:[\\/]/.test(head) || head.endsWith(".exe")) head = head.replace(/^.*[\\/]/, "").replace(/\.exe$/, "");
   if (!head) return "other";
+  if (PS_CMDLETS[head]) return PS_CMDLETS[head];
+  if (ps && PS_ALIASES[head]) return PS_ALIASES[head];
   if (head === "cd") return "list";
   if (head === "sed") return words.some((w) => /^-[a-z]*i/.test(w)) ? "edit" : "read";
   if (head === "git") {
@@ -317,14 +360,18 @@ function segmentCategory(seg: string): CommandCategory {
 }
 
 export function commandCategory(command: string): CommandCategory {
-  const body = unwrapShell(command.trim());
+  const trimmed = command.trim();
+  const body = unwrapShell(trimmed);
   if (!body) return "other";
+  // 套着 PowerShell 外壳的（Windows 上的 Codex）：别名照 PowerShell 认，`> $null` 是丢弃输出
+  const ps = unwrapPowerShell(trimmed) !== null;
+  const cleaned = body.replace(/2>&1|&>\/dev\/null|>\s*\/dev\/null/g, "");
   // 写到真实文件的重定向就是改文件（2>&1、>/dev/null 不算）
-  if (/(^|[^0-9&])>{1,2}\s*(?!&|\/dev\/null)[^\s|&;]+/.test(body.replace(/2>&1|&>\/dev\/null|>\s*\/dev\/null/g, ""))) {
+  if (/(^|[^0-9&])>{1,2}\s*(?!&|\/dev\/null)[^\s|&;]+/.test(ps ? cleaned.replace(/>\s*\$null/gi, "") : cleaned)) {
     return "edit";
   }
   const segs = body.split(/&&|\|\||;|\|/).filter((x) => x.trim());
-  const cats = segs.map(segmentCategory);
+  const cats = segs.map((s) => segmentCategory(s, ps));
   if (cats.includes("edit")) return "edit";
   const looks = cats.filter((c) => c !== "list" || cats.length === 1);
   if (cats.length && cats.every((c) => c === "read" || c === "search" || c === "list")) {

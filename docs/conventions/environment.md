@@ -29,6 +29,12 @@
   （ESC[6n）并读 stdin 等回答，无人应答永久挂起——`run_streaming_pty` 的 reader 代答 ESC[24;120R。
   shim 深化（解析 JS 入口改 node 直启）统一在 `process.rs`：`pty_command`（PTY）与 `background_command`（后台）
   双入口同一口径，npm.cmd 自身走固定布局 special case。
+  **2026-10-20 补齐两种 shim**：npm 装的 Claude Code、OpenCode 的 shim 直接调原生 exe（`"%dp0%\…\bin\claude.exe" %*`）→
+  直启那个 exe（`exe_from_cmd_shim`）；CodeBuddy 的入口是无扩展名的 node 脚本 → 确认首行 node shebang 后 node 直启。
+  **硬约束：Agent CLI 的参数不得经 `cmd /c call` 传**——cmd 不认 `\"`，引号按开关切换：引号里的 `|` `&` 跑到外面被当管道 /
+  命令分隔、`%变量%` 被展开（实测把整条 PATH 塞进了首条消息）、`^` 被加倍、多行参数只剩第一行。实测后果：官方账号的
+  Claude 带内联 `--settings`（hooks matcher 含 `|`）直接起不来；聊天层随启动带的首条消息多行被截断。cmd 包装只作认不出
+  shim 时的最后兜底；Windows 上给 CLI 的 JSON 设置一律落文件传路径（chat_channel prepare 的 settings.json）。
 - **Windows 硬化规则（2026-10-19 全量排查定稿）**：
   - 路径：`fs::canonicalize` 在 Windows 产出 `\\?\` 前缀，存库 / 回给前端 / 写进给 Agent 的指令前一律走
     `paths::canonicalize_plain`；跨来源比较一律 `paths::same_path` / `path_within`；前端相对化用 `path-utils.relativeUnder`。

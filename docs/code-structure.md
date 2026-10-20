@@ -536,7 +536,9 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 2026-10-20：调用与结果按 callId 配对（没有 id 退回先后）；turnPlan / planEntries = 计划卡（各家待办参数收成一份，一轮取最后一次）
   tool-activity.ts           # 一次工具调用 → 一行动作（编辑 文件 目录 +N −M / 运行 命令 / 搜索 …）：九家工具名归类、常见参数键取对象、
                              #   Codex 补丁拆文件与脚本模式取 cmd、行级差异 lineDiff、结果状态只看开头（tests/tool-activity.test.ts）
-                             # 2026-10-20：commandCategory（借 vibe-kanban）——只读命令（cat / sed -n / rg / ls …）归进查阅，改文件 / 取网页 / 其余照旧算运行
+                             # 2026-10-20：commandCategory（借 vibe-kanban）——只读命令（cat / sed -n / rg / ls …）归进查阅，改文件 / 取网页 / 其余照旧算运行；
+                             #   unwrapPowerShell 剥 Windows 上 Codex 的 `pwsh.exe -Command '…'` 外壳（chat-channel displayCommand 共用），
+                             #   完整 cmdlet 名（Get-Content …）任何时候认、别名（gc / type …）只在确认是 PowerShell 时认
   dep-check.ts               # 依赖体检前端镜像：DTO 判定与 DOM/Tauri 解耦（tests 同名）
   dep-install.tsx            # 依赖一键安装管线 useDepInstall + 日志块 DepInstallLog + 缺 Git 就地安装出口
                              #   GitInstallOffer（改动面板 / 历史浮层 / 开步报错条共用）
@@ -805,7 +807,9 @@ src-tauri/src/
                              #   start 起读取线程（状态日志 / 事件文件追加读、OpenCode SSE、Codex ws 客户端，手写最小 WebSocket），
                              #   Tracker = 回合状态机（幂等开始 / 结束、审批、实时文字、会话跟随），快照推 chat-channel-<tabId>；
                              #   chat_channel_reply 经官方通道回审批；close_for_pty 随 PTY 退出收旁路；e2e::e2e_channel（ignored）=
-                             #   真 CLI + 假网关端到端（scripts/e2e-model-routing/README.md）
+                             #   真 CLI + 假网关端到端（scripts/e2e-model-routing/README.md，三平台同一份）；
+                             #   Windows 专属（terminal.md 旁路条⑦–⑪）：官方账号 hooks 写 settings.json 传路径、Claude hooks 后台跑时
+                             #   Tracker::async_hooks 按身份对账（apply_async_tool）、app-server spawn_tied_to_app、收旁路先杀后删
   terminal_replay.rs         # 终端画面回放：<config>/ccode/terminal-replay/replay-<标签>.txt，
                              # 单份 256KB、出站先 redact_sensitive_text、0600；重启占位标签读回，不是会话档案；
                              # prune_terminal_replays 启动后只留当前标签集合（清崩溃残留孤儿）
@@ -997,6 +1001,9 @@ src-tauri/src/
                              #   用 global_hook_command：helper 拷成 hooks-state/ccode-hook.exe、路径不加引号（三种宿主都认），不行退回 .ps1
                              #   （PostToolUse 2KB，截断按字段名兜底）；launch_hooks_value = Claude / CodeBuddy 每次启动注入的 hooks；
                              #   launch_injected 五家设置页不给开关、precise_enabled 门控；migrate_launch_injected 启动收回以前写的全局条目；
+                             #   launch_hooks_async（只 Windows 的 Claude Code：hooks 带 async + 另挂 PermissionRequest）；
+                             #   Windows 共用脚本 ccode-hook.ps1 只删回车换行、写日志撞车重试，正文改了启动时替换；
+                             #   状态日志 / 备份目录走 storage::config_root（测试可重定向）；
                              #   real_data_dry_run_migrate（ignored）= 对真实配置的拷贝干跑
   inst_access.rs             # 机构访问通道（2026-09-16）：人登录一次、系统复用会话——登录窗（Tauri WebviewWindow
                              #   label=inst-login）Cookie 落 0600 inst-session.json（值绝不出站，状态 DTO 只有
@@ -1215,9 +1222,13 @@ src-tauri/src/
   process.rs                 # 后台子进程统一创建（Windows CREATE_NO_WINDOW 防 conhost 闪窗；三平台都删掉继承的 PWD——
                              #   opencode run 按 PWD 取目录，2026-10-20；PTY 那边 spawn_tracked 把 PWD 设成工作目录）+
                              # pty_command（Windows .cmd/.bat shim 深化：npm 系 CLI 解析出 JS 入口改 node 直启，
-                             #   npm.cmd 走固定布局 special case；Cursor CLI 的 Windows 启动器 cursor-agent.cmd
+                             #   npm.cmd 走固定布局 special case；指向原生 exe 的 shim（npm 装的 Claude Code / OpenCode）
+                             #   exe_from_cmd_shim 直启、无扩展名 node 脚本（CodeBuddy）认 shebang 后 node 直启——
+                             #   Agent 参数不得过 cmd（2026-10-20，environment.md）；Cursor CLI 的 Windows 启动器 cursor-agent.cmd
                              #   （转手 PowerShell 脚本挑最新版本目录）由 cursor_entry_from_launcher 照同一挑法直启自带 node.exe + index.js；
-                             #   解析失败回落 cmd /c call；updater 与终端拉起共用）
+                             #   解析失败才回落 cmd /c call；updater 与终端拉起共用）+
+                             # BackgroundCommand::spawn_tied_to_app（Windows：挂进 app_lifetime_job「句柄关即全杀」任务组，
+                             #   聊天层 Codex app-server 用，Mesa 崩溃不留孤儿）
   models.rs                  # fetch_models 拉目录（候选链 model_list_candidates：gemini 先剥版本段再拼 /v1beta/models，
                              #   strip_trailing_version_segment / ends_with_version_segment 版本段判据单一出处）+ 目录缓存 + 共享 DTO
   lib.rs                     # 模块与 Tauri command 注册

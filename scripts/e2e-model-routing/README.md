@@ -86,8 +86,16 @@ cd src-tauri && E2E_BASE=http://127.0.0.1:18950 E2E_OUT=/tmp/e2e-plans.json carg
 # E2E_AGENT 取 claude-code / codebuddy / qwen / opencode / codex；生成计划后马上跑（Claude 的 --settings 文件 60 秒后会被清）
 MESA_E2E_REAL_CLI=1 E2E_PLANS=/tmp/e2e-plans.json E2E_AGENT=codex cargo test --lib e2e_channel -- --ignored --nocapture
 # 可加：E2E_CLEAR=1（走完再发 /clear，看会话跟随）、E2E_RESUME=1（停掉后按 Mesa 的恢复参数接回再跑一轮）、
-#       E2E_TIER=auto|full（换权限档）、MESA_CHANNEL_DEBUG=1（打印 Codex app-server 收到的每条消息）
+#       E2E_TIER=auto|full（换权限档）、MESA_CHANNEL_DEBUG=1（打印 Codex app-server 收到的每条消息）、
+#       E2E_DROP_SETTINGS=1（去掉网关的 --settings，模拟官方账号启动；同时去掉拷来的 settings.json 里的 env，只打假网关）、
+#       E2E_ARG_PROMPT=1（Claude / CodeBuddy：首条消息带换行、引号、|、%变量% 放进启动参数，核对原样进会话）、
+#       E2E_DELETE_SETTINGS=1（发消息前删掉网关的 --settings 覆盖文件，看 hooks 还到不到）
 ```
+
+Windows（2026-10-20 起同一份测试三平台都能跑）：在 Git Bash 里照上面执行，三处不同——
+`python3` / `python` 在 PATH 上常先命中应用商店占位（退出码 49 / 9009），用 Python 安装目录下的 `python.exe` 起假网关；
+`E2E_PLANS` / `E2E_OUT` 用 Windows 路径（`$(cygpath -w /tmp/e2e-plans.json)`）；测试自己设 USERPROFILE / CODEX_HOME 到临时目录，
+Mesa 的状态日志与旁路目录走测试配置根，不碰真实 `%APPDATA%\ccode`。
 
 **二、CLI 本身的机制（换版本时先跑这个）**：不经 Mesa，直接看每家旁路还在不在、形状变没变。
 
@@ -106,3 +114,9 @@ TRANSPORT=ws python3 -I scripts/e2e-model-routing/codex-appserver-probe.py /tmp/
 2026-10-20 结论：五家（Claude Code 2.1.292、CodeBuddy 2.169.0、Qwen 0.25.2、OpenCode 1.19.3、Codex 0.163.0）能不写用户配置地默认接上；
 Gemini 0.64.0（系统设置文件须属 root）、Kimi 2.2.0（无指定配置的参数）、Grok 1.0.62（GROK_CONFIG 覆盖层不收 hooks）只能写全局配置；Cursor 无等价事件。
 Codex 远程 TUI 恢复会话时拒收权限参数（Permission overrides are not supported when resuming a remote task），Mesa 改成 app-server 的 `-c` 配置。
+
+2026-10-20 Windows 11 结论（Claude Code 2.1.304、CodeBuddy 2.170.0、Qwen 0.25.3、OpenCode 1.19.3、Codex 0.163.0，Mesa 的 `e2e_channel`）：
+五家旁路全通（会话认出、回合 running → awaiting_approval → completed、审批内容、Qwen / Codex 聊天层答审批、/clear 跟随、接回）。
+修之前不通的两处：官方账号的 Claude（内联 `--settings` 经 claude.cmd 包装被 cmd 拆坏，起不来）、带换行 / 引号 / `%` 的首条消息
+（经 cmd 包装被截断 / 展开）——改为 shim 直启后 `E2E_DROP_SETTINGS=1 E2E_ARG_PROMPT=1` 通过。`E2E_DELETE_SETTINGS=1` 通过：
+网关覆盖文件 60 秒后被清理不影响已启动的 Claude 继续触发 hooks。

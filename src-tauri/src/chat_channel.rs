@@ -151,6 +151,15 @@ pub(crate) struct Tracker {
     pending_break: bool,
     /// 审批属于哪个工具调用（工具结束 = 已答）
     approval_call: Option<String>,
+    /// hooks 在后台跑（Windows 的 Claude Code，hooks::launch_hooks_async）：每个 hook 起一个 PowerShell、
+    /// 约一秒才写进日志，先触发的不一定先到——「等批准」可能比它那个工具的 PreToolUse 先到、
+    /// 上一个工具的 PostToolUse 可能比「等批准」后到。打开后：审批不拿已经结束的上一个工具充数，
+    /// 随后到的工具补上审批内容，与审批对不上的工具结束不撤卡。只在这种模式下生效，其余家照旧。
+    async_hooks: bool,
+    /// 已经结束的工具 id（async_hooks 时用；每轮清空）
+    ended: std::collections::HashSet<String>,
+    /// 审批卡内容来自哪个工具（名字 + 参数；async_hooks 时按它对账）
+    approval_src: Option<(String, Value)>,
 }
 
 fn is_open(turn: &Option<TurnDto>) -> bool {
@@ -184,6 +193,7 @@ impl Tracker {
         self.snap.approval = None;
         self.approval_call = None;
         self.pending_break = false;
+        self.ended.clear();
     }
 
     fn ensure_running(&mut self, now: i64) {
@@ -200,11 +210,137 @@ impl Tracker {
         }
     }
 
+    fn clear_approval(&mut self) {
+        self.snap.approval = None;
+        self.approval_call = None;
+        self.approval_src = None;
+        self.set_status("running");
+    }
+
+    /// 后台 hook（async_hooks）下的工具 / 审批事件：先后不可信，只按身份对账。
+    /// - 审批卡内容只认带内容的事件（PermissionRequest 的工具名 + 参数），或随后到的工具；不拿「上一个工具」充数
+    /// - 审批与工具按 id（工具开始时）或「工具名 + 参数相同」对上；对上之前，别的工具开始 / 结束都不撤卡
+    /// - 对上的那个工具结束（不管开始事件到没到过）= 答完
+    fn apply_async_tool(&mut self, ev: ChannelEvent, now: i64) {
+        // 当前审批卡的内容来自哪个工具（名字 + 参数）；没有卡、或卡上只有一句提示时为 None
+        let src = self.snap.approval.as_ref().and(self.approval_src.clone());
+        let same = |name: &str, input: &Value| {
+            src.as_ref().is_some_and(|(n, i)| n == name && i == input)
+        };
+        match ev {
+            ChannelEvent::ToolStart {
+                call_id,
+                name,
+                input,
+            } => {
+                self.ensure_running(now);
+                let finished = call_id.as_ref().is_some_and(|id| self.ended.contains(id));
+                let unbound = self.approval_call.is_none();
+                if let (Some(id), Some(a), true) = (&call_id, self.snap.approval.clone(), unbound) {
+                    if src.is_none() && !finished {
+                        // 只有「等批准」提示、还没内容：就是这个工具
+                        let mut dto = approval_from_tool(&name, &input);
+                        dto.request_id = a.request_id;
+                        dto.replyable = a.replyable;
+                        dto.detail = dto.detail.or(a.detail);
+                        self.snap.approval = Some(dto);
+                        self.approval_src = Some((name.clone(), input.clone()));
+                        self.approval_call = Some(id.clone());
+                    } else if same(&name, &input) {
+                        if finished {
+                            // 它的结束事件早到过：已经答完
+                            self.clear_approval();
+                        } else {
+                            self.approval_call = Some(id.clone());
+                        }
+                    }
+                }
+                if let Some(id) = &call_id {
+                    self.tools.insert(id.clone(), (name.clone(), input.clone()));
+                }
+                if !finished {
+                    self.last_tool = Some((call_id, name, input));
+                }
+                self.pending_break = true;
+            }
+            ChannelEvent::ApprovalAsked {
+                request_id,
+                call_id,
+                name,
+                input,
+                replyable,
+                detail,
+            } => {
+                self.ensure_running(now);
+                let detail = detail.map(|d| crate::sessions::redact_sensitive_text(&d));
+                match name {
+                    Some(name) if !input.is_null() => {
+                        let mut dto = approval_from_tool(&name, &input);
+                        dto.request_id = request_id;
+                        dto.replyable = replyable && dto.request_id.is_some();
+                        dto.detail = dto.detail.or(detail);
+                        // 对上已经报到、还没结束的同一个工具
+                        let bound = call_id.or_else(|| {
+                            self.tools
+                                .iter()
+                                .find(|(id, (n, i))| !self.ended.contains(*id) && *n == name && *i == input)
+                                .map(|(id, _)| id.clone())
+                        });
+                        self.snap.approval = Some(dto);
+                        self.approval_src = Some((name, input));
+                        self.approval_call = bound;
+                    }
+                    _ => {
+                        // 只有「需要你批准」一句话：已经有卡就不动内容，没有就先出一张只带这句话的
+                        if self.snap.approval.is_none() {
+                            let mut dto = approval_from_tool("", &Value::Null);
+                            dto.request_id = request_id;
+                            dto.replyable = replyable && dto.request_id.is_some();
+                            dto.detail = detail;
+                            self.snap.approval = Some(dto);
+                            self.approval_src = None;
+                            self.approval_call = call_id;
+                        }
+                    }
+                }
+                self.set_status("awaiting_approval");
+            }
+            ChannelEvent::ToolEnd { call_id } => {
+                let Some(id) = call_id else { return };
+                self.ended.insert(id.clone());
+                let answered = match &self.approval_call {
+                    Some(bound) => *bound == id,
+                    // 还没对上：内容相同的那个工具结束了也算答完
+                    None => self.tools.get(&id).is_some_and(|(n, i)| same(n, i)),
+                };
+                if self.snap.approval.is_some() && answered {
+                    self.clear_approval();
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// 应用一个事件；返回快照是否变了
     pub(crate) fn apply(&mut self, ev: ChannelEvent, now: i64) -> bool {
         let before = self.snap.clone();
+        if self.async_hooks
+            && matches!(
+                ev,
+                ChannelEvent::ToolStart { .. } | ChannelEvent::ApprovalAsked { .. } | ChannelEvent::ToolEnd { .. }
+            )
+        {
+            self.apply_async_tool(ev, now);
+            return self.snap != before;
+        }
         match ev {
             ChannelEvent::Session { id, path, source } => {
+                // Codex 在 Windows 上恢复会话时给的是 `\\?\C:\…` 形态，统一成普通路径（其余平台原样）
+                let path = path.map(|p| {
+                    crate::paths::strip_verbatim(PathBuf::from(p))
+                        .to_string_lossy()
+                        .into_owned()
+                });
                 let changed_id = self.snap.session_id.as_deref() != Some(id.as_str());
                 let changed_path = path.is_some() && self.snap.transcript_path != path;
                 if changed_id || changed_path {
@@ -1233,7 +1369,7 @@ fn now_ms() -> i64 {
 }
 
 fn channels_root() -> Option<PathBuf> {
-    Some(dirs::config_dir()?.join("ccode").join("chat-channels"))
+    Some(crate::storage::config_root()?.join("chat-channels"))
 }
 
 /// 标签号进环境变量与 hook 命令行：只留安全字符（hook 命令按空格切段）
@@ -1517,6 +1653,10 @@ fn start_codex_server(
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
     }
+    // Windows：挂进「Mesa 一退就全杀」的任务组，Mesa 崩溃 / 被强杀也不留占端口、占会话写锁的 app-server
+    #[cfg(windows)]
+    let mut child = cmd.spawn_tied_to_app().ok()?;
+    #[cfg(not(windows))]
     let mut child = cmd.spawn().ok()?;
     let pid = child.id();
     let deadline = Instant::now() + CODEX_READY_TIMEOUT;
@@ -1583,11 +1723,33 @@ pub(crate) fn prepare(
             let Some(hooks) = crate::hooks::launch_hooks_value(agent) else {
                 return (env, None);
             };
-            if !merge_settings_hooks(args, &hooks) {
-                return (env, None);
-            }
             let mut p = base("hooks");
             if hooks_channel(&mut p).is_none() {
+                return (env, None);
+            }
+            // Windows：没有网关的覆盖文件时（官方账号）不内联 JSON——经 .cmd 包装起的 CLI 参数要过 cmd，
+            // hooks 里 matcher 的 `|` 会被当管道，Claude 直接起不来（2026-10-20 实测「文件名、目录名或卷标语法不正确」）。
+            // 另起一份 Mesa 自己的设置文件，标签关掉随旁路目录删
+            #[cfg(windows)]
+            if !args.iter().any(|a| a == "--settings") {
+                let Some(dir) = private_dir(&tab) else {
+                    return (env, None);
+                };
+                let file = dir.join("settings.json");
+                if std::fs::write(&file, "{}").is_err() {
+                    let _ = std::fs::remove_dir_all(&dir);
+                    return (env, None);
+                }
+                args.insert(0, file.to_string_lossy().into_owned());
+                args.insert(0, "--settings".into());
+                p.dir = Some(dir);
+            }
+            if !merge_settings_hooks(args, &hooks) {
+                if let Some(dir) = p.dir.take() {
+                    // 去掉刚加的 --settings（文件随目录删了，留着 CLI 会找不到）
+                    args.drain(0..2);
+                    let _ = std::fs::remove_dir_all(dir);
+                }
                 return (env, None);
             }
             (env, Some(p))
@@ -1697,7 +1859,11 @@ pub(crate) fn start_with_sink(pty_id: &str, prepared: Prepared, sink: Sink) {
     let channel = Arc::new(Channel {
         tab_id: tab_id.clone(),
         stop: AtomicBool::new(false),
-        tracker: Mutex::new(Tracker::new(&tab_id, &agent, kind)),
+        tracker: Mutex::new({
+            let mut t = Tracker::new(&tab_id, &agent, kind);
+            t.async_hooks = kind == "hooks" && crate::hooks::launch_hooks_async(&agent);
+            t
+        }),
         dirty: AtomicBool::new(true),
         replier: Mutex::new(replier),
         codex: Mutex::new(CodexState::default()),
@@ -2006,9 +2172,12 @@ fn codex_loop(ch: Arc<Channel>, port: u16, token: String) {
 
 /// PTY 退出（或标签重启 Agent）：收掉旁路进程、连接与目录
 pub(crate) fn close_for_pty(pty_id: &str) {
-    let Some(ch) = registry().lock().ok().and_then(|mut r| r.remove(pty_id)) else {
-        return;
-    };
+    let _ = close_channel(pty_id);
+}
+
+/// 收旁路；Windows 上返回收尾线程（应用退出时要等它杀完进程）
+fn close_channel(pty_id: &str) -> Option<std::thread::JoinHandle<()>> {
+    let ch = registry().lock().ok().and_then(|mut r| r.remove(pty_id))?;
     ch.stop.store(true, Ordering::Release);
     if let Ok(mut r) = ch.replier.lock() {
         if let Some(Replier::Codex { stream }) = r.take() {
@@ -2017,11 +2186,38 @@ pub(crate) fn close_for_pty(pty_id: &str) {
             }
         }
     }
-    if let Some(pid) = ch.sidecar_pid.lock().ok().and_then(|mut p| p.take()) {
-        std::thread::spawn(move || crate::pty::kill_process_tree(pid));
+    let pid = ch.sidecar_pid.lock().ok().and_then(|mut p| p.take());
+    #[cfg(windows)]
+    {
+        // Windows 上进程开着的文件删不掉（Codex app-server 的 stderr 就写在旁路目录里）：先杀进程树再删目录，
+        // 句柄释放慢一拍就稍等重试
+        let dir = ch.dir.clone();
+        if pid.is_none() && dir.is_none() {
+            return None;
+        }
+        Some(std::thread::spawn(move || {
+            if let Some(pid) = pid {
+                crate::pty::kill_process_tree(pid);
+            }
+            if let Some(dir) = dir {
+                for _ in 0..10 {
+                    if std::fs::remove_dir_all(&dir).is_ok() || !dir.exists() {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            }
+        }))
     }
-    if let Some(dir) = &ch.dir {
-        let _ = std::fs::remove_dir_all(dir);
+    #[cfg(not(windows))]
+    {
+        if let Some(pid) = pid {
+            std::thread::spawn(move || crate::pty::kill_process_tree(pid));
+        }
+        if let Some(dir) = &ch.dir {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+        None
     }
 }
 
@@ -2031,8 +2227,13 @@ pub(crate) fn shutdown_all() {
         .lock()
         .map(|r| r.keys().cloned().collect())
         .unwrap_or_default();
-    for id in ids {
-        close_for_pty(&id);
+    let pending: Vec<_> = ids.iter().filter_map(|id| close_channel(id)).collect();
+    // Windows：等收尾线程把 app-server 杀完再让应用退出（任务组是崩溃时的兜底），最多等 3 秒
+    let deadline = Instant::now() + Duration::from_secs(3);
+    for handle in pending {
+        while !handle.is_finished() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 }
 
@@ -2524,6 +2725,109 @@ mod tests {
         assert!(a.command.unwrap().contains("后面还有"));
     }
 
+    fn tool(id: &str, name: &str, input: Value) -> ChannelEvent {
+        ChannelEvent::ToolStart { call_id: Some(id.into()), name: name.into(), input }
+    }
+
+    fn end(id: &str) -> ChannelEvent {
+        ChannelEvent::ToolEnd { call_id: Some(id.into()) }
+    }
+
+    fn notification() -> ChannelEvent {
+        ChannelEvent::ApprovalAsked {
+            request_id: None,
+            call_id: None,
+            name: None,
+            input: Value::Null,
+            replyable: false,
+            detail: Some("Claude needs your permission to use Bash".into()),
+        }
+    }
+
+    fn permission_request(name: &str, input: Value) -> ChannelEvent {
+        ChannelEvent::ApprovalAsked {
+            request_id: None,
+            call_id: None,
+            name: Some(name.into()),
+            input,
+            replyable: false,
+            detail: None,
+        }
+    }
+
+    /// Windows 上 Claude 的 hooks 后台跑（每个约一秒才落日志）：「等批准」先于它那个工具的 PreToolUse 到、
+    /// 上一个工具的 PostToolUse 晚到，卡片仍要显示对的命令、不被晚到的结束撤掉
+    #[test]
+    fn async_hooks_tolerate_out_of_order_approval() {
+        let mut t = tracker();
+        t.async_hooks = true;
+        let read = json!({"file_path": "/w/a.rs"});
+        let bash = json!({"command": "echo mesa > mesa_probe.txt"});
+        t.apply(ChannelEvent::TurnStart, 1);
+        t.apply(tool("A", "Read", read.clone()), 2);
+        t.apply(notification(), 3);
+        let a = t.snap.approval.clone().unwrap();
+        assert_eq!(a.command, None, "不拿上一个工具（读文件）充数");
+        assert_eq!(a.detail.as_deref(), Some("Claude needs your permission to use Bash"));
+        t.apply(end("A"), 4);
+        assert!(t.snap.approval.is_some(), "晚到的上一个工具结束不撤卡");
+        assert_eq!(t.snap.turn.as_ref().unwrap().status, "awaiting_approval");
+        t.apply(tool("B", "Bash", bash.clone()), 5);
+        assert_eq!(t.snap.approval.as_ref().unwrap().command.as_deref(), Some("echo mesa > mesa_probe.txt"));
+        t.apply(permission_request("Bash", bash.clone()), 6);
+        assert_eq!(t.snap.approval.as_ref().unwrap().command.as_deref(), Some("echo mesa > mesa_probe.txt"));
+        t.apply(end("B"), 7);
+        assert!(t.snap.approval.is_none(), "对上的工具结束 = 答完");
+        assert_eq!(t.snap.turn.as_ref().unwrap().status, "running");
+        t.apply(ChannelEvent::TurnEnd { reason: Some("end_turn".into()) }, 8);
+        assert_eq!(t.snap.turn.as_ref().unwrap().status, "completed");
+    }
+
+    /// 结束事件比开始事件先到：PermissionRequest 给了内容，PostToolUse 先到不算（还对不上），PreToolUse 晚到时对上 → 答完
+    #[test]
+    fn async_hooks_tool_end_before_start() {
+        let mut t = tracker();
+        t.async_hooks = true;
+        let bash = json!({"command": "ls"});
+        t.apply(ChannelEvent::TurnStart, 1);
+        t.apply(permission_request("Bash", bash.clone()), 2);
+        assert_eq!(t.snap.approval.as_ref().unwrap().command.as_deref(), Some("ls"));
+        t.apply(notification(), 3);
+        assert_eq!(t.snap.approval.as_ref().unwrap().command.as_deref(), Some("ls"), "一句话的提示不覆盖已有内容");
+        t.apply(end("B"), 4);
+        assert!(t.snap.approval.is_some());
+        t.apply(tool("B", "Bash", bash), 5);
+        assert!(t.snap.approval.is_none());
+        assert_eq!(t.snap.turn.as_ref().unwrap().status, "running");
+        // 另一个不相干的工具开始不会凭空出卡
+        t.apply(tool("C", "Read", json!({"file_path": "/x"})), 6);
+        assert!(t.snap.approval.is_none());
+    }
+
+    /// 同步 hooks（macOS / Linux 与其余家）照旧：等批准时用上一个工具补内容
+    #[test]
+    fn sync_hooks_keep_last_tool_fallback() {
+        let mut t = tracker();
+        t.apply(ChannelEvent::TurnStart, 1);
+        t.apply(tool("B", "Bash", json!({"command": "ls"})), 2);
+        t.apply(notification(), 3);
+        assert_eq!(t.snap.approval.as_ref().unwrap().command.as_deref(), Some("ls"));
+        t.apply(end("B"), 4);
+        assert!(t.snap.approval.is_none());
+    }
+
+    #[test]
+    fn session_path_drops_windows_verbatim_prefix() {
+        let mut t = tracker();
+        t.apply(
+            ChannelEvent::Session { id: "a".into(), path: Some(r"\\?\C:\Users\x\.codex\r.jsonl".into()), source: None },
+            0,
+        );
+        assert_eq!(t.snap.transcript_path.as_deref(), Some(r"C:\Users\x\.codex\r.jsonl"));
+        t.apply(ChannelEvent::Session { id: "a".into(), path: Some("/Users/x/r.jsonl".into()), source: None }, 1);
+        assert_eq!(t.snap.transcript_path.as_deref(), Some("/Users/x/r.jsonl"), "POSIX 路径原样");
+    }
+
     #[test]
     fn live_text_resets_each_turn() {
         let mut t = tracker();
@@ -2537,13 +2841,14 @@ mod tests {
 }
 
 /// 端到端：真 CLI + 假网关（scripts/e2e-model-routing/gateway.py），跑 Mesa 自己的 prepare / 旁路读取 / 回复，
-/// 看快照里会话、回合、审批是否都对得上。临时 HOME，不碰真实会话目录与 Mesa 配置。
-/// 先起假网关并生成计划（见 scripts/e2e-model-routing/README.md「聊天层结构化旁路」），再：
+/// 看快照里会话、回合、审批是否都对得上。临时 HOME（Windows 另设 USERPROFILE / CODEX_HOME）+ 测试配置根，
+/// 不碰真实会话目录与 Mesa 配置。三平台同一份（2026-10-20 Windows 补齐：起 CLI 走 process::pty_command 认 .cmd shim、
+/// 收尾按进程树杀）。先起假网关并生成计划（见 scripts/e2e-model-routing/README.md「聊天层结构化旁路」），再：
 /// `MESA_E2E_REAL_CLI=1 E2E_PLANS=/tmp/e2e-plans.json E2E_AGENT=qwen cargo test --lib e2e_channel -- --ignored --nocapture`
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod e2e {
     use super::*;
-    use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+    use portable_pty::{native_pty_system, PtySize};
 
     const COPY: &[&str] = &[
         ".claude/settings.json", ".claude.json", ".codex/config.toml", ".grok/config.toml",
@@ -2558,6 +2863,8 @@ mod e2e {
         approval: Option<ApprovalDto>,
         answered: Option<String>,
         cleared: Option<(Option<String>, Option<String>, Option<String>)>,
+        /// E2E_ARG_PROMPT：启动参数里的首条消息是否原样进了会话
+        arg_prompt_ok: Option<bool>,
     }
 
     /// 拉起一次、发「跑命令」、按快照答审批，等这一轮走完；clear = 走完再发 /clear 看会话跟随
@@ -2577,12 +2884,19 @@ mod e2e {
         let cwd = work.to_string_lossy().into_owned();
         let (extra, prepared) = prepare(agent, Some("e2e-tab"), &cwd, bin, &mut args, env, env_remove);
         let prepared = prepared.expect("这家应当接上旁路");
+        // E2E_ARG_PROMPT=1：首条消息照 Mesa 快速开聊的做法放进启动参数（位置参数，必须最后），
+        // 带换行、引号、|、%变量%、^——Windows 经 .cmd 包装时这些会被 cmd 拆坏
+        let arg_prompt = (std::env::var("E2E_ARG_PROMPT").is_ok()
+            && matches!(agent, "claude-code" | "codebuddy"))
+        .then(|| "TRIGGER_TOOL 跑一下\n第二行 \"a|b\" 100%PATH% x^2".to_string());
+        if let Some(p) = &arg_prompt {
+            args.push(p.clone());
+        }
         println!("{agent}: 旁路 {}，参数 {:?}", prepared.kind, args);
         let pair = native_pty_system()
             .openpty(PtySize { rows: 40, cols: 120, pixel_width: 0, pixel_height: 0 })
             .unwrap();
-        let mut cmd = CommandBuilder::new(bin);
-        cmd.args(&args);
+        let mut cmd = crate::process::pty_command(bin, &args);
         cmd.cwd(work);
         for (k, _) in std::env::vars() {
             if k.starts_with("CLAUDE_CODE_") || k.starts_with("ANTHROPIC_") || k == "CLAUDECODE"
@@ -2602,6 +2916,8 @@ mod e2e {
             cmd.env(k, v);
         }
         let mut child = pair.slave.spawn_command(cmd).unwrap();
+        #[cfg(windows)]
+        let child_pid = child.process_id();
         let mut reader = pair.master.try_clone_reader().unwrap();
         let writer = Arc::new(Mutex::new(pair.master.take_writer().unwrap()));
         let screen = Arc::new(Mutex::new(String::new()));
@@ -2669,12 +2985,29 @@ mod e2e {
             screen.lock().unwrap().clear();
             std::thread::sleep(Duration::from_millis(2500));
         }
+        // E2E_DELETE_SETTINGS=1：模拟网关连接的 --settings 覆盖文件被 60 秒清理删掉，看 hooks 还到不到
+        if std::env::var("E2E_DELETE_SETTINGS").is_ok() {
+            if let Some(i) = args.iter().position(|a| a == "--settings") {
+                let p = Path::new(&args[i + 1]);
+                if p.is_file() {
+                    println!("{agent}: 删掉 --settings 文件 {}", p.display());
+                    let _ = std::fs::remove_file(p);
+                }
+            }
+        }
         let probe = work.join("mesa_probe.txt");
         let _ = std::fs::remove_file(&probe);
-        let prompt = if agent == "codex" { "TRIGGER_TOOL TRIGGER_ESC 跑一下" } else { "TRIGGER_TOOL 跑一下" };
-        send(prompt.as_bytes());
-        std::thread::sleep(Duration::from_millis(400));
-        send(b"\r");
+        if arg_prompt.is_none() {
+            // E2E_PROMPT：换触发词（如 Codex 去掉 TRIGGER_ESC = 沙箱里直接跑、不走审批）
+            let prompt = std::env::var("E2E_PROMPT").unwrap_or_else(|_| {
+                if agent == "codex" { "TRIGGER_TOOL TRIGGER_ESC 跑一下" } else { "TRIGGER_TOOL 跑一下" }.to_string()
+            });
+            send(prompt.as_bytes());
+            // E2E_SUBMIT_GAP_MS：正文与回车的间隔，照聊天层发送（pty_input 的提交间隔）复现「字留在输入框」
+            let gap = std::env::var("E2E_SUBMIT_GAP_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(400);
+            std::thread::sleep(Duration::from_millis(gap));
+            send(b"\r");
+        }
         let started = Instant::now();
         let mut answered = None;
         let mut approval = None;
@@ -2731,10 +3064,54 @@ mod e2e {
             let tail: String = text.chars().rev().take(1500).collect::<Vec<_>>().into_iter().rev().collect();
             println!("{agent}: 屏幕尾部\n{}", tail.replace('\x1b', "␛"));
         }
+        // 会话文件里的旁证：首条消息是否原样到达（E2E_ARG_PROMPT）、Claude 记下的 hook 耗时与整轮用时
+        let mut arg_prompt_ok = None;
+        let transcript = all
+            .iter()
+            .find_map(|s| s.transcript_path.clone())
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .unwrap_or_default();
+        for line in transcript.lines() {
+            let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
+            match v.get("subtype").and_then(|x| x.as_str()) {
+                Some("stop_hook_summary") => println!("{agent}: Stop hook {}", v["hookInfos"]),
+                Some("turn_duration") => println!("{agent}: 整轮用时 {} ms", v["durationMs"]),
+                _ => {}
+            }
+            if let (Some(p), None) = (&arg_prompt, arg_prompt_ok) {
+                if v.get("type").and_then(|x| x.as_str()) == Some("user")
+                    || v.get("role").and_then(|x| x.as_str()) == Some("user")
+                {
+                    // Claude 是字符串，CodeBuddy 是文本块数组
+                    let content = v.pointer("/message/content").or_else(|| v.get("content"));
+                    let text = match content {
+                        Some(Value::String(s)) => Some(s.clone()),
+                        Some(Value::Array(a)) => Some(
+                            a.iter()
+                                .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+                                .collect::<Vec<_>>()
+                                .join(""),
+                        ),
+                        _ => None,
+                    };
+                    if let Some(text) = text.filter(|t| t.contains("TRIGGER_TOOL")) {
+                        arg_prompt_ok = Some(text.contains(p.as_str()));
+                        if !text.contains(p.as_str()) {
+                            println!("{agent}: 首条消息到达时变成了 {text:?}");
+                        }
+                    }
+                }
+            }
+        }
         close_for_pty("e2e-pty");
+        // Windows 上 PTY 子进程常是 cmd / node 包装，只杀顶层会把真 CLI 留下
+        #[cfg(windows)]
+        if let Some(pid) = child_pid {
+            crate::pty::kill_process_tree(pid);
+        }
         let _ = child.kill();
         let _ = child.wait();
-        Run { done, last: all.last().cloned().unwrap_or_default(), statuses, approval, answered, cleared }
+        Run { done, last: all.last().cloned().unwrap_or_default(), statuses, approval, answered, cleared, arg_prompt_ok }
     }
 
     fn report(agent: &str, label: &str, r: &Run) {
@@ -2744,6 +3121,9 @@ mod e2e {
         println!("{agent}{label}: 答法 {:?}；实时文字 {:?}", r.answered, r.last.live_text);
         if r.cleared.is_some() {
             println!("{agent}{label}: /clear 之后 {:?}", r.cleared);
+        }
+        if r.arg_prompt_ok.is_some() {
+            println!("{agent}{label}: 启动参数里的首条消息原样到达 {:?}", r.arg_prompt_ok);
         }
     }
 
@@ -2772,28 +3152,59 @@ mod e2e {
         let cj = home.join(".claude.json");
         if cj.is_file() {
             let mut d: Value = serde_json::from_str(&std::fs::read_to_string(&cj).unwrap()).unwrap();
-            d["projects"][work.to_string_lossy().as_ref()] = json!({ "hasTrustDialogAccepted": true });
-            let real = std::fs::canonicalize(&work).unwrap();
-            d["projects"][real.to_string_lossy().as_ref()] = json!({ "hasTrustDialogAccepted": true });
+            let real = crate::paths::strip_verbatim(std::fs::canonicalize(&work).unwrap());
+            for p in [work.clone(), real] {
+                let s = p.to_string_lossy().into_owned();
+                // Windows 上 Claude 以正斜杠路径作项目键
+                for key in [s.clone(), s.replace('\\', "/")] {
+                    d["projects"][key.as_str()] = json!({ "hasTrustDialogAccepted": true });
+                }
+            }
             std::fs::write(&cj, d.to_string()).unwrap();
         }
-        // 状态日志、旁路目录都落进临时 HOME（dirs::config_dir 跟 HOME 走）
+        // 状态日志、旁路目录、hook 脚本都落进测试配置根（storage::config_root 的测试接缝，线程局部：
+        // prepare 在本线程算好路径交给读取线程）
+        let _config = crate::storage::TestConfigRoot::redirect_to(&home.join("mesa-config"));
+        // 去掉 --settings 时，拷来的用户 settings.json 里的 env（自己配的网关地址与钥匙）会盖过进程环境变量，
+        // 请求打到用户真实的服务上：只留假网关
+        if std::env::var("E2E_DROP_SETTINGS").is_ok() {
+            let us = home.join(".claude").join("settings.json");
+            if let Ok(mut v) = std::fs::read_to_string(&us).map(|t| serde_json::from_str::<Value>(&t).unwrap_or(json!({}))) {
+                if let Some(o) = v.as_object_mut() {
+                    o.remove("env");
+                }
+                std::fs::write(&us, v.to_string()).unwrap();
+            }
+        }
+        // unix 的 CLI 跟 HOME；Windows 的 Node / Bun 系跟 USERPROFILE，Codex（Rust）只认 CODEX_HOME
         std::env::set_var("HOME", &home);
         let strs = |v: &Value| -> Vec<String> {
             v.as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default()
         };
         let tier = std::env::var("E2E_TIER").unwrap_or_else(|_| "ask".into());
-        let args = if plan["permission"][&tier].is_array() {
+        let mut args = if plan["permission"][&tier].is_array() {
             strs(&plan["permission"][&tier])
         } else {
             strs(&plan["args"])
         };
+        // E2E_DROP_SETTINGS=1：去掉网关连接的 --settings，模拟官方账号启动（没有覆盖文件，hooks 要另起一份）
+        if std::env::var("E2E_DROP_SETTINGS").is_ok() {
+            if let Some(i) = args.iter().position(|a| a == "--settings") {
+                args.drain(i..(i + 2).min(args.len()));
+            }
+        }
         let mut env: Vec<(String, String)> = plan["env"]
             .as_array()
             .unwrap()
             .iter()
             .map(|p| (p[0].as_str().unwrap().to_string(), p[1].as_str().unwrap().to_string()))
             .collect();
+        let home_s = home.to_string_lossy().into_owned();
+        env.push(("HOME".into(), home_s.clone()));
+        if cfg!(windows) {
+            env.push(("USERPROFILE".into(), home_s.clone()));
+            env.push(("CODEX_HOME".into(), home.join(".codex").to_string_lossy().into_owned()));
+        }
         // 只打本机假网关：Codex 的 app-server 也从这份环境起，代理变量要一并绕开
         env.push(("NO_PROXY".into(), "127.0.0.1".into()));
         env.push(("no_proxy".into(), "127.0.0.1".into()));
@@ -2825,6 +3236,9 @@ mod e2e {
         let _ = std::fs::remove_dir_all(&home);
         assert!(first.last.session_id.is_some(), "旁路认出会话");
         assert!(first.done, "这一轮走完且命令确实跑了：{:?}", first.statuses);
+        if std::env::var("E2E_ARG_PROMPT").is_ok() && matches!(agent.as_str(), "claude-code" | "codebuddy") {
+            assert_eq!(first.arg_prompt_ok, Some(true), "启动参数里的首条消息原样到达");
+        }
         if clear {
             let (a, b, src) = first.cleared.expect("/clear 后旁路报出新会话");
             assert_ne!(a, b);

@@ -82,6 +82,25 @@ test("shell 命令再分类：读 / 搜 / 看目录归查阅，改文件、取�
   assert.equal(s.note, "rg -n TODO src");
 });
 
+test("Windows：PowerShell 外壳与 cmdlet 也按读 / 搜 / 看目录 / 改 / 取网页分类", () => {
+  const pwsh = (c: string) => `"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command '${c}'`;
+  assert.equal(commandCategory(pwsh("Get-Content -Raw src\\main.rs")), "read");
+  assert.equal(commandCategory(pwsh("gc README.md")), "read");
+  assert.equal(commandCategory(pwsh("Select-String -Path *.rs -Pattern TODO")), "search");
+  assert.equal(commandCategory(pwsh("Get-ChildItem -Recurse src")), "list");
+  assert.equal(commandCategory(pwsh("Set-Content a.txt hi")), "edit");
+  assert.equal(commandCategory(pwsh("echo mesa > mesa_probe.txt")), "edit");
+  assert.equal(commandCategory(pwsh("cargo build > $null")), "other", "> $null 是丢弃输出");
+  assert.equal(commandCategory(pwsh("Invoke-WebRequest https://x.y")), "fetch");
+  assert.equal(commandCategory(pwsh("C:\\tools\\rg.exe -n foo src")), "search");
+  assert.equal(commandCategory("powershell.exe -NoProfile -Command \"rg -n foo\""), "search");
+  // 没有 PowerShell 外壳时别名不认（macOS 的 type 是 shell 内建，不算读文件）
+  assert.equal(commandCategory("type ls"), "other");
+  // 数组形态（Codex shell 工具）
+  const r = one("shell", { command: ["C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "-Command", "Get-Content a.md"] });
+  assert.equal(r.command, "Get-Content a.md");
+});
+
 test("Codex 脚本模式：从 tools.exec_command({cmd}) 里取出命令", () => {
   const script =
     'const r = await tools.exec_command({cmd:"sed -n \'1,20p\' \\"a b.md\\" && ls","workdir":"/w"});\ntext(r.output);\n' +

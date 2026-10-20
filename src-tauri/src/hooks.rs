@@ -186,6 +186,16 @@ pub(crate) fn launch_injected(agent: &str) -> bool {
     matches!(agent, "claude-code" | "codebuddy" | "qwen" | "opencode" | "codex")
 }
 
+/// 每次启动注入的 hooks 是否放到后台跑（hook 配置带 `"async": true`，CLI 不等它跑完）。
+/// 只在 Windows、只给 Claude Code、且只在找不到原生 hook 程序时：那时 hook 命令要起一个 PowerShell，
+/// 实测每次 0.9–1.2 秒（2026-10-20 本机：Stop hook durationMs 1241），同步挂着时每个工具调用前后各卡一秒、
+/// 每轮结束再卡一秒；2.1.x 支持 async（「runs in background without blocking」）。代价是事件可能乱序，
+/// 由旁路状态机兜（chat_channel Tracker::async_hooks）。有原生 hook 程序（随包的 mesa_helper，几十毫秒）
+/// 就同步跑，事件有序。CodeBuddy 没核实认 async，一律同步。macOS / Linux 的 hook 是几毫秒的 sh 一行，不动。
+pub(crate) fn launch_hooks_async(agent: &str) -> bool {
+    cfg!(windows) && agent == "claude-code" && native_hook_exe().is_none()
+}
+
 /// Windows 上写 hook 日志的原生程序：随包的 mesa_helper（`hook` 模式，见 bin/mesa_helper.rs）。
 /// 找主程序同目录（测试二进制在 deps/ 下，再往上找一层），跳过 0 字节占位，并试跑一次 `hook --probe`
 /// 确认认这个模式（开发时留着的旧 helper 不认，会把事件吞掉）。一次运行只查一次；找不到退回 PowerShell 脚本。
@@ -308,20 +318,28 @@ fn precise_enabled(agent: &str) -> bool {
 
 /// 这家注入用的 `{"hooks": {...}}`（并进 Claude Code / CodeBuddy 的 `--settings`）；不支持的家 None
 pub(crate) fn launch_hooks_value(agent: &str) -> Option<Value> {
-    let events = launch_hook_events(agent)?;
+    let mut events = launch_hook_events(agent)?.to_vec();
+    // 后台跑时「等批准」的 Notification 可能比它那个工具的 PreToolUse 先到，卡片拿不到内容：
+    // 另挂 PermissionRequest（payload 自带工具名与参数），审批卡内容不依赖先后
+    if launch_hooks_async(agent) {
+        events.push(("PermissionRequest", ""));
+    }
     let spec = spec_for(agent)?;
     let log = hooks_log_path(spec).ok()?;
     // 启动注入没有「开启开关」那一步写脚本：Windows 命令引用 ccode-hook.ps1，这里保证它在且是当前正文
     #[cfg(windows)]
     ensure_win_hook_script(&log).ok()?;
     let mut hooks = serde_json::Map::new();
-    for &(event, matcher) in events {
+    for &(event, matcher) in &events {
         let cap = if event == "PostToolUse" {
             PAYLOAD_CAP_SMALL
         } else {
             PAYLOAD_CAP
         };
-        let handler = json!({ "type": "command", "command": launch_hook_command(&log, cap) });
+        let mut handler = json!({ "type": "command", "command": launch_hook_command(&log, cap) });
+        if launch_hooks_async(agent) {
+            handler["async"] = json!(true);
+        }
         hooks.insert(
             event.into(),
             json!([{ "matcher": matcher, "hooks": [handler] }]),
@@ -385,10 +403,10 @@ pub(crate) fn migrate_launch_injected() {
     }
 }
 
+// 走 storage::config_root：测试（含聊天层端到端）重定向配置根时，状态日志与备份跟着进临时目录
 fn hooks_state_dir() -> Result<PathBuf, String> {
-    Ok(dirs::config_dir()
+    Ok(crate::storage::config_root()
         .ok_or("无法确定平台配置目录")?
-        .join("ccode")
         .join("hooks-state"))
 }
 
@@ -397,9 +415,8 @@ fn hooks_log_path(spec: &BridgeSpec) -> Result<PathBuf, String> {
 }
 
 fn backups_dir() -> Result<PathBuf, String> {
-    Ok(dirs::config_dir()
+    Ok(crate::storage::config_root()
         .ok_or("无法确定平台配置目录")?
-        .join("ccode")
         .join("backups"))
 }
 
@@ -429,7 +446,11 @@ const WIN_HOOK_SCRIPT: &str = "ccode-hook.ps1";
 /// serde_json 解析失败 ⇒ 整条 hook 记录被丢弃（transcript_path 一旦中招，
 /// grok 这类只能靠它归属会话的 agent 会永久丢失精确注意力标记）。
 /// 用 UTF8Encoding::new($false) 而非 -Encoding utf8：PS 5.1 的后者会写 BOM，
-/// 首行多出 U+FEFF 会让读取侧的 unix 秒 parse::<i64>() 失败。\s+ 折叠换行保证一行一条记录。
+/// 首行多出 U+FEFF 会让读取侧的 unix 秒 parse::<i64>() 失败。
+/// 只删回车换行（同 unix 的 `tr -d '\r\n'`）保证一行一条记录：JSON 字符串里不会有裸换行，删掉的只是排版空白；
+/// 2026-10-20 以前折叠的是 `\s+`，会把字符串里的连续空格也并成一个——审批卡上的命令、差异丢了缩进。
+/// 追加撞上别的 hook 进程正在写（AppendAllText 独占写，多个工具并行、多个标签同时触发时实测 12 并发丢 1 条）
+/// 就稍等重试，最多约 1.5 秒；丢了「回合结束」那条，聊天层会一直显示在回复。
 /// 正文保持纯 ASCII：PS 5.1 按 ANSI 代码页读无 BOM 脚本，ASCII 在任何代码页下都无损。
 #[cfg_attr(not(any(windows, test)), allow(dead_code))]
 const WIN_HOOK_SCRIPT_BODY: &str = "param([string]$LogPath, [int]$Cap = 65536)\r\n\
@@ -440,7 +461,11 @@ if (-not $t) { $t = '-' }\r\n\
 $l = (New-Object IO.StreamReader ([Console]::OpenStandardInput()), $u).ReadToEnd()\r\n\
 if ($l.Length -gt $Cap) { $l = $l.Substring(0, $Cap) }\r\n\
 $ts = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()\r\n\
-[IO.File]::AppendAllText($LogPath, ($ts.ToString() + ' ' + $t + ' ' + ($l -replace '\\s+', ' ') + [Environment]::NewLine), $u)\r\n";
+$line = $ts.ToString() + ' ' + $t + ' ' + ($l -replace '[\\r\\n]+', '') + [Environment]::NewLine\r\n\
+for ($i = 0; $i -lt 60; $i++) {\r\n\
+  try { [IO.File]::AppendAllText($LogPath, $line, $u); break }\r\n\
+  catch { [Threading.Thread]::Sleep(10 + ($i * 7) % 31) }\r\n\
+}\r\n";
 
 #[cfg_attr(not(any(windows, test)), allow(dead_code))]
 fn win_hook_script_path(log_path: &Path) -> PathBuf {
@@ -816,6 +841,14 @@ fn is_legacy_win_hook(config_text: &str) -> bool {
 /// 替换旧条目）；已是新写法不动，不会每次启动多出一份备份。失败只记日志，不挡启动
 #[cfg(windows)]
 pub(crate) fn migrate_legacy_windows_hooks() {
+    // 共用脚本正文改过（2026-10-20：保留字符串里的空格、写日志撞车重试）：已经写过脚本的机器
+    // （开过全局开关的 Gemini / Kimi / Grok 也引用它）启动时换成当前正文，正文没变不写
+    if let Ok(dir) = hooks_state_dir() {
+        let any_log = dir.join("claude-hooks.jsonl");
+        if win_hook_script_path(&any_log).is_file() {
+            let _ = ensure_win_hook_script(&any_log);
+        }
+    }
     let Some(home) = dirs::home_dir() else {
         return;
     };
@@ -2032,14 +2065,17 @@ mod tests {
     }
 
     /// 原生 hook 程序（mesa_helper hook）：Claude Code 的 Git Bash、CodeBuddy 的 cmd 两种宿主都能跑，
-    /// 记录与 PowerShell 脚本同形。没先 `cargo build --bin mesa_helper` 就找不到，跳过
+    /// 记录与 PowerShell 脚本同形；有它时 Claude 不再走后台 hooks。没先 `cargo build --bin mesa_helper`
+    /// 就找不到，只核对退回 PowerShell 的那半
     #[cfg(windows)]
     #[test]
     fn native_hook_command_runs_under_cmd_and_bash() {
         use std::io::Write;
         let Some(exe) = native_hook_exe() else {
+            assert!(launch_hooks_async("claude-code"), "没有原生程序时 Claude 走后台 hooks");
             return;
         };
+        assert!(!launch_hooks_async("claude-code"), "有原生程序就同步跑，事件有序");
         let dir = tmpdir("native").join("带 空格 目录");
         let log = dir.join("hooks-state").join("claude-hooks.jsonl");
         let cmd = launch_hook_command(&log, PAYLOAD_CAP);
@@ -2072,12 +2108,62 @@ mod tests {
         assert_eq!(ids, hosts);
         assert!(records.iter().all(|r| r.detail.as_deref() == Some("新项目  两格")));
         assert!(records.iter().all(|r| r.tab.as_deref() == Some("tab-n")));
-        // 注入的 Claude hooks 用这条命令
+        // 注入的 Claude hooks 用这条命令，且不带 async
         let v = launch_hooks_value("claude-code").unwrap();
         let stop = &v["hooks"]["Stop"][0]["hooks"][0];
         assert!(stop["command"].as_str().unwrap().contains(" hook "), "{stop}");
         assert!(stop.get("async").is_none(), "{stop}");
         fs::remove_dir_all(dir.parent().unwrap()).ok();
+    }
+
+    /// 2026-10-20：字符串里的连续空格原样保留（审批卡的命令 / 差异要缩进），排版换行照删；
+    /// 多个 hook 进程同时追加同一份日志（并行工具调用、多个标签）一条不丢
+    #[cfg(windows)]
+    #[test]
+    fn win_hook_script_keeps_spaces_and_survives_concurrent_appends() {
+        use std::io::Write;
+        let dir = tmpdir("conc");
+        let log = dir.join("hooks-state").join("claude-hooks.jsonl");
+        write_win_hook_script(&log).unwrap();
+        let script = win_hook_script_path(&log);
+        let n = 12;
+        let children: Vec<_> = (0..n)
+            .map(|i| {
+                let mut c = crate::process::background_command("powershell.exe");
+                c.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"])
+                    .arg(&script)
+                    .arg(&log)
+                    .arg("65536")
+                    .env("CCODE_TAB_ID", "tab-c")
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::piped());
+                let mut child = c.spawn().unwrap();
+                let payload = format!(
+                    "{{\"session_id\":\"s{i}\",\"hook_event_name\":\"PreToolUse\",\r\n  \"tool_input\":{{\"old_string\":\"def f():\\n    return    {i}\"}}}}\r\n"
+                );
+                child
+                    .stdin
+                    .take()
+                    .unwrap()
+                    .write_all(payload.as_bytes())
+                    .unwrap();
+                child
+            })
+            .collect();
+        for child in children {
+            let out = child.wait_with_output().unwrap();
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        }
+        let text = fs::read_to_string(&log).unwrap();
+        let records = parse_log_records(&text);
+        assert_eq!(records.len(), n, "并发追加一条不丢：\n{text}");
+        assert_eq!(text.lines().count(), n, "一行一条记录");
+        assert!(
+            text.contains(r#"{"session_id":"s3","hook_event_name":"PreToolUse",  "tool_input":{"old_string":"def f():\n    return    3"}}"#),
+            "字符串里的空格原样保留、裸换行删掉：\n{text}"
+        );
+        fs::remove_dir_all(&dir).ok();
     }
 
     /// 支持清单：七家在桥接注册表内，cursor/opencode 不支持且带备注

@@ -152,4 +152,16 @@ test("审批卡上的命令剥掉外层 shell 包装", () => {
   assert.equal(displayCommand(`bash -c "echo $HOME"`), `bash -c "echo $HOME"`);
   assert.equal(displayCommand("sh -c 'a' && rm x"), "sh -c 'a' && rm x");
   assert.deepEqual(approvalPreview(approval({ command: "/bin/zsh -lc 'echo hi'" })), { kind: "command", text: "echo hi" });
+  // Windows 上 Codex 包的是 PowerShell（2026-10-20 Windows 端到端实测的审批原文）
+  assert.equal(
+    displayCommand(`"D:\\PowerShell-7.6.7-win-x64\\pwsh.exe" -Command 'echo mesa > mesa_probe.txt'`),
+    "echo mesa > mesa_probe.txt",
+  );
+  assert.equal(
+    displayCommand(`C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -Command "Get-ChildItem src"`),
+    "Get-ChildItem src",
+  );
+  assert.equal(displayCommand(`pwsh -Command 'it''s ok'`), "it's ok");
+  // 双引号里有变量要外层先展开：不剥
+  assert.equal(displayCommand(`pwsh -Command "echo $env:PATH"`), `pwsh -Command "echo $env:PATH"`);
 });

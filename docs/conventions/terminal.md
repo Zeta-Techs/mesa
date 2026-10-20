@@ -327,6 +327,25 @@
   新线程 rollout 未落盘前 `thread/resume` 会失败，线程转 active 时再订；⑥旁路目录 `<config>/ccode/chat-channels/<pid>-<tab>-<随机>/`
   0700，标签退出即删，启动只清进程已不在的（打包版与 Mesa Dev 共用配置目录）；Codex app-server 自成进程组，随 PTY 退出 /
   应用退出一并杀。改任一家旁路前先跑 `scripts/e2e-model-routing/README.md`「聊天层结构化旁路」两层核对。
+  **Windows 口径（2026-10-20 实测后定，macOS / Linux 行为不变）**：⑦hook 命令是起一个 PowerShell 跑共用脚本，每次 0.9–1.2 秒
+  （Claude 记的 Stop hook 1241ms）——同步挂着时每个工具调用前后各卡一秒，所以**只在 Windows、只给 Claude Code**带
+  `"async": true`（`hooks::launch_hooks_async`），另挂 `PermissionRequest`（payload 自带工具名与参数）；后台 hook 先后不可信，
+  `Tracker::async_hooks` 只按身份对账：审批卡内容只认带内容的事件或随后到的工具、不拿上一个工具充数，对上之前别的工具开始 /
+  结束都不撤卡（同步模式那套「上一个工具充数、下一个工具开始 = 已答」不动）。CodeBuddy 没核实认 async，仍同步。
+  ⑧共用脚本只删回车换行（同 unix `tr -d '\r\n'`），**不得折叠 `\s+`**（会吃掉命令 / 差异里的缩进）；写日志撞上别的 hook 进程
+  （AppendAllText 独占写，12 并发实测丢 1 条）重试约 1.5 秒；改正文后启动时 `migrate_legacy_windows_hooks` 替换旧脚本。
+  ⑨官方账号（没有网关覆盖文件）的 Claude / CodeBuddy 不内联 `--settings` JSON，写进旁路目录的 settings.json 传路径
+  （原因见 environment.md「.cmd shim」）。⑩Codex app-server 用 `spawn_tied_to_app` 挂进「Mesa 一退就全杀」的任务组
+  （Mesa 崩溃 / 被强杀不留孤儿，实测强杀后 0 残留）；收旁路时先杀进程树再删目录（进程开着的文件删不掉），应用退出等它最多 3 秒。
+  ⑪Codex 恢复会话给的 rollout 路径带 `\\?\`，进快照前 `strip_verbatim`。端到端在 Windows 同一份测试跑（`e2e_channel`，README）。
+  ⑫**原生 hook 程序（2026-10-20 二批）**：⑦的 PowerShell 只在找不到随包的 `mesa_helper`（`hook` 模式）时用；找到就用它写日志
+  （Claude Stop hook 实测 87–109ms），Claude 不再带 async、也不另挂 PermissionRequest，回到同步规则——`launch_hooks_async`
+  返回 false，Tracker 自动走同步对账。命令是带双引号的 exe 路径：Claude 在 Git Bash、CodeBuddy 在 cmd 里跑 hook，两边都认。
+  写全局配置的三家（Gemini / Kimi / Grok）用拷到 hooks-state 的 `ccode-hook.exe`、程序路径不加引号（Gemini 的 PowerShell 宿主不认
+  双引号开头的命令；不加引号的正斜杠路径三种宿主都认），路径有空格等退回 `.ps1`（`hooks::global_hook_command`）；Gemini 实跑 hooks 照常记录。⑬**读屏兜底的 Windows 字形**（ConPTY 抓屏实测，`chat-capture.py` Windows 分支 +
+  `capture-check.ts`）：Claude 正文行首是 `●`（不是 `⏺`）；Grok 回显 / 输入框 `>`、工具 `♦`、代码块标签 `○`、单选选中点 `•`；
+  四家（Claude / Gemini / Kimi / Grok）的审批菜单与实时预览在 ConPTY 下都认得出。屏顶是没缩进的字（启动横幅、排队中的提问）
+  且找不到回显与行首时不预览（两平台同一条）。
 
 - **内置终端 shell 与跟随 cd（2026-10-20）**：普通 shell 标签用设置 `terminal_shell`（自动 / 本机找得到的几种），run 脚本不受影响
   （Windows 固定 Git Bash）。文件树 / Git 面板跟随 shell 里的 `cd` 靠 `pty_get_cwd`：macOS lsof、Linux /proc；Windows 由 shell 每次出提示符

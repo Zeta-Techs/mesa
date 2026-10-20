@@ -515,6 +515,23 @@ macOS 签名公证接进 workflow，六个 `APPLE_*` secrets 配齐才启用（�
 （`scripts/mirror-latest-json.mjs`，签名原样、缺签名拒绝）、先传包后传清单、读回核对；凭据走 secrets，没配齐跳过并写日志。改写逻辑
 对现有已发布的 `latest.json` 干跑过；工作流本身没在真实对象存储上跑过（开通步骤见 docs/release.md）。只对配好后打出的版本生效。
 
+### 2026-10-20 · 聊天层 Windows 适配：CLI 绕开 cmd 直启、Claude hooks 在 Windows 后台跑、app-server 随 Mesa 同生共死
+
+用户在 Windows 上要求核对 Mac 上做的聊天层（结构化旁路）是否适配、需要什么完善，并要求**不影响 Mac 端**。把 `chat_channel::e2e`
+移植到 Windows（`storage::config_root` 测试接缝 + USERPROFILE / CODEX_HOME + `pty_command` 认 shim），五家真 CLI + 假网关逐家跑。
+查出并定下：一，**Agent CLI 的参数不经 cmd 传**——npm 装的 Claude Code / OpenCode 的 .cmd shim 指向原生 exe、CodeBuddy 指向
+无扩展名 node 脚本，原先都回落 `cmd /c call`：官方账号的 Claude 带的内联 `--settings`（hooks matcher 含 `|`）让 Claude 直接起不来
+（「文件名、目录名或卷标语法不正确」），聊天层随启动带的首条消息多行只剩首行、`%PATH%` 被展开进消息。shim 深化补这两种
+（`process::exe_from_cmd_shim` / node shebang），Windows 上官方账号的 hooks 设置另写旁路目录里的 settings.json 传路径。
+二，**Windows 上 Claude 的注入 hooks 带 `async: true`**：hook 要起 PowerShell，实测每次 0.9–1.2 秒，同步挂着每个工具调用前后各卡一秒；
+后台跑会乱序，另挂 PermissionRequest 拿审批内容，`Tracker::async_hooks` 按身份对账（同步模式规则不动）。CodeBuddy 未核实 async，仍同步。
+原生小程序代替 PowerShell（再快一个数量级、可保持同步）要加 Windows 专属 sidecar，未做，列为后续。三，**共用 hook 脚本**只删回车换行
+（原先折叠 `\s+` 吃掉审批卡命令 / 差异的缩进）、写日志撞车重试（12 并发实测丢 1 条，丢的若是 Stop 聊天层会一直「在回复」）。
+四，**Codex app-server 挂进 Windows 任务组**（`BackgroundCommand::spawn_tied_to_app`，句柄关即全杀），Mesa 崩溃 / 被强杀不留占端口、
+占会话写锁的孤儿（实测强杀后 0 残留）；收旁路先杀后删目录。五，审批卡与「已工作」摘要认 PowerShell 外壳（`unwrapPowerShell`）和
+常见 cmdlet，别名只在确认是 PowerShell 时认。全部改动按平台门控或对 Mac 输入恒等（bash/zsh 命令、POSIX 路径输出不变）。
+未验：Mesa Dev 窗口里逐家点一遍；Windows 上读屏兜底（审批菜单 / 实时预览，Claude / Gemini / Kimi / Grok）在 ConPTY 下的形态。
+
 ### 2026-10-20 · Gemini 版本探测不再往用户 ~/.gemini 里留 projects.json.*.tmp
 
 新用户沙盒里发现 `~/.gemini` 十几分钟积了 28 个 `projects.json.<uuid>.tmp`。定因（本机 gemini 0.64 复现 + 读源码

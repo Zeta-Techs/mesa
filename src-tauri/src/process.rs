@@ -45,12 +45,14 @@ pub struct TrackedChild {
 #[cfg(windows)]
 pub fn background_command<S: AsRef<OsStr>>(program: S) -> BackgroundCommand {
     // .cmd/.bat 批处理 shim 无法直接 CreateProcess（os error 193）：与 pty_command 同口径，
-    // 优先深化为 node 直启（--version 探测、npm view 等都走这里），失败回落 cmd 包装
+    // 优先深化为 node 直启（--version 探测、npm view 等都走这里）或 shim 指向的原生 exe，失败回落 cmd 包装
     let path = Path::new(program.as_ref());
     let mut command = if let Some((node, entry)) = node_entry_from_cmd_shim(path) {
         let mut c = Command::new(node);
         c.arg(entry);
         c
+    } else if let Some(exe) = exe_from_cmd_shim(path) {
+        Command::new(exe)
     } else if is_cmd_batch_shim(path) {
         let mut c = Command::new("cmd.exe");
         c.args(["/d", "/c", "call"]);
@@ -77,15 +79,23 @@ pub fn background_command<S: AsRef<OsStr>>(program: S) -> BackgroundCommand {
 
 /// 构建 PTY 命令。Windows 上 npm 系 CLI（npm 自己、npm 全局装的 codex 等）是
 /// .cmd/.bat 批处理 shim，ConPTY/CreateProcess 无法直接执行批处理文件：
-/// 优先解析 shim 文本里的 JS 入口改用 node 直启——参数不再过 cmd 解析，
-/// 含引号/百分号/& 的 prompt 与参数也不会被 cmd 吞掉或误展开；
-/// shim 结构解析失败才回落 cmd /c call 包装。
+/// 优先解析 shim 文本里的 JS 入口改用 node 直启，或 shim 直接调用的原生 exe（npm 装的
+/// Claude Code、OpenCode）改为直启——参数不再过 cmd 解析，含引号/百分号/& 的 prompt 与参数
+/// 也不会被 cmd 吞掉或误展开（2026-10-20 实测：经 cmd 包装时多行首条消息只剩第一行、
+/// `%PATH%` 被展开、引号里的 `|` 让 Claude 根本起不来）；shim 结构解析失败才回落 cmd /c call 包装。
 pub fn pty_command(program: &Path, args: &[String]) -> CommandBuilder {
     #[cfg(windows)]
     {
         if let Some((node, entry)) = node_entry_from_cmd_shim(program) {
             let mut command = CommandBuilder::new(node);
             command.arg(entry);
+            for arg in args {
+                command.arg(arg);
+            }
+            return command;
+        }
+        if let Some(exe) = exe_from_cmd_shim(program) {
+            let mut command = CommandBuilder::new(exe);
             for arg in args {
                 command.arg(arg);
             }
@@ -159,6 +169,75 @@ fn js_entry_from_shim(content: &str) -> Option<String> {
         let name = token.strip_prefix('%')?.strip_suffix('%')?;
         vars.get(&name.to_ascii_uppercase()).cloned()
     })
+}
+
+/// shim 文本里以 `%dp0%\` / `%~dp0\` 起头引用的相对路径，按出现顺序（分隔符统一成 `\`）
+#[cfg(any(windows, test))]
+fn dp0_targets(content: &str) -> Vec<String> {
+    content
+        .split(|c: char| c == '"' || c.is_whitespace())
+        .filter_map(|t| {
+            ["%~dp0\\", "%~dp0/", "%dp0%\\", "%dp0%/"]
+                .iter()
+                .find_map(|p| t.strip_prefix(p))
+        })
+        .filter(|rest| !rest.is_empty())
+        .map(|rest| rest.replace('/', "\\"))
+        .collect()
+}
+
+#[cfg(any(windows, test))]
+fn is_node_exe(rel: &str) -> bool {
+    rel.eq_ignore_ascii_case("node.exe")
+}
+
+/// 直接调用原生 exe 的 shim（npm 装的 Claude Code、OpenCode：`"%dp0%\…\bin\claude.exe"   %*`）→ exe 相对路径。
+/// 引用了 node.exe 的是 Node 系 shim（走 js 入口），不算
+#[cfg(any(windows, test))]
+fn exe_entry_from_shim(content: &str) -> Option<String> {
+    let targets = dp0_targets(content);
+    if targets.iter().any(|t| is_node_exe(t)) {
+        return None;
+    }
+    let last = targets.last()?;
+    last.to_ascii_lowercase().ends_with(".exe").then(|| last.clone())
+}
+
+/// Node 系 shim 的无扩展名入口（CodeBuddy：`"%_prog%"  "%dp0%\…\bin\codebuddy" %*`）。
+/// 是不是 node 脚本由调用方读文件首行（`#!/usr/bin/env node`）确认
+#[cfg(any(windows, test))]
+fn bare_script_entry_from_shim(content: &str) -> Option<String> {
+    let targets = dp0_targets(content);
+    if !targets.iter().any(|t| is_node_exe(t)) {
+        return None;
+    }
+    let last = targets.iter().rev().find(|t| !is_node_exe(t))?;
+    let name = last.rsplit('\\').next()?;
+    (!name.contains('.')).then(|| last.clone())
+}
+
+/// 文件首行是不是 node 的 shebang
+#[cfg(windows)]
+fn is_node_script(path: &Path) -> bool {
+    use std::io::Read;
+    let mut head = [0u8; 128];
+    let Ok(n) = std::fs::File::open(path).and_then(|mut f| f.read(&mut head)) else {
+        return false;
+    };
+    let first = String::from_utf8_lossy(&head[..n]);
+    let line = first.lines().next().unwrap_or("");
+    line.starts_with("#!") && line.contains("node")
+}
+
+/// 直接调用原生 exe 的 .cmd shim → exe 绝对路径（文件必须真实存在）；起进程时用它直启，参数不过 cmd
+#[cfg(windows)]
+pub(crate) fn exe_from_cmd_shim(program: &Path) -> Option<std::path::PathBuf> {
+    if !is_cmd_batch_shim(program) {
+        return None;
+    }
+    let content = std::fs::read_to_string(program).ok()?;
+    let exe = program.parent()?.join(exe_entry_from_shim(&content)?);
+    exe.is_file().then_some(exe)
 }
 
 /// Cursor CLI 的 Windows 启动器（官方 `irm https://cursor.com/install?win32=true | iex` 装到
@@ -241,7 +320,12 @@ pub(crate) fn node_entry_from_cmd_shim(
             .join(format!("{}-cli.js", &name[..3])),
         _ => {
             let content = std::fs::read_to_string(program).ok()?;
-            dir.join(js_entry_from_shim(&content)?)
+            // .js 入口优先；CodeBuddy 这类无扩展名的 node 脚本入口要先确认 shebang
+            let rel = js_entry_from_shim(&content).or_else(|| {
+                let rel = bare_script_entry_from_shim(&content)?;
+                is_node_script(&dir.join(&rel)).then_some(rel)
+            })?;
+            dir.join(rel)
         }
     };
     if !entry.is_file() {
@@ -327,6 +411,45 @@ impl BackgroundCommand {
             inner: child,
             trace_id: Some(trace_id),
         })
+    }
+
+    /// 起一个与 Mesa 同生共死的长驻后台进程（聊天层 Codex 私有 app-server）：挂进一个「句柄关闭即全杀」的
+    /// 进程任务组，Mesa 崩溃、被强杀、或退出流程没来得及收尾时，它和它派生的孙进程（node → codex.exe）
+    /// 一并由系统回收，不留占端口、占会话写锁的孤儿。先挂起、入组、再恢复，免得入组前就派生出孙进程逃出去；
+    /// 入组失败照常运行（只是少了这层兜底），不挡启动。
+    pub fn spawn_tied_to_app(&mut self) -> io::Result<TrackedChild> {
+        use std::os::windows::io::AsRawHandle;
+        use std::os::windows::process::CommandExt;
+        self.inner.creation_flags(
+            CREATE_NO_WINDOW | windows_sys::Win32::System::Threading::CREATE_SUSPENDED,
+        );
+        let spawned = self.spawn();
+        configure_background(&mut self.inner);
+        let mut child = spawned?;
+        let tied = match app_lifetime_job() {
+            Some(job) => unsafe {
+                windows_sys::Win32::System::JobObjects::AssignProcessToJobObject(
+                    job,
+                    child.inner.as_raw_handle() as _,
+                ) != 0
+            }
+            .then_some(())
+            .ok_or_else(io::Error::last_os_error),
+            None => Err(io::Error::other("任务组没建起来")),
+        };
+        if let Err(error) = CaptureJob::resume(&child) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(io::Error::other(error));
+        }
+        if let Err(error) = tied {
+            crate::logbuf::record(
+                "warn",
+                "process",
+                &format!("后台进程未能挂进退出即回收的任务组: {error}"),
+            );
+        }
+        Ok(child)
     }
 
     pub fn output(&mut self) -> io::Result<Output> {
@@ -538,6 +661,34 @@ impl Drop for CaptureJob {
             windows_sys::Win32::Foundation::CloseHandle(self.0);
         }
     }
+}
+
+/// 整个 Mesa 进程共用的「句柄关闭即全杀」任务组（见 spawn_tied_to_app）：句柄只在本进程里、从不关闭，
+/// 进程一结束（不论怎么结束）系统关掉句柄，组里的进程随之终止
+#[cfg(windows)]
+fn app_lifetime_job() -> Option<windows_sys::Win32::Foundation::HANDLE> {
+    use windows_sys::Win32::System::JobObjects::*;
+    static JOB: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let raw = *JOB.get_or_init(|| unsafe {
+        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if job.is_null() {
+            return 0;
+        }
+        let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &limits as *const _ as _,
+            std::mem::size_of_val(&limits) as u32,
+        ) == 0
+        {
+            windows_sys::Win32::Foundation::CloseHandle(job);
+            return 0;
+        }
+        job as usize
+    });
+    (raw != 0).then_some(raw as windows_sys::Win32::Foundation::HANDLE)
 }
 
 /// 后台捕获的公共生命周期：父进程退出不是管道 EOF，deadline 覆盖两者。
@@ -1015,6 +1166,83 @@ endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\node_
         assert_eq!(js_entry_from_shim("\"%~dp0\\node.exe\" %*"), None);
         assert_eq!(js_entry_from_shim("echo hello"), None);
         assert_eq!(js_entry_from_shim(""), None);
+    }
+
+    // npm 装的 Claude Code / OpenCode：shim 直接调原生 exe（2026-10-20 本机采样，claude-code 2.1.304）
+    const EXE_SHIM: &str = "@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n\
+\"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe\"   %*\r\n";
+
+    // CodeBuddy：Node 系 shim，入口是无扩展名的 node 脚本（codebuddy-code 2.170.0）
+    const BARE_NODE_SHIM: &str = r#"@ECHO off
+GOTO start
+:find_dp0
+SET dp0=%~dp0
+EXIT /b
+:start
+SETLOCAL
+CALL :find_dp0
+
+IF EXIST "%dp0%\node.exe" (
+  SET "_prog=%dp0%\node.exe"
+) ELSE (
+  SET "_prog=node"
+  SET PATHEXT=%PATHEXT:;.JS;=;%
+)
+
+endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\node_modules\@tencent-ai\codebuddy-code\bin\codebuddy" %*
+"#;
+
+    #[test]
+    fn shim_exe_and_bare_node_entries() {
+        assert_eq!(
+            exe_entry_from_shim(EXE_SHIM).as_deref(),
+            Some(r"node_modules\@anthropic-ai\claude-code\bin\claude.exe")
+        );
+        assert_eq!(js_entry_from_shim(EXE_SHIM), None);
+        assert_eq!(bare_script_entry_from_shim(EXE_SHIM), None, "没调 node 的不算 node 脚本");
+        assert_eq!(
+            bare_script_entry_from_shim(BARE_NODE_SHIM).as_deref(),
+            Some(r"node_modules\@tencent-ai\codebuddy-code\bin\codebuddy")
+        );
+        assert_eq!(exe_entry_from_shim(BARE_NODE_SHIM), None, "Node 系 shim 的 node.exe 不是入口");
+        // Node 系 .js shim 两种都不认（走 js_entry_from_shim）
+        assert_eq!(exe_entry_from_shim(MODERN_SHIM), None);
+        assert_eq!(bare_script_entry_from_shim(MODERN_SHIM), None);
+        assert_eq!(exe_entry_from_shim(LEGACY_SHIM), None);
+        assert_eq!(exe_entry_from_shim("echo hello"), None);
+        assert_eq!(exe_entry_from_shim(""), None);
+    }
+
+    /// 直调 exe 的 shim 起进程时绕开 cmd：PTY 命令的程序就是那个 exe，参数原样（含换行、%、引号、|）
+    #[cfg(windows)]
+    #[test]
+    fn exe_shim_launches_exe_directly_with_args_intact() {
+        let dir = std::env::temp_dir().join(format!("ccode-shim-{}", uuid::Uuid::new_v4()));
+        let bin = dir.join("node_modules").join("@anthropic-ai").join("claude-code").join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("claude.exe"), b"MZ").unwrap();
+        let shim = dir.join("claude.cmd");
+        std::fs::write(&shim, EXE_SHIM).unwrap();
+        let prompt = "第一行\n第二行 \"a|b\" 100%PATH% x^2".to_string();
+        let cmd = pty_command(&shim, &["--model".into(), "x".into(), prompt.clone()]);
+        let argv = cmd.get_argv();
+        assert_eq!(std::path::Path::new(&argv[0]), bin.join("claude.exe"));
+        assert_eq!(argv[1..].iter().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>(), ["--model", "x", prompt.as_str()]);
+        // CodeBuddy 式无扩展名 node 脚本：node 直启
+        let cb = dir.join("node_modules").join("@tencent-ai").join("codebuddy-code").join("bin");
+        std::fs::create_dir_all(&cb).unwrap();
+        std::fs::write(cb.join("codebuddy"), "#!/usr/bin/env node\nconsole.log(1)\n").unwrap();
+        let shim = dir.join("codebuddy.cmd");
+        std::fs::write(&shim, BARE_NODE_SHIM).unwrap();
+        if let Some((_, entry)) = node_entry_from_cmd_shim(&shim) {
+            assert_eq!(entry, cb.join("codebuddy"));
+        } else {
+            assert!(crate::agents::resolve_binary("node").is_none(), "装了 node 就该深化成 node 直启");
+        }
+        // 无扩展名但不是 node 脚本：不深化
+        std::fs::write(cb.join("codebuddy"), "echo hi\n").unwrap();
+        assert!(node_entry_from_cmd_shim(&shim).is_none());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
