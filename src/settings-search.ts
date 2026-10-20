@@ -97,6 +97,7 @@ export const SETTINGS_SEARCH_INDEX: readonly SettingsSearchEntry[] = [
       "自动命名", "起名", "命名", "会话标题", "改标题", "标题",
       "翻译", "提交信息", "摘要",
       "想法期", "只读", "保护", "hooks", "注意力", "精确注意力",
+      "沙箱", "Windows 沙箱", "Codex 沙箱", "定时任务",
       "integration", "agent",
     ],
   },

@@ -1184,11 +1184,102 @@ fn headless_write_cap(agent: &str) -> CapabilityFlagDto {
         "qwen" => flag(false, Some("无头写盘未验证，定时任务请换别家")),
         // grok 定时任务带 --yolo：自动批准全部工具，不限课题目录
         "grok" => flag(true, Some("会批准全部操作")),
-        // codex 定时任务是 -s workspace-write，只写课题目录，不必再附注
+        // codex 定时任务是 -s workspace-write，只写课题目录，不必再附注（Windows 另看沙箱开没开）
+        "codex" if cfg!(windows) => codex_windows_headless_cap(
+            codex_windows_sandbox_mode().as_deref(),
+            crate::settings::read_current().codex_win_sandbox_consent.unwrap_or(false),
+        ),
         "codex" => flag(true, None),
         // 其余无头能写文件，但没逐项核过默认权限
         _ => flag(true, Some("按该工具默认权限写文件")),
     }
+}
+
+/// Windows 上 Codex 的 workspace-write 靠它自己的 Windows 沙箱（~/.codex/config.toml 的 `[windows] sandbox`）。
+/// 2026-10-20 本机实测（无头 exec + 假网关，工作目录是 git 工作树，同定时任务的隔离副本）：
+/// - 没配沙箱：命令一律「blocked by policy」被拦下，无头运行没人能批准——定时雷达跑不了检索命令；
+/// - unelevated（非提权，不要管理员）：命令能跑；第一次给工作树里每个文件加一条「修改」权限（给 Codex 的沙箱身份），
+///   约 20–30 秒，主仓与 .git 不动；但 Codex 0.163 在这种模式下 shell 起在自己的安装目录，命令里的相对路径会落到那里
+///   被拒，绝对路径正常——Mesa 在任务说明里要求写绝对路径（scheduler，`codex_win_unelevated_note`）；
+/// - elevated（提权，要在 Codex 里做一次管理员初始化）：命令与相对路径都正常，同样给工作树加权限（多一个 CodexSandboxUsers 组）。
+/// 用户在 Mesa 里确认过（设置 codex_win_sandbox_consent）且自己没配沙箱时，Mesa 给定时任务加 `-c windows.sandbox="unelevated"`
+/// （只对这次运行，不改用户配置）。用户配了就照用户的
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn codex_windows_headless_cap(mode: Option<&str>, consent: bool) -> CapabilityFlagDto {
+    match codex_win_effective_sandbox(mode, consent) {
+        Some("elevated") => flag(true, None),
+        Some(_) if mode.map(str::trim) == Some("unelevated") => flag(
+            true,
+            Some("Codex 用的是非提权沙箱：命令能跑，写文件时 Mesa 会要求它用绝对路径（Codex 的已知问题）"),
+        ),
+        Some(_) => flag(
+            true,
+            Some("已按你的确认开 Codex 的 Windows 沙箱（非提权）：只写定时任务的隔离副本"),
+        ),
+        None => flag(
+            true,
+            Some("Codex 在 Windows 上没开沙箱：定时任务里的命令会被拦下（联网检索等跑不了），可在定时任务里确认开启"),
+        ),
+    }
+}
+
+/// 这次定时运行实际用哪种 Windows 沙箱：用户配了照用户的；没配且确认过 = unelevated；否则 None（命令会被拦）
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+pub(crate) fn codex_win_effective_sandbox(user_mode: Option<&str>, consent: bool) -> Option<&str> {
+    match user_mode.map(str::trim).filter(|m| !m.is_empty()) {
+        Some(m) if m == "elevated" || m == "unelevated" => Some(m),
+        _ if consent => Some("unelevated"),
+        _ => None,
+    }
+}
+
+/// Mesa 要不要给这次定时运行加 `-c windows.sandbox="…"`：只在用户自己没配、但在 Mesa 里确认过时加
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+pub(crate) fn codex_win_sandbox_override(user_mode: Option<&str>, consent: bool) -> Option<&'static str> {
+    let user_set = user_mode.map(str::trim).is_some_and(|m| m == "elevated" || m == "unelevated");
+    (!user_set && consent).then_some("unelevated")
+}
+
+/// 当前机器上 Codex 定时任务的沙箱情况（定时任务弹层与设置页用）
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexWinSandboxDto {
+    /// 只在 Windows 上有意义；其余平台 false，前端不显示
+    pub applicable: bool,
+    /// 用户 Codex 配置里的 `[windows] sandbox`（没有为 None）
+    pub user_mode: Option<String>,
+    pub consent: bool,
+    /// 实际会用的：elevated / unelevated / None（命令会被拦）
+    pub effective: Option<String>,
+}
+
+#[tauri::command]
+pub fn codex_win_sandbox_state() -> CodexWinSandboxDto {
+    let consent = crate::settings::read_current().codex_win_sandbox_consent.unwrap_or(false);
+    let user_mode = if cfg!(windows) { codex_windows_sandbox_mode() } else { None };
+    CodexWinSandboxDto {
+        applicable: cfg!(windows),
+        effective: cfg!(windows)
+            .then(|| codex_win_effective_sandbox(user_mode.as_deref(), consent).map(str::to_string))
+            .flatten(),
+        user_mode,
+        consent,
+    }
+}
+
+/// 只读：用户 Codex 配置里的 `[windows] sandbox` 取值；读不到返回 None
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn codex_windows_sandbox_mode() -> Option<String> {
+    let home = std::env::var_os("CODEX_HOME")
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|h| h.join(".codex")))?;
+    let text = std::fs::read_to_string(home.join("config.toml")).ok()?;
+    let doc: toml::Value = toml::from_str(crate::mcp::strip_bom(&text)).ok()?;
+    doc.get("windows")?
+        .get("sandbox")?
+        .as_str()
+        .map(str::to_string)
 }
 
 /// 九家的三项能力一览（前端置灰/提示与后端报错同源）
@@ -1425,6 +1516,28 @@ pub fn skills_dir_for(spec: &AgentSpec) -> Option<std::path::PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_windows_headless_note_follows_sandbox_mode() {
+        // 用户自己配了：照用户的，Mesa 的确认不起作用
+        for consent in [false, true] {
+            assert!(codex_windows_headless_cap(Some("elevated"), consent).reason.is_none());
+            assert!(codex_windows_headless_cap(Some("unelevated"), consent).reason.unwrap().contains("绝对路径"));
+            assert_eq!(codex_win_sandbox_override(Some("elevated"), consent), None);
+            assert_eq!(codex_win_sandbox_override(Some("unelevated"), consent), None);
+        }
+        // 没配：没确认就提示会被拦、不加覆盖；确认后加 unelevated
+        for mode in [None, Some("none"), Some("")] {
+            let cap = codex_windows_headless_cap(mode, false);
+            assert!(cap.supported, "改文件仍可以，只是命令会被拦");
+            assert!(cap.reason.unwrap().contains("没开沙箱"), "{mode:?}");
+            assert_eq!(codex_win_sandbox_override(mode, false), None);
+            assert!(codex_windows_headless_cap(mode, true).reason.unwrap().contains("已按你的确认"));
+            assert_eq!(codex_win_sandbox_override(mode, true), Some("unelevated"));
+            assert_eq!(codex_win_effective_sandbox(mode, true), Some("unelevated"));
+            assert_eq!(codex_win_effective_sandbox(mode, false), None);
+        }
+    }
 
     const KNOWN_IDS: [&str; 9] = [
         "claude-code",

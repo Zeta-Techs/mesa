@@ -570,6 +570,7 @@ pub fn run() {
             config_dump::dump_effective_config,
             config_dump::export_effective_config,
             agent_specs::agent_capabilities,
+            agent_specs::codex_win_sandbox_state,
             model_registry::model_capabilities,
             model_registry::list_model_capability_overrides,
             model_registry::set_model_capability_override,

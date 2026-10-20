@@ -53,6 +53,7 @@ import type {
 import { SubscriptionsModal } from "./LitWatchCard";
 import type { WatchSubscriptionDto } from "../lit-watch";
 import { headlessWriteBlocked, headlessWriteCaution, headlessWriteNote } from "../agent-caps";
+import CodexWinSandboxNotice from "./CodexWinSandboxNotice";
 import { toast } from "../toast";
 
 const NEW_WATCH = "__new__";
@@ -387,6 +388,8 @@ function CreateScheduleModal({
             const caution = p
               ? headlessWriteCaution(caps[p.agent]?.headlessWrite)
               : null;
+            // Windows 上的 Codex：没开沙箱时给「了解并开启」（确认后才生效），开着的可关
+            if (p?.agent === "codex") return <CodexWinSandboxNotice agent={p.agent} fallback={caution} />;
             return caution ? (
               <p className="mb-3 text-xs text-warn-text">⚠ {caution}</p>
             ) : null;
@@ -606,7 +609,7 @@ function EditScheduleModal({
         </div>
         <label className="mb-3 block text-sm"><span className="mb-1 block text-xs text-l3">运行配置</span><span className="mb-1 block text-micro text-l4">文献雷达选 Codex。没有后缀的只在课题目录里写。</span><select className={fieldClass} value={profileId} onChange={(e) => { setProfileId(e.target.value); setModelId(""); }}><option value="">跟随项目默认</option>{profiles.map((p) => { const meta = profileScheduleMeta(p, caps); return <option key={p.id} value={p.id} disabled={meta.disabled}>{meta.label}</option>; })}</select></label>
         <label className="mb-3 block text-sm"><span className="mb-1 block text-xs text-l3">模型</span><select className={fieldClass} value={modelId} disabled={!profileId} onChange={(e) => setModelId(e.target.value)}><option value="">{profileId ? "默认（名单第一个）" : "跟随执行时解析"}</option>{profileId && (profiles.find((p) => p.id === profileId)?.models ?? []).map((m) => <option key={m} value={m}>{m}</option>)}</select></label>
-        {profileId && (() => { const p = profiles.find((x) => x.id === profileId); const caution = p ? headlessWriteCaution(caps[p.agent]?.headlessWrite) : null; return caution ? <InlineNotice tone="warn" className="mb-3">{caution}</InlineNotice> : null; })()}
+        {profileId && (() => { const p = profiles.find((x) => x.id === profileId); const caution = p ? headlessWriteCaution(caps[p.agent]?.headlessWrite) : null; if (p?.agent === "codex") return <CodexWinSandboxNotice agent={p.agent} fallback={caution} />; return caution ? <InlineNotice tone="warn" className="mb-3">{caution}</InlineNotice> : null; })()}
         {error && <NoticeBar tone="err" className="mb-3">{error}</NoticeBar>}
         <div className="flex justify-end gap-2"><button type="button" onClick={onClose} className={secondaryActionClass}>取消</button><button type="submit" disabled={busy} className={primaryActionClass}>{busy ? "保存中…" : "保存"}</button></div>
       </form>

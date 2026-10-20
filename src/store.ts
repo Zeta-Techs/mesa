@@ -102,6 +102,8 @@ export interface AppSettings {
   terminalRenderer?: string;
   /** 内置终端 shell：auto | powershell | pwsh | git-bash | cmd | zsh | bash | fish（设置 → 终端） */
   terminalShell?: string;
+  /** Windows 上定时任务里的 Codex 用它自己的 Windows 沙箱（看过说明、确认过才是 true；用户 Codex 配置里有就照那个） */
+  codexWinSandboxConsent?: boolean;
   terminalPalette?: string; // 四套深色 + 四套配对浅色，见 terminal-palettes.ts PALETTE_LIST
   scrollback: number;
   rateUsdCny: number;

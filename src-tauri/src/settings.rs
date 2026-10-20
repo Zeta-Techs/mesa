@@ -234,6 +234,9 @@ pub struct AppSettingsDto {
     /// powershell | pwsh | git-bash | cmd（Windows）| zsh | bash | fish（macOS / Linux）。
     /// 未知值读时回落 auto；选了本机没有的，启动时也回落 auto（pty::login_shell_argv）
     pub terminal_shell: Option<String>,
+    /// Windows 上定时任务里的 Codex 开它自己的 Windows 沙箱（非提权）：用户在定时任务弹层或设置里看过说明、点了确认才是 true。
+    /// 用户的 Codex 配置里已有 `[windows] sandbox` 时不看这一项（照用户的）。默认 false（命令会被 Codex 拦下）
+    pub codex_win_sandbox_consent: Option<bool>,
     /// 终端 16 色调色板预设：dark-plus（默认）| solarized | one-dark | catppuccin
     pub terminal_palette: Option<String>,
     pub scrollback: Option<u32>,
@@ -810,6 +813,7 @@ fn with_defaults(s: AppSettingsDto) -> AppSettingsDto {
                 .filter(|v| KNOWN_TERMINAL_SHELLS.contains(&v.as_str()))
                 .unwrap_or_else(|| "auto".into()),
         ),
+        codex_win_sandbox_consent: Some(s.codex_win_sandbox_consent.unwrap_or(false)),
         terminal_palette: s
             .terminal_palette
             .filter(|p| KNOWN_PALETTES.contains(&p.as_str())),
@@ -929,6 +933,9 @@ fn merge(cur: &mut AppSettingsDto, patch: AppSettingsDto) {
     }
     if patch.terminal_shell.is_some() {
         cur.terminal_shell = patch.terminal_shell;
+    }
+    if patch.codex_win_sandbox_consent.is_some() {
+        cur.codex_win_sandbox_consent = patch.codex_win_sandbox_consent;
     }
     if patch.terminal_palette.is_some() {
         cur.terminal_palette = patch.terminal_palette;

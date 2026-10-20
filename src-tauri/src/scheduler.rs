@@ -496,6 +496,25 @@ fn build_task_prompt(skill: &str) -> String {
     template.replace("{skill}", skill)
 }
 
+/// Windows 上 Codex 用非提权沙箱时追加的一句：Codex 0.163 在这种模式下 shell 起在自己的安装目录，命令里的相对路径
+/// 会落到那里被拒（2026-10-20 实测，绝对路径正常），所以要求它写文件用绝对路径（agent_specs::codex_windows_headless_cap）
+fn codex_win_unelevated_note(agent: &str, root: &Path) -> Option<String> {
+    if !cfg!(windows) || agent != "codex" {
+        return None;
+    }
+    let consent = crate::settings::read_current().codex_win_sandbox_consent.unwrap_or(false);
+    let user_mode = crate::agent_specs::codex_windows_sandbox_mode();
+    (crate::agent_specs::codex_win_effective_sandbox(user_mode.as_deref(), consent) == Some("unelevated"))
+        .then(|| codex_unelevated_prompt_line(root))
+}
+
+fn codex_unelevated_prompt_line(root: &Path) -> String {
+    format!(
+        "\n\n（Windows 沙箱）在命令里读写文件一律用绝对路径，工作目录是 {}——这里的命令不会从工作目录启动，相对路径会落到别处被拒绝。",
+        crate::paths::strip_verbatim(root.to_path_buf()).display()
+    )
+}
+
 fn cap_summary(text: &str) -> String {
     text.chars().take(SUMMARY_CAP).collect()
 }
@@ -1476,10 +1495,14 @@ fn execute_one(id: &str) -> RunDonePayload {
             )
             .map(str::to_string)
         };
+        let mut task_prompt = build_task_prompt(&task.skill);
+        if let Some(note) = codex_win_unelevated_note(&profile.agent, root) {
+            task_prompt.push_str(&note);
+        }
         crate::ai::run_agent_task(
             &profile,
             model.as_deref(),
-            &build_task_prompt(&task.skill),
+            &task_prompt,
             root,
             RUN_TIMEOUT,
             Some(&reuse),
@@ -3273,6 +3296,16 @@ mod tests {
         assert!(!adopted);
         // 没有任何匹配：明确查不到，不默认放行
         assert!(find_run_record(&[], "run-none").is_none());
+    }
+
+    #[test]
+    fn codex_unelevated_note_names_worktree_and_absolute_paths() {
+        let line = codex_unelevated_prompt_line(Path::new("/x/watch-worktrees/abc"));
+        assert!(line.contains("绝对路径") && line.contains("watch-worktrees"), "{line}");
+        // 不是 Windows 或不是 Codex：不加
+        assert_eq!(codex_win_unelevated_note("claude-code", Path::new("/x")), None);
+        #[cfg(not(windows))]
+        assert_eq!(codex_win_unelevated_note("codex", Path::new("/x")), None);
     }
 
     #[test]

@@ -80,6 +80,7 @@ import {
 } from "../diagnostics";
 import { useAppUpdateInstall } from "../app-update-install";
 import UpdateNotes from "../components/UpdateNotes";
+import { enableCodexWinSandbox } from "../components/CodexWinSandboxNotice";
 import {
   appUpdateProgressLabel,
   appUpdateProgressPct,
@@ -3439,6 +3440,23 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             onChange={(v) => patch({ autoTitleSessions: v })}
           />
         </Row>
+
+        {IS_WINDOWS && (
+          <Row
+            label="定时任务里 Codex 用 Windows 沙箱"
+            hint="不开时 Codex 在无人值守的定时任务里会拦下所有命令；开之前会先讲清楚它会做什么"
+            labelTitle="只对 Mesa 的定时任务生效，不改 Codex 的配置文件；你在 Codex 里自己开过沙箱时直接用你的设置"
+          >
+            <Toggle
+              label="定时任务里 Codex 用 Windows 沙箱"
+              checked={settings?.codexWinSandboxConsent ?? false}
+              onChange={(v) => {
+                if (v) void enableCodexWinSandbox();
+                else patch({ codexWinSandboxConsent: false });
+              }}
+            />
+          </Row>
+        )}
 
         <SubHeading title="对 Agent 的约束" hint="Mesa 拉起各家 CLI 时额外加的保护与标记" />
         <Row

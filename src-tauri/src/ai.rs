@@ -345,6 +345,28 @@ pub(crate) fn headless_task_args(agent: &str, prompt: &str) -> Vec<String> {
 
 // ===== 进程执行（不走 PTY；stdout/stderr 各开线程读，超时 kill 并返回部分输出） =====
 
+/// 这次无头运行要不要给 Codex 加 Windows 沙箱覆盖（只 Windows、只 Codex；用户自己没配、在 Mesa 里确认过才加，
+/// 见 agent_specs::codex_win_sandbox_override）
+fn codex_win_sandbox_for_run(agent: &str) -> Option<&'static str> {
+    if !cfg!(windows) || agent != "codex" {
+        return None;
+    }
+    let consent = crate::settings::read_current().codex_win_sandbox_consent.unwrap_or(false);
+    crate::agent_specs::codex_win_sandbox_override(
+        crate::agent_specs::codex_windows_sandbox_mode().as_deref(),
+        consent,
+    )
+}
+
+/// 把 `-c windows.sandbox="…"` 插在提示词（最后一个参数）前面；不改用户的 config.toml，只对这次运行
+fn with_codex_win_sandbox(mut args: Vec<String>, sandbox: Option<&str>) -> Vec<String> {
+    if let Some(mode) = sandbox {
+        let at = args.len().saturating_sub(1);
+        args.splice(at..at, ["-c".to_string(), format!("windows.sandbox=\"{mode}\"")]);
+    }
+    args
+}
+
 /// 无头失败不要把 CLI 整段日志甩给用户。官方账号过期、401 等收成一句中文。
 /// expected_host = 当前配置应请求的端点（绑定 base_url 的 host 部分），用于把
 /// 401 invalid_api_key 细分成两条修复路径：报错 URL 是 api.openai.com 而配置是网关
@@ -775,7 +797,10 @@ pub(crate) fn run_agent_task(
     for a in compose_headless_args(
         &profile.agent,
         &plan.args,
-        &headless_task_args(&profile.agent, prompt),
+        &with_codex_win_sandbox(
+            headless_task_args(&profile.agent, prompt),
+            codex_win_sandbox_for_run(&profile.agent),
+        ),
     ) {
         cmd.arg(a);
     }
@@ -2451,6 +2476,19 @@ ERROR: Your access token could not be refreshed because your refresh token was r
             headless_args("cursor", "你好"),
             vec!["-p", "你好", "--output-format", "text"]
         );
+    }
+
+    #[test]
+    fn codex_win_sandbox_override_goes_before_prompt() {
+        let args = with_codex_win_sandbox(headless_task_args("codex", "你好"), Some("unelevated"));
+        assert_eq!(args.last().map(String::as_str), Some("你好"), "提示词仍是最后一个参数");
+        let n = args.len();
+        assert_eq!(&args[n - 3..n - 1], ["-c", "windows.sandbox=\"unelevated\""]);
+        assert_eq!(with_codex_win_sandbox(headless_task_args("codex", "你好"), None), headless_task_args("codex", "你好"));
+        // 非 Windows / 非 Codex 一律不加
+        assert_eq!(codex_win_sandbox_for_run("claude-code"), None);
+        #[cfg(not(windows))]
+        assert_eq!(codex_win_sandbox_for_run("codex"), None);
     }
 
     #[test]
