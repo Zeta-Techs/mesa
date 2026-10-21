@@ -578,6 +578,16 @@ test("Zotero 域稿写出 ADDIN ZOTERO_ITEM，缺键不交 docx", () => {
     assert.match(braceZip.stdout, /tbl-benchmark/);
     assert.doesNotMatch(braceZip.stdout, /\{#/);
     assert.match(readFileSync(join(root, "report.md"), "utf8"), /未匹配：0/);
+    // 只在图注里引的文献 Refresh 后进不了文献表：照常出稿，报告点名
+    writeFileSync(md, "See [@Doe2020].\n\n![Panel from [@Lee2021].](dot.png){#fig-1}\n");
+    writeFileSync(join(root, "dot.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64"));
+    const captioned = join(root, "captioned.docx");
+    result = run(script, ["--input", md, "--bib", bib, "--output", captioned, "--report", join(root, "cap.md")]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /cited only in captions.*Lee2021/);
+    const capWarn = readFileSync(join(root, "cap.md"), "utf8").split("只在图注或表题里引用")[1]?.split("\n\n")[0] ?? "";
+    assert.match(capWarn, /`Lee2021`/);
+    assert.doesNotMatch(capWarn, /`Doe2020`/);
     writeFileSync(md, "See [@Missing].\n");
     const bad = join(root, "bad.docx");
     result = run(script, ["--input", md, "--bib", bib, "--output", bad, "--report", join(root, "bad.md")]);

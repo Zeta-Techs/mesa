@@ -141,6 +141,10 @@ def write_report(path: Path, payload: dict):
             lines.append(f"- `{target}`")
     else:
         lines.append("")
+        if payload.get("caption_only"):
+            lines.append("⚠ 下面这些文献只在图注或表题里引用。图注只写作者-年、不写引用域，Refresh 后它们进不了参考文献表。在正文里至少引用一次再重新生成：")
+            lines.extend(f"- `{key}`" for key in payload["caption_only"])
+            lines.append("")
         lines.append("打开 `output/zotero.docx` → Zotero 工具栏点 **Refresh**（**先确认 Zotero 应用已在运行再开文档**：首次打开若插件无响应，是宿主未就绪——等 Zotero 加载完，或关掉文档重开一次，文档本身没坏。首次会弹引用样式选择框，属正常，选一次即可）→ **光标点进 References 标题下面那个空行**（⚠ 必须是空行本身：点在标题行上会把参考文献表插到标题上方、还继承标题的大字号）→ 点 **Add/Edit Bibliography** 插入参考文献表 → 换样式用 Document Preferences。插错位置就 Ctrl+Z 撤销，光标点对再点一次。不要改源稿里的 `[@键]`。")
     binding = payload.get("binding") or []
     if binding:
@@ -234,9 +238,12 @@ def main(argv: list[str] | None = None) -> int:
         "missing": uniq_missing,
         "images": len(images),
         "missing_images": missing_images,
+        "caption_only": cite.caption_only_keys(rec_nums, cited),
         "binding": binding,
     }
     write_report(report, payload)
+    if payload["caption_only"]:
+        print("cited only in captions (not in bibliography after Refresh): " + ", ".join(payload["caption_only"]), file=sys.stderr)
     if uniq_missing:
         print("unmatched citation keys: " + ", ".join(uniq_missing), file=sys.stderr)
         return 1

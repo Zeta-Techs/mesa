@@ -598,6 +598,13 @@ def plain_citations(text: str, bib: dict[str, dict]) -> str:
     return CITE_RE.sub(replace, text)
 
 
+def caption_only_keys(rec_nums: dict[str, int], cited: list[str]) -> list[str]:
+    """源稿引了、却一个引用域都没写成的键。图注/表题只写作者-年，
+    只在那里出现的文献点 Update/Refresh 后进不了参考文献表。"""
+    written = set(cited)
+    return [key for key in rec_nums if key not in written]
+
+
 def append_inline(
     p: ET.Element,
     text: str,
@@ -1144,6 +1151,10 @@ def write_report(path: Path, payload: dict):
             lines.append(f"- `{target}`")
     else:
         lines.append("")
+        if payload.get("caption_only"):
+            lines.append("⚠ 下面这些文献只在图注或表题里引用。图注只写作者-年、不写引用域，点 Update 后它们进不了参考文献表。在正文里至少引用一次再重新生成：")
+            lines.extend(f"- `{key}`" for key in payload["caption_only"])
+            lines.append("")
         lines.append("打开 `output/endnote.docx`，在 EndNote 工具栏点 Update Citations and Bibliography，再换 Output Style。**先确认 EndNote 应用已在运行再开文档**：首次打开若插件无响应（按钮灰/无反应），是宿主还没就绪——等 EndNote 加载完库，或关掉文档重开一次即可，文档本身没坏。不要改源稿里的 `[@键]`。")
         lines.append("合意后另存为 `manuscript/source.docx`。不要覆盖这份报告或源稿。")
     binding = payload.get("binding") or []
@@ -1252,9 +1263,12 @@ def main(argv: list[str] | None = None) -> int:
         "missing": uniq_missing,
         "images": len(images),
         "missing_images": missing_images,
+        "caption_only": caption_only_keys(rec_nums, cited),
         "binding": binding,
     }
     write_report(report, payload)
+    if payload["caption_only"]:
+        print("cited only in captions (not in bibliography after Update): " + ", ".join(payload["caption_only"]), file=sys.stderr)
     if uniq_missing:
         print("unmatched citation keys: " + ", ".join(uniq_missing), file=sys.stderr)
         return 1
