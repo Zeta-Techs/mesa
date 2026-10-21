@@ -143,6 +143,8 @@
   ④底栏右区补上下文用量圆环 + 百分比（`ContextRing`，xterm 调色板色，≥80% 用 yellow），只在终端变体画，聊天变体在输入框里画。
 - **聊天层第二期（2026-10-18）**：①**排队**：生成中（`pendingReply` 或 attention working）发出的话照常写进 PTY、由 CLI 排队，
   乐观消息带前端专用标记 `ChatMessageDto.queued`，气泡标「排队中 · 这一轮结束后处理」、无撤回钮；会话文件记下后由解析结果替换。
+  **2026-10-22 起气泡写法与「立即发送」按各家实测走 `mid-turn-send.ts`**（下一步就交 / 这一轮说完再交；Esc / 回车 / Ctrl+S 各家不同，
+  依据 matrix §14「生成中再发一句」）——CLI 升级改了行为改那张表，别在组件里各写一份；按键经 `writePty` 原样写，不加回车。
   ②**乐观消息放回位置**（`placePendingUsers`，chat-handoff.ts）：排队中的接末尾；其余插在「发送那一刻还没有的第一条回复」前
   （`pendingAssistantKeysRef`）。原口径插在整页第一条回复前，长对话里刚发的那句会跳到页顶。
   **认「已落盘」不逐字比（2026-10-21）**：`userTextRecorded` 包含即算，再去空白与 BMP 外字符宽松比（Windows 上 Codex 吞 emoji，

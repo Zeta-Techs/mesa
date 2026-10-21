@@ -269,6 +269,7 @@ export default function ConversationView({
   awaiting,
   onEditResend,
   onForkHere,
+  queuedNote,
 }: {
   messages: ChatMessageDto[];
   compact?: boolean;
@@ -286,6 +287,12 @@ export default function ConversationView({
   onEditResend?: (text: string) => void;
   /** 助手消息「从这里分叉」：带着到这条为止的对话开分叉标签（聊天层传；回放页不传 = 不显示） */
   onForkHere?: (text: string) => void;
+  /** 排队气泡下那一行怎么写（聊天层按这家 CLI 的真实行为传，mid-turn-send.ts）；action 只挂在最后一条排着的气泡上 */
+  queuedNote?: {
+    text: string;
+    title: string;
+    action?: { label: string; title: string; onClick: () => void } | null;
+  };
 }) {
   const setDiffFocusReq = useAppStore((s) => s.setDiffFocusReq);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -713,6 +720,11 @@ export default function ConversationView({
     );
   }
 
+  let lastQueuedIndex = -1;
+  messages.forEach((m, i) => {
+    if (m.queued) lastQueuedIndex = i;
+  });
+
   return (
     <>
       {groupConversationSegments(messages, { live: working, cwd: cwd ?? null, isWindows: IS_WINDOWS }).map((seg) => {
@@ -767,12 +779,22 @@ export default function ConversationView({
               {renderBlocks(m, mk, true, hit)}
             </div>
             {m.queued && (
-              // 上一轮还在生成时发的：已写进终端、由 CLI 排队（Mesa 不另设队列，所以没有撤回钮）
-              <span
-                className="mt-0.5 text-micro text-l4"
-                title="已经交给 AI，它这一轮说完就接着处理；要撤回请到终端里删掉排队的那条"
-              >
-                排队中 · 这一轮结束后处理
+              // 上一轮还在生成时发的：已写进终端、由 CLI 处理（Mesa 不另设队列，所以没有撤回钮）。
+              // 写法按这家 CLI 的真实行为（下一步就交 / 这一轮说完再交），能「立即发送」的给一个钮
+              <span className="mt-0.5 flex items-center gap-1.5 text-micro text-l4">
+                <span title={queuedNote?.title ?? "已经交给 AI，它这一轮说完就接着处理；要撤回请到终端里改掉排着的那条"}>
+                  {queuedNote?.text ?? "排队中 · 这一轮结束后处理"}
+                </span>
+                {queuedNote?.action && mi === lastQueuedIndex && (
+                  <button
+                    type="button"
+                    onClick={queuedNote.action.onClick}
+                    title={queuedNote.action.title}
+                    className="rounded-sm px-1 text-l3 underline decoration-dotted underline-offset-2 hover:bg-hover hover:text-l1"
+                  >
+                    {queuedNote.action.label}
+                  </button>
+                )}
               </span>
             )}
             {!compact && !m.queued && messageActions(m, mk, "right")}

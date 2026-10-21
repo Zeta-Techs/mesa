@@ -490,6 +490,27 @@ Zed 是唯一核实过的跨 agent 路线：可从已配置的 ACP agent 导入�
 
 **「现在在做什么」（2026-10-21，聊天层生成中那一行，`chat-status.ts`）**：正在跑的工具五家都有（Claude / CodeBuddy PreToolUse·PostToolUse、Qwen 的 tool_use·tool_result、OpenCode tool part 的 status、Codex `item/started`·`item/completed` 的 commandExecution / fileChange / mcpToolCall）；思考摘要只有三家：Codex `item/reasoning/summaryTextDelta`（每段前 `summaryPartAdded`；没摘要的模型只有 `item/reasoning/textDelta` 原始推理，拿来兜底）、Qwen `content_block_delta` 的 `thinking_delta`、OpenCode reasoning part 的 `message.part.delta`（V：假网关 TRIGGER_THINK，四家 e2e_channel 逐家核对，Codex 0.163.0 / Qwen 0.25.2 / OpenCode 1.19.3）。Claude hooks 不带思考，聊天层用会话文件里刚落盘的思考块兜底。
 
+**生成中再发一句（2026-10-22，聊天层排队 / 立即发送，`src/mid-turn-send.ts`）**：本机假网关逐家实测（`chat-capture.py` 的 `QUEUE_*` 一幕：先让它跑一条
+`sleep 9` 命令，第 4–6 秒打一句回车，看这句出现在假网关哪个请求里；`QUEUE_THEN` 再按一个键看能不能让它马上处理）。「下一步」= 和工具结果同一个请求，
+插进这一轮；「轮后」= 这一轮说完后新起的请求。纯文字回复（这一轮没有工具调用）时「下一步」几家也是等说完再发。
+
+| CLI（实测版本） | 回车之后终端里的样子 | 落在哪 | 别的键 | 让它马上处理 |
+|---|---|---|---|---|
+| claude-code 2.1.292 | 那句挂在过程下面「ctrl+enter to send now」，输入框「Press up to edit queued messages」 | 下一步（`The user sent a new message while you were working: …`） | ↑ 拿回来改 | Ctrl+Enter 或 Esc：打断手头这一步并马上发（V） |
+| codex 0.163.0 | 「Messages to be submitted after next tool call (press esc to interrupt and send immediately)」 | 下一步（steer） | Tab =「Queued follow-up inputs」，轮后（V） | Esc：「Model interrupted to submit steer instructions」（V） |
+| codebuddy 2.170.0 | 同 Codex 的提示 | 下一步（`<system-reminder data-role="message-queue">`） | — | Esc：打断并马上发（V） |
+| qwen 0.25.2 | 底栏「Enter to steer · Ctrl+Q to queue」，「⏳ 1 queued」 | 下一步（steer） | Ctrl+Q 轮后 | 无：Esc 取消这一轮，排着的那句不发（V） |
+| opencode 1.19.3 | 输入框里「QUEUED」 | 下一步（跟在工具结果后） | — | 未核实：Esc 要按两次才打断 |
+| gemini 0.65.0 | 「Queued (press ↑ to edit)」 | 轮后 | ↑ 拿回来改 | Esc：取消这一轮并马上发（`[The previous response was interrupted…]`）（V） |
+| kimi 2.2.0 | 「↑ to edit · ctrl-s to steer immediately」 | 轮后 | Ctrl+S（kitty 下 `ESC[115;5u`）= 插进这一轮（下一步），不打断（V） | 同左 |
+| grok 1.0.62 | 「#1 …」「Queued · Enter to send now」，底栏「Ctrl+;:queue」 | 轮后 | — | 输入框空着再按回车：马上插进这一轮（`The user sent a message while you were working`），正在跑的命令照常跑完（V） |
+| cursor | 未测（第三方网关钥匙进不了 Cursor） | — | — | — |
+
+Claude 会话文件：排上记 `queue-operation`（`enqueue` 带原文；轮后被取走 `dequeue`；下一步插进去 `remove` + `reason: absorbed_mid_turn`），
+插进去的那句另记一行 `attachment` / `queued_command`（`prompt` 原文、`commandMode: prompt`、`origin.kind: human`），**不是 user 行**——
+解析要认它（`sessions.rs parse_claude`），否则聊天层与回放里这句话消失。后台任务通知、别的会话发来的也是 `queued_command`
+（`commandMode: task-notification` / `origin.kind: peer`），不算用户说的。
+
 **陷阱（实证）**：
 - **Codex `-c hooks.<事件>=…`** 认得出（来源记作 Session flags），但每次都要在 /hooks 面板审核信任才执行——不能当默认通道。
 - **Codex 新线程第一条消息前没有 rollout**：`thread/resume` 报「no rollout found」；线程转 active 时再订，resume 会重放挂着的审批。

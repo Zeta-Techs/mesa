@@ -404,6 +404,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   chat-reply.ts              # 聊天长回复按小标题分段（带级别；识别代码围栏；有 ## 时冒号行不当标题）、正文里像文件路径的段（fileRefPath /
                              # findFileRefs，真假由 existing_files 核实）与本机音频（mentionedAudioFiles → ChatMarkdown 播放条）、
                              # 确认按钮是否给出（tests/chat-reply.test.ts）
+  mid-turn-send.ts           # 生成中再发一句：各家 CLI 把这句插进这一轮还是排到轮后、「立即发送」按哪个键（Esc / 回车 / Ctrl+S），
+                             # 排队气泡与占位字的写法；依据 matrix §14「生成中再发一句」逐家实测（tests/mid-turn-send.test.ts）
   chat-cite.ts               # 聊天回复里的 [@key] 引用段（与 citation.rs extract_cite_keys 同口径）、胶囊字样 citeLabel、cite_lookup 30 秒缓存
   chat-inline-refs.ts        # 回复上屏后的就地加工：文件路径 → .md-file-link（existing_files 核实、15 秒缓存）、引用键 → .md-cite-item
                              # （先键名占位再换作者年份）；只动 DOM，sanitize 之后做（tests/chat-inline-refs.test.ts）

@@ -63,6 +63,12 @@ Gemini 的临时 HOME 里会把登录方式改成 API Key（Mesa 只在这种情
 切换会不会写回 CLI 的全局配置：第三幕带 `ANSWER_MENU=1`（Codex 选择器要连按两次用 `ANSWER_MENU=2`），脚本会在弹确认时按回车选默认项，
 最后比对临时 HOME 里各家配置文件切换前后的差异（`config_changed`，也打印到屏上）。2026-10-18 的结论见 src/switch-strategy.ts 文件头。
 
+**生成中再发一句（2026-10-22）**：设 `QUEUE_PROMPT` 走另一幕——先发 `QUEUE_FIRST`（默认 `TRIGGER_TOOL 跑一下`），过 `QUEUE_AFTER` 秒打这句、
+按 `QUEUE_KEY`（默认回车；Codex 的 Tab 写 `\t`），设了 `QUEUE_THEN` 再隔 `QUEUE_THEN_AFTER` 秒按一个键（「立即发送」：Esc 写 `\x1b`，kitty 下
+`\x1b[27u`；Claude 的 Ctrl+Enter `\x1b[13;5u`），拍 `QUEUE_SECS` 秒。假网关起的时候设 `E2E_PROBE_CMD="sleep 9; echo mesa > mesa_probe.txt"`
+让工具跑久一点、`E2E_DUMP=<文件>` 记完整请求，看这句落在哪个请求里（和工具结果同一个 = 插进这一轮）。Qwen 拒绝独立的 `sleep`，用
+`QUEUE_FIRST="TRIGGER_SLOW 讲一段"`。结论见 docs/agent-integration-matrix.md §14「生成中再发一句」。
+
 **Windows（2026-10-20，ConPTY）**：同一脚本走 pywinpty（`pip install --target <目录> pywinpty pyte`，`PYTE_DIR` 与 `PYWINPTY_DIR` 都指向它），
 npm 的 `.cmd` 垫片按 Mesa 同口径直启。在 Git Bash 里跑，路径用 `cygpath -w` 转；Python 要用安装目录下的 `python.exe` 并加 `-X utf8`
 （`-I` 会忽略 PYTHONUTF8，计划文件按 GBK 读会报错）；Gemini 的工具幕可能要 `TOOL_SECS=25`（本机全局 hooks、MCP 初始化拖慢审批菜单）：

@@ -1260,6 +1260,32 @@ fn parse_claude(lines: &[String]) -> Vec<ChatMessageDto> {
                     push_claude_user_string(&mut msgs, text, ts, get_str(&v, "uuid").map(String::from));
                 }
             }
+            // 这一轮还在跑时用户发的话，Claude 在下一步工具调用结束时一起交给模型，记成 attachment/queued_command，
+            // 不是 user 行（2026-10-22 实测 2.1.292：原先这类话聊天层与回放里都看不到）。只认用户自己发的：
+            // origin.kind = human，旧版没有 origin 的按 commandMode = prompt 认；后台任务通知、别的会话发来的不算
+            Some("attachment") => {
+                let Some(a) = v.get("attachment") else {
+                    continue;
+                };
+                if get_str(a, "type") != Some("queued_command") || get_str(a, "commandMode") != Some("prompt") {
+                    continue;
+                }
+                if a.get("origin").and_then(|o| get_str(o, "kind")).is_some_and(|kind| kind != "human") {
+                    continue;
+                }
+                let text = match a.get("prompt") {
+                    Some(Value::String(s)) => s.clone(),
+                    Some(Value::Array(parts)) => parts
+                        .iter()
+                        .filter_map(|p| get_str(p, "text"))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    _ => continue,
+                };
+                if !text.trim().is_empty() {
+                    push_claude_user_string(&mut msgs, &text, ts, get_str(&v, "uuid").map(String::from));
+                }
+            }
             Some("assistant") => {
                 let Some(msg) = v.get("message") else {
                     continue;
@@ -8160,6 +8186,29 @@ mod tests {
         assert_eq!(msgs[2].blocks[0].text, "! ls");
         assert_eq!(msgs[2].blocks[1].text, "a.txt");
         assert_eq!(msgs[3].blocks[0].kind, "text");
+    }
+
+    #[test]
+    fn claude_mid_turn_message_is_a_user_message() {
+        // 2.1.292：这一轮还在跑时发的话记成 attachment/queued_command（下一步工具调用时交给模型）；
+        // 后台任务通知、别的会话发来的同样是 queued_command，不算用户说的
+        let lines = s(&[
+            r#"{"type":"user","uuid":"u1","message":{"role":"user","content":"跑一下测试"}}"#,
+            r#"{"type":"assistant","uuid":"a1","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"npm test"}}]}}"#,
+            r#"{"type":"queue-operation","operation":"enqueue","content":"顺便看看 lint"}"#,
+            r#"{"type":"attachment","uuid":"q1","timestamp":"2026-10-21T15:37:14.538Z","attachment":{"type":"queued_command","prompt":"顺便看看 lint","commandMode":"prompt","origin":{"kind":"human"},"humanTurn":true}}"#,
+            r#"{"type":"queue-operation","operation":"remove","content":"顺便看看 lint","reason":"absorbed_mid_turn"}"#,
+            r#"{"type":"attachment","uuid":"q2","attachment":{"type":"queued_command","prompt":"<task-notification>x</task-notification>","commandMode":"task-notification","origin":{"kind":"task-notification"}}}"#,
+            r#"{"type":"attachment","uuid":"q3","attachment":{"type":"queued_command","prompt":"别的会话发来的","commandMode":"prompt","origin":{"kind":"peer"}}}"#,
+            r#"{"type":"user","uuid":"u2","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}"#,
+        ]);
+        let msgs = parse_claude(&lines);
+        let users: Vec<_> = msgs
+            .iter()
+            .filter(|m| m.role == "user" && m.blocks.iter().any(|b| b.kind == "text"))
+            .map(|m| (m.blocks[0].text.as_str(), m.id.as_deref()))
+            .collect();
+        assert_eq!(users, vec![("跑一下测试", Some("u1")), ("顺便看看 lint", Some("q1"))]);
     }
 
     #[test]

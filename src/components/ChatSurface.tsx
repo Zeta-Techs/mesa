@@ -47,6 +47,7 @@ import ChatDecisionCard, { type ChatDecision } from "./ChatDecisionCard";
 import { connIssueDecision } from "../chat-decision";
 import { cwdChipLabel } from "../terminal-welcome";
 import { escInterruptSafe } from "../agent-caps";
+import { midTurnSpec, queuedNote, runningPlaceholder } from "../mid-turn-send";
 import type { TrustPrompt } from "../trust-prompt";
 import {
   approvalChoices,
@@ -114,6 +115,7 @@ export default function ChatSurface({
   onForkFrom,
   channel = null,
   onChannelReply,
+  onSendNow,
 }: {
   messages: ChatMessageDto[];
   state: "idle" | "detecting" | "linked" | "timeout";
@@ -213,6 +215,8 @@ export default function ChatSurface({
   channel?: ChatChannelSnapshot | null;
   /** 经 CLI 官方通道回复审批（Qwen / OpenCode / Codex） */
   onChannelReply?: (requestId: string, decision: ChannelReplyDecision) => void;
+  /** 往终端写一串键（「立即发送」：这家 CLI 让排着的那句马上处理的键，mid-turn-send.ts） */
+  onSendNow?: (keys: string) => void;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -579,6 +583,21 @@ export default function ChatSurface({
     return onSend(text);
   }
 
+  // 生成中又发一句：这家 CLI 怎么处理（下一步就交 / 这一轮说完再交）、怎么「立即发送」（2026-10-22 逐家实测）
+  const midTurn = midTurnSpec(agentId, { csiU: runtime?.submitCsiU ?? false });
+  const sendNow = running && generating && onSendNow ? midTurn.sendNow : null;
+  // 点过「立即发送」的那一轮不再给钮（那句还要等会话文件记下才从「排队」变正式，期间别让人连点）
+  const [sentNowAt, setSentNowAt] = useState<number | null>(null);
+  useEffect(() => {
+    if (!generating) setSentNowAt(null);
+  }, [generating]);
+  function pressSendNow() {
+    if (!sendNow) return;
+    setSentNowAt(Date.now());
+    onSendNow?.(sendNow.keys);
+  }
+  const note = queuedNote(midTurn);
+
   // 终端选中文字交给对话（终端会话「Mesa内嵌终端优化」的右键菜单 / 浮条 → 父级分派到这里）
   const externalToken = externalInsert?.token ?? null;
   useEffect(() => {
@@ -685,6 +704,14 @@ export default function ChatSurface({
               awaiting={attention === "confirm" || channel?.turn?.status === "awaiting_approval"}
               onEditResend={(text) => setSeedInsert(text)}
               onForkHere={onForkFrom}
+              queuedNote={{
+                ...note,
+                text: sentNowAt ? "已叫它马上处理" : note.text,
+                action:
+                  sendNow && !sentNowAt
+                    ? { label: sendNow.label, title: sendNow.title, onClick: pressSendNow }
+                    : null,
+              }}
             />
           )}
           {livePreview.length > 0 && (
@@ -775,7 +802,7 @@ export default function ChatSurface({
             : readOnly
             ? "这是只读分叉；可以提问、分析和规划…"
             : generating && running
-              ? "还在回复；现在发的话会排队，这一轮结束后处理…"
+              ? runningPlaceholder(midTurn, null)
             : messages.length === 0
               ? "问一个问题…"
               : undefined

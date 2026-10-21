@@ -212,6 +212,35 @@ for _ in range(4):
         break
 record["scenes"]["ready"] = [{"t": 0, "lines": lines()}]
 
+# 生成中再发一句（2026-10-22，聊天层「排队 / 立即发送」）：先发 QUEUE_FIRST 让它干活（默认 TRIGGER_TOOL，配合
+# E2E_PROBE_CMD="sleep 8; …" 让工具跑久一点），过 QUEUE_AFTER 秒再打 QUEUE_PROMPT、按 QUEUE_KEY（默认回车；Codex 的 Tab 写 \t），
+# 拍 QUEUE_SECS 秒。这句话是插进这一轮、排到这一轮后、还是打断这一轮，看假网关 E2E_DUMP 里它出现在哪个请求
+if os.environ.get("QUEUE_PROMPT"):
+    send(os.environ.get("QUEUE_FIRST", "TRIGGER_TOOL 跑一下"))
+    record["scenes"]["queue_before"] = film(float(os.environ.get("QUEUE_AFTER", "3")))
+    try:
+        pty_write(os.environ["QUEUE_PROMPT"].encode())
+        pump(0.4)
+        record["scenes"]["queue_typed"] = [{"t": 0, "lines": lines()}]
+        key = os.environ.get("QUEUE_KEY")
+        pty_write(key.encode().decode("unicode_escape").encode() if key else (b"\x1b[13u" if kitty[0] else b"\r"))
+        # QUEUE_THEN：排上之后再按的键（如 Claude 提示的 ctrl+enter「现在就发」：kitty 下是 \x1b[13;5u），隔 QUEUE_THEN_AFTER 秒
+        then = os.environ.get("QUEUE_THEN")
+        if then:
+            record["scenes"]["queue_queued"] = film(float(os.environ.get("QUEUE_THEN_AFTER", "1.5")), 0.3)
+            pty_write(then.encode().decode("unicode_escape").encode())
+    except OSError:
+        alive[0] = False
+    record["scenes"]["queue_after"] = film(float(os.environ.get("QUEUE_SECS", "25")), 0.5)
+    record["probe_created"] = os.path.exists(os.path.join(work, "mesa_probe.txt"))
+    record["kitty"] = kitty[0]; record["alive"] = alive[0]
+    json.dump(record, open(out_path, "w"), ensure_ascii=False, indent=1)
+    try: proc.terminate(force=True) if WIN else os.kill(pid, signal.SIGKILL)
+    except OSError: pass
+    shutil.rmtree(home, ignore_errors=True)
+    print(f"{agent}/{tier}: queue probe_created={record['probe_created']} kitty={kitty[0]} alive={alive[0]}")
+    sys.exit(0)
+
 send(os.environ.get("REPLY_PROMPT", "TRIGGER_SLOW 讲一段"))
 record["scenes"]["reply"] = film(float(os.environ.get("REPLY_SECS", "12")))
 pump(1)

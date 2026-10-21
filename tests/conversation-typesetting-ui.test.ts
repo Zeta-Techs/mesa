@@ -167,3 +167,28 @@ test("做完的一轮里，中途说明降一级（ccode-chat-aside）；还在�
     await ui.close();
   }
 });
+
+test("排队气泡按这家 CLI 的行为写，「立即发送」只挂在最后一条排着的气泡上", async () => {
+  const ui = await mount();
+  try {
+    let pressed = 0;
+    const queued = (text: string, s: number) => ({ ...m("user", [block("text", text)], s), queued: true });
+    await ui.render({
+      messages: [m("user", [block("text", "先跑测试")], 0), queued("顺便看 lint", 5), queued("再看类型", 6)],
+      working: true,
+      queuedNote: {
+        text: "下一步时交给它",
+        title: "t",
+        action: { label: "立即发送", title: "按 Esc", onClick: () => pressed++ },
+      },
+    });
+    const notes = Array.from(ui.el.querySelectorAll('span[title="t"]'));
+    assert.deepEqual(notes.map((n) => n.textContent), ["下一步时交给它", "下一步时交给它"]);
+    const buttons = Array.from(ui.el.querySelectorAll("button")).filter((b) => b.textContent === "立即发送");
+    assert.equal(buttons.length, 1);
+    await ui.click("立即发送");
+    assert.equal(pressed, 1);
+  } finally {
+    await ui.close();
+  }
+});

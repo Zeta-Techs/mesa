@@ -9867,6 +9867,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                           tabActionsRef.current.get(t.id)?.answerTrust(accept);
                         }}
                         onInterrupt={chatInterrupt}
+                        onSendNow={(keys) => tabActionsRef.current.get(t.id)?.writePty(keys)}
                         onApprovalKey={(key) => {
                           holdAutoPeek(t.id);
                           chatApprovalKey(key);
