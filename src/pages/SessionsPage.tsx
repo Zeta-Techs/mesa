@@ -391,11 +391,11 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
           setSearchingBody(false);
           setError(null);
         })
-        .catch(() => {
+        .catch((reason) => {
           if (searchGenRef.current !== gen) return;
           setContentHits(null);
           setSearchingBody(false);
-          setError("会话内容搜索失败，请稍后重试");
+          setError(`会话内容搜索失败：${String(reason)}`);
         });
     }, 280);
     return () => window.clearTimeout(timer);

@@ -309,8 +309,7 @@ fn snippet_around(text: &str, tokens: &[String]) -> Option<String> {
     }
     let at = best?;
     let chars: Vec<char> = text.chars().collect();
-    // at 是字节下标；转成字符下标
-    let char_at = text[..at].chars().count();
+    let char_at = orig_char_index(text, at);
     let start = char_at.saturating_sub(SNIPPET_RADIUS);
     let end = (char_at + SNIPPET_RADIUS + 8).min(chars.len());
     let mut s: String = chars[start..end].iter().collect();
@@ -326,6 +325,19 @@ fn snippet_around(text: &str, tokens: &[String]) -> Option<String> {
     } else {
         Some(s)
     }
+}
+
+/// 小写串里的字节下标 → 原文字符下标。部分字符小写后 UTF-8 长度会变（İ、K 开尔文号、Ω 欧姆号），
+/// 直接拿去切原文会落在字符中间而 panic，整个搜索命令随之失败。
+fn orig_char_index(text: &str, lower_byte: usize) -> usize {
+    let mut acc = 0usize;
+    for (i, c) in text.chars().enumerate() {
+        if acc >= lower_byte {
+            return i;
+        }
+        acc += c.to_lowercase().map(char::len_utf8).sum::<usize>();
+    }
+    text.chars().count()
 }
 
 fn ensure_table(conn: &Connection) -> Result<(), String> {
@@ -593,7 +605,7 @@ fn text_needle(m: &sessions::ChatMessageDto, tokens: &[String]) -> Option<String
             let Some(byte_at) = lower.find(t.as_str()) else {
                 continue;
             };
-            let char_at = lower[..byte_at].chars().count();
+            let char_at = orig_char_index(&b.text, byte_at);
             let chars: Vec<char> = b.text.chars().collect();
             let tok_len = t.chars().count();
             let to = (char_at + tok_len + 24).min(chars.len());
@@ -809,6 +821,14 @@ mod tests {
         let text = "前面垫一些无关的话，然后说到消融实验设计，后面还有别的。";
         let sn = snippet_around(text, &["消融".into()]).unwrap();
         assert!(sn.contains("消融"));
+    }
+
+    #[test]
+    fn snippet_survives_case_folding_that_changes_byte_length() {
+        // İ 小写后多一个字节、K（开尔文号）少两个：命中位置不得错切到「字」中间
+        let text = format!("{}回复超 1500 字的说明", "İK".repeat(30));
+        let sn = snippet_around(&text, &["字".into()]).unwrap();
+        assert!(sn.contains("1500 字"), "{sn}");
     }
 
     #[test]
