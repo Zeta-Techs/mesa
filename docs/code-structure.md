@@ -123,7 +123,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   已配对手机的「上次用」行（tests/phone-drop.test.ts）
   phone-drop-store.ts        # 从手机添加界面状态（独立 zustand）：接收状态、收到的列表、弹层、目标输入框；后端三事件只在
                              #   usePhoneDropEvents（App 挂一次）里接，输入框只从 deliveries 取自己那份（防多监听器各改各的）；
-                             #   starting 期间丢弃旧会话迟到的「已停止」事件；openForComposer：有已配对手机就直接开始接收不弹窗
+                             #   starting 期间丢弃旧会话迟到的「已停止」事件；openForComposer：有已配对手机就直接开始接收不弹窗；
+                             #   没有目标输入框时收到东西自动弹窗（onArrive 交 App 发系统通知）
   components/PhoneDropDialog.tsx # 从手机添加弹层（App 全局一处；入口：聊天输入框「+」/ ⌘K / 收件箱「手机」）：二维码（后端 SVG，
                              #   data: URL 进 img）+ 地址复制 + 换地址（电脑名 / 各网卡 IP）+ 「扫了打不开？」；有已配对手机时顶上是状态卡、
                              #   二维码收进「配对新手机」、已配对的手机折叠（移除）；收到的列表带 96px 缩略图（读一次画小图只留小图，
@@ -1190,6 +1191,8 @@ src-tauri/src/
                              #   2026-10-21 记住这台手机：/p/<配对令牌>/ 扫码即配对（pair）→ /d/<设备令牌>/ 主屏网页；配对簿
                              #   phone-devices.json 只存令牌 SHA-256、最多 8 台、可移除，另记固定端口与地址偏好；电脑 mDNS 名
                              #   （mdns_hostname）作二维码主机，start_with 可注入网卡/电脑名/暂存区/配对簿供测试，
+                             #   同日常驻等候：配对簿 standby 开且有配对手机时 ensure_standby 随 Mesa 开着只认 /d/，主动接收结束自动转回，
+                             #   每 20 秒比网卡换绑；命令 phone_drop_sync / phone_drop_set_standby，
                              #   停止 / 30 分钟无新内容 / 退出（lib.rs ExitRequested）即关；手机页 resources/phone-drop/ 三文件 include_str!；
                              #   收到的落 <配置根>/phone-inbox/（索引 items.json 进程锁+文件锁+原子写，7 天清理，.part 1 小时）；
                              #   place_into 只走已有入口（PDF save_paper_bytes / 图片 reader::write_notes_asset / 文字 projects::append_clip_at，

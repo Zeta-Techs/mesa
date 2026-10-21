@@ -27,6 +27,10 @@ const MAX_ACTIVE_UPLOADS: usize = 3;
 /// 不能让卡死的连接把名额占满、之后一律 503
 const STALL_AFTER: Duration = Duration::from_secs(120);
 const IDLE_STOP: Duration = Duration::from_secs(30 * 60);
+/// 合计上限按 24 小时窗口算（常驻等候一开就是几天，不能一直累加）
+const BYTES_WINDOW: Duration = Duration::from_secs(24 * 3600);
+/// 多久看一次网卡变了没有（换了 Wi-Fi 要换绑新地址，配对的手机才连得上）
+const NET_CHECK: Duration = Duration::from_secs(20);
 const STAGE_TTL_SECS: i64 = 7 * 24 * 3600;
 const PART_TTL_SECS: i64 = 3600;
 const MAX_NAME_CHARS: usize = 80;
@@ -483,8 +487,22 @@ struct DeviceBook {
     /// 二维码用电脑名还是 IP：人在「换一个地址」里改选过才记（name / ip）
     #[serde(default)]
     host_pref: Option<String>,
+    /// Mesa 开着就随时接收已配对的手机（2026-10-21 用户拍板，缺省开）；关了回到「人点了才收」
+    #[serde(default)]
+    standby: Option<bool>,
     #[serde(default)]
     devices: Vec<PairedDevice>,
+}
+
+impl DeviceBook {
+    fn standby_enabled(&self) -> bool {
+        self.standby.unwrap_or(true)
+    }
+
+    /// 要不要常驻等候：开着且至少配对了一台
+    fn standby_wanted(&self) -> bool {
+        self.standby_enabled() && !self.devices.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -616,13 +634,18 @@ fn device_name(user_agent: &str, taken: &[String]) -> String {
 // ===== 接收会话 =====
 
 struct Session {
-    /// 扫码配对令牌：每次开始接收新开，只在本次接收期间有效
-    pair_token: String,
+    /// 扫码配对令牌：每次开始接收新开，只在本次接收期间有效；常驻等候没有（扫码配对要人点开始）
+    pair_token: Option<String>,
+    /// 常驻等候：只认已配对手机的设备地址，不出二维码、不因空闲停止
+    standby: bool,
+    /// 本次绑定的网卡地址（看网卡变没变）；测试里不跟网络
+    bound: Vec<Ipv4Addr>,
+    follow_network: bool,
     /// 允许的 Host 头：每个绑定 IP:端口 + 电脑名:端口（防 DNS 重绑定）
     hosts: Vec<String>,
     /// 二维码用的主机（电脑名或 IP）
     host: String,
-    url: String,
+    url: Option<String>,
     port: u16,
     /// 固定端口被占时的提醒（这次临时换了端口）
     port_note: Option<String>,
@@ -633,7 +656,8 @@ struct Session {
     connected: AtomicBool,
     last_device: Mutex<Option<String>>,
     last_item: Mutex<Instant>,
-    bytes_total: AtomicU64,
+    /// 24 小时窗口内收到的字节（窗口起点, 累计）
+    bytes_window: Mutex<(Instant, u64)>,
     received: AtomicU32,
     uploads: Mutex<HashMap<u64, Instant>>,
     next_upload: AtomicU64,
@@ -651,17 +675,38 @@ impl Session {
         self.last_device.lock().ok().and_then(|g| g.clone())
     }
 
-    fn emit_state(&self, receiving: bool, reason: Option<&str>) {
+    /// running = 服务开着（主动接收或常驻等候）；standby_next = 这次停下后会转常驻等候
+    fn emit_state(&self, running: bool, reason: Option<&str>, standby_next: bool) {
         self.emit(
             "phone-drop-state",
             serde_json::json!({
-                "receiving": receiving,
+                "receiving": running && !self.standby,
+                "standby": running && self.standby,
+                "standbyNext": standby_next,
                 "connected": self.connected.load(Ordering::Acquire),
                 "received": self.received.load(Ordering::Acquire),
                 "lastDevice": self.last_device(),
                 "reason": reason,
             }),
         );
+    }
+
+    /// 24 小时窗口内再收 len 字节会不会超上限；不超就记上
+    fn reserve_bytes(&self, len: u64) -> bool {
+        let mut w = self.bytes_window.lock().unwrap_or_else(|e| e.into_inner());
+        if w.0.elapsed() >= BYTES_WINDOW {
+            *w = (Instant::now(), 0);
+        }
+        if w.1 + len > MAX_SESSION_BYTES {
+            return false;
+        }
+        w.1 += len;
+        true
+    }
+
+    fn release_bytes(&self, len: u64) {
+        let mut w = self.bytes_window.lock().unwrap_or_else(|e| e.into_inner());
+        w.1 = w.1.saturating_sub(len);
     }
 
     /// 手机打开了页面：记下是哪台，第一次连上或换了手机才报状态
@@ -677,7 +722,7 @@ impl Session {
         };
         let first = !self.connected.swap(true, Ordering::AcqRel);
         if first || changed_device {
-            self.emit_state(true, None);
+            self.emit_state(true, None, false);
         }
     }
 
@@ -762,6 +807,8 @@ struct LaunchSpec {
     addresses: Vec<PhoneAddrDto>,
     stage: PathBuf,
     book: PathBuf,
+    standby: bool,
+    follow_network: bool,
 }
 
 fn launch(spec: LaunchSpec, app: Option<tauri::AppHandle>) -> Result<Running, String> {
@@ -783,13 +830,19 @@ fn launch(spec: LaunchSpec, app: Option<tauri::AppHandle>) -> Result<Running, St
         }
     };
     let mut hosts: Vec<String> = bound.iter().map(|ip| format!("{ip}:{port}")).collect();
+    let bound: Vec<Ipv4Addr> = bound;
     if let Some(h) = &spec.hostname {
         hosts.push(format!("{h}:{port}"));
     }
-    let pair_token = uuid::Uuid::new_v4().simple().to_string();
+    let pair_token = (!spec.standby).then(|| uuid::Uuid::new_v4().simple().to_string());
     let session = Arc::new(Session {
-        url: format!("http://{}:{port}/p/{pair_token}/", spec.host),
+        url: pair_token
+            .as_ref()
+            .map(|t| format!("http://{}:{port}/p/{t}/", spec.host)),
         pair_token,
+        standby: spec.standby,
+        bound,
+        follow_network: spec.follow_network,
         hosts,
         host: spec.host,
         port,
@@ -801,7 +854,7 @@ fn launch(spec: LaunchSpec, app: Option<tauri::AppHandle>) -> Result<Running, St
         connected: AtomicBool::new(false),
         last_device: Mutex::new(None),
         last_item: Mutex::new(Instant::now()),
-        bytes_total: AtomicU64::new(0),
+        bytes_window: Mutex::new((Instant::now(), 0)),
         received: AtomicU32::new(0),
         uploads: Mutex::new(HashMap::new()),
         next_upload: AtomicU64::new(0),
@@ -818,15 +871,32 @@ fn launch(spec: LaunchSpec, app: Option<tauri::AppHandle>) -> Result<Running, St
     })
 }
 
+fn network_changed(s: &Session) -> bool {
+    let mut now: Vec<Ipv4Addr> = lan_candidates().into_iter().map(|(ip, _)| ip).collect();
+    let mut was = s.bound.clone();
+    now.sort();
+    was.sort();
+    now != was
+}
+
 fn serve(servers: Vec<tiny_http::Server>, s: Arc<Session>) {
     let mut reason = "stopped";
+    let mut last_net_check = Instant::now();
     'outer: loop {
         if s.stop.load(Ordering::Acquire) {
             break;
         }
-        if s.idle_for() >= IDLE_STOP {
+        // 常驻等候不因空闲停；主动接收 30 分钟没新东西就停（有配对的手机就转回常驻等候）
+        if !s.standby && s.idle_for() >= IDLE_STOP {
             reason = "idle";
             break;
+        }
+        if s.follow_network && last_net_check.elapsed() >= NET_CHECK {
+            last_net_check = Instant::now();
+            if network_changed(&s) {
+                reason = "network";
+                break;
+            }
         }
         for server in &servers {
             match server.recv_timeout(Duration::from_millis(80)) {
@@ -859,7 +929,77 @@ fn serve(servers: Vec<tiny_http::Server>, s: Arc<Session>) {
     if reason != "stopped" {
         crate::logbuf::record("info", "phone-drop", &format!("接收已停止（{reason}）"));
     }
-    s.emit_state(false, Some(reason));
+    let standby_next = !crate::process::shutting_down()
+        && with_book(&s.book, |b| (b.standby_wanted(), false)).unwrap_or(false);
+    s.emit_state(false, Some(reason), standby_next);
+    // 自己停下的（空闲 / 网络变了 / 出错）：有配对的手机就接着常驻等候。人点的停止由 stop 命令自己接
+    if reason != "stopped" && standby_next {
+        let app = s.app.clone();
+        let (stage, book, follow) = (s.stage.clone(), s.book.clone(), s.follow_network);
+        let _ = std::thread::Builder::new()
+            .name("phone-drop-standby".into())
+            .spawn(move || {
+                // 网络刚变时网卡可能还没拿到地址，稍等再绑
+                std::thread::sleep(Duration::from_millis(if reason == "network" { 1500 } else { 50 }));
+                let _ = ensure_standby_with(app, lan_candidates(), mdns_hostname(), stage, book, follow);
+            });
+    }
+}
+
+/// 常驻等候：没在接收、配对簿说要等（开着且有配对的手机）就在固定端口上开一个只认设备地址的服务；
+/// 不想要了（关了开关 / 手机全移除）就把正在等候的停掉。主动接收中不动它
+fn ensure_standby_with(
+    app: Option<tauri::AppHandle>,
+    candidates: Vec<(Ipv4Addr, String)>,
+    hostname: Option<String>,
+    stage: PathBuf,
+    book: PathBuf,
+    follow_network: bool,
+) -> Result<(), String> {
+    let _life = LIFECYCLE.lock().unwrap_or_else(|e| e.into_inner());
+    let (wanted, port) = with_book(&book, |b| ((b.standby_wanted(), b.port), false))?;
+    let current = {
+        let g = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
+        g.as_ref()
+            .filter(|r| !r.session.stop.load(Ordering::Acquire))
+            .map(|r| r.session.standby)
+    };
+    match (current, wanted) {
+        // 主动接收中：等它结束再说
+        (Some(false), _) | (Some(true), true) | (None, false) => return Ok(()),
+        (Some(true), false) => {
+            let old = RUNNING.lock().unwrap_or_else(|e| e.into_inner()).take();
+            if let Some(old) = old {
+                stop_running(old);
+            }
+            return Ok(());
+        }
+        (None, true) => {}
+    }
+    if candidates.is_empty() {
+        return Ok(());
+    }
+    let spec = LaunchSpec {
+        ips: candidates.iter().map(|(ip, _)| *ip).collect(),
+        host: candidates[0].0.to_string(),
+        addresses: Vec::new(),
+        hostname,
+        port,
+        stage,
+        book,
+        standby: true,
+        follow_network,
+    };
+    let running = launch(spec, app)?;
+    running.session.emit_state(true, None, false);
+    *RUNNING.lock().unwrap_or_else(|e| e.into_inner()) = Some(running);
+    crate::logbuf::record("info", "phone-drop", "开始等配对的手机");
+    Ok(())
+}
+
+fn ensure_standby(app: Option<tauri::AppHandle>) -> Result<(), String> {
+    let book = devices_path().ok_or("无法确定 Mesa 数据目录")?;
+    ensure_standby_with(app, lan_candidates(), mdns_hostname(), ensure_stage_dir()?, book, true)
 }
 
 fn stop_running(r: Running) {
@@ -951,7 +1091,7 @@ fn route(s: &Session, rq: &mut tiny_http::Request) -> tiny_http::Response<Cursor
         return not_found();
     }
     let access = match kind {
-        "p" if token_eq(tok, &s.pair_token) => Access::Pairing,
+        "p" if s.pair_token.as_deref().is_some_and(|t| token_eq(tok, t)) => Access::Pairing,
         "d" => match device_by_token(&s.book, tok) {
             Some(d) => Access::Device(d),
             None => return not_found(),
@@ -1055,7 +1195,7 @@ fn record_item(s: &Session, item: StoredItem, device: Option<&str>) -> Result<()
     }
     s.received.fetch_add(1, Ordering::AcqRel);
     s.emit("phone-drop-item", dto);
-    s.emit_state(true, None);
+    s.emit_state(true, None, false);
     Ok(())
 }
 
@@ -1099,12 +1239,12 @@ fn receive_file(
     if len > MAX_FILE_BYTES {
         return err_json(413, "too_large");
     }
-    if s.bytes_total.load(Ordering::Acquire) + len > MAX_SESSION_BYTES {
-        return err_json(413, "session_full");
-    }
     let Some(slot) = s.claim_upload() else {
         return err_json(503, "busy");
     };
+    if !s.reserve_bytes(len) {
+        return err_json(413, "session_full");
+    }
     let raw = header_value(rq, "X-Mesa-Name").map(|v| percent_decode(&v)).unwrap_or_default();
     let display = display_name(&raw);
     s.emit("phone-drop-incoming", serde_json::json!({ "name": display }));
@@ -1137,11 +1277,13 @@ fn receive_file(
         Ok(v) => v,
         Err(_) => {
             let _ = fs::remove_file(&part);
+            s.release_bytes(len);
             return err_json(400, "incomplete");
         }
     };
     if total != len {
         let _ = fs::remove_file(&part);
+        s.release_bytes(len);
         return err_json(400, "incomplete");
     }
     let display = with_sniffed_ext(display, &head);
@@ -1149,13 +1291,14 @@ fn receive_file(
     let file_name = unique_stage_name(&s.stage, &display);
     if fs::rename(&part, s.stage.join(&file_name)).is_err() {
         let _ = fs::remove_file(&part);
+        s.release_bytes(len);
         return err_json(500, "store_failed");
     }
-    s.bytes_total.fetch_add(len, Ordering::AcqRel);
     let mut item = new_item(kind, display, len);
     item.file = Some(file_name.clone());
     if record_item(s, item, device).is_err() {
         let _ = fs::remove_file(s.stage.join(&file_name));
+        s.release_bytes(len);
         return err_json(500, "store_failed");
     }
     json_reply(200, serde_json::json!({ "ok": true }))
@@ -1204,7 +1347,12 @@ fn receive_text(
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PhoneDropStatusDto {
+    /// 主动接收中（有二维码、可配新手机）
     pub receiving: bool,
+    /// 常驻等候中：没在主动接收，但已配对的手机随时能发
+    pub standby: bool,
+    /// 「Mesa 开着就随时接收已配对的手机」开关
+    pub standby_enabled: bool,
     pub connected: bool,
     /// 扫码配对地址（二维码内容）
     pub url: Option<String>,
@@ -1221,9 +1369,11 @@ pub struct PhoneDropStatusDto {
     pub port_note: Option<String>,
 }
 
-fn idle_status() -> PhoneDropStatusDto {
+fn idle_status(standby_enabled: bool) -> PhoneDropStatusDto {
     PhoneDropStatusDto {
         receiving: false,
+        standby: false,
+        standby_enabled,
         connected: false,
         url: None,
         qr_svg: None,
@@ -1249,11 +1399,14 @@ fn qr_svg(url: &str) -> Option<String> {
 }
 
 fn status_of(s: &Session) -> PhoneDropStatusDto {
+    let running = !s.stop.load(Ordering::Acquire);
     PhoneDropStatusDto {
-        receiving: !s.stop.load(Ordering::Acquire),
+        receiving: running && !s.standby,
+        standby: running && s.standby,
+        standby_enabled: with_book(&s.book, |b| (b.standby_enabled(), false)).unwrap_or(true),
         connected: s.connected.load(Ordering::Acquire),
-        url: Some(s.url.clone()),
-        qr_svg: qr_svg(&s.url),
+        url: s.url.clone(),
+        qr_svg: s.url.as_deref().and_then(qr_svg),
         host: Some(s.host.clone()),
         addresses: s.addresses.clone(),
         received: s.received.load(Ordering::Acquire),
@@ -1271,6 +1424,7 @@ fn start_with(
     stage: PathBuf,
     book: PathBuf,
     is_mac: bool,
+    follow_network: bool,
 ) -> Result<PhoneDropStatusDto, String> {
     let _life = LIFECYCLE.lock().unwrap_or_else(|e| e.into_inner());
     let wanted = bind
@@ -1289,7 +1443,8 @@ fn start_with(
         let g = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(r) = g.as_ref() {
             let same = wanted.as_deref().is_none_or(|w| w == r.session.host);
-            if same && !r.session.stop.load(Ordering::Acquire) {
+            // 常驻等候中点开始：换成主动接收（同一固定端口，重开一次）
+            if same && !r.session.standby && !r.session.stop.load(Ordering::Acquire) {
                 return Ok(status_of(&r.session));
             }
         }
@@ -1321,6 +1476,8 @@ fn start_with(
         port: saved_port,
         stage,
         book: book.clone(),
+        standby: false,
+        follow_network,
     };
     let running = launch(spec, app)?;
     // 记住固定端口（第一次；临时换端口那次不改）与人改选过的主机类型
@@ -1359,6 +1516,7 @@ fn start_impl(app: Option<tauri::AppHandle>, bind: Option<String>) -> Result<Pho
         ensure_stage_dir()?,
         book,
         cfg!(target_os = "macos"),
+        true,
     )
 }
 
@@ -1372,23 +1530,65 @@ pub async fn phone_drop_start(
         .map_err(|e| format!("开始接收失败: {e}"))?
 }
 
+fn current_status() -> PhoneDropStatusDto {
+    let g = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
+    match g.as_ref() {
+        Some(r) if !r.session.stop.load(Ordering::Acquire) => status_of(&r.session),
+        _ => {
+            let enabled = devices_path()
+                .and_then(|p| with_book(&p, |b| (b.standby_enabled(), false)).ok())
+                .unwrap_or(true);
+            idle_status(enabled)
+        }
+    }
+}
+
+/// 停止主动接收：二维码作废；有配对的手机且开着「随时接收」就转回常驻等候
 #[tauri::command]
-pub async fn phone_drop_stop() -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let _life = LIFECYCLE.lock().unwrap_or_else(|e| e.into_inner());
-        shutdown();
+pub async fn phone_drop_stop(app: tauri::AppHandle) -> Result<PhoneDropStatusDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        {
+            let _life = LIFECYCLE.lock().unwrap_or_else(|e| e.into_inner());
+            shutdown();
+        }
+        ensure_standby(Some(app))?;
+        Ok(current_status())
     })
     .await
-    .map_err(|e| format!("停止接收失败: {e}"))
+    .map_err(|e| format!("停止接收失败: {e}"))?
 }
 
 #[tauri::command]
 pub fn phone_drop_status() -> PhoneDropStatusDto {
-    let g = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
-    match g.as_ref() {
-        Some(r) if !r.session.stop.load(Ordering::Acquire) => status_of(&r.session),
-        _ => idle_status(),
-    }
+    current_status()
+}
+
+/// 启动时与配对名单变了之后对一次：该常驻等候就开，不该就停
+#[tauri::command]
+pub async fn phone_drop_sync(app: tauri::AppHandle) -> Result<PhoneDropStatusDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_standby(Some(app))?;
+        Ok(current_status())
+    })
+    .await
+    .map_err(|e| format!("同步接收状态失败: {e}"))?
+}
+
+/// 「Mesa 开着就随时接收已配对的手机」开关
+#[tauri::command]
+pub async fn phone_drop_set_standby(app: tauri::AppHandle, enabled: bool) -> Result<PhoneDropStatusDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let book = devices_path().ok_or("无法确定 Mesa 数据目录")?;
+        with_book(&book, |b| {
+            let changed = b.standby != Some(enabled);
+            b.standby = Some(enabled);
+            ((), changed)
+        })?;
+        ensure_standby(Some(app))?;
+        Ok(current_status())
+    })
+    .await
+    .map_err(|e| format!("设置失败: {e}"))?
 }
 
 fn devices_at(book: &Path) -> Result<Vec<PhoneDeviceDto>, String> {
@@ -1414,12 +1614,14 @@ fn remove_device_at(book: &Path, id: &str) -> Result<(), String> {
     })
 }
 
-/// 移除一台手机：它主屏上的网页立刻失效，要再用得重新扫码
+/// 移除一台手机：它主屏上的网页立刻失效，要再用得重新扫码；一台都不剩就不再常驻等候
 #[tauri::command]
-pub async fn phone_drop_remove_device(id: String) -> Result<(), String> {
+pub async fn phone_drop_remove_device(app: tauri::AppHandle, id: String) -> Result<PhoneDropStatusDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let book = devices_path().ok_or("无法确定 Mesa 数据目录")?;
-        remove_device_at(&book, &id)
+        remove_device_at(&book, &id)?;
+        ensure_standby(Some(app))?;
+        Ok(current_status())
     })
     .await
     .map_err(|e| format!("移除失败: {e}"))?
@@ -1764,6 +1966,10 @@ mod tests {
     }
 
     fn test_launch(stage: &Path, book: &Path, port: Option<u16>) -> Running {
+        test_launch_mode(stage, book, port, false)
+    }
+
+    fn test_launch_mode(stage: &Path, book: &Path, port: Option<u16>, standby: bool) -> Running {
         launch(
             LaunchSpec {
                 ips: vec![Ipv4Addr::LOCALHOST],
@@ -1773,6 +1979,8 @@ mod tests {
                 addresses: Vec::new(),
                 stage: stage.to_path_buf(),
                 book: book.to_path_buf(),
+                standby,
+                follow_network: false,
             },
             None,
         )
@@ -1813,13 +2021,13 @@ mod tests {
 
     fn post(r: &Running, sub: &str, name: Option<&str>, len: usize, body: &[u8], close: bool) -> (u16, String) {
         let name_header = name.map(|n| format!("X-Mesa-Name: {n}\r\n")).unwrap_or_default();
-        let path = format!("/p/{}/{sub}", r.session.pair_token);
+        let path = format!("/p/{}/{sub}", r.session.pair_token.as_deref().unwrap_or("-"));
         post_at(r, &path, &name_header, len, body, close)
     }
 
     /// 配对一台手机，返回设备地址前缀 /d/<令牌>/
     fn pair_phone(r: &Running, ua: &str) -> (u16, String) {
-        let path = format!("/p/{}/pair", r.session.pair_token);
+        let path = format!("/p/{}/pair", r.session.pair_token.as_deref().unwrap_or("-"));
         let (code, body) = post_at(r, &path, &format!("User-Agent: {ua}\r\n"), 0, b"", false);
         let dev = serde_json::from_str::<serde_json::Value>(&body)
             .ok()
@@ -1834,7 +2042,7 @@ mod tests {
         let book = book_path("serve");
         let r = test_launch(&stage, &book, None);
         let host = addr(&r);
-        let token = r.session.pair_token.clone();
+        let token = r.session.pair_token.clone().unwrap();
         let (code, body) = get(&r, &format!("/p/{token}/"), &host);
         assert_eq!(code, 200);
         assert!(body.contains("发到 Mesa"));
@@ -1931,7 +2139,7 @@ mod tests {
 
         // 重开接收：扫码令牌换新、端口照旧（固定端口由调用方传入），设备地址照样能用
         let port = r.session.port;
-        let old_pair = r.session.pair_token.clone();
+        let old_pair = r.session.pair_token.clone().unwrap();
         stop_running(r);
         let r = test_launch(&stage, &book, Some(port));
         assert_eq!(r.session.port, port);
@@ -1963,14 +2171,18 @@ mod tests {
         fs::remove_file(&book).ok();
     }
 
+    /// 用到全局 RUNNING 的测试串行跑
+    static START_TESTS: Mutex<()> = Mutex::new(());
+
     #[test]
     fn start_remembers_port_and_address_choice() {
+        let _serial = START_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         let stage = temp_dir("start");
         let book = book_path("start");
         let lo = vec![(Ipv4Addr::LOCALHOST, "lo0".to_string())];
         let name = Some("testmac.local".to_string());
         let start = |bind: Option<&str>| {
-            start_with(None, bind.map(str::to_string), lo.clone(), name.clone(), stage.clone(), book.clone(), true)
+            start_with(None, bind.map(str::to_string), lo.clone(), name.clone(), stage.clone(), book.clone(), true, false)
         };
         let first = start(None).unwrap();
         assert_eq!(first.host.as_deref(), Some("testmac.local"), "macOS 默认用电脑名");
@@ -2042,6 +2254,96 @@ mod tests {
                 n.starts_with(book.file_stem().unwrap().to_string_lossy().as_ref()) && n.contains("corrupt-")
             });
         assert!(kept, "原件留证");
+    }
+
+    #[test]
+    fn standby_only_lets_paired_phones_in() {
+        let stage = temp_dir("standby");
+        let book = book_path("standby");
+        // 先主动接收配对一台，记下设备地址
+        let r = test_launch(&stage, &book, None);
+        let (_, dev) = pair_phone(&r, "Mozilla/5.0 (iPhone)");
+        let port = r.session.port;
+        stop_running(r);
+        // 常驻等候：设备地址能发，扫码配对不开放
+        let r = test_launch_mode(&stage, &book, Some(port), true);
+        assert!(r.session.pair_token.is_none() && r.session.url.is_none());
+        let host = addr(&r);
+        assert_eq!(get(&r, &format!("{dev}state"), &host).0, 200);
+        let text = "常驻时发来的";
+        assert_eq!(post_at(&r, &format!("{dev}text"), "", text.len(), text.as_bytes(), false).0, 200);
+        assert_eq!(post_at(&r, "/p/anything/pair", "", 0, b"", false).0, 404, "常驻等候不能配对");
+        let st = status_of(&r.session);
+        assert!(st.standby && !st.receiving && st.url.is_none() && st.qr_svg.is_none());
+        stop_running(r);
+        fs::remove_dir_all(&stage).ok();
+        fs::remove_file(&book).ok();
+    }
+
+    #[test]
+    fn standby_follows_switch_devices_and_active_sessions() {
+        let _serial = START_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let stage = temp_dir("ensure");
+        let book = book_path("ensure");
+        let lo = vec![(Ipv4Addr::LOCALHOST, "lo0".to_string())];
+        let name = Some("testmac.local".to_string());
+        let ensure = || ensure_standby_with(None, lo.clone(), name.clone(), stage.clone(), book.clone(), false);
+        let running_mode = || {
+            RUNNING
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|r| r.session.standby)
+        };
+        ensure().unwrap();
+        assert_eq!(running_mode(), None, "没配对的手机不等候");
+        with_book(&book, |b| {
+            b.devices.push(PairedDevice {
+                id: "d1".into(),
+                name: "iPhone".into(),
+                token_sha256: sha256_hex("tok"),
+                paired_at: String::new(),
+                last_seen_at: None,
+            });
+            ((), true)
+        })
+        .unwrap();
+        ensure().unwrap();
+        assert_eq!(running_mode(), Some(true), "有配对的手机：Mesa 开着就等");
+        // 点开始：换成主动接收（有二维码）；停止后再对一次：回到常驻等候
+        let st = start_with(None, None, lo.clone(), name.clone(), stage.clone(), book.clone(), true, false).unwrap();
+        assert!(st.receiving && st.url.is_some());
+        assert_eq!(running_mode(), Some(false));
+        ensure().unwrap();
+        assert_eq!(running_mode(), Some(false), "主动接收中不被常驻等候顶掉");
+        shutdown();
+        ensure().unwrap();
+        assert_eq!(running_mode(), Some(true));
+        // 关掉开关：停
+        with_book(&book, |b| {
+            b.standby = Some(false);
+            ((), true)
+        })
+        .unwrap();
+        ensure().unwrap();
+        assert_eq!(running_mode(), None);
+        shutdown();
+        fs::remove_dir_all(&stage).ok();
+        fs::remove_file(&book).ok();
+    }
+
+    #[test]
+    fn byte_window_reserves_and_releases() {
+        let stage = temp_dir("bytes");
+        let book = book_path("bytes");
+        let r = test_launch(&stage, &book, None);
+        assert!(r.session.reserve_bytes(MAX_SESSION_BYTES - 10));
+        assert!(!r.session.reserve_bytes(11), "超窗口上限");
+        r.session.release_bytes(100);
+        assert!(r.session.reserve_bytes(11), "没收完的退回去");
+        stop_running(r);
+        fs::remove_dir_all(&stage).ok();
+        fs::remove_file(&book).ok();
     }
 
     #[test]
@@ -2205,8 +2507,8 @@ mod tests {
         assert!(svg.contains("<svg"));
     }
 
-    /// 真机核对用：在本机局域网地址上开一个接收会话，打印地址后挂着（默认 300 秒，
-    /// PHONE_DROP_LIVE_SECS 可改）；暂存区重定向到临时目录，不碰真实数据目录。
+    /// 真机核对用：在本机局域网地址上开一个接收会话，打印地址后挂着（主动接收 PHONE_DROP_LIVE_ACTIVE_SECS，
+    /// 之后转常驻等候 PHONE_DROP_LIVE_SECS，默认各 300 秒）；暂存区与配对簿重定向到临时目录，不碰真实数据目录。
     /// `cargo test --lib phone_drop::tests::live_lan_session -- --ignored --nocapture`
     #[test]
     #[ignore]
@@ -2217,11 +2519,15 @@ mod tests {
         println!("PHONE_DROP_URL={}", status.url.unwrap_or_default());
         println!("PHONE_DROP_STAGE={}", tmp.join("phone-inbox").display());
         println!("PHONE_DROP_ADDRS={:?}", status.addresses);
-        let secs: u64 = std::env::var("PHONE_DROP_LIVE_SECS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(300);
-        std::thread::sleep(Duration::from_secs(secs));
+        let secs = |key: &str, default: u64| -> u64 {
+            std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+        };
+        // 先主动接收（可扫码配对）；PHONE_DROP_LIVE_ACTIVE_SECS 后像关掉弹窗一样停下，有配对的手机就转常驻等候
+        std::thread::sleep(Duration::from_secs(secs("PHONE_DROP_LIVE_ACTIVE_SECS", 300)));
+        shutdown();
+        ensure_standby(None).expect("常驻等候");
+        println!("PHONE_DROP_STANDBY={:?}", current_status().standby);
+        std::thread::sleep(Duration::from_secs(secs("PHONE_DROP_LIVE_SECS", 300)));
         shutdown();
     }
 }

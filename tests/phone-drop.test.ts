@@ -8,6 +8,7 @@ import {
   phoneItemActions,
   phoneItemOpenable,
   phoneItemStatusText,
+  phonePairedCard,
   phonePlacedLabel,
   phonePendingCount,
   phoneStateLine,
@@ -121,4 +122,17 @@ test("已配对手机：状态行写是哪台手机，设备行写上次用的�
   );
   assert.equal(phoneDeviceLine({ pairedAt: new Date(2026, 9, 20).toISOString(), lastSeenAt: null }, now), "10月20日 配对");
   assert.equal(phoneDeviceLine({ pairedAt: "bad", lastSeenAt: null }, now), "");
+});
+
+test("已配对状态卡：主动接收、常驻等候、都没开三种说法", () => {
+  const base = { ...IDLE_PHONE_STATUS };
+  assert.equal(phonePairedCard({ ...base, receiving: true }, null).title, "等手机打开「发到 Mesa」…");
+  const standby = { ...base, standby: true };
+  assert.equal(phonePairedCard(standby, null).title, "手机随时能发");
+  assert.match(phonePairedCard(standby, null).hint, /不用先在这里点开始/);
+  assert.equal(phonePairedCard({ ...standby, connected: true, lastDevice: "iPhone" }, null).title, "iPhone 已连上");
+  assert.equal(phonePairedCard(standby, "a.jpg").title, "正在接收 a.jpg…");
+  const off = phonePairedCard(base, null);
+  assert.equal(off.title, "没在接收");
+  assert.equal(off.live, false);
 });

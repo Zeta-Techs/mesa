@@ -883,6 +883,8 @@ pub fn run() {
             phone_drop::phone_drop_delete,
             phone_drop::phone_drop_devices,
             phone_drop::phone_drop_remove_device,
+            phone_drop::phone_drop_sync,
+            phone_drop::phone_drop_set_standby,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

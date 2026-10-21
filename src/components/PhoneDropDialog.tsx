@@ -8,6 +8,7 @@ import {
   FoldMark,
   InlineNotice,
   MenuSelect,
+  Toggle,
   ghostActionClass,
   primaryActionClass,
   projectWellClass,
@@ -21,6 +22,7 @@ import {
   phoneItemActions,
   phoneItemOpenable,
   phoneItemStatusText,
+  phonePairedCard,
   phoneStateLine,
   pickPlaceProject,
   placeableProjects,
@@ -117,6 +119,7 @@ export default function PhoneDropDialog() {
   const deliver = usePhoneDropStore((s) => s.deliver);
   const devices = usePhoneDropStore((s) => s.devices);
   const removeDevice = usePhoneDropStore((s) => s.removeDevice);
+  const setStandby = usePhoneDropStore((s) => s.setStandby);
 
   const [projects, setProjects] = useState<ProjectDto[]>([]);
   const [placeRoot, setPlaceRoot] = useState<string>("");
@@ -224,6 +227,7 @@ export default function PhoneDropDialog() {
     return undefined;
   }
 
+  const card = phonePairedCard(status, incoming);
   const footer = !status.receiving ? (
     <button type="button" className={secondaryActionClass} onClick={closeDialog}>
       关闭
@@ -239,7 +243,9 @@ export default function PhoneDropDialog() {
     </>
   ) : (
     <>
-      <span className="mr-auto text-micro text-l4">关掉就停止接收</span>
+      <span className="mr-auto text-micro text-l4">
+        {paired && status.standbyEnabled ? "关掉后配对过的手机照样能发" : "关掉就停止接收"}
+      </span>
       <button type="button" className={primaryActionClass} onClick={closeDialog}>
         完成
       </button>
@@ -263,33 +269,64 @@ export default function PhoneDropDialog() {
           {error && <InlineNotice tone="err">{error}</InlineNotice>}
           {status.receiving && status.portNote && <InlineNotice tone="warn">{status.portNote}</InlineNotice>}
 
-          {!status.receiving ? (
-            <div className="flex items-center gap-3">
-              <p className="flex-1 text-l3">{starting ? "正在开始接收…" : "没有在接收。"}</p>
-              {!starting && (
-                <button type="button" className={secondaryActionClass} onClick={() => void start()}>
-                  开始接收
-                </button>
-              )}
-            </div>
-          ) : (
-            paired && (
-              <div className={`${projectWellClass} flex items-center gap-3`}>
+          {paired ? (
+            <div className={projectWellClass}>
+              <div className="flex items-center gap-3">
                 <Smartphone
                   size={18}
                   strokeWidth={1.8}
                   aria-hidden="true"
-                  className={`shrink-0 ${status.connected ? "text-ok-text" : "text-l3"}`}
+                  className={`shrink-0 ${card.live ? "text-ok-text" : "text-l3"}`}
                 />
                 <div className="min-w-0 flex-1 leading-5">
-                  <p className={`text-sm ${status.connected ? "text-ok-text" : "text-l1"}`}>
-                    {phoneStateLine(status, incoming, true)}
-                  </p>
-                  <p className="text-l3">在手机上点主屏的「发到 Mesa」就能发，不用扫码。</p>
+                  <p className={`text-sm ${card.live ? "text-ok-text" : "text-l1"}`}>{card.title}</p>
+                  {card.hint && <p className="text-l3">{card.hint}</p>}
                 </div>
-                <button type="button" className={ghostActionClass} onClick={() => setPairOpen((v) => !v)}>
-                  {pairOpen ? "收起二维码" : "配对新手机"}
-                </button>
+                {!status.receiving && !status.standby ? (
+                  <button
+                    type="button"
+                    className={secondaryActionClass}
+                    disabled={starting}
+                    onClick={() => void start()}
+                  >
+                    {starting ? "正在开始…" : "开始接收"}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className={ghostActionClass}
+                    disabled={starting}
+                    onClick={() => {
+                      // 配新手机要二维码：常驻等候没有，先转成主动接收
+                      if (!status.receiving) void start().then(() => setPairOpen(true));
+                      else setPairOpen((v) => !v);
+                    }}
+                  >
+                    {status.receiving && pairOpen ? "收起二维码" : "配对新手机"}
+                  </button>
+                )}
+              </div>
+              <label className="mt-2.5 flex items-center gap-2 border-t border-hairline pt-2.5 text-l3">
+                <Toggle
+                  checked={status.standbyEnabled}
+                  onChange={(v) => void setStandby(v)}
+                  label="Mesa 开着就随时接收"
+                />
+                <span>
+                  Mesa 开着就随时接收，收到的自动弹出这里
+                  {!status.standbyEnabled && "（关着时要先点「开始接收」）"}
+                </span>
+              </label>
+            </div>
+          ) : (
+            !status.receiving && (
+              <div className="flex items-center gap-3">
+                <p className="flex-1 text-l3">{starting ? "正在开始接收…" : "没有在接收。"}</p>
+                {!starting && (
+                  <button type="button" className={secondaryActionClass} onClick={() => void start()}>
+                    开始接收
+                  </button>
+                )}
               </div>
             )
           )}

@@ -478,7 +478,16 @@ function App() {
   const appUpdate = useAppStore((s) => s.appUpdate);
   const inboxDismissed = useAppStore((s) => s.inboxDismissed);
   // 从手机添加：后端事件全局接一次；弹层开着时不在收件箱重复提醒
-  usePhoneDropEvents();
+  usePhoneDropEvents((item) => {
+    // 手机直接发来（不在往输入框送）：弹窗已弹出；窗口不在前台时再发一条系统通知，同「长任务 OS 通知」开关
+    if (document.hasFocus()) return;
+    if (!(useAppStore.getState().settings?.notificationsEnabled ?? true)) return;
+    void (async () => {
+      let granted = await isPermissionGranted();
+      if (!granted) granted = (await requestPermission()) === "granted";
+      if (granted) sendNotification({ title: "手机发来了东西", body: item.name });
+    })();
+  });
   const phonePending = usePhoneDropStore((s) => (s.open ? 0 : phonePendingCount(s.items)));
   const inboxItems = visibleInboxItems(
     rawInboxItems,

@@ -30,7 +30,12 @@ export interface PhoneAddr {
 }
 
 export interface PhoneDropStatus {
+  /** 主动接收中（有二维码、可配新手机） */
   receiving: boolean;
+  /** 常驻等候中：没在主动接收，但已配对的手机随时能发 */
+  standby: boolean;
+  /** 「Mesa 开着就随时接收已配对的手机」开关 */
+  standbyEnabled: boolean;
   connected: boolean;
   /** 扫码配对地址（二维码内容） */
   url: string | null;
@@ -46,6 +51,8 @@ export interface PhoneDropStatus {
 
 export const IDLE_PHONE_STATUS: PhoneDropStatus = {
   receiving: false,
+  standby: false,
+  standbyEnabled: true,
   connected: false,
   url: null,
   qrSvg: null,
@@ -169,6 +176,33 @@ export function phoneStateLine(
     return status.received > 0 ? `${who} · 已收 ${status.received} 条` : who;
   }
   return hasDevices ? "等手机打开「发到 Mesa」…" : "等手机扫码…";
+}
+
+/** 已配对时状态卡的两行：标题 + 说明（主动接收 / 常驻等候 / 都没开） */
+export function phonePairedCard(
+  status: PhoneDropStatus,
+  incoming: string | null,
+): { title: string; hint: string; live: boolean } {
+  if (status.receiving) {
+    return {
+      title: phoneStateLine(status, incoming, true),
+      hint: "在手机上点主屏的「发到 Mesa」就能发，不用扫码。",
+      live: status.connected,
+    };
+  }
+  if (status.standby) {
+    if (incoming) return { title: `正在接收 ${incoming}…`, hint: "", live: true };
+    return {
+      title: status.connected ? `${status.lastDevice ?? "手机"} 已连上` : "手机随时能发",
+      hint: "手机点主屏的「发到 Mesa」就能发，不用先在这里点开始。",
+      live: status.connected,
+    };
+  }
+  return {
+    title: "没在接收",
+    hint: "「随时接收」关着：要发，先点「开始接收」。",
+    live: false,
+  };
 }
 
 /** 已配对手机的一行说明：上次用过的时间（今天只写时刻） */

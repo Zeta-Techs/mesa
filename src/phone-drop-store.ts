@@ -3,7 +3,7 @@
  * 「收到的东西去哪个输入框」。后端事件在 usePhoneDropEvents（App 挂一次）里统一接，
  * 对话输入框只从 deliveries 里取属于自己的那份——避免多个监听器各自改同一条的状态。
  */
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -50,6 +50,8 @@ interface PhoneDropState {
   refresh: () => Promise<void>;
   loadDevices: () => Promise<void>;
   removeDevice: (id: string) => Promise<void>;
+  /** 「Mesa 开着就随时接收已配对的手机」开关 */
+  setStandby: (enabled: boolean) => Promise<void>;
   patchItem: (item: PhoneItem) => void;
   removeItem: (id: string) => void;
   /** 手动把一条附到当前目标输入框 */
@@ -105,6 +107,7 @@ export const usePhoneDropStore = create<PhoneDropState>((set, get) => ({
   closeDialog: () => {
     const { target, status } = get();
     set({ open: false });
+    // 不是从输入框打开的：关掉就收起二维码（有配对的手机时后端转回常驻等候）
     if (!target && status.receiving) void get().stop();
   },
 
@@ -121,12 +124,13 @@ export const usePhoneDropStore = create<PhoneDropState>((set, get) => ({
   },
 
   stop: async () => {
+    set({ incoming: null, target: null });
     try {
-      await invoke("phone_drop_stop");
+      const status = await invoke<PhoneDropStatus>("phone_drop_stop");
+      set({ status });
     } catch (e) {
-      set({ error: String(e) });
+      set({ error: String(e), status: { ...IDLE_PHONE_STATUS, standbyEnabled: get().status.standbyEnabled } });
     }
-    set({ status: IDLE_PHONE_STATUS, incoming: null, target: null });
   },
 
   loadDevices: async () => {
@@ -140,10 +144,19 @@ export const usePhoneDropStore = create<PhoneDropState>((set, get) => ({
 
   removeDevice: async (id) => {
     try {
-      await invoke("phone_drop_remove_device", { id });
-      set((s) => ({ devices: s.devices.filter((d) => d.id !== id) }));
+      const status = await invoke<PhoneDropStatus>("phone_drop_remove_device", { id });
+      set((s) => ({ devices: s.devices.filter((d) => d.id !== id), status }));
     } catch (e) {
       toast(`移除失败：${String(e)}`, "error");
+    }
+  },
+
+  setStandby: async (enabled) => {
+    try {
+      const status = await invoke<PhoneDropStatus>("phone_drop_set_standby", { enabled });
+      set({ status });
+    } catch (e) {
+      toast(`设置失败：${String(e)}`, "error");
     }
   },
 
@@ -194,29 +207,55 @@ export const usePhoneDropStore = create<PhoneDropState>((set, get) => ({
 
 interface StatePayload {
   receiving: boolean;
+  standby: boolean;
+  /** 这次停下后会转常驻等候（配对过的手机照样能发） */
+  standbyNext: boolean;
   connected: boolean;
   received: number;
   lastDevice: string | null;
   reason: string | null;
 }
 
-/** 后端事件 → 界面状态；App 挂一次。启动时读一次列表（7 天内没处理完的进收件箱） */
-export function usePhoneDropEvents(): void {
+/** 后端事件 → 界面状态；App 挂一次。启动时读一次列表（7 天内没处理完的进收件箱），
+ *  并让后端对一次常驻等候（有配对的手机且开着「随时接收」就开始等）。
+ *  onArrive：没在往输入框送时收到东西（弹窗会自己弹出），App 用它在窗口不在前台时发系统通知 */
+export function usePhoneDropEvents(onArrive?: (item: PhoneItem) => void): void {
+  const arriveRef = useRef(onArrive);
+  arriveRef.current = onArrive;
   useEffect(() => {
     const store = usePhoneDropStore;
     void store.getState().refresh();
     void store.getState().loadDevices();
-    void invoke<PhoneDropStatus>("phone_drop_status")
+    void invoke<PhoneDropStatus>("phone_drop_sync")
       .then((status) => store.setState({ status }))
       .catch(() => undefined);
     const offs = [
       listen<StatePayload>("phone-drop-state", (e) => {
         const p = e.payload;
         const s = store.getState();
+        if (p.standby) {
+          // 常驻等候：没有二维码，已配对的手机随时能发
+          store.setState({
+            status: {
+              ...IDLE_PHONE_STATUS,
+              standby: true,
+              standbyEnabled: s.status.standbyEnabled,
+              connected: p.connected,
+              received: p.received,
+              lastDevice: p.lastDevice,
+            },
+            target: null,
+          });
+          return;
+        }
         if (!p.receiving) {
           if (s.starting) return;
-          const note = phoneStopNote(p.reason);
-          store.setState({ status: IDLE_PHONE_STATUS, incoming: null, target: null });
+          const note = p.standbyNext ? null : phoneStopNote(p.reason);
+          store.setState({
+            status: { ...IDLE_PHONE_STATUS, standbyEnabled: s.status.standbyEnabled },
+            incoming: null,
+            target: null,
+          });
           if (note && !s.open) toast(note, "info");
           return;
         }
@@ -224,6 +263,7 @@ export function usePhoneDropEvents(): void {
           status: {
             ...s.status,
             receiving: true,
+            standby: false,
             connected: p.connected,
             received: p.received,
             lastDevice: p.lastDevice,
@@ -243,7 +283,13 @@ export function usePhoneDropEvents(): void {
         const item = e.payload;
         const s = store.getState();
         store.setState({ incoming: null, items: [item, ...s.items.filter((it) => it.id !== item.id)] });
-        if (s.target) s.deliver(item);
+        if (s.target) {
+          s.deliver(item);
+          return;
+        }
+        // 没在往哪个输入框送（手机直接发来的）：弹出「收到的」让人处理
+        if (!s.open) store.setState({ open: true, error: null });
+        arriveRef.current?.(item);
       }),
     ];
     return () => {

@@ -28,7 +28,7 @@
 
   var ERRORS = {
     too_large: "超过 100 MB，没有发送",
-    session_full: "这次接收已满 1 GB，请在 Mesa 里重新开始接收",
+    session_full: "24 小时内最多传 1 GB，已经满了",
     too_long: "超过 2 万字，没有发送",
     empty: "是空的，没有发送",
     busy: "电脑那边正忙，稍后重试",
@@ -177,7 +177,7 @@
 
   // 连不上电脑（没在接收 / 网络变了）的那条先排着，连上后自动补发
   function park(task) {
-    show(task.row, "等电脑开始接收", "", null);
+    show(task.row, "等连上电脑", "", null);
     waiting.push(task);
     markOffline();
   }
@@ -296,7 +296,7 @@
     if (!online) return;
     online = false;
     statusEl.textContent =
-      "电脑那边没在接收：在电脑上的 Mesa 里点「从手机添加」，这里会自动连上，没送出去的会自动补发。";
+      "连不上电脑：确认电脑上的 Mesa 开着、两边连的是同一个 Wi-Fi。连上后没送出去的会自动补发。";
     statusEl.className = "status bad";
     schedulePoll(POLL_OFFLINE_MS);
   }
