@@ -891,7 +891,7 @@ src-tauri/src/
                              #   到 <配置目录>/ccode/backups/session-slim/、最近 60 秒有写入拒绝、复核源文件未变、tmp+rename 保持 mtime；
                              #   不另存副本（会撞 sessionId、用量重复计）；安全口径 safety.md 例外清单第 7 条；干跑用 ignored 的 real_data_dry_run
   session_transfer.rs        # 会话包导出/导入（.ccode-sessions.zip，八家不含 opencode）：原文打包装、导入时改写 cwd（含子目录前缀，
-                             #   分隔符按目标机方言重接）并按 B 机目录重建落位；zip-slip/大小/后缀/白名单；同 id 跳过不覆盖（导出同会话去重）；
+                             #   分隔符按目标机方言重接）并按 B 机目录重建落位；zip-slip/大小/后缀/白名单；同 id 跳过不覆盖（导出同会话去重；Claude id 按文件名，同 sessions.rs）；
                              #   Mesa 元数据写 app.db；Claude 附属目录 <id>/（subagents/tool-results/custom-title.json，32MB/128MB 封顶，
                              #   不跟符号链接，导入尽力而为 + tool-results 路径重映射）；各家目录名规则以 CLI 源码为准：
                              #   claude/qwen 非字母数字→- 按 UTF-16 码元、codebuddy compressWorkspacePathName、cursor workspace-paths、

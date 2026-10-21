@@ -163,7 +163,7 @@
      zip 解压防 zip-slip（`enclosed_name` + 禁 `..` / 绝对路径，条目只允许 `manifest.json` 与 `sessions/`）；单文件 200MB / 整包解压 512MB / 条目数 2 万上限；
      目标路径必须落在 `session_data_dirs_at` 白名单内（cursor 另限 `projects/*/agent-transcripts/**/*.jsonl`）；
      额外放行的索引写点仅 `~/.kimi-code/session_index.jsonl`、`~/.kimi/kimi.json`、gemini `.project_root`、grok 组目录 `.cwd`（codex `config.toml` 走现有注册命令，不经本模块直写）；
-     已存在同 agent 同 sessionId 一律跳过不覆盖；写入走 `atomic_write_bytes`（tmp+rename）；索引类读-改-写。
+     已存在同 agent 同 sessionId 一律跳过不覆盖（Claude 的 id 以文件名为准、与会话列表同口径——接续文件开头的 sessionId 是上游的，校验与查重都按文件名认；旧包记的上游 id 照旧接受）；写入走 `atomic_write_bytes`（tmp+rename）；索引类读-改-写。
      **Claude 附属目录**（2026-10-21）：导出带 `<id>/` 下的 subagents、tool-results、custom-title.json（单文件 32MB / 合计 128MB 封顶，超的不带；导出途中消失的附属文件跳过），
      打包遍历**不跟符号链接**（会话目录里的链接可能指到目录外）；导入侧附属文件尽力而为（失败不回头判整条失败、已存在不覆盖），仍只落在会话数据目录白名单内，
      只重写 `cwd` 类键与「…/projects/<slug>/<本会话id>/tool-results/」形状的路径（`remap_tool_result_paths`），文本其余部分与坏行原样保留。

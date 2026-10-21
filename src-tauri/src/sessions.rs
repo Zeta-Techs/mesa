@@ -864,7 +864,7 @@ pub(crate) struct ClaudeLineage {
     pub(crate) own_title: Option<String>,
 }
 
-fn is_uuid_like(s: &str) -> bool {
+pub(crate) fn is_uuid_like(s: &str) -> bool {
     s.len() == 36
         && s.chars()
             .enumerate()

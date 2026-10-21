@@ -1132,6 +1132,14 @@ fn extract_session_id(agent: &str, bytes: &[u8]) -> Option<String> {
     None
 }
 
+/// Claude 会话的 id 以文件名为准（sessions.rs 列表同口径）：接续文件开头几行的 sessionId 是上游的，
+/// 拿它当 id 会把接续文件判成「id 不匹配」、查重也对不上。文件名不像 uuid 时返回 None，回落读内容
+fn claude_file_id(path: &str) -> Option<String> {
+    let name = Path::new(path).file_name()?.to_string_lossy().into_owned();
+    let stem = name.strip_suffix(".jsonl.zst").or_else(|| name.strip_suffix(".jsonl"))?;
+    sessions::is_uuid_like(stem).then(|| stem.to_string())
+}
+
 fn validate_entry_files(
     agent: &str,
     session_id: &str,
@@ -1175,6 +1183,10 @@ fn validate_entry_files(
         if !new && !legacy {
             return Err("Kimi 会话缺 wire.jsonl / context.jsonl".into());
         }
+        return Ok(());
+    }
+    // Claude 按文件名认 id；旧版 Mesa 导出的接续文件记的是文件内的上游 id，下面照旧认
+    if agent == "claude-code" && claude_file_id(&main.path).as_deref() == Some(session_id) {
         return Ok(());
     }
     match extract_session_id(agent, bytes) {
@@ -1239,6 +1251,12 @@ fn walk_jsonl(dir: &Path, max_depth: usize, out: &mut Vec<PathBuf>) {
 fn index_existing_at(home: &Path) -> HashSet<(String, String)> {
     let mut out = HashSet::new();
     let mut push = |agent: &str, path: &Path| {
+        if agent == "claude-code" {
+            if let Some(id) = claude_file_id(&path.to_string_lossy()) {
+                out.insert((agent.to_string(), id));
+                return;
+            }
+        }
         if let Ok(bytes) = fs::read(path) {
             if let Some(id) = extract_session_id(agent, &bytes) {
                 out.insert((agent.to_string(), id));
@@ -2525,6 +2543,40 @@ mod tests {
         );
         assert!(slug_dir.join(id).join("custom-title.json").exists());
         assert!(slug_dir.join(id).join("subagents").join("agent-a1.meta.json").exists());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn claude_continuation_file_id_is_file_name() {
+        // Claude 接续文件：文件名是自己的 id，开头几行的 sessionId 是上游的（sessions.rs 列表同口径）
+        let dir = tmp();
+        let home = dir.join("home");
+        let target = dir.join("work");
+        fs::create_dir_all(&target).unwrap();
+        let upstream = "55555555-5555-5555-5555-555555555555";
+        let own = "66666666-6666-6666-6666-666666666666";
+        let body = format!(
+            "{}{}",
+            sample_claude("/Users/alice/proj", upstream),
+            sample_claude("/Users/alice/proj", own)
+        );
+        let zp = format!("sessions/0/{own}.jsonl");
+        let man = claude_manifest(own, "/Users/alice/proj", &zp, body.as_bytes());
+        let zip = write_zip_test(&dir, &man, vec![(zp, body.clone().into_bytes())]);
+        let preview = inspect_at(&zip, &home, &[]).unwrap();
+        assert_ne!(preview.entries[0].status, "unsupported", "{:?}", preview.entries[0].reason);
+        let dec = vec![ImportDecisionDto {
+            index: 0,
+            skip: false,
+            target_dir: Some(target.to_string_lossy().into_owned()),
+        }];
+        let (report, _) = apply_at(&zip, &home, &dec).unwrap();
+        assert_eq!(report.imported, 1, "{:?}", report.items);
+        // 本机已有：按文件名认出同一条；上游那条没导入过，不算已存在
+        let existing = index_existing_at(&home);
+        assert!(existing.contains(&("claude-code".into(), own.into())));
+        assert!(!existing.contains(&("claude-code".into(), upstream.into())));
+        assert_eq!(inspect_at(&zip, &home, &[]).unwrap().entries[0].status, "conflict");
         fs::remove_dir_all(&dir).ok();
     }
 
