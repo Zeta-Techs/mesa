@@ -12,6 +12,8 @@
 - **Homebrew 7 安装默认问 `[y/n]`**（2026-09-30 实证：诊断页装 tectonic 停在 “Do you want to proceed?”）。应用内 brew 一律设 `HOMEBREW_NO_ASK=1`，等价 `--yes`。pip 安装加 `--no-input`。诊断页那一行没有输入框。若环境变量没盖住、日志里仍出现 `[y/n]`，安装读端再自动写一次 `y`，最多 5 次。Git、Node、Quarto、TeX、字体和 CLI 更新走同一条 brew 管线。PyMuPDF 与 Pillow 走 pip。winget 本来就带 `--disable-interactivity`。
 - **诊断页一键安装**（2026-09-30）：Quarto 走 `brew install --cask quarto` / winget `Posit.Quarto`。TeX 装 tectonic（`brew install tectonic` / winget `TectonicTypesetting.Tectonic`），已有 xelatex 或 pdflatex 不再装。PyMuPDF 与 Pillow 走 `python3 -m pip install`，碰到 externally-managed-environment 再加 `--user`，不使用 `--break-system-packages`。Linux 只给 apt 或官网指引，不代跑 sudo。
 - **GUI 应用 PATH 很短**：打包应用可能找不到 npm 装的 CLI（开发模式不受影响）；统一经 `agents::resolve_binary` 候选目录兜底解析。
+  Mesa 开着时用户新装的程序同理（PATH 只在启动时读一次）：新增依赖要给它的默认安装落点进候选目录，装完不重启也认得——
+  如 PowerShell 7（`%ProgramFiles%\PowerShell\7`）、「仅为我安装」的 Git Bash（`%LOCALAPPDATA%\Programs\Git\bin`，`agents::git_bash_default_paths`）（2026-10-21）。
 - **Windows 正式版没有父控制台**：后台 `git/cmd/netstat/tasklist/CLI --version` 等若直接 `Command::new` 会反复创建
   `conhost.exe` 闪窗；所有不需要独立可见窗口的命令必须走 `process::background_command`，统一加 `CREATE_NO_WINDOW`
   并在 spawn/wait 边界登记脱敏参数与生命周期。该包装和 250ms 进程扫描只在 Windows 生效；macOS/Linux 直接返回标准

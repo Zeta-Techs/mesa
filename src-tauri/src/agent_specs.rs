@@ -1412,6 +1412,13 @@ pub(crate) fn binary_candidate_dirs() -> Vec<std::path::PathBuf> {
         if let Some(local) = dirs::data_local_dir() {
             out.push(local.join("Programs").join("Git").join("cmd"));
         }
+        // PowerShell 7 官方 MSI / winget Microsoft.PowerShell 默认落点：装完写进 PATH，但已在跑的 Mesa 拿不到，
+        // 内置终端下拉要重启 Mesa 才出现（2026-10-21 补）；应用商店版在上面的 WindowsApps
+        for key in ["ProgramW6432", "ProgramFiles"] {
+            if let Some(root) = std::env::var_os(key) {
+                out.push(std::path::PathBuf::from(root).join("PowerShell").join("7"));
+            }
+        }
         // Quarto 官方安装器默认落点（GUI 启动时 PATH 可能未继承）
         for key in ["ProgramW6432", "ProgramFiles"] {
             if let Some(root) = std::env::var_os(key) {

@@ -1359,7 +1359,7 @@ Mesa 自己的对话命名（列表里「1017|功能|…」那种标题）和这
 | 项 | 说明 |
 |---|---|
 | 终端渲染 | 改完要重开标签：在意字形选「清晰」（「自动」在 Mac 上也是清晰档、Windows 上是流畅 WebGL），要出字更快选「流畅（WebGL）」。「自动」在 Mac 上对 Gemini 标签例外用流畅档：Gemini 的消息框上下用半格方块留白，清晰档下会断成一条细线加一道缝；不想要这个例外就明确选「清晰」 |
-| 内置终端 shell | 运行页里普通终端标签用哪个 shell，新开的标签生效。「自动」在 Windows 上是 Windows PowerShell，在 Mac 上是你系统默认的 shell；下拉里只列这台电脑找得到的：Windows 上有 Windows PowerShell、PowerShell 7、Git Bash、命令提示符（cmd），Mac 上有 zsh、bash、fish。鼠标停在这一行的标题上能看到每个 shell 的位置。不论选哪个，在终端里 `cd` 到别处后，右侧文件树和 Git 面板都会跟过去。流程里的运行脚本不受这一项影响：Windows 上固定用 Git Bash 跑 |
+| 内置终端 shell | 运行页里普通终端标签用哪个 shell，新开的标签生效。「自动」在 Windows 上是 Windows PowerShell，在 Mac 上是你系统默认的 shell；下拉里只列这台电脑找得到的：Windows 上有 Windows PowerShell、PowerShell 7、Git Bash、命令提示符（cmd），Mac 上有 zsh、bash、fish。鼠标停在这一行的标题上能看到每个 shell 的位置。不论选哪个，在终端里 `cd` 到别处后，右侧文件树和 Git 面板都会跟过去。流程里的运行脚本不受这一项影响：Windows 上固定用 Git Bash 跑。Mesa 不自带这些 shell：Windows PowerShell 和 cmd 是系统自带的，Git Bash 随 Git for Windows 一起装（诊断页能一键装 Git），PowerShell 7 要自己装；后来装上的，重新打开设置页就会出现在下拉里，不用重启 Mesa |
 | 字号、字体、滚动缓冲行数 | 字体立即生效，没装上的可一键装；要对齐 Ghostty 选「JetBrains Mono（内置，与 Ghostty 默认同款）」 |
 | 终端调色板 | 每套色条下面写着名字，只列出和当前主题亮暗匹配的四套；你之前选的那套和主题深浅不配时，会自动用它配对的另一版，说明里会写出来 |
 | 外部终端 | 对话页「在外部终端恢复」、连接页外部启动用哪个终端：自动（依次找 Ghostty、iTerm2、系统终端）、Ghostty、iTerm2、终端。装在 `/Applications` 或你自己的 `~/Applications` 里都认。选 iTerm2 时，命令打在新开的那个窗口里；iTerm2 没开着时，用它启动时自己开的窗口，不会冒出两个 |

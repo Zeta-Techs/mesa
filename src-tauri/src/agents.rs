@@ -290,16 +290,8 @@ pub fn resolve_binary(name: &str) -> Option<std::path::PathBuf> {
 pub fn resolve_git_bash() -> Option<std::path::PathBuf> {
     #[cfg(windows)]
     {
-        for key in ["ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"] {
-            if let Some(root) = std::env::var_os(key) {
-                let p = std::path::PathBuf::from(root)
-                    .join("Git")
-                    .join("bin")
-                    .join("bash.exe");
-                if p.is_file() {
-                    return Some(p);
-                }
-            }
+        if let Some(p) = git_bash_default_paths().into_iter().find(|p| p.is_file()) {
+            return Some(p);
         }
         let p = resolve_binary("bash")?;
         let s = p.to_string_lossy().to_ascii_lowercase();
@@ -312,6 +304,21 @@ pub fn resolve_git_bash() -> Option<std::path::PathBuf> {
     {
         resolve_binary("bash")
     }
+}
+
+/// Git for Windows 的 bash.exe 默认落点，按序：全机安装（%ProgramFiles%\Git），再是「仅为我安装」
+/// （winget 用户范围 / 安装器选项，%LOCALAPPDATA%\Programs\Git）。后者装完 Mesa 只认得 git、
+/// 认不出 Git Bash（内置终端下拉不出现、run 脚本找不到 bash），2026-10-21 补
+#[cfg(windows)]
+fn git_bash_default_paths() -> Vec<std::path::PathBuf> {
+    let mut roots: Vec<std::path::PathBuf> = ["ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"]
+        .iter()
+        .filter_map(|k| std::env::var_os(k).map(std::path::PathBuf::from))
+        .collect();
+    if let Some(local) = dirs::data_local_dir() {
+        roots.push(local.join("Programs"));
+    }
+    roots.into_iter().map(|r| r.join("Git").join("bin").join("bash.exe")).collect()
 }
 
 /// 在候选目录里按序找第一个存在的文件；Windows 下 npm 全局包是 .cmd shim，补扩展名匹配
@@ -6530,6 +6537,21 @@ api_backend = "responses"
         assert!(dirs
             .iter()
             .any(|d| d.ends_with(std::path::Path::new("Git").join("cmd"))));
+        // PowerShell 7 MSI 默认落点：Mesa 开着时装上，不重启也能认出
+        assert!(dirs
+            .iter()
+            .any(|d| d.ends_with(std::path::Path::new("PowerShell").join("7"))));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn git_bash_paths_cover_per_user_install() {
+        let paths = git_bash_default_paths();
+        let per_user = dirs::data_local_dir().unwrap().join("Programs").join("Git").join("bin").join("bash.exe");
+        assert!(paths.contains(&per_user), "「仅为我安装」的 Git Bash");
+        // 全机安装排在前面
+        assert!(paths.first().unwrap().ends_with(std::path::Path::new("Git").join("bin").join("bash.exe")));
+        assert_ne!(paths.first(), Some(&per_user));
     }
 
     #[cfg(windows)]
