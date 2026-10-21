@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>Mesa 聊天输入框与状态栏设计稿 · 第二版（2026-10-22）</title>
+<style>
+  /* 默认深色主题令牌（src/App.css :root）；琥珀 = Mesa 光标色（浅色主题换 #e39a1c） */
+  :root {
+    --canvas: #101218; --strip: #1a1d26; --inset: #1e222c; --raised: #262a35; --seg: #313643;
+    --hair: #2c3039; --field: #40454f; --hover: rgb(255 255 255 / .05);
+    --l1: #e9e6e2; --l2: #bdbab4; --l3: #95959a; --l4: #6b6b72;
+    --cta: #faa8d4; --caution: #c9ad4a; --amber: #f5b83d; --amber-ink: #1d1608;
+    --add: #8fd3a8; --del: #d98a93; --float: #20242e;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0a0b0e; color: var(--l2); font: 14px/1.6 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif; }
+  header { max-width: 1440px; margin: 28px auto 4px; padding: 0 24px; }
+  header h1 { margin: 0; font-size: 19px; color: var(--l1); font-weight: 600; }
+  header p { margin: 6px 0 0; color: var(--l3); font-size: 13px; max-width: 1040px; }
+  .grid { max-width: 1440px; margin: 0 auto; padding: 18px 24px 56px; display: grid; grid-template-columns: 1fr 1fr; gap: 26px; }
+  .frame { background: var(--canvas); border: 1px solid #1d2028; border-radius: 14px; position: relative; padding: 46px 28px 24px; display: flex; flex-direction: column; justify-content: flex-end; }
+  .frame.wide { grid-column: span 2; }
+  .frame.tallpop { min-height: 660px; }
+  .cap { position: absolute; top: 12px; left: 16px; right: 16px; font-size: 11.5px; color: var(--l4); }
+  .cap b { color: var(--l2); font-weight: 600; margin-right: 6px; }
+  svg.i { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+  svg.i.s15 { width: 15px; height: 15px; }
+  svg.g { width: 20px; height: 16px; flex-shrink: 0; stroke: currentColor; fill: none; }
+  svg.mm { width: 13px; height: 12px; flex-shrink: 0; stroke: currentColor; fill: none; }
+
+  .composer { position: relative; background: var(--raised); border: 1px solid var(--hair); border-radius: 16px; }
+  .composer.focus { border-color: var(--field); }
+  .composer.discuss { border-style: dashed; border-color: #4a4f5a; }
+  .composer.full::before { content: ""; position: absolute; left: 14px; right: 14px; top: -1px; height: 1.5px; border-radius: 2px; background: linear-gradient(90deg, transparent, var(--caution) 18%, var(--caution) 82%, transparent); opacity: .85; }
+  .ta { padding: 13px 16px 6px; min-height: 30px; color: var(--l1); font-size: 14px; line-height: 22px; }
+  .ta.tall { min-height: 62px; }
+  .ph { color: var(--l4); }
+  .caret { display: inline-block; width: 1.6px; height: 16px; background: var(--amber); vertical-align: -3px; margin-left: 1px; }
+  .bar { display: flex; align-items: center; gap: 4px; padding: 4px 8px 8px 8px; min-height: 40px; }
+  .ib { width: 28px; height: 28px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; color: var(--l3); }
+  .chip { height: 24px; display: inline-flex; align-items: center; gap: 5px; padding: 0 7px; border-radius: 7px; font-size: 11.5px; color: var(--l3); white-space: nowrap; }
+  .chip.on { background: var(--hover); color: var(--l1); }
+  .chip.risk { color: var(--caution); }
+  .chip .dn { width: 10px; height: 10px; opacity: .7; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .grow { flex: 1; }
+  .ring { width: 16px; height: 16px; flex-shrink: 0; }
+
+  /* 发送钮 = 图标里那块光标 */
+  .blk { width: 34px; height: 24px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .blk svg { width: 14px; height: 14px; stroke-width: 2.4; }
+  .blk.empty { background: var(--seg); color: var(--l4); }
+  .blk.ready { background: var(--amber); color: var(--amber-ink); box-shadow: 0 0 12px rgb(245 184 61 / .35); }
+  .blk.run { border: 1.5px solid rgb(245 184 61 / .7); color: var(--amber); box-shadow: 0 0 10px rgb(245 184 61 / .22); }
+  .blk.run i { width: 8px; height: 8px; border-radius: 1.5px; background: currentColor; display: block; }
+  .queue { font-size: 11px; color: var(--l4); margin-right: 2px; white-space: nowrap; }
+
+  .pop { position: absolute; bottom: calc(100% + 8px); width: 300px; background: var(--float); border: 1px solid var(--field); border-radius: 14px; padding: 5px; box-shadow: 0 18px 40px rgb(0 0 0 / .45), inset 0 1px 0 rgb(255 255 255 / .04); font-size: 13px; z-index: 5; }
+  .pop h5 { margin: 0; padding: 6px 8px 4px; font-size: 11.5px; font-weight: 500; color: var(--l4); display: flex; align-items: center; gap: 6px; }
+  .row { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 4px 8px; border-radius: 9px; color: var(--l2); }
+  .row.sel { background: var(--seg); color: var(--l1); }
+  .row .meta { margin-left: auto; font-size: 11.5px; color: var(--l4); white-space: nowrap; }
+  .row.two { align-items: flex-start; }
+  .row .sub { display: block; font-size: 11.5px; color: var(--l4); line-height: 17px; }
+  .hr { height: 1px; background: var(--hair); margin: 4px 6px; }
+  .search { margin: 2px 2px 4px; height: 30px; border-radius: 9px; background: var(--inset); display: flex; align-items: center; gap: 7px; padding: 0 9px; color: var(--l4); font-size: 12.5px; }
+
+  /* 思考强度：光标在基线上走，M 的中间那道 V 随档加深 */
+  .eff { padding: 6px 10px 6px; }
+  .eff-h { display: flex; align-items: center; justify-content: space-between; font-size: 11.5px; color: var(--l4); }
+  .eff-h .cur { display: inline-flex; align-items: center; gap: 6px; color: var(--l1); font-weight: 600; }
+  .rail { position: relative; height: 22px; margin: 8px 9px 0; }
+  .rail .base { position: absolute; left: 0; right: 0; bottom: 3px; height: 1.5px; background: var(--field); border-radius: 1px; }
+  .rail .done { position: absolute; left: 0; bottom: 3px; height: 1.5px; background: var(--l3); border-radius: 1px; }
+  .rail .tick { position: absolute; bottom: 3px; width: 1.5px; height: 6px; margin-left: -.75px; background: var(--l4); border-radius: 1px; }
+  .rail .knob { position: absolute; bottom: 2px; width: 18px; height: 8px; margin-left: -9px; border-radius: 2px; background: var(--amber); box-shadow: 0 0 8px rgb(245 184 61 / .55); }
+  .ticks { position: relative; height: 16px; margin: 5px 9px 0; font-size: 11px; color: var(--l4); }
+  .ticks span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+  .ticks span.on { color: var(--l1); font-weight: 600; }
+  .gloss { font-size: 11.5px; color: var(--l3); padding: 4px 10px 2px; }
+  .ladder { display: flex; gap: 22px; align-items: flex-end; padding: 4px 4px 0; }
+  .ladder div { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 11px; color: var(--l4); }
+  .ladder svg { width: 22px; height: 20px; color: var(--l2); stroke: currentColor; fill: none; }
+
+  /* 状态栏 */
+  .sbar { height: 32px; display: flex; align-items: center; gap: 14px; padding: 0 6px; font-size: 11.5px; color: var(--l3); white-space: nowrap; }
+  .sbar .sp { flex: 1; }
+  .sbar .k { display: inline-flex; align-items: center; gap: 5px; }
+  .sbar .l4 { color: var(--l4); }
+  .sbar .l2 { color: var(--l2); }
+  .sbar .add { color: var(--add); opacity: .85; }
+  .sbar .del { color: var(--del); opacity: .85; }
+  .sbar .act { color: var(--l2); padding: 2px 6px; border-radius: 6px; background: var(--hover); }
+  .sbar .num { font-variant-numeric: tabular-nums; }
+  .old { height: 32px; display: flex; align-items: center; gap: 10px; padding: 0 6px; font: 11px ui-monospace, Menlo, monospace; color: #9a9aa0; white-space: nowrap; }
+  .old .pill { border-radius: 999px; padding: 2px 8px; background: rgb(255 255 255 / .06); display: inline-flex; align-items: center; gap: 4px; }
+  .old .cp { border-radius: 999px; overflow: hidden; display: inline-flex; border: 1px solid rgb(255 255 255 / .13); }
+  .old .cp span { padding: 2px 8px; }
+  .x { text-decoration: line-through; text-decoration-color: rgb(240 112 112 / .8); text-decoration-thickness: 1.5px; }
+  .table { display: grid; grid-template-columns: 120px 1fr; font-size: 12px; margin-top: 14px; border-top: 1px solid var(--hair); }
+  .table > div { padding: 6px 4px; border-bottom: 1px solid var(--hair); }
+  .table .h { color: var(--l2); }
+  .table .v { color: var(--l3); }
+  .sample { border: 1px solid var(--hair); border-radius: 10px; padding: 2px 4px; background: var(--canvas); overflow: hidden; }
+
+  .greet { display: flex; align-items: baseline; gap: 10px; font-size: 20px; font-weight: 500; color: var(--l1); padding: 0 4px 14px; }
+  .greet .m { font-weight: 700; letter-spacing: -.04em; }
+  .greet .cb { display: inline-block; width: .55em; height: .2em; background: var(--amber); margin-left: 1px; box-shadow: 0 0 6px rgb(245 184 61 / .45); }
+  .pills { display: flex; gap: 8px; flex-wrap: wrap; padding: 12px 2px 0; }
+  .pill { border: 1px solid var(--hair); border-radius: 999px; padding: 5px 12px; font-size: 12px; color: var(--l3); }
+  .notes { margin: 14px 2px 0; padding: 0; list-style: none; font-size: 12px; color: var(--l3); display: grid; gap: 5px; }
+  .notes li::before { content: "— "; color: var(--l4); }
+  .lbl { font-size: 11px; color: var(--l4); margin: 0 0 6px 4px; }
+  .states { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .state { display: flex; flex-direction: column; align-items: center; gap: 8px; font-size: 11.5px; color: var(--l3); padding: 14px 6px; border: 1px solid var(--hair); border-radius: 10px; }
+  .state small { color: var(--l4); font-size: 11px; text-align: center; }
+  .glyphs { display: grid; grid-template-columns: 78px repeat(4, 1fr); gap: 8px 6px; align-items: center; font-size: 11.5px; color: var(--l3); }
+  .glyphs .hd { color: var(--l4); font-size: 11px; }
+  .glyphs .cell { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 8px; border-radius: 8px; border: 1px solid var(--hair); white-space: nowrap; }
+  .glyphs .cell.rec { border-color: var(--field); background: var(--inset); }
+  .glyphs .cell.risk { color: var(--caution); }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <symbol id="plus" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></symbol>
+    <symbol id="up" viewBox="0 0 24 24"><path d="m5 12 7-7 7 7M12 19V5"/></symbol>
+    <symbol id="down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+    <symbol id="folder" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol>
+    <symbol id="flask" viewBox="0 0 24 24"><path d="M14 2v6a2 2 0 0 0 .245.96l5.51 10.08A2 2 0 0 1 18 22H6a2 2 0 0 1-1.755-2.96l5.51-10.08A2 2 0 0 0 10 8V2M6.453 15h11.094M8.5 2h7"/></symbol>
+    <symbol id="code" viewBox="0 0 24 24"><path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/></symbol>
+    <symbol id="brief" viewBox="0 0 24 24"><path d="M16 20V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/><rect x="2" y="6" width="20" height="14" rx="2"/></symbol>
+    <symbol id="branch" viewBox="0 0 24 24"><path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></symbol>
+    <symbol id="chat" viewBox="0 0 24 24"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></symbol>
+    <symbol id="home" viewBox="0 0 24 24"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+    <symbol id="clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="merge" viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></symbol>
+    <!-- 方案 B：Lucide 里不与 Codex 撞的专业符号 -->
+    <symbol id="b-discuss" viewBox="0 0 24 24"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/></symbol>
+    <symbol id="b-ask" viewBox="0 0 24 24"><path d="M2 21a8 8 0 0 1 13.292-6"/><circle cx="10" cy="8" r="5"/><path d="m16 19 2 2 4-4"/></symbol>
+    <symbol id="b-auto" viewBox="0 0 24 24"><path d="M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1-4.78-4.77 4 4 0 0 1 0-6.76Z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="b-full" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></symbol>
+    <!-- 方案 A：Mesa 自绘「界线」符号——光标块离那道线多远，就是 AI 能走多远 -->
+    <symbol id="a-discuss" viewBox="0 0 20 16"><path d="M13 2v12" stroke-width="1.8" stroke-linecap="round"/><rect x="2.6" y="9.6" width="7" height="4" rx="1.2" stroke-width="1.4"/></symbol>
+    <symbol id="a-ask" viewBox="0 0 20 16"><path d="M13 2v12" stroke-width="1.8" stroke-linecap="round"/><rect x="4.6" y="9.6" width="7" height="4" rx="1.2" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="a-auto" viewBox="0 0 20 16"><path d="M13 2v6" stroke-width="1.8" stroke-dasharray="2 2"/><rect x="9.5" y="9.6" width="7" height="4" rx="1.2" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="a-full" viewBox="0 0 20 16"><rect x="12.6" y="9.6" width="7" height="4" rx="1.2" fill="currentColor" stroke="none"/><path d="M1.5 11.6h8" stroke-width="1.4" stroke-dasharray="1.5 2" opacity=".6"/></symbol>
+    <!-- 思考强度：M 的中间那道 V 随档加深 -->
+    <symbol id="m1" viewBox="0 0 16 14"><path d="M2 13V2l6 2 6-2v11" stroke-width="2.1" stroke-linejoin="miter"/></symbol>
+    <symbol id="m2" viewBox="0 0 16 14"><path d="M2 13V2l6 5 6-5v11" stroke-width="2.1" stroke-linejoin="miter"/></symbol>
+    <symbol id="m3" viewBox="0 0 16 14"><path d="M2 13V2l6 8 6-8v11" stroke-width="2.1" stroke-linejoin="miter"/></symbol>
+    <symbol id="m4" viewBox="0 0 16 14"><path d="M2 13V2l6 11 6-11v11" stroke-width="2.1" stroke-linejoin="miter"/></symbol>
+    <symbol id="m0" viewBox="0 0 16 14"><path d="M2 13V2l6 6 6-6v11" stroke-width="2.1" stroke-linejoin="miter" opacity=".45"/></symbol>
+  </defs>
+</svg>
+
+<header>
+  <h1>Mesa 聊天输入框与底部状态栏 · 第二版</h1>
+  <p>按第一版反馈改：开聊前不用一句话，回到三颗芯片；发送钮、思考强度用 Mesa 图标里的光标块和 M；权限符号给两套不和 Codex 撞的；分支和改动放进底部状态栏，状态栏同步重排——输入框管「这一句怎么发」，状态栏管「这段活落在哪、花了多少」。</p>
+</header>
+
+<div class="grid">
+
+  <!-- ① 开聊前 -->
+  <div class="frame tallpop">
+    <div class="cap"><b>① 开聊前：回到三颗芯片</b>项目 · 权限 · 模型，各管一件事；项目弹层就是第一版认可的那张</div>
+    <div class="greet"><span class="m">M<span class="cb"></span></span><span>晚上好</span></div>
+    <div class="composer focus">
+      <div class="pop" style="left:34px; width:320px">
+        <div class="search"><svg class="i"><use href="#search"/></svg>找项目或文件夹</div>
+        <h5>最近</h5>
+        <div class="row sel"><svg class="i"><use href="#code"/></svg>Ccode<span class="meta"><svg class="i" style="width:11px;height:11px;vertical-align:-1px"><use href="#branch"/></svg> main · 2 段在聊</span></div>
+        <div class="row"><svg class="i"><use href="#flask"/></svg>肠道菌群综述<span class="meta">科研 · 默认 Codex</span></div>
+        <div class="row"><svg class="i"><use href="#brief"/></svg>部门周报<span class="meta">办公</span></div>
+        <div class="hr"></div>
+        <div class="row"><svg class="i"><use href="#chat"/></svg>随手聊<span class="meta">不挂在项目下</span></div>
+        <div class="row"><svg class="i"><use href="#home"/></svg>主目录<span class="meta">~</span></div>
+        <div class="hr"></div>
+        <div class="row"><svg class="i"><use href="#folder"/></svg>选择文件夹…<span class="meta">也可以把文件夹拖进来</span></div>
+        <div class="row"><svg class="i"><use href="#plus"/></svg>新建项目…</div>
+      </div>
+      <div class="ta tall"><span class="caret"></span><span class="ph">问一个问题…</span></div>
+      <div class="bar">
+        <span class="ib"><svg class="i s15"><use href="#plus"/></svg></span>
+        <span class="chip on"><svg class="i"><use href="#code"/></svg>Ccode<svg class="i dn"><use href="#down"/></svg></span>
+        <span class="chip"><svg class="g"><use href="#a-ask"/></svg>请求批准</span>
+        <span class="grow"></span>
+        <span class="chip"><span class="dot" style="background:#D97757"></span>Claude Code · glm-5.3 · <svg class="mm"><use href="#m3"/></svg>高</span>
+        <span class="blk empty"><svg class="i"><use href="#up"/></svg></span>
+      </div>
+    </div>
+    <div class="pills"><span class="pill">读一下这个仓库的结构</span><span class="pill">跑测试并修失败</span><span class="pill">看看最近的提交</span></div>
+    <ul class="notes">
+      <li>只有项目芯片带小箭头（它会换掉整个起点）；权限、模型点开即可，不画箭头</li>
+      <li>开聊前模型芯片带 Agent 名；开聊后 Agent 定了，只剩品牌色圆点 + 模型 · 思考</li>
+    </ul>
+  </div>
+
+  <!-- ② 思考强度 -->
+  <div class="frame tallpop">
+    <div class="cap"><b>② 思考强度：光标在基线上走，M 越想越深</b>滑块就是图标里的「M▁」——琥珀光标块沿基线滑；M 中间那道 V 随档位加深，最高档就是图标原样</div>
+    <div class="composer">
+      <div class="pop" style="right:40px; width:318px">
+        <h5><svg class="i"><use href="#clock"/></svg>最近在 Ccode 用过</h5>
+        <div class="row"><span class="dot" style="background:#D97757"></span>Claude Code<span class="meta">glm-5.3 · 高</span></div>
+        <div class="row"><span class="dot" style="background:#8B7EC8"></span>Codex<span class="meta">gpt-5.5 · medium</span></div>
+        <div class="hr"></div>
+        <h5>模型</h5>
+        <div class="row two sel"><span style="flex:1">glm-5.3<span class="sub">200K · 思考 · 看图</span></span></div>
+        <div class="row two"><span style="flex:1">glm-5.3-flash<span class="sub">128K · 思考</span></span></div>
+        <div class="hr"></div>
+        <div class="eff">
+          <div class="eff-h"><span>思考强度</span><span class="cur"><svg class="mm" style="width:15px;height:13px"><use href="#m3"/></svg>high</span></div>
+          <div class="rail">
+            <span class="base"></span><span class="done" style="width:75%"></span>
+            <span class="tick" style="left:0"></span><span class="tick" style="left:25%"></span><span class="tick" style="left:50%"></span><span class="tick" style="left:100%"></span>
+            <span class="knob" style="left:75%"></span>
+          </div>
+          <div class="ticks"><span style="left:0">默认</span><span style="left:25%">low</span><span style="left:50%">medium</span><span class="on" style="left:75%">high</span><span style="left:100%">max</span></div>
+          <div class="gloss">想得更久，回得慢一些</div>
+        </div>
+      </div>
+      <div class="ta"><span class="ph">接着说…</span></div>
+      <div class="bar">
+        <span class="ib"><svg class="i s15"><use href="#plus"/></svg></span>
+        <span class="chip"><svg class="g"><use href="#a-ask"/></svg>请求批准</span>
+        <span class="grow"></span>
+        <span class="chip on"><span class="dot" style="background:#D97757"></span>glm-5.3 · <svg class="mm"><use href="#m3"/></svg>高</span>
+        <span class="blk empty"><svg class="i"><use href="#up"/></svg></span>
+      </div>
+    </div>
+    <div class="lbl" style="margin-top:16px">M 的五种深度（芯片里用同一个小 M）</div>
+    <div class="ladder">
+      <div><svg><use href="#m0"/></svg>默认</div>
+      <div><svg><use href="#m1"/></svg>low</div>
+      <div><svg><use href="#m2"/></svg>medium</div>
+      <div><svg><use href="#m3"/></svg>high</div>
+      <div><svg><use href="#m4"/></svg>max</div>
+    </div>
+    <ul class="notes">
+      <li>「默认」用灰 M：不知道 CLI 自己用哪档，不装作知道</li>
+      <li>档多的家（Grok 八档）V 按比例分深度，档名照 CLI 原名</li>
+      <li>刻度是基线上的短竖线，像尺子；拖动时光标块跟手，松手才写进终端（现有口径不变）</li>
+    </ul>
+  </div>
+
+  <!-- ③ 发送钮 + 权限符号 -->
+  <div class="frame">
+    <div class="cap"><b>③ 发送钮是图标里那块光标；权限符号两套</b></div>
+    <div class="lbl">发送钮四态（横向圆角块，和 M▁ 的光标同一个形状，放大到能点）</div>
+    <div class="states">
+      <div class="state"><span class="blk empty"><svg class="i"><use href="#up"/></svg></span>没字<small>灰块，点不了</small></div>
+      <div class="state"><span class="blk ready"><svg class="i"><use href="#up"/></svg></span>有字<small>点亮成琥珀，带一点余辉</small></div>
+      <div class="state"><span class="blk run"><i></i></span>在回复<small>琥珀描边 + 停止方块，不闪</small></div>
+      <div class="state"><span style="display:flex;align-items:center;gap:6px"><span class="blk run"><i></i></span><span class="queue">排队</span><span class="blk ready"><svg class="i"><use href="#up"/></svg></span></span>在回复又打了字<small>停止让到旁边</small></div>
+    </div>
+    <div class="lbl" style="margin-top:20px">权限符号：两套都不和 Codex 撞（Codex 是 眼睛 / 手掌 / 盾牌勾 / 盾牌叹号）</div>
+    <div class="glyphs">
+      <span class="hd"></span><span class="hd">只讨论</span><span class="hd">请求批准</span><span class="hd">帮我批准</span><span class="hd">完全访问</span>
+      <span class="hd">A 界线（推荐）</span>
+      <span class="cell rec"><svg class="g"><use href="#a-discuss"/></svg>只讨论</span>
+      <span class="cell rec"><svg class="g"><use href="#a-ask"/></svg>请求批准</span>
+      <span class="cell rec"><svg class="g"><use href="#a-auto"/></svg>帮我批准</span>
+      <span class="cell rec risk"><svg class="g"><use href="#a-full"/></svg>完全访问</span>
+      <span class="hd">B 通用符号</span>
+      <span class="cell"><svg class="i"><use href="#b-discuss"/></svg>只讨论</span>
+      <span class="cell"><svg class="i"><use href="#b-ask"/></svg>请求批准</span>
+      <span class="cell"><svg class="i"><use href="#b-auto"/></svg>帮我批准</span>
+      <span class="cell risk"><svg class="i"><use href="#b-full"/></svg>完全访问</span>
+    </div>
+    <ul class="notes">
+      <li>A：竖线是「要你点头的那条线」，小块是 Mesa 的光标。空心块停在线外 = 只看不动；实心块抵住线 = 到线前先问；线只剩上半截、块从下面过去 = 日常的自己过；线没了、块走远 = 不再问（警示色）</li>
+      <li>B：对话气泡 / 人像加勾（有人核对）/ 认证徽章（AI 审过）/ 开锁，都是 Lucide 现成的</li>
+    </ul>
+  </div>
+
+  <!-- ④ 状态栏：现在 vs 改后 -->
+  <div class="frame">
+    <div class="cap"><b>④ 底部状态栏：现在 vs 改后</b>划掉的是和输入框重复、或聊天层用不上的</div>
+    <div class="lbl">现在（聊天层）</div>
+    <div class="sample">
+      <div class="old">
+        <span class="x">● Claude Code · 智谱 GLM</span>
+        <span class="pill x"><svg class="i" style="width:12px"><use href="#folder"/></svg>Ccode</span>
+        <span class="cp"><span style="background:rgb(255 255 255 / .07)">⑂ main <span style="color:#4cc38a">+128</span> <span style="color:#f07070">-34</span> ↑2</span><span class="x" style="background:linear-gradient(90deg,#4cc38acc,#10b981);color:#101218">Commit &amp; Push (+7) ▾</span></span>
+        <span style="flex:1"></span>
+        <span class="x">12:41</span><span>75.2k↑ 3.1k↓ · $0.210</span>
+      </div>
+    </div>
+    <div class="lbl" style="margin-top:16px">改后（聊天层）</div>
+    <div class="sample">
+      <div class="sbar">
+        <span class="k l2"><svg class="i" style="width:12px"><use href="#branch"/></svg>main</span>
+        <span class="k num"><span class="add">+128</span><span class="del">−34</span><span class="l4">· 7 个文件</span></span>
+        <span class="k l4">↑2 未推送</span>
+        <span class="act">提交…</span>
+        <span class="sp"></span>
+        <span class="k l4">经 智谱 GLM</span>
+        <span class="k num">7.8 万 token · $0.21</span>
+      </div>
+    </div>
+    <div class="table">
+      <div class="h">Agent · 连接</div><div class="v">Agent 看模型芯片的品牌色圆点；连接名留下（额度、限流、花谁的钱都看它），写成「经 智谱 GLM」放右边</div>
+      <div class="h">状态圆点</div><div class="v">去掉：在回复 / 已停下，对话末尾的 M▁ 那一行和「AI 已停下」已经说了</div>
+      <div class="h">目录胶囊</div><div class="v">去掉：开聊前在输入框的项目芯片里选，开聊后不能换</div>
+      <div class="h">分支 · 改动</div><div class="v">留下并加强：是 git 仓库就常驻（干净时写「无改动」），生成中数字跟着涨；点它打开改动面板</div>
+      <div class="h">Commit &amp; Push</div><div class="v">改中文、去绿色渐变：「提交…」只在 Agent 停下且有改动时出现，流程不变（生成信息 → 倒计时 → 提交推送）</div>
+      <div class="h">运行时长</div><div class="v">去掉：聊天里没人关心进程活了多久；每一轮的用时在生成那一行</div>
+      <div class="h">token ↑↓</div><div class="v">合成一个总数 + 费用；悬停再分输入 / 输出 / 缓存</div>
+      <div class="h">「换模请重开」</div><div class="v">去掉：模型菜单里已经写了</div>
+    </div>
+  </div>
+
+  <!-- ⑤ 整体：开聊后输入框 + 状态栏 -->
+  <div class="frame wide">
+    <div class="cap"><b>⑤ 开聊后：输入框 + 状态栏一起看</b>输入框管「这一句怎么发」，状态栏管「这段活落在哪、花了多少」——两条不重复任何一个字段</div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:22px 26px; margin-top:4px">
+      <div>
+        <div class="lbl">编程项目 · 正在回复，改动数字在涨</div>
+        <div class="composer focus">
+          <div class="ta">顺便把 README 也更新一下<span class="caret"></span></div>
+          <div class="bar">
+            <span class="ib"><svg class="i s15"><use href="#plus"/></svg></span>
+            <span class="chip"><svg class="g"><use href="#a-ask"/></svg>请求批准</span>
+            <span class="grow"></span>
+            <svg class="ring" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="#40454f" stroke-width="2"/><circle cx="8" cy="8" r="6" fill="none" stroke="#95959a" stroke-width="2" stroke-dasharray="15 38" transform="rotate(-90 8 8)"/></svg>
+            <span class="chip"><span class="dot" style="background:#D97757"></span>glm-5.3 · <svg class="mm"><use href="#m3"/></svg>高</span>
+            <span class="blk run"><i></i></span><span class="queue">排队</span><span class="blk ready"><svg class="i"><use href="#up"/></svg></span>
+          </div>
+        </div>
+        <div class="sbar">
+          <span class="k l2"><svg class="i" style="width:12px"><use href="#branch"/></svg>main</span>
+          <span class="k num"><span class="add">+96</span><span class="del">−12</span><span class="l4">· 4 个文件</span></span>
+          <span class="sp"></span><span class="k l4">经 智谱 GLM</span><span class="k num">5.1 万 token · $0.14</span>
+        </div>
+      </div>
+      <div>
+        <div class="lbl">完全访问 · 回复完了，可以提交</div>
+        <div class="composer full">
+          <div class="ta"><span class="ph">接着说…</span></div>
+          <div class="bar">
+            <span class="ib"><svg class="i s15"><use href="#plus"/></svg></span>
+            <span class="chip risk"><svg class="g"><use href="#a-full"/></svg>完全访问</span>
+            <span class="grow"></span>
+            <span class="chip"><span class="dot" style="background:#D97757"></span>glm-5.3 · <svg class="mm"><use href="#m3"/></svg>高</span>
+            <span class="blk empty"><svg class="i"><use href="#up"/></svg></span>
+          </div>
+        </div>
+        <div class="sbar">
+          <span class="k l2"><svg class="i" style="width:12px"><use href="#branch"/></svg>main</span>
+          <span class="k num"><span class="add">+128</span><span class="del">−34</span><span class="l4">· 7 个文件</span></span>
+          <span class="k l4">↑2 未推送</span><span class="act">提交…</span>
+          <span class="sp"></span><span class="k l4">经 智谱 GLM</span><span class="k num">7.8 万 token · $0.21</span>
+        </div>
+      </div>
+      <div>
+        <div class="lbl">科研项目 · 只讨论 · 有一个工作区可以合并</div>
+        <div class="composer discuss">
+          <div class="ta"><span class="ph">只讨论：它会看、会说，不改文件、不跑命令</span></div>
+          <div class="bar">
+            <span class="ib"><svg class="i s15"><use href="#plus"/></svg></span>
+            <span class="chip"><svg class="g"><use href="#a-discuss"/></svg>只讨论</span>
+            <span class="grow"></span>
+            <span class="chip"><span class="dot" style="background:#8B7EC8"></span>gpt-5.5 · <svg class="mm"><use href="#m2"/></svg>medium</span>
+            <span class="blk empty"><svg class="i"><use href="#up"/></svg></span>
+          </div>
+        </div>
+        <div class="sbar">
+          <span class="k l2"><svg class="i" style="width:12px"><use href="#branch"/></svg>main</span>
+          <span class="k l4">无改动</span>
+          <span class="k l2"><svg class="i" style="width:12px"><use href="#merge"/></svg>精读工作区可合并</span>
+          <span class="sp"></span><span class="k l4">经 Codex 官方</span><span class="k num">1.2 万 token</span>
+        </div>
+      </div>
+      <div>
+        <div class="lbl">随手聊（不是 git 仓库）</div>
+        <div class="composer">
+          <div class="ta"><span class="ph">接着说…</span></div>
+          <div class="bar">
+            <span class="ib"><svg class="i s15"><use href="#plus"/></svg></span>
+            <span class="chip"><svg class="g"><use href="#a-auto"/></svg>帮我批准</span>
+            <span class="grow"></span>
+            <span class="chip"><span class="dot" style="background:#0D9488"></span>kimi-k3</span>
+            <span class="blk ready"><svg class="i"><use href="#up"/></svg></span>
+          </div>
+        </div>
+        <div class="sbar">
+          <span class="k l4"><svg class="i" style="width:12px"><use href="#chat"/></svg>随手聊</span>
+          <span class="sp"></span><span class="k l4">经 Kimi 官方</span><span class="k num">3,400 token · $0.01</span>
+        </div>
+      </div>
+    </div>
+    <ul class="notes">
+      <li>状态栏不铺胶囊底、不用等宽字，和聊天正文同一套灰阶；只有改动的 +/− 带一点增删色</li>
+      <li>不是 git 仓库时左边只写项目名或「随手聊」，不画空的分支位</li>
+      <li>阅读区右栏（窄）照旧不出 git，只留连接和花费</li>
+    </ul>
+  </div>
+
+</div>
+</body>
+</html>

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { FolderOpen } from "lucide-react";
+import { FolderOpen, GitBranch, GitMerge, MessageCircle, Settings2 } from "lucide-react";
+import { fmtTokensZh } from "../token-format";
 import { invoke } from "@tauri-apps/api/core";
 import { AGENTS } from "../types";
 import { isTerminalIdle } from "../terminal-welcome";
@@ -231,6 +232,15 @@ export default function TerminalStatusBar({
     } catch {}
   }
 
+  /** 聊天变体提交按钮的字（终端变体同一套中文） */
+  function cpLabel(): string {
+    if (phase === "generating") return "生成提交信息…";
+    if (phase === "review") return `(${Math.max(1, Math.ceil((countPct / 100) * 3))}) 停`;
+    if (phase === "pushing") return "推送中…";
+    if (phase === "success") return `已推送${successHash ? ` ${successHash}` : ""}`;
+    return "提交…";
+  }
+
   function reset() {
     setPhase("idle");
     setEditing(false);
@@ -382,6 +392,7 @@ export default function TerminalStatusBar({
   const cwdRaw = status?.cwd ?? fallbackCwd;
   const cwdBase =
     cwdRaw.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? cwdRaw;
+  const isScratch = /[\\/]ccode[\\/]scratch[\\/]?$/i.test(cwdRaw);
   // 目录浮层改路径：仅未启动可编辑；进程存活期间 cwd 由 pty_get_cwd 回写跟随（shell 里 cd 即可）
   const cwdLocked = !!status?.ptyId;
   const idle = isTerminalIdle(status);
@@ -422,7 +433,9 @@ export default function TerminalStatusBar({
           chat ? "ccode-chat-column mx-auto w-full" : ""
         }`}
       >
-      {/* 左区：状态圆点 + agent · 配置 · 模型 + 思考滑块 */}
+      {/* 左区：状态圆点 + agent · 配置 · 模型 + 思考滑块。聊天变体不画（2026-10-22 状态栏去重）：
+          在回复 / 已停下对话末尾已经说了，Agent 看输入框模型芯片的品牌色圆点，模型思考在输入框里，连接挪到右边 */}
+      {!chat && (
       <span
         className="flex min-w-0 items-center gap-2 font-mono"
         style={{ color: dim }}
@@ -640,9 +653,22 @@ export default function TerminalStatusBar({
             </span>
           )}
       </span>
+      )}
 
       {/* 中区：目录胶囊常驻（点击浮层改目录，仅未启动可编辑）+ git 连体胶囊（有改动/未推送时）。
-          终端内 TUI 自己那行状态是字符流删不掉，底栏侧把路径做出辨识度即是冗余的解 */}
+          终端内 TUI 自己那行状态是字符流删不掉，底栏侧把路径做出辨识度即是冗余的解。
+          聊天变体不画目录（输入框的项目芯片管选、开聊后不能换）；不是 git 仓库时只写项目名 / 随手聊 */}
+      {chat && !git?.isRepo && (
+        <span className="flex min-w-0 items-center gap-1.5 text-l4" title={cwdRaw}>
+          {isScratch ? (
+            <MessageCircle size={12} strokeWidth={1.8} aria-hidden="true" className="shrink-0" />
+          ) : (
+            <FolderOpen size={12} strokeWidth={1.8} aria-hidden="true" className="shrink-0" />
+          )}
+          <span className="truncate">{isScratch ? "随手聊" : cwdBase}</span>
+        </span>
+      )}
+      {!chat && (
       <span className="relative">
         <button
           type="button"
@@ -705,10 +731,93 @@ export default function TerminalStatusBar({
           </>
         )}
       </span>
-      {!idle && hasGit && (
+      )}
+      {((chat && git?.isRepo) || (!chat && !idle && hasGit)) && (
         /* 外包一层 relative 给浮层做锚（菜单右对齐 ▾、气泡左对齐胶囊左缘）；
            内层胶囊保持 overflow-hidden 裁圆角；min-w-0 允许窄窗时收缩防溢出右栏 */
         <span className="relative min-w-0">
+        {chat ? (
+          /* 聊天变体（2026-10-22 状态栏重排）：不铺胶囊底、不用等宽字、不用绿色渐变，与聊天正文同一套灰阶，
+             只有 +/− 带一点增删色。是 git 仓库就常驻（干净写「无改动」），生成中数字跟着涨；点分支 / 改动打开改动面板。
+             「提交…」与终端变体同一套流程（生成信息 → 倒计时 → 提交推送）和同一道门（Agent 在跑不给提交） */
+          <span className="flex min-w-0 items-center gap-3 text-l3">
+            <button
+              type="button"
+              onClick={onOpenGit}
+              title="点击查看改动"
+              className="flex min-w-0 cursor-pointer items-center gap-2 border-0 bg-transparent p-0 hover:text-l1"
+            >
+              <span className="flex min-w-0 items-center gap-1 text-l2">
+                <GitBranch size={12} strokeWidth={1.8} aria-hidden="true" className="shrink-0" />
+                <span className="min-w-0 max-w-[10rem] truncate">{git!.branch || "HEAD"}</span>
+              </span>
+              {git!.files.length > 0 ? (
+                <span className="flex shrink-0 items-center gap-1 tabular-nums">
+                  <span className="text-add">+{git!.add}</span>
+                  <span className="text-del">−{git!.del}</span>
+                  {!narrow && <span className="text-l4">· {git!.files.length} 个文件</span>}
+                </span>
+              ) : (
+                <span className="shrink-0 text-l4">无改动</span>
+              )}
+            </button>
+            {git!.ahead > 0 && !narrow && (
+              <span className="shrink-0 text-l4" title={`比远程多出 ${git!.ahead} 个提交`}>
+                ↑{git!.ahead} 未推送
+              </span>
+            )}
+            {git!.behind > 0 && !narrow && (
+              <span className="shrink-0 text-l4" title={`远程新增 ${git!.behind} 个提交`}>
+                ↓{git!.behind} 待拉取
+              </span>
+            )}
+            {hasCommittable && !agentBusy && (
+              <span className="flex shrink-0 items-center">
+                <button
+                  type="button"
+                  onClick={() =>
+                    phase === "generating" || phase === "review" ? reset() : phase === "idle" ? void startGenerate() : undefined
+                  }
+                  disabled={phase === "pushing"}
+                  title={
+                    phase === "idle"
+                      ? `AI 生成提交信息 → ${mode === "auto" ? "3 秒后自动提交并推送" : "停在预览"}（Esc 随时取消）`
+                      : phase === "generating"
+                        ? "点击或 Esc 取消"
+                        : phase === "review"
+                          ? "点击停止自动提交（信息留在预览里）"
+                          : undefined
+                  }
+                  className="cursor-pointer rounded-md border-0 bg-hover px-1.5 py-0.5 text-l2 hover:text-l1 disabled:cursor-wait"
+                >
+                  {cpLabel()}
+                </button>
+                {phase === "idle" && (
+                  <button
+                    type="button"
+                    onClick={() => setSplitOpen((v) => !v)}
+                    title="提交设置：自动推送还是只预览、提交信息风格"
+                    aria-expanded={splitOpen}
+                    className="ml-0.5 flex cursor-pointer items-center rounded-md border-0 bg-transparent p-1 text-l4 hover:bg-hover hover:text-l2"
+                  >
+                    <Settings2 size={11} strokeWidth={1.8} aria-hidden="true" />
+                  </button>
+                )}
+              </span>
+            )}
+            {canPushOnly && !agentBusy && (
+              <button
+                type="button"
+                onClick={() => void pushOnly()}
+                disabled={pushBusy}
+                title="推送到远程（无上游分支时自动建立跟踪）"
+                className="shrink-0 cursor-pointer rounded-md border-0 bg-hover px-1.5 py-0.5 text-l2 hover:text-l1 disabled:cursor-wait"
+              >
+                {pushBusy ? "推送中…" : "推送"}
+              </button>
+            )}
+          </span>
+        ) : (
         <span
           className="flex items-stretch overflow-hidden rounded-full font-mono"
           style={{ border: `1px solid ${fg}22` }}
@@ -798,18 +907,18 @@ export default function TerminalStatusBar({
                 {phase === "generating" ? (
                   <>
                     <span className="inline-block animate-spin">◌</span>
-                    Analyzing Diff…
+                    生成提交信息…
                   </>
                 ) : phase === "review" ? (
                   // 倒计时秒数实时反馈：剩余时间 = countPct/100 × 3s，点击即 Stop
-                  `(${Math.max(1, Math.ceil((countPct / 100) * 3))}) Stop`
+                  `(${Math.max(1, Math.ceil((countPct / 100) * 3))}) 停`
                 ) : phase === "pushing" ? (
                   <>
                     <span className="inline-block animate-spin">⚙</span>{" "}
-                    Pushing…
+                    推送中…
                   </>
                 ) : phase === "success" ? (
-                  `✓ Pushed${successHash ? ` [${successHash}]` : ""}`
+                  `✓ 已推送${successHash ? ` [${successHash}]` : ""}`
                 ) : (
                   <>
                     <svg
@@ -828,7 +937,7 @@ export default function TerminalStatusBar({
                       <line x1="12" y1="11" x2="12" y2="19.5" />
                     </svg>
                     <span className="min-w-0 truncate">
-                      {`Commit & Push${git!.files.length > 0 ? ` (+${git!.files.length})` : ""}`}
+                      {`提交并推送${git!.files.length > 0 ? ` (+${git!.files.length})` : ""}`}
                     </span>
                   </>
                 )}
@@ -838,7 +947,7 @@ export default function TerminalStatusBar({
                 type="button"
                 onClick={() => setSplitOpen((v) => !v)}
                 disabled={phase !== "idle" || agentBusy}
-                title="Commit & Push 设置"
+                title="提交设置"
                 aria-expanded={splitOpen}
                 className="flex cursor-pointer items-center border-0 px-1.5 font-mono disabled:opacity-50"
                 style={{
@@ -872,7 +981,8 @@ export default function TerminalStatusBar({
             </button>
           )}
         </span>
-      {/* 分割菜单：模式（Auto-Push / Dry Run）+ 风格偏好 */}
+        )}
+      {/* 分割菜单：模式（自动推送 / 只预览）+ 风格偏好 */}
       {splitOpen && (
         <>
           <div
@@ -894,8 +1004,8 @@ export default function TerminalStatusBar({
             />
             {(
               [
-                ["auto", "Auto-Push（默认）：生成 → 3s 倒计时 → 自动提交推送"],
-                ["dry", "Dry Run：只生成并停在预览，不自动执行"],
+                ["auto", "自动推送（默认）：生成 → 3 秒倒计时 → 自动提交推送"],
+                ["dry", "只预览：只生成并停在预览，不自动执行"],
               ] as const
             ).map(([m, label]) => (
               <button
@@ -958,7 +1068,7 @@ export default function TerminalStatusBar({
         >
           <div className="mb-1.5 flex items-center justify-between">
             <span style={{ color: colors.yellow }}>
-              {mode === "dry" ? "预览（Dry Run · 不自动执行）" : "预览确认"}
+              {mode === "dry" ? "预览（只预览 · 不自动执行）" : "预览确认"}
             </span>
             {!editing && (
               <button
@@ -1018,29 +1128,58 @@ export default function TerminalStatusBar({
               className="rounded-sm border px-1.5 py-0.5"
               style={{ borderColor: `${fg}33`, color: colors.green }}
             >
-              [Enter] Push Now
+              [Enter] 立即提交
             </span>
             <span
               className="rounded-sm border px-1.5 py-0.5"
               style={{ borderColor: `${fg}33` }}
             >
-              [Esc] Cancel
+              [Esc] 取消
             </span>
           </div>
         </div>
       )}
         </span>
       )}
-      {!idle && mergeReady.length > 0 && (
-        <span
-          style={{ color: colors.green }}
-          title={`可合并的工作区：${mergeReady.join("、")}（从「改动」页签进入评审合并）`}
-        >
-          ● {mergeReady.length > 1 ? `${mergeReady.length} 个可合并` : "可合并"}
-        </span>
-      )}
+      {!idle && mergeReady.length > 0 &&
+        (chat ? (
+          <span
+            className="flex shrink-0 items-center gap-1 text-l2"
+            title={`可合并的工作区：${mergeReady.join("、")}（从「改动」页签进入评审合并）`}
+          >
+            <GitMerge size={12} strokeWidth={1.8} aria-hidden="true" />
+            {mergeReady.length > 1 ? `${mergeReady.length} 个工作区可合并` : `${mergeReady[0]}可合并`}
+          </span>
+        ) : (
+          <span
+            style={{ color: colors.green }}
+            title={`可合并的工作区：${mergeReady.join("、")}（从「改动」页签进入评审合并）`}
+          >
+            ● {mergeReady.length > 1 ? `${mergeReady.length} 个可合并` : "可合并"}
+          </span>
+        ))}
 
-      {/* 右区：时长 · token（等宽小字） */}
+      {/* 右区：时长 · token（等宽小字）。聊天变体：经哪条连接 · 这段对话用了多少（不写运行时长——每一轮的用时在生成那一行） */}
+      {chat ? (
+        <span className="ml-auto flex min-w-0 shrink-0 items-center gap-3 overflow-hidden text-l4">
+          {!idle && profileName && !narrow && (
+            <span className="min-w-0 truncate" title={`${agentLabel ?? ""} 经「${profileName}」连接（额度、限流、花费都按这条连接算）`}>
+              经 {profileName}
+            </span>
+          )}
+          {usage && (usage.input > 0 || usage.output > 0) && (
+            <span
+              className="shrink-0 tabular-nums text-l3"
+              title={`这段对话累计：输入 ${fmtTokensZh(usage.input)} · 输出 ${fmtTokensZh(usage.output)} token（约 1 分钟更新一次）${
+                usage.priced ? `\n按定价表估算 $${usage.costUsd.toFixed(3)}` : ""
+              }`}
+            >
+              {fmtTokensZh(usage.input + usage.output)} token
+              {usage.priced && ` · $${usage.costUsd.toFixed(2)}`}
+            </span>
+          )}
+        </span>
+      ) : (
       <span
         className="ml-auto flex min-w-0 items-center gap-3 overflow-hidden font-mono"
         style={{ color: faint }}
@@ -1079,6 +1218,7 @@ export default function TerminalStatusBar({
           </span>
         )}
       </span>
+      )}
 
 
       </div>
