@@ -816,7 +816,8 @@ src-tauri/src/
                              #   Codex 私有 app-server + TUI --remote，split_codex_args 恢复时把权限参数改成服务配置），
                              #   start 起读取线程（状态日志 / 事件文件追加读、OpenCode SSE、Codex ws 客户端，手写最小 WebSocket），
                              #   Tracker = 回合状态机（幂等开始 / 结束、审批、实时文字、会话跟随），快照推 chat-channel-<tabId>；
-                             #   chat_channel_reply 经官方通道回审批；close_for_pty 随 PTY 退出收旁路；e2e::e2e_channel（ignored）=
+                             #   chat_channel_reply 经官方通道回审批；chat_channel_settle_from_transcript（Claude 被拒绝 / Esc 打断不发 Stop，
+                             #   按会话文件里这一轮之后的收尾标记收回合）；close_for_pty 随 PTY 退出收旁路；e2e::e2e_channel（ignored）=
                              #   真 CLI + 假网关端到端（scripts/e2e-model-routing/README.md，三平台同一份）；
                              #   Windows 专属（terminal.md 旁路条⑦–⑪）：官方账号 hooks 写 settings.json 传路径、Claude hooks 后台跑时
                              #   Tracker::async_hooks 按身份对账（apply_async_tool）、app-server spawn_tied_to_app、收旁路先杀后删

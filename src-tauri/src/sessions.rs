@@ -1008,6 +1008,49 @@ fn is_claude_interrupt_marker(text: &str) -> bool {
         || t.eq_ignore_ascii_case("[Request interrupted by user for tool use]")
 }
 
+/// Claude 会话文件里，`after_ms`（unix 毫秒）之后这一轮有没有收尾：被打断（拒绝工具 / Esc）返回 "interrupted"，
+/// 正常写了 system/turn_duration 返回 "end_turn"，没有返回 None。只看尾部 64KB、时间早于 after_ms 的行就停
+pub(crate) fn claude_turn_end_after(path: &Path, after_ms: i64) -> Option<&'static str> {
+    let (head, tail) = read_head_tail(path, 64 * 1024)?;
+    // 小文件整份在头窗里、尾窗为空
+    let tail = if tail.is_empty() { head } else { tail };
+    let mut ended = None;
+    for line in tail.iter().rev() {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let Some(ts) = get_str(&v, "timestamp")
+            .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+            .map(|t| t.timestamp_millis())
+        else {
+            continue;
+        };
+        if ts < after_ms {
+            break;
+        }
+        match get_str(&v, "type") {
+            Some("system") if get_str(&v, "subtype") == Some("turn_duration") => {
+                ended.get_or_insert("end_turn");
+            }
+            Some("user") => {
+                let content = v.get("message").and_then(|m| m.get("content"));
+                let interrupted = match content {
+                    Some(Value::String(s)) => is_claude_interrupt_marker(s),
+                    Some(Value::Array(arr)) => arr.iter().any(|b| {
+                        get_str(b, "type") == Some("text") && get_str(b, "text").is_some_and(is_claude_interrupt_marker)
+                    }),
+                    _ => false,
+                };
+                if interrupted {
+                    return Some("interrupted");
+                }
+            }
+            _ => {}
+        }
+    }
+    ended
+}
+
 /// 一条字符串内容的 Claude 用户 / 本地命令行：命令标签拆成 command / command_output 块，
 /// 命令输出并进紧挨着的那条命令（聊天里一行「命令 → 结果」），其余是用户文本
 fn push_claude_user_string(
@@ -8248,6 +8291,33 @@ mod tests {
             r#"{"type":"system","subtype":"local_command","content":"<local-command-stdout>Settings dialog dismissed</local-command-stdout>"}"#,
         ]);
         assert_eq!(claude_tail_state(&done), "settled");
+    }
+
+    #[test]
+    fn claude_turn_end_after_sees_interrupt_and_ignores_older_turns() {
+        // 2026-10-21 用户实测的形状：拒绝两个工具后只有打断标记与 turn_duration，没有 Stop hook
+        let dir = std::env::temp_dir().join(format!("ccode-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("s.jsonl");
+        let lines = [
+            r#"{"type":"system","subtype":"turn_duration","timestamp":"2026-10-21T02:48:09.000Z"}"#,
+            r#"{"type":"user","timestamp":"2026-10-21T02:49:22.000Z","message":{"role":"user","content":"在当前目录依次完成"}}"#,
+            r#"{"type":"user","timestamp":"2026-10-21T02:50:05.100Z","message":{"role":"user","content":[{"type":"tool_result","is_error":true,"content":"The user doesn't want to proceed"}]}}"#,
+            r#"{"type":"user","timestamp":"2026-10-21T02:50:05.200Z","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]}}"#,
+            r#"{"type":"system","subtype":"turn_duration","timestamp":"2026-10-21T02:50:05.300Z"}"#,
+        ];
+        std::fs::write(&f, lines.join("\n") + "\n").unwrap();
+        let ms = |t: &str| chrono::DateTime::parse_from_rfc3339(t).unwrap().timestamp_millis();
+        // 这一轮 02:49:22 开始：打断标记在后面 → interrupted
+        assert_eq!(claude_turn_end_after(&f, ms("2026-10-21T02:49:22.000Z")), Some("interrupted"));
+        // 上一轮的 turn_duration 不算这一轮的收尾
+        std::fs::write(&f, lines[..2].join("\n") + "\n").unwrap();
+        assert_eq!(claude_turn_end_after(&f, ms("2026-10-21T02:49:22.000Z")), None);
+        // 正常结束只有 turn_duration
+        let normal = [lines[1], lines[4]];
+        std::fs::write(&f, normal.join("\n") + "\n").unwrap();
+        assert_eq!(claude_turn_end_after(&f, ms("2026-10-21T02:49:22.000Z")), Some("end_turn"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

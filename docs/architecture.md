@@ -457,6 +457,18 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-21 · Claude 被拒绝 / 打断后回合靠会话文件收；Windows 上 Claude 回复不流式是 CLI 自己的画法
+
+用户报两件。一，**终端已结束、聊天层仍「正在回复」**：在审批菜单里拒绝工具（或按 Esc）时 Claude 写一行 user
+「[Request interrupted by user for tool use]」和 system/turn_duration 就结束这一轮，**不触发 Stop hook**（用户会话实证：正常一轮有
+stop_hook_summary，被拒那轮没有），旁路回合一直开着、又压过会话尾部的推断。定下：会话尾部判成收尾时前端调
+`chat_channel_settle_from_transcript`，后端只认这一轮开始之后的打断标记 / turn_duration（`sessions::claude_turn_end_after`），
+按 interrupted 收掉；三平台同。二，**Claude 的回复不是流式出来的**：不是模型也不是网关——直连智谱 Anthropic 端点 glm-5.3-flash 流式，
+正文 228 个增量、每块 1–12 字、4.7 秒内陆续到（之前另有约 20 秒思考，开不开 thinking 参数都思考）；Windows 上用假网关慢速吐字抓屏，
+Claude Code 2.1.305 与 2.1.292 都是转圈计 token、整条消息收完才一次画出（Mac 上 2.1.292 同一假网关是逐行画出，见 live-reply 测试样本）。
+Mesa 对 Claude 只能读屏（hooks 不带正文），所以 Windows 上 Claude 的聊天层没有逐字预览；长思考期间屏上也只有「Thinking」。
+暂不改：可选的补救是在「正在回复」旁显示转圈行里的已生成 token 数，未定。
+
 ### 2026-10-20 · 聊天层 Windows 八家抓屏核对：读屏与 macOS 同形；Grok 多行改写 CR
 
 用户要求看 Windows 上各家在聊天层的显示与交互问题、Mac 是否同样存在。`chat-capture.py` 在 Windows 上走 ConPTY（pywinpty）跑八家

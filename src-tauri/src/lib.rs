@@ -788,6 +788,7 @@ pub fn run() {
             hooks::hooks_attention_support,
             hooks::session_confirm_detail,
             chat_channel::chat_channel_snapshot,
+            chat_channel::chat_channel_settle_from_transcript,
             chat_channel::chat_channel_reply,
             context_breakdown::context_breakdown,
             ai::ai_prompt,

@@ -325,7 +325,10 @@
   其余家照旧按菜单原文写按键；「先答者算」，卡片等 CLI 回「已处理」才撤。只能在终端菜单里答的 hooks 家（Claude Code）CLI 不报「已答」，
   旁路要等那个工具跑完（PostToolUse）才撤——批准后工具跑多久「等你确认」就挂多久（WebFetch 实测 14 秒，菜单英文卡之后又冒一张中文兜底卡）：
   **屏上回到输入框、没有菜单 = 已答**（`hooksApprovalAnswered`，标签注意力回 working、不出兜底卡；旁路报「等批准」时补扫一次屏；
-  读屏认不出输入框的家照旧等旁路）；③会话跟随：旁路给了文件路径就锁定（文件未落盘先记 id），
+  读屏认不出输入框的家照旧等旁路）；Claude 在审批菜单里被拒绝 / 按 Esc 打断时**不触发 Stop hook**，回合靠会话文件收：
+  会话尾部判成收尾时前端调 `chat_channel_settle_from_transcript`，后端只认这一轮开始之后的打断标记 / turn_duration
+  （`sessions::claude_turn_end_after`），按 interrupted 收掉（2026-10-21 用户实测：拒绝后聊天层 1 分半仍「正在回复」）；
+  ③会话跟随：旁路给了文件路径就锁定（文件未落盘先记 id），
   `sessionSeq` 增大且路径变了（/clear、恢复别的会话）就 `relinkTo` 改盯新文件并在对话流记一行；④实时文字有旁路的家（Qwen / OpenCode /
   Codex）不再读屏；⑤Codex 恢复时远程 TUI 拒收权限参数，`split_codex_args` 改成 app-server 的 `-c` 配置，新开会话仍由 TUI 带；
   新线程 rollout 未落盘前 `thread/resume` 会失败，线程转 active 时再订；⑥旁路目录 `<config>/ccode/chat-channels/<pid>-<tab>-<随机>/`

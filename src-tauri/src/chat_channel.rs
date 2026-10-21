@@ -2281,6 +2281,33 @@ pub fn chat_channel_snapshot(tab_id: String) -> Option<ChannelSnapshot> {
     Some(snap)
 }
 
+/// hooks 家（Claude Code）的回合在会话文件里已经收尾、旁路却还开着时收掉它：在审批菜单里拒绝工具或按 Esc 打断，
+/// Claude 不触发 Stop hook，回合一直开着，聊天层挂着「正在回复」（2026-10-21 用户实测：拒绝两个工具后终端已结束、
+/// 聊天层 1 分半仍在回复；三平台都有）。会话文件里有收尾标记（打断记一行 user「[Request interrupted…]」、
+/// 一轮结束记 system/turn_duration），时间晚于这一轮开始才算。前端读会话文件时顺带问；收了返回 true
+#[tauri::command]
+pub fn chat_channel_settle_from_transcript(tab_id: String) -> bool {
+    let Some(ch) = channel_for_tab(&tab_id) else {
+        return false;
+    };
+    let (path, started) = {
+        let Ok(t) = ch.tracker.lock() else {
+            return false;
+        };
+        let open = t.snap.turn.as_ref().filter(|turn| turn.ended_at.is_none());
+        match (t.snap.kind, open, t.snap.transcript_path.clone()) {
+            ("hooks", Some(turn), Some(path)) if t.snap.agent == "claude-code" => (path, turn.started_at),
+            _ => return false,
+        }
+    };
+    // 只认这一轮开始之后的标记：上一轮的 turn_duration 一定早于这一轮的 UserPromptSubmit
+    let Some(reason) = crate::sessions::claude_turn_end_after(Path::new(&path), started) else {
+        return false;
+    };
+    feed(&ch, vec![ChannelEvent::TurnEnd { reason: Some(reason.into()) }]);
+    true
+}
+
 /// 聊天层「等你决定」卡上点了按钮：经这家官方的回复通道送回（decision = allow | allow_always | deny）。
 /// 只送用户点的那一项；终端里已经答过的，CLI 会回「已处理」并丢掉这条，不会出错。
 #[tauri::command]

@@ -7,6 +7,8 @@
 
 ## 未发布
 
+- **Claude Code 里拒绝工具或按 Esc 打断后，聊天层不再一直显示「正在回复」**：在审批菜单里选「不」或按 Esc，Claude 这一轮就结束了，但聊天层以前收不到结束的信号，一直挂着「正在回复」计时。现在一看到会话记录里写了「这一轮已打断 / 已结束」就收起。macOS 与 Windows 相同。
+
 - **Windows 上内置终端可以换 shell，`cd` 之后文件树也跟着走**：**设置 → 终端 → 内置终端 shell** 里能选 Windows PowerShell、PowerShell 7、Git Bash 或命令提示符（只列你电脑上装了的），Mac 上能选 zsh、bash、fish。以前在 Windows 的终端里 `cd` 到别处，右侧文件树和 Git 面板还停在原地，现在会跟过去（四种 shell 都一样）。
 - **Windows 上 Agent 记录进度更快**：Claude Code、CodeBuddy，以及开了精确注意力的 Gemini、Kimi、Grok，每次调用工具前后 Mesa 要记一笔进度，以前每次都要起一个 PowerShell，约 1 秒，Gemini 的屏上会一直挂着「Executing Hook」、审批菜单要等很久才出来。现在改用 Mesa 自带的小程序，每次约 0.1 秒。已经开着精确注意力的，下次打开 Mesa 会自动换成新写法（改之前先备份配置）。
 - **Windows 上聊天层更认得清 Claude Code 和 Grok 的屏幕**：Claude Code 回复的第一行、Grok 的审批选项与回复，以前在 Windows 上会漏读或读错（这两家在 Windows 上换了一套符号），现在和 Mac 一样。Gemini 等 MCP 初始化、提问还在排队时，聊天里不再把启动横幅当成回复显示出来（Mac 同样修正）。

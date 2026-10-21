@@ -3872,6 +3872,11 @@ const TerminalView = memo(function TerminalView({
       // 之后会话文件若再无新写入，签名门会让 5s 轮询永远不再重跑 fetch，
       // 「已收尾但被推迟」就冻结成永久转圈（2026-09-19 综述大纲跑完实测）
       const fileSaysOver = state === "done" || state === "settled" || turnSettled;
+      // hooks 家的回合被打断（审批菜单里拒绝 / Esc）时 Claude 不发 Stop，旁路一直「在回复」：会话文件说收尾了就让后端核对后收掉
+      const openChannel = channelRef.current;
+      if (fileSaysOver && openChannel?.kind === "hooks" && channelTurnOpen(openChannel)) {
+        void invoke<boolean>("chat_channel_settle_from_transcript", { tabId }).catch(() => false);
+      }
       const ptyLive = Date.now() - lastOutputAtRef.current < PTY_LIVE_MS;
       // 回合确定结束、且刚发的用户消息都已落盘（不是上一轮残留的收尾标记）：
       // 等回复就此结束，不再靠逐条比对正文（正文比对有漏判就会一直挂着「等待回复」）
