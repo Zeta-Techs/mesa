@@ -848,6 +848,8 @@ src-tauri/src/
                              #   条间 2ms；ConPTY 双向吞 OSC 的实测结论见 conventions/terminal.md，别改回 OSC）
                              # pty_spawn / shell_spawn / pty_spawn_custom / pty_kill 是 async 命令、在后台线程干活（*_sync 是原体），
                              #   三种拉起经 SPAWN_LOCK 逐个进行（2026-10-21，conventions/terminal.md「会等待的命令不占主线程」）；
+                             # 输出：发送线程 route_output → OutputSink（前端 pty_subscribe 交来的 Channel + 隐藏期 backlog，同锁）；
+                             #   ≥8KB 的帧发原始字节；FlowGate 流控（pty_ack 确认，未确认超 10 万字读线程停读，5 秒失联放行）；
                              # 内置终端 shell 可选（2026-10-20，设置 terminal_shell）：shell_candidates 只列本机找得到的
                              #   （Windows PowerShell / PowerShell 7 / Git Bash / cmd；macOS zsh / bash / fish），interactive_shell 选不上回落
                              #   login_shell_argv；run 脚本不走这里（script_shell_argv）。Windows 跟随 cd：attach_cwd_tracking 给

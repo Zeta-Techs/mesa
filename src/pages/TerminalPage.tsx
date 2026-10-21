@@ -10,7 +10,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -610,6 +610,10 @@ type RightTab = (typeof RIGHT_TABS)[number]["key"];
 /** 往 shell 写完整命令后的「回车」：ConPTY 把裸 LF 当 Ctrl+Enter，PowerShell 只换行不执行；
  *  Windows 用 \r（VS Code sendText 同口径），其他平台保持 \n */
 const SHELL_ENTER = IS_WINDOWS ? "\r" : "\n";
+
+/** 终端输出流控：画完这么多字（string.length）回一次确认。必须 ≤ pty.rs 的 FLOW_LOW——
+ *  攒着不发的部分要低于后端恢复读取的下限，否则停读后永远等不到恢复 */
+const OUTPUT_ACK_CHUNK = 5000;
 
 /** 发系统通知：macOS 首次发送前必须显式申请权限（系统级弹窗，仅首次）；被拒则静默跳过。
  *  带「去处理」动作按钮（ccode.attention，App.tsx 注册）；extra 携带 tabId/cwd，
@@ -3496,11 +3500,31 @@ const TerminalView = memo(function TerminalView({
       // 换连接 / 重开接回后，xterm 里还留着上一个进程画的错误：记作已看过，不再提示
       connBaselineRef.current = connIssueCounts(detectConnIssues(screenLines(), agentId));
     }
+    // 输出走 Rust 交来的通道（pty_subscribe，见下方）：小帧是字符串，≥8KB 的大帧是原始字节
+    //（不转义、不拼脚本执行）。每帧画完回流控确认，攒满 OUTPUT_ACK_CHUNK 发一次；后端未确认的
+    // 超过 10 万字就停读 PTY，刷屏时 Ctrl+C 立即见效（pty.rs FlowGate）
+    const output = new Channel<string | ArrayBuffer>();
+    const listenOutput = (handle: (payload: string) => void) => {
+      const decoder = new TextDecoder();
+      output.onmessage = (message) =>
+        handle(typeof message === "string" ? message : decoder.decode(message));
+      return () => {
+        output.onmessage = () => {};
+      };
+    };
+    let drawnUnacked = 0;
+    const ackDrawn = (units: number) => {
+      drawnUnacked += units;
+      if (drawnUnacked < OUTPUT_ACK_CHUNK) return;
+      const done = drawnUnacked;
+      drawnUnacked = 0;
+      void invoke("pty_ack", { ptyId, units: done }).catch(() => {});
+    };
     unlistenRef.current = [
-      await listen<string>(`pty-output-${ptyId}`, (e) => {
+      listenOutput((payload) => {
         // 查询在这里只剥掉、跟踪 Kitty 推栈；应答由后端读线程当场写回（term_query.rs），
         // 前端再答就是第二份，且后台标签的 backlog 补发会让应答晚到、被 CLI 当成按键打进输入框
-        const queried = consumeTerminalQueries(queryPendingRef.current, e.payload);
+        const queried = consumeTerminalQueries(queryPendingRef.current, payload);
         queryPendingRef.current = queried.pending;
         for (const reply of queried.replies) {
           if (reply.kkp === "arm") kkpArmedRef.current = true;
@@ -3533,11 +3557,14 @@ const TerminalView = memo(function TerminalView({
           const buf = term.buffer.active;
           const keepLine =
             host.text.includes("\x1b[3J") && buf.viewportY < buf.baseY ? buf.viewportY : null;
-          if (keepLine === null) term.write(host.text);
+          if (keepLine === null) term.write(host.text, () => ackDrawn(payload.length));
           else
             term.write(host.text, () => {
               term.scrollToLine(Math.min(keepLine, term.buffer.active.baseY));
+              ackDrawn(payload.length);
             });
+        } else {
+          ackDrawn(payload.length);
         }
         if (kind === "agent" && host.text) {
           lastDrawAtRef.current = Date.now();
@@ -3586,7 +3613,7 @@ const TerminalView = memo(function TerminalView({
       await listen<number>(`pty-exit-${ptyId}`, (e) => {
         void onPtyExit(ptyId, e.payload);
       }),
-      // 后台标签的带外信号（Rust gated_emit 在不可见时对含 OSC 9/777/BEL 的帧照发）：
+      // 后台标签的带外信号（Rust route_output 在不可见时对含 OSC 9/777/BEL 的帧照发）：
       // 只喂通知/进度解析，不写画面——正文仍在 backlog 里等切回补发；补发时的重复
       // 通知由限频消化、进度幂等。没有这条，通知与进度徽章的主场景（后台标签）失效。
       await listen<string>(`pty-signal-${ptyId}`, (e) => {
@@ -3613,6 +3640,8 @@ const TerminalView = memo(function TerminalView({
       invoke("pty_kill", { ptyId }).catch(() => {});
       return;
     }
+    // 监听都挂好了再接通道：接上之前的输出在后端 backlog 里，可见就当场补发，不会丢开屏
+    await invoke("pty_subscribe", { ptyId, channel: output }).catch(() => {});
     // Windows/ConPTY 吞掉 agent 的 OSC 10/11 底色查询（两个方向都不通，见
     // docs/conventions/terminal.md），xterm 的内置回报永远送不到子进程。
     // 改为不等查询、attach 后主动推一次：浅色主题下把当前前景/底色告诉 agent，

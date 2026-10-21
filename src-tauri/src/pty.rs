@@ -6,6 +6,7 @@ use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
+use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Emitter, Manager};
 
 /// 输出合帧周期：每个 PTY 每 16ms 最多一个 IPC 事件。
@@ -30,7 +31,10 @@ struct PtyEntry {
     child: Box<dyn Child + Send + Sync>,
     /// 标签可见才推流；不可见时输出进 backlog（优化 2）
     visible: Arc<AtomicBool>,
-    backlog: Arc<Mutex<Vec<u8>>>,
+    /// 前端输出通道与隐藏期积压（同一把锁，补发严格先于实时块）
+    sink: Arc<Mutex<OutputSink>>,
+    /// 输出流控：前端没跟上时读线程停读（见 FlowGate）
+    flow: Arc<FlowGate>,
     /// 子进程是否开过 bracketed paste（输出里出现过 ESC[?2004h，粘性置位）；
     /// pty_write 据此决定是否给多行输入手工包裹粘贴序列
     bracketed_paste: Arc<AtomicBool>,
@@ -74,6 +78,7 @@ impl PtyManager {
             .collect();
         let mut workers = Vec::new();
         for entry in entries {
+            entry.flow.close();
             workers.push(std::thread::spawn(move || {
                 terminate_pty_child(entry.child);
                 if let Some(id) = entry.run_id {
@@ -313,34 +318,137 @@ fn drain_backlog(backlog: &mut Vec<u8>) -> Option<String> {
     Some(text)
 }
 
-/// 可见性门控发送（优化 2）：可见 → 先补发 backlog 再发本块；不可见 → 进 backlog。
-/// 与 pty_set_visible 共用同一把 backlog 锁，保证补发严格先于实时块。
-fn gated_emit(
-    app: &AppHandle,
-    event: &str,
-    visible: &AtomicBool,
-    backlog: &Mutex<Vec<u8>>,
-    text: &str,
-) {
-    let mut bl = backlog.lock().unwrap();
-    if visible.load(Ordering::Relaxed) {
-        if let Some(back) = drain_backlog(&mut bl) {
-            let _ = app.emit(event, back);
+/// 前端的输出通道（pty_subscribe 交来，每次 attach 新建一条）与隐藏期积压放在同一把锁下：
+/// 补发严格先于之后的实时块。还没接上通道时与隐藏时一样进 backlog，接上再补发
+#[derive(Default)]
+struct OutputSink {
+    backlog: Vec<u8>,
+    channel: Option<Channel>,
+}
+
+/// 这么大的帧走原始字节（Tauri 用 fetch 取回，不转义、不拼脚本执行）；更小的仍按 JSON 字符串直接执行，
+/// 与 Tauri 自己的分界一致（ipc/channel.rs MAX_JSON_DIRECT_EXECUTE_THRESHOLD）。前端两种都收
+const RAW_FRAME_MIN: usize = 8 * 1024;
+
+/// 输出流控（2026-10-21，照 VS Code 的确认机制）：前端每画完约 5000 字回一次确认（pty_ack），
+/// 已发出未确认的超过 10 万字时读线程停读 PTY——子进程写不出去自然减速，刷屏时按 Ctrl+C 立刻见效，
+/// 不再等前端把积起来的几十 MB 写入队列消化完。降到 5000 字以下再接着读。
+/// 计数单位 = UTF-16 码元（前端 string.length），两端一致。隐藏标签的输出进 backlog、不计数
+const FLOW_HIGH: usize = 100_000;
+const FLOW_LOW: usize = 5_000;
+/// 停读期间这么久一个确认都没收到（页面重载、监听抛了异常）视为前端失联、放行，
+/// 不让子进程永远卡在写上
+const FLOW_STALL: Duration = Duration::from_secs(5);
+
+#[derive(Default)]
+struct FlowState {
+    unacked: usize,
+    paused: bool,
+    closed: bool,
+}
+
+#[derive(Default)]
+struct FlowGate {
+    state: Mutex<FlowState>,
+    cond: Condvar,
+}
+
+impl FlowGate {
+    fn sent(&self, units: usize) {
+        let mut s = self.state.lock().unwrap();
+        s.unacked = s.unacked.saturating_add(units);
+        if s.unacked > FLOW_HIGH {
+            s.paused = true;
         }
-        let _ = app.emit(event, text.to_string());
+    }
+
+    fn ack(&self, units: usize) {
+        let mut s = self.state.lock().unwrap();
+        s.unacked = s.unacked.saturating_sub(units);
+        if s.paused && s.unacked < FLOW_LOW {
+            s.paused = false;
+            self.cond.notify_all();
+        }
+    }
+
+    /// 前端不会再确认之前那些帧了（换了通道 / 标签转后台）：清零放行
+    fn reset(&self) {
+        let mut s = self.state.lock().unwrap();
+        s.unacked = 0;
+        s.paused = false;
+        self.cond.notify_all();
+    }
+
+    /// 标签被关 / 应用退出：读线程别再等，读到 EOF 自然收尾
+    fn close(&self) {
+        self.state.lock().unwrap().closed = true;
+        self.cond.notify_all();
+    }
+
+    /// 读线程每次读 PTY 之前调：停读中就等前端确认
+    fn wait_ready(&self, stall: Duration) {
+        let mut s = self.state.lock().unwrap();
+        while s.paused && !s.closed {
+            let before = s.unacked;
+            let (guard, timeout) = self.cond.wait_timeout(s, stall).unwrap();
+            s = guard;
+            if timeout.timed_out() && s.paused && s.unacked >= before {
+                crate::logbuf::record("warn", "pty", "终端输出等确认超时，视为前端失联，继续读取");
+                s.unacked = 0;
+                s.paused = false;
+            }
+        }
+    }
+}
+
+/// 发一帧给前端并计入流控；通道已失效（页面没了）就丢掉通道，之后的输出进 backlog 等重新接上
+fn send_frame(sink: &mut OutputSink, flow: &FlowGate, text: String) {
+    let Some(channel) = sink.channel.as_ref() else {
+        backlog_push(&mut sink.backlog, text.as_bytes());
+        return;
+    };
+    let units = text.encode_utf16().count();
+    let body = if text.len() >= RAW_FRAME_MIN {
+        InvokeResponseBody::Raw(text.into_bytes())
     } else {
-        // 后台标签的正文进 backlog，但带外信号（OSC 9/777 通知与进度、BEL）照发：
-        // 通知/进度徽章的主场景就是后台标签，等切回再补发就废了（2026-10-11 复核）。
-        // 前端 pty-signal 只喂通知/进度解析、不写画面；切回时的 backlog 补发会再见到
-        // 同样的字节，靠前端限频/幂等消化重复。
-        if text.contains("\x1b]9;")
-            || text.contains("\x1b]777;")
-            || text.contains('\u{7}')
-        {
-            let signal = format!("pty-signal-{}", &event["pty-output-".len()..]);
-            let _ = app.emit(&signal, text.to_string());
+        match serde_json::to_string(&text) {
+            Ok(json) => InvokeResponseBody::Json(json),
+            Err(_) => return,
         }
-        backlog_push(&mut bl, text.as_bytes());
+    };
+    if channel.send(body).is_ok() {
+        flow.sent(units);
+    } else {
+        sink.channel = None;
+    }
+}
+
+/// 可见性门控（优化 2）：可见且接上了通道 → 先补发 backlog 再发本块；否则进 backlog。
+/// 与 pty_set_visible / pty_subscribe 共用 sink 锁，保证补发严格先于实时块。
+/// 返回值 = 要照发给后台标签的带外信号（调用方 emit pty-signal）
+fn route_output(sink: &mut OutputSink, visible: bool, flow: &FlowGate, text: String) -> Option<String> {
+    if visible && sink.channel.is_some() {
+        if let Some(back) = drain_backlog(&mut sink.backlog) {
+            send_frame(sink, flow, back);
+        }
+        send_frame(sink, flow, text);
+        return None;
+    }
+    // 后台标签的正文进 backlog，但带外信号（OSC 9/777 通知与进度、BEL）照发：
+    // 通知/进度徽章的主场景就是后台标签，等切回再补发就废了（2026-10-11 复核）。
+    // 前端 pty-signal 只喂通知/进度解析、不写画面；切回时的 backlog 补发会再见到
+    // 同样的字节，靠前端限频/幂等消化重复。
+    backlog_push(&mut sink.backlog, text.as_bytes());
+    let signal = text.contains("\x1b]9;") || text.contains("\x1b]777;") || text.contains('\u{7}');
+    signal.then_some(text)
+}
+
+/// 翻成可见 / 刚接上通道时，在 sink 锁内把积压补发出去
+fn flush_backlog(sink: &mut OutputSink, flow: &FlowGate) {
+    if sink.channel.is_some() {
+        if let Some(text) = drain_backlog(&mut sink.backlog) {
+            send_frame(sink, flow, text);
+        }
     }
 }
 
@@ -578,7 +686,8 @@ fn spawn_tracked(
 
     let pty_id = uuid::Uuid::new_v4().to_string();
     let visible = Arc::new(AtomicBool::new(false)); // 默认不可见：前端随即按标签状态标记
-    let backlog = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::new(Mutex::new(OutputSink::default()));
+    let flow = Arc::new(FlowGate::default());
     let bracketed_paste = Arc::new(AtomicBool::new(false));
     LIVE_MANAGER.get_or_init(|| manager.clone());
     let input = crate::pty_input::PtyInput::new(writer);
@@ -590,7 +699,8 @@ fn spawn_tracked(
             master: pair.master,
             child,
             visible: visible.clone(),
-            backlog: backlog.clone(),
+            sink: sink.clone(),
+            flow: flow.clone(),
             bracketed_paste: bracketed_paste.clone(),
             purpose,
             initial_cwd: cwd.to_string(),
@@ -601,18 +711,24 @@ fn spawn_tracked(
     );
 
     let coalescer = Arc::new(FrameCoalescer::new());
-    let out_event = format!("pty-output-{pty_id}");
+    let signal_event = format!("pty-signal-{pty_id}");
     let exit_event = format!("pty-exit-{pty_id}");
 
-    // 发送线程：按 50ms 帧合并发出（优化 1），经可见性门控（优化 2）
+    // 发送线程：按帧合并发出（优化 1），经可见性门控（优化 2）走前端交来的通道
     let emitter = {
         let coalescer = coalescer.clone();
         let app = app.clone();
-        let out_event = out_event.clone();
+        let flow = flow.clone();
         std::thread::spawn(move || {
             let mut last_emit = Instant::now() - FRAME; // 首字节立即发
             while let Some((text, at)) = coalescer.take_frame(last_emit, FRAME) {
-                gated_emit(&app, &out_event, &visible, &backlog, &text);
+                let signal = {
+                    let mut sink = sink.lock().unwrap();
+                    route_output(&mut sink, visible.load(Ordering::Relaxed), &flow, text)
+                };
+                if let Some(signal) = signal {
+                    let _ = app.emit(&signal_event, signal);
+                }
                 last_emit = at;
             }
         })
@@ -628,6 +744,8 @@ fn spawn_tracked(
         // 终端能力查询在这里当场答，不等前端（标签在后台时输出进 backlog，前端答就晚了，见 term_query.rs）
         let mut queries = crate::term_query::QueryScanner::default();
         loop {
+            // 前端没跟上就先停读（流控，见 FlowGate）
+            flow.wait_ready(FLOW_STALL);
             let mut buf = [0u8; 8192];
             match reader.read(&mut buf) {
                 Ok(0) => break,
@@ -1841,27 +1959,51 @@ pub fn terminal_link_target(cwd: String, path: String) -> Option<String> {
     )
 }
 
-/// 标记标签可见性（优化 2）：翻转为可见时在同一把 backlog 锁内补发积压输出，
-/// 与发送线程的 gated_emit 互斥，保证补发严格先于之后的实时输出
+/// 标记标签可见性（优化 2）：翻转为可见时在 sink 锁内补发积压输出，
+/// 与发送线程互斥，保证补发严格先于之后的实时输出。转后台时流控清零（前端不再收这个标签的帧）
 #[tauri::command]
 pub fn pty_set_visible(
-    app: AppHandle,
     manager: tauri::State<'_, PtyManager>,
     pty_id: String,
     visible: bool,
 ) -> Result<(), String> {
     let entries = manager.entries.lock().unwrap();
     let entry = entries.get(&pty_id).ok_or("终端不存在或已退出")?;
+    let mut sink = entry.sink.lock().unwrap();
+    entry.visible.store(visible, Ordering::Relaxed);
     if visible {
-        let mut bl = entry.backlog.lock().unwrap();
-        entry.visible.store(true, Ordering::Relaxed);
-        if let Some(text) = drain_backlog(&mut bl) {
-            let _ = app.emit(&format!("pty-output-{pty_id}"), text);
-        }
+        flush_backlog(&mut sink, &entry.flow);
     } else {
-        entry.visible.store(false, Ordering::Relaxed);
+        entry.flow.reset();
     }
     Ok(())
+}
+
+/// 前端接上这个 PTY 的输出通道（attach 时每次新建一条；旧通道随 drop 通知前端收尾）。
+/// 接上之前与隐藏期间的输出都在 backlog 里，可见就当场补发
+#[tauri::command]
+pub fn pty_subscribe(
+    manager: tauri::State<'_, PtyManager>,
+    pty_id: String,
+    channel: Channel,
+) -> Result<(), String> {
+    let entries = manager.entries.lock().unwrap();
+    let entry = entries.get(&pty_id).ok_or("终端不存在或已退出")?;
+    let mut sink = entry.sink.lock().unwrap();
+    sink.channel = Some(channel);
+    entry.flow.reset();
+    if entry.visible.load(Ordering::Relaxed) {
+        flush_backlog(&mut sink, &entry.flow);
+    }
+    Ok(())
+}
+
+/// 前端画完了这么多字（UTF-16 码元）：流控确认，读线程按需恢复读取
+#[tauri::command]
+pub fn pty_ack(manager: tauri::State<'_, PtyManager>, pty_id: String, units: usize) {
+    if let Some(entry) = manager.entries.lock().unwrap().get(&pty_id) {
+        entry.flow.ack(units);
+    }
 }
 
 /// unix 下终止子进程的整个进程组：portable-pty spawn 时子进程已 setsid
@@ -1934,6 +2076,7 @@ fn terminate_pty_child(mut child: Box<dyn Child + Send + Sync>) {
 fn discard_spawned_pty(app: &AppHandle, manager: &PtyManager, id: &str) {
     let entry = manager.entries.lock().unwrap().remove(id);
     if let Some(mut entry) = entry {
+        entry.flow.close();
         forget_cwd_file(&mut entry);
         terminate_pty_child(entry.child);
         let _ = app.emit(&format!("pty-exit-{id}"), -1);
@@ -1948,6 +2091,7 @@ pub async fn pty_kill(app: AppHandle, pty_id: String) -> Result<(), String> {
         let manager = app.state::<PtyManager>();
         let entry = manager.entries.lock().unwrap().remove(&pty_id);
         if let Some(mut entry) = entry {
+            entry.flow.close();
             forget_cwd_file(&mut entry);
             terminate_pty_child(entry.child);
             if let Some(run_id) = entry.run_id {
@@ -2180,6 +2324,110 @@ mod tests {
         let drained2 = drain_backlog(&mut bl);
         assert_eq!(drained2.as_deref(), Some("文-live"));
         assert!(bl.is_empty());
+    }
+
+    /// 测试用通道：把收到的帧按顺序记下来（Json 帧还原成字符串，Raw 帧标 raw）
+    fn recording_channel() -> (Channel, Arc<Mutex<Vec<(bool, String)>>>) {
+        let got = Arc::new(Mutex::new(Vec::new()));
+        let sink = got.clone();
+        let channel = Channel::new(move |body| {
+            let frame = match body {
+                InvokeResponseBody::Json(json) => {
+                    (false, serde_json::from_str::<String>(&json).unwrap())
+                }
+                InvokeResponseBody::Raw(bytes) => (true, String::from_utf8(bytes).unwrap()),
+            };
+            sink.lock().unwrap().push(frame);
+            Ok(())
+        });
+        (channel, got)
+    }
+
+    #[test]
+    fn output_waits_in_backlog_until_channel_and_visible() {
+        let flow = FlowGate::default();
+        let mut sink = OutputSink::default();
+        // 可见但还没接上通道：不丢，进 backlog
+        assert_eq!(route_output(&mut sink, true, &flow, "先到-".into()), None);
+        // 隐藏：进 backlog，带外信号照发
+        assert_eq!(route_output(&mut sink, false, &flow, "响铃\u{7}".into()).as_deref(), Some("响铃\u{7}"));
+        let (channel, got) = recording_channel();
+        sink.channel = Some(channel);
+        // 接上 + 可见：先补发积压，再发本块
+        assert_eq!(route_output(&mut sink, true, &flow, "实时".into()), None);
+        let frames: Vec<String> = got.lock().unwrap().iter().map(|(_, t)| t.clone()).collect();
+        assert_eq!(frames, vec!["先到-响铃\u{7}".to_string(), "实时".to_string()]);
+        assert!(sink.backlog.is_empty());
+        // 计数按 UTF-16 码元，与前端 string.length 一致
+        assert_eq!(flow.state.lock().unwrap().unacked, "先到-响铃\u{7}实时".encode_utf16().count());
+    }
+
+    #[test]
+    fn big_frames_go_raw_small_frames_go_json() {
+        let flow = FlowGate::default();
+        let (channel, got) = recording_channel();
+        let mut sink = OutputSink { backlog: Vec::new(), channel: Some(channel) };
+        let big = "画".repeat(RAW_FRAME_MIN);
+        route_output(&mut sink, true, &flow, "小帧\x1b[0m".into());
+        route_output(&mut sink, true, &flow, big.clone());
+        let got = got.lock().unwrap();
+        assert_eq!(got[0], (false, "小帧\x1b[0m".to_string()));
+        assert_eq!(got[1], (true, big));
+    }
+
+    #[test]
+    fn flow_pauses_above_high_and_resumes_below_low() {
+        let flow = FlowGate::default();
+        flow.sent(FLOW_HIGH);
+        assert!(!flow.state.lock().unwrap().paused, "等于上限还不停");
+        flow.sent(1);
+        assert!(flow.state.lock().unwrap().paused);
+        // 回落到 LOW 之上仍停（滞回，免得在上限附近来回抖）
+        flow.ack(FLOW_HIGH + 1 - FLOW_LOW);
+        assert!(flow.state.lock().unwrap().paused);
+        flow.ack(1);
+        assert!(!flow.state.lock().unwrap().paused);
+        // 多确认不会减成负数
+        flow.ack(FLOW_HIGH);
+        assert_eq!(flow.state.lock().unwrap().unacked, 0);
+    }
+
+    #[test]
+    fn flow_wait_releases_on_ack_close_or_stall() {
+        // 确认放行
+        let flow = Arc::new(FlowGate::default());
+        flow.sent(FLOW_HIGH + 1);
+        let waiter = {
+            let flow = flow.clone();
+            std::thread::spawn(move || flow.wait_ready(Duration::from_secs(60)))
+        };
+        flow.ack(FLOW_HIGH + 1);
+        assert!(finished_within(waiter, Duration::from_secs(10)), "确认后读线程应恢复");
+        // 关闭放行
+        flow.sent(FLOW_HIGH + 1);
+        let waiter = {
+            let flow = flow.clone();
+            std::thread::spawn(move || flow.wait_ready(Duration::from_secs(60)))
+        };
+        flow.close();
+        assert!(finished_within(waiter, Duration::from_secs(10)), "关闭后读线程应收尾");
+        // 前端失联：等满失联时限自己放行并清零
+        let flow = FlowGate::default();
+        flow.sent(FLOW_HIGH + 1);
+        flow.wait_ready(Duration::from_millis(20));
+        let s = flow.state.lock().unwrap();
+        assert!(!s.paused && s.unacked == 0);
+    }
+
+    fn finished_within(handle: std::thread::JoinHandle<()>, limit: Duration) -> bool {
+        let deadline = Instant::now() + limit;
+        while !handle.is_finished() {
+            if Instant::now() > deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        handle.join().is_ok()
     }
 
     // ===== bracketed paste 手工包裹 =====
