@@ -185,6 +185,15 @@ test("接驳摘要：清单 md 数主仓非注释行、笔记按份数，标签�
   const onlyNotes = summarizeIntakeBridge(hits.filter((h) => h.kind === "notes"), {});
   assert.equal(intakeBridgeLabel(onlyNotes, 0), "2 篇未提交笔记");
   assert.equal(countNonCommentLines("# 注释\n正文\n\n"), 1);
+  // 已入库的 included.md 只改了一行：整份 72 行不能报成「72 条新行」
+  const tracked = intakeBridgeHits([{ path: "papers/included.md", status: "M" }]);
+  assert.deepEqual(tracked, [{ path: "papers/included.md", kind: "ledger", modified: true }]);
+  const trackedSummary = summarizeIntakeBridge(tracked, { "papers/included.md": "A\nB\nC\n" });
+  assert.equal(intakeBridgeLabel(trackedSummary, 1), "清单文件待提交");
+  assert.equal(
+    summarizeIntakeBridge(intakeBridgeHits([{ path: "papers/included.md", status: "??" }]), { "papers/included.md": "A\nB\n" }).ledgerLines,
+    2,
+  );
 });
 
 test("沉浸阅读截图跟笔记一起接驳，标签单列「笔记配图」", () => {

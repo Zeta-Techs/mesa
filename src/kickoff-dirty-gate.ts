@@ -59,6 +59,8 @@ export type IntakeBridgeKind = "ledger" | "notes" | "asset";
 export interface IntakeBridgeHit {
   path: string;
   kind: IntakeBridgeKind;
+  /** 已入库文件的改动（非 ??）：整文件行数不是新行，摘要不按行数报 */
+  modified?: true;
 }
 
 /** 单个仓库相对路径是否属于积累面；命中返回分类，否则 null */
@@ -82,12 +84,13 @@ export function intakeBridgeSurfaceKind(path: string): IntakeBridgeKind | null {
 
 /** 脏文件里的积累面子集（保序）：开工接驳的候选提交集 */
 export function intakeBridgeHits(
-  files: readonly { path: string }[],
+  files: readonly { path: string; status?: string }[],
 ): IntakeBridgeHit[] {
   const out: IntakeBridgeHit[] = [];
   for (const f of files) {
     const kind = intakeBridgeSurfaceKind(f.path);
-    if (kind) out.push({ path: normPath(f.path), kind });
+    if (!kind) continue;
+    out.push(f.status && f.status !== "??" ? { path: normPath(f.path), kind, modified: true } : { path: normPath(f.path), kind });
   }
   return out;
 }
@@ -111,7 +114,7 @@ export function countNonCommentLines(text: string): number {
   }).length;
 }
 
-/** 积累面摘要：清单 md 拿主仓当前文件内容数非注释行（新增行数），笔记按文件个数。
+/** 积累面摘要：新建的清单 md 拿主仓当前文件内容数非注释行，笔记按文件个数。
  *  texts 是脏清单 md 的主仓内容（读不到的按空计）；结构化清单（json/ris）不进行数。 */
 export function summarizeIntakeBridge(
   hits: readonly IntakeBridgeHit[],
@@ -131,7 +134,8 @@ export function summarizeIntakeBridge(
       if (hit.path.endsWith("/")) assetsDir = true;
       continue;
     }
-    if (hit.path.endsWith(".md")) {
+    // 新文件整份都是新行；已入库的清单改了几行数不出来，只报「清单文件待提交」
+    if (hit.path.endsWith(".md") && !hit.modified) {
       ledgerLines += countNonCommentLines(texts[hit.path] ?? "");
     }
   }
