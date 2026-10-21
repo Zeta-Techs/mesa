@@ -10,9 +10,14 @@ use std::time::Duration;
 /// （codex-rs tui paste_burst.rs PASTE_ENTER_SUPPRESS_WINDOW）——间隔不够时字留在输入框里没发出去
 /// （2026-10-20 Windows 实测：60ms 复现，150ms 通过；留余量取 250ms，chat_channel e2e 可用 E2E_SUBMIT_GAP_MS 复核）
 const SUBMIT_GAP: Duration = Duration::from_millis(250);
+/// 分段输入的段间隔：ConPTY 的输入解析器一次灌进多条 win32 按键记录会丢同步（pty.rs WIN32_INPUT_RECORD_GAP）
+const PIECE_GAP: Duration = Duration::from_millis(2);
+/// 写入回执的基础等待；分段输入每段再加一个段间隔
+const RECEIPT_TIMEOUT: Duration = Duration::from_secs(2);
 
 struct Request {
-    bytes: Vec<u8>,
+    /// 依次写入，段与段之间隔 PIECE_GAP（只有一段时等同整块写）
+    pieces: Vec<Vec<u8>>,
     submit: Option<Vec<u8>>,
     cancelled: Arc<AtomicBool>,
     reply: mpsc::Sender<Result<(), String>>,
@@ -28,8 +33,13 @@ impl PtyInput {
                     continue;
                 }
                 let result = (|| {
-                    writer.write_all(&request.bytes)?;
-                    writer.flush()?;
+                    for (i, piece) in request.pieces.iter().enumerate() {
+                        if i > 0 {
+                            std::thread::sleep(PIECE_GAP);
+                        }
+                        writer.write_all(piece)?;
+                        writer.flush()?;
+                    }
                     if let Some(submit) = &request.submit {
                         std::thread::sleep(SUBMIT_GAP);
                         writer.write_all(submit)?;
@@ -52,27 +62,36 @@ impl PtyInput {
     }
     pub(crate) fn enqueue_submit(
         &self,
-        bytes: &[u8],
+        pieces: Vec<Vec<u8>>,
         submit: &[u8],
     ) -> Result<InputReceipt, String> {
         if !matches!(submit, b"\r" | b"\n" | b"\x1b[13u") {
             return Err("无效的提交键".into());
         }
-        self.enqueue(bytes, Some(submit.to_vec()))
+        self.enqueue_pieces(pieces, Some(submit.to_vec()))
     }
     pub(crate) fn enqueue(
         &self,
         bytes: &[u8],
         submit: Option<Vec<u8>>,
     ) -> Result<InputReceipt, String> {
-        if bytes.len() > 1024 * 1024 {
+        self.enqueue_pieces(vec![bytes.to_vec()], submit)
+    }
+    /// 分段入队：同一请求内按序写完各段（Windows 上 emoji 改送按键记录时用，见 pty.rs conpty_input_pieces）
+    pub(crate) fn enqueue_pieces(
+        &self,
+        pieces: Vec<Vec<u8>>,
+        submit: Option<Vec<u8>>,
+    ) -> Result<InputReceipt, String> {
+        if pieces.iter().map(Vec::len).sum::<usize>() > 1024 * 1024 {
             return Err("单次输入超过 1 MB，请分段发送".into());
         }
         let (reply, receive) = mpsc::channel();
         let cancelled = Arc::new(AtomicBool::new(false));
+        let timeout = RECEIPT_TIMEOUT + PIECE_GAP * pieces.len().saturating_sub(1) as u32;
         self.0
             .try_send(Request {
-                bytes: bytes.to_vec(),
+                pieces,
                 submit,
                 cancelled: cancelled.clone(),
                 reply,
@@ -84,17 +103,22 @@ impl PtyInput {
                 }
                 .to_string()
             })?;
-        Ok(InputReceipt { receive, cancelled })
+        Ok(InputReceipt {
+            receive,
+            cancelled,
+            timeout,
+        })
     }
 }
 
 pub(crate) struct InputReceipt {
     receive: mpsc::Receiver<Result<(), String>>,
     cancelled: Arc<AtomicBool>,
+    timeout: Duration,
 }
 impl InputReceipt {
     pub(crate) fn wait(self) -> Result<(), String> {
-        match self.receive.recv_timeout(Duration::from_secs(2)) {
+        match self.receive.recv_timeout(self.timeout) {
             Ok(result) => result,
             Err(_) => {
                 self.cancelled.store(true, Ordering::Release);
@@ -146,12 +170,19 @@ mod tests {
         second.wait().unwrap();
         first.wait().unwrap();
         input
-            .enqueue_submit(b"message", b"\r")
+            .enqueue_submit(vec![b"message".to_vec()], b"\r")
             .unwrap()
             .wait()
             .unwrap();
         assert_eq!(*data.lock().unwrap(), b"12message\r");
-        assert!(input.enqueue_submit(b"x", b"shell command").is_err());
+        assert!(input.enqueue_submit(vec![b"x".to_vec()], b"shell command").is_err());
+        // 分段：按序写完各段再写提交键
+        input
+            .enqueue_pieces(vec![b"a".to_vec(), b"<rec>".to_vec(), b"b".to_vec()], Some(b"\r".to_vec()))
+            .unwrap()
+            .wait()
+            .unwrap();
+        assert_eq!(*data.lock().unwrap(), b"12message\ra<rec>b\r");
     }
 
     #[test]

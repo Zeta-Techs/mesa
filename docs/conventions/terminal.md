@@ -951,4 +951,12 @@
   设置页开关 `terminal_color_report`（默认开）留作白名单内 CLI 换实现时的兜底。
   注入早于子进程读 stdin 也不会丢（ConPTY 会缓冲；300ms 注入 vs 2000ms 才挂监听，实测完整收到）。
   这条只解决**启动**取色，运行中切主题仍是上一条的老问题（重启会话才一致），两条口径不冲突。
+- **Windows：emoji 等 BMP 以外的字改送只按下的 win32 按键记录（2026-10-21 实测）**。ConPTY 把写进来的 UTF-8
+  emoji 拆成「高位按下、高位抬起、低位按下、低位抬起」四条按键事件；Codex 用的 crossterm（openai-oss-forks 版
+  `windows/parse.rs handle_surrogate`）把抬起也当代理对的一半去拼，两次都拼不成字，**整个 emoji 被丢掉**
+  （聊天层发「"引号" 😀」，Codex 会话落成「"引号" 」；真 Codex 0.163 输入框实测 `X 😀 Y` → `X  Y`）。
+  `pty_write` / `pty_write_submit` 在 Windows 上经 `conpty_input_pieces`（pty.rs）把每个 BMP 外的字换成高、低两条
+  只按下的记录（`win32_input_records` 按 UTF-16 码元出），其余字节原样、粘贴包照包，按段写、段间隔 2ms
+  （`pty_input` 分段请求，回执等待随段数加长）。已核：crossterm 收到完整字；不开 VT 输入的读法（Node / .NET /
+  prompt_toolkit 只看按下）收到的不变；开 VT 输入的程序在粘贴包里照样收到原字、包首尾不变。macOS 不走这条。
 

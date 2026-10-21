@@ -815,7 +815,10 @@ src-tauri/src/
                              #   login_shell_argv；run 脚本不走这里（script_shell_argv）。Windows 跟随 cd：attach_cwd_tracking 给
                              #   PowerShell 包 prompt、给 Git Bash 设 PROMPT_COMMAND，把当前目录写进 <config>/ccode/pty-cwd/<uuid>.txt，
                              #   process_cwd 先读它、没有再读进程 PEB（cmd）；文件随标签退出删、启动清残留；pty_cd 按标签的 shell 方言写 cd
-  pty_input.rs               # 每个终端独立的有界输入队列：一个不读 stdin 的 CLI 不得占住 PTY 全局锁
+                             # conpty_input_pieces = Windows 输入里的 emoji 改送只按下的 win32 记录（Codex 的 crossterm 拼不了
+                             #   ConPTY 的按下+抬起代理对，会整个丢字；2026-10-21，见 conventions/terminal.md）
+  pty_input.rs               # 每个终端独立的有界输入队列：一个不读 stdin 的 CLI 不得占住 PTY 全局锁；
+                             #   一个请求可分段写（段间 2ms，回执等待随段数加长）
   context_breakdown.rs       # 上下文分类明细（2026-10-20）：用标签同一套启动参数在后台跑 CLI 自带的 /context（Claude Code `-p --resume --no-session-persistence`，
                              # 关 hooks；Qwen `-p --resume`），解析分类表；不调用模型、不改会话文件。只有这两家能无头跑，其余家前端只显示总量
   chat_channel.rs            # 聊天层结构化旁路（2026-10-20，docs/design-chat-structured-channels.md）：pty_spawn 起进程前

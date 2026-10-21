@@ -393,10 +393,47 @@ fn chat_paste_body(text: &str, paste_mode_on: bool, cr_newlines: bool) -> String
 ///
 /// 逐条投递、条与条之间必须留间隔：一次性灌进去时 ConPTY 的输入解析器会丢同步，
 /// 把中间某条记录原样漏成可见文本（投递间隔见 `WIN32_INPUT_RECORD_GAP`）。
+/// 按 UTF-16 码元出记录：BMP 以外的字（emoji）出高、低两条代理记录。
 fn win32_input_records(text: &str) -> Vec<String> {
-    text.chars()
-        .map(|ch| format!("\x1b[0;0;{};1;0;1_", ch as u32))
+    text.encode_utf16()
+        .map(|unit| format!("\x1b[0;0;{unit};1;0;1_"))
         .collect()
+}
+
+/// Windows 上写进 PTY 的输入：BMP 以外的字（emoji 等）改送只按下的 win32 按键记录，其余字节原样，按段依次写。
+///
+/// ConPTY 把 UTF-8 里的 emoji 拆成「高位按下、高位抬起、低位按下、低位抬起」四条按键事件；Codex 用的 crossterm
+/// 把抬起也当代理对的一半去拼（windows/parse.rs handle_surrogate），高配高、低配低都拼不成字，整个 emoji 丢掉
+/// （2026-10-21 用户实测：Codex 会话里「"引号" 😀」落成「"引号" 」；探针复现：同一版 crossterm 收 `a😀b` 只剩 `ab`，
+/// 改送只按下的两条记录后收到完整的 U+1F600）。忽略抬起的读法（Node / .NET / prompt_toolkit）收到的不变；
+/// 开了 VT 输入的程序在粘贴包里照样收到原字，粘贴包首尾也不变（同日探针实测）。
+fn conpty_input_pieces(bytes: &str) -> Vec<Vec<u8>> {
+    let mut pieces = Vec::new();
+    let mut text = String::new();
+    for ch in bytes.chars() {
+        if (ch as u32) <= 0xFFFF {
+            text.push(ch);
+            continue;
+        }
+        if !text.is_empty() {
+            pieces.push(std::mem::take(&mut text).into_bytes());
+        }
+        let mut buf = [0u8; 4];
+        pieces.extend(win32_input_records(ch.encode_utf8(&mut buf)).into_iter().map(String::into_bytes));
+    }
+    if !text.is_empty() || pieces.is_empty() {
+        pieces.push(text.into_bytes());
+    }
+    pieces
+}
+
+/// 写进 PTY 的分段：只有 Windows 需要改送 emoji（见 conpty_input_pieces），别的平台整块写
+fn pty_input_pieces(bytes: &str) -> Vec<Vec<u8>> {
+    if cfg!(windows) {
+        conpty_input_pieces(bytes)
+    } else {
+        vec![bytes.as_bytes().to_vec()]
+    }
 }
 
 /// win32 按键记录之间的投递间隔——低于此值 ConPTY 输入解析器会丢同步漏出字面记录
@@ -1368,7 +1405,7 @@ pub async fn pty_write(
         )
     };
     // 先按 IPC 到达次序入队，再后台等待；不能让线程池调度把按键顺序打乱。
-    let receipt = writer.enqueue(wrap_bracketed_paste(&data, paste_on).as_bytes(), None)?;
+    let receipt = writer.enqueue_pieces(pty_input_pieces(&wrap_bracketed_paste(&data, paste_on)), None)?;
     tauri::async_runtime::spawn_blocking(move || receipt.wait())
         .await
         .map_err(|e| e.to_string())?
@@ -1467,7 +1504,7 @@ pub async fn pty_write_submit(
         )
     };
     let receipt = writer.enqueue_submit(
-        chat_paste_body(&text, paste_on, cr_newlines).as_bytes(),
+        pty_input_pieces(&chat_paste_body(&text, paste_on, cr_newlines)),
         submit.as_bytes(),
     )?;
     tauri::async_runtime::spawn_blocking(move || receipt.wait())
@@ -2218,6 +2255,29 @@ mod tests {
         let recs = win32_input_records("ab");
         // 每字符一条 key-down 记录：Vk/Sc 留 0，Uc 用码点，Kd=1，Cs=0，Rc=1
         assert_eq!(recs, vec!["\x1b[0;0;97;1;0;1_", "\x1b[0;0;98;1;0;1_"]);
+    }
+
+    #[test]
+    fn conpty_input_sends_emoji_as_key_down_surrogate_records() {
+        // 😀 = U+1F600 = D83D DE00：拆成两条只按下的记录，前后文字（含粘贴包首尾）原样
+        let pieces = conpty_input_pieces("\x1b[200~\"引号\" 😀\n第四行\x1b[201~");
+        let text: Vec<String> = pieces
+            .iter()
+            .map(|p| String::from_utf8(p.clone()).unwrap())
+            .collect();
+        assert_eq!(
+            text,
+            vec![
+                "\x1b[200~\"引号\" ",
+                "\x1b[0;0;55357;1;0;1_",
+                "\x1b[0;0;56832;1;0;1_",
+                "\n第四行\x1b[201~",
+            ]
+        );
+        // 连着两个 emoji 中间没有空文字段；没有 emoji 时整块一段（空输入也留一段）
+        assert_eq!(conpty_input_pieces("😀😀").len(), 4);
+        assert_eq!(conpty_input_pieces("中文 abc"), vec!["中文 abc".as_bytes().to_vec()]);
+        assert_eq!(conpty_input_pieces(""), vec![Vec::<u8>::new()]);
     }
 
     #[test]
