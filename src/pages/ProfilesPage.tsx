@@ -3417,14 +3417,13 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                             key={profile.id}
                             className={`group grid min-h-14 ${PROFILE_GRID} items-center gap-3 px-4 text-sm transition-colors hover:bg-hover/60`}
                           >
-                            <span className="flex min-w-0 items-start gap-2">
+                            <span className="flex min-w-0 items-center gap-2">
                               <VendorIcon
                                 vendor={vendorForProfile(
                                   profile.baseUrl,
                                   gateways.find((g) => g.id === profile.gatewayId),
                                 )}
                                 name={profile.name}
-                                className="mt-0.5"
                               />
                               <span className="min-w-0 flex-1">
                               <span
