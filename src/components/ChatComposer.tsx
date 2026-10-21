@@ -35,11 +35,13 @@ function SendBlock({
   disabled,
   busy,
   queued = false,
+  queuedTitle,
   onClick,
 }: {
   disabled: boolean;
   busy: boolean;
   queued?: boolean;
+  queuedTitle?: string;
   onClick: () => void;
 }) {
   return (
@@ -48,7 +50,7 @@ function SendBlock({
       disabled={disabled}
       onClick={onClick}
       data-state={disabled ? "empty" : "ready"}
-      title={queued ? "排队：这一轮结束后处理（Enter 也是）" : busy ? "正在发送…" : "Enter 发送 · Shift+Enter 换行"}
+      title={queued ? (queuedTitle ?? "排队：这一轮结束后处理（Enter 也是）") : busy ? "正在发送…" : "Enter 发送 · Shift+Enter 换行"}
       aria-label={queued ? "排队发送" : "发送"}
       className="ccode-send-block"
     >
@@ -200,6 +202,8 @@ export default function ChatComposer({
   onCyclePermission,
   imageWarning = null,
   onImagesChange,
+  queueHint = null,
+  stopTitle = null,
 }: {
   disabled?: boolean;
   busy?: boolean;
@@ -244,6 +248,10 @@ export default function ChatComposer({
   imageWarning?: string | null;
   /** 附件里有没有图片（给调用方判断要不要查模型能不能看图） */
   onImagesChange?: (hasImages: boolean) => void;
+  /** 生成中停止块旁那组的字：这家 CLI 是「下一步交给它」还是「排队」（mid-turn-send.ts queueSendHint）；不传写「排队」 */
+  queueHint?: { label: string; title: string } | null;
+  /** 停止块的悬停说明（按 Esc 的几家，有排着的话时停下就马上处理那句，mid-turn-send.ts stopTitle） */
+  stopTitle?: string | null;
 }) {
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -868,7 +876,7 @@ export default function ChatComposer({
                       // 停止后焦点回输入框：「这一轮停下、可以接着打下一句」
                       ref.current?.focus();
                     }}
-                    title="暂停当前生成（往终端发送 Esc；会话保留，可继续输入）"
+                    title={stopTitle ?? "暂停当前生成（往终端发送 Esc；会话保留，可继续输入）"}
                     aria-label="暂停当前生成"
                     data-state="stop"
                     className="ccode-send-block"
@@ -877,8 +885,15 @@ export default function ChatComposer({
                   </button>
                   {canSubmit && (
                     <>
-                      <span className="shrink-0 text-micro text-l4">排队</span>
-                      <SendBlock disabled={false} busy={false} onClick={() => void submit()} queued />
+                      {/* 写法按这家 CLI 的真实行为：Claude / Codex 等是「下一步交给它」，不是排到这一轮之后 */}
+                      <span className="shrink-0 text-micro text-l4">{queueHint?.label ?? "排队"}</span>
+                      <SendBlock
+                        disabled={false}
+                        busy={false}
+                        onClick={() => void submit()}
+                        queued
+                        queuedTitle={queueHint?.title}
+                      />
                     </>
                   )}
                 </>

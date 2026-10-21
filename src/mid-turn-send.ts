@@ -103,6 +103,23 @@ export function queuedNote(spec: MidTurnSpec): { text: string; title: string } {
   }
 }
 
+/** 生成中输入框里停止块旁那组「排队 + 发送块」的字（2026-10-22 输入框第二版的发送区） */
+export function queueSendHint(spec: MidTurnSpec): { label: string; title: string } {
+  if (spec.delivery === "next_step") {
+    return { label: "下一步交给它", title: "发出去，它做完手头这一步就会看到（Enter 也是）" };
+  }
+  return {
+    label: "排队",
+    title: spec.delivery === "after_turn" ? "排队：这一轮结束后处理（Enter 也是）" : "排队：它空下来就处理（Enter 也是）",
+  };
+}
+
+/** 停止块的悬停说明：按 Esc 的几家，有排着的话时停下就是马上处理那句（实测），写明 */
+export function stopTitle(spec: MidTurnSpec): string {
+  const base = "暂停当前生成（往终端发送 Esc；会话保留，可继续输入）";
+  return spec.sendNow?.keys === "\x1b" ? `${base}。有排着的话时，它会马上处理那句` : base;
+}
+
 /** 生成中输入框的占位字；mod = 输入框认「立即发送」快捷键时的平台修饰键写法（Mac「⌘」、Windows「Ctrl+」），不认传 null */
 export function runningPlaceholder(spec: MidTurnSpec, mod: string | null): string {
   const base =

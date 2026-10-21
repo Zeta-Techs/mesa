@@ -49,7 +49,7 @@ import ChatDecisionCard, { type ChatDecision } from "./ChatDecisionCard";
 import { connIssueDecision } from "../chat-decision";
 import { cwdChipLabel } from "../terminal-welcome";
 import { escInterruptSafe } from "../agent-caps";
-import { midTurnSpec, queuedNote, runningPlaceholder } from "../mid-turn-send";
+import { midTurnSpec, queueSendHint, queuedNote, runningPlaceholder, stopTitle } from "../mid-turn-send";
 import type { TrustPrompt } from "../trust-prompt";
 import {
   approvalChoices,
@@ -1038,6 +1038,8 @@ export default function ChatSurface({
         onCyclePermission={launchPickOpen && launchPick && !readOnly ? () => void cyclePermission() : undefined}
         imageWarning={imageWarning}
         onImagesChange={setHasImages}
+        queueHint={queueSendHint(midTurn)}
+        stopTitle={stopTitle(midTurn)}
       />
       {emptyStart && (
         // 输入框后面同一层级渲染，切出空态时输入框不重挂载（已输入的字、焦点都在）
