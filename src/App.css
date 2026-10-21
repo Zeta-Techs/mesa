@@ -2427,12 +2427,15 @@ select:focus-visible {
   text-decoration-color: currentColor;
 }
 /* 行内代码强调色（设置 → 外观 → 行内代码颜色）：字色 + 同色 14% 薄底，深浅各一套保证可读；
-   off = 不匹配任何一条，保留上面的中性灰白。围栏代码块不动。 */
+   off = 不匹配任何一条，保留上面的中性灰白。围栏代码块不动。
+   深色四色按青绿的观感对齐（2026-10-22 用户：除了青绿，陶红 / 琥珀 / 紫都发浅）：同样亮度下青绿已接近色域上限、
+   看着饱满，另三色当初只用了色域的六七成、显得粉。改为各自色域的九成以上饱和度、亮度略降，
+   在最亮的深色底（陶土 / 哥特 / 自定义深色，inset ≈ #333–#3a）上对比仍约 3.8–4.9:1，与改前差不到 0.3 */
 .ccode-app-shell {
-  --chat-code-dark-warm: #eb9a85;
-  --chat-code-dark-amber: #e8bb6b;
+  --chat-code-dark-warm: #fc8c70;
+  --chat-code-dark-amber: #f6ae30;
   --chat-code-dark-teal: #66cdb9;
-  --chat-code-dark-violet: #b9a2f4;
+  --chat-code-dark-violet: #b399fb;
   --chat-code-light-warm: #b23f2b;
   --chat-code-light-amber: #8a5a00;
   --chat-code-light-teal: #0d6f66;
@@ -2590,18 +2593,19 @@ select:focus-visible {
   height: 11px;
 }
 /* 代码高亮（code-highlight.ts，highlight.js 按需加载）：颜色取聊天行内代码那四支已校验过深浅对比的强调色 +
-   链接蓝，不另带一套配色；注释降到 l4。深浅主题各一套 */
+   链接蓝，不另带一套配色；注释降到 l4。深浅主题各一套。直接引用 .ccode-app-shell 上的 --chat-code-* 变量
+   （改那边这里跟着变，2026-10-22 调深四色时原先抄的十六进制没跟上）；括号里是壳外兜底，与那边同值 */
 .md-body .md-code pre code {
-  --hl-kw: #b9a2f4;
-  --hl-str: #66cdb9;
-  --hl-num: #e8bb6b;
-  --hl-fn: #eb9a85;
+  --hl-kw: var(--chat-code-dark-violet, #b399fb);
+  --hl-str: var(--chat-code-dark-teal, #66cdb9);
+  --hl-num: var(--chat-code-dark-amber, #f6ae30);
+  --hl-fn: var(--chat-code-dark-warm, #fc8c70);
 }
 [data-theme$="-light"] .md-body .md-code pre code {
-  --hl-kw: #6a3dc0;
-  --hl-str: #0d6f66;
-  --hl-num: #8a5a00;
-  --hl-fn: #b23f2b;
+  --hl-kw: var(--chat-code-light-violet, #6a3dc0);
+  --hl-str: var(--chat-code-light-teal, #0d6f66);
+  --hl-num: var(--chat-code-light-amber, #8a5a00);
+  --hl-fn: var(--chat-code-light-warm, #b23f2b);
 }
 .md-body .hljs-keyword,
 .md-body .hljs-selector-tag,
