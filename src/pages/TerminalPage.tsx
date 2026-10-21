@@ -2001,6 +2001,8 @@ const TerminalView = memo(function TerminalView({
   const inputReadyRef = useRef(true);
   // 最近一次画出字（剥掉终端查询后还有内容）的时刻：只发了查询的帧不算「画出了界面」
   const lastDrawAtRef = useRef(0);
+  // 这次拉起的启动阶段已过（见过输入框 / 回合已开始）：之后不再扫信任菜单（scanTrustPromptSoon）
+  const startupSettledRef = useRef(false);
   // 用户刚提交一轮（聊天发送 / 回车 / 带指令的新启动）：允许 PTY 点亮转圈。
   // 启动或恢复会话本身不点亮——TUI 启动画面不是「正在生成回答」。
   const ptyWorkingArmedRef = useRef(false);
@@ -2036,8 +2038,10 @@ const TerminalView = memo(function TerminalView({
   const ptyQuietRef = useRef(false);
   const trustScanTimerRef = useRef<number | null>(null);
   function scanTrustPromptSoon() {
-    // 会话已接上就不会再有信任菜单；正挂着一个时继续扫，菜单消失要能撤掉
-    if (linkCtxRef.current?.filePath && !trustPromptRef.current) return;
+    // 过了启动阶段就不会再有信任菜单；正挂着一个时继续扫，菜单消失要能撤掉。
+    // 原先以「会话已接上」为界：Claude / CodeBuddy 的 SessionStart hook 一起来就报了会话文件，信任菜单还在后头，
+    // 聊天层不再扫屏、看不到菜单（2026-10-21 用户：CodeBuddy 发第一条，终端弹出是否信任，聊天层不显示）
+    if (!trustPromptRef.current && trustScanSettled()) return;
     if (trustScanTimerRef.current) window.clearTimeout(trustScanTimerRef.current);
     trustScanTimerRef.current = window.setTimeout(() => {
       trustScanTimerRef.current = null;
@@ -2050,10 +2054,21 @@ const TerminalView = memo(function TerminalView({
       }
       const next = parseTrustPrompt(lines);
       if (next) trustOptionsRef.current = next.options;
+      // 画出了输入框、或这一轮已经开始干活：启动阶段过了
+      else if (terminalHasInputBox(lines, launchAgentRef.current) === true || channelRef.current?.turn) {
+        startupSettledRef.current = true;
+      }
       if (sameTrustPrompt(trustPromptRef.current, next)) return;
       trustPromptRef.current = next;
       setTrustPrompt(next);
     }, 250);
+  }
+  /** 启动阶段（信任菜单只在这时出现）是否已过：见过输入框 / 回合已开始；认不得画面、又没有旁路的家照旧以会话接上为界 */
+  function trustScanSettled(): boolean {
+    if (startupSettledRef.current) return true;
+    return Boolean(
+      linkCtxRef.current?.filePath && !liveReplySupported(launchAgentRef.current) && !channelRef.current,
+    );
   }
   useEffect(() => {
     if (!running) {
@@ -3450,6 +3465,7 @@ const TerminalView = memo(function TerminalView({
     if (kind === "agent") {
       ptyAttachedAtRef.current = Date.now();
       inputReadyRef.current = false;
+      startupSettledRef.current = false;
     }
     kkpArmedRef.current = false;
     queryPendingRef.current = "";
