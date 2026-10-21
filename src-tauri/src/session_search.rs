@@ -1,7 +1,9 @@
 //! 对话正文搜索：标题/标签之外，按会话里说过的话找。
 //!
 //! 多关键词按「命中多少 + 落在哪」打分，同分再按更新时间。正文不进前端，
-//! 只回脱敏后的一句摘录。源文件只读；抽出的可检索文本缓存在 app.db。
+//! 只回脱敏后的一句摘录。源文件只读；抽出的可检索文本存在 app.db 的
+//! `session_search_doc`，配 FTS5 trigram 索引（中文不分词也能按子串找）。
+//! 用户说的话与 AI 的回复分两列存，供按角色筛。全文索引，不再截前 96KB。
 
 use crate::sessions::{
     self, conversation_impl_raw, is_injected_context_message, parse_session_lines,
@@ -9,17 +11,24 @@ use crate::sessions::{
 };
 use rusqlite::{params, Connection, Transaction};
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 const ZSTD_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
-const TEXT_CAP: usize = 96 * 1024;
-const DECODE_CAP: usize = 8 * 1024 * 1024;
-const INDEX_BUDGET: Duration = Duration::from_millis(1200);
+/// 每条会话每个角色最多存这么多文字。正常对话远到不了；防的是几百 MB 的归档把库撑爆
+const TEXT_CAP: usize = 4 * 1024 * 1024;
+/// 建索引时最多解码这么多原始字节（Codex/Grok 归档 zst 可达 GB 级）
+const DECODE_CAP: usize = 64 * 1024 * 1024;
+const LOCATE_DECODE_CAP: usize = 8 * 1024 * 1024;
+/// 搜索时顺手补索引的时间上限；剩下的交给后台线程，结果里报还差几条
+const INDEX_BUDGET: Duration = Duration::from_millis(800);
 const SNIPPET_RADIUS: usize = 42;
+/// 索引表结构版本：不符整表重建（列、抽取口径变了都要 bump）
+const SEARCH_INDEX_VER: i64 = 1;
 
 const W_TITLE: u32 = 80;
 const W_SUMMARY: u32 = 40;
@@ -33,6 +42,8 @@ const W_CONTENT_TF: u32 = 4;
 const CONTENT_TF_CAP: u32 = 8;
 const ALL_TOKENS_BONUS: u32 = 50;
 const PHRASE_BONUS: u32 = 40;
+
+static INDEXING: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -48,31 +59,62 @@ pub struct SessionSearchHitDto {
     pub match_role: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSearchResultDto {
+    pub hits: Vec<SessionSearchHitDto>,
+    /// 还没建好索引的对话条数（后台在建）；>0 时结果可能不全，前端过一会儿再搜一次
+    pub pending: usize,
+}
+
 #[tauri::command]
-pub async fn search_sessions(query: String) -> Result<Vec<SessionSearchHitDto>, String> {
+pub async fn search_sessions(query: String) -> Result<SessionSearchResultDto, String> {
     tauri::async_runtime::spawn_blocking(move || search_impl(&query))
         .await
         .map_err(|e| e.to_string())?
 }
 
-fn search_impl(query: &str) -> Result<Vec<SessionSearchHitDto>, String> {
+/// 内容命中的候选：单字（中文单字）只参与打分，有更长的词时不单独决定谁算命中，
+/// 否则「回复超 1500 字」里一个「字」就能把几乎所有对话拉进来
+fn driving_tokens(tokens: &[String]) -> Vec<&String> {
+    let strong: Vec<&String> = tokens.iter().filter(|t| t.chars().count() >= 2).collect();
+    if strong.is_empty() {
+        tokens.iter().collect()
+    } else {
+        strong
+    }
+}
+
+fn search_impl(query: &str) -> Result<SessionSearchResultDto, String> {
     let tokens = tokenize(query);
     if tokens.is_empty() {
-        return Ok(Vec::new());
+        return Ok(SessionSearchResultDto {
+            hits: Vec::new(),
+            pending: 0,
+        });
     }
     let phrase = phrase_of(query);
     let sessions = sessions::list_sessions_sync();
     let mut conn = sessions::open_db()?;
-    ensure_table(&conn)?;
-    refresh_index(&mut conn, &sessions);
-    let texts = load_indexed_text(&conn)?;
+    ensure_schema(&conn)?;
+    let pending = if INDEXING.load(Ordering::SeqCst) {
+        // 后台在建：不抢写锁，只数还差几条
+        count_pending(&conn, &sessions)
+    } else {
+        let left = refresh_index(&mut conn, &sessions, Some(INDEX_BUDGET));
+        if left > 0 {
+            spawn_background_index();
+        }
+        left
+    };
+    let texts = load_candidate_texts(&conn, &driving_tokens(&tokens))?;
     let mut hits = Vec::new();
     for s in &sessions {
         let content = texts
             .get(&(s.agent.clone(), s.session_id.clone()))
-            .cloned()
+            .map(String::as_str)
             .unwrap_or_default();
-        let (score, snippet, matched) = score_session(s, &content, &tokens, phrase.as_deref());
+        let (score, snippet, matched) = score_session(s, content, &tokens, phrase.as_deref());
         if score == 0 {
             continue;
         }
@@ -108,7 +150,10 @@ fn search_impl(query: &str) -> Result<Vec<SessionSearchHitDto>, String> {
             located += 1;
         }
     }
-    Ok(hits.into_iter().map(|(_, _, _, h)| h).collect())
+    Ok(SessionSearchResultDto {
+        hits: hits.into_iter().map(|(_, _, _, h)| h).collect(),
+        pending,
+    })
 }
 
 fn phrase_of(query: &str) -> Option<String> {
@@ -340,74 +385,158 @@ fn orig_char_index(text: &str, lower_byte: usize) -> usize {
     text.chars().count()
 }
 
-fn ensure_table(conn: &Connection) -> Result<(), String> {
+fn ensure_schema(conn: &Connection) -> Result<(), String> {
+    let err = |e: rusqlite::Error| format!("初始化会话搜索索引失败: {e}");
+    conn.execute_batch("CREATE TABLE IF NOT EXISTS session_search_ver(ver INTEGER NOT NULL);")
+        .map_err(err)?;
+    let ver: Option<i64> = conn
+        .query_row("SELECT ver FROM session_search_ver", [], |r| r.get(0))
+        .ok();
+    if ver == Some(SEARCH_INDEX_VER) {
+        return Ok(());
+    }
+    // 版本不符（含首次）：整表重建。旧版 session_search_text 只存前 96KB、不分角色，一并丢掉
     conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS session_search_text (
+        "DROP TRIGGER IF EXISTS session_search_doc_ai;
+         DROP TRIGGER IF EXISTS session_search_doc_ad;
+         DROP TRIGGER IF EXISTS session_search_doc_au;
+         DROP TABLE IF EXISTS session_search_fts;
+         DROP TABLE IF EXISTS session_search_doc;
+         DROP TABLE IF EXISTS session_search_text;
+         CREATE TABLE session_search_doc(
+            id INTEGER PRIMARY KEY,
             agent TEXT NOT NULL,
             session_id TEXT NOT NULL,
             file_path TEXT NOT NULL,
             mtime_ms INTEGER NOT NULL,
             size INTEGER NOT NULL,
-            text TEXT NOT NULL,
-            PRIMARY KEY (agent, session_id)
-        );",
+            user_text TEXT NOT NULL,
+            ai_text TEXT NOT NULL,
+            UNIQUE(agent, session_id)
+         );
+         CREATE VIRTUAL TABLE session_search_fts USING fts5(
+            user_text, ai_text,
+            content='session_search_doc', content_rowid='id',
+            tokenize='trigram', detail='column'
+         );
+         CREATE TRIGGER session_search_doc_ai AFTER INSERT ON session_search_doc BEGIN
+            INSERT INTO session_search_fts(rowid, user_text, ai_text)
+            VALUES (new.id, new.user_text, new.ai_text);
+         END;
+         CREATE TRIGGER session_search_doc_ad AFTER DELETE ON session_search_doc BEGIN
+            INSERT INTO session_search_fts(session_search_fts, rowid, user_text, ai_text)
+            VALUES ('delete', old.id, old.user_text, old.ai_text);
+         END;
+         CREATE TRIGGER session_search_doc_au AFTER UPDATE ON session_search_doc BEGIN
+            INSERT INTO session_search_fts(session_search_fts, rowid, user_text, ai_text)
+            VALUES ('delete', old.id, old.user_text, old.ai_text);
+            INSERT INTO session_search_fts(rowid, user_text, ai_text)
+            VALUES (new.id, new.user_text, new.ai_text);
+         END;
+         DELETE FROM session_search_ver;",
     )
-    .map_err(|e| format!("初始化会话搜索索引失败: {e}"))
+    .map_err(err)?;
+    conn.execute(
+        "INSERT INTO session_search_ver(ver) VALUES (?1)",
+        params![SEARCH_INDEX_VER],
+    )
+    .map_err(err)?;
+    Ok(())
 }
 
 pub(crate) fn forget_in_tx(tx: &Transaction<'_>, agent: &str, session_id: &str) {
-    let _ = tx.execute_batch(
-        "CREATE TABLE IF NOT EXISTS session_search_text (
-            agent TEXT NOT NULL,
-            session_id TEXT NOT NULL,
-            file_path TEXT NOT NULL,
-            mtime_ms INTEGER NOT NULL,
-            size INTEGER NOT NULL,
-            text TEXT NOT NULL,
-            PRIMARY KEY (agent, session_id)
-        );",
-    );
+    if ensure_schema(tx).is_err() {
+        return;
+    }
     let _ = tx.execute(
-        "DELETE FROM session_search_text WHERE agent=?1 AND session_id=?2",
+        "DELETE FROM session_search_doc WHERE agent=?1 AND session_id=?2",
         params![agent, session_id],
     );
 }
 
-fn refresh_index(conn: &mut Connection, sessions: &[SessionMetaDto]) {
+fn is_stale(
+    existing: &HashMap<(String, String), (String, i64, u64)>,
+    s: &SessionMetaDto,
+) -> bool {
+    let (mtime, size) = source_stamp(s);
+    existing
+        .get(&(s.agent.clone(), s.session_id.clone()))
+        .map(|(p, m, n)| p != &s.file_path || *m != mtime || *n != size)
+        .unwrap_or(true)
+}
+
+fn count_pending(conn: &Connection, sessions: &[SessionMetaDto]) -> usize {
     let existing = load_stamps(conn);
+    sessions.iter().filter(|s| is_stale(&existing, s)).count()
+}
+
+/// 补齐过期/缺失的索引；`budget` 为 None 时做完为止。返回还没做的条数。
+/// 列表里已经没有的会话（删了、并进接续链）顺手清掉
+fn refresh_index(
+    conn: &mut Connection,
+    sessions: &[SessionMetaDto],
+    budget: Option<Duration>,
+) -> usize {
+    let existing = load_stamps(conn);
+    let live: HashSet<(String, String)> = sessions
+        .iter()
+        .map(|s| (s.agent.clone(), s.session_id.clone()))
+        .collect();
+    for key in existing.keys().filter(|k| !live.contains(*k)) {
+        let _ = conn.execute(
+            "DELETE FROM session_search_doc WHERE agent=?1 AND session_id=?2",
+            params![key.0, key.1],
+        );
+    }
     let start = Instant::now();
+    let mut left = 0usize;
     for s in sessions {
-        if start.elapsed() > INDEX_BUDGET {
-            break;
-        }
-        let (mtime, size) = source_stamp(s);
-        let stale = existing
-            .get(&(s.agent.clone(), s.session_id.clone()))
-            .map(|(p, m, n)| p != &s.file_path || *m != mtime || *n != size)
-            .unwrap_or(true);
-        if !stale {
+        if !is_stale(&existing, s) {
             continue;
         }
-        let text = extract_session_text(s);
+        if budget.is_some_and(|b| start.elapsed() > b) {
+            left += 1;
+            continue;
+        }
+        let (mtime, size) = source_stamp(s);
+        let (user_text, ai_text) = extract_session_text(s);
         let _ = conn.execute(
-            "INSERT INTO session_search_text(agent, session_id, file_path, mtime_ms, size, text)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6)
+            "INSERT INTO session_search_doc(agent, session_id, file_path, mtime_ms, size, user_text, ai_text)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(agent, session_id) DO UPDATE SET
                file_path=excluded.file_path,
                mtime_ms=excluded.mtime_ms,
                size=excluded.size,
-               text=excluded.text",
-            params![s.agent, s.session_id, s.file_path, mtime, size as i64, text],
+               user_text=excluded.user_text,
+               ai_text=excluded.ai_text",
+            params![s.agent, s.session_id, s.file_path, mtime, size as i64, user_text, ai_text],
         );
     }
+    left
 }
 
-fn load_stamps(
-    conn: &Connection,
-) -> std::collections::HashMap<(String, String), (String, i64, u64)> {
-    let mut out = std::collections::HashMap::new();
+/// 第一次全量建（或大批会话变了）要几十秒：放后台做完，搜索只报还差几条
+fn spawn_background_index() {
+    if INDEXING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(|| {
+        let run = || -> Result<(), String> {
+            let sessions = sessions::list_sessions_sync();
+            let mut conn = sessions::open_db()?;
+            ensure_schema(&conn)?;
+            refresh_index(&mut conn, &sessions, None);
+            Ok(())
+        };
+        let _ = std::panic::catch_unwind(run);
+        INDEXING.store(false, Ordering::SeqCst);
+    });
+}
+
+fn load_stamps(conn: &Connection) -> HashMap<(String, String), (String, i64, u64)> {
+    let mut out = HashMap::new();
     let Ok(mut stmt) = conn
-        .prepare("SELECT agent, session_id, file_path, mtime_ms, size FROM session_search_text")
+        .prepare("SELECT agent, session_id, file_path, mtime_ms, size FROM session_search_doc")
     else {
         return out;
     };
@@ -428,24 +557,91 @@ fn load_stamps(
     out
 }
 
-fn load_indexed_text(
+/// FTS5 字符串字面量：整体加双引号，内部双引号写两遍
+fn fts_quote(t: &str) -> String {
+    format!("\"{}\"", t.replace('"', "\"\""))
+}
+
+/// detail=column 不支持多三元组短语（查询直接报错）：长词拆成全部三元组 AND 起来
+fn fts_trigram_query(t: &str) -> String {
+    let chars: Vec<char> = t.chars().collect();
+    let mut seen = HashSet::new();
+    chars
+        .windows(3)
+        .map(|w| w.iter().collect::<String>())
+        .filter(|g| seen.insert(g.clone()))
+        .map(|g| fts_quote(&g))
+        .collect::<Vec<_>>()
+        .join(" AND ")
+}
+
+fn like_pattern(t: &str) -> String {
+    let mut out = String::from("%");
+    for c in t.chars() {
+        if matches!(c, '%' | '_' | '\\') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out.push('%');
+    out
+}
+
+/// 正文里出现过任一驱动词的会话 → 它的全文（用户 + 回复）。三字以上走 trigram 索引，
+/// 一两个字的词 trigram 用不上，退回 LIKE 扫表（SQLite 里做，不进 Rust 内存）。
+/// 索引是 detail=column（不存位置，体积约省一半）：长词 MATCH 退化成「三元组都在同一列」，
+/// 可能多召回，打分时按原文逐个核对，多召回的不算命中
+fn load_candidate_texts(
     conn: &Connection,
-) -> Result<std::collections::HashMap<(String, String), String>, String> {
-    let mut out = std::collections::HashMap::new();
+    tokens: &[&String],
+) -> Result<HashMap<(String, String), String>, String> {
+    let err = |e: rusqlite::Error| format!("读取会话搜索索引失败: {e}");
+    let mut ids: HashSet<i64> = HashSet::new();
+    for tok in tokens {
+        let rows: Vec<i64> = if tok.chars().count() >= 3 {
+            let mut stmt = conn
+                .prepare_cached("SELECT rowid FROM session_search_fts WHERE session_search_fts MATCH ?1")
+                .map_err(err)?;
+            let r = stmt
+                .query_map(params![fts_trigram_query(tok)], |r| r.get(0))
+                .map_err(err)?
+                .collect::<Result<_, _>>()
+                .map_err(err)?;
+            r
+        } else {
+            let mut stmt = conn
+                .prepare_cached(
+                    "SELECT id FROM session_search_doc
+                     WHERE user_text LIKE ?1 ESCAPE '\\' OR ai_text LIKE ?1 ESCAPE '\\'",
+                )
+                .map_err(err)?;
+            let r = stmt
+                .query_map(params![like_pattern(tok)], |r| r.get(0))
+                .map_err(err)?
+                .collect::<Result<_, _>>()
+                .map_err(err)?;
+            r
+        };
+        ids.extend(rows);
+    }
+    let mut out = HashMap::with_capacity(ids.len());
     let mut stmt = conn
-        .prepare("SELECT agent, session_id, text FROM session_search_text")
-        .map_err(|e| format!("读取会话搜索索引失败: {e}"))?;
-    let rows = stmt
-        .query_map([], |row| {
+        .prepare_cached(
+            "SELECT agent, session_id, user_text, ai_text FROM session_search_doc WHERE id=?1",
+        )
+        .map_err(err)?;
+    for id in ids {
+        let row = stmt.query_row(params![id], |r| {
             Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
             ))
-        })
-        .map_err(|e| format!("读取会话搜索索引失败: {e}"))?;
-    for row in rows.flatten() {
-        out.insert((row.0, row.1), row.2);
+        });
+        if let Ok((agent, sid, user, ai)) = row {
+            out.insert((agent, sid), format!("{user}\n{ai}"));
+        }
     }
     Ok(out)
 }
@@ -476,18 +672,21 @@ fn iso_to_ms(iso: &str) -> Option<i64> {
         .map(|d| d.timestamp_millis())
 }
 
-fn extract_session_text(s: &SessionMetaDto) -> String {
-    let raw = if s.agent == "opencode" {
-        messages_to_text(&conversation_impl_raw(&s.agent, &s.file_path))
+/// （用户说的话, AI 的回复），各自脱敏、各自封顶
+fn extract_session_text(s: &SessionMetaDto) -> (String, String) {
+    let msgs = if s.agent == "opencode" {
+        conversation_impl_raw(&s.agent, &s.file_path)
     } else {
-        extract_jsonl_text(&s.agent, Path::new(&s.file_path))
+        // Claude 分叉行只索引分出来之后的部分：分叉前那段原会话里也有，别两边都命中
+        let own = if s.agent == "claude-code" && s.forked_from.is_some() {
+            Some(s.session_id.as_str())
+        } else {
+            None
+        };
+        jsonl_messages(&s.agent, Path::new(&s.file_path), DECODE_CAP, own)
     };
-    let capped = if raw.len() > TEXT_CAP {
-        raw.chars().take(TEXT_CAP).collect()
-    } else {
-        raw
-    };
-    redact_sensitive_text(&capped)
+    let (user, ai) = messages_to_texts(&msgs);
+    (redact_sensitive_text(&user), redact_sensitive_text(&ai))
 }
 
 struct MatchLoc {
@@ -552,7 +751,7 @@ fn locate_jsonl(agent: &str, path: &Path, tokens: &[String]) -> Option<MatchLoc>
     for (offset, line) in iter {
         decoded = decoded.saturating_add(line.len());
         items.push((offset, line));
-        if decoded >= DECODE_CAP {
+        if decoded >= LOCATE_DECODE_CAP {
             break;
         }
     }
@@ -676,20 +875,41 @@ impl Iterator for LineOffsetIter {
     }
 }
 
-fn extract_jsonl_text(agent: &str, path: &Path) -> String {
+/// 读 jsonl 解析成消息，最多解码 `cap` 字节；`own` 给定时只留这个 sessionId 的行（没有 sessionId 的行照留）
+fn jsonl_messages(
+    agent: &str,
+    path: &Path,
+    cap: usize,
+    own: Option<&str>,
+) -> Vec<sessions::ChatMessageDto> {
     let Some(reader) = jsonl_line_reader(path) else {
-        return String::new();
+        return Vec::new();
     };
     let mut lines = Vec::new();
     let mut decoded = 0usize;
     for line in reader {
         decoded = decoded.saturating_add(line.len());
-        lines.push(line);
-        if decoded >= DECODE_CAP {
+        let keep = match own {
+            Some(own) => serde_json::from_str::<serde_json::Value>(&line)
+                .ok()
+                .and_then(|v| v.get("sessionId").and_then(|x| x.as_str()).map(|x| x == own))
+                .unwrap_or(true),
+            None => true,
+        };
+        if keep {
+            lines.push(line);
+        }
+        if decoded >= cap {
             break;
         }
     }
-    messages_to_text(&parse_session_lines(agent, &lines))
+    parse_session_lines(agent, &lines)
+}
+
+#[cfg(test)]
+fn extract_jsonl_text(agent: &str, path: &Path) -> String {
+    let (user, ai) = messages_to_texts(&jsonl_messages(agent, path, DECODE_CAP, None));
+    format!("{user}\n{ai}")
 }
 
 fn jsonl_line_reader(path: &Path) -> Option<impl Iterator<Item = String>> {
@@ -709,10 +929,15 @@ fn jsonl_line_reader(path: &Path) -> Option<impl Iterator<Item = String>> {
     }))
 }
 
-fn messages_to_text(msgs: &[sessions::ChatMessageDto]) -> String {
-    let mut out = String::new();
+fn messages_to_texts(msgs: &[sessions::ChatMessageDto]) -> (String, String) {
+    let (mut user, mut ai) = (String::new(), String::new());
     for m in msgs {
-        if m.role != "user" && m.role != "assistant" {
+        let out = match m.role.as_str() {
+            "user" => &mut user,
+            "assistant" => &mut ai,
+            _ => continue,
+        };
+        if out.len() >= TEXT_CAP {
             continue;
         }
         for b in &m.blocks {
@@ -725,12 +950,20 @@ fn messages_to_text(msgs: &[sessions::ChatMessageDto]) -> String {
             }
             out.push_str(t);
             out.push('\n');
-            if out.len() >= TEXT_CAP {
-                return out;
-            }
         }
     }
-    out
+    (cap_text(user), cap_text(ai))
+}
+
+fn cap_text(mut s: String) -> String {
+    if s.len() > TEXT_CAP {
+        let mut end = TEXT_CAP;
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        s.truncate(end);
+    }
+    s
 }
 
 #[cfg(test)]
@@ -830,6 +1063,82 @@ mod tests {
         let text = format!("{}回复超 1500 字的说明", "İK".repeat(30));
         let sn = snippet_around(&text, &["字".into()]).unwrap();
         assert!(sn.contains("1500 字"), "{sn}");
+    }
+
+    fn indexed_conn(files: &[(&str, &str)]) -> (Connection, Vec<SessionMetaDto>, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("ccode-ss-idx-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut metas = Vec::new();
+        for (id, body) in files {
+            let f = dir.join(format!("{id}.jsonl"));
+            std::fs::write(&f, body).unwrap();
+            let mut m = meta("t", "", "/p/x");
+            m.session_id = (*id).into();
+            m.file_path = f.to_string_lossy().into_owned();
+            metas.push(m);
+        }
+        let mut conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+        assert_eq!(refresh_index(&mut conn, &metas, None), 0);
+        (conn, metas, dir)
+    }
+
+    fn user_line(text: &str) -> String {
+        format!(r#"{{"type":"user","message":{{"role":"user","content":"{text}"}}}}"#) + "\n"
+    }
+
+    #[test]
+    fn fts_index_finds_short_long_and_ascii_tokens() {
+        let (conn, _, dir) = indexed_conn(&[
+            ("s1", &user_line("我们做了消融实验，回复超过 1500 字，调 web_search 参数")),
+            ("s2", &user_line("随便聊聊天气")),
+        ]);
+        for tok in ["消融", "消融实验", "1500", "web_search", "回复超过 1500 字"] {
+            let t = tok.to_string();
+            let hits = load_candidate_texts(&conn, &[&t]).unwrap();
+            assert!(
+                hits.contains_key(&("claude-code".to_string(), "s1".to_string())),
+                "{tok} 应命中 s1"
+            );
+            assert!(!hits.contains_key(&("claude-code".to_string(), "s2".to_string())));
+        }
+        let none = "量子纠缠".to_string();
+        assert!(load_candidate_texts(&conn, &[&none]).unwrap().is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn index_has_no_96kb_cap_and_drops_vanished_sessions() {
+        // 旧版只存前 96KB：长对话后半段搜不到
+        let mut body = user_line(&"前面的话".repeat(40_000));
+        body.push_str(&user_line("最后才提到的关键词"));
+        let (mut conn, metas, dir) = indexed_conn(&[("long", &body), ("gone", &user_line("x"))]);
+        let t = "最后才提到".to_string();
+        assert_eq!(load_candidate_texts(&conn, &[&t]).unwrap().len(), 1);
+        // 列表里没有了（删除、并进接续链）的对话，索引行随之清掉
+        let keep: Vec<SessionMetaDto> = metas.into_iter().filter(|m| m.session_id == "long").collect();
+        refresh_index(&mut conn, &keep, None);
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM session_search_doc", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn single_char_tokens_do_not_drive_candidates_when_longer_exist() {
+        let toks = tokenize("回复超 1500 字");
+        let driving: Vec<&String> = driving_tokens(&toks);
+        assert_eq!(driving, vec!["回复超", "1500"]);
+        let only = tokenize("酶");
+        assert_eq!(driving_tokens(&only), vec!["酶"], "全是单字时单字照样驱动");
+    }
+
+    #[test]
+    fn trigram_query_ands_all_trigrams() {
+        assert_eq!(fts_trigram_query("1500"), r#""150" AND "500""#);
+        assert_eq!(fts_trigram_query("回复超"), r#""回复超""#);
+        assert_eq!(fts_trigram_query(r#"a"bc"#), r#""a""b" AND """bc""#);
     }
 
     #[test]

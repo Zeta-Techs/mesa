@@ -97,6 +97,7 @@ import type {
   SessionExportKey,
   SessionMetaDto,
   SessionSearchHitDto,
+  SessionSearchResultDto,
   SlimInspectDto,
   TokenUsageDto,
 } from "../types";
@@ -220,6 +221,11 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
   );
   const [searchingBody, setSearchingBody] = useState(false);
   const searchGenRef = useRef(0);
+  // 后台还在建索引时隔一会儿重搜一次；只换结果，不清空列表
+  const [indexPending, setIndexPending] = useState(0);
+  const [searchTick, setSearchTick] = useState(0);
+  const searchedQueryRef = useRef("");
+  const searchPollRef = useRef<number | null>(null);
   const [searchFocus, setSearchFocus] = useState<SearchFocus | null>(null);
   const searchFocusRef = useRef<SearchFocus | null>(null);
   searchFocusRef.current = searchFocus;
@@ -376,32 +382,59 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
   }, [sessionsScratchReq, setSessionsScratchReq]);
 
   useEffect(() => {
+    const clearPoll = () => {
+      if (searchPollRef.current != null) {
+        window.clearTimeout(searchPollRef.current);
+        searchPollRef.current = null;
+      }
+    };
+    clearPoll();
     if (!q) {
       searchGenRef.current += 1;
+      searchedQueryRef.current = "";
       setContentHits(null);
       setSearchingBody(false);
+      setIndexPending(0);
       return;
     }
-    setContentHits(null);
-    setSearchingBody(true);
+    const text = query.trim();
+    const fresh = searchedQueryRef.current !== text;
+    if (fresh) {
+      setContentHits(null);
+      setSearchingBody(true);
+    }
     const gen = ++searchGenRef.current;
-    const timer = window.setTimeout(() => {
-      void invoke<SessionSearchHitDto[]>("search_sessions", { query: query.trim() })
-        .then((hits) => {
-          if (searchGenRef.current !== gen) return;
-          setContentHits(hits);
-          setSearchingBody(false);
-          setError(null);
-        })
-        .catch((reason) => {
-          if (searchGenRef.current !== gen) return;
-          setContentHits(null);
-          setSearchingBody(false);
-          setError(`会话内容搜索失败：${String(reason)}`);
-        });
-    }, 280);
-    return () => window.clearTimeout(timer);
-  }, [query, q]);
+    const timer = window.setTimeout(
+      () => {
+        void invoke<SessionSearchResultDto>("search_sessions", { query: text })
+          .then((res) => {
+            if (searchGenRef.current !== gen) return;
+            searchedQueryRef.current = text;
+            setContentHits(res.hits);
+            setIndexPending(res.pending);
+            setSearchingBody(false);
+            setError(null);
+            if (res.pending > 0) {
+              searchPollRef.current = window.setTimeout(
+                () => setSearchTick((t) => t + 1),
+                2500,
+              );
+            }
+          })
+          .catch((reason) => {
+            if (searchGenRef.current !== gen) return;
+            setContentHits(null);
+            setSearchingBody(false);
+            setError(`会话内容搜索失败：${String(reason)}`);
+          });
+      },
+      fresh ? 280 : 0,
+    );
+    return () => {
+      window.clearTimeout(timer);
+      clearPoll();
+    };
+  }, [query, q, searchTick]);
 
   // 一次性作用域请求：落成 chip（结构化筛选，不是往搜索框塞字符串）
   useEffect(() => {
@@ -1577,6 +1610,14 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
               </button>
               {searchingBody && (
                 <span className="text-micro text-l4">正在搜正文…</span>
+              )}
+              {!searchingBody && indexPending > 0 && (
+                <span
+                  className="text-micro text-l4"
+                  title="第一次搜索或很多对话有更新时，Mesa 在后台给对话正文建索引；建好的会自动补进结果"
+                >
+                  还有 {indexPending} 条对话在建索引，结果会自动补全
+                </span>
               )}
             </div>
           )}

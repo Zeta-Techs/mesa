@@ -558,6 +558,12 @@ export interface SessionSearchHitDto {
   matchRole: string | null;
 }
 
+export interface SessionSearchResultDto {
+  hits: SessionSearchHitDto[];
+  /** 还没建好索引的对话条数（后台在建）；>0 时结果可能不全 */
+  pending: number;
+}
+
 export interface SessionExportKey {
   agent: string;
   sessionId: string;

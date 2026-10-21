@@ -832,7 +832,10 @@ src-tauri/src/
                              # sessions_for_card（融合进任务书的按卡取会话：与列表同一归属口径）；
                              # 无头 AI 按 session id 标 session_meta.internal（雷达解读/定时巡检不进本项目会话，
                              # 禁止把项目路径写入 usage_provenance.internal）
-  session_search.rs          # 会话正文搜索：多关键词按「命中多少 + 落在哪」打分、同分按更新时间；正文不进前端
+  session_search.rs          # 会话正文搜索：多关键词按「命中多少 + 落在哪」打分、同分按更新时间；正文不进前端；
+                             #   索引 session_search_doc（用户/回复分列、全文不截断、脱敏后存）+ FTS5 trigram detail=column
+                             #   （长词拆三元组 AND、一两字走 LIKE，候选再按原文核对）；建不完的交后台线程，结果带 pending；
+                             #   单字词有更长词时不驱动候选（SEARCH_INDEX_VER 变更即整表重建）
   session_slim.rs            # 会话瘦身（仅 Claude Code，撞网关 413 Request body too large）：inspect 只读估算下次请求体大小与较早截图数（<8MB 免扫描，
                              #   压缩边界之前不算）；apply 原地把较早的 base64 截图/文档换文字占位、留最近 6 张，没动的行逐字节原样，写前完整备份
                              #   到 <配置目录>/ccode/backups/session-slim/、最近 60 秒有写入拒绝、复核源文件未变、tmp+rename 保持 mtime；
