@@ -4,6 +4,7 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import ConversationView from "./ConversationView";
 import ChatComposer from "./ChatComposer";
 import ChatEmptyStart from "./ChatEmptyStart";
+import { useAutoLoadOlder, wasPrepended } from "../auto-load-older";
 import { ChevronDown, FolderOpen } from "lucide-react";
 import { chatGreeting } from "../chat-empty-start";
 import { useAppStore } from "../store";
@@ -34,6 +35,7 @@ import { dropHitsRect, joinDroppedChatPaths } from "../terminal-input";
 import {
   approvalExtraHint,
   chatHeaderStatus,
+  chatMessageKey,
   chatWaitKind,
   chatWaitText,
   composerShowsInterrupt,
@@ -140,7 +142,7 @@ export default function ChatSurface({
   hooksEnabled?: boolean;
   hasOlder?: boolean;
   loadingOlder?: boolean;
-  onLoadOlder?: () => void;
+  onLoadOlder?: () => void | Promise<void>;
   /** 空态目录行：点选工作目录（未启动时走终端标签 chooseCwd） */
   onChooseCwd?: () => void;
   /** 终端里正停着「是否信任这个目录」菜单（会话文件出现之前） */
@@ -214,6 +216,7 @@ export default function ChatSurface({
   const [homeDir, setHomeDir] = useState("");
   const prevScrollHeightRef = useRef(0);
   const loadingOlderRef = useRef(false);
+  const prevFirstKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     void invoke<string>("home_dir")
@@ -267,16 +270,27 @@ export default function ChatSurface({
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    if (loadingOlderRef.current) {
+    const prepended =
+      loadingOlderRef.current &&
+      wasPrepended(prevFirstKeyRef.current, messages.map(chatMessageKey));
+    prevFirstKeyRef.current = messages[0] ? chatMessageKey(messages[0]) : null;
+    // 只在头部真的多了消息时补偿：等更早一页的途中最新窗口刷新了（只在尾部追加），
+    // 那次不能把补偿用掉，否则阅读位置会跳
+    if (loadingOlderRef.current && prepended) {
       const delta = el.scrollHeight - prevScrollHeightRef.current;
       el.scrollTop += delta;
       loadingOlderRef.current = false;
       return;
     }
+    if (loadingOlderRef.current) prevScrollHeightRef.current = el.scrollHeight;
     if (followRef.current) requestAnimationFrame(scrollBottom);
     else setHasNew(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages]);
+  // 加载结束（loadingOlder 与新消息同一批到）还没前插：这页没带来更早的消息，补偿标记作废
+  useLayoutEffect(() => {
+    if (!loadingOlder) loadingOlderRef.current = false;
+  }, [loadingOlder]);
 
   useEffect(() => {
     if (!active) return;
@@ -323,6 +337,20 @@ export default function ChatSurface({
 
   // 空态：输入框挪到画面中间偏上，起手提示与「接着上一段」在它下方（2026-10-17 二轮收敛）
   const emptyStart = state === "idle" && messages.length === 0 && !stuckWaiting;
+
+  async function loadOlder() {
+    if (!onLoadOlder) return;
+    followRef.current = false;
+    loadingOlderRef.current = true;
+    prevScrollHeightRef.current = scrollRef.current?.scrollHeight ?? 0;
+    await onLoadOlder();
+  }
+  useAutoLoadOlder(scrollRef, {
+    enabled: hasOlder && !!onLoadOlder && !emptyStart,
+    busy: loadingOlder,
+    onLoad: loadOlder,
+    fillKey: messages.length,
+  });
   const projectPaths = useAppStore((s) => s.projectPaths);
   const recentRepos = useAppStore((s) => s.recentRepos);
   const theme = useAppStore((s) => s.settings?.theme);
@@ -563,13 +591,7 @@ export default function ChatSurface({
               <button
                 type="button"
                 disabled={loadingOlder}
-                onClick={() => {
-                  followRef.current = false;
-                  loadingOlderRef.current = true;
-                  prevScrollHeightRef.current =
-                    scrollRef.current?.scrollHeight ?? 0;
-                  onLoadOlder();
-                }}
+                onClick={() => void loadOlder()}
                 className="rounded-md px-2.5 py-1 text-micro text-l3 hover:bg-hover hover:text-l1 disabled:opacity-40"
               >
                 {loadingOlder ? "加载中…" : "加载更早的消息"}

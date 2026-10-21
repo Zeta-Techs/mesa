@@ -4,6 +4,7 @@ import { Archive, Pencil } from "lucide-react";
 import { agentBrandBadgeStyle } from "../agent-colors";
 import { beginProjectChat } from "./AskAiModal";
 import ConversationView from "./ConversationView";
+import { useAutoLoadOlder } from "../auto-load-older";
 import { resumeSessionInTerminal } from "../quick-chat-launch";
 import { projectBoundProfileId, slotPrefs, CHAT_BINDING_SLOT } from "../project-agents";
 import {
@@ -74,6 +75,7 @@ export default function ProjectChatsView({
     title: string;
   } | null>(null);
   const composingLockRef = useRef(false);
+  const convScrollRef = useRef<HTMLDivElement>(null);
   const composingFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -234,8 +236,12 @@ export default function ProjectChatsView({
 
   async function loadOlder() {
     if (!selected || cursor == null || loadingOlder) return;
+    const key = selectedKey;
     setLoadingOlder(true);
     try {
+      const scroller = convScrollRef.current;
+      const previousHeight = scroller?.scrollHeight ?? 0;
+      const previousTop = scroller?.scrollTop ?? 0;
       const page = await invoke<ConversationPageDto>(
         "get_session_conversation_page",
         {
@@ -245,8 +251,16 @@ export default function ProjectChatsView({
           around: null,
         },
       );
+      if (selectedKeyRef.current !== key) return;
       setMessages((current) => [...page.messages, ...current]);
       setCursor(page.cursor);
+      // 前插后保住阅读位置，不然自动加载会把视线顶到新拉来那页的开头
+      requestAnimationFrame(() => {
+        const current = convScrollRef.current;
+        if (current)
+          current.scrollTop =
+            previousTop + current.scrollHeight - previousHeight;
+      });
     } catch (reason) {
       onError?.(String(reason));
     } finally {
@@ -270,6 +284,12 @@ export default function ProjectChatsView({
   rowsRef.current = rows;
   const selectedKeyRef = useRef(selectedKey);
   selectedKeyRef.current = selectedKey;
+  useAutoLoadOlder(convScrollRef, {
+    enabled: !loadingConv && cursor !== null,
+    busy: loadingOlder,
+    onLoad: loadOlder,
+    fillKey: messages.length,
+  });
   const prevRow = neighborFile(
     rows.map((s) => ({ path: sessionKey(s) })),
     selectedKey,
@@ -593,7 +613,7 @@ export default function ProjectChatsView({
             ×
           </button>
         </header>
-        <div className="min-h-0 flex-1 overflow-auto">
+        <div ref={convScrollRef} className="min-h-0 flex-1 overflow-auto">
           {!selected.alive && !selected.pinned ? (
             <p className="px-1 py-6 text-sm text-l3">
               源文件已失效，没有可回放的内容。

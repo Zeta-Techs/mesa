@@ -6071,12 +6071,15 @@ pub async fn get_session_conversation(agent: String, file_path: String) -> Vec<C
 }
 
 const CONVERSATION_PAGE_BYTES: u64 = 192 * 1024;
-/// 一页解析不出对话时继续往前扫的上限（Codex 工具行经常 >192KB，空窗必须连跳）。
-const CONVERSATION_PAGE_SCAN_LIMIT: u64 = CONVERSATION_PAGE_BYTES * 24;
+/// 一页凑不够消息时窗口逐次翻倍往前读，单步最多这么大（重解析总量保持在最终读量的两倍内）
+const CONVERSATION_PAGE_MAX_STEP: u64 = CONVERSATION_PAGE_BYTES * 8;
+/// 一次请求最多往前扫这么多字节（Codex 工具行经常 >192KB，空窗必须连跳）。
+const CONVERSATION_PAGE_SCAN_LIMIT: u64 = CONVERSATION_PAGE_BYTES * 40;
 const OPENCODE_PAGE_MESSAGES: usize = 80;
 /// 一页至少解析出这么多条消息才停：Claude 每轮写一行几百 KB 的 prompt_snapshot 附件，
-/// 192KB 的窗常常只剩最后一句提问，聊天层只看得到「加载更早的消息」+ 一条气泡（2026-10-17 用户截图）
-const CONVERSATION_PAGE_MIN_MESSAGES: usize = 6;
+/// 192KB 的窗常常只剩最后一句提问（2026-10-17 用户截图）；原先 6 条一页，工具调用也算条数，
+/// 看长对话要一直点「加载更早」（2026-10-21 用户），提到 40 条并配合前端滚到顶自动加载
+const CONVERSATION_PAGE_MIN_MESSAGES: usize = 40;
 
 pub(crate) fn parse_session_lines(agent: &str, lines: &[String]) -> Vec<ChatMessageDto> {
     match agent {
@@ -6238,13 +6241,15 @@ fn plain_conversation_page(
     let mut end = before.unwrap_or(len).min(len);
     let mut lines: Vec<String> = Vec::new();
     let mut scanned = 0u64;
+    let mut step = CONVERSATION_PAGE_BYTES;
     loop {
-        let start = end.saturating_sub(CONVERSATION_PAGE_BYTES);
+        let start = end.saturating_sub(step);
         let win = read_jsonl_window(&mut file, start, end)?;
         let mut combined = win.lines;
         combined.append(&mut lines);
         lines = combined;
-        scanned = scanned.saturating_add(CONVERSATION_PAGE_BYTES);
+        scanned = scanned.saturating_add(step);
+        step = (step * 2).min(CONVERSATION_PAGE_MAX_STEP);
         let mut messages = parse_session_lines(agent, &lines);
         if messages.len() >= CONVERSATION_PAGE_MIN_MESSAGES
             || win.cursor.is_none()
@@ -8815,7 +8820,8 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("s.jsonl");
         let mut content = String::new();
-        for turn in 0..4 {
+        // 24 轮 = 48 条 + 最新一问：够 40 条要往前读二十来行快照（约 5MB），验证窗口翻倍能读到
+        for turn in 0..24 {
             content.push_str(&claude_user_line(&format!("问题 {turn}")));
             content.push_str(&format!(
                 "{{\"type\":\"assistant\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"回答 {turn}\"}}]}}}}\n"
@@ -8831,7 +8837,7 @@ mod tests {
         let texts: Vec<&str> = latest.messages.iter().map(|m| m.blocks[0].text.as_str()).collect();
         assert!(texts.len() >= CONVERSATION_PAGE_MIN_MESSAGES, "{texts:?}");
         assert_eq!(texts.last(), Some(&"最新的问题"));
-        assert!(texts.contains(&"回答 3"));
+        assert!(texts.contains(&"回答 23"));
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -8843,9 +8849,10 @@ mod tests {
         let file = dir.join("huge.jsonl");
         let huge = "H".repeat(300_000);
         let mut content = String::new();
-        // 首屏要攒够 CONVERSATION_PAGE_MIN_MESSAGES 条才停：前面多放几屏的早消息，才有「更早一页」
-        for i in 0..2000 {
-            content.push_str(&claude_user_line(&format!("early-msg {i:04} {}", "e".repeat(80))));
+        // 首屏要攒够 CONVERSATION_PAGE_MIN_MESSAGES 条才停，窗口还会翻倍到 1.5MB：
+        // 前面多放几屏的早消息，才有「更早一页」
+        for i in 0..12000 {
+            content.push_str(&claude_user_line(&format!("early-msg {i:05} {}", "e".repeat(80))));
         }
         content.push_str(&claude_user_line(&huge));
         content.push_str(&claude_user_line("late-msg"));

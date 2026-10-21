@@ -460,6 +460,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   live-reply.ts              # 聊天实时预览：按每家画面布局（LAYOUTS：Claude / Codex / Qwen / Gemini / Grok / Kimi，第三期抓屏定的）抽出这一轮正在写的段落
                              # （extractLiveReply）+ 剔掉会话文件已有的行（unsyncedTail）；CodeBuddy / OpenCode / Cursor 返回 null。新增一家先抓屏、样本进测试
   menu-key-nav.ts            # 聊天输入框小弹层的键盘操作（useMenuKeyNav：打开聚焦当前项、↑↓/Home/End、关闭还焦点）
+  auto-load-older.ts         # 回放往上翻自动加载更早一页（useAutoLoadOlder：对话页 / 项目对话 / 聊天层共用；只认用户滚动，
+                             # 不满一屏自动补页）+ wasPrepended（聊天层前插判定，最新窗后滑不算）
   model-history.ts           # 「这份连接能选哪些模型」：连接名单 + 按 Agent+连接记的手填历史；开聊前选择器、启动栏、模型芯片同源
   tui-menu.ts                # 认屏上的 TUI 选择菜单（parseTuiMenu / menuAnswerKeys / sameTuiMenu / menuEchoesText）：切换命令后 5 秒、启动后 20 秒、
                              # 以及这一轮没结束前都扫屏，切换确认与七家工具审批按原文给按钮；剥方框边与滚动条、Grok 单选改写成序号行、

@@ -66,6 +66,7 @@ import {
   pickResumeProfile,
 } from "../resume-profile";
 import ConversationView from "../components/ConversationView";
+import { useAutoLoadOlder } from "../auto-load-older";
 import GitPanel from "../components/GitPanel";
 import HandoffPicker from "../components/HandoffPicker";
 import DigestPicker from "../components/DigestPicker";
@@ -1030,6 +1031,13 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
       setLoadingOlder(false);
     }
   }
+
+  useAutoLoadOlder(scrollRef, {
+    enabled: !loadingConv && conversationCursor !== null,
+    busy: loadingOlder,
+    onLoad: loadOlderMessages,
+    fillKey: messages.length,
+  });
 
   // 页面可见时每 8s 轮询（后端扫描结果缓存 10s，更密的轮询无意义）；
   // 当前打开的会话 updatedAt 变了就重拉对话

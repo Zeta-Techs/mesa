@@ -9599,7 +9599,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         hasOlder={sessionByTab[t.id]?.convCursor != null}
                         loadingOlder={sessionByTab[t.id]?.loadingOlder ?? false}
                         onLoadOlder={() =>
-                          void tabActionsRef.current
+                          tabActionsRef.current
                             .get(t.id)
                             ?.loadOlderConversation()
                         }
