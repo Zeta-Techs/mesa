@@ -97,6 +97,7 @@
 - **阅读区是 DOM 搬移。** `data-terminal-host` / `data-statusbar-host` 被 `appendChild` 进 `ReaderOverlay` 槽位，槽位更窄。搬进和搬回都在 `pty_resize` 名单里：盒子稳定后由搬移处理函数发一次，再记 `measured`。不靠 `onResize` 自动发。
 - **字号 / 字体变化会 SIGWINCH。** 设置 effect 在容器像素没变时手动 `fit()`，因为 `ResizeObserver` 看不见字号。这是用户改显示的显式变化。
 - **macOS 默认 DOM、Windows 默认 WebGL**（2026-09-19 / 2026-09-21）。不在本设计里改默认。
+  （2026-10-22 起自动档两个平台都走 WebGL，见 conventions/terminal.md「终端渲染器」。）
 
 ### 两类 TUI，同一套 chrome 不能用同一套补救
 

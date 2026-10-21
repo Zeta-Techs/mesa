@@ -999,8 +999,6 @@ const TerminalView = memo(function TerminalView({
   const effortTailRef = useRef("");
   // 输出监听是启动时挂的闭包：认档用「这个进程启动时的 agent」，不跟启动栏后来的选择
   const launchAgentRef = useRef(agentId);
-  /** xterm 建好后挂上：进程接上时按实际 agent 对齐渲染器（见 terminal-renderer.ts） */
-  const rendererSyncRef = useRef<((agent: string | undefined) => void) | null>(null);
   /** 按当前渲染器重算单元格宽补位（WebGL 就近取整）；字号字体改了由设置 effect 调 */
   const cellWidthSyncRef = useRef<(() => void) | null>(null);
   const selectedProfile = profiles.find(
@@ -2885,25 +2883,16 @@ const TerminalView = memo(function TerminalView({
       return true;
     });
 
-    // 渲染器选择（设置页「终端渲染」）：auto = Windows 流畅优先（WebGL + 软件渲染探针）、
-    // macOS 清晰优先（DOM）——xterm 的字形图集→GPU 纹理采样在 WKWebView 里整体偏软发糊
-    // （A/B 截屏实测 DOM 渲染明显更锐利，Safari 同引擎复现一致），故 Mac 默认不走 WebGL；
-    // 用户显式选「流畅」(webgl) 时按流畅优先，软件渲染（SwiftShader 等，闪烁）时退回默认。
+    // 渲染器选择（设置页「终端渲染」）：自动档两个平台都走 WebGL（2026-10-22 用户拍板，此前 Mac 默认 DOM——
+    // 当年判 WebGL 在 WKWebView 里偏软，xterm 6 下逐像素复测已与 DOM 持平，见 terminal-renderer.ts）；
+    // 只有显式选「兼容（DOM）」才不加载。软件渲染（SwiftShader 等，闪烁）时退回 DOM。
     // 上下文丢失不再永久退 DOM（借鉴 Tabby）：终端标签长寿命、常驻后台，正是丢失高发场景；
-    // 窗口重新聚焦/可见时预算重试（≤3 次），再丢才认命回落——Windows 默认 webgl 的用户
-    // 不会「流畅档悄悄变糊」。
-    // 自动档另按 agent 例外（terminal-renderer.ts）：先按启动栏选的 agent 定，进程接上后再按实际 agent 对齐。
-    const renderer = settingsRef.current?.terminalRenderer ?? "auto";
-    let wantWebgl = wantsWebglRenderer({
-      setting: renderer,
-      isMac: IS_MAC,
-      agentId: launchAgentRef.current,
-    });
+    // 窗口重新聚焦/可见时预算重试（≤3 次），再丢才认命回落。
+    const wantWebgl = wantsWebglRenderer(settingsRef.current?.terminalRenderer);
     let webglRecoveryLeft = 3;
     // webglActive：当前已加载且健康——没有它，每次窗口聚焦都会重建 renderer、
     // 新开 WebGL 上下文（2026-10-11 复核实证）。软件渲染探针也只开一次。
     let webglActive = false;
-    let webglAddon: WebglAddon | null = null;
     let softwareWebgl: boolean | null = null;
     // WebGL 的单元格宽改成就近取整（webglLetterSpacing：原本一律向下取整，Retina 上每格窄 3.8%、
     // 1 倍屏窄 10%）。卸下 WebGL 回 0——DOM 渲染器按实际字宽排。字号字体、像素比、字体加载完都要重算
@@ -2931,13 +2920,14 @@ const TerminalView = memo(function TerminalView({
         webgl.onContextLoss(() => {
           webgl.dispose();
           webglActive = false;
-          webglAddon = null;
           webglRecoveryLeft -= 1;
           syncCellWidth();
+          // 退回的是新建的 DOM 渲染器：滚动按行挪位要重新挂上
+          teardownRowReuse();
+          teardownRowReuse = installDomScrollRowReuse(term);
         });
         term.loadAddon(webgl);
         webglActive = true;
-        webglAddon = webgl;
         syncCellWidth();
         return true;
       } catch {
@@ -2945,21 +2935,6 @@ const TerminalView = memo(function TerminalView({
       }
     };
     loadWebgl();
-    // 同一标签换 agent 重开：按新 agent 加载或卸下 WebGL（卸下后 xterm 自动回到 DOM 渲染器）
-    rendererSyncRef.current = (agent: string | undefined) => {
-      wantWebgl = wantsWebglRenderer({ setting: renderer, isMac: IS_MAC, agentId: agent });
-      if (wantWebgl) {
-        loadWebgl();
-      } else if (webglAddon) {
-        webglAddon.dispose();
-        webglAddon = null;
-        webglActive = false;
-        syncCellWidth();
-        // 换回的是新建的 DOM 渲染器：滚动按行挪位要重新挂上
-        teardownRowReuse();
-        teardownRowReuse = installDomScrollRowReuse(term);
-      }
-    };
     cellWidthSyncRef.current = syncCellWidth;
     // 拖到另一块像素比不同的屏：xterm 自己会重算尺寸，补位要跟着重判
     let dprQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
@@ -3259,7 +3234,6 @@ const TerminalView = memo(function TerminalView({
       teardownWheelCoalescing();
       teardownRowReuse();
       teardownWebglRecovery();
-      rendererSyncRef.current = null;
       term.dispose();
       termRef.current = null;
     };
@@ -3547,7 +3521,6 @@ const TerminalView = memo(function TerminalView({
     setModelSeen(null);
     effortTailRef.current = "";
     launchAgentRef.current = agentId;
-    rendererSyncRef.current?.(kind === "agent" ? agentId : undefined);
     // 启动后 20 秒也盯确认菜单：完全访问启动时 Claude Code 先弹「Bypass Permissions mode」警告，
     // 默认高亮在 No——聊天层不给按钮就卡在「已送出」（2026-10-17 本机 PTY 实录）。不替用户选
     if (kind === "agent") {

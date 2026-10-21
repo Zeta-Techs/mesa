@@ -100,7 +100,7 @@ function loadOnboardingState(): OnboardingState {
 export interface AppSettings {
   terminalFontSize: number;
   terminalFontFamily?: string;
-  /** 终端渲染器：auto（默认）| webgl（流畅）| dom（清晰）；只对新开的终端生效 */
+  /** 终端渲染器：auto（默认，WebGL）| dom（兼容）；旧值 webgl 与 auto 同义；只对新开的终端生效 */
   terminalRenderer?: string;
   /** 内置终端 shell：auto | powershell | pwsh | git-bash | cmd | zsh | bash | fish（设置 → 终端） */
   terminalShell?: string;

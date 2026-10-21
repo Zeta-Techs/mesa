@@ -318,26 +318,20 @@
 - **右栏可调分栏，不新增普通内容全屏路由**：左缘拖拽调宽并记忆；**宽度上限不写死像素**（v3.60 前曾限 820px），
   随窗口自由拉宽、只给中带终端保留 340px 最小宽度（`TERMINAL_MIN_RESERVE`），下限 360px；宽屏动作暂隐工作树但保留终端，再执行恢复，双击
   对话/预览/改动页签同义；宽度变化必须触发 xterm 重新 fit；任务评审仍用全宽覆盖层。
-- **渲染器按平台分流 + 用户可切（2026-09-19 起设「终端渲染」，勿回退默认）**：macOS 默认不走 WebGL——
-  xterm 的字形图集→GPU 纹理采样在 WKWebView 里整体偏软发糊（A/B 截屏实测 DOM 渲染明显更锐利，
-  Safari 同引擎复现一致；2026-09-21 复测到量化证据：图集按整数设备像素取整单元格（DPR 2 即 0.5px 步进），
-  同一字体同一字号实测字宽 7.8 被压成 7.5（−3.8%，字形横向压缩并对齐到更粗的栅格）），故 macOS 默认用
-  xterm 默认 DOM 渲染器；Windows 默认 WebGL 加速。**自动档按 agent 例外（2026-10-20）**：Mac 上 Gemini 标签走 WebGL——
-  gemini 用半格方块 ▄ / ▀ 做消息框上下留白，DOM 渲染器按字体画、行高 1.2 下断成细线加缝，WebGL 自绘方块铺满整格。
-  名单单一出处 `src/terminal-renderer.ts`（`wantsWebglRenderer`），只认「自动」档；进程接上时按实际 agent 对齐（换 agent 重开会加载 /
-  卸下 WebGL，卸下后重挂滚动按行挪位）。新增名单前先实测该 TUI 确实画方块留白，别把清晰档整体让掉。
-  滚动流畅度是另一面的真实诉求（DOM 渲染器滚动时要逐行建/拆 DOM，体感不如原生终端）——
-  设置页「终端 → 终端渲染」提供 auto（默认，平台分流如上）/ webgl（流畅，Mac 上文字可能略软）/
-  dom（清晰）；选择在**新开的终端**生效，选 webgl 仍过 `isSoftwareWebGL` 探针（TerminalPage.tsx）
-  并在上下文丢失时自动退回默认渲染器。canvas 渲染器 addon 只声明支持 xterm 5（截至 0.8.0-beta.48），
-  不引入。**别把「触控板合帧」说成清晰与流畅兼得**——合帧只砍同一帧内的重复位置写入，每帧重绘次数不变。
-  **2026-10-21 复测（xterm 6.0 + addon-webgl 0.19，macOS 27 WKWebView，JetBrains Mono 13px）**：同一段文字的锐度量化两者持平
-  （梯度/墨迹：浅色 DOM 0.880 / WebGL 0.893，深色 0.819 / 0.829；半调像素占比同为 0.71–0.74），「WebGL 偏软」已复现不出；
-  剩下的差别只有单元格宽——addon-webgl 按 `floor(字宽 × 像素比) + round(letterSpacing)` 取整，Retina 上 7.79 → 7.5（窄 3.8%），
-  1 倍外接屏 7.79 → 7（窄 10%，字挤成一团）。`webglLetterSpacing`（terminal-renderer.ts）在小数部分 ≥ 0.5 时补 1 个设备像素改成
-  就近取整（Retina 与 1 倍屏都是 8.0，宽 2.6%），只在 WebGL 生效时设、卸下回 0；字号字体、像素比变化与字体加载完都重算。
-  另：DOM 渲染器在行高 1.2 下画框线（─ │ ┌）与半格方块会断成虚线、留缝，WebGL 自绘铺满。Mac 自动档是否改走 WebGL 待用户拍板，
-  拍板前不动 `wantsWebglRenderer`。复测脚手架：Swift 起 WKWebView（关窗口遮挡检测才有 rAF）截图 + 逐像素量锐度，见 §10 当日条目。
+- **终端渲染器：自动档两个平台都走 WebGL（2026-10-22 用户拍板，取代 2026-09-19「Mac 默认 DOM」）**：设置页
+  「终端 → 终端渲染」只剩两档——「自动（WebGL）」（默认）与「兼容（DOM）」；旧设置里的 `webgl` 与自动同义（显示成自动，
+  后端闭集仍收），`dom` 显示为兼容。单一出处 `src/terminal-renderer.ts`（`wantsWebglRenderer(setting)`，不再看平台和 agent，
+  原 Mac 上 Gemini 例外随之取消）。选择在**新开的终端**生效；WebGL 仍过 `isSoftwareWebGL` 探针（软件渲染闪烁时退回 DOM），
+  上下文丢失时退回 DOM 并重挂滚动按行挪位，窗口重新聚焦 / 可见时预算重试 ≤3 次。canvas 渲染器 addon 只声明支持 xterm 5，不引入。
+  **为什么改**：2026-09 判 WebGL 在 WKWebView 里偏软（图集按整数设备像素取整单元格，字宽 7.8 压成 7.5）。2026-10-21 复测
+  （xterm 6.0 + addon-webgl 0.19，macOS 27 WKWebView，JetBrains Mono 13px）同一段文字锐度量化持平（梯度/墨迹：浅色 DOM 0.880 /
+  WebGL 0.893，深色 0.819 / 0.829；半调像素占比同为 0.71–0.74），「偏软」已复现不出；DOM 反而在行高 1.2 下把框线（─ │ ┌）
+  画成虚线、半格方块（▄ ▀）留缝，滚动时逐行建 / 拆 DOM 也更慢。剩下的差别只有单元格宽：addon-webgl 按
+  `floor(字宽 × 像素比) + round(letterSpacing)` 取整，Retina 上 7.79 → 7.5（窄 3.8%），1 倍外接屏 7.79 → 7（窄 10%）。
+  `webglLetterSpacing` 在小数部分 ≥ 0.5 时补 1 个设备像素改成就近取整（两种屏都是 8.0，宽 2.6%），只在 WebGL 生效时设、
+  退回 DOM 回 0；字号字体、像素比变化与字体加载完都重算。DOM 的好处只剩字宽按实际排、带字体连写（`=>` 画成箭头）。
+  复测脚手架：Swift 起 WKWebView（关窗口遮挡检测才有 rAF）截图 + 逐像素量锐度，见 architecture §10 当日条目。
+  **别把「触控板合帧」说成提速**——合帧只砍同一帧内的重复位置写入，每帧重绘次数不变。
 - **聊天层盖住时终端停画（2026-10-21）**：聊天模式且没拉起终端时，聊天层整片盖在 xterm 上，但 xterm 照样每帧重画。
   xterm 按 IntersectionObserver 判断画面可见、看不见就停画并在重新可见时整屏重画一次——给 xterm 宿主加
   `content-visibility: hidden`（`coveredByChat`）即可让它停；`visibility: hidden` 停不了（WKWebView 实测：盖住期间 20 次写入，

@@ -2857,20 +2857,16 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         />
         <Row
           label="终端渲染"
-          hint={
-            IS_MAC
-              ? "重开终端生效。清晰更锐，流畅更快；自动档下 Gemini 标签用流畅"
-              : "重开终端生效。自动：Windows 流畅，Mac 清晰"
-          }
+          hint="重开终端生效。自动用显卡绘制，出字和滚动更顺、框线连贯，显卡用不了时自动改用兼容；兼容按网页排版绘制，画面显示不对时再选"
         >
+          {/* 旧设置里存过的 "webgl" 与自动同义（terminal-renderer.ts），显示成自动 */}
           <select
             className={selectSm}
-            value={settings?.terminalRenderer ?? "auto"}
+            value={settings?.terminalRenderer === "dom" ? "dom" : "auto"}
             onChange={(e) => patch({ terminalRenderer: e.target.value })}
           >
-            <option value="auto">自动</option>
-            <option value="webgl">流畅（WebGL）</option>
-            <option value="dom">清晰（默认渲染）</option>
+            <option value="auto">自动（WebGL）</option>
+            <option value="dom">兼容（DOM）</option>
           </select>
         </Row>
 

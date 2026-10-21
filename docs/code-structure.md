@@ -649,7 +649,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   step-decisions.ts          # 决策项：答案落任务书草稿固定小节；isTaskMdStub = 空/仅决策/仅评审沉淀不算可执行正文，resolveTaskMdSource 走模板拼装并接沉淀（decisionGate/orderedAnswers/parseDecisions，tests/step-decisions.test.ts）
   terminal-resume.ts         # 终端会话恢复的标签复用与配置挑选纯逻辑（2026-09-08 审计修复）
   terminal-geometry.ts       # 启动前收不收栏、没量到格子就不起进程、起来之后谁可以改行列
-  terminal-renderer.ts       # 用哪种渲染器：设置「终端渲染」+ 平台 + agent（自动档 Mac 上 Gemini 例外走 WebGL）；
+  terminal-renderer.ts       # 用哪种渲染器：设置「终端渲染」（自动 = WebGL，两个平台同；只有「兼容（DOM）」不走）；
                              # webglLetterSpacing = WebGL 单元格宽就近取整的补位（tests/terminal-renderer.test.ts）
   store.ts                   # zustand 状态。applyTheme 同步原生窗口外观；Windows 上同时把整窗 Mica 切到 micaDark/micaLight
 src-tauri/src/

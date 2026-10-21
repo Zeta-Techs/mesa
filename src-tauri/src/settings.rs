@@ -66,7 +66,8 @@ const KNOWN_PALETTES: [&str; 8] = [
     "one-light",
     "latte",
 ];
-/// 终端渲染器闭集（terminal_renderer）：auto = 平台默认（Windows 流畅优先 / macOS 清晰优先）
+/// 终端渲染器闭集（terminal_renderer）：auto = WebGL（两个平台同，2026-10-22 起）/ dom = 兼容；
+/// webgl 是旧值，与 auto 同义，留着让旧设置读得进来
 const KNOWN_RENDERERS: [&str; 3] = ["auto", "dom", "webgl"];
 /// 内置终端 shell 闭集（terminal_shell）：两个平台的选项放一张表，跨机同步的设置里留着对方平台的值也不丢
 pub(crate) const KNOWN_TERMINAL_SHELLS: [&str; 8] =
