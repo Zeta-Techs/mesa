@@ -4346,7 +4346,6 @@ pub fn scan_sessions() -> ScanResult {
             HashMap::with_capacity(opencode_db.len());
         for db in opencode_db_candidates() {
             if db.exists() {
-                let sig = file_sig(&db);
                 let key = cache_key(&db);
                 let (entry, rows) = opencode_rows_cached(&db, opencode_db.get(&key));
                 if let Some(entry) = entry {
