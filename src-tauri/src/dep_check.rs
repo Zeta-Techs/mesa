@@ -638,6 +638,19 @@ fn install_with_pip(app: &AppHandle, tool: &str) -> Result<UpdateResultDto, Stri
         }
     };
     let program = python.to_string_lossy().into_owned();
+    // Windows 全机安装的 Python：经管理员确认装进它自己的 site-packages，Codex 的 elevated 沙箱也看得到。
+    // 用户点了「否」（或没起来）就照常用普通权限装——pip 会自己退到用户目录，Mesa 能用、Codex 沙箱里用不了
+    #[cfg(windows)]
+    if pip_needs_elevation(current_os(), &python, &program_files_roots()) {
+        if let Some((ok, output)) = pip_elevated(app, tool, &python) {
+            return Ok(finish_install(tool, ok, output, "pip"));
+        }
+        use tauri::Emitter;
+        let _ = app.emit(
+            &format!("agent-update-output-{}", dep_key(tool)),
+            "没拿到管理员确认，改装到你自己的用户目录：Mesa 能用，但 Codex 的沙箱里用不了这两个库。\n",
+        );
+    }
     let (ok, output) = updater::run_streaming(app, &dep_key(tool), &program, &pip_args(false));
     if ok {
         return Ok(finish_install(tool, true, output, "pip"));
@@ -648,6 +661,109 @@ fn install_with_pip(app: &AppHandle, tool: &str) -> Result<UpdateResultDto, Stri
         return Ok(finish_install(tool, ok2, output2, "pip"));
     }
     Ok(finish_install(tool, false, output, "pip"))
+}
+
+/// Windows 上装在 %ProgramFiles% 下的 Python（一键补齐 2026-10-21 起就是这种）：普通权限的 pip 写不进
+/// 它的 site-packages，会自动退到 %APPDATA%\Python——Codex 的 elevated 沙箱以单独的本地账户跑命令，
+/// 读不了用户目录，AI 在 Codex 里 `import pymupdf` 就找不到（environment.md 同日条）。这种要经管理员确认再装
+#[cfg_attr(not(windows), allow(dead_code))]
+fn pip_needs_elevation(os: HostOs, python: &Path, program_roots: &[PathBuf]) -> bool {
+    os == HostOs::Windows && program_roots.iter().any(|r| crate::paths::path_within_path(python, r))
+}
+
+#[cfg(windows)]
+fn program_files_roots() -> Vec<PathBuf> {
+    ["ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"]
+        .iter()
+        .filter_map(|k| std::env::var_os(k).map(PathBuf::from))
+        .collect()
+}
+
+/// 以管理员身份跑的那段 Python：pip 的输出逐行写进日志（Mesa 边等边读给界面），退出码照传
+#[cfg_attr(not(windows), allow(dead_code))]
+fn elevated_pip_script(log: &Path) -> String {
+    let log = serde_json::to_string(&log.to_string_lossy()).unwrap_or_default();
+    let cmd = serde_json::to_string(&pip_args(false)).unwrap_or_default();
+    format!(
+        "import os, subprocess, sys\n\
+         with open({log}, \"w\", encoding=\"utf-8\", buffering=1) as f:\n    \
+         r = subprocess.run([sys.executable] + {cmd}, stdout=f, stderr=subprocess.STDOUT,\n                       \
+         env=dict(os.environ, PYTHONUNBUFFERED=\"1\", PYTHONIOENCODING=\"utf-8\"))\n\
+         sys.exit(r.returncode)\n"
+    )
+}
+
+/// PowerShell 单引号字面量
+#[cfg_attr(not(windows), allow(dead_code))]
+fn ps_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "''"))
+}
+
+/// 经 UAC 以管理员身份跑 pip（Start-Process -Verb RunAs，输出拿不到管道，改写日志文件、边等边推给界面）。
+/// None = 日志都没生成：用户点了「否」或没起来，调用方退回普通权限装
+#[cfg(windows)]
+fn pip_elevated(app: &AppHandle, tool: &str, python: &Path) -> Option<(bool, String)> {
+    use tauri::Emitter;
+    let event = format!("agent-update-output-{}", dep_key(tool));
+    pip_elevated_with(python, |text| {
+        let _ = app.emit(&event, text);
+    })
+}
+
+#[cfg(windows)]
+fn pip_elevated_with(python: &Path, emit: impl Fn(String)) -> Option<(bool, String)> {
+    let powershell = agents::resolve_binary("powershell")?;
+    let dir = crate::storage::config_root()?
+        .join("tmp")
+        .join(format!("pip-elevated-{}", uuid::Uuid::new_v4().simple()));
+    std::fs::create_dir_all(&dir).ok()?;
+    let (log, script) = (dir.join("pip.log"), dir.join("pip_elevated.py"));
+    if std::fs::write(&script, elevated_pip_script(&log)).is_err() {
+        let _ = std::fs::remove_dir_all(&dir);
+        return None;
+    }
+    emit("PDF 处理库要装进全机的 Python，Windows 会弹出「你要允许此应用对你的设备进行更改吗？」，请点「是」。\n".into());
+    let command = format!(
+        "$p = Start-Process -FilePath {} -ArgumentList {} -Verb RunAs -Wait -PassThru -WindowStyle Hidden; exit $p.ExitCode",
+        ps_quote(&python.to_string_lossy()),
+        ps_quote(&format!("\"{}\"", script.to_string_lossy())),
+    );
+    let mut child = crate::process::background_command(&powershell)
+        .args(["-NoProfile", "-NonInteractive", "-Command", &command])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20 * 60);
+    let mut sent = 0usize;
+    let push = |sent: &mut usize| {
+        if let Ok(bytes) = std::fs::read(&log) {
+            if bytes.len() > *sent {
+                emit(String::from_utf8_lossy(&bytes[*sent..]).into_owned());
+                *sent = bytes.len();
+            }
+        }
+    };
+    let status = loop {
+        if let Ok(Some(s)) = child.try_wait() {
+            break Some(s);
+        }
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            break None;
+        }
+        push(&mut sent);
+        std::thread::sleep(std::time::Duration::from_millis(400));
+    };
+    push(&mut sent);
+    let text = std::fs::read(&log).ok().map(|b| String::from_utf8_lossy(&b).into_owned());
+    let _ = std::fs::remove_dir_all(&dir);
+    match (status, text) {
+        (_, None) => None,
+        (Some(s), Some(t)) => Some((s.success(), t)),
+        (None, Some(t)) => Some((false, format!("{t}\n等了 20 分钟还没装完，Mesa 不再等了：稍后点「重新检测」看是否已装好"))),
+    }
 }
 
 /// winget 安装参数（纯函数）。Node.js 钉死系统级（MSI）：它的「仅当前用户」安装包是绿色
@@ -1104,6 +1220,44 @@ mod tests {
         assert!(managed.contains(&"--user".to_string()));
         assert!(managed.contains(&"--break-system-packages".to_string()));
         assert!(managed.ends_with(&["pymupdf".to_string(), "pillow".to_string()]));
+    }
+
+    /// 手动跑：真弹一次 UAC，以管理员身份对本机全机 Python 跑 pip（已装就是 Requirement already satisfied）。
+    /// `cargo test --lib pip_elevated_real -- --ignored --nocapture`
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "会弹 UAC，手动跑"]
+    fn pip_elevated_real() {
+        let python = usable_python().expect("有 Python");
+        assert!(pip_needs_elevation(HostOs::Windows, &python, &program_files_roots()), "{python:?} 不是全机安装");
+        let r = pip_elevated_with(&python, |t| print!("{t}"));
+        println!("\n结果 {r:?}");
+        let (ok, text) = r.expect("点了「是」才有日志");
+        assert!(ok, "{text}");
+        assert!(text.contains("pymupdf") && text.contains("pillow"), "{text}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn pip_elevates_only_for_program_files_python_on_windows() {
+        let roots = [PathBuf::from(r"C:\Program Files"), PathBuf::from(r"C:\Program Files (x86)")];
+        let machine = Path::new(r"C:\Program Files\Python313\python.exe");
+        let per_user = Path::new(r"C:\Users\me\AppData\Local\Programs\Python\Python313\python.exe");
+        assert!(pip_needs_elevation(HostOs::Windows, machine, &roots));
+        assert!(!pip_needs_elevation(HostOs::Windows, per_user, &roots), "只装当前用户的照常装");
+        assert!(!pip_needs_elevation(HostOs::Macos, machine, &roots));
+        // 不是 Program Files 下的同名前缀目录
+        assert!(!pip_needs_elevation(HostOs::Windows, Path::new(r"C:\Program Files2\py\python.exe"), &roots));
+    }
+
+    #[test]
+    fn elevated_pip_script_logs_and_passes_exit_code() {
+        let s = elevated_pip_script(Path::new(r"C:\Users\me\AppData\Roaming\ccode\tmp\pip-elevated-x\pip.log"));
+        // 路径按 JSON 字符串转义进 Python（反斜杠成对）
+        assert!(s.contains(r#"open("C:\\Users\\me\\AppData\\Roaming\\ccode\\tmp\\pip-elevated-x\\pip.log""#), "{s}");
+        assert!(s.contains(r#"["-m","pip","install","--disable-pip-version-check","--no-input","pymupdf","pillow"]"#), "{s}");
+        assert!(s.contains("sys.exit(r.returncode)"));
+        assert_eq!(ps_quote(r"C:\it's\python.exe"), r"'C:\it''s\python.exe'");
     }
 
     #[test]

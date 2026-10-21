@@ -87,7 +87,10 @@
   连带两点：①系统 PATH 里 `WindowsApps`（应用商店 python 占位）排在用户 PATH 之前，「仅为我安装」的 Python 即使不在沙箱里，
   `python` 也先命中占位；全机安装带 PrependPath 会排到占位前面。②Mesa 诊断页「一键补齐」装 Python 原走 winget `--scope user`
   （免管理员确认），装出来的正是这种 Codex elevated 沙箱看不到的 Python——同日改为 `--scope machine` +
-  `InstallAllUsers=1 PrependPath=1`（dep_check.rs，弹一次管理员确认，同 Node）。
+  `InstallAllUsers=1 PrependPath=1`（dep_check.rs，弹一次管理员确认，同 Node）。PyMuPDF / Pillow 同理：普通权限的 pip
+  写不进全机 Python 的 site-packages，会自己退到 `%APPDATA%\Python`（沙箱同样看不到），所以 Python 在 `%ProgramFiles%`
+  下时经 `Start-Process -Verb RunAs` 以管理员跑 pip（`dep_check::pip_elevated`：输出写日志、边等边推界面；用户点「否」
+  没有日志，退回普通权限装）。手动核对 `cargo test --lib pip_elevated_real -- --ignored --nocapture`（会弹 UAC）。
   本机已于当日改为全机安装 3.13.15（`C:\Program Files\Python313`，含 pillow / pymupdf），沙箱里 `python` / `py` 均可用。
 - **Windows PDF 预览白屏**：WebView2 + 全局 `color-scheme:dark` 下，pdf.js 默认不透明 2d canvas 与
   `.textLayer { color-scheme:only light }` 会合成整页白块；经典滚动条改 clientWidth 再叠加
