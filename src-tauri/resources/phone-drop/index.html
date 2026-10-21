@@ -5,7 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="referrer" content="no-referrer">
 <meta name="color-scheme" content="light dark">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="发到 Mesa">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>发到 Mesa</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="icon" href="icon.png">
 <link rel="stylesheet" href="app.css">
 <script src="app.js" defer></script>
 </head>
@@ -15,6 +22,14 @@
     <h1>发到 Mesa</h1>
     <p id="status" class="status">已连上你的电脑。发出的东西会出现在 Mesa 里。</p>
   </header>
+
+  <section id="tip" class="tip" hidden>
+    <p><strong>已记住这台手机。</strong>把这个页面加到主屏幕，以后点开就能发，不用再扫码。</p>
+    <p id="tip-ios" hidden>iPhone：点 Safari 底部的分享按钮，选「添加到主屏幕」。</p>
+    <p id="tip-android" hidden>安卓：点 Chrome 右上角的 ⋮，选「添加到主屏幕」。</p>
+    <p class="muted">每次用之前，先在电脑上的 Mesa 里点「从手机添加」。</p>
+    <button id="tip-close" type="button">知道了</button>
+  </section>
 
   <section class="picks">
     <label class="pick">

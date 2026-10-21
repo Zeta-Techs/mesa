@@ -24,18 +24,24 @@ export interface PhoneItem {
 }
 
 export interface PhoneAddr {
-  ip: string;
+  /** 二维码里用的主机：电脑名（xxx.local）或 IP */
+  host: string;
   label: string;
 }
 
 export interface PhoneDropStatus {
   receiving: boolean;
   connected: boolean;
+  /** 扫码配对地址（二维码内容） */
   url: string | null;
   qrSvg: string | null;
-  address: string | null;
+  host: string | null;
   addresses: PhoneAddr[];
   received: number;
+  /** 最近连上的已配对手机 */
+  lastDevice: string | null;
+  /** 固定端口被占、这次临时换了端口 */
+  portNote: string | null;
 }
 
 export const IDLE_PHONE_STATUS: PhoneDropStatus = {
@@ -43,10 +49,20 @@ export const IDLE_PHONE_STATUS: PhoneDropStatus = {
   connected: false,
   url: null,
   qrSvg: null,
-  address: null,
+  host: null,
   addresses: [],
   received: 0,
+  lastDevice: null,
+  portNote: null,
 };
+
+/** 已配对的手机（记住这台手机，2026-10-21） */
+export interface PhoneDevice {
+  id: string;
+  name: string;
+  pairedAt: string;
+  lastSeenAt: string | null;
+}
 
 export type PhoneAction = "attach" | "place" | "saveAs" | "copy" | "delete";
 
@@ -126,11 +142,34 @@ export function formatPhoneSize(bytes: number): string {
 }
 
 /** 弹层状态行 */
-export function phoneStateLine(status: PhoneDropStatus, incoming: string | null): string {
+export function phoneStateLine(
+  status: PhoneDropStatus,
+  incoming: string | null,
+  hasDevices = false,
+): string {
   if (!status.receiving) return "没有在接收";
   if (incoming) return `正在接收 ${incoming}…`;
-  if (status.connected) return status.received > 0 ? `手机已连上 · 已收 ${status.received} 条` : "手机已连上";
-  return "等手机扫码…";
+  if (status.connected) {
+    const who = status.lastDevice ? `${status.lastDevice} 已连上` : "手机已连上";
+    return status.received > 0 ? `${who} · 已收 ${status.received} 条` : who;
+  }
+  return hasDevices ? "等手机打开「发到 Mesa」…" : "等手机扫码…";
+}
+
+/** 已配对手机的一行说明：上次用过的时间（今天只写时刻） */
+export function phoneDeviceLine(device: Pick<PhoneDevice, "pairedAt" | "lastSeenAt">, now: Date): string {
+  const at = (iso: string | null) => {
+    if (!iso) return null;
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return null;
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return d.toDateString() === now.toDateString() ? `今天 ${hm}` : `${d.getMonth() + 1}月${d.getDate()}日`;
+  };
+  const seen = at(device.lastSeenAt);
+  if (seen) return `上次用 ${seen}`;
+  const paired = at(device.pairedAt);
+  return paired ? `${paired} 配对` : "";
 }
 
 /** 自动停止的原因（手动停止不提示） */

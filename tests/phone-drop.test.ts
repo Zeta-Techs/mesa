@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   IDLE_PHONE_STATUS,
   formatPhoneSize,
+  phoneDeviceLine,
   phoneInboxFields,
   phoneItemActions,
   phoneItemStatusText,
@@ -87,4 +88,25 @@ test("状态文案", () => {
   assert.equal(formatPhoneSize(512), "512 B");
   assert.equal(formatPhoneSize(300 * 1024), "300 KB");
   assert.equal(formatPhoneSize(4.25 * 1024 * 1024), "4.3 MB");
+});
+
+test("已配对手机：状态行写是哪台手机，设备行写上次用的时间", () => {
+  const on = { ...IDLE_PHONE_STATUS, receiving: true };
+  assert.equal(phoneStateLine(on, null, true), "等手机打开「发到 Mesa」…");
+  assert.equal(phoneStateLine({ ...on, connected: true, lastDevice: "iPhone" }, null, true), "iPhone 已连上");
+  assert.equal(
+    phoneStateLine({ ...on, connected: true, lastDevice: "iPhone", received: 2 }, null, true),
+    "iPhone 已连上 · 已收 2 条",
+  );
+  const now = new Date(2026, 9, 21, 15, 0);
+  assert.equal(
+    phoneDeviceLine({ pairedAt: "x", lastSeenAt: new Date(2026, 9, 21, 9, 5).toISOString() }, now),
+    "上次用 今天 09:05",
+  );
+  assert.equal(
+    phoneDeviceLine({ pairedAt: "x", lastSeenAt: new Date(2026, 9, 19, 9, 5).toISOString() }, now),
+    "上次用 10月19日",
+  );
+  assert.equal(phoneDeviceLine({ pairedAt: new Date(2026, 9, 20).toISOString(), lastSeenAt: null }, now), "10月20日 配对");
+  assert.equal(phoneDeviceLine({ pairedAt: "bad", lastSeenAt: null }, now), "");
 });

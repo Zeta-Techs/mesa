@@ -268,6 +268,9 @@ export default function ChatComposer({
   const phoneReceiving = usePhoneDropStore((s) => s.status.receiving);
   const phoneDialogOpen = usePhoneDropStore((s) => s.open);
   const phoneReceived = usePhoneDropStore((s) => s.status.received);
+  const phoneWho = usePhoneDropStore((s) =>
+    s.status.connected ? `${s.status.lastDevice ?? "手机"} 已连上` : "手机接收中",
+  );
   const phoneDeliveries = usePhoneDropStore((s) => s.deliveries);
   useEffect(() => {
     const mine = usePhoneDropStore.getState().takeDeliveries(composerId);
@@ -295,7 +298,8 @@ export default function ChatComposer({
   }, [phoneDeliveries, composerId]);
   useEffect(() => () => usePhoneDropStore.getState().releaseTarget(composerId), [composerId]);
   function openPhoneDrop() {
-    usePhoneDropStore.getState().openDialog({ composerId, cwd: cwd ?? null });
+    // 有已配对的手机：直接开始接收，不弹窗；没有：弹窗扫码配对
+    usePhoneDropStore.getState().openForComposer({ composerId, cwd: cwd ?? null });
   }
 
   /** 剪贴板图片落盘（与终端粘贴同一通道 save_clipboard_image）→ 附件卡 */
@@ -561,7 +565,7 @@ export default function ChatComposer({
             <div className="flex items-center gap-2 px-3 pt-2.5 text-micro text-l3">
               <Smartphone size={12} strokeWidth={1.8} aria-hidden="true" className="shrink-0" />
               <span className="min-w-0 truncate">
-                手机接收中{phoneReceived > 0 ? ` · 已收 ${phoneReceived}` : ""}
+                {phoneWho}{phoneReceived > 0 ? ` · 已收 ${phoneReceived}` : ""}
               </span>
               <button
                 type="button"

@@ -11,6 +11,7 @@ import { toast } from "./toast";
 import {
   IDLE_PHONE_STATUS,
   phoneStopNote,
+  type PhoneDevice,
   type PhoneDropStatus,
   type PhoneItem,
 } from "./phone-drop";
@@ -36,12 +37,19 @@ interface PhoneDropState {
   starting: boolean;
   items: PhoneItem[];
   deliveries: Delivery[];
+  /** 已配对的手机（记住这台手机） */
+  devices: PhoneDevice[];
   openDialog: (target: PhoneDropTarget | null, opts?: { start?: boolean }) => void;
+  /** 聊天输入框「+ → 从手机添加」：有已配对的手机就直接开始接收、不弹窗（输入框上方那一行可展开扫码）；
+   *  没有就弹窗扫码配对 */
+  openForComposer: (target: PhoneDropTarget) => void;
   /** 从输入框打开的：收起，接收继续（输入框上方留一行可停止）；其余：停止并关闭 */
   closeDialog: () => void;
   start: (bind?: string) => Promise<void>;
   stop: () => Promise<void>;
   refresh: () => Promise<void>;
+  loadDevices: () => Promise<void>;
+  removeDevice: (id: string) => Promise<void>;
   patchItem: (item: PhoneItem) => void;
   removeItem: (id: string) => void;
   /** 手动把一条附到当前目标输入框 */
@@ -64,11 +72,34 @@ export const usePhoneDropStore = create<PhoneDropState>((set, get) => ({
   starting: false,
   items: [],
   deliveries: [],
+  devices: [],
 
   openDialog: (target, opts) => {
     set({ open: true, target, error: null });
     void get().refresh();
+    void get().loadDevices();
     if (opts?.start !== false) void get().start();
+  },
+
+  openForComposer: (target) => {
+    if (get().devices.length === 0) {
+      get().openDialog(target);
+      return;
+    }
+    set({ target, error: null });
+    void get()
+      .start()
+      .then(() => {
+        const { error, status } = get();
+        if (error) {
+          // 没开起来：弹窗里看原因
+          set({ open: true });
+          return;
+        }
+        if (!status.connected) {
+          toast("已开始接收：在手机上打开主屏幕的「发到 Mesa」就能发", "info");
+        }
+      });
   },
 
   closeDialog: () => {
@@ -96,6 +127,24 @@ export const usePhoneDropStore = create<PhoneDropState>((set, get) => ({
       set({ error: String(e) });
     }
     set({ status: IDLE_PHONE_STATUS, incoming: null, target: null });
+  },
+
+  loadDevices: async () => {
+    try {
+      const devices = await invoke<PhoneDevice[]>("phone_drop_devices");
+      set({ devices });
+    } catch {
+      /* 读不到名单时照常走扫码 */
+    }
+  },
+
+  removeDevice: async (id) => {
+    try {
+      await invoke("phone_drop_remove_device", { id });
+      set((s) => ({ devices: s.devices.filter((d) => d.id !== id) }));
+    } catch (e) {
+      toast(`移除失败：${String(e)}`, "error");
+    }
   },
 
   refresh: async () => {
@@ -147,6 +196,7 @@ interface StatePayload {
   receiving: boolean;
   connected: boolean;
   received: number;
+  lastDevice: string | null;
   reason: string | null;
 }
 
@@ -155,6 +205,7 @@ export function usePhoneDropEvents(): void {
   useEffect(() => {
     const store = usePhoneDropStore;
     void store.getState().refresh();
+    void store.getState().loadDevices();
     void invoke<PhoneDropStatus>("phone_drop_status")
       .then((status) => store.setState({ status }))
       .catch(() => undefined);
@@ -170,8 +221,20 @@ export function usePhoneDropEvents(): void {
           return;
         }
         store.setState({
-          status: { ...s.status, receiving: true, connected: p.connected, received: p.received },
+          status: {
+            ...s.status,
+            receiving: true,
+            connected: p.connected,
+            received: p.received,
+            lastDevice: p.lastDevice,
+          },
         });
+      }),
+      listen<PhoneDevice>("phone-drop-paired", (e) => {
+        const device = e.payload;
+        const s = store.getState();
+        store.setState({ devices: [...s.devices.filter((d) => d.id !== device.id), device] });
+        if (!s.open) toast(`已记住这台手机：${device.name}`, "success");
       }),
       listen<{ name: string }>("phone-drop-incoming", (e) => {
         store.setState({ incoming: e.payload.name });

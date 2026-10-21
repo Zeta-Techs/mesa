@@ -119,12 +119,14 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   usage-dist.ts              # 用量页分布区纯逻辑：shareOf/barWidthPct/sharePctLabel、visibleDistRows（先露 10 行、≤12 行不折）、
                              #   toTsv（复制表格，格内换行/制表符压空格）；tests/usage-dist.test.ts。StatsPage 的 DistList 统一渲染六个页签
   phone-drop.ts              # 从手机添加纯逻辑（docs/design-phone-drop.md）：条目动作可用性（其他文件不放进项目）、放进哪个项目
-                             #   （对话目录所在科研/办公项目最长匹配，否则最近打开；编程不放）、状态/收件箱/停止原因文案（tests/phone-drop.test.ts）
+                             #   （对话目录所在科研/办公项目最长匹配，否则最近打开；编程不放）、状态/收件箱/停止原因文案、
+                             #   已配对手机的「上次用」行（tests/phone-drop.test.ts）
   phone-drop-store.ts        # 从手机添加界面状态（独立 zustand）：接收状态、收到的列表、弹层、目标输入框；后端三事件只在
                              #   usePhoneDropEvents（App 挂一次）里接，输入框只从 deliveries 取自己那份（防多监听器各改各的）；
-                             #   starting 期间丢弃旧会话迟到的「已停止」事件
+                             #   starting 期间丢弃旧会话迟到的「已停止」事件；openForComposer：有已配对手机就直接开始接收不弹窗
   components/PhoneDropDialog.tsx # 从手机添加弹层（App 全局一处；入口：聊天输入框「+」/ ⌘K / 收件箱「手机」）：二维码（后端 SVG，
-                             #   data: URL 进 img）+ 地址复制 + 多网卡换地址 + 「扫了打不开？」+ 收到的列表（附到输入框/放进项目/另存为/复制/删除）；
+                             #   data: URL 进 img）+ 地址复制 + 换地址（电脑名 / 各网卡 IP）+ 「扫了打不开？」+ 已配对的手机（移除）+
+                             #   收到的列表（附到输入框/放进项目/另存为/复制/删除）；
                              #   从输入框打开的「收起」接收继续，⌘K 打开的「完成」即停止
   components/ClientOpenDialog.tsx # useClientOpen 钩子 + 确认层：对话页底栏/右键菜单与工作台项目行共用；预检全过直接打开，有 note/warn/fix/block 才弹层（Codex 缺渠道「写入并打开」可选连接，Claude 渠道会变提示，被拦只给原因/下载入口）
   components/ConfirmDialog.tsx # 全局确认/提示框（confirmDialog/alertDialog，126 处共用）：语气图标 + 结构化正文（标题/对照表/注意条，
@@ -1171,8 +1173,11 @@ src-tauri/src/
                              #   家目录直下系统目录标 isSystem 供前端置灰）
   pdf.rs                     # PDF/docx 字节读取：read_pdf_bytes 白名单 + canonicalize + 上限，base64 传输
                              #   （白名单根含 ccode/tmp 粘贴图与 phone_drop 暂存区）
-  phone_drop.rs              # 从手机添加（2026-10-20，docs/design-phone-drop.md；安全口径 safety.md 同名条）：人点了才在选中网卡的
-                             #   私网 IPv4 上起 tiny_http 收件服务（令牌在路径、Host 校验、错令牌/未知路径同一个 404、只收不出），
+  phone_drop.rs              # 从手机添加（2026-10-20，docs/design-phone-drop.md；安全口径 safety.md 同名条）：人点了才在各张局域网
+                             #   网卡的私网 IPv4 上同端口起 tiny_http 收件服务（单线程轮询；令牌在路径、Host 校验、错令牌/未知路径同一个 404、只收不出），
+                             #   2026-10-21 记住这台手机：/p/<配对令牌>/ 扫码即配对（pair）→ /d/<设备令牌>/ 主屏网页；配对簿
+                             #   phone-devices.json 只存令牌 SHA-256、最多 8 台、可移除，另记固定端口与地址偏好；电脑 mDNS 名
+                             #   （mdns_hostname）作二维码主机，start_with 可注入网卡/电脑名/暂存区/配对簿供测试，
                              #   停止 / 30 分钟无新内容 / 退出（lib.rs ExitRequested）即关；手机页 resources/phone-drop/ 三文件 include_str!；
                              #   收到的落 <配置根>/phone-inbox/（索引 items.json 进程锁+文件锁+原子写，7 天清理，.part 1 小时）；
                              #   place_into 只走已有入口（PDF save_paper_bytes / 图片 reader::write_notes_asset / 文字 projects::append_clip_at，

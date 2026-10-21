@@ -3,7 +3,9 @@
 //! 人在 Mesa 里点了「从手机添加」才在局域网上开一个只收不出的小服务：手机扫码打开网页，
 //! 传照片 / 文件 / 一句话；收到的先进 Mesa 自己的暂存区（`<配置根>/phone-inbox/`），
 //! 人点了才进项目（项目根多出未跟踪文件会挡工作区合并，见 review_contract）。
-//! 点停止 / 30 分钟没收到新东西 / Mesa 退出即关；令牌每次新开，错令牌与未知路径同一个 404。
+//! 点停止 / 30 分钟没收到新东西 / Mesa 退出即关；错令牌与未知路径同一个 404。
+//! 记住这台手机（2026-10-21）：扫码地址 `/p/<本次配对令牌>/` 打开即配对，发长期设备令牌（只存哈希，可移除），
+//! 手机跳到 `/d/<设备令牌>/` 加到主屏；固定端口 + 电脑名（mDNS `.local`）让主屏网页下次直接连上。
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -33,7 +35,7 @@ const PAGE_HTML: &str = include_str!("../resources/phone-drop/index.html");
 const PAGE_JS: &str = include_str!("../resources/phone-drop/app.js");
 const PAGE_CSS: &str = include_str!("../resources/phone-drop/app.css");
 /// 手机页三个静态文件同源加载，不写内联脚本 / 样式（与 Mesa 生产 CSP 同一纪律）
-const PAGE_CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+const PAGE_CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob:; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 // ===== 暂存区与索引 =====
 
@@ -326,7 +328,8 @@ fn percent_decode(raw: &str) -> String {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PhoneAddrDto {
-    pub ip: String,
+    /// 二维码里用的主机：电脑名（xxx.local）或 IP
+    pub host: String,
     pub label: String,
 }
 
@@ -380,17 +383,255 @@ fn lan_candidates() -> Vec<(Ipv4Addr, String)> {
     out.into_iter().map(|(_, ip, name)| (ip, name)).collect()
 }
 
+/// 电脑的局域网名字（mDNS，`<名字>.local`）：主屏网页记的是它，换了 Wi-Fi、IP 变了也不用重扫。
+/// macOS 由 Bonjour 常驻广播 LocalHostName；Windows / Linux 手机能否解析待实测，只作可选项
+fn mdns_hostname() -> Option<String> {
+    clean_hostname(&local_host_name()?)
+}
+
+fn clean_hostname(raw: &str) -> Option<String> {
+    let name = raw.trim().trim_end_matches(".local").to_ascii_lowercase();
+    let ok = !name.is_empty()
+        && name.len() <= 63
+        && !name.starts_with('-')
+        && !name.ends_with('-')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    ok.then(|| format!("{name}.local"))
+}
+
+#[cfg(target_os = "macos")]
+fn local_host_name() -> Option<String> {
+    let mut cmd = crate::process::background_command("scutil");
+    cmd.args(["--get", "LocalHostName"]);
+    let out = crate::process::capture_command(&mut cmd, Duration::from_secs(3), 4096).ok()?;
+    if !out.status.is_some_and(|s| s.success()) {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+#[cfg(windows)]
+fn local_host_name() -> Option<String> {
+    std::env::var("COMPUTERNAME").ok()
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn local_host_name() -> Option<String> {
+    fs::read_to_string("/etc/hostname").ok()
+}
+
+/// 二维码默认用哪个主机：人改选过就照人的（name / ip）；没选过时 macOS 用电脑名，其余用第一个 IP
+fn default_host(
+    hostname: Option<&str>,
+    candidates: &[(Ipv4Addr, String)],
+    pref: Option<&str>,
+    is_mac: bool,
+) -> Option<String> {
+    let name_first = match pref {
+        Some("ip") => false,
+        Some("name") => true,
+        _ => is_mac,
+    };
+    if name_first {
+        if let Some(h) = hostname {
+            return Some(h.to_string());
+        }
+    }
+    candidates.first().map(|(ip, _)| ip.to_string())
+}
+
+fn addr_options(hostname: Option<&str>, candidates: &[(Ipv4Addr, String)]) -> Vec<PhoneAddrDto> {
+    let mut out = Vec::new();
+    if let Some(h) = hostname {
+        out.push(PhoneAddrDto {
+            host: h.to_string(),
+            label: "电脑名（换了 Wi-Fi 也能连）".to_string(),
+        });
+    }
+    out.extend(candidates.iter().map(|(ip, name)| PhoneAddrDto {
+        host: ip.to_string(),
+        label: format!("{ip}（{name}）"),
+    }));
+    out
+}
+
+// ===== 已配对的手机 =====
+
+/// 最多记住几台：防止二维码被别人拍走后无限配对
+const MAX_DEVICES: usize = 8;
+/// 「上次使用」写盘节流
+const SEEN_THROTTLE_SECS: i64 = 60;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PairedDevice {
+    id: String,
+    name: String,
+    /// 设备令牌的 SHA-256；原文只在手机网页的地址里，Mesa 不存、界面不显示
+    token_sha256: String,
+    paired_at: String,
+    #[serde(default)]
+    last_seen_at: Option<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeviceBook {
+    /// 固定端口：第一次开始接收时由系统挑定，之后每次都用它（主屏网页记着「主机:端口」）
+    #[serde(default)]
+    port: Option<u16>,
+    /// 二维码用电脑名还是 IP：人在「换一个地址」里改选过才记（name / ip）
+    #[serde(default)]
+    host_pref: Option<String>,
+    #[serde(default)]
+    devices: Vec<PairedDevice>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PhoneDeviceDto {
+    pub id: String,
+    pub name: String,
+    pub paired_at: String,
+    pub last_seen_at: Option<String>,
+}
+
+fn device_dto(d: &PairedDevice) -> PhoneDeviceDto {
+    PhoneDeviceDto {
+        id: d.id.clone(),
+        name: d.name.clone(),
+        paired_at: d.paired_at.clone(),
+        last_seen_at: d.last_seen_at.clone(),
+    }
+}
+
+fn devices_path() -> Option<PathBuf> {
+    crate::storage::config_root().map(|r| r.join("phone-devices.json"))
+}
+
+static BOOK_LOCK: Mutex<()> = Mutex::new(());
+
+/// 配对簿读改写：进程锁 + OS 文件锁 + 原子写（0600）；f 返回 (结果, 是否改了)，没改不写盘。
+/// 损坏时原件改名留证、按空簿继续——空簿只会让手机都要重扫（失败即收紧），不会放进任何人
+fn with_book<T>(path: &Path, f: impl FnOnce(&mut DeviceBook) -> (T, bool)) -> Result<T, String> {
+    let _guard = BOOK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("创建数据目录失败: {e}"))?;
+    }
+    let _flock = crate::storage::lock_at(&path.with_extension("lock"))?;
+    let mut book = match fs::read(path) {
+        Ok(bytes) => match serde_json::from_slice::<DeviceBook>(&bytes) {
+            Ok(b) => b,
+            Err(_) => {
+                let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+                let _ = fs::rename(path, path.with_extension(format!("corrupt-{stamp}.json")));
+                crate::logbuf::record("warn", "phone-drop", "已配对手机名单损坏，原件已改名保留，手机需重新扫码");
+                DeviceBook::default()
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => DeviceBook::default(),
+        Err(e) => return Err(format!("读取已配对手机失败: {e}")),
+    };
+    let (out, changed) = f(&mut book);
+    if changed {
+        let bytes = serde_json::to_vec_pretty(&book).map_err(|e| e.to_string())?;
+        crate::storage::atomic_write(path, &bytes, true)?;
+    }
+    Ok(out)
+}
+
+fn sha256_hex(text: &str) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(text.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// 设备令牌：两段 uuid v4（约 244 位随机），长期有效所以比扫码令牌长
+fn new_device_token() -> String {
+    format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    )
+}
+
+fn device_by_token(path: &Path, token: &str) -> Option<PairedDevice> {
+    if token.is_empty() {
+        return None;
+    }
+    let hash = sha256_hex(token);
+    with_book(path, |book| {
+        let hit = book
+            .devices
+            .iter()
+            .find(|d| token_eq(&d.token_sha256, &hash))
+            .cloned();
+        (hit, false)
+    })
+    .ok()
+    .flatten()
+}
+
+fn touch_device(path: &Path, id: &str) {
+    let now = chrono::Local::now();
+    let _ = with_book(path, |book| {
+        let Some(d) = book.devices.iter_mut().find(|d| d.id == id) else {
+            return ((), false);
+        };
+        let fresh = d
+            .last_seen_at
+            .as_deref()
+            .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+            .is_some_and(|t| now.timestamp() - t.timestamp() < SEEN_THROTTLE_SECS);
+        if fresh {
+            return ((), false);
+        }
+        d.last_seen_at = Some(now.to_rfc3339());
+        ((), true)
+    });
+}
+
+/// 按浏览器标识起个认得出的名字；重名加序号
+fn device_name(user_agent: &str, taken: &[String]) -> String {
+    let base = if user_agent.contains("iPhone") {
+        "iPhone"
+    } else if user_agent.contains("iPad") {
+        "iPad"
+    } else if user_agent.contains("Android") {
+        "安卓手机"
+    } else {
+        "手机"
+    };
+    if !taken.iter().any(|t| t == base) {
+        return base.to_string();
+    }
+    (2..)
+        .map(|n| format!("{base} {n}"))
+        .find(|name| !taken.contains(name))
+        .unwrap_or_else(|| base.to_string())
+}
+
 // ===== 接收会话 =====
 
 struct Session {
-    token: String,
-    /// Host 头必须恰好是它（防 DNS 重绑定）
+    /// 扫码配对令牌：每次开始接收新开，只在本次接收期间有效
+    pair_token: String,
+    /// 允许的 Host 头：每个绑定 IP:端口 + 电脑名:端口（防 DNS 重绑定）
+    hosts: Vec<String>,
+    /// 二维码用的主机（电脑名或 IP）
     host: String,
     url: String,
-    address: Ipv4Addr,
+    port: u16,
+    /// 固定端口被占时的提醒（这次临时换了端口）
+    port_note: Option<String>,
+    addresses: Vec<PhoneAddrDto>,
     stage: PathBuf,
+    book: PathBuf,
     stop: AtomicBool,
     connected: AtomicBool,
+    last_device: Mutex<Option<String>>,
     last_item: Mutex<Instant>,
     bytes_total: AtomicU64,
     received: AtomicU32,
@@ -406,6 +647,10 @@ impl Session {
         }
     }
 
+    fn last_device(&self) -> Option<String> {
+        self.last_device.lock().ok().and_then(|g| g.clone())
+    }
+
     fn emit_state(&self, receiving: bool, reason: Option<&str>) {
         self.emit(
             "phone-drop-state",
@@ -413,9 +658,27 @@ impl Session {
                 "receiving": receiving,
                 "connected": self.connected.load(Ordering::Acquire),
                 "received": self.received.load(Ordering::Acquire),
+                "lastDevice": self.last_device(),
                 "reason": reason,
             }),
         );
+    }
+
+    /// 手机打开了页面：记下是哪台，第一次连上或换了手机才报状态
+    fn mark_connected(&self, device: Option<&str>) {
+        let changed_device = match device {
+            Some(name) => {
+                let mut g = self.last_device.lock().unwrap_or_else(|e| e.into_inner());
+                let changed = g.as_deref() != Some(name);
+                *g = Some(name.to_string());
+                changed
+            }
+            None => false,
+        };
+        let first = !self.connected.swap(true, Ordering::AcqRel);
+        if first || changed_device {
+            self.emit_state(true, None);
+        }
     }
 
     fn idle_for(&self) -> Duration {
@@ -468,28 +731,75 @@ static RUNNING: Mutex<Option<Running>> = Mutex::new(None);
 /// start / stop 串行：替换会话时先停旧的再装新的
 static LIFECYCLE: Mutex<()> = Mutex::new(());
 
-fn launch(
-    ip: Ipv4Addr,
-    stage: PathBuf,
-    app: Option<tauri::AppHandle>,
-) -> Result<Running, String> {
-    let server = tiny_http::Server::http(SocketAddr::new(IpAddr::V4(ip), 0))
-        .map_err(|e| format!("开始接收失败（{ip}）：{e}"))?;
-    let port = server
+/// 在每张局域网网卡上用同一个端口监听：第一张决定端口（0 = 系统挑），其余同端口，绑不上的跳过。
+/// 电脑名解析到哪张网卡的地址都接得住
+fn bind_all(ips: &[Ipv4Addr], port: u16) -> Result<(Vec<tiny_http::Server>, Vec<Ipv4Addr>, u16), String> {
+    let first = *ips.first().ok_or("没有可用的局域网地址")?;
+    let server = tiny_http::Server::http(SocketAddr::new(IpAddr::V4(first), port))
+        .map_err(|e| e.to_string())?;
+    let real = server
         .server_addr()
         .to_ip()
         .map(|a| a.port())
-        .ok_or("开始接收失败：拿不到端口")?;
-    let token = uuid::Uuid::new_v4().simple().to_string();
-    let host = format!("{ip}:{port}");
+        .ok_or("拿不到端口")?;
+    let mut servers = vec![server];
+    let mut bound = vec![first];
+    for ip in &ips[1..] {
+        if let Ok(s) = tiny_http::Server::http(SocketAddr::new(IpAddr::V4(*ip), real)) {
+            servers.push(s);
+            bound.push(*ip);
+        }
+    }
+    Ok((servers, bound, real))
+}
+
+struct LaunchSpec {
+    /// 要监听的网卡地址，第一个是二维码用的那张（主机是 IP 时）
+    ips: Vec<Ipv4Addr>,
+    host: String,
+    hostname: Option<String>,
+    port: Option<u16>,
+    addresses: Vec<PhoneAddrDto>,
+    stage: PathBuf,
+    book: PathBuf,
+}
+
+fn launch(spec: LaunchSpec, app: Option<tauri::AppHandle>) -> Result<Running, String> {
+    let (servers, bound, port, port_note) = match spec.port {
+        Some(p) => match bind_all(&spec.ips, p) {
+            Ok((s, b, real)) => (s, b, real, None),
+            Err(_) => {
+                let (s, b, real) =
+                    bind_all(&spec.ips, 0).map_err(|e| format!("开始接收失败：{e}"))?;
+                let note = format!(
+                    "平常用的端口 {p} 被别的程序占着，这次临时换了端口：已配对的手机这次连不上，要用就重新扫码"
+                );
+                (s, b, real, Some(note))
+            }
+        },
+        None => {
+            let (s, b, real) = bind_all(&spec.ips, 0).map_err(|e| format!("开始接收失败：{e}"))?;
+            (s, b, real, None)
+        }
+    };
+    let mut hosts: Vec<String> = bound.iter().map(|ip| format!("{ip}:{port}")).collect();
+    if let Some(h) = &spec.hostname {
+        hosts.push(format!("{h}:{port}"));
+    }
+    let pair_token = uuid::Uuid::new_v4().simple().to_string();
     let session = Arc::new(Session {
-        url: format!("http://{host}/{token}/"),
-        token,
-        host,
-        address: ip,
-        stage,
+        url: format!("http://{}:{port}/p/{pair_token}/", spec.host),
+        pair_token,
+        hosts,
+        host: spec.host,
+        port,
+        port_note,
+        addresses: spec.addresses,
+        stage: spec.stage,
+        book: spec.book,
         stop: AtomicBool::new(false),
         connected: AtomicBool::new(false),
+        last_device: Mutex::new(None),
         last_item: Mutex::new(Instant::now()),
         bytes_total: AtomicU64::new(0),
         received: AtomicU32::new(0),
@@ -500,7 +810,7 @@ fn launch(
     let s = session.clone();
     let worker = std::thread::Builder::new()
         .name("phone-drop".into())
-        .spawn(move || serve(server, s))
+        .spawn(move || serve(servers, s))
         .map_err(|e| format!("开始接收失败：{e}"))?;
     Ok(Running {
         session,
@@ -508,9 +818,9 @@ fn launch(
     })
 }
 
-fn serve(server: tiny_http::Server, s: Arc<Session>) {
+fn serve(servers: Vec<tiny_http::Server>, s: Arc<Session>) {
     let mut reason = "stopped";
-    loop {
+    'outer: loop {
         if s.stop.load(Ordering::Acquire) {
             break;
         }
@@ -518,26 +828,28 @@ fn serve(server: tiny_http::Server, s: Arc<Session>) {
             reason = "idle";
             break;
         }
-        match server.recv_timeout(Duration::from_millis(300)) {
-            Ok(Some(rq)) => {
-                let s = s.clone();
-                let _ = std::thread::Builder::new()
-                    .name("phone-drop-rq".into())
-                    .spawn(move || {
-                        let mut rq = rq;
-                        let resp = route(&s, &mut rq);
-                        let _ = rq.respond(resp);
-                    });
-            }
-            Ok(None) => {}
-            Err(_) => {
-                reason = "error";
-                break;
+        for server in &servers {
+            match server.recv_timeout(Duration::from_millis(80)) {
+                Ok(Some(rq)) => {
+                    let s = s.clone();
+                    let _ = std::thread::Builder::new()
+                        .name("phone-drop-rq".into())
+                        .spawn(move || {
+                            let mut rq = rq;
+                            let resp = route(&s, &mut rq);
+                            let _ = rq.respond(resp);
+                        });
+                }
+                Ok(None) => {}
+                Err(_) => {
+                    reason = "error";
+                    break 'outer;
+                }
             }
         }
     }
     // 先关监听（drop 即释放端口），再报状态
-    drop(server);
+    drop(servers);
     s.stop.store(true, Ordering::Release);
     if let Ok(mut g) = RUNNING.lock() {
         if g.as_ref().is_some_and(|r| Arc::ptr_eq(&r.session, &s)) {
@@ -572,6 +884,9 @@ pub fn shutdown() {
 }
 
 // ===== HTTP 路由 =====
+
+const MANIFEST: &str = r##"{"name":"发到 Mesa","short_name":"发到 Mesa","start_url":"./","scope":"./","display":"standalone","background_color":"#161615","theme_color":"#161615","icons":[{"src":"icon.png","sizes":"256x256","type":"image/png"}]}"##;
+const ICON_PNG: &[u8] = include_bytes!("../icons/128x128@2x.png");
 
 fn header(k: &str, v: &str) -> tiny_http::Header {
     tiny_http::Header::from_bytes(k.as_bytes(), v.as_bytes()).expect("静态响应头合法")
@@ -616,28 +931,50 @@ fn header_value(rq: &tiny_http::Request, name: &'static str) -> Option<String> {
         .map(|h| h.value.as_str().to_string())
 }
 
+/// 谁在访问：扫码配对页（本次接收的配对令牌）或已配对的手机（设备令牌）
+enum Access {
+    Pairing,
+    Device(PairedDevice),
+}
+
+/// 路径两种：`/p/<配对令牌>/…`（扫码打开、可配对）与 `/d/<设备令牌>/…`（已配对手机，主屏网页记的就是它）
 fn route(s: &Session, rq: &mut tiny_http::Request) -> tiny_http::Response<Cursor<Vec<u8>>> {
     let url = rq.url().to_string();
     let path = url.split(['?', '#']).next().unwrap_or("");
-    let rest = path.strip_prefix('/').unwrap_or("");
-    let (tok, sub) = match rest.split_once('/') {
-        Some((t, sub)) => (t, Some(sub)),
-        None => (rest, None),
-    };
-    let host_ok = header_value(rq, "Host").is_some_and(|h| h.eq_ignore_ascii_case(&s.host));
-    if !host_ok || !token_eq(tok, &s.token) {
+    let mut parts = path.trim_start_matches('/').splitn(3, '/');
+    let kind = parts.next().unwrap_or("");
+    let tok = parts.next().unwrap_or("");
+    let sub = parts.next();
+    let host_ok = header_value(rq, "Host")
+        .is_some_and(|h| s.hosts.iter().any(|x| x.eq_ignore_ascii_case(&h)));
+    if !host_ok {
         return not_found();
     }
+    let access = match kind {
+        "p" if token_eq(tok, &s.pair_token) => Access::Pairing,
+        "d" => match device_by_token(&s.book, tok) {
+            Some(d) => Access::Device(d),
+            None => return not_found(),
+        },
+        _ => return not_found(),
+    };
+    let device_id = match &access {
+        Access::Device(d) => Some(d.id.clone()),
+        Access::Pairing => None,
+    };
     let method = rq.method().clone();
     match (&method, sub) {
         (tiny_http::Method::Get, None) => tiny_http::Response::from_data(Vec::new())
             .with_status_code(302)
-            .with_header(header("Location", &format!("/{}/", s.token)))
+            .with_header(header("Location", &format!("/{kind}/{tok}/")))
             .with_header(header("Cache-Control", "no-store"))
             .with_header(header("Referrer-Policy", "no-referrer")),
         (tiny_http::Method::Get, Some("")) => {
-            if !s.connected.swap(true, Ordering::AcqRel) {
-                s.emit_state(true, None);
+            if let Access::Device(d) = &access {
+                touch_device(&s.book, &d.id);
+                s.mark_connected(Some(&d.name));
+            } else {
+                s.mark_connected(None);
             }
             response(200, "text/html; charset=utf-8", PAGE_HTML.as_bytes().to_vec())
         }
@@ -649,26 +986,70 @@ fn route(s: &Session, rq: &mut tiny_http::Request) -> tiny_http::Response<Cursor
         (tiny_http::Method::Get, Some("app.css")) => {
             response(200, "text/css; charset=utf-8", PAGE_CSS.as_bytes().to_vec())
         }
+        (tiny_http::Method::Get, Some("manifest.webmanifest")) => response(
+            200,
+            "application/manifest+json; charset=utf-8",
+            MANIFEST.as_bytes().to_vec(),
+        ),
+        (tiny_http::Method::Get, Some("icon.png")) => response(200, "image/png", ICON_PNG.to_vec()),
         (tiny_http::Method::Get, Some("state")) => json_reply(
             200,
             serde_json::json!({
                 "receiving": !s.stop.load(Ordering::Acquire),
+                "paired": device_id.is_some(),
                 "maxFileBytes": MAX_FILE_BYTES,
                 "maxTextChars": MAX_TEXT_CHARS,
             }),
         ),
-        (tiny_http::Method::Post, Some("file")) => receive_file(s, rq),
-        (tiny_http::Method::Post, Some("text")) => receive_text(s, rq),
+        (tiny_http::Method::Post, Some("pair")) if matches!(access, Access::Pairing) => pair(s, rq),
+        (tiny_http::Method::Post, Some("file")) => receive_file(s, rq, device_id.as_deref()),
+        (tiny_http::Method::Post, Some("text")) => receive_text(s, rq, device_id.as_deref()),
         _ => not_found(),
     }
 }
 
-fn record_item(s: &Session, item: StoredItem) -> Result<(), String> {
+/// 扫码配对：发一个长期设备令牌，手机网页跳到 `/d/<令牌>/`（加到主屏的就是这个地址）
+fn pair(s: &Session, rq: &tiny_http::Request) -> tiny_http::Response<Cursor<Vec<u8>>> {
+    let ua = header_value(rq, "User-Agent").unwrap_or_default();
+    let token = new_device_token();
+    let hash = sha256_hex(&token);
+    let made = with_book(&s.book, |book| {
+        if book.devices.len() >= MAX_DEVICES {
+            return (None, false);
+        }
+        let taken: Vec<String> = book.devices.iter().map(|d| d.name.clone()).collect();
+        let now = chrono::Local::now().to_rfc3339();
+        let device = PairedDevice {
+            id: uuid::Uuid::new_v4().simple().to_string(),
+            name: device_name(&ua, &taken),
+            token_sha256: hash,
+            paired_at: now.clone(),
+            last_seen_at: Some(now),
+        };
+        book.devices.push(device.clone());
+        (Some(device), true)
+    });
+    match made {
+        Ok(Some(device)) => {
+            s.mark_connected(Some(&device.name));
+            s.emit("phone-drop-paired", device_dto(&device));
+            crate::logbuf::record("info", "phone-drop", "配对了一台手机");
+            json_reply(200, serde_json::json!({ "ok": true, "path": format!("/d/{token}/") }))
+        }
+        Ok(None) => err_json(409, "too_many_devices"),
+        Err(_) => err_json(500, "store_failed"),
+    }
+}
+
+fn record_item(s: &Session, item: StoredItem, device: Option<&str>) -> Result<(), String> {
     let dto = to_dto(&s.stage, &item);
     with_index(&s.stage, |idx| {
         idx.items.push(item);
         Ok(())
     })?;
+    if let Some(id) = device {
+        touch_device(&s.book, id);
+    }
     if let Ok(mut t) = s.last_item.lock() {
         *t = Instant::now();
     }
@@ -704,7 +1085,11 @@ fn open_private(path: &Path) -> std::io::Result<fs::File> {
     options.open(path)
 }
 
-fn receive_file(s: &Session, rq: &mut tiny_http::Request) -> tiny_http::Response<Cursor<Vec<u8>>> {
+fn receive_file(
+    s: &Session,
+    rq: &mut tiny_http::Request,
+    device: Option<&str>,
+) -> tiny_http::Response<Cursor<Vec<u8>>> {
     let Some(len) = rq.body_length().map(|n| n as u64) else {
         return err_json(411, "length_required");
     };
@@ -769,14 +1154,18 @@ fn receive_file(s: &Session, rq: &mut tiny_http::Request) -> tiny_http::Response
     s.bytes_total.fetch_add(len, Ordering::AcqRel);
     let mut item = new_item(kind, display, len);
     item.file = Some(file_name.clone());
-    if record_item(s, item).is_err() {
+    if record_item(s, item, device).is_err() {
         let _ = fs::remove_file(s.stage.join(&file_name));
         return err_json(500, "store_failed");
     }
     json_reply(200, serde_json::json!({ "ok": true }))
 }
 
-fn receive_text(s: &Session, rq: &mut tiny_http::Request) -> tiny_http::Response<Cursor<Vec<u8>>> {
+fn receive_text(
+    s: &Session,
+    rq: &mut tiny_http::Request,
+    device: Option<&str>,
+) -> tiny_http::Response<Cursor<Vec<u8>>> {
     if rq.body_length().is_some_and(|n| n as u64 > MAX_TEXT_BYTES) {
         return err_json(413, "too_long");
     }
@@ -804,7 +1193,7 @@ fn receive_text(s: &Session, rq: &mut tiny_http::Request) -> tiny_http::Response
     }
     let mut item = new_item("text", text_title(&text), text.len() as u64);
     item.text = Some(text);
-    if record_item(s, item).is_err() {
+    if record_item(s, item, device).is_err() {
         return err_json(500, "store_failed");
     }
     json_reply(200, serde_json::json!({ "ok": true }))
@@ -817,13 +1206,19 @@ fn receive_text(s: &Session, rq: &mut tiny_http::Request) -> tiny_http::Response
 pub struct PhoneDropStatusDto {
     pub receiving: bool,
     pub connected: bool,
+    /// 扫码配对地址（二维码内容）
     pub url: Option<String>,
     /// 二维码 SVG（黑码白底，深色主题下也好扫）
     pub qr_svg: Option<String>,
-    pub address: Option<String>,
-    /// 开始接收时可选的局域网地址（多张网卡时给「换一个地址」）
+    /// 二维码用的主机（电脑名或 IP）
+    pub host: Option<String>,
+    /// 可选的主机：电脑名 + 各张网卡的 IP（多于一个时给「换一个地址」）
     pub addresses: Vec<PhoneAddrDto>,
     pub received: u32,
+    /// 最近连上的已配对手机
+    pub last_device: Option<String>,
+    /// 固定端口被占、这次临时换了端口
+    pub port_note: Option<String>,
 }
 
 fn idle_status() -> PhoneDropStatusDto {
@@ -832,9 +1227,11 @@ fn idle_status() -> PhoneDropStatusDto {
         connected: false,
         url: None,
         qr_svg: None,
-        address: None,
+        host: None,
         addresses: Vec::new(),
         received: 0,
+        last_device: None,
+        port_note: None,
     }
 }
 
@@ -851,62 +1248,118 @@ fn qr_svg(url: &str) -> Option<String> {
     )
 }
 
-fn addr_options(candidates: &[(Ipv4Addr, String)]) -> Vec<PhoneAddrDto> {
-    candidates
-        .iter()
-        .map(|(ip, name)| PhoneAddrDto {
-            ip: ip.to_string(),
-            label: format!("{ip}（{name}）"),
-        })
-        .collect()
-}
-
-fn status_of(s: &Session, candidates: &[(Ipv4Addr, String)]) -> PhoneDropStatusDto {
+fn status_of(s: &Session) -> PhoneDropStatusDto {
     PhoneDropStatusDto {
         receiving: !s.stop.load(Ordering::Acquire),
         connected: s.connected.load(Ordering::Acquire),
         url: Some(s.url.clone()),
         qr_svg: qr_svg(&s.url),
-        address: Some(s.address.to_string()),
-        addresses: addr_options(candidates),
+        host: Some(s.host.clone()),
+        addresses: s.addresses.clone(),
         received: s.received.load(Ordering::Acquire),
+        last_device: s.last_device(),
+        port_note: s.port_note.clone(),
     }
 }
 
-fn start_impl(app: Option<tauri::AppHandle>, bind: Option<String>) -> Result<PhoneDropStatusDto, String> {
+/// 开始接收（已在接收且没换主机就原样返回）。网卡、电脑名、暂存区、配对簿都由调用方给，测试可注入
+fn start_with(
+    app: Option<tauri::AppHandle>,
+    bind: Option<String>,
+    candidates: Vec<(Ipv4Addr, String)>,
+    hostname: Option<String>,
+    stage: PathBuf,
+    book: PathBuf,
+    is_mac: bool,
+) -> Result<PhoneDropStatusDto, String> {
     let _life = LIFECYCLE.lock().unwrap_or_else(|e| e.into_inner());
-    let candidates = lan_candidates();
-    let wanted: Option<Ipv4Addr> = match bind.as_deref().map(str::trim).filter(|b| !b.is_empty()) {
-        Some(b) => Some(b.parse().map_err(|_| "地址无效".to_string())?),
-        None => None,
-    };
+    let wanted = bind
+        .as_deref()
+        .map(str::trim)
+        .filter(|b| !b.is_empty())
+        .map(str::to_string);
+    if let Some(w) = &wanted {
+        let known = hostname.as_deref() == Some(w.as_str())
+            || candidates.iter().any(|(ip, _)| ip.to_string() == *w);
+        if !known {
+            return Err("这个地址现在不可用，换一个再试".into());
+        }
+    }
     {
         let g = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(r) = g.as_ref() {
-            let same = wanted.is_none_or(|w| w == r.session.address);
+            let same = wanted.as_deref().is_none_or(|w| w == r.session.host);
             if same && !r.session.stop.load(Ordering::Acquire) {
-                return Ok(status_of(&r.session, &candidates));
+                return Ok(status_of(&r.session));
             }
         }
     }
-    let ip = match wanted {
-        Some(w) if candidates.iter().any(|(ip, _)| *ip == w) => w,
-        Some(_) => return Err("这个地址现在不可用，换一个再试".into()),
-        None => candidates.first().map(|(ip, _)| *ip).ok_or(
-            "没找到可用的局域网地址：电脑要先连上 Wi-Fi 或网线（连手机热点也行）",
-        )?,
+    if candidates.is_empty() {
+        return Err("没找到可用的局域网地址：电脑要先连上 Wi-Fi 或网线（连手机热点也行）".into());
+    }
+    let (saved_port, pref) = with_book(&book, |b| ((b.port, b.host_pref.clone()), false))?;
+    let host = match &wanted {
+        Some(w) => w.clone(),
+        None => default_host(hostname.as_deref(), &candidates, pref.as_deref(), is_mac)
+            .ok_or("没找到可用的局域网地址")?,
     };
+    let mut ips: Vec<Ipv4Addr> = candidates.iter().map(|(ip, _)| *ip).collect();
+    if let Ok(ip) = host.parse::<Ipv4Addr>() {
+        ips.retain(|x| *x != ip);
+        ips.insert(0, ip);
+    }
     let old = RUNNING.lock().unwrap_or_else(|e| e.into_inner()).take();
     if let Some(old) = old {
         stop_running(old);
     }
-    let stage = ensure_stage_dir()?;
     let _ = sweep(&stage, now_secs());
-    let running = launch(ip, stage, app)?;
-    let status = status_of(&running.session, &candidates);
+    let spec = LaunchSpec {
+        ips,
+        host,
+        addresses: addr_options(hostname.as_deref(), &candidates),
+        hostname,
+        port: saved_port,
+        stage,
+        book: book.clone(),
+    };
+    let running = launch(spec, app)?;
+    // 记住固定端口（第一次；临时换端口那次不改）与人改选过的主机类型
+    let port = running.session.port;
+    let first_port = saved_port.is_none() && running.session.port_note.is_none();
+    let new_pref = wanted
+        .as_ref()
+        .map(|w| if w.parse::<Ipv4Addr>().is_ok() { "ip" } else { "name" });
+    with_book(&book, |b| {
+        let mut changed = false;
+        if first_port {
+            b.port = Some(port);
+            changed = true;
+        }
+        if let Some(p) = new_pref {
+            if b.host_pref.as_deref() != Some(p) {
+                b.host_pref = Some(p.to_string());
+                changed = true;
+            }
+        }
+        ((), changed)
+    })?;
+    let status = status_of(&running.session);
     *RUNNING.lock().unwrap_or_else(|e| e.into_inner()) = Some(running);
     crate::logbuf::record("info", "phone-drop", "开始接收");
     Ok(status)
+}
+
+fn start_impl(app: Option<tauri::AppHandle>, bind: Option<String>) -> Result<PhoneDropStatusDto, String> {
+    let book = devices_path().ok_or("无法确定 Mesa 数据目录")?;
+    start_with(
+        app,
+        bind,
+        lan_candidates(),
+        mdns_hostname(),
+        ensure_stage_dir()?,
+        book,
+        cfg!(target_os = "macos"),
+    )
 }
 
 #[tauri::command]
@@ -933,9 +1386,43 @@ pub async fn phone_drop_stop() -> Result<(), String> {
 pub fn phone_drop_status() -> PhoneDropStatusDto {
     let g = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
     match g.as_ref() {
-        Some(r) if !r.session.stop.load(Ordering::Acquire) => status_of(&r.session, &[]),
+        Some(r) if !r.session.stop.load(Ordering::Acquire) => status_of(&r.session),
         _ => idle_status(),
     }
+}
+
+fn devices_at(book: &Path) -> Result<Vec<PhoneDeviceDto>, String> {
+    with_book(book, |b| (b.devices.iter().map(device_dto).collect(), false))
+}
+
+/// 已配对的手机（不含令牌）
+#[tauri::command]
+pub async fn phone_drop_devices() -> Result<Vec<PhoneDeviceDto>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let book = devices_path().ok_or("无法确定 Mesa 数据目录")?;
+        devices_at(&book)
+    })
+    .await
+    .map_err(|e| format!("读取已配对手机失败: {e}"))?
+}
+
+fn remove_device_at(book: &Path, id: &str) -> Result<(), String> {
+    with_book(book, |b| {
+        let before = b.devices.len();
+        b.devices.retain(|d| d.id != id);
+        ((), b.devices.len() != before)
+    })
+}
+
+/// 移除一台手机：它主屏上的网页立刻失效，要再用得重新扫码
+#[tauri::command]
+pub async fn phone_drop_remove_device(id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let book = devices_path().ok_or("无法确定 Mesa 数据目录")?;
+        remove_device_at(&book, &id)
+    })
+    .await
+    .map_err(|e| format!("移除失败: {e}"))?
 }
 
 fn list_at(dir: &Path) -> Result<Vec<PhoneItemDto>, String> {
@@ -1269,56 +1756,114 @@ mod tests {
         (status, body)
     }
 
+    fn book_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "ccode-phone-book-{name}-{}.json",
+            uuid::Uuid::new_v4().simple()
+        ))
+    }
+
+    fn test_launch(stage: &Path, book: &Path, port: Option<u16>) -> Running {
+        launch(
+            LaunchSpec {
+                ips: vec![Ipv4Addr::LOCALHOST],
+                host: "127.0.0.1".into(),
+                hostname: Some("testmac.local".into()),
+                port,
+                addresses: Vec::new(),
+                stage: stage.to_path_buf(),
+                book: book.to_path_buf(),
+            },
+            None,
+        )
+        .unwrap()
+    }
+
+    fn addr(r: &Running) -> String {
+        format!("127.0.0.1:{}", r.session.port)
+    }
+
     fn get(r: &Running, path: &str, host: &str) -> (u16, String) {
         http(
-            &r.session.host,
+            &addr(r),
             &format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"),
             b"",
             false,
         )
     }
 
-    fn post(r: &Running, sub: &str, name: Option<&str>, len: usize, body: &[u8], close: bool) -> (u16, String) {
-        let name_header = name.map(|n| format!("X-Mesa-Name: {n}\r\n")).unwrap_or_default();
+    fn post_at(
+        r: &Running,
+        path: &str,
+        headers: &str,
+        len: usize,
+        body: &[u8],
+        close: bool,
+    ) -> (u16, String) {
         http(
-            &r.session.host,
+            &addr(r),
             &format!(
-                "POST /{}/{sub} HTTP/1.1\r\nHost: {}\r\n{name_header}Content-Length: {len}\r\nConnection: close\r\n\r\n",
-                r.session.token, r.session.host
+                "POST {path} HTTP/1.1\r\nHost: {}\r\n{headers}Content-Length: {len}\r\nConnection: close\r\n\r\n",
+                addr(r)
             ),
             body,
             close,
         )
     }
 
+    fn post(r: &Running, sub: &str, name: Option<&str>, len: usize, body: &[u8], close: bool) -> (u16, String) {
+        let name_header = name.map(|n| format!("X-Mesa-Name: {n}\r\n")).unwrap_or_default();
+        let path = format!("/p/{}/{sub}", r.session.pair_token);
+        post_at(r, &path, &name_header, len, body, close)
+    }
+
+    /// 配对一台手机，返回设备地址前缀 /d/<令牌>/
+    fn pair_phone(r: &Running, ua: &str) -> (u16, String) {
+        let path = format!("/p/{}/pair", r.session.pair_token);
+        let (code, body) = post_at(r, &path, &format!("User-Agent: {ua}\r\n"), 0, b"", false);
+        let dev = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v["path"].as_str().map(str::to_string))
+            .unwrap_or_default();
+        (code, dev)
+    }
+
     #[test]
     fn server_serves_page_and_hides_everything_else() {
         let stage = temp_dir("serve");
-        let r = launch(Ipv4Addr::LOCALHOST, stage.clone(), None).unwrap();
-        let host = r.session.host.clone();
-        let token = r.session.token.clone();
-        let (code, body) = get(&r, &format!("/{token}/"), &host);
+        let book = book_path("serve");
+        let r = test_launch(&stage, &book, None);
+        let host = addr(&r);
+        let token = r.session.pair_token.clone();
+        let (code, body) = get(&r, &format!("/p/{token}/"), &host);
         assert_eq!(code, 200);
         assert!(body.contains("发到 Mesa"));
         assert!(r.session.connected.load(Ordering::Acquire));
-        assert_eq!(get(&r, &format!("/{token}/app.js"), &host).0, 200);
-        assert_eq!(get(&r, &format!("/{token}/state"), &host).0, 200);
-        assert_eq!(get(&r, &format!("/{token}"), &host).0, 302);
+        for sub in ["app.js", "app.css", "state", "manifest.webmanifest", "icon.png"] {
+            assert_eq!(get(&r, &format!("/p/{token}/{sub}"), &host).0, 200, "{sub}");
+        }
+        assert_eq!(get(&r, &format!("/p/{token}"), &host).0, 302);
+        let port = r.session.port;
+        assert_eq!(get(&r, &format!("/p/{token}/"), &format!("TestMac.local:{port}")).0, 200, "电脑名也认");
         let not_found = get(&r, "/nope/", &host);
         assert_eq!(not_found, (404, "Not Found".to_string()));
-        assert_eq!(get(&r, &format!("/{token}x/"), &host), not_found, "错令牌与未知路径一样");
-        assert_eq!(get(&r, &format!("/{token}/items.json"), &host), not_found, "没有读暂存区的路由");
-        assert_eq!(get(&r, &format!("/{token}/"), "evil.example:80"), not_found, "Host 不符");
-        let addr = r.session.host.clone();
+        assert_eq!(get(&r, &format!("/p/{token}x/"), &host), not_found, "错令牌与未知路径一样");
+        assert_eq!(get(&r, &format!("/{token}/"), &host), not_found, "旧式路径不认");
+        assert_eq!(get(&r, "/d/0123456789abcdef/state", &host), not_found, "没配对的设备令牌");
+        assert_eq!(get(&r, &format!("/p/{token}/items.json"), &host), not_found, "没有读暂存区的路由");
+        assert_eq!(get(&r, &format!("/p/{token}/"), "evil.example:80"), not_found, "Host 不符");
+        let a = addr(&r);
         stop_running(r);
-        assert!(TcpStream::connect(&addr).is_err(), "停止后端口释放");
+        assert!(TcpStream::connect(&a).is_err(), "停止后端口释放");
         fs::remove_dir_all(&stage).ok();
+        fs::remove_file(&book).ok();
     }
 
     #[test]
     fn server_receives_file_and_text() {
         let stage = temp_dir("recv");
-        let r = launch(Ipv4Addr::LOCALHOST, stage.clone(), None).unwrap();
+        let book = book_path("recv");
+        let r = test_launch(&stage, &book, None);
         let (code, _) = post(&r, "file", Some("%E7%85%A7%E7%89%87.png"), PNG.len(), PNG, false);
         assert_eq!(code, 200);
         let (code, _) = post(&r, "text", None, "  记一下：样品 3 号偏黄  ".len(), "  记一下：样品 3 号偏黄  ".as_bytes(), false);
@@ -1354,12 +1899,156 @@ mod tests {
         assert_eq!(list_at(&stage).unwrap().len(), 2);
         stop_running(r);
         fs::remove_dir_all(&stage).ok();
+        fs::remove_file(&book).ok();
+    }
+
+    #[test]
+    fn pairing_gives_a_lasting_device_address_and_removal_revokes_it() {
+        let stage = temp_dir("pair");
+        let book = book_path("pair");
+        let r = test_launch(&stage, &book, None);
+        let host = addr(&r);
+        let iphone = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Safari/604.1";
+        let (code, dev) = pair_phone(&r, iphone);
+        assert_eq!(code, 200);
+        assert!(dev.starts_with("/d/") && dev.ends_with('/'), "{dev}");
+        let token = dev.trim_start_matches("/d/").trim_end_matches('/').to_string();
+        // 配对簿只存哈希
+        let raw = fs::read_to_string(&book).unwrap();
+        assert!(!raw.contains(&token), "令牌原文不落盘");
+        assert!(raw.contains(&sha256_hex(&token)));
+        let (code, body) = get(&r, &format!("{dev}state"), &host);
+        assert_eq!(code, 200);
+        assert!(body.contains("\"paired\":true"), "{body}");
+        let text = "设备地址发来的";
+        assert_eq!(post_at(&r, &format!("{dev}text"), "", text.len(), text.as_bytes(), false).0, 200);
+        assert_eq!(r.session.last_device().as_deref(), Some("iPhone"));
+        assert_eq!(post_at(&r, &format!("{dev}pair"), "", 0, b"", false).0, 404, "配对只走扫码地址");
+        let (_, second) = pair_phone(&r, iphone);
+        let devices = devices_at(&book).unwrap();
+        assert_eq!(devices.len(), 2);
+        assert_eq!(devices[1].name, "iPhone 2");
+
+        // 重开接收：扫码令牌换新、端口照旧（固定端口由调用方传入），设备地址照样能用
+        let port = r.session.port;
+        let old_pair = r.session.pair_token.clone();
+        stop_running(r);
+        let r = test_launch(&stage, &book, Some(port));
+        assert_eq!(r.session.port, port);
+        assert_eq!(get(&r, &format!("{dev}state"), &host).0, 200, "换一次接收，主屏网页照样连上");
+        assert_eq!(get(&r, &format!("/p/{old_pair}/"), &host).0, 404, "旧扫码令牌作废");
+
+        // 移除即失效
+        remove_device_at(&book, &devices[0].id).unwrap();
+        assert_eq!(get(&r, &format!("{dev}state"), &host).0, 404);
+        assert_eq!(get(&r, &format!("{second}state"), &host).0, 200, "只移除那一台");
+
+        // 满 8 台不再配对
+        with_book(&book, |b| {
+            while b.devices.len() < MAX_DEVICES {
+                b.devices.push(PairedDevice {
+                    id: uuid::Uuid::new_v4().simple().to_string(),
+                    name: "手机".into(),
+                    token_sha256: sha256_hex(&new_device_token()),
+                    paired_at: String::new(),
+                    last_seen_at: None,
+                });
+            }
+            ((), true)
+        })
+        .unwrap();
+        assert_eq!(pair_phone(&r, iphone).0, 409);
+        stop_running(r);
+        fs::remove_dir_all(&stage).ok();
+        fs::remove_file(&book).ok();
+    }
+
+    #[test]
+    fn start_remembers_port_and_address_choice() {
+        let stage = temp_dir("start");
+        let book = book_path("start");
+        let lo = vec![(Ipv4Addr::LOCALHOST, "lo0".to_string())];
+        let name = Some("testmac.local".to_string());
+        let start = |bind: Option<&str>| {
+            start_with(None, bind.map(str::to_string), lo.clone(), name.clone(), stage.clone(), book.clone(), true)
+        };
+        let first = start(None).unwrap();
+        assert_eq!(first.host.as_deref(), Some("testmac.local"), "macOS 默认用电脑名");
+        assert_eq!(first.addresses.len(), 2);
+        let url = first.url.clone().unwrap();
+        assert!(url.starts_with("http://testmac.local:"), "{url}");
+        let port: u16 = with_book(&book, |b| (b.port, false)).unwrap().expect("记下固定端口");
+        assert!(url.contains(&format!(":{port}/p/")));
+        assert_eq!(start(None).unwrap().url.unwrap(), url, "已在接收：原样返回");
+        assert!(start(Some("10.9.9.9")).is_err(), "不在候选里的地址拒绝");
+
+        // 改选 IP：重开、记住偏好、端口不变
+        let by_ip = start(Some("127.0.0.1")).unwrap();
+        assert_eq!(by_ip.url.as_deref().unwrap(), format!("http://127.0.0.1:{port}/p/{}/", by_ip.url.as_deref().unwrap().rsplit("/p/").next().unwrap().trim_end_matches('/')));
+        assert_eq!(with_book(&book, |b| (b.host_pref.clone(), false)).unwrap().as_deref(), Some("ip"));
+        shutdown();
+        let again = start(None).unwrap();
+        assert!(again.url.unwrap().starts_with(&format!("http://127.0.0.1:{port}/")), "偏好 IP 后默认就是 IP");
+        shutdown();
+
+        // 固定端口被占：这次临时换端口并提醒，记下的端口不改
+        let blocker = std::net::TcpListener::bind(("127.0.0.1", port)).unwrap();
+        let moved = start(None).unwrap();
+        assert!(moved.port_note.is_some());
+        assert!(!moved.url.unwrap().contains(&format!(":{port}/")));
+        assert_eq!(with_book(&book, |b| (b.port, false)).unwrap(), Some(port));
+        shutdown();
+        drop(blocker);
+        fs::remove_dir_all(&stage).ok();
+        fs::remove_file(&book).ok();
+    }
+
+    #[test]
+    fn device_names_hostnames_and_default_host() {
+        assert_eq!(device_name("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)", &[]), "iPhone");
+        assert_eq!(
+            device_name("Mozilla/5.0 (iPhone)", &["iPhone".into(), "iPhone 2".into()]),
+            "iPhone 3"
+        );
+        assert_eq!(device_name("Mozilla/5.0 (Linux; Android 14)", &[]), "安卓手机");
+        assert_eq!(device_name("curl/8", &[]), "手机");
+        assert_eq!(clean_hostname("TongzhouHongdeMacBook-Air\n").as_deref(), Some("tongzhouhongdemacbook-air.local"));
+        assert_eq!(clean_hostname("DESKTOP-AB12").as_deref(), Some("desktop-ab12.local"));
+        assert_eq!(clean_hostname("my mac"), None);
+        assert_eq!(clean_hostname("张三的电脑"), None);
+        assert_eq!(clean_hostname(""), None);
+        let c = vec![(Ipv4Addr::new(192, 168, 1, 5), "en0".to_string())];
+        assert_eq!(default_host(Some("a.local"), &c, None, true).as_deref(), Some("a.local"));
+        assert_eq!(default_host(Some("a.local"), &c, None, false).as_deref(), Some("192.168.1.5"), "非 macOS 默认 IP");
+        assert_eq!(default_host(Some("a.local"), &c, Some("ip"), true).as_deref(), Some("192.168.1.5"));
+        assert_eq!(default_host(Some("a.local"), &c, Some("name"), false).as_deref(), Some("a.local"));
+        assert_eq!(default_host(None, &c, Some("name"), true).as_deref(), Some("192.168.1.5"));
+        let opts = addr_options(Some("a.local"), &c);
+        assert_eq!(opts[0].host, "a.local");
+        assert_eq!(opts[1].host, "192.168.1.5");
+    }
+
+    #[test]
+    fn corrupt_device_book_fails_closed() {
+        let book = book_path("corrupt");
+        fs::write(&book, b"{oops").unwrap();
+        assert!(devices_at(&book).unwrap().is_empty());
+        assert!(device_by_token(&book, "anything").is_none());
+        let kept = fs::read_dir(book.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .any(|e| {
+                let n = e.file_name().to_string_lossy().into_owned();
+                n.starts_with(book.file_stem().unwrap().to_string_lossy().as_ref()) && n.contains("corrupt-")
+            });
+        assert!(kept, "原件留证");
     }
 
     #[test]
     fn upload_slots_ignore_stalled_connections() {
         let stage = temp_dir("slots");
-        let r = launch(Ipv4Addr::LOCALHOST, stage.clone(), None).unwrap();
+        let book = book_path("slots");
+        let r = test_launch(&stage, &book, None);
         let s = r.session.clone();
         {
             let a = s.claim_upload().unwrap();
@@ -1379,6 +2068,7 @@ mod tests {
         }
         stop_running(r);
         fs::remove_dir_all(&stage).ok();
+        fs::remove_file(&book).ok();
     }
 
     fn stage_with(dir: &Path, items: Vec<StoredItem>) {

@@ -55,6 +55,29 @@ h1 {
 
 .status.bad { color: var(--err); }
 
+.tip {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+  font-size: 14px;
+}
+
+.tip p { margin: 0 0 6px; }
+.tip .muted { color: var(--muted); }
+
+.tip button {
+  margin-top: 4px;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+}
+
 .picks {
   display: grid;
   grid-template-columns: 1fr 1fr;

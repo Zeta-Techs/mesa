@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { Copy, File, FileText, Image as ImageIcon, MessageSquareText, Trash2 } from "lucide-react";
+import { Copy, File, FileText, Image as ImageIcon, MessageSquareText, Smartphone, Trash2 } from "lucide-react";
 import { Modal } from "./Modal";
 import {
   FoldMark,
@@ -15,6 +15,7 @@ import { usePhoneDropStore } from "../phone-drop-store";
 import {
   PHONE_PLACE_TARGET,
   formatPhoneSize,
+  phoneDeviceLine,
   phoneItemActions,
   phoneItemStatusText,
   phoneStateLine,
@@ -59,6 +60,8 @@ export default function PhoneDropDialog() {
   const patchItem = usePhoneDropStore((s) => s.patchItem);
   const removeItem = usePhoneDropStore((s) => s.removeItem);
   const deliver = usePhoneDropStore((s) => s.deliver);
+  const devices = usePhoneDropStore((s) => s.devices);
+  const removeDevice = usePhoneDropStore((s) => s.removeDevice);
 
   const [projects, setProjects] = useState<ProjectDto[]>([]);
   const [placeRoot, setPlaceRoot] = useState<string>("");
@@ -157,6 +160,7 @@ export default function PhoneDropDialog() {
     >
       <div className="space-y-4">
         {error && <InlineNotice tone="err">{error}</InlineNotice>}
+        {status.receiving && status.portNote && <InlineNotice tone="warn">{status.portNote}</InlineNotice>}
 
         {status.receiving && qrSrc ? (
           <div className="flex gap-4">
@@ -164,9 +168,17 @@ export default function PhoneDropDialog() {
               <img src={qrSrc} alt="扫码打开手机上传页" className="size-40" />
             </div>
             <div className="min-w-0 flex-1 space-y-2 leading-5">
-              <p className="text-sm text-l1">用手机相机扫这个码。</p>
-              <p className="text-l3">手机和电脑要连同一个 Wi-Fi。扫开后可以拍照、选照片或文件、写一句话。</p>
-              <p className={status.connected ? "text-ok-text" : "text-l3"}>{phoneStateLine(status, incoming)}</p>
+              <p className="text-sm text-l1">
+                {devices.length > 0 ? "已配对的手机直接打开主屏幕上的「发到 Mesa」。" : "用手机相机扫这个码。"}
+              </p>
+              <p className="text-l3">
+                {devices.length > 0
+                  ? "新手机扫这个码，扫开就记住了。手机和电脑要连同一个 Wi-Fi。"
+                  : "手机和电脑要连同一个 Wi-Fi。扫开后就记住这台手机，可以加到主屏幕，以后不用再扫。"}
+              </p>
+              <p className={status.connected ? "text-ok-text" : "text-l3"}>
+                {phoneStateLine(status, incoming, devices.length > 0)}
+              </p>
               {status.url && (
                 <div className="flex min-w-0 items-center gap-1">
                   <span className="min-w-0 truncate font-mono text-micro text-l4" title={status.url}>
@@ -189,14 +201,14 @@ export default function PhoneDropDialog() {
                 </div>
               )}
               {status.addresses.length > 1 && (
-                <div className="w-56">
+                <div className="w-72 max-w-full">
                   <MenuSelect
                     aria-label="换一个地址"
-                    value={status.address ?? ""}
-                    onChange={(ip) => {
-                      if (ip !== status.address) void start(ip);
+                    value={status.host ?? ""}
+                    onChange={(host) => {
+                      if (host !== status.host) void start(host);
                     }}
-                    options={status.addresses.map((a) => ({ value: a.ip, label: a.label }))}
+                    options={status.addresses.map((a) => ({ value: a.host, label: a.label }))}
                   />
                 </div>
               )}
@@ -231,10 +243,35 @@ export default function PhoneDropDialog() {
                 电脑弹出防火墙提示时点允许。Windows 上要勾「专用网络」，并把当前 Wi-Fi 设成专用网络——新连的 Wi-Fi
                 常被归为公用，只勾专用会照样被拦。
               </li>
-              <li>地址不对时，用上面的下拉换一个（电脑有多张网卡时才会出现）。</li>
+              <li>
+                地址有两种：电脑名（xxx.local）换了 Wi-Fi 也能连；IP 地址一变就要重扫。手机打不开电脑名时，用上面的下拉换成
+                IP 再扫。
+              </li>
+              <li>已配对的手机打开后显示「电脑那边没在接收」：先在这里开始接收，手机页会自动连上。</li>
             </ul>
           )}
         </div>
+
+        {devices.length > 0 && (
+          <div>
+            <div className="mb-1.5 flex items-center gap-2">
+              <span className="font-medium text-l2">已配对的手机</span>
+              <span className="text-l4">移除后它主屏上的「发到 Mesa」就失效了</span>
+            </div>
+            <ul className="space-y-0.5">
+              {devices.map((d) => (
+                <li key={d.id} className="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 hover:bg-hover">
+                  <Smartphone size={14} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l3" />
+                  <span className="min-w-0 truncate text-l1">{d.name}</span>
+                  <span className="min-w-0 flex-1 truncate text-micro text-l4">{phoneDeviceLine(d, new Date())}</span>
+                  <button type="button" className={ghostActionClass} onClick={() => void removeDevice(d.id)}>
+                    移除
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         <div>
           <div className="mb-1.5 flex items-center gap-2">

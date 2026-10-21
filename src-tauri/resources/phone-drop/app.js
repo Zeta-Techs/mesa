@@ -1,12 +1,15 @@
 // 「发到 Mesa」手机页（phone_drop.rs 同源下发；不引任何外部资源）。
-// 一件一件按顺序传，带进度；失败的可以重试。电脑停止接收后服务就关了，页面连不上即提示重新扫码。
+// 扫码地址 /p/<配对令牌>/ 打开即配对，跳到 /d/<设备令牌>/——加到主屏的就是这个地址，下次点开直接能发。
+// 一件一件按顺序传，带进度；电脑没在接收时先排着，连上后自动补发。
 (function () {
   "use strict";
 
   var MAX_FILE = 100 * 1024 * 1024;
   var MAX_TEXT = 20000;
   var STALL_MS = 60000;
-  var POLL_MS = 15000;
+  var POLL_ONLINE_MS = 15000;
+  var POLL_OFFLINE_MS = 4000;
+  var DEVICE_KEY = "mesa.devicePath";
 
   var statusEl = document.getElementById("status");
   var listEl = document.getElementById("sent");
@@ -18,6 +21,9 @@
 
   var queue = [];
   var busy = false;
+  var online = true;
+  // 没连上电脑时没送出去的：连上后自动补发
+  var waiting = [];
   var okText = statusEl.textContent;
 
   var ERRORS = {
@@ -30,6 +36,87 @@
     bad_text: "文字编码不对",
   };
 
+  function storageGet(key) {
+    try {
+      return window.localStorage.getItem(key);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function storageSet(key, value) {
+    try {
+      window.localStorage.setItem(key, value);
+    } catch (e) {
+      /* 无痕模式写不进：这次照样能发，只是下次要重新扫码 */
+    }
+  }
+
+  function request(method, path, body, headers, done) {
+    var xhr = new XMLHttpRequest();
+    xhr.open(method, path);
+    xhr.timeout = 8000;
+    for (var k in headers || {}) xhr.setRequestHeader(k, headers[k]);
+    xhr.onload = function () {
+      done(xhr.status, xhr.responseText);
+    };
+    xhr.onerror = xhr.ontimeout = function () {
+      done(0, "");
+    };
+    xhr.send(body || null);
+  }
+
+  // ---- 配对：扫码地址先看这台手机是不是已经配过（同一地址存过设备路径且还有效），否则新配一台 ----
+  function pairIfNeeded() {
+    if (!/^\/p\//.test(location.pathname)) return;
+    var saved = storageGet(DEVICE_KEY);
+    var fresh = function () {
+      request("POST", "pair", null, {}, function (status, text) {
+        var body = null;
+        try {
+          body = JSON.parse(text);
+        } catch (e) {
+          body = null;
+        }
+        if (status === 200 && body && body.path) {
+          storageSet(DEVICE_KEY, body.path);
+          location.replace(body.path + "?new=1");
+          return;
+        }
+        if (body && body.error === "too_many_devices") {
+          statusEl.textContent =
+            "这台电脑已经记住 8 台手机了：先在 Mesa 的「从手机添加」里移除不用的。这次照样能发，只是下次要重新扫码。";
+          statusEl.className = "status bad";
+        }
+      });
+    };
+    if (!saved || !/^\/d\/[0-9a-f]+\/$/.test(saved)) {
+      fresh();
+      return;
+    }
+    request("GET", saved + "state", null, {}, function (status) {
+      if (status === 200) location.replace(saved);
+      else fresh();
+    });
+  }
+
+  function showTipIfNew() {
+    if (!/[?&]new=1/.test(location.search)) return;
+    var ua = navigator.userAgent || "";
+    var ios = /iPhone|iPad|iPod/.test(ua);
+    var android = /Android/.test(ua);
+    document.getElementById("tip-ios").hidden = android && !ios;
+    document.getElementById("tip-android").hidden = ios && !android;
+    var tip = document.getElementById("tip");
+    tip.hidden = false;
+    document.getElementById("tip-close").addEventListener("click", function () {
+      tip.hidden = true;
+    });
+    // 去掉 ?new=1 再让人加到主屏，免得主屏图标每次打开都弹这段说明
+    history.replaceState(null, "", location.pathname);
+  }
+
+  // ---- 已发列表 ----
   function row(name) {
     var li = document.createElement("li");
     var n = document.createElement("span");
@@ -72,14 +159,13 @@
     if (busy || queue.length === 0) return;
     busy = true;
     var task = queue.shift();
-    task(function () {
+    task.run(function () {
       busy = false;
       pump();
     });
   }
 
   function errorText(xhr) {
-    if (xhr.status === 404 || xhr.status === 0) return null;
     try {
       var body = JSON.parse(xhr.responseText);
       if (body && ERRORS[body.error]) return ERRORS[body.error];
@@ -89,8 +175,16 @@
     return "没送到";
   }
 
+  // 连不上电脑（没在接收 / 网络变了）的那条先排着，连上后自动补发
+  function park(task) {
+    show(task.row, "等电脑开始接收", "", null);
+    waiting.push(task);
+    markOffline();
+  }
+
   // 一次上传 / 发送：60 秒没有进展就放弃（手机息屏、网络断开时连接可能一直挂着）
-  function send(r, path, body, headers, label, again) {
+  function send(task, path, body, headers) {
+    var r = task.row;
     return function (done) {
       var xhr = new XMLHttpRequest();
       var last = Date.now();
@@ -98,11 +192,11 @@
         if (Date.now() - last > STALL_MS) xhr.abort();
       }, 5000);
       var ended = false;
-      function finish(text, tone, retry) {
+      function finish(fn) {
         if (ended) return;
         ended = true;
         clearInterval(timer);
-        show(r, text, tone, retry);
+        fn();
         done();
       }
       xhr.open("POST", path);
@@ -114,25 +208,29 @@
         }
       };
       xhr.onload = function () {
-        if (xhr.status === 200) {
-          finish(label, "ok", null);
-          return;
-        }
-        var t = errorText(xhr);
-        if (t === null) {
-          markOffline();
-          finish("没送到", "err", again);
-        } else {
-          var retryable = xhr.status === 503 || xhr.status >= 500 || t === ERRORS.incomplete;
-          finish(t, "err", retryable ? again : null);
-        }
+        finish(function () {
+          if (xhr.status === 200) {
+            show(r, "已送到", "ok", null);
+            markOnline();
+          } else if (xhr.status === 404) {
+            // 这台手机被移除了，或扫码地址已过期
+            show(r, "没送到：电脑不认这个页面了，请重新扫码", "err", null);
+          } else {
+            var t = errorText(xhr);
+            var retryable = xhr.status === 503 || xhr.status >= 500 || t === ERRORS.incomplete;
+            show(r, t, "err", retryable ? task : null);
+          }
+        });
       };
       xhr.onerror = function () {
-        markOffline();
-        finish("没送到", "err", again);
+        finish(function () {
+          park(task);
+        });
       };
       xhr.onabort = function () {
-        finish("没送到", "err", again);
+        finish(function () {
+          show(r, "没送到", "err", task);
+        });
       };
       show(r, "上传中", "", null);
       xhr.send(body);
@@ -150,12 +248,11 @@
       show(r, ERRORS.empty, "err", null);
       return;
     }
-    var task = function (done) {
-      send(r, "file", file, {
-        "Content-Type": file.type || "application/octet-stream",
-        "X-Mesa-Name": encodeURIComponent(name),
-      }, "已送到", task)(done);
-    };
+    var task = { row: r };
+    task.run = send(task, "file", file, {
+      "Content-Type": file.type || "application/octet-stream",
+      "X-Mesa-Name": encodeURIComponent(name),
+    });
     show(r, "排队中", "", null);
     enqueue(task);
   }
@@ -186,42 +283,65 @@
       show(r, ERRORS.too_long, "err", null);
       return;
     }
-    var task = function (done) {
-      send(r, "text", text, { "Content-Type": "text/plain; charset=utf-8" }, "已送到", task)(done);
-    };
+    var task = { row: r };
+    task.run = send(task, "text", text, { "Content-Type": "text/plain; charset=utf-8" });
     show(r, "排队中", "", null);
     enqueue(task);
     textEl.value = "";
     sendBtn.disabled = true;
   });
 
-  // 连不上电脑：多半是 Mesa 那边停止了接收（服务随之关闭），或手机 / 电脑换了网络
-  var misses = 0;
+  // ---- 连接状态：没在接收时每几秒问一次，连上就把排着的补发 ----
   function markOffline() {
+    if (!online) return;
+    online = false;
     statusEl.textContent =
-      "连不上电脑了：可能 Mesa 那边已停止接收，或网络变了。要再发，在 Mesa 里重新点「从手机添加」扫码。";
+      "电脑那边没在接收：在电脑上的 Mesa 里点「从手机添加」，这里会自动连上，没送出去的会自动补发。";
     statusEl.className = "status bad";
+    schedulePoll(POLL_OFFLINE_MS);
   }
+
   function markOnline() {
-    misses = 0;
+    if (online) return;
+    online = true;
     statusEl.textContent = okText;
     statusEl.className = "status";
+    var again = waiting;
+    waiting = [];
+    again.forEach(function (task) {
+      show(task.row, "排队中", "", null);
+      enqueue(task);
+    });
+  }
+
+  var misses = 0;
+  var gone = false;
+  var pollTimer = null;
+  function schedulePoll(ms) {
+    if (gone) return;
+    clearTimeout(pollTimer);
+    pollTimer = setTimeout(poll, ms);
   }
   function poll() {
-    var xhr = new XMLHttpRequest();
-    xhr.open("GET", "state");
-    xhr.timeout = 8000;
-    xhr.onload = function () {
-      if (xhr.status === 200) markOnline();
-      else miss();
-    };
-    xhr.onerror = miss;
-    xhr.ontimeout = miss;
-    xhr.send();
+    request("GET", "state", null, {}, function (status) {
+      if (status === 200) {
+        misses = 0;
+        markOnline();
+      } else if (status === 404) {
+        // 电脑在接收，但不认这个地址：这台手机在 Mesa 里被移除了，或扫码地址已过期
+        gone = true;
+        statusEl.textContent = "电脑不认这个页面了：这台手机可能已在 Mesa 里被移除。请在 Mesa 里点「从手机添加」重新扫码。";
+        statusEl.className = "status bad";
+        return;
+      } else {
+        misses += 1;
+        if (misses >= 2) markOffline();
+      }
+      schedulePoll(online ? POLL_ONLINE_MS : POLL_OFFLINE_MS);
+    });
   }
-  function miss() {
-    misses += 1;
-    if (misses >= 2) markOffline();
-  }
-  setInterval(poll, POLL_MS);
+
+  pairIfNeeded();
+  showTipIfNew();
+  schedulePoll(POLL_ONLINE_MS);
 })();
