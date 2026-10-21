@@ -80,6 +80,9 @@
   --color-err-text: #f07070;
   --color-warn: #37300f;
   --color-warn-text: #f0c010;
+  /* 「完全访问」这类需要留心、但不是报错的状态：把警告黄往正文灰里调和一截，成一支哑光琥珀，
+     不用纯黄整行染色（2026-10-21 用户：那个黄太丑）。随主题的 warn-text / l2 变，深浅主题自动成套 */
+  --color-caution-text: color-mix(in srgb, var(--color-warn-text) 62%, var(--color-l2));
 
   /* diff 增删 */
   --color-add: #8fd3a8;

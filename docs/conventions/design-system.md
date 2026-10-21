@@ -742,3 +742,5 @@ aria-live）。上下文圆环说明改自绘浮层（portal + 外层定位 / �
   Windows 版撑满到 24/1024，否则任务栏里比邻居小一圈。
 - **不在打包时跑 actool**：tauri 2.11 起 actool 子进程时 stdin 是关着的，actool 读 `.icon` 报 Bad file descriptor
   （2026-10-17 实证，手动跑正常）；预编译还让 CI 不依赖 runner 的 Xcode 版本。`bundle.icon` 里不得改回 `.icon` 目录。
+
+- **「留心但不是报错」用 `--color-caution-text`（2026-10-21）**：完全访问这类状态不用纯警告黄整行染色，取 `warn-text` 与 `l2` 按 62/38 调和出的哑光琥珀（随主题自动成套），只染图标、小标记与芯片，正文仍 l1 / l3。真正的警告 / 报错（工作目录不可用、模型异常）仍用 `warn-text` / `err-text`。聊天权限菜单的「放手程度」四格竖条、选中勾用主题 `cta` 色，是菜单类选择态的 Mesa 标记手法。

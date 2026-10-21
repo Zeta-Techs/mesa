@@ -13,8 +13,8 @@ type Tier = PermissionTier;
 export const PERMISSION_TIERS: { id: Tier; label: string; desc: string; Icon: typeof Eye }[] = [
   { id: "discuss", label: "只讨论", desc: "只看、只说，不改文件、不跑命令", Icon: Eye },
   { id: "ask", label: "请求批准", desc: "改文件、跑命令前都先问你", Icon: Hand },
-  { id: "auto", label: "帮我批准", desc: "普通操作自动放行，有风险的才问你", Icon: ShieldCheck },
-  { id: "full", label: "完全访问", desc: "改文件、跑命令都不问你，选时会再确认", Icon: ShieldAlert },
+  { id: "auto", label: "帮我批准", desc: "日常操作自动放行，有风险才问你", Icon: ShieldCheck },
+  { id: "full", label: "完全访问", desc: "改文件、跑命令都不再问你", Icon: ShieldAlert },
 ];
 
 /**
@@ -137,7 +137,7 @@ export default function ChatPermissionBadge({
   }
 
   const chip = `ml-1 flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-micro ${
-    loud ? "text-warn-text" : "text-l3"
+    loud ? "text-caution-text" : "text-l3"
   }`;
 
   if (!interactive) {
@@ -175,12 +175,12 @@ export default function ChatPermissionBadge({
           ref={menuRef}
           role="menu"
           aria-label="AI 动手前怎么问你"
-          className={`absolute left-0 z-30 w-[19rem] rounded-xl border border-field ccode-float-surface p-1 shadow-lg ${
+          className={`absolute left-0 z-30 w-[20rem] rounded-xl border border-field ccode-float-surface p-1 shadow-lg ${
             side === "below" ? "top-full mt-2" : "bottom-full mb-2"
           }`}
         >
           <div className="px-2 pb-1 pt-1 text-xs text-l3">AI 动手前怎么问你？</div>
-          {PERMISSION_TIERS.map((t) => {
+          {PERMISSION_TIERS.map((t, tierIndex) => {
             const ok = available(t.id);
             const selected = current === t.id;
             const danger = t.id === "full";
@@ -192,32 +192,52 @@ export default function ChatPermissionBadge({
                 aria-checked={selected}
                 disabled={!ok}
                 onClick={() => void choose(t.id)}
-                className={`flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left outline-none hover:bg-hover focus-visible:bg-hover disabled:cursor-not-allowed disabled:opacity-40 ${
-                  danger ? "text-warn-text" : ""
-                }`}
+                className="flex w-full items-start gap-2.5 rounded-lg px-2 py-1.5 text-left outline-none hover:bg-hover focus-visible:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <t.Icon
                   size={15}
                   strokeWidth={1.8}
                   aria-hidden="true"
-                  className={`mt-px shrink-0 ${danger ? "" : "text-l2"}`}
+                  className={`mt-0.5 shrink-0 ${danger ? "text-caution-text" : "text-l3"}`}
                 />
                 <span className="min-w-0 flex-1">
-                  <span className={`block text-sm leading-5 ${danger ? "" : "text-l1"}`}>
+                  <span className="flex items-center gap-1.5 text-sm leading-5 text-l1">
                     {t.label}
                     {followsLocal && note?.tier === t.id && (
-                      <span className="ml-1.5 text-micro text-l4">本机设置</span>
+                      <span className="rounded-sm bg-inset px-1 text-micro leading-4 text-l3">
+                        本机设置
+                      </span>
                     )}
                   </span>
-                  <span className={`block text-xs leading-[18px] ${danger ? "" : "text-l3"}`}>
+                  <span className="block text-xs leading-[18px] text-l3">
                     {ok ? t.desc : `${agentLabel} 没有这一档的启动参数`}
                   </span>
                 </span>
+                {/* 放手程度：四格递增，一眼看出这四档是同一把尺上的四个刻度；完全访问那格换成留心色 */}
+                <span
+                  aria-hidden="true"
+                  className="mt-1 flex h-3.5 shrink-0 items-end gap-[2px]"
+                  title={`放手程度 ${tierIndex + 1} / ${PERMISSION_TIERS.length}`}
+                >
+                  {PERMISSION_TIERS.map((_, i) => (
+                    <i
+                      key={i}
+                      style={{ height: 5 + i * 3 }}
+                      className={`w-[3px] rounded-full ${
+                        i <= tierIndex
+                          ? danger
+                            ? "bg-caution-text"
+                            : "bg-l3"
+                          : "bg-hairline"
+                      }`}
+                    />
+                  ))}
+                </span>
                 <Check
                   size={14}
-                  strokeWidth={2}
+                  strokeWidth={2.2}
                   aria-hidden="true"
-                  className={`mt-0.5 shrink-0 ${selected ? "text-l2" : "invisible"}`}
+                  className={`mt-0.5 shrink-0 ${selected ? "text-cta" : "invisible"}`}
                 />
               </button>
             );

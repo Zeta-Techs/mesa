@@ -5262,7 +5262,7 @@ const TerminalView = memo(function TerminalView({
                 {effortSeen ?? effortOverride ?? "按连接设置"}
               </dd>
               <dt className="text-l4">权限</dt>
-              <dd className={`truncate ${permTier === "full" ? "text-warn-text" : "text-l1"}`}>
+              <dd className={`truncate ${permTier === "full" ? "text-caution-text" : "text-l1"}`}>
                 {permText}
                 {permFollowsLocal && cliPermissionNote && (
                   <span className="ml-1 text-l4">（本机设置）</span>
@@ -5317,9 +5317,9 @@ const TerminalView = memo(function TerminalView({
                         }
                         className={`h-6 rounded-md px-2 text-xs disabled:cursor-default ${
                           current
-                            ? `bg-seg-sel ${t.id === "full" ? "text-warn-text" : "text-l1"}`
+                            ? `bg-seg-sel ${t.id === "full" ? "text-caution-text" : "text-l1"}`
                             : `border border-hairline hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent ${
-                                t.id === "full" ? "text-warn-text" : "text-l2 hover:text-l1"
+                                t.id === "full" ? "text-caution-text" : "text-l2 hover:text-l1"
                               }`
                         }`}
                       >
@@ -5563,7 +5563,7 @@ const TerminalView = memo(function TerminalView({
                 onChange={(v) => void pickLaunchPermission(v as PermissionTier, false)}
                 preferredWidth={220}
                 className={`${
-                  permTier === "full" ? seg.replace("text-l2", "text-warn-text") : seg
+                  permTier === "full" ? seg.replace("text-l2", "text-caution-text") : seg
                 } w-[clamp(6rem,9vw,7.5rem)] min-w-[6rem] max-w-[7.5rem] shrink`}
               />
             )}
