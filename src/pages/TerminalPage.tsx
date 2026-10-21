@@ -4937,6 +4937,9 @@ const TerminalView = memo(function TerminalView({
   async function writeChatMessage(ptyId: string, text: string): Promise<ChatSendResult> {
     await waitAgentInputReady(ptyId);
     if (ptyIdRef.current !== ptyId) return { error: "终端已重新启动，这句没有发出，请再发一次" };
+    // 写之前就记下：正文粘进输入框到按下提交之间（多行要等 0.65 秒），输入框里的编号清单会被扫菜单认成选项，
+    // 拿上一句比对排除不掉（2026-10-21 用户 Grok：七步清单在输入框里时出了一张「终端里在等你选一项」）
+    lastSentRef.current = text;
     // 发送前屏上最后一条回显：CLI 画出这句之前，实时预览读到的还是上一轮（staleEcho）
     sendEchoRef.current = {
       before: extractLiveReply(screenLines(), launchAgentRef.current)?.echo ?? null,

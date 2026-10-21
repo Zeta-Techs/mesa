@@ -181,11 +181,18 @@ export function menuAnswerKeys(menu: TuiMenu, target: number): string[] {
   return [...Array.from({ length: Math.abs(delta) }, () => arrow), "\r"];
 }
 
-/** 菜单的每一项都出现在 text 里：多半是用户刚发的编号清单的回显，不是 CLI 在问 */
+/** 菜单的每一项都出现在 text 里：多半是用户刚发的编号清单的回显，不是 CLI 在问。
+ *  终端窄时回显的长行被截断、行尾补「…」（2026-10-21 用户 Grok：「…和当前时…」认不出，七步清单被当成审批卡），去掉再比 */
 export function menuEchoesText(menu: TuiMenu, text: string): boolean {
   const squash = (v: string) => v.replace(/\s+/g, "");
   const said = squash(text);
-  return said.length > 0 && menu.options.every((o) => said.includes(squash(o)));
+  return (
+    said.length > 0 &&
+    menu.options.every((o) => {
+      const opt = squash(o).replace(/(?:…|\.{3})+$/, "");
+      return opt.length > 0 && said.includes(opt);
+    })
+  );
 }
 
 export function sameTuiMenu(a: TuiMenu | null, b: TuiMenu | null): boolean {

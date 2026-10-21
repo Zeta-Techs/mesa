@@ -7,6 +7,7 @@
 
 ## 未发布
 
+- **聊天层发多行清单给 Grok 时不再冒出一张「终端里在等你选一项」**：七步这类编号清单粘进 Grok 输入框、还没按发送的那一下，输入框的样子正好像一个选择菜单，聊天层把清单每一行当成选项出了一张卡，Grok 其实在正常思考。现在 Mesa 认得这是你刚发的话，不再出卡。
 - **Gemini 终端里不再摆出一串 Mesa 的程序路径**：开了 Gemini 的精确注意力标记后，Gemini 每次跑 Mesa 的钩子时，转圈行会写「Executing Hook: C:/Users/…/AppData/…/ccode-hook.exe …」，取消回答时尤其显眼。现在写「Executing Hook: Mesa 状态同步」。已经开着开关的，Mesa 启动时会替你把这个名字补进 Gemini 的配置（写前自动备份，别的设置不动）。
 - **聊天层「正在回复」上方的实时预览不再混进终端里的杂项，也不再先把上一段回复再显示一遍**：Kimi 等第一个字时的「🌕 · Tip: …」转圈、Qwen 的「∴ Thought for 1s (click or ctrl+o to expand)」思考折叠行、Gemini 输入框上方的「auto-accept edits Shift+Tab to manual」「1 MCP server · 20 skills」「Press Ctrl+O to expand pasted text」这类提示，以前会被当成回复显示出来，现在都认得出、不显示。以前发出一句后、CLI 还没把它画进终端的那一下，预览会把上一轮的回复整段又显示一遍（Qwen 最明显），现在等终端里出现这一句再开始预览。
 - **CodeBuddy、Claude Code 启动时问「是否信任这个目录」，聊天层又能看到并直接点了**：以前从聊天层开一个新对话，终端里弹出信任提示，聊天层却什么都不显示，只能自己去终端里选。原因是这两家一起来就把对话文件报给了 Mesa，Mesa 以为启动已经结束、不再看信任提示。现在要等终端里出现输入框、或者这一轮真的开始干活，才算启动结束。
