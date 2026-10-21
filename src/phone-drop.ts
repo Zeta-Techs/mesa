@@ -225,5 +225,6 @@ export function phoneDeviceLine(device: Pick<PhoneDevice, "pairedAt" | "lastSeen
 export function phoneStopNote(reason: string | null | undefined): string | null {
   if (reason === "idle") return "30 分钟没有收到新东西，已停止从手机接收";
   if (reason === "error") return "接收出错，已停止从手机接收";
+  if (reason === "network-rescan") return "网络换了，已自动换到新地址。手机要重新扫码：点「从手机添加」出新的二维码";
   return null;
 }

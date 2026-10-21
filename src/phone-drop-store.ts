@@ -250,13 +250,14 @@ export function usePhoneDropEvents(onArrive?: (item: PhoneItem) => void): void {
         }
         if (!p.receiving) {
           if (s.starting) return;
-          const note = p.standbyNext ? null : phoneStopNote(p.reason);
+          // 换网络要重扫的提示不看「接着常驻等候」：等候虽接上了，手机手里的旧地址已不通
+          const note = p.standbyNext && p.reason !== "network-rescan" ? null : phoneStopNote(p.reason);
           store.setState({
             status: { ...IDLE_PHONE_STATUS, standbyEnabled: s.status.standbyEnabled },
             incoming: null,
             target: null,
           });
-          if (note && !s.open) toast(note, "info");
+          if (note && (!s.open || p.reason === "network-rescan")) toast(note, "info");
           return;
         }
         store.setState({

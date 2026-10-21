@@ -98,6 +98,8 @@ test("状态文案", () => {
   assert.equal(phoneItemStatusText({ status: "new", placedTo: null }), "");
   assert.match(phoneStopNote("idle") ?? "", /30 分钟/);
   assert.equal(phoneStopNote("stopped"), null);
+  assert.match(phoneStopNote("network-rescan") ?? "", /重新扫码/);
+  assert.equal(phoneStopNote("network"), null);
   assert.equal(formatPhoneSize(512), "512 B");
   assert.equal(formatPhoneSize(300 * 1024), "300 KB");
   assert.equal(formatPhoneSize(4.25 * 1024 * 1024), "4.3 MB");

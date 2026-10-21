@@ -29,8 +29,13 @@ const STALL_AFTER: Duration = Duration::from_secs(120);
 const IDLE_STOP: Duration = Duration::from_secs(30 * 60);
 /// 合计上限按 24 小时窗口算（常驻等候一开就是几天，不能一直累加）
 const BYTES_WINDOW: Duration = Duration::from_secs(24 * 3600);
-/// 多久看一次网卡变了没有（换了 Wi-Fi 要换绑新地址，配对的手机才连得上）
+/// 兜底多久主动看一次网卡变了没有（换了 Wi-Fi 要换绑新地址，配对的手机才连得上）。
+/// Windows / Linux 有系统的网卡变更通知（`watch_interfaces`），这里只是漏通知时的保险；
+/// macOS 的 if-addrs 没有变更通知，靠短周期轮询（读一次网卡列表很轻）
+#[cfg(any(windows, target_os = "linux"))]
 const NET_CHECK: Duration = Duration::from_secs(20);
+#[cfg(not(any(windows, target_os = "linux")))]
+const NET_CHECK: Duration = Duration::from_secs(4);
 const STAGE_TTL_SECS: i64 = 7 * 24 * 3600;
 const PART_TTL_SECS: i64 = 3600;
 const MAX_NAME_CHARS: usize = 80;
@@ -641,6 +646,8 @@ struct Session {
     /// 本次绑定的网卡地址（看网卡变没变）；测试里不跟网络
     bound: Vec<Ipv4Addr>,
     follow_network: bool,
+    /// 网卡变更通知线程报「变了」：serve 循环立刻比对一次，不等兜底轮询
+    net_dirty: AtomicBool,
     /// 允许的 Host 头：每个绑定 IP:端口 + 电脑名:端口（防 DNS 重绑定）
     hosts: Vec<String>,
     /// 二维码用的主机（电脑名或 IP）
@@ -843,6 +850,7 @@ fn launch(spec: LaunchSpec, app: Option<tauri::AppHandle>) -> Result<Running, St
         standby: spec.standby,
         bound,
         follow_network: spec.follow_network,
+        net_dirty: AtomicBool::new(false),
         hosts,
         host: spec.host,
         port,
@@ -865,18 +873,49 @@ fn launch(spec: LaunchSpec, app: Option<tauri::AppHandle>) -> Result<Running, St
         .name("phone-drop".into())
         .spawn(move || serve(servers, s))
         .map_err(|e| format!("开始接收失败：{e}"))?;
+    #[cfg(any(windows, target_os = "linux"))]
+    if session.follow_network {
+        let s = session.clone();
+        let _ = std::thread::Builder::new()
+            .name("phone-drop-netwatch".into())
+            .spawn(move || watch_interfaces(s));
+    }
     Ok(Running {
         session,
         worker: Some(worker),
     })
 }
 
-fn network_changed(s: &Session) -> bool {
-    let mut now: Vec<Ipv4Addr> = lan_candidates().into_iter().map(|(ip, _)| ip).collect();
-    let mut was = s.bound.clone();
+/// 网卡地址集变了才算换网络。现在一个地址都没有（Wi-Fi 刚断、还没拿到新地址）不算：
+/// 这时停掉也没有新地址可绑，等新地址出现再换绑
+fn addrs_changed(mut now: Vec<Ipv4Addr>, mut was: Vec<Ipv4Addr>) -> bool {
+    if now.is_empty() {
+        return false;
+    }
     now.sort();
     was.sort();
     now != was
+}
+
+fn network_changed(s: &Session) -> bool {
+    let now: Vec<Ipv4Addr> = lan_candidates().into_iter().map(|(ip, _)| ip).collect();
+    addrs_changed(now, s.bound.clone())
+}
+
+/// 系统报网卡增减（Wi-Fi 切换 / 插拔网线 / 热点）就通知 serve 循环比对；
+/// 通知装不上或读出错就退出，剩下兜底轮询
+#[cfg(any(windows, target_os = "linux"))]
+fn watch_interfaces(s: Arc<Session>) {
+    let Ok(mut notifier) = if_addrs::IfChangeNotifier::new() else {
+        return;
+    };
+    while !s.stop.load(Ordering::Acquire) {
+        match notifier.wait(Some(Duration::from_secs(2))) {
+            Ok(_) => s.net_dirty.store(true, Ordering::Release),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(_) => return,
+        }
+    }
 }
 
 fn serve(servers: Vec<tiny_http::Server>, s: Arc<Session>) {
@@ -891,7 +930,9 @@ fn serve(servers: Vec<tiny_http::Server>, s: Arc<Session>) {
             reason = "idle";
             break;
         }
-        if s.follow_network && last_net_check.elapsed() >= NET_CHECK {
+        if s.follow_network
+            && (s.net_dirty.swap(false, Ordering::AcqRel) || last_net_check.elapsed() >= NET_CHECK)
+        {
             last_net_check = Instant::now();
             if network_changed(&s) {
                 reason = "network";
@@ -931,7 +972,10 @@ fn serve(servers: Vec<tiny_http::Server>, s: Arc<Session>) {
     }
     let standby_next = !crate::process::shutting_down()
         && with_book(&s.book, |b| (b.standby_wanted(), false)).unwrap_or(false);
-    s.emit_state(false, Some(reason), standby_next);
+    // 换网络后手机要不要重新扫码：扫码页的令牌随这次接收作废；常驻等候里已配对的手机，
+    // 记的是电脑名就不用重扫，没有电脑名（只能用 IP）则旧地址失效
+    let rescan = reason == "network" && (!s.standby || mdns_hostname().is_none());
+    s.emit_state(false, Some(if rescan { "network-rescan" } else { reason }), standby_next);
     // 自己停下的（空闲 / 网络变了 / 出错）：有配对的手机就接着常驻等候。人点的停止由 stop 命令自己接
     if reason != "stopped" && standby_next {
         let app = s.app.clone();
@@ -1839,6 +1883,16 @@ pub async fn phone_drop_delete(id: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn addrs_changed_ignores_empty_and_order() {
+        let a: Ipv4Addr = "192.168.1.5".parse().unwrap();
+        let b: Ipv4Addr = "10.0.0.7".parse().unwrap();
+        assert!(!addrs_changed(vec![], vec![a]), "一个地址都没有不算换网络");
+        assert!(!addrs_changed(vec![a, b], vec![b, a]));
+        assert!(addrs_changed(vec![b], vec![a]));
+        assert!(addrs_changed(vec![a, b], vec![a]));
+    }
+
     use super::*;
     use std::net::{Shutdown, TcpStream};
 

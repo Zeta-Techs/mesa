@@ -1194,7 +1194,7 @@ src-tauri/src/
                              #   phone-devices.json 只存令牌 SHA-256、最多 8 台、可移除，另记固定端口与地址偏好；电脑 mDNS 名
                              #   （mdns_hostname）作二维码主机，start_with 可注入网卡/电脑名/暂存区/配对簿供测试，
                              #   同日常驻等候：配对簿 standby 开且有配对手机时 ensure_standby 随 Mesa 开着只认 /d/，主动接收结束自动转回，
-                             #   每 20 秒比网卡换绑；命令 phone_drop_sync / phone_drop_set_standby，
+                             #   比网卡换绑（Win/Linux 变更通知 + 兜底轮询，macOS 4 秒轮询）；命令 phone_drop_sync / phone_drop_set_standby，
                              #   停止 / 30 分钟无新内容 / 退出（lib.rs ExitRequested）即关；手机页 resources/phone-drop/ 三文件 include_str!；
                              #   收到的落 <配置根>/phone-inbox/（索引 items.json 进程锁+文件锁+原子写，7 天清理，.part 1 小时）；
                              #   place_into 只走已有入口（PDF save_paper_bytes / 图片 reader::write_notes_asset / 文字 projects::append_clip_at，

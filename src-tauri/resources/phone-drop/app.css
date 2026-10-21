@@ -36,6 +36,10 @@ html, body {
 }
 
 main {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
   max-width: 34rem;
   margin: 0 auto;
   padding: max(20px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
@@ -48,10 +52,25 @@ h1 {
 }
 
 .status {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   margin: 0 0 20px;
   color: var(--muted);
   font-size: 14px;
 }
+
+.status::before {
+  content: "";
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  margin-top: 0.48em;
+  border-radius: 50%;
+  background: var(--ok);
+}
+
+.status.bad::before { background: var(--err); }
 
 .status.bad { color: var(--err); }
 
@@ -89,17 +108,30 @@ h1 {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 88px;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 96px;
+  border: 1px solid var(--line);
   border-radius: 14px;
-  background: var(--accent);
-  color: var(--accent-text);
-  font-size: 17px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 16px;
   font-weight: 600;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
 
-.pick:active { opacity: 0.85; }
+.pick:active { opacity: 0.6; }
+
+.ico {
+  width: 28px;
+  height: 28px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 
 .pick input {
   position: absolute;
@@ -151,6 +183,15 @@ h1 {
   padding: 0;
 }
 
+.sent:empty::before {
+  content: "发出的东西会列在这里";
+  display: block;
+  padding: 18px 0;
+  color: var(--muted);
+  font-size: 14px;
+  text-align: center;
+}
+
 .sent li {
   display: flex;
   align-items: center;
@@ -190,7 +231,8 @@ h1 {
 }
 
 .foot {
-  margin-top: 24px;
+  margin-top: auto;
+  padding-top: 24px;
   color: var(--muted);
   font-size: 12px;
 }

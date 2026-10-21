@@ -343,5 +343,6 @@
 
   pairIfNeeded();
   showTipIfNew();
-  schedulePoll(POLL_ONLINE_MS);
+  // 配对中的扫码页马上要跳走，不急着探；其余页面一打开就问一次，状态点才是真的
+  schedulePoll(/^\/p\//.test(location.pathname) ? POLL_ONLINE_MS : 600);
 })();
