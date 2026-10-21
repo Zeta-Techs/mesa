@@ -831,6 +831,8 @@ src-tauri/src/
                              # terminal_link_target = 终端相对路径点击的终审（cwd 拼 + ~ 展开 + 存在性）；
                              # pty_report_terminal_colors = Windows 底色告知（win32-input-mode 记录逐条投递，
                              #   条间 2ms；ConPTY 双向吞 OSC 的实测结论见 conventions/terminal.md，别改回 OSC）
+                             # pty_spawn / shell_spawn / pty_spawn_custom / pty_kill 是 async 命令、在后台线程干活（*_sync 是原体），
+                             #   三种拉起经 SPAWN_LOCK 逐个进行（2026-10-21，conventions/terminal.md「会等待的命令不占主线程」）；
                              # 内置终端 shell 可选（2026-10-20，设置 terminal_shell）：shell_candidates 只列本机找得到的
                              #   （Windows PowerShell / PowerShell 7 / Git Bash / cmd；macOS zsh / bash / fish），interactive_shell 选不上回落
                              #   login_shell_argv；run 脚本不走这里（script_shell_argv）。Windows 跟随 cd：attach_cwd_tracking 给

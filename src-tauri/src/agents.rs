@@ -2823,52 +2823,73 @@ pub fn session_resume_command(
     resume_command_line_with(agent_id, session_id, cwd, binary, &extra)
 }
 
+/// 外部终端在后台线程打开：macOS 上要等 osascript / open 跑完（第一次控制某个终端应用时系统还会弹授权框，
+/// 人点之前一直等着）。同步命令跑在主线程上，这期间 Mesa 所有终端的输出和按键都会停住
+///（见 conventions/terminal.md「会等待的命令不占主线程」）
+async fn open_external_off_main(
+    app: tauri::AppHandle,
+    open: impl FnOnce(&ProfileStore) -> Result<(), String> + Send + 'static,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri::Manager;
+        open(&app.state::<ProfileStore>())
+    })
+    .await
+    .map_err(|e| format!("打开外部终端失败: {e}"))?
+}
+
 /// 在外部终端应用中恢复会话。profile、模型、provider 与 CLI 参数由后端复用
 /// launch_plan 生成；密钥只写入一次性 0600 wrapper，绝不进入 argv/剪贴板/前端 payload。
 #[tauri::command]
-pub fn resume_external_terminal(
-    store: tauri::State<'_, ProfileStore>,
-    agent_id: &str,
-    session_id: &str,
-    cwd: &str,
+pub async fn resume_external_terminal(
+    app: tauri::AppHandle,
+    agent_id: String,
+    session_id: String,
+    cwd: String,
     profile_id: Option<String>,
     model: Option<String>,
     provider: Option<String>,
     base_url: Option<String>,
 ) -> Result<(), String> {
-    open_external_profiled(
-        &store,
-        agent_id,
-        profile_id.as_deref(),
-        provider.as_deref(),
-        base_url.as_deref(),
-        model.as_deref(),
-        cwd,
-        Some(session_id),
-        None,
-    )
+    open_external_off_main(app, move |store| {
+        open_external_profiled(
+            store,
+            &agent_id,
+            profile_id.as_deref(),
+            provider.as_deref(),
+            base_url.as_deref(),
+            model.as_deref(),
+            &cwd,
+            Some(&session_id),
+            None,
+        )
+    })
+    .await
 }
 
 /// 在外部终端按指定 Mesa profile 新建会话。与连接页「在终端使用」同一套注入计划。
 #[tauri::command]
-pub fn new_external_terminal(
-    store: tauri::State<'_, ProfileStore>,
-    agent_id: &str,
-    cwd: &str,
+pub async fn new_external_terminal(
+    app: tauri::AppHandle,
+    agent_id: String,
+    cwd: String,
     profile_id: String,
     model: Option<String>,
 ) -> Result<(), String> {
-    open_external_profiled(
-        &store,
-        agent_id,
-        Some(&profile_id),
-        None,
-        None,
-        model.as_deref(),
-        cwd,
-        None,
-        None,
-    )
+    open_external_off_main(app, move |store| {
+        open_external_profiled(
+            store,
+            &agent_id,
+            Some(&profile_id),
+            None,
+            None,
+            model.as_deref(),
+            &cwd,
+            None,
+            None,
+        )
+    })
+    .await
 }
 
 /// 「◈ 提炼接力」外部续作命令行：cd 到项目目录 + 新会话首条指令（读简报续作，非 resume）。
@@ -2944,25 +2965,28 @@ pub fn session_digest_command(agent_id: &str, cwd: &str, prompt: &str) -> Result
 
 /// 在外部终端应用中以「读简报续作」开新会话；使用与内嵌启动相同的 profile 注入计划。
 #[tauri::command]
-pub fn digest_external_terminal(
-    store: tauri::State<'_, ProfileStore>,
-    agent_id: &str,
-    cwd: &str,
-    prompt: &str,
+pub async fn digest_external_terminal(
+    app: tauri::AppHandle,
+    agent_id: String,
+    cwd: String,
+    prompt: String,
     profile_id: Option<String>,
     model: Option<String>,
 ) -> Result<(), String> {
-    open_external_profiled(
-        &store,
-        agent_id,
-        profile_id.as_deref(),
-        None,
-        None,
-        model.as_deref(),
-        cwd,
-        None,
-        Some(prompt),
-    )
+    open_external_off_main(app, move |store| {
+        open_external_profiled(
+            store,
+            &agent_id,
+            profile_id.as_deref(),
+            None,
+            None,
+            model.as_deref(),
+            &cwd,
+            None,
+            Some(&prompt),
+        )
+    })
+    .await
 }
 
 /// 应用装在哪：/Applications 或用户自己的 ~/Applications（不用管理员权限装的 iTerm / Ghostty 常在后者，

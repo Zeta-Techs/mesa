@@ -8,6 +8,15 @@
 - 诊断输出副本不参与终端回显热路径，拥堵可丢诊断副本但不能影响实际终端；数据库输出事件有保留上限，不把它视为完整会话日志。
 - “停止运行”与应用退出都回收原生进程；后台任务入口在设置诊断区。新建/恢复的只讨论权限一致，缺能力不能降级成可写。
 - 文件树达到 2000 项上限必须提示“部分文件未列出”，保留搜索和子目录导航；编程工作树仍有活跃 Run/PTY 时不得删除。
+- **会等待的命令不占主线程（2026-10-21）**：不带 `async` 的 Tauri 命令在主线程上执行，而 Rust 往网页推终端输出（每个事件 =
+  在网页里执行一段脚本）也要排主线程的队——同步命令里等一秒，所有标签的输出和按键就停一秒。凡会等子进程或外部应用（osascript /
+  open / start）、等端口就绪、走回收站、删拷目录树、冻结评审快照的命令，一律 `async fn` + `tauri::async_runtime::spawn_blocking`，
+  需要的 State 在闭包里经 `app.state()` 取。已挪出：`pty_spawn` / `shell_spawn` / `pty_spawn_custom` / `pty_kill`、三个外部终端命令、
+  `run_close`、`delete_schedule` / `schedule_run_delete` / `adopt_watch_run`（pty.rs `waiting_commands_stay_off_main_thread` 钉住）。
+  三种拉起之间用 `SPAWN_LOCK` 保持逐个进行——原先靠主线程天然串行，Run 认领、会话预登记、启动前文件准备都按这个前提写。挪出后
+  命令之间**不再按调用顺序串行**：停止后要按同一 Run 重新拉起的调用方必须 await `pty_kill`（`cleanupPty` 已是），否则这边
+  随后的 Run 收尾会关掉新进程认领的 Run。只碰内存、读写一两个小文件的命令（`pty_resize` / `pty_set_visible` / 配置读写等）
+  留在同步，不为挪而挪。
 
 ## 终端行为（用户明确要求；配色 = VS Code Dark+ 调色板，集中在 `TerminalPage.tsx` 的 `theme` 一处）
 

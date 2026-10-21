@@ -6,7 +6,7 @@ use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 /// 输出合帧周期：每个 PTY 每 16ms 最多一个 IPC 事件。
 /// 从 50ms 收紧到 16ms（约一帧屏幕刷新）：TUI 高频小块场景下等待窗口更短，
@@ -691,8 +691,73 @@ fn spawn_tracked(
     Ok(pty_id)
 }
 
+/// 拉起与停止终端一律在后台线程做（2026-10-21，conventions/terminal.md「会等待的命令不占主线程」）：
+/// 不带 async 的 Tauri 命令跑在主线程上，而 Rust 往网页推终端输出也要排主线程的队。起 Codex 标签要等
+/// app-server 就绪（最长 4 秒），停止要等子进程退出（最长 2 秒）并可能冻结评审快照——放在主线程上，
+/// 这期间所有标签的输出和按键都会停住。
+/// 几种拉起之间仍逐个进行：挪出主线程前它们靠主线程天然串行，Run 认领、会话预登记、启动前文件准备
+///（Codex 模型 catalog 等）都是按这个前提写的
+static SPAWN_LOCK: Mutex<()> = Mutex::new(());
+
+fn spawn_turn() -> std::sync::MutexGuard<'static, ()> {
+    SPAWN_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// 参数含义见 `pty_spawn_sync`
 #[tauri::command]
-pub fn pty_spawn(
+pub async fn pty_spawn(
+    app: AppHandle,
+    agent_id: String,
+    profile_id: String,
+    cwd: String,
+    model: Option<String>,
+    extra_env: Option<HashMap<String, String>>,
+    resume_session_id: Option<String>,
+    initial_prompt: Option<String>,
+    link_claim_id: Option<String>,
+    readonly: Option<bool>,
+    resume_provider: Option<String>,
+    reuse_key: Option<String>,
+    run_id: Option<String>,
+    permission: Option<String>,
+    effort_override: Option<String>,
+    permission_mode: Option<String>,
+    task_id: Option<String>,
+    cols: Option<u16>,
+    rows: Option<u16>,
+) -> Result<SpawnResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let _turn = spawn_turn();
+        pty_spawn_sync(
+            app.clone(),
+            app.state(),
+            app.state(),
+            agent_id,
+            profile_id,
+            cwd,
+            model,
+            extra_env,
+            resume_session_id,
+            initial_prompt,
+            link_claim_id,
+            readonly,
+            resume_provider,
+            reuse_key,
+            run_id,
+            permission,
+            effort_override,
+            permission_mode,
+            task_id,
+            cols,
+            rows,
+        )
+    })
+    .await
+    .map_err(|e| format!("启动终端失败: {e}"))?
+}
+
+#[allow(clippy::too_many_arguments)]
+fn pty_spawn_sync(
     app: AppHandle,
     manager: tauri::State<'_, PtyManager>,
     store: tauri::State<'_, ProfileStore>,
@@ -1016,9 +1081,27 @@ pub fn pty_spawn(
     })
 }
 
-/// 拉起用户的登录 shell，供 agent 退出后回落或纯终端使用。
+/// 拉起用户的登录 shell，供 agent 退出后回落或纯终端使用。参数含义见 `shell_spawn_sync`
 #[tauri::command]
-pub fn shell_spawn(
+pub async fn shell_spawn(
+    app: AppHandle,
+    cwd: String,
+    extra_env: Option<std::collections::HashMap<String, String>>,
+    purpose: Option<String>,
+    run_id: Option<String>,
+    cols: Option<u16>,
+    rows: Option<u16>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let _turn = spawn_turn();
+        shell_spawn_sync(app.clone(), app.state(), cwd, extra_env, purpose, run_id, cols, rows)
+    })
+    .await
+    .map_err(|e| format!("启动终端失败: {e}"))?
+}
+
+#[allow(clippy::too_many_arguments)]
+fn shell_spawn_sync(
     app: AppHandle,
     manager: tauri::State<'_, PtyManager>,
     cwd: String,
@@ -1105,7 +1188,23 @@ pub fn shell_spawn(
 /// 直接启动登记的 Custom Runtime。刻意不经过 shell，避免引号拼接、
 /// shell 注入以及 Windows/POSIX 参数语义差异。
 #[tauri::command]
-pub fn pty_spawn_custom(
+pub async fn pty_spawn_custom(
+    app: AppHandle,
+    runtime_id: String,
+    cwd: String,
+    run_id: String,
+    cols: Option<u16>,
+    rows: Option<u16>,
+) -> Result<SpawnResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let _turn = spawn_turn();
+        pty_spawn_custom_sync(app.clone(), app.state(), runtime_id, cwd, run_id, cols, rows)
+    })
+    .await
+    .map_err(|e| format!("启动终端失败: {e}"))?
+}
+
+fn pty_spawn_custom_sync(
     app: AppHandle,
     manager: tauri::State<'_, PtyManager>,
     runtime_id: String,
@@ -1841,33 +1940,68 @@ fn discard_spawned_pty(app: &AppHandle, manager: &PtyManager, id: &str) {
     }
 }
 
+/// 在后台线程做（见 SPAWN_LOCK 上方说明）。紧接着要按同一 Run 重新拉起的调用方必须 await 它：
+/// Run 的收尾登记在等子进程退出之后，不等完就拉起，新进程认领的 Run 会被这里随后的收尾关掉
 #[tauri::command]
-pub fn pty_kill(
-    app: AppHandle,
-    manager: tauri::State<'_, PtyManager>,
-    pty_id: String,
-) -> Result<(), String> {
-    let entry = manager.entries.lock().unwrap().remove(&pty_id);
-    if let Some(mut entry) = entry {
-        forget_cwd_file(&mut entry);
-        terminate_pty_child(entry.child);
-        if let Some(run_id) = entry.run_id {
-            let _ = crate::runs::close_run_with_result(
-                &run_id,
-                None,
-                "stopped",
-                None,
-                Some("用户主动停止"),
-            );
+pub async fn pty_kill(app: AppHandle, pty_id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let manager = app.state::<PtyManager>();
+        let entry = manager.entries.lock().unwrap().remove(&pty_id);
+        if let Some(mut entry) = entry {
+            forget_cwd_file(&mut entry);
+            terminate_pty_child(entry.child);
+            if let Some(run_id) = entry.run_id {
+                let _ = crate::runs::close_run_with_result(
+                    &run_id,
+                    None,
+                    "stopped",
+                    None,
+                    Some("用户主动停止"),
+                );
+            }
+            let _ = app.emit(&format!("pty-exit-{pty_id}"), -1);
         }
-        let _ = app.emit(&format!("pty-exit-{pty_id}"), -1);
-    }
-    Ok(())
+    })
+    .await
+    .map_err(|e| format!("停止终端失败: {e}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn waiting_commands_stay_off_main_thread() {
+        // 不带 async 的 Tauri 命令跑在主线程上。这几个会等子进程 / 外部应用 / 回收站或冻结快照，
+        // 改回同步，等待期间所有终端的输出和按键都会停住（conventions/terminal.md「会等待的命令不占主线程」）
+        let sources: [(&str, &str, &[&str]); 4] = [
+            (
+                "pty.rs",
+                include_str!("pty.rs"),
+                &["pty_spawn", "shell_spawn", "pty_spawn_custom", "pty_kill"],
+            ),
+            (
+                "agents.rs",
+                include_str!("agents.rs"),
+                &["resume_external_terminal", "new_external_terminal", "digest_external_terminal"],
+            ),
+            ("runs.rs", include_str!("runs.rs"), &["run_close"]),
+            (
+                "scheduler.rs",
+                include_str!("scheduler.rs"),
+                &["delete_schedule", "schedule_run_delete", "adopt_watch_run"],
+            ),
+        ];
+        for (file, source, commands) in sources {
+            let source = source.replace("\r\n", "\n");
+            for name in commands {
+                assert!(
+                    source.contains(&format!("#[tauri::command]\npub async fn {name}(")),
+                    "{file} 的 {name} 必须是 async 命令并在后台线程里干活"
+                );
+            }
+        }
+    }
 
     #[test]
     fn workspace_path_matching_is_segment_safe() {

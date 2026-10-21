@@ -457,6 +457,24 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-21 · 终端性能：会等待的命令挪出主线程
+
+用户问「Mesa 用的是伪终端，终端性能是不是被这个方式定了上限」。结论：PTY 不是上限——原生终端同样从 PTY 读，本机实测 macOS
+单个 PTY 约 49 MB/s，agent 界面每秒只出几 KB 到几十 KB。上限在 PTY 之后：Rust 读线程 → 16ms 合帧 → Tauri 事件（JSON 拼进
+一段脚本在网页里执行，要排主线程的队）→ 网页主线程上的 xterm.js 解析与渲染，天花板约在 VS Code 内置终端一档。查出四处差距，
+用户让先做第一处：
+
+一，**会等待的命令挪出主线程**。不带 `async` 的 Tauri 命令在主线程上执行；`pty_spawn` 起 Codex 标签要等 app-server 就绪（最长
+4 秒）、`pty_kill` 要等子进程退出（最长 2 秒）并可能冻结评审快照，这期间所有标签的输出和按键都停住。改为 `async` +
+`spawn_blocking`，同批挪出外部终端三命令（等 osascript / open，首次控制终端应用还会等授权框）、`run_close`（冻结快照）、
+`delete_schedule`（Finder 回收站）、`schedule_run_delete`、`adopt_watch_run`。三种拉起之间用 `SPAWN_LOCK` 保持原来的逐个进行；
+挪出后命令不再按调用顺序串行，停止后要按同一 Run 重拉的调用方必须 await `pty_kill`。规则写进 AGENTS.md 与 terminal.md。
+
+二，**其余三处另行处理**：没有流控（刷屏时 Ctrl+C 要等写入队列消化完，已开单独任务，按 VS Code 的确认机制做）；Mac 默认 DOM
+渲染器（清晰度拍板不改，值得做的是查 WebGL 在 WKWebView 里发软的根因）；事件走 JSON + 脚本执行（改 Channel 二进制，刷屏时才有
+明显收益，优先级最低）。**不做原生终端视图**（嵌 libghostty 一类）：信任菜单 / 终端菜单 / 实时回复 / 连接错误 / 模型读回 / 回放 /
+搜索 / 选中引用都直接读 xterm.js 的屏幕内容，换掉要全部改成从 Rust 读屏，分屏与浮层叠放要重做，三平台各写一套渲染。
+
 ### 2026-10-21 · 从手机添加：已配对的手机随时能发，Mesa 收到自动弹窗
 
 用户：「现在必须在 Mesa 打开页面手机才可以传，能否手机直接传，然后 Mesa 打开弹窗」。这推翻了当日上一条「不做 Mesa 开着就自动接收」

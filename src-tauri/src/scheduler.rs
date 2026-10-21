@@ -1097,8 +1097,15 @@ pub(crate) fn run_marked_adopted(run_id: &str) -> bool {
 }
 
 /// 把隔离树里的巡检产物拷进主仓。不走 git merge，不自动发生。
+/// 要拷 PDF、改台账，在后台线程做（见 conventions/terminal.md「会等待的命令不占主线程」）
 #[tauri::command]
-pub fn adopt_watch_run(app: tauri::AppHandle, run_id: String) -> Result<Vec<String>, String> {
+pub async fn adopt_watch_run(app: tauri::AppHandle, run_id: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || adopt_watch_run_sync(app, run_id))
+        .await
+        .map_err(|e| format!("采纳失败: {e}"))?
+}
+
+fn adopt_watch_run_sync(app: tauri::AppHandle, run_id: String) -> Result<Vec<String>, String> {
     let run = crate::runs::run_get(run_id.clone())?.ok_or("Run 不存在")?;
     if run.task_kind != "watch" {
         return Err("只有定时巡检 Run 可以采纳进主仓".into());
@@ -1888,8 +1895,16 @@ pub fn update_schedule(id: String, patch: UpdateSchedulePatch) -> Result<Schedul
     update_schedule_at(&schedules_path()?, &id, patch).map(ScheduleDto::from)
 }
 
+/// 在后台线程删：隔离 worktree 走系统回收站（macOS 经 Finder，几秒）还带重试，
+/// 放主线程上终端会跟着停住（见 conventions/terminal.md「会等待的命令不占主线程」）
 #[tauri::command]
-pub fn delete_schedule(id: String) -> Result<(), String> {
+pub async fn delete_schedule(id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || delete_schedule_sync(id))
+        .await
+        .map_err(|e| format!("删除定时任务失败: {e}"))?
+}
+
+fn delete_schedule_sync(id: String) -> Result<(), String> {
     // 还有没收尾的运行先拒删：跑着的巡检牵着头程互斥与产物冻结，强删会留半截状态
     if let Some(run_id) = crate::runs::schedule_open_run(&id) {
         return Err(format!("这条任务还有没结束的运行（{run_id}），先停止再删除"));
@@ -1995,8 +2010,19 @@ fn remove_failed_record_at(
 /// 删除一条定时运行历史（人显式操作）：Run 账行与事件、历史行、冻结证据一起删。
 /// 隔离 worktree 按日程共享、后续运行还要用，不随单条历史删；已采纳进项目的产物不受影响。
 /// runId 为空时按 (scheduleId, at) 删启动即失败的记录（没有 Run 行与快照可清）。
+/// 冻结证据是整个目录，在后台线程删（见 conventions/terminal.md「会等待的命令不占主线程」）
 #[tauri::command]
-pub fn schedule_run_delete(
+pub async fn schedule_run_delete(
+    run_id: Option<String>,
+    schedule_id: Option<String>,
+    at: Option<String>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || schedule_run_delete_sync(run_id, schedule_id, at))
+        .await
+        .map_err(|e| format!("删除运行记录失败: {e}"))?
+}
+
+fn schedule_run_delete_sync(
     run_id: Option<String>,
     schedule_id: Option<String>,
     at: Option<String>,

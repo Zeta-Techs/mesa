@@ -3733,21 +3733,27 @@ pub fn run_cancel(id: String) -> Result<(), String> {
     crate::process::cancel_capture(&id)
 }
 
+/// 在后台线程收尾：要评审的目标会在这里冻结快照（逐个读产物文件），放主线程上终端会跟着停住
+///（见 conventions/terminal.md「会等待的命令不占主线程」）
 #[tauri::command]
-pub fn run_close(
+pub async fn run_close(
     id: String,
     session_id: Option<String>,
     status: Option<String>,
     exit_code: Option<i32>,
     reason: Option<String>,
 ) -> Result<(), String> {
-    close_run_with_result(
-        &id,
-        session_id.as_deref(),
-        status.as_deref().unwrap_or("stopped"),
-        exit_code,
-        reason.as_deref(),
-    )
+    tauri::async_runtime::spawn_blocking(move || {
+        close_run_with_result(
+            &id,
+            session_id.as_deref(),
+            status.as_deref().unwrap_or("stopped"),
+            exit_code,
+            reason.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| format!("结束运行失败: {e}"))?
 }
 #[tauri::command]
 pub fn run_attach_session(id: String, session_id: String) -> Result<(), String> {
