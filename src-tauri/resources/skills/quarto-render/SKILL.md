@@ -70,7 +70,7 @@ quarto render manuscript/<稿件>.md --to pdf --output-dir output
 - **正文 `@` 被当成引用**（`citation polymer not found` 这类）：材料名里的 `@` 写成 `\@`。子图写成 `@fig-2(a–c)`，Quarto 只认整图标签。
 - **图注和交叉引用**：图片写成 `![说明](../figures/figN.png){#fig-N out-width="100%"}`，表题末尾写 `{#tbl-N}`。正文交叉引用只写 `@fig-N`、`@tbl-N`，不要再加 `Figure` 或 `Table`，否则 PDF 和普通 Word 会显示 `Figure Figure 1`。阅读稿按 Quarto 所选样式排图注、表题和文献表。两份域稿另交，引用保持作者-年，等人在 EndNote 或 Zotero 里换样式。
 - **`--output-dir output` 仍落到 `output/manuscript/`**：把 `draft.pdf` / `draft.docx` 移到 `output/`，删掉带过来的脚手架目录。`keep-tex` 写在 YAML 里，不是命令行旗标。
-- **xelatex 跑满 9 轮**：先查 PDF 有没有 `??` 和未解析引用。没有就记入渲染说明，不要为消这句警告改稿。
+- **xelatex 跑满 9 轮**：图注、表题里有 Ω、α 这类希腊字母时，unicode-math 会让标签每轮都判「可能已变」。`manuscript_font.py` 会在 YAML 的 `include-in-header` 里写一段 `\@testdef`（标签按字面比较），YAML 里没有这段就重跑一次字体脚本，不要删希腊字母。有这段仍跑满，先查 PDF 有没有 `??` 和未解析引用。没有就记入渲染说明，不要为消这句警告改稿。
 
 ### 5. 修复-验证闭环
 

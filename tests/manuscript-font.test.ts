@@ -103,6 +103,34 @@ test("字体脚本把 reference-doc 写进 YAML 的 format.docx：任何入口�
   assert.doesNotMatch(kept.stdout, /reference-doc: reference\.docx/);
 });
 
+test("PDF 头写入标签按字面比较：图注里的希腊字母不再让 xelatex 跑满 9 轮", () => {
+  const booktabs = (front: string) => {
+    const r = spawnSync(
+      python,
+      [
+        "-c",
+        "import sys, importlib.util; sys.stdout.reconfigure(encoding='utf-8'); spec = importlib.util.spec_from_file_location('mf', sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m); print(m.ensure_booktabs(m.ensure_booktabs(sys.argv[2])))",
+        script,
+        front,
+      ],
+      { encoding: "utf8" },
+    );
+    assert.equal(r.status, 0, r.stderr);
+    return (r.stdout ?? "").replace(/\r\n/g, "\n");
+  };
+  const fresh = booktabs("format:\n  pdf:\n    pdf-engine: xelatex\n");
+  assert.match(fresh, /\\def\\@testdef#1#2#3\{.*\\detokenize/);
+  assert.equal(fresh.match(/\\@testdef/g)?.length, 1);
+  assert.equal(fresh.match(/parindent/g)?.length, 1);
+  // 旧稿已有 booktabs + 缩进，只补标签这段
+  const old = booktabs(
+    "format:\n  pdf:\n    include-in-header:\n      text: |\n        \\usepackage{booktabs}\n        \\usepackage{indentfirst}\n        \\setlength{\\parindent}{2em}\n    pdf-engine: xelatex\n",
+  );
+  assert.equal(old.match(/\\@testdef/g)?.length, 1);
+  assert.equal(old.match(/parindent/g)?.length, 1);
+  assert.match(old, /\\usepackage\{booktabs\}\n        % Mesa: compare labels/);
+});
+
 test("Word 主题字体槽按闭合标签整段替换（不依赖 quarto）", () => {
   const theme =
     '<a:fontScheme><a:majorFont><a:latin typeface="Aptos Display" panose="1"/><a:ea typeface=""/><a:font script="Hans" typeface="等线 Light"/></a:majorFont>' +

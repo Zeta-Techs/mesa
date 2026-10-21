@@ -75,18 +75,34 @@ def set_yaml_line(block: str, key: str, value: str) -> str:
     return "\n".join(out)
 
 
+INDENT_LINES = ["\\usepackage{indentfirst}", "\\setlength{\\parindent}{2em}"]
+# unicode-math 开文档后才把希腊字母改成 other 类，开头读 .aux 时还是 letter 类。图注里有 Ω、α 的
+# 标签每轮都判「可能已变」，xelatex 跑满 9 轮还报警告（2026-10-21 综述稿实证）。标签改按字面比较。
+STABLE_LABEL_LINES = [
+    "% Mesa: compare labels as strings (unicode-math recatcodes Greek after the .aux is read)",
+    "\\makeatletter",
+    "\\def\\@testdef#1#2#3{\\expandafter\\let\\expandafter\\reserved@b\\csname #1@#2\\endcsname"
+    "\\edef\\reserved@a{\\detokenize{#3}}\\ifx\\reserved@b\\relax\\@tempswatrue\\else"
+    "\\edef\\reserved@b{\\detokenize\\expandafter{\\reserved@b}}"
+    "\\ifx\\reserved@a\\reserved@b\\else\\@tempswatrue\\fi\\fi}",
+    "\\makeatother",
+]
+
+
 def ensure_booktabs(block: str) -> str:
-    """PDF 表格用 booktabs：顶线、表头线、底线。正文首行缩进两个字符。已有 pdf 段也补上。"""
-    extra = "\\usepackage{indentfirst}\n        \\setlength{\\parindent}{2em}\n"
+    """PDF 表格用 booktabs：顶线、表头线、底线。正文首行缩进两个字符。标签按字面比较。已有 pdf 段也补上。"""
+    missing = []
+    if "parindent" not in block:
+        missing += INDENT_LINES
+    if "\\@testdef" not in block:
+        missing += STABLE_LABEL_LINES
+    extra = "".join(f"        {line}\n" for line in missing)
     if "booktabs" in block:
-        if "parindent" in block:
+        if not missing:
             return block
-        return block.replace("\\usepackage{booktabs}\n", "\\usepackage{booktabs}\n        " + extra, 1)
+        return block.replace("\\usepackage{booktabs}\n", "\\usepackage{booktabs}\n" + extra, 1)
     needle = "  pdf:\n"
-    insert = (
-        "  pdf:\n    include-in-header:\n      text: |\n        \\usepackage{booktabs}\n        "
-        + extra
-    )
+    insert = "  pdf:\n    include-in-header:\n      text: |\n        \\usepackage{booktabs}\n" + extra
     if needle in block:
         return block.replace(needle, insert, 1)
     return block
