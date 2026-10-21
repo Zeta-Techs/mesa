@@ -472,6 +472,12 @@ Mesa 对 Claude 只能读屏（hooks 不带正文），所以 Windows 上 Claude
 Write / Bash 等照常发、另把十来个少用的工具藏在 ToolSearch 后面；glm-5.3-flash 拿 ToolSearch 去搜 Write / Bash（它只搜延迟列表，
 当然搜不到），就断定没工具。定下：非 `claude-*` 模型注入 `ENABLE_TOOL_SEARCH=false`（`agents::claude_model_env`，用户自设不动），
 假网关核对 Mesa 的真实启动计划：ToolSearch 与占位工具消失、24 个工具一次发全；代价是每次请求多几千 token 输入。用户问「Mac 上不出现」：同一假网关什么都不注入时 Claude Code 2.1.305 发 ToolSearch、2.1.292 不发——是 CLI 新版的变化（本机 Windows 已自动升级到 2.1.305），Mac 升级后同样会遇到，这次的注入两边都生效。
+四，**Claude 说「本会话没有 TodoWrite 类工具」、用 Markdown 列计划**：Claude Code 2.1.306 的任务清单工具（TaskCreate / TaskUpdate / TaskList / TaskGet，
+取代旧 TodoWrite）只对自家老模型（≤ opus-4-7 / sonnet-4-6 / haiku-4-5）默认发，其余模型名（含 claude-opus-5 与一切第三方模型）不发，
+`CLAUDE_CODE_ENABLE_TODO_TOOLS=1` 打开。假网关核对：glm-5.3 不注入 23 个工具、注入后 27 个（多 4 个 Task 工具）。定下：非 `claude-*` 模型注入它
+（同 ENABLE_TOOL_SEARCH 口径，用户自设不动）；Claude 新模型是官方有意不发，不动。聊天层计划卡同步认 Task 工具：一轮里 TaskCreate 逐条建
+（编号取自结果「Task #N created successfully」）、TaskUpdate 按编号改状态 / deleted 删除，拼回一张清单（`conversation-tools.ts taskPlan`，
+照 Claude Code 自己的拼法）；上一轮建的任务本轮只改状态时拼不出标题，不画卡。
 
 ### 2026-10-20 · 聊天层 Windows 八家抓屏核对：读屏与 macOS 同形；Grok 多行改写 CR
 

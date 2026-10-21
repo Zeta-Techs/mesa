@@ -650,7 +650,8 @@ src-tauri/src/
                              #   kimi KIMI_MODEL_DISPLAY_NAME / opencode provider+models name）；
                              # claude 不写 CLAUDE_CODE_SUBAGENT_MODEL（保留 Task 参数/frontmatter/inherit 原生选择链），
                              #   用 --settings 只覆盖本次连接的非敏感模型选择；
-                             # claude 非 Claude 模型写 ENABLE_TOOL_SEARCH=false（弱模型拿 ToolSearch 搜内置工具、搜不到就不干活）；
+                             # claude 非 Claude 模型写 ENABLE_TOOL_SEARCH=false（弱模型拿 ToolSearch 搜内置工具、搜不到就不干活）
+                             #   与 CLAUDE_CODE_ENABLE_TODO_TOOLS=1（新版只给自家老模型发任务清单工具）；
                              # claude 长上下文声明 CLAUDE_CODE_MAX_CONTEXT_TOKENS + CLAUDE_CODE_AUTO_COMPACT_WINDOW
                              #   同值成对（启动注入与设为全局同键同条件；注册链确知 >200K 才注，防第三方模型被按 200K 提前 compact）；
                              # codex catalog 的 base_instructions = 本机 Codex 对未登记模型的默认提示词原文：按版本取一次缓存到

@@ -721,6 +721,12 @@ fn claude_model_env(profile: &Profile, model: Option<&str>, user_keys: &[String]
     if fill.is_some_and(|m| !m.to_ascii_lowercase().starts_with("claude-")) && !user_has("ENABLE_TOOL_SEARCH") {
         env.push(("ENABLE_TOOL_SEARCH".into(), "false".into()));
     }
+    // 非 Claude 模型打开任务清单工具（TaskCreate / TaskUpdate…）：Claude Code 2.1.306 只给自家老模型（≤ opus-4-7 / sonnet-4-6）
+    // 默认发，别的模型名一律不发，模型就说「没有待办 / 计划工具」、只能用 Markdown 列计划，聊天层画不出计划卡
+    // （2026-10-21 用户会话实证 glm-5.3；假网关核对：加上后多出 4 个 Task 工具）。Claude 新模型是官方有意不发，不动
+    if fill.is_some_and(|m| !m.to_ascii_lowercase().starts_with("claude-")) && !user_has("CLAUDE_CODE_ENABLE_TODO_TOOLS") {
+        env.push(("CLAUDE_CODE_ENABLE_TODO_TOOLS".into(), "1".into()));
+    }
     env
 }
 
@@ -4119,11 +4125,12 @@ mod tests {
         p.models = vec!["glm-5.3-flash".into()];
         let env = claude_model_env(&p, Some("glm-5.3-flash"), &[]);
         assert!(env.contains(&("ENABLE_TOOL_SEARCH".into(), "false".into())));
+        assert!(env.contains(&("CLAUDE_CODE_ENABLE_TODO_TOOLS".into(), "1".into())));
         // Claude 自家模型照 Claude Code 默认；用户自己设过不动
         let env = claude_model_env(&p, Some("claude-sonnet-4-5"), &[]);
-        assert!(!env.iter().any(|(k, _)| k == "ENABLE_TOOL_SEARCH"));
-        let env = claude_model_env(&p, Some("glm-5.3"), &["ENABLE_TOOL_SEARCH".into()]);
-        assert!(!env.iter().any(|(k, _)| k == "ENABLE_TOOL_SEARCH"));
+        assert!(!env.iter().any(|(k, _)| k == "ENABLE_TOOL_SEARCH" || k == "CLAUDE_CODE_ENABLE_TODO_TOOLS"));
+        let env = claude_model_env(&p, Some("glm-5.3"), &["ENABLE_TOOL_SEARCH".into(), "CLAUDE_CODE_ENABLE_TODO_TOOLS".into()]);
+        assert!(!env.iter().any(|(k, _)| k == "ENABLE_TOOL_SEARCH" || k == "CLAUDE_CODE_ENABLE_TODO_TOOLS"));
     }
 
     #[test]

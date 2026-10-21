@@ -313,5 +313,45 @@ export function turnPlan(items: readonly ProcessItem[]): PlanEntry[] | null {
     const entries = planEntries(tools[i].activity.input);
     if (entries) return entries;
   }
-  return null;
+  return taskPlan(tools);
+}
+
+function taskArgs(input: string): Record<string, unknown> | null {
+  try {
+    const v = JSON.parse(input) as unknown;
+    if (!v || typeof v !== "object") return null;
+    const inner = (v as Record<string, unknown>).input;
+    return (inner && typeof inner === "object" ? inner : v) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+/** Claude Code 新版的任务工具不传整张清单：TaskCreate 一次建一条（编号在结果「Task #3 created successfully」里），
+ *  TaskUpdate 按编号改状态 / 删除。照 Claude Code 自己的拼法把这一轮的调用拼回一张清单；
+ *  上一轮建的任务这一轮只改状态时拼不出（不知道标题），不画 */
+function taskPlan(tools: readonly ProcessTool[]): PlanEntry[] | null {
+  const tasks = new Map<string, PlanEntry>();
+  tools.forEach((t, i) => {
+    const name = t.activity.toolName.toLowerCase();
+    const args = taskArgs(t.activity.input);
+    if (!args) return;
+    if (name === "taskcreate") {
+      const subject = typeof args.subject === "string" ? args.subject.trim() : "";
+      if (!subject) return;
+      const id = t.result?.match(/Task #(\w+) created successfully/)?.[1] ?? `pending-${i}`;
+      tasks.set(id, { text: subject, status: "pending" });
+    } else if (name === "taskupdate") {
+      const id = String(args.taskId ?? "");
+      if (args.status === "deleted") {
+        tasks.delete(id);
+        return;
+      }
+      const prev = tasks.get(id);
+      if (!prev) return;
+      const subject = typeof args.subject === "string" && args.subject.trim() ? args.subject.trim() : prev.text;
+      tasks.set(id, { text: subject, status: args.status === undefined ? prev.status : planStatus(args.status) });
+    }
+  });
+  return tasks.size ? [...tasks.values()] : null;
 }
