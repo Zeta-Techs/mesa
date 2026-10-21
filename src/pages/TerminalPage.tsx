@@ -6880,9 +6880,6 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     return list;
   }
 
-  // 标签条 ⋯「对话操作」：与斜杠面板「Mesa」组同一份（mesaCommandsFor），给不习惯打 / 的人
-  const [convMenu, setConvMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
-
   // 终端选中文字交给对话（「Mesa内嵌终端优化」会话的右键菜单 / 选区浮条调 onConversationInsert）：
   // 这个标签在聊天层 → 进聊天输入框（send=true 直接发）；在终端层 → bracketed paste 写进 TUI 输入行，send 时补回车
   const [chatInsertByTab, setChatInsertByTab] = useState<
@@ -9115,25 +9112,10 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                     </span>
                   );
                 })()}
+                {/* 聊天层不放 ✦：输入框「＋」里有同一份「插入技能 / MCP」；对话操作走输入框 /（2026-10-21 用户拍板去掉标签条 ⋯ 与聊天态 ✦） */}
                 {active &&
-                  (surfaceModeByTab[t.id] ?? DEFAULT_SURFACE_MODE) === "chat" && (
-                    <button
-                      type="button"
-                      title="对话操作（新对话、压缩、分叉、导出、看改动…；输入框里打 / 也能找到）"
-                      aria-label="对话操作"
-                      aria-haspopup="menu"
-                      onPointerDown={(event) => event.stopPropagation()}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        const r = event.currentTarget.getBoundingClientRect();
-                        setConvMenu({ tabId: t.id, x: r.left, y: r.bottom + 4 });
-                      }}
-                      className="flex size-5 shrink-0 items-center justify-center rounded-full text-sm leading-none text-l4 hover:bg-hover hover:text-l2"
-                    >
-                      ⋯
-                    </button>
-                  )}
-                {active && s?.ptyId && (
+                  s?.ptyId &&
+                  (surfaceModeByTab[t.id] ?? DEFAULT_SURFACE_MODE) !== "chat" && (
                   <button
                     type="button"
                     title="插入技能或 MCP"
@@ -9183,22 +9165,6 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           })}
             </div>
           </div>
-          {convMenu && (
-            <ContextMenu
-              x={convMenu.x}
-              y={convMenu.y}
-              onClose={() => setConvMenu(null)}
-              items={[
-                { header: "对话操作" },
-                ...mesaCommandsFor(convMenu.tabId).map((c) => ({
-                  label: c.label,
-                  hint: c.cmd,
-                  title: c.hint,
-                  onSelect: c.run,
-                })),
-              ]}
-            />
-          )}
           <button
             // 「+」＝在当前项目里再开一个 Agent：目录跟当前标签走（2026-10-18 用户拍板；原先一律主目录）。
             // 随手问用侧栏「快速开聊」
