@@ -1986,6 +1986,11 @@ const TerminalView = memo(function TerminalView({
     return () => window.removeEventListener("keydown", onKey);
   }, [visible, primaryFocus, welcomeVisible]);
   const [runId, setRunId] = useState<string | null>(initialRunId ?? null);
+  // 轮询 / 旁路回调的闭包是 launch 那一轮捕获的，那时 setRunId 还没生效——在里面读 runId 永远是旧值（新标签是 null），
+  // lockLink 就不给 Run 登记会话，换权限重开时报「此 Run 不支持恢复」（2026-10-21：Gemini / Kimi / OpenCode 的交互 Run
+  // 全都没登记会话）。闭包里一律读这个 ref
+  const runIdRef = useRef<string | null>(runId);
+  runIdRef.current = runId;
   const [attention, setAttention] = useState<TabStatus["attention"]>(null);
   // PTY 输出静默计时：working 标由输出事件打起，静默后按 onPtyWorkingSilence 熄灭
   const lastOutputAtRef = useRef(0);
@@ -4014,8 +4019,9 @@ const TerminalView = memo(function TerminalView({
     setLinkState("linked");
     setSyncState("polling");
     setLiveSession(ctx.agentId, sessionId, tabId);
-    if (runId) {
-      invoke("run_attach_session", { id: runId, sessionId }).catch(() => {});
+    const rid = runIdRef.current ?? initialRunId;
+    if (rid) {
+      invoke("run_attach_session", { id: rid, sessionId }).catch(() => {});
     }
     void invoke("set_session_profile_command", {
       agent: ctx.agentId,
@@ -4357,7 +4363,8 @@ const TerminalView = memo(function TerminalView({
     resumeId?: string,
     /** typeDroppedPrompt：CLI 没有启动注入参数（Kimi）时由调用方等 TUI 就绪后把指令打进输入框，
         这里按「已发出」收起启动栏、不复制不报错 */
-    options?: { prompt?: string; readonly?: boolean; typeDroppedPrompt?: boolean },
+    /** freshRun：不沿用标签上的旧 Run，另开一条（换权限重开：旧 Run 刚被停下、权限也变了，沿用会被身份校验拒掉） */
+    options?: { prompt?: string; readonly?: boolean; typeDroppedPrompt?: boolean; freshRun?: boolean },
   ): Promise<{ ptyId: string; promptDropped: boolean } | null> {
     setError(null);
     setNotice(null);
@@ -4408,6 +4415,7 @@ const TerminalView = memo(function TerminalView({
             rows: size.rows,
           },
         );
+        runIdRef.current = res.runId ?? fresh.id;
         setRunId(res.runId ?? fresh.id);
         await attach(res.ptyId, "agent", { reset: true });
         setExited(false);
@@ -4475,7 +4483,7 @@ const TerminalView = memo(function TerminalView({
       bar: barExpandedRef.current,
       advanced: advancedLaunchOpenRef.current,
     };
-    const probeRun = (runId ?? initialRunId ?? "").trim();
+    const probeRun = options?.freshRun ? "" : (runId ?? initialRunId ?? "").trim();
     let existingPty: string | null = null;
     if (probeRun) {
       existingPty = await invoke<string | null>("pty_id_for_run", {
@@ -4524,7 +4532,7 @@ const TerminalView = memo(function TerminalView({
         // 登记失败静默降级：会话不归步骤，仍可在对话页全部列表里看到
       });
     }
-    const lockKey = (runId ?? initialRunId ?? "").trim() || `tab:${tabId}`;
+    const lockKey = (options?.freshRun ? "" : (runId ?? initialRunId ?? "").trim()) || `tab:${tabId}`;
     if (interactiveLaunchLocks.has(lockKey)) {
       return null;
     }
@@ -4579,13 +4587,16 @@ const TerminalView = memo(function TerminalView({
             ? null
             : permissionMode,
         reuseKey: reuseKey ?? null,
-        runId: runId ?? initialRunId ?? null,
+        runId: options?.freshRun ? null : (runId ?? initialRunId ?? null),
         taskId: taskId ?? null,
         cols: size.cols,
         rows: size.rows,
       });
       if (res.adopted) resizeLatchRef.current = { kind: "frozen" };
-      if (res.runId) setRunId(res.runId);
+      if (res.runId) {
+        runIdRef.current = res.runId;
+        setRunId(res.runId);
+      }
       // 要接的那段对话从没落盘（上次启动没聊就退出 / 启动即崩），后端已改开新会话：说一句，
       // 免得用户以为接上了上次的上下文
       if (res.resumeUnwritten) {
@@ -4793,7 +4804,8 @@ const TerminalView = memo(function TerminalView({
   useEffect(() => {
     if (!permissionRestartRef.current || running || !shellActive) return;
     permissionRestartRef.current = false;
-    void launch(lastResumeRef.current ?? undefined, { prompt: "" });
+    // 另开一条 Run 接回原对话：旧 Run 已停、权限也变了（只讨论 ↔ 可改文件是 Run 身份的一部分）
+    void launch(lastResumeRef.current ?? undefined, { prompt: "", freshRun: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running, shellActive]);
 
