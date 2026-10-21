@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   exploreLabel,
+  firstCompleteTurnIndex,
   formatSeconds,
   groupConversationSegments,
   isProcessBlock,
@@ -201,4 +202,24 @@ test("计划：各家待办参数收成同一份清单，一轮只取最后一�
   ];
   const t = turnOf(groupConversationSegments(messages));
   assert.deepEqual(turnPlan(t.items), [{ text: "A", status: "completed" }]);
+});
+
+test("还有更早一页时，开头被分页切断的半轮先不显示", () => {
+  const half = [
+    msg("assistant", [{ kind: "tool_use", text: "ls", toolName: "Bash" } as BlockDto]),
+    msg("user", [{ kind: "tool_result", text: "ok" } as BlockDto]),
+    msg("assistant", [{ kind: "text", text: "做完了" } as BlockDto]),
+  ];
+  const ask = msg("user", [{ kind: "text", text: "下一个问题" } as BlockDto]);
+  const list = [...half, ask, msg("assistant", [{ kind: "text", text: "好" } as BlockDto])];
+  assert.equal(firstCompleteTurnIndex(list, true), 3);
+  // 已到对话开头：全显示
+  assert.equal(firstCompleteTurnIndex(list, false), 0);
+  // 开头就是提问
+  assert.equal(firstCompleteTurnIndex([ask, ...half], true), 0);
+  // 整页都在一轮里：不藏
+  assert.equal(firstCompleteTurnIndex(half, true), 0);
+  // 搜索命中落在半轮里：不藏
+  assert.equal(firstCompleteTurnIndex(list, true, 1), 0);
+  assert.equal(firstCompleteTurnIndex(list, true, 4), 3);
 });

@@ -54,6 +54,24 @@ function isTurnBody(m: ChatMessageDto): boolean {
   return m.blocks.length > 0 && m.blocks.every((b) => b.kind === "tool_result");
 }
 
+/**
+ * 回放只显示完整的轮：还有更早一页没加载时，开头那段多半是被分页切断的半轮（它的提问在更早一页里），
+ * 收起行「已工作 X 分 · 运行 N 条命令」会在加载更早一页后变长、变多（2026-10-21 用户截图）。
+ * 返回该从哪条开始显示：第一条真正的提问；没有更早一页、找不到提问（一轮比一整页还长）、
+ * 或要定位的那条（搜索命中）落在半轮里时从 0 开始，宁可显示半轮也不藏东西。
+ */
+export function firstCompleteTurnIndex(
+  messages: readonly ChatMessageDto[],
+  hasOlder: boolean,
+  keepIndex: number | null = null,
+): number {
+  if (!hasOlder) return 0;
+  const at = messages.findIndex((m) => !isTurnBody(m));
+  if (at <= 0) return 0;
+  if (keepIndex != null && keepIndex >= 0 && keepIndex < at) return 0;
+  return at;
+}
+
 export function parseTimestamp(ts: string | null): number | null {
   if (!ts) return null;
   if (/^\d{10}$/.test(ts)) return Number(ts) * 1000;

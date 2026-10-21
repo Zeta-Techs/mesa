@@ -1,9 +1,10 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import ConversationView from "./ConversationView";
 import ChatComposer from "./ChatComposer";
 import ChatEmptyStart from "./ChatEmptyStart";
+import { firstCompleteTurnIndex } from "../conversation-tools";
 import { useAutoLoadOlder, wasPrepended } from "../auto-load-older";
 import { ChevronDown, FolderOpen } from "lucide-react";
 import { chatGreeting } from "../chat-empty-start";
@@ -218,6 +219,11 @@ export default function ChatSurface({
   const prevScrollHeightRef = useRef(0);
   const loadingOlderRef = useRef(false);
   const prevFirstKeyRef = useRef<string | null>(null);
+  // 被分页切断的半轮先不显示（它的提问在更早一页里），否则收起行的时长 / 条数会在加载更早一页后变
+  const shownMessages = useMemo(
+    () => messages.slice(firstCompleteTurnIndex(messages, hasOlder)),
+    [messages, hasOlder],
+  );
 
   useEffect(() => {
     void invoke<string>("home_dir")
@@ -273,8 +279,8 @@ export default function ChatSurface({
     if (!el) return;
     const prepended =
       loadingOlderRef.current &&
-      wasPrepended(prevFirstKeyRef.current, messages.map(chatMessageKey));
-    prevFirstKeyRef.current = messages[0] ? chatMessageKey(messages[0]) : null;
+      wasPrepended(prevFirstKeyRef.current, shownMessages.map(chatMessageKey));
+    prevFirstKeyRef.current = shownMessages[0] ? chatMessageKey(shownMessages[0]) : null;
     // 只在头部真的多了消息时补偿：等更早一页的途中最新窗口刷新了（只在尾部追加），
     // 那次不能把补偿用掉，否则阅读位置会跳
     if (loadingOlderRef.current && prepended) {
@@ -287,7 +293,7 @@ export default function ChatSurface({
     if (followRef.current) requestAnimationFrame(scrollBottom);
     else setHasNew(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages]);
+  }, [shownMessages]);
   // 加载结束（loadingOlder 与新消息同一批到）还没前插：这页没带来更早的消息，补偿标记作废
   useLayoutEffect(() => {
     if (!loadingOlder) loadingOlderRef.current = false;
@@ -636,7 +642,7 @@ export default function ChatSurface({
             <div className="flex flex-1" />
           ) : (
             <ConversationView
-              messages={messages}
+              messages={shownMessages}
               cwd={cwd}
               working={generating || settling}
               onEditResend={(text) => setSeedInsert(text)}

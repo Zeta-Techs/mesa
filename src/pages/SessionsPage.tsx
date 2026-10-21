@@ -69,6 +69,7 @@ import {
   pickResumeProfile,
 } from "../resume-profile";
 import ConversationView from "../components/ConversationView";
+import { firstCompleteTurnIndex } from "../conversation-tools";
 import { useAutoLoadOlder } from "../auto-load-older";
 import GitPanel from "../components/GitPanel";
 import HandoffPicker from "../components/HandoffPicker";
@@ -2776,13 +2777,24 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                             }
                           />
                         ) : (
-                          <ConversationView
-                            key={`${selected?.sessionId ?? "none"}:${searchFocus?.around ?? "tail"}`}
-                            messages={messages}
-                            cwd={selected?.projectPath ?? null}
-                            focusIndex={findFocusMessageIndex(messages, searchFocus)}
-                            focusKeywords={searchFocus?.matchedKeywords ?? []}
-                          />
+                          (() => {
+                            // 被分页切断的半轮先不显示，加载到它的提问再一起出来（收起行的时长 / 条数不再变）
+                            const focusAt = findFocusMessageIndex(messages, searchFocus);
+                            const from = firstCompleteTurnIndex(
+                              messages,
+                              conversationCursor !== null,
+                              focusAt,
+                            );
+                            return (
+                              <ConversationView
+                                key={`${selected?.sessionId ?? "none"}:${searchFocus?.around ?? "tail"}`}
+                                messages={from ? messages.slice(from) : messages}
+                                cwd={selected?.projectPath ?? null}
+                                focusIndex={focusAt >= 0 ? focusAt - from : focusAt}
+                                focusKeywords={searchFocus?.matchedKeywords ?? []}
+                              />
+                            );
+                          })()
                         )}
                       </>
                     )}

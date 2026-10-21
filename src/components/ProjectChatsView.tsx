@@ -4,6 +4,7 @@ import { Archive, Pencil } from "lucide-react";
 import { agentBrandBadgeStyle } from "../agent-colors";
 import { beginProjectChat } from "./AskAiModal";
 import ConversationView from "./ConversationView";
+import { firstCompleteTurnIndex } from "../conversation-tools";
 import { useAutoLoadOlder } from "../auto-load-older";
 import { resumeSessionInTerminal } from "../quick-chat-launch";
 import { projectBoundProfileId, slotPrefs, CHAT_BINDING_SLOT } from "../project-agents";
@@ -635,7 +636,7 @@ export default function ProjectChatsView({
               ) : (
                 <ConversationView
                   key={sessionKey(selected)}
-                  messages={messages}
+                  messages={messages.slice(firstCompleteTurnIndex(messages, cursor !== null))}
                   compact
                   cwd={selected.projectPath ?? project.path}
                 />
