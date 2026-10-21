@@ -586,6 +586,49 @@ test("Zotero 域稿写出 ADDIN ZOTERO_ITEM，缺键不交 docx", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("两份域稿的字体取自 manuscript/typeface.md，没有这份文件才按平台回落（不再写死 Songti SC）", () => {
+  const root = mkdtempSync(join(tmpdir(), "mesa-docx-fonts-"));
+  try {
+    mkdirSync(join(root, "manuscript"));
+    mkdirSync(join(root, "submission"));
+    const bib = join(root, "references.bib");
+    writeFileSync(bib, "@article{Doe2020,\n title={Evidence}, author={Doe, Jane}, year={2020}, journal={Research}, doi={10.1/ex}\n}\n");
+    const endnote = citeDocx;
+    const zotero = resolve("src-tauri/resources/skills/zotero-sync/scripts/zotero_docx.py");
+    const fontsOf = (script: string, source: string, name: string) => {
+      const out = join(root, name);
+      const result = run(script, ["--input", source, "--bib", bib, "--output", out, "--report", join(root, `${name}.md`)]);
+      assert.equal(result.status, 0, result.stderr);
+      const styles = zipXml(out, ["word/styles.xml"]).stdout;
+      return {
+        latin: styles.match(/w:ascii="([^"]*)"/)?.[1],
+        cjk: styles.match(/w:eastAsia="([^"]*)"/)?.[1],
+      };
+    };
+    const final = join(root, "manuscript", "review-final.md");
+    writeFileSync(final, "See [@Doe2020].\n");
+    // 没有 typeface.md：英文 Times New Roman，中文按平台（macOS Songti SC，其余宋体）
+    const fallback = process.platform === "darwin" ? "Songti SC" : "宋体";
+    for (const script of [endnote, zotero]) {
+      assert.deepEqual(fontsOf(script, final, "a.docx"), { latin: "Times New Roman", cjk: fallback });
+    }
+    // 有 typeface.md：照用户在初稿开工时定的字体
+    writeFileSync(join(root, "manuscript", "typeface.md"), "英文：Arial\n中文：SimSun\n");
+    for (const script of [endnote, zotero]) {
+      assert.deepEqual(fontsOf(script, final, "b.docx"), { latin: "Arial", cjk: "SimSun" });
+    }
+    // 期刊格式适配的稿在 submission/，同样找得到 ../manuscript/typeface.md
+    const formatted = join(root, "submission", "formatted.md");
+    writeFileSync(formatted, "See [@Doe2020].\n");
+    for (const script of [endnote, zotero]) {
+      assert.deepEqual(fontsOf(script, formatted, "c.docx"), { latin: "Arial", cjk: "SimSun" });
+    }
+    // 字体名里的引号不能弄坏 styles.xml
+    writeFileSync(join(root, "manuscript", "typeface.md"), '英文：Foo "Bar"\n中文：宋体\n');
+    assert.deepEqual(fontsOf(endnote, final, "d.docx"), { latin: "Foo &quot;Bar&quot;", cjk: "宋体" });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("Zotero 交稿写出可扫描的引用和对应 RIS，缺键不交稿", () => {
   const root = mkdtempSync(join(tmpdir(), "mesa-zotero-rtf-"));
   try {

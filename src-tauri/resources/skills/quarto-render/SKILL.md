@@ -32,10 +32,13 @@ quarto check
 ### 2. 渲染命令与产物路径约定
 
 ```bash
-quarto render manuscript/<稿件>.md --to docx --output-dir output
-quarto render manuscript/<稿件>.md --to pdf --output-dir output
+quarto render manuscript/<稿件>.md --to docx --output-dir ../output
+quarto render manuscript/<稿件>.md --to pdf --output-dir ../output
 ```
 
+- **`--output-dir` 写 `../output`，不是 `output`**（2026-10-21 Windows + Quarto 1.10.19 实测）：没有 `_quarto.yml` 时 Quarto 把稿件所在目录当项目根，`--output-dir` 相对它解析——写 `output` 会落到 `manuscript/output/`，而且下一次渲染（先 docx 后 PDF）会把上一份清掉，只剩最后一个格式。`../output` 才是工作区根 `output/`，docx 与 PDF 可共存。稿件在 `submission/` 下同理。
+- **不要加 `--output <文件名>`**：和 `--output-dir` 同用时 Quarto 会把成品丢到工作区根（`../review-final.docx`），不进 `output/`。默认文件名就是稿件同名，不需要它。
+- **项目根不要放 `_quarto.yml`**：有它时 `../output` 会越出项目、写到工作区外面。需要项目配置时放在 `manuscript/_quarto.yml`（项目根就是 `manuscript/`，`../output` 仍然对）。
 - **先 docx 后 PDF**：docx 不走 LaTeX，能先交出可审稿。
 - **引用样式按人在流程线上选定的具体形式**。人选定后才换样式重渲：方括号编号 `[1]`、上标编号 `¹`、作者-年 `(Author, Year)` 或 `(Author Year)`，或某一本期刊的作者须知。按这一句改稿子的 csl 再渲。人还没换时，沿用稿子里已经在用的样式（初稿是编号制）照常渲，不因没选样式、也没有 `citation-style.md` 而停渲。只有人确认了目标期刊，才写 `submission/target-journal.md`；沿用编号不要写这份文件，也不要写一份空的去应付交付检查。YAML 写：
   ```yaml
@@ -43,7 +46,7 @@ quarto render manuscript/<稿件>.md --to pdf --output-dir output
   csl: citation.csl
   link-citations: true
   ```
-  项目根 `_quarto.yml` 则 `bibliography: references.bib` 与 `csl: manuscript/citation.csl`。换形式按流程线上那一句改 csl 再重渲。不要手写文末文献表。源稿仍写 `[@bib键]`。
+  项目配置只写在稿件自己的 YAML 头里（或 `manuscript/_quarto.yml`，路径同上），不放项目根。换形式按流程线上那一句改 csl 再重渲。不要手写文末文献表。源稿仍写 `[@bib键]`。
 - 正文字体在初稿开工时问人一次，写在本步工作区。默认英文 Times New Roman、中文宋体。用 `scripts/manuscript_font.py` 写入 YAML 的 `mainfont` / `CJKmainfont`，并生成 `manuscript/reference.docx` 与 `manuscript/typeface.md`。商量任务书的会话只改任务书，不要在那里写这两份。PDF 用 `pdf-engine: xelatex`，并加载 `booktabs`，表格是三线表。正文首行缩进 `2em`，节后第一段也缩进。脚本同时把 `reference-doc` 写进 YAML 的 `format.docx`（路径相对稿件所在目录），所以无论流程线的 run 脚本还是手敲的 `quarto render`，出 Word 都自动套 `manuscript/reference.docx`；Word 出来是 Quarto 默认的等线，就是 YAML 里少了这一行，补上再渲。这份参考文档同时带标题 1–3 的字号和段前段后、正文行距。EndNote 与 Zotero 域稿的表格同样只有顶线、表头下横线和底线，没有竖线。本机没有指定字体就停，不改用别的。Quarto 见到 Mg²⁺ 这类 Unicode 会自己改走 lualatex，Mac 上 luaotfload 扫字体常卡死；xelatex 不嵌字体则整页乱码。定稿读初稿留下的 `manuscript/typeface.md`，按里面的字体名渲，不要另选字体，也不要重问；第一次渲染就用这套字，不要先用默认字体渲完再重渲。
 - `number-sections: true` 时，markdown 标题写 `## Introduction`，不要自带 `## 1.`。
 - 渲染产物统一写入 **本工作区 `output/`**（相对路径；评审合并进主仓时自动带到项目根同名目录）；该目录必须在 `.gitignore` 中，**产物不进 git**。
@@ -65,11 +68,12 @@ quarto render manuscript/<稿件>.md --to pdf --output-dir output
 - **引用键缺失**（`citation not found: @xxx`）：回 `references.bib` 补条目或改源稿中的引用键，**不得删除引用来消错**。
 - **LaTeX 包缺失**（`! LaTeX Error: File 'xxx.sty' not found`）：用 `tlmgr install xxx`（tinytex）或让 tinytex 自动补装，**先装不绕路**——禁止删图表、改格式、去掉公式来回避报错。
 - **lualatex 卡死**（CPU 很高、对应 `.log` 仍 0 字节、`luatex-cache` 空）：是 luaotfload 扫字体，不是正常首次编译。**超过 3 分钟无日志就停掉**，YAML 设 `pdf-engine: xelatex` 再渲。不要空等，也不要删公式/改正文符号来躲。
+- **首次渲 PDF 很慢**（Windows 实测约 2.5 分钟）：TinyTeX 会现装缺的宏包（如 `xecjk`，终端里能看到 `installing xecjk`），期间看起来没动静。看到 `updating tlmgr` / `installing …` 就是在装，**不要中断**；装完同一台机器上再渲只要几秒。这和上一条 lualatex 空转不同：那条是日志 0 字节、没有任何安装输出。
 - **中文缺字/豆腐块**（PDF 里中文乱码或方框）：用 `fc-list :lang=zh family` 找本机中文字体，在 YAML 设 `mainfont`/`CJKmainfont`；缺字靠设字体，不靠换引擎。
 - **英文标题里的缺字**：`references.bib` 标题中的 U+2010 连字符在 xelatex + Times New Roman 下会变成缺字。渲染前把标题和作者字段里的 U+2010 / U+2011 换成 ASCII `-`，重渲后再数 PDF 里的缺字，不为 0 不算通过。
 - **正文 `@` 被当成引用**（`citation polymer not found` 这类）：材料名里的 `@` 写成 `\@`。子图写成 `@fig-2(a–c)`，Quarto 只认整图标签。
 - **图注和交叉引用**：图片写成 `![说明](../figures/figN.png){#fig-N out-width="100%"}`，表题末尾写 `{#tbl-N}`。正文交叉引用只写 `@fig-N`、`@tbl-N`，不要再加 `Figure` 或 `Table`，否则 PDF 和普通 Word 会显示 `Figure Figure 1`。阅读稿按 Quarto 所选样式排图注、表题和文献表。两份域稿另交，引用保持作者-年，等人在 EndNote 或 Zotero 里换样式。
-- **`--output-dir output` 仍落到 `output/manuscript/`**：把 `draft.pdf` / `draft.docx` 移到 `output/`，删掉带过来的脚手架目录。`keep-tex` 写在 YAML 里，不是命令行旗标。
+- **成品没在根 `output/`**：落到 `manuscript/output/` 是 `--output-dir` 写成了 `output`；落到 `output/manuscript/` 是项目根有 `_quarto.yml`；落到工作区根是加了 `--output`。改回上面的命令重渲，不要手动搬文件；已落错的把成品移到 `output/`、删掉带过来的脚手架目录。`keep-tex` 写在 YAML 里，不是命令行旗标。
 - **xelatex 跑满 9 轮**：先查 PDF 有没有 `??` 和未解析引用。没有就记入渲染说明，不要为消这句警告改稿。
 
 ### 5. 修复-验证闭环
@@ -107,7 +111,8 @@ quarto render manuscript/<稿件>.md --to pdf --output-dir output
 
 ## 完成标准
 
-- **码位抽检**（2026-10-11 定稿审计实证：PDF 文本层 59 个分号全被映射成 U+037E 希腊问号，视觉不可辨但复制/检索/查重即坏）：`pdftotext` 抽全文，比对源稿与 PDF 的标点码位（分号、引号、减号），发现 U+037E/U+2018 类映射漂移按渲染管线缺陷处理（字体/ToUnicode 层），记录进报告，不静默放行。
+- **码位抽检**（2026-10-11 定稿审计实证：PDF 文本层 59 个分号全被映射成 U+037E 希腊问号，视觉不可辨但复制/检索/查重即坏）：渲完 PDF 跑 `python <技能目录>/scripts/check_pdf_text.py output/<稿件>.pdf`（macOS / Linux 用 `python3`；只读，依赖 PyMuPDF，不需要 pdftotext）。退出码 1 = 文本层有 U+037E / 缺字 / 私有区字符，按渲染管线缺陷处理，记录进报告，不静默放行。
+  **修法**（2026-10-21 Windows + Times New Roman 实测，3 个分号 U+037E → U+003B）：xelatex 的 `include-in-header` 里要有 `\ifdefined\XeTeXgenerateactualtext\XeTeXgenerateactualtext=1\fi`。`manuscript_font.py` 开工时会写这一行，旧稿重跑一次脚本也会补；手工起草或脚本没跑过的稿子自己补上，重渲后再抽检，U+037E 为 0 才算过。
 
 - 产物在产物目录且验收通过（存在、非零字节、残留 warning 已计数）；
 - 渲染说明齐全（命令/路径/警告摘要）；

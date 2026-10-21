@@ -99,6 +99,22 @@ def ensure_booktabs(block: str) -> str:
     return block
 
 
+# xelatex + Times New Roman：字体里分号字形同时挂在 U+003B 和 U+037E 上，xdvipdfmx 生成文本层映射时
+# 选了后者，PDF 里所有分号复制/检索/查重出来都是希腊问号。ActualText 让它按真实字符写回
+# （2026-10-21 Windows 实测：3 个分号 U+037E → U+003B）。\ifdefined 包一层：换成 lualatex 也不报错
+ACTUALTEXT_LINE = "\\ifdefined\\XeTeXgenerateactualtext\\XeTeXgenerateactualtext=1\\fi"
+
+
+def ensure_actualtext(block: str) -> str:
+    """在 PDF 的 include-in-header 里补 ActualText 开关；已有就不动。旧稿重跑脚本也能补上。"""
+    if "XeTeXgenerateactualtext" in block:
+        return block
+    found = re.search(r"^([ \t]*)\\usepackage\{booktabs\}[ \t]*$", block, re.M)
+    if not found:
+        return block
+    return block[: found.end()] + "\n" + found.group(1) + ACTUALTEXT_LINE + block[found.end() :]
+
+
 def ensure_pdf(block: str) -> str:
     if "\n  pdf:" in f"\n{block}" or block.startswith("  pdf:"):
         return block
@@ -174,6 +190,7 @@ def write_markdown(path: Path, latin: str, cjk: str, reference: str = "reference
     front = set_pdf_font(front, "mainfont", latin)
     front = set_pdf_font(front, "CJKmainfont", cjk)
     front = ensure_booktabs(front)
+    front = ensure_actualtext(front)
     front = ensure_docx_reference(front, reference)
     path.write_text(f"---\n{front.strip()}\n---{body if body.startswith(chr(10)) else chr(10) + body}", encoding="utf-8")
 

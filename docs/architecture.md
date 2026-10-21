@@ -457,6 +457,32 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-21 · 英文综述 Windows 全流程核验（用户：「核验一下……各项操作有什么问题」→「全部修」）
+
+在 Windows 11 + Quarto 1.10.19 + TinyTeX 上用真实 run 命令与随包脚本干跑一遍（临时项目，界面没点）。查出四处，全部修，**规则如下**：
+
+一，**`quarto render` 的产物落点（影响全部带渲染的模板）**。没有 `_quarto.yml` 时 Quarto 把稿件所在目录当项目根，`--output-dir` 相对它解析：
+旧写法 `--output-dir output` 落进 `manuscript/output/`，且先 docx 后 PDF 时后一次渲染清掉前一次，评审只认根 `output/` → docx 缺。与 `--output` 同用时成品还会落到工作区根。
+定下：稿件都在一级目录（`manuscript/`、`submission/`），命令统一 `--output-dir ../output`、**不带 `--output`**（默认文件名本就是稿件同名）；项目根不放 `_quarto.yml`
+（`../output` 会越出项目），要配置放 `manuscript/_quarto.yml`。`tests/pipeline-presets.test.ts` 钉住所有模板（含返修轮次变体）。
+存量项目的步骤定义存在各自 `.ccode/project.toml`，**不随模板自动更新**：本机两个项目（HER催化综述、Ccode 示例课题）已手工改完并用 TOML 解析验证；
+以后再改 run 命令，同样要处理存量 `project.toml`（开步只按项目里存的 `step.run` 写 settings，不回读模板）。
+
+二，**PDF 文本层分号变 U+037E**（2026-10-11 审计已见、当时只定「记录不放行」）。Times New Roman 字形同挂 U+003B / U+037E，xdvipdfmx 的 ToUnicode 选了后者，复制/检索/查重全坏。
+定下：`manuscript_font.py` 在 PDF 的 `include-in-header` 写 `\ifdefined\XeTeXgenerateactualtext\XeTeXgenerateactualtext=1\fi`（`\ifdefined` 守卫，换 lualatex 不报错；旧稿重跑补行、重复跑不叠）；
+随包 `check_pdf_text.py`（PyMuPDF，不依赖 pdftotext——普通 Windows 没有）渲完抽检 U+037E / U+FFFD / U+FFFF / 私有区，退出码 1 即按渲染缺陷处理。实测同一份稿：无开关 4 处 U+037E，有开关 0。
+
+三，**两份域稿 docx 的中文字体写死 `Songti SC`**（macOS 字体，Windows 的 Word 里悄悄换字体）。定下：`cite_docx.py`（`zotero_docx.py` 复用）读 `manuscript/typeface.md`，
+稿在 `submission/` 下也找同级 `manuscript/`；没有这份文件才回落（macOS Songti SC，其余宋体）。域稿与阅读稿字体一致，不再各写各的。
+
+四，**Agent 起的 Python 在 Windows 上按 GBK 输出**：管道里打印 `²` `⁺` 直接 UnicodeEncodeError，Agent 读回的中文也乱码。此前只有 Mesa 自己起的 Python（endnote.rs / research_quality.rs）带编码变量。
+定下：`process::agent_python_io_env()`——Windows 且用户没自设时给 **PTY 子进程**（`pty_command`，含 Agent、shell、run 脚本标签）和**无头 Agent 运行**（`ai.rs`）补 `PYTHONIOENCODING=utf-8`。
+**不设 `PYTHONUTF8`**：它连 `open()` 默认编码一起改，会让 Agent 写的、读 GBK 数据文件的脚本变样。控制台（ConPTY）里的 Python 本就走 UTF-8，不受影响。
+
+顺带：首次渲 PDF 会现装 `xecjk` 等宏包（实测约 2.5 分钟、无进度），写进 quarto-render 技能与说明书，避免被当成卡死。
+**未验证、留给下一轮**：①本机 Codex 配的是 `elevated` 沙箱，而 TinyTeX 装在 `%APPDATA%`（用户目录）——同「Codex 沙箱读不了用户目录里的工具」那条，Codex 渲 PDF 很可能失败（含 tlmgr 现装宏包），
+需真实 Codex 跑一次确认，对策方向同 Python（全机安装或 unelevated）；②Mesa 界面里的整条流程、Word 里真点 EndNote Update / Zotero Refresh、Consensus / Undermind 检索工具都没验。
+
 ### 2026-10-21 · Codex 计划工具随提示词打开；端到端计划补上启动前追加参数
 
 用户实测 Codex（glm-5.3-flash）两句：「当前会话没有暴露任务清单/计划工具」「提问工具当前不可用」。查明：一，Codex 0.163 默认不发 `update_plan`

@@ -77,6 +77,23 @@ pub fn background_command<S: AsRef<OsStr>>(program: S) -> BackgroundCommand {
     command
 }
 
+/// Windows 上 Agent 起的 Python：stdout/stderr 接管道时按系统代码页编码（中文系统是 GBK），
+/// 打印 `²` `⁺` 这类字符直接 UnicodeEncodeError，Agent 读回的中文也成乱码（2026-10-21 实测）。
+/// 只设 PYTHONIOENCODING（标准输入输出），不设 PYTHONUTF8：后者连 `open()` 的默认编码一起改，
+/// 会让 Agent 写的、读 GBK 文件的脚本行为变掉。用户自己设过就尊重。
+/// 控制台（ConPTY）里的 Python 输出本来就是 UTF-8，不受影响。
+pub fn agent_python_io_env() -> Option<(&'static str, &'static str)> {
+    python_io_env_for(cfg!(windows), std::env::var_os("PYTHONIOENCODING").as_deref())
+}
+
+fn python_io_env_for(windows: bool, existing: Option<&OsStr>) -> Option<(&'static str, &'static str)> {
+    if windows && existing.is_none() {
+        Some(("PYTHONIOENCODING", "utf-8"))
+    } else {
+        None
+    }
+}
+
 /// 构建 PTY 命令。Windows 上 npm 系 CLI（npm 自己、npm 全局装的 codex 等）是
 /// .cmd/.bat 批处理 shim，ConPTY/CreateProcess 无法直接执行批处理文件：
 /// 优先解析 shim 文本里的 JS 入口改用 node 直启，或 shim 直接调用的原生 exe（npm 装的
@@ -84,6 +101,14 @@ pub fn background_command<S: AsRef<OsStr>>(program: S) -> BackgroundCommand {
 /// 也不会被 cmd 吞掉或误展开（2026-10-20 实测：经 cmd 包装时多行首条消息只剩第一行、
 /// `%PATH%` 被展开、引号里的 `|` 让 Claude 根本起不来）；shim 结构解析失败才回落 cmd /c call 包装。
 pub fn pty_command(program: &Path, args: &[String]) -> CommandBuilder {
+    let mut command = pty_command_base(program, args);
+    if let Some((key, value)) = agent_python_io_env() {
+        command.env(key, value);
+    }
+    command
+}
+
+fn pty_command_base(program: &Path, args: &[String]) -> CommandBuilder {
     #[cfg(windows)]
     {
         if let Some((node, entry)) = node_entry_from_cmd_shim(program) {
@@ -1211,6 +1236,16 @@ endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\node_
         assert_eq!(exe_entry_from_shim(LEGACY_SHIM), None);
         assert_eq!(exe_entry_from_shim("echo hello"), None);
         assert_eq!(exe_entry_from_shim(""), None);
+    }
+
+    /// Agent 的 Python 输出编码：只在 Windows 补 PYTHONIOENCODING，用户自己设过的不覆盖
+    #[test]
+    fn agent_python_io_env_only_on_windows_and_respects_user_value() {
+        assert_eq!(python_io_env_for(true, None), Some(("PYTHONIOENCODING", "utf-8")));
+        assert_eq!(python_io_env_for(true, Some(OsStr::new("gbk"))), None);
+        assert_eq!(python_io_env_for(false, None), None);
+        // 不设 PYTHONUTF8：它会连 open() 的默认编码一起改
+        assert_ne!(python_io_env_for(true, None).map(|(k, _)| k), Some("PYTHONUTF8"));
     }
 
     /// 直调 exe 的 shim 起进程时绕开 cmd：PTY 命令的程序就是那个 exe，参数原样（含换行、%、引号、|）

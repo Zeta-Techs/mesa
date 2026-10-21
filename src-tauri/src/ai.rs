@@ -790,6 +790,10 @@ pub(crate) fn run_agent_task(
     agents::validate_launch_compatibility(&profile, selected.as_deref())?;
     let plan = agents::launch_plan(&profile, key, selected.as_deref())?;
     let mut cmd = crate::process::background_command(&binary_path);
+    // 先于 plan.env 设：Agent 在无头运行里起的 Python 不再按系统代码页（GBK）出字，profile 里写了的照 profile
+    if let Some((key, value)) = crate::process::agent_python_io_env() {
+        cmd.env(key, value);
+    }
     let (lock_id, lock_args) = lock_headless_session(&profile.agent);
     if let Some(id) = &lock_id {
         let _ = crate::sessions::mark_session_internal(&profile.agent, id);

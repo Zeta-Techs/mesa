@@ -45,7 +45,10 @@
   - 原子写：`storage::replace` 只对 os error 5/32/33（杀毒、索引、OneDrive 短暂占用）有限重试；git 调用一律带
     `core.longpaths=true`（`git_info::PLATFORM_GIT_CONFIG`）。
   - 命令输出：禁止按本地化文案判断成败（中文 Windows 是 GBK），用退出码；PowerShell 脚本开头先切 UTF-8；
-    `clip.exe` 写 UTF-16LE+BOM；每个 Python 子进程带 `PYTHONUTF8=1` / `PYTHONIOENCODING=utf-8`；netstat 按列位置解析且
+    `clip.exe` 写 UTF-16LE+BOM；每个 **Mesa 自己起的** Python 子进程带 `PYTHONUTF8=1` / `PYTHONIOENCODING=utf-8`；
+    **Agent 起的 Python**（PTY 子进程与无头 Agent 运行）由 `process::agent_python_io_env` 只补 `PYTHONIOENCODING=utf-8`（用户自设则不动）——
+    不补 `PYTHONUTF8`，它连 `open()` 默认编码一起改，会让 Agent 读 GBK 数据文件的脚本变样（2026-10-21：管道里打印 `²` 报 UnicodeEncodeError、
+    中文读回乱码）；netstat 按列位置解析且
     同时查 `tcp` 与 `tcpv6`；Windows 上结束进程一律 `kill_process_tree` / `taskkill /T /F`。
   - 写进 CLI 配置的 Windows hooks 不得含内联 PowerShell、`$` 或单引号（会被 bash / PowerShell / cmd 宿主吞掉），
     逻辑放 `.ps1`、命令只带双引号路径与一个截断字节数（`ccode-hook.ps1` 与 unix 命令同语义：记「unix 秒 + 标签号 `CCODE_TAB_ID`」前缀、超 Cap 截断；聊天层启动注入每次启动 `ensure_win_hook_script` 保证脚本在且正文是当前版）；读任何 CLI 配置（JSON / TOML）先 `mcp::strip_bom`；读失败报错，不得当文件不存在。

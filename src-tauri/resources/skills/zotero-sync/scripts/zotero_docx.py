@@ -247,7 +247,7 @@ def main(argv: list[str] | None = None) -> int:
     if cite.CURLY_KEY.search(visible):
         print("visible text contains an unmatched brace key; refusing to write docx", file=sys.stderr)
         return 1
-    cite.write_docx(out, body_el, images)
+    cite.write_docx(out, body_el, images, cite.read_typeface(source))
     return 0
 
 

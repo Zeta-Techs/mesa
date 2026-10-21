@@ -369,6 +369,11 @@ static BUILTIN_SUPPORT: &[(&str, &str, &str)] = &[
         include_str!("../resources/skills/quarto-render/scripts/manuscript_font.py"),
     ),
     (
+        "quarto-render",
+        "scripts/check_pdf_text.py",
+        include_str!("../resources/skills/quarto-render/scripts/check_pdf_text.py"),
+    ),
+    (
         "endnote-bridge",
         "scripts/sync_docx.py",
         include_str!("../resources/skills/endnote-bridge/scripts/sync_docx.py"),

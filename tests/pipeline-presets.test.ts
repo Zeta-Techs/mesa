@@ -231,6 +231,42 @@ test("同一份稿同时渲 docx 和 pdf 时，docx 排在 pdf 前面", () => {
   }
 });
 
+test("quarto render 的产物落点：稿件在一级目录下，--output-dir 必须是 ../output 且不带 --output", () => {
+  // 实测（Windows + Quarto 1.10.19）：没有 _quarto.yml 时 --output-dir 相对稿件所在目录解析。
+  // 写 `output` 落进 manuscript/output/ 且后一次渲染清掉前一次；与 --output 同用则成品落到工作区根
+  const variants = PIPELINE_TEMPLATES.flatMap((template) =>
+    template.id === "submission-rebuttal"
+      ? [
+          pipelineStepsForTemplate(template, "initial", 1),
+          pipelineStepsForTemplate(template, "revision", 2),
+        ]
+      : [template.steps],
+  );
+  let seen = 0;
+  for (const steps of variants) {
+    for (const step of steps) {
+      for (const run of step.run) {
+        if (!/quarto render\s+/.test(run.command)) continue;
+        seen += 1;
+        const source = run.command.match(/quarto render\s+(\S+)/)![1];
+        assert.equal(source.split("/").length, 2, `${step.name}/${run.name} 稿件应在一级目录下：${source}`);
+        assert.match(run.command, /--output-dir \.\.\/output(\s|$)/, `${step.name}/${run.name} --output-dir 应为 ../output`);
+        assert.doesNotMatch(run.command, /\s--output\s/, `${step.name}/${run.name} 不能带 --output`);
+      }
+    }
+  }
+  assert.ok(seen >= 10, "应覆盖到全部模板的渲染命令");
+});
+
+test("quarto-render 技能与导出的综述模板都用 ../output", () => {
+  const skill = readFileSync("src-tauri/resources/skills/quarto-render/SKILL.md", "utf8");
+  assert.match(skill, /--to pdf --output-dir \.\.\/output/);
+  assert.doesNotMatch(skill, /--output-dir output\b/);
+  const exported = readFileSync("src-tauri/resources/pipeline-review.json", "utf8");
+  assert.doesNotMatch(exported, /--output-dir output\b/);
+  assert.match(exported, /--output-dir \.\.\/output/);
+});
+
 test("quarto-render 随包 CSL 是编号引用", () => {
   const csl = readFileSync(
     "src-tauri/resources/skills/quarto-render/ieee.csl",

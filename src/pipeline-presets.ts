@@ -412,8 +412,8 @@ const REVIEW_STEPS: ProjectStepDto[] = [
       "machine:not-contains:manuscript/draft.md::待绘制",
     ],
     run: [
-      { name: "export-docx", command: "quarto render manuscript/draft.md --to docx --output-dir output", default: true },
-      { name: "render-draft", command: "quarto render manuscript/draft.md --to pdf --output-dir output", default: true },
+      { name: "export-docx", command: "quarto render manuscript/draft.md --to docx --output-dir ../output", default: true },
+      { name: "render-draft", command: "quarto render manuscript/draft.md --to pdf --output-dir ../output", default: true },
     ],
     humanTasks: [],
   },
@@ -450,8 +450,8 @@ const REVIEW_STEPS: ProjectStepDto[] = [
     inputs: ["manuscript/draft.md", "manuscript/section-status.md", "manuscript/typeface.md", "manuscript/reference.docx", "outline.md", "notes/", "references.bib"],
     skills: ["review-writing", "bib-check", "quarto-render", "endnote-bridge", "zotero-sync"],
     run: [
-      { name: "export-docx", command: "quarto render manuscript/review-final.md --to docx --output-dir output --output review-final.docx", default: true },
-      { name: "render-final", command: "quarto render manuscript/review-final.md --to pdf --output-dir output --output review-final.pdf", default: true },
+      { name: "export-docx", command: "quarto render manuscript/review-final.md --to docx --output-dir ../output", default: true },
+      { name: "render-final", command: "quarto render manuscript/review-final.md --to pdf --output-dir ../output", default: true },
     ],
     humanTasks: [
       styleChoiceTask(),
@@ -735,12 +735,12 @@ const RESEARCH_PAPER_STEPS: ProjectStepDto[] = [
     run: [
       {
         name: "export-docx",
-        command: "quarto render manuscript/draft.md --to docx --output-dir output",
+        command: "quarto render manuscript/draft.md --to docx --output-dir ../output",
         default: true,
       },
       {
         name: "render-draft",
-        command: "quarto render manuscript/draft.md --to pdf --output-dir output",
+        command: "quarto render manuscript/draft.md --to pdf --output-dir ../output",
         default: true,
       },
     ],
@@ -796,12 +796,12 @@ const RESEARCH_PAPER_STEPS: ProjectStepDto[] = [
     run: [
       {
         name: "export-docx",
-        command: "quarto render manuscript/paper-final.md --to docx --output-dir output",
+        command: "quarto render manuscript/paper-final.md --to docx --output-dir ../output",
         default: true,
       },
       {
         name: "render-final",
-        command: "quarto render manuscript/paper-final.md --to pdf --output-dir output",
+        command: "quarto render manuscript/paper-final.md --to pdf --output-dir ../output",
         default: true,
       },
     ],
@@ -1175,12 +1175,12 @@ const THESIS_STEPS: ProjectStepDto[] = [
     run: [
       {
         name: "export-docx",
-        command: "quarto render manuscript/thesis-draft.md --to docx --output-dir output",
+        command: "quarto render manuscript/thesis-draft.md --to docx --output-dir ../output",
         default: true,
       },
       {
         name: "render-draft",
-        command: "quarto render manuscript/thesis-draft.md --to pdf --output-dir output",
+        command: "quarto render manuscript/thesis-draft.md --to pdf --output-dir ../output",
         default: true,
       },
     ],
@@ -1232,12 +1232,12 @@ const THESIS_STEPS: ProjectStepDto[] = [
     run: [
       {
         name: "export-docx",
-        command: "quarto render manuscript/thesis-final.md --to docx --output-dir output",
+        command: "quarto render manuscript/thesis-final.md --to docx --output-dir ../output",
         default: true,
       },
       {
         name: "render-final",
-        command: "quarto render manuscript/thesis-final.md --to pdf --output-dir output",
+        command: "quarto render manuscript/thesis-final.md --to pdf --output-dir ../output",
         default: true,
       },
     ],
@@ -1286,13 +1286,13 @@ const SUBMISSION_INITIAL_STEPS: ProjectStepDto[] = [
       {
         name: "export-docx",
         command:
-          "quarto render submission/formatted.md --to docx --output-dir output --output formatted.docx",
+          "quarto render submission/formatted.md --to docx --output-dir ../output",
         default: true,
       },
       {
         name: "render-formatted",
         command:
-          "quarto render submission/formatted.md --to pdf --output-dir output --output formatted.pdf",
+          "quarto render submission/formatted.md --to pdf --output-dir ../output",
         default: true,
       },
     ],
@@ -1418,8 +1418,8 @@ function submissionRevisionSteps(round: number): ProjectStepDto[] {
       acceptanceCriteria: [`machine:contains:rebuttal/review-report-r${r}.md::严重问题`],
       skills: ["rebuttal-crafter", "bib-check", "quarto-render"],
       run: [
-        { name: `export-revised-r${r}`, command: `quarto render manuscript/revised-r${r}.md --to docx --output-dir output`, default: true },
-        { name: `render-revised-r${r}`, command: `quarto render manuscript/revised-r${r}.md --to pdf --output-dir output`, default: true },
+        { name: `export-revised-r${r}`, command: `quarto render manuscript/revised-r${r}.md --to docx --output-dir ../output`, default: true },
+        { name: `render-revised-r${r}`, command: `quarto render manuscript/revised-r${r}.md --to pdf --output-dir ../output`, default: true },
       ],
       humanTasks: [
         styleChoiceTask(),
