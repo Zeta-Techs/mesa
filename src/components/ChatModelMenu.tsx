@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, Info } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, History, Info } from "lucide-react";
 import { AGENTS } from "../types";
 import type { DetectResult, ModelCapabilityDto } from "../types";
 import { useAppStore } from "../store";
@@ -10,6 +10,10 @@ import { connectionModels, readModelHistory } from "../model-history";
 import { modelCapsLabel } from "../model-caps-label";
 import { pickPopoverSide, popoverRoom } from "../popover-side";
 import ContextRing from "./ContextRing";
+import EffortMark from "./EffortMark";
+import { effortDepth, effortGloss } from "../effort-depth";
+import { agentBrand } from "../agent-colors";
+import type { LaunchCombo } from "../launch-combos";
 import { breakdownRequest } from "../context-breakdown";
 import type {
   LaunchPickState,
@@ -35,6 +39,18 @@ type LaunchProps = {
   onModel: (model: string) => void;
   onEffort: (level: string) => void;
   onPermission: (permission: "discuss" | "write_tree", mode?: NativePermissionMode | null) => void;
+  /** 「最近在这个项目用过」的搭配（launch-combos.ts；连接已删的调用方先滤掉） */
+  combos?: LaunchCombo[];
+  /** 搭配标题里的项目名 */
+  combosWhere?: string | null;
+  /** 点一套搭配：Agent + 连接 + 模型 + 思考档一起换 */
+  onCombo?: (combo: LaunchCombo) => void;
+} & SharedProps;
+
+type SharedProps = {
+  /** 输入框里有图：看不了图的模型在名单里标出来，当前模型看不了时经 onImageWarning 告诉输入框 */
+  hasImages?: boolean;
+  onImageWarning?: (warning: string | null) => void;
 };
 
 type RuntimeProps = {
@@ -54,7 +70,7 @@ type RuntimeProps = {
   onCompact?: (() => void) | null;
   /** 停下 Agent、带新模型 / 思考档接回原对话（会写回 CLI 全局配置的切换走这条，switch-strategy.ts） */
   onRelaunch?: (patch: { model?: string; effort?: string | null }) => void;
-};
+} & SharedProps;
 
 /** 菜单最高多少（px）：大屏上也不一路拉长，名单多了在中间那段里滚 */
 const MENU_CAP = 460;
@@ -166,7 +182,27 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
     );
     currentModel = rt.shownModel;
   }
-  const caps = useModelCaps(open ? models : [], profile?.gatewayId ?? null);
+  // 能力灰字菜单打开才查；输入框里有图时也查（要知道当前模型能不能看图）
+  const caps = useModelCaps(open || props.hasImages ? models : [], profile?.gatewayId ?? null);
+  const hasImages = Boolean(props.hasImages);
+  // 和当前选择一模一样的那套不列（列了也是点了没变化）
+  const shownCombos = (launch?.combos ?? []).filter(
+    (c) =>
+      !(
+        c.agentId === launch?.pick.agentId &&
+        c.profileId === launch?.pick.profileId &&
+        c.model === launch?.pick.model.trim() &&
+        c.effort === launch?.pick.effort
+      ),
+  );
+  const imageWarning =
+    hasImages && currentModel && caps.vision[currentModel] === false
+      ? `${currentModel} 看不了图，换个能看图的模型更稳`
+      : null;
+  const onImageWarning = props.onImageWarning;
+  useEffect(() => {
+    onImageWarning?.(imageWarning);
+  }, [imageWarning, onImageWarning]);
 
   // ---- 思考档 ----
   const effortChoices: { value: string; label: string }[] | null = launch
@@ -192,28 +228,35 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
       ? rt.levels[rt.effortIdx]
       : (rt.knownEffort ?? (rt.effortSeenDefault || rt.combo?.thinking ? "默认" : null));
 
-  // ---- 芯片文字 ----
+  // ---- 芯片文字（2026-10-22）：前面一个 Agent 品牌色圆点；思考档前画小 M，V 的深浅就是档位 ----
   let label: string;
   let title: string;
+  let chipEffort: string | null;
+  let chipDepth: number | null = null;
   if (launch) {
     // 这家一条连接都没有（快速开聊在本机没有可用连接时也会落到这里）：芯片上直接说，不等点开才看见
-    label =
-      launch.pick.profiles.length === 0
-        ? `${agentLabel} · 还没有连接`
-        : [agentLabel, currentModel || null, launch.pick.effort || null].filter(Boolean).join(" · ");
+    const noConn = launch.pick.profiles.length === 0;
+    label = noConn ? `${agentLabel} · 还没有连接` : [agentLabel, currentModel || null].filter(Boolean).join(" · ");
+    chipEffort = noConn ? null : launch.pick.effort || null;
+    chipDepth = effortDepth(launch.pick.effort, launch.pick.effortLevels);
     title = `${agentLabel}${profileId ? ` · ${profileLabel}` : ""}${currentModel ? ` · ${currentModel}` : ""}\n选择这次用哪个 Agent、配置、模型和思考强度（发出第一句前都能改）`;
   } else if (next) {
-    label = [currentModel || "模型", next.effort || null].filter(Boolean).join(" · ");
-    title = `${label}\n接着聊时用的模型和思考强度（下次启动生效）`;
+    label = currentModel || "模型";
+    chipEffort = next.effort || null;
+    chipDepth = effortDepth(next.effort, next.effortLevels);
+    title = `${[label, chipEffort].filter(Boolean).join(" · ")}\n接着聊时用的模型和思考强度（下次启动生效）`;
   } else {
-    label = [rt.shownModel || "模型", runtimeEffortText].filter(Boolean).join(" · ");
+    label = rt.shownModel || "模型";
+    chipEffort = runtimeEffortText;
+    chipDepth = effortDepth(rt.effortIdx >= 0 ? rt.levels[rt.effortIdx] : rt.knownEffort, rt.levels);
+    const shown = [label, chipEffort].filter(Boolean).join(" · ");
     title = !live
       ? "Agent 没在运行"
       : rt.modelState === "pending"
-        ? `${label}\n已发送切换，等 CLI 回显确认`
+        ? `${shown}\n已发送切换，等 CLI 回显确认`
         : rt.modelState === "unverifiable"
-          ? `${label}\n已发送切换；这家 CLI 不回显当前模型，以终端里显示的为准`
-          : `${label}\n换模型或思考强度（写进终端执行）`;
+          ? `${shown}\n已发送切换；这家 CLI 不回显当前模型，以终端里显示的为准`
+          : `${agentLabel} · ${shown}\n换模型或思考强度`;
   }
   const pendingMark = !launch && !next && rt.modelState !== "confirmed";
 
@@ -277,8 +320,12 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
               <span className="min-w-0 flex-1">
                 <span className="block truncate leading-[18px]">{m}</span>
                 {/* 能力灰字（200K · 思考 · 看图）放在名字下面一行，名字长也不挤 */}
-                {caps[m] && <span className="block truncate text-xs leading-[18px] text-l4">{caps[m]}</span>}
+                {caps.labels[m] && <span className="block truncate text-xs leading-[18px] text-l4">{caps.labels[m]}</span>}
               </span>
+              {/* 输入框里有图、这个模型确知看不了：当场标出来（不知道的不标） */}
+              {hasImages && caps.vision[m] === false && (
+                <span className="mt-0.5 shrink-0 text-xs text-caution-text">看不了图</span>
+              )}
               <Check
                 size={14}
                 strokeWidth={2}
@@ -404,11 +451,30 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
         disabled={!launch && !live && !next}
         onClick={() => setOpen((v) => !v)}
         title={title}
-        className="flex h-6 min-w-0 max-w-[18rem] items-center gap-1 rounded-md px-1.5 text-micro text-l3 hover:bg-hover hover:text-l1 disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-l3"
+        className={`flex h-6 min-w-0 max-w-[20rem] items-center gap-1.5 rounded-md px-1.5 text-micro text-l3 hover:bg-hover hover:text-l1 disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-l3 ${
+          open ? "bg-hover text-l1" : ""
+        }`}
       >
+        {agentId && (
+          <span
+            aria-hidden="true"
+            className="size-1.5 shrink-0 rounded-full"
+            style={{ background: agentBrand(agentId) }}
+          />
+        )}
         <span className={`truncate ${pendingMark ? "italic" : ""}`}>{label}</span>
+        {chipEffort && (
+          <>
+            <span aria-hidden="true" className="shrink-0">
+              {" · "}
+            </span>
+            <span className="flex shrink-0 items-center gap-1">
+              <EffortMark depth={chipDepth} className="h-[0.85em] w-auto" />
+              {chipEffort}
+            </span>
+          </>
+        )}
         {pendingMark && rt.modelState === "pending" && <span className="shrink-0 text-l4">待确认</span>}
-        <ChevronDown size={12} strokeWidth={1.8} aria-hidden="true" className="shrink-0" />
       </button>
       {open && (
         <div
@@ -454,6 +520,43 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
             />
           ) : (
             <>
+              {launch && shownCombos.length > 0 && (
+                // 最近在这个项目用过的搭配（2026-10-22）：九家 × 多条连接，常换的其实是整套；点一下四样一起换
+                <div className="shrink-0">
+                  <h4 className={`${section} flex items-center gap-1.5`}>
+                    <History size={12} strokeWidth={1.8} aria-hidden="true" />
+                    {launch.combosWhere ? `最近在 ${launch.combosWhere} 用过` : "最近用过"}
+                  </h4>
+                  {shownCombos.map((c) => {
+                    const name = AGENTS.find((a) => a.id === c.agentId)?.label ?? c.agentId;
+                    const conn = profiles.find((p) => p.id === c.profileId)?.name ?? "";
+                    const model = c.model || profiles.find((p) => p.id === c.profileId)?.models[0] || "";
+                    return (
+                      <button
+                        key={`${c.agentId}\t${c.profileId}\t${c.model}\t${c.effort}`}
+                        type="button"
+                        className={item(false)}
+                        title={`${name}${conn ? ` · ${conn}` : ""}${model ? ` · ${model}` : ""}${c.effort ? ` · ${c.effort}` : ""}\n点一下：Agent、连接、模型和思考强度一起换`}
+                        onClick={() => {
+                          launch.onCombo?.(c);
+                          setOpen(false);
+                        }}
+                      >
+                        <span
+                          aria-hidden="true"
+                          className="size-1.5 shrink-0 rounded-full"
+                          style={{ background: agentBrand(c.agentId) }}
+                        />
+                        <span className="shrink-0">{name}</span>
+                        <span className="ml-auto min-w-0 truncate text-xs text-l4">
+                          {[model || null, c.effort || null].filter(Boolean).join(" · ")}
+                        </span>
+                      </button>
+                    );
+                  })}
+                  {divider}
+                </div>
+              )}
               {launch ? (
                 <button
                   type="button"
@@ -461,6 +564,11 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
                   onClick={() => setView("who")}
                   title="换 Agent 或配置"
                 >
+                  <span
+                    aria-hidden="true"
+                    className="size-1.5 shrink-0 rounded-full"
+                    style={{ background: agentBrand(agentId) }}
+                  />
                   <span className="truncate font-medium">{agentLabel}</span>
                   {profileId && <span className="min-w-0 truncate text-l3">{profileLabel}</span>}
                   <span className="ml-auto flex shrink-0 items-center gap-0.5 text-xs text-l4">
@@ -626,9 +734,15 @@ function WhoView({
   );
 }
 
-/** 菜单里每个模型后面那行灰字（200K · 思考 · 看图）：能力库按网关逐字段查，菜单打开时才查 */
-function useModelCaps(models: string[], gatewayId: string | null): Record<string, string> {
-  const [caps, setCaps] = useState<Record<string, string>>({});
+/** 菜单里每个模型后面那行灰字（200K · 思考 · 看图）与能不能看图：能力库按网关逐字段查 */
+function useModelCaps(
+  models: string[],
+  gatewayId: string | null,
+): { labels: Record<string, string>; vision: Record<string, boolean | null> } {
+  const [caps, setCaps] = useState<{ labels: Record<string, string>; vision: Record<string, boolean | null> }>({
+    labels: {},
+    vision: {},
+  });
   const key = useMemo(() => models.join("\n"), [models]);
   useEffect(() => {
     if (!key) return;
@@ -636,9 +750,13 @@ function useModelCaps(models: string[], gatewayId: string | null): Record<string
     invoke<ModelCapabilityDto[]>("model_capabilities", { models: key.split("\n"), gatewayId })
       .then((list) => {
         if (stale) return;
-        const next: Record<string, string> = {};
-        for (const c of list) next[c.model] = modelCapsLabel(c);
-        setCaps(next);
+        const labels: Record<string, string> = {};
+        const vision: Record<string, boolean | null> = {};
+        for (const c of list) {
+          labels[c.model] = modelCapsLabel(c);
+          vision[c.model] = c.vision;
+        }
+        setCaps({ labels, vision });
       })
       .catch(() => {});
     return () => {
@@ -649,10 +767,11 @@ function useModelCaps(models: string[], gatewayId: string | null): Record<string
 }
 
 /**
- * 思考强度滑块（2026-10-17 用户：档位切换做成滑块）。分段按钮在档多的家放不下——Grok 连「默认」有 8 档，
- * 每格只剩一个字母加省略号。滑块按档位刻度停靠：轨道 + 已选段 + 刻度点 + 隐形原生 range（拖动、键盘、读屏全包），
- * 右上写当前档名，轨道下写两端档名。拖动中只改预览，松手（或键盘抬起）才提交——运行中提交 = 往终端写一次命令，
- * 不能拖一路写一路。current 为 null = 不知道当前档（运行中 CLI 没报），不点亮任何一格。
+ * 思考强度滑块（2026-10-17 用户：档位切换做成滑块；2026-10-22 第二版设计稿：融进 Mesa 图标）。滑块就是图标里的「M▁」——
+ * 琥珀光标块沿一条基线滑，档位刻度是基线上的短竖线（像尺子）；右上的小 M 中间那道 V 随档位加深（EffortMark），
+ * 下面一句白话说这一档意味着什么（effort-depth.ts），档名照 CLI 原名。分段按钮在档多的家放不下（Grok 连「默认」8 档）。
+ * 隐形原生 range 管拖动、键盘、读屏。拖动中只改预览，松手（或键盘抬起）才提交——运行中提交 = 往终端写一次命令，
+ * 不能拖一路写一路。current 为 null = 不知道当前档（运行中 CLI 没报），光标块不出现。
  */
 function EffortSlider({
   choices,
@@ -672,6 +791,8 @@ function EffortSlider({
   const last = choices.length - 1;
   const pct = (i: number) => (last > 0 ? (i / last) * 100 : 0);
   const label = idx >= 0 ? choices[idx].label : "未知";
+  const levels = choices.map((c) => c.value).filter(Boolean);
+  const depth = idx >= 0 ? effortDepth(choices[idx].value, levels) : null;
   function commit() {
     if (draft === null || draft === knownIdx) {
       setDraft(null);
@@ -681,33 +802,36 @@ function EffortSlider({
     // 松手后回到真值：运行中要等 CLI 回显（中途换档会先弹确认，选 No 档位不变）；开聊前 current 会立刻跟上
     setDraft(null);
   }
-  // 档不多（≤6，含「默认」）时每个刻度下都写档名，一眼看出在哪一格、点名字也能选；Grok 那种八档只写两端，当前档写在右上
+  // 档不多（≤6，含「默认」）时每个刻度下都写档名，一眼看出在哪一格、点名字也能选；Grok 那种八档只写两端
   const labelAll = choices.length <= 6;
   const dragging = draft !== null;
-  // 拖动时滑块跟手；点刻度 / 点档名 / 键盘跳格时滑过去（120ms，动效口径 200ms 内）
-  const glide = dragging ? "" : "transition-[left,width,scale] duration-[120ms] ease-[var(--ccode-motion-ease)]";
+  // 拖动时光标块跟手；点刻度 / 点档名 / 键盘跳格时滑过去（120ms，动效口径 200ms 内）
+  const glide = dragging ? "" : "transition-[left,width] duration-[120ms] ease-[var(--ccode-motion-ease)]";
   return (
     <div className={`group/effort px-2 pb-2 pt-1.5 ${disabled ? "opacity-50" : ""}`}>
-      <div className="mb-2 flex items-baseline justify-between">
+      <div className="mb-1.5 flex items-center justify-between">
         <span className="text-xs text-l3">思考强度</span>
-        {!labelAll && <span className={`text-xs font-medium ${idx >= 0 ? "text-l1" : "text-l4"}`}>{label}</span>}
+        <span className={`flex items-center gap-1.5 text-xs font-medium ${idx >= 0 ? "text-l1" : "text-l4"}`}>
+          <EffortMark depth={depth} className="h-3 w-auto" />
+          {label}
+        </span>
       </div>
-      {/* 左右各缩进半个滑块，两端的滑块不贴边；原生 range 向两边各伸出半个滑块，它的停靠点才与画出来的刻度对齐 */}
-      <div className="relative mx-2 h-5">
-        <span className="absolute top-1/2 left-0 h-1 w-full -translate-y-1/2 rounded-full bg-field" />
+      {/* 左右各缩进半个光标块，两端不贴边；原生 range 向两边各伸出半块，它的停靠点才与画出来的刻度对齐 */}
+      <div className="relative mx-2.5 h-5">
+        <span className="absolute bottom-1 left-0 h-0.5 w-full rounded-full bg-field" />
         {idx >= 0 && (
           <span
-            className={`absolute top-1/2 left-0 h-1 -translate-y-1/2 rounded-full bg-l3 ${glide}`}
+            className={`absolute bottom-1 left-0 h-0.5 rounded-full bg-l3 ${glide}`}
             style={{ width: `${pct(idx)}%` }}
           />
         )}
-        {/* 没走到的档画成灰点，一眼数得出还差几档；走过的被已选段盖住，不再挖点（挖了像虚线） */}
+        {/* 刻度：基线上的短竖线（光标块盖住的那一格不画） */}
         {choices.map((c, i) =>
-          i <= idx ? null : (
+          i === idx ? null : (
             <span
               key={c.value || "default"}
               aria-hidden="true"
-              className="absolute top-1/2 size-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-l4"
+              className={`absolute bottom-1 h-1.5 w-px -translate-x-1/2 ${i < idx ? "bg-l3" : "bg-l4"}`}
               style={{ left: `${pct(i)}%` }}
             />
           ),
@@ -715,8 +839,8 @@ function EffortSlider({
         {idx >= 0 && (
           <span
             aria-hidden="true"
-            // 滑块走开关同一套令牌（design-system：禁 bg-l1 当滑块，浅色主题会变成黑疙瘩）；靠描边浮起，不加投影
-            className={`pointer-events-none absolute top-1/2 size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border border-l4 bg-switch-knob ${glide} ${
+            // 光标块：M▁ 里那一道（琥珀 + 余辉，App.css .ccode-effort-knob），坐在基线上
+            className={`ccode-effort-knob pointer-events-none absolute bottom-1 h-2 w-4 -translate-x-1/2 rounded-xs ${glide} ${
               disabled ? "" : "group-hover/effort:scale-110"
             } group-has-[input:focus-visible]/effort:outline group-has-[input:focus-visible]/effort:outline-1 group-has-[input:focus-visible]/effort:outline-offset-2 group-has-[input:focus-visible]/effort:outline-l3`}
             style={{ left: `${pct(idx)}%` }}
@@ -736,13 +860,13 @@ function EffortSlider({
           onKeyUp={(e) => {
             if (e.key.startsWith("Arrow") || e.key === "Home" || e.key === "End") commit();
           }}
-          className="absolute inset-y-0 -right-2 -left-2 m-0 h-full cursor-pointer appearance-none bg-transparent opacity-0 disabled:cursor-default [&::-moz-range-thumb]:size-4 [&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:appearance-none"
+          className="absolute inset-y-0 -right-2.5 -left-2.5 m-0 h-full cursor-pointer appearance-none bg-transparent opacity-0 disabled:cursor-default [&::-moz-range-thumb]:size-4 [&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:appearance-none"
         />
       </div>
       {labelAll ? (
-        <div className="relative mx-2 mt-1.5 h-4 text-micro">
+        <div className="relative mx-2.5 mt-1 h-4 text-micro">
           {choices.map((c, i) => (
-            // 读屏走上面的 range；这里是给鼠标的快捷点选。外层 px-2 + mx-2 给两端居中的档名留了位置
+            // 读屏走上面的 range；这里是给鼠标的快捷点选。外层 px-2 + mx-2.5 给两端居中的档名留了位置
             <span
               key={c.value || "default"}
               aria-hidden="true"
@@ -757,11 +881,12 @@ function EffortSlider({
           ))}
         </div>
       ) : (
-        <div className="mt-1.5 flex justify-between text-micro leading-4 text-l4">
+        <div className="mt-1 flex justify-between text-micro leading-4 text-l4">
           <span>{choices[0]?.label}</span>
           <span>{choices[last]?.label}</span>
         </div>
       )}
+      {idx >= 0 && <p className="mt-1.5 text-xs leading-[18px] text-l3">{effortGloss(depth)}</p>}
     </div>
   );
 }

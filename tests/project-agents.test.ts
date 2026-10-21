@@ -523,3 +523,25 @@ test("goalBoundLaunch：显式绑定尊重停用项，死引用 fail-loud，模�
   const dead = goalBoundLaunch({ profiles, hiddenProfiles: [], profileId: "deleted-x" });
   assert.deepEqual(dead, { kind: "missing", deadId: "deleted-x" });
 });
+
+test("聊天开聊前选项目：chat 槽 > 项目默认，都没有不动", async () => {
+  const { projectChatLaunch } = await import("../src/project-agents.ts");
+  const profiles = [
+    { id: "cc1", agent: "claude-code", models: ["glm-5.3", "glm-5.3-flash"] },
+    { id: "cx1", agent: "codex", models: ["gpt-5.5"] },
+  ];
+  assert.deepEqual(projectChatLaunch(profiles, { defaultAgent: "codex" }), {
+    agentId: "codex",
+    profileId: "cx1",
+    model: "gpt-5.5",
+  });
+  assert.deepEqual(
+    projectChatLaunch(profiles, {
+      defaultAgent: "codex",
+      taskBindings: { chat: { profile: "cc1", model: "glm-5.3-flash" } },
+    }),
+    { agentId: "claude-code", profileId: "cc1", model: "glm-5.3-flash" },
+  );
+  assert.equal(projectChatLaunch(profiles, {}), null);
+  assert.equal(projectChatLaunch(profiles, null), null);
+});

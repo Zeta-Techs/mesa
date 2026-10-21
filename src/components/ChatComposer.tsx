@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { AtSign, FileText, Paperclip, Plus, Smartphone, Square } from "lucide-react";
+import { ArrowUp, AtSign, FileText, Paperclip, Plus, Smartphone, Square, TriangleAlert } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import type { McpServerDto, SkillDto } from "../types";
 import type { SearchResultDto } from "./FileTree";
@@ -23,6 +23,39 @@ import { escInterruptSafe } from "../agent-caps";
 import InsertMenuItems from "./InsertMenuItems";
 import { usePhoneDropStore } from "../phone-drop-store";
 import type { PhoneItem } from "../phone-drop";
+
+/** 按扩展名认图片附件（「+ → 文件或图片」选来的没有缩略图，也要算） */
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|heif|tiff?)$/i;
+
+/**
+ * 发送钮 = Mesa 图标里 M▁ 那块光标（2026-10-22 用户：圆形按钮做成图标里的小方块）：横向圆角块，
+ * 没字是灰块，有字亮成琥珀带一点余辉。样式在 App.css .ccode-send-block（data-state）
+ */
+function SendBlock({
+  disabled,
+  busy,
+  queued = false,
+  onClick,
+}: {
+  disabled: boolean;
+  busy: boolean;
+  queued?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      data-state={disabled ? "empty" : "ready"}
+      title={queued ? "排队：这一轮结束后处理（Enter 也是）" : busy ? "正在发送…" : "Enter 发送 · Shift+Enter 换行"}
+      aria-label={queued ? "排队发送" : "发送"}
+      className="ccode-send-block"
+    >
+      <ArrowUp size={15} strokeWidth={2.4} aria-hidden="true" />
+    </button>
+  );
+}
 
 /**
  * 「+」添加菜单（docs/design-chat-layer.md §4.1，2026-10-17 第二期）：文件或图片 / 引用项目文件 / 技能 / MCP。
@@ -162,7 +195,11 @@ export default function ChatComposer({
   narrow = false,
   cwd = null,
   mesaCommands = [],
-  recallText = null,
+  recallHistory = [],
+  tone = null,
+  onCyclePermission,
+  imageWarning = null,
+  onImagesChange,
 }: {
   disabled?: boolean;
   busy?: boolean;
@@ -197,8 +234,16 @@ export default function ChatComposer({
   cwd?: string | null;
   /** 斜杠面板上半组「Mesa」操作（由 Mesa 执行，不写进终端） */
   mesaCommands?: MesaCommand[];
-  /** 输入框为空时按 ↑ 取回的上一句 */
-  recallText?: string | null;
+  /** 自己发过的话（最近的在前）：输入框为空时按 ↑ 取第一条，接着 ↑ / ↓ 在这串里走 */
+  recallHistory?: readonly string[];
+  /** 权限写在输入框本身上（2026-10-22）：完全访问上沿一道 caution 细线；只讨论虚线框。其余档不加任何东西 */
+  tone?: "full" | "discuss" | null;
+  /** ⇧Tab 轮换权限档（只在开聊前给；开聊后换档要重开，不走快捷键） */
+  onCyclePermission?: () => void;
+  /** 输入框里有图、而当前模型看不了图时的一句提示（模型能力库判定，调用方给） */
+  imageWarning?: string | null;
+  /** 附件里有没有图片（给调用方判断要不要查模型能不能看图） */
+  onImagesChange?: (hasImages: boolean) => void;
 }) {
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -248,6 +293,14 @@ export default function ChatComposer({
     },
     [],
   );
+  // 有没有图片附件：调用方据此查当前模型能不能看图（看不了的在附件下面说一句）
+  const hasImages = attachments.some((a) => a.url != null || IMAGE_EXT.test(a.path));
+  useEffect(() => {
+    onImagesChange?.(hasImages);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasImages]);
+  // ↑ 一路往回取：-1 = 没在翻；翻出来的那条被改过就退出翻历史，↑ ↓ 回到在文字里移动光标
+  const recallIdxRef = useRef(-1);
 
   function removeAttachment(path: string) {
     const hit = attachmentsRef.current.find((a) => a.path === path);
@@ -427,6 +480,8 @@ export default function ChatComposer({
     if (el && value === "") el.style.height = "";
   }, [value]);
 
+  const canSubmit = !disabled && !busy && (value.trim() !== "" || attachments.length > 0);
+
   async function submit(override?: string) {
     const text = (override ?? value).trim();
     if ((!text && attachments.length === 0) || disabled || busy) return;
@@ -486,7 +541,10 @@ export default function ChatComposer({
     <div className="ccode-chat-composer shrink-0 bg-canvas px-4 pb-2 pt-2.5">
       {/* 开聊后与对话流同一条中轴：栏宽跟聊天字号走（App.css .ccode-chat-column） */}
       <div className={`mx-auto w-full ${narrow ? "max-w-[45rem]" : "ccode-chat-column"}`}>
-        <div className="overflow-visible rounded-xl border border-hairline bg-raised transition-colors focus-within:border-l4">
+        <div
+          data-tone={tone ?? undefined}
+          className="ccode-composer-box relative overflow-visible rounded-xl border border-hairline bg-raised transition-colors focus-within:border-l4"
+        >
           {/* 斜杠命令面板：/ 开头弹出（命令表是各家 CLI 的保守常用集，见 src/slash-commands.ts） */}
           {slashList.length > 0 && (
             <div className="border-b border-hairline px-1.5 py-1.5">
@@ -615,6 +673,12 @@ export default function ChatComposer({
               ))}
             </div>
           )}
+          {imageWarning && hasImages && (
+            <p className="flex items-center gap-1.5 px-4 pt-2 text-micro text-caution-text">
+              <TriangleAlert size={12} strokeWidth={1.8} aria-hidden="true" className="shrink-0" />
+              <span className="min-w-0 truncate" title={imageWarning}>{imageWarning}</span>
+            </p>
+          )}
           <textarea
             ref={ref}
             value={value}
@@ -672,18 +736,43 @@ export default function ChatComposer({
                 setMentionDismissed(true);
                 return;
               }
-              // 输入框为空时按 ↑：取回自己上一句来改（终端里的历史同习惯）
-              if (e.key === "ArrowUp" && !value && recallText && slashList.length === 0) {
+              // ⇧Tab 轮换权限档（开聊前；面板开着时不抢）：和 Claude Code 终端里同一个手势
+              if (e.key === "Tab" && e.shiftKey && onCyclePermission && slashList.length === 0 && !mention) {
                 e.preventDefault();
-                setValue(recallText);
-                requestAnimationFrame(() => {
-                  const el = ref.current;
-                  if (!el) return;
-                  el.style.height = "0";
-                  el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
-                  el.setSelectionRange(recallText.length, recallText.length);
-                });
+                onCyclePermission();
                 return;
+              }
+              // ↑ 一路往回取自己发过的话（终端历史同习惯）：输入框为空时开始；翻出来的那条没改过才接着翻，
+              // 多行的那条光标在第一行才往更早翻、在最后一行 ↓ 才往回翻，其余时候 ↑ ↓ 照常在文字里移动
+              if ((e.key === "ArrowUp" || e.key === "ArrowDown") && slashList.length === 0 && recallHistory.length > 0) {
+                const el = e.currentTarget;
+                const idx = recallIdxRef.current;
+                const browsing = idx >= 0 && value === recallHistory[idx];
+                if (!browsing) recallIdxRef.current = -1;
+                const pos = el.selectionStart ?? 0;
+                const onFirstLine = !value.slice(0, pos).includes("\n");
+                const onLastLine = !value.slice(pos).includes("\n");
+                let next: number | null = null;
+                if (e.key === "ArrowUp" && (!value || (browsing && onFirstLine))) {
+                  next = Math.min(recallHistory.length - 1, (browsing ? idx : -1) + 1);
+                  if (browsing && next === idx) next = null;
+                } else if (e.key === "ArrowDown" && browsing && onLastLine) {
+                  next = idx - 1;
+                }
+                if (next !== null) {
+                  e.preventDefault();
+                  recallIdxRef.current = next;
+                  const text = next >= 0 ? recallHistory[next] : "";
+                  setValue(text);
+                  requestAnimationFrame(() => {
+                    const t = ref.current;
+                    if (!t) return;
+                    t.style.height = "0";
+                    t.style.height = `${Math.min(t.scrollHeight, 160)}px`;
+                    t.setSelectionRange(text.length, text.length);
+                  });
+                  return;
+                }
               }
               // 斜杠面板开着时：↑/↓ 移动、Enter 选中并发送、Tab 仅补全、Esc 收起
               if (slashList.length > 0) {
@@ -716,9 +805,13 @@ export default function ChatComposer({
                 void submit();
               }
             }}
-            rows={2}
+            // 空态（居中）两行高，好落笔；开聊后一行起，长对话里把高度让给内容（2026-10-22）
+            rows={narrow ? 2 : 1}
             placeholder={placeholder ?? "输入消息…"}
-            className="block max-h-40 min-h-16 w-full resize-none bg-transparent px-4 pb-2 pt-3 text-sm leading-6 text-l1 outline-none focus:outline-none focus-visible:outline-none focus-visible:outline-offset-0 placeholder:text-l4 disabled:cursor-not-allowed disabled:opacity-60"
+            // 插入符是 M▁ 那道琥珀（--color-mesa-amber），光标本身就是品牌
+            className={`block max-h-40 w-full resize-none bg-transparent px-4 pb-2 pt-3 text-sm leading-6 text-l1 caret-mesa-amber outline-none focus:outline-none focus-visible:outline-none focus-visible:outline-offset-0 placeholder:text-l4 disabled:cursor-not-allowed disabled:opacity-60 ${
+              narrow ? "min-h-16" : ""
+            }`}
           />
           <div className="flex min-h-10 items-center justify-between gap-2 px-3 pb-1.5">
             <div className="flex min-w-0 items-center gap-0.5">
@@ -764,41 +857,33 @@ export default function ChatComposer({
               onInterrupt &&
               !busy &&
               (agentId == null || escInterruptSafe(agentId)) ? (
-                /* 正在生成：发送钮本体变「进行中」停止钮，点击 = 往终端发 Esc 暂停；
-                   打字中的消息仍可用 Enter 发送（submit 走键盘路径，不经此钮）。
-                   Grok 无此钮：非 prompt 态 Esc 会退出整进程。 */
-                <button
-                  type="button"
-                  onClick={() => {
-                    onInterrupt();
-                    // 停止后焦点回输入框：「这一轮停下、可以接着打下一句」
-                    ref.current?.focus();
-                  }}
-                  title="暂停当前生成（往终端发送 Esc；会话保留，可继续输入）"
-                  aria-label="暂停当前生成"
-                  className="inline-flex h-8 w-8 shrink-0 animate-pulse items-center justify-center rounded-md bg-cta text-cta-text transition-opacity hover:opacity-90"
-                >
-                  <Square
-                    size={11}
-                    strokeWidth={0}
-                    fill="currentColor"
-                    aria-hidden="true"
-                  />
-                </button>
+                /* 正在生成：发送钮让位给停止钮（琥珀描边 + 实心方块，不闪），点击 = 往终端发 Esc 暂停。
+                   这时又打了字：停止钮旁写「排队」并亮出发送钮——Enter / 点它都是排队，这一轮结束后处理。
+                   Grok 无停止钮：非 prompt 态 Esc 会退出整进程。 */
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onInterrupt();
+                      // 停止后焦点回输入框：「这一轮停下、可以接着打下一句」
+                      ref.current?.focus();
+                    }}
+                    title="暂停当前生成（往终端发送 Esc；会话保留，可继续输入）"
+                    aria-label="暂停当前生成"
+                    data-state="stop"
+                    className="ccode-send-block"
+                  >
+                    <Square size={10} strokeWidth={0} fill="currentColor" aria-hidden="true" />
+                  </button>
+                  {canSubmit && (
+                    <>
+                      <span className="shrink-0 text-micro text-l4">排队</span>
+                      <SendBlock disabled={false} busy={false} onClick={() => void submit()} queued />
+                    </>
+                  )}
+                </>
               ) : (
-                <button
-                  type="button"
-                  disabled={
-                    disabled ||
-                    busy ||
-                    (!value.trim() && attachments.length === 0)
-                  }
-                  onClick={() => void submit()}
-                  title="Enter 发送 · Shift+Enter 换行"
-                  className="inline-flex h-8 shrink-0 items-center rounded-md bg-cta px-3 text-xs text-cta-text transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  {busy ? "发送中…" : "发送"}
-                </button>
+                <SendBlock disabled={!canSubmit} busy={Boolean(busy)} onClick={() => void submit()} />
               )}
             </div>
           </div>

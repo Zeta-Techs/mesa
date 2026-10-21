@@ -316,6 +316,26 @@ export const DISCUSS_BINDING_SLOT = "discuss";
 export const CHAT_BINDING_SLOT = "chat";
 
 /**
+ * 聊天输入框开聊前选了这个项目：用谁开聊（2026-10-22）。与项目里「＋ 新对话」同一条塔：
+ * chat 槽专属绑定 > 项目默认（名册）；都没有返回 null（不动当前选择）。
+ */
+export function projectChatLaunch(
+  profiles: readonly { id: string; agent: string; models?: readonly string[] }[],
+  project: {
+    defaultAgent?: string | null;
+    defaultProfiles?: Record<string, string> | null;
+    defaultModels?: Record<string, string> | null;
+    taskBindings?: Record<string, ProjectAgentBinding> | null;
+  } | null | undefined,
+): { agentId: string; profileId: string; model: string } | null {
+  if (!project) return null;
+  return (
+    taskBindingLaunch(profiles, project.taskBindings?.[CHAT_BINDING_SLOT]) ??
+    projectAgentLaunch(profiles, project.defaultAgent, project.defaultProfiles, project.defaultModels)
+  );
+}
+
+/**
  * 问 AI / ＋新对话 / 聊想法的 preferred 三件套（B4）：discuss 槽绑定命中即用它
  * （agent 跟随绑定连接），否则原样回落项目默认（projectAgentPrefs）。签名带
  * profiles——绑定→agent 需解析。产出与 projectAgentPrefs 同形，直接展开进

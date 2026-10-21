@@ -136,11 +136,13 @@ import {
   saveReaderSurface,
 } from "../reader";
 import {
+  projectChatLaunch,
   READER_BINDING_SLOT,
   stepSlotKey,
   taskBindingLaunch,
   workspaceLaunchChain,
 } from "../project-agents";
+import type { DirPick } from "../components/ChatProjectPicker";
 import { defaultCommitMessage } from "../git-commit-message";
 import { skipDisconnectedOfficial } from "../resume-profile";
 import {
@@ -448,6 +450,12 @@ export interface FocusTabActions {
   restoreHere: () => void;
   /** 在指定位置弹出目录菜单（项目 / 随手聊 / 主目录 / 选择文件夹… / 新建项目…；聊天输入框目录芯片用） */
   openDirMenu: (x: number, y: number) => void;
+  /** 开聊前换目录（聊天项目弹层 / 拖进文件夹）：选了项目且这个标签没手动换过 Agent，就带上项目的对话默认（chat 槽 > 项目默认） */
+  pickDir: (pick: DirPick) => void;
+  /** 「新建项目…」：去项目页建，建好回到这个标签 */
+  newProject: () => void;
+  /** 「最近用过」的一套搭配：Agent + 连接 + 模型一起换（思考档是标签级，由父级写） */
+  applyLaunchCombo: (combo: { agentId: string; profileId: string; model: string }) => void;
   /** 写一条 TUI 命令并盯屏 5 秒，CLI 弹确认菜单时上报 menuPrompt（切模型 / 思考档用） */
   runTuiCommand: (cmd: string) => void;
   /** 替用户在确认菜单里选第 index 项 */
@@ -495,6 +503,8 @@ export interface LaunchPickState {
   readonlySupported: boolean;
   /** 这家 CLI 本机默认权限（short 上徽标、detail 整句；如 Claude「完全访问」）；默认档为 null */
   permissionNote: CliPermissionNote | null;
+  /** 刚按项目默认换了 Agent / 连接（选项目时）：输入框上短暂写一句「按项目默认」，几秒后清掉 */
+  autoNote: string | null;
 }
 
 /** 聊天权限菜单的原生档：ask 请求批准 / auto 帮我批准 / full 完全访问（agent_specs permission_args） */
@@ -1609,14 +1619,25 @@ const TerminalView = memo(function TerminalView({
         group: "已停用（可手选）",
       })),
   ];
+  // 这个标签里人手换过 Agent / 连接（启动栏、聊天菜单、「最近用过」）：之后换项目不再自动带项目默认，免得覆盖人的选择
+  const agentPickedByHandRef = useRef(false);
+  // 刚按项目默认换了 Agent：聊天输入框上短暂写「按项目默认」
+  const [launchAutoNote, setLaunchAutoNote] = useState<string | null>(null);
+  useEffect(() => {
+    if (!launchAutoNote) return;
+    const t = window.setTimeout(() => setLaunchAutoNote(null), 4000);
+    return () => window.clearTimeout(t);
+  }, [launchAutoNote]);
   // 启动栏三段选择的唯一写入口：终端启动栏与聊天输入框的开聊前选择共用，两边改的是同一份
   function pickLaunchAgent(id: string) {
+    agentPickedByHandRef.current = true;
     setAgentId(id);
     setProfileId("");
     setModel("");
     setModelKept(false);
   }
   function pickLaunchProfile(id: string) {
+    agentPickedByHandRef.current = true;
     const prevModels = profiles.find((p) => p.id === profileId)?.models ?? [];
     const prof = profiles.find((p) => p.id === id);
     setProfileId(id);
@@ -1629,6 +1650,55 @@ const TerminalView = memo(function TerminalView({
   function pickLaunchModel(m: string) {
     setModel(m);
     setModelKept(false);
+  }
+  /** 「最近用过」的搭配：三样一起换（换 Agent 的默认连接预选只在 profileId 为空时跑，这里一并给了不会被它顶掉） */
+  function applyLaunchCombo(c: { agentId: string; profileId: string; model: string }) {
+    if (running) return;
+    agentPickedByHandRef.current = true;
+    setAgentId(c.agentId);
+    setProfileId(c.profileId);
+    setModel(c.model);
+    setModelKept(false);
+    setLaunchAutoNote(null);
+  }
+  /**
+   * 开聊前换目录（聊天项目弹层、把文件夹拖进来、终端空态卡的目录菜单）。随手聊目录可能还没建：与快速开聊同一个后端入口创建。
+   * 选的是已添加的项目、且这个标签没手动换过 Agent：按项目里「＋ 新对话」同一条塔带上用谁（chat 槽 > 项目默认，2026-10-22）
+   */
+  async function pickDir(pick: DirPick) {
+    if (running) return;
+    if (pick.kind === "scratch") {
+      try {
+        setWorkingDirectory(await invoke<string>("ensure_scratch_dir"));
+      } catch (reason) {
+        setError(`随手聊目录创建失败：${String(reason)}`);
+      }
+      return;
+    }
+    if (pick.kind === "home") {
+      setWorkingDirectory("~");
+      return;
+    }
+    setWorkingDirectory(pick.path);
+    if (agentPickedByHandRef.current) return;
+    try {
+      const list = await invoke<ProjectDto[]>("list_projects");
+      const project = list.find((p) => samePath(p.path, pick.path, IS_WINDOWS));
+      const launchTo = projectChatLaunch(profiles, project ?? null);
+      if (!launchTo) return;
+      const changed = launchTo.agentId !== agentId || launchTo.profileId !== profileId;
+      setAgentId(launchTo.agentId);
+      setProfileId(launchTo.profileId);
+      setModel(launchTo.model);
+      setModelKept(false);
+      if (changed) setLaunchAutoNote("按项目默认");
+    } catch {
+      // 读不到项目表：只换目录，用谁照旧
+    }
+  }
+  function openNewProject() {
+    setPage("workspaces");
+    useAppStore.getState().setNewProjectOpenReq({ token: Date.now(), returnTabId: tabId });
   }
   // 开聊前的思考档（2026-10-17 用户选定）：与开工弹层同一判定——只有该 agent + 连接 + 模型
   // 有启动注入通道（combo_surface.injectEffortAllowed）才给档位；值是本次覆盖（标签 effort），不写回连接
@@ -1702,6 +1772,7 @@ const TerminalView = memo(function TerminalView({
       permissionModes: launchAgentDet?.permissionModes ?? [],
       readonlySupported: launchAgentDet?.readonlySupported ?? false,
       permissionNote: cliPermissionNote,
+      autoNote: launchAutoNote,
     }),
     // profileMenuOptions 每次渲染新建，按其内容签名判等
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1724,6 +1795,7 @@ const TerminalView = memo(function TerminalView({
       launchAgentDet?.readonlySupported,
       launchAgentDet?.permissionModes?.join(","),
       cliPermissionNote,
+      launchAutoNote,
     ],
   );
   // 启动栏「权限」格与「这次启动」卡（2026-10-18 与聊天输入框同步）：值 = 只讨论 / 手选的原生档 /
@@ -5185,6 +5257,9 @@ const TerminalView = memo(function TerminalView({
     pickLaunchModel: () => {},
     restoreHere: () => {},
     openDirMenu: () => {},
+    pickDir: () => {},
+    newProject: () => {},
+    applyLaunchCombo: () => {},
     runTuiCommand: () => {},
     answerMenu: () => {},
     restartWithPermission: () => {},
@@ -5242,6 +5317,9 @@ const TerminalView = memo(function TerminalView({
     pickLaunchModel,
     restoreHere: () => void restoreTask(),
     openDirMenu: (x, y) => setWelcomeDirMenu({ x, y }),
+    pickDir: (pick) => void pickDir(pick),
+    newProject: openNewProject,
+    applyLaunchCombo,
     runTuiCommand,
     answerMenu,
     restartWithPermission,
@@ -5273,6 +5351,9 @@ const TerminalView = memo(function TerminalView({
       pickLaunchModel: (m) => actionsRef.current.pickLaunchModel(m),
       restoreHere: () => actionsRef.current.restoreHere(),
       openDirMenu: (x, y) => actionsRef.current.openDirMenu(x, y),
+      pickDir: (pick) => actionsRef.current.pickDir(pick),
+      newProject: () => actionsRef.current.newProject(),
+      applyLaunchCombo: (c) => actionsRef.current.applyLaunchCombo(c),
       runTuiCommand: (cmd) => actionsRef.current.runTuiCommand(cmd),
       answerMenu: (i) => actionsRef.current.answerMenu(i),
       restartWithPermission: () => actionsRef.current.restartWithPermission(),
@@ -6512,16 +6593,8 @@ const TerminalView = memo(function TerminalView({
               checked: choice.current,
               title: choice.path,
               hint: choice.kind === "home" ? "~" : undefined,
-              onSelect: () => {
-                if (choice.kind === "scratch") {
-                  // 随手聊目录可能还没建：与快速开聊同一个后端入口创建
-                  void invoke<string>("ensure_scratch_dir")
-                    .then((dir) => setWorkingDirectory(dir))
-                    .catch((reason) => setError(`随手聊目录创建失败：${String(reason)}`));
-                  return;
-                }
-                setWorkingDirectory(choice.kind === "home" ? "~" : choice.path);
-              },
+              // 与聊天输入框的项目弹层同一个入口：随手聊按需创建，选项目带上项目的对话默认
+              onSelect: () => void pickDir({ kind: choice.kind, path: choice.path }),
             })),
             { separator: true },
             {
@@ -6533,10 +6606,7 @@ const TerminalView = memo(function TerminalView({
               icon: FolderPlus,
               label: "新建项目…",
               title: "起个名字建一个新文件夹，定好工作方式后登记为项目（在项目页完成）",
-              onSelect: () => {
-                setPage("workspaces");
-                useAppStore.getState().setNewProjectOpenReq({ token: Date.now(), returnTabId: tabId });
-              },
+              onSelect: openNewProject,
             },
           ]}
         />
@@ -9816,7 +9886,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         launchPick={sessionByTab[t.id]?.launchPick ?? null}
                         onRestore={() => tabActionsRef.current.get(t.id)?.restoreHere()}
                         onPickRecent={(s) => openRecentChat(t.id, s)}
-                        onOpenDirMenu={(x, y) => tabActionsRef.current.get(t.id)?.openDirMenu(x, y)}
+                        onPickDir={(pick) => tabActionsRef.current.get(t.id)?.pickDir(pick)}
+                        onNewProject={() => tabActionsRef.current.get(t.id)?.newProject()}
                         onPickLaunch={{
                           agent: (id) => tabActionsRef.current.get(t.id)?.pickLaunchAgent(id),
                           profile: (id) => tabActionsRef.current.get(t.id)?.pickLaunchProfile(id),
@@ -9834,6 +9905,13 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                                   : x,
                               ),
                             ),
+                          // 「最近用过」的搭配：Agent / 连接 / 模型写进标签的启动栏，思考档是标签级的本次选择
+                          combo: (c) => {
+                            tabActionsRef.current.get(t.id)?.applyLaunchCombo(c);
+                            setTabs((prev) =>
+                              prev.map((x) => (x.id === t.id ? { ...x, effort: c.effort || null } : x)),
+                            );
+                          },
                         }}
                         onAnswerTrust={(accept) => {
                           holdAutoPeek(t.id);

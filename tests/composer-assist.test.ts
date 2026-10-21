@@ -56,3 +56,13 @@ test("上下文用量：最后一条带用量的助手消息 ÷ 窗口；窗口�
   assert.equal(contextUsage(msgs, null), null);
   assert.equal(contextUsage([], 200000), null);
 });
+
+test("↑ 历史：最近的在前，连着发的同一句只留一条，只认文字块", async () => {
+  const { userTextHistory } = await import("../src/composer-assist.ts");
+  const u = (text: string) => ({ role: "user", blocks: [{ kind: "text", text }] });
+  const a = { role: "assistant", blocks: [{ kind: "text", text: "好的" }] };
+  const msgs = [u("第一句"), a, u("第二句"), a, u("第二句"), { role: "user", blocks: [{ kind: "image", text: "" }] }, u("  第三句 ")];
+  assert.deepEqual(userTextHistory(msgs), ["第三句", "第二句", "第一句"]);
+  assert.deepEqual(userTextHistory(msgs, 2), ["第三句", "第二句"]);
+  assert.deepEqual(userTextHistory([]), []);
+});

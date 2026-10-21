@@ -44,6 +44,28 @@ export function filterMesaCommands(list: readonly MesaCommand[], query: string):
   return list.filter((c) => c.cmd.slice(1).toLowerCase().startsWith(q) || c.label.includes(query));
 }
 
+/**
+ * ↑ 一路往回取（2026-10-22）：自己发过的话，最近的在前；连着发的同一句只留一条，最多 limit 条。
+ * 输入框为空按 ↑ 取第一条，接着按 ↑ / ↓ 在这串里走（与终端历史同习惯）
+ */
+export function userTextHistory(
+  messages: readonly { role: string; blocks: readonly { kind: string; text: string }[] }[],
+  limit = 30,
+): string[] {
+  const out: string[] = [];
+  for (let i = messages.length - 1; i >= 0 && out.length < limit; i--) {
+    const m = messages[i];
+    if (m.role !== "user") continue;
+    const text = m.blocks
+      .filter((b) => b.kind === "text")
+      .map((b) => b.text)
+      .join("\n")
+      .trim();
+    if (text && out[out.length - 1] !== text) out.push(text);
+  }
+  return out;
+}
+
 /** 输入框为空时按 ↑：取回自己上一句（只取纯文字块；命令行、乐观消息之外的才算） */
 export function lastUserText(
   messages: readonly { role: string; blocks: readonly { kind: string; text: string }[] }[],

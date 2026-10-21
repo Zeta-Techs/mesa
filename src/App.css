@@ -83,6 +83,10 @@
   /* 「完全访问」这类需要留心、但不是报错的状态：把警告黄往正文灰里调和一截，成一支哑光琥珀，
      不用纯黄整行染色（2026-10-21 用户：那个黄太丑）。随主题的 warn-text / l2 变，深浅主题自动成套 */
   --color-caution-text: color-mix(in srgb, var(--color-warn-text) 62%, var(--color-l2));
+  /* Mesa 光标琥珀（M▁ 那一道，与图标源 / MesaMark 同值）：聊天输入框的插入符、发送钮光标块、思考强度滑块。
+     品牌色不随主题换色相，只在浅色底深一档（下方 -light 覆写）；ink 是压在琥珀上的字 / 图标色 */
+  --color-mesa-amber: #f5b83d;
+  --color-mesa-amber-ink: #1d1608;
 
   /* diff 增删 */
   --color-add: #8fd3a8;
@@ -355,6 +359,7 @@
 [data-theme$="-light"] {
   color-scheme: light;
   --color-hover: rgb(0 0 0 / 0.05);
+  --color-mesa-amber: #e39a1c;
   /* diff 增删行：GitHub 式浅底深字（七套浅色共享，截图口径） */
   --color-diff-add-bg: #d9f2e2; --color-diff-add-fg: #177245;
   --color-diff-del-bg: #fbe3e6; --color-diff-del-fg: #b02a42;
@@ -1904,6 +1909,93 @@ select:focus-visible {
   outline: 0 !important;
   box-shadow: none !important;
   -webkit-appearance: none;
+}
+
+/* 权限写在输入框本身上（2026-10-22）：完全访问 = 上沿一道 caution 细线（两端淡出）；只讨论 = 虚线框。
+   其余档不加任何东西——不看芯片也知道这段对话放了多大权 */
+.ccode-composer-box[data-tone="discuss"] {
+  border-style: dashed;
+  border-color: var(--color-field);
+}
+.ccode-composer-box[data-tone="full"]::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 14px;
+  right: 14px;
+  height: 1.5px;
+  border-radius: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--color-caution-text) 18%,
+    var(--color-caution-text) 82%,
+    transparent
+  );
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+/* 发送钮 = M▁ 那块光标（2026-10-22 用户：圆形按钮做成图标里的小方块）：横向圆角块。
+   empty 灰块；ready 琥珀 + 一点余辉（浅色底不加，发脏）；stop 琥珀描边 + 实心方块，不闪 */
+.ccode-send-block {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 1.75rem;
+  border-radius: var(--ccode-radius-control);
+  transition:
+    background-color 120ms var(--ccode-motion-ease),
+    box-shadow 120ms var(--ccode-motion-ease),
+    color 120ms var(--ccode-motion-ease);
+}
+.ccode-send-block[data-state="empty"] {
+  background: var(--color-seg-sel);
+  color: var(--color-l4);
+  cursor: not-allowed;
+}
+.ccode-send-block[data-state="ready"] {
+  background: var(--color-mesa-amber);
+  color: var(--color-mesa-amber-ink);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--color-mesa-amber) 35%, transparent);
+}
+.ccode-send-block[data-state="ready"]:hover {
+  filter: brightness(1.06);
+}
+.ccode-send-block[data-state="stop"] {
+  color: var(--color-mesa-amber);
+  box-shadow:
+    inset 0 0 0 1.5px color-mix(in srgb, var(--color-mesa-amber) 70%, transparent),
+    0 0 10px color-mix(in srgb, var(--color-mesa-amber) 22%, transparent);
+}
+.ccode-send-block[data-state="stop"]:hover {
+  background: color-mix(in srgb, var(--color-mesa-amber) 12%, transparent);
+}
+[data-theme$="-light"] .ccode-send-block[data-state="ready"] {
+  box-shadow: none;
+}
+[data-theme$="-light"] .ccode-send-block[data-state="stop"] {
+  box-shadow: inset 0 0 0 1.5px var(--color-mesa-amber);
+}
+/* 聊天项目弹层的搜索框：边界由那条 inset 底条提供，不再套全局焦点环 */
+.ccode-picker-search:focus,
+.ccode-picker-search:focus-visible {
+  outline: 0;
+}
+/* 思考强度滑块的光标块（M▁ 那一道，ChatModelMenu EffortSlider）：琥珀 + 同色余辉；浅色底不加余辉 */
+.ccode-effort-knob {
+  background: var(--color-mesa-amber);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--color-mesa-amber) 55%, transparent);
+}
+[data-theme$="-light"] .ccode-effort-knob {
+  box-shadow: none;
+}
+@media (forced-colors: active) {
+  .ccode-send-block {
+    border: 1px solid ButtonText;
+  }
 }
 
 /* 命令面板输入框由浮层本身提供边界；避免全局可访问焦点环在搜索框内再套一层黑框。 */

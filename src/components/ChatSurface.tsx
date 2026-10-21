@@ -6,13 +6,15 @@ import ChatComposer from "./ChatComposer";
 import ChatEmptyStart from "./ChatEmptyStart";
 import { firstCompleteTurnIndex } from "../conversation-tools";
 import { useAutoLoadOlder, wasPrepended } from "../auto-load-older";
-import { ChevronDown, FolderOpen } from "lucide-react";
-import { chatGreeting } from "../chat-empty-start";
+import { chatGreeting, resolveChatCwd, starterContextFor } from "../chat-empty-start";
 import { useAppStore } from "../store";
 import { isLightTheme } from "../themes";
 import { MesaCaret, MesaMark } from "./MesaMark";
 import ChatModelMenu from "./ChatModelMenu";
-import ChatPermissionBadge from "./ChatPermissionBadge";
+import ChatPermissionBadge, { confirmPermissionChoice, effectivePermissionTier } from "./ChatPermissionBadge";
+import ChatProjectPicker, { type DirPick } from "./ChatProjectPicker";
+import { nextPermissionTier } from "../chat-permission";
+import { readCombos, recordCombo, type LaunchCombo } from "../launch-combos";
 import type {
   ConnIssueState,
   LaunchPickState,
@@ -21,8 +23,8 @@ import type {
 } from "../pages/TerminalPage";
 import type { TuiMenu } from "../tui-menu";
 import { liveReplySupported, unsyncedTail } from "../live-reply";
-import { lastContextTokens, lastUserText, type MesaCommand } from "../composer-assist";
-import { AGENTS, type SessionMetaDto } from "../types";
+import { lastContextTokens, userTextHistory, type MesaCommand } from "../composer-assist";
+import { AGENTS, type ProjectDto, type SessionMetaDto } from "../types";
 import type {
   ChatMessageDto,
   DetectResult,
@@ -95,7 +97,8 @@ export default function ChatSurface({
   onPickLaunch,
   onRestore,
   onPickRecent,
-  onOpenDirMenu,
+  onPickDir,
+  onNewProject,
   runtime = null,
   onTuiCommand,
   menuPrompt = null,
@@ -166,13 +169,17 @@ export default function ChatSurface({
       permission: "discuss" | "write_tree",
       mode?: NativePermissionMode | null,
     ) => void;
+    /** 「最近用过」的一套搭配：Agent + 连接 + 模型 + 思考档一起换 */
+    combo?: (combo: LaunchCombo) => void;
   };
   /** 恢复占位：接回这个标签上次的会话 */
   onRestore?: () => void;
   /** 空态「最近的随手聊」点一条：接着聊它（快速开聊的空白标签用） */
   onPickRecent?: (s: SessionMetaDto) => void;
-  /** 目录芯片点开的菜单（项目 / 随手聊 / 主目录 / 选择文件夹… / 新建项目…），坐标为芯片左下角 */
-  onOpenDirMenu?: (x: number, y: number) => void;
+  /** 开聊前换项目 / 文件夹（项目芯片弹层、把文件夹拖进来）：选了项目由标签那边带上项目默认的 Agent */
+  onPickDir?: (pick: DirPick) => void;
+  /** 项目弹层「新建项目…」 */
+  onNewProject?: () => void;
   /** 运行中「模型 · 思考」芯片要的数据（与终端底栏同一份） */
   runtime?: {
     status: TabStatus | null;
@@ -309,6 +316,8 @@ export default function ChatSurface({
     if (!loadingOlder) loadingOlderRef.current = false;
   }, [loadingOlder]);
 
+  // 拖放监听只挂一次：开聊前能不能换目录随渲染变，经 ref 读最新的
+  const dropPickDirRef = useRef<((pick: DirPick) => void) | null>(null);
   useEffect(() => {
     if (!active) return;
     let cancelled = false;
@@ -327,6 +336,19 @@ export default function ChatSurface({
       }
       const text = joinDroppedChatPaths(event.payload.paths, IS_WINDOWS);
       if (!text) return;
+      // 开聊前拖进来一个文件夹 = 在这个文件夹里聊（项目弹层底部写着「也可以把文件夹拖进来」）；文件照旧当附件路径
+      const pickDir = dropPickDirRef.current;
+      if (pickDir && event.payload.paths.length === 1) {
+        const path = event.payload.paths[0];
+        void invoke("list_dir", { path, showHidden: false })
+          .then(() => {
+            if (!cancelled) pickDir({ kind: "folder", path });
+          })
+          .catch(() => {
+            if (!cancelled) setSeedInsert(text);
+          });
+        return;
+      }
       if (!cancelled) setSeedInsert(text);
     });
     return () => {
@@ -351,6 +373,7 @@ export default function ChatSurface({
   const canSend = state !== "timeout" || running || canResume;
   // 开聊前选择（Agent·模型 / 权限）：可改、没起进程、还没有对话
   const launchPickOpen = Boolean(launchPick?.editable && !running && messages.length === 0);
+  dropPickDirRef.current = launchPickOpen && onPickDir ? onPickDir : null;
 
   // 空态：输入框挪到画面中间偏上，起手提示与「接着上一段」在它下方（2026-10-17 二轮收敛）
   const emptyStart = state === "idle" && messages.length === 0 && !stuckWaiting;
@@ -578,6 +601,19 @@ export default function ChatSurface({
   }, [decisionKey]);
 
   async function sendFromComposer(text: string): Promise<string | null> {
+    // 从聊天层开聊：记下这套搭配，下次在这个项目里点一下就能换回来（launch-combos.ts）
+    if (launchPickOpen && launchPick && cwd && launchPick.profileId) {
+      recordCombo(
+        resolveChatCwd(cwd, homeDir),
+        {
+          agentId: launchPick.agentId,
+          profileId: launchPick.profileId,
+          model: launchPick.model.trim(),
+          effort: launchPick.effort,
+        },
+        IS_WINDOWS,
+      );
+    }
     const event = slashHandoff(text, modelSwitch?.kind ?? null);
     if (event === "picker_model") onRequestPeek?.();
     return onSend(text);
@@ -608,7 +644,64 @@ export default function ChatSurface({
     // 只在新请求到来时处理一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [externalToken]);
-  const recallText = lastUserText(messages);
+  const recallHistory = useMemo(() => userTextHistory(messages), [messages]);
+
+  // 项目表（项目芯片弹层、权限菜单拿哪件事举例、「最近用过」标题里的项目名都要）
+  const projectsVersion = useAppStore((s) => s.projectsVersion);
+  const [projects, setProjects] = useState<ProjectDto[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    invoke<ProjectDto[]>("list_projects")
+      .then((list) => {
+        if (!cancelled) setProjects(list);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [projectsVersion]);
+  const chatDir = resolveChatCwd(cwd, homeDir);
+  const workContext = starterContextFor(chatDir, projects, IS_WINDOWS);
+  const cwdLabel = cwd
+    ? cwdChipLabel({ cwd, home: homeDir, projectPaths, recentRepos, isWindows: IS_WINDOWS })
+    : "";
+
+  // 权限写在输入框身上：完全访问上沿细线、只讨论虚线框（其余档不加东西）
+  const launchAgentLabel = AGENTS.find((a) => a.id === launchPick?.agentId)?.label ?? "这家 CLI";
+  const permTier =
+    launchPick && !readOnly
+      ? effectivePermissionTier(launchPick.permission, launchPick.permissionMode, launchPick.permissionNote)
+      : null;
+  const composerTone = permTier === "full" ? "full" : permTier === "discuss" || readOnly ? "discuss" : null;
+  // ⇧Tab 轮换权限：只在开聊前（开聊后换档要重开，留给菜单里那条确认）
+  async function cyclePermission() {
+    if (!launchPick || !onPickLaunch) return;
+    const next = nextPermissionTier(permTier, (id) =>
+      id === "discuss" ? launchPick.readonlySupported : launchPick.permissionModes.includes(id),
+    );
+    if (!next) return;
+    if (next === "full" && !(await confirmPermissionChoice(launchAgentLabel, "full", false))) return;
+    if (next === "discuss") onPickLaunch.permission("discuss", null);
+    else onPickLaunch.permission("write_tree", next);
+  }
+
+  // 输入框里有图、当前模型确知看不了图：附件下面说一句（模型能力库，ChatModelMenu 查）
+  const [hasImages, setHasImages] = useState(false);
+  const [imageWarning, setImageWarning] = useState<string | null>(null);
+
+  // 「最近在这个项目用过」的搭配：连接已删的不列
+  const storeProfiles = useAppStore((s) => s.profiles);
+  const combos = useMemo(
+    () =>
+      launchPickOpen && chatDir
+        ? readCombos(chatDir, IS_WINDOWS).filter((c) =>
+            storeProfiles.some((p) => p.id === c.profileId && p.agent === c.agentId),
+          )
+        : [],
+    // launchPick 变了（刚开过聊、换了项目）重新读
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [launchPickOpen, chatDir, storeProfiles, launchPick?.agentId, launchPick?.profileId],
+  );
   const contextUsed = lastContextTokens(messages);
 
   return (
@@ -809,36 +902,27 @@ export default function ChatSurface({
         }
         leftExtras={
           <>
-            {/* 目录芯片（2026-10-17 用户：「将在 ~ 开始」应该是选项目）：写项目名 / 随手聊 / 主目录，
-                点开同终端空态卡那张目录菜单，多一项「新建项目…」；开聊后目录不能再换，不显示 */}
+            {/* 项目芯片（2026-10-17 用户：「将在 ~ 开始」应该是选项目；2026-10-22 换成与权限、模型同一族的弹层）：
+                能搜、带项目类型与项目默认；开聊后目录不能再换，不显示 */}
             {cwd && launchPick?.editable && !running && messages.length === 0 && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  const r = e.currentTarget.getBoundingClientRect();
-                  if (onOpenDirMenu) onOpenDirMenu(r.left, r.bottom + 4);
-                  else onChooseCwd?.();
-                }}
-                title={`${cwd === "~" && homeDir ? homeDir : cwd}\n点击换项目或文件夹`}
-                className="ml-1 flex h-6 min-w-0 max-w-[14rem] items-center gap-1 rounded-md px-1.5 text-micro text-l3 hover:bg-hover hover:text-l1"
-              >
-                <FolderOpen size={12} strokeWidth={1.8} aria-hidden="true" className="shrink-0" />
-                <span className="truncate">
-                  {cwdChipLabel({
-                    cwd,
-                    home: homeDir,
-                    projectPaths,
-                    recentRepos,
-                    isWindows: IS_WINDOWS,
-                  })}
-                </span>
-                <ChevronDown size={12} strokeWidth={1.8} aria-hidden="true" className="shrink-0" />
-              </button>
+              <ChatProjectPicker
+                cwd={cwd}
+                homeDir={homeDir}
+                label={cwdLabel}
+                projects={projects}
+                recentRepos={recentRepos ?? []}
+                isWindows={IS_WINDOWS}
+                onPick={(pick) => onPickDir?.(pick)}
+                onChooseFolder={() => onChooseCwd?.()}
+                onNewProject={onNewProject}
+              />
             )}
             {/* 权限徽标：开聊前可选两档，开聊后只读；只读分叉另有「只读分叉」标签，不重复 */}
             {launchPick && !readOnly && (launchPickOpen || running || canResume) && (
               <ChatPermissionBadge
-                agentLabel={AGENTS.find((a) => a.id === launchPick.agentId)?.label ?? "这家 CLI"}
+                agentLabel={launchAgentLabel}
+                context={workContext}
+                cycleHint={launchPickOpen}
                 permission={launchPick.permission}
                 mode={launchPick.permissionMode}
                 modes={launchPick.permissionModes}
@@ -889,6 +973,11 @@ export default function ChatSurface({
         rightExtras={
           // 「模型 · 思考」菜单：开聊前、运行中、停了可接着聊同一个菜单（ChatModelMenu）
           launchPickOpen && onPickLaunch ? (
+            <>
+              {/* 刚选的项目设了对话默认，Agent 跟着换了：说一声（几秒后自己消失） */}
+              {launchPick?.autoNote && (
+                <span className="shrink-0 animate-pulse-brief text-micro text-l4">{launchPick.autoNote}</span>
+              )}
             <ChatModelMenu
               kind="launch"
               pick={launchPick!}
@@ -897,7 +986,13 @@ export default function ChatSurface({
               onModel={onPickLaunch.model}
               onEffort={onPickLaunch.effort}
               onPermission={onPickLaunch.permission}
+              combos={combos}
+              combosWhere={cwdLabel || null}
+              onCombo={onPickLaunch.combo}
+              hasImages={hasImages}
+              onImageWarning={setImageWarning}
             />
+            </>
           ) : (running || canResume) && runtime && onTuiCommand ? (
             <ChatModelMenu
               kind="runtime"
@@ -911,6 +1006,8 @@ export default function ChatSurface({
               contextUsed={contextUsed}
               onCompact={mesaCommands.find((c) => c.cmd === "/compact")?.run ?? null}
               onRelaunch={runtime.onRelaunch}
+              hasImages={hasImages}
+              onImageWarning={setImageWarning}
               // 进程退出、还能接着聊：改选「接着聊用哪个模型」，写标签的启动选择（与终端启动栏同一份）
               next={
                 !running && canResume && launchPick && onPickLaunch
@@ -936,7 +1033,11 @@ export default function ChatSurface({
         narrow={emptyStart}
         cwd={cwd ?? null}
         mesaCommands={mesaCommands}
-        recallText={recallText}
+        recallHistory={recallHistory}
+        tone={composerTone}
+        onCyclePermission={launchPickOpen && launchPick && !readOnly ? () => void cyclePermission() : undefined}
+        imageWarning={imageWarning}
+        onImagesChange={setHasImages}
       />
       {emptyStart && (
         // 输入框后面同一层级渲染，切出空态时输入框不重挂载（已输入的字、焦点都在）

@@ -12,7 +12,8 @@ const bundle = await build({
       export {default as Menu} from './src/components/ChatModelMenu';
       export {default as Decision} from './src/components/ChatDecisionCard';
       export {default as Conversation} from './src/components/ConversationView';
-      export {default as Composer} from './src/components/ChatComposer';`,
+      export {default as Composer} from './src/components/ChatComposer';
+      export {default as Picker} from './src/components/ChatProjectPicker';`,
     resolveDir: process.cwd(),
     loader: "tsx",
   },
@@ -83,6 +84,7 @@ async function mount() {
           return [
             { model: "glm-5.3", thinking: true, context: 200000, vision: null },
             { model: "glm-5.2", thinking: true, context: 128000, vision: true },
+            { model: "glm-flash", thinking: false, context: 128000, vision: false },
           ];
         }
         if (command === "search_files") {
@@ -91,6 +93,9 @@ async function mount() {
             { path: "/proj/src/main.rs", rel: "src/main.rs", name: "main.rs", isDir: false },
             { path: "/proj/src/my app.ts", rel: "src/my app.ts", name: "my app.ts", isDir: false },
           ];
+        }
+        if (command === "git_status") {
+          return { isRepo: true, branch: "main" };
         }
         if (command === "combo_surface") {
           return { showNativeEffort: true, effortLevels: [], launchEffort: "high", thinking: true, mixedModelsNote: null, injectEffortAllowed: true };
@@ -105,7 +110,7 @@ async function mount() {
     compiled,
     compiled.exports,
   );
-  const { createElement: h, act, createRoot, Badge, Menu, Decision, Conversation, Composer } = compiled.exports;
+  const { createElement: h, act, createRoot, Badge, Menu, Decision, Conversation, Composer, Picker } = compiled.exports;
   const el = dom.window.document.getElementById("root")!;
   const root = createRoot(el);
   const render = (node: unknown) => act(async () => root.render(node));
@@ -116,7 +121,7 @@ async function mount() {
   };
   const click = (text: string) => act(async () => button(text).click());
   return {
-    h, act, el, host, render, button, click, Badge, Menu, Decision, Conversation, Composer,
+    h, act, el, host, render, button, click, Badge, Menu, Decision, Conversation, Composer, Picker,
     close: async () => {
       await act(async () => root.unmount());
       dom.window.close();
@@ -167,7 +172,7 @@ test("权限菜单四档：本机设置对应的那档打勾并标注，没有�
     await ui.render(ui.h(ui.Badge, props));
     assert.match(ui.el.textContent ?? "", /完全访问/);
     await ui.click("完全访问");
-    assert.match(ui.el.textContent ?? "", /AI 动手前怎么问你？/);
+    assert.match(ui.el.textContent ?? "", /假如它要/, "拿一件具体的事说明四档（2026-10-22）");
     for (const label of ["只讨论", "请求批准", "帮我批准", "完全访问"]) menuItem(ui, label);
     assert.doesNotMatch(ui.el.textContent ?? "", /自动改文件|按本机设置|先问再改/, "旧的五档已收掉");
     assert.equal(menuItem(ui, "完全访问").getAttribute("aria-checked"), "true");
@@ -479,7 +484,8 @@ test("输入框「+」：选文件成文件卡、随消息按路径发出；没�
     await ui.click("文件或图片");
     assert.match(ui.el.textContent ?? "", /报告\.pdf/, "选中的文件显示成文件名卡");
     await typeInto(ui, "帮我看看");
-    await ui.click("发送");
+    // 发送钮是光标块（只有图标），按 aria-label 找
+    await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="发送"]')!.click());
     assert.deepEqual(sent, ["帮我看看\n/proj/docs/报告.pdf"]);
 
     await ui.render(ui.h(ui.Composer, { ...props, cwd: null }));
@@ -526,7 +532,7 @@ test("斜杠面板：上半组 Mesa 操作由 Mesa 执行、不写进终端；�
           return null;
         },
         agentId: "claude-code",
-        recallText: "上一句问题",
+        recallHistory: ["上一句问题", "更早一句"],
         mesaCommands: [
           { cmd: "/new", label: "新对话", hint: "另开一段", run: () => ran.push("new") },
           { cmd: "/diff", label: "查看改动", hint: "右侧打开改动", run: () => ran.push("diff") },
@@ -550,6 +556,15 @@ test("斜杠面板：上半组 Mesa 操作由 Mesa 执行、不写进终端；�
 
     await key(ui, "ArrowUp");
     assert.equal(ui.el.querySelector("textarea")!.value, "上一句问题");
+    // 接着 ↑ 一路往回，↓ 往回走，走过头清空（2026-10-22）
+    await key(ui, "ArrowUp");
+    assert.equal(ui.el.querySelector("textarea")!.value, "更早一句");
+    await key(ui, "ArrowUp");
+    assert.equal(ui.el.querySelector("textarea")!.value, "更早一句", "到头了不动");
+    await key(ui, "ArrowDown");
+    assert.equal(ui.el.querySelector("textarea")!.value, "上一句问题");
+    await key(ui, "ArrowDown");
+    assert.equal(ui.el.querySelector("textarea")!.value, "");
   } finally {
     await ui.close();
   }
@@ -585,6 +600,146 @@ test("消息悬停操作：用户消息「编辑后重发」，助手消息「�
     // 回放页不传回调 = 只有复制
     await ui.render(ui.h(ui.Conversation, { messages: [text("user", "a"), text("assistant", "b")] }));
     assert.doesNotMatch(ui.el.textContent ?? "", /编辑后重发|从这里分叉/);
+  } finally {
+    await ui.close();
+  }
+});
+
+test("输入框（2026-10-22）：发送钮是光标块，生成中有字时停止 + 排队；⇧Tab 轮换权限；权限写在框上", async () => {
+  const ui = await mount();
+  try {
+    let cycles = 0;
+    let stops = 0;
+    const sent: string[] = [];
+    const base = {
+      onSend: async (t: string) => {
+        sent.push(t);
+        return null;
+      },
+      onCyclePermission: () => cycles++,
+    };
+    await ui.render(ui.h(ui.Composer, { ...base, tone: "full" }));
+    assert.equal(ui.el.querySelector(".ccode-composer-box")?.getAttribute("data-tone"), "full");
+    const send = () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="发送"]')!;
+    assert.equal(send().getAttribute("data-state"), "empty");
+    assert.equal(send().disabled, true);
+    await typeInto(ui, "你好");
+    assert.equal(send().getAttribute("data-state"), "ready");
+    await ui.act(async () => {
+      ui.el.querySelector("textarea")!.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true }));
+    });
+    assert.equal(cycles, 1, "⇧Tab 轮换权限");
+    // 生成中：停止钮在，有字时旁边写「排队」并给发送钮
+    await ui.render(ui.h(ui.Composer, { ...base, tone: "discuss", running: true, onInterrupt: () => stops++ }));
+    assert.equal(ui.el.querySelector(".ccode-composer-box")?.getAttribute("data-tone"), "discuss");
+    assert.ok(ui.el.querySelector('button[aria-label="暂停当前生成"]'));
+    assert.match(ui.el.textContent ?? "", /排队/);
+    await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="排队发送"]')!.click());
+    assert.deepEqual(sent, ["你好"]);
+    assert.doesNotMatch(ui.el.textContent ?? "", /排队/, "发出去了、输入框空了就只剩停止钮");
+    await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="暂停当前生成"]')!.click());
+    assert.equal(stops, 1);
+  } finally {
+    await ui.close();
+  }
+});
+
+test("模型菜单开聊前：最近在这个项目用过的搭配一点四样一起换；输入框有图时标出看不了图的模型", async () => {
+  const ui = await mount();
+  try {
+    const combos: unknown[] = [];
+    const warnings: (string | null)[] = [];
+    const pick = {
+      editable: true,
+      resumeSessionId: null,
+      agentId: "claude-code",
+      profileId: "p1",
+      model: "glm-flash",
+      profiles: [{ value: "p1", label: "GLM" }],
+      models: ["glm-flash", "glm-5.2"],
+      effort: "",
+      effortLevels: ["low", "medium", "high"],
+      permission: "write_tree",
+      permissionMode: null,
+      permissionModes: ["ask", "auto", "full"],
+      readonlySupported: true,
+      permissionNote: null,
+      autoNote: null,
+    };
+    const props = {
+      kind: "launch",
+      pick,
+      onAgent: () => {},
+      onProfile: () => {},
+      onModel: () => {},
+      onEffort: () => {},
+      onPermission: () => {},
+      combosWhere: "Ccode",
+      combos: [
+        { agentId: "codex", profileId: "cx", model: "gpt-5.5", effort: "medium" },
+        // 和当前选择一样的那套不列
+        { agentId: "claude-code", profileId: "p1", model: "glm-flash", effort: "" },
+      ],
+      onCombo: (c: unknown) => combos.push(c),
+      hasImages: true,
+      onImageWarning: (w: string | null) => warnings.push(w),
+    };
+    await ui.render(ui.h(ui.Menu, props));
+    await ui.act(async () => new Promise((r) => setTimeout(r, 0)));
+    assert.match(String(warnings.at(-1)), /glm-flash 看不了图/, "当前模型看不了图：告诉输入框");
+    await ui.click("Claude Code · glm-flash");
+    await ui.act(async () => new Promise((r) => setTimeout(r, 0)));
+    const text = ui.el.textContent ?? "";
+    assert.match(text, /最近在 Ccode 用过/);
+    assert.equal((text.match(/Claude Code/g) ?? []).length, 2, "芯片 + 菜单顶行各一次，和当前一样的那套不列");
+    assert.match(text, /看不了图/);
+    await ui.click("Codex");
+    assert.deepEqual(combos, [{ agentId: "codex", profileId: "cx", model: "gpt-5.5", effort: "medium" }]);
+  } finally {
+    await ui.close();
+  }
+});
+
+test("项目弹层：能搜、带项目类型与项目默认、编程项目写分支，选了交给标签；随手聊 / 选择文件夹在下面", async () => {
+  const ui = await mount();
+  try {
+    const picks: unknown[] = [];
+    let folders = 0;
+    let created = 0;
+    await ui.render(
+      ui.h(ui.Picker, {
+        cwd: "/u/code/ccode",
+        homeDir: "/u",
+        label: "Ccode",
+        projects: [
+          { path: "/u/code/ccode", name: "Ccode", workMode: "coding", lastOpenedAt: "2026-10-22", createdAt: null },
+          { path: "/u/res/gut", name: "肠道菌群综述", workMode: "research", defaultAgent: "codex", lastOpenedAt: "2026-10-21", createdAt: null },
+        ],
+        recentRepos: [],
+        isWindows: false,
+        onPick: (p: unknown) => picks.push(p),
+        onChooseFolder: () => folders++,
+        onNewProject: () => created++,
+      }),
+    );
+    await ui.click("Ccode");
+    await ui.act(async () => new Promise((r) => setTimeout(r, 0)));
+    const text = ui.el.textContent ?? "";
+    assert.match(text, /main/, "编程项目写当前分支");
+    assert.match(text, /科研\s*· 默认 Codex/);
+    assert.match(text, /随手聊/);
+    await ui.click("肠道菌群综述");
+    assert.deepEqual(picks.at(-1), { kind: "project", path: "/u/res/gut" });
+    await ui.click("Ccode");
+    const input = ui.el.querySelector<HTMLInputElement>('input[aria-label="找项目或文件夹"]')!;
+    await ui.act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+      setter.call(input, "肠道");
+      input.dispatchEvent(new window.Event("input", { bubbles: true }));
+    });
+    assert.doesNotMatch(ui.el.textContent ?? "", /随手聊/, "搜的时候固定两行对不上就不列");
+    await ui.click("选择文件夹");
+    assert.equal(folders, 1);
   } finally {
     await ui.close();
   }
