@@ -64,7 +64,7 @@ test("行/页模式（物理滚轮）、横向分量、零增量不接管", () =
 
 /** --- 合帧管道：假 DOM（祖先捕获监听 + 后代滚动监听）验证「每帧一次写入」 --- */
 
-type Synthetic = { type: string; init: { deltaY: number }; prevented: boolean };
+type Synthetic = { type: string; init: { deltaY: number; wheelDeltaY?: number }; prevented: boolean };
 
 function makeHarness() {
   const frames: { id: number; cb: () => void; cancelled: boolean }[] = [];
@@ -83,9 +83,9 @@ function makeHarness() {
   };
   class FakeWheelEvent {
     type: string;
-    init: { deltaY: number };
+    init: { deltaY: number; wheelDeltaY?: number };
     prevented = false;
-    constructor(type: string, init: { deltaY: number }) {
+    constructor(type: string, init: { deltaY: number; wheelDeltaY?: number }) {
       this.type = type;
       this.init = init;
     }
@@ -191,6 +191,23 @@ test("捕获阶段拦截：拦下原事件、不自己滚、同帧只排一次",
   assert.deepEqual(h.innerScrolls, [-7.5], "合成事件带累加增量走 xterm 原路径");
   assert.equal(h.pendingFrames(), 0);
 
+  teardown();
+});
+
+test("合成事件显式带反号 wheelDeltaY（Chromium 默认同号会让 xterm 反向滚）", () => {
+  const h = makeHarness();
+  const seen: Synthetic["init"][] = [];
+  h.inner.dispatchEvent = (e: Synthetic) => {
+    seen.push(e.init);
+    return true;
+  };
+  const teardown = installTrackpadWheelCoalescing(hostOf(h));
+  h.fire(h.wheel(-3));
+  h.fire(h.wheel(-4));
+  h.flush();
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].deltaY, -7);
+  assert.equal(seen[0].wheelDeltaY, 7);
   teardown();
 });
 

@@ -307,6 +307,12 @@
   决策纯函数 `shouldCoalesceTrackpadWheel`：备用屏（alternate buffer）／鼠标上报模式（mouseTrackingMode
   ≠ none）／任何修饰键／deltaMode ≠ 0／deltaX ≠ 0 一律放行不合帧（TUI 自身滚轮语义与横向滚动原样透传）。
   纯逻辑与假 DOM 时序断言在 `tests/terminal-wheel-scroll.test.ts`。
+  **合成事件必须显式带 `wheelDeltaY: -deltaY`（2026-10-21）**：Chromium / WebView2 给合成 `WheelEvent` 填的旧字段
+  `wheelDeltaY` 与 deltaY **同号**（真事件反号），xterm 的 `StandardWheelEvent` 先读它——Windows 上鼠标滚轮全是像素模式、
+  每一格都走合帧，于是普通缓冲里的滚轮整个反向（Edge CDP 实测：合帧前正确、合帧后反向、补字段后正确）。WebKit 默认就是
+  -deltaY，macOS 不变；别改成累加真事件的 `wheelDeltaY`（WebKit 约是 -3×deltaY，Mac 会快三倍）。
+  **清回滚区重画保住阅读位置**：输出帧带 `ESC[3J`（Ink 超一屏的整屏重画；Windows 由 consumeHostSequences 补上）且用户
+  正往上翻时，写完按原行号 `scrollToLine` 放回——不放回的话 xterm 每帧把视口钉到新历史最顶端，往下滚被拽回去。
   **鼠标滚轮同一条重绘账**（2026-09-22）：一格通常只有一枚 wheel，合帧省不掉整屏
   `replaceChildren`。`src/terminal-row-reuse.ts` 在 DOM 渲染器上包住 `renderRows`：
   视口平移不到一整屏、且还留在屏幕上的行文字与缓冲区一致时，把现成行节点挪到新位置，

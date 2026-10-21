@@ -3462,7 +3462,19 @@ const TerminalView = memo(function TerminalView({
         if (image) {
           setInlineImageUrl(`data:${image.mime};base64,${image.payload}`);
         }
-        if (host.text) term.write(host.text);
+        if (host.text) {
+          // 带清回滚区（ESC[3J）的整屏重画（Ink 回复超一屏时每帧「清屏 + 整段历史重打」）：用户正往上翻着时，
+          // xterm 清掉回滚区后把视口钉在新历史的最顶端、此后每帧都回到顶，往下滚也被拽回去，看着像滚轮反了。
+          // 历史是从头原样重打的，按原来的行号把视口放回去，用户看的还是那一段
+          const buf = term.buffer.active;
+          const keepLine =
+            host.text.includes("\x1b[3J") && buf.viewportY < buf.baseY ? buf.viewportY : null;
+          if (keepLine === null) term.write(host.text);
+          else
+            term.write(host.text, () => {
+              term.scrollToLine(Math.min(keepLine, term.buffer.active.baseY));
+            });
+        }
         if (kind === "agent" && host.text) {
           scanTrustPromptSoon();
           scanMenuSoon();

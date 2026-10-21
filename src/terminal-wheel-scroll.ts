@@ -93,9 +93,13 @@ export function installTrackpadWheelCoalescing(
         new WheelEvent("wheel", {
           deltaY: item.deltaY,
           deltaMode: 0,
+          // 旧字段 wheelDeltaY 必须显式给反号：Chromium / WebView2 给合成事件填的是与 deltaY **同号**的值
+          //（真事件是反号），xterm 的 StandardWheelEvent 先读 wheelDeltaY → Windows 上滚轮整个反向
+          //（2026-10-21 Edge CDP 实测）。WebKit 默认就是 -deltaY，macOS 不变
+          wheelDeltaY: -item.deltaY,
           bubbles: true,
           cancelable: true,
-        }),
+        } as WheelEventInit),
       );
     } catch {
       // 合成事件失败（老引擎缺 WheelEvent 构造器）时不再接管
