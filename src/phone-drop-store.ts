@@ -77,10 +77,13 @@ export const usePhoneDropStore = create<PhoneDropState>((set, get) => ({
   devices: [],
 
   openDialog: (target, opts) => {
+    // 配对过的手机已在随时接收：看列表不用开二维码（配新手机点「配对新手机」才开）；往输入框送仍要开始接收
+    const { devices, status } = get();
+    const standbyCovers = !target && devices.length > 0 && status.standby;
     set({ open: true, target, error: null });
     void get().refresh();
     void get().loadDevices();
-    if (opts?.start !== false) void get().start();
+    if (opts?.start !== false && !standbyCovers) void get().start();
   },
 
   openForComposer: (target) => {

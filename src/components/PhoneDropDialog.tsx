@@ -243,9 +243,9 @@ export default function PhoneDropDialog() {
     </>
   ) : (
     <>
-      <span className="mr-auto text-micro text-l4">
-        {paired && status.standbyEnabled ? "关掉后配对过的手机照样能发" : "关掉就停止接收"}
-      </span>
+      {!(paired && status.standbyEnabled) && (
+        <span className="mr-auto text-micro text-l4">关掉就停止接收</span>
+      )}
       <button type="button" className={primaryActionClass} onClick={closeDialog}>
         完成
       </button>
@@ -340,6 +340,7 @@ export default function PhoneDropDialog() {
                 <p className="text-sm text-l1">用手机相机扫这个码。</p>
                 <p className="text-l3">
                   手机和电脑要连同一个 Wi-Fi。扫开后就记住这台手机，照页面提示加到主屏幕，以后不用再扫。
+                  只在同一网络内传输、没有加密，公共 Wi-Fi 上别传敏感文件。
                 </p>
                 {!paired && (
                   <p className={status.connected ? "text-ok-text" : "text-l3"}>{phoneStateLine(status, incoming)}</p>
@@ -441,7 +442,7 @@ export default function PhoneDropDialog() {
           <div>
             <div className="mb-1.5 flex items-center gap-2">
               <span className="font-medium text-l2">收到的</span>
-              <span className="text-l4">点开看 · 保留 7 天</span>
+              <span className="text-l4">{items.length === 0 ? "还没有" : "点开看 · 保留 7 天"}</span>
               {placeable.length > 0 && canPlaceAny && (
                 <div className="ml-auto flex items-center gap-1.5">
                   <span className="text-l4">放进</span>
@@ -456,9 +457,7 @@ export default function PhoneDropDialog() {
                 </div>
               )}
             </div>
-            {items.length === 0 ? (
-              <p className="py-3 text-l4">还没有。手机上发出的东西会马上出现在这里。</p>
-            ) : (
+            {items.length > 0 && (
               <ul className="max-h-72 space-y-0.5 overflow-y-auto">
                 {items.map((item) => {
                   const Icon = KIND_ICON[item.kind] ?? File;
@@ -554,8 +553,6 @@ export default function PhoneDropDialog() {
               </ul>
             )}
           </div>
-
-          <p className="text-micro text-l4">只在同一网络内传输，没有加密。在公共 Wi-Fi 上别传敏感文件。</p>
         </div>
       </Modal>
       {previewItem?.path && (
