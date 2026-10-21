@@ -498,3 +498,4 @@ Zed 是唯一核实过的跨 agent 路线：可从已配置的 ACP agent 导入�
 - **Kimi 2.3 启动**：先发 DA1 查询，约 1.5 秒后才推 kitty 键盘、画界面；之前写进 PTY 的字全丢（2026-10-21 ConPTY 探针 3/3）。
 - **读屏字形（2026-10-21）**：Kimi 2.3 等首字时转月相「🌑 · Tip: …」；Qwen 0.25.3 的字形带 U+FE0E（「◆︎ 正文」「∴︎ Thought for 1s (click or ctrl+o to expand)」）；Gemini 0.65 输入框上方「? for shortcuts」单独一行、「Shift+Tab to accept edits / auto-accept edits  Shift+Tab to manual」随权限档变、MCP 后跟「· N skills」，粘贴多行后回显下多一行「Press Ctrl+O to expand pasted text」。
 - **Gemini 0.65 hook 显示名**：转圈行写「Executing Hook: <name>」，`name` 缺省时取 `command` 原文（`getHookName`）——Mesa 写 `name`。
+- **Grok 1.0.62 内置 web_search 经第三方网关必 401**（2026-10-21 用户实测）：它是 xAI 服务端搜索，另用 `models.web_search`（缺省 grok-4.x）、拿 `XAI_API_KEY` 去 xAI 鉴权；网关钥匙不认。顶层 `--disable-web-search` 摘掉它（连带 web_fetch，后者 `features.web_fetch` 缺省本就关），假网关核对请求里的工具从 26 个变 25 个。Mesa：API 连接且地址不是 `*.x.ai` 时加这个参数（`agents.rs`）。

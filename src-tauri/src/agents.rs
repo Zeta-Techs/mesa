@@ -606,6 +606,14 @@ fn grok_config_overlay(profile: &Profile, model: Option<&str>) -> Option<serde_j
 }
 
 /// GROK_CONFIG overlay 的预览附注（preview_launch_plan 用）：如实交代注不进的字段去向
+/// 连接地址是不是 xAI 官方（api.x.ai 及其子域）：只有官方 key 能用 Grok 内置的服务端 web_search
+fn grok_is_xai_endpoint(url: &str) -> bool {
+    reqwest::Url::parse(url.trim())
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.to_ascii_lowercase()))
+        .is_some_and(|h| h == "x.ai" || h.ends_with(".x.ai"))
+}
+
 fn grok_overlay_note() -> String {
     "api_backend / context_window 不在 grok overlay 白名单内（[model.*] 表会被静默丢弃）；渠道有二：中转 /models 目录条目带 apiBackend / contextWindow 字段，或绑定设「API 后端」后经「设为全局默认」写入 ~/.grok/config.toml 的 [model.*] 段；目录缺 contextWindow 时 grok 按 256000 计".into()
 }
@@ -1227,6 +1235,14 @@ pub fn launch_plan(
         {
             plan.args.push("--reasoning-effort".into());
             plan.args.push(effort);
+        }
+        // 内置 web_search 是 xAI 的服务端搜索：另用一个 grok-4.x 搜索模型、拿 XAI_API_KEY 去 xAI 鉴权，
+        // 经第三方网关时那把钥匙在 xAI 那边 401（2026-10-21 用户：内置的 web_search 工具报了 401 授权错误）。
+        // 连接地址不是 xAI 官方就关掉（--disable-web-search 连带关 web_fetch，它默认本来就关）
+        if profile.account_type == crate::profiles::AccountType::Api
+            && profile.base_url.as_deref().is_some_and(|u| !grok_is_xai_endpoint(u))
+        {
+            plan.args.push("--disable-web-search".into());
         }
     }
     // CodeBuddy 的 effort 是 CLI flag，不是环境变量；只在启动时携带，避免伪造配置文件字段。
@@ -4546,6 +4562,12 @@ mod tests {
             .args
             .windows(2)
             .any(|pair| pair[0] == "-m" && pair[1] == "grok-code-fast-1"));
+        // 第三方网关：内置 web_search 拿网关钥匙去 xAI 鉴权必 401，关掉；xAI 官方地址保留
+        assert!(plan.args.iter().any(|a| a == "--disable-web-search"));
+        let mut official = p.clone();
+        official.base_url = Some("https://api.x.ai/v1".into());
+        let plan_official = launch_plan(&official, Some("xai-secret".into()), Some("grok-code-fast-1")).unwrap();
+        assert!(!plan_official.args.iter().any(|a| a == "--disable-web-search"));
         // 模型列表经 GROK_CONFIG overlay 收敛进选择器（allowed_models）
         let grok_config = plan
             .env
