@@ -1,8 +1,8 @@
 //! 扫描缓存的落盘层（app.db 表 `scan_meta_cache`，2026-10-16）。
 //!
 //! 进程内 `SCAN_FILE_CACHE` 只活在进程生命期里，重启即清零——冷启动要把全部会话文件
-//! 重新解析一遍（Codex 归档 zst 还得解压）。本模块把五张 meta 缓存表
-//! （plain / chained / kimi / snapshot / kimi_snapshot）按「键 + 文件指纹」整表落进
+//! 重新解析一遍（Codex 归档 zst 还得解压）。本模块把六张 meta 缓存表
+//! （plain / chained / claude / kimi / snapshot / kimi_snapshot）按「键 + 文件指纹」整表落进
 //! app.db，新进程首轮扫描**前**装回：指纹未变的文件直接沿用旧 meta，一个字节不重读。
 //!
 //! 正确性完全复用既有口径：落盘行只是「解析结果」，消费端仍走 `file_sig` 指纹比对，
@@ -14,14 +14,14 @@
 //!
 //! 已知局限（2026-10-16 实测口径）：`cached_plain` 是**每段整表替换**共享 map 的
 //! 既有语义，扫描跑完 plain 表只剩最后一个 section 的条目——落盘因此只对
-//! chained（codex/grok，大头）与 kimi 完整生效；claude/gemini 等明文段每进程
+//! chained（codex/grok，大头）、claude 与 kimi 完整生效；gemini 等明文段每进程
 //! 重走 seek 头窗读（亚秒级）。实测冷扫描 3.2s → ~0.8s；要吃掉明文段需把
 //! plain 改成按段累积，动的是共享热路径，收益 <0.6s，暂不做。
 
 use rusqlite::{params, Connection};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::sessions::{FileSig, ScanFileCache, SessionMetaDto};
+use crate::sessions::{ClaudeLineage, FileSig, ScanFileCache, SessionMetaDto};
 
 static LOADED: AtomicBool = AtomicBool::new(false);
 static SAVED: AtomicBool = AtomicBool::new(false);
@@ -31,7 +31,8 @@ static SAVED: AtomicBool = AtomicBool::new(false);
 /// 旧版本落盘的行会被新版本「成功」读出并带着错误默认值永久命中缓存且被回写固化。
 /// 对照 usage.rs USAGE_SCHEMA_VERSION 先例；不符即整表不装，save_to 本就是
 /// DELETE 后整表重写，下轮落盘自愈。
-const SCAN_CACHE_VER: i64 = 1;
+/// 2：Claude 改按文件名取 id、拆出 claude 栏（接续关系存 parent 列 JSON），DTO 加 forked_from
+const SCAN_CACHE_VER: i64 = 2;
 
 fn ensure_table(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(
@@ -83,6 +84,12 @@ fn load_from(conn: &Connection, cache: &mut ScanFileCache) {
             }
             "chained" => {
                 cache.chained.entry(key).or_insert((sig, meta, parent));
+            }
+            "claude" => {
+                let lineage = parent
+                    .and_then(|p| serde_json::from_str::<ClaudeLineage>(&p).ok())
+                    .unwrap_or_default();
+                cache.claude.entry(key).or_insert((sig, meta, lineage));
             }
             "kimi" => {
                 let state = match (
@@ -151,6 +158,11 @@ fn save_to(conn: &Connection, cache: &ScanFileCache) -> rusqlite::Result<()> {
         }
         for (k, (sig, meta, parent)) in &cache.chained {
             row(k, "chained", sig, None, meta, parent.as_deref())?;
+        }
+        for (k, (sig, meta, lineage)) in &cache.claude {
+            let lin = serde_json::to_string(lineage)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            row(k, "claude", sig, None, meta, Some(&lin))?;
         }
         for (k, (sig, state, meta)) in &cache.kimi {
             row(k, "kimi", sig, state.as_ref(), meta, None)?;
@@ -228,6 +240,7 @@ mod tests {
             task_name: None,
             provider: None,
             profile_id: None,
+            forked_from: None,
         }
     }
 

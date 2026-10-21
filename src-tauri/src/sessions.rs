@@ -131,6 +131,10 @@ pub struct SessionMetaDto {
     /// Mesa profile used to start this session when known; historical/external sessions may be null.
     #[serde(default)]
     pub profile_id: Option<String>,
+    /// 同一 agent 内的分叉来源（目前只有 Claude）：本会话从哪条会话的某一点分出来、
+    /// 而原会话之后还在继续写。直线接续合并成一条，不填这个字段
+    #[serde(default)]
+    pub forked_from: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -842,13 +846,94 @@ fn claude_tool_result_text(b: &Value) -> String {
 }
 
 fn claude_file_meta(path: &Path, alive: bool) -> Option<SessionMetaDto> {
+    claude_file_meta_lineage(path, alive).map(|(m, _)| m)
+}
+
+/// Claude 会话文件的接续关系（2026-10-21 实证，Claude 桌面版「继续」）：在旧对话上接着聊会新建
+/// `<新id>.jsonl`，开头原样复制旧对话全部历史（行里 sessionId 仍是旧 id），之后的新内容才用新 id。
+/// 文件名才是会话自己的 id；开头的旧 id 只说明「从哪条接续而来」。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct ClaudeLineage {
+    /// 直接上游：第一条自身行之前最后出现的别的 sessionId（链式接续时不是最早那条）
+    pub(crate) parent: Option<String>,
+    /// 分出来的时刻：第一条带时间戳的自身行
+    pub(crate) branch_at: Option<String>,
+    /// 本文件最后一条带时间戳的行。不用 mtime：Claude 会往旧文件补写不带时间戳的标题行
+    pub(crate) last_at: Option<String>,
+    /// 分叉后用户问的第一句（分叉行的标题用它，否则跟原会话同名）
+    pub(crate) own_title: Option<String>,
+}
+
+fn is_uuid_like(s: &str) -> bool {
+    s.len() == 36
+        && s.chars()
+            .enumerate()
+            .all(|(i, c)| if matches!(i, 8 | 13 | 18 | 23) { c == '-' } else { c.is_ascii_hexdigit() })
+}
+
+fn json_line_session_id(line: &[u8]) -> Option<&str> {
+    const KEY: &[u8] = br#""sessionId":""#;
+    let at = line.windows(KEY.len()).position(|w| w == KEY)? + KEY.len();
+    let rest = &line[at..];
+    let end = rest.iter().position(|&b| b == b'"')?;
+    std::str::from_utf8(&rest[..end]).ok()
+}
+
+/// 流式找分叉点：只做字节查找，第一条自身行之前不解析 JSON
+fn claude_branch_info(path: &Path, own: &str) -> (Option<String>, Option<String>, Option<String>) {
+    use std::io::BufRead;
+    let Ok(f) = fs::File::open(path) else {
+        return (None, None, None);
+    };
+    let mut reader = std::io::BufReader::new(f);
+    let (mut parent, mut branch_at, mut own_title) = (None, None, None);
+    let mut own_seen = 0usize;
+    let mut buf = Vec::new();
+    loop {
+        buf.clear();
+        match reader.read_until(b'\n', &mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {}
+        }
+        let Some(sid) = json_line_session_id(&buf) else { continue };
+        if sid != own {
+            if own_seen == 0 {
+                parent = Some(sid.to_string());
+            }
+            continue;
+        }
+        own_seen += 1;
+        let Ok(v) = serde_json::from_slice::<Value>(&buf) else { continue };
+        if branch_at.is_none() {
+            branch_at = get_str(&v, "timestamp").map(String::from);
+        }
+        if own_title.is_none()
+            && get_str(&v, "type") == Some("user")
+            && v.get("isSidechain").and_then(|x| x.as_bool()) != Some(true)
+            && v.get("isMeta").and_then(|x| x.as_bool()) != Some(true)
+        {
+            own_title = claude_user_title(&v);
+        }
+        if (branch_at.is_some() && own_title.is_some()) || own_seen > 400 {
+            break;
+        }
+    }
+    (parent, branch_at, own_title)
+}
+
+fn claude_file_meta_lineage(path: &Path, alive: bool) -> Option<(SessionMetaDto, ClaudeLineage)> {
     let (head, tail) = read_head_tail(path, 64 * 1024)?;
     let (mut cwd, mut created, mut session_id, mut version) = (None, None, None, None);
     let (mut title, mut ai_title) = (None, None);
+    // 顺着 head→tail 读到底，最后一个时间戳就是末行的（小文件整段落在 head、tail 为空）
+    let mut last_at: Option<String> = None;
     for line in head.iter().chain(&tail) {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             continue;
         };
+        if let Some(ts) = get_str(&v, "timestamp") {
+            last_at = Some(ts.to_string());
+        }
         if cwd.is_none() {
             cwd = get_str(&v, "cwd").map(String::from);
         }
@@ -883,10 +968,28 @@ fn claude_file_meta(path: &Path, alive: bool) -> Option<SessionMetaDto> {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default()
     });
-    let session_id = session_id
-        .or_else(|| path.file_stem().map(|s| s.to_string_lossy().into_owned()))
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    Some(SessionMetaDto {
+    let content_id = session_id;
+    // 真实 Claude 文件名就是会话 uuid；接续文件开头的 sessionId 是上游的，不能拿来当自己的 id
+    let mut lineage = ClaudeLineage {
+        last_at,
+        ..Default::default()
+    };
+    let session_id = if is_uuid_like(&stem) {
+        if content_id.as_deref().is_some_and(|c| c != stem) {
+            let (parent, branch_at, own_title) = claude_branch_info(path, &stem);
+            lineage.parent = parent.or(content_id);
+            lineage.branch_at = branch_at;
+            lineage.own_title = own_title;
+        }
+        stem
+    } else {
+        content_id.unwrap_or(stem)
+    };
+    let meta = SessionMetaDto {
         agent: "claude-code".into(),
         session_id,
         project_path: project_path.clone(),
@@ -915,7 +1018,9 @@ fn claude_file_meta(path: &Path, alive: bool) -> Option<SessionMetaDto> {
         task_name: None,
         provider: None,
         profile_id: None,
-    })
+        forked_from: None,
+    };
+    Some((meta, lineage))
 }
 
 fn tag_inner<'a>(text: &'a str, open: &str, close: &str) -> Option<&'a str> {
@@ -1342,6 +1447,7 @@ fn codex_file_meta(
             task_name: None,
             provider,
             profile_id: None,
+            forked_from: None,
         },
         forked_from_id,
     ))
@@ -1668,6 +1774,7 @@ fn gemini_file_meta(
         task_name: None,
         provider: None,
         profile_id: None,
+        forked_from: None,
     })
 }
 
@@ -1986,6 +2093,7 @@ fn qwen_file_meta(path: &Path, alive: bool, archived: bool) -> Option<SessionMet
         task_name: None,
         provider: None,
         profile_id: None,
+        forked_from: None,
     })
 }
 
@@ -2216,6 +2324,7 @@ fn kimi_wire_file_meta(
         task_name: None,
         provider: None,
         profile_id: None,
+        forked_from: None,
     })
 }
 
@@ -2491,6 +2600,7 @@ fn kimi_legacy_file_meta(
         task_name: None,
         provider: None,
         profile_id: None,
+        forked_from: None,
     })
 }
 
@@ -2696,6 +2806,7 @@ fn codebuddy_file_meta(path: &Path, alive: bool) -> Option<SessionMetaDto> {
         task_name: None,
         provider: None,
         profile_id: None,
+        forked_from: None,
     })
 }
 
@@ -2870,6 +2981,7 @@ fn cursor_file_meta(path: &Path, alive: bool) -> Option<SessionMetaDto> {
         task_name: None,
         provider: None,
         profile_id: None,
+        forked_from: None,
     })
 }
 
@@ -3045,6 +3157,7 @@ fn grok_file_meta(path: &Path, alive: bool) -> Option<(SessionMetaDto, Option<St
             task_name: None,
             provider: None,
             profile_id: None,
+            forked_from: None,
         },
         parent,
     ))
@@ -3440,6 +3553,7 @@ fn opencode_scan_db(db_path: &Path) -> Vec<SessionMetaDto> {
             task_name: None,
             provider: None,
             profile_id: None,
+            forked_from: None,
         });
     }
     // OpenCode 新会话常暂存为 "New Session"：只对占位标题的会话惰性补标题——
@@ -3902,6 +4016,7 @@ fn opencode_scan_legacy(storage: &Path) -> Vec<SessionMetaDto> {
             task_name: None,
             provider: None,
             profile_id: None,
+            forked_from: None,
         });
     }
     out
@@ -3959,6 +4074,9 @@ pub struct ScanResult {
     /// codex 链代表 id → 全部成员 id（含代表自己）；链代表随新 resume 换人时，
     /// 用户写在任一成员 id 上的 pinned/tags 等整理数据仍能找回来
     pub chain_members: HashMap<String, Vec<String>>,
+    /// 并进链代表、列表里不单独出现的会话文件（目前只有 Claude 接续链）。
+    /// 每份文件只算自己 id 的行，用量重建要逐个过，否则上游那段的用量会丢
+    pub hidden_members: Vec<SessionMetaDto>,
     /// 项目路径 → provenance 规范化结果（含 canonicalize），随扫描缓存一轮，
     /// apply_provenance 不再每个会话每轮都 canonicalize
     pub provenance_paths: HashMap<String, String>,
@@ -3999,6 +4117,8 @@ pub(crate) struct ScanFileCache {
     pub(crate) plain: HashMap<String, (FileSig, SessionMetaDto)>,
     /// codex/grok：meta + 链父 id（merge_codex_chains 的输入）
     pub(crate) chained: HashMap<String, (FileSig, SessionMetaDto, Option<String>)>,
+    /// claude：meta + 接续关系（merge_claude_chains 的输入）。单独一栏：plain 每段整表替换
+    pub(crate) claude: HashMap<String, (FileSig, SessionMetaDto, ClaudeLineage)>,
     /// kimi：state.json 内容参与解析，值多带一份 state 指纹
     pub(crate) kimi: HashMap<String, (FileSig, Option<FileSig>, SessionMetaDto)>,
     /// 快照区（kimi 之外各家 + opencode .json）：解析不依赖外部文件
@@ -4050,6 +4170,30 @@ fn cached_plain(
     out
 }
 
+/// Claude：多带接续关系；按指纹跳过未变文件
+fn cached_claude(
+    files: Vec<PathBuf>,
+    cache: &mut HashMap<String, (FileSig, SessionMetaDto, ClaudeLineage)>,
+) -> Vec<(SessionMetaDto, ClaudeLineage)> {
+    let mut next = HashMap::with_capacity(files.len());
+    let mut out = Vec::with_capacity(files.len());
+    for f in files {
+        let Some(sig) = file_sig(&f) else { continue };
+        let key = cache_key(&f);
+        let pair = match cache.get(&key) {
+            Some((old_sig, m, lin)) if *old_sig == sig => (m.clone(), lin.clone()),
+            _ => match claude_file_meta_lineage(&f, true) {
+                Some(p) => p,
+                None => continue,
+            },
+        };
+        next.insert(key, (sig, pair.0.clone(), pair.1.clone()));
+        out.push(pair);
+    }
+    *cache = next;
+    out
+}
+
 /// codex/grok 同款，多带一个链父 id
 fn cached_chained(
     files: Vec<PathBuf>,
@@ -4098,6 +4242,7 @@ fn dir_listing_sig(files: &[PathBuf]) -> u64 {
 pub fn scan_sessions() -> ScanResult {
     let mut out = Vec::new();
     let mut chain_members = HashMap::new();
+    let mut claude_hidden: Vec<(String, SessionMetaDto)> = Vec::new();
     let mut cache = scan_file_cache().lock().unwrap_or_else(|e| e.into_inner());
     // 冷启动兜底（2026-10-16）：装回上一进程落盘的 meta 缓存——指纹未变的文件
     // 直接沿用旧解析结果，归档 zst 一个字节都不用重读（秒开的关键）
@@ -4105,6 +4250,7 @@ pub fn scan_sessions() -> ScanResult {
     let ScanFileCache {
         plain,
         chained,
+        claude,
         kimi,
         snapshot,
         kimi_snapshot,
@@ -4119,9 +4265,11 @@ pub fn scan_sessions() -> ScanResult {
     if let Some(home) = dirs::home_dir() {
         let mut claude_files = Vec::new();
         collect_files(&home.join(".claude").join("projects"), 2, &mut claude_files);
-        out.extend(cached_plain(claude_files, plain, |f| {
-            claude_file_meta(f, true)
-        }));
+        let claude_metas = cached_claude(claude_files, claude);
+        let (reps, members, hidden) = merge_claude_chains(claude_metas);
+        out.extend(reps);
+        chain_members.extend(members);
+        claude_hidden = hidden;
         // archived_sessions 里的文件是 alive 的归档，不是「已失效」
         let mut active_files = Vec::new();
         collect_files(&home.join(".codex").join("sessions"), 5, &mut active_files);
@@ -4140,7 +4288,7 @@ pub fn scan_sessions() -> ScanResult {
         });
         let (reps, members) = merge_codex_chains(codex_metas);
         out.extend(reps);
-        chain_members = members;
+        chain_members.extend(members);
         // Gemini：深度 3 恰好到 chats/*.jsonl，chats/<parentId>/ 下的子 agent 会话被排除；
         // 旧版单 JSON .json 文件不匹配 .jsonl 后缀，自然跳过（如需兼容再单开解析器）
         let mut gemini_files = Vec::new();
@@ -4549,9 +4697,26 @@ pub fn scan_sessions() -> ScanResult {
             s.step_name = Some(name.clone());
         }
     }
+    // 被并掉的 Claude 链成员跟代表同一归属（代表已经过工作区归并）
+    let rep_place: HashMap<&str, (&String, &Option<String>)> = out
+        .iter()
+        .filter(|m| m.agent == "claude-code")
+        .map(|m| (m.session_id.as_str(), (&m.project_path, &m.workspace)))
+        .collect();
+    let hidden_members = claude_hidden
+        .into_iter()
+        .map(|(rep, mut m)| {
+            if let Some((p, w)) = rep_place.get(rep.as_str()) {
+                m.project_path = (*p).clone();
+                m.workspace = (*w).clone();
+            }
+            m
+        })
+        .collect();
     ScanResult {
         sessions: out,
         chain_members,
+        hidden_members,
         provenance_paths: HashMap::new(), // 由 cached_scan 按项目去重填充
     }
 }
@@ -4639,6 +4804,118 @@ fn merge_codex_chains(
     (reps, members)
 }
 
+/// Claude 接续链（2026-10-21）。直线接续——上游在分叉点之后再没写过——并成一条，代表取链尾
+/// （最新那份文件带着全部历史，「继续」必须接它）；上游分出去之后还在写，或同一点被接续了
+/// 第二次，是真分叉：各自成行，`forked_from` 指向上游所在那一行的 id，标题改用分叉后第一句。
+/// 第三项是被并掉的成员（代表 id, meta）：列表不显示，但用量要逐文件算本文件自己的行。
+fn merge_claude_chains(
+    metas: Vec<(SessionMetaDto, ClaudeLineage)>,
+) -> (
+    Vec<SessionMetaDto>,
+    HashMap<String, Vec<String>>,
+    Vec<(String, SessionMetaDto)>,
+) {
+    let n = metas.len();
+    let index: HashMap<String, usize> = metas
+        .iter()
+        .enumerate()
+        .map(|(i, (m, _))| (m.session_id.clone(), i))
+        .collect();
+    let mut children: HashMap<usize, Vec<usize>> = HashMap::new();
+    for (i, (_, lin)) in metas.iter().enumerate() {
+        if let Some(p) = lin.parent.as_ref().and_then(|p| index.get(p)) {
+            if *p != i {
+                children.entry(*p).or_default().push(i);
+            }
+        }
+    }
+    let mut linear_parent: Vec<Option<usize>> = vec![None; n];
+    let mut fork_parent: Vec<Option<usize>> = vec![None; n];
+    let mut has_linear_child = vec![false; n];
+    for (p, kids) in &mut children {
+        kids.sort_by(|a, b| metas[*a].1.branch_at.cmp(&metas[*b].1.branch_at));
+        let p_last = metas[*p].1.last_at.as_deref();
+        for &c in kids.iter() {
+            let eligible = match (p_last, metas[c].1.branch_at.as_deref()) {
+                (Some(last), Some(branch)) => last <= branch,
+                _ => true, // 时间读不全：按直线接续处理（只是少一个分叉标记，不丢内容）
+            };
+            if eligible && !has_linear_child[*p] {
+                linear_parent[c] = Some(*p);
+                has_linear_child[*p] = true;
+            } else {
+                fork_parent[c] = Some(*p);
+            }
+        }
+    }
+    let root_of = |mut i: usize| {
+        for _ in 0..n {
+            match linear_parent[i] {
+                Some(p) => i = p,
+                None => break,
+            }
+        }
+        i
+    };
+    let mut groups: HashMap<usize, Vec<usize>> = HashMap::new();
+    for i in 0..n {
+        groups.entry(root_of(i)).or_default().push(i);
+    }
+    // 链尾 = 组里唯一没有直线后继的那份
+    let mut rep_of_root: HashMap<usize, usize> = HashMap::new();
+    for (root, g) in &groups {
+        let tail = g
+            .iter()
+            .copied()
+            .find(|&i| !has_linear_child[i])
+            .unwrap_or(*root);
+        rep_of_root.insert(*root, tail);
+    }
+    let rep_ids: Vec<String> = (0..n)
+        .map(|i| metas[rep_of_root[&root_of(i)]].0.session_id.clone())
+        .collect();
+    let forked_from: Vec<Option<String>> = (0..n)
+        .map(|i| fork_parent[i].map(|p| rep_ids[p].clone()))
+        .collect();
+    let mut slots: Vec<Option<(SessionMetaDto, ClaudeLineage)>> =
+        metas.into_iter().map(Some).collect();
+    let mut reps = Vec::new();
+    let mut members = HashMap::new();
+    let mut hidden = Vec::new();
+    for (root, g) in groups {
+        let rep_idx = rep_of_root[&root];
+        let Some((mut rep, rep_lin)) = slots[rep_idx].take() else { continue };
+        rep.chain_count = g.len();
+        // 分叉只看链头：链头从别处分出来，整条链都算那条分叉
+        rep.forked_from = forked_from[root].clone();
+        if rep.forked_from.is_some() {
+            let own = if root == rep_idx {
+                rep_lin.own_title
+            } else {
+                slots[root].as_ref().and_then(|(_, l)| l.own_title.clone())
+            };
+            if own.is_some() {
+                rep.title = own;
+            }
+        }
+        if g.len() > 1 {
+            let mut ids = vec![rep.session_id.clone()];
+            for &i in &g {
+                if i == rep_idx {
+                    continue;
+                }
+                if let Some((m, _)) = slots[i].take() {
+                    ids.push(m.session_id.clone());
+                    hidden.push((rep.session_id.clone(), m));
+                }
+            }
+            members.insert(rep.session_id.clone(), ids);
+        }
+        reps.push(rep);
+    }
+    (reps, members, hidden)
+}
+
 fn snapshot_stem(path: &Path) -> String {
     let name = path
         .file_name()
@@ -4701,6 +4978,7 @@ fn opencode_snapshot_meta(path: &Path, session_id: &str) -> Option<SessionMetaDt
         task_name: None,
         provider: None,
         profile_id: None,
+        forked_from: None,
     })
 }
 
@@ -7265,13 +7543,13 @@ pub(crate) fn delete_session_files(
         }
     } else {
         delete_source_file_mode(file_path, permanent)?;
-        if agent == "codex" || agent == "grok" {
+        if agent == "codex" || agent == "grok" || agent == "claude-code" {
             // resume/fork 链：只删代表文件会让链换个代表重新出现，成员文件一并删除
             let members = chain_members.get(session_id).cloned().unwrap_or_default();
-            let extra_files = if agent == "codex" {
-                codex_member_files(&members)
-            } else {
-                grok_member_files(&members)
+            let extra_files = match agent {
+                "codex" => codex_member_files(&members),
+                "grok" => grok_member_files(&members),
+                _ => claude_member_files(file_path, session_id, &members),
             };
             for f in extra_files {
                 delete_source_file_mode(&f.to_string_lossy(), permanent)?;
@@ -7294,9 +7572,22 @@ pub(crate) fn delete_session_files(
     Ok(extra_meta_ids)
 }
 
+/// Claude 链成员与代表在同一项目目录下，文件名即 id
+fn claude_member_files(rep_file: &str, rep_id: &str, members: &[String]) -> Vec<PathBuf> {
+    let Some(dir) = Path::new(rep_file).parent() else {
+        return Vec::new();
+    };
+    members
+        .iter()
+        .filter(|id| id.as_str() != rep_id && is_uuid_like(id))
+        .map(|id| dir.join(format!("{id}.jsonl")))
+        .filter(|p| p.exists())
+        .collect()
+}
+
 fn delete_session_impl(agent: &str, session_id: &str, file_path: &str) -> Result<(), String> {
     // 链成员表只有 codex 用得到；走缓存，不额外触发全量扫描之外的 IO
-    let chain_members = if agent == "codex" || agent == "grok" {
+    let chain_members = if agent == "codex" || agent == "grok" || agent == "claude-code" {
         cached_scan().chain_members
     } else {
         HashMap::new()
@@ -7727,7 +8018,8 @@ mod tests {
         std::fs::write(&file, content).unwrap();
         let m = claude_file_meta(&file, true).unwrap();
         assert_eq!(m.project_path, "/tmp/proj");
-        assert_eq!(m.session_id, "sid-1");
+        // 文件名是 uuid 时以文件名为准（Claude 接续文件开头的 sessionId 是上游的）
+        assert_eq!(m.session_id, "11111111-2222-3333-4444-555555555555");
         assert_eq!(m.cli_version.as_deref(), Some("1.2.3"));
         assert_eq!(m.created_at.as_deref(), Some("2026-07-01T00:00:00Z"));
         assert_eq!(
@@ -8382,6 +8674,7 @@ mod tests {
                     task_name: None,
                     provider: None,
                     profile_id: None,
+                    forked_from: None,
                 },
                 None,
             ),
@@ -8871,6 +9164,7 @@ mod tests {
                 task_name: None,
                 provider: None,
                 profile_id: None,
+                forked_from: None,
             },
             fork.map(String::from),
         )
@@ -8897,6 +9191,136 @@ mod tests {
             "成员表记录链上全部 id 供 db meta 反查"
         );
         assert!(!members.contains_key("u1"), "单文件会话不进成员表");
+    }
+
+    const CA: &str = "aaaaaaaa-0000-4000-8000-000000000001";
+    const CB: &str = "bbbbbbbb-0000-4000-8000-000000000002";
+    const CC: &str = "cccccccc-0000-4000-8000-000000000003";
+
+    fn claude_line(sid: &str, ts: &str, kind: &str, text: &str) -> String {
+        if kind == "user" {
+            format!(
+                r#"{{"type":"user","cwd":"/tmp/p","sessionId":"{sid}","timestamp":"{ts}","message":{{"role":"user","content":"{text}"}}}}"#
+            )
+        } else {
+            format!(
+                r#"{{"type":"assistant","sessionId":"{sid}","timestamp":"{ts}","message":{{"model":"m","content":[{{"type":"text","text":"{text}"}}],"usage":{{"input_tokens":10,"output_tokens":1}}}}}}"#
+            )
+        }
+    }
+
+    fn write_claude(dir: &Path, id: &str, lines: &[String]) -> PathBuf {
+        let f = dir.join(format!("{id}.jsonl"));
+        fs::write(&f, lines.join("\n") + "\n").unwrap();
+        f
+    }
+
+    fn parse_claude_files(files: &[PathBuf]) -> Vec<(SessionMetaDto, ClaudeLineage)> {
+        files
+            .iter()
+            .map(|f| claude_file_meta_lineage(f, true).unwrap())
+            .collect()
+    }
+
+    /// 2026-10-21 实证结构：桌面版「继续」新开文件，先复制上游全部行（sessionId 仍是上游）
+    #[test]
+    fn claude_continuation_file_uses_file_name_as_id() {
+        let dir = std::env::temp_dir().join(format!("ccode-cl-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let a = vec![
+            claude_line(CA, "2026-10-18T01:00:00Z", "user", "第一句"),
+            claude_line(CA, "2026-10-18T01:01:00Z", "assistant", "好"),
+        ];
+        let mut b = a.clone();
+        b.push(claude_line(CB, "2026-10-19T08:01:00Z", "user", "继续"));
+        let fb = write_claude(&dir, CB, &b);
+        let (m, lin) = claude_file_meta_lineage(&fb, true).unwrap();
+        assert_eq!(m.session_id, CB, "id 取文件名，不取开头复制来的上游 id");
+        assert_eq!(m.title.as_deref(), Some("第一句"));
+        assert_eq!(lin.parent.as_deref(), Some(CA));
+        assert_eq!(lin.branch_at.as_deref(), Some("2026-10-19T08:01:00Z"));
+        assert_eq!(lin.last_at.as_deref(), Some("2026-10-19T08:01:00Z"));
+        assert_eq!(lin.own_title.as_deref(), Some("继续"));
+        // 非 uuid 文件名（旧测试样本、手工文件）仍按内容 id
+        let plain = dir.join("a.jsonl");
+        fs::write(&plain, claude_line(CA, "2026-10-18T01:00:00Z", "user", "x")).unwrap();
+        assert_eq!(claude_file_meta(&plain, true).unwrap().session_id, CA);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn claude_linear_continuations_merge_to_chain_tail() {
+        let dir = std::env::temp_dir().join(format!("ccode-cl-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let a = vec![claude_line(CA, "2026-10-18T09:00:00Z", "user", "做宣传片")];
+        let mut b = a.clone();
+        b.push(claude_line(CB, "2026-10-18T16:01:00Z", "user", "继续完成"));
+        let mut c = b.clone();
+        c.push(claude_line(CC, "2026-10-19T01:18:00Z", "user", "再改一版"));
+        let files = [
+            write_claude(&dir, CA, &a),
+            write_claude(&dir, CB, &b),
+            write_claude(&dir, CC, &c),
+        ];
+        let metas = parse_claude_files(&files);
+        assert_eq!(metas[2].1.parent.as_deref(), Some(CB), "直接上游是 B，不是最早的 A");
+        let (reps, members, hidden) = merge_claude_chains(metas);
+        assert_eq!(reps.len(), 1);
+        assert_eq!(reps[0].session_id, CC, "代表是链尾，「继续」才接得上最新内容");
+        assert_eq!(reps[0].chain_count, 3);
+        assert_eq!(reps[0].forked_from, None);
+        assert_eq!(members[CC].len(), 3);
+        assert_eq!(hidden.len(), 2);
+        assert!(hidden.iter().all(|(rep, _)| rep == CC));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn claude_fork_keeps_both_rows_and_marks_source() {
+        let dir = std::env::temp_dir().join(format!("ccode-cl-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let shared = vec![claude_line(CA, "2026-10-16T17:00:00Z", "user", "思考过程显示")];
+        // 上游在分叉之后还在写
+        let mut a = shared.clone();
+        a.push(claude_line(CA, "2026-10-18T04:24:00Z", "assistant", "后来的内容"));
+        let mut b = shared.clone();
+        b.push(claude_line(CB, "2026-10-17T15:18:00Z", "user", "终端是 iterm 怎么办"));
+        let files = [write_claude(&dir, CA, &a), write_claude(&dir, CB, &b)];
+        let (reps, members, hidden) = merge_claude_chains(parse_claude_files(&files));
+        assert_eq!(reps.len(), 2, "两边各有对方没有的内容，不能合并");
+        assert!(members.is_empty() && hidden.is_empty());
+        let fork = reps.iter().find(|m| m.session_id == CB).unwrap();
+        assert_eq!(fork.forked_from.as_deref(), Some(CA));
+        assert_eq!(fork.title.as_deref(), Some("终端是 iterm 怎么办"), "分叉行用分叉后第一句当标题");
+        let orig = reps.iter().find(|m| m.session_id == CA).unwrap();
+        assert_eq!(orig.forked_from, None);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn claude_second_continuation_from_same_point_is_a_fork() {
+        let dir = std::env::temp_dir().join(format!("ccode-cl-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let a = vec![claude_line(CA, "2026-10-18T09:00:00Z", "user", "起点")];
+        let mut b = a.clone();
+        b.push(claude_line(CB, "2026-10-18T10:00:00Z", "user", "第一次接着聊"));
+        let mut c = a.clone();
+        c.push(claude_line(CC, "2026-10-18T11:00:00Z", "user", "第二次接着聊"));
+        let files = [
+            write_claude(&dir, CA, &a),
+            write_claude(&dir, CB, &b),
+            write_claude(&dir, CC, &c),
+        ];
+        let (reps, _, hidden) = merge_claude_chains(parse_claude_files(&files));
+        assert_eq!(reps.len(), 2);
+        assert_eq!(hidden.len(), 1, "A 并进第一次接续 B");
+        let second = reps.iter().find(|m| m.session_id == CC).unwrap();
+        assert_eq!(
+            second.forked_from.as_deref(),
+            Some(CB),
+            "分叉来源指向上游所在那一行（A 已并进 B）"
+        );
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -9743,6 +10167,7 @@ mod tests {
             task_name: None,
             provider: None,
             profile_id: None,
+            forked_from: None,
         }
     }
 
@@ -10068,6 +10493,7 @@ mod tests {
             task_name: None,
             provider: None,
             profile_id: None,
+            forked_from: None,
         }
     }
 

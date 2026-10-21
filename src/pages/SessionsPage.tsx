@@ -426,6 +426,20 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     return m;
   }, [contentHits]);
 
+  function forkSource(s: SessionMetaDto): SessionMetaDto | undefined {
+    if (!s.forkedFrom) return undefined;
+    return sessions.find((x) => x.agent === s.agent && x.sessionId === s.forkedFrom);
+  }
+
+  function forkSourceTitle(s: SessionMetaDto): string {
+    const parent = forkSource(s);
+    return parent ? sessionTitle(parent) : "已不在的对话";
+  }
+
+  function forkHint(s: SessionMetaDto): string {
+    return `从「${forkSourceTitle(s)}」中途分出来的对话，分开之后两边各自继续`;
+  }
+
   function focusFor(s: SessionMetaDto): SearchFocus | null {
     const h = hitByKey.get(searchHitKey(s.agent, s.sessionId));
     if (!h) return null;
@@ -2075,9 +2089,17 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                     {s.chainCount > 1 && (
                       <span
                         className="shrink-0 px-1 text-xs text-l3"
-                        title="Codex resume 链合并为一条"
+                        title="同一段对话接着聊时存成了多个文件，这里合并成一条，打开和继续都接最新那份"
                       >
                         {s.chainCount} 次继续
+                      </span>
+                    )}
+                    {s.forkedFrom && (
+                      <span
+                        className="shrink-0 px-1 text-xs text-l3"
+                        title={forkHint(s)}
+                      >
+                        分支
                       </span>
                     )}
                     {!s.alive && (
@@ -2435,6 +2457,20 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                   >
                     ⎇ {selected.stepName ?? selected.workspace}
                   </span>
+                )}
+                {selected.forkedFrom && (
+                  <button
+                    type="button"
+                    className="max-w-56 shrink-0 truncate rounded-sm bg-inset px-1.5 py-px text-l2 hover:text-l1"
+                    title={`${forkHint(selected)}。点击打开原对话`}
+                    disabled={!forkSource(selected)}
+                    onClick={() => {
+                      const parent = forkSource(selected);
+                      if (parent) void openSession(parent);
+                    }}
+                  >
+                    分支自「{forkSourceTitle(selected)}」
+                  </button>
                 )}
                 {selected.handoffFromAgent && (
                   <span

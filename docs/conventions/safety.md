@@ -144,8 +144,8 @@
      同根 auth.json/settings.json 等一律拒绝；源文件走系统回收站 `trash::delete`（可从回收站找回），与工作树删除同口径；
      **Cursor 不走目录级白名单**（~/.cursor 与 IDE 共享），由 `cursor_deletable`
      限定 `projects/*/agent-transcripts/**/*.jsonl`；OpenCode 事务删库行且 db 必须是已知候选路径之一
-     （Windows 含 `%LOCALAPPDATA%\opencode`，库行删除无法进回收站）；Codex resume 链删除
-     连带成员文件）；
+     （Windows 含 `%LOCALAPPDATA%\opencode`，库行删除无法进回收站）；Codex resume 链、Grok 继续链、Claude 接续链删除
+     连带成员文件；Claude 成员只认与代表同目录、文件名为 uuid 的 `<id>.jsonl`）；
   4. 工作树文件删除（限定树当前根 + 重要路径黑名单：系统目录/关键用户目录/CLI 配置/.git 一律拒绝；黑名单 canonicalize
      双校验堵 symlink 绕过）；
   6. **内部对话保留期清理**（2026-10-17，`internal_sessions.rs`）：设置「数据与存储」的自动清理开关（默认开、保留 30 天）

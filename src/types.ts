@@ -488,7 +488,7 @@ export interface SessionMetaDto {
   tags: string[];
   /** 源文件是否还在；不在则回放走 pin 快照 */
   alive: boolean;
-  /** Codex resume/fork 链长度（同一对话合并为一个条目）；非 Codex 恒为 1 */
+  /** 接着聊产生的多份文件合并成一条时的文件数（Codex resume、Grok 继续、Claude 桌面版继续）；无链为 1 */
   chainCount: number;
   /** 会话发生在任务工作区（git worktree）里时的工作区名；此时 projectPath 已改写为真实仓库 */
   workspace: string | null;
@@ -513,6 +513,8 @@ export interface SessionMetaDto {
   provider?: string | null;
   /** Mesa profile used to start this session, when the launch was observed by Mesa. */
   profileId: string | null;
+  /** 从同一 agent 的哪条对话中途分出来（原对话分开后还在继续写）；直线接续已合并，不填 */
+  forkedFrom?: string | null;
 }
 
 /** 会话瘦身检测结果（session_slim.rs，只读估算；level 由后端按请求体大小判定） */

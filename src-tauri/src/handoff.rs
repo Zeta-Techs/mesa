@@ -776,6 +776,7 @@ fn test_session(
         task_name: None,
         provider: None,
         profile_id: None,
+        forked_from: None,
     }
 }
 

@@ -68,7 +68,9 @@ fn day_of_ms(ms: i64) -> String {
         .unwrap_or_default()
 }
 
-fn claude_events<I, S>(lines: I) -> Vec<UsageEvent>
+/// `own`：本文件自己的会话 id。Claude 接续文件开头复制了上游全部历史（行里 sessionId 是上游的），
+/// 那些用量已经记在上游文件名下，再算一遍就翻倍
+fn claude_events<I, S>(lines: I, own: Option<&str>) -> Vec<UsageEvent>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
@@ -82,6 +84,11 @@ where
             || v.get("isSidechain").and_then(|x| x.as_bool()) == Some(true)
         {
             continue;
+        }
+        if let (Some(own), Some(sid)) = (own, get_str(&v, "sessionId")) {
+            if sid != own {
+                continue;
+            }
         }
         let Some(msg) = v.get("message") else {
             continue;
@@ -550,7 +557,7 @@ fn usage_line_reader(path: &Path) -> Option<Box<dyn BufRead>> {
     }
 }
 
-fn extract_file_events(agent: &str, path: &Path) -> Vec<UsageEvent> {
+fn extract_file_events(agent: &str, path: &Path, session_id: Option<&str>) -> Vec<UsageEvent> {
     let Some(reader) = usage_line_reader(path) else {
         return Vec::new();
     };
@@ -567,7 +574,7 @@ fn extract_file_events(agent: &str, path: &Path) -> Vec<UsageEvent> {
         "codebuddy" => codebuddy_events(lines),
         "cursor" => cursor_events(lines),
         "grok" => grok_events(lines),
-        _ => claude_events(lines),
+        _ => claude_events(lines, session_id),
     }
 }
 
@@ -580,7 +587,7 @@ fn extract_events(session: &crate::sessions::SessionMetaDto) -> Vec<UsageEvent> 
         return opencode_events(Path::new(db), sid);
     }
     let path = Path::new(&session.file_path);
-    extract_file_events(&session.agent, path)
+    extract_file_events(&session.agent, path, Some(&session.session_id))
 }
 
 // ===== 聚合 =====
@@ -1235,7 +1242,7 @@ fn rebuild_impl() -> Result<UsageBuildResult, String> {
     let scan = crate::sessions::scan_sessions();
     let mut indexed = 0usize;
     let mut seen: HashSet<String> = HashSet::new();
-    for s in &scan.sessions {
+    for s in scan.sessions.iter().chain(&scan.hidden_members) {
         let key = seen_key(s);
         seen.insert(key.clone());
         // 快照补出的会话（alive=false）file_path 指向快照，内容稳定；
@@ -4517,13 +4524,26 @@ mod tests {
     }
 
     #[test]
+    fn claude_continuation_counts_only_own_lines() {
+        // 接续文件开头是上游复制来的历史，那份用量记在上游名下
+        let lines = vec![
+            r#"{"type":"assistant","sessionId":"up","timestamp":"2026-10-18T01:00:00Z","message":{"model":"m","usage":{"input_tokens":100,"output_tokens":10}}}"#.to_string(),
+            r#"{"type":"assistant","sessionId":"me","timestamp":"2026-10-19T01:00:00Z","message":{"model":"m","usage":{"input_tokens":7,"output_tokens":1}}}"#.to_string(),
+        ];
+        let evs = claude_events(&lines, Some("me"));
+        assert_eq!(evs.len(), 1);
+        assert_eq!(evs[0].input, 7);
+        assert_eq!(claude_events(&lines, None).len(), 2, "不知道自己 id 时不过滤");
+    }
+
+    #[test]
     fn extractors_claude_codex_kimi() {
         // claude：assistant 行的 usage + model
         let lines = vec![
             r#"{"type":"assistant","timestamp":"2026-07-29T01:00:00Z","message":{"model":"claude-sonnet-4-5","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":3,"cache_creation_input_tokens":2}}}"#.to_string(),
             r#"{"type":"user","message":{"role":"user","content":"q"}}"#.to_string(),
         ];
-        let evs = claude_events(&lines);
+        let evs = claude_events(&lines, None);
         assert_eq!(evs.len(), 1);
         assert_eq!(
             (evs[0].day.as_str(), evs[0].model.as_str()),
@@ -4708,7 +4728,7 @@ mod tests {
         writeln!(writer, r#"{{"timestamp":"2026-08-04T04:01:00Z","type":"event_msg","payload":{{"type":"token_count","info":{{"last_token_usage":{{"input_tokens":100,"output_tokens":20,"reasoning_output_tokens":5,"cached_input_tokens":10}}}}}}}}"#).unwrap();
         writer.flush().unwrap();
         assert!(std::fs::metadata(&plain).unwrap().len() > 10 * 1024 * 1024);
-        let events = extract_file_events("codex", &plain);
+        let events = extract_file_events("codex", &plain, None);
         assert_eq!(events.len(), 1, "大于旧 10 MB 上限的会话不得整份跳过");
         assert_eq!(
             (events[0].input, events[0].output, events[0].cache_read),
@@ -4718,7 +4738,7 @@ mod tests {
         let compressed = dir.join("small.jsonl.zst");
         let raw = std::fs::read(&plain).unwrap();
         std::fs::write(&compressed, zstd::stream::encode_all(&raw[..], 1).unwrap()).unwrap();
-        let compressed_events = extract_file_events("codex", &compressed);
+        let compressed_events = extract_file_events("codex", &compressed, None);
         assert_eq!(
             compressed_events, events,
             "zstd 会话必须同样流式解码并提取用量"

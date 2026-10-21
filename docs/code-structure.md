@@ -820,6 +820,8 @@ src-tauri/src/
                              # Codex 归档 zst 懒解压（read_head_only：列表只要头窗元数据、头窗满即停，
                              #   归档 token_usage 宁缺毋滥给 None，2026-10-16）+
                              # 会话删除、注意力分类（session_tail_state）、步骤名映射（RX3a）、
+                             # Claude 接续链（merge_claude_chains，2026-10-21）：id 取文件名，直线接续并成链尾一条、
+                             #   真分叉单列 forked_from；被并掉的成员进 ScanResult.hidden_members 供用量逐文件算、
                              # Claude 斜杠命令 / ! 命令及本地输出拆成 command / command_output 块（claude_command_block，
                              #   剥 ANSI；本地输出行在尾态里算 settled，2026-10-17）、
                              # codex rollout 元信息 model_provider 记进 SessionMetaDto.provider（恢复按它挑兼容 profile，
