@@ -1999,6 +1999,8 @@ const TerminalView = memo(function TerminalView({
   // （2026-10-18 阅读区简报实测：Claude Code 拉起后 50ms 内写入必现，等它画出界面再安静 400ms 后 3/3 正常）
   const ptyAttachedAtRef = useRef(0);
   const inputReadyRef = useRef(true);
+  // 最近一次画出字（剥掉终端查询后还有内容）的时刻：只发了查询的帧不算「画出了界面」
+  const lastDrawAtRef = useRef(0);
   // 用户刚提交一轮（聊天发送 / 回车 / 带指令的新启动）：允许 PTY 点亮转圈。
   // 启动或恢复会话本身不点亮——TUI 启动画面不是「正在生成回答」。
   const ptyWorkingArmedRef = useRef(false);
@@ -3513,6 +3515,7 @@ const TerminalView = memo(function TerminalView({
             });
         }
         if (kind === "agent" && host.text) {
+          lastDrawAtRef.current = Date.now();
           scanTrustPromptSoon();
           scanMenuSoon();
           scanLiveReplySoon();
@@ -4876,16 +4879,32 @@ const TerminalView = memo(function TerminalView({
     }
   }
 
-  /** 等刚拉起的 Agent 能收键：出过字后安静 400ms（一直没出字的接管进程等满 3 秒），最多等 8 秒；
-      只在拉起后的第一次发送等，之后直接写 */
+  /** 等刚拉起的 Agent 能收键，只在拉起后的第一次发送等，之后直接写。
+   *  认得画面布局的几家（live-reply.ts）等屏上画出它的输入框、再安静 300ms：Kimi 2.3 一起来先发一个终端查询，
+   *  隔一秒多才画界面，原先「出过字后安静 400ms」在查询之后就写了，字落在界面起来之前被吞掉
+   *  （2026-10-21 用户：Kimi 发「你好」终端里没有输入，8 秒后终端被拉起来；Mac 同样）。屏上是信任菜单时一直等——
+   *  这时写进回车就等于替用户选了；其余认不出输入框的情形最多等 20 秒。
+   *  认不得布局的家（与后台标签：画面不更新）照旧：画出过字后安静 400ms（一直没画的等满 3 秒），最多 8 秒 */
   async function waitAgentInputReady(ptyId: string) {
+    const agent = launchAgentRef.current;
+    const byBox = liveReplySupported(agent) && visibleRef.current;
     while (!inputReadyRef.current && ptyIdRef.current === ptyId) {
       const now = Date.now();
       const since = now - ptyAttachedAtRef.current;
-      const drew = lastOutputAtRef.current > ptyAttachedAtRef.current;
-      if ((now - lastOutputAtRef.current >= 400 && (drew || since >= 3000)) || since >= 8000) {
-        inputReadyRef.current = true;
-        break;
+      const quiet = now - lastOutputAtRef.current;
+      if (byBox) {
+        const lines = screenLines();
+        const trust = parseTrustPrompt(lines) !== null;
+        if (!trust && ((quiet >= 300 && terminalHasInputBox(lines, agent) === true) || since >= 20_000)) {
+          inputReadyRef.current = true;
+          break;
+        }
+      } else {
+        const drew = lastDrawAtRef.current > ptyAttachedAtRef.current;
+        if ((quiet >= 400 && (drew || since >= 3000)) || since >= 8000) {
+          inputReadyRef.current = true;
+          break;
+        }
       }
       await new Promise((r) => setTimeout(r, 100));
     }
