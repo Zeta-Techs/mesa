@@ -162,7 +162,7 @@ import {
 import { lastContextTokens, type MesaCommand } from "../composer-assist";
 import { slashCommandsFor } from "../slash-commands";
 import { claudeOutputTokens, extractLiveReply, liveReplySupported, mergeLiveReply, terminalHasInputBox } from "../live-reply";
-import { parseTuiPanel } from "../tui-panel";
+import { parseTuiNotice, parseTuiPanel } from "../tui-panel";
 import {
   connIssueCounts,
   connIssueText,
@@ -556,6 +556,8 @@ export interface SessionLinkState {
   cliModeSwitch: { mode: string; seq: number } | null;
   /** 终端里开着一个只能在终端看、按 Esc 关的面板（/cost、/usage 的 Settings 面板等，tui-panel.ts） */
   tuiPanel: boolean;
+  /** 终端里弹了一条要按回车才继续的通知（tui-panel.ts parseTuiNotice）：正文行；没有为 null */
+  tuiNotice: string[] | null;
   /** 连接出问题（额度 / 限流 / 钥匙 / 服务 / 模型；conn-issue.ts 扫终端画面认出）+ 可换的同家连接 */
   connIssue: ConnIssueState | null;
   /** 终端画面里这一轮正在写的回复（live-reply.ts；只认 Claude Code / CodeBuddy，别家 null） */
@@ -2098,6 +2100,14 @@ const TerminalView = memo(function TerminalView({
     tuiPanelRef.current = open;
     setTuiPanel(open);
   }
+  // 要按回车才继续的通知（Claude 中途弹的计费说明等）：同一次扫屏认，弹着时一直扫到它消失
+  const [tuiNotice, setTuiNotice] = useState<string[] | null>(null);
+  const tuiNoticeRef = useRef<string[] | null>(null);
+  function setTuiNoticeLines(next: string[] | null) {
+    if ((tuiNoticeRef.current?.join("\n") ?? null) === (next?.join("\n") ?? null)) return;
+    tuiNoticeRef.current = next;
+    setTuiNotice(next);
+  }
   // 最近一次扫屏：看得见这家的输入框、没有菜单（hooksApprovalAnswered：旁路还说「等批准」时据此认作已经答过）
   const [promptIdle, setPromptIdle] = useState(false);
   function scanMenuSoon() {
@@ -2105,6 +2115,7 @@ const TerminalView = memo(function TerminalView({
     if (
       !menuPromptRef.current &&
       !tuiPanelRef.current &&
+      !tuiNoticeRef.current &&
       Date.now() > menuWatchUntilRef.current &&
       !turnLive
     )
@@ -2127,7 +2138,10 @@ const TerminalView = memo(function TerminalView({
       const next =
         echoed || trustMenu || sameTuiMenu(found, menuBaselineRef.current) ? null : found;
       // 菜单（审批 / 切换确认）也带 Esc to cancel：认出菜单时不再当面板
-      setPanelOpen(found === null && parseTuiPanel(lines, launchAgentRef.current));
+      // 要按回车继续的通知也带 Esc to cancel：认出通知时不当面板（面板卡的按钮是 Esc，按了会取消）
+      const notice = found === null ? parseTuiNotice(lines, launchAgentRef.current) : null;
+      setTuiNoticeLines(notice);
+      setPanelOpen(found === null && notice === null && parseTuiPanel(lines, launchAgentRef.current));
       setPromptIdle(next === null && terminalHasInputBox(lines, launchAgentRef.current) === true);
       if (sameTuiMenu(menuPromptRef.current, next)) return;
       menuPromptRef.current = next;
@@ -2421,6 +2435,7 @@ const TerminalView = memo(function TerminalView({
       menuPrompt,
       cliModeSwitch,
       tuiPanel,
+      tuiNotice,
       connIssue,
       liveReply,
       liveTokens,
@@ -2446,6 +2461,7 @@ const TerminalView = memo(function TerminalView({
     menuPrompt,
     cliModeSwitch,
     tuiPanel,
+    tuiNotice,
     connIssue,
     liveReply,
     liveTokens,
@@ -3586,6 +3602,7 @@ const TerminalView = memo(function TerminalView({
     menuPromptRef.current = null;
     setMenuPrompt(null);
     setPanelOpen(false);
+    setTuiNoticeLines(null);
     // 换权限重开 / 退出：下一次接上的运行重新取基线，旧运行的切换不再上报
     permBaselineRef.current = null;
     liveReplyRef.current = null;
@@ -4291,6 +4308,7 @@ const TerminalView = memo(function TerminalView({
     menuPromptRef.current = null;
     setMenuPrompt(null);
     setPanelOpen(false);
+    setTuiNoticeLines(null);
     // 换权限重开 / 退出：下一次接上的运行重新取基线，旧运行的切换不再上报
     permBaselineRef.current = null;
     liveReplyRef.current = null;
@@ -7290,6 +7308,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         cur.menuPrompt === s.menuPrompt &&
         cur.liveReply === s.liveReply &&
         cur.liveTokens === s.liveTokens &&
+        cur.tuiPanel === s.tuiPanel &&
+        cur.tuiNotice === s.tuiNotice &&
         cur.connIssue === s.connIssue &&
         cur.ptyQuiet === s.ptyQuiet &&
         cur.launchPick === s.launchPick &&
@@ -7573,10 +7593,10 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
 
   /** 聊天层审批卡片按键：批准 y / 拒绝 n / 取消 Esc（单键热键，各 CLI TUI 通用形态；
       kimi 类 CSI-u 终端的 Enter 改写不涉及——审批热键不回车） */
-  function chatApprovalKey(key: "y" | "n" | "esc") {
+  function chatApprovalKey(key: "y" | "n" | "esc" | "enter") {
     tabActionsRef.current
       .get(focusedId)
-      ?.writePty(key === "esc" ? "\x1b" : key);
+      ?.writePty(key === "esc" ? "\x1b" : key === "enter" ? "\r" : key);
   }
 
   async function allowWritableFork() {
@@ -9716,6 +9736,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         }
                         menuPrompt={sessionByTab[t.id]?.menuPrompt ?? null}
                         tuiPanel={sessionByTab[t.id]?.tuiPanel ?? false}
+                        tuiNotice={sessionByTab[t.id]?.tuiNotice ?? null}
                         liveReply={sessionByTab[t.id]?.liveReply ?? null}
                         liveTokens={sessionByTab[t.id]?.liveTokens ?? null}
                         mesaCommands={mesaCommandsFor(t.id)}

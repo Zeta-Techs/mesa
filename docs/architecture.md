@@ -463,7 +463,7 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 「[Request interrupted by user for tool use]」和 system/turn_duration 就结束这一轮，**不触发 Stop hook**（用户会话实证：正常一轮有
 stop_hook_summary，被拒那轮没有），旁路回合一直开着、又压过会话尾部的推断。定下：会话尾部判成收尾时前端调
 `chat_channel_settle_from_transcript`，后端只认这一轮开始之后的打断标记 / turn_duration（`sessions::claude_turn_end_after`），
-按 interrupted 收掉；三平台同。二，**Claude 的回复不是流式出来的**：不是模型也不是网关——直连智谱 Anthropic 端点 glm-5.3-flash 流式，
+按 interrupted 收掉；三平台同。（同日补：非 Claude 模型关工具搜索见本条三；Claude 中途弹「Enter to continue · Esc to cancel」的通知——经第三方网关时 auto mode 分类器计费说明——原先被认成面板、聊天层只给按 Esc（=取消），改为 `tui-panel.ts parseTuiNotice` 认出、给「继续」（回车）卡。）二，**Claude 的回复不是流式出来的**：不是模型也不是网关——直连智谱 Anthropic 端点 glm-5.3-flash 流式，
 正文 228 个增量、每块 1–12 字、4.7 秒内陆续到（之前另有约 20 秒思考，开不开 thinking 参数都思考）；Windows 上用假网关慢速吐字抓屏，
 Claude Code 2.1.305 与 2.1.292 都是转圈计 token、整条消息收完才一次画出（Mac 上 2.1.292 同一假网关是逐行画出，见 live-reply 测试样本）。
 Mesa 对 Claude 只能读屏（hooks 不带正文），所以 Windows 上 Claude 的聊天层没有逐字预览；长思考期间屏上也只有「Thinking」。
@@ -471,7 +471,7 @@ Mesa 对 Claude 只能读屏（hooks 不带正文），所以 Windows 上 Claude
 三，**Claude 说「没有加载文件与命令行类工具」**：上一次判成纯模型问题，这次会话实证到原因——Claude Code 对第三方网关也开工具搜索，
 Write / Bash 等照常发、另把十来个少用的工具藏在 ToolSearch 后面；glm-5.3-flash 拿 ToolSearch 去搜 Write / Bash（它只搜延迟列表，
 当然搜不到），就断定没工具。定下：非 `claude-*` 模型注入 `ENABLE_TOOL_SEARCH=false`（`agents::claude_model_env`，用户自设不动），
-假网关核对 Mesa 的真实启动计划：ToolSearch 与占位工具消失、24 个工具一次发全；代价是每次请求多几千 token 输入。
+假网关核对 Mesa 的真实启动计划：ToolSearch 与占位工具消失、24 个工具一次发全；代价是每次请求多几千 token 输入。用户问「Mac 上不出现」：同一假网关什么都不注入时 Claude Code 2.1.305 发 ToolSearch、2.1.292 不发——是 CLI 新版的变化（本机 Windows 已自动升级到 2.1.305），Mac 升级后同样会遇到，这次的注入两边都生效。
 
 ### 2026-10-20 · 聊天层 Windows 八家抓屏核对：读屏与 macOS 同形；Grok 多行改写 CR
 

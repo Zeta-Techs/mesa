@@ -98,6 +98,7 @@ export default function ChatSurface({
   menuPrompt = null,
   onAnswerMenu,
   tuiPanel = false,
+  tuiNotice = null,
   liveReply = null,
   liveTokens = null,
   onRestartPermission,
@@ -133,7 +134,7 @@ export default function ChatSurface({
   onAllowWrite: () => void;
   onOpenTerminal: () => void;
   onInterrupt?: () => void;
-  onApprovalKey?: (key: "y" | "n" | "esc") => void;
+  onApprovalKey?: (key: "y" | "n" | "esc" | "enter") => void;
   peek?: boolean;
   onTogglePeek?: () => void;
   onRequestPeek?: () => void;
@@ -183,6 +184,8 @@ export default function ChatSurface({
   onAnswerMenu?: (index: number) => void;
   /** 终端里开着一个只能在终端看的面板（/cost、/usage 的 Settings 面板等，tui-panel.ts） */
   tuiPanel?: boolean;
+  /** 终端里弹了一条要按回车才继续的通知（tui-panel.ts parseTuiNotice）：正文行 */
+  tuiNotice?: string[] | null;
   /** 终端画面里这一轮正在写的回复（live-reply.ts）；会话文件追上的行由这里剔掉 */
   liveReply?: string[] | null;
   /** Claude 转圈行里这一轮已生成的 token 数（Windows 上 Claude 不边写边画，靠它看出还在出字）；没有为 null */
@@ -492,6 +495,16 @@ export default function ChatSurface({
                 onClick: () => onAnswerMenu?.(i),
               })),
             }
+          : tuiNotice
+            ? {
+                // Claude 一轮中途弹的通知（2026-10-21：经第三方网关时 auto mode 分类器计费说明），按回车前这一轮停着；
+                // 原先被当成面板、按钮是 Esc（按了是取消）
+                key: `tui-notice:${tuiNotice.join("\n")}`,
+                title: "终端里弹了一条提示，按回车才会接着做",
+                detail: tuiNotice.join("\n"),
+                hint: "提示原文照终端显示；只是说明，回车继续不改任何设置",
+                options: [{ label: "继续", primary: true, title: "往终端按回车", onClick: () => onApprovalKey?.("enter") }],
+              }
           : tuiPanel
             ? {
                 // 面板开着时会话文件不动，原先这里一直写「正在生成回复」（2026-10-19 用户发 /cost 实测）

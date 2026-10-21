@@ -22,3 +22,28 @@ export function parseTuiPanel(lines: readonly string[], agentId: string): boolea
   if (filled.length < 3) return false;
   return filled.some((l) => CLOSE_HINT.test(l));
 }
+
+const CONTINUE_HINT = /\bEnter to continue\b/i;
+const RULE_LINE = /^\s*[─━═▔▁-]{8,}/;
+
+/**
+ * 认「终端里弹了一条要按回车才继续的提示」：没有输入框、屏上有「Enter to continue」，返回提示正文（从上一条分隔线到提示行之间）。
+ * Claude Code 会在一轮中途弹这种通知（2026-10-21 用户实测：经第三方网关时 auto mode 分类器计费的说明，
+ * 「Enter to continue · Esc to cancel」），弹着时这一轮停住；原先被当成「面板」，聊天层给的是按 Esc 关面板。认不出返回 null
+ */
+export function parseTuiNotice(lines: readonly string[], agentId: string): string[] | null {
+  if (terminalHasInputBox(lines, agentId) !== false) return null;
+  let hint = lines.length - 1;
+  while (hint >= 0 && !CONTINUE_HINT.test(lines[hint])) hint--;
+  if (hint < 0) return null;
+  let start = hint - 1;
+  while (start >= 0 && !RULE_LINE.test(lines[start])) start--;
+  const body = lines
+    .slice(start + 1, hint)
+    .map((l) => l.trim())
+    // 首尾空行去掉，段间空行留一行
+    .filter((l, i, arr) => l || (i > 0 && arr[i - 1]));
+  while (body.length && !body[0]) body.shift();
+  while (body.length && !body[body.length - 1]) body.pop();
+  return body.length ? body : null;
+}
