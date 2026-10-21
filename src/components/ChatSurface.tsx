@@ -628,7 +628,8 @@ export default function ChatSurface({
             : "ccode-chat-scroll relative min-h-0 flex-1 overflow-auto"
         }
       >
-        <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col px-4 pb-6 pt-8 sm:px-5">
+        {/* 栏宽跟聊天字号走（App.css .ccode-chat-column，回答一行约 52 字），与输入框、底部状态栏同一条中轴 */}
+        <div className="ccode-chat-column mx-auto flex min-h-full w-full flex-col px-4 pb-6 pt-8 sm:px-5">
           {emptyStart && (
             // 空态问候：Mesa 光标标志 + 时段问候，贴在输入框正上方（2026-10-17 用户选定）。
             // 只是问候：不重复「问一个问题…」，不写 Agent 身份（v3.214 否决的是居中引导语）。
@@ -689,7 +690,8 @@ export default function ChatSurface({
           {livePreview.length > 0 && (
             // 与助手正文同一栏、同字号，但不走 Markdown（终端里已渲染过）：灰一级表示「还在写、以落盘为准」。
             // 还在写时 Mesa 光标接在最后一个字后面，不另起一行写状态（2026-10-21）
-            <div className="mb-2 whitespace-pre-wrap break-words text-sm leading-6 text-l3">
+            // 字号行高与落盘后的回答同一档（.ccode-chat-body），落盘那一下不跳
+            <div className="ccode-chat-body mb-2 whitespace-pre-wrap break-words text-l3">
               {livePreview.join("\n")}
               {generating && !decision && <MesaCaret light={isLightTheme(theme)} />}
             </div>

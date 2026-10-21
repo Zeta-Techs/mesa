@@ -86,7 +86,10 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   components/InternalSessionsCard.tsx # 设置「数据与存储」→ Mesa 内部对话：条数/体积/最早、自动清理开关、保留天数、立即清理
   components/InsertMenuItems.tsx # 「插入技能/MCP」菜单条目：运行页收缩行、标签栏 ✦（仅终端层）、聊天输入框 ＋ 三处共用（只画 <li>，浮层由调用方定位）
   components/ConversationView.tsx # 对话渲染（聊天层 / 对话页回放 / 项目对话预览共用）：气泡与正文、一轮过程收在「已工作 X 分 Y 秒」下，
-                             #   展开为动作行（点行看差异 / 命令输出 / 思考），回答露在外面；working 由聊天层传（进行中不收起）
+                             #   展开为动作行（点行看差异 / 命令输出 / 思考），回答露在外面；working 由聊天层传（进行中不收起）；
+                             #   AI 回复不截断、用户长消息 UserText 量行收起；字号走聊天阶梯类（design-system「聊天正文排版」）
+  components/ChatMarkdown.tsx # AI 回复 Markdown（独立 Marked 实例、原始 HTML 转义）：长回复分节小标题按级别排、ChatCodeBlock（用户气泡里的
+                             #   围栏代码同一套）、上屏后 useChatDecorations 跑表格壳 / 代码高亮 / 公式 / 引用胶囊 / 文件链接，音频播放条、图片卡
   components/ProjectTree.tsx # 侧栏项目树（展开态）：「项目」标签行（计数＋添加入口）+ 搜索框 + 按工作方式分组的课题列表
                              #   （注册项目 + list_workspaces 推导的「未添加」仓库段；重拉触发=store.projectsVersion 管理动作代数
                              #   与 projectPaths 签名变化）。行点击=onSelect(repoPath)（App 侧 setSelectProjectReq+setPage）；
@@ -329,7 +332,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   draft-review.ts            # 写作步评审机械红线（摘要待核实/G编号/待绘制/叠号）、划选批注追加与退回提示词
   md-path.ts                 # 阅读版式覆盖的 md 族（md/markdown/mdx/qmd）与 html 判定
   md-toc.ts                  # md 浮动目录：≥3 标题才出、slug/展开 details
-  md-code-chrome.ts          # 阅读态代码块语言名 + 复制；mermaid 围栏打标
+  md-code-chrome.ts          # 阅读态代码块语言名 + 复制（lucide Copy 图标）；mermaid 围栏打标；decorateMdTables 聊天表格横滚壳 + 数字列
+                             # （isNumericCell，只给聊天用：笔记双击定位按 table 节点配对）
   md-block-map.ts            # md 渲染块→源码行映射（阅读态双击段落跳编辑态定位）：lexer raw
                              # 累积算行（无参调用，带 options 丢 md-math 扩展）+ 上屏 DOM 惰性
                              # 配对（md-code/md-mermaid 归一 pre），失败回落纯切换
@@ -342,7 +346,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   html-preview.ts            # html 沙箱预览：stylesheet 内联 / 本地图 / srcdoc
   md-math.ts                 # md 阅读版式公式渲染（批次 E）：marked 扩展按 Pandoc 口径切分 $/$$
                              # （边界规则/转义/代码块不渲染/货币不误判）+ renderMathInto 懒加载
-                             # katex+CSS（独立 chunk 不进主包，失败回落原文，tests/md-math.test.ts 25 例）
+                             # katex+CSS（独立 chunk 不进主包，失败回落原文，tests/md-math.test.ts）；mathExtensions 全局注册，
+                             # chatMathExtensions 另认 \( \) / \[ \]（只给聊天 Marked 实例，占位一律写成 $ 形式）
   task-cards.ts              # 任务卡纯逻辑：按步骤分桶/卡片排序/会话按卡分组/卡片 kind（idea 想法卡 / draft 讨论卡）过滤；
                              # 「＋ 话题」占位按当前步骤给例子（ideaTopicPlaceholder，综述大纲不写对照实验）
                              # （tests/task-cards.test.ts）
@@ -396,8 +401,13 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   git-commit-message.ts      # 空提交信息的本地默认信息生成
   main-history-save.ts       # 科研步骤卡一键「存进历史」：冲突拦截 / 白话说明 / 路径（tests/main-history-save.test.ts）
   text-fences.ts             # 纯文本消息（用户气泡）的围栏代码拆分 splitFenced：只认行首的 ``` / ~~~，行中间的三个反引号是行内写法不开围栏（旧实现按任意位置切会吞掉后面整段）；未收尾按代码到结尾（tests/text-fences.test.ts）
-  chat-reply.ts              # 聊天长回复按小标题分段（识别代码围栏；有 ## 时冒号行不当标题）、正文里的项目文件与本机音频（mentionedAudioFiles →
-                             # ChatMarkdown 播放条）、确认按钮是否给出（tests/chat-reply.test.ts）
+  chat-reply.ts              # 聊天长回复按小标题分段（带级别；识别代码围栏；有 ## 时冒号行不当标题）、正文里像文件路径的段（fileRefPath /
+                             # findFileRefs，真假由 existing_files 核实）与本机音频（mentionedAudioFiles → ChatMarkdown 播放条）、
+                             # 确认按钮是否给出（tests/chat-reply.test.ts）
+  chat-cite.ts               # 聊天回复里的 [@key] 引用段（与 citation.rs extract_cite_keys 同口径）、胶囊字样 citeLabel、cite_lookup 30 秒缓存
+  chat-inline-refs.ts        # 回复上屏后的就地加工：文件路径 → .md-file-link（existing_files 核实、15 秒缓存）、引用键 → .md-cite-item
+                             # （先键名占位再换作者年份）；只动 DOM，sanitize 之后做（tests/chat-inline-refs.test.ts）
+  code-highlight.ts          # 代码块语法高亮：highlight.js 核心 + 二十几种语言按需 import，只认围栏写明的语言；颜色在 App.css .hljs-*
   paste-guard.ts             # 终端粘贴防线：剪收尾回车、shell 多行先确认、备用屏原样（tests/paste-guard.test.ts）
   terminal-links.ts          # 终端行绝对/相对路径与行列号（`:行:列`、句尾标点不吞、lookbehind 起点
                              # 让行首边界字符后的路径也命中；相对候选点击时经 terminal_link_target 终审）
@@ -1211,7 +1221,8 @@ src-tauri/src/
                              # 建在「译段」前、同处再标只更新批注、删空连标题删；格式与 src/reader-note.ts 双端镜像）+
                              # reader_paper_title（paper_title_for：配对笔记 H1→index.json→included.json→included.md/reading-list→雷达收件箱，
                              # 截断文件名按 ≥24 字前缀认；新建档笔记标题同口径）；门槛 = gated_root 注册项目根 + canonicalize + 原子写
-  citation.rs                # 引用健康检查：.md 引用键（[@key]/多键/[-@key]）对照 references.bib（白名单同 pdf.rs 口径）
+  citation.rs                # 引用健康检查：.md 引用键（[@key]/多键/[-@key]）对照 references.bib（白名单同 pdf.rs 口径）；
+                             # cite_lookup：聊天引用胶囊按键取作者姓 / 年份 / 题名（会话目录往上到白名单根找 bib，只读，8MB 上限）
   handoff.rs                 # 接力（§11.3 机制四）：简报生成（脱敏+64KB）、提炼接力（build_session_digest AI 蒸馏全会话 +
                              # finalize_digest_brief 初稿写回）、handoff_links 接力链登记/固化；
                              # build_handoff_brief 的 until_text = 聊天层「从这里分叉」，按正文截到那条助手回复（cut_messages_at，认不出报错不给全文）
@@ -1248,6 +1259,7 @@ src-tauri/src/
   git_info.rs                # git 状态/累计 diff/逐 hunk/勾选提交临时索引；
                              # MERGE_HEAD → merging + git_abort_merge；porcelain 冲突码归 U
   fs_tree.rs                 # 文件树与文件操作（删除走系统回收站 trash；重要路径删除保护，canonicalize 双校验；
+                             # existing_files：聊天回复里提到的路径哪些是 cwd 内的文件（只看元数据，返回原样路径 + 规范化绝对路径）；
                              # drop_ris_record / drop_fetch_line：移出时整份改写超过 256 KB 的 RIS 与 to-fetch.md
                              # read_research_ledger / save_research_ledger：科研台账整份读写（16 MB 上限，白名单
                              #   papers/included.json|included.md|to-fetch.md|to-fetch.ris|endnote-import.ris|screening.md、

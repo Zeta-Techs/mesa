@@ -1,14 +1,18 @@
-import { mentionedAudioFiles, mentionedProjectFiles, splitReplySections } from "../chat-reply";
-import { FoldMark } from "./PageFrame";
+import { mentionedAudioFiles, splitReplySections, type ReplySection } from "../chat-reply";
 import { sanitizeDocumentHtml } from "../document-html";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Marked } from "marked";
+import { ChevronRight, ImageOff, Volume2 } from "lucide-react";
 import { useAppStore } from "../store";
 import { classifyMdHref, resolveMdPath, rewriteMdImageHtml } from "../reader";
 import { hydrateMdImages } from "../md-image-hydrate";
-import { decorateMdCodeBlocks, handleMdCodeCopyClick } from "../md-code-chrome";
+import { decorateMdCodeBlocks, decorateMdTables, handleMdCodeCopyClick } from "../md-code-chrome";
+import { chatMathExtensions, renderMathInto } from "../md-math";
+import { highlightCodeBlocks } from "../code-highlight";
+import { citeTipFor, decorateCitations, linkFileRefs } from "../chat-inline-refs";
+import { HoverTip } from "./HoverTip";
 
 /**
  * 聊天消息 Markdown 渲染（AI 回复正文；用户气泡保持纯文本）。
@@ -18,6 +22,8 @@ import { decorateMdCodeBlocks, handleMdCodeCopyClick } from "../md-code-chrome";
  * 图片与链接口径同 MarkdownView（批次 B2）：http(s) 图片不加载只显示文本，
  * 本地图片经 read_image_bytes 白名单换 data URL（rewrite 先换成 data-md-src 占位 span）；
  * 外链走系统浏览器，本地路径跳终端页预览。
+ * 2026-10-21 排版一轮：公式（$ $$ 与模型常用的 \( \) / \[ \]，KaTeX 按需加载）、代码高亮、表格横滚壳与数字列、
+ * 文献引用键胶囊、正文里提到的项目文件就地可点（取代回复末尾那排文件胶囊）；长回复分节的小标题照 Markdown 级别排。
  */
 function escapeHtml(s: string): string {
   return s
@@ -34,7 +40,24 @@ chatMarked.use({
       return escapeHtml(text);
     },
   },
+  extensions: chatMathExtensions,
 });
+
+/**
+ * HTML 上屏后的就地加工（按 html 跑一次；StrictMode 双跑各函数自己幂等）：表格壳、代码高亮、公式、
+ * 引用胶囊、文件链接。图片与代码头栏在每次 layout 都扫（见 MarkdownBody）
+ */
+function useChatDecorations(ref: RefObject<HTMLElement | null>, html: string, cwd?: string | null) {
+  useLayoutEffect(() => {
+    const host = ref.current;
+    if (!host) return;
+    decorateMdTables(host);
+    void highlightCodeBlocks(host);
+    void renderMathInto(host);
+    void decorateCitations(host, cwd ?? null).then(() => (cwd ? linkFileRefs(host, cwd) : undefined));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [html, cwd]);
+}
 
 export default function ChatMarkdown({
   text,
@@ -45,29 +68,26 @@ export default function ChatMarkdown({
   cwd?: string | null;
 }) {
   const sections = useMemo(() => splitReplySections(text), [text]);
-  const files = useMemo(() => mentionedProjectFiles(text), [text]);
   const audios = useMemo(() => mentionedAudioFiles(text), [text]);
-  const setDiffFocusReq = useAppStore((s) => s.setDiffFocusReq);
   // 默认全部展开、点小节标题收起：原先只开第一节，长回答大半被藏在一串标题后面，
   // 读起来像内容丢了（2026-10-17 用户截图）
   const [closedSections, setClosedSections] = useState<Set<number>>(() => new Set());
   if (sections && sections.length > 1) {
     return (
-      <div>
+      <div className="md-body md-chat">
         {sections.map((section, index) => {
-          const open = !closedSections.has(index);
           // 第一个小标题之前的引子没有标题（chat-reply 记作「正文」）：照常排版，不配折叠钮
           if (section.title === "正文") {
             return <MarkdownBody key={`lead-${index}`} text={section.body} cwd={cwd} />;
           }
+          const open = !closedSections.has(index);
           return (
-            <div key={`${section.title}-${index}`} className="mt-3 first:mt-0">
-              <button
-                type="button"
-                aria-expanded={open}
-                title={open ? "收起这一节" : "展开这一节"}
-                className="-ml-1 flex items-center gap-1 rounded-sm px-1 text-sm font-medium text-l1 hover:bg-hover"
-                onClick={() =>
+            <div key={`${section.title}-${index}`}>
+              <SectionHeading
+                section={section}
+                open={open}
+                cwd={cwd}
+                onToggle={() =>
                   setClosedSections((prev) => {
                     const next = new Set(prev);
                     if (next.has(index)) next.delete(index);
@@ -75,16 +95,12 @@ export default function ChatMarkdown({
                     return next;
                   })
                 }
-              >
-                <FoldMark open={open} />
-                <span>{section.title}</span>
-              </button>
+              />
               {open && section.body && <MarkdownBody text={section.body} cwd={cwd} />}
             </div>
           );
         })}
         <MentionedAudios paths={audios} cwd={cwd} />
-        <MentionedFiles files={files} cwd={cwd} onOpen={setDiffFocusReq} />
       </div>
     );
   }
@@ -92,36 +108,76 @@ export default function ChatMarkdown({
     <div>
       <MarkdownBody text={text} cwd={cwd} />
       <MentionedAudios paths={audios} cwd={cwd} />
-      <MentionedFiles files={files} cwd={cwd} onOpen={setDiffFocusReq} />
     </div>
   );
 }
 
-function MentionedFiles({
-  files,
+/**
+ * 长回复分节的小标题：照 Markdown 的级别排（与不分节的回复里同一个 ## 长得一样，原先做成按钮后被全站
+ * button { font: inherit } 吞成正文字号、常规字重），标题里的加粗 / 代码 / 公式照常解析。
+ * 折叠箭头挂在标题左侧留白里，悬停 / 聚焦 / 已收起时才出现；点标题文字也能收起
+ */
+function SectionHeading({
+  section,
+  open,
   cwd,
-  onOpen,
+  onToggle,
 }: {
-  files: string[];
+  section: ReplySection;
+  open: boolean;
   cwd?: string | null;
-  onOpen: (req: { cwd: string; path: string }) => void;
+  onToggle: () => void;
 }) {
-  if (!cwd || files.length === 0) return null;
-  return (
-    <div className="mt-2 flex flex-wrap gap-1">
-      {files.slice(0, 8).map((path) => (
-        <button
-          key={path}
-          type="button"
-          title="在右侧改动里打开"
-          className="rounded-sm bg-inset px-1.5 py-0.5 text-micro text-l2 hover:bg-hover hover:text-l1"
-          onClick={() => onOpen({ cwd, path })}
-        >
-          {path}
-        </button>
-      ))}
-    </div>
+  const html = useMemo(
+    () => sanitizeDocumentHtml(chatMarked.parseInline(section.title) as string),
+    [section.title],
   );
+  const titleRef = useRef<HTMLSpanElement>(null);
+  useChatDecorations(titleRef, html, cwd);
+  const Tag = (["h1", "h2", "h3", "h4"] as const)[Math.min(Math.max(section.level, 1), 4) - 1];
+  return (
+    <Tag
+      className="md-fold-head"
+      data-closed={open ? undefined : ""}
+      onClick={(e) => {
+        // 标题里的链接照常跳转，不当成收起
+        if ((e.target as HTMLElement).closest("a")) return;
+        onToggle();
+      }}
+    >
+      <button
+        type="button"
+        className="md-fold-toggle"
+        aria-expanded={open}
+        aria-label={open ? "收起这一节" : "展开这一节"}
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggle();
+        }}
+      >
+        <ChevronRight
+          size={12}
+          strokeWidth={2}
+          aria-hidden="true"
+          style={{ transform: open ? "rotate(90deg)" : undefined, transition: "transform 120ms" }}
+        />
+      </button>
+      <span ref={titleRef} dangerouslySetInnerHTML={{ __html: html }} />
+    </Tag>
+  );
+}
+
+/**
+ * 用户消息里的围栏代码块：与 AI 回复里的代码块同一套（头栏、复制、高亮）。围栏用比正文里最长的反引号串
+ * 多一个的长度，正文里有 ``` 也不会提前收口
+ */
+export function ChatCodeBlock({ lang, text, cwd }: { lang: string; text: string; cwd?: string | null }) {
+  const md = useMemo(() => {
+    const longest = Math.max(0, ...[...text.matchAll(/`+/g)].map((m) => m[0].length));
+    const fence = "`".repeat(Math.max(3, longest + 1));
+    return `${fence}${lang.trim()}\n${text.replace(/\n+$/, "")}\n${fence}`;
+  }, [lang, text]);
+  return <MarkdownBody text={md} cwd={cwd} />;
 }
 
 function MentionedAudios({ paths, cwd }: { paths: string[]; cwd?: string | null }) {
@@ -173,7 +229,10 @@ export function ChatAudioCard({ path, cwd }: { path: string; cwd?: string | null
       className="flex max-w-md flex-col gap-1 rounded-md border border-hairline bg-inset px-2.5 py-2"
       title={abs}
     >
-      <span className="truncate text-micro text-l3">🔊 {name}</span>
+      <span className="flex min-w-0 items-center gap-1.5 text-micro text-l3">
+        <Volume2 size={12} strokeWidth={1.8} aria-hidden="true" className="shrink-0" />
+        <span className="truncate">{name}</span>
+      </span>
       {error ? (
         <span className="text-micro text-l4">
           {/只支持|不是有效|超过/.test(error) ? error : "读不到这个文件（不在可读取范围或已删除）"}
@@ -221,11 +280,42 @@ function MarkdownBody({
     // 代码块头栏（语言名 + 复制），与笔记预览同一套（2026-10-19 用户：聊天里的代码块没有复制按钮）
     decorateMdCodeBlocks(host);
   });
+  useChatDecorations(bodyRef, html, cwd);
 
-  /** 链接：锚点默认；外链系统浏览器；本地路径跳终端页预览。图片点击 = 预览放大 */
+  // 引用胶囊的悬停卡片（应用内浮层，不用 WKWebView 的原生 title）
+  const [citeTip, setCiteTip] = useState<{ x: number; y: number; text: string; warn: string | null } | null>(null);
+  useEffect(() => {
+    if (!citeTip) return;
+    const hide = () => setCiteTip(null);
+    window.addEventListener("scroll", hide, true);
+    return () => window.removeEventListener("scroll", hide, true);
+  }, [citeTip]);
+  function onBodyOver(e: React.MouseEvent<HTMLDivElement>) {
+    const chip = (e.target as HTMLElement).closest(".md-cite-item");
+    const tip = chip ? citeTipFor(chip) : null;
+    if (!chip || !tip) {
+      if (citeTip) setCiteTip(null);
+      return;
+    }
+    const r = chip.getBoundingClientRect();
+    setCiteTip({
+      x: Math.min(Math.max(r.left + r.width / 2, 150), window.innerWidth - 150),
+      y: r.top - 8,
+      ...tip,
+    });
+  }
+
+  /** 链接：锚点默认；外链系统浏览器；本地路径跳终端页预览。图片点击 = 预览放大；
+   *  正文里提到的项目文件（md-file-link，后端核实过）= 预览这个文件 */
   function onBodyClick(e: React.MouseEvent<HTMLDivElement>) {
     if (handleMdCodeCopyClick(e.target)) return;
     const target = e.target as HTMLElement;
+    const fileLink = target.closest<HTMLElement>(".md-file-link");
+    if (fileLink?.dataset.fileAbs && cwd) {
+      const abs = fileLink.dataset.fileAbs;
+      setPreviewReq({ path: abs, name: abs.split(/[\\/]/).pop() ?? abs, root: cwd });
+      return;
+    }
     const img = target.closest("img");
     if (img?.dataset.ccodePath && cwd) {
       const abs = img.dataset.ccodePath;
@@ -257,12 +347,17 @@ function MarkdownBody({
   }
 
   return (
-    <div
-      ref={bodyRef}
-      onClick={onBodyClick}
-      className="md-body md-chat"
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
+    <>
+      <div
+        ref={bodyRef}
+        onClick={onBodyClick}
+        onMouseOver={onBodyOver}
+        onMouseLeave={() => setCiteTip(null)}
+        className="md-body md-chat"
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+      <HoverTip tip={citeTip} text={citeTip?.text ?? ""} warn={citeTip?.warn} up />
+    </>
   );
 }
 
@@ -303,10 +398,11 @@ export function ChatImageCard({
   if (failed)
     return (
       <div
-        className="my-1 break-all rounded-md border border-hairline bg-inset px-2.5 py-1.5 font-mono text-xs text-l3"
+        className="my-1 flex items-start gap-1.5 break-all rounded-md border border-hairline bg-inset px-2.5 py-1.5 font-mono text-xs text-l3"
         title={abs}
       >
-        🖼 {name}（不在可读取范围或文件已删除）
+        <ImageOff size={13} strokeWidth={1.8} aria-hidden="true" className="mt-0.5 shrink-0 text-l4" />
+        <span>{name}（不在可读取范围或文件已删除）</span>
       </div>
     );
   if (!src) return <div className="md-img-pending my-1">图片加载中…</div>;

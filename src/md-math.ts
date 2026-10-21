@@ -1,4 +1,4 @@
-import { marked } from "marked";
+import { marked, type TokenizerAndRendererExtension } from "marked";
 
 /**
  * md 阅读版式公式渲染（批次 E）：$...$ 行内 / $$...$$ 块级。
@@ -78,40 +78,121 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
+/** 块级 \[ ... \]（聊天专用）：块边界起步，内容可跨行但不含空行；内容里要有像公式的字符（\ ^ _ = { }），
+ *  不然多半是转义方括号「\[1\]」 */
+export function matchBlockBracketMath(src: string): MathMatch | undefined {
+  const m = /^ {0,3}\\\[[ \t]*\n?([\s\S]*?)\\\][ \t]*(?=\n|$)/.exec(src);
+  if (!m) return undefined;
+  const tex = m[1].trim();
+  if (!tex || /\n[ \t]*\n/.test(m[1]) || !looksLikeTex(tex)) return undefined;
+  return { raw: m[0], tex, display: true };
+}
+
+/** 行内 \( ... \) 与 \[ ... \]（聊天专用：模型回复常用这两种定界符）；不跨空行 */
+export function matchInlineParenMath(src: string): MathMatch | undefined {
+  const paren = /^\\\(([\s\S]+?)\\\)/.exec(src);
+  if (paren) {
+    const tex = paren[1].trim();
+    if (!tex || /\n[ \t]*\n/.test(paren[1])) return undefined;
+    return { raw: paren[0], tex, display: false };
+  }
+  const bracket = /^\\\[([\s\S]+?)\\\]/.exec(src);
+  if (!bracket) return undefined;
+  const tex = bracket[1].trim();
+  if (!tex || /\n[ \t]*\n/.test(bracket[1]) || !looksLikeTex(tex)) return undefined;
+  return { raw: bracket[0], tex, display: true };
+}
+
+function looksLikeTex(tex: string): boolean {
+  return /[\\^_={}]/.test(tex);
+}
+
+/** 下一个 \( / \[ 的下标 */
+export function findInlineParenMathStart(src: string): number | undefined {
+  const i = src.search(/\\[([]/);
+  return i < 0 ? undefined : i;
+}
+
+/** marked startBlock：下一个独占行首的 \[ */
+export function findBlockBracketMathStart(src: string): number | undefined {
+  const m = /\n( {0,3})\\\[/.exec(src);
+  return m ? m.index + 1 + m[1].length : undefined;
+}
+
+/** 占位一律写成 $ / $$ 形式（renderMathInto 按定界符长度取 TeX；\( \) 来源也这么存） */
+function blockPlaceholder(tex: string): string {
+  return `<div class="md-math md-math-display">$$${escapeHtml(tex)}$$</div>\n`;
+}
+function inlinePlaceholder(tex: string, display: boolean): string {
+  const d = display ? "$$" : "$";
+  return `<span class="md-math${display ? " md-math-display" : ""}">${d}${escapeHtml(tex)}${d}</span>`;
+}
+
+/** $ / $$ 两种定界符（笔记、任务书、聊天共用） */
+export const mathExtensions: TokenizerAndRendererExtension[] = [
+  {
+    name: "mathBlock",
+    level: "block",
+    start: findBlockMathStart,
+    tokenizer(src: string) {
+      const m = matchBlockMath(src);
+      if (!m) return undefined;
+      return { type: "mathBlock", raw: m.raw, tex: m.tex };
+    },
+    renderer(token) {
+      return blockPlaceholder((token as unknown as { tex: string }).tex);
+    },
+  },
+  {
+    name: "mathInline",
+    level: "inline",
+    start: findInlineMathStart,
+    tokenizer(src: string) {
+      const m = matchInlineMath(src);
+      if (!m) return undefined;
+      return { type: "mathInline", raw: m.raw, tex: m.tex, display: m.display };
+    },
+    renderer(token) {
+      const t = token as unknown as { tex: string; display: boolean };
+      return inlinePlaceholder(t.tex, t.display);
+    },
+  },
+];
+
+/** 聊天额外认 \( \) / \[ \]（模型回复常用；笔记里不开，免得改变已有笔记里转义括号的显示） */
+export const chatMathExtensions: TokenizerAndRendererExtension[] = [
+  ...mathExtensions,
+  {
+    name: "mathBlockBracket",
+    level: "block",
+    start: findBlockBracketMathStart,
+    tokenizer(src: string) {
+      const m = matchBlockBracketMath(src);
+      if (!m) return undefined;
+      return { type: "mathBlockBracket", raw: m.raw, tex: m.tex };
+    },
+    renderer(token) {
+      return blockPlaceholder((token as unknown as { tex: string }).tex);
+    },
+  },
+  {
+    name: "mathInlineParen",
+    level: "inline",
+    start: findInlineParenMathStart,
+    tokenizer(src: string) {
+      const m = matchInlineParenMath(src);
+      if (!m) return undefined;
+      return { type: "mathInlineParen", raw: m.raw, tex: m.tex, display: m.display };
+    },
+    renderer(token) {
+      const t = token as unknown as { tex: string; display: boolean };
+      return inlinePlaceholder(t.tex, t.display);
+    },
+  },
+];
+
 // marked 扩展注册（全局单例）：占位文本 = 原始 $...$ 源码，未升级处观感与接入前一致
-marked.use({
-  extensions: [
-    {
-      name: "mathBlock",
-      level: "block",
-      start: findBlockMathStart,
-      tokenizer(src: string) {
-        const m = matchBlockMath(src);
-        if (!m) return undefined;
-        return { type: "mathBlock", raw: m.raw, tex: m.tex };
-      },
-      renderer(token) {
-        const tex = (token as unknown as { tex: string }).tex;
-        return `<div class="md-math md-math-display">$$${escapeHtml(tex)}$$</div>\n`;
-      },
-    },
-    {
-      name: "mathInline",
-      level: "inline",
-      start: findInlineMathStart,
-      tokenizer(src: string) {
-        const m = matchInlineMath(src);
-        if (!m) return undefined;
-        return { type: "mathInline", raw: m.raw, tex: m.tex, display: m.display };
-      },
-      renderer(token) {
-        const t = token as unknown as { tex: string; display: boolean };
-        const d = t.display ? "$$" : "$";
-        return `<span class="md-math${t.display ? " md-math-display" : ""}">${d}${escapeHtml(t.tex)}${d}</span>`;
-      },
-    },
-  ],
-});
+marked.use({ extensions: mathExtensions });
 
 /**
  * 把 host 内的 .md-math 占位升级为 KaTeX 排版（无公式直接返回，不触发 katex 加载）。

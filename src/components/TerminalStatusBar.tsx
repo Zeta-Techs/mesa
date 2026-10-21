@@ -21,7 +21,7 @@ import type { TabStatus } from "../pages/TerminalPage";
  * 切换类控件只写 TUI 命令、不回读 CLI 内部状态——模型名按用户切的选择显示（内存态）。
  * chat 变体（2026-09-13）：聊天页（非 peek）不再沿用「与 xterm 同底」的终端语言——
  * 底色改涂 var(--color-canvas) 与聊天画布同源（消除两套深色相接的色差缝），
- * 内容与输入卡同一条 max-w-4xl 中轴，模型胶囊统一成目录胶囊的灰调（蓝色强调只留给状态点）；
+ * 内容与输入卡同一条中轴（.ccode-chat-column），模型胶囊统一成目录胶囊的灰调（蓝色强调只留给状态点）；
  * 几何不变（32px 恒定，切层不改终端行列数），终端模式完全不动。
  */
 
@@ -408,7 +408,7 @@ export default function TerminalStatusBar({
       ref={rootRef}
       className={`relative h-8 shrink-0 overflow-visible rounded-b-xl text-micro whitespace-nowrap select-none ${
         // chat 变体通栏涂画布色（上方 ChatSurface 同为 bg-canvas，接缝消失），
-        // px-4 + 内层 max-w-4xl 与 ChatComposer 同构，内容与输入卡同一左缘。
+        // px-4 + 内层 .ccode-chat-column 与 ChatComposer 同构，内容与输入卡同一左缘。
         // 终端变体用 xterm 同源底色，下圆角和画面的上圆角拼成一张卡。
         chat ? "w-full bg-canvas px-4" : "w-full px-3"
       }`}
@@ -419,7 +419,7 @@ export default function TerminalStatusBar({
     >
       <div
         className={`flex h-full min-w-0 items-center gap-2.5 ${
-          chat ? "mx-auto w-full max-w-4xl" : ""
+          chat ? "ccode-chat-column mx-auto w-full" : ""
         }`}
       >
       {/* 左区：状态圆点 + agent · 配置 · 模型 + 思考滑块 */}

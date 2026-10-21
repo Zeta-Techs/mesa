@@ -484,7 +484,8 @@ export default function ChatComposer({
 
   return (
     <div className="ccode-chat-composer shrink-0 bg-canvas px-4 pb-2 pt-2.5">
-      <div className={`mx-auto w-full ${narrow ? "max-w-[45rem]" : "max-w-4xl"}`}>
+      {/* 开聊后与对话流同一条中轴：栏宽跟聊天字号走（App.css .ccode-chat-column） */}
+      <div className={`mx-auto w-full ${narrow ? "max-w-[45rem]" : "ccode-chat-column"}`}>
         <div className="overflow-visible rounded-xl border border-hairline bg-raised transition-colors focus-within:border-l4">
           {/* 斜杠命令面板：/ 开头弹出（命令表是各家 CLI 的保守常用集，见 src/slash-commands.ts） */}
           {slashList.length > 0 && (

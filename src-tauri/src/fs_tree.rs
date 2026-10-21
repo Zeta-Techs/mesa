@@ -1405,6 +1405,93 @@ pub async fn search_files(
     .map_err(|e| format!("搜索失败: {e}"))?
 }
 
+/// 一次最多核对这么多路径（一条回复里提到的文件不会更多，防前端传巨量列表）
+const EXISTING_FILES_MAX: usize = 200;
+
+/// 核实过的文件：原样路径（前端拿它对回正文那一段）+ 规范化后的绝对路径（点开预览用）
+#[derive(Debug, Clone, serde::Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExistingFileDto {
+    pub path: String,
+    pub abs: String,
+}
+
+/// 聊天回复里提到的路径哪些真是会话目录下的文件（2026-10-21，回复里文件路径就地可点）：
+/// 相对路径按 cwd 拼，绝对 / ~/ 路径原样；规范化后必须落在 cwd 内、且是文件。
+/// 只看元数据，不读内容；cwd 不存在返回空表。
+fn existing_files_in(cwd: &str, paths: &[String]) -> Vec<ExistingFileDto> {
+    let Ok(root) = std::path::PathBuf::from(expand_tilde(cwd)).canonicalize() else {
+        return Vec::new();
+    };
+    paths
+        .iter()
+        .take(EXISTING_FILES_MAX)
+        .filter_map(|p| {
+            let raw = p.trim();
+            if raw.is_empty() {
+                return None;
+            }
+            let expanded = std::path::PathBuf::from(expand_tilde(raw));
+            let candidate = if expanded.is_absolute() {
+                expanded
+            } else {
+                root.join(expanded)
+            };
+            let canon = candidate.canonicalize().ok()?;
+            (canon.is_file() && crate::paths::path_within_path(&canon, &root)).then(|| ExistingFileDto {
+                path: p.clone(),
+                abs: crate::paths::strip_verbatim(canon).to_string_lossy().to_string(),
+            })
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub async fn existing_files(cwd: String, paths: Vec<String>) -> Result<Vec<ExistingFileDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || existing_files_in(&cwd, &paths))
+        .await
+        .map_err(|e| format!("核对文件失败: {e}"))
+}
+
+#[cfg(test)]
+mod existing_files_tests {
+    use super::*;
+
+    #[test]
+    fn only_files_inside_cwd_are_kept() {
+        let base = std::env::temp_dir().join(format!("ccode-existing-{}", uuid::Uuid::new_v4()));
+        let root = base.join("proj").canonicalize().unwrap_or_else(|_| {
+            std::fs::create_dir_all(base.join("proj")).unwrap();
+            base.join("proj").canonicalize().unwrap()
+        });
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src").join("a.ts"), "x").unwrap();
+        std::fs::write(root.join("README.md"), "x").unwrap();
+        let outside = base.join("other");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("b.ts"), "x").unwrap();
+        let abs_inside = root.join("README.md").to_string_lossy().to_string();
+        let abs_outside = outside.join("b.ts").to_string_lossy().to_string();
+        let asked = vec![
+            "src/a.ts".to_string(),
+            "src/missing.ts".to_string(),
+            "src".to_string(),
+            "../b.ts".to_string(),
+            abs_inside.clone(),
+            abs_outside,
+        ];
+        let got: Vec<String> = existing_files_in(&root.to_string_lossy(), &asked)
+            .into_iter()
+            .map(|f| f.path)
+            .collect();
+        assert_eq!(got, vec!["src/a.ts".to_string(), abs_inside]);
+        let first = &existing_files_in(&root.to_string_lossy(), &asked[..1])[0];
+        assert!(std::path::Path::new(&first.abs).ends_with("src/a.ts"));
+        assert!(existing_files_in("/definitely/not/here", &asked).is_empty());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+}
+
 #[cfg(test)]
 mod search_tests {
     use super::*;

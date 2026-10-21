@@ -138,3 +138,32 @@ test("端到端：段落后紧跟块级公式（无空行）也成块", () => {
   const html = parse("引言如下\n$$x^2$$\n");
   assert.match(html, /<div class="md-math md-math-display">/);
 });
+
+// ===== 聊天专用：\( \) / \[ \]（模型回复常用这两种定界符；笔记不开） =====
+
+import { Marked } from "marked";
+import { chatMathExtensions, matchBlockBracketMath, matchInlineParenMath } from "../src/md-math.ts";
+
+const chatParse = (src: string) => {
+  const m = new Marked({ gfm: true, breaks: true, async: false });
+  m.use({ extensions: chatMathExtensions });
+  return m.parse(src) as string;
+};
+
+test("聊天：\\( \\) 行内、\\[ \\] 块级都渲染成占位（占位写成 $ 形式）", () => {
+  assert.deepEqual(matchInlineParenMath("\\(a^2+b^2\\) 是"), { raw: "\\(a^2+b^2\\)", tex: "a^2+b^2", display: false });
+  assert.equal(matchBlockBracketMath("\\[\n\\int_0^1 x\\,dx\n\\]")?.tex, "\\int_0^1 x\\,dx");
+  const inline = chatParse("勾股定理 \\(a^2+b^2=c^2\\) 成立");
+  assert.ok(inline.includes('<span class="md-math">$a^2+b^2=c^2$</span>'), inline);
+  const block = chatParse("如下：\n\n\\[\nE = mc^2\n\\]\n\n完");
+  assert.ok(block.includes('<div class="md-math md-math-display">$$E = mc^2$$</div>'), block);
+  // $ 写法在聊天里照旧
+  assert.ok(chatParse("$x_1$").includes('<span class="md-math">$x_1$</span>'));
+});
+
+test("聊天：转义方括号 \\[1\\] 不当公式；代码里的 \\( 不碰；笔记的全局实例不认 \\( \\)", () => {
+  assert.equal(matchInlineParenMath("\\[1\\]"), undefined);
+  assert.ok(!chatParse("见 \\[1\\] 与 \\[2\\]").includes("md-math"));
+  assert.ok(!chatParse("`\\(x\\)`").includes("md-math"));
+  assert.ok(!(marked.parse("勾股 \\(a^2\\)") as string).includes("md-math"));
+});

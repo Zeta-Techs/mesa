@@ -198,6 +198,245 @@ pub async fn check_citation_health(path: String) -> Result<CitationHealthDto, St
         .map_err(|e| format!("引用健康检查失败: {e}"))?
 }
 
+/// 聊天回复里的引用键 → 条目信息（2026-10-21，聊天层引用胶囊）。只读 bib，不改。
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CiteEntryDto {
+    pub key: String,
+    /// 作者姓（家族名）按顺序；机构作者整名
+    pub authors: Vec<String>,
+    pub year: Option<String>,
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CiteLookupDto {
+    pub bib_found: bool,
+    pub entries: Vec<CiteEntryDto>,
+}
+
+const CITE_LOOKUP_MAX_KEYS: usize = 100;
+const BIB_MAX_BYTES: u64 = 8 * 1024 * 1024;
+
+/// BibTeX 字段值：`name = {…}`（花括号可嵌套）/ `"…"` / 裸值（数字、宏名）。字段名大小写不敏感。
+fn bib_field(entry: &str, name: &str) -> Option<String> {
+    let lower = entry.to_ascii_lowercase();
+    let bytes = entry.as_bytes();
+    let mut from = 0;
+    while let Some(pos) = lower[from..].find(name) {
+        let at = from + pos;
+        from = at + name.len();
+        let before_ok = at == 0 || matches!(bytes[at - 1], b' ' | b'\t' | b'\n' | b'\r' | b',' | b'{');
+        let rest = entry[from..].trim_start();
+        if !before_ok || !rest.starts_with('=') {
+            continue;
+        }
+        let value = rest[1..].trim_start();
+        let mut chars = value.char_indices();
+        return match chars.next() {
+            Some((_, '{')) => {
+                let mut depth = 1;
+                for (i, c) in chars {
+                    match c {
+                        '{' => depth += 1,
+                        '}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                return Some(value[1..i].to_string());
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                None
+            }
+            Some((_, '"')) => {
+                let mut depth = 0;
+                for (i, c) in chars {
+                    match c {
+                        '{' => depth += 1,
+                        '}' => depth -= 1,
+                        '"' if depth <= 0 => return Some(value[1..i].to_string()),
+                        _ => {}
+                    }
+                }
+                None
+            }
+            Some(_) => {
+                let end = value.find([',', '\n', '}']).unwrap_or(value.len());
+                Some(value[..end].trim().to_string())
+            }
+            None => None,
+        };
+    }
+    None
+}
+
+/// 去掉 BibTeX 的保护花括号与简单 LaTeX 命令（\textit、\"o 这类），合并空白
+fn bib_plain(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '{' | '}' => {}
+            '\\' => match chars.peek().copied() {
+                Some(n) if n.is_ascii_alphabetic() => {
+                    while chars.peek().is_some_and(|c| c.is_ascii_alphabetic()) {
+                        chars.next();
+                    }
+                }
+                Some('&') | Some('%') | Some('$') | Some('_') | Some('#') => {
+                    out.push(chars.next().unwrap_or(' '));
+                }
+                Some(_) => {
+                    // 重音记号 \" \' \^ 等：去掉记号，留后面的字母
+                    chars.next();
+                }
+                None => {}
+            },
+            '~' => out.push(' '),
+            c => out.push(c),
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// author 字段 → 各作者的姓：「Smith, John」取逗号前；「John Smith」取最后一个词；
+/// 整个包在花括号里的是机构名，整名保留；中文名（无空格）整名
+fn bib_authors(raw: &str) -> Vec<String> {
+    let mut parts: Vec<String> = Vec::new();
+    let mut depth = 0i32;
+    let mut cur = String::new();
+    // 按顶层（花括号外）的「 and 」切
+    for w in raw.split_inclusive(char::is_whitespace) {
+        let trimmed = w.trim();
+        if depth == 0 && trimmed.eq_ignore_ascii_case("and") && !cur.trim().is_empty() {
+            parts.push(std::mem::take(&mut cur));
+            continue;
+        }
+        depth += w.matches('{').count() as i32 - w.matches('}').count() as i32;
+        cur.push_str(w);
+    }
+    if !cur.trim().is_empty() {
+        parts.push(cur);
+    }
+    parts
+        .iter()
+        .map(|p| {
+            let t = p.trim();
+            if t.starts_with('{') && t.ends_with('}') {
+                return bib_plain(t);
+            }
+            let plain = bib_plain(t);
+            if let Some((family, _)) = plain.split_once(',') {
+                return family.trim().to_string();
+            }
+            plain.split_whitespace().last().unwrap_or("").to_string()
+        })
+        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("others"))
+        .collect()
+}
+
+fn bib_entry_dto(entry: &str) -> Option<CiteEntryDto> {
+    let head = entry.trim_start();
+    if !head.starts_with('@') {
+        return None;
+    }
+    let kind = head[1..].split('{').next().unwrap_or("").trim().to_ascii_lowercase();
+    if matches!(kind.as_str(), "comment" | "preamble" | "string") {
+        return None;
+    }
+    let key = head.split_once('{')?.1.split(',').next()?.trim().to_string();
+    if key.is_empty() {
+        return None;
+    }
+    let year = bib_field(entry, "year")
+        .map(|y| bib_plain(&y))
+        .or_else(|| bib_field(entry, "date").map(|d| d.chars().take(4).collect()))
+        .filter(|y| !y.is_empty());
+    let title = bib_field(entry, "title")
+        .map(|t| bib_plain(&t).chars().take(240).collect::<String>())
+        .filter(|t| !t.is_empty());
+    let authors = bib_field(entry, "author")
+        .or_else(|| bib_field(entry, "editor"))
+        .map(|a| bib_authors(&a))
+        .unwrap_or_default();
+    Some(CiteEntryDto { key, authors, year, title })
+}
+
+/// 在会话目录及其上级（到白名单根为止）找 references.bib，取所问各键的条目。
+/// 目录不在注册项目 / 工作区内时不读，bib_found=false（与引用健康检查同一白名单）
+fn cite_lookup_in(dir: &Path, roots: &[PathBuf], keys: &[String]) -> CiteLookupDto {
+    let empty = CiteLookupDto { bib_found: false, entries: Vec::new() };
+    let Some(root) = roots
+        .iter()
+        .filter(|r| crate::paths::path_within_path(dir, r))
+        .max_by_key(|r| r.as_os_str().len())
+    else {
+        return empty;
+    };
+    let Some(bib) = dir
+        .ancestors()
+        .take_while(|a| crate::paths::path_within_path(a, root))
+        .find_map(find_bib)
+    else {
+        return empty;
+    };
+    let text = match fs::metadata(&bib) {
+        Ok(meta) if meta.len() <= BIB_MAX_BYTES => fs::read_to_string(&bib).unwrap_or_default(),
+        _ => String::new(),
+    };
+    let wanted: BTreeSet<&str> = keys
+        .iter()
+        .take(CITE_LOOKUP_MAX_KEYS)
+        .map(|k| k.as_str())
+        .collect();
+    let mut entries = Vec::new();
+    let mut current = String::new();
+    let mut flush = |chunk: &str| {
+        if let Some(e) = bib_entry_dto(chunk) {
+            if wanted.contains(e.key.as_str()) && !entries.iter().any(|x: &CiteEntryDto| x.key == e.key) {
+                entries.push(e);
+            }
+        }
+    };
+    for line in text.lines() {
+        if line.trim_start().starts_with('@') && !current.is_empty() {
+            flush(&current);
+            current.clear();
+        }
+        current.push_str(line);
+        current.push('\n');
+    }
+    flush(&current);
+    CiteLookupDto { bib_found: true, entries }
+}
+
+#[tauri::command]
+pub async fn cite_lookup(cwd: String, keys: Vec<String>) -> Result<CiteLookupDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Ok(dir) = PathBuf::from(crate::sessions::expand_tilde(&cwd)).canonicalize() else {
+            return CiteLookupDto { bib_found: false, entries: Vec::new() };
+        };
+        let canon = |p: &PathBuf| p.canonicalize().ok();
+        let mut roots: Vec<PathBuf> = crate::projects::project_roots_and_resources()
+            .0
+            .iter()
+            .filter_map(canon)
+            .collect();
+        roots.extend(
+            crate::workspaces::worktree_rows()
+                .into_iter()
+                .flat_map(|w| [w.worktree_path, w.repo_path])
+                .filter_map(|p| canon(&PathBuf::from(p))),
+        );
+        cite_lookup_in(&dir, &roots, &keys)
+    })
+    .await
+    .map_err(|e| format!("读取引文失败: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -313,5 +552,46 @@ mod tests {
         fs::write(dir.join("references.bib"), "").unwrap();
         assert_eq!(find_bib(&dir).unwrap(), dir.join("references.bib"));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    const BIB: &str = r#"% 文件头说明不算条目
+@article{smith2020,
+  title = {A {Bayesian} view of \textit{everything}},
+  author = {Smith, John and Lee, Kim and others},
+  year = 2020,
+  booktitle = {不该被当成 title}
+}
+@book{who2019, author = {{World Health Organization}}, title = "Global report", date = {2019-05-01}}
+@misc{zhang21,
+  author = {张三 and 李四},
+  year = {2021},
+  title = {中文题名}
+}
+@comment{ignored, title = {x}}
+"#;
+
+    #[test]
+    fn bib_entries_parse_authors_year_title() {
+        let dir = tmpdir("lookup");
+        fs::create_dir_all(dir.join("notes")).unwrap();
+        fs::write(dir.join("references.bib"), BIB).unwrap();
+        let root = dir.canonicalize().unwrap();
+        let keys = ["smith2020", "who2019", "zhang21", "nope"].map(String::from);
+        let got = cite_lookup_in(&root.join("notes"), std::slice::from_ref(&root), &keys);
+        assert!(got.bib_found);
+        assert_eq!(got.entries.len(), 3);
+        assert_eq!(got.entries[0].key, "smith2020");
+        assert_eq!(got.entries[0].authors, vec!["Smith", "Lee"]);
+        assert_eq!(got.entries[0].year.as_deref(), Some("2020"));
+        assert_eq!(got.entries[0].title.as_deref(), Some("A Bayesian view of everything"));
+        assert_eq!(got.entries[1].authors, vec!["World Health Organization"]);
+        assert_eq!(got.entries[1].year.as_deref(), Some("2019"));
+        assert_eq!(got.entries[1].title.as_deref(), Some("Global report"));
+        assert_eq!(got.entries[2].authors, vec!["张三", "李四"]);
+        // 不在白名单里的目录不读 bib
+        let other = tmpdir("lookup-out").canonicalize().unwrap();
+        assert!(!cite_lookup_in(&root, std::slice::from_ref(&other), &keys).bib_found);
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&other);
     }
 }

@@ -2761,8 +2761,9 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                   </div>
                 )}
                 <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
-                  {/* 阅读栏居中限宽：气泡与排版不随宽窗拉成超长行；scrollRef 仍挂滚动容器，分页语义不变 */}
-                  <div className="mx-auto max-w-3xl p-4">
+                  {/* 阅读栏居中限宽：与聊天层同一个栏宽（跟聊天字号走，App.css .ccode-chat-column）；
+                      scrollRef 仍挂滚动容器，分页语义不变 */}
+                  <div className="ccode-chat-column mx-auto p-4">
                     {loadingConv ? (
                       <LoadingRows compact />
                     ) : (

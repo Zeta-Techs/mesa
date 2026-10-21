@@ -2273,37 +2273,120 @@ select:focus-visible {
 .md-body img {
   max-width: 100%;
 }
-/* 聊天消息里的 Markdown（ConversationView AI 正文，ChatMarkdown 渲染）：
-   比笔记阅读版式更紧凑——段距收窄、图片收为缩略卡（点击经预览页签放大） */
-.md-chat {
-  font-size: inherit;
-  line-height: 1.65;
+/* 聊天字号阶梯（2026-10-21 聊天层排版）：聊天里的字一律按正文字号取比例——回答与用户气泡 = 1、
+   过程行 / 计划 / 过程里的说明 = 0.94、过程里的命令输出与差异 = 0.86。设置 → 外观「聊天字号」写的
+   --ccode-chat-fs（壳上变量，见 chat-style.ts）一改全跟着走；没调过时 Mac 13.5px、Windows 14px。
+   原先 Mac 根字号 14px 下 text-sm 只有 12.25px：用户气泡 12.25、回答 13.5、过程行 12.25、代码 10.5，
+   同屏几种字号，调大字号也只有回答变大。对话回放（对话页）与聊天层同一套；项目里的窄预览（compact）不走这里 */
+:root {
+  --chat-base: 13.5px;
+}
+[data-platform="windows"] {
+  --chat-base: 14px;
 }
 
-/* 对话层覆盖字号为 inherit（跟气泡/正文 14px）；字体栈已由 .md-body 的 Windows 块覆盖。 */
-[data-platform="windows"] .md-chat {
-  font-size: var(--ccode-chat-fs, inherit);
-}
-/* 聊天层阅读体验（设置 → 外观，壳上变量见 chat-style.ts）：没调过时变量不存在，全部落回原值。
-   用户气泡是纯文本不走 .md-chat，单独挂 .ccode-chat-user 同步字号字体；0.875rem = 原 text-sm。 */
+/* 聊天消息里的 Markdown（ConversationView AI 正文，ChatMarkdown 渲染）：
+   比笔记阅读版式更紧凑——标题只比正文略大、图片收为缩略卡（点击经预览页签放大） */
 .md-chat {
-  font-size: var(--ccode-chat-fs, 13.5px);
+  font-size: var(--ccode-chat-fs, var(--chat-base));
   font-family: var(--ccode-chat-ff, inherit);
+  line-height: 1.75;
 }
+/* Windows 的 .md-body 块把字号写死 14px、字体写死 Segoe（选择器更具体）：聊天这里压回聊天设置，
+   否则 Windows 上「聊天字号 / 聊天字体」都选了没反应 */
+[data-platform="windows"] .md-chat {
+  font-size: var(--ccode-chat-fs, var(--chat-base));
+  font-family: var(--ccode-chat-ff, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif);
+}
+/* 用户气泡是纯文本不走 .md-chat，单独挂这个类同步字号字体 */
 .ccode-chat-user {
-  font-size: var(--ccode-chat-fs, 0.875rem);
+  font-size: var(--ccode-chat-fs, var(--chat-base));
   font-family: var(--ccode-chat-ff, inherit);
+  line-height: 1.65;
+}
+/* 还没落盘的正文（实时预览）：与落盘后的回答同字号同行高，落盘那一下不跳 */
+.ccode-chat-body {
+  font-size: var(--ccode-chat-fs, var(--chat-base));
+  font-family: var(--ccode-chat-ff, inherit);
+  line-height: 1.75;
+}
+.ccode-chat-meta {
+  font-size: calc(var(--ccode-chat-fs, var(--chat-base)) * 0.94);
+}
+.ccode-chat-code {
+  font-size: calc(var(--ccode-chat-fs, var(--chat-base)) * 0.86);
+  line-height: 1.6;
+}
+/* 过程里的中途说明（回答之前「我先看看…」那些话）：降一级字色与字号，回答才是这一轮最醒目的字。
+   只在这一轮做完后降——还在写时它可能就是回答 */
+.ccode-chat-aside .md-chat {
+  color: var(--color-l3);
+  font-size: calc(var(--ccode-chat-fs, var(--chat-base)) * 0.94);
+}
+/* 栏宽按字数定：回答一行约 52 个汉字（Claude 约 45–50 个），换大字号栏跟着变宽，不再固定 max-w-4xl
+   （Mac 上 13.5px 一行近 58 字）。对话流、输入框、底部状态栏、对话回放同一个类；+2.5rem 是对话流两侧内边距 */
+.ccode-chat-column {
+  max-width: calc(var(--ccode-chat-fs, var(--chat-base)) * 52 + 2.5rem);
+}
+/* 中文排版：中文与英文、数字之间自动留约四分之一字宽（text-autospace；原文已有空格不再加）、
+   段末不留孤字（text-wrap: pretty）、句读不落行首（line-break: strict）。macOS 的 WKWebView（本机实测）
+   与 Windows 的 WebView2 都认前两项，不认的系统忽略这几行照旧显示。代码里不加间距 */
+.md-chat,
+.ccode-chat-user,
+.ccode-chat-body {
+  text-autospace: normal;
+  text-wrap: pretty;
+  line-break: strict;
+}
+.md-chat code,
+.md-chat pre,
+.ccode-chat-user code,
+.ccode-chat-user pre,
+.ccode-chat-code {
+  text-autospace: no-autospace;
+}
+/* 一问一答的节奏：每个新问题前留大空，同一轮之内收紧（原先所有块一律 12px，长对话分不出哪是一问一答）；
+   连着发的几句（排队）之间不拉开 */
+.ccode-chat-user-row {
+  margin-top: 1.75rem;
+}
+.ccode-chat-user-row:first-child,
+.ccode-chat-user-row + .ccode-chat-user-row {
+  margin-top: 0.5rem;
+}
+/* 用户长消息（大段粘贴）收起：约 12 行，底部三行渐隐，点「展开」看全文 */
+.ccode-chat-clamp {
+  max-height: calc(1lh * 12);
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 3lh), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 3lh), transparent);
 }
 .md-chat p,
 .md-chat ul,
 .md-chat ol {
-  margin: 0.45em 0;
+  margin: 0.7em 0;
+}
+.md-chat li {
+  margin: 0.3em 0;
+}
+.md-chat li > p {
+  margin: 0.3em 0;
+}
+.md-chat li > ul,
+.md-chat li > ol {
+  margin: 0.25em 0;
+}
+/* 序号是信息不是装饰：比笔记阅读的 l4 亮一档，数字等宽对齐 */
+.md-chat li::marker {
+  color: var(--color-l3);
+  font-variant-numeric: tabular-nums;
 }
 .md-chat h1,
 .md-chat h2,
 .md-chat h3,
 .md-chat h4 {
-  margin: 0.9em 0 0.4em;
+  margin: 1.3em 0 0.5em;
+  line-height: 1.45;
 }
 .md-chat h1,
 .md-chat h2 {
@@ -2386,6 +2469,186 @@ select:focus-visible {
 .md-chat .md-img-pending {
   min-height: 2.5rem;
   margin: 0.4em 0;
+}
+/* 长回复分节的小标题（ChatMarkdown）：标题照 Markdown 级别排，与不分节的回复长得一样；
+   折叠箭头挂在标题左侧留白里，悬停 / 聚焦 / 已收起时才出现 */
+.md-chat .md-fold-head {
+  position: relative;
+  cursor: pointer;
+}
+.md-chat .md-fold-toggle {
+  position: absolute;
+  top: 50%;
+  left: -1.15rem;
+  display: flex;
+  width: 1rem;
+  height: 1rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: var(--color-l4);
+  opacity: 0;
+  transform: translateY(-50%);
+  transition: opacity 120ms var(--ccode-motion-ease);
+}
+.md-chat .md-fold-head:hover .md-fold-toggle,
+.md-chat .md-fold-toggle:focus-visible,
+.md-chat .md-fold-head[data-closed] .md-fold-toggle {
+  opacity: 1;
+}
+.md-chat .md-fold-toggle:hover {
+  color: var(--color-l1);
+  background: var(--color-hover);
+}
+.md-chat .md-fold-head[data-closed] {
+  color: var(--color-l3);
+}
+/* 回复一开头就是小标题时不留顶空（标题包在分节的 div 里，.md-chat > :first-child 够不着） */
+.md-chat > :first-child > .md-fold-head:first-child {
+  margin-top: 0;
+}
+/* 表格：外面套一层可横滚的壳（md-code-chrome decorateMdTables），列多也不撑出对话栏；
+   只画横线、表头加粗不铺底、首尾列贴栏边，数字列右对齐用等宽数字（科研表格大多是数字） */
+.md-chat .md-table-wrap {
+  margin: 0.8em 0;
+  overflow-x: auto;
+}
+.md-chat table {
+  margin: 0;
+  font-size: 0.94em;
+}
+.md-chat th,
+.md-chat td {
+  border: none;
+  border-bottom: 1px solid var(--color-hairline);
+  padding: 0.45em 0.9em;
+  vertical-align: top;
+}
+.md-chat th {
+  background: transparent;
+  border-bottom-color: var(--color-field);
+  white-space: nowrap;
+}
+.md-chat th:first-child,
+.md-chat td:first-child {
+  padding-left: 0;
+}
+.md-chat th:last-child,
+.md-chat td:last-child {
+  padding-right: 0;
+}
+.md-chat tbody tr:last-child td {
+  border-bottom: none;
+}
+.md-chat .md-num {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+/* 回复里提到的项目文件（md-file-links）：就地点开预览，虚下划线表示可点；悬停转实线 */
+.md-chat .md-file-link {
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.22em;
+  text-decoration-color: color-mix(in srgb, currentColor 55%, transparent);
+}
+.md-chat .md-file-link:hover {
+  text-decoration-style: solid;
+  text-decoration-color: currentColor;
+}
+/* 文献引用键 [@key]（chat-cite.ts）：小胶囊，悬停出作者 / 年份 / 题名；bib 里没有的键描一圈琥珀 */
+.md-chat .md-cite-item {
+  display: inline-block;
+  margin: 0 0.12em;
+  padding: 0 0.42em;
+  border-radius: 4px;
+  background: var(--color-inset);
+  color: var(--color-l2);
+  font-size: 0.86em;
+  line-height: 1.55;
+  white-space: nowrap;
+  cursor: default;
+}
+.md-chat .md-cite-item[data-state="found"]:hover {
+  background: var(--color-hover);
+  color: var(--color-l1);
+}
+.md-chat .md-cite-item[data-state="missing"] {
+  background: transparent;
+  color: var(--color-caution-text);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-caution-text) 45%, transparent);
+}
+/* 代码块复制钮（md-code-chrome）：图标 + 字，不用字符画 */
+.md-body .md-code-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.md-body .md-code-copy svg {
+  width: 11px;
+  height: 11px;
+}
+/* 代码高亮（code-highlight.ts，highlight.js 按需加载）：颜色取聊天行内代码那四支已校验过深浅对比的强调色 +
+   链接蓝，不另带一套配色；注释降到 l4。深浅主题各一套 */
+.md-body .md-code pre code {
+  --hl-kw: #b9a2f4;
+  --hl-str: #66cdb9;
+  --hl-num: #e8bb6b;
+  --hl-fn: #eb9a85;
+}
+[data-theme$="-light"] .md-body .md-code pre code {
+  --hl-kw: #6a3dc0;
+  --hl-str: #0d6f66;
+  --hl-num: #8a5a00;
+  --hl-fn: #b23f2b;
+}
+.md-body .hljs-keyword,
+.md-body .hljs-selector-tag,
+.md-body .hljs-meta .hljs-keyword,
+.md-body .hljs-doctag {
+  color: var(--hl-kw);
+}
+.md-body .hljs-string,
+.md-body .hljs-regexp,
+.md-body .hljs-addition,
+.md-body .hljs-selector-attr {
+  color: var(--hl-str);
+}
+.md-body .hljs-number,
+.md-body .hljs-literal,
+.md-body .hljs-symbol,
+.md-body .hljs-variable.constant_ {
+  color: var(--hl-num);
+}
+.md-body .hljs-title,
+.md-body .hljs-section,
+.md-body .hljs-selector-id,
+.md-body .hljs-selector-class {
+  color: var(--hl-fn);
+}
+.md-body .hljs-type,
+.md-body .hljs-built_in,
+.md-body .hljs-attr,
+.md-body .hljs-attribute,
+.md-body .hljs-name,
+.md-body .hljs-tag {
+  color: var(--color-link);
+}
+.md-body .hljs-comment,
+.md-body .hljs-quote,
+.md-body .hljs-meta {
+  color: var(--color-l4);
+  font-style: italic;
+}
+.md-body .hljs-deletion {
+  color: var(--color-del);
+}
+.md-body .hljs-emphasis {
+  font-style: italic;
+}
+.md-body .hljs-strong {
+  font-weight: 600;
 }
 /* 批次 B2 图片后处理的三种呈现：加载占位灰块 / 失败小字 / 外部图片不加载只显文本 */
 .md-body .md-img-pending {

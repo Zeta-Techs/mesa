@@ -180,6 +180,17 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+### Codex CLI 默认系统提示词（Apache-2.0）
+
+- 用途：Mesa 为第三方连接生成的 Codex 模型清单里的 `base_instructions` 的**兜底**
+  （`src-tauri/src/codex_base_instructions.md`，编译进二进制）。清单必须填这一项，
+  填了就整段替换 Codex 自己的提示词，所以照搬 Codex 对未登记模型用的默认原文；
+  平时取用户本机所装 Codex 的同一段原文（不随包），取不到时才用这份
+- 来源：[openai/codex](https://github.com/openai/codex) 0.163.0 的默认提示词（© OpenAI），
+  从该版本会话文件的 `session_meta.base_instructions` 取出，只把换行统一为 LF；
+  Windows 上另拼接 Mesa 自己写的补充说明（`codex_windows_patch_note.md`，不属上游）
+- 许可：Apache License 2.0（与 Mesa 本体同许可，全文见仓库 [LICENSE](../../LICENSE)）
+
 ## 数据来源（运行期外联，不随包分发）
 
 - 期刊缩写与 ISSN 线：JabRef / abbrv.jabref.org 缩写表（CC0-1.0）、NLM Catalog
@@ -333,6 +344,7 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | dompurify | 3.4.15 | (MPL-2.0 OR Apache-2.0) |
 | duck | 0.1.12 | BSD |
 | hachure-fill | 0.5.2 | MIT |
+| highlight.js | 11.12.0 | BSD-3-Clause |
 | iconv-lite | 0.6.3 | MIT |
 | immediate | 3.0.6 | MIT |
 | import-meta-resolve | 4.2.0 | MIT |

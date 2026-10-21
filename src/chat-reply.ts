@@ -2,6 +2,8 @@
 
 export interface ReplySection {
   title: string;
+  /** 标题级别：Markdown 的 # 数（1–3），冒号短行按 3 级排；首个标题前的引子为 0 */
+  level: number;
   body: string;
 }
 
@@ -28,11 +30,12 @@ export function splitReplySections(text: string): ReplySection[] | null {
   const lines = text.split("\n");
   const sections: ReplySection[] = [];
   let title = "";
+  let level = 0;
   let body: string[] = [];
   let fenced = false;
   const flush = () => {
     if (!title && body.every((line) => !line.trim())) return;
-    sections.push({ title: title || "正文", body: body.join("\n").trim() });
+    sections.push({ title: title || "正文", level: title ? level : 0, body: body.join("\n").trim() });
     body = [];
   };
   let inFence = false;
@@ -50,7 +53,10 @@ export function splitReplySections(text: string): ReplySection[] | null {
     }
     if (!fenced && isHeadingLine(line, !hasMdHeading)) {
       flush();
-      title = line.trim().replace(/^#{1,3}\s+/, "");
+      const t = line.trim();
+      const hashes = /^(#{1,3})\s/.exec(t);
+      level = hashes ? hashes[1].length : 3;
+      title = t.replace(/^#{1,3}\s+/, "");
       continue;
     }
     body.push(line);
@@ -79,20 +85,46 @@ export function mentionedAudioFiles(text: string): string[] {
   return [...found];
 }
 
-const FILE_MENTION =
-  /(?:^|[\s`'"(（])((?:[\w.-]+\/)+[\w.-]+\.[A-Za-z0-9]{1,8})/g;
+/**
+ * 一段文字是不是项目里的文件路径（回复里就地可点，md-file-links）：相对、绝对、~/ 都收，可带「:行号」，
+ * 返回去掉行号与 ./ 前缀的路径；网址、带空白的、没有扩展名的、音频（另有播放条）返回 null。
+ * 只是长得像——真假由后端 existing_files 按会话目录核实，核实过的才变成链接。
+ */
+export function fileRefPath(token: string): string | null {
+  let t = token.trim();
+  if (!t || /\s/.test(t) || t.includes("://")) return null;
+  t = t.replace(/:\d+(?:[:-]\d+)?$/, "").replace(/^\.[\\/]/, "");
+  if (!/^(?:~[\\/]|[\\/]|[A-Za-z]:[\\/])?(?:[\w.@+-]+[\\/])*[\w@+-][\w.@+-]*\.[A-Za-z][A-Za-z0-9]{0,7}$/.test(t)) return null;
+  if (AUDIO_EXT.test(t)) return null;
+  return t;
+}
 
-/** 正文里像项目文件的相对路径。绝对路径和网址不算。 */
-export function mentionedProjectFiles(text: string): string[] {
-  const found = new Set<string>();
-  for (const match of text.matchAll(FILE_MENTION)) {
-    const raw = match[1];
-    // 音频另给播放条（mentionedAudioFiles），不再出一个打开文件的小标签
-    if (!raw || raw.startsWith("http") || AUDIO_EXT.test(raw)) continue;
-    // git 状态里的路径没有 ./ 前缀，对齐后再比对
-    found.add(raw.replace(/^\.\//, ""));
+export interface FileRefHit {
+  /** 在原文里的起点（已跳过包裹的 * _） */
+  index: number;
+  /** 原文里这一段（含行号） */
+  raw: string;
+  path: string;
+}
+
+/**
+ * 正文（不在代码里的文字）里提到的文件路径：按空白、引号、括号、中文标点切词，剥掉词尾英文标点与
+ * Markdown 的 * _ 包裹。正文里只认带目录的路径（「README.md」这种单个文件名在句子里太容易误认），
+ * 行内代码里的单个文件名由调用方用 fileRefPath 直接认。
+ */
+export function findFileRefs(text: string): FileRefHit[] {
+  const hits: FileRefHit[] = [];
+  for (const m of text.matchAll(/[^\s`'"()（）<>[\]{}，。；：！？、「」『』]+/g)) {
+    const word = m[0];
+    const lead = /^[*_]*/.exec(word)![0].length;
+    let core = word.slice(lead).replace(/[*_]+$/, "");
+    // 句末标点剥掉，「:12」这种行号留着
+    core = core.replace(/[.,;!?]+$/, "").replace(/:$/, "");
+    const path = fileRefPath(core);
+    if (!path || !/[\\/]/.test(path)) continue;
+    hits.push({ index: (m.index ?? 0) + lead, raw: core, path });
   }
-  return [...found];
+  return hits;
 }
 
 export interface ConfirmChoice {

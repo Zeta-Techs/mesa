@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 import type { BlockDto, ChatMessageDto } from "../types";
 import { FoldMark } from "./PageFrame";
-import ChatMarkdown, { ChatImageCard } from "./ChatMarkdown";
+import ChatMarkdown, { ChatCodeBlock, ChatImageCard } from "./ChatMarkdown";
 import { splitImagePaths } from "../chat-image";
 import { splitFenced } from "../text-fences";
 import { useAppStore } from "../store";
@@ -48,40 +48,61 @@ import { IS_WINDOWS } from "../hotkeys";
 
 /** 纯文本块：保留换行，超长不带空格的串（长 URL、一串 aaaa）在气泡内折行，不撑出气泡（2026-10-19 用户截图） */
 const WRAP_TEXT = "whitespace-pre-wrap [overflow-wrap:anywhere]";
-/** 文本块超过该长度先截断，点「展开全部」再看完整内容 */
+/** 思考等纯文本块超过该长度先截断，点「展开全部」再看完整内容（AI 回复不截：一律按 Markdown 排版） */
 const TEXT_CAP = 4000;
-/** 展开后的差异 / 输出最多画这么多行，再多写明还剩几行 */
-const DETAIL_LINES = 200;
+/** 用户长消息收起时只画开头这么多字（收起态只露十来行，再多也看不见，省得大段粘贴整块进 DOM） */
+const USER_PREVIEW_CHARS = 2000;
 
-/** 代码块：inset 底 + hairline 细边，头部语言名 + hover/focus 显现的 ⧉ 复制 */
-function CodeBlock({ lang, text }: { lang: string; text: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <div className="group/code my-1.5 overflow-hidden rounded-md border border-hairline bg-inset">
-      <div className="flex h-6 items-center justify-between border-b border-hairline px-2.5">
-        <span className="text-micro text-l4">{lang || "code"}</span>
-        <button
-          type="button"
-          onClick={() => {
-            void navigator.clipboard
-              .writeText(text)
-              .then(() => {
-                setCopied(true);
-                window.setTimeout(() => setCopied(false), 1200);
-              })
-              .catch(() => {});
-          }}
-          className="text-micro text-l3 opacity-0 transition-opacity hover:text-l1 focus-visible:opacity-100 group-hover/code:opacity-100"
-        >
-          {copied ? "已复制" : "⧉ 复制"}
-        </button>
-      </div>
-      <pre className="overflow-x-auto px-2.5 py-2 font-mono text-xs leading-relaxed text-l2">
-        <code>{text.replace(/\n+$/, "")}</code>
-      </pre>
-    </div>
+/** 文本里的围栏代码块拆出来，用与 AI 回复同一套的代码块（头栏、复制、高亮）画；其余保持纯文本 */
+function textWithFences(text: string, cwd?: string | null): ReactNode {
+  const parts = splitFenced(text);
+  if (parts.every((p) => !p.code)) return text;
+  return parts.map((p, i) =>
+    p.code ? (
+      <ChatCodeBlock key={i} lang={p.lang} text={p.text} cwd={cwd} />
+    ) : (
+      // 代码块前后的换行只是围栏分隔，去掉避免多出空行
+      <span key={i}>{p.text.replace(/^\n+|\n+$/g, "")}</span>
+    ),
   );
 }
+
+/**
+ * 用户消息正文：超过约 12 行收起、底部渐隐，「展开全部」看全文（2026-10-21：原先按 4000 字切原文、
+ * 切口处直接断开）。是否超出在绘制前量（行高 × 13），短消息不挂渐隐
+ */
+function UserText({ text, cwd, forceOpen }: { text: string; cwd?: string | null; forceOpen: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [overflow, setOverflow] = useState(text.length > USER_PREVIEW_CHARS);
+  const expanded = open || forceOpen;
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const lh = parseFloat(getComputedStyle(el).lineHeight) || 20;
+    setOverflow(text.length > USER_PREVIEW_CHARS || el.scrollHeight > lh * 13);
+  }, [text]);
+  const clamped = overflow && !expanded;
+  return (
+    <>
+      <div ref={ref} className={`${WRAP_TEXT} ${clamped ? "ccode-chat-clamp" : ""}`}>
+        {textWithFences(clamped ? text.slice(0, USER_PREVIEW_CHARS) : text, cwd)}
+      </div>
+      {overflow && !forceOpen && (
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+          className="mt-1 text-micro text-l3 hover:text-l1"
+        >
+          {open ? "收起" : "展开全部"}
+        </button>
+      )}
+    </>
+  );
+}
+/** 展开后的差异 / 输出最多画这么多行，再多写明还剩几行 */
+const DETAIL_LINES = 200;
 
 const ACTIVITY_ICON: Record<ActivityKind, LucideIcon> = {
   edit: PencilLine,
@@ -104,7 +125,7 @@ const ACTIVITY_ICON: Record<ActivityKind, LucideIcon> = {
 export function DiffView({ lines }: { lines: DiffLine[] }) {
   const shown = lines.slice(0, DETAIL_LINES);
   return (
-    <div className="max-h-80 overflow-auto rounded-md border border-hairline bg-inset py-1 font-mono text-xs leading-5">
+    <div className="ccode-chat-code max-h-80 overflow-auto rounded-md border border-hairline bg-inset py-1 font-mono">
       {shown.map((l, i) =>
         l.op === "~" ? (
           <div key={i} className="px-2.5 text-l4">
@@ -142,7 +163,7 @@ export function OutputView({ command, text }: { command?: string | null; text?: 
   const lines = body.split("\n");
   const cut = lines.length > DETAIL_LINES ? lines.slice(0, DETAIL_LINES).join("\n") : body;
   return (
-    <div className="max-h-80 overflow-auto rounded-md border border-hairline bg-inset px-2.5 py-2 font-mono text-xs leading-5">
+    <div className="ccode-chat-code max-h-80 overflow-auto rounded-md border border-hairline bg-inset px-2.5 py-2 font-mono">
       {command && <div className="whitespace-pre-wrap break-all text-l2">$ {command}</div>}
       {/* text 不传（审批卡只看命令）就不画结果那一栏 */}
       {text === undefined ? null : body.trim() ? (
@@ -161,7 +182,7 @@ export function OutputView({ command, text }: { command?: string | null; text?: 
 function PlanCard({ entries, compact }: { entries: PlanEntry[]; compact?: boolean }) {
   const done = entries.filter((e) => e.status === "completed").length;
   return (
-    <div className={`my-2 rounded-md border border-hairline px-3 py-2 ${compact ? "text-xs" : "text-sm"}`}>
+    <div className={`my-2 rounded-md border border-hairline px-3 py-2 ${compact ? "text-xs" : "ccode-chat-meta"}`}>
       <div className="mb-1 flex items-center gap-1.5 text-micro text-l4">
         <ListTodo size={12} strokeWidth={1.8} aria-hidden="true" />
         计划 · {done}/{entries.length} 已完成
@@ -389,7 +410,7 @@ export default function ConversationView({
       <div className={cls}>
         {parts.map((p, i) =>
           p.code ? (
-            <CodeBlock key={i} lang={p.lang} text={p.text} />
+            <ChatCodeBlock key={i} lang={p.lang} text={p.text} cwd={cwd} />
           ) : (
             // 代码块前后的换行只是围栏分隔，去掉避免多出空行
             <span key={i}>{p.text.replace(/^\n+|\n+$/g, "")}</span>
@@ -411,7 +432,7 @@ export default function ConversationView({
   function renderBlock(b: BlockDto, key: string, isUser: boolean, forceOpen = false) {
     if (b.kind === "thinking" || b.kind === "tool_use" || b.kind === "tool_result") {
       return (
-        <div key={key} className="my-1 whitespace-pre-wrap break-all font-mono text-xs text-l3">
+        <div key={key} className={`my-1 whitespace-pre-wrap break-all text-l3 ${compact ? "font-mono text-xs" : "font-mono ccode-chat-code"}`}>
           {b.toolName ? `${b.toolName} ` : ""}
           {b.text.length > 200 ? `${b.text.slice(0, 200)}…` : b.text}
         </div>
@@ -426,33 +447,17 @@ export default function ConversationView({
     if (isUser) {
       return (
         <div key={key} className="my-1">
-          {bodyText && richText(key, bodyText, WRAP_TEXT, forceOpen)}
+          {bodyText && <UserText text={bodyText} cwd={cwd} forceOpen={forceOpen} />}
           {imageRow}
         </div>
       );
     }
-    // AI 正文走 Markdown 渲染（ChatMarkdown：原始 HTML 转义 + 本地图片内嵌）；
-    // 超长未展开保持截断纯文本 + 展开按钮，展开后整段 Markdown
-    if (bodyText.length > TEXT_CAP && !forceOpen && !expanded.has(key)) {
-      return (
-        <div key={key} className="my-1">
-          {richText(key, bodyText, `${WRAP_TEXT} ${compact ? "text-xs" : "text-sm"}`)}
-          {imageRow}
-        </div>
-      );
-    }
+    // AI 正文一律走 Markdown 渲染（ChatMarkdown：原始 HTML 转义 + 本地图片内嵌）。原先超过 4000 字先截成
+    // 纯文本原文，`**`、`#`、表格竖线全露出来，要点「展开全部」才排版（2026-10-21 去掉）
     return (
       <div key={key} className="my-1">
         {bodyText && <ChatMarkdown text={bodyText} cwd={cwd} />}
         {imageRow}
-        {bodyText.length > TEXT_CAP && (
-          <button
-            onClick={() => toggleExpand(key)}
-            className="text-xs text-l3 hover:text-l1"
-          >
-            收起
-          </button>
-        )}
       </div>
     );
   }
@@ -461,7 +466,10 @@ export default function ConversationView({
     return m.blocks.map((b, bi) => renderBlock(b, `${mkey}:${bi}`, isUser, forceOpen));
   }
 
-  const rowText = compact ? "text-xs" : "text-sm";
+  // 过程行、计划、思考正文：聊天字号阶梯里的 0.94 档（App.css .ccode-chat-meta），随「聊天字号」设置走
+  const rowText = compact ? "text-xs" : "ccode-chat-meta";
+  // 过程行里的命令 / 参数等宽字：0.86 档（原 text-xs 在 Mac 上只有 10.5px）
+  const monoText = compact ? "font-mono text-xs" : "font-mono ccode-chat-code";
   const iconSize = compact ? 13 : 15;
 
   /** 过程里的一行：图标 + 动词 + 对象 + 目录 / 补充 + 增删行数；有细节的整行可点开 */
@@ -495,7 +503,7 @@ export default function ConversationView({
       <>
         <span className="shrink-0 text-l3">{row.verb}</span>
         {row.target && (
-          <span className={`min-w-0 truncate ${row.plain ? "text-l2" : "text-l1"} ${row.mono ? "font-mono text-xs" : ""}`}>
+          <span className={`min-w-0 truncate ${row.plain ? "text-l2" : "text-l1"} ${row.mono ? monoText : ""}`}>
             {row.target}
           </span>
         )}
@@ -507,7 +515,7 @@ export default function ConversationView({
         {shimmer ? <span className="ccode-shimmer flex min-w-0 items-center gap-2">{head}</span> : head}
         {row.dir && <span className="min-w-0 shrink truncate text-l4">{row.dir}</span>}
         {row.note && (
-          <span className={`min-w-0 shrink-[2] truncate text-l4 ${row.noteMono ? "font-mono text-xs" : ""}`}>
+          <span className={`min-w-0 shrink-[2] truncate text-l4 ${row.noteMono ? monoText : ""}`}>
             {row.note}
           </span>
         )}
@@ -624,8 +632,9 @@ export default function ConversationView({
       });
     }
     if (item.kind === "text") {
+      // 过程里的中途说明：这一轮做完后降一级（.ccode-chat-aside），回答才是最醒目的字；还在写时它可能就是回答，不降
       return (
-        <div key={key} className="my-2">
+        <div key={key} className={`my-2 ${live || compact ? "" : "ccode-chat-aside"}`}>
           {renderBlock({ kind: "text", text: item.text, toolName: null }, key, false)}
         </div>
       );
@@ -720,7 +729,7 @@ export default function ConversationView({
               key={mk}
               ref={hit ? hitRef : undefined}
               data-search-hit={hit ? "1" : undefined}
-              className={`mb-3 flex items-start gap-2 text-xs text-l4 ${
+              className={`mb-3 flex items-start gap-2 ${compact ? "text-xs" : "ccode-chat-meta"} text-l4 ${
                 hit ? "rounded-md bg-seg-sel px-2 py-1" : ""
               }`}
             >
@@ -747,10 +756,11 @@ export default function ConversationView({
             key={mk}
             ref={hit ? hitRef : undefined}
             data-search-hit={hit ? "1" : undefined}
-            className="group/msg mb-3 flex flex-col items-end"
+            // 每个新问题前留大空、连着发的几句不拉开（App.css .ccode-chat-user-row）；大圆角气泡（原 6px 像一张卡片）
+            className={`group/msg mb-3 flex flex-col items-end ${compact ? "" : "ccode-chat-user-row"}`}
           >
             <div
-              className={`max-w-[70%] rounded-md bg-bubble/75 px-3 py-2 ${compact ? "text-xs" : "ccode-chat-user text-sm"} ${
+              className={`max-w-[70%] bg-bubble/75 ${compact ? "rounded-xl px-3 py-2 text-xs" : "ccode-chat-user rounded-2xl px-3.5 py-2"} ${
                 hit ? "ring-1 ring-cta-bd" : ""
               }`}
             >

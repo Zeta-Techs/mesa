@@ -27,7 +27,8 @@ const bundle = await build({
         const stubs: Record<string, string> = {
           "./ChatMarkdown": `import { createElement } from 'react';
             export default function ChatMarkdown(p) { return createElement('div', { 'data-md': '1' }, p.text); }
-            export function ChatImageCard() { return null; }`,
+            export function ChatImageCard() { return null; }
+            export function ChatCodeBlock(p) { return createElement('pre', { 'data-code': p.lang }, p.text); }`,
         };
         b.onResolve({ filter: /.*/ }, (args) =>
           args.path in stubs ? { path: args.path, namespace: "conv-stub" } : undefined,

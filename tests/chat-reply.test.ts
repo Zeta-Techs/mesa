@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   confirmChoices,
+  fileRefPath,
+  findFileRefs,
   mentionedAudioFiles,
-  mentionedProjectFiles,
   REPLY_FOLD_MIN_CHARS,
   splitReplySections,
 } from "../src/chat-reply.ts";
@@ -81,11 +82,33 @@ test("已经用 ## 分节的回复里，冒号句是引出下文的话，不当�
   // 没有 ## 标题的报告体（「验收摘要：」「尚未验证：」）仍按冒号行分节——见「两个以上小标题才折叠」
 });
 
-test("相对文件路径可点，网址不是；./ 前缀对齐 git 状态", () => {
-  const files = mentionedProjectFiles(
-    "见 papers/screening.md 和 ./scripts/run.py，https://a.com/b.md 不算",
+test("小标题带级别：# 数照记，冒号短行按 3 级排，引子为 0", () => {
+  const sections = splitReplySections(pad("引子\n\n## 方法\n正文\n\n### 细节\n正文"))!;
+  assert.deepEqual(
+    sections.map((s) => [s.title, s.level]),
+    [["正文", 0], ["方法", 2], ["细节", 3]],
   );
-  assert.deepEqual(files, ["papers/screening.md", "scripts/run.py"]);
+  const colon = splitReplySections(pad("验收摘要：\n565 条\n\n尚未验证：\n7 篇"))!;
+  assert.equal(colon[0]?.level, 3);
+});
+
+test("文件路径：相对 / 绝对 / ~/ / 行号都认，网址、无扩展名、音频、数字不认", () => {
+  assert.equal(fileRefPath("src/chat-reply.ts:42"), "src/chat-reply.ts");
+  assert.equal(fileRefPath("./scripts/run.py"), "scripts/run.py");
+  assert.equal(fileRefPath("README.md"), "README.md");
+  assert.equal(fileRefPath("~/notes/a.md"), "~/notes/a.md");
+  assert.equal(fileRefPath("src\\win\\a.tsx"), "src\\win\\a.tsx");
+  for (const no of ["https://a.com/b.md", "src/lib", "and/or", "1/2.5", "v1.2", "voice/a.mp3", "a b.md", ""]) {
+    assert.equal(fileRefPath(no), null, no);
+  }
+});
+
+test("正文里的文件路径：只认带目录的，剥掉句读与加粗，位置对得上原文", () => {
+  const text = "见 **papers/screening.md**，和 ./scripts/run.py:12。README.md 单个文件名不算；https://a.com/b.md 也不算";
+  const hits = findFileRefs(text);
+  assert.deepEqual(hits.map((h) => h.path), ["papers/screening.md", "scripts/run.py"]);
+  for (const h of hits) assert.equal(text.slice(h.index, h.index + h.raw.length), h.raw);
+  assert.equal(hits[1]?.raw, "./scripts/run.py:12");
 });
 
 test("登录确认不提供批准按钮", () => {
@@ -108,6 +131,6 @@ test("回复里提到的本机音频给播放条：相对 / 绝对 / ~/ 都认�
     "~/Music/mesa.mp3",
     "out/voice.wav",
   ]);
-  assert.deepEqual(mentionedProjectFiles(text), ["notes/demo.md"]);
+  assert.deepEqual(findFileRefs(text).map((h) => h.path), ["notes/demo.md"]);
   assert.deepEqual(mentionedAudioFiles("没有音频的回复。say Mesa"), []);
 });

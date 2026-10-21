@@ -34,7 +34,8 @@ const bundle = await build({
           "@tauri-apps/plugin-dialog": `export const open = async () => window.__chips.pickFiles;`,
           "./ChatMarkdown": `import { createElement } from 'react';
             export default function ChatMarkdown(p) { return createElement('div', null, p.text); }
-            export function ChatImageCard() { return null; }`,
+            export function ChatImageCard() { return null; }
+            export function ChatCodeBlock(p) { return createElement('pre', null, p.text); }`,
         };
         b.onResolve({ filter: /.*/ }, (args) =>
           args.path in stubs ? { path: args.path, namespace: "chips-stub" } : undefined,

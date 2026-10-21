@@ -74,3 +74,20 @@ test("CSS：每个强调色深浅各一套，且气泡与正文都读同一组�
   assert.ok(css.includes("var(--ccode-chat-fs"));
   assert.ok(css.includes(".ccode-chat-scroll"));
 });
+
+test("CSS：聊天字号阶梯都从 --ccode-chat-fs 取比例，Windows 不被 .md-body 的写死字号字体压住", () => {
+  for (const cls of [".ccode-chat-body", ".ccode-chat-meta", ".ccode-chat-code", ".ccode-chat-aside .md-chat"]) {
+    const rule = css.slice(css.indexOf(`${cls} {`));
+    assert.ok(rule.startsWith(`${cls} {`), `缺 ${cls}`);
+    assert.match(rule.slice(0, rule.indexOf("}")), /var\(--ccode-chat-fs, var\(--chat-base\)\)/, cls);
+  }
+  const win = css.slice(css.indexOf('[data-platform="windows"] .md-chat {'));
+  assert.match(win.slice(0, win.indexOf("}")), /font-family: var\(--ccode-chat-ff/);
+  // 栏宽按字数定，对话流 / 输入框 / 状态栏 / 回放同一个类
+  assert.match(css, /\.ccode-chat-column \{\s*max-width: calc\(var\(--ccode-chat-fs, var\(--chat-base\)\) \* \d+/);
+  // 中文排版几项都在，代码里关掉自动间距
+  assert.match(css, /text-autospace: normal/);
+  assert.match(css, /text-wrap: pretty/);
+  assert.match(css, /line-break: strict/);
+  assert.match(css, /text-autospace: no-autospace/);
+});
