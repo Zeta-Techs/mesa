@@ -103,7 +103,9 @@ MESA_E2E_REAL_CLI=1 E2E_PLANS=/tmp/e2e-plans.json E2E_AGENT=codex cargo test --l
 #       E2E_TIER=auto|full（换权限档）、MESA_CHANNEL_DEBUG=1（打印 Codex app-server 收到的每条消息）、
 #       E2E_DROP_SETTINGS=1（去掉网关的 --settings，模拟官方账号启动；同时去掉拷来的 settings.json 里的 env，只打假网关）、
 #       E2E_ARG_PROMPT=1（Claude / CodeBuddy：首条消息带换行、引号、|、%变量% 放进启动参数，核对原样进会话）、
-#       E2E_DELETE_SETTINGS=1（发消息前删掉网关的 --settings 覆盖文件，看 hooks 还到不到）
+#       E2E_DELETE_SETTINGS=1（发消息前删掉网关的 --settings 覆盖文件，看 hooks 还到不到）、
+#       E2E_RAW=<文件>（终端原始输出按时间逐块记下，聊天层答审批的时刻另记一行；用终端模拟器回放看「答过以后终端里还挂着什么」）、
+#       E2E_REPLY_DELAY_MS=<毫秒>（审批卡出来后等这么久再从聊天层答，像人一样先看一会儿）
 ```
 
 Windows（2026-10-20 起同一份测试三平台都能跑）：在 Git Bash 里照上面执行，三处不同——

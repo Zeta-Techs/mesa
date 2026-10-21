@@ -2994,8 +2994,15 @@ mod e2e {
         let mut reader = pair.master.try_clone_reader().unwrap();
         let writer = Arc::new(Mutex::new(pair.master.take_writer().unwrap()));
         let screen = Arc::new(Mutex::new(String::new()));
+        // E2E_RAW=<文件>：终端原始输出按时间逐块记下（{"t":毫秒,"d":原文}，审批答完之后另记一行 {"t","mark"}），
+        // 用终端模拟器回放就能看到「聊天层答过以后终端里还挂着什么」
+        let raw_log: Option<Arc<Mutex<std::fs::File>>> = std::env::var("E2E_RAW")
+            .ok()
+            .and_then(|p| std::fs::File::create(p).ok())
+            .map(|f| Arc::new(Mutex::new(f)));
+        let t0 = Instant::now();
         {
-            let (screen, writer) = (screen.clone(), writer.clone());
+            let (screen, writer, raw_log) = (screen.clone(), writer.clone(), raw_log.clone());
             std::thread::spawn(move || {
                 let mut buf = [0u8; 8192];
                 while let Ok(n) = reader.read(&mut buf) {
@@ -3003,6 +3010,10 @@ mod e2e {
                         break;
                     }
                     let chunk = String::from_utf8_lossy(&buf[..n]).into_owned();
+                    if let Some(f) = &raw_log {
+                        let line = json!({ "t": t0.elapsed().as_millis() as u64, "d": chunk }).to_string();
+                        let _ = writeln!(f.lock().unwrap(), "{line}");
+                    }
                     // 终端查询照 Mesa 的口径应答（src/terminal-protocols.ts 的子集）
                     let mut w = writer.lock().unwrap();
                     if chunk.contains("\x1b[c") || chunk.contains("\x1b[0c") {
@@ -3092,9 +3103,17 @@ mod e2e {
             if let (Some(a), None) = (&last.approval, &answered) {
                 approval = Some(a.clone());
                 if a.replyable {
+                    // E2E_REPLY_DELAY_MS：像人一样看一会儿卡片再点（终端菜单此时已画出）
+                    if let Some(ms) = std::env::var("E2E_REPLY_DELAY_MS").ok().and_then(|v| v.parse().ok()) {
+                        std::thread::sleep(Duration::from_millis(ms));
+                    }
                     let id = a.request_id.clone().unwrap();
                     let r = tauri::async_runtime::block_on(reply_impl("e2e-tab", &id, "allow"));
                     answered = Some(format!("聊天层回复（{r:?}）"));
+                    if let Some(f) = &raw_log {
+                        let line = json!({ "t": t0.elapsed().as_millis() as u64, "mark": "answered" }).to_string();
+                        let _ = writeln!(f.lock().unwrap(), "{line}");
+                    }
                 } else if started.elapsed() > Duration::from_secs(3) {
                     send(b"\r");
                     answered = Some("终端菜单回车".into());
