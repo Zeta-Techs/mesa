@@ -745,7 +745,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
         binary: "codebuddy",
         version_args: &["--version"],
         protocols: &[],
-        // v2.132.0 实测：只认 CODEBUDDY_* 环境变量（ANTHROPIC_* 无效），协议 Anthropic 兼容
+        // v2.132.0 实测：只认 CODEBUDDY_* 环境变量（ANTHROPIC_* 无效），协议是 OpenAI chat/completions（2026-10-21 更正：base 原样拼 /chat/completions）
         launch: LaunchSpec::Env(EnvInject {
             base_url: Some("CODEBUDDY_BASE_URL"),
             key: Some("CODEBUDDY_API_KEY"),

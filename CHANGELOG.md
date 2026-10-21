@@ -7,6 +7,7 @@
 
 ## 未发布
 
+- **CodeBuddy 经第三方网关不再只回「Model returned no valid response」**：CodeBuddy 实际走的是 OpenAI 的对话接口，Mesa 以前却把网关的 Anthropic 地址交给它，网关回了一段错误、CodeBuddy 只说没收到有效回复（连接测试却能通过）。现在 Mesa 给 CodeBuddy 用网关的 OpenAI 地址，连接测试也按它真正的请求方式检查；万一再碰到这句报错，聊天层会给出「换个连接接着聊」。网关没填 OpenAI 地址时，会提示你补上。
 - **Windows 上终端里的鼠标滚轮方向对了**：以前在 Gemini、PowerShell 这类不占满全屏的终端里，滚轮往上画面却往下走。原因是 Mesa 为了让滚动更顺把几次滚动合成一次，合成出来的事件在 Windows 的浏览器内核里方向被读反了。另外 Gemini 一边输出长回复、你一边往上翻时，画面不再每刷新一次就跳回最顶上。
 - **Gemini 的消息开头不再莫名多出「5u>|Mesa (xterm.js 6.0.0)」**：Gemini 等 CLI 启动时会问终端「你是谁、支持什么按键协议」，Mesa 以前要等画面送到界面上才回答；标签在后台或界面正忙时回答晚到，CLI 已经不等了，这段回答就被当成你打的字留在输入框里，跟着下一条消息发出去。现在 Mesa 在收到提问的当下就回答，Windows 和 Mac 都一样。
 - **Windows 上英文综述的 Word 和 PDF 不再互相覆盖，PDF 里的分号也能正常复制**：以前先点渲染 Word、再点渲染 PDF，Word 会被清掉，成品还落在 `manuscript/output/`、评审找不到；现在两份都进项目根的 `output/`。PDF 里的分号以前复制出来是希腊问号（看着一样，搜索和查重会失效），已修好。EndNote / Zotero 两份带引用的 Word 的中文字体改成跟正文一致（以前写死成 Mac 才有的字体）。AI 在 Windows 上跑的 Python 脚本打印化学式上标这类字符，不再因为编码报错。第一次渲 PDF 要现装排版组件，约 2–3 分钟，别当成卡死。

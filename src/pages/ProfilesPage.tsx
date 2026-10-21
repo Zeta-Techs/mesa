@@ -773,7 +773,7 @@ function ProfileModal({
             填好后到下方「验证并获取」一次完成连通验证和模型目录拉取
           </span>
         </label>
-        {(form.agent === "claude-code" || form.agent === "codebuddy" || form.protocol === "anthropic") &&
+        {(form.agent === "claude-code" || form.protocol === "anthropic") &&
           form.baseUrl.trim().replace(/\/+$/, "").endsWith("/v1") && (
           <p className="-mt-2 mb-3 text-xs text-warn-text">
             Anthropic 客户端会自动在 Base URL 后拼 /v1/messages，以 /v1 结尾将打成 /v1/v1/messages 报 404（此时「测试」仍能成功，不代表运行可用）——请去掉末尾的 /v1

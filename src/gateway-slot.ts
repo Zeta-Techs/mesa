@@ -11,7 +11,8 @@ export function slotForAgent(
   agent: string,
   protocol?: string | null,
 ): GatewaySlotName {
-  if (agent === "claude-code" || agent === "codebuddy") return "anthropic";
+  // codebuddy 走 OpenAI chat/completions（同 gateway_store.rs slot_for_agent）
+  if (agent === "claude-code") return "anthropic";
   if (agent === "codex") return "responses";
   if (agent === "gemini") return "gemini";
   if (agent === "cursor") return "cursor";

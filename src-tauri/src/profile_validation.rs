@@ -262,7 +262,7 @@ pub(crate) fn validate_profile_fields(profile: &Profile) -> Result<Vec<String>, 
     // Anthropic 协议通道的 SDK 会在 Base URL 后自动拼 /v1/messages：base 以 /v1 结尾会打成
     // /v1/v1/messages 404（2026-08-28 实测），且「获取模型」（OpenAI 风格 {base}/models）照样成功，
     // 极具迷惑性——只提醒不阻断
-    let anthropic_wire = matches!(profile.agent.as_str(), "claude-code" | "codebuddy")
+    let anthropic_wire = profile.agent == "claude-code"
         || profile.protocol.as_deref() == Some("anthropic");
     if anthropic_wire {
         if let Some(base) = profile.base_url.as_deref() {
@@ -280,7 +280,7 @@ pub(crate) fn validate_profile_fields(profile: &Profile) -> Result<Vec<String>, 
 /// Anthropic-compatible CLIs append `/v1/messages` themselves. A full resource
 /// URL here would become `/v1/messages/v1/messages` and fail at runtime.
 fn validate_anthropic_base_url(profile: &Profile, url: &reqwest::Url) -> Result<(), String> {
-    let anthropic = matches!(profile.agent.as_str(), "claude-code" | "codebuddy")
+    let anthropic = profile.agent == "claude-code"
         || profile.protocol.as_deref() == Some("anthropic");
     if !anthropic {
         return Ok(());
@@ -752,8 +752,9 @@ enum ApiKind {
 
 fn api_kind(profile: &Profile) -> ApiKind {
     match profile.agent.as_str() {
-        // codebuddy 协议 Anthropic 兼容（docs 有 DeepSeek Anthropic 端点对接示例）
-        "claude-code" | "codebuddy" => ApiKind::Anthropic,
+        // codebuddy 不在这里：它把 CODEBUDDY_BASE_URL 原样当 base 拼 /chat/completions（OpenAI 形状，
+        // 2026-10-21 源码 + 实测；原先按 Anthropic 探针验证能过、实际运行只得空回复）
+        "claude-code" => ApiKind::Anthropic,
         "gemini" => ApiKind::Gemini,
         // codex 走 Responses 线格式：chat/completions 形状探针会被 GLM 这类
         // Responses-only 网关拒掉（实测 403 model_access_denied），却放行 /responses
@@ -767,7 +768,7 @@ fn api_kind(profile: &Profile) -> ApiKind {
 }
 
 fn anthropic_uses_bearer(profile: &Profile) -> bool {
-    matches!(profile.agent.as_str(), "claude-code" | "codebuddy" | "grok")
+    matches!(profile.agent.as_str(), "claude-code" | "grok")
 }
 
 /// 协议族标签（profiles::copy_to_agent 的兼容性判定用）。与 api_kind 同口径，
@@ -775,7 +776,7 @@ fn anthropic_uses_bearer(profile: &Profile) -> bool {
 /// 复制判定时 Cursor 是专有协议（见 api_check 注释），自成一族不与任何 agent 互通
 pub(crate) fn api_kind_label(agent: &str, protocol: Option<&str>) -> &'static str {
     match agent {
-        "claude-code" | "codebuddy" => "anthropic",
+        "claude-code" => "anthropic",
         "gemini" => "gemini",
         "cursor" => "cursor",
         "qwen" | "kimi" if protocol == Some("anthropic") => "anthropic",
@@ -785,8 +786,8 @@ pub(crate) fn api_kind_label(agent: &str, protocol: Option<&str>) -> &'static st
 
 fn default_base(profile: &Profile, kind: ApiKind) -> &'static str {
     match kind {
-        // codebuddy 缺省端点：官方国际站（product.json 的 endpoint 字段）
-        ApiKind::Anthropic if profile.agent == "codebuddy" => "https://www.codebuddy.ai",
+        // codebuddy 缺省端点：官方国际站（product.json 的 endpoint 字段 + CLI 自拼的 /v2）
+        ApiKind::OpenAi if profile.agent == "codebuddy" => "https://www.codebuddy.ai/v2",
         ApiKind::Anthropic => "https://api.anthropic.com/v1",
         ApiKind::Gemini => "https://generativelanguage.googleapis.com/v1beta",
         ApiKind::OpenAi if profile.agent == "kimi" => "https://api.moonshot.cn/v1",

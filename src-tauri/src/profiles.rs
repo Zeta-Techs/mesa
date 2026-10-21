@@ -2903,11 +2903,12 @@ mod tests {
             pick_copy_protocol(&src("kimi", Some("openai")), "qwen").unwrap(),
             Some("openai".to_string())
         );
-        // 无协议概念的同族目标：协议清为 None
+        // 无协议概念的同族目标：协议清为 None（codebuddy 是 openai 族，2026-10-21 更正）
         assert_eq!(
-            pick_copy_protocol(&src("qwen", Some("anthropic")), "codebuddy").unwrap(),
+            pick_copy_protocol(&src("qwen", Some("openai")), "codebuddy").unwrap(),
             None
         );
+        assert!(pick_copy_protocol(&src("qwen", Some("anthropic")), "codebuddy").is_err());
         // grok 归 openai 族（xAI 官方 API 是 OpenAI chat_completions 兼容），无协议概念目标协议清 None
         assert_eq!(
             pick_copy_protocol(&src("codex", None), "grok").unwrap(),

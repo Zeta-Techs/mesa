@@ -24,6 +24,10 @@ test("七家的错误行都认得出，并按原文分类", () => {
   assert.equal(one("claude-code", ["✻ 401 身份验证失败。 · Retrying in 17s · attempt 6/10"]).kind, "auth");
   assert.equal(one("claude-code", ["✻ 500 Internal server error · Retrying in 4s · attempt 4/10"]).kind, "timeout");
   assert.equal(one("codebuddy", [`  └ 429 ${QUOTA}`]).kind, "quota");
+  // 网关回 200 但不是 chat/completions 流（2026-10-21 实录：连接给了 Anthropic 地址）
+  f = one("codebuddy", ["> 你好", "  └ Model returned no valid response. Retry later, switch models with /model, or report it with /feedback."]);
+  assert.equal(f.kind, "other");
+  assert.equal(f.message, "Model returned no valid response.");
   f = one("codex", ["■ exceeded retry limit, last status: 429 Too Many Requests"]);
   assert.equal(f.kind, "rate_limit");
   f = one("codex", ["■ unexpected status 401 Unauthorized: 身份验证失败。, url: http://127.0.0.1:18970/e401/codex/v1/responses"]);

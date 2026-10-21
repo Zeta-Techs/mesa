@@ -103,7 +103,7 @@
 | 项 | 值 |
 |---|---|
 | 二进制 / 检测 | `codebuddy`（别名 `cbc`，npm 包 `@tencent-ai/codebuddy-code`）；`codebuddy --version` |
-| 注入 env | **`CODEBUDDY_API_KEY` / `CODEBUDDY_BASE_URL` / `CODEBUDDY_MODEL`**（`ANTHROPIC_*` 无效）；协议 Anthropic 兼容（官方 docs 有 DeepSeek 对接示例） |
+| 注入 env | **`CODEBUDDY_API_KEY` / `CODEBUDDY_BASE_URL` / `CODEBUDDY_MODEL`**（`ANTHROPIC_*` 无效）；**协议是 OpenAI Chat Completions**（2026-10-21 2.171 源码 `resolveModelBaseURL` + 实测更正，原记「Anthropic 兼容」是错的）：`CODEBUDDY_BASE_URL` 原样当 base、CLI 自拼 `/chat/completions`，不加 `/v1`；官方端点 = product endpoint + `/v2`。给 Anthropic 地址（如 `…/api/anthropic`）时网关回 200 + 非流式错误体，CLI 只画「└ Model returned no valid response」——Mesa 按 OpenAI 槽取地址（`slot_for_agent`），连接验证同走 chat/completions 形状 |
 | 官方端点 | 国际站 `https://www.codebuddy.ai`（product.json `endpoint`，默认）/ 中国站 `https://copilot.tencent.com`（`officialEndpoints` 同源核实） |
 | 全局配置 | `~/.codebuddy/settings.json`（env 块，同 Claude 形态） |
 | 会话存储 | `~/.codebuddy/projects/<slug>/<uuid>.jsonl`，slug = CLI 源码 `compressWorkspacePathName`（2026-10-21 2.170.0 实测）：`/ \ :`→`-`、去首尾 `-`、连续 `-` 并成一个（Windows 的 `C:\Users` 是 `C-Users`，**不是 Claude 的 `C--Users`**），超 255 字节改成「截 180 字节 + `-` + djb2 base36」；有损不解码，项目归属读行内 `cwd`，兜底目录名 |

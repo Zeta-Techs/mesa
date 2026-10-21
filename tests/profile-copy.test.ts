@@ -4,7 +4,7 @@ import { apiKindOf, copyTargets } from "../src/profile-copy.ts";
 
 test("apiKindOf 协议族归类与后端同口径", () => {
   assert.equal(apiKindOf("claude-code", null), "anthropic");
-  assert.equal(apiKindOf("codebuddy", null), "anthropic");
+  assert.equal(apiKindOf("codebuddy", null), "openai");
   assert.equal(apiKindOf("gemini", null), "gemini");
   assert.equal(apiKindOf("cursor", null), "cursor");
   assert.equal(apiKindOf("codex", null), "openai");
@@ -22,9 +22,8 @@ test("copyTargets 排除自身并禁用不同协议族", () => {
   // anthropic 族：qwen/kimi（多协议可选 anthropic）可用
   assert.equal(byId["qwen"].compatible, true);
   assert.equal(byId["kimi"].compatible, true);
-  assert.equal(byId["codebuddy"].compatible, true);
-  // openai/gemini/cursor 族禁用并带原因
-  for (const id of ["codex", "opencode", "gemini", "cursor", "grok"]) {
+  // openai/gemini/cursor 族禁用并带原因（codebuddy 走 OpenAI chat/completions，2026-10-21）
+  for (const id of ["codebuddy", "codex", "opencode", "gemini", "cursor", "grok"]) {
     assert.equal(byId[id].compatible, false, id);
     assert.ok(byId[id].reason?.includes("协议不兼容"), id);
   }

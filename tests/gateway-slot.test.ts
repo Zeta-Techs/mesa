@@ -12,7 +12,7 @@ test("slotForAgent 与后端槽表一致", () => {
   assert.equal(slotForAgent("kimi", "anthropic"), "anthropic");
   assert.equal(slotForAgent("kimi", "kimi"), "openai");
   assert.equal(slotForAgent("qwen"), "openai");
-  assert.equal(slotForAgent("codebuddy"), "anthropic");
+  assert.equal(slotForAgent("codebuddy"), "openai");
 });
 
 test("firstFilledCatalogSlot：优先记住的槽，否则 Anthropic 先于 OpenAI", () => {
