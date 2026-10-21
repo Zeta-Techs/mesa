@@ -1,7 +1,7 @@
 import type { ModelCapabilityDto } from "./types";
 
 /** 上下文窗口写成 200K / 1M；0 或未知不写 */
-export function contextLabel(tokens: number): string | null {
+export function contextLabel(tokens: number | null | undefined): string | null {
   if (!tokens || tokens <= 0) return null;
   if (tokens >= 1_000_000) {
     const m = tokens / 1_000_000;

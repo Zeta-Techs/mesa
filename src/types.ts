@@ -43,7 +43,8 @@ export interface ComboSurfaceDto {
   slot: string | null;
   thinking: boolean;
   vision: boolean;
-  context: number;
+  /** 确知的上下文窗口；不知道是 null（不画上下文圈，不拿 128K 保守值冒充） */
+  context: number | null;
   output: number;
   showNativeEffort: boolean;
   /** 网关勾选的可切换档。空 = 用 CLI 整张档位表。 */
@@ -230,7 +231,8 @@ export interface RequestPolicy {
 export interface ModelCapabilityDto {
   model: string;
   thinking: boolean;
-  context: number;
+  /** 确知才有；null = 不知道 */
+  context: number | null;
   tools: boolean | null;
   vision: boolean | null;
   video: boolean | null;

@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from "react";
+import { contextLabel } from "../model-caps-label";
 import { invoke } from "@tauri-apps/api/core";
 import { scheduleWarnText, usageWarnText, type UnbindRefs } from "../unbind-impact";
 import { listen } from "@tauri-apps/api/event";
@@ -1070,7 +1071,8 @@ function ProfileModal({
                             ? "无图像"
                             : "图像未知",
                       ].filter(Boolean);
-                      return `${flags.join(" · ")} · 上下文 ${(c.context / 1024).toFixed(0)}K`;
+                      const ctx = contextLabel(c.context);
+                      return ctx ? `${flags.join(" · ")} · 上下文 ${ctx}` : flags.join(" · ");
                     })()}
                     className="group flex items-center gap-2 rounded-sm px-2 py-0.5 hover:bg-hover"
                   >

@@ -16,7 +16,8 @@ use std::path::{Path, PathBuf};
 pub struct ModelCapabilityDto {
     pub model: String,
     pub thinking: bool,
-    pub context: i64,
+    /// 上下文窗口：确知才有（model_context_size_known_for）；不知道就是 None，界面不画圈不写数
+    pub context: Option<i64>,
     pub tools: Option<bool>,
     pub vision: Option<bool>,
     pub video: Option<bool>,
@@ -927,14 +928,26 @@ fn keyword_thinking(model: &str) -> bool {
 /// 保守默认上下文映射（注册表条目不填 context 或未命中时的兜底）：
 /// kimi 系按官方映射，其余 128K 保守值
 fn fallback_context_size(model: &str) -> i64 {
+    kimi_official_context(model).unwrap_or(131_072)
+}
+
+/// kimi 系的官方上下文映射（确知值，不是猜的）
+fn kimi_official_context(model: &str) -> Option<i64> {
     let m = normalize(model);
     if m.starts_with("kimi-k3") {
-        1_048_576
+        Some(1_048_576)
     } else if m.starts_with("kimi-k2.6") || m.starts_with("kimi-k2.7") {
-        262_144
+        Some(262_144)
     } else {
-        131_072
+        None
     }
+}
+
+/// 给人看的上下文窗口：查询链有声明或属 kimi 官方映射才 Some，**不拿 128K 保守值冒充**。
+/// 原先状态栏 / 聊天层上下文圈用的是带兜底的 `model_context_size_for`，库里没有的模型一律显示「131K」，
+/// 而 CLI 自己按各自默认算（Gemini 1M、Claude / Qwen 200K），圈比 CLI 实际满得多（2026-10-21 gemini-4-argon 用户质疑）
+pub(crate) fn model_context_size_known_for(model: &str, gateway_id: Option<&str>) -> Option<i64> {
+    lookup_field_for(model, gateway_id, |c| c.context).or_else(|| kimi_official_context(model))
 }
 
 /// 模型是否支持思考：逐字段查询链 → 关键词推断兜底
@@ -1065,7 +1078,7 @@ pub fn model_capability_for(model: &str, gateway_id: Option<&str>) -> ModelCapab
     ModelCapabilityDto {
         model: model.to_string(),
         thinking: model_thinking_for(model, gateway_id),
-        context: model_context_size_for(model, gateway_id),
+        context: model_context_size_known_for(model, gateway_id),
         tools,
         vision,
         video,
@@ -1092,6 +1105,16 @@ pub fn model_capabilities(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn known_context_does_not_pass_off_the_conservative_default() {
+        // 库里没有的模型：显示层给 None，不拿 128K 兜底冒充（启动注入另有带兜底的那条）
+        assert_eq!(model_context_size_known_for("gemini-4-argon", None), None);
+        assert_eq!(model_capability_for("gemini-4-argon", None).context, None);
+        assert_eq!(model_context_size_for("gemini-4-argon", None), 131_072);
+        // kimi 官方映射是确知值
+        assert_eq!(model_context_size_known_for("kimi-k3", None), Some(1_048_576));
+    }
 
     #[test]
     fn builtin_table_hits_known_models() {
