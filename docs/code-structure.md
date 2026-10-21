@@ -855,9 +855,13 @@ src-tauri/src/
                              #   压缩边界之前不算）；apply 原地把较早的 base64 截图/文档换文字占位、留最近 6 张，没动的行逐字节原样，写前完整备份
                              #   到 <配置目录>/ccode/backups/session-slim/、最近 60 秒有写入拒绝、复核源文件未变、tmp+rename 保持 mtime；
                              #   不另存副本（会撞 sessionId、用量重复计）；安全口径 safety.md 例外清单第 7 条；干跑用 ignored 的 real_data_dry_run
-  session_transfer.rs        # 会话包导出/导入（.ccode-sessions.zip，八家不含 opencode）：原文打包装、导入时改写 cwd 并按 B 机
-                             #   目录重建落位；zip-slip/大小/后缀/白名单；同 id 跳过不覆盖；Mesa 元数据写 app.db；
-                             #   kimi 新版 wd_<basename>_<sha256[:12]> + session_index.jsonl；grok URL 编码 cwd
+  session_transfer.rs        # 会话包导出/导入（.ccode-sessions.zip，八家不含 opencode）：原文打包装、导入时改写 cwd（含子目录前缀，
+                             #   分隔符按目标机方言重接）并按 B 机目录重建落位；zip-slip/大小/后缀/白名单；同 id 跳过不覆盖（导出同会话去重）；
+                             #   Mesa 元数据写 app.db；Claude 附属目录 <id>/（subagents/tool-results/custom-title.json，32MB/128MB 封顶，
+                             #   不跟符号链接，导入尽力而为 + tool-results 路径重映射）；各家目录名规则以 CLI 源码为准：
+                             #   claude/qwen 非字母数字→- 按 UTF-16 码元、codebuddy compressWorkspacePathName、cursor workspace-paths、
+                             #   kimi 新版 wd_<slug>_<sha256(斜杠化路径)[:12]> + wire.jsonl workspaceId 同步 + session_index.jsonl、
+                             #   gemini 先查 projects.json 已登记 slug、grok URL 编码 cwd；cursor 续聊靠自家 store.db，导入只给提示
   skills.rs                  # 技能库（§6.13）：SSOT 库 + symlink/copy 分发（cursor/grok 固定 copy）、四路导入、ZIP 导出、卸载备份、
                              # 漂移检测 resync、create_skill/update_skill_content；provides 解析（frontmatter 闭集位声明，
                              #   compose_skill_md 重写链保留——曾在这里剥过字段）；「AI 优化另存」两阶段命令

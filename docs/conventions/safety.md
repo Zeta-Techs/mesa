@@ -141,6 +141,9 @@
      目标路径必须落在 `session_data_dirs_at` 白名单内（cursor 另限 `projects/*/agent-transcripts/**/*.jsonl`）；
      额外放行的索引写点仅 `~/.kimi-code/session_index.jsonl`、`~/.kimi/kimi.json`、gemini `.project_root`、grok 组目录 `.cwd`（codex `config.toml` 走现有注册命令，不经本模块直写）；
      已存在同 agent 同 sessionId 一律跳过不覆盖；写入走 `atomic_write_bytes`（tmp+rename）；索引类读-改-写。
+     **Claude 附属目录**（2026-10-21）：导出带 `<id>/` 下的 subagents、tool-results、custom-title.json（单文件 32MB / 合计 128MB 封顶，超的不带；导出途中消失的附属文件跳过），
+     打包遍历**不跟符号链接**（会话目录里的链接可能指到目录外）；导入侧附属文件尽力而为（失败不回头判整条失败、已存在不覆盖），仍只落在会话数据目录白名单内，
+     只重写 `cwd` 类键与「…/projects/<slug>/<本会话id>/tool-results/」形状的路径（`remap_tool_result_paths`），文本其余部分与坏行原样保留。
      导出是只读拷贝：会话原文进包（可能含密钥），弹层明示「分享前请自查」；密钥/网关/profile 不进包；B 机浏览仍过 `redact_sensitive_text`。
   7. **会话瘦身**（2026-10-19，`session_slim.rs`：仅 Claude Code。用户在弹层点确认才写；撞网关 413 的根因与取舍见 architecture §10 当日条目）。
      **原地**把较早的 base64 截图/文档附件换成文字占位、只留最近 6 张，没动的行逐字节原样。防护：路径 canonicalize 后必须落在
