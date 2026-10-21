@@ -91,6 +91,11 @@
   写不进全机 Python 的 site-packages，会自己退到 `%APPDATA%\Python`（沙箱同样看不到），所以 Python 在 `%ProgramFiles%`
   下时经 `Start-Process -Verb RunAs` 以管理员跑 pip（`dep_check::pip_elevated`：输出写日志、边等边推界面；用户点「否」
   没有日志，退回普通权限装）。手动核对 `cargo test --lib pip_elevated_real -- --ignored --nocapture`（会弹 UAC）。
+  **同一沙箱的 HTTPS（2026-10-21 实证，上游未修：openai/codex#17459 / #46726 / #50582）**：沙箱账户不加载用户配置文件，
+  走 Windows Schannel 的 HTTPS 全部报 `SEC_E_NO_CREDENTIALS`——`curl.exe`、`Invoke-WebRequest` / `Invoke-RestMethod`、`git` https
+  （联网档 `CodexSandboxOnline` 与 `unelevated` 档都一样；连接本身是通的，模型常误判成「沙箱禁网」）；自带 OpenSSL 的 Node `fetch`、
+  Python `urllib` 正常。Mesa 在 Windows 附加给 Codex 的说明（`codex_windows_patch_note.md`）写明这条、让它改用 Node / Python
+  或申请跳出沙箱：同一问题（查 crates.io 上 Tauri 版本）从 9 条命令多数失败降到 3 条（首条因没带 User-Agent 被拒，已补进说明）。
   本机已于当日改为全机安装 3.13.15（`C:\Program Files\Python313`，含 pillow / pymupdf），沙箱里 `python` / `py` 均可用。
 - **Windows PDF 预览白屏**：WebView2 + 全局 `color-scheme:dark` 下，pdf.js 默认不透明 2d canvas 与
   `.textLayer { color-scheme:only light }` 会合成整页白块；经典滚动条改 clientWidth 再叠加

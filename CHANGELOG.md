@@ -7,6 +7,7 @@
 
 ## 未发布
 
+- **Windows 上 Codex 联网查资料不再连试一串失败的命令**：Codex 的 Windows 沙箱有个它自己的已知问题——Windows 自带的 HTTPS（curl.exe、PowerShell 的 Invoke-WebRequest、git 走 https）在沙箱里一律失败，模型以前会换着参数反复试、最后误以为网络被禁。现在 Mesa 给 Codex 的 Windows 说明里写明了这一点，让它直接改用能用的 Node / Python 去取网页，或申请跳出沙箱。
 - **经网关用 Codex 时，模型又能列计划了，聊天层画出计划卡**：Codex 新版默认不再给模型计划工具，但它给第三方模型的说明里还写着「你有计划工具」，模型去找找不到，就说「当前会话没有暴露计划工具」。现在 Mesa 启动 Codex 时把计划工具打开，和说明对上。你自己在 Codex 配置里设过的不动。Codex 的「提问工具」（问你选择题）只在计划模式里可用，这是 Codex 自己的设计，普通模式下它会说提问工具不可用。
 - **诊断页一键装的 Python，Codex 里也能用了**：Windows 上 Codex 的沙箱用单独的系统账号跑命令，看不到只装给当前用户的 Python，以前一键装好后在 Codex 里仍报找不到 python。现在一键安装把 Python 装给这台电脑的所有用户，安装时会弹一次管理员确认，点「是」即可。PyMuPDF、Pillow 两个库也跟着装进这个 Python（再弹一次确认），Codex 里写的脚本能直接用；点了「否」就照旧装到你自己的用户目录。
 - **Windows 上后来装的 Git、PowerShell 7 不用重启 Mesa 也能选**：装 Git 时选了「仅为我安装」，以前 Mesa 认得 git 却找不到 Git Bash，内置终端下拉里没有它，流程脚本也找不到 bash；Mesa 开着时装的 PowerShell 7 要重启 Mesa 才出现在下拉里。现在两种装法装好后，重新打开设置页就能选。
