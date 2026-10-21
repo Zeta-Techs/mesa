@@ -329,6 +329,13 @@
   dom（清晰）；选择在**新开的终端**生效，选 webgl 仍过 `isSoftwareWebGL` 探针（TerminalPage.tsx）
   并在上下文丢失时自动退回默认渲染器。canvas 渲染器 addon 只声明支持 xterm 5（截至 0.8.0-beta.48），
   不引入。**别把「触控板合帧」说成清晰与流畅兼得**——合帧只砍同一帧内的重复位置写入，每帧重绘次数不变。
+  **2026-10-21 复测（xterm 6.0 + addon-webgl 0.19，macOS 27 WKWebView，JetBrains Mono 13px）**：同一段文字的锐度量化两者持平
+  （梯度/墨迹：浅色 DOM 0.880 / WebGL 0.893，深色 0.819 / 0.829；半调像素占比同为 0.71–0.74），「WebGL 偏软」已复现不出；
+  剩下的差别只有单元格宽——addon-webgl 按 `floor(字宽 × 像素比) + round(letterSpacing)` 取整，Retina 上 7.79 → 7.5（窄 3.8%），
+  1 倍外接屏 7.79 → 7（窄 10%，字挤成一团）。`webglLetterSpacing`（terminal-renderer.ts）在小数部分 ≥ 0.5 时补 1 个设备像素改成
+  就近取整（Retina 与 1 倍屏都是 8.0，宽 2.6%），只在 WebGL 生效时设、卸下回 0；字号字体、像素比变化与字体加载完都重算。
+  另：DOM 渲染器在行高 1.2 下画框线（─ │ ┌）与半格方块会断成虚线、留缝，WebGL 自绘铺满。Mac 自动档是否改走 WebGL 待用户拍板，
+  拍板前不动 `wantsWebglRenderer`。复测脚手架：Swift 起 WKWebView（关窗口遮挡检测才有 rAF）截图 + 逐像素量锐度，见 §10 当日条目。
 - **聊天层盖住时终端停画（2026-10-21）**：聊天模式且没拉起终端时，聊天层整片盖在 xterm 上，但 xterm 照样每帧重画。
   xterm 按 IntersectionObserver 判断画面可见、看不见就停画并在重新可见时整屏重画一次——给 xterm 宿主加
   `content-visibility: hidden`（`coveredByChat`）即可让它停；`visibility: hidden` 停不了（WKWebView 实测：盖住期间 20 次写入，

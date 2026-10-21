@@ -19,3 +19,13 @@ export function wantsWebglRenderer(opts: {
   if (opts.setting === "dom") return false;
   return !opts.isMac || WEBGL_ON_MAC_AGENTS.has(opts.agentId ?? "");
 }
+
+/** WebGL 渲染器的单元格宽 = floor(字宽 × 像素比) + round(letterSpacing)（addon-webgl 0.19，letterSpacing 按设备像素算）。
+ *  一律向下取整：JetBrains Mono 13px 字宽 7.79，Retina 上 15.59 → 15（每格窄 3.8%），1 倍外接屏 7.79 → 7（窄 10%，字挤成一团）。
+ *  小数部分 ≥ 0.5 时补 1 个设备像素，改成就近取整：Retina 16、1 倍屏 8（宽 2.6%）。
+ *  DOM 渲染器按实际字宽排，不补（2026-10-21 WKWebView 实测，docs/conventions/terminal.md「渲染器按平台分流」） */
+export function webglLetterSpacing(charWidthCss: number, devicePixelRatio: number): number {
+  if (!(charWidthCss > 0) || !(devicePixelRatio > 0)) return 0;
+  const device = charWidthCss * devicePixelRatio;
+  return device - Math.floor(device) >= 0.5 ? 1 : 0;
+}

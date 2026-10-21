@@ -202,7 +202,7 @@ import {
   runtimeModelSwitch,
 } from "../model-switch";
 import { isSoftwareWebGL } from "../diagnostics";
-import { wantsWebglRenderer } from "../terminal-renderer";
+import { wantsWebglRenderer, webglLetterSpacing } from "../terminal-renderer";
 import {
   ChevronDown,
   ClipboardPaste,
@@ -681,6 +681,25 @@ function buildXtermTheme(
   };
 }
 
+/** 与 xterm 自己量字宽同一口径（CharSizeService：画布上按 `${fontSize}px ${fontFamily}` 量一个 W） */
+function measureTerminalCharWidth(fontSize: number, fontFamily: string): number {
+  try {
+    const canvas =
+      typeof OffscreenCanvas !== "undefined"
+        ? new OffscreenCanvas(100, 100)
+        : document.createElement("canvas");
+    const ctx = canvas.getContext("2d") as
+      | CanvasRenderingContext2D
+      | OffscreenCanvasRenderingContext2D
+      | null;
+    if (!ctx) return 0;
+    ctx.font = `${fontSize}px ${fontFamily}`;
+    return ctx.measureText("W").width;
+  } catch {
+    return 0;
+  }
+}
+
 /** 同一 Run 未完成的交互启动：挡住 StrictMode / 连点「运行」抢锁。 */
 const interactiveLaunchLocks = new Set<string>();
 
@@ -860,6 +879,7 @@ const TerminalView = memo(function TerminalView({
       settings.terminalPalette,
       settings.customTheme,
     );
+    cellWidthSyncRef.current?.();
     // 字号/字体变了但容器像素尺寸没变，ResizeObserver 不触发——手动补 fit 让 PTY 行列跟随
     try {
       fitRef.current?.fit();
@@ -981,6 +1001,8 @@ const TerminalView = memo(function TerminalView({
   const launchAgentRef = useRef(agentId);
   /** xterm 建好后挂上：进程接上时按实际 agent 对齐渲染器（见 terminal-renderer.ts） */
   const rendererSyncRef = useRef<((agent: string | undefined) => void) | null>(null);
+  /** 按当前渲染器重算单元格宽补位（WebGL 就近取整）；字号字体改了由设置 effect 调 */
+  const cellWidthSyncRef = useRef<(() => void) | null>(null);
   const selectedProfile = profiles.find(
     (p) => p.id === profileId && p.agent === agentId,
   );
@@ -2883,6 +2905,23 @@ const TerminalView = memo(function TerminalView({
     let webglActive = false;
     let webglAddon: WebglAddon | null = null;
     let softwareWebgl: boolean | null = null;
+    // WebGL 的单元格宽改成就近取整（webglLetterSpacing：原本一律向下取整，Retina 上每格窄 3.8%、
+    // 1 倍屏窄 10%）。卸下 WebGL 回 0——DOM 渲染器按实际字宽排。字号字体、像素比、字体加载完都要重算
+    const syncCellWidth = () => {
+      const spacing = webglActive
+        ? webglLetterSpacing(
+            measureTerminalCharWidth(term.options.fontSize ?? 14, term.options.fontFamily ?? ""),
+            window.devicePixelRatio,
+          )
+        : 0;
+      if (term.options.letterSpacing === spacing) return;
+      term.options.letterSpacing = spacing;
+      try {
+        fit.fit();
+      } catch {
+        // 容器隐藏时 fit 算不出尺寸，可见时再 fit
+      }
+    };
     const loadWebgl = (): boolean => {
       if (!wantWebgl || webglActive || webglRecoveryLeft <= 0) return false;
       try {
@@ -2894,10 +2933,12 @@ const TerminalView = memo(function TerminalView({
           webglActive = false;
           webglAddon = null;
           webglRecoveryLeft -= 1;
+          syncCellWidth();
         });
         term.loadAddon(webgl);
         webglActive = true;
         webglAddon = webgl;
+        syncCellWidth();
         return true;
       } catch {
         return false;
@@ -2913,11 +2954,23 @@ const TerminalView = memo(function TerminalView({
         webglAddon.dispose();
         webglAddon = null;
         webglActive = false;
+        syncCellWidth();
         // 换回的是新建的 DOM 渲染器：滚动按行挪位要重新挂上
         teardownRowReuse();
         teardownRowReuse = installDomScrollRowReuse(term);
       }
     };
+    cellWidthSyncRef.current = syncCellWidth;
+    // 拖到另一块像素比不同的屏：xterm 自己会重算尺寸，补位要跟着重判
+    let dprQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+    const onDprChange = () => {
+      dprQuery.removeEventListener("change", onDprChange);
+      dprQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+      dprQuery.addEventListener("change", onDprChange);
+      syncCellWidth();
+    };
+    dprQuery.addEventListener("change", onDprChange);
+    document.fonts?.addEventListener?.("loadingdone", syncCellWidth);
     const recoverWebgl = () => {
       if (wantWebgl && webglRecoveryLeft > 0) loadWebgl();
     };
@@ -2929,6 +2982,9 @@ const TerminalView = memo(function TerminalView({
     const teardownWebglRecovery = () => {
       window.removeEventListener("focus", recoverWebgl);
       document.removeEventListener("visibilitychange", onVisRecover);
+      dprQuery.removeEventListener("change", onDprChange);
+      document.fonts?.removeEventListener?.("loadingdone", syncCellWidth);
+      cellWidthSyncRef.current = null;
     };
 
     // 触控板滚动合帧（见 src/terminal-wheel-scroll.ts）：xterm 只对物理滚轮做平滑动画，
