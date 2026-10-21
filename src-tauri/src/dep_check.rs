@@ -544,9 +544,11 @@ const PIP_PACKAGES: [&str; 2] = ["pymupdf", "pillow"];
 /// winget 上的 Python 包：3.12 已停出安装包，用 3.13
 const WINGET_PYTHON_ID: &str = "Python.Python.3.13";
 
-/// 没有可用 Python 时先装 Python（一键补齐的第一步）。Windows 走 winget：只装当前用户
-/// （--scope user，不弹管理员确认），PrependPath=1 让它排在应用商店占位前面，新开的终端
-/// 和 agent 直接用上；macOS 走 brew install python。没有渠道返回 Err（界面按原因提示）。
+/// 没有可用 Python 时先装 Python（一键补齐的第一步）。Windows 走 winget 全机安装（会弹管理员确认）：
+/// 装进 %ProgramFiles%，Codex 的 elevated 沙箱（以单独的本地账户跑命令，读不了用户目录）里也能用——
+/// 2026-10-21 前只装当前用户，装出来的 Python 在 Codex 里 not recognized（environment.md 同日条）。
+/// PrependPath=1 让它排在应用商店占位前面，新开的终端和 agent 直接用上；macOS 走 brew install python。
+/// 没有渠道返回 Err（界面按原因提示）。
 fn install_python(app: &AppHandle, tool: &str) -> Result<(bool, String, &'static str), String> {
     let os = current_os();
     let has_brew = os == HostOs::Macos && agents::resolve_binary("brew").is_some();
@@ -559,6 +561,12 @@ fn install_python(app: &AppHandle, tool: &str) -> Result<(bool, String, &'static
         &format!("agent-update-output-{}", dep_key(tool)),
         "还没有可用的 Python 3，先安装它（约 1–3 分钟），装好后接着装 PDF 处理库…\n",
     );
+    if channel == "winget" {
+        let _ = app.emit(
+            &format!("agent-update-output-{}", dep_key(tool)),
+            "安装过程中 Windows 可能弹出「你要允许此应用对你的设备进行更改吗？」，请点「是」。\n",
+        );
+    }
     if channel == "pkg" {
         let (ok, output) = run_mac_pkg(app, tool, "python")?;
         return Ok((ok, output, channel));
@@ -572,7 +580,7 @@ fn install_python(app: &AppHandle, tool: &str) -> Result<(bool, String, &'static
 fn python_install_command(channel: &str) -> (&'static str, Vec<String>) {
     if channel == "winget" {
         let mut args = updater::winget_args("install", WINGET_PYTHON_ID);
-        args.extend(["--scope", "user", "--custom", "PrependPath=1"].map(String::from));
+        args.extend(["--scope", "machine", "--custom", "InstallAllUsers=1 PrependPath=1"].map(String::from));
         ("winget", args)
     } else {
         ("brew", vec!["install".into(), "python".into()])
@@ -1040,12 +1048,12 @@ mod tests {
         assert_eq!(python_install_channel(HostOs::Macos, true, false), Some("brew"));
         assert_eq!(python_install_channel(HostOs::Macos, false, true), Some("pkg"));
         assert_eq!(python_install_channel(HostOs::Linux, true, true), None);
-        // winget：只装当前用户（不弹 UAC）、写进 PATH（排在应用商店占位前面）
+        // winget：全机安装（Codex elevated 沙箱看得到）、写进 PATH（排在应用商店占位前面）
         let (prog, args) = python_install_command("winget");
         assert_eq!(prog, "winget");
         assert!(args.windows(2).any(|w| w == ["--id", WINGET_PYTHON_ID]));
-        assert!(args.windows(2).any(|w| w == ["--scope", "user"]));
-        assert!(args.windows(2).any(|w| w == ["--custom", "PrependPath=1"]));
+        assert!(args.windows(2).any(|w| w == ["--scope", "machine"]));
+        assert!(args.windows(2).any(|w| w == ["--custom", "InstallAllUsers=1 PrependPath=1"]));
         assert_eq!(python_install_command("brew"), ("brew", vec!["install".to_string(), "python".to_string()]));
         // 没有渠道时的提示都给出口
         assert!(no_python_msg(HostOs::Windows).contains("python.org"));

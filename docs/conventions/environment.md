@@ -85,8 +85,9 @@
   或用户自己把 Codex 改成 `sandbox = "unelevated"`（用本人账号加受限令牌，能读用户目录，隔离弱一档）——**Mesa 不改这项**，
   只有定时任务经用户确认后临时加 `-c windows.sandbox="unelevated"`（agent_specs.rs）。
   连带两点：①系统 PATH 里 `WindowsApps`（应用商店 python 占位）排在用户 PATH 之前，「仅为我安装」的 Python 即使不在沙箱里，
-  `python` 也先命中占位；全机安装带 PrependPath 会排到占位前面。②Mesa 诊断页「一键补齐」装 Python 走 winget `--scope user`
-  （dep_check.rs，免管理员确认），装出来的正是这种 Codex elevated 沙箱看不到的 Python。
+  `python` 也先命中占位；全机安装带 PrependPath 会排到占位前面。②Mesa 诊断页「一键补齐」装 Python 原走 winget `--scope user`
+  （免管理员确认），装出来的正是这种 Codex elevated 沙箱看不到的 Python——同日改为 `--scope machine` +
+  `InstallAllUsers=1 PrependPath=1`（dep_check.rs，弹一次管理员确认，同 Node）。
   本机已于当日改为全机安装 3.13.15（`C:\Program Files\Python313`，含 pillow / pymupdf），沙箱里 `python` / `py` 均可用。
 - **Windows PDF 预览白屏**：WebView2 + 全局 `color-scheme:dark` 下，pdf.js 默认不透明 2d canvas 与
   `.textLayer { color-scheme:only light }` 会合成整页白块；经典滚动条改 clientWidth 再叠加
