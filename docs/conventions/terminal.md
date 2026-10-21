@@ -242,6 +242,10 @@
   **2026-10-18 第三期修订**：七家审批菜单逐家抓屏后，这一轮没结束前（armed / pendingReply）一直扫屏认菜单（`parseTuiMenu`，排除用户刚发的
   编号清单回显 `menuEchoesText`），认出来就按菜单原文给按钮、`answerMenu` 方向键 + 回车代选；y / n 两键只在认不出菜单时兜底——
   Claude 2.1.292 按 y 没反应（实测），各家都只保证回车 / 方向键 / 序号。独立「⏹ 打断」已删：正在生成时发送钮变「进行中」符号钮，点击写 `\x1b`（Esc 暂停当前回合，会话保留；不是 `\x03` 硬中断）。暂停后清掉「等待回复」，发送钮变回发送，下一句仍写进同一 PTY（和 Codex 按 Esc 再继续一样）。只在 `attention === working` 或等待回复时出现，进程活着但停在提示符时仍是发送；审批 confirm 时 Esc 归审批卡。
+- **Windows 清屏补清回滚区（2026-10-21）**：Ink 系 CLI 用的 ansi-escapes `clearTerminal` 在 Windows 是 `ESC[2J ESC[0f`，不带 macOS 的 `ESC[3J`；
+  Gemini 回复超过一屏时进「整屏重画」（清屏 + 全部历史 + 动态区）每帧一次，回滚区就叠出一份份历史（ConPTY 原样转出；实录一段 60 行回复重画 251 次，
+  xterm 回放：修前横幅 252 份 / 8944 行，修后 1 份 / 85 行）。`terminal-protocols.ts consumeHostSequences` 把这对序列补成 `ESC[2J ESC[3J ESC[0f`，
+  切在两帧之间先扣住再补；与 macOS 同效果，不分平台（macOS 上不出现这对写法）。
 - **聊天写入 PTY（v3.133）**：聊天发送必须取 `TerminalView` 当前 `ptyIdRef/ptyKindRef` 作为目标，不依赖异步状态镜像；文本和提交键通过后端 `pty_write_submit` 写入，文本先遵守 bracketed-paste 规则。2026-08-24 起正文与提交键分两次写、中间留间隔（spawn_blocking + thread::sleep，不占主线程）——背靠背写入时开了 bracketed paste 的 TUI 来不及把粘贴内容收进输入框，回车会被吞掉。**间隔不得低于 150ms，现取 250ms（`pty_input::SUBMIT_GAP`）**：Codex 把连着到达的字当粘贴，粘贴后 120ms 内的回车只换行不发送（2026-10-20 Windows 实测：原 60ms 下聊天层发给 Codex 的话留在输入框里；`E2E_SUBMIT_GAP_MS` 可在 chat_channel e2e 复核）。恢复会话路径发送前再额外等 1.2s（进程引导/会话回放/信任提示期写入会落在未就绪的 TUI 上）。普通 CLI 使用 `\r`，Kimi 继续使用 CSI-u Enter。**多行正文的换行**（2026-10-20 Windows 八家逐个实测）：ConPTY 会转出 `?2004h`，粘贴包照常包；包里的换行默认写 LF（Claude / Codex / Qwen / Gemini / Kimi / CodeBuddy / OpenCode 都保留成换行），**只有 Windows 上的 Grok 改写 CR**（LF 会被它丢掉、两行连成一行；`pty_write_submit` 的 `paste_newline`，pty.rs `chat_paste_body`）——不得统一改 CR：Codex 会把第一行单独发出，CodeBuddy / OpenCode 会把字写错位。macOS 不改。
 - **聊天层常驻挂载（2026-08-24）**：ChatSurface 不再随 chat⇄terminal 切换卸载（display:contents/none 仅隐藏），输入框草稿、滚动位置、ConversationView 展开状态切层不丢；ChatComposer 的一次性 autofocus 改为 `focusWhen` 可见性信号（隐藏态 focus() 被浏览器忽略，不会抢终端焦点）。AI 正文经 ChatMarkdown 渲染 Markdown（安全口径见 safety.md），超长未展开仍保持截断纯文本 + 展开按钮。
 - **会话同步（v3.125 / v3.168）**：关联成功后优先注册专用 session watcher，普通 JSONL 监听目标文件目录，OpenCode 监听数据库与 WAL；事件短防抖后通知前端，前端用会话文件尾窗替换最新一页并与已向前翻页的旧窗去重拼接。签名轮询保留为 watcher 失败或丢事件时的兜底，并以请求代次防止旧读取覆盖新消息。同步状态显式区分识别中、已监听、等待文件、兜底轮询。

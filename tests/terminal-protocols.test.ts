@@ -215,6 +215,20 @@ test("通知序列切在两帧之间也攒着，不闪乱码", () => {
   assert.deepEqual(second.titles, ["做完了"]);
 });
 
+test("Windows 上 Ink 的清屏补上清回滚区，Gemini 重画不再叠出多份历史（2026-10-21）", () => {
+  // ansi-escapes 的 clearTerminal：Windows 是 ESC[2J ESC[0f，macOS 是 ESC[2J ESC[3J ESC[H
+  const taken = consumeHostSequences("", "旧\x1b[2J\x1b[0f历史\r\n新");
+  assert.equal(taken.text, "旧\x1b[2J\x1b[3J\x1b[0f历史\r\n新");
+  // 切在两帧之间：先扣住，拼齐再补
+  const first = consumeHostSequences("", "a\x1b[2J\x1b[");
+  assert.equal(first.text, "a");
+  const second = consumeHostSequences(first.pending, "0fb");
+  assert.equal(second.text, "\x1b[2J\x1b[3J\x1b[0fb");
+  // 别的清屏写法、单独的 ESC[2J 后面跟别的都不动
+  assert.equal(consumeHostSequences("", "\x1b[2J\x1b[3J\x1b[H").text, "\x1b[2J\x1b[3J\x1b[H");
+  assert.equal(consumeHostSequences("", "\x1b[2J\x1b[Hx").text, "\x1b[2J\x1b[Hx");
+});
+
 test("OSC 52 超长与坏 base64 不写剪贴板", () => {
   const huge = "A".repeat(350_001);
   const taken = takeHostSequences(`\x1b]52;c;${huge}\x1b\\`);
