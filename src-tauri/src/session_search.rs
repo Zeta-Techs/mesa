@@ -23,7 +23,6 @@ const ZSTD_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
 const TEXT_CAP: usize = 4 * 1024 * 1024;
 /// 建索引时最多解码这么多原始字节（Codex/Grok 归档 zst 可达 GB 级）
 const DECODE_CAP: usize = 64 * 1024 * 1024;
-const LOCATE_DECODE_CAP: usize = 8 * 1024 * 1024;
 /// 搜索时顺手补索引的时间上限；剩下的交给后台线程，结果里报还差几条
 const INDEX_BUDGET: Duration = Duration::from_millis(800);
 const SNIPPET_RADIUS: usize = 42;
@@ -53,11 +52,35 @@ pub struct SessionSearchHitDto {
     pub score: u32,
     pub snippet: Option<String>,
     pub matched_keywords: Vec<String>,
-    /// jsonl：命中行在（解压后）流中的字节偏移；OpenCode：time_created。
-    pub around: Option<u64>,
-    pub match_timestamp: Option<String>,
-    pub match_role: Option<String>,
 }
+
+/// 一条对话里的一处命中（一条消息算一处）
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMatchDto {
+    /// jsonl：命中行在（解压后）流中的字节偏移；OpenCode：time_created。交给分页接口 `around`
+    pub around: Option<u64>,
+    pub timestamp: Option<String>,
+    pub role: String,
+    pub snippet: Option<String>,
+    pub score: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMatchesDto {
+    /// 按对话里的先后顺序
+    pub matches: Vec<SessionMatchDto>,
+    /// 最该先看的那处（整句 > 词最全 > 最早）
+    pub best: Option<usize>,
+    /// 命中太多只列了前 MAX_MATCHES 处
+    pub truncated: bool,
+    pub keywords: Vec<String>,
+}
+
+const MAX_MATCHES: usize = 300;
+/// 「几个词挨得近」的窗口（小写串字节数，约 50 个汉字）
+const ANCHOR_WINDOW: usize = 150;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -120,40 +143,44 @@ fn search_impl(query: &str) -> Result<SessionSearchResultDto, String> {
         }
         hits.push((
             s.updated_at.clone().unwrap_or_default(),
-            s.file_path.clone(),
-            s.agent.clone(),
             SessionSearchHitDto {
                 agent: s.agent.clone(),
                 session_id: s.session_id.clone(),
                 score,
                 snippet,
                 matched_keywords: matched,
-                around: None,
-                match_timestamp: None,
-                match_role: None,
             },
         ));
     }
-    hits.sort_by(|a, b| b.3.score.cmp(&a.3.score).then_with(|| b.0.cmp(&a.0)));
-    let mut located = 0usize;
-    for (_, file_path, agent, hit) in &mut hits {
-        if located >= 80 {
-            break;
-        }
-        if hit.snippet.is_none() {
-            continue;
-        }
-        if let Some((around, ts, role)) = locate_match(agent, file_path, &hit.matched_keywords) {
-            hit.around = Some(around);
-            hit.match_timestamp = ts;
-            hit.match_role = Some(role);
-            located += 1;
-        }
-    }
+    hits.sort_by(|a, b| b.1.score.cmp(&a.1.score).then_with(|| b.0.cmp(&a.0)));
     Ok(SessionSearchResultDto {
-        hits: hits.into_iter().map(|(_, _, _, h)| h).collect(),
+        hits: hits.into_iter().map(|(_, h)| h).collect(),
         pending,
     })
+}
+
+/// 打开一条搜索结果时现定位：列出这段对话里所有命中的消息和各自的位置。
+/// 只认 Mesa 列出过的对话文件（含被并进接续链的成员），不按前端给的路径随便读
+#[tauri::command]
+pub async fn locate_session_matches(
+    agent: String,
+    file_path: String,
+    query: String,
+) -> Result<SessionMatchesDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let scan = sessions::cached_scan();
+        let known = scan
+            .sessions
+            .iter()
+            .chain(&scan.hidden_members)
+            .any(|s| s.agent == agent && crate::paths::same_path(&s.file_path, &file_path));
+        if !known {
+            return Err("找不到这条对话".to_string());
+        }
+        Ok(locate_all(&agent, &file_path, &query))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 fn phrase_of(query: &str) -> Option<String> {
@@ -327,7 +354,7 @@ fn score_session(
         }
     }
     let snippet = if matched.iter().any(|t| content_l.contains(t.as_str())) {
-        snippet_around(content, &matched).map(|s| redact_sensitive_text(&s))
+        snippet_around(content, &matched, phrase).map(|s| redact_sensitive_text(&s))
     } else {
         None
     };
@@ -341,18 +368,51 @@ fn count_matches(hay: &str, needle: &str) -> usize {
     hay.matches(needle).count()
 }
 
-fn snippet_around(text: &str, tokens: &[String]) -> Option<String> {
-    let lower = text.to_lowercase();
-    let mut best: Option<usize> = None;
-    for tok in tokens {
-        if let Some(i) = lower.find(tok.as_str()) {
-            best = Some(match best {
-                Some(b) if b <= i => b,
-                _ => i,
-            });
+/// 命中锚点（小写串字节下标）：整句原样出现处 > 驱动词挨得最近、种类最全处 > 任一词第一次出现
+fn best_anchor(lower: &str, tokens: &[String], phrase: Option<&str>) -> Option<usize> {
+    if let Some(i) = phrase.and_then(|p| lower.find(p)) {
+        return Some(i);
+    }
+    let driving = driving_tokens(tokens);
+    let mut occ: Vec<(usize, usize)> = Vec::new();
+    for (ti, t) in driving.iter().enumerate() {
+        occ.extend(lower.match_indices(t.as_str()).take(400).map(|(i, _)| (i, ti)));
+    }
+    if occ.is_empty() {
+        return tokens.iter().filter_map(|t| lower.find(t.as_str())).min();
+    }
+    occ.sort_unstable();
+    // 双指针滑窗：以每处出现为窗口起点，数窗内不同驱动词的种数；种数多者胜，同数取最早
+    let mut counts = vec![0usize; driving.len()];
+    let (mut distinct, mut r) = (0usize, 0usize);
+    let mut best = (0usize, occ[0].0);
+    for l in 0..occ.len() {
+        while r < occ.len() && occ[r].0 < occ[l].0 + ANCHOR_WINDOW {
+            if counts[occ[r].1] == 0 {
+                distinct += 1;
+            }
+            counts[occ[r].1] += 1;
+            r += 1;
+        }
+        if distinct > best.0 {
+            best = (distinct, occ[l].0);
+        }
+        counts[occ[l].1] -= 1;
+        if counts[occ[l].1] == 0 {
+            distinct -= 1;
         }
     }
-    let at = best?;
+    Some(best.1)
+}
+
+fn snippet_around(text: &str, tokens: &[String], phrase: Option<&str>) -> Option<String> {
+    let lower = text.to_lowercase();
+    let at = best_anchor(&lower, tokens, phrase)?;
+    snippet_at(text, at)
+}
+
+/// 以小写串字节下标 `at` 为中心截一句摘录
+fn snippet_at(text: &str, at: usize) -> Option<String> {
     let chars: Vec<char> = text.chars().collect();
     let char_at = orig_char_index(text, at);
     let start = char_at.saturating_sub(SNIPPET_RADIUS);
@@ -689,135 +749,211 @@ fn extract_session_text(s: &SessionMetaDto) -> (String, String) {
     (redact_sensitive_text(&user), redact_sensitive_text(&ai))
 }
 
-struct MatchLoc {
-    around: u64,
-    timestamp: Option<String>,
-    role: String,
-}
-
-fn locate_match(
-    agent: &str,
-    file_path: &str,
-    tokens: &[String],
-) -> Option<(u64, Option<String>, String)> {
-    if tokens.is_empty() {
+fn message_text(m: &sessions::ChatMessageDto) -> Option<String> {
+    if m.role != "user" && m.role != "assistant" {
         return None;
     }
-    let loc = if agent == "opencode" {
-        locate_in_messages(&conversation_impl_raw(agent, file_path), tokens)
+    let parts: Vec<&str> = m
+        .blocks
+        .iter()
+        .filter(|b| b.kind == "text")
+        .map(|b| b.text.trim())
+        .filter(|t| !t.is_empty() && !is_injected_context_message(t))
+        .collect();
+    if parts.is_empty() {
+        None
     } else {
-        locate_jsonl(agent, Path::new(file_path), tokens)
-    }?;
-    Some((loc.around, loc.timestamp, loc.role))
-}
-
-fn message_has_token(m: &sessions::ChatMessageDto, tokens: &[String]) -> bool {
-    if m.role != "user" && m.role != "assistant" {
-        return false;
+        Some(parts.join("\n"))
     }
-    m.blocks.iter().any(|b| {
-        if b.kind != "text" {
-            return false;
-        }
-        let lower = b.text.to_lowercase();
-        tokens.iter().any(|t| lower.contains(t.as_str()))
-    })
 }
 
-fn locate_in_messages(msgs: &[sessions::ChatMessageDto], tokens: &[String]) -> Option<MatchLoc> {
-    for m in msgs {
-        if !message_has_token(m, tokens) {
+/// 一条消息的命中分：整句原样出现最重，其次驱动词种数，再次单字种数和出现次数
+fn message_score(lower: &str, tokens: &[String], phrase: Option<&str>) -> u32 {
+    let driving = driving_tokens(tokens);
+    let mut score = 0u32;
+    if phrase.is_some_and(|p| lower.contains(p)) {
+        score += 1000;
+    }
+    let mut tf = 0usize;
+    for t in tokens {
+        let n = count_matches(lower, t);
+        if n == 0 {
             continue;
         }
-        let around = m
-            .timestamp
-            .as_deref()
-            .and_then(iso_to_ms)
-            .map(|ms| ms as u64)
-            .unwrap_or(0);
-        return Some(MatchLoc {
-            around,
-            timestamp: m.timestamp.clone(),
-            role: m.role.clone(),
-        });
+        tf += n;
+        score += if driving.contains(&t) { 40 } else { 5 };
     }
-    None
+    if score == 0 {
+        return 0;
+    }
+    score + tf.min(10) as u32
 }
 
-fn locate_jsonl(agent: &str, path: &Path, tokens: &[String]) -> Option<MatchLoc> {
-    let iter = jsonl_lines_with_offset(path)?;
+/// 消息是否算一处命中：有驱动词才算（单字有更长的词时不单独算）
+fn message_hits(lower: &str, tokens: &[String]) -> bool {
+    driving_tokens(tokens)
+        .iter()
+        .any(|t| lower.contains(t.as_str()))
+}
+
+fn locate_all(agent: &str, file_path: &str, query: &str) -> SessionMatchesDto {
+    let tokens = tokenize(query);
+    let phrase = phrase_of(query);
+    let mut out = SessionMatchesDto {
+        matches: Vec::new(),
+        best: None,
+        truncated: false,
+        keywords: tokens.clone(),
+    };
+    if tokens.is_empty() {
+        return out;
+    }
+    let found = if agent == "opencode" {
+        locate_in_messages(&conversation_impl_raw(agent, file_path), &tokens, phrase.as_deref())
+    } else {
+        locate_jsonl(agent, Path::new(file_path), &tokens, phrase.as_deref())
+    };
+    out.truncated = found.len() > MAX_MATCHES;
+    out.matches = found.into_iter().take(MAX_MATCHES).collect();
+    let mut best: Option<(usize, u32)> = None;
+    for (i, m) in out.matches.iter().enumerate() {
+        if best.map_or(true, |(_, s)| m.score > s) {
+            best = Some((i, m.score));
+        }
+    }
+    out.best = best.map(|(i, _)| i);
+    out
+}
+
+fn match_of(
+    m: &sessions::ChatMessageDto,
+    tokens: &[String],
+    phrase: Option<&str>,
+) -> Option<(SessionMatchDto, String)> {
+    let text = message_text(m)?;
+    let lower = text.to_lowercase();
+    if !message_hits(&lower, tokens) {
+        return None;
+    }
+    let snippet = best_anchor(&lower, tokens, phrase)
+        .and_then(|at| snippet_at(&text, at))
+        .map(|s| redact_sensitive_text(&s));
+    Some((
+        SessionMatchDto {
+            around: None,
+            timestamp: m.timestamp.clone(),
+            role: m.role.clone(),
+            snippet,
+            score: message_score(&lower, tokens, phrase),
+        },
+        text,
+    ))
+}
+
+fn locate_in_messages(
+    msgs: &[sessions::ChatMessageDto],
+    tokens: &[String],
+    phrase: Option<&str>,
+) -> Vec<SessionMatchDto> {
+    let mut out = Vec::new();
+    for m in msgs {
+        if let Some((mut hit, _)) = match_of(m, tokens, phrase) {
+            hit.around = m
+                .timestamp
+                .as_deref()
+                .and_then(iso_to_ms)
+                .map(|ms| ms as u64);
+            out.push(hit);
+            if out.len() > MAX_MATCHES {
+                break;
+            }
+        }
+    }
+    out
+}
+
+fn locate_jsonl(
+    agent: &str,
+    path: &Path,
+    tokens: &[String],
+    phrase: Option<&str>,
+) -> Vec<SessionMatchDto> {
+    let Some(iter) = jsonl_lines_with_offset(path) else {
+        return Vec::new();
+    };
     let mut items: Vec<(u64, String)> = Vec::new();
     let mut decoded = 0usize;
     for (offset, line) in iter {
         decoded = decoded.saturating_add(line.len());
         items.push((offset, line));
-        if decoded >= LOCATE_DECODE_CAP {
+        if decoded >= DECODE_CAP {
             break;
         }
     }
     if items.is_empty() {
-        return None;
+        return Vec::new();
     }
-    // kimi 等把一条 assistant 拆成 step.begin + 多条 content.part；单行 parse 会丢掉正文。
+    // kimi 等把一条 assistant 拆成 step.begin + 多条 content.part；单行 parse 会丢掉正文，只能整段解析
     let lines: Vec<String> = items.iter().map(|(_, l)| l.clone()).collect();
     let msgs = parse_session_lines(agent, &lines);
-    let m = msgs.iter().find(|msg| message_has_token(msg, tokens))?;
-    let around = offset_of_message(&items, m, tokens).unwrap_or(items[0].0);
-    Some(MatchLoc {
-        around,
-        timestamp: m.timestamp.clone(),
-        role: m.role.clone(),
+    let mut out = Vec::new();
+    // 消息与行同序：从上一处的下一行往后找，整段对话一共扫一遍；
+    // 找不到再退回上一处那行（个别解析器一行出多条消息）
+    let mut prev: Option<usize> = None;
+    for m in &msgs {
+        let Some((mut hit, text)) = match_of(m, tokens, phrase) else {
+            continue;
+        };
+        let from = prev.map_or(0, |p| p + 1);
+        let idx = line_of_message(&items, from, &text, tokens)
+            .or_else(|| prev.and_then(|p| line_of_message(&items, p, &text, tokens)))
+            .unwrap_or(from)
+            .min(items.len() - 1);
+        prev = Some(idx);
+        hit.around = Some(items[idx].0);
+        out.push(hit);
+        if out.len() > MAX_MATCHES {
+            break;
+        }
+    }
+    out
+}
+
+/// 从命中消息里取一段不易撞车的原文，在 `from` 之后的行里找它所在的那一行
+fn line_of_message(
+    items: &[(u64, String)],
+    from: usize,
+    text: &str,
+    tokens: &[String],
+) -> Option<usize> {
+    let needle = text_needle(text, tokens);
+    if let Some(n) = needle.as_deref().filter(|n| n.chars().count() >= 2) {
+        if let Some(i) = (from..items.len()).find(|&i| line_has_fragment(&items[i].1, n)) {
+            return Some(i);
+        }
+    }
+    (from..items.len()).find(|&i| {
+        let lower = items[i].1.to_lowercase();
+        tokens.iter().any(|t| lower.contains(t.as_str()))
     })
 }
 
-/// 从命中消息里取一段不易撞车的原文，去 jsonl 里找对应行的字节偏移。
-fn offset_of_message(
-    items: &[(u64, String)],
-    m: &sessions::ChatMessageDto,
-    tokens: &[String],
-) -> Option<u64> {
-    if let Some(n) = text_needle(m, tokens) {
-        if n.chars().count() >= 2 {
-            for (off, line) in items {
-                if line_has_fragment(line, &n) {
-                    return Some(*off);
-                }
-            }
-        }
-    }
-    for (off, line) in items {
-        let lower = line.to_lowercase();
-        if tokens.iter().any(|t| lower.contains(t.as_str())) {
-            return Some(*off);
-        }
-    }
-    None
-}
-
-fn text_needle(m: &sessions::ChatMessageDto, tokens: &[String]) -> Option<String> {
-    for b in &m.blocks {
-        if b.kind != "text" {
+fn text_needle(text: &str, tokens: &[String]) -> Option<String> {
+    let lower = text.to_lowercase();
+    for t in tokens {
+        let Some(byte_at) = lower.find(t.as_str()) else {
             continue;
-        }
-        let lower = b.text.to_lowercase();
-        for t in tokens {
-            let Some(byte_at) = lower.find(t.as_str()) else {
-                continue;
-            };
-            let char_at = orig_char_index(&b.text, byte_at);
-            let chars: Vec<char> = b.text.chars().collect();
-            let tok_len = t.chars().count();
-            let to = (char_at + tok_len + 24).min(chars.len());
-            let mut n = String::new();
-            for c in chars.iter().take(to).skip(char_at) {
-                if *c == '\n' {
-                    break;
-                }
-                n.push(*c);
-            }
-            if n.chars().count() >= 2 {
-                return Some(n);
-            }
+        };
+        let char_at = orig_char_index(text, byte_at);
+        let tok_len = t.chars().count();
+        let n: String = text
+            .chars()
+            .skip(char_at)
+            .take(tok_len + 24)
+            .take_while(|c| *c != '\n')
+            .collect();
+        if n.chars().count() >= 2 {
+            return Some(n);
         }
     }
     None
@@ -1053,15 +1189,66 @@ mod tests {
     #[test]
     fn snippet_centers_on_keyword() {
         let text = "前面垫一些无关的话，然后说到消融实验设计，后面还有别的。";
-        let sn = snippet_around(text, &["消融".into()]).unwrap();
+        let sn = snippet_around(text, &["消融".into()], None).unwrap();
         assert!(sn.contains("消融"));
+    }
+
+    #[test]
+    fn anchor_prefers_phrase_then_densest_window_over_first_single_char() {
+        // 旧版取「任一词第一次出现」：开头一个「字」就把摘录和跳转带偏
+        let text = format!(
+            "开头随便说个字。{}后来要求整段回复超过 1500 字，并且分三节。",
+            "中间垫话。".repeat(80)
+        );
+        let toks = tokenize("回复超 1500 字");
+        let sn = snippet_around(&text, &toks, phrase_of("回复超 1500 字").as_deref()).unwrap();
+        assert!(sn.contains("回复超过 1500 字"), "{sn}");
+        // 整句原样出现时锚在整句
+        let lower = "abc 消融 xxx 方差 ... 消融方差分析".to_lowercase();
+        let toks = tokenize("消融方差");
+        assert_eq!(
+            best_anchor(&lower, &toks, None),
+            lower.find("消融方差")
+        );
+    }
+
+    #[test]
+    fn locate_lists_every_hit_in_order_and_picks_best() {
+        let dir = std::env::temp_dir().join(format!("ccode-ss-all-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("s.jsonl");
+        let line = |role: &str, ts: &str, text: &str| {
+            if role == "user" {
+                format!(r#"{{"type":"user","timestamp":"{ts}","message":{{"role":"user","content":"{text}"}}}}"#)
+            } else {
+                format!(r#"{{"type":"assistant","timestamp":"{ts}","message":{{"content":[{{"type":"text","text":"{text}"}}]}}}}"#)
+            }
+        };
+        let content = [
+            line("user", "2026-10-01T00:00:01Z", "先聊别的"),
+            line("assistant", "2026-10-01T00:00:02Z", "提到一次消融"),
+            line("user", "2026-10-01T00:00:03Z", "消融实验的方差怎么算"),
+            line("assistant", "2026-10-01T00:00:04Z", "只说方差"),
+        ]
+        .join("\n")
+            + "\n";
+        std::fs::write(&file, &content).unwrap();
+        let r = locate_all("claude-code", &file.to_string_lossy(), "消融 方差");
+        assert_eq!(r.matches.len(), 3, "每条命中的消息都列出来");
+        let ts: Vec<_> = r.matches.iter().map(|m| m.timestamp.clone().unwrap()).collect();
+        assert!(ts.windows(2).all(|w| w[0] < w[1]), "按对话先后顺序");
+        assert_eq!(r.best, Some(1), "两个词都有的那条最先看");
+        let offs: Vec<u64> = r.matches.iter().map(|m| m.around.unwrap()).collect();
+        assert!(offs.windows(2).all(|w| w[0] < w[1]), "每处各自定位到自己的行");
+        assert!(r.matches[1].snippet.as_deref().unwrap().contains("消融实验的方差"));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn snippet_survives_case_folding_that_changes_byte_length() {
         // İ 小写后多一个字节、K（开尔文号）少两个：命中位置不得错切到「字」中间
         let text = format!("{}回复超 1500 字的说明", "İK".repeat(30));
-        let sn = snippet_around(&text, &["字".into()]).unwrap();
+        let sn = snippet_around(&text, &["字".into()], None).unwrap();
         assert!(sn.contains("1500 字"), "{sn}");
     }
 
@@ -1179,8 +1366,10 @@ mod tests {
         let content = format!("{pad}{hit}\n");
         std::fs::write(&file, &content).unwrap();
         let expect = content.find(hit).unwrap() as u64;
-        let loc = locate_jsonl("claude-code", &file, &["消融".into()]).unwrap();
-        assert_eq!(loc.around, expect);
+        let found = locate_jsonl("claude-code", &file, &["消融".into()], None);
+        assert_eq!(found.len(), 1);
+        let loc = &found[0];
+        assert_eq!(loc.around, Some(expect));
         assert_eq!(loc.role, "user");
         assert_eq!(loc.timestamp.as_deref(), Some("2026-09-02T01:00:00Z"));
         std::fs::remove_dir_all(&dir).ok();
@@ -1209,8 +1398,9 @@ mod tests {
             content.push('\n');
         }
         std::fs::write(&file, &content).unwrap();
-        let loc = locate_jsonl("kimi", &file, &["web".into()]).expect("kimi 流式正文应能定位");
-        assert_eq!(loc.around, hit_at);
+        let found = locate_jsonl("kimi", &file, &["web".into()], None);
+        let loc = found.first().expect("kimi 流式正文应能定位");
+        assert_eq!(loc.around, Some(hit_at));
         assert_eq!(loc.role, "assistant");
         assert!(loc.timestamp.is_some());
         std::fs::remove_dir_all(&dir).ok();

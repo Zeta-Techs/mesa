@@ -552,10 +552,25 @@ export interface SessionSearchHitDto {
   score: number;
   snippet: string | null;
   matchedKeywords: string[];
-  /** jsonl 字节偏移 / OpenCode time_created；没有正文命中时为 null */
+}
+
+/** 一条对话里的一处命中（一条消息算一处）；打开搜索结果时由 locate_session_matches 现算 */
+export interface SessionMatchDto {
+  /** jsonl 字节偏移 / OpenCode time_created，交给分页接口的 around */
   around: number | null;
-  matchTimestamp: string | null;
-  matchRole: string | null;
+  timestamp: string | null;
+  role: string;
+  snippet: string | null;
+  score: number;
+}
+
+export interface SessionMatchesDto {
+  /** 按对话里的先后顺序 */
+  matches: SessionMatchDto[];
+  /** 最该先看的那处（整句 > 词最全 > 最早） */
+  best: number | null;
+  truncated: boolean;
+  keywords: string[];
 }
 
 export interface SessionSearchResultDto {

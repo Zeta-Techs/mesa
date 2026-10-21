@@ -525,6 +525,7 @@ pub fn run() {
             pty::pty_has_running_process,
             sessions::list_sessions,
             session_search::search_sessions,
+            session_search::locate_session_matches,
             sessions::claim_session_for,
             sessions::release_session_claim,
             sessions::get_session_conversation,

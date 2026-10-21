@@ -4,6 +4,7 @@
  */
 import type {
   ChatMessageDto,
+  SessionMatchDto,
   SessionMetaDto,
   SessionSearchHitDto,
 } from "./types.ts";
@@ -74,10 +75,24 @@ export function searchHitKey(agent: string, sessionId: string): string {
   return `${agent}\n${sessionId}`;
 }
 
-export type SearchFocus = Pick<
-  SessionSearchHitDto,
-  "around" | "matchTimestamp" | "matchRole" | "snippet" | "matchedKeywords"
->;
+/** 回放里要滚到、高亮的那一处 */
+export interface SearchFocus {
+  around: number | null;
+  matchTimestamp: string | null;
+  matchRole: string | null;
+  snippet: string | null;
+  matchedKeywords: string[];
+}
+
+export function focusFromMatch(m: SessionMatchDto, keywords: string[]): SearchFocus {
+  return {
+    around: m.around,
+    matchTimestamp: m.timestamp,
+    matchRole: m.role,
+    snippet: m.snippet,
+    matchedKeywords: keywords,
+  };
+}
 
 function messageText(m: ChatMessageDto): string {
   return m.blocks

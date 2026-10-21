@@ -52,6 +52,7 @@ import {
 import {
   applySearchHits,
   findFocusMessageIndex,
+  focusFromMatch,
   searchHitKey,
   type SearchFocus,
 } from "../session-search";
@@ -95,6 +96,8 @@ import type {
   OfficialAccountStatusDto,
   SessionExportKey,
   SessionMetaDto,
+  SessionMatchDto,
+  SessionMatchesDto,
   SessionSearchHitDto,
   SessionSearchResultDto,
   SlimInspectDto,
@@ -228,6 +231,14 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
   const [searchFocus, setSearchFocus] = useState<SearchFocus | null>(null);
   const searchFocusRef = useRef<SearchFocus | null>(null);
   searchFocusRef.current = searchFocus;
+  // 打开搜索结果时这段对话里的全部命中（上一处 / 下一处按对话先后走）
+  const [searchMatches, setSearchMatches] = useState<{
+    query: string;
+    list: SessionMatchDto[];
+    index: number;
+    truncated: boolean;
+    keywords: string[];
+  } | null>(null);
   const [filter, setFilter] = useState<Filter>({ kind: "all" });
   const [showArchived, setShowArchived] = useState(false);
   // 一行 chip 快筛 + 搜索建议落成的作用域 chip（v3.88，纯逻辑在 session-filter.ts）
@@ -474,14 +485,14 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     return `从「${forkSourceTitle(s)}」中途分出来的对话，分开之后两边各自继续`;
   }
 
+  /** 正文有命中的结果才带焦点；具体落在哪几处，打开时再现算 */
   function focusFor(s: SessionMetaDto): SearchFocus | null {
     const h = hitByKey.get(searchHitKey(s.agent, s.sessionId));
-    if (!h) return null;
-    if (!h.snippet && h.around == null) return null;
+    if (!h || !h.snippet) return null;
     return {
-      around: h.around,
-      matchTimestamp: h.matchTimestamp,
-      matchRole: h.matchRole,
+      around: null,
+      matchTimestamp: null,
+      matchRole: null,
       snippet: h.snippet,
       matchedKeywords: h.matchedKeywords,
     };
@@ -924,6 +935,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     setSelected(s);
     setReplayTab("chat");
     setSearchFocus(focus);
+    setSearchMatches(null);
     // 摘要缓存命中：已有 summary 直接展示，不再调用 AI
     setSummary(s.summary ?? null);
     setExportPath(null);
@@ -931,6 +943,34 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     setLoadingConv(true);
     setError(null);
     const request = ++conversationRequestRef.current;
+    let target = focus;
+    const text = query.trim();
+    if (focus && text) {
+      // 先在这段对话里找全部命中，从最该看的那处打开；定位失败照常打开，退回按摘录/关键词找
+      try {
+        const r = await invoke<SessionMatchesDto>("locate_session_matches", {
+          agent: s.agent,
+          filePath: s.filePath,
+          query: text,
+        });
+        if (request !== conversationRequestRef.current) return;
+        if (r.matches.length > 0) {
+          const index = r.best ?? 0;
+          const keywords = focus.matchedKeywords.length > 0 ? focus.matchedKeywords : r.keywords;
+          setSearchMatches({
+            query: text,
+            list: r.matches,
+            index,
+            truncated: r.truncated,
+            keywords,
+          });
+          target = focusFromMatch(r.matches[index], keywords);
+          setSearchFocus(target);
+        }
+      } catch {
+        // 留着 focus 原样
+      }
+    }
     try {
       const page = await invoke<ConversationPageDto>(
         "get_session_conversation_page",
@@ -938,19 +978,50 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
           agent: s.agent,
           filePath: s.filePath,
           before: null,
-          around: focus?.around ?? null,
+          around: target?.around ?? null,
         },
       );
       if (request !== conversationRequestRef.current) return;
       olderCountRef.current = 0;
       setMessages(page.messages);
       setConversationCursor(page.cursor);
-      if (!focus) {
+      if (!target) {
         requestAnimationFrame(() => {
           const el = scrollRef.current;
           if (el) el.scrollTop = el.scrollHeight;
         });
       }
+    } catch (e) {
+      if (request === conversationRequestRef.current) setError(String(e));
+    } finally {
+      if (request === conversationRequestRef.current) setLoadingConv(false);
+    }
+  }
+
+  /** 跳到这段对话里的第 i 处命中：按那处的位置重新取一页 */
+  async function jumpToMatch(i: number) {
+    const s = selected;
+    const sm = searchMatches;
+    if (!s || !sm) return;
+    const m = sm.list[i];
+    if (!m) return;
+    const focus = focusFromMatch(m, sm.keywords);
+    setSearchMatches({ ...sm, index: i });
+    setSearchFocus(focus);
+    setConversationCursor(null);
+    setLoadingConv(true);
+    const request = ++conversationRequestRef.current;
+    try {
+      const page = await invoke<ConversationPageDto>("get_session_conversation_page", {
+        agent: s.agent,
+        filePath: s.filePath,
+        before: null,
+        around: m.around,
+      });
+      if (request !== conversationRequestRef.current) return;
+      olderCountRef.current = 0;
+      setMessages(page.messages);
+      setConversationCursor(page.cursor);
     } catch (e) {
       if (request === conversationRequestRef.current) setError(String(e));
     } finally {
@@ -2624,6 +2695,49 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                     <div className="mx-auto mt-2 max-w-3xl rounded-sm ccode-well p-3 text-sm text-l2">
                       <span className="mr-1">◈</span>
                       <span className="whitespace-pre-wrap">{summary}</span>
+                    </div>
+                  </div>
+                )}
+                {searchMatches && (
+                  <div className="px-4">
+                    <div className="mx-auto mt-2 flex max-w-3xl items-center gap-1 text-xs text-l3">
+                      <span className="min-w-0 flex-1 truncate">
+                        搜索「{searchMatches.query}」：这段对话里{" "}
+                        {searchMatches.list.length}
+                        {searchMatches.truncated ? "+" : ""} 处，第{" "}
+                        {searchMatches.index + 1} 处 ·{" "}
+                        {searchMatches.list[searchMatches.index]?.role === "user"
+                          ? "你说的"
+                          : "AI 回复"}
+                      </span>
+                      <button
+                        type="button"
+                        className={rowActionClass}
+                        disabled={searchMatches.index <= 0 || loadingConv}
+                        onClick={() => void jumpToMatch(searchMatches.index - 1)}
+                        title="上一处（按对话先后）"
+                      >
+                        ↑ 上一处
+                      </button>
+                      <button
+                        type="button"
+                        className={rowActionClass}
+                        disabled={
+                          searchMatches.index >= searchMatches.list.length - 1 || loadingConv
+                        }
+                        onClick={() => void jumpToMatch(searchMatches.index + 1)}
+                        title="下一处（按对话先后）"
+                      >
+                        ↓ 下一处
+                      </button>
+                      <button
+                        type="button"
+                        className={rowActionClass}
+                        onClick={() => setSearchMatches(null)}
+                        title="收起命中导航"
+                      >
+                        ×
+                      </button>
                     </div>
                   </div>
                 )}

@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   applySearchHits,
   findFocusMessageIndex,
+  focusFromMatch,
   metadataMatchesQuery,
   searchHitKey,
   tokenizeSearchQuery,
@@ -87,9 +88,6 @@ test("有正文命中时按后端顺序排，并带摘录", () => {
       score: 90,
       snippet: "……消融实验……",
       matchedKeywords: ["消融"],
-      around: 1200,
-      matchTimestamp: "2026-09-02T01:00:00Z",
-      matchRole: "user",
     },
     {
       agent: "claude-code",
@@ -97,9 +95,6 @@ test("有正文命中时按后端顺序排，并带摘录", () => {
       score: 40,
       snippet: null,
       matchedKeywords: ["消融"],
-      around: null,
-      matchTimestamp: null,
-      matchRole: null,
     },
   ];
   const { list, snippets } = applySearchHits(rows, "消融", hits);
@@ -204,4 +199,24 @@ test("findFocusMessageIndex 同一秒多条时用摘录区分", () => {
     }),
     1,
   );
+});
+
+test("focusFromMatch：每一处命中各自带时间戳和摘录，同一秒多条也能对上", () => {
+  const messages = [
+    msg({ text: "提到一次消融", role: "assistant", timestamp: "t" }),
+    msg({ text: "消融实验的方差怎么算", timestamp: "t" }),
+  ];
+  const focus = focusFromMatch(
+    {
+      around: 42,
+      timestamp: "t",
+      role: "user",
+      snippet: "消融实验的方差怎么算",
+      score: 90,
+    },
+    ["消融", "方差"],
+  );
+  assert.equal(focus.around, 42);
+  assert.deepEqual(focus.matchedKeywords, ["消融", "方差"]);
+  assert.equal(findFocusMessageIndex(messages, focus), 1);
 });
