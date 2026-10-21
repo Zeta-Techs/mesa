@@ -1270,16 +1270,21 @@ pub fn codex_win_sandbox_state() -> CodexWinSandboxDto {
 /// 只读：用户 Codex 配置里的 `[windows] sandbox` 取值；读不到返回 None
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn codex_windows_sandbox_mode() -> Option<String> {
+    codex_user_config()?
+        .get("windows")?
+        .get("sandbox")?
+        .as_str()
+        .map(str::to_string)
+}
+
+/// 只读：用户的 Codex config.toml（CODEX_HOME 优先，否则 ~/.codex）；读不到或解析失败返回 None
+pub(crate) fn codex_user_config() -> Option<toml::Value> {
     let home = std::env::var_os("CODEX_HOME")
         .filter(|v| !v.is_empty())
         .map(std::path::PathBuf::from)
         .or_else(|| dirs::home_dir().map(|h| h.join(".codex")))?;
     let text = std::fs::read_to_string(home.join("config.toml")).ok()?;
-    let doc: toml::Value = toml::from_str(crate::mcp::strip_bom(&text)).ok()?;
-    doc.get("windows")?
-        .get("sandbox")?
-        .as_str()
-        .map(str::to_string)
+    toml::from_str(crate::mcp::strip_bom(&text)).ok()
 }
 
 /// 九家的三项能力一览（前端置灰/提示与后端报错同源）

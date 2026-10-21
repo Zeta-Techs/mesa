@@ -28,6 +28,10 @@
 
 ## 2. Codex CLI
 
+> **0.163 默认工具（2026-10-21 假网关实测，官方 gpt-5.5 与第三方模型同）**：不再发 `update_plan`（改发 goals：create_goal / update_goal / get_goal），
+> `tools.update_plan.enabled=true` 打开（`tools.update_plan` 是表，写 `=true` 报 invalid type）；`request_user_input` 照发，但只有 Plan 模式能用，
+> Default 模式调用返回「request_user_input is unavailable in Default mode」（`features.default_mode_request_user_input` 开发中、默认关，Mesa 不开）。
+
 | 项 | 值 |
 |---|---|
 | 二进制 / 检测 | `codex`；`codex --version`；`codex login status`；`codex doctor` |

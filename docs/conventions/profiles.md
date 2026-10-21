@@ -453,6 +453,7 @@ Codex            → …
   未指定时钉成这次的主模型——用户全局常把它们指到别的网关；small 并入 allowed_models）、OpenCode（small → `small_model`）。
   选项只能是名单里的模型；名单删掉的模型对应分工自动作废。不改任何 CLI 配置文件；导出导入随绑定带走。
 - **非 Claude 模型关工具搜索（2026-10-21）**：主模型不是 `claude-*` 时写 `ENABLE_TOOL_SEARCH=false`（用户 settings.json 设过不动）。Claude Code 对第三方网关也开 ToolSearch、把少用的工具藏到它后面；glm-5.3-flash 会拿 ToolSearch 去「搜」本来就在的 Write / Bash，搜不到就断定没工具、整轮不干活（用户会话实证）。假网关核对：关掉后 ToolSearch 与占位工具消失、24 个工具一次发全（多几千 token 输入）。**这是 Claude Code 新版才有的**：同一假网关、什么都不注入时，2.1.305 发 14 个工具（含 ToolSearch 与占位），2.1.292 发全 24 个——旧版机器上（用户的 Mac）不出这个问题，升级后会出。
+- **Codex 计划工具随提示词打开（2026-10-21）**：Mesa 给的 catalog 提示词（Codex 对未登记模型的默认提示词）提到 `update_plan`、Codex ≥ 0.163、用户 config.toml 没有 `[tools.update_plan]` 时，交互启动加 `-c tools.update_plan.enabled=true`（`agents::codex_plan_tool_args`）。0.163 默认不发这个工具，提示词却说有，模型就答「没有计划工具」。`request_user_input` 只在 Plan 模式可用是 Codex 设计，不改。
 - **非 Claude 模型开任务清单工具（2026-10-21）**：主模型不是 `claude-*` 时写 `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`（用户设过不动）。Claude Code 2.1.306 的 TaskCreate / TaskUpdate / TaskList / TaskGet 只对 ≤ opus-4-7 / sonnet-4-6 / haiku-4-5 默认发，别的模型名不发，模型就说没有待办工具。假网关核对：glm-5.3 注入前 23 个工具、注入后 27 个。claude-opus-5 等新 Claude 模型官方有意不发，不注入。
 - **别家模型适配（2026-10-17 假网关实测）**：Claude 主模型被能力库确知「不会思考」时写 `MAX_THINKING_TOKENS=0`（去掉 adaptive
   thinking 字段；`CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING` 实测不去）。Grok 的思考档只对 config 里 `[model."<id>"]` 声明了档位的模型生效，

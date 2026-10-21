@@ -457,6 +457,17 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-21 · Codex 计划工具随提示词打开；端到端计划补上启动前追加参数
+
+用户实测 Codex（glm-5.3-flash）两句：「当前会话没有暴露任务清单/计划工具」「提问工具当前不可用」。查明：一，Codex 0.163 默认不发 `update_plan`
+（官方 gpt-5.5 也不发，改走 goals），但 Mesa 经 catalog 给的 base_instructions——即 Codex 给未登记模型的默认提示词——仍写「你有 `update_plan` 工具」，
+提示词与工具对不上。定下：提示词里提到 update_plan、Codex ≥ 0.163、用户 config.toml 没配 `[tools.update_plan]` 时，`prepare_launch` 加
+`-c tools.update_plan.enabled=true`（`agents::codex_plan_tool_args`）；聊天层本就认 update_plan 画计划卡。与 Claude 那条（非 Claude 模型开任务清单工具）
+同理：对上 CLI 自己给的说明，不替官方模型改判断。二，`request_user_input` 照发但只在 Plan 模式可用（Default 模式调用即返回不可用），
+是 Codex 的设计、开关还在开发中，不动。三，**端到端计划此前漏了 `prepare_launch` 追加的参数**（Codex 的 catalog、--no-daemon），
+`e2e_dump_launch_plans` 改为照 pty.rs 接上（并按本机真实 Codex 版本拼），金丝雀因此首次核对到 catalog 提示词；drive.py 的 `codex exec` 去掉 --no-daemon。
+金丝雀按流程走了一遍：报「工具清单多了 update_plan、上下文多了 Planning / Windows 小标题、请求多了 text 字段」，旁路端到端照过，记成新基线。
+
 ### 2026-10-21 · CLI 金丝雀：Claude Code / Codex 每天装最新版自动核对
 
 起因：同一天两次撞上 Claude Code 新版悄悄改默认行为（对第三方模型藏工具搜索、不发任务清单工具），都是用户先撞见。用户问各家 CLI 一天一版

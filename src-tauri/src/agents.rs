@@ -2021,6 +2021,11 @@ pub fn prepare_launch(profile: &Profile) -> Result<Vec<String>, String> {
     if is_codex {
         if let Some(path) = write_codex_catalog(profile)? {
             args.extend(catalog_args(&path));
+            args.extend(codex_plan_tool_args(
+                &codex_base_instructions(),
+                codex_modern(),
+                crate::agent_specs::codex_user_config().as_ref(),
+            ));
         }
         // 只给交互式启动（内嵌终端 / 外部终端，都经这里）：exec 不认这个参数，无头调用不走这里。
         // Mesa 一律用 -c 注入，codex 0.163 只能不走共享后台服务，不明说就每次报一条
@@ -2035,6 +2040,23 @@ pub fn prepare_launch(profile: &Profile) -> Result<Vec<String>, String> {
 /// 本机实测过的新版行为起点（0.163）：`--no-daemon` 可用；模型目录 / 兜底元数据没声明的档位
 /// CLI 自己丢掉（配置里的 priority 不会再带到中转），不必再用 -c 强塞 service_tier
 const CODEX_MODERN: (u32, u32, u32) = (0, 163, 0);
+
+/// catalog 里的 base_instructions（Codex 给未登记模型的默认提示词）写着「你有 `update_plan` 工具」，
+/// 但 0.163 起 Codex 默认不发这个工具（官方模型也不发，改走 goals）：模型照提示词去找、找不到就说
+/// 「当前会话没有暴露计划工具」，聊天层也画不出计划卡（2026-10-21 用户实测 glm-5.3-flash；假网关核对：
+/// 加 `tools.update_plan.enabled=true` 后多出 update_plan）。提示词里提到才给，旧版不认这个键不加，
+/// 用户自己在 config.toml 配过 `[tools.update_plan]` 不动
+fn codex_plan_tool_args(instructions: &str, modern: bool, user_config: Option<&toml::Value>) -> Vec<String> {
+    let user_set = user_config
+        .and_then(|c| c.get("tools"))
+        .and_then(|t| t.get("update_plan"))
+        .is_some();
+    if modern && !user_set && instructions.contains("update_plan") {
+        vec!["-c".into(), "tools.update_plan.enabled=true".into()]
+    } else {
+        Vec::new()
+    }
+}
 
 fn codex_modern() -> bool {
     codex_cli_version().is_some_and(|v| v >= CODEX_MODERN)
@@ -4069,6 +4091,8 @@ mod tests {
     fn e2e_dump_launch_plans() {
         let base = std::env::var("E2E_BASE").expect("E2E_BASE");
         let out = std::env::var("E2E_OUT").expect("E2E_OUT");
+        // 测试态 Codex 版本默认取桩（None = 当旧版）：端到端要按本机真实版本拼参数（--no-daemon、计划工具）
+        CODEX_VERSION_FOR_TEST.with(|c| c.set(cli_version_uncached_ok("codex")));
         // (agent, 协议, base_url 后缀)：Anthropic 协议的 base 不带 /v1（CLI 自己拼 /v1/messages），
         // OpenAI / Responses 协议带 /v1，Gemini 由 CLI 拼 /v1beta
         let cases: [(&str, Option<&str>, &str); 9] = [
@@ -4104,17 +4128,25 @@ mod tests {
                 agent.into(),
                 match plan {
                     Ok(plan) => {
+                        // 启动前准备追加的参数（Codex 的模型目录 catalog、计划工具、--no-daemon），同 pty.rs：
+                        // 接在计划参数（含权限档）后面——缺了它端到端和金丝雀核对的就不是 Mesa 真实的启动
+                        // （2026-10-21：catalog 的提示词与 update_plan 都没被核对到）
+                        let extra = prepare_launch(&p).unwrap_or_default();
+                        let with_extra = |mut a: Vec<String>| {
+                            a.extend(extra.iter().cloned());
+                            a
+                        };
                         // 聊天层权限四档的启动参数（pty.rs 同一处拼法），第三期逐家抓屏用
                         let tiers: serde_json::Map<String, serde_json::Value> = ["ask", "auto", "full"]
                             .iter()
                             .filter_map(|m| {
                                 permission_launch_args(agent, &plan.args, m)
-                                    .map(|a| ((*m).to_string(), serde_json::json!(a)))
+                                    .map(|a| ((*m).to_string(), serde_json::json!(with_extra(a))))
                             })
                             .collect();
                         serde_json::json!({
                             "env": plan.env,
-                            "args": plan.args,
+                            "args": with_extra(plan.args.clone()),
                             "env_remove": plan.env_remove,
                             "permission": tiers,
                         })
@@ -5899,6 +5931,22 @@ api_backend = "responses"
         assert_eq!(v["models"][0]["slug"], "m1");
         assert_eq!(v["models"][0]["display_name"], "测试 · m1");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn codex_plan_tool_follows_instructions() {
+        let on = vec!["-c".to_string(), "tools.update_plan.enabled=true".to_string()];
+        let prompt = "You have access to an `update_plan` tool";
+        assert_eq!(codex_plan_tool_args(prompt, true, None), on);
+        // 提示词没提、旧版 Codex、用户自己配过：都不加
+        assert!(codex_plan_tool_args("no plan here", true, None).is_empty());
+        assert!(codex_plan_tool_args(prompt, false, None).is_empty());
+        let user: toml::Value = toml::from_str("[tools.update_plan]\nenabled = false\n").unwrap();
+        assert!(codex_plan_tool_args(prompt, true, Some(&user)).is_empty());
+        let other: toml::Value = toml::from_str("[windows]\nsandbox = \"elevated\"\n").unwrap();
+        assert_eq!(codex_plan_tool_args(prompt, true, Some(&other)), on);
+        // 内嵌的默认提示词确实提到它（本机取不到时用这份）
+        assert!(CODEX_BASE_INSTRUCTIONS.contains("update_plan"));
     }
 
     #[test]

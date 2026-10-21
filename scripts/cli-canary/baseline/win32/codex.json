@@ -7,6 +7,7 @@
   "kind": "codex",
   "statuses": [
    "-",
+   "running",
    "awaiting_approval",
    "running",
    "completed"
@@ -49,6 +50,7 @@
     "reasoning",
     "store",
     "stream",
+    "text",
     "tool_choice",
     "tools"
    ],
@@ -63,6 +65,7 @@
     "How to request escalation",
     "How you work",
     "Personality",
+    "Planning",
     "Preamble messages",
     "Presenting your work and final message",
     "Responsiveness",
@@ -74,6 +77,8 @@
     "Tool Guidelines",
     "Validating your work",
     "When to request escalation",
+    "Windows",
+    "`update_plan`",
     "prefix_rule guidance",
     "request_user_input availability"
    ],
@@ -104,6 +109,7 @@
     "multi_agent_v1",
     "request_user_input",
     "update_goal",
+    "update_plan",
     "view_image",
     "write_stdin"
    ]
