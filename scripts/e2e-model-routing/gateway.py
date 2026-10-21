@@ -3,6 +3,9 @@ import json, os, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LOG = open(sys.argv[2], "a", buffering=1)
+# E2E_DUMP=<文件>：每个 POST 的完整请求体与少数请求头另记一行（CLI 金丝雀拿它比工具清单、系统提示词结构、请求参数）
+DUMP = open(os.environ["E2E_DUMP"], "a", buffering=1, encoding="utf-8") if os.environ.get("E2E_DUMP") else None
+DUMP_HEADERS = ("anthropic-beta", "anthropic-version", "user-agent", "openai-beta", "x-app", "originator", "version")
 MODELS = ["e2e-default", "e2e-picked"]
 
 # 聊天层第三期抓屏用的两个触发词（只认带工具列表的主对话请求，标题 / 摘要这类后台请求照常回 ok）：
@@ -114,6 +117,10 @@ class H(BaseHTTPRequestHandler):
         raw = self.rfile.read(n) if n else b""
         try: body = json.loads(raw or b"{}")
         except Exception: body = {}
+        if DUMP:
+            DUMP.write(json.dumps({"t": time.time(), "path": self.path.split("?")[0],
+                                   "headers": {h: self.headers.get(h) for h in DUMP_HEADERS if self.headers.get(h)},
+                                   "body": body}, ensure_ascii=False) + "\n")
         model = body.get("model")
         if model is None and "/models/" in self.path:  # gemini: /v1beta/models/<m>:generateContent
             model = self.path.split("/models/")[1].split(":")[0]

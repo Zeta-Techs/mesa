@@ -457,6 +457,23 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-21 · CLI 金丝雀：Claude Code / Codex 每天装最新版自动核对
+
+起因：同一天两次撞上 Claude Code 新版悄悄改默认行为（对第三方模型藏工具搜索、不发任务清单工具），都是用户先撞见。用户问各家 CLI 一天一版
+Mesa 怎么跟，拍板先做 Claude Code 与 Codex 两家。定下：
+一，**不追求当天全适配，追求当天知道**：`scripts/cli-canary/canary.py` 把已有的假网关、`chat_channel` 端到端、聊天层抓屏串成一条，
+抽五层指纹——主对话请求（工具清单、系统提示词小标题、用户这句前注入的上下文标签、请求字段、`anthropic-beta` 等头）、旁路（会话认出、回合状态序列、
+审批形态）、会话文件（记录类型与字段）及 Mesa 解析器读出的工具来回、读屏（审批菜单、实时预览）、Codex 默认提示词可取——和
+`scripts/cli-canary/baseline/<平台>/<agent>.json` 比；报告附两版之间更新日志里沾边的条目（Claude 取 GitHub CHANGELOG / 本机缓存，Codex 取 Releases）。
+二，**临时 HOME 不拷本机配置**（`E2E_CLEAN_HOME` / `CLEAN_HOME`，只预置 Claude「已走完首次引导」、Codex 的 CODEX_HOME 目录）：用户自己的 MCP / 插件
+会改工具清单，拷了就没法跨机器、跨 CI 比；「用户全局配置盖不盖 Mesa 注入」仍归 e2e-model-routing。基线按平台分存（两边画面本就不同）。
+三，**CI 每天跑、不挡主线**：`.github/workflows/cli-canary.yml` 北京时间 9:17 在 macOS / Windows 装 `@latest` 跑，报告进运行摘要、明细进 artifact；
+红了是 CLI 变了。适配后（或判定无需适配）在同一平台 `--accept` 把新指纹随改动一起提交，基线的 `version` 即「Mesa 已核对到的版本」，
+取代散落在 matrix 各处的「x.y 实测」。检查没全过时 `--accept` 拒绝。
+四，不替用户锁 CLI 版本（自动更新是用户的选择，锁住收不到修复）；运行时遇到未知会话记录 / 工具名留诊断记录、各家更新日志关键词监看，留作后续。
+首跑（Windows，Claude Code 2.1.306 / Codex 0.163.0）两家检查全过并建了 win32 基线；连跑两次除临时目录名外无变化（已归一成 `<工作目录>`），
+人为从基线去掉 TaskCreate 后报告准确报出「工具清单多了 TaskCreate」。darwin 基线待在 Mac 上跑一次 `--accept`。
+
 ### 2026-10-21 · Claude 被拒绝 / 打断后回合靠会话文件收；Windows 上 Claude 回复不流式是 CLI 自己的画法
 
 用户报两件。一，**终端已结束、聊天层仍「正在回复」**：在审批菜单里拒绝工具（或按 Esc）时 Claude 写一行 user

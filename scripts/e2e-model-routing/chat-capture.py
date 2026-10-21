@@ -39,11 +39,15 @@ a = list(plan["args"] if tier == "base" else plan["permission"][tier])
 if "--settings" in a and not os.path.exists(a[a.index("--settings") + 1]):
     sys.exit(f"{agent}: 启动计划里的 --settings 文件已不在，请重新生成计划（cargo test e2e_dump_launch_plans）后马上跑")
 home = tempfile.mkdtemp(prefix=f"cc-{agent}-"); os.chmod(home, 0o700)
-for rel in COPY:
+# CLEAN_HOME=1（CLI 金丝雀）：不拷本机配置，只预置 Claude「已走完首次引导」——各台机器、CI 抓到的画面才可比
+CLEAN = bool(os.environ.get("CLEAN_HOME"))
+for rel in [] if CLEAN else COPY:
     src = os.path.join(real_home, rel)
     if os.path.exists(src):
         dst = os.path.join(home, rel); os.makedirs(os.path.dirname(dst), exist_ok=True); shutil.copy2(src, dst)
 work = os.path.join(home, "work"); os.makedirs(work)
+if CLEAN:
+    json.dump({"hasCompletedOnboarding": True, "projects": {}}, open(os.path.join(home, ".claude.json"), "w"))
 # Gemini：Mesa 只在本机设置选的是 API Key 登录时才放行第三方连接（gemini_auth_blocker），临时 HOME 里照这个口径改
 gs = os.path.join(home, ".gemini/settings.json")
 if agent == "gemini":

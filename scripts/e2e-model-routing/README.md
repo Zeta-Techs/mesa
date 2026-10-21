@@ -19,6 +19,10 @@ cd .. && python3 -I scripts/e2e-model-routing/drive.py /tmp/e2e-plans.json /tmp/
 （Claude `/v1/messages`、Codex `/v1/responses`、其余 `/v1/chat/completions`、Gemini `/v1beta/models/<模型>:streamGenerateContent`）。
 2026-10-17 首次运行的结论见 docs/architecture.md §10 当日「各家 CLI 模型配置端到端核对」与「连接加模型分工」两条。
 
+CLI 金丝雀（`scripts/cli-canary/`，2026-10-21）复用这里的三件：假网关设 `E2E_DUMP=<文件>` 另记每个请求的完整请求体与少数请求头；
+`chat-capture.py` 设 `CLEAN_HOME=1` 不拷本机配置；`e2e_channel` 设 `E2E_CLEAN_HOME=1` 同理，`E2E_KEEP=<目录>` 留下会话原件、
+Mesa 解析结果与旁路状态（channel.json）。
+
 ## 内嵌终端按键核对（2026-10-17）
 
 按 Mesa 的真实应答口径（DA1 / XTVERSION / kitty 查询 / DECRQM，同 `src/terminal-protocols.ts`）拉起各家，在输入框里实际按键看效果。

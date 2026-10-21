@@ -3212,7 +3212,10 @@ mod e2e {
         let home = std::env::temp_dir().join(format!("mesa-e2e-{}", uuid::Uuid::new_v4().simple()));
         let work = home.join("work");
         std::fs::create_dir_all(&work).unwrap();
-        for rel in COPY {
+        // E2E_CLEAN_HOME=1（CLI 金丝雀，scripts/cli-canary）：不拷本机配置——用户的 MCP / 插件 / hooks 会改工具清单，
+        // 快照要在 CI 和各台机器上可比；只预置「已走完首次引导」，免得停在选主题
+        let clean = std::env::var("E2E_CLEAN_HOME").is_ok();
+        for rel in COPY.iter().filter(|_| !clean) {
             let src = real_home.join(rel);
             if src.is_file() {
                 let dst = home.join(rel);
@@ -3221,6 +3224,11 @@ mod e2e {
             }
         }
         let cj = home.join(".claude.json");
+        if clean {
+            std::fs::write(&cj, json!({ "hasCompletedOnboarding": true, "projects": {} }).to_string()).unwrap();
+            // Windows 下面会设 CODEX_HOME，Codex 要求它已存在
+            std::fs::create_dir_all(home.join(".codex")).unwrap();
+        }
         if cj.is_file() {
             let mut d: Value = serde_json::from_str(&std::fs::read_to_string(&cj).unwrap()).unwrap();
             let real = crate::paths::strip_verbatim(std::fs::canonicalize(&work).unwrap());
@@ -3303,6 +3311,31 @@ mod e2e {
             let r = run_once(&agent, &bin, &home, &work, again, &env, &env_remove, false, false);
             report(&agent, "（接回）", &r);
             resumed = Some((sid, r));
+        }
+        // E2E_KEEP=<目录>（CLI 金丝雀）：删临时 HOME 前留下会话文件原件、Mesa 解析器读出的对话、旁路走过的状态
+        if let Ok(keep) = std::env::var("E2E_KEEP") {
+            let keep = Path::new(&keep);
+            std::fs::create_dir_all(keep).unwrap();
+            let path = first.last.transcript_path.clone();
+            if let Some(p) = &path {
+                let _ = std::fs::copy(p, keep.join("transcript.jsonl"));
+            }
+            let parsed = path.as_deref().map(|p| crate::sessions::conversation_impl_raw(&agent, p)).unwrap_or_default();
+            std::fs::write(keep.join("parsed.json"), serde_json::to_string_pretty(&parsed).unwrap()).unwrap();
+            let a = first.approval.as_ref();
+            let channel = json!({
+                "kind": first.last.kind,
+                "sessionId": first.last.session_id.is_some(),
+                "transcript": path.is_some(),
+                "done": first.done,
+                "statuses": first.statuses,
+                "approvalKind": a.map(|a| a.kind),
+                "approvalTool": a.and_then(|a| a.tool_name.clone()),
+                "approvalReplyable": a.map(|a| a.replyable),
+                "approvalCommand": a.and_then(|a| a.command.clone()),
+                "answered": first.answered,
+            });
+            std::fs::write(keep.join("channel.json"), serde_json::to_string_pretty(&channel).unwrap()).unwrap();
         }
         let _ = std::fs::remove_dir_all(&home);
         assert!(first.last.session_id.is_some(), "旁路认出会话");

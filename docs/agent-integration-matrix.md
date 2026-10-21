@@ -5,6 +5,7 @@
 > 2026-08-06 新增 §7 CodeBuddy Code（v2.132.0 实机验证，含真实会话样本与 product.json 核实）。
 > 2026-08 新增 §9 Grok Build（xai-org/grok-build 源码调研；标注「待实机验证」处未经实机核对）。
 > 2026-08-20 新增 §12 精确注意力 hooks 桥接调研（九家，实现 = hooks.rs 的 BRIDGE_SPECS；cursor/opencode 未接入结论同记）。
+> 2026-10-21 起 Claude Code / Codex 有每日金丝雀（`scripts/cli-canary/`）：Mesa 已核对到的版本与指纹见 `scripts/cli-canary/baseline/<平台>/<agent>.json` 的 `version`，比本表各处「x.y 实测」更新。
 > 标记「易漂移」的均为各 CLI 内部格式，解析必须防御式（跳过未知类型、容忍缺字段、容忍末行截断）。
 
 ## 1. Claude Code

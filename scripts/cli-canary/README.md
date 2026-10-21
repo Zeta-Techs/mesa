@@ -1,0 +1,61 @@
+# CLI 金丝雀（Claude Code / Codex）
+
+各家 CLI 几乎每天发一版，默认行为常常没写进更新日志就变了。2026-10-21 的两次实例：Claude Code 新版对第三方模型把工具藏到工具搜索后面；
+又不再给这类模型发任务清单工具。两次都是用户撞上才发现。金丝雀每天装最新版，把 Mesa 依赖的几层抽成「指纹」，和这里存的基线比，
+变了就报。
+
+| 层 | 看什么 | 来源 |
+|---|---|---|
+| 请求 | 主对话请求的工具清单、系统提示词小标题、用户这句之前注入的上下文标签、请求字段、`anthropic-beta` 等请求头 | 假网关 `E2E_DUMP` |
+| 旁路 | Mesa `chat_channel` 端到端：认出会话、回合状态序列、审批形态 | `e2e_channel`（`E2E_CLEAN_HOME` + `E2E_KEEP`） |
+| 会话 | 会话文件的记录类型与字段；Mesa 解析器读出用户这句、工具调用 / 结果、回复 | 同上留下的 `transcript.jsonl` / `parsed.json` |
+| 画面 | 审批菜单认不认得出、实时预览读不读得到 | `chat-capture.py`（`CLEAN_HOME`）+ `capture-check.ts` |
+| Codex 提示词 | 本机 Codex 的默认提示词还取得到（Mesa 给 Codex 的 `base_instructions` 来源） | `codex_instructions_extract_real` |
+
+跑法（仓库根目录；Windows 在 Git Bash 里用 Python 安装目录下的 `python.exe`，见 e2e-model-routing/README.md）：
+
+```bash
+python -I -X utf8 scripts/cli-canary/canary.py
+```
+
+- `--agents codex`：只跑一家。
+- `--skip-screen`：不抓屏，不需要 pyte。
+- `--out <目录>`：指定明细落点，默认系统临时目录。
+
+抓屏依赖（pyte，Windows 另加 pywinpty）缺了会自动 `pip install --target` 到 `CANARY_DEPS`，默认在系统临时目录下。
+两家合计约 3–5 分钟，另加首次编译测试的时间。
+
+不用真实密钥，请求只到本机假网关。临时 HOME **不拷本机配置**：用户自己的 MCP、插件、hooks 会改工具清单，那样各台机器和 CI 就没法比。
+所以这里测的是「装好什么都不配的 CLI + Mesa 的注入」，「用户全局配置会不会盖过 Mesa」仍由 e2e-model-routing 的脚本核对。
+
+## 结果怎么看
+
+`<out>/report.md` 每家写三件事：
+- 版本，以及基线核对到的版本。
+- 检查过没过。检查是硬性的：旁路端到端通过、解析器读到工具来回等。
+- 与基线比的每处变化，以及两个版本之间更新日志里沾边的条目。Claude 取 GitHub 上的 CHANGELOG，取不到读本机 `~/.claude/cache/changelog.md`；Codex 取 GitHub Releases。
+
+明细在 `<out>/<agent>/`：
+- `fingerprint.json`：这次的指纹。
+- `channel/transcript.jsonl`：会话原件。
+- `channel/parsed.json`：Mesa 解析结果。
+- `screen.json`：逐帧画面。
+
+`<out>/gateway-dump.jsonl` 是完整请求体，系统提示词原文在里面。
+
+退出码：
+- 0：没变化，检查全过。
+- 1：有变化、检查没过，或还没有基线。
+- 2：环境问题，没跑起来。
+
+## 变了之后
+
+1. 看 report.md 列的变化，对照 Mesa 用到的地方判断要不要适配。比如工具清单变了，看聊天层认不认得新工具；会话字段变了，看 `sessions.rs` 对应的解析器。
+2. Mesa 改好后（或判断不用改），在**同一平台**上跑一次 `--accept`，把新指纹提交进 `baseline/<平台>/<agent>.json`。
+   基线文件里的 `version` 就是「Mesa 已核对到的版本」。检查没全过时 `--accept` 会拒绝。
+3. 基线按平台分开存（`win32` / `darwin`）：两边的画面本来就不同，比如 Windows 上 Claude 回复不流式，读不到实时预览。
+
+CI：`.github/workflows/cli-canary.yml` 每天北京时间 9:17 在 macOS / Windows 各跑一次，也可以手动触发。
+- 红了不是 Mesa 代码回退，是 CLI 变了。
+- report.md 进运行摘要，明细在 artifact。
+- 某个平台还没有基线时会一直报「无基线」：在那个平台本机跑一次 `--accept` 提交上来即可。
