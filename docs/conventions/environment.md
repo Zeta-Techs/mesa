@@ -76,6 +76,18 @@
     `%LOCALAPPDATA%\Programs\Python\Python313` 放到 PATH 前面再跑。不是代码问题。
   - Agent 在 Git Bash 里用 heredoc（`<<'EOF'`）生成含 `\\` 的源码或脚本时反斜杠会被吞一半（2026-10-20 实证：写进去的 `'\\'`
     变成 `'\'`、`\b` 变成退格符），含反斜杠的改动用编辑工具直接改。
+- **Windows 上 Codex 的 elevated 沙箱看不到用户目录里的工具（2026-10-21 实证）**：Codex 配置 `[windows] sandbox = "elevated"`
+  （较安全的一档）时，命令以 Codex 建的本地账户 `CodexSandboxOffline` / `CodexSandboxOnline` 运行，
+  这个账户读不了 `C:\Users\<你>\`。装在用户目录里的程序——python.org 默认的「仅为我安装」Python（`%LOCALAPPDATA%\Programs\Python`）、
+  它带的 `py` 启动器、winget 用户范围的包——在 Codex 里一律 `not recognized`，直接按全路径跑报「拒绝访问」；
+  装在 `C:\Program Files` 的（Node、Git、全机 Python）照常能用。外部终端跑 Codex 同样如此，与 Mesa 无关。
+  解决：工具装成全机（Python 安装器勾 *Install for all users*，或 `InstallAllUsers=1 PrependPath=1`，需管理员确认）；
+  或用户自己把 Codex 改成 `sandbox = "unelevated"`（用本人账号加受限令牌，能读用户目录，隔离弱一档）——**Mesa 不改这项**，
+  只有定时任务经用户确认后临时加 `-c windows.sandbox="unelevated"`（agent_specs.rs）。
+  连带两点：①系统 PATH 里 `WindowsApps`（应用商店 python 占位）排在用户 PATH 之前，「仅为我安装」的 Python 即使不在沙箱里，
+  `python` 也先命中占位；全机安装带 PrependPath 会排到占位前面。②Mesa 诊断页「一键补齐」装 Python 走 winget `--scope user`
+  （dep_check.rs，免管理员确认），装出来的正是这种 Codex elevated 沙箱看不到的 Python。
+  本机已于当日改为全机安装 3.13.15（`C:\Program Files\Python313`，含 pillow / pymupdf），沙箱里 `python` / `py` 均可用。
 - **Windows PDF 预览白屏**：WebView2 + 全局 `color-scheme:dark` 下，pdf.js 默认不透明 2d canvas 与
   `.textLayer { color-scheme:only light }` 会合成整页白块；经典滚动条改 clientWidth 再叠加
   `key={renderKey}` 会拆掉 canvas 振荡闪白。渲染前必须先绑 `alpha:true` 上下文，页宿主锁定 light
