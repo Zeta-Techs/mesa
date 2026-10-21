@@ -113,6 +113,8 @@
   1. 「设为全局默认」（写前必须备份）；
   2. **精确注意力标记开关**（2026-10-20 起只剩 Gemini / Kimi / Grok 三家给开关：其余五家在 Mesa 里启动时用启动参数 / CLI 自带通道
      注入、不写用户配置，以前写过的由 `hooks::migrate_launch_injected` 启动时收回（同一套「只删 marker 条目 + 写前备份」）；
+     开着 Gemini 开关、Mesa 条目还没有 `name` 的，`hooks::refresh_gemini_hook_name` 启动时按当前写法重写一次（同口径写前备份，
+     只多一个 name 字段；2026-10-21 真实配置核对：hooks 以外的键逐字不变）；
      下列七家配置路径与防护口径不变）（hooks.rs 按 agent 写七家 hooks 配置——claude `~/.claude/settings.json`、
      qwen `~/.qwen/settings.json`、codebuddy `~/.codebuddy/settings.json`、gemini `~/.gemini/settings.json`
      （qwen/gemini 走 JSONC 容错读）、kimi `~/.kimi-code/config.toml`（`[[hooks]]` 表，toml_edit 保格式）、

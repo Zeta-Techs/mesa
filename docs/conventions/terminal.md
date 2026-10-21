@@ -385,7 +385,10 @@
   （Claude Stop hook 实测 87–109ms），Claude 不再带 async、也不另挂 PermissionRequest，回到同步规则——`launch_hooks_async`
   返回 false，Tracker 自动走同步对账。命令是带双引号的 exe 路径：Claude 在 Git Bash、CodeBuddy 在 cmd 里跑 hook，两边都认。
   写全局配置的三家（Gemini / Kimi / Grok）用拷到 hooks-state 的 `ccode-hook.exe`、程序路径不加引号（Gemini 的 PowerShell 宿主不认
-  双引号开头的命令；不加引号的正斜杠路径三种宿主都认），路径有空格等退回 `.ps1`（`hooks::global_hook_command`）；Gemini 实跑 hooks 照常记录。⑬**读屏兜底的 Windows 字形**（ConPTY 抓屏实测，`chat-capture.py` Windows 分支 +
+  双引号开头的命令；不加引号的正斜杠路径三种宿主都认），路径有空格等退回 `.ps1`（`hooks::global_hook_command`）；Gemini 实跑 hooks 照常记录。
+  **Gemini 的 hook 条目带 `name`（2026-10-21，三平台）**：Gemini 跑 hook 时转圈行写「Executing Hook: <name>」，没有 name 就把整条命令
+  （hook 程序与日志的绝对路径）摆在终端里（用户：取消会话时屏上一串 C:/Users/…/AppData/…）；现在写「Mesa 状态同步」。
+  已开开关的旧条目启动时补一次（`hooks::refresh_gemini_hook_name`，apply_hooks_at 写前备份；已有 name 不动）。⑬**读屏兜底的 Windows 字形**（ConPTY 抓屏实测，`chat-capture.py` Windows 分支 +
   `capture-check.ts`）：Claude 正文行首是 `●`（不是 `⏺`）；Grok 回显 / 输入框 `>`、工具 `♦`、代码块标签 `○`、单选选中点 `•`；
   四家（Claude / Gemini / Kimi / Grok）的审批菜单与实时预览在 ConPTY 下都认得出。屏顶是没缩进的字（启动横幅、排队中的提问）
   且找不到回显与行首时不预览（两平台同一条）。

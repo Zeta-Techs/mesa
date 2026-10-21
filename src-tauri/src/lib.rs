@@ -184,9 +184,15 @@ pub fn run() {
             }
             // 托盘建好后再挂：应用图标外观要连托盘一起换
             app_icon::apply_saved(app.handle());
-            // Windows 老用户：已开的精确注意力钩子若还是旧版内联写法（从不生效），后台换成新写法
+            // Windows 老用户：已开的精确注意力钩子若还是旧版内联写法（从不生效），后台换成新写法；
+            // 之后（三平台）给开着的 Gemini 钩子补上名字（hooks::refresh_gemini_hook_name）
             #[cfg(windows)]
-            std::thread::spawn(hooks::migrate_legacy_windows_hooks);
+            std::thread::spawn(|| {
+                hooks::migrate_legacy_windows_hooks();
+                hooks::refresh_gemini_hook_name();
+            });
+            #[cfg(not(windows))]
+            std::thread::spawn(hooks::refresh_gemini_hook_name);
             // macOS 菜单栏：应用子菜单带 About 面板（版权 / 许可入口）。set_menu 会
             // 整体替换默认菜单——编辑子菜单的复制粘贴等预置项必须显式带上，否则
             // 文本框的系统快捷键全失灵。仅 macOS：Windows 无菜单栏惯例。

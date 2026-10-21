@@ -403,6 +403,34 @@ pub(crate) fn migrate_launch_injected() {
     }
 }
 
+/// 开着全局开关的 Gemini，配置里 Mesa 的条目还没有 name（2026-10-21 之前写的）：启动时按当前写法重写一次
+/// （apply_hooks_at 写前备份），之后转圈行显示 hook 名字而不是一串路径。已有 name 不动，不会每次启动多一份备份
+pub(crate) fn refresh_gemini_hook_name() {
+    let settings = crate::settings::read_current();
+    if !crate::settings::hooks_attention_enabled(&settings, "gemini") {
+        return;
+    }
+    let (Some(home), Ok(backups), Some(spec)) = (dirs::home_dir(), backups_dir(), spec_for("gemini")) else {
+        return;
+    };
+    let Ok(text) = fs::read_to_string(home.join(spec.config_rel)) else {
+        return;
+    };
+    if !gemini_hook_unnamed(&text, &spec.marker()) {
+        return;
+    }
+    let Ok(log) = hooks_log_path(spec) else {
+        return;
+    };
+    if let Err(e) = apply_hooks_at(spec, &home, &log, &backups, true) {
+        crate::logbuf::record("warn", "hooks", &format!("gemini 钩子补名字失败: {e}"));
+    }
+}
+
+fn gemini_hook_unnamed(config_text: &str, marker: &str) -> bool {
+    has_marker(config_text, marker) && !config_text.contains(GEMINI_HOOK_NAME)
+}
+
 // 走 storage::config_root：测试（含聊天层端到端）重定向配置根时，状态日志与备份跟着进临时目录
 fn hooks_state_dir() -> Result<PathBuf, String> {
     Ok(crate::storage::config_root()
@@ -579,8 +607,17 @@ fn to_pretty(v: &Value) -> Result<String, String> {
 }
 
 /// 事件组里我们追加的 handler；codex 额外带 "async": true
+/// Gemini 跑 hook 时转圈行写「Executing Hook: <name>」，没有 name 就把整条命令（hook 程序的绝对路径加日志路径）
+/// 摆在终端里（2026-10-21 用户：取消会话时屏上一串 C:/Users/…/AppData/…）。Gemini 认 hook 的 name 字段（getHookName）
+const GEMINI_HOOK_NAME: &str = "Mesa 状态同步";
+
 fn handler_json(spec: &BridgeSpec, command: &str) -> Value {
     let mut h = json!({ "type": "command", "command": command });
+    if spec.agent == "gemini" {
+        h.as_object_mut()
+            .unwrap()
+            .insert("name".into(), json!(GEMINI_HOOK_NAME));
+    }
     if spec.handler_async {
         h.as_object_mut()
             .unwrap()
@@ -2338,6 +2375,51 @@ mod tests {
             assert!(!has_marker(&after, &spec.marker()));
             assert_eq!(std::fs::read_to_string(&real).unwrap(), before, "真实文件不得被改");
         }
+        std::fs::remove_dir_all(tmp).ok();
+    }
+
+    /// Gemini 钩子补名字：只给 Mesa 的条目加 name，用户自己的条目与其余设置原样；补过一次就不再算「没名字」
+    #[test]
+    fn gemini_hook_name_added_and_idempotent() {
+        let spec = spec_for("gemini").unwrap();
+        let old = r#"{"ui":{"theme":"x"},"hooks":{"AfterAgent":[{"matcher":"","hooks":[{"type":"command","command":"C:/x/hooks-state/gemini-hooks.jsonl"}]},{"matcher":"","hooks":[{"type":"command","command":"my-own-hook"}]}]}}"#;
+        assert!(gemini_hook_unnamed(old, &spec.marker()));
+        let new = merge_json_doc(spec, Some(old), "C:/x/ccode-hook.exe hook \"C:/x/hooks-state/gemini-hooks.jsonl\" 65536").unwrap();
+        assert!(!gemini_hook_unnamed(&new, &spec.marker()));
+        let v: Value = serde_json::from_str(&new).unwrap();
+        assert_eq!(v["ui"]["theme"], "x");
+        let after = v["hooks"]["AfterAgent"].as_array().unwrap();
+        assert!(after.iter().any(|g| g["hooks"][0]["command"] == "my-own-hook" && g["hooks"][0].get("name").is_none()));
+        assert!(after.iter().any(|g| g["hooks"][0]["name"] == GEMINI_HOOK_NAME));
+        // 别家不加
+        let kimi = handler_json(spec_for("grok").unwrap(), "cmd");
+        assert!(kimi.get("name").is_none());
+    }
+
+    /// 真实数据干跑：本机 ~/.gemini/settings.json 拷到临时目录按启动补名字的写法重写，打印前后对照（不碰真实文件）
+    /// `cargo test --lib real_data_dry_run_gemini_name -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn real_data_dry_run_gemini_name() {
+        let home = dirs::home_dir().unwrap();
+        let spec = spec_for("gemini").unwrap();
+        let real = home.join(spec.config_rel);
+        let Ok(Some(before)) = read_existing(&real) else { return };
+        println!("需要补：{}", gemini_hook_unnamed(&before, &spec.marker()));
+        let tmp = tmpdir("dryrun-gemini");
+        let fake = tmp.join(spec.config_rel);
+        std::fs::create_dir_all(fake.parent().unwrap()).unwrap();
+        std::fs::write(&fake, &before).unwrap();
+        let log = hooks_log_path(spec).unwrap();
+        apply_hooks_at(spec, &tmp, &log, &tmp.join("backups"), true).unwrap();
+        let after = std::fs::read_to_string(&fake).unwrap();
+        println!("-- 前\n{before}\n-- 后\n{after}");
+        let (b, a): (Value, Value) = (serde_json::from_str(&before).unwrap(), serde_json::from_str(&after).unwrap());
+        for k in b.as_object().unwrap().keys().filter(|k| *k != "hooks") {
+            assert_eq!(b[k], a[k], "{k} 不得改动");
+        }
+        assert!(!gemini_hook_unnamed(&after, &spec.marker()));
+        assert_eq!(std::fs::read_to_string(&real).unwrap(), before, "真实文件不得被改");
         std::fs::remove_dir_all(tmp).ok();
     }
 }
