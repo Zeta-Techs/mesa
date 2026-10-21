@@ -468,6 +468,10 @@ stop_hook_summary，被拒那轮没有），旁路回合一直开着、又压过
 Claude Code 2.1.305 与 2.1.292 都是转圈计 token、整条消息收完才一次画出（Mac 上 2.1.292 同一假网关是逐行画出，见 live-reply 测试样本）。
 Mesa 对 Claude 只能读屏（hooks 不带正文），所以 Windows 上 Claude 的聊天层没有逐字预览；长思考期间屏上也只有「Thinking」。
 同日用户拍板补救：「正在回复」后面显示转圈行里的已生成 token 数（`live-reply.ts claudeOutputTokens`，只认 ↓；有逐字预览时不显示），两平台同。
+三，**Claude 说「没有加载文件与命令行类工具」**：上一次判成纯模型问题，这次会话实证到原因——Claude Code 对第三方网关也开工具搜索，
+Write / Bash 等照常发、另把十来个少用的工具藏在 ToolSearch 后面；glm-5.3-flash 拿 ToolSearch 去搜 Write / Bash（它只搜延迟列表，
+当然搜不到），就断定没工具。定下：非 `claude-*` 模型注入 `ENABLE_TOOL_SEARCH=false`（`agents::claude_model_env`，用户自设不动），
+假网关核对 Mesa 的真实启动计划：ToolSearch 与占位工具消失、24 个工具一次发全；代价是每次请求多几千 token 输入。
 
 ### 2026-10-20 · 聊天层 Windows 八家抓屏核对：读屏与 macOS 同形；Grok 多行改写 CR
 

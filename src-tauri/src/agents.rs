@@ -714,6 +714,13 @@ fn claude_model_env(profile: &Profile, model: Option<&str>, user_keys: &[String]
         env.push(("CLAUDE_CODE_MAX_CONTEXT_TOKENS".into(), c.to_string()));
         env.push(("CLAUDE_CODE_AUTO_COMPACT_WINDOW".into(), c.to_string()));
     }
+    // 非 Claude 模型关掉工具搜索（ToolSearch）：Claude Code 对第三方网关也开着，内置工具 Bash / Read / Write 照常发，
+    // 另把十来个少用的工具藏到 ToolSearch 后面。glm-5.3-flash 会拿 ToolSearch 去「搜」Write / Bash，
+    // 搜不到（它们本来就在、不在延迟列表里）就断定没有工具、整轮不干活（2026-10-21 用户会话实证；假网关核对：
+    // 关掉后 ToolSearch 与占位工具消失，24 个工具一次发全）。用户自己设过就不动
+    if fill.is_some_and(|m| !m.to_ascii_lowercase().starts_with("claude-")) && !user_has("ENABLE_TOOL_SEARCH") {
+        env.push(("ENABLE_TOOL_SEARCH".into(), "false".into()));
+    }
     env
 }
 
@@ -4104,6 +4111,19 @@ mod tests {
             );
         }
         std::fs::write(out, serde_json::to_string_pretty(&all).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn claude_non_claude_model_turns_off_tool_search() {
+        let mut p = profile("claude-code", Some("https://open.bigmodel.cn/api/anthropic"));
+        p.models = vec!["glm-5.3-flash".into()];
+        let env = claude_model_env(&p, Some("glm-5.3-flash"), &[]);
+        assert!(env.contains(&("ENABLE_TOOL_SEARCH".into(), "false".into())));
+        // Claude 自家模型照 Claude Code 默认；用户自己设过不动
+        let env = claude_model_env(&p, Some("claude-sonnet-4-5"), &[]);
+        assert!(!env.iter().any(|(k, _)| k == "ENABLE_TOOL_SEARCH"));
+        let env = claude_model_env(&p, Some("glm-5.3"), &["ENABLE_TOOL_SEARCH".into()]);
+        assert!(!env.iter().any(|(k, _)| k == "ENABLE_TOOL_SEARCH"));
     }
 
     #[test]

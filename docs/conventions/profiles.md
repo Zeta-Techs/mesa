@@ -452,6 +452,7 @@ Codex            → …
   subagent → 显式写 `CLAUDE_CODE_SUBAGENT_MODEL`）、Grok（small → overlay `[models].session_summary` + `prompt_suggestion`，
   未指定时钉成这次的主模型——用户全局常把它们指到别的网关；small 并入 allowed_models）、OpenCode（small → `small_model`）。
   选项只能是名单里的模型；名单删掉的模型对应分工自动作废。不改任何 CLI 配置文件；导出导入随绑定带走。
+- **非 Claude 模型关工具搜索（2026-10-21）**：主模型不是 `claude-*` 时写 `ENABLE_TOOL_SEARCH=false`（用户 settings.json 设过不动）。Claude Code 对第三方网关也开 ToolSearch、把少用的工具藏到它后面；glm-5.3-flash 会拿 ToolSearch 去「搜」本来就在的 Write / Bash，搜不到就断定没工具、整轮不干活（用户会话实证）。假网关核对：关掉后 ToolSearch 与占位工具消失、24 个工具一次发全（多几千 token 输入）。
 - **别家模型适配（2026-10-17 假网关实测）**：Claude 主模型被能力库确知「不会思考」时写 `MAX_THINKING_TOKENS=0`（去掉 adaptive
   thinking 字段；`CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING` 实测不去）。Grok 的思考档只对 config 里 `[model."<id>"]` 声明了档位的模型生效，
   其余被忽略并警告——求交器在只绑 grok 时据 `agents::grok_model_declares_effort`（只读）关掉开聊前与运行中的档位。
