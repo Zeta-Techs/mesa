@@ -10,7 +10,7 @@ import { ChevronDown, FolderOpen } from "lucide-react";
 import { chatGreeting } from "../chat-empty-start";
 import { useAppStore } from "../store";
 import { isLightTheme } from "../themes";
-import { MesaMark } from "./MesaMark";
+import { MesaCaret, MesaMark } from "./MesaMark";
 import ChatModelMenu from "./ChatModelMenu";
 import ChatPermissionBadge from "./ChatPermissionBadge";
 import type {
@@ -37,12 +37,11 @@ import {
   approvalExtraHint,
   chatHeaderStatus,
   chatMessageKey,
-  chatWaitKind,
-  chatWaitText,
+  CHAT_NO_SESSION_TEXT,
   composerShowsInterrupt,
-  latestToolName,
   slashHandoff,
 } from "../chat-handoff";
+import { chatStatus, STATUS_QUIET_START_MS } from "../chat-status";
 import { confirmChoices } from "../chat-reply";
 import ChatDecisionCard, { type ChatDecision } from "./ChatDecisionCard";
 import { connIssueDecision } from "../chat-decision";
@@ -368,21 +367,9 @@ export default function ChatSurface({
   const projectPaths = useAppStore((s) => s.projectPaths);
   const recentRepos = useAppStore((s) => s.recentRepos);
   const theme = useAppStore((s) => s.settings?.theme);
-  const toolName = latestToolName(messages);
-  const waitKind = chatWaitKind({
-    pendingReply: loading,
-    running,
-    syncState,
-    messageCount: messages.length,
-    stuckWaiting,
-    toolName,
-  });
-  const waitText = trustPrompt
-    ? "等你确认是否信任这个目录"
-    : chatWaitText(waitKind, toolName);
   const generating =
     loading || (running && attention === "working");
-  // 这一轮已经过去多久（「正在回复 · 12 秒」）：生成开始时起表，每秒走一下，停了清零
+  // 这一轮已经过去多久：生成开始时起表，每秒走一下，停了清零
   const [genStartedAt, setGenStartedAt] = useState<number | null>(null);
   const [, setGenTick] = useState(0);
   useEffect(() => {
@@ -393,7 +380,33 @@ export default function ChatSurface({
     const t = window.setInterval(() => setGenTick((n) => n + 1), 1000);
     return () => window.clearInterval(t);
   }, [genStartedAt]);
-  const genElapsed = genStartedAt === null ? 0 : Math.floor((Date.now() - genStartedAt) / 1000);
+  const genElapsedMs = genStartedAt === null ? 0 : Date.now() - genStartedAt;
+  const genElapsed = Math.floor(genElapsedMs / 1000);
+  // 「这一轮现在在做什么」（chat-status.ts）：说在做的事，不说阶段；过程里已经在动的那一行不在这里重复
+  const activity = channel?.activity ?? null;
+  const thinking = channel?.thinking ?? null;
+  const statusBase = useMemo(
+    () =>
+      chatStatus({
+        messages,
+        activity,
+        thinking,
+        // 刚发出的那一会儿另算（下面），这里按「已经过了」给，免得每秒重算整轮
+        sinceStartMs: Number.MAX_SAFE_INTEGER,
+        cwd: cwd ?? null,
+        isWindows: IS_WINDOWS,
+      }),
+    [messages, activity, thinking, cwd],
+  );
+  const status =
+    statusBase.kind === "waiting" && genElapsedMs < STATUS_QUIET_START_MS ? { kind: "none" as const, text: null } : statusBase;
+  const statusText = trustPrompt ? "等你确认是否信任这个目录" : status.text;
+  // 最近一次「看得见的进展」：新消息、预览出字、旁路换了工具 / 思考。安静满 10 秒才给「看实时输出」
+  const [progressAt, setProgressAt] = useState(() => Date.now());
+  useEffect(() => {
+    setProgressAt(Date.now());
+  }, [messages.length, liveReply, activity?.startedAt, thinking]);
+  const quiet = generating && Date.now() - progressAt >= QUIET_HINT_MS;
   const extraHint = approvalExtraHint(agentId, hooksEnabled);
   const liveReplyCapable = liveReplySupported(agentId ?? "");
   // 一轮刚结束、会话文件还没把最后一段写进来：预览和展开的过程再留一会儿，追上了（或 4 秒到了）再收。
@@ -634,7 +647,7 @@ export default function ChatSurface({
             stuckWaiting ? (
               <div className="flex flex-1 flex-col items-center justify-center pb-20 text-center">
                 <p className="max-w-md text-sm text-warn-text">
-                  {chatWaitText("no_session")}
+                  {CHAT_NO_SESSION_TEXT}
                   ——信任此目录 / 登录 / 菜单选择通常在终端里
                 </p>
                 <div className="mt-3 flex items-center gap-2">
@@ -668,14 +681,17 @@ export default function ChatSurface({
               messages={shownMessages}
               cwd={cwd}
               working={generating || settling}
+              awaiting={attention === "confirm" || channel?.turn?.status === "awaiting_approval"}
               onEditResend={(text) => setSeedInsert(text)}
               onForkHere={onForkFrom}
             />
           )}
           {livePreview.length > 0 && (
-            // 与助手正文同一栏、同字号，但不走 Markdown（终端里已渲染过）：灰一级表示「还在写、以落盘为准」
+            // 与助手正文同一栏、同字号，但不走 Markdown（终端里已渲染过）：灰一级表示「还在写、以落盘为准」。
+            // 还在写时 Mesa 光标接在最后一个字后面，不另起一行写状态（2026-10-21）
             <div className="mb-2 whitespace-pre-wrap break-words text-sm leading-6 text-l3">
               {livePreview.join("\n")}
+              {generating && !decision && <MesaCaret light={isLightTheme(theme)} />}
             </div>
           )}
           {decision && (
@@ -685,34 +701,43 @@ export default function ChatSurface({
               onPeek={onTogglePeek && !peek ? onTogglePeek : undefined}
             />
           )}
-          {generating && !decision && (
-            // 「正在回复」用 Mesa 字标（2026-10-18 用户：换成 Mesa 独有的设计）：M▁ 的琥珀光标像插入符一样亮灭，
-            // 后面是这一轮在做什么（已送出 / 正在生成回复 / 正在用 Bash…）和已经过去的时间
-            <div className="mb-2 flex items-center gap-2 text-xs text-l3">
+          {generating && !decision && livePreview.length === 0 && (
+            // 生成中那一行（2026-10-21 用户：「正在生成回复」「正在用」太机械）：M▁ 光标一直亮灭，后面说这一轮在做的事——
+            // 正在跑的工具（「运行 npm test」）、计划里在做的一项、思考的小标题，都没有才写「思考中」，文字带一道光带扫过；
+            // 过程里已经有那一行在动时只留光标。满 10 秒才写时间，Claude 没有逐字预览时写已生成的 token 数，
+            // 安静满 10 秒才给「看实时输出」。预览在出字时这一行不出现，光标接在预览末尾
+            <div className="mb-2 flex min-w-0 items-center gap-2 text-xs text-l3">
               <MesaMark
                 light={isLightTheme(theme)}
                 typing
                 inline
                 className="h-[0.8em] w-auto shrink-0 text-l3"
               />
-              <span aria-live="polite">{waitText || "正在回复"}</span>
-              {genElapsed >= 3 && (
-                <span className="tabular-nums text-l4" aria-hidden="true">
+              {statusText && (
+                <span
+                  aria-live="polite"
+                  className={`min-w-0 truncate ${trustPrompt ? "" : "ccode-shimmer"}`}
+                >
+                  {statusText}
+                </span>
+              )}
+              {genElapsed >= 10 && (
+                <span className="shrink-0 tabular-nums text-l4" aria-hidden="true">
                   {fmtElapsed(genElapsed)}
                 </span>
               )}
-              {liveTokens !== null && liveTokens > 0 && livePreview.length === 0 && (
-                <span className="tabular-nums text-l4" title="终端转圈行里这一轮已经收到的 token 数">
+              {liveTokens !== null && liveTokens > 0 && (
+                <span className="shrink-0 tabular-nums text-l4" title="终端转圈行里这一轮已经收到的 token 数">
                   已生成 {fmtTokens(liveTokens)} token
                 </span>
               )}
-              {/* 聊天层按会话文件同步，一段写完才落盘；Claude Code 的逐字输出已在上方实时预览，
-                  别家没有预览时才给「看实时输出」（2026-10-17 用户：点开终端比聊天层先显示，体验不好） */}
-              {onTogglePeek && !peek && !liveReplyCapable && (
+              {/* 聊天层按会话文件同步，一段写完才落盘；有实时预览的家不给（2026-10-17 用户：点开终端比聊天层先显示，体验不好），
+                  别家安静满 10 秒才给 */}
+              {onTogglePeek && !peek && !liveReplyCapable && quiet && (
                 <button
                   type="button"
                   onClick={onTogglePeek}
-                  className="rounded-sm px-1 text-l4 underline decoration-dotted underline-offset-2 hover:text-l2"
+                  className="shrink-0 rounded-sm px-1 text-l4 underline decoration-dotted underline-offset-2 hover:text-l2"
                 >
                   看实时输出
                 </button>
@@ -913,6 +938,9 @@ export default function ChatSurface({
     </div>
   );
 }
+
+/** 安静多久才给「看实时输出」 */
+const QUIET_HINT_MS = 10_000;
 
 /** 1234 → 1.2k；千以下原样 */
 function fmtTokens(n: number): string {

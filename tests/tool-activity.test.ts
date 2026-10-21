@@ -62,6 +62,26 @@ test("运行：有说明就先说说明，命令放旁边；Codex 的 bash -lc �
   assert.equal(r.command, "cat a.md");
 });
 
+test("Codex 旁路的条目：commandExecution 剥掉 shell 外壳，fileChange 按文件说新建 / 编辑 / 删除（2026-10-21）", () => {
+  const run = one("commandExecution", { command: "/bin/zsh -lc 'npm test'" });
+  assert.equal(run.kind, "run");
+  assert.equal(run.target, "npm test");
+  assert.equal(run.command, "/bin/zsh -lc 'npm test'", "展开时仍给原命令");
+  // Windows 上套的 PowerShell 外壳同样剥掉
+  const ps = one("commandExecution", { command: `"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command 'npm test'` });
+  assert.equal(ps.target, "npm test");
+  const changes = toolActivities(
+    "fileChange",
+    JSON.stringify({ changes: [
+      { path: "/w/a.txt", kind: { type: "add" }, diff: "x" },
+      { path: "/w/b.txt", kind: "update", diff: "y" },
+      { path: "/w/c.txt", kind: { type: "delete" } },
+    ] }),
+    "/w",
+  );
+  assert.deepEqual(changes.map((c) => [c.verb, c.target]), [["新建", "a.txt"], ["编辑", "b.txt"], ["删除", "c.txt"]]);
+});
+
 test("shell 命令再分类：读 / 搜 / 看目录归查阅，改文件、取网页、其余照旧", () => {
   assert.equal(commandCategory("sed -n '1,120p' src/a.ts"), "read");
   assert.equal(commandCategory("sed -i 's/a/b/' x"), "edit");

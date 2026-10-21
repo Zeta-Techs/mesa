@@ -363,10 +363,13 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   app-update-install.ts      # 「下载并安装」hook（设置→更新与帮助菜单更新弹窗共用）：先查后台任务要人点头、进度累计、成功 relaunch；模块级闸防双下载
   diagnostics.ts             # 前端诊断：WebGL 探针/软件渲染判定、monaco 取消拒绝识别、诊断包前端采集；应用日志展示纯逻辑（UTC→本机时间、错误/警告短标、计数、复制文本）（tests/diagnostics.test.ts）
                              # （tests/app-update.test.ts）；真正 check()/安装在 store.ts
-  chat-handoff.ts            # 聊天⇄终端交接表：chat_ok / peek / must_switch、等待态文案、斜杠是否要窥视 TUI、
+  chat-handoff.ts            # 聊天⇄终端交接表：chat_ok / peek / must_switch、卡住时的一句话 CHAT_NO_SESSION_TEXT、斜杠是否要窥视 TUI、
                              # 聊天头状态 chatHeaderStatus（未开始不写「等待会话文件」，tests/chat-handoff.test.ts）；
                              # 本地乐观消息放回解析结果的位置 placePendingUsers（排队中的接末尾，其余插在发送后的第一条新回复前）；
                              # messageKey / chatMessageKey 有来源 id 用 id；HOOKS_AGENTS 键是 agent id（2026-10-20 改正 claude-code）
+  chat-status.ts             # 生成中那一行「这一轮在做什么」（2026-10-21，规则见 design-system「生成中那一行」）：旁路 activity / thinking
+                             # > 会话里还没回结果的调用（已有那一行就不重复）/ 计划进行中一项（activeForm）/ 刚落盘的思考 > 「思考中」；
+                             # thinkingHeadline 取 `**小标题**` 或第一句（tests/chat-status.test.ts）；ChatSurface 消费
   chat-channel.ts            # 结构化旁路快照的前端纯逻辑：回合状态 → 注意力、会话跟随（lock / switch / hint）、实时文字、
                              # 审批卡标题 / 预览（命令 / 差异）/ 可回复的按钮、hooks 审批「屏上回到输入框 = 已答」（hooksApprovalAnswered）
                              # （tests/chat-channel.test.ts）；TerminalView 的 applyChannel 消费
@@ -851,6 +854,8 @@ src-tauri/src/
                              #   Codex 私有 app-server + TUI --remote，split_codex_args 恢复时把权限参数改成服务配置），
                              #   start 起读取线程（状态日志 / 事件文件追加读、OpenCode SSE、Codex ws 客户端，手写最小 WebSocket），
                              #   Tracker = 回合状态机（幂等开始 / 结束、审批、实时文字、会话跟随），快照推 chat-channel-<tabId>；
+                             #   快照另带 activity（正在跑的工具，track_activity 按开始 / 结束登记，参数 slim_input 截断脱敏）与 thinking
+                             #   （Codex item/reasoning/summaryTextDelta、Qwen thinking_delta、OpenCode reasoning part）；出站 outbound 脱敏实时文字与思考；
                              #   chat_channel_reply 经官方通道回审批；chat_channel_settle_from_transcript（Claude 被拒绝 / Esc 打断不发 Stop，
                              #   按会话文件里这一轮之后的收尾标记收回合）；close_for_pty 随 PTY 退出收旁路；e2e::e2e_channel（ignored）=
                              #   真 CLI + 假网关端到端（scripts/e2e-model-routing/README.md，三平台同一份）；

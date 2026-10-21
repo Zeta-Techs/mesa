@@ -78,7 +78,7 @@ const NAMES: Array<[ActivityKind, string[]]> = [
   ["read", ["read", "readfile", "readmanyfiles", "viewimage", "view", "notebookread", "readnotebook"]],
   ["search", ["grep", "glob", "searchfilecontent", "grepsearch", "codebasesearch", "filesearch", "find", "findfiles", "ripgrep", "search"]],
   ["list", ["ls", "list", "listdirectory", "listdir", "listfiles"]],
-  ["run", ["bash", "shell", "runshellcommand", "execcommand", "runterminalcmd", "runcommand", "runterminalcommand", "localshell", "monitor"]],
+  ["run", ["bash", "shell", "runshellcommand", "execcommand", "commandexecution", "runterminalcmd", "runcommand", "runterminalcommand", "localshell", "monitor"]],
   ["web", ["webfetch", "fetchurl", "fetch", "readurl", "websearch", "googlewebsearch", "searchweb"]],
   ["task", ["task", "agent", "subagent", "dispatchagent"]],
   ["todo", ["todowrite", "todoread", "settodolist", "updateplan", "taskcreate", "taskupdate", "writetodos"]],
@@ -512,6 +512,20 @@ export function toolActivities(
     return [{ ...withPath(base("edit", name, input), path, cwd, isWindows), ...countDiff(diff), diff }];
   }
 
+  // Codex 旁路的改文件条目（app-server fileChange）：{changes:[{path, kind:{type}|"add", diff}]}
+  if (n === "filechange" && Array.isArray(args?.changes)) {
+    const changes = (args.changes as unknown[]).filter((c): c is Args => Boolean(c) && typeof c === "object");
+    const out = changes.flatMap((c) => {
+      const path = str(c, "path");
+      if (!path) return [];
+      const raw = c.kind && typeof c.kind === "object" ? (c.kind as Args).type : c.kind;
+      const op = typeof raw === "string" ? raw.toLowerCase() : "update";
+      const kind: ActivityKind = op === "add" ? "write" : op === "delete" ? "delete" : "edit";
+      return [{ ...withPath(base(kind, name, input), path, cwd, isWindows), verb: op === "add" ? "新建" : VERB[kind] }];
+    });
+    if (out.length) return out;
+  }
+
   const kind = kindOf(name);
   const a = base(kind, name, input);
   const filePath =
@@ -549,11 +563,12 @@ export function toolActivities(
       const desc = str(args, "description");
       const look = command ? lookActivity(a, command, cwd, desc, isWindows) : null;
       if (look) return [look];
+      // 命令外面套的 `zsh -lc '…'` / PowerShell 外壳只是 CLI 的跑法（Codex 旁路报来的就是这样），显示时剥掉
       return [
         {
           ...a,
-          target: desc ?? (firstLine(command) || name),
-          note: desc ? firstLine(command) : null,
+          target: desc ?? (firstLine(unwrapShell(command)) || name),
+          note: desc ? firstLine(unwrapShell(command)) : null,
           command: command || null,
         },
       ];

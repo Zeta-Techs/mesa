@@ -286,6 +286,12 @@ export function exploreLabel(tools: readonly ProcessTool[]): string {
 export interface PlanEntry {
   text: string;
   status: "pending" | "in_progress" | "completed";
+  /** 这一项正在做时的说法（Claude 的 activeForm，如「正在跑测试」）；聊天层状态行用，没有就不带这个键 */
+  active?: string;
+}
+
+function activeForm(v: unknown): Pick<PlanEntry, "active"> {
+  return typeof v === "string" && v.trim() ? { active: v.trim() } : {};
 }
 
 function planStatus(raw: unknown): PlanEntry["status"] {
@@ -319,7 +325,7 @@ export function planEntries(input: string): PlanEntry[] | null {
     const text = [e.content, e.step, e.description, e.title, e.text, e.task].find(
       (v): v is string => typeof v === "string" && v.trim().length > 0,
     );
-    if (text) out.push({ text: text.trim(), status: planStatus(e.status ?? e.state) });
+    if (text) out.push({ text: text.trim(), status: planStatus(e.status ?? e.state), ...activeForm(e.activeForm) });
   }
   return out.length ? out : null;
 }
@@ -358,7 +364,7 @@ function taskPlan(tools: readonly ProcessTool[]): PlanEntry[] | null {
       const subject = typeof args.subject === "string" ? args.subject.trim() : "";
       if (!subject) return;
       const id = t.result?.match(/Task #(\w+) created successfully/)?.[1] ?? `pending-${i}`;
-      tasks.set(id, { text: subject, status: "pending" });
+      tasks.set(id, { text: subject, status: "pending", ...activeForm(args.activeForm) });
     } else if (name === "taskupdate") {
       const id = String(args.taskId ?? "");
       if (args.status === "deleted") {
@@ -368,7 +374,12 @@ function taskPlan(tools: readonly ProcessTool[]): PlanEntry[] | null {
       const prev = tasks.get(id);
       if (!prev) return;
       const subject = typeof args.subject === "string" && args.subject.trim() ? args.subject.trim() : prev.text;
-      tasks.set(id, { text: subject, status: args.status === undefined ? prev.status : planStatus(args.status) });
+      tasks.set(id, {
+        ...prev,
+        text: subject,
+        status: args.status === undefined ? prev.status : planStatus(args.status),
+        ...activeForm(args.activeForm),
+      });
     }
   });
   return tasks.size ? [...tasks.values()] : null;

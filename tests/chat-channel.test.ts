@@ -28,6 +28,8 @@ const snap = (patch: Partial<ChatChannelSnapshot> = {}): ChatChannelSnapshot => 
   approval: null,
   liveText: null,
   notice: null,
+  activity: null,
+  thinking: null,
   ...patch,
 });
 

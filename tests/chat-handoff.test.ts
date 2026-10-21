@@ -7,15 +7,13 @@ import {
   chatMessageKey,
   claudeModeTier,
   chatHeaderStatus,
-  chatWaitKind,
-  chatWaitText,
+  CHAT_NO_SESSION_TEXT,
   composerShowsInterrupt,
   confirmHandoffEvent,
   placePendingUsers,
   handoffFor,
   hasAssistantText,
   kimiModelArg,
-  latestToolName,
   localCommandRecord,
   mergeLocalRecords,
   mergeConversationPages,
@@ -96,58 +94,8 @@ test("审批附加说明：没有精确状态的家引导去终端", () => {
   assert.equal(approvalExtraHint("claude-code", true), null);
 });
 
-test("等待态三句人话 + 工具名", () => {
-  assert.equal(chatWaitText("sent"), "已送出");
-  assert.equal(chatWaitText("writing"), "正在生成回复");
-  assert.equal(chatWaitText("using_tool", "Bash"), "正在用 Bash");
-  assert.equal(chatWaitText("using_tool"), "正在调用工具");
-  assert.match(chatWaitText("no_session"), /会话文件还没出现/);
-  assert.equal(chatWaitText("idle"), "");
-
-  assert.equal(
-    chatWaitKind({
-      pendingReply: true,
-      running: true,
-      syncState: "waiting",
-      messageCount: 1,
-      stuckWaiting: false,
-      toolName: null,
-    }),
-    "sent",
-  );
-  assert.equal(
-    chatWaitKind({
-      pendingReply: true,
-      running: true,
-      syncState: "watching",
-      messageCount: 2,
-      stuckWaiting: false,
-      toolName: null,
-    }),
-    "writing",
-  );
-  assert.equal(
-    chatWaitKind({
-      pendingReply: true,
-      running: true,
-      syncState: "watching",
-      messageCount: 2,
-      stuckWaiting: false,
-      toolName: "Bash",
-    }),
-    "using_tool",
-  );
-  assert.equal(
-    chatWaitKind({
-      pendingReply: false,
-      running: true,
-      syncState: "waiting",
-      messageCount: 0,
-      stuckWaiting: true,
-      toolName: null,
-    }),
-    "no_session",
-  );
+test("卡住时的一句话", () => {
+  assert.match(CHAT_NO_SESSION_TEXT, /会话文件还没出现/);
 });
 
 test("聊天头：没开始时不写等待会话文件", () => {
@@ -190,33 +138,6 @@ test("聊天头：没开始时不写等待会话文件", () => {
       messageCount: 3,
     }),
     "实时同步",
-  );
-});
-
-test("latestToolName 从最新 assistant 取，碰到 user 即停", () => {
-  assert.equal(latestToolName([]), null);
-  assert.equal(
-    latestToolName([
-      msg("user", [{ kind: "text", text: "hi", toolName: null }]),
-    ]),
-    null,
-  );
-  assert.equal(
-    latestToolName([
-      msg("user", [{ kind: "text", text: "hi", toolName: null }]),
-      msg("assistant", [
-        { kind: "tool_use", text: "ls", toolName: "Bash" },
-        { kind: "text", text: "", toolName: null },
-      ]),
-    ]),
-    "Bash",
-  );
-  assert.equal(
-    latestToolName([
-      msg("assistant", [{ kind: "tool_use", text: "x", toolName: "Read" }]),
-      msg("user", [{ kind: "text", text: "next", toolName: null }]),
-    ]),
-    null,
   );
 });
 

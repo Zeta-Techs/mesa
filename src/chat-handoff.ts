@@ -33,13 +33,6 @@ export type ChatHandoffEvent =
 /** chat_ok = 聊天层独立完成；peek = 露出同一会话 TUI；must_switch = 整层切到终端 */
 export type ChatHandoffAction = "chat_ok" | "peek" | "must_switch";
 
-export type ChatWaitKind =
-  | "idle"
-  | "sent"
-  | "writing"
-  | "using_tool"
-  | "no_session";
-
 export function agentHasHooks(agentId: string | null | undefined): boolean {
   return Boolean(agentId && HOOKS_AGENTS.has(agentId));
 }
@@ -86,20 +79,6 @@ export function approvalExtraHint(
   return null;
 }
 
-export function latestToolName(
-  messages: Pick<ChatMessageDto, "role" | "blocks">[],
-): string | null {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const message = messages[i];
-    if (message.role === "user") return null;
-    for (let j = message.blocks.length - 1; j >= 0; j--) {
-      const block = message.blocks[j];
-      if (block.kind === "tool_use" && block.toolName) return block.toolName;
-    }
-  }
-  return null;
-}
-
 export function hasAssistantText(
   messages: Pick<ChatMessageDto, "role" | "blocks">[],
 ): boolean {
@@ -112,50 +91,9 @@ export function hasAssistantText(
   );
 }
 
-export function chatWaitKind(input: {
-  pendingReply: boolean;
-  running: boolean;
-  syncState: SessionSyncState;
-  messageCount: number;
-  stuckWaiting: boolean;
-  toolName: string | null;
-}): ChatWaitKind {
-  if (input.stuckWaiting) return "no_session";
-  if (!input.pendingReply) {
-    if (
-      input.running &&
-      input.syncState === "waiting" &&
-      input.messageCount === 0
-    ) {
-      return "idle";
-    }
-    return "idle";
-  }
-  if (input.toolName) return "using_tool";
-  if (input.syncState === "watching" || input.syncState === "polling") {
-    return "writing";
-  }
-  return "sent";
-}
-
-export function chatWaitText(
-  kind: ChatWaitKind,
-  toolName?: string | null,
-): string {
-  switch (kind) {
-    case "sent":
-      return "已送出";
-    case "writing":
-      // 会话文件一段写完聊天层才看得到；终端里是实时的（聊天层另给「看实时输出」）
-      return "正在生成回复";
-    case "using_tool":
-      return toolName ? `正在用 ${toolName}` : "正在调用工具";
-    case "no_session":
-      return "会话文件还没出现（去终端看确认）";
-    default:
-      return "";
-  }
-}
+/** 发出后 8 秒还没有会话文件（多半停在终端里的信任 / 登录 / 菜单上）时的一句话。
+ * 生成中那一行说什么见 chat-status.ts（2026-10-21 起不再按「已送出 / 正在生成回复 / 正在用 X」分阶段说） */
+export const CHAT_NO_SESSION_TEXT = "会话文件还没出现（去终端看确认）";
 
 /**
  * 聊天头状态微字。未发过、也没在跑时不要写「等待会话文件」——

@@ -457,6 +457,25 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-21 · 聊天层生成中那一行：说在做的事，不说程序阶段
+
+用户：「借鉴 Claude 客户端以及 Codex 客户端的聊天层 UI 和显示交互……现在的『正在生成回复』『正在用』太机械了」→ 看过方案后「全部做，也要注意 Windows 的显示」。定下：
+
+一，**状态说这一轮在做的事**（`chat-status.ts`）：正在跑的工具用过程行同一套动词 + 对象（「运行 npm test」「编辑 store.ts」「调用 blender · get_scene_info」），
+不露工具原名；没有工具时说思考的小标题（Codex 推理摘要 `**小标题**`，别家取第一句）、计划里进行中的一项（Claude 的 activeForm），都没有写「思考中」；
+刚发出 1.5 秒内只亮 M▁ 光标。「已送出 / 正在生成回复 / 正在用 X」三段式作废（「正在生成回复」实为在等会话文件，词不达意）。
+
+二，**同一件事只说一次**：过程里已经有那一行在跑时，状态行不再重复（只留光标，或说计划里那一项）；那一行自己不再写「进行中…」，改为动词与对象共用一道光带，
+等你决定时写「等你决定」。实时预览在出字时不另起状态行，Mesa 光标（`MesaCaret`）接在最后一个字后面。时间满 10 秒才写，「看实时输出」安静满 10 秒才给。
+
+三，**取数**：旁路快照新增 `activity`（正在跑的工具，按开始 / 结束登记，开始写正文或一轮结束清空；参数截断并逐个脱敏）与 `thinking`
+（Codex `item/reasoning/summaryTextDelta`，没摘要时用原始推理兜底；Qwen `thinking_delta`；OpenCode reasoning part）。没有旁路的家照会话文件推断，慢几秒但说法一样。
+出站快照的实时文字与思考在 Rust 层脱敏（原先实时文字未脱敏，顺带补上）。假网关加 `TRIGGER_THINK`，Codex / Qwen / OpenCode / Claude Code 四家 e2e_channel 逐家核过。
+
+四，**Windows**：光带用 background-clip:text（WebView2 与 WKWebView 都支持，WebKit 带前缀）；减弱动态效果与 Windows 高对比度（forced-colors）下不扫光、
+退回各段字色（否则透明字整行消失）；Codex 在 Windows 上命令外面套的 PowerShell 外壳显示时剥掉；路径按 Windows 方言相对化；Windows 上 Claude 后台 hooks
+结束先于开始到达时不误判在跑。不学 Claude Code 随机换的俏皮动词（语气要专业）。未验：Mesa Dev 窗口里实机点验（Mac / Windows），交给用户。
+
 ### 2026-10-21 · 终端性能：会等待的命令挪出主线程
 
 用户问「Mesa 用的是伪终端，终端性能是不是被这个方式定了上限」。结论：PTY 不是上限——原生终端同样从 PTY 读，本机实测 macOS

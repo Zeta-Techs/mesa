@@ -15,6 +15,8 @@ SLOW_LINES = ["第一段：这是一段慢慢流出来的回复。", "", "- 要�
               "", "```bash", "echo mesa", "```", "", "最后一行：完毕。"]
 # TRIGGER_LONG = 比一屏还长的回复（看回复开头滚出屏后预览还接不接得上，2026-10-19 用户：Codex 第 22 行卡住）
 LONG_LINES = [f"第 {i} 行：长回复逐行流出。" for i in range(1, 61)]
+# TRIGGER_THINK 时先出的那段思考（Codex 推理摘要的样子：粗体小标题 + 一句）
+THINK_TEXT = "**规划探针命令**\n\n先跑一条命令看看环境，再回答。"
 # E2E_PROBE_CMD 换探针命令（如写绝对路径，看沙箱里的工作目录对不对）
 PROBE = os.environ.get("E2E_PROBE_CMD", "echo mesa > mesa_probe.txt")
 SHELLISH = ("bash", "shell", "run_shell_command", "exec_command", "run_command", "terminal", "execute", "command")
@@ -157,6 +159,9 @@ class H(BaseHTTPRequestHandler):
         shell = pick_shell(tools) if mode == "tool" else None
         call_args = json.dumps(shell_args(shell[1], b"TRIGGER_ESC" in raw), ensure_ascii=False) if shell else None
         delay = 0.6 if mode == "slow" else 0.25 if mode == "long" else 0
+        # TRIGGER_THINK：回答 / 调工具前先出一段思考（Responses 推理摘要、Anthropic thinking 块、Chat 的 reasoning_content），
+        # 核对聊天层「现在在想什么」那条线；工具结果回来之后的那次请求不再想
+        think = THINK_TEXT if b"TRIGGER_THINK" in raw and mode != "done" else None
         if "count_tokens" in p:
             return self._send(200, {"input_tokens": 10})
         if p.split("?")[0].endswith("/messages"):
@@ -176,18 +181,26 @@ class H(BaseHTTPRequestHandler):
                 self._ev({"type": "message_delta", "delta": {"stop_reason": "tool_use", "stop_sequence": None}, "usage": {"output_tokens": 1}}, "message_delta")
                 self._ev({"type": "message_stop"}, "message_stop")
                 return
-            if shell:
-                self._ev({"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": "toolu_probe", "name": shell[0], "input": {}}}, "content_block_start")
-                self._ev({"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": call_args}}, "content_block_delta")
+            bi = 0
+            if think:
+                self._ev({"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": ""}}, "content_block_start")
+                self._ev({"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": think}}, "content_block_delta")
+                self._ev({"type": "content_block_delta", "index": 0, "delta": {"type": "signature_delta", "signature": "e2e"}}, "content_block_delta")
                 self._ev({"type": "content_block_stop", "index": 0}, "content_block_stop")
+                time.sleep(1.0)
+                bi = 1
+            if shell:
+                self._ev({"type": "content_block_start", "index": bi, "content_block": {"type": "tool_use", "id": "toolu_probe", "name": shell[0], "input": {}}}, "content_block_start")
+                self._ev({"type": "content_block_delta", "index": bi, "delta": {"type": "input_json_delta", "partial_json": call_args}}, "content_block_delta")
+                self._ev({"type": "content_block_stop", "index": bi}, "content_block_stop")
                 self._ev({"type": "message_delta", "delta": {"stop_reason": "tool_use", "stop_sequence": None}, "usage": {"output_tokens": 1}}, "message_delta")
                 self._ev({"type": "message_stop"}, "message_stop")
                 return
-            self._ev({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}, "content_block_start")
+            self._ev({"type": "content_block_start", "index": bi, "content_block": {"type": "text", "text": ""}}, "content_block_start")
             for i, ln in enumerate(lines):
-                self._ev({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": ln + ("\n" if i < len(lines) - 1 else "")}}, "content_block_delta")
+                self._ev({"type": "content_block_delta", "index": bi, "delta": {"type": "text_delta", "text": ln + ("\n" if i < len(lines) - 1 else "")}}, "content_block_delta")
                 time.sleep(delay)
-            self._ev({"type": "content_block_stop", "index": 0}, "content_block_stop")
+            self._ev({"type": "content_block_stop", "index": bi}, "content_block_stop")
             self._ev({"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence": None}, "usage": {"output_tokens": 1}}, "message_delta")
             self._ev({"type": "message_stop"}, "message_stop")
             return
@@ -198,6 +211,9 @@ class H(BaseHTTPRequestHandler):
                                         "usage": {"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6}})
             self._sse_start()
             base = {"id": "c", "object": "chat.completion.chunk", "created": int(time.time()), "model": model}
+            if think:
+                self._ev({**base, "choices": [{"index": 0, "delta": {"role": "assistant", "reasoning_content": think}, "finish_reason": None}]})
+                time.sleep(1.0)
             if shell:
                 call = {"index": 0, "id": "call_probe", "type": "function", "function": {"name": shell[0], "arguments": call_args}}
                 self._ev({**base, "choices": [{"index": 0, "delta": {"role": "assistant", "content": None, "tool_calls": [call]}, "finish_reason": None}]})
@@ -217,22 +233,34 @@ class H(BaseHTTPRequestHandler):
             rid = "resp_e2e"
             resp = {"id": rid, "object": "response", "created_at": int(time.time()), "status": "in_progress", "model": model, "output": []}
             self._ev({"type": "response.created", "response": resp}, "response.created")
+            out, oi = [], 0
+            if think:
+                rs = {"id": "rs_1", "type": "reasoning", "summary": [{"type": "summary_text", "text": think}]}
+                self._ev({"type": "response.output_item.added", "output_index": 0, "item": {**rs, "summary": []}}, "response.output_item.added")
+                self._ev({"type": "response.reasoning_summary_part.added", "item_id": "rs_1", "output_index": 0, "summary_index": 0, "part": {"type": "summary_text", "text": ""}}, "response.reasoning_summary_part.added")
+                self._ev({"type": "response.reasoning_summary_text.delta", "item_id": "rs_1", "output_index": 0, "summary_index": 0, "delta": think}, "response.reasoning_summary_text.delta")
+                self._ev({"type": "response.reasoning_summary_text.done", "item_id": "rs_1", "output_index": 0, "summary_index": 0, "text": think}, "response.reasoning_summary_text.done")
+                self._ev({"type": "response.reasoning_summary_part.done", "item_id": "rs_1", "output_index": 0, "summary_index": 0, "part": {"type": "summary_text", "text": think}}, "response.reasoning_summary_part.done")
+                self._ev({"type": "response.output_item.done", "output_index": 0, "item": rs}, "response.output_item.done")
+                time.sleep(1.0)
+                out.append(rs); oi = 1
             if shell:
                 item = {"id": "fc_1", "type": "function_call", "status": "completed", "call_id": "call_probe", "name": shell[0], "arguments": call_args}
-                self._ev({"type": "response.output_item.added", "output_index": 0, "item": {**item, "status": "in_progress", "arguments": ""}}, "response.output_item.added")
-                self._ev({"type": "response.function_call_arguments.delta", "item_id": "fc_1", "output_index": 0, "delta": call_args}, "response.function_call_arguments.delta")
-                self._ev({"type": "response.function_call_arguments.done", "item_id": "fc_1", "output_index": 0, "arguments": call_args}, "response.function_call_arguments.done")
-                self._ev({"type": "response.output_item.done", "output_index": 0, "item": item}, "response.output_item.done")
+                self._ev({"type": "response.output_item.added", "output_index": oi, "item": {**item, "status": "in_progress", "arguments": ""}}, "response.output_item.added")
+                self._ev({"type": "response.function_call_arguments.delta", "item_id": "fc_1", "output_index": oi, "delta": call_args}, "response.function_call_arguments.delta")
+                self._ev({"type": "response.function_call_arguments.done", "item_id": "fc_1", "output_index": oi, "arguments": call_args}, "response.function_call_arguments.done")
+                self._ev({"type": "response.output_item.done", "output_index": oi, "item": item}, "response.output_item.done")
             else:
                 full = "\n".join(lines)
                 item = {"id": "msg_1", "type": "message", "role": "assistant", "status": "completed", "content": [{"type": "output_text", "text": full, "annotations": []}]}
-                self._ev({"type": "response.output_item.added", "output_index": 0, "item": {**item, "status": "in_progress", "content": []}}, "response.output_item.added")
+                self._ev({"type": "response.output_item.added", "output_index": oi, "item": {**item, "status": "in_progress", "content": []}}, "response.output_item.added")
                 for i, ln in enumerate(lines):
-                    self._ev({"type": "response.output_text.delta", "item_id": "msg_1", "output_index": 0, "content_index": 0, "delta": ln + ("\n" if i < len(lines) - 1 else "")}, "response.output_text.delta")
+                    self._ev({"type": "response.output_text.delta", "item_id": "msg_1", "output_index": oi, "content_index": 0, "delta": ln + ("\n" if i < len(lines) - 1 else "")}, "response.output_text.delta")
                     time.sleep(delay)
-                self._ev({"type": "response.output_text.done", "item_id": "msg_1", "output_index": 0, "content_index": 0, "text": full}, "response.output_text.done")
-                self._ev({"type": "response.output_item.done", "output_index": 0, "item": item}, "response.output_item.done")
-            self._ev({"type": "response.completed", "response": {**resp, "status": "completed", "output": [item],
+                self._ev({"type": "response.output_text.done", "item_id": "msg_1", "output_index": oi, "content_index": 0, "text": full}, "response.output_text.done")
+                self._ev({"type": "response.output_item.done", "output_index": oi, "item": item}, "response.output_item.done")
+            out.append(item)
+            self._ev({"type": "response.completed", "response": {**resp, "status": "completed", "output": out,
                       "usage": {"input_tokens": 5, "output_tokens": 1, "total_tokens": 6, "input_tokens_details": {"cached_tokens": 0}, "output_tokens_details": {"reasoning_tokens": 0}}}}, "response.completed")
             return
         if ":streamGenerateContent" in p or ":generateContent" in p:

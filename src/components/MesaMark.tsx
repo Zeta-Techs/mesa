@@ -1,5 +1,26 @@
 import { useId } from "react";
 
+/** 光标的品牌琥珀：浅色底用深一档才压得住 */
+function mesaAmber(light: boolean): string {
+  return light ? "#e39a1c" : "#f5b83d";
+}
+
+/**
+ * 只有 M▁ 里那道光标，当插入符接在聊天实时预览的最后一个字后面（2026-10-21：AI 正在往下写，
+ * 光标就跟着字走，不再另起一行写「正在生成回复」）。坐在文字基线上，宽高随字号；一直亮灭，
+ * 减弱动态效果时常亮（.ccode-caret-blink）。深色底带一点同色余辉，浅色底余辉发脏不加
+ */
+export function MesaCaret({ light, className = "" }: { light: boolean; className?: string }) {
+  const amber = mesaAmber(light);
+  return (
+    <span
+      aria-hidden="true"
+      className={`ccode-caret-blink ml-[0.2em] inline-block h-[0.22em] w-[0.55em] align-baseline ${className}`}
+      style={{ background: amber, boxShadow: light ? undefined : `0 0 6px ${amber}73` }}
+    />
+  );
+}
+
 /**
  * Mesa 光标标志的「字标」版：去掉图标底板（圆角方块、渐变、投影），只留 M 与基线上的光标。
  * 放在文字行里当字用——M 取当前文字色（随主题），光标保留品牌琥珀与荧光余辉（与图标源
@@ -26,7 +47,7 @@ export function MesaMark({
 }) {
   // 多个聊天标签可能同时挂着字标：滤镜 id 每个实例各一份
   const glowId = `mesa-mark-glow-${useId().replace(/:/g, "")}`;
-  const amber = light ? "#e39a1c" : "#f5b83d";
+  const amber = mesaAmber(light);
   // 光标矩形（与图标源同值 120×60）；小字号版加宽加厚到 250×100，viewBox 跟着往右放
   const cw = inline ? 250 : 120;
   const ch = inline ? 100 : 60;

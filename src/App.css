@@ -2458,6 +2458,49 @@ select:focus-visible {
   }
 }
 
+/* 聊天「这一轮在做什么」的光带（2026-10-21，对照 Claude / Codex 客户端）：生成中那一行的文字、过程里还没回结果的
+   那一行，底色 l3，一道 l1 的亮带从左扫到右——字本身在动，不再多写「进行中…」。
+   background-clip:text 连后代的字一起裁（过程行的动词与对象两个 span 共用一道光带）；WebKit 要带前缀。
+   减弱动态效果时不扫、各段回到自己的字色（currentColor 按关键字继承）。Windows 高对比度（forced-colors）下背景被系统接管、
+   透明字会整行消失，同样退回字色 */
+@keyframes ccode-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0% 0;
+  }
+}
+.ccode-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    var(--color-l3) 0%,
+    var(--color-l3) 40%,
+    var(--color-l1) 50%,
+    var(--color-l3) 60%,
+    var(--color-l3) 100%
+  );
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: ccode-shimmer 2.4s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ccode-shimmer {
+    animation: none;
+    background: none;
+    -webkit-text-fill-color: currentColor;
+  }
+}
+@media (forced-colors: active) {
+  .ccode-shimmer {
+    animation: none;
+    background: none;
+    -webkit-text-fill-color: currentColor;
+  }
+}
+
 
 /* 终端标签「生成中」：虚线沿圆周爬，圆本身不旋转。
    WKWebView 里 CSS rotate 会让变换原点跟着描边外接框晃。 */

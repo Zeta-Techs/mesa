@@ -30,6 +30,10 @@ const CODEX_REMOTE_MIN: (u32, u32, u32) = (0, 163, 0);
 const CODEBUDDY_SETTINGS_MIN: (u32, u32, u32) = (2, 169, 0);
 /// 这一轮实时文字最多留多少字符（只给预览用，正文以会话文件为准）
 const LIVE_TEXT_CAP: usize = 24_000;
+/// 一段思考摘要最多留多少字节（聊天层只取开头一句当状态）
+const THINKING_CAP: usize = 2_000;
+/// 正在跑的工具的参数里，单个字符串最多留多少字符（认得出命令 / 文件就够，差异正文不要）
+const ACTIVITY_STR_CAP: usize = 1_200;
 /// 审批卡里命令 / 差异 / 参数的长度上限
 const PREVIEW_CAP: usize = 6_000;
 /// 往前端推快照的最短间隔（实时文字一字一个事件，合并着推）
@@ -99,6 +103,21 @@ pub struct ChannelSnapshot {
     /// 这一轮旁路送来的实时文字（预览用；Claude 这类只有 hooks 的家没有）
     pub live_text: Option<String>,
     pub notice: Option<NoticeDto>,
+    /// 正在跑的工具（最近开始、还没结束的那个）：聊天层「现在在做什么」用，比会话文件早到
+    pub activity: Option<ActivityDto>,
+    /// 这一段思考的摘要（Codex 推理摘要、Qwen / OpenCode 的思考增量）；工具开始或正文开始写就清掉
+    pub thinking: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityDto {
+    /// CLI 自己的工具名（前端 tool-activity.ts 按名字归类成「运行 / 读取 / 编辑 …」）
+    pub name: String,
+    /// 参数 JSON：长字符串截断、逐个脱敏，只够认出在做什么（见 slim_value）
+    pub input: String,
+    /// 毫秒时间戳
+    pub started_at: i64,
 }
 
 // ===== 事件 =====
@@ -133,6 +152,10 @@ pub(crate) enum ChannelEvent {
     TextDelta(String),
     /// 新的一段回复开始（工具调用把正文隔开了）
     TextBreak,
+    /// 思考摘要的增量（Codex 推理摘要 / Qwen、OpenCode 思考）
+    ThinkingDelta(String),
+    /// 新的一段思考开始：前一段的摘要作废
+    ThinkingBreak,
     TurnEnd {
         reason: Option<String>,
     },
@@ -163,6 +186,10 @@ pub(crate) struct Tracker {
     /// 排在当前这张后面的审批（带请求 id 的旁路才有：同一回复里并行的几个工具各要一次批准，
     /// CLI 逐个问；后到的不能顶掉还没答的那张）。(内容, 所属工具 id)
     queued: Vec<(ApprovalDto, Option<String>)>,
+    /// 正在跑的工具（按开始先后；并行时有几个）：snap.activity 取最后一个
+    running: Vec<(Option<String>, ActivityDto)>,
+    /// 这一轮已经结束的工具 id：后台 hook 的结束可能比开始先到，晚到的开始不再算在跑
+    finished: std::collections::HashSet<String>,
 }
 
 fn is_open(turn: &Option<TurnDto>) -> bool {
@@ -198,6 +225,10 @@ impl Tracker {
         self.queued.clear();
         self.pending_break = false;
         self.ended.clear();
+        self.running.clear();
+        self.finished.clear();
+        self.snap.activity = None;
+        self.snap.thinking = None;
     }
 
     /// 带请求 id 的审批（Codex / Qwen / OpenCode）：撤卡只认「已处理」事件、它自己那个工具结束、这一轮结束
@@ -346,6 +377,7 @@ impl Tracker {
     /// 应用一个事件；返回快照是否变了
     pub(crate) fn apply(&mut self, ev: ChannelEvent, now: i64) -> bool {
         let before = self.snap.clone();
+        let tracked = ev.clone();
         if self.async_hooks
             && matches!(
                 ev,
@@ -353,8 +385,72 @@ impl Tracker {
             )
         {
             self.apply_async_tool(ev, now);
-            return self.snap != before;
+        } else {
+            self.apply_event(ev, now);
         }
+        self.track_activity(&tracked, now);
+        self.snap != before
+    }
+
+    /// 「现在在做什么」：正在跑的工具与这一段思考摘要（回合状态与审批之外的另一条线，放在事件处理之后算——
+    /// 回合开始会清空它们，开始事件要先开回合再登记）
+    fn track_activity(&mut self, ev: &ChannelEvent, now: i64) {
+        match ev {
+            ChannelEvent::ToolStart { call_id, name, input } => {
+                if call_id.as_ref().is_some_and(|id| self.finished.contains(id)) {
+                    return;
+                }
+                let input = slim_input(input);
+                // 同一个调用再报一次（OpenCode 先 pending 后 running、参数补全）：原地更新
+                let same = call_id
+                    .as_ref()
+                    .and_then(|id| self.running.iter_mut().find(|(c, _)| c.as_deref() == Some(id.as_str())));
+                if let Some((_, a)) = same {
+                    a.input = input;
+                } else {
+                    self.running.push((
+                        call_id.clone(),
+                        ActivityDto { name: name.clone(), input, started_at: now },
+                    ));
+                }
+                // 想完了、动手了：这一段思考的摘要不再是「现在」
+                self.snap.thinking = None;
+            }
+            ChannelEvent::ToolEnd { call_id } => match call_id {
+                Some(id) => {
+                    self.finished.insert(id.clone());
+                    self.running.retain(|(c, _)| c.as_deref() != Some(id.as_str()));
+                }
+                None => {
+                    self.running.pop();
+                }
+            },
+            ChannelEvent::TextDelta(text) if !text.is_empty() => {
+                // 开始写回复：工具都跑完了，思考也结束了
+                self.running.clear();
+                self.snap.thinking = None;
+            }
+            ChannelEvent::ThinkingBreak => self.snap.thinking = None,
+            ChannelEvent::ThinkingDelta(text) if !text.is_empty() => {
+                let cur = self.snap.thinking.get_or_insert_with(String::new);
+                if cur.len() < THINKING_CAP {
+                    cur.push_str(text);
+                    if cur.len() > THINKING_CAP {
+                        let end = (0..=THINKING_CAP).rev().find(|i| cur.is_char_boundary(*i)).unwrap_or(0);
+                        cur.truncate(end);
+                    }
+                }
+            }
+            ChannelEvent::TurnEnd { .. } => {
+                self.running.clear();
+                self.snap.thinking = None;
+            }
+            _ => {}
+        }
+        self.snap.activity = self.running.last().map(|(_, a)| a.clone());
+    }
+
+    fn apply_event(&mut self, ev: ChannelEvent, now: i64) {
         match ev {
             ChannelEvent::Session { id, path, source } => {
                 // Codex 在 Windows 上恢复会话时给的是 `\\?\C:\…` 形态，统一成普通路径（其余平台原样）
@@ -485,7 +581,7 @@ impl Tracker {
             }
             ChannelEvent::TextDelta(text) => {
                 if text.is_empty() {
-                    return false;
+                    return;
                 }
                 self.ensure_running(now);
                 let live = self.snap.live_text.get_or_insert_with(String::new);
@@ -523,8 +619,13 @@ impl Tracker {
                 let seq = self.snap.notice.as_ref().map(|n| n.seq).unwrap_or(0) + 1;
                 self.snap.notice = Some(NoticeDto { seq, text });
             }
+            ChannelEvent::ThinkingDelta(text) => {
+                if !text.is_empty() {
+                    self.ensure_running(now);
+                }
+            }
+            ChannelEvent::ThinkingBreak => {}
         }
-        self.snap != before
     }
 }
 
@@ -541,6 +642,64 @@ fn cap(text: &str, max: usize) -> String {
 
 fn redact_cap(text: &str) -> String {
     crate::sessions::redact_sensitive_text(&cap(text, PREVIEW_CAP))
+}
+
+/// 已保存的密钥（脱敏用）：出字时每 150ms 推一次快照，不必每次都读 keys.json，5 秒内复用
+fn secrets_for_redact() -> Vec<String> {
+    static CACHE: Mutex<Option<(Instant, Vec<String>)>> = Mutex::new(None);
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, list)) = cache.as_ref() {
+        if at.elapsed() < Duration::from_secs(5) {
+            return list.clone();
+        }
+    }
+    let list = crate::profiles::stored_secrets();
+    *cache = Some((Instant::now(), list.clone()));
+    list
+}
+
+/// 正在跑的工具的参数：长字符串截到 ACTIVITY_STR_CAP 个字符并逐个脱敏，数组 / 对象限量限深。
+/// 前端拿它认出「运行 npm test」「编辑 store.ts」，不需要差异正文
+fn slim_value(v: &Value, depth: usize, secrets: &[String]) -> Value {
+    match v {
+        Value::String(s) => {
+            let cut = match s.char_indices().nth(ACTIVITY_STR_CAP) {
+                Some((at, _)) => format!("{}…", &s[..at]),
+                None => s.clone(),
+            };
+            Value::String(crate::sessions::redact_sensitive_text_with(&cut, secrets))
+        }
+        Value::Array(a) if depth < 3 => {
+            Value::Array(a.iter().take(20).map(|x| slim_value(x, depth + 1, secrets)).collect())
+        }
+        Value::Object(m) if depth < 3 => Value::Object(
+            m.iter()
+                .take(40)
+                .map(|(k, x)| (k.clone(), slim_value(x, depth + 1, secrets)))
+                .collect(),
+        ),
+        Value::Array(_) | Value::Object(_) => Value::Null,
+        other => other.clone(),
+    }
+}
+
+fn slim_input(input: &Value) -> String {
+    match input {
+        Value::Null => String::new(),
+        other => slim_value(other, 0, &secrets_for_redact()).to_string(),
+    }
+}
+
+/// 出站前的快照：会话文本（实时文字、思考摘要）在 Rust 层脱敏再给前端（AGENTS.md 硬约束；工具参数在登记时已脱敏）
+fn outbound(snap: &ChannelSnapshot) -> ChannelSnapshot {
+    let mut out = snap.clone();
+    if out.live_text.is_some() || out.thinking.is_some() {
+        let secrets = secrets_for_redact();
+        let redact = |t: String| crate::sessions::redact_sensitive_text_with(&t, &secrets);
+        out.live_text = out.live_text.map(redact);
+        out.thinking = out.thinking.map(redact);
+    }
+    out
 }
 
 /// 整个文件新建 / 删除：每行补上 + / -。已经是带符号的差异（每行都以该符号开头，或有 @@ 段头）就原样返回
@@ -812,15 +971,26 @@ pub(crate) fn map_qwen(v: &Value) -> Vec<ChannelEvent> {
             let ev = v.get("event").cloned().unwrap_or(Value::Null);
             match ev.get("type").and_then(|x| x.as_str()) {
                 Some("message_start") => out.push(ChannelEvent::TextBreak),
+                Some("content_block_start") => {
+                    let block = ev.get("content_block").and_then(|b| b.get("type")).and_then(|x| x.as_str());
+                    if block == Some("thinking") {
+                        out.push(ChannelEvent::ThinkingBreak);
+                    }
+                }
                 Some("content_block_delta") => {
                     let delta = ev.get("delta");
-                    if delta.and_then(|d| d.get("type")).and_then(|x| x.as_str())
-                        == Some("text_delta")
-                    {
-                        if let Some(t) = delta.and_then(|d| d.get("text")).and_then(|x| x.as_str())
-                        {
-                            out.push(ChannelEvent::TextDelta(t.to_string()));
+                    match delta.and_then(|d| d.get("type")).and_then(|x| x.as_str()) {
+                        Some("text_delta") => {
+                            if let Some(t) = delta.and_then(|d| d.get("text")).and_then(|x| x.as_str()) {
+                                out.push(ChannelEvent::TextDelta(t.to_string()));
+                            }
                         }
+                        Some("thinking_delta") => {
+                            if let Some(t) = delta.and_then(|d| d.get("thinking")).and_then(|x| x.as_str()) {
+                                out.push(ChannelEvent::ThinkingDelta(t.to_string()));
+                            }
+                        }
+                        _ => {}
                     }
                 }
                 _ => {}
@@ -988,6 +1158,7 @@ pub(crate) fn map_opencode(ev: &Value, st: &mut OpenCodeState) -> Vec<ChannelEve
             }
             match pty.as_str() {
                 "text" if first => out.push(ChannelEvent::TextBreak),
+                "reasoning" if first => out.push(ChannelEvent::ThinkingBreak),
                 "tool" => {
                     let call = part.get("callID").and_then(|x| x.as_str()).map(String::from);
                     let name = part
@@ -1015,9 +1186,13 @@ pub(crate) fn map_opencode(ev: &Value, st: &mut OpenCodeState) -> Vec<ChannelEve
             let part = p.get("partID").and_then(|x| x.as_str()).unwrap_or("");
             let field = p.get("field").and_then(|x| x.as_str()).unwrap_or("text");
             let kind = st.parts.get(part).map(String::as_str).unwrap_or("text");
-            if kind == "text" && field == "text" {
+            if field == "text" {
                 if let Some(d) = p.get("delta").and_then(|x| x.as_str()) {
-                    out.push(ChannelEvent::TextDelta(d.to_string()));
+                    match kind {
+                        "text" => out.push(ChannelEvent::TextDelta(d.to_string())),
+                        "reasoning" => out.push(ChannelEvent::ThinkingDelta(d.to_string())),
+                        _ => {}
+                    }
                 }
             }
         }
@@ -1073,6 +1248,8 @@ pub(crate) struct CodexState {
     /// 我们发出的请求 id → 用途
     calls: HashMap<i64, &'static str>,
     next_id: i64,
+    /// 推理条目里出过摘要的：它的原始推理增量不再拼进思考摘要（两路混在一起读不通）
+    summarized: std::collections::HashSet<String>,
 }
 
 impl CodexState {
@@ -1251,6 +1428,26 @@ pub(crate) fn map_codex(msg: &Value, st: &mut CodexState) -> (Vec<ChannelEvent>,
                     out.push(ChannelEvent::TextDelta(d.to_string()));
                 }
             }
+            // 推理摘要（`**小标题**` + 一段话；一个推理条目可分几段，每段开头先报 summaryPartAdded）。
+            // 摘要没开（或模型不给）时只有原始推理增量（第三方模型经网关常见），拿它兜底
+            "item/reasoning/summaryPartAdded" => out.push(ChannelEvent::ThinkingBreak),
+            "item/reasoning/summaryTextDelta" => {
+                if let Some(id) = params.get("itemId").and_then(|x| x.as_str()) {
+                    st.summarized.insert(id.to_string());
+                }
+                if let Some(d) = params.get("delta").and_then(|x| x.as_str()) {
+                    out.push(ChannelEvent::ThinkingDelta(d.to_string()));
+                }
+            }
+            "item/reasoning/textDelta" => {
+                let summarized = params
+                    .get("itemId")
+                    .and_then(|x| x.as_str())
+                    .is_some_and(|id| st.summarized.contains(id));
+                if let (false, Some(d)) = (summarized, params.get("delta").and_then(|x| x.as_str())) {
+                    out.push(ChannelEvent::ThinkingDelta(d.to_string()));
+                }
+            }
             "item/started" | "item/completed" => {
                 let item = params.get("item").cloned().unwrap_or(Value::Null);
                 let id = item.get("id").and_then(|x| x.as_str()).map(String::from);
@@ -1258,6 +1455,7 @@ pub(crate) fn map_codex(msg: &Value, st: &mut CodexState) -> (Vec<ChannelEvent>,
                 let started = m == "item/started";
                 match ty {
                     "agentMessage" if started => out.push(ChannelEvent::TextBreak),
+                    "reasoning" if started => out.push(ChannelEvent::ThinkingBreak),
                     "commandExecution" | "fileChange" | "mcpToolCall" | "dynamicToolCall" => {
                         if started {
                             let (name, input) = match ty {
@@ -2016,7 +2214,7 @@ fn spawn_flusher(sink: Sink, ch: Arc<Channel>) {
     std::thread::spawn(move || {
         while !ch.stop.load(Ordering::Acquire) {
             if ch.dirty.swap(false, Ordering::AcqRel) {
-                let snap = ch.tracker.lock().ok().map(|t| t.snap.clone());
+                let snap = ch.tracker.lock().ok().map(|t| outbound(&t.snap));
                 if let Some(snap) = snap {
                     sink(Some(snap));
                 }
@@ -2325,7 +2523,7 @@ fn channel_for_tab(tab_id: &str) -> Option<Arc<Channel>> {
 #[tauri::command]
 pub fn chat_channel_snapshot(tab_id: String) -> Option<ChannelSnapshot> {
     let ch = channel_for_tab(&tab_id)?;
-    let snap = ch.tracker.lock().ok()?.snap.clone();
+    let snap = outbound(&ch.tracker.lock().ok()?.snap);
     Some(snap)
 }
 
@@ -2893,6 +3091,141 @@ mod tests {
         ChannelEvent::ToolEnd { call_id: Some(id.into()) }
     }
 
+    #[test]
+    fn activity_follows_running_tools() {
+        let mut t = tracker();
+        t.apply(ChannelEvent::TurnStart, 1);
+        assert!(t.snap.activity.is_none());
+        t.apply(tool("a", "Bash", json!({"command":"npm test","description":"跑测试"})), 2);
+        let a = t.snap.activity.clone().unwrap();
+        assert_eq!((a.name.as_str(), a.started_at), ("Bash", 2));
+        assert_eq!(serde_json::from_str::<Value>(&a.input).unwrap()["command"], "npm test");
+        // 并行：取最近开始的；它结束了回到前一个
+        t.apply(tool("b", "Read", json!({"file_path":"/w/a.rs"})), 3);
+        assert_eq!(t.snap.activity.as_ref().unwrap().name, "Read");
+        t.apply(end("b"), 4);
+        assert_eq!(t.snap.activity.as_ref().unwrap().name, "Bash");
+        t.apply(end("a"), 5);
+        assert!(t.snap.activity.is_none());
+        // 开始写回复：没结束事件的工具也不再算在跑
+        t.apply(tool("c", "Grep", json!({"pattern":"x"})), 6);
+        t.apply(ChannelEvent::TextDelta("好了".into()), 7);
+        assert!(t.snap.activity.is_none());
+        t.apply(tool("d", "Bash", json!({"command":"ls"})), 8);
+        t.apply(ChannelEvent::TurnEnd { reason: None }, 9);
+        assert!(t.snap.activity.is_none(), "一轮结束清空");
+    }
+
+    #[test]
+    fn activity_ignores_late_start_after_end_in_async_hooks() {
+        // Windows 上 Claude 的 hooks 在后台跑，结束可能比开始先到
+        let mut t = tracker();
+        t.async_hooks = true;
+        t.apply(ChannelEvent::TurnStart, 1);
+        t.apply(end("x"), 2);
+        t.apply(tool("x", "Bash", json!({"command":"echo hi"})), 3);
+        assert!(t.snap.activity.is_none());
+        t.apply(tool("y", "Edit", json!({"file_path":"/w/b.rs","old_string":"a","new_string":"b"})), 4);
+        assert_eq!(t.snap.activity.as_ref().unwrap().name, "Edit");
+    }
+
+    #[test]
+    fn activity_input_is_slimmed_and_redacted() {
+        let long = "x".repeat(ACTIVITY_STR_CAP + 50);
+        let input = slim_input(&json!({
+            "command": format!("curl -H 'Authorization: Bearer sk-abcdefghijklmnopqrstuvwxyz0123' {long}"),
+            "nested": {"deep": {"deeper": {"deepest": "gone"}}},
+        }));
+        let v: Value = serde_json::from_str(&input).unwrap();
+        let cmd = v["command"].as_str().unwrap();
+        assert!(!cmd.contains("sk-abcdefghijklmnopqrstuvwxyz0123"), "{cmd}");
+        assert!(cmd.ends_with('…') && cmd.chars().count() <= ACTIVITY_STR_CAP + 1);
+        assert!(v["nested"]["deep"]["deeper"].is_null(), "限深");
+        assert_eq!(slim_input(&Value::Null), "");
+    }
+
+    #[test]
+    fn thinking_from_codex_reasoning_summary() {
+        let mut st = CodexState::default();
+        let mut t = Tracker::new("tab-c", "codex", "codex");
+        let apply = |msg: Value, st: &mut CodexState, t: &mut Tracker| {
+            for ev in map_codex(&msg, st).0 {
+                t.apply(ev, 1);
+            }
+        };
+        apply(json!({"method":"thread/started","params":{"thread":{"id":"th1","path":"/r/x.jsonl","parentThreadId":null}}}), &mut st, &mut t);
+        apply(json!({"method":"turn/started","params":{"threadId":"th1","turn":{"id":"u1"}}}), &mut st, &mut t);
+        let reason = |m: &str, extra: Value| {
+            let mut p = json!({"threadId":"th1","turnId":"u1","itemId":"r1","summaryIndex":0});
+            if let (Some(o), Some(e)) = (p.as_object_mut(), extra.as_object()) {
+                o.extend(e.clone());
+            }
+            json!({"method": m, "params": p})
+        };
+        apply(json!({"method":"item/started","params":{"threadId":"th1","turnId":"u1","item":{"type":"reasoning","id":"r1","summary":[],"content":[]}}}), &mut st, &mut t);
+        apply(reason("item/reasoning/summaryPartAdded", json!({})), &mut st, &mut t);
+        apply(reason("item/reasoning/summaryTextDelta", json!({"delta":"**规划修复步骤**\n\n先看"})), &mut st, &mut t);
+        apply(reason("item/reasoning/summaryTextDelta", json!({"delta":"调用方"})), &mut st, &mut t);
+        // 有摘要的条目，原始推理增量不再拼进来
+        apply(reason("item/reasoning/textDelta", json!({"delta":"raw"})), &mut st, &mut t);
+        assert_eq!(t.snap.thinking.as_deref(), Some("**规划修复步骤**\n\n先看调用方"));
+        // 新的一段摘要：前一段作废
+        apply(reason("item/reasoning/summaryPartAdded", json!({"summaryIndex":1})), &mut st, &mut t);
+        assert!(t.snap.thinking.is_none());
+        apply(reason("item/reasoning/summaryTextDelta", json!({"delta":"**跑测试**"})), &mut st, &mut t);
+        // 动手了：思考不再是「现在」
+        apply(json!({"method":"item/started","params":{"threadId":"th1","turnId":"u1","item":{"type":"commandExecution","id":"c1","command":"/bin/zsh -lc 'npm test'"}}}), &mut st, &mut t);
+        assert!(t.snap.thinking.is_none());
+        let a = t.snap.activity.clone().unwrap();
+        assert_eq!(a.name, "commandExecution");
+        assert!(a.input.contains("npm test"));
+        // 没有摘要的模型：原始推理兜底
+        apply(json!({"method":"item/started","params":{"threadId":"th1","turnId":"u1","item":{"type":"reasoning","id":"r2","summary":[],"content":[]}}}), &mut st, &mut t);
+        apply(json!({"method":"item/reasoning/textDelta","params":{"threadId":"th1","turnId":"u1","itemId":"r2","delta":"想一想","contentIndex":0}}), &mut st, &mut t);
+        assert_eq!(t.snap.thinking.as_deref(), Some("想一想"));
+    }
+
+    #[test]
+    fn thinking_from_qwen_and_opencode() {
+        let mut t = Tracker::new("tab-q", "qwen", "qwen");
+        let ev = |delta: Value| json!({"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":delta}});
+        for e in [
+            json!({"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}}),
+            ev(json!({"type":"thinking_delta","thinking":"先看目录"})),
+        ] {
+            for x in map_qwen(&e) {
+                t.apply(x, 1);
+            }
+        }
+        assert_eq!(t.snap.thinking.as_deref(), Some("先看目录"));
+        for x in map_qwen(&ev(json!({"type":"text_delta","text":"好的"}))) {
+            t.apply(x, 2);
+        }
+        assert!(t.snap.thinking.is_none(), "开始写回复就清掉");
+
+        let mut st = OpenCodeState::default();
+        let mut t = Tracker::new("tab-o", "opencode", "opencode");
+        let part = json!({"type":"message.part.updated","properties":{"sessionID":"ses_1","part":{"id":"p1","type":"reasoning","sessionID":"ses_1"}}});
+        let delta = json!({"type":"message.part.delta","properties":{"sessionID":"ses_1","messageID":"m1","partID":"p1","field":"text","delta":"想想怎么改"}});
+        for e in [part, delta] {
+            for x in map_opencode(&e, &mut st) {
+                t.apply(x, 1);
+            }
+        }
+        assert_eq!(t.snap.thinking.as_deref(), Some("想想怎么改"));
+        assert!(t.snap.live_text.is_none(), "思考不进实时正文");
+    }
+
+    #[test]
+    fn thinking_is_capped() {
+        let mut t = tracker();
+        t.apply(ChannelEvent::TurnStart, 1);
+        t.apply(ChannelEvent::ThinkingDelta("想".repeat(THINKING_CAP)), 2);
+        t.apply(ChannelEvent::ThinkingDelta("更多".into()), 3);
+        let th = t.snap.thinking.clone().unwrap();
+        assert!(th.len() <= THINKING_CAP && !th.contains("更多"));
+    }
+
     fn notification() -> ChannelEvent {
         ChannelEvent::ApprovalAsked {
             request_id: None,
@@ -3025,6 +3358,9 @@ mod e2e {
         cleared: Option<(Option<String>, Option<String>, Option<String>)>,
         /// E2E_ARG_PROMPT：启动参数里的首条消息是否原样进了会话
         arg_prompt_ok: Option<bool>,
+        /// 快照里出现过的「正在跑的工具」（名字 + 参数，去重按先后）与思考摘要
+        activities: Vec<String>,
+        thoughts: Vec<String>,
     }
 
     /// 拉起一次、发「跑命令」、按快照答审批，等这一轮走完；clear = 走完再发 /clear 看会话跟随
@@ -3290,7 +3626,32 @@ mod e2e {
         }
         let _ = child.kill();
         let _ = child.wait();
-        Run { done, last: all.last().cloned().unwrap_or_default(), statuses, approval, answered, cleared, arg_prompt_ok }
+        let mut activities: Vec<String> = Vec::new();
+        let mut thoughts: Vec<String> = Vec::new();
+        for s in &all {
+            if let Some(a) = &s.activity {
+                let line = format!("{} {}", a.name, a.input);
+                if !activities.contains(&line) {
+                    activities.push(line);
+                }
+            }
+            if let Some(t) = s.thinking.as_ref().filter(|t| !t.is_empty()) {
+                if !thoughts.contains(t) {
+                    thoughts.push(t.clone());
+                }
+            }
+        }
+        Run {
+            done,
+            last: all.last().cloned().unwrap_or_default(),
+            statuses,
+            approval,
+            answered,
+            cleared,
+            arg_prompt_ok,
+            activities,
+            thoughts,
+        }
     }
 
     fn report(agent: &str, label: &str, r: &Run) {
@@ -3304,6 +3665,8 @@ mod e2e {
         if r.arg_prompt_ok.is_some() {
             println!("{agent}{label}: 启动参数里的首条消息原样到达 {:?}", r.arg_prompt_ok);
         }
+        println!("{agent}{label}: 正在跑的工具 {:?}", r.activities);
+        println!("{agent}{label}: 思考摘要 {:?}", r.thoughts);
     }
 
     /// E2E_CLEAR=1：走完再发 /clear 看会话跟随；E2E_RESUME=1：停掉后按 Mesa 的恢复参数接回这段对话再跑一轮

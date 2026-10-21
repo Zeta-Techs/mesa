@@ -488,6 +488,8 @@ Zed 是唯一核实过的跨 agent 路线：可从已配置的 ACP agent 导入�
 | grok 1.0.62 | **无**：`GROK_CONFIG` 覆盖层按白名单只收 models / features / toolset / shell_environment_policy，hooks 被丢（随包文档）（I） | — | — | — | — | — |
 | cursor | 无「等待确认」事件 | — | — | — | — | — |
 
+**「现在在做什么」（2026-10-21，聊天层生成中那一行，`chat-status.ts`）**：正在跑的工具五家都有（Claude / CodeBuddy PreToolUse·PostToolUse、Qwen 的 tool_use·tool_result、OpenCode tool part 的 status、Codex `item/started`·`item/completed` 的 commandExecution / fileChange / mcpToolCall）；思考摘要只有三家：Codex `item/reasoning/summaryTextDelta`（每段前 `summaryPartAdded`；没摘要的模型只有 `item/reasoning/textDelta` 原始推理，拿来兜底）、Qwen `content_block_delta` 的 `thinking_delta`、OpenCode reasoning part 的 `message.part.delta`（V：假网关 TRIGGER_THINK，四家 e2e_channel 逐家核对，Codex 0.163.0 / Qwen 0.25.2 / OpenCode 1.19.3）。Claude hooks 不带思考，聊天层用会话文件里刚落盘的思考块兜底。
+
 **陷阱（实证）**：
 - **Codex `-c hooks.<事件>=…`** 认得出（来源记作 Session flags），但每次都要在 /hooks 面板审核信任才执行——不能当默认通道。
 - **Codex 新线程第一条消息前没有 rollout**：`thread/resume` 报「no rollout found」；线程转 active 时再订，resume 会重放挂着的审批。

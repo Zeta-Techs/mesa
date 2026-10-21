@@ -45,6 +45,10 @@ export interface ChatChannelSnapshot {
   approval: ChannelApproval | null;
   liveText: string | null;
   notice: { seq: number; text: string } | null;
+  /** 正在跑的工具（最近开始、还没结束的那个；input 是参数 JSON，已截断脱敏）；没有为 null */
+  activity: { name: string; input: string; startedAt: number } | null;
+  /** 这一段思考的摘要（Codex 推理摘要、Qwen / OpenCode 思考增量）；工具开始或正文开始写就清掉 */
+  thinking: string | null;
 }
 
 export type ChannelReplyDecision = "allow" | "allow_always" | "deny";

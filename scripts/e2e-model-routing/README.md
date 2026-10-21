@@ -106,6 +106,8 @@ MESA_E2E_REAL_CLI=1 E2E_PLANS=/tmp/e2e-plans.json E2E_AGENT=codex cargo test --l
 #       E2E_DELETE_SETTINGS=1（发消息前删掉网关的 --settings 覆盖文件，看 hooks 还到不到）、
 #       E2E_RAW=<文件>（终端原始输出按时间逐块记下，聊天层答审批的时刻另记一行；用终端模拟器回放看「答过以后终端里还挂着什么」）、
 #       E2E_REPLY_DELAY_MS=<毫秒>（审批卡出来后等这么久再从聊天层答，像人一样先看一会儿）
+#       E2E_PROMPT="TRIGGER_TOOL TRIGGER_THINK 跑一下"（假网关先出一段思考：Responses 推理摘要 / Anthropic thinking 块 / Chat reasoning_content，
+#       报告末尾「正在跑的工具」「思考摘要」两行核对聊天层生成中那一行的取数；Codex 照旧加 TRIGGER_ESC）
 ```
 
 Windows（2026-10-20 起同一份测试三平台都能跑）：在 Git Bash 里照上面执行，三处不同——

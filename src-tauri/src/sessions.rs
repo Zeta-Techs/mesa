@@ -430,7 +430,7 @@ pub(crate) fn common_secret_token(token: &str) -> Option<String> {
     ))
 }
 
-fn redact_sensitive_text_with(text: &str, secrets: &[String]) -> String {
+pub(crate) fn redact_sensitive_text_with(text: &str, secrets: &[String]) -> String {
     let mut out = text.to_string();
     for secret in secrets {
         if secret.chars().count() >= 8 && out.contains(secret) {

@@ -245,7 +245,8 @@ test("计划：Claude Code 新版任务工具一条一条建、按编号改，�
   ];
   const t = turnOf(groupConversationSegments(messages));
   assert.deepEqual(turnPlan(t.items), [
-    { text: "新建 plan_a.txt", status: "completed" },
+    // 建任务时带的 activeForm 留着，聊天层状态行说「正在做的那一项」用
+    { text: "新建 plan_a.txt", status: "completed", active: "新建中" },
     { text: "写一行 ok", status: "in_progress" },
   ]);
 });

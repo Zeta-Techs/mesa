@@ -245,6 +245,7 @@ export default function ConversationView({
   focusIndex = -1,
   focusKeywords,
   working,
+  awaiting,
   onEditResend,
   onForkHere,
 }: {
@@ -256,8 +257,10 @@ export default function ConversationView({
   focusIndex?: number;
   /** 搜索关键词，用来在命中消息里标出那一句 */
   focusKeywords?: string[];
-  /** 最后一轮还在生成（聊天层传）：这一轮的过程铺开、不收起，正文不当回答切出去 */
+  /** 最后一轮还在生成（聊天层传）：这一轮的过程铺开、不收起，正文不当回答切出去；还没回结果的那一行带光带 */
   working?: boolean;
+  /** 正在等你决定（聊天层有审批 / 确认卡）：还没回结果的那一行写「等你决定」，不再带光带 */
+  awaiting?: boolean;
   /** 用户消息「编辑后重发」：把这句放回输入框（聊天层传；回放页不传 = 不显示） */
   onEditResend?: (text: string) => void;
   /** 助手消息「从这里分叉」：带着到这条为止的对话开分叉标签（聊天层传；回放页不传 = 不显示） */
@@ -484,15 +487,24 @@ export default function ConversationView({
   ) {
     const open = expanded.has(key);
     const Icon = row.icon;
-    const line = (
+    // 还没回结果的一行：聊天层在生成时动词和对象一起带一道光带（不再写「进行中…」）；等你决定时写明在等你；
+    // 回放里悬着没结果的调用（多半是当时被打断）什么都不标
+    const live = row.pending && !row.problem;
+    const shimmer = live && working && !awaiting;
+    const head = (
       <>
-        <Icon size={iconSize} strokeWidth={1.7} aria-hidden="true" className="shrink-0 text-l4" />
         <span className="shrink-0 text-l3">{row.verb}</span>
         {row.target && (
           <span className={`min-w-0 truncate ${row.plain ? "text-l2" : "text-l1"} ${row.mono ? "font-mono text-xs" : ""}`}>
             {row.target}
           </span>
         )}
+      </>
+    );
+    const line = (
+      <>
+        <Icon size={iconSize} strokeWidth={1.7} aria-hidden="true" className="shrink-0 text-l4" />
+        {shimmer ? <span className="ccode-shimmer flex min-w-0 items-center gap-2">{head}</span> : head}
         {row.dir && <span className="min-w-0 shrink truncate text-l4">{row.dir}</span>}
         {row.note && (
           <span className={`min-w-0 shrink-[2] truncate text-l4 ${row.noteMono ? "font-mono text-xs" : ""}`}>
@@ -502,7 +514,7 @@ export default function ConversationView({
         {(row.added ?? 0) > 0 && <span className="shrink-0 tabular-nums text-add">+{row.added}</span>}
         {(row.removed ?? 0) > 0 && <span className="shrink-0 tabular-nums text-del">−{row.removed}</span>}
         {row.problem && <span className="shrink-0 text-err-text">{row.problem}</span>}
-        {row.pending && !row.problem && <span className="shrink-0 text-l4">进行中…</span>}
+        {live && awaiting && <span className="shrink-0 text-l4">等你决定</span>}
       </>
     );
     const rowCls = `flex min-w-0 items-center gap-2 ${compact ? "min-h-6" : "min-h-8"} py-0.5 ${rowText}`;
