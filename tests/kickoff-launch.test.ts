@@ -78,6 +78,18 @@ test("pickKickoffLaunch：项目点选的模型优先于问 AI 记忆", () => {
   );
 });
 
+test("pickKickoffLaunch：步骤绑到没列模型的连接，不带上别的连接记住的模型", () => {
+  const list = [...profiles, { id: "p-bare", agent: "codex", name: "自建", models: [] as string[] }];
+  const memory = { agentId: "claude-code", profileId: "p-claude", model: "sonnet" };
+  // 绑定的连接没列模型 → 留空走 CLI 默认，不是 claude 的 sonnet
+  assert.equal(pickKickoffLaunch(list, memory, null, "codex", "p-bare", "")?.model, "");
+  // 记住的就是这条连接 → 沿用
+  assert.equal(
+    pickKickoffLaunch(list, { agentId: "codex", profileId: "p-bare", model: "o3" }, null, "codex", "p-bare", "")?.model,
+    "o3",
+  );
+});
+
 test("pickKickoffLaunch：项目默认 Agent 优先于全局记忆", () => {
   const picked = pickKickoffLaunch(
     profiles,
