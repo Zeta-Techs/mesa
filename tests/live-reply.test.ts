@@ -506,3 +506,67 @@ test("claudeOutputTokens：转圈行里已生成的 token 数（2026-10-21 Windo
   assert.equal(claudeOutputTokens(screen("✻ Sautéed for 1m 20s · done 10:44")), null);
   assert.equal(claudeOutputTokens(["❯ hello", RULE, "❯", RULE]), null);
 });
+
+// 2026-10-21 Windows ConPTY 抓屏（Grok 1.0.62，假网关）：七行清单提问被折成三行（末行「2. … …」），
+// 回复长过一屏后提问钉在屏顶（sticky header），下面一行「▲」是滚动提示，再往下是回复的后半截
+const GROK_BOX = [
+  "  ╭" + "─".repeat(60) + "╮",
+  "  │ >" + " ".repeat(57) + "│",
+  "  ╰" + "─".repeat(48) + " e2e-picked ─╯",
+];
+const GROK_STICKY = [
+  "",
+  "  ~/work                                                     1.6K / 256K │ [Dashboard]",
+  "",
+  "",
+  "     > TRIGGER_LONG 在当前目录依次完成，每一步用一句话汇报：                 5:50 PM",
+  "       1. 新建 mesa_probe/hello.py，内容是打印 hello 和当前时间",
+  "       2. 列出 mesa_probe 目录 …",
+  "",
+  "                                                            ▲",
+  "     第 4 步：在 mesa_probe 里搜到 \"hello\" 一词，仅出现在 hello.py 第 3 行。",
+  "",
+  "     第 5 步：已把 hello.py 中的 \"hello\" 改为 \"hello Mesa\"。                      █",
+  "                                                                                     █",
+  "    - Responding… 4.1s                                              4.2s ↓1.57k [stop]",
+  "",
+  ...GROK_BOX,
+  "",
+  "  Shift+Tab:mode  │  Ctrl+c:cancel  │  Ctrl+x:shortcuts",
+];
+
+test("Grok：多行提问的续行（含钉在屏顶、折成「… …」的）不是回复，滚动提示 ▲ 也不是", () => {
+  const read = extractLiveReply(GROK_STICKY, "grok");
+  assert.deepEqual(read?.lines, [
+    "第 4 步：在 mesa_probe 里搜到 \"hello\" 一词，仅出现在 hello.py 第 3 行。",
+    "",
+    "第 5 步：已把 hello.py 中的 \"hello\" 改为 \"hello Mesa\"。",
+  ]);
+  // 没滚动时同样：提问三行之后两个空行才是回复
+  const fresh = [
+    "     > 在当前目录依次完成，每一步用一句话汇报：                              5:50 PM",
+    "       1. 新建 mesa_probe/hello.py，内容是打印 hello 和当前时间",
+    "       2. 列出 mesa_probe 目录 …",
+    "",
+    "",
+    "     第 1 步：已创建 mesa_probe/hello.py。                                   5:50 PM",
+    "",
+    "    - Responding… 1.2s",
+    ...GROK_BOX,
+  ];
+  assert.deepEqual(extractLiveReply(fresh, "grok")?.lines, ["第 1 步：已创建 mesa_probe/hello.py。"]);
+});
+
+test("unsyncedTail：开头混进的非回复行不把后面已落盘的段落拖进预览；短行不当锚", () => {
+  const synced = "第 4 步：在 `mesa_probe` 里搜到 \"hello\" 一词，仅出现在 `hello.py` 第 3 行。\n第 5 步：已把 `hello.py` 中的 `\"hello\"` 改为 `\"hello Mesa\"`。";
+  const live = [
+    "  1. 新建 mesa_probe/hello.py，内容是打印 hello 和当前时间",
+    "第 4 步：在 mesa_probe 里搜到 \"hello\" 一词，仅出现在 hello.py 第 3 行。",
+    "",
+    "第 5 步：已把 hello.py 中的 \"hello\" 改为 \"hello Mesa\"。",
+  ];
+  assert.deepEqual(unsyncedTail(live, synced), []);
+  assert.deepEqual(unsyncedTail([...live, "", "第 6 步：已读取"], synced), ["第 6 步：已读取"]);
+  // 「好的」这种短行到处对得上：它后面的新内容照常显示，前面的也不被它吞掉
+  assert.deepEqual(unsyncedTail(["新的一段还没落盘", "好的"], "好的，我来看看。"), ["新的一段还没落盘", "好的"]);
+});

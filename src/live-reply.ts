@@ -126,7 +126,8 @@ const LAYOUTS: Record<string, Layout> = {
     echo: /^\s+[❯>]\s+\S/,
     lead: null,
     tool: /^\s*[◆♦]\s/,
-    skip: /Responding…|^\s*Worked for\b|^\s*[◇○]\s+\S+\s+\[Copy\]$/,
+    // ▲ / ▼ = 对话区上下还有内容的滚动提示（提问钉在屏顶时紧跟在它下面）
+    skip: /Responding…|^\s*Worked for\b|^\s*[◇○]\s+\S+\s+\[Copy\]$|^\s*[▲▼]$/,
     indent: 5,
     tail: /\s{2,}\d{1,2}:\d{2}\s?[AP]M$/,
   },
@@ -232,7 +233,18 @@ export function extractLiveReply(lines: readonly string[], agentId: string): Liv
  *  （2026-10-19 用户截图：Codex 里发九行清单，后八行被当成回复显示在下面） */
 function echoStart(layout: Layout, region: readonly string[], start: number): number {
   const lead = layout.lead;
-  if (!lead) return start;
+  if (!lead) {
+    // 没有助手行首的（Grok）：提问续行对齐到回显正文那一列（「     > 」之后，缩进 7），回复正文只缩进 5。
+    // 缩进够到回显正文列的非空行都是提问续行（含长提问被折成「2. … …」的末行），到空行或缩进回到正文列为止
+    // （2026-10-21 用户 Windows 截图：七行清单提问的续行被当成回复，聊天层已有的段落跟着又画一遍）
+    const echo = region[start - 1] ?? "";
+    const m = /[❯>]\s+/.exec(echo);
+    const col = m ? m.index + m[0].length : layout.indent + 2;
+    while (start < region.length && region[start].trim() && region[start].length - region[start].trimStart().length >= col) {
+      start++;
+    }
+    return start;
+  }
   while (start < region.length && region[start].trim() && !lead.test(region[start])) start++;
   return start;
 }
@@ -328,7 +340,15 @@ function norm(text: string): string {
  */
 export function unsyncedTail(live: readonly string[], synced: string): string[] {
   const done = norm(synced);
-  const idx = live.findIndex((l) => {
+  // 会话文件按顺序落盘：最后一行「够长、已落盘」的及其之前都算过去了。前面混进来的非回复行（提问续行、工具输出）
+  // 原先让「从第一行没落盘的起」从头算起，已落盘的段落整段又画一遍（2026-10-21 Grok 截图）。短行到处对得上，不当锚
+  let from = 0;
+  live.forEach((l, i) => {
+    const n = norm(l);
+    if (n.length >= 8 && done.includes(n)) from = i + 1;
+  });
+  const idx = live.findIndex((l, i) => {
+    if (i < from) return false;
     const n = norm(l);
     return n.length > 0 && !done.includes(n);
   });
