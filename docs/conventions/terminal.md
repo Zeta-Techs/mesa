@@ -329,6 +329,13 @@
   dom（清晰）；选择在**新开的终端**生效，选 webgl 仍过 `isSoftwareWebGL` 探针（TerminalPage.tsx）
   并在上下文丢失时自动退回默认渲染器。canvas 渲染器 addon 只声明支持 xterm 5（截至 0.8.0-beta.48），
   不引入。**别把「触控板合帧」说成清晰与流畅兼得**——合帧只砍同一帧内的重复位置写入，每帧重绘次数不变。
+- **聊天层盖住时终端停画（2026-10-21）**：聊天模式且没拉起终端时，聊天层整片盖在 xterm 上，但 xterm 照样每帧重画。
+  xterm 按 IntersectionObserver 判断画面可见、看不见就停画并在重新可见时整屏重画一次——给 xterm 宿主加
+  `content-visibility: hidden`（`coveredByChat`）即可让它停；`visibility: hidden` 停不了（WKWebView 实测：盖住期间 20 次写入，
+  visibility 照画 19 帧，content-visibility 与移出视口都是 0 帧，揭开后内容一致，DOM 与 WebGL 两种渲染器同）。
+  尺寸不变、行列数不变，**缓冲照常解析**——信任菜单、实时回复、连接错误、模型读回都读缓冲不读画面，不受影响。
+  被盖住的 xterm 不可聚焦，`term.focus()` 成为空操作，不再从聊天输入框抢焦点。不要改成移出视口：
+  `focus()` 会把 overflow 容器滚过去，揭开后画面错位。
 - **终端字体链单一出处 `src/terminal-font.ts`（2026-09-21 修）**：xterm 的 `fontFamily` 就是一段 CSS 字体列表。
   以前 TerminalPage 手拼一份、App.css `--font-mono` 另一份——手拼那份缺 `ui-monospace` 且重复 `'SF Mono'`，
   设置页选「SF Mono（macOS）」永远落 Menlo。现统一走 `terminalFontStack(族名, monoFallbackStack())`：

@@ -724,6 +724,7 @@ const TerminalView = memo(function TerminalView({
   onStatus,
   onSessionUpdate,
   embedInPeek = false,
+  coveredByChat = false,
   onActions,
   onRestoreComplete,
   onConsumeResume,
@@ -808,6 +809,8 @@ const TerminalView = memo(function TerminalView({
   onSessionUpdate: (id: string, s: SessionLinkState) => void;
   /** 聊天窥视底栏：只留 xterm，收起启动栏，让这一栏高度都给 TUI */
   embedInPeek?: boolean;
+  /** 聊天层整片盖在终端上（聊天模式且没拉起终端）：xterm 照常解析（聊天层读屏要用），只停绘制 */
+  coveredByChat?: boolean;
   /** 向父级注册本标签的动作表（查找图标 / 聊天发送 / 改目录等） */
   onActions?: (id: string, a: FocusTabActions) => void;
   onRestoreComplete?: (id: string) => void;
@@ -6147,6 +6150,10 @@ const TerminalView = memo(function TerminalView({
           // 阅读区打开期间由 TerminalPage 按此标记把本节点搬进覆盖层右栏（DOM 搬移不重建）
           data-terminal-host={tabId}
           className="min-w-0 flex-1 overflow-hidden px-3 py-2.5"
+          // 聊天层盖住时跳过绘制：xterm 按 IntersectionObserver 判可见，content-visibility: hidden 让它停画、
+          // 揭开时整屏重画一次；visibility: hidden 停不了（WKWebView 实测）。尺寸不变、行列数不变，
+          // 缓冲照常解析，读屏（信任菜单 / 实时回复 / 连接错误）不受影响
+          style={coveredByChat ? { contentVisibility: "hidden" } : undefined}
           onContextMenu={(e) => {
             e.preventDefault();
             setTermCtxMenu({ x: e.clientX, y: e.clientY });
@@ -9536,6 +9543,10 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                 embedInPeek={
                   (surfaceModeByTab[t.id] ?? DEFAULT_SURFACE_MODE) === "chat" &&
                   Boolean(peekByTab[t.id])
+                }
+                coveredByChat={
+                  (surfaceModeByTab[t.id] ?? DEFAULT_SURFACE_MODE) === "chat" &&
+                  !peekByTab[t.id]
                 }
                 gitTotals={t.id === focusedId ? gitTotals : null}
                 termBg={statusBarColors.background}
