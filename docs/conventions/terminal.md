@@ -99,7 +99,10 @@
 - **聊天层第二期（2026-10-18）**：①**排队**：生成中（`pendingReply` 或 attention working）发出的话照常写进 PTY、由 CLI 排队，
   乐观消息带前端专用标记 `ChatMessageDto.queued`，气泡标「排队中 · 这一轮结束后处理」、无撤回钮；会话文件记下后由解析结果替换。
   ②**乐观消息放回位置**（`placePendingUsers`，chat-handoff.ts）：排队中的接末尾；其余插在「发送那一刻还没有的第一条回复」前
-  （`pendingAssistantKeysRef`）。原口径插在整页第一条回复前，长对话里刚发的那句会跳到页顶。③**标签条 ⋯「对话操作」**
+  （`pendingAssistantKeysRef`）。原口径插在整页第一条回复前，长对话里刚发的那句会跳到页顶。
+  **认「已落盘」不逐字比（2026-10-21）**：`userTextRecorded` 包含即算，再去空白与 BMP 外字符宽松比（Windows 上 Codex 吞 emoji，
+  逐字比永远落空 → 同句画两遍、「正在生成回复」不收）；旁路报回合结束时 `pendingAfterTurn` 把这一轮开始前发出的乐观消息一律
+  当已收下（排队的须早于回合开始），不靠原文。③**标签条 ⋯「对话操作」**
   与斜杠面板 Mesa 组同一份 `mesaCommandsFor(tabId)`，只在聊天层活动标签显示，父级 `ContextMenu`。④**从这里分叉**：
   `forkChat(tabId, untilText)` → `build_handoff_brief(untilText)` 按正文截到那条回复。⑤**连接出问题**：终端会话产出的
   `SessionLinkState.connIssue` 在聊天层渲染成确认卡（`chat-decision.ts`），按钮调标签动作 `switchConnection` / `dismissConnIssue`。

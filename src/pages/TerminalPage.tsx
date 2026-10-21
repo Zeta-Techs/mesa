@@ -71,10 +71,12 @@ import {
   localCommandRecord,
   mergeLocalRecords,
   messageKey,
+  pendingAfterTurn,
   placePendingUsers,
   shouldAutoPeek,
   slashCommandRecorded,
   slashSettledLocally,
+  userTextRecorded,
 } from "../chat-handoff";
 import { AGENTS, type CustomRuntimeDto, type OfficialAccountStatusDto } from "../types";
 import {
@@ -3792,18 +3794,11 @@ const TerminalView = memo(function TerminalView({
         parsedMessages.some(
           (message) =>
             message.role === "user" &&
-            message.blocks.some((block) => {
-              if (block.kind !== "text") return false;
-              const sent = pu.blocks[0]?.text ?? "";
-              // TUI 输入框可能有残留草稿（先发一半、审批框吞键等），落盘文本会是
-              // 「残留 + 本文」的拼接（实证：yyyyyy你是什么模型），精确匹配永远落空、
-              // 「等待回复」挂到超时——放宽为包含匹配；重复发同一文本时旧记录会先命中，
-              // 清除仍受下方 hasNewAssistantText（必须出现新回复正文）双闸门约束
-              return (
-                block.text === sent ||
-                (sent.length > 0 && block.text.includes(sent))
-              );
-            }),
+            // 包含 + 宽松比对（残留草稿、CLI 吞掉 emoji，见 userTextRecorded）；重复发同一文本时旧记录会先命中，
+            // 清除仍受下方 hasNewAssistantText（必须出现新回复正文）双闸门约束
+            message.blocks.some(
+              (block) => block.kind === "text" && userTextRecorded(pu.blocks[0]?.text ?? "", block.text),
+            ),
         );
       // 只画在终端里的斜杠命令（Codex /status…）：本机处理完就留成「命令 + 结果」记录，不再挡着等回复
       if (localRecordsRef.current.file !== ctx.filePath) {
@@ -4117,15 +4112,21 @@ const TerminalView = memo(function TerminalView({
       menuWatchUntilRef.current = Math.max(menuWatchUntilRef.current, Date.now() + 3000);
       scanMenuSoon();
     }
-    // 回合结束：马上读一次会话文件；刚发的话都已落盘的，结束「等待回复」（文件稍慢于事件，留 2.5 秒）
+    // 回合结束：马上读一次会话文件；文件稍慢于事件，2.5 秒后再读一次，这一轮开始前发出的话算 CLI 已收下
+    // （落盘原文对不上也不再挂着「正在生成回复」、同一句画两遍，见 pendingAfterTurn），都收下了就结束等待
     const turn = snap.turn;
     if (turn?.endedAt && turn.endedAt !== channelEndHandledRef.current) {
       channelEndHandledRef.current = turn.endedAt;
       void fetchConversation(true);
-      if (pendingReplyRef.current && turn.startedAt >= lastSendAtRef.current - 2000) {
+      if (pendingReplyRef.current) {
         window.setTimeout(() => {
           void fetchConversation(true).then(() => {
-            if (pendingReplyRef.current && pendingUsersRef.current.length === 0) setPendingReply(false);
+            if (!pendingReplyRef.current) return;
+            pendingUsersRef.current = pendingAfterTurn(pendingUsersRef.current, turn.startedAt);
+            if (pendingUsersRef.current.length > 0) return;
+            setPendingReply(false);
+            // 摘掉画面上残留的本地气泡
+            void fetchConversation(true);
           });
         }, 2500);
       }

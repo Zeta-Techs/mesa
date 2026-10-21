@@ -305,6 +305,40 @@ export function mergeLocalRecords(
   return out;
 }
 
+/**
+ * 发出去的话会话文件记下了没有。不逐字比：
+ * - TUI 输入框有残留草稿（先发一半、审批框吞键等）时落盘是「残留 + 本文」（实证：yyyyyy你是什么模型）→ 包含即算；
+ * - CLI 收不全字：Windows 上 Codex 把 emoji 吞掉、原位留个空格（2026-10-21 用户实测「"引号" 😀」落盘成「"引号" 」），
+ *   原先这句一直算「没落盘」，同一句画两遍、「正在生成回复」挂到下一轮 → 两边去掉空白与 BMP 以外的字（emoji 及其拼接符）再比。
+ * 去完什么都不剩（整句只有 emoji）只认原文，交给旁路回合结束兜底（pendingAfterTurn）。
+ */
+export function userTextRecorded(sent: string, recorded: string): boolean {
+  if (recorded === sent || (sent.length > 0 && recorded.includes(sent))) return true;
+  const loose = looseText(sent);
+  return loose.length > 0 && looseText(recorded).includes(loose);
+}
+
+function looseText(text: string): string {
+  return text.replace(/[\s\u200d\ufe0e\ufe0f\ufffd]|[\u{10000}-\u{10ffff}]|[\ud800-\udfff]/gu, "");
+}
+
+/**
+ * 旁路报来一轮结束：这一轮开始前发出的话 CLI 已经收下（非排队的在开始后 2 秒内发出也算——发送回执可能晚于回合开始事件），
+ * 剩下的才接着等。不靠比原文：原文对不上时（见 userTextRecorded）聊天层原先一直等。
+ * 排队的（上一轮还在跑时发的）必须早于这一轮开始，否则是等下一轮的
+ */
+export function pendingAfterTurn(
+  pending: readonly ChatMessageDto[],
+  turnStartedAt: number,
+  slackMs = 2000,
+): ChatMessageDto[] {
+  return pending.filter((message) => {
+    const at = Date.parse(message.timestamp ?? "");
+    if (!Number.isFinite(at)) return true;
+    return message.queued ? at >= turnStartedAt : at > turnStartedAt + slackMs;
+  });
+}
+
 /** 斜杠发出后要不要露出 TUI：无参 /model、/models、/login 会唤选择器或登录页 */
 export function slashHandoff(
   text: string,
