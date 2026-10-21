@@ -1858,11 +1858,54 @@ fn qwen_content_text(msg: &Value) -> Option<String> {
     }
 }
 
-/// qwen 运行时标记：会话目录里存在 <sessionId>.runtime.json sidecar 视为进行中
-fn qwen_runtime_sidecar(path: &Path) -> Option<PathBuf> {
+/// qwen 运行时标记：会话目录里的 <sessionId>.runtime.json sidecar。
+/// qwen 退出（尤其被杀 / 崩溃）后不会清掉它，实测 8 月的残留文件仍在——只看「文件存在」会让
+/// 早已结束的对话永远显示「进行中」，所以必须核对里面记的进程：同一台机器、进程还在、
+/// 且不是 PID 被后来的进程复用（进程启动时间不得晚于 sidecar 的 started_at）。
+fn qwen_runtime_sidecar_path(path: &Path) -> Option<PathBuf> {
     let sid = path.file_stem()?.to_string_lossy();
     let candidate = path.parent()?.join(format!("{sid}.runtime.json"));
     candidate.exists().then_some(candidate)
+}
+
+/// 纯判定（进程与主机名由调用方注入，便于测试）：process_start(pid) = 该 pid 的进程启动 unix 秒，不存在 None
+fn qwen_sidecar_text_live(
+    text: &str,
+    local_host: Option<&str>,
+    process_start: impl Fn(u32) -> Option<u64>,
+) -> bool {
+    let Ok(v) = serde_json::from_str::<Value>(text) else {
+        return false;
+    };
+    if let (Some(local), Some(host)) = (local_host, v.get("hostname").and_then(|h| h.as_str())) {
+        if !local.eq_ignore_ascii_case(host) {
+            return false; // 别的机器同步过来的目录，进程不在本机
+        }
+    }
+    let Some(pid) = v.get("pid").and_then(|p| p.as_u64()).and_then(|p| u32::try_from(p).ok()) else {
+        return false;
+    };
+    let Some(started) = process_start(pid) else {
+        return false;
+    };
+    match v.get("started_at").and_then(|t| t.as_f64()) {
+        // 会话开始时这个进程必须已经在了；留 5 秒时钟误差
+        Some(session_started) => (started as f64) <= session_started + 5.0,
+        None => true,
+    }
+}
+
+fn qwen_runtime_sidecar(path: &Path) -> Option<PathBuf> {
+    let sidecar = qwen_runtime_sidecar_path(path)?;
+    let text = std::fs::read_to_string(&sidecar).ok()?;
+    let host = sysinfo::System::host_name();
+    let live = qwen_sidecar_text_live(&text, host.as_deref(), |pid| {
+        let pid = sysinfo::Pid::from_u32(pid);
+        let mut sys = sysinfo::System::new();
+        sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
+        sys.process(pid).map(|p| p.start_time())
+    });
+    live.then_some(sidecar)
 }
 
 fn qwen_file_meta(path: &Path, alive: bool, archived: bool) -> Option<SessionMetaDto> {
@@ -7460,6 +7503,28 @@ pub fn unwatch_session(watch_id: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    /// qwen 退出后 runtime.json 不清理：只有进程还在、同一台机器、PID 没被复用才算进行中
+    #[test]
+    fn qwen_sidecar_live_requires_a_real_running_process() {
+        let json = |host: &str, pid: u64, started: f64| {
+            format!(
+                r#"{{"schema_version":1,"pid":{pid},"session_id":"s","hostname":"{host}","started_at":{started}}}"#
+            )
+        };
+        let t0 = 1_787_550_648_u64;
+        let running = |_: u32| Some(t0 - 30); // 进程比会话早启动：正常
+        let gone = |_: u32| None;
+        let reused = |_: u32| Some(t0 + 86_400); // 同号进程是之后才起的：PID 被复用
+        let text = json("my-mac", 38762, t0 as f64);
+        assert!(qwen_sidecar_text_live(&text, Some("my-mac"), running));
+        assert!(!qwen_sidecar_text_live(&text, Some("my-mac"), gone), "进程已不在（残留文件）");
+        assert!(!qwen_sidecar_text_live(&text, Some("my-mac"), reused), "PID 被复用");
+        assert!(!qwen_sidecar_text_live(&text, Some("other-pc"), running), "别的机器同步来的");
+        assert!(qwen_sidecar_text_live(&text, None, running), "取不到本机名时不因主机名误杀");
+        assert!(!qwen_sidecar_text_live("not json", Some("my-mac"), running));
+        assert!(!qwen_sidecar_text_live(r#"{"hostname":"my-mac"}"#, Some("my-mac"), running), "缺 pid");
+    }
+
     use super::*;
 
     fn s(lines: &[&str]) -> Vec<String> {
@@ -9753,11 +9818,27 @@ mod tests {
             .set_modified(old)
             .unwrap();
         assert!(!qwen_file_meta(&file, true, false).unwrap().live);
-        // sidecar 出现 → live
-        std::fs::write(dir.join("q1.runtime.json"), "{}").unwrap();
+        // sidecar 记的进程不存在（qwen 退出后残留）→ 不 live
+        let sidecar = |pid: u32| {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs_f64();
+            let host = sysinfo::System::host_name().unwrap_or_default();
+            format!(
+                r#"{{"schema_version":1,"pid":{pid},"session_id":"q1","hostname":"{host}","started_at":{now}}}"#
+            )
+        };
+        std::fs::write(dir.join("q1.runtime.json"), sidecar(0x7fff_fff0)).unwrap();
+        assert!(
+            !qwen_file_meta(&file, true, false).unwrap().live,
+            "进程已不在的残留 sidecar 不应判 live"
+        );
+        // 进程还在（用本测试进程自己充当 qwen）→ live
+        std::fs::write(dir.join("q1.runtime.json"), sidecar(std::process::id())).unwrap();
         assert!(
             qwen_file_meta(&file, true, false).unwrap().live,
-            "runtime sidecar 应判 live"
+            "进程在的 runtime sidecar 应判 live"
         );
         std::fs::remove_dir_all(&dir).ok();
     }
