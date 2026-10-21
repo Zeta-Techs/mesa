@@ -160,6 +160,9 @@ pub(crate) struct Tracker {
     ended: std::collections::HashSet<String>,
     /// 审批卡内容来自哪个工具（名字 + 参数；async_hooks 时按它对账）
     approval_src: Option<(String, Value)>,
+    /// 排在当前这张后面的审批（带请求 id 的旁路才有：同一回复里并行的几个工具各要一次批准，
+    /// CLI 逐个问；后到的不能顶掉还没答的那张）。(内容, 所属工具 id)
+    queued: Vec<(ApprovalDto, Option<String>)>,
 }
 
 fn is_open(turn: &Option<TurnDto>) -> bool {
@@ -192,8 +195,27 @@ impl Tracker {
         self.snap.live_text = None;
         self.snap.approval = None;
         self.approval_call = None;
+        self.queued.clear();
         self.pending_break = false;
         self.ended.clear();
+    }
+
+    /// 带请求 id 的审批（Codex / Qwen / OpenCode）：撤卡只认「已处理」事件、它自己那个工具结束、这一轮结束
+    fn approval_has_id(&self) -> bool {
+        self.snap.approval.as_ref().is_some_and(|a| a.request_id.is_some())
+    }
+
+    /// 当前这张答完：换上排着的下一张，没有就回到「在跑」
+    fn next_approval(&mut self) {
+        if self.queued.is_empty() {
+            self.snap.approval = None;
+            self.approval_call = None;
+            self.set_status("running");
+        } else {
+            let (dto, call) = self.queued.remove(0);
+            self.snap.approval = Some(dto);
+            self.approval_call = call;
+        }
     }
 
     fn ensure_running(&mut self, now: i64) {
@@ -367,8 +389,11 @@ impl Tracker {
                 input,
             } => {
                 self.ensure_running(now);
-                // 等批准时来了下一个工具：上一个已经答过了
+                // 等批准时来了下一个工具：上一个已经答过了。只对推断出来的审批（hooks）这样认——带请求 id 的
+                // 审批另有「已处理」事件；同一回复里并行的工具（Codex 跑命令的同时调 MCP）开始了不等于答过，
+                // 原先这里撤了卡，终端菜单还挂着，聊天层改由读屏再出一张英文原文的卡（2026-10-21 用户：先中文后英文两张）
                 if self.snap.approval.is_some()
+                    && !self.approval_has_id()
                     && call_id.is_some()
                     && self.approval_call.is_some()
                     && call_id != self.approval_call
@@ -411,31 +436,51 @@ impl Tracker {
                 if dto.detail.is_none() {
                     dto.detail = detail.map(|d| crate::sessions::redact_sensitive_text(&d));
                 }
-                self.approval_call = call_id.or_else(|| {
-                    self.last_tool.as_ref().and_then(|(id, _, _)| id.clone())
-                });
-                self.snap.approval = Some(dto);
+                if dto.request_id.is_some() {
+                    // 带请求 id 的：只认它自己报的工具，不拿「最近一个工具」猜（并行时猜错了会被别的工具结束撤掉）
+                    let same = self.snap.approval.as_ref().is_some_and(|a| a.request_id == dto.request_id);
+                    if self.approval_has_id() && !same {
+                        // 前一张还没答：排在后面，答完再出
+                        if !self.queued.iter().any(|(q, _)| q.request_id == dto.request_id) {
+                            self.queued.push((dto, call_id));
+                        }
+                    } else {
+                        self.approval_call = call_id;
+                        self.snap.approval = Some(dto);
+                    }
+                } else {
+                    self.approval_call = call_id.or_else(|| {
+                        self.last_tool.as_ref().and_then(|(id, _, _)| id.clone())
+                    });
+                    self.snap.approval = Some(dto);
+                }
                 self.set_status("awaiting_approval");
             }
             ChannelEvent::ApprovalResolved { request_id } => {
+                if let Some(id) = &request_id {
+                    self.queued.retain(|(q, _)| q.request_id.as_deref() != Some(id.as_str()));
+                }
                 let matches = match (&self.snap.approval, &request_id) {
                     (Some(a), Some(id)) => a.request_id.as_deref() == Some(id.as_str()),
                     (Some(_), None) => true,
                     _ => false,
                 };
                 if matches {
-                    self.snap.approval = None;
-                    self.approval_call = None;
-                    self.set_status("running");
+                    self.next_approval();
                 }
             }
             ChannelEvent::ToolEnd { call_id } => {
-                if self.snap.approval.is_some()
-                    && (call_id.is_none() || self.approval_call.is_none() || call_id == self.approval_call)
-                {
-                    self.snap.approval = None;
-                    self.approval_call = None;
-                    self.set_status("running");
+                if let Some(id) = &call_id {
+                    self.queued.retain(|(_, c)| c.as_deref() != Some(id.as_str()));
+                }
+                let answered = if self.approval_has_id() {
+                    // 只有它自己那个工具结束才算答过（「已处理」事件丢了的兜底）
+                    call_id.is_some() && call_id == self.approval_call
+                } else {
+                    call_id.is_none() || self.approval_call.is_none() || call_id == self.approval_call
+                };
+                if self.snap.approval.is_some() && answered {
+                    self.next_approval();
                 }
             }
             ChannelEvent::TextDelta(text) => {
@@ -472,6 +517,7 @@ impl Tracker {
                 }
                 self.snap.approval = None;
                 self.approval_call = None;
+                self.queued.clear();
             }
             ChannelEvent::Notice(text) => {
                 let seq = self.snap.notice.as_ref().map(|n| n.seq).unwrap_or(0) + 1;
@@ -2464,6 +2510,47 @@ mod tests {
         assert_eq!(turn.ended_at, Some(11));
         // 重复的结束不再改动
         assert!(!t.apply(ChannelEvent::TurnEnd { reason: None }, 12));
+    }
+
+    /// 带请求 id 的审批（Codex / Qwen / OpenCode）：同一回复里并行的另一个工具开始、结束都不撤卡，
+    /// 只认「已处理」或它自己那个工具结束；第二张审批排在第一张后面（2026-10-21 用户 Codex 实录：
+    /// 跑命令要提权的同时调了 MCP，MCP 一结束卡就没了，读屏又出一张英文的）
+    #[test]
+    fn id_approvals_survive_parallel_tools_and_queue() {
+        let mut t = Tracker::new("tab-1", "codex", "codex");
+        let tool = |id: &str, cmd: &str| ChannelEvent::ToolStart {
+            call_id: Some(id.into()),
+            name: "commandExecution".into(),
+            input: json!({ "command": cmd }),
+        };
+        let ask = |req: &str, call: &str, cmd: &str| ChannelEvent::ApprovalAsked {
+            request_id: Some(req.into()),
+            call_id: Some(call.into()),
+            name: Some("commandExecution".into()),
+            input: json!({ "command": cmd }),
+            replyable: true,
+            detail: None,
+        };
+        t.apply(ChannelEvent::TurnStart, 0);
+        t.apply(tool("c1", "curl a"), 1);
+        t.apply(ask("r1", "c1", "curl a"), 2);
+        // 并行的 MCP 调用开始又结束：卡还在
+        t.apply(ChannelEvent::ToolStart { call_id: Some("m1".into()), name: "js".into(), input: json!({}) }, 3);
+        t.apply(ChannelEvent::ToolEnd { call_id: Some("m1".into()) }, 4);
+        assert_eq!(t.snap.approval.as_ref().unwrap().request_id.as_deref(), Some("r1"));
+        assert_eq!(t.snap.turn.as_ref().unwrap().status, "awaiting_approval");
+        // 第二个要批准的排在后面，不顶掉第一张
+        t.apply(tool("c2", "curl b"), 5);
+        t.apply(ask("r2", "c2", "curl b"), 6);
+        assert_eq!(t.snap.approval.as_ref().unwrap().command.as_deref(), Some("curl a"));
+        // 第一张答完，换上第二张
+        t.apply(ChannelEvent::ApprovalResolved { request_id: Some("r1".into()) }, 7);
+        assert_eq!(t.snap.approval.as_ref().unwrap().command.as_deref(), Some("curl b"));
+        assert_eq!(t.snap.turn.as_ref().unwrap().status, "awaiting_approval");
+        // 「已处理」丢了：它自己那个工具结束也算答过
+        t.apply(ChannelEvent::ToolEnd { call_id: Some("c2".into()) }, 8);
+        assert!(t.snap.approval.is_none());
+        assert_eq!(t.snap.turn.as_ref().unwrap().status, "running");
     }
 
     #[test]

@@ -2117,6 +2117,37 @@ const TerminalView = memo(function TerminalView({
   }
   // 最近一次扫屏：看得见这家的输入框、没有菜单（hooksApprovalAnswered：旁路还说「等批准」时据此认作已经答过）
   const [promptIdle, setPromptIdle] = useState(false);
+  // 旁路审批卡最近一次撤掉的时刻（applyChannel 记）；屏上那张菜单第一次被认出的时刻与内容
+  const channelApprovalGoneAtRef = useRef(0);
+  const menuFirstSeenRef = useRef<{ key: string; at: number } | null>(null);
+  /**
+   * 能从聊天层答审批的旁路（Codex / Qwen / OpenCode）一轮进行中时，屏上的审批菜单交给旁路的卡：
+   * 旁路已经有卡 → 同一问，不另出；旁路的卡刚撤（答过了）→ 终端菜单还没撤的那一下不认；
+   * 刚认出、旁路的事件还没到 → 先等 1.2 秒。等过了旁路还没有，才按屏上原文出卡（旁路漏了的兜底）。
+   * 原先两边各出一张，先中文后英文（2026-10-21 用户 Codex / Qwen）
+   */
+  function channelOwnsMenu(menu: TuiMenu | null): boolean {
+    const ch = channelRef.current;
+    if (!menu) {
+      menuFirstSeenRef.current = null;
+      return false;
+    }
+    if (!ch || ch.kind === "hooks" || !channelTurnOpen(ch)) return false;
+    // 旁路的卡上答不了（没有回复通道的那类请求）：屏上原文的卡更有用
+    if (ch.approval) return channelCanAnswer(ch, launchAgentRef.current);
+    const now = Date.now();
+    if (now - channelApprovalGoneAtRef.current < 3000) {
+      window.setTimeout(scanMenuSoon, 600);
+      return true;
+    }
+    const key = `${menu.question ?? ""}\n${menu.options.join("\n")}`;
+    if (menuFirstSeenRef.current?.key !== key) menuFirstSeenRef.current = { key, at: now };
+    if (now - menuFirstSeenRef.current.at < 1200) {
+      window.setTimeout(scanMenuSoon, 400);
+      return true;
+    }
+    return false;
+  }
   function scanMenuSoon() {
     const turnLive = ptyWorkingArmedRef.current || pendingReplyRef.current;
     if (
@@ -2142,8 +2173,9 @@ const TerminalView = memo(function TerminalView({
         (parseTrustPrompt(lines) !== null ||
           (trustOptionsRef.current !== null &&
             found.options.join("\n") === trustOptionsRef.current.join("\n")));
-      const next =
+      const next0 =
         echoed || trustMenu || sameTuiMenu(found, menuBaselineRef.current) ? null : found;
+      const next = channelOwnsMenu(next0) ? null : next0;
       // 菜单（审批 / 切换确认）也带 Esc to cancel：认出菜单时不再当面板
       // 要按回车继续的通知也带 Esc to cancel：认出通知时不当面板（面板卡的按钮是 Esc，按了会取消）
       const notice = found === null ? parseTuiNotice(lines, launchAgentRef.current) : null;
@@ -4092,6 +4124,8 @@ const TerminalView = memo(function TerminalView({
     const prev = channelRef.current;
     channelRef.current = snap;
     setChannel(snap);
+    // 旁路的审批卡撤了（聊天层答过 / 终端里答过）：终端菜单撤掉前那一下读屏不再认（scanMenuSoon）
+    if (prev?.approval && !snap?.approval) channelApprovalGoneAtRef.current = Date.now();
     if (!snap) return;
     const ctx = linkCtxRef.current;
     if (ctx && snap.agent === ctx.agentId) {
