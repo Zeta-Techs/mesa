@@ -163,7 +163,7 @@ import {
 } from "../tui-menu";
 import { lastContextTokens, type MesaCommand } from "../composer-assist";
 import { slashCommandsFor } from "../slash-commands";
-import { claudeOutputTokens, extractLiveReply, liveReplySupported, mergeLiveReply, terminalHasInputBox } from "../live-reply";
+import { claudeOutputTokens, extractLiveReply, liveReplySupported, mergeLiveReply, staleEcho, terminalHasInputBox } from "../live-reply";
 import { parseTuiNotice, parseTuiPanel } from "../tui-panel";
 import {
   connIssueCounts,
@@ -2211,6 +2211,8 @@ const TerminalView = memo(function TerminalView({
   const liveTokensRef = useRef<number | null>(null);
   const liveScanAtRef = useRef(0);
   const liveScanTimerRef = useRef<number | null>(null);
+  // 最近一次从聊天发出时屏上的最后一条回显与原文（writeChatMessage 记；读到新回显后清）
+  const sendEchoRef = useRef<{ before: string | null; sent: string } | null>(null);
   function scanLiveReplySoon() {
     if (!liveReplySupported(launchAgentRef.current)) return;
     // 旁路直接送实时文字的家（Qwen / OpenCode / Codex）不再读屏
@@ -2241,6 +2243,12 @@ const TerminalView = memo(function TerminalView({
       const prev = liveReplyRef.current;
       // 一时读不出（菜单挂着、重绘半帧）保留上一次的，免得预览闪没；新一轮发送时清
       if (!read) return;
+      // 刚发的这句 CLI 还没画出来：屏上是上一轮的回显和回复，不当这一轮的预览（Qwen 先把上一段回复又显示一遍）
+      const sent = sendEchoRef.current;
+      if (sent && read.echo !== undefined) {
+        if (staleEcho(read, sent.before, sent.sent)) return;
+        sendEchoRef.current = null;
+      }
       const next = mergeLiveReply(prev, read);
       if (!next) return;
       if ((prev?.join("\n") ?? null) === (next?.join("\n") ?? null)) return;
@@ -4929,6 +4937,11 @@ const TerminalView = memo(function TerminalView({
   async function writeChatMessage(ptyId: string, text: string): Promise<ChatSendResult> {
     await waitAgentInputReady(ptyId);
     if (ptyIdRef.current !== ptyId) return { error: "终端已重新启动，这句没有发出，请再发一次" };
+    // 发送前屏上最后一条回显：CLI 画出这句之前，实时预览读到的还是上一轮（staleEcho）
+    sendEchoRef.current = {
+      before: extractLiveReply(screenLines(), launchAgentRef.current)?.echo ?? null,
+      sent: text,
+    };
     try {
       await invoke("pty_write_submit", {
         ptyId,

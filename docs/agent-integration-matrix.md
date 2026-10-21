@@ -496,3 +496,4 @@ Zed 是唯一核实过的跨 agent 路线：可从已配置的 ACP agent 导入�
 - **OpenCode 的 `OPENCODE_CONFIG_CONTENT` 不能整份覆盖**：Mesa 用它注入连接，覆盖会打到 OpenCode 自己的免费模型（2026-10-20 探针误触一次）。
 - **Codex 同一回复里并行的工具各自开始 / 结束**（2026-10-21 用户实录：要提权的 `exec_command` 与 MCP `js` 同一刻发出，MCP 先结束）：审批要按 `serverRequest/resolved` 或它自己那个 item 结束撤卡，别的工具开始 / 结束不代表答过。
 - **Kimi 2.3 启动**：先发 DA1 查询，约 1.5 秒后才推 kitty 键盘、画界面；之前写进 PTY 的字全丢（2026-10-21 ConPTY 探针 3/3）。
+- **读屏字形（2026-10-21）**：Kimi 2.3 等首字时转月相「🌑 · Tip: …」；Qwen 0.25.3 的字形带 U+FE0E（「◆︎ 正文」「∴︎ Thought for 1s (click or ctrl+o to expand)」）；Gemini 0.65 输入框上方「? for shortcuts」单独一行、「Shift+Tab to accept edits / auto-accept edits  Shift+Tab to manual」随权限档变、MCP 后跟「· N skills」，粘贴多行后回显下多一行「Press Ctrl+O to expand pasted text」。

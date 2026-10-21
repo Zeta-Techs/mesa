@@ -104,7 +104,8 @@ const LAYOUTS: Record<string, Layout> = {
     lead: /^\s*◆\s/,
     // 「  ? Shell echo …」「  - Shell …」「  ✓ ReadFile …」：顶两格 + 状态符号 + 工具名（正文列表缩进更深）
     tool: /^ {2}[?✓✔✗✘⊷○◐-]\s+[A-Z]/,
-    skip: /esc to cancel|^\s*●\s*$|Waiting for user confirmation/,
+    // 思考折叠行「∴ Thought for 1s (click or ctrl+o to expand)」（模型带思考时才有，2026-10-21 用户截图）
+    skip: /esc to cancel|^\s*●\s*$|Waiting for user confirmation|^\s*∴\s|\((?:click or )?ctrl\+o to expand\)/,
     // 段落续行缩进 4、列表 / 代码行缩进 5：最多去 5 格，两种都对齐到行首
     indent: 5,
   },
@@ -115,7 +116,9 @@ const LAYOUTS: Record<string, Layout> = {
     echo: /^\s?>\s+\S/,
     lead: /^✦\s/,
     tool: /^\s*[╭│╰]/,
-    skip: /esc to cancel|Shift\+Tab to accept edits|\? for shortcuts|MCP servers?\s*$|^\s*[╭│╰]/,
+    // 输入框上方的提示与状态行。0.65 起按权限档变字（「auto-accept edits  Shift+Tab to manual」），MCP 后面还跟技能数
+    // （「1 MCP server · 20 skills」）；粘贴多行后回显下面多一行「Press Ctrl+O to expand pasted text」（2026-10-21 用户截图）
+    skip: /esc to cancel|Shift\+Tab to |auto-accept edits|\? for shortcuts|\bMCP servers?\b|\b\d+ skills?\s*$|Press Ctrl\+O to expand|^\s*[╭│╰]/,
     // 段落续行缩进 2、列表缩进 3
     indent: 3,
   },
@@ -137,7 +140,8 @@ const LAYOUTS: Record<string, Layout> = {
     echo: /^\s*❯\s+\S/,
     lead: /^\s*●\s/,
     tool: new RegExp(`^\\s*[●✗✓•]\\s+${TOOL_VERB}\\b`),
-    skip: /Press Ctrl\+B to run in background|^\s*Tool ".*" was not run|^\s*Rejected:/,
+    // 2.3 等首字时转月相「🌑 · Tip: …」（2026-10-21 抓屏；用户截图里 🌕Kimi 叠在「正在回复」上面）
+    skip: /Press Ctrl\+B to run in background|^\s*Tool ".*" was not run|^\s*Rejected:|^\s*[\u{1F311}-\u{1F318}]|^\s*·\s*Tip:/u,
     indent: 3,
   },
 };
@@ -163,14 +167,21 @@ export function liveReplySupported(agentId: string): boolean {
 }
 
 /**
+ * 行尾的空白与右侧滚动条（Grok / Gemini 的 █）去掉；字形后的变体选择符（U+FE0E / FE0F）也去掉——
+ * Qwen 0.25.3 画「◆︎ 正文」「∴︎ Thought …」，xterm 把它并进前一格，行首符号认不出，整屏连提示一起当成回复（2026-10-21）
+ */
+function cleanRows(lines: readonly string[]): string[] {
+  return lines.map((l) => l.replace(/[\uFE0E\uFE0F]/g, "").replace(/[\s█]+$/, ""));
+}
+
+/**
  * 这一屏有没有该家的聊天输入框：true = 在对话界面，false = 被别的全屏界面顶掉了（/usage 的 Settings 面板、
  * 登录页、全屏选择器），null = 这家没有画面布局表、不知道。tui-panel.ts 用它认「终端里开着一个面板」。
  */
 export function terminalHasInputBox(lines: readonly string[], agentId: string): boolean | null {
   const layout = LAYOUTS[agentId];
   if (!layout) return null;
-  const rows = lines.map((l) => l.replace(/[\s█]+$/, ""));
-  return layout.boxTop(rows) >= 0;
+  return layout.boxTop(cleanRows(lines)) >= 0;
 }
 
 /**
@@ -185,13 +196,18 @@ export interface LiveReplyRead {
    * lines 是按「钉在屏顶的提问」读的（anchored = false），{@link mergeLiveReply} 接不上上一次时才改用它
    */
   ifRealEcho?: LiveReplyRead | null;
+  /**
+   * 这一截是从哪条回显后面读的（那一行原文）。刚发出一句、CLI 还没把它画出来时，屏上最后一条回显还是上一轮的，
+   * 读出来的是上一轮的回复（2026-10-21 用户 Qwen：聊天层先把上一段回复又显示一遍）；调用方拿它和发送前的那条比
+   */
+  echo?: string;
 }
 
 export function extractLiveReply(lines: readonly string[], agentId: string): LiveReplyRead | null {
   const layout = LAYOUTS[agentId];
   if (!layout) return null;
   // 行尾的空白与右侧滚动条（Grok / Gemini 的 █）
-  const rows = lines.map((l) => l.replace(/[\s█]+$/, ""));
+  const rows = cleanRows(lines);
   // 有确认菜单挂着（▔▔▔ 边框）时不预览：聊天层另有确认卡
   if (rows.some((l) => MENU_BORDER.test(l.trim()))) return null;
   // 没有输入框 = 不在对话界面（启动信任菜单、登录页、全屏选择器）：屏上的字不是回复，不预览。
@@ -212,10 +228,14 @@ export function extractLiveReply(lines: readonly string[], agentId: string): Liv
   if (layout.pinnedEcho && echoAt === 0 && region.length > 1) {
     const pinned = readReply(layout, region, 1, false);
     if (!realEchoShape(layout, region)) return pinned;
-    const real = readReply(layout, region, echoStart(layout, region, 1), true);
+    const real0 = readReply(layout, region, echoStart(layout, region, 1), true);
+    const real = real0 ? { ...real0, echo: region[0] } : null;
     return pinned ? { ...pinned, ifRealEcho: real } : real;
   }
-  if (echoAt >= 0) return readReply(layout, region, echoStart(layout, region, echoAt + 1), true);
+  if (echoAt >= 0) {
+    const read = readReply(layout, region, echoStart(layout, region, echoAt + 1), true);
+    return read ? { ...read, echo: region[echoAt] } : null;
+  }
   if (layout.lead) {
     const lead = layout.lead;
     const first = region.findIndex((l) => lead.test(l) && !layout.tool.test(l));
@@ -332,6 +352,16 @@ export function mergeLiveReply(prev: readonly string[] | null, read: LiveReplyRe
 /** 只留字母、数字、汉字：终端里渲染过的 Markdown（标题去 #、行内代码去反引号、折行）和会话原文才对得上 */
 function norm(text: string): string {
   return text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+/**
+ * 读到的这一截是不是还停在上一轮：它所在的回显与发送前屏上最后一条回显是同一行，又不像刚发的这句。
+ * before = 发送前的最后一条回显（没有为 null）；sent = 刚发的原文。重复发同一句时认作新的（宁可多显示一会儿旧的）
+ */
+export function staleEcho(read: LiveReplyRead, before: string | null, sent: string): boolean {
+  if (before === null || read.echo === undefined || read.echo !== before) return false;
+  const head = norm(sent.split("\n")[0] ?? "").slice(0, 12);
+  return !head || !norm(read.echo).includes(head);
 }
 
 /**

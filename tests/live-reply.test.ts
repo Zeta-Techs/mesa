@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { claudeOutputTokens, extractLiveReply, liveReplySupported, mergeLiveReply, terminalHasInputBox, unsyncedTail } from "../src/live-reply.ts";
+import { claudeOutputTokens, extractLiveReply, liveReplySupported, mergeLiveReply, staleEcho, terminalHasInputBox, unsyncedTail } from "../src/live-reply.ts";
 
 const RULE = "─".repeat(100);
 // Claude Code 2.1.292 本机 PTY 实录（流式写到一半；假 API 慢速吐字）
@@ -569,4 +569,57 @@ test("unsyncedTail：开头混进的非回复行不把后面已落盘的段落�
   assert.deepEqual(unsyncedTail([...live, "", "第 6 步：已读取"], synced), ["第 6 步：已读取"]);
   // 「好的」这种短行到处对得上：它后面的新内容照常显示，前面的也不被它吞掉
   assert.deepEqual(unsyncedTail(["新的一段还没落盘", "好的"], "好的，我来看看。"), ["新的一段还没落盘", "好的"]);
+});
+
+test("Kimi 2.3 等首字时的月相转圈「🌑 · Tip: …」不进预览（2026-10-21 抓屏）", () => {
+  const screen = [" ❯ 你好", " ", "  🌑 · Tip: /tasks to check progress and status for background tasks", ...BOX(">")];
+  assert.equal(extractLiveReply(screen, "kimi"), null);
+  const after = [" ❯ 你好", " ", " ● 你好！", "  🌕 · Tip: @: mention files", ...BOX(">")];
+  assert.deepEqual(extractLiveReply(after, "kimi")?.lines, ["你好！"]);
+});
+
+test("Qwen 0.25.3 字形后带变体选择符「◆︎」「∴︎」：行首符号照认，思考折叠行不进预览", () => {
+  const screen = [
+    "  > 你好",
+    "",
+    "  ∴︎ Thought for 1s (click or ctrl+o to expand)",
+    "",
+    "  ◆︎ 你好！我是 Qwen Code，可以帮你处理编程任务。",
+    "─".repeat(60),
+    ">   输入您的消息或 @ 文件路径",
+    "─".repeat(60),
+  ];
+  assert.deepEqual(extractLiveReply(screen, "qwen")?.lines, ["你好！我是 Qwen Code，可以帮你处理编程任务。"]);
+});
+
+test("Gemini 0.65 输入框上方的提示行（随权限档变字、带技能数、粘贴提示）不进预览", () => {
+  const screen = [
+    "▄".repeat(60),
+    " > 在当前目录依次完成：",
+    "   1. 新建 hello.py",
+    "▀".repeat(60),
+    " Press Ctrl+O to expand pasted text",
+    "✦ 第一步完成。",
+    "? for shortcuts",
+    "─".repeat(60),
+    " auto-accept edits Shift+Tab to manual                    1 MCP server · 20 skills",
+    "▄".repeat(60),
+    " >   Type your message or @path/to/file",
+    "▀".repeat(60),
+  ];
+  assert.deepEqual(extractLiveReply(screen, "gemini")?.lines, ["第一步完成。"]);
+});
+
+test("staleEcho：刚发的这句还没画出来时，读到的是上一轮回显后面的回复", () => {
+  const before = ["  > 你好", "", "  ◆ 你好！有什么可以帮你？", "─".repeat(60), ">   打字", "─".repeat(60)];
+  const read = extractLiveReply(before, "qwen")!;
+  assert.equal(read.echo, "  > 你好");
+  // 发送前屏上最后一条回显就是它，又不像刚发的话：上一轮的
+  assert.equal(staleEcho(read, "  > 你好", "讲个笑话"), true);
+  // 新回显出来了：这一轮的
+  const now = extractLiveReply(["  > 讲个笑话", "", "  ◆ 从前有座山", ...before.slice(3)], "qwen")!;
+  assert.equal(staleEcho(now, "  > 你好", "讲个笑话"), false);
+  // 重复发同一句：认作新的；发送前屏上没有回显：不拦
+  assert.equal(staleEcho(read, "  > 你好", "你好"), false);
+  assert.equal(staleEcho(read, null, "讲个笑话"), false);
 });
