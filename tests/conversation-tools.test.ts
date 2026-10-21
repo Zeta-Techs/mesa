@@ -81,6 +81,11 @@ test("还在生成的最后一轮：正文都算过程、不切回答；有没�
   // 不是最后一轮就不算
   const older = groupConversationSegments([...base, msg("user", [text("下一句")])], { live: true });
   assert.equal(turnOf(older).live, false);
+  // 末尾只是排着的话（聊天层乐观气泡）：上面那一轮仍在跑，不收起
+  const queued = { ...msg("user", [text("顺便跑 lint")]), queued: true };
+  const withQueued = groupConversationSegments([...base, queued], { live: true });
+  assert.equal(turnOf(withQueued).live, true);
+  assert.equal(withQueued[withQueued.length - 1].kind, "message");
 });
 
 test("连着的读文件 / 搜索并成一行「查阅」，夹着别的动作就断开；失败计数", () => {

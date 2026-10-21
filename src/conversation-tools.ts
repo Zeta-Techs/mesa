@@ -164,6 +164,10 @@ export function groupConversationSegments(
   opts: { live?: boolean; cwd?: string | null; isWindows?: boolean } = {},
 ): ConversationSegment[] {
   const out: ConversationSegment[] = [];
+  // 末尾还没被收下的话（聊天层乐观显示的排队气泡）不算这一轮结束：它上面那一轮仍在跑，照常铺开（2026-10-22：
+  // 原先生成中一发话，正在跑的那一轮立刻收成「已工作」，后面的步骤也只进收起的那一行）
+  let tail = messages.length - 1;
+  while (tail >= 0 && messages[tail].role === "user" && messages[tail].queued) tail -= 1;
   let i = 0;
   while (i < messages.length) {
     if (!isTurnBody(messages[i])) {
@@ -184,7 +188,7 @@ export function groupConversationSegments(
       for (let k = start; k <= end; k++) out.push({ kind: "message", message: messages[k], index: k });
       continue;
     }
-    const isLast = end === messages.length - 1;
+    const isLast = end === tail;
     // 最后一轮还有没回结果的调用 = 工具正在跑（或等批准）：也算进行中，不收起、不切回答
     const pending =
       entries.filter((e) => e.block.kind === "tool_use").length >
