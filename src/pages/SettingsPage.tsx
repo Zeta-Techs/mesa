@@ -138,6 +138,24 @@ import {
   chromeOpacityShortLabel,
   normalizeChromeOpacity,
 } from "../chrome-opacity";
+import {
+  CHAT_ACCENTS,
+  CHAT_ACCENT_LABEL,
+  CHAT_FONT_FAMILIES,
+  CHAT_FONT_FAMILY_LABEL,
+  CHAT_FONT_SIZES,
+  CHAT_FONT_SIZE_LABEL,
+  CHAT_SCROLLBARS,
+  CHAT_SCROLLBAR_LABEL,
+  normalizeChatAccent,
+  normalizeChatFontFamily,
+  normalizeChatFontSize,
+  normalizeChatScrollbar,
+  type ChatAccent,
+  type ChatFontFamily,
+  type ChatFontSize,
+  type ChatScrollbar,
+} from "../chat-style";
 import { toast } from "../toast";
 import { compact as compactTokens } from "../stats-insight";
 import { storageClearConfirmText, storageSegments, summarizeStorage } from "../settings-storage";
@@ -2676,6 +2694,82 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             onChange={(id) => void patch({ chromeOpacity: Number(id) })}
             className="flex-wrap"
           />
+        </Row>
+
+        <Row
+          label="聊天字号"
+          hint="立即生效；标准 = 原有大小"
+          labelTitle="管聊天层和对话回放里的正文（你的提问与 AI 回复）。标题、行内代码跟着按比例变；终端字号在「终端」里单独调"
+        >
+          <SegTabs
+            items={CHAT_FONT_SIZES.map((id) => ({
+              id,
+              label: CHAT_FONT_SIZE_LABEL[id],
+            }))}
+            value={normalizeChatFontSize(settings?.chatFontSize)}
+            onChange={(id) => void patch({ chatFontSize: id as ChatFontSize })}
+          />
+        </Row>
+
+        <Row
+          label="聊天字体"
+          hint="系统 = 跟随界面字体"
+          labelTitle="衬线用宋体系（macOS 宋体-简、Windows 宋体 / 思源宋体），适合长文阅读；等宽用 JetBrains Mono，中文回退系统字体。代码块一直是等宽，不受影响"
+        >
+          <SegTabs
+            items={CHAT_FONT_FAMILIES.map((id) => ({
+              id,
+              label: CHAT_FONT_FAMILY_LABEL[id],
+            }))}
+            value={normalizeChatFontFamily(settings?.chatFontFamily)}
+            onChange={(id) =>
+              void patch({ chatFontFamily: id as ChatFontFamily })
+            }
+          />
+        </Row>
+
+        <Row
+          label="行内代码颜色"
+          hint="文件名、命令、变量名这类反引号包着的字"
+          labelTitle="给对话里的行内代码一个淡强调色（字色加同色薄底），和正文、链接一眼分开；深浅主题各有一套保证看得清。关闭 = 灰白。代码块不受影响"
+        >
+          <SegTabs
+            items={CHAT_ACCENTS.map((id) => ({
+              id,
+              label: CHAT_ACCENT_LABEL[id],
+            }))}
+            value={normalizeChatAccent(settings?.chatAccent)}
+            onChange={(id) => void patch({ chatAccent: id as ChatAccent })}
+          />
+        </Row>
+
+        <Row
+          label="聊天滚动条"
+          hint="闲置淡出：鼠标进入或滚动时才显现"
+          labelTitle="两种都比以前更宽、更好抓，悬停到滚动条上还会再粗一点。选「常显」则一直显示"
+        >
+          <SegTabs
+            items={CHAT_SCROLLBARS.map((id) => ({
+              id,
+              label: CHAT_SCROLLBAR_LABEL[id],
+            }))}
+            value={normalizeChatScrollbar(settings?.chatScrollbar)}
+            onChange={(id) =>
+              void patch({ chatScrollbar: id as ChatScrollbar })
+            }
+          />
+        </Row>
+
+        <Row label="聊天预览" align="start" hint="上面四项改了这里当场变">
+          <div className="md-body md-chat max-w-md rounded-md border border-hairline bg-inset px-3 py-2">
+            <p>
+              已把结果写进 <code>notes/clips.md</code>，可以用 <code>npm test</code>{" "}
+              复查，详见 <a href="#chat-preview" onClick={(e) => e.preventDefault()}>这份说明</a>。
+            </p>
+            <p>
+              Hello, <strong>Mesa</strong> 的对话正文会随字号与字体一起变化。
+            </p>
+          </div>
         </Row>
 
         <Row

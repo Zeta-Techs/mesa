@@ -2022,6 +2022,39 @@ select:focus-visible {
   background: transparent;
 }
 
+/* 聊天滚动区（.ccode-chat-scroll）：轨道加宽到 10px 好抓，拇指用透明描边「内缩」成 4px 细条，
+   悬停到拇指上再收成 6px。闲置淡出（设置 → 外观 → 聊天滚动条，默认）：平时拇指全透明，
+   鼠标进入滚动区或正在滚动（ChatSurface 打 data-scrolling，停 0.9s 后摘）时才显现。
+   「常显」走全局那条细滚动条的原色，只保留加宽。 */
+.ccode-chat-scroll::-webkit-scrollbar {
+  width: 10px;
+}
+.ccode-chat-scroll::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+.ccode-chat-scroll::-webkit-scrollbar-thumb:hover {
+  border-width: 2px;
+}
+.ccode-app-shell[data-chat-scrollbar="auto"] .ccode-chat-scroll::-webkit-scrollbar-thumb {
+  background-color: transparent;
+}
+.ccode-app-shell[data-chat-scrollbar="auto"] .ccode-chat-scroll:hover::-webkit-scrollbar-thumb,
+.ccode-app-shell[data-chat-scrollbar="auto"] .ccode-chat-scroll[data-scrolling]::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.4);
+}
+.ccode-app-shell[data-chat-scrollbar="auto"] .ccode-chat-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255, 255, 255, 0.58);
+}
+[data-theme$="-light"] .ccode-app-shell[data-chat-scrollbar="auto"] .ccode-chat-scroll:hover::-webkit-scrollbar-thumb,
+[data-theme$="-light"] .ccode-app-shell[data-chat-scrollbar="auto"] .ccode-chat-scroll[data-scrolling]::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.44);
+}
+[data-theme$="-light"] .ccode-app-shell[data-chat-scrollbar="auto"] .ccode-chat-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(0, 0, 0, 0.58);
+}
+
 /* Markdown 阅读版式（RX2a 笔记阅读模式）：全部走主题令牌，七套深色主题通用；
    .md-body-lg 为沉浸阅读覆盖层的大号排版 */
 .md-body {
@@ -2246,7 +2279,17 @@ select:focus-visible {
 
 /* 对话层覆盖字号为 inherit（跟气泡/正文 14px）；字体栈已由 .md-body 的 Windows 块覆盖。 */
 [data-platform="windows"] .md-chat {
-  font-size: inherit;
+  font-size: var(--ccode-chat-fs, inherit);
+}
+/* 聊天层阅读体验（设置 → 外观，壳上变量见 chat-style.ts）：没调过时变量不存在，全部落回原值。
+   用户气泡是纯文本不走 .md-chat，单独挂 .ccode-chat-user 同步字号字体；0.875rem = 原 text-sm。 */
+.md-chat {
+  font-size: var(--ccode-chat-fs, 13.5px);
+  font-family: var(--ccode-chat-ff, inherit);
+}
+.ccode-chat-user {
+  font-size: var(--ccode-chat-fs, 0.875rem);
+  font-family: var(--ccode-chat-ff, inherit);
 }
 .md-chat p,
 .md-chat ul,
@@ -2286,6 +2329,40 @@ select:focus-visible {
   border: none;
   padding: 0.1em 0.28em;
   border-radius: 3px;
+}
+/* 对话里的链接带细下划线：只靠蓝色在长段落里和正文区分不开；悬停时线跟着实色。 */
+.md-chat a {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+  text-decoration-color: color-mix(in srgb, currentColor 38%, transparent);
+}
+.md-chat a:hover {
+  text-decoration-color: currentColor;
+}
+/* 行内代码强调色（设置 → 外观 → 行内代码颜色）：字色 + 同色 14% 薄底，深浅各一套保证可读；
+   off = 不匹配任何一条，保留上面的中性灰白。围栏代码块不动。 */
+.ccode-app-shell {
+  --chat-code-dark-warm: #eb9a85;
+  --chat-code-dark-amber: #e8bb6b;
+  --chat-code-dark-teal: #66cdb9;
+  --chat-code-dark-violet: #b9a2f4;
+  --chat-code-light-warm: #b23f2b;
+  --chat-code-light-amber: #8a5a00;
+  --chat-code-light-teal: #0d6f66;
+  --chat-code-light-violet: #6a3dc0;
+}
+.ccode-app-shell[data-chat-accent="warm"] .md-chat { --chat-code: var(--chat-code-dark-warm); }
+.ccode-app-shell[data-chat-accent="amber"] .md-chat { --chat-code: var(--chat-code-dark-amber); }
+.ccode-app-shell[data-chat-accent="teal"] .md-chat { --chat-code: var(--chat-code-dark-teal); }
+.ccode-app-shell[data-chat-accent="violet"] .md-chat { --chat-code: var(--chat-code-dark-violet); }
+[data-theme$="-light"] .ccode-app-shell[data-chat-accent="warm"] .md-chat { --chat-code: var(--chat-code-light-warm); }
+[data-theme$="-light"] .ccode-app-shell[data-chat-accent="amber"] .md-chat { --chat-code: var(--chat-code-light-amber); }
+[data-theme$="-light"] .ccode-app-shell[data-chat-accent="teal"] .md-chat { --chat-code: var(--chat-code-light-teal); }
+[data-theme$="-light"] .ccode-app-shell[data-chat-accent="violet"] .md-chat { --chat-code: var(--chat-code-light-violet); }
+.md-chat :not(pre) > code {
+  color: var(--chat-code, var(--color-l1));
+  background: color-mix(in srgb, var(--chat-code, transparent) 14%, var(--color-inset));
 }
 /* 引用只留左线：不要整块 inset 底，警告/摘录才不会占半屏。 */
 .md-chat blockquote {

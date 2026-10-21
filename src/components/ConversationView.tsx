@@ -738,7 +738,7 @@ export default function ConversationView({
             className="group/msg mb-3 flex flex-col items-end"
           >
             <div
-              className={`max-w-[70%] rounded-md bg-bubble/75 px-3 py-2 ${compact ? "text-xs" : "text-sm"} ${
+              className={`max-w-[70%] rounded-md bg-bubble/75 px-3 py-2 ${compact ? "text-xs" : "ccode-chat-user text-sm"} ${
                 hit ? "ring-1 ring-cta-bd" : ""
               }`}
             >

@@ -102,6 +102,12 @@ const KNOWN_NAV_CAPSULE_DISPLAY_MODES: [&str; 3] = ["both", "icons", "labels"];
 /// dark / light = 运行中强制换图。只影响运行中的程序坞 / 主窗 / 托盘，见 app_icon.rs
 pub(crate) const KNOWN_APP_ICON_STYLES: [&str; 3] = ["system", "dark", "light"];
 const DEFAULT_APP_ICON_STYLE: &str = "system";
+/// 聊天层阅读体验（设置 → 外观）：字号档、字体、行内代码强调色、滚动条。与前端 chat-style.ts 的表一致；
+/// 不在表里的存量值落回默认，前端加选项而这里没跟上会「选了没反应」。
+const KNOWN_CHAT_FONT_SIZES: [&str; 4] = ["small", "normal", "large", "xlarge"];
+const KNOWN_CHAT_FONT_FAMILIES: [&str; 3] = ["system", "serif", "mono"];
+const KNOWN_CHAT_ACCENTS: [&str; 5] = ["off", "warm", "amber", "teal", "violet"];
+const KNOWN_CHAT_SCROLLBARS: [&str; 2] = ["auto", "always"];
 const KNOWN_NAV_CAPSULE_ITEMS: [&str; 10] = [
     "quick-chat",
     "workbench",
@@ -262,6 +268,14 @@ pub struct AppSettingsDto {
     pub chrome_opacity: Option<u32>,
     /// 应用图标外观（KNOWN_APP_ICON_STYLES），缺省 system
     pub app_icon_style: Option<String>,
+    /// 聊天层字号档（KNOWN_CHAT_FONT_SIZES），缺省 normal = 不动现有字号
+    pub chat_font_size: Option<String>,
+    /// 聊天层正文字体（KNOWN_CHAT_FONT_FAMILIES），缺省 system
+    pub chat_font_family: Option<String>,
+    /// 聊天层行内代码强调色（KNOWN_CHAT_ACCENTS），缺省 warm；off = 中性灰白
+    pub chat_accent: Option<String>,
+    /// 聊天滚动条（KNOWN_CHAT_SCROLLBARS）：auto = 闲置淡出，always = 常显；缺省 auto
+    pub chat_scrollbar: Option<String>,
     /// 自定义主题三色（左栏/画布/强调）。theme 为 custom / custom-light 时由前端派生全套令牌
     pub custom_theme: Option<CustomThemeDto>,
     /// 另存的可点色卡（最多 12 套）
@@ -773,6 +787,12 @@ fn prune_ai_model_choice(settings: &mut AppSettingsDto) {
     }
 }
 
+/// 白名单取值：不在表里（存量脏值 / 前端先于后端加选项）一律落回默认
+fn known_or(v: Option<String>, table: &[&str], default: &str) -> String {
+    v.filter(|x| table.contains(&x.as_str()))
+        .unwrap_or_else(|| default.to_string())
+}
+
 /// 合并默认值：get_settings 永远返回完整对象；未知 theme 值回落默认
 fn with_defaults(s: AppSettingsDto) -> AppSettingsDto {
     let custom_theme = sanitize_custom_theme(s.custom_theme);
@@ -828,6 +848,14 @@ fn with_defaults(s: AppSettingsDto) -> AppSettingsDto {
                 .filter(|v| KNOWN_APP_ICON_STYLES.contains(&v.as_str()))
                 .unwrap_or_else(|| DEFAULT_APP_ICON_STYLE.to_string()),
         ),
+        chat_font_size: Some(known_or(s.chat_font_size, &KNOWN_CHAT_FONT_SIZES, "normal")),
+        chat_font_family: Some(known_or(
+            s.chat_font_family,
+            &KNOWN_CHAT_FONT_FAMILIES,
+            "system",
+        )),
+        chat_accent: Some(known_or(s.chat_accent, &KNOWN_CHAT_ACCENTS, "warm")),
+        chat_scrollbar: Some(known_or(s.chat_scrollbar, &KNOWN_CHAT_SCROLLBARS, "auto")),
         theme_follow_system: Some(s.theme_follow_system.unwrap_or(false)),
         custom_theme,
         custom_themes,
@@ -971,6 +999,18 @@ fn merge(cur: &mut AppSettingsDto, patch: AppSettingsDto) {
     }
     if patch.app_icon_style.is_some() {
         cur.app_icon_style = patch.app_icon_style;
+    }
+    if patch.chat_font_size.is_some() {
+        cur.chat_font_size = patch.chat_font_size;
+    }
+    if patch.chat_font_family.is_some() {
+        cur.chat_font_family = patch.chat_font_family;
+    }
+    if patch.chat_accent.is_some() {
+        cur.chat_accent = patch.chat_accent;
+    }
+    if patch.chat_scrollbar.is_some() {
+        cur.chat_scrollbar = patch.chat_scrollbar;
     }
     if patch.theme_follow_system.is_some() {
         cur.theme_follow_system = patch.theme_follow_system;
@@ -1589,6 +1629,10 @@ mod tests {
                 nav_capsule_hide_delay_ms: Some(999),
                 chrome_opacity: Some(999),
                 app_icon_style: Some("neon".into()),
+                chat_font_size: Some("huge".into()),
+                chat_font_family: Some("comic".into()),
+                chat_accent: Some("neon".into()),
+                chat_scrollbar: Some("never".into()),
                 nav_capsule_display_mode: Some("text".into()),
                 nav_capsule_visible_items: Some(vec!["workbench".into(), "unknown".into()]),
                 ..Default::default()
@@ -1600,6 +1644,10 @@ mod tests {
         assert_eq!(invalid_full.nav_capsule_display_mode, None);
         assert_eq!(invalid_full.chrome_opacity, Some(100));
         assert_eq!(invalid_full.app_icon_style.as_deref(), Some("system"));
+        assert_eq!(invalid_full.chat_accent.as_deref(), Some("warm"));
+        assert_eq!(invalid_full.chat_font_size.as_deref(), Some("normal"));
+        assert_eq!(invalid_full.chat_font_family.as_deref(), Some("system"));
+        assert_eq!(invalid_full.chat_scrollbar.as_deref(), Some("auto"));
         assert_eq!(
             invalid_full.nav_capsule_visible_items,
             Some(vec!["workbench".into()])

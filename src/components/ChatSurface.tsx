@@ -211,6 +211,7 @@ export default function ChatSurface({
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollFadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const followRef = useRef(true);
   const [hasNew, setHasNew] = useState(false);
   const [stuckWaiting, setStuckWaiting] = useState(false);
@@ -581,6 +582,12 @@ export default function ChatSurface({
         onScroll={() => {
           const el = scrollRef.current;
           if (!el) return;
+          // 滚动条「闲置淡出」：滚动期间打标，停 0.9s 摘掉（样式见 App.css .ccode-chat-scroll）
+          el.dataset.scrolling = "1";
+          if (scrollFadeTimer.current) clearTimeout(scrollFadeTimer.current);
+          scrollFadeTimer.current = setTimeout(() => {
+            delete el.dataset.scrolling;
+          }, 900);
           const nearBottom =
             el.scrollHeight - el.scrollTop - el.clientHeight < 56;
           followRef.current = nearBottom;
@@ -589,7 +596,7 @@ export default function ChatSurface({
         className={
           emptyStart
             ? "min-h-0 flex-[0.75_1_0]"
-            : "relative min-h-0 flex-1 overflow-auto"
+            : "ccode-chat-scroll relative min-h-0 flex-1 overflow-auto"
         }
       >
         <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col px-4 pb-6 pt-8 sm:px-5">

@@ -152,6 +152,11 @@ export interface AppSettings {
   chromeOpacity?: number;
   /** 应用图标外观：system（跟随系统，缺省）/ dark / light——只换运行中的程序坞、主窗与托盘图标 */
   appIconStyle?: "system" | "dark" | "light";
+  /** 聊天层阅读体验（设置 → 外观，表见 chat-style.ts，Rust 侧 KNOWN_CHAT_* 白名单） */
+  chatFontSize?: "small" | "normal" | "large" | "xlarge";
+  chatFontFamily?: "system" | "serif" | "mono";
+  chatAccent?: "off" | "warm" | "amber" | "teal" | "violet";
+  chatScrollbar?: "auto" | "always";
   /** 主题跟随系统深浅（缺省关）：开着时系统外观变化即把 theme 换成同名 twin 写回（theme-follow.ts）；
    *  原生窗口外观交还系统（setTheme(null)），自定义配色不跟随 */
   themeFollowSystem?: boolean;

@@ -73,6 +73,11 @@ import { RunActivityButton, useRunActivity } from "./components/RunActivity";
 import { shellContextPlacement, shellMode } from "./shell-context";
 import { normalizeNavCapsuleDelay, resolveStartupNavMode } from "./nav-capsule";
 import { chromeOpacityScale } from "./chrome-opacity";
+import {
+  chatStyleVars,
+  normalizeChatAccent,
+  normalizeChatScrollbar,
+} from "./chat-style";
 import { macOverlayPadClass, useMacFullscreen } from "./mac-titlebar";
 import ToastHost from "./components/ToastHost";
 import {
@@ -1134,6 +1139,8 @@ function App() {
           data-nav={collapsed ? "icons" : "expanded"}
           data-chrome={lightChrome ? "light" : "dark"}
           data-nav-hidden={chromeHidden ? "true" : undefined}
+          data-chat-accent={normalizeChatAccent(settings?.chatAccent)}
+          data-chat-scrollbar={normalizeChatScrollbar(settings?.chatScrollbar)}
           /* 侧栏 / 顶栏罩色的系数。只写这一个变量，各主题的基数留在 App.css 里乘——
            深浅、图标态三套基数不同，JS 不该持有它们（见 chrome-opacity.ts）。
            值经 normalize 过：存量配置里可能是白名单外的数，直接乘会让罩色跑飞。 */
@@ -1142,6 +1149,7 @@ function App() {
               "--ccode-chrome-scale": chromeOpacityScale(
                 settings?.chromeOpacity,
               ),
+              ...chatStyleVars(settings ?? {}),
             } as React.CSSProperties
           }
         >
