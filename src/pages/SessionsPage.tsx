@@ -66,7 +66,6 @@ import {
   pickResumeProfile,
 } from "../resume-profile";
 import ConversationView from "../components/ConversationView";
-import OlderLoadingRow from "../components/OlderLoadingRow";
 import { useAutoLoadOlder } from "../auto-load-older";
 import GitPanel from "../components/GitPanel";
 import HandoffPicker from "../components/HandoffPicker";
@@ -2635,9 +2634,6 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                       <LoadingRows compact />
                     ) : (
                       <>
-                        {conversationCursor !== null && (
-                          <OlderLoadingRow loading={loadingOlder} className="mb-3" />
-                        )}
                         {messages.length === 0 ? (
                           <EmptyState
                             title="这条会话没有可回放的内容"

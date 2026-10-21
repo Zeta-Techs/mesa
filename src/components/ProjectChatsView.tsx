@@ -4,7 +4,6 @@ import { Archive, Pencil } from "lucide-react";
 import { agentBrandBadgeStyle } from "../agent-colors";
 import { beginProjectChat } from "./AskAiModal";
 import ConversationView from "./ConversationView";
-import OlderLoadingRow from "./OlderLoadingRow";
 import { useAutoLoadOlder } from "../auto-load-older";
 import { resumeSessionInTerminal } from "../quick-chat-launch";
 import { projectBoundProfileId, slotPrefs, CHAT_BINDING_SLOT } from "../project-agents";
@@ -628,9 +627,6 @@ export default function ProjectChatsView({
             <LoadingRows compact />
           ) : (
             <>
-              {cursor !== null && (
-                <OlderLoadingRow loading={loadingOlder} className="mb-3" />
-              )}
               {messages.length === 0 ? (
                 <p className="px-1 py-6 text-sm text-l3">
                   这条会话没有可回放的内容。

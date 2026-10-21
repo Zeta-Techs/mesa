@@ -7,12 +7,16 @@ import {
   wasPrepended,
 } from "../src/auto-load-older.ts";
 
-test("翻到顶部附近才自动加载更早的", () => {
-  const m = { scrollHeight: 5000, clientHeight: 800 };
+test("离顶一屏半以内就提前加载更早的", () => {
+  const m = { scrollHeight: 8000, clientHeight: 800 };
   assert.equal(nearTop({ ...m, scrollTop: 0 }), true);
-  assert.equal(nearTop({ ...m, scrollTop: AUTO_LOAD_OLDER_THRESHOLD }), true);
-  assert.equal(nearTop({ ...m, scrollTop: AUTO_LOAD_OLDER_THRESHOLD + 1 }), false);
-  assert.equal(nearTop({ ...m, scrollTop: 4200 }), false);
+  assert.equal(nearTop({ ...m, scrollTop: 1200 }), true);
+  assert.equal(nearTop({ ...m, scrollTop: 1201 }), false);
+  assert.equal(nearTop({ ...m, scrollTop: 7200 }), false);
+  // 窗口很矮时不低于下限
+  const short = { scrollHeight: 3000, clientHeight: 100 };
+  assert.equal(nearTop({ ...short, scrollTop: AUTO_LOAD_OLDER_THRESHOLD }), true);
+  assert.equal(nearTop({ ...short, scrollTop: AUTO_LOAD_OLDER_THRESHOLD + 1 }), false);
 });
 
 test("内容不满一屏才算要补页", () => {

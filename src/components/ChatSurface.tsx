@@ -4,7 +4,6 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import ConversationView from "./ConversationView";
 import ChatComposer from "./ChatComposer";
 import ChatEmptyStart from "./ChatEmptyStart";
-import OlderLoadingRow from "./OlderLoadingRow";
 import { useAutoLoadOlder, wasPrepended } from "../auto-load-older";
 import { ChevronDown, FolderOpen } from "lucide-react";
 import { chatGreeting } from "../chat-empty-start";
@@ -587,9 +586,6 @@ export default function ChatSurface({
         }
       >
         <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col px-4 pb-6 pt-8 sm:px-5">
-          {hasOlder && onLoadOlder && (
-            <OlderLoadingRow loading={loadingOlder} className="mb-4" />
-          )}
           {emptyStart && (
             // 空态问候：Mesa 光标标志 + 时段问候，贴在输入框正上方（2026-10-17 用户选定）。
             // 只是问候：不重复「问一个问题…」，不写 Agent 身份（v3.214 否决的是居中引导语）。

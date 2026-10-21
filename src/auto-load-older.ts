@@ -2,7 +2,8 @@ import { useEffect, useRef, type RefObject } from "react";
 
 /**
  * 对话回放「往上翻自动接着加载更早的」（2026-10-21 用户：对话页、项目对话、聊天层都要一直点「加载更早」）。
- * 按钮保留作兜底与进度提示；滚到离顶部这么近（px）时自动拉下一页，留一段余量让翻页不卡顿。
+ * 顶部不放按钮也不放加载提示（同日用户：要无缝衔接）：离顶还有一屏半就提前拉，滑到顶之前新内容已经接在上面。
+ * 这是下限（px），窗口高时按一屏半算。
  */
 export const AUTO_LOAD_OLDER_THRESHOLD = 360;
 
@@ -17,10 +18,10 @@ export function needsFill(m: ScrollMetrics): boolean {
   return m.scrollHeight - m.clientHeight <= 1;
 }
 
-/** 用户往上翻到了顶部附近 */
+/** 用户往上翻到了离顶一屏半以内（提前量，免得滑到顶再停下来等） */
 export function nearTop(
   m: ScrollMetrics,
-  threshold = AUTO_LOAD_OLDER_THRESHOLD,
+  threshold = Math.max(AUTO_LOAD_OLDER_THRESHOLD, m.clientHeight * 1.5),
 ): boolean {
   return m.scrollTop <= threshold;
 }
