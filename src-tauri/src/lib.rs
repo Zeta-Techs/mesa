@@ -96,6 +96,7 @@ mod projects;
 mod provider_id;
 mod pty;
 mod pty_input;
+mod term_query;
 mod chat_channel;
 mod context_breakdown;
 mod reader;
@@ -121,6 +122,7 @@ mod uninstall;
 mod updater;
 mod usage;
 mod watch_review;
+mod win_snap;
 mod workspaces;
 mod internal_sessions;
 mod ws_settings;
@@ -154,6 +156,8 @@ pub fn run() {
             // 聊天层旁路：清上次崩溃留下的旁路目录；改为每次启动注入的几家，收回以前写进全局配置的 hooks
             chat_channel::prune_on_startup();
             hooks::migrate_launch_injected();
+            // Windows 普通 shell 标签的目录记录文件：上次崩溃 / 强杀没删成的清掉
+            pty::purge_cwd_track_files();
             if let Err(e) = runs::reconcile_stale_runs() {
                 logbuf::record("warn", "runs", &format!("收口上次未完成 Run 失败: {e}"));
             }
@@ -181,9 +185,15 @@ pub fn run() {
             }
             // 托盘建好后再挂：应用图标外观要连托盘一起换
             app_icon::apply_saved(app.handle());
-            // Windows 老用户：已开的精确注意力钩子若还是旧版内联写法（从不生效），后台换成新写法
+            // Windows 老用户：已开的精确注意力钩子若还是旧版内联写法（从不生效），后台换成新写法；
+            // 之后（三平台）给开着的 Gemini 钩子补上名字（hooks::refresh_gemini_hook_name）
             #[cfg(windows)]
-            std::thread::spawn(hooks::migrate_legacy_windows_hooks);
+            std::thread::spawn(|| {
+                hooks::migrate_legacy_windows_hooks();
+                hooks::refresh_gemini_hook_name();
+            });
+            #[cfg(not(windows))]
+            std::thread::spawn(hooks::refresh_gemini_hook_name);
             // macOS 菜单栏：应用子菜单带 About 面板（版权 / 许可入口）。set_menu 会
             // 整体替换默认菜单——编辑子菜单的复制粘贴等预置项必须显式带上，否则
             // 文本框的系统快捷键全失灵。仅 macOS：Windows 无菜单栏惯例。
@@ -522,11 +532,16 @@ pub fn run() {
             terminal_replay::prune_terminal_replays,
             pty::pty_set_visible,
             pty::pty_get_cwd,
+            pty::terminal_shell_options,
+            pty::pty_cd,
+            win_snap::window_show_snap_layouts,
             pty::pty_has_running_process,
             sessions::list_sessions,
+            sessions::find_session,
             session_search::search_sessions,
             session_search::locate_session_matches,
             sessions::claim_session_for,
+            sessions::claim_session_successor,
             sessions::release_session_claim,
             sessions::get_session_conversation,
             sessions::get_session_conversation_page,
@@ -566,6 +581,7 @@ pub fn run() {
             config_dump::dump_effective_config,
             config_dump::export_effective_config,
             agent_specs::agent_capabilities,
+            agent_specs::codex_win_sandbox_state,
             model_registry::model_capabilities,
             model_registry::list_model_capability_overrides,
             model_registry::set_model_capability_override,
@@ -782,6 +798,7 @@ pub fn run() {
             hooks::hooks_attention_support,
             hooks::session_confirm_detail,
             chat_channel::chat_channel_snapshot,
+            chat_channel::chat_channel_settle_from_transcript,
             chat_channel::chat_channel_reply,
             context_breakdown::context_breakdown,
             ai::ai_prompt,

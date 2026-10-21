@@ -28,7 +28,7 @@ test("sameModelList 识别用户是否动过名单", () => {
   assert.ok(!sameModelList([], ["a"]));
 });
 
-test("extraBindTargets：Anthropic 族内可绑 codebuddy/qwen(anthropic)/kimi(anthropic)", () => {
+test("extraBindTargets：Anthropic 族内可绑 qwen(anthropic)/kimi(anthropic)，codebuddy 是 OpenAI 族", () => {
   const by = Object.fromEntries(
     extraBindTargets("claude-code", null, [
       "codebuddy",
@@ -41,8 +41,7 @@ test("extraBindTargets：Anthropic 族内可绑 codebuddy/qwen(anthropic)/kimi(a
       "grok",
     ]).map((t) => [t.agent, t]),
   );
-  assert.equal(by.codebuddy.ok, true);
-  assert.equal(by.codebuddy.protocol, null);
+  assert.equal(by.codebuddy.ok, false);
   assert.equal(by.qwen.ok, true);
   assert.equal(by.qwen.protocol, "anthropic");
   assert.equal(by.kimi.ok, true);

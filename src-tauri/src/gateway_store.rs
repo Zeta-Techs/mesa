@@ -44,7 +44,9 @@ impl Slot {
 
 pub fn slot_for_agent(agent: &str, protocol: Option<&str>) -> Slot {
     match agent {
-        "claude-code" | "codebuddy" => Slot::Anthropic,
+        // codebuddy 走 OpenAI chat/completions：CODEBUDDY_BASE_URL 原样当 base 再拼 /chat/completions
+        //（2.171 源码 resolveModelBaseURL；2026-10-21 实测给 Anthropic 地址只得空回复）
+        "claude-code" => Slot::Anthropic,
         "codex" => Slot::Responses,
         "gemini" => Slot::Gemini,
         "cursor" => Slot::Cursor,
@@ -981,7 +983,7 @@ mod tests {
         assert_eq!(slot_for_agent("kimi", Some("anthropic")), Slot::Anthropic);
         assert_eq!(slot_for_agent("kimi", Some("kimi")), Slot::Openai);
         assert_eq!(slot_for_agent("qwen", None), Slot::Openai);
-        assert_eq!(slot_for_agent("codebuddy", None), Slot::Anthropic);
+        assert_eq!(slot_for_agent("codebuddy", None), Slot::Openai);
     }
 
     fn fetched(id: &str, slot: Option<&str>) -> GatewayModel {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseTuiPanel } from "../src/tui-panel.ts";
+import { parseTuiNotice, parseTuiPanel } from "../src/tui-panel.ts";
 
 // 2026-10-19 用户截图：Claude 2.1.29x 里发 /cost 打开的 Settings 面板（Usage 页）
 const USAGE_PANEL = [
@@ -59,4 +59,33 @@ test("Codex 同样：没有输入行 + Esc to close 才算", () => {
   const panel = ["  Resume a previous session", "", "  ❯ 1. 今天的会话", "    2. 昨天的会话", "", "  Enter to select · Esc to close"];
   assert.equal(parseTuiPanel(panel, "codex"), true);
   assert.equal(parseTuiPanel(["› 你好", "• 好的", "› "], "codex"), false);
+});
+
+// 2026-10-21 用户 Windows 实测（Claude Code 2.1.305，经智谱网关、auto mode）：一轮中途弹的通知，按回车才继续
+const AUTO_MODE_NOTICE = [
+  "● Bash(python mesa_probe/hello.py)",
+  '  ⎿  "hello"',
+  "",
+  "─".repeat(100),
+  "  We're changing auto mode to no longer charge for classifier requests in Claude Code.",
+  "",
+  "  However, this session isn't eligible because your requests go through open.bigmodel.cn, which isn't  ",
+  "  compatible with this update.",
+  "",
+  "  Nothing breaks: auto mode keeps working, and its classifier requests are billed as before.",
+  "",
+  "  To fix it and access the new version of auto mode, ask your gateway to implement:",
+  "  https://code.claude.com/docs/en/auto-mode-classifier-billing",
+  "",
+  "  Enter to continue · Esc to cancel",
+];
+
+test("parseTuiNotice：要按回车继续的通知取出正文；有输入框、没有提示行都不算", () => {
+  const body = parseTuiNotice(AUTO_MODE_NOTICE, "claude-code")!;
+  assert.equal(body[0], "We're changing auto mode to no longer charge for classifier requests in Claude Code.");
+  assert.equal(body[body.length - 1], "https://code.claude.com/docs/en/auto-mode-classifier-billing");
+  assert.ok(!body.some((l) => /Enter to continue|─{8}/.test(l)));
+  assert.equal(parseTuiNotice(AUTO_MODE_NOTICE.slice(0, -1), "claude-code"), null);
+  const withPrompt = [...AUTO_MODE_NOTICE, "─".repeat(100), "❯ ", "─".repeat(100)];
+  assert.equal(parseTuiNotice(withPrompt, "claude-code"), null);
 });

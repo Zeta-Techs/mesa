@@ -3073,7 +3073,16 @@ fn open_at(conn: &Connection, input: OpenRunInput) -> Result<RunDto, String> {
             if !existing.capabilities.can_resume || input.session_id.is_none() {
                 return Err("此 Run 不支持恢复；请从任务入口再次运行".into());
             }
-            if existing.session_id.as_deref() != input.session_id.as_deref() {
+            if existing.session_id.is_none() {
+                // 交互 Run 从没登记上会话（前端闭包读到旧 runId 漏登记，2026-10-21 Gemini / Kimi / OpenCode 存量）：
+                // 首次恢复时认下这条会话，同 attach_session_impl「首次登记为准」
+                conn.execute(
+                    "UPDATE runs SET session_id=?2 WHERE id=?1 AND session_id IS NULL",
+                    params![id, input.session_id],
+                )
+                .map_err(|e| e.to_string())?;
+                record_event(conn, id, "run.session_attached", None)?;
+            } else if existing.session_id.as_deref() != input.session_id.as_deref() {
                 return Err("恢复会话与原 Run 不一致；请从原会话入口恢复".into());
             }
             conn.execute("UPDATE runs SET status='created',closed_at=NULL,exit_code=NULL,close_reason=NULL,profile_id=?2 WHERE id=?1", params![id,input.profile_id]).map_err(|e| e.to_string())?;
@@ -4345,6 +4354,38 @@ mod tests {
         let reopened = open_at(&conn, input).unwrap();
         assert_eq!(reopened.id, "run");
         assert_eq!(reopened.session_id.as_deref(), Some("s3"));
+    }
+
+    #[test]
+    fn resume_adopts_session_when_run_never_attached() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+        // 交互 Run 停下时还没登记会话（2026-10-21 Gemini 存量）
+        conn.execute("INSERT INTO runs(id,task_kind,isolation_path,runtime,agent,permission,created_at,status,closed_at) VALUES('run','scratch','/tmp/ccode-x','local_cli','gemini','write_tree','now','stopped','later')", []).unwrap();
+        let input = |sid: &str| OpenRunInput {
+            id: Some("run".into()),
+            task_id: None,
+            project_root: None,
+            task_kind: None,
+            task_ref: None,
+            isolation_path: "/tmp/ccode-x".into(),
+            runtime: Some("local_cli".into()),
+            agent: "gemini".into(),
+            profile_id: None,
+            permission: Some("write_tree".into()),
+            reuse_key: None,
+            session_id: Some(sid.into()),
+            custom_runtime_id: None,
+            internal: Some(false),
+            sentinel: Some(false),
+        };
+        let reopened = open_at(&conn, input("g1")).unwrap();
+        assert_eq!(reopened.session_id.as_deref(), Some("g1"));
+        assert!(reopened.closed_at.is_none());
+        // 认下之后照旧：别的会话来恢复仍拒绝
+        conn.execute("UPDATE runs SET closed_at='later2',status='stopped' WHERE id='run'", []).unwrap();
+        let err = open_at(&conn, input("g2")).unwrap_err();
+        assert!(err.contains("不一致"), "{err}");
     }
 
     #[test]

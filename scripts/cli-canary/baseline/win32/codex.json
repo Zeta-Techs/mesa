@@ -1,0 +1,341 @@
+{
+ "agent": "codex",
+ "channel": {
+  "approvalKind": "execute",
+  "approvalReplyable": true,
+  "approvalTool": "commandExecution",
+  "kind": "codex",
+  "statuses": [
+   "-",
+   "running",
+   "awaiting_approval",
+   "running",
+   "completed"
+  ]
+ },
+ "checks": {
+  "假网关收到主对话请求": true,
+  "取得到 Codex 默认提示词": true,
+  "抓屏跑完": true,
+  "旁路拿到会话文件": true,
+  "旁路端到端通过": true,
+  "旁路认出会话": true,
+  "解析器读到回复": true,
+  "解析器读到工具结果": true,
+  "解析器读到工具调用": true,
+  "解析器读到用户这句": true,
+  "这一轮走完": true
+ },
+ "parsed": {
+  "blockKinds": [
+   "assistant:text",
+   "assistant:tool_result",
+   "assistant:tool_use",
+   "user:text"
+  ],
+  "toolNames": [
+   "exec_command"
+  ]
+ },
+ "platform": "win32",
+ "request": {
+  "main": {
+   "bodyKeys": [
+    "client_metadata",
+    "include",
+    "input",
+    "model",
+    "parallel_tool_calls",
+    "prompt_cache_key",
+    "reasoning",
+    "store",
+    "stream",
+    "text",
+    "tool_choice",
+    "tools"
+   ],
+   "contextHeadings": [
+    "AGENTS.md spec",
+    "Ambition vs. precision",
+    "Available skills",
+    "Banned prefix_rules",
+    "Escalation Requests",
+    "Examples",
+    "Final answer structure and style guidelines",
+    "How to request escalation",
+    "How you work",
+    "Personality",
+    "Planning",
+    "Preamble messages",
+    "Presenting your work and final message",
+    "Responsiveness",
+    "Sharing progress updates",
+    "Shell commands",
+    "Skill roots",
+    "Skills",
+    "Task execution",
+    "Tool Guidelines",
+    "Validating your work",
+    "When to request escalation",
+    "Windows",
+    "`update_plan`",
+    "prefix_rule guidance",
+    "request_user_input availability"
+   ],
+   "contextTags": [
+    "collaboration_mode",
+    "current_date",
+    "cwd",
+    "environment_context",
+    "filesystem",
+    "root",
+    "shell",
+    "skills_instructions",
+    "special",
+    "timezone",
+    "workspace_roots"
+   ],
+   "headers": {
+    "originator": "mesa",
+    "user-agent": "<有>"
+   },
+   "model": "e2e-picked",
+   "path": "/codex/v1/responses",
+   "systemHeadings": [],
+   "tools": [
+    "create_goal",
+    "exec_command",
+    "get_goal",
+    "multi_agent_v1",
+    "request_user_input",
+    "update_goal",
+    "update_plan",
+    "view_image",
+    "write_stdin"
+   ]
+  },
+  "other": [
+   "/codex/v1/responses tools=False"
+  ]
+ },
+ "screen": {
+  "liveReplySupported": true,
+  "menu": {
+   "options": [
+    "Yes, proceed (y)",
+    "Yes, and don't ask again for commands that start with `echo mesa > mesa_probe.txt` (p)",
+    "No, and tell Codex what to do differently (esc)"
+   ],
+   "question": "Would you like to run the following command?"
+  },
+  "previewReadable": true
+ },
+ "transcript": {
+  "event_msg/item_completed": {
+   "keys": [
+    "ordinal",
+    "payload",
+    "timestamp",
+    "type"
+   ],
+   "payloadKeys": [
+    "completed_at_ms",
+    "item",
+    "started_at_ms",
+    "thread_id",
+    "turn_id",
+    "type"
+   ]
+  },
+  "event_msg/task_complete": {
+   "keys": [
+    "ordinal",
+    "payload",
+    "timestamp",
+    "type"
+   ],
+   "payloadKeys": [
+    "completed_at",
+    "duration_ms",
+    "last_agent_message",
+    "root_turn_id",
+    "started_at",
+    "time_to_first_token_ms",
+    "turn_id",
+    "type"
+   ]
+  },
+  "event_msg/task_started": {
+   "keys": [
+    "ordinal",
+    "payload",
+    "timestamp",
+    "type"
+   ],
+   "payloadKeys": [
+    "collaboration_mode_kind",
+    "model_context_window",
+    "root_turn_id",
+    "started_at",
+    "turn_attribution",
+    "turn_id",
+    "type"
+   ]
+  },
+  "event_msg/thread_settings_applied": {
+   "keys": [
+    "ordinal",
+    "payload",
+    "timestamp",
+    "type"
+   ],
+   "payloadKeys": [
+    "thread_id",
+    "thread_settings",
+    "type"
+   ]
+  },
+  "event_msg/token_count": {
+   "keys": [
+    "ordinal",
+    "payload",
+    "timestamp",
+    "type"
+   ],
+   "payloadKeys": [
+    "info",
+    "rate_limits",
+    "type"
+   ]
+  },
+  "response_item/function_call": {
+   "keys": [
+    "metadata",
+    "ordinal",
+    "payload",
+    "timestamp",
+    "type"
+   ],
+   "payloadKeys": [
+    "arguments",
+    "call_id",
+    "id",
+    "internal_chat_message_metadata_passthrough",
+    "name",
+    "status",
+    "type"
+   ]
+  },
+  "response_item/function_call_output": {
+   "keys": [
+    "metadata",
+    "ordinal",
+    "payload",
+    "timestamp",
+    "type"
+   ],
+   "payloadKeys": [
+    "call_id",
+    "id",
+    "internal_chat_message_metadata_passthrough",
+    "output",
+    "type"
+   ]
+  },
+  "response_item/message": {
+   "keys": [
+    "metadata",
+    "ordinal",
+    "payload",
+    "timestamp",
+    "type"
+   ],
+   "payloadKeys": [
+    "content",
+    "id",
+    "internal_chat_message_metadata_passthrough",
+    "role",
+    "status",
+    "type"
+   ]
+  },
+  "session_meta": {
+   "keys": [
+    "ordinal",
+    "payload",
+    "timestamp",
+    "type"
+   ],
+   "payloadKeys": [
+    "base_instructions",
+    "cli_version",
+    "context_window",
+    "cwd",
+    "dynamic_tools",
+    "history_mode",
+    "id",
+    "model_provider",
+    "originator",
+    "runtime_workspace_roots",
+    "session_id",
+    "source",
+    "thread_source",
+    "timestamp"
+   ]
+  },
+  "token_usage_record": {
+   "keys": [
+    "ordinal",
+    "payload",
+    "timestamp",
+    "type"
+   ],
+   "payloadKeys": [
+    "response_id",
+    "root_turn_id",
+    "session_id",
+    "thread_id",
+    "thread_token_usage",
+    "turn_id",
+    "turn_token_usage",
+    "usage"
+   ]
+  },
+  "turn_context": {
+   "keys": [
+    "ordinal",
+    "payload",
+    "timestamp",
+    "type"
+   ],
+   "payloadKeys": [
+    "approval_policy",
+    "approvals_reviewer",
+    "collaboration_mode",
+    "cwd",
+    "disabled_plugin_ids",
+    "model",
+    "multi_agent_version",
+    "permission_profile",
+    "realtime_active",
+    "root_turn_id",
+    "sandbox_policy",
+    "summary",
+    "turn_id"
+   ]
+  },
+  "world_state": {
+   "keys": [
+    "ordinal",
+    "payload",
+    "timestamp",
+    "type"
+   ],
+   "payloadKeys": [
+    "full",
+    "state"
+   ]
+  }
+ },
+ "version": "0.163.0"
+}

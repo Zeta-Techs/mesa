@@ -194,12 +194,12 @@
       "run": [
         {
           "name": "export-docx",
-          "command": "quarto render manuscript/draft.md --to docx --output-dir output",
+          "command": "quarto render manuscript/draft.md --to docx --output-dir ../output",
           "default": true
         },
         {
           "name": "render-draft",
-          "command": "quarto render manuscript/draft.md --to pdf --output-dir output",
+          "command": "quarto render manuscript/draft.md --to pdf --output-dir ../output",
           "default": true
         }
       ],
@@ -254,12 +254,12 @@
       "run": [
         {
           "name": "export-docx",
-          "command": "quarto render manuscript/review-final.md --to docx --output-dir output --output review-final.docx",
+          "command": "quarto render manuscript/review-final.md --to docx --output-dir ../output",
           "default": true
         },
         {
           "name": "render-final",
-          "command": "quarto render manuscript/review-final.md --to pdf --output-dir output --output review-final.pdf",
+          "command": "quarto render manuscript/review-final.md --to pdf --output-dir ../output",
           "default": true
         }
       ],

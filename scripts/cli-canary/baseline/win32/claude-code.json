@@ -1,0 +1,332 @@
+{
+ "agent": "claude-code",
+ "channel": {
+  "approvalKind": "execute",
+  "approvalReplyable": false,
+  "approvalTool": "Bash",
+  "kind": "hooks",
+  "statuses": [
+   "-",
+   "running",
+   "awaiting_approval",
+   "running",
+   "completed"
+  ]
+ },
+ "checks": {
+  "假网关收到主对话请求": true,
+  "抓屏跑完": true,
+  "旁路拿到会话文件": true,
+  "旁路端到端通过": true,
+  "旁路认出会话": true,
+  "解析器读到回复": true,
+  "解析器读到工具结果": true,
+  "解析器读到工具调用": true,
+  "解析器读到用户这句": true,
+  "这一轮走完": true
+ },
+ "parsed": {
+  "blockKinds": [
+   "assistant:text",
+   "assistant:tool_result",
+   "assistant:tool_use",
+   "user:text"
+  ],
+  "toolNames": [
+   "Bash"
+  ]
+ },
+ "platform": "win32",
+ "request": {
+  "main": {
+   "bodyKeys": [
+    "context_management",
+    "max_tokens",
+    "messages",
+    "metadata",
+    "model",
+    "output_config",
+    "stream",
+    "system",
+    "thinking",
+    "tools"
+   ],
+   "contextHeadings": [],
+   "contextTags": [
+    "command",
+    "short-kebab-case-slug",
+    "skill-name",
+    "system-reminder"
+   ],
+   "headers": {
+    "anthropic-beta": [
+     "claude-code-20250219",
+     "context-management-2025-06-27",
+     "effort-2025-11-24",
+     "interleaved-thinking-2025-05-14",
+     "mid-conversation-tool-changes-2026-07-01",
+     "prompt-caching-scope-2026-01-05",
+     "thinking-display-updates-2026-08-18",
+     "thinking-token-count-2026-05-13"
+    ],
+    "anthropic-version": "2023-06-01",
+    "user-agent": "<有>",
+    "x-app": "cli"
+   },
+   "model": "e2e-picked",
+   "path": "/claude-code/v1/messages",
+   "systemHeadings": [
+    "Context management",
+    "Environment",
+    "Harness",
+    "Memory",
+    "Session-specific guidance"
+   ],
+   "tools": [
+    "Agent",
+    "AskUserQuestion",
+    "Bash",
+    "CronCreate",
+    "CronDelete",
+    "CronList",
+    "DesignSync",
+    "Edit",
+    "EnterPlanMode",
+    "EnterWorktree",
+    "ExitPlanMode",
+    "ExitWorktree",
+    "Glob",
+    "Grep",
+    "ListAgents",
+    "NotebookEdit",
+    "Read",
+    "ReportFindings",
+    "ScheduleWakeup",
+    "SendMessage",
+    "Skill",
+    "TaskCreate",
+    "TaskGet",
+    "TaskList",
+    "TaskStop",
+    "TaskUpdate",
+    "WebFetch",
+    "WebSearch",
+    "Workflow",
+    "Write"
+   ]
+  },
+  "other": [
+   "/claude-code/v1/messages tools=False"
+  ]
+ },
+ "screen": {
+  "liveReplySupported": true,
+  "menu": {
+   "options": [
+    "Yes",
+    "Yes, and always allow access to <工作目录> from this project",
+    "Yes, and switch to auto mode · auto mode handles these prompts for you",
+    "No"
+   ],
+   "question": "Do you want to proceed?"
+  },
+  "previewReadable": true
+ },
+ "transcript": {
+  "api-request": {
+   "keys": [
+    "cacheControl",
+    "id",
+    "keep",
+    "params",
+    "querySource",
+    "requestDigest",
+    "sessionId",
+    "shapeHash",
+    "tail",
+    "timestamp",
+    "type",
+    "version"
+   ]
+  },
+  "api-request-blob": {
+   "blocks": [
+    "text"
+   ],
+   "keys": [
+    "hash",
+    "message",
+    "sessionId",
+    "type"
+   ]
+  },
+  "api-request-shape": {
+   "keys": [
+    "sessionId",
+    "shape",
+    "shapeHash",
+    "timestamp",
+    "type",
+    "version"
+   ]
+  },
+  "assistant": {
+   "blocks": [
+    "text",
+    "tool_use"
+   ],
+   "keys": [
+    "apiBlockIndex",
+    "cwd",
+    "effort",
+    "entrypoint",
+    "gitBranch",
+    "isSidechain",
+    "message",
+    "parentUuid",
+    "perTurnEffort",
+    "requestRef",
+    "requestedModel",
+    "sessionId",
+    "session_id",
+    "timestamp",
+    "type",
+    "userType",
+    "uuid",
+    "version"
+   ]
+  },
+  "atis-latch": {
+   "keys": [
+    "atis",
+    "sessionId",
+    "type"
+   ]
+  },
+  "attachment": {
+   "keys": [
+    "attachment",
+    "cwd",
+    "entrypoint",
+    "gitBranch",
+    "isSidechain",
+    "parentUuid",
+    "rendered",
+    "renderedBesideToolResult",
+    "renderedRole",
+    "sessionId",
+    "session_id",
+    "timestamp",
+    "type",
+    "userType",
+    "uuid",
+    "version"
+   ]
+  },
+  "file-history-snapshot": {
+   "keys": [
+    "isSnapshotUpdate",
+    "messageId",
+    "snapshot",
+    "type"
+   ]
+  },
+  "last-prompt": {
+   "keys": [
+    "lastPrompt",
+    "leafUuid",
+    "sessionId",
+    "type"
+   ]
+  },
+  "mode": {
+   "keys": [
+    "mode",
+    "sessionId",
+    "type"
+   ]
+  },
+  "permission-mode": {
+   "keys": [
+    "permissionMode",
+    "sessionId",
+    "type"
+   ]
+  },
+  "system/stop_hook_summary": {
+   "keys": [
+    "cwd",
+    "entrypoint",
+    "gitBranch",
+    "hasOutput",
+    "hookAdditionalContext",
+    "hookCount",
+    "hookErrors",
+    "hookInfos",
+    "isSidechain",
+    "level",
+    "parentUuid",
+    "preventedContinuation",
+    "sessionId",
+    "session_id",
+    "stopReason",
+    "subtype",
+    "timestamp",
+    "toolUseID",
+    "type",
+    "userType",
+    "uuid",
+    "version"
+   ]
+  },
+  "system/turn_duration": {
+   "keys": [
+    "cwd",
+    "durationMs",
+    "entrypoint",
+    "gitBranch",
+    "isMeta",
+    "isSidechain",
+    "messageCount",
+    "parentUuid",
+    "sessionId",
+    "subtype",
+    "timestamp",
+    "type",
+    "userType",
+    "uuid",
+    "version"
+   ]
+  },
+  "user": {
+   "blocks": [
+    "tool_result"
+   ],
+   "keys": [
+    "cwd",
+    "entrypoint",
+    "gitBranch",
+    "isSidechain",
+    "message",
+    "origin",
+    "parentUuid",
+    "permissionDecision",
+    "permissionMode",
+    "promptId",
+    "promptSource",
+    "sessionId",
+    "session_id",
+    "sourceToolAssistantUUID",
+    "timestamp",
+    "toolUseResult",
+    "turnOrigin",
+    "turnPosition",
+    "type",
+    "userType",
+    "uuid",
+    "version"
+   ]
+  }
+ },
+ "version": "2.1.306"
+}

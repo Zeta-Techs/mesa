@@ -1,10 +1,11 @@
-# Ccode 跨平台 UI 自动化验收矩阵
+# Mesa 跨平台 UI 验收矩阵
 
 本矩阵是可执行验收清单，不把 macOS 的本地结果冒充 Windows/Linux 结果。每个平台的真实桌面验收必须在对应 Tauri dev 窗口完成，并记录截图或录屏路径。
+按批次的具体点验项另列（当前：`docs/qa/acceptance-2026-10.md`），本文件只放跨批次长期要点的面。
 
 ## 锚点
 
-- 开发窗口：`npm run tauri:dev`，标题 `Ccode Dev - 热更新`，端口 17575。
+- 开发窗口：`npm run tauri:dev`，标题 `Mesa Dev - 热更新`，端口 17575。
 - Windows/Linux 多实例必须使用仓库约定的端口配置，验收记录同时写仓库路径、窗口标题、devUrl。
 - 失败项记录：平台、页面、操作、期望、实际、诊断包路径。
 

@@ -4,7 +4,9 @@
 //! 这里只宣布 Mesa 真正会编码的能力：消歧义 + 备用键（flags = 1|4 = 5）。
 //! 不宣布按键松开/重复（bit 2）。Grok 源码写明：宣布了松开却发不出，Enter 会交两次。
 //!
-//! 查询在前端拦截并写回 PTY。贴图/剪贴板/通知序列从字节流里拆出来，不交给 xterm 当文字画。
+//! 查询在前端从字节流里剥掉（不交给 xterm 自己答）；应答由后端 PTY 读线程当场写回，应答表与
+//! src-tauri/src/term_query.rs 双端镜像（2026-10-21 起：前端答会因后台标签 backlog 晚到）。
+//! 贴图/剪贴板/通知序列从字节流里拆出来，不交给 xterm 当文字画。
 
 import {
   takeTerminalNotifications,
@@ -418,9 +420,16 @@ export function consumeHostSequences(
     ready += rest;
     rest = "";
   }
+  // Windows 上 Ink 的「清屏」（ansi-escapes clearTerminal）是 ESC[2J ESC[0f，不带清回滚区的 ESC[3J（macOS 带）。
+  // Gemini CLI 回复超过一屏时每次重画都「清屏 + 整段历史重打」，回滚区里就叠出一份又一份历史
+  //（2026-10-21 用户：画面重复好几屏；ConPTY 实录一段 60 行回复重画 251 次）。补上 ESC[3J，与 macOS 同效果
+  ready = ready.split(WIN_CLEAR_TERMINAL).join(FULL_CLEAR_TERMINAL);
   const taken = takeHostSequences(ready, kittyAccum);
   return { pending: rest, ...taken };
 }
+
+const WIN_CLEAR_TERMINAL = "\x1b[2J\x1b[0f";
+const FULL_CLEAR_TERMINAL = "\x1b[2J\x1b[3J\x1b[0f";
 
 function openHostSequenceAt(input: string): number {
   const marks = ["\x1b_G", "\x1b]52;", "\x1b]9;", "\x1b]777;"];
@@ -440,8 +449,9 @@ function openHostSequenceAt(input: string): number {
   // 「半截」必须延伸到输入末尾（$ 锚定）：search 不锚定会把帧尾**完整**的短序列
   //（如 kimi 每秒的 \x1b]9;4;3\x07 恰好 8 字符）也当半截扣住，通知/进度终点卡死
   //（2026-10-11 复核实证）。marks 主检查已认「有终结符=完整」，这里只补真半截。
+  // Windows 清屏 ESC[2J ESC[0f 切在两帧之间也扣住（拼齐了才补得上 ESC[3J，见 consumeHostSequences）
   const partial = tail.match(
-    /\x1b(?:_G?|\](?:5(?:2;?)?|7(?:7(?:7;?)?)?|9;?)?)?$/,
+    /\x1b(?:_G?|\](?:5(?:2;?)?|7(?:7(?:7;?)?)?|9;?)?|\[2J(?:\x1b(?:\[0?)?)?)?$/,
   );
   const partialAt = partial?.index;
   if (partialAt !== undefined) {

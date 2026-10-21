@@ -71,10 +71,12 @@ import {
   localCommandRecord,
   mergeLocalRecords,
   messageKey,
+  pendingAfterTurn,
   placePendingUsers,
   shouldAutoPeek,
   slashCommandRecorded,
   slashSettledLocally,
+  userTextRecorded,
 } from "../chat-handoff";
 import { AGENTS, type CustomRuntimeDto, type OfficialAccountStatusDto } from "../types";
 import {
@@ -83,6 +85,7 @@ import {
   channelLiveLines,
   channelRelink,
   channelTurnOpen,
+  hooksApprovalAnswered,
   sessionSwitchNote,
   type ChannelReplyDecision,
   type ChatChannelSnapshot,
@@ -104,7 +107,12 @@ import {
   modelOnScreenSupported,
   outputTail,
 } from "../reasoning-effort";
-import { QUICK_CHAT_KEY_PREFIX, isBlankChatTab, newTabCwd } from "../quick-chat";
+import {
+  QUICK_CHAT_KEY_PREFIX,
+  codexSandboxCoversHome,
+  isBlankChatTab,
+  newTabCwd,
+} from "../quick-chat";
 import { resumeSessionInTerminal, saveQuickChatChoice } from "../quick-chat-launch";
 import { connectionModels, readModelHistory } from "../model-history";
 import FileTree, { type DirEntryDto } from "../components/FileTree";
@@ -155,8 +163,8 @@ import {
 } from "../tui-menu";
 import { lastContextTokens, type MesaCommand } from "../composer-assist";
 import { slashCommandsFor } from "../slash-commands";
-import { extractLiveReply, liveReplySupported, mergeLiveReply } from "../live-reply";
-import { parseTuiPanel } from "../tui-panel";
+import { claudeOutputTokens, extractLiveReply, liveReplySupported, mergeLiveReply, staleEcho, terminalHasInputBox } from "../live-reply";
+import { parseTuiNotice, parseTuiPanel } from "../tui-panel";
 import {
   connIssueCounts,
   connIssueText,
@@ -550,10 +558,14 @@ export interface SessionLinkState {
   cliModeSwitch: { mode: string; seq: number } | null;
   /** 终端里开着一个只能在终端看、按 Esc 关的面板（/cost、/usage 的 Settings 面板等，tui-panel.ts） */
   tuiPanel: boolean;
+  /** 终端里弹了一条要按回车才继续的通知（tui-panel.ts parseTuiNotice）：正文行；没有为 null */
+  tuiNotice: string[] | null;
   /** 连接出问题（额度 / 限流 / 钥匙 / 服务 / 模型；conn-issue.ts 扫终端画面认出）+ 可换的同家连接 */
   connIssue: ConnIssueState | null;
   /** 终端画面里这一轮正在写的回复（live-reply.ts；只认 Claude Code / CodeBuddy，别家 null） */
   liveReply: string[] | null;
+  /** Claude 转圈行里这一轮已生成的 token 数（live-reply.ts claudeOutputTokens）；别家与没认出时 null */
+  liveTokens: number | null;
   /** Agent 在跑但 PTY 已 4 秒没出字：TUI 静止（多半停在菜单 / 登录上），不是模型还在想 */
   ptyQuiet: boolean;
   /** 开聊前的 Agent / 配置 / 模型选择（与启动栏同一份） */
@@ -593,11 +605,6 @@ const RIGHT_TABS = [
   { key: "git", label: "改动", symbol: IS_MAC ? "⌘" : "±" },
 ] as const;
 type RightTab = (typeof RIGHT_TABS)[number]["key"];
-
-/** shell 单引号转义（向 PTY 写 cd 命令用）。Windows 内嵌终端默认是 PowerShell：单引号内
- *  用 '' 转义，POSIX 的 '\'' 在 PowerShell 里是坏语法 */
-const shQuote = (s: string) =>
-  IS_WINDOWS ? `'${s.replace(/'/g, "''")}'` : `'${s.replace(/'/g, "'\\''")}'`;
 
 /** 往 shell 写完整命令后的「回车」：ConPTY 把裸 LF 当 Ctrl+Enter，PowerShell 只换行不执行；
  *  Windows 用 \r（VS Code sendText 同口径），其他平台保持 \n */
@@ -1044,6 +1051,24 @@ const TerminalView = memo(function TerminalView({
       .then(setHomeDir)
       .catch(() => {});
   }, []);
+  // 没给目录的新标签默认随手聊（~/ccode/scratch，与快速开聊同口径），不再默认主目录：Codex 在 Windows 上会给
+  // 工作目录下每一项改访问权限，主目录 = 整个用户文件夹（2026-10-20 实测）。主目录仍可在目录菜单里选。
+  // 恢复的标签与接回会话保持原目录；人在这之前已经换过目录的不覆盖
+  useEffect(() => {
+    if (initialCwd || restored || resumeSessionId) return;
+    let cancelled = false;
+    void invoke<string>("ensure_scratch_dir")
+      .then((dir) => {
+        if (!cancelled && dir) setCwd((cur) => (cur === "~" ? dir : cur));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  /** launch 里人主动取消（如主目录提醒点了取消）时的说明，给聊天层发送失败时显示，代替笼统的「启动失败」 */
+  const launchCancelRef = useRef<string | null>(null);
 
   async function checkWorkingDirectory(path = cwd): Promise<boolean> {
     const seq = ++cwdCheckSeqRef.current;
@@ -1961,6 +1986,11 @@ const TerminalView = memo(function TerminalView({
     return () => window.removeEventListener("keydown", onKey);
   }, [visible, primaryFocus, welcomeVisible]);
   const [runId, setRunId] = useState<string | null>(initialRunId ?? null);
+  // 轮询 / 旁路回调的闭包是 launch 那一轮捕获的，那时 setRunId 还没生效——在里面读 runId 永远是旧值（新标签是 null），
+  // lockLink 就不给 Run 登记会话，换权限重开时报「此 Run 不支持恢复」（2026-10-21：Gemini / Kimi / OpenCode 的交互 Run
+  // 全都没登记会话）。闭包里一律读这个 ref
+  const runIdRef = useRef<string | null>(runId);
+  runIdRef.current = runId;
   const [attention, setAttention] = useState<TabStatus["attention"]>(null);
   // PTY 输出静默计时：working 标由输出事件打起，静默后按 onPtyWorkingSilence 熄灭
   const lastOutputAtRef = useRef(0);
@@ -1969,6 +1999,10 @@ const TerminalView = memo(function TerminalView({
   // （2026-10-18 阅读区简报实测：Claude Code 拉起后 50ms 内写入必现，等它画出界面再安静 400ms 后 3/3 正常）
   const ptyAttachedAtRef = useRef(0);
   const inputReadyRef = useRef(true);
+  // 最近一次画出字（剥掉终端查询后还有内容）的时刻：只发了查询的帧不算「画出了界面」
+  const lastDrawAtRef = useRef(0);
+  // 这次拉起的启动阶段已过（见过输入框 / 回合已开始）：之后不再扫信任菜单（scanTrustPromptSoon）
+  const startupSettledRef = useRef(false);
   // 用户刚提交一轮（聊天发送 / 回车 / 带指令的新启动）：允许 PTY 点亮转圈。
   // 启动或恢复会话本身不点亮——TUI 启动画面不是「正在生成回答」。
   const ptyWorkingArmedRef = useRef(false);
@@ -2004,8 +2038,10 @@ const TerminalView = memo(function TerminalView({
   const ptyQuietRef = useRef(false);
   const trustScanTimerRef = useRef<number | null>(null);
   function scanTrustPromptSoon() {
-    // 会话已接上就不会再有信任菜单；正挂着一个时继续扫，菜单消失要能撤掉
-    if (linkCtxRef.current?.filePath && !trustPromptRef.current) return;
+    // 过了启动阶段就不会再有信任菜单；正挂着一个时继续扫，菜单消失要能撤掉。
+    // 原先以「会话已接上」为界：Claude / CodeBuddy 的 SessionStart hook 一起来就报了会话文件，信任菜单还在后头，
+    // 聊天层不再扫屏、看不到菜单（2026-10-21 用户：CodeBuddy 发第一条，终端弹出是否信任，聊天层不显示）
+    if (!trustPromptRef.current && trustScanSettled()) return;
     if (trustScanTimerRef.current) window.clearTimeout(trustScanTimerRef.current);
     trustScanTimerRef.current = window.setTimeout(() => {
       trustScanTimerRef.current = null;
@@ -2018,10 +2054,21 @@ const TerminalView = memo(function TerminalView({
       }
       const next = parseTrustPrompt(lines);
       if (next) trustOptionsRef.current = next.options;
+      // 画出了输入框、或这一轮已经开始干活：启动阶段过了
+      else if (terminalHasInputBox(lines, launchAgentRef.current) === true || channelRef.current?.turn) {
+        startupSettledRef.current = true;
+      }
       if (sameTrustPrompt(trustPromptRef.current, next)) return;
       trustPromptRef.current = next;
       setTrustPrompt(next);
     }, 250);
+  }
+  /** 启动阶段（信任菜单只在这时出现）是否已过：见过输入框 / 回合已开始；认不得画面、又没有旁路的家照旧以会话接上为界 */
+  function trustScanSettled(): boolean {
+    if (startupSettledRef.current) return true;
+    return Boolean(
+      linkCtxRef.current?.filePath && !liveReplySupported(launchAgentRef.current) && !channelRef.current,
+    );
   }
   useEffect(() => {
     if (!running) {
@@ -2077,11 +2124,53 @@ const TerminalView = memo(function TerminalView({
     tuiPanelRef.current = open;
     setTuiPanel(open);
   }
+  // 要按回车才继续的通知（Claude 中途弹的计费说明等）：同一次扫屏认，弹着时一直扫到它消失
+  const [tuiNotice, setTuiNotice] = useState<string[] | null>(null);
+  const tuiNoticeRef = useRef<string[] | null>(null);
+  function setTuiNoticeLines(next: string[] | null) {
+    if ((tuiNoticeRef.current?.join("\n") ?? null) === (next?.join("\n") ?? null)) return;
+    tuiNoticeRef.current = next;
+    setTuiNotice(next);
+  }
+  // 最近一次扫屏：看得见这家的输入框、没有菜单（hooksApprovalAnswered：旁路还说「等批准」时据此认作已经答过）
+  const [promptIdle, setPromptIdle] = useState(false);
+  // 旁路审批卡最近一次撤掉的时刻（applyChannel 记）；屏上那张菜单第一次被认出的时刻与内容
+  const channelApprovalGoneAtRef = useRef(0);
+  const menuFirstSeenRef = useRef<{ key: string; at: number } | null>(null);
+  /**
+   * 能从聊天层答审批的旁路（Codex / Qwen / OpenCode）一轮进行中时，屏上的审批菜单交给旁路的卡：
+   * 旁路已经有卡 → 同一问，不另出；旁路的卡刚撤（答过了）→ 终端菜单还没撤的那一下不认；
+   * 刚认出、旁路的事件还没到 → 先等 1.2 秒。等过了旁路还没有，才按屏上原文出卡（旁路漏了的兜底）。
+   * 原先两边各出一张，先中文后英文（2026-10-21 用户 Codex / Qwen）
+   */
+  function channelOwnsMenu(menu: TuiMenu | null): boolean {
+    const ch = channelRef.current;
+    if (!menu) {
+      menuFirstSeenRef.current = null;
+      return false;
+    }
+    if (!ch || ch.kind === "hooks" || !channelTurnOpen(ch)) return false;
+    // 旁路的卡上答不了（没有回复通道的那类请求）：屏上原文的卡更有用
+    if (ch.approval) return channelCanAnswer(ch, launchAgentRef.current);
+    const now = Date.now();
+    if (now - channelApprovalGoneAtRef.current < 3000) {
+      window.setTimeout(scanMenuSoon, 600);
+      return true;
+    }
+    const key = `${menu.question ?? ""}\n${menu.options.join("\n")}`;
+    if (menuFirstSeenRef.current?.key !== key) menuFirstSeenRef.current = { key, at: now };
+    if (now - menuFirstSeenRef.current.at < 1200) {
+      window.setTimeout(scanMenuSoon, 400);
+      return true;
+    }
+    return false;
+  }
   function scanMenuSoon() {
     const turnLive = ptyWorkingArmedRef.current || pendingReplyRef.current;
     if (
       !menuPromptRef.current &&
       !tuiPanelRef.current &&
+      !tuiNoticeRef.current &&
       Date.now() > menuWatchUntilRef.current &&
       !turnLive
     )
@@ -2101,10 +2190,15 @@ const TerminalView = memo(function TerminalView({
         (parseTrustPrompt(lines) !== null ||
           (trustOptionsRef.current !== null &&
             found.options.join("\n") === trustOptionsRef.current.join("\n")));
-      const next =
+      const next0 =
         echoed || trustMenu || sameTuiMenu(found, menuBaselineRef.current) ? null : found;
+      const next = channelOwnsMenu(next0) ? null : next0;
       // 菜单（审批 / 切换确认）也带 Esc to cancel：认出菜单时不再当面板
-      setPanelOpen(found === null && parseTuiPanel(lines, launchAgentRef.current));
+      // 要按回车继续的通知也带 Esc to cancel：认出通知时不当面板（面板卡的按钮是 Esc，按了会取消）
+      const notice = found === null ? parseTuiNotice(lines, launchAgentRef.current) : null;
+      setTuiNoticeLines(notice);
+      setPanelOpen(found === null && notice === null && parseTuiPanel(lines, launchAgentRef.current));
+      setPromptIdle(next === null && terminalHasInputBox(lines, launchAgentRef.current) === true);
       if (sameTuiMenu(menuPromptRef.current, next)) return;
       menuPromptRef.current = next;
       setMenuPrompt(next);
@@ -2113,8 +2207,12 @@ const TerminalView = memo(function TerminalView({
   // 实时预览：Agent 出字时节流 300ms 读一次可视区，抽出这一轮正在写的回复给聊天层（会话文件一段写完才落盘）
   const [liveReply, setLiveReply] = useState<string[] | null>(null);
   const liveReplyRef = useRef<string[] | null>(null);
+  const [liveTokens, setLiveTokens] = useState<number | null>(null);
+  const liveTokensRef = useRef<number | null>(null);
   const liveScanAtRef = useRef(0);
   const liveScanTimerRef = useRef<number | null>(null);
+  // 最近一次从聊天发出时屏上的最后一条回显与原文（writeChatMessage 记；读到新回显后清）
+  const sendEchoRef = useRef<{ before: string | null; sent: string } | null>(null);
   function scanLiveReplySoon() {
     if (!liveReplySupported(launchAgentRef.current)) return;
     // 旁路直接送实时文字的家（Qwen / OpenCode / Codex）不再读屏
@@ -2134,9 +2232,23 @@ const TerminalView = memo(function TerminalView({
       }
       // 长回复滚出屏后只看得见续行：接到上一次读到的整段后面（mergeLiveReply）
       const read = extractLiveReply(lines, launchAgentRef.current);
+      // Claude 转圈行的已生成 token 数（Windows 上 Claude 不边写边画，聊天层靠它看出还在出字）
+      if (launchAgentRef.current === "claude-code") {
+        const tokens = claudeOutputTokens(lines);
+        if (tokens !== null && tokens !== liveTokensRef.current) {
+          liveTokensRef.current = tokens;
+          setLiveTokens(tokens);
+        }
+      }
       const prev = liveReplyRef.current;
       // 一时读不出（菜单挂着、重绘半帧）保留上一次的，免得预览闪没；新一轮发送时清
       if (!read) return;
+      // 刚发的这句 CLI 还没画出来：屏上是上一轮的回显和回复，不当这一轮的预览（Qwen 先把上一段回复又显示一遍）
+      const sent = sendEchoRef.current;
+      if (sent && read.echo !== undefined) {
+        if (staleEcho(read, sent.before, sent.sent)) return;
+        sendEchoRef.current = null;
+      }
       const next = mergeLiveReply(prev, read);
       if (!next) return;
       if ((prev?.join("\n") ?? null) === (next?.join("\n") ?? null)) return;
@@ -2234,6 +2346,8 @@ const TerminalView = memo(function TerminalView({
     if (!menu || !id) return;
     menuPromptRef.current = null;
     setMenuPrompt(null);
+    // 答完到下一次扫屏之间，别让旁路还没撤的「等批准」顶上来一张兜底卡（扫屏会纠正：菜单还在就回来）
+    if (liveReplySupported(launchAgentRef.current)) setPromptIdle(true);
     // Kimi 开了 kitty 键盘后只认 CSI-u 回车（submitCsiU）；方向键仍是传统写法
     const keys = menuAnswerKeys(menu, index).map((k) =>
       k === "\r" && submitCsiU ? KIMI_CSI_U_ENTER : k,
@@ -2314,9 +2428,16 @@ const TerminalView = memo(function TerminalView({
       // 会话文件 sticky working 不能单独维持。running 不兜底——「进程在跑」≠「正在生成」。
       // 屏上认出了等你选的菜单（工具审批 / 启动信任 / 切换确认，tui-menu.ts、trust-prompt.ts）也算 confirm
       // （2026-10-18）：原先「等你确认」只靠 hooks 精确注意力（要在设置里逐家打开）或会话尾部推断，没开 hooks 的家
-      // 在等你批准时收件箱、标签黄点、系统通知全都不响；读屏认得出的七家（tui-menu.ts 样本）不用装 hooks
+      // 在等你批准时收件箱、标签黄点、系统通知全都不响；读屏认得出的七家（tui-menu.ts 样本）不用装 hooks。
+      // 反过来，hooks 还说「等批准」、屏上却已回到输入框：答过了，工具在跑（hooksApprovalAnswered）
       attention:
-        running && !shellActive ? (menuPrompt || trustPrompt ? "confirm" : attention) : null,
+        running && !shellActive
+          ? menuPrompt || trustPrompt
+            ? "confirm"
+            : attention === "confirm" && hooksApprovalAnswered(channel, promptIdle)
+              ? "working"
+              : attention
+          : null,
       canResume: shellActive && lastResumeRef.current != null,
       startedAt,
       sessionId:
@@ -2348,6 +2469,8 @@ const TerminalView = memo(function TerminalView({
     attention,
     menuPrompt,
     trustPrompt,
+    channel,
+    promptIdle,
     sessionFile,
     resumeSessionId,
     startedAt,
@@ -2376,8 +2499,10 @@ const TerminalView = memo(function TerminalView({
       menuPrompt,
       cliModeSwitch,
       tuiPanel,
+      tuiNotice,
       connIssue,
       liveReply,
+      liveTokens,
       ptyQuiet,
       launchPick,
       skills: agentSkills,
@@ -2400,8 +2525,10 @@ const TerminalView = memo(function TerminalView({
     menuPrompt,
     cliModeSwitch,
     tuiPanel,
+    tuiNotice,
     connIssue,
     liveReply,
+    liveTokens,
     ptyQuiet,
     launchPick,
     agentSkills,
@@ -3162,10 +3289,8 @@ const TerminalView = memo(function TerminalView({
     if (visible && externalCwd && !running) {
       setCwd(externalCwd);
       if (shellActive && activePtyId) {
-        invoke("pty_write", {
-          ptyId: activePtyId,
-          data: `cd ${shQuote(externalCwd)}${SHELL_ENTER}`,
-        }).catch(() => {});
+        // 按这个标签实际用的 shell 拼 cd（设置里可换成 cmd / Git Bash，写法各不相同）
+        invoke("pty_cd", { ptyId: activePtyId, path: externalCwd }).catch(() => {});
       }
       onConsumeExternalCwd?.();
     }
@@ -3187,10 +3312,7 @@ const TerminalView = memo(function TerminalView({
       setCwd(repoPath);
       const s = shellRef.current;
       if (s.shellActive && !s.running && s.activePtyId) {
-        invoke("pty_write", {
-          ptyId: s.activePtyId,
-          data: `cd ${shQuote(repoPath)}${SHELL_ENTER}`,
-        }).catch(() => {});
+        invoke("pty_cd", { ptyId: s.activePtyId, path: repoPath }).catch(() => {});
       }
     }).then((u) => (un = u));
     return () => un?.();
@@ -3351,6 +3473,7 @@ const TerminalView = memo(function TerminalView({
     if (kind === "agent") {
       ptyAttachedAtRef.current = Date.now();
       inputReadyRef.current = false;
+      startupSettledRef.current = false;
     }
     kkpArmedRef.current = false;
     queryPendingRef.current = "";
@@ -3374,14 +3497,13 @@ const TerminalView = memo(function TerminalView({
     }
     unlistenRef.current = [
       await listen<string>(`pty-output-${ptyId}`, (e) => {
+        // 查询在这里只剥掉、跟踪 Kitty 推栈；应答由后端读线程当场写回（term_query.rs），
+        // 前端再答就是第二份，且后台标签的 backlog 补发会让应答晚到、被 CLI 当成按键打进输入框
         const queried = consumeTerminalQueries(queryPendingRef.current, e.payload);
         queryPendingRef.current = queried.pending;
         for (const reply of queried.replies) {
           if (reply.kkp === "arm") kkpArmedRef.current = true;
           if (reply.kkp === "disarm") kkpArmedRef.current = false;
-          if (reply.reply) {
-            invoke("pty_write", { ptyId, data: reply.reply }).catch(() => {});
-          }
         }
         // 贴图 / OSC 52 / OSC 9、777 通知统一走断帧管线（consumeHostSequences）：
         // 半截序列攒到下一帧，不把转义或 base64 画进画面
@@ -3403,8 +3525,21 @@ const TerminalView = memo(function TerminalView({
         if (image) {
           setInlineImageUrl(`data:${image.mime};base64,${image.payload}`);
         }
-        if (host.text) term.write(host.text);
+        if (host.text) {
+          // 带清回滚区（ESC[3J）的整屏重画（Ink 回复超一屏时每帧「清屏 + 整段历史重打」）：用户正往上翻着时，
+          // xterm 清掉回滚区后把视口钉在新历史的最顶端、此后每帧都回到顶，往下滚也被拽回去，看着像滚轮反了。
+          // 历史是从头原样重打的，按原来的行号把视口放回去，用户看的还是那一段
+          const buf = term.buffer.active;
+          const keepLine =
+            host.text.includes("\x1b[3J") && buf.viewportY < buf.baseY ? buf.viewportY : null;
+          if (keepLine === null) term.write(host.text);
+          else
+            term.write(host.text, () => {
+              term.scrollToLine(Math.min(keepLine, term.buffer.active.baseY));
+            });
+        }
         if (kind === "agent" && host.text) {
+          lastDrawAtRef.current = Date.now();
           scanTrustPromptSoon();
           scanMenuSoon();
           scanLiveReplySoon();
@@ -3544,10 +3679,13 @@ const TerminalView = memo(function TerminalView({
     menuPromptRef.current = null;
     setMenuPrompt(null);
     setPanelOpen(false);
+    setTuiNoticeLines(null);
     // 换权限重开 / 退出：下一次接上的运行重新取基线，旧运行的切换不再上报
     permBaselineRef.current = null;
     liveReplyRef.current = null;
     setLiveReply(null);
+    liveTokensRef.current = null;
+    setLiveTokens(null);
     if (kind === "agent") {
       // 记录可恢复的会话 id（一键恢复按钮用）
       lastResumeRef.current = linkCtxRef.current?.sessionId ?? null;
@@ -3662,10 +3800,11 @@ const TerminalView = memo(function TerminalView({
     if (!ctx) return null;
     try {
       if (ctx.hint) {
-        const list = await invoke<SessionMetaDto[]>("list_sessions");
-        const hit = list.find(
-          (s) => s.agent === ctx.agentId && s.sessionId === ctx.hint,
-        );
+        // 按 id 找：扫描缓存里还没有这条新会话时后端会重扫一次，不用等满 10 秒缓存
+        const hit = await invoke<SessionMetaDto | null>("find_session", {
+          agent: ctx.agentId,
+          sessionId: ctx.hint,
+        });
         return hit
           ? {
               filePath: hit.filePath,
@@ -3731,18 +3870,11 @@ const TerminalView = memo(function TerminalView({
         parsedMessages.some(
           (message) =>
             message.role === "user" &&
-            message.blocks.some((block) => {
-              if (block.kind !== "text") return false;
-              const sent = pu.blocks[0]?.text ?? "";
-              // TUI 输入框可能有残留草稿（先发一半、审批框吞键等），落盘文本会是
-              // 「残留 + 本文」的拼接（实证：yyyyyy你是什么模型），精确匹配永远落空、
-              // 「等待回复」挂到超时——放宽为包含匹配；重复发同一文本时旧记录会先命中，
-              // 清除仍受下方 hasNewAssistantText（必须出现新回复正文）双闸门约束
-              return (
-                block.text === sent ||
-                (sent.length > 0 && block.text.includes(sent))
-              );
-            }),
+            // 包含 + 宽松比对（残留草稿、CLI 吞掉 emoji，见 userTextRecorded）；重复发同一文本时旧记录会先命中，
+            // 清除仍受下方 hasNewAssistantText（必须出现新回复正文）双闸门约束
+            message.blocks.some(
+              (block) => block.kind === "text" && userTextRecorded(pu.blocks[0]?.text ?? "", block.text),
+            ),
         );
       // 只画在终端里的斜杠命令（Codex /status…）：本机处理完就留成「命令 + 结果」记录，不再挡着等回复
       if (localRecordsRef.current.file !== ctx.filePath) {
@@ -3844,6 +3976,11 @@ const TerminalView = memo(function TerminalView({
       // 之后会话文件若再无新写入，签名门会让 5s 轮询永远不再重跑 fetch，
       // 「已收尾但被推迟」就冻结成永久转圈（2026-09-19 综述大纲跑完实测）
       const fileSaysOver = state === "done" || state === "settled" || turnSettled;
+      // hooks 家的回合被打断（审批菜单里拒绝 / Esc）时 Claude 不发 Stop，旁路一直「在回复」：会话文件说收尾了就让后端核对后收掉
+      const openChannel = channelRef.current;
+      if (fileSaysOver && openChannel?.kind === "hooks" && channelTurnOpen(openChannel)) {
+        void invoke<boolean>("chat_channel_settle_from_transcript", { tabId }).catch(() => false);
+      }
       const ptyLive = Date.now() - lastOutputAtRef.current < PTY_LIVE_MS;
       // 回合确定结束、且刚发的用户消息都已落盘（不是上一轮残留的收尾标记）：
       // 等回复就此结束，不再靠逐条比对正文（正文比对有漏判就会一直挂着「等待回复」）
@@ -3943,8 +4080,9 @@ const TerminalView = memo(function TerminalView({
     setLinkState("linked");
     setSyncState("polling");
     setLiveSession(ctx.agentId, sessionId, tabId);
-    if (runId) {
-      invoke("run_attach_session", { id: runId, sessionId }).catch(() => {});
+    const rid = runIdRef.current ?? initialRunId;
+    if (rid) {
+      invoke("run_attach_session", { id: rid, sessionId }).catch(() => {});
     }
     void invoke("set_session_profile_command", {
       agent: ctx.agentId,
@@ -4015,6 +4153,8 @@ const TerminalView = memo(function TerminalView({
     const prev = channelRef.current;
     channelRef.current = snap;
     setChannel(snap);
+    // 旁路的审批卡撤了（聊天层答过 / 终端里答过）：终端菜单撤掉前那一下读屏不再认（scanMenuSoon）
+    if (prev?.approval && !snap?.approval) channelApprovalGoneAtRef.current = Date.now();
     if (!snap) return;
     const ctx = linkCtxRef.current;
     if (ctx && snap.agent === ctx.agentId) {
@@ -4048,15 +4188,26 @@ const TerminalView = memo(function TerminalView({
       if (att === "working") ptyWorkingArmedRef.current = true;
       setAttention(att);
     }
-    // 回合结束：马上读一次会话文件；刚发的话都已落盘的，结束「等待回复」（文件稍慢于事件，留 2.5 秒）
+    // hooks 报来「等批准」：看一眼屏上还在不在等（Windows 上 hooks 在后台跑，报到时可能已经在终端里答完了）
+    if (snap.kind === "hooks" && att === "confirm") {
+      menuWatchUntilRef.current = Math.max(menuWatchUntilRef.current, Date.now() + 3000);
+      scanMenuSoon();
+    }
+    // 回合结束：马上读一次会话文件；文件稍慢于事件，2.5 秒后再读一次，这一轮开始前发出的话算 CLI 已收下
+    // （落盘原文对不上也不再挂着「正在生成回复」、同一句画两遍，见 pendingAfterTurn），都收下了就结束等待
     const turn = snap.turn;
     if (turn?.endedAt && turn.endedAt !== channelEndHandledRef.current) {
       channelEndHandledRef.current = turn.endedAt;
       void fetchConversation(true);
-      if (pendingReplyRef.current && turn.startedAt >= lastSendAtRef.current - 2000) {
+      if (pendingReplyRef.current) {
         window.setTimeout(() => {
           void fetchConversation(true).then(() => {
-            if (pendingReplyRef.current && pendingUsersRef.current.length === 0) setPendingReply(false);
+            if (!pendingReplyRef.current) return;
+            pendingUsersRef.current = pendingAfterTurn(pendingUsersRef.current, turn.startedAt);
+            if (pendingUsersRef.current.length > 0) return;
+            setPendingReply(false);
+            // 摘掉画面上残留的本地气泡
+            void fetchConversation(true);
           });
         }, 2500);
       }
@@ -4119,6 +4270,14 @@ const TerminalView = memo(function TerminalView({
         return;
       }
       lockLink(hit.filePath, hit.sessionId, hit.title, hit.createdAt);
+    } else if (!channelRef.current?.sessionId) {
+      // 没有旁路报「换了会话」的家（Gemini / Kimi / Grok 默认）：/clear 后 CLI 另开新文件，按认领规则接着跟
+      const next = await invoke<SessionMetaDto | null>("claim_session_successor", { claimId: tabId }).catch(() => null);
+      const cur = linkCtxRef.current;
+      if (next && cur?.filePath && !samePath(next.filePath, cur.filePath, IS_WINDOWS)) {
+        relinkTo(next.filePath, next.sessionId, null);
+        return;
+      }
     }
     const linkedCtx = linkCtxRef.current;
     if (linkedCtx?.filePath && !sessionWatchIdRef.current) {
@@ -4231,10 +4390,13 @@ const TerminalView = memo(function TerminalView({
     menuPromptRef.current = null;
     setMenuPrompt(null);
     setPanelOpen(false);
+    setTuiNoticeLines(null);
     // 换权限重开 / 退出：下一次接上的运行重新取基线，旧运行的切换不再上报
     permBaselineRef.current = null;
     liveReplyRef.current = null;
     setLiveReply(null);
+    liveTokensRef.current = null;
+    setLiveTokens(null);
   }
 
   /** 布局提交之后再读格子。高度没变时当前帧就能量到；变了就等下一次尺寸。 */
@@ -4264,10 +4426,12 @@ const TerminalView = memo(function TerminalView({
     resumeId?: string,
     /** typeDroppedPrompt：CLI 没有启动注入参数（Kimi）时由调用方等 TUI 就绪后把指令打进输入框，
         这里按「已发出」收起启动栏、不复制不报错 */
-    options?: { prompt?: string; readonly?: boolean; typeDroppedPrompt?: boolean },
+    /** freshRun：不沿用标签上的旧 Run，另开一条（换权限重开：旧 Run 刚被停下、权限也变了，沿用会被身份校验拒掉） */
+    options?: { prompt?: string; readonly?: boolean; typeDroppedPrompt?: boolean; freshRun?: boolean },
   ): Promise<{ ptyId: string; promptDropped: boolean } | null> {
     setError(null);
     setNotice(null);
+    launchCancelRef.current = null;
     if (customRuntimeId) {
       if (restored) {
         setError("自定义 Runtime 不支持恢复；点击“运行”会创建新的 Run");
@@ -4314,6 +4478,7 @@ const TerminalView = memo(function TerminalView({
             rows: size.rows,
           },
         );
+        runIdRef.current = res.runId ?? fresh.id;
         setRunId(res.runId ?? fresh.id);
         await attach(res.ptyId, "agent", { reset: true });
         setExited(false);
@@ -4344,6 +4509,28 @@ const TerminalView = memo(function TerminalView({
       setBarExpanded(true);
       return null;
     }
+    if (
+      codexSandboxCoversHome({
+        agentId,
+        cwd,
+        home: homeDir,
+        permissionMode:
+          (permission ?? (options?.readonly ?? readonly ? "discuss" : "write_tree")) === "discuss"
+            ? null
+            : permissionMode,
+        isWindows: IS_WINDOWS,
+      })
+    ) {
+      const ok = await confirmDialog(
+        "Codex 要在主目录里运行\n\nCodex 在 Windows 上跑命令前，会给工作目录里的每个文件改访问权限。现在的目录是主目录，会改到整个用户文件夹（文档、桌面、AppData 等）：第一次跑命令会很慢，Codex 的沙箱账户也会留下这些文件的写权限。\n\n建议点「取消」，在目录芯片里换成「随手聊」或某个项目文件夹再开始。",
+        { confirmText: "仍在主目录运行" },
+      );
+      if (!ok) {
+        launchCancelRef.current = "没有启动：Codex 不建议在主目录运行，请在输入框下方的目录芯片里换一个文件夹再发";
+        setBarExpanded(true);
+        return null;
+      }
+    }
     if (!visible || !everVisible) {
       setError("这次没能按画面大小启动");
       return null;
@@ -4359,7 +4546,7 @@ const TerminalView = memo(function TerminalView({
       bar: barExpandedRef.current,
       advanced: advancedLaunchOpenRef.current,
     };
-    const probeRun = (runId ?? initialRunId ?? "").trim();
+    const probeRun = options?.freshRun ? "" : (runId ?? initialRunId ?? "").trim();
     let existingPty: string | null = null;
     if (probeRun) {
       existingPty = await invoke<string | null>("pty_id_for_run", {
@@ -4408,7 +4595,7 @@ const TerminalView = memo(function TerminalView({
         // 登记失败静默降级：会话不归步骤，仍可在对话页全部列表里看到
       });
     }
-    const lockKey = (runId ?? initialRunId ?? "").trim() || `tab:${tabId}`;
+    const lockKey = (options?.freshRun ? "" : (runId ?? initialRunId ?? "").trim()) || `tab:${tabId}`;
     if (interactiveLaunchLocks.has(lockKey)) {
       return null;
     }
@@ -4463,13 +4650,16 @@ const TerminalView = memo(function TerminalView({
             ? null
             : permissionMode,
         reuseKey: reuseKey ?? null,
-        runId: runId ?? initialRunId ?? null,
+        runId: options?.freshRun ? null : (runId ?? initialRunId ?? null),
         taskId: taskId ?? null,
         cols: size.cols,
         rows: size.rows,
       });
       if (res.adopted) resizeLatchRef.current = { kind: "frozen" };
-      if (res.runId) setRunId(res.runId);
+      if (res.runId) {
+        runIdRef.current = res.runId;
+        setRunId(res.runId);
+      }
       // 要接的那段对话从没落盘（上次启动没聊就退出 / 启动即崩），后端已改开新会话：说一句，
       // 免得用户以为接上了上次的上下文
       if (res.resumeUnwritten) {
@@ -4677,7 +4867,8 @@ const TerminalView = memo(function TerminalView({
   useEffect(() => {
     if (!permissionRestartRef.current || running || !shellActive) return;
     permissionRestartRef.current = false;
-    void launch(lastResumeRef.current ?? undefined, { prompt: "" });
+    // 另开一条 Run 接回原对话：旧 Run 已停、权限也变了（只讨论 ↔ 可改文件是 Run 身份的一部分）
+    void launch(lastResumeRef.current ?? undefined, { prompt: "", freshRun: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running, shellActive]);
 
@@ -4714,16 +4905,32 @@ const TerminalView = memo(function TerminalView({
     }
   }
 
-  /** 等刚拉起的 Agent 能收键：出过字后安静 400ms（一直没出字的接管进程等满 3 秒），最多等 8 秒；
-      只在拉起后的第一次发送等，之后直接写 */
+  /** 等刚拉起的 Agent 能收键，只在拉起后的第一次发送等，之后直接写。
+   *  认得画面布局的几家（live-reply.ts）等屏上画出它的输入框、再安静 300ms：Kimi 2.3 一起来先发一个终端查询，
+   *  隔一秒多才画界面，原先「出过字后安静 400ms」在查询之后就写了，字落在界面起来之前被吞掉
+   *  （2026-10-21 用户：Kimi 发「你好」终端里没有输入，8 秒后终端被拉起来；Mac 同样）。屏上是信任菜单时一直等——
+   *  这时写进回车就等于替用户选了；其余认不出输入框的情形最多等 20 秒。
+   *  认不得布局的家（与后台标签：画面不更新）照旧：画出过字后安静 400ms（一直没画的等满 3 秒），最多 8 秒 */
   async function waitAgentInputReady(ptyId: string) {
+    const agent = launchAgentRef.current;
+    const byBox = liveReplySupported(agent) && visibleRef.current;
     while (!inputReadyRef.current && ptyIdRef.current === ptyId) {
       const now = Date.now();
       const since = now - ptyAttachedAtRef.current;
-      const drew = lastOutputAtRef.current > ptyAttachedAtRef.current;
-      if ((now - lastOutputAtRef.current >= 400 && (drew || since >= 3000)) || since >= 8000) {
-        inputReadyRef.current = true;
-        break;
+      const quiet = now - lastOutputAtRef.current;
+      if (byBox) {
+        const lines = screenLines();
+        const trust = parseTrustPrompt(lines) !== null;
+        if (!trust && ((quiet >= 300 && terminalHasInputBox(lines, agent) === true) || since >= 20_000)) {
+          inputReadyRef.current = true;
+          break;
+        }
+      } else {
+        const drew = lastDrawAtRef.current > ptyAttachedAtRef.current;
+        if ((quiet >= 400 && (drew || since >= 3000)) || since >= 8000) {
+          inputReadyRef.current = true;
+          break;
+        }
       }
       await new Promise((r) => setTimeout(r, 100));
     }
@@ -4732,11 +4939,28 @@ const TerminalView = memo(function TerminalView({
   async function writeChatMessage(ptyId: string, text: string): Promise<ChatSendResult> {
     await waitAgentInputReady(ptyId);
     if (ptyIdRef.current !== ptyId) return { error: "终端已重新启动，这句没有发出，请再发一次" };
+    // 写之前就记下：正文粘进输入框到按下提交之间（多行要等 0.65 秒），输入框里的编号清单会被扫菜单认成选项，
+    // 拿上一句比对排除不掉（2026-10-21 用户 Grok：七步清单在输入框里时出了一张「终端里在等你选一项」）
+    lastSentRef.current = text;
+    // 发送前屏上最后一条回显：CLI 画出这句之前，实时预览读到的还是上一轮（staleEcho）
+    sendEchoRef.current = {
+      before: extractLiveReply(screenLines(), launchAgentRef.current)?.echo ?? null,
+      sent: text,
+    };
     try {
       await invoke("pty_write_submit", {
         ptyId,
         text,
         submit: submitCsiU ? KIMI_CSI_U_ENTER : "\r",
+        // Windows 上 Grok 收粘贴包里的 LF 会把两行连成一行，CR 才算换行；Codex 的 LF 同样丢、CR 又会拆成几条消息，
+        // 换行改送 Shift+Enter 按键记录（pty.rs shift_enter_pieces）；别家 LF 正常，不动
+        pasteNewline: !IS_WINDOWS
+          ? null
+          : launchAgentRef.current === "grok"
+            ? "\r"
+            : launchAgentRef.current === "codex"
+              ? "shift-enter"
+              : null,
       });
       return { error: null };
     } catch (e) {
@@ -4753,6 +4977,8 @@ const TerminalView = memo(function TerminalView({
     // 实时预览从这一轮重新攒（上一轮的长回复不能接到这一轮前面）
     liveReplyRef.current = null;
     setLiveReply(null);
+    liveTokensRef.current = null;
+    setLiveTokens(null);
     const message: ChatMessageDto = {
       role: "user",
       blocks: [{ kind: "text", text, toolName: null }],
@@ -4793,7 +5019,7 @@ const TerminalView = memo(function TerminalView({
     // Agent 已回落 shell：聊天框继续沿用最后一个会话，而不是启动新上下文。
     if (!running && shellActive && lastResumeRef.current) {
       const res = await launch(lastResumeRef.current, { prompt: "" });
-      if (!res) return { error: error ?? "恢复会话失败，请切到终端检查" };
+      if (!res) return { error: launchCancelRef.current ?? error ?? "恢复会话失败，请切到终端检查" };
       // 恢复启动要经历进程引导/会话回放（可能还有信任提示）：等一拍再写，
       // 否则正文+提交键落在尚未就绪的 TUI 上，表现为消息躺在输入框里没发出去
       await new Promise((r) => setTimeout(r, 1200));
@@ -4813,7 +5039,7 @@ const TerminalView = memo(function TerminalView({
         return { error: "上次使用的配置已不存在，切到终端在启动栏重新选择" };
       }
       const res = await launch(undefined, { prompt: "" });
-      if (!res) return { error: error ?? "恢复会话失败，请切到终端检查" };
+      if (!res) return { error: launchCancelRef.current ?? error ?? "恢复会话失败，请切到终端检查" };
       await new Promise((r) => setTimeout(r, 1200));
       if (!mountedRef.current || ptyIdRef.current !== res.ptyId)
         return { error: null };
@@ -4835,7 +5061,7 @@ const TerminalView = memo(function TerminalView({
     setPromptText(message);
     setShowPrompt(true);
     const res = await launch(undefined, { prompt: message, typeDroppedPrompt: true });
-    if (!res) return { error: "启动 Agent 失败，请切到终端查看详细信息" };
+    if (!res) return { error: launchCancelRef.current ?? "启动 Agent 失败，请切到终端查看详细信息" };
     if (res.promptDropped) {
       // Kimi 没有带首条指令启动的参数：等输入框就绪后照普通消息写进去（与之后每句同一条路）
       if (!mountedRef.current || ptyIdRef.current !== res.ptyId) return { error: null };
@@ -7197,6 +7423,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         cur.trustPrompt === s.trustPrompt &&
         cur.menuPrompt === s.menuPrompt &&
         cur.liveReply === s.liveReply &&
+        cur.liveTokens === s.liveTokens &&
+        cur.tuiPanel === s.tuiPanel &&
+        cur.tuiNotice === s.tuiNotice &&
         cur.connIssue === s.connIssue &&
         cur.ptyQuiet === s.ptyQuiet &&
         cur.launchPick === s.launchPick &&
@@ -7480,10 +7709,10 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
 
   /** 聊天层审批卡片按键：批准 y / 拒绝 n / 取消 Esc（单键热键，各 CLI TUI 通用形态；
       kimi 类 CSI-u 终端的 Enter 改写不涉及——审批热键不回车） */
-  function chatApprovalKey(key: "y" | "n" | "esc") {
+  function chatApprovalKey(key: "y" | "n" | "esc" | "enter") {
     tabActionsRef.current
       .get(focusedId)
-      ?.writePty(key === "esc" ? "\x1b" : key);
+      ?.writePty(key === "esc" ? "\x1b" : key === "enter" ? "\r" : key);
   }
 
   async function allowWritableFork() {
@@ -9592,7 +9821,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         }
                         menuPrompt={sessionByTab[t.id]?.menuPrompt ?? null}
                         tuiPanel={sessionByTab[t.id]?.tuiPanel ?? false}
+                        tuiNotice={sessionByTab[t.id]?.tuiNotice ?? null}
                         liveReply={sessionByTab[t.id]?.liveReply ?? null}
+                        liveTokens={sessionByTab[t.id]?.liveTokens ?? null}
                         mesaCommands={mesaCommandsFor(t.id)}
                         externalInsert={chatInsertByTab[t.id] ?? null}
                         onExternalInsertConsumed={() =>

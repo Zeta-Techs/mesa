@@ -290,16 +290,8 @@ pub fn resolve_binary(name: &str) -> Option<std::path::PathBuf> {
 pub fn resolve_git_bash() -> Option<std::path::PathBuf> {
     #[cfg(windows)]
     {
-        for key in ["ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"] {
-            if let Some(root) = std::env::var_os(key) {
-                let p = std::path::PathBuf::from(root)
-                    .join("Git")
-                    .join("bin")
-                    .join("bash.exe");
-                if p.is_file() {
-                    return Some(p);
-                }
-            }
+        if let Some(p) = git_bash_default_paths().into_iter().find(|p| p.is_file()) {
+            return Some(p);
         }
         let p = resolve_binary("bash")?;
         let s = p.to_string_lossy().to_ascii_lowercase();
@@ -312,6 +304,21 @@ pub fn resolve_git_bash() -> Option<std::path::PathBuf> {
     {
         resolve_binary("bash")
     }
+}
+
+/// Git for Windows 的 bash.exe 默认落点，按序：全机安装（%ProgramFiles%\Git），再是「仅为我安装」
+/// （winget 用户范围 / 安装器选项，%LOCALAPPDATA%\Programs\Git）。后者装完 Mesa 只认得 git、
+/// 认不出 Git Bash（内置终端下拉不出现、run 脚本找不到 bash），2026-10-21 补
+#[cfg(windows)]
+fn git_bash_default_paths() -> Vec<std::path::PathBuf> {
+    let mut roots: Vec<std::path::PathBuf> = ["ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"]
+        .iter()
+        .filter_map(|k| std::env::var_os(k).map(std::path::PathBuf::from))
+        .collect();
+    if let Some(local) = dirs::data_local_dir() {
+        roots.push(local.join("Programs"));
+    }
+    roots.into_iter().map(|r| r.join("Git").join("bin").join("bash.exe")).collect()
 }
 
 /// 在候选目录里按序找第一个存在的文件；Windows 下 npm 全局包是 .cmd shim，补扩展名匹配
@@ -599,6 +606,14 @@ fn grok_config_overlay(profile: &Profile, model: Option<&str>) -> Option<serde_j
 }
 
 /// GROK_CONFIG overlay 的预览附注（preview_launch_plan 用）：如实交代注不进的字段去向
+/// 连接地址是不是 xAI 官方（api.x.ai 及其子域）：只有官方 key 能用 Grok 内置的服务端 web_search
+fn grok_is_xai_endpoint(url: &str) -> bool {
+    reqwest::Url::parse(url.trim())
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.to_ascii_lowercase()))
+        .is_some_and(|h| h == "x.ai" || h.ends_with(".x.ai"))
+}
+
 fn grok_overlay_note() -> String {
     "api_backend / context_window 不在 grok overlay 白名单内（[model.*] 表会被静默丢弃）；渠道有二：中转 /models 目录条目带 apiBackend / contextWindow 字段，或绑定设「API 后端」后经「设为全局默认」写入 ~/.grok/config.toml 的 [model.*] 段；目录缺 contextWindow 时 grok 按 256000 计".into()
 }
@@ -713,6 +728,19 @@ fn claude_model_env(profile: &Profile, model: Option<&str>, user_keys: &[String]
         // 自动压缩窗口与上限成对注入、同值（cc-switch 校准口径）
         env.push(("CLAUDE_CODE_MAX_CONTEXT_TOKENS".into(), c.to_string()));
         env.push(("CLAUDE_CODE_AUTO_COMPACT_WINDOW".into(), c.to_string()));
+    }
+    // 非 Claude 模型关掉工具搜索（ToolSearch）：Claude Code 对第三方网关也开着，内置工具 Bash / Read / Write 照常发，
+    // 另把十来个少用的工具藏到 ToolSearch 后面。glm-5.3-flash 会拿 ToolSearch 去「搜」Write / Bash，
+    // 搜不到（它们本来就在、不在延迟列表里）就断定没有工具、整轮不干活（2026-10-21 用户会话实证；假网关核对：
+    // 关掉后 ToolSearch 与占位工具消失，24 个工具一次发全）。用户自己设过就不动
+    if fill.is_some_and(|m| !m.to_ascii_lowercase().starts_with("claude-")) && !user_has("ENABLE_TOOL_SEARCH") {
+        env.push(("ENABLE_TOOL_SEARCH".into(), "false".into()));
+    }
+    // 非 Claude 模型打开任务清单工具（TaskCreate / TaskUpdate…）：Claude Code 2.1.306 只给自家老模型（≤ opus-4-7 / sonnet-4-6）
+    // 默认发，别的模型名一律不发，模型就说「没有待办 / 计划工具」、只能用 Markdown 列计划，聊天层画不出计划卡
+    // （2026-10-21 用户会话实证 glm-5.3；假网关核对：加上后多出 4 个 Task 工具）。Claude 新模型是官方有意不发，不动
+    if fill.is_some_and(|m| !m.to_ascii_lowercase().starts_with("claude-")) && !user_has("CLAUDE_CODE_ENABLE_TODO_TOOLS") {
+        env.push(("CLAUDE_CODE_ENABLE_TODO_TOOLS".into(), "1".into()));
     }
     env
 }
@@ -1208,6 +1236,14 @@ pub fn launch_plan(
             plan.args.push("--reasoning-effort".into());
             plan.args.push(effort);
         }
+        // 内置 web_search 是 xAI 的服务端搜索：另用一个 grok-4.x 搜索模型、拿 XAI_API_KEY 去 xAI 鉴权，
+        // 经第三方网关时那把钥匙在 xAI 那边 401（2026-10-21 用户：内置的 web_search 工具报了 401 授权错误）。
+        // 连接地址不是 xAI 官方就关掉（--disable-web-search 连带关 web_fetch，它默认本来就关）
+        if profile.account_type == crate::profiles::AccountType::Api
+            && profile.base_url.as_deref().is_some_and(|u| !grok_is_xai_endpoint(u))
+        {
+            plan.args.push("--disable-web-search".into());
+        }
     }
     // CodeBuddy 的 effort 是 CLI flag，不是环境变量；只在启动时携带，避免伪造配置文件字段。
     if profile.agent == "codebuddy" {
@@ -1685,6 +1721,184 @@ pub fn codex_catalog_path(profile_id: &str) -> Option<std::path::PathBuf> {
     )
 }
 
+/// Codex 对没登记的模型用的默认系统提示词。catalog 必须填 base_instructions，填了就整段替换 Codex 自己的提示词：
+/// 以前填「You are a coding agent.」，模型不知道 apply_patch，改文件全用 Set-Content / 重定向，会话里没有差异、聊天层画不出来
+/// （2026-10-20 Windows 实跑：同一网关同一模型，一句话版 5 次改文件全走 PowerShell，换回原文全走 apply_patch）。
+/// 优先向本机装的 Codex 取原文（local_codex_base_instructions，跟着 Codex 版本走）；取不到才用这份随包兜底
+/// （Codex 0.163 原文，Apache-2.0，OpenAI）
+const CODEX_BASE_INSTRUCTIONS: &str = include_str!("codex_base_instructions.md");
+/// Windows 补充：PowerShell 里调 apply_patch Codex 接不住（引号串、here-string、管道实跑都报错），
+/// 只认「整条命令就是一个 bash heredoc」；不说模型会先在 PowerShell 里试错几轮
+const CODEX_WINDOWS_PATCH_NOTE: &str = include_str!("codex_windows_patch_note.md");
+
+fn codex_base_instructions() -> String {
+    let base = codex_cli_version()
+        .and_then(local_codex_base_instructions)
+        .unwrap_or_else(|| CODEX_BASE_INSTRUCTIONS.to_string())
+        .replace("\r\n", "\n");
+    if cfg!(windows) {
+        format!("{}\n\n{}", base.trim_end(), CODEX_WINDOWS_PATCH_NOTE.replace("\r\n", "\n"))
+    } else {
+        base
+    }
+}
+
+/// 本机 Codex（该版本）的默认提示词，缓存在 `<配置根>/catalogs/codex-base-instructions-<版本>.md`，
+/// 每个版本只取一次；旧版本的缓存顺手删掉。取失败本进程内不再重试这个版本（每次启动都等不值得）
+#[cfg(not(test))]
+fn local_codex_base_instructions(version: (u32, u32, u32)) -> Option<String> {
+    static LOCK: std::sync::Mutex<Option<(u32, u32, u32)>> = std::sync::Mutex::new(None);
+    let mut failed = LOCK.lock().ok()?;
+    let dir = crate::storage::config_root()?.join("catalogs");
+    let name = format!("codex-base-instructions-{}.{}.{}.md", version.0, version.1, version.2);
+    let cache = dir.join(&name);
+    if let Ok(text) = std::fs::read_to_string(&cache) {
+        if plausible_codex_instructions(&text) {
+            return Some(text);
+        }
+    }
+    if *failed == Some(version) {
+        return None;
+    }
+    let Some(text) = extract_codex_base_instructions() else {
+        eprintln!("[codex] 没取到 Codex {version:?} 的默认提示词，模型清单用随包的 0.163 原文");
+        *failed = Some(version);
+        return None;
+    };
+    let _ = std::fs::create_dir_all(&dir);
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for e in entries.flatten() {
+            let n = e.file_name().to_string_lossy().into_owned();
+            if n.starts_with("codex-base-instructions-") && n != name {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+    let _ = crate::profiles::atomic_write(&cache, &text);
+    Some(text)
+}
+
+/// 测试态不跑本机 Codex（结果与开发机装没装、装哪版无关）
+#[cfg(test)]
+fn local_codex_base_instructions(_version: (u32, u32, u32)) -> Option<String> {
+    None
+}
+
+/// Codex 没有直接导出这段原文的命令（`debug models` 只有 GPT 专用的打包条目，`debug prompt-input` 不含它），
+/// 做法是在一次性的 CODEX_HOME 里跑一次 `codex exec`、渠道的密钥变量故意不给：Codex 先写会话文件
+/// （首行 session_meta.base_instructions 就是原文），发请求前报「Missing environment variable」退出——
+/// 不联网、不碰用户的 ~/.codex，实测约 0.5 秒。临时目录用完即删
+#[cfg_attr(test, allow(dead_code))]
+fn extract_codex_base_instructions() -> Option<String> {
+    const KEY_VAR: &str = "MESA_CODEX_INSTRUCTIONS_PROBE_UNSET";
+    let bin = resolve_binary("codex")?;
+    let tmp = crate::storage::config_root()?.join("tmp");
+    // 上次没删干净的（见下）先扫掉
+    if let Ok(entries) = std::fs::read_dir(&tmp) {
+        for e in entries.flatten() {
+            if e.file_name().to_string_lossy().starts_with("codex-instructions-") {
+                let _ = std::fs::remove_dir_all(e.path());
+            }
+        }
+    }
+    let scratch = tmp.join(format!("codex-instructions-{}", uuid::Uuid::new_v4()));
+    let home = scratch.join("home");
+    let work = scratch.join("work");
+    let result = (|| {
+        std::fs::create_dir_all(&home).ok()?;
+        std::fs::create_dir_all(&work).ok()?;
+        let p = "mesa-probe";
+        let mut child = crate::process::background_command(&bin)
+            .args([
+                "exec".to_string(),
+                "--skip-git-repo-check".into(),
+                "-c".into(),
+                format!(r#"model_provider="{p}""#),
+                "-c".into(),
+                format!(r#"model_providers.{p}.name="{p}""#),
+                "-c".into(),
+                // 万一真发出去也只到本机一个不通的端口
+                format!(r#"model_providers.{p}.base_url="http://127.0.0.1:9/v1""#),
+                "-c".into(),
+                format!(r#"model_providers.{p}.env_key="{KEY_VAR}""#),
+                "-c".into(),
+                format!(r#"model_providers.{p}.wire_api="responses""#),
+                "-c".into(),
+                format!("model_providers.{p}.request_max_retries=0"),
+                "-c".into(),
+                format!("model_providers.{p}.stream_max_retries=0"),
+                "-m".into(),
+                "mesa-probe-model".into(),
+                "hi".into(),
+            ])
+            .current_dir(&work)
+            .env("CODEX_HOME", &home)
+            .env_remove(KEY_VAR)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .ok()?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) if std::time::Instant::now() >= deadline => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(30)),
+                Err(_) => return None,
+            }
+        }
+        let rollout = first_jsonl(&home.join("sessions"))?;
+        codex_instructions_from_rollout(&std::fs::read_to_string(rollout).ok()?)
+    })();
+    // Windows 上 codex 退出后约 1.2–1.4 秒目录句柄才放（实测文件删得掉、空目录删不掉）：放后台重试，不拖慢启动
+    if std::fs::remove_dir_all(&scratch).is_err() && scratch.exists() {
+        std::thread::spawn(move || {
+            for _ in 0..50 {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                if std::fs::remove_dir_all(&scratch).is_ok() || !scratch.exists() {
+                    break;
+                }
+            }
+        });
+    }
+    result
+}
+
+#[cfg_attr(test, allow(dead_code))]
+fn first_jsonl(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    for e in std::fs::read_dir(dir).ok()?.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            if let Some(f) = first_jsonl(&p) {
+                return Some(f);
+            }
+        } else if p.extension().is_some_and(|x| x == "jsonl") {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// 会话文件首行 session_meta 里的 base_instructions.text（换行统一成 LF）
+fn codex_instructions_from_rollout(text: &str) -> Option<String> {
+    let first: serde_json::Value = serde_json::from_str(text.lines().next()?).ok()?;
+    if first["type"] != "session_meta" {
+        return None;
+    }
+    let s = first["payload"]["base_instructions"]["text"].as_str()?.replace("\r\n", "\n");
+    plausible_codex_instructions(&s).then_some(s)
+}
+
+/// 像一段完整的系统提示词（防把截断 / 占位文本缓存下来）
+fn plausible_codex_instructions(text: &str) -> bool {
+    text.len() > 2000 && text.contains("apply_patch")
+}
+
 /// 单个 catalog 条目：字段拼写与标量值照抄 codex-rs/models-manager/models.json 的打包条目
 /// （reasoning levels 使用 Codex 当前完整档位集——cc-switch 的 catalog 同样全量模板
 /// （自家资源 codex_native_responses_template.json），模型不支持时端点忽略 effort，口径稳妥；
@@ -1720,12 +1934,12 @@ fn codex_catalog_entry_for(
         "priority": 1,
         "availability_nux": null,
         "upgrade": null,
-        "base_instructions": "You are a coding agent.",
+        "base_instructions": codex_base_instructions(),
         "support_verbosity": true,
         "default_verbosity": "low",
         // 不声明 apply_patch_tool_type：freeform（type=custom）工具会被原生 /responses 与
-        // Anthropic 协议网关拒/丢（cc-switch 实证，非代理档一律剥除）；缺省时 codex 走
-        // shell_type=shell_command 的 shell 版 apply_patch，编辑能力不受影响
+        // Anthropic 协议网关拒/丢（cc-switch 实证，非代理档一律剥除；0.163 也只认 freeform 一种）；
+        // 缺省时模型在 shell 里调 apply_patch，Codex 接住后照样出改文件事件与差异
         "truncation_policy": { "mode": "tokens", "limit": 10000 },
         "supports_parallel_tool_calls": true,
         // v0.146 起为必填（无 serde default），空数组即可
@@ -1823,6 +2037,11 @@ pub fn prepare_launch(profile: &Profile) -> Result<Vec<String>, String> {
     if is_codex {
         if let Some(path) = write_codex_catalog(profile)? {
             args.extend(catalog_args(&path));
+            args.extend(codex_plan_tool_args(
+                &codex_base_instructions(),
+                codex_modern(),
+                crate::agent_specs::codex_user_config().as_ref(),
+            ));
         }
         // 只给交互式启动（内嵌终端 / 外部终端，都经这里）：exec 不认这个参数，无头调用不走这里。
         // Mesa 一律用 -c 注入，codex 0.163 只能不走共享后台服务，不明说就每次报一条
@@ -1837,6 +2056,23 @@ pub fn prepare_launch(profile: &Profile) -> Result<Vec<String>, String> {
 /// 本机实测过的新版行为起点（0.163）：`--no-daemon` 可用；模型目录 / 兜底元数据没声明的档位
 /// CLI 自己丢掉（配置里的 priority 不会再带到中转），不必再用 -c 强塞 service_tier
 const CODEX_MODERN: (u32, u32, u32) = (0, 163, 0);
+
+/// catalog 里的 base_instructions（Codex 给未登记模型的默认提示词）写着「你有 `update_plan` 工具」，
+/// 但 0.163 起 Codex 默认不发这个工具（官方模型也不发，改走 goals）：模型照提示词去找、找不到就说
+/// 「当前会话没有暴露计划工具」，聊天层也画不出计划卡（2026-10-21 用户实测 glm-5.3-flash；假网关核对：
+/// 加 `tools.update_plan.enabled=true` 后多出 update_plan）。提示词里提到才给，旧版不认这个键不加，
+/// 用户自己在 config.toml 配过 `[tools.update_plan]` 不动
+fn codex_plan_tool_args(instructions: &str, modern: bool, user_config: Option<&toml::Value>) -> Vec<String> {
+    let user_set = user_config
+        .and_then(|c| c.get("tools"))
+        .and_then(|t| t.get("update_plan"))
+        .is_some();
+    if modern && !user_set && instructions.contains("update_plan") {
+        vec!["-c".into(), "tools.update_plan.enabled=true".into()]
+    } else {
+        Vec::new()
+    }
+}
 
 fn codex_modern() -> bool {
     codex_cli_version().is_some_and(|v| v >= CODEX_MODERN)
@@ -3871,6 +4107,8 @@ mod tests {
     fn e2e_dump_launch_plans() {
         let base = std::env::var("E2E_BASE").expect("E2E_BASE");
         let out = std::env::var("E2E_OUT").expect("E2E_OUT");
+        // 测试态 Codex 版本默认取桩（None = 当旧版）：端到端要按本机真实版本拼参数（--no-daemon、计划工具）
+        CODEX_VERSION_FOR_TEST.with(|c| c.set(cli_version_uncached_ok("codex")));
         // (agent, 协议, base_url 后缀)：Anthropic 协议的 base 不带 /v1（CLI 自己拼 /v1/messages），
         // OpenAI / Responses 协议带 /v1，Gemini 由 CLI 拼 /v1beta
         let cases: [(&str, Option<&str>, &str); 9] = [
@@ -3906,17 +4144,25 @@ mod tests {
                 agent.into(),
                 match plan {
                     Ok(plan) => {
+                        // 启动前准备追加的参数（Codex 的模型目录 catalog、计划工具、--no-daemon），同 pty.rs：
+                        // 接在计划参数（含权限档）后面——缺了它端到端和金丝雀核对的就不是 Mesa 真实的启动
+                        // （2026-10-21：catalog 的提示词与 update_plan 都没被核对到）
+                        let extra = prepare_launch(&p).unwrap_or_default();
+                        let with_extra = |mut a: Vec<String>| {
+                            a.extend(extra.iter().cloned());
+                            a
+                        };
                         // 聊天层权限四档的启动参数（pty.rs 同一处拼法），第三期逐家抓屏用
                         let tiers: serde_json::Map<String, serde_json::Value> = ["ask", "auto", "full"]
                             .iter()
                             .filter_map(|m| {
                                 permission_launch_args(agent, &plan.args, m)
-                                    .map(|a| ((*m).to_string(), serde_json::json!(a)))
+                                    .map(|a| ((*m).to_string(), serde_json::json!(with_extra(a))))
                             })
                             .collect();
                         serde_json::json!({
                             "env": plan.env,
-                            "args": plan.args,
+                            "args": with_extra(plan.args.clone()),
                             "env_remove": plan.env_remove,
                             "permission": tiers,
                         })
@@ -3926,6 +4172,20 @@ mod tests {
             );
         }
         std::fs::write(out, serde_json::to_string_pretty(&all).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn claude_non_claude_model_turns_off_tool_search() {
+        let mut p = profile("claude-code", Some("https://open.bigmodel.cn/api/anthropic"));
+        p.models = vec!["glm-5.3-flash".into()];
+        let env = claude_model_env(&p, Some("glm-5.3-flash"), &[]);
+        assert!(env.contains(&("ENABLE_TOOL_SEARCH".into(), "false".into())));
+        assert!(env.contains(&("CLAUDE_CODE_ENABLE_TODO_TOOLS".into(), "1".into())));
+        // Claude 自家模型照 Claude Code 默认；用户自己设过不动
+        let env = claude_model_env(&p, Some("claude-sonnet-4-5"), &[]);
+        assert!(!env.iter().any(|(k, _)| k == "ENABLE_TOOL_SEARCH" || k == "CLAUDE_CODE_ENABLE_TODO_TOOLS"));
+        let env = claude_model_env(&p, Some("glm-5.3"), &["ENABLE_TOOL_SEARCH".into(), "CLAUDE_CODE_ENABLE_TODO_TOOLS".into()]);
+        assert!(!env.iter().any(|(k, _)| k == "ENABLE_TOOL_SEARCH" || k == "CLAUDE_CODE_ENABLE_TODO_TOOLS"));
     }
 
     #[test]
@@ -4302,6 +4562,12 @@ mod tests {
             .args
             .windows(2)
             .any(|pair| pair[0] == "-m" && pair[1] == "grok-code-fast-1"));
+        // 第三方网关：内置 web_search 拿网关钥匙去 xAI 鉴权必 401，关掉；xAI 官方地址保留
+        assert!(plan.args.iter().any(|a| a == "--disable-web-search"));
+        let mut official = p.clone();
+        official.base_url = Some("https://api.x.ai/v1".into());
+        let plan_official = launch_plan(&official, Some("xai-secret".into()), Some("grok-code-fast-1")).unwrap();
+        assert!(!plan_official.args.iter().any(|a| a == "--disable-web-search"));
         // 模型列表经 GROK_CONFIG overlay 收敛进选择器（allowed_models）
         let grok_config = plan
             .env
@@ -5609,6 +5875,11 @@ api_backend = "responses"
         assert_eq!(e["visibility"], "list");
         // freeform apply_patch 会中转被拒（cc-switch 实证）→ 不声明，走 shell 版
         assert!(e.get("apply_patch_tool_type").is_none());
+        // base_instructions 用 Codex 自己的默认提示词（教模型用 apply_patch），不是一句话占位
+        let bi = e["base_instructions"].as_str().unwrap();
+        assert!(bi.starts_with("You are a coding agent running in the Codex CLI"));
+        assert!(bi.contains("apply_patch") && !bi.contains('\r'));
+        assert_eq!(bi.contains("shell: \"bash\""), cfg!(windows), "Windows 补充只在 Windows 上带");
         assert_eq!(e["truncation_policy"]["mode"], "tokens");
         assert_eq!(e["default_verbosity"], "low");
         assert_eq!(e["supported_in_api"], true);
@@ -5641,6 +5912,38 @@ api_backend = "responses"
     }
 
     #[test]
+    fn codex_instructions_read_from_rollout_first_line() {
+        let body = format!("You are a coding agent.\r\nUse `apply_patch`.\r\n{}", "x".repeat(3000));
+        let meta = serde_json::json!({"type":"session_meta","payload":{"base_instructions":{"text": body}}});
+        let text = format!("{meta}\n{{\"type\":\"turn_context\"}}\n");
+        let got = codex_instructions_from_rollout(&text).unwrap();
+        assert!(got.starts_with("You are a coding agent.\nUse `apply_patch`.\n"), "换行统一成 LF");
+        // 首行不是 session_meta、内容太短或不像提示词：不收（不能把它缓存下来）
+        assert!(codex_instructions_from_rollout("{\"type\":\"turn_context\"}\n").is_none());
+        let short = serde_json::json!({"type":"session_meta","payload":{"base_instructions":{"text":"You are a coding agent."}}});
+        assert!(codex_instructions_from_rollout(&short.to_string()).is_none());
+        // 随包兜底本身得过同一道门
+        assert!(plausible_codex_instructions(CODEX_BASE_INSTRUCTIONS));
+    }
+
+    /// 手动跑：真起本机 codex 取默认提示词（不联网、临时目录用完即删）。`cargo test --lib codex_instructions_extract_real -- --ignored --nocapture`
+    #[test]
+    #[ignore = "需要本机装着 codex"]
+    fn codex_instructions_extract_real() {
+        let t = std::time::Instant::now();
+        let text = extract_codex_base_instructions().expect("取不到");
+        eprintln!("{} 字，用时 {:?}，开头：{}", text.chars().count(), t.elapsed(), &text[..80]);
+        assert!(plausible_codex_instructions(&text));
+        // 临时目录（后台重试删）几秒内清干净
+        std::thread::sleep(std::time::Duration::from_secs(4));
+        let tmp = crate::storage::config_root().unwrap().join("tmp");
+        let left = std::fs::read_dir(&tmp)
+            .map(|d| d.flatten().filter(|e| e.file_name().to_string_lossy().starts_with("codex-instructions-")).count())
+            .unwrap_or(0);
+        assert_eq!(left, 0, "临时目录没删干净");
+    }
+
+    #[test]
     fn codex_catalog_written_atomically() {
         let dir = std::env::temp_dir().join(format!("ccode-test-{}", uuid::Uuid::new_v4()));
         let path = dir.join("catalogs").join("codex-p1.json");
@@ -5650,6 +5953,22 @@ api_backend = "responses"
         assert_eq!(v["models"][0]["slug"], "m1");
         assert_eq!(v["models"][0]["display_name"], "测试 · m1");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn codex_plan_tool_follows_instructions() {
+        let on = vec!["-c".to_string(), "tools.update_plan.enabled=true".to_string()];
+        let prompt = "You have access to an `update_plan` tool";
+        assert_eq!(codex_plan_tool_args(prompt, true, None), on);
+        // 提示词没提、旧版 Codex、用户自己配过：都不加
+        assert!(codex_plan_tool_args("no plan here", true, None).is_empty());
+        assert!(codex_plan_tool_args(prompt, false, None).is_empty());
+        let user: toml::Value = toml::from_str("[tools.update_plan]\nenabled = false\n").unwrap();
+        assert!(codex_plan_tool_args(prompt, true, Some(&user)).is_empty());
+        let other: toml::Value = toml::from_str("[windows]\nsandbox = \"elevated\"\n").unwrap();
+        assert_eq!(codex_plan_tool_args(prompt, true, Some(&other)), on);
+        // 内嵌的默认提示词确实提到它（本机取不到时用这份）
+        assert!(CODEX_BASE_INSTRUCTIONS.contains("update_plan"));
     }
 
     #[test]
@@ -6288,6 +6607,21 @@ api_backend = "responses"
         assert!(dirs
             .iter()
             .any(|d| d.ends_with(std::path::Path::new("Git").join("cmd"))));
+        // PowerShell 7 MSI 默认落点：Mesa 开着时装上，不重启也能认出
+        assert!(dirs
+            .iter()
+            .any(|d| d.ends_with(std::path::Path::new("PowerShell").join("7"))));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn git_bash_paths_cover_per_user_install() {
+        let paths = git_bash_default_paths();
+        let per_user = dirs::data_local_dir().unwrap().join("Programs").join("Git").join("bin").join("bash.exe");
+        assert!(paths.contains(&per_user), "「仅为我安装」的 Git Bash");
+        // 全机安装排在前面
+        assert!(paths.first().unwrap().ends_with(std::path::Path::new("Git").join("bin").join("bash.exe")));
+        assert_ne!(paths.first(), Some(&per_user));
     }
 
     #[cfg(windows)]

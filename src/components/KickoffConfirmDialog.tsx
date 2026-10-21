@@ -66,6 +66,7 @@ import {
 } from "../pipeline-start";
 import { decisionGate, isTaskMdStub, resolveTaskMdSource } from "../step-decisions";
 import { RESOURCE_TYPE_LABELS } from "../pipeline-presets";
+import { IS_WINDOWS } from "../hotkeys";
 import type {
   ArtifactEntryDto,
   DiscoveredResourceDto,
@@ -546,6 +547,7 @@ export default function KickoffConfirmDialog({
         ? Object.fromEntries(skillLib.map((s) => [s.name, s.provides ?? []]))
         : extras.providesByName,
       extras.decisions,
+      IS_WINDOWS,
     );
   }, [extras, stepNow, cfgLocal, skillMeta, projectPath]);
 

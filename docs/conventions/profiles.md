@@ -88,7 +88,7 @@ Binding
 | Grok / OpenCode | `openai` | grok：`GROK_MODELS_BASE_URL`；opencode：`OPENCODE_CONFIG_CONTENT` 内联 JSON |
 | Qwen / Kimi | 绑定 `protocol` → `openai` 或 `anthropic` | kimi 官方协议仍用 openai 槽 URL + `provider_type=kimi`；kimi 双写 `KIMI_MODEL_BASE_URL` / `KIMI_BASE_URL` |
 
-**自拼版本段的槽位地址归一（2026-10-19 定）**：gemini CLI 对 `GOOGLE_GEMINI_BASE_URL` 无条件追加 `/v1beta/models/<模型>:…`、Claude Code 对 `ANTHROPIC_BASE_URL` 自拼 `/v1/messages`（当日本机探针实测：base 带 `/v1` 分别拼出 `/v1/v1beta/…`、`/v1/v1/messages?beta=true`，中转 404，gemini 报「Model … not found or is invalid」）。用户把 OpenAI 风格 `/v1` 地址填进这两槽是常态——网关保存把主地址折进全部槽，同址网关必然如此。所以 `gateway_store::materialize` 对 **gemini / claude-code** 绑定剥掉槽位末尾版本段（`models::strip_trailing_version_segment`），启动注入 / 设为全局 / 验证拉目录拿到的都是 CLI 真正要的 base；gemini 拉目录候选链（`models::model_list_candidates`）同口径。**仅限已实证的两家**——codebuddy 与 qwen / kimi 的 anthropic 协议通道未实证自拼行为，不剥，等实测后再收；openai 系（codex / grok / opencode / qwen / kimi 的 openai 协议）版本段是约定的一部分，原样保留。
+**自拼版本段的槽位地址归一（2026-10-19 定）**：gemini CLI 对 `GOOGLE_GEMINI_BASE_URL` 无条件追加 `/v1beta/models/<模型>:…`、Claude Code 对 `ANTHROPIC_BASE_URL` 自拼 `/v1/messages`（当日本机探针实测：base 带 `/v1` 分别拼出 `/v1/v1beta/…`、`/v1/v1/messages?beta=true`，中转 404，gemini 报「Model … not found or is invalid」）。用户把 OpenAI 风格 `/v1` 地址填进这两槽是常态——网关保存把主地址折进全部槽，同址网关必然如此。所以 `gateway_store::materialize` 对 **gemini / claude-code** 绑定剥掉槽位末尾版本段（`models::strip_trailing_version_segment`），启动注入 / 设为全局 / 验证拉目录拿到的都是 CLI 真正要的 base；gemini 拉目录候选链（`models::model_list_candidates`）同口径。**仅限已实证的两家**——qwen / kimi 的 anthropic 协议通道未实证自拼行为，不剥，等实测后再收；openai 系（codex / grok / opencode / qwen / kimi 的 openai 协议）版本段是约定的一部分，原样保留。
 
 显示名：绑定无独立名字，列表用网关名（一对一）。官方绑定固定叫「官方账号」。
 
@@ -300,6 +300,8 @@ Grok 还须同时写 `[models].default` = 本次启动模型（2026-09-20 1.0.34
 
 **无头调用（雷达解读 / 提交信息等）** 的「最近使用」回落跳过官方账号：OAuth 过期会把 CLI stderr 甩到界面。有 API 配置就走 API；只有官方才回落官方。显式 id、功能专属、AI 专用仍尊重官方。失败文案走 `summarize_headless_error`，不回整段日志。终端里手选「官方账号」不受这条约束。
 
+**Grok 网关绑定加 `--disable-web-search`（2026-10-21）**：Grok 内置 web_search 是 xAI 服务端搜索、拿 `XAI_API_KEY` 去 xAI 鉴权，网关钥匙 401；API 连接且地址不是 `*.x.ai` 时摘掉（官方地址与官方账号不动）。
+
 **Codex 网关绑定额外注入** `-c web_search="disabled"` 与 `-c service_tier="auto"`：ChatGPT 登录/磁盘默认会把官方 hosted 网页搜索和订阅优先档带进本进程；catalog 的 `supports_search_tool: false` 挡不住请求。DeepSeek 等中转会拒 `web_search`（有的网关转成 Anthropic `web_search_20250305`）。只盖本进程，官方账号启动不注。**按 codex 版本分（2026-10-19，本机 0.163 实测）**：0.163 起 CLI 自己丢掉模型目录 / 兜底元数据没声明的档位（配置里的 priority 不会带到中转），再塞 `service_tier="auto"` 只会每次报「not advertised」warning，故只给旧版与查不到版本时塞；交互式启动（内嵌 / 外部终端，经 `prepare_launch`）在 0.163 起加 `--no-daemon`——Mesa 一律 -c 注入，只能不走共享后台服务，明说才不报「Running without the shared background server」。**`exec` 不认 `--no-daemon`，不得加进 `launch_plan`**（无头调用共用）。版本取检测缓存，缺了现查 `--version`；查不到按旧版参数，保证起得来。
 
 **出网代理**（设置 `outbound_proxy`）：只注入官方启动与组头登录（`HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY`/`NO_PROXY`）。网关 API 启动不走。连接 `extraEnv` 同名键最后覆盖。不建本地反代理，官方失败不回落中转。
@@ -452,6 +454,9 @@ Codex            → …
   subagent → 显式写 `CLAUDE_CODE_SUBAGENT_MODEL`）、Grok（small → overlay `[models].session_summary` + `prompt_suggestion`，
   未指定时钉成这次的主模型——用户全局常把它们指到别的网关；small 并入 allowed_models）、OpenCode（small → `small_model`）。
   选项只能是名单里的模型；名单删掉的模型对应分工自动作废。不改任何 CLI 配置文件；导出导入随绑定带走。
+- **非 Claude 模型关工具搜索（2026-10-21）**：主模型不是 `claude-*` 时写 `ENABLE_TOOL_SEARCH=false`（用户 settings.json 设过不动）。Claude Code 对第三方网关也开 ToolSearch、把少用的工具藏到它后面；glm-5.3-flash 会拿 ToolSearch 去「搜」本来就在的 Write / Bash，搜不到就断定没工具、整轮不干活（用户会话实证）。假网关核对：关掉后 ToolSearch 与占位工具消失、24 个工具一次发全（多几千 token 输入）。**这是 Claude Code 新版才有的**：同一假网关、什么都不注入时，2.1.305 发 14 个工具（含 ToolSearch 与占位），2.1.292 发全 24 个——旧版机器上（用户的 Mac）不出这个问题，升级后会出。
+- **Codex 计划工具随提示词打开（2026-10-21）**：Mesa 给的 catalog 提示词（Codex 对未登记模型的默认提示词）提到 `update_plan`、Codex ≥ 0.163、用户 config.toml 没有 `[tools.update_plan]` 时，交互启动加 `-c tools.update_plan.enabled=true`（`agents::codex_plan_tool_args`）。0.163 默认不发这个工具，提示词却说有，模型就答「没有计划工具」。`request_user_input` 只在 Plan 模式可用是 Codex 设计，不改。
+- **非 Claude 模型开任务清单工具（2026-10-21）**：主模型不是 `claude-*` 时写 `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`（用户设过不动）。Claude Code 2.1.306 的 TaskCreate / TaskUpdate / TaskList / TaskGet 只对 ≤ opus-4-7 / sonnet-4-6 / haiku-4-5 默认发，别的模型名不发，模型就说没有待办工具。假网关核对：glm-5.3 注入前 23 个工具、注入后 27 个。claude-opus-5 等新 Claude 模型官方有意不发，不注入。
 - **别家模型适配（2026-10-17 假网关实测）**：Claude 主模型被能力库确知「不会思考」时写 `MAX_THINKING_TOKENS=0`（去掉 adaptive
   thinking 字段；`CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING` 实测不去）。Grok 的思考档只对 config 里 `[model."<id>"]` 声明了档位的模型生效，
   其余被忽略并警告——求交器在只绑 grok 时据 `agents::grok_model_declares_effort`（只读）关掉开聊前与运行中的档位。
@@ -468,3 +473,7 @@ Codex            → …
 - **能力声明与能力通道（2026-09-19，对照 cc-switch 补口）**：Claude 长上下文 `CLAUDE_CODE_MAX_CONTEXT_TOKENS` 与 `CLAUDE_CODE_AUTO_COMPACT_WINDOW` **同值成对**注入/清除（启动 + 设为全局；只抬上限不抬压缩窗口会把压缩触发点留在旧档，勿拆对）。Codex catalog **不写** `apply_patch_tool_type`（freeform=custom 工具会被原生 /responses 与 Anthropic 网关拒/丢，编辑走 `shell_type: "shell_command"`）。模型能力注册链四层全 miss 时用户可经网关库「能力声明」写覆盖（`model-capabilities.json` 最高层；表单只收 context/思考/视觉——output 的旋钮是策略字段 max output，能力层 output 只喂 opencode limit.output，与策略并排摆两个输出框属重复），`input_modalities` 等按注册链如实声明（宁缺毋滥）+ 覆盖层补口的口径不变。
 - **声明层与估值层分家（2026-09-26，硬规则）**：写进**别人家 CLI 配置文件**的能力值只能来自 `model_*_declared_for` 声明层访问器，兜底层（`fallback_context_size` 的 128K/256K/1M、关键词推断 thinking、内置表确知多模态清单）**一律不得**当声明写出——它只配喂 UI 显示与自己家状态的估算。分流按目标格式的必填性决定：**可省略的未知就不写**（codex catalog 的 `context_window`/`max_context_window`/`input_modalities`，实证可选；codex `-c model_context_window`/`model_auto_compact_token_limit`；kimi `KIMI_MODEL_MAX_CONTEXT_SIZE`，env 通道有 CLI 兜底不报错），**必填的写保守下限**（kimi `config.toml` 的 `max_context_size`；opencode 的 `limit.context`/`limit.output`）。理由：`-c model_context_window` 是硬覆盖，写 128K 猜测会把 codex 自带 registry 认得的 272K/1M 窗口压低（比不写更坏）；`input_modalities: ["text"]` 是替用户断言「纯文本」；未知≠假，凡**破坏性/删除性**决策（如 `combo::apply_to_profile` 剥 `reasoning_effort`）只认显式 `Some(false)`，未知一律保留。反面对照：凡是注释里出现「必填/强制/schema 要求」的说法，改前先去二进制或上游源码找非注释证据（本仓此类说法源头都是注释，文档/测试只是复述）。
   第三个分流维度是**目标键是不是「完备声明」**：`capabilities` 这类数组由 CLI 用 `some(===)` 判成员（不在表里 == 不支持），所以写进去就是替用户断言「不在此表即没有」，未确知不得写入；但**若该键有已知缺省集，就可以写「缺省集 ∪ 确知为真」，只可能加不可能减**。kimi env 通道正属此列：缺省 `["image_in","thinking"]` 是已知有限集（且**不含 `tool_use`**——省了就是丢工具），故恒写 `tool_use` 并保留未被声明为假的缺省成员；config.toml 通道的 `capabilities` 缺省由 CLI 按模型自身线索推导、边界不可知，故只在 `== Some(true)` 时写、未确知整键省略。**未确知的缺省集不许猜**：`["tool_use"]` 是 `CUSTOM_REGISTRY_DEFAULT_CAPABILITIES`（注册项路径）的缺省，曾被误当 env 通道缺省引用，勿再复述。
+
+**CodeBuddy 走 OpenAI 槽（2026-10-21 更正）**：CodeBuddy 把 `CODEBUDDY_BASE_URL` 原样当 base 拼 `/chat/completions`（2.171 源码 `resolveModelBaseURL`），不是 Anthropic 协议。`slot_for_agent` / `api_kind` / `api_kind_label` 与前端 `slotForAgent` / `apiKindOf` 同改，连接验证按 chat/completions 形状探针；内置预设的 CodeBuddy 自家端点写 `openai: <endpoint>/v2`。原口径下验证能过（Anthropic 地址的 `/v1/messages` 可用）、运行只得空回复（网关对 `…/anthropic/chat/completions` 回 200 + 错误体），是「验证通过 ≠ 运行可用」的又一例。
+
+**给人看的上下文窗口只用确知值（2026-10-21）**：状态栏 / 聊天层上下文圈、模型菜单、网关库「当前解析」走 `model_context_size_known_for`（查询链声明 + kimi 官方映射），查不到是 `None` / `null`，界面不画不写；`model_context_size_for` 的 128K 保守兜底只留给 schema 必填的写配置场景（OpenCode `limit.context`、Kimi config.toml）。原先显示层也吃兜底，库外模型一律「131K」，而各家 CLI 按自己的默认算（Gemini 1M、Claude / Qwen 200K），圈比 CLI 实际满得多。

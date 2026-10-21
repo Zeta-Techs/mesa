@@ -5,6 +5,7 @@
 > 2026-08-06 新增 §7 CodeBuddy Code（v2.132.0 实机验证，含真实会话样本与 product.json 核实）。
 > 2026-08 新增 §9 Grok Build（xai-org/grok-build 源码调研；标注「待实机验证」处未经实机核对）。
 > 2026-08-20 新增 §12 精确注意力 hooks 桥接调研（九家，实现 = hooks.rs 的 BRIDGE_SPECS；cursor/opencode 未接入结论同记）。
+> 2026-10-21 起 Claude Code / Codex 有每日金丝雀（`scripts/cli-canary/`）：Mesa 已核对到的版本与指纹见 `scripts/cli-canary/baseline/<平台>/<agent>.json` 的 `version`，比本表各处「x.y 实测」更新。
 > 标记「易漂移」的均为各 CLI 内部格式，解析必须防御式（跳过未知类型、容忍缺字段、容忍末行截断）。
 
 ## 1. Claude Code
@@ -28,6 +29,10 @@
 
 ## 2. Codex CLI
 
+> **0.163 默认工具（2026-10-21 假网关实测，官方 gpt-5.5 与第三方模型同）**：不再发 `update_plan`（改发 goals：create_goal / update_goal / get_goal），
+> `tools.update_plan.enabled=true` 打开（`tools.update_plan` 是表，写 `=true` 报 invalid type）；`request_user_input` 照发，但只有 Plan 模式能用，
+> Default 模式调用返回「request_user_input is unavailable in Default mode」（`features.default_mode_request_user_input` 开发中、默认关，Mesa 不开）。
+
 | 项 | 值 |
 |---|---|
 | 二进制 / 检测 | `codex`；`codex --version`；`codex login status`；`codex doctor` |
@@ -49,7 +54,7 @@
 | 二进制 / 检测 | `gemini`（npm `@google/gemini-cli`，Node ≥ 20）；`gemini --version`。**0.64 实测（2026-10-20）**：`~/.gemini/projects.json` 不存在时，每次启动都异步「写 `projects.json.<uuid>.tmp` + 改名」登记项目，`--version` 先退出、改名来不及做，tmp 文件留在 `~/.gemini` 越积越多（每次两个；已有 projects.json 时不写，交互跑过一次后自然消失）。Mesa 的无头探测（版本、启动预检）因此带 `GEMINI_CLI_HOME=<系统临时目录>/ccode-gemini-probe` 并预放 projects.json（`agents::quiet_cli_probe`），不碰用户目录 |
 | 注入 env | `GEMINI_API_KEY`、`GOOGLE_GEMINI_BASE_URL`（设了即进入 GATEWAY 模式，官方支持中转；要求 HTTPS 或 localhost；**CLI 对 base 无条件自拼 `/v1beta/models/<模型>:…`——2026-10-19 探针实测带 `/v1` 的 base 会请求 `/v1/v1beta/…` 被中转 404、CLI 报「Model … not found or is invalid」，Mesa 物化 Profile 与拉目录时剥掉槽位末尾版本段**）、`GEMINI_MODEL`。env 优先级仅次于 CLI 参数 |
 | 全局配置 | `~/.gemini/settings.json`（`model.name`、`security.auth.selectedType`）；`GEMINI_CLI_HOME` 可整体搬迁 |
-| 会话存储 | `~/.gemini/tmp/<slug>/chats/session-<时间>-<id8>.jsonl`；**slug 映射读 `~/.gemini/projects.json` 和目录内 `.project_root` 标记，不要自己推导**（旧版是 sha256 目录，有迁移） |
+| 会话存储 | `~/.gemini/tmp/<slug>/chats/session-<时间>-<id8>.jsonl`；**slug 映射读 `~/.gemini/projects.json` 和目录内 `.project_root` 标记，不要自己推导**（旧版是 sha256 目录，有迁移）；**0.64 实测**：目录没登记进 projects.json 时 Gemini 会扫 `tmp/*/.project_root` 自行认领并回写登记；已登记的只认登记的 slug，落到别的目录看不见（会话包导入因此先查 projects.json） |
 | 会话格式 | JSONL。首行 metadata；消息 `{id, timestamp, content, type: user/info/error/warning/gemini}`，gemini 类型带 `toolCalls` 和 `tokens{input,output,cached,thoughts,tool,total}`；**控制记录 `$rewindTo`（截断后续消息）和 `$set`（patch 元数据）必须处理**，不能简单拼接。旧版单 JSON 文件仍需兼容。若多个落盘文件声明同一 `sessionId`，按最新文件作为唯一会话代表。**易漂移** |
 | 关键启动参数 | `-m`、`-p`（进入 headless）、`--output-format stream-json`、`-r/--resume`、`--list-sessions` |
 | 坑 | **默认 30 天自动删除会话**（`general.sessionRetention`）；新目录首次运行有信任确认（`--skip-trust` 绕过）；管道 stdio 会静默进入 headless；会话文件边写边追加，末行可能残缺；**多模型切换无配置注入机制**（已核实），只能在 TUI 里 `/model set <id>` 手动切换。**0.46 实机核实补充**：`/model` 的「Select Model」选择器列表**硬编码**（main 视图 Auto/Manual 两项 + Manual 子视图官方模型），`GEMINI_MODEL` env 的值不进列表（优先级 `--model` > `GEMINI_MODEL` > settings `model.name`）；`/model set <id>` 零校验任意 id 当场生效。自定义模型进选择器的官方机制：`experimental.dynamicModelConfiguration: true` + `modelConfigs.modelDefinitions`（与内置表 merge，`tier:"custom"` + `isVisible:true` 进 Manual 子视图；实验开关，requiresRestart）——**Ccode「设为全局默认」已写入该登记**（2026-09-01：开关 + 逐模型 definition，displayName = 配置名·模型，thinking/multimodalToolUse 按注册表确知才写；只写不删旧条目）。**闪烁**：inline 模式 UI 高度超终端行数即整区重绘（内置 useFlickerDetector 检测；上游已知问题簇，官方 Epic google-gemini/gemini-cli#10673，与终端种类无关，维护者背书 alternate buffer 可根治），缓解 = settings `ui.useAlternateBuffer: true`（默认 false；开了之后 `ui.incrementalRendering`（默认 true）才生效），可叠加 `ui.showSpinner: false` / `ui.loadingPhrases: "off"` |
@@ -75,7 +80,7 @@
 | 二进制 / 检测 | `opencode`（npm `opencode-ai`；仓库已更名 anomalyco/opencode）；`opencode --version` |
 | 注入方式 | **无通用 key/baseURL env**。用 `OPENCODE_CONFIG_CONTENT`（内联配置 JSON，优先级几乎最高）+ `OPENCODE_AUTH_CONTENT`（内联凭证 JSON，未文档化但源码确认）做启动注入。provider 配置：`provider.<id>.options.{apiKey, baseURL}` + `npm: "@ai-sdk/openai-compatible"` 接任意中转；provider 级 `name` 与 models 条目 `name`/`reasoning`/`limit.context` 是 models.dev 覆盖语义（官方文档 2026-08-17 核实），Ccode 填显示名（配置名 · 模型）+ 思考模型 `reasoning: true` + 上下文 limit（model_registry） |
 | 全局配置 | `~/.config/opencode/opencode.json(c)`（支持 `{env:VAR}` 插值）。**优先级坑：config > auth.json > env**，注入必须走 config 层才确定 |
-| 会话存储 | **v1.2.0+：单一 SQLite**。Unix：`~/.local/share/opencode/opencode.db`；Windows：优先 `%LOCALAPPDATA%\opencode\opencode.db`，回落 `%APPDATA%\opencode` 与 unix 形态路径（`OPENCODE_DB` 环境变量仍优先）。WAL 模式；表：`session/message/part/project`，`message.data`/`part.data` 为 JSON 列。更早版本是 `storage/` 目录的扁平 JSON 文件（需双解析） |
+| 会话存储 | **v1.2.0+：单一 SQLite**。Unix：`~/.local/share/opencode/opencode.db`；Windows：优先 `%LOCALAPPDATA%\opencode\opencode.db`，回落 `%APPDATA%\opencode` 与 unix 形态路径（`OPENCODE_DB` 环境变量仍优先）。WAL 模式（**新会话 / 新消息先只进 `opencode.db-wal`，主库要等自动检查点（约 1000 页）才动——变更判定必须连 `-wal` 一起看，只看主库会几分钟扫不到新会话**，2026-10-21 实测）；表：`session/message/part/project`，`message.data`/`part.data` 为 JSON 列。更早版本是 `storage/` 目录的扁平 JSON 文件（需双解析） |
 | 会话格式 | `session` 表直接有 `title/cost/tokens_*/time_*`；项目 = git 首个 commit hash，`project.worktree` 列给路径；message.data：`{role, time, model, tokens, cost, ...}`；part.data：`type: text/reasoning/tool/...` 判别联合。**drizzle 迁移频繁，易漂移** |
 | 官方替代路径（推荐优先用） | `opencode export <id>`（完整 JSON）、`opencode session list --format json`、`opencode db "<sql>" --format json`、`opencode serve`（HTTP+OpenAPI）——比解析内部 DB 稳定 |
 | 关键启动参数 | `-m/--model`、`--prompt`（交互会话首条指令）、`-s/--session`（按 ID 继续） |
@@ -88,7 +93,7 @@
 | 检测 | `~/.kimi-code/` 存在；`kimi doctor` 可用 | `~/.kimi/` 存在；`kimi --version` 为 1.x |
 | 注入 env | **故意忽略 shell env 的 API key**。唯一注入通道：合成模型 `KIMI_MODEL_NAME` + `KIMI_MODEL_API_KEY` + `KIMI_MODEL_BASE_URL` + `KIMI_MODEL_PROVIDER_TYPE`（kimi/anthropic/openai）。合成通道另有元数据字段（2026-08-17 二进制 strings 实证）：`KIMI_MODEL_CAPABILITIES`（逗号分隔小写）、`KIMI_MODEL_DISPLAY_NAME`（选择器 label 优先它）、`KIMI_MODEL_MAX_CONTEXT_SIZE`、`KIMI_MODEL_THINKING_EFFORT`/`ADAPTIVE_THINKING`/`REASONING_KEY` 等；Ccode 注入 display_name=配置名·模型、max_context_size 与 capabilities 判定统一走 model_registry（内置表 + model-capabilities.json 覆盖 + 关键词推断兜底） | `KIMI_API_KEY`/`KIMI_BASE_URL`/`KIMI_MODEL_NAME`（最高优先级）；或 `--config-file` / `--config '<json>'` |
 | 全局配置 | `~/.kimi-code/config.toml`：`[providers.x]`（type/base_url/api_key/custom_headers）+ `[models.x]` + `default_model`；也可脚本化 `kimi provider add/remove`；`KIMI_CODE_HOME` 整体搬迁 | `~/.kimi/config.toml`，同构字段；`KIMI_SHARE_DIR` 整体搬迁 |
-| 会话存储 | `~/.kimi-code/session_index.jsonl`（枚举入口：sessionId/sessionDir/**workDir**）+ `sessions/<wd_*>/<id>/agents/main/wire.jsonl` | `~/.kimi/sessions/<md5(workDir)>/<uuid>/context.jsonl`（无时间戳；时间戳在 `wire.jsonl`，标题在 `state.json`）；项目映射读 `~/.kimi/kimi.json` 的 `work_dirs[]` |
+| 会话存储 | `~/.kimi-code/session_index.jsonl`（枚举入口：sessionId/sessionDir/**workDir**）+ `sessions/<wd_*>/<id>/agents/main/wire.jsonl`；**目录名规则（2026-10-21 kimi.exe 源码 + 本机实证）**：`wd_<末段slug>_<sha256(路径，反斜杠先换成斜杠、去尾斜杠)[:12]>`，slug=小写、非 `[a-z0-9._-]` 连续段并成 `-`、去首尾 `-`、截 40，空记 `workspace`；wire.jsonl 的 `runtime.set_binding.workspaceId` 必须等于所在目录名，否则恢复报「runtime binding workspace … does not match」 | `~/.kimi/sessions/<md5(workDir)>/<uuid>/context.jsonl`（无时间戳；时间戳在 `wire.jsonl`，标题在 `state.json`）；项目映射读 `~/.kimi/kimi.json` 的 `work_dirs[]` |
 | 会话格式 | wire.jsonl：版本化 record（`metadata` / `turn.prompt`（用户输入）/ `context.append_message`（assistant/tool）/ `usage.record`（token）），协议 v1.0→v1.4 有迁移 | context.jsonl：`{role, content, tool_calls, tool_call_id}`；`_` 开头的 role 是内部记录（跳过）；content 可能是字符串或 parts 数组；tool_calls.arguments 是 JSON 字符串 |
 | 坑 | 密钥在 config.toml 里是明文；旧版 1.47+ 会催用户升级新版；模型选择器按 `[models.*]` 别名列出（注入模式的 KIMI_MODEL_* 合成通道是单模型设计，多模型需走全局写入）。运行中切换（0.36.1 pty 探针实证）：`/model <别名>` 与 `/effort <档>` 带参直切（/model 吃的是别名不是模型 id；档位随模型，K3 等布尔模型只有 on/off）；**kitty 键盘协议坑**：TUI 启动 push flags（`\x1b[>7u`）后只认 CSI-u 的 Enter（`\x1b[13u`），普通 `\r` 不提交——xterm.js 不支持该协议，Ccode 在 xterm 键盘层与写入链路两处改写（注册表 `submit_csi_u`） | 正在被新版替代，安装新版会迁移其数据（不改旧数据） |
 
@@ -99,10 +104,10 @@
 | 项 | 值 |
 |---|---|
 | 二进制 / 检测 | `codebuddy`（别名 `cbc`，npm 包 `@tencent-ai/codebuddy-code`）；`codebuddy --version` |
-| 注入 env | **`CODEBUDDY_API_KEY` / `CODEBUDDY_BASE_URL` / `CODEBUDDY_MODEL`**（`ANTHROPIC_*` 无效）；协议 Anthropic 兼容（官方 docs 有 DeepSeek 对接示例） |
+| 注入 env | **`CODEBUDDY_API_KEY` / `CODEBUDDY_BASE_URL` / `CODEBUDDY_MODEL`**（`ANTHROPIC_*` 无效）；**协议是 OpenAI Chat Completions**（2026-10-21 2.171 源码 `resolveModelBaseURL` + 实测更正，原记「Anthropic 兼容」是错的）：`CODEBUDDY_BASE_URL` 原样当 base、CLI 自拼 `/chat/completions`，不加 `/v1`；官方端点 = product endpoint + `/v2`。给 Anthropic 地址（如 `…/api/anthropic`）时网关回 200 + 非流式错误体，CLI 只画「└ Model returned no valid response」——Mesa 按 OpenAI 槽取地址（`slot_for_agent`），连接验证同走 chat/completions 形状 |
 | 官方端点 | 国际站 `https://www.codebuddy.ai`（product.json `endpoint`，默认）/ 中国站 `https://copilot.tencent.com`（`officialEndpoints` 同源核实） |
 | 全局配置 | `~/.codebuddy/settings.json`（env 块，同 Claude 形态） |
-| 会话存储 | `~/.codebuddy/projects/<slug>/<uuid>.jsonl`，slug = 项目路径 `/`→`-`（Claude 同款规则，有损不解码；项目归属读行内 `cwd`，兜底目录名） |
+| 会话存储 | `~/.codebuddy/projects/<slug>/<uuid>.jsonl`，slug = CLI 源码 `compressWorkspacePathName`（2026-10-21 2.170.0 实测）：`/ \ :`→`-`、去首尾 `-`、连续 `-` 并成一个（Windows 的 `C:\Users` 是 `C-Users`，**不是 Claude 的 `C--Users`**），超 255 字节改成「截 180 字节 + `-` + djb2 base36」；有损不解码，项目归属读行内 `cwd`，兜底目录名 |
 | 会话格式 | `{"type":"message","role":"user","content":[{"type":"input_text","text":...}],"sessionId":...,"cwd":...,"timestamp":<毫秒 epoch>}`；assistant 块为 `output_text`；`file-history-snapshot` 等事件行跳过。**与 Claude schema 不同构，独立解析器**；usage/工具调用字段未实证（防御式跳过） |
 | 关键启动参数 | 交互初始 prompt = 位置参数（`codebuddy "<prompt>"`）；`-p` 无头；`-r|--resume [sessionId]` 按 ID 恢复（`-c` 续最近）；`--session-id <uuid>` 固定会话文件名 |
 | 官方账号 | TUI 内 `/login`（浏览器 OAuth，分国际/中国站）；凭证 `~/.codebuddy/.credentials.json`。**env 优先压账号**（实测 401 提示），官方账号拉起必须 `env_remove CODEBUDDY_API_KEY`（连同 `CODEBUDDY_AUTH_TOKEN`） |
@@ -116,11 +121,11 @@
 | 二进制 / 检测 | **`cursor-agent`**（不要用 `agent`——太通用；cursor-agent 是 legacy symlink 但稳定）；安装到 `~/.local/share/cursor-agent/versions/<ver>/`，symlink 在 `~/.local/bin`（resolve_binary 通用候选已覆盖）；`cursor-agent --version` |
 | 注入 | API key = `--api-key <key>` flag 或 env **`CURSOR_API_KEY`**；端点 = `-e/--endpoint` 或 env **`CURSOR_API_ENDPOINT`**（**Cursor 专有协议，非 OpenAI/Anthropic 兼容——第三方供应商预设无意义**）；模型 = **`--model <name>` flag（非 env）**，支持 `claude-opus-4-8[context=1m,effort=high]` bracket 参数化 |
 | 关键启动参数 | 交互初始 prompt = argv 末尾位置参数；非交互 `-p/--print` + `--output-format text|json|stream-json`；`--resume <uuid>` 按 ID 恢复（必须带 id，无参会卡 Ink TUI）；`--continue` 续最近 |
-| 会话存储 | `~/.cursor/projects/<编码cwd>/agent-transcripts/<uuid>/<uuid>.jsonl`（目录名=文件名=session id；cwd 编码=分隔符→`-`，有损不解码）。**`agent ls` 是 Ink TUI 非 TTY 会崩，会话发现只能文件扫描** |
+| 会话存储 | `~/.cursor/projects/<编码cwd>/agent-transcripts/<uuid>/<uuid>.jsonl`（目录名=文件名=session id；cwd 编码：**2026-10-21 静态读 cursor-agent 源码**（`workspace-paths`）= 非字母数字→`-`、连续 `-` 并成一个、去首尾 `-`，Windows 的 `C:\Users` 是 `C-Users`，空格/下划线/点/中文也变 `-`，有损不解码）。**续聊不读这份 jsonl**：`--resume <id>` 只读 `~/.cursor/chats/<md5(cwd)>/<id>/store.db`（SQLite），`agent-transcripts` 是从它导出的副本——所以会话包导入的 Cursor 对话「Mesa 可看、Cursor 不一定能接着聊」（静态结论，未真机验证）。**`agent ls` 是 Ink TUI 非 TTY 会崩，会话发现只能文件扫描** |
 | 会话格式 | JSONL 带 type 字段，源码枚举：`user_message`/`tool_call`/`tool_result`/`turn_ended`/`turn_id`/`message_id` 等（**完整字段样本未验证——防御式解析，未知 type 跳过**） |
 | 官方账号 | `cursor-agent login`（浏览器 OAuth）；凭证**默认 macOS 钥匙串**，设 `AGENT_CLI_CREDENTIAL_STORE=file` 时落 `~/.cursor/auth.json`（检测需双通道：auth.json + 钥匙串只读查询）；官方账号拉起 `env_remove CURSOR_API_KEY` |
 | 技能 | `~/.cursor/skills-cursor/`（**未验证 CLI 是否真读，分发走 copy 模式**）；`~/.cursor` 与 IDE 共享——**会话删除白名单必须限定 `projects/*/agent-transcripts/**/*.jsonl`** |
-| 安装 / 更新 | 官方安装脚本（`curl -fsSL https://cursor.com/install | bash`）；自更新 `cursor-agent update`（非交互）；无 brew/npm 官方包。**Windows 安装/数据路径未验证** |
+| 安装 / 更新 | 官方安装脚本（`curl -fsSL https://cursor.com/install | bash`）；自更新 `cursor-agent update`（非交互）；无 brew/npm 官方包。**Windows（2026-10-20 核实）**：官方有原生安装器 `irm 'https://cursor.com/install?win32=true' \| iex`，装到 `%LOCALAPPDATA%\cursor-agent`（写进用户 PATH），`cursor-agent.cmd` → PowerShell `cursor-agent.ps1` → 挑 `versions\<YYYY.M.D-提交>` 最新目录跑自带 `node.exe index.js`（Mesa 直启后两者，`process::cursor_entry_from_launcher`）；安装器提示运行需要 Git for Windows。本机 2026.10.19-6bbf2c4 版本探测已核；**登录、会话目录（预计仍是 `~/.cursor/projects/...`）需要 Cursor 账号，未核** |
 
 ## 9. Grok Build（本机 1.0.13 实测，2026-09-05）
 
@@ -460,6 +465,11 @@ Zed 是唯一核实过的跨 agent 路线：可从已配置的 ACP agent 导入�
 2. 客户端是否「无缝」取决于三条：读不读同一份会话存储、能否按 id / 目录定位、渠道能否带过去；缺一档降一档。
 3. 本机 Codex 0.163 的 provider 支持 `command` 取令牌（`command / timeout_ms / refresh_interval_ms / cwd`，字符串表核实，**未实测 ChatGPT 内嵌客户端认不认**），若认则 `experimental_bearer_token` 明文落盘可替换为命令取密钥；单独起验证任务，不并入本期。
 
+4. **Windows（2026-10-20 本机核实）**：Codex 客户端（MSIX 包 OpenAI.Codex 26.1013.4894.0）与 Claude 桌面版（MSIX 包 Claude 2.42304.2.0）的
+   scheme 都注册在 `HKCR\<scheme>`（含 `URL Protocol` 值；Claude 另有 shell\open\command 指向 WindowsApps 下的 Claude.exe，Codex 没有，靠应用包激活）。
+   版本从 `HKCU\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages` 的子键名（包全名）读，
+   不起 PowerShell。深链打开本身仍需人点验（会真的拉起客户端）。
+
 ## 14. 聊天层结构化旁路（2026-10-20；实现 = chat_channel.rs + hooks.rs launch_hooks_value，设计 docs/design-chat-structured-channels.md）
 
 **目标**：TUI 照常跑在 PTY 里，同时让 CLI 自己把「会话是哪个、这一轮在哪步、在等批准什么、正在写什么」用结构化事件交给 Mesa；
@@ -485,3 +495,8 @@ Zed 是唯一核实过的跨 agent 路线：可从已配置的 ACP agent 导入�
   `-c sandbox_mode / approval_policy / approvals_reviewer="auto_review"`；`-m` 照收。
 - **Codex app-server 的工具在服务进程里跑**：环境变量（连接密钥、MCP 密钥、工作区端口段）要和 TUI 同一份；代理变量同理。
 - **OpenCode 的 `OPENCODE_CONFIG_CONTENT` 不能整份覆盖**：Mesa 用它注入连接，覆盖会打到 OpenCode 自己的免费模型（2026-10-20 探针误触一次）。
+- **Codex 同一回复里并行的工具各自开始 / 结束**（2026-10-21 用户实录：要提权的 `exec_command` 与 MCP `js` 同一刻发出，MCP 先结束）：审批要按 `serverRequest/resolved` 或它自己那个 item 结束撤卡，别的工具开始 / 结束不代表答过。
+- **Kimi 2.3 启动**：先发 DA1 查询，约 1.5 秒后才推 kitty 键盘、画界面；之前写进 PTY 的字全丢（2026-10-21 ConPTY 探针 3/3）。
+- **读屏字形（2026-10-21）**：Kimi 2.3 等首字时转月相「🌑 · Tip: …」；Qwen 0.25.3 的字形带 U+FE0E（「◆︎ 正文」「∴︎ Thought for 1s (click or ctrl+o to expand)」）；Gemini 0.65 输入框上方「? for shortcuts」单独一行、「Shift+Tab to accept edits / auto-accept edits  Shift+Tab to manual」随权限档变、MCP 后跟「· N skills」，粘贴多行后回显下多一行「Press Ctrl+O to expand pasted text」。
+- **Gemini 0.65 hook 显示名**：转圈行写「Executing Hook: <name>」，`name` 缺省时取 `command` 原文（`getHookName`）——Mesa 写 `name`。
+- **Grok 1.0.62 内置 web_search 经第三方网关必 401**（2026-10-21 用户实测）：它是 xAI 服务端搜索，另用 `models.web_search`（缺省 grok-4.x）、拿 `XAI_API_KEY` 去 xAI 鉴权；网关钥匙不认。顶层 `--disable-web-search` 摘掉它（连带 web_fetch，后者 `features.web_fetch` 缺省本就关），假网关核对请求里的工具从 26 个变 25 个。Mesa：API 连接且地址不是 `*.x.ai` 时加这个参数（`agents.rs`）。

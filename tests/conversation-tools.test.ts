@@ -223,3 +223,29 @@ test("还有更早一页时，开头被分页切断的半轮先不显示", () =>
   assert.equal(firstCompleteTurnIndex(list, true, 1), 0);
   assert.equal(firstCompleteTurnIndex(list, true, 4), 3);
 });
+
+test("计划：Claude Code 新版任务工具一条一条建、按编号改，拼回一张清单（2026-10-21）", () => {
+  const messages = [
+    msg("user", [text("列 3 步计划再做")]),
+    msg("assistant", [use("TaskCreate", { subject: "新建 plan_a.txt", activeForm: "新建中" })]),
+    msg("user", [result("Task #1 created successfully: 新建 plan_a.txt")]),
+    msg("assistant", [use("TaskCreate", { subject: "写一行 ok" })]),
+    msg("user", [result("Task #2 created successfully: 写一行 ok")]),
+    msg("assistant", [use("TaskCreate", { subject: "读出来" })]),
+    msg("user", [result("Task #3 created successfully: 读出来")]),
+    msg("assistant", [use("TaskUpdate", { taskId: "1", status: "completed" })]),
+    msg("user", [result("Updated task #1 status")]),
+    msg("assistant", [use("TaskUpdate", { taskId: "2", status: "in_progress" })]),
+    msg("user", [result("Updated task #2 status")]),
+    msg("assistant", [use("TaskUpdate", { taskId: "3", status: "deleted" })]),
+    msg("user", [result("Updated task #3 deleted")]),
+    msg("assistant", [use("TaskUpdate", { taskId: "9", status: "completed" })]),
+    msg("user", [result("Task #9 not found")]),
+    msg("assistant", [text("好了")]),
+  ];
+  const t = turnOf(groupConversationSegments(messages));
+  assert.deepEqual(turnPlan(t.items), [
+    { text: "新建 plan_a.txt", status: "completed" },
+    { text: "写一行 ok", status: "in_progress" },
+  ]);
+});

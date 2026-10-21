@@ -15,7 +15,7 @@ BIN["kimi"] = BIN["kimi"] or os.path.join(real_home, ".kimi-code/bin/kimi")
 CMD = {
     "claude-code": lambda b, a: [b, *a, "-p", os.environ.get("E2E_PROMPT", "say ok"), "--no-session-persistence"],
     "codebuddy": lambda b, a: [b, *a, "-p", "say ok"],
-    "codex": lambda b, a: [b, "exec", "--skip-git-repo-check", *a, "say ok"],
+    "codex": lambda b, a: [b, "exec", "--skip-git-repo-check", *[x for x in a if x != "--no-daemon"], "say ok"],  # 计划里带交互启动才认的 --no-daemon，exec 不认
     "qwen": lambda b, a: [b, *a, "-p", "say ok"],
     "kimi": lambda b, a: [b, *a, "-p", "say ok"],
     "opencode": lambda b, a: [b, "run", *a, "say ok"],

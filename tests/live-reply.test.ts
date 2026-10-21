@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extractLiveReply, liveReplySupported, mergeLiveReply, unsyncedTail } from "../src/live-reply.ts";
+import { claudeOutputTokens, extractLiveReply, liveReplySupported, mergeLiveReply, staleEcho, terminalHasInputBox, unsyncedTail } from "../src/live-reply.ts";
 
 const RULE = "─".repeat(100);
 // Claude Code 2.1.292 本机 PTY 实录（流式写到一半；假 API 慢速吐字）
@@ -295,6 +295,52 @@ test("工具输出里折叠的「… +12 lines (ctrl+o to expand)」也不进预
   assert.deepEqual(extractLiveReply(rows, "claude-code")?.lines, ["列好了。"]);
 });
 
+// 2026-10-20 用户 Windows 实测（Claude Code 2.1.304）：转圈下面的提示长过一行，折下来的第二行没有「⎿」，
+// 原先被当成回复一直挂在预览里
+test("Claude 转圈下「⎿  Tip:」折行的续行不进预览", () => {
+  const rows = [
+    "❯ 你好",
+    "",
+    "⏺ 我先想一想。",
+    "  第二行。",
+    "    - 缩进深的列表项照常保留",
+    "",
+    "✻ Pondering… (3s · ↓ 20 tokens)",
+    "  ⎿  Tip: You can control how big a workflow is just by prompting. Ask for a small workflow, cap",
+    '     it with "use at most 5 agents", or set a default with Dynamic workflow size in /config.',
+    "",
+    RULE,
+    "❯",
+    RULE,
+  ];
+  assert.deepEqual(extractLiveReply(rows, "claude-code")?.lines, [
+    "我先想一想。",
+    "第二行。",
+    "  - 缩进深的列表项照常保留",
+  ]);
+});
+
+// 聊天层据此认「审批已经答过」（chat-channel.ts hooksApprovalAnswered）：Claude 的审批菜单顶掉输入框，
+// 答完输入框回来（菜单样本同 tests/tui-menu.test.ts，Claude Code 2.1.292 PTY 实录）
+test("Claude：审批菜单挂着时屏上没有输入框，答完回到输入框", () => {
+  const approving = [
+    "❯ 写个文件",
+    "",
+    "⏺ Bash(echo mesa > a.txt)",
+    "  ⎿  Waiting…",
+    RULE,
+    " Bash command",
+    " echo mesa > a.txt",
+    " Do you want to proceed?",
+    " ❯ 1. Yes",
+    "   2. No",
+    " Esc to cancel · Tab to amend",
+  ];
+  assert.equal(terminalHasInputBox(approving, "claude-code"), false);
+  assert.equal(terminalHasInputBox(STREAMING, "claude-code"), true);
+  assert.equal(terminalHasInputBox(STREAMING, "codebuddy"), null, "没有画面布局的家：不知道");
+});
+
 // 2026-10-19 用户截图（Codex 0.163）：多行提问的回显续行、审批结果行、失败命令行都不是回复
 test("Codex：多行提问的回显续行不进预览", () => {
   const screen = [
@@ -387,4 +433,193 @@ test("Codex：多行提问的真回显刚好滚到第一行，续行仍不进预
 test("接续时上一次的最后一行只写了半截，写全后不重复", () => {
   const merged = mergeLiveReply(["第一行写完了", "第二行写到一"], { lines: ["第二行写到一半又写完", "第三行"], anchored: false });
   assert.deepEqual(merged, ["第一行写完了", "第二行写到一半又写完", "第三行"]);
+});
+
+// 2026-10-20 Windows 11 ConPTY 抓屏（scripts/e2e-model-routing/chat-capture.py + pywinpty，假网关慢速吐字）
+test("Windows：Claude Code 的正文行首是 ●（不是 ⏺），右对齐的「● high · /effort」仍算状态", () => {
+  const rows = [
+    " ▐▛███▛█   Claude Code v2.1.304",
+    "▝▜██████▀  e2e-picked with high effort · API Usage Billing",
+    " ▝▝   ▝▝   ~\work",
+    "❯ TRIGGER_SLOW 讲一段",
+    "● 第一段：这是一段慢慢流出来的回复。",
+    "  - 要点一：终端先画出来",
+    "  - 要点二：会话文件后落盘",
+    "                                                  ● high · /effort",
+    "✻ Worked for 6s · done 21:12",
+    RULE,
+    "❯",
+    RULE,
+    "  ⏸ manual mode on · ? for shortcuts",
+  ];
+  const read = extractLiveReply(rows, "claude-code");
+  assert.deepEqual(read?.lines, ["第一段：这是一段慢慢流出来的回复。", "- 要点一：终端先画出来", "- 要点二：会话文件后落盘"]);
+});
+
+test("Windows：Grok 回显与输入框是 >、工具是 ♦、代码块标签是 ○", () => {
+  const box = "─".repeat(60);
+  const rows = [
+    "  ~/work                                                     6 / 256K │ [Dashboard]",
+    "     > TRIGGER_SLOW 讲一段                                    9:13 PM",
+    "     第一段：这是一段慢慢流出来的回复。                         9:13 PM",
+    "     • 要点一：终端先画出来",
+    "     echo mesa",
+    "     ○ bash   [Copy]",
+    "     ♦ Running 写一个探针文件",
+    "     最后一行：完毕。",
+    "     Worked for 6.3s",
+    `  ╭${box}╮`,
+    "  │ > ok" + " ".repeat(54) + "│",
+    `  ╰${box}╯`,
+    "  Tab/→:accept suggestion  │  Shift+Tab:mode  │  Ctrl+x:shortcuts",
+  ];
+  const read = extractLiveReply(rows, "grok");
+  assert.deepEqual(read?.lines, ["第一段：这是一段慢慢流出来的回复。", "• 要点一：终端先画出来", "echo mesa", "最后一行：完毕。"]);
+});
+
+test("回显还没出来（提问排着队）、屏顶是启动横幅时不预览——横幅不是回复", () => {
+  const top = "▄".repeat(60);
+  const bottom = "▀".repeat(60);
+  const rows = [
+    " ▝▜▄     Gemini CLI v0.64.0",
+    "   ▝▜▄",
+    "Tips for getting started:",
+    "1. Create GEMINI.md files to customize your interactions",
+    "ℹ Waiting for MCP servers to initialize... Slash commands are still available and prompts will be queued.",
+    "  Queued (press ↑ to edit):",
+    "    TRIGGER_SLOW 讲一段",
+    " Shift+Tab to accept edits                                   1 MCP server",
+    top,
+    " >   Type your message or @path/to/file",
+    bottom,
+  ];
+  assert.equal(extractLiveReply(rows, "gemini"), null);
+});
+
+test("claudeOutputTokens：转圈行里已生成的 token 数（2026-10-21 Windows 抓屏原样）", () => {
+  const screen = (status: string) => ["❯ TRIGGER_SLOW 讲一段", status, RULE, "❯", RULE];
+  assert.equal(claudeOutputTokens(screen("✶ Musing… (5s · ↓ 20 tokens)")), 20);
+  assert.equal(claudeOutputTokens(screen("· Simmering… (2s · ↓ 12 tokens)")), 12);
+  assert.equal(claudeOutputTokens(screen("✻ Thinking… (1m 3s · ↓ 1.2k tokens · esc to interrupt)")), 1200);
+  // 上传方向、收尾行、没有转圈：不算
+  assert.equal(claudeOutputTokens(screen("✢ Musing… (0s · ↑ 3.4k tokens)")), null);
+  assert.equal(claudeOutputTokens(screen("✻ Sautéed for 1m 20s · done 10:44")), null);
+  assert.equal(claudeOutputTokens(["❯ hello", RULE, "❯", RULE]), null);
+});
+
+// 2026-10-21 Windows ConPTY 抓屏（Grok 1.0.62，假网关）：七行清单提问被折成三行（末行「2. … …」），
+// 回复长过一屏后提问钉在屏顶（sticky header），下面一行「▲」是滚动提示，再往下是回复的后半截
+const GROK_BOX = [
+  "  ╭" + "─".repeat(60) + "╮",
+  "  │ >" + " ".repeat(57) + "│",
+  "  ╰" + "─".repeat(48) + " e2e-picked ─╯",
+];
+const GROK_STICKY = [
+  "",
+  "  ~/work                                                     1.6K / 256K │ [Dashboard]",
+  "",
+  "",
+  "     > TRIGGER_LONG 在当前目录依次完成，每一步用一句话汇报：                 5:50 PM",
+  "       1. 新建 mesa_probe/hello.py，内容是打印 hello 和当前时间",
+  "       2. 列出 mesa_probe 目录 …",
+  "",
+  "                                                            ▲",
+  "     第 4 步：在 mesa_probe 里搜到 \"hello\" 一词，仅出现在 hello.py 第 3 行。",
+  "",
+  "     第 5 步：已把 hello.py 中的 \"hello\" 改为 \"hello Mesa\"。                      █",
+  "                                                                                     █",
+  "    - Responding… 4.1s                                              4.2s ↓1.57k [stop]",
+  "",
+  ...GROK_BOX,
+  "",
+  "  Shift+Tab:mode  │  Ctrl+c:cancel  │  Ctrl+x:shortcuts",
+];
+
+test("Grok：多行提问的续行（含钉在屏顶、折成「… …」的）不是回复，滚动提示 ▲ 也不是", () => {
+  const read = extractLiveReply(GROK_STICKY, "grok");
+  assert.deepEqual(read?.lines, [
+    "第 4 步：在 mesa_probe 里搜到 \"hello\" 一词，仅出现在 hello.py 第 3 行。",
+    "",
+    "第 5 步：已把 hello.py 中的 \"hello\" 改为 \"hello Mesa\"。",
+  ]);
+  // 没滚动时同样：提问三行之后两个空行才是回复
+  const fresh = [
+    "     > 在当前目录依次完成，每一步用一句话汇报：                              5:50 PM",
+    "       1. 新建 mesa_probe/hello.py，内容是打印 hello 和当前时间",
+    "       2. 列出 mesa_probe 目录 …",
+    "",
+    "",
+    "     第 1 步：已创建 mesa_probe/hello.py。                                   5:50 PM",
+    "",
+    "    - Responding… 1.2s",
+    ...GROK_BOX,
+  ];
+  assert.deepEqual(extractLiveReply(fresh, "grok")?.lines, ["第 1 步：已创建 mesa_probe/hello.py。"]);
+});
+
+test("unsyncedTail：开头混进的非回复行不把后面已落盘的段落拖进预览；短行不当锚", () => {
+  const synced = "第 4 步：在 `mesa_probe` 里搜到 \"hello\" 一词，仅出现在 `hello.py` 第 3 行。\n第 5 步：已把 `hello.py` 中的 `\"hello\"` 改为 `\"hello Mesa\"`。";
+  const live = [
+    "  1. 新建 mesa_probe/hello.py，内容是打印 hello 和当前时间",
+    "第 4 步：在 mesa_probe 里搜到 \"hello\" 一词，仅出现在 hello.py 第 3 行。",
+    "",
+    "第 5 步：已把 hello.py 中的 \"hello\" 改为 \"hello Mesa\"。",
+  ];
+  assert.deepEqual(unsyncedTail(live, synced), []);
+  assert.deepEqual(unsyncedTail([...live, "", "第 6 步：已读取"], synced), ["第 6 步：已读取"]);
+  // 「好的」这种短行到处对得上：它后面的新内容照常显示，前面的也不被它吞掉
+  assert.deepEqual(unsyncedTail(["新的一段还没落盘", "好的"], "好的，我来看看。"), ["新的一段还没落盘", "好的"]);
+});
+
+test("Kimi 2.3 等首字时的月相转圈「🌑 · Tip: …」不进预览（2026-10-21 抓屏）", () => {
+  const screen = [" ❯ 你好", " ", "  🌑 · Tip: /tasks to check progress and status for background tasks", ...BOX(">")];
+  assert.equal(extractLiveReply(screen, "kimi"), null);
+  const after = [" ❯ 你好", " ", " ● 你好！", "  🌕 · Tip: @: mention files", ...BOX(">")];
+  assert.deepEqual(extractLiveReply(after, "kimi")?.lines, ["你好！"]);
+});
+
+test("Qwen 0.25.3 字形后带变体选择符「◆︎」「∴︎」：行首符号照认，思考折叠行不进预览", () => {
+  const screen = [
+    "  > 你好",
+    "",
+    "  ∴︎ Thought for 1s (click or ctrl+o to expand)",
+    "",
+    "  ◆︎ 你好！我是 Qwen Code，可以帮你处理编程任务。",
+    "─".repeat(60),
+    ">   输入您的消息或 @ 文件路径",
+    "─".repeat(60),
+  ];
+  assert.deepEqual(extractLiveReply(screen, "qwen")?.lines, ["你好！我是 Qwen Code，可以帮你处理编程任务。"]);
+});
+
+test("Gemini 0.65 输入框上方的提示行（随权限档变字、带技能数、粘贴提示）不进预览", () => {
+  const screen = [
+    "▄".repeat(60),
+    " > 在当前目录依次完成：",
+    "   1. 新建 hello.py",
+    "▀".repeat(60),
+    " Press Ctrl+O to expand pasted text",
+    "✦ 第一步完成。",
+    "? for shortcuts",
+    "─".repeat(60),
+    " auto-accept edits Shift+Tab to manual                    1 MCP server · 20 skills",
+    "▄".repeat(60),
+    " >   Type your message or @path/to/file",
+    "▀".repeat(60),
+  ];
+  assert.deepEqual(extractLiveReply(screen, "gemini")?.lines, ["第一步完成。"]);
+});
+
+test("staleEcho：刚发的这句还没画出来时，读到的是上一轮回显后面的回复", () => {
+  const before = ["  > 你好", "", "  ◆ 你好！有什么可以帮你？", "─".repeat(60), ">   打字", "─".repeat(60)];
+  const read = extractLiveReply(before, "qwen")!;
+  assert.equal(read.echo, "  > 你好");
+  // 发送前屏上最后一条回显就是它，又不像刚发的话：上一轮的
+  assert.equal(staleEcho(read, "  > 你好", "讲个笑话"), true);
+  // 新回显出来了：这一轮的
+  const now = extractLiveReply(["  > 讲个笑话", "", "  ◆ 从前有座山", ...before.slice(3)], "qwen")!;
+  assert.equal(staleEcho(now, "  > 你好", "讲个笑话"), false);
+  // 重复发同一句：认作新的；发送前屏上没有回显：不拦
+  assert.equal(staleEcho(read, "  > 你好", "你好"), false);
+  assert.equal(staleEcho(read, null, "讲个笑话"), false);
 });

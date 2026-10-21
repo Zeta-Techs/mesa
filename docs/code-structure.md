@@ -262,6 +262,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # arrangeBranchMap 分支地图（基准作根 / 其余树分组 / 未检出分支单列）
                              # （tests/coding-lanes.test.ts）
   agent-caps.ts              # 能力表前端消费：定时任务禁选未验证无头；Grok 标「会批准全部操作」
+                             #   （Windows 上 Codex 的沙箱提示与「了解并开启」在 components/CodexWinSandboxNotice.tsx：说明文字单一出处，
+                             #   确认才写设置 codexWinSandboxConsent；定时任务弹层与设置页共用）
                              # （tests/agent-caps.test.ts）
   work-mode.ts               # 项目工作方式（科研/编程/办公）与编程状态归类、办公文档类型/预览形态；
                              # 文件行「进行中」只认 officeFileReuseKey 对上的活标签（仓级仍 isOfficeInProgress）；
@@ -366,7 +368,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 本地乐观消息放回解析结果的位置 placePendingUsers（排队中的接末尾，其余插在发送后的第一条新回复前）；
                              # messageKey / chatMessageKey 有来源 id 用 id；HOOKS_AGENTS 键是 agent id（2026-10-20 改正 claude-code）
   chat-channel.ts            # 结构化旁路快照的前端纯逻辑：回合状态 → 注意力、会话跟随（lock / switch / hint）、实时文字、
-                             # 审批卡标题 / 预览（命令 / 差异）/ 可回复的按钮（tests/chat-channel.test.ts）；TerminalView 的 applyChannel 消费
+                             # 审批卡标题 / 预览（命令 / 差异）/ 可回复的按钮、hooks 审批「屏上回到输入框 = 已答」（hooksApprovalAnswered）
+                             # （tests/chat-channel.test.ts）；TerminalView 的 applyChannel 消费
   slash-commands.ts          # 聊天斜杠命令保守常用集（未全量调研的 agent 只给 /help；tests/slash-commands.test.ts）
   ime-guard.ts               # 聊天 Enter 是否处于输入法组词（WKWebView 确认候选时 isComposing 已假；tests/ime-guard.test.ts）
   notify.ts                  # 长任务 OS 通知（仅「待确认」跃迁 + 未聚焦 + 30s 去抖；「已回复」不通知）；
@@ -399,7 +402,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   terminal-notify.ts         # OSC 9 / 777 通知标题（777 三段式取标题）与 OSC 9;4 进度解析
                              # （parseOsc9Progress → 标签条徽章），从画面文字里抽走（tests/terminal-notify.test.ts）
   terminal-replay.ts         # 重启回放取缓冲尾部纯文本（tests/terminal-replay.test.ts）
-  terminal-protocols.ts      # 内嵌终端协议：Kitty 键盘查询应答（只宣布 flags 5；无修饰功能键保持传统
+  terminal-protocols.ts      # 内嵌终端协议：Kitty 键盘查询识别与剥离（应答由后端 term_query.rs 写回；只宣布 flags 5；无修饰功能键保持传统
                              # 序列、只改写 Esc；带修饰方向键走 CSI 1;mod 字母形）、弹栈认层数、
                              # XTVERSION 两问法统一 DCS 应答、XTGETTCAP 答 Ms、OSC 52 限长写剪贴板、
                              # Kitty 贴图按文件头认 MIME 且支持 m=1 分块、通知/贴图/剪贴板共用
@@ -442,7 +445,14 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   chat-empty-start.ts        # 聊天空态纯逻辑：按目录类型的起手提示表（STARTER_PROMPTS）+ 时段问候（chatGreeting）；输入框目录芯片文字在 terminal-welcome.ts cwdChipLabel，UI 在 components/ChatEmptyStart.tsx（随手聊文件夹下另列最近 5 条随手聊；输入框居中版式在 ChatSurface）；输入框右下「模型 · 思考」菜单在 components/ChatModelMenu.tsx（开聊前 / 运行中 / 接着聊同一个单栏菜单），左下权限四档在 components/ChatPermissionBadge.tsx，对话末尾「等你决定」卡在 components/ChatDecisionCard.tsx（设计稿 docs/design-chat-layer.md）
   model-caps-label.ts        # 模型菜单每行右侧的能力灰字（200K · 思考 · 看图），数据来自 model_capabilities
   （scripts/e2e-model-routing/：假网关 + 驱动，用 agents.rs 的 e2e_dump_launch_plans 生成的真实启动计划拉起各家 CLI，核对请求里的模型与路径；
-   chat-capture.py 按权限四档拉起、发 TRIGGER_SLOW / TRIGGER_TOOL / 切换命令逐帧抓屏，聊天层第三期逐家核实用；见其 README）
+   chat-capture.py 按权限四档拉起、发 TRIGGER_SLOW / TRIGGER_TOOL / 切换命令逐帧抓屏，聊天层第三期逐家核实用（2026-10-20 起
+   Windows 走 ConPTY / pywinpty）；capture-check.ts 把抓屏交给 tui-menu / live-reply 解析器看读不读得出；见其 README）
+  （scripts/cli-canary/：CLI 金丝雀——canary.py 串起假网关 E2E_DUMP、chat_channel 的 e2e_channel（E2E_CLEAN_HOME / E2E_KEEP 留会话原件与
+   解析结果）、chat-capture 抓屏，抽指纹与 baseline/<平台>/<agent>.json 比，报告附两版之间更新日志的相关条目；
+   .github/workflows/cli-canary.yml 每天在 macOS / Windows 跑；见其 README）
+  （scripts/mirror-latest-json.mjs：应用内更新国内镜像——把 Release 的 latest.json 下载地址改写成镜像地址，签名原样、缺签名拒绝；
+   .github/workflows/mirror-release.yml 在 Release 发布时调用，build.yml 打包时按仓库变量 UPDATE_MIRROR_BASE 把镜像加到 updater 地址最前；
+   开通步骤 docs/release.md）
   composer-assist.ts         # 聊天输入框的纯逻辑：@ 引用（mentionQueryAt / applyMention，带空格加引号）、斜杠面板 Mesa 组（MesaCommand / filterMesaCommands）、
                              # ↑ 取回上一句（lastUserText）、上下文圆环数据（lastContextTokens / contextUsage）；Mesa 组的内容由 TerminalPage mesaCommandsFor 组装，
                              # 斜杠面板与标签条 ⋯ 同一份（tests/composer-assist.test.ts）
@@ -461,7 +471,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   conn-issue.ts              # 认终端画面里的连接错误（额度 / 限流 / 钥匙 / 服务 / 模型）：七家实录形态的 detectConnIssues、按次数判新错误的 newestConnIssue、给人看的 connIssueText
   terminal-quote.ts          # 终端选中文字交给对话 / 存笔记的排版：quoteForChat（每行「> 」）、askAboutText、clipNoteEntry（notes/clips.md 小节）
   live-reply.ts              # 聊天实时预览：按每家画面布局（LAYOUTS：Claude / Codex / Qwen / Gemini / Grok / Kimi，第三期抓屏定的）抽出这一轮正在写的段落
-                             # （extractLiveReply）+ 剔掉会话文件已有的行（unsyncedTail）；CodeBuddy / OpenCode / Cursor 返回 null。新增一家先抓屏、样本进测试
+                             # （extractLiveReply）+ 剔掉会话文件已有的行（unsyncedTail）+ 屏上有没有输入框（terminalHasInputBox）+ Claude 转圈行已生成 token 数（claudeOutputTokens，聊天层「正在回复」后显示）；
+                             # CodeBuddy / OpenCode / Cursor 返回 null。新增一家先抓屏、样本进测试
   menu-key-nav.ts            # 聊天输入框小弹层的键盘操作（useMenuKeyNav：打开聚焦当前项、↑↓/Home/End、关闭还焦点）
   auto-load-older.ts         # 回放往上翻自动加载更早一页（useAutoLoadOlder：对话页 / 项目对话 / 聊天层共用；只认用户滚动，
                              # 不满一屏自动补页）+ wasPrepended（聊天层前插判定，最新窗后滑不算）
@@ -469,10 +480,13 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   tui-menu.ts                # 认屏上的 TUI 选择菜单（parseTuiMenu / menuAnswerKeys / sameTuiMenu / menuEchoesText）：切换命令后 5 秒、启动后 20 秒、
                              # 以及这一轮没结束前都扫屏，切换确认与七家工具审批按原文给按钮；剥方框边与滚动条、Grok 单选改写成序号行、
                              # 折行并回上一项、问句取贴着选项的发问行；回显的 /命令、⎿ 续行、用户刚发的编号清单都不算菜单
-  tui-panel.ts               # 认「终端里开着一个面板」（parseTuiPanel：没有该家输入框 + Esc to cancel/close 一类关闭提示；/cost、/usage 的 Settings 面板）：
+  tui-panel.ts               # parseTuiNotice：没有输入框 + 「Enter to continue」= 要按回车才继续的通知（Claude 中途弹的计费说明），
+                             #   聊天层给「继续」卡（回车），认出时不再当面板；
+                             # 认「终端里开着一个面板」（parseTuiPanel：没有该家输入框 + Esc to cancel/close 一类关闭提示；/cost、/usage 的 Settings 面板）：
                              # 与菜单同一次扫屏，认出菜单时不算面板；聊天层给「结果在终端面板里」卡，不再挂「正在生成回复」（tests/tui-panel.test.ts）
   quick-chat.ts              # 快速开聊纯逻辑：默认选择 pickQuickChatDefault（记住的 → 同家另一条 → 上次启动 → 装了的第一家）、
-                             # 空白标签 isBlankChatTab（再点只复用没说过话的）、运行页「+」目录 newTabCwd（跟当前标签，隔离目录不跟）、
+                             # 空白标签 isBlankChatTab（再点只复用没说过话的）、运行页「+」目录 newTabCwd（跟当前标签，隔离目录不跟，不跟时落随手聊）、
+                             # Windows 上 Codex 在主目录启动前要不要确认 codexSandboxCoversHome（完全访问不提醒）、
                              # 连接页「新对话」chatChoiceForProfile（点哪条用哪条，模型取名单第一个，不看记住的默认）、
                              # 随手聊历史只列 ~/ccode/scratch（isScratchCwd），排除工作区/已注册项目/其他仓库/归档/内部/live/源文件已删，
                              # pickQuickChatHistory 用 store 会话列表现算（tests/quick-chat.test.ts）
@@ -550,7 +564,9 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 2026-10-20：调用与结果按 callId 配对（没有 id 退回先后）；turnPlan / planEntries = 计划卡（各家待办参数收成一份，一轮取最后一次）
   tool-activity.ts           # 一次工具调用 → 一行动作（编辑 文件 目录 +N −M / 运行 命令 / 搜索 …）：九家工具名归类、常见参数键取对象、
                              #   Codex 补丁拆文件与脚本模式取 cmd、行级差异 lineDiff、结果状态只看开头（tests/tool-activity.test.ts）
-                             # 2026-10-20：commandCategory（借 vibe-kanban）——只读命令（cat / sed -n / rg / ls …）归进查阅，改文件 / 取网页 / 其余照旧算运行
+                             # 2026-10-20：commandCategory（借 vibe-kanban）——只读命令（cat / sed -n / rg / ls …）归进查阅，改文件 / 取网页 / 其余照旧算运行；
+                             #   unwrapPowerShell 剥 Windows 上 Codex 的 `pwsh.exe -Command '…'` 外壳（chat-channel displayCommand 共用），
+                             #   完整 cmdlet 名（Get-Content …）任何时候认、别名（gc / type …）只在确认是 PowerShell 时认
   dep-check.ts               # 依赖体检前端镜像：DTO 判定与 DOM/Tauri 解耦（tests 同名）
   dep-install.tsx            # 依赖一键安装管线 useDepInstall + 日志块 DepInstallLog + 缺 Git 就地安装出口
                              #   GitInstallOffer（改动面板 / 历史浮层 / 开步报错条共用）
@@ -657,8 +673,17 @@ src-tauri/src/
                              #   kimi KIMI_MODEL_DISPLAY_NAME / opencode provider+models name）；
                              # claude 不写 CLAUDE_CODE_SUBAGENT_MODEL（保留 Task 参数/frontmatter/inherit 原生选择链），
                              #   用 --settings 只覆盖本次连接的非敏感模型选择；
+                             # claude 非 Claude 模型写 ENABLE_TOOL_SEARCH=false（弱模型拿 ToolSearch 搜内置工具、搜不到就不干活）
+                             #   与 CLAUDE_CODE_ENABLE_TODO_TOOLS=1（新版只给自家老模型发任务清单工具）；
                              # claude 长上下文声明 CLAUDE_CODE_MAX_CONTEXT_TOKENS + CLAUDE_CODE_AUTO_COMPACT_WINDOW
-                             #   同值成对（启动注入与设为全局同键同条件；注册链确知 >200K 才注，防第三方模型被按 200K 提前 compact）
+                             #   同值成对（启动注入与设为全局同键同条件；注册链确知 >200K 才注，防第三方模型被按 200K 提前 compact）；
+                             # codex catalog 的 base_instructions = 本机 Codex 对未登记模型的默认提示词原文：按版本取一次缓存到
+                             #   <配置根>/catalogs/codex-base-instructions-<版本>.md（一次性 CODEX_HOME 跑 codex exec、密钥变量故意不给，
+                             #   会话首行 session_meta 取原文、发请求前就退出，不联网）；取不到用随包 codex_base_instructions.md 兜底；
+                             #   不得换回一句话占位：模型会不知道 apply_patch，改文件全走 Set-Content / 重定向，没有差异；
+                             #   Windows 另拼 codex_windows_patch_note.md（只认整条 bash heredoc 的 apply_patch）
+  codex_base_instructions.md # Codex 0.163 默认系统提示词原文（Apache-2.0，THIRD-PARTY 有条目），只在取不到本机原文时兜底
+  codex_windows_patch_note.md # Windows 上 apply_patch 的调用口径（Mesa 自写，英文给模型看）
   model_registry.rs          # 模型能力注册表：逐字段查询链 = 用户覆盖 > 网关实测缓存（fetch_models 顺带沉淀
                              # OpenRouter 风格 /models 元数据）> 公共能力库（配置页 ⋯ 下载，models.dev 优先
                              # OpenRouter 回落，download_model_db/model_db_status）> 内置前缀表 > 关键词兜底；
@@ -744,7 +769,8 @@ src-tauri/src/
                              # matrix §9 第 8 条）；请求策略字段校验（范围、claude effort 闭集、
                              # Header 名禁引号冒号、环境变量名 POSIX 字符集）
   client_open.rs             # 客户端接力（设计 docs/design-client-handoff.md）：Mesa 的一条对话/一个项目交给该 agent 的 GUI 客户端接着做。
-                             # 探测（macOS 读 Info.plist 的 URL scheme + 版本，Windows 查 HKCR，30 秒缓存）→ 纯函数 build_plan 预检
+                             # 探测（macOS 读 Info.plist 的 URL scheme + 版本，Windows 查 HKCR 的 scheme、版本取当前用户应用包仓库的
+                             #   MSIX 包全名（两家 Windows 客户端都是 MSIX，2026-10-20 本机核实），30 秒缓存）→ 纯函数 build_plan 预检
                              #   （ok/note/warn/fix/block；Codex 查 state_<N>.sqlite 的 threads 表与 config.toml 的 provider 定义块，
                              #   Claude 查 transcript 文件与连接是否网关）→ client_open_list / client_open_plan / client_open_launch。
                              #   红线：客户端侧失败看不见，判断全在发深链前；launch 每次现算、修复只能选预检候选；会话 id / 块名后端校验后才进 URL / TOML；
@@ -805,7 +831,17 @@ src-tauri/src/
                              # terminal_link_target = 终端相对路径点击的终审（cwd 拼 + ~ 展开 + 存在性）；
                              # pty_report_terminal_colors = Windows 底色告知（win32-input-mode 记录逐条投递，
                              #   条间 2ms；ConPTY 双向吞 OSC 的实测结论见 conventions/terminal.md，别改回 OSC）
-  pty_input.rs               # 每个终端独立的有界输入队列：一个不读 stdin 的 CLI 不得占住 PTY 全局锁
+                             # 内置终端 shell 可选（2026-10-20，设置 terminal_shell）：shell_candidates 只列本机找得到的
+                             #   （Windows PowerShell / PowerShell 7 / Git Bash / cmd；macOS zsh / bash / fish），interactive_shell 选不上回落
+                             #   login_shell_argv；run 脚本不走这里（script_shell_argv）。Windows 跟随 cd：attach_cwd_tracking 给
+                             #   PowerShell 包 prompt、给 Git Bash 设 PROMPT_COMMAND，把当前目录写进 <config>/ccode/pty-cwd/<uuid>.txt，
+                             #   process_cwd 先读它、没有再读进程 PEB（cmd）；文件随标签退出删、启动清残留；pty_cd 按标签的 shell 方言写 cd
+                             # conpty_input_pieces = Windows 输入里的 emoji 改送只按下的 win32 记录（Codex 的 crossterm 拼不了
+                             #   ConPTY 的按下+抬起代理对，会整个丢字；2026-10-21，见 conventions/terminal.md）
+  term_query.rs              # 终端能力查询（DA1 / XTVERSION / Kitty / modifyOtherKeys / XTGETTCAP）在 PTY 读线程当场应答，
+                             #   跨块半截续扫；应答表与 terminal-protocols.ts 双端镜像（前端只剥查询不回写）
+  pty_input.rs               # 每个终端独立的有界输入队列：一个不读 stdin 的 CLI 不得占住 PTY 全局锁；
+                             #   一个请求可分段写（段间 2ms，回执等待随段数加长）
   context_breakdown.rs       # 上下文分类明细（2026-10-20）：用标签同一套启动参数在后台跑 CLI 自带的 /context（Claude Code `-p --resume --no-session-persistence`，
                              # 关 hooks；Qwen `-p --resume`），解析分类表；不调用模型、不改会话文件。只有这两家能无头跑，其余家前端只显示总量
   chat_channel.rs            # 聊天层结构化旁路（2026-10-20，docs/design-chat-structured-channels.md）：pty_spawn 起进程前
@@ -813,8 +849,11 @@ src-tauri/src/
                              #   Codex 私有 app-server + TUI --remote，split_codex_args 恢复时把权限参数改成服务配置），
                              #   start 起读取线程（状态日志 / 事件文件追加读、OpenCode SSE、Codex ws 客户端，手写最小 WebSocket），
                              #   Tracker = 回合状态机（幂等开始 / 结束、审批、实时文字、会话跟随），快照推 chat-channel-<tabId>；
-                             #   chat_channel_reply 经官方通道回审批；close_for_pty 随 PTY 退出收旁路；e2e::e2e_channel（ignored）=
-                             #   真 CLI + 假网关端到端（scripts/e2e-model-routing/README.md）
+                             #   chat_channel_reply 经官方通道回审批；chat_channel_settle_from_transcript（Claude 被拒绝 / Esc 打断不发 Stop，
+                             #   按会话文件里这一轮之后的收尾标记收回合）；close_for_pty 随 PTY 退出收旁路；e2e::e2e_channel（ignored）=
+                             #   真 CLI + 假网关端到端（scripts/e2e-model-routing/README.md，三平台同一份）；
+                             #   Windows 专属（terminal.md 旁路条⑦–⑪）：官方账号 hooks 写 settings.json 传路径、Claude hooks 后台跑时
+                             #   Tracker::async_hooks 按身份对账（apply_async_tool）、app-server spawn_tied_to_app、收旁路先杀后删
   terminal_replay.rs         # 终端画面回放：<config>/ccode/terminal-replay/replay-<标签>.txt，
                              # 单份 256KB、出站先 redact_sensitive_text、0600；重启占位标签读回，不是会话档案；
                              # prune_terminal_replays 启动后只留当前标签集合（清崩溃残留孤儿）
@@ -832,6 +871,11 @@ src-tauri/src/
                              # codex rollout 元信息 model_provider 记进 SessionMetaDto.provider（恢复按它挑兼容 profile，
                              #   前端 pickResumeProfile 单一出处：ccode 或 ccode-<短id> 前缀按网关挑绑定）、
                              # sessions_for_card（融合进任务书的按卡取会话：与列表同一归属口径）；
+                             # 标签认领会话（register_session_claim / claim_session_for）；claim_session_successor：没有旁路报换会话的家
+                             #   （Gemini / Kimi / Grok 默认）/clear 后另开新文件，同 agent 同目录只有这一个标签登记时改认更新、启动前没有、
+                             #   没人认领过的会话（多个标签不猜），前端 linkTick 在无旁路会话时每轮问一次；
+                             # Grok 回放优先读 chat_history.jsonl（parse_grok_history）：文字 + tool_calls → tool_use 块（带 call_id）+
+                             #   tool_result 并进发起调用的助手消息；updates.jsonl 回落（parse_grok）只取文字；
                              # 无头 AI 按 session id 标 session_meta.internal（雷达解读/定时巡检不进本项目会话，
                              # 禁止把项目路径写入 usage_provenance.internal）
   session_search.rs          # 会话正文搜索：多关键词按「命中多少 + 落在哪」打分、同分按更新时间；正文不进前端；
@@ -846,9 +890,13 @@ src-tauri/src/
                              #   压缩边界之前不算）；apply 原地把较早的 base64 截图/文档换文字占位、留最近 6 张，没动的行逐字节原样，写前完整备份
                              #   到 <配置目录>/ccode/backups/session-slim/、最近 60 秒有写入拒绝、复核源文件未变、tmp+rename 保持 mtime；
                              #   不另存副本（会撞 sessionId、用量重复计）；安全口径 safety.md 例外清单第 7 条；干跑用 ignored 的 real_data_dry_run
-  session_transfer.rs        # 会话包导出/导入（.ccode-sessions.zip，八家不含 opencode）：原文打包装、导入时改写 cwd 并按 B 机
-                             #   目录重建落位；zip-slip/大小/后缀/白名单；同 id 跳过不覆盖；Mesa 元数据写 app.db；
-                             #   kimi 新版 wd_<basename>_<sha256[:12]> + session_index.jsonl；grok URL 编码 cwd
+  session_transfer.rs        # 会话包导出/导入（.ccode-sessions.zip，八家不含 opencode）：原文打包装、导入时改写 cwd（含子目录前缀，
+                             #   分隔符按目标机方言重接）并按 B 机目录重建落位；zip-slip/大小/后缀/白名单；同 id 跳过不覆盖（导出同会话去重）；
+                             #   Mesa 元数据写 app.db；Claude 附属目录 <id>/（subagents/tool-results/custom-title.json，32MB/128MB 封顶，
+                             #   不跟符号链接，导入尽力而为 + tool-results 路径重映射）；各家目录名规则以 CLI 源码为准：
+                             #   claude/qwen 非字母数字→- 按 UTF-16 码元、codebuddy compressWorkspacePathName、cursor workspace-paths、
+                             #   kimi 新版 wd_<slug>_<sha256(斜杠化路径)[:12]> + wire.jsonl workspaceId 同步 + session_index.jsonl、
+                             #   gemini 先查 projects.json 已登记 slug、grok URL 编码 cwd；cursor 续聊靠自家 store.db，导入只给提示
   skills.rs                  # 技能库（§6.13）：SSOT 库 + symlink/copy 分发（cursor/grok 固定 copy）、四路导入、ZIP 导出、卸载备份、
                              # 漂移检测 resync、create_skill/update_skill_content；provides 解析（frontmatter 闭集位声明，
                              #   compose_skill_md 重写链保留——曾在这里剥过字段）；「AI 优化另存」两阶段命令
@@ -1009,8 +1057,15 @@ src-tauri/src/
                              #   session_confirm_detail（2026-08-24）：confirm 时从 payload 提取「在等什么」摘要
                              #   （message/tool_name/title 尽力而为），聊天层审批卡片用；
                              # 2026-10-20：hook 命令整行一次写入、记 CCODE_TAB_ID（日志第二段，旧格式照读）、payload 截 64KB
+                             # 2026-10-20 二：Windows 上每次启动注入的两家（Claude / CodeBuddy）有原生 hook 程序就用它——
+                             #   native_hook_exe 找随包的 mesa_helper（hook 模式，开发态在 target/debug/deps/），试跑 --probe 确认；
+                             #   找到就同步跑（launch_hooks_async 返回 false），找不到照旧 PowerShell 脚本 + 后台；写全局配置的三家
+                             #   用 global_hook_command：helper 拷成 hooks-state/ccode-hook.exe、路径不加引号（三种宿主都认），不行退回 .ps1
                              #   （PostToolUse 2KB，截断按字段名兜底）；launch_hooks_value = Claude / CodeBuddy 每次启动注入的 hooks；
                              #   launch_injected 五家设置页不给开关、precise_enabled 门控；migrate_launch_injected 启动收回以前写的全局条目；
+                             #   launch_hooks_async（只 Windows 的 Claude Code：hooks 带 async + 另挂 PermissionRequest）；
+                             #   Windows 共用脚本 ccode-hook.ps1 只删回车换行、写日志撞车重试，正文改了启动时替换；
+                             #   状态日志 / 备份目录走 storage::config_root（测试可重定向）；
                              #   real_data_dry_run_migrate（ignored）= 对真实配置的拷贝干跑
   inst_access.rs             # 机构访问通道（2026-09-16）：人登录一次、系统复用会话——登录窗（Tauri WebviewWindow
                              #   label=inst-login）Cookie 落 0600 inst-session.json（值绝不出站，状态 DTO 只有
@@ -1070,7 +1125,8 @@ src-tauri/src/
                              #   （设置页「学校图书馆」主路径「登录学校账号」，内嵌窗留回落）；C extension/（MV3，ID 固定
                              #   dmjplopfhbdamkihimfllomdmkfainnn）+ bin/mesa_helper.rs（native messaging，读 helper-context.json
                              #   当前项目+打开篇标题/DOI 调 ccode_lib::helper_ingest；PDF 阅读器空标题不得落 paper-5.pdf；
-                             #   工具栏图标优先走页内「存到 Mesa」，chrome.downloads 只作无 content script 末路）
+                             #   工具栏图标优先走页内「存到 Mesa」，chrome.downloads 只作无 content script 末路；
+                             #   2026-10-20 起另有 `hook <日志> <截断字节>` 模式：Windows 上给 CLI hooks 写状态日志，只用标准库，见 hooks.rs）
                              #   + browser_bridge.rs（装 NativeMessagingHosts
                              #   清单）。内嵌窗漏斗保留为过渡，通道 C 稳定后退役——细则见 pipeline.md ⑧
   fonts.rs                   # 终端字体打包与 brew 一键安装（Maple/Sarasa/Iosevka）
@@ -1085,6 +1141,8 @@ src-tauri/src/
                              #   settings::auto_title_sessions_enabled 关 = 两命令入口直接跳过（最终闸门在此，前端跳过只为省白跑），
                              #   补名批循环逐轮复查闸门（中途关掉即停）；retitle impl 闸门收进参数是关停语义的单测锚点
   scheduler.rs               # 定时雷达（v3.75；v3.79 起技能可选；v3.218 新建巡检技能：草稿 .ccode/drafts/watch-*，确认才入库分发）：
+                             # 2026-10-20：Windows 上 Codex 用非提权沙箱时任务说明追加「读写文件用绝对路径」（codex_win_unelevated_note）；
+                             #   沙箱覆盖参数本身由 ai.rs codex_win_sandbox_for_run 加（用户确认过、自己没配才加），判定在 agent_specs.rs
                              # schedules.json（每日/每周+时分，本地时区）、60s tick + 启动补跑
                              # （漏跑 coalesce 只补一次）、执行模型 2026-10-16 起跨项目并行（due 各自 spawn；同项目 project_lock 互斥防并行写坏追加台账，tick 在跑 ≤2 防启动尖峰；手动立即跑不占额度但受同项目互斥；拉起发 scheduler-run-started、ScheduleDto.queued 支撑「排队中」；锁序恒 任务锁→项目锁、sched_lock 恒叶子）、
                              # 无头拉起 agent 在任务隔离 worktree 跑技能（每轮先从主仓播种：收件箱/跟进/引文与只读种子 included.*/reading-list 镜像、watch-seen 取并集——seed_watch_isolation，2026-10-17 取代「没有才拷」；项目根只用于归属与采纳；非 Git 项目明确失败；显式 sentinel 才允许主仓写入；人点「采纳进项目」才把本轮新增并进主仓——watch_review::adopt_at 按条目追加、watch_path_denied 硬排除流程正典、lit_watch::adopt_watch_pdfs 只拷本轮新下未排除的 PDF；未钉连接按项目默认取连接（pick_project_default）；2026-10-13 起：已采纳记录明确拒绝重采纳（find_run_record）、run_marked_adopted 是 decide 的后端闸门；历史行可删（schedule_run_delete：账行/事件/历史行/冻结证据），删任务/移项目必级联（purge_schedule_side_effects，worktree 走回收站）；默认 lit-watch，prompt 按技能分派（lit-watch 文案明锁不写 included/index/references.bib）：
@@ -1223,7 +1281,11 @@ src-tauri/src/
                              #   拼图库问 python 能否导入）
                              #   + install_dependency（quarto 走 brew --cask / winget Posit.Quarto；tex 装 tectonic；
                              #   pymupdf/pillow 走 python -m pip，externally-managed 再加 --user；Linux 只给指引）；
-                             #   缺 git 走收件箱 dep: 类别常驻提醒（不造横幅）
+                             #   缺 git 走收件箱 dep: 类别常驻提醒（不造横幅）；
+                             #   2026-10-20：macOS 没有 Homebrew 时 Node.js / Python / Quarto 走官方 .pkg（mac_pkg_url 从各家版本索引挑
+                             #   地址，curl 下载后 osascript「with administrator privileges」跑 installer，Mesa 碰不到密码）；
+                             #   TeX 两平台都可由 Quarto 装 TinyTeX（install_tex_via_quarto，Windows 写 PATH、macOS 不写）
+  win_snap.rs                # Windows 11 贴靠布局：自绘最大化按钮悬停够久，替用户按一次 Win+Z（只在 Win11、Mesa 在前台时）
   logbuf.rs                  # 诊断日志环形缓冲
   diagnostics.rs             # 诊断包：系统/WebView/GPU/输入法、功能开关、日志、进程生命周期采集与 ZIP 导出；bundle_dir/BUNDLE_FILE_PREFIX 是反馈附件闸门的同一出处
   config_dump.rs             # 生效配置自省（只读，不建/不改任何用户配置文件）：dump_effective_config /
@@ -1232,9 +1294,16 @@ src-tauri/src/
                              # 剔除 extra_env，绝无密钥）/hooksAttention/capabilities（复用 agent_capabilities）/
                              # workspaceSettings（传 root 时 ws_settings 三层合并终值 + 每键来源层标注）；
                              # 整份出站前过 sessions::redact_sensitive_text；设置页「诊断」区「生效配置快照」卡片消费
-  process.rs                 # 后台子进程统一创建（Windows CREATE_NO_WINDOW 防 conhost 闪窗）+
+  process.rs                 # 后台子进程统一创建（Windows CREATE_NO_WINDOW 防 conhost 闪窗；三平台都删掉继承的 PWD——
+                             #   opencode run 按 PWD 取目录，2026-10-20；PTY 那边 spawn_tracked 把 PWD 设成工作目录）+
                              # pty_command（Windows .cmd/.bat shim 深化：npm 系 CLI 解析出 JS 入口改 node 直启，
-                             #   npm.cmd 走固定布局 special case，解析失败回落 cmd /c call；updater 与终端拉起共用）
+                             #   npm.cmd 走固定布局 special case；指向原生 exe 的 shim（npm 装的 Claude Code / OpenCode）
+                             #   exe_from_cmd_shim 直启、无扩展名 node 脚本（CodeBuddy）认 shebang 后 node 直启——
+                             #   Agent 参数不得过 cmd（2026-10-20，environment.md）；Cursor CLI 的 Windows 启动器 cursor-agent.cmd
+                             #   （转手 PowerShell 脚本挑最新版本目录）由 cursor_entry_from_launcher 照同一挑法直启自带 node.exe + index.js；
+                             #   解析失败才回落 cmd /c call；updater 与终端拉起共用）+
+                             # BackgroundCommand::spawn_tied_to_app（Windows：挂进 app_lifetime_job「句柄关即全杀」任务组，
+                             #   聊天层 Codex app-server 用，Mesa 崩溃不留孤儿）
   models.rs                  # fetch_models 拉目录（候选链 model_list_candidates：gemini 先剥版本段再拼 /v1beta/models，
                              #   strip_trailing_version_segment / ends_with_version_segment 版本段判据单一出处）+ 目录缓存 + 共享 DTO
   lib.rs                     # 模块与 Tauri command 注册

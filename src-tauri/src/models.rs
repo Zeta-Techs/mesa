@@ -227,7 +227,7 @@ pub async fn fetch_models(
         return Err("Cursor 使用专有协议，无法通过通用模型列表接口获取模型".into());
     }
     let gemini = agent == "gemini";
-    let anthropic = matches!(agent, "claude-code" | "codebuddy")
+    let anthropic = agent == "claude-code"
         || matches!(protocol.as_deref(), Some("anthropic"));
     let base = base_url.trim().trim_end_matches('/');
     if base.is_empty() {

@@ -1113,6 +1113,49 @@ fn is_claude_interrupt_marker(text: &str) -> bool {
         || t.eq_ignore_ascii_case("[Request interrupted by user for tool use]")
 }
 
+/// Claude 会话文件里，`after_ms`（unix 毫秒）之后这一轮有没有收尾：被打断（拒绝工具 / Esc）返回 "interrupted"，
+/// 正常写了 system/turn_duration 返回 "end_turn"，没有返回 None。只看尾部 64KB、时间早于 after_ms 的行就停
+pub(crate) fn claude_turn_end_after(path: &Path, after_ms: i64) -> Option<&'static str> {
+    let (head, tail) = read_head_tail(path, 64 * 1024)?;
+    // 小文件整份在头窗里、尾窗为空
+    let tail = if tail.is_empty() { head } else { tail };
+    let mut ended = None;
+    for line in tail.iter().rev() {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let Some(ts) = get_str(&v, "timestamp")
+            .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+            .map(|t| t.timestamp_millis())
+        else {
+            continue;
+        };
+        if ts < after_ms {
+            break;
+        }
+        match get_str(&v, "type") {
+            Some("system") if get_str(&v, "subtype") == Some("turn_duration") => {
+                ended.get_or_insert("end_turn");
+            }
+            Some("user") => {
+                let content = v.get("message").and_then(|m| m.get("content"));
+                let interrupted = match content {
+                    Some(Value::String(s)) => is_claude_interrupt_marker(s),
+                    Some(Value::Array(arr)) => arr.iter().any(|b| {
+                        get_str(b, "type") == Some("text") && get_str(b, "text").is_some_and(is_claude_interrupt_marker)
+                    }),
+                    _ => false,
+                };
+                if interrupted {
+                    return Some("interrupted");
+                }
+            }
+            _ => {}
+        }
+    }
+    ended
+}
+
 /// 一条字符串内容的 Claude 用户 / 本地命令行：命令标签拆成 command / command_output 块，
 /// 命令输出并进紧挨着的那条命令（聊天里一行「命令 → 结果」），其余是用户文本
 fn push_claude_user_string(
@@ -3259,6 +3302,26 @@ fn parse_grok_history(lines: &[String]) -> Vec<ChatMessageDto> {
             continue;
         };
         let role = get_str(&value, "type");
+        // 工具结果：并进发起调用的那条助手消息，按 tool_call_id 与调用配对
+        if role == Some("tool_result") {
+            let text = match value.get("content") {
+                Some(Value::String(s)) => s.clone(),
+                Some(other) => grok_history_text(other).unwrap_or_else(|| other.to_string()),
+                None => String::new(),
+            };
+            push_tool_result(
+                &mut messages,
+                vec![BlockDto {
+                    kind: "tool_result".into(),
+                    text,
+                    tool_name: None,
+                    is_error: false,
+                    call_id: get_str(&value, "tool_call_id").map(String::from),
+                }],
+                None,
+            );
+            continue;
+        }
         let is_user_prompt = role == Some("user")
             && value.get("prompt_index").is_some()
             && value.get("synthetic_reason").is_none();
@@ -3266,12 +3329,33 @@ fn parse_grok_history(lines: &[String]) -> Vec<ChatMessageDto> {
         if !is_user_prompt && !is_assistant {
             continue;
         }
-        let Some(text) = grok_history_text(value.get("content").unwrap_or(&Value::Null)) else {
+        let mut blocks: Vec<BlockDto> = grok_history_text(value.get("content").unwrap_or(&Value::Null))
+            .map(text_block)
+            .into_iter()
+            .collect();
+        // 助手的工具调用（Grok 1.0.62：{id, name, arguments: JSON 串}；兼容 OpenAI 式 function 包一层）。
+        // 以前只取文字，Grok 对话里读文件 / 改文件 / 跑命令一条都看不到（2026-10-20 Windows 实跑发现，与平台无关）
+        if is_assistant {
+            for call in value.get("tool_calls").and_then(Value::as_array).into_iter().flatten() {
+                let f = call.get("function").unwrap_or(call);
+                let Some(name) = get_str(f, "name") else {
+                    continue;
+                };
+                blocks.push(BlockDto {
+                    kind: "tool_use".into(),
+                    text: stringify_payload(f.get("arguments")),
+                    tool_name: Some(name.into()),
+                    is_error: false,
+                    call_id: get_str(call, "id").map(String::from),
+                });
+            }
+        }
+        if blocks.is_empty() {
             continue;
-        };
+        }
         messages.push(ChatMessageDto {
             role: if is_user_prompt { "user" } else { "assistant" }.into(),
-            blocks: vec![text_block(text)],
+            blocks,
             timestamp: None,
             usage: None,
             id: None,
@@ -4097,6 +4181,28 @@ pub(crate) struct FileSig {
     pub(crate) mtime_ns: i64,
 }
 
+type OpencodeDbEntry = (FileSig, Option<FileSig>, Vec<SessionMetaDto>);
+
+/// OpenCode 库的会话行，主库与 `-wal` 指纹都没变才复用上一轮。
+///
+/// OpenCode 开着 WAL：新会话、新消息先只写进 `opencode.db-wal`，主库要等自动检查点（约 1000 页）才动。
+/// 只看主库指纹时新会话长时间扫不到，聊天层迟迟接不上会话、回复不显示或隔几分钟才出来
+/// （2026-10-21 用户实测：会话 09:21 建、主库 09:24 才第一次写，聊天层恰好那时才接上；macOS 同理）
+fn opencode_rows_cached(
+    db: &Path,
+    prev: Option<&OpencodeDbEntry>,
+) -> (Option<OpencodeDbEntry>, Vec<SessionMetaDto>) {
+    let sig = file_sig(db);
+    let mut wal = db.as_os_str().to_owned();
+    wal.push("-wal");
+    let wal_sig = file_sig(Path::new(&wal));
+    let rows = match (sig, prev) {
+        (Some(sig), Some((old, old_wal, rows))) if *old == sig && *old_wal == wal_sig => rows.clone(),
+        _ => opencode_scan_db(db),
+    };
+    (sig.map(|sig| (sig, wal_sig, rows.clone())), rows)
+}
+
 fn file_sig(path: &Path) -> Option<FileSig> {
     let md = fs::metadata(path).ok()?;
     let mtime_ns = md
@@ -4125,8 +4231,8 @@ pub(crate) struct ScanFileCache {
     pub(crate) snapshot: HashMap<String, (FileSig, SessionMetaDto)>,
     /// kimi 快照要先读字节分辨新/旧协议，单独一栏
     pub(crate) kimi_snapshot: HashMap<String, (FileSig, SessionMetaDto)>,
-    /// opencode 共享 SQLite：db 文件指纹 → 整批行
-    opencode_db: HashMap<String, (FileSig, Vec<SessionMetaDto>)>,
+    /// opencode 共享 SQLite：(主库指纹, -wal 指纹) → 整批行（见 opencode_rows_cached）
+    opencode_db: HashMap<String, OpencodeDbEntry>,
     /// opencode 旧版扁平 JSON：storage 根路径 → (目录清单指纹, 整批)
     opencode_legacy: HashMap<String, (u64, Vec<SessionMetaDto>)>,
     /// grok 会话的 summary.json 指纹侧栏：与 chained 里 updates.jsonl 指纹分开比较，
@@ -4427,18 +4533,14 @@ pub fn scan_sessions() -> ScanResult {
         }
         // OpenCode：v1.2+ 读共享 SQLite（WAL 只读）；旧版读 storage/ 扁平 JSON
         let mut found_db = false;
-        let mut opencode_db_next: HashMap<String, (FileSig, Vec<SessionMetaDto>)> =
+        let mut opencode_db_next: HashMap<String, OpencodeDbEntry> =
             HashMap::with_capacity(opencode_db.len());
         for db in opencode_db_candidates() {
             if db.exists() {
-                let sig = file_sig(&db);
                 let key = cache_key(&db);
-                let rows = match (sig, opencode_db.get(&key)) {
-                    (Some(sig), Some((old_sig, rows))) if *old_sig == sig => rows.clone(),
-                    _ => opencode_scan_db(&db),
-                };
-                if let Some(sig) = sig {
-                    opencode_db_next.insert(key, (sig, rows.clone()));
+                let (entry, rows) = opencode_rows_cached(&db, opencode_db.get(&key));
+                if let Some(entry) = entry {
+                    opencode_db_next.insert(key, entry);
                 }
                 out.extend(rows);
                 found_db = true;
@@ -5825,6 +5927,34 @@ pub async fn list_sessions() -> Vec<SessionMetaDto> {
         .unwrap_or_default()
 }
 
+/// 按 id 找一条会话（聊天层已从旁路 / hook 知道会话 id 时用）。10 秒扫描缓存里还没有它（刚建的会话）就失效重扫一次，
+/// 每 2 秒至多一次——否则聊天层要等满一轮缓存才接上，短回复在这一轮结束后先消失、隔几秒才出来（2026-10-21 OpenCode 实测）
+#[tauri::command]
+pub async fn find_session(agent: String, session_id: String) -> Option<SessionMetaDto> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let pick = |list: Vec<SessionMetaDto>| {
+            list.into_iter()
+                .find(|s| s.agent == agent && s.session_id == session_id)
+        };
+        if let Some(found) = pick(list_sessions_sync()) {
+            return Some(found);
+        }
+        static LAST_RESCAN: Mutex<Option<Instant>> = Mutex::new(None);
+        {
+            let mut last = LAST_RESCAN.lock().unwrap_or_else(|e| e.into_inner());
+            if last.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(2)) {
+                return None;
+            }
+            *last = Some(Instant::now());
+        }
+        invalidate_scan_cache();
+        pick(list_sessions_sync())
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 #[derive(Clone)]
 struct SessionClaimContext {
     agent: String,
@@ -6016,6 +6146,67 @@ pub async fn claim_session_for(claim_id: String) -> Option<SessionMetaDto> {
 #[tauri::command]
 pub fn release_session_claim(claim_id: String) {
     release_session_claim_impl(&claim_id);
+}
+
+/// 已认领的标签，CLI 换了会话文件之后接着跟：Gemini / Kimi / Grok 打 /clear 会另开新会话文件（2026-10-20 三家实测），
+/// 它们默认没有旁路报「换了会话」，标签一直盯着旧文件、聊天层看不到新回复（三平台都有）。
+/// 同 agent 同目录出现了比当前认领更新、启动前没有、也没被任何标签认领过的会话就改认它（取最新的）；
+/// 同 agent 同目录还有别的标签登记着时不猜——分不清是哪个标签开的新对话，宁可不跟也不抢
+#[tauri::command]
+pub async fn claim_session_successor(claim_id: String) -> Option<SessionMetaDto> {
+    let scan = tauri::async_runtime::spawn_blocking(cached_scan)
+        .await
+        .ok()?;
+    let mut registry = session_claims().lock().ok()?;
+    let mut found = pick_claim_successor(&mut registry, &claim_id, scan.sessions)?;
+    drop(registry);
+    redact_session_meta(std::slice::from_mut(&mut found));
+    Some(found)
+}
+
+fn claim_time(session: &SessionMetaDto) -> &str {
+    session
+        .created_at
+        .as_deref()
+        .unwrap_or(session.updated_at.as_deref().unwrap_or(""))
+}
+
+fn pick_claim_successor(
+    registry: &mut SessionClaimRegistry,
+    claim_id: &str,
+    sessions: Vec<SessionMetaDto>,
+) -> Option<SessionMetaDto> {
+    let context = registry.contexts.get(claim_id)?.clone();
+    let current = registry.assignments.get(claim_id)?.clone();
+    let rivals = registry.contexts.iter().any(|(id, other)| {
+        id != claim_id
+            && other.agent == context.agent
+            && crate::paths::same_path(&other.project_path, &context.project_path)
+    });
+    if rivals {
+        return None;
+    }
+    let current_time = sessions
+        .iter()
+        .find(|s| s.agent == current.0 && s.session_id == current.1)
+        .map(|s| claim_time(s).to_string())?;
+    let mut taken = registry.used_sessions.clone();
+    taken.extend(registry.assignments.values().cloned());
+    let next = sessions
+        .into_iter()
+        .filter(|s| {
+            s.agent == context.agent
+                && crate::paths::same_path(&s.project_path, &context.project_path)
+                && !context.excluded.contains(&s.session_id)
+                && !taken.contains(&(s.agent.clone(), s.session_id.clone()))
+                && claim_time(s) > current_time.as_str()
+        })
+        .max_by(|a, b| claim_time(a).cmp(claim_time(b)).then(a.session_id.cmp(&b.session_id)))?;
+    registry.used_sessions.insert(current);
+    registry
+        .assignments
+        .insert(claim_id.to_string(), (next.agent.clone(), next.session_id.clone()));
+    Some(next)
 }
 
 /// 注意力标记 v1（§6.11）：读会话文件尾部分类 done/working/confirm/unknown
@@ -8364,7 +8555,7 @@ mod tests {
             r#"{"type":"user","synthetic_reason":"system_reminder","content":"hidden"}"#,
             r#"{"type":"user","prompt_index":0,"content":[{"type":"text","text":"第一问"}]}"#,
             r#"{"type":"assistant","content":"第一答"}"#,
-            r#"{"type":"tool_result","content":"不要显示"}"#,
+            r#"{"type":"tool_result","content":"并进上一条助手消息"}"#,
             r#"{"type":"user","prompt_index":1,"content":[{"type":"text","text":"第二问"},{"type":"image","data":"..."}]}"#,
             r#"{"type":"assistant","content":"第二答"}"#,
         ]);
@@ -8373,6 +8564,35 @@ mod tests {
         assert_eq!(messages[0].role, "user");
         assert_eq!(messages[0].blocks[0].text, "第一问");
         assert_eq!(messages[3].blocks[0].text, "第二答");
+    }
+
+    /// Grok 1.0.62 chat_history.jsonl 的原样形状（2026-10-20 Windows 实跑「新建→改→删」，路径脱敏）：
+    /// 助手行只有 tool_calls、content 为空；tool_result 带 tool_call_id
+    #[test]
+    fn grok_history_keeps_tool_calls_and_results_paired() {
+        let lines = s(&[
+            r#"{"type":"user","prompt_index":0,"content":[{"type":"text","text":"<user_query>\n新建 notes.txt 再把 banana 改成 blueberry\n</user_query>"}]}"#,
+            r#"{"type":"reasoning","id":"r1","summary":""}"#,
+            r#"{"type":"assistant","content":"","tool_calls":[{"id":"call_1","name":"write","arguments":"{\"content\":\"apple\\nbanana\\n\",\"file_path\":\"C:\\\\w\\\\notes.txt\"}"}],"model_id":"glm-5.3-flash"}"#,
+            r#"{"type":"tool_result","tool_call_id":"call_1","content":"The file C:\\w\\notes.txt has been created."}"#,
+            r#"{"type":"assistant","content":"","tool_calls":[{"id":"call_2","name":"search_replace","arguments":"{\"file_path\":\"C:\\\\w\\\\notes.txt\",\"new_string\":\"blueberry\",\"old_string\":\"banana\"}"}]}"#,
+            r#"{"type":"tool_result","tool_call_id":"call_2","content":"The file C:\\w\\notes.txt has been updated successfully."}"#,
+            r#"{"type":"assistant","content":"完成。","tool_calls":[{"id":"call_3","function":{"name":"run_terminal_command","arguments":{"command":"Remove-Item notes.txt"}}}]}"#,
+        ]);
+        let messages = parse_grok_history(&lines);
+        assert_eq!(messages.len(), 4, "一问 + 三条助手消息，工具结果并进各自的助手消息");
+        assert_eq!(messages[0].blocks[0].text, "新建 notes.txt 再把 banana 改成 blueberry");
+        let call = &messages[1].blocks[0];
+        assert_eq!((call.kind.as_str(), call.tool_name.as_deref()), ("tool_use", Some("write")));
+        assert!(call.text.contains("\"file_path\""), "参数原样保留给前端画差异：{}", call.text);
+        assert_eq!(call.call_id.as_deref(), Some("call_1"));
+        let result = &messages[1].blocks[1];
+        assert_eq!((result.kind.as_str(), result.call_id.as_deref()), ("tool_result", Some("call_1")));
+        assert_eq!(messages[2].blocks[0].tool_name.as_deref(), Some("search_replace"));
+        // 有文字也有工具调用：文字在前；function 包一层、参数是对象的也认
+        assert_eq!(messages[3].blocks[0].text, "完成。");
+        assert_eq!(messages[3].blocks[1].tool_name.as_deref(), Some("run_terminal_command"));
+        assert!(messages[3].blocks[1].text.contains("Remove-Item"));
     }
 
     #[test]
@@ -8479,6 +8699,33 @@ mod tests {
             r#"{"type":"system","subtype":"local_command","content":"<local-command-stdout>Settings dialog dismissed</local-command-stdout>"}"#,
         ]);
         assert_eq!(claude_tail_state(&done), "settled");
+    }
+
+    #[test]
+    fn claude_turn_end_after_sees_interrupt_and_ignores_older_turns() {
+        // 2026-10-21 用户实测的形状：拒绝两个工具后只有打断标记与 turn_duration，没有 Stop hook
+        let dir = std::env::temp_dir().join(format!("ccode-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("s.jsonl");
+        let lines = [
+            r#"{"type":"system","subtype":"turn_duration","timestamp":"2026-10-21T02:48:09.000Z"}"#,
+            r#"{"type":"user","timestamp":"2026-10-21T02:49:22.000Z","message":{"role":"user","content":"在当前目录依次完成"}}"#,
+            r#"{"type":"user","timestamp":"2026-10-21T02:50:05.100Z","message":{"role":"user","content":[{"type":"tool_result","is_error":true,"content":"The user doesn't want to proceed"}]}}"#,
+            r#"{"type":"user","timestamp":"2026-10-21T02:50:05.200Z","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]}}"#,
+            r#"{"type":"system","subtype":"turn_duration","timestamp":"2026-10-21T02:50:05.300Z"}"#,
+        ];
+        std::fs::write(&f, lines.join("\n") + "\n").unwrap();
+        let ms = |t: &str| chrono::DateTime::parse_from_rfc3339(t).unwrap().timestamp_millis();
+        // 这一轮 02:49:22 开始：打断标记在后面 → interrupted
+        assert_eq!(claude_turn_end_after(&f, ms("2026-10-21T02:49:22.000Z")), Some("interrupted"));
+        // 上一轮的 turn_duration 不算这一轮的收尾
+        std::fs::write(&f, lines[..2].join("\n") + "\n").unwrap();
+        assert_eq!(claude_turn_end_after(&f, ms("2026-10-21T02:49:22.000Z")), None);
+        // 正常结束只有 turn_duration
+        let normal = [lines[1], lines[4]];
+        std::fs::write(&f, normal.join("\n") + "\n").unwrap();
+        assert_eq!(claude_turn_end_after(&f, ms("2026-10-21T02:49:22.000Z")), Some("end_turn"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -10505,6 +10752,50 @@ mod tests {
     }
 
     #[test]
+    fn claim_successor_follows_clear_only_when_unambiguous() {
+        let ctx = |since: &str, excluded: &[&str]| SessionClaimContext {
+            agent: "gemini".into(),
+            project_path: "/p".into(),
+            since_iso: since.into(),
+            excluded: excluded.iter().map(|s| s.to_string()).collect(),
+        };
+        let s = |id: &str, t: &str| claim_test_session("gemini", id, "/p", t);
+        let mut reg = SessionClaimRegistry::default();
+        reg.contexts.insert("tab1".into(), ctx("2026-10-20T10:00:00Z", &["old"]));
+        reg.assignments.insert("tab1".into(), ("gemini".into(), "s1".into()));
+        let all = || {
+            vec![
+                s("old", "2026-10-20T11:00:00Z"), // 启动前就有：不认（时间新也不认）
+                s("s1", "2026-10-20T10:00:05Z"),
+                s("s2", "2026-10-20T10:05:00Z"),
+                claim_test_session("kimi", "k1", "/p", "2026-10-20T10:06:00Z"), // 别家
+                claim_test_session("gemini", "x1", "/q", "2026-10-20T10:07:00Z"), // 别的目录
+            ]
+        };
+        // 没有更新的会话：不动
+        assert!(pick_claim_successor(&mut reg, "tab1", vec![s("s1", "2026-10-20T10:00:05Z")]).is_none());
+        // /clear 后出现 s2：改认它，旧的记为用过
+        let next = pick_claim_successor(&mut reg, "tab1", all()).unwrap();
+        assert_eq!(next.session_id, "s2");
+        assert_eq!(reg.assignments["tab1"].1, "s2");
+        assert!(reg.used_sessions.contains(&("gemini".into(), "s1".into())));
+        // 再问一次：已经是最新，不再跳
+        assert!(pick_claim_successor(&mut reg, "tab1", all()).is_none());
+        // 同目录同家还有别的标签登记着：分不清是谁开的新对话，不猜
+        let mut reg2 = SessionClaimRegistry::default();
+        reg2.contexts.insert("tab1".into(), ctx("2026-10-20T10:00:00Z", &["old"]));
+        reg2.contexts.insert("tab2".into(), ctx("2026-10-20T10:01:00Z", &["old"]));
+        reg2.assignments.insert("tab1".into(), ("gemini".into(), "s1".into()));
+        assert!(pick_claim_successor(&mut reg2, "tab1", all()).is_none());
+        // 别的标签已认领的会话不抢
+        let mut reg3 = SessionClaimRegistry::default();
+        reg3.contexts.insert("tab1".into(), ctx("2026-10-20T10:00:00Z", &["old"]));
+        reg3.assignments.insert("tab1".into(), ("gemini".into(), "s1".into()));
+        reg3.used_sessions.insert(("gemini".into(), "s2".into()));
+        assert!(pick_claim_successor(&mut reg3, "tab1", all()).is_none());
+    }
+
+    #[test]
     fn sessions_belonging_to_filters_by_card_and_sorts_asc() {
         // 「◈ 融合进任务书」取材范围 = 该卡名下会话（task_id 口径），不碰其他会话
         let mut a = claim_test_session("codex", "s-a", "/p", "2026-07-01T00:00:00Z");
@@ -10649,6 +10940,32 @@ mod tests {
         )
         .unwrap();
         db
+    }
+
+    #[test]
+    fn opencode_cache_sees_sessions_still_in_wal() {
+        let dir = std::env::temp_dir().join(format!("ccode-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = opencode_fixture_db(&dir);
+        // 照 OpenCode：WAL 模式、写连接一直开着、还没到检查点
+        let writer = Connection::open(&db).unwrap();
+        writer
+            .execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;")
+            .unwrap();
+        let (entry, rows) = opencode_rows_cached(&db, None);
+        assert_eq!(rows.len(), 2);
+        let main_before = file_sig(&db);
+        writer
+            .execute(
+                "INSERT INTO session VALUES('ses_new','global',NULL,'/tmp/new','',0,0,0,0,0,0,'build','{}',NULL,1785307090000,1785307090000)",
+                [],
+            )
+            .unwrap();
+        assert!(file_sig(&db) == main_before, "新会话只进了 -wal，主库指纹不变（缺陷成因）");
+        let (_, rows) = opencode_rows_cached(&db, entry.as_ref());
+        assert!(rows.iter().any(|m| m.session_id == "ses_new"), "-wal 变了就重扫");
+        drop(writer);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

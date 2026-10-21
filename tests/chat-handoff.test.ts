@@ -20,10 +20,12 @@ import {
   mergeLocalRecords,
   mergeConversationPages,
   modelSwitchCommand,
+  pendingAfterTurn,
   slashCommandRecorded,
   slashSettledLocally,
   shouldAutoPeek,
   slashHandoff,
+  userTextRecorded,
 } from "../src/chat-handoff.ts";
 import type { ChatMessageDto } from "../src/types.ts";
 
@@ -306,6 +308,47 @@ test("本地消息放回：普通发送插在新回复前，长对话不跳到�
     ["第一问", "第一答", "第二问", "第二答", "第三答", "补一句"],
   );
   assert.equal(placePendingUsers(old, [], known), old);
+});
+
+test("发出的话落没落盘：残留草稿包含即算；Windows 上 Codex 吞掉的 emoji 与空白不挡认", () => {
+  const sent = '第一行\n  缩进的第二行\n<b>不该加粗</b> & "引号" \u{1F600}\n第四行：aaaa';
+  // 2026-10-21 Codex 实录：emoji 没了、原位留个空格
+  const codex = '第一行\n  缩进的第二行\n<b>不该加粗</b> & "引号" \n第四行：aaaa';
+  assert.equal(userTextRecorded(sent, codex), true);
+  assert.equal(userTextRecorded("你是什么模型", "yyyyyy你是什么模型"), true);
+  assert.equal(userTextRecorded("👍🏻 好的\r\n收到", "好的\n收到"), true);
+  // 不同的话照样不算
+  assert.equal(userTextRecorded("第二问", "第一问"), false);
+  // 整句只有 emoji：去完什么都不剩，只认原文
+  assert.equal(userTextRecorded("\u{1F600}", "随便一句"), false);
+  assert.equal(userTextRecorded("\u{1F600}", "\u{1F600}"), true);
+});
+
+test("旁路回合结束：开始前发出的话算已收下；排队的必须早于这一轮开始", () => {
+  const at = (ms: number, queued = false): ChatMessageDto => ({
+    role: "user",
+    blocks: [{ kind: "text", text: String(ms), toolName: null }],
+    timestamp: new Date(ms).toISOString(),
+    usage: null,
+    ...(queued ? { queued: true } : {}),
+  });
+  const start = Date.parse("2026-10-21T07:05:23.261Z");
+  const left = pendingAfterTurn(
+    [
+      at(start - 500), // 普通发送，回合随后开始 → 收下
+      at(start + 1500), // 发送回执晚于回合开始事件 → 收下
+      at(start + 5000), // 回合开始好久之后才发 → 还在等
+      at(start - 100, true), // 上一轮时排队，这一轮开始前就在 → 收下
+      at(start + 500, true), // 这一轮跑着时排队 → 等下一轮
+    ],
+    start,
+  );
+  assert.deepEqual(
+    left.map((m) => m.blocks[0].text),
+    [String(start + 5000), String(start + 500)],
+  );
+  const noTime = { ...at(start), timestamp: null };
+  assert.equal(pendingAfterTurn([noTime], start).length, 1);
 });
 
 const cmdMsg = (role: string, kind: string, text: string, timestamp: string | null) => ({

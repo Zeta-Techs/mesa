@@ -281,3 +281,37 @@ test("CodeBuddy 2.168 审批：框顶标题「Confirm」，问句取贴着选项
   assert.equal(menu.options.length, 3);
   assert.equal(menu.selected, 0);
 });
+
+test("Windows：Grok 单选的选中点画成 •（2026-10-20 ConPTY 抓屏）", () => {
+  const menu = parseTuiMenu([
+    "  │  >  写一个探针文件",
+    "  │  │ echo mesa > mesa_probe.txt",
+    "  │",
+    "  │  1 (○) Yes, and don't ask again for anything (always-approve mode)",
+    "  │  2 (•) Yes, proceed",
+    "  │  3 (○) No, reject (type to add feedback)",
+    "  │  4 (○) Never allow: echo",
+    "  │",
+    "  1/4:select  │  Tab:next option  │  ←/→:scope  │  Ctrl+c:cancel",
+  ]);
+  assert.equal(menu?.selected, 1);
+  assert.equal(menu?.options[1], "Yes, proceed");
+  assert.equal(menu?.options.length, 4);
+});
+
+test("Grok 输入框里排着的多行编号清单像菜单：按刚发的原文排除，终端窄时截断加「…」的行也认（2026-10-21 用户截图）", () => {
+  const sent = "在当前目录依次完成，每一步用一句话汇报：\n1. 新建 mesa_probe/hello.py，内容是打印 hello 和当前时间\n2. 列出 mesa_probe 目录";
+  const screen = [
+    "     ❯ 上一句                                                     9:41 PM",
+    "  ╭──────────────────────────────────────────────────────────╮",
+    "  │ ❯ 在当前目录依次完成，每一步用一句话汇报：                 │",
+    "  │   1. 新建 mesa_probe/hello.py，内容是打印 hello 和当前时…  │",
+    "  │   2. 列出 mesa_probe 目录                                  │",
+    "  ╰──────────────────────────────────── e2e · always-approve ─╯",
+    "  Enter:queue  │  Alt+Enter:newline",
+  ];
+  const menu = parseTuiMenu(screen)!;
+  assert.ok(menu, "这个形状确实会被认成菜单");
+  assert.equal(menuEchoesText(menu, sent), true);
+  assert.equal(menuEchoesText(menu, "上一句"), false);
+});

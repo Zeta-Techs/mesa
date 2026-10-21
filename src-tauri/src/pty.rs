@@ -40,6 +40,11 @@ struct PtyEntry {
     initial_cwd: String,
     /// 交互 Run 身份；进程退出时 close。
     run_id: Option<String>,
+    /// Windows 普通 shell 标签的目录记录文件（shell 每次出提示符时写当前目录，pty_get_cwd 读）；
+    /// 标签退出时删
+    cwd_file: Option<std::path::PathBuf>,
+    /// 普通 shell 标签用的哪种 shell（pty_cd 按它拼 cd）；agent 与 run 脚本为 None
+    shell_kind: Option<ShellKind>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -367,6 +372,18 @@ fn wrap_bracketed_paste(data: &str, paste_mode_on: bool) -> std::borrow::Cow<'_,
     }
 }
 
+/// 聊天发送的正文：照 bracketed paste 规则包好；`cr_newlines` = 包里的换行改写成 CR。
+/// Windows（ConPTY）上 Grok 收到粘贴包里的 LF 会把换行丢掉（两行连成一行），CR 才算换行；
+/// 其余几家 CR 会被当成提交或把字写错位（2026-10-20 八家逐个实测），所以只按调用方点名改，没包的不动
+fn chat_paste_body(text: &str, paste_mode_on: bool, cr_newlines: bool) -> String {
+    let body = wrap_bracketed_paste(text, paste_mode_on);
+    if cr_newlines && body.starts_with("\x1b[200~") {
+        body.replace("\r\n", "\r").replace('\n', "\r")
+    } else {
+        body.into_owned()
+    }
+}
+
 /// 把文本编码成 win32-input-mode 按键记录（`ESC [ Vk;Sc;Uc;Kd;Cs;Rc _`），每字符一条 key-down。
 ///
 /// Windows/ConPTY 会把写进 PTY 输入的**成形 OSC 序列整段剥掉**（ST / BEL 收尾都一样），
@@ -376,14 +393,76 @@ fn wrap_bracketed_paste(data: &str, paste_mode_on: bool) -> std::borrow::Cow<'_,
 ///
 /// 逐条投递、条与条之间必须留间隔：一次性灌进去时 ConPTY 的输入解析器会丢同步，
 /// 把中间某条记录原样漏成可见文本（投递间隔见 `WIN32_INPUT_RECORD_GAP`）。
+/// 按 UTF-16 码元出记录：BMP 以外的字（emoji）出高、低两条代理记录。
 fn win32_input_records(text: &str) -> Vec<String> {
-    text.chars()
-        .map(|ch| format!("\x1b[0;0;{};1;0;1_", ch as u32))
+    text.encode_utf16()
+        .map(|unit| format!("\x1b[0;0;{unit};1;0;1_"))
         .collect()
+}
+
+/// Windows 上写进 PTY 的输入：BMP 以外的字（emoji 等）改送只按下的 win32 按键记录，其余字节原样，按段依次写。
+///
+/// ConPTY 把 UTF-8 里的 emoji 拆成「高位按下、高位抬起、低位按下、低位抬起」四条按键事件；Codex 用的 crossterm
+/// 把抬起也当代理对的一半去拼（windows/parse.rs handle_surrogate），高配高、低配低都拼不成字，整个 emoji 丢掉
+/// （2026-10-21 用户实测：Codex 会话里「"引号" 😀」落成「"引号" 」；探针复现：同一版 crossterm 收 `a😀b` 只剩 `ab`，
+/// 改送只按下的两条记录后收到完整的 U+1F600）。忽略抬起的读法（Node / .NET / prompt_toolkit）收到的不变；
+/// 开了 VT 输入的程序在粘贴包里照样收到原字，粘贴包首尾也不变（同日探针实测）。
+fn conpty_input_pieces(bytes: &str) -> Vec<Vec<u8>> {
+    let mut pieces = Vec::new();
+    let mut text = String::new();
+    for ch in bytes.chars() {
+        if (ch as u32) <= 0xFFFF {
+            text.push(ch);
+            continue;
+        }
+        if !text.is_empty() {
+            pieces.push(std::mem::take(&mut text).into_bytes());
+        }
+        let mut buf = [0u8; 4];
+        pieces.extend(win32_input_records(ch.encode_utf8(&mut buf)).into_iter().map(String::into_bytes));
+    }
+    if !text.is_empty() || pieces.is_empty() {
+        pieces.push(text.into_bytes());
+    }
+    pieces
+}
+
+/// 写进 PTY 的分段：只有 Windows 需要改送 emoji（见 conpty_input_pieces），别的平台整块写
+fn pty_input_pieces(bytes: &str) -> Vec<Vec<u8>> {
+    if cfg!(windows) {
+        conpty_input_pieces(bytes)
+    } else {
+        vec![bytes.as_bytes().to_vec()]
+    }
 }
 
 /// win32 按键记录之间的投递间隔——低于此值 ConPTY 输入解析器会丢同步漏出字面记录
 const WIN32_INPUT_RECORD_GAP: std::time::Duration = std::time::Duration::from_millis(2);
+
+/// Shift+Enter 的 win32 按键记录（VK_RETURN、扫描码 28、字符 CR、按下、SHIFT_PRESSED）
+const SHIFT_ENTER_RECORD: &str = "\x1b[13;28;13;1;16;1_";
+
+/// Windows 上发给 Codex 的多行正文：每个换行改送一条 Shift+Enter 按键记录（Codex 的换行键），其余同 conpty_input_pieces。
+///
+/// Codex（crossterm）在 Windows 上读的是按键事件，ConPTY 把粘贴包里的 LF 转成它认不出的键，换行整个丢掉、几行连成一行；
+/// 改写 CR 则每行各自发出去（2026-10-21 ConPTY 探针，Codex 0.163：LF → 「多行第二行第三行」、CR → 拆成三条消息、
+/// Shift+Enter / Ctrl+J 记录 → 三行原样；docs 里 10-20「Codex 保留 LF」的结论已不成立）
+fn shift_enter_pieces(body: &str) -> Vec<Vec<u8>> {
+    let mut pieces = Vec::new();
+    for (i, line) in body.split('\n').enumerate() {
+        if i > 0 {
+            pieces.push(SHIFT_ENTER_RECORD.as_bytes().to_vec());
+        }
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        if !line.is_empty() {
+            pieces.extend(conpty_input_pieces(line));
+        }
+    }
+    if pieces.is_empty() {
+        pieces.push(Vec::new());
+    }
+    pieces
+}
 
 /// 向指定 PTY 的独立队列写字节；只在查找 writer 句柄时持全局表锁。
 /// PTY 已消失（标签被秒关）时返回 Err，由调用方决定是否静默。
@@ -454,6 +533,7 @@ fn spawn_tracked(
     purpose: PtyPurpose,
     run_id: Option<String>,
     size: PtySize,
+    cwd_file: Option<std::path::PathBuf>,
 ) -> Result<String, String> {
     if crate::process::shutting_down() {
         return Err("应用正在退出，拒绝启动终端".into());
@@ -468,6 +548,9 @@ fn spawn_tracked(
     cmd.env_remove("NO_COLOR");
     cmd.env_remove("FORCE_COLOR");
     cmd.cwd(cwd);
+    // PWD 跟工作目录一致：否则子进程继承的是 Mesa 启动时那个 shell 的 PWD，按 PWD 取目录的 CLI（opencode run）
+    // 会跑到别处干活（process::background_command 同一条，那边是删掉）
+    cmd.env("PWD", cwd);
 
     let pair = native_pty_system()
         .openpty(size)
@@ -498,10 +581,12 @@ fn spawn_tracked(
     let backlog = Arc::new(Mutex::new(Vec::new()));
     let bracketed_paste = Arc::new(AtomicBool::new(false));
     LIVE_MANAGER.get_or_init(|| manager.clone());
+    let input = crate::pty_input::PtyInput::new(writer);
+    let query_input = input.clone();
     manager.entries.lock().unwrap().insert(
         pty_id.clone(),
         PtyEntry {
-            writer: crate::pty_input::PtyInput::new(writer),
+            writer: input,
             master: pair.master,
             child,
             visible: visible.clone(),
@@ -510,6 +595,8 @@ fn spawn_tracked(
             purpose,
             initial_cwd: cwd.to_string(),
             run_id: run_id.clone(),
+            cwd_file,
+            shell_kind: None,
         },
     );
 
@@ -538,6 +625,8 @@ fn spawn_tracked(
         let mut reader = reader;
         // bracketed paste 检测的跨块尾部（序列可能恰好被 8KB 读取边界切开）
         let mut scan_tail: Vec<u8> = Vec::new();
+        // 终端能力查询在这里当场答，不等前端（标签在后台时输出进 backlog，前端答就晚了，见 term_query.rs）
+        let mut queries = crate::term_query::QueryScanner::default();
         loop {
             let mut buf = [0u8; 8192];
             match reader.read(&mut buf) {
@@ -548,6 +637,10 @@ fn spawn_tracked(
                         && scan_bracketed_paste_on(&mut scan_tail, &buf[..n])
                     {
                         bracketed_paste.store(true, Ordering::Relaxed);
+                    }
+                    for reply in queries.feed(&buf[..n]) {
+                        // 只入队不等回执：读线程不能被一个不读 stdin 的子进程卡住
+                        let _ = query_input.enqueue(&reply, None);
                     }
                     if let Some(id) = run_id.as_deref() {
                         // 有界队列仅传递副本；数据库/脱敏不占用终端读取线程。
@@ -566,6 +659,7 @@ fn spawn_tracked(
         // 输出流结束视为进程结束；谁先移除 entry 谁负责回收并发退出事件
         let entry = entries.lock().unwrap().remove(&id);
         if let Some(mut entry) = entry {
+            forget_cwd_file(&mut entry);
             // wait 失败按异常退出（-1）上报，不误报正常退出
             let deadline = Instant::now() + Duration::from_secs(2);
             let code = loop {
@@ -861,6 +955,7 @@ pub fn pty_spawn(
         PtyPurpose::Agent,
         opened_id.clone(),
         pty_size_from(cols, rows),
+        None,
     ) {
         Ok(pty_id) => pty_id,
         Err(error) => {
@@ -936,12 +1031,16 @@ pub fn shell_spawn(
     cols: Option<u16>,
     rows: Option<u16>,
 ) -> Result<String, String> {
-    let (shell, shell_args) = if purpose.as_deref() == Some("script") {
-        script_shell_argv()?
+    let (shell, mut shell_args, kind) = if purpose.as_deref() == Some("script") {
+        let (shell, args) = script_shell_argv()?;
+        (shell, args, None)
     } else {
-        login_shell_argv()
+        let setting = crate::settings::read_current().terminal_shell;
+        let (shell, args, kind) = interactive_shell(setting.as_deref());
+        (shell, args, Some(kind))
     };
     let mut cmd = CommandBuilder::new(&shell);
+    let cwd_file = kind.and_then(|k| attach_cwd_tracking(&mut cmd, &mut shell_args, k));
     for arg in &shell_args {
         cmd.arg(arg);
     }
@@ -967,8 +1066,12 @@ pub fn shell_spawn(
         purpose,
         run_id.clone(),
         pty_size_from(cols, rows),
+        cwd_file,
     ) {
         Ok(id) => {
+            if let Some(entry) = manager.inner().entries.lock().unwrap().get_mut(&id) {
+                entry.shell_kind = kind;
+            }
             if let Some(run_id) = run_id.as_deref() {
                 if let Err(error) = crate::runs::mark_started(run_id) {
                     discard_spawned_pty(&app, manager.inner(), &id);
@@ -1041,6 +1144,7 @@ pub fn pty_spawn_custom(
         PtyPurpose::Agent,
         Some(run_id.clone()),
         pty_size_from(cols, rows),
+        None,
     ) {
         Ok(id) => id,
         Err(error) => {
@@ -1121,6 +1225,189 @@ fn login_shell_argv() -> (String, Vec<String>) {
     (shell, vec!["-l".to_string()])
 }
 
+// ===== 内置终端 shell 选择（设置 → 终端 → 内置终端 shell）=====
+
+/// shell 的种类：决定启动参数与「跟随 cd」怎么接（只有 Windows 需要接，macOS / Linux 直接读进程 cwd）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(windows), allow(dead_code))]
+enum ShellKind {
+    PowerShell,
+    GitBash,
+    Cmd,
+    Posix,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShellOptionDto {
+    /// 落 settings.terminal_shell 的值
+    pub id: &'static str,
+    pub label: &'static str,
+    pub path: String,
+}
+
+/// 本机找得到的可选 shell：(id, 显示名, 程序, 种类)。顺序即设置页下拉顺序
+#[cfg(windows)]
+fn shell_candidates() -> Vec<(&'static str, &'static str, std::path::PathBuf, ShellKind)> {
+    let mut out = Vec::new();
+    if let Some(p) = crate::agents::resolve_binary("powershell") {
+        out.push(("powershell", "Windows PowerShell", p, ShellKind::PowerShell));
+    }
+    if let Some(p) = crate::agents::resolve_binary("pwsh") {
+        out.push(("pwsh", "PowerShell 7", p, ShellKind::PowerShell));
+    }
+    if let Some(p) = crate::agents::resolve_git_bash() {
+        out.push(("git-bash", "Git Bash", p, ShellKind::GitBash));
+    }
+    let cmd = std::env::var_os("COMSPEC")
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.is_file())
+        .or_else(|| crate::agents::resolve_binary("cmd"));
+    if let Some(p) = cmd {
+        out.push(("cmd", "命令提示符（cmd）", p, ShellKind::Cmd));
+    }
+    out
+}
+
+#[cfg(not(windows))]
+fn shell_candidates() -> Vec<(&'static str, &'static str, std::path::PathBuf, ShellKind)> {
+    let mut out = Vec::new();
+    for (id, fixed) in [("zsh", "/bin/zsh"), ("bash", "/bin/bash")] {
+        let p = std::path::PathBuf::from(fixed);
+        let found = if p.is_file() {
+            Some(p)
+        } else {
+            crate::agents::resolve_binary(id)
+        };
+        if let Some(p) = found {
+            out.push((id, id, p, ShellKind::Posix));
+        }
+    }
+    if let Some(p) = crate::agents::resolve_binary("fish") {
+        out.push(("fish", "fish", p, ShellKind::Posix));
+    }
+    out
+}
+
+/// 某个 shell 的启动参数（PowerShell 带进程级 Bypass，理由见 login_shell_argv）
+fn shell_args_for(kind: ShellKind) -> Vec<String> {
+    match kind {
+        ShellKind::PowerShell => ["-NoLogo", "-ExecutionPolicy", "Bypass"]
+            .map(String::from)
+            .to_vec(),
+        ShellKind::GitBash | ShellKind::Posix => vec!["-l".to_string()],
+        ShellKind::Cmd => Vec::new(),
+    }
+}
+
+/// 内置终端（普通 shell 标签）实际用的 shell：设置里选了且本机找得到就用它，否则平台默认。
+/// run 脚本不走这里（script_shell_argv：Windows 固定 Git Bash，其余平台登录 shell）
+fn interactive_shell(setting: Option<&str>) -> (String, Vec<String>, ShellKind) {
+    if let Some(id) = setting.filter(|v| !v.is_empty() && *v != "auto") {
+        if let Some((_, _, path, kind)) = shell_candidates().into_iter().find(|c| c.0 == id) {
+            return (path.to_string_lossy().into_owned(), shell_args_for(kind), kind);
+        }
+    }
+    let (program, args) = login_shell_argv();
+    let lower = program.to_ascii_lowercase();
+    let kind = if lower.contains("powershell") || lower.contains("pwsh") {
+        ShellKind::PowerShell
+    } else if cfg!(windows) && lower.ends_with("cmd.exe") {
+        ShellKind::Cmd
+    } else {
+        ShellKind::Posix
+    };
+    (program, args, kind)
+}
+
+/// 设置页「内置终端 shell」下拉的候选（只列本机找得到的；「自动」由前端固定加在最前）
+#[tauri::command]
+pub fn terminal_shell_options() -> Vec<ShellOptionDto> {
+    shell_candidates()
+        .into_iter()
+        .map(|(id, label, path, _)| ShellOptionDto {
+            id,
+            label,
+            path: crate::paths::strip_verbatim(path).to_string_lossy().into_owned(),
+        })
+        .collect()
+}
+
+// ===== Windows：shell 里 cd 后文件树 / Git 面板跟随 =====
+//
+// macOS 用 lsof、Linux 读 /proc 拿进程 cwd；Windows 没有轻量办法，而且 PowerShell 的 Set-Location
+// 根本不改进程工作目录。所以由 shell 自己在每次出提示符时把当前目录写进一个小文件
+// （PowerShell 包一层 prompt 函数，Git Bash 用 PROMPT_COMMAND 跑 `pwd -W`），pty_get_cwd 读它；
+// cmd 的 cd 会改进程工作目录，读不到文件时从进程环境块（PEB）里取。文件随标签退出删除，启动时清残留。
+
+/// PowerShell 的 prompt 包装：先记目录再交回原来的 prompt（用户 profile 里的主题照常生效）。
+/// 只用单引号：整段经 CreateProcess 命令行传，不能含双引号
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+const PS_CWD_HOOK: &str = "$global:__ccodeCwdFile = $env:CCODE_CWD_FILE; \
+$global:__ccodePrompt = $function:prompt; \
+function global:prompt { if ($global:__ccodeCwdFile -and $PWD.Provider.Name -eq 'FileSystem') { \
+try { [IO.File]::WriteAllText($global:__ccodeCwdFile, $PWD.ProviderPath) } catch { } }; & $global:__ccodePrompt }";
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn cwd_track_dir() -> Option<std::path::PathBuf> {
+    crate::storage::config_root().map(|r| r.join("pty-cwd"))
+}
+
+/// 启动时清掉上次没删成的目录记录文件（崩溃 / 强杀留下的）
+pub(crate) fn purge_cwd_track_files() {
+    if let Some(dir) = cwd_track_dir() {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+/// 给这个 shell 接上目录记录：返回记录文件路径（不支持或建目录失败返回 None，照常启动）
+#[cfg(windows)]
+fn attach_cwd_tracking(
+    cmd: &mut CommandBuilder,
+    args: &mut Vec<String>,
+    kind: ShellKind,
+) -> Option<std::path::PathBuf> {
+    if kind == ShellKind::Cmd || kind == ShellKind::Posix {
+        return None;
+    }
+    let dir = cwd_track_dir()?;
+    std::fs::create_dir_all(&dir).ok()?;
+    let file = dir.join(format!("{}.txt", uuid::Uuid::new_v4()));
+    cmd.env("CCODE_CWD_FILE", &file);
+    match kind {
+        ShellKind::PowerShell => {
+            args.extend(["-NoExit", "-Command", PS_CWD_HOOK].map(String::from));
+        }
+        ShellKind::GitBash => {
+            let posix = file.to_string_lossy().replace('\\', "/").replace('\'', "'\\''");
+            cmd.env("PROMPT_COMMAND", format!("pwd -W > '{posix}' 2>/dev/null"));
+        }
+        ShellKind::Cmd | ShellKind::Posix => {}
+    }
+    Some(file)
+}
+
+#[cfg(not(windows))]
+fn attach_cwd_tracking(
+    _cmd: &mut CommandBuilder,
+    _args: &mut Vec<String>,
+    _kind: ShellKind,
+) -> Option<std::path::PathBuf> {
+    None
+}
+
+/// 读 shell 写下的目录记录：正斜杠转回反斜杠，必须是存在的目录
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn read_cwd_track_file(file: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(file).ok()?;
+    let p = text.trim().trim_start_matches('\u{feff}');
+    if p.is_empty() {
+        return None;
+    }
+    let p = if cfg!(windows) { p.replace('/', "\\") } else { p.to_string() };
+    std::path::Path::new(&p).is_dir().then_some(p)
+}
+
 /// 流水线 run 脚本（render-pdf 等）是 bash。Windows 交互 shell 是 PowerShell，
 /// 必须改走 Git Bash，否则 `mkdir -p` / `command -v` 整链失败。
 #[cfg(windows)]
@@ -1151,7 +1438,42 @@ pub async fn pty_write(
         )
     };
     // 先按 IPC 到达次序入队，再后台等待；不能让线程池调度把按键顺序打乱。
-    let receipt = writer.enqueue(wrap_bracketed_paste(&data, paste_on).as_bytes(), None)?;
+    let receipt = writer.enqueue_pieces(pty_input_pieces(&wrap_bracketed_paste(&data, paste_on)), None)?;
+    tauri::async_runtime::spawn_blocking(move || receipt.wait())
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// 按 shell 方言拼一行「切到这个目录」（含回车）：PowerShell / POSIX 单引号，Git Bash 转正斜杠，
+/// cmd 用 `cd /d` + 双引号（cmd 不认单引号，跨盘还得带 /d）
+fn cd_line(kind: ShellKind, path: &str) -> String {
+    let enter = if cfg!(windows) { "\r" } else { "\n" };
+    match kind {
+        ShellKind::PowerShell => format!("cd '{}'{enter}", path.replace('\'', "''")),
+        ShellKind::Cmd => format!("cd /d \"{}\"{enter}", path.replace('"', "")),
+        ShellKind::GitBash => format!(
+            "cd '{}'{enter}",
+            path.replace('\\', "/").replace('\'', "'\\''")
+        ),
+        ShellKind::Posix => format!("cd '{}'{enter}", path.replace('\'', "'\\''")),
+    }
+}
+
+/// 让普通 shell 标签切到某个目录（工作区归档后切回主仓、最近项目「真进入」）：按这个标签实际
+/// 用的 shell 写 cd——用户在设置里换成 cmd / Git Bash 后，前端拼的 PowerShell 写法会失败
+#[tauri::command]
+pub async fn pty_cd(
+    manager: tauri::State<'_, PtyManager>,
+    pty_id: String,
+    path: String,
+) -> Result<(), String> {
+    let (writer, line) = {
+        let entries = manager.entries.lock().unwrap();
+        let entry = entries.get(&pty_id).ok_or("终端不存在或已退出")?;
+        let kind = entry.shell_kind.unwrap_or_else(|| interactive_shell(None).2);
+        (entry.writer.clone(), cd_line(kind, &path))
+    };
+    let receipt = writer.enqueue(line.as_bytes(), None)?;
     tauri::async_runtime::spawn_blocking(move || receipt.wait())
         .await
         .map_err(|e| e.to_string())?
@@ -1192,13 +1514,21 @@ pub fn pty_report_terminal_colors(
 /// 将聊天消息和提交键作为同一个输入队列请求，避免其它输入插入中间。
 /// 文本仍遵守 bracketed-paste 规则，提交键在粘贴包结束后单独写入，
 /// 避免前端两个 IPC 调用之间被 TUI 切帧，也避免多行消息把回车吞进粘贴文本。
+/// `paste_newline`：粘贴包里的换行写成什么——"\r"（见 chat_paste_body）或 "shift-enter"（见 shift_enter_pieces），缺省照原样 LF
 #[tauri::command]
 pub async fn pty_write_submit(
     manager: tauri::State<'_, PtyManager>,
     pty_id: String,
     text: String,
     submit: String,
+    paste_newline: Option<String>,
 ) -> Result<(), String> {
+    let (cr_newlines, shift_enter) = match paste_newline.as_deref() {
+        None | Some("\n") => (false, false),
+        Some("\r") => (true, false),
+        Some("shift-enter") => (false, true),
+        Some(_) => return Err("无效的粘贴换行".into()),
+    };
     let (writer, paste_on) = {
         let entries = manager.entries.lock().unwrap();
         let entry = entries.get(&pty_id).ok_or("终端不存在或已退出")?;
@@ -1207,10 +1537,15 @@ pub async fn pty_write_submit(
             entry.bracketed_paste.load(Ordering::Relaxed),
         )
     };
-    let receipt = writer.enqueue_submit(
-        wrap_bracketed_paste(&text, paste_on).as_bytes(),
-        submit.as_bytes(),
-    )?;
+    let body = chat_paste_body(&text, paste_on, cr_newlines);
+    // 粘贴包后的回车多等一会儿：Qwen 在 Windows 上吞掉粘贴后 500ms 内的回车（pty_input PASTE_SUBMIT_GAP）
+    let pasted = body.starts_with("\x1b[200~");
+    let pieces = if shift_enter && cfg!(windows) {
+        shift_enter_pieces(&body)
+    } else {
+        pty_input_pieces(&body)
+    };
+    let receipt = writer.enqueue_submit(pieces, submit.as_bytes(), pasted)?;
     tauri::async_runtime::spawn_blocking(move || receipt.wait())
         .await
         .map_err(|e| format!("写入终端失败：{e}"))?
@@ -1258,10 +1593,16 @@ pub fn pty_resize(
         .map_err(|e| format!("调整终端尺寸失败: {e}"))
 }
 
-/// 进程的真实 cwd：macOS 走 lsof，Linux 读 /proc，Windows 无轻量途径返回 None
-///（前端对 None 回落启动栏 cwd）
+/// 标签退出：删掉目录记录文件（先 take，entry 随后会被拆开消费）
+fn forget_cwd_file(entry: &mut PtyEntry) {
+    if let Some(file) = entry.cwd_file.take() {
+        let _ = std::fs::remove_file(file);
+    }
+}
+
+/// 进程的真实 cwd：macOS 走 lsof，Linux 读 /proc，Windows 见下（读不到返回 None，前端回落启动栏 cwd）
 #[cfg(target_os = "macos")]
-fn process_cwd(pid: u32) -> Option<String> {
+fn process_cwd(pid: u32, _cwd_file: Option<&std::path::Path>) -> Option<String> {
     let out = std::process::Command::new("lsof")
         .args(["-a", "-p", &pid.to_string(), "-d", "cwd", "-Fn"])
         .output()
@@ -1275,15 +1616,94 @@ fn process_cwd(pid: u32) -> Option<String> {
 }
 
 #[cfg(target_os = "linux")]
-fn process_cwd(pid: u32) -> Option<String> {
+fn process_cwd(pid: u32, _cwd_file: Option<&std::path::Path>) -> Option<String> {
     std::fs::read_link(format!("/proc/{pid}/cwd"))
         .ok()
         .map(|p| p.to_string_lossy().into_owned())
 }
 
+/// Windows：先读 shell 写下的目录记录（PowerShell / Git Bash），没有再从进程环境块取（cmd 的 cd 改的就是它）
 #[cfg(target_os = "windows")]
-fn process_cwd(_pid: u32) -> Option<String> {
+fn process_cwd(pid: u32, cwd_file: Option<&std::path::Path>) -> Option<String> {
+    cwd_file
+        .and_then(read_cwd_track_file)
+        .or_else(|| peb_current_directory(pid))
+}
+
+/// 读另一个进程的当前目录：PEB → RTL_USER_PROCESS_PARAMETERS.CurrentDirectory.DosPath。
+/// 偏移按 64 位布局（PEB+0x20 = ProcessParameters，参数块 +0x38 = DosPath 的 UNICODE_STRING）；
+/// 只读自己拉起的子进程，读不到返回 None
+#[cfg(all(target_os = "windows", target_pointer_width = "64"))]
+fn peb_current_directory(pid: u32) -> Option<String> {
+    use std::ffi::c_void;
+    use windows_sys::Wdk::System::Threading::{NtQueryInformationProcess, ProcessBasicInformation};
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Diagnostics::Debug::ReadProcessMemory;
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
+    };
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, pid);
+        if handle.is_null() {
+            return None;
+        }
+        let read = |addr: usize, buf: *mut c_void, len: usize| -> bool {
+            let mut got = 0usize;
+            ReadProcessMemory(handle, addr as *const c_void, buf, len, &mut got) != 0 && got == len
+        };
+        let result = (|| {
+            // PROCESS_BASIC_INFORMATION：6 个指针宽的槽，第 2 个是 PebBaseAddress
+            let mut pbi = [0usize; 6];
+            let mut ret = 0u32;
+            let status = NtQueryInformationProcess(
+                handle,
+                ProcessBasicInformation,
+                pbi.as_mut_ptr() as *mut c_void,
+                std::mem::size_of_val(&pbi) as u32,
+                &mut ret,
+            );
+            if status < 0 || pbi[1] == 0 {
+                return None;
+            }
+            let mut params = 0usize;
+            if !read(pbi[1] + 0x20, &mut params as *mut usize as *mut c_void, 8) || params == 0 {
+                return None;
+            }
+            // UNICODE_STRING：Length(u16) MaximumLength(u16) 填充(4) Buffer(ptr)
+            let mut ustr = [0u8; 16];
+            if !read(params + 0x38, ustr.as_mut_ptr() as *mut c_void, 16) {
+                return None;
+            }
+            let len = u16::from_le_bytes([ustr[0], ustr[1]]) as usize;
+            let buf = usize::from_le_bytes(ustr[8..16].try_into().ok()?);
+            if len == 0 || len > 0x8000 || buf == 0 {
+                return None;
+            }
+            let mut wide = vec![0u16; len / 2];
+            if !read(buf, wide.as_mut_ptr() as *mut c_void, len) {
+                return None;
+            }
+            Some(trim_dir_backslash(String::from_utf16_lossy(&wide)))
+        })();
+        CloseHandle(handle);
+        result
+    }
+}
+
+#[cfg(all(target_os = "windows", not(target_pointer_width = "64")))]
+fn peb_current_directory(_pid: u32) -> Option<String> {
     None
+}
+
+/// PEB 里的目录带结尾反斜杠（`C:\work\`）；盘根保留（`C:\`）
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn trim_dir_backslash(p: String) -> String {
+    let trimmed = p.trim_end_matches('\\');
+    if trimmed.len() <= 2 && trimmed.ends_with(':') {
+        format!("{trimmed}\\")
+    } else {
+        trimmed.to_string()
+    }
 }
 
 /// 活动 PTY 进程的真实工作目录（文件树/git 面板跟随 shell 内的 cd）
@@ -1291,7 +1711,8 @@ fn process_cwd(_pid: u32) -> Option<String> {
 pub fn pty_get_cwd(manager: tauri::State<'_, PtyManager>, pty_id: String) -> Option<String> {
     let mut entries = manager.entries.lock().unwrap();
     let entry = entries.get_mut(&pty_id)?;
-    process_cwd(entry.child.process_id()?)
+    let file = entry.cwd_file.clone();
+    process_cwd(entry.child.process_id()?, file.as_deref())
 }
 
 /// 终端里点到的路径能不能打开：相对路径按 cwd 拼、`~` 按 home 展开，
@@ -1413,7 +1834,8 @@ fn terminate_pty_child(mut child: Box<dyn Child + Send + Sync>) {
 
 fn discard_spawned_pty(app: &AppHandle, manager: &PtyManager, id: &str) {
     let entry = manager.entries.lock().unwrap().remove(id);
-    if let Some(entry) = entry {
+    if let Some(mut entry) = entry {
+        forget_cwd_file(&mut entry);
         terminate_pty_child(entry.child);
         let _ = app.emit(&format!("pty-exit-{id}"), -1);
     }
@@ -1426,7 +1848,8 @@ pub fn pty_kill(
     pty_id: String,
 ) -> Result<(), String> {
     let entry = manager.entries.lock().unwrap().remove(&pty_id);
-    if let Some(entry) = entry {
+    if let Some(mut entry) = entry {
+        forget_cwd_file(&mut entry);
         terminate_pty_child(entry.child);
         if let Some(run_id) = entry.run_id {
             let _ = crate::runs::close_run_with_result(
@@ -1457,7 +1880,7 @@ mod tests {
     #[test]
     fn process_cwd_reads_own_process() {
         // lsof//proc 读自己进程的 cwd，与 current_dir 一致（canonicalize 归一化）
-        let got = process_cwd(std::process::id()).expect("应能读取本进程 cwd");
+        let got = process_cwd(std::process::id(), None).expect("应能读取本进程 cwd");
         let expect = std::env::current_dir().unwrap().canonicalize().unwrap();
         assert_eq!(std::path::Path::new(&got).canonicalize().unwrap(), expect);
     }
@@ -1637,6 +2060,20 @@ mod tests {
     }
 
     #[test]
+    fn chat_paste_body_cr_only_when_named_and_wrapped() {
+        // 点名 CR：只改粘贴包里的换行（含 CRLF），包标记不动
+        assert_eq!(
+            chat_paste_body("一\n二\r\n三", true, true),
+            "\x1b[200~一\r二\r三\x1b[201~"
+        );
+        // 没点名：与原规则一致
+        assert_eq!(chat_paste_body("一\n二", true, false), "\x1b[200~一\n二\x1b[201~");
+        // 子进程没开粘贴模式（不包）：换行原样，不能改成 CR——那就成了逐行提交
+        assert_eq!(chat_paste_body("一\n二", false, true), "一\n二");
+        assert_eq!(chat_paste_body("单行", true, true), "单行");
+    }
+
+    #[test]
     fn wrap_bracketed_paste_only_multiline_and_only_when_on() {
         // 已开 2004 + 多行 → 包裹
         let wrapped = wrap_bracketed_paste("line1\nline2", true);
@@ -1708,6 +2145,148 @@ mod tests {
         }
     }
 
+    // ===== 内置终端 shell 选择 + Windows 跟随 cd =====
+
+    #[test]
+    fn interactive_shell_falls_back_to_platform_default() {
+        let (default_shell, default_args) = login_shell_argv();
+        for setting in [None, Some("auto"), Some(""), Some("no-such-shell")] {
+            let (shell, args, _) = interactive_shell(setting);
+            assert_eq!(shell, default_shell, "{setting:?}");
+            assert_eq!(args, default_args, "{setting:?}");
+        }
+        // 候选里有的都能选上，且参数合该 shell 的口径
+        for opt in terminal_shell_options() {
+            let (shell, args, kind) = interactive_shell(Some(opt.id));
+            assert!(std::path::Path::new(&shell).is_file(), "{shell}");
+            match kind {
+                ShellKind::PowerShell => assert!(args.iter().any(|a| a == "Bypass"), "{args:?}"),
+                ShellKind::GitBash | ShellKind::Posix => assert_eq!(args, vec!["-l".to_string()]),
+                ShellKind::Cmd => assert!(args.is_empty()),
+            }
+            assert!(crate::settings::KNOWN_TERMINAL_SHELLS.contains(&opt.id), "{}", opt.id);
+        }
+    }
+
+    #[test]
+    fn cd_line_follows_shell_dialect() {
+        let enter = if cfg!(windows) { "\r" } else { "\n" };
+        assert_eq!(
+            cd_line(ShellKind::PowerShell, r"C:\it's\proj"),
+            format!(r"cd 'C:\it''s\proj'{enter}")
+        );
+        assert_eq!(
+            cd_line(ShellKind::Cmd, r"D:\work dir"),
+            format!("cd /d \"D:\\work dir\"{enter}")
+        );
+        assert_eq!(
+            cd_line(ShellKind::GitBash, r"C:\it's\proj"),
+            format!("cd 'C:/it'\\''s/proj'{enter}")
+        );
+        assert_eq!(
+            cd_line(ShellKind::Posix, "/Users/me/it's"),
+            format!("cd '/Users/me/it'\\''s'{enter}")
+        );
+    }
+
+    #[test]
+    fn dir_backslash_trim_keeps_drive_root() {
+        assert_eq!(trim_dir_backslash(r"C:\work\proj\".into()), r"C:\work\proj");
+        assert_eq!(trim_dir_backslash(r"C:\".into()), r"C:\");
+        assert_eq!(trim_dir_backslash(r"\\server\share\x\".into()), r"\\server\share\x");
+    }
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("ccode-pty-{tag}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn cwd_track_file_reads_existing_dir_only() {
+        let dir = scratch("cwdfile");
+        let file = dir.join("cwd.txt");
+        assert_eq!(read_cwd_track_file(&file), None, "文件还没写");
+        let target = dir.join("a b");
+        std::fs::create_dir(&target).unwrap();
+        // Git Bash 的 pwd -W 写正斜杠；PowerShell 写反斜杠；两种都认，结尾换行忽略
+        let fwd = target.to_string_lossy().replace('\\', "/");
+        std::fs::write(&file, format!("{fwd}\n")).unwrap();
+        let got = read_cwd_track_file(&file).unwrap();
+        assert!(crate::paths::same_path(&got, &target.to_string_lossy()), "{got}");
+        std::fs::write(&file, dir.join("gone").to_string_lossy().as_bytes()).unwrap();
+        assert_eq!(read_cwd_track_file(&file), None, "目录已不在");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 真起一个 PowerShell / Git Bash（ConPTY），cd 之后记录文件跟着变；cmd 从进程环境块读
+    #[cfg(windows)]
+    #[test]
+    fn windows_shells_report_cwd_after_cd() {
+        let root = scratch("shells");
+        let _guard = crate::storage::TestConfigRoot::redirect_to(&root);
+        let start = root.join("start");
+        let target = root.join("目标 dir");
+        std::fs::create_dir_all(&start).unwrap();
+        std::fs::create_dir_all(&target).unwrap();
+        for opt in terminal_shell_options() {
+            let (shell, mut args, kind) = interactive_shell(Some(opt.id));
+            let mut cmd = CommandBuilder::new(&shell);
+            let file = attach_cwd_tracking(&mut cmd, &mut args, kind);
+            for a in &args {
+                cmd.arg(a);
+            }
+            cmd.cwd(&start);
+            let pair = native_pty_system()
+                .openpty(PtySize { rows: 30, cols: 120, pixel_width: 0, pixel_height: 0 })
+                .unwrap();
+            let mut child = pair.slave.spawn_command(cmd).unwrap();
+            let mut reader = pair.master.try_clone_reader().unwrap();
+            // 读端要一直抽走，不然 ConPTY 输出管道写满会把 shell 卡住；顺带应答光标位置查询
+            let mut writer = pair.master.take_writer().unwrap();
+            let pid = child.process_id().unwrap();
+            let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+            std::thread::spawn(move || {
+                let mut buf = [0u8; 8192];
+                while let Ok(n) = reader.read(&mut buf) {
+                    if n == 0 || tx.send(buf[..n].to_vec()).is_err() {
+                        break;
+                    }
+                }
+            });
+            let pump = |writer: &mut Box<dyn std::io::Write + Send>, secs: u64| {
+                let end = Instant::now() + Duration::from_secs(secs);
+                while Instant::now() < end {
+                    if let Ok(chunk) = rx.recv_timeout(Duration::from_millis(100)) {
+                        if chunk.windows(4).any(|w| w == b"\x1b[6n") {
+                            let _ = writer.write_all(b"\x1b[1;1R");
+                        }
+                    }
+                }
+            };
+            pump(&mut writer, 6);
+            let quoted = match kind {
+                ShellKind::GitBash => format!("cd '{}'\r", target.to_string_lossy().replace('\\', "/")),
+                ShellKind::Cmd => format!("cd /d \"{}\"\r", target.to_string_lossy()),
+                _ => format!("cd '{}'\r", target.to_string_lossy()),
+            };
+            writer.write_all(quoted.as_bytes()).unwrap();
+            pump(&mut writer, 4);
+            let got = process_cwd(pid, file.as_deref());
+            let _ = child.kill();
+            if let Some(f) = &file {
+                let _ = std::fs::remove_file(f);
+            }
+            let got = got.unwrap_or_else(|| panic!("{}：读不到目录", opt.id));
+            assert!(
+                crate::paths::same_path(&got, &target.to_string_lossy()),
+                "{}：cd 后应是 {}，实际 {got}",
+                opt.id,
+                target.display()
+            );
+        }
+    }
+
     // ===== win32-input-mode 底色回报（Windows/ConPTY 绕行通道） =====
 
     #[test]
@@ -1715,6 +2294,50 @@ mod tests {
         let recs = win32_input_records("ab");
         // 每字符一条 key-down 记录：Vk/Sc 留 0，Uc 用码点，Kd=1，Cs=0，Rc=1
         assert_eq!(recs, vec!["\x1b[0;0;97;1;0;1_", "\x1b[0;0;98;1;0;1_"]);
+    }
+
+    #[test]
+    fn shift_enter_pieces_replace_newlines_with_key_records() {
+        let text: Vec<String> = shift_enter_pieces("\x1b[200~第一行\r\n第二行\n😀\x1b[201~")
+            .into_iter()
+            .map(|p| String::from_utf8(p).unwrap())
+            .collect();
+        assert_eq!(
+            text,
+            vec![
+                "\x1b[200~第一行",
+                SHIFT_ENTER_RECORD,
+                "第二行",
+                SHIFT_ENTER_RECORD,
+                "\x1b[0;0;55357;1;0;1_",
+                "\x1b[0;0;56832;1;0;1_",
+                "\x1b[201~",
+            ]
+        );
+        assert_eq!(shift_enter_pieces("单行"), vec!["单行".as_bytes().to_vec()]);
+    }
+
+    #[test]
+    fn conpty_input_sends_emoji_as_key_down_surrogate_records() {
+        // 😀 = U+1F600 = D83D DE00：拆成两条只按下的记录，前后文字（含粘贴包首尾）原样
+        let pieces = conpty_input_pieces("\x1b[200~\"引号\" 😀\n第四行\x1b[201~");
+        let text: Vec<String> = pieces
+            .iter()
+            .map(|p| String::from_utf8(p.clone()).unwrap())
+            .collect();
+        assert_eq!(
+            text,
+            vec![
+                "\x1b[200~\"引号\" ",
+                "\x1b[0;0;55357;1;0;1_",
+                "\x1b[0;0;56832;1;0;1_",
+                "\n第四行\x1b[201~",
+            ]
+        );
+        // 连着两个 emoji 中间没有空文字段；没有 emoji 时整块一段（空输入也留一段）
+        assert_eq!(conpty_input_pieces("😀😀").len(), 4);
+        assert_eq!(conpty_input_pieces("中文 abc"), vec!["中文 abc".as_bytes().to_vec()]);
+        assert_eq!(conpty_input_pieces(""), vec![Vec::<u8>::new()]);
     }
 
     #[test]

@@ -29,8 +29,9 @@ const DASHED = /^[╌┄┈╍┅┉]+$/;
 // 这几个符号单独出现时是输入提示、标题或助手正文的行首）
 const MARKED = /^\s*(?:[❯›]\s*(?:\d+[.)]\s*)?|[>▶●]\s*\d+[.)]\s*)(\S.*?)\s*$/;
 const NUMBERED = /^\s*(?:[❯›>▶●]\s*)?\d+[.)]\s/;
-// Grok 的单选写法「2 (●) Yes, proceed」「3 (○) No, reject」：先改写成「❯ 2. …」「  3. …」再认
-const RADIO = /^(\s*)(\d+)\s+\(([●○◉◯])\)\s+(.*)$/;
+// Grok 的单选写法「2 (●) Yes, proceed」「3 (○) No, reject」：先改写成「❯ 2. …」「  3. …」再认。
+// Windows 上 Grok 的选中点画成 •（2026-10-20 ConPTY 抓屏）
+const RADIO = /^(\s*)(\d+)\s+\(([●•○◉◯])\)\s+(.*)$/;
 // 未选中的选项行：缩进 + 可选序号 + 文字；边框线、空行、工具输出续行（⎿）不算
 const PLAIN = /^\s{1,8}(?:\d+[.)]\s*)?([^\s─━═│┃╭╮╰╯▔▁⎿].*?)\s*$/;
 
@@ -55,7 +56,7 @@ function unbox(line: string): string {
   }
   const radio = RADIO.exec(t);
   if (radio) {
-    const on = radio[3] === "●" || radio[3] === "◉";
+    const on = radio[3] === "●" || radio[3] === "•" || radio[3] === "◉";
     t = `${radio[1]}${on ? "❯ " : "  "}${radio[2]}. ${radio[4]}`;
   }
   return t;
@@ -180,11 +181,18 @@ export function menuAnswerKeys(menu: TuiMenu, target: number): string[] {
   return [...Array.from({ length: Math.abs(delta) }, () => arrow), "\r"];
 }
 
-/** 菜单的每一项都出现在 text 里：多半是用户刚发的编号清单的回显，不是 CLI 在问 */
+/** 菜单的每一项都出现在 text 里：多半是用户刚发的编号清单的回显，不是 CLI 在问。
+ *  终端窄时回显的长行被截断、行尾补「…」（2026-10-21 用户 Grok：「…和当前时…」认不出，七步清单被当成审批卡），去掉再比 */
 export function menuEchoesText(menu: TuiMenu, text: string): boolean {
   const squash = (v: string) => v.replace(/\s+/g, "");
   const said = squash(text);
-  return said.length > 0 && menu.options.every((o) => said.includes(squash(o)));
+  return (
+    said.length > 0 &&
+    menu.options.every((o) => {
+      const opt = squash(o).replace(/(?:…|\.{3})+$/, "");
+      return opt.length > 0 && said.includes(opt);
+    })
+  );
 }
 
 export function sameTuiMenu(a: TuiMenu | null, b: TuiMenu | null): boolean {

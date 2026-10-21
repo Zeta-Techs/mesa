@@ -1,8 +1,11 @@
 """假网关：记录每个请求打到哪个路径、带的什么模型；按协议回一个最小可用的回复（让 CLI 至少能走完一轮）。"""
-import json, sys, time
+import json, os, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LOG = open(sys.argv[2], "a", buffering=1)
+# E2E_DUMP=<文件>：每个 POST 的完整请求体与少数请求头另记一行（CLI 金丝雀拿它比工具清单、系统提示词结构、请求参数）
+DUMP = open(os.environ["E2E_DUMP"], "a", buffering=1, encoding="utf-8") if os.environ.get("E2E_DUMP") else None
+DUMP_HEADERS = ("anthropic-beta", "anthropic-version", "user-agent", "openai-beta", "x-app", "originator", "version")
 MODELS = ["e2e-default", "e2e-picked"]
 
 # 聊天层第三期抓屏用的两个触发词（只认带工具列表的主对话请求，标题 / 摘要这类后台请求照常回 ok）：
@@ -12,7 +15,8 @@ SLOW_LINES = ["第一段：这是一段慢慢流出来的回复。", "", "- 要�
               "", "```bash", "echo mesa", "```", "", "最后一行：完毕。"]
 # TRIGGER_LONG = 比一屏还长的回复（看回复开头滚出屏后预览还接不接得上，2026-10-19 用户：Codex 第 22 行卡住）
 LONG_LINES = [f"第 {i} 行：长回复逐行流出。" for i in range(1, 61)]
-PROBE = "echo mesa > mesa_probe.txt"
+# E2E_PROBE_CMD 换探针命令（如写绝对路径，看沙箱里的工作目录对不对）
+PROBE = os.environ.get("E2E_PROBE_CMD", "echo mesa > mesa_probe.txt")
 SHELLISH = ("bash", "shell", "run_shell_command", "exec_command", "run_command", "terminal", "execute", "command")
 
 
@@ -113,6 +117,10 @@ class H(BaseHTTPRequestHandler):
         raw = self.rfile.read(n) if n else b""
         try: body = json.loads(raw or b"{}")
         except Exception: body = {}
+        if DUMP:
+            DUMP.write(json.dumps({"t": time.time(), "path": self.path.split("?")[0],
+                                   "headers": {h: self.headers.get(h) for h in DUMP_HEADERS if self.headers.get(h)},
+                                   "body": body}, ensure_ascii=False) + "\n")
         model = body.get("model")
         if model is None and "/models/" in self.path:  # gemini: /v1beta/models/<m>:generateContent
             model = self.path.split("/models/")[1].split(":")[0]

@@ -57,11 +57,12 @@ export function collapseHomeTreeOnce(
   return { open: treeOpen, handled };
 }
 
-/** 未启动且目录是家/裸 ~ 时，标签不要显示成 ~。 */
+/** 未启动且目录是家/裸 ~/随手聊（新标签默认落在随手聊）时，标签不要显示成 ~ 或 scratch。 */
 export function idleTabTitle(cwd: string, idle: boolean): string | null {
   if (!idle) return null;
   const raw = cwd.trim() || "~";
   if (raw === "~") return "未启动";
+  if (/[\\/]ccode[\\/]scratch$/i.test(raw.replace(/[\\/]+$/, ""))) return "未启动";
   const base = raw.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? raw;
   if (base === "~") return "未启动";
   return null;
@@ -75,8 +76,8 @@ export interface WelcomeDirChoice {
 }
 
 /**
- * 空态卡「将在 … 启动」点开的目录菜单（2026-10-17）：原先一点就弹系统选目录窗，
- * 而新标签默认落在主目录——想去的通常是随手聊或某个已添加项目，得一层层点。
+ * 空态卡「将在 … 启动」点开的目录菜单（2026-10-17）：原先一点就弹系统选目录窗，想去的通常是随手聊或某个已添加项目，
+ * 得一层层点（2026-10-20 起新标签默认就在随手聊）。
  * 顺序：随手聊 → 已添加项目（按最近活动，最多 limit 个）→ 主目录；菜单尾部另有「选择文件夹…」。
  */
 export function welcomeDirChoices(input: {

@@ -16,6 +16,7 @@ import time
 import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
+from xml.sax.saxutils import escape as sax_escape
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 WP_NS = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
@@ -1034,7 +1035,43 @@ def build_body(
     return body, images, missing_images
 
 
-def write_docx(path: Path, body: ET.Element, images: list[dict] | None = None):
+def default_cjk_font() -> str:
+    # macOS 的 Word 认 Songti SC；Windows / Linux 上这个名字不存在，Word 会悄悄换成别的字体
+    return "Songti SC" if sys.platform == "darwin" else "宋体"
+
+
+def read_typeface(source: Path, project_root: str = "") -> tuple[str, str]:
+    """读初稿字体脚本留下的 manuscript/typeface.md（两行：英文：… / 中文：…），域稿与阅读稿同一套字体。
+
+    找法：稿件同目录 → 与稿件同级的 manuscript/（期刊格式适配的稿在 submission/）→ 指定的项目根。
+    都没有就用默认：英文 Times New Roman、中文按平台。
+    """
+    latin, cjk = "Times New Roman", default_cjk_font()
+    candidates = [source.parent / "typeface.md", source.parent.parent / "manuscript" / "typeface.md"]
+    if project_root:
+        candidates.append(Path(project_root) / "manuscript" / "typeface.md")
+    for path in candidates:
+        if not path.is_file():
+            continue
+        for line in path.read_text(encoding="utf-8-sig", errors="replace").splitlines():
+            head, sep, value = line.replace(":", "：", 1).partition("：")
+            value = value.strip()
+            if not sep or not value:
+                continue
+            if head.strip() == "英文":
+                latin = value
+            elif head.strip() == "中文":
+                cjk = value
+        break
+    return latin, cjk
+
+
+def write_docx(
+    path: Path,
+    body: ET.Element,
+    images: list[dict] | None = None,
+    fonts: tuple[str, str] | None = None,
+):
     images = images or []
     document = ET.Element(W + "document")
     document.append(body)
@@ -1069,7 +1106,7 @@ def write_docx(path: Path, body: ET.Element, images: list[dict] | None = None):
     styles = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
 <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/>
-<w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:eastAsia="Songti SC"/>
+<w:rPr><w:rFonts w:ascii="@@LATIN@@" w:hAnsi="@@LATIN@@" w:eastAsia="@@CJK@@"/>
 <w:sz w:val="24"/></w:rPr><w:pPr><w:jc w:val="both"/><w:ind w:firstLineChars="200" w:firstLine="480"/>
 <w:spacing w:after="160" w:line="360" w:lineRule="auto"/></w:pPr></w:style>
 <w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/>
@@ -1092,6 +1129,10 @@ def write_docx(path: Path, body: ET.Element, images: list[dict] | None = None):
 <w:pPr><w:keepNext/><w:outlineLvl w:val="5"/></w:pPr><w:rPr><w:b/><w:sz w:val="22"/></w:rPr></w:style>
 </w:styles>
 """
+    latin_font, cjk_font = fonts or ("Times New Roman", default_cjk_font())
+    styles = styles.replace("@@LATIN@@", sax_escape(latin_font, {'"': "&quot;"})).replace(
+        "@@CJK@@", sax_escape(cjk_font, {'"': "&quot;"})
+    )
     image_rels = "".join(
         f'<Relationship Id="{img["id"]}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/{img["name"]}"/>'
         for img in images
@@ -1279,7 +1320,7 @@ def main(argv: list[str] | None = None) -> int:
     if CURLY_KEY.search(visible) or CURLY_TEMP.search(visible):
         print("visible text contains {Author, Year} or an unmatched brace key; refusing to write docx", file=sys.stderr)
         return 1
-    write_docx(out, body_el, images)
+    write_docx(out, body_el, images, read_typeface(source, args.project_root))
     return 0
 
 

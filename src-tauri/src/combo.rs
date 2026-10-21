@@ -17,7 +17,8 @@ pub struct ComboSurfaceDto {
     pub slot: Option<String>,
     pub thinking: bool,
     pub vision: bool,
-    pub context: i64,
+    /// 确知的上下文窗口；不知道是 None（界面不画上下文圈，见 model_context_size_known_for）
+    pub context: Option<i64>,
     pub output: i64,
     /// 状态栏是否展示 CLI 原生 /effort（启动时选中模型求交）
     pub show_native_effort: bool,
@@ -183,7 +184,7 @@ pub fn surface_for_agents(
     let gid = gateway.map(|g| g.id.as_str());
     let thinking = model_registry::model_thinking_for(model, gid);
     let vision = model_registry::model_supports_vision_for(model, gid);
-    let context = model_registry::model_context_size_for(model, gid);
+    let context = model_registry::model_context_size_known_for(model, gid);
     let output = model_registry::model_output_limit_for(model, gid);
     let channel_effort = union_channel_kind(agents, "effort");
     let channel_temperature = union_channel_kind(agents, "temperature");

@@ -48,12 +48,14 @@ test("智谱分槽：Codex 走 Responses 专用端点 api/v1，其余按计费�
   assert.equal(payg?.baseUrl, "https://open.bigmodel.cn/api/paas/v4");
 });
 
-test("Claude/CodeBuddy 走 Anthropic 兼容端点", () => {
-  for (const agent of ["claude-code", "codebuddy"]) {
-    const ds = presetsForAgent(agent).find((p) => p.name === "DeepSeek");
-    assert.ok(ds, `${agent} 缺少 DeepSeek 预设`);
-    assert.equal(ds.baseUrl, "https://api.deepseek.com/anthropic");
-  }
+test("Claude 走 Anthropic 兼容端点，CodeBuddy 走 OpenAI 端点", () => {
+  const claude = presetsForAgent("claude-code").find((p) => p.name === "DeepSeek");
+  assert.equal(claude?.baseUrl, "https://api.deepseek.com/anthropic");
+  // CodeBuddy 把 base 原样拼 /chat/completions（2.171 源码），给 Anthropic 地址只得空回复
+  const cb = presetsForAgent("codebuddy").find((p) => p.name === "DeepSeek");
+  assert.equal(cb?.baseUrl, "https://api.deepseek.com/v1");
+  const own = presetsForAgent("codebuddy").find((p) => p.name === "腾讯 CodeBuddy 国际站");
+  assert.equal(own?.baseUrl, "https://www.codebuddy.ai/v2");
 });
 
 test("gemini/cursor 没有任何预设", () => {

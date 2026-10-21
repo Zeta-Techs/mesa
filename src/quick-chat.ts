@@ -114,15 +114,32 @@ export function isBlankChatTab(
   return !status.alive && !status.running && !status.sessionId;
 }
 
-/** 运行页「+」的目录：跟当前标签走（在同一个项目里再开一个 Agent）。当前标签在主目录、没有目录，
+/** 运行页「+」的目录：跟当前标签走（在同一个项目里再开一个 Agent）。当前标签没有目录，
  *  或在 Mesa 管的隔离目录（科研工作副本 / 编程工作树 / 定时隔离树，各有自己的入口和 Run 身份）里时，
- *  不跟，照旧开在主目录 */
+ *  不跟，返回 undefined——新标签落到随手聊（TerminalView 挂载时补成 ensure_scratch_dir，2026-10-20 起不再默认主目录） */
 export function newTabCwd(focusedCwd: string | null | undefined, isWindows = false): string | undefined {
   const cwd = focusedCwd?.trim();
   if (!cwd || cwd === "~") return undefined;
   const k = pathKey(cwd, isWindows);
   if (/\/ccode\/(workspaces|worktrees|watch-worktrees)\//.test(`${k}/`)) return undefined;
   return cwd;
+}
+
+/** Windows 上 Codex 在主目录启动、又跑在沙箱里（非「完全访问」）时要先提醒：Codex 的 Windows 沙箱跑命令前
+ *  会给工作目录下每一项改访问权限，主目录 = 整个用户文件夹（文档、桌面、AppData…），很慢，还会给沙箱账户
+ *  留下写权限；开发版里改到 Mesa 源码会让 tauri dev 重编译并重启 Mesa（2026-10-20 实测）。
+ *  完全访问不进沙箱，不改权限，不提醒 */
+export function codexSandboxCoversHome(input: {
+  agentId: string;
+  cwd: string;
+  home: string;
+  permissionMode: string | null | undefined;
+  isWindows: boolean;
+}): boolean {
+  if (!input.isWindows || input.agentId !== "codex" || input.permissionMode === "full") return false;
+  const cwd = input.cwd.trim();
+  if (!cwd || cwd === "~") return true;
+  return !!input.home && pathKey(cwd, true) === pathKey(input.home, true);
 }
 
 /** 「没法恢复」的会话统一排除口径 */

@@ -57,7 +57,7 @@ test("updaterProxyUrl：只放行 http(s)，空串与 socks5 不传", () => {
 test("summarizeUpdateCheckError：网络/超时/签名/清单 收成中文，不回原文", () => {
   assert.equal(
     summarizeUpdateCheckError("error sending request for url"),
-    "无法连接更新源（GitHub），请检查网络后重试",
+    "无法连接更新源：请检查网络，或在设置 → 网络填出网代理后重试",
   );
   assert.equal(
     summarizeUpdateCheckError("operation timed out"),
@@ -77,13 +77,13 @@ test("summarizeUpdateCheckError：网络/超时/签名/清单 收成中文，不
     summarizeUpdateCheckError(
       "the platform `darwin-x86_64` was not found in the response `platforms` object",
     ),
-    "本机平台没有对应的更新包（如 Intel Mac 需自行构建），不会收到应用内更新",
+    "这台电脑的平台没有对应的更新包（如自行构建的版本），不会收到应用内更新，请到发布页下载安装包",
   );
   assert.equal(
     summarizeUpdateCheckError(
       "None of the fallback platforms `[\"a\", \"b\"]` were found in the response `platforms` object",
     ),
-    "本机平台没有对应的更新包（如 Intel Mac 需自行构建），不会收到应用内更新",
+    "这台电脑的平台没有对应的更新包（如自行构建的版本），不会收到应用内更新，请到发布页下载安装包",
   );
   assert.equal(summarizeUpdateCheckError("weird plugin panic"), "检查更新失败，请稍后重试");
 });

@@ -601,6 +601,99 @@ fn audio_magic_ok(mime: &str, bytes: &[u8]) -> bool {
     }
 }
 
+/// 未压缩的 AIFF / AIFC（NONE、twos 大端整数，sowt 小端整数，fl32 大端浮点）转 WAV；
+/// 其余（压缩编码、结构坏了）返回 None。只做格式搬运，不重采样
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn aiff_to_wav(bytes: &[u8]) -> Option<Vec<u8>> {
+    let be32 = |b: &[u8]| u32::from_be_bytes([b[0], b[1], b[2], b[3]]);
+    if bytes.len() < 12 || &bytes[0..4] != b"FORM" {
+        return None;
+    }
+    let aifc = &bytes[8..12] == b"AIFC";
+    if !aifc && &bytes[8..12] != b"AIFF" {
+        return None;
+    }
+    let (mut channels, mut bits, mut rate, mut codec) = (0u16, 0u16, 0f64, *b"NONE");
+    let mut sound: Option<&[u8]> = None;
+    let mut pos = 12usize;
+    while pos + 8 <= bytes.len() {
+        let id = &bytes[pos..pos + 4];
+        let size = be32(&bytes[pos + 4..pos + 8]) as usize;
+        let body = bytes.get(pos + 8..pos + 8 + size).unwrap_or(&bytes[pos + 8..]);
+        if id == b"COMM" && body.len() >= 18 {
+            channels = u16::from_be_bytes([body[0], body[1]]);
+            bits = u16::from_be_bytes([body[6], body[7]]);
+            rate = extended_to_f64(&body[8..18]);
+            if aifc && body.len() >= 22 {
+                codec.copy_from_slice(&body[18..22]);
+            }
+        } else if id == b"SSND" && body.len() >= 8 {
+            let offset = be32(&body[0..4]) as usize;
+            sound = body.get(8 + offset..);
+        }
+        pos += 8 + size + (size & 1);
+    }
+    let sound = sound?;
+    if channels == 0 || !(1.0..=768_000.0).contains(&rate) {
+        return None;
+    }
+    let (format_tag, little_endian) = match &codec {
+        b"NONE" | b"twos" => (1u16, false),
+        b"sowt" => (1u16, true),
+        b"fl32" | b"FL32" if bits == 32 => (3u16, false),
+        _ => return None,
+    };
+    if !matches!(bits, 8 | 16 | 24 | 32) {
+        return None;
+    }
+    let width = (bits / 8) as usize;
+    let usable = sound.len() - sound.len() % (width * channels as usize);
+    let mut data = Vec::with_capacity(usable);
+    for sample in sound[..usable].chunks_exact(width) {
+        if width == 1 {
+            // AIFF 8 位有符号，WAV 8 位无符号
+            data.push(sample[0].wrapping_add(128));
+        } else if little_endian {
+            data.extend_from_slice(sample);
+        } else {
+            data.extend(sample.iter().rev());
+        }
+    }
+    let rate = rate.round() as u32;
+    let block = width as u16 * channels;
+    let mut wav = Vec::with_capacity(44 + data.len());
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36 + data.len() as u32).to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    wav.extend_from_slice(&format_tag.to_le_bytes());
+    wav.extend_from_slice(&channels.to_le_bytes());
+    wav.extend_from_slice(&rate.to_le_bytes());
+    wav.extend_from_slice(&(rate * block as u32).to_le_bytes());
+    wav.extend_from_slice(&block.to_le_bytes());
+    wav.extend_from_slice(&bits.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    wav.extend_from_slice(&data);
+    Some(wav)
+}
+
+/// AIFF 的采样率是 80 位扩展精度浮点（1 位符号 + 15 位指数 + 64 位含显式整数位的尾数）
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn extended_to_f64(b: &[u8]) -> f64 {
+    let exp = (((b[0] & 0x7F) as i32) << 8) | b[1] as i32;
+    let mant = u64::from_be_bytes([b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9]]);
+    if exp == 0 && mant == 0 {
+        return 0.0;
+    }
+    let v = mant as f64 * 2f64.powi(exp - 16383 - 63);
+    if b[0] & 0x80 != 0 {
+        -v
+    } else {
+        v
+    }
+}
+
 fn read_audio_sync(path: &str, cwd_hint: Option<&str>) -> Result<ImageBytesDto, String> {
     let expanded = crate::sessions::expand_tilde(path);
     let mime = audio_mime_for(Path::new(&expanded))
@@ -610,6 +703,16 @@ fn read_audio_sync(path: &str, cwd_hint: Option<&str>) -> Result<ImageBytesDto, 
     })?;
     if !audio_magic_ok(mime, &bytes) {
         return Err("文件内容不是有效的音频（扩展名对但内容对不上）".into());
+    }
+    // Windows 的 WebView2 放不了 aiff（Mac 上 `say -o` 的默认产物）：未压缩的就地转成 wav 交给播放器；
+    // 压缩的 aifc（ima4 / ulaw 等）转不了，照原样交出去，前端如实提示放不了
+    if cfg!(windows) && mime == "audio/aiff" {
+        if let Some(wav) = aiff_to_wav(&bytes) {
+            return Ok(ImageBytesDto {
+                mime: "audio/wav".into(),
+                data: base64::engine::general_purpose::STANDARD.encode(&wav),
+            });
+        }
     }
     Ok(ImageBytesDto {
         mime: mime.into(),
@@ -1441,6 +1544,52 @@ pub async fn reader_paper_title(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 拼一份 AIFF / AIFC：22050 Hz、16 位、单声道、三个采样
+    fn aiff(form: &[u8; 4], codec: Option<&[u8; 4]>, samples: &[u8]) -> Vec<u8> {
+        let mut comm = vec![0, 1, 0, 0, 0, 3, 0, 16];
+        comm.extend_from_slice(&[0x40, 0x0D, 0xAC, 0x44, 0, 0, 0, 0, 0, 0]);
+        if let Some(c) = codec {
+            comm.extend_from_slice(c);
+            comm.extend_from_slice(&[0, 0]); // 空的 pascal 串（补齐到偶数）
+        }
+        let mut ssnd = vec![0u8; 8];
+        ssnd.extend_from_slice(samples);
+        let mut body = form.to_vec();
+        for (id, chunk) in [(b"COMM", &comm), (b"SSND", &ssnd)] {
+            body.extend_from_slice(id);
+            body.extend_from_slice(&(chunk.len() as u32).to_be_bytes());
+            body.extend_from_slice(chunk);
+        }
+        let mut out = b"FORM".to_vec();
+        out.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        out.extend_from_slice(&body);
+        out
+    }
+
+    #[test]
+    fn aiff_converts_to_playable_wav() {
+        let be = [0x12, 0x34, 0xFF, 0xFE, 0x00, 0x01];
+        let wav = aiff_to_wav(&aiff(b"AIFF", None, &be)).unwrap();
+        assert!(audio_magic_ok("audio/wav", &wav));
+        assert_eq!(u16::from_le_bytes([wav[22], wav[23]]), 1, "单声道");
+        assert_eq!(u32::from_le_bytes([wav[24], wav[25], wav[26], wav[27]]), 22050);
+        assert_eq!(u16::from_le_bytes([wav[34], wav[35]]), 16);
+        assert_eq!(&wav[44..], &[0x34, 0x12, 0xFE, 0xFF, 0x01, 0x00], "大端翻成小端");
+        // AIFC：NONE 同 AIFF；sowt 已是小端照搬；压缩编码转不了
+        let none = aiff_to_wav(&aiff(b"AIFC", Some(b"NONE"), &be)).unwrap();
+        assert_eq!(&none[44..], &wav[44..]);
+        let sowt = aiff_to_wav(&aiff(b"AIFC", Some(b"sowt"), &be)).unwrap();
+        assert_eq!(&sowt[44..], &be);
+        assert!(aiff_to_wav(&aiff(b"AIFC", Some(b"ima4"), &be)).is_none());
+        assert!(aiff_to_wav(b"RIFF....WAVE").is_none());
+    }
+
+    #[test]
+    fn extended_sample_rates() {
+        assert_eq!(extended_to_f64(&[0x40, 0x0E, 0xAC, 0x44, 0, 0, 0, 0, 0, 0]), 44100.0);
+        assert_eq!(extended_to_f64(&[0x40, 0x0E, 0xBB, 0x80, 0, 0, 0, 0, 0, 0]), 48000.0);
+    }
 
     fn tmpdir(name: &str) -> PathBuf {
         let dir =

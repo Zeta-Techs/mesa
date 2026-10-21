@@ -14,7 +14,13 @@ import type {
   ProjectStepDto,
 } from "./types.ts";
 
-/** TASK.md 拼装单一出处：弹层预览与开工落盘共用。纯函数，不碰文件系统。 */
+/** 只有 bash 才认的写法（quarto render 这类单条命令两边都能跑，不提示） */
+function looksPosixShell(command: string): boolean {
+  return /(?:&&|\|\||\bmkdir -p\b|\bcommand -v\b|\$\(|\bthen\b|\bfi\b|\bexport\b|>\s*\/dev\/null)/.test(command);
+}
+
+/** TASK.md 拼装单一出处：弹层预览与开工落盘共用。纯函数，不碰文件系统。
+ *  isWindows 显式传参（纯逻辑模块不读平台）：只影响「本步骤脚本」给哪种写法 */
 export function renderTaskMd(
   step: ProjectStepDto,
   cfg: ProjectConfigDto,
@@ -23,6 +29,7 @@ export function renderTaskMd(
   skillMeta?: Record<string, string>,
   providesByName?: SkillProvides,
   decisions?: { q: string; answer: string }[],
+  isWindows = false,
 ): string {
   const projectRoot = projectPath.replace(/[\\/]+$/, "");
   const lines = [`# ${step.name}`, "", `项目根：\`${projectRoot}\``, ""];
@@ -108,6 +115,34 @@ export function renderTaskMd(
       "## 预期产物",
       ...step.expectedArtifacts.map((a) => `- ${a}`),
     );
+  }
+  // 简报点名的 run 脚本（「用本步骤 run 脚本 render-pdf」）在 Windows 上给出能跑的写法：脚本是 bash 写法，
+  // 命令工具是 PowerShell 的 Agent（Codex 等）照抄会失败。macOS / Linux 的 Agent 本就在 bash/zsh 里，
+  // 照旧从 .ccode/settings.toml 读，不占任务书篇幅
+  const runScripts = isWindows
+    ? (step.run ?? []).filter(
+        (r) => r.name.trim() && r.command.trim() && step.brief.includes(r.name.trim()),
+      )
+    : [];
+  if (runScripts.length > 0) {
+    lines.push("", "## 本步骤脚本（Windows）", "简报里说「run 脚本 <名字>」时按下面的命令执行，在本工作区根目录运行：");
+    for (const r of runScripts) {
+      const win = r.commandWindows?.trim();
+      if (win) {
+        lines.push(
+          `- ${r.name}`,
+          `  - 命令工具是 PowerShell 时：\`${win}\``,
+          `  - 命令工具是 Git Bash 时：\`${r.command.trim()}\``,
+        );
+      } else {
+        lines.push(`- ${r.name}：\`${r.command.trim()}\``);
+      }
+    }
+    if (runScripts.some((r) => !r.commandWindows?.trim() && looksPosixShell(r.command))) {
+      lines.push(
+        "没有给 PowerShell 写法的条目是 bash 写法，PowerShell 与 cmd 跑不了：用 Git Bash 执行（Git for Windows 自带，一般在 C:\\Program Files\\Git\\bin\\bash.exe），不要自己改写成别的写法。",
+      );
+    }
   }
   if ((step.decisions?.length ?? 0) > 0) {
     lines.push(

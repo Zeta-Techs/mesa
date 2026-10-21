@@ -6112,7 +6112,7 @@ mod tests {
 
     // ===== W2：项目级脚本钩子 =====
 
-    #[cfg(unix)] // 脚本体是 POSIX 语法；Windows 侧 shell_cmd 走 cmd /C，需另写用例
+    // 脚本体是 POSIX 语法：Windows 上 shell_cmd 走 Git Bash（与生产同一条路），三平台同一份用例
     #[test]
     fn create_runs_setup_script_and_custom_files_to_copy() {
         let Some(fx) = Fixture::new() else { return };
@@ -6169,7 +6169,7 @@ mod tests {
         assert!(Path::new(&w.worktree_path).exists());
     }
 
-    #[cfg(unix)] // 脚本体是 POSIX 语法；Windows 侧 shell_cmd 走 cmd /C，需另写用例
+    // 脚本体是 POSIX 语法：Windows 上 shell_cmd 走 Git Bash（与生产同一条路），三平台同一份用例
     #[test]
     fn archive_script_failure_blocks_removal() {
         let Some(fx) = Fixture::new() else { return };
@@ -6188,10 +6188,13 @@ mod tests {
             "脚本失败时 worktree 不得移除"
         );
         assert_eq!(get_workspace(&fx.conn, &w.id).unwrap().status, "active");
-        // 脚本改成成功后归档照常
+        // 脚本改成成功后归档照常（路径写正斜杠、TOML 字面量串：Windows 路径的反斜杠在 TOML 基本串与 bash 里都是转义）
         fs::write(
             fx.repo.join(".ccode/settings.toml"),
-            &format!("[scripts]\narchive = \"touch {}\"\n", marker.display()),
+            &format!(
+                "[scripts]\narchive = 'touch \"{}\"'\n",
+                marker.to_string_lossy().replace('\\', "/")
+            ),
         )
         .unwrap();
         archive_impl(&fx.conn, &w.id).unwrap();

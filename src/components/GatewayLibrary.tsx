@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { contextLabel } from "../model-caps-label";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "../store";
 import { AGENTS, AGENT_PROTOCOLS } from "../types";
@@ -1449,7 +1450,7 @@ export default function GatewayLibrary({
                           <span className="text-micro text-l4">
                             {(cap ?? combo)?.thinking ? "思考" : ""}
                             {(cap ?? combo)?.vision ? " 视觉" : ""}
-                            {cap?.context ? ` ${Math.round(cap.context / 1024)}K` : ""}
+                            {cap?.context ? ` ${contextLabel(cap.context)}` : ""}
                           </span>
                         </button>
                         {open && (
@@ -1565,7 +1566,7 @@ export default function GatewayLibrary({
                               <p className="mt-0.5 text-micro text-l4">
                                 当前解析：
                                 {cap
-                                  ? `${Math.round(cap.context / 1024)}K 上下文${cap.thinking ? " · 思考" : ""}${cap.vision ? " · 视觉" : ""}`
+                                  ? `${contextLabel(cap.context) ? `${contextLabel(cap.context)} 上下文` : "上下文未知"}${cap.thinking ? " · 思考" : ""}${cap.vision ? " · 视觉" : ""}`
                                   : "加载中…"}
                                 {capOverrides[m.id] ? " · 已声明（最高优先）" : ""}
                               </p>

@@ -25,7 +25,10 @@
   打开终端」，代答按当前高亮算方向键再回车（`trustAnswerKeys`，**每个键单独写、隔 80ms**——Ink 一次只认一个键；新版 Claude
   默认高亮在 No，不能盲按回车）。认不出（Gemini 的 Trust folder、Codex 的免审批问题）返回 null，走原出口。**原出口修正**：
   8 秒无会话文件的判定原要求 `messages.length === 0`，而聊天发送会先乐观显示用户那条，导致首条消息场景永不触发；改为
-  「除了自己刚发的用户消息没有别的」。
+  「除了自己刚发的用户消息没有别的」。**扫描窗口以「启动阶段」为界（2026-10-21）**：原先会话文件一接上就停扫，可 Claude Code /
+  CodeBuddy 的每次注入 hooks 在进程一起来就报了会话文件，信任菜单还在后头，聊天层看不到（用户：CodeBuddy 发第一条，终端弹出是否信任，
+  聊天层不显示）。现在见过这家的输入框（`terminalHasInputBox`）或旁路报了回合开始才算启动阶段过了；认不得画面又没有旁路的家
+  照旧以会话接上为界（`trustScanSettled`）。
 - **切换命令后的确认菜单在聊天层给按钮（2026-10-17）**：聊天「模型 · 思考」芯片与底栏的切换命令都走标签动作
   `runTuiCommand`（写命令 + Enter，按 submitCsiU 分派），**写之前记屏上已有的「像菜单」内容为基线**，之后 5 秒内每帧输出防抖
   250ms 扫可视区（`parseTuiMenu`，`src/tui-menu.ts`），认出与基线不同的菜单才上报 `SessionLinkState.menuPrompt`；菜单挂着时继续扫到
@@ -40,10 +43,21 @@
   按每家「画面布局」读（输入框位置、回显、助手行首、续行缩进、工具 / 转圈 / 提示行）：Claude Code、Codex、Qwen、Gemini、Grok、Kimi。
   CodeBuddy（生成中屏上只有转圈）与 OpenCode（分栏整屏重绘）不认，仍给「看实时输出」。新增一家必须先用 `chat-capture.py`
   抓屏、样本进 `tests/live-reply.test.ts`，不凭帮助文字或印象加。
+  **Grok 提问续行与去重锚点（2026-10-21）**：Grok 回复长过一屏后把提问钉在屏顶（sticky header，长提问折成三行、末行「… …」），
+  下面跟一行「▲」滚动提示——续行缩进到回显正文那一列（7），回复只缩进 5，`echoStart` 按这一列跳过续行，「▲ / ▼」进 skip。
+  `unsyncedTail` 以「最后一行够长（≥8 字）且已落盘的」为锚，锚之前的一律算过去：开头混进一行非回复（续行、工具输出），
+  原口径从第一行没落盘的算起，会把聊天层已画出的段落整段再画一遍（用户截图：第 4 / 5 步画两遍，下面一份是灰字）。
+  **2026-10-21 用户 Windows 实测补四条**：①读屏前去掉字形后的变体选择符（U+FE0E / FE0F）——Qwen 0.25.3 画「◆︎ 正文」「∴︎ Thought…」，
+  xterm 把它并进前一格，行首符号认不出，思考折叠行连同上一轮回复一起进了预览；②Kimi 2.3 等首字时转月相「🌑 · Tip: …」，进 skip
+  （用户截图：🌕Kimi 叠在「正在回复」上面）；③Gemini 0.65 输入框上方的提示按权限档变字（「auto-accept edits  Shift+Tab to manual」）、
+  MCP 后面跟技能数、粘贴多行后回显下多一行「Press Ctrl+O to expand pasted text」，一并进 skip；④**刚发的这句还没画出来时不读上一轮**：
+  `writeChatMessage` 记下发送前屏上最后一条回显，读到的这一截仍挂在那条回显后面、又不像刚发的话（`staleEcho`）就不当这一轮的预览，
+  读到新回显后解除——原先发出后到 CLI 画出回显之间，预览把上一段回复整段又显示一遍（用户 Qwen 实测；旁路家在回合开始前同样读屏）。
   **必须看得见输入框**（启动信任菜单、登录页没有输入框，原先退回整屏，把「Accessing workspace / Quick safety check」当回复画进聊天层，
   用户截图）；**这一轮没见过开头（回显 / ⏺）时续行不预览**；有「等你决定」卡时不预览
-  画面——最后一条「❯ 回显」之后、输入框上边框之前，去掉工具摘要（Read 1 file…）、⎿ 结果、转圈与「· /effort」提示行；
-  确认菜单挂着时不出。上报 `SessionLinkState.liveReply`，聊天层用 `unsyncedTail` 剔掉会话文件已有的行（只比字母数字汉字，
+  画面——最后一条「❯ 回显」之后、输入框上边框之前，去掉工具摘要（Read 1 file…）、⎿ 结果与提示（折行的续行一并去掉，`wrapSkip`：
+  转圈下的「⎿  Tip: …」长过一行时第二行没有符号，原先一直挂在预览里，2026-10-20 用户实测）、转圈与「· /effort」提示行；
+  确认菜单挂着时不出。Claude 另读转圈行里的「↓ N tokens」上报 `liveTokens`，没有逐字预览时在「正在回复」后显示「已生成 N token」（Windows 上 Claude 整条收完才画，2026-10-21 抓屏）。上报 `SessionLinkState.liveReply`，聊天层用 `unsyncedTail` 剔掉会话文件已有的行（只比字母数字汉字，
   渲染过的 Markdown 对得上）。别家返回 null，仍给「看实时输出」。**长回复**（同日用户：显示一半后就没了）：回复长过一屏时
   回显与「⏺」都滚出可视区，读到的是续行（`anchored: false`），`mergeLiveReply` 按「上次结尾 / 这次开头」最长重合接到上一次后面；
   一时读不出保留上一次，用户发下一句时清空重攒（实录：Claude 流式时可视区只剩续行段落）。
@@ -64,6 +78,10 @@
 - **运行中换权限（2026-10-17 用户：发完消息权限就改不了了）**：各家权限都在启动参数里，换 = 父级先写标签 permission /
   permissionMode，下一拍调标签动作 `restartWithPermission`：停下 Agent，回落 shell 后 effect 用最新 props
   `launch(lastResume)` 按原会话恢复，对话不丢。权限徽标确认框写明「会重开」，正在生成时只显示不可点。
+  **重开另开一条 Run（`freshRun`，2026-10-21）**：旧 Run 刚被 pty_kill 关掉，权限（只讨论 ↔ 可改文件）又是 Run 身份的一部分，
+  沿用旧 Run 会被 `open_at` 拒（「此 Run 不支持恢复」「Run 身份与启动目标不一致」）。另：**轮询 / 旁路回调里读 Run 一律用 `runIdRef`**——
+  闭包是 launch 那一轮捕获的，读 state 是旧值，`lockLink` 曾因此从不给 Gemini / Kimi / OpenCode 的交互 Run 登记会话；
+  存量没登记的 Run 由 `open_at` 在首次带会话恢复时认下（同「首次登记为准」）。
 - **屏上读回模型（2026-10-17；2026-10-18 补 Gemini「Model set to X」、Codex 底栏「<模型> <档位> · <目录>」，CodeBuddy 中途换不了不再读）**：
   与思考档同一帧扫描，`detectModelInOutput` 按家认（Claude「Set model to X」，屏上无反引号），上报
   `TabStatus.modelSeen`；芯片与底栏以它为真值，切换待确认记录按 ptyId 存模块级表。**不认「X with LEVEL effort」**——思考中的
@@ -98,6 +116,12 @@
 - **信任菜单不走通用确认菜单（2026-10-18 用户：点完信任后同一个画面又出现一次）**：启动 20 秒的菜单扫描与这一轮的审批扫描都会把
   启动信任菜单认成通用菜单；点完信任、按键还没生效的那一两帧，信任卡撤了、通用卡顶上来。扫描时屏上是信任菜单（`parseTrustPrompt`）
   或选项与见过的信任菜单相同就不报；`answerTrust` 同时撤掉 menuPrompt。
+- **旁路审批与读屏菜单只出一张卡（2026-10-21 用户：Codex 先中文后英文两张、Qwen 连着两张）**：能从聊天层答审批的旁路
+  （Codex / Qwen / OpenCode）一轮进行中时，屏上的审批菜单归旁路的卡（`channelOwnsMenu`）：旁路有卡 → 读屏不另报；旁路的卡刚撤
+  （答过了，终端菜单还没撤的那一下）3 秒内不认；读屏先认出、旁路事件还没到 → 先等 1.2 秒；等过了旁路仍没有才按屏上原文出卡（兜底）。
+  旁路侧（`chat_channel.rs` Tracker）：带请求 id 的审批只认「已处理」事件、它自己那个工具结束、这一轮结束才撤——同一回复里并行的
+  别的工具开始 / 结束不撤（用户 Codex 实录：跑命令要提权的同时调了 MCP，MCP 一结束旁路卡就没了，读屏又出一张英文的）；
+  后到的审批排队，前一张答完再出，不顶掉没答的那张。没有请求 id 的（hooks 推断）照旧「下一个工具开始 = 已答」。
 - **终端层与聊天层同步（2026-10-18 用户「全部都做」）**：①启动栏补「思考」「权限」两格（`LaunchMenu`，选项 `hint` / `tone: warn`），
   与聊天输入框写同一份标签级选择（父级 `patchTabLaunch` → TerminalView `onPatchLaunch`）；权限四档名与确认话术共用
   `ChatPermissionBadge` 导出的 `PERMISSION_TIERS` / `confirmPermissionChoice`（完全访问二次确认、运行中换档说明「会重开」）。
@@ -109,7 +133,10 @@
 - **聊天层第二期（2026-10-18）**：①**排队**：生成中（`pendingReply` 或 attention working）发出的话照常写进 PTY、由 CLI 排队，
   乐观消息带前端专用标记 `ChatMessageDto.queued`，气泡标「排队中 · 这一轮结束后处理」、无撤回钮；会话文件记下后由解析结果替换。
   ②**乐观消息放回位置**（`placePendingUsers`，chat-handoff.ts）：排队中的接末尾；其余插在「发送那一刻还没有的第一条回复」前
-  （`pendingAssistantKeysRef`）。原口径插在整页第一条回复前，长对话里刚发的那句会跳到页顶。③**标签条 ⋯「对话操作」**
+  （`pendingAssistantKeysRef`）。原口径插在整页第一条回复前，长对话里刚发的那句会跳到页顶。
+  **认「已落盘」不逐字比（2026-10-21）**：`userTextRecorded` 包含即算，再去空白与 BMP 外字符宽松比（Windows 上 Codex 吞 emoji，
+  逐字比永远落空 → 同句画两遍、「正在生成回复」不收）；旁路报回合结束时 `pendingAfterTurn` 把这一轮开始前发出的乐观消息一律
+  当已收下（排队的须早于回合开始），不靠原文。③**标签条 ⋯「对话操作」**
   与斜杠面板 Mesa 组同一份 `mesaCommandsFor(tabId)`，只在聊天层活动标签显示，父级 `ContextMenu`。④**从这里分叉**：
   `forkChat(tabId, untilText)` → `build_handoff_brief(untilText)` 按正文截到那条回复。⑤**连接出问题**：终端会话产出的
   `SessionLinkState.connIssue` 在聊天层渲染成确认卡（`chat-decision.ts`），按钮调标签动作 `switchConnection` / `dismissConnIssue`。
@@ -250,9 +277,13 @@
 - **聊天回复反馈（v3.131）**：发送成功后先显示本地用户消息并展示「Agent 正在处理…」加载状态；会话文件刷新时保留尚未落盘的本地消息，只有检测到发送之后的真实 assistant 消息才结束加载。等待回复期间使用约 700ms 的短兜底刷新，防止单次 watcher 事件丢失导致回复永远不进入聊天层；回复到达后立即停止该兜底刷新。2026-08-24 起本地消息从单条改为队列（pendingUsersRef）：连发多条全部保留，已落盘的逐条移出，全部落盘且等到新回复才结束等待；兜底轮询有 3 分钟超时。
 - **聊天层审批卡片与暂停（2026-08-24；2026-09-13 停止与发送同体）**：注意力 confirm 时横幅升级为审批卡片——详情文案来自 hooks 日志 payload 的 `message`/`tool_name`/`title`（`session_confirm_detail` command，与 state_for_session_file 同一套门控；payload schema 各家未文档化，取不到回通用文案）；✓ 批准 / ✗ 拒绝 / Esc 取消三个按键经 `writePty` 写单字符（y/n/\x1b），是保守热键集，按键无效引导「打开终端」。
   **2026-10-18 第三期修订**：七家审批菜单逐家抓屏后，这一轮没结束前（armed / pendingReply）一直扫屏认菜单（`parseTuiMenu`，排除用户刚发的
-  编号清单回显 `menuEchoesText`），认出来就按菜单原文给按钮、`answerMenu` 方向键 + 回车代选；y / n 两键只在认不出菜单时兜底——
+  编号清单回显 `menuEchoesText`；**比对的原文在写进 PTY 之前就记下**——多行正文粘进输入框到按提交之间要等 0.65 秒，Grok 的输入框画着方框、回显行首是 ❯，正好是菜单的样子，原先拿上一句比对，七步清单在输入框里时出了一张「终端里在等你选一项」，2026-10-21 用户截图；终端窄时截断补「…」的行去掉「…」再比），认出来就按菜单原文给按钮、`answerMenu` 方向键 + 回车代选；y / n 两键只在认不出菜单时兜底——
   Claude 2.1.292 按 y 没反应（实测），各家都只保证回车 / 方向键 / 序号。独立「⏹ 打断」已删：正在生成时发送钮变「进行中」符号钮，点击写 `\x1b`（Esc 暂停当前回合，会话保留；不是 `\x03` 硬中断）。暂停后清掉「等待回复」，发送钮变回发送，下一句仍写进同一 PTY（和 Codex 按 Esc 再继续一样）。只在 `attention === working` 或等待回复时出现，进程活着但停在提示符时仍是发送；审批 confirm 时 Esc 归审批卡。
-- **聊天写入 PTY（v3.133）**：聊天发送必须取 `TerminalView` 当前 `ptyIdRef/ptyKindRef` 作为目标，不依赖异步状态镜像；文本和提交键通过后端 `pty_write_submit` 写入，文本先遵守 bracketed-paste 规则。2026-08-24 起正文与提交键分两次写、中间留 60ms（spawn_blocking + thread::sleep，不占主线程）——背靠背写入时开了 bracketed paste 的 TUI 来不及把粘贴内容收进输入框，回车会被吞掉；恢复会话路径发送前再额外等 1.2s（进程引导/会话回放/信任提示期写入会落在未就绪的 TUI 上）。普通 CLI 使用 `\r`，Kimi 继续使用 CSI-u Enter。
+- **Windows 清屏补清回滚区（2026-10-21）**：Ink 系 CLI 用的 ansi-escapes `clearTerminal` 在 Windows 是 `ESC[2J ESC[0f`，不带 macOS 的 `ESC[3J`；
+  Gemini 回复超过一屏时进「整屏重画」（清屏 + 全部历史 + 动态区）每帧一次，回滚区就叠出一份份历史（ConPTY 原样转出；实录一段 60 行回复重画 251 次，
+  xterm 回放：修前横幅 252 份 / 8944 行，修后 1 份 / 85 行）。`terminal-protocols.ts consumeHostSequences` 把这对序列补成 `ESC[2J ESC[3J ESC[0f`，
+  切在两帧之间先扣住再补；与 macOS 同效果，不分平台（macOS 上不出现这对写法）。
+- **聊天写入 PTY（v3.133）**：聊天发送必须取 `TerminalView` 当前 `ptyIdRef/ptyKindRef` 作为目标，不依赖异步状态镜像；文本和提交键通过后端 `pty_write_submit` 写入，文本先遵守 bracketed-paste 规则。2026-08-24 起正文与提交键分两次写、中间留间隔（spawn_blocking + thread::sleep，不占主线程）——背靠背写入时开了 bracketed paste 的 TUI 来不及把粘贴内容收进输入框，回车会被吞掉。**间隔不得低于 150ms，现取 250ms（`pty_input::SUBMIT_GAP`）**：Codex 把连着到达的字当粘贴，粘贴后 120ms 内的回车只换行不发送（2026-10-20 Windows 实测：原 60ms 下聊天层发给 Codex 的话留在输入框里；`E2E_SUBMIT_GAP_MS` 可在 chat_channel e2e 复核）。**正文是粘贴包（多行）时提交间隔取 650ms（`PASTE_SUBMIT_GAP`，2026-10-21）**：Qwen Code 在 Windows 上开着 pasteWorkaround，粘贴后 500ms 内的回车一律吞掉（InputPrompt `recentPasteTime`），250ms 时多行消息停在输入框没发（ConPTY 探针 250ms 复现、600ms 通过）；单行不包粘贴，照旧 250ms。恢复会话路径发送前再额外等 1.2s（进程引导/会话回放/信任提示期写入会落在未就绪的 TUI 上）。普通 CLI 使用 `\r`，Kimi 继续使用 CSI-u Enter。**多行正文的换行**（2026-10-20 Windows 八家逐个实测）：ConPTY 会转出 `?2004h`，粘贴包照常包；包里的换行默认写 LF（Claude / Qwen / Gemini / Kimi / CodeBuddy / OpenCode 都保留成换行，2026-10-21 复测），**Windows 上的 Grok 改写 CR**（LF 会被它丢掉、两行连成一行；`pty_write_submit` 的 `paste_newline`，pty.rs `chat_paste_body`），**Windows 上的 Codex 改送 Shift+Enter 按键记录**（`paste_newline: "shift-enter"`，pty.rs `shift_enter_pieces`；2026-10-21 Codex 0.163 复测：LF 被丢、几行连成一行，CR 拆成几条消息各自发出，Shift+Enter / Ctrl+J 记录三行原样——10-20「Codex 保留 LF」已不成立）——不得统一改 CR：CodeBuddy / OpenCode 会把字写错位。macOS 不改。
 - **聊天层常驻挂载（2026-08-24）**：ChatSurface 不再随 chat⇄terminal 切换卸载（display:contents/none 仅隐藏），输入框草稿、滚动位置、ConversationView 展开状态切层不丢；ChatComposer 的一次性 autofocus 改为 `focusWhen` 可见性信号（隐藏态 focus() 被浏览器忽略，不会抢终端焦点）。AI 正文经 ChatMarkdown 渲染 Markdown（安全口径见 safety.md），超长未展开仍保持截断纯文本 + 展开按钮。
 - **会话同步（v3.125 / v3.168）**：关联成功后优先注册专用 session watcher，普通 JSONL 监听目标文件目录，OpenCode 监听数据库与 WAL；事件短防抖后通知前端，前端用会话文件尾窗替换最新一页并与已向前翻页的旧窗去重拼接。签名轮询保留为 watcher 失败或丢事件时的兜底，并以请求代次防止旧读取覆盖新消息。同步状态显式区分识别中、已监听、等待文件、兜底轮询。
 - **分叉聊天（v3.125）**：新建聊天只在已有 session 文件和 session ID 时启用；复用结构化接力简报与 handoff 链，不复制完整原始历史。新标签继承 Agent/连接/模型/目录，默认聊天模式、自动启动、只读；不支持原生只读参数的 CLI 标注「提示约束」。点击「允许修改」确认风险后停止只读 PTY，以同一摘要和配置重启可写会话，原会话保持不变。
@@ -310,6 +341,12 @@
   决策纯函数 `shouldCoalesceTrackpadWheel`：备用屏（alternate buffer）／鼠标上报模式（mouseTrackingMode
   ≠ none）／任何修饰键／deltaMode ≠ 0／deltaX ≠ 0 一律放行不合帧（TUI 自身滚轮语义与横向滚动原样透传）。
   纯逻辑与假 DOM 时序断言在 `tests/terminal-wheel-scroll.test.ts`。
+  **合成事件必须显式带 `wheelDeltaY: -deltaY`（2026-10-21）**：Chromium / WebView2 给合成 `WheelEvent` 填的旧字段
+  `wheelDeltaY` 与 deltaY **同号**（真事件反号），xterm 的 `StandardWheelEvent` 先读它——Windows 上鼠标滚轮全是像素模式、
+  每一格都走合帧，于是普通缓冲里的滚轮整个反向（Edge CDP 实测：合帧前正确、合帧后反向、补字段后正确）。WebKit 默认就是
+  -deltaY，macOS 不变；别改成累加真事件的 `wheelDeltaY`（WebKit 约是 -3×deltaY，Mac 会快三倍）。
+  **清回滚区重画保住阅读位置**：输出帧带 `ESC[3J`（Ink 超一屏的整屏重画；Windows 由 consumeHostSequences 补上）且用户
+  正往上翻时，写完按原行号 `scrollToLine` 放回——不放回的话 xterm 每帧把视口钉到新历史最顶端，往下滚被拽回去。
   **鼠标滚轮同一条重绘账**（2026-09-22）：一格通常只有一枚 wheel，合帧省不掉整屏
   `replaceChildren`。`src/terminal-row-reuse.ts` 在 DOM 渲染器上包住 `renderRows`：
   视口平移不到一整屏、且还留在屏幕上的行文字与缓冲区一致时，把现成行节点挪到新位置，
@@ -332,12 +369,46 @@
   Gemini / Kimi / Grok = 同一份状态日志按标签号过滤。PTY 一律注入 `CCODE_TAB_ID`（hook 命令记进日志第二段，旧格式无此段照读）。
   **规则**：①同一事实取精度最高的来源：旁路有回合状态时，`applyTailAttention`、PTY 出字点亮、PTY 静默熄灭都让位（不删兜底）；
   ②hook 一律不阻塞、不输出决定，审批只在用户点按钮后经官方通道回（Qwen input 文件 / OpenCode 接口 / Codex JSON-RPC），
-  其余家照旧按菜单原文写按键；「先答者算」，卡片等 CLI 回「已处理」才撤；③会话跟随：旁路给了文件路径就锁定（文件未落盘先记 id），
+  其余家照旧按菜单原文写按键；「先答者算」，卡片等 CLI 回「已处理」才撤。只能在终端菜单里答的 hooks 家（Claude Code）CLI 不报「已答」，
+  旁路要等那个工具跑完（PostToolUse）才撤——批准后工具跑多久「等你确认」就挂多久（WebFetch 实测 14 秒，菜单英文卡之后又冒一张中文兜底卡）：
+  **屏上回到输入框、没有菜单 = 已答**（`hooksApprovalAnswered`，标签注意力回 working、不出兜底卡；旁路报「等批准」时补扫一次屏；
+  读屏认不出输入框的家照旧等旁路）；Claude 在审批菜单里被拒绝 / 按 Esc 打断时**不触发 Stop hook**，回合靠会话文件收：
+  会话尾部判成收尾时前端调 `chat_channel_settle_from_transcript`，后端只认这一轮开始之后的打断标记 / turn_duration
+  （`sessions::claude_turn_end_after`），按 interrupted 收掉（2026-10-21 用户实测：拒绝后聊天层 1 分半仍「正在回复」）；
+  ③会话跟随：旁路给了文件路径就锁定（文件未落盘先记 id），
   `sessionSeq` 增大且路径变了（/clear、恢复别的会话）就 `relinkTo` 改盯新文件并在对话流记一行；④实时文字有旁路的家（Qwen / OpenCode /
   Codex）不再读屏；⑤Codex 恢复时远程 TUI 拒收权限参数，`split_codex_args` 改成 app-server 的 `-c` 配置，新开会话仍由 TUI 带；
   新线程 rollout 未落盘前 `thread/resume` 会失败，线程转 active 时再订；⑥旁路目录 `<config>/ccode/chat-channels/<pid>-<tab>-<随机>/`
   0700，标签退出即删，启动只清进程已不在的（打包版与 Mesa Dev 共用配置目录）；Codex app-server 自成进程组，随 PTY 退出 /
   应用退出一并杀。改任一家旁路前先跑 `scripts/e2e-model-routing/README.md`「聊天层结构化旁路」两层核对。
+  **Windows 口径（2026-10-20 实测后定，macOS / Linux 行为不变）**：⑦hook 命令是起一个 PowerShell 跑共用脚本，每次 0.9–1.2 秒
+  （Claude 记的 Stop hook 1241ms）——同步挂着时每个工具调用前后各卡一秒，所以**只在 Windows、只给 Claude Code**带
+  `"async": true`（`hooks::launch_hooks_async`），另挂 `PermissionRequest`（payload 自带工具名与参数）；后台 hook 先后不可信，
+  `Tracker::async_hooks` 只按身份对账：审批卡内容只认带内容的事件或随后到的工具、不拿上一个工具充数，对上之前别的工具开始 /
+  结束都不撤卡（同步模式那套「上一个工具充数、下一个工具开始 = 已答」不动）。CodeBuddy 没核实认 async，仍同步。
+  ⑧共用脚本只删回车换行（同 unix `tr -d '\r\n'`），**不得折叠 `\s+`**（会吃掉命令 / 差异里的缩进）；写日志撞上别的 hook 进程
+  （AppendAllText 独占写，12 并发实测丢 1 条）重试约 1.5 秒；改正文后启动时 `migrate_legacy_windows_hooks` 替换旧脚本。
+  ⑨官方账号（没有网关覆盖文件）的 Claude / CodeBuddy 不内联 `--settings` JSON，写进旁路目录的 settings.json 传路径
+  （原因见 environment.md「.cmd shim」）。⑩Codex app-server 用 `spawn_tied_to_app` 挂进「Mesa 一退就全杀」的任务组
+  （Mesa 崩溃 / 被强杀不留孤儿，实测强杀后 0 残留）；收旁路时先杀进程树再删目录（进程开着的文件删不掉），应用退出等它最多 3 秒。
+  ⑪Codex 恢复会话给的 rollout 路径带 `\\?\`，进快照前 `strip_verbatim`。端到端在 Windows 同一份测试跑（`e2e_channel`，README）。
+  ⑫**原生 hook 程序（2026-10-20 二批）**：⑦的 PowerShell 只在找不到随包的 `mesa_helper`（`hook` 模式）时用；找到就用它写日志
+  （Claude Stop hook 实测 87–109ms），Claude 不再带 async、也不另挂 PermissionRequest，回到同步规则——`launch_hooks_async`
+  返回 false，Tracker 自动走同步对账。命令是带双引号的 exe 路径：Claude 在 Git Bash、CodeBuddy 在 cmd 里跑 hook，两边都认。
+  写全局配置的三家（Gemini / Kimi / Grok）用拷到 hooks-state 的 `ccode-hook.exe`、程序路径不加引号（Gemini 的 PowerShell 宿主不认
+  双引号开头的命令；不加引号的正斜杠路径三种宿主都认），路径有空格等退回 `.ps1`（`hooks::global_hook_command`）；Gemini 实跑 hooks 照常记录。
+  **Gemini 的 hook 条目带 `name`（2026-10-21，三平台）**：Gemini 跑 hook 时转圈行写「Executing Hook: <name>」，没有 name 就把整条命令
+  （hook 程序与日志的绝对路径）摆在终端里（用户：取消会话时屏上一串 C:/Users/…/AppData/…）；现在写「Mesa 状态同步」。
+  已开开关的旧条目启动时补一次（`hooks::refresh_gemini_hook_name`，apply_hooks_at 写前备份；已有 name 不动）。⑬**读屏兜底的 Windows 字形**（ConPTY 抓屏实测，`chat-capture.py` Windows 分支 +
+  `capture-check.ts`）：Claude 正文行首是 `●`（不是 `⏺`）；Grok 回显 / 输入框 `>`、工具 `♦`、代码块标签 `○`、单选选中点 `•`；
+  四家（Claude / Gemini / Kimi / Grok）的审批菜单与实时预览在 ConPTY 下都认得出。屏顶是没缩进的字（启动横幅、排队中的提问）
+  且找不到回显与行首时不预览（两平台同一条）。
+
+- **内置终端 shell 与跟随 cd（2026-10-20）**：普通 shell 标签用设置 `terminal_shell`（自动 / 本机找得到的几种），run 脚本不受影响
+  （Windows 固定 Git Bash）。文件树 / Git 面板跟随 shell 里的 `cd` 靠 `pty_get_cwd`：macOS lsof、Linux /proc；Windows 由 shell 每次出提示符
+  把当前目录写进 `<config>/ccode/pty-cwd/<uuid>.txt`（PowerShell 包一层 prompt 函数，保留用户 profile 的提示符；Git Bash 用
+  PROMPT_COMMAND `pwd -W`），cmd 没有提示符钩子、读进程 PEB。前端往 shell 写 cd 一律走 `pty_cd`（按标签的 shell 方言），不得自己拼
+  `cd '…'`——cmd 不认单引号、跨盘还要 `/d`。
 
 - **精确注意力标记（hooks 桥接，七家；2026-10-20 起 Claude Code / CodeBuddy / Qwen / OpenCode / Codex 改为 Mesa 里启动时自动带上，
   设置页只给 Gemini / Kimi / Grok 开关，见上条）**：`session_tail_state` 对设置页已开启（或启动时自动注入）的 agent 优先读 hooks 事件日志
@@ -432,6 +503,10 @@
   实发形式、`CSI > 0 q`）统一回 DCS `>|Mesa (xterm.js 6.0.0) ST`——带上 xterm.js 字样是如实自述，
   OpenCode 的超链接能力表明确收录 "xterm.js"（同日调研实证，靠它启用 OSC 8/OSC 52）；
   XTGETTCAP（`DCS + q`）问到 Ms（4d73）时回 terminfo Ms 能力值，OpenCode 据此开 OSC 52 剪贴板。
+  **应答在后端读线程当场写回（2026-10-21）**：`term_query.rs` 与 `terminal-protocols.ts replyToTerminalQuery` 双端镜像同一张表，
+  前端只剥掉查询、跟踪 Kitty 推栈，**不得再回写**。原因：前端要等输出事件到了才答，后台标签的输出进 backlog、切回才补发，
+  应答晚于 CLI 的探测窗口（Gemini 只等 1 秒）就被当成按键打进输入框，跟着下一条消息发出去
+  （实证：Gemini 第二条消息开头带「5u>|Mesa (xterm.js 6.0.0)」；ConPTY 探针推迟 4 秒应答可稳定复现）。改应答表两边同改。
   **OSC 8 / OSC 52 / 贴图**：OSC 8 只打开 http(s) 与 mailto（URL 含换行不认）。OSC 52 从输出抽走，
   base64 上限约 256KB，写入系统剪贴板。Kitty 图形（`ESC _ G`）拆出右下角预览：MIME 按文件头判定
   （PNG/JPEG/GIF/WEBP，RIFF 四字符不是 WEBP 的不算）、支持 m=1 分块拼装（>4KB 的图 kitty 客户端
@@ -694,9 +769,13 @@
   （`pty_write_submit`：正文按粘贴写入、提交键单独补写，同聊天层发送）——**禁止把正文和 `\r` 一次 `pty_write`**：
   Claude Code 把整段连同回车当成粘贴，字躺在输入行里没发出去，聊天层却已记成「正在回复」一直转
   （2026-10-18 阅读区简报实测；此前「简报两段」的另一半就是这个）。**拉起后的第一次发送要等 CLI 能收键**
-  （TerminalView `waitAgentInputReady`：出过字后安静 400ms，一直不出字的接管进程等满 3 秒，最多 8 秒；之后的发送不等）：
+  （TerminalView `waitAgentInputReady`；之后的发送不等）：
   进程刚起来时写进去的字先被终端行规程回显，回车成了开屏前预输入的一部分，字落进输入框没提交、聊天层却记成已发出。
-  假网关 PTY 实测：Claude Code 拉起后 50ms 内写入必现，等就绪后 3/3 正常。阅读区遮面以会话联动为撤除条件，
+  假网关 PTY 实测：Claude Code 拉起后 50ms 内写入必现，等就绪后 3/3 正常。**认得画面布局的几家（live-reply.ts）等屏上画出输入框、
+  再安静 300ms（2026-10-21）**：Kimi 2.3 一起来先发一个终端查询、隔一秒多才画界面，原口径「出过字后安静 400ms」在查询之后 0.5 秒
+  就写了，字全丢（ConPTY 探针旧口径 3/3 丢、新口径 3/3 到；用户：发「你好」终端没有输入，8 秒后终端被拉起来，Mac 同样）。
+  屏上是信任菜单时一直等（写进回车等于替用户选），别的认不出输入框的情形最多 20 秒；认不得布局的家与后台标签照旧
+  （画出过字——剥掉终端查询后还有内容——后安静 400ms，一直没画的等满 3 秒，最多 8 秒）。阅读区遮面以会话联动为撤除条件，
   Claude 拉起即预登记会话 id、联动几乎立刻就有，不能当「能收键」用。
 - **阅读会话 reuseKey 口径**：进入阅读区自动起一个阅读会话标签（项目根 + autoStart，快速开聊同款
   机制），`reuseKey = reader:<projectRoot>`（`src/reader.ts readerReuseKey` 单一出处）——退出再进找回同一标签
@@ -926,5 +1005,13 @@
   设置页开关 `terminal_color_report`（默认开）留作白名单内 CLI 换实现时的兜底。
   注入早于子进程读 stdin 也不会丢（ConPTY 会缓冲；300ms 注入 vs 2000ms 才挂监听，实测完整收到）。
   这条只解决**启动**取色，运行中切主题仍是上一条的老问题（重启会话才一致），两条口径不冲突。
+- **Windows：emoji 等 BMP 以外的字改送只按下的 win32 按键记录（2026-10-21 实测）**。ConPTY 把写进来的 UTF-8
+  emoji 拆成「高位按下、高位抬起、低位按下、低位抬起」四条按键事件；Codex 用的 crossterm（openai-oss-forks 版
+  `windows/parse.rs handle_surrogate`）把抬起也当代理对的一半去拼，两次都拼不成字，**整个 emoji 被丢掉**
+  （聊天层发「"引号" 😀」，Codex 会话落成「"引号" 」；真 Codex 0.163 输入框实测 `X 😀 Y` → `X  Y`）。
+  `pty_write` / `pty_write_submit` 在 Windows 上经 `conpty_input_pieces`（pty.rs）把每个 BMP 外的字换成高、低两条
+  只按下的记录（`win32_input_records` 按 UTF-16 码元出），其余字节原样、粘贴包照包，按段写、段间隔 2ms
+  （`pty_input` 分段请求，回执等待随段数加长）。已核：crossterm 收到完整字；不开 VT 输入的读法（Node / .NET /
+  prompt_toolkit 只看按下）收到的不变；开 VT 输入的程序在粘贴包里照样收到原字、包首尾不变。macOS 不走这条。
 
 - **聊天层标签条不放 ⋯ 与 ✦（2026-10-21 用户拍板）**：⋯「对话操作」与聊天态 ✦「插入技能 / MCP」都与输入框重复（`/` 面板 Mesa 组、＋ 菜单），标签条只留名称、进度、关闭。终端层的 ✦ 保留（那里没有输入框 ＋）；启动行的「更多终端操作」⋯ 不动。

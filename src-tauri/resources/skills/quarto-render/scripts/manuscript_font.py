@@ -30,11 +30,18 @@ def families() -> set[str]:
             check=False,
             capture_output=True,
             text=True,
+            # 中文 Windows 默认按 GBK 解码子进程输出，quarto / pandoc 吐的是 UTF-8
+            encoding="utf-8",
+            errors="replace",
         ).stdout
     except OSError:
         return set()
     found = set()
     for line in out.splitlines():
+        # 每行「路径: 族名:style=…」。Windows 的路径带盘符（C:/WINDOWS/fonts/times.ttf），先去掉盘符，
+        # 不然按冒号切到的是路径的后半截，一个族名都认不出来（2026-10-20 TinyTeX 自带的 fc-list 实测）
+        if re.match(r"^[A-Za-z]:[\\/]", line):
+            line = line[2:]
         parts = line.split(":")
         if len(parts) < 2:
             continue
@@ -106,6 +113,22 @@ def ensure_booktabs(block: str) -> str:
     if needle in block:
         return block.replace(needle, insert, 1)
     return block
+
+
+# xelatex + Times New Roman：字体里分号字形同时挂在 U+003B 和 U+037E 上，xdvipdfmx 生成文本层映射时
+# 选了后者，PDF 里所有分号复制/检索/查重出来都是希腊问号。ActualText 让它按真实字符写回
+# （2026-10-21 Windows 实测：3 个分号 U+037E → U+003B）。\ifdefined 包一层：换成 lualatex 也不报错
+ACTUALTEXT_LINE = "\\ifdefined\\XeTeXgenerateactualtext\\XeTeXgenerateactualtext=1\\fi"
+
+
+def ensure_actualtext(block: str) -> str:
+    """在 PDF 的 include-in-header 里补 ActualText 开关；已有就不动。旧稿重跑脚本也能补上。"""
+    if "XeTeXgenerateactualtext" in block:
+        return block
+    found = re.search(r"^([ \t]*)\\usepackage\{booktabs\}[ \t]*$", block, re.M)
+    if not found:
+        return block
+    return block[: found.end()] + "\n" + found.group(1) + ACTUALTEXT_LINE + block[found.end() :]
 
 
 def ensure_pdf(block: str) -> str:
@@ -183,6 +206,7 @@ def write_markdown(path: Path, latin: str, cjk: str, reference: str = "reference
     front = set_pdf_font(front, "mainfont", latin)
     front = set_pdf_font(front, "CJKmainfont", cjk)
     front = ensure_booktabs(front)
+    front = ensure_actualtext(front)
     front = ensure_docx_reference(front, reference)
     path.write_text(f"---\n{front.strip()}\n---{body if body.startswith(chr(10)) else chr(10) + body}", encoding="utf-8")
 
@@ -220,6 +244,9 @@ def reference_docx(dest: Path, latin: str, cjk: str) -> None:
                 ["quarto", "pandoc", str(sample), "-o", str(made), "-t", "docx"],
                 capture_output=True,
                 text=True,
+                # 中文 Windows 默认按 GBK 解码子进程输出，quarto / pandoc 吐的是 UTF-8
+                encoding="utf-8",
+                errors="replace",
             )
         except OSError:
             # 先打一行 ASCII。英文 Windows 的 stderr 是 cp1252，中文 SystemExit 会变成

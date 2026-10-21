@@ -5,6 +5,7 @@ import {
   isBlankChatTab,
   isScratchCwd,
   newTabCwd,
+  codexSandboxCoversHome,
   pickQuickChatDefault,
   pickQuickChatHistory,
   pickQuickChatSessions,
@@ -231,6 +232,18 @@ test("运行页「+」的目录跟当前标签走；主目录 / 没有 / Mesa �
   assert.equal(newTabCwd("/Users/me/ccode/watch-worktrees/x"), undefined);
   assert.equal(newTabCwd("D:\\ccode\\worktrees\\p", true), undefined);
   assert.equal(newTabCwd("C:\\Users\\me\\proj", true), "C:\\Users\\me\\proj");
+});
+
+test("codexSandboxCoversHome：只在 Windows + Codex + 主目录 + 非完全访问时提醒", () => {
+  const base = { agentId: "codex", home: "C:\\Users\\me", permissionMode: "ask", isWindows: true };
+  assert.equal(codexSandboxCoversHome({ ...base, cwd: "~" }), true);
+  assert.equal(codexSandboxCoversHome({ ...base, cwd: "" }), true);
+  assert.equal(codexSandboxCoversHome({ ...base, cwd: "c:/users/ME/" }), true);
+  assert.equal(codexSandboxCoversHome({ ...base, cwd: "C:\\Users\\me", permissionMode: null }), true);
+  assert.equal(codexSandboxCoversHome({ ...base, cwd: "C:\\Users\\me\\ccode\\scratch" }), false);
+  assert.equal(codexSandboxCoversHome({ ...base, cwd: "~", permissionMode: "full" }), false);
+  assert.equal(codexSandboxCoversHome({ ...base, cwd: "~", agentId: "claude-code" }), false);
+  assert.equal(codexSandboxCoversHome({ ...base, cwd: "~", isWindows: false }), false);
 });
 
 test("withLiveSessionFlags：终端页正在跑的会话补标 live", () => {

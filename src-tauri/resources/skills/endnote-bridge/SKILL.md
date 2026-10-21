@@ -88,6 +88,7 @@ python3 <技能目录>/scripts/cite_docx.py \
 - 图片 `![说明](图){#fig-1 ...}` 的花括号是锚点，删掉，不显示成 `Figure 1`。图注写成一行 `Figure 1. 说明`，跟在这张图后面。图注和表题里的 `[@键]` 写成普通作者-年文字，不写引用域。Zotero 刷新时，图注里的引用域会让整篇报错。只在图注或表题里出现的文献，Update 后进不了参考文献表：脚本照常出稿，但在报告和 stderr 点名，看到就在正文里至少引一次再重新生成。同一段里的行内插图不当成编号图。表是 Word 表格，表题写成 `Table 1. 说明`，放在表下。正文交叉引用写 `@fig-1`、`@tbl-1`，收成 `Figure 1`、`Table 1`。对不上的只留键名，不留 `@` 和花括号。EndNote 会把留下的花括号当成临时引文去库里搜。
 - 域稿的引用保持作者-年，等人点 Update 后按 Output Style 换成期刊格式。不在生成时改成阅读稿的编号。阅读稿的图注、表题和交叉引用由 Quarto 按所选样式生成。
 - 图注和表题两端对齐，不缩进，不居中。正文仍是两端对齐、首行缩进。
+- **字体沿用初稿**（2026-10-21）：域稿（EndNote、Zotero 两份同）的正文字体读 `manuscript/typeface.md`（初稿开工时 `manuscript_font.py` 写的「英文：…／中文：…」两行），与阅读稿 docx 一致。稿在 `submission/` 下也读得到同级的 `manuscript/typeface.md`。没有这份文件才回落：英文 Times New Roman，中文 macOS 用 Songti SC、其余平台用宋体。不要手改 docx 里的字体。
 - 「编辑库中的文献」只对已经写进当前打开的 EndNote 库、并且域里有记录号的引用有反应。先用同步生成的 RIS 导入这个库，再打开域稿点一次 Update。库里还没有这条时，按钮没有反应。
 - 没指定 `papers/endnote-library.path`、库打不开、或同一 DOI 有多条时，域里不写 `foreign-keys`，也不编 `db-id="mesa"` 和顺序记录号。文末已有空的 `EN.REFLIST`，Update 往这里填参考文献表。
 - 正文 `![说明](../figures/figN.png)` 嵌进域稿，说明里的 `[@键]` 仍写成引用域。找不到图或读不出尺寸就停，不交 docx。不另交 `output/figures/`：那是渲染时复制的同一张图，源图在 `figures/`。

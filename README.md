@@ -55,7 +55,8 @@
 
 | 平台 | 选哪个 | 说明 |
 |---|---|---|
-| macOS（Apple 芯片 M1/M2/M3/M4） | `Mesa_x.x.x_aarch64.dmg` | 目前唯一 macOS 包；Intel Mac 暂需自行 `npm run tauri build` 构建 |
+| macOS（Apple 芯片 M1/M2/M3/M4） | `Mesa_x.x.x_aarch64.dmg` | |
+| macOS（Intel 芯片） | `Mesa_x.x.x_x64.dmg` | 从 2026-10-20 之后的版本起提供 |
 | Windows | `Mesa_x.x.x_x64-setup.exe` | 唯一的 Windows 安装包；批量部署用静默安装 `setup.exe /S` |
 
 不再提供 `.msi`：应用内更新只认 NSIS 渠道，混用会装出两份应用。以前用 `.msi` 装过的机器，请先用系统卸载再用 `setup.exe` 装一次。
@@ -70,6 +71,9 @@
 > ```bash
 > xattr -cr /Applications/Mesa.app
 > ```
+
+> **Windows 注意**：安装包暂未做代码签名，双击 `setup.exe` 时可能弹出蓝色的「Windows 已保护你的电脑」（SmartScreen）。
+> 点 **更多信息**，再点 **仍要运行** 即可继续安装。以后应用内更新不会再弹这个提示。
 
 之后的版本更新：打开应用后若有新版本，顶栏「待处理」会出现提醒，也可在「设置 → 更新」查看说明并一键下载安装（完成后自动重启）。
 
@@ -102,7 +106,7 @@ npm run tauri build    # 打包
 
 开发预览必须用 `npm run tauri:dev`（窗口标题 **Mesa Dev - 热更新**，bundle ID `com.ccode.dev.hmr`）。不要用 `/Applications/Mesa.app` 或旧打包前端做界面验收。
 
-推到 main 会跑 macOS 与 Windows 的测试。tag `v*` 或手动 dispatch 打这两个平台的安装包，并创建 Release 草稿（含自动更新签名包）。应用内看到的「更新说明」取自 `CHANGELOG.md` 对应版本段（缺则 CI 失败），发版前先写好。
+推到 main 会跑 macOS 与 Windows 的测试。tag `v*` 或手动 dispatch 打 macOS（Apple 芯片、Intel）与 Windows 的安装包，并创建 Release 草稿（含自动更新签名包）。应用内看到的「更新说明」取自 `CHANGELOG.md` 对应版本段（缺则 CI 失败），发版前先写好。仓库配齐六个 `APPLE_*` secrets 后，macOS 包自动签名公证；配好更新镜像的变量与 secrets 后，Release 一发布就同步到国内镜像、之后打的包先从镜像检查更新（两者都见 [docs/release.md](docs/release.md)）。
 
 ## 反馈与参与
 
@@ -112,8 +116,8 @@ npm run tauri build    # 打包
 
 ## 现在不做
 
-- macOS 安装包还没有 Apple 签名公证。首次打开若提示「已损坏」，按上面的 `xattr` 命令处理。
-- 只提供 Apple 芯片的 macOS 包。Intel Mac 需要自己构建。
+- macOS 安装包还没有 Apple 签名公证（发版流程已接好，等 Apple 开发者账号）。首次打开若提示「已损坏」，按上面的 `xattr` 命令处理。
+- Windows 安装包还没有代码签名，首次安装会被 SmartScreen 拦一下，按上面的说明继续。
 - 本版本不发布 Linux 安装包。
 - 不是系统综述工具，也不做 Meta 分析。
 - 客户端接力目前只覆盖 Codex 客户端与 Claude 桌面版；其余七家要么没有读同一份会话存储的客户端，要么只能打开项目，暂不显示入口。

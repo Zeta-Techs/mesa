@@ -80,6 +80,7 @@ import {
 } from "../diagnostics";
 import { useAppUpdateInstall } from "../app-update-install";
 import UpdateNotes from "../components/UpdateNotes";
+import { enableCodexWinSandbox } from "../components/CodexWinSandboxNotice";
 import {
   appUpdateProgressLabel,
   appUpdateProgressPct,
@@ -552,7 +553,7 @@ function DepStatusLine({
     );
   }
   const reason = depMissingReason(item);
-  const hint = installButtonHint(tool, item.prereq);
+  const hint = installButtonHint(tool, item.prereq, channel);
   return (
     <div className="py-1 text-xs">
       <div className="flex flex-wrap items-center gap-2">
@@ -1065,6 +1066,49 @@ function HotkeysSection({
 }
 
 /** 一键卸载：清 Mesa 自己的数据，课题文件夹不动。确认两次，第二次要原样输入「卸载」。 */
+/** 内置终端用哪个 shell：候选只列本机找得到的（后端 terminal_shell_options），选了没装的启动时回落自动 */
+function TerminalShellRow({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  const [options, setOptions] = useState<{ id: string; label: string; path: string }[]>([]);
+  useEffect(() => {
+    invoke<{ id: string; label: string; path: string }[]>("terminal_shell_options")
+      .then(setOptions)
+      .catch(() => setOptions([]));
+  }, []);
+  const missing = value !== "auto" && options.length > 0 && !options.some((o) => o.id === value);
+  return (
+    <Row
+      label="内置终端 shell"
+      hint={
+        missing
+          ? "选的 shell 本机找不到，新开的终端用自动"
+          : IS_WINDOWS
+            ? "新开的终端生效。自动 = Windows PowerShell；运行脚本固定用 Git Bash"
+            : "新开的终端生效。自动 = 系统默认 shell（$SHELL）"
+      }
+      labelTitle={options.map((o) => `${o.label}：${o.path}`).join("\n") || undefined}
+    >
+      <select
+        className={selectSm}
+        value={missing ? "auto" : value}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        <option value="auto">自动</option>
+        {options.map((o) => (
+          <option key={o.id} value={o.id}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </Row>
+  );
+}
+
 function UninstallRow() {
   const [busy, setBusy] = useState(false);
   const [armed, setArmed] = useState(false);
@@ -2830,6 +2874,11 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           </select>
         </Row>
 
+        <TerminalShellRow
+          value={settings?.terminalShell ?? "auto"}
+          onChange={(next) => patch({ terminalShell: next })}
+        />
+
         <Row label="终端字号" hint="立即生效（11–18）">
           <input
             type="number"
@@ -3486,6 +3535,23 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           />
         </Row>
 
+        {IS_WINDOWS && (
+          <Row
+            label="定时任务里 Codex 用 Windows 沙箱"
+            hint="不开时 Codex 在无人值守的定时任务里会拦下所有命令；开之前会先讲清楚它会做什么"
+            labelTitle="只对 Mesa 的定时任务生效，不改 Codex 的配置文件；你在 Codex 里自己开过沙箱时直接用你的设置"
+          >
+            <Toggle
+              label="定时任务里 Codex 用 Windows 沙箱"
+              checked={settings?.codexWinSandboxConsent ?? false}
+              onChange={(v) => {
+                if (v) void enableCodexWinSandbox();
+                else patch({ codexWinSandboxConsent: false });
+              }}
+            />
+          </Row>
+        )}
+
         <SubHeading title="对 Agent 的约束" hint="Mesa 拉起各家 CLI 时额外加的保护与标记" />
         <Row
           label="想法期只读保护"
@@ -3990,7 +4056,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                   {depCheck.channel === "brew" && "Homebrew（可一键安装）"}
                   {depCheck.channel === "winget" && "winget（可一键安装）"}
                   {depCheck.channel === "xcode" &&
-                    "无 Homebrew（Git 可走系统安装窗口）"}
+                    "无 Homebrew：Git 走系统安装窗口，其余用官网安装包（可一键安装）"}
                   {depCheck.channel === "none" &&
                     "无自动安装渠道（按指引手动安装）"}
                   <span className="ml-auto shrink-0">
@@ -4346,7 +4412,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           </button>
         </Row>
         <div className="space-y-1 pt-3 text-micro leading-4 text-l4">
-          <p title="API 密钥只存本机（仅本人可读的文件）；各 CLI 的会话目录只读。会联网的只有：检查更新（向 GitHub 问版本）、文献同步 / 下载 / 远查（把 DOI 或刊名发给 JabRef、NLM、ShowJCR、Unpaywall、Crossref、OpenAlex）、你主动发送的反馈">
+          <p title="API 密钥只存本机（仅本人可读的文件）；各 CLI 的会话目录只读。会联网的只有：检查更新（向 Mesa 的更新源问版本：发布页或官方镜像）、文献同步 / 下载 / 远查（把 DOI 或刊名发给 JabRef、NLM、ShowJCR、Unpaywall、Crossref、OpenAlex）、你主动发送的反馈">
             隐私：密钥只存本机；除检查更新、文献检索和你发出的反馈外，不上传任何数据。
           </p>
           <p>

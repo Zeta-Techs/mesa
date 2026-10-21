@@ -149,13 +149,21 @@ docs/            architecture.md（总体设计 + §10 决策记录 + §12 当�
   hook 只记录、不阻塞、不替用户决定；审批只在用户点按钮后经 CLI 官方通道回，终端里先答也算。Codex 在 Mesa 里经私有 app-server 运行
   （本机 ws + 能力令牌，TUI `--remote`），OpenCode 带口令的自带服务；口令 / 令牌只经环境变量。改任一家旁路或升级 CLI 前先跑
   `scripts/e2e-model-routing/README.md`「聊天层结构化旁路」两层核对。细则 terminal.md、safety.md 同名条，matrix §14。
+- **CLI 金丝雀（2026-10-21，先做 Claude Code / Codex）**：`.github/workflows/cli-canary.yml` 每天装最新版跑 `scripts/cli-canary/canary.py`，
+  把请求形状 / 旁路 / 会话格式 / 读屏抽成指纹和 `scripts/cli-canary/baseline/<平台>/` 比。红了是 CLI 变了、不是 Mesa 回退，不挡主线 CI；
+  看报告适配（或判定无需适配）后在**同一平台**跑 `--accept` 把新指纹连同改动一起提交——基线里的 `version` 即「Mesa 已核对到的版本」。
+  临时 HOME 不拷本机配置（各机器 / CI 可比）；新增一家照 `BIN` / `TOOL_PROMPT` 两张表加。
 - **二进制解析统一走 `agents::resolve_binary`**：先 which（继承 PATH），miss 时按平台候选目录兜底；新增 CLI/工具调用点一律
   用它，禁直接 `which::which` 或裸名 spawn（候选目录清单见 `docs/conventions/safety.md` 对应实现 `agents.rs`）。
   PATH 上第一个可能是占位程序时（Windows 应用商店的 `python`、macOS CLT 没装时的 `/usr/bin/python3`）改用
   `agents::resolve_binary_all` 列全部候选、逐个试跑，拿「能跑」的那个（2026-10-19，见 dep_check `usable_python`）。
   **Python 一律走 `dep_check::usable_python()`**，禁 `resolve_binary("python3")`：python.org 的 Windows 安装包只有
   `python.exe`，`python3` 在 Windows 上永远先命中应用商店占位。给 Agent 的指令 / 技能里写 `python3` 时同时注明
-  「Windows 上改用 `python`」。
+  「Windows 上改用 `python`」。**Agent 起的 Python（PTY 子进程与无头运行）在 Windows 由 `process::agent_python_io_env`
+  补 `PYTHONIOENCODING=utf-8`，禁补 `PYTHONUTF8`**（它连 `open()` 默认编码一起改）。
+- **`quarto render` 命令（模板 run 脚本与技能）统一 `--output-dir ../output`、不带 `--output`**（2026-10-21 Windows 实测：写 `output`
+  落进 `manuscript/output/` 且后一次渲染清掉前一次）；项目根不放 `_quarto.yml`；存量项目的 run 命令存在各自 `.ccode/project.toml`，
+  改模板不会自动更新，要手工处理。PDF 走 xelatex 时 header 必须带 ActualText 开关（`manuscript_font.py` 写），否则分号文本层变 U+037E。
 - **发版版本号三处同步**：`package.json` / `src-tauri/Cargo.toml` / `src-tauri/tauri.conf.json` 的 `version` 必须与
   git tag `vX.Y.Z` 的 `X.Y.Z` 一致（CI package job 会拦）。Tauri updater 只比较 `tauri.conf.json` 版本与
   `latest.json`，不认 git tag / architecture 决策号；不 bump 则已安装用户永远看不到「可更新」。内部决策记录
@@ -175,7 +183,8 @@ docs/            architecture.md（总体设计 + §10 决策记录 + §12 当�
 - 三平台兼容：禁写平台特定路径，用 `dirs`/`keyring`/`portable-pty` 的抽象；unix 专属函数加
   `#[cfg_attr(not(any(unix, test)), allow(dead_code))]` 或 cfg 门控（Windows 编译不过就是漏了）；起子进程统一
   `process::background_command`（后台）/ `process::pty_command`（PTY），超时终止用 `kill_process_tree` +
-  `join_with_timeout`，禁裸 kill + 无限 join。
+  `join_with_timeout`，禁裸 kill + 无限 join。子进程不继承 Mesa 自己的 `PWD`（后台删掉、PTY 设成工作目录；
+  `opencode run` 按 PWD 取目录，2026-10-20 实证写错地方）。前端往 shell 写 `cd` 走 `pty_cd`（按标签的 shell 方言），不自己拼。
 - **客户端接力（2026-10-18）**：对话 / 项目交给 agent 自己的 GUI 客户端打开，一律走 `client_open.rs`（客户端规格 `ClientSpec` 声明在 `agent_specs.rs`），**前端不得自己拼深链**。客户端侧的失败 Mesa 看不见，所以判断全在发深链**之前**（`client_open_plan` 只读预检；`client_open_launch` 每次现算、修复只能选预检候选）；读不到的不假装知道；会话 id / 写进 TOML 的块名后端校验后才拼进 URL / 配置；按钮文案如实写层级（项目级写「打开项目」）、没装客户端就不显示。新增客户端先按 `docs/design-client-handoff.md` §1 分档（读不读同一份会话存储、能否按 id / 目录定位、渠道能否带过去），并在 matrix §13 记依据。
 - UI 文案用中文；代码注释用中文、只在非显而易见处写（参照现有文件风格）。
 - 前端不直接碰文件系统，一切经 Tauri command；流式输出走 `pty-output-<id>` 等事件。

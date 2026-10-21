@@ -10,6 +10,7 @@ import {
   channelRelink,
   channelTurnOpen,
   displayCommand,
+  hooksApprovalAnswered,
   sessionSwitchNote,
   type ChannelApproval,
   type ChatChannelSnapshot,
@@ -62,6 +63,21 @@ test("回合状态 → 标签注意力；旁路没说过就交回原来的推断
   assert.equal(channelAttention(snap({ turn: turn("cancelled") })), "done");
   assert.equal(channelTurnOpen(snap({ turn: turn("awaiting_approval") })), true);
   assert.equal(channelTurnOpen(snap({ turn: turn("failed") })), false);
+});
+
+test("hooks 还说等批准、屏上已回到输入框：认作答过了；能从聊天层答的、不在等批准的不经这里", () => {
+  const waiting = snap({ turn: turn("awaiting_approval"), approval: approval({ toolName: "WebFetch", kind: "fetch" }) });
+  assert.equal(hooksApprovalAnswered(waiting, true), true);
+  assert.equal(hooksApprovalAnswered(waiting, false), false, "屏上还挂着菜单 / 认不出输入框：照旧等");
+  assert.equal(hooksApprovalAnswered(snap({ turn: turn("running") }), true), false);
+  assert.equal(hooksApprovalAnswered(null, true), false);
+  const codex = snap({
+    agent: "codex",
+    kind: "codex",
+    turn: turn("awaiting_approval"),
+    approval: approval({ requestId: "r1", replyable: true }),
+  });
+  assert.equal(hooksApprovalAnswered(codex, true), false);
 });
 
 test("跟会话：直接给路径就锁定；/clear 换了文件就改盯；只给 id 交给按 id 找", () => {
@@ -152,4 +168,16 @@ test("审批卡上的命令剥掉外层 shell 包装", () => {
   assert.equal(displayCommand(`bash -c "echo $HOME"`), `bash -c "echo $HOME"`);
   assert.equal(displayCommand("sh -c 'a' && rm x"), "sh -c 'a' && rm x");
   assert.deepEqual(approvalPreview(approval({ command: "/bin/zsh -lc 'echo hi'" })), { kind: "command", text: "echo hi" });
+  // Windows 上 Codex 包的是 PowerShell（2026-10-20 Windows 端到端实测的审批原文）
+  assert.equal(
+    displayCommand(`"D:\\PowerShell-7.6.7-win-x64\\pwsh.exe" -Command 'echo mesa > mesa_probe.txt'`),
+    "echo mesa > mesa_probe.txt",
+  );
+  assert.equal(
+    displayCommand(`C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -Command "Get-ChildItem src"`),
+    "Get-ChildItem src",
+  );
+  assert.equal(displayCommand(`pwsh -Command 'it''s ok'`), "it's ok");
+  // 双引号里有变量要外层先展开：不剥
+  assert.equal(displayCommand(`pwsh -Command "echo $env:PATH"`), `pwsh -Command "echo $env:PATH"`);
 });

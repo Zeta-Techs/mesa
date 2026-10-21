@@ -5,7 +5,8 @@
  * 只认带固定上下文的错误行，回答正文里聊到「429」「rate limit」不算。各家形态（2026-10-17 本机假网关回
  * 429 / 401 / 500，按 Mesa 应答口径 PTY 实录；样本在 tests/conn-issue.test.ts）：
  * - Claude Code / CodeBuddy 重试中：「✻ 429 <网关原文> · Retrying in 3s · attempt 4/10」；最终「API Error: 429 …」
- * - CodeBuddy：「└ 429 <网关原文>」
+ * - CodeBuddy：「└ 429 <网关原文>」；网关回 200 却不是它要的 chat/completions 流时只画
+ *   「└ Model returned no valid response. Retry later, …」（2026-10-21 实录：给了 Anthropic 地址）
  * - Codex：「■ exceeded retry limit, last status: 429 Too Many Requests」「■ unexpected status 401 Unauthorized: <原文>, url: …」
  * - Kimi：「Retrying (5/10) · APIProviderRateLimitError · in 5s」下一行「429 · <原文>」；「Error: [provider.auth_error] 401 <原文>」
  * - OpenCode：「<原文> [retrying in 1s attempt #2]」
@@ -70,6 +71,10 @@ export function detectConnIssues(lines: readonly string[], agentId: string): Det
       }
       if (agentId === "codebuddy" && (m = /^└\s+([45]\d\d)\s+(.+)$/.exec(t))) {
         out.push(issue(Number(m[1]), "", m[2], false));
+        continue;
+      }
+      if (agentId === "codebuddy" && (m = /^└\s+(Model returned no valid response\.?)/.exec(t))) {
+        out.push(issue(null, "", m[1], false));
         continue;
       }
     }

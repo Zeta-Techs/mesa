@@ -186,6 +186,130 @@ pub(crate) fn launch_injected(agent: &str) -> bool {
     matches!(agent, "claude-code" | "codebuddy" | "qwen" | "opencode" | "codex")
 }
 
+/// 每次启动注入的 hooks 是否放到后台跑（hook 配置带 `"async": true`，CLI 不等它跑完）。
+/// 只在 Windows、只给 Claude Code、且只在找不到原生 hook 程序时：那时 hook 命令要起一个 PowerShell，
+/// 实测每次 0.9–1.2 秒（2026-10-20 本机：Stop hook durationMs 1241），同步挂着时每个工具调用前后各卡一秒、
+/// 每轮结束再卡一秒；2.1.x 支持 async（「runs in background without blocking」）。代价是事件可能乱序，
+/// 由旁路状态机兜（chat_channel Tracker::async_hooks）。有原生 hook 程序（随包的 mesa_helper，几十毫秒）
+/// 就同步跑，事件有序。CodeBuddy 没核实认 async，一律同步。macOS / Linux 的 hook 是几毫秒的 sh 一行，不动。
+pub(crate) fn launch_hooks_async(agent: &str) -> bool {
+    cfg!(windows) && agent == "claude-code" && native_hook_exe().is_none()
+}
+
+/// Windows 上写 hook 日志的原生程序：随包的 mesa_helper（`hook` 模式，见 bin/mesa_helper.rs）。
+/// 找主程序同目录（测试二进制在 deps/ 下，再往上找一层），跳过 0 字节占位，并试跑一次 `hook --probe`
+/// 确认认这个模式（开发时留着的旧 helper 不认，会把事件吞掉）。一次运行只查一次；找不到退回 PowerShell 脚本。
+/// 只用于每次启动注入的两家时写原路径（Claude Code 走 Git Bash、CodeBuddy 走 cmd 跑 hook，带双引号的程序路径两边都认）；
+/// 写进全局配置的三家用拷到 hooks-state 的那份、不加引号（global_hook_command，Gemini 在 PowerShell 里跑 hook）
+pub(crate) fn native_hook_exe() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        use std::sync::OnceLock;
+        static CACHE: OnceLock<Option<PathBuf>> = OnceLock::new();
+        CACHE.get_or_init(find_native_hook_exe).clone()
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
+#[cfg(windows)]
+fn find_native_hook_exe() -> Option<PathBuf> {
+    if std::env::var_os("CCODE_HOOK_NO_NATIVE").is_some() {
+        return None;
+    }
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    let triple = env!("TAURI_ENV_TARGET_TRIPLE");
+    let names = ["mesa_helper.exe".to_string(), format!("mesa_helper-{triple}.exe")];
+    // 打包版：同目录带 triple 后缀的 sidecar。开发态：target/debug/mesa_helper.exe 会被 tauri-build
+    // 用 0 字节占位反复覆盖，`cargo build --bin mesa_helper` 的真身留在 deps/；测试二进制本身就在 deps/
+    let dirs = [Some(dir.to_path_buf()), Some(dir.join("deps")), dir.parent().map(Path::to_path_buf)];
+    for d in dirs.into_iter().flatten() {
+        for name in &names {
+            let p = d.join(name);
+            if !fs::metadata(&p).is_ok_and(|m| m.is_file() && m.len() > 0) {
+                continue;
+            }
+            let probe = crate::process::background_command(&p)
+                .args(["hook", "--probe"])
+                .stdin(std::process::Stdio::null())
+                .output();
+            if probe.is_ok_and(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "ok") {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
+/// 每次启动注入用的 hook 命令：Windows 有原生 hook 程序就用它，否则同 hook_command_capped
+fn launch_hook_command(log_path: &Path, cap: usize) -> String {
+    match native_hook_exe() {
+        Some(exe) => format!(
+            "{} hook {} {cap}",
+            win_cmdline_path(&exe),
+            win_cmdline_path(log_path)
+        ),
+        None => hook_command_capped(log_path, cap),
+    }
+}
+
+// ===== 写进全局配置的三家（Gemini / Kimi / Grok）：Windows 上也用原生 hook 程序 =====
+//
+// 2026-10-20 实测：Gemini 在 Windows 上每个事件同步起一个 PowerShell，屏上一直「Executing Hook」、审批菜单约 10 秒才出。
+// 这几家的 hook 宿主各不相同（Gemini 是 PowerShell，其余经 cmd / bash），命令必须三种宿主都认：程序路径不加引号、
+// 用正斜杠（cmd /s /c、powershell -Command、bash -c 都能直接跑，2026-10-20 实测）。不加引号就不能有空格与特殊字符，
+// 所以把 helper 拷一份到 hooks-state/ccode-hook.exe——路径跟 .ps1 一样稳定（不随安装目录、开发 / 打包切换变），
+// 路径里有空格（用户名带空格）等就退回 PowerShell 脚本。
+
+/// 拷进 hooks-state 的 hook 程序文件名（与 ccode-hook.ps1 同目录）
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+const WIN_HOOK_EXE: &str = "ccode-hook.exe";
+
+/// 不加引号也能在 cmd / PowerShell / bash 里原样当程序路径用：只含字母数字（含中文等）与 `_-./:~`
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn shell_neutral_path(p: &Path) -> Option<String> {
+    let s = crate::paths::strip_verbatim(p.to_path_buf())
+        .to_string_lossy()
+        .replace('\\', "/");
+    s.chars()
+        .all(|c| c.is_alphanumeric() || "_-./:~".contains(c))
+        .then_some(s)
+}
+
+/// 全局 hooks 用的原生程序：把随包 helper 拷到 hooks-state/ccode-hook.exe（内容不同才拷；正在被 hook 进程
+/// 占用换不掉就先用旧的，下次启动再换），路径能不加引号用才返回
+#[cfg(windows)]
+fn stable_hook_exe(log_path: &Path) -> Option<String> {
+    let src = native_hook_exe()?;
+    let dst = log_path.parent()?.join(WIN_HOOK_EXE);
+    let same = fs::read(&src).ok().zip(fs::read(&dst).ok()).is_some_and(|(a, b)| a == b);
+    if !same {
+        let tmp = dst.with_extension("exe.new");
+        let copied = fs::create_dir_all(dst.parent()?).is_ok()
+            && fs::copy(&src, &tmp).is_ok()
+            && fs::rename(&tmp, &dst).is_ok();
+        if !copied {
+            let _ = fs::remove_file(&tmp);
+            if !dst.is_file() {
+                return None;
+            }
+        }
+    }
+    shell_neutral_path(&dst)
+}
+
+/// 写进全局配置的 hook 命令：Windows 有可用的原生程序就用它（三种宿主都认的写法），否则 PowerShell 脚本
+fn global_hook_command(log_path: &Path) -> String {
+    #[cfg(windows)]
+    if let Some(exe) = stable_hook_exe(log_path) {
+        return format!("{exe} hook {} {PAYLOAD_CAP}", win_cmdline_path(log_path));
+    }
+    hook_command(log_path)
+}
+
 /// 精确注意力是否可用：开关打开（写了全局配置），或这家由 Mesa 每次启动注入
 fn precise_enabled(agent: &str) -> bool {
     launch_injected(agent)
@@ -194,22 +318,31 @@ fn precise_enabled(agent: &str) -> bool {
 
 /// 这家注入用的 `{"hooks": {...}}`（并进 Claude Code / CodeBuddy 的 `--settings`）；不支持的家 None
 pub(crate) fn launch_hooks_value(agent: &str) -> Option<Value> {
-    let events = launch_hook_events(agent)?;
+    let mut events = launch_hook_events(agent)?.to_vec();
+    // 后台跑时「等批准」的 Notification 可能比它那个工具的 PreToolUse 先到，卡片拿不到内容：
+    // 另挂 PermissionRequest（payload 自带工具名与参数），审批卡内容不依赖先后
+    if launch_hooks_async(agent) {
+        events.push(("PermissionRequest", ""));
+    }
     let spec = spec_for(agent)?;
     let log = hooks_log_path(spec).ok()?;
     // 启动注入没有「开启开关」那一步写脚本：Windows 命令引用 ccode-hook.ps1，这里保证它在且是当前正文
     #[cfg(windows)]
     ensure_win_hook_script(&log).ok()?;
     let mut hooks = serde_json::Map::new();
-    for &(event, matcher) in events {
+    for &(event, matcher) in &events {
         let cap = if event == "PostToolUse" {
             PAYLOAD_CAP_SMALL
         } else {
             PAYLOAD_CAP
         };
+        let mut handler = json!({ "type": "command", "command": launch_hook_command(&log, cap) });
+        if launch_hooks_async(agent) {
+            handler["async"] = json!(true);
+        }
         hooks.insert(
             event.into(),
-            json!([{ "matcher": matcher, "hooks": [{ "type": "command", "command": hook_command_capped(&log, cap) }] }]),
+            json!([{ "matcher": matcher, "hooks": [handler] }]),
         );
     }
     Some(json!({ "hooks": hooks }))
@@ -270,10 +403,38 @@ pub(crate) fn migrate_launch_injected() {
     }
 }
 
+/// 开着全局开关的 Gemini，配置里 Mesa 的条目还没有 name（2026-10-21 之前写的）：启动时按当前写法重写一次
+/// （apply_hooks_at 写前备份），之后转圈行显示 hook 名字而不是一串路径。已有 name 不动，不会每次启动多一份备份
+pub(crate) fn refresh_gemini_hook_name() {
+    let settings = crate::settings::read_current();
+    if !crate::settings::hooks_attention_enabled(&settings, "gemini") {
+        return;
+    }
+    let (Some(home), Ok(backups), Some(spec)) = (dirs::home_dir(), backups_dir(), spec_for("gemini")) else {
+        return;
+    };
+    let Ok(text) = fs::read_to_string(home.join(spec.config_rel)) else {
+        return;
+    };
+    if !gemini_hook_unnamed(&text, &spec.marker()) {
+        return;
+    }
+    let Ok(log) = hooks_log_path(spec) else {
+        return;
+    };
+    if let Err(e) = apply_hooks_at(spec, &home, &log, &backups, true) {
+        crate::logbuf::record("warn", "hooks", &format!("gemini 钩子补名字失败: {e}"));
+    }
+}
+
+fn gemini_hook_unnamed(config_text: &str, marker: &str) -> bool {
+    has_marker(config_text, marker) && !config_text.contains(GEMINI_HOOK_NAME)
+}
+
+// 走 storage::config_root：测试（含聊天层端到端）重定向配置根时，状态日志与备份跟着进临时目录
 fn hooks_state_dir() -> Result<PathBuf, String> {
-    Ok(dirs::config_dir()
+    Ok(crate::storage::config_root()
         .ok_or("无法确定平台配置目录")?
-        .join("ccode")
         .join("hooks-state"))
 }
 
@@ -282,9 +443,8 @@ fn hooks_log_path(spec: &BridgeSpec) -> Result<PathBuf, String> {
 }
 
 fn backups_dir() -> Result<PathBuf, String> {
-    Ok(dirs::config_dir()
+    Ok(crate::storage::config_root()
         .ok_or("无法确定平台配置目录")?
-        .join("ccode")
         .join("backups"))
 }
 
@@ -314,7 +474,11 @@ const WIN_HOOK_SCRIPT: &str = "ccode-hook.ps1";
 /// serde_json 解析失败 ⇒ 整条 hook 记录被丢弃（transcript_path 一旦中招，
 /// grok 这类只能靠它归属会话的 agent 会永久丢失精确注意力标记）。
 /// 用 UTF8Encoding::new($false) 而非 -Encoding utf8：PS 5.1 的后者会写 BOM，
-/// 首行多出 U+FEFF 会让读取侧的 unix 秒 parse::<i64>() 失败。\s+ 折叠换行保证一行一条记录。
+/// 首行多出 U+FEFF 会让读取侧的 unix 秒 parse::<i64>() 失败。
+/// 只删回车换行（同 unix 的 `tr -d '\r\n'`）保证一行一条记录：JSON 字符串里不会有裸换行，删掉的只是排版空白；
+/// 2026-10-20 以前折叠的是 `\s+`，会把字符串里的连续空格也并成一个——审批卡上的命令、差异丢了缩进。
+/// 追加撞上别的 hook 进程正在写（AppendAllText 独占写，多个工具并行、多个标签同时触发时实测 12 并发丢 1 条）
+/// 就稍等重试，最多约 1.5 秒；丢了「回合结束」那条，聊天层会一直显示在回复。
 /// 正文保持纯 ASCII：PS 5.1 按 ANSI 代码页读无 BOM 脚本，ASCII 在任何代码页下都无损。
 #[cfg_attr(not(any(windows, test)), allow(dead_code))]
 const WIN_HOOK_SCRIPT_BODY: &str = "param([string]$LogPath, [int]$Cap = 65536)\r\n\
@@ -325,7 +489,11 @@ if (-not $t) { $t = '-' }\r\n\
 $l = (New-Object IO.StreamReader ([Console]::OpenStandardInput()), $u).ReadToEnd()\r\n\
 if ($l.Length -gt $Cap) { $l = $l.Substring(0, $Cap) }\r\n\
 $ts = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()\r\n\
-[IO.File]::AppendAllText($LogPath, ($ts.ToString() + ' ' + $t + ' ' + ($l -replace '\\s+', ' ') + [Environment]::NewLine), $u)\r\n";
+$line = $ts.ToString() + ' ' + $t + ' ' + ($l -replace '[\\r\\n]+', '') + [Environment]::NewLine\r\n\
+for ($i = 0; $i -lt 60; $i++) {\r\n\
+  try { [IO.File]::AppendAllText($LogPath, $line, $u); break }\r\n\
+  catch { [Threading.Thread]::Sleep(10 + ($i * 7) % 31) }\r\n\
+}\r\n";
 
 #[cfg_attr(not(any(windows, test)), allow(dead_code))]
 fn win_hook_script_path(log_path: &Path) -> PathBuf {
@@ -439,8 +607,17 @@ fn to_pretty(v: &Value) -> Result<String, String> {
 }
 
 /// 事件组里我们追加的 handler；codex 额外带 "async": true
+/// Gemini 跑 hook 时转圈行写「Executing Hook: <name>」，没有 name 就把整条命令（hook 程序的绝对路径加日志路径）
+/// 摆在终端里（2026-10-21 用户：取消会话时屏上一串 C:/Users/…/AppData/…）。Gemini 认 hook 的 name 字段（getHookName）
+const GEMINI_HOOK_NAME: &str = "Mesa 状态同步";
+
 fn handler_json(spec: &BridgeSpec, command: &str) -> Value {
     let mut h = json!({ "type": "command", "command": command });
+    if spec.agent == "gemini" {
+        h.as_object_mut()
+            .unwrap()
+            .insert("name".into(), json!(GEMINI_HOOK_NAME));
+    }
     if spec.handler_async {
         h.as_object_mut()
             .unwrap()
@@ -701,6 +878,14 @@ fn is_legacy_win_hook(config_text: &str) -> bool {
 /// 替换旧条目）；已是新写法不动，不会每次启动多出一份备份。失败只记日志，不挡启动
 #[cfg(windows)]
 pub(crate) fn migrate_legacy_windows_hooks() {
+    // 共用脚本正文改过（2026-10-20：保留字符串里的空格、写日志撞车重试）：已经写过脚本的机器
+    // （开过全局开关的 Gemini / Kimi / Grok 也引用它）启动时换成当前正文，正文没变不写
+    if let Ok(dir) = hooks_state_dir() {
+        let any_log = dir.join("claude-hooks.jsonl");
+        if win_hook_script_path(&any_log).is_file() {
+            let _ = ensure_win_hook_script(&any_log);
+        }
+    }
     let Some(home) = dirs::home_dir() else {
         return;
     };
@@ -718,14 +903,28 @@ pub(crate) fn migrate_legacy_windows_hooks() {
         let Ok(text) = fs::read_to_string(home.join(spec.config_rel)) else {
             continue;
         };
-        if !is_legacy_win_hook(&text) {
+        let Ok(log) = hooks_log_path(spec) else {
+            continue;
+        };
+        // 两种要重写：旧版内联写法；原生程序与 PowerShell 脚本之间该换了（装了新版有了 helper、或 helper 没了）
+        let want_native = global_hook_command(&log).contains(WIN_HOOK_EXE);
+        if !is_legacy_win_hook(&text) && !win_hook_form_stale(&text, want_native) {
             continue;
         }
-        let result = hooks_log_path(spec)
-            .and_then(|log| apply_hooks_at(spec, &home, &log, &backups, true));
+        let result = apply_hooks_at(spec, &home, &log, &backups, true);
         if let Err(e) = result {
             crate::logbuf::record("warn", "hooks", &format!("{} 旧版钩子迁移失败: {e}", s.id));
         }
+    }
+}
+
+/// 配置里我们的条目用的是不是该用的那种写法（ccode-hook.exe / ccode-hook.ps1）
+#[cfg(any(windows, test))]
+fn win_hook_form_stale(config_text: &str, want_native: bool) -> bool {
+    if want_native {
+        config_text.contains(WIN_HOOK_SCRIPT)
+    } else {
+        config_text.contains(WIN_HOOK_EXE)
     }
 }
 
@@ -763,7 +962,7 @@ fn apply_hooks_at(
             }
             crate::profiles::atomic_write(
                 &config_path,
-                &whole_file_doc(spec, &hook_command(log_path))?,
+                &whole_file_doc(spec, &global_hook_command(log_path))?,
             )?;
             return Ok(());
         }
@@ -789,7 +988,7 @@ fn apply_hooks_at(
         return Ok(());
     }
     let content = if enabled {
-        let command = hook_command(log_path);
+        let command = global_hook_command(log_path);
         match spec.family {
             DocFamily::KimiToml => merge_kimi_toml(spec, existing.as_deref(), &command)?,
             _ => merge_json_doc(spec, existing.as_deref(), &command)?,
@@ -1834,6 +2033,176 @@ mod tests {
         fs::remove_dir_all(dir.parent().unwrap()).ok();
     }
 
+    #[test]
+    fn global_native_hook_path_must_be_shell_neutral() {
+        assert_eq!(
+            shell_neutral_path(Path::new(r"C:\Users\张三\AppData\Roaming\ccode\hooks-state\ccode-hook.exe")).as_deref(),
+            Some("C:/Users/张三/AppData/Roaming/ccode/hooks-state/ccode-hook.exe")
+        );
+        for bad in [
+            r"C:\Users\John Smith\AppData\ccode-hook.exe",
+            r"C:\Program Files (x86)\x.exe",
+            r"C:\a&b\x.exe",
+            r"C:\100%\x.exe",
+        ] {
+            assert_eq!(shell_neutral_path(Path::new(bad)), None, "{bad}");
+        }
+        // 该用 exe 时配置里还是 .ps1 → 要重写；反之亦然；已对的不动
+        let ps1 = r#"{"hooks":{"Stop":[{"hooks":[{"command":"powershell -File \"C:/x/hooks-state/ccode-hook.ps1\" \"C:/x/hooks-state/gemini-hooks.jsonl\""}]}]}}"#;
+        let exe = r#"{"hooks":{"Stop":[{"hooks":[{"command":"C:/x/hooks-state/ccode-hook.exe hook \"C:/x/hooks-state/gemini-hooks.jsonl\" 65536"}]}]}}"#;
+        assert!(win_hook_form_stale(ps1, true));
+        assert!(!win_hook_form_stale(exe, true));
+        assert!(win_hook_form_stale(exe, false));
+        assert!(!win_hook_form_stale(ps1, false));
+    }
+
+    /// 全局 hooks 的原生写法（不加引号的正斜杠程序路径）在 cmd / PowerShell / bash 三种宿主里都能跑；
+    /// 没先 `cargo build --bin mesa_helper` 时退回 PowerShell 脚本（另一条测试核对）
+    #[cfg(windows)]
+    #[test]
+    fn global_native_hook_runs_under_cmd_powershell_and_bash() {
+        use std::io::Write;
+        let dir = tmpdir("global-native");
+        let log = dir.join("hooks-state").join("gemini-hooks.jsonl");
+        let cmd = global_hook_command(&log);
+        if native_hook_exe().is_none() {
+            assert!(cmd.contains(WIN_HOOK_SCRIPT), "{cmd}");
+            return;
+        }
+        assert!(cmd.starts_with(&shell_neutral_path(&log.parent().unwrap().join(WIN_HOOK_EXE)).unwrap()), "{cmd}");
+        let run = |host: &str, mut c: crate::process::BackgroundCommand| {
+            c.env("CCODE_TAB_ID", "tab-g")
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            let mut child = c.spawn().unwrap_or_else(|e| panic!("{host} 起不来: {e}"));
+            let payload = format!("{{\"session_id\": \"{host}\", \"hook_event_name\": \"Notification\", \"message\": \"新项目\"}}");
+            child.stdin.take().unwrap().write_all(payload.as_bytes()).unwrap();
+            let out = child.wait_with_output().unwrap();
+            assert!(out.status.success(), "{host}: {}", String::from_utf8_lossy(&out.stderr));
+        };
+        let mut c = crate::process::background_command("cmd.exe");
+        c.raw_arg(format!("/d /s /c \"{cmd}\""));
+        run("cmd", c);
+        let mut c = crate::process::background_command("powershell.exe");
+        c.args(["-NoProfile", "-NonInteractive", "-Command", &cmd]);
+        run("powershell", c);
+        let mut hosts = vec!["cmd", "powershell"];
+        if let Some(bash) = crate::agents::resolve_git_bash() {
+            let mut c = crate::process::background_command(bash);
+            c.args(["-c", &cmd]);
+            run("bash", c);
+            hosts.push("bash");
+        }
+        let records = parse_log_records(&fs::read_to_string(&log).unwrap());
+        let ids: Vec<&str> = records.iter().map(|r| r.session_id.as_str()).collect();
+        assert_eq!(ids, hosts);
+        assert!(records.iter().all(|r| r.tab.as_deref() == Some("tab-g")));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 原生 hook 程序（mesa_helper hook）：Claude Code 的 Git Bash、CodeBuddy 的 cmd 两种宿主都能跑，
+    /// 记录与 PowerShell 脚本同形；有它时 Claude 不再走后台 hooks。没先 `cargo build --bin mesa_helper`
+    /// 就找不到，只核对退回 PowerShell 的那半
+    #[cfg(windows)]
+    #[test]
+    fn native_hook_command_runs_under_cmd_and_bash() {
+        use std::io::Write;
+        let Some(exe) = native_hook_exe() else {
+            assert!(launch_hooks_async("claude-code"), "没有原生程序时 Claude 走后台 hooks");
+            return;
+        };
+        assert!(!launch_hooks_async("claude-code"), "有原生程序就同步跑，事件有序");
+        let dir = tmpdir("native").join("带 空格 目录");
+        let log = dir.join("hooks-state").join("claude-hooks.jsonl");
+        let cmd = launch_hook_command(&log, PAYLOAD_CAP);
+        assert!(cmd.contains(&*exe.file_name().unwrap().to_string_lossy()), "{cmd}");
+        let run = |host: &str, mut c: crate::process::BackgroundCommand| {
+            c.env("CCODE_TAB_ID", "tab-n")
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            let mut child = c.spawn().unwrap_or_else(|e| panic!("{host} 起不来: {e}"));
+            let payload = format!(
+                "{{\n  \"session_id\": \"{host}\",\n  \"hook_event_name\": \"Notification\",\n  \"message\": \"新项目  两格\"\n}}\n"
+            );
+            child.stdin.take().unwrap().write_all(payload.as_bytes()).unwrap();
+            let out = child.wait_with_output().unwrap();
+            assert!(out.status.success(), "{host}: {}", String::from_utf8_lossy(&out.stderr));
+        };
+        let mut hosts = vec!["cmd"];
+        let mut c = crate::process::background_command("cmd.exe");
+        c.raw_arg(format!("/d /s /c \"{cmd}\""));
+        run("cmd", c);
+        if let Some(bash) = crate::agents::resolve_git_bash() {
+            let mut c = crate::process::background_command(bash);
+            c.args(["-c", &cmd]);
+            run("bash", c);
+            hosts.push("bash");
+        }
+        let records = parse_log_records(&fs::read_to_string(&log).unwrap());
+        let ids: Vec<&str> = records.iter().map(|r| r.session_id.as_str()).collect();
+        assert_eq!(ids, hosts);
+        assert!(records.iter().all(|r| r.detail.as_deref() == Some("新项目  两格")));
+        assert!(records.iter().all(|r| r.tab.as_deref() == Some("tab-n")));
+        // 注入的 Claude hooks 用这条命令，且不带 async
+        let v = launch_hooks_value("claude-code").unwrap();
+        let stop = &v["hooks"]["Stop"][0]["hooks"][0];
+        assert!(stop["command"].as_str().unwrap().contains(" hook "), "{stop}");
+        assert!(stop.get("async").is_none(), "{stop}");
+        fs::remove_dir_all(dir.parent().unwrap()).ok();
+    }
+
+    /// 2026-10-20：字符串里的连续空格原样保留（审批卡的命令 / 差异要缩进），排版换行照删；
+    /// 多个 hook 进程同时追加同一份日志（并行工具调用、多个标签）一条不丢
+    #[cfg(windows)]
+    #[test]
+    fn win_hook_script_keeps_spaces_and_survives_concurrent_appends() {
+        use std::io::Write;
+        let dir = tmpdir("conc");
+        let log = dir.join("hooks-state").join("claude-hooks.jsonl");
+        write_win_hook_script(&log).unwrap();
+        let script = win_hook_script_path(&log);
+        let n = 12;
+        let children: Vec<_> = (0..n)
+            .map(|i| {
+                let mut c = crate::process::background_command("powershell.exe");
+                c.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"])
+                    .arg(&script)
+                    .arg(&log)
+                    .arg("65536")
+                    .env("CCODE_TAB_ID", "tab-c")
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::piped());
+                let mut child = c.spawn().unwrap();
+                let payload = format!(
+                    "{{\"session_id\":\"s{i}\",\"hook_event_name\":\"PreToolUse\",\r\n  \"tool_input\":{{\"old_string\":\"def f():\\n    return    {i}\"}}}}\r\n"
+                );
+                child
+                    .stdin
+                    .take()
+                    .unwrap()
+                    .write_all(payload.as_bytes())
+                    .unwrap();
+                child
+            })
+            .collect();
+        for child in children {
+            let out = child.wait_with_output().unwrap();
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        }
+        let text = fs::read_to_string(&log).unwrap();
+        let records = parse_log_records(&text);
+        assert_eq!(records.len(), n, "并发追加一条不丢：\n{text}");
+        assert_eq!(text.lines().count(), n, "一行一条记录");
+        assert!(
+            text.contains(r#"{"session_id":"s3","hook_event_name":"PreToolUse",  "tool_input":{"old_string":"def f():\n    return    3"}}"#),
+            "字符串里的空格原样保留、裸换行删掉：\n{text}"
+        );
+        fs::remove_dir_all(&dir).ok();
+    }
+
     /// 支持清单：七家在桥接注册表内，cursor/opencode 不支持且带备注
     #[test]
     fn support_list_covers_all_nine() {
@@ -2006,6 +2375,51 @@ mod tests {
             assert!(!has_marker(&after, &spec.marker()));
             assert_eq!(std::fs::read_to_string(&real).unwrap(), before, "真实文件不得被改");
         }
+        std::fs::remove_dir_all(tmp).ok();
+    }
+
+    /// Gemini 钩子补名字：只给 Mesa 的条目加 name，用户自己的条目与其余设置原样；补过一次就不再算「没名字」
+    #[test]
+    fn gemini_hook_name_added_and_idempotent() {
+        let spec = spec_for("gemini").unwrap();
+        let old = r#"{"ui":{"theme":"x"},"hooks":{"AfterAgent":[{"matcher":"","hooks":[{"type":"command","command":"C:/x/hooks-state/gemini-hooks.jsonl"}]},{"matcher":"","hooks":[{"type":"command","command":"my-own-hook"}]}]}}"#;
+        assert!(gemini_hook_unnamed(old, &spec.marker()));
+        let new = merge_json_doc(spec, Some(old), "C:/x/ccode-hook.exe hook \"C:/x/hooks-state/gemini-hooks.jsonl\" 65536").unwrap();
+        assert!(!gemini_hook_unnamed(&new, &spec.marker()));
+        let v: Value = serde_json::from_str(&new).unwrap();
+        assert_eq!(v["ui"]["theme"], "x");
+        let after = v["hooks"]["AfterAgent"].as_array().unwrap();
+        assert!(after.iter().any(|g| g["hooks"][0]["command"] == "my-own-hook" && g["hooks"][0].get("name").is_none()));
+        assert!(after.iter().any(|g| g["hooks"][0]["name"] == GEMINI_HOOK_NAME));
+        // 别家不加
+        let kimi = handler_json(spec_for("grok").unwrap(), "cmd");
+        assert!(kimi.get("name").is_none());
+    }
+
+    /// 真实数据干跑：本机 ~/.gemini/settings.json 拷到临时目录按启动补名字的写法重写，打印前后对照（不碰真实文件）
+    /// `cargo test --lib real_data_dry_run_gemini_name -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn real_data_dry_run_gemini_name() {
+        let home = dirs::home_dir().unwrap();
+        let spec = spec_for("gemini").unwrap();
+        let real = home.join(spec.config_rel);
+        let Ok(Some(before)) = read_existing(&real) else { return };
+        println!("需要补：{}", gemini_hook_unnamed(&before, &spec.marker()));
+        let tmp = tmpdir("dryrun-gemini");
+        let fake = tmp.join(spec.config_rel);
+        std::fs::create_dir_all(fake.parent().unwrap()).unwrap();
+        std::fs::write(&fake, &before).unwrap();
+        let log = hooks_log_path(spec).unwrap();
+        apply_hooks_at(spec, &tmp, &log, &tmp.join("backups"), true).unwrap();
+        let after = std::fs::read_to_string(&fake).unwrap();
+        println!("-- 前\n{before}\n-- 后\n{after}");
+        let (b, a): (Value, Value) = (serde_json::from_str(&before).unwrap(), serde_json::from_str(&after).unwrap());
+        for k in b.as_object().unwrap().keys().filter(|k| *k != "hooks") {
+            assert_eq!(b[k], a[k], "{k} 不得改动");
+        }
+        assert!(!gemini_hook_unnamed(&after, &spec.marker()));
+        assert_eq!(std::fs::read_to_string(&real).unwrap(), before, "真实文件不得被改");
         std::fs::remove_dir_all(tmp).ok();
     }
 }

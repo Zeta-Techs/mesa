@@ -93,6 +93,10 @@ pub struct ClientSpec {
     pub mac_bundle_ids: &'static [&'static str],
     /// macOS 应用名（/Applications 与 ~/Applications 下的 .app，不含扩展名）
     pub mac_app_names: &'static [&'static str],
+    /// Windows 应用包名（MSIX 包全名的前段，如 OpenAI.Codex_26.1013.4894.0_x64__… 的 OpenAI.Codex）：
+    /// 读版本用（2026-10-20 本机核实：两家 Windows 客户端都是 MSIX 包，scheme 注册在 HKCR 下）
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub win_package_names: &'static [&'static str],
     /// 下载页（未安装时给用户的出口）；没有把握的不填
     pub download_url: Option<&'static str>,
     /// 渠道（API 配置）如何到达客户端
@@ -309,6 +313,8 @@ pub struct PackagingSpec {
     pub interactive_tui: bool,
     /// 官方安装脚本（bash -c 内容）
     pub install_script: Option<&'static str>,
+    /// Windows 上的官方安装脚本（powershell -Command 内容）；None = Windows 不走脚本渠道
+    pub install_script_win: Option<&'static str>,
     /// 安装脚本 URL 兼作最新版查询口：脚本正文烙着当前版本（如 cursor 的
     /// downloads.cursor.com/lab/<年.月.日-哈希>/ 下载地址），抓正文提取即可，
     /// 无包管理器渠道也能判定「已最新」；None = 脚本不带版本，不查
@@ -330,6 +336,7 @@ const NO_PACKAGING: PackagingSpec = PackagingSpec {
     self_update: None,
     interactive_tui: false,
     install_script: None,
+    install_script_win: None,
     script_latest: None,
     update_fallback: &[],
     legacy_variant: None,
@@ -415,6 +422,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
             scheme: "claude",
             mac_bundle_ids: &["com.anthropic.claudefordesktop"],
             mac_app_names: &["Claude"],
+            win_package_names: &["Claude"],
             download_url: Some("https://claude.ai/download"),
             channel: ChannelPolicy::OwnAccount,
         }],
@@ -477,6 +485,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
             // 内嵌于 ChatGPT.app（无独立 Codex.app，bundle id com.openai.codex，matrix §2）
             mac_bundle_ids: &["com.openai.codex"],
             mac_app_names: &["ChatGPT", "Codex"],
+            win_package_names: &["OpenAI.Codex"],
             download_url: None,
             channel: ChannelPolicy::RegisteredProvider,
         }],
@@ -736,7 +745,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
         binary: "codebuddy",
         version_args: &["--version"],
         protocols: &[],
-        // v2.132.0 实测：只认 CODEBUDDY_* 环境变量（ANTHROPIC_* 无效），协议 Anthropic 兼容
+        // v2.132.0 实测：只认 CODEBUDDY_* 环境变量（ANTHROPIC_* 无效），协议是 OpenAI chat/completions（2026-10-21 更正：base 原样拼 /chat/completions）
         launch: LaunchSpec::Env(EnvInject {
             base_url: Some("CODEBUDDY_BASE_URL"),
             key: Some("CODEBUDDY_API_KEY"),
@@ -808,8 +817,10 @@ static AGENT_SPECS: &[AgentSpec] = &[
         skills_dir: &[".cursor", "skills-cursor"],
         packaging: PackagingSpec {
             // 无 brew/npm 官方包：官方安装脚本装到 ~/.local/share/cursor-agent/versions/<ver>/
-            // Windows 安装渠道官方不支持（updater pick_install 直接 None，文案指 WSL）
             install_script: Some("curl -fsSL https://cursor.com/install | bash"),
+            // Windows 原生安装器（2026-10-20 核实：装到 %LOCALAPPDATA%\cursor-agent，自带 node.exe，
+            // 运行要 Git for Windows；此前文档只写 WSL）
+            install_script_win: Some("irm 'https://cursor.com/install?win32=true' | iex"),
             // 安装脚本正文烙着当前版本（downloads.cursor.com/lab/<版本>/），作最新版查询口
             script_latest: Some("https://cursor.com/install"),
             // cursor-agent update 是非交互自更新
@@ -1173,11 +1184,107 @@ fn headless_write_cap(agent: &str) -> CapabilityFlagDto {
         "qwen" => flag(false, Some("无头写盘未验证，定时任务请换别家")),
         // grok 定时任务带 --yolo：自动批准全部工具，不限课题目录
         "grok" => flag(true, Some("会批准全部操作")),
-        // codex 定时任务是 -s workspace-write，只写课题目录，不必再附注
+        // codex 定时任务是 -s workspace-write，只写课题目录，不必再附注（Windows 另看沙箱开没开）
+        "codex" if cfg!(windows) => codex_windows_headless_cap(
+            codex_windows_sandbox_mode().as_deref(),
+            crate::settings::read_current().codex_win_sandbox_consent.unwrap_or(false),
+        ),
         "codex" => flag(true, None),
         // 其余无头能写文件，但没逐项核过默认权限
         _ => flag(true, Some("按该工具默认权限写文件")),
     }
+}
+
+/// Windows 上 Codex 的 workspace-write 靠它自己的 Windows 沙箱（~/.codex/config.toml 的 `[windows] sandbox`）。
+/// 2026-10-20 本机实测（无头 exec + 假网关，工作目录是 git 工作树，同定时任务的隔离副本）：
+/// - 没配沙箱：命令一律「blocked by policy」被拦下，无头运行没人能批准——定时雷达跑不了检索命令；
+/// - unelevated（非提权，不要管理员）：命令能跑；第一次给工作树里每个文件加一条「修改」权限（给 Codex 的沙箱身份），
+///   约 20–30 秒，主仓与 .git 不动；但 Codex 0.163 在这种模式下 shell 起在自己的安装目录，命令里的相对路径会落到那里
+///   被拒，绝对路径正常——Mesa 在任务说明里要求写绝对路径（scheduler，`codex_win_unelevated_note`）；
+/// - elevated（提权，要在 Codex 里做一次管理员初始化）：命令与相对路径都正常，同样给工作树加权限（多一个 CodexSandboxUsers 组）。
+/// 用户在 Mesa 里确认过（设置 codex_win_sandbox_consent）且自己没配沙箱时，Mesa 给定时任务加 `-c windows.sandbox="unelevated"`
+/// （只对这次运行，不改用户配置）。用户配了就照用户的
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn codex_windows_headless_cap(mode: Option<&str>, consent: bool) -> CapabilityFlagDto {
+    match codex_win_effective_sandbox(mode, consent) {
+        Some("elevated") => flag(true, None),
+        Some(_) if mode.map(str::trim) == Some("unelevated") => flag(
+            true,
+            Some("Codex 用的是非提权沙箱：命令能跑，写文件时 Mesa 会要求它用绝对路径（Codex 的已知问题）"),
+        ),
+        Some(_) => flag(
+            true,
+            Some("已按你的确认开 Codex 的 Windows 沙箱（非提权）：只写定时任务的隔离副本"),
+        ),
+        None => flag(
+            true,
+            Some("Codex 在 Windows 上没开沙箱：定时任务里的命令会被拦下（联网检索等跑不了），可在定时任务里确认开启"),
+        ),
+    }
+}
+
+/// 这次定时运行实际用哪种 Windows 沙箱：用户配了照用户的；没配且确认过 = unelevated；否则 None（命令会被拦）
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+pub(crate) fn codex_win_effective_sandbox(user_mode: Option<&str>, consent: bool) -> Option<&str> {
+    match user_mode.map(str::trim).filter(|m| !m.is_empty()) {
+        Some(m) if m == "elevated" || m == "unelevated" => Some(m),
+        _ if consent => Some("unelevated"),
+        _ => None,
+    }
+}
+
+/// Mesa 要不要给这次定时运行加 `-c windows.sandbox="…"`：只在用户自己没配、但在 Mesa 里确认过时加
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+pub(crate) fn codex_win_sandbox_override(user_mode: Option<&str>, consent: bool) -> Option<&'static str> {
+    let user_set = user_mode.map(str::trim).is_some_and(|m| m == "elevated" || m == "unelevated");
+    (!user_set && consent).then_some("unelevated")
+}
+
+/// 当前机器上 Codex 定时任务的沙箱情况（定时任务弹层与设置页用）
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexWinSandboxDto {
+    /// 只在 Windows 上有意义；其余平台 false，前端不显示
+    pub applicable: bool,
+    /// 用户 Codex 配置里的 `[windows] sandbox`（没有为 None）
+    pub user_mode: Option<String>,
+    pub consent: bool,
+    /// 实际会用的：elevated / unelevated / None（命令会被拦）
+    pub effective: Option<String>,
+}
+
+#[tauri::command]
+pub fn codex_win_sandbox_state() -> CodexWinSandboxDto {
+    let consent = crate::settings::read_current().codex_win_sandbox_consent.unwrap_or(false);
+    let user_mode = if cfg!(windows) { codex_windows_sandbox_mode() } else { None };
+    CodexWinSandboxDto {
+        applicable: cfg!(windows),
+        effective: cfg!(windows)
+            .then(|| codex_win_effective_sandbox(user_mode.as_deref(), consent).map(str::to_string))
+            .flatten(),
+        user_mode,
+        consent,
+    }
+}
+
+/// 只读：用户 Codex 配置里的 `[windows] sandbox` 取值；读不到返回 None
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn codex_windows_sandbox_mode() -> Option<String> {
+    codex_user_config()?
+        .get("windows")?
+        .get("sandbox")?
+        .as_str()
+        .map(str::to_string)
+}
+
+/// 只读：用户的 Codex config.toml（CODEX_HOME 优先，否则 ~/.codex）；读不到或解析失败返回 None
+pub(crate) fn codex_user_config() -> Option<toml::Value> {
+    let home = std::env::var_os("CODEX_HOME")
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|h| h.join(".codex")))?;
+    let text = std::fs::read_to_string(home.join("config.toml")).ok()?;
+    toml::from_str(crate::mcp::strip_bom(&text)).ok()
 }
 
 /// 九家的三项能力一览（前端置灰/提示与后端报错同源）
@@ -1243,6 +1350,9 @@ pub(crate) fn binary_candidate_dirs() -> Vec<std::path::PathBuf> {
             out.push(h.join(".grok/bin")); // Grok Build 官方安装器（x.ai/cli/install.sh）
             out.push(h.join(".volta/bin")); // Volta（node 版本管理器）固定 shim 目录
             out.push(h.join(".local/share/mise/shims")); // mise（node 版本管理器）固定 shim 目录
+            // `quarto install tinytex` 在 macOS 的落点（没有 Homebrew 时 Mesa 这样装 TeX，不写 PATH）
+            out.push(h.join("Library/TinyTeX/bin/universal-darwin"));
+            out.push(h.join("Library/TinyTeX/bin/x86_64-darwin"));
         }
         out.push("/opt/homebrew/bin".into()); // Apple Silicon brew
         out.push("/usr/local/bin".into()); // Intel brew / 手动安装
@@ -1250,6 +1360,8 @@ pub(crate) fn binary_candidate_dirs() -> Vec<std::path::PathBuf> {
         // Quarto 官方 pkg 的本体目录：它往 /usr/local/bin 建链接，Apple 芯片机器上这个目录
         // 常常不存在，链接静默建不出来（2026-10-18 本机实证），装完 PATH 上找不到 quarto
         out.push("/Applications/quarto/bin".into());
+        // python.org 官方 pkg 的本体（同理，/usr/local/bin 的链接可能没建成）
+        out.push("/Library/Frameworks/Python.framework/Versions/Current/bin".into());
     }
     #[cfg(target_os = "linux")]
     {
@@ -1273,6 +1385,8 @@ pub(crate) fn binary_candidate_dirs() -> Vec<std::path::PathBuf> {
             out.push(local.join("Microsoft").join("WindowsApps"));
             // GitHub Desktop 捆绑 CLI github.bat（打开指定工作树）
             out.push(local.join("GitHubDesktop").join("bin"));
+            // Cursor CLI 官方 Windows 安装器（cursor-agent.cmd 启动器，进程直启见 process::cursor_entry_from_launcher）
+            out.push(local.join("cursor-agent"));
         }
         if let Some(roaming) = dirs::data_dir() {
             out.push(roaming.join("npm"));
@@ -1302,6 +1416,13 @@ pub(crate) fn binary_candidate_dirs() -> Vec<std::path::PathBuf> {
         // 只给当前用户装的 Git（winget 偏好用户范围 / 安装器选「仅为我安装」）
         if let Some(local) = dirs::data_local_dir() {
             out.push(local.join("Programs").join("Git").join("cmd"));
+        }
+        // PowerShell 7 官方 MSI / winget Microsoft.PowerShell 默认落点：装完写进 PATH，但已在跑的 Mesa 拿不到，
+        // 内置终端下拉要重启 Mesa 才出现（2026-10-21 补）；应用商店版在上面的 WindowsApps
+        for key in ["ProgramW6432", "ProgramFiles"] {
+            if let Some(root) = std::env::var_os(key) {
+                out.push(std::path::PathBuf::from(root).join("PowerShell").join("7"));
+            }
         }
         // Quarto 官方安装器默认落点（GUI 启动时 PATH 可能未继承）
         for key in ["ProgramW6432", "ProgramFiles"] {
@@ -1407,6 +1528,28 @@ pub fn skills_dir_for(spec: &AgentSpec) -> Option<std::path::PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_windows_headless_note_follows_sandbox_mode() {
+        // 用户自己配了：照用户的，Mesa 的确认不起作用
+        for consent in [false, true] {
+            assert!(codex_windows_headless_cap(Some("elevated"), consent).reason.is_none());
+            assert!(codex_windows_headless_cap(Some("unelevated"), consent).reason.unwrap().contains("绝对路径"));
+            assert_eq!(codex_win_sandbox_override(Some("elevated"), consent), None);
+            assert_eq!(codex_win_sandbox_override(Some("unelevated"), consent), None);
+        }
+        // 没配：没确认就提示会被拦、不加覆盖；确认后加 unelevated
+        for mode in [None, Some("none"), Some("")] {
+            let cap = codex_windows_headless_cap(mode, false);
+            assert!(cap.supported, "改文件仍可以，只是命令会被拦");
+            assert!(cap.reason.unwrap().contains("没开沙箱"), "{mode:?}");
+            assert_eq!(codex_win_sandbox_override(mode, false), None);
+            assert!(codex_windows_headless_cap(mode, true).reason.unwrap().contains("已按你的确认"));
+            assert_eq!(codex_win_sandbox_override(mode, true), Some("unelevated"));
+            assert_eq!(codex_win_effective_sandbox(mode, true), Some("unelevated"));
+            assert_eq!(codex_win_effective_sandbox(mode, false), None);
+        }
+    }
 
     const KNOWN_IDS: [&str; 9] = [
         "claude-code",

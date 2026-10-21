@@ -21,6 +21,12 @@ const MANIFEST_VERSION: u32 = 1;
 const ZIP_MAX_ENTRIES: usize = 20_000;
 const ZIP_MAX_UNCOMPRESSED: u64 = 512 * 1024 * 1024;
 const ZIP_MAX_FILE: u64 = 200 * 1024 * 1024;
+const SIDECAR_MAX_FILE: u64 = 32 * 1024 * 1024;
+const SIDECAR_MAX_TOTAL: u64 = 128 * 1024 * 1024;
+
+/// Cursor CLI 续聊读 `~/.cursor/chats/<md5(cwd)>/<id>/store.db`（它自己的 SQLite），`agent-transcripts` 下的 jsonl 只是导出副本。
+/// 会话包只带得了后者，所以导入的 Cursor 对话在 Mesa 里能看，不保证能在 Cursor 里接着聊。
+const CURSOR_RESUME_NOTE: &str = "Cursor 自己的续聊数据库不在包里，导入后可在 Mesa 查看，不一定能在 Cursor 里接着聊";
 const ZSTD_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
 
 const TRANSFER_AGENTS: &[&str] = &[
@@ -159,30 +165,33 @@ pub struct ImportReportDto {
 // ===== 路径编码（对照实机会话目录 / matrix） =====
 
 /// Claude / Qwen：路径中所有非字母数字换成 `-`（含开头的 `/` → 前导 `-`）。
+/// 两家都是 JS `replace(/[^a-zA-Z0-9]/g, "-")`，按 UTF-16 码元计：BMP 字符 1 个 `-`，emoji 等增补平面字符 2 个。
 fn path_slug_non_alnum(path: &str) -> String {
-    path.chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-        .collect()
+    let mut out = String::new();
+    for c in path.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+        } else {
+            for _ in 0..c.len_utf16() {
+                out.push('-');
+            }
+        }
+    }
+    out
 }
 
-/// Cursor / CodeBuddy：去掉前导 `/`，分隔符换成 `-`（本机 cursor 目录实证）。
-/// Windows 盘符 `C:` 的冒号是非法文件名，必须再洗一遍，否则 Mac→Win 落盘会 os error 123。
-fn path_slug_separators(path: &str) -> String {
-    let n = path.replace('\\', "/");
-    let n = n.trim_start_matches('/');
-    fs_safe_component(&n.replace('/', "-"))
-}
-
-/// Windows 文件名非法字符（与 paths::FS_ILLEGAL 同集）换成 `-`，三平台同一套，
-/// 避免 Mac 导出的会话在 Windows 上建不出目录。
-fn fs_safe_component(name: &str) -> String {
-    name.chars()
-        .map(|c| match c {
-            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '-',
-            c if c.is_control() => '-',
-            c => c,
-        })
-        .collect()
+/// Cursor CLI 的项目目录名（cursor-agent 源码 `workspace-paths`）：非字母数字换 `-`、连续 `-` 并成一个、去首尾 `-`。
+/// Windows 的 `C:\Users` 因此是 `C-Users`（不是 `C--Users`），空格 / `_` / `.` / 中文也都变 `-`。
+fn cursor_slug(path: &str) -> String {
+    let mut out = String::new();
+    for c in path.chars() {
+        let c = if c.is_ascii_alphanumeric() { c } else { '-' };
+        if c == '-' && (out.is_empty() || out.ends_with('-')) {
+            continue;
+        }
+        out.push(c);
+    }
+    out.trim_end_matches('-').to_string()
 }
 
 fn percent_encode_path(s: &str) -> String {
@@ -230,14 +239,34 @@ fn sha256_hex(bytes: &[u8]) -> String {
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Kimi 新版 `wd_<basename>_<sha256(workDir)[:12]>`（本机 session_index 实证）。
+/// Kimi 新版工作区目录名（kimi.exe 源码 `workdir-slug.ts` `encodeWorkDirKey`）：
+/// 路径先把 `\` 换成 `/`、去尾部 `/`；`wd_<末段 slug>_<sha256(整条路径)[:12]>`。
+/// 末段 slug = 小写、连续的非 `[a-z0-9._-]` 并成一个 `-`、去首尾 `-`、截 40、再去首尾 `-`，空 / `.` / `..` 记作 `workspace`。
+/// Windows 路径必须先换斜杠再哈希，否则目录名对不上、`kimi --cwd` 列不出会话。
 fn kimi_wd_bucket(work_dir: &str) -> String {
-    let base = Path::new(work_dir)
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "wd".into());
-    let hash = sha256_hex(work_dir.as_bytes());
-    format!("wd_{}_{}", base, &hash[..12])
+    let normalized = work_dir.replace('\\', "/");
+    let normalized = normalized.trim_end_matches('/');
+    let last = normalized.rsplit('/').next().unwrap_or(normalized);
+    let hash = sha256_hex(normalized.as_bytes());
+    format!("wd_{}_{}", kimi_slug(last), &hash[..12])
+}
+
+fn kimi_slug(name: &str) -> String {
+    let mut slug = String::new();
+    for c in name.to_lowercase().chars() {
+        if c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-') {
+            slug.push(c);
+        } else if !slug.ends_with('-') {
+            slug.push('-');
+        }
+    }
+    let slug: String = slug.trim_matches('-').chars().take(40).collect();
+    let slug = slug.trim_matches('-');
+    if slug.is_empty() || slug == "." || slug == ".." {
+        "workspace".into()
+    } else {
+        slug.to_string()
+    }
 }
 
 fn kimi_legacy_bucket(work_dir: &str) -> String {
@@ -247,6 +276,66 @@ fn kimi_legacy_bucket(work_dir: &str) -> String {
 fn gemini_import_slug(target: &str) -> String {
     let hash = format!("{:x}", md5::compute(target.as_bytes()));
     format!("ccode-{}", &hash[..12])
+}
+
+/// 目标目录若已在 `~/.gemini/projects.json` 登记过（用户在那里跑过 gemini），Gemini 只认登记的 slug 目录，
+/// 落到别的 slug 下它看不见；没登记时它会扫 `tmp/*/.project_root` 自行认领，自建 slug 即可。
+fn gemini_registered_slug(home: &Path, target: &str) -> Option<String> {
+    let text = fs::read_to_string(home.join(".gemini").join("projects.json")).ok()?;
+    let v: Value = serde_json::from_str(&text).ok()?;
+    let slug = v
+        .get("projects")?
+        .as_object()?
+        .iter()
+        .find(|(k, _)| same_path(k, target))?
+        .1
+        .as_str()?
+        .to_string();
+    let plain =
+        !slug.is_empty() && slug != "." && slug != ".." && !slug.contains(['/', '\\', '\0']);
+    plain.then_some(slug)
+}
+
+/// CodeBuddy 的项目目录名（CLI 源码 `compressWorkspacePathName`）：`/ \ :` 换 `-`、去首尾 `-`、
+/// 连续 `-` 并成一个；超 255 字节改成「按码点截 180 字节 + `-` + djb2 的 36 进制」。
+fn codebuddy_slug(path: &str) -> String {
+    let mut base = String::new();
+    for c in path.chars() {
+        let c = if matches!(c, '/' | '\\' | ':') { '-' } else { c };
+        if c == '-' && (base.is_empty() || base.ends_with('-')) {
+            continue;
+        }
+        base.push(c);
+    }
+    let base = base.trim_end_matches('-').to_string();
+    if base.len() <= 255 {
+        return base;
+    }
+    let mut cut = String::new();
+    for c in base.chars() {
+        if cut.len() + c.len_utf8() > 180 {
+            break;
+        }
+        cut.push(c);
+    }
+    let mut h: u32 = 5381;
+    for b in base.as_bytes() {
+        h = h.wrapping_mul(33) ^ u32::from(*b);
+    }
+    format!("{cut}-{}", base36(h))
+}
+
+fn base36(mut n: u32) -> String {
+    if n == 0 {
+        return "0".into();
+    }
+    let mut out = Vec::new();
+    while n > 0 {
+        out.push(b"0123456789abcdefghijklmnopqrstuvwxyz"[(n % 36) as usize]);
+        n /= 36;
+    }
+    out.reverse();
+    String::from_utf8(out).unwrap_or_default()
 }
 
 fn md5_hex(bytes: &[u8]) -> String {
@@ -285,7 +374,9 @@ fn is_transfer_agent(agent: &str) -> bool {
 
 fn rewrite_keys_for(agent: &str) -> &'static [&'static str] {
     match agent {
-        "claude-code" | "qwen" | "codebuddy" | "codex" => &["cwd"],
+        "claude-code" | "qwen" | "codebuddy" => &["cwd"],
+        // session_meta 里还有 runtime_workspace_roots（数组）；workspace_roots 里属于旧根的才会被改
+        "codex" => &["cwd", "runtime_workspace_roots", "workspace_roots"],
         "gemini" => &["directories"],
         // cursor 字段名未拿到实机 jsonl 样本；与扫描器候选名单同源，存在哪个改哪个
         "cursor" => &["cwd", "project_path", "workingDirectory"],
@@ -298,31 +389,65 @@ fn rewrite_keys_for(agent: &str) -> &'static [&'static str] {
 
 // ===== JSON 行级改写 =====
 
+/// 目标路径的分隔符风格：带盘符或反斜杠按 Windows，其余按 POSIX。
+fn target_sep(new: &str) -> char {
+    let bytes = new.as_bytes();
+    let drive = bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic();
+    if drive || new.contains('\\') {
+        '\\'
+    } else {
+        '/'
+    }
+}
+
+/// 路径是旧根自身或其子目录时换成新根，子目录余下部分按目标分隔符重接。
+/// Claude Code 的 cwd 会随 `cd` 落到子目录，只改「恰好等于旧根」会留下对方机器的路径。
+fn remap_path(s: &str, old: &str, new: &str) -> Option<String> {
+    if same_path(s, old) {
+        return Some(new.to_string());
+    }
+    if !path_within(s, old) {
+        return None;
+    }
+    let skip = old
+        .replace('\\', "/")
+        .split('/')
+        .filter(|c| !c.is_empty())
+        .count();
+    let norm = s.replace('\\', "/");
+    let sep = target_sep(new);
+    let mut out = new.trim_end_matches(['/', '\\']).to_string();
+    for c in norm.split('/').filter(|c| !c.is_empty()).skip(skip) {
+        out.push(sep);
+        out.push_str(c);
+    }
+    Some(out)
+}
+
 fn rewrite_value(v: &mut Value, old: &str, new: &str, keys: &[&str]) {
     match v {
         Value::Object(map) => {
-            let names: Vec<String> = map.keys().cloned().collect();
-            for name in names {
-                if let Some(val) = map.get_mut(&name) {
-                    if keys.iter().any(|k| *k == name) {
-                        match val {
-                            Value::String(s) if same_path(s, old) => {
-                                *s = new.to_string();
+            for (name, val) in map.iter_mut() {
+                if keys.iter().any(|k| *k == name) {
+                    match val {
+                        Value::String(s) => {
+                            if let Some(r) = remap_path(s, old, new) {
+                                *s = r;
                             }
-                            Value::Array(arr) => {
-                                for item in arr {
-                                    if let Value::String(s) = item {
-                                        if same_path(s, old) {
-                                            *s = new.to_string();
-                                        }
+                        }
+                        Value::Array(arr) => {
+                            for item in arr {
+                                if let Value::String(s) = item {
+                                    if let Some(r) = remap_path(s, old, new) {
+                                        *s = r;
                                     }
                                 }
                             }
-                            _ => {}
                         }
+                        _ => {}
                     }
-                    rewrite_value(val, old, new, keys);
                 }
+                rewrite_value(val, old, new, keys);
             }
         }
         Value::Array(arr) => {
@@ -334,43 +459,8 @@ fn rewrite_value(v: &mut Value, old: &str, new: &str, keys: &[&str]) {
     }
 }
 
-fn rewrite_prefix(v: &mut Value, old_prefix: &str, new_prefix: &str, keys: &[&str]) {
-    match v {
-        Value::Object(map) => {
-            let names: Vec<String> = map.keys().cloned().collect();
-            for name in names {
-                if let Some(val) = map.get_mut(&name) {
-                    if keys.iter().any(|k| *k == name) {
-                        if let Value::String(s) = val {
-                            if s == old_prefix
-                                || s.starts_with(&(old_prefix.to_string() + "/"))
-                                || s.starts_with(&(old_prefix.to_string() + "\\"))
-                            {
-                                *s = format!("{}{}", new_prefix, &s[old_prefix.len()..]);
-                            }
-                        }
-                    }
-                    rewrite_prefix(val, old_prefix, new_prefix, keys);
-                }
-            }
-        }
-        Value::Array(arr) => {
-            for item in arr {
-                rewrite_prefix(item, old_prefix, new_prefix, keys);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn rewrite_json_bytes(
-    bytes: &[u8],
-    old: &str,
-    new: &str,
-    keys: &[&str],
-    prefix: Option<(&str, &str, &[&str])>,
-) -> Vec<u8> {
-    if old == new && prefix.is_none() {
+fn rewrite_json_bytes(bytes: &[u8], old: &str, new: &str, keys: &[&str]) -> Vec<u8> {
+    if old == new {
         return bytes.to_vec();
     }
     let raw = maybe_decompress(bytes);
@@ -389,9 +479,6 @@ fn rewrite_json_bytes(
         match serde_json::from_str::<Value>(line) {
             Ok(mut v) => {
                 rewrite_value(&mut v, old, new, keys);
-                if let Some((old_p, new_p, pkeys)) = prefix {
-                    rewrite_prefix(&mut v, old_p, new_p, pkeys);
-                }
                 out.push_str(&v.to_string());
             }
             Err(_) => out.push_str(line),
@@ -403,24 +490,118 @@ fn rewrite_json_bytes(
     out.into_bytes()
 }
 
-fn rewrite_json_object(
-    bytes: &[u8],
-    old: &str,
-    new: &str,
-    keys: &[&str],
-    prefix: Option<(&str, &str, &[&str])>,
-) -> Vec<u8> {
-    if old == new && prefix.is_none() {
+fn rewrite_json_object(bytes: &[u8], old: &str, new: &str, keys: &[&str]) -> Vec<u8> {
+    if old == new {
         return bytes.to_vec();
     }
     let Ok(mut v) = serde_json::from_slice::<Value>(bytes) else {
         return bytes.to_vec();
     };
     rewrite_value(&mut v, old, new, keys);
-    if let Some((old_p, new_p, pkeys)) = prefix {
-        rewrite_prefix(&mut v, old_p, new_p, pkeys);
-    }
     serde_json::to_vec(&v).unwrap_or_else(|_| bytes.to_vec())
+}
+
+/// Claude 把过大的工具输出落到 `<项目目录>/<会话id>/tool-results/` 并在历史里记绝对路径
+/// （`Full output saved to: …` 文本与 `toolUseResult.persistedOutputPath` 两处）；导入换了 home 或 cwd 后
+/// 这些路径就悬空了。只认「…/projects/<slug>/<本会话id>/tool-results/」这一形状，把前缀换成新位置，其余原样。
+/// 起点必须是盘符或 `/` 开头且途中无空白（含空格的用户名认不出来，留着悬空也不会改坏文本）。
+fn remap_tool_result_paths(s: &str, sid: &str, new_prefix: &str) -> Option<String> {
+    const DIR: &str = "tool-results";
+    let is_sep = |c: char| c == '/' || c == '\\';
+    let mut out = String::new();
+    let mut last = 0usize;
+    for (i, _) in s.match_indices(sid) {
+        if i < last {
+            continue;
+        }
+        let after = &s[i + sid.len()..];
+        let tail_ok = after.starts_with(is_sep)
+            && after[1..].starts_with(DIR)
+            && after[1 + DIR.len()..].starts_with(is_sep);
+        if !tail_ok {
+            continue;
+        }
+        let end = i + sid.len() + 1 + DIR.len() + 1;
+        let Some(b1) = s[..i].strip_suffix(is_sep) else {
+            continue;
+        };
+        let Some(p) = b1.rfind(is_sep) else {
+            continue;
+        };
+        let slug = &b1[p + 1..];
+        if slug.is_empty() || slug.chars().any(char::is_whitespace) {
+            continue;
+        }
+        let Some(b3) = b1[..p].strip_suffix("projects") else {
+            continue;
+        };
+        let Some(b4) = b3.strip_suffix(is_sep) else {
+            continue;
+        };
+        let start = b4
+            .rfind(|c: char| c.is_whitespace() || "\"'<>|*?()[]{}=,;".contains(c))
+            .map_or(0, |k| k + b4[k..].chars().next().map_or(1, char::len_utf8));
+        let head = &b4[start..];
+        let hb = head.as_bytes();
+        let rooted = head.starts_with('/')
+            || (hb.len() >= 3 && hb[0].is_ascii_alphabetic() && hb[1] == b':' && is_sep(hb[2] as char));
+        if !rooted || start < last {
+            continue;
+        }
+        out.push_str(&s[last..start]);
+        out.push_str(new_prefix);
+        last = end;
+    }
+    (last > 0).then(|| {
+        out.push_str(&s[last..]);
+        out
+    })
+}
+
+fn remap_tool_result_value(v: &mut Value, sid: &str, new_prefix: &str) {
+    match v {
+        Value::String(s) => {
+            if let Some(r) = remap_tool_result_paths(s, sid, new_prefix) {
+                *s = r;
+            }
+        }
+        Value::Array(arr) => {
+            for item in arr {
+                remap_tool_result_value(item, sid, new_prefix);
+            }
+        }
+        Value::Object(map) => {
+            for (_, val) in map.iter_mut() {
+                remap_tool_result_value(val, sid, new_prefix);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 逐行处理：只有含 `tool-results` 的行才解析改写，其余行（含坏行）原样保留。
+fn rewrite_tool_result_paths(bytes: &[u8], sid: &str, new_prefix: &str) -> Vec<u8> {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return bytes.to_vec();
+    };
+    if !text.contains("tool-results") {
+        return bytes.to_vec();
+    }
+    let mut out = String::with_capacity(text.len());
+    for (i, line) in text.split('\n').enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        if line.contains("tool-results") {
+            if let Ok(mut v) = serde_json::from_str::<Value>(line) {
+                remap_tool_result_value(&mut v, sid, new_prefix);
+                out.push_str(&v.to_string());
+                continue;
+            }
+        }
+        out.push_str(line);
+    }
+    out.into_bytes()
 }
 
 // ===== zip 安全 =====
@@ -550,12 +731,45 @@ fn collect_tree(root: &Path, rel_base: &str, out: &mut Vec<(String, PathBuf)>) {
         } else {
             format!("{rel_base}/{name}")
         };
-        if p.is_dir() {
+        // 符号链接一律不跟：会话目录里的链接可能指到目录之外，跟进去就把任意文件打进了包
+        let Ok(ft) = e.file_type() else {
+            continue;
+        };
+        if ft.is_dir() {
             collect_tree(&p, &rel, out);
-        } else if p.is_file() {
+        } else if ft.is_file() {
             out.push((rel.replace('\\', "/"), p));
         }
     }
+}
+
+/// Claude 会话旁的同名目录 `<id>/`：子 agent 对话、被截断的大工具输出、自定义标题。
+/// 单文件与总量封顶，超了的文件直接不带；主会话不受影响。
+fn claude_sidecar_files(main: &Path) -> Vec<(String, PathBuf)> {
+    let Some(stem) = main.file_stem().map(|s| s.to_string_lossy().into_owned()) else {
+        return Vec::new();
+    };
+    let dir = main.with_extension("");
+    if !fs::symlink_metadata(&dir)
+        .map(|m| m.is_dir())
+        .unwrap_or(false)
+    {
+        return Vec::new();
+    }
+    let mut all = Vec::new();
+    collect_tree(&dir, &stem, &mut all);
+    all.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut total = 0u64;
+    let mut out = Vec::new();
+    for (rel, p) in all {
+        let len = fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+        if len > SIDECAR_MAX_FILE || total + len > SIDECAR_MAX_TOTAL {
+            continue;
+        }
+        total += len;
+        out.push((rel, p));
+    }
+    out
 }
 
 fn kimi_session_dir(file_path: &Path) -> Option<PathBuf> {
@@ -609,7 +823,11 @@ fn pack_files_for(agent: &str, file_path: &Path) -> Result<Vec<(String, PathBuf)
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .ok_or("会话文件名无效")?;
-            Ok(vec![(name, file_path.to_path_buf())])
+            let mut files = vec![(name, file_path.to_path_buf())];
+            if agent == "claude-code" {
+                files.extend(claude_sidecar_files(file_path));
+            }
+            Ok(files)
         }
     }
 }
@@ -648,9 +866,19 @@ fn export_one(spec: &ExportKeyDto) -> Result<(ManifestEntry, Vec<(String, Vec<u8
     let packed = pack_files_for(&spec.agent, &src)?;
     let mut files = Vec::new();
     let mut blobs = Vec::new();
-    for (rel, path) in packed {
-        let bytes = fs::read(&path).map_err(|e| format!("读取会话文件失败: {e}"))?;
+    // 只有 Claude 的附属文件允许丢；kimi / grok 缺一个文件包就不完整，必须报错
+    let sidecar_lenient = spec.agent == "claude-code";
+    for (n, (rel, path)) in packed.into_iter().enumerate() {
+        let bytes = match fs::read(&path) {
+            Ok(b) => b,
+            // 第 0 个是主会话文件；附属文件可能在导出途中被 CLI 清掉，丢了不影响主会话
+            Err(_) if n > 0 && sidecar_lenient => continue,
+            Err(e) => return Err(format!("读取会话文件失败: {e}")),
+        };
         if bytes.len() as u64 > ZIP_MAX_FILE {
+            if n > 0 && sidecar_lenient {
+                continue;
+            }
             return Err("会话文件过大，无法导出".into());
         }
         let zip_path = format!("sessions/{rel}");
@@ -689,7 +917,13 @@ pub fn export_impl(specs: &[ExportKeyDto], dest: &Path) -> Result<String, String
     }
     let mut entries = Vec::new();
     let mut blobs = Vec::new();
-    for (i, spec) in specs.iter().enumerate() {
+    let mut seen = HashSet::new();
+    for spec in specs {
+        // 列表里同一会话可能出现两次（如 pin 快照与实体），包里只留一份
+        if !seen.insert((spec.agent.clone(), spec.session_id.clone())) {
+            continue;
+        }
+        let i = entries.len();
         let (mut entry, files) = export_one(spec)?;
         let prefix = format!("sessions/{i}/");
         for f in &mut entry.files {
@@ -971,9 +1205,11 @@ fn pick_main_file<'a>(agent: &str, files: &'a [ManifestFile]) -> Option<&'a Mani
         "codex" => files
             .iter()
             .find(|f| f.path.ends_with(".jsonl") || f.path.ends_with(".jsonl.zst")),
+        // 主文件是层级最浅的 jsonl：Claude 附属目录里的子 agent 对话更深，不能被当主文件
         _ => files
             .iter()
-            .find(|f| f.path.ends_with(".jsonl") || f.path.ends_with(".jsonl.zst")),
+            .filter(|f| f.path.ends_with(".jsonl") || f.path.ends_with(".jsonl.zst"))
+            .min_by_key(|f| f.path.matches('/').count()),
     }
 }
 
@@ -1124,6 +1360,15 @@ fn inspect_at(
                 status = "needs-path".into();
                 reason = Some("原目录在本机不存在，请指定要落到的项目目录".into());
             }
+        }
+        if status != "unsupported"
+            && status != "conflict"
+            && e.agent == "cursor"
+        {
+            reason = Some(match reason {
+                Some(r) => format!("{r}；{CURSOR_RESUME_NOTE}"),
+                None => CURSOR_RESUME_NOTE.to_string(),
+            });
         }
         if status != "unsupported"
             && e.agent == "codex"
@@ -1324,7 +1569,7 @@ fn apply_entry(
             &old,
             home.join(".codebuddy")
                 .join("projects")
-                .join(path_slug_separators(target)),
+                .join(codebuddy_slug(target)),
         ),
         "cursor" => land_cursor(home, entry, &files, index, target, &old),
         "gemini" => land_gemini(home, entry, &files, index, target, &old),
@@ -1347,7 +1592,8 @@ fn land_single(
 ) -> Result<String, String> {
     let (f, bytes) = files
         .iter()
-        .find(|(f, _)| f.path.ends_with(".jsonl") || f.path.ends_with(".jsonl.zst"))
+        .filter(|(f, _)| f.path.ends_with(".jsonl") || f.path.ends_with(".jsonl.zst"))
+        .min_by_key(|(f, _)| f.path.matches('/').count())
         .copied()
         .ok_or("缺 jsonl 主文件")?;
     let name = Path::new(&zip_rel(index, &f.path))
@@ -1359,13 +1605,60 @@ fn land_single(
     if dest.exists() {
         return Err("目标文件已存在".into());
     }
-    let body = if rewrite_needed(old, target) {
-        rewrite_json_bytes(bytes, old, target, rewrite_keys_for(agent), None)
+    let mut body = if rewrite_needed(old, target) {
+        rewrite_json_bytes(bytes, old, target, rewrite_keys_for(agent))
     } else {
         bytes.to_vec()
     };
+    if agent == "claude-code" {
+        body = rewrite_tool_result_paths(&body, session_id, &tool_results_prefix(&dir, session_id));
+    }
     atomic_write_checked(&dest, &body, home, f.mtime_ms)?;
+    land_sidecars(home, agent, session_id, files, f, index, target, old, &dir);
     Ok("imported".into())
+}
+
+fn tool_results_prefix(dir: &Path, session_id: &str) -> String {
+    let p = dir.join(session_id).join("tool-results");
+    format!("{}{}", p.to_string_lossy(), std::path::MAIN_SEPARATOR)
+}
+
+/// 主文件旁的附属文件（Claude 的 `<id>/subagents|tool-results|custom-title.json`）。
+/// 尽力而为：主会话已经落好，附属文件任何一个失败都不回头把整条导入判失败；已存在的不覆盖。
+fn land_sidecars(
+    home: &Path,
+    agent: &str,
+    session_id: &str,
+    files: &[(&ManifestFile, &[u8])],
+    main: &ManifestFile,
+    index: usize,
+    target: &str,
+    old: &str,
+    dir: &Path,
+) {
+    let prefix = format!("{session_id}/");
+    for (f, bytes) in files {
+        if f.path == main.path {
+            continue;
+        }
+        let rel = zip_rel(index, &f.path);
+        if !rel.starts_with(&prefix) {
+            continue;
+        }
+        let dest = dir.join(&rel);
+        if dest.exists() {
+            continue;
+        }
+        let mut body = if rel.ends_with(".jsonl") && rewrite_needed(old, target) {
+            rewrite_json_bytes(bytes, old, target, rewrite_keys_for(agent))
+        } else {
+            bytes.to_vec()
+        };
+        if rel.ends_with(".jsonl") && agent == "claude-code" {
+            body = rewrite_tool_result_paths(&body, session_id, &tool_results_prefix(dir, session_id));
+        }
+        let _ = atomic_write_checked(&dest, &body, home, f.mtime_ms);
+    }
 }
 
 fn land_cursor(
@@ -1384,7 +1677,7 @@ fn land_cursor(
     let dest = home
         .join(".cursor")
         .join("projects")
-        .join(path_slug_separators(target))
+        .join(cursor_slug(target))
         .join("agent-transcripts")
         .join(&entry.session_id)
         .join(format!("{}.jsonl", entry.session_id));
@@ -1393,7 +1686,7 @@ fn land_cursor(
     }
     let _ = index;
     let body = if rewrite_needed(old, target) {
-        rewrite_json_bytes(bytes, old, target, rewrite_keys_for("cursor"), None)
+        rewrite_json_bytes(bytes, old, target, rewrite_keys_for("cursor"))
     } else {
         bytes.to_vec()
     };
@@ -1414,7 +1707,10 @@ fn land_gemini(
         .find(|(f, _)| f.path.ends_with(".jsonl"))
         .copied()
         .ok_or("缺 gemini jsonl")?;
-    let slug = gemini_import_slug(target);
+    let registered = gemini_registered_slug(home, target);
+    let slug = registered
+        .clone()
+        .unwrap_or_else(|| gemini_import_slug(target));
     let slug_dir = home.join(".gemini").join("tmp").join(&slug);
     let name = Path::new(&zip_rel(index, &f.path))
         .file_name()
@@ -1425,13 +1721,15 @@ fn land_gemini(
         return Err("目标文件已存在".into());
     }
     let body = if rewrite_needed(old, target) {
-        rewrite_json_bytes(bytes, old, target, rewrite_keys_for("gemini"), None)
+        rewrite_json_bytes(bytes, old, target, rewrite_keys_for("gemini"))
     } else {
         bytes.to_vec()
     };
     atomic_write_checked(&dest, &body, home, f.mtime_ms)?;
     let marker = slug_dir.join(".project_root");
-    atomic_write_checked(&marker, format!("{target}\n").as_bytes(), home, 0)?;
+    if registered.is_none() || !marker.exists() {
+        atomic_write_checked(&marker, format!("{target}\n").as_bytes(), home, 0)?;
+    }
     Ok("imported".into())
 }
 
@@ -1464,7 +1762,7 @@ fn land_codex(
         if name.ends_with(".zst") {
             name = name.trim_end_matches(".zst").to_string();
         }
-        rewrite_json_bytes(bytes, old, target, rewrite_keys_for("codex"), None)
+        rewrite_json_bytes(bytes, old, target, rewrite_keys_for("codex"))
     } else {
         bytes.to_vec()
     };
@@ -1500,15 +1798,19 @@ fn land_kimi(
             let dest = dest_dir.join(rel);
             let mut body = if rewrite_needed(old, target) {
                 if f.path.ends_with(".json") {
-                    rewrite_json_object(bytes, old, target, rewrite_keys_for("kimi"), None)
+                    rewrite_json_object(bytes, old, target, rewrite_keys_for("kimi"))
                 } else {
-                    rewrite_json_bytes(bytes, old, target, rewrite_keys_for("kimi"), None)
+                    rewrite_json_bytes(bytes, old, target, rewrite_keys_for("kimi"))
                 }
             } else {
                 bytes.to_vec()
             };
             if f.path.ends_with("state.json") {
                 body = rewrite_kimi_homedir(&body, &new_home);
+            }
+            // wire 里的 runtime.set_binding 记着原工作区目录名，与会话所在目录不一致时 Kimi 拒绝恢复
+            if f.path.ends_with("wire.jsonl") {
+                body = rewrite_kimi_workspace_id(&body, &kimi_wd_bucket(target));
             }
             atomic_write_checked(&dest, &body, home, f.mtime_ms)?;
         }
@@ -1528,9 +1830,9 @@ fn land_kimi(
             let dest = dest_dir.join(Path::new(&rel).file_name().unwrap_or(rel.as_ref()));
             let body = if rewrite_needed(old, target) {
                 if f.path.ends_with(".json") {
-                    rewrite_json_object(bytes, old, target, rewrite_keys_for("kimi"), None)
+                    rewrite_json_object(bytes, old, target, rewrite_keys_for("kimi"))
                 } else {
-                    rewrite_json_bytes(bytes, old, target, rewrite_keys_for("kimi"), None)
+                    rewrite_json_bytes(bytes, old, target, rewrite_keys_for("kimi"))
                 }
             } else {
                 bytes.to_vec()
@@ -1540,6 +1842,30 @@ fn land_kimi(
         upsert_kimi_work_dir(home, target)?;
         Ok("imported".into())
     }
+}
+
+fn rewrite_kimi_workspace_id(bytes: &[u8], bucket: &str) -> Vec<u8> {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return bytes.to_vec();
+    };
+    let mut out = String::with_capacity(text.len());
+    for (i, line) in text.split('\n').enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        if line.contains("runtime.set_binding") {
+            if let Ok(mut v) = serde_json::from_str::<Value>(line) {
+                let is_binding = v.get("type").and_then(Value::as_str) == Some("runtime.set_binding");
+                if is_binding && v.get("workspaceId").is_some() {
+                    v["workspaceId"] = Value::String(bucket.to_string());
+                    out.push_str(&v.to_string());
+                    continue;
+                }
+            }
+        }
+        out.push_str(line);
+    }
+    out.into_bytes()
 }
 
 fn rewrite_kimi_homedir(bytes: &[u8], new_agent_home: &Path) -> Vec<u8> {
@@ -1645,7 +1971,7 @@ fn land_grok(
         let dest = dest_dir.join(rel);
         let mut body = bytes.to_vec();
         if f.path.ends_with("summary.json") && rewrite_needed(old, target) {
-            body = rewrite_json_object(bytes, old, target, rewrite_keys_for("grok"), None);
+            body = rewrite_json_object(bytes, old, target, rewrite_keys_for("grok"));
         }
         atomic_write_checked(&dest, &body, home, f.mtime_ms)?;
     }
@@ -1761,6 +2087,11 @@ fn apply_at(
                 let meta_warning = write_ccode_meta(entry)
                     .err()
                     .map(|err| format!("会话文件已导入，但 Mesa 整理信息写入失败：{err}"));
+                let meta_warning = match (meta_warning, entry.agent == "cursor") {
+                    (Some(w), true) => Some(format!("{w}；{CURSOR_RESUME_NOTE}")),
+                    (None, true) => Some(CURSOR_RESUME_NOTE.to_string()),
+                    (w, false) => w,
+                };
                 existing.insert((entry.agent.clone(), entry.session_id.clone()));
                 imported += 1;
                 if entry.agent == "codex" {
@@ -1898,11 +2229,96 @@ mod tests {
     }
 
     #[test]
-    fn cursor_slug_strips_leading_slash() {
+    fn cursor_slug_matches_cli_rule() {
         assert_eq!(
-            path_slug_separators("/Users/tongzhouhong/Documents/Ccode"),
+            cursor_slug("/Users/tongzhouhong/Documents/Ccode"),
             "Users-tongzhouhong-Documents-Ccode"
         );
+        // 源码核对：非字母数字（空格 / _ / . / 中文）都变 -，连续 - 并成一个，盘符后只有一个 -
+        assert_eq!(
+            cursor_slug(r"C:\Users\10783\Desktop\Mesa\ccode"),
+            "C-Users-10783-Desktop-Mesa-ccode"
+        );
+        assert_eq!(cursor_slug("/Users/a b/my_proj.v2/聊图"), "Users-a-b-my-proj-v2");
+    }
+
+    #[test]
+    fn codebuddy_slug_matches_cli_rule() {
+        assert_eq!(codebuddy_slug("/Users/alice/proj"), "Users-alice-proj");
+        assert_eq!(
+            codebuddy_slug(r"C:\Users\10783\Desktop\mesa-verify-target"),
+            "C-Users-10783-Desktop-mesa-verify-target"
+        );
+        assert_eq!(codebuddy_slug("/a/proj--x/"), "a-proj-x", "连续 - 并成一个、去尾");
+        // 与 CLI 源码同一算法在 node 里算出的期望值（超 255 字节：截 180 字节 + djb2 base36）
+        let long = format!(r"C:\Users\10783\{}\proj", "目录".repeat(60));
+        assert_eq!(
+            codebuddy_slug(&long),
+            format!("C-Users-10783-{}目-1y2au2m", "目录".repeat(27))
+        );
+    }
+
+    #[test]
+    fn claude_slug_counts_utf16_units() {
+        assert_eq!(path_slug_non_alnum("/a/聊图"), "-a---");
+        assert_eq!(path_slug_non_alnum("/a/😀"), "-a---", "增补平面字符占 2 个码元");
+    }
+
+    #[test]
+    fn tool_result_paths_follow_new_location() {
+        let sid = "93f52ccd-2ef2-4e31-a9f5-c4ee59c16679";
+        let new_prefix = format!(r"C:\Users\10783\.claude\projects\C--new\{sid}\tool-results\");
+        let old_win = format!(
+            r"Output too large (43.3KB). Full output saved to: C:\Users\a\.claude\projects\C--old\{sid}\tool-results\x1.txt\n\nPreview"
+        );
+        let got = remap_tool_result_paths(&old_win, sid, &new_prefix).unwrap();
+        assert!(got.starts_with(&format!(
+            r"Output too large (43.3KB). Full output saved to: {new_prefix}x1.txt"
+        )));
+        assert!(got.ends_with(r"\n\nPreview"), "{got}");
+        assert!(!got.contains("C--old"));
+
+        let old_mac = format!(
+            "saved to \"/Users/tongzhouhong/.claude/projects/-Users-t-proj/{sid}/tool-results/y.txt\" ok"
+        );
+        let got = remap_tool_result_paths(&old_mac, sid, &new_prefix).unwrap();
+        assert_eq!(got, format!("saved to \"{new_prefix}y.txt\" ok"));
+
+        // 字段本身就是路径
+        let field = format!("/Users/t/.claude/projects/-p/{sid}/tool-results/z.txt");
+        assert_eq!(
+            remap_tool_result_paths(&field, sid, &new_prefix).unwrap(),
+            format!("{new_prefix}z.txt")
+        );
+
+        // 别的会话 id、含空格的用户名、路径不在 projects 下：一律不动
+        assert!(
+            remap_tool_result_paths(&old_win.replace(sid, "other-sid"), sid, &new_prefix).is_none()
+        );
+        let spaced =
+            format!(r"C:\Users\J Smith\.claude\projects\C--old\{sid}\tool-results\x.txt");
+        assert!(remap_tool_result_paths(&spaced, sid, &new_prefix).is_none());
+        let elsewhere = format!("/tmp/{sid}/tool-results/x.txt");
+        assert!(remap_tool_result_paths(&elsewhere, sid, &new_prefix).is_none());
+    }
+
+    #[test]
+    fn rewrite_tool_result_paths_only_touches_matching_lines() {
+        let sid = "s-1";
+        let np = "/new/projects/slug/s-1/tool-results/";
+        let src = format!(
+            "{{\"a\":1}}\nbroken tool-results {{\n{{\"toolUseResult\":{{\"persistedOutputPath\":\"/old/.claude/projects/p/{sid}/tool-results/t.txt\"}}}}\n"
+        );
+        let out = String::from_utf8(rewrite_tool_result_paths(src.as_bytes(), sid, np)).unwrap();
+        let lines: Vec<&str> = out.split('\n').collect();
+        assert_eq!(lines[0], "{\"a\":1}");
+        assert_eq!(lines[1], "broken tool-results {", "坏行原样保留");
+        assert!(
+            lines[2].contains("\"/new/projects/slug/s-1/tool-results/t.txt\""),
+            "{}",
+            lines[2]
+        );
+        assert!(out.ends_with('\n'));
     }
 
     #[test]
@@ -1911,8 +2327,8 @@ mod tests {
         let claude = path_slug_non_alnum(win);
         assert_eq!(claude, "C--Users-bob-Documents-Ccode");
         assert!(!claude.chars().any(|c| "<>:\"/\\|?*".contains(c)));
-        let cursor = path_slug_separators(win);
-        assert_eq!(cursor, "C--Users-bob-Documents-Ccode");
+        let cursor = cursor_slug(win);
+        assert_eq!(cursor, "C-Users-bob-Documents-Ccode");
         assert!(!cursor.contains(':'));
         let (grok, long) = grok_encode_cwd(win);
         assert!(!long);
@@ -1928,7 +2344,6 @@ mod tests {
             "/Users/alice/proj",
             r"C:\Users\bob\proj",
             &["cwd"],
-            None,
         );
         let text = String::from_utf8(out).unwrap();
         assert!(
@@ -1948,6 +2363,31 @@ mod tests {
             kimi_wd_bucket("/Users/tongzhouhong/Documents/Codex/2026-07-29/ban"),
             "wd_ban_32b867789ad1"
         );
+        // 本机 ~/.kimi-code/sessions 实证：Windows 路径先换斜杠再哈希，末段小写、截 40
+        assert_eq!(kimi_wd_bucket(r"C:\Users\10783"), "wd_10783_5034012cecd7");
+        assert_eq!(kimi_wd_bucket("C:/Users/10783"), "wd_10783_5034012cecd7");
+        assert_eq!(kimi_wd_bucket("C:/Windows/System32"), "wd_system32_ffa30e30ecb5");
+        assert_eq!(
+            kimi_wd_bucket(r"C:\Users\10783\AppData\Local\Temp\ccode-ai-060b9a54-f203-4097-9356-c694414f4a1e"),
+            "wd_ccode-ai-060b9a54-f203-4097-9356-c694414_637144306e11"
+        );
+        assert_eq!(kimi_slug("聊图层测试"), "workspace");
+        assert_eq!(kimi_slug("My Proj (v2)"), "my-proj-v2");
+    }
+
+    #[test]
+    fn kimi_workspace_id_in_wire_follows_bucket() {
+        let wire = concat!(
+            r#"{"type":"runtime.set_binding","workspaceId":"wd_old_111111111111","runtimeId":"local"}"#,
+            "\n",
+            r#"{"type":"other","workspaceId":"wd_old_111111111111"}"#,
+            "\n",
+        );
+        let out = rewrite_kimi_workspace_id(wire.as_bytes(), "wd_new_222222222222");
+        let text = String::from_utf8(out).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert!(lines[0].contains("wd_new_222222222222"), "{}", lines[0]);
+        assert!(lines[1].contains("wd_old_111111111111"), "只改 set_binding 行");
     }
 
     #[test]
@@ -1976,11 +2416,153 @@ mod tests {
             r#"{"other":"/old/proj"}"#,
             "\n",
         );
-        let out = rewrite_json_bytes(src.as_bytes(), "/old/proj", "/new/proj", &["cwd"], None);
+        let out = rewrite_json_bytes(src.as_bytes(), "/old/proj", "/new/proj", &["cwd"]);
         let text = String::from_utf8(out).unwrap();
         assert!(text.contains("\"cwd\":\"/new/proj\""));
         assert!(text.contains(r#"{"cwd":"/old/proj""#));
         assert!(text.contains(r#""other":"/old/proj""#), "非目标键不改");
+    }
+
+    #[test]
+    fn rewrite_remaps_subdirectory_cwd() {
+        let src = concat!(
+            r#"{"cwd":"/Users/alice/proj","n":1}"#,
+            "\n",
+            r#"{"cwd":"/Users/alice/proj/src-tauri/src","n":2}"#,
+            "\n",
+            r#"{"cwd":"/Users/alice/proj2","n":3}"#,
+            "\n",
+        );
+        let out = rewrite_json_bytes(
+            src.as_bytes(),
+            "/Users/alice/proj",
+            r"C:\Users\bob\proj",
+            &["cwd"],
+        );
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains(r#""cwd":"C:\\Users\\bob\\proj\\src-tauri\\src""#), "{text}");
+        assert!(text.contains(r#""cwd":"/Users/alice/proj2""#), "同前缀兄弟目录不改");
+
+        let out = rewrite_json_bytes(
+            r#"{"cwd":"C:\\Users\\bob\\proj\\a"}"#.as_bytes(),
+            r"C:\Users\bob\proj",
+            "/Users/alice/proj",
+            &["cwd"],
+        );
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains(r#""cwd":"/Users/alice/proj/a""#), "{text}");
+    }
+
+    #[test]
+    fn claude_sidecars_roundtrip_with_cwd_rewrite() {
+        let dir = tmp();
+        let src = dir.join("src");
+        let home = dir.join("home");
+        let target = dir.join("work");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&target).unwrap();
+        let id = "33333333-3333-3333-3333-333333333333";
+        let main = src.join(format!("{id}.jsonl"));
+        let side = src.join(id);
+        fs::create_dir_all(side.join("subagents")).unwrap();
+        fs::create_dir_all(side.join("tool-results")).unwrap();
+        fs::write(&main, sample_claude("/Users/alice/proj", id)).unwrap();
+        fs::write(
+            side.join("subagents").join("agent-a1.jsonl"),
+            sample_claude("/Users/alice/proj/sub", id),
+        )
+        .unwrap();
+        fs::write(side.join("subagents").join("agent-a1.meta.json"), "{}").unwrap();
+        fs::write(side.join("tool-results").join("t1.txt"), "big output").unwrap();
+        fs::write(side.join("custom-title.json"), r#"{"customTitle":"T"}"#).unwrap();
+        fs::write(side.join("tool-results").join("x.tmp"), "skip").unwrap();
+
+        let packed = pack_files_for("claude-code", &main).unwrap();
+        assert_eq!(packed[0].0, format!("{id}.jsonl"), "主文件必须排第一");
+        let names: Vec<&str> = packed.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(packed.len(), 5, "{names:?}");
+        assert!(names.contains(&format!("{id}/subagents/agent-a1.jsonl").as_str()));
+        assert!(!names.iter().any(|n| n.ends_with(".tmp")));
+
+        // 故意把子 agent 文件排在主文件前面：主文件仍应按层级选中
+        let mut files = Vec::new();
+        let mut blobs = Vec::new();
+        for (rel, path) in packed.iter().rev() {
+            let bytes = fs::read(path).unwrap();
+            let zp = format!("sessions/0/{rel}");
+            files.push(ManifestFile {
+                path: zp.clone(),
+                size_bytes: bytes.len() as u64,
+                mtime_ms: 1_725_000_000_000,
+                md5: md5_hex(&bytes),
+            });
+            blobs.push((zp, bytes));
+        }
+        let mut man = claude_manifest(id, "/Users/alice/proj", "x", b"x");
+        man.entries[0].files = files;
+        let zip = write_zip_test(&dir, &man, blobs);
+        let dec = vec![ImportDecisionDto {
+            index: 0,
+            skip: false,
+            target_dir: Some(target.to_string_lossy().into_owned()),
+        }];
+        let (report, _) = apply_at(&zip, &home, &dec).unwrap();
+        assert_eq!(report.imported, 1, "{:?}", report.items);
+
+        let slug_dir = home
+            .join(".claude")
+            .join("projects")
+            .join(path_slug_non_alnum(target.to_str().unwrap()));
+        let main_got = fs::read_to_string(slug_dir.join(format!("{id}.jsonl"))).unwrap();
+        assert!(!main_got.contains("/Users/alice/proj"));
+        let sub_got =
+            fs::read_to_string(slug_dir.join(id).join("subagents").join("agent-a1.jsonl")).unwrap();
+        assert!(!sub_got.contains("/Users/alice/proj"), "子 agent 的 cwd 也要改写: {sub_got}");
+        assert!(sub_got.contains("sub"), "子目录部分保留: {sub_got}");
+        assert_eq!(
+            fs::read_to_string(slug_dir.join(id).join("tool-results").join("t1.txt")).unwrap(),
+            "big output"
+        );
+        assert!(slug_dir.join(id).join("custom-title.json").exists());
+        assert!(slug_dir.join(id).join("subagents").join("agent-a1.meta.json").exists());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn claude_sidecars_respect_size_caps() {
+        let dir = tmp();
+        let id = "44444444-4444-4444-4444-444444444444";
+        let main = dir.join(format!("{id}.jsonl"));
+        fs::write(&main, "{}\n").unwrap();
+        let side = dir.join(id).join("tool-results");
+        fs::create_dir_all(&side).unwrap();
+        fs::write(side.join("small.txt"), "x").unwrap();
+        let huge = fs::File::create(side.join("huge.txt")).unwrap();
+        huge.set_len(SIDECAR_MAX_FILE + 1).unwrap();
+        let packed = pack_files_for("claude-code", &main).unwrap();
+        let names: Vec<&str> = packed.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(names.iter().any(|n| n.ends_with("small.txt")));
+        assert!(!names.iter().any(|n| n.ends_with("huge.txt")), "超单文件上限的附属文件不带");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn gemini_registered_slug_reads_projects_json() {
+        let dir = tmp();
+        let home = dir.join("home");
+        fs::create_dir_all(home.join(".gemini")).unwrap();
+        let target = dir.join("work");
+        fs::create_dir_all(&target).unwrap();
+        let t = target.to_string_lossy().into_owned();
+        assert!(gemini_registered_slug(&home, &t).is_none(), "没有 projects.json");
+        let json = serde_json::json!({
+            "projects": { t.clone(): "work", "/elsewhere": "../evil" }
+        });
+        fs::write(home.join(".gemini").join("projects.json"), json.to_string()).unwrap();
+        assert_eq!(gemini_registered_slug(&home, &t).as_deref(), Some("work"));
+        assert!(gemini_registered_slug(&home, "/elsewhere").is_none(), "slug 含分隔符不采信");
+        assert!(gemini_registered_slug(&home, "/other").is_none());
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -2344,7 +2926,7 @@ mod tests {
         let dest = home
             .join(".cursor")
             .join("projects")
-            .join(path_slug_separators(target.to_str().unwrap()))
+            .join(cursor_slug(target.to_str().unwrap()))
             .join("agent-transcripts")
             .join(id)
             .join(format!("{id}.jsonl"));

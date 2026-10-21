@@ -566,6 +566,233 @@ PDF 一期不写积累账（一行要题录，从 PDF 里拿不可靠），之�
 
 安全口径进 safety.md「从手机添加」。规格与真机点验清单见 `docs/design-phone-drop.md`。未做真机（手机）与 Mesa Dev 实机界面验收。
 
+### 2026-10-21 · 英文综述 Windows 全流程核验（用户：「核验一下……各项操作有什么问题」→「全部修」）
+
+在 Windows 11 + Quarto 1.10.19 + TinyTeX 上用真实 run 命令与随包脚本干跑一遍（临时项目，界面没点）。查出四处，全部修，**规则如下**：
+
+一，**`quarto render` 的产物落点（影响全部带渲染的模板）**。没有 `_quarto.yml` 时 Quarto 把稿件所在目录当项目根，`--output-dir` 相对它解析：
+旧写法 `--output-dir output` 落进 `manuscript/output/`，且先 docx 后 PDF 时后一次渲染清掉前一次，评审只认根 `output/` → docx 缺。与 `--output` 同用时成品还会落到工作区根。
+定下：稿件都在一级目录（`manuscript/`、`submission/`），命令统一 `--output-dir ../output`、**不带 `--output`**（默认文件名本就是稿件同名）；项目根不放 `_quarto.yml`
+（`../output` 会越出项目），要配置放 `manuscript/_quarto.yml`。`tests/pipeline-presets.test.ts` 钉住所有模板（含返修轮次变体）。
+存量项目的步骤定义存在各自 `.ccode/project.toml`，**不随模板自动更新**：本机两个项目（HER催化综述、Ccode 示例课题）已手工改完并用 TOML 解析验证；
+以后再改 run 命令，同样要处理存量 `project.toml`（开步只按项目里存的 `step.run` 写 settings，不回读模板）。
+
+二，**PDF 文本层分号变 U+037E**（2026-10-11 审计已见、当时只定「记录不放行」）。Times New Roman 字形同挂 U+003B / U+037E，xdvipdfmx 的 ToUnicode 选了后者，复制/检索/查重全坏。
+定下：`manuscript_font.py` 在 PDF 的 `include-in-header` 写 `\ifdefined\XeTeXgenerateactualtext\XeTeXgenerateactualtext=1\fi`（`\ifdefined` 守卫，换 lualatex 不报错；旧稿重跑补行、重复跑不叠）；
+随包 `check_pdf_text.py`（PyMuPDF，不依赖 pdftotext——普通 Windows 没有）渲完抽检 U+037E / U+FFFD / U+FFFF / 私有区，退出码 1 即按渲染缺陷处理。实测同一份稿：无开关 4 处 U+037E，有开关 0。
+
+三，**两份域稿 docx 的中文字体写死 `Songti SC`**（macOS 字体，Windows 的 Word 里悄悄换字体）。定下：`cite_docx.py`（`zotero_docx.py` 复用）读 `manuscript/typeface.md`，
+稿在 `submission/` 下也找同级 `manuscript/`；没有这份文件才回落（macOS Songti SC，其余宋体）。域稿与阅读稿字体一致，不再各写各的。
+
+四，**Agent 起的 Python 在 Windows 上按 GBK 输出**：管道里打印 `²` `⁺` 直接 UnicodeEncodeError，Agent 读回的中文也乱码。此前只有 Mesa 自己起的 Python（endnote.rs / research_quality.rs）带编码变量。
+定下：`process::agent_python_io_env()`——Windows 且用户没自设时给 **PTY 子进程**（`pty_command`，含 Agent、shell、run 脚本标签）和**无头 Agent 运行**（`ai.rs`）补 `PYTHONIOENCODING=utf-8`。
+**不设 `PYTHONUTF8`**：它连 `open()` 默认编码一起改，会让 Agent 写的、读 GBK 数据文件的脚本变样。控制台（ConPTY）里的 Python 本就走 UTF-8，不受影响。
+
+顺带：首次渲 PDF 会现装 `xecjk` 等宏包（实测约 2.5 分钟、无进度），写进 quarto-render 技能与说明书，避免被当成卡死。
+**未验证、留给下一轮**：①本机 Codex 配的是 `elevated` 沙箱，而 TinyTeX 装在 `%APPDATA%`（用户目录）——同「Codex 沙箱读不了用户目录里的工具」那条，Codex 渲 PDF 很可能失败（含 tlmgr 现装宏包），
+需真实 Codex 跑一次确认，对策方向同 Python（全机安装或 unelevated）；②Mesa 界面里的整条流程、Word 里真点 EndNote Update / Zotero Refresh、Consensus / Undermind 检索工具都没验。
+
+### 2026-10-21 · Codex 计划工具随提示词打开；端到端计划补上启动前追加参数
+
+用户实测 Codex（glm-5.3-flash）两句：「当前会话没有暴露任务清单/计划工具」「提问工具当前不可用」。查明：一，Codex 0.163 默认不发 `update_plan`
+（官方 gpt-5.5 也不发，改走 goals），但 Mesa 经 catalog 给的 base_instructions——即 Codex 给未登记模型的默认提示词——仍写「你有 `update_plan` 工具」，
+提示词与工具对不上。定下：提示词里提到 update_plan、Codex ≥ 0.163、用户 config.toml 没配 `[tools.update_plan]` 时，`prepare_launch` 加
+`-c tools.update_plan.enabled=true`（`agents::codex_plan_tool_args`）；聊天层本就认 update_plan 画计划卡。与 Claude 那条（非 Claude 模型开任务清单工具）
+同理：对上 CLI 自己给的说明，不替官方模型改判断。二，`request_user_input` 照发但只在 Plan 模式可用（Default 模式调用即返回不可用），
+是 Codex 的设计、开关还在开发中，不动。三，**端到端计划此前漏了 `prepare_launch` 追加的参数**（Codex 的 catalog、--no-daemon），
+`e2e_dump_launch_plans` 改为照 pty.rs 接上（并按本机真实 Codex 版本拼），金丝雀因此首次核对到 catalog 提示词；drive.py 的 `codex exec` 去掉 --no-daemon。
+金丝雀按流程走了一遍：报「工具清单多了 update_plan、上下文多了 Planning / Windows 小标题、请求多了 text 字段」，旁路端到端照过，记成新基线。
+
+### 2026-10-21 · CLI 金丝雀：Claude Code / Codex 每天装最新版自动核对
+
+起因：同一天两次撞上 Claude Code 新版悄悄改默认行为（对第三方模型藏工具搜索、不发任务清单工具），都是用户先撞见。用户问各家 CLI 一天一版
+Mesa 怎么跟，拍板先做 Claude Code 与 Codex 两家。定下：
+一，**不追求当天全适配，追求当天知道**：`scripts/cli-canary/canary.py` 把已有的假网关、`chat_channel` 端到端、聊天层抓屏串成一条，
+抽五层指纹——主对话请求（工具清单、系统提示词小标题、用户这句前注入的上下文标签、请求字段、`anthropic-beta` 等头）、旁路（会话认出、回合状态序列、
+审批形态）、会话文件（记录类型与字段）及 Mesa 解析器读出的工具来回、读屏（审批菜单、实时预览）、Codex 默认提示词可取——和
+`scripts/cli-canary/baseline/<平台>/<agent>.json` 比；报告附两版之间更新日志里沾边的条目（Claude 取 GitHub CHANGELOG / 本机缓存，Codex 取 Releases）。
+二，**临时 HOME 不拷本机配置**（`E2E_CLEAN_HOME` / `CLEAN_HOME`，只预置 Claude「已走完首次引导」、Codex 的 CODEX_HOME 目录）：用户自己的 MCP / 插件
+会改工具清单，拷了就没法跨机器、跨 CI 比；「用户全局配置盖不盖 Mesa 注入」仍归 e2e-model-routing。基线按平台分存（两边画面本就不同）。
+三，**CI 每天跑、不挡主线**：`.github/workflows/cli-canary.yml` 北京时间 9:17 在 macOS / Windows 装 `@latest` 跑，报告进运行摘要、明细进 artifact；
+红了是 CLI 变了。适配后（或判定无需适配）在同一平台 `--accept` 把新指纹随改动一起提交，基线的 `version` 即「Mesa 已核对到的版本」，
+取代散落在 matrix 各处的「x.y 实测」。检查没全过时 `--accept` 拒绝。
+四，不替用户锁 CLI 版本（自动更新是用户的选择，锁住收不到修复）；运行时遇到未知会话记录 / 工具名留诊断记录、各家更新日志关键词监看，留作后续。
+首跑（Windows，Claude Code 2.1.306 / Codex 0.163.0）两家检查全过并建了 win32 基线；连跑两次除临时目录名外无变化（已归一成 `<工作目录>`），
+人为从基线去掉 TaskCreate 后报告准确报出「工具清单多了 TaskCreate」。darwin 基线待在 Mac 上跑一次 `--accept`。
+
+### 2026-10-21 · Claude 被拒绝 / 打断后回合靠会话文件收；Windows 上 Claude 回复不流式是 CLI 自己的画法
+
+用户报两件。一，**终端已结束、聊天层仍「正在回复」**：在审批菜单里拒绝工具（或按 Esc）时 Claude 写一行 user
+「[Request interrupted by user for tool use]」和 system/turn_duration 就结束这一轮，**不触发 Stop hook**（用户会话实证：正常一轮有
+stop_hook_summary，被拒那轮没有），旁路回合一直开着、又压过会话尾部的推断。定下：会话尾部判成收尾时前端调
+`chat_channel_settle_from_transcript`，后端只认这一轮开始之后的打断标记 / turn_duration（`sessions::claude_turn_end_after`），
+按 interrupted 收掉；三平台同。（同日补：非 Claude 模型关工具搜索见本条三；Claude 中途弹「Enter to continue · Esc to cancel」的通知——经第三方网关时 auto mode 分类器计费说明——原先被认成面板、聊天层只给按 Esc（=取消），改为 `tui-panel.ts parseTuiNotice` 认出、给「继续」（回车）卡。）二，**Claude 的回复不是流式出来的**：不是模型也不是网关——直连智谱 Anthropic 端点 glm-5.3-flash 流式，
+正文 228 个增量、每块 1–12 字、4.7 秒内陆续到（之前另有约 20 秒思考，开不开 thinking 参数都思考）；Windows 上用假网关慢速吐字抓屏，
+Claude Code 2.1.305 与 2.1.292 都是转圈计 token、整条消息收完才一次画出（Mac 上 2.1.292 同一假网关是逐行画出，见 live-reply 测试样本）。
+Mesa 对 Claude 只能读屏（hooks 不带正文），所以 Windows 上 Claude 的聊天层没有逐字预览；长思考期间屏上也只有「Thinking」。
+同日用户拍板补救：「正在回复」后面显示转圈行里的已生成 token 数（`live-reply.ts claudeOutputTokens`，只认 ↓；有逐字预览时不显示），两平台同。
+三，**Claude 说「没有加载文件与命令行类工具」**：上一次判成纯模型问题，这次会话实证到原因——Claude Code 对第三方网关也开工具搜索，
+Write / Bash 等照常发、另把十来个少用的工具藏在 ToolSearch 后面；glm-5.3-flash 拿 ToolSearch 去搜 Write / Bash（它只搜延迟列表，
+当然搜不到），就断定没工具。定下：非 `claude-*` 模型注入 `ENABLE_TOOL_SEARCH=false`（`agents::claude_model_env`，用户自设不动），
+假网关核对 Mesa 的真实启动计划：ToolSearch 与占位工具消失、24 个工具一次发全；代价是每次请求多几千 token 输入。用户问「Mac 上不出现」：同一假网关什么都不注入时 Claude Code 2.1.305 发 ToolSearch、2.1.292 不发——是 CLI 新版的变化（本机 Windows 已自动升级到 2.1.305），Mac 升级后同样会遇到，这次的注入两边都生效。
+四，**Claude 说「本会话没有 TodoWrite 类工具」、用 Markdown 列计划**：Claude Code 2.1.306 的任务清单工具（TaskCreate / TaskUpdate / TaskList / TaskGet，
+取代旧 TodoWrite）只对自家老模型（≤ opus-4-7 / sonnet-4-6 / haiku-4-5）默认发，其余模型名（含 claude-opus-5 与一切第三方模型）不发，
+`CLAUDE_CODE_ENABLE_TODO_TOOLS=1` 打开。假网关核对：glm-5.3 不注入 23 个工具、注入后 27 个（多 4 个 Task 工具）。定下：非 `claude-*` 模型注入它
+（同 ENABLE_TOOL_SEARCH 口径，用户自设不动）；Claude 新模型是官方有意不发，不动。聊天层计划卡同步认 Task 工具：一轮里 TaskCreate 逐条建
+（编号取自结果「Task #N created successfully」）、TaskUpdate 按编号改状态 / deleted 删除，拼回一张清单（`conversation-tools.ts taskPlan`，
+照 Claude Code 自己的拼法）；上一轮建的任务本轮只改状态时拼不出标题，不画卡。
+
+### 2026-10-20 · 聊天层 Windows 八家抓屏核对：读屏与 macOS 同形；Grok 多行改写 CR
+
+用户要求看 Windows 上各家在聊天层的显示与交互问题、Mac 是否同样存在。`chat-capture.py` 在 Windows 上走 ConPTY（pywinpty）跑八家
+（Cursor 未装），逐帧喂给 Mesa 自己的读屏函数（parseTuiMenu / parseTrustPrompt / extractLiveReply / terminalHasInputBox / detectModelOnScreen）。
+结论：读屏实时预览、审批菜单、信任提示、Codex 底栏模型都与 macOS 同形（Claude / Gemini / Kimi / Grok 的 Windows 字形差异另一批已收进 live-reply.ts /
+tui-menu.ts）；聊天层的答题键实际按下去七家都放行。**唯一要改的：Windows 上 Grok 把粘贴包里的 LF 丢掉**（多行连成一行，网关收到的也是连着的），
+CR 才算换行；八家逐个试 CR，Codex 会把第一行单独发出、CodeBuddy / OpenCode 把字写错位，所以只对 Windows 的 Grok 改写
+（`pty_write_submit` 加 `paste_newline`，pty.rs `chat_paste_body`；前端 writeChatMessage 点名），macOS 不动。另记：Gemini 开着全局精确注意力时
+hook 同步跑 PowerShell，每个事件约一秒，工具调用的审批菜单约 10 秒才出（Windows 独有，交给 Gemini 那一批）。
+
+### 2026-10-20 · Windows / Mac 两端完善批（用户：盘点后「全部做」）
+
+先盘点两端各自还缺什么（8 月底 Windows 审计的优先级表前 11 项已修，只剩第 6 项一半），用户「全部做」。定下与实测：
+
+一，**流程 run 脚本在 Windows**：人点「运行脚本」本来就走 Git Bash（`script_shell_argv`），盘点时说「点了必错」不准；真正的缺口是
+Agent 照简报跑 `render-pdf` 时，命令工具是 PowerShell 的几家（Codex 等）跑不了 bash 写法。步骤 run 条目加 `command_windows`
+（PowerShell 写法，编译器经 `cmd /c` 跑并在 cmd 里重定向——日志按原字节落盘、不走 5.1 的 UTF-16；失败用 `cmd /c exit` 收尾，非零退出又
+不关交互 shell；本机 TinyTeX 实跑成功 / 失败 / 无 TeX 三种）。TASK.md 只在 Windows、只列简报点名的脚本，给 PowerShell 与 Git Bash
+两种写法——macOS 任务书长度不变（`research-usability` 的篇幅上限钉着）。
+二，**内置终端 shell 可选**（设置 `terminal_shell`，只列本机找得到的）+ **Windows 跟随 cd**：PowerShell 的 Set-Location 不改进程工作目录，
+所以由 shell 每次出提示符写目录记录文件（PowerShell 包 prompt、Git Bash `PROMPT_COMMAND` 跑 `pwd -W`），cmd 读进程 PEB；四种 shell
+在 ConPTY 里真起、`cd` 后读回已有测试。前端写 cd 改走 `pty_cd`（cmd 不认单引号、跨盘要 `/d`）。
+三，**hooks 原生小程序**：随包的 `mesa_helper` 加 `hook` 模式（只用标准库），Windows 上每次启动注入的 Claude Code / CodeBuddy 找得到它就用它、
+同步跑；`e2e_channel` 实跑 Claude（网关 / 官方账号 + 带 `|%^` 的首条消息）与 CodeBuddy 全通过，Stop hook 87–109ms（PowerShell 1241ms）。
+没用新 sidecar。同日应统筹会话要求，写全局配置的三家（Gemini / Kimi / Grok）也换上：helper 拷成 `hooks-state/ccode-hook.exe`，命令里程序路径
+不加引号、用正斜杠——Gemini 在 PowerShell 里跑 hook 不认双引号开头的命令，这种写法 cmd / PowerShell / bash 三种宿主都认；路径有空格等退回 `.ps1`，
+启动时按该用的写法重写（写前备份）。Gemini 实跑（假网关、临时 HOME）hooks 照常记录，整轮 2.8 秒（原先每个事件约 1 秒、屏上挂「Executing Hook」）。
+四，**读屏兜底在 ConPTY 下核对**（`chat-capture.py` 加 Windows 分支，`capture-check.ts` 用 Mesa 自己的解析器读逐帧画面）：Claude / Gemini / Kimi /
+Grok 的审批菜单与实时预览都认得出，前提是补上 Windows 字形——Claude 正文行首 `●`（Mac 是 `⏺`，原 `CLAUDE_STATUS` 把顶格 `●` 当状态吞掉）、
+Grok `>` / `♦` / `○` / 单选 `•`；没有回显也没有行首、屏顶是没缩进的字（启动横幅、排队中的提问）时不再预览（两平台同一条）。
+五，**Win11 贴靠布局**：自绘最大化按钮悬停 500ms 替用户按 Win+Z（只在 build ≥ 22000、Mesa 在前台时），系统给前台窗口弹同一个布局菜单。
+六，**客户端接力 Windows 事实**（设计稿 §8 第 3 条）：本机 Codex（OpenAI.Codex 26.1013.4894.0）与 Claude（2.42304.2.0）都是 MSIX 包，scheme 注册在
+HKCR 下（Codex 没有 shell\open\command，靠应用包激活）；版本改从当前用户应用包仓库的子键名读，不起 PowerShell。打开动作本身仍留给人点。
+七，**Cursor CLI 在 Windows 上能装能用**：官方其实有原生安装器（`irm 'https://cursor.com/install?win32=true' | iex`，装到 `%LOCALAPPDATA%\cursor-agent`），
+此前「只支持 WSL」的口径作废。`PackagingSpec.install_script_win` 走 PowerShell；启动器 `cursor-agent.cmd` 转手 PowerShell 再起自带 node，
+Mesa 照同一挑法直启 `node.exe index.js`。本机已装并核对版本探测；登录与会话目录需要 Cursor 账号，未核。
+八，**Codex 无头写盘在 Windows**（定时雷达用）：临时 CODEX_HOME + 假网关实测——没配 `[windows] sandbox` 时 `exec -s workspace-write` 的命令一律
+「blocked by policy」；`unelevated` 能跑但 pwsh 7 下命令落在 pwsh 安装目录、相对路径写错地方；`elevated` 要 UAC 初始化，没在测试里起。
+能力表按用户配置给提示，不改启动参数（要不要在 Windows 上给 Codex 定时任务放开沙箱是安全取舍，留给用户定——同日已拍板，见下下条）。
+九，**其余 Windows 小项**：未压缩 aiff 后端转 wav 再给 WebView2 放；setup / archive 钩子测试三平台同跑（Windows 走 Git Bash）；SmartScreen 写进
+README 与说明书；`manuscript_font.py` 两处 Windows 毛病（子进程输出按 GBK 解码崩、fc-list 的 `C:` 盘符让族名全认不出）。
+十，**Mac 没有 Homebrew 也能一键装依赖**：Node.js / Python / Quarto 走各家官网 .pkg（查版本索引 → curl → osascript 提权跑 installer，系统密码框，
+Mesa 碰不到密码），TeX 由 Quarto 装 TinyTeX。只在 Windows 上编译与单测过解析逻辑，Mac 实机未跑。
+十一，**发布**：推翻 v1.3「Intel 包暂缓」——Apple 芯片 runner 交叉编译 `x86_64-apple-darwin`，`verify-release` 加 `darwin-x86_64` 校验；
+macOS 签名公证接进 workflow，六个 `APPLE_*` secrets 配齐才启用（缺一个就照旧出未签名包），开通步骤见 docs/release.md。
+十二，**子进程不继承 Mesa 的 PWD**（同日另一会话报：`opencode run` 用 `process.env.PWD ?? cwd`，无头 opencode 把文件写进了 src-tauri/src）：
+`background_command` 删掉 PWD，PTY 拉起时 PWD 设成工作目录，三平台同口径。
+**没做**：应用内更新的国内镜像（当时要先定托管方；同日用户拍板后已接上，见下一条）；CI 里的
+「CLI 版本 × 平台」端到端（`e2e_channel` 依赖本机各家 CLI 的首次启动状态，要在 GitHub 上迭代，本地端到端仍是闸门）；
+界面点验（清单在 docs/qa/acceptance-2026-10.md）。
+
+### 2026-10-20 · 用户拍板两件：Windows 上 Codex 定时任务确认后开沙箱；应用内更新国内镜像「配齐就启用」
+
+一，**Codex 定时任务的 Windows 沙箱**（上条第八条的取舍）。补测（假网关、git 工作树作工作目录，同定时任务的隔离副本）：
+`-c windows.sandbox="unelevated"`（非提权，不要管理员）命令能跑，第一次约 20–30 秒，给工作树里每个文件加一条给 Codex 沙箱身份的
+「修改」权限，主仓与 `.git` 不动；但 Codex 0.163 在这种模式下 shell 起在 PowerShell 自己的安装目录（5.1 与 7 都是），相对路径写
+被拒、绝对路径正常。用户本机已配的 elevated（提权）命令与相对路径都正常（多一个 CodexSandboxUsers 组的权限；`~/.codex/cap_sid`
+记下这次的工作目录）。Codex 没有命令行做 elevated 的初始化（要管理员 UAC），所以 Mesa 能替用户开的只有 unelevated。定下：
+用户在定时任务弹层（选了 Codex 时出「了解并开启」）或 **设置 → AI 与 Agent** 看过说明、点确认，设置 `codex_win_sandbox_consent`
+（全局一个：权限只动 Mesa 自己建的隔离副本，与哪个任务无关）才生效；生效时定时运行加 `-c windows.sandbox="unelevated"`（只对这次
+运行，不改 `config.toml`），任务说明追加「读写文件用绝对路径」一句（`scheduler::codex_win_unelevated_note`）。用户在 Codex 里自己配了
+`[windows] sandbox` 时照用户的、不问。没确认 = 现状（提示会被拦、不开）。
+二，**更新镜像**：托管 = 公司自有对象存储 + CDN（S3 兼容接口，阿里云 OSS 一类），不用第三方加速域名。应用侧：仓库变量
+`UPDATE_MIRROR_BASE` 配了，打包时把 `<镜像>/latest.json` 加到 updater 地址最前、GitHub 第二（Tauri 按顺序试）；没配就只有 GitHub，
+源码不写死域名。同步：新 workflow `mirror-release.yml` 在 Release **published** 时触发（草稿阶段不同步），取 `latest.json` 改写下载地址
+（`scripts/mirror-latest-json.mjs`，签名原样、缺签名拒绝）、先传包后传清单、读回核对；凭据走 secrets，没配齐跳过并写日志。改写逻辑
+对现有已发布的 `latest.json` 干跑过；工作流本身没在真实对象存储上跑过（开通步骤见 docs/release.md）。只对配好后打出的版本生效。
+
+### 2026-10-20 · 没有旁路的家 /clear 后跟到新会话；多 Agent 聊天层核对统筹结论
+
+用户让本会话统筹几个并行核对 Agent CLI 聊天层的会话，补做没人核对的「会话跟随」。Windows 上六家（Gemini / Kimi / Grok / Qwen /
+OpenCode / CodeBuddy）在含中文与空格的目录里实跑（假网关、临时家目录），Mesa 解析出的项目路径都与启动目录 same_path 相等、消息都读得出
+（Gemini 存的是全小写路径，same_path 在 Windows 不分大小写，照样对上）。**查出三平台共有的缺口**：Gemini / Kimi / Grok 打 `/clear`
+都另开新会话文件（三家实测），这三家默认没有旁路报「换了会话」，标签一直盯旧文件，之后的回复聊天层看不到。用户拍板修：
+`sessions::claim_session_successor`——已认领的标签，同 agent 同目录出现比当前认领更新、启动前没有、没被任何标签认领过的会话就改认
+（取最新）；**同 agent 同目录还有别的标签登记时不猜**（分不清谁开的新对话，宁可不跟也不串）；前端 `linkTick` 在旁路没给会话 id 时
+每轮问一次，换过去走 `relinkTo`（「已切到新的会话」）。按会话 id 恢复的标签不登记认领，仍不跟随（已知限制）。
+同批分派：Grok 回放丢工具调用（分叉会话修，见上条）、`opencode run` 取 `PWD` 当工作目录（待完善项会话修 process.rs）、Windows 上
+cmd 内建 `del` 等不带外壳也算改文件（tool-activity.ts）。
+
+### 2026-10-20 · Grok 回放 / 聊天层带上工具调用：chat_history.jsonl 的 tool_calls 与 tool_result 不再丢
+
+用户问「除了 Codex，其他 Agent CLI 改文件有什么问题、是否只在 Windows」。Windows 上六家真网关实跑同一条「新建→改→删」
+（Claude / Qwen / OpenCode / Kimi / Grok 智谱 glm-5.3-flash，Gemini Zeta gemini-4-argon，临时 HOME、无头），按 Mesa 的会话解析
++ tool-activity 渲染核对：五家新建 / 修改走各自的 Write / Edit 类工具、差异正常；删除各家都只有 shell 命令（CLI 没有删除工具，
+三平台同）。**Grok 例外**：Mesa 读 Grok 优先用 `chat_history.jsonl`（`parse_grok_history`），只取文字，`assistant.tool_calls`
+与 `tool_result` 整个丢掉，回放和聊天层看不到任何工具调用——数据本身完整（Grok 1.0.62：`tool_calls[{id,name,arguments 串}]`，
+`tool_result{tool_call_id,content}`），与平台无关。用户拍板修：工具调用解析成 tool_use 块（参数原样、带 call_id），结果并进发起调用的
+助手消息并按 call_id 配对；兼容 OpenAI 式 `function` 包一层、参数为对象。`updates.jsonl` 回落解析（`parse_grok`，没有 chat_history 时用）
+仍只取文字，未改。同批另两条：Qwen 在 Windows 上用 cmd 内建 `del` 删文件，摘要不算改文件（tool-activity 补 cmd 内建表）；
+OpenCode `run` 取目录用 `process.env.PWD ?? cwd`，Mesa 进程带 PWD 时无头运行会跑错目录（另行处理）。
+
+### 2026-10-20 · Codex 模型清单的基础指令换回 Codex 默认原文：模型才会用 apply_patch，聊天层才有差异
+
+用户问「Codex 不显示写入删除的 diff，是读不到还是要完善」，要求先实跑再修。用户今天 5 个 Codex 会话（智谱网关 glm-5.3）里改文件
+全是 PowerShell 的 Set-Content / Remove-Item，会话文件与 app-server 都没有改动前后内容；8 月不经 Mesa 清单的会话全走 apply_patch、差异正常。
+原因是 Mesa 写的 catalog `base_instructions` = 「You are a coding agent.」，整段替换了 Codex 的系统提示词，模型不知道 apply_patch。
+实跑（同网关同模型、隔离 CODEX_HOME，`codex exec`）：一句话版 5 次改文件全走 PowerShell；换 Codex 默认原文后走 apply_patch，
+**但 Windows 上只有「整条命令就是一个 bash heredoc」Codex 才接住**（出 FileChange、带差异），PowerShell 的引号串 / here-string / 管道、
+heredoc 前后串别的命令都失败，模型先试错几轮。0.163 的 `apply_patch_tool_type` 只认 `freeform`（中转拒收，维持不声明）。定下：
+一，catalog 填 Codex 对未登记模型的默认提示词原文（不得换回一句话占位）。**同日追加（用户：做根因第 1 条）**：原文改为
+**向本机 Codex 取、按版本缓存**（`<配置根>/catalogs/codex-base-instructions-<版本>.md`，新版本取到后删旧缓存）——Codex 没有导出命令
+（`debug models` 只有 GPT 专用条目），做法是一次性 CODEX_HOME 里跑 `codex exec`、渠道密钥变量故意不给：会话首行 session_meta 已带原文，
+发请求前报缺变量退出，不联网、实测 0.5–2 秒、每版本一次；取不到才用随包 0.163 原文（`codex_base_instructions.md`，Apache-2.0，
+THIRD-PARTY 有条目），本进程内不再重试该版本。Windows 上 codex 退出后约 1.3 秒目录句柄才放，临时目录放后台重试删、下次取前先扫；二，**只在 Windows** 另拼 `codex_windows_patch_note.md`（只用单独一条
+bash heredoc 调 apply_patch、不经 PowerShell、报 command not found 就单独重发），实跑 glm-5.3 改文件一次成功，glm-5.3-flash 偶尔仍先
+串命令、按提示自行纠正；三，前端 `tool-activity.ts` 认 shell 里的 apply_patch（argv 形式或整条 heredoc，PowerShell 里调的不算——
+文件没改），会话回放画成新建 / 编辑 + 差异；四，app-server `fileChange` 的新建 / 删除差异是文件原文，`chat_channel.rs` 补 + / − 再给审批卡。
+代价：每次请求输入多约 5 千 token。用 Remove-Item 删文件、用脚本改文件仍只有命令，属正常。实跑时注意：`codex exec` 不关 stdin 会一直等输入；
+CODEX_HOME 放在系统临时目录下 Codex 不建 apply_patch 别名，结论会失真。
+
+### 2026-10-20 · 新标签默认随手聊；Windows 上 Codex 在主目录启动先确认；聊天层提交间隔 250ms
+
+用户在 Mesa Dev 里测 Codex 聊天层，报两件事。一，**发出去的话留在终端输入框**：聊天发送是正文、隔 60ms、回车，Codex 把连着到达的字当粘贴，
+粘贴后 120ms 内的回车只换行（codex-rs `paste_burst.rs`）；Windows 端到端实测 60ms 复现、150ms 通过，`pty_input::SUBMIT_GAP` 取 250ms（terminal.md 同步）。
+二，**Codex 执行任务时 Mesa 直接退出**：新标签默认目录是主目录，用户配置了 Codex Windows 沙箱（`[windows] sandbox = "elevated"`），第一条沙箱命令前
+Codex 给工作目录下每一项改访问权限（`~/.codex/cap_sid` 记了 89 个路径，含 Desktop），一路改进 Mesa 源码；tauri dev 把权限变动当源码改动，
+杀掉 Mesa 重编译重启，app-server 随任务组一起被收，Codex 目标续跑又触发同一条命令，循环三次（只改权限、不改内容即可复现）。打包版不退出，
+但同样会改整个用户文件夹的权限。用户拍板：**新标签没给目录时默认随手聊**（`ensure_scratch_dir`，恢复标签 / 接回会话不动，主目录要人在目录菜单里选）；
+**Windows + Codex + 主目录 + 非完全访问启动前弹确认**（`quick-chat.ts codexSandboxCoversHome`），取消时聊天层报具体原因。仓库上 Codex 遗留的
+继承权限已用 `icacls /reset /T` 清回（36889 个文件）。开发时测 Codex 不要用包住 Mesa 仓库的目录（主目录、Desktop、仓库本身）。
+
+### 2026-10-20 · 聊天层 Windows 实测反馈：Claude 审批答完即收卡、实时预览滤掉折行提示（两处 Mac 共有）
+
+用户在 Mesa Dev 里按测试提示词逐条点 Claude Code，报三件事，定因后两件是 Mac 共有、Windows 上更显眼，一件与 Mesa 无关：
+一，**审批卡先英文后中文**：英文是读屏认出的终端菜单卡；答完后 Claude 不报「已答」，旁路要等那个工具跑完（PostToolUse）才撤，
+期间屏上没菜单、注意力仍是「等确认」，冒出中文兜底卡（WebFetch 批准后挂了 14 秒；Windows 上 hooks 后台跑，快命令也多挂约 1 秒）。
+定下：**屏上回到这家的输入框、没有菜单 = 已答**（`chat-channel.ts hooksApprovalAnswered`，注意力回 working；旁路报「等批准」时补扫一次屏，
+聊天层点了菜单按钮先按已答、下一次扫屏纠正）。只作用于读屏认得出输入框的 hooks 家（Claude Code），CodeBuddy 与能从聊天层答的家不变。
+二，**实时预览一直挂着一行英文**：转圈下「⎿  Tip: …」（Claude 2.1.304 的 workflow 提示）长过一行，第二行没有 ⎿、被当成回复；
+`live-reply.ts` 加 `wrapSkip`，⎿ 行折下来、比正文缩进深的续行一并跳过。三，**Claude 说「本会话没有写文件 / shell 工具」**：
+Claude 自己的会话记录里每次请求都带着 Bash / Read / Write / Edit 等全套工具，Mesa 的「请求批准」档不删工具，Windows 上假网关端到端也照常调用工具；
+是 glm-5.3-flash（经智谱网关）只认出 ToolSearch、拿它搜不到内置工具就断定没有，换平台结果一样。不改 Mesa；换模型复测。
+
+### 2026-10-20 · 聊天层 Windows 适配：CLI 绕开 cmd 直启、Claude hooks 在 Windows 后台跑、app-server 随 Mesa 同生共死
+
+用户在 Windows 上要求核对 Mac 上做的聊天层（结构化旁路）是否适配、需要什么完善，并要求**不影响 Mac 端**。把 `chat_channel::e2e`
+移植到 Windows（`storage::config_root` 测试接缝 + USERPROFILE / CODEX_HOME + `pty_command` 认 shim），五家真 CLI + 假网关逐家跑。
+查出并定下：一，**Agent CLI 的参数不经 cmd 传**——npm 装的 Claude Code / OpenCode 的 .cmd shim 指向原生 exe、CodeBuddy 指向
+无扩展名 node 脚本，原先都回落 `cmd /c call`：官方账号的 Claude 带的内联 `--settings`（hooks matcher 含 `|`）让 Claude 直接起不来
+（「文件名、目录名或卷标语法不正确」），聊天层随启动带的首条消息多行只剩首行、`%PATH%` 被展开进消息。shim 深化补这两种
+（`process::exe_from_cmd_shim` / node shebang），Windows 上官方账号的 hooks 设置另写旁路目录里的 settings.json 传路径。
+二，**Windows 上 Claude 的注入 hooks 带 `async: true`**：hook 要起 PowerShell，实测每次 0.9–1.2 秒，同步挂着每个工具调用前后各卡一秒；
+后台跑会乱序，另挂 PermissionRequest 拿审批内容，`Tracker::async_hooks` 按身份对账（同步模式规则不动）。CodeBuddy 未核实 async，仍同步。
+原生小程序代替 PowerShell（再快一个数量级、可保持同步）要加 Windows 专属 sidecar，未做，列为后续。三，**共用 hook 脚本**只删回车换行
+（原先折叠 `\s+` 吃掉审批卡命令 / 差异的缩进）、写日志撞车重试（12 并发实测丢 1 条，丢的若是 Stop 聊天层会一直「在回复」）。
+四，**Codex app-server 挂进 Windows 任务组**（`BackgroundCommand::spawn_tied_to_app`，句柄关即全杀），Mesa 崩溃 / 被强杀不留占端口、
+占会话写锁的孤儿（实测强杀后 0 残留）；收旁路先杀后删目录。五，审批卡与「已工作」摘要认 PowerShell 外壳（`unwrapPowerShell`）和
+常见 cmdlet，别名只在确认是 PowerShell 时认。全部改动按平台门控或对 Mac 输入恒等（bash/zsh 命令、POSIX 路径输出不变）。
+未验：Mesa Dev 窗口里逐家点一遍；Windows 上读屏兜底（审批菜单 / 实时预览，Claude / Gemini / Kimi / Grok）在 ConPTY 下的形态。
+
 ### 2026-10-20 · Gemini 版本探测不再往用户 ~/.gemini 里留 projects.json.*.tmp
 
 新用户沙盒里发现 `~/.gemini` 十几分钟积了 28 个 `projects.json.<uuid>.tmp`。定因（本机 gemini 0.64 复现 + 读源码
@@ -2334,8 +2561,9 @@ Claude Code 用量无法恢复。
   雷达卡片 + 收件箱 lit: 文献胶囊 / Schedule.linkedStep 关联步骤 + RunRecord.newEntries / staleLitHint 复用
   staleUpstream 口径只提醒不阻断）。
   当前规则：默认定时任务进入隔离 worktree，无法创建或校验失败则 fail-closed；启动前登记 Run，启动失败也保留 failed Run 记录；超时与真失败分列。成功产物经只读评审，人点「采纳进主仓」才拷回项目根，不自动合并。当前没有主仓 sentinel 配置入口，不能把定时成功理解为已写入主仓。不同 Agent 的无头权限差异仍以能力表和实机验证为准。关标签后交互 Run 按 `runId` 从工作台「继续」或收件箱找回。
-- macOS 签名公证（暂缓，需 Apple Developer 会员 + CI 配 6 个 APPLE_* secrets，见架构 v1.3）
-- Intel macOS 安装包（暂缓：CI macos-latest 只出 aarch64；加 `x86_64-apple-darwin` target 构建时间翻倍，真有 Intel 用户再加，
-  见架构 v1.3 / README 安装节）
+- macOS 签名公证：**workflow 已接好**（2026-10-20），六个 APPLE_* secrets 配齐自动启用；剩开通 Apple Developer 账号与配 secrets（docs/release.md）
+- Intel macOS 安装包 ✅（2026-10-20 用户「全部做」推翻暂缓：Apple 芯片 runner 交叉编译 x86_64，latest.json 带 darwin-x86_64，verify-release 校验）
+- Windows 代码签名（未做：要证书；SmartScreen 的点法已写进 README 与说明书）
+- 应用内更新的国内镜像：**流程已接好**（2026-10-20 拍板：公司对象存储 + CDN，Release 发布时同步）；剩建桶、绑域名、配变量与 secrets（docs/release.md）
 - OpenCode Windows 数据路径 ✅：`sessions.rs` 依次探测 `OPENCODE_DB` / `%LOCALAPPDATA%\opencode` / `%APPDATA%\opencode` / `~/.local/share/opencode`（2026-08-31）
 - Skills 一键更新 ✅：更新检测（check_skill_updates）+ 检测后一键应用更新（apply_skill_update，v3.53）均已落地

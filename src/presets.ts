@@ -37,12 +37,13 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   {
     name: "腾讯 CodeBuddy 国际站",
     agents: ["codebuddy"],
-    slots: { anthropic: "https://www.codebuddy.ai" },
+    // CodeBuddy 自己的端点 = product endpoint + /v2，CLI 再拼 /chat/completions
+    slots: { openai: "https://www.codebuddy.ai/v2" },
   },
   {
     name: "腾讯 CodeBuddy 中国站",
     agents: ["codebuddy"],
-    slots: { anthropic: "https://copilot.tencent.com" },
+    slots: { openai: "https://copilot.tencent.com/v2" },
   },
   {
     name: "DeepSeek",

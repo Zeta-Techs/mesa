@@ -6,7 +6,7 @@
  * 优先级：旁路说了算的事，读会话文件 / 读屏的推断只补空缺（旁路没接上的家照旧走原来那套）。
  */
 import { samePath } from "./path-utils.ts";
-import { lineDiff, parsePatch, type DiffLine } from "./tool-activity.ts";
+import { lineDiff, parsePatch, unwrapPowerShell, type DiffLine } from "./tool-activity.ts";
 
 export type ChannelKind = "hooks" | "qwen" | "opencode" | "codex";
 
@@ -61,6 +61,23 @@ export function channelAttention(snap: ChatChannelSnapshot | null): "working" | 
   if (t.status === "running") return "working";
   if (t.status === "awaiting_approval") return "confirm";
   return "done";
+}
+
+/**
+ * hooks 家（Claude Code）的审批答完了没有：CLI 不报「答了」，旁路要等那个工具跑完（PostToolUse）才撤卡，
+ * 批准后工具跑多久「等你确认」就挂多久——卡片从终端菜单的英文原文换成一张中文的「要访问网络」，
+ * 标签黄点也一直亮着（2026-10-20 用户 Windows 实测：WebFetch 批准后又挂了 14 秒；Windows 上 hooks 在后台跑，
+ * 快命令也要多挂约 1 秒，Mac 上慢命令同样如此）。
+ * promptIdle = 最近一次扫屏看见这家的输入框、没有菜单：终端里已经不在等这一问（在聊天层点的、在终端里答的都算）。
+ * 读屏认不出输入框的家（CodeBuddy）promptIdle 恒为 false，照旧等旁路撤卡；能从聊天层答的（Qwen / Codex）不经这里
+ */
+export function hooksApprovalAnswered(snap: ChatChannelSnapshot | null, promptIdle: boolean): boolean {
+  return Boolean(
+    promptIdle &&
+      snap?.kind === "hooks" &&
+      snap.turn?.status === "awaiting_approval" &&
+      !snap.approval?.replyable,
+  );
 }
 
 /**
@@ -127,13 +144,19 @@ export function approvalPreview(a: ChannelApproval | null): DecisionPreview | nu
 /**
  * 命令去掉外层 shell 包装再给人看：Codex 把模型的命令再包一层登录 shell，审批里是
  * `/bin/zsh -lc "/bin/zsh -lc 'printf …'"`（2026-10-20 用户截图）。只剥「整条就是 sh -c 加一个引号串」的；
- * 双引号串里有没转义的 $ 或反引号就不剥（那要外层 shell 先展开，剥了含义会变）
+ * 双引号串里有没转义的 $ 或反引号就不剥（那要外层 shell 先展开，剥了含义会变）。
+ * Windows 上包的是 PowerShell：`"D:\…\pwsh.exe" -Command 'echo …'`（同日 Windows 端到端实测），同样剥掉
  */
 export function displayCommand(command: string): string {
   let cur = command.trim();
   for (let i = 0; i < 3; i++) {
     const m = /^(?:\/\S*\/)?(?:ba|z)?sh\s+-l?c\s+(?:'([^']*)'|"((?:[^"\\]|\\.)*)")$/.exec(cur);
-    if (!m) break;
+    if (!m) {
+      const ps = unwrapPowerShell(cur);
+      if (ps === null) break;
+      cur = ps;
+      continue;
+    }
     if (m[1] !== undefined) {
       cur = m[1].trim();
     } else {

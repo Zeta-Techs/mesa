@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from "react";
+import { contextLabel } from "../model-caps-label";
 import { invoke } from "@tauri-apps/api/core";
 import { scheduleWarnText, usageWarnText, type UnbindRefs } from "../unbind-impact";
 import { listen } from "@tauri-apps/api/event";
@@ -775,7 +776,7 @@ function ProfileModal({
             填好后到下方「验证并获取」一次完成连通验证和模型目录拉取
           </span>
         </label>
-        {(form.agent === "claude-code" || form.agent === "codebuddy" || form.protocol === "anthropic") &&
+        {(form.agent === "claude-code" || form.protocol === "anthropic") &&
           form.baseUrl.trim().replace(/\/+$/, "").endsWith("/v1") && (
           <p className="-mt-2 mb-3 text-xs text-warn-text">
             Anthropic 客户端会自动在 Base URL 后拼 /v1/messages，以 /v1 结尾将打成 /v1/v1/messages 报 404（此时「测试」仍能成功，不代表运行可用）——请去掉末尾的 /v1
@@ -1072,7 +1073,8 @@ function ProfileModal({
                             ? "无图像"
                             : "图像未知",
                       ].filter(Boolean);
-                      return `${flags.join(" · ")} · 上下文 ${(c.context / 1024).toFixed(0)}K`;
+                      const ctx = contextLabel(c.context);
+                      return ctx ? `${flags.join(" · ")} · 上下文 ${ctx}` : flags.join(" · ");
                     })()}
                     className="group flex items-center gap-2 rounded-sm px-2 py-0.5 hover:bg-hover"
                   >
@@ -1604,7 +1606,7 @@ const WINGET_AGENTS = new Set(["claude-code", "codex", "opencode", "kimi", "grok
 function installToolHelp(agentId: string): string {
   if (/Windows/i.test(navigator.userAgent)) {
     if (agentId === "cursor") {
-      return "Cursor CLI 官方仅支持 macOS/Linux，Windows 请在 WSL 中安装 cursor-agent，或改用其他 Agent。";
+      return "Cursor CLI 在 Windows 上用官方的 PowerShell 安装器，但这台电脑找不到 PowerShell。也可以在 PowerShell 里手动运行：irm 'https://cursor.com/install?win32=true' | iex，装好后重新打开 Mesa。";
     }
     if (WINGET_AGENTS.has(agentId)) {
       return "未找到可用的安装工具：winget 与 Node.js 都不可用。该 agent 在 Windows 上有两条路——① 系统自带 winget：若被卸载，请在 Microsoft Store 安装「应用安装程序」；② 安装 Node.js LTS 走 npm 渠道（下载：https://nodejs.org/en/download）。完成后完全退出并重新打开 Mesa。";

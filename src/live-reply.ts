@@ -29,6 +29,12 @@ interface Layout {
   tool: RegExp;
   /** 转圈、用时、提示、装饰行 */
   skip: RegExp;
+  /**
+   * 这种行折行时，续行（比正文缩进深、不带符号）也跳过，到空行或下一段为止。Claude 转圈下面的「⎿  Tip: …」
+   * 长过一行时，第二行「     it with "use at most 5 agents", …」原先被当成回复，一直挂在预览里（2026-10-20 用户 Windows 实测，
+   * Claude Code 2.1.304；终端窄一点 Mac 上同样会折行）
+   */
+  wrapSkip?: RegExp;
   /** 续行去掉的缩进（空格数，最多去这么多） */
   indent: number;
   /** 行尾要去掉的东西（Grok 右侧的时间） */
@@ -47,8 +53,9 @@ const SPINNER = /^\s*[\u2800-\u28ff]\s/;
 // Claude：转圈 / 用时 / 右对齐的思考档提示：✻ Sautéed for 7s · done、✶ Thinking…、● high · /effort；
 // 还有两种界面提示，聊天层里按不了、也不是回复：「Thought for 7s (ctrl+o to expand)」（思考折叠行，不带行首符号，
 // 会被当成上一段的续行）和任何「(ctrl+o to expand)」「(ctrl+r to …)」这类快捷键提示（2026-10-19 用户截图）
+// ● 只在缩进行里算状态（右对齐的「● high · /effort」）：顶格的 ● 是 Windows 上 Claude 的正文行首
 const CLAUDE_STATUS =
-  /^\s*(?:[✻✶✳✢✽✺∴*·●◈]\s|Thought for \d|.*·\s*\/effort\s*$)|\(ctrl\+[a-z] to [^)]*\)\s*$/;
+  /^\s*(?:[✻✶✳✢✽✺∴*·◈]\s|Thought for \d|.*·\s*\/effort\s*$)|^\s+●\s|\(ctrl\+[a-z] to [^)]*\)\s*$/;
 // Claude 2.1.x 把工具调用折成一行摘要：Read 1 file、Ran 2 commands、Searched for 3 patterns…
 const TOOL_SUMMARY =
   /^\s*(?:Read|Ran|Searched|Listed|Wrote|Edited|Updated|Fetched|Called|Created|Deleted|Found)\b.*\b(?:files?|commands?|patterns?|director(?:y|ies)|lines?|tools?|pages?|results?)\b/;
@@ -69,11 +76,13 @@ const LAYOUTS: Record<string, Layout> = {
     // 输入框上边框：最后一条「❯」行的上一行是横线
     boxTop: (rows) => lastBox(rows, (i) => (i > 0 && /^❯/.test(rows[i]) && BORDER.test(rows[i - 1].trim()) ? i - 1 : -1)),
     echo: /^❯\s+\S/,
-    lead: /^⏺\s?/,
+    // 行首符号：macOS / Linux 是 ⏺，Windows 上 Claude Code 画 ●（控制台字体没有 ⏺，2026-10-20 ConPTY 抓屏）
+    lead: /^[⏺●]\s?/,
     // 工具名可以是两个词：「Web Search(…)」「Notebook Edit(…)」（旧写法 [A-Za-z]* 漏掉带空格的，整行被当成正文）；
     // 括号必须紧跟字母，「⏺ Note (important)…」这种正文不会误判
-    tool: new RegExp(`^⏺\\s+[A-Z][A-Za-z]*(?: [A-Z][A-Za-z]*)*\\(|${TOOL_SUMMARY.source}`),
-    skip: new RegExp(`${CLAUDE_STATUS.source}|^\\s*⎿`),
+    tool: new RegExp(`^[⏺●]\\s+[A-Z][A-Za-z]*(?: [A-Z][A-Za-z]*)*\\(|${TOOL_SUMMARY.source}`),
+    skip: CLAUDE_STATUS,
+    wrapSkip: /^\s*⎿/,
     indent: 2,
   },
   codex: {
@@ -95,7 +104,8 @@ const LAYOUTS: Record<string, Layout> = {
     lead: /^\s*◆\s/,
     // 「  ? Shell echo …」「  - Shell …」「  ✓ ReadFile …」：顶两格 + 状态符号 + 工具名（正文列表缩进更深）
     tool: /^ {2}[?✓✔✗✘⊷○◐-]\s+[A-Z]/,
-    skip: /esc to cancel|^\s*●\s*$|Waiting for user confirmation/,
+    // 思考折叠行「∴ Thought for 1s (click or ctrl+o to expand)」（模型带思考时才有，2026-10-21 用户截图）
+    skip: /esc to cancel|^\s*●\s*$|Waiting for user confirmation|^\s*∴\s|\((?:click or )?ctrl\+o to expand\)/,
     // 段落续行缩进 4、列表 / 代码行缩进 5：最多去 5 格，两种都对齐到行首
     indent: 5,
   },
@@ -106,17 +116,21 @@ const LAYOUTS: Record<string, Layout> = {
     echo: /^\s?>\s+\S/,
     lead: /^✦\s/,
     tool: /^\s*[╭│╰]/,
-    skip: /esc to cancel|Shift\+Tab to accept edits|\? for shortcuts|MCP servers?\s*$|^\s*[╭│╰]/,
+    // 输入框上方的提示与状态行。0.65 起按权限档变字（「auto-accept edits  Shift+Tab to manual」），MCP 后面还跟技能数
+    // （「1 MCP server · 20 skills」）；粘贴多行后回显下面多一行「Press Ctrl+O to expand pasted text」（2026-10-21 用户截图）
+    skip: /esc to cancel|Shift\+Tab to |auto-accept edits|\? for shortcuts|\bMCP servers?\b|\b\d+ skills?\s*$|Press Ctrl\+O to expand|^\s*[╭│╰]/,
     // 段落续行缩进 2、列表缩进 3
     indent: 3,
   },
   grok: {
+    // Windows 上 Grok 换了一套字形（2026-10-20 ConPTY 抓屏）：回显与输入框 ❯ → >，工具 ◆ → ♦，代码块标签 ◇ → ○
     boxTop: (rows) =>
-      lastBox(rows, (i) => (/^\s*╭[─━]+╮$/.test(rows[i]) && /^\s*│\s*❯/.test(rows[i + 1] ?? "") ? i : -1)),
-    echo: /^\s+❯\s+\S/,
+      lastBox(rows, (i) => (/^\s*╭[─━]+╮$/.test(rows[i]) && /^\s*│\s*[❯>]/.test(rows[i + 1] ?? "") ? i : -1)),
+    echo: /^\s+[❯>]\s+\S/,
     lead: null,
-    tool: /^\s*◆\s/,
-    skip: /Responding…|^\s*Worked for\b|^\s*◇\s+\S+\s+\[Copy\]$/,
+    tool: /^\s*[◆♦]\s/,
+    // ▲ / ▼ = 对话区上下还有内容的滚动提示（提问钉在屏顶时紧跟在它下面）
+    skip: /Responding…|^\s*Worked for\b|^\s*[◇○]\s+\S+\s+\[Copy\]$|^\s*[▲▼]$/,
     indent: 5,
     tail: /\s{2,}\d{1,2}:\d{2}\s?[AP]M$/,
   },
@@ -126,13 +140,38 @@ const LAYOUTS: Record<string, Layout> = {
     echo: /^\s*❯\s+\S/,
     lead: /^\s*●\s/,
     tool: new RegExp(`^\\s*[●✗✓•]\\s+${TOOL_VERB}\\b`),
-    skip: /Press Ctrl\+B to run in background|^\s*Tool ".*" was not run|^\s*Rejected:/,
+    // 2.3 等首字时转月相「🌑 · Tip: …」（2026-10-21 抓屏；用户截图里 🌕Kimi 叠在「正在回复」上面）
+    skip: /Press Ctrl\+B to run in background|^\s*Tool ".*" was not run|^\s*Rejected:|^\s*[\u{1F311}-\u{1F318}]|^\s*·\s*Tip:/u,
     indent: 3,
   },
 };
 
+/**
+ * Claude Code 转圈行里这一轮已生成的 token 数：「✶ Musing… (5s · ↓ 1.2k tokens)」→ 1200。
+ * Windows 上 Claude Code 整条消息收完才画出来（2026-10-21 抓屏：2.1.292 / 2.1.305 都是转圈计数、最后一次画出），
+ * 聊天层没有逐字预览，拿它告诉人还在出字；长思考时也有用。只认 ↓（收到的），认不出返回 null
+ */
+export function claudeOutputTokens(lines: readonly string[]): number | null {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const m = /…\s*\([^)]*↓\s*([\d.]+)\s*(k)?\s*tokens?\b/i.exec(lines[i]);
+    if (m) {
+      const n = Number(m[1]);
+      if (Number.isFinite(n)) return Math.round(n * (m[2] ? 1000 : 1));
+    }
+  }
+  return null;
+}
+
 export function liveReplySupported(agentId: string): boolean {
   return agentId in LAYOUTS;
+}
+
+/**
+ * 行尾的空白与右侧滚动条（Grok / Gemini 的 █）去掉；字形后的变体选择符（U+FE0E / FE0F）也去掉——
+ * Qwen 0.25.3 画「◆︎ 正文」「∴︎ Thought …」，xterm 把它并进前一格，行首符号认不出，整屏连提示一起当成回复（2026-10-21）
+ */
+function cleanRows(lines: readonly string[]): string[] {
+  return lines.map((l) => l.replace(/[\uFE0E\uFE0F]/g, "").replace(/[\s█]+$/, ""));
 }
 
 /**
@@ -142,8 +181,7 @@ export function liveReplySupported(agentId: string): boolean {
 export function terminalHasInputBox(lines: readonly string[], agentId: string): boolean | null {
   const layout = LAYOUTS[agentId];
   if (!layout) return null;
-  const rows = lines.map((l) => l.replace(/[\s█]+$/, ""));
-  return layout.boxTop(rows) >= 0;
+  return layout.boxTop(cleanRows(lines)) >= 0;
 }
 
 /**
@@ -158,13 +196,18 @@ export interface LiveReplyRead {
    * lines 是按「钉在屏顶的提问」读的（anchored = false），{@link mergeLiveReply} 接不上上一次时才改用它
    */
   ifRealEcho?: LiveReplyRead | null;
+  /**
+   * 这一截是从哪条回显后面读的（那一行原文）。刚发出一句、CLI 还没把它画出来时，屏上最后一条回显还是上一轮的，
+   * 读出来的是上一轮的回复（2026-10-21 用户 Qwen：聊天层先把上一段回复又显示一遍）；调用方拿它和发送前的那条比
+   */
+  echo?: string;
 }
 
 export function extractLiveReply(lines: readonly string[], agentId: string): LiveReplyRead | null {
   const layout = LAYOUTS[agentId];
   if (!layout) return null;
   // 行尾的空白与右侧滚动条（Grok / Gemini 的 █）
-  const rows = lines.map((l) => l.replace(/[\s█]+$/, ""));
+  const rows = cleanRows(lines);
   // 有确认菜单挂着（▔▔▔ 边框）时不预览：聊天层另有确认卡
   if (rows.some((l) => MENU_BORDER.test(l.trim()))) return null;
   // 没有输入框 = 不在对话界面（启动信任菜单、登录页、全屏选择器）：屏上的字不是回复，不预览。
@@ -185,16 +228,24 @@ export function extractLiveReply(lines: readonly string[], agentId: string): Liv
   if (layout.pinnedEcho && echoAt === 0 && region.length > 1) {
     const pinned = readReply(layout, region, 1, false);
     if (!realEchoShape(layout, region)) return pinned;
-    const real = readReply(layout, region, echoStart(layout, region, 1), true);
+    const real0 = readReply(layout, region, echoStart(layout, region, 1), true);
+    const real = real0 ? { ...real0, echo: region[0] } : null;
     return pinned ? { ...pinned, ifRealEcho: real } : real;
   }
-  if (echoAt >= 0) return readReply(layout, region, echoStart(layout, region, echoAt + 1), true);
+  if (echoAt >= 0) {
+    const read = readReply(layout, region, echoStart(layout, region, echoAt + 1), true);
+    return read ? { ...read, echo: region[echoAt] } : null;
+  }
   if (layout.lead) {
     const lead = layout.lead;
     const first = region.findIndex((l) => lead.test(l) && !layout.tool.test(l));
     if (first >= 0) return readReply(layout, region, first, true);
   }
-  // 开头都滚出屏了（长回复，2026-10-17 用户：显示一半后就没了）：屏上这一截全是续行
+  // 开头都滚出屏了（长回复，2026-10-17 用户：显示一半后就没了）：屏上这一截全是续行——续行都有缩进。
+  // 顶上是没缩进的字（启动横幅、「Tips for getting started」、排队中的提问）说明这一轮的回复还没出来，
+  // 不预览（2026-10-20 Windows 抓屏：Gemini 等 MCP 初始化时提问排着队、屏上还没有回显，横幅被当成回复）
+  const firstText = region.find((l) => l.trim() && !BORDER.test(l.trim()));
+  if (firstText !== undefined && firstText.length - firstText.trimStart().length < 2) return null;
   return readReply(layout, region, 0, false);
 }
 
@@ -202,7 +253,18 @@ export function extractLiveReply(lines: readonly string[], agentId: string): Liv
  *  （2026-10-19 用户截图：Codex 里发九行清单，后八行被当成回复显示在下面） */
 function echoStart(layout: Layout, region: readonly string[], start: number): number {
   const lead = layout.lead;
-  if (!lead) return start;
+  if (!lead) {
+    // 没有助手行首的（Grok）：提问续行对齐到回显正文那一列（「     > 」之后，缩进 7），回复正文只缩进 5。
+    // 缩进够到回显正文列的非空行都是提问续行（含长提问被折成「2. … …」的末行），到空行或缩进回到正文列为止
+    // （2026-10-21 用户 Windows 截图：七行清单提问的续行被当成回复，聊天层已有的段落跟着又画一遍）
+    const echo = region[start - 1] ?? "";
+    const m = /[❯>]\s+/.exec(echo);
+    const col = m ? m.index + m[0].length : layout.indent + 2;
+    while (start < region.length && region[start].trim() && region[start].length - region[start].trimStart().length >= col) {
+      start++;
+    }
+    return start;
+  }
   while (start < region.length && region[start].trim() && !lead.test(region[start])) start++;
   return start;
 }
@@ -225,6 +287,7 @@ function readReply(layout: Layout, region: readonly string[], start: number, anc
   };
   const out: string[] = [];
   let inTool = false;
+  let inWrapSkip = false;
   for (const raw0 of region.slice(start)) {
     const raw = layout.tail ? raw0.replace(layout.tail, "") : raw0;
     const t = raw.trim();
@@ -234,7 +297,9 @@ function readReply(layout: Layout, region: readonly string[], start: number, anc
       inTool = layout.lead !== null;
       continue;
     }
-    if (layout.skip.test(raw)) continue;
+    if (inWrapSkip && t && raw.length - raw.trimStart().length > layout.indent && !layout.lead?.test(raw)) continue;
+    inWrapSkip = Boolean(layout.wrapSkip?.test(raw));
+    if (inWrapSkip || layout.skip.test(raw)) continue;
     if (layout.lead?.test(raw)) {
       inTool = false;
       const text = raw.replace(layout.lead, "");
@@ -290,12 +355,30 @@ function norm(text: string): string {
 }
 
 /**
+ * 读到的这一截是不是还停在上一轮：它所在的回显与发送前屏上最后一条回显是同一行，又不像刚发的这句。
+ * before = 发送前的最后一条回显（没有为 null）；sent = 刚发的原文。重复发同一句时认作新的（宁可多显示一会儿旧的）
+ */
+export function staleEcho(read: LiveReplyRead, before: string | null, sent: string): boolean {
+  if (before === null || read.echo === undefined || read.echo !== before) return false;
+  const head = norm(sent.split("\n")[0] ?? "").slice(0, 12);
+  return !head || !norm(read.echo).includes(head);
+}
+
+/**
  * 去掉聊天层已经有了的行：从第一行「会话里还没有」的开始往后都算实时部分。
  * synced = 最近几条助手消息的正文（调用方拼好）
  */
 export function unsyncedTail(live: readonly string[], synced: string): string[] {
   const done = norm(synced);
-  const idx = live.findIndex((l) => {
+  // 会话文件按顺序落盘：最后一行「够长、已落盘」的及其之前都算过去了。前面混进来的非回复行（提问续行、工具输出）
+  // 原先让「从第一行没落盘的起」从头算起，已落盘的段落整段又画一遍（2026-10-21 Grok 截图）。短行到处对得上，不当锚
+  let from = 0;
+  live.forEach((l, i) => {
+    const n = norm(l);
+    if (n.length >= 8 && done.includes(n)) from = i + 1;
+  });
+  const idx = live.findIndex((l, i) => {
+    if (i < from) return false;
     const n = norm(l);
     return n.length > 0 && !done.includes(n);
   });

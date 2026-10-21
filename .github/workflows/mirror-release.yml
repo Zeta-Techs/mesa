@@ -1,0 +1,104 @@
+name: mirror release
+
+# 应用内更新的国内镜像（docs/release.md「应用内更新的国内镜像」）：Release 正式发布时，把 latest.json 与它引用的
+# 更新包搬到公司自己的对象存储（S3 兼容接口，如阿里云 OSS），latest.json 里的下载地址改成镜像地址。
+# 只在 published 时跑：Release 是草稿时就同步，镜像会先于正式发布宣布新版本。
+# 没配齐就跳过（日志里写缺什么），不让发版失败。安装包签名原样保留，应用照旧用内置公钥校验，镜像改不了包。
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 要同步的已发布版本 tag（如 v1.2.3）
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mirror-release
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    name: 同步更新镜像
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      MIRROR_BASE: ${{ vars.UPDATE_MIRROR_BASE }}
+      S3_ENDPOINT: ${{ vars.UPDATE_MIRROR_S3_ENDPOINT }}
+      S3_REGION: ${{ vars.UPDATE_MIRROR_S3_REGION }}
+      S3_BUCKET: ${{ vars.UPDATE_MIRROR_BUCKET }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.UPDATE_MIRROR_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.UPDATE_MIRROR_ACCESS_KEY_SECRET }}
+    steps:
+      - name: 检查镜像配置
+        id: cfg
+        shell: bash
+        run: |
+          missing=""
+          for k in MIRROR_BASE S3_ENDPOINT S3_REGION S3_BUCKET AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; do
+            [ -n "${!k}" ] || missing="$missing $k"
+          done
+          if [ -n "$missing" ]; then
+            echo "::notice::更新镜像没配齐（缺：$missing），跳过同步。配法见 docs/release.md"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.cfg.outputs.enabled == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.cfg.outputs.enabled == 'true'
+        with:
+          node-version: 22
+      - name: 下载 latest.json 与更新包，改写下载地址
+        if: steps.cfg.outputs.enabled == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh release download "$TAG" --repo "${{ github.repository }}" --pattern latest.json --dir dist
+          node scripts/mirror-latest-json.mjs dist/latest.json "$MIRROR_BASE" "$TAG" dist/latest.mirror.json > dist/files.tsv
+          while IFS=$'\t' read -r url name; do
+            echo "下载 $name"
+            curl -fL --retry 3 -o "dist/$name" "$url"
+          done < dist/files.tsv
+      - name: 上传到对象存储（先传更新包，最后传 latest.json）
+        if: steps.cfg.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws configure set default.s3.addressing_style virtual
+          prefix=$(node --input-type=module -e 'import { keyPrefixFromBase } from "./scripts/mirror-latest-json.mjs"; process.stdout.write(keyPrefixFromBase(process.env.MIRROR_BASE))')
+          s3() { aws s3 cp "$@" --endpoint-url "$S3_ENDPOINT" --region "$S3_REGION" --only-show-errors; }
+          while IFS=$'\t' read -r url name; do
+            s3 "dist/$name" "s3://$S3_BUCKET/${prefix}${TAG}/$name" --cache-control "public, max-age=31536000, immutable"
+          done < dist/files.tsv
+          # 清单最后传：之前传的包都到位了，用户才会被告知有新版本
+          s3 dist/latest.mirror.json "s3://$S3_BUCKET/${prefix}latest.json" --content-type application/json --cache-control "no-cache"
+      - name: 核对镜像能读到
+        if: steps.cfg.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${MIRROR_BASE%/}"
+          curl -fsS "$base/latest.json" -o check.json
+          node -e '
+            const m = JSON.parse(require("fs").readFileSync("check.json", "utf8"));
+            const want = process.env.TAG.replace(/^v/, "");
+            if (m.version.replace(/^v/, "") !== want) { console.error("镜像上的版本是 " + m.version + "，不是 " + want + "（CDN 缓存未刷新？）"); process.exit(1); }
+            const urls = Object.values(m.platforms).map((p) => p.url);
+            if (!urls.every((u) => u.startsWith(process.env.MIRROR_BASE.replace(/\/+$/, "")))) { console.error("清单里还有非镜像地址"); process.exit(1); }
+            console.log(urls.join("\n"));
+          ' > urls.txt
+          while read -r u; do curl -fsSI "$u" > /dev/null && echo "可读：$u"; done < urls.txt
+          {
+            echo "## 更新镜像已同步 $TAG"
+            echo ""
+            echo "- 清单：$base/latest.json"
+            sed 's/^/- /' urls.txt
+          } >> "$GITHUB_STEP_SUMMARY"

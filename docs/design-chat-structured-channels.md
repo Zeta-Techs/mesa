@@ -509,3 +509,27 @@ Mesa 写进全局配置的条目（只删含状态日志路径的条目，写前
 UserPromptSubmit）被收回成 `{}`，设置里 codex 开关置为关；写前备份在 `<配置目录>/ccode/backups/codex-hooks-settings-01792433585819246000.json`，
 核对过备份里正是这三条、且只有这三条。之后补了干跑测试 `hooks::tests::real_data_dry_run_migrate`（`--ignored`）与同形状的单测。
 
+### Windows 适配（2026-10-20，用户：「这些完善不要影响到 Mac 端」）
+
+在 Windows 11 上把 `e2e_channel` 跑通五家（版本见 scripts/e2e-model-routing/README.md 文末），查出与改法（规则见 conventions/terminal.md
+旁路条⑦–⑪、environment.md「.cmd shim」；决策见 architecture §10 同日条）：
+
+| 问题（实测） | 后果 | 改法（只动 Windows） |
+|---|---|---|
+| claude.cmd / opencode.cmd 指向原生 exe、codebuddy.cmd 指向无扩展名 node 脚本，起进程回落 `cmd /c call` | 官方账号 Claude 的内联 `--settings` 里 `\|` 被 cmd 当管道，**Claude 起不来**；随启动带的首条消息多行截断、`%PATH%` 被展开 | shim 深化补两种（exe 直启 / node shebang）；官方账号的 hooks 写旁路目录 settings.json 传路径 |
+| hook 起 PowerShell 每次 0.9–1.2 秒 | Claude 每个工具调用前后各卡约一秒，每轮结束再卡一秒 | Claude 的注入 hooks 带 `async: true`，另挂 PermissionRequest；Tracker 后台模式按身份对账 |
+| 共用脚本折叠 `\s+` | 审批卡命令 / 差异丢缩进 | 只删回车换行 |
+| 多个 hook 进程同时追加日志 | 12 并发丢 1 条；丢的是 Stop 时聊天层一直「在回复」 | 撞车重试约 1.5 秒 |
+| Codex app-server 是独立后台进程 | Mesa 崩溃 / 强杀后成孤儿（占端口、占会话写锁）；收旁路时目录被它开着的日志锁住删不掉 | 挂进「句柄关即全杀」任务组；先杀后删 |
+| Codex 恢复给的 rollout 路径带 `\\?\` | 与 Mesa 其余路径对不上 | 进快照前 strip_verbatim |
+| 审批里是 `"…\pwsh.exe" -Command '…'` | 卡上露出外壳；「已工作」摘要不认 cmdlet，全算「运行」 | 前端认 PowerShell 外壳与常见 cmdlet |
+
+未做：原生小程序代替 PowerShell 写日志（可保持同步、快一个数量级，要加 Windows 专属 sidecar）；CodeBuddy 是否认 `async`；Windows 上
+读屏兜底（审批菜单 / 实时预览）在 ConPTY 下的抓屏核对；Mesa Dev 窗口逐家点验。
+
+**同日二批补上（architecture §10「Windows / Mac 两端完善批」）**：原生小程序没加新 sidecar，用随包的 `mesa_helper` 的 `hook` 模式——启动注入的
+Claude / CodeBuddy 用原路径（带引号）、同步跑，Stop hook 87–109ms；写全局配置的 Gemini / Kimi / Grok 用拷到 hooks-state 的 `ccode-hook.exe`、
+路径不加引号（PowerShell / cmd / bash 三种宿主都认）。CodeBuddy 的 async 不再需要核实（不走后台了）。读屏兜底在 ConPTY 下核对了 Claude / Gemini /
+Kimi / Grok 四家（`chat-capture.py` Windows 分支 + `capture-check.ts`），补了 Windows 字形（Claude `●`、Grok `>` `♦` `○` `•`）。
+剩下：Mesa Dev 窗口逐家点验（docs/qa/acceptance-2026-10.md）。
+
