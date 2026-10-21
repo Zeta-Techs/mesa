@@ -4865,8 +4865,15 @@ const TerminalView = memo(function TerminalView({
         ptyId,
         text,
         submit: submitCsiU ? KIMI_CSI_U_ENTER : "\r",
-        // Windows 上 Grok 收粘贴包里的 LF 会把两行连成一行，CR 才算换行；别家 CR 会被当提交，只给 Grok 改（pty.rs chat_paste_body）
-        pasteNewline: IS_WINDOWS && launchAgentRef.current === "grok" ? "\r" : null,
+        // Windows 上 Grok 收粘贴包里的 LF 会把两行连成一行，CR 才算换行；Codex 的 LF 同样丢、CR 又会拆成几条消息，
+        // 换行改送 Shift+Enter 按键记录（pty.rs shift_enter_pieces）；别家 LF 正常，不动
+        pasteNewline: !IS_WINDOWS
+          ? null
+          : launchAgentRef.current === "grok"
+            ? "\r"
+            : launchAgentRef.current === "codex"
+              ? "shift-enter"
+              : null,
       });
       return { error: null };
     } catch (e) {

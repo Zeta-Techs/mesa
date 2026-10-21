@@ -439,6 +439,31 @@ fn pty_input_pieces(bytes: &str) -> Vec<Vec<u8>> {
 /// win32 按键记录之间的投递间隔——低于此值 ConPTY 输入解析器会丢同步漏出字面记录
 const WIN32_INPUT_RECORD_GAP: std::time::Duration = std::time::Duration::from_millis(2);
 
+/// Shift+Enter 的 win32 按键记录（VK_RETURN、扫描码 28、字符 CR、按下、SHIFT_PRESSED）
+const SHIFT_ENTER_RECORD: &str = "\x1b[13;28;13;1;16;1_";
+
+/// Windows 上发给 Codex 的多行正文：每个换行改送一条 Shift+Enter 按键记录（Codex 的换行键），其余同 conpty_input_pieces。
+///
+/// Codex（crossterm）在 Windows 上读的是按键事件，ConPTY 把粘贴包里的 LF 转成它认不出的键，换行整个丢掉、几行连成一行；
+/// 改写 CR 则每行各自发出去（2026-10-21 ConPTY 探针，Codex 0.163：LF → 「多行第二行第三行」、CR → 拆成三条消息、
+/// Shift+Enter / Ctrl+J 记录 → 三行原样；docs 里 10-20「Codex 保留 LF」的结论已不成立）
+fn shift_enter_pieces(body: &str) -> Vec<Vec<u8>> {
+    let mut pieces = Vec::new();
+    for (i, line) in body.split('\n').enumerate() {
+        if i > 0 {
+            pieces.push(SHIFT_ENTER_RECORD.as_bytes().to_vec());
+        }
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        if !line.is_empty() {
+            pieces.extend(conpty_input_pieces(line));
+        }
+    }
+    if pieces.is_empty() {
+        pieces.push(Vec::new());
+    }
+    pieces
+}
+
 /// 向指定 PTY 的独立队列写字节；只在查找 writer 句柄时持全局表锁。
 /// PTY 已消失（标签被秒关）时返回 Err，由调用方决定是否静默。
 fn write_pty_bytes(manager: &PtyManager, pty_id: &str, bytes: &[u8]) -> Result<(), String> {
@@ -1489,7 +1514,7 @@ pub fn pty_report_terminal_colors(
 /// 将聊天消息和提交键作为同一个输入队列请求，避免其它输入插入中间。
 /// 文本仍遵守 bracketed-paste 规则，提交键在粘贴包结束后单独写入，
 /// 避免前端两个 IPC 调用之间被 TUI 切帧，也避免多行消息把回车吞进粘贴文本。
-/// `paste_newline`：粘贴包里的换行写成什么，只认 "\r"（见 chat_paste_body），缺省照原样 LF
+/// `paste_newline`：粘贴包里的换行写成什么——"\r"（见 chat_paste_body）或 "shift-enter"（见 shift_enter_pieces），缺省照原样 LF
 #[tauri::command]
 pub async fn pty_write_submit(
     manager: tauri::State<'_, PtyManager>,
@@ -1498,9 +1523,10 @@ pub async fn pty_write_submit(
     submit: String,
     paste_newline: Option<String>,
 ) -> Result<(), String> {
-    let cr_newlines = match paste_newline.as_deref() {
-        None | Some("\n") => false,
-        Some("\r") => true,
+    let (cr_newlines, shift_enter) = match paste_newline.as_deref() {
+        None | Some("\n") => (false, false),
+        Some("\r") => (true, false),
+        Some("shift-enter") => (false, true),
         Some(_) => return Err("无效的粘贴换行".into()),
     };
     let (writer, paste_on) = {
@@ -1511,10 +1537,15 @@ pub async fn pty_write_submit(
             entry.bracketed_paste.load(Ordering::Relaxed),
         )
     };
-    let receipt = writer.enqueue_submit(
-        pty_input_pieces(&chat_paste_body(&text, paste_on, cr_newlines)),
-        submit.as_bytes(),
-    )?;
+    let body = chat_paste_body(&text, paste_on, cr_newlines);
+    // 粘贴包后的回车多等一会儿：Qwen 在 Windows 上吞掉粘贴后 500ms 内的回车（pty_input PASTE_SUBMIT_GAP）
+    let pasted = body.starts_with("\x1b[200~");
+    let pieces = if shift_enter && cfg!(windows) {
+        shift_enter_pieces(&body)
+    } else {
+        pty_input_pieces(&body)
+    };
+    let receipt = writer.enqueue_submit(pieces, submit.as_bytes(), pasted)?;
     tauri::async_runtime::spawn_blocking(move || receipt.wait())
         .await
         .map_err(|e| format!("写入终端失败：{e}"))?
@@ -2263,6 +2294,27 @@ mod tests {
         let recs = win32_input_records("ab");
         // 每字符一条 key-down 记录：Vk/Sc 留 0，Uc 用码点，Kd=1，Cs=0，Rc=1
         assert_eq!(recs, vec!["\x1b[0;0;97;1;0;1_", "\x1b[0;0;98;1;0;1_"]);
+    }
+
+    #[test]
+    fn shift_enter_pieces_replace_newlines_with_key_records() {
+        let text: Vec<String> = shift_enter_pieces("\x1b[200~第一行\r\n第二行\n😀\x1b[201~")
+            .into_iter()
+            .map(|p| String::from_utf8(p).unwrap())
+            .collect();
+        assert_eq!(
+            text,
+            vec![
+                "\x1b[200~第一行",
+                SHIFT_ENTER_RECORD,
+                "第二行",
+                SHIFT_ENTER_RECORD,
+                "\x1b[0;0;55357;1;0;1_",
+                "\x1b[0;0;56832;1;0;1_",
+                "\x1b[201~",
+            ]
+        );
+        assert_eq!(shift_enter_pieces("单行"), vec!["单行".as_bytes().to_vec()]);
     }
 
     #[test]
