@@ -85,6 +85,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   侧栏系统段上方「上手引导」行（useOnboardingRail，引导进行中才渲染，data-onboarding-anchor 供清单定位）
   components/InternalSessionsCard.tsx # 设置「数据与存储」→ Mesa 内部对话：条数/体积/最早、自动清理开关、保留天数、立即清理
   components/InsertMenuItems.tsx # 「插入技能/MCP」菜单条目：运行页收缩行、标签栏 ✦、聊天输入框 ＋ 三处共用（只画 <li>，浮层由调用方定位）
+  components/OlderLoadingRow.tsx # 回放顶部固定高度的「正在加载更早的内容…」行（取代会闪的「加载更早」按钮，三处回放共用）
   components/ConversationView.tsx # 对话渲染（聊天层 / 对话页回放 / 项目对话预览共用）：气泡与正文、一轮过程收在「已工作 X 分 Y 秒」下，
                              #   展开为动作行（点行看差异 / 命令输出 / 思考），回答露在外面；working 由聊天层传（进行中不收起）
   components/ProjectTree.tsx # 侧栏项目树（展开态）：「项目」标签行（计数＋添加入口）+ 搜索框 + 按工作方式分组的课题列表

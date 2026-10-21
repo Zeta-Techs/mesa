@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -66,6 +66,7 @@ import {
   pickResumeProfile,
 } from "../resume-profile";
 import ConversationView from "../components/ConversationView";
+import OlderLoadingRow from "../components/OlderLoadingRow";
 import { useAutoLoadOlder } from "../auto-load-older";
 import GitPanel from "../components/GitPanel";
 import HandoffPicker from "../components/HandoffPicker";
@@ -997,9 +998,6 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     const selectedKey = `${selected.agent}\n${selected.sessionId}`;
     setLoadingOlder(true);
     try {
-      const scroller = scrollRef.current;
-      const previousHeight = scroller?.scrollHeight ?? 0;
-      const previousTop = scroller?.scrollTop ?? 0;
       const page = await invoke<ConversationPageDto>(
         "get_session_conversation_page",
         {
@@ -1015,15 +1013,15 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
         `${currentSelected.agent}\n${currentSelected.sessionId}` !== selectedKey
       )
         return;
+      const scroller = scrollRef.current;
+      if (scroller)
+        prependRestoreRef.current = {
+          height: scroller.scrollHeight,
+          top: scroller.scrollTop,
+        };
       setMessages((current) => [...page.messages, ...current]);
       olderCountRef.current += page.messages.length;
       setConversationCursor(page.cursor);
-      requestAnimationFrame(() => {
-        const current = scrollRef.current;
-        if (current)
-          current.scrollTop =
-            previousTop + current.scrollHeight - previousHeight;
-      });
       setError(null);
     } catch (e) {
       setError(String(e));
@@ -1031,6 +1029,15 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
       setLoadingOlder(false);
     }
   }
+
+  // 前插更早一页后在绘制前把阅读位置挪回原处（放到 rAF 里会先画一帧跳位，滑动时一闪一闪）
+  const prependRestoreRef = useRef<{ height: number; top: number } | null>(null);
+  useLayoutEffect(() => {
+    const restore = prependRestoreRef.current;
+    const el = scrollRef.current;
+    prependRestoreRef.current = null;
+    if (restore && el) el.scrollTop = restore.top + el.scrollHeight - restore.height;
+  }, [messages]);
 
   useAutoLoadOlder(scrollRef, {
     enabled: !loadingConv && conversationCursor !== null,
@@ -2588,23 +2595,14 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                     ) : (
                       <>
                         {conversationCursor !== null && (
-                          <div className="mb-3 flex justify-center">
-                            <button
-                              type="button"
-                              disabled={loadingOlder}
-                              onClick={() => void loadOlderMessages()}
-                              className={rowActionClass}
-                            >
-                              {loadingOlder ? "加载中…" : "加载更早对话"}
-                            </button>
-                          </div>
+                          <OlderLoadingRow loading={loadingOlder} className="mb-3" />
                         )}
                         {messages.length === 0 ? (
                           <EmptyState
                             title="这条会话没有可回放的内容"
                             detail={
                               conversationCursor !== null
-                                ? "这一段里没有解析出消息。点上面「加载更早对话」继续往前。"
+                                ? "这一段里没有解析出消息，正在往前找。"
                                 : "本地会话文件里没有解析出消息记录。"
                             }
                           />

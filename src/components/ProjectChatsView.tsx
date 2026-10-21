@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Archive, Pencil } from "lucide-react";
 import { agentBrandBadgeStyle } from "../agent-colors";
 import { beginProjectChat } from "./AskAiModal";
 import ConversationView from "./ConversationView";
+import OlderLoadingRow from "./OlderLoadingRow";
 import { useAutoLoadOlder } from "../auto-load-older";
 import { resumeSessionInTerminal } from "../quick-chat-launch";
 import { projectBoundProfileId, slotPrefs, CHAT_BINDING_SLOT } from "../project-agents";
@@ -239,9 +240,6 @@ export default function ProjectChatsView({
     const key = selectedKey;
     setLoadingOlder(true);
     try {
-      const scroller = convScrollRef.current;
-      const previousHeight = scroller?.scrollHeight ?? 0;
-      const previousTop = scroller?.scrollTop ?? 0;
       const page = await invoke<ConversationPageDto>(
         "get_session_conversation_page",
         {
@@ -252,15 +250,14 @@ export default function ProjectChatsView({
         },
       );
       if (selectedKeyRef.current !== key) return;
+      const scroller = convScrollRef.current;
+      if (scroller)
+        prependRestoreRef.current = {
+          height: scroller.scrollHeight,
+          top: scroller.scrollTop,
+        };
       setMessages((current) => [...page.messages, ...current]);
       setCursor(page.cursor);
-      // 前插后保住阅读位置，不然自动加载会把视线顶到新拉来那页的开头
-      requestAnimationFrame(() => {
-        const current = convScrollRef.current;
-        if (current)
-          current.scrollTop =
-            previousTop + current.scrollHeight - previousHeight;
-      });
     } catch (reason) {
       onError?.(String(reason));
     } finally {
@@ -284,6 +281,15 @@ export default function ProjectChatsView({
   rowsRef.current = rows;
   const selectedKeyRef = useRef(selectedKey);
   selectedKeyRef.current = selectedKey;
+  // 前插后在绘制前保住阅读位置，不然自动加载会把视线顶到新拉来那页的开头（放 rAF 会先闪一帧）
+  const prependRestoreRef = useRef<{ height: number; top: number } | null>(null);
+  useLayoutEffect(() => {
+    const restore = prependRestoreRef.current;
+    const el = convScrollRef.current;
+    prependRestoreRef.current = null;
+    if (restore && el) el.scrollTop = restore.top + el.scrollHeight - restore.height;
+  }, [messages]);
+
   useAutoLoadOlder(convScrollRef, {
     enabled: !loadingConv && cursor !== null,
     busy: loadingOlder,
@@ -623,16 +629,7 @@ export default function ProjectChatsView({
           ) : (
             <>
               {cursor !== null && (
-                <div className="mb-3 flex justify-center">
-                  <button
-                    type="button"
-                    disabled={loadingOlder}
-                    className={ghostActionClass}
-                    onClick={() => void loadOlder()}
-                  >
-                    {loadingOlder ? "加载中…" : "加载更早对话"}
-                  </button>
-                </div>
+                <OlderLoadingRow loading={loadingOlder} className="mb-3" />
               )}
               {messages.length === 0 ? (
                 <p className="px-1 py-6 text-sm text-l3">
