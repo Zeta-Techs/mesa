@@ -53,6 +53,7 @@ import {
   shouldReportTerminalColors,
   xtermOscColorReport,
 } from "../terminal-input";
+import { saveClipboardImage } from "../clipboard-image";
 import {
   consumeHostSequences,
   consumeTerminalQueries,
@@ -1249,10 +1250,7 @@ const TerminalView = memo(function TerminalView({
     }
     try {
       const buf = await file.arrayBuffer();
-      const path = await invoke<string>("save_clipboard_image", {
-        bytes: Array.from(new Uint8Array(buf)),
-        ext: imageExtFromMime(file.type),
-      });
+      const path = await saveClipboardImage(buf, imageExtFromMime(file.type));
       await invoke("pty_write", {
         ptyId: id,
         data: escapeShellPath(path, IS_WINDOWS),

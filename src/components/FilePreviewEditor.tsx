@@ -30,6 +30,7 @@ import {
   rewriteMdImageHtml,
 } from "../reader";
 import { escapeShellPath, imageExtFromMime } from "../terminal-input";
+import { saveClipboardImage } from "../clipboard-image";
 import { comboLabel, eventMatchesCombo, IS_WINDOWS, READER_MODE_HOTKEY } from "../hotkeys";
 import { imeBlocksEnter } from "../ime-guard";
 // md-math 模块作用域完成 marked 公式扩展注册（全局生效，占位=原始 $..$ 源码，未升级处观感不变）
@@ -1050,10 +1051,7 @@ function TextFilePreviewEditor({
       } catch (reason) {
         // 不在已注册项目内：回落 <config>/ccode/tmp 临时图 + 路径文本；其它失败如实上报
         if (!String(reason).includes("不是 Mesa 项目")) throw reason;
-        const p = await invoke<string>("save_clipboard_image", {
-          bytes: Array.from(bytes),
-          ext: imageExtFromMime(file.type),
-        });
+        const p = await saveClipboardImage(bytes, imageExtFromMime(file.type));
         insert = escapeShellPath(p, IS_WINDOWS);
       }
       const sel = ed.getSelection();

@@ -410,6 +410,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # XTVERSION 两问法统一 DCS 应答、XTGETTCAP 答 Ms、OSC 52 限长写剪贴板、
                              # Kitty 贴图按文件头认 MIME 且支持 m=1 分块、通知/贴图/剪贴板共用
                              断帧 pending 管线（tests/terminal-protocols.test.ts）
+  clipboard-image.ts         # 图片落盘的唯一前端入口 saveClipboardImage：终端 / 聊天输入框 / 文件预览 / 沉浸阅读截图四处共用，
+                             # 字节作请求体原样走 IPC、扩展名放请求头（禁回 JSON 数字数组，5MB 截图要编出 18.7MB JSON）
   terminal-input.ts          # 终端输入侧纯逻辑：shell 路径转义 escapeShellPath、拖入多路径拼接 joinDroppedPaths、
                              # 聊天拖入 joinDroppedChatPaths、dropHitsRect、Kimi CSI-u 序列、
                              # Shift+标点补发（229 只补 ASCII 标点，中文上屏不补，避免一字两遍）、
@@ -866,6 +868,7 @@ src-tauri/src/
                              # prune_terminal_replays 启动后只留当前标签集合（清崩溃残留孤儿）
   clipboard.rs               # 剪贴板图片落盘（save_clipboard_image）：<config>/ccode/tmp/paste-* 白名单扩展名 +
                              # 50MB 上限 + 每次顺带清理 7 天前残留（机制约定见 conventions/terminal.md「输入侧」）；
+                             # 字节是请求体原样（tauri::ipc::Request，postMessage 退路收 JSON 数组）、扩展名在 x-image-ext 头，后台线程落盘；
                              # read_clipboard_files = 文件管理器复制文件的粘贴（mac NSPasteboard / win CF_HDROP / linux 空）
   sessions.rs                # 会话浏览：九 agent 会话扫描/解析（Codex .zst、OpenCode SQLite/JSON）、session_meta、pin 快照、
                              # Codex 归档 zst 懒解压（read_head_only：列表只要头窗元数据、头窗满即停，

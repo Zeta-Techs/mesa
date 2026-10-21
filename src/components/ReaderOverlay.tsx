@@ -10,6 +10,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { saveClipboardImage } from "../clipboard-image";
 import { IS_MAC, IS_WINDOWS, eventMatchesCombo, READER_MODE_HOTKEY } from "../hotkeys";
 import WindowControls from "./WindowControls";
 import { macOverlayPadClass, useMacFullscreen } from "../mac-titlebar";
@@ -721,10 +722,7 @@ export default function ReaderOverlay({
       if (!hasAgentTab) return "阅读会话未在运行";
       try {
         const bytes = new Uint8Array(await blob.arrayBuffer());
-        const absPath = await invoke<string>("save_clipboard_image", {
-          bytes: Array.from(bytes),
-          ext: "png",
-        });
+        const absPath = await saveClipboardImage(bytes, "png");
         return onInject(formatReaderCapturePrompt(absPath, page, fileName, IS_WINDOWS), false);
       } catch (e) {
         return `截图发送准备失败：${String(e)}`;

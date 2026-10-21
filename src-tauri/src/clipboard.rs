@@ -51,10 +51,34 @@ fn cleanup_old(dir: &std::path::Path, ttl_secs: i64) {
     }
 }
 
+/// 扩展名放在这个请求头里（请求体是图片字节本身）
+const EXT_HEADER: &str = "x-image-ext";
+
 /// 保存剪贴板图片到临时目录，返回绝对路径（前端随后把路径写进 PTY）。
-/// 文件名：paste-<yyyymmdd-hhmmss>-<短随机>.<ext>（同秒连贴防重名）
+/// 字节按原样走 IPC（前端 `saveClipboardImage`）：按 JSON 数字数组传时，5MB 截图是 18.7MB 的 JSON，
+/// 网页和 Rust 主线程各编解一遍，粘贴时界面整个卡住（2026-10-21）。落盘与顺带清理在后台线程
+///（conventions/terminal.md「会等待的命令不占主线程」）
 #[tauri::command]
-pub fn save_clipboard_image(bytes: Vec<u8>, ext: String) -> Result<String, String> {
+pub async fn save_clipboard_image(request: tauri::ipc::Request<'_>) -> Result<String, String> {
+    let bytes: Vec<u8> = match request.body() {
+        tauri::ipc::InvokeBody::Raw(bytes) => bytes.clone(),
+        // 自定义协议不通时 Tauri 退回 postMessage，请求体会变成 JSON 数字数组
+        tauri::ipc::InvokeBody::Json(value) => serde_json::from_value(value.clone())
+            .map_err(|_| "剪贴板图片数据格式不对".to_string())?,
+    };
+    let ext = request
+        .headers()
+        .get(EXT_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("png")
+        .to_string();
+    tauri::async_runtime::spawn_blocking(move || save_image_bytes(&bytes, &ext))
+        .await
+        .map_err(|e| format!("保存剪贴板图片失败: {e}"))?
+}
+
+/// 文件名：paste-<yyyymmdd-hhmmss>-<短随机>.<ext>（同秒连贴防重名）
+fn save_image_bytes(bytes: &[u8], ext: &str) -> Result<String, String> {
     if bytes.is_empty() {
         return Err("剪贴板图片为空".into());
     }
@@ -69,10 +93,10 @@ pub fn save_clipboard_image(bytes: Vec<u8>, ext: String) -> Result<String, Strin
         "paste-{}-{}.{}",
         chrono::Local::now().format("%Y%m%d-%H%M%S"),
         &uuid[..8],
-        sanitize_ext(&ext),
+        sanitize_ext(ext),
     );
     let path = dir.join(&name);
-    std::fs::write(&path, &bytes).map_err(|e| format!("保存剪贴板图片失败: {e}"))?;
+    std::fs::write(&path, bytes).map_err(|e| format!("保存剪贴板图片失败: {e}"))?;
     Ok(path.to_string_lossy().to_string())
 }
 

@@ -488,6 +488,8 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 `spawn_blocking`，同批挪出外部终端三命令（等 osascript / open，首次控制终端应用还会等授权框）、`run_close`（冻结快照）、
 `delete_schedule`（Finder 回收站）、`schedule_run_delete`、`adopt_watch_run`。三种拉起之间用 `SPAWN_LOCK` 保持原来的逐个进行；
 挪出后命令不再按调用顺序串行，停止后要按同一 Run 重拉的调用方必须 await `pty_kill`。规则写进 AGENTS.md 与 terminal.md。
+排查中另见粘贴图片按 JSON 数字数组走 IPC（5MB 截图编出 18.7MB JSON，网页与 Rust 主线程各编解一遍），改为请求体原样传字节、
+扩展名放请求头（`saveClipboardImage`），同样后台落盘。
 
 二，**其余三处另行处理**：没有流控（刷屏时 Ctrl+C 要等写入队列消化完，已开单独任务，按 VS Code 的确认机制做）；Mac 默认 DOM
 渲染器（清晰度拍板不改，值得做的是查 WebGL 在 WKWebView 里发软的根因）；事件走 JSON + 脚本执行（改 Channel 二进制，刷屏时才有

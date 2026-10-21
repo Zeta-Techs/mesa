@@ -12,11 +12,13 @@
   在网页里执行一段脚本）也要排主线程的队——同步命令里等一秒，所有标签的输出和按键就停一秒。凡会等子进程或外部应用（osascript /
   open / start）、等端口就绪、走回收站、删拷目录树、冻结评审快照的命令，一律 `async fn` + `tauri::async_runtime::spawn_blocking`，
   需要的 State 在闭包里经 `app.state()` 取。已挪出：`pty_spawn` / `shell_spawn` / `pty_spawn_custom` / `pty_kill`、三个外部终端命令、
-  `run_close`、`delete_schedule` / `schedule_run_delete` / `adopt_watch_run`（pty.rs `waiting_commands_stay_off_main_thread` 钉住）。
+  `run_close`、`delete_schedule` / `schedule_run_delete` / `adopt_watch_run`、`save_clipboard_image`（pty.rs `waiting_commands_stay_off_main_thread` 钉住）。
   三种拉起之间用 `SPAWN_LOCK` 保持逐个进行——原先靠主线程天然串行，Run 认领、会话预登记、启动前文件准备都按这个前提写。挪出后
   命令之间**不再按调用顺序串行**：停止后要按同一 Run 重新拉起的调用方必须 await `pty_kill`（`cleanupPty` 已是），否则这边
   随后的 Run 收尾会关掉新进程认领的 Run。只碰内存、读写一两个小文件的命令（`pty_resize` / `pty_set_visible` / 配置读写等）
-  留在同步，不为挪而挪。
+  留在同步，不为挪而挪。**大块二进制不按 JSON 数字数组传**：IPC 请求在主线程上解析，5MB 截图编成数组是 18.7MB 的 JSON，
+  网页和 Rust 两边各编解一遍；请求体直接给 `Uint8Array`、元数据放请求头，命令收 `tauri::ipc::Request`（先例
+  `saveClipboardImage` / `save_clipboard_image`，自定义协议不通时 Tauri 退回 postMessage、请求体变回 JSON 数组，两种都要收）。
 
 ## 终端行为（用户明确要求；配色 = VS Code Dark+ 调色板，集中在 `TerminalPage.tsx` 的 `theme` 一处）
 

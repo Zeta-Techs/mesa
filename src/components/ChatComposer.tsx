@@ -12,6 +12,7 @@ import {
   type MesaCommand,
 } from "../composer-assist";
 import { firstImageItem, imageExtFromMime } from "../terminal-input";
+import { saveClipboardImage } from "../clipboard-image";
 import {
   filterSlashCommands,
   slashCommandsFor,
@@ -306,10 +307,7 @@ export default function ChatComposer({
   async function addImageAttachment(file: File) {
     try {
       const buf = await file.arrayBuffer();
-      const path = await invoke<string>("save_clipboard_image", {
-        bytes: Array.from(new Uint8Array(buf)),
-        ext: imageExtFromMime(file.type),
-      });
+      const path = await saveClipboardImage(buf, imageExtFromMime(file.type));
       setAttachments((cur) => [
         ...cur,
         { path, url: URL.createObjectURL(file) },
