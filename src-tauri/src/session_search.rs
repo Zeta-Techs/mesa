@@ -109,14 +109,15 @@ fn driving_tokens(tokens: &[String]) -> Vec<&String> {
 }
 
 fn search_impl(query: &str) -> Result<SessionSearchResultDto, String> {
-    let tokens = tokenize(query);
+    let pq = parse_query(query);
+    let tokens = pq.tokens.clone();
     if tokens.is_empty() {
         return Ok(SessionSearchResultDto {
             hits: Vec::new(),
             pending: 0,
         });
     }
-    let phrase = phrase_of(query);
+    let phrases = pq.anchor_phrases();
     let sessions = sessions::list_sessions_sync();
     let mut conn = sessions::open_db()?;
     ensure_schema(&conn)?;
@@ -130,15 +131,19 @@ fn search_impl(query: &str) -> Result<SessionSearchResultDto, String> {
         }
         left
     };
-    let texts = load_candidate_texts(&conn, &driving_tokens(&tokens))?;
+    let texts = load_candidate_texts(&conn, &driving_tokens(&tokens), pq.role)?;
     let mut hits = Vec::new();
-    for s in &sessions {
+    for s in sessions.iter().filter(|s| session_passes(s, &pq)) {
         let content = texts
             .get(&(s.agent.clone(), s.session_id.clone()))
             .map(String::as_str)
             .unwrap_or_default();
-        let (score, snippet, matched) = score_session(s, content, &tokens, phrase.as_deref());
+        let (score, snippet, matched) = score_session(s, content, &tokens, &phrases, &pq.phrases);
         if score == 0 {
+            continue;
+        }
+        // 按角色搜时只认正文命中：标题里有这个词不等于「我说过」
+        if pq.role.is_some() && snippet.is_none() {
             continue;
         }
         hits.push((
@@ -192,23 +197,201 @@ fn phrase_of(query: &str) -> Option<String> {
     }
 }
 
-pub(crate) fn tokenize(query: &str) -> Vec<String> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RoleFilter {
+    User,
+    Ai,
+}
+
+/// 搜索框语法（与前端 parseSearchQuery 同口径）：
+/// `"整句"` / `“整句”` / `「整句」` 必须原样出现；`agent:` / `来自:` 只看某家；
+/// `role:` / `角色:` 只搜我说的（我/用户/user）或 AI 的回复（ai/回复/助手）；
+/// `after:` / `从:`、`before:` / `到:` 按对话更新日期（本地时区，可写到年/月/日）。
+/// 认不出的 `x:y` 当普通词
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct ParsedQuery {
+    /// 小写：普通词 + 引号整句
+    pub(crate) tokens: Vec<String>,
+    /// 引号里的整句（小写），必须出现
+    pub(crate) phrases: Vec<String>,
+    /// 引号与筛选之外的原文，用来算「整句原样出现」加分
+    pub(crate) free: String,
+    pub(crate) agents: Vec<String>,
+    pub(crate) role: Option<RoleFilter>,
+    pub(crate) after: Option<String>,
+    pub(crate) before: Option<String>,
+}
+
+impl ParsedQuery {
+    /// 锚点/加分用的整句：引号里的在前，再是整段普通词
+    fn anchor_phrases(&self) -> Vec<String> {
+        let mut out = self.phrases.clone();
+        out.extend(phrase_of(&self.free));
+        out
+    }
+}
+
+fn split_query(q: &str) -> Vec<(String, bool)> {
     let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut chars = q.chars().peekable();
+    while let Some(c) = chars.next() {
+        let close = match c {
+            '"' => Some('"'),
+            '“' => Some('”'),
+            '「' => Some('」'),
+            _ => None,
+        };
+        if let Some(close) = close {
+            if !cur.is_empty() {
+                out.push((std::mem::take(&mut cur), false));
+            }
+            let mut quoted = String::new();
+            for d in chars.by_ref() {
+                if d == close {
+                    break;
+                }
+                quoted.push(d);
+            }
+            out.push((quoted, true));
+        } else if c.is_whitespace() {
+            if !cur.is_empty() {
+                out.push((std::mem::take(&mut cur), false));
+            }
+        } else {
+            cur.push(c);
+        }
+    }
+    if !cur.is_empty() {
+        out.push((cur, false));
+    }
+    out
+}
+
+pub(crate) fn norm_agent(s: &str) -> String {
+    s.to_lowercase()
+        .chars()
+        .filter(|c| !matches!(c, ' ' | '-' | '_'))
+        .collect()
+}
+
+fn norm_date(v: &str) -> Option<String> {
+    let parts: Vec<&str> = v.split(['-', '/', '.']).collect();
+    if parts.is_empty() || parts.len() > 3 || parts[0].len() != 4 {
+        return None;
+    }
+    let mut out = Vec::new();
+    for (i, p) in parts.iter().enumerate() {
+        let n: u32 = p.parse().ok()?;
+        let ok = match i {
+            0 => (1970..=2100).contains(&n),
+            1 => (1..=12).contains(&n),
+            _ => (1..=31).contains(&n),
+        };
+        if !ok {
+            return None;
+        }
+        out.push(if i == 0 { format!("{n}") } else { format!("{n:02}") });
+    }
+    Some(out.join("-"))
+}
+
+fn apply_filter(pq: &mut ParsedQuery, piece: &str) -> bool {
+    let Some((k, v)) = piece.split_once([':', '：']) else {
+        return false;
+    };
+    let v = v.trim();
+    if v.is_empty() {
+        return false;
+    }
+    match k.to_lowercase().as_str() {
+        "agent" | "来自" => {
+            let a = norm_agent(v);
+            if a.is_empty() {
+                return false;
+            }
+            pq.agents.push(a);
+            true
+        }
+        "role" | "角色" => {
+            pq.role = match v.to_lowercase().as_str() {
+                "user" | "me" | "我" | "用户" | "你" => Some(RoleFilter::User),
+                "ai" | "assistant" | "助手" | "回复" | "模型" => Some(RoleFilter::Ai),
+                _ => return false,
+            };
+            true
+        }
+        "after" | "从" => norm_date(v).map(|d| pq.after = Some(d)).is_some(),
+        "before" | "到" => norm_date(v).map(|d| pq.before = Some(d)).is_some(),
+        _ => false,
+    }
+}
+
+pub(crate) fn parse_query(query: &str) -> ParsedQuery {
+    let mut pq = ParsedQuery::default();
     let mut seen = HashSet::new();
-    for raw in query.split_whitespace() {
-        let trimmed = trim_punct(raw);
+    let mut free = Vec::new();
+    for (piece, quoted) in split_query(query) {
+        if quoted {
+            let p = piece.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+            if !p.is_empty() && seen.insert(p.clone()) {
+                pq.phrases.push(p.clone());
+                pq.tokens.push(p);
+            }
+            continue;
+        }
+        if apply_filter(&mut pq, &piece) {
+            continue;
+        }
+        free.push(piece.clone());
+        let trimmed = trim_punct(&piece);
         if trimmed.is_empty() {
             continue;
         }
         let lower = trimmed.to_lowercase();
-        if !keep_token(&lower) {
-            continue;
-        }
-        if seen.insert(lower.clone()) {
-            out.push(lower);
+        if keep_token(&lower) && seen.insert(lower.clone()) {
+            pq.tokens.push(lower);
         }
     }
-    out
+    pq.free = free.join(" ");
+    pq
+}
+
+#[cfg(test)]
+pub(crate) fn tokenize(query: &str) -> Vec<String> {
+    parse_query(query).tokens
+}
+
+fn local_day(iso: &str) -> Option<String> {
+    chrono::DateTime::parse_from_rfc3339(iso)
+        .ok()
+        .map(|d| d.with_timezone(&chrono::Local).format("%Y-%m-%d").to_string())
+}
+
+/// agent / 日期筛选（与正文无关，先筛掉）
+fn session_passes(s: &SessionMetaDto, pq: &ParsedQuery) -> bool {
+    if !pq.agents.is_empty() {
+        let id = norm_agent(&s.agent);
+        if !pq.agents.iter().any(|a| id.starts_with(a.as_str())) {
+            return false;
+        }
+    }
+    if pq.after.is_some() || pq.before.is_some() {
+        let Some(day) = s.updated_at.as_deref().and_then(local_day) else {
+            return false;
+        };
+        if let Some(a) = &pq.after {
+            if day[..a.len().min(day.len())] < *a.as_str() {
+                return false;
+            }
+        }
+        if let Some(b) = &pq.before {
+            if day[..b.len().min(day.len())] > *b.as_str() {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 fn keep_token(t: &str) -> bool {
@@ -288,10 +471,18 @@ fn score_session(
     s: &SessionMetaDto,
     content: &str,
     tokens: &[String],
-    phrase: Option<&str>,
+    phrases: &[String],
+    required: &[String],
 ) -> (u32, Option<String>, Vec<String>) {
     let (title, summary, tags, rest) = haystack_meta(s);
     let content_l = content.to_lowercase();
+    // 引号整句：正文或标题/摘要里必须原样出现
+    if required
+        .iter()
+        .any(|p| !content_l.contains(p.as_str()) && !title.contains(p.as_str()) && !summary.contains(p.as_str()))
+    {
+        return (0, None, Vec::new());
+    }
     let mut score = 0u32;
     let mut matched = Vec::new();
     let mut all_hit = true;
@@ -348,13 +539,14 @@ fn score_session(
     if all_hit && tokens.len() > 1 {
         score = score.saturating_add(ALL_TOKENS_BONUS);
     }
-    if let Some(p) = phrase {
-        if title.contains(p) || summary.contains(p) || content_l.contains(p) {
-            score = score.saturating_add(PHRASE_BONUS);
-        }
+    if phrases
+        .iter()
+        .any(|p| title.contains(p.as_str()) || summary.contains(p.as_str()) || content_l.contains(p.as_str()))
+    {
+        score = score.saturating_add(PHRASE_BONUS);
     }
     let snippet = if matched.iter().any(|t| content_l.contains(t.as_str())) {
-        snippet_around(content, &matched, phrase).map(|s| redact_sensitive_text(&s))
+        snippet_around(content, &matched, phrases).map(|s| redact_sensitive_text(&s))
     } else {
         None
     };
@@ -369,8 +561,8 @@ fn count_matches(hay: &str, needle: &str) -> usize {
 }
 
 /// 命中锚点（小写串字节下标）：整句原样出现处 > 驱动词挨得最近、种类最全处 > 任一词第一次出现
-fn best_anchor(lower: &str, tokens: &[String], phrase: Option<&str>) -> Option<usize> {
-    if let Some(i) = phrase.and_then(|p| lower.find(p)) {
+fn best_anchor(lower: &str, tokens: &[String], phrases: &[String]) -> Option<usize> {
+    if let Some(i) = phrases.iter().find_map(|p| lower.find(p.as_str())) {
         return Some(i);
     }
     let driving = driving_tokens(tokens);
@@ -405,9 +597,9 @@ fn best_anchor(lower: &str, tokens: &[String], phrase: Option<&str>) -> Option<u
     Some(best.1)
 }
 
-fn snippet_around(text: &str, tokens: &[String], phrase: Option<&str>) -> Option<String> {
+fn snippet_around(text: &str, tokens: &[String], phrases: &[String]) -> Option<String> {
     let lower = text.to_lowercase();
-    let at = best_anchor(&lower, tokens, phrase)?;
+    let at = best_anchor(&lower, tokens, phrases)?;
     snippet_at(text, at)
 }
 
@@ -654,7 +846,26 @@ fn like_pattern(t: &str) -> String {
 fn load_candidate_texts(
     conn: &Connection,
     tokens: &[&String],
+    role: Option<RoleFilter>,
 ) -> Result<HashMap<(String, String), String>, String> {
+    let (col_filter, like_sql, text_sql) = match role {
+        None => (
+            "",
+            "SELECT id FROM session_search_doc
+             WHERE user_text LIKE ?1 ESCAPE '\\' OR ai_text LIKE ?1 ESCAPE '\\'",
+            "SELECT agent, session_id, user_text || char(10) || ai_text FROM session_search_doc WHERE id=?1",
+        ),
+        Some(RoleFilter::User) => (
+            "user_text : ",
+            "SELECT id FROM session_search_doc WHERE user_text LIKE ?1 ESCAPE '\\'",
+            "SELECT agent, session_id, user_text FROM session_search_doc WHERE id=?1",
+        ),
+        Some(RoleFilter::Ai) => (
+            "ai_text : ",
+            "SELECT id FROM session_search_doc WHERE ai_text LIKE ?1 ESCAPE '\\'",
+            "SELECT agent, session_id, ai_text FROM session_search_doc WHERE id=?1",
+        ),
+    };
     let err = |e: rusqlite::Error| format!("读取会话搜索索引失败: {e}");
     let mut ids: HashSet<i64> = HashSet::new();
     for tok in tokens {
@@ -662,19 +873,15 @@ fn load_candidate_texts(
             let mut stmt = conn
                 .prepare_cached("SELECT rowid FROM session_search_fts WHERE session_search_fts MATCH ?1")
                 .map_err(err)?;
+            let q = format!("{col_filter}({})", fts_trigram_query(tok));
             let r = stmt
-                .query_map(params![fts_trigram_query(tok)], |r| r.get(0))
+                .query_map(params![q], |r| r.get(0))
                 .map_err(err)?
                 .collect::<Result<_, _>>()
                 .map_err(err)?;
             r
         } else {
-            let mut stmt = conn
-                .prepare_cached(
-                    "SELECT id FROM session_search_doc
-                     WHERE user_text LIKE ?1 ESCAPE '\\' OR ai_text LIKE ?1 ESCAPE '\\'",
-                )
-                .map_err(err)?;
+            let mut stmt = conn.prepare_cached(like_sql).map_err(err)?;
             let r = stmt
                 .query_map(params![like_pattern(tok)], |r| r.get(0))
                 .map_err(err)?
@@ -685,22 +892,17 @@ fn load_candidate_texts(
         ids.extend(rows);
     }
     let mut out = HashMap::with_capacity(ids.len());
-    let mut stmt = conn
-        .prepare_cached(
-            "SELECT agent, session_id, user_text, ai_text FROM session_search_doc WHERE id=?1",
-        )
-        .map_err(err)?;
+    let mut stmt = conn.prepare_cached(text_sql).map_err(err)?;
     for id in ids {
         let row = stmt.query_row(params![id], |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, String>(1)?,
                 r.get::<_, String>(2)?,
-                r.get::<_, String>(3)?,
             ))
         });
-        if let Ok((agent, sid, user, ai)) = row {
-            out.insert((agent, sid), format!("{user}\n{ai}"));
+        if let Ok((agent, sid, text)) = row {
+            out.insert((agent, sid), text);
         }
     }
     Ok(out)
@@ -768,10 +970,10 @@ fn message_text(m: &sessions::ChatMessageDto) -> Option<String> {
 }
 
 /// 一条消息的命中分：整句原样出现最重，其次驱动词种数，再次单字种数和出现次数
-fn message_score(lower: &str, tokens: &[String], phrase: Option<&str>) -> u32 {
+fn message_score(lower: &str, tokens: &[String], phrases: &[String]) -> u32 {
     let driving = driving_tokens(tokens);
     let mut score = 0u32;
-    if phrase.is_some_and(|p| lower.contains(p)) {
+    if phrases.iter().any(|p| lower.contains(p.as_str())) {
         score += 1000;
     }
     let mut tf = 0usize;
@@ -789,29 +991,31 @@ fn message_score(lower: &str, tokens: &[String], phrase: Option<&str>) -> u32 {
     score + tf.min(10) as u32
 }
 
-/// 消息是否算一处命中：有驱动词才算（单字有更长的词时不单独算）
-fn message_hits(lower: &str, tokens: &[String]) -> bool {
-    driving_tokens(tokens)
+/// 消息是否算一处命中：有引号整句时出现任一整句才算；否则有驱动词才算（单字有更长的词时不单独算）
+fn message_hits(lower: &str, pq: &ParsedQuery) -> bool {
+    if !pq.phrases.is_empty() {
+        return pq.phrases.iter().any(|p| lower.contains(p.as_str()));
+    }
+    driving_tokens(&pq.tokens)
         .iter()
         .any(|t| lower.contains(t.as_str()))
 }
 
 fn locate_all(agent: &str, file_path: &str, query: &str) -> SessionMatchesDto {
-    let tokens = tokenize(query);
-    let phrase = phrase_of(query);
+    let pq = parse_query(query);
     let mut out = SessionMatchesDto {
         matches: Vec::new(),
         best: None,
         truncated: false,
-        keywords: tokens.clone(),
+        keywords: pq.tokens.clone(),
     };
-    if tokens.is_empty() {
+    if pq.tokens.is_empty() {
         return out;
     }
     let found = if agent == "opencode" {
-        locate_in_messages(&conversation_impl_raw(agent, file_path), &tokens, phrase.as_deref())
+        locate_in_messages(&conversation_impl_raw(agent, file_path), &pq)
     } else {
-        locate_jsonl(agent, Path::new(file_path), &tokens, phrase.as_deref())
+        locate_jsonl(agent, Path::new(file_path), &pq)
     };
     out.truncated = found.len() > MAX_MATCHES;
     out.matches = found.into_iter().take(MAX_MATCHES).collect();
@@ -825,17 +1029,19 @@ fn locate_all(agent: &str, file_path: &str, query: &str) -> SessionMatchesDto {
     out
 }
 
-fn match_of(
-    m: &sessions::ChatMessageDto,
-    tokens: &[String],
-    phrase: Option<&str>,
-) -> Option<(SessionMatchDto, String)> {
+fn match_of(m: &sessions::ChatMessageDto, pq: &ParsedQuery) -> Option<(SessionMatchDto, String)> {
+    match (pq.role, m.role.as_str()) {
+        (Some(RoleFilter::User), r) if r != "user" => return None,
+        (Some(RoleFilter::Ai), r) if r != "assistant" => return None,
+        _ => {}
+    }
     let text = message_text(m)?;
     let lower = text.to_lowercase();
-    if !message_hits(&lower, tokens) {
+    if !message_hits(&lower, pq) {
         return None;
     }
-    let snippet = best_anchor(&lower, tokens, phrase)
+    let phrases = pq.anchor_phrases();
+    let snippet = best_anchor(&lower, &pq.tokens, &phrases)
         .and_then(|at| snippet_at(&text, at))
         .map(|s| redact_sensitive_text(&s));
     Some((
@@ -844,20 +1050,16 @@ fn match_of(
             timestamp: m.timestamp.clone(),
             role: m.role.clone(),
             snippet,
-            score: message_score(&lower, tokens, phrase),
+            score: message_score(&lower, &pq.tokens, &phrases),
         },
         text,
     ))
 }
 
-fn locate_in_messages(
-    msgs: &[sessions::ChatMessageDto],
-    tokens: &[String],
-    phrase: Option<&str>,
-) -> Vec<SessionMatchDto> {
+fn locate_in_messages(msgs: &[sessions::ChatMessageDto], pq: &ParsedQuery) -> Vec<SessionMatchDto> {
     let mut out = Vec::new();
     for m in msgs {
-        if let Some((mut hit, _)) = match_of(m, tokens, phrase) {
+        if let Some((mut hit, _)) = match_of(m, pq) {
             hit.around = m
                 .timestamp
                 .as_deref()
@@ -872,12 +1074,7 @@ fn locate_in_messages(
     out
 }
 
-fn locate_jsonl(
-    agent: &str,
-    path: &Path,
-    tokens: &[String],
-    phrase: Option<&str>,
-) -> Vec<SessionMatchDto> {
+fn locate_jsonl(agent: &str, path: &Path, pq: &ParsedQuery) -> Vec<SessionMatchDto> {
     let Some(iter) = jsonl_lines_with_offset(path) else {
         return Vec::new();
     };
@@ -901,12 +1098,12 @@ fn locate_jsonl(
     // 找不到再退回上一处那行（个别解析器一行出多条消息）
     let mut prev: Option<usize> = None;
     for m in &msgs {
-        let Some((mut hit, text)) = match_of(m, tokens, phrase) else {
+        let Some((mut hit, text)) = match_of(m, pq) else {
             continue;
         };
         let from = prev.map_or(0, |p| p + 1);
-        let idx = line_of_message(&items, from, &text, tokens)
-            .or_else(|| prev.and_then(|p| line_of_message(&items, p, &text, tokens)))
+        let idx = line_of_message(&items, from, &text, &pq.tokens)
+            .or_else(|| prev.and_then(|p| line_of_message(&items, p, &text, &pq.tokens)))
             .unwrap_or(from)
             .min(items.len() - 1);
         prev = Some(idx);
@@ -1155,13 +1352,9 @@ mod tests {
         let a = meta("消融", "", "/p/alpha");
         let b = meta("别的", "", "/p/beta");
         let tokens = tokenize("消融 方差");
-        let (sa, _, ma) = score_session(
-            &a,
-            "我们做了消融实验，看方差变化",
-            &tokens,
-            Some("消融 方差"),
-        );
-        let (sb, _, mb) = score_session(&b, "随便聊聊天气", &tokens, Some("消融 方差"));
+        let ph = vec!["消融 方差".to_string()];
+        let (sa, _, ma) = score_session(&a, "我们做了消融实验，看方差变化", &tokens, &ph, &[]);
+        let (sb, _, mb) = score_session(&b, "随便聊聊天气", &tokens, &ph, &[]);
         assert!(sa > sb, "{sa} vs {sb}");
         assert!(ma.contains(&"消融".to_string()));
         assert!(mb.is_empty() || !mb.contains(&"消融".to_string()) || sb < sa);
@@ -1171,8 +1364,9 @@ mod tests {
     fn all_tokens_outscore_single_token() {
         let s = meta("笔记", "", "/p/x");
         let both = tokenize("消融 方差");
-        let (full, _, _) = score_session(&s, "消融实验的方差分析", &both, Some("消融 方差"));
-        let (one, _, _) = score_session(&s, "只提了消融", &both, Some("消融 方差"));
+        let ph = vec!["消融 方差".to_string()];
+        let (full, _, _) = score_session(&s, "消融实验的方差分析", &both, &ph, &[]);
+        let (one, _, _) = score_session(&s, "只提了消融", &both, &ph, &[]);
         assert!(full > one, "{full} vs {one}");
     }
 
@@ -1181,15 +1375,15 @@ mod tests {
         let titled = meta("消融实验", "", "/p/x");
         let body = meta("闲聊", "", "/p/x");
         let tokens = tokenize("消融");
-        let (st, _, _) = score_session(&titled, "没有这个词", &tokens, None);
-        let (sc, _, _) = score_session(&body, "正文里写了消融", &tokens, None);
+        let (st, _, _) = score_session(&titled, "没有这个词", &tokens, &[], &[]);
+        let (sc, _, _) = score_session(&body, "正文里写了消融", &tokens, &[], &[]);
         assert!(st > sc, "标题命中应重于仅正文, {st} vs {sc}");
     }
 
     #[test]
     fn snippet_centers_on_keyword() {
         let text = "前面垫一些无关的话，然后说到消融实验设计，后面还有别的。";
-        let sn = snippet_around(text, &["消融".into()], None).unwrap();
+        let sn = snippet_around(text, &["消融".into()], &[]).unwrap();
         assert!(sn.contains("消融"));
     }
 
@@ -1201,13 +1395,13 @@ mod tests {
             "中间垫话。".repeat(80)
         );
         let toks = tokenize("回复超 1500 字");
-        let sn = snippet_around(&text, &toks, phrase_of("回复超 1500 字").as_deref()).unwrap();
+        let sn = snippet_around(&text, &toks, &parse_query("回复超 1500 字").anchor_phrases()).unwrap();
         assert!(sn.contains("回复超过 1500 字"), "{sn}");
         // 整句原样出现时锚在整句
         let lower = "abc 消融 xxx 方差 ... 消融方差分析".to_lowercase();
         let toks = tokenize("消融方差");
         assert_eq!(
-            best_anchor(&lower, &toks, None),
+            best_anchor(&lower, &toks, &[]),
             lower.find("消融方差")
         );
     }
@@ -1248,7 +1442,7 @@ mod tests {
     fn snippet_survives_case_folding_that_changes_byte_length() {
         // İ 小写后多一个字节、K（开尔文号）少两个：命中位置不得错切到「字」中间
         let text = format!("{}回复超 1500 字的说明", "İK".repeat(30));
-        let sn = snippet_around(&text, &["字".into()], None).unwrap();
+        let sn = snippet_around(&text, &["字".into()], &[]).unwrap();
         assert!(sn.contains("1500 字"), "{sn}");
     }
 
@@ -1282,7 +1476,7 @@ mod tests {
         ]);
         for tok in ["消融", "消融实验", "1500", "web_search", "回复超过 1500 字"] {
             let t = tok.to_string();
-            let hits = load_candidate_texts(&conn, &[&t]).unwrap();
+            let hits = load_candidate_texts(&conn, &[&t], None).unwrap();
             assert!(
                 hits.contains_key(&("claude-code".to_string(), "s1".to_string())),
                 "{tok} 应命中 s1"
@@ -1290,7 +1484,7 @@ mod tests {
             assert!(!hits.contains_key(&("claude-code".to_string(), "s2".to_string())));
         }
         let none = "量子纠缠".to_string();
-        assert!(load_candidate_texts(&conn, &[&none]).unwrap().is_empty());
+        assert!(load_candidate_texts(&conn, &[&none], None).unwrap().is_empty());
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1301,7 +1495,7 @@ mod tests {
         body.push_str(&user_line("最后才提到的关键词"));
         let (mut conn, metas, dir) = indexed_conn(&[("long", &body), ("gone", &user_line("x"))]);
         let t = "最后才提到".to_string();
-        assert_eq!(load_candidate_texts(&conn, &[&t]).unwrap().len(), 1);
+        assert_eq!(load_candidate_texts(&conn, &[&t], None).unwrap().len(), 1);
         // 列表里没有了（删除、并进接续链）的对话，索引行随之清掉
         let keep: Vec<SessionMetaDto> = metas.into_iter().filter(|m| m.session_id == "long").collect();
         refresh_index(&mut conn, &keep, None);
@@ -1319,6 +1513,58 @@ mod tests {
         assert_eq!(driving, vec!["回复超", "1500"]);
         let only = tokenize("酶");
         assert_eq!(driving_tokens(&only), vec!["酶"], "全是单字时单字照样驱动");
+    }
+
+    #[test]
+    fn query_syntax_quotes_and_filters() {
+        let pq = parse_query(r#"agent:Claude 角色：我 after:2026-10 before:2026/10/20 "回复 超过" 「1500 字」 消融 http://x.y"#);
+        assert_eq!(pq.agents, vec!["claude"]);
+        assert_eq!(pq.role, Some(RoleFilter::User));
+        assert_eq!(pq.after.as_deref(), Some("2026-10"));
+        assert_eq!(pq.before.as_deref(), Some("2026-10-20"));
+        assert_eq!(pq.phrases, vec!["回复 超过", "1500 字"]);
+        assert_eq!(pq.tokens, vec!["回复 超过", "1500 字", "消融", "http://x.y"]);
+        assert_eq!(pq.free, "消融 http://x.y", "认不出的 x:y 当普通词");
+        // 认不出的值不吞：role:随便 当普通词
+        let pq = parse_query("role:随便 after:昨天");
+        assert_eq!(pq.role, None);
+        assert_eq!(pq.after, None);
+        assert_eq!(pq.tokens, vec!["role:随便", "after:昨天"]);
+        // 引号没闭合：剩下的整段当整句
+        assert_eq!(parse_query(r#""没闭合 的引号"#).phrases, vec!["没闭合 的引号"]);
+    }
+
+    #[test]
+    fn filters_and_required_phrase_apply() {
+        let mut s = meta("t", "", "/p/x");
+        s.agent = "codex".into();
+        s.updated_at = Some("2026-10-15T04:00:00Z".into());
+        assert!(session_passes(&s, &parse_query("agent:codex x")));
+        assert!(!session_passes(&s, &parse_query("agent:claude x")));
+        assert!(session_passes(&s, &parse_query("after:2026-10 before:2026-10 x")));
+        assert!(!session_passes(&s, &parse_query("after:2026-11 x")));
+        assert!(!session_passes(&s, &parse_query("before:2026-09 x")));
+        // 引号整句必须原样出现
+        let pq = parse_query(r#""消融实验" 方差"#);
+        let (hit, _, _) = score_session(&s, "做了消融实验，看方差", &pq.tokens, &pq.anchor_phrases(), &pq.phrases);
+        let (miss, _, _) = score_session(&s, "消融 和 实验 分开说，看方差", &pq.tokens, &pq.anchor_phrases(), &pq.phrases);
+        assert!(hit > 0);
+        assert_eq!(miss, 0);
+    }
+
+    #[test]
+    fn role_filter_limits_candidates_and_locate() {
+        let body = user_line("我问的是消融实验")
+            + r#"{"type":"assistant","message":{"content":[{"type":"text","text":"回复里也说消融实验"}]}}"#
+            + "\n";
+        let (conn, metas, dir) = indexed_conn(&[("s1", &body)]);
+        let t = "消融实验".to_string();
+        let user = load_candidate_texts(&conn, &[&t], Some(RoleFilter::User)).unwrap();
+        assert!(user.values().all(|v| !v.contains("回复里")), "只取用户那一列");
+        let r = locate_all("claude-code", &metas[0].file_path, "消融实验 role:ai");
+        assert_eq!(r.matches.len(), 1);
+        assert_eq!(r.matches[0].role, "assistant");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -1366,7 +1612,7 @@ mod tests {
         let content = format!("{pad}{hit}\n");
         std::fs::write(&file, &content).unwrap();
         let expect = content.find(hit).unwrap() as u64;
-        let found = locate_jsonl("claude-code", &file, &["消融".into()], None);
+        let found = locate_jsonl("claude-code", &file, &parse_query("消融"));
         assert_eq!(found.len(), 1);
         let loc = &found[0];
         assert_eq!(loc.around, Some(expect));
@@ -1398,7 +1644,7 @@ mod tests {
             content.push('\n');
         }
         std::fs::write(&file, &content).unwrap();
-        let found = locate_jsonl("kimi", &file, &["web".into()], None);
+        let found = locate_jsonl("kimi", &file, &parse_query("web"));
         let loc = found.first().expect("kimi 流式正文应能定位");
         assert_eq!(loc.around, Some(hit_at));
         assert_eq!(loc.role, "assistant");

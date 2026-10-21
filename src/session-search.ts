@@ -33,19 +33,173 @@ function trimPunct(s: string): string {
   return chars.slice(a, b).join("");
 }
 
-/** 与后端 tokenize 同口径：空白切开、去首尾标点、短英文丢掉、中日韩单字保留。 */
-export function tokenizeSearchQuery(query: string): string[] {
+/**
+ * 搜索框语法，与后端 parse_query 同口径：
+ * `"整句"` / `“整句”` / `「整句」` 必须原样出现；`agent:` / `来自:` 只看某家；
+ * `role:` / `角色:` 只搜我说的（我/用户/user）或 AI 的回复（ai/回复/助手）；
+ * `after:` / `从:`、`before:` / `到:` 按对话更新日期（本地时区，可写到年/月/日）。认不出的 `x:y` 当普通词。
+ */
+export interface ParsedSearchQuery {
+  /** 小写：普通词 + 引号整句 */
+  tokens: string[];
+  phrases: string[];
+  agents: string[];
+  role: "user" | "ai" | null;
+  after: string | null;
+  before: string | null;
+}
+
+const QUOTE_CLOSE: Record<string, string> = { '"': '"', "“": "”", "「": "」" };
+
+function splitQuery(q: string): { text: string; quoted: boolean }[] {
+  const out: { text: string; quoted: boolean }[] = [];
+  const chars = [...q];
+  let cur = "";
+  for (let i = 0; i < chars.length; i += 1) {
+    const c = chars[i];
+    const close = QUOTE_CLOSE[c];
+    if (close) {
+      if (cur) out.push({ text: cur, quoted: false });
+      cur = "";
+      let quoted = "";
+      i += 1;
+      while (i < chars.length && chars[i] !== close) {
+        quoted += chars[i];
+        i += 1;
+      }
+      out.push({ text: quoted, quoted: true });
+    } else if (/\s/.test(c)) {
+      if (cur) out.push({ text: cur, quoted: false });
+      cur = "";
+    } else {
+      cur += c;
+    }
+  }
+  if (cur) out.push({ text: cur, quoted: false });
+  return out;
+}
+
+export function normAgent(s: string): string {
+  return s.toLowerCase().replace(/[ \-_]/g, "");
+}
+
+function normDate(v: string): string | null {
+  const parts = v.split(/[-/.]/);
+  if (parts.length === 0 || parts.length > 3 || parts[0].length !== 4) return null;
   const out: string[] = [];
+  for (let i = 0; i < parts.length; i += 1) {
+    if (!/^\d+$/.test(parts[i])) return null;
+    const n = Number(parts[i]);
+    const ok = i === 0 ? n >= 1970 && n <= 2100 : i === 1 ? n >= 1 && n <= 12 : n >= 1 && n <= 31;
+    if (!ok) return null;
+    out.push(i === 0 ? String(n) : String(n).padStart(2, "0"));
+  }
+  return out.join("-");
+}
+
+function applyFilter(pq: ParsedSearchQuery, piece: string): boolean {
+  const m = /^([^:：]+)[:：](.+)$/.exec(piece);
+  if (!m) return false;
+  const key = m[1].toLowerCase();
+  const v = m[2].trim();
+  if (!v) return false;
+  if (key === "agent" || key === "来自") {
+    const a = normAgent(v);
+    if (!a) return false;
+    pq.agents.push(a);
+    return true;
+  }
+  if (key === "role" || key === "角色") {
+    const r = v.toLowerCase();
+    if (["user", "me", "我", "用户", "你"].includes(r)) pq.role = "user";
+    else if (["ai", "assistant", "助手", "回复", "模型"].includes(r)) pq.role = "ai";
+    else return false;
+    return true;
+  }
+  if (key === "after" || key === "从" || key === "before" || key === "到") {
+    const d = normDate(v);
+    if (!d) return false;
+    if (key === "after" || key === "从") pq.after = d;
+    else pq.before = d;
+    return true;
+  }
+  return false;
+}
+
+export function parseSearchQuery(query: string): ParsedSearchQuery {
+  const pq: ParsedSearchQuery = {
+    tokens: [],
+    phrases: [],
+    agents: [],
+    role: null,
+    after: null,
+    before: null,
+  };
   const seen = new Set<string>();
-  for (const raw of query.trim().split(/\s+/)) {
-    const trimmed = trimPunct(raw);
+  for (const { text, quoted } of splitQuery(query)) {
+    if (quoted) {
+      const p = text.trim().split(/\s+/).join(" ").toLowerCase();
+      if (p && !seen.has(p)) {
+        seen.add(p);
+        pq.phrases.push(p);
+        pq.tokens.push(p);
+      }
+      continue;
+    }
+    if (applyFilter(pq, text)) continue;
+    const trimmed = trimPunct(text);
     if (!trimmed) continue;
     const lower = trimmed.toLowerCase();
     const keep = [...lower].some(isCjk) || [...lower].length >= 2;
     if (!keep || seen.has(lower)) continue;
     seen.add(lower);
-    out.push(lower);
+    pq.tokens.push(lower);
   }
+  return pq;
+}
+
+/** 空白切开、去首尾标点、短英文丢掉、中日韩单字保留；筛选写法（agent: 等）不算词。 */
+export function tokenizeSearchQuery(query: string): string[] {
+  return parseSearchQuery(query).tokens;
+}
+
+export function hasSearchFilters(pq: ParsedSearchQuery): boolean {
+  return pq.agents.length > 0 || pq.role !== null || pq.after !== null || pq.before !== null;
+}
+
+function localDay(iso: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
+/** agent / 日期筛选（角色只影响正文搜索，这里不管） */
+export function sessionPassesFilters(s: SessionMetaDto, pq: ParsedSearchQuery): boolean {
+  if (pq.agents.length > 0) {
+    const id = normAgent(s.agent);
+    if (!pq.agents.some((a) => id.startsWith(a))) return false;
+  }
+  if (pq.after || pq.before) {
+    const day = localDay(s.updatedAt);
+    if (!day) return false;
+    if (pq.after && day.slice(0, pq.after.length) < pq.after) return false;
+    if (pq.before && day.slice(0, pq.before.length) > pq.before) return false;
+  }
+  return true;
+}
+
+/** 搜索框下面那行：把认出来的筛选写成人话，让人知道生效了 */
+export function describeSearchFilters(pq: ParsedSearchQuery): string[] {
+  const out: string[] = [];
+  if (pq.agents.length > 0) out.push(`来自 ${pq.agents.join(" / ")}`);
+  if (pq.role === "user") out.push("只搜你说的");
+  if (pq.role === "ai") out.push("只搜 AI 回复");
+  if (pq.after) out.push(`${pq.after} 起`);
+  if (pq.before) out.push(`到 ${pq.before}`);
+  for (const p of pq.phrases) out.push(`整句「${p}」`);
   return out;
 }
 
@@ -160,7 +314,12 @@ export function applySearchHits(
 ): { list: SessionMetaDto[]; snippets: Record<string, string> } {
   const q = query.trim();
   if (!q) return { list: [...sessions], snippets: {} };
-  const tokens = tokenizeSearchQuery(q);
+  const pq = parseSearchQuery(q);
+  const tokens = pq.tokens;
+  // 只写了筛选、没写词：按 agent / 日期筛列表
+  if (tokens.length === 0 && hasSearchFilters(pq)) {
+    return { list: sessions.filter((s) => sessionPassesFilters(s, pq)), snippets: {} };
+  }
   if (hits) {
     const byKey = new Map(
       sessions.map((s) => [searchHitKey(s.agent, s.sessionId), s]),
@@ -182,8 +341,14 @@ export function applySearchHits(
       snippets: {},
     };
   }
+  // 正文结果回来之前先按标题等过一遍；按角色搜时标题命中不算，等正文结果
   return {
-    list: sessions.filter((s) => metadataMatchesQuery(s, tokens)),
+    list:
+      pq.role !== null
+        ? []
+        : sessions.filter(
+            (s) => sessionPassesFilters(s, pq) && metadataMatchesQuery(s, tokens),
+          ),
     snippets: {},
   };
 }

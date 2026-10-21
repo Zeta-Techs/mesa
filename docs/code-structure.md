@@ -837,7 +837,8 @@ src-tauri/src/
                              #   单字词有更长词时不驱动候选（SEARCH_INDEX_VER 变更即整表重建）；
                              #   摘录锚点 best_anchor：整句 > 驱动词窗内种数最多 > 任一词首现；命中位置不在搜索时算，
                              #   打开结果时 locate_session_matches 现算整段对话全部命中（只认已列出的对话文件，前端
-                             #   上一处/下一处按 around 重新取页）
+                             #   上一处/下一处按 around 重新取页）；搜索语法 parse_query（引号整句必须出现、agent/role/
+                             #   after/before 及中文键，前端 session-search.ts parseSearchQuery 双端镜像，改一边必须改另一边）
   session_slim.rs            # 会话瘦身（仅 Claude Code，撞网关 413 Request body too large）：inspect 只读估算下次请求体大小与较早截图数（<8MB 免扫描，
                              #   压缩边界之前不算）；apply 原地把较早的 base64 截图/文档换文字占位、留最近 6 张，没动的行逐字节原样，写前完整备份
                              #   到 <配置目录>/ccode/backups/session-slim/、最近 60 秒有写入拒绝、复核源文件未变、tmp+rename 保持 mtime；

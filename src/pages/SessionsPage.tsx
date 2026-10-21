@@ -51,8 +51,10 @@ import {
 } from "../session-filter";
 import {
   applySearchHits,
+  describeSearchFilters,
   findFocusMessageIndex,
   focusFromMatch,
+  parseSearchQuery,
   searchHitKey,
   type SearchFocus,
 } from "../session-search";
@@ -177,6 +179,14 @@ function basename(p: string): string {
   const parts = p.replace(/[\\/]+$/, "").split(/[\\/]/);
   return parts[parts.length - 1] || p;
 }
+
+const SEARCH_SYNTAX_HINT = [
+  "几个词用空格隔开。还可以这样写：",
+  "\"整句\" 或 「整句」：这句话必须原样出现",
+  "agent:codex（或 来自:codex）：只看这家 AI 的对话",
+  "role:我 / role:ai（或 角色:我）：只搜你说的 / 只搜 AI 的回复",
+  "after:2026-10 / before:2026-10-20（或 从: / 到:）：按对话更新日期",
+].join("\n");
 
 function sessionTitle(s: SessionMetaDto): string {
   return projectSessionLabel(tidySessionTitle(s));
@@ -1640,6 +1650,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
           <input
             className={`mt-2 w-full ${searchFieldClass}`}
             placeholder="搜索标题、标签，或对话里说过的话"
+            title={SEARCH_SYNTAX_HINT}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
@@ -1680,6 +1691,11 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
               >
                 搜索：{query.trim()} ×
               </button>
+              {describeSearchFilters(parseSearchQuery(query)).map((d) => (
+                <span key={d} className="text-micro text-l3" title={SEARCH_SYNTAX_HINT}>
+                  {d}
+                </span>
+              ))}
               {searchingBody && (
                 <span className="text-micro text-l4">正在搜正文…</span>
               )}

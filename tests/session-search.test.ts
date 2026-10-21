@@ -5,6 +5,8 @@ import {
   findFocusMessageIndex,
   focusFromMatch,
   metadataMatchesQuery,
+  parseSearchQuery,
+  sessionPassesFilters,
   searchHitKey,
   tokenizeSearchQuery,
 } from "../src/session-search.ts";
@@ -219,4 +221,39 @@ test("focusFromMatch：每一处命中各自带时间戳和摘录，同一秒多
   assert.equal(focus.around, 42);
   assert.deepEqual(focus.matchedKeywords, ["消融", "方差"]);
   assert.equal(findFocusMessageIndex(messages, focus), 1);
+});
+
+test("parseSearchQuery：引号整句与筛选写法，与后端 parse_query 同口径", () => {
+  const pq = parseSearchQuery(
+    'agent:Claude 角色：我 after:2026-10 before:2026/10/20 "回复 超过" 「1500 字」 消融 http://x.y',
+  );
+  assert.deepEqual(pq.agents, ["claude"]);
+  assert.equal(pq.role, "user");
+  assert.equal(pq.after, "2026-10");
+  assert.equal(pq.before, "2026-10-20");
+  assert.deepEqual(pq.phrases, ["回复 超过", "1500 字"]);
+  assert.deepEqual(pq.tokens, ["回复 超过", "1500 字", "消融", "http://x.y"]);
+  const odd = parseSearchQuery("role:随便 after:昨天");
+  assert.equal(odd.role, null);
+  assert.equal(odd.after, null);
+  assert.deepEqual(odd.tokens, ["role:随便", "after:昨天"]);
+  assert.deepEqual(parseSearchQuery('"没闭合 的引号').phrases, ["没闭合 的引号"]);
+});
+
+test("只写筛选不写词：按 agent / 日期筛列表；按角色搜时不拿标题先顶上", () => {
+  const rows = [
+    s({ sessionId: "a", agent: "codex", updatedAt: "2026-10-15T04:00:00Z", title: "消融" }),
+    s({ sessionId: "b", agent: "claude-code", updatedAt: "2026-09-01T04:00:00Z", title: "消融" }),
+  ];
+  assert.ok(sessionPassesFilters(rows[0], parseSearchQuery("agent:codex after:2026-10")));
+  assert.ok(!sessionPassesFilters(rows[1], parseSearchQuery("after:2026-10")));
+  assert.deepEqual(
+    applySearchHits(rows, "agent:codex", null).list.map((x) => x.sessionId),
+    ["a"],
+  );
+  assert.deepEqual(applySearchHits(rows, "消融 role:我", null).list, []);
+  assert.deepEqual(
+    applySearchHits(rows, "消融 agent:claude", null).list.map((x) => x.sessionId),
+    ["b"],
+  );
 });
