@@ -9,6 +9,7 @@ import tencent from "../assets/vendor-icons/tencent.svg";
 import openrouter from "../assets/vendor-icons/openrouter.svg";
 import xai from "../assets/vendor-icons/xai.svg";
 import ollama from "../assets/vendor-icons/ollama.svg";
+import newapi from "../assets/vendor-icons/newapi.svg";
 import { isMonoVendor, type VendorId } from "../vendor-icon";
 
 const SRC: Record<VendorId, string> = {
@@ -23,6 +24,7 @@ const SRC: Record<VendorId, string> = {
   openrouter,
   xai,
   ollama,
+  newapi,
 };
 
 /**

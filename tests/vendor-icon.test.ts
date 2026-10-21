@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isMonoVendor, vendorForPlanProvider, vendorForSlots, vendorForUrl } from "../src/vendor-icon.ts";
+import {
+  isMonoVendor,
+  vendorForGateway,
+  vendorForPlanProvider,
+  vendorForProfile,
+  vendorForSlots,
+  vendorForUrl,
+} from "../src/vendor-icon.ts";
 
 test("官方端点认出厂商，含子域与无协议写法", () => {
   assert.equal(vendorForUrl("https://api.anthropic.com"), "anthropic");
@@ -34,7 +41,24 @@ test("网关按槽顺序取第一个认得出的", () => {
 
 test("单色图标走 mask，彩色走 img；套餐键只认三家", () => {
   for (const v of ["anthropic", "openai", "kimi", "openrouter", "xai", "ollama"] as const) assert.ok(isMonoVendor(v), v);
-  for (const v of ["deepseek", "zhipu", "minimax", "alibaba", "tencent"] as const) assert.ok(!isMonoVendor(v), v);
+  for (const v of ["deepseek", "zhipu", "minimax", "alibaba", "tencent", "newapi"] as const) assert.ok(!isMonoVendor(v), v);
   assert.equal(vendorForPlanProvider("zhipu"), "zhipu");
   assert.equal(vendorForPlanProvider("other"), null);
+});
+
+test("New API 站：命中钱包站或配了钱包才标，官方厂商域名优先，普通中转不标", () => {
+  const relay = { anthropic: "https://relay.example.com/v1" };
+  assert.equal(vendorForGateway({ slots: relay }), null);
+  assert.equal(vendorForGateway({ slots: relay, walletUserId: "42" }), "newapi");
+  assert.equal(vendorForGateway({ slots: relay, walletKeyHint: "…abcd" }), "newapi");
+  assert.equal(vendorForGateway({ slots: { openai: "https://api.zetatechs.com/v1" } }), "newapi");
+  assert.equal(vendorForGateway({ slots: { openai: "https://api.deepseek.com/v1" }, walletUserId: "1" }), "deepseek");
+});
+
+test("连接行：自己的地址优先，认不出再看所属网关", () => {
+  const gw = { slots: { openai: "https://relay.example.com/v1" }, walletUserId: "7" };
+  assert.equal(vendorForProfile("https://relay.example.com/v1", gw), "newapi");
+  assert.equal(vendorForProfile("https://api.openai.com/v1", gw), "openai");
+  assert.equal(vendorForProfile(null, null), null);
+  assert.equal(vendorForProfile("https://relay.example.com/v1", undefined), null);
 });

@@ -53,7 +53,7 @@ import ContextMenu from "../components/ContextMenu";
 import GatewayLibrary from "../components/GatewayLibrary";
 import { OnboardingPageStrip } from "../components/OnboardingGuide";
 import VendorIcon from "../components/VendorIcon";
-import { vendorForUrl } from "../vendor-icon";
+import { vendorForProfile } from "../vendor-icon";
 import { HoverTip, useHoverTip } from "../components/HoverTip";
 import { alertDialog, confirmDialog } from "../components/ConfirmDialog";
 import { Modal } from "../components/Modal";
@@ -2035,6 +2035,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   const connectionLoadError = useAppStore((s) => s.connectionLoadError);
   const retryConnections = useAppStore((s) => s.loadAll);
   const profiles = useAppStore((s) => s.profiles);
+  const gateways = useAppStore((s) => s.gateways);
   const profileIssues = useAppStore((s) => s.profileIssues);
   const [driftByAgent, setDriftByAgent] = useState<Record<string, GlobalDriftDto>>({});
   const [validationMap, setValidationMap] = useState<Record<string, { ok: boolean; checkedAt: string }>>(() => {
@@ -3418,7 +3419,10 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                           >
                             <span className="flex min-w-0 items-start gap-2">
                               <VendorIcon
-                                vendor={vendorForUrl(profile.baseUrl)}
+                                vendor={vendorForProfile(
+                                  profile.baseUrl,
+                                  gateways.find((g) => g.id === profile.gatewayId),
+                                )}
                                 name={profile.name}
                                 className="mt-0.5"
                               />

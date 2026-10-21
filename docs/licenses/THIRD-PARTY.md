@@ -117,19 +117,20 @@ DEALINGS IN THE FONT SOFTWARE.
   字体目录是 OFL 1.1，再分发需随附版权声明与许可全文（本清单 + 随包
   `third-party-notices.md` + 应用内「开源许可」页共同履行）
 
-### 平台标识 SVG（11 个服务商小图标）
+### 平台标识 SVG（12 个服务商 / 平台小图标）
 
 - 用途：连接页网关库与连接列表标明端点所属服务商、用量页标明订阅套餐所属平台
   （`src/assets/vendor-icons/` 下 anthropic / openai / deepseek / zhipu / kimi / minimax / alibaba /
-  tencent / openrouter / xai / ollama 共 11 个 .svg），指示性使用（nominative use），
-  不构成对该平台的关联或背书；只给官方域名的端点配图标，第三方中转站与自建网关不配
+  tencent / openrouter / xai / ollama / newapi 共 12 个 .svg），指示性使用（nominative use），
+  不构成对该平台的关联或背书；只给官方域名的端点配厂商图标；New API 图标标的是中转站所用的平台软件（网关命中已知钱包站或配了钱包才标），
+  不是某家中转站的品牌，其余第三方中转站与自建网关不配
 - 来源链条：[lobe-icons](https://github.com/lobehub/lobe-icons)（MIT，Copyright (c) 2023 LobeHub）
   → [cc-switch](https://github.com/farion1231/cc-switch)（MIT，Copyright (c) 2025 Jason Young）
-  `src/icons/extracted/` → 本仓库逐字节引入（11 个文件均为 lobe-icons 导出格式；2026-10-20 核对：
+  `src/icons/extracted/` → 本仓库逐字节引入（12 个文件均为 lobe-icons 导出格式；2026-10-20 核对：
   anthropic / zhipu / xai / ollama / deepseek / alibaba / tencent 与 lobe-icons 当前版本逐字节相同，
-  openai / kimi / minimax / openrouter 是 cc-switch 引入时的版本，上游之后有修订）
+  openai / kimi / minimax / openrouter / newapi 是 cc-switch 引入时的版本，上游之后有修订）
 - 许可：MIT——再分发需随附版权声明与许可全文，两份原文如下
-- 商标：各 logo 本身归对应公司所有（Anthropic、OpenAI、DeepSeek、智谱、Moonshot AI、MiniMax、阿里巴巴、腾讯、OpenRouter、xAI、Ollama）
+- 商标：各 logo 本身归对应公司所有（Anthropic、OpenAI、DeepSeek、智谱、Moonshot AI、MiniMax、阿里巴巴、腾讯、OpenRouter、xAI、Ollama、QuantumNous / New API）
 
 lobe-icons 的许可原文（取自其仓库 LICENSE）：
 
@@ -233,7 +234,7 @@ SOFTWARE.
 ## 设计参考致谢
 
 Mesa 的机制设计参考了三个开源项目（学机制与取舍，未复制代码；唯一例外是上文的
-十一个平台图标文件）：
+十二个平台图标文件）：
 
 - [cc-switch](https://github.com/farion1231/cc-switch)（MIT，Copyright (c) 2025 Jason Young）— provider 预设、配置同步、订阅余量解析口径
 - [waveterm](https://github.com/wavetermdev/waveterm)（Apache-2.0，© 2025 Command Line Inc.）— block/workspace 对象模型、注意力标记与滚动缓冲恢复思路
