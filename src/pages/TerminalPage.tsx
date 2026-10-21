@@ -161,7 +161,7 @@ import {
 } from "../tui-menu";
 import { lastContextTokens, type MesaCommand } from "../composer-assist";
 import { slashCommandsFor } from "../slash-commands";
-import { extractLiveReply, liveReplySupported, mergeLiveReply, terminalHasInputBox } from "../live-reply";
+import { claudeOutputTokens, extractLiveReply, liveReplySupported, mergeLiveReply, terminalHasInputBox } from "../live-reply";
 import { parseTuiPanel } from "../tui-panel";
 import {
   connIssueCounts,
@@ -560,6 +560,8 @@ export interface SessionLinkState {
   connIssue: ConnIssueState | null;
   /** 终端画面里这一轮正在写的回复（live-reply.ts；只认 Claude Code / CodeBuddy，别家 null） */
   liveReply: string[] | null;
+  /** Claude 转圈行里这一轮已生成的 token 数（live-reply.ts claudeOutputTokens）；别家与没认出时 null */
+  liveTokens: number | null;
   /** Agent 在跑但 PTY 已 4 秒没出字：TUI 静止（多半停在菜单 / 登录上），不是模型还在想 */
   ptyQuiet: boolean;
   /** 开聊前的 Agent / 配置 / 模型选择（与启动栏同一份） */
@@ -2135,6 +2137,8 @@ const TerminalView = memo(function TerminalView({
   // 实时预览：Agent 出字时节流 300ms 读一次可视区，抽出这一轮正在写的回复给聊天层（会话文件一段写完才落盘）
   const [liveReply, setLiveReply] = useState<string[] | null>(null);
   const liveReplyRef = useRef<string[] | null>(null);
+  const [liveTokens, setLiveTokens] = useState<number | null>(null);
+  const liveTokensRef = useRef<number | null>(null);
   const liveScanAtRef = useRef(0);
   const liveScanTimerRef = useRef<number | null>(null);
   function scanLiveReplySoon() {
@@ -2156,6 +2160,14 @@ const TerminalView = memo(function TerminalView({
       }
       // 长回复滚出屏后只看得见续行：接到上一次读到的整段后面（mergeLiveReply）
       const read = extractLiveReply(lines, launchAgentRef.current);
+      // Claude 转圈行的已生成 token 数（Windows 上 Claude 不边写边画，聊天层靠它看出还在出字）
+      if (launchAgentRef.current === "claude-code") {
+        const tokens = claudeOutputTokens(lines);
+        if (tokens !== null && tokens !== liveTokensRef.current) {
+          liveTokensRef.current = tokens;
+          setLiveTokens(tokens);
+        }
+      }
       const prev = liveReplyRef.current;
       // 一时读不出（菜单挂着、重绘半帧）保留上一次的，免得预览闪没；新一轮发送时清
       if (!read) return;
@@ -2411,6 +2423,7 @@ const TerminalView = memo(function TerminalView({
       tuiPanel,
       connIssue,
       liveReply,
+      liveTokens,
       ptyQuiet,
       launchPick,
       skills: agentSkills,
@@ -2435,6 +2448,7 @@ const TerminalView = memo(function TerminalView({
     tuiPanel,
     connIssue,
     liveReply,
+    liveTokens,
     ptyQuiet,
     launchPick,
     agentSkills,
@@ -3576,6 +3590,8 @@ const TerminalView = memo(function TerminalView({
     permBaselineRef.current = null;
     liveReplyRef.current = null;
     setLiveReply(null);
+    liveTokensRef.current = null;
+    setLiveTokens(null);
     if (kind === "agent") {
       // 记录可恢复的会话 id（一键恢复按钮用）
       lastResumeRef.current = linkCtxRef.current?.sessionId ?? null;
@@ -4279,6 +4295,8 @@ const TerminalView = memo(function TerminalView({
     permBaselineRef.current = null;
     liveReplyRef.current = null;
     setLiveReply(null);
+    liveTokensRef.current = null;
+    setLiveTokens(null);
   }
 
   /** 布局提交之后再读格子。高度没变时当前帧就能量到；变了就等下一次尺寸。 */
@@ -4822,6 +4840,8 @@ const TerminalView = memo(function TerminalView({
     // 实时预览从这一轮重新攒（上一轮的长回复不能接到这一轮前面）
     liveReplyRef.current = null;
     setLiveReply(null);
+    liveTokensRef.current = null;
+    setLiveTokens(null);
     const message: ChatMessageDto = {
       role: "user",
       blocks: [{ kind: "text", text, toolName: null }],
@@ -7269,6 +7289,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         cur.trustPrompt === s.trustPrompt &&
         cur.menuPrompt === s.menuPrompt &&
         cur.liveReply === s.liveReply &&
+        cur.liveTokens === s.liveTokens &&
         cur.connIssue === s.connIssue &&
         cur.ptyQuiet === s.ptyQuiet &&
         cur.launchPick === s.launchPick &&
@@ -9696,6 +9717,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         menuPrompt={sessionByTab[t.id]?.menuPrompt ?? null}
                         tuiPanel={sessionByTab[t.id]?.tuiPanel ?? false}
                         liveReply={sessionByTab[t.id]?.liveReply ?? null}
+                        liveTokens={sessionByTab[t.id]?.liveTokens ?? null}
                         mesaCommands={mesaCommandsFor(t.id)}
                         externalInsert={chatInsertByTab[t.id] ?? null}
                         onExternalInsertConsumed={() =>

@@ -99,6 +99,7 @@ export default function ChatSurface({
   onAnswerMenu,
   tuiPanel = false,
   liveReply = null,
+  liveTokens = null,
   onRestartPermission,
   mesaCommands = [],
   externalInsert = null,
@@ -184,6 +185,8 @@ export default function ChatSurface({
   tuiPanel?: boolean;
   /** 终端画面里这一轮正在写的回复（live-reply.ts）；会话文件追上的行由这里剔掉 */
   liveReply?: string[] | null;
+  /** Claude 转圈行里这一轮已生成的 token 数（Windows 上 Claude 不边写边画，靠它看出还在出字）；没有为 null */
+  liveTokens?: number | null;
   /** 运行中换权限：停下 Agent、带新权限接回原会话（标签动作 restartWithPermission） */
   onRestartPermission?: () => void;
   /** 斜杠面板上半组「Mesa」操作（新对话、压缩、分叉、看改动、导出、打开终端） */
@@ -661,6 +664,11 @@ export default function ChatSurface({
                   {fmtElapsed(genElapsed)}
                 </span>
               )}
+              {liveTokens !== null && liveTokens > 0 && livePreview.length === 0 && (
+                <span className="tabular-nums text-l4" title="终端转圈行里这一轮已经收到的 token 数">
+                  已生成 {fmtTokens(liveTokens)} token
+                </span>
+              )}
               {/* 聊天层按会话文件同步，一段写完才落盘；Claude Code 的逐字输出已在上方实时预览，
                   别家没有预览时才给「看实时输出」（2026-10-17 用户：点开终端比聊天层先显示，体验不好） */}
               {onTogglePeek && !peek && !liveReplyCapable && (
@@ -867,6 +875,11 @@ export default function ChatSurface({
       )}
     </div>
   );
+}
+
+/** 1234 → 1.2k；千以下原样 */
+function fmtTokens(n: number): string {
+  return n >= 1000 ? `${(n / 1000).toFixed(1).replace(/.0$/, "")}k` : String(n);
 }
 
 function fmtElapsed(sec: number): string {

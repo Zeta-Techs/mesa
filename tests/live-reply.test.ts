@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extractLiveReply, liveReplySupported, mergeLiveReply, terminalHasInputBox, unsyncedTail } from "../src/live-reply.ts";
+import { claudeOutputTokens, extractLiveReply, liveReplySupported, mergeLiveReply, terminalHasInputBox, unsyncedTail } from "../src/live-reply.ts";
 
 const RULE = "─".repeat(100);
 // Claude Code 2.1.292 本机 PTY 实录（流式写到一半；假 API 慢速吐字）
@@ -494,4 +494,15 @@ test("回显还没出来（提问排着队）、屏顶是启动横幅时不预�
     bottom,
   ];
   assert.equal(extractLiveReply(rows, "gemini"), null);
+});
+
+test("claudeOutputTokens：转圈行里已生成的 token 数（2026-10-21 Windows 抓屏原样）", () => {
+  const screen = (status: string) => ["❯ TRIGGER_SLOW 讲一段", status, RULE, "❯", RULE];
+  assert.equal(claudeOutputTokens(screen("✶ Musing… (5s · ↓ 20 tokens)")), 20);
+  assert.equal(claudeOutputTokens(screen("· Simmering… (2s · ↓ 12 tokens)")), 12);
+  assert.equal(claudeOutputTokens(screen("✻ Thinking… (1m 3s · ↓ 1.2k tokens · esc to interrupt)")), 1200);
+  // 上传方向、收尾行、没有转圈：不算
+  assert.equal(claudeOutputTokens(screen("✢ Musing… (0s · ↑ 3.4k tokens)")), null);
+  assert.equal(claudeOutputTokens(screen("✻ Sautéed for 1m 20s · done 10:44")), null);
+  assert.equal(claudeOutputTokens(["❯ hello", RULE, "❯", RULE]), null);
 });

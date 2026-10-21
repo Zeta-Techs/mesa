@@ -7,6 +7,7 @@
 
 ## 未发布
 
+- **Claude Code 回复还没出来时，「正在回复」后面显示已生成多少 token**：Claude 在思考、或在 Windows 上要等整段写完才显示回复的这段时间，聊天里以前只有计时，看不出它是不是还在干活。现在后面会写「已生成 1.2k token」，数字跟着终端里的计数涨。macOS 与 Windows 相同。
 - **Claude Code 里拒绝工具或按 Esc 打断后，聊天层不再一直显示「正在回复」**：在审批菜单里选「不」或按 Esc，Claude 这一轮就结束了，但聊天层以前收不到结束的信号，一直挂着「正在回复」计时。现在一看到会话记录里写了「这一轮已打断 / 已结束」就收起。macOS 与 Windows 相同。
 
 - **Windows 上内置终端可以换 shell，`cd` 之后文件树也跟着走**：**设置 → 终端 → 内置终端 shell** 里能选 Windows PowerShell、PowerShell 7、Git Bash 或命令提示符（只列你电脑上装了的），Mac 上能选 zsh、bash、fish。以前在 Windows 的终端里 `cd` 到别处，右侧文件树和 Git 面板还停在原地，现在会跟过去（四种 shell 都一样）。

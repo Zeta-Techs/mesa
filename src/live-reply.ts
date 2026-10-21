@@ -141,6 +141,22 @@ const LAYOUTS: Record<string, Layout> = {
   },
 };
 
+/**
+ * Claude Code 转圈行里这一轮已生成的 token 数：「✶ Musing… (5s · ↓ 1.2k tokens)」→ 1200。
+ * Windows 上 Claude Code 整条消息收完才画出来（2026-10-21 抓屏：2.1.292 / 2.1.305 都是转圈计数、最后一次画出），
+ * 聊天层没有逐字预览，拿它告诉人还在出字；长思考时也有用。只认 ↓（收到的），认不出返回 null
+ */
+export function claudeOutputTokens(lines: readonly string[]): number | null {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const m = /…\s*\([^)]*↓\s*([\d.]+)\s*(k)?\s*tokens?\b/i.exec(lines[i]);
+    if (m) {
+      const n = Number(m[1]);
+      if (Number.isFinite(n)) return Math.round(n * (m[2] ? 1000 : 1));
+    }
+  }
+  return null;
+}
+
 export function liveReplySupported(agentId: string): boolean {
   return agentId in LAYOUTS;
 }
