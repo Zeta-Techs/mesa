@@ -1096,7 +1096,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     el?.scrollIntoView({ block: "nearest" });
   }, [selected]);
 
-  async function loadOlderMessages() {
+  async function loadOlderMessages(settle?: () => Promise<void>) {
     if (!selected || conversationCursor === null || loadingOlder) return;
     const selectedKey = `${selected.agent}\n${selected.sessionId}`;
     setLoadingOlder(true);
@@ -1110,6 +1110,8 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
           around: null,
         },
       );
+      // 等手停下来再接到上面，滑动途中插入会顿一下
+      await settle?.();
       const currentSelected = selectedRef.current;
       if (
         !currentSelected ||

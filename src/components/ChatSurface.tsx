@@ -142,7 +142,8 @@ export default function ChatSurface({
   hooksEnabled?: boolean;
   hasOlder?: boolean;
   loadingOlder?: boolean;
-  onLoadOlder?: () => void | Promise<void>;
+  /** 拉到更早一页后先 await settle（等手停）再写进列表 */
+  onLoadOlder?: (settle?: () => Promise<void>) => void | Promise<void>;
   /** 空态目录行：点选工作目录（未启动时走终端标签 chooseCwd） */
   onChooseCwd?: () => void;
   /** 终端里正停着「是否信任这个目录」菜单（会话文件出现之前） */
@@ -338,12 +339,12 @@ export default function ChatSurface({
   // 空态：输入框挪到画面中间偏上，起手提示与「接着上一段」在它下方（2026-10-17 二轮收敛）
   const emptyStart = state === "idle" && messages.length === 0 && !stuckWaiting;
 
-  async function loadOlder() {
+  async function loadOlder(settle?: () => Promise<void>) {
     if (!onLoadOlder) return;
     followRef.current = false;
     loadingOlderRef.current = true;
     prevScrollHeightRef.current = scrollRef.current?.scrollHeight ?? 0;
-    await onLoadOlder();
+    await onLoadOlder(settle);
   }
   useAutoLoadOlder(scrollRef, {
     enabled: hasOlder && !!onLoadOlder && !emptyStart,

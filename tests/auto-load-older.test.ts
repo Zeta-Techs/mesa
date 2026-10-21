@@ -2,16 +2,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   AUTO_LOAD_OLDER_THRESHOLD,
+  SCROLL_IDLE_MS,
+  canCommitNow,
   nearTop,
   needsFill,
   wasPrepended,
 } from "../src/auto-load-older.ts";
 
-test("离顶一屏半以内就提前加载更早的", () => {
+test("离顶三屏以内就提前加载更早的", () => {
   const m = { scrollHeight: 8000, clientHeight: 800 };
   assert.equal(nearTop({ ...m, scrollTop: 0 }), true);
-  assert.equal(nearTop({ ...m, scrollTop: 1200 }), true);
-  assert.equal(nearTop({ ...m, scrollTop: 1201 }), false);
+  assert.equal(nearTop({ ...m, scrollTop: 2400 }), true);
+  assert.equal(nearTop({ ...m, scrollTop: 2401 }), false);
   assert.equal(nearTop({ ...m, scrollTop: 7200 }), false);
   // 窗口很矮时不低于下限
   const short = { scrollHeight: 3000, clientHeight: 100 };
@@ -31,4 +33,12 @@ test("只有原首条往后挪了才算前插（最新窗整体后滑不算）",
   // 最新一窗随文件增长往后滑：原首条掉出窗口
   assert.equal(wasPrepended("a", ["b", "c", "d"]), false);
   assert.equal(wasPrepended(null, ["a"]), false);
+});
+
+test("拉回来的更早一页等手停了再接；快撞顶就不等", () => {
+  const m = { scrollTop: 3000, clientHeight: 800 };
+  assert.equal(canCommitNow({ ...m, sinceLastScrollMs: 16 }), false);
+  assert.equal(canCommitNow({ ...m, sinceLastScrollMs: SCROLL_IDLE_MS }), true);
+  assert.equal(canCommitNow({ scrollTop: 400, clientHeight: 800, sinceLastScrollMs: 16 }), true);
+  assert.equal(canCommitNow({ scrollTop: 401, clientHeight: 800, sinceLastScrollMs: 16 }), false);
 });

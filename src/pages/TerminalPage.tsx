@@ -428,7 +428,7 @@ export interface FocusTabActions {
   /** 用户刚提交一轮（聊天发送 / 注入并回车）：允许随后的 PTY 输出点亮「生成中」 */
   noteUserTurn: () => void;
   /** 聊天层向前翻页（会话文件 cursor；压缩会话可能没有更早一页） */
-  loadOlderConversation: () => Promise<void>;
+  loadOlderConversation: (settle?: () => Promise<void>) => Promise<void>;
   /** 聊天层替用户回答启动时的「是否信任这个目录」菜单 */
   answerTrust: (accept: boolean) => void;
   /** 聊天输入框的开聊前选择（与启动栏同一写入口） */
@@ -3890,7 +3890,7 @@ const TerminalView = memo(function TerminalView({
     }
   }
 
-  async function loadOlderConversation() {
+  async function loadOlderConversation(settle?: () => Promise<void>) {
     const ctx = linkCtxRef.current;
     const cursor = convCursorRef.current;
     if (!ctx?.filePath || cursor == null || loadingOlder) return;
@@ -3905,6 +3905,8 @@ const TerminalView = memo(function TerminalView({
           around: null,
         },
       );
+      // 等手停下来再接到上面，滑动途中插入会顿一下
+      await settle?.();
       if (linkCtxRef.current !== ctx) return;
       olderRef.current = mergeConversationPages(page.messages, olderRef.current);
       convCursorRef.current = page.cursor;
@@ -4948,7 +4950,7 @@ const TerminalView = memo(function TerminalView({
       writeInteractivePty(id, `${cmd}${enter}`);
     },
     noteUserTurn: () => armPtyWorking(),
-    loadOlderConversation: () => loadOlderConversation(),
+    loadOlderConversation: (settle) => loadOlderConversation(settle),
     answerTrust: (accept) => answerTrust(accept),
     pickLaunchAgent,
     pickLaunchProfile,
@@ -4979,7 +4981,7 @@ const TerminalView = memo(function TerminalView({
       writePty: (data) => actionsRef.current.writePty(data),
       writeCommand: (cmd) => actionsRef.current.writeCommand(cmd),
       noteUserTurn: () => actionsRef.current.noteUserTurn(),
-      loadOlderConversation: () => actionsRef.current.loadOlderConversation(),
+      loadOlderConversation: (settle) => actionsRef.current.loadOlderConversation(settle),
       answerTrust: (accept) => actionsRef.current.answerTrust(accept),
       pickLaunchAgent: (id) => actionsRef.current.pickLaunchAgent(id),
       pickLaunchProfile: (id) => actionsRef.current.pickLaunchProfile(id),
@@ -9598,10 +9600,10 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         }}
                         hasOlder={sessionByTab[t.id]?.convCursor != null}
                         loadingOlder={sessionByTab[t.id]?.loadingOlder ?? false}
-                        onLoadOlder={() =>
+                        onLoadOlder={(settle) =>
                           tabActionsRef.current
                             .get(t.id)
-                            ?.loadOlderConversation()
+                            ?.loadOlderConversation(settle)
                         }
                         onChooseCwd={() =>
                           tabActionsRef.current.get(t.id)?.chooseCwd()

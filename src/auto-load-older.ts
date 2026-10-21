@@ -2,10 +2,12 @@ import { useEffect, useRef, type RefObject } from "react";
 
 /**
  * 对话回放「往上翻自动接着加载更早的」（2026-10-21 用户：对话页、项目对话、聊天层都要一直点「加载更早」）。
- * 顶部不放按钮也不放加载提示（同日用户：要无缝衔接）：离顶还有一屏半就提前拉，滑到顶之前新内容已经接在上面。
- * 这是下限（px），窗口高时按一屏半算。
+ * 顶部不放按钮也不放加载提示（同日用户：要无缝衔接）：离顶还有三屏就提前去拉，拉回来先攒着，
+ * 等手停下来再接到上面（见 canCommitNow）。这是下限（px），窗口高时按三屏算。
  */
 export const AUTO_LOAD_OLDER_THRESHOLD = 360;
+/** 多久没有滚动事件算「手停了」（惯性滑动期间滚动事件几乎每帧都有） */
+export const SCROLL_IDLE_MS = 140;
 
 export type ScrollMetrics = {
   scrollTop: number;
@@ -18,12 +20,25 @@ export function needsFill(m: ScrollMetrics): boolean {
   return m.scrollHeight - m.clientHeight <= 1;
 }
 
-/** 用户往上翻到了离顶一屏半以内（提前量，免得滑到顶再停下来等） */
+/** 用户往上翻到了离顶三屏以内（提前量，免得滑到顶再停下来等） */
 export function nearTop(
   m: ScrollMetrics,
-  threshold = Math.max(AUTO_LOAD_OLDER_THRESHOLD, m.clientHeight * 1.5),
+  threshold = Math.max(AUTO_LOAD_OLDER_THRESHOLD, m.clientHeight * 3),
 ): boolean {
   return m.scrollTop <= threshold;
+}
+
+/**
+ * 拉回来的更早一页现在能不能接上去。滑动中途插内容要同步改 scrollTop 补偿位置，WebKit 里这会
+ * 打断惯性、外加整列重排，手上感觉是一顿（2026-10-21 用户：「会有一瞬间的顿挫感」）。
+ * 所以等手停了再接；离顶不到半屏就不等了——再等就要撞顶。
+ */
+export function canCommitNow(m: {
+  sinceLastScrollMs: number;
+  scrollTop: number;
+  clientHeight: number;
+}): boolean {
+  return m.sinceLastScrollMs >= SCROLL_IDLE_MS || m.scrollTop <= m.clientHeight * 0.5;
 }
 
 /**
@@ -39,7 +54,8 @@ export function wasPrepended(previousFirstKey: string | null, keys: string[]): b
  * 只认用户的滚动 / 滚轮触发，不在挂载时按 scrollTop 判断：首屏先渲染在顶部、下一帧才滚到底，
  * 那一瞬间 scrollTop=0 会被误判成「翻到顶」，一路把整份会话拉完。
  * 内容不满一屏时自动补页（`fillKey` 变化后复查，通常传消息条数）。
- * `onLoad` 返回的 Promise 结束后再等两帧才放开下一次：调用方在 rAF / layout effect 里把阅读位置
+ * `onLoad` 拿到 `settle`：拉到数据后、写进列表前先 `await settle()`，等手停下来再接（canCommitNow）。
+ * `onLoad` 返回的 Promise 结束后再等两帧才放开下一次：调用方在 layout effect 里把阅读位置
  * 挪回原处，放早了会在还没挪回的顶部再触发一次。
  */
 export function useAutoLoadOlder(
@@ -47,7 +63,7 @@ export function useAutoLoadOlder(
   opts: {
     enabled: boolean;
     busy: boolean;
-    onLoad: () => void | Promise<void>;
+    onLoad: (settle: () => Promise<void>) => void | Promise<void>;
     fillKey?: unknown;
   },
 ) {
@@ -55,6 +71,27 @@ export function useAutoLoadOlder(
   optsRef.current = opts;
   const inflightRef = useRef(false);
   const attachedRef = useRef<{ el: HTMLElement; off: () => void } | null>(null);
+  const lastScrollAtRef = useRef(0);
+
+  const settle = () =>
+    new Promise<void>((resolve) => {
+      const check = () => {
+        const el = scrollRef.current;
+        if (
+          !el ||
+          canCommitNow({
+            sinceLastScrollMs: performance.now() - lastScrollAtRef.current,
+            scrollTop: el.scrollTop,
+            clientHeight: el.clientHeight,
+          })
+        ) {
+          resolve();
+          return;
+        }
+        window.setTimeout(check, 40);
+      };
+      check();
+    });
 
   const trigger = () => {
     const { enabled, busy, onLoad } = optsRef.current;
@@ -70,7 +107,7 @@ export function useAutoLoadOlder(
         }),
       );
     Promise.resolve()
-      .then(onLoad)
+      .then(() => onLoad(settle))
       .catch(() => {})
       .finally(release);
   };
@@ -85,10 +122,12 @@ export function useAutoLoadOlder(
     attachedRef.current = null;
     if (!el) return;
     const onScroll = () => {
+      lastScrollAtRef.current = performance.now();
       if (nearTop(el)) triggerRef.current();
     };
     // 已经停在顶部时再往上滚不会产生 scroll 事件，靠滚轮补一下
     const onWheel = (e: WheelEvent) => {
+      lastScrollAtRef.current = performance.now();
       if (e.deltaY < 0 && nearTop(el)) triggerRef.current();
     };
     el.addEventListener("scroll", onScroll, { passive: true });

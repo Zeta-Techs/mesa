@@ -234,7 +234,7 @@ export default function ProjectChatsView({
     }
   }
 
-  async function loadOlder() {
+  async function loadOlder(settle?: () => Promise<void>) {
     if (!selected || cursor == null || loadingOlder) return;
     const key = selectedKey;
     setLoadingOlder(true);
@@ -248,6 +248,7 @@ export default function ProjectChatsView({
           around: null,
         },
       );
+      await settle?.();
       if (selectedKeyRef.current !== key) return;
       const scroller = convScrollRef.current;
       if (scroller)
