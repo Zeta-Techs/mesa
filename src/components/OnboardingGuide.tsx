@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { Check, X } from "lucide-react";
+import { Check, ChevronRight, X } from "lucide-react";
 import { useAppStore } from "../store";
 import { openQuickChat } from "../quick-chat-launch";
 import { dismissToast, toast, type ToastAction } from "../toast";
@@ -219,19 +219,20 @@ export function OnboardingRing({
   );
 }
 
-/** 步骤序号圈：做完 = 绿勾；当前 = 品牌色描边；其余 = 淡描边 */
+/** 步骤序号圈：做完 = 实心绿底 + 反色对勾（bg-ok-text / text-ok 深浅主题都成对，不能用 bg-ok：
+ *  深色下它近黑，和浮层底融成一团）；当前 = 品牌色描边；其余 = 淡描边 */
 function StepMark({ done, current, index }: { done: boolean; current: boolean; index: number }) {
   if (done) {
     return (
-      <span className="flex size-[18px] shrink-0 items-center justify-center rounded-full bg-ok text-ok-text">
-        <Check size={11} strokeWidth={2.6} aria-hidden="true" />
+      <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-ok-text text-ok">
+        <Check size={13} strokeWidth={3} aria-hidden="true" />
       </span>
     );
   }
   return (
     <span
-      className={`flex size-[18px] shrink-0 items-center justify-center rounded-full border text-micro tabular-nums ${
-        current ? "border-cta font-medium text-l1" : "border-field text-l4"
+      className={`flex size-5 shrink-0 items-center justify-center rounded-full border text-micro tabular-nums ${
+        current ? "border-cta font-medium text-l1" : "border-field text-l3"
       }`}
     >
       {index}
@@ -437,7 +438,7 @@ function OnboardingPanel({ facts }: { facts: OnboardingFacts }) {
       <div className="shrink-0 px-4 pb-3 pt-3.5">
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-semibold text-l1">上手引导</h2>
-          <span className="text-micro tabular-nums text-l3">
+          <span className={`text-micro tabular-nums ${allDone ? "font-medium text-ok-text" : "text-l3"}`}>
             {progress.doneCount}/{progress.total}
           </span>
           <button
@@ -457,7 +458,9 @@ function OnboardingPanel({ facts }: { facts: OnboardingFacts }) {
         </p>
         <div className="mt-2.5 h-1 overflow-hidden rounded-full bg-hairline">
           <div
-            className="h-full rounded-full bg-cta transition-[width] duration-300"
+            className={`h-full rounded-full transition-[width,background-color] duration-300 ${
+              allDone ? "bg-ok-text" : "bg-cta"
+            }`}
             style={{ width: `${(progress.doneCount / progress.total) * 100}%` }}
           />
         </div>
@@ -477,14 +480,20 @@ function OnboardingPanel({ facts }: { facts: OnboardingFacts }) {
                 <StepMark done={done} current={isCurrent} index={i + 1} />
                 <span
                   className={`min-w-0 flex-1 truncate text-sm ${
-                    isCurrent ? "font-medium text-l1" : done ? "text-l3" : "text-l2"
+                    isCurrent ? "font-medium text-l1" : done && !allDone ? "text-l3" : "text-l2"
                   }`}
                 >
                   {step.title}
                 </span>
+                <ChevronRight
+                  size={14}
+                  strokeWidth={1.8}
+                  aria-hidden="true"
+                  className={`shrink-0 text-l4 transition-transform duration-150 ${isOpen ? "rotate-90" : ""}`}
+                />
               </button>
               {isOpen && (
-                <div className="pb-3 pl-[2.375rem] pr-2">
+                <div className="pb-3 pl-[2.625rem] pr-2">
                   <p className="text-xs leading-5 text-l2">{step.summary}</p>
                   {step.how.map((line) => (
                     <p key={line} className="mt-1 text-xs leading-5 text-l3">
@@ -531,7 +540,7 @@ function OnboardingPanel({ facts }: { facts: OnboardingFacts }) {
             不再显示引导
           </button>
         )}
-        <span className="ml-auto text-micro text-l4">顶栏「帮助」里可以再打开</span>
+        <span className="ml-auto text-micro text-l3">顶栏「帮助」里可以再打开</span>
       </div>
     </div>
   );
