@@ -180,7 +180,7 @@ export default function ChatPermissionBadge({
           }`}
         >
           <div className="px-2 pb-1 pt-1 text-xs text-l3">AI 动手前怎么问你？</div>
-          {PERMISSION_TIERS.map((t, tierIndex) => {
+          {PERMISSION_TIERS.map((t) => {
             const ok = available(t.id);
             const selected = current === t.id;
             const danger = t.id === "full";
@@ -212,26 +212,6 @@ export default function ChatPermissionBadge({
                   <span className="block text-xs leading-[18px] text-l3">
                     {ok ? t.desc : `${agentLabel} 没有这一档的启动参数`}
                   </span>
-                </span>
-                {/* 放手程度：四格递增，一眼看出这四档是同一把尺上的四个刻度；完全访问那格换成留心色 */}
-                <span
-                  aria-hidden="true"
-                  className="mt-1 flex h-3.5 shrink-0 items-end gap-[2px]"
-                  title={`放手程度 ${tierIndex + 1} / ${PERMISSION_TIERS.length}`}
-                >
-                  {PERMISSION_TIERS.map((_, i) => (
-                    <i
-                      key={i}
-                      style={{ height: 5 + i * 3 }}
-                      className={`w-[3px] rounded-full ${
-                        i <= tierIndex
-                          ? danger
-                            ? "bg-caution-text"
-                            : "bg-l3"
-                          : "bg-hairline"
-                      }`}
-                    />
-                  ))}
                 </span>
                 <Check
                   size={14}
