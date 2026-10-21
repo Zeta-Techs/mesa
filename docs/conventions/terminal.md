@@ -460,6 +460,10 @@
   实发形式、`CSI > 0 q`）统一回 DCS `>|Mesa (xterm.js 6.0.0) ST`——带上 xterm.js 字样是如实自述，
   OpenCode 的超链接能力表明确收录 "xterm.js"（同日调研实证，靠它启用 OSC 8/OSC 52）；
   XTGETTCAP（`DCS + q`）问到 Ms（4d73）时回 terminfo Ms 能力值，OpenCode 据此开 OSC 52 剪贴板。
+  **应答在后端读线程当场写回（2026-10-21）**：`term_query.rs` 与 `terminal-protocols.ts replyToTerminalQuery` 双端镜像同一张表，
+  前端只剥掉查询、跟踪 Kitty 推栈，**不得再回写**。原因：前端要等输出事件到了才答，后台标签的输出进 backlog、切回才补发，
+  应答晚于 CLI 的探测窗口（Gemini 只等 1 秒）就被当成按键打进输入框，跟着下一条消息发出去
+  （实证：Gemini 第二条消息开头带「5u>|Mesa (xterm.js 6.0.0)」；ConPTY 探针推迟 4 秒应答可稳定复现）。改应答表两边同改。
   **OSC 8 / OSC 52 / 贴图**：OSC 8 只打开 http(s) 与 mailto（URL 含换行不认）。OSC 52 从输出抽走，
   base64 上限约 256KB，写入系统剪贴板。Kitty 图形（`ESC _ G`）拆出右下角预览：MIME 按文件头判定
   （PNG/JPEG/GIF/WEBP，RIFF 四字符不是 WEBP 的不算）、支持 m=1 分块拼装（>4KB 的图 kitty 客户端

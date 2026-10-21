@@ -386,7 +386,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   terminal-notify.ts         # OSC 9 / 777 通知标题（777 三段式取标题）与 OSC 9;4 进度解析
                              # （parseOsc9Progress → 标签条徽章），从画面文字里抽走（tests/terminal-notify.test.ts）
   terminal-replay.ts         # 重启回放取缓冲尾部纯文本（tests/terminal-replay.test.ts）
-  terminal-protocols.ts      # 内嵌终端协议：Kitty 键盘查询应答（只宣布 flags 5；无修饰功能键保持传统
+  terminal-protocols.ts      # 内嵌终端协议：Kitty 键盘查询识别与剥离（应答由后端 term_query.rs 写回；只宣布 flags 5；无修饰功能键保持传统
                              # 序列、只改写 Esc；带修饰方向键走 CSI 1;mod 字母形）、弹栈认层数、
                              # XTVERSION 两问法统一 DCS 应答、XTGETTCAP 答 Ms、OSC 52 限长写剪贴板、
                              # Kitty 贴图按文件头认 MIME 且支持 m=1 分块、通知/贴图/剪贴板共用
@@ -817,6 +817,8 @@ src-tauri/src/
                              #   process_cwd 先读它、没有再读进程 PEB（cmd）；文件随标签退出删、启动清残留；pty_cd 按标签的 shell 方言写 cd
                              # conpty_input_pieces = Windows 输入里的 emoji 改送只按下的 win32 记录（Codex 的 crossterm 拼不了
                              #   ConPTY 的按下+抬起代理对，会整个丢字；2026-10-21，见 conventions/terminal.md）
+  term_query.rs              # 终端能力查询（DA1 / XTVERSION / Kitty / modifyOtherKeys / XTGETTCAP）在 PTY 读线程当场应答，
+                             #   跨块半截续扫；应答表与 terminal-protocols.ts 双端镜像（前端只剥查询不回写）
   pty_input.rs               # 每个终端独立的有界输入队列：一个不读 stdin 的 CLI 不得占住 PTY 全局锁；
                              #   一个请求可分段写（段间 2ms，回执等待随段数加长）
   context_breakdown.rs       # 上下文分类明细（2026-10-20）：用标签同一套启动参数在后台跑 CLI 自带的 /context（Claude Code `-p --resume --no-session-persistence`，

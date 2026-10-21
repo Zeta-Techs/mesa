@@ -95,6 +95,7 @@ mod projects;
 mod provider_id;
 mod pty;
 mod pty_input;
+mod term_query;
 mod chat_channel;
 mod context_breakdown;
 mod reader;

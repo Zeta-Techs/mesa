@@ -7,6 +7,7 @@
 
 ## 未发布
 
+- **Gemini 的消息开头不再莫名多出「5u>|Mesa (xterm.js 6.0.0)」**：Gemini 等 CLI 启动时会问终端「你是谁、支持什么按键协议」，Mesa 以前要等画面送到界面上才回答；标签在后台或界面正忙时回答晚到，CLI 已经不等了，这段回答就被当成你打的字留在输入框里，跟着下一条消息发出去。现在 Mesa 在收到提问的当下就回答，Windows 和 Mac 都一样。
 - **Windows 上英文综述的 Word 和 PDF 不再互相覆盖，PDF 里的分号也能正常复制**：以前先点渲染 Word、再点渲染 PDF，Word 会被清掉，成品还落在 `manuscript/output/`、评审找不到；现在两份都进项目根的 `output/`。PDF 里的分号以前复制出来是希腊问号（看着一样，搜索和查重会失效），已修好。EndNote / Zotero 两份带引用的 Word 的中文字体改成跟正文一致（以前写死成 Mac 才有的字体）。AI 在 Windows 上跑的 Python 脚本打印化学式上标这类字符，不再因为编码报错。第一次渲 PDF 要现装排版组件，约 2–3 分钟，别当成卡死。
 - **Windows 上 Gemini 终端往上翻不再是一屏屏重复的历史**：Gemini 的回复超过一屏时，每刷新一次就把整段对话重画一遍；它在 Windows 上清屏时不清掉滚动记录，旧的那份就留在上面，一段长回复能叠出几百份。现在 Mesa 的终端在它清屏时连滚动记录一起清掉，和 Mac 上一样只留一份。
 - **Windows 上 Codex 联网查资料不再连试一串失败的命令**：Codex 的 Windows 沙箱有个它自己的已知问题——Windows 自带的 HTTPS（curl.exe、PowerShell 的 Invoke-WebRequest、git 走 https）在沙箱里一律失败，模型以前会换着参数反复试、最后误以为网络被禁。现在 Mesa 给 Codex 的 Windows 说明里写明了这一点，让它直接改用能用的 Node / Python 去取网页，或申请跳出沙箱。

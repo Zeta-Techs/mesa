@@ -556,10 +556,12 @@ fn spawn_tracked(
     let backlog = Arc::new(Mutex::new(Vec::new()));
     let bracketed_paste = Arc::new(AtomicBool::new(false));
     LIVE_MANAGER.get_or_init(|| manager.clone());
+    let input = crate::pty_input::PtyInput::new(writer);
+    let query_input = input.clone();
     manager.entries.lock().unwrap().insert(
         pty_id.clone(),
         PtyEntry {
-            writer: crate::pty_input::PtyInput::new(writer),
+            writer: input,
             master: pair.master,
             child,
             visible: visible.clone(),
@@ -598,6 +600,8 @@ fn spawn_tracked(
         let mut reader = reader;
         // bracketed paste 检测的跨块尾部（序列可能恰好被 8KB 读取边界切开）
         let mut scan_tail: Vec<u8> = Vec::new();
+        // 终端能力查询在这里当场答，不等前端（标签在后台时输出进 backlog，前端答就晚了，见 term_query.rs）
+        let mut queries = crate::term_query::QueryScanner::default();
         loop {
             let mut buf = [0u8; 8192];
             match reader.read(&mut buf) {
@@ -608,6 +612,10 @@ fn spawn_tracked(
                         && scan_bracketed_paste_on(&mut scan_tail, &buf[..n])
                     {
                         bracketed_paste.store(true, Ordering::Relaxed);
+                    }
+                    for reply in queries.feed(&buf[..n]) {
+                        // 只入队不等回执：读线程不能被一个不读 stdin 的子进程卡住
+                        let _ = query_input.enqueue(&reply, None);
                     }
                     if let Some(id) = run_id.as_deref() {
                         // 有界队列仅传递副本；数据库/脱敏不占用终端读取线程。

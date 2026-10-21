@@ -3434,14 +3434,13 @@ const TerminalView = memo(function TerminalView({
     }
     unlistenRef.current = [
       await listen<string>(`pty-output-${ptyId}`, (e) => {
+        // 查询在这里只剥掉、跟踪 Kitty 推栈；应答由后端读线程当场写回（term_query.rs），
+        // 前端再答就是第二份，且后台标签的 backlog 补发会让应答晚到、被 CLI 当成按键打进输入框
         const queried = consumeTerminalQueries(queryPendingRef.current, e.payload);
         queryPendingRef.current = queried.pending;
         for (const reply of queried.replies) {
           if (reply.kkp === "arm") kkpArmedRef.current = true;
           if (reply.kkp === "disarm") kkpArmedRef.current = false;
-          if (reply.reply) {
-            invoke("pty_write", { ptyId, data: reply.reply }).catch(() => {});
-          }
         }
         // 贴图 / OSC 52 / OSC 9、777 通知统一走断帧管线（consumeHostSequences）：
         // 半截序列攒到下一帧，不把转义或 base64 画进画面
