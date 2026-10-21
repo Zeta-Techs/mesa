@@ -3736,10 +3736,11 @@ const TerminalView = memo(function TerminalView({
     if (!ctx) return null;
     try {
       if (ctx.hint) {
-        const list = await invoke<SessionMetaDto[]>("list_sessions");
-        const hit = list.find(
-          (s) => s.agent === ctx.agentId && s.sessionId === ctx.hint,
-        );
+        // 按 id 找：扫描缓存里还没有这条新会话时后端会重扫一次，不用等满 10 秒缓存
+        const hit = await invoke<SessionMetaDto | null>("find_session", {
+          agent: ctx.agentId,
+          sessionId: ctx.hint,
+        });
         return hit
           ? {
               filePath: hit.filePath,

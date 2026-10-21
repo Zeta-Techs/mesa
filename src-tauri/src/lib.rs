@@ -530,6 +530,7 @@ pub fn run() {
             win_snap::window_show_snap_layouts,
             pty::pty_has_running_process,
             sessions::list_sessions,
+            sessions::find_session,
             session_search::search_sessions,
             sessions::claim_session_for,
             sessions::claim_session_successor,

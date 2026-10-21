@@ -4020,6 +4020,28 @@ pub(crate) struct FileSig {
     pub(crate) mtime_ns: i64,
 }
 
+type OpencodeDbEntry = (FileSig, Option<FileSig>, Vec<SessionMetaDto>);
+
+/// OpenCode 库的会话行，主库与 `-wal` 指纹都没变才复用上一轮。
+///
+/// OpenCode 开着 WAL：新会话、新消息先只写进 `opencode.db-wal`，主库要等自动检查点（约 1000 页）才动。
+/// 只看主库指纹时新会话长时间扫不到，聊天层迟迟接不上会话、回复不显示或隔几分钟才出来
+/// （2026-10-21 用户实测：会话 09:21 建、主库 09:24 才第一次写，聊天层恰好那时才接上；macOS 同理）
+fn opencode_rows_cached(
+    db: &Path,
+    prev: Option<&OpencodeDbEntry>,
+) -> (Option<OpencodeDbEntry>, Vec<SessionMetaDto>) {
+    let sig = file_sig(db);
+    let mut wal = db.as_os_str().to_owned();
+    wal.push("-wal");
+    let wal_sig = file_sig(Path::new(&wal));
+    let rows = match (sig, prev) {
+        (Some(sig), Some((old, old_wal, rows))) if *old == sig && *old_wal == wal_sig => rows.clone(),
+        _ => opencode_scan_db(db),
+    };
+    (sig.map(|sig| (sig, wal_sig, rows.clone())), rows)
+}
+
 fn file_sig(path: &Path) -> Option<FileSig> {
     let md = fs::metadata(path).ok()?;
     let mtime_ns = md
@@ -4046,8 +4068,8 @@ pub(crate) struct ScanFileCache {
     pub(crate) snapshot: HashMap<String, (FileSig, SessionMetaDto)>,
     /// kimi 快照要先读字节分辨新/旧协议，单独一栏
     pub(crate) kimi_snapshot: HashMap<String, (FileSig, SessionMetaDto)>,
-    /// opencode 共享 SQLite：db 文件指纹 → 整批行
-    opencode_db: HashMap<String, (FileSig, Vec<SessionMetaDto>)>,
+    /// opencode 共享 SQLite：(主库指纹, -wal 指纹) → 整批行（见 opencode_rows_cached）
+    opencode_db: HashMap<String, OpencodeDbEntry>,
     /// opencode 旧版扁平 JSON：storage 根路径 → (目录清单指纹, 整批)
     opencode_legacy: HashMap<String, (u64, Vec<SessionMetaDto>)>,
     /// grok 会话的 summary.json 指纹侧栏：与 chained 里 updates.jsonl 指纹分开比较，
@@ -4320,18 +4342,15 @@ pub fn scan_sessions() -> ScanResult {
         }
         // OpenCode：v1.2+ 读共享 SQLite（WAL 只读）；旧版读 storage/ 扁平 JSON
         let mut found_db = false;
-        let mut opencode_db_next: HashMap<String, (FileSig, Vec<SessionMetaDto>)> =
+        let mut opencode_db_next: HashMap<String, OpencodeDbEntry> =
             HashMap::with_capacity(opencode_db.len());
         for db in opencode_db_candidates() {
             if db.exists() {
                 let sig = file_sig(&db);
                 let key = cache_key(&db);
-                let rows = match (sig, opencode_db.get(&key)) {
-                    (Some(sig), Some((old_sig, rows))) if *old_sig == sig => rows.clone(),
-                    _ => opencode_scan_db(&db),
-                };
-                if let Some(sig) = sig {
-                    opencode_db_next.insert(key, (sig, rows.clone()));
+                let (entry, rows) = opencode_rows_cached(&db, opencode_db.get(&key));
+                if let Some(entry) = entry {
+                    opencode_db_next.insert(key, entry);
                 }
                 out.extend(rows);
                 found_db = true;
@@ -5586,6 +5605,34 @@ pub async fn list_sessions() -> Vec<SessionMetaDto> {
     tauri::async_runtime::spawn_blocking(list_sessions_sync)
         .await
         .unwrap_or_default()
+}
+
+/// 按 id 找一条会话（聊天层已从旁路 / hook 知道会话 id 时用）。10 秒扫描缓存里还没有它（刚建的会话）就失效重扫一次，
+/// 每 2 秒至多一次——否则聊天层要等满一轮缓存才接上，短回复在这一轮结束后先消失、隔几秒才出来（2026-10-21 OpenCode 实测）
+#[tauri::command]
+pub async fn find_session(agent: String, session_id: String) -> Option<SessionMetaDto> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let pick = |list: Vec<SessionMetaDto>| {
+            list.into_iter()
+                .find(|s| s.agent == agent && s.session_id == session_id)
+        };
+        if let Some(found) = pick(list_sessions_sync()) {
+            return Some(found);
+        }
+        static LAST_RESCAN: Mutex<Option<Instant>> = Mutex::new(None);
+        {
+            let mut last = LAST_RESCAN.lock().unwrap_or_else(|e| e.into_inner());
+            if last.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(2)) {
+                return None;
+            }
+            *last = Some(Instant::now());
+        }
+        invalidate_scan_cache();
+        pick(list_sessions_sync())
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 #[derive(Clone)]
@@ -10380,6 +10427,32 @@ mod tests {
         )
         .unwrap();
         db
+    }
+
+    #[test]
+    fn opencode_cache_sees_sessions_still_in_wal() {
+        let dir = std::env::temp_dir().join(format!("ccode-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = opencode_fixture_db(&dir);
+        // 照 OpenCode：WAL 模式、写连接一直开着、还没到检查点
+        let writer = Connection::open(&db).unwrap();
+        writer
+            .execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;")
+            .unwrap();
+        let (entry, rows) = opencode_rows_cached(&db, None);
+        assert_eq!(rows.len(), 2);
+        let main_before = file_sig(&db);
+        writer
+            .execute(
+                "INSERT INTO session VALUES('ses_new','global',NULL,'/tmp/new','',0,0,0,0,0,0,'build','{}',NULL,1785307090000,1785307090000)",
+                [],
+            )
+            .unwrap();
+        assert!(file_sig(&db) == main_before, "新会话只进了 -wal，主库指纹不变（缺陷成因）");
+        let (_, rows) = opencode_rows_cached(&db, entry.as_ref());
+        assert!(rows.iter().any(|m| m.session_id == "ses_new"), "-wal 变了就重扫");
+        drop(writer);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

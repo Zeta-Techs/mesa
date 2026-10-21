@@ -2075,13 +2075,15 @@ async fn opencode_loop(ch: Arc<Channel>) {
             tokio_sleep(1000).await;
             continue;
         }
-        let mut buf = String::new();
+        // 按字节攒、整行再解码：一个汉字可能被切在两块网络数据之间，逐块解码会变成「�」
+        let mut buf: Vec<u8> = Vec::new();
         while !ch.stop.load(Ordering::Acquire) {
             match resp.chunk().await {
                 Ok(Some(bytes)) => {
-                    buf.push_str(&String::from_utf8_lossy(&bytes));
-                    while let Some(end) = buf.find('\n') {
-                        let line: String = buf.drain(..=end).collect();
+                    buf.extend_from_slice(&bytes);
+                    while let Some(end) = buf.iter().position(|&b| b == b'\n') {
+                        let raw: Vec<u8> = buf.drain(..=end).collect();
+                        let line = String::from_utf8_lossy(&raw);
                         if let Some(data) = line.trim_end().strip_prefix("data:") {
                             if let Ok(v) = serde_json::from_str::<Value>(data.trim()) {
                                 feed(&ch, map_opencode(&v, &mut state));
