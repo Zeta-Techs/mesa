@@ -605,7 +605,6 @@ fn grok_config_overlay(profile: &Profile, model: Option<&str>) -> Option<serde_j
     }
 }
 
-/// GROK_CONFIG overlay 的预览附注（preview_launch_plan 用）：如实交代注不进的字段去向
 /// 连接地址是不是 xAI 官方（api.x.ai 及其子域）：只有官方 key 能用 Grok 内置的服务端 web_search
 fn grok_is_xai_endpoint(url: &str) -> bool {
     reqwest::Url::parse(url.trim())
@@ -614,6 +613,7 @@ fn grok_is_xai_endpoint(url: &str) -> bool {
         .is_some_and(|h| h == "x.ai" || h.ends_with(".x.ai"))
 }
 
+/// GROK_CONFIG overlay 的预览附注（preview_launch_plan 用）：如实交代注不进的字段去向
 fn grok_overlay_note() -> String {
     "api_backend / context_window 不在 grok overlay 白名单内（[model.*] 表会被静默丢弃）；渠道有二：中转 /models 目录条目带 apiBackend / contextWindow 字段，或绑定设「API 后端」后经「设为全局默认」写入 ~/.grok/config.toml 的 [model.*] 段；目录缺 contextWindow 时 grok 按 256000 计".into()
 }
