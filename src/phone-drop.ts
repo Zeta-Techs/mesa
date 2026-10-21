@@ -89,12 +89,27 @@ export function phoneItemActions(
   return out;
 }
 
+/** 放进去的位置写到文件夹为止（notes/assets/phone-20261021-092945.jpg → notes/assets/）；
+ *  文件名短的（notes/clips.md）整条写，完整路径放悬停 */
+export function phonePlacedLabel(placedTo: string): string {
+  const cut = placedTo.lastIndexOf("/");
+  if (cut < 0) return placedTo;
+  const base = placedTo.slice(cut + 1);
+  return base.length <= 12 ? placedTo : placedTo.slice(0, cut + 1);
+}
+
+/** 能点开看：文字就地展开；有文件的走预览弹窗（图片 / PDF / 表格 / 文档在 Mesa 里看，
+ *  HEIC 这类看不了的在弹窗里给「用系统应用打开」） */
+export function phoneItemOpenable(item: Pick<PhoneItem, "kind" | "path">): boolean {
+  return item.kind === "text" || Boolean(item.path);
+}
+
 export function phoneItemStatusText(item: Pick<PhoneItem, "status" | "placedTo">): string {
   switch (item.status) {
     case "attached":
       return "已附到输入框";
     case "placed":
-      return item.placedTo ? `已放进 ${item.placedTo}` : "已放进项目";
+      return item.placedTo ? `已放进 ${phonePlacedLabel(item.placedTo)}` : "已放进项目";
     case "saved":
       return "已另存";
     default:

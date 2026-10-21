@@ -1,14 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { Copy, File, FileText, Image as ImageIcon, MessageSquareText, Smartphone, Trash2 } from "lucide-react";
 import { Modal } from "./Modal";
+import OfficePreviewModal from "./OfficePreviewModal";
 import {
   FoldMark,
   InlineNotice,
   MenuSelect,
   ghostActionClass,
   primaryActionClass,
+  projectWellClass,
   secondaryActionClass,
 } from "./PageFrame";
 import { usePhoneDropStore } from "../phone-drop-store";
@@ -17,6 +19,7 @@ import {
   formatPhoneSize,
   phoneDeviceLine,
   phoneItemActions,
+  phoneItemOpenable,
   phoneItemStatusText,
   phoneStateLine,
   pickPlaceProject,
@@ -45,7 +48,59 @@ function timeLabel(iso: string): string {
     : `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/** 「从手机添加」弹层（App 全局挂一处；入口：聊天输入框「+」、命令面板、收件箱「手机」）。 */
+function dirOf(path: string): string {
+  const cut = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return cut > 0 ? path.slice(0, cut) : path;
+}
+
+/** 列表缩略图：原图经白名单读一次、画成 96px 小图后只留小图（手机照片几 MB，整张进内存不划算）；
+ *  读不了的（HEIC 等）记 null，行里显示类型图标 */
+const thumbCache = new Map<string, string | null>();
+
+function makeThumb(dataUrl: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const size = 96;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return reject(new Error("no canvas"));
+      const s = Math.min(img.naturalWidth, img.naturalHeight);
+      ctx.drawImage(img, (img.naturalWidth - s) / 2, (img.naturalHeight - s) / 2, s, s, 0, 0, size, size);
+      resolve(canvas.toDataURL("image/jpeg", 0.82));
+    };
+    img.onerror = () => reject(new Error("decode"));
+    img.src = dataUrl;
+  });
+}
+
+function usePhoneThumbs(items: PhoneItem[], active: boolean): Record<string, string | null> {
+  const [, bump] = useState(0);
+  useEffect(() => {
+    if (!active) return;
+    let stale = false;
+    const todo = items.filter((it) => it.kind === "image" && it.path && !thumbCache.has(it.id)).slice(0, 40);
+    for (const it of todo) {
+      thumbCache.set(it.id, null);
+      void invoke<{ mime: string; data: string }>("read_image_bytes", { path: it.path })
+        .then((img) => makeThumb(`data:${img.mime};base64,${img.data}`))
+        .then((thumb) => {
+          thumbCache.set(it.id, thumb);
+          if (!stale) bump((n) => n + 1);
+        })
+        .catch(() => undefined);
+    }
+    return () => {
+      stale = true;
+    };
+  }, [items, active]);
+  return Object.fromEntries(items.map((it) => [it.id, thumbCache.get(it.id) ?? null]));
+}
+
+/** 「从手机添加」弹层（App 全局挂一处；入口：聊天输入框「+」、命令面板、收件箱「手机」）。
+ *  有已配对的手机时上面只是一张状态卡（二维码收进「配对新手机」）；下面「收到的」带缩略图，点开就地预览。 */
 export default function PhoneDropDialog() {
   const open = usePhoneDropStore((s) => s.open);
   const target = usePhoneDropStore((s) => s.target);
@@ -66,10 +121,20 @@ export default function PhoneDropDialog() {
   const [projects, setProjects] = useState<ProjectDto[]>([]);
   const [placeRoot, setPlaceRoot] = useState<string>("");
   const [helpOpen, setHelpOpen] = useState(false);
+  const [pairOpen, setPairOpen] = useState(false);
+  const [devicesOpen, setDevicesOpen] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [previewId, setPreviewId] = useState<string | null>(null);
+  const [expandedText, setExpandedText] = useState<string | null>(null);
+  // 预览弹窗与本弹层都认 Esc：同一次 Esc 只关预览（本弹层的 onClose 读到的还是打开时的值）
+  const previewRef = useRef<string | null>(null);
+  previewRef.current = previewId;
 
   useEffect(() => {
     if (!open) return;
+    setPairOpen(false);
+    setDevicesOpen(false);
+    setPreviewId(null);
     let stale = false;
     invoke<ProjectDto[]>("list_projects")
       .then((list) => {
@@ -86,8 +151,15 @@ export default function PhoneDropDialog() {
   }, [open, target?.cwd]);
 
   const placeable = useMemo(() => placeableProjects(projects), [projects]);
+  const thumbs = usePhoneThumbs(items, open);
   const qrSrc = status.qrSvg ? `data:image/svg+xml;utf8,${encodeURIComponent(status.qrSvg)}` : null;
   const composerMode = Boolean(target);
+  const paired = devices.length > 0;
+  const showQr = status.receiving && qrSrc !== null && (!paired || pairOpen);
+  const fileItems = items.filter((it) => it.path);
+  const previewIndex = fileItems.findIndex((it) => it.id === previewId);
+  const previewItem = previewIndex >= 0 ? fileItems[previewIndex] : null;
+  const canPlaceAny = Boolean(placeRoot) && items.some((it) => it.kind !== "file" && it.status !== "placed");
 
   async function place(item: PhoneItem) {
     if (!placeRoot) return;
@@ -122,6 +194,8 @@ export default function PhoneDropDialog() {
     try {
       await invoke("phone_drop_delete", { id: item.id });
       removeItem(item.id);
+      thumbCache.delete(item.id);
+      if (previewId === item.id) setPreviewId(null);
     } catch (e) {
       toast(`删除失败：${String(e)}`, "error");
     }
@@ -134,109 +208,152 @@ export default function PhoneDropDialog() {
       .catch(() => toast("复制失败", "error"));
   }
 
-  const footer = status.receiving ? (
+  function openItem(item: PhoneItem) {
+    if (item.kind === "text") {
+      setExpandedText((cur) => (cur === item.id ? null : item.id));
+      return;
+    }
+    if (item.path) setPreviewId(item.id);
+  }
+
+  /** 预览弹窗右下角的一个后续动作：能放进项目就放，否则能附到输入框就附 */
+  function previewAction(item: PhoneItem): { label: string; onClick: () => void } | undefined {
+    const actions = phoneItemActions(item, { canAttach: composerMode, canPlace: Boolean(placeRoot) });
+    if (actions.includes("place")) return { label: "放进项目", onClick: () => void place(item) };
+    if (actions.includes("attach")) return { label: "附到输入框", onClick: () => deliver(item) };
+    return undefined;
+  }
+
+  const footer = !status.receiving ? (
+    <button type="button" className={secondaryActionClass} onClick={closeDialog}>
+      关闭
+    </button>
+  ) : composerMode ? (
     <>
       <button type="button" className={secondaryActionClass} onClick={() => void stop()}>
         停止接收
       </button>
       <button type="button" className={primaryActionClass} onClick={closeDialog}>
-        {composerMode ? "收起" : "完成"}
+        收起
       </button>
     </>
   ) : (
-    <button type="button" className={secondaryActionClass} onClick={closeDialog}>
-      关闭
-    </button>
+    <>
+      <span className="mr-auto text-micro text-l4">关掉就停止接收</span>
+      <button type="button" className={primaryActionClass} onClick={closeDialog}>
+        完成
+      </button>
+    </>
   );
 
   return (
-    <Modal
-      open={open}
-      title="从手机添加"
-      onClose={closeDialog}
-      size="md"
-      footer={footer}
-      contentClassName="text-xs"
-    >
-      <div className="space-y-4">
-        {error && <InlineNotice tone="err">{error}</InlineNotice>}
-        {status.receiving && status.portNote && <InlineNotice tone="warn">{status.portNote}</InlineNotice>}
+    <>
+      <Modal
+        open={open}
+        title="从手机添加"
+        onClose={() => {
+          if (previewRef.current) return;
+          closeDialog();
+        }}
+        size="md"
+        footer={footer}
+        contentClassName="text-xs"
+      >
+        <div className="space-y-4">
+          {error && <InlineNotice tone="err">{error}</InlineNotice>}
+          {status.receiving && status.portNote && <InlineNotice tone="warn">{status.portNote}</InlineNotice>}
 
-        {status.receiving && qrSrc ? (
-          <div className="flex gap-4">
-            <div className="shrink-0 rounded-lg bg-white p-1.5">
-              <img src={qrSrc} alt="扫码打开手机上传页" className="size-40" />
-            </div>
-            <div className="min-w-0 flex-1 space-y-2 leading-5">
-              <p className="text-sm text-l1">
-                {devices.length > 0 ? "已配对的手机直接打开主屏幕上的「发到 Mesa」。" : "用手机相机扫这个码。"}
-              </p>
-              <p className="text-l3">
-                {devices.length > 0
-                  ? "新手机扫这个码，扫开就记住了。手机和电脑要连同一个 Wi-Fi。"
-                  : "手机和电脑要连同一个 Wi-Fi。扫开后就记住这台手机，可以加到主屏幕，以后不用再扫。"}
-              </p>
-              <p className={status.connected ? "text-ok-text" : "text-l3"}>
-                {phoneStateLine(status, incoming, devices.length > 0)}
-              </p>
-              {status.url && (
-                <div className="flex min-w-0 items-center gap-1">
-                  <span className="min-w-0 truncate font-mono text-micro text-l4" title={status.url}>
-                    {status.url}
-                  </span>
-                  <button
-                    type="button"
-                    className={ghostActionClass}
-                    title="复制地址（扫不了码时在手机浏览器里手动输入）"
-                    aria-label="复制地址"
-                    onClick={() =>
-                      void navigator.clipboard
-                        .writeText(status.url ?? "")
-                        .then(() => toast("已复制地址", "success"))
-                        .catch(() => toast("复制失败", "error"))
-                    }
-                  >
-                    <Copy size={12} strokeWidth={1.8} aria-hidden="true" />
-                  </button>
-                </div>
-              )}
-              {status.addresses.length > 1 && (
-                <div className="w-72 max-w-full">
-                  <MenuSelect
-                    aria-label="换一个地址"
-                    value={status.host ?? ""}
-                    onChange={(host) => {
-                      if (host !== status.host) void start(host);
-                    }}
-                    options={status.addresses.map((a) => ({ value: a.host, label: a.label }))}
-                  />
-                </div>
+          {!status.receiving ? (
+            <div className="flex items-center gap-3">
+              <p className="flex-1 text-l3">{starting ? "正在开始接收…" : "没有在接收。"}</p>
+              {!starting && (
+                <button type="button" className={secondaryActionClass} onClick={() => void start()}>
+                  开始接收
+                </button>
               )}
             </div>
-          </div>
-        ) : (
-          <div className="flex items-center gap-3">
-            <p className="flex-1 text-l3">{starting ? "正在开始接收…" : "没有在接收。"}</p>
-            {!starting && (
-              <button type="button" className={secondaryActionClass} onClick={() => void start()}>
-                开始接收
-              </button>
-            )}
-          </div>
-        )}
+          ) : (
+            paired && (
+              <div className={`${projectWellClass} flex items-center gap-3`}>
+                <Smartphone
+                  size={18}
+                  strokeWidth={1.8}
+                  aria-hidden="true"
+                  className={`shrink-0 ${status.connected ? "text-ok-text" : "text-l3"}`}
+                />
+                <div className="min-w-0 flex-1 leading-5">
+                  <p className={`text-sm ${status.connected ? "text-ok-text" : "text-l1"}`}>
+                    {phoneStateLine(status, incoming, true)}
+                  </p>
+                  <p className="text-l3">在手机上点主屏的「发到 Mesa」就能发，不用扫码。</p>
+                </div>
+                <button type="button" className={ghostActionClass} onClick={() => setPairOpen((v) => !v)}>
+                  {pairOpen ? "收起二维码" : "配对新手机"}
+                </button>
+              </div>
+            )
+          )}
 
-        <div>
-          <button
-            type="button"
-            className="flex items-center gap-1.5 text-l3 hover:text-l1"
-            onClick={() => setHelpOpen((v) => !v)}
-            aria-expanded={helpOpen}
-          >
-            <FoldMark open={helpOpen} />
-            扫了打不开？
-          </button>
-          {helpOpen && (
-            <ul className="mt-1.5 list-disc space-y-1 pl-5 leading-5 text-l3">
+          {showQr && (
+            <div className="flex gap-4">
+              <div className="shrink-0 rounded-lg bg-white p-1.5">
+                <img src={qrSrc ?? undefined} alt="扫码打开手机上传页" className="size-36" />
+              </div>
+              <div className="min-w-0 flex-1 space-y-2 leading-5">
+                <p className="text-sm text-l1">用手机相机扫这个码。</p>
+                <p className="text-l3">
+                  手机和电脑要连同一个 Wi-Fi。扫开后就记住这台手机，照页面提示加到主屏幕，以后不用再扫。
+                </p>
+                {!paired && (
+                  <p className={status.connected ? "text-ok-text" : "text-l3"}>{phoneStateLine(status, incoming)}</p>
+                )}
+                {status.url && (
+                  <div className="flex min-w-0 items-center gap-1">
+                    <span className="min-w-0 truncate font-mono text-micro text-l4" title={status.url}>
+                      {status.url}
+                    </span>
+                    <button
+                      type="button"
+                      className={ghostActionClass}
+                      title="复制地址（扫不了码时在手机浏览器里手动输入）"
+                      aria-label="复制地址"
+                      onClick={() =>
+                        void navigator.clipboard
+                          .writeText(status.url ?? "")
+                          .then(() => toast("已复制地址", "success"))
+                          .catch(() => toast("复制失败", "error"))
+                      }
+                    >
+                      <Copy size={12} strokeWidth={1.8} aria-hidden="true" />
+                    </button>
+                  </div>
+                )}
+                {status.addresses.length > 1 && (
+                  <div className="w-full max-w-72">
+                    <MenuSelect
+                      aria-label="换一个地址"
+                      value={status.host ?? ""}
+                      onChange={(host) => {
+                        if (host !== status.host) void start(host);
+                      }}
+                      options={status.addresses.map((a) => ({ value: a.host, label: a.label }))}
+                    />
+                  </div>
+                )}
+                <button
+                  type="button"
+                  className="flex items-center gap-1.5 text-l3 hover:text-l1"
+                  onClick={() => setHelpOpen((v) => !v)}
+                  aria-expanded={helpOpen}
+                >
+                  <FoldMark open={helpOpen} />
+                  扫了打不开？
+                </button>
+              </div>
+            </div>
+          )}
+          {showQr && helpOpen && (
+            <ul className="list-disc space-y-1 pl-5 leading-5 text-l3">
               <li>确认手机和电脑连的是同一个 Wi-Fi；手机开着 VPN 的话先关掉。</li>
               <li>校园网、公司网常禁止设备互访：让电脑连手机热点，再点「停止接收」「开始接收」，扫新码。</li>
               <li>
@@ -247,124 +364,176 @@ export default function PhoneDropDialog() {
                 地址有两种：电脑名（xxx.local）换了 Wi-Fi 也能连；IP 地址一变就要重扫。手机打不开电脑名时，用上面的下拉换成
                 IP 再扫。
               </li>
-              <li>已配对的手机打开后显示「电脑那边没在接收」：先在这里开始接收，手机页会自动连上。</li>
             </ul>
           )}
-        </div>
 
-        {devices.length > 0 && (
-          <div>
-            <div className="mb-1.5 flex items-center gap-2">
-              <span className="font-medium text-l2">已配对的手机</span>
-              <span className="text-l4">移除后它主屏上的「发到 Mesa」就失效了</span>
-            </div>
-            <ul className="space-y-0.5">
-              {devices.map((d) => (
-                <li key={d.id} className="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 hover:bg-hover">
-                  <Smartphone size={14} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l3" />
-                  <span className="min-w-0 truncate text-l1">{d.name}</span>
-                  <span className="min-w-0 flex-1 truncate text-micro text-l4">{phoneDeviceLine(d, new Date())}</span>
-                  <button type="button" className={ghostActionClass} onClick={() => void removeDevice(d.id)}>
-                    移除
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        <div>
-          <div className="mb-1.5 flex items-center gap-2">
-            <span className="font-medium text-l2">收到的</span>
-            <span className="text-l4">保留 7 天</span>
-            {placeable.length > 0 && items.some((it) => it.kind !== "file") && (
-              <div className="ml-auto flex items-center gap-1.5">
-                <span className="text-l4">放进</span>
-                <div className="w-48">
-                  <MenuSelect
-                    aria-label="放进哪个项目"
-                    value={placeRoot}
-                    onChange={setPlaceRoot}
-                    options={placeable.map((p) => ({ value: p.path, label: p.name }))}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-          {items.length === 0 ? (
-            <p className="py-3 text-l4">还没有。手机上发出的东西会马上出现在这里。</p>
-          ) : (
-            <ul className="max-h-64 space-y-0.5 overflow-y-auto">
-              {items.map((item) => {
-                const Icon = KIND_ICON[item.kind] ?? File;
-                const actions = phoneItemActions(item, {
-                  canAttach: composerMode,
-                  canPlace: Boolean(placeRoot),
-                });
-                const note = phoneItemStatusText(item);
-                return (
-                  <li key={item.id} className="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 hover:bg-hover">
-                    <Icon size={14} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l3" />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-l1" title={item.text ?? item.name}>
-                        {item.name}
-                      </div>
-                      <div className="truncate text-micro text-l4">
-                        {[
-                          item.kind === "text" ? null : formatPhoneSize(item.size),
-                          timeLabel(item.receivedAt),
-                          note || null,
-                        ]
-                          .filter(Boolean)
-                          .join(" · ")}
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-0.5">
-                      {actions.includes("attach") && (
-                        <button type="button" className={ghostActionClass} onClick={() => deliver(item)}>
-                          附到输入框
-                        </button>
-                      )}
-                      {actions.includes("place") && item.kind !== "file" && (
-                        <button
-                          type="button"
-                          className={ghostActionClass}
-                          disabled={busyId === item.id}
-                          title={`放进项目的 ${PHONE_PLACE_TARGET[item.kind]}`}
-                          onClick={() => void place(item)}
-                        >
-                          {busyId === item.id ? "放进中…" : "放进项目"}
-                        </button>
-                      )}
-                      {actions.includes("saveAs") && (
-                        <button type="button" className={ghostActionClass} onClick={() => void saveAs(item)}>
-                          另存为…
-                        </button>
-                      )}
-                      {actions.includes("copy") && (
-                        <button type="button" className={ghostActionClass} onClick={() => copyText(item)}>
-                          复制
-                        </button>
-                      )}
+          {paired && (
+            <div>
+              <button
+                type="button"
+                className="flex items-center gap-1.5 text-l3 hover:text-l1"
+                onClick={() => setDevicesOpen((v) => !v)}
+                aria-expanded={devicesOpen}
+              >
+                <FoldMark open={devicesOpen} />
+                已配对的手机
+                <span className="text-l4">{devices.length} 台</span>
+              </button>
+              {devicesOpen && (
+                <ul className="mt-1.5 space-y-0.5">
+                  {devices.map((d) => (
+                    <li key={d.id} className="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 hover:bg-hover">
+                      <Smartphone size={14} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l3" />
+                      <span className="min-w-0 truncate text-l1">{d.name}</span>
+                      <span className="min-w-0 flex-1 truncate text-micro text-l4">{phoneDeviceLine(d, new Date())}</span>
                       <button
                         type="button"
                         className={ghostActionClass}
-                        title="删除"
-                        aria-label="删除"
-                        onClick={() => void remove(item)}
+                        title="移除后它主屏上的「发到 Mesa」就失效了，要再用得重新扫码"
+                        onClick={() => void removeDevice(d.id)}
                       >
-                        <Trash2 size={12} strokeWidth={1.8} aria-hidden="true" />
+                        移除
                       </button>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           )}
-        </div>
 
-        <p className="text-micro text-l4">只在同一网络内传输，没有加密。在公共 Wi-Fi 上别传敏感文件。</p>
-      </div>
-    </Modal>
+          <div>
+            <div className="mb-1.5 flex items-center gap-2">
+              <span className="font-medium text-l2">收到的</span>
+              <span className="text-l4">点开看 · 保留 7 天</span>
+              {placeable.length > 0 && canPlaceAny && (
+                <div className="ml-auto flex items-center gap-1.5">
+                  <span className="text-l4">放进</span>
+                  <div className="w-44">
+                    <MenuSelect
+                      aria-label="放进哪个项目"
+                      value={placeRoot}
+                      onChange={setPlaceRoot}
+                      options={placeable.map((p) => ({ value: p.path, label: p.name }))}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+            {items.length === 0 ? (
+              <p className="py-3 text-l4">还没有。手机上发出的东西会马上出现在这里。</p>
+            ) : (
+              <ul className="max-h-72 space-y-0.5 overflow-y-auto">
+                {items.map((item) => {
+                  const Icon = KIND_ICON[item.kind] ?? File;
+                  const thumb = thumbs[item.id];
+                  const actions = phoneItemActions(item, {
+                    canAttach: composerMode,
+                    canPlace: Boolean(placeRoot),
+                  });
+                  const note = phoneItemStatusText(item);
+                  const openable = phoneItemOpenable(item);
+                  const expanded = expandedText === item.id;
+                  return (
+                    <li key={item.id} className="rounded-md hover:bg-hover">
+                      <div className="flex min-w-0 items-center gap-2.5 px-1.5 py-1">
+                        <button
+                          type="button"
+                          disabled={!openable}
+                          onClick={() => openItem(item)}
+                          title={item.kind === "text" ? (expanded ? "收起" : "展开全文") : "预览"}
+                          className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-md border border-hairline bg-strip"
+                        >
+                          {thumb ? (
+                            <img src={thumb} alt="" className="size-full object-cover" />
+                          ) : (
+                            <Icon size={16} strokeWidth={1.8} aria-hidden="true" className="text-l3" />
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!openable}
+                          onClick={() => openItem(item)}
+                          className="min-w-0 flex-1 text-left"
+                        >
+                          <span className="block truncate text-l1" title={item.text ?? item.name}>
+                            {item.name}
+                          </span>
+                          <span className="block truncate text-micro text-l4" title={item.placedTo ?? undefined}>
+                            {[
+                              item.kind === "text" ? null : formatPhoneSize(item.size),
+                              timeLabel(item.receivedAt),
+                              note || null,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </span>
+                        </button>
+                        <div className="flex shrink-0 items-center gap-0.5">
+                          {actions.includes("attach") && (
+                            <button type="button" className={ghostActionClass} onClick={() => deliver(item)}>
+                              附到输入框
+                            </button>
+                          )}
+                          {actions.includes("place") && item.kind !== "file" && (
+                            <button
+                              type="button"
+                              className={ghostActionClass}
+                              disabled={busyId === item.id}
+                              title={`放进项目的 ${PHONE_PLACE_TARGET[item.kind]}`}
+                              onClick={() => void place(item)}
+                            >
+                              {busyId === item.id ? "放进中…" : "放进项目"}
+                            </button>
+                          )}
+                          {actions.includes("saveAs") && (
+                            <button type="button" className={ghostActionClass} onClick={() => void saveAs(item)}>
+                              另存为…
+                            </button>
+                          )}
+                          {actions.includes("copy") && (
+                            <button type="button" className={ghostActionClass} onClick={() => copyText(item)}>
+                              复制
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className={ghostActionClass}
+                            title="删除"
+                            aria-label="删除"
+                            onClick={() => void remove(item)}
+                          >
+                            <Trash2 size={12} strokeWidth={1.8} aria-hidden="true" />
+                          </button>
+                        </div>
+                      </div>
+                      {expanded && item.text && (
+                        <p className="mx-1.5 mb-1.5 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md bg-strip px-2.5 py-2 text-xs leading-5 text-l2">
+                          {item.text}
+                        </p>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+
+          <p className="text-micro text-l4">只在同一网络内传输，没有加密。在公共 Wi-Fi 上别传敏感文件。</p>
+        </div>
+      </Modal>
+      {previewItem?.path && (
+        <OfficePreviewModal
+          path={previewItem.path}
+          root={dirOf(previewItem.path)}
+          displayName={previewItem.name}
+          onClose={() => setPreviewId(null)}
+          extraAction={previewAction(previewItem)}
+          hasPrevious={previewIndex > 0}
+          hasNext={previewIndex < fileItems.length - 1}
+          onPrevious={() => setPreviewId(fileItems[previewIndex - 1]?.id ?? null)}
+          onNext={() => setPreviewId(fileItems[previewIndex + 1]?.id ?? null)}
+        />
+      )}
+    </>
   );
 }

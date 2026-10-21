@@ -25,6 +25,7 @@ export default function OfficePreviewModal({
   hasPrevious = false,
   hasNext = false,
   companionPdf,
+  displayName,
 }: {
   path: string;
   root: string;
@@ -36,8 +37,10 @@ export default function OfficePreviewModal({
   hasPrevious?: boolean;
   hasNext?: boolean;
   companionPdf?: string | null;
+  /** 标题用的名字（缺省取文件名；手机暂存文件带时间前缀，标题用原名） */
+  displayName?: string;
 }) {
-  const name = path.split(/[\\/]/).pop() ?? path;
+  const name = displayName ?? path.split(/[\\/]/).pop() ?? path;
   const mode = officePreviewMode(path);
   const [text, setText] = useState<string | null>(null);
   const [html, setHtml] = useState<string>("");

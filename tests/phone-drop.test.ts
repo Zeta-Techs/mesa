@@ -6,7 +6,9 @@ import {
   phoneDeviceLine,
   phoneInboxFields,
   phoneItemActions,
+  phoneItemOpenable,
   phoneItemStatusText,
+  phonePlacedLabel,
   phonePendingCount,
   phoneStateLine,
   phoneStopNote,
@@ -82,6 +84,16 @@ test("状态文案", () => {
   assert.equal(phoneStateLine({ ...on, connected: true, received: 3 }, null), "手机已连上 · 已收 3 条");
   assert.equal(phoneStateLine({ ...on, connected: true }, "IMG_1.jpg"), "正在接收 IMG_1.jpg…");
   assert.equal(phoneItemStatusText({ status: "placed", placedTo: "papers/a.pdf" }), "已放进 papers/a.pdf");
+  assert.equal(
+    phoneItemStatusText({ status: "placed", placedTo: "notes/assets/phone-20261021-092945.jpg" }),
+    "已放进 notes/assets/",
+  );
+  assert.equal(phonePlacedLabel("notes/clips.md"), "notes/clips.md");
+  assert.equal(phonePlacedLabel("papers/A Review of Advanced Energy Materials.pdf"), "papers/");
+  assert.equal(phoneItemOpenable({ kind: "image", path: "/x/a.jpg" }), true);
+  assert.equal(phoneItemOpenable({ kind: "file", path: "/x/a.xlsx" }), true);
+  assert.equal(phoneItemOpenable({ kind: "text", path: null }), true);
+  assert.equal(phoneItemOpenable({ kind: "image", path: null }), false);
   assert.equal(phoneItemStatusText({ status: "new", placedTo: null }), "");
   assert.match(phoneStopNote("idle") ?? "", /30 分钟/);
   assert.equal(phoneStopNote("stopped"), null);

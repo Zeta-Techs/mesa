@@ -125,8 +125,9 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   usePhoneDropEvents（App 挂一次）里接，输入框只从 deliveries 取自己那份（防多监听器各改各的）；
                              #   starting 期间丢弃旧会话迟到的「已停止」事件；openForComposer：有已配对手机就直接开始接收不弹窗
   components/PhoneDropDialog.tsx # 从手机添加弹层（App 全局一处；入口：聊天输入框「+」/ ⌘K / 收件箱「手机」）：二维码（后端 SVG，
-                             #   data: URL 进 img）+ 地址复制 + 换地址（电脑名 / 各网卡 IP）+ 「扫了打不开？」+ 已配对的手机（移除）+
-                             #   收到的列表（附到输入框/放进项目/另存为/复制/删除）；
+                             #   data: URL 进 img）+ 地址复制 + 换地址（电脑名 / 各网卡 IP）+ 「扫了打不开？」；有已配对手机时顶上是状态卡、
+                             #   二维码收进「配对新手机」、已配对的手机折叠（移除）；收到的列表带 96px 缩略图（读一次画小图只留小图，
+                             #   模块级缓存）、点开走 OfficePreviewModal（displayName 用原名、↑↓ 翻、右下一个后续动作）、文字就地展开；
                              #   从输入框打开的「收起」接收继续，⌘K 打开的「完成」即停止
   components/ClientOpenDialog.tsx # useClientOpen 钩子 + 确认层：对话页底栏/右键菜单与工作台项目行共用；预检全过直接打开，有 note/warn/fix/block 才弹层（Codex 缺渠道「写入并打开」可选连接，Claude 渠道会变提示，被拦只给原因/下载入口）
   components/ConfirmDialog.tsx # 全局确认/提示框（confirmDialog/alertDialog，126 处共用）：语气图标 + 结构化正文（标题/对照表/注意条，
