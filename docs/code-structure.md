@@ -554,7 +554,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   没有连接在用的网关取最后建的、预选「选用已有网关」；Agent 挑已装且网关填了其协议槽的，
                              #   有 Claude Code 先选它）（tests/gateway-option.test.ts）
   command-palette.ts         # 命令面板过滤与排序纯逻辑：searchOnly 默认不列、得分（标题全等/开头/「前缀：名字」开头/包含 > 别名 > 散字兜底）、组按最高分排且组内连续、matchedKeyword（tests/command-palette.test.ts）
-  stats-insight.ts           # 统计页花费环比 / 缓存命中率 / 会话标题回落纯逻辑；compact/fmtCost 统计页统一数字方言（tests/stats-insight.test.ts）
+  stats-insight.ts           # 统计页花费环比 / 会话标题回落纯逻辑；compact/fmtCost 统计页统一数字方言（tests/stats-insight.test.ts）
   usage-activity.ts          # 活跃度热力图纯逻辑：周一开头滚动网格（去年同月 1 日到今天，不翻年；整年网格
                              #   buildYearGrid/yearBounds/future 标记随 2026-10-15 时间窗改口移除）/ 月份标签避让 /
                              #   非零天四分位分档（GitHub 同构）/ streaks（今天宽限，跨年不断档）/ yearStats / 中文日期短语 /

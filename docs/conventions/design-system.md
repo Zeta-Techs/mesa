@@ -357,7 +357,7 @@
   `mcpHealthLabel`；正常只留点。②「用于」列写「N 个 Agent」，全正常不画点、有分发异常才画琥珀点（同技能页）。③页头添加入口合一：「+ 添加 MCP ⌄」
   菜单 = 自己填写 / 预设 / 从别处导入（收编、粘贴），删掉「预设 ▾」与 ⋯；检测中转圈用 `LoaderCircle`。④协议徽章中性（bg-inset + l3），不再 stdio 紫 /
   remote 蓝；配置列 l3。⑤金额统一千分位两位小数（`money-format.ts groupedMoney`，`fmtCost` / `formatBalanceAmount` / `splitBalanceAmount` 共用），
-  tokens 计数也带千分位。⑥命中率 `fmtHitRate`：全中才 100%，≥99% 向下留一位小数。⑦走势图：峰值处虚线参考线 + 峰点，右上写「最高 X · MM-DD」
+  tokens 计数也带千分位。⑥总览卡小格只留「对话 N 次」「不计费」（同日用户「没用的不要」：场均可自己算，缓存命中恒在 99% 上下、看了做不了什么，缓存省下是比实际花费还大的假设数，三项删）。⑦走势图：峰值处虚线参考线 + 峰点，右上写「最高 X · MM-DD」
   （取代重复的区间名），日期轴 l3；切换页签「花费 / tokens」（页面名已是「用量」）。⑧币种用两格分段「$ | ¥」，不放裸符号钮。
   ⑨全站 `PageHeader`：所在滚动容器 scrollTop>0 时写 `data-stuck`，页头底边出 hairline（玻璃页头下内容像被切掉）。
 - **侧栏桌面磨砂（2026-09-24）**：透的是窗口背后的桌面，不是页头那种网页内 `backdrop-filter`。

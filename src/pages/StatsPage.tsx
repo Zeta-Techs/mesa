@@ -15,8 +15,6 @@ import type {
 } from "../types";
 import { axisLabels } from "../stats-trend";
 import {
-  cacheHitRate,
-  fmtHitRate,
   compact,
   fmtCost,
   sessionDisplayTitle,
@@ -506,26 +504,20 @@ function UsageChart({ pts, aria }: { pts: ChartPt[]; aria: string }) {
   );
 }
 
-/** 总览卡下方的小指标：标签 l3、数值 l1 等宽数字；tone=ok 用于「省下」这类正向数 */
+/** 总览卡下方的小指标：标签 l3、数值 l1 等宽数字 */
 function KpiStat({
   label,
   value,
   title,
-  tone,
 }: {
   label: string;
   value: string;
   title?: string;
-  tone?: "ok";
 }) {
   return (
     <div className="flex items-baseline gap-1.5" title={title}>
       <dt className="text-l3">{label}</dt>
-      <dd
-        className={`font-medium tabular-nums ${tone === "ok" ? "text-ok-text" : "text-l1"}`}
-      >
-        {value}
-      </dd>
+      <dd className="font-medium tabular-nums text-l1">{value}</dd>
     </div>
   );
 }
@@ -957,9 +949,6 @@ export default function StatsPage({ visible }: { visible: boolean }) {
     return showInternal ? rows : rows.filter((w) => !w.internal);
   }, [showInternal, stats]);
 
-  const hit = stats
-    ? cacheHitRate(stats.cards.input, stats.cards.cacheRead)
-    : null;
   const trendLive = Boolean(trend?.days.some((d) => d.hasUsage));
   const wow =
     trendLive && trend && trend.days.length > 0
@@ -977,10 +966,6 @@ export default function StatsPage({ visible }: { visible: boolean }) {
     totalTokens > 0 && stats
       ? Math.round((stats.cards.input / totalTokens) * 100)
       : 0;
-  const perChat =
-    stats && stats.cards.sessions > 0 && stats.cards.costUsd != null
-      ? stats.cards.costUsd / stats.cards.sessions
-      : null;
   const distItems = DIST.filter((item) => {
     if (item.id === "sessions") return topSessions.length > 0;
     if (item.id === "agent") return (stats?.byAgent.length ?? 0) > 0;
@@ -1748,43 +1733,11 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                 </div>
               </div>
             </div>
-            {/* 次要指标拆成一排「标签 · 数值」小格（原先五六件事挤在一句话里，读到后半句已忘了前半句）；
-                没有的项不出现，解释进悬停 */}
+            {/* 次要指标只留两样（2026-10-23 用户「没用的不要」）：对话次数给费用一个量级参照；不计费说明 tokens 为何比费用对应的多。
+                场均（费用÷次数，自己能算）、缓存命中（Agent 长对话恒在 99% 上下，看了也做不了什么）、缓存省下（假设性的数，比实际花费还大好几倍，
+                只会让人困惑）都去掉了 */}
             <dl className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-xs">
               <KpiStat label="对话" value={`${stats.cards.sessions} 次`} />
-              {perChat != null && (
-                <KpiStat
-                  label="场均"
-                  value={fmtCost(perChat, currency, rate, stats.cards.costPartial)}
-                />
-              )}
-              {hit != null && (
-                <KpiStat
-                  label="缓存命中"
-                  value={fmtHitRate(hit)}
-                  title="输入里有多少是从缓存读的；命中越高越省钱"
-                />
-              )}
-              {hit != null &&
-                stats.cards.cacheSavingsUsd != null &&
-                stats.cards.costUsd != null && (
-                  <KpiStat
-                    label="缓存省下"
-                    value={fmtCost(
-                      stats.cards.cacheSavingsUsd,
-                      currency,
-                      rate,
-                      stats.cards.costPartial,
-                    )}
-                    tone="ok"
-                    title={`若无缓存约 ${fmtCost(
-                      stats.cards.costUsd + stats.cards.cacheSavingsUsd,
-                      currency,
-                      rate,
-                      stats.cards.costPartial,
-                    )}`}
-                  />
-                )}
               {(stats.cards.officialTokens > 0 || stats.cards.internalTokens > 0) && (
                 <KpiStat
                   label="不计费"

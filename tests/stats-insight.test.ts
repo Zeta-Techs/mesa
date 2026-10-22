@@ -1,10 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  cacheHitRate,
   compact,
   fmtCost,
-  fmtHitRate,
   sessionDisplayTitle,
   shortSessionId,
   weekOverWeek,
@@ -60,13 +58,6 @@ test("weekOverWeek：日期非法或空序列返回 null", () => {
   assert.equal(weekOverWeek([day("2026-08-24", 1)], "nope"), null);
 });
 
-test("cacheHitRate：cache / (input + cache)", () => {
-  assert.equal(cacheHitRate(100, 300), 0.75);
-  assert.equal(cacheHitRate(0, 0), null);
-  assert.equal(cacheHitRate(50, 0), 0);
-  assert.equal(cacheHitRate(0, 10), 1);
-});
-
 test("shortSessionId：去横线取末 8 位", () => {
   assert.equal(shortSessionId("abc"), "abc");
   assert.equal(shortSessionId("ses-sion-12345678"), "12345678");
@@ -112,12 +103,4 @@ test("fmtCost：~ 无价格、≥ 含未计价、$/¥ 换算", () => {
   // 金额带千分位（同页次数写 28,000，金额也得读得出位数）
   assert.equal(fmtCost(5420.5, "¥", 7.2, true), "≥¥39,027.60");
   assert.equal(fmtCost(13520.25, "$", 7.2, false), "$13,520.25");
-});
-
-test("fmtHitRate：99% 以上留一位小数且不进位成 100%", () => {
-  assert.equal(fmtHitRate(1), "100%");
-  assert.equal(fmtHitRate(0.9996), "99.9%");
-  assert.equal(fmtHitRate(0.995), "99.5%");
-  assert.equal(fmtHitRate(0.873), "87%");
-  assert.equal(fmtHitRate(0), "0%");
 });
