@@ -384,6 +384,8 @@ export interface WorkspaceReviewRequest {
   requestId: string;
   /** 从项目页签进来的：返回时回到这个项目的这个页签，而不是停在终端页。 */
   returnTo?: { projectRoot: string; surface: ProjectSurfaceTab } | null;
+  /** 发起页，store 自动记（调用方不写）：评审只挂在运行页，从别的页进来的返回时回那一页。 */
+  fromPage?: string;
   /** 这次已经采纳：评审只查看，不能再改纳入或排除。 */
   locked?: boolean;
 }
@@ -959,8 +961,11 @@ export const useAppStore = create<AppState>((set, get) => {
   askAiReq: null,
   setAskAiReq: (r) => set({ askAiReq: r }),
   workspaceReviewRequest: null,
+  // 发起页同 readerReq 在 store 层自动记：流程线、任务卡、收件箱、上游提醒等入口都是先发请求再切运行页
   setWorkspaceReviewRequest: (request) =>
-    set({ workspaceReviewRequest: request }),
+    set({
+      workspaceReviewRequest: request ? { ...request, fromPage: get().page } : null,
+    }),
   terminalRunInputs: [],
   setTerminalRunInputs: (inputs) => set({ terminalRunInputs: inputs }),
   inboxItems: [],

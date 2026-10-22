@@ -7022,15 +7022,18 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   const [reviewAction, setReviewAction] = useState<
     "pr" | "archive" | "resolve-conflict" | null
   >(null);
-  /** 从项目页签进来的评审：返回时回到那个项目的那个页签。
+  /** 从项目页签进来的评审：返回时回到那个项目的那个页签；没指定页签的回发起页。
    *  关评审的入口不止返回键（开新终端、开阅读、切目录都会盖掉它），
    *  ref 让这些入口清状态时不用逐个改依赖 */
   const reviewReturnRef = useRef<{
-    projectRoot: string;
-    surface: ProjectSurfaceTab;
+    target: { projectRoot: string; surface: ProjectSurfaceTab } | null;
+    fromPage: string | null;
   } | null>(null);
   const setReviewReturn = (
-    value: { projectRoot: string; surface: ProjectSurfaceTab } | null,
+    value: {
+      target: { projectRoot: string; surface: ProjectSurfaceTab } | null;
+      fromPage: string | null;
+    } | null,
   ) => {
     reviewReturnRef.current = value;
   };
@@ -8344,7 +8347,10 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     setReviewRunId(workspaceReviewRequest.runId ?? null);
     setReviewAction(workspaceReviewRequest.action ?? null);
     setReviewRequestId(workspaceReviewRequest.requestId);
-    setReviewReturn(workspaceReviewRequest.returnTo ?? null);
+    setReviewReturn({
+      target: workspaceReviewRequest.returnTo ?? null,
+      fromPage: workspaceReviewRequest.fromPage ?? null,
+    });
     setReviewLocked(!!workspaceReviewRequest.locked);
     setWorkspaceReviewRequest(null);
   }, [visible, workspaceReviewRequest, setWorkspaceReviewRequest]);
@@ -10332,6 +10338,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                 onOpenPr={gitPanelOpenPr}
                 onOpenReview={(path, runId) => {
                   setReviewAction(null);
+                  setReviewReturn(null);
                   setReviewPath(path);
                   setReviewRunId(runId ?? null);
                 }}
@@ -10356,11 +10363,19 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
             setReviewRequestId(null);
             setReviewReturn(null);
             setReviewLocked(false);
-            if (back) {
-              const s = useAppStore.getState();
-              s.setSelectProjectReq(back.projectRoot);
-              s.setProjectSurfaceReq(back.surface);
+            const s = useAppStore.getState();
+            // 「回给 Agent」「看复现日志」先交终端请求再关评审：人要看的就是这页的终端，不回跳
+            if (!back || s.pendingTerminal) return;
+            if (back.target) {
+              s.setSelectProjectReq(back.target.projectRoot);
+              s.setProjectSurfaceReq(back.target.surface);
               s.setPage("workspaces");
+            } else if (
+              back.fromPage &&
+              back.fromPage !== "terminal" &&
+              back.fromPage !== s.page
+            ) {
+              s.setPage(back.fromPage);
             }
           }}
         />
