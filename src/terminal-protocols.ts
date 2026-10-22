@@ -53,10 +53,8 @@ export function replyToTerminalQuery(data: string): PtyQueryReply | null {
     // kitty 规范：flags 省略时按 0 处理（= 恢复传统编码），不是按 5
     const requested = push[1] === "" ? 0 : Number(push[1]);
     const granted = (Number.isFinite(requested) ? requested : 0) & KKP_FLAGS;
-    return {
-      reply: `${ESC}[?${granted}u`,
-      kkp: granted === 0 ? "disarm" : "arm",
-    };
+    // 推栈不应答（kitty 规范只有 CSI ? u 才回）：Gemini 收到不请自来的 CSI ? 1 u 会把「1u」打进输入框
+    return { reply: "", kkp: granted === 0 ? "disarm" : "arm" };
   }
   if (MODIFY_OTHER_KEYS_QUERY_RE.test(data)) {
     // 等级 0：不提供 modifyOtherKeys。带修饰的键走 Kitty CSI-u。

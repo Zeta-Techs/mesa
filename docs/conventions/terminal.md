@@ -558,7 +558,9 @@
   return false（网页侧 Ctrl+V 在 WKWebView 不产生 paste 事件也到不了 PTY；CLI 收到 \x16 自读系统剪贴板）。
   **Kitty 键盘协议（2026-10-10 首版，同日按规范修正，`src/terminal-protocols.ts`）**：输出流里的
   `CSI ? u` / `CSI > n u` / `CSI < n u` 由前端应答，只宣布 flags 5（消歧义 1 + 备用键 4），不宣布
-  松开/重复（bit 2，Grok 实证：答应了发不出，Enter 会交两次）。**编码形态按 kitty 规范**
+  松开/重复（bit 2，Grok 实证：答应了发不出，Enter 会交两次）。**只有查询 `CSI ? u` 回话，推栈 / 弹栈一律不回**
+  （kitty 规范；2026-10-22 实证：原先推栈也回 `CSI ? flags u`，Gemini 每次重挂键盘层都推 `>1u`，没人等的应答被当成按键，
+  输入框里多出「1u」跟着下一条发出去）。**编码形态按 kitty 规范**
   （首版把无修饰功能键也编成 CSI-u 且用了 57417-57426 小键盘编号，gemini-cli 的映射表没有这段，
   方向键/Home/End/Insert/Delete/PageUp/Down 全部打私用区乱码——复核实证后修正）：
   无修饰功能键一律保持 xterm 传统序列，**只有 Esc 改写 `CSI 27u`**（消歧义档的本意）；

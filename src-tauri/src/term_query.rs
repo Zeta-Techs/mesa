@@ -82,14 +82,9 @@ fn parse(s: &[u8]) -> Parse {
                     }
                     match s.get(3 + n) {
                         None => Partial,
-                        Some(b'u') => {
-                            // kitty 规范：flags 省略按 0（= 恢复传统编码）
-                            let requested = std::str::from_utf8(num)
-                                .ok()
-                                .and_then(|t| t.parse::<u32>().ok())
-                                .unwrap_or(0);
-                            Query(4 + n, Some(format!("\x1b[?{}u", requested & KKP_FLAGS)))
-                        }
+                        // 推栈不应答（kitty 规范只有 CSI ? u 查询才回）。原先回 CSI ? flags u，Gemini 每次重挂键盘
+                        // 层都推一次 >1u，没人等的应答被当成按键，输入框里多出「1u」跟着下一条发出去（2026-10-22）
+                        Some(b'u') => Query(4 + n, None),
                         Some(b'q') if num.is_empty() || num == b"0" => Query(
                             4 + n,
                             Some(format!("\x1bP>|{TERM_NAME}\x1b\\")),
@@ -182,11 +177,12 @@ mod tests {
     }
 
     #[test]
-    fn kitty_push_grants_only_supported_flags_and_pop_is_silent() {
-        assert_eq!(feed_all(&["\x1b[>7u"]), vec!["\x1b[?5u"]);
-        assert_eq!(feed_all(&["\x1b[>u"]), vec!["\x1b[?0u"]);
-        assert_eq!(feed_all(&["\x1b[>1u"]), vec!["\x1b[?1u"]);
+    fn kitty_push_and_pop_are_silent() {
+        // 推栈没有应答：Gemini 收到不请自来的 CSI ? 1 u 会把「1u」打进输入框
+        assert!(feed_all(&["\x1b[>7u", "\x1b[>u", "\x1b[>1u"]).is_empty());
         assert!(feed_all(&["\x1b[<u\x1b[<1u"]).is_empty());
+        // 推栈之后的查询照常答 Mesa 会编码的 flags
+        assert_eq!(feed_all(&["\x1b[>1u\x1b[?u"]), vec!["\x1b[?5u"]);
     }
 
     #[test]

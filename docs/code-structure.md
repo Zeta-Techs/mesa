@@ -876,7 +876,7 @@ src-tauri/src/
                              # conpty_input_pieces = Windows 输入里的 emoji 改送只按下的 win32 记录（Codex 的 crossterm 拼不了
                              #   ConPTY 的按下+抬起代理对，会整个丢字；2026-10-21，见 conventions/terminal.md）
   term_query.rs              # 终端能力查询（DA1 / XTVERSION / Kitty / modifyOtherKeys / XTGETTCAP）在 PTY 读线程当场应答，
-                             #   跨块半截续扫；应答表与 terminal-protocols.ts 双端镜像（前端只剥查询不回写）
+                             #   跨块半截续扫；应答表与 terminal-protocols.ts 双端镜像（前端只剥查询不回写）；Kitty 推栈 / 弹栈不应答
   pty_input.rs               # 每个终端独立的有界输入队列：一个不读 stdin 的 CLI 不得占住 PTY 全局锁；
                              #   一个请求可分段写（段间 2ms，回执等待随段数加长）
   context_breakdown.rs       # 上下文分类明细（2026-10-20）：用标签同一套启动参数在后台跑 CLI 自带的 /context（Claude Code `-p --resume --no-session-persistence`，

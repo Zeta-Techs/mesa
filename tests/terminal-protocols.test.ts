@@ -21,15 +21,15 @@ const base = {
   metaKey: false,
 };
 
-test("Kitty 查询只答应 Mesa 真会编码的 flags；省略 flags 的 push 按 0（disarm）", () => {
+test("Kitty 查询只答应 Mesa 真会编码的 flags；推栈不应答，省略 flags 的 push 按 0（disarm）", () => {
   assert.equal(KKP_FLAGS, 5);
   assert.equal(replyToTerminalQuery("\x1b[?u")?.reply, "\x1b[?5u");
-  // Kimi 一次要 7（含松开）。答应的交集不含 bit 2。
-  assert.equal(replyToTerminalQuery("\x1b[>7u")?.reply, "\x1b[?5u");
-  assert.equal(replyToTerminalQuery("\x1b[>1u")?.reply, "\x1b[?1u");
+  // 推栈没有应答（kitty 规范）：Gemini 收到不请自来的 CSI ? 1 u 会把「1u」打进输入框（2026-10-22）
+  assert.equal(replyToTerminalQuery("\x1b[>7u")?.reply, "");
+  assert.equal(replyToTerminalQuery("\x1b[>1u")?.reply, "");
   assert.equal(replyToTerminalQuery("\x1b[>1u")?.kkp, "arm");
   // kitty 规范：push 省略 flags = 0，恢复传统编码
-  assert.equal(replyToTerminalQuery("\x1b[>u")?.reply, "\x1b[?0u");
+  assert.equal(replyToTerminalQuery("\x1b[>u")?.reply, "");
   assert.equal(replyToTerminalQuery("\x1b[>u")?.kkp, "disarm");
 });
 
