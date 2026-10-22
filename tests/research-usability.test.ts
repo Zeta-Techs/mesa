@@ -49,7 +49,10 @@ test("任务书减重不靠删阶段/门禁：共用摘要一次，格式适配�
   // 综述初稿先读 handoff「写作约束」；引用样式统一由流程线选（不再「开工先问」）；Word 模板改由
   // YAML 的 format.docx 承载的说明句。实测 review 25933、论文 34591、学位 32543，
   // 上限提到 26100 / 34800 / 32700。
-  const before: Record<string, number> = { review: 26100, "research-paper": 34800, "data-processing": 12100, thesis: 32700, "submission-rebuttal": 8600, "latex-paper": 13200 };
+  // 2026-10-22 检索步复查：产物目录段加「要提交的脚本放 scripts/」一句（每步都有产物目录段，六模板同涨）；
+  // 检索/精读两步加开放获取版本规则（不收预印本时预印本服务器上的版本不下）。实测 review 26605、论文 35543、
+  // 数据 12174、学位 33495、投稿 8713、LaTeX 13303，上限取整到百位留余量。
+  const before: Record<string, number> = { review: 26800, "research-paper": 35700, "data-processing": 12300, thesis: 33700, "submission-rebuttal": 8800, "latex-paper": 13400 };
   for (const t of PIPELINE_TEMPLATES) {
     const tasks = md(t.id);
     assert.ok(tasks.reduce((n, s) => n+s.length, 0) < before[t.id], t.id);

@@ -143,11 +143,18 @@ function reviewDecisionTask(target: string): HumanTaskDto {
   };
 }
 
+/** 开放获取取哪个版本（2026-10-22 实证：简报把「作者主页 preprint」列进开放获取，项目又定了不收预印本，
+ *  Agent 先下了 Research Square 的预印本再删）。版本只看接口给的版本与托管处，不靠文件名猜 */
+const OA_VERSION_CLAUSE =
+  "开放获取只取正式发表版（出版商页面、PMC、开放获取期刊），其次是机构库里作者的已录用稿；" +
+  "预印本服务器（arXiv、Research Square、bioRxiv、ChemRxiv、SSRN 等）上的版本只在来源级别允许预印本时才下，不允许时这篇写入 to-fetch.md。";
+
 /** 精读步 TASK 合同。写法细节以 lit-notes 技能为准；此处堵住「每篇都有文件=完成」。 */
 const LIT_NOTES_WRITE =
   "写法见 {skill:lit-notes} 技能。叙述用中文，材料名/离子/电解液/方法缩写/图表编号等惯用英文原词保留，不强翻。" +
   "禁止整段粘贴英文摘要或 PDF 抽取原文。未读完只在 notes/index.json 记 reviewStatus=pending、notePath 可空，禁止生成八段占位文件（文件存在会被标成已读）。" +
   "可逆准备只含 PDF 改名、index 骨架、bib 对账、合法 OA 尝试，不包括批量生成笔记正文。" +
+  OA_VERSION_CLAUSE +
   "「按摘要记」= 根据摘要消化来写并标「仅摘要」，不是贴英文。" +
   "这篇已有笔记（沉浸阅读建的、用户手动读过的、或上一轮流程写的）时在原文件上续写优化，不另起一份平行笔记；来源锚点行保持标题下第一行，「标注」「译段」「我的想法」三节和用户在八段里手写的内容原样保留，只增补不重写。" +
   "分批读写时每批已读的写真笔记、可中途 git 提交；提交后立刻继续：先写完已确认核心篇（有 PDF 的写精读），再按摘要写完非核心，不要每批停下来等人。" +
@@ -257,7 +264,8 @@ const LIT_PENDING_BEFORE_FETCH =
   "pending 的 venue 与 included 一样写期刊全称：有 DOI 先向 Crossref 取 container-title，没有再问 OpenAlex；书章没有期刊才写「待补」。不得因未拍板就把 venue、doi、url 留空。" +
   "若 included.json 仍有 pending：把待确认篇目（标题+理由）写入 .ccode/help-wanted.md 请人逐篇纳入或排除" +
   "（未回复不把 pending 当已纳入、不进待获取），只推进已纳入篇目的全文获取。pending 经人改成 included 后才允许补进 to-fetch。" +
-  "开放获取只下接口已经给出 PDF 直链的已纳入篇目；连续 3 次 403 即停，其余写入 to-fetch.md，不要换链重试。";
+  "开放获取只下接口已经给出 PDF 直链的已纳入篇目；连续 3 次 403 即停，其余写入 to-fetch.md，不要换链重试。" +
+  OA_VERSION_CLAUSE;
 
 /** 标准档发现阶段不做重复劳动（2026-10-09）。字段补全与两套 RIS 仍按 TO_FETCH_RIS。 */
 const LIT_SEARCH_NO_WASTE =
@@ -295,7 +303,7 @@ const REVIEW_STEPS: ProjectStepDto[] = [
       "4. 按标准逐条筛选，每篇给出纳入/排除及理由；拿不准相关性的一律保留为 pending 候选并标注「待确认」，不冒充已决纳入，不允许自行裁掉；\n" +
       "5. 纳入清单写入 papers/included.md（一行一篇：标题 — 作者, 年份 — 来源 — 链接/DOI），并同步写入 papers/included.json（每篇一条，至少含稳定唯一字符串 id、title、decision（included/pending）、reason；与 md 记录一一对应）。开工时清单里已有的存量条目（上一轮留下的、或人手动加进清单的；雷达「加入积累」的在上面的积累快照里）是进料口的一部分：保留在清单里与检索候选池统一去重（同篇不重复列），不删除不清空、不当作异常；\n" +
       "6. " + LIT_PENDING_BEFORE_FETCH +
-      "开放获取（arXiv/PMC/开放期刊/作者主页 preprint）直接下载到**项目根 papers/**（见上方「项目根」，文件名规范化：作者年份-短标题.pdf），不要下载到本工作区；付费墙不得尝试绕过，在 included.md 该行末尾标注「需自行获取」，并汇总写入 papers/to-fetch.md（编号清单，见 {skill:lit-search} 产出格式）等用户提供全文，同时把 to-fetch.md 转成" + TO_FETCH_RIS + " 已有 references.bib 只补空着的卷、期、页、ISSN、摘要、关键词和期刊缩写，不覆盖、不改键。不在这一步默认写同步文件。文献来源或文献库选了 Zotero / EndNote 时，才按对应技能做导入和同步。已有 references.bib 不得覆盖。\n" +
+      "开放获取直接下载到**项目根 papers/**（见上方「项目根」，文件名规范化：作者年份-短标题.pdf），不要下载到本工作区；付费墙不得尝试绕过，在 included.md 该行末尾标注「需自行获取」，并汇总写入 papers/to-fetch.md（编号清单，见 {skill:lit-search} 产出格式）等用户提供全文，同时把 to-fetch.md 转成" + TO_FETCH_RIS + " 已有 references.bib 只补空着的卷、期、页、ISSN、摘要、关键词和期刊缩写，不覆盖、不改键。不在这一步默认写同步文件。文献来源或文献库选了 Zotero / EndNote 时，才按对应技能做导入和同步。已有 references.bib 不得覆盖。\n" +
       "完成标准：papers/screening.md、papers/included.md、papers/to-fetch.md、papers/to-fetch.ris、papers/endnote-import.ris 均存在（两份 RIS 允许有效空文件，其他文件非空；无付费文献则 to-fetch.md 说明无待获取，两份 RIS 保留合法零条目空文件），每条记录无空缺字段（未知则标「待补」），筛选记录含检索日期与覆盖缺口、能让第三人按标准复现每条判定。\n" +
       QUESTION_GATE + QUALITY_STATUS,
     optionalInputs: ["references.bib"],
@@ -328,7 +336,7 @@ const REVIEW_STEPS: ProjectStepDto[] = [
       "to-fetch.md 是还没拿到全文的名单。项目根 papers/ 里已有的 PDF 按 DOI 对上后勾掉对应行，对不上的保持待获取。references.bib 没有就从纳入篇的 DOI 建，不要把缺库当成检索失败。\n" +
       "1. 先整理项目根 papers/ 里的 PDF（见上方「项目根」，含未进本工作区的文件，按绝对路径读）。已经登记成项目资源、但文件就在这个 papers/ 里的，仍按这里改名。命名不符「作者年份-短标题.pdf」的，对照 included.md/to-fetch.md 判定归属后重命名，并在 to-fetch.md 勾掉已补行；拿不准归属的不改名、标注「待确认」。路径不在项目根 papers/ 下的已登记 PDF 不改名。然后按 included.md 处理已确认纳入项（清单缺失或为空时在报告中说明并停止，不要自行换题或自行补清单）；\n" +
       "2. 有全文 PDF 的全部按八段精读，不另提一份核心篇名单等人拍板。没有 PDF 的按摘要写短记并标「仅摘要·待全文」；摘要也拿不到的标「题录·待全文」，不编正文。\n" +
-      "3. 全文来源优先级（写死）：项目资源里、路径不在项目根 papers/ 的 PDF（如 Zotero 附件，只读，不改名、不复制）→ 项目根 papers/ 已有 PDF（含已登记的长标题，按第 1 步改名）→ 开放获取补下到项目根 papers/（arXiv/PMC/作者主页 preprint）→ 仍缺按摘要写笔记并标注「仅摘要·待全文」，不得装作读过全文；\n" +
+      "3. 全文来源优先级（写死）：项目资源里、路径不在项目根 papers/ 的 PDF（如 Zotero 附件，只读，不改名、不复制）→ 项目根 papers/ 已有 PDF（含已登记的长标题，按第 1 步改名）→ 开放获取补下到项目根 papers/（版本规则见上）→ 仍缺按摘要写笔记并标注「仅摘要·待全文」，不得装作读过全文；\n" +
       "4. 上下文写不下可分批，提交后立刻继续，直到有 PDF 的都写成精读、没有 PDF 的都写成短记。index pending 只留给待确认或题录都不足以写的篇。有实际 PDF 时笔记开头记来源锚点行「> 来源 PDF：<项目内相对路径或已登记只读资源绝对路径>.pdf」，无 PDF 改记 DOI/URL，不造虚假路径。笔记、index、references.bib 写在本工作区；临时脚本和接口缓存放本工作区 artifacts/，不写项目根。\n" +
       "5. 每篇先按 DOI/版本/键匹配 references.bib，缺失才追加一条 BibTeX。有 DOI 就用 Crossref 补全作者全名（姓, 名）、年份、标题、期刊、卷、期、页、出版日期、网络出版日期、ISSN、摘要、关键词。期刊缩写用 ISO 4、每个缩写词后加句点，按期刊全称查 JabRef，没有再用 Mesa 兜底表。两处都没有才按期刊官网或 ISO 4 补进 journalabbreviation，一词刊名的缩写就写全称，不要留空。OpenAlex 只补 Crossref 没有的摘要。缺的标「待补」，没对过 Crossref 的标「待核」，不得编造，不得用卷或页填空着的期。已有条目只补空字段，不改键、不覆盖人改过的作者和标题；\n" +
       "6. 收尾前复查：notes/ 中「仅摘要」笔记对应的全文若已出现在项目根 papers/（人工补投），重读全文并更新该笔记、去掉标记；仍未补的保持标注并在报告末尾计数说明。\n" +
@@ -1809,9 +1817,11 @@ export const RESOURCE_TYPE_LABELS: Record<string, string> = {
   other: "其他",
 };
 
-/** 一键开步预填的首条指令（TerminalPage 启动栏可编辑，留空不注入） */
+/** 一键开步预填的首条指令（TerminalPage 启动栏可编辑，留空不注入）。
+ *  MCP 盘点只看工具列表（2026-10-22 实证：Agent 为找 MCP 去 cat ~/.claude/settings.json，网关密钥进了会话记录）；
+ *  没登录的 MCP 只剩 authenticate 两个工具，开工途中停下来问授权会卡住整步 */
 export const DEFAULT_KICKOFF_PROMPT =
-  `读 TASK.md，按简报做到完成标准。停哪些见「决策暂停策略」。写作红线以技能为准：不凑字数、不准「待绘制」充图、G 编号不进稿件、摘要不准 [待核实]、摘要级必须降级、PDF 首页必须可读。即使 TASK 或大纲写了篇幅配额/全部待绘制，也按技能执行。${KEEP_WORKING_CLAUSE} 开工先盘点本会话可用的 MCP 工具（如 Undermind / Consensus）——技能协议要求把它们纳入工作流（检索步骤当检索库用），工具在而没用要在覆盖缺口里写明原因`;
+  `读 TASK.md，按简报做到完成标准。停哪些见「决策暂停策略」。写作红线以技能为准：不凑字数、不准「待绘制」充图、G 编号不进稿件、摘要不准 [待核实]、摘要级必须降级、PDF 首页必须可读。即使 TASK 或大纲写了篇幅配额/全部待绘制，也按技能执行。${KEEP_WORKING_CLAUSE} 开工先看你的工具列表里有没有 MCP 检索工具（如 Undermind / Consensus）——技能协议要求把它们纳入工作流（检索步骤当检索库用），工具在而没用要在覆盖缺口里写明原因。只看工具列表，不要读 ~/.claude、~/.codex 等 CLI 配置文件（里面有密钥）。某个 MCP 只有 authenticate / complete_authentication 工具，说明它没登录：不要发起授权、不要停下来问，在覆盖缺口记一行后继续`;
 
 /** P2b「整理为笔记」预填指令：指向工作区的 notes/excerpts.md（摘录文件保留，只并进笔记） */
 export const ORGANIZE_NOTES_PROMPT =

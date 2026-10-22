@@ -457,6 +457,23 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-22 · 检索步复查整改（Windows 实跑 3 小时没跑完）
+
+用户在 Windows 上跑 HER 综述的「文献检索与筛选」（Claude Code 2.1.307 经网关跑 deepseek-v4.1-flash，权限档「自动」），3 小时没收尾。
+逐条看会话记录：等模型约 80 分钟、每条 Bash 前的自动档安全检查约 65 分钟（含 9 次超时），真正跑命令约 14 分钟；补字段 / 出 RIS
+整条链重跑 26 次；116 次 Python 调用加了 `-I`，69 次输出乱码。用户「按建议全部改」，定下：
+
+一，**开工首句的 MCP 盘点只看工具列表**：Agent 为找 MCP 去读 `~/.claude/settings.json`，网关密钥进了会话记录（已请用户作废换新）。
+首句与 lit-search 技能写明不读 `~/.claude`、`~/.codex` 等 CLI 配置文件；某个 MCP 只剩 `authenticate` / `complete_authentication`
+两个工具 = 没登录，不调用、不停下来问，记覆盖缺口后继续（登录是步骤面板「配置学术检索 MCP」那一项）。
+
+二，**开放获取版本规则**（`OA_VERSION_CLAUSE`，进检索与精读两步的共用合同）：先正式发表版，其次机构库里的已录用稿；预印本服务器
+（arXiv、Research Square、bioRxiv、ChemRxiv、SSRN 等）上的版本只在来源级别允许预印本时才下——看托管处，不只看版本标签
+（OpenAlex 把 Research Square 标成 acceptedVersion）。原简报把「作者主页 preprint」列进开放获取，与「不收预印本」矛盾。
+
+三，**要提交的脚本放 `scripts/`**：TASK.md 产物目录段写明「简报没指定位置就放 scripts/（进 git），产物目录只放一次性调试脚本和接口
+缓存」。实证：14 个脚本写进被忽略的 `artifacts/`，收尾提交不了又整体搬家。
+
 ### 2026-10-22 · 实时预览长回复不再重贴整屏：接法按位置对齐，读屏避开半帧
 
 用户截图：Claude Code（经网关跑 gpt-6-luna）流式写一段一千五百多字的 Markdown，聊天层预览上下滑全是重复段落，第二节写到一半

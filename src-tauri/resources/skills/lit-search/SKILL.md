@@ -44,7 +44,7 @@ provides: [lit-search]
 
 - 标准档的发现库是 **OpenAlex 一条主检索式**（概念块 2–4 个，块内 OR、块间 AND；单复数与近义词并进同一条，不另开检索式）。先取命中数，再取回这一条的记录。命中多时收紧这一条式子，不要拆成十几条近义式各抓一页。
 - **不做发现的库**：标准档不用 Semantic Scholar、Crossref 标题检索、arXiv 建候选池。429 或请求失败在检索日志记一行并写入覆盖缺口，**不重试**。来源级别允许预印本时才查 arXiv。Crossref 只在已有 DOI 时补字段（见下），不当发现库。PubMed（生物医学）、DBLP（CS）、CNKI（中文，手动导出）按学科需要再加，不加则写入覆盖缺口。
-- **Consensus / Undermind MCP（挂了就必须用，2026-09-15 实测被跳过后收紧）**：开工第一件事盘点本会话可用工具——只要存在 mcp__undermind / mcp__consensus 类工具就各跑**一轮**（Undermind = 语义深搜补漏；Consensus = 按研究问题搜同行评议论文，免费档有多少收多少）。命中并进候选池，检索日志「库」写 Consensus / Undermind，去重与纳排与其他库同一套；**不替代** OpenAlex，也不另写一份清单。**工具在而没检索 = 违规**，必须在覆盖缺口里写明原因；工具不存在、未登录或调用失败则记缺口后继续，不反复授权、不中断检索；
+- **Consensus / Undermind MCP（挂了就必须用，2026-09-15 实测被跳过后收紧）**：开工第一件事看本会话的工具列表——只要存在 mcp__undermind / mcp__consensus 类工具就各跑**一轮**（Undermind = 语义深搜补漏；Consensus = 按研究问题搜同行评议论文，免费档有多少收多少）。命中并进候选池，检索日志「库」写 Consensus / Undermind，去重与纳排与其他库同一套；**不替代** OpenAlex，也不另写一份清单。**工具在而没检索 = 违规**，必须在覆盖缺口里写明原因；工具不存在、未登录或调用失败则记缺口后继续，不反复授权、不中断检索。**盘点只看工具列表，不读 `~/.claude`、`~/.codex` 等 CLI 配置文件**（里面有 API 密钥，读出来就进了会话记录）。某个 MCP 只剩 `authenticate` / `complete_authentication` 两个工具 = 没登录：不调用它、不停下来问人授权，覆盖缺口写「Undermind 未登录」后继续——登录是步骤面板「配置学术检索 MCP」那一项的人工事项；
 - 检索日志用固定六字段表头，逐库一行记入 `papers/screening.md`：**日期 / 库 / 完整检索式 / 命中数 / 去重后数 / 筛后保留数**，保证检索过程可复现；
 - 各库结果合并去重后，同一篇（DOI 或标题归一判定）被 ≥2 个库命中的，在记录上标「**多源命中**」——这是优先阅读的提示，不是纳入标准；
 - 每篇记录：标题、作者（全名，一位一行）、年份、期刊全称、卷、期、页码、出版日期、文章类型、ISSN、DOI、链接。有摘要、关键词、期刊缩写一并记下。字段未知一律标「待补」，不得留空或猜测。
@@ -98,6 +98,7 @@ Elicit / Undermind / X-MOL / Google Scholar 等闭源站点无法程序化检索
 - **「待确认」不是题录没查全。** `decision=pending` 只表示相关性等人拍板。期刊全称、ISSN、`doi`、`url` 与已纳入同一套：有 DOI 就必须先向 Crossref 取 `container-title` 写入 `venue`，没有再问 OpenAlex。书章没有期刊才把 `venue` 写成「待补」。禁止因为这篇还没拍板，就把 `venue`/`doi`/`url` 整列写成「待补」或留空。
 - **先拍 pending，再下载全文**：`to-fetch.md` 与开放获取下载都只针对 `decision=included`。禁止把 pending 写入待获取或先下其全文。有 pending 时写入 `.ccode/help-wanted.md` 请人逐篇纳入或排除（未回复则不把 pending 当已纳入）；人改成 included 后才允许补进 to-fetch。
 - **开放获取失败就停**：只下载接口已经给出的 PDF 直链。连续 3 次 HTTP 403 即停止其余下载，未下到的写入 `to-fetch.md`，不要换链重试。
+- **开放获取取哪个版本**：先取正式发表版（出版商页面、PMC、开放获取期刊），其次是机构库里作者的已录用稿。预印本服务器（arXiv、Research Square、bioRxiv、ChemRxiv、SSRN 等）上的版本只在来源级别允许预印本时才下；不允许时这篇写入 `to-fetch.md`。接口把 Research Square 标成 acceptedVersion 也照样算预印本——看托管处，不只看版本标签。
 - **排除的不补字段**：期刊全称、卷期页、ISSN、摘要、ISO 4 缩写和两套 RIS 只对最终纳入与待确认各做一次。排除篇留在筛选记录里即可，不向 Crossref 补全。
 
 ### 5. 引用扩展与停止

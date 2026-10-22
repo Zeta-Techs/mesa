@@ -47,6 +47,12 @@ test("TASK.md 派生产物写本工作区、文献 PDF 直写项目根", () => {
   assert.doesNotMatch(md, /`\/Users\/me\/proj\/output\/`/);
 });
 
+test("TASK.md 产物目录：要提交的脚本放 scripts/，产物目录只放一次性脚本和缓存", () => {
+  const md = renderTaskMd(step(), cfg(), "/tmp/p");
+  assert.match(md, /简报没指定就放 `scripts\/`（进 git）/);
+  assert.match(md, /`artifacts\/` 不进 git，只放一次性调试脚本和接口缓存/);
+});
+
 test("TASK.md 收尾：派生产物走工作区，直写项目根的是未验收产物", () => {
   const md = renderTaskMd(step(), cfg(), "/tmp/p");
   assert.match(md, /派生产物只写本工作区产物目录/);

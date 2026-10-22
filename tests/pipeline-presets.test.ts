@@ -605,3 +605,14 @@ test("检索步带可选 MCP 事项，文献 PDF 指引落到项目根", () => {
     }
   }
 });
+
+test("检索与精读的开放获取只取正式版，预印本服务器的版本按来源级别决定（不再列「作者主页 preprint」）", () => {
+  for (const template of PIPELINE_TEMPLATES) {
+    for (const step of template.steps) {
+      if (!step.skills.includes("lit-search") && !step.skills.includes("lit-notes")) continue;
+      assert.doesNotMatch(step.brief, /作者主页 preprint/, `${template.id}/${step.name}`);
+      assert.match(step.brief, /预印本服务器（arXiv、Research Square/, `${template.id}/${step.name}`);
+      assert.match(step.brief, /只在来源级别允许预印本时才下/, `${template.id}/${step.name}`);
+    }
+  }
+});
