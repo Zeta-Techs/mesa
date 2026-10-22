@@ -8,8 +8,8 @@
   </defs>
   <g filter="url(#sh)"><rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/></g>
   <rect x="101.5" y="101.5" width="821" height="821" rx="183.5" fill="none" stroke="url(#rim)" stroke-width="3"/>
-  <g transform="translate(512 522) scale(0.86) translate(-586 -512)">
-    <path d="M232 740 V284 H356 L512 512 L668 284 H792 V740 H672 V474 L548 652 H476 L352 474 V740 Z" fill="url(#ink)"/>
+  <g transform="translate(512 522) scale(0.86) translate(-586 -470)">
+    <path d="M232 740 V200 H356 L512 470 L668 200 H792 V740 H672 V425 L548 636 H476 L352 425 V740 Z" fill="url(#ink)"/>
     <!-- 光标：与竖干同宽，落在基线上；一层同色柔光模拟荧光屏余辉 -->
     <rect x="820" y="680" width="120" height="60" rx="6" fill="#e39a1c" opacity="0.45" filter="url(#phos)"/>
     <rect x="820" y="680" width="120" height="60" rx="6" fill="#e39a1c"/>
