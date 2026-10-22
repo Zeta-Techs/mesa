@@ -465,6 +465,7 @@ export default function StepFlow({
   projectLaunch = null,
   stepSlotLaunch = null,
   onContinueStep,
+  onContinueFresh,
 }: {
   projectPath: string;
   step: ProjectStepDto;
@@ -547,6 +548,8 @@ export default function StepFlow({
   stepSlotLaunch?: { agentId: string; profileId: string; model: string } | null;
   /** 工作区已开时：新会话，用步骤绑定接着做到完成标准。不接回旧 Agent。 */
   onContinueStep?: () => void;
+  /** 有能接回的上次对话时才给：不接原对话，新开一个会话从任务书读起 */
+  onContinueFresh?: () => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const {
@@ -1707,13 +1710,23 @@ export default function StepFlow({
           </span>
         );
       case "go-terminal": {
-        // 这一行只留一个入口。会话还在出字或等确认：回去看。否则「继续」新开一轮，
-        // 用这一步的绑定。两颗同时出现会和下面工作区的「继续」叠成三件同一件事。
+        // 这一行只留一个主入口。会话还在出字或等确认：回去看。否则「继续」接回这一步上次的对话
+        // （同一家 Agent，2026-10-22），用这一步的绑定；「新开一轮」是次要出口，只在有能接回的对话时跟在前面。
         const live =
           agentAttention === "working" || agentAttention === "confirm";
         return (
           <span className="flex shrink-0 items-center gap-1.5">
             {action.agentDone && <span className="text-xs text-l3">Agent 已跑完</span>}
+            {!live && onContinueStep && onContinueFresh && (
+              <button
+                type="button"
+                onClick={onContinueFresh}
+                title="不接上次的对话，新开一个会话从任务书读起（上次对话太长或跑偏时用）"
+                className="shrink-0 rounded-sm px-1 text-xs text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+              >
+                新开一轮
+              </button>
+            )}
             {live || !onContinueStep ? (
               <button
                 type="button"
@@ -1727,7 +1740,11 @@ export default function StepFlow({
               <button
                 type="button"
                 onClick={onContinueStep}
-                title="在这一步的工作区开新会话，用这一步绑定的配置，接着做到完成标准"
+                title={
+                  onContinueFresh
+                    ? "接回这一步上次的对话，用这一步绑定的配置，接着做到完成标准"
+                    : "在这一步的工作区开新会话，用这一步绑定的配置，接着做到完成标准"
+                }
                 className="shrink-0 rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover"
               >
                 继续

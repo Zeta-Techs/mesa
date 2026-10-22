@@ -427,6 +427,11 @@ export const KEEP_WORKING_CLAUSE =
 export const CONTINUE_STEP_PROMPT =
   `阅读 TASK.md 并继续做到完成标准。停哪些见「决策暂停策略」。${KEEP_WORKING_CLAUSE}`;
 
+/** 「继续」接回这一步上次的对话时的下一句（2026-10-22 用户拍板：同一家 Agent 默认接回原会话，进度和上下文不丢）。
+ *  任务书可能在两次之间被人改过，提醒它先对一眼 */
+export const CONTINUE_RESUME_PROMPT =
+  `接着上次停下的地方继续，做到 TASK.md 的完成标准（任务书若有改动以新版为准）。停哪些见「决策暂停策略」。${KEEP_WORKING_CLAUSE}`;
+
 /** 换 Agent 继续：先读接力简报，再按完成标准往下做。简报不是原会话。 */
 export function continueWithBriefPrompt(briefRel: string): string {
   return `读 ${briefRel} 接力简报，按这份简报接着做。${CONTINUE_STEP_PROMPT}`;

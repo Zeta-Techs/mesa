@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  continueRoute,
   keepWorkspaceResume,
   pickWorkspaceResume,
   shouldResumeWorkspaceSession,
@@ -168,4 +169,20 @@ test("去终端 resume：全排除或无会话时返回 null（去终端降级�
     ),
     null,
   );
+});
+
+test("步骤「继续」：上次是同一家 Agent 就接回原会话，另一家才问带不带，「新开一轮」直接新开", () => {
+  const sessions = [
+    session({ sessionId: "s-live", live: true }),
+    session({ sessionId: "s-last", agent: "claude-code" }),
+  ];
+  // 还在跑的不接（resume 同一会话会冲突），取下一条
+  assert.deepEqual(continueRoute(sessions, "lit-search", "/repo", "claude-code"), { kind: "resume", sessionId: "s-last" });
+  const carry = continueRoute(sessions, "lit-search", "/repo", "codex");
+  assert.equal(carry.kind, "carry");
+  assert.equal(carry.kind === "carry" && carry.source.sessionId, "s-last");
+  assert.deepEqual(continueRoute(sessions, "lit-search", "/repo", "claude-code", true), { kind: "fresh" });
+  assert.deepEqual(continueRoute([], "lit-search", "/repo", "claude-code"), { kind: "fresh" });
+  // 别的工作区的会话不算
+  assert.deepEqual(continueRoute(sessions, "lit-notes", "/repo", "claude-code"), { kind: "fresh" });
 });

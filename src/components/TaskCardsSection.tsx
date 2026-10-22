@@ -31,8 +31,8 @@ import {
   unstartedSeeds,
 } from "../task-cards";
 import { buildTaskMdPreview, buildWorkspaceTerminalRequest } from "../pipeline-start";
-import { CONTINUE_STEP_PROMPT, continueWithBriefPrompt, isTaskMdStub, resolveTaskMdSource } from "../step-decisions";
-import { workspaceCarrySource } from "../workspace-resume";
+import { CONTINUE_RESUME_PROMPT, CONTINUE_STEP_PROMPT, continueWithBriefPrompt, isTaskMdStub, resolveTaskMdSource } from "../step-decisions";
+import { continueRoute, pickWorkspaceResume } from "../workspace-resume";
 import { filterProjectSessions } from "../project-status";
 import { pickDiscussResume } from "../step-flow";
 import { IS_WINDOWS } from "../hotkeys";
@@ -548,7 +548,8 @@ export default function TaskCardsSection({
     return workspaces.find((w) => w.name === step.workspaceName && w.status === "active");
   }
 
-  /** 继续：工作树里新开一轮，预填 CONTINUE_STEP_PROMPT。不接回旧会话、不复用旧标签。
+  /** 继续：上次的工作区对话是同一家 Agent 就接回它（2026-10-22 用户拍板，进度与上下文不丢），预填 CONTINUE_RESUME_PROMPT；
+   *  没有可接的、或 fresh（「新开一轮」）才在工作树里新开，预填 CONTINUE_STEP_PROMPT。上次是另一家先问要不要带接力简报。
    *  配置现读数据库 step:步骤名，失败再走 props（步骤槽 > discuss > 项目默认）。
    *  kimi 无启动注入参数：启动栏保留指令文本由用户手动发送（pty_spawn promptDropped 既有处理） */
   async function openStepContinuation(
@@ -556,6 +557,7 @@ export default function TaskCardsSection({
     ws: WorkspaceDto,
     title: string,
     card?: TaskCardDto | null,
+    fresh = false,
   ) {
     let launch: { agentId: string; profileId: string; model: string } | null = null;
     if (stepName) {
@@ -579,13 +581,23 @@ export default function TaskCardsSection({
     } catch {
       /* 用已加载的会话列表判断要不要问 */
     }
-    const prior = workspaceCarrySource(
+    const route = continueRoute(
       useAppStore.getState().sessions,
       ws.name,
       ws.repoPath,
       launch.agentId,
+      fresh,
     );
-    if (prior) {
+    if (route.kind === "resume") {
+      try {
+        await resumeContinuation(launch, ws, title, card);
+      } catch (reason) {
+        setError(String(reason));
+      }
+      return;
+    }
+    if (route.kind === "carry") {
+      const prior = route.source;
       setCarryError(null);
       setCarryAsk({
         fromAgent: prior.agent,
@@ -604,6 +616,25 @@ export default function TaskCardsSection({
     } catch (reason) {
       setError(String(reason));
     }
+  }
+
+  /** 接回这一步上次的工作区对话（同一家 Agent）：resume + 下一句接着做；步骤绑定只作连接预填 */
+  async function resumeContinuation(
+    launch: { agentId: string; profileId: string; model: string },
+    ws: WorkspaceDto,
+    title: string,
+    card?: TaskCardDto | null,
+  ) {
+    if (card) claimForCard(card, launch);
+    const agentLabel =
+      AGENTS.find((a) => a.id === launch.agentId)?.label ?? launch.agentId;
+    const req = await buildWorkspaceTerminalRequest(ws, CONTINUE_RESUME_PROMPT, {
+      autoStart: true,
+      resumeSession: true,
+      stepLaunch: launch,
+    });
+    setPendingTerminal({ ...req, title: `${title} · ${agentLabel}`, surface: "terminal" });
+    setPage("terminal");
   }
 
   /** 新开一轮。不 resume、不复用旧标签。prompt 可以是完成标准，或先读简报再完成标准。 */
@@ -715,17 +746,22 @@ export default function TaskCardsSection({
     setPage("terminal");
   }
 
-  function onContinue(card: TaskCardDto) {
+  function onContinue(card: TaskCardDto, fresh = false) {
     const ws = activeWorkspaceFor(card.step, card.workspace);
     if (!ws) return;
-    void openStepContinuation(card.step, ws, card.name, card);
+    void openStepContinuation(card.step, ws, card.name, card, fresh);
   }
 
-  function continueFocusedStep() {
+  function continueFocusedStep(fresh = false) {
     if (!focusStepDto) return;
     const ws = activeWorkspaceFor(focusStepDto.name, focusStepDto.workspaceName);
     if (!ws) return;
-    void openStepContinuation(focusStepDto.name, ws, focusStepDto.name);
+    void openStepContinuation(focusStepDto.name, ws, focusStepDto.name, null, fresh);
+  }
+
+  /** 这个工作区有没有能接回的上次对话（只看会话列表，不管是哪家）：有才给「新开一轮」 */
+  function hasPriorSession(ws: WorkspaceDto | undefined): boolean {
+    return Boolean(ws && pickWorkspaceResume(sessions, ws.name, ws.repoPath));
   }
 
   /** 「跟 AI 商量一下」开聊前的草稿播种（v3.90）：空/仅决策答案/仅评审沉淀的草稿
@@ -877,14 +913,30 @@ export default function TaskCardsSection({
                 去终端看看
               </button>
             ) : (
-              <button
-                type="button"
-                onClick={() => onContinue(card)}
-                title="开终端新会话，预填继续做到完成标准；会话自动归入本卡"
-                className={`${actionBtn} shrink-0`}
-              >
-                继续
-              </button>
+              <span className="flex shrink-0 items-center gap-1">
+                {hasPriorSession(boundWs) && (
+                  <button
+                    type="button"
+                    onClick={() => onContinue(card, true)}
+                    title="不接上次的对话，新开一个会话从任务书读起（上次对话太长或跑偏时用）"
+                    className="shrink-0 rounded-sm px-1 text-xs text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                  >
+                    新开一轮
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => onContinue(card)}
+                  title={
+                    hasPriorSession(boundWs)
+                      ? "接回这一步上次的对话，接着做到完成标准；上次是另一家 Agent 时先问要不要带上原话"
+                      : "开终端新会话，预填继续做到完成标准；会话自动归入本卡"
+                  }
+                  className={`${actionBtn} shrink-0`}
+                >
+                  继续
+                </button>
+              </span>
             )
           ) : canStart ? (
             <button
@@ -1099,7 +1151,16 @@ export default function TaskCardsSection({
                 taskBindings?.[stepSlotKey(focusStepDto.name)],
               )
             }
-            onContinueStep={continueFocusedStep}
+            onContinueStep={() => continueFocusedStep()}
+            onContinueFresh={
+              hasPriorSession(
+                focusStepDto
+                  ? activeWorkspaceFor(focusStepDto.name, focusStepDto.workspaceName)
+                  : undefined,
+              )
+                ? () => continueFocusedStep(true)
+                : undefined
+            }
             discussContent={
               // 零态且非人主导步骤：整个想法区不渲染（没有入口也没有约束对象）
               !showIdeaEntry && !ideaFormOpen ? null : (
