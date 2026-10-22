@@ -3054,6 +3054,10 @@ const TerminalView = memo(function TerminalView({
             setError(String(err)),
           );
         }
+        // 只 return false 不 preventDefault，浏览器照发 keypress，xterm 再补一个 `\r`：普通发送时落在空输入框上看不出，
+        // /permission 这类选择器刚弹出就被这个 `\r` 选中当前项关掉（Kimi 写「Permission mode unchanged」，2026-10-22 用户实测）
+        e.preventDefault();
+        swallowShiftEnterCrUntil = performance.now() + 80;
         return false;
       }
       if (
