@@ -108,7 +108,7 @@
 | 官方端点 | 国际站 `https://www.codebuddy.ai`（product.json `endpoint`，默认）/ 中国站 `https://copilot.tencent.com`（`officialEndpoints` 同源核实） |
 | 全局配置 | `~/.codebuddy/settings.json`（env 块，同 Claude 形态） |
 | 会话存储 | `~/.codebuddy/projects/<slug>/<uuid>.jsonl`，slug = CLI 源码 `compressWorkspacePathName`（2026-10-21 2.170.0 实测）：`/ \ :`→`-`、去首尾 `-`、连续 `-` 并成一个（Windows 的 `C:\Users` 是 `C-Users`，**不是 Claude 的 `C--Users`**），超 255 字节改成「截 180 字节 + `-` + djb2 base36」；有损不解码，项目归属读行内 `cwd`，兜底目录名 |
-| 会话格式 | `{"type":"message","role":"user","content":[{"type":"input_text","text":...}],"sessionId":...,"cwd":...,"timestamp":<毫秒 epoch>}`；assistant 块为 `output_text`；`file-history-snapshot` 等事件行跳过。**与 Claude schema 不同构，独立解析器**；usage/工具调用字段未实证（防御式跳过） |
+| 会话格式 | 工具（2.172.1 金丝雀实测）：`{"type":"function_call","callId","name","arguments":"<JSON 串>"}` / `{"type":"function_call_result","callId","status","output":{"type":"text","text"}}`，ptc 模式 name 是 `REPL`、参数里是一段调用别的工具的 JS；`{"type":"message","role":"user","content":[{"type":"input_text","text":...}],"sessionId":...,"cwd":...,"timestamp":<毫秒 epoch>}`；assistant 块为 `output_text`；`file-history-snapshot` 等事件行跳过。**与 Claude schema 不同构，独立解析器**；usage/工具调用字段未实证（防御式跳过） |
 | 关键启动参数 | 交互初始 prompt = 位置参数（`codebuddy "<prompt>"`）；`-p` 无头；`-r|--resume [sessionId]` 按 ID 恢复（`-c` 续最近）；`--session-id <uuid>` 固定会话文件名 |
 | 官方账号 | TUI 内 `/login`（浏览器 OAuth，分国际/中国站）；凭证 `~/.codebuddy/.credentials.json`。**env 优先压账号**（实测 401 提示），官方账号拉起必须 `env_remove CODEBUDDY_API_KEY`（连同 `CODEBUDDY_AUTH_TOKEN`） |
 | 技能 | `~/.codebuddy/skills/<name>/SKILL.md`（frontmatter 与库格式兼容） |

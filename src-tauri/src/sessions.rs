@@ -2784,6 +2784,9 @@ fn kimi_looks_like_wire(lines: &[String]) -> bool {
 //   {"type":"message","role":"user","content":[{"type":"input_text","text":...}],
 //    "sessionId":"<uuid>","cwd":"<项目路径>","timestamp":<毫秒 epoch>}
 //   assistant 行 content 块为 output_text；file-history-snapshot 等事件行跳过。
+//   工具（2.172.1 实测，CLI 金丝雀 2026-10-22 发现原先没读）：{"type":"function_call","callId","name","arguments":"<JSON 串>"}、
+//   {"type":"function_call_result","callId","name","status":"completed","output":{"type":"text","text":...}}；
+//   ptc 模式下 name 是 REPL，arguments 里是一段调用别的工具的 JS（code）和一句 description。
 // 与 claude schema 不同构，独立解析器；防御式：未知 type/缺字段/末行截断一律跳过。
 
 /// 时间戳是毫秒 epoch 数字（容错 ISO 字符串），统一转 ISO
@@ -2888,10 +2891,47 @@ fn parse_codebuddy(lines: &[String]) -> Vec<ChatMessageDto> {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             continue; // 末行截断等坏行直接跳过
         };
-        if get_str(&v, "type") != Some("message") {
-            continue; // file-history-snapshot 等事件行
-        }
         let ts = codebuddy_time(&v);
+        match get_str(&v, "type") {
+            Some("function_call") => {
+                msgs.push(ChatMessageDto {
+                    role: "assistant".into(),
+                    blocks: vec![BlockDto {
+                        kind: "tool_use".into(),
+                        text: get_str(&v, "arguments").unwrap_or("").to_string(),
+                        tool_name: get_str(&v, "name").map(String::from),
+                        is_error: false,
+                        call_id: get_str(&v, "callId").map(String::from),
+                    }],
+                    timestamp: ts,
+                    usage: None,
+                    id: get_str(&v, "id").map(String::from),
+                });
+                continue;
+            }
+            Some("function_call_result") => {
+                let output = v.get("output");
+                let text = output
+                    .and_then(|o| o.get("text"))
+                    .and_then(Value::as_str)
+                    .map(String::from)
+                    .unwrap_or_else(|| stringify_payload(output));
+                push_tool_result(
+                    &mut msgs,
+                    vec![BlockDto {
+                        kind: "tool_result".into(),
+                        text,
+                        tool_name: None,
+                        is_error: matches!(get_str(&v, "status"), Some("error" | "failed")),
+                        call_id: get_str(&v, "callId").map(String::from),
+                    }],
+                    ts,
+                );
+                continue;
+            }
+            Some("message") => {}
+            _ => continue, // file-history-snapshot 等事件行
+        }
         match get_str(&v, "role") {
             Some("user") => {
                 let Some(text) = codebuddy_content_text(&v, "input_text") else {
@@ -5602,8 +5642,11 @@ fn codebuddy_tail_state(lines: &[String]) -> &'static str {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             continue;
         };
-        if get_str(&v, "type") != Some("message") {
-            continue; // file-history-snapshot 等事件行不算数
+        match get_str(&v, "type") {
+            // 工具调用了 / 结果回来了，回答还没写：这一轮还在干活
+            Some("function_call" | "function_call_result") => return "working",
+            Some("message") => {}
+            _ => continue, // file-history-snapshot 等事件行不算数
         }
         match get_str(&v, "role") {
             Some("user") => return "working", // 发了 prompt 还没等到回答
@@ -8352,6 +8395,31 @@ mod tests {
     // ===== CodeBuddy 解析（v2.132.0 实测样本行） =====
 
     #[test]
+    fn codebuddy_parse_reads_tool_calls_and_results() {
+        // 2.172.1 金丝雀抓到的原样（ptc 模式：工具是 REPL，参数里是一段 JS）
+        let lines = s(&[
+            r#"{"id":"m1","timestamp":1792672349272,"type":"message","role":"user","content":[{"type":"input_text","text":"TRIGGER_TOOL 跑一下"}],"sessionId":"s"}"#,
+            r#"{"id": "f1", "timestamp": 1792672349362, "type": "function_call", "callId": "call_probe", "name": "REPL", "arguments": "{\"code\": \"return await Bash({ command: \\\"echo mesa > mesa_probe.txt\\\" })\", \"description\": \"写一个探针文件\"}", "sessionId": "s"}"#,
+            r#"{"id": "r1", "timestamp": 1792672352936, "type": "function_call_result", "name": "REPL", "callId": "call_probe", "status": "completed", "output": {"type": "text", "text": "{\"stdout\":\"\"}"}, "sessionId": "s"}"#,
+            r#"{"id":"m2","timestamp":1792672352954,"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}],"sessionId":"s"}"#,
+        ]);
+        let msgs = parse_codebuddy(&lines);
+        let blocks: Vec<_> = msgs.iter().flat_map(|m| m.blocks.iter()).collect();
+        let call = blocks.iter().find(|b| b.kind == "tool_use").expect("读到工具调用");
+        assert_eq!(call.tool_name.as_deref(), Some("REPL"));
+        assert_eq!(call.call_id.as_deref(), Some("call_probe"));
+        assert!(call.text.contains("写一个探针文件"));
+        let result = blocks.iter().find(|b| b.kind == "tool_result").expect("读到工具结果");
+        assert_eq!(result.call_id.as_deref(), Some("call_probe"));
+        assert_eq!(result.text, r#"{"stdout":""}"#);
+        assert!(!result.is_error);
+        assert_eq!(msgs.last().unwrap().blocks[0].text, "done");
+        // 调用了工具、回答还没写：在干活
+        assert_eq!(codebuddy_tail_state(&lines[..3]), "working");
+        assert_eq!(codebuddy_tail_state(&lines), "done");
+    }
+
+    #[test]
     fn codebuddy_parse_messages_skips_event_lines() {
         let lines = s(&[
             r#"{"id":"m1","timestamp":1786005441386,"type":"message","role":"user","content":[{"type":"input_text","text":"say hi"}],"providerData":{"agent":"cli"},"sessionId":"sid-cb","cwd":"/private/tmp/cbtest"}"#,
@@ -9846,7 +9914,7 @@ mod tests {
             r#"{"id":"u1","type":"user","content":[{"text":"新建 hello.py"}]}"#,
             r#"{"id":"a1","type":"gemini","content":""}"#,
             r#"{"id":"a1","type":"gemini","content":"","toolCalls":[{"id":"t1","name":"write_file","args":{"path":"hello.py"}}]}"#,
-            r#"{"id":"r1","type":"user","content":[{"functionResponse":{"id":"t1","name":"write_file","response":{"output":"ok"}}}]}"#,
+            r#"{"id": "r1", "timestamp": 1792672352936, "type": "function_call_result", "name": "REPL", "callId": "call_probe", "status": "completed", "output": {"type": "text", "text": "{\"stdout\":\"\"}"}, "sessionId": "s"}"#,
             r#"{"id":"a2","type":"gemini","content":"1. 已新建 hello.py"}"#,
             r#"{"id":"a2","type":"gemini","content":"1. 已新建 hello.py","toolCalls":[{"id":"t2","name":"list_directory","args":{}}]}"#,
             r#"{"id":"u2","type":"user","content":"展开后的 @a.md 全文","displayContent":[{"text":"看看 @a.md"}]}"#,
