@@ -566,7 +566,7 @@
   无修饰功能键一律保持 xterm 传统序列，**只有 Esc 改写 `CSI 27u`**（消歧义档的本意）；
   带修饰的方向/Home/End 用 `CSI 1;mod A-H/F` 字母形、PageUp/Down/Insert/Delete 用 `CSI 5/6/2/3;mod ~`；
   带修饰的 Enter/Tab/Backspace 走 CSI-u（kimi 的 Enter 特判兜底在宿主键盘路径，协议未推时也生效）；
-  Ctrl/Alt/Cmd+可打印字符走 CSI-u，纯 Shift 可打印留给 xterm/输入法。弹栈认带层数形式
+  Ctrl/Alt/Cmd+可打印字符走 CSI-u，纯 Shift 可打印留给 xterm/输入法。**编码后写进 PTY 的 Tab / ⇧Tab 要 `preventDefault`**（`keyNeedsPreventDefault`）：这条路 return false，xterm 不接手也不替我们拦，Tab 的默认动作是挪焦点——Claude 推了协议后⇧Tab 切完一次权限焦点就跳到界面按钮上（2026-10-22 用户）；⌘ 组合不拦（WKWebView 里拦了应用菜单快捷键失灵）。弹栈认带层数形式
   （`CSI < 1 u`，crossterm/grok 实发）；push 省略 flags 按 0（= 恢复传统）；进程退出即解除 armed
   （TUI 崩溃没弹栈也不能让 shell 的 Ctrl+C 变垃圾）。不把 `TERM_PROGRAM` 改成 Ghostty 或 Kitty。
   **启动查询应答**：DA1 回 `CSI ?1;2c`（kimi 哨兵）；XTVERSION 两种问法（`CSI > q` 裸式为 gemini/qwen

@@ -251,6 +251,14 @@ export function encodeKittyKey(e: EncodedKey): string | null {
   return `${ESC}[${code};${mods + 1}u`;
 }
 
+/** 编码写进 PTY 之后，这一键还得拦下浏览器的默认动作：Tab / ⇧Tab 的默认动作是挪焦点。
+ *  Claude 推了 Kitty 键盘协议后按键走 encodeKittyKey，xterm 不接手（自定义键盘钩子 return false）也就不替我们
+ *  preventDefault——⇧Tab 切完一次权限，焦点就跳到界面上的按钮（2026-10-22 用户）。
+ *  ⌘ 组合键不拦：WKWebView 里网页拦了，应用菜单的快捷键（⌘W / ⌘Q…）就失灵 */
+export function keyNeedsPreventDefault(e: Pick<EncodedKey, "key">): boolean {
+  return e.key === "Tab";
+}
+
 export type KittyImageMime =
   | "image/png"
   | "image/jpeg"

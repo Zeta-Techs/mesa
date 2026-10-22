@@ -6,6 +6,7 @@ import {
   consumeHostSequences,
   consumeTerminalQueries,
   encodeKittyKey,
+  keyNeedsPreventDefault,
   kittyImageMime,
   replyToTerminalQuery,
   safeOsc8Url,
@@ -242,4 +243,13 @@ test("OSC 8 只放行 http 与 mailto", () => {
   assert.equal(safeOsc8Url("javascript:alert(1)"), null);
   assert.equal(safeOsc8Url("file:///etc/passwd"), null);
   assert.equal(safeOsc8Url("https://a.com/b\nc"), null);
+});
+
+test("Kitty 编码写进去的 ⇧Tab / Tab 要拦下浏览器挪焦点；⌘ 组合键留给应用菜单", () => {
+  const shiftTab = { ...base, key: "Tab", shiftKey: true };
+  assert.equal(encodeKittyKey(shiftTab), "\x1b[9;2u");
+  assert.equal(keyNeedsPreventDefault(shiftTab), true);
+  assert.equal(keyNeedsPreventDefault({ key: "Tab" }), true);
+  assert.equal(keyNeedsPreventDefault({ key: "w" }), false);
+  assert.equal(keyNeedsPreventDefault({ key: "Enter" }), false);
 });

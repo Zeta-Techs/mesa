@@ -58,6 +58,7 @@ import {
   consumeHostSequences,
   consumeTerminalQueries,
   encodeKittyKey,
+  keyNeedsPreventDefault,
   safeOsc8Url,
 } from "../terminal-protocols";
 import { hitCellRange, terminalPathHits } from "../terminal-links";
@@ -3028,6 +3029,8 @@ const TerminalView = memo(function TerminalView({
           if (e.shiftKey && e.key === "Enter") {
             swallowShiftEnterCrUntil = performance.now() + 80;
           }
+          // return false 时 xterm 不接手这一键，也就不替我们拦浏览器的默认动作：⇧Tab 写进去切完权限，焦点又跳到界面按钮上
+          if (keyNeedsPreventDefault(e)) e.preventDefault();
           invoke("pty_write", { ptyId: id, data: encoded }).catch((err) =>
             setError(String(err)),
           );
