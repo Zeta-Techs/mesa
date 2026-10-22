@@ -113,6 +113,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   components/FeedbackModal.tsx # 反馈表单弹层（帮助菜单、诊断弹窗「附到反馈」、设置→关于三入口）：端点已配只走端点，否则用户选发送方式（邮件应用/网页邮箱/邮箱直发）；附件=截图缩略图+诊断包（表单内现导出或 attachDiagnostics 带入，后端按路径白名单自读）；邮件类通道附件落盘+交接提示（清空/保留草稿由人定）；邮箱直发配置视图（保存并测试、结果就地显示、首存失败回滚授权码）
   components/UpdateNotes.tsx # 更新说明渲染（Markdown→浅底框，原始 HTML 转义、链接/图片只留文字）；设置→更新卡片与帮助「检查更新」弹窗共用
   components/ChatHandoffStatsPanel.tsx # 设置「诊断」→ 聊天层转到终端：按 agent + 原因 + 细分的次数排序、近 30 天 / 全部、清空
+  components/ChatBetaBadge.tsx # 聊天输入框左下「测试版」：点开说这一家的档与要回终端的事，CLI 比核对过的新时带点并提醒
   components/HelpDialogs.tsx # 帮助菜单三个内容弹窗：诊断与日志（日志按级别筛/计数/复制 + 导出诊断包 → 附到反馈）、检查更新（打开即查；状态/更新说明/下载进度/安装，安装走 useAppUpdateInstall）、关于（图标/版本复制/更新状态只读 store/仓库与许可入口，许可页同弹窗切换）；快捷键速查曾短暂存在后按「不与命令面板/设置/说明书重复」删除（2026-10-12）
   components/ThirdPartyNotices.tsx # 「开源许可与致谢」内容区（帮助→关于、设置→关于共用）：致谢与数据来源（Markdown 阅读版式，许可全文收进 details，链接交系统浏览器）/ 组件许可（可搜索）两页签；清单读一次进程内缓存
   third-party-notices.ts     # 随包许可清单解析纯逻辑：依赖表拆组拆行（跳过代码块里的 ##、丢弃文件头生成说明）+ 按名字/许可搜索（tests/third-party-notices.test.ts 含真文件格式守卫）
@@ -380,6 +381,9 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   chat-status.ts             # 生成中那一行「这一轮在做什么」（2026-10-21，规则见 design-system「生成中那一行」）：旁路 activity / thinking
                              # > 会话里还没回结果的调用（已有那一行就不重复）/ 计划进行中一项（activeForm）/ 刚落盘的思考
                              # > CLI 自己报的现状 statusLine（程序状态旁路，只等于「在等 / 在想」的不用）> 「思考中」；
+  chat-fidelity.ts           # 聊天层对九家能做到哪一步（2026-10-22，tests/chat-fidelity.test.ts，docs/design-chat-fidelity.md）：CHAT_FIDELITY 分档
+                             # 单一出处、parseVersion / verifiedVersion（本平台基线优先）/ versionTrust（比核对过的新 = newer）
+  cli-verified.ts            # 已核对 CLI 版本：构建时 import.meta.glob 读金丝雀基线的 version（测试里兜成空表）；useCliNewer 给降级用
   text-reveal.ts             # 聊天实时预览匀速显示（2026-10-22，tests/text-reveal.test.ts）：revealStep 按积压放字、shownAfterRetarget
                              # 「接着长才匀速、换了一段整段」、safeCut 不切开字形、useRevealedText（rAF + 兜底节拍）；ChatSurface 消费
                              # thinkingHeadline 取 `**小标题**` 或第一句（tests/chat-status.test.ts）；ChatSurface 消费

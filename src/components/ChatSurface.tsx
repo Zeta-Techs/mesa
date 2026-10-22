@@ -48,6 +48,8 @@ import { decisionKind, recordChatHandoff, type HandoffReason } from "../chat-han
 import { chatStatus, STATUS_QUIET_START_MS } from "../chat-status";
 import { confirmChoices } from "../chat-reply";
 import ChatDecisionCard, { type ChatDecision } from "./ChatDecisionCard";
+import ChatBetaBadge from "./ChatBetaBadge";
+import { useCliNewer } from "../cli-verified";
 import { connIssueDecision } from "../chat-decision";
 import { cwdChipLabel } from "../terminal-welcome";
 import { escInterruptSafe } from "../agent-caps";
@@ -515,6 +517,8 @@ export default function ChatSurface({
   // 旁路给了这次审批的结构化内容（命令原文 / 要改的差异）：卡片上画出来；能从聊天层答的直接给按钮
   const channelApproval = channel?.approval ?? null;
   const preview = approvalPreview(channelApproval);
+  // CLI 比 Mesa 核对过的新（cli-verified.ts）：卡上的选项是读屏认出来的，画面变了可能按不准，提醒一句
+  const cliNewer = useCliNewer(agentId);
   const channelChoices = channelApproval ? approvalChoices(channelApproval, agentId ?? null) : [];
   const decision: ChatDecision | null =
     channelApproval && channelChoices.length && !trustPrompt
@@ -600,7 +604,9 @@ export default function ChatSurface({
               detail: menuPrompt.detail,
               // 审批菜单：旁路给了要做的事（命令 / 差异）就画在卡上，选项仍照终端原文
               preview: channel?.turn?.status === "awaiting_approval" ? preview : null,
-              hint: "选项照终端原文；高亮的是终端当前默认的那一项",
+              hint: cliNewer
+                ? "这版 CLI Mesa 还没核对过：选项照终端原文，按不对就点「露出终端」在终端里选"
+                : "选项照终端原文；高亮的是终端当前默认的那一项",
               // 不替用户选：把 CLI 的选项原样摆出来（tui-menu.ts）
               options: menuPrompt.options.map((opt, i) => ({
                 label: opt,
@@ -1020,6 +1026,14 @@ export default function ChatSurface({
                 }
               />
             )}
+            {/* 聊天层是测试版（chat-fidelity.ts）：点开说这一家在聊天里能做到哪一步、哪些要回终端 */}
+            <ChatBetaBadge
+              agentId={agentId ?? launchPick?.agentId ?? null}
+              onOpenTerminal={() => {
+                noteHandoff("user_switch", "beta");
+                onOpenTerminal();
+              }}
+            />
             {statusNote ? (
               <span
                 // 窄栏（阅读区右栏）里让它截断，不然顶到右侧的模型芯片上叠字

@@ -18,6 +18,7 @@ const DETAIL_LABEL: Record<string, string> = {
   slash: "斜杠命令",
   menu: "模型菜单",
   "tab-bar": "标签栏切换钮",
+  beta: "测试版说明里",
   peek: "露出终端",
   open: "打开终端",
 };

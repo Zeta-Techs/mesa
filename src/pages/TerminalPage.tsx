@@ -81,6 +81,7 @@ import {
   userTextRecorded,
 } from "../chat-handoff";
 import { confirmHandoffReason, recordChatHandoff } from "../chat-handoff-log";
+import { useCliNewer } from "../cli-verified";
 import { AGENTS, type CustomRuntimeDto, type OfficialAccountStatusDto } from "../types";
 import {
   channelAttention,
@@ -2332,7 +2333,8 @@ const TerminalView = memo(function TerminalView({
     const ask = next?.ask ?? null;
     // 卡片上交过卷又到了确认页：答案就是刚在卡片上选的，替人按「Submit answers」，不要人再点一次
     // （2026-10-22 用户：为什么还有确认提交回答）。还有题没答（带提醒）、或人自己点到确认页的，照常出卡
-    if (ask?.kind === "review" && !ask.warning && Date.now() < askAutoConfirmUntilRef.current) {
+    // CLI 比 Mesa 核对过的新（cli-verified.ts）：确认页的样子可能变了，不替人按，照常出卡
+    if (ask?.kind === "review" && !ask.warning && !cliNewerRef.current && Date.now() < askAutoConfirmUntilRef.current) {
       askAutoConfirmUntilRef.current = 0;
       const keys = askAnswerKeys(ask, { kind: "confirm" });
       const id = ptyIdRef.current;
@@ -2559,6 +2561,9 @@ const TerminalView = memo(function TerminalView({
   const askHiddenUntilRef = useRef(0);
   // 这之前扫到确认页就替人按「Submit answers」（卡片上交过卷才设）
   const askAutoConfirmUntilRef = useRef(0);
+  const cliNewer = useCliNewer(agentId);
+  const cliNewerRef = useRef(cliNewer);
+  cliNewerRef.current = cliNewer;
   function queuePtyKeys(id: string, keys: string[]): number {
     const start = Math.max(Date.now(), keyQueueAtRef.current);
     keys.forEach((key, i) => {
