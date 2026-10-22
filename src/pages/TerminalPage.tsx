@@ -164,6 +164,8 @@ import {
   sameTuiMenu,
   type TuiMenu,
 } from "../tui-menu";
+import { promptSuggestionSupported, readPromptSuggestion } from "../prompt-suggestion";
+import { lineCells } from "../screen-cells";
 import { lastContextTokens, type MesaCommand } from "../composer-assist";
 import { slashCommandsFor } from "../slash-commands";
 import { claudeOutputTokens, extractLiveReply, liveReplySupported, mergeLiveReply, staleEcho, terminalHasInputBox } from "../live-reply";
@@ -577,6 +579,8 @@ export interface SessionLinkState {
   liveReply: string[] | null;
   /** Claude 转圈行里这一轮已生成的 token 数（live-reply.ts claudeOutputTokens）；别家与没认出时 null */
   liveTokens: number | null;
+  /** Claude Code 输入框里那行灰字：它猜你下一句想说什么（prompt-suggestion.ts）；没有为 null */
+  promptSuggestion: string | null;
   /** Agent 在跑但 PTY 已 4 秒没出字：TUI 静止（多半停在菜单 / 登录上），不是模型还在想 */
   ptyQuiet: boolean;
   /** 开聊前的 Agent / 配置 / 模型选择（与启动栏同一份） */
@@ -2208,6 +2212,13 @@ const TerminalView = memo(function TerminalView({
     }
     return parseTuiMenu(lines);
   }
+  /** 可视区第 row 行每个字的样子（灰字 / 反色 / 底色；screen-cells.ts） */
+  function screenCells(row: number) {
+    const term = termRef.current;
+    if (!term) return [];
+    const buf = term.buffer.active;
+    return lineCells(buf.getLine(buf.viewportY + row));
+  }
   // 终端里换权限模式的跟随（fetchConversation 读会话文件；基线 = 这个文件第一次读到的模式）
   const permBaselineRef = useRef<{ file: string; mode: string } | null>(null);
   // 本机处理完、会话文件里没有的斜杠命令记录（只在这次打开的聊天里；换了会话文件就清）
@@ -2390,6 +2401,31 @@ const TerminalView = memo(function TerminalView({
   // 底栏上的模型（Codex「模型 档位 · 目录」）：差量重绘只重画变了的格子，输出流里档位前面不一定是模型名，
   // 只能从画好的屏上读（reasoning-effort.ts detectModelOnScreen）。节流 500ms
   const footerScanTimerRef = useRef<number | null>(null);
+  // Claude 输入框里那行灰字（它猜你下一句想说什么，prompt-suggestion.ts）：会话文件和 hooks 都不记，只能读屏。
+  // 出字时节流 400ms 读一次，一帧画到一半时等它画完；发出一句时清掉
+  const [promptSuggestion, setPromptSuggestion] = useState<string | null>(null);
+  const promptSuggestionRef = useRef<string | null>(null);
+  const suggestionScanTimerRef = useRef<number | null>(null);
+  function setSuggestion(next: string | null) {
+    if (promptSuggestionRef.current === next) return;
+    promptSuggestionRef.current = next;
+    setPromptSuggestion(next);
+  }
+  function scanSuggestionSoon() {
+    if (suggestionScanTimerRef.current || !promptSuggestionSupported(launchAgentRef.current)) return;
+    let waits = 0;
+    const run = () => {
+      const term = termRef.current;
+      if (term?.modes.synchronizedOutputMode && waits++ < 20) {
+        suggestionScanTimerRef.current = window.setTimeout(run, 50);
+        return;
+      }
+      suggestionScanTimerRef.current = null;
+      if (!term || ptyKindRef.current !== "agent") return;
+      setSuggestion(readPromptSuggestion(screenLines(), screenCells));
+    };
+    suggestionScanTimerRef.current = window.setTimeout(run, 400);
+  }
   function scanFooterModelSoon() {
     if (footerScanTimerRef.current || !modelOnScreenSupported(launchAgentRef.current)) return;
     footerScanTimerRef.current = window.setTimeout(() => {
@@ -2615,6 +2651,7 @@ const TerminalView = memo(function TerminalView({
       connIssue,
       liveReply,
       liveTokens,
+      promptSuggestion,
       ptyQuiet,
       launchPick,
       skills: agentSkills,
@@ -2641,6 +2678,7 @@ const TerminalView = memo(function TerminalView({
     connIssue,
     liveReply,
     liveTokens,
+    promptSuggestion,
     ptyQuiet,
     launchPick,
     agentSkills,
@@ -3688,6 +3726,7 @@ const TerminalView = memo(function TerminalView({
           scanMenuSoon();
           scanLiveReplySoon();
           scanConnIssueSoon();
+          scanSuggestionSoon();
           if (ptyQuietRef.current) {
             ptyQuietRef.current = false;
             setPtyQuiet(false);
@@ -3832,6 +3871,7 @@ const TerminalView = memo(function TerminalView({
     setLiveReply(null);
     liveTokensRef.current = null;
     setLiveTokens(null);
+    setSuggestion(null);
     if (kind === "agent") {
       // 记录可恢复的会话 id（一键恢复按钮用）
       lastResumeRef.current = linkCtxRef.current?.sessionId ?? null;
@@ -4543,6 +4583,7 @@ const TerminalView = memo(function TerminalView({
     setLiveReply(null);
     liveTokensRef.current = null;
     setLiveTokens(null);
+    setSuggestion(null);
   }
 
   /** 布局提交之后再读格子。高度没变时当前帧就能量到；变了就等下一次尺寸。 */
@@ -5125,6 +5166,7 @@ const TerminalView = memo(function TerminalView({
     setLiveReply(null);
     liveTokensRef.current = null;
     setLiveTokens(null);
+    setSuggestion(null);
     const message: ChatMessageDto = {
       role: "user",
       blocks: [{ kind: "text", text, toolName: null }],
@@ -7572,6 +7614,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         cur.menuPrompt === s.menuPrompt &&
         cur.liveReply === s.liveReply &&
         cur.liveTokens === s.liveTokens &&
+        cur.promptSuggestion === s.promptSuggestion &&
         cur.tuiPanel === s.tuiPanel &&
         cur.tuiNotice === s.tuiNotice &&
         cur.connIssue === s.connIssue &&
@@ -9985,6 +10028,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         tuiNotice={sessionByTab[t.id]?.tuiNotice ?? null}
                         liveReply={sessionByTab[t.id]?.liveReply ?? null}
                         liveTokens={sessionByTab[t.id]?.liveTokens ?? null}
+                        promptSuggestion={sessionByTab[t.id]?.promptSuggestion ?? null}
                         mesaCommands={mesaCommandsFor(t.id)}
                         externalInsert={chatInsertByTab[t.id] ?? null}
                         onExternalInsertConsumed={() =>

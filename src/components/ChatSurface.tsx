@@ -107,6 +107,7 @@ export default function ChatSurface({
   tuiNotice = null,
   liveReply = null,
   liveTokens = null,
+  promptSuggestion = null,
   onRestartPermission,
   mesaCommands = [],
   externalInsert = null,
@@ -202,6 +203,8 @@ export default function ChatSurface({
   liveReply?: string[] | null;
   /** Claude 转圈行里这一轮已生成的 token 数（Windows 上 Claude 不边写边画，靠它看出还在出字）；没有为 null */
   liveTokens?: number | null;
+  /** Claude 输入框里那行灰字：它猜你下一句想说什么（prompt-suggestion.ts）；输入框空着时照样灰着显示，Tab 填入 */
+  promptSuggestion?: string | null;
   /** 运行中换权限：停下 Agent、带新权限接回原会话（标签动作 restartWithPermission） */
   onRestartPermission?: () => void;
   /** 斜杠面板上半组「Mesa」操作（新对话、压缩、分叉、看改动、导出、打开终端） */
@@ -914,6 +917,8 @@ export default function ChatSurface({
               ? "问一个问题…"
               : undefined
         }
+        // Claude 猜的下一句：只在它停在输入框、没有等你决定的事时给（生成中屏上那行是排队提示，不是建议）
+        suggestion={running && !generating && !decision ? promptSuggestion : null}
         leftExtras={
           <>
             {/* 项目芯片（2026-10-17 用户：「将在 ~ 开始」应该是选项目；2026-10-22 换成与权限、模型同一族的弹层）：

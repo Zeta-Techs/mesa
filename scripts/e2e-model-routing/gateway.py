@@ -31,6 +31,8 @@ def pieces(lines, chunk):
     return [text[i:i + chunk] for i in range(0, len(text), chunk)]
 # TRIGGER_THINK 时先出的那段思考（Codex 推理摘要的样子：粗体小标题 + 一句）
 THINK_TEXT = "**规划探针命令**\n\n先跑一条命令看看环境，再回答。"
+# Claude 一轮结束后另发一次请求猜「你下一句想说什么」（系统提示带 SUGGESTION MODE），回这一句，它会灰着字放进输入框（2026-10-22）
+SUGGESTION = os.environ.get("E2E_SUGGESTION", "再运行一次看看输出")
 # E2E_PROBE_CMD 换探针命令（如写绝对路径，看沙箱里的工作目录对不对）
 PROBE = os.environ.get("E2E_PROBE_CMD", "echo mesa > mesa_probe.txt")
 SHELLISH = ("bash", "shell", "run_shell_command", "exec_command", "run_command", "terminal", "execute", "command")
@@ -153,8 +155,11 @@ class H(BaseHTTPRequestHandler):
             params["generationConfig"] = {k: gen[k] for k in gen if k in ("thinkingConfig", "maxOutputTokens", "temperature")}
         tools = tool_list(body)
         mode = None
+        # 猜下一句的请求带着整段对话历史（里面有触发词），要先认
+        if b"SUGGESTION MODE" in raw:
+            mode = "suggest"
         # 后一幕的触发词在前：第二幕的请求历史里还带着第一幕的 TRIGGER_SLOW
-        if tools and b"TRIGGER_TOOL" in raw:
+        elif tools and b"TRIGGER_TOOL" in raw:
             mode = "done" if has_tool_result(body, raw) else ("tool" if pick_shell(tools) else "notool")
         elif tools and b"TRIGGER_LONG" in raw:
             mode = "long"
@@ -169,7 +174,10 @@ class H(BaseHTTPRequestHandler):
             hint=("SUBTASK" if "SUBTASK" in msgs else "") + " | " + (sysp or "")[:0] + msgs[-90:].replace("\n", " "))
         p = self.path
         text = "ok"
-        lines = SLOW_LINES if mode == "slow" else LONG_LINES if mode == "long" else [("done" if mode == "done" else "ok")]
+        lines = (SLOW_LINES if mode == "slow" else LONG_LINES if mode == "long" else [SUGGESTION] if mode == "suggest"
+                 else [("done" if mode == "done" else "ok")])
+        if mode == "suggest":
+            text = SUGGESTION
         shell = pick_shell(tools) if mode == "tool" else None
         call_args = json.dumps(shell_args(shell[1], b"TRIGGER_ESC" in raw), ensure_ascii=False) if shell else None
         delay = 0.6 if mode == "slow" else LONG_DELAY if mode == "long" else 0

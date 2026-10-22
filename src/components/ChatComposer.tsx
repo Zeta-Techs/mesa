@@ -206,6 +206,7 @@ export default function ChatComposer({
   onImagesChange,
   queueHint = null,
   stopTitle = null,
+  suggestion = null,
 }: {
   disabled?: boolean;
   busy?: boolean;
@@ -254,6 +255,8 @@ export default function ChatComposer({
   queueHint?: { label: string; title: string } | null;
   /** 停止块的悬停说明（按 Esc 的几家，有排着的话时停下就马上处理那句，mid-turn-send.ts stopTitle） */
   stopTitle?: string | null;
+  /** CLI 猜的下一句（Claude 输入框里那行灰字，prompt-suggestion.ts）：输入框空着时当占位字灰着显示，Tab / → 填入 */
+  suggestion?: string | null;
 }) {
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -405,6 +408,14 @@ export default function ChatComposer({
       el.style.height = "0";
       el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
     });
+  }
+
+  // CLI 猜的下一句：输入框空着才灰着显示（同终端里的样子），填进来之后照常改、照常发
+  const ghost = suggestion && !value && attachments.length === 0 && !disabled && !busy ? suggestion : null;
+  function acceptSuggestion() {
+    if (!ghost) return;
+    insertResourceText(ghost);
+    requestAnimationFrame(() => ref.current?.setSelectionRange(ghost.length, ghost.length));
   }
 
   /** 「+ → 文件或图片」：系统选文件，按路径随消息发出（与拖入同口径） */
@@ -704,6 +715,7 @@ export default function ChatComposer({
               <span className="min-w-0 truncate" title={imageWarning}>{imageWarning}</span>
             </p>
           )}
+          <div className="relative">
           <textarea
             ref={ref}
             value={value}
@@ -765,6 +777,12 @@ export default function ChatComposer({
               if (e.key === "Tab" && e.shiftKey && onCyclePermission && slashList.length === 0 && !mention) {
                 e.preventDefault();
                 onCyclePermission();
+                return;
+              }
+              // 灰着的建议：Tab / → 填进来（终端里是 Tab；空着回车直接发那条不照搬，免得手滑替你发出一句猜的话）
+              if (ghost && !e.shiftKey && (e.key === "Tab" || e.key === "ArrowRight")) {
+                e.preventDefault();
+                acceptSuggestion();
                 return;
               }
               // ↑ 一路往回取自己发过的话（终端历史同习惯）：输入框为空时开始；翻出来的那条没改过才接着翻，
@@ -832,12 +850,27 @@ export default function ChatComposer({
             }}
             // 空态（居中）两行高，好落笔；开聊后一行起，长对话里把高度让给内容（2026-10-22）
             rows={narrow ? 2 : 1}
-            placeholder={placeholder ?? "输入消息…"}
+            placeholder={ghost ?? placeholder ?? "输入消息…"}
             // 插入符是 M▁ 那道琥珀（--color-mesa-amber），光标本身就是品牌
             className={`block max-h-40 w-full resize-none bg-transparent px-4 pb-2 pt-3 text-sm leading-6 text-l1 caret-mesa-amber outline-none focus:outline-none focus-visible:outline-none focus-visible:outline-offset-0 placeholder:text-l4 disabled:cursor-not-allowed disabled:opacity-60 ${
               narrow ? "min-h-16" : ""
-            }`}
+            } ${ghost ? "pr-20" : ""}`}
           />
+          {ghost && (
+            // 灰字是 CLI 猜的下一句：右上角说一声怎么填，点一下也行
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={acceptSuggestion}
+              title={`灰字是它猜你下一句想说的话，按 Tab 填进输入框，改完再发`}
+              className="absolute right-3 top-3 flex h-6 items-center gap-1 rounded-md px-1.5 text-l4 transition-colors hover:bg-hover hover:text-l2"
+            >
+              {/* 字号写在里层（全站 button { font: inherit } 会吞掉按钮自己的 text-*） */}
+              <kbd className="rounded border border-hairline px-1 font-sans text-micro leading-4">Tab</kbd>
+              <span className="text-micro">填入</span>
+            </button>
+          )}
+          </div>
           <div className="flex min-h-10 items-center justify-between gap-2 px-3 pb-1.5">
             <div className="flex min-w-0 items-center gap-0.5">
               <AddMenu

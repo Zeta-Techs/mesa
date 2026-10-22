@@ -50,6 +50,13 @@
   多行提问认成菜单，必须带序号 / 下方有按键提示（Enter to confirm…，该行本身不算选项）/ 上方有边框三者之一。
   菜单问句取选项上方那段说明（到 ▔/─ 边框为止）的第一行，其余进 `detail`（Claude 2.1.292 实录「Switch model? / Your next
   response will be slower…」；本机假 API + PTY 抓屏得来，样本在 tests/tui-menu.test.ts）。
+- **Claude「猜你下一句」进聊天输入框（2026-10-22，`src/prompt-suggestion.ts`）**：一轮做完 Claude 另发一次请求猜你接下来想说什么，
+  灰着字放进它的输入框（Tab 填入、空着回车直接发）；会话文件、hooks 都不记，只能读屏。输入框那一行 = 顶格「❯」且上一行是整条横线；
+  占位字整句 SGR 2 灰、终端有焦点时第一个字反色当光标，自己打的字不灰——有一个字不灰就不算。同一位置的固定提示按原文排除
+  （`Try "…"`、`Press up/Enter…`、`Message @…`）。出字时节流 400ms 读（等同步输出画完），发出一句 / 进程重开时清；聊天层只在它停在
+  输入框、没有等你决定的事时给输入框（生成中那一行是排队提示）。聊天输入框空着时当占位字灰着显示，右上「Tab 填入」，Tab / → 填进来
+  再改再发；**空着回车不替你发**（终端里会直接发出这句猜的话，聊天层不照搬）。只认 Claude Code：开关在服务端，假网关下要
+  `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=1`；第二轮起才猜；终端失焦（聊天层盖住终端时 xterm 发 ESC[O）之后照样出（2.1.306 实测）。
 - **实时预览（2026-10-17；2026-10-18 第三期扩到六家）**：Agent 出字时节流 300ms 读可视区，`extractLiveReply`（`src/live-reply.ts`）
   按每家「画面布局」读（输入框位置、回显、助手行首、续行缩进、工具 / 转圈 / 提示行）：Claude Code、Codex、Qwen、Gemini、Grok、Kimi。
   CodeBuddy（生成中屏上只有转圈）与 OpenCode（分栏整屏重绘）不认，仍给「看实时输出」。新增一家必须先用 `chat-capture.py`

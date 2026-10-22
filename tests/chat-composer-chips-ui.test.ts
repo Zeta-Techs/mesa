@@ -761,3 +761,25 @@ test("项目弹层：能搜、带项目类型与项目默认、编程项目写�
     await ui.close();
   }
 });
+
+test("输入框：CLI 猜的下一句空着时灰着显示，Tab 填进来；有字就不显示", async () => {
+  const ui = await mount();
+  try {
+    const sent: string[] = [];
+    await ui.render(ui.h(ui.Composer, { onSend: async (t: string) => (sent.push(t), null), suggestion: "再运行一次看看输出" }));
+    const box = ui.el.querySelector("textarea")!;
+    assert.equal(box.placeholder, "再运行一次看看输出");
+    assert.ok(ui.button("填入"));
+    await key(ui, "Tab");
+    assert.equal(box.value, "再运行一次看看输出");
+    assert.ok(!Array.from(ui.el.querySelectorAll("button")).some((b) => b.textContent?.includes("填入")), "填进来后提示收起");
+    // 空着按回车不替你发（终端里会直接发出这句猜的话）
+    await typeInto(ui, "");
+    await key(ui, "Enter");
+    assert.deepEqual(sent, []);
+    await typeInto(ui, "我自己写");
+    assert.notEqual(box.placeholder, "再运行一次看看输出");
+  } finally {
+    await ui.close();
+  }
+});

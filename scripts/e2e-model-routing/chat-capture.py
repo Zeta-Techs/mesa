@@ -74,6 +74,10 @@ if WIN:
 for k in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "all_proxy"): env.pop(k, None)
 for k in plan.get("env_remove", []): env.pop(k, None)
 for k, v in plan["env"]: env[k] = v
+# CAP_ENV="K=V;K2=V2"：再加几个环境变量（上面把 CLAUDE_CODE_* 都去掉了，要开 Claude 的某个开关从这里给，
+# 如 CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=1——「猜下一句」平时要服务端开关，假网关下拿不到）
+for pair in filter(None, os.environ.get("CAP_ENV", "").split(";")):
+    k, _, v = pair.partition("="); env[k] = v
 COLS, ROWS = int(os.environ.get("CAP_COLS", "120")), int(os.environ.get("CAP_ROWS", "40"))
 screen = pyte.Screen(COLS, ROWS); stream = pyte.ByteStream(screen)
 
@@ -137,7 +141,7 @@ else:
 
     def pty_write(data):
         os.write(fd, data)
-kitty = [False]; alive = [True]; paste = [False]
+kitty = [False]; alive = [True]; paste = [False]; focus = [False]
 # CAP_RAW=1：终端原始输出逐块记进结果的 raw（[秒, base64]），拿真 xterm.js 回放（live-replay.ts）看读屏在每一块之间读到什么
 RAW, T0 = [] if os.environ.get("CAP_RAW") else None, time.time()
 
@@ -153,6 +157,9 @@ def pump(sec):
         # 子进程开 / 关 bracketed paste（同 pty.rs 的检测口径）：Windows 上要看 ConPTY 有没有把它转出来
         if b"\x1b[?2004h" in data: paste[0] = True
         if b"\x1b[?2004l" in data: paste[0] = False
+        # 焦点上报（mode 1004）：开了之后 xterm.js 在终端失焦 / 得焦时发 ESC[O / ESC[I
+        if b"\x1b[?1004h" in data: focus[0] = True
+        if b"\x1b[?1004l" in data: focus[0] = False
         # 应答口径同 src/terminal-protocols.ts（DA1 / XTVERSION / kitty 查询 / DECRQM / DSR / OSC 10/11）
         for m in re.finditer(rb"\x1b\[(0?c|>0?q|\?u|>4;\?m|\?(\d+)\$p|\??6n|>(\d*)u|<(\d*)u)|\x1b\](1[01]);\?(\x07|\x1b\\)", data):
             q = m.group(0)
@@ -218,6 +225,9 @@ for _ in range(4):
     except OSError:
         break
 record["scenes"]["ready"] = [{"t": 0, "lines": lines()}]
+# CAP_FOCUS=out / in：开场后告诉 CLI 终端失焦 / 得焦（Mesa 聊天层盖住终端时 xterm.js 的输入区是失焦的），看它还出不出「猜下一句」
+if os.environ.get("CAP_FOCUS") and focus[0]:
+    pty_write(b"\x1b[O" if os.environ["CAP_FOCUS"] == "out" else b"\x1b[I"); pump(0.5)
 
 # 生成中再发一句（2026-10-22，聊天层「排队 / 立即发送」）：先发 QUEUE_FIRST 让它干活（默认 TRIGGER_TOOL，配合
 # E2E_PROBE_CMD="sleep 8; …" 让工具跑久一点），过 QUEUE_AFTER 秒再打 QUEUE_PROMPT、按 QUEUE_KEY（默认回车；Codex 的 Tab 写 \t），
@@ -294,7 +304,7 @@ for rel in COPY + [".gemini/settings.json", ".grok/config.toml", ".qwen/settings
     if now != before.get(rel):
         changed[rel] = "".join(difflib.unified_diff((before.get(rel) or "").splitlines(True), now.splitlines(True), n=0))[:1500]
 record["config_changed"] = changed
-record["kitty"] = kitty[0]; record["alive"] = alive[0]; record["bracketed_paste"] = paste[0]
+record["kitty"] = kitty[0]; record["alive"] = alive[0]; record["bracketed_paste"] = paste[0]; record["focus_reporting"] = focus[0]
 if RAW is not None: record["raw"] = RAW; record["size"] = [COLS, ROWS]
 json.dump(record, open(out_path, "w"), ensure_ascii=False, indent=1)
 try: proc.terminate(force=True) if WIN else os.kill(pid, signal.SIGKILL)

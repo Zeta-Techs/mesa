@@ -511,6 +511,14 @@ Claude 会话文件：排上记 `queue-operation`（`enqueue` 带原文；轮后
 解析要认它（`sessions.rs parse_claude`），否则聊天层与回放里这句话消失。后台任务通知、别的会话发来的也是 `queued_command`
 （`commandMode: task-notification` / `origin.kind: peer`），不算用户说的。
 
+**Claude 只画在屏上的东西（2026-10-22，2.1.306，假网关 126×29 抓屏 + 源码）**：
+- **猜你下一句（prompt suggestion）**：一轮做完另发一次请求（系统提示带 `[SUGGESTION MODE: …]`，带整段历史），回的话当占位字灰着放进输入框；
+  Tab 填入、空着回车直接发（`acceptMethod` tab / enter），打出一样的字也算采纳，连着 20 次没用会少出。服务端开关 growthbook
+  `tengu_chomp_inflection`，`CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=1/0` 强开强关，设置里 `promptSuggestionEnabled: false` 关；头一轮不猜
+  （对话里助手消息少于两条）、计划模式 / 有待批权限 / 限流时不猜；终端失焦（ESC[O）后实测照样出。会话文件、hooks 都不记——
+  聊天层读屏（`src/prompt-suggestion.ts`）：占位字整句 SGR 2、终端有焦点时第一个字反色；同一位置还有新手示例 `Try "…"`、排队提示
+  `Press up to edit queued messages`、队友 `Message @…`。
+
 **陷阱（实证）**：
 - **Codex `-c hooks.<事件>=…`** 认得出（来源记作 Session flags），但每次都要在 /hooks 面板审核信任才执行——不能当默认通道。
 - **Codex 新线程第一条消息前没有 rollout**：`thread/resume` 报「no rollout found」；线程转 active 时再订，resume 会重放挂着的审批。
