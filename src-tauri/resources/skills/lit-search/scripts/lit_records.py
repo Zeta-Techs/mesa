@@ -18,6 +18,7 @@ papers/included.json 是唯一的题录来源。补字段（enrich）把 Crossre
 import argparse
 import concurrent.futures
 import csv
+import functools
 import hashlib
 import importlib.util
 import io
@@ -607,7 +608,32 @@ def existing_pdf(rec, root):
                 continue
             if needle and needle in head:
                 return f"papers/{pdf.name}"
+        # 元数据压在对象流里时原始字节里搜不到：有 PyMuPDF 就抽前两页文字再找（首页页眉多半印着 DOI）。
+        # 2026-10-23 HER 实证：Zhao2024-HEA-HER、Liang2022-TiCN-MXene-HER、Chen2022-Pt-defect-anchoring-HER 三个名字都认不出
+        target = doi.lower()
+        for pdf in sorted(papers.glob("*.pdf")):
+            if target in _pdf_head_text(pdf):
+                return f"papers/{pdf.name}"
     return ""
+
+
+@functools.lru_cache(maxsize=None)
+def _pdf_head_text(pdf):
+    """PDF 元数据与前两页文字（小写、去空白）；没装 PyMuPDF 或读不了返回空串。"""
+    try:
+        import pymupdf
+    except ImportError:
+        try:
+            import fitz as pymupdf
+        except ImportError:
+            return ""
+    try:
+        with pymupdf.open(str(pdf)) as doc:
+            parts = [" ".join(str(v) for v in (doc.metadata or {}).values() if v)]
+            parts += [doc[i].get_text() for i in range(min(2, doc.page_count))]
+    except Exception:
+        return ""
+    return re.sub(r"\s+", "", " ".join(parts)).lower()
 
 
 def cmd_fetch(args):

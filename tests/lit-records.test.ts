@@ -392,3 +392,25 @@ test("认已有全文：文件名对不上（元素缩写、出版商编号名�
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// 2026-10-23 HER：出版商 PDF 的元数据压在对象流里，原始字节搜不到 DOI；首页页眉印着
+test("认已有全文：原始字节里没有 DOI 时，有 PyMuPDF 就按前两页文字认", (t) => {
+  const probe = spawnSync(python, ["-c", "import pymupdf"], { encoding: "utf8" });
+  if (probe.status !== 0) {
+    t.skip("没装 PyMuPDF");
+    return;
+  }
+  const { root, ws, proj } = fixture();
+  try {
+    const pdf = join(proj, "papers/Bai2021-MX-HER.pdf");
+    const make = `import pymupdf,sys; d=pymupdf.open(); p=d.new_page(); p.insert_text((72,72),"https://doi.org/10.1038/s41699-021-00259-4"); d.save(sys.argv[1], deflate=True)`;
+    assert.equal(spawnSync(python, ["-c", make, pdf], { encoding: "utf8" }).status, 0);
+    assert.ok(!readFileSync(pdf).includes("s41699"), "原始字节里确实没有 DOI");
+    const r = run(["write", "--root", proj], ws);
+    assert.equal(r.status, 0, r.stderr);
+    const json = JSON.parse(readFileSync(join(ws, "papers/included.json"), "utf8"));
+    assert.equal(json.find((x: { id: string }) => x.id === "W2").pdf, "papers/Bai2021-MX-HER.pdf");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
