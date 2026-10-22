@@ -59,11 +59,20 @@ test("亮暗不符时换到 twin", () => {
 });
 
 test("缺省/未知 id 回落到对应亮暗档的默认套", () => {
-  assert.equal(resolvePaletteId(undefined, false), "dark-plus");
+  assert.equal(resolvePaletteId(undefined, false), "one-dark");
   assert.equal(resolvePaletteId(undefined, true), "light-plus");
-  assert.equal(resolvePaletteId("不存在的调色板", false), "dark-plus");
+  assert.equal(resolvePaletteId("不存在的调色板", false), "one-dark");
   assert.equal(resolvePaletteId("不存在的调色板", true), "light-plus");
   assert.equal(resolvePaletteId("", true), "light-plus");
+});
+
+test("跟随主题（没选过 / auto）：深色 One Dark、暮紫 Catppuccin、浅色一律 Light+", () => {
+  assert.equal(resolvePaletteId("auto", false, "ayu"), "one-dark");
+  assert.equal(resolvePaletteId(undefined, false, "mocha"), "catppuccin");
+  assert.equal(resolvePaletteId("auto", true, "mocha-light"), "light-plus");
+  assert.equal(resolvePaletteId("auto", true, "ayu-light"), "light-plus");
+  // 手动选过的照旧，不被主题默认覆盖
+  assert.equal(resolvePaletteId("dark-plus", false, "mocha"), "dark-plus");
 });
 
 test("十四套主题都能解析出与自身亮暗一致的调色板", () => {

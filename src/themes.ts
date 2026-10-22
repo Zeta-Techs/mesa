@@ -28,6 +28,11 @@ export const THEMES = [
 
 export type ThemeId = (typeof THEMES)[number]["id"];
 
+/** 首次安装的主题（2026-10-22 用户拍板，原沉浸黑）：琥珀的强调色就是 Mesa 的琥珀光标，发送块 / 插入符 /
+ *  主按钮同一种颜色；首装同时默认「跟随系统深浅」（settings.rs DEFAULT_THEME / DEFAULT_THEME_FOLLOW_SYSTEM 同步）。
+ *  也是设置还没读到时的兜底 */
+export const DEFAULT_THEME_ID = "ayu";
+
 /** 主题亮暗判定单一出处：原生窗口外观、终端调色板 twin、浅色分支都走它，禁另造判定。
  *  自定义浅色 id 为 custom-light（画布亮度现算后写入），不进 THEMES 十四套清单。 */
 export function isLightTheme(id: string | undefined): boolean {

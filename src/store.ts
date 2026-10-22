@@ -4,7 +4,7 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { type Effect } from "@tauri-apps/api/window";
 import { IS_WINDOWS } from "./hotkeys";
 import { check, type Update } from "@tauri-apps/plugin-updater";
-import { isCustomThemeId, isLightTheme } from "./themes";
+import { DEFAULT_THEME_ID, isCustomThemeId, isLightTheme } from "./themes";
 import { followedTheme } from "./theme-follow";
 import {
   applyCustomThemeVars,
@@ -106,7 +106,7 @@ export interface AppSettings {
   terminalShell?: string;
   /** Windows 上定时任务里的 Codex 用它自己的 Windows 沙箱（看过说明、确认过才是 true；用户 Codex 配置里有就照那个） */
   codexWinSandboxConsent?: boolean;
-  terminalPalette?: string; // 四套深色 + 四套配对浅色，见 terminal-palettes.ts PALETTE_LIST
+  terminalPalette?: string; // "auto"/缺省 = 跟随主题；其余为四套深色 + 四套配对浅色，见 terminal-palettes.ts
   scrollback: number;
   rateUsdCny: number;
   brewMirror: boolean;
@@ -256,7 +256,7 @@ export function applyTheme(
     syncWindowsMica(light);
     return;
   }
-  const theme = id || "midnight";
+  const theme = id || DEFAULT_THEME_ID;
   root.dataset.theme = theme;
   // 判定走 themes.ts 的 isLightTheme（该文件声明它是「原生窗口外观、终端调色板 twin、
   // 浅色分支」的单一出处），不要在这里另写后缀判断。

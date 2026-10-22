@@ -190,7 +190,7 @@ import {
 } from "../lit-project";
 import { isPreviewableImagePath } from "../file-icons";
 import { XTERM_PALETTES, resolvePaletteId } from "../terminal-palettes";
-import { isCustomThemeId, isLightTheme } from "../themes";
+import { DEFAULT_THEME_ID, isCustomThemeId, isLightTheme } from "../themes";
 import {
   customXtermBgFg,
   DEFAULT_CUSTOM_THEME,
@@ -647,13 +647,13 @@ async function fireAttentionNotification(
  *  （见 terminal-palettes.ts 的 resolvePaletteId）。 */
 const XTERM_BG_FG: Record<string, { background: string; foreground: string }> =
   {
-    midnight: { background: "#0e1015", foreground: "#b3b0aa" },
+    midnight: { background: "#101218", foreground: "#b3b0aa" },
     terracotta: { background: "#2d2d2b", foreground: "#c9c9c4" },
     ayu: { background: "#10141c", foreground: "#bfbdb6" },
     mocha: { background: "#1e1e2e", foreground: "#aeb8dc" },
     neutral: { background: "#111111", foreground: "#c9c9c9" },
     dracula: { background: "#282a36", foreground: "#cfcfc9" },
-    shadcn: { background: "#111827", foreground: "#b9b9c0" },
+    shadcn: { background: "#12141a", foreground: "#b9b9c0" },
     "midnight-light": { background: "#fbfbf9", foreground: "#3f3c36" },
     "terracotta-light": { background: "#fefcfa", foreground: "#453f3a" },
     "ayu-light": { background: "#fffefd", foreground: "#3f4754" },
@@ -674,13 +674,13 @@ function buildXtermTheme(
   customTheme?: { rail: string; canvas: string; accent: string } | null,
 ): { background: string; foreground: string } & Record<string, string> {
   const palette =
-    XTERM_PALETTES[resolvePaletteId(paletteId, isLightTheme(themeId))];
+    XTERM_PALETTES[resolvePaletteId(paletteId, isLightTheme(themeId), themeId)];
   const bgfg = isCustomThemeId(themeId)
     ? customXtermBgFg(
         deriveThemeTokens(normalizeCustomTheme(customTheme) ?? DEFAULT_CUSTOM_THEME)
           .tokens,
       )
-    : (XTERM_BG_FG[themeId] ?? XTERM_BG_FG.midnight);
+    : (XTERM_BG_FG[themeId] ?? XTERM_BG_FG[DEFAULT_THEME_ID]);
   const light = isLightTheme(themeId);
   return {
     ...bgfg,
@@ -2704,7 +2704,7 @@ const TerminalView = memo(function TerminalView({
         },
       },
       theme: buildXtermTheme(
-        settingsRef.current?.theme ?? "midnight",
+        settingsRef.current?.theme ?? DEFAULT_THEME_ID,
         settingsRef.current?.terminalPalette,
         settingsRef.current?.customTheme,
       ),
@@ -8063,7 +8063,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   const appSettings = useAppStore((s) => s.settings);
   const statusBarColors = (() => {
     const t = buildXtermTheme(
-      appSettings?.theme ?? "midnight",
+      appSettings?.theme ?? DEFAULT_THEME_ID,
       appSettings?.terminalPalette,
       appSettings?.customTheme,
     );

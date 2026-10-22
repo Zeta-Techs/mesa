@@ -1,4 +1,4 @@
-import { THEMES, isCustomThemeId } from "./themes.ts";
+import { DEFAULT_THEME_ID, THEMES, isCustomThemeId } from "./themes.ts";
 
 /**
  * 主题跟随系统深浅（2026-10-17）的纯逻辑。
@@ -19,6 +19,6 @@ export function themeTwin(id: string | undefined, light: boolean): string | null
 
 /** 跟随时应生效的主题：内置主题换成与系统同深浅的那套，自定义与未知 id 原样 */
 export function followedTheme(id: string | undefined, systemDark: boolean): string {
-  const fallback = id || "midnight";
+  const fallback = id || DEFAULT_THEME_ID;
   return themeTwin(fallback, !systemDark) ?? fallback;
 }

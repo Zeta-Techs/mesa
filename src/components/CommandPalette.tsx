@@ -28,7 +28,7 @@ import { useAppStore } from "../store";
 import { usePhoneDropStore } from "../phone-drop-store";
 import { openOnboardingGuide } from "./OnboardingGuide";
 import { filterCommands, matchedKeyword, type PaletteCommand } from "../command-palette";
-import { THEMES } from "../themes";
+import { DEFAULT_THEME_ID, THEMES } from "../themes";
 import { followedTheme } from "../theme-follow";
 import {
   customThemeIdFromSeeds,
@@ -222,7 +222,7 @@ export default function CommandPalette({
         const card = resolveCustomThemeCardId(customCards, settings?.customThemeCardId);
         return card ? `card:${card}` : "custom";
       })()
-    : (settings?.theme ?? "midnight");
+    : (settings?.theme ?? DEFAULT_THEME_ID);
   const currentThemeName =
     currentThemeKey === "custom"
       ? "自定义"

@@ -12,7 +12,8 @@ import { THEMES } from "../src/themes.ts";
  * `XTERM_BG_FG[themeId] ?? XTERM_BG_FG.midnight` 兜底——加一套新主题不会报错，
  * 只会静默套上沉浸黑的配色。这里把两件事都钉死：
  *   1) 每套主题都必须有自己的行（堵住静默兜底）；
- *   2) 深色行与 App.css 的 --color-editor-bg/-fg 逐字一致（堵住漂移）。
+ *   2) 深色行与 App.css 的 --color-editor-bg/-fg 逐字一致（堵住漂移）；
+ *   3) 深色行的底色等于该主题的 --color-canvas（2026-10-22：终端与聊天层同底，切层不跳色）。
  * 浅色行**故意不等同** editor-bg（纯白整屏当终端刺眼），故只校验方向：近白、且前景够深。
  */
 const css = readFileSync(new URL("../src/App.css", import.meta.url), "utf8");
@@ -71,7 +72,7 @@ test("十四套主题在 XTERM_BG_FG 里都有自己的行", () => {
   assert.deepEqual(
     missing,
     [],
-    `这些主题没有终端配色行，会静默套用沉浸黑（?? XTERM_BG_FG.midnight）：\n${missing.join("\n")}`,
+    `这些主题没有终端配色行，会静默套用默认主题那行（?? XTERM_BG_FG[DEFAULT_THEME_ID]）：\n${missing.join("\n")}`,
   );
   assert.equal(Object.keys(TABLE).length, THEMES.length, "有表外多余的行");
 });
@@ -86,6 +87,21 @@ test("深色主题的终端底色/前景与 App.css 的 editor 令牌逐字一�
     if (got.fg !== want.fg) drift.push(`${t.id} fg: 表 ${got.fg} ≠ css ${want.fg}`);
   }
   assert.deepEqual(drift, [], `深色终端配色与 editor 令牌漂移：\n${drift.join("\n")}`);
+});
+
+test("深色主题的终端底色等于画布底色（终端与聊天层同底）", () => {
+  const drift: string[] = [];
+  for (const t of THEMES) {
+    if (t.light) continue;
+    const body =
+      t.id === "midnight"
+        ? /@theme\s*\{(.*?)\n\}/s.exec(css)?.[1]
+        : new RegExp(`(?:^|\\n)\\[data-theme="${t.id}"\\]\\s*\\{([^]*?)\\n\\}`).exec(css)?.[1];
+    const canvas = /--color-canvas:\s*(#[0-9a-fA-F]{6})/.exec(body ?? "")?.[1]?.toLowerCase();
+    assert.ok(canvas, `${t.id} 缺 --color-canvas`);
+    if (TABLE[t.id].bg !== canvas) drift.push(`${t.id}: 终端 ${TABLE[t.id].bg} ≠ 画布 ${canvas}`);
+  }
+  assert.deepEqual(drift, [], `深色终端底与画布不一致，切到聊天层会跳色：\n${drift.join("\n")}`);
 });
 
 test("浅色主题的终端底色是近白、前景够深（不追求与 editor-bg 相同）", () => {

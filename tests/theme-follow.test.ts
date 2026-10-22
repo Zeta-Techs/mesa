@@ -24,5 +24,6 @@ test("自定义配色与未知 id 不跟随", () => {
   assert.equal(followedTheme("custom-light", true), "custom-light");
   assert.equal(followedTheme("no-such-theme", false), "no-such-theme");
   assert.equal(themeTwin("custom", true), null);
-  assert.equal(followedTheme(undefined, true), "midnight");
+  assert.equal(followedTheme(undefined, true), "ayu");
+  assert.equal(followedTheme(undefined, false), "ayu-light", "首装默认琥珀，系统浅色时跟成琥珀 · 浅");
 });

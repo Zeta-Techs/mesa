@@ -115,8 +115,19 @@ export const PALETTE_TWIN: Record<string, string> = {
   latte: "catppuccin",
 };
 
-export const DEFAULT_DARK_PALETTE = "dark-plus";
+/** 「跟随主题」（2026-10-22 起的默认，设置里没选过也是它）：深色 One Dark——各色对比度 4.3–9:1 较匀，
+ *  Dark+ 黄色 14:1 扎眼、红蓝不到 4:1；浅色 Light+——One Light 在近白底上红蓝只有 3:1 出头。
+ *  暮紫配 Catppuccin（同源配色）；浅色暮紫仍走 Light+（Latte 的黄、品红在浅底上 2.2:1）。 */
+export const AUTO_PALETTE = "auto";
+export const DEFAULT_DARK_PALETTE = "one-dark";
 export const DEFAULT_LIGHT_PALETTE = "light-plus";
+const THEME_DARK_PALETTE: Record<string, string> = { mocha: "catppuccin" };
+
+/** 跟随主题时这套主题用哪套调色板 */
+export function themeDefaultPalette(themeId: string | undefined, themeIsLight: boolean): string {
+  if (themeIsLight) return DEFAULT_LIGHT_PALETTE;
+  return (themeId && THEME_DARK_PALETTE[themeId]) || DEFAULT_DARK_PALETTE;
+}
 
 export function isLightPalette(id: string): boolean {
   return PALETTE_LIST.some((p) => p.id === id && p.light);
@@ -124,23 +135,21 @@ export function isLightPalette(id: string): boolean {
 
 /**
  * 按主题亮暗解析实际生效的调色板 id。
- * 亮暗不符时切到 twin（无 twin 记录则回落该亮暗档的默认套），
+ * 没选过 / 选了「跟随主题」/ 未知 id → 这套主题的默认套（themeDefaultPalette）；
+ * 亮暗不符时切到 twin（无 twin 记录则回落默认套），
  * 避免用户配出「浅底 + 深色向 ANSI」这种不可读组合。
  */
 export function resolvePaletteId(
   paletteId: string | undefined,
   themeIsLight: boolean,
+  themeId?: string,
 ): string {
-  const id =
-    paletteId && XTERM_PALETTES[paletteId]
-      ? paletteId
-      : themeIsLight
-        ? DEFAULT_LIGHT_PALETTE
-        : DEFAULT_DARK_PALETTE;
+  const fallback = themeDefaultPalette(themeId, themeIsLight);
+  const id = paletteId && XTERM_PALETTES[paletteId] ? paletteId : fallback;
   if (isLightPalette(id) === themeIsLight) return id;
   const twin = PALETTE_TWIN[id];
   if (twin && XTERM_PALETTES[twin]) return twin;
-  return themeIsLight ? DEFAULT_LIGHT_PALETTE : DEFAULT_DARK_PALETTE;
+  return fallback;
 }
 
 /** 设置页预览用的代表色（前 8 个 ANSI 标准色） */

@@ -307,16 +307,19 @@ pub fn run() {
                 //
                 // 放在 set_effects 之前而不是之后：材质是按当前外观渲染的，先定外观再挂材质，
                 // 首帧就是对的；反过来的话启动瞬间还会闪一下深色材质。
-                let light = settings::current_theme_is_light();
-                let appearance = if light {
-                    tauri::utils::Theme::Light
-                } else {
-                    tauri::utils::Theme::Dark
-                };
-                // Linux / macOS 上主题是应用级（不受 this window 局限，见 tauri Window::set_theme 文档），
-                // 保持单一主窗与 tray 的一致性正是我们要的。
-                if let Err(e) = window.set_theme(Some(appearance)) {
-                    logbuf::record("warn", "window", &format!("窗口外观未挂上: {e}"));
+                // 跟随系统深浅时外观本就是系统的（前端把主题校正成同深浅的 twin），不强制
+                if !settings::current_theme_follows_system() {
+                    let light = settings::current_theme_is_light();
+                    let appearance = if light {
+                        tauri::utils::Theme::Light
+                    } else {
+                        tauri::utils::Theme::Dark
+                    };
+                    // Linux / macOS 上主题是应用级（不受 this window 局限，见 tauri Window::set_theme 文档），
+                    // 保持单一主窗与 tray 的一致性正是我们要的。
+                    if let Err(e) = window.set_theme(Some(appearance)) {
+                        logbuf::record("warn", "window", &format!("窗口外观未挂上: {e}"));
+                    }
                 }
 
                 let effects = tauri::utils::config::WindowEffectsConfig {

@@ -66,8 +66,8 @@
   --color-cta-text: #2a1220;
   --color-cta-bd: #b06a8e;
 
-  /* 导航强调（靛蓝）：侧栏选中左条 + 选中图标着色，与粉色 CTA 并列 */
-  --color-nav-accent: #5a51d0;
+  /* 导航强调：侧栏选中左条 + 选中图标着色，取 CTA 色 */
+  --color-nav-accent: var(--color-cta); /* 2026-10-22 起与其余主题同口径（原靛蓝 #5a51d0，粉 + 靛蓝 + 琥珀三色打架） */
 
   /* 文件树文件夹图标着色（每主题一个 muted 色调；文件图标保持 l4 灰） */
   --color-folder: #8f8fa0;
@@ -94,6 +94,12 @@
   --color-chat-bubble: color-mix(in oklab, var(--color-canvas), var(--color-l1) 4.5%);
   --color-composer: color-mix(in oklab, var(--color-canvas), var(--color-l1) 7%);
   --color-composer-edge: color-mix(in oklab, var(--color-canvas), var(--color-l1) 13%);
+  /* 聊天里的字（2026-10-22 用户：有的主题在聊天层不适合长时间聊）：回答正文 = 正文色；加粗与小标题只往 l1 走六成——
+     回答里加粗多，满格 l1（对画布 13–18:1）在 10:1 左右的正文里一粒粒跳出来，长读刺眼。
+     正文偏离 8.5–11.5:1 或带色偏的主题（极简灰蓝太亮、暮紫偏蓝、暮紫·浅与琥珀·浅偏淡）在各自块里覆写，
+     tests/theme-contrast.test.ts 钉范围。只管聊天回答（.md-chat），其余页面的层级不动 */
+  --color-chat-text: var(--color-l2);
+  --color-chat-strong: color-mix(in oklab, var(--color-l1) 60%, var(--color-l2));
 
   /* diff 增删 */
   --color-add: #8fd3a8;
@@ -130,7 +136,7 @@
   --color-switch-knob: #e9e6e2;
 
   /* 编辑器面（Monaco 经 getComputedStyle 读这三个变量，比 canvas 更暗半档，代码块感） */
-  --color-editor-bg: #0e1015;
+  --color-editor-bg: #101218; /* = canvas：终端 / 编辑器与聊天层同底（2026-10-22） */
   --color-editor-fg: #b3b0aa;
   --color-editor-line: #57555c;
 
@@ -190,6 +196,8 @@
   --color-done: #7da668;
 }
 [data-theme="mocha"] {
+  /* 聊天正文去掉一半蓝紫色偏（Catppuccin 的正文色在大段阅读里发蓝），亮度不变 */
+  --color-chat-text: #bfc3d2; --color-chat-strong: #d3d7e5;
   --color-rail: #181824; --color-rail2: #1a1a28; --color-rail-sel: #2e2e44;
   --color-strip: #262738; --color-canvas: #1e1e2e; --color-inset: #2b2c40;
   --color-raised: #313249; --color-bubble: #3a3b56;
@@ -204,6 +212,8 @@
   --color-done: #63a48c;
 }
 [data-theme="neutral"] {
+  /* 近纯黑底 + 近纯白字，聊天正文 12.5:1、加粗 18:1，长读晕光：正文收到约 10:1 */
+  --color-chat-text: #bebebe; --color-chat-strong: #d6d6d6;
   --color-rail: #0d0d0d; --color-rail2: #101010; --color-rail-sel: #262626;
   --color-strip: #1c1c1c; --color-canvas: #111111; --color-inset: #212121;
   --color-raised: #272727; --color-bubble: #303030;
@@ -249,7 +259,7 @@
   --color-cta-pill: #3d1414;
   --color-cta-pill-text: #ff8080;
   --color-folder: #8291ab;
-  --color-editor-bg: #111827; --color-editor-fg: #b9b9c0; --color-editor-line: #55555f;
+  --color-editor-bg: #12141a; --color-editor-fg: #b9b9c0; --color-editor-line: #55555f;
   --color-done: #4c9d7d;
 }
 
@@ -266,7 +276,7 @@
   --color-seg-sel: #cfcbc2; --color-hairline: #d4d1c8; --color-field: #b8b4a8;
   --color-l1: #1a1814; --color-l2: #3f3c36; --color-l3: #6f6b62; --color-l4: #9a958b;
   --color-cta: #c2447f; --color-cta-text: #ffffff; --color-cta-bd: #a33368;
-  --color-nav-accent: #5249c4;
+  --color-nav-accent: var(--color-cta);
   --color-cta-pill: #f6d7e6; --color-cta-pill-text: #a33368;
   --color-folder: #7a7368;
   --color-link: #2470d8; --color-tabline: #5a564e;
@@ -288,6 +298,8 @@
   --color-done: #4a7d4f;
 }
 [data-theme="ayu-light"] {
+  /* 首装浅色默认：聊天正文对暖纸底只有 8:1，压深到 9.5:1，加粗用 l1 */
+  --color-chat-text: #353c48; --color-chat-strong: var(--color-l1);
   --color-rail: #e7e4da; --color-rail2: #f3f2ec; --color-rail-sel: #e2dfd9;
   --color-strip: #f7f6f3; --color-canvas: #efede6; --color-inset: #fefaf6;
   --color-raised: #ffffff; --color-bubble: #e7e4de;
@@ -302,6 +314,8 @@
   --color-done: #567d3d;
 }
 [data-theme="mocha-light"] {
+  /* 正文对画布只有 7.1:1、整段发灰紫：聊天正文压深到 9:1，加粗用 l1 */
+  --color-chat-text: #3e3c52; --color-chat-strong: var(--color-l1);
   /* Catppuccin Latte：灰里带 Mauve，和 shadcn-light 的冷石板灰分开（原先两套底色同 hex）。 */
   --color-rail: #e3dfea; --color-rail2: #f2f0f6; --color-rail-sel: #d8d3e4;
   --color-strip: #f6f5fa; --color-canvas: #eeebf3; --color-inset: #fbfafc;
@@ -2421,6 +2435,7 @@ select:focus-visible {
 /* 聊天消息里的 Markdown（ConversationView AI 正文，ChatMarkdown 渲染）：
    比笔记阅读版式更紧凑——标题只比正文略大、图片收为缩略卡（点击经预览页签放大） */
 .md-chat {
+  color: var(--color-chat-text);
   font-size: var(--ccode-chat-fs, var(--chat-base));
   font-family: var(--ccode-chat-ff, inherit);
   line-height: 1.75;
@@ -2525,6 +2540,14 @@ select:focus-visible {
 .md-chat h2 {
   padding-bottom: 0;
   border-bottom: none;
+}
+/* 加粗与小标题用 chat-strong（见 @theme 聊天里的字），不跳满格 l1 */
+.md-chat strong,
+.md-chat h1,
+.md-chat h2,
+.md-chat h3,
+.md-chat h4 {
+  color: var(--color-chat-strong);
 }
 /* 对话里的标题只比正文略大：AI 爱用一级标题开头，按阅读页字号排会像一张海报 */
 .md-chat h1 {

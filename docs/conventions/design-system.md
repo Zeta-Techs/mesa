@@ -9,7 +9,7 @@
   **不统一的对象**：主次按钮、输入框/搜索框、状态与选中标记、工具栏/页签、弹层外壳、骨架/进度条、代码与 diff、PDF/文档页和 xterm；原本透明的密集行不为了统一而铺卡。未安装连接组仍可无底降权。只统一底色，不重排布局、不改状态/行为。新增内容卡必须复用此规则；跨页覆盖与编译后层级由 `tests/content-surfaces.test.ts`、主题对比度由 `tests/theme-contrast.test.ts` 守住。
 
 - 全站主题令牌集中在 `src/App.css` 的 `@theme` + `[data-theme]` 变体（**七套深色 + 七套对应浅色**，v3.44 起：
-  沉浸黑(默认)/陶土/Ayu琥珀/Catppuccin/极简灰蓝/Dracula/灰蓝正红，各配一套同性格浅色；浅色方向翻转——rail 比 canvas
+  沉浸黑/陶土/Ayu琥珀(首装默认，2026-10-22 起；原沉浸黑)/Catppuccin/极简灰蓝/Dracula/灰蓝正红，各配一套同性格浅色；浅色方向翻转——rail 比 canvas
   略暗、面板向白浮起、hairline/field 为深灰线、cta 加深保白底对比，状态语义色共享深色值；行 hover 统一走
   `--color-hover` 令牌（深色 5% 白 / 浅色 5% 黑，`hover:bg-hover`，禁再写死 `hover:bg-white/*`），选中行 bg-white/10
   与缩进线 border-white/5 仍在浅色下由 App.css 按类名翻转），运行时切 `document.documentElement.dataset.theme`，
@@ -21,8 +21,16 @@
   `color-scheme: only light`（pdf.js 不透明 canvas 在 WebView2 深色文档里会合成白屏，见 conventions/terminal.md v3.154），
   不得把全局 dark color-scheme 套到 PDF canvas 上。macOS 原生窗口仍按 NSWindow appearance 渲染，
   只改 CSS 变量时深色主题下弹出系统浅色列表；capabilities 需保留 `core:window:allow-set-theme`。
-  默认主题 CTA 粉 `#faa8d4`（cta-text 近黑）；`--color-raised`（浮起面板/pill 底）、
-  `--color-bubble`（用户消息气泡）、`--color-nav-accent`（侧栏选中左条+选中图标，默认靛蓝、其余取各自 CTA 色）。
+  沉浸黑 CTA 粉 `#faa8d4`（cta-text 近黑）；`--color-raised`（浮起面板/pill 底）、
+  `--color-bubble`（用户消息气泡）、`--color-nav-accent`（侧栏选中左条+选中图标，十四套一律取各自 CTA 色——
+  沉浸黑原靛蓝 2026-10-22 并入同口径，粉 + 靛蓝 + 琥珀三色打架）。
+  **首装默认 = 琥珀 + 跟随系统深浅**（`themes.ts DEFAULT_THEME_ID` ↔ `settings.rs DEFAULT_THEME / DEFAULT_THEME_FOLLOW_SYSTEM`，
+  前端兜底与后端默认同步改）：琥珀 CTA 与品牌琥珀光标同色，整屏一种强调色；跟随开着时启动不强制窗口外观（lib.rs）。
+  **聊天回答的字（2026-10-22，用户：有的主题在聊天层不适合长时间聊）**：`.md-chat` 正文走 `--color-chat-text`（默认 l2），
+  加粗与 h1–h4 走 `--color-chat-strong`（默认 l1 与 l2 在 OKLab 六四混，不跳满格 l1）；正文偏离 8.5–11.5:1 或带明显色偏的主题
+  在自己块里覆写（极简灰蓝、暮紫、暮紫·浅、琥珀·浅），范围钉 `tests/theme-contrast.test.ts`。只管聊天回答，其余页面层级不动。
+  **深色主题终端底 = 画布底**（XTERM_BG_FG 深色行 = editor-bg = canvas，`tests/theme-tokens.test.ts` 钉住）：聊天层与终端切换不跳色；
+  浅色终端仍是近白卡（灰画布上 Light+ 绿 / 黄对比掉到 2.2，不跟画布）。
 - 四层「浮起」结构（rail/rail2/canvas/inset 逐级变亮）；文字冷白→灰四档；每主题独立 CTA 强调色（按钮/选中用 `cta`；可操作
   状态如「可合并」用**按钮本身的 cta 高亮**，不另挂 pill；纯状态 pill 用 inset 灰底 + 语义色小圆点）；
   **浅色浮起阶梯必须真的拉得开（v3.85）**：`canvas→strip→inset→raised` 每档亮度差 ≥4，且
@@ -92,6 +100,8 @@
   禁再在 `buildXtermTheme` 里写死——原先写死的 `cursor #aeafad` / `selectionBackground #264f78` 在浅色底上
   分别是「几乎看不见」和「深底压深字、选中即不可读」。`buildXtermTheme` 必须经 `resolvePaletteId(paletteId, isLightTheme(themeId))`
   按主题亮暗解析，亮暗不符自动换 twin；设置页只列出与当前主题亮暗匹配的四套。
+  **默认「跟随主题」（2026-10-22）**：没存值或存 `auto` 时按主题取（`themeDefaultPalette`）：深色 One Dark（Dark+ 黄 14:1 扎眼、
+  红蓝不到 4:1）、暮紫 Catppuccin、浅色一律 Light+（One Light / Latte 在浅底上红蓝或黄品红只有 2–3:1）；设置页第一格「跟随主题」回到默认。
   **三处同步点**：`terminal-palettes.ts PALETTE_LIST` ↔ `settings.rs KNOWN_PALETTES`（持久化白名单，
   漏加会让新调色板被静默丢弃、表现为「选了没生效」）↔ `TerminalPage XTERM_BG_FG`（每主题底/字色）。
   Windows 浅色主题下启动 gemini / qwen 时，由 `pty_report_terminal_colors` 主动把当前浅色前景/底色

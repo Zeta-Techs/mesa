@@ -1,0 +1,645 @@
+<!doctype html><meta charset="utf-8"><title>Mesa 主题改前与改后（2026-10-22）</title>
+<style>
+body{margin:0;padding:16px;background:#888;font:13px -apple-system,"PingFang SC",sans-serif}
+h1{font-size:15px;margin:0 0 12px;color:#111}
+.grid{display:grid;grid-template-columns:repeat(2,640px);gap:12px}
+.card{border-radius:10px;overflow:hidden;background:var(--color-canvas);color:var(--color-l2)}
+.card header{background:var(--color-rail);color:var(--color-l1);padding:6px 10px;font-weight:600;display:flex;gap:8px;align-items:baseline}
+.card header small{font-weight:400;color:var(--color-l3);font-size:11px}
+.row{display:flex;height:196px}
+nav{width:34px;background:var(--color-rail);display:flex;flex-direction:column;gap:9px;padding:10px 0;align-items:center}
+nav i{width:14px;height:14px;border-radius:4px;background:var(--color-l4,var(--color-l3));opacity:.55}
+nav i.sel{background:var(--color-nav-accent);opacity:1;box-shadow:-10px 0 0 -5px var(--color-nav-accent)}
+.chat{flex:1;padding:10px 12px;display:flex;flex-direction:column;gap:7px;min-width:0}
+.bubble{align-self:flex-end;background:var(--color-chat-bubble);color:var(--color-l1);padding:5px 9px;border-radius:10px;font-size:12px}
+.chat p{margin:0;font-size:12px;line-height:1.6;color:var(--color-chat-text,var(--color-l2))}
+.chat p strong{color:var(--color-chat-strong,var(--color-l1))}
+code{color:var(--chat-code);background:color-mix(in srgb,var(--chat-code) 14%,var(--color-inset));padding:0 3px;border-radius:3px;font:11.5px ui-monospace,Menlo}
+a{color:var(--color-link,#58a6ff)}
+.composer{margin-top:auto;background:var(--color-composer);border:1px solid var(--color-composer-edge);border-radius:10px;padding:8px;display:flex;align-items:center;gap:6px;font-size:12px}
+.caret{width:1.5px;height:14px;background:var(--color-mesa-amber)}
+.ph{color:var(--color-l3);flex:1}
+.chip{color:var(--color-l3);font-size:11px}
+.send{width:22px;height:13px;border-radius:4px;background:var(--color-mesa-amber);box-shadow:0 0 10px color-mix(in srgb,var(--color-mesa-amber) 35%,transparent)}
+.btns{display:flex;gap:10px;align-items:center;font-size:11px}
+.cta{background:var(--color-cta);color:var(--color-cta-text);border:0;border-radius:6px;padding:3px 12px;font-size:12px}
+.ok{color:var(--color-ok-text)}.warn{color:var(--color-warn-text,var(--color-caution-text))}
+.term{width:270px;padding:8px 10px;font:11px/1.6 ui-monospace,Menlo,monospace;white-space:nowrap;overflow:hidden;border-left:1px solid var(--color-hairline)}
+</style>
+<p style="margin:0 0 14px;color:#111;max-width:1290px;line-height:1.6">示意稿（生成自 App.css / TerminalPage XTERM_BG_FG / terminal-palettes.ts 的真实令牌）：左为各深色主题、右为同名浅色。上半是改前，下半是改后。终端里只示意 ANSI 调色板，Claude Code 自己用真彩画的部分不受调色板影响。</p><h1>改前：每套主题的聊天层 + 终端（默认调色板 Dark+ / Light+）</h1>
+<div class="grid"><section class="card" style="--color-rail:#0a0b0e;--color-canvas:#101218;--color-rail2:#161920;--color-strip:#1a1d26;--color-inset:#1e222c;--color-raised:#262a35;--color-rail-sel:#2b303d;--color-seg-sel:#313643;--color-bubble:#343947;--color-hairline:#2c3039;--color-field:#40454f;--color-hover:rgb(255 255 255 / 0.05);--color-l1:#e9e6e2;--color-l2:#bdbab4;--color-l3:#a3a2a3;--color-l4:#808086;--color-cta:#faa8d4;--color-cta-text:#2a1220;--color-cta-bd:#b06a8e;--color-nav-accent:#5a51d0;--color-folder:#8f8fa0;--color-ok:#10331f;--color-ok-text:#4cc38a;--color-err:#381e24;--color-err-text:#f07070;--color-warn:#37300f;--color-warn-text:#f0c010;--color-caution-text:color-mix(in srgb, var(--color-warn-text) 62%, var(--color-l2));--color-mesa-amber:#f5b83d;--color-mesa-amber-ink:#1d1608;--color-chat-bubble:color-mix(in oklab, var(--color-canvas), var(--color-l1) 4.5%);--color-composer:color-mix(in oklab, var(--color-canvas), var(--color-l1) 7%);--color-composer-edge:color-mix(in oklab, var(--color-canvas), var(--color-l1) 13%);--color-add:#8fd3a8;--color-del:#d98a93;--color-diff-add-bg:#10331f;--color-diff-add-fg:#4cc38a;--color-diff-del-bg:#381e24;--color-diff-del-fg:#f07070;--color-done:#47967a;--color-link:#60a0f0;--color-tabline:#c6c2ba;--color-cta-pill:#3d1f31;--color-cta-pill-text:#f6a9d6;--color-btn:#464543;--color-switch-off:#1e222c;--color-switch-knob:#e9e6e2;--color-editor-bg:#0e1015;--color-editor-fg:#b3b0aa;--color-editor-line:#57555c;--chat-code:#fc8c70">
+  <header>沉浸黑<small>midnight · 终端 dark-plus</small></header>
+  <div class="row">
+    <nav><i></i><i class="sel"></i><i></i><i></i></nav>
+    <div class="chat">
+      <div class="bubble">把 figures 里的图按期刊规格重画</div>
+      <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落里正文用这个颜色读起来是否舒服，看这一行。<a>查看改动</a></p>
+      <div class="composer"><span class="caret"></span><span class="ph">接着说…</span>
+        <span class="chip">⊢ 帮我批准</span><span class="send"></span></div>
+      <div class="btns"><button class="cta">开工</button><span class="ok">● 已完成</span><span class="warn">● 等你</span></div>
+    </div>
+    <div class="term" style="background:#0e1015;color:#b3b0aa">
+      <div><span style="color:#0dbc79">➜</span> <span style="color:#11a8cd">paper</span> <span style="color:#2472c8">git:(</span><span style="color:#cd3131">main</span><span style="color:#2472c8">)</span> claude</div>
+      <div><span style="color:#666666">╭─────────────────────╮</span></div>
+      <div><span style="color:#bc3fbc">●</span> Read <span style="color:#666666">figures/fig2.py</span></div>
+      <div><span style="color:#0dbc79">+ plt.rcParams["font.size"] = 8</span></div>
+      <div><span style="color:#cd3131">- plt.rcParams["font.size"] = 12</span></div>
+      <div><span style="color:#e5e510">⚠</span> 需要批准：<span style="color:#11a8cd">python fig2.py</span></div>
+      <div><span style="background:#264f78">选中文本</span> <span style="background:#aeafad;color:#0e1015">█</span></div>
+    </div>
+  </div>
+</section>
+<section class="card" style="--color-rail:#e5e5dd;--color-canvas:#edede9;--color-rail2:#f2f2ee;--color-strip:#f6f6f4;--color-inset:#fbfbf9;--color-raised:#ffffff;--color-rail-sel:#ddd9d1;--color-seg-sel:#cfcbc2;--color-bubble:#e4e1d8;--color-hairline:#d4d1c8;--color-field:#b8b4a8;--color-hover:rgb(0 0 0 / 0.05);--color-l1:#1a1814;--color-l2:#3f3c36;--color-l3:#6f6b62;--color-l4:#9a958b;--color-cta:#c2447f;--color-cta-text:#ffffff;--color-cta-bd:#a33368;--color-nav-accent:#5249c4;--color-folder:#7a7368;--color-ok:#d9f2e2;--color-ok-text:#177245;--color-err:#fbe3e6;--color-err-text:#b02a42;--color-warn:#fdf1cd;--color-warn-text:#8a6100;--color-caution-text:color-mix(in srgb, var(--color-warn-text) 62%, var(--color-l2));--color-mesa-amber:#e39a1c;--color-mesa-amber-ink:#1d1608;--color-chat-bubble:color-mix(in oklab, var(--color-canvas), var(--color-l1) 5%);--color-composer:#ffffff;--color-composer-edge:color-mix(in oklab, var(--color-canvas), var(--color-l1) 14%);--color-add:#177245;--color-del:#b02a42;--color-diff-add-bg:#d9f2e2;--color-diff-add-fg:#177245;--color-diff-del-bg:#fbe3e6;--color-diff-del-fg:#b02a42;--color-done:#2e7d5f;--color-link:#2470d8;--color-tabline:#5a564e;--color-cta-pill:#f6d7e6;--color-cta-pill-text:#a33368;--color-btn:#464543;--color-switch-off:#ccd1da;--color-switch-knob:#ffffff;--color-editor-bg:#ffffff;--color-editor-fg:#2a2620;--color-editor-line:#a39e93;--chat-code:#b23f2b">
+  <header>沉浸黑 · 浅<small>midnight-light · 终端 light-plus</small></header>
+  <div class="row">
+    <nav><i></i><i class="sel"></i><i></i><i></i></nav>
+    <div class="chat">
+      <div class="bubble">把 figures 里的图按期刊规格重画</div>
+      <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落里正文用这个颜色读起来是否舒服，看这一行。<a>查看改动</a></p>
+      <div class="composer"><span class="caret"></span><span class="ph">接着说…</span>
+        <span class="chip">⊢ 帮我批准</span><span class="send"></span></div>
+      <div class="btns"><button class="cta">开工</button><span class="ok">● 已完成</span><span class="warn">● 等你</span></div>
+    </div>
+    <div class="term" style="background:#fbfbf9;color:#3f3c36">
+      <div><span style="color:#00bc00">➜</span> <span style="color:#0598bc">paper</span> <span style="color:#0451a5">git:(</span><span style="color:#cd3131">main</span><span style="color:#0451a5">)</span> claude</div>
+      <div><span style="color:#666666">╭─────────────────────╮</span></div>
+      <div><span style="color:#bc05bc">●</span> Read <span style="color:#666666">figures/fig2.py</span></div>
+      <div><span style="color:#00bc00">+ plt.rcParams["font.size"] = 8</span></div>
+      <div><span style="color:#cd3131">- plt.rcParams["font.size"] = 12</span></div>
+      <div><span style="color:#949800">⚠</span> 需要批准：<span style="color:#0598bc">python fig2.py</span></div>
+      <div><span style="background:#add6ff">选中文本</span> <span style="background:#333333;color:#fbfbf9">█</span></div>
+    </div>
+  </div>
+</section>
+<section class="card" style="--color-rail:#232322;--color-canvas:#2d2d2b;--color-rail2:#262624;--color-strip:#333331;--color-inset:#383836;--color-raised:#3e3e3b;--color-rail-sel:#3d3d3a;--color-seg-sel:#434340;--color-bubble:#4a4a46;--color-hairline:#444441;--color-field:#4a4a47;--color-hover:rgb(255 255 255 / 0.05);--color-l1:#f9f9f7;--color-l2:#d2d2cc;--color-l3:#9d9d97;--color-l4:#747470;--color-cta:#cc7d5e;--color-cta-text:#f9f9f7;--color-cta-bd:#8f4f38;--color-nav-accent:var(--color-cta);--color-folder:#ab9a85;--color-ok:#10331f;--color-ok-text:#4cc38a;--color-err:#381e24;--color-err-text:#f07070;--color-warn:#37300f;--color-warn-text:#f0c010;--color-caution-text:color-mix(in srgb, var(--color-warn-text) 62%, var(--color-l2));--color-mesa-amber:#f5b83d;--color-mesa-amber-ink:#1d1608;--color-chat-bubble:color-mix(in oklab, var(--color-canvas), var(--color-l1) 4.5%);--color-composer:color-mix(in oklab, var(--color-canvas), var(--color-l1) 7%);--color-composer-edge:color-mix(in oklab, var(--color-canvas), var(--color-l1) 13%);--color-add:#8fd3a8;--color-del:#d98a93;--color-diff-add-bg:#10331f;--color-diff-add-fg:#4cc38a;--color-diff-del-bg:#381e24;--color-diff-del-fg:#f07070;--color-done:#6d9a6f;--color-link:#60a0f0;--color-tabline:#c6c2ba;--color-cta-pill:#3d211a;--color-cta-pill-text:#eda586;--color-btn:#464543;--color-switch-off:#1e222c;--color-switch-knob:#e9e6e2;--color-editor-bg:#2d2d2b;--color-editor-fg:#c9c9c4;--color-editor-line:#6a6a66;--chat-code:#fc8c70">
+  <header>陶土<small>terracotta · 终端 dark-plus</small></header>
+  <div class="row">
+    <nav><i></i><i class="sel"></i><i></i><i></i></nav>
+    <div class="chat">
+      <div class="bubble">把 figures 里的图按期刊规格重画</div>
+      <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落里正文用这个颜色读起来是否舒服，看这一行。<a>查看改动</a></p>
+      <div class="composer"><span class="caret"></span><span class="ph">接着说…</span>
+        <span class="chip">⊢ 帮我批准</span><span class="send"></span></div>
+      <div class="btns"><button class="cta">开工</button><span class="ok">● 已完成</span><span class="warn">● 等你</span></div>
+    </div>
+    <div class="term" style="background:#2d2d2b;color:#c9c9c4">
+      <div><span style="color:#0dbc79">➜</span> <span style="color:#11a8cd">paper</span> <span style="color:#2472c8">git:(</span><span style="color:#cd3131">main</span><span style="color:#2472c8">)</span> claude</div>
+      <div><span style="color:#666666">╭─────────────────────╮</span></div>
+      <div><span style="color:#bc3fbc">●</span> Read <span style="color:#666666">figures/fig2.py</span></div>
+      <div><span style="color:#0dbc79">+ plt.rcParams["font.size"] = 8</span></div>
+      <div><span style="color:#cd3131">- plt.rcParams["font.size"] = 12</span></div>
+      <div><span style="color:#e5e510">⚠</span> 需要批准：<span style="color:#11a8cd">python fig2.py</span></div>
+      <div><span style="background:#264f78">选中文本</span> <span style="background:#aeafad;color:#2d2d2b">█</span></div>
+    </div>
+  </div>
+</section>
+<section class="card" style="--color-rail:#ebe3db;--color-canvas:#f2ece7;--color-rail2:#f5f1ed;--color-strip:#f8f6f3;--color-inset:#fefaf6;--color-raised:#ffffff;--color-rail-sel:#e0d9d3;--color-seg-sel:#d3cbc3;--color-bubble:#e8e1da;--color-hairline:#d8d1ca;--color-field:#bcb3a9;--color-hover:rgb(0 0 0 / 0.05);--color-l1:#211d1a;--color-l2:#453f3a;--color-l3:#7a726b;--color-l4:#a49b92;--color-cta:#b25a3c;--color-cta-text:#ffffff;--color-cta-bd:#8f4f38;--color-nav-accent:var(--color-cta);--color-folder:#96887a;--color-ok:#d9f2e2;--color-ok-text:#177245;--color-err:#fbe3e6;--color-err-text:#b02a42;--color-warn:#fdf1cd;--color-warn-text:#8a6100;--color-caution-text:color-mix(in srgb, var(--color-warn-text) 62%, var(--color-l2));--color-mesa-amber:#e39a1c;--color-mesa-amber-ink:#1d1608;--color-chat-bubble:color-mix(in oklab, var(--color-canvas), var(--color-l1) 5%);--color-composer:#ffffff;--color-composer-edge:color-mix(in oklab, var(--color-canvas), var(--color-l1) 14%);--color-add:#177245;--color-del:#b02a42;--color-diff-add-bg:#d9f2e2;--color-diff-add-fg:#177245;--color-diff-del-bg:#fbe3e6;--color-diff-del-fg:#b02a42;--color-done:#4a7d4f;--color-link:#2470d8;--color-tabline:#6b6259;--color-cta-pill:#f3ddd2;--color-cta-pill-text:#8f4f38;--color-btn:#464543;--color-switch-off:#ccd1da;--color-switch-knob:#ffffff;--color-editor-bg:#ffffff;--color-editor-fg:#2a2521;--color-editor-line:#ab9f94;--chat-code:#b23f2b">
+  <header>陶土 · 浅<small>terracotta-light · 终端 light-plus</small></header>
+  <div class="row">
+    <nav><i></i><i class="sel"></i><i></i><i></i></nav>
+    <div class="chat">
+      <div class="bubble">把 figures 里的图按期刊规格重画</div>
+      <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落里正文用这个颜色读起来是否舒服，看这一行。<a>查看改动</a></p>
+      <div class="composer"><span class="caret"></span><span class="ph">接着说…</span>
+        <span class="chip">⊢ 帮我批准</span><span class="send"></span></div>
+      <div class="btns"><button class="cta">开工</button><span class="ok">● 已完成</span><span class="warn">● 等你</span></div>
+    </div>
+    <div class="term" style="background:#fefcfa;color:#453f3a">
+      <div><span style="color:#00bc00">➜</span> <span style="color:#0598bc">paper</span> <span style="color:#0451a5">git:(</span><span style="color:#cd3131">main</span><span style="color:#0451a5">)</span> claude</div>
+      <div><span style="color:#666666">╭─────────────────────╮</span></div>
+      <div><span style="color:#bc05bc">●</span> Read <span style="color:#666666">figures/fig2.py</span></div>
+      <div><span style="color:#00bc00">+ plt.rcParams["font.size"] = 8</span></div>
+      <div><span style="color:#cd3131">- plt.rcParams["font.size"] = 12</span></div>
+      <div><span style="color:#949800">⚠</span> 需要批准：<span style="color:#0598bc">python fig2.py</span></div>
+      <div><span style="background:#add6ff">选中文本</span> <span style="background:#333333;color:#fefcfa">█</span></div>
+    </div>
+  </div>
+</section>
+<section class="card" style="--color-rail:#0b0e14;--color-canvas:#10141c;--color-rail2:#0d1118;--color-strip:#181c23;--color-inset:#1c212b;--color-raised:#222834;--color-rail-sel:#1e232e;--color-seg-sel:#262c37;--color-bubble:#2b303c;--color-hairline:#272a33;--color-field:#31353f;--color-hover:rgb(255 255 255 / 0.05);--color-l1:#d9d7d2;--color-l2:#c8c6bf;--color-l3:#908e88;--color-l4:#6a6963;--color-cta:#e6b450;--color-cta-text:#1d1608;--color-cta-bd:#8a6a26;--color-nav-accent:var(--color-cta);--color-folder:#9a8a5f;--color-ok:#10331f;--color-ok-text:#4cc38a;--color-err:#381e24;--color-err-text:#f07070;--color-warn:#37300f;--color-warn-text:#f0c010;--color-caution-text:color-mix(in srgb, var(--color-warn-text) 62%, var(--color-l2));--color-mesa-amber:#f5b83d;--color-mesa-amber-ink:#1d1608;--color-chat-bubble:color-mix(in oklab, var(--color-canvas), var(--color-l1) 4.5%);--color-composer:color-mix(in oklab, var(--color-canvas), var(--color-l1) 7%);--color-composer-edge:color-mix(in oklab, var(--color-canvas), var(--color-l1) 13%);--color-add:#8fd3a8;--color-del:#d98a93;--color-diff-add-bg:#10331f;--color-diff-add-fg:#4cc38a;--color-diff-del-bg:#381e24;--color-diff-del-fg:#f07070;--color-done:#7da668;--color-link:#60a0f0;--color-tabline:#c6c2ba;--color-cta-pill:#3a2e10;--color-cta-pill-text:#eec363;--color-btn:#464543;--color-switch-off:#1e222c;--color-switch-knob:#e9e6e2;--color-editor-bg:#10141c;--color-editor-fg:#bfbdb6;--color-editor-line:#5f5e59;--chat-code:#fc8c70">
+  <header>琥珀<small>ayu · 终端 dark-plus</small></header>
+  <div class="row">
+    <nav><i></i><i class="sel"></i><i></i><i></i></nav>
+    <div class="chat">
+      <div class="bubble">把 figures 里的图按期刊规格重画</div>
+      <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落里正文用这个颜色读起来是否舒服，看这一行。<a>查看改动</a></p>
+      <div class="composer"><span class="caret"></span><span class="ph">接着说…</span>
+        <span class="chip">⊢ 帮我批准</span><span class="send"></span></div>
+      <div class="btns"><button class="cta">开工</button><span class="ok">● 已完成</span><span class="warn">● 等你</span></div>
+    </div>
+    <div class="term" style="background:#10141c;color:#bfbdb6">
+      <div><span style="color:#0dbc79">➜</span> <span style="color:#11a8cd">paper</span> <span style="color:#2472c8">git:(</span><span style="color:#cd3131">main</span><span style="color:#2472c8">)</span> claude</div>
+      <div><span style="color:#666666">╭─────────────────────╮</span></div>
+      <div><span style="color:#bc3fbc">●</span> Read <span style="color:#666666">figures/fig2.py</span></div>
+      <div><span style="color:#0dbc79">+ plt.rcParams["font.size"] = 8</span></div>
+      <div><span style="color:#cd3131">- plt.rcParams["font.size"] = 12</span></div>
+      <div><span style="color:#e5e510">⚠</span> 需要批准：<span style="color:#11a8cd">python fig2.py</span></div>
+      <div><span style="background:#264f78">选中文本</span> <span style="background:#aeafad;color:#10141c">█</span></div>
+    </div>
+  </div>
+</section>
+<section class="card" style="--color-rail:#e7e4da;--color-canvas:#efede6;--color-rail2:#f3f2ec;--color-strip:#f7f6f3;--color-inset:#fefaf6;--color-raised:#ffffff;--color-rail-sel:#e2dfd9;--color-seg-sel:#d4d0c8;--color-bubble:#e7e4de;--color-hairline:#d9d5cd;--color-field:#bab4a8;--color-hover:rgb(0 0 0 / 0.05);--color-l1:#20242e;--color-l2:#3f4754;--color-l3:#6c7380;--color-l4:#9ea3ac;--color-cta:#e6a417;--color-cta-text:#241a02;--color-cta-bd:#b27d12;--color-nav-accent:var(--color-cta);--color-folder:#a2905e;--color-ok:#d9f2e2;--color-ok-text:#177245;--color-err:#fbe3e6;--color-err-text:#b02a42;--color-warn:#fdf1cd;--color-warn-text:#8a6100;--color-caution-text:color-mix(in srgb, var(--color-warn-text) 62%, var(--color-l2));--color-mesa-amber:#e39a1c;--color-mesa-amber-ink:#1d1608;--color-chat-bubble:color-mix(in oklab, var(--color-canvas), var(--color-l1) 5%);--color-composer:#ffffff;--color-composer-edge:color-mix(in oklab, var(--color-canvas), var(--color-l1) 14%);--color-add:#177245;--color-del:#b02a42;--color-diff-add-bg:#d9f2e2;--color-diff-add-fg:#177245;--color-diff-del-bg:#fbe3e6;--color-diff-del-fg:#b02a42;--color-done:#567d3d;--color-link:#2470d8;--color-tabline:#5f6470;--color-cta-pill:#f7e8c8;--color-cta-pill-text:#8a6a26;--color-btn:#464543;--color-switch-off:#ccd1da;--color-switch-knob:#ffffff;--color-editor-bg:#ffffff;--color-editor-fg:#2a313d;--color-editor-line:#a7adb8;--chat-code:#b23f2b">
+  <header>琥珀 · 浅<small>ayu-light · 终端 light-plus</small></header>
+  <div class="row">
+    <nav><i></i><i class="sel"></i><i></i><i></i></nav>
+    <div class="chat">
+      <div class="bubble">把 figures 里的图按期刊规格重画</div>
+      <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落里正文用这个颜色读起来是否舒服，看这一行。<a>查看改动</a></p>
+      <div class="composer"><span class="caret"></span><span class="ph">接着说…</span>
+        <span class="chip">⊢ 帮我批准</span><span class="send"></span></div>
+      <div class="btns"><button class="cta">开工</button><span class="ok">● 已完成</span><span class="warn">● 等你</span></div>
+    </div>
+    <div class="term" style="background:#fffefd;color:#3f4754">
+      <div><span style="color:#00bc00">➜</span> <span style="color:#0598bc">paper</span> <span style="color:#0451a5">git:(</span><span style="color:#cd3131">main</span><span style="color:#0451a5">)</span> claude</div>
+      <div><span style="color:#666666">╭─────────────────────╮</span></div>
+      <div><span style="color:#bc05bc">●</span> Read <span style="color:#666666">figures/fig2.py</span></div>
+      <div><span style="color:#00bc00">+ plt.rcParams["font.size"] = 8</span></div>
+      <div><span style="color:#cd3131">- plt.rcParams["font.size"] = 12</span></div>
+      <div><span style="color:#949800">⚠</span> 需要批准：<span style="color:#0598bc">python fig2.py</span></div>
+      <div><span style="background:#add6ff">选中文本</span> <span style="background:#333333;color:#fffefd">█</span></div>
+    </div>
+  </div>
+</section>
+<section class="card" style="--color-rail:#181824;--color-canvas:#1e1e2e;--color-rail2:#1a1a28;--color-strip:#262738;--color-inset:#2b2c40;--color-raised:#313249;--color-rail-sel:#2e2e44;--color-seg-sel:#353650;--color-bubble:#3a3b56;--color-hairline:#34354a;--color-field:#3d3e54;--color-hover:rgb(255 255 255 / 0.05);--color-l1:#cdd6f4;--color-l2:#b8c1e2;--color-l3:#8790b8;--color-l4:#626a8e;--color-cta:#cba6f7;--color-cta-text:#2a1b3d;--color-cta-bd:#6b4d94;--color-nav-accent:var(--color-cta);--color-folder:#8f97b8;--color-ok:#10331f;--color-ok-text:#4cc38a;--color-err:#381e24;--color-err-text:#f07070;--color-warn:#37300f;--color-warn-text:#f0c010;--color-caution-text:color-mix(in srgb, var(--color-warn-text) 62%, var(--color-l2));--color-mesa-amber:#f5b83d;--color-mesa-amber-ink:#1d1608;--color-chat-bubble:color-mix(in oklab, var(--color-canvas), var(--color-l1) 4.5%);--color-composer:color-mix(in oklab, var(--color-canvas), var(--color-l1) 7%);--color-composer-edge:color-mix(in oklab, var(--color-canvas), var(--color-l1) 13%);--color-add:#8fd3a8;--color-del:#d98a93;--color-diff-add-bg:#10331f;--color-diff-add-fg:#4cc38a;--color-diff-del-bg:#381e24;--color-diff-del-fg:#f07070;--color-done:#63a48c;--color-link:#60a0f0;--color-tabline:#c6c2ba;--color-cta-pill:#2e2145;--color-cta-pill-text:#d3b3fa;--color-btn:#464543;--color-switch-off:#1e222c;--color-switch-knob:#e9e6e2;--color-editor-bg:#1e1e2e;--color-editor-fg:#aeb8dc;--color-editor-line:#565e83;--chat-code:#fc8c70">
+  <header>暮紫<small>mocha · 终端 dark-plus</small></header>
+  <div class="row">
+    <nav><i></i><i class="sel"></i><i></i><i></i></nav>
+    <div class="chat">
+      <div class="bubble">把 figures 里的图按期刊规格重画</div>
+      <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落里正文用这个颜色读起来是否舒服，看这一行。<a>查看改动</a></p>
+      <div class="composer"><span class="caret"></span><span class="ph">接着说…</span>
+        <span class="chip">⊢ 帮我批准</span><span class="send"></span></div>
+      <div class="btns"><button class="cta">开工</button><span class="ok">● 已完成</span><span class="warn">● 等你</span></div>
+    </div>
+    <div class="term" style="background:#1e1e2e;color:#aeb8dc">
+      <div><span style="color:#0dbc79">➜</span> <span style="color:#11a8cd">paper</span> <span style="color:#2472c8">git:(</span><span style="color:#cd3131">main</span><span style="color:#2472c8">)</span> claude</div>
+      <div><span style="color:#666666">╭─────────────────────╮</span></div>
+      <div><span style="color:#bc3fbc">●</span> Read <span style="color:#666666">figures/fig2.py</span></div>
+      <div><span style="color:#0dbc79">+ plt.rcParams["font.size"] = 8</span></div>
+      <div><span style="color:#cd3131">- plt.rcParams["font.size"] = 12</span></div>
+      <div><span style="color:#e5e510">⚠</span> 需要批准：<span style="color:#11a8cd">python fig2.py</span></div>
+      <div><span style="background:#264f78">选中文本</span> <span style="background:#aeafad;color:#1e1e2e">█</span></div>
+    </div>
+  </div>
+</section>
+<section class="card" style="--color-rail:#e3dfea;--color-canvas:#eeebf3;--color-rail2:#f2f0f6;--color-strip:#f6f5fa;--color-inset:#fbfafc;--color-raised:#ffffff;--color-rail-sel:#d8d3e4;--color-seg-sel:#c9c3d8;--color-bubble:#e2ddec;--color-hairline:#d0cadc;--color-field:#aea7c0;--color-hover:rgb(0 0 0 / 0.05);--color-l1:#2c2a3d;--color-l2:#4e4b63;--color-l3:#6e6b82;--color-l4:#9c99ad;--color-cta:#8839ef;--color-cta-text:#ffffff;--color-cta-bd:#6d2bd0;--color-nav-accent:var(--color-cta);--color-folder:#7d7898;--color-ok:#d9f2e2;--color-ok-text:#177245;--color-err:#fbe3e6;--color-err-text:#b02a42;--color-warn:#fdf1cd;--color-warn-text:#8a6100;--color-caution-text:color-mix(in srgb, var(--color-warn-text) 62%, var(--color-l2));--color-mesa-amber:#e39a1c;--color-mesa-amber-ink:#1d1608;--color-chat-bubble:color-mix(in oklab, var(--color-canvas), var(--color-l1) 5%);--color-composer:#ffffff;--color-composer-edge:color-mix(in oklab, var(--color-canvas), var(--color-l1) 14%);--color-add:#177245;--color-del:#b02a42;--color-diff-add-bg:#d9f2e2;--color-diff-add-fg:#177245;--color-diff-del-bg:#fbe3e6;--color-diff-del-fg:#b02a42;--color-done:#3f7d6a;--color-link:#1e66f5;--color-tabline:#5c5870;--color-cta-pill:#e6d6fb;--color-cta-pill-text:#6d2bd0;--color-btn:#464543;--color-switch-off:#ccd1da;--color-switch-knob:#ffffff;--color-editor-bg:#ffffff;--color-editor-fg:#2c2a3d;--color-editor-line:#9c99ad;--chat-code:#b23f2b">
+  <header>暮紫 · 浅<small>mocha-light · 终端 light-plus</small></header>
+  <div class="row">
+    <nav><i></i><i class="sel"></i><i></i><i></i></nav>
+    <div class="chat">
+      <div class="bubble">把 figures 里的图按期刊规格重画</div>
+      <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落里正文用这个颜色读起来是否舒服，看这一行。<a>查看改动</a></p>
+      <div class="composer"><span class="caret"></span><span class="ph">接着说…</span>
+        <span class="chip">⊢ 帮我批准</span><span class="send"></span></div>
+      <div class="btns"><button class="cta">开工</button><span class="ok">● 已完成</span><span class="warn">● 等你</span></div>
+    </div>
+    <div class="term" style="background:#fbfafc;color:#4e4b63">
+      <div><span style="color:#00bc00">➜</span> <span style="color:#0598bc">paper</span> <span style="color:#0451a5">git:(</span><span style="color:#cd3131">main</span><span style="color:#0451a5">)</span> claude</div>
+      <div><span style="color:#666666">╭─────────────────────╮</span></div>
+      <div><span style="color:#bc05bc">●</span> Read <span style="color:#666666">figures/fig2.py</span></div>
+      <div><span style="color:#00bc00">+ plt.rcParams["font.size"] = 8</span></div>
+      <div><span style="color:#cd3131">- plt.rcParams["font.size"] = 12</span></div>
+      <div><span style="color:#949800">⚠</span> 需要批准：<span style="color:#0598bc">python fig2.py</span></div>
+      <div><span style="background:#add6ff">选中文本</span> <span style="background:#333333;color:#fbfafc">█</span></div>
+    </div>
+  </div>
+</section>
+<section class="card" style="--color-rail:#0d0d0d;--color-canvas:#111111;--color-rail2:#101010;--color-strip:#1c1c1c;--color-inset:#212121;--color-raised:#272727;--color-rail-sel:#262626;--color-seg-sel:#2b2b2b;--color-bubble:#303030;--color-hairline:#2c2c2c;--color-field:#383838;--color-hover:rgb(255 255 255 / 0.05);--color-l1:#fcfcfc;--color-l2:#d2d2d2;--color-l3:#989898;--color-l4:#6e6e6e;--color-cta:#0169cc;--color-cta-text:#eaf4ff;--color-cta-bd:#014a8f;--color-nav-accent:var(--color-cta);--color-folder:#999999;--color-ok:#10331f;--color-ok-text:#4cc38a;--color-err:#381e24;--color-err-text:#f07070;--color-warn:#37300f;--color-warn-text:#f0c010;--color-caution-text:color-mix(in srgb, var(--color-warn-text) 62%, var(--color-l2));--color-mesa-amber:#f5b83d;--color-mesa-amber-ink:#1d1608;--color-chat-bubble:color-mix(in oklab, var(--color-canvas), var(--color-l1) 4.5%);--color-composer:color-mix(in oklab, var(--color-canvas), var(--color-l1) 7%);--color-composer-edge:color-mix(in oklab, var(--color-canvas), var(--color-l1) 13%);--color-add:#8fd3a8;--color-del:#d98a93;--color-diff-add-bg:#10331f;--color-diff-add-fg:#4cc38a;--color-diff-del-bg:#381e24;--color-diff-del-fg:#f07070;--color-done:#5c987a;--color-link:#60a0f0;--color-tabline:#c6c2ba;--color-cta-pill:#0d2d4d;--color-cta-pill-text:#63a9ef;--color-btn:#464543;--color-switch-off:#1e222c;--color-switch-knob:#e9e6e2;--color-editor-bg:#111111;--color-editor-fg:#c9c9c9;--color-editor-line:#616161;--chat-code:#fc8c70">
+  <header>极简灰蓝<small>neutral · 终端 dark-plus</small></header>
+  <div class="row">
+    <nav><i></i><i class="sel"></i><i></i><i></i></nav>
+    <div class="chat">
+      <div class="bubble">把 figures 里的图按期刊规格重画</div>
+      <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落里正文用这个颜色读起来是否舒服，看这一行。<a>查看改动</a></p>
+      <div class="composer"><span class="caret"></span><span class="ph">接着说…</span>
+        <span class="chip">⊢ 帮我批准</span><span class="send"></span></div>
+      <div class="btns"><button class="cta">开工</button><span class="ok">● 已完成</span><span class="warn">● 等你</span></div>
+    </div>
+    <div class="term" style="background:#111111;color:#c9c9c9">
+      <div><span style="color:#0dbc79">➜</span> <span style="color:#11a8cd">paper</span> <span style="color:#2472c8">git:(</span><span style="color:#cd3131">main</span><span style="color:#2472c8">)</span> claude</div>
+      <div><span style="color:#666666">╭─────────────────────╮</span></div>
+      <div><span style="color:#bc3fbc">●</span> Read <span style="color:#666666">figures/fig2.py</span></div>
+      <div><span style="color:#0dbc79">+ plt.rcParams["font.size"] = 8</span></div>
+      <div><span style="color:#cd3131">- plt.rcParams["font.size"] = 12</span></div>
+      <div><span style="color:#e5e510">⚠</span> 需要批准：<span style="color:#11a8cd">python fig2.py</span></div>
+      <div><span style="background:#264f78">选中文本</span> <span style="background:#aeafad;color:#111111">█</span></div>
+    </div>
+  </div>
+</section>
+<section class="card" style="--color-rail:#e4e4e4;--color-canvas:#ededed;--color-rail2:#f1f1f1;--color-strip:#f6f6f6;--color-inset:#fafafa;--color-raised:#ffffff;--color-rail-sel:#dedede;--color-seg-sel:#d0d0d0;--color-bubble:#e5e5e5;--color-hairline:#d6d6d6;--color-field:#bababa;--color-hover:rgb(0 0 0 / 0.05);--color-l1:#161616;--color-l2:#3a3a3a;--color-l3:#6e6e6e;--color-l4:#9d9d9d;--color-cta:#0169cc;--color-cta-text:#ffffff;--color-cta-bd:#014a8f;--color-nav-accent:var(--color-cta);--color-folder:#8a8a8a;--color-ok:#d9f2e2;--color-ok-text:#177245;--color-err:#fbe3e6;--color-err-text:#b02a42;--color-warn:#fdf1cd;--color-warn-text:#8a6100;--color-caution-text:color-mix(in srgb, var(--color-warn-text) 62%, var(--color-l2));--color-mesa-amber:#e39a1c;--color-mesa-amber-ink:#1d1608;--color-chat-bubble:color-mix(in oklab, var(--color-canvas), var(--color-l1) 5%);--color-composer:#ffffff;--color-composer-edge:color-mix(in oklab, var(--color-canvas), var(--color-l1) 14%);--color-add:#177245;--color-del:#b02a42;--color-diff-add-bg:#d9f2e2;--color-diff-add-fg:#177245;--color-diff-del-bg:#fbe3e6;--color-diff-del-fg:#b02a42;--color-done:#3a7d60;--color-link:#0169cc;--color-tabline:#555555;--color-cta-pill:#d3e6f8;--color-cta-pill-text:#014a8f;--color-btn:#464543;--color-switch-off:#ccd1da;--color-switch-knob:#ffffff;--color-editor-bg:#ffffff;--color-editor-fg:#1e1e1e;--color-editor-line:#a0a0a0;--chat-code:#b23f2b">
+  <header>极简灰蓝 · 浅<small>neutral-light · 终端 light-plus</small></header>
+  <div class="row">
+    <nav><i></i><i class="sel"></i><i></i><i></i></nav>
+    <div class="chat">
+      <div class="bubble">把 figures 里的图按期刊规格重画</div>
+      <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落里正文用这个颜色读起来是否舒服，看这一行。<a>查看改动</a></p>
+      <div class="composer"><span class="caret"></span><span class="ph">接着说…</span>
+        <span class="chip">⊢ 帮我批准</span><span class="send"></span></div>
+      <div class="btns"><button class="cta">开工</button><span class="ok">● 已完成</span><span class="warn">● 等你</span></div>
+    </div>
+    <div class="term" style="background:#fdfdfd;color:#3a3a3a">
+      <div><span style="color:#00bc00">➜</span> <span style="color:#0598bc">paper</span> <span style="color:#0451a5">git:(</span><span style="color:#cd3131">main</span><span style="color:#0451a5">)</span> claude</div>
+      <div><span style="color:#666666">╭─────────────────────╮</span></div>
+      <div><span style="color:#bc05bc">●</span> Read <span style="color:#666666">figures/fig2.py</span></div>
+      <div><span style="color:#00bc00">+ plt.rcParams["font.size"] = 8</span></div>
+      <div><span style="color:#cd3131">- plt.rcParams["font.size"] = 12</span></div>
+      <div><span style="color:#949800">⚠</span> 需要批准：<span style="color:#0598bc">python fig2.py</span></div>
+      <div><span style="background:#add6ff">选中文本</span> <span style="background:#333333;color:#fdfdfd">█</span></div>
+    </div>
+  </div>
+</section>
+<section class="card" style="--color-rail:#1e2029;--color-canvas:#282a36;--color-rail2:#22242e;--color-strip:#33343f;--color-inset:#393a47;--color-raised:#3f404f;--color-rail-sel:#3d3f4e;--color-seg-sel:#434453;--color-bubble:#484a5c;--color-hairline:#434455;--color-field:#494a5a;--color-hover:rgb(255 255 255 / 0.05);--color-l1:#f8f8f2;--color-l2:#d8d8d2;--color-l3:#9d9d97;--color-l4:#747476;--color-cta:#ff79c6;--color-cta-text:#38102a;--color-cta-bd:#a64a80;--color-nav-accent:var(--color-cta);--color-folder:#8289b0;--color-ok:#10331f;--color-ok-text:#4cc38a;--color-err:#381e24;--color-err-text:#f07070;--color-warn:#37300f;--color-warn-text:#f0c010;--color-caution-text:color-mix(in srgb, var(--color-warn-text) 62%, var(--color-l2));--color-mesa-amber:#f5b83d;--color-mesa-amber-ink:#1d1608;--color-chat-bubble:color-mix(in oklab, var(--color-canvas), var(--color-l1) 4.5%);--color-composer:color-mix(in oklab, var(--color-canvas), var(--color-l1) 7%);--color-composer-edge:color-mix(in oklab, var(--color-canvas), var(--color-l1) 13%);--color-add:#8fd3a8;--color-del:#d98a93;--color-diff-add-bg:#10331f;--color-diff-add-fg:#4cc38a;--color-diff-del-bg:#381e24;--color-diff-del-fg:#f07070;--color-done:#54b890;--color-link:#60a0f0;--color-tabline:#c6c2ba;--color-cta-pill:#401a35;--color-cta-pill-text:#ff8fd0;--color-btn:#464543;--color-switch-off:#1e222c;--color-switch-knob:#e9e6e2;--color-editor-bg:#282a36;--color-editor-fg:#cfcfc9;--color-editor-line:#68686a;--chat-code:#fc8c70">
+  <header>哥特<small>dracula · 终端 dark-plus</small></header>
+  <div class="row">
+    <nav><i></i><i class="sel"></i><i></i><i></i></nav>
+    <div class="chat">
+      <div class="bubble">把 figures 里的图按期刊规格重画</div>
+      <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落里正文用这个颜色读起来是否舒服，看这一行。<a>查看改动</a></p>
+      <div class="composer"><span class="caret"></span><span class="ph">接着说…</span>
+        <span class="chip">⊢ 帮我批准</span><span class="send"></span></div>
+      <div class="btns"><button class="cta">开工</button><span class="ok">● 已完成</span><span class="warn">● 等你</span></div>
+    </div>
+    <div class="term" style="background:#282a36;color:#cfcfc9">
+      <div><span style="color:#0dbc79">➜</span> <span style="color:#11a8cd">paper</span> <span style="color:#2472c8">git:(</span><span style="color:#cd3131">main</span><span style="color:#2472c8">)</span> claude</div>
+      <div><span style="color:#666666">╭─────────────────────╮</span></div>
+      <div><span style="color:#bc3fbc">●</span> Read <span style="color:#666666">figures/fig2.py</span></div>
+      <div><span style="color:#0dbc79">+ plt.rcParams["font.size"] = 8</span></div>
+      <div><span style="color:#cd3131">- plt.rcParams["font.size"] = 12</span></div>
+      <div><span style="color:#e5e510">⚠</span> 需要批准：<span style="color:#11a8cd">python fig2.py</span></div>
+      <div><span style="background:#264f78">选中文本</span> <span style="background:#aeafad;color:#282a36">█</span></div>
+    </div>
+  </div>
+</section>
+<section class="card" style="--color-rail:#e7e2ef;--color-canvas:#efecf5;--color-rail2:#f3f1f7;--color-strip:#f7f5fa;--color-inset:#fbfafc;--color-raised:#ffffff;--color-rail-sel:#e0dae9;--color-seg-sel:#d0c9de;--color-bubble:#e6e0ee;--color-hairline:#d5cfe0;--color-field:#b7aec6;--color-hover:rgb(0 0 0 / 0.05);--color-l1:#241f31;--color-l2:#403a4e;--color-l3:#716a80;--color-l4:#9d97ab;--color-cta:#d6336c;--color-cta-text:#ffffff;--color-cta-bd:#b02855;--color-nav-accent:var(--color-cta);--color-folder:#7f7a9c;--color-ok:#d9f2e2;--color-ok-text:#177245;--color-err:#fbe3e6;--color-err-text:#b02a42;--color-warn:#fdf1cd;--color-warn-text:#8a6100;--color-caution-text:color-mix(in srgb, var(--color-warn-text) 62%, var(--color-l2));--color-mesa-amber:#e39a1c;--color-mesa-amber-ink:#1d1608;--color-chat-bubble:color-mix(in oklab, var(--color-canvas), var(--color-l1) 5%);--color-composer:#ffffff;--color-composer-edge:color-mix(in oklab, var(--color-canvas), var(--color-l1) 14%);--color-add:#177245;--color-del:#b02a42;--color-diff-add-bg:#d9f2e2;--color-diff-add-fg:#177245;--color-diff-del-bg:#fbe3e6;--color-diff-del-fg:#b02a42;--color-done:#2f8a63;--color-link:#2470d8;--color-tabline:#5f5870;--color-cta-pill:#f6d8e4;--color-cta-pill-text:#a02850;--color-btn:#464543;--color-switch-off:#ccd1da;--color-switch-knob:#ffffff;--color-editor-bg:#ffffff;--color-editor-fg:#2c2739;--color-editor-line:#a29cb3;--chat-code:#b23f2b">
+  <header>哥特 · 浅<small>dracula-light · 终端 light-plus</small></header>
+  <div class="row">
+    <nav><i></i><i class="sel"></i><i></i><i></i></nav>
+    <div class="chat">
+      <div class="bubble">把 figures 里的图按期刊规格重画</div>
+      <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落里正文用这个颜色读起来是否舒服，看这一行。<a>查看改动</a></p>
+      <div class="composer"><span class="caret"></span><span class="ph">接着说…</span>
+        <span class="chip">⊢ 帮我批准</span><span class="send"></span></div>
+      <div class="btns"><button class="cta">开工</button><span class="ok">● 已完成</span><span class="warn">● 等你</span></div>
+    </div>
+    <div class="term" style="background:#fefdff;color:#403a4e">
+      <div><span style="color:#00bc00">➜</span> <span style="color:#0598bc">paper</span> <span style="color:#0451a5">git:(</span><span style="color:#cd3131">main</span><span style="color:#0451a5">)</span> claude</div>
+      <div><span style="color:#666666">╭─────────────────────╮</span></div>
+      <div><span style="color:#bc05bc">●</span> Read <span style="color:#666666">figures/fig2.py</span></div>
+      <div><span style="color:#00bc00">+ plt.rcParams["font.size"] = 8</span></div>
+      <div><span style="color:#cd3131">- plt.rcParams["font.size"] = 12</span></div>
+      <div><span style="color:#949800">⚠</span> 需要批准：<span style="color:#0598bc">python fig2.py</span></div>
+      <div><span style="background:#add6ff">选中文本</span> <span style="background:#333333;color:#fefdff">█</span></div>
+    </div>
+  </div>
+</section>
+<section class="card" style="--color-rail:#0e1014;--color-canvas:#12141a;--color-rail2:#13161c;--color-strip:#1a2230;--color-inset:#202938;--color-raised:#252f41;--color-rail-sel:#232c3c;--color-seg-sel:#293447;--color-bubble:#2f3b4e;--color-hairline:#2b323f;--color-field:#363e4e;--color-hover:rgb(255 255 255 / 0.05);--color-l1:#e4e4e7;--color-l2:#c2c2c9;--color-l3:#878794;--color-l4:#62626c;--color-cta:#ff5c5c;--color-cta-text:#3d0f0f;--color-cta-bd:#a83232;--color-nav-accent:var(--color-cta);--color-folder:#8291ab;--color-ok:#10331f;--color-ok-text:#4cc38a;--color-err:#381e24;--color-err-text:#f07070;--color-warn:#37300f;--color-warn-text:#f0c010;--color-caution-text:color-mix(in srgb, var(--color-warn-text) 62%, var(--color-l2));--color-mesa-amber:#f5b83d;--color-mesa-amber-ink:#1d1608;--color-chat-bubble:color-mix(in oklab, var(--color-canvas), var(--color-l1) 4.5%);--color-composer:color-mix(in oklab, var(--color-canvas), var(--color-l1) 7%);--color-composer-edge:color-mix(in oklab, var(--color-canvas), var(--color-l1) 13%);--color-add:#8fd3a8;--color-del:#d98a93;--color-diff-add-bg:#10331f;--color-diff-add-fg:#4cc38a;--color-diff-del-bg:#381e24;--color-diff-del-fg:#f07070;--color-done:#4c9d7d;--color-link:#60a0f0;--color-tabline:#c6c2ba;--color-cta-pill:#3d1414;--color-cta-pill-text:#ff8080;--color-btn:#464543;--color-switch-off:#1e222c;--color-switch-knob:#e9e6e2;--color-editor-bg:#111827;--color-editor-fg:#b9b9c0;--color-editor-line:#55555f;--chat-code:#fc8c70">
+  <header>灰蓝正红<small>shadcn · 终端 dark-plus</small></header>
+  <div class="row">
+    <nav><i></i><i class="sel"></i><i></i><i></i></nav>
+    <div class="chat">
+      <div class="bubble">把 figures 里的图按期刊规格重画</div>
+      <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落里正文用这个颜色读起来是否舒服，看这一行。<a>查看改动</a></p>
+      <div class="composer"><span class="caret"></span><span class="ph">接着说…</span>
+        <span class="chip">⊢ 帮我批准</span><span class="send"></span></div>
+      <div class="btns"><button class="cta">开工</button><span class="ok">● 已完成</span><span class="warn">● 等你</span></div>
+    </div>
+    <div class="term" style="background:#111827;color:#b9b9c0">
+      <div><span style="color:#0dbc79">➜</span> <span style="color:#11a8cd">paper</span> <span style="color:#2472c8">git:(</span><span style="color:#cd3131">main</span><span style="color:#2472c8">)</span> claude</div>
+      <div><span style="color:#666666">╭─────────────────────╮</span></div>
+      <div><span style="color:#bc3fbc">●</span> Read <span style="color:#666666">figures/fig2.py</span></div>
+      <div><span style="color:#0dbc79">+ plt.rcParams["font.size"] = 8</span></div>
+      <div><span style="color:#cd3131">- plt.rcParams["font.size"] = 12</span></div>
+      <div><span style="color:#e5e510">⚠</span> 需要批准：<span style="color:#11a8cd">python fig2.py</span></div>
+      <div><span style="background:#264f78">选中文本</span> <span style="background:#aeafad;color:#111827">█</span></div>
+    </div>
+  </div>
+</section>
+<section class="card" style="--color-rail:#dde3ee;--color-canvas:#e8ecf3;--color-rail2:#eef1f6;--color-strip:#f3f5f9;--color-inset:#fafbfc;--color-raised:#ffffff;--color-rail-sel:#d0d7e4;--color-seg-sel:#c5cddb;--color-bubble:#dfe5ee;--color-hairline:#cdd3de;--color-field:#aeb6c4;--color-hover:rgb(0 0 0 / 0.05);--color-l1:#101828;--color-l2:#344054;--color-l3:#667085;--color-l4:#98a2b3;--color-cta:#dc2626;--color-cta-text:#ffffff;--color-cta-bd:#a83232;--color-nav-accent:var(--color-cta);--color-folder:#75819a;--color-ok:#d9f2e2;--color-ok-text:#177245;--color-err:#fbe3e6;--color-err-text:#b02a42;--color-warn:#fdf1cd;--color-warn-text:#8a6100;--color-caution-text:color-mix(in srgb, var(--color-warn-text) 62%, var(--color-l2));--color-mesa-amber:#e39a1c;--color-mesa-amber-ink:#1d1608;--color-chat-bubble:color-mix(in oklab, var(--color-canvas), var(--color-l1) 5%);--color-composer:#ffffff;--color-composer-edge:color-mix(in oklab, var(--color-canvas), var(--color-l1) 14%);--color-add:#177245;--color-del:#b02a42;--color-diff-add-bg:#d9f2e2;--color-diff-add-fg:#177245;--color-diff-del-bg:#fbe3e6;--color-diff-del-fg:#b02a42;--color-done:#2c7d5c;--color-link:#2470d8;--color-tabline:#475467;--color-cta-pill:#fadcdc;--color-cta-pill-text:#a83232;--color-btn:#464543;--color-switch-off:#ccd1da;--color-switch-knob:#ffffff;--color-editor-bg:#ffffff;--color-editor-fg:#182230;--color-editor-line:#9aa4b2;--chat-code:#b23f2b">
+  <header>灰蓝正红 · 浅<small>shadcn-light · 终端 light-plus</small></header>
+  <div class="row">
+    <nav><i></i><i class="sel"></i><i></i><i></i></nav>
+    <div class="chat">
+      <div class="bubble">把 figures 里的图按期刊规格重画</div>
+      <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落里正文用这个颜色读起来是否舒服，看这一行。<a>查看改动</a></p>
+      <div class="composer"><span class="caret"></span><span class="ph">接着说…</span>
+        <span class="chip">⊢ 帮我批准</span><span class="send"></span></div>
+      <div class="btns"><button class="cta">开工</button><span class="ok">● 已完成</span><span class="warn">● 等你</span></div>
+    </div>
+    <div class="term" style="background:#fefefe;color:#344054">
+      <div><span style="color:#00bc00">➜</span> <span style="color:#0598bc">paper</span> <span style="color:#0451a5">git:(</span><span style="color:#cd3131">main</span><span style="color:#0451a5">)</span> claude</div>
+      <div><span style="color:#666666">╭─────────────────────╮</span></div>
+      <div><span style="color:#bc05bc">●</span> Read <span style="color:#666666">figures/fig2.py</span></div>
+      <div><span style="color:#00bc00">+ plt.rcParams["font.size"] = 8</span></div>
+      <div><span style="color:#cd3131">- plt.rcParams["font.size"] = 12</span></div>
+      <div><span style="color:#949800">⚠</span> 需要批准：<span style="color:#0598bc">python fig2.py</span></div>
+      <div><span style="background:#add6ff">选中文本</span> <span style="background:#333333;color:#fefefe">█</span></div>
+    </div>
+  </div>
+</section></div><div style="height:28px"></div><h1>改后：首装琥珀；深色终端底 = 画布；终端调色板跟随主题；沉浸黑侧栏选中跟 CTA；聊天正文与加粗按长读调</h1>
+<div class="grid"><section class="card" style="--color-rail:#0a0b0e;--color-canvas:#101218;--color-rail2:#161920;--color-strip:#1a1d26;--color-inset:#1e222c;--color-raised:#262a35;--color-rail-sel:#2b303d;--color-seg-sel:#313643;--color-bubble:#343947;--color-hairline:#2c3039;--color-field:#40454f;--color-hover:rgb(255 255 255 / 0.05);--color-l1:#e9e6e2;--color-l2:#bdbab4;--color-l3:#a3a2a3;--color-l4:#808086;--color-cta:#faa8d4;--color-cta-text:#2a1220;--color-cta-bd:#b06a8e;--color-nav-accent:var(--color-cta);--color-folder:#8f8fa0;--color-ok:#10331f;--color-ok-text:#4cc38a;--color-err:#381e24;--color-err-text:#f07070;--color-warn:#37300f;--color-warn-text:#f0c010;--color-caution-text:color-mix(in srgb, var(--color-warn-text) 62%, var(--color-l2));--color-mesa-amber:#f5b83d;--color-mesa-amber-ink:#1d1608;--color-chat-bubble:color-mix(in oklab, var(--color-canvas), var(--color-l1) 4.5%);--color-composer:color-mix(in oklab, var(--color-canvas), var(--color-l1) 7%);--color-composer-edge:color-mix(in oklab, var(--color-canvas), var(--color-l1) 13%);--color-chat-text:var(--color-l2);--color-chat-strong:color-mix(in oklab, var(--color-l1) 60%, var(--color-l2));--color-add:#8fd3a8;--color-del:#d98a93;--color-diff-add-bg:#10331f;--color-diff-add-fg:#4cc38a;--color-diff-del-bg:#381e24;--color-diff-del-fg:#f07070;--color-done:#47967a;--color-link:#60a0f0;--color-tabline:#c6c2ba;--color-cta-pill:#3d1f31;--color-cta-pill-text:#f6a9d6;--color-btn:#464543;--color-switch-off:#1e222c;--color-switch-knob:#e9e6e2;--color-editor-bg:#101218;--color-editor-fg:#b3b0aa;--color-editor-line:#57555c;--chat-code:#fc8c70">
+  <header>沉浸黑<small>midnight · 终端 one-dark</small></header>
+  <div class="row">
+    <nav><i></i><i class="sel"></i><i></i><i></i></nav>
+    <div class="chat">
+      <div class="bubble">把 figures 里的图按期刊规格重画</div>
+      <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落里正文用这个颜色读起来是否舒服，看这一行。<a>查看改动</a></p>
+      <div class="composer"><span class="caret"></span><span class="ph">接着说…</span>
+        <span class="chip">⊢ 帮我批准</span><span class="send"></span></div>
+      <div class="btns"><button class="cta">开工</button><span class="ok">● 已完成</span><span class="warn">● 等你</span></div>
+    </div>
+    <div class="term" style="background:#101218;color:#b3b0aa">
+      <div><span style="color:#98c379">➜</span> <span style="color:#56b6c2">paper</span> <span style="color:#61afef">git:(</span><span style="color:#e06c75">main</span><span style="color:#61afef">)</span> claude</div>
+      <div><span style="color:#545862">╭─────────────────────╮</span></div>
+      <div><span style="color:#c678dd">●</span> Read <span style="color:#545862">figures/fig2.py</span></div>
+      <div><span style="color:#98c379">+ plt.rcParams["font.size"] = 8</span></div>
+      <div><span style="color:#e06c75">- plt.rcParams["font.size"] = 12</span></div>
+      <div><span style="color:#d19a66">⚠</span> 需要批准：<span style="color:#56b6c2">python fig2.py</span></div>
+      <div><span style="background:#264f78">选中文本</span> <span style="background:#aeafad;color:#101218">█</span></div>
+    </div>
+  </div>
+</section>
+<section class="card" style="--color-rail:#e5e5dd;--color-canvas:#edede9;--color-rail2:#f2f2ee;--color-strip:#f6f6f4;--color-inset:#fbfbf9;--color-raised:#ffffff;--color-rail-sel:#ddd9d1;--color-seg-sel:#cfcbc2;--color-bubble:#e4e1d8;--color-hairline:#d4d1c8;--color-field:#b8b4a8;--color-hover:rgb(0 0 0 / 0.05);--color-l1:#1a1814;--color-l2:#3f3c36;--color-l3:#6f6b62;--color-l4:#9a958b;--color-cta:#c2447f;--color-cta-text:#ffffff;--color-cta-bd:#a33368;--color-nav-accent:var(--color-cta);--color-folder:#7a7368;--color-ok:#d9f2e2;--color-ok-text:#177245;--color-err:#fbe3e6;--color-err-text:#b02a42;--color-warn:#fdf1cd;--color-warn-text:#8a6100;--color-caution-text:color-mix(in srgb, var(--color-warn-text) 62%, var(--color-l2));--color-mesa-amber:#e39a1c;--color-mesa-amber-ink:#1d1608;--color-chat-bubble:color-mix(in oklab, var(--color-canvas), var(--color-l1) 5%);--color-composer:#ffffff;--color-composer-edge:color-mix(in oklab, var(--color-canvas), var(--color-l1) 14%);--color-chat-text:var(--color-l2);--color-chat-strong:color-mix(in oklab, var(--color-l1) 60%, var(--color-l2));--color-add:#177245;--color-del:#b02a42;--color-diff-add-bg:#d9f2e2;--color-diff-add-fg:#177245;--color-diff-del-bg:#fbe3e6;--color-diff-del-fg:#b02a42;--color-done:#2e7d5f;--color-link:#2470d8;--color-tabline:#5a564e;--color-cta-pill:#f6d7e6;--color-cta-pill-text:#a33368;--color-btn:#464543;--color-switch-off:#ccd1da;--color-switch-knob:#ffffff;--color-editor-bg:#ffffff;--color-editor-fg:#2a2620;--color-editor-line:#a39e93;--chat-code:#b23f2b">
+  <header>沉浸黑 · 浅<small>midnight-light · 终端 light-plus</small></header>
+  <div class="row">
+    <nav><i></i><i class="sel"></i><i></i><i></i></nav>
+    <div class="chat">
+      <div class="bubble">把 figures 里的图按期刊规格重画</div>
+      <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落里正文用这个颜色读起来是否舒服，看这一行。<a>查看改动</a></p>
+      <div class="composer"><span class="caret"></span><span class="ph">接着说…</span>
+        <span class="chip">⊢ 帮我批准</span><span class="send"></span></div>
+      <div class="btns"><button class="cta">开工</button><span class="ok">● 已完成</span><span class="warn">● 等你</span></div>
+    </div>
+    <div class="term" style="background:#fbfbf9;color:#3f3c36">
+      <div><span style="color:#00bc00">➜</span> <span style="color:#0598bc">paper</span> <span style="color:#0451a5">git:(</span><span style="color:#cd3131">main</span><span style="color:#0451a5">)</span> claude</div>
+      <div><span style="color:#666666">╭─────────────────────╮</span></div>
+      <div><span style="color:#bc05bc">●</span> Read <span style="color:#666666">figures/fig2.py</span></div>
+      <div><span style="color:#00bc00">+ plt.rcParams["font.size"] = 8</span></div>
+      <div><span style="color:#cd3131">- plt.rcParams["font.size"] = 12</span></div>
+      <div><span style="color:#949800">⚠</span> 需要批准：<span style="color:#0598bc">python fig2.py</span></div>
+      <div><span style="background:#add6ff">选中文本</span> <span style="background:#333333;color:#fbfbf9">█</span></div>
+    </div>
+  </div>
+</section>
+<section class="card" style="--color-rail:#232322;--color-canvas:#2d2d2b;--color-rail2:#262624;--color-strip:#333331;--color-inset:#383836;--color-raised:#3e3e3b;--color-rail-sel:#3d3d3a;--color-seg-sel:#434340;--color-bubble:#4a4a46;--color-hairline:#444441;--color-field:#4a4a47;--color-hover:rgb(255 255 255 / 0.05);--color-l1:#f9f9f7;--color-l2:#d2d2cc;--color-l3:#9d9d97;--color-l4:#747470;--color-cta:#cc7d5e;--color-cta-text:#f9f9f7;--color-cta-bd:#8f4f38;--color-nav-accent:var(--color-cta);--color-folder:#ab9a85;--color-ok:#10331f;--color-ok-text:#4cc38a;--color-err:#381e24;--color-err-text:#f07070;--color-warn:#37300f;--color-warn-text:#f0c010;--color-caution-text:color-mix(in srgb, var(--color-warn-text) 62%, var(--color-l2));--color-mesa-amber:#f5b83d;--color-mesa-amber-ink:#1d1608;--color-chat-bubble:color-mix(in oklab, var(--color-canvas), var(--color-l1) 4.5%);--color-composer:color-mix(in oklab, var(--color-canvas), var(--color-l1) 7%);--color-composer-edge:color-mix(in oklab, var(--color-canvas), var(--color-l1) 13%);--color-chat-text:var(--color-l2);--color-chat-strong:color-mix(in oklab, var(--color-l1) 60%, var(--color-l2));--color-add:#8fd3a8;--color-del:#d98a93;--color-diff-add-bg:#10331f;--color-diff-add-fg:#4cc38a;--color-diff-del-bg:#381e24;--color-diff-del-fg:#f07070;--color-done:#6d9a6f;--color-link:#60a0f0;--color-tabline:#c6c2ba;--color-cta-pill:#3d211a;--color-cta-pill-text:#eda586;--color-btn:#464543;--color-switch-off:#1e222c;--color-switch-knob:#e9e6e2;--color-editor-bg:#2d2d2b;--color-editor-fg:#c9c9c4;--color-editor-line:#6a6a66;--chat-code:#fc8c70">
+  <header>陶土<small>terracotta · 终端 one-dark</small></header>
+  <div class="row">
+    <nav><i></i><i class="sel"></i><i></i><i></i></nav>
+    <div class="chat">
+      <div class="bubble">把 figures 里的图按期刊规格重画</div>
+      <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落里正文用这个颜色读起来是否舒服，看这一行。<a>查看改动</a></p>
+      <div class="composer"><span class="caret"></span><span class="ph">接着说…</span>
+        <span class="chip">⊢ 帮我批准</span><span class="send"></span></div>
+      <div class="btns"><button class="cta">开工</button><span class="ok">● 已完成</span><span class="warn">● 等你</span></div>
+    </div>
+    <div class="term" style="background:#2d2d2b;color:#c9c9c4">
+      <div><span style="color:#98c379">➜</span> <span style="color:#56b6c2">paper</span> <span style="color:#61afef">git:(</span><span style="color:#e06c75">main</span><span style="color:#61afef">)</span> claude</div>
+      <div><span style="color:#545862">╭─────────────────────╮</span></div>
+      <div><span style="color:#c678dd">●</span> Read <span style="color:#545862">figures/fig2.py</span></div>
+      <div><span style="color:#98c379">+ plt.rcParams["font.size"] = 8</span></div>
+      <div><span style="color:#e06c75">- plt.rcParams["font.size"] = 12</span></div>
+      <div><span style="color:#d19a66">⚠</span> 需要批准：<span style="color:#56b6c2">python fig2.py</span></div>
+      <div><span style="background:#264f78">选中文本</span> <span style="background:#aeafad;color:#2d2d2b">█</span></div>
+    </div>
+  </div>
+</section>
+<section class="card" style="--color-rail:#ebe3db;--color-canvas:#f2ece7;--color-rail2:#f5f1ed;--color-strip:#f8f6f3;--color-inset:#fefaf6;--color-raised:#ffffff;--color-rail-sel:#e0d9d3;--color-seg-sel:#d3cbc3;--color-bubble:#e8e1da;--color-hairline:#d8d1ca;--color-field:#bcb3a9;--color-hover:rgb(0 0 0 / 0.05);--color-l1:#211d1a;--color-l2:#453f3a;--color-l3:#7a726b;--color-l4:#a49b92;--color-cta:#b25a3c;--color-cta-text:#ffffff;--color-cta-bd:#8f4f38;--color-nav-accent:var(--color-cta);--color-folder:#96887a;--color-ok:#d9f2e2;--color-ok-text:#177245;--color-err:#fbe3e6;--color-err-text:#b02a42;--color-warn:#fdf1cd;--color-warn-text:#8a6100;--color-caution-text:color-mix(in srgb, var(--color-warn-text) 62%, var(--color-l2));--color-mesa-amber:#e39a1c;--color-mesa-amber-ink:#1d1608;--color-chat-bubble:color-mix(in oklab, var(--color-canvas), var(--color-l1) 5%);--color-composer:#ffffff;--color-composer-edge:color-mix(in oklab, var(--color-canvas), var(--color-l1) 14%);--color-chat-text:var(--color-l2);--color-chat-strong:color-mix(in oklab, var(--color-l1) 60%, var(--color-l2));--color-add:#177245;--color-del:#b02a42;--color-diff-add-bg:#d9f2e2;--color-diff-add-fg:#177245;--color-diff-del-bg:#fbe3e6;--color-diff-del-fg:#b02a42;--color-done:#4a7d4f;--color-link:#2470d8;--color-tabline:#6b6259;--color-cta-pill:#f3ddd2;--color-cta-pill-text:#8f4f38;--color-btn:#464543;--color-switch-off:#ccd1da;--color-switch-knob:#ffffff;--color-editor-bg:#ffffff;--color-editor-fg:#2a2521;--color-editor-line:#ab9f94;--chat-code:#b23f2b">
+  <header>陶土 · 浅<small>terracotta-light · 终端 light-plus</small></header>
+  <div class="row">
+    <nav><i></i><i class="sel"></i><i></i><i></i></nav>
+    <div class="chat">
+      <div class="bubble">把 figures 里的图按期刊规格重画</div>
+      <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落里正文用这个颜色读起来是否舒服，看这一行。<a>查看改动</a></p>
+      <div class="composer"><span class="caret"></span><span class="ph">接着说…</span>
+        <span class="chip">⊢ 帮我批准</span><span class="send"></span></div>
+      <div class="btns"><button class="cta">开工</button><span class="ok">● 已完成</span><span class="warn">● 等你</span></div>
+    </div>
+    <div class="term" style="background:#fefcfa;color:#453f3a">
+      <div><span style="color:#00bc00">➜</span> <span style="color:#0598bc">paper</span> <span style="color:#0451a5">git:(</span><span style="color:#cd3131">main</span><span style="color:#0451a5">)</span> claude</div>
+      <div><span style="color:#666666">╭─────────────────────╮</span></div>
+      <div><span style="color:#bc05bc">●</span> Read <span style="color:#666666">figures/fig2.py</span></div>
+      <div><span style="color:#00bc00">+ plt.rcParams["font.size"] = 8</span></div>
+      <div><span style="color:#cd3131">- plt.rcParams["font.size"] = 12</span></div>
+      <div><span style="color:#949800">⚠</span> 需要批准：<span style="color:#0598bc">python fig2.py</span></div>
+      <div><span style="background:#add6ff">选中文本</span> <span style="background:#333333;color:#fefcfa">█</span></div>
+    </div>
+  </div>
+</section>
+<section class="card" style="--color-rail:#0b0e14;--color-canvas:#10141c;--color-rail2:#0d1118;--color-strip:#181c23;--color-inset:#1c212b;--color-raised:#222834;--color-rail-sel:#1e232e;--color-seg-sel:#262c37;--color-bubble:#2b303c;--color-hairline:#272a33;--color-field:#31353f;--color-hover:rgb(255 255 255 / 0.05);--color-l1:#d9d7d2;--color-l2:#c8c6bf;--color-l3:#908e88;--color-l4:#6a6963;--color-cta:#e6b450;--color-cta-text:#1d1608;--color-cta-bd:#8a6a26;--color-nav-accent:var(--color-cta);--color-folder:#9a8a5f;--color-ok:#10331f;--color-ok-text:#4cc38a;--color-err:#381e24;--color-err-text:#f07070;--color-warn:#37300f;--color-warn-text:#f0c010;--color-caution-text:color-mix(in srgb, var(--color-warn-text) 62%, var(--color-l2));--color-mesa-amber:#f5b83d;--color-mesa-amber-ink:#1d1608;--color-chat-bubble:color-mix(in oklab, var(--color-canvas), var(--color-l1) 4.5%);--color-composer:color-mix(in oklab, var(--color-canvas), var(--color-l1) 7%);--color-composer-edge:color-mix(in oklab, var(--color-canvas), var(--color-l1) 13%);--color-chat-text:var(--color-l2);--color-chat-strong:color-mix(in oklab, var(--color-l1) 60%, var(--color-l2));--color-add:#8fd3a8;--color-del:#d98a93;--color-diff-add-bg:#10331f;--color-diff-add-fg:#4cc38a;--color-diff-del-bg:#381e24;--color-diff-del-fg:#f07070;--color-done:#7da668;--color-link:#60a0f0;--color-tabline:#c6c2ba;--color-cta-pill:#3a2e10;--color-cta-pill-text:#eec363;--color-btn:#464543;--color-switch-off:#1e222c;--color-switch-knob:#e9e6e2;--color-editor-bg:#10141c;--color-editor-fg:#bfbdb6;--color-editor-line:#5f5e59;--chat-code:#fc8c70">
+  <header>琥珀<small>ayu · 终端 one-dark</small></header>
+  <div class="row">
+    <nav><i></i><i class="sel"></i><i></i><i></i></nav>
+    <div class="chat">
+      <div class="bubble">把 figures 里的图按期刊规格重画</div>
+      <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落里正文用这个颜色读起来是否舒服，看这一行。<a>查看改动</a></p>
+      <div class="composer"><span class="caret"></span><span class="ph">接着说…</span>
+        <span class="chip">⊢ 帮我批准</span><span class="send"></span></div>
+      <div class="btns"><button class="cta">开工</button><span class="ok">● 已完成</span><span class="warn">● 等你</span></div>
+    </div>
+    <div class="term" style="background:#10141c;color:#bfbdb6">
+      <div><span style="color:#98c379">➜</span> <span style="color:#56b6c2">paper</span> <span style="color:#61afef">git:(</span><span style="color:#e06c75">main</span><span style="color:#61afef">)</span> claude</div>
+      <div><span style="color:#545862">╭─────────────────────╮</span></div>
+      <div><span style="color:#c678dd">●</span> Read <span style="color:#545862">figures/fig2.py</span></div>
+      <div><span style="color:#98c379">+ plt.rcParams["font.size"] = 8</span></div>
+      <div><span style="color:#e06c75">- plt.rcParams["font.size"] = 12</span></div>
+      <div><span style="color:#d19a66">⚠</span> 需要批准：<span style="color:#56b6c2">python fig2.py</span></div>
+      <div><span style="background:#264f78">选中文本</span> <span style="background:#aeafad;color:#10141c">█</span></div>
+    </div>
+  </div>
+</section>
+<section class="card" style="--color-rail:#e7e4da;--color-canvas:#efede6;--color-rail2:#f3f2ec;--color-strip:#f7f6f3;--color-inset:#fefaf6;--color-raised:#ffffff;--color-rail-sel:#e2dfd9;--color-seg-sel:#d4d0c8;--color-bubble:#e7e4de;--color-hairline:#d9d5cd;--color-field:#bab4a8;--color-hover:rgb(0 0 0 / 0.05);--color-l1:#20242e;--color-l2:#3f4754;--color-l3:#6c7380;--color-l4:#9ea3ac;--color-cta:#e6a417;--color-cta-text:#241a02;--color-cta-bd:#b27d12;--color-nav-accent:var(--color-cta);--color-folder:#a2905e;--color-ok:#d9f2e2;--color-ok-text:#177245;--color-err:#fbe3e6;--color-err-text:#b02a42;--color-warn:#fdf1cd;--color-warn-text:#8a6100;--color-caution-text:color-mix(in srgb, var(--color-warn-text) 62%, var(--color-l2));--color-mesa-amber:#e39a1c;--color-mesa-amber-ink:#1d1608;--color-chat-bubble:color-mix(in oklab, var(--color-canvas), var(--color-l1) 5%);--color-composer:#ffffff;--color-composer-edge:color-mix(in oklab, var(--color-canvas), var(--color-l1) 14%);--color-chat-text:#353c48;--color-chat-strong:var(--color-l1);--color-add:#177245;--color-del:#b02a42;--color-diff-add-bg:#d9f2e2;--color-diff-add-fg:#177245;--color-diff-del-bg:#fbe3e6;--color-diff-del-fg:#b02a42;--color-done:#567d3d;--color-link:#2470d8;--color-tabline:#5f6470;--color-cta-pill:#f7e8c8;--color-cta-pill-text:#8a6a26;--color-btn:#464543;--color-switch-off:#ccd1da;--color-switch-knob:#ffffff;--color-editor-bg:#ffffff;--color-editor-fg:#2a313d;--color-editor-line:#a7adb8;--chat-code:#b23f2b">
+  <header>琥珀 · 浅<small>ayu-light · 终端 light-plus</small></header>
+  <div class="row">
+    <nav><i></i><i class="sel"></i><i></i><i></i></nav>
+    <div class="chat">
+      <div class="bubble">把 figures 里的图按期刊规格重画</div>
+      <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落里正文用这个颜色读起来是否舒服，看这一行。<a>查看改动</a></p>
+      <div class="composer"><span class="caret"></span><span class="ph">接着说…</span>
+        <span class="chip">⊢ 帮我批准</span><span class="send"></span></div>
+      <div class="btns"><button class="cta">开工</button><span class="ok">● 已完成</span><span class="warn">● 等你</span></div>
+    </div>
+    <div class="term" style="background:#fffefd;color:#3f4754">
+      <div><span style="color:#00bc00">➜</span> <span style="color:#0598bc">paper</span> <span style="color:#0451a5">git:(</span><span style="color:#cd3131">main</span><span style="color:#0451a5">)</span> claude</div>
+      <div><span style="color:#666666">╭─────────────────────╮</span></div>
+      <div><span style="color:#bc05bc">●</span> Read <span style="color:#666666">figures/fig2.py</span></div>
+      <div><span style="color:#00bc00">+ plt.rcParams["font.size"] = 8</span></div>
+      <div><span style="color:#cd3131">- plt.rcParams["font.size"] = 12</span></div>
+      <div><span style="color:#949800">⚠</span> 需要批准：<span style="color:#0598bc">python fig2.py</span></div>
+      <div><span style="background:#add6ff">选中文本</span> <span style="background:#333333;color:#fffefd">█</span></div>
+    </div>
+  </div>
+</section>
+<section class="card" style="--color-rail:#181824;--color-canvas:#1e1e2e;--color-rail2:#1a1a28;--color-strip:#262738;--color-inset:#2b2c40;--color-raised:#313249;--color-rail-sel:#2e2e44;--color-seg-sel:#353650;--color-bubble:#3a3b56;--color-hairline:#34354a;--color-field:#3d3e54;--color-hover:rgb(255 255 255 / 0.05);--color-l1:#cdd6f4;--color-l2:#b8c1e2;--color-l3:#8790b8;--color-l4:#626a8e;--color-cta:#cba6f7;--color-cta-text:#2a1b3d;--color-cta-bd:#6b4d94;--color-nav-accent:var(--color-cta);--color-folder:#8f97b8;--color-ok:#10331f;--color-ok-text:#4cc38a;--color-err:#381e24;--color-err-text:#f07070;--color-warn:#37300f;--color-warn-text:#f0c010;--color-caution-text:color-mix(in srgb, var(--color-warn-text) 62%, var(--color-l2));--color-mesa-amber:#f5b83d;--color-mesa-amber-ink:#1d1608;--color-chat-bubble:color-mix(in oklab, var(--color-canvas), var(--color-l1) 4.5%);--color-composer:color-mix(in oklab, var(--color-canvas), var(--color-l1) 7%);--color-composer-edge:color-mix(in oklab, var(--color-canvas), var(--color-l1) 13%);--color-chat-text:#bfc3d2;--color-chat-strong:#d3d7e5;--color-add:#8fd3a8;--color-del:#d98a93;--color-diff-add-bg:#10331f;--color-diff-add-fg:#4cc38a;--color-diff-del-bg:#381e24;--color-diff-del-fg:#f07070;--color-done:#63a48c;--color-link:#60a0f0;--color-tabline:#c6c2ba;--color-cta-pill:#2e2145;--color-cta-pill-text:#d3b3fa;--color-btn:#464543;--color-switch-off:#1e222c;--color-switch-knob:#e9e6e2;--color-editor-bg:#1e1e2e;--color-editor-fg:#aeb8dc;--color-editor-line:#565e83;--chat-code:#fc8c70">
+  <header>暮紫<small>mocha · 终端 catppuccin</small></header>
+  <div class="row">
+    <nav><i></i><i class="sel"></i><i></i><i></i></nav>
+    <div class="chat">
+      <div class="bubble">把 figures 里的图按期刊规格重画</div>
+      <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落里正文用这个颜色读起来是否舒服，看这一行。<a>查看改动</a></p>
+      <div class="composer"><span class="caret"></span><span class="ph">接着说…</span>
+        <span class="chip">⊢ 帮我批准</span><span class="send"></span></div>
+      <div class="btns"><button class="cta">开工</button><span class="ok">● 已完成</span><span class="warn">● 等你</span></div>
+    </div>
+    <div class="term" style="background:#1e1e2e;color:#aeb8dc">
+      <div><span style="color:#a6e3a1">➜</span> <span style="color:#94e2d5">paper</span> <span style="color:#89b4fa">git:(</span><span style="color:#f38ba8">main</span><span style="color:#89b4fa">)</span> claude</div>
+      <div><span style="color:#585b70">╭─────────────────────╮</span></div>
+      <div><span style="color:#f5c2e7">●</span> Read <span style="color:#585b70">figures/fig2.py</span></div>
+      <div><span style="color:#a6e3a1">+ plt.rcParams["font.size"] = 8</span></div>
+      <div><span style="color:#f38ba8">- plt.rcParams["font.size"] = 12</span></div>
+      <div><span style="color:#f9e2af">⚠</span> 需要批准：<span style="color:#94e2d5">python fig2.py</span></div>
+      <div><span style="background:#264f78">选中文本</span> <span style="background:#aeafad;color:#1e1e2e">█</span></div>
+    </div>
+  </div>
+</section>
+<section class="card" style="--color-rail:#e3dfea;--color-canvas:#eeebf3;--color-rail2:#f2f0f6;--color-strip:#f6f5fa;--color-inset:#fbfafc;--color-raised:#ffffff;--color-rail-sel:#d8d3e4;--color-seg-sel:#c9c3d8;--color-bubble:#e2ddec;--color-hairline:#d0cadc;--color-field:#aea7c0;--color-hover:rgb(0 0 0 / 0.05);--color-l1:#2c2a3d;--color-l2:#4e4b63;--color-l3:#6e6b82;--color-l4:#9c99ad;--color-cta:#8839ef;--color-cta-text:#ffffff;--color-cta-bd:#6d2bd0;--color-nav-accent:var(--color-cta);--color-folder:#7d7898;--color-ok:#d9f2e2;--color-ok-text:#177245;--color-err:#fbe3e6;--color-err-text:#b02a42;--color-warn:#fdf1cd;--color-warn-text:#8a6100;--color-caution-text:color-mix(in srgb, var(--color-warn-text) 62%, var(--color-l2));--color-mesa-amber:#e39a1c;--color-mesa-amber-ink:#1d1608;--color-chat-bubble:color-mix(in oklab, var(--color-canvas), var(--color-l1) 5%);--color-composer:#ffffff;--color-composer-edge:color-mix(in oklab, var(--color-canvas), var(--color-l1) 14%);--color-chat-text:#3e3c52;--color-chat-strong:var(--color-l1);--color-add:#177245;--color-del:#b02a42;--color-diff-add-bg:#d9f2e2;--color-diff-add-fg:#177245;--color-diff-del-bg:#fbe3e6;--color-diff-del-fg:#b02a42;--color-done:#3f7d6a;--color-link:#1e66f5;--color-tabline:#5c5870;--color-cta-pill:#e6d6fb;--color-cta-pill-text:#6d2bd0;--color-btn:#464543;--color-switch-off:#ccd1da;--color-switch-knob:#ffffff;--color-editor-bg:#ffffff;--color-editor-fg:#2c2a3d;--color-editor-line:#9c99ad;--chat-code:#b23f2b">
+  <header>暮紫 · 浅<small>mocha-light · 终端 light-plus</small></header>
+  <div class="row">
+    <nav><i></i><i class="sel"></i><i></i><i></i></nav>
+    <div class="chat">
+      <div class="bubble">把 figures 里的图按期刊规格重画</div>
+      <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落里正文用这个颜色读起来是否舒服，看这一行。<a>查看改动</a></p>
+      <div class="composer"><span class="caret"></span><span class="ph">接着说…</span>
+        <span class="chip">⊢ 帮我批准</span><span class="send"></span></div>
+      <div class="btns"><button class="cta">开工</button><span class="ok">● 已完成</span><span class="warn">● 等你</span></div>
+    </div>
+    <div class="term" style="background:#fbfafc;color:#4e4b63">
+      <div><span style="color:#00bc00">➜</span> <span style="color:#0598bc">paper</span> <span style="color:#0451a5">git:(</span><span style="color:#cd3131">main</span><span style="color:#0451a5">)</span> claude</div>
+      <div><span style="color:#666666">╭─────────────────────╮</span></div>
+      <div><span style="color:#bc05bc">●</span> Read <span style="color:#666666">figures/fig2.py</span></div>
+      <div><span style="color:#00bc00">+ plt.rcParams["font.size"] = 8</span></div>
+      <div><span style="color:#cd3131">- plt.rcParams["font.size"] = 12</span></div>
+      <div><span style="color:#949800">⚠</span> 需要批准：<span style="color:#0598bc">python fig2.py</span></div>
+      <div><span style="background:#add6ff">选中文本</span> <span style="background:#333333;color:#fbfafc">█</span></div>
+    </div>
+  </div>
+</section>
+<section class="card" style="--color-rail:#0d0d0d;--color-canvas:#111111;--color-rail2:#101010;--color-strip:#1c1c1c;--color-inset:#212121;--color-raised:#272727;--color-rail-sel:#262626;--color-seg-sel:#2b2b2b;--color-bubble:#303030;--color-hairline:#2c2c2c;--color-field:#383838;--color-hover:rgb(255 255 255 / 0.05);--color-l1:#fcfcfc;--color-l2:#d2d2d2;--color-l3:#989898;--color-l4:#6e6e6e;--color-cta:#0169cc;--color-cta-text:#eaf4ff;--color-cta-bd:#014a8f;--color-nav-accent:var(--color-cta);--color-folder:#999999;--color-ok:#10331f;--color-ok-text:#4cc38a;--color-err:#381e24;--color-err-text:#f07070;--color-warn:#37300f;--color-warn-text:#f0c010;--color-caution-text:color-mix(in srgb, var(--color-warn-text) 62%, var(--color-l2));--color-mesa-amber:#f5b83d;--color-mesa-amber-ink:#1d1608;--color-chat-bubble:color-mix(in oklab, var(--color-canvas), var(--color-l1) 4.5%);--color-composer:color-mix(in oklab, var(--color-canvas), var(--color-l1) 7%);--color-composer-edge:color-mix(in oklab, var(--color-canvas), var(--color-l1) 13%);--color-chat-text:#bebebe;--color-chat-strong:#d6d6d6;--color-add:#8fd3a8;--color-del:#d98a93;--color-diff-add-bg:#10331f;--color-diff-add-fg:#4cc38a;--color-diff-del-bg:#381e24;--color-diff-del-fg:#f07070;--color-done:#5c987a;--color-link:#60a0f0;--color-tabline:#c6c2ba;--color-cta-pill:#0d2d4d;--color-cta-pill-text:#63a9ef;--color-btn:#464543;--color-switch-off:#1e222c;--color-switch-knob:#e9e6e2;--color-editor-bg:#111111;--color-editor-fg:#c9c9c9;--color-editor-line:#616161;--chat-code:#fc8c70">
+  <header>极简灰蓝<small>neutral · 终端 one-dark</small></header>
+  <div class="row">
+    <nav><i></i><i class="sel"></i><i></i><i></i></nav>
+    <div class="chat">
+      <div class="bubble">把 figures 里的图按期刊规格重画</div>
+      <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落里正文用这个颜色读起来是否舒服，看这一行。<a>查看改动</a></p>
+      <div class="composer"><span class="caret"></span><span class="ph">接着说…</span>
+        <span class="chip">⊢ 帮我批准</span><span class="send"></span></div>
+      <div class="btns"><button class="cta">开工</button><span class="ok">● 已完成</span><span class="warn">● 等你</span></div>
+    </div>
+    <div class="term" style="background:#111111;color:#c9c9c9">
+      <div><span style="color:#98c379">➜</span> <span style="color:#56b6c2">paper</span> <span style="color:#61afef">git:(</span><span style="color:#e06c75">main</span><span style="color:#61afef">)</span> claude</div>
+      <div><span style="color:#545862">╭─────────────────────╮</span></div>
+      <div><span style="color:#c678dd">●</span> Read <span style="color:#545862">figures/fig2.py</span></div>
+      <div><span style="color:#98c379">+ plt.rcParams["font.size"] = 8</span></div>
+      <div><span style="color:#e06c75">- plt.rcParams["font.size"] = 12</span></div>
+      <div><span style="color:#d19a66">⚠</span> 需要批准：<span style="color:#56b6c2">python fig2.py</span></div>
+      <div><span style="background:#264f78">选中文本</span> <span style="background:#aeafad;color:#111111">█</span></div>
+    </div>
+  </div>
+</section>
+<section class="card" style="--color-rail:#e4e4e4;--color-canvas:#ededed;--color-rail2:#f1f1f1;--color-strip:#f6f6f6;--color-inset:#fafafa;--color-raised:#ffffff;--color-rail-sel:#dedede;--color-seg-sel:#d0d0d0;--color-bubble:#e5e5e5;--color-hairline:#d6d6d6;--color-field:#bababa;--color-hover:rgb(0 0 0 / 0.05);--color-l1:#161616;--color-l2:#3a3a3a;--color-l3:#6e6e6e;--color-l4:#9d9d9d;--color-cta:#0169cc;--color-cta-text:#ffffff;--color-cta-bd:#014a8f;--color-nav-accent:var(--color-cta);--color-folder:#8a8a8a;--color-ok:#d9f2e2;--color-ok-text:#177245;--color-err:#fbe3e6;--color-err-text:#b02a42;--color-warn:#fdf1cd;--color-warn-text:#8a6100;--color-caution-text:color-mix(in srgb, var(--color-warn-text) 62%, var(--color-l2));--color-mesa-amber:#e39a1c;--color-mesa-amber-ink:#1d1608;--color-chat-bubble:color-mix(in oklab, var(--color-canvas), var(--color-l1) 5%);--color-composer:#ffffff;--color-composer-edge:color-mix(in oklab, var(--color-canvas), var(--color-l1) 14%);--color-chat-text:var(--color-l2);--color-chat-strong:color-mix(in oklab, var(--color-l1) 60%, var(--color-l2));--color-add:#177245;--color-del:#b02a42;--color-diff-add-bg:#d9f2e2;--color-diff-add-fg:#177245;--color-diff-del-bg:#fbe3e6;--color-diff-del-fg:#b02a42;--color-done:#3a7d60;--color-link:#0169cc;--color-tabline:#555555;--color-cta-pill:#d3e6f8;--color-cta-pill-text:#014a8f;--color-btn:#464543;--color-switch-off:#ccd1da;--color-switch-knob:#ffffff;--color-editor-bg:#ffffff;--color-editor-fg:#1e1e1e;--color-editor-line:#a0a0a0;--chat-code:#b23f2b">
+  <header>极简灰蓝 · 浅<small>neutral-light · 终端 light-plus</small></header>
+  <div class="row">
+    <nav><i></i><i class="sel"></i><i></i><i></i></nav>
+    <div class="chat">
+      <div class="bubble">把 figures 里的图按期刊规格重画</div>
+      <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落里正文用这个颜色读起来是否舒服，看这一行。<a>查看改动</a></p>
+      <div class="composer"><span class="caret"></span><span class="ph">接着说…</span>
+        <span class="chip">⊢ 帮我批准</span><span class="send"></span></div>
+      <div class="btns"><button class="cta">开工</button><span class="ok">● 已完成</span><span class="warn">● 等你</span></div>
+    </div>
+    <div class="term" style="background:#fdfdfd;color:#3a3a3a">
+      <div><span style="color:#00bc00">➜</span> <span style="color:#0598bc">paper</span> <span style="color:#0451a5">git:(</span><span style="color:#cd3131">main</span><span style="color:#0451a5">)</span> claude</div>
+      <div><span style="color:#666666">╭─────────────────────╮</span></div>
+      <div><span style="color:#bc05bc">●</span> Read <span style="color:#666666">figures/fig2.py</span></div>
+      <div><span style="color:#00bc00">+ plt.rcParams["font.size"] = 8</span></div>
+      <div><span style="color:#cd3131">- plt.rcParams["font.size"] = 12</span></div>
+      <div><span style="color:#949800">⚠</span> 需要批准：<span style="color:#0598bc">python fig2.py</span></div>
+      <div><span style="background:#add6ff">选中文本</span> <span style="background:#333333;color:#fdfdfd">█</span></div>
+    </div>
+  </div>
+</section>
+<section class="card" style="--color-rail:#1e2029;--color-canvas:#282a36;--color-rail2:#22242e;--color-strip:#33343f;--color-inset:#393a47;--color-raised:#3f404f;--color-rail-sel:#3d3f4e;--color-seg-sel:#434453;--color-bubble:#484a5c;--color-hairline:#434455;--color-field:#494a5a;--color-hover:rgb(255 255 255 / 0.05);--color-l1:#f8f8f2;--color-l2:#d8d8d2;--color-l3:#9d9d97;--color-l4:#747476;--color-cta:#ff79c6;--color-cta-text:#38102a;--color-cta-bd:#a64a80;--color-nav-accent:var(--color-cta);--color-folder:#8289b0;--color-ok:#10331f;--color-ok-text:#4cc38a;--color-err:#381e24;--color-err-text:#f07070;--color-warn:#37300f;--color-warn-text:#f0c010;--color-caution-text:color-mix(in srgb, var(--color-warn-text) 62%, var(--color-l2));--color-mesa-amber:#f5b83d;--color-mesa-amber-ink:#1d1608;--color-chat-bubble:color-mix(in oklab, var(--color-canvas), var(--color-l1) 4.5%);--color-composer:color-mix(in oklab, var(--color-canvas), var(--color-l1) 7%);--color-composer-edge:color-mix(in oklab, var(--color-canvas), var(--color-l1) 13%);--color-chat-text:var(--color-l2);--color-chat-strong:color-mix(in oklab, var(--color-l1) 60%, var(--color-l2));--color-add:#8fd3a8;--color-del:#d98a93;--color-diff-add-bg:#10331f;--color-diff-add-fg:#4cc38a;--color-diff-del-bg:#381e24;--color-diff-del-fg:#f07070;--color-done:#54b890;--color-link:#60a0f0;--color-tabline:#c6c2ba;--color-cta-pill:#401a35;--color-cta-pill-text:#ff8fd0;--color-btn:#464543;--color-switch-off:#1e222c;--color-switch-knob:#e9e6e2;--color-editor-bg:#282a36;--color-editor-fg:#cfcfc9;--color-editor-line:#68686a;--chat-code:#fc8c70">
+  <header>哥特<small>dracula · 终端 one-dark</small></header>
+  <div class="row">
+    <nav><i></i><i class="sel"></i><i></i><i></i></nav>
+    <div class="chat">
+      <div class="bubble">把 figures 里的图按期刊规格重画</div>
+      <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落里正文用这个颜色读起来是否舒服，看这一行。<a>查看改动</a></p>
+      <div class="composer"><span class="caret"></span><span class="ph">接着说…</span>
+        <span class="chip">⊢ 帮我批准</span><span class="send"></span></div>
+      <div class="btns"><button class="cta">开工</button><span class="ok">● 已完成</span><span class="warn">● 等你</span></div>
+    </div>
+    <div class="term" style="background:#282a36;color:#cfcfc9">
+      <div><span style="color:#98c379">➜</span> <span style="color:#56b6c2">paper</span> <span style="color:#61afef">git:(</span><span style="color:#e06c75">main</span><span style="color:#61afef">)</span> claude</div>
+      <div><span style="color:#545862">╭─────────────────────╮</span></div>
+      <div><span style="color:#c678dd">●</span> Read <span style="color:#545862">figures/fig2.py</span></div>
+      <div><span style="color:#98c379">+ plt.rcParams["font.size"] = 8</span></div>
+      <div><span style="color:#e06c75">- plt.rcParams["font.size"] = 12</span></div>
+      <div><span style="color:#d19a66">⚠</span> 需要批准：<span style="color:#56b6c2">python fig2.py</span></div>
+      <div><span style="background:#264f78">选中文本</span> <span style="background:#aeafad;color:#282a36">█</span></div>
+    </div>
+  </div>
+</section>
+<section class="card" style="--color-rail:#e7e2ef;--color-canvas:#efecf5;--color-rail2:#f3f1f7;--color-strip:#f7f5fa;--color-inset:#fbfafc;--color-raised:#ffffff;--color-rail-sel:#e0dae9;--color-seg-sel:#d0c9de;--color-bubble:#e6e0ee;--color-hairline:#d5cfe0;--color-field:#b7aec6;--color-hover:rgb(0 0 0 / 0.05);--color-l1:#241f31;--color-l2:#403a4e;--color-l3:#716a80;--color-l4:#9d97ab;--color-cta:#d6336c;--color-cta-text:#ffffff;--color-cta-bd:#b02855;--color-nav-accent:var(--color-cta);--color-folder:#7f7a9c;--color-ok:#d9f2e2;--color-ok-text:#177245;--color-err:#fbe3e6;--color-err-text:#b02a42;--color-warn:#fdf1cd;--color-warn-text:#8a6100;--color-caution-text:color-mix(in srgb, var(--color-warn-text) 62%, var(--color-l2));--color-mesa-amber:#e39a1c;--color-mesa-amber-ink:#1d1608;--color-chat-bubble:color-mix(in oklab, var(--color-canvas), var(--color-l1) 5%);--color-composer:#ffffff;--color-composer-edge:color-mix(in oklab, var(--color-canvas), var(--color-l1) 14%);--color-chat-text:var(--color-l2);--color-chat-strong:color-mix(in oklab, var(--color-l1) 60%, var(--color-l2));--color-add:#177245;--color-del:#b02a42;--color-diff-add-bg:#d9f2e2;--color-diff-add-fg:#177245;--color-diff-del-bg:#fbe3e6;--color-diff-del-fg:#b02a42;--color-done:#2f8a63;--color-link:#2470d8;--color-tabline:#5f5870;--color-cta-pill:#f6d8e4;--color-cta-pill-text:#a02850;--color-btn:#464543;--color-switch-off:#ccd1da;--color-switch-knob:#ffffff;--color-editor-bg:#ffffff;--color-editor-fg:#2c2739;--color-editor-line:#a29cb3;--chat-code:#b23f2b">
+  <header>哥特 · 浅<small>dracula-light · 终端 light-plus</small></header>
+  <div class="row">
+    <nav><i></i><i class="sel"></i><i></i><i></i></nav>
+    <div class="chat">
+      <div class="bubble">把 figures 里的图按期刊规格重画</div>
+      <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落里正文用这个颜色读起来是否舒服，看这一行。<a>查看改动</a></p>
+      <div class="composer"><span class="caret"></span><span class="ph">接着说…</span>
+        <span class="chip">⊢ 帮我批准</span><span class="send"></span></div>
+      <div class="btns"><button class="cta">开工</button><span class="ok">● 已完成</span><span class="warn">● 等你</span></div>
+    </div>
+    <div class="term" style="background:#fefdff;color:#403a4e">
+      <div><span style="color:#00bc00">➜</span> <span style="color:#0598bc">paper</span> <span style="color:#0451a5">git:(</span><span style="color:#cd3131">main</span><span style="color:#0451a5">)</span> claude</div>
+      <div><span style="color:#666666">╭─────────────────────╮</span></div>
+      <div><span style="color:#bc05bc">●</span> Read <span style="color:#666666">figures/fig2.py</span></div>
+      <div><span style="color:#00bc00">+ plt.rcParams["font.size"] = 8</span></div>
+      <div><span style="color:#cd3131">- plt.rcParams["font.size"] = 12</span></div>
+      <div><span style="color:#949800">⚠</span> 需要批准：<span style="color:#0598bc">python fig2.py</span></div>
+      <div><span style="background:#add6ff">选中文本</span> <span style="background:#333333;color:#fefdff">█</span></div>
+    </div>
+  </div>
+</section>
+<section class="card" style="--color-rail:#0e1014;--color-canvas:#12141a;--color-rail2:#13161c;--color-strip:#1a2230;--color-inset:#202938;--color-raised:#252f41;--color-rail-sel:#232c3c;--color-seg-sel:#293447;--color-bubble:#2f3b4e;--color-hairline:#2b323f;--color-field:#363e4e;--color-hover:rgb(255 255 255 / 0.05);--color-l1:#e4e4e7;--color-l2:#c2c2c9;--color-l3:#878794;--color-l4:#62626c;--color-cta:#ff5c5c;--color-cta-text:#3d0f0f;--color-cta-bd:#a83232;--color-nav-accent:var(--color-cta);--color-folder:#8291ab;--color-ok:#10331f;--color-ok-text:#4cc38a;--color-err:#381e24;--color-err-text:#f07070;--color-warn:#37300f;--color-warn-text:#f0c010;--color-caution-text:color-mix(in srgb, var(--color-warn-text) 62%, var(--color-l2));--color-mesa-amber:#f5b83d;--color-mesa-amber-ink:#1d1608;--color-chat-bubble:color-mix(in oklab, var(--color-canvas), var(--color-l1) 4.5%);--color-composer:color-mix(in oklab, var(--color-canvas), var(--color-l1) 7%);--color-composer-edge:color-mix(in oklab, var(--color-canvas), var(--color-l1) 13%);--color-chat-text:var(--color-l2);--color-chat-strong:color-mix(in oklab, var(--color-l1) 60%, var(--color-l2));--color-add:#8fd3a8;--color-del:#d98a93;--color-diff-add-bg:#10331f;--color-diff-add-fg:#4cc38a;--color-diff-del-bg:#381e24;--color-diff-del-fg:#f07070;--color-done:#4c9d7d;--color-link:#60a0f0;--color-tabline:#c6c2ba;--color-cta-pill:#3d1414;--color-cta-pill-text:#ff8080;--color-btn:#464543;--color-switch-off:#1e222c;--color-switch-knob:#e9e6e2;--color-editor-bg:#12141a;--color-editor-fg:#b9b9c0;--color-editor-line:#55555f;--chat-code:#fc8c70">
+  <header>灰蓝正红<small>shadcn · 终端 one-dark</small></header>
+  <div class="row">
+    <nav><i></i><i class="sel"></i><i></i><i></i></nav>
+    <div class="chat">
+      <div class="bubble">把 figures 里的图按期刊规格重画</div>
+      <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落里正文用这个颜色读起来是否舒服，看这一行。<a>查看改动</a></p>
+      <div class="composer"><span class="caret"></span><span class="ph">接着说…</span>
+        <span class="chip">⊢ 帮我批准</span><span class="send"></span></div>
+      <div class="btns"><button class="cta">开工</button><span class="ok">● 已完成</span><span class="warn">● 等你</span></div>
+    </div>
+    <div class="term" style="background:#12141a;color:#b9b9c0">
+      <div><span style="color:#98c379">➜</span> <span style="color:#56b6c2">paper</span> <span style="color:#61afef">git:(</span><span style="color:#e06c75">main</span><span style="color:#61afef">)</span> claude</div>
+      <div><span style="color:#545862">╭─────────────────────╮</span></div>
+      <div><span style="color:#c678dd">●</span> Read <span style="color:#545862">figures/fig2.py</span></div>
+      <div><span style="color:#98c379">+ plt.rcParams["font.size"] = 8</span></div>
+      <div><span style="color:#e06c75">- plt.rcParams["font.size"] = 12</span></div>
+      <div><span style="color:#d19a66">⚠</span> 需要批准：<span style="color:#56b6c2">python fig2.py</span></div>
+      <div><span style="background:#264f78">选中文本</span> <span style="background:#aeafad;color:#12141a">█</span></div>
+    </div>
+  </div>
+</section>
+<section class="card" style="--color-rail:#dde3ee;--color-canvas:#e8ecf3;--color-rail2:#eef1f6;--color-strip:#f3f5f9;--color-inset:#fafbfc;--color-raised:#ffffff;--color-rail-sel:#d0d7e4;--color-seg-sel:#c5cddb;--color-bubble:#dfe5ee;--color-hairline:#cdd3de;--color-field:#aeb6c4;--color-hover:rgb(0 0 0 / 0.05);--color-l1:#101828;--color-l2:#344054;--color-l3:#667085;--color-l4:#98a2b3;--color-cta:#dc2626;--color-cta-text:#ffffff;--color-cta-bd:#a83232;--color-nav-accent:var(--color-cta);--color-folder:#75819a;--color-ok:#d9f2e2;--color-ok-text:#177245;--color-err:#fbe3e6;--color-err-text:#b02a42;--color-warn:#fdf1cd;--color-warn-text:#8a6100;--color-caution-text:color-mix(in srgb, var(--color-warn-text) 62%, var(--color-l2));--color-mesa-amber:#e39a1c;--color-mesa-amber-ink:#1d1608;--color-chat-bubble:color-mix(in oklab, var(--color-canvas), var(--color-l1) 5%);--color-composer:#ffffff;--color-composer-edge:color-mix(in oklab, var(--color-canvas), var(--color-l1) 14%);--color-chat-text:var(--color-l2);--color-chat-strong:color-mix(in oklab, var(--color-l1) 60%, var(--color-l2));--color-add:#177245;--color-del:#b02a42;--color-diff-add-bg:#d9f2e2;--color-diff-add-fg:#177245;--color-diff-del-bg:#fbe3e6;--color-diff-del-fg:#b02a42;--color-done:#2c7d5c;--color-link:#2470d8;--color-tabline:#475467;--color-cta-pill:#fadcdc;--color-cta-pill-text:#a83232;--color-btn:#464543;--color-switch-off:#ccd1da;--color-switch-knob:#ffffff;--color-editor-bg:#ffffff;--color-editor-fg:#182230;--color-editor-line:#9aa4b2;--chat-code:#b23f2b">
+  <header>灰蓝正红 · 浅<small>shadcn-light · 终端 light-plus</small></header>
+  <div class="row">
+    <nav><i></i><i class="sel"></i><i></i><i></i></nav>
+    <div class="chat">
+      <div class="bubble">把 figures 里的图按期刊规格重画</div>
+      <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落里正文用这个颜色读起来是否舒服，看这一行。<a>查看改动</a></p>
+      <div class="composer"><span class="caret"></span><span class="ph">接着说…</span>
+        <span class="chip">⊢ 帮我批准</span><span class="send"></span></div>
+      <div class="btns"><button class="cta">开工</button><span class="ok">● 已完成</span><span class="warn">● 等你</span></div>
+    </div>
+    <div class="term" style="background:#fefefe;color:#344054">
+      <div><span style="color:#00bc00">➜</span> <span style="color:#0598bc">paper</span> <span style="color:#0451a5">git:(</span><span style="color:#cd3131">main</span><span style="color:#0451a5">)</span> claude</div>
+      <div><span style="color:#666666">╭─────────────────────╮</span></div>
+      <div><span style="color:#bc05bc">●</span> Read <span style="color:#666666">figures/fig2.py</span></div>
+      <div><span style="color:#00bc00">+ plt.rcParams["font.size"] = 8</span></div>
+      <div><span style="color:#cd3131">- plt.rcParams["font.size"] = 12</span></div>
+      <div><span style="color:#949800">⚠</span> 需要批准：<span style="color:#0598bc">python fig2.py</span></div>
+      <div><span style="background:#add6ff">选中文本</span> <span style="background:#333333;color:#fefefe">█</span></div>
+    </div>
+  </div>
+</section></div>

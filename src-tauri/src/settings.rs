@@ -13,7 +13,10 @@ pub const DEFAULT_NOTIFICATIONS_ENABLED: bool = true;
 /// 会话自动命名（聊完起名 + 打开对话页补名去重）默认开；关 = 全停，手改标题不受影响
 pub const DEFAULT_AUTO_TITLE_SESSIONS: bool = true;
 pub const DEFAULT_NAV_CAPSULE_RUN_ANNOUNCE: bool = true;
-pub const DEFAULT_THEME: &str = "midnight";
+/// 首次安装的主题与「跟随系统深浅」（2026-10-22 用户拍板：琥珀 + 跟随，原沉浸黑 + 不跟随）。
+/// 前端兜底在 themes.ts DEFAULT_THEME_ID，两边同步；存过值的老设置不受影响
+pub const DEFAULT_THEME: &str = "ayu";
+pub const DEFAULT_THEME_FOLLOW_SYSTEM: bool = true;
 pub const DEFAULT_TERMINAL_FONT_FAMILY: &str = "JetBrains Mono";
 /// 全局快捷键默认绑定（前端 hotkeys.ts 解析；mod = macOS ⌘ / 其他平台 Ctrl）
 pub const DEFAULT_HOTKEY_PALETTE: &str = "mod+k";
@@ -56,7 +59,9 @@ const KNOWN_PAGES: [&str; 9] = [
     "stats",
     "settings",
 ];
-const KNOWN_PALETTES: [&str; 8] = [
+/// "auto" = 跟随主题（前端 terminal-palettes.ts AUTO_PALETTE；没存值与它同义，设置页用它「回到跟随」）
+const KNOWN_PALETTES: [&str; 9] = [
+    "auto",
     "dark-plus",
     "solarized",
     "one-dark",
@@ -873,7 +878,7 @@ fn with_defaults(s: AppSettingsDto) -> AppSettingsDto {
         )),
         chat_accent: Some(known_or(s.chat_accent, &KNOWN_CHAT_ACCENTS, "warm")),
         chat_scrollbar: Some(known_or(s.chat_scrollbar, &KNOWN_CHAT_SCROLLBARS, "auto")),
-        theme_follow_system: Some(s.theme_follow_system.unwrap_or(false)),
+        theme_follow_system: Some(s.theme_follow_system.unwrap_or(DEFAULT_THEME_FOLLOW_SYSTEM)),
         custom_theme,
         custom_themes,
         custom_theme_card_id,
@@ -1325,6 +1330,15 @@ pub(crate) fn current_theme_is_light() -> bool {
     theme_is_light(&theme)
 }
 
+/// 启动时窗口外观要不要交还系统：跟随系统深浅开着（首装默认开）且不是自定义配色时，
+/// 前端会把主题校正成与系统同深浅的 twin（theme-follow.ts），此时强行按存的主题上外观，
+/// 系统浅色的机器首帧会先闪一下深色材质
+pub(crate) fn current_theme_follows_system() -> bool {
+    let s = current_with_defaults();
+    let custom = matches!(s.theme.as_deref(), Some("custom" | "custom-light"));
+    s.theme_follow_system.unwrap_or(DEFAULT_THEME_FOLLOW_SYSTEM) && !custom
+}
+
 pub(crate) fn brew_mirror_enabled() -> bool {
     read_current().brew_mirror.unwrap_or(DEFAULT_BREW_MIRROR)
 }
@@ -1582,7 +1596,16 @@ mod tests {
         assert_eq!(full.rate_usd_cny, Some(7.2));
         assert_eq!(full.brew_mirror, Some(true));
         assert_eq!(full.auto_title_sessions, Some(true));
-        assert_eq!(full.theme.as_deref(), Some("midnight"));
+        assert_eq!(full.theme.as_deref(), Some("ayu"));
+        assert_eq!(full.theme_follow_system, Some(true));
+        // 存过「不跟随」的老设置照旧
+        let kept = with_defaults(AppSettingsDto {
+            theme: Some("midnight".into()),
+            theme_follow_system: Some(false),
+            ..Default::default()
+        });
+        assert_eq!(kept.theme.as_deref(), Some("midnight"));
+        assert_eq!(kept.theme_follow_system, Some(false));
         // 100 = 各主题原有罩色，是「没调过和以前一模一样」的那一档
         assert_eq!(full.chrome_opacity, Some(100));
         assert_eq!(full.startup_nav_mode, None);
@@ -1859,7 +1882,7 @@ mod tests {
             theme: Some("neon".into()),
             ..Default::default()
         });
-        assert_eq!(full.theme.as_deref(), Some("midnight"));
+        assert_eq!(full.theme.as_deref(), Some(DEFAULT_THEME));
     }
 
     #[test]
@@ -1891,7 +1914,7 @@ mod tests {
             }),
             ..Default::default()
         });
-        assert_eq!(bad.theme.as_deref(), Some("midnight"));
+        assert_eq!(bad.theme.as_deref(), Some(DEFAULT_THEME));
         assert_eq!(bad.custom_theme, None);
     }
 

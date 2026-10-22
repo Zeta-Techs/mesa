@@ -91,8 +91,10 @@ import {
 import {
   XTERM_PALETTES,
   PALETTE_PREVIEW_KEYS,
+  AUTO_PALETTE,
   PALETTE_LIST,
   resolvePaletteId,
+  themeDefaultPalette,
 } from "../terminal-palettes";
 import { THEMES, isCustomThemeId, isLightTheme } from "../themes";
 import { followedTheme } from "../theme-follow";
@@ -2853,6 +2855,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           paletteId={resolvePaletteId(
             settings?.terminalPalette,
             isLightTheme(settings?.theme),
+            settings?.theme,
           )}
         />
         <Row
@@ -3015,21 +3018,28 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         {(() => {
           const themeIsLight = isLightTheme(settings?.theme);
           const stored = settings?.terminalPalette;
-          const effective = resolvePaletteId(stored, themeIsLight);
-          const options = PALETTE_LIST.filter((p) => p.light === themeIsLight);
+          const auto = !stored || stored === AUTO_PALETTE;
+          const effective = resolvePaletteId(stored, themeIsLight, settings?.theme);
+          const options = [
+            { id: AUTO_PALETTE, name: "跟随主题" },
+            ...PALETTE_LIST.filter((p) => p.light === themeIsLight),
+          ];
+          const effectiveName = PALETTE_LIST.find((p) => p.id === effective)?.name ?? effective;
           return (
             <Row
               label="终端调色板"
               align="start"
               hint={
-                stored && stored !== effective
-                  ? `立即生效；当前主题是${themeIsLight ? "浅色" : "深色"}，你选的那套已换成配对的${themeIsLight ? "浅色" : "深色"}版`
-                  : `立即生效；只列与${themeIsLight ? "浅色" : "深色"}主题相配的四套`
+                auto
+                  ? `立即生效；跟随主题时用 ${effectiveName}，换主题自动换配套的那套`
+                  : stored !== effective
+                    ? `立即生效；当前主题是${themeIsLight ? "浅色" : "深色"}，你选的那套已换成配对的${themeIsLight ? "浅色" : "深色"}版`
+                    : `立即生效；只列与${themeIsLight ? "浅色" : "深色"}主题相配的四套`
               }
             >
               <div role="radiogroup" aria-label="终端调色板" className="flex flex-wrap gap-2">
                 {options.map((pl) => {
-                  const selected = effective === pl.id;
+                  const selected = pl.id === AUTO_PALETTE ? auto : !auto && effective === pl.id;
                   return (
                     <button
                       key={pl.id}
@@ -3045,7 +3055,9 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                     >
                       {/* 8 色无缝色条：分段 flex-1 自适应固定宽度，色数变化也不撑破布局 */}
                       <span className="flex h-3 w-20 overflow-hidden rounded-sm">
-                        {paletteDots(pl.id).map((d) => (
+                        {paletteDots(
+                          pl.id === AUTO_PALETTE ? themeDefaultPalette(settings?.theme, themeIsLight) : pl.id,
+                        ).map((d) => (
                           <span key={d} className="flex-1" style={{ background: d }} />
                         ))}
                       </span>

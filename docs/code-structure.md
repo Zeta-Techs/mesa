@@ -453,7 +453,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   tab-drag.ts                # 标签条拖拽排序纯逻辑：位移钳制 + 目标槽位判定（>= 中线守末槽边界，
                              # tests/tab-drag.test.ts）
   terminal-palettes.ts       # 终端调色板共享表（设置页与终端同源）：四套深色 + 四套配对浅色 twin，
-                             # ANSI 16 色 + 光标 + 选区全在表内；resolvePaletteId 按主题亮暗自动换 twin
+                             # ANSI 16 色 + 光标 + 选区全在表内；resolvePaletteId 按主题亮暗自动换 twin；
+                             # 没选过 / "auto" = 跟随主题（themeDefaultPalette：深色 One Dark、暮紫 Catppuccin、浅色 Light+）
                              # （新增调色板须同步 settings.rs KNOWN_PALETTES，否则被静默丢弃，tests/terminal-palettes.test.ts）
   upstream-note.ts           # brew 最新但上游 npm 更高版本的提示
   trust-prompt.ts            # 启动「是否信任这个目录」菜单识别（读 xterm 可视区文本；认 Claude / Kimi / CodeBuddy 方框 / Gemini 四种形态，信任只选范围最窄的那项）+ 代答按键序列（方向键挪到目标项再回车）；认不出返回 null 走 8 秒拉起终端的出口
@@ -563,7 +564,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   planLevelLabel 全小写等级首字母大写（智谱实测回 level:"max"）
                              #   （tests/plan-quota.test.ts）
   hotkeys.ts                 # 快捷键组合串纯逻辑
-  themes.ts                  # 主题清单单一出处 + isLightTheme() 亮暗判定单一出处（禁另造判定；
+  themes.ts                  # 主题清单单一出处 + isLightTheme() 亮暗判定单一出处 + DEFAULT_THEME_ID（首装琥珀，与 settings.rs 同步）（禁另造判定；
                              #   custom / custom-light 不进十四套清单）
   theme-follow.ts            # 主题跟随系统深浅：同名 twin（xxx ↔ xxx-light）换算；store 在设置读写后与系统
                              #   外观变化时调用，把 theme 写成生效值；自定义配色不跟随（tests/theme-follow.test.ts）
