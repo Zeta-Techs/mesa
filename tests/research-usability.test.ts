@@ -52,7 +52,9 @@ test("任务书减重不靠删阶段/门禁：共用摘要一次，格式适配�
   // 2026-10-22 检索步复查：产物目录段加「要提交的脚本放 scripts/」一句（每步都有产物目录段，六模板同涨）；
   // 检索/精读两步加开放获取版本规则（不收预印本时预印本服务器上的版本不下）。实测 review 26605、论文 35543、
   // 数据 12174、学位 33495、投稿 8713、LaTeX 13303，上限取整到百位留余量。
-  const before: Record<string, number> = { review: 26800, "research-paper": 35700, "data-processing": 12300, thesis: 33700, "submission-rebuttal": 8800, "latex-paper": 13400 };
+  // 同日再加一句：决策暂停策略带人工请求文件的用法（只放没答的、答完删、不提交；每步一句，六模板同涨）。
+  // 实测 review 26621、论文 36303、数据 12734、学位 34257、投稿 8993、LaTeX 13863。
+  const before: Record<string, number> = { review: 26800, "research-paper": 36500, "data-processing": 12900, thesis: 34400, "submission-rebuttal": 9100, "latex-paper": 14000 };
   for (const t of PIPELINE_TEMPLATES) {
     const tasks = md(t.id);
     assert.ok(tasks.reduce((n, s) => n+s.length, 0) < before[t.id], t.id);

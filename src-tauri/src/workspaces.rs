@@ -3983,20 +3983,38 @@ pub async fn write_review_notes(
     .map_err(|e| e.to_string())?
 }
 
+/// 只收条目行（「- 」「* 」「1. 」「1、」开头）；表格、普通段落不算（2026-10-22 实证：一张检索命中数表被拆成九条请求）。
+/// 标题写着已拍板 / 已解决 / 已回复 / 备查的那一节整节跳过——那是记录，不是在等人回答的问题
 fn parse_help_wanted(text: &str) -> Vec<String> {
+    let mut answered_section = false;
     text.chars()
         .take(32 * 1024)
         .collect::<String>()
         .lines()
         .filter_map(|l| {
             let t = l.trim();
+            if let Some(heading) = t.strip_prefix('#') {
+                // 「已拍板」「已由人拍板」都算；「待你拍板」不算
+                answered_section = ["已解决", "已回复", "已答复", "已处理", "已完成", "备查"]
+                    .iter()
+                    .any(|w| heading.contains(w))
+                    || (heading.contains('已') && heading.contains("拍板"));
+                return None;
+            }
+            if answered_section {
+                return None;
+            }
             let item = t
                 .strip_prefix("- ")
                 .or_else(|| t.strip_prefix("* "))
-                .unwrap_or(t);
+                .or_else(|| {
+                    let digits = t.chars().take_while(|c| c.is_ascii_digit()).count();
+                    (digits > 0)
+                        .then(|| &t[digits..])
+                        .and_then(|rest| rest.strip_prefix(". ").or_else(|| rest.strip_prefix('、')))
+                })?;
             let item = item.trim();
-            // 跳过标题/空行/分隔线，只收实质条目
-            if item.is_empty() || item.starts_with('#') || item.starts_with("---") {
+            if item.is_empty() {
                 return None;
             }
             Some(item.chars().take(300).collect())
@@ -7758,6 +7776,16 @@ mod tests {
         assert!(items[0].starts_with("请补充检索词"));
         assert_eq!(items[2], "星号条目也算");
         assert_eq!(parse_help_wanted("# 只有标题\n\n"), Vec::<String>::new());
+        // 表格、段落不算条目；已拍板 / 备查的小节整节跳过；编号条目算
+        let text = "# 需要人决定的事\n\n## 收尾\n\n- 7 篇 SI 未下载（兜底：只用正文数字）\n1. Zotero 进库待人操作\n\n## 0. 已由人拍板\n\n- **规模**：人答 20 篇\n\n## 1. 粗检依据（已拍板，保留备查）\n\n| # | 限定 | 命中数 |\n|---|---|---|\n| ① | 裸查 | 46,048 |\n\n复现：python scripts/x.py\n\n## 2. 待你拍板\n\n2、硼化物批身份最迟大纲前定\n";
+        assert_eq!(
+            parse_help_wanted(text),
+            vec![
+                "7 篇 SI 未下载（兜底：只用正文数字）".to_string(),
+                "Zotero 进库待人操作".to_string(),
+                "硼化物批身份最迟大纲前定".to_string(),
+            ]
+        );
     }
 
     #[test]

@@ -3026,8 +3026,9 @@ fn gitignore_text(work_mode: &str, artifact_dir: &str) -> String {
         return "# Mesa 生成：系统垃圾与过程文件不进 git\n\
              .DS_Store\n\
              \n\
-             # Mesa 过程文件\n\
+             # Mesa 过程文件（人工请求一步一份、只放没答的问题）\n\
              .ccode/handoff-*.md\n\
+             .ccode/help-wanted.md\n\
              /output/\n"
             .into();
     }
@@ -3036,8 +3037,9 @@ fn gitignore_text(work_mode: &str, artifact_dir: &str) -> String {
          /{artifact_dir}/\n\
          .DS_Store\n\
          \n\
-         # Mesa 接力简报：过程文件，不进版本库\n\
+         # Mesa 接力简报与人工请求：过程文件，不进版本库（人工请求一步一份、只放没答的问题）\n\
          .ccode/handoff-*.md\n\
+         .ccode/help-wanted.md\n\
          \n\
          # 文献 PDF 等大文件登记为资源引用，不进 git\n\
          *.pdf\n\
@@ -8312,6 +8314,10 @@ briefs = "not-an-array"
         assert!(research.contains("（日常积累，不进 git；2026-10-13 双台账口径）"));
         // coding 模式没有文献台账，不带积累面
         assert!(!gitignore_text("coding", "artifacts").contains(GITIGNORE_LEDGER_MARKER));
+        // 人工请求一步一份、不进 git（2026-10-22：提交进去后一路带到下一步，收件箱里全是上一步答过的问题）
+        for mode in ["research", "coding"] {
+            assert!(gitignore_text(mode, "artifacts").lines().any(|l| l == ".ccode/help-wanted.md"), "{mode}");
+        }
     }
 
 

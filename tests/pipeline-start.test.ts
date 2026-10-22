@@ -505,3 +505,10 @@ test("TASK.md 本步骤脚本：简报没点名的不列；只有 bash 写法的
   assert.doesNotMatch(renderTaskMd(quartoOnly, cfg(), "C:\\p", undefined, undefined, undefined, undefined, true), /用 Git Bash 执行/);
   assert.doesNotMatch(renderTaskMd(step(), cfg(), "/p"), /## 本步骤脚本/);
 });
+
+test("TASK.md 决策暂停策略带人工请求文件的用法：只放没答的、答完删、不提交", () => {
+  const md = renderTaskMd(step(), cfg(), "/tmp/p");
+  assert.match(md, /\.ccode\/help-wanted\.md 只放还没回答的问题/);
+  assert.match(md, /人回复后把那一条删掉/);
+  assert.match(md, /这个文件不提交/);
+});

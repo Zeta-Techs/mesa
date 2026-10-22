@@ -498,6 +498,11 @@ export function stepWaitItems(step: WaitStep): { during: string[]; after: string
 }
 
 /** 写入 TASK.md 的整段：模式说明 + 本步停哪些 + 其余做到做完。 */
+/** 人工请求文件的用法（2026-10-22 实证：检索步把这份文件提交进 git，精读步又在上面追加，人在收件箱里看到的全是
+ *  上一步早答过的问题和被拆成一条条的表格行）。一步一份、只放没答的，答完就删 */
+export const HELP_WANTED_RULE =
+  ".ccode/help-wanted.md 只放还没回答的问题：每条一行「- 」开头，写清要人定什么、不回时按什么兜底；不写已拍板的记录，不放表格和长段说明（依据写进本步报告，这里只引位置）。人回复后把那一条删掉，答案写进 TASK.md「已定口径」或本步报告。这个文件不提交。";
+
 export function decisionPolicyBlock(step: WaitStep): string {
   const lines = [decisionPolicyText(step.decisionMode)];
   const { during, after } = stepWaitItems(step);
@@ -511,6 +516,7 @@ export function decisionPolicyBlock(step: WaitStep): string {
     lines.push("达到完成标准后交给你（不要自行宣称已通过）：");
     for (const item of after) lines.push(`- ${item}`);
   }
+  lines.push(HELP_WANTED_RULE);
   lines.push(KEEP_WORKING_CLAUSE);
   return lines.join("\n");
 }
