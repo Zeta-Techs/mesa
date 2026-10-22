@@ -7,7 +7,6 @@ import {
   ChevronRight,
   CircleDot,
   ClipboardCheck,
-  FolderOpen,
   Inbox,
   MessageSquare,
   MessagesSquare,
@@ -117,7 +116,8 @@ function SectionHeading({
   return (
     <div className="mb-2.5 flex items-center gap-2 px-1">
       <Icon size={14} strokeWidth={1.8} className={iconClass} aria-hidden="true" />
-      <h2 className="text-xs font-medium text-l2">{title}</h2>
+      {/* Mac 根字号 14px 下 text-xs 只有 10.5px，比旁边 11px 的「查看全部」还小：标题用 micro，靠字重与字色分层 */}
+      <h2 className="text-micro font-medium text-l2">{title}</h2>
       {action && <div className="ml-auto">{action}</div>}
     </div>
   );
@@ -730,8 +730,12 @@ function WorkbenchPage({
       sessionId: session.sessionId,
       title: namedSessionTitle(session) ?? "",
       updatedAt: session.updatedAt,
+      // 已添加项目写注册名；随手聊 / 外部目录不写（行尾不放路径）
+      projectName: session.projectPath
+        ? (projects.find((p) => samePath(p.path, session.projectPath, IS_WINDOWS))?.name ?? null)
+        : null,
     }));
-  }, [sessions]);
+  }, [sessions, projects]);
 
   const hasInbox = inboxItems.length > 0;
   const reviewTasks = userTasks.filter((task) => task.status === "pending_review");
@@ -763,7 +767,6 @@ function WorkbenchPage({
         runningCount: hero.runningCount,
         agentLabel: agentLabel(hero.agentId),
         attention: hero.attention,
-        registered: hero.registered,
       })
     : "";
   const statusDot =
@@ -771,7 +774,7 @@ function WorkbenchPage({
       ? "bg-warn-text"
       : hero && hero.runningCount > 0
         ? "bg-ok-text"
-        : "bg-l4";
+        : "";
   const runningBadge = nowItems.reduce((n, item) => n + item.runningCount, 0)
     || (hero?.runningCount ?? 0);
   function itemDot(item: {
@@ -796,7 +799,7 @@ function WorkbenchPage({
         }
       />
       {loadError && (
-        <div className="mb-4 flex items-center justify-between gap-3 rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn-text">
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn-text">
           <span>{loadError}</span>
           <button
             type="button"
@@ -818,7 +821,7 @@ function WorkbenchPage({
         <section className="min-w-0">
           <div className="mb-2.5 flex items-center gap-2 px-1">
             <CircleDot size={14} strokeWidth={1.8} className="text-nav-accent" aria-hidden="true" />
-            <h2 className="text-xs font-medium text-l2">
+            <h2 className="text-micro font-medium text-l2">
               {workbenchNowSectionTitle(runningBadge)}
             </h2>
             {runningBadge > 0 && (
@@ -868,8 +871,8 @@ function WorkbenchPage({
                   title={`上次停在：${heroSaid.full}\n点开查看这段对话`}
                   onClick={() => openLastSaid(heroSaid)}
                 >
-                  <span className="shrink-0 text-xs text-l3">上次停在</span>
-                  <span className="min-w-0 flex-1 truncate text-xs">{heroSaid.text}</span>
+                  <span className="shrink-0 text-micro text-l3">上次停在</span>
+                  <span className="min-w-0 flex-1 truncate text-sm">{heroSaid.text}</span>
                   {heroSaid.timestamp && (
                     <span
                       className="shrink-0 text-micro text-l3"
@@ -880,9 +883,17 @@ function WorkbenchPage({
                   )}
                 </button>
               )}
-              <div className="mt-4 flex items-center gap-2 border-t border-hairline pt-3 text-xs text-l3">
-                <span className={`size-1.5 rounded-full ${statusDot}`} />
-                <span className="min-w-0 flex-1 truncate">{statusText}</span>
+              {/* 有 Agent 在跑 / 等确认才报状态；空闲时只剩「在客户端打开」，也没有就整行不出（没事不画点） */}
+              {(statusText || showClientJump) && (
+              <div className="mt-4 flex items-center gap-2 border-t border-hairline pt-3 text-micro text-l3">
+                {statusText ? (
+                  <>
+                    <span className={`size-1.5 rounded-full ${statusDot}`} />
+                    <span className="min-w-0 flex-1 truncate">{statusText}</span>
+                  </>
+                ) : (
+                  <span className="flex-1" />
+                )}
                 {showClientJump && (
                   <button
                     type="button"
@@ -895,13 +906,14 @@ function WorkbenchPage({
                   </button>
                 )}
               </div>
+              )}
               {hero.runs.length > 1 && (
                 <ul className="mt-2 space-y-0.5">
                   {hero.runs.map((r) => (
                     <li key={r.runId ?? r.tabId}>
                       <button
                         type="button"
-                        className="flex h-7 w-full items-center gap-2 rounded-md px-1 text-left text-xs text-l3 hover:bg-hover hover:text-l2"
+                        className="flex h-7 w-full items-center gap-2 rounded-md px-1 text-left text-sm text-l3 hover:bg-hover hover:text-l2"
                         onClick={() => {
                           if (r.runId) openRun(r.runId, r.tabId);
                           else {
@@ -1061,7 +1073,7 @@ function WorkbenchPage({
                     />
                   </div>
                 ) : (
-                  <span className="max-w-[11rem] shrink-0 truncate text-micro text-l4" title={goalTarget.path}>
+                  <span className="max-w-[11rem] shrink-0 truncate text-micro text-l3" title={goalTarget.path}>
                     记到「{goalTarget.name}」
                   </span>
                 )}
@@ -1129,7 +1141,7 @@ function WorkbenchPage({
                 className="group flex min-h-10 items-center gap-2 rounded-md px-2.5 transition-colors hover:bg-hover"
               >
                 <span className={`size-1.5 shrink-0 rounded-full ${item.dot}`} />
-                <span className="min-w-0 flex-1 truncate text-xs text-l2" title={item.text}>
+                <span className="min-w-0 flex-1 truncate text-sm text-l2" title={item.text}>
                   {item.text}
                 </span>
                 {projectName && (
@@ -1229,73 +1241,9 @@ function WorkbenchPage({
         )}
       </div>
 
-      <div className="mt-10 grid gap-8 lg:grid-cols-2">
-        <section className="min-w-0">
-          <SectionHeading
-            icon={FolderOpen}
-            title="最近项目"
-            action={
-              <button type="button" className={sectionLinkClass} onClick={() => setPage("workspaces")}>
-                <span className={sectionLinkTextClass}>查看全部</span>
-              </button>
-            }
-          />
-          {recentRows.length === 0 ? (
-            <p className="py-5 text-sm text-l3">最近打开的项目会显示在这里。</p>
-          ) : (
-            <div className="space-y-0.5">
-              {recentRows.map((row) => (
-                <div
-                  key={row.path}
-                  className="group flex min-h-9 w-full items-center gap-3 rounded-md px-2.5 transition-colors hover:bg-hover"
-                >
-                  <button
-                    type="button"
-                    className="flex min-w-0 flex-1 items-center gap-3 text-left"
-                    title={
-                      row.registered
-                        ? row.path
-                        : "还没添加到 Mesa，点开会进运行页"
-                    }
-                    onClick={() =>
-                      void enterRepo({
-                        path: row.path,
-                        name: row.name,
-                        lastActive: row.lastActive,
-                      })
-                    }
-                  >
-                    <FolderOpen size={15} strokeWidth={1.8} className={iconClass} aria-hidden="true" />
-                    <span className="min-w-0 flex-1 truncate text-sm text-l2">
-                      {row.name}
-                    </span>
-                  </button>
-                  {!row.registered && (
-                    <span className="shrink-0 text-micro text-l3">未添加</span>
-                  )}
-                  <span
-                    className="shrink-0 text-micro text-l3"
-                    title={absTime(row.lastActive)}
-                  >
-                    {relTime(row.lastActive)}
-                  </span>
-                  {showClientJump && (
-                    <button
-                      type="button"
-                      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-l4 hover:bg-hover hover:text-l1 ${hoverRevealClass}`}
-                      title={clientJumpTitle}
-                      aria-label={clientJumpLabel}
-                      onClick={() => clientOpen.openProject(row.path)}
-                    >
-                      <SquareArrowOutUpRight size={14} strokeWidth={1.8} aria-hidden="true" />
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-
+      {/* 「最近项目」栏已删（2026-10-22 审查）：侧栏项目树与上面的「最近在做」已经列了项目，一屏三处重复；
+          它带来的「哪些项目最近在动」改由对话行尾的项目名承担 */}
+      <div className="mt-10">
         <section className="min-w-0">
           <SectionHeading
             icon={MessagesSquare}
@@ -1325,6 +1273,11 @@ function WorkbenchPage({
                 >
                   <MessageSquare size={15} strokeWidth={1.8} className={iconClass} aria-hidden="true" />
                   <span className="min-w-0 flex-1 truncate text-sm text-l2">{session.title}</span>
+                  {session.projectName && (
+                    <span className="max-w-[12rem] shrink-0 truncate text-micro text-l3">
+                      {session.projectName}
+                    </span>
+                  )}
                   <span
                     className="shrink-0 text-micro text-l3"
                     title={absTime(session.updatedAt)}

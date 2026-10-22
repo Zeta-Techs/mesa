@@ -11,6 +11,7 @@ import {
   isWorkbenchSurfaceRun,
 } from "./run-model.ts";
 import { goalBucket } from "./project-tasks.ts";
+import { LAUNCH_PROMPT_SEPARATOR, PROJECT_PACK_HEAD } from "./project-context.ts";
 import { projectNowLine } from "./project-status.ts";
 import { sessionExcludedFromProjectList } from "./session-filter.ts";
 import {
@@ -679,7 +680,6 @@ export function heroStatusLine(opts: {
   runningCount: number;
   agentLabel: string | null;
   attention: "confirm" | "working" | "done" | null;
-  registered: boolean;
 }): string {
   if (opts.runningCount > 0) {
     const who = opts.agentLabel?.trim() || "Agent";
@@ -692,7 +692,8 @@ export function heroStatusLine(opts: {
     }
     return `${opts.runningCount} 个 Agent 在跑`;
   }
-  return opts.registered ? "准备好从上次位置继续" : "可从最近位置继续";
+  // 没有 Agent 在跑就没有状态可报：「准备好从上次位置继续」与「继续工作」按钮说的是同一件事（2026-10-22 审查删）
+  return "";
 }
 
 /** 有实质标题才返回；未命名 / 空标题不列。与项目侧栏同一套清洗。 */
@@ -796,6 +797,15 @@ const LAST_SAID_INJECTED_RE = /^(?:<[a-z][\w-]*[\s>]|caveat:)/i;
 const LAST_SAID_INTERRUPT_RE =
   /\[?\s*request interrupted by user[^\]]*\]?|请求(?:已)?中断|被用户中断/gi;
 
+/** Mesa 开对话时把项目上下文包塞在第一句话前面（composeLaunchPrompt）：包不是人话。
+ *  以默认包头开头的消息，有分隔就只留分隔后面你说的那句，没有分隔（只发了包）就整条不算。
+ *  自定义模板的包头认不出，照旧当人话——宁可偶尔显示包，不误删人话 */
+function stripProjectPack(text: string): string {
+  if (!text.startsWith(PROJECT_PACK_HEAD)) return text;
+  const at = text.indexOf(LAUNCH_PROMPT_SEPARATOR.trim());
+  return at < 0 ? "" : text.slice(at + LAUNCH_PROMPT_SEPARATOR.trim().length).trim();
+}
+
 function clampLastSaid(text: string): string {
   const chars = [...text];
   const cjk = chars.filter((c) => (c.codePointAt(0) ?? 0) > 0xff).length;
@@ -825,8 +835,8 @@ export function lastUserInstruction(
       .join("\n")
       .trim();
     if (!raw) continue;
-    const unwrapped = unwrapPromptTags(raw);
-    if (LAST_SAID_INJECTED_RE.test(unwrapped)) continue;
+    const unwrapped = stripProjectPack(unwrapPromptTags(raw));
+    if (!unwrapped || LAST_SAID_INJECTED_RE.test(unwrapped)) continue;
     let full = replaceAbsFsPaths(unwrapped.replace(LAST_SAID_INTERRUPT_RE, " "));
     full = stripTitleMarkdown(full.replace(/\s+/g, " ").trim());
     if (!full) continue;

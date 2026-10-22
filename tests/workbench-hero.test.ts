@@ -303,13 +303,12 @@ test("区块标题：没在跑不算正在进行", () => {
   assert.equal(workbenchNowSectionTitle(3), "正在进行");
 });
 
-test("heroStatusLine 只描述这张卡上的 Agent", () => {
+test("heroStatusLine 只描述这张卡上的 Agent，没在跑不报状态", () => {
   assert.equal(
     heroStatusLine({
       runningCount: 1,
       agentLabel: "Claude Code",
       attention: "confirm",
-      registered: true,
     }),
     "Claude Code 在等你确认",
   );
@@ -318,7 +317,6 @@ test("heroStatusLine 只描述这张卡上的 Agent", () => {
       runningCount: 2,
       agentLabel: "Codex",
       attention: "working",
-      registered: true,
     }),
     "2 个 Agent 在跑",
   );
@@ -327,7 +325,6 @@ test("heroStatusLine 只描述这张卡上的 Agent", () => {
       runningCount: 2,
       agentLabel: "Codex",
       attention: "confirm",
-      registered: true,
     }),
     "2 个 Agent 在跑 · Codex 在等你确认",
   );
@@ -336,18 +333,16 @@ test("heroStatusLine 只描述这张卡上的 Agent", () => {
       runningCount: 0,
       agentLabel: "Claude Code",
       attention: null,
-      registered: true,
     }),
-    "准备好从上次位置继续",
+    "",
   );
   assert.equal(
     heroStatusLine({
       runningCount: 0,
       agentLabel: null,
       attention: null,
-      registered: false,
     }),
-    "可从最近位置继续",
+    "",
   );
 });
 
@@ -884,6 +879,31 @@ test("lastUserInstruction：取最后一条人说的话，跳过工具结果与�
   const long = lastUserInstruction([msg("user", ["text", "长".repeat(80)])]);
   assert.equal([...long!.text].length, 61);
   assert.equal(long!.full.length, 80);
+});
+
+test("lastUserInstruction：Mesa 塞在前面的项目上下文包不算人话", () => {
+  const msg = (text: string) => ({
+    role: "user",
+    timestamp: "2026-10-22T01:00:00Z",
+    blocks: [{ kind: "text", text }],
+  });
+  const pack = "你正在项目「测试项目」中工作。\n工作方式：科研\n项目目录：/u/test\n\n项目里现有（顶层）：\n- papers/";
+  // 只发了包：整条跳过，往前找上一句人话
+  assert.equal(
+    lastUserInstruction([msg("先把检索式定下来"), msg(pack)])?.text,
+    "先把检索式定下来",
+  );
+  assert.equal(lastUserInstruction([msg(pack)]), null);
+  // 包 + 分隔 + 第一句话：只取分隔后面
+  assert.equal(
+    lastUserInstruction([msg(`${pack}\n\n----\n\n帮我筛一下待确认的篇目`)])?.text,
+    "帮我筛一下待确认的篇目",
+  );
+  // 人话里自己写了分隔线不受影响
+  assert.equal(
+    lastUserInstruction([msg("第一段\n\n----\n\n第二段")])?.text,
+    "第一段 ---- 第二段",
+  );
 });
 
 test("latestProjectSession：同项目最近一次人参与的对话，内部/归档/失效不算", () => {

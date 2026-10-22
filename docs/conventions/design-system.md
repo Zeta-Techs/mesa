@@ -336,6 +336,13 @@
   才固定、新加的排组尾。切换面板各组同表排序，「最近」段仍按打开时间。
   坑：组头与课题行是 `<button>`，全站 `button { font: inherit }` 让它们吃侧栏字号，`text-xs` 不生效；同排的 `<div>` 组头（置顶）
   不能写 `text-xs`，否则比别的组头小一号。
+- **工作台按审查收口（2026-10-22，HIG 审查后用户「全部修」）**：①Mac 根字号 14px 下 `text-xs` = 10.5px，比 `text-micro`（固定 11px）还小——
+  工作台区块标题改 `text-micro` + 中粗 + l2（与「查看全部」同字号，靠字重字色分层），列表行 / 待你处理行 / 运行行用 `text-sm`，工作台不再用
+  `text-xs`。全站这个倒挂还在（见 §12 待办），新代码在 Mac 上要「比 micro 小」时别用 xs。②「最近项目」栏删除：侧栏项目树 + 「最近在做」已列项目，
+  一屏三处重复；「最近对话」占整宽，行尾补项目注册名（text-micro l3）。③大卡底部状态行只在有 Agent 在跑 / 等确认时写（`heroStatusLine` 空闲返回空），
+  空闲只留「在客户端打开」，两样都没有整行不出——没事不画点。④l4 小字在井上 3.45:1，工作台文字一律 ≥ l3；l4 只给图标。
+  ⑤「上次停在」不算 Mesa 塞的上下文包：以默认包头 `PROJECT_PACK_HEAD` 开头的用户消息，有 `LAUNCH_PROMPT_SEPARATOR` 只取其后，没有整条跳过
+  （两常量与 `composeLaunchPrompt` 同处 project-context.ts）。
 - **侧栏桌面磨砂（2026-09-24）**：透的是窗口背后的桌面，不是页头那种网页内 `backdrop-filter`。
   窗口 `transparent` + macOS `underWindowBackground`（`macOSPrivateApi`，不上 Mac App Store）/
   Windows 11 Mica（深浅跟 Mesa 主题，不跟系统外观）；Linux 没有同等材质，侧栏保持实心 rail。

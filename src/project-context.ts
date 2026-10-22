@@ -471,6 +471,11 @@ export function renderSessionInjection(
     .trim();
 }
 
+/** 上下文包与用户第一句话之间的分隔（工作台「上次停在」据此只取人话，改这里两边一起变） */
+export const LAUNCH_PROMPT_SEPARATOR = "\n\n----\n\n";
+/** 默认上下文包的开头（模板首行）：工作台据此认出「这条用户消息是 Mesa 自己塞的」 */
+export const PROJECT_PACK_HEAD = "你正在项目「";
+
 export function composeLaunchPrompt(
   pack: string,
   userPrompt?: string | null,
@@ -478,5 +483,5 @@ export function composeLaunchPrompt(
   const body = userPrompt?.trim() ?? "";
   if (!pack.trim()) return body;
   if (!body) return pack;
-  return `${pack}\n\n----\n\n${body}`;
+  return `${pack}${LAUNCH_PROMPT_SEPARATOR}${body}`;
 }
