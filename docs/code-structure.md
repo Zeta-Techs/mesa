@@ -90,7 +90,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   AI 回复不截断、用户长消息 UserText 量行收起；字号走聊天阶梯类（design-system「聊天正文排版」）
   components/ChatMarkdown.tsx # AI 回复 Markdown（独立 Marked 实例、原始 HTML 转义）：长回复分节小标题按级别排、ChatCodeBlock（用户气泡里的
                              #   围栏代码同一套）、上屏后 useChatDecorations 跑表格壳 / 代码高亮 / 公式 / 引用胶囊 / 文件链接，音频播放条、图片卡
-  components/ProjectTree.tsx # 侧栏项目树（展开态）：「项目」标签行（计数＋放大镜＋添加入口）+ 点开才有的搜索框 + 按工作方式分组的课题列表
+  components/ProjectTree.tsx # 侧栏项目树（展开态）：「项目」标签行（计数＋放大镜＋添加入口）+ 点开才有的搜索框 + 按工作方式分组的课题列表（组内可拖动排序）
                              #   （注册项目 + list_workspaces 推导的「未添加」仓库段；重拉触发=store.projectsVersion 管理动作代数
                              #   与 projectPaths 签名变化）。行点击=onSelect(repoPath)（App 侧 setSelectProjectReq+setPage）；
                              #   行右键=重命名/复制路径/从 Mesa 移除/清除痕迹/删除目录，动作自持（invoke+confirmDialog+toast），
@@ -119,7 +119,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   third-party-notices.ts     # 随包许可清单解析纯逻辑：依赖表拆组拆行（跳过代码块里的 ##、丢弃文件头生成说明）+ 按名字/许可搜索（tests/third-party-notices.test.ts 含真文件格式守卫）
   components/MesaMark.tsx    # Mesa 光标标志的字标版（去底板，M 跟文字色、光标品牌琥珀 + 深色底余辉，viewBox 裁到图形、底边即基线）；聊天空态问候在用
   components/CommandPalette.tsx # ⌘K 面板：默认列表 快速操作/最近项目（list_projects 前 5）/页面（快捷键跟随设置）/外观/帮助；设置分区（SETTINGS_SEARCH_INDEX）、单个主题、较早项目、外链只在搜索时出现；「切换主题…」进主题网格（与设置页主题卡同长相、7 列深浅上下对齐、方向键四向移动、当前打勾；色样懒加载 App.css?raw；跟随系统只列与系统同深浅的一排并走 followedTheme）；输入法组词 Enter 不执行、↑↓ 循环、键盘移动跟随滚动；帮助类动作经 onHelp 交 App 的同一批弹窗（「上手引导」直接调 openOnboardingGuide）
-  project-tree.ts            # 侧栏项目树置顶纯逻辑：togglePin / splitPinned（置顶段按先后、移出原分组）/ parsePins（坏数据当空表）；
+  project-tree.ts            # 侧栏项目树置顶与组内顺序纯逻辑：togglePin / splitPinned（置顶段按先后、移出原分组）/ parsePins（坏数据当空表）/ applyOrder + reorderGroup（拖动排序，只比同组相对先后）；
                              #   localStorage ccode.projectTreePins；tests/project-tree.test.ts
   usage-dist.ts              # 用量页分布区纯逻辑：shareOf/barWidthPct/sharePctLabel、visibleDistRows（先露 10 行、≤12 行不折）、
                              #   toTsv（复制表格，格内换行/制表符压空格）；tests/usage-dist.test.ts。StatsPage 的 DistList 统一渲染六个页签

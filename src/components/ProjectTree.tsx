@@ -34,12 +34,16 @@ import { revealFolderLabel, samePath } from "../path-utils";
 import { IS_MAC, IS_WINDOWS } from "../hotkeys";
 import { projectRailStatus } from "../run-overview";
 import {
+  applyOrder,
   isPinned,
   parsePins,
+  PROJECT_ORDER_KEY,
   PROJECT_PINS_KEY,
+  reorderGroup,
   splitPinned,
   togglePin,
 } from "../project-tree";
+import { clampTabDragDx, rubberbandTabDx, tabDragTarget } from "../tab-drag";
 import ContextMenu, { type ContextMenuItem } from "./ContextMenu";
 import { confirmDialog } from "./ConfirmDialog";
 import RenameProjectModal from "./RenameProjectModal";
@@ -118,6 +122,126 @@ export default function ProjectTree({
       return next;
     });
   }
+  // 组内顺序（拖动排序）：同置顶，界面偏好记本机；置顶段的顺序就是 pins 表本身
+  const [order, setOrder] = useState<string[]>(() => {
+    try {
+      return parsePins(localStorage.getItem(PROJECT_ORDER_KEY));
+    } catch {
+      return [];
+    }
+  });
+  function saveList(key: string, next: string[]) {
+    try {
+      localStorage.setItem(key, JSON.stringify(next));
+    } catch {
+      /* 存不下只影响下次启动 */
+    }
+  }
+  // 组内拖动排序（同运行页标签拖动：pointer 事件自实现，不用 HTML5 拖放——Tauri 原生文件拖放会拦掉
+  // WKWebView 的拖拽手势）：竖向位移超 6px 进拖拽，源行跟手、其余行滑动让位，松手先吸附再落定。
+  // 只在同一段（置顶 / 某个工作方式组）里拖，不能跨组：分组由工作方式决定。搜索时不拖。
+  const [drag, setDrag] = useState<{
+    section: string;
+    key: string;
+    from: number;
+    target: number;
+    dy: number;
+    /** 拖拽开始时本段各行的测量值（复用标签条的一维槽位：left=top、width=height） */
+    slots: { left: number; width: number }[];
+    settling: boolean;
+  } | null>(null);
+  // 拖完松手的那次 click 吞掉（拖排序不该顺手打开课题）
+  const suppressClickRef = useRef(false);
+  function onRowPointerDown(
+    e: React.PointerEvent,
+    section: string,
+    paths: string[],
+    key: string,
+  ) {
+    if (e.button !== 0 || searchQuery || paths.length < 2) return;
+    const rowEl = e.currentTarget as HTMLElement;
+    const startY = e.clientY;
+    let active = false;
+    let slots: { left: number; width: number }[] = [];
+    let from = 0;
+    let lastTarget = 0;
+    const cleanup = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+    const finish = () => {
+      cleanup();
+      if (!active) return;
+      suppressClickRef.current = true;
+      // 吞 click 只管紧随的这一次；松手落在行外就没有 click，别让它留到下次真点击
+      window.setTimeout(() => {
+        suppressClickRef.current = false;
+      }, 0);
+      const target = lastTarget;
+      if (target === from) {
+        setDrag(null);
+        return;
+      }
+      setDrag((cur) =>
+        cur
+          ? { ...cur, dy: cur.slots[target].left - cur.slots[from].left, settling: true }
+          : null,
+      );
+      window.setTimeout(() => {
+        if (section === "pinned") {
+          setPins((prev) => {
+            const next = reorderGroup(prev, paths, from, target, IS_WINDOWS);
+            saveList(PROJECT_PINS_KEY, next);
+            return next;
+          });
+        } else {
+          setOrder((prev) => {
+            const next = reorderGroup(prev, paths, from, target, IS_WINDOWS);
+            saveList(PROJECT_ORDER_KEY, next);
+            return next;
+          });
+        }
+        setDrag(null);
+      }, 170);
+    };
+    const onMove = (ev: PointerEvent) => {
+      if (!active) {
+        if (Math.abs(ev.clientY - startY) <= 6) return;
+        active = true;
+        // 进入拖拽态才测量（此刻布局未变）；querySelectorAll 顺序 = 本段显示顺序
+        const els = Array.from(
+          (rowEl.parentElement ?? rowEl).querySelectorAll<HTMLElement>("[data-tree-row]"),
+        );
+        slots = els.map((el) => {
+          const r = el.getBoundingClientRect();
+          return { left: r.top, width: r.height };
+        });
+        from = Math.max(0, els.findIndex((el) => el.getAttribute("data-tree-row") === key));
+        lastTarget = from;
+        document.body.style.userSelect = "none";
+        document.body.style.cursor = "grabbing";
+        setMenu(null);
+      }
+      const raw = ev.clientY - startY;
+      const target = tabDragTarget(slots, from, clampTabDragDx(slots, from, raw));
+      lastTarget = target;
+      setDrag({
+        section,
+        key,
+        from,
+        target,
+        dy: rubberbandTabDx(slots, from, raw),
+        slots,
+        settling: false,
+      });
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", finish);
+  }
   const [addMenu, setAddMenu] = useState<{ x: number; y: number } | null>(null);
   const [renameTarget, setRenameTarget] = useState<{
     path: string;
@@ -190,11 +314,12 @@ export default function ProjectTree({
     const { pinned, rest } = splitPinned(filtered, pins, IS_WINDOWS);
     return {
       pinned,
-      groups: groupByWorkMode(rest, (r) =>
-        r.project ? r.project.workMode : "unregistered",
+      groups: groupByWorkMode(
+        applyOrder(rest, order, (r) => r.repoPath, IS_WINDOWS),
+        (r) => (r.project ? r.project.workMode : "unregistered"),
       ),
     };
-  }, [rows, searchQuery, pins]);
+  }, [rows, searchQuery, pins, order]);
 
   const toggleGroup = (mode: string) => {
     setExpandedGroups((prev) => {
@@ -352,7 +477,7 @@ export default function ProjectTree({
 
   /** 一行课题：整行是主按钮（点进项目页、右键出菜单），右侧 ⋯ 悬停 / 键盘聚焦 / 菜单开着时出现。
    *  按钮不能嵌套，所以外层是 div 承载底色，主按钮与 ⋯ 并排。 */
-  function renderRow(row: TreeRow) {
+  function renderRow(row: TreeRow, index: number, section: string, paths: string[]) {
     const selected =
       selectedRoot != null && samePath(selectedRoot, row.repoPath, IS_WINDOWS);
     // needsAttention 恒 0：黄点归顶栏收件箱，树里只认「此刻在跑」
@@ -369,10 +494,34 @@ export default function ProjectTree({
         runs: terminalRunInputs,
       }) === "running";
     const menuOpen = menu?.row.key === row.key;
+    // 拖动：源行跟手；落在「原位 → 目标」之间的行各让一个槽位（同运行页标签条）
+    const inSection = drag?.section === section ? drag : null;
+    const isSource = inSection?.key === row.key;
+    let shift = 0;
+    if (inSection && !isSource) {
+      const { from, target, slots } = inSection;
+      if (from < target && index > from && index <= target)
+        shift = slots[index - 1].left - slots[index].left;
+      else if (from > target && index < from && index >= target)
+        shift = slots[index + 1].left - slots[index].left;
+    }
     return (
       <div
         key={row.key}
+        data-tree-row={row.key}
+        onPointerDown={(e) => onRowPointerDown(e, section, paths, row.key)}
+        style={
+          inSection
+            ? {
+                transform: `translateY(${isSource ? inSection.dy : shift}px)`,
+                transition:
+                  !isSource || inSection.settling ? "transform 150ms ease" : "none",
+              }
+            : undefined
+        }
         className={`group relative flex h-7 items-center rounded-md transition-colors ${
+          isSource ? "z-10 bg-raised" : ""
+        } ${
           selected && active
             ? "ccode-tree-active bg-rail-sel"
             : menuOpen
@@ -386,7 +535,13 @@ export default function ProjectTree({
       >
         <button
           type="button"
-          onClick={() => onSelect(row.repoPath)}
+          onClick={() => {
+            if (suppressClickRef.current) {
+              suppressClickRef.current = false;
+              return;
+            }
+            onSelect(row.repoPath);
+          }}
           title={row.repoPath}
           aria-current={selected && active ? "page" : undefined}
           className={`flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md px-1.5 text-xs ${
@@ -410,6 +565,8 @@ export default function ProjectTree({
           title="更多操作"
           aria-haspopup="menu"
           aria-expanded={menuOpen}
+          // ⋯ 上按下不起拖
+          onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             const r = e.currentTarget.getBoundingClientRect();
             setMenu({ x: r.right, y: r.bottom + 4, row, alignRight: true });
@@ -523,7 +680,9 @@ export default function ProjectTree({
                   <span className="min-w-0 flex-1 truncate">置顶</span>
                 </div>
                 <div className="ml-3 space-y-0.5 border-l border-hairline pl-1.5">
-                  {grouped.pinned.map(renderRow)}
+                  {grouped.pinned.map((r, i, all) =>
+                    renderRow(r, i, "pinned", all.map((x) => x.repoPath)),
+                  )}
                 </div>
               </div>
             )}
@@ -550,7 +709,9 @@ export default function ProjectTree({
                   </button>
                   {isExpanded && (
                     <div className="ml-3 space-y-0.5 border-l border-hairline pl-1.5">
-                      {group.items.map(renderRow)}
+                      {group.items.map((r, i, all) =>
+                        renderRow(r, i, group.mode, all.map((x) => x.repoPath)),
+                      )}
                     </div>
                   )}
                 </div>
@@ -840,7 +1001,15 @@ function ProjectSwitchPanel({
         items: rows.slice(0, RECENT_COUNT),
       });
     }
-    for (const g of groupByWorkMode(rows, (r) => r.project.workMode)) {
+    // 分组内顺序与侧栏项目树同一张表（拖动排序的结果），两边不各排各的；「最近」段仍按打开时间
+    let order: string[] = [];
+    try {
+      order = parsePins(localStorage.getItem(PROJECT_ORDER_KEY));
+    } catch {
+      /* 读不出就按最近打开 */
+    }
+    const ordered = applyOrder(rows, order, (r) => r.project.path, IS_WINDOWS);
+    for (const g of groupByWorkMode(ordered, (r) => r.project.workMode)) {
       out.push({
         key: g.mode,
         label: RAIL_WORK_MODE_LABEL[g.mode],
