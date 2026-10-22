@@ -1024,7 +1024,7 @@ function App() {
   }, [settings]);
 
   // 启动过渡（2026-10-16 用户拍板）：首屏数据（连接/会话/项目/最近目录/设置）就位前
-  // 保持 index.html 同款呼吸占位，就位后应用树才挂载——工作台的项目和最近会话不再
+  // 保持 index.html 同款字标占位，就位后应用树才挂载——工作台的项目和最近会话不再
   // 先出空列表再弹出。2.5s 硬顶：后端卡死也放行（宁可空列表，不困在过渡里）。
   // 更新检查/依赖体检不进闸（网络/外部命令不该拖长过渡）。
   const [bootDataReady, setBootDataReady] = useState(false);
@@ -1954,10 +1954,9 @@ function App() {
 }
 
 /** 启动过渡闸（2026-10-16 用户拍板）：首屏数据未就位时渲染与 index.html 相同的
- *  呼吸占位——同 class 让 html:has 选择器仍走实心底，与 pre-React 占位无缝衔接；
+ *  字标占位——同 class 让 html:has 选择器仍走实心底，与 pre-React 占位无缝衔接；
  *  就位/硬顶后才挂载应用树，工作台的项目与最近会话直接满屏出现，不再先空后弹。
- *  负 animation-delay 让呼吸从 HTML 占位的当前相位继续（周期须与 boot-breathe
- *  的 2.4s 同步改），换手无跳变。 */
+ *  换手时字标留一层 .boot-handoff 盖在应用上淡出，与应用淡入叠在一起（2026-10-23）。 */
 function BootGate({
   ready,
   children,
@@ -1965,13 +1964,53 @@ function BootGate({
   ready: boolean;
   children: React.ReactNode;
 }) {
-  if (ready) return <>{children}</>;
+  if (ready)
+    return (
+      <>
+        {children}
+        <BootHandoff />
+      </>
+    );
+  return <BootMark />;
+}
+
+// 与 index.html 的 boot-show（0.2s 延迟）/ boot-blink（1.1s 周期）同步改
+const BOOT_SHOW_DELAY_MS = 200;
+const BOOT_BLINK_MS = 1100;
+
+/** 字标 Mesa + 琥珀光标。HTML 占位的动画从文档开始算起，React 换上的这一份用负
+ *  animation-delay 接着它的进度走：淡入没到点就照样等、到了就停在显示态，光标接同一相位。
+ *  挂载时刻只取一次——重渲染再改 delay 不会重启动画，只会让进度跳一截。 */
+function BootMark() {
+  const [now] = useState(() => performance.now());
   return (
     <div
       className="boot-splash"
-      style={{ animationDelay: `${-(performance.now() % 2400)}ms` }}
+      style={{ animationDelay: `${BOOT_SHOW_DELAY_MS - now}ms` }}
     >
-      Mesa
+      <span>
+        Mesa
+        <i
+          className="boot-caret"
+          style={{ animationDelay: `${-(now % BOOT_BLINK_MS)}ms` }}
+        />
+      </span>
+    </div>
+  );
+}
+
+/** 换手层：只活一次淡出的时间，不接点击；用计时器卸载而不是 animationend——
+ *  后者遇到动画被关掉就永远等不到，字会一直压在应用上。 */
+function BootHandoff() {
+  const [done, setDone] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setDone(true), 400);
+    return () => clearTimeout(t);
+  }, []);
+  if (done) return null;
+  return (
+    <div className="boot-handoff" aria-hidden="true">
+      <BootMark />
     </div>
   );
 }
