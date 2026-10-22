@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useRef, useState } from "react";
 import { contextLabel } from "../model-caps-label";
 import { invoke } from "@tauri-apps/api/core";
 import { scheduleWarnText, usageWarnText, type UnbindRefs } from "../unbind-impact";
@@ -53,6 +53,7 @@ import {
   profileNeedsProbe,
   profileStatusCell,
   showCatalogSyncAction,
+  suggestConnectionName,
   type ProfileStatus,
   type ProfileStatusTone,
 } from "../profile-connection-ui";
@@ -106,7 +107,8 @@ import type {
   LaunchPlanPreviewDto,
 } from "../types";
 
-function ProfileModal({
+/** 添加 / 编辑连接弹层（导出供 UI 测试挂载） */
+export function ProfileModal({
   initial,
   presetAgent,
   officialSupported,
@@ -182,6 +184,16 @@ function ProfileModal({
       .map(([k, v]) => `${k}=${v}`)
       .join("\n"),
   );
+  // 同一 agent 下重名只提醒不拦：名字是给人看的，启动栏 / 选择器里同名分不清
+  const allProfiles = useAppStore((s) => s.profiles);
+  const sameNameTaken = (name: string) =>
+    name !== "" &&
+    allProfiles.some(
+      (p) =>
+        p.id !== initial?.id &&
+        p.agent === form.agent &&
+        p.name.trim().toLowerCase() === name.toLowerCase(),
+    );
   const [fetching, setFetching] = useState(false);
   const [fetchedModels, setFetchedModels] = useState<string[] | null>(null);
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
@@ -192,6 +204,7 @@ function ProfileModal({
     Boolean(opening?.gateway && opening.gateway.models.length > 0),
   );
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [aliasOpen, setAliasOpen] = useState(false);
   const [pickerFilter, setPickerFilter] = useState("");
   const [openVendors, setOpenVendors] = useState<ReadonlySet<string>>(new Set());
   const [testResult, setTestResult] = useState<{
@@ -202,14 +215,38 @@ function ProfileModal({
   const [saving, setSaving] = useState(false);
   const [capabilities, setCapabilities] = useState<ModelCapabilityDto[]>([]);
   const [agentCapabilities, setAgentCapabilities] = useState<AgentCapabilitiesDto | null>(null);
+  const formId = useId();
+  // 添加连接的顺序（2026-10-23 弹层审查）：Agent → 账号类型 → 网关（新建 / 已有）→ 模型 → 名称。
+  // 账号类型在上：官方账号不用网关，「新建 / 已有网关」只在 API 下出现，也只在 API 下生效
+  const usesExisting = !initial && form.accountType === "api" && bindMode === "existing";
   const showGatewayFields =
     form.accountType === "api" && !initial && bindMode !== "existing";
-  // 模型选择器数据源：新建网关 = 「获取模型」拉取结果；选用已有网关/编辑绑定 = 该网关目录
+  // 模型选择器数据源：新建网关 = 「验证并获取」拉取结果；选用已有网关/编辑连接 = 该网关目录
   // （null = 无网关语境——官方账号或纯新建，不出选择器）
-  const catalogGatewayId =
-    !initial && bindMode === "existing"
-      ? bindGatewayId
-      : (initial?.gatewayId ?? null);
+  const catalogGatewayId = usesExisting ? bindGatewayId : (initial?.gatewayId ?? null);
+  // 名称放最后、自动起：没手改过就按网关 / 服务商 / 地址起，这家 Agent 下撞名补首个模型（suggestConnectionName）
+  const [nameTouched, setNameTouched] = useState(false);
+  const autoName = (() => {
+    if (initial) return "";
+    const base =
+      form.accountType === "official"
+        ? "官方账号"
+        : usesExisting
+          ? (gateways.find((g) => g.id === bindGatewayId)?.name ?? "")
+          : (appliedPreset?.name ?? endpointHost(form.baseUrl));
+    return suggestConnectionName({
+      base,
+      firstModel: form.models.find((m) => m.trim()) ?? null,
+      takenNames: allProfiles.filter((p) => p.agent === form.agent).map((p) => p.name),
+    });
+  })();
+  const effectiveName = (initial || nameTouched ? form.name : autoName).trim();
+  // 模型框的例子跟着 Agent 走：取这家第一个服务商的推荐模型，没有就不举例
+  const modelPlaceholder = (() => {
+    const example = presetsForAgent(form.agent).find((p) => p.provider.models?.length)
+      ?.provider.models?.[0];
+    return example ? `模型名，如 ${example}` : "模型名";
+  })();
   const gatewayCatalog = catalogGatewayId
     ? (gateways.find((g) => g.id === catalogGatewayId)?.models ?? []).map(
         (m) => m.id,
@@ -445,7 +482,7 @@ function ProfileModal({
     setError(null);
     const input: ProfileInput = {
       agent: form.agent,
-      name: form.name.trim(),
+      name: effectiveName,
       accountType: form.accountType,
       noAuth: form.accountType === "api" && form.noAuth,
       protocol: AGENT_PROTOCOLS[form.agent] ? form.protocol : null,
@@ -470,7 +507,7 @@ function ProfileModal({
         : null,
     };
     try {
-      if (!initial && bindMode === "existing") {
+      if (usesExisting) {
         if (!bindGatewayId) throw new Error("请选择网关");
         const bind: BindingInput = {
           agent: input.agent,
@@ -567,82 +604,37 @@ function ProfileModal({
   return (
     <Modal
       open
-      title={initial ? "编辑连接" : "添加连接"}
-      description={
+      title={
         initial
-          ? "改这份绑定用的模型名单和附加环境变量。"
-          : undefined
+          ? `编辑连接 · ${AGENTS.find((a) => a.id === initial.agent)?.label ?? initial.agent}`
+          : "添加连接"
+      }
+      description={
+        initial ? "改这条连接用的模型名单和附加环境变量。" : undefined
       }
       onClose={onClose}
       size="md"
+      // 标题与「取消 / 保存」常驻，只有表单滚动（2026-10-23 弹层审查：保存钮原先跟着表单滚出视野）
+      overflow="hidden"
+      contentClassName="flex-1 overflow-y-auto overscroll-contain -mx-1 px-1"
+      footer={
+        <>
+          <button type="button" onClick={onClose} className={secondaryActionClass}>
+            取消
+          </button>
+          <button
+            type="submit"
+            form={formId}
+            disabled={saving || !effectiveName}
+            title={effectiveName ? undefined : "先给这条连接起个名字"}
+            className={primaryActionClass}
+          >
+            {saving ? "保存中…" : "保存"}
+          </button>
+        </>
+      }
     >
-      <form onSubmit={submit}>
-        {!initial && (
-          <div className="mb-3">
-            <SegTabs
-              items={[
-                { id: "new", label: "新建网关" },
-                { id: "existing", label: "选用已有网关" },
-              ]}
-              value={bindMode}
-              onChange={(id) => {
-                setBindMode(id);
-                setPickerOpen(false);
-                setExtraAgents([]);
-                setAppliedPreset(null);
-                if (id === "existing") {
-                  setForm((f) => ({ ...f, accountType: "api", noAuth: false }));
-                }
-              }}
-            />
-          </div>
-        )}
-        {!initial && bindMode === "existing" && (
-          <div className="mb-3">
-            {gateways.length === 0 ? (
-              <p className="text-xs text-l3">
-                还没有网关。改选「新建网关」，或到网关库添加。
-              </p>
-            ) : (
-              <ul className="max-h-48 space-y-0.5 overflow-auto" aria-label="已有网关">
-                {gatewayPickerRows(gateways).map((row) => {
-                  const selected = bindGatewayId === row.id;
-                  return (
-                    <li key={row.id}>
-                      <button
-                        type="button"
-                        aria-pressed={selected}
-                        className={`flex w-full flex-col rounded-md px-2.5 py-1.5 text-left ${
-                          selected ? "bg-seg-sel text-l1" : "text-l2 hover:bg-hover hover:text-l1"
-                        }`}
-                        onClick={() => {
-                          setBindGatewayId(row.id);
-                          const gw = gateways.find((g) => g.id === row.id);
-                          if (gw)
-                            setForm((f) => {
-                              const gwNames = new Set(gateways.map((item) => item.name));
-                              return {
-                                ...f,
-                                name: !f.name.trim() || gwNames.has(f.name) ? gw.name : f.name,
-                                models: [],
-                                accountType: "api",
-                              };
-                            });
-                          setPickerOpen(Boolean(gw && gw.models.length > 0));
-                          setPickerFilter("");
-                          setOpenVendors(new Set());
-                        }}
-                      >
-                        <span className="truncate text-sm font-medium">{row.name}</span>
-                        <span className="truncate text-micro text-l4">{row.detail}</span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-        )}
+      <form id={formId} onSubmit={submit}>
 
         {!initial && (
         <label className="mb-3 block text-sm">
@@ -672,16 +664,6 @@ function ProfileModal({
         </label>
         )}
 
-        <label className="mb-3 block text-sm">
-          <span className="mb-1 block text-xs text-l3">名称</span>
-          <input
-            className={fieldClass}
-            required
-            placeholder="这份连接叫什么"
-            value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })}
-          />
-        </label>
         {initial?.gatewayId && (
           <p className="mb-3 text-xs text-l3">
             端点与密钥在网关库改。
@@ -699,8 +681,9 @@ function ProfileModal({
             )}
           </p>
         )}
-        {officialSupported[form.agent] && !initial && bindMode === "new" && (
+        {officialSupported[form.agent] && !initial && (
           <div className="mb-3">
+            <span className="mb-1 block text-xs text-l3">账号类型</span>
             <SegTabs
               items={[
                 { id: "api", label: "API 密钥" },
@@ -715,6 +698,66 @@ function ProfileModal({
             />
           </div>
         )}
+        {!initial && form.accountType === "api" && (
+          <div className="mb-3">
+            <span className="mb-1 block text-xs text-l3">网关</span>
+            <SegTabs
+              items={[
+                { id: "new", label: "新建网关" },
+                { id: "existing", label: "选用已有网关" },
+              ]}
+              value={bindMode}
+              onChange={(id) => {
+                setBindMode(id);
+                setPickerOpen(false);
+                setExtraAgents([]);
+                setAppliedPreset(null);
+                if (id === "existing") {
+                  setForm((f) => ({ ...f, accountType: "api", noAuth: false }));
+                }
+              }}
+            />
+          </div>
+        )}
+        {usesExisting && (
+          <div className="mb-3">
+            {gateways.length === 0 ? (
+              <p className="text-xs text-l3">
+                还没有网关。改选「新建网关」，或到网关库添加。
+              </p>
+            ) : (
+              <ul className="max-h-48 space-y-0.5 overflow-auto" aria-label="已有网关">
+                {gatewayPickerRows(gateways).map((row) => {
+                  const selected = bindGatewayId === row.id;
+                  return (
+                    <li key={row.id}>
+                      <button
+                        type="button"
+                        aria-pressed={selected}
+                        className={`flex w-full flex-col rounded-md px-2.5 py-1.5 text-left ${
+                          selected ? "bg-seg-sel text-l1" : "text-l2 hover:bg-hover hover:text-l1"
+                        }`}
+                        onClick={() => {
+                          setBindGatewayId(row.id);
+                          const gw = gateways.find((g) => g.id === row.id);
+                          // 名称不在这里改：没手改过就按所选网关自动起（effectiveName）
+                          if (gw) setForm((f) => ({ ...f, models: [], accountType: "api" }));
+                          setPickerOpen(Boolean(gw && gw.models.length > 0));
+                          setPickerFilter("");
+                          setOpenVendors(new Set());
+                        }}
+                      >
+                        <span className="truncate text-sm font-medium">{row.name}</span>
+                        <span className="truncate text-micro text-l4">{row.detail}</span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        )}
+
         {showGatewayFields && (
           <>
         {(() => {
@@ -728,11 +771,11 @@ function ProfileModal({
           }
           return (
           <label className="mb-3 block text-sm">
-            <span className="mb-1 block text-xs text-l3">端点预设</span>
+            <span className="mb-1 block text-xs text-l3">服务商</span>
             <MenuSelect
-              aria-label="端点预设"
+              aria-label="服务商"
               value=""
-              placeholder="选一家供应商，自动填地址和推荐模型…"
+              placeholder="选一家服务商，自动填地址和推荐模型…"
               options={agentPresets.map((p) => ({
                 value: p.name,
                 label: `${p.name}${p.provider.models?.length ? " · 含推荐模型" : ""}${
@@ -752,7 +795,6 @@ function ProfileModal({
                   setForm({
                     ...form,
                     baseUrl: preset.baseUrl,
-                    name: form.name || preset.name,
                     protocol: preset.protocol ?? form.protocol,
                     // 预设推荐模型直接预填（精选清单，非整份目录）；「验证并获取」后与实际目录求交
                     models: preset.provider.models ? [...preset.provider.models] : [],
@@ -769,7 +811,7 @@ function ProfileModal({
           );
         })()}
         <label className="mb-3 block text-sm">
-          <span className="mb-1 block text-xs text-l3">Base URL</span>
+          <span className="mb-1 block text-xs text-l3">地址</span>
           <input
             className={fieldClass}
             placeholder="https://api.example.com"
@@ -780,14 +822,11 @@ function ProfileModal({
               if (appliedPreset) setAppliedPreset(null);
             }}
           />
-          <span className="mt-1 block text-micro text-l4">
-            填好后到下方「验证并获取」一次完成连通验证和模型目录拉取
-          </span>
         </label>
         {(form.agent === "claude-code" || form.protocol === "anthropic") &&
           form.baseUrl.trim().replace(/\/+$/, "").endsWith("/v1") && (
           <p className="-mt-2 mb-3 text-xs text-warn-text">
-            Anthropic 客户端会自动在 Base URL 后拼 /v1/messages，以 /v1 结尾将打成 /v1/v1/messages 报 404（此时「测试」仍能成功，不代表运行可用）——请去掉末尾的 /v1
+            Anthropic 客户端会自动在地址后拼 /v1/messages，以 /v1 结尾将打成 /v1/v1/messages 报 404（此时「测试」仍能成功，不代表运行可用）——请去掉末尾的 /v1
           </p>
         )}
         {zhipuOpenAiSlotBillingHint(form.baseUrl) && (
@@ -795,24 +834,39 @@ function ProfileModal({
             {zhipuOpenAiSlotBillingHint(form.baseUrl)}
           </p>
         )}
-        {testResult && (
-          <p
-            className={`-mt-2 mb-3 text-xs ${testResult.ok ? "text-ok-text" : "text-err-text"}`}
-          >
-            {testResult.text}
-          </p>
-        )}
-        <label className="mb-3 block text-sm">
-          <span className="mb-1 block text-xs text-l3">API Key</span>
-          <input
-            className={fieldClass}
-            type="password"
-            autoComplete="new-password"
-            placeholder={initial ? "留空则不修改" : "密钥"}
-            value={form.apiKey}
-            onChange={(e) => setForm({ ...form, apiKey: e.target.value })}
-          />
-        </label>
+        <div className="mb-3 text-sm">
+          <label htmlFor={`${formId}-key`} className="mb-1 block text-xs text-l3">密钥</label>
+          {/* 「验证并获取」紧挨密钥：地址 + 密钥一填完就能点，不用去下面找（2026-10-23 弹层审查） */}
+          <div className="flex items-center gap-2">
+            <input
+              id={`${formId}-key`}
+              className={`${fieldClass} min-w-0 flex-1`}
+              type="password"
+              autoComplete="new-password"
+              placeholder={initial ? "留空则不修改" : form.noAuth ? "本地端点无密钥，可留空" : "API 密钥"}
+              value={form.apiKey}
+              onChange={(e) => setForm({ ...form, apiKey: e.target.value })}
+            />
+            <button
+              type="button"
+              onClick={() => void verifyAndFetch()}
+              disabled={fetching || !form.baseUrl.trim()}
+              title={
+                form.baseUrl.trim()
+                  ? "真实请求验证地址与密钥，并拉取模型目录；服务商推荐模型会自动选中"
+                  : "先填地址"
+              }
+              className={`${secondaryActionClass} shrink-0 whitespace-nowrap`}
+            >
+              {fetching ? "验证中…" : "验证并获取"}
+            </button>
+          </div>
+          {testResult && (
+            <p className={`mt-1 text-xs ${testResult.ok ? "text-ok-text" : "text-err-text"}`}>
+              {testResult.text}
+            </p>
+          )}
+        </div>
           </>
         )}
         <div className="mb-4 text-sm">
@@ -837,20 +891,7 @@ function ProfileModal({
           })()}
           {showGatewayFields && (
             <>
-          <div className="mb-2 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void verifyAndFetch()}
-              disabled={fetching || !form.baseUrl.trim()}
-              title={
-                form.baseUrl.trim()
-                  ? "真实请求验证端点与密钥，并拉取模型目录；预设推荐模型会自动选中"
-                  : "先填写 Base URL"
-              }
-              className={`${rowActionClass} shrink-0 whitespace-nowrap`}
-            >
-              {fetching ? "验证中…" : "验证并获取"}
-            </button>
+          <div className="mb-2 flex flex-wrap items-center gap-2 empty:hidden">
             {fetchedModels && fetchedModels.length > 0 && (
               <button
                 type="button"
@@ -862,7 +903,7 @@ function ProfileModal({
                   }
                   setPickerOpen(!pickerOpen);
                 }}
-                className={`${fieldClass} flex min-w-0 items-center justify-between gap-2 text-left`}
+                className={`${fieldClass} flex min-w-0 flex-1 items-center justify-between gap-2 text-left`}
               >
                 <span className="truncate text-l3">
                   从 {fetchedModels.length} 个模型中选择…
@@ -910,7 +951,11 @@ function ProfileModal({
                 title="重新拉取这个网关的模型目录并保存；不会改当前已勾选的模型"
                 className={`${rowActionClass} shrink-0 whitespace-nowrap`}
               >
-                {fetching ? "获取中…" : "获取模型"}
+                {fetching
+                  ? "获取中…"
+                  : gatewayCatalog && gatewayCatalog.length > 0
+                    ? "刷新目录"
+                    : "获取目录"}
               </button>
               {gatewayCatalog && gatewayCatalog.length > 0 && (
                 <button
@@ -932,7 +977,7 @@ function ProfileModal({
               )}
               {(!gatewayCatalog || gatewayCatalog.length === 0) && (
                 <span className="text-micro text-l4">
-                  还没有目录，点「获取模型」拉取，或在下方手填。
+                  还没有目录，点「获取目录」拉取，或在下方手填。
                 </span>
               )}
               {fetchError && (
@@ -1091,12 +1136,15 @@ function ProfileModal({
                     </span>
                     <input
                       className="min-w-0 flex-1 bg-transparent py-0.5 font-mono text-xs text-l2 outline-none placeholder:font-sans placeholder:text-l4"
-                      placeholder="模型名，如 gpt-5.6-sol"
+                      placeholder={modelPlaceholder}
                       value={m}
                       onChange={(e) => setModelSlot(i, e.target.value)}
                     />
                     {i === firstFilled && (
-                      <span className="shrink-0 text-micro text-l1">默认</span>
+                      // 与连接列表名称旁的「默认」同一枚主题色胶囊
+                      <span className="shrink-0 rounded-full bg-cta-pill px-1.5 py-px text-micro text-cta-pill-text">
+                        默认
+                      </span>
                     )}
                     <button
                       type="button"
@@ -1123,68 +1171,78 @@ function ProfileModal({
             );
           })()}
         </div>
-        {/* 模型分工（2026-10-17）：哪些小任务 / 子 Agent 用哪个模型，原先由 Mesa 暗中补齐，现在摆出来可改 */}
+        {/* 模型分工（2026-10-17）：哪些小任务 / 子 Agent 用哪个模型，原先由 Mesa 暗中补齐，现在摆出来可改。
+            名单里有模型才出现（2026-10-23：空名单时只能选「跟主模型」，整块是噪声）；下拉用 MenuSelect，
+            与弹层里其余下拉同一套长相（原生 select 是系统样式、字号也对不上） */}
         {form.accountType === "api" && rolesFor(form.agent).length > 0 && (() => {
           const listed = [...new Set(form.models.map((m) => m.trim()).filter(Boolean))];
+          if (listed.length === 0) return null;
           const aliases = form.agent === "claude-code" ? claudeAliasMap(listed, form.roleModels) : [];
           // 没在启动时选模型时，主模型 = 名单第一个
-          const mainHint = listed[0] ? `（没选时是 ${listed[0]}）` : "";
-          const selectCls =
-            "w-full rounded-md border border-field bg-canvas px-2 py-1 text-xs text-l2 outline-none focus:border-l4";
+          const mainLabel = `跟主模型（${listed[0]}）`;
           return (
             <div className="mb-4">
               <span className="mb-1 block text-xs text-l3">模型分工</span>
               <div className="rounded-md border border-hairline">
                 <div className="space-y-2.5 px-3 py-2.5">
                   {rolesFor(form.agent).map((r) => (
-                    <label key={r.key} className="grid grid-cols-[6.5rem_1fr] items-start gap-x-3">
-                      <span className="pt-1 text-xs text-l2">{r.label}</span>
-                      <span className="min-w-0">
-                        <select
-                          className={selectCls}
+                    <div key={r.key} className="grid grid-cols-[6.5rem_1fr] items-start gap-x-3">
+                      <span className="pt-1.5 text-xs text-l2">{r.label}</span>
+                      {/* text-sm 定住下拉字号：按钮 font: inherit，不给就随外层变大（与 Agent 下拉对齐） */}
+                      <span className="min-w-0 text-sm">
+                        <MenuSelect
+                          aria-label={r.label}
                           value={form.roleModels[r.key] ?? ""}
-                          onChange={(e) =>
+                          options={[
+                            { value: "", label: mainLabel },
+                            ...listed.map((m) => ({ value: m, label: m })),
+                          ]}
+                          onChange={(v) =>
                             setForm({
                               ...form,
-                              roleModels: { ...form.roleModels, [r.key]: e.target.value || null },
+                              roleModels: { ...form.roleModels, [r.key]: v || null },
                             })
                           }
-                        >
-                          <option value="">跟主模型{mainHint}</option>
-                          {listed.map((m) => (
-                            <option key={m} value={m}>
-                              {m}
-                            </option>
-                          ))}
-                        </select>
-                        <span className="mt-0.5 block text-micro leading-4 text-l4">{r.hint}</span>
+                        />
+                        <span className="mt-0.5 block text-micro leading-4 text-l3">{r.hint}</span>
                       </span>
-                    </label>
+                    </div>
                   ))}
                 </div>
                 {aliases.length > 0 && (
-                  // Claude 四个别名的实际指向：原先是底部一行小灰字，用户看不见（2026-10-17 截图）——
-                  // 改成和上面同层级的一张小表，空槽明写「跟主模型」
-                  <div className="border-t border-hairline px-3 py-2.5">
-                    <div className="mb-1.5 flex items-baseline justify-between">
-                      <span className="text-xs text-l2">Claude 别名指向</span>
-                      <span className="text-micro text-l4">按上面的名单和分工自动算，只读</span>
-                    </div>
-                    <div className="grid grid-cols-[4.5rem_1fr_auto] gap-x-3 gap-y-1 text-xs">
+                  // Claude 四个别名的实际指向：只读，默认收起成一行摘要，点开看全表（2026-10-23 弹层审查）
+                  <details
+                    className="border-t border-hairline px-3 py-2"
+                    onToggle={(e) => setAliasOpen(e.currentTarget.open)}
+                  >
+                    <summary className="flex cursor-pointer list-none select-none items-center gap-1.5 text-xs text-l2 [&::-webkit-details-marker]:hidden">
+                      <FoldMark open={aliasOpen} />
+                      <span className="shrink-0">Claude 别名指向</span>
+                      {!aliasOpen && (
+                        <span className="min-w-0 truncate font-mono text-micro text-l3">
+                          {aliases
+                            .slice(0, 2)
+                            .map((a) => `${a.alias} → ${a.model ?? "主模型"}`)
+                            .join("，")}
+                          {aliases.length > 2 ? ` 等 ${aliases.length} 项` : ""}
+                        </span>
+                      )}
+                    </summary>
+                    <div className="mt-2 grid grid-cols-[4.5rem_1fr_auto] gap-x-3 gap-y-1 text-xs">
                       {aliases.map((a) => (
                         <Fragment key={a.alias}>
                           <span className="font-mono text-l3">{a.alias}</span>
-                          <span className={`truncate font-mono ${a.model ? "text-l1" : "text-l3"}`}>
-                            {a.model ?? `跟主模型${mainHint}`}
+                          <span className={`break-all font-mono ${a.model ? "text-l1" : "text-l3"}`}>
+                            {a.model ?? "跟主模型"}
                           </span>
-                          <span className="text-micro text-l4">{a.why}</span>
+                          <span className="text-micro text-l3">{a.why}</span>
                         </Fragment>
                       ))}
                     </div>
-                    <p className="mt-2 text-micro leading-4 text-l4">
-                      在 Claude 里用 /model 选 sonnet、opus 这些别名，或它自己派小任务时，用的就是右边的模型。你本机 Claude 设置里的同名配置在 Mesa 启动的会话里会被这里盖过，不改你的配置文件。
+                    <p className="mt-2 text-micro leading-4 text-l3">
+                      按上面的名单和分工自动算，只读。在 Claude 里用 /model 选 sonnet、opus 这些别名，或它自己派小任务时，用的就是这里的模型；你本机 Claude 设置里的同名配置在 Mesa 启动的会话里会被盖过，不改你的配置文件。
                     </p>
-                  </div>
+                  </details>
                 )}
               </div>
             </div>
@@ -1229,6 +1287,26 @@ function ProfileModal({
             </p>
           </div>
         )}
+        <label className="mb-3 block text-sm">
+          <span className="mb-1 block text-xs text-l3">名称</span>
+          <input
+            className={fieldClass}
+            placeholder={initial ? "这条连接叫什么" : "选好网关和模型后自动起，也可以自己改"}
+            value={initial || nameTouched ? form.name : autoName}
+            onChange={(e) => {
+              setNameTouched(true);
+              setForm({ ...form, name: e.target.value });
+            }}
+          />
+          {!initial && !nameTouched && autoName && (
+            <span className="mt-1 block text-micro text-l3">按网关和模型自动起的，可以改</span>
+          )}
+          {sameNameTaken(effectiveName) && (
+            <span className="mt-1 block text-xs text-warn-text">
+              这个 Agent 下已有同名连接，启动栏里会分不清。建议加上模型或用途，比如「{effectiveName} · {form.models.find((m) => m.trim()) || "flash"}」。
+            </span>
+          )}
+        </label>
         <details
           className="mb-4 border-t border-hairline pt-3"
           onToggle={(e) => setAdvancedOpen(e.currentTarget.open)}
@@ -1394,23 +1472,7 @@ function ProfileModal({
             )}
           </div>
         </details>
-        {error && <NoticeBar tone="err" className="mb-3">{error}</NoticeBar>}
-        <div className="flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className={secondaryActionClass}
-          >
-            取消
-          </button>
-          <button
-            type="submit"
-            disabled={saving}
-            className={primaryActionClass}
-          >
-            保存
-          </button>
-        </div>
+        {error && <NoticeBar tone="err" className="mb-1">{error}</NoticeBar>}
       </form>
     </Modal>
   );

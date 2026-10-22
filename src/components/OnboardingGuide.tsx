@@ -552,7 +552,7 @@ function stripText(id: OnboardingStepId, officialPath: boolean): string | null {
     case "install":
       return "在下面任选一家点「安装」，没有偏好就从 Claude Code 或 Codex 开始。安装要联网下载，在国内网络慢或失败时，先填出网代理再装。";
     case "gateway":
-      return "点右上「网关库」→「+ 新建网关」：选端点预设、贴 API Key，测试通过后保存。用官方订阅账号登录的，可以跳过这一步。";
+      return "点右上「网关库」→「+ 新建网关」：选服务商、贴密钥，测试通过后保存。用官方订阅账号登录的，可以跳过这一步。";
     case "connection":
       return officialPath
         ? "点右上「+ 添加连接」，账号类型选「官方账号」，保存后在这家 Agent 卡片上点「官方登录」，按终端提示完成。"

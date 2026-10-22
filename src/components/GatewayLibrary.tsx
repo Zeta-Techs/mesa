@@ -808,7 +808,7 @@ export default function GatewayLibrary({
     const prefer = editing !== null && editing !== "new" ? editing.catalogFromSlot : null;
     const start = catalogFetchSlot(slots, masterUrl, prefer);
     if (!start) {
-      setError("先填 Base URL 或某个协议槽");
+      setError("先填地址或某个协议槽");
       return;
     }
     setFetchingCatalog(true);
@@ -856,7 +856,7 @@ export default function GatewayLibrary({
     }
     const baseUrl = effectiveSlotUrl(slots, slot, masterUrl);
     if (!baseUrl) {
-      setError("先填 Base URL 或这个槽的地址");
+      setError("先填地址或这个槽的地址");
       return;
     }
     setProbingSlot(slot);
@@ -901,7 +901,7 @@ export default function GatewayLibrary({
         Boolean(effectiveSlotUrl(slots, k, masterUrl)),
     );
     if (filled.length === 0) {
-      setError("先填 Base URL 或某个协议槽");
+      setError("先填地址或某个协议槽");
       return;
     }
     setProbingAll(true);
@@ -1050,7 +1050,7 @@ export default function GatewayLibrary({
           <div className="space-y-2">
             {editing === "new" && (
               <label className="block text-sm text-l2">
-                端点预设
+                服务商
                 <select
                   className={`${fieldClass} mt-1 w-full`}
                   value=""
@@ -1086,7 +1086,7 @@ export default function GatewayLibrary({
             />
             <label className="block text-sm text-l2">
               <span className="flex items-center justify-between gap-2">
-                <span>Base URL</span>
+                <span>地址</span>
                 <span className="font-mono text-micro text-l4">
                   {probeSummaryText(primaryProbe)}
                 </span>
@@ -1110,7 +1110,7 @@ export default function GatewayLibrary({
                 type="button"
                 className={secondaryActionClass}
                 disabled={!!probingSlot || probingAll || !primarySlot}
-                title={primarySlot ? "用当前填写的地址和密钥测试，不必先保存" : "先填 Base URL"}
+                title={primarySlot ? "用当前填写的地址和密钥测试，不必先保存" : "先填地址"}
                 onClick={() => primarySlot && void probeOne(primarySlot, false)}
               >
                 {probingSlot && probingSlot === primarySlot ? "测试中…" : "测试"}
@@ -1195,7 +1195,7 @@ export default function GatewayLibrary({
                 <FoldMark open={showSlots} />
                 <span className="flex-1">协议槽</span>
                 <span className="text-micro text-l4">
-                  {slotsTogether ? "跟随 Base URL" : "有独立地址"}
+                  {slotsTogether ? "跟随上面的地址" : "有独立地址"}
                 </span>
               </button>
               {showSlots && (
@@ -1209,7 +1209,7 @@ export default function GatewayLibrary({
                             <span>
                               {label}
                               {follows && (
-                                <span className="ml-1.5 text-micro text-l4">跟随 Base URL</span>
+                                <span className="ml-1.5 text-micro text-l4">跟随上面的地址</span>
                               )}
                             </span>
                             <span className="font-mono text-micro text-l4">{probeSummaryText(slotSum(key))}</span>
@@ -1218,7 +1218,7 @@ export default function GatewayLibrary({
                             className={`${fieldClass} mt-1 w-full font-mono text-xs`}
                             value={slots[key] ?? ""}
                             placeholder={follows ? masterUrl : "https://…"}
-                            title={follows ? "留空 = 跟随 Base URL；填入即脱离跟随" : undefined}
+                            title={follows ? "留空 = 跟随上面的地址；填入即脱离跟随" : undefined}
                             onChange={(e) => setSlots((s) => ({ ...s, [key]: e.target.value }))}
                           />
                         </label>

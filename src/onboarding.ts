@@ -71,7 +71,7 @@ export const ONBOARDING_STEPS: readonly OnboardingStep[] = [
     title: "新建网关",
     summary: "网关是 AI 服务商给你的接口地址加一把 API Key。",
     how: [
-      "打开网关库，点「+ 新建网关」：选端点预设（地址和推荐模型自动填好），贴上 API Key，点「测试」，通过后点「保存网关」。",
+      "打开网关库，点「+ 新建网关」：选服务商（地址和推荐模型自动填好），贴上密钥，点「测试」，通过后点「保存网关」。",
       "用官方订阅账号（Claude、ChatGPT 等）登录的不需要网关，点「我用官方账号」跳过，下一步添加连接时选「官方账号」。",
     ],
   },
@@ -228,7 +228,7 @@ function nextLine(
     case "install":
       return "下一步：到连接页装一个 Agent，任选一家点「安装」。";
     case "gateway":
-      return "下一步：新建网关。打开网关库，选端点预设、贴 API Key，测试通过后保存。";
+      return "下一步：新建网关。打开网关库，选服务商、贴密钥，测试通过后保存。";
     case "connection":
       return ctx.officialPath
         ? "下一步：添加连接。在连接页点「+ 添加连接」，账号类型选「官方账号」，再按提示登录。"

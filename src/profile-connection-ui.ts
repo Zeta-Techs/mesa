@@ -118,3 +118,21 @@ export function showCatalogSyncAction(profile: {
     profile.connectionStatus === "catalog_stale"
   );
 }
+
+/**
+ * 添加连接时自动起的名字（2026-10-23 弹层审查，用户拍板：名称放最后、自动起）。
+ * 底名取网关名 / 服务商名 / 地址主机名（官方账号叫「官方账号」）；这家 Agent 下已有同名连接时补「· 首个模型」，
+ * 仍撞名就原样给出，由名称框下的重名提醒交给人改。没有底名返回空串（名称框照常要求手填）。
+ */
+export function suggestConnectionName(input: {
+  base: string;
+  firstModel?: string | null;
+  takenNames: readonly string[];
+}): string {
+  const base = input.base.trim();
+  if (!base) return "";
+  const taken = new Set(input.takenNames.map((n) => n.trim().toLowerCase()));
+  if (!taken.has(base.toLowerCase())) return base;
+  const model = input.firstModel?.trim();
+  return model ? `${base} · ${model}` : base;
+}

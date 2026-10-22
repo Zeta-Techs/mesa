@@ -96,3 +96,15 @@ test("目录过期才显示同步目录；模型未同步不显示", () => {
     false,
   );
 });
+
+test("自动起名：底名没被占用就用底名，占用了补首个模型", async () => {
+  const { suggestConnectionName } = await import("../src/profile-connection-ui.ts");
+  assert.equal(suggestConnectionName({ base: "GLM", firstModel: "glm-5.3", takenNames: [] }), "GLM");
+  assert.equal(
+    suggestConnectionName({ base: "Test", firstModel: "deepseek-v4", takenNames: [" test "] }),
+    "Test · deepseek-v4",
+  );
+  // 还没选模型：照给底名，名称框下的重名提醒负责提示
+  assert.equal(suggestConnectionName({ base: "Test", firstModel: null, takenNames: ["Test"] }), "Test");
+  assert.equal(suggestConnectionName({ base: "  ", takenNames: [] }), "");
+});
