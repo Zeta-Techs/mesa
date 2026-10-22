@@ -157,4 +157,4 @@ Elicit / Undermind / X-MOL / Google Scholar 等闭源站点无法程序化检索
 
 ## 人工补投的命名整理
 
-开放获取全文下载到 **TASK.md 写明的项目根 `papers/`**，不要写当前工作区（PDF 不进 git，写在工作区会在合并后丢失）。文件名「作者年份-短标题.pdf」。**人工补投的文件名随意，不改名压力不交给用户**——下一步精读（lit-notes）开工时由 agent 对照 included.md/to-fetch.md 判定归属后统一重命名，并在 to-fetch.md 勾掉已补行；拿不准归属的不改名、标注「待确认」。
+开放获取全文下载到 **TASK.md 写明的项目根 `papers/`**，不要写当前工作区（PDF 不进 git，写在工作区会在合并后丢失）。文件名「作者年份-短标题.pdf」。**人工补投的文件名随意，不改名**——下一步精读（lit-notes）开工时跑 `lit_records.py write`，按 DOI、标题认出这些文件，在 included.json 记 `pdf` 路径、给 to-fetch.md 打 ✓；Mesa 的资源登记和沉浸阅读按路径认文件，改名就对不上。

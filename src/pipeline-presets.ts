@@ -153,7 +153,7 @@ const OA_VERSION_CLAUSE =
 const LIT_NOTES_WRITE =
   "写法见 {skill:lit-notes} 技能。叙述用中文，材料名/离子/电解液/方法缩写/图表编号等惯用英文原词保留，不强翻。" +
   "禁止整段粘贴英文摘要或 PDF 抽取原文。未读完只在 notes/index.json 记 reviewStatus=pending、notePath 可空，禁止生成八段占位文件（文件存在会被标成已读）。" +
-  "可逆准备只含 PDF 改名、index 骨架、bib 对账、合法 OA 尝试，不包括批量生成笔记正文。" +
+  "可逆准备只含认 PDF（lit_records.py write）、index 骨架、bib 对账、合法 OA 尝试，不包括批量生成笔记正文。" +
   OA_VERSION_CLAUSE +
   "references.bib 用 {skill:lit-notes} 技能目录里的 scripts/lit_records.py bib 从 papers/included.json 写（检索步已查全，不再向 Crossref 另查一遍；已有条目不改键、只补空的或写着待补的字段），输出的 id → 键写进 notes/index.json 的 bibKey；included.json 里没有的待跟进引用才按技能口径手写。" +
   "「按摘要记」= 根据摘要消化来写并标「仅摘要」，不是贴英文。" +
@@ -329,17 +329,17 @@ const REVIEW_STEPS: ProjectStepDto[] = [
       LIT_NOTES_WRITE +
       "篇数以 papers/included.json 的 decision 为准。included.md 开头若写着「终判纳入 N 篇 / 待确认 M 篇」而和 json 不一致，那是检索时的旧句子，人在 Mesa 里改过判定后以 json 为准，改掉那一句再继续，不要因此停步。\n" +
       "若后续提交把 included.json 从「纳入+待确认」改成「纳入+排除」、并把部分行移出 included.md，那是人在 Mesa 里做的筛选，不是定稿被退回。help-wanted.md 里列出的待确认是提问当时的名单，json 里已经没有 pending 就不要再当成未决。\n" +
-      "to-fetch.md 是还没拿到全文的名单。项目根 papers/ 里已有的 PDF 按 DOI 对上后勾掉对应行，对不上的保持待获取。references.bib 没有就用脚本 bib 从 included.json 建，不要把缺库当成检索失败。\n" +
-      "1. 先整理项目根 papers/ 里的 PDF（见上方「项目根」，含未进本工作区的文件，按绝对路径读）。已经登记成项目资源、但文件就在这个 papers/ 里的，仍按这里改名。命名不符「作者年份-短标题.pdf」的，对照 included.md/to-fetch.md 判定归属后重命名，并在 to-fetch.md 勾掉已补行；拿不准归属的不改名、标注「待确认」。路径不在项目根 papers/ 下的已登记 PDF 不改名。然后按 included.md 处理已确认纳入项（清单缺失或为空时在报告中说明并停止，不要自行换题或自行补清单）；\n" +
+      "to-fetch.md 是还没拿到全文的名单，不手改：开工先跑一次 {skill:lit-notes} 技能目录里的 scripts/lit_records.py write --root <项目根>，它按 DOI、标题认出项目根 papers/ 里已有的 PDF（文件名随意），在 included.json 记 pdf 路径、给 to-fetch.md 对应行打 ✓、重算篇数。references.bib 没有就用脚本 bib 从 included.json 建，不要把缺库当成检索失败。\n" +
+      "1. 项目根 papers/ 里的 PDF 一律不改名、不移动（见上方「项目根」，含未进本工作区的文件，按绝对路径读）：Mesa 的资源登记、沉浸阅读的标注和笔记都按路径认文件，改了名就对不上。哪篇对哪个文件以 included.json 的 pdf 字段为准（上面的 write 写的）；write 没认出、你按内容能确定归属的，把相对路径写进那篇的 pdf 字段再跑一次 write，拿不准的不写、在报告里列出。然后按 included.md 处理已确认纳入项（清单缺失或为空时在报告中说明并停止，不要自行换题或自行补清单）；\n" +
       "2. 有全文 PDF 的全部按八段精读，不另提一份核心篇名单等人拍板。没有 PDF 的按摘要写短记并标「仅摘要·待全文」；摘要也拿不到的标「题录·待全文」，不编正文。\n" +
-      "3. 全文来源优先级（写死）：项目资源里、路径不在项目根 papers/ 的 PDF（如 Zotero 附件，只读，不改名、不复制）→ 项目根 papers/ 已有 PDF（含已登记的长标题，按第 1 步改名）→ 开放获取补下到项目根 papers/（版本规则见上）→ 仍缺按摘要写笔记并标注「仅摘要·待全文」，不得装作读过全文；\n" +
+      "3. 全文来源优先级（写死）：项目资源里、路径不在项目根 papers/ 的 PDF（如 Zotero 附件，只读，不改名、不复制）→ 项目根 papers/ 已有 PDF（按 included.json 的 pdf 字段，文件名不改）→ 开放获取补下到项目根 papers/（版本规则见上）→ 仍缺按摘要写笔记并标注「仅摘要·待全文」，不得装作读过全文；\n" +
       "4. 上下文写不下可分批，提交后立刻继续，直到有 PDF 的都写成精读、没有 PDF 的都写成短记。index pending 只留给待确认或题录都不足以写的篇。有实际 PDF 时笔记开头记来源锚点行「> 来源 PDF：<项目内相对路径或已登记只读资源绝对路径>.pdf」，无 PDF 改记 DOI/URL，不造虚假路径。笔记、index、references.bib 写在本工作区；临时脚本和接口缓存放本工作区 artifacts/，不写项目根。\n" +
       "5. 引文库按上面那句用脚本 bib 写；脚本报的「待补」保持待补，不得编造，不得用卷或页填空着的期。已有条目只补空字段，不改键、不覆盖人改过的作者和标题；\n" +
       "6. 收尾前复查：notes/ 中「仅摘要」笔记对应的全文若已出现在项目根 papers/（人工补投），重读全文并更新该笔记、去掉标记；仍未补的保持标注并在报告末尾计数说明。\n" +
       "7. 写 notes/handoff.md，只给下一步用。两节：\n" +
       "「## 写作约束」：仅摘要或题录的 bib 键（下游不得写成已确立）；库内要并列的机制分歧；图只核对了文本层图注、拼图时再核；期刊缩写留空的刊名。每条一行，没有就写无。\n" +
       "「## 不由下一步做」：补全文、登录、授权。这些留在 .ccode/help-wanted.md，不写进大纲任务。\n" +
-      "8. 项目根 papers/ 里已对上 DOI 的 PDF，读首页和摘要页。标题、化学式上下标、摘要与 Crossref 纯文本不一致时，以 PDF 为准改 references.bib 的 title 和 abstract。抽不出字或对不上 DOI 的保持原字段。不在这一步重写 RIS。人点「同步到文献库」时，Mesa 按这份 references.bib 生成导入文件。\n" +
+      "8. 项目根 papers/ 里已对上 DOI 的 PDF，读首页和摘要页。标题、化学式上下标、摘要与 Crossref 纯文本不一致时，以 PDF 为准改 references.bib 的 title 和 abstract。抽不出字或对不上 DOI 的保持原字段。RIS 只随 write 重出，不手改。人点「同步到文献库」时，Mesa 按这份 references.bib 生成导入文件。\n" +
       "完成标准：notes/index.json 与 included.json 全部 id 对齐（仅待确认或无法按摘要写的篇 notePath 可空）；已写笔记符合 {skill:lit-notes} 写法；确认过的核心篇未写完、或已确认要按摘要记的非核心还没写完，则不得结束本轮等人，验收摘要写明剩余篇数，质量状态不得高于已生成待审。清单全有文件不等于完成。\n" +
       QUALITY_STATUS,
     inputs: ["papers/included.md", "papers/included.json", "papers/to-fetch.md"],

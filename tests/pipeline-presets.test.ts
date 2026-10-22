@@ -616,3 +616,15 @@ test("检索与精读的开放获取只取正式版，预印本服务器的版�
     }
   }
 });
+
+// 2026-10-23 HER 精读步：按简报把项目根 9 个 PDF 改了名，流程期间暂缓的资源登记全指向旧名
+test("精读步不改 PDF 名：认 PDF、打 ✓ 交给 lit_records.py write，to-fetch.md 不手改", () => {
+  const step = PIPELINE_TEMPLATES.find((t) => t.id === "review")!.steps.find((s) => s.workspaceName === "lit-notes")!;
+  assert.match(step.brief, /lit_records\.py write --root/);
+  assert.match(step.brief, /一律不改名、不移动/);
+  assert.doesNotMatch(step.brief, /重命名|按第 1 步改名|PDF 改名/);
+  for (const name of ["lit-notes", "lit-search"]) {
+    const skill = readFileSync(`src-tauri/resources/skills/${name}/SKILL.md`, "utf8");
+    assert.doesNotMatch(skill, /统一重命名|判定归属后重命名/, name);
+  }
+});
