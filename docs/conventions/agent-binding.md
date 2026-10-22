@@ -35,7 +35,7 @@ L0 全局设置   settings.defaultProfiles / ai_profile_id / ai_profiles[fn]（�
 | 编程进树/建树（CodingProjectView） | 项目默认，**不动** |
 | 快速开聊 | 全局记忆 ccode.quickChat，**不进塔** |
 | 接力/提炼接力/外部恢复 | 会话连续性优先，**不进塔** |
-| resume（继续会话） | 恒用会话原 agent；绑定连接只作 autoLaunchProfileId 预填（agent 匹配才采纳） |
+| resume（继续会话） | 恒用会话原 agent；绑定连接作 autoLaunchProfileId 预填、绑定模型一并带上（agent 匹配才采纳；2026-10-23：只带连接时模型落到连接名单第一个，接回的对话被悄悄换模型） |
 | 定时任务（雷达/自定义巡检）执行 | **日程钉的连接 > 项目默认 > 设置页 AI 专用 / 最近使用**（见下「日程未钉连接」） |
 | AI 无头功能（摘要/起名/提交/翻译/雷达解读 watch-explain…） | settings.ai_profiles[fn]，全局按功能，与项目塔无关 |
 

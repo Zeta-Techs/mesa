@@ -458,6 +458,49 @@ test("wsLast 记忆层闸门：停用连接不被自动预填（autoStart 落空
   }
 });
 
+// 2026-10-23 HER 精读步：接回时只带连接不带模型，启动侧落到连接名单第一个（glm-5.3 接回成 glm-5.3-flash）
+test("继续接回原对话：同一家 Agent 带上绑定的模型，不落到连接名单第一个", async () => {
+  const api = await bundleStartPipeline();
+  const ws = {
+    id: "w1", repoPath: "/p", repoName: "p", name: "lit-notes", branch: "ccode/lit-notes",
+    worktreePath: "/p/.mesa/ws-lit-notes", baseBranch: "main", portBase: 4200,
+    status: "active", createdAt: "2026-10-22T00:00:00Z", archivedAt: null,
+  };
+  const session = {
+    agent: "claude-code", sessionId: "s1", workspace: "lit-notes", projectPath: "/p",
+    archived: false, internal: false, live: false,
+  };
+  const lsPrev = (globalThis as { localStorage?: unknown }).localStorage;
+  (globalThis as { localStorage?: unknown }).localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+  const prevHost = (globalThis as { __pipelineStartHost?: unknown }).__pipelineStartHost;
+  (globalThis as { __pipelineStartHost?: unknown }).__pipelineStartHost = {
+    invoke: async (cmd: string) => {
+      if (cmd === "workspace_env_for") return [];
+      if (cmd === "list_sessions") return [session];
+      throw new Error(`测试未预期的命令：${cmd}`);
+    },
+  };
+  try {
+    const bound = { agentId: "claude-code", profileId: "gw", model: "glm-5.3" };
+    const req = await api.buildWorkspaceTerminalRequest(ws, "接着上次停下的地方继续", {
+      autoStart: true, resumeSession: true, stepLaunch: bound,
+    });
+    assert.equal(req.resume?.sessionId, "s1");
+    assert.equal(req.autoLaunchProfileId, "gw");
+    assert.equal(req.model, "glm-5.3");
+    // 绑定是另一家：接回的会话自选连接，不把别家的模型塞过去
+    const other = await api.buildWorkspaceTerminalRequest(ws, "接着上次停下的地方继续", {
+      autoStart: true, resumeSession: true, stepLaunch: { agentId: "codex", profileId: "cx", model: "gpt-x" },
+    });
+    assert.equal(other.resume?.sessionId, "s1");
+    assert.equal(other.model, undefined);
+  } finally {
+    if (lsPrev === undefined) delete (globalThis as { localStorage?: unknown }).localStorage;
+    else (globalThis as { localStorage?: unknown }).localStorage = lsPrev;
+    (globalThis as { __pipelineStartHost?: unknown }).__pipelineStartHost = prevHost;
+  }
+});
+
 test("TASK.md 本步骤脚本：只在 Windows、只列简报点名的 run 脚本；有 PowerShell 写法时两种都给", () => {
   const latex = PIPELINE_TEMPLATES.flatMap((t) => t.steps).find((s) =>
     s.run.some((r) => r.name === "render-pdf"),
