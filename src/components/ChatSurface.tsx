@@ -23,6 +23,7 @@ import type {
 } from "../pages/TerminalPage";
 import type { TuiMenu } from "../tui-menu";
 import { liveReplySupported, unsyncedTail } from "../live-reply";
+import { useRevealedText } from "../text-reveal";
 import { lastContextTokens, userTextHistory, type MesaCommand } from "../composer-assist";
 import { AGENTS, type ProjectDto, type SessionMetaDto } from "../types";
 import type {
@@ -490,7 +491,8 @@ export default function ChatSurface({
   })();
   // 实时预览多出一行：贴着底的就当帧跟到底。原先只在消息列表变化时贴底（生成中 700ms 一次的轮询），新出的那一行先落在
   // 底部留白和渐隐里，等下一次轮询整段才往上跳一行，看着像那一行在原位闪一下才出新内容（2026-10-22 用户 Claude 长回复）
-  const livePreviewText = livePreview.join("\n");
+  // 一块一块到的预览匀速放出来（text-reveal.ts）：到一块贴一块看着一顿一顿的；不在生成了一次放完
+  const livePreviewText = useRevealedText(livePreview.join("\n"), generating);
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (el && followRef.current && livePreviewText) el.scrollTop = el.scrollHeight;
@@ -863,7 +865,7 @@ export default function ChatSurface({
             // 还在写时 Mesa 光标接在最后一个字后面，不另起一行写状态（2026-10-21）
             // 字号行高与落盘后的回答同一档（.ccode-chat-body），落盘那一下不跳
             <div className="ccode-chat-body mb-2 whitespace-pre-wrap break-words text-l3">
-              {livePreview.join("\n")}
+              {livePreviewText}
               {generating && !decision && <MesaCaret light={isLightTheme(theme)} />}
             </div>
           )}

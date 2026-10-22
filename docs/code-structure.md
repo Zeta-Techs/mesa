@@ -380,6 +380,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   chat-status.ts             # 生成中那一行「这一轮在做什么」（2026-10-21，规则见 design-system「生成中那一行」）：旁路 activity / thinking
                              # > 会话里还没回结果的调用（已有那一行就不重复）/ 计划进行中一项（activeForm）/ 刚落盘的思考 > 「思考中」；
                              # thinkingHeadline 取 `**小标题**` 或第一句（tests/chat-status.test.ts）；ChatSurface 消费
+  text-reveal.ts             # 聊天实时预览匀速显示（2026-10-22，tests/text-reveal.test.ts）：revealStep 按积压放字、shownAfterRetarget
+                             # 「接着长才匀速、换了一段整段」、safeCut 不切开字形、useRevealedText（rAF + 兜底节拍）；ChatSurface 消费
   chat-channel.ts            # 结构化旁路快照的前端纯逻辑：回合状态 → 注意力、会话跟随（lock / switch / hint）、实时文字、
                              # 审批卡标题 / 预览（命令 / 差异）/ 可回复的按钮、hooks 审批「屏上回到输入框 = 已答」（hooksApprovalAnswered）
                              # （tests/chat-channel.test.ts）；TerminalView 的 applyChannel 消费
