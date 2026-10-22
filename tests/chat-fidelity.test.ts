@@ -36,3 +36,15 @@ test("比核对过的新才算没核对过；读不到版本不降级", () => {
   assert.equal(versionTrust(null, "2.1.306"), "unknown");
   assert.equal(versionTrust("2.1.400", null), "unknown");
 });
+
+test("小标签：还在测试写「测试版」，第三四档写「简化」，摘了测试版的不标、但 CLI 更新时标「未核对」", async () => {
+  const { fidelityBadge } = await import("../src/chat-fidelity.ts");
+  const t1 = { tier: 1 as const, beta: true, source: "s", terminalOnly: "t" };
+  assert.equal(fidelityBadge(t1, false), "测试版");
+  assert.equal(fidelityBadge({ ...t1, beta: false }, false), null);
+  assert.equal(fidelityBadge({ ...t1, beta: false }, true), "未核对");
+  assert.equal(fidelityBadge({ ...t1, tier: 3, beta: false }, false), "简化");
+  assert.equal(fidelityBadge(null, false), null);
+  assert.equal(fidelityBadge(chatFidelity("cursor"), false), "简化");
+  assert.equal(fidelityBadge(chatFidelity("codex"), false), "测试版");
+});

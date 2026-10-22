@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useAppStore } from "../store";
 import { AGENTS } from "../types";
-import { chatFidelity, tierLabel, verifiedVersion } from "../chat-fidelity";
+import { chatFidelity, fidelityBadge, tierLabel, verifiedVersion } from "../chat-fidelity";
 import { CANARY_PLATFORM, VERIFIED_VERSIONS, useCliNewer } from "../cli-verified";
 import { clipBounds, pickPopoverSide } from "../popover-side";
 
@@ -25,6 +25,8 @@ export default function ChatBetaBadge({
   const label = AGENTS.find((a) => a.id === agentId)?.label ?? "这家 Agent";
   const verified = agentId ? verifiedVersion(VERIFIED_VERSIONS, CANARY_PLATFORM, agentId) : null;
   const newer = useCliNewer(agentId);
+  const badge = fidelityBadge(fidelity, newer);
+  const heading = fidelity?.beta ? "聊天是测试版" : fidelity && fidelity.tier >= 3 ? "这家的聊天是简化的" : "聊天层说明";
 
   useLayoutEffect(() => {
     if (!open || !rootRef.current || !menuRef.current) return;
@@ -46,6 +48,7 @@ export default function ChatBetaBadge({
     };
   }, [open]);
 
+  if (!badge) return null;
   return (
     <div ref={rootRef} className="relative shrink-0">
       <button
@@ -53,24 +56,24 @@ export default function ChatBetaBadge({
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        title="聊天层是测试版：点开看这一家在聊天里能做到哪一步"
+        title={`${heading}：点开看这一家在聊天里能做到哪一步`}
         className={`ml-1 flex h-6 items-center gap-1 rounded-md px-1.5 text-micro text-l4 hover:bg-hover hover:text-l2 ${
           open ? "bg-hover text-l2" : ""
         }`}
       >
-        测试版
+        {badge}
         {newer && <span aria-label="CLI 比核对过的新" className="size-1.5 rounded-full bg-caution-text" />}
       </button>
       {open && (
         <div
           ref={menuRef}
           role="dialog"
-          aria-label="聊天层是测试版"
+          aria-label={heading}
           className={`absolute left-0 z-30 w-[22rem] rounded-xl border border-field ccode-float-surface p-3 text-xs leading-5 text-l3 shadow-lg ${
             side === "below" ? "top-full mt-2" : "bottom-full mb-2"
           }`}
         >
-          <div className="mb-1 text-sm text-l1">聊天是测试版</div>
+          <div className="mb-1 text-sm text-l1">{heading}</div>
           <p>聊天是同一个终端会话的另一种看法，以终端为准：聊天里看不到、按不动的，切到终端都在。</p>
           {fidelity && (
             <>

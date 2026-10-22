@@ -147,7 +147,8 @@
   信任 / 不信任，先只按方向键挪高亮，读一遍屏（等同步输出画完，最多再等三拍 150ms）：还是同一个菜单、高亮停在要选的那项上才按回车；对不上就不按，
   卡片按屏上现在的样子重画，人再点一次（高亮已在那项时直接回车）。核对期间扫屏不把挪到一半的菜单拿回来当卡片（`askKeysDoneAtRef` /
   `trustAnsweringUntilRef`）。原先照算好的格数直接回车，读屏把说明行算成选项时会选中另一项（Kimi /permission 实例）。新加替人按键的动作照这个口径。
-- **聊天层标「测试版」与按版本降级（2026-10-22 用户，设计 `docs/design-chat-fidelity.md`）**：输入框左下 `ChatBetaBadge` 点开说当前这家的档
+- **聊天层标「测试版」与按版本降级（2026-10-22 用户，设计 `docs/design-chat-fidelity.md`）**：输入框左下 `ChatBetaBadge`（字由 `fidelityBadge` 定：
+  `beta` 的写「测试版」、第三四档「简化」、摘了测试版的只在 CLI 更新时写「未核对」；按家摘测试版的条件见设计 §4）点开说当前这家的档
   （`chat-fidelity.ts` `CHAT_FIDELITY` 单一出处，九家各一行）与要回终端做的事。已核对版本 = 金丝雀基线的 `version`（`cli-verified.ts`
   构建时 `import.meta.glob` 只取这个字段；本平台没有就取别的平台最新的）。用户的 CLI 更新时（`useCliNewer`）：**不替人自动按任何一步**
   （Claude 提问表单交卷后的自动「Submit answers」停掉）、菜单卡提示「这版 CLI Mesa 还没核对过」、徽标带点；读不到版本不降级。
