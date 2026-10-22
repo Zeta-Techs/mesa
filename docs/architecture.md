@@ -473,6 +473,31 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 同日再追加（用户：翻译悬浮球脱出了 PDF）：「译」球的坐标域从整窗收回 PDF 栏（修订 2026-10-14「整窗可拖」），球与卡共用 `readerTlBallOffset`；核对档译文卡不出「问这段」。
 同日第三批（用户：译文悬浮窗可以做什么优化，「1–4 都做」）：卡开着时 PDF 上常驻标出它的原文段，悬浮卡压到就挪到那段上方或下方；表头只留原文 / 存进笔记 / 复制 / ⋯ / ×；悬浮卡译文改阅读字号 13px；下面还有字时卡底渐隐。逐句对照（第 5 条）暂缓。
 
+### 2026-10-23 · 精读步复查整改（HER 文献精读与笔记）
+
+用户跑完 HER 综述的「文献精读与笔记」后让看会话：23 分钟读完 9 篇 117 页，没有空转；查出的问题用户「全部按建议来」，定下：
+
+一，**「继续」接回原对话带上绑定的模型**：resume 时只带连接（autoLaunchProfileId），启动侧落到连接名单第一个——glm-5.3
+的对话接回成 glm-5.3-flash。同一家 Agent 时绑定的模型一并预填（agent-binding.md resume 行）。
+
+二，**只按卷编排的刊期号记「无期号」**：Appl. Catal. B、Chin. J. Catal. 在 Crossref 有卷没期，旧口径写「待补」——永远补不上，
+引文库 `number = {待补}` 会渲染进参考文献。`lit_records.py` 补字段时 Crossref 有正式记录、有卷没期就记「无期号」，
+不算缺口、不进 RIS、引文库不写 number（早先写的待补行拿掉）；`screening-review.ts` 与 bridge.py 同口径，「待核」也不再漏进 RIS 标签。
+
+三，**精读步不给项目根 PDF 改名**（推翻 v3.97「精读开工统一重命名」）：Agent 照简报把 9 个 PDF 改成「作者年份-短标题」，
+流程期间暂缓的资源登记（`.ccode/pending-registrations.json`）全指向旧名，收尾回放会登记一串不存在的路径；沉浸阅读的标注与笔记
+也按路径认。改为开工跑 `lit_records.py write --root`：按 DOI、标题认已有 PDF，在 included.json 记 `pdf`、给 to-fetch.md 打 ✓，
+to-fetch.md 不手改。认 PDF 多一层：原始字节里搜不到 DOI（元数据在对象流里）时有 PyMuPDF 就抽前两页文字找。
+
+四，**评审移出文献后待获取篇数重算**：`drop_fetch_line` 只删行，留下「还没有全文的 16 篇」下面列 9 行。
+
+五，**Windows 读 PDF 的步骤提示用 PyMuPDF**：本机没装 poppler，Claude Code 读 PDF 报 pdftoppm is not installed，Agent 只抽文字层、
+图一张没看；任务书「本机 Python（Windows）」节对精读 / 拼图 / 输入含 PDF 的步骤多带一行（抽字 get_text，看图先 get_pixmap 存图）。
+
+核对后不改的一条：照 PDF 首页补的摘要只进了 references.bib——同步到文献库本就按 references.bib 生成（`zotero.rs refresh_library_ris`），不缺。
+HER 当日处理：lit-notes 工作区三篇改「无期号」、引文库去掉 number 行、清单经 write 重出（9 篇 pdf 全认出，先在副本干跑一致）；
+主仓暂缓登记里 9 条旧文件名换成新名（备份在临时目录）。
+
 ### 2026-10-22 · 检索步复查整改（Windows 实跑 3 小时没跑完）
 
 用户在 Windows 上跑 HER 综述的「文献检索与筛选」（Claude Code 2.1.307 经网关跑 deepseek-v4.1-flash，权限档「自动」），3 小时没收尾。
