@@ -232,9 +232,25 @@ function menuAround(
 
 /** 选第 target 项要按的键：方向键从当前高亮挪过去再回车，每个键单独写（Ink 一次只认一个键） */
 export function menuAnswerKeys(menu: TuiMenu, target: number): string[] {
+  return [...menuMoveKeys(menu, target), "\r"];
+}
+
+/** 只挪高亮、不回车：认准了再按（menuReadyToConfirm） */
+export function menuMoveKeys(menu: TuiMenu, target: number): string[] {
   const delta = target - menu.selected;
   const arrow = delta > 0 ? "\x1b[B" : "\x1b[A";
-  return [...Array.from({ length: Math.abs(delta) }, () => arrow), "\r"];
+  return Array.from({ length: Math.abs(delta) }, () => arrow);
+}
+
+/**
+ * 挪完高亮之后再读一遍屏：还是同一个菜单、高亮正停在要选的那一项上，才按回车（2026-10-22，docs/design-chat-fidelity.md
+ * 规则二「替人按键只在认准时做」）。读屏把说明行算成选项、CLI 改版换了画法时，方向键挪的格数会对不上——
+ * 原先照算好的格数直接回车，会选中另一项（Kimi /permission 实例）；现在对不上就不按，卡片按屏上的新样子重画，人再点一次
+ */
+export function menuReadyToConfirm(before: TuiMenu, target: number, now: TuiMenu | null): boolean {
+  if (!now || now.ask || before.ask) return false;
+  if (now.options.join("\n") !== before.options.join("\n")) return false;
+  return now.selected === target;
 }
 
 /** 菜单的每一项都出现在 text 里：多半是用户刚发的编号清单的回显，不是 CLI 在问。

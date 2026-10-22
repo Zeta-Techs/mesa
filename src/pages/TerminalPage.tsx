@@ -162,7 +162,8 @@ import {
 } from "../terminal-geometry";
 import { toast } from "../toast";
 import {
-  menuAnswerKeys,
+  menuMoveKeys,
+  menuReadyToConfirm,
   menuEchoesText,
   parseTuiMenu,
   sameTuiMenu,
@@ -185,6 +186,7 @@ import {
 import { askAboutText, clipNoteEntry, quoteForChat } from "../terminal-quote";
 import {
   parseTrustPrompt,
+  trustReadyToConfirm,
   sameTrustPrompt,
   trustAnswerKeys,
   type TrustPrompt,
@@ -2145,6 +2147,7 @@ const TerminalView = memo(function TerminalView({
   const [ptyQuiet, setPtyQuiet] = useState(false);
   const ptyQuietRef = useRef(false);
   const trustScanTimerRef = useRef<number | null>(null);
+  const trustAnsweringUntilRef = useRef(0);
   function scanTrustPromptSoon() {
     // 过了启动阶段就不会再有信任菜单；正挂着一个时继续扫，菜单消失要能撤掉。
     // 原先以「会话已接上」为界：Claude / CodeBuddy 的 SessionStart hook 一起来就报了会话文件，信任菜单还在后头，
@@ -2153,6 +2156,12 @@ const TerminalView = memo(function TerminalView({
     if (trustScanTimerRef.current) window.clearTimeout(trustScanTimerRef.current);
     trustScanTimerRef.current = window.setTimeout(() => {
       trustScanTimerRef.current = null;
+      // 正在替人挪高亮、核对完才回车（answerTrust）：挪到一半的菜单不拿回来当卡片
+      const hold = trustAnsweringUntilRef.current - Date.now();
+      if (hold > 0) {
+        window.setTimeout(scanTrustPromptSoon, hold);
+        return;
+      }
       const term = termRef.current;
       if (!term || ptyKindRef.current !== "agent") return;
       const buf = term.buffer.active;
@@ -2541,17 +2550,46 @@ const TerminalView = memo(function TerminalView({
     // 答完到下一次扫屏之间，别让旁路还没撤的「等批准」顶上来一张兜底卡（扫屏会纠正：菜单还在就回来）
     if (liveReplySupported(launchAgentRef.current)) setPromptIdle(true);
     // Kimi 开了 kitty 键盘后只认 CSI-u 回车（submitCsiU）；方向键仍是传统写法
-    const keys = menuAnswerKeys(menu, index).map((k) =>
-      k === "\r" && submitCsiU ? KIMI_CSI_U_ENTER : k,
-    );
-    keys.forEach((key, i) => {
-      window.setTimeout(() => {
-        if (ptyIdRef.current === id) writeInteractivePty(id, key);
-      }, i * 80);
-    });
+    const enter = submitCsiU ? KIMI_CSI_U_ENTER : "\r";
+    const moves = menuMoveKeys(menu, index);
     // 一个确认之后可能还有下一个（选完模型再问思考档）：再开一小段窗口
     menuWatchUntilRef.current = Date.now() + 3000;
-    window.setTimeout(scanMenuSoon, keys.length * 80 + 400);
+    if (moves.length === 0) {
+      // 高亮本来就在这一项（刚从屏上读到的）：直接回车
+      writeInteractivePty(id, enter);
+      window.setTimeout(scanMenuSoon, 400);
+      return;
+    }
+    // 先挪高亮，再读一遍屏确认停对了才回车（tui-menu.ts menuReadyToConfirm）：读屏认错了格数也不会选中另一项
+    const done = queuePtyKeys(id, moves);
+    // 核对期间屏上是挪到一半的菜单：扫屏先别把卡片拿回来（与提问表单的按键同一道闸）
+    askKeysDoneAtRef.current = done + 1200;
+    const settle = () => {
+      askKeysDoneAtRef.current = 0;
+    };
+    const confirm = (tries: number) => {
+      if (ptyIdRef.current !== id) return settle();
+      const term = termRef.current;
+      if (term?.modes.synchronizedOutputMode && tries < 6) {
+        window.setTimeout(() => confirm(tries + 1), 60);
+        return;
+      }
+      if (menuReadyToConfirm(menu, index, parseScreenMenu(screenLines()))) {
+        writeInteractivePty(id, enter);
+        settle();
+        window.setTimeout(scanMenuSoon, 400);
+        return;
+      }
+      // 画面可能还没跟上：再等两拍；仍对不上就不按，卡片按屏上现在的样子重画，交给人再点一次
+      if (tries < 3) {
+        window.setTimeout(() => confirm(tries + 1), 150);
+        return;
+      }
+      settle();
+      menuWatchUntilRef.current = Date.now() + 3000;
+      scanMenuSoon();
+    };
+    window.setTimeout(() => confirm(0), Math.max(0, done - Date.now()) + 150);
   }
   // 替用户按的键排成一队：每个键隔 80ms（Ink 一次只认一个键），连点几下也不会交错着写
   const keyQueueAtRef = useRef(0);
@@ -2628,17 +2666,26 @@ const TerminalView = memo(function TerminalView({
     trustOptionsRef.current = prompt.options;
     menuPromptRef.current = null;
     setMenuPrompt(null);
-    const keys = trustAnswerKeys(prompt, accept).map((k) =>
-      k === "\r" && submitCsiU ? KIMI_CSI_U_ENTER : k,
-    );
-    keys.forEach((key, i) => {
-      window.setTimeout(() => {
-        if (ptyIdRef.current === id) writeInteractivePty(id, key);
-      }, i * 80);
-    });
-    if (accept) armPtyWorking();
-    // 选完之后屏幕会变；再扫一次，万一按键没生效菜单还在，按钮要回来
-    window.setTimeout(scanTrustPromptSoon, keys.length * 80 + 400);
+    const enter = submitCsiU ? KIMI_CSI_U_ENTER : "\r";
+    const moves = trustAnswerKeys(prompt, accept).slice(0, -1);
+    // 先挪高亮，读屏确认停在「信任 / 不信任」那一项上才回车（同 answerMenu）：信任是安全决定，认错一格就反了
+    const done = moves.length ? queuePtyKeys(id, moves) : Date.now();
+    trustAnsweringUntilRef.current = moves.length ? done + 1000 : 0;
+    const confirm = (tries: number) => {
+      if (ptyIdRef.current !== id) return;
+      const now = moves.length ? parseTrustPrompt(screenLines()) : prompt;
+      if (trustReadyToConfirm(prompt, accept, now)) {
+        writeInteractivePty(id, enter);
+        if (accept) armPtyWorking();
+      } else if (tries < 3) {
+        window.setTimeout(() => confirm(tries + 1), 150);
+        return;
+      }
+      // 选完之后屏幕会变；再扫一次，万一按键没生效（或没认准、没按回车）菜单还在，按钮要回来
+      trustAnsweringUntilRef.current = 0;
+      window.setTimeout(scanTrustPromptSoon, 400);
+    };
+    window.setTimeout(() => confirm(0), moves.length ? Math.max(0, done - Date.now()) + 150 : 0);
   }
   // PTY 输出静默：已经出过字则熄灭；还在等首字（思考中）保持转圈。
   // 熄灭后会话文件 sticky working 不得重新点亮（applyTailAttention）。

@@ -111,3 +111,12 @@ test("同一提示判等，高亮变了算不同", () => {
   assert.equal(sameTrustPrompt(a, moved), false);
   assert.ok(sameTrustPrompt(null, null));
 });
+
+test("信任菜单认准了再回车：高亮停在信任 / 不信任那项上才按", async () => {
+  const { trustReadyToConfirm } = await import("../src/trust-prompt.ts");
+  const p = { path: "/w", options: ["No, exit", "Yes, I trust this folder"], selected: 0, yesIndex: 1, noIndex: 0 };
+  assert.equal(trustReadyToConfirm(p, true, { ...p, selected: 1 }), true);
+  assert.equal(trustReadyToConfirm(p, true, { ...p, selected: 0 }), false);
+  assert.equal(trustReadyToConfirm(p, false, p), true);
+  assert.equal(trustReadyToConfirm(p, true, null), false);
+});

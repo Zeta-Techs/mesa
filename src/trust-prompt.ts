@@ -94,6 +94,12 @@ export function trustAnswerKeys(prompt: TrustPrompt, accept: boolean): string[] 
   return [...Array.from({ length: Math.abs(delta) }, () => arrow), "\r"];
 }
 
+/** 挪完高亮后再读一遍屏：还是这个信任菜单、高亮停在要选的那项上才回车（同 tui-menu menuReadyToConfirm） */
+export function trustReadyToConfirm(before: TrustPrompt, accept: boolean, now: TrustPrompt | null): boolean {
+  if (!now || now.options.join("\n") !== before.options.join("\n")) return false;
+  return now.selected === (accept ? before.yesIndex : before.noIndex);
+}
+
 /** 两次扫描结果是否同一个提示（避免每帧都往上报一份新对象） */
 export function sameTrustPrompt(a: TrustPrompt | null, b: TrustPrompt | null): boolean {
   if (a === b) return true;

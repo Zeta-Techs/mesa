@@ -344,3 +344,16 @@ test("Kimi Code 2.3 选择器：每项下面的灰字说明靠字色和选项分
   // 没有字色信息时照旧（读不到样子就按文字认）
   assert.equal(parseTuiMenu(lines)?.options.length, 6);
 });
+
+test("认准了再回车：挪完高亮读屏还是同一个菜单、停在要选的那项上才按", async () => {
+  const { menuMoveKeys, menuReadyToConfirm } = await import("../src/tui-menu.ts");
+  const menu = { question: "Do you want to proceed?", detail: null, options: ["Yes", "Yes, always", "No"], selected: 0 };
+  assert.deepEqual(menuMoveKeys(menu, 2), ["\x1b[B", "\x1b[B"]);
+  assert.deepEqual(menuMoveKeys(menu, 0), []);
+  assert.equal(menuReadyToConfirm(menu, 2, { ...menu, selected: 2 }), true);
+  // 读屏把说明行算成了选项（Kimi /permission 实例）：挪的格数对不上，高亮停在别处——不按
+  assert.equal(menuReadyToConfirm(menu, 2, { ...menu, selected: 1 }), false);
+  // 画面已经换了（另一个菜单 / 菜单没了 / 变成提问表单）：不按
+  assert.equal(menuReadyToConfirm(menu, 2, { ...menu, options: ["A", "B", "C"], selected: 2 }), false);
+  assert.equal(menuReadyToConfirm(menu, 2, null), false);
+});

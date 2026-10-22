@@ -139,6 +139,10 @@
   **整行底栏只从画好的屏上读**（`detectModelOnScreen`，节流 500ms 读可视区、自下往上取第一行）：Codex 差量重绘只重画变了的格子，
   输出流里档位前面不一定是模型名（2026-10-18 用户截图：芯片显示「[14;5H好」＝输入框回显「你好」的光标定位 + 字）。
   所有读回的名字须像模型名（可见 ASCII、不以「[」开头）；拼帧尾巴走 `outputTail`，不从转义序列中间开始。
+- **替人选菜单项认准了再回车（2026-10-22，`tui-menu.ts` `menuReadyToConfirm` / `trust-prompt.ts` `trustReadyToConfirm`）**：聊天卡上点了菜单项 /
+  信任 / 不信任，先只按方向键挪高亮，读一遍屏（等同步输出画完，最多再等三拍 150ms）：还是同一个菜单、高亮停在要选的那项上才按回车；对不上就不按，
+  卡片按屏上现在的样子重画，人再点一次（高亮已在那项时直接回车）。核对期间扫屏不把挪到一半的菜单拿回来当卡片（`askKeysDoneAtRef` /
+  `trustAnsweringUntilRef`）。原先照算好的格数直接回车，读屏把说明行算成选项时会选中另一项（Kimi /permission 实例）。新加替人按键的动作照这个口径。
 - **聊天层标「测试版」与按版本降级（2026-10-22 用户，设计 `docs/design-chat-fidelity.md`）**：输入框左下 `ChatBetaBadge` 点开说当前这家的档
   （`chat-fidelity.ts` `CHAT_FIDELITY` 单一出处，九家各一行）与要回终端做的事。已核对版本 = 金丝雀基线的 `version`（`cli-verified.ts`
   构建时 `import.meta.glob` 只取这个字段；本平台没有就取别的平台最新的）。用户的 CLI 更新时（`useCliNewer`）：**不替人自动按任何一步**
