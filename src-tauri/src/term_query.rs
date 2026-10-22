@@ -1,6 +1,7 @@
-//! 终端能力查询的应答（DA1 / XTVERSION / Kitty 键盘 / modifyOtherKeys / XTGETTCAP），在 PTY 读线程里当场答。
+//! 终端能力查询的应答（DA1 / XTVERSION / Kitty 键盘 / modifyOtherKeys / XTGETTCAP / OSC 7501），在 PTY 读线程里当场答。
 //!
-//! 应答表与 `src/terminal-protocols.ts` 的 `replyToTerminalQuery` 逐条一致（双端镜像：前端仍从画面字节里剥掉
+//! OSC 7501（程序状态，program_status.rs）只在后端答、只对开了这条旁路的标签答：答了 Claude Code 等会改画法
+//! （不再往窗口标题写转圈符号），没用上它的标签保持原样。其余应答表与 `src/terminal-protocols.ts` 的 `replyToTerminalQuery` 逐条一致（双端镜像：前端仍从画面字节里剥掉
 //! 这些查询、跟踪 Kitty 推栈，但不再回写）。挪到后端的原因：前端要等输出事件到了才答，标签在后台时输出进 backlog，
 //! 切回来才补发，应答晚到——CLI 的探测窗口早关了（Gemini 只等 1 秒），迟到的应答被当成按键打进输入框，
 //! 跟着下一条消息发出去（2026-10-21 Windows 实证：Gemini 第二条消息开头带着「5u>|Mesa (xterm.js 6.0.0)」）。
@@ -26,9 +27,15 @@ enum Parse {
 #[derive(Default)]
 pub(crate) struct QueryScanner {
     tail: Vec<u8>,
+    /// 答不答 `OSC 7501 ; ?`（这个标签用程序状态当旁路时才答）
+    program_status: bool,
 }
 
 impl QueryScanner {
+    pub(crate) fn new(program_status: bool) -> Self {
+        Self { tail: Vec::new(), program_status }
+    }
+
     /// 喂一块输出，返回这块里（含上一块留下的半截）完整查询的应答，按出现顺序
     pub(crate) fn feed(&mut self, chunk: &[u8]) -> Vec<Vec<u8>> {
         let mut hay = std::mem::take(&mut self.tail);
@@ -37,7 +44,7 @@ impl QueryScanner {
         let mut i = 0;
         while let Some(off) = hay[i..].iter().position(|&b| b == 0x1b) {
             let at = i + off;
-            match parse(&hay[at..]) {
+            match parse(&hay[at..], self.program_status) {
                 Parse::Query(len, reply) => {
                     if let Some(reply) = reply {
                         replies.push(reply.into_bytes());
@@ -61,10 +68,30 @@ fn digits(s: &[u8]) -> usize {
     s.iter().take_while(|b| b.is_ascii_digit()).count()
 }
 
-fn parse(s: &[u8]) -> Parse {
+/// `OSC 7501 ; ?`，BEL 或 ESC \ 结尾
+fn parse_program_status_query(s: &[u8]) -> Parse {
+    use Parse::*;
+    const Q: &[u8] = b"\x1b]7501;?";
+    if s.len() < Q.len() {
+        return if Q.starts_with(s) { Partial } else { NotQuery };
+    }
+    if !s.starts_with(Q) {
+        return NotQuery;
+    }
+    let reply = Some(crate::program_status::QUERY_REPLY.to_string());
+    match (s.get(Q.len()), s.get(Q.len() + 1)) {
+        (None, _) | (Some(0x1b), None) => Partial,
+        (Some(0x07), _) => Query(Q.len() + 1, reply),
+        (Some(0x1b), Some(b'\\')) => Query(Q.len() + 2, reply),
+        _ => NotQuery,
+    }
+}
+
+fn parse(s: &[u8], program_status: bool) -> Parse {
     use Parse::*;
     let Some(&kind) = s.get(1) else { return Partial };
     match kind {
+        b']' if program_status => parse_program_status_query(s),
         b'[' => {
             let Some(&lead) = s.get(2) else { return Partial };
             match lead {
@@ -153,7 +180,11 @@ mod tests {
     use super::*;
 
     fn feed_all(chunks: &[&str]) -> Vec<String> {
-        let mut scanner = QueryScanner::default();
+        feed_with(false, chunks)
+    }
+
+    fn feed_with(program_status: bool, chunks: &[&str]) -> Vec<String> {
+        let mut scanner = QueryScanner::new(program_status);
         chunks
             .iter()
             .flat_map(|c| scanner.feed(c.as_bytes()))
@@ -193,6 +224,22 @@ mod tests {
             feed_all(&["\x1bP+q4d", "73\x1b", "\\"]),
             vec!["\x1bP1+r4d73=1b5d35323b25633b25703273257307\x1b\\"]
         );
+    }
+
+    #[test]
+    fn program_status_probe_answered_before_da1_only_when_enabled() {
+        // Claude Code 2.1.306 一次写出的启动探测（本机抓到的顺序）
+        let probe = "\x1b[>0q\x1b[?u\x1b]7501;?\x1b\\\x1b[c";
+        let on = feed_with(true, &[probe]);
+        assert_eq!(on.len(), 4);
+        assert_eq!(on[2], crate::program_status::QUERY_REPLY);
+        assert_eq!(on[3], "\x1b[?1;2c");
+        // 切在半截也只答一次
+        assert_eq!(feed_with(true, &["\x1b]75", "01;", "?\x07"]), vec![crate::program_status::QUERY_REPLY]);
+        // 没开这条旁路的标签不答，别的应答照旧
+        assert_eq!(feed_with(false, &[probe]).len(), 3);
+        // 报告不是查询
+        assert!(feed_with(true, &["\x1b]7501;state=idle\x07\x1b]0;t\x07"]).is_empty());
     }
 
     #[test]

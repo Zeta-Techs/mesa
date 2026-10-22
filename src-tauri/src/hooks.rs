@@ -1261,6 +1261,8 @@ fn support_note(agent: &str) -> Option<&'static str> {
         "qwen" => Some("在 Mesa 里启动时自动带上（Qwen 自带的结构化输出通道）"),
         "opencode" => Some("在 Mesa 里启动时自动带上（OpenCode 自带的本机服务）"),
         "codex" => Some("在 Mesa 里启动时自动带上（Codex 自带的 app-server 通道）"),
+        // 程序状态 OSC 7501（program_status.rs，2026-10-22）：不开开关也有回合与等确认，开了卡上多出要跑的命令
+        "grok" => Some("不开也行：Grok 在 Mesa 里会自己报进度和等确认；开了确认卡上多出要运行的命令"),
         "cursor" => Some("无「等待确认」原生事件，暂不支持"),
         _ => None,
     }

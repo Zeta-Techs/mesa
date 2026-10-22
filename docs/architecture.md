@@ -457,6 +457,19 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-22 · 借 Orca 的程序状态（OSC 7501）补上 Grok；借 Paseo 的匀速显示改实时预览
+
+用户看了 Orca（MIT）、Paseo（Apache-2.0）后要「做第一项和第二项」。快照在 `.reference/orca`、`.reference/paseo`（不抄代码，学机制）。
+一，**程序状态旁路**（`program_status.rs`，旁路 kind `program-status`）：CLI 自己往终端流写 `OSC 7501` 状态，终端答一次探询就开始报，
+不写任何配置。只在这家没有别的旁路时用——Grok（没开全局 hooks）、Claude Code（hooks 起不来）；探询只对这类标签答（答了 Claude 不再往标题写转圈，
+有别的旁路的标签保持原样），排在 DA1 应答前。working 开回合、blocked 只在回合进行中当审批（启动时信任 / 登录交读屏，守住「启动不转圈」）、
+done / idle 收、error 失败；msg 当「现状一句」进聊天层生成中那一行。本机实测：Claude 2.1.306 问并报 idle（环境里有
+`CLAUDE_CODE_DISABLE_TERMINAL_TITLE` 就不问）；Grok 1.0.67 信任菜单报 blocked、干活报进度一句；假网关 e2e_channel（E2E_AGENT=grok）走完
+running → awaiting_approval → running → completed。设置页 Grok 一行说明「不开也行」，开关保留（开了卡上多出命令）。
+二，**实时预览匀速显示**（`src/text-reveal.ts`）：到达只改目标，每帧放积压 × 帧长 / 220ms（至少一字）；第一次见整段、接着长才匀速、
+换了一段整段；不在生成一次放完；不切开字形。时间常数按 Mesa 的到达间隔（读屏 400ms / 旁路 150ms）定，比 Paseo 的 150ms 长。
+未验：Mesa Dev 窗口里实际开 Grok 标签、看长回复预览的手感。
+
 ### 2026-10-22 · 终端定位为「引擎 + 逃生口」，聊天层转到终端按次数排优先级
 
 用户问：做了聊天层，终端还要不要；聊天层是不是做不到接近上游。结论：终端不能去——聊天层是同一 PTY 里 TUI 的另一层显示（发消息写 PTY、

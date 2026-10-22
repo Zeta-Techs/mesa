@@ -147,7 +147,8 @@ docs/            architecture.md（总体设计 + §10 决策记录 + §12 当�
 - **聊天层结构化旁路（2026-10-20，`chat_channel.rs`；设计与实测 `docs/design-chat-structured-channels.md`）**：聊天层取数优先 CLI 自带的
   结构化旁路，其次会话文件，最后读屏；旁路**不写用户配置**（只用启动参数 / 环境变量 / Mesa 目录下的临时文件），起不来照旧启动。
   hook 只记录、不阻塞、不替用户决定；审批只在用户点按钮后经 CLI 官方通道回，终端里先答也算。Codex 在 Mesa 里经私有 app-server 运行
-  （本机 ws + 能力令牌，TUI `--remote`），OpenCode 带口令的自带服务；口令 / 令牌只经环境变量。改任一家旁路或升级 CLI 前先跑
+  （本机 ws + 能力令牌，TUI `--remote`），OpenCode 带口令的自带服务；口令 / 令牌只经环境变量。没有别的旁路、CLI 支持程序状态
+  （OSC 7501，2026-10-22，`program_status.rs`）的家（Grok；Claude 的 hooks 起不来时）读它自己写进终端流的状态，探询只对这类标签答。改任一家旁路或升级 CLI 前先跑
   `scripts/e2e-model-routing/README.md`「聊天层结构化旁路」两层核对。细则 terminal.md、safety.md 同名条，matrix §14。
 - **CLI 金丝雀（2026-10-21，先做 Claude Code / Codex）**：`.github/workflows/cli-canary.yml` 每天装最新版跑 `scripts/cli-canary/canary.py`，
   把请求形状 / 旁路 / 会话格式 / 读屏抽成指纹和 `scripts/cli-canary/baseline/<平台>/` 比。红了是 CLI 变了、不是 Mesa 回退，不挡主线 CI；

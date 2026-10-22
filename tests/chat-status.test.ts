@@ -17,6 +17,16 @@ const ask = msg("user", [text("帮我跑一下测试")]);
 
 const base = { messages: [ask], activity: null, thinking: null, sinceStartMs: 5000, cwd: "/w", isWindows: false };
 
+test("CLI 自己报的现状（程序状态）：比「思考中」多说了点什么才用原文", () => {
+  assert.deepEqual(chatStatus({ ...base, statusLine: "Connection failed | Retrying (1/15)" }), {
+    kind: "cli",
+    text: "Connection failed | Retrying (1/15)",
+  });
+  assert.deepEqual(chatStatus({ ...base, statusLine: "Waiting for response…" }), { kind: "waiting", text: "思考中" });
+  // 旁路的工具、思考摘要在它前面
+  assert.equal(chatStatus({ ...base, statusLine: "x", thinking: "**读配置**" }).kind, "thinking");
+});
+
 test("什么都还没有：刚发出只亮光标，过一会儿写「思考中」", () => {
   assert.deepEqual(chatStatus({ ...base, sinceStartMs: 200 }), { kind: "none", text: null });
   assert.deepEqual(chatStatus({ ...base, sinceStartMs: STATUS_QUIET_START_MS }), { kind: "waiting", text: "思考中" });

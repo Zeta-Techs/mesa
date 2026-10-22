@@ -443,7 +443,13 @@
   `chat-channel-<tabId>` 推给前端（150ms 合并）；**任一旁路起不来就照旧启动、不接**，聊天层退回会话文件 + 读屏。逐家：
   Claude Code / CodeBuddy = `--settings` 带 hooks（`hooks::launch_hooks_value`，与用户 hooks 合并）；Qwen = Dual Output；
   OpenCode = `--port` + `OPENCODE_SERVER_PASSWORD`；Codex = 私有 app-server（ws + 能力令牌）+ TUI `--remote`；开了全局开关的
-  Gemini / Kimi / Grok = 同一份状态日志按标签号过滤。PTY 一律注入 `CCODE_TAB_ID`（hook 命令记进日志第二段，旧格式无此段照读）。
+  Gemini / Kimi / Grok = 同一份状态日志按标签号过滤；**没有别的旁路、CLI 支持程序状态的家 = OSC 7501（2026-10-22，`program_status.rs`，
+  旁路 kind `program-status`）**：Grok ≥1.0.60（没开全局 hooks 时）、Claude Code ≥2.1.295（hooks 起不来时）。PTY 读线程只对这类标签答
+  `OSC 7501 ; ?`（`term_query::QueryScanner::new(true)`，排在 DA1 应答之前——Claude 拿 DA1 当探询哨兵；答了 Claude 不再往窗口标题写转圈符号，
+  所以有别的旁路的标签不答），读到的根记录交 `chat_channel::program_status_report`：working 开一轮（同一轮里只更新现状一句 `statusLine`）、
+  blocked 只在一轮进行中当审批（启动时的信任目录 / 登录由读屏认，**不为它们开一轮**，守住「启动不转圈」）、done / idle 收、error 按失败收。
+  审批与 hooks 同口径（`channelInfersApproval`：卡片只有 CLI 那一句，按钮从屏上菜单来，屏上回到输入框算答过）。不带会话 id，会话照旧认领。
+  继承了 `CLAUDE_CODE_DISABLE_TERMINAL_TITLE` 的 Claude 不问（从 Claude Code 会话里起 Mesa Dev 时会遇到）。PTY 一律注入 `CCODE_TAB_ID`（hook 命令记进日志第二段，旧格式无此段照读）。
   **规则**：①同一事实取精度最高的来源：旁路有回合状态时，`applyTailAttention`、PTY 出字点亮、PTY 静默熄灭都让位（不删兜底）；
   ②hook 一律不阻塞、不输出决定，审批只在用户点按钮后经官方通道回（Qwen input 文件 / OpenCode 接口 / Codex JSON-RPC），
   其余家照旧按菜单原文写按键；「先答者算」，卡片等 CLI 回「已处理」才撤。只能在终端菜单里答的 hooks 家（Claude Code）CLI 不报「已答」，

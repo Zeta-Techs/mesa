@@ -642,6 +642,8 @@ fn spawn_tracked(
     run_id: Option<String>,
     size: PtySize,
     cwd_file: Option<std::path::PathBuf>,
+    // 这个标签用程序状态（OSC 7501，program_status.rs）当聊天层旁路：答探询、读报告
+    program_status: bool,
 ) -> Result<String, String> {
     if crate::process::shutting_down() {
         return Err("应用正在退出，拒绝启动终端".into());
@@ -742,7 +744,8 @@ fn spawn_tracked(
         // bracketed paste 检测的跨块尾部（序列可能恰好被 8KB 读取边界切开）
         let mut scan_tail: Vec<u8> = Vec::new();
         // 终端能力查询在这里当场答，不等前端（标签在后台时输出进 backlog，前端答就晚了，见 term_query.rs）
-        let mut queries = crate::term_query::QueryScanner::default();
+        let mut queries = crate::term_query::QueryScanner::new(program_status);
+        let mut reports = program_status.then(crate::program_status::ReportScanner::default);
         loop {
             // 前端没跟上就先停读（流控，见 FlowGate）
             flow.wait_ready(FLOW_STALL);
@@ -759,6 +762,11 @@ fn spawn_tracked(
                     for reply in queries.feed(&buf[..n]) {
                         // 只入队不等回执：读线程不能被一个不读 stdin 的子进程卡住
                         let _ = query_input.enqueue(&reply, None);
+                    }
+                    if let Some(scanner) = reports.as_mut() {
+                        for report in scanner.feed(&buf[..n]) {
+                            crate::chat_channel::program_status_report(&id, &report);
+                        }
                     }
                     if let Some(id) = run_id.as_deref() {
                         // 有界队列仅传递副本；数据库/脱敏不占用终端读取线程。
@@ -1139,6 +1147,7 @@ fn pty_spawn_sync(
         opened_id.clone(),
         pty_size_from(cols, rows),
         None,
+        channel.as_ref().is_some_and(|c| c.program_status()),
     ) {
         Ok(pty_id) => pty_id,
         Err(error) => {
@@ -1268,6 +1277,7 @@ fn shell_spawn_sync(
         run_id.clone(),
         pty_size_from(cols, rows),
         cwd_file,
+        false,
     ) {
         Ok(id) => {
             if let Some(entry) = manager.inner().entries.lock().unwrap().get_mut(&id) {
@@ -1362,6 +1372,7 @@ fn pty_spawn_custom_sync(
         Some(run_id.clone()),
         pty_size_from(cols, rows),
         None,
+        false,
     ) {
         Ok(id) => id,
         Err(error) => {

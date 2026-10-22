@@ -97,6 +97,7 @@ mod provider_id;
 mod pty;
 mod pty_input;
 mod term_query;
+mod program_status;
 mod chat_channel;
 mod chat_handoff_log;
 mod context_breakdown;

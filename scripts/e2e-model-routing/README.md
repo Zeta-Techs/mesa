@@ -138,7 +138,8 @@ ConPTY 转出 `?2004h`，读屏实时预览、审批菜单、信任提示与 mac
 ```bash
 python3 -I scripts/e2e-model-routing/gateway.py 18950 /tmp/e2e-gw.log &
 cd src-tauri && E2E_BASE=http://127.0.0.1:18950 E2E_OUT=/tmp/e2e-plans.json cargo test --lib e2e_dump_launch_plans -- --ignored
-# E2E_AGENT 取 claude-code / codebuddy / qwen / opencode / codex；生成计划后马上跑（Claude 的 --settings 文件 60 秒后会被清）
+# E2E_AGENT 取 claude-code / codebuddy / qwen / opencode / codex / grok（grok 走程序状态 OSC 7501，打印每条 [7501] 报告）；
+# 生成计划后马上跑（Claude 的 --settings 文件 60 秒后会被清）
 MESA_E2E_REAL_CLI=1 E2E_PLANS=/tmp/e2e-plans.json E2E_AGENT=codex cargo test --lib e2e_channel -- --ignored --nocapture
 # 可加：E2E_CLEAR=1（走完再发 /clear，看会话跟随）、E2E_RESUME=1（停掉后按 Mesa 的恢复参数接回再跑一轮）、
 #       E2E_TIER=auto|full（换权限档）、MESA_CHANNEL_DEBUG=1（打印 Codex app-server 收到的每条消息）、

@@ -485,8 +485,14 @@ Zed 是唯一核实过的跨 agent 路线：可从已配置的 ACP agent 导入�
 | codex 0.163.0 | 私有 `codex app-server --listen ws://127.0.0.1:<n> --ws-auth capability-token --ws-token-sha256 <hex>`（带 Mesa 的 `-c` 注入）+ TUI `--remote ws://… --remote-auth-token-env <变量>`；Mesa 作为第二个客户端（V） | `thread/started` 带 `thread.path`（rollout 路径）；恢复的会话不广播，靠 `thread/loaded/list`（V） | `turn/started` / `turn/completed`；未订阅前也广播 `thread/status/changed` active / idle（V） | 服务端请求 `item/commandExecution/requestApproval` / `item/fileChange/requestApproval`；`serverRequest/resolved` 撤卡（V） | `item/agentMessage/delta`（V） | JSON-RPC 响应 `{"decision":"accept"\|"acceptForSession"\|"decline"}`（V） |
 | gemini 0.64.0 | **无**：系统设置 / 系统默认设置路径（`GEMINI_CLI_SYSTEM_SETTINGS_PATH` / `_DEFAULTS_PATH`）注入的 hooks 被丢——文件必须属 root（`isFileAndDirectorySecureSync`）（V） | — | — | — | — | — |
 | kimi 2.2.0 | **无**：没有指定配置文件的参数或环境变量（二进制环境变量清单核实）（V） | — | — | — | — | — |
-| grok 1.0.62 | **无**：`GROK_CONFIG` 覆盖层按白名单只收 models / features / toolset / shell_environment_policy，hooks 被丢（随包文档）（I） | — | — | — | — | — |
+| grok 1.0.67 | **程序状态 OSC 7501**（2026-10-22）：终端答 `OSC 7501 ; ?` 后 Grok 把状态写进输出流（`program_status = auto`）；不写任何配置（V：本机抓到 + 假网关 e2e_channel 走完一轮）。原先 `GROK_CONFIG` 覆盖层按白名单只收 models / features / toolset / shell_environment_policy，hooks 被丢（I） | 无（照旧认领） | `working`（msg = 它自己的进度一句：`Waiting for response…`、`Connection failed \| Retrying (1/15)`、工具说明）/ `done`（msg `Turn complete in 3.3s.`）后再报 `clear`（V） | `blocked:kind=permission`，msg 是工具说明（「写一个探针文件」）；启动信任菜单也报 blocked（msg `Trust this folder?`）（V） | 无 | 只能终端菜单 |
 | cursor | 无「等待确认」事件 | — | — | — | — | — |
+
+**程序状态 OSC 7501（2026-10-22，`program_status.rs`；规格 superlogical.com/rex/docs/build/program-status，机制参照 Orca `.reference/orca/src/main/agent-hooks/README.md`）**：
+CLI 往输出流写 `ESC ] 7501 ; state=<idle|working|done|blocked|error>[:kind=<permission|question|auth>][:app=…][:msg=<base64>] ST`；多数要终端先答探询。
+本机实测：Claude Code 2.1.306 启动探测一次写出 XTVERSION、Kitty `?u`、`OSC 7501;?`、DA1，答了报 `state=idle:app=claude-code`；**环境里有
+`CLAUDE_CODE_DISABLE_TERMINAL_TITLE` 就不问**（从 Claude Code 会话里起的进程会继承）。Grok 1.0.67 见上表。Codex 0.163 不问也报 idle / working（启动时
+idle → working → idle 一次，不是在回答问题）。Gemini / Kimi / OpenCode / Qwen / CodeBuddy / Cursor 未见（Orca 表 2026-10-17 同）。Mesa 只在这家没有别的旁路时用它。
 
 **「现在在做什么」（2026-10-21，聊天层生成中那一行，`chat-status.ts`）**：正在跑的工具五家都有（Claude / CodeBuddy PreToolUse·PostToolUse、Qwen 的 tool_use·tool_result、OpenCode tool part 的 status、Codex `item/started`·`item/completed` 的 commandExecution / fileChange / mcpToolCall）；思考摘要只有三家：Codex `item/reasoning/summaryTextDelta`（每段前 `summaryPartAdded`；没摘要的模型只有 `item/reasoning/textDelta` 原始推理，拿来兜底）、Qwen `content_block_delta` 的 `thinking_delta`、OpenCode reasoning part 的 `message.part.delta`（V：假网关 TRIGGER_THINK，四家 e2e_channel 逐家核对，Codex 0.163.0 / Qwen 0.25.2 / OpenCode 1.19.3）。Claude hooks 不带思考，聊天层用会话文件里刚落盘的思考块兜底。
 

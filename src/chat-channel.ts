@@ -8,7 +8,16 @@
 import { samePath } from "./path-utils.ts";
 import { lineDiff, parsePatch, unwrapPowerShell, type DiffLine } from "./tool-activity.ts";
 
-export type ChannelKind = "hooks" | "qwen" | "opencode" | "codex";
+/** program-status = CLI 自己写进终端流的程序状态（OSC 7501，program_status.rs）：没有别的旁路时用，2026-10-22 起 Grok */
+export type ChannelKind = "hooks" | "qwen" | "opencode" | "codex" | "program-status";
+
+/**
+ * 这条旁路的审批只是「在等确认」的信号，答不了、也不带菜单（hooks、程序状态）：卡片按屏上菜单原文给按钮，
+ * 答了没有由屏上输入框回来判断
+ */
+export function channelInfersApproval(snap: Pick<ChatChannelSnapshot, "kind"> | null | undefined): boolean {
+  return snap?.kind === "hooks" || snap?.kind === "program-status";
+}
 
 export interface ChannelTurn {
   seq: number;
@@ -49,6 +58,8 @@ export interface ChatChannelSnapshot {
   activity: { name: string; input: string; startedAt: number } | null;
   /** 这一段思考的摘要（Codex 推理摘要、Qwen / OpenCode 思考增量）；工具开始或正文开始写就清掉 */
   thinking: string | null;
+  /** CLI 自己报的一句现状（程序状态旁路的 msg，如 Grok「Connection failed | Retrying (1/15)」）；回合开始 / 结束清掉 */
+  statusLine?: string | null;
 }
 
 export type ChannelReplyDecision = "allow" | "allow_always" | "deny";
@@ -78,8 +89,8 @@ export function channelAttention(snap: ChatChannelSnapshot | null): "working" | 
 export function hooksApprovalAnswered(snap: ChatChannelSnapshot | null, promptIdle: boolean): boolean {
   return Boolean(
     promptIdle &&
-      snap?.kind === "hooks" &&
-      snap.turn?.status === "awaiting_approval" &&
+      channelInfersApproval(snap) &&
+      snap?.turn?.status === "awaiting_approval" &&
       !snap.approval?.replyable,
   );
 }

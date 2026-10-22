@@ -11,6 +11,7 @@ import {
   channelTurnOpen,
   displayCommand,
   hooksApprovalAnswered,
+  channelInfersApproval,
   sessionSwitchNote,
   type ChannelApproval,
   type ChatChannelSnapshot,
@@ -80,6 +81,12 @@ test("hooks 还说等批准、屏上已回到输入框：认作答过了；能�
     approval: approval({ requestId: "r1", replyable: true }),
   });
   assert.equal(hooksApprovalAnswered(codex, true), false);
+  // 程序状态旁路（Grok，OSC 7501）与 hooks 同一口径：只说在等，答了没有看屏上
+  const grok = snap({ agent: "grok", kind: "program-status", turn: turn("awaiting_approval"), approval: approval({}) });
+  assert.equal(hooksApprovalAnswered(grok, true), true);
+  assert.equal(channelInfersApproval(grok), true);
+  assert.equal(channelInfersApproval(codex), false);
+  assert.equal(channelInfersApproval(null), false);
 });
 
 test("跟会话：直接给路径就锁定；/clear 换了文件就改盯；只给 id 交给按 id 找", () => {

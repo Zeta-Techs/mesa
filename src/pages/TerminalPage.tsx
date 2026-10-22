@@ -85,6 +85,7 @@ import { AGENTS, type CustomRuntimeDto, type OfficialAccountStatusDto } from "..
 import {
   channelAttention,
   channelCanAnswer,
+  channelInfersApproval,
   channelLiveLines,
   channelRelink,
   channelTurnOpen,
@@ -2261,7 +2262,7 @@ const TerminalView = memo(function TerminalView({
       menuFirstSeenRef.current = null;
       return false;
     }
-    if (!ch || ch.kind === "hooks" || !channelTurnOpen(ch)) return false;
+    if (!ch || channelInfersApproval(ch) || !channelTurnOpen(ch)) return false;
     // 旁路的卡上答不了（没有回复通道的那类请求）：屏上原文的卡更有用
     if (ch.approval) return channelCanAnswer(ch, launchAgentRef.current);
     const now = Date.now();
@@ -4477,8 +4478,9 @@ const TerminalView = memo(function TerminalView({
       if (att === "working") ptyWorkingArmedRef.current = true;
       setAttention(att);
     }
-    // hooks 报来「等批准」：看一眼屏上还在不在等（Windows 上 hooks 在后台跑，报到时可能已经在终端里答完了）
-    if (snap.kind === "hooks" && att === "confirm") {
+    // hooks / 程序状态报来「等批准」：看一眼屏上还在不在等（Windows 上 hooks 在后台跑，报到时可能已经在终端里答完了），
+    // 卡片的按钮也从屏上菜单来
+    if (channelInfersApproval(snap) && att === "confirm") {
       menuWatchUntilRef.current = Math.max(menuWatchUntilRef.current, Date.now() + 3000);
       scanMenuSoon();
     }

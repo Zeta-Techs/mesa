@@ -28,6 +28,12 @@ const QWEN_DUAL_MIN: (u32, u32, u32) = (0, 25, 2);
 const OPENCODE_PORT_MIN: (u32, u32, u32) = (1, 19, 3);
 const CODEX_REMOTE_MIN: (u32, u32, u32) = (0, 163, 0);
 const CODEBUDDY_SETTINGS_MIN: (u32, u32, u32) = (2, 169, 0);
+/// OSC 7501 程序状态（program_status.rs）：开始支持的版本（Orca 实测表，2026-10-17）；本机 2026-10-22 实测
+/// Claude Code 2.1.306、Grok 1.0.67 都会报。只在这家没有别的旁路时用它
+const PROGRAM_STATUS_MIN: &[(&str, (u32, u32, u32))] =
+    &[("claude-code", (2, 1, 295)), ("grok", (1, 0, 60))];
+/// CLI 自己报的一句现状（程序状态 msg）上限
+const STATUS_LINE_CAP: usize = 240;
 /// 这一轮实时文字最多留多少字符（只给预览用，正文以会话文件为准）
 const LIVE_TEXT_CAP: usize = 24_000;
 /// 一段思考摘要最多留多少字节（聊天层只取开头一句当状态）
@@ -89,7 +95,7 @@ pub struct NoticeDto {
 pub struct ChannelSnapshot {
     pub tab_id: String,
     pub agent: String,
-    /// hooks | qwen | opencode | codex
+    /// hooks | qwen | opencode | codex | program-status
     pub kind: &'static str,
     pub session_id: Option<String>,
     /// 会话文件路径（Claude / CodeBuddy / Codex 直接告诉；Qwen / OpenCode 只给 id）
@@ -107,6 +113,8 @@ pub struct ChannelSnapshot {
     pub activity: Option<ActivityDto>,
     /// 这一段思考的摘要（Codex 推理摘要、Qwen / OpenCode 的思考增量）；工具开始或正文开始写就清掉
     pub thinking: Option<String>,
+    /// CLI 自己报的一句现状（程序状态旁路的 msg，如 Grok「Connection failed | Retrying (1/15)」）；回合开始 / 结束清掉
+    pub status_line: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
@@ -156,6 +164,8 @@ pub(crate) enum ChannelEvent {
     ThinkingDelta(String),
     /// 新的一段思考开始：前一段的摘要作废
     ThinkingBreak,
+    /// CLI 自己报的一句现状（None = 清掉）
+    StatusLine(Option<String>),
     TurnEnd {
         reason: Option<String>,
     },
@@ -229,6 +239,7 @@ impl Tracker {
         self.finished.clear();
         self.snap.activity = None;
         self.snap.thinking = None;
+        self.snap.status_line = None;
     }
 
     /// 带请求 id 的审批（Codex / Qwen / OpenCode）：撤卡只认「已处理」事件、它自己那个工具结束、这一轮结束
@@ -614,6 +625,10 @@ impl Tracker {
                 self.snap.approval = None;
                 self.approval_call = None;
                 self.queued.clear();
+                self.snap.status_line = None;
+            }
+            ChannelEvent::StatusLine(line) => {
+                self.snap.status_line = line.map(|l| cap(l.trim(), STATUS_LINE_CAP));
             }
             ChannelEvent::Notice(text) => {
                 let seq = self.snap.notice.as_ref().map(|n| n.seq).unwrap_or(0) + 1;
@@ -693,11 +708,12 @@ fn slim_input(input: &Value) -> String {
 /// 出站前的快照：会话文本（实时文字、思考摘要）在 Rust 层脱敏再给前端（AGENTS.md 硬约束；工具参数在登记时已脱敏）
 fn outbound(snap: &ChannelSnapshot) -> ChannelSnapshot {
     let mut out = snap.clone();
-    if out.live_text.is_some() || out.thinking.is_some() {
+    if out.live_text.is_some() || out.thinking.is_some() || out.status_line.is_some() {
         let secrets = secrets_for_redact();
         let redact = |t: String| crate::sessions::redact_sensitive_text_with(&t, &secrets);
         out.live_text = out.live_text.map(redact);
         out.thinking = out.thinking.map(redact);
+        out.status_line = out.status_line.map(redact);
     }
     out
 }
@@ -923,6 +939,38 @@ pub(crate) fn map_hook(rec: &crate::hooks::HookRecord) -> Vec<ChannelEvent> {
 }
 
 /// Qwen Dual Output 的一条事件（与 `--output-format stream-json` 同一套形状）
+/// 程序状态（OSC 7501）→ 旁路事件。turn_open = 这一轮还开着。
+/// - working：开一轮（已开着就不动）；之前卡住的那一问算答过了；msg 当现状一句
+/// - blocked（要批准 / 在提问 / 要登录）：只在一轮进行中当审批——启动时的信任目录、登录页由读屏认（卡片按屏上原文给按钮），
+///   这里不为它们开一轮（否则启动就转圈，违背「启动不转圈」）。卡片内容只有 msg 一句，按钮仍从屏上菜单来
+/// - done / idle：收这一轮；error：按失败收
+pub(crate) fn map_program_status(r: &crate::program_status::Report, turn_open: bool) -> Vec<ChannelEvent> {
+    use crate::program_status::State;
+    match r.state {
+        State::Working => {
+            let mut out = Vec::new();
+            if turn_open {
+                out.push(ChannelEvent::ApprovalResolved { request_id: None });
+            } else {
+                out.push(ChannelEvent::TurnStart);
+            }
+            out.push(ChannelEvent::StatusLine(r.msg.clone()));
+            out
+        }
+        State::Blocked if turn_open => vec![ChannelEvent::ApprovalAsked {
+            request_id: None,
+            call_id: None,
+            name: None,
+            input: Value::Null,
+            replyable: false,
+            detail: r.msg.clone(),
+        }],
+        State::Done | State::Idle if turn_open => vec![ChannelEvent::TurnEnd { reason: None }],
+        State::Error if turn_open => vec![ChannelEvent::TurnEnd { reason: Some("error".into()) }],
+        _ => Vec::new(),
+    }
+}
+
 pub(crate) fn map_qwen(v: &Value) -> Vec<ChannelEvent> {
     let mut out = Vec::new();
     let ty = v.get("type").and_then(|x| x.as_str()).unwrap_or("");
@@ -1715,6 +1763,11 @@ pub(crate) struct Prepared {
 }
 
 impl Prepared {
+    /// 这个标签用程序状态（OSC 7501）当旁路：PTY 读线程要答探询、把报告交给 `program_status_report`
+    pub(crate) fn program_status(&self) -> bool {
+        self.kind == "program-status"
+    }
+
     /// 进程没起来：收掉旁路进程与目录
     pub(crate) fn abort(self) {
         if let Some((_, _, pid)) = self.codex {
@@ -1955,6 +2008,42 @@ fn start_codex_server(
 /// pty_spawn 在起进程前调用：按这家改启动参数（`args` 不含末尾的初始 prompt）、返回要加给 PTY 的环境变量
 /// 与旁路句柄。`server_env` = 交给 PTY 的完整环境（Codex 的 app-server 跑工具，要同一份）。
 pub(crate) fn prepare(
+    agent: &str,
+    tab_id: Option<&str>,
+    cwd: &str,
+    binary: &Path,
+    args: &mut Vec<String>,
+    server_env: &[(String, String)],
+    env_remove: &[String],
+) -> (Vec<(String, String)>, Option<Prepared>) {
+    let (env, prepared) = prepare_structured(agent, tab_id, cwd, binary, args, server_env, env_remove);
+    if prepared.is_some() {
+        return (env, prepared);
+    }
+    // 没有别的旁路：CLI 支持程序状态（OSC 7501）就用它——不写任何配置，PTY 读线程答探询、读报告
+    let tab = tab_id.map(sanitize_tab).filter(|t| !t.is_empty());
+    let supported = PROGRAM_STATUS_MIN
+        .iter()
+        .any(|(a, min)| *a == agent && version_at_least(agent, *min));
+    match tab {
+        Some(tab) if supported => (
+            env,
+            Some(Prepared {
+                agent: agent.to_string(),
+                tab_id: tab,
+                kind: "program-status",
+                dir: None,
+                hooks_log: None,
+                qwen_events: None,
+                replier: None,
+                codex: None,
+            }),
+        ),
+        _ => (env, None),
+    }
+}
+
+fn prepare_structured(
     agent: &str,
     tab_id: Option<&str>,
     cwd: &str,
@@ -2440,6 +2529,19 @@ fn codex_loop(ch: Arc<Channel>, port: u16, token: String) {
     }
 }
 
+/// PTY 读线程读到程序状态报告（只有 program-status 旁路的标签会交来）
+pub(crate) fn program_status_report(pty_id: &str, report: &crate::program_status::Report) {
+    let Some(ch) = registry().lock().ok().and_then(|r| r.get(pty_id).cloned()) else {
+        // 旁路还没登记（进程刚起、启动时的那一报）：启动时的状态不开回合，丢了无妨
+        return;
+    };
+    let events = match ch.tracker.lock() {
+        Ok(t) if t.snap.kind == "program-status" => map_program_status(report, is_open(&t.snap.turn)),
+        _ => return,
+    };
+    feed(&ch, events);
+}
+
 /// PTY 退出（或标签重启 Agent）：收掉旁路进程、连接与目录
 pub(crate) fn close_for_pty(pty_id: &str) {
     let _ = close_channel(pty_id);
@@ -2665,6 +2767,54 @@ mod tests {
 
     fn rec(line: &str) -> crate::hooks::HookRecord {
         crate::hooks::parse_log_records(line).into_iter().next().unwrap()
+    }
+
+    fn ps(state: crate::program_status::State, kind: Option<crate::program_status::BlockedKind>, msg: Option<&str>) -> crate::program_status::Report {
+        crate::program_status::Report { state, kind, msg: msg.map(str::to_string) }
+    }
+
+    /// 把一串程序状态报告喂给 program-status 旁路（与 program_status_report 同一套：先按「这一轮开着没有」映射再应用）
+    fn feed_ps(t: &mut Tracker, reports: &[crate::program_status::Report]) {
+        for (i, r) in reports.iter().enumerate() {
+            for ev in map_program_status(r, is_open(&t.snap.turn)) {
+                t.apply(ev, i as i64);
+            }
+        }
+    }
+
+    #[test]
+    fn program_status_turn_lifecycle() {
+        use crate::program_status::{BlockedKind::*, State::*};
+        let mut t = Tracker::new("tab-1", "grok", "program-status");
+        // 启动时的信任菜单 / 空闲：不开回合（启动不转圈，信任菜单交给读屏）
+        feed_ps(&mut t, &[ps(Blocked, Some(Permission), Some("Trust this folder?")), ps(Idle, None, None)]);
+        assert!(t.snap.turn.is_none());
+        assert!(t.snap.approval.is_none());
+        // 干活：开一轮，msg 是现状一句
+        feed_ps(&mut t, &[ps(Working, None, Some("Waiting for response…"))]);
+        assert_eq!(t.snap.turn.as_ref().unwrap().status, "running");
+        assert_eq!(t.snap.status_line.as_deref(), Some("Waiting for response…"));
+        feed_ps(&mut t, &[ps(Working, None, Some("Connection failed | Retrying (1/15)"))]);
+        assert_eq!(t.snap.turn.as_ref().unwrap().seq, 1, "同一轮里的进度不另开一轮");
+        assert_eq!(t.snap.status_line.as_deref(), Some("Connection failed | Retrying (1/15)"));
+        // 卡住要批准 → 等确认，卡上只有 msg；答完回到干活
+        feed_ps(&mut t, &[ps(Blocked, Some(Permission), Some("approve Write: notes.md"))]);
+        assert_eq!(t.snap.turn.as_ref().unwrap().status, "awaiting_approval");
+        let a = t.snap.approval.clone().unwrap();
+        assert!(!a.replyable);
+        assert_eq!(a.detail.as_deref(), Some("approve Write: notes.md"));
+        feed_ps(&mut t, &[ps(Working, None, None)]);
+        assert_eq!(t.snap.turn.as_ref().unwrap().status, "running");
+        assert!(t.snap.approval.is_none());
+        // 完成：收这一轮、清掉现状；之后的 idle 不再动
+        feed_ps(&mut t, &[ps(Done, None, Some("Turn complete in 19s.")), ps(Idle, None, None)]);
+        let turn = t.snap.turn.clone().unwrap();
+        assert_eq!(turn.status, "completed");
+        assert!(t.snap.status_line.is_none());
+        // 下一轮出错
+        feed_ps(&mut t, &[ps(Working, None, None), ps(Error, None, Some("boom"))]);
+        let turn = t.snap.turn.clone().unwrap();
+        assert_eq!((turn.seq, turn.status), (2, "failed"));
     }
 
     #[test]
@@ -3424,9 +3574,13 @@ mod e2e {
             .and_then(|p| std::fs::File::create(p).ok())
             .map(|f| Arc::new(Mutex::new(f)));
         let t0 = Instant::now();
+        // 程序状态旁路（OSC 7501）：照 pty.rs 读线程答探询、把报告交给旁路
+        let program_status = prepared.program_status();
         {
             let (screen, writer, raw_log) = (screen.clone(), writer.clone(), raw_log.clone());
             std::thread::spawn(move || {
+                let mut queries = crate::term_query::QueryScanner::new(program_status);
+                let mut reports = crate::program_status::ReportScanner::default();
                 let mut buf = [0u8; 8192];
                 while let Ok(n) = reader.read(&mut buf) {
                     if n == 0 {
@@ -3437,8 +3591,21 @@ mod e2e {
                         let line = json!({ "t": t0.elapsed().as_millis() as u64, "d": chunk }).to_string();
                         let _ = writeln!(f.lock().unwrap(), "{line}");
                     }
-                    // 终端查询照 Mesa 的口径应答（src/terminal-protocols.ts 的子集）
+                    if program_status {
+                        for r in reports.feed(&buf[..n]) {
+                            println!("  [7501] {:?} {:?} {:?}", r.state, r.kind, r.msg);
+                            program_status_report("e2e-pty", &r);
+                        }
+                    }
+                    // 终端查询照 Mesa 的口径应答（src/terminal-protocols.ts 的子集；程序状态探询走 term_query）
                     let mut w = writer.lock().unwrap();
+                    if program_status {
+                        for reply in queries.feed(&buf[..n]) {
+                            if reply.starts_with(b"\x1b]7501") {
+                                let _ = w.write_all(&reply);
+                            }
+                        }
+                    }
                     if chunk.contains("\x1b[c") || chunk.contains("\x1b[0c") {
                         let _ = w.write_all(b"\x1b[?1;2c");
                     }
@@ -3809,7 +3976,10 @@ mod e2e {
             std::fs::write(keep.join("channel.json"), serde_json::to_string_pretty(&channel).unwrap()).unwrap();
         }
         let _ = std::fs::remove_dir_all(&home);
-        assert!(first.last.session_id.is_some(), "旁路认出会话");
+        // 程序状态旁路（OSC 7501）不带会话 id：会话仍按原来的认领找
+        if first.last.kind != "program-status" {
+            assert!(first.last.session_id.is_some(), "旁路认出会话");
+        }
         assert!(first.done, "这一轮走完且命令确实跑了：{:?}", first.statuses);
         if std::env::var("E2E_ARG_PROMPT").is_ok() && matches!(agent.as_str(), "claude-code" | "codebuddy") {
             assert_eq!(first.arg_prompt_ok, Some(true), "启动参数里的首条消息原样到达");

@@ -4,7 +4,8 @@
  * 不说程序处在哪个阶段；过程里已经有一行在动的事不在这里再说一遍（那一行自己带光带）。
  *
  * 取数先后：旁路（正在跑的工具、思考摘要，chat_channel.rs）> 会话文件（还没回结果的调用、计划里进行中的一项、
- * 刚落盘的一段思考）> 「思考中」。旁路没接上的家只走会话文件这一档，慢几秒但说法一样。
+ * 刚落盘的一段思考）> CLI 自己报的一句现状（程序状态旁路，如 Grok「Connection failed | Retrying (1/15)」）> 「思考中」。
+ * 旁路没接上的家只走会话文件这一档，慢几秒但说法一样。
  */
 import type { ChatMessageDto } from "./types.ts";
 import { groupConversationSegments, turnPlan, type ProcessItem } from "./conversation-tools.ts";
@@ -21,6 +22,8 @@ export interface ChatStatusInput {
   activity: StatusActivity | null;
   /** 旁路的思考摘要（Codex 推理摘要 / Qwen、OpenCode 思考增量） */
   thinking: string | null;
+  /** CLI 自己报的一句现状（程序状态旁路的 msg）；照原文显示，只在比「思考中」多说了点什么时用 */
+  statusLine?: string | null;
   /** 这一轮开始了多久（毫秒） */
   sinceStartMs: number;
   cwd: string | null;
@@ -28,7 +31,7 @@ export interface ChatStatusInput {
   isWindows: boolean;
 }
 
-export type ChatStatusKind = "tool" | "plan" | "thinking" | "waiting" | "none";
+export type ChatStatusKind = "tool" | "plan" | "thinking" | "cli" | "waiting" | "none";
 
 export interface ChatStatus {
   kind: ChatStatusKind;
@@ -40,6 +43,9 @@ export interface ChatStatus {
 export const STATUS_QUIET_START_MS = 1500;
 
 const HEADLINE_MAX = 48;
+
+/** 只等于「在等 / 在想」的现状不比「思考中」多说什么，不换成英文原文 */
+const GENERIC_STATUS_RE = /^(waiting for (the )?response|thinking|working|generating|processing)\b/i;
 
 function clip(text: string, max = HEADLINE_MAX): string {
   const chars = [...text];
@@ -123,6 +129,8 @@ export function chatStatus(input: ChatStatusInput): ChatStatus {
   if (turn.planStep) return { kind: "plan", text: turn.planStep };
   const settled = thinkingHeadline(turn.lastThought);
   if (settled) return { kind: "thinking", text: settled };
+  const line = input.statusLine?.trim();
+  if (line && !GENERIC_STATUS_RE.test(line)) return { kind: "cli", text: clip(line, 72) };
   if (input.sinceStartMs < STATUS_QUIET_START_MS) return { kind: "none", text: null };
   return { kind: "waiting", text: "思考中" };
 }

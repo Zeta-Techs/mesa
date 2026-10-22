@@ -533,3 +533,11 @@ Claude / CodeBuddy 用原路径（带引号）、同步跑，Stop hook 87–109m
 Kimi / Grok 四家（`chat-capture.py` Windows 分支 + `capture-check.ts`），补了 Windows 字形（Claude `●`、Grok `>` `♦` `○` `•`）。
 剩下：Mesa Dev 窗口逐家点验（docs/qa/acceptance-2026-10.md）。
 
+### 补记（2026-10-22）：程序状态 OSC 7501 补上 Grok
+
+借 Orca 的做法：CLI 自己把状态写进终端流（`OSC 7501`），终端答一次探询就开始报，不写任何配置。§0 表里 Grok 原先只能靠全局 hooks，
+现在没开全局开关时走这条（旁路 kind `program-status`）；Claude Code 的 hooks 起不来时也退到它。回合、等批准、完成都有，没有会话 id、
+没有工具参数（卡片只有 CLI 那一句，按钮仍从屏上菜单来）。额外得到一句「现状」（Grok 的 `Connection failed | Retrying (1/15)`），
+聊天层生成中那一行在没别的可说时显示它。假网关端到端：`E2E_AGENT=grok`，回合 running → awaiting_approval → running → completed。
+实时预览另加匀速显示（借 Paseo，`src/text-reveal.ts`，见 terminal.md 同名条）。
+

@@ -424,27 +424,29 @@ export default function ChatSurface({
   // 「这一轮现在在做什么」（chat-status.ts）：说在做的事，不说阶段；过程里已经在动的那一行不在这里重复
   const activity = channel?.activity ?? null;
   const thinking = channel?.thinking ?? null;
+  const statusLine = channel?.statusLine ?? null;
   const statusBase = useMemo(
     () =>
       chatStatus({
         messages,
         activity,
         thinking,
+        statusLine,
         // 刚发出的那一会儿另算（下面），这里按「已经过了」给，免得每秒重算整轮
         sinceStartMs: Number.MAX_SAFE_INTEGER,
         cwd: cwd ?? null,
         isWindows: IS_WINDOWS,
       }),
-    [messages, activity, thinking, cwd],
+    [messages, activity, thinking, statusLine, cwd],
   );
   const status =
     statusBase.kind === "waiting" && genElapsedMs < STATUS_QUIET_START_MS ? { kind: "none" as const, text: null } : statusBase;
   const statusText = trustPrompt ? "等你确认是否信任这个目录" : status.text;
-  // 最近一次「看得见的进展」：新消息、预览出字、旁路换了工具 / 思考。安静满 10 秒才给「看实时输出」
+  // 最近一次「看得见的进展」：新消息、预览出字、旁路换了工具 / 思考 / CLI 自己报的现状。安静满 10 秒才给「看实时输出」
   const [progressAt, setProgressAt] = useState(() => Date.now());
   useEffect(() => {
     setProgressAt(Date.now());
-  }, [messages.length, liveReply, activity?.startedAt, thinking]);
+  }, [messages.length, liveReply, activity?.startedAt, thinking, statusLine]);
   const quiet = generating && Date.now() - progressAt >= QUIET_HINT_MS;
   const extraHint = approvalExtraHint(agentId, hooksEnabled);
   const liveReplyCapable = liveReplySupported(agentId ?? "");
@@ -533,7 +535,8 @@ export default function ChatSurface({
       ? {
           key: `approval:${confirmDetail ?? ""}`,
           title: channelApproval ? approvalTitle(channelApproval, agentLabel(agentId)) : `${agentLabel(agentId)} 在等你确认`,
-          detail: confirmDetail ?? "终端里有待处理的批准、登录或菜单选择",
+          // 程序状态旁路（Grok）没有 hooks 日志，卡上写它自己报的那一句（「写一个探针文件」）
+          detail: confirmDetail ?? channelApproval?.detail ?? "终端里有待处理的批准、登录或菜单选择",
           hint: extraHint,
           preview,
           options: [
