@@ -1433,24 +1433,14 @@ pub(crate) fn clear_task_profile_refs(profile_id: &str) {
     );
 }
 
-#[tauri::command]
-pub fn task_set_launch(
-    id: String,
+/// 目标绑定写侧三件套（W2a，与槽位写入同口径）：连接存在、agent 恒随 profile 所属 CLI、
+/// 模型在名单。后端是唯一硬边界——UI 下拉自证不算防线，任何调用方都写不进脏值。
+/// 三个都空 = 跟随项目默认（开工时按项目默认解析）。
+fn normalize_goal_launch(
     agent: Option<String>,
     profile_id: Option<String>,
     model: Option<String>,
-) -> Result<TaskDto, String> {
-    let conn = db()?;
-    let task = task_by_id(&conn, &id)?;
-    if !task.declared {
-        return Err("只能改你记下的目标".into());
-    }
-    if task.kind != "free_research" && task.kind != "office_doc" {
-        return Err("只能改科研或工作目标".into());
-    }
-    if task.status == "running" {
-        return Err("目标正在跑，先停掉再改连接".into());
-    }
+) -> Result<(Option<String>, Option<String>, Option<String>), String> {
     let agent = agent.unwrap_or_default();
     let agent = agent.trim();
     if !agent.is_empty() && crate::agent_specs::agent_spec(agent).is_none() {
@@ -1460,8 +1450,6 @@ pub fn task_set_launch(
     let profile = profile.trim();
     let model = model.unwrap_or_default();
     let model = model.trim();
-    // W2a 写侧三件套（与槽位写入同口径）：连接存在、agent 恒随 profile 所属 CLI、
-    // 模型在名单。后端是唯一硬边界——UI 下拉自证不算防线，任何调用方都写不进脏值。
     let mut agent = agent.to_string();
     if !profile.is_empty() {
         let bindings = crate::gateway_store::load_bindings()?;
@@ -1480,68 +1468,23 @@ pub fn task_set_launch(
         // 模型须在名单（空 = 名单第一，读侧回落）；名单外直接拒写
         crate::projects::accept_project_model(&binding.models, Some(model))?;
     }
-    let agent_val = if agent.is_empty() {
-        None::<String>
-    } else {
-        Some(agent.clone())
-    };
-    let profile_val = if profile.is_empty() {
-        None::<String>
-    } else {
-        Some(profile.to_string())
-    };
-    let model_val = if model.is_empty() {
-        None::<String>
-    } else {
-        Some(model.to_string())
-    };
-    conn.execute(
-        "UPDATE tasks SET agent=?2, profile_id=?3, model=?4, updated_at=?5 WHERE id=?1",
-        params![id, agent_val, profile_val, model_val, now_rfc3339()],
-    )
-    .map_err(|err| format!("保存目标连接失败: {err}"))?;
-    task_by_id(&conn, &id)
+    let non_empty = |value: &str| (!value.is_empty()).then(|| value.to_string());
+    Ok((non_empty(&agent), non_empty(profile), non_empty(model)))
 }
 
-#[tauri::command]
-pub fn task_create(input: CreateTaskInput) -> Result<TaskDto, String> {
-    let root = validate_existing_dir(&input.project_root, "项目根目录")?;
-    if !matches!(input.kind.as_str(), "free_research" | "office_doc") {
-        return Err("这里只能创建自由科研或工作任务".into());
-    }
-    let name = input.name.trim();
-    if name.is_empty() {
-        return Err("Task 名称不能为空".into());
-    }
-    let permission = input.permission.as_deref().unwrap_or("write_tree");
+/// 目标的资料 / 产出范围与权限（新建与编辑同一套校验）。返回 (输入, 输出, 是否验收写回)。
+fn normalize_goal_scope(
+    root: &str,
+    input_paths: &[String],
+    output_paths: &[String],
+    permission: Option<&str>,
+) -> Result<(Vec<String>, Vec<String>, bool), String> {
+    let permission = permission.unwrap_or("write_tree");
     if !matches!(permission, "discuss" | "write_tree") {
         return Err("不支持的权限政策".into());
     }
-    let agent = input
-        .agent
-        .as_deref()
-        .map(str::trim)
-        .filter(|id| !id.is_empty());
-    if let Some(agent) = agent {
-        if crate::agent_specs::agent_spec(agent).is_none() {
-            return Err(format!("未知 Agent：{agent}"));
-        }
-    }
-    let conn = db()?;
-    let project = crate::projects::canonical_key(Path::new(&root));
-    let project_id = project_id_for(&conn, Some(&project));
-    let registered = conn
-        .query_row(
-            "SELECT COUNT(*) FROM projects WHERE path=?1",
-            [&project],
-            |r| r.get::<_, i64>(0),
-        )
-        .map_err(|e| e.to_string())?;
-    if registered == 0 {
-        return Err("项目尚未注册，不能创建 Task".into());
-    }
     let mut inputs = Vec::new();
-    for path in &input.input_paths {
+    for path in input_paths {
         if path.trim() == "." {
             if !inputs.is_empty() {
                 return Err("整个项目范围不能与指定路径同时使用".into());
@@ -1554,7 +1497,7 @@ pub fn task_create(input: CreateTaskInput) -> Result<TaskDto, String> {
         if inputs.iter().any(|item| item == ".") {
             return Err("整个项目范围不能与指定路径同时使用".into());
         }
-        let (relative, _) = task_rel_path(Path::new(&root), path, "输入路径")?;
+        let (relative, _) = task_rel_path(Path::new(root), path, "资料路径")?;
         if !inputs.contains(&relative) {
             inputs.push(relative);
         }
@@ -1565,7 +1508,7 @@ pub fn task_create(input: CreateTaskInput) -> Result<TaskDto, String> {
         inputs = prune_nested_rel_paths(&inputs);
     }
     let mut outputs = Vec::new();
-    for path in &input.output_paths {
+    for path in output_paths {
         let path = path.trim().replace('\\', "/");
         let path = path.trim_matches('/');
         if path == "." {
@@ -1591,26 +1534,87 @@ pub fn task_create(input: CreateTaskInput) -> Result<TaskDto, String> {
     }
     let review_required = permission == "write_tree";
     if !review_required && !outputs.is_empty() {
-        return Err("只讨论任务不能指定输出路径；如需生成文件请改为写入后审核".into());
+        return Err("只讨论的目标不能指定输出路径；要生成文件请改为写入并验收".into());
     }
     if review_required && outputs.is_empty() {
-        return Err("需要写文件的 Task 必须指定输出路径".into());
+        return Err("要写文件的目标必须指定输出范围".into());
+    }
+    Ok((inputs, outputs, review_required))
+}
+
+fn normalize_goal_skills(skills: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for skill in skills {
+        let name = skill.trim();
+        if !name.is_empty() && !out.iter().any(|item| item == name) {
+            out.push(name.to_string());
+        }
+    }
+    out
+}
+
+#[tauri::command]
+pub fn task_set_launch(
+    id: String,
+    agent: Option<String>,
+    profile_id: Option<String>,
+    model: Option<String>,
+) -> Result<TaskDto, String> {
+    let conn = db()?;
+    let task = task_by_id(&conn, &id)?;
+    if !task.declared {
+        return Err("只能改你记下的目标".into());
+    }
+    if task.kind != "free_research" && task.kind != "office_doc" {
+        return Err("只能改科研或工作目标".into());
+    }
+    if task.status == "running" {
+        return Err("目标正在跑，先停掉再改连接".into());
+    }
+    let (agent_val, profile_val, model_val) = normalize_goal_launch(agent, profile_id, model)?;
+    conn.execute(
+        "UPDATE tasks SET agent=?2, profile_id=?3, model=?4, updated_at=?5 WHERE id=?1",
+        params![id, agent_val, profile_val, model_val, now_rfc3339()],
+    )
+    .map_err(|err| format!("保存目标连接失败: {err}"))?;
+    task_by_id(&conn, &id)
+}
+
+#[tauri::command]
+pub fn task_create(input: CreateTaskInput) -> Result<TaskDto, String> {
+    let root = validate_existing_dir(&input.project_root, "项目根目录")?;
+    if !matches!(input.kind.as_str(), "free_research" | "office_doc") {
+        return Err("这里只能创建科研或工作目标".into());
+    }
+    let name = input.name.trim();
+    if name.is_empty() {
+        return Err("目标不能为空".into());
+    }
+    let (inputs, outputs, review_required) = normalize_goal_scope(
+        &root,
+        &input.input_paths,
+        &input.output_paths,
+        input.permission.as_deref(),
+    )?;
+    let (agent, profile_id, model) =
+        normalize_goal_launch(input.agent, input.profile_id, input.model)?;
+    let conn = db()?;
+    let project = crate::projects::canonical_key(Path::new(&root));
+    let project_id = project_id_for(&conn, Some(&project));
+    let registered = conn
+        .query_row(
+            "SELECT COUNT(*) FROM projects WHERE path=?1",
+            [&project],
+            |r| r.get::<_, i64>(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if registered == 0 {
+        return Err("项目尚未注册，不能新建目标".into());
     }
     let id = uuid::Uuid::new_v4().to_string();
     let now = now_rfc3339();
     let identity = format!("user:{id}");
-    let mut skills: Vec<String> = Vec::new();
-    for skill in &input.skills {
-        let name = skill.trim();
-        if !name.is_empty() && !skills.iter().any(|item| item == name) {
-            skills.push(name.to_string());
-        }
-    }
-    let model = input
-        .model
-        .as_deref()
-        .map(str::trim)
-        .filter(|m| !m.is_empty());
+    let skills = normalize_goal_skills(&input.skills);
     conn.execute(
         "INSERT INTO tasks(id,identity_key,project_root,kind,task_ref,name,description,status,input_paths,output_paths,review_required,agent,profile_id,skills,project_id,created_at,updated_at,model)
          VALUES(?1,?2,?3,?4,?5,?6,?7,'pending',?8,?9,?10,?11,?12,?13,?14,?15,?15,?16)",
@@ -1626,19 +1630,138 @@ pub fn task_create(input: CreateTaskInput) -> Result<TaskDto, String> {
             task_json_paths(&outputs)?,
             review_required as i64,
             agent,
-            input
-                .profile_id
-                .as_deref()
-                .map(str::trim)
-                .filter(|id| !id.is_empty()),
+            profile_id,
             task_json_paths(&skills)?,
             project_id,
             now,
             model
         ],
     )
-    .map_err(|e| format!("创建 Task 失败: {e}"))?;
+    .map_err(|e| format!("新建目标失败: {e}"))?;
     task_by_id(&conn, &id)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateTaskInput {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub input_paths: Vec<String>,
+    pub output_paths: Vec<String>,
+    pub permission: Option<String>,
+    pub agent: Option<String>,
+    pub profile_id: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub skills: Vec<String>,
+}
+
+/// 已规范化的编辑内容（命令层做完路径 / 连接校验后交给 apply_task_update）。
+struct GoalEdit {
+    name: String,
+    description: String,
+    inputs: Vec<String>,
+    outputs: Vec<String>,
+    review_required: bool,
+    agent: Option<String>,
+    profile_id: Option<String>,
+    model: Option<String>,
+    skills: Vec<String>,
+}
+
+/// 只改「记下了还没开始」的目标：一旦跑过，资料已复制进副本、上下文已冻结，
+/// 改要求或范围会让历程对不上——那时请「再来一版」写意见，或归档后重记。
+fn apply_task_update(conn: &Connection, id: &str, edit: GoalEdit) -> Result<(), String> {
+    let task = conn
+        .query_row(
+            "SELECT identity_key, kind, status, archived_at FROM tasks WHERE id=?1",
+            [id],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, Option<String>>(3)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .ok_or("目标不存在")?;
+    let (identity, kind, status, archived_at) = task;
+    if !identity.starts_with("user:") || !matches!(kind.as_str(), "free_research" | "office_doc") {
+        return Err("只能编辑你记下的科研或工作目标".into());
+    }
+    if archived_at.is_some() {
+        return Err("已归档的目标先恢复再编辑".into());
+    }
+    let runs: i64 = conn
+        .query_row("SELECT COUNT(*) FROM runs WHERE task_id=?1", [id], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    if status != "pending" || runs > 0 {
+        return Err("目标已经开始过，不能再改要求和资料；要调整请在验收时写意见再出一版".into());
+    }
+    let name = edit.name.trim();
+    if name.is_empty() {
+        return Err("目标不能为空".into());
+    }
+    conn.execute(
+        "UPDATE tasks SET name=?2, description=?3, input_paths=?4, output_paths=?5, review_required=?6,
+             agent=?7, profile_id=?8, model=?9, skills=?10, updated_at=?11
+         WHERE id=?1 AND status='pending'",
+        params![
+            id,
+            name,
+            edit.description,
+            task_json_paths(&edit.inputs)?,
+            task_json_paths(&edit.outputs)?,
+            edit.review_required as i64,
+            edit.agent,
+            edit.profile_id,
+            edit.model,
+            task_json_paths(&edit.skills)?,
+            now_rfc3339(),
+        ],
+    )
+    .map_err(|e| format!("保存目标失败: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn task_update(input: UpdateTaskInput) -> Result<TaskDto, String> {
+    let conn = db()?;
+    let task = task_by_id(&conn, &input.id)?;
+    let root = task
+        .project_root
+        .clone()
+        .ok_or("目标没有所属项目，不能编辑")?;
+    let root = validate_existing_dir(&root, "项目根目录")?;
+    let (inputs, outputs, review_required) = normalize_goal_scope(
+        &root,
+        &input.input_paths,
+        &input.output_paths,
+        input.permission.as_deref(),
+    )?;
+    let (agent, profile_id, model) =
+        normalize_goal_launch(input.agent, input.profile_id, input.model)?;
+    apply_task_update(
+        &conn,
+        &input.id,
+        GoalEdit {
+            name: input.name,
+            description: input.description.unwrap_or_default(),
+            inputs,
+            outputs,
+            review_required,
+            agent,
+            profile_id,
+            model,
+            skills: normalize_goal_skills(&input.skills),
+        },
+    )?;
+    task_by_id(&conn, &input.id)
 }
 
 #[derive(Debug, Deserialize)]
@@ -3916,6 +4039,90 @@ mod tests {
         assert_eq!(t2.agent.as_deref(), Some("codex"));
         assert_eq!(t2.profile_id, None);
         assert_eq!(t2.model, None);
+    }
+
+    fn goal_edit(name: &str) -> GoalEdit {
+        GoalEdit {
+            name: name.into(),
+            description: format!("{name}，详细要求"),
+            inputs: vec!["data".into()],
+            outputs: vec![".".into()],
+            review_required: true,
+            agent: None,
+            profile_id: None,
+            model: None,
+            skills: vec!["data-clean".into()],
+        }
+    }
+
+    /// 记下未开始的目标可改要求、资料、技能与绑定；跑过 / 归档 / 非人声明的一律拒改
+    #[test]
+    fn goal_edit_only_before_first_run() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+        for (id, identity, status, archived) in [
+            ("fresh", "user:fresh", "pending", None),
+            ("ran", "user:ran", "pending", None),
+            ("stopped", "user:stopped", "stopped", None),
+            ("archived", "user:archived", "pending", Some("now")),
+            ("auto", "/p/proj", "pending", None),
+        ] {
+            conn.execute(
+                "INSERT INTO tasks(id,identity_key,project_root,kind,task_ref,name,status,created_at,updated_at,agent,profile_id,archived_at)
+                 VALUES(?1,?2,'/p/proj','office_doc',?1,'旧目标',?3,'now','now','codex','pf-1',?4)",
+                params![id, identity, status, archived],
+            )
+            .unwrap();
+        }
+        conn.execute(
+            "INSERT INTO runs(id,task_id,task_kind,project_root,isolation_path,runtime,agent,permission,status,created_at)
+             VALUES('r1','ran','office_doc','/p/proj','/iso','local_cli','codex','write_tree','failed','now')",
+            [],
+        )
+        .unwrap();
+
+        apply_task_update(&conn, "fresh", goal_edit("整理周报")).unwrap();
+        let (name, desc, inputs, skills, profile): (String, String, String, String, Option<String>) = conn
+            .query_row(
+                "SELECT name,description,input_paths,skills,profile_id FROM tasks WHERE id='fresh'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .unwrap();
+        assert_eq!(name, "整理周报");
+        assert_eq!(desc, "整理周报，详细要求");
+        assert_eq!(inputs, r#"["data"]"#);
+        assert_eq!(skills, r#"["data-clean"]"#);
+        assert_eq!(profile, None, "清掉绑定 = 跟随项目默认");
+
+        for id in ["ran", "stopped", "archived", "auto"] {
+            assert!(apply_task_update(&conn, id, goal_edit("改")).is_err(), "{id} 不应可改");
+        }
+        assert!(apply_task_update(&conn, "fresh", goal_edit("  ")).is_err());
+        assert!(apply_task_update(&conn, "missing", goal_edit("改")).is_err());
+    }
+
+    #[test]
+    fn goal_scope_rejects_mixed_and_mismatched_permission() {
+        let root = std::env::temp_dir().join(format!("mesa-goal-scope-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("data/raw")).unwrap();
+        // 生产侧的根来自 validate_existing_dir（已规范化）；macOS 临时目录 /var → /private/var
+        let root_s = validate_existing_dir(&root.to_string_lossy(), "项目根目录").unwrap();
+        let (inputs, outputs, review) = normalize_goal_scope(
+            &root_s,
+            &["data".into(), "data/raw".into()],
+            &[".".into()],
+            None,
+        )
+        .unwrap();
+        assert_eq!(inputs, vec!["data".to_string()]);
+        assert_eq!(outputs, vec![".".to_string()]);
+        assert!(review);
+        assert!(normalize_goal_scope(&root_s, &[".".into(), "data".into()], &[".".into()], None).is_err());
+        assert!(normalize_goal_scope(&root_s, &[], &[".".into()], Some("discuss")).is_err());
+        assert!(normalize_goal_scope(&root_s, &[], &[], Some("write_tree")).is_err());
+        assert!(normalize_goal_scope(&root_s, &["../x".into()], &[], Some("discuss")).is_err());
+        let _ = fs::remove_dir_all(&root);
     }
 
     fn journal_fixture() -> (PathBuf, PathBuf, PathBuf, Connection, GoalApplyJournal) {

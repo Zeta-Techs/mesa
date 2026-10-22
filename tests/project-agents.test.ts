@@ -545,3 +545,17 @@ test("聊天开聊前选项目：chat 槽 > 项目默认，都没有不动", asy
   assert.equal(projectChatLaunch(profiles, {}), null);
   assert.equal(projectChatLaunch(profiles, null), null);
 });
+
+test("没绑连接的目标按项目默认解析：项目定的连接 > 这家第一条 > Claude Code > 任意", async () => {
+  const { goalDefaultProfile } = await import("../src/project-agents.ts");
+  const profiles = [
+    { id: "cx-1", agent: "codex" },
+    { id: "cx-2", agent: "codex" },
+    { id: "cc-1", agent: "claude-code" },
+  ];
+  assert.equal(goalDefaultProfile(profiles, "codex", { codex: "cx-2" })?.id, "cx-2");
+  assert.equal(goalDefaultProfile(profiles, "codex", {})?.id, "cx-1");
+  assert.equal(goalDefaultProfile(profiles, "gemini", {})?.id, "cc-1");
+  assert.equal(goalDefaultProfile(profiles, null, null)?.id, "cc-1");
+  assert.equal(goalDefaultProfile([{ id: "g", agent: "gemini" }], null)?.id, "g");
+});

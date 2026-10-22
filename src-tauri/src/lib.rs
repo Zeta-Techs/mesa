@@ -501,6 +501,7 @@ pub fn run() {
             runs::task_list,
             runs::task_create,
             runs::task_set_launch,
+            runs::task_update,
             runs::task_delete,
             runs::task_unarchive,
             runs::task_purge_archived,

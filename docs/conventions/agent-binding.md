@@ -19,7 +19,7 @@ L0 全局设置   settings.defaultProfiles / ai_profile_id / ai_profiles[fn]（�
 ## 存储与命令
 
 - 槽位绑定：SQLite `projects.task_bindings`（`slot → {profile, model?}`）。白名单 `reader` / `chat` / `discuss` + `step:` 前缀（`valid_agent_binding_slot`）；写 `set_project_agent_binding`（模型须在名单）、读 `get_project_agent_binding`（无白名单校验）。
-- 目标绑定：`tasks` 表 `agent + profile_id + model`（只在创建时写入；model 列**追加队尾**——map_task 按位置索引，插中间静默串列，有回归测试钉住）。
+- 目标绑定：`tasks` 表 `agent + profile_id + model`（创建时写入，没开始过的目标可经 `task_update` 改；新建目标弹层不点 Agent/连接/模型就存空＝跟随项目默认，未绑目标开工与弹层摘要共用 `goalDefaultProfile`；model 列**追加队尾**——map_task 按位置索引，插中间静默串列，有回归测试钉住）。
 - 日程绑定：`schedules.json` `profile_id + model`（`#[serde(default)]` 兼容旧档；UpdateSchedulePatch 的 model 走 `Option<Option>+空串清空`，与 profileId 同口径；行内换配置连带清 model）。
 
 ## 指派表（谁吃哪层——改前对照，防漏改防误改）

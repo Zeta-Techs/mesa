@@ -70,10 +70,37 @@ export function taskPathsForScope(
     return {
       inputPaths: [],
       outputPaths: [],
-      error: "请勾选要带入这一步的文件或目录",
+      error: "请勾选要带给这个目标的文件或文件夹",
     };
   }
   return { inputPaths, outputPaths, error: null };
+}
+
+/** 已存目标的资料范围反推回弹层三档（编辑时预填）。 */
+export function scopeFromInputPaths(inputPaths: readonly string[]): {
+  scope: TaskMaterialScope;
+  selected: string[];
+} {
+  if (inputPaths.includes(".")) return { scope: "whole", selected: [] };
+  if (inputPaths.length === 0) return { scope: "none", selected: [] };
+  return { scope: "selected", selected: [...inputPaths] };
+}
+
+/** 目标短名：第一行非空文字，超长截断加「…」。只给终端标签、通知、验收弹层标题用；
+ * 交给 Agent 的全文另存 description，不裁剪。 */
+export function goalShortTitle(text: string, max = 40): string {
+  const line = text.split(/\r?\n/).map((item) => item.trim()).find(Boolean) ?? "";
+  const chars = Array.from(line);
+  return chars.length > max ? `${chars.slice(0, max).join("")}…` : line;
+}
+
+/** 目标完整要求：短名是全文开头时只给全文，不把同一句话说两遍。 */
+export function goalFullText(task: { name: string; description?: string | null }): string {
+  const name = task.name.trim();
+  const desc = task.description?.trim() ?? "";
+  if (!desc) return name;
+  if (!name || desc === name || desc.startsWith(name.replace(/…$/, ""))) return desc;
+  return `${name}\n\n${desc}`;
 }
 
 export function canSaveDeclaredGoal(input: {

@@ -149,6 +149,12 @@ async function renderGoals(options: {
           data.tasks.push(task);
           return task;
         }
+        if (command === "task_update") {
+          data.tasks = data.tasks.map((task) => task.id === args.input.id
+            ? { ...task, ...args.input, reviewRequired: args.input.permission === "write_tree" }
+            : task);
+          return data.tasks.find((task) => task.id === args.input.id);
+        }
         if (command === "task_storage_review") {
           return data.storage ?? {
             taskId: args.taskId, workspace: { bytes: 14, files: 2, directories: 1 },
@@ -376,7 +382,7 @@ test("加载、读取失败和无 Run 状态不伪装为空目标或可验收", 
   } finally { finish(); await loading.close(); }
   const failed = await renderGoals({ loadError: true });
   try {
-    assert.match(failed.host.querySelector('[role="alert"]')!.textContent!, /任务读取失败/);
+    assert.match(failed.host.querySelector('[role="alert"]')!.textContent!, /目标读取失败/);
     assert.ok(!failed.host.textContent!.includes("这次想完成什么"));
     failed.data.loadError = false;
     await failed.click("刷新目标");
@@ -668,4 +674,92 @@ test("待验收归档会说明不再提醒；未完成接受不能归档", async
     assert.equal(archive.disabled, true);
     assert.equal(archive.title, "请先处理未完成的接受，再归档");
   } finally { await blocked.close(); }
+});
+
+async function typeGoal(view: Awaited<ReturnType<typeof renderGoals>>, text: string) {
+  const input = view.host.querySelector("textarea")!;
+  await view.act(async () => {
+    Object.getOwnPropertyDescriptor(view.dom.window.HTMLTextAreaElement.prototype, "value")!.set!.call(input, text);
+    input.dispatchEvent(new view.dom.window.Event("input", { bubbles: true }));
+  });
+}
+
+test("新建目标默认跟随项目默认：折叠时看得见设置，不点 Agent 就不钉连接；长要求只截短名", async () => {
+  const view = await renderGoals();
+  try {
+    await view.click("新建目标");
+    const summary = view.host.querySelector('[aria-label="本次设置"]')!;
+    assert.match(summary.textContent!, /整个项目 · 写入并验收文档 · Codex \/ Official \/ gpt-6-astra（项目默认）/);
+    const long = `按公司模板整理本周周报，把三个部门的数字汇总到一张表里并写结论段落\n不要改原始数据`;
+    await typeGoal(view, long);
+    await view.click("记下");
+    const created = view.data.tasks[0];
+    assert.equal(created.profileId, null, "没点过 Agent：存空，开工按项目默认");
+    assert.equal(created.agent, null);
+    assert.equal(created.description, long, "交给 Agent 的全文不裁剪");
+    assert.equal(created.name, "按公司模板整理本周周报，把三个部门的数字汇总到一张表里并写结论段落", "短名取第一行");
+    await view.click("开始", view.host.querySelector<HTMLElement>('li[aria-label^="目标："]')!);
+    assert.equal(view.data.starts[0].profileId, "codex-a");
+  } finally { await view.close(); }
+});
+
+test("在弹层里点了连接才钉到这条目标，且可改回跟随项目默认", async () => {
+  const profiles = [
+    { id: "codex-a", agent: "codex", name: "Official", models: ["gpt-6-astra"] },
+    { id: "codex-b", agent: "codex", name: "Relay", models: ["gpt-6-mini"] },
+  ];
+  const view = await renderGoals({ profiles });
+  try {
+    await view.click("新建目标");
+    await typeGoal(view, "整理文档");
+    const fold = Array.from(view.host.querySelectorAll("button")).find((b) => b.textContent!.startsWith("资料和 Agent"))!;
+    await view.act(async () => fold.click());
+    await view.click("Relay");
+    assert.ok(view.button("改回跟随项目默认"));
+    await view.click("记下");
+    assert.equal(view.data.tasks[0].profileId, "codex-b");
+    assert.equal(view.data.tasks[0].agent, "codex");
+  } finally { await view.close(); }
+});
+
+test("启动失败的提示不被下一次轮询抹掉", async () => {
+  const task = goal("失败提示");
+  const view = await renderGoals({ tasks: [task] });
+  try {
+    view.data.startError = true;
+    await view.click("开始", view.row(task));
+    assert.match(view.host.querySelector('[role="alert"]')!.textContent!, /启动目标失败/);
+    await view.poll();
+    assert.match(view.host.querySelector('[role="alert"]')!.textContent!, /启动目标失败/);
+  } finally { await view.close(); }
+});
+
+test("记下未开始的目标可在详情里核对设置并编辑；跑过的不给编辑", async () => {
+  const fresh = goal("周报", "pending", { name: "整理周报", description: "整理周报", inputPaths: ["数据"], skills: ["data-clean"] });
+  const ran = goal("跑过", "stopped");
+  const view = await renderGoals({ tasks: [fresh, ran], runs: [execution(ran)] });
+  try {
+    await view.click(`目标详情：${fresh.name}`, view.row(fresh));
+    const settings = view.host.querySelector(`[aria-label="目标设置：${fresh.name}"]`)!;
+    assert.match(settings.textContent!, /资料：数据/);
+    assert.match(settings.textContent!, /技能：data-clean/);
+    assert.match(settings.textContent!, /Codex \/ Official/);
+    assert.equal(view.row(fresh).querySelector("button") && Array.from(view.row(fresh).querySelectorAll("button")).some((b) => b.textContent === "释放副本空间"), false, "没跑过没有副本可释放");
+    await view.click(`编辑目标：${fresh.name}`);
+    const dialog = view.host.querySelector('[role="dialog"]')!;
+    assert.match(dialog.textContent!, /编辑目标/);
+    assert.equal(dialog.querySelector("textarea")!.value, "整理周报");
+    assert.match(dialog.querySelector('[aria-label="本次设置"]')!.textContent!, /指定资料 1 项/);
+    await typeGoal(view, "整理周报，只用数据文件夹");
+    await view.click("保存");
+    const call = view.calls.find((c) => c.command === "task_update")!;
+    assert.equal(call.args.input.id, fresh.id);
+    assert.equal(call.args.input.description, "整理周报，只用数据文件夹");
+    assert.deepEqual(call.args.input.inputPaths, ["数据"]);
+    assert.deepEqual(call.args.input.skills, ["data-clean"]);
+    assert.equal(call.args.input.profileId, "codex-a", "原本钉了连接的保持原样");
+    assert.equal(view.data.starts.length, 0, "保存不自动开始");
+    await view.click(`目标详情：${ran.name}`, view.row(ran));
+    assert.equal(Array.from(view.row(ran).querySelectorAll("button")).some((b) => b.textContent === "编辑"), false);
+  } finally { await view.close(); }
 });

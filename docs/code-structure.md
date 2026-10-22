@@ -252,7 +252,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # pickRecoverableRun 找回可恢复 Run（排除 internal/login/watch/reader——阅读关掉就离开，
                              # 不进找回链）/ isRunProcessLive 活进程判定（保留标签不算运行中）（tests/run-model.test.ts）
   project-tasks.ts           # 人声明任务：资料范围（不带入/勾选/整个项目）/ 嵌套路径剪枝 /
-                             # 声明步骤过滤（不含会话自动登记）/ 审核回流文案 /
+                             # 声明步骤过滤（不含会话自动登记）/ 审核回流文案 / 目标短名 goalShortTitle 与全文 goalFullText /
                              # 保护文件夹勾选（验收写回保持原样，不是另存副本；tests/project-tasks.test.ts）
   project-agents.ts          # 项目 Agents 名册：每家默认配置 / 项目选用的模型 / 项目默认 / 声明步骤归属
                              # （不自动分派；tests/project-agents.test.ts）
@@ -317,6 +317,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   agent-binding 体系（2026-10-15 定稿，全文 docs/conventions/agent-binding.md）：
   project-agents.ts          # 绑定纯逻辑单一出处：slotPrefs（discuss 槽>项目默认）/ taskBindingLaunch /
                              #   resolveStepLaunch（步骤槽>discuss）/ resolveTaskModel（目标三档回落）/
+                             #   goalDefaultProfile（未绑目标开工用哪条，新建目标弹层摘要同源）/
                              #   workspaceLaunchChain（手选>步骤>wsLast 三链）/ stepSlotKey /
                              #   CHAT_BINDING_SLOT（项目对话）/ DISCUSS_BINDING_SLOT（问 AI·聊想法）
   render-gate.ts            # 通用并发槽 RenderGate（限并发 + FIFO + 槽位直接移交）：PDF 位图重渲过闸逐页错开，
@@ -1274,6 +1275,7 @@ src-tauri/src/
                              # pipeline_step/coding_lane/watch（run_needs_task）；
                              # 普通目标开工写评审基线（写失败即开工失败）、收尾触发冻结、
                              # 预览/采纳绑定冻结快照（失败清理只删本次新建目录 cleanup_failed_prepare）
+                             # 新建/编辑目标共用 normalize_goal_scope / normalize_goal_launch；task_update 只改未跑过的 pending 目标
   runs/goal_storage.rs       # 普通目标副本的显式清理：归档、项目成果与接受账本不在删除范围（两步各需确认）
   task_review.rs             # 普通目标评审证据（规格 conventions/review-freeze.md）：开工基线哈希、
                              # 收尾冻结 payload 副本（拒绝改写）、采纳三向判定（项目现读 vs 基线 vs 冻结内容，

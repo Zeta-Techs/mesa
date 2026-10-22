@@ -29,7 +29,7 @@ import {
 } from "./PageFrame";
 import { Modal } from "./Modal";
 import { agentBrand } from "../agent-colors";
-import { goalBoundLaunch, resolveTaskModel } from "../project-agents";
+import { goalBoundLaunch, goalDefaultProfile, resolveTaskModel } from "../project-agents";
 import { toast } from "../toast";
 
 import { confirmDialog } from "./ConfirmDialog";
@@ -46,15 +46,19 @@ import {
   goalTimeline,
   groupGoalsByBucket,
   goalDisplayName,
+  goalFullText,
+  goalShortTitle,
   isTaskMaterialNoise,
   joinRunPath,
   parseReviewNote,
   pathCoveredBySelection,
   pathIsProtected,
   relativeProjectPath,
+  scopeFromInputPaths,
   selectedChangePaths,
   taskChangeKindLabel,
   taskPathsForScope,
+  taskInputLabel,
   taskStatusLabel,
   toggleTaskMaterialPath,
   visibleDeclaredTasks,
@@ -102,6 +106,29 @@ function continueRun(run: RunDto) {
   });
 }
 
+/** 目标详情里的「设置」：资料、权限、点名技能、谁来做——卡面不展开这些，记下后也要能核对。 */
+function goalSettingLines(
+  task: TaskDto,
+  project: ProjectDto,
+  profiles: { id: string; agent: string; name: string }[],
+): string[] {
+  const writeLabel = goalReviewCopy(project.workMode).writeTab;
+  const lines = [
+    `资料：${taskInputLabel(task.inputPaths)}`,
+    `权限：${task.reviewRequired ? writeLabel : "只讨论"}`,
+    `技能：${task.skills?.length ? task.skills.join("、") : "不点名"}`,
+  ];
+  if (task.profileId) {
+    const profile = profiles.find((item) => item.id === task.profileId);
+    lines.push(
+      `Agent：${[agentLabel(task.agent ?? profile?.agent ?? ""), profile?.name ?? "连接已删除", task.model].filter(Boolean).join(" / ")}`,
+    );
+  } else {
+    lines.push("Agent：跟随项目默认（开始时按 Agents 页的项目默认）");
+  }
+  return lines;
+}
+
 export default function ProjectUserTasksView({
   project,
   embed = false,
@@ -130,10 +157,14 @@ export default function ProjectUserTasksView({
   const [runs, setRuns] = useState<RunDto[]>([]);
   const [events, setEvents] = useState<RunEventDto[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
+  const [editTask, setEditTask] = useState<TaskDto | null>(null);
   const [reviewTask, setReviewTask] = useState<TaskDto | null>(null);
   const [storageTaskId, setStorageTaskId] = useState<string | null>(null);
   const taskReviewReq = useAppStore((state) => state.taskReviewReq);
   const setTaskReviewReq = useAppStore((state) => state.setTaskReviewReq);
+  // 两类提示分开：读取失败随下一次成功读取消失；操作失败（启动/归档/恢复）留到下一次操作，
+  // 否则 2.5s 轮询会把「启动目标失败」这类提示刚显示就抹掉
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [startingId, setStartingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -165,9 +196,9 @@ export default function ProjectUserTasksView({
       setArchivedTasks(archivedDeclaredTasks(nextTasks, kinds));
       setRuns(nextRuns);
       setEvents(nextEvents);
-      setError(null);
+      setLoadError(null);
     } catch (reason) {
-      setError(`任务读取失败：${String(reason)}`);
+      setLoadError(`目标读取失败：${String(reason)}`);
     } finally {
       setLoaded(true);
     }
@@ -278,6 +309,7 @@ export default function ProjectUserTasksView({
     task: TaskDto,
     opts?: { reuseIsolation?: boolean; feedback?: string },
   ) {
+    setError(null);
     const preferredAgent = task.agent ?? project.defaultAgent;
     // W1（拍板①A）：显式绑定在全量 profiles 里解析——停用照用（显式绑定尊重停用
     // 项，与 Agents 页换绑侧同向）；连接真被删才 fail-loud 引导重绑，不再静默滑到
@@ -301,14 +333,7 @@ export default function ProjectUserTasksView({
     }
     const profile = bound?.kind === "bound"
       ? profiles.find((item) => item.id === bound.profileId)
-      : visibleProfiles.find(
-          (item) =>
-            item.id ===
-            (preferredAgent ? project.defaultProfiles?.[preferredAgent] : undefined),
-        ) ??
-        visibleProfiles.find((item) => item.agent === preferredAgent) ??
-        visibleProfiles.find((item) => item.agent === "claude-code") ??
-        visibleProfiles[0];
+      : goalDefaultProfile(visibleProfiles, preferredAgent, project.defaultProfiles);
     if (!profile) {
       setError("还没有可用连接，先到连接页配一个。");
       setPage("profiles");
@@ -356,7 +381,7 @@ export default function ProjectUserTasksView({
       });
       setPage("terminal");
     } catch (reason) {
-      setError(`启动任务失败：${String(reason)}`);
+      setError(`启动目标失败：${String(reason)}`);
     } finally {
       setStartingId(null);
       void load();
@@ -452,11 +477,12 @@ export default function ProjectUserTasksView({
             <RotateCw size={14} aria-hidden="true" />
           </button>
         </div>
+        {loadError && <InlineNotice tone="err" className="mb-2">{loadError}</InlineNotice>}
         {error && <InlineNotice tone="err" className="mb-2">{error}</InlineNotice>}
         {!loaded ? (
           <p role="status" className={`${projectWellClass} text-xs text-l3`}>正在读取目标…</p>
         ) : tasks.length === 0 ? (
-          !error && <EmptyState
+          !loadError && <EmptyState
             compact
             title={archivedTasks.length ? "当前没有目标" : "这次想完成什么？"}
             detail={archivedTasks.length ? "可以新建目标，或从已归档中恢复。" : "写清要交付的成果，再选择资料和 Agent。"}
@@ -512,10 +538,12 @@ export default function ProjectUserTasksView({
                       const canStart = !recoveryPending && ["pending", "failed", "stopped"].includes(task.status);
                       const showStatus = visibleBuckets.length === 1 || bucket === "stuck";
                       const detailsOpen = detailsTaskId === task.id;
-                      const fullGoal = [...new Set([task.name, task.description].map((value) => value?.trim()).filter(Boolean))].join("\n\n");
+                      const fullGoal = goalFullText(task);
                       const outputPaths = [...new Set(acceptedGoalOutputs(task.outputPaths, task.adoptedPaths))];
                       const hasAdoptedFiles = acceptedGoalOutputs([], task.adoptedPaths).length > 0;
                       const extraRequirement = fullGoal !== name;
+                      // 记下了还没跑过：资料还没复制、上下文还没冻结，要求和设置都还能改
+                      const editable = task.status === "pending" && taskRuns.length === 0 && !recoveryPending;
                       const actionClass = `${task.id === primaryTaskId ? primaryActionClass : secondaryActionClass} gap-1.5`;
                       return (
                         <li key={task.id} aria-label={`目标：${name}`} className={projectWellClass}>
@@ -621,11 +649,24 @@ export default function ProjectUserTasksView({
                                   </ol>
                                 </div>
                               )}
+                              <div>
+                                <h5 className="text-micro font-medium text-l3">设置</h5>
+                                <ul aria-label={`目标设置：${name}`} className="mt-1.5 space-y-0.5 text-xs text-l2">
+                                  {goalSettingLines(task, project, profiles).map((line) => (
+                                    <li key={line} className="break-words [overflow-wrap:anywhere]">{line}</li>
+                                  ))}
+                                </ul>
+                              </div>
                               {task.workspaceCleared && (
                                 <p className="text-xs text-l3">工作副本已清理，不能从旧副本续跑。{task.reviewCleared ? "历史版本也已清理；目标与接受记录保留。" : "历史冻结版本仍保留。"}</p>
                               )}
                               <div className="flex flex-wrap items-center justify-end gap-2 border-t border-hairline pt-3">
-                                <button type="button" className={secondaryActionClass} onClick={() => setStorageTaskId(task.id)}>释放副本空间</button>
+                                {editable && (
+                                  <button type="button" className={secondaryActionClass} aria-label={`编辑目标：${name}`} onClick={() => setEditTask(task)}>编辑</button>
+                                )}
+                                {(taskRuns.length > 0 || cleanupPending) && (
+                                  <button type="button" className={secondaryActionClass} onClick={() => setStorageTaskId(task.id)}>释放副本空间</button>
+                                )}
                                 <button
                                   type="button"
                                   className={`${ghostActionClass} gap-1.5`}
@@ -716,13 +757,19 @@ export default function ProjectUserTasksView({
         onError={setError}
       />
     )}
-      {createOpen && (
+      {(createOpen || editTask) && (
         <CreateTaskModal
+          key={editTask?.id ?? "new"}
           project={project}
           profiles={visibleProfiles}
-          onClose={() => setCreateOpen(false)}
-          onCreated={async (task, start) => {
+          editing={editTask}
+          onClose={() => {
             setCreateOpen(false);
+            setEditTask(null);
+          }}
+          onSaved={async (task, start) => {
+            setCreateOpen(false);
+            setEditTask(null);
             await load();
             if (start) await startTask(task);
           }}
@@ -770,26 +817,39 @@ const MATERIAL_SCOPES: { id: TaskMaterialScope; label: string }[] = [
   { id: "none", label: "不带入" },
 ];
 
+function materialScopeLabel(scope: TaskMaterialScope, selected: readonly string[]): string {
+  if (scope === "whole") return "整个项目";
+  if (scope === "none") return "不带入资料";
+  return selected.length ? `指定资料 ${selected.length} 项` : "指定资料（未勾选）";
+}
+
+/** 新建 / 编辑目标同一张表。编辑只给「记下了还没开始」的目标（后端 task_update 同口径拒改跑过的）。 */
 function CreateTaskModal({
   project,
   profiles,
+  editing,
   onClose,
-  onCreated,
+  onSaved,
   onError,
 }: {
   project: ProjectDto;
   profiles: ReturnType<typeof useAppStore.getState>["profiles"];
+  editing?: TaskDto | null;
   onClose: () => void;
-  onCreated: (task: TaskDto, start: boolean) => Promise<void>;
+  onSaved: (task: TaskDto, start: boolean) => Promise<void>;
   onError: (message: string) => void;
 }) {
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [permission, setPermission] = useState<TaskPermission>("write_tree");
-  const [scope, setScope] = useState<TaskMaterialScope>("whole");
-  const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
+  const initialScope = editing
+    ? scopeFromInputPaths(editing.inputPaths)
+    : { scope: "whole" as TaskMaterialScope, selected: [] as string[] };
+  const [text, setText] = useState(editing ? goalFullText(editing) : "");
+  const [permission, setPermission] = useState<TaskPermission>(
+    editing && !editing.reviewRequired ? "discuss" : "write_tree",
+  );
+  const [scope, setScope] = useState<TaskMaterialScope>(initialScope.scope);
+  const [selectedPaths, setSelectedPaths] = useState<string[]>(initialScope.selected);
   const [poolSkills, setPoolSkills] = useState<string[]>([]);
-  const [pickedSkills, setPickedSkills] = useState<string[]>([]);
+  const [pickedSkills, setPickedSkills] = useState<string[]>(editing?.skills ?? []);
   useEffect(() => {
     let stale = false;
     invoke<{ config: { skills?: string[] } }>("read_project_config", {
@@ -806,22 +866,22 @@ function CreateTaskModal({
   const configuredAgents = AGENTS.filter((agent) =>
     profiles.some((profile) => profile.agent === agent.id),
   );
+  // 没点过 Agent / 连接 / 模型 = 跟随项目默认：存空，开工时按项目默认解析（与工作台「记下一个目标」同口径），
+  // 之后在 Agents 页改项目默认它也跟着走；点过才把这条目标钉在所选连接上。
+  const followAgent = editing?.agent ?? project.defaultAgent;
+  const fallback = goalDefaultProfile(profiles, followAgent, project.defaultProfiles);
+  const [launchPinned, setLaunchPinned] = useState(Boolean(editing?.profileId));
   const [taskAgent, setTaskAgent] = useState(
-    project.defaultAgent ?? configuredAgents[0]?.id ?? "",
+    editing?.profileId ? editing.agent ?? "" : fallback?.agent ?? configuredAgents[0]?.id ?? "",
   );
   const detectedAgents = useAppStore((s) => s.agents);
-  const discussUnsupported = permission === "discuss" && !detectedAgents.find((a) => a.id === taskAgent)?.readonlySupported;
   const agentProfiles = profiles.filter((profile) => profile.agent === taskAgent);
   const [taskProfile, setTaskProfile] = useState(
-    project.defaultProfiles?.[taskAgent] ?? agentProfiles[0]?.id ?? "",
+    editing?.profileId ?? fallback?.id ?? agentProfiles[0]?.id ?? "",
   );
   // B2 目标级模型：随连接换档重置（旧模型的名单属于旧连接）
   const taskProfileObj = agentProfiles.find((profile) => profile.id === taskProfile);
-  const [taskModel, setTaskModel] = useState(
-    taskProfileObj && taskProfileObj.id === project.defaultProfiles?.[taskAgent]
-      ? (project.defaultModels?.[taskAgent] ?? "")
-      : "",
-  );
+  const [taskModel, setTaskModel] = useState(editing?.profileId ? editing.model ?? "" : "");
   useEffect(() => {
     setTaskModel((cur) =>
       taskProfileObj?.models.includes(cur) ? cur : "",
@@ -841,7 +901,49 @@ function CreateTaskModal({
     }
   }, [agentProfiles, project.defaultProfiles, taskAgent, taskProfile]);
 
+  const effectiveProfile = launchPinned ? taskProfileObj : fallback;
+  const effectiveAgent = effectiveProfile?.agent ?? taskAgent;
+  const effectiveModel = effectiveProfile
+    ? resolveTaskModel({
+        models: effectiveProfile.models,
+        taskModel: launchPinned ? taskModel : undefined,
+        profileId: effectiveProfile.id,
+        defaultProfileId: project.defaultProfiles?.[effectiveProfile.agent],
+        defaultModel: project.defaultModels?.[effectiveProfile.agent],
+      })
+    : "";
+  const discussUnsupported = permission === "discuss" && !detectedAgents.find((a) => a.id === effectiveAgent)?.readonlySupported;
+
+  function pin(next: () => void) {
+    if (!launchPinned) {
+      setLaunchPinned(true);
+      if (fallback) {
+        setTaskAgent(fallback.agent);
+        setTaskProfile(fallback.id);
+      }
+    }
+    next();
+  }
+  function followDefault() {
+    setLaunchPinned(false);
+    if (fallback) {
+      setTaskAgent(fallback.agent);
+      setTaskProfile(fallback.id);
+    }
+    setTaskModel("");
+  }
+
   const copy = goalReviewCopy(project.workMode);
+  const summary = [
+    materialScopeLabel(scope, selectedPaths),
+    permission === "write_tree" ? copy.writeTab : "只讨论",
+    pickedSkills.length ? `点名技能 ${pickedSkills.length} 个` : null,
+    effectiveProfile
+      ? [agentLabel(effectiveProfile.agent), effectiveProfile.name, effectiveModel].filter(Boolean).join(" / ") +
+        (launchPinned ? "" : "（项目默认）")
+      : "还没有可用连接",
+  ].filter(Boolean).join(" · ");
+  const name = goalShortTitle(text);
   const canSave = canSaveDeclaredGoal({
     name,
     scope,
@@ -852,42 +954,50 @@ function CreateTaskModal({
     name,
     scope,
     selectedPaths,
-    profileId: taskProfile,
+    profileId: effectiveProfile?.id ?? "",
     permission,
   });
 
-  async function createGoal(start: boolean) {
+  async function saveGoal(start: boolean) {
     const paths = taskPathsForScope(scope, selectedPaths, permission);
     if (paths.error) {
       setFormError(paths.error);
+      setMoreOpen(true);
       return;
     }
-    if (start && discussUnsupported) { setFormError("所选 Agent 不支持只读/计划模式，请更换 Agent 或明确选择可写权限。"); return; }
-    if (start && !taskProfile) {
-      setFormError("开始前请选择 Agent 和配置。");
+    if (start && discussUnsupported) { setFormError("所选 Agent 不支持只读/计划模式，请更换 Agent 或明确选择可写权限。"); setMoreOpen(true); return; }
+    if (start && !effectiveProfile) {
+      setFormError("开始前请选择 Agent 和连接。");
+      setMoreOpen(true);
       return;
     }
+    const launch = launchPinned
+      ? { agent: taskAgent || null, profileId: taskProfile || null, model: taskModel || null }
+      : { agent: null, profileId: null, model: null };
+    const fields = {
+      name,
+      description: text.trim(),
+      inputPaths: paths.inputPaths,
+      outputPaths: paths.outputPaths,
+      permission,
+      ...launch,
+      skills: pickedSkills,
+    };
     setBusy(true);
     setFormError(null);
     try {
-      const task = await invoke<TaskDto>("task_create", {
-        input: {
-          projectRoot: project.path,
-          kind: project.workMode === "office" ? "office_doc" : "free_research",
-          name,
-          description,
-          inputPaths: paths.inputPaths,
-          outputPaths: paths.outputPaths,
-          permission,
-          agent: taskAgent || null,
-          profileId: taskProfile || null,
-          model: taskModel || null,
-          skills: pickedSkills,
-        },
-      });
-      await onCreated(task, start);
+      const task = editing
+        ? await invoke<TaskDto>("task_update", { input: { id: editing.id, ...fields } })
+        : await invoke<TaskDto>("task_create", {
+            input: {
+              projectRoot: project.path,
+              kind: project.workMode === "office" ? "office_doc" : "free_research",
+              ...fields,
+            },
+          });
+      await onSaved(task, start);
     } catch (reason) {
-      const message = `创建任务失败：${String(reason)}`;
+      const message = `${editing ? "保存目标失败" : "新建目标失败"}：${String(reason)}`;
       setFormError(message);
       onError(message);
     } finally {
@@ -897,21 +1007,23 @@ function CreateTaskModal({
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    await createGoal(true);
+    await saveGoal(true);
   }
 
+  const chipClass = (on: boolean) =>
+    `inline-flex h-7 items-center rounded-full px-2.5 text-xs ${
+      on ? "bg-seg-sel text-l1" : "text-l3 hover:text-l1"
+    }`;
+
   return (
-    <Modal open title="新建目标" onClose={onClose} size={moreOpen ? "lg" : "md"}>
+    <Modal open title={editing ? "编辑目标" : "新建目标"} onClose={onClose} size={moreOpen ? "lg" : "md"}>
       <form onSubmit={submit} className="space-y-3">
         <label className="block text-xs text-l3">
           要完成什么
           <textarea
             className="mt-1 min-h-20 w-full rounded-md border border-field bg-canvas px-2 py-1.5 text-sm text-l1 outline-none placeholder:text-l4 focus:border-l4"
-            value={name}
-            onChange={(event) => {
-              setName(event.target.value);
-              setDescription(event.target.value);
-            }}
+            value={text}
+            onChange={(event) => setText(event.target.value)}
             placeholder={
               project.workMode === "office"
                 ? "例如：按公司模板写本周周报，保存到文档/周报.md"
@@ -923,12 +1035,15 @@ function CreateTaskModal({
         </label>
         <button
           type="button"
-          className="flex items-center gap-1 text-xs text-l3 hover:text-l1"
+          className="flex w-full min-w-0 items-baseline gap-1.5 text-left text-xs text-l3 hover:text-l1"
           onClick={() => setMoreOpen((open) => !open)}
           aria-expanded={moreOpen}
         >
           <FoldMark open={moreOpen} />
-          资料和 Agent
+          <span className="shrink-0">资料和 Agent</span>
+          {!moreOpen && (
+            <span aria-label="本次设置" className="min-w-0 truncate text-micro text-l4" title={summary}>{summary}</span>
+          )}
         </button>
         {moreOpen && (
           <div className="space-y-3">
@@ -963,9 +1078,7 @@ function CreateTaskModal({
                         key={skill}
                         type="button"
                         aria-pressed={on}
-                        className={`inline-flex h-7 items-center rounded-full px-2.5 text-xs ${
-                          on ? "bg-seg-sel text-l1" : "text-l3 hover:text-l1"
-                        }`}
+                        className={chipClass(on)}
                         onClick={() =>
                           setPickedSkills(
                             on
@@ -994,7 +1107,20 @@ function CreateTaskModal({
               />
             </div>
             <div>
-              <p className="mb-1 text-xs text-l3">Agent</p>
+              <p className="mb-1 flex items-baseline gap-2 text-xs text-l3">
+                Agent
+                {configuredAgents.length > 0 && (launchPinned ? (
+                  <button
+                    type="button"
+                    className="text-micro text-l4 hover:text-l1 hover:underline"
+                    onClick={followDefault}
+                  >
+                    改回跟随项目默认
+                  </button>
+                ) : (
+                  <span className="text-micro font-normal text-l4">跟随项目默认；点选即只给这个目标指定</span>
+                ))}
+              </p>
               {configuredAgents.length === 0 ? (
                 <p className="text-xs text-l4">
                   还没有可用连接。
@@ -1012,15 +1138,13 @@ function CreateTaskModal({
               ) : (
                 <div className="flex flex-wrap gap-1">
                   {configuredAgents.map((agent) => {
-                    const on = taskAgent === agent.id;
+                    const on = effectiveAgent === agent.id;
                     return (
                       <button
                         key={agent.id}
                         type="button"
-                        className={`inline-flex h-7 items-center gap-1.5 rounded-full px-2.5 text-xs ${
-                          on ? "bg-seg-sel text-l1" : "text-l3 hover:text-l1"
-                        }`}
-                        onClick={() => setTaskAgent(agent.id)}
+                        className={`${chipClass(on)} gap-1.5`}
+                        onClick={() => pin(() => setTaskAgent(agent.id))}
                       >
                         <span
                           aria-hidden="true"
@@ -1053,48 +1177,39 @@ function CreateTaskModal({
                   </p>
                 ) : (
                   <div className="flex flex-wrap gap-1">
-                    {agentProfiles.map((profile) => {
-                      const on = taskProfile === profile.id;
-                      return (
-                        <button
-                          key={profile.id}
-                          type="button"
-                          className={`inline-flex h-7 items-center rounded-full px-2.5 text-xs ${
-                            on ? "bg-seg-sel text-l1" : "text-l3 hover:text-l1"
-                          }`}
-                          onClick={() => setTaskProfile(profile.id)}
-                        >
-                          {profile.name}
-                        </button>
-                      );
-                    })}
+                    {agentProfiles.map((profile) => (
+                      <button
+                        key={profile.id}
+                        type="button"
+                        className={chipClass(effectiveProfile?.id === profile.id)}
+                        onClick={() => pin(() => setTaskProfile(profile.id))}
+                      >
+                        {profile.name}
+                      </button>
+                    ))}
                   </div>
                 )}
               </div>
             )}
             {configuredAgents.length > 0 &&
-              taskProfileObj &&
-              taskProfileObj.models.length > 0 && (
+              effectiveProfile &&
+              effectiveProfile.models.length > 0 && (
                 <div>
                   <p className="mb-1 text-xs text-l3">模型</p>
                   <div className="flex flex-wrap gap-1">
                     <button
                       type="button"
-                      className={`inline-flex h-7 items-center rounded-full px-2.5 text-xs ${
-                        taskModel === "" ? "bg-seg-sel text-l1" : "text-l3 hover:text-l1"
-                      }`}
-                      onClick={() => setTaskModel("")}
+                      className={chipClass(!launchPinned || taskModel === "")}
+                      onClick={() => pin(() => setTaskModel(""))}
                     >
-                      默认
+                      默认{effectiveModel && (!launchPinned || taskModel === "") ? `（${effectiveModel}）` : ""}
                     </button>
-                    {taskProfileObj.models.map((m) => (
+                    {effectiveProfile.models.map((m) => (
                       <button
                         key={m}
                         type="button"
-                        className={`inline-flex h-7 items-center rounded-full px-2.5 text-xs ${
-                          taskModel === m ? "bg-seg-sel text-l1" : "text-l3 hover:text-l1"
-                        }`}
-                        onClick={() => setTaskModel(m)}
+                        className={chipClass(launchPinned && taskModel === m)}
+                        onClick={() => pin(() => setTaskModel(m))}
                       >
                         {m}
                       </button>
@@ -1113,16 +1228,16 @@ function CreateTaskModal({
             type="button"
             className={secondaryActionClass}
             disabled={busy || !canSave}
-            onClick={() => void createGoal(false)}
+            onClick={() => void saveGoal(false)}
           >
-            {busy ? "记下…" : "记下"}
+            {editing ? (busy ? "保存中…" : "保存") : busy ? "记下…" : "记下"}
           </button>
           <button
             type="submit"
             className={primaryActionClass}
             disabled={busy || !canSubmit}
           >
-            {busy ? "正在准备…" : "开始"}
+            {busy ? "正在准备…" : editing ? "保存并开始" : "开始"}
           </button>
         </div>
       </form>
@@ -1234,7 +1349,7 @@ function TaskMaterialsPicker({
               type="button"
               className="inline-flex max-w-full items-center gap-1 rounded-full bg-raised px-2 py-0.5 text-micro text-l2 hover:bg-inset"
               onClick={() => toggleRelative(path, false)}
-              title="移出这一步"
+              title="移出"
             >
               <span className="truncate">{path}</span>
               <span aria-hidden="true">×</span>

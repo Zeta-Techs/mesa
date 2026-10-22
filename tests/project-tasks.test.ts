@@ -51,7 +51,7 @@ test("write tasks do not silently default to the whole project", () => {
     outputPaths: ["."],
     error: null,
   });
-  assert.deepEqual(taskPathsForScope("selected", [], "write_tree").error, "请勾选要带入这一步的文件或目录");
+  assert.deepEqual(taskPathsForScope("selected", [], "write_tree").error, "请勾选要带给这个目标的文件或文件夹");
   assert.deepEqual(taskPathsForScope("selected", ["notes/a.md", "notes"], "write_tree"), {
     inputPaths: ["notes"],
     outputPaths: ["."],
@@ -406,4 +406,17 @@ test("goalDisplayName prefers the longer description", () => {
 test("acceptedGoalOutputs prefers adopted files over whole-project scope", () => {
   assert.deepEqual(acceptedGoalOutputs(["."], ["论文/综述.md"]), ["论文/综述.md"]);
   assert.deepEqual(acceptedGoalOutputs(["notes"], []), ["notes"]);
+});
+
+test("目标短名取第一行、超长截断；完整要求不把短名和全文说两遍", async () => {
+  const { goalShortTitle, goalFullText, scopeFromInputPaths } = await import("../src/project-tasks.ts");
+  assert.equal(goalShortTitle("\n  写周报  \n细节"), "写周报");
+  const long = "一".repeat(50);
+  assert.equal(goalShortTitle(long), `${"一".repeat(40)}…`);
+  assert.equal(goalFullText({ name: `${"一".repeat(40)}…`, description: long }), long);
+  assert.equal(goalFullText({ name: "整理周报", description: "依据原始记录写周报" }), "整理周报\n\n依据原始记录写周报");
+  assert.equal(goalFullText({ name: "整理周报", description: "" }), "整理周报");
+  assert.deepEqual(scopeFromInputPaths(["."]), { scope: "whole", selected: [] });
+  assert.deepEqual(scopeFromInputPaths([]), { scope: "none", selected: [] });
+  assert.deepEqual(scopeFromInputPaths(["数据", "文档/a.md"]), { scope: "selected", selected: ["数据", "文档/a.md"] });
 });

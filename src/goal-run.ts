@@ -29,7 +29,7 @@ export async function prepareGoalRun(
 ): Promise<{ run: RunDto; prompt: string }> {
   if (!input.reuseIsolation) {
     const estimate = await invoke<{ files: number; bytes: number; allowed: boolean }>("task_input_estimate", { taskId: input.task.id });
-    if (!estimate.allowed) throw new Error(`资料 ${estimate.files} 个文件、${(estimate.bytes / 1024 / 1024).toFixed(1)} MB，超过隔离输入预算。请缩小资料范围后开始；尚未复制或启动。`);
+    if (!estimate.allowed) throw new Error(`资料 ${estimate.files} 个文件、${(estimate.bytes / 1024 / 1024).toFixed(1)} MB，超过隔离输入预算，尚未复制或启动。还没开始过的目标可在「详情 → 编辑」里改成指定资料再开始。`);
   }
   const goal = input.task.description?.trim() || input.task.name;
   const pack = await loadProjectContextPack({

@@ -450,6 +450,22 @@ export function goalBoundLaunch(input: {
  *  目标绑定模型（还在该连接名单里）> 命中项目默认连接时项目点选的模型 > 名单第一。
  *  taskModel 与 defaultModel 都是「点过才非空」；都不适用时空串（CLI 默认/名单第一由
  *  resolveProfileModel 收口） */
+/** 没绑连接的目标开工用哪条：项目给这家定的连接 > 这家第一条 > Claude Code 第一条 > 任意第一条。
+ * 新建目标弹层「跟随项目默认」的摘要与开工（ProjectUserTasksView.startTask）共用，显示的就是会用的。 */
+export function goalDefaultProfile<P extends { id: string; agent: string }>(
+  profiles: readonly P[],
+  agent: string | null | undefined,
+  defaultProfiles?: Record<string, string> | null,
+): P | undefined {
+  const pinned = agent ? defaultProfiles?.[agent] : undefined;
+  return (
+    profiles.find((item) => item.id === pinned) ??
+    profiles.find((item) => item.agent === agent) ??
+    profiles.find((item) => item.agent === "claude-code") ??
+    profiles[0]
+  );
+}
+
 export function resolveTaskModel(input: {
   models: readonly string[];
   taskModel?: string | null;
