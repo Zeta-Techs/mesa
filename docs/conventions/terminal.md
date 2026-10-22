@@ -739,6 +739,9 @@
   {autoStart, resumeSession})`（与决策后续跑同链：活会话认回标签注入、否则 resume），关阅读区留运行页、事项不勾；
   「N 篇都没问题」三篇都看过才可点 → `set_human_task_check` + store `bumpHumanTasks`（useHumanTasks 见 tick 重取）
   → 回来源页。索引读自项目根（已保存进项目）时 ws 为空：笔记可改、问题单只记不发。
+  栏宽另记一套（`ccode.spotSplitL/R`，缺省笔记 34% / 问题单 18%，同日用户「问题单窄一点、左侧保留阅读宽度」），
+  拖动不影响平时三栏；窗口放不下时 `readerColumnWidths(…, keepLeft)` 先把问题单压到 240px 保底，笔记栏最后才让；
+  ReaderOverlay 以 `key` 区分两档，换档重挂才按各自记忆读宽度。
 - **右栏可切「聊天 / 终端」（2026-10-18 用户要求补上聊天层切换）**：对话卡标题行右侧分段钮切阅读会话标签的
   surface（与终端页同一份 `surfaceModeByTab`，不走 switchSurface——它按焦点标签改、切聊天会退出分屏），选择记
   `ccode.readerSurface`（缺省聊天层，与新标签默认同口径；阅读会话每次进入新开，派发时带 `surface`）。

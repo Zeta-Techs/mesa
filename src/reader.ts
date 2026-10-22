@@ -38,6 +38,12 @@ export const READER_PDF_MIN_PX = 280;
 /** 侧栏缺省百分比（笔记栏窄些、Agent 栏宽些——对话内容比笔记目录长） */
 export const READER_PCT_DEFAULT_L = 22;
 export const READER_PCT_DEFAULT_R = 28;
+/** 抽查核对档（2026-10-23 用户：问题单窄一点、左侧保留阅读宽度）：栏宽另记一套，
+ *  拖动不影响平时读文献的三栏；笔记栏给到正常阅读的宽度，问题单只要放得下卡片 */
+export const SPOT_SPLIT_L_KEY = "ccode.spotSplitL";
+export const SPOT_SPLIT_R_KEY = "ccode.spotSplitR";
+export const SPOT_PCT_DEFAULT_L = 34;
+export const SPOT_PCT_DEFAULT_R = 18;
 
 /**
  * 适配宽度：新 scale 换算回页面 CSS 宽度后与当前差不到半像素则保持原值。
@@ -286,17 +292,23 @@ export function saveReaderTlCard(size: { w: number; h: number } | null): void {
 }
 
 /** 三栏像素换算：侧栏按百分比取整后保底 240px；两侧合计超出「总宽 − PDF 保底」时按比例压缩；
- *  窗口窄到 PDF 保底都拿不出时侧栏归零让位（PDF 全宽） */
+ *  窗口窄到 PDF 保底都拿不出时侧栏归零让位（PDF 全宽）。
+ *  keepLeft（抽查核对档）：放不下时先把右栏压到保底，左栏的阅读宽度最后才让 */
 export function readerColumnWidths(
   totalPx: number,
   pctL: number,
   pctR: number,
+  keepLeft = false,
 ): { left: number; right: number } {
   const budget = totalPx - READER_PDF_MIN_PX;
   if (budget <= 0) return { left: 0, right: 0 };
   const left = Math.max(READER_SIDE_MIN_PX, Math.round((pctL / 100) * totalPx));
-  const right = Math.max(READER_SIDE_MIN_PX, Math.round((pctR / 100) * totalPx));
+  let right = Math.max(READER_SIDE_MIN_PX, Math.round((pctR / 100) * totalPx));
   if (left + right <= budget) return { left, right };
+  if (keepLeft) {
+    right = Math.max(READER_SIDE_MIN_PX, budget - left);
+    if (left + right <= budget) return { left, right };
+  }
   const k = budget / (left + right);
   return { left: Math.floor(left * k), right: Math.floor(right * k) };
 }

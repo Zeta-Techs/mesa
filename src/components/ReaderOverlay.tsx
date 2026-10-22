@@ -23,6 +23,10 @@ import {
   READER_SPLITTER_PX,
   READER_SPLIT_L_KEY,
   READER_SPLIT_R_KEY,
+  SPOT_PCT_DEFAULT_L,
+  SPOT_PCT_DEFAULT_R,
+  SPOT_SPLIT_L_KEY,
+  SPOT_SPLIT_R_KEY,
   READER_SPLIT_T_KEY,
   buildReaderTranslatePrompt,
   bytesToBase64,
@@ -261,11 +265,14 @@ export default function ReaderOverlay({
     // open 态进依赖让每次翻转重臂定时器，避免中途到期把过渡掐断
     return () => clearTimeout(t);
   }, [leftSlide, rightSlide, leftOpen, rightOpen]);
+  // 抽查核对档另记一套栏宽：笔记栏留阅读宽度、问题单窄（拖了只记抽查自己的，不动平时三栏）
+  const splitKeyL = spotMode ? SPOT_SPLIT_L_KEY : READER_SPLIT_L_KEY;
+  const splitKeyR = spotMode ? SPOT_SPLIT_R_KEY : READER_SPLIT_R_KEY;
   const [pctL, setPctL] = useState(() =>
-    loadReaderPct(READER_SPLIT_L_KEY, READER_PCT_DEFAULT_L),
+    loadReaderPct(splitKeyL, spotMode ? SPOT_PCT_DEFAULT_L : READER_PCT_DEFAULT_L),
   );
   const [pctR, setPctR] = useState(() =>
-    loadReaderPct(READER_SPLIT_R_KEY, READER_PCT_DEFAULT_R),
+    loadReaderPct(splitKeyR, spotMode ? SPOT_PCT_DEFAULT_R : READER_PCT_DEFAULT_R),
   );
   const areaRef = useRef<HTMLDivElement>(null);
   // 初始值直接取窗口宽（覆盖层恒为全窗口宽）：避免首帧按 0 渲染成只剩 PDF 栏的闪帧
@@ -278,7 +285,7 @@ export default function ReaderOverlay({
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const { left: leftPx, right: rightPx } = readerColumnWidths(areaW, pctL, pctR);
+  const { left: leftPx, right: rightPx } = readerColumnWidths(areaW, pctL, pctR, spotMode);
   // 极端窄窗（PDF 保底都拿不出）时换算结果为 0：侧栏整栏让位，只留 PDF。
   // 平时收起/展开不卸载——整块（栏 + 分隔条）负 margin 滑出（readerPanelSlideMargin），
   // 栏宽不变 → Monaco/xterm 宿主零重排零搬移，PDF 栏重排由其停稳防抖收口
@@ -295,7 +302,7 @@ export default function ReaderOverlay({
     const rect = areaRef.current?.getBoundingClientRect();
     if (!rect || rect.width <= 0) return;
     const setPct = side === "left" ? setPctL : setPctR;
-    const key = side === "left" ? READER_SPLIT_L_KEY : READER_SPLIT_R_KEY;
+    const key = side === "left" ? splitKeyL : splitKeyR;
     const fallback = side === "left" ? pctL : pctR;
     const pctOf = (clientX: number) =>
       clampReaderPct(

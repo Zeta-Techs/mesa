@@ -10430,6 +10430,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           右栏 xterm 由上面的 useLayoutEffect 把阅读会话标签的宿主节点搬进 termSlot */}
       {reader && (
         <ReaderOverlay
+          // 抽查核对档与平时阅读各有一套栏宽记忆，换档要重挂才按各自的读
+          key={reader.spotCheck ? "spot" : "read"}
           pdfPath={reader.pdfPath}
           projectRoot={reader.projectRoot}
           notePath={reader.notePath ?? null}

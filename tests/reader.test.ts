@@ -195,6 +195,26 @@ test("readerColumnWidths 两侧超预算时按比例压缩，PDF 保底不被压
   assert.ok(left < 360);
 });
 
+test("抽查核对档：笔记栏留阅读宽度、问题单窄；放不下先压问题单", async () => {
+  const { SPOT_PCT_DEFAULT_L, SPOT_PCT_DEFAULT_R } = await import("../src/reader.ts");
+  // 1440 宽：笔记约 490px（一行三十来个字），问题单压到保底附近，PDF 仍有六百多
+  const wide = readerColumnWidths(1440, SPOT_PCT_DEFAULT_L, SPOT_PCT_DEFAULT_R, true);
+  assert.ok(wide.left > 450, `${wide.left}`);
+  assert.ok(wide.right < wide.left);
+  assert.ok(1440 - wide.left - wide.right > 600);
+  // 1000 宽放不下（400 + 350 > 720）：问题单让出差额，笔记栏不动
+  const narrow = readerColumnWidths(1000, 40, 35, true);
+  assert.equal(narrow.left, 400);
+  assert.equal(narrow.right, 320);
+  // 问题单压到 240 保底仍放不下，才两边等比让
+  const tight = readerColumnWidths(800, 40, 35, true);
+  assert.ok(tight.left + tight.right <= 800 - READER_PDF_MIN_PX);
+  assert.ok(tight.left < 320);
+  // 不传 keepLeft 照旧等比压缩
+  const even = readerColumnWidths(1000, 40, 35);
+  assert.ok(even.left < 400);
+});
+
 test("readerColumnWidths 极端窄窗侧栏归零让位", () => {
   assert.deepEqual(readerColumnWidths(READER_PDF_MIN_PX, 22, 28), {
     left: 0,
