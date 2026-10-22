@@ -162,6 +162,7 @@ function PdfContinuousView({
   onRevealAnnotation,
   jumpReq,
   findHotkey,
+  sourceMark,
 }: {
   path: string;
   /** 项目根：后端白名单的来源之一（同 PdfPreview 的 cwdHint） */
@@ -229,6 +230,8 @@ function PdfContinuousView({
   onRevealAnnotation?: (a: PdfAnnotation) => void;
   /** 笔记里点 p.3 / Fig. 2 交来的跳转（nonce 递增即执行一次） */
   jumpReq?: PdfJumpReq | null;
+  /** 译文卡正在显示的那段原文：常驻淡高亮（卡收起即撤），宿主据此让卡避开它 */
+  sourceMark?: { page: number; quote: string } | null;
   /** ⌘/Ctrl+F 呼出查找（阅读区接线；其他宿主只有工具条按钮） */
   findHotkey?: boolean;
 }) {
@@ -995,9 +998,12 @@ function PdfContinuousView({
         add(cur.page, { id: "find-active", quote: findQuery, nth: cur.nth, kind: "find-active" });
       }
     }
+    if (sourceMark?.quote.trim()) {
+      add(sourceMark.page, { id: "tl-source", quote: sourceMark.quote, nth: 0, kind: "source" });
+    }
     if (flash) add(flash.page, { id: "flash", quote: flash.quote, nth: 0, kind: "flash" });
     return m;
-  }, [annotations, findOpen, findQuery, findHits, findIdx, flash]);
+  }, [annotations, findOpen, findQuery, findHits, findIdx, flash, sourceMark]);
 
   // 工具条下拉（目录/标注列表）与高亮小卡：点外面或 Esc 收起（capture 相抢在关阅读区之前）
   const toolsRef = useRef<HTMLDivElement>(null);

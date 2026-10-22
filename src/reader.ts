@@ -239,6 +239,26 @@ export function readerTlBallOffset(pct: number, near: number, span: number): str
   return `calc(${near}px + clamp(18px, calc((100% - ${span}px) * ${pct / 100}), calc(100% - ${span}px - 18px)))`;
 }
 
+/** 译文卡避让它的原文段（覆盖层根坐标 px）：只看横向压没压到——上下换位不改横向范围，
+ *  判定不会来回翻；压到了摆到原文段下方或上方（下方够 160px 或比上方大就放下方），
+ *  两边都不足 120px 就不避让。below：top = px；above：bottom = px；room = 那一侧可用高度 */
+export function readerTlCardAvoid(
+  card: { left: number; right: number },
+  source: { top: number; bottom: number; left: number; right: number },
+  hostHeight: number,
+  bounds?: ReaderPdfBounds,
+): { side: "above" | "below"; px: number; room: number } | null {
+  if (!(card.right > source.left + 4 && card.left < source.right - 4)) return null;
+  const top = bounds?.top ?? 0;
+  const bottom = hostHeight - (bounds?.bottom ?? 0);
+  const below = bottom - source.bottom - 16;
+  const above = source.top - top - 16;
+  if (Math.max(below, above) < 120) return null;
+  return below >= 160 || below >= above
+    ? { side: "below", px: Math.round(source.bottom + 8), room: Math.round(below) }
+    : { side: "above", px: Math.round(hostHeight - source.top + 8), room: Math.round(above) };
+}
+
 /** 读悬浮球位置记忆（坏值/缺省回落右缘中部） */
 export function loadReaderTlBall(): { xp: number; yp: number } {
   try {

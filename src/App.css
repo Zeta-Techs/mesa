@@ -3065,6 +3065,11 @@ select:focus-visible {
   background: rgb(255 120 0 / 0.45);
   box-shadow: 0 0 0 1px rgb(230 100 0 / 0.85);
 }
+.ccode-mark-source {
+  /* 译文卡正在显示的那段原文：淡底 + 下划线，常驻到卡收起（比一闪弱，不抢正文） */
+  background: rgb(0 120 255 / 0.1);
+  box-shadow: inset 0 -1.5px 0 rgb(0 100 230 / 0.55);
+}
 .ccode-mark-flash {
   background: rgb(0 120 255 / 0.28);
   box-shadow: 0 0 0 1px rgb(0 100 230 / 0.6);

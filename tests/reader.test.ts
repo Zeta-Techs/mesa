@@ -225,6 +225,28 @@ test("译文球心只在 PDF 栏里：近侧栏外距离 + 栏内百分比，按
   assert.match(readerTlBallOffset(45, 0, 0), /^calc\(0px \+ clamp\(18px, calc\(\(100% - 0px\) \* 0\.45\)/);
 });
 
+test("译文卡避让原文段：横向压到才挪，下方够放下方，否则上方，都不够不挪", async () => {
+  const { readerTlCardAvoid } = await import("../src/reader.ts");
+  const bounds = { left: 300, right: 260, top: 76, bottom: 0 };
+  const card = { left: 500, right: 900 };
+  // 原文段在上半页：卡挪到它下方
+  assert.deepEqual(readerTlCardAvoid(card, { top: 200, bottom: 360, left: 340, right: 980 }, 900, bounds), {
+    side: "below",
+    px: 368,
+    room: 524,
+  });
+  // 原文段贴底：卡挪到它上方（bottom 锚）
+  assert.deepEqual(readerTlCardAvoid(card, { top: 620, bottom: 860, left: 340, right: 980 }, 900, bounds), {
+    side: "above",
+    px: 288,
+    room: 528,
+  });
+  // 横向没压到：不挪
+  assert.equal(readerTlCardAvoid(card, { top: 200, bottom: 360, left: 920, right: 1100 }, 900, bounds), null);
+  // 原文段占满整栏：两边都放不下，不挪
+  assert.equal(readerTlCardAvoid(card, { top: 120, bottom: 820, left: 340, right: 980 }, 900, bounds), null);
+});
+
 test("readerColumnWidths 极端窄窗侧栏归零让位", () => {
   assert.deepEqual(readerColumnWidths(READER_PDF_MIN_PX, 22, 28), {
     left: 0,

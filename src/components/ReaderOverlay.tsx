@@ -980,6 +980,64 @@ export default function ReaderOverlay({
       ? "未在运行"
       : "启动中…";
 
+  /** 译文卡正在摆出来的那条（面板经 onDisplay 报上来）：PDF 上常驻标出它的原文段，
+      悬浮卡据此避开那段——卡压在原文上就没法对照（2026-10-23 用户点名） */
+  const [tlShown, setTlShown] = useState<TlHistoryEntry | null>(null);
+  const tlSource = useMemo(
+    () => (tlShown ? { page: tlShown.page, quote: tlShown.original } : null),
+    // 按条目身份比，不按对象：面板每次渲染报上来的是同一条
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tlShown?.at, tlShown?.page],
+  );
+  /** 原文段在覆盖层根里的外框（悬浮卡避让用）：标记由文本层异步落位，换条目/开卡后量两次；
+      不跟滚动——读者滚走了卡也不该追着跳 */
+  const [tlAvoid, setTlAvoid] = useState<{
+    top: number;
+    bottom: number;
+    left: number;
+    right: number;
+  } | null>(null);
+  useEffect(() => {
+    if (!tlSource || !tlFloat) {
+      setTlAvoid(null);
+      return;
+    }
+    const measure = () => {
+      const root = rootRef.current;
+      const marks = pdfColRef.current?.querySelectorAll<HTMLElement>('[data-mark-id="tl-source"]');
+      if (!root || !marks || marks.length === 0) return;
+      const rr = root.getBoundingClientRect();
+      const col = pdfColRef.current!.getBoundingClientRect();
+      let top = Infinity;
+      let bottom = -Infinity;
+      let left = Infinity;
+      let right = -Infinity;
+      marks.forEach((m) => {
+        const r = m.getBoundingClientRect();
+        // 只算露在 PDF 栏里的那部分（滚出去的行不参与避让）
+        if (r.bottom < col.top || r.top > col.bottom) return;
+        top = Math.min(top, r.top);
+        bottom = Math.max(bottom, r.bottom);
+        left = Math.min(left, r.left);
+        right = Math.max(right, r.right);
+      });
+      if (!Number.isFinite(top)) return;
+      setTlAvoid({
+        top: Math.round(top - rr.top),
+        bottom: Math.round(bottom - rr.top),
+        left: Math.round(left - rr.left),
+        right: Math.round(right - rr.left),
+      });
+    };
+    setTlAvoid(null);
+    const t1 = setTimeout(measure, 120);
+    const t2 = setTimeout(measure, 500);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, [tlSource, tlFloat]);
+
   /** 表头「钉住/回栏」：钉住落记忆键（跨收起/展开、跨次进入保持悬浮）；回栏 = 取钉
       并确保右栏展开——右栏收着时点回栏就是「把侧栏叫回来接住面板」，不让它无声消失。
       从看得见的卡点钉住时球先展开接续（卡搬家，不是缩成球）；该标记只在本次悬浮
@@ -1003,6 +1061,8 @@ export default function ReaderOverlay({
 
   // 翻译面板两档摆位共用一套 props；摆位差异只在 heightPct（% 右栏高，悬浮档恒 null）
   const tlPanelProps = {
+    onDisplay: setTlShown,
+    avoidRect: tlFloat ? tlAvoid : null,
     latest: tlHistory[0] ?? null,
     pending: tlPending,
     history: tlHistory,
@@ -1336,6 +1396,7 @@ export default function ReaderOverlay({
               onRemoveAnnotation={noteReadOnly ? undefined : removeAnnotation}
               onRevealAnnotation={revealAnnotation}
               jumpReq={jumpReq}
+              sourceMark={tlSource}
               findHotkey
             />
           </Suspense>
