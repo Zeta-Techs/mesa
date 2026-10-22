@@ -1,5 +1,27 @@
 # CLI 金丝雀（九家）
 
+## 日常维护（只看这一节就够）
+
+每天北京时间 9:17，GitHub Actions 的 **cli-canary** 在 macOS、Windows 各跑一次。你只看结果：
+
+| 结果 | 意思 | 你要做的 |
+|---|---|---|
+| 绿 | 九家都没变，或者只是版本往前走了 | 什么都不用做。版本前移它已经自己提交回 main 了（提交信息「金丝雀核对版本前移」） |
+| 红 | 某家的请求 / 旁路 / 会话 / 画面变了，或检查没过 | 点进那次运行看摘要（就是 report.md），按下面「红了怎么办」处理 |
+
+红了怎么办：
+1. 看报告里是哪一家、哪一层变了，下面附了两个版本之间更新日志里沾边的条目。
+2. 要改 Mesa 就改；判断不用改也行。
+3. 在**报红的那个平台**上（macOS 红就在 Mac 上，Windows 红就在 Windows 上）跑：`npm run canary -- --accept --agents <那一家>`，
+   把 `scripts/cli-canary/baseline/` 里变了的文件连同 Mesa 的改动一起提交。
+4. 报告里写了新画面就顺手存进抓屏语料库（`tests/fixtures/screens/README.md`）。
+
+记住两件事：
+- 推送前先 `git pull`：CI 会往 main 提交版本前移。
+- 核对版本是打包时带进应用的：基线前移了，用户要等下一版 Mesa 才拿到，聊天层「未核对」的降级才解除。
+
+一次性：Windows 上除 Claude Code、Codex 外的七家还没有基线，在 Windows 上跑一次 `npm run canary -- --accept`。
+
 各家 CLI 几乎每天发一版，默认行为常常没写进更新日志就变了。2026-10-21 的两次实例：Claude Code 新版对第三方模型把工具藏到工具搜索后面；
 又不再给这类模型发任务清单工具。两次都是用户撞上才发现。金丝雀每天装最新版，把 Mesa 依赖的几层抽成「指纹」，和这里存的基线比，
 变了就报。
@@ -12,10 +34,10 @@
 | 画面 | 审批菜单认不认得出、实时预览读不读得到 | `chat-capture.py`（`CLEAN_HOME`）+ `capture-check.ts` |
 | Codex 提示词 | 本机 Codex 的默认提示词还取得到（Mesa 给 Codex 的 `base_instructions` 来源） | `codex_instructions_extract_real` |
 
-跑法（仓库根目录；Windows 在 Git Bash 里用 Python 安装目录下的 `python.exe`，见 e2e-model-routing/README.md）：
+跑法（仓库根目录，三平台同一个写法；`run.mjs` 会自己找能跑的 Python 3）：
 
 ```bash
-python -I -X utf8 scripts/cli-canary/canary.py
+npm run canary
 ```
 
 - `--agents codex,qwen`：只跑这几家（默认九家；没装的跳过并写进报告）。

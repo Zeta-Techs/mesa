@@ -154,7 +154,8 @@ docs/            architecture.md（总体设计 + §10 决策记录 + §12 当�
   把请求形状 / 旁路 / 会话格式 / 读屏抽成指纹和 `scripts/cli-canary/baseline/<平台>/` 比。红了是 CLI 变了、不是 Mesa 回退，不挡主线 CI；
   看报告适配（或判定无需适配）后在**同一平台**跑 `--accept` 把新指纹连同改动一起提交——基线里的 `version` 即「Mesa 已核对到的版本」。
   临时 HOME 不拷本机配置（各机器 / CI 可比）；新增一家照 `BIN` / `CHANNEL` / `TOOL_PROMPT` 几张表加。**基线的 `version` 随包进 Mesa**
-  （`src/cli-verified.ts`）：用户 CLI 比它新时聊天层不替人自动按键，所以基线要跟上——版本前进而指纹没变时跑 `--accept-unchanged`。
+  （`src/cli-verified.ts`）：用户 CLI 比它新时聊天层不替人自动按键，所以基线要跟上——CI 全绿而只是版本前进时自己 `--accept-unchanged`
+  并提交回 main（工作流有 `contents: write`，只动 baseline/），本地推送前先 pull。本地跑统一 `npm run canary`（日常维护见其 README 第一节）。
   读屏问题修好后把那一屏存进抓屏语料库（`tests/fixtures/screens/`，`scripts/screen-corpus/add-from-capture.ts`），设计见 `docs/design-chat-fidelity.md`。
 - **二进制解析统一走 `agents::resolve_binary`**：先 which（继承 PATH），miss 时按平台候选目录兜底；新增 CLI/工具调用点一律
   用它，禁直接 `which::which` 或裸名 spawn（候选目录清单见 `docs/conventions/safety.md` 对应实现 `agents.rs`）。
