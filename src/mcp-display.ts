@@ -9,17 +9,6 @@
 
 import type { McpHealthDto } from "./types";
 
-/** 协议类型徽章：stdio 紫 / remote 蓝（传输层架构一眼可辨） */
-export function mcpKindBadgeStyle(kind: string): {
-  color: string;
-  background: string;
-} {
-  const c = kind === "remote" ? "#4f8ef7" : "#9a6ef3";
-  return {
-    color: `color-mix(in srgb, ${c} 70%, var(--color-l1))`,
-    background: `color-mix(in srgb, ${c} 10%, transparent)`,
-  };
-}
 
 /** 单个 token 的路径缩略：家目录前缀折成 ~，段数 >3 且折后仍 >28 字符才砍中段留首尾
  *  （短路径如 /opt/homebrew/bin/node、~/.bun/bin/bun 原样保留——缩了反而丢信息）。
@@ -187,6 +176,17 @@ export function mcpHealthNeedsLogin(
 ): boolean {
   if (!health || health === "checking" || health.ok) return false;
   return /OAuth|mcp login/i.test(health.error ?? "");
+}
+
+/** 行内常显的异常短语：状态点只靠颜色分不出黄绿，不正常时名字后面直接写出来（2026-10-23 审查）。
+ *  没检测 / 检测中 / 正常返回 null（正常只留一个点） */
+export function mcpHealthLabel(
+  health: McpHealthView | "checking" | undefined,
+): { text: string; tone: "warn" | "err" } | null {
+  if (!health || health === "checking" || health.ok) return null;
+  return mcpHealthNeedsLogin(health)
+    ? { text: "需登录", tone: "warn" }
+    : { text: "连不上", tone: "err" };
 }
 
 export function mcpHealthText(

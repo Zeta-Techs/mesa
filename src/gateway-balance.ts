@@ -2,6 +2,7 @@
 // 与后端 gateway_balance.rs WALLET_HOSTS / 解析口径双端镜像。
 
 import { endpointHost } from "./gateway-option.ts";
+import { groupedMoney } from "./money-format.ts";
 
 /** 槽 URL 主机命中才出卡。加站点 = 加一条（与 Rust WALLET_HOSTS 同步）。 */
 export const WALLET_HOSTS = ["zetatechs.com"] as const;
@@ -106,9 +107,9 @@ export function walletKeyAmountLine(
 /** 站点币种金额：CNY → ¥、USD → $、TOKENS → 整数 + tokens；不走用量页汇率。 */
 export function formatBalanceAmount(value: number, currency: string): string {
   if (!Number.isFinite(value)) return "—";
-  if (currency === "TOKENS") return `${Math.round(value)} tokens`;
+  if (currency === "TOKENS") return `${Math.round(value).toLocaleString("en-US")} tokens`;
   const symbol = currency === "CNY" ? "¥" : "$";
-  return `${symbol}${value.toFixed(2)}`;
+  return value < 0 ? `-${symbol}${groupedMoney(-value)}` : `${symbol}${groupedMoney(value)}`;
 }
 
 /** 隐藏额度时的占位，保留币种符号。 */
@@ -128,10 +129,10 @@ export function splitBalanceAmount(
 ): { prefix: string; number: string; unit: string } {
   if (!Number.isFinite(value)) return { prefix: "", number: "—", unit: "" };
   if (currency === "TOKENS") {
-    return { prefix: "", number: String(Math.round(value)), unit: "tokens" };
+    return { prefix: "", number: Math.round(value).toLocaleString("en-US"), unit: "tokens" };
   }
   const symbol = currency === "CNY" ? "¥" : "$";
-  const fixed = value.toFixed(2);
+  const fixed = value < 0 ? `-${groupedMoney(-value)}` : groupedMoney(value);
   return fixed.startsWith("-")
     ? { prefix: `-${symbol}`, number: fixed.slice(1), unit: "" }
     : { prefix: symbol, number: fixed, unit: "" };

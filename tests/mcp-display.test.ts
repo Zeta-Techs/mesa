@@ -6,9 +6,9 @@ import {
   mcpCmdPathBadge,
   mcpDeleteImpact,
   mcpDistBadge,
+  mcpHealthLabel,
   mcpHealthNeedsLogin,
   mcpHealthText,
-  mcpKindBadgeStyle,
   mcpOriginLabel,
   mcpPathResolveNote,
   missingEnvSignature,
@@ -60,16 +60,19 @@ test("shortenCommand 逐 token 缩略后拼接，短路径原样", () => {
   );
 });
 
-test("协议徽章：remote 蓝 / stdio 紫，文字色随主题主文本色混 30% 自适应对比度", () => {
-  assert.equal(
-    mcpKindBadgeStyle("remote").color,
-    "color-mix(in srgb, #4f8ef7 70%, var(--color-l1))",
+test("行内异常短语：需登录 / 连不上，正常与未检测不写", () => {
+  const base = { latencyMs: 30, detail: null };
+  assert.equal(mcpHealthLabel(undefined), null);
+  assert.equal(mcpHealthLabel("checking"), null);
+  assert.equal(mcpHealthLabel({ ...base, ok: true, error: null }), null);
+  assert.deepEqual(
+    mcpHealthLabel({ ...base, ok: false, error: "需要 OAuth 登录（HTTP 401 Unauthorized）", status: "auth" }),
+    { text: "需登录", tone: "warn" },
   );
-  assert.equal(
-    mcpKindBadgeStyle("stdio").color,
-    "color-mix(in srgb, #9a6ef3 70%, var(--color-l1))",
+  assert.deepEqual(
+    mcpHealthLabel({ ...base, ok: false, error: "连接超时" }),
+    { text: "连不上", tone: "err" },
   );
-  assert.match(mcpKindBadgeStyle("stdio").background, /color-mix/);
 });
 
 const AGENTS_FIXTURE = [

@@ -1127,6 +1127,22 @@ html[data-material="none"] .ccode-app-rail .bg-rail-sel {
   pointer-events: none;
 }
 
+/* 滚动后（PageHeader 写 data-stuck）页头底边一根 hairline：内容从玻璃下穿过时有个边，不像被切掉 */
+.ccode-page-header::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 0.5px;
+  background: var(--color-hairline);
+  opacity: 0;
+  transition: opacity 150ms var(--ccode-motion-ease);
+  pointer-events: none;
+}
+.ccode-page-header[data-stuck]::after {
+  opacity: 1;
+}
+
 /* 工具栏不再包边成盒：与页头共用 hairline 与留白节奏，保持连续工作台观感。 */
 
 .ccode-action-primary,

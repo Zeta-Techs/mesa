@@ -64,8 +64,28 @@ export function PageHeader({
   /** 页面级标题前的轻量入口（例如工作区页收起后的项目列表恢复按钮）。 */
   leading?: ReactNode;
 }) {
+  // 内容滚到页头下面时，页头底边出一根细线：玻璃页头只靠磨砂，滚动后卡片顶像被切掉一截（2026-10-23 审查）
+  const ref = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const header = ref.current;
+    let scroller: HTMLElement | null = header?.parentElement ?? null;
+    while (scroller) {
+      const oy = getComputedStyle(scroller).overflowY;
+      if (oy === "auto" || oy === "scroll") break;
+      scroller = scroller.parentElement;
+    }
+    if (!header || !scroller) return;
+    const target = scroller;
+    const sync = () => header.toggleAttribute("data-stuck", target.scrollTop > 0);
+    sync();
+    target.addEventListener("scroll", sync, { passive: true });
+    return () => target.removeEventListener("scroll", sync);
+  }, []);
   return (
-    <header className="ccode-page-header sticky top-0 z-20 mb-4 flex h-12 items-center justify-between gap-4">
+    <header
+      ref={ref}
+      className="ccode-page-header sticky top-0 z-20 mb-4 flex h-12 items-center justify-between gap-4"
+    >
       <div className="flex min-w-0 items-center gap-2.5">
         {leading}
         <div className="flex min-w-0 items-baseline gap-2.5">

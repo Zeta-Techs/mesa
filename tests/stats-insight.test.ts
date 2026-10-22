@@ -4,6 +4,7 @@ import {
   cacheHitRate,
   compact,
   fmtCost,
+  fmtHitRate,
   sessionDisplayTitle,
   shortSessionId,
   weekOverWeek,
@@ -108,4 +109,15 @@ test("fmtCost：~ 无价格、≥ 含未计价、$/¥ 换算", () => {
   assert.equal(fmtCost(1.24, "$", 7.2, false), "$1.24");
   assert.equal(fmtCost(1.24, "¥", 7.2, false), "¥8.93");
   assert.equal(fmtCost(1.24, "¥", 7.2, true), "≥¥8.93");
+  // 金额带千分位（同页次数写 28,000，金额也得读得出位数）
+  assert.equal(fmtCost(5420.5, "¥", 7.2, true), "≥¥39,027.60");
+  assert.equal(fmtCost(13520.25, "$", 7.2, false), "$13,520.25");
+});
+
+test("fmtHitRate：99% 以上留一位小数且不进位成 100%", () => {
+  assert.equal(fmtHitRate(1), "100%");
+  assert.equal(fmtHitRate(0.9996), "99.9%");
+  assert.equal(fmtHitRate(0.995), "99.5%");
+  assert.equal(fmtHitRate(0.873), "87%");
+  assert.equal(fmtHitRate(0), "0%");
 });

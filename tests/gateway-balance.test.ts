@@ -51,7 +51,7 @@ test("网关槽 URL 命中才出卡", () => {
 test("金额按站点币种格式化，不走用量页汇率", () => {
   assert.equal(formatBalanceAmount(128.5, "CNY"), "¥128.50");
   assert.equal(formatBalanceAmount(12, "USD"), "$12.00");
-  assert.equal(formatBalanceAmount(1234.6, "TOKENS"), "1235 tokens");
+  assert.equal(formatBalanceAmount(1234.6, "TOKENS"), "1,235 tokens");
   assert.equal(formatBalanceAmount(Number.NaN, "CNY"), "—");
   assert.equal(formatBalanceAmountMasked("CNY"), "¥•••");
   assert.equal(formatBalanceAmountMasked("USD"), "$•••");
@@ -84,13 +84,13 @@ test("钱包深链与种类名", () => {
 test("大数字拆币种符号，负数符号不跑进数字里", () => {
   assert.deepEqual(splitBalanceAmount(4842.831884, "CNY"), {
     prefix: "¥",
-    number: "4842.83",
+    number: "4,842.83",
     unit: "",
   });
   assert.deepEqual(splitBalanceAmount(12, "USD"), { prefix: "$", number: "12.00", unit: "" });
   assert.deepEqual(splitBalanceAmount(1235, "TOKENS"), {
     prefix: "",
-    number: "1235",
+    number: "1,235",
     unit: "tokens",
   });
   assert.deepEqual(splitBalanceAmount(-1.45, "CNY"), {
@@ -102,7 +102,7 @@ test("大数字拆币种符号，负数符号不跑进数字里", () => {
 });
 
 test("不限额度也把已用说出来", () => {
-  assert.equal(walletUnlimitedLine(4622.53, "CNY"), "不限 · 已用 ¥4622.53");
+  assert.equal(walletUnlimitedLine(4622.53, "CNY"), "不限 · 已用 ¥4,622.53");
   assert.equal(walletUnlimitedLine(null, "CNY"), "不限");
   assert.equal(walletUnlimitedLine(4622.53, "CNY", true), "不限 · 已用 ¥•••");
 });
@@ -133,7 +133,7 @@ test("消耗条：主题强调色过渡，正常档压透明度", () => {
 
 test("密钥行金额格式一致，不混已用前缀", () => {
   assert.equal(walletKeyAmountLine(false, 3.05, 203.05, "CNY"), "¥3.05 / ¥203.05");
-  assert.equal(walletKeyAmountLine(true, 4622.53, null, "CNY"), "¥4622.53");
+  assert.equal(walletKeyAmountLine(true, 4622.53, null, "CNY"), "¥4,622.53");
   assert.equal(walletKeyAmountLine(true, null, null, "CNY"), "");
   assert.equal(
     walletKeyAmountLine(false, 3.05, 203.05, "CNY", true),

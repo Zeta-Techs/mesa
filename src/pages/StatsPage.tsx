@@ -16,6 +16,7 @@ import type {
 import { axisLabels } from "../stats-trend";
 import {
   cacheHitRate,
+  fmtHitRate,
   compact,
   fmtCost,
   sessionDisplayTitle,
@@ -126,7 +127,8 @@ interface DistRowData {
 
 const CHART_METRICS: { id: ChartMetric; label: string }[] = [
   { id: "cost", label: "花费" },
-  { id: "tokens", label: "用量" },
+  // 页面就叫「用量」，这一格指 tokens，写明（2026-10-23 审查）
+  { id: "tokens", label: "tokens" },
 ];
 
 const RANGES: { id: Range; label: string }[] = [
@@ -372,12 +374,20 @@ function wowLabel(
   };
 }
 
-type ChartPt = { day: string; value: number; tip: string };
+type ChartPt = {
+  day: string;
+  value: number;
+  tip: string;
+  /** 峰值参考线上写的短数（只写这一样，不带日期与次要信息） */
+  short: string;
+};
 
-/** 花费/用量共用折线（手绘 SVG）。日期轴常驻，悬停才出当日数字。 */
+/** 花费/用量共用折线（手绘 SVG）。日期轴常驻，悬停才出当日数字；峰值处常驻一根虚线参考线写出最高值
+ *  （2026-10-23 审查：只有日期没有任何数值，看不出起伏有多大） */
 function UsageChart({ pts, aria }: { pts: ChartPt[]; aria: string }) {
   const [hover, setHover] = useState<number | null>(null);
   const peak = Math.max(0.01, ...pts.map((d) => d.value));
+  const peakIdx = pts.findIndex((d) => d.value === peak);
   const W = 720;
   const H = 96;
   const PAD = 6;
@@ -423,6 +433,18 @@ function UsageChart({ pts, aria }: { pts: ChartPt[]; aria: string }) {
             </linearGradient>
           </defs>
           <path d={area} fill="url(#usageChartFill)" />
+          {peakIdx >= 0 && (
+            <line
+              x1={0}
+              x2={W}
+              y1={PAD}
+              y2={PAD}
+              className="stroke-l4"
+              strokeWidth={1}
+              strokeDasharray="3 4"
+              vectorEffect="non-scaling-stroke"
+            />
+          )}
           <path
             d={line}
             className="stroke-cta"
@@ -431,6 +453,14 @@ function UsageChart({ pts, aria }: { pts: ChartPt[]; aria: string }) {
             vectorEffect="non-scaling-stroke"
           />
         </svg>
+        {peakIdx >= 0 && !hd && (
+          <>
+            <div
+              className="pointer-events-none absolute size-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-cta"
+              style={{ left: `${(coords[peakIdx][0] / W) * 100}%`, top: `${(PAD / H) * 100}%` }}
+            />
+          </>
+        )}
         {hd && (
           <>
             <div
@@ -453,7 +483,7 @@ function UsageChart({ pts, aria }: { pts: ChartPt[]; aria: string }) {
           </>
         )}
       </div>
-      <div className="relative mt-1 h-4 text-micro text-l4">
+      <div className="relative mt-1 h-4 text-micro text-l3">
         {labels.map((l) => (
           <span
             key={l.index}
@@ -1106,11 +1136,13 @@ export default function StatsPage({ visible }: { visible: boolean }) {
     day: d.day,
     value: d.costUsd ?? 0,
     tip: fmtCost(d.costUsd, currency, rate, d.costPartial),
+    short: fmtCost(d.costUsd, currency, rate, d.costPartial),
   }));
   const tokenPts: ChartPt[] = (stats?.daily ?? []).map((d) => ({
     day: d.day,
     value: d.input + d.output,
     tip: `${compact(d.input + d.output)} tokens · ${fmtCost(d.costUsd, currency, rate, d.costPartial)}`,
+    short: `${compact(d.input + d.output)} tokens`,
   }));
   const canCost = trendLive && costPts.length > 1;
   const canTokens = tokenPts.length > 1;
@@ -1145,14 +1177,29 @@ export default function StatsPage({ visible }: { visible: boolean }) {
             label="显示内部活动"
             className="rounded-sm px-2 py-0.5 text-xs text-l3 hover:bg-hover"
           />
-          <button
-            type="button"
-            onClick={toggleCurrency}
-            title="切换货币（$ 美元 / ¥ 人民币）"
-            className="w-7 rounded-sm px-1 py-1 text-xs text-l3 hover:text-l1"
+          {/* 币种：两格分段切换（原先一颗裸「¥」，不悬停看不出能点；2026-10-23 审查） */}
+          <div
+            role="group"
+            aria-label="货币"
+            className="inline-flex items-center rounded-md bg-inset p-0.5 text-xs"
           >
-            {currency}
-          </button>
+            {(["$", "¥"] as const).map((c) => (
+              <button
+                key={c}
+                type="button"
+                aria-pressed={currency === c}
+                title={c === "$" ? "按美元显示" : "按人民币显示"}
+                onClick={() => {
+                  if (currency !== c) toggleCurrency();
+                }}
+                className={`h-6 w-7 rounded-sm tabular-nums ${
+                  currency === c ? "bg-seg-sel text-l1" : "text-l3 hover:text-l1"
+                }`}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
           <button
             type="button"
             onClick={() => void onRebuild()}
@@ -1714,7 +1761,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
               {hit != null && (
                 <KpiStat
                   label="缓存命中"
-                  value={`${(hit * 100).toFixed(0)}%`}
+                  value={fmtHitRate(hit)}
                   title="输入里有多少是从缓存读的；命中越高越省钱"
                 />
               )}
@@ -1769,12 +1816,18 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                     <span className="text-xs text-l3">
                       {metric === "cost"
                         ? `${rangeLabel}花费`
-                        : `${rangeLabel}用量`}
+                        : `${rangeLabel} tokens`}
                     </span>
                   )}
-                  {canCost && canTokens && (
-                    <span className="text-micro text-l4">{rangeLabel}</span>
-                  )}
+                  {/* 右上写峰值（与图里那根虚线对应）；区间名上面的区间切换已经写着，不再重复 */}
+                  {(() => {
+                    const top = chartPts.reduce((a, b) => (b.value > a.value ? b : a), chartPts[0]);
+                    return top.value > 0 ? (
+                      <span className="text-micro tabular-nums text-l3" title={`${top.day} 最高`}>
+                        最高 {top.short} · {top.day.slice(5)}
+                      </span>
+                    ) : null;
+                  })()}
                 </div>
                 <UsageChart
                   pts={chartPts}

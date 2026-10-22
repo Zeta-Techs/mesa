@@ -1,8 +1,11 @@
 import {
+  ChevronDown,
   ClipboardPaste,
+  LoaderCircle,
   PackagePlus,
   Pencil,
   PlugZap,
+  SquarePen,
   Trash2,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -23,7 +26,7 @@ import { confirmDialog } from "../components/ConfirmDialog";
 import ContextMenu from "../components/ContextMenu";
 import { Modal } from "../components/Modal";
 import { HoverTip, useHoverTip } from "../components/HoverTip";
-import { mcpKindBadgeStyle, shortenCommand } from "../mcp-display";
+import { mcpHealthLabel, shortenCommand } from "../mcp-display";
 import type { McpHealthView } from "../mcp-display";
 import {
   isAdoptedMcp,
@@ -70,7 +73,7 @@ import {
 /** MCP 列表五列网格模板（表头与数据行共用，保证列严格对齐）：
  *  名称 | 类型 | 配置 | 分发 | 行内操作+启用开关（2026-08-25 设计评审：宽屏下左右信息不再跨整页） */
 const MCP_GRID =
-  // 「用于」列 96→148px：要放下「8 个 CLI · 2 处异常」一行（96px 时折成两行、状态点被挤扁）
+  // 「用于」列 96→148px：要放下「8 个 Agent · 2 处异常」一行（96px 时折成两行、状态点被挤扁）
   "grid-cols-[minmax(150px,1.1fr)_64px_minmax(200px,1.4fr)_148px_140px]";
 
 /** 行首健康状态点（v3.93）：未检测不渲染（无状态不渲染状态点）；检测过 = 绿/红点 + 延迟，
@@ -294,7 +297,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
     note?: string;
     setup?: ResolvedMcpSetup;
     setupChecking?: boolean;
-    /** 从「预设 ▾」打开：新建保存时自动分发到能写 MCP 的 Agent */
+    /** 从「添加 MCP」菜单的预设打开：新建保存时自动分发到能写 MCP 的 Agent */
     fromPreset?: boolean;
     /** 密钥栏草稿：空 = 不改已存值 */
     secretDrafts?: Record<string, string>;
@@ -360,12 +363,9 @@ export default function McpPage({ visible }: { visible: boolean }) {
         setError(`读取 MCP 分发能力失败：${String(reason)}`),
       );
   }, [visible]);
-  // 收编现有配置 / 粘贴导入 / 内置预设（低频，收进顶部 ⋯ 菜单）
-  const [topMenu, setTopMenu] = useState<{ x: number; y: number } | null>(null);
-  // 页头「预设 ▾」下拉：内置预置一键预填（mcp-presets.ts，加预设 = 加一条）
-  const [presetMenu, setPresetMenu] = useState<{ x: number; y: number } | null>(
-    null,
-  );
+  // 页头「添加 MCP」下拉：自己填写 / 内置预设（mcp-presets.ts，加预设 = 加一条）/ 收编现有配置 / 粘贴导入。
+  // 原先预设与收编、粘贴分在「预设 ▾」和 ⋯ 两处，同一件事三个入口（2026-10-23 审查合并）
+  const [addMenu, setAddMenu] = useState<{ x: number; y: number } | null>(null);
   const [discoverOpen, setDiscoverOpen] = useState(false);
   const [discovered, setDiscovered] = useState<DiscoveredMcp[]>([]);
   const [pasteOpen, setPasteOpen] = useState(false);
@@ -1049,45 +1049,29 @@ export default function McpPage({ visible }: { visible: boolean }) {
         actions={
           <>
             <button
-              className={primaryActionClass}
-              onClick={() => setModal({ id: null, form: { ...EMPTY_FORM } })}
+              type="button"
+              className={`${primaryActionClass} inline-flex items-center gap-1`}
+              aria-haspopup="menu"
+              aria-expanded={!!addMenu}
+              onClick={(event) => {
+                const rect = event.currentTarget.getBoundingClientRect();
+                setAddMenu({ x: rect.right, y: rect.bottom + 4 });
+              }}
             >
               + 添加 MCP
+              <ChevronDown size={13} strokeWidth={1.8} aria-hidden="true" />
             </button>
             <button
               type="button"
               title="对清单里所有已启用的 MCP 逐条检测连通性（分波并发，每波最多 4 个）"
-              className={secondaryActionClass}
+              className={`${secondaryActionClass} inline-flex items-center gap-1`}
               disabled={checkingAll || servers.length === 0}
               onClick={() => void checkAllHealth()}
             >
               {checkingAll && (
-                <span className="mr-1 inline-block animate-spin">◌</span>
+                <LoaderCircle size={13} strokeWidth={1.8} className="animate-spin" aria-hidden="true" />
               )}
               {checkingAll ? "检测中…" : "全部检测"}
-            </button>
-            <button
-              type="button"
-              title="从内置预置一键添加（如 Consensus 学术搜索）"
-              className={secondaryActionClass}
-              onClick={(event) => {
-                const rect = event.currentTarget.getBoundingClientRect();
-                setPresetMenu({ x: rect.right, y: rect.bottom + 4 });
-              }}
-            >
-              预设 ▾
-            </button>
-            <button
-              type="button"
-              title="更多（收编现有配置 / 粘贴导入）"
-              aria-label="更多"
-              className="flex h-8 w-8 items-center justify-center rounded-sm text-sm text-l3 hover:bg-hover hover:text-l1"
-              onClick={(event) => {
-                const rect = event.currentTarget.getBoundingClientRect();
-                setTopMenu({ x: rect.right, y: rect.bottom + 4 });
-              }}
-            >
-              ⋯
             </button>
           </>
         }
@@ -1127,6 +1111,18 @@ export default function McpPage({ visible }: { visible: boolean }) {
           {servers.map((s) => {
             const onCount = Object.values(s.apps).filter(Boolean).length;
             const open = expanded === s.id;
+            // 实时结果优先；没测过实时就回落清单里沉淀的上次结果（带时间前缀）
+            const shownHealth =
+              health[s.id] ??
+              (s.lastCheck
+                ? {
+                    ok: s.lastCheck.ok,
+                    latencyMs: s.lastCheck.latencyMs,
+                    error: s.lastCheck.error,
+                    detail: null,
+                  }
+                : undefined);
+            const healthLabel = mcpHealthLabel(shownHealth);
             return (
               <li
                 key={s.id}
@@ -1149,19 +1145,8 @@ export default function McpPage({ visible }: { visible: boolean }) {
                     }}
                   >
                     <FoldMark open={open} />
-                    {/* 实时结果优先；没测过实时就回落清单里沉淀的上次结果（带时间前缀） */}
                     <HealthDot
-                      health={
-                        health[s.id] ??
-                        (s.lastCheck
-                          ? {
-                              ok: s.lastCheck.ok,
-                              latencyMs: s.lastCheck.latencyMs,
-                              error: s.lastCheck.error,
-                              detail: null,
-                            }
-                          : undefined)
-                      }
+                      health={shownHealth}
                       at={health[s.id] ? null : (s.lastCheck?.at ?? null)}
                       onCheck={() => void checkHealth(s)}
                     />
@@ -1170,18 +1155,25 @@ export default function McpPage({ visible }: { visible: boolean }) {
                     >
                       {s.name}
                     </span>
+                    {/* 状态点只靠颜色分不出黄绿：不正常时名字后面写出来，正常只留点 */}
+                    {healthLabel && (
+                      <span
+                        className={`shrink-0 text-micro ${
+                          healthLabel.tone === "warn" ? "text-warn-text" : "text-err-text"
+                        }`}
+                      >
+                        {healthLabel.text}
+                      </span>
+                    )}
                     {!s.enabled && (
                       <span className="shrink-0 rounded-sm bg-inset px-1.5 py-0.5 text-micro text-l4">
                         已停用
                       </span>
                     )}
                   </button>
-                  {/* 协议徽章固定识别色（stdio 紫 / remote 蓝，mcp-display.ts） */}
+                  {/* 协议徽章中性灰：原 stdio 紫 / remote 蓝只表达类型，蓝又和选中、主按钮撞色（2026-10-23） */}
                   <span>
-                    <span
-                      className="inline-block rounded-sm px-1.5 py-0.5 font-mono text-micro"
-                      style={mcpKindBadgeStyle(s.kind)}
-                    >
+                    <span className="inline-block rounded-sm bg-inset px-1.5 py-0.5 font-mono text-micro text-l3">
                       {s.kind}
                     </span>
                   </span>
@@ -1204,7 +1196,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
                       ) : null;
                     })()}
                     <span
-                      className="min-w-0 truncate font-mono text-xs text-l4"
+                      className="min-w-0 truncate font-mono text-xs text-l3"
                       title={
                         s.kind === "stdio"
                           ? `${s.command} ${s.args.join(" ")}`.trim()
@@ -1232,11 +1224,9 @@ export default function McpPage({ visible }: { visible: boolean }) {
                     title={
                       onCount > 0
                         ? `已分发到：${AGENTS.filter((a) => s.apps[a.id]).map((a) => a.label).join("、")}\n点击展开分发管理`
-                        : "还没分发给任何 CLI；点击展开分发管理"
+                        : "还没分发给任何 Agent；点击展开分发管理"
                     }
-                    className={`flex min-w-0 items-center gap-1.5 whitespace-nowrap rounded-sm px-1.5 py-0.5 text-xs hover:bg-hover ${
-                      onCount > 0 ? "text-l3" : "text-l4"
-                    }`}
+                    className="flex min-w-0 items-center gap-1.5 whitespace-nowrap rounded-sm px-1.5 py-0.5 text-xs text-l3 hover:bg-hover"
                   >
                     {(() => {
                       const issues = s.enabled
@@ -1248,12 +1238,11 @@ export default function McpPage({ visible }: { visible: boolean }) {
                         : [];
                       return (
                         <>
-                          {onCount > 0 && (
-                            <span
-                              className={`size-1.5 shrink-0 rounded-full ${issues.length ? "bg-warn-text" : "bg-ok-text"}`}
-                            />
+                          {/* 全部正常不画点（每行一样的绿点等于没说），有异常才画琥珀点；同技能页 */}
+                          {issues.length > 0 && (
+                            <span className="size-1.5 shrink-0 rounded-full bg-warn-text" />
                           )}
-                          {onCount > 0 ? `${onCount} 个 CLI` : "未用"}
+                          {onCount > 0 ? `${onCount} 个 Agent` : "未用"}
                           {issues.length > 0 && (
                             <span
                               className="text-warn-text"
@@ -1833,17 +1822,29 @@ export default function McpPage({ visible }: { visible: boolean }) {
             </div>
         </Modal>
       )}
-      {/* 顶部 ⋯ 更多菜单（低频入口）：收编现有配置 / 粘贴导入 */}
-      {topMenu && (
+      {addMenu && (
         <ContextMenu
-          x={topMenu.x}
-          y={topMenu.y}
+          x={addMenu.x}
+          y={addMenu.y}
           alignRight
-          onClose={() => setTopMenu(null)}
+          onClose={() => setAddMenu(null)}
           items={[
+            {
+              icon: SquarePen,
+              label: "自己填写…",
+              onSelect: () => setModal({ id: null, form: { ...EMPTY_FORM } }),
+            },
+            { header: "预设" },
+            ...MCP_PRESETS.map((p) => ({
+              label: p.label,
+              title: p.note,
+              onSelect: () => void openPreset(p),
+            })),
+            { header: "从别处导入" },
             {
               icon: PackagePlus,
               label: "收编现有配置",
+              title: "各 CLI 里已有、但不在 Mesa 清单中的 MCP",
               onSelect: () => void onDiscover(),
             },
             {
@@ -1852,19 +1853,6 @@ export default function McpPage({ visible }: { visible: boolean }) {
               onSelect: () => setPasteOpen(true),
             },
           ]}
-        />
-      )}
-      {presetMenu && (
-        <ContextMenu
-          x={presetMenu.x}
-          y={presetMenu.y}
-          alignRight
-          onClose={() => setPresetMenu(null)}
-          items={MCP_PRESETS.map((p) => ({
-            label: p.label,
-            title: p.note,
-            onSelect: () => void openPreset(p),
-          }))}
         />
       )}
       {/* 收编现有配置：八家用户级配置里不在清单的 server */}

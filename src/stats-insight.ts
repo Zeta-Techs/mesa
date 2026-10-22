@@ -1,5 +1,6 @@
 /** 统计页「花得快不快 / 钱花在哪 / 缓存省了多少」纯逻辑。
  *  环比、命中率、会话标题回落都走这里；SVG 与跳转留在 StatsPage。 */
+import { groupedMoney } from "./money-format.ts";
 
 export interface TrendDay {
   day: string;
@@ -61,6 +62,14 @@ export function cacheHitRate(input: number, cacheRead: number): number | null {
   return cacheRead / den;
 }
 
+/** 命中率怎么写：整数取整会把 99.6% 写成 100%，像是全部命中（2026-10-23 审查）。
+ *  真全中才写 100%；99% 以上向下保留一位小数（99.96 → 99.9），其余取整 */
+export function fmtHitRate(hit: number): string {
+  if (hit >= 1) return "100%";
+  if (hit >= 0.99) return `${(Math.floor(hit * 1000) / 10).toFixed(1)}%`;
+  return `${Math.round(hit * 100)}%`;
+}
+
 export function shortSessionId(id: string): string {
   const compact = id.replace(/-/g, "");
   if (compact.length <= 8) return compact || id;
@@ -98,6 +107,6 @@ export function fmtCost(
   if (c == null) return "~";
   const prefix = partial ? "≥" : "";
   return currency === "¥"
-    ? `${prefix}¥${(c * rate).toFixed(2)}`
-    : `${prefix}$${c.toFixed(2)}`;
+    ? `${prefix}¥${groupedMoney(c * rate)}`
+    : `${prefix}$${groupedMoney(c)}`;
 }
