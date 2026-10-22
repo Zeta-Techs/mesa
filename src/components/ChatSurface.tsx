@@ -867,8 +867,10 @@ export default function ChatSurface({
             </div>
           )}
           {!emptyStart && (
-            // 对话流底部渐隐（2026-10-22 配色）：字滚到输入框上方时淡进画布，不是一刀切；负边距不占高度，不挡点击
-            <div aria-hidden="true" className="ccode-chat-fade pointer-events-none sticky bottom-0 -mx-4 -mt-8 h-8 shrink-0 sm:-mx-5" />
+            // 对话流底部渐隐（2026-10-22 配色）：字滚到输入框上方时淡进画布，不是一刀切；负边距不占高度，不挡点击。
+            // 只留一窄条（同日用户：「底部隐现的太多了」——原先 h-8 比底部留白 pb-6 还高，滚到底时最后一行、生成中那一行
+            // 都被盖淡）：比 pb-6 矮，停在底部时整条落在留白里，不碰任何字；往上翻时只有贴着边的那一点淡出
+            <div aria-hidden="true" className="ccode-chat-fade pointer-events-none sticky bottom-0 -mx-4 -mt-3 h-3 shrink-0 sm:-mx-5" />
           )}
           {hasNew && (
             <button
