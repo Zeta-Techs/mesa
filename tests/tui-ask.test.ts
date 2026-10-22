@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ScreenCell } from "../src/screen-cells.ts";
-import { askAfter, askAnswerKeys, askMenu, parseClaudeAsk } from "../src/tui-ask.ts";
+import { askAfter, askAnswerKeys, askFinishes, askMenu, parseClaudeAsk } from "../src/tui-ask.ts";
 import { parseTuiMenu, sameTuiMenu } from "../src/tui-menu.ts";
 
 // Claude Code 2.1.306 实录（假网关回 AskUserQuestion，126×29，2026-10-22；横线截短）
@@ -232,4 +232,41 @@ test("给通用流程的摘要：问句 + 选项名；按过键待刷新的卡�
   // 光标挪了也算变了（按键要从新位置算）
   const moved = askMenu(parseClaudeAsk(SINGLE.map((l) => (l === "❯ 1. 红" ? "  1. 红" : l === "  2. 绿" ? "❯ 2. 绿" : l)))!);
   assert.equal(sameTuiMenu(menu, moved), false);
+});
+
+test("哪一下算交卷：卡片当场收起、到确认页替人按 Submit answers", () => {
+  const single = parseClaudeAsk(SINGLE)!;
+  assert.equal(askFinishes(single, { kind: "pick", index: 1 }), true);
+  assert.equal(askFinishes(single, { kind: "text", text: "紫色" }), true);
+  assert.equal(askFinishes(single, { kind: "chat" }), true);
+  // 只有一道多选题（2026-10-22 用户截图：交了还要过确认页）：勾一项不算，交这一题 / 从输入框写了答案交才算
+  const onlyMulti = parseClaudeAsk([
+    RULE,
+    "←  ☒ 水果  ✔ Submit  →",
+    "下面这些水果你平时会吃哪些？",
+    "  1. [✔] 苹果",
+    "         脆甜，一年四季都有",
+    "  2. [ ] 香蕉",
+    "         软糯，适合当早餐",
+    "  3. [ ] Type something",
+    "❯    Submit",
+    RULE,
+    "  4. Chat about this",
+  ])!;
+  assert.ok(onlyMulti.kind === "question" && onlyMulti.tabs.length === 1 && onlyMulti.multiSelect);
+  assert.equal(askFinishes(onlyMulti, { kind: "pick", index: 1 }), false);
+  assert.equal(askFinishes(onlyMulti, { kind: "text", text: "梨" }), false);
+  assert.equal(askFinishes(onlyMulti, { kind: "text", text: "梨", submit: true }), true);
+  assert.equal(askFinishes(onlyMulti, { kind: "submit" }), true);
+  // 两题：第一题答过、正在第二题 → 交这一题就是交卷；认不出当前题时不当交卷（按钮停用等屏上换）
+  const lastOfTwo = parseClaudeAsk(MULTI, (row) => (MULTI[row] === MULTI_TABS ? tabCells(MULTI_TABS, "☐ 水果") : []))!;
+  assert.equal(askFinishes(lastOfTwo, { kind: "submit" }), true);
+  assert.equal(askFinishes(lastOfTwo, { kind: "tab", index: 0 }), false);
+  assert.equal(askFinishes(parseClaudeAsk(MULTI)!, { kind: "submit" }), false);
+  // 两题都还没答、在第一题：选了只是换到下一题
+  const tabs = "←  ☐ 颜色  ☐ 水果  ✔ Submit  →";
+  const first = SINGLE.map((l) => (l === " ☐ 颜色" ? tabs : l));
+  const firstOfTwo = parseClaudeAsk(first, (row) => (first[row] === tabs ? tabCells(tabs, "☐ 颜色") : []))!;
+  assert.equal(firstOfTwo.current, 0);
+  assert.equal(askFinishes(firstOfTwo, { kind: "pick", index: 0 }), false);
 });

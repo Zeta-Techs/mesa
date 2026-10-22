@@ -33,7 +33,8 @@ def pieces(lines, chunk):
 THINK_TEXT = "**规划探针命令**\n\n先跑一条命令看看环境，再回答。"
 # Claude 一轮结束后另发一次请求猜「你下一句想说什么」（系统提示带 SUGGESTION MODE），回这一句，它会灰着字放进输入框（2026-10-22）
 SUGGESTION = os.environ.get("E2E_SUGGESTION", "再运行一次看看输出")
-# TRIGGER_ASK = 回一个 AskUserQuestion 工具调用（Claude 的「问你一个问题」菜单，看聊天层提问卡片）；TRIGGER_ASK2 = 一次问两题
+# TRIGGER_ASK = 回一个 AskUserQuestion 工具调用（Claude 的「问你一个问题」菜单，看聊天层提问卡片）；TRIGGER_ASK2 = 一次问两题；
+# TRIGGER_ASKM = 只问一道多选题（多选交了也要过一遍确认页）
 ASK_COLOR = {"question": "红、绿、蓝三种颜色里，你更喜欢哪一种？", "header": "颜色", "multiSelect": False,
              "options": [{"label": "红", "description": "选择红色"}, {"label": "绿", "description": "选择绿色"},
                          {"label": "蓝", "description": "选择蓝色"}]}
@@ -214,7 +215,7 @@ class H(BaseHTTPRequestHandler):
                 self._ev({"type": "message_stop"}, "message_stop")
                 return
             if mode == "ask":
-                ask = {"questions": [ASK_COLOR, ASK_FRUIT] if b"TRIGGER_ASK2" in raw else [ASK_COLOR]}
+                ask = {"questions": [ASK_COLOR, ASK_FRUIT] if b"TRIGGER_ASK2" in raw else [ASK_FRUIT] if b"TRIGGER_ASKM" in raw else [ASK_COLOR]}
                 log(note="emit-ask", schema=json.dumps(dict(tool_list(body)).get("AskUserQuestion"), ensure_ascii=False)[:1500])
                 self._ev({"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": "toolu_ask", "name": "AskUserQuestion", "input": {}}}, "content_block_start")
                 self._ev({"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": json.dumps(ask, ensure_ascii=False)}}, "content_block_delta")

@@ -520,7 +520,7 @@ Claude 会话文件：排上记 `queue-operation`（`enqueue` 带原文；轮后
   `Press up to edit queued messages`、队友 `Message @…`。
 - **提问表单（AskUserQuestion）**：画在输入框的位置（`src/tui-ask.ts` 文件头有逐行样子）；题签行当前题只靠底色（permission 色）标；
   最后一项「Type something.」是就地输入行，多选里打字自动勾上；横线下是「Chat about this」（工具结果「User declined to answer questions」，
-  模型接着说）；多题答完是确认页，Cancel 同样记 declined 但这一轮直接停。←→ / Tab 换题，↑↓ 逐行，回车选 / 勾。工具结果
+  模型接着说）；多题答完是确认页（只有一道多选题时交了也要过这一页；交了马上再按回车，隔 80ms 实测也能过），Cancel 同样记 declined 但这一轮直接停。←→ / Tab 换题，↑↓ 逐行，回车选 / 勾。工具结果
   「User answered Claude's questions: · 问句 → 答案」。
 
 **陷阱（实证）**：

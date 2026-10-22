@@ -70,7 +70,7 @@ Gemini 的临时 HOME 里会把登录方式改成 API Key（Mesa 只在这种情
 `QUEUE_FIRST="TRIGGER_SLOW 讲一段"`。结论见 docs/agent-integration-matrix.md §14「生成中再发一句」。
 
 **Claude 猜的下一句与提问表单（2026-10-22）**：假网关认 `SUGGESTION MODE`（Claude 一轮做完猜你下一句的那次请求）回 `E2E_SUGGESTION`
-（默认「再运行一次看看输出」）；`TRIGGER_ASK` 回一个 AskUserQuestion（一题单选），`TRIGGER_ASK2` 一次问两题（单选 + 多选）。抓屏加：
+（默认「再运行一次看看输出」）；`TRIGGER_ASK` 回一个 AskUserQuestion（一题单选），`TRIGGER_ASK2` 一次问两题（单选 + 多选），`TRIGGER_ASKM` 只问一道多选题。抓屏加：
 `CAP_ENV="K=V;…"` 补环境变量（脚本把 `CLAUDE_CODE_*` 都去掉了，猜下一句要 `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=1`，服务端开关假网关拿不到）；
 `CAP_FOCUS=out|in` 开场后告诉 CLI 终端失焦 / 得焦（结果里 `focus_reporting` = 它开没开焦点上报）；`APPROVE_GAP` 改按键间隔、每按一个键记一帧
 （`scenes.approve_steps`），键写 `:文字` 是原样打一段字（在「Type something.」里写答案）。猜下一句第二轮起才出，所以两幕都发话：

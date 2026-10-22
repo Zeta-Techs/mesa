@@ -164,7 +164,7 @@ import {
   sameTuiMenu,
   type TuiMenu,
 } from "../tui-menu";
-import { askAfter, askAnswerKeys, askMenu, parseClaudeAsk, type AskAction } from "../tui-ask";
+import { askAfter, askAnswerKeys, askFinishes, askMenu, parseClaudeAsk, type AskAction } from "../tui-ask";
 import { promptSuggestionSupported, readPromptSuggestion } from "../prompt-suggestion";
 import { lineCells } from "../screen-cells";
 import { lastContextTokens, type MesaCommand } from "../composer-assist";
@@ -2285,47 +2285,71 @@ const TerminalView = memo(function TerminalView({
       !turnLive
     )
       return;
-    if (menuScanTimerRef.current) window.clearTimeout(menuScanTimerRef.current);
-    menuScanTimerRef.current = window.setTimeout(() => {
-      menuScanTimerRef.current = null;
-      if (!termRef.current || ptyKindRef.current !== "agent") return;
-      // 提问表单的键还没按完：屏上是半路的样子，等按完再读
-      const keysLeft = askKeysDoneAtRef.current - Date.now();
-      if (keysLeft > 0 && menuPromptRef.current?.ask) {
-        window.setTimeout(scanMenuSoon, keysLeft + 50);
+    // 节流、不防抖：生成中转圈每一两百毫秒就出一帧，防抖（每帧重新计时）一直等不到 250ms 的安静，答完提问后
+    // 卡片要挂到这一轮说完才撤（2026-10-22 用户：点了之后卡住几秒）
+    if (menuScanTimerRef.current) return;
+    menuScanTimerRef.current = window.setTimeout(runMenuScan, 250);
+  }
+  function runMenuScan() {
+    menuScanTimerRef.current = null;
+    if (!termRef.current || ptyKindRef.current !== "agent") return;
+    // 提问表单的键还没按完：屏上是半路的样子，等按完再读
+    const keysLeft = askKeysDoneAtRef.current - Date.now();
+    if (keysLeft > 0) {
+      menuScanTimerRef.current = window.setTimeout(runMenuScan, keysLeft + 50);
+      return;
+    }
+    // 一帧正画到一半（同步输出还没收尾）：表单下半截还是旧的，读出来会缺一截、卡片闪没（同 scanLiveReplyNow）
+    if (termRef.current.modes.synchronizedOutputMode && menuSyncWaitsRef.current < 20) {
+      menuSyncWaitsRef.current++;
+      menuScanTimerRef.current = window.setTimeout(runMenuScan, 50);
+      return;
+    }
+    menuSyncWaitsRef.current = 0;
+    const lines = screenLines();
+    const found = parseScreenMenu(lines);
+    // 用户自己发的多行编号清单回显在屏上（「❯ 1. … / 2. …」）也是这个形状：选项全在刚发的话里就不算
+    const echoed = found ? menuEchoesText(found, lastSentRef.current) : false;
+    // 启动信任菜单归信任卡管（trust-prompt.ts）：这里再认一遍，点完信任后菜单还在屏上的那一两帧
+    // 会以通用确认卡再冒出来一次（2026-10-18 用户截图「Accessing workspace… No, exit / Yes, I trust」）
+    const trustMenu =
+      found !== null &&
+      (parseTrustPrompt(lines) !== null ||
+        (trustOptionsRef.current !== null &&
+          found.options.join("\n") === trustOptionsRef.current.join("\n")));
+    const next0 =
+      echoed || trustMenu || sameTuiMenu(found, menuBaselineRef.current) ? null : found;
+    const next = channelOwnsMenu(next0) ? null : next0;
+    // 菜单（审批 / 切换确认）也带 Esc to cancel：认出菜单时不再当面板
+    // 要按回车继续的通知也带 Esc to cancel：认出通知时不当面板（面板卡的按钮是 Esc，按了会取消）
+    const notice = found === null ? parseTuiNotice(lines, launchAgentRef.current) : null;
+    setTuiNoticeLines(notice);
+    setPanelOpen(found === null && notice === null && parseTuiPanel(lines, launchAgentRef.current));
+    setPromptIdle(next === null && terminalHasInputBox(lines, launchAgentRef.current) === true);
+    const ask = next?.ask ?? null;
+    // 卡片上交过卷又到了确认页：答案就是刚在卡片上选的，替人按「Submit answers」，不要人再点一次
+    // （2026-10-22 用户：为什么还有确认提交回答）。还有题没答（带提醒）、或人自己点到确认页的，照常出卡
+    if (ask?.kind === "review" && !ask.warning && Date.now() < askAutoConfirmUntilRef.current) {
+      askAutoConfirmUntilRef.current = 0;
+      const keys = askAnswerKeys(ask, { kind: "confirm" });
+      const id = ptyIdRef.current;
+      if (keys && id) {
+        pressAskKeys(id, keys, true);
         return;
       }
-      // 一帧正画到一半（同步输出还没收尾）：表单下半截还是旧的，读出来会缺一截、卡片闪没（同 scanLiveReplyNow）
-      if (termRef.current.modes.synchronizedOutputMode && menuSyncWaitsRef.current < 20) {
-        menuSyncWaitsRef.current++;
-        window.setTimeout(scanMenuSoon, 50);
-        return;
-      }
-      menuSyncWaitsRef.current = 0;
-      const lines = screenLines();
-      const found = parseScreenMenu(lines);
-      // 用户自己发的多行编号清单回显在屏上（「❯ 1. … / 2. …」）也是这个形状：选项全在刚发的话里就不算
-      const echoed = found ? menuEchoesText(found, lastSentRef.current) : false;
-      // 启动信任菜单归信任卡管（trust-prompt.ts）：这里再认一遍，点完信任后菜单还在屏上的那一两帧
-      // 会以通用确认卡再冒出来一次（2026-10-18 用户截图「Accessing workspace… No, exit / Yes, I trust」）
-      const trustMenu =
-        found !== null &&
-        (parseTrustPrompt(lines) !== null ||
-          (trustOptionsRef.current !== null &&
-            found.options.join("\n") === trustOptionsRef.current.join("\n")));
-      const next0 =
-        echoed || trustMenu || sameTuiMenu(found, menuBaselineRef.current) ? null : found;
-      const next = channelOwnsMenu(next0) ? null : next0;
-      // 菜单（审批 / 切换确认）也带 Esc to cancel：认出菜单时不再当面板
-      // 要按回车继续的通知也带 Esc to cancel：认出通知时不当面板（面板卡的按钮是 Esc，按了会取消）
-      const notice = found === null ? parseTuiNotice(lines, launchAgentRef.current) : null;
-      setTuiNoticeLines(notice);
-      setPanelOpen(found === null && notice === null && parseTuiPanel(lines, launchAgentRef.current));
-      setPromptIdle(next === null && terminalHasInputBox(lines, launchAgentRef.current) === true);
-      if (sameTuiMenu(menuPromptRef.current, next)) return;
-      menuPromptRef.current = next;
-      setMenuPrompt(next);
-    }, 250);
+    }
+    // 刚交过：表单还在屏上是键还没生效（或正换到确认页），先不把卡片拿回来；过了这一会儿还在就照常出卡，
+    // 按键没生效时人还能接着答
+    const hiddenLeft = askHiddenUntilRef.current - Date.now();
+    if (ask && hiddenLeft > 0) {
+      menuScanTimerRef.current = window.setTimeout(runMenuScan, hiddenLeft + 50);
+      return;
+    }
+    // 换到了另一道题：上一下不是最后一题，之后人自己点到确认页时不替人交
+    if (ask?.kind === "question") askAutoConfirmUntilRef.current = 0;
+    if (sameTuiMenu(menuPromptRef.current, next)) return;
+    menuPromptRef.current = next;
+    setMenuPrompt(next);
   }
   // 实时预览：Agent 出字时节流 300ms 读一次可视区，抽出这一轮正在写的回复给聊天层（会话文件一段写完才落盘）
   const [liveReply, setLiveReply] = useState<string[] | null>(null);
@@ -2528,6 +2552,10 @@ const TerminalView = memo(function TerminalView({
   const keyQueueAtRef = useRef(0);
   // 提问表单的键按到什么时候：按完之前屏上是半路的样子（光标挪了、还没回车），扫屏不拿它覆盖卡片
   const askKeysDoneAtRef = useRef(0);
+  // 交了卷的卡片当场收起，这之前扫到的表单不拿回来（键还没生效 / 正换到确认页）
+  const askHiddenUntilRef = useRef(0);
+  // 这之前扫到确认页就替人按「Submit answers」（卡片上交过卷才设）
+  const askAutoConfirmUntilRef = useRef(0);
   function queuePtyKeys(id: string, keys: string[]): number {
     const start = Math.max(Date.now(), keyQueueAtRef.current);
     keys.forEach((key, i) => {
@@ -2545,16 +2573,36 @@ const TerminalView = memo(function TerminalView({
     if (!menu || !ask || !id || menu.pending) return;
     const keys = askAnswerKeys(ask, action)?.map((k) => (k === "\r" && submitCsiU ? KIMI_CSI_U_ENTER : k));
     if (!keys) return;
+    // 交卷（最后一题选定 / 交这一题 / 确认 / 不答）：卡片当场收起，到了确认页替人按「Submit answers」；
     // 多选勾一项、往「自己写」里写字：还是这一题，先照按键结果画（askAfter），连点也从对的光标位置算；
-    // 会换题 / 交卷的先停用按钮，等屏上换了再画（答完最后一题表单消失，卡片跟着撤）
-    const after = askAfter(ask, action);
-    const next: TuiMenu = after ? askMenu(after) : { ...menu, pending: true };
-    menuPromptRef.current = next;
-    setMenuPrompt(next);
+    // 换题（多题里还有没答的、切题）：先停用按钮，等屏上换了再画
+    const finishes = askFinishes(ask, action);
+    askAutoConfirmUntilRef.current =
+      finishes && (action.kind === "pick" || action.kind === "text" || action.kind === "submit")
+        ? Date.now() + keys.length * 80 + 5000
+        : 0;
+    if (!finishes) {
+      const after = askAfter(ask, action);
+      const next: TuiMenu = after ? askMenu(after) : { ...menu, pending: true };
+      menuPromptRef.current = next;
+      setMenuPrompt(next);
+    } else if (liveReplySupported(launchAgentRef.current)) {
+      // 同 answerMenu：答完到下一次扫屏之间，别让旁路还没撤的「等批准」顶上来一张兜底卡
+      setPromptIdle(true);
+    }
+    pressAskKeys(id, keys, finishes);
+  }
+  function pressAskKeys(id: string, keys: string[], hide: boolean) {
     const done = queuePtyKeys(id, keys);
     askKeysDoneAtRef.current = done + 120;
     menuWatchUntilRef.current = done + 3000;
-    window.setTimeout(scanMenuSoon, done - Date.now() + 400);
+    if (hide) {
+      askHiddenUntilRef.current = done + 1500;
+      menuPromptRef.current = null;
+      setMenuPrompt(null);
+    }
+    if (menuScanTimerRef.current) window.clearTimeout(menuScanTimerRef.current);
+    menuScanTimerRef.current = window.setTimeout(runMenuScan, done - Date.now() + 200);
   }
   function clearTrustPrompt() {
     if (trustScanTimerRef.current) window.clearTimeout(trustScanTimerRef.current);

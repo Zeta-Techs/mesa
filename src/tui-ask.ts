@@ -19,7 +19,7 @@
  *   Enter to select · ↑/↓ to navigate · Esc to cancel
  *
  * 多题答完（或切到「✔ Submit」页）是确认页：「Review your answers / ● 问句 / → 答案 / Ready to submit your answers? /
- * ❯ 1. Submit answers / 2. Cancel」（Cancel = 整组不答，这一轮就停）。
+ * ❯ 1. Submit answers / 2. Cancel」（Cancel = 整组不答，这一轮就停）。只有一道多选题时交了也要过这一页。
  * 按键：↑↓ 在可停的行之间一行一行走（不跳、按屏上顺序）；回车 = 单选选中 / 多选勾或取消；←→（或 Tab）换题。
  */
 import type { ScreenCell } from "./screen-cells";
@@ -338,6 +338,23 @@ export function askAnswerKeys(ask: ClaudeAsk, action: AskAction): string[] | nul
       return Array.from({ length: Math.abs(delta) }, () => (delta > 0 ? RIGHT : LEFT));
     }
   }
+}
+
+/**
+ * 这一下按完表单就交了（或只剩确认页、由调用方替人按「Submit answers」）：确认 / 整组不答 / 先不答；
+ * 或这是还没答的最后一题（只有一题、或别的题都答过）时选定（单选）/ 交这一题（多选）/ 写了答案并交。
+ * 交了的卡片当场收起，不等屏上换画面（2026-10-22 用户：点了之后卡住几秒）；多题里还有没答的、多选勾一项、切题都不算
+ */
+export function askFinishes(ask: ClaudeAsk, action: AskAction): boolean {
+  if (action.kind === "confirm" || action.kind === "cancel" || action.kind === "chat") return true;
+  if (ask.kind !== "question" || action.kind === "tab") return false;
+  const current = ask.current;
+  const lastOpen =
+    ask.tabs.length <= 1 || (current !== null && ask.tabs.every((t, i) => i === current || t.answered));
+  if (!lastOpen) return false;
+  if (action.kind === "submit") return true;
+  if (ask.multiSelect) return action.kind === "text" && Boolean(action.submit);
+  return action.kind === "pick" || action.kind === "text";
 }
 
 /** 同一张表单（光标挪了也算变了：按键要从新位置算） */
