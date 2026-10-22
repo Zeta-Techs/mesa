@@ -66,6 +66,10 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   页内标记 marks 按页 memo 交 PdfPageView）、
                              #   阅读区 2026-10-18 补齐：笔记 watcher 自订一份（标注高亮与「让 AI 起草」显隐看盘上笔记）、
                              #   reader_paper_title 顶栏真实题名、标注增删/在笔记里看/笔记→PDF 跳转接线、悬浮译文卡 floatBounds（PDF 栏边界）、
+                             #   spotCheck prop = 精读步抽查核对档（2026-10-23：pdfPath/notePath 按篇由 spot_check_item 解析，工作区笔记只读，
+                             #   右栏换问题单、不派阅读会话；口径 terminal.md「抽查核对档」）、
+                             # SpotCheckPanel（抽查核对档的部件：useSpotCheck 状态 hook（当前篇/已看/解析缓存/问题单）、
+                             #   SpotCheckStrip 顶栏下切篇条、SpotAbstractPane 无 PDF 时中栏摘要、SpotCheckPanel 右栏问题单与两个收尾按钮）、
                              # TemplatePickModal（科研项目注册成功后的研究流程模板选择层：顶部课题主题 +
                              # 六套内置模板 + 「不使用研究流程」（写 pipeline_opt_out 标记；只读文献走这条）/
                              # 「稍后再选」（不留痕，已填主题仍落盘）两出口）、
@@ -630,8 +634,10 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   loadSessionTemplateValues = 每个占位符此刻的内容（project-context.ts sessionTemplateValues，与渲染同一出处）
   notes-progress.ts          # 精读进度：notes/index.json 按 reviewStatus=reviewed（旧索引的 done/read 同义）数已写笔记、按 fulltextStatus 分全文/仅摘要，
                              #   StepFlow 精读步「AI 干活」行下一行进度（工作区优先、项目根兜底）；spotCheckPicks =
-                             #   「抽查 3 篇笔记」三篇候选（全文/仅摘要各取中间一篇再从尾部补，确定性；tests/notes-progress.test.ts）；
+                             #   「抽查 3 篇笔记」三篇候选（全文/仅摘要各取中间一篇再从尾部补，确定性，带 included.json id；tests/notes-progress.test.ts）；
                              #   excludedIncludedIds：included.json 里 decision=excluded 的篇不进进度分母
+  spot-check.ts              # 抽查核对档纯逻辑：SpotCheckSession（readerReq.spotCheck 外形）、问题单按 base 记 localStorage、
+                             #   spotCheckFocus 每篇要看什么、buildSpotCheckPrompt 交回这一步 AI 的消息（按篇分组带出处，tests/spot-check.test.ts）
   stepper-status.ts          # 步进器圆下状态小字的文案与色（待开始/检查中不写，进行中按终端注意力细分等你确认/等你查看；
                              #   ProjectGroup 状态带唯一出处，tests/stepper-status.test.ts）
   research-report.ts         # 研究报告节抽取/相对路径解析（只认显式报告节，不认 TASK 指令或推断结论）
@@ -1232,6 +1238,8 @@ src-tauri/src/
                              # pdf_for_note 笔记→配对 PDF（来源行锚点优先；无锚点回落笔记 stem ×「type=paper 资源 + papers/ 顶层 PDF」
                              # 做 normalize_title 互相包含（2026-09-20 起 papers/ 直扫：agent 直下全文没走登记通道也能配），多命中取最长，无命中返回 None；lit_watch.rs normalize_title 提 pub(crate) 复用）+
                              # reader_for_note 归属反查版（注册项目根直含 / 工作区 worktree 映射主仓副本，未合并明确报错）+
+                             # spot_check_item 抽查核对档一篇（2026-10-23：笔记限 base/notes，base 为本项目工作区即只读——不映射主仓；
+                             # PDF 项目根配对优先、再看 included.json pdf 字段；题名/摘要取 included.json，「待补」「待核」不算）+
                              # read_image_bytes 图片通道（png/jpg/jpeg/gif/webp/svg、20MB，白名单判定复用 pdf.rs 内核）+
                              # read_audio_bytes 聊天层音频通道（mp3/wav/m4a/aac/aiff/flac/ogg、20MB、文件头校验，同一套白名单）+
                              # save_reader_capture 圈选截图落 notes/assets/（PNG 魔数 + 同秒重名 -2/-3；写入内核 write_notes_asset

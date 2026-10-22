@@ -112,6 +112,21 @@ interface PathContext {
   branch: string | null;
 }
 
+/** 划选记一条的四处文案：浮条按钮 / 提交钮 / 输入框提示 / 记上后的回执 */
+export interface AnnotateCopy {
+  button: string;
+  submit: string;
+  placeholder: string;
+  done: string;
+}
+
+const REVIEW_ANNOTATE_COPY: AnnotateCopy = {
+  button: "加进意见",
+  submit: "加入意见",
+  placeholder: "这一处要怎么改",
+  done: "已加进上面的意见",
+};
+
 /**
  * Markdown 阅读视图（RX2a）：marked 渲染本地文件内容。
  * 本地文件同样是不可信内容；转换与图片重写后统一清洗，保留 GFM 排版。
@@ -139,9 +154,12 @@ function MarkdownView({
   compact,
   onPdfRef,
   focusText,
+  annotateCopy = REVIEW_ANNOTATE_COPY,
 }: {
   text: string;
   large?: boolean;
+  /** 划选记一条的文案（缺省 = 审阅页「加进意见」；阅读区抽查 = 「记成问题」） */
+  annotateCopy?: AnnotateCopy;
   /** 窄栏排版（阅读区笔记栏）：标题字号收一档 */
   compact?: boolean;
   /** 正文里的页码/图表引用可点（阅读区笔记栏：点了跳 PDF） */
@@ -257,7 +275,7 @@ function MarkdownView({
     if (!annotateDraft || !onAnnotate) return;
     const err = onAnnotate(annotateDraft, fileName, annotateComment);
     if (err) showHint(err);
-    else showHint("已加进上面的意见");
+    else showHint(annotateCopy.done);
     setAnnotateDraft(null);
     setAnnotateComment("");
   }
@@ -394,7 +412,7 @@ function MarkdownView({
                 onClick={beginAnnotate}
                 className="rounded-sm border border-cta-bd bg-cta px-2 py-1 text-xs text-cta-text hover:brightness-110"
               >
-                加进意见
+                {annotateCopy.button}
               </button>
             )}
             {onDiscuss && (
@@ -444,14 +462,14 @@ function MarkdownView({
                   setAnnotateDraft(null);
                 }
               }}
-              placeholder="这一处要怎么改"
+              placeholder={annotateCopy.placeholder}
               className="min-w-0 flex-1 rounded-sm border border-field bg-canvas px-2 py-1 text-xs text-l2 outline-none placeholder:text-l4 focus:border-l4"
             />
             <button
               type="submit"
               className="shrink-0 rounded-sm border border-cta-bd bg-cta px-2 py-1 text-xs text-cta-text hover:brightness-110"
             >
-              加入意见
+              {annotateCopy.submit}
             </button>
             <button
               type="button"
@@ -480,6 +498,8 @@ function TextFilePreviewEditor({
   revealLine,
   onDiscuss,
   onAnnotate,
+  annotateCopy,
+  readOnly,
   hideImmersive,
   onOpenFile,
   onOpenReader,
@@ -513,6 +533,9 @@ function TextFilePreviewEditor({
     fileName: string,
     comment: string,
   ) => string | null;
+  annotateCopy?: AnnotateCopy;
+  /** 宿主要求只读（阅读区抽查：笔记还在工作区里等评审）：值是工具条上给人看的原因 */
+  readOnly?: string;
   /** 宿主声明「主仓库就是这份文件的正常落点」（阅读区笔记栏：笔记本来就记在项目里，属日常积累面，
    *  不进任何工作区分支）：不挂琥珀色「主仓库（非分支）」、保存不再每次弹危险确认。 */
   mainRepoIsHome?: boolean;
@@ -544,7 +567,8 @@ function TextFilePreviewEditor({
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [truncated, setTruncated] = useState(false);
-  const [readOnlyReason, setReadOnlyReason] = useState<string | null>(null);
+  const [fileReadOnly, setReadOnlyReason] = useState<string | null>(null);
+  const readOnlyReason = readOnly ?? fileReadOnly;
   const dirtyRef = useRef(false);
   const savingRef = useRef(false);
   const [dirty, setDirty] = useState(false);
@@ -1317,6 +1341,7 @@ function TextFilePreviewEditor({
             root={root}
             onDiscuss={onDiscuss}
             onAnnotate={onAnnotate}
+            annotateCopy={annotateCopy}
             onOpenFile={onOpenFile}
             onJumpToSource={isMd && !truncated && !readOnlyReason ? jumpToSource : undefined}
             compact={compact}
@@ -1376,6 +1401,7 @@ function TextFilePreviewEditor({
                 root={root}
                 onDiscuss={onDiscuss}
                 onAnnotate={onAnnotate}
+                annotateCopy={annotateCopy}
                 onOpenFile={onOpenFile}
                 onJumpToSource={isMd && !truncated && !readOnlyReason ? jumpToSource : undefined}
               />

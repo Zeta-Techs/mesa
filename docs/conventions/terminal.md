@@ -725,6 +725,20 @@
   配对 = 笔记 stem 与 project.toml `type="paper"` 资源的文件 stem 做 `normalize_title`（lit_watch.rs，已提
   pub(crate) 复用）**互相包含**（与前端 lit-watch.ts `paperResourceFor` 同口径），多命中取规范化最长者，
   无命中报错透出。另有根已知的变体 `pdf_for_note`（返回 Option，供已知 projectRoot 的调用方）。
+- **抽查核对档（2026-10-23 用户拍板「都按推荐做」）**：精读步人工事项「抽查 3 篇笔记」点一篇 → `readerReq.spotCheck`
+  （`src/spot-check.ts SpotCheckSession`：三篇、index.json 所在根 base、步骤名/事项标题、工作区）→ 阅读区不跳运行页、
+  退出回流程页。**pdfPath/notePath 由阅读区按篇经 `spot_check_item`（reader.rs）解析**：笔记限 base/notes 内；
+  base 是本项目某工作区时 `readOnly`（工作区归属查 workspaces 表，repo 必须是本项目根）——**不走 reader_for_note**
+  （它把工作区笔记映射回主仓副本，抽查要看的恰是待评审那份）；PDF 先按来源行/文件名在**项目根**配对（原始资料
+  直写项目根 papers/），再看 included.json 的 `pdf` 字段；题名/摘要取 included.json（「待补」「待核」不算）。
+  只读档：FilePreviewEditor `readOnly`、标注增删 / 圈选插笔记 / 译段存笔记 / 让 AI 起草全收；无 PDF 时中栏
+  `SpotAbstractPane` 摆摘要。**核对档不派阅读会话**（readerKey 置空）：阅读会话在项目根、`Edit(./notes/**)`
+  预放行改的是主仓笔记，会改错地方。右栏 = `SpotCheckPanel` 问题单：笔记划选走 FilePreviewEditor `onAnnotate` +
+  `annotateCopy`、PDF 划选走 `onAskAi` + `askAs`（不出「直接发送」），都记「记成问题」；问题单按 base 记
+  localStorage（Esc 退出不丢，发出/勾上清）。「发给这一步的 AI」= `buildWorkspaceTerminalRequest(ws, prompt,
+  {autoStart, resumeSession})`（与决策后续跑同链：活会话认回标签注入、否则 resume），关阅读区留运行页、事项不勾；
+  「N 篇都没问题」三篇都看过才可点 → `set_human_task_check` + store `bumpHumanTasks`（useHumanTasks 见 tick 重取）
+  → 回来源页。索引读自项目根（已保存进项目）时 ws 为空：笔记可改、问题单只记不发。
 - **右栏可切「聊天 / 终端」（2026-10-18 用户要求补上聊天层切换）**：对话卡标题行右侧分段钮切阅读会话标签的
   surface（与终端页同一份 `surfaceModeByTab`，不走 switchSurface——它按焦点标签改、切聊天会退出分屏），选择记
   `ccode.readerSurface`（缺省聊天层，与新标签默认同口径；阅读会话每次进入新开，派发时带 `surface`）。

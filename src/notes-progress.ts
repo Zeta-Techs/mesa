@@ -99,6 +99,8 @@ export interface SpotCheckPick {
   /** index 里的 notePath（相对工作区/项目根，或绝对路径） */
   notePath: string;
   fulltext: boolean;
+  /** included.json 的 id（阅读区拿它找题名与摘要；仅摘要的篇拿摘要当原文对照） */
+  id: string | null;
 }
 
 /** 抽查 3 篇的候选：全文精读与仅摘要各至少 1 篇（有的话），其余从已写完的里补齐。
@@ -114,10 +116,12 @@ export function spotCheckPicks(indexText: string, count = 3): SpotCheckPick[] {
   const rows = (records(parsed) ?? [])
     .filter((row) => isReviewed(row))
     .map((row) => {
-      const raw = (row as Record<string, unknown>).notePath;
+      const r = row as Record<string, unknown>;
+      const raw = r.notePath;
       return {
         notePath: typeof raw === "string" ? raw.trim() : "",
         fulltext: field(row, "fulltextStatus") === "fulltext",
+        id: typeof r.id === "string" && r.id.trim() ? r.id.trim() : null,
       };
     })
     .filter((row) => row.notePath !== "");

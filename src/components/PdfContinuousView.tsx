@@ -144,6 +144,7 @@ function PdfContinuousView({
   path,
   cwdHint,
   onAskAi,
+  askAs,
   onBack,
   onCaptureAgent,
   onCaptureNote,
@@ -172,6 +173,8 @@ function PdfContinuousView({
     fileName: string,
     send?: boolean,
   ) => string | null | Promise<string | null>;
+  /** 选段主钮改作别的用途（阅读区抽查 =「记成问题」）：换按钮字与回执，且不出「↵ 直接发送」 */
+  askAs?: { label: string; done: string };
   /** 加载失败/被白名单拒绝时错误条上的「← 返回」 */
   onBack?: () => void;
   /** 圈选截图「◈ 发给 agent」：返回 null 成功，否则为要展示的提示（批次 B2） */
@@ -1055,7 +1058,8 @@ function PdfContinuousView({
         "当前页面不支持问 AI",
     ).then((err) => {
       showHint(
-        err ?? (send ? "已发送给阅读会话" : "已放进对话的输入框，检查后发送"),
+        err ??
+          (askAs ? askAs.done : send ? "已发送给阅读会话" : "已放进对话的输入框，检查后发送"),
       );
       if (!err) clearSelection();
     });
@@ -1811,7 +1815,7 @@ function PdfContinuousView({
                   onClick={() => askAi()}
                   className="rounded-sm border border-cta-bd bg-cta px-2 py-1 text-xs text-cta-text hover:brightness-110"
                 >
-                  ◈ 问 AI
+                  {askAs?.label ?? "◈ 问 AI"}
                 </button>
               )}
               {onAddGlossary && (
@@ -1829,7 +1833,7 @@ function PdfContinuousView({
               <FloatBarOverflow
                 items={[
                   ...(onAddAnnotation ? [{ label: "＋ 批注…", run: openAnnotCard }] : []),
-                  ...(onAskAi ? [{ label: "↵ 直接发送", run: () => askAi(true) }] : []),
+                  ...(onAskAi && !askAs ? [{ label: "↵ 直接发送", run: () => askAi(true) }] : []),
                 ]}
               />
               {onOrganize && (

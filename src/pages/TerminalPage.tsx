@@ -128,7 +128,8 @@ import LaunchMenu, {
 import ProjectRail from "../components/ProjectRail";
 import WorkspaceReviewView from "../components/WorkspaceReviewView";
 import ReaderOverlay from "../components/ReaderOverlay";
-import { wireWorkspaceLaunchGuard } from "../pipeline-start";
+import { buildWorkspaceTerminalRequest, wireWorkspaceLaunchGuard } from "../pipeline-start";
+import type { SpotCheckSession } from "../spot-check";
 import {
   formatPdfExcerptPrompt,
   loadReaderSurface,
@@ -7049,6 +7050,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     notePath?: string;
     /** 跨页进入时的来源页（readerReq 自动记）：退出阅读区回那里；终端页自身入口无此字段 */
     fromPage?: string;
+    /** 精读步「抽查 3 篇笔记」核对档：右栏是问题单、不派阅读会话 */
+    spotCheck?: SpotCheckSession;
   } | null>(null);
 
   // 分屏开启时右栏/文件树/改动跟随「活跃 pane」（点击 pane 或点标签条切换），否则跟随活跃标签
@@ -8441,10 +8444,12 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       projectRoot: readerReq.projectRoot,
       notePath: readerReq.notePath,
       fromPage: readerReq.fromPage,
+      spotCheck: readerReq.spotCheck,
     });
   }, [visible, readerReq, setReaderReq]);
 
-  const readerKey = reader ? readerReuseKey(reader.projectRoot) : null;
+  // 抽查核对档不派阅读会话：阅读会话在项目根运行，改的是主仓里的笔记，不是工作区里待评审的那份
+  const readerKey = reader && !reader.spotCheck ? readerReuseKey(reader.projectRoot) : null;
   /** 阅读会话标签（reuseKey 找回：退出再进接着聊；恢复出的占位标签不带 reuseKey 不参与复用） */
   const readerTabId = readerKey
     ? (tabs.find((t) => t.reuseKey === readerKey)?.id ?? null)
@@ -8631,6 +8636,46 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       setPage(back);
     }
   }, [reader, readerTabId, setPage]);
+
+  /** 抽查问题单交回这一步的 AI：走步骤「继续」同一条链（接回原对话；还在跑就认回持有它的标签，
+      消息注入那个标签），关掉阅读区留在运行页看 AI 改。返回 null 成功，否则为提示 */
+  const sendSpotCheck = useCallback(
+    async (prompt: string): Promise<string | null> => {
+      const ws = reader?.spotCheck?.ws;
+      if (!ws) return "这一步没有可以接着改的对话";
+      try {
+        const req = await buildWorkspaceTerminalRequest(ws, prompt, {
+          autoStart: true,
+          resumeSession: true,
+        });
+        setReader(null);
+        setPendingTerminal(req);
+        return null;
+      } catch (e) {
+        return `没交回去：${String(e)}`;
+      }
+    },
+    [reader],
+  );
+
+  /** 抽查都没问题：勾上这一项、通知流程页重取，回来源页 */
+  const clearSpotCheck = useCallback(async (): Promise<string | null> => {
+    const spot = reader?.spotCheck;
+    if (!spot) return null;
+    try {
+      await invoke("set_human_task_check", {
+        projectRoot: spot.projectRoot,
+        step: spot.stepName,
+        title: spot.taskTitle,
+        checked: true,
+      });
+    } catch (e) {
+      return `没勾上：${String(e)}`;
+    }
+    useAppStore.getState().bumpHumanTasks();
+    closeReader();
+    return null;
+  }, [reader, closeReader]);
 
   // 阅读区打开时把阅读会话标签提到活跃（右栏 xterm 就是那个标签的画面；
   // 退出阅读区时该标签随 closeReader 一起关掉，不再「正好落在它上面」）
@@ -10404,6 +10449,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           agentSurface={readerSurface}
           agentPeek={Boolean(readerTabId && peekByTab[readerTabId])}
           onAgentSurface={setReaderSurface}
+          spotCheck={reader.spotCheck ?? null}
+          onSpotSend={sendSpotCheck}
+          onSpotAllClear={clearSpotCheck}
         />
       )}
     </div>

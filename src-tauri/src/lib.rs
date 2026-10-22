@@ -875,6 +875,7 @@ pub fn run() {
             reader::pdf_for_note,
             reader::list_paper_notes,
             reader::reader_for_note,
+            reader::spot_check_item,
             reader::read_image_bytes,
             reader::read_audio_bytes,
             reader::save_reader_capture,

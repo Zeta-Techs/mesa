@@ -318,11 +318,22 @@ function NotesProgressLine({ roots, live }: { roots: string[]; live: boolean }) 
 }
 
 /** 「抽查 3 篇笔记」就地给出三篇候选（notes/index.json，工作区优先、项目根兜底）：
- *  点一篇在运行页预览打开——保存进项目前笔记还只在工作区里，文件页看不到。 */
-function SpotCheckPicks({ roots }: { roots: string[] }) {
-  const setPreviewReq = useAppStore((s) => s.setPreviewReq);
+ *  点一篇直接盖上阅读区的核对档（笔记｜原文），三篇在里面切，退出回流程页（2026-10-23）。 */
+function SpotCheckPicks({
+  projectPath,
+  ws,
+  stepName,
+  taskTitle,
+}: {
+  projectPath: string;
+  ws: WorkspaceDto | undefined;
+  stepName: string;
+  taskTitle: string;
+}) {
+  const setReaderReq = useAppStore((s) => s.setReaderReq);
   const setPage = useAppStore((s) => s.setPage);
   const [picks, setPicks] = useState<{ root: string; items: SpotCheckPick[] } | null>(null);
+  const roots = ws ? [ws.worktreePath, projectPath] : [projectPath];
   const rootsKey = roots.join("\n");
   useEffect(() => {
     let stale = false;
@@ -348,20 +359,30 @@ function SpotCheckPicks({ roots }: { roots: string[] }) {
   return (
     <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
       <span className="text-micro text-l4">抽这几篇：</span>
-      {picks.items.map((pick) => {
+      {picks.items.map((pick, index) => {
         const rel = pick.notePath.replace(/\\/g, "/");
-        const abs = /^(?:[A-Za-z]:)?\//.test(rel)
-          ? rel
-          : `${picks.root.replace(/[\\/]+$/, "")}/${rel.replace(/^\.?\//, "")}`;
         const name = rel.split("/").pop() ?? rel;
         return (
           <button
             key={pick.notePath}
             type="button"
             className="inline-flex max-w-[16rem] items-center gap-1 rounded-sm px-1 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1"
-            title={`在运行页预览 ${rel}`}
+            title={`对照原文看 ${rel}`}
             onClick={() => {
-              setPreviewReq({ path: abs, name, root: picks.root });
+              setReaderReq({
+                pdfPath: "",
+                projectRoot: projectPath,
+                spotCheck: {
+                  projectRoot: projectPath,
+                  base: picks.root,
+                  stepName,
+                  taskTitle,
+                  // 索引读自项目根（已保存进项目）就没有可交回的对话
+                  ws: ws && picks.root === ws.worktreePath ? ws : null,
+                  items: picks.items,
+                  index,
+                },
+              });
               setPage("terminal");
             }}
           >
@@ -2671,7 +2692,12 @@ export default function StepFlow({
                 </>
               )}
               {isSpotCheckTaskTitle(human.title) && !node.done && (
-                <SpotCheckPicks roots={ws ? [ws.worktreePath, projectPath] : [projectPath]} />
+                <SpotCheckPicks
+                  projectPath={projectPath}
+                  ws={ws}
+                  stepName={step.name}
+                  taskTitle={human.title}
+                />
               )}
               {/* 付费墙：清单就是入口。折叠标题带缺篇数；做法进行内按钮 title，
                   不再在清单上下各写一段说明书。 */}

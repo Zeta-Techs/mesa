@@ -42,6 +42,7 @@ import {
 import type { RunOverviewInput } from "./run-overview";
 import type { DepCheckDto } from "./dep-check";
 import type { AskAiFile } from "./ask-ai";
+import type { SpotCheckSession } from "./spot-check";
 import { toast } from "./toast";
 import { phoneInboxFields } from "./phone-drop";
 import { usePhoneDropStore } from "./phone-drop-store";
@@ -711,12 +712,14 @@ interface AppState {
   setDiffFocusReq: (r: { cwd: string; path: string } | null) => void;
   /** 沉浸式阅读区的一次性打开请求（终端页消费并清空）：PDF 绝对路径 + 所属项目根；
       notePath 指定后笔记栏直接编辑该 md（不按 PDF slug 另建模板笔记）；
-      fromPage 由 store 自动记发起页——阅读区只挂在终端页，跨页进入退出时回到来源页 */
+      fromPage 由 store 自动记发起页——阅读区只挂在终端页，跨页进入退出时回到来源页；
+      spotCheck = 精读步「抽查 3 篇笔记」的核对档（三篇一起带进来，pdfPath/notePath 由阅读区按篇解析） */
   readerReq: {
     pdfPath: string;
     projectRoot: string;
     notePath?: string;
     fromPage?: string;
+    spotCheck?: SpotCheckSession;
   } | null;
   setReaderReq: (
     r: {
@@ -724,8 +727,12 @@ interface AppState {
       projectRoot: string;
       notePath?: string;
       fromPage?: string;
+      spotCheck?: SpotCheckSession;
     } | null,
   ) => void;
+  /** 人工事项状态在流程页之外被改过（阅读区抽查「都没问题」勾上）：useHumanTasks 见变化即重取 */
+  humanTasksTick: number;
+  bumpHumanTasks: () => void;
   /** 步骤胶囊「📁」→ 终端页文件树切根的一次性交接（终端页消费并清空） */
   enterCwdReq: string | null;
   setEnterCwdReq: (p: string | null) => void;
@@ -1043,6 +1050,8 @@ export const useAppStore = create<AppState>((set, get) => {
   // 都该在退出阅读区时回来源页；终端页自己的入口不走 readerReq，天然不带回跳
   setReaderReq: (r) =>
     set({ readerReq: r ? { ...r, fromPage: get().page } : null }),
+  humanTasksTick: 0,
+  bumpHumanTasks: () => set((s) => ({ humanTasksTick: s.humanTasksTick + 1 })),
   enterCwdReq: null,
   setEnterCwdReq: (p) => set({ enterCwdReq: p }),
   runningScripts: {},
