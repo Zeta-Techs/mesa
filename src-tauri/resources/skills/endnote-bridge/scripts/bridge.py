@@ -142,7 +142,8 @@ def parse_bibtex(text):
 
 
 def _placeholder(value):
-    return str(value).strip() in ('待补', '待核')
+    # 「无期号」= 这本刊不分期（lit_records.py 补字段时按 Crossref 判定），同样不是值
+    return str(value).strip() in ('待补', '待核', '无期号')
 
 
 def load(path):
@@ -1004,7 +1005,7 @@ def meaningful(value):
     if isinstance(value, list):
         return any(meaningful(item) for item in value)
     text = clean(value)
-    return bool(text) and text.casefold() not in ('none', 'null', '待补')
+    return bool(text) and text.casefold() not in ('none', 'null', '待补', '待核', '无期号')
 
 
 def blank(record, field):

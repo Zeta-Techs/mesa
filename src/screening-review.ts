@@ -1265,10 +1265,12 @@ function risValue(value: string): string {
   return value.replace(/\r?\n/g, " ").replace(/\s+/g, " ").trim();
 }
 
-/** 「待补」是给人看的缺口标记，进 RIS 就成了文献库里一格「待补」：当没有 */
+/** 「待补」「待核」是给人看的缺口标记，进 RIS 就成了文献库里一格「待补」：当没有。
+ *  「无期号」= 这本刊不分期（lit_records.py 按 Crossref 判定），同样不是值 */
+const NOT_VALUES = new Set(["待补", "待核", "无期号"]);
 function filled(value: string): string {
   const text = risValue(value);
-  return text === "待补" || text === "待核" ? "" : text;
+  return NOT_VALUES.has(text) ? "" : text;
 }
 
 /** RIS 正文里的化学式。DOI、年份、卷期页不走这里。 */
@@ -1335,18 +1337,18 @@ export function normalizeSourceRis(block: string): string {
 }
 
 function pushTag(lines: string[], tag: string, value: string) {
-  const text = risValue(value);
-  if (text && text !== "待补") lines.push(`${tag}  - ${text}`);
+  const text = filled(value);
+  if (text) lines.push(`${tag}  - ${text}`);
 }
 
 function risBody(row: IncludedRecord, target: "zotero" | "endnote"): string[] {
   const lines = ["TY  - JOUR"];
   for (const author of risAuthors(row.authors)) lines.push(`AU  - ${author}`);
   pushTag(lines, "TI", risText(row.title));
-  const journal = risValue(row.source);
-  if (journal && journal !== "待补") lines.push(`T2  - ${journal}`);
-  const short = risValue(row.journalAbbreviation);
-  if (short && short !== "待补" && short.toLowerCase() !== journal.toLowerCase()) {
+  const journal = filled(row.source);
+  if (journal) lines.push(`T2  - ${journal}`);
+  const short = filled(row.journalAbbreviation);
+  if (short && short.toLowerCase() !== journal.toLowerCase()) {
     lines.push(`J2  - ${short}`);
   }
   pushTag(lines, "PY", row.year);
@@ -1366,7 +1368,7 @@ function risBody(row: IncludedRecord, target: "zotero" | "endnote"): string[] {
   const doi = doiToken(row.id, row.url);
   if (doi) lines.push(`DO  - ${doi}`);
   for (const word of risText(row.keywords).split(/[;；]/)) {
-    if (word.trim() && word.trim() !== "待补") lines.push(`KW  - ${word.trim()}`);
+    if (filled(word)) lines.push(`KW  - ${word.trim()}`);
   }
   pushTag(lines, "AB", risText(row.abstract));
   if (target === "endnote") pushTag(lines, "LA", row.language);

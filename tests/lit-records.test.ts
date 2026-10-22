@@ -320,6 +320,54 @@ test("bib：精读步从 included.json 写引文库——已有条目不改键�
   }
 });
 
+test("不分期的刊：Crossref 有卷无期记「无期号」，不进 RIS、引文库不写 number，早先写的 number = {待补} 拿掉", () => {
+  // 2026-10-23 HER 精读步：Appl. Catal. B / Chin. J. Catal. 只按卷编排，期号「待补」永远补不上，渲染出「(待补)」
+  const root = mkdtempSync(join(tmpdir(), "mesa-lit-noissue-"));
+  try {
+    const cache = join(root, "cache");
+    mkdirSync(join(root, "papers"), { recursive: true });
+    mkdirSync(cache);
+    const doi = "10.1016/j.apcatb.2021.120490";
+    writeFileSync(join(root, "papers/included.json"), JSON.stringify([
+      { id: "W", title: "Single atom Ru doping 2H-MoS2", decision: "included", reason: "纳入", doi },
+    ]));
+    cacheBody(cache, `https://api.crossref.org/works/${doi}`, {
+      status: "ok",
+      message: {
+        DOI: doi, type: "journal-article", title: ["Single atom Ru doping 2H-MoS2"],
+        author: [{ family: "Wang", given: "Kai" }], "container-title": ["Applied Catalysis B: Environmental"],
+        volume: "298", page: "120490", issued: { "date-parts": [[2021, 11]] },
+      },
+    });
+    cacheBody(cache, `https://api.openalex.org/works/doi:${doi}`, { biblio: { volume: "298" } });
+    let r = spawnSync(python, [script, "enrich", "--offline", "--cache", cache], { cwd: root, encoding: "utf8", timeout: 60_000 });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    const [rec] = JSON.parse(readFileSync(join(root, "papers/included.json"), "utf8"));
+    assert.equal(rec.issue, "无期号");
+    assert.doesNotMatch(r.stdout, /待补：[^\n]*issue/, "不算缺口");
+    const bib = join(root, "references.bib");
+    writeFileSync(bib, `@article{Wang2021,\n  title = {Single atom Ru doping 2H-MoS2},\n  volume = {298},\n  number = {待补},\n  doi = {${doi}}\n}\n`);
+    r = spawnSync(python, [script, "bib"], { cwd: root, encoding: "utf8", timeout: 60_000 });
+    assert.equal(r.status, 0, r.stderr);
+    let text = readFileSync(bib, "utf8");
+    assert.doesNotMatch(text, /number/);
+    assert.match(text, /volume = \{298\},\n  doi =/);
+    writeFileSync(bib, "");
+    r = spawnSync(python, [script, "bib"], { cwd: root, encoding: "utf8", timeout: 60_000 });
+    text = readFileSync(bib, "utf8");
+    assert.match(text, /@article\{Wang2021,/);
+    assert.doesNotMatch(text, /number|无期号/, "新写的条目也不带 number");
+    r = spawnSync(python, [script, "write", "--root", root], { cwd: root, encoding: "utf8", timeout: 60_000 });
+    assert.equal(r.status, 0, r.stderr);
+    const ris = readFileSync(join(root, "papers/endnote-import.ris"), "utf8");
+    assert.doesNotMatch(ris, /IS  -|无期号/);
+    const [row] = parseIncludedRecords(readFileSync(join(root, "papers/included.json"), "utf8"));
+    assert.doesNotMatch(recordToEndnoteRis(row), /IS  -|无期号/, "Mesa 纳入时追加的那份同口径");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("Mesa 纳入时追加 RIS：数组作者一人一条 AU，「待补」的页、链接、文章类型不进标签", () => {
   const [row] = parseIncludedRecords(
     JSON.stringify([{ id: "X", title: "T", decision: "included", reason: "", authors: ["Doe, Jane", "Roe, John", "待补"], pages: "待补", url: "待补", articleType: "待补", doi: "10.1/x" }]),

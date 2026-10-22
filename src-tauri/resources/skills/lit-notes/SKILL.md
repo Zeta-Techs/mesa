@@ -81,7 +81,7 @@ python3 <技能目录>/scripts/lit_records.py bib --json papers/included.json --
 - `journalabbreviation`（与期刊全称不同才写）
 - `issn`、`abstract`、`keywords`（分号分隔）
 
-缺的字段写「待补」，不得编造，也不许用卷号或页码去填空着的期（「待补」「待核」只是给人看的缺口标记，同步到文献库时 Mesa 不会把它写进 Zotero / EndNote）。字段写了但没和 Crossref 对过的标「待核」，核对通过再去掉标记。已有条目只补空字段，不改键、不覆盖人改过的作者和标题。
+缺的字段写「待补」，不得编造，也不许用卷号或页码去填空着的期（「待补」「待核」只是给人看的缺口标记，同步到文献库时 Mesa 不会把它写进 Zotero / EndNote）。included.json 里期是「无期号」的（这本刊只按卷编排），引文库不写 number，也不当缺口报。字段写了但没和 Crossref 对过的标「待核」，核对通过再去掉标记。已有条目只补空字段，不改键、不覆盖人改过的作者和标题。
 
 ### 用已下载 PDF 核对题录
 

@@ -35,6 +35,10 @@ import urllib.request
 from pathlib import Path
 
 PLACEHOLDER = "待补"
+# Crossref 有这篇的正式记录、但它没有期号（Appl. Catal. B、Chin. J. Catal. 等只按卷编排）：
+# 不是缺口，标「无期号」免得人去补一个不存在的值；和「待补」「待核」一样不进 RIS / 引文库
+NO_ISSUE = "无期号"
+NOT_VALUES = (PLACEHOLDER, "待核", NO_ISSUE)
 # included.json 每条的题录字段（顺序即写回顺序）。查不到的写「待补」，不留空、不猜
 FIELDS = (
     "authors", "year", "venue", "volume", "issue", "pages", "date", "epubDate", "articleType",
@@ -188,7 +192,7 @@ def meaningful(value):
     if isinstance(value, list):
         return any(meaningful(v) for v in value)
     text = str(value).strip()
-    return bool(text) and text.casefold() not in ("none", "null", "nan", PLACEHOLDER, "待核", "n/a")
+    return bool(text) and text.casefold() not in ("none", "null", "nan", "n/a", *NOT_VALUES)
 
 
 def as_text(value):
@@ -392,7 +396,10 @@ def enrich_one(rec, mesa):
     venue = pick(cr.get("journal"), rec.get("venue"), rec.get("source"), rec.get("journal"), oa.get("journal"))
     out["venue"] = B.clean(as_text(venue)) if venue else PLACEHOLDER
     out["volume"] = B.plain_id(as_text(pick(cr.get("volume"), oa.get("volume"), rec.get("volume")))) or PLACEHOLDER
-    out["issue"] = B.plain_id(as_text(pick(cr.get("number"), oa.get("number"), rec.get("issue")))) or PLACEHOLDER
+    issue = B.plain_id(as_text(pick(cr.get("number"), oa.get("number"), rec.get("issue"))))
+    # 正式记录有卷没期：这本刊不分期，不是查不到
+    no_issue = (bool(cr) and cr.get("articleType") != "Preprint" and meaningful(out["volume"])) or as_text(rec.get("issue")) == NO_ISSUE
+    out["issue"] = issue or (NO_ISSUE if no_issue else PLACEHOLDER)
     pages = as_text(pick(cr.get("pages"), oa.get("pages"), rec.get("pages")))
     out["pages"] = B.plain_id(pages.replace("–", "-").replace("—", "-")) or PLACEHOLDER
     if cr:
@@ -415,7 +422,7 @@ def enrich_one(rec, mesa):
     out["journalAbbreviation"] = journal_abbreviation(out["venue"] if out["venue"] != PLACEHOLDER else "", rec.get("journalAbbreviation"), mesa)
     if not doi:
         notes.append("没有 DOI，题录只按原记录整理")
-    missing = [k for k in FIELDS if not meaningful(out.get(k)) and k != "epubDate"]
+    missing = [k for k in FIELDS if not meaningful(out.get(k)) and k != "epubDate" and out.get(k) != NO_ISSUE]
     if missing:
         notes.append("待补：" + "、".join(missing))
     return out, notes
@@ -676,7 +683,7 @@ def ris_text(value):
 
 def push(lines, tag, value):
     text = ris_value(value)
-    if text and text != PLACEHOLDER:
+    if text and text not in NOT_VALUES:
         lines.append(f"{tag}  - {text}")
 
 
@@ -686,10 +693,10 @@ def ris_block(rec, target):
         lines.append(f"AU  - {ris_value(author)}")
     push(lines, "TI", ris_text(rec.get("title")))
     journal = ris_value(rec.get("venue") or rec.get("source") or rec.get("journal"))
-    if journal and journal != PLACEHOLDER:
+    if journal and journal not in NOT_VALUES:
         lines.append(f"T2  - {journal}")
     short = ris_value(rec.get("journalAbbreviation"))
-    if short and short != PLACEHOLDER and short.lower() != journal.lower():
+    if short and short not in NOT_VALUES and short.lower() != journal.lower():
         lines.append(f"J2  - {short}")
     push(lines, "PY", rec.get("year"))
     if target == "endnote":
@@ -698,7 +705,7 @@ def ris_block(rec, target):
     push(lines, "VL", rec.get("volume"))
     push(lines, "IS", rec.get("issue"))
     pages = ris_value(rec.get("pages"))
-    if pages != PLACEHOLDER:
+    if pages not in NOT_VALUES:
         parts = [p.strip() for p in re.split(r"-+", re.sub(r"[–—−]", "-", pages), maxsplit=1)] if pages else []
         if parts and parts[0]:
             lines.append(f"SP  - {parts[0]}")
@@ -951,7 +958,7 @@ BIB_FIELDS = (
     ("journalAbbreviation", "journalabbreviation"), ("issn", "issn"), ("doi", "doi"), ("url", "url"),
     ("abstract", "abstract"), ("keywords", "keywords"), ("language", "language"), ("articleType", "articletype"),
 )
-# 查不到也要写「待补」的字段（人一眼看到缺口）；其余查不到就不写
+# 查不到也要写「待补」的字段（人一眼看到缺口）；其余查不到就不写。期号是「无期号」的不写 number
 BIB_REQUIRED = {"title", "author", "year", "journal", "volume", "number", "pages", "doi"}
 
 
@@ -1069,9 +1076,14 @@ def cmd_bib(args):
             changed = []
             for src, name in BIB_FIELDS:
                 value = bib_value(rec, src)
-                if not value:
-                    continue
                 current = fields.get(name)
+                if not value:
+                    # 早先写成 number = {待补}、其实这本刊不分期：拿掉这一行，免得渲染出「(待补)」
+                    if src == "issue" and as_text(rec.get("issue")) == NO_ISSUE and current and current[0] == PLACEHOLDER:
+                        new_entry = re.sub(r"\n[ \t]*number\s*=\s*\{待补\},?", "", new_entry, count=1)
+                        changed.append("-number")
+                        fields = bib_fields_of(new_entry)
+                    continue
                 if current and meaningful(current[0]):
                     continue
                 line = f"{name} = {{{B.escape_bib(value)}}}"
@@ -1094,7 +1106,7 @@ def cmd_bib(args):
         for src, name in BIB_FIELDS:
             value = bib_value(rec, src)
             if not value:
-                if name in BIB_REQUIRED:
+                if name in BIB_REQUIRED and not (src == "issue" and as_text(rec.get("issue")) == NO_ISSUE):
                     value = PLACEHOLDER
                 else:
                     continue

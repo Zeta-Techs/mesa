@@ -164,7 +164,7 @@ docs/            architecture.md（总体设计 + §10 决策记录 + §12 当�
   （中文系统回落 GBK），Windows 任务书固定带「本机 Python（Windows）」节提示改加 `-X utf8`（2026-10-22，`task-md.ts`）。
 - **检索 / 精读的题录只经 `lit-search/scripts/lit_records.py` 从 `papers/included.json` 出**（2026-10-22）：included.md、to-fetch.md、
   两份 RIS、references.bib 都是它生成，简报与技能不得再让 Agent 手写或自写补字段脚本；RIS 拼法与 `screening-review.ts risBody`
-  双端镜像（`tests/lit-records.test.ts` 逐条比对），改一边两边同改；「待补」「待核」不得进任何 RIS / 文献库字段。
+  双端镜像（`tests/lit-records.test.ts` 逐条比对），改一边两边同改；「待补」「待核」「无期号」不得进任何 RIS / 文献库字段（「无期号」= Crossref 有卷没期，不是缺口，2026-10-23）。
 - **`quarto render` 命令（模板 run 脚本与技能）统一 `--output-dir ../output`、不带 `--output`**（2026-10-21 Windows 实测：写 `output`
   落进 `manuscript/output/` 且后一次渲染清掉前一次）；项目根不放 `_quarto.yml`；存量项目的 run 命令存在各自 `.ccode/project.toml`，
   改模板不会自动更新，要手工处理。PDF 走 xelatex 时 header 必须带 ActualText 开关（`manuscript_font.py` 写），否则分号文本层变 U+037E。
