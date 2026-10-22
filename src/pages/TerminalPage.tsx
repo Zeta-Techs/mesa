@@ -6731,6 +6731,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       resumeSessionId: tab.customRuntimeId ? undefined : tab.sessionId ?? undefined,
       runId: tab.runId ?? undefined,
       taskId: tab.taskId ?? undefined,
+      reuseKey: tab.reuseKey ?? undefined,
       restored: true,
     }));
     return {
@@ -7633,6 +7634,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
             sessionId,
             runId: status?.runId ?? tab.runId ?? null,
             taskId: tab.taskId ?? null,
+            reuseKey: tab.reuseKey ?? null,
           },
         },
       ];
@@ -8149,7 +8151,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         }
       }
       // 复用键：已有同 key 标签就切过去，不再新开（「快速开聊」「跟 AI 商量一下」等
-      // 重复入口防标签堆积；恢复出的占位标签不带 reuseKey，不参与复用——会话已断，新开才诚实）。
+      // 重复入口防标签堆积；恢复出的占位标签只留工作区键 ws:，别的不参与复用——会话已断，新开才诚实）。
       // 复用时不跳过右侧收尾：previewPath/rightTab 等交接对复用标签同样生效（重进即回到该有的布局）
       let tabId: string | null = null;
       const adoptExisting = (existing: (typeof tabs)[number]) => {
@@ -8240,6 +8242,21 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           return agent === pt.resume?.agentId && sid === pt.resume?.sessionId;
         });
         if (bySession) adoptExisting(bySession);
+      }
+      // 这一步的对话还在跑：找到持有它的标签只聚焦，不另开一份（另开就是两个 CLI 抢同一会话）
+      if (!tabId && pt.focusSession) {
+        const holder = findResumeHolderTab(tabsRef.current, statusesRef.current, pt.focusSession);
+        if (holder) adoptExisting(holder);
+      }
+      // 工作区入口的最后一道：会话 id 对不上（Claude 接续后换了新会话文件、老标签没带复用键）时，
+      // 这棵工作树里正有 Agent 在跑的标签就是这一步的对话。工作树一步一棵，按目录认不会认错别的对话
+      //（2026-10-22 实证：收件箱「去终端回答」在 Agent 还在跑时新开了一个终端）
+      if (!tabId && (pt.focusSession || pt.reuseKey?.startsWith("ws:"))) {
+        const running = tabsRef.current.find((t) => {
+          const st = statusesRef.current[t.id];
+          return st?.running && !st.shell && samePath(st.cwd ?? "", pt.cwd, IS_WINDOWS);
+        });
+        if (running) adoptExisting(running);
       }
       tabId ??= addTab({
         cwd: pt.cwd,

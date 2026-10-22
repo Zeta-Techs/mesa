@@ -351,8 +351,11 @@ export interface PendingTerminal {
   /** 打开后切到聊天层（办公「问 AI」）；缺省沿用标签上次选择 / 默认终端 */
   surface?: "chat" | "terminal";
   /** 复用键：已有同 key 标签时切换到它而不是新开（「跟 AI 商量一下」等
-      重复入口防标签堆积）。仅内存匹配，不进重启持久化白名单（恢复占位不参与复用） */
+      重复入口防标签堆积）。只有工作区键（ws:）进重启持久化白名单，别的恢复占位不参与复用 */
   reuseKey?: string;
+  /** 这一步的对话还在跑（CLI 活着，不能再 resume 一份）：有标签持有它就切过去，不另开会话。
+      复用键没命中（老标签没带键）时按会话 id 认，再不行认同一工作树里正在跑 Agent 的标签 */
+  focusSession?: { agentId: string; sessionId: string };
   /** 只复用空白标签（快速开聊）：有复用键以此开头、还没说过话的标签就切过去（不改它输入框里已换的选择），
       没有就用 reuseKey 新开。说过话的不复用——快速开聊是开新对话 */
   reuseBlank?: string;

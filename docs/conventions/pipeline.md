@@ -678,13 +678,16 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   「去终端看看」、工作区行「去终端」）是「回到那个对话」而非新开**（v3.93，用户拍板）：交接构造
   单一出处 `pipeline-start.ts buildWorkspaceTerminalRequest`——始终带 reuseKey `ws:<worktreePath>`
   （开工起的标签之后能找回，同一工作区永远回到同一个终端标签），无 initialPrompt 时自动 resume
-  该工作区最近会话（`latestWorkspaceSession`：按 workspace 名 + 仓库路径匹配列表，排除归档/内部
+  该工作区最近会话（`pickWorkspaceResume`：按 workspace 名 + 仓库路径匹配列表，排除归档/内部
   无头/live 中的会话）；有 prompt（开工/整理笔记）是明确新任务，不 resume。StepFlow `goTerminal`
   与 WorkspacesPage `useOpenInTerminal` 都走它，禁再各自手搓 pendingTerminal。
-  **resume 前还有一道 cwd 活标签兜底**（TerminalPage 消费处）：reuseKey 没命中（restored/手动开的
-  标签不带 key）时若某活标签的 cwd 就是目标目录，聚焦它而不是新开 resume——`live` 只标外部进程，
-  本应用标签里活着的会话不在其列，直接去 resume 会被 CLI 拒（codex：thread already has an
-  active writer）。
+  **同一步只有一个终端标签（2026-10-22 修，用户实证收件箱「去终端回答」新开了终端、标签名一会儿 lit-notes 一会儿
+  「文献精读与笔记」）**：①「继续」「新开一轮」也带 `ws:` 复用键（原先新开一轮不带，之后谁都认不出这个标签）；
+  ② 工作区复用键进重启持久化白名单（`terminal-tab-persistence.ts` 只留 `ws:` 前缀），重启后照样回到原标签；
+  ③ 最近那条对话还在跑（外部进程，`live`）时不 resume 任何一条，交接带 `focusSession` 让终端页认回持有它的标签；
+  ④ 复用键与会话 id 都没对上时（Claude 接续后换了新会话文件），这棵工作树里正有 Agent 在跑的标签就是这一步的对话，
+  聚焦它不另开（工作树一步一棵，按目录认不会认错）；⑤ 标签名统一用步骤名（`workspaceStepName` 读项目配置），
+  手建工作区才用工作区名。
   **人工事项是步骤级，不进卡片**（v3.69 修正：卡片是想法容器，一步多卡时步骤级清单在每张卡重复渲染 = 噪声）；
   **v3.70 起大圆点击语义从「终端入口」改为「步骤聚焦」**（用户拍板：圆上不再跳终端/开步——推进动作归流程
   线节点、卡片行、任务行）：点圆 = 卡片区只看该步骤（种子 + 卡片 + 人工事项清单一屏内），选中圆中性高亮环，

@@ -626,18 +626,18 @@ export default function TaskCardsSection({
     card?: TaskCardDto | null,
   ) {
     if (card) claimForCard(card, launch);
-    const agentLabel =
-      AGENTS.find((a) => a.id === launch.agentId)?.label ?? launch.agentId;
     const req = await buildWorkspaceTerminalRequest(ws, CONTINUE_RESUME_PROMPT, {
       autoStart: true,
       resumeSession: true,
       stepLaunch: launch,
     });
-    setPendingTerminal({ ...req, title: `${title} · ${agentLabel}`, surface: "terminal" });
+    setPendingTerminal({ ...req, title: req.title || title, surface: "terminal" });
     setPage("terminal");
   }
 
-  /** 新开一轮。不 resume、不复用旧标签。prompt 可以是完成标准，或先读简报再完成标准。 */
+  /** 新开一轮：不 resume。仍用这个工作区的复用键——同一步只有一个终端标签（2026-10-22：
+   *  不带键时这个标签之后「去终端回答」认不出，又开一个）；闲着的旧标签就地换成新一轮。
+   *  prompt 可以是完成标准，或先读简报再完成标准。 */
   async function launchContinuation(
     launch: { agentId: string; profileId: string; model: string },
     ws: WorkspaceDto,
@@ -646,8 +646,6 @@ export default function TaskCardsSection({
     card?: TaskCardDto | null,
   ) {
     if (card) claimForCard(card, launch);
-    const agentLabel =
-      AGENTS.find((a) => a.id === launch.agentId)?.label ?? launch.agentId;
     const req = await buildWorkspaceTerminalRequest(ws, prompt, {
       autoStart: true,
       stepLaunch: launch,
@@ -655,7 +653,8 @@ export default function TaskCardsSection({
     setPendingTerminal({
       cwd: req.cwd,
       extraEnv: req.extraEnv,
-      title: `${title} · ${agentLabel}`,
+      title: req.title || title,
+      reuseKey: req.reuseKey,
       agentId: launch.agentId,
       profileId: launch.profileId,
       model: launch.model,

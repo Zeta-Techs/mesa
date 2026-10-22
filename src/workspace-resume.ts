@@ -104,3 +104,22 @@ export function continueRoute(
   const source = workspaceCarrySource(sessions, workspaceName, repoPath, agentId);
   return source ? { kind: "carry", source } : { kind: "fresh" };
 }
+
+/** 这个工作区里还在跑的那条对话（CLI 进程活着）。「去终端看看 / 回答」用它找持有的标签，
+ *  不 resume——活会话再 resume 一份就是两个 CLI 抢同一会话。 */
+export function pickLiveWorkspaceSession(
+  sessions: SessionMetaDto[],
+  workspaceName: string,
+  repoPath: string,
+): { agentId: string; sessionId: string } | null {
+  const repo = repoPath.replace(/[\\/]+$/, "");
+  const hit = sessions.find(
+    (s) =>
+      s.workspace === workspaceName &&
+      s.projectPath.replace(/[\\/]+$/, "") === repo &&
+      !s.archived &&
+      !s.internal &&
+      s.live,
+  );
+  return hit ? { agentId: hit.agent, sessionId: hit.sessionId } : null;
+}

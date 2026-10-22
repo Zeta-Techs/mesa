@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   continueRoute,
   keepWorkspaceResume,
+  pickLiveWorkspaceSession,
   pickWorkspaceResume,
   shouldResumeWorkspaceSession,
   workspaceCarrySource,
@@ -185,4 +186,13 @@ test("步骤「继续」：上次是同一家 Agent 就接回原会话，另一�
   assert.deepEqual(continueRoute([], "lit-search", "/repo", "claude-code"), { kind: "fresh" });
   // 别的工作区的会话不算
   assert.deepEqual(continueRoute(sessions, "lit-notes", "/repo", "claude-code"), { kind: "fresh" });
+});
+
+test("去终端看看 / 回答：这一步有对话还在跑时认出它（交给终端页找持有的标签），不 resume 更早的那条", () => {
+  const sessions = [
+    session({ sessionId: "s-live", live: true }),
+    session({ sessionId: "s-old" }),
+  ];
+  assert.deepEqual(pickLiveWorkspaceSession(sessions, "lit-search", "/repo/"), { agentId: "claude-code", sessionId: "s-live" });
+  assert.equal(pickLiveWorkspaceSession([session({ sessionId: "s-old" })], "lit-search", "/repo"), null);
 });
