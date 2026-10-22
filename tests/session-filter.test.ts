@@ -330,6 +330,25 @@ test("sessionProjectLabel：注册名 > 随手聊 > 目录末段", async () => {
   assert.equal(sessionProjectLabel("", names), null);
 });
 
+test("sessionProjectLabel：Claude 编码目录名认回已添加项目，认不出就不写", async () => {
+  const { sessionProjectLabel, claudeProjectDirName } = await import("../src/session-filter.ts");
+  assert.equal(claudeProjectDirName("/Users/me/Desktop/测试项目"), "-Users-me-Desktop-----");
+  assert.equal(claudeProjectDirName("C:\\Users\\me\\x"), "C--Users-me-x");
+  const names = new Map([
+    ["/Users/me/Documents/Ccode", "Ccode"],
+    ["/Users/me/Desktop/测试项目", "测试项目"],
+  ]);
+  assert.equal(sessionProjectLabel("-Users-me-Documents-Ccode", names), "Ccode");
+  assert.equal(sessionProjectLabel("-Users-me-Desktop-----", names), "测试项目");
+  assert.equal(sessionProjectLabel("-Users-me-elsewhere", names), null);
+  // 两个同长中文名编码相同：认不准就不写
+  const twins = new Map([
+    ["/Users/me/甲乙", "甲乙"],
+    ["/Users/me/丙丁", "丙丁"],
+  ]);
+  assert.equal(sessionProjectLabel("-Users-me---", twins), null);
+});
+
 test("scopeDirRows：已添加项目用注册名在上，家目录/其他目录另段，随手聊不进", async () => {
   const { scopeDirRows } = await import("../src/session-filter.ts");
   const g = (path: string, n: number) => ({ path, list: Array.from({ length: n }, () => ({}) as never) });

@@ -345,6 +345,14 @@
   空闲只留「在客户端打开」，两样都没有整行不出——没事不画点。④l4 小字在井上 3.45:1，工作台文字一律 ≥ l3；l4 只给图标。
   ⑤「上次停在」不算 Mesa 塞的上下文包：以默认包头 `PROJECT_PACK_HEAD` 开头的用户消息，有 `LAUNCH_PROMPT_SEPARATOR` 只取其后，没有整条跳过
   （两常量与 `composeLaunchPrompt` 同处 project-context.ts）。
+- **对话页 / 技能页按审查收口（2026-10-23，HIG 审查后用户「全部修」）**：①行内操作钮、快筛与「更多」展开一律 Lucide 线框（14px / 1.8，同侧栏）：
+  保留 = `Flag`（已保留实心）、更多 = `MoreHorizontal`、展开 = `ChevronDown`、编辑 = `Pencil`、优化 = `WandSparkles`、MCP 测连通 = `PlugZap`、删除 = `Trash2`；
+  `RowAction.icon` 收 ReactNode。「符号语言统一」里的 ⚑ ◈ 几何符号只留在正文文案与旧浮条里，可点的行内钮不再用文字符号（✎ ◈ ↯ ✕ ⋯ ▾）。
+  ②对话行品牌胶囊：范围限定到单个 Agent（含单个 Agent 范围 chip）时不画，同 projectScoped 口径。③「恢复」统一叫「继续」（行内钮、
+  回放 ⋯、右键、设置提示、复制命令文案），与回放头部主按钮、项目页预览、说明书同词。④对话列表滚动后上沿出 hairline（顶部被切半的行压在线下）。
+  ⑤`searchFieldClass` 占位字 l3（l4 在 inset 上 3.16:1）。⑥技能行：简介去掉 `max-w-xl` 铺到「已用」列前；「N 处」改「N 个 Agent」，全装 / 未用
+  不画点，本机装了却没分发才画琥珀点（悬停列已用 / 还没用）；搜索框 `w-full max-w-md`，不给宽度时 input 默认 20 字宽会截掉占位字。
+  ⑦Claude 会话没记工作目录时 `projectPath` 是编码目录名（`-Users-…`）：前端 `sessionProjectLabel` 按 `claudeProjectDirName` 认回唯一项目，认不出不写。
 - **侧栏桌面磨砂（2026-09-24）**：透的是窗口背后的桌面，不是页头那种网页内 `backdrop-filter`。
   窗口 `transparent` + macOS `underWindowBackground`（`macOSPrivateApi`，不上 Mac App Store）/
   Windows 11 Mica（深浅跟 Mesa 主题，不跟系统外观）；Linux 没有同等材质，侧栏保持实心 rail。

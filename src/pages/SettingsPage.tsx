@@ -3133,7 +3133,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         <SubHeading title="外部终端与运行时" />
         <Row
           label="外部终端"
-          hint="对话页「在外部终端恢复」、连接页外部启动用哪个终端；立即生效"
+          hint="对话页「在外部终端继续」、连接页外部启动用哪个终端；立即生效"
           labelTitle="对话页「⇗ 外部恢复」使用的终端应用，立即生效。Windows 可在命令提示符和 PowerShell 之间切换：cmd 不经过 PowerShell，通常更快"
         >
           <select

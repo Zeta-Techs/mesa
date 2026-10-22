@@ -29,7 +29,7 @@ export interface QuickFilterDef {
 
 /** 固定展示顺序：状态在前、时间居中、范围在后 */
 export const QUICK_FILTERS: readonly QuickFilterDef[] = [
-  { id: "pinned", label: "⚑ 保留", title: "只看已保留（pin）的对话" },
+  { id: "pinned", label: "保留", title: "只看已保留（pin）的对话" },
   { id: "live", label: "进行中", title: "只看仍在运行的会话" },
   { id: "today", label: "今天", title: "今天有更新的对话" },
   { id: "week", label: "近 7 天", title: "近 7 天有更新的对话" },
@@ -200,12 +200,26 @@ export function sessionProjectLabel(
   isWindows = false,
 ): string | null {
   if (!projectPath.trim()) return null;
+  // 会话文件没记工作目录时，后端退回 Claude 存会话的目录名（路径里非字母数字都换成 -，有损）：
+  // 不是路径就别当路径显示（曾出现「-Users-tongzhouho…」），按同一规则编码已添加项目去对，唯一对上才写名
+  if (!/[\\/]/.test(projectPath)) {
+    const hits = [...names].filter(
+      ([path, name]) => name.trim() && claudeProjectDirName(path) === projectPath,
+    );
+    return hits.length === 1 ? hits[0][1].trim() : null;
+  }
   const key = pathKey(projectPath, isWindows);
   for (const [path, name] of names) {
     if (pathKey(path, isWindows) === key && name.trim()) return name.trim();
   }
   if (isScratchCwd(projectPath, isWindows)) return "随手聊";
   return baseName(projectPath) || null;
+}
+
+/** Claude Code 存会话的目录名：绝对路径去掉末尾分隔后，每个非 ASCII 字母数字的字符换成 `-`
+ *  （`/Users/me/测试项目` → `-Users-me-----`；Windows `C:\\x` → `C--x`） */
+export function claudeProjectDirName(path: string): string {
+  return path.replace(/[\\/]+$/, "").replace(/[^A-Za-z0-9]/g, "-");
 }
 
 /** Mesa 无头 AI 的临时 cwd 名：`ccode-ai-<uuid>`（与 ai.rs 命名同步）。 */

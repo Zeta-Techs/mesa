@@ -7,6 +7,7 @@ import {
   Import,
   Layers,
   Link,
+  MoreHorizontal,
   Pencil,
   RefreshCw,
   Tag,
@@ -94,14 +95,23 @@ function skillRepoUrl(skill: SkillDto): string | null {
 /** 应用列单元格：未用 = 浅灰「未用」；已用 = 绿点 + 数量，agent 名收进 tooltip；点击进右侧详情 */
 function AppliedCell({
   skill,
+  installedIds,
   onOpen,
 }: {
   skill: SkillDto;
+  /** 本机装了的 Agent（检测还没回来时为 null：不判「漏装」） */
+  installedIds: ReadonlySet<string> | null;
   onOpen: () => void;
 }) {
   const appliedNames = Object.entries(skill.apps)
     .filter(([, on]) => on)
     .map(([id]) => AGENTS.find((a) => a.id === id)?.label ?? id);
+  // 装了却没分发到的 Agent：只有这种「部分应用」值得点一下，全装上不画点（每行一样的绿点等于没说）
+  const missingNames = installedIds
+    ? Object.entries(skill.apps)
+        .filter(([id, on]) => !on && installedIds.has(id))
+        .map(([id]) => AGENTS.find((a) => a.id === id)?.label ?? id)
+    : [];
   const anchorRef = useRef<HTMLButtonElement>(null);
   const { tip, show, hide } = useHoverTip(anchorRef);
   const has = appliedNames.length > 0;
@@ -117,15 +127,19 @@ function AppliedCell({
       onMouseLeave={hide}
       className="flex h-8 items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-seg-sel"
     >
-      {/* 无状态不渲染状态点：未应用时不画灰点，计数文字已表达 */}
-      {has && <span className="size-2 shrink-0 rounded-full bg-ok-text" />}
-      <span className={has ? "text-l3 hover:text-l1" : "text-l4"}>
-        {has ? `${appliedNames.length} 处` : "未用"}
+      {/* 写「N 个 Agent」不写「N 处」；只有部分应用画琥珀点，全装上 / 未用都不画（2026-10-23 审查） */}
+      {has && missingNames.length > 0 && (
+        <span className="size-1.5 shrink-0 rounded-full bg-warn-text" />
+      )}
+      <span className="text-l3 hover:text-l1">
+        {has ? `${appliedNames.length} 个 Agent` : "未用"}
       </span>
       {has && (
         <HoverTip
           tip={tip}
-          text={`已用：\n${appliedNames.join("、")}\n点击在右侧管理`}
+          text={`已用：${appliedNames.join("、")}${
+            missingNames.length ? `\n还没用：${missingNames.join("、")}` : ""
+          }\n点击在右侧管理`}
         />
       )}
     </button>
@@ -1421,6 +1435,12 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
   const setPendingTerminal = useAppStore((s) => s.setPendingTerminal);
   const setPage = useAppStore((s) => s.setPage);
   const agents = useAppStore((s) => s.agents);
+  // 列表「N 个 Agent」判部分应用用：检测数据没回来时不判
+  const installedAgentIds = useMemo(
+    () =>
+      agents.length ? new Set(agents.filter((a) => a.binaryPath).map((a) => a.id)) : null,
+    [agents],
+  );
 
   async function refresh() {
     try {
@@ -1975,7 +1995,8 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
             <div className="mt-4">
               <div className="mb-2 flex items-center gap-2">
                 <input
-                  className={searchFieldClass}
+                  // 不给宽度时 input 按默认 20 字符宽，占位字后半截「/ 来源）」被截掉
+                  className={`w-full max-w-md ${searchFieldClass}`}
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="搜索技能（名称 / 描述 / 分类 / 来源）"
@@ -2123,14 +2144,14 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                                     )}
                                   </div>
                                   {/* 描述次行：名称下挂一行简介提升扫视效率（来源列拆除后横向空间
-                                      释放，上限放宽到 max-w-xl；对比度提到 xs/l3，米白底色上 micro/l4 太暗）；
+                                      释放，2026-10-23 去掉宽度上限、铺到「已用」列前；对比度提到 xs/l3，米白底色上 micro/l4 太暗）；
                                       空/纯符号描述不渲染（displayDescription 同预览面板口径） */}
                                   {(() => {
                                     const desc = displayDescription(
                                       skill.description,
                                     );
                                     return desc ? (
-                                      <div className="mt-0.5 max-w-xl truncate text-xs text-l3">
+                                      <div className="mt-0.5 truncate text-xs text-l3">
                                         {desc}
                                       </div>
                                     ) : null;
@@ -2195,6 +2216,7 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                                 </div>
                                 <AppliedCell
                                   skill={skill}
+                                  installedIds={installedAgentIds}
                                   onOpen={() => void onView(skill)}
                                 />
                                 {/* 行内高频操作（2026-08-24 起与 MCP 页同口径）：裸图标钮 hover 淡入，
@@ -2202,7 +2224,7 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                                 <div className="flex items-center justify-end">
                                   <div className={`flex items-center ${hoverRevealClass} focus-within:opacity-100`}>
                                     <RowAction
-                                      icon="✎"
+                                      icon={<Pencil size={14} strokeWidth={1.8} aria-hidden="true" />}
                                       tip="编辑内容"
                                       label={`编辑 ${skill.name}`}
                                       onClick={(e) => {
@@ -2211,8 +2233,8 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                                       }}
                                     />
                                     <RowAction
-                                      icon="◈"
-                                      tip="◈ 优化：开终端让 Agent 按你的意见改写"
+                                      icon={<WandSparkles size={14} strokeWidth={1.8} aria-hidden="true" />}
+                                      tip="优化：开终端让 Agent 按你的意见改写"
                                       label={`优化 ${skill.name}`}
                                       onClick={(e) => {
                                         e.stopPropagation();
@@ -2220,7 +2242,7 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                                       }}
                                     />
                                     <RowAction
-                                      icon="⋯"
+                                      icon={<MoreHorizontal size={14} strokeWidth={1.8} aria-hidden="true" />}
                                       tip="更多操作"
                                       label={`${skill.name} 更多操作`}
                                       onClick={(e) => {

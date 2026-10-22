@@ -232,7 +232,7 @@
   ②iTerm 写进 `create window` 返回的那个窗口（`iterm_script`），不写 `current window`（焦点在别的窗口时会打进用户正在用的窗口）；
   iTerm 未运行时等它自己开的窗口（≤3 秒）再用，不另建第二个——本机未装 iTerm2，AppleScript 只有文本单测，**未实机验收**；
   ③复制恢复命令的文案不得写「粘贴即可」：它用终端的全局配置，Claude 会换到全局网关 / 模型、Mesa 连接开的 Codex 对话缺
-  `CODEX_API_KEY` 接不上（toast 点名），要原连接走「在外部终端恢复」。**外部终端里正在跑的对话**（`SessionMetaDto.live`：
+  `CODEX_API_KEY` 接不上（toast 点名），要原连接走「在外部终端继续」。**外部终端里正在跑的对话**（`SessionMetaDto.live`：
   文件一分钟内有写入、Mesa 没开这个标签）在 Mesa 里点继续先 `confirmDialog`（默认焦点取消），防两个进程交错写同一段记录。
 
 - **定时历史评审（2026-09-07）**：有 watch Run 身份时先打开冻结产物对照，三列是执行前主仓、执行前隔离目录、本次结果；

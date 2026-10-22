@@ -252,9 +252,10 @@ export function MenuSelect({
   );
 }
 
-/** 搜索输入框：inset 底色分层（无描边，聚焦时底色加深一档），与表单输入区分开 */
+/** 搜索输入框：inset 底色分层（无描边，聚焦时底色加深一档），与表单输入区分开。
+ *  占位字用 l3：l4 在 inset 上只有 3.16:1，低于 4.5:1（2026-10-23） */
 export const searchFieldClass =
-  "h-8 rounded-lg bg-inset px-2.5 text-xs text-l2 outline-none transition-colors placeholder:text-l4 focus:bg-raised";
+  "h-8 rounded-lg bg-inset px-2.5 text-xs text-l2 outline-none transition-colors placeholder:text-l3 focus:bg-raised";
 
 /** hover 才现的低频操作：行挂 group，按钮用此类；键盘 Tab 聚焦（focus-visible）同样显示 */
 export const hoverRevealClass =
@@ -273,7 +274,8 @@ export function RowAction({
   label,
   onClick,
 }: {
-  icon: string;
+  /** Lucide 线框图标（14px / 1.8，与侧栏同套）；旧的 ✎ ◈ ↯ 文字符号已换掉（2026-10-23） */
+  icon: ReactNode;
   tip: string;
   label: string;
   onClick: (e: MouseEvent<HTMLButtonElement>) => void;

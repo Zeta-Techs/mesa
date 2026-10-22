@@ -676,7 +676,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   review-decisions.ts        # 审查报告 R/S 与待核实 V 的拆条、接受/拒绝/修改写回、点完后的继续提示
                              # （tests/review-decisions.test.ts）
   academic-mcp.ts            # 检索步「配置学术检索 MCP」：预设名、登录注入；登录态由 academic_mcp_login_status 回一句现状（tests/academic-mcp.test.ts）
-  session-filter.ts          # 对话页筛选纯逻辑 + 列表行项目名 sessionProjectLabel（tests/session-filter.test.ts）
+  session-filter.ts          # 对话页筛选纯逻辑 + 列表行项目名 sessionProjectLabel（Claude 编码目录名经 claudeProjectDirName 认回项目；tests/session-filter.test.ts）
   session-search.ts          # 对话搜索纯逻辑：分词、元数据即时过滤、正文命中合并排序
   session-slim.ts            # 会话瘦身纯逻辑（撞网关 413）：提示条/菜单项出现条件、拦路原因（Mesa 终端在跑 / 最近一分钟有写入）、瘦身后体积预告、结果文案（tests/session-slim.test.ts）
   session-transfer.ts        # 会话导入向导纯逻辑：状态文案、目标目录预填、可否执行

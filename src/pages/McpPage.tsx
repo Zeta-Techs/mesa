@@ -1,6 +1,9 @@
 import {
   ClipboardPaste,
   PackagePlus,
+  Pencil,
+  PlugZap,
+  Trash2,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -1270,19 +1273,19 @@ export default function McpPage({ visible }: { visible: boolean }) {
                       className={`flex items-center ${hoverRevealClass} focus-within:opacity-100`}
                     >
                       <RowAction
-                        icon="↯"
+                        icon={<PlugZap size={14} strokeWidth={1.8} aria-hidden="true" />}
                         tip="测试连通性（stdio 拉起握手 / remote 探活）"
                         label={`测试 ${s.name} 连通性`}
                         onClick={() => void checkHealth(s)}
                       />
                       <RowAction
-                        icon="✎"
+                        icon={<Pencil size={14} strokeWidth={1.8} aria-hidden="true" />}
                         tip="编辑"
                         label={`编辑 ${s.name}`}
                         onClick={() => setModal({ id: s.id, form: formFrom(s) })}
                       />
                       <RowAction
-                        icon="✕"
+                        icon={<Trash2 size={14} strokeWidth={1.8} aria-hidden="true" />}
                         tip="删除（收编条目默认仅从清单移除，不动 agent 配置）"
                         label={`删除 ${s.name}`}
                         onClick={() => void onDelete(s)}

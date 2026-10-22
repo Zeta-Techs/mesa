@@ -9,8 +9,10 @@ import {
   Copy,
   Download,
   FileText,
+  Flag,
   Forward,
   Package,
+  MoreHorizontal,
   Pencil,
   Pin,
   PinOff,
@@ -114,14 +116,14 @@ const NOOP_TOTALS = () => {};
  *  命令刻意不带密钥（session_resume_command），粘到终端里跑用的是那个终端的全局配置——不能写「粘贴即可」：
  *  Mesa 连接开的 Codex 对话缺 CODEX_API_KEY 接不上，Claude 对话会换到全局配置的网关 / 模型上（2026-10-17 核对） */
 const COPY_RESUME_LABEL = IS_WINDOWS
-  ? "复制恢复命令（PowerShell）"
-  : "复制恢复命令";
+  ? "复制继续命令（PowerShell）"
+  : "复制继续命令";
 const COPY_RESUME_HINT =
-  (IS_WINDOWS ? "复制 PowerShell 命令（粘贴到 PowerShell，不要粘到 cmd）。" : "复制一条恢复命令。") +
-  "在终端里运行时用的是终端自己的全局配置，不带 Mesa 的连接和密钥；要接着用这段对话原来的连接，选「在外部终端恢复」";
+  (IS_WINDOWS ? "复制 PowerShell 命令（粘贴到 PowerShell，不要粘到 cmd）。" : "复制一条继续这段对话的命令。") +
+  "在终端里运行时用的是终端自己的全局配置，不带 Mesa 的连接和密钥；要接着用这段对话原来的连接，选「在外部终端继续」";
 const COPY_RESUME_DONE = IS_WINDOWS
-  ? "已复制恢复命令（PowerShell）。它用 PowerShell 里的全局配置，不带 Mesa 的连接"
-  : "已复制恢复命令。它用终端里的全局配置，不带 Mesa 的连接";
+  ? "已复制继续命令（PowerShell）。它用 PowerShell 里的全局配置，不带 Mesa 的连接"
+  : "已复制继续命令。它用终端里的全局配置，不带 Mesa 的连接";
 const EXTERNAL_RESUME_HINT =
   "用这段对话原来的连接（密钥随一次性启动脚本带过去），在设置「终端 → 外部终端」选的终端里接着聊";
 
@@ -256,6 +258,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
   const [quick, setQuick] = useState<Set<QuickFilterId>>(() => new Set());
   // 「更多 ▾」收纳的次常用快筛（v3.92 控制区瘦身）：近 7 天 / 内部 AI / 已归档
   const [moreFiltersOpen, setMoreFiltersOpen] = useState(false);
+  const [listScrolled, setListScrolled] = useState(false);
   const [mobileRailOpen, setMobileRailOpen] = useState(false);
   /** 快筛开关统一入口：archived chip 与 showArchived 是同一件事，必须同步两边
       （此前只有页头按钮同步，单独点 chip 会被 archiveVisible 兜底过滤掉——等于无效） */
@@ -585,7 +588,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
       const needsKey = s.agent === "codex" && Boolean(resumeBaseUrl(s));
       toast(
         needsKey
-          ? "已复制恢复命令。这段对话走的是 Mesa 的连接，终端里要先设好 CODEX_API_KEY 才能接上；直接用「在外部终端恢复」更省事"
+          ? "已复制继续命令。这段对话走的是 Mesa 的连接，终端里要先设好 CODEX_API_KEY 才能接上；直接用「在外部终端继续」更省事"
           : COPY_RESUME_DONE,
         needsKey ? "warning" : "success",
       );
@@ -716,6 +719,11 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     filter.kind === "projectPath" ||
     filter.kind === "scratch" ||
     scopes.some((chip) => chip.kind === "project");
+  // 范围已限定到一家 Agent：每行的品牌胶囊全是同一个，不再逐条写（同 projectScoped）
+  const agentScoped =
+    filter.kind === "agent" ||
+    filter.kind === "project" ||
+    new Set(scopes.filter((chip) => chip.kind === "agent").map((chip) => chip.value)).size === 1;
   const sessionList = useMemo(() => {
     let src: SessionMetaDto[];
     if (q) {
@@ -1751,12 +1759,14 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                       aria-pressed={on}
                       title={f.title}
                       onClick={() => toggleQuick(f.id)}
-                      className={`rounded-full px-2 py-0.5 text-micro ${
+                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-micro ${
                         on
                           ? "bg-seg-sel text-l1"
                           : "text-l3 hover:bg-hover hover:text-l1"
                       }`}
                     >
+                      {/* 行内操作与快筛统一用 Lucide 线框（同侧栏）；保留 = 旗子，与行首已保留标记同形 */}
+                      {f.id === "pinned" && <Flag size={11} strokeWidth={1.8} aria-hidden="true" />}
                       {f.label}
                     </button>
                   );
@@ -1767,9 +1777,10 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                     onClick={() => setMoreFiltersOpen((v) => !v)}
                     aria-expanded={moreFiltersOpen}
                     title="更多快筛（近 7 天 / 已归档）"
-                    className="rounded-full px-2 py-0.5 text-micro text-l3 hover:bg-hover hover:text-l1"
+                    className="inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-micro text-l3 hover:bg-hover hover:text-l1"
                   >
-                    更多 ▾
+                    更多
+                    <ChevronDown size={11} strokeWidth={1.8} aria-hidden="true" />
                   </button>
                   {moreFiltersOpen && (
                     <>
@@ -2070,7 +2081,16 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
               )}
             </div>
         ) : (
-        <div className="min-h-0 flex-1 overflow-auto">
+        // 滚下去后上沿出一根细线：被切掉半截的行压在筛选区下面，不再像排版出错
+        <div
+          className={`min-h-0 flex-1 overflow-auto border-t transition-colors ${
+            listScrolled ? "border-hairline" : "border-transparent"
+          }`}
+          onScroll={(e) => {
+            const scrolled = e.currentTarget.scrollTop > 0;
+            if (scrolled !== listScrolled) setListScrolled(scrolled);
+          }}
+        >
             {shownSessionRows.map(({ header, s }) => {
               const isEditing =
                 editing?.agent === s.agent && editing.sessionId === s.sessionId;
@@ -2223,9 +2243,10 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                           void togglePin(s);
                         }}
                         title="已保留（点击取消）"
-                        className="shrink-0 rounded-sm px-0.5 text-l2 hover:text-cta"
+                        aria-label="已保留（点击取消）"
+                        className="flex shrink-0 items-center rounded-sm px-0.5 text-l2 hover:text-cta"
                       >
-                        ⚑
+                        <Flag size={13} strokeWidth={1.8} fill="currentColor" aria-hidden="true" />
                       </button>
                     )}
                     <span className="min-w-0 flex-1 truncate text-sm font-medium leading-7 text-l1">
@@ -2277,7 +2298,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                             }}
                             className={`${ghostActionClass} text-l2`}
                           >
-                            恢复
+                            继续
                           </button>
                         )}
                         {!s.pinned && (
@@ -2288,9 +2309,10 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                               void togglePin(s);
                             }}
                             title="保留（并生成快照，防 CLI 自动清理）"
+                            aria-label={`保留：${sessionTitle(s)}`}
                             className={`${ghostActionClass} text-l3`}
                           >
-                            ⚑
+                            <Flag size={14} strokeWidth={1.8} aria-hidden="true" />
                           </button>
                         )}
                         <button
@@ -2318,21 +2340,23 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                           }}
                           title="更多操作"
                           aria-label={`更多操作：${sessionTitle(s)}`}
-                          className="flex h-7 w-7 items-center justify-center rounded-sm text-sm text-l3 hover:bg-hover hover:text-l1"
+                          className="flex h-7 w-7 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1"
                         >
-                          ⋯
+                          <MoreHorizontal size={14} strokeWidth={1.8} aria-hidden="true" />
                         </button>
                       </div>
                     )}
                   </div>
                   {/* meta 行：agent 品牌色胶囊（扫一眼分家）· token mono 小字 + 步骤/接力/标签 chip，AI 摘要截断尾随 */}
                   <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-micro text-l4">
-                    <span
-                      className="shrink-0 rounded-full px-1.5 py-px font-medium"
-                      style={agentBrandBadgeStyle(s.agent)}
-                    >
-                      {agentLabel(s.agent)}
-                    </span>
+                    {!agentScoped && (
+                      <span
+                        className="shrink-0 rounded-full px-1.5 py-px font-medium"
+                        style={agentBrandBadgeStyle(s.agent)}
+                      >
+                        {agentLabel(s.agent)}
+                      </span>
+                    )}
                     {/* 哪个项目：范围已限定到单个项目时不写（同一事实不重复）；
                         原先 meta 行常常只剩一枚 agent 胶囊，第二行几乎是空的 */}
                     {!projectScoped && (() => {
@@ -2543,9 +2567,10 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                       setResumeMenu({ x: r.right - 176, y: r.bottom + 4 });
                     }}
                     title="更多对话操作"
-                    className="ml-1 inline-flex h-7 w-7 items-center justify-center rounded-md text-xs text-l4 hover:bg-hover hover:text-l1"
+                    aria-label="更多对话操作"
+                    className="ml-1 inline-flex h-7 w-7 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1"
                   >
-                    ⋯
+                    <MoreHorizontal size={15} strokeWidth={1.8} aria-hidden="true" />
                   </button>
                 </span>
               </div>
@@ -2839,7 +2864,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
           <div className="flex min-h-0 flex-1 items-center justify-center">
             <EmptyState
               title="从左侧选择一条对话"
-              detail="回放为只读历史记录；选中后可在回放头部恢复、保留、归档或导出。按 ↑ / ↓ 可在列表中快速切换对话。"
+              detail="回放为只读历史记录；选中后可在回放头部继续、保留、归档或导出。按 ↑ / ↓ 可在列表中快速切换对话。"
             />
           </div>
         )}
@@ -2855,7 +2880,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
             onClose={() => setResumeMenu(null)}
             items={[
               {
-                label: "在外部终端恢复",
+                label: "在外部终端继续",
                 icon: SquareArrowOutUpRight,
                 disabled: !readable,
                 title: EXTERNAL_RESUME_HINT,
@@ -3035,14 +3060,14 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                     items.push(
                       { header: "继续" },
                       {
-                        label: "在终端恢复",
+                        label: "在终端继续",
                         icon: SquareTerminal,
                         onSelect: () => resumeInTerminal(ss),
                       },
                       {
-                        label: "在外部终端恢复",
+                        label: "在外部终端继续",
                         icon: SquareArrowOutUpRight,
-                        title: "在外部终端应用里恢复（同一件事的另一个出口，下面是复制命令自己粘）",
+                        title: "在外部终端应用里继续（同一件事的另一个出口，下面是复制命令自己粘）",
                         onSelect: () => void resumeExternal(ss),
                       },
                       {
