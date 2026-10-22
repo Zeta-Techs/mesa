@@ -74,6 +74,41 @@ export function starterContextFor(
   return hit ? normalizeWorkMode(hit.workMode) : "general";
 }
 
+export interface ProjectStarter {
+  name: string;
+  path: string;
+}
+
+/** 通用空态最多放几个「接着做某项目」：剩下的位置留给通用起手提示，一排总数不变 */
+export const PROJECT_STARTER_LIMIT = 2;
+
+/**
+ * 通用空态的「接着做」（2026-10-23 运行页审查，用户拍板）：通用起手提示放进任何聊天应用都成立，
+ * Mesa 自己的东西是项目——列最近有过对话的已登记项目（不含当前目录、不算 Mesa 内部对话），
+ * 按最近一次对话时间倒序；没有对话的项目按上次打开时间兜底。点了只把这段对话的目录换到该项目，不替用户发送。
+ */
+export function recentProjectStarters(
+  projects: readonly { path: string; name: string; lastOpenedAt?: string | null }[],
+  sessions: readonly { projectPath: string; updatedAt: string | null; internal?: boolean }[],
+  currentDir: string,
+  isWindows = false,
+  limit = PROJECT_STARTER_LIMIT,
+): ProjectStarter[] {
+  const ranked = projects
+    .filter((p) => !(currentDir && samePath(p.path, currentDir, isWindows)))
+    .map((p) => {
+      let last = "";
+      for (const s of sessions) {
+        if (s.internal || !s.updatedAt) continue;
+        if (s.updatedAt > last && samePath(s.projectPath, p.path, isWindows)) last = s.updatedAt;
+      }
+      return { p, last: last || p.lastOpenedAt || "" };
+    })
+    .filter((r) => r.last)
+    .sort((a, b) => (a.last < b.last ? 1 : a.last > b.last ? -1 : 0));
+  return ranked.slice(0, limit).map(({ p }) => ({ name: p.name, path: p.path }));
+}
+
 /** 空态问候（2026-10-17 用户选定「品牌标志 + 问候」）：只按时段，不写身份、不重复输入框占位 */
 export function chatGreeting(hour: number): string {
   if (hour >= 5 && hour < 11) return "早上好";

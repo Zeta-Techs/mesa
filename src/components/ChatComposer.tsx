@@ -852,7 +852,7 @@ export default function ChatComposer({
             rows={narrow ? 2 : 1}
             placeholder={ghost ?? placeholder ?? "输入消息…"}
             // 插入符是 M▁ 那道琥珀（--color-mesa-amber），光标本身就是品牌
-            className={`block max-h-40 w-full resize-none bg-transparent px-4 pb-2 pt-3 text-sm leading-6 text-l1 caret-mesa-amber outline-none focus:outline-none focus-visible:outline-none focus-visible:outline-offset-0 placeholder:text-l4 disabled:cursor-not-allowed disabled:opacity-60 ${
+            className={`block max-h-40 w-full resize-none bg-transparent px-4 pb-2 pt-3 text-sm leading-6 text-l1 caret-mesa-amber outline-none focus:outline-none focus-visible:outline-none focus-visible:outline-offset-0 placeholder:text-l3 disabled:cursor-not-allowed disabled:opacity-60 ${
               narrow ? "min-h-16" : ""
             } ${ghost ? "pr-20" : ""}`}
           />

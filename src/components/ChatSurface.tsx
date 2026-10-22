@@ -1151,6 +1151,12 @@ export default function ChatSurface({
               resumeSessionId={launchPick?.resumeSessionId ?? null}
               onRestore={onRestore}
               onPickRecent={onPickRecent}
+              onPickProject={
+                // 与输入框里的项目芯片同一条换目录路径；开聊后目录不能再换，不给
+                launchPick?.editable && !running && onPickDir
+                  ? (path) => onPickDir({ kind: "project", path })
+                  : undefined
+              }
               onShowScreen={onOpenTerminal}
             />
           </div>

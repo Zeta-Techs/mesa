@@ -40,3 +40,27 @@ test("问候按时段", async () => {
   assert.equal(chatGreeting(20), "晚上好");
   assert.equal(chatGreeting(2), "夜深了");
 });
+
+test("通用空态的「接着做」：按最近一次对话排，不含当前目录与内部对话", async () => {
+  const { recentProjectStarters } = await import("../src/chat-empty-start.ts");
+  const projects = [
+    { path: "/proj/a", name: "A", lastOpenedAt: "2026-10-01T00:00:00Z" },
+    { path: "/proj/b", name: "B", lastOpenedAt: null },
+    { path: "/proj/c", name: "C", lastOpenedAt: null },
+    { path: "/proj/d", name: "D", lastOpenedAt: "2026-10-20T00:00:00Z" },
+  ];
+  const sessions = [
+    { projectPath: "/proj/a", updatedAt: "2026-10-22T08:00:00Z" },
+    { projectPath: "/proj/b", updatedAt: "2026-10-22T09:00:00Z" },
+    { projectPath: "/proj/c", updatedAt: "2026-10-23T09:00:00Z", internal: true },
+  ];
+  assert.deepEqual(
+    recentProjectStarters(projects, sessions, "/Users/u/ccode/scratch").map((p) => p.name),
+    ["B", "A"],
+  );
+  // 当前就在 B 里：不推荐自己；没对话的 D 用上次打开时间兜底
+  assert.deepEqual(
+    recentProjectStarters(projects, sessions, "/proj/b/", false, 3).map((p) => p.name),
+    ["A", "D"],
+  );
+});

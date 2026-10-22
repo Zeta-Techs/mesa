@@ -57,7 +57,7 @@ export default function ChatBetaBadge({
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
         title={`${heading}：点开看这一家在聊天里能做到哪一步`}
-        className={`ml-1 flex h-6 items-center gap-1 rounded-md px-1.5 text-micro text-l4 hover:bg-hover hover:text-l2 ${
+        className={`ml-1 flex h-6 items-center gap-1 rounded-md px-1.5 text-micro text-l3 hover:bg-hover hover:text-l2 ${
           open ? "bg-hover text-l2" : ""
         }`}
       >

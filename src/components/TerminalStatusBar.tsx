@@ -429,9 +429,12 @@ export default function TerminalStatusBar({
       }}
     >
       <div
+        // 聊天变体未启动时整栏内容隐藏、只留 32px 高度（2026-10-23 运行页审查）：这时栏里只剩目录胶囊，
+        // 和输入框里的项目芯片说的是同一件事，还压在窗口最底边；高度照留，开聊时终端几何不跳
+        aria-hidden={chat && !status?.ptyId ? true : undefined}
         className={`flex h-full min-w-0 items-center gap-2.5 ${
           chat ? "ccode-chat-column mx-auto w-full" : ""
-        }`}
+        } ${chat && !status?.ptyId ? "invisible" : ""}`}
       >
       {/* 左区：状态圆点 + agent · 配置 · 模型 + 思考滑块。聊天变体不画（2026-10-22 状态栏去重）：
           在回复 / 已停下对话末尾已经说了，Agent 看输入框模型芯片的品牌色圆点，模型思考在输入框里，连接挪到右边 */}
