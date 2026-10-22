@@ -620,6 +620,11 @@ test("输入框（2026-10-22）：发送钮是光标块，生成中有字时停�
     };
     await ui.render(ui.h(ui.Composer, { ...base, tone: "full" }));
     assert.equal(ui.el.querySelector(".ccode-composer-box")?.getAttribute("data-tone"), "full");
+    assert.equal(
+      ui.el.querySelector(".ccode-composer-box")?.hasAttribute("data-tone-flash"),
+      false,
+      "打开时已是完全访问：细线不亮（只在切换那一下亮）",
+    );
     const send = () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="发送"]')!;
     assert.equal(send().getAttribute("data-state"), "empty");
     assert.equal(send().disabled, true);
@@ -639,6 +644,14 @@ test("输入框（2026-10-22）：发送钮是光标块，生成中有字时停�
     assert.doesNotMatch(ui.el.textContent ?? "", /排队/, "发出去了、输入框空了就只剩停止钮");
     await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="暂停当前生成"]')!.click());
     assert.equal(stops, 1);
+    // 从别的档切到完全访问：细线亮一下（data-tone-flash），过后自己撤掉
+    await ui.render(ui.h(ui.Composer, { ...base, tone: "full" }));
+    assert.equal(ui.el.querySelector(".ccode-composer-box")?.hasAttribute("data-tone-flash"), true);
+    await ui.act(async () => {
+      await new Promise((r) => setTimeout(r, 2600));
+    });
+    assert.equal(ui.el.querySelector(".ccode-composer-box")?.hasAttribute("data-tone-flash"), false, "亮完淡掉，不常驻");
+    assert.equal(ui.el.querySelector(".ccode-composer-box")?.getAttribute("data-tone"), "full");
   } finally {
     await ui.close();
   }

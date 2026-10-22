@@ -666,7 +666,7 @@ export default function ChatSurface({
     ? cwdChipLabel({ cwd, home: homeDir, projectPaths, recentRepos, isWindows: IS_WINDOWS })
     : "";
 
-  // 权限写在输入框身上：完全访问上沿细线、只讨论虚线框（其余档不加东西）
+  // 权限写在输入框身上：切到完全访问时上沿细线亮一下、只讨论虚线框（其余档不加东西）
   const launchAgentLabel = AGENTS.find((a) => a.id === launchPick?.agentId)?.label ?? "这家 CLI";
   const permTier =
     launchPick && !readOnly

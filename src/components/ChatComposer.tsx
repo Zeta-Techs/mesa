@@ -26,6 +26,8 @@ import type { PhoneItem } from "../phone-drop";
 
 /** 按扩展名认图片附件（「+ → 文件或图片」选来的没有缩略图，也要算） */
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|heif|tiff?)$/i;
+/** 切到完全访问时细线亮多久（与 App.css ccode-tone-flash 动画时长一致） */
+const TONE_FLASH_MS = 2400;
 
 /**
  * 发送钮 = Mesa 图标里 M▁ 那块光标（2026-10-22 用户：圆形按钮做成图标里的小方块）：横向圆角块，
@@ -240,7 +242,7 @@ export default function ChatComposer({
   mesaCommands?: MesaCommand[];
   /** 自己发过的话（最近的在前）：输入框为空时按 ↑ 取第一条，接着 ↑ / ↓ 在这串里走 */
   recallHistory?: readonly string[];
-  /** 权限写在输入框本身上（2026-10-22）：完全访问上沿一道 caution 细线；只讨论虚线框。其余档不加任何东西 */
+  /** 权限写在输入框本身上（2026-10-22）：切到完全访问时上沿亮一下 caution 细线再淡掉（不常驻）；只讨论虚线框。其余档不加任何东西 */
   tone?: "full" | "discuss" | null;
   /** ⇧Tab 轮换权限档（只在开聊前给；开聊后换档要重开，不走快捷键） */
   onCyclePermission?: () => void;
@@ -256,6 +258,20 @@ export default function ChatComposer({
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
+  // 完全访问的细线只在「切到」这一档时亮一下（用户：常驻显得输入框花哨）；挂载时已是完全访问不亮
+  const [toneFlash, setToneFlash] = useState(false);
+  const prevToneRef = useRef(tone);
+  useEffect(() => {
+    const prev = prevToneRef.current;
+    prevToneRef.current = tone;
+    if (tone !== "full" || prev === "full") {
+      setToneFlash(false);
+      return;
+    }
+    setToneFlash(true);
+    const timer = setTimeout(() => setToneFlash(false), TONE_FLASH_MS);
+    return () => clearTimeout(timer);
+  }, [tone]);
   // WKWebView：确认候选的 Enter 在 compositionend 之后、isComposing 已是 false。
   // 组词开始锁上，compositionend 后再留一帧，让那次 Enter 只上屏不发送。
   const composingLockRef = useRef(false);
@@ -551,6 +567,7 @@ export default function ChatComposer({
       <div className={`mx-auto w-full ${narrow ? "max-w-[45rem]" : "ccode-chat-column"}`}>
         <div
           data-tone={tone ?? undefined}
+          data-tone-flash={toneFlash || undefined}
           className="ccode-composer-box relative overflow-visible rounded-xl border border-composer-edge bg-composer transition-colors focus-within:border-l4"
         >
           {/* 斜杠命令面板：/ 开头弹出（命令表是各家 CLI 的保守常用集，见 src/slash-commands.ts） */}

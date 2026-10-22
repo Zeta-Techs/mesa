@@ -1921,8 +1921,6 @@ select:focus-visible {
   -webkit-appearance: none;
 }
 
-/* 权限写在输入框本身上（2026-10-22）：完全访问 = 上沿一道 caution 细线（两端淡出）；只讨论 = 虚线框。
-   其余档不加任何东西——不看芯片也知道这段对话放了多大权 */
 /* 对话流底部渐隐（ChatSurface 滚动区末尾的粘底层）：透明 → 画布 */
 .ccode-chat-fade {
   background: linear-gradient(to bottom, transparent, var(--color-canvas));
@@ -1934,11 +1932,14 @@ select:focus-visible {
 [data-theme$="-light"] .ccode-composer-box {
   box-shadow: inset 0 -1px 0 rgb(0 0 0 / 0.03);
 }
+/* 权限写在输入框本身上（2026-10-22）：只讨论 = 虚线框（常驻）；完全访问 = 切到这一档时上沿亮一道 caution 细线
+   （两端淡出）约 2.4 秒后淡掉，不常驻（同日用户：一直亮着输入框太花）——常驻的提醒交给权限芯片的琥珀字。
+   其余档不加任何东西 */
 .ccode-composer-box[data-tone="discuss"] {
   border-style: dashed;
   border-color: var(--color-field);
 }
-.ccode-composer-box[data-tone="full"]::before {
+.ccode-composer-box[data-tone="full"][data-tone-flash]::before {
   content: "";
   position: absolute;
   top: -1px;
@@ -1953,8 +1954,27 @@ select:focus-visible {
     var(--color-caution-text) 82%,
     transparent
   );
-  opacity: 0.85;
+  opacity: 0;
   pointer-events: none;
+  animation: ccode-tone-flash 2.4s ease-out forwards;
+}
+@keyframes ccode-tone-flash {
+  0% {
+    opacity: 0;
+  }
+  12%,
+  65% {
+    opacity: 0.85;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ccode-composer-box[data-tone="full"][data-tone-flash]::before {
+    animation: none;
+    opacity: 0.85;
+  }
 }
 
 /* 发送钮 = M▁ 那块光标（2026-10-22 用户：圆形按钮做成图标里的小方块）：横向圆角块。
