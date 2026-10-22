@@ -25,7 +25,10 @@ const LIST_CAP: usize = 20;
 // SQLite 不能 ALTER 主键，provenance 整表重建迁移、旧行保留；升版本自动重建用量索引。
 // v8：Grok 回合用量改认 params.update.usage（camelCase）。v7 索引按猜的 _meta.usage
 // 提取，Grok 行为空；只清 Grok 的日行和 seen 标记，其它 agent 的已建索引留着。
-const USAGE_SCHEMA_VERSION: &str = "8";
+// v9（2026-10-22）：Codex / Gemini / Qwen 的输入数含缓存读（Codex 的输出还含推理），原先原样入库——缓存在费用里
+// 按全价再加一折、合计里算两遍，Codex 推理算两遍。改为入库时拆成没命中的输入（uncached_input）；
+// 只清这三家能从会话文件重抽的行（有 seen 标记）和它们的 seen 标记，其余 agent 与重抽不回来的行不动。
+const USAGE_SCHEMA_VERSION: &str = "9";
 const SOURCE_CLI: &str = "cli";
 const SOURCE_CCODE_AI: &str = "ccode-ai";
 const ZSTD_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
@@ -45,6 +48,19 @@ pub(crate) struct UsageEvent {
     pub internal: bool,
     /// 官方账号（订阅制）用量：同样由 provenance 登记决定，不由事件本身猜测
     pub official: bool,
+}
+
+/// 输入里拆掉缓存，只留「没命中缓存的输入」（2026-10-22）。Codex（OpenAI 口径）、Gemini / Qwen（Gemini API 口径）、
+/// Grok camelCase 的输入数都已经含缓存读（实机：Codex total_tokens = input + output，Qwen totalTokenCount =
+/// prompt + candidates）；不拆的话缓存在费用里按输入全价再加一折、在用量合计里算两遍。Claude / Kimi 的输入本就不含缓存，
+/// 不走这里。缓存比输入还大（字段口径对不上）就原样返回，不拆成 0
+pub(crate) fn uncached_input(input: u64, cache_read: u64, cache_write: u64) -> u64 {
+    let cached = cache_read.saturating_add(cache_write);
+    if input >= cached {
+        input - cached
+    } else {
+        input
+    }
 }
 
 fn get_str<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
@@ -144,8 +160,10 @@ where
                 out.push(UsageEvent {
                     day: get_str(&v, "timestamp").map(day_of_iso).unwrap_or_default(),
                     model: model.clone(),
-                    input: num("input_tokens"),
-                    output: num("output_tokens") + num("reasoning_output_tokens"),
+                    // input_tokens 含 cached_input_tokens、output_tokens 含 reasoning_output_tokens
+                    // （实机 total_tokens = input + output）：拆缓存、推理不另加
+                    input: uncached_input(num("input_tokens"), num("cached_input_tokens"), 0),
+                    output: num("output_tokens"),
                     cache_read: num("cached_input_tokens"),
                     cache_write: num("cache_write_input_tokens"),
                     source: SOURCE_CLI.into(),
@@ -179,7 +197,8 @@ where
         out.push(UsageEvent {
             day: get_str(&v, "timestamp").map(day_of_iso).unwrap_or_default(),
             model: get_str(&v, "model").unwrap_or("").to_string(),
-            input: num("input"),
+            // input 是 promptTokenCount，含缓存读（Gemini API 口径）；thoughts 不在 output 里，另加
+            input: uncached_input(num("input"), num("cached"), 0),
             output: num("output") + num("thoughts"),
             cache_read: num("cached"),
             cache_write: 0,
@@ -211,7 +230,8 @@ where
         out.push(UsageEvent {
             day: get_str(&v, "timestamp").map(day_of_iso).unwrap_or_default(),
             model: get_str(&v, "model").unwrap_or("").to_string(),
-            input: num("promptTokenCount"),
+            // promptTokenCount 含 cachedContentTokenCount（实机 totalTokenCount = prompt + candidates）
+            input: uncached_input(num("promptTokenCount"), num("cachedContentTokenCount"), 0),
             output: num("candidatesTokenCount"),
             cache_read: num("cachedContentTokenCount"),
             cache_write: 0,
@@ -417,12 +437,11 @@ fn grok_event_from_usage(day: String, model: String, u: &Value) -> Option<UsageE
     // 拆成未命中输入再入库，否则缓存会按输入全价再加一折。reasoningTokens 不另加：
     // 它不是 total 之外的第三项，有时还大于 outputTokens。
     // snake_case 旧夹具把 input_tokens 与 cached_read_tokens 当独立字段，不拆。
-    let input =
-        if u.get("inputTokens").is_some() && raw_input >= cache_read.saturating_add(cache_write) {
-            raw_input - cache_read - cache_write
-        } else {
-            raw_input
-        };
+    let input = if u.get("inputTokens").is_some() {
+        uncached_input(raw_input, cache_read, cache_write)
+    } else {
+        raw_input
+    };
     if input + output + cache_read + cache_write == 0 {
         return None;
     }
@@ -784,22 +803,42 @@ fn ensure_usage_schema(conn: &Connection) -> Result<(), String> {
         .ok();
     if current.as_deref() != Some(USAGE_SCHEMA_VERSION) {
         // 旧索引没有可靠来源，清空后由会话源重新生成，避免把历史猜测伪装成权威分类。
-        // v7→v8 只是 Grok 提取口径变了：Grok 旧行本就是空的，清掉 seen 让它重扫；
-        // 其它 agent 已建好的日行和 seen 标记留着，避免整库重解析。
-        let reset_sql = if current.as_deref() == Some("7") {
-            "DELETE FROM usage_daily WHERE agent='grok';
-             DELETE FROM usage_meta WHERE key LIKE 'seen:grok:%' OR key='initialized';"
-        } else {
+        // v7→v8 只是 Grok 提取口径变了，v8→v9 只是 Codex / Gemini / Qwen 拆缓存：只清这几家能从会话文件重抽的行
+        // （有 seen 标记）和它们的 seen 标记，其它 agent 已建好的日行留着，避免整库重解析；文件已不在的行重抽不回来，
+        // 留着（用量历史永久保留）
+        let partial: Option<&[&str]> = match current.as_deref() {
+            Some("8") => Some(&["codex", "gemini", "qwen"]),
+            Some("7") => Some(&["grok", "codex", "gemini", "qwen"]),
+            _ => None,
+        };
+        let reset_sql = match partial {
+            Some(agents) => {
+                let list = agents.iter().map(|a| format!("'{a}'")).collect::<Vec<_>>().join(",");
+                let seen = agents
+                    .iter()
+                    .map(|a| format!("key LIKE 'seen:{a}:%'"))
+                    .collect::<Vec<_>>()
+                    .join(" OR ");
+                format!(
+                    "DELETE FROM usage_daily WHERE agent IN ({list}) AND EXISTS (
+                       SELECT 1 FROM usage_meta m
+                       WHERE m.key = 'seen:' || usage_daily.agent || ':' || usage_daily.session_id || ':live'
+                          OR m.key = 'seen:' || usage_daily.agent || ':' || usage_daily.session_id || ':snap'
+                          OR m.key = 'seen:' || usage_daily.agent || ':' || usage_daily.session_id);
+                     DELETE FROM usage_meta WHERE {seen} OR key='initialized';"
+                )
+            }
             // 只清还能从会话文件重抽的行（有 seen 标记的）；文件已不在的历史行与
             // 不落盘的一次性内部调用行（ephemeral-*）重抽不回来，整表清空就是永久丢账
-            "DELETE FROM usage_daily WHERE EXISTS (
+            None => "DELETE FROM usage_daily WHERE EXISTS (
                SELECT 1 FROM usage_meta m
                WHERE m.key = 'seen:' || usage_daily.agent || ':' || usage_daily.session_id || ':live'
                   OR m.key = 'seen:' || usage_daily.agent || ':' || usage_daily.session_id || ':snap'
                   OR m.key = 'seen:' || usage_daily.agent || ':' || usage_daily.session_id);
              DELETE FROM usage_meta WHERE key LIKE 'seen:%' OR key='initialized';"
+                .to_string(),
         };
-        conn.execute_batch(reset_sql)
+        conn.execute_batch(&reset_sql)
             .map_err(|e| format!("重置旧用量索引失败: {e}"))?;
         conn.execute(
             "INSERT INTO usage_meta(key, value) VALUES('schema_version', ?1)
@@ -2011,8 +2050,13 @@ pub async fn rebuild_usage_index() -> Result<UsageBuildResult, String> {
 #[derive(Debug, Default, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionUsageDto {
+    /// 没命中缓存的输入（各家入库时已拆好，见 uncached_input）
     pub input: u64,
     pub output: u64,
+    /// 读缓存 / 写缓存：Claude 这类带缓存的长对话里这才是大头（每轮都把整段上下文读一遍），
+    /// 状态栏的合计要算上，否则只剩新输入 + 输出、比实际处理量少两三个数量级（2026-10-22 用户：「token 数是不是显示有误」）
+    pub cache_read: u64,
+    pub cache_write: u64,
     pub cost_usd: f64,
     /// 至少一个模型命中定价表（费用才有意义；全未命中时前端只显示 token）
     pub priced: bool,
@@ -2047,6 +2091,8 @@ fn session_usage_from(
         let (model, i, o, cr, cw) = row.map_err(|e| e.to_string())?;
         out.input += i as u64;
         out.output += o as u64;
+        out.cache_read += cr as u64;
+        out.cache_write += cw as u64;
         if let Some(price) = price_of(&model, &pricing) {
             out.priced = true;
             out.cost_usd += cost_of(
@@ -3238,11 +3284,13 @@ mod tests {
                created_at TEXT NOT NULL,
                PRIMARY KEY(agent, project_path, session_id));
              INSERT INTO usage_daily VALUES
+               ('2026-09-21','claude-code','opus','/repo','s-claude',10,2,0,0,'cli',0,'',0),
                ('2026-09-21','codex','gpt-5','/repo','s-codex',10,2,0,0,'cli',0,'',0),
                ('2026-09-21','grok','grok-4','/repo','s-grok',0,0,0,0,'cli',0,'',0);
              INSERT INTO usage_meta VALUES
                ('schema_version','7'),
                ('initialized','old'),
+               ('seen:claude-code:s-claude:live','old'),
                ('seen:codex:s-codex:live','old'),
                ('seen:grok:s-grok:live','old');",
         )
@@ -3253,10 +3301,12 @@ mod tests {
             Some(USAGE_SCHEMA_VERSION)
         );
         assert!(meta_get(&conn, "initialized").is_none());
+        // v7 直升 v9：Grok（v8）与 Codex（v9）都重抽，Claude 不动
         assert_eq!(
-            meta_get(&conn, "seen:codex:s-codex:live").as_deref(),
+            meta_get(&conn, "seen:claude-code:s-claude:live").as_deref(),
             Some("old")
         );
+        assert!(meta_get(&conn, "seen:codex:s-codex:live").is_none());
         assert!(meta_get(&conn, "seen:grok:s-grok:live").is_none());
         let agents: Vec<String> = conn
             .prepare("SELECT agent FROM usage_daily ORDER BY agent")
@@ -3265,7 +3315,72 @@ mod tests {
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        assert_eq!(agents, vec!["codex".to_string()]);
+        assert_eq!(agents, vec!["claude-code".to_string()]);
+    }
+
+    #[test]
+    fn usage_schema_v9_reindexes_cache_inclusive_agents_only() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE usage_daily(
+               day TEXT, agent TEXT, model TEXT, project_path TEXT, session_id TEXT,
+               input INTEGER, output INTEGER, cache_read INTEGER, cache_write INTEGER,
+               source TEXT, internal INTEGER, workspace TEXT, official INTEGER,
+               PRIMARY KEY(day, agent, model, project_path, session_id));
+             CREATE TABLE usage_meta(key TEXT PRIMARY KEY, value TEXT);
+             CREATE TABLE usage_provenance(
+               agent TEXT NOT NULL, project_path TEXT NOT NULL,
+               session_id TEXT NOT NULL DEFAULT '',
+               source TEXT NOT NULL, internal INTEGER NOT NULL DEFAULT 0,
+               official INTEGER NOT NULL DEFAULT 0,
+               created_at TEXT NOT NULL,
+               PRIMARY KEY(agent, project_path, session_id));
+             INSERT INTO usage_daily VALUES
+               ('2026-10-21','claude-code','opus','/repo','s-claude',10,2,0,0,'cli',0,'',0),
+               ('2026-10-21','codex','gpt-5','/repo','s-codex',10,2,4,0,'cli',0,'',0),
+               ('2026-10-01','codex','gpt-5','/repo','s-gone',10,2,4,0,'cli',0,'',0),
+               ('2026-10-21','qwen','qwen3','/repo','s-qwen',10,2,4,0,'cli',0,'',0),
+               ('2026-10-21','grok','grok-4','/repo','s-grok',10,2,0,0,'cli',0,'',0);
+             INSERT INTO usage_meta VALUES
+               ('schema_version','8'),
+               ('initialized','old'),
+               ('seen:claude-code:s-claude:live','old'),
+               ('seen:codex:s-codex:live','old'),
+               ('seen:qwen:s-qwen','old'),
+               ('seen:grok:s-grok:live','old');",
+        )
+        .unwrap();
+        ensure_usage_schema(&conn).unwrap();
+        assert_eq!(meta_get(&conn, "schema_version").as_deref(), Some(USAGE_SCHEMA_VERSION));
+        assert!(meta_get(&conn, "initialized").is_none());
+        assert!(meta_get(&conn, "seen:codex:s-codex:live").is_none());
+        assert!(meta_get(&conn, "seen:qwen:s-qwen").is_none());
+        assert_eq!(meta_get(&conn, "seen:claude-code:s-claude:live").as_deref(), Some("old"));
+        assert_eq!(meta_get(&conn, "seen:grok:s-grok:live").as_deref(), Some("old"));
+        let left: Vec<String> = conn
+            .prepare("SELECT agent || ':' || session_id FROM usage_daily ORDER BY 1")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        // 能重抽的三家行清掉；文件已不在（无 seen）的 Codex 行重抽不回来，留着
+        assert_eq!(left, vec!["claude-code:s-claude", "codex:s-gone", "grok:s-grok"]);
+    }
+
+    #[test]
+    fn cache_inclusive_inputs_are_split_on_ingest() {
+        assert_eq!(uncached_input(100, 30, 0), 70);
+        assert_eq!(uncached_input(100, 30, 10), 60);
+        assert_eq!(uncached_input(20, 30, 0), 20, "缓存比输入还大：字段口径对不上，原样返回");
+        // Codex 实机：total_tokens = input + output（缓存含在输入里、推理含在输出里）
+        let lines = vec![r#"{"timestamp":"2026-10-22T00:05:00Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":82770,"cached_input_tokens":34240,"cache_write_input_tokens":0,"output_tokens":356,"reasoning_output_tokens":265,"total_tokens":83126}}}}"#.to_string()];
+        let ev = &codex_events(&lines)[0];
+        assert_eq!((ev.input, ev.output, ev.cache_read), (48530, 356, 34240));
+        // Qwen 实机：totalTokenCount = prompt + candidates
+        let q = vec![r#"{"timestamp":"2026-10-22T00:05:00Z","model":"qwen3","usageMetadata":{"promptTokenCount":20911,"cachedContentTokenCount":1152,"candidatesTokenCount":1287,"totalTokenCount":22198,"thoughtsTokenCount":0}}"#.to_string()];
+        let qv = &qwen_events(&q)[0];
+        assert_eq!((qv.input, qv.output, qv.cache_read), (19759, 1287, 1152));
     }
 
     /// 旧的纯路径查询形态：无会话 id、无创建时间、无会话级标记（等价 v7 前行为）
@@ -3646,6 +3761,7 @@ mod tests {
         let dto = session_usage_from(&conn, "claude-code", "s1").unwrap();
         assert_eq!(dto.input, 1_510_000);
         assert_eq!(dto.output, 155_000);
+        assert_eq!((dto.cache_read, dto.cache_write), (100_000, 0), "缓存单独给出，状态栏合计要算上");
         assert!(dto.priced);
         // sonnet: 1M×3 + 0.1M×15 = 4.5；gpt-5: 0.5M×1.25 + 0.05M×10 + 0.1M×1.25×0.1 = 1.1375
         let expect = 4.5 + 1.1375;
@@ -4570,8 +4686,8 @@ mod tests {
         assert_eq!(evs.len(), 1);
         assert_eq!(
             (evs[0].input, evs[0].output, evs[0].cache_read),
-            (100, 25, 10),
-            "用增量而非累计"
+            (90, 20, 10),
+            "用增量而非累计；输入拆掉缓存、推理不另加"
         );
         assert_eq!(evs[0].model, "gpt-5-codex");
         // kimi：usage.record
@@ -4732,7 +4848,7 @@ mod tests {
         assert_eq!(events.len(), 1, "大于旧 10 MB 上限的会话不得整份跳过");
         assert_eq!(
             (events[0].input, events[0].output, events[0].cache_read),
-            (100, 25, 10)
+            (90, 20, 10)
         );
 
         let compressed = dir.join("small.jsonl.zst");

@@ -285,8 +285,9 @@ pub(crate) fn parse_oneshot_output(
                         if let Some(u) = v.get("usage") {
                             events.push(ev(
                                 model.unwrap_or(""),
-                                num(u, "input_tokens"),
-                                num(u, "output_tokens") + num(u, "reasoning_output_tokens"),
+                                // 与会话文件同口径：input 含缓存、output 含推理（usage::uncached_input）
+                                crate::usage::uncached_input(num(u, "input_tokens"), num(u, "cached_input_tokens"), 0),
+                                num(u, "output_tokens"),
                                 num(u, "cached_input_tokens"),
                                 num(u, "cache_write_input_tokens"),
                             ));
@@ -2455,7 +2456,11 @@ ERROR: Your access token could not be refreshed because your refresh token was r
 {"type":"turn.completed","usage":{"input_tokens":20513,"cached_input_tokens":9088,"cache_write_input_tokens":0,"output_tokens":23,"reasoning_output_tokens":16}}"#;
         let (text, ev) = parse_oneshot_output("codex", raw, Some("gpt-5"), "2026-10-17").unwrap();
         assert_eq!(text, "好的");
-        assert_eq!((ev[0].input, ev[0].output, ev[0].cache_read), (20513, 39, 9088), "与 rollout 抽取同口径：输出含推理");
+        assert_eq!(
+            (ev[0].input, ev[0].output, ev[0].cache_read),
+            (11425, 23, 9088),
+            "与 rollout 抽取同口径：输入拆掉缓存读，推理已含在输出里"
+        );
         // 没有正文：拿最后一条告警/失败当原因
         let failed = r#"{"type":"turn.failed","error":{"message":"401 Unauthorized"}}"#;
         assert_eq!(parse_oneshot_output("codex", failed, None, "d").unwrap_err(), "401 Unauthorized");

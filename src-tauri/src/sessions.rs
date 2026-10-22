@@ -1380,9 +1380,9 @@ fn codex_token_usage(v: &Value) -> Option<TokenUsageDto> {
     let t = p.get("info")?.get("total_token_usage")?;
     let num = |k: &str| t.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
     Some(TokenUsageDto {
-        input: num("input_tokens"),
-        // reasoning token 计入输出侧，与计费口径一致
-        output: num("output_tokens") + num("reasoning_output_tokens"),
+        // input_tokens 含缓存读、output_tokens 含推理（实机 total_tokens = input + output）：拆缓存、推理不另加
+        input: crate::usage::uncached_input(num("input_tokens"), num("cached_input_tokens"), 0),
+        output: num("output_tokens"),
         cache_read: num("cached_input_tokens"),
         cache_write: num("cache_write_input_tokens"),
     })
@@ -1406,7 +1406,8 @@ fn codex_last_request_usage(v: &Value) -> Option<TokenUsageDto> {
     let cached = num("cached_input_tokens");
     Some(TokenUsageDto {
         input: num("input_tokens").saturating_sub(cached),
-        output: num("output_tokens") + num("reasoning_output_tokens"),
+        // output_tokens 已含 reasoning_output_tokens，不另加
+        output: num("output_tokens"),
         cache_read: cached,
         cache_write: num("cache_write_input_tokens"),
     })
@@ -1729,7 +1730,8 @@ fn gemini_user_text(v: &Value) -> Option<String> {
 fn gemini_usage(t: &Value) -> TokenUsageDto {
     let num = |k: &str| t.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
     TokenUsageDto {
-        input: num("input"),
+        // input 含缓存读（Gemini API 口径），拆成没命中的部分（同 usage.rs）
+        input: crate::usage::uncached_input(num("input"), num("cached"), 0),
         output: num("output"),
         cache_read: num("cached"),
         cache_write: 0, // gemini 的 tokens 没有写缓存概念
@@ -1966,7 +1968,8 @@ fn parse_gemini(lines: &[String]) -> Vec<ChatMessageDto> {
 fn qwen_usage(u: &Value) -> TokenUsageDto {
     let num = |k: &str| u.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
     TokenUsageDto {
-        input: num("promptTokenCount"),
+        // promptTokenCount 含 cachedContentTokenCount，拆成没命中的部分（同 usage.rs）
+        input: crate::usage::uncached_input(num("promptTokenCount"), num("cachedContentTokenCount"), 0),
         output: num("candidatesTokenCount"),
         cache_read: num("cachedContentTokenCount"),
         cache_write: 0,
@@ -9305,11 +9308,11 @@ mod tests {
         assert_eq!(msgs[2].blocks[1].kind, "tool_result");
         assert_eq!(msgs[2].blocks[1].text, "total 0");
         // 最后一次请求（last_token_usage）挂在最后一条 assistant 上，不是整场累计（total 那 160 万）；
-        // input 去掉缓存命中的部分（codex 的 input 含 cached），reasoning 计入 output
+        // input 去掉缓存命中的部分（codex 的 input 含 cached）；reasoning 已含在 output_tokens 里，不另加
         let u = msgs[2].usage.as_ref().unwrap();
         assert_eq!(
             (u.input, u.output, u.cache_read, u.cache_write),
-            (90, 25, 10, 0)
+            (90, 20, 10, 0)
         );
     }
 
@@ -9375,7 +9378,8 @@ mod tests {
         let u = m.token_usage.unwrap();
         assert_eq!(
             (u.input, u.output, u.cache_read, u.cache_write),
-            (50, 8, 4, 2)
+            (46, 8, 4, 2),
+            "整场累计同样拆掉缓存读（input_tokens 含 cached_input_tokens）"
         );
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -9822,12 +9826,13 @@ mod tests {
         // 另起一条只含 tokens 的场景验证映射
         assert!(g.usage.is_none());
         let with_tokens = parse_gemini(&s(&[
-            r#"{"id":"a","type":"gemini","content":"答","tokens":{"input":100,"output":20,"cached":10,"thoughts":5,"tool":0,"total":135}}"#,
+            // 实机口径（~/.gemini 实录 2026-09-20）：total = input + output + thoughts，cached 含在 input 里
+            r#"{"id":"a","type":"gemini","content":"答","tokens":{"input":100,"output":20,"cached":10,"thoughts":5,"tool":0,"total":125}}"#,
         ]));
         let u = with_tokens[0].usage.as_ref().unwrap();
         assert_eq!(
             (u.input, u.output, u.cache_read, u.cache_write),
-            (100, 20, 10, 0)
+            (90, 20, 10, 0)
         );
     }
 
@@ -9978,7 +9983,8 @@ mod tests {
         let u = a.usage.as_ref().unwrap();
         assert_eq!(
             (u.input, u.output, u.cache_read, u.cache_write),
-            (50, 10, 5, 0)
+            (45, 10, 5, 0),
+            "promptTokenCount 含缓存，拆成没命中的部分"
         );
     }
 

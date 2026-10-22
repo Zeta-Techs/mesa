@@ -458,8 +458,12 @@ export type SessionSyncState =
 
 /** 单会话累计用量（终端状态栏 token 段） */
 export interface SessionUsageDto {
+  /** 没命中缓存的输入（各家入库时已拆好） */
   input: number;
   output: number;
+  /** 读缓存 / 写缓存：带缓存的长对话里这才是大头，合计要算上 */
+  cacheRead: number;
+  cacheWrite: number;
   costUsd: number;
   /** 至少一个模型命中定价表（false = 费用无意义，只显示 token） */
   priced: boolean;

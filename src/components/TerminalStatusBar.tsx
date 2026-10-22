@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { FolderOpen, GitBranch, GitMerge, MessageCircle, Settings2 } from "lucide-react";
-import { fmtTokensZh } from "../token-format";
+import { fmtTokensZh, usageTitle, usageTotal } from "../token-format";
 import { invoke } from "@tauri-apps/api/core";
 import { AGENTS } from "../types";
 import { isTerminalIdle } from "../terminal-welcome";
@@ -1167,14 +1167,9 @@ export default function TerminalStatusBar({
               经 {profileName}
             </span>
           )}
-          {usage && (usage.input > 0 || usage.output > 0) && (
-            <span
-              className="shrink-0 tabular-nums text-l3"
-              title={`这段对话累计：输入 ${fmtTokensZh(usage.input)} · 输出 ${fmtTokensZh(usage.output)} token（约 1 分钟更新一次）${
-                usage.priced ? `\n按定价表估算 $${usage.costUsd.toFixed(3)}` : ""
-              }`}
-            >
-              {fmtTokensZh(usage.input + usage.output)} token
+          {usage && usageTotal(usage) > 0 && (
+            <span className="shrink-0 tabular-nums text-l3" title={usageTitle(usage, fmtTokensZh)}>
+              {fmtTokensZh(usageTotal(usage))} token
               {usage.priced && ` · $${usage.costUsd.toFixed(2)}`}
             </span>
           )}
@@ -1211,9 +1206,10 @@ export default function TerminalStatusBar({
             {Math.round(Math.min(1, contextUsed / combo.context) * 100)}%
           </span>
         ) : null}
-        {!narrow && usage && (usage.input > 0 || usage.output > 0) && (
-          <span title="本会话累计 token（随索引节奏更新，约 1 分钟粒度）">
-            {fmtTokens(usage.input)}↑ {fmtTokens(usage.output)}↓
+        {!narrow && usage && usageTotal(usage) > 0 && (
+          // ↑ = 喂给模型的全部输入（含读写缓存），↓ = 输出；拆分在悬停里
+          <span title={usageTitle(usage, fmtTokens)}>
+            {fmtTokens(usage.input + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0))}↑ {fmtTokens(usage.output)}↓
             {usage.priced && ` · $${usage.costUsd.toFixed(3)}`}
           </span>
         )}

@@ -457,6 +457,25 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-22 · 用量口径：输入一律存「没命中缓存的部分」，对话 token 合计算上缓存
+
+用户：「底部状态栏的 token 数是不是显示有误」。核对本机真实数据，两处错：
+
+一，**状态栏合计漏了缓存**：只加「新输入 + 输出」。Claude 这类带缓存的长对话每轮把整段上下文从缓存读一遍，读缓存才是大头
+（本机一段对话新输入 4 万、输出 54 万、读缓存 1.87 亿），显示五十多万、旁边的费用却按含缓存计价，对不上。改为合计 = 新输入 + 读缓存 +
+写缓存 + 输出（`token-format.ts usageTotal`），悬停拆四项并说明读缓存为什么大、按一折计费；`session_usage` 多给 cacheRead / cacheWrite。
+终端变体 ↑ 同样含缓存。
+
+二，**Codex / Gemini / Qwen 入库口径错**：三家的输入数本就含缓存读（实机：Codex total_tokens = input + output，Qwen totalTokenCount =
+prompt + candidates，Gemini total = input + output + thoughts），原样入库后缓存在费用里按全价再加一折、在合计里算两遍；Codex 的
+output_tokens 已含 reasoning_output_tokens，又加了一遍。统一走 `usage::uncached_input`（Grok camelCase 原先已拆，并入同一个助手），
+三处解析（usage.rs 用量索引、ai.rs 一次性调用记账、sessions.rs 会话列表 / 聊天消息用量）同口径。**规矩：各家入库的 input 一律是没命中缓存的输入，
+含缓存的在解析处拆，新增一家先拿实机 total 核对字段关系。**
+
+用量表 v8→v9 只重抽这三家能从会话文件重抽的行（有 seen 标记）及其 seen 标记，文件已不在的行与其它 agent 不动（用量历史永久保留）；v7 直升 v9 时
+Grok 一并重抽。提交前在真实 app.db 副本上干跑（HOME 指向副本、会话目录只读链接）：Codex 1116 行一条不少，输入 44.6 亿 → 6.6 亿、输出 2241 万 → 1459 万，
+另有两段旧索引重复入账的会话读缓存减半；其余 agent 不变。
+
 ### 2026-10-22 · 聊天画布、气泡、输入框三层配色统一
 
 用户：「画布和输入框的颜色该如何设计」→ 看过对比稿（`docs/design-chat-color-mockup.html`）后「全部执行」。原来输入框借 raised、气泡借 bubble 75%，
