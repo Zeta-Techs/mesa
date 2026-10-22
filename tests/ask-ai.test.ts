@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   askAiCanSkip,
   askAiDirectLaunch,
+  askAiProjectName,
   buildAskAiPending,
   type AskAiRemembered,
 } from "../src/ask-ai.ts";
@@ -110,4 +111,31 @@ test("项目绑了 Agents 就直接启动，不走问 AI 记忆", () => {
     model: "sonnet",
   });
   assert.equal(askAiDirectLaunch({}, profiles, null), null);
+});
+
+test("askAiProjectName：对着文件问时用项目注册名，不用文件名", () => {
+  const projects = [{ path: "/u/Desktop/测试项目", name: "测试项目" }];
+  const shot = {
+    path: "/u/Desktop/测试项目/notes/assets/phone-20261021-092949.jpg",
+    name: "phone-20261021-092949.jpg",
+    root: "/u/Desktop/测试项目",
+    cwd: "/u/Desktop/测试项目",
+  };
+  assert.equal(askAiProjectName(shot, projects, false), "测试项目");
+  // 未注册目录：根目录末段
+  assert.equal(askAiProjectName({ ...shot, root: "/u/repo/" }, projects, false), "repo");
+  // 项目级新对话（无文件）：name 本来就是项目名
+  assert.equal(
+    askAiProjectName({ path: "", name: "我的课题", root: "/x", cwd: "/x" }, [], false),
+    "我的课题",
+  );
+  // Windows 路径大小写不敏感
+  assert.equal(
+    askAiProjectName(
+      { path: "C:\\P\\a.pdf", name: "a.pdf", root: "c:/p", cwd: "c:/p" },
+      [{ path: "C:\\P", name: "课题P" }],
+      true,
+    ),
+    "课题P",
+  );
 });

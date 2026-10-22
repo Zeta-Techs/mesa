@@ -4,6 +4,7 @@
  * 项目内新会话（＋新对话 / 跟 AI 商量）优先项目 Agents 名册，不走这里的记忆跳过。
  */
 import { projectAgentLaunch } from "./project-agents.ts";
+import { samePath } from "./path-utils.ts";
 
 const KEY = "ccode.askAi";
 
@@ -33,6 +34,22 @@ export interface AskAiRemembered {
   profileId: string;
   model: string;
   useDefault: boolean;
+}
+
+/** 上下文包里的项目名：对着文件问时 `name` 是文件名（标签标题用），不能当项目名
+ *  （2026-10-22 实证：从手机添加的图片开聊，包里写成「你正在项目「phone-….jpg」中工作」）。
+ *  项目级新对话（path 空）的 name 就是项目名；否则按根目录找注册名，找不到用根目录末段。 */
+export function askAiProjectName(
+  file: Pick<AskAiFile, "path" | "name" | "root" | "cwd">,
+  projects: readonly { path: string; name: string }[],
+  isWindows: boolean,
+): string {
+  if (!file.path.trim()) return file.name;
+  const root = file.root || file.cwd;
+  const hit = projects.find((p) => samePath(p.path, root, isWindows))?.name?.trim();
+  if (hit) return hit;
+  const parts = root.replace(/[\\/]+$/, "").split(/[\\/]/);
+  return parts[parts.length - 1] || root;
 }
 
 export function loadAskAiRemembered(): AskAiRemembered | null {

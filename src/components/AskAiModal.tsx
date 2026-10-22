@@ -14,8 +14,10 @@ import {
   saveAskAiRemembered,
   askAiDirectLaunch,
   buildAskAiPending,
+  askAiProjectName,
   type AskAiFile,
 } from "../ask-ai";
+import { IS_WINDOWS } from "../hotkeys";
 import { projectChatReuseKey } from "../work-mode";
 import { Modal } from "./Modal";
 import { composeLaunchPrompt } from "../project-context";
@@ -30,8 +32,12 @@ export function beginAskAi(
   opts?: { forcePick?: boolean },
 ): void {
   void (async () => {
+    // 对着文件问时 file.name 是文件名：项目名另取注册名（读不到清单就退回根目录末段）
+    const projects = file.path.trim()
+      ? await invoke<{ path: string; name: string }[]>("list_projects").catch(() => [])
+      : [];
     const pack = await loadProjectContextPack({
-      name: file.name,
+      name: askAiProjectName(file, projects, IS_WINDOWS),
       path: file.root || file.cwd,
       workMode: file.workMode,
       writeReview: false,
