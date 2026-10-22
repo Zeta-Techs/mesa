@@ -160,7 +160,8 @@ docs/            architecture.md（总体设计 + §10 决策记录 + §12 当�
   **Python 一律走 `dep_check::usable_python()`**，禁 `resolve_binary("python3")`：python.org 的 Windows 安装包只有
   `python.exe`，`python3` 在 Windows 上永远先命中应用商店占位。给 Agent 的指令 / 技能里写 `python3` 时同时注明
   「Windows 上改用 `python`」。**Agent 起的 Python（PTY 子进程与无头运行）在 Windows 由 `process::agent_python_io_env`
-  补 `PYTHONIOENCODING=utf-8`，禁补 `PYTHONUTF8`**（它连 `open()` 默认编码一起改）。
+  补 `PYTHONIOENCODING=utf-8`，禁补 `PYTHONUTF8`**（它连 `open()` 默认编码一起改）。Agent 加 `-I` / `-E` 时该变量失效
+  （中文系统回落 GBK），Windows 任务书固定带「本机 Python（Windows）」节提示改加 `-X utf8`（2026-10-22，`task-md.ts`）。
 - **`quarto render` 命令（模板 run 脚本与技能）统一 `--output-dir ../output`、不带 `--output`**（2026-10-21 Windows 实测：写 `output`
   落进 `manuscript/output/` 且后一次渲染清掉前一次）；项目根不放 `_quarto.yml`；存量项目的 run 命令存在各自 `.ccode/project.toml`，
   改模板不会自动更新，要手工处理。PDF 走 xelatex 时 header 必须带 ActualText 开关（`manuscript_font.py` 写），否则分号文本层变 U+037E。

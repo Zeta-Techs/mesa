@@ -82,6 +82,7 @@ pub fn background_command<S: AsRef<OsStr>>(program: S) -> BackgroundCommand {
 /// 只设 PYTHONIOENCODING（标准输入输出），不设 PYTHONUTF8：后者连 `open()` 的默认编码一起改，
 /// 会让 Agent 写的、读 GBK 文件的脚本行为变掉。用户自己设过就尊重。
 /// 控制台（ConPTY）里的 Python 输出本来就是 UTF-8，不受影响。
+/// Agent 加 `-I` / `-E` 时本变量失效，靠任务书「本机 Python（Windows）」提示改加 `-X utf8`（task-md.ts）。
 pub fn agent_python_io_env() -> Option<(&'static str, &'static str)> {
     python_io_env_for(cfg!(windows), std::env::var_os("PYTHONIOENCODING").as_deref())
 }

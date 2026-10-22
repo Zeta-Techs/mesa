@@ -144,6 +144,16 @@ export function renderTaskMd(
       );
     }
   }
+  // Mesa 补的 PYTHONIOENCODING 遇 -I / -E 失效（隔离模式忽略全部 PYTHON* 环境变量），
+  // 中文系统回落 GBK，打印 Č、² 即 UnicodeEncodeError（2026-10-22 实测：Claude Code 读外部数据时习惯加 -I）
+  if (isWindows) {
+    lines.push(
+      "",
+      "## 本机 Python（Windows）",
+      "- 命令名用 `python`，不要用 `python3`（Windows 上的 `python3` 是应用商店占位程序，一运行就失败）。",
+      "- 加了 `-I` 或 `-E` 时，Python 会忽略 Mesa 设好的 UTF-8 输出，打印中文或 Č、² 这类字符就报 `'gbk' codec can't encode`：这时同时加 `-X utf8`。它也会把 `open()` 的默认编码改成 UTF-8，读 GBK 文件要显式写 `encoding=\"gbk\"`。",
+    );
+  }
   if ((step.decisions?.length ?? 0) > 0) {
     lines.push(
       "",

@@ -473,6 +473,14 @@ test("TASK.md 本步骤脚本：只在 Windows、只列简报点名的 run 脚�
   assert.doesNotMatch(win, /没有给 PowerShell 写法的条目/);
 });
 
+test("TASK.md 本机 Python：只在 Windows 给出，-I 隔离模式要配 -X utf8", () => {
+  const win = renderTaskMd(step(), cfg(), "C:\\p", undefined, undefined, undefined, undefined, true);
+  assert.match(win, /## 本机 Python（Windows）/);
+  assert.match(win, /不要用 `python3`/);
+  assert.match(win, /`-I` 或 `-E`[^\n]*`-X utf8`/);
+  assert.doesNotMatch(renderTaskMd(step(), cfg(), "/p"), /## 本机 Python/);
+});
+
 test("TASK.md 本步骤脚本：简报没点名的不列；只有 bash 写法的条目点名用 Git Bash", () => {
   const s = step({
     brief: "改完跑一次 run 脚本 prep，再跑 render-draft。",
