@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
 import { createPortal } from "react-dom";
 
@@ -34,13 +34,10 @@ export function useHoverTip(
       setTip({ x, y });
       return;
     }
-    // 横向钳制在窗口内（tooltip max-w-72 半宽 144 + 边距）
-    const x = Math.min(
-      Math.max(r.left + r.width / 2, 150),
-      window.innerWidth - 150,
-    );
+    // x 是锚点中心；贴窗口边时由 HoverTip 按提示的实际宽度挪回窗内（这里按最宽 288 预先钳制会把
+    // 靠边的短提示统统推到同一处，和锚点对不上——侧栏底部图标排实证）
     // up 时 y 指到锚点上缘，由 HoverTip 用 -translate-y-full 翻上去
-    setTip({ x, y: up ? r.top - 8 : r.bottom + 8 });
+    setTip({ x: r.left + r.width / 2, y: up ? r.top - 8 : r.bottom + 8 });
   };
   return { tip, show, hide: () => setTip(null) };
 }
@@ -61,11 +58,24 @@ export function HoverTip({
   /** 与 useHoverTip 的 side 配对：从锚点右侧弹出 */
   side?: boolean;
 }) {
+  const ref = useRef<HTMLDivElement>(null);
+  // 上 / 下弹：量出实际宽度后以锚点为中心摆，贴边时整体挪回窗内（留 8px），绘制前完成不闪
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!tip || side || !el) return;
+    const w = el.offsetWidth;
+    const left = Math.min(
+      Math.max(tip.x - w / 2, 8),
+      Math.max(window.innerWidth - 8 - w, 8),
+    );
+    el.style.left = `${left}px`;
+  }, [tip, side, text, warn]);
   if (!tip) return null;
   return createPortal(
     <div
+      ref={ref}
       role="tooltip"
-      className={`pointer-events-none fixed z-50 max-w-72 whitespace-pre-line rounded-md border border-hairline ccode-float-surface px-2.5 py-1.5 text-left text-xs leading-5 text-l2 ${side ? "-translate-y-1/2" : "-translate-x-1/2"} ${up && !side ? "-translate-y-full" : ""}`}
+      className={`pointer-events-none fixed z-50 max-w-72 whitespace-pre-line rounded-md border border-hairline ccode-float-surface px-2.5 py-1.5 text-left text-xs leading-5 text-l2 ${side ? "-translate-y-1/2" : ""} ${up && !side ? "-translate-y-full" : ""}`}
       style={{ left: tip.x, top: tip.y }}
     >
       {text}
