@@ -267,7 +267,9 @@ test("模型菜单开聊前：顶部 Agent · 配置可进二级，模型带能�
         onPermission: () => calls.push("permission"),
       }),
     );
-    await ui.click("Claude Code · glm-5.3");
+    // 芯片：品牌色 M 说明哪家 Agent（不再写名字），后面是模型（2026-10-22）
+    assert.ok(ui.el.querySelector('svg[role="img"][aria-label="Claude Code"]'), "品牌色 M 带 Agent 名供读屏");
+    await ui.click("glm-5.3");
     await ui.act(async () => new Promise((r) => setTimeout(r, 0)));
     assert.match(ui.el.textContent ?? "", /200K · 思考/);
     assert.match(ui.el.textContent ?? "", /128K · 思考 · 看图/);
@@ -700,11 +702,13 @@ test("模型菜单开聊前：最近在这个项目用过的搭配一点四样�
     await ui.render(ui.h(ui.Menu, props));
     await ui.act(async () => new Promise((r) => setTimeout(r, 0)));
     assert.match(String(warnings.at(-1)), /glm-flash 看不了图/, "当前模型看不了图：告诉输入框");
-    await ui.click("Claude Code · glm-flash");
+    await ui.click("glm-flash");
     await ui.act(async () => new Promise((r) => setTimeout(r, 0)));
     const text = ui.el.textContent ?? "";
     assert.match(text, /最近在 Ccode 用过/);
-    assert.equal((text.match(/Claude Code/g) ?? []).length, 2, "芯片 + 菜单顶行各一次，和当前一样的那套不列");
+    // 「最近用过」只剩 Codex 一行：和当前一样的那套不列（各行前是品牌色 M，读屏名就是 Agent 名）
+    const comboRows = Array.from(ui.el.querySelectorAll('[role="dialog"] svg[role="img"]')).map((m) => m.getAttribute("aria-label"));
+    assert.deepEqual(comboRows, ["Codex", "Claude Code"], "搭配一行 + 菜单顶行的 Agent");
     assert.match(text, /看不了图/);
     await ui.click("Codex");
     assert.deepEqual(combos, [{ agentId: "codex", profileId: "cx", model: "gpt-5.5", effort: "medium" }]);

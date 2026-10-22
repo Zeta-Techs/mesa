@@ -228,27 +228,23 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
       ? rt.levels[rt.effortIdx]
       : (rt.knownEffort ?? (rt.effortSeenDefault || rt.combo?.thinking ? "默认" : null));
 
-  // ---- 芯片文字（2026-10-22）：前面一个 Agent 品牌色圆点；思考档前画小 M，V 的深浅就是档位 ----
+  // ---- 芯片文字（2026-10-22）：前面是品牌色 M（哪家 Agent），后面写模型 · 思考档 ----
   let label: string;
   let title: string;
   let chipEffort: string | null;
-  let chipDepth: number | null = null;
   if (launch) {
     // 这家一条连接都没有（快速开聊在本机没有可用连接时也会落到这里）：芯片上直接说，不等点开才看见
     const noConn = launch.pick.profiles.length === 0;
-    label = noConn ? `${agentLabel} · 还没有连接` : [agentLabel, currentModel || null].filter(Boolean).join(" · ");
+    label = noConn ? `${agentLabel} · 还没有连接` : currentModel || agentLabel;
     chipEffort = noConn ? null : launch.pick.effort || null;
-    chipDepth = effortDepth(launch.pick.effort, launch.pick.effortLevels);
     title = `${agentLabel}${profileId ? ` · ${profileLabel}` : ""}${currentModel ? ` · ${currentModel}` : ""}\n选择这次用哪个 Agent、配置、模型和思考强度（发出第一句前都能改）`;
   } else if (next) {
     label = currentModel || "模型";
     chipEffort = next.effort || null;
-    chipDepth = effortDepth(next.effort, next.effortLevels);
     title = `${[label, chipEffort].filter(Boolean).join(" · ")}\n接着聊时用的模型和思考强度（下次启动生效）`;
   } else {
     label = rt.shownModel || "模型";
     chipEffort = runtimeEffortText;
-    chipDepth = effortDepth(rt.effortIdx >= 0 ? rt.levels[rt.effortIdx] : rt.knownEffort, rt.levels);
     const shown = [label, chipEffort].filter(Boolean).join(" · ");
     title = !live
       ? "Agent 没在运行"
@@ -455,25 +451,14 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
           open ? "bg-hover text-l1" : ""
         }`}
       >
-        {agentId && (
-          <span
-            aria-hidden="true"
-            className="size-1.5 shrink-0 rounded-full"
-            style={{ background: agentBrand(agentId) }}
-          />
-        )}
-        <span className={`truncate ${pendingMark ? "italic" : ""}`}>{label}</span>
-        {chipEffort && (
-          <>
-            <span aria-hidden="true" className="shrink-0">
-              {" · "}
-            </span>
-            <span className="flex shrink-0 items-center gap-1">
-              <EffortMark depth={chipDepth} className="h-[0.85em] w-auto" />
-              {chipEffort}
-            </span>
-          </>
-        )}
+        {/* 品牌色 M（2026-10-22 用户：圆点换成各家品牌色的 M）：Mesa 标志里那个 M，染成这家 Agent 的品牌色——
+            颜色就说明用的是哪家，不再写 Agent 名；M 的形状固定，思考档写在后面的文字里 */}
+        {agentId && <AgentMark agentId={agentId} />}
+        {/* 模型与档名同一段文字：间距与「Agent · 模型」一致，太长时一起截断 */}
+        <span className={`truncate ${pendingMark ? "italic" : ""}`}>
+          {label}
+          {chipEffort ? ` · ${chipEffort}` : ""}
+        </span>
         {pendingMark && rt.modelState === "pending" && <span className="shrink-0 text-l4">待确认</span>}
       </button>
       {open && (
@@ -542,11 +527,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
                           setOpen(false);
                         }}
                       >
-                        <span
-                          aria-hidden="true"
-                          className="size-1.5 shrink-0 rounded-full"
-                          style={{ background: agentBrand(c.agentId) }}
-                        />
+                        <AgentMark agentId={c.agentId} />
                         <span className="shrink-0">{name}</span>
                         <span className="ml-auto min-w-0 truncate text-xs text-l4">
                           {[model || null, c.effort || null].filter(Boolean).join(" · ")}
@@ -564,11 +545,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
                   onClick={() => setView("who")}
                   title="换 Agent 或配置"
                 >
-                  <span
-                    aria-hidden="true"
-                    className="size-1.5 shrink-0 rounded-full"
-                    style={{ background: agentBrand(agentId) }}
-                  />
+                  <AgentMark agentId={agentId} />
                   <span className="truncate font-medium">{agentLabel}</span>
                   {profileId && <span className="min-w-0 truncate text-l3">{profileLabel}</span>}
                   <span className="ml-auto flex shrink-0 items-center gap-0.5 text-xs text-l4">
@@ -731,6 +708,26 @@ function WhoView({
         </ul>
       </div>
     </>
+  );
+}
+
+/** Agent 标记：Mesa 标志里的 M（与图标源同一条路径），染成这家的品牌色；悬停写 Agent 名 */
+function AgentMark({ agentId }: { agentId: string }) {
+  const name = AGENTS.find((a) => a.id === agentId)?.label ?? agentId;
+  return (
+    <svg
+      viewBox="232 284 560 456"
+      className="h-[0.8em] w-auto shrink-0"
+      role="img"
+      aria-label={name}
+      style={{ color: agentBrand(agentId) }}
+    >
+      <title>{name}</title>
+      <path
+        d="M232 740 V284 H356 L512 512 L668 284 H792 V740 H672 V474 L548 652 H476 L352 474 V740 Z"
+        fill="currentColor"
+      />
+    </svg>
   );
 }
 
