@@ -330,3 +330,17 @@ test("Mesa 纳入时追加 RIS：数组作者一人一条 AU，「待补」的�
   assert.match(endnote, /M3  - Journal Article/);
   assert.match(endnote, /UR  - https:\/\/doi\.org\/10\.1\/x/);
 });
+
+test("认已有全文：文件名对不上（元素缩写、出版商编号名）时按 PDF 开头元数据里的 DOI 认", () => {
+  const { root, ws, proj } = fixture();
+  try {
+    writeFileSync(join(proj, "papers/s41699-021.pdf"), "%PDF-1.4\n<</doi (10.1038/s41699-021-00259-4)>>\n");
+    const r = run(["write", "--root", proj], ws);
+    assert.equal(r.status, 0, r.stderr);
+    const json = JSON.parse(readFileSync(join(ws, "papers/included.json"), "utf8"));
+    assert.equal(json.find((x: { id: string }) => x.id === "W2").pdf, "papers/s41699-021.pdf");
+    assert.doesNotMatch(readFileSync(join(ws, "papers/to-fetch.md"), "utf8"), /MXenes/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

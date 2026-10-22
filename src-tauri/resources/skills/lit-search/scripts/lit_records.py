@@ -505,19 +505,57 @@ def oa_candidates(doi, allow_preprint):
     return [u for _, u in locs]
 
 
+class Forbidden(Exception):
+    pass
+
+
+def _curl_body(url, tmp):
+    """优先 curl：Nature、Springer 对 Python urllib 的连接回「Client Challenge」页，同样的请求 curl 拿得到 PDF
+    （2026-10-22 实测）。系统没有 curl 返回 None，交给 urllib。"""
+    import shutil
+    import subprocess
+    curl = shutil.which("curl")
+    if not curl:
+        return None
+    try:
+        out = subprocess.run(
+            [curl, "-sL", "--max-time", "180", "-A", "Mozilla/5.0", "-H", "Accept: application/pdf,*/*;q=0.8",
+             "-o", str(tmp), "-w", "%{http_code}", url],
+            capture_output=True, text=True, timeout=200,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    code = out.stdout.strip()[-3:]
+    if code == "403":
+        raise Forbidden()
+    if out.returncode != 0 or not tmp.is_file():
+        return None
+    return tmp.read_bytes()
+
+
 def download_pdf(url, dest):
-    req = urllib.request.Request(url, headers={
-        "User-Agent": "Mozilla/5.0 (Mesa literature review; mailto:local)",
-        "Accept": "application/pdf,*/*;q=0.8",
-    })
-    with urllib.request.urlopen(req, timeout=90) as resp:
-        body = resp.read(200 * 1024 * 1024 + 1)
-    if b"%PDF-" not in body[:1024]:
-        raise ValueError("不是 PDF（多半是登录页或验证码页）")
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_name(dest.name + ".part")
-    tmp.write_bytes(body)
-    os.replace(tmp, dest)
+    try:
+        body = _curl_body(url, tmp)
+        if body is None or b"%PDF-" not in body[:1024]:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/pdf,*/*;q=0.8"})
+            try:
+                with urllib.request.urlopen(req, timeout=90) as resp:
+                    alt = resp.read(200 * 1024 * 1024 + 1)
+            except urllib.error.HTTPError as err:
+                if err.code == 403:
+                    raise Forbidden() from err
+                raise
+            if b"%PDF-" in alt[:1024]:
+                body = alt
+        if body is None or b"%PDF-" not in body[:1024]:
+            raise ValueError("拿到的不是 PDF（多半是登录页或验证页）")
+        tmp.write_bytes(body)
+        os.replace(tmp, dest)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
 
 
 def _words(text):
@@ -551,6 +589,17 @@ def existing_pdf(rec, root):
         words = _words(re.sub(r"^[A-Za-z]+\d{4}[a-z]?-", "", pdf.stem))
         if len(words) >= 3 and sum(len(w) for w in words) >= 12 and all(w in title for w in words):
             return f"papers/{pdf.name}"
+    # 文件名对不上（Ru-based 这类元素缩写、出版商编号名）：PDF 开头的元数据里多半写着 DOI
+    if doi:
+        needle = doi.encode("ascii", "ignore")
+        for pdf in sorted(papers.glob("*.pdf")):
+            try:
+                with pdf.open("rb") as handle:
+                    head = handle.read(256 * 1024).lower()
+            except OSError:
+                continue
+            if needle and needle in head:
+                return f"papers/{pdf.name}"
     return ""
 
 
@@ -587,22 +636,21 @@ def cmd_fetch(args):
             name = f"{base}-{n}.pdf"
             n += 1
         dest = root / "papers" / name
-        ok = False
+        ok, refused = False, False
         for url in urls[:2]:
             try:
                 download_pdf(url, dest)
                 ok = True
-                forbidden = 0
                 break
-            except urllib.error.HTTPError as err:
-                if err.code == 403:
-                    forbidden += 1
-                report.append(f"- 下载失败：{doi} ← {url}（HTTP {err.code}）")
-                if forbidden >= 3:
-                    stopped = True
-                    break
+            except Forbidden:
+                refused = True
+                report.append(f"- 下载失败：{doi} ← {url}（HTTP 403）")
             except Exception as err:
                 report.append(f"- 下载失败：{doi} ← {url}（{err}）")
+        # 「连续 3 次 403」按篇数：这篇两条链都被拒才算一次，有一篇成功或别的原因失败就重新数
+        forbidden = forbidden + 1 if (refused and not ok) else 0
+        if forbidden >= 3:
+            stopped = True
         if ok:
             taken.add(name.lower())
             rec["pdf"] = f"papers/{name}"
