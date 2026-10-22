@@ -8,7 +8,7 @@ import { useMenuKeyNav } from "../menu-key-nav";
 import { useRuntimeModelEffort } from "../runtime-model-effort";
 import { connectionModels, readModelHistory } from "../model-history";
 import { modelCapsLabel } from "../model-caps-label";
-import { pickPopoverSide, popoverRoom } from "../popover-side";
+import { clipBounds, pickPopoverSide, popoverRoom } from "../popover-side";
 import ContextRing from "./ContextRing";
 import EffortMark from "./EffortMark";
 import { effortDepth, effortGloss } from "../effort-depth";
@@ -104,9 +104,11 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
       const body = bodyRef.current;
       // 已被限高时 offsetHeight 偏小：滚动区按内容全高补回来，才是「不限高要多高」
       const natural = menu.offsetHeight + (body ? body.scrollHeight - body.clientHeight : 0);
-      const s = pickPopoverSide(anchor, window.innerHeight, Math.min(natural, MENU_CAP));
+      // 边界按看得见的区域算（运行页在顶栏下面，按整个窗口算会顶出去被盖住）
+      const bounds = clipBounds(rootRef.current);
+      const s = pickPopoverSide(anchor, bounds, Math.min(natural, MENU_CAP));
       setSide(s);
-      setRoom(popoverRoom(anchor, window.innerHeight, s, MENU_CAP));
+      setRoom(popoverRoom(anchor, bounds, s, MENU_CAP));
     };
     place();
     // 打开时把当前选中的那一行滚进可视区（名单长、选的在后面时）

@@ -15,7 +15,7 @@ import {
 import type { ProjectDto } from "../types";
 import { AGENTS } from "../types";
 import { useMenuKeyNav } from "../menu-key-nav";
-import { pickPopoverSide, popoverRoom } from "../popover-side";
+import { clipBounds, pickPopoverSide, popoverRoom } from "../popover-side";
 import { pickerRows, type PickerFixedRow } from "../chat-project-picker";
 import { WORK_MODE_LABEL, type WorkMode } from "../work-mode";
 
@@ -74,9 +74,10 @@ export default function ChatProjectPicker({
   useLayoutEffect(() => {
     if (!open || !rootRef.current || !menuRef.current) return;
     const anchor = rootRef.current.getBoundingClientRect();
-    const s = pickPopoverSide(anchor, window.innerHeight, Math.min(menuRef.current.scrollHeight, MENU_CAP));
+    const bounds = clipBounds(rootRef.current);
+    const s = pickPopoverSide(anchor, bounds, Math.min(menuRef.current.scrollHeight, MENU_CAP));
     setSide(s);
-    setRoom(popoverRoom(anchor, window.innerHeight, s, MENU_CAP));
+    setRoom(popoverRoom(anchor, bounds, s, MENU_CAP));
   }, [open, query]);
   useEffect(() => {
     if (!open) {

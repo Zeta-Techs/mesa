@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { confirmDialog } from "./ConfirmDialog";
 import { useMenuKeyNav } from "../menu-key-nav";
-import { pickPopoverSide } from "../popover-side";
+import { clipBounds, pickPopoverSide } from "../popover-side";
 import { permissionExample } from "../chat-permission";
 import type { StarterContext } from "../chat-empty-start";
 import type { CliPermissionNote, NativePermissionMode } from "../pages/TerminalPage";
@@ -143,7 +143,7 @@ export default function ChatPermissionBadge({
     setSide(
       pickPopoverSide(
         rootRef.current.getBoundingClientRect(),
-        window.innerHeight,
+        clipBounds(rootRef.current),
         menuRef.current.offsetHeight,
       ),
     );
