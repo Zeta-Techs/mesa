@@ -5,6 +5,8 @@ import { scheduleWarnText, usageWarnText, type UnbindRefs } from "../unbind-impa
 import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import {
+  ChevronsDownUp,
+  ChevronsUpDown,
   CopyPlus,
   Database,
   Eye,
@@ -46,8 +48,13 @@ import { toast } from "../toast";
 import { slotForAgent } from "../gateway-slot";
 import { catalogCapabilityNote, zhipuOpenAiSlotBillingHint } from "../gateway-draft";
 import {
-  profileConnectionCaptions,
+  canProbeProfile,
+  duplicateNameIds,
+  profileNeedsProbe,
+  profileStatusCell,
   showCatalogSyncAction,
+  type ProfileStatus,
+  type ProfileStatusTone,
 } from "../profile-connection-ui";
 import { addConnectionDefaults, endpointHost, gatewayPickerRows } from "../gateway-option";
 import ContextMenu from "../components/ContextMenu";
@@ -93,6 +100,7 @@ import type {
   FetchGatewayCatalogDto,
   ProfileValidationDto,
   ValidationCheckDto,
+  GatewayProbeDto,
   RequestPolicy,
   RoleModels,
   LaunchPlanPreviewDto,
@@ -1475,21 +1483,28 @@ const OFFICIAL_LOGOUT_HINT: Record<string, string> = {
 
 const displayHost = endpointHost;
 
-/** 连接列表五列网格模板：名称 | 域名 | 模型 | 密钥状态 | 操作。
- *  官方账号行与数据行共用同一模板，保证上下行严格垂直对齐；
+/** 连接列表五列网格模板：名称 | 端点 | 模型 | 状态 | 操作。
+ *  列标题行、官方账号行与数据行共用同一模板，保证上下行严格垂直对齐；
  *  操作列 170px 刚好容纳「两枚 hover 图标钮 + 编辑 + ⋯」，再宽会在中等窗口把行撑出横向滚动 */
 const PROFILE_GRID =
   "grid-cols-[minmax(150px,1.1fr)_minmax(140px,0.9fr)_minmax(150px,1fr)_110px_170px]";
 
-/** 连接状态微型胶囊（Pill Badge）：每行只出一个最高优先级状态
- *  （配置失效 > 已停用 > 已验证 > 未验证），不再多标记堆叠；
- *  「默认」「全局生效」不是健康状态，收进名称下方 caption 行 */
+/** 状态列配色：纯状态 = 中性字 + 语义色小圆点；例外（缺/失败）字也着色，扫一眼就能挑出来 */
+const STATUS_TONE: Record<ProfileStatusTone, { text: string; dot: string | null }> = {
+  ok: { text: "text-l2", dot: "bg-ok-text" },
+  warn: { text: "text-warn-text", dot: "bg-warn-text" },
+  err: { text: "text-err-text", dot: "bg-err-text" },
+  muted: { text: "text-l3", dot: null },
+};
+
+/** 名称旁的标记胶囊：配置失效 / 已停用（健康类，每行至多一颗）与 默认 / 全局（选用类）。
+ *  默认、全局不是健康状态，但决定启动时用谁——2026-10-23 起从灰色 caption 提到名称旁，一眼能找到 */
 function StatusPill({
   tone,
   tip,
   children,
 }: {
-  tone: "ok" | "err" | "muted";
+  tone: "ok" | "err" | "muted" | "accent";
   tip: string;
   children: string;
 }) {
@@ -1498,10 +1513,12 @@ function StatusPill({
       ? "bg-ok text-ok-text"
       : tone === "err"
         ? "bg-err text-err-text"
-        : "bg-inset text-l4";
+        : tone === "accent"
+          ? "bg-cta-pill text-cta-pill-text"
+          : "bg-inset text-l3";
   return (
     <span
-      className={`ml-1.5 inline-flex items-center whitespace-nowrap rounded-full px-1.5 py-px text-micro font-normal ${cls}`}
+      className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-1.5 py-px text-micro font-normal ${cls}`}
       title={tip}
     >
       {children}
@@ -1532,7 +1549,7 @@ function OfficialStatusChip({
     const hint = OFFICIAL_LOGOUT_HINT[agentId];
     if (hint) lines.push(`断开方式：${hint}`);
   } else if (st.loginCommand) {
-    lines.push(`点「登录」将在终端执行：${st.loginCommand}`);
+    lines.push(`点「官方登录」将在终端执行：${st.loginCommand}`);
   }
   if (!hasOutboundProxy) {
     lines.push("官方通道直连厂商；国内网络请在设置 → 网络填写出网代理");
@@ -1562,7 +1579,7 @@ function OfficialStatusChip({
         title={lines.join("\n") || "在终端登录官方账号"}
         className={rowActionClass}
       >
-        登录
+        官方登录
       </button>
       {lines.length > 0 && <HoverTip tip={tip} text={lines.join("\n")} />}
     </span>
@@ -2268,6 +2285,10 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   // 操作成功提示（复制到其他 agent 等），几秒后自动消失
   const [notice, setNotice] = useState<string | null>(null);
   const [syncingCatalogId, setSyncingCatalogId] = useState<string | null>(null);
+  // 行上「测试」的就地结果：测试中 / 刚测完（后端状态重算前先用它，重算后以后端为准，失败原因留在悬停里）
+  const [rowProbe, setRowProbe] = useState<
+    Record<string, { running: true } | { running: false; ok: boolean; message: string }>
+  >({});
   // 过滤条：按安装状态过滤 agent 组；按名称/端点/模型过滤配置行
   const [statusFilter, setStatusFilter] = useState<
     "all" | "installed" | "uninstalled"
@@ -2864,6 +2885,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   });
   // 可见分组中存在展开项 → 按钮显示「全部折叠」，否则「全部展开」
   const anyExpanded = visibleAgents.some((a) => !collapsedGroups.has(a.id));
+  const dupNameIds = duplicateNameIds(profiles);
   // 保存后的「要重启标签才生效」提示（仅当该 agent 确有标签在跑）
   const [savedNote, setSavedNote] = useState<string | null>(null);
   // 「设为全局」进度/结果弹层：确认后立即弹出（写文件 + CLI 复检含网络检查要几秒到
@@ -2916,6 +2938,36 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     } catch (e) {
       setError(String(e));
     }
+  }
+
+  /** 行上「测试」：就地对这条连接用的协议槽 + 它的启动模型发一次基础请求（与网关库「测试」同一条命令，
+   *  结果按槽 / 模型 / 地址密钥指纹存进网关，后端据此算出这条连接的「测试通过 / 测试失败」），不开网关库 */
+  async function probeRow(profile: Profile) {
+    if (!profile.gatewayId || rowProbe[profile.id]?.running) return;
+    setRowProbe((cur) => ({ ...cur, [profile.id]: { running: true } }));
+    try {
+      const dto = await invoke<GatewayProbeDto>("probe_gateway_slot", {
+        gatewayId: profile.gatewayId,
+        slot: slotForAgent(profile.agent, profile.protocol),
+        model: profile.models[0] ?? null,
+        basicOnly: true,
+        baseUrl: null,
+        apiKey: null,
+        noAuth: null,
+      });
+      const failed = dto.checks.find((c) => c.status === "failed");
+      setRowProbe((cur) => ({
+        ...cur,
+        [profile.id]: { running: false, ok: dto.ok, message: failed?.message ?? "" },
+      }));
+    } catch (e) {
+      setRowProbe((cur) => ({
+        ...cur,
+        [profile.id]: { running: false, ok: false, message: String(e) },
+      }));
+    }
+    // 测试结果已写进网关：重拉连接，让状态列换成后端算出的结论
+    await loadAll().catch(() => {});
   }
 
   /** 连接行的就地修复：先刷新网关目录，再让后端重新计算绑定同步状态。
@@ -3022,21 +3074,23 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
         {/* 上手引导走到安装 / 网关 / 连接 / 第一段对话时，这一步在本页怎么做 */}
         <OnboardingPageStrip />
 
-        {/* 过滤条：状态筛选胶囊（选中=实心 seg-sel）+ 右侧搜索框 */}
+        {/* 过滤条：状态筛选胶囊（选中=实心 seg-sel）+ 右侧折叠开关与搜索框。
+            「全部折叠」是动作不是筛选条件，不跟筛选胶囊挨着摆成第四个选项 */}
         <PageToolbar>
-          <div className="flex items-center gap-1">
-            <SegTabs
-              items={(
-                [
-                  ["all", "全部"],
-                  ["installed", "已安装"],
-                  ["uninstalled", "未安装"],
-                ] as const
-              ).map(([id, label]) => ({ id, label }))}
-              value={statusFilter}
-              onChange={setStatusFilter}
-            />
+          <SegTabs
+            items={(
+              [
+                ["all", "全部"],
+                ["installed", "已安装"],
+                ["uninstalled", "未安装"],
+              ] as const
+            ).map(([id, label]) => ({ id, label }))}
+            value={statusFilter}
+            onChange={setStatusFilter}
+          />
+          <div className="flex items-center gap-1.5">
             <button
+              type="button"
               onClick={() =>
                 updateCollapsed((prev) => {
                   const next = new Set(prev);
@@ -3048,18 +3102,24 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                   return next;
                 })
               }
-              className="ml-2 flex h-7 items-center rounded-sm px-2 text-xs text-l2 hover:bg-hover hover:text-l1"
+              title={anyExpanded ? "全部折叠" : "全部展开"}
+              aria-label={anyExpanded ? "全部折叠" : "全部展开"}
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-l3 hover:bg-hover hover:text-l1"
             >
-              {anyExpanded ? "全部折叠" : "全部展开"}
+              {anyExpanded ? (
+                <ChevronsDownUp size={16} strokeWidth={1.8} aria-hidden="true" />
+              ) : (
+                <ChevronsUpDown size={16} strokeWidth={1.8} aria-hidden="true" />
+              )}
             </button>
+            {/* 搜索框：inset 底 + hairline 细边（同对话页手法） */}
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="搜索连接 / 端点 / 模型"
+              className={`${searchFieldClass} w-56`}
+            />
           </div>
-          {/* 搜索框：inset 底 + hairline 细边（同对话页手法） */}
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="搜索连接 / 端点 / 模型"
-            className={`${searchFieldClass} w-56`}
-          />
         </PageToolbar>
 
         {error && <NoticeBar tone="err" className="mt-4" onDismiss={() => setError(null)}>{error}</NoticeBar>}
@@ -3098,7 +3158,20 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
           </NoticeBar>
         )}
 
-        {/* agent 分组（可折叠） */}
+        {/* agent 分组（可折叠）。上方一行列标题，与卡内行同一网格模板：
+            mx-px 抵卡片 1px 边框、px-4 同行内边距，列严格对齐 */}
+        {anyExpanded && profiles.length > 0 && (
+          <div
+            aria-hidden="true"
+            className={`mx-px mb-1.5 grid ${PROFILE_GRID} gap-3 px-4 text-micro text-l3`}
+          >
+            <span>连接</span>
+            <span>端点</span>
+            <span>模型</span>
+            <span>状态</span>
+            <span />
+          </div>
+        )}
         <div>
           {visibleAgents.map((agent) => {
             const det = agents.find((a) => a.id === agent.id);
@@ -3150,7 +3223,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                   >
                     {agent.label}
                   </h2>
-                  <span className="rounded-full bg-inset px-1.5 py-0.5 text-micro text-l4">
+                  <span className="rounded-full bg-inset px-1.5 py-0.5 text-micro text-l3">
                     {connectionCount}
                   </span>
                   {/* 连接冲突提升为组头琥珀胶囊（v3.93）：CLI 自读文件里的残留密钥会覆盖官方账号
@@ -3367,7 +3440,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
 
                     {list.length === 0 ? (
                       // 只说状态不说教：页头已有「+ 添加连接」主按钮，入口不必每组复述一遍
-                      <p className="px-4 py-3 text-xs text-l4">还没有连接</p>
+                      <p className="px-4 py-3 text-xs text-l3">还没有连接</p>
                     ) : (
                       // 行间极细分割线（hairline）替代卡片间距：整列垂直严格对齐，视觉节奏与官方账号行一致
                       <ul className="divide-y divide-hairline overflow-x-auto">
@@ -3381,22 +3454,12 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                           const isGlobal =
                             settings?.activeGlobalProfiles?.[profile.agent] ===
                             profile.id;
-                          // caption：默认 / 全局生效 + 上次使用 + 外部文件被改过
+                          // caption：上次使用 + 外部文件被改过（默认 / 全局已提到名称旁，连接状态在状态列）
                           const caption: {
                             text: string;
                             tip: string;
                             cls?: string;
                           }[] = [];
-                          if (isDefault)
-                            caption.push({
-                              text: "默认",
-                              tip: "Mesa 启动栏预选这份连接。只改启动栏，不写外部 CLI 文件。",
-                            });
-                          if (isGlobal)
-                            caption.push({
-                              text: "全局生效",
-                              tip: "最近一次由 Mesa 写入该 CLI 的全局默认。外部终端会读到这份配置。",
-                            });
                           if (profile.lastUsedAt)
                             caption.push({
                               text: `上次使用 ${relTime(profile.lastUsedAt)}`,
@@ -3413,7 +3476,12 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                               });
                             }
                           }
-                          caption.push(...profileConnectionCaptions(profile));
+                          const status = profileStatusCell(profile);
+                          // 同组重名：补首个模型名区分（只改显示，不动名字）
+                          const nameSuffix =
+                            dupNameIds.has(profile.id) && profile.models[0]
+                              ? profile.models[0]
+                              : null;
                           return (
                           <li
                             key={profile.id}
@@ -3428,11 +3496,26 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                 name={profile.name}
                               />
                               <span className="min-w-0 flex-1">
-                              <span
-                                className="block truncate font-medium text-l1"
-                                title={profile.name}
-                              >
-                                {profile.name}
+                              <span className="flex min-w-0 items-center gap-1.5">
+                                <span
+                                  className="truncate font-medium text-l1"
+                                  title={
+                                    nameSuffix
+                                      ? `${profile.name}（同一 Agent 下有同名连接，这里补上首个模型 ${nameSuffix} 区分；可在「编辑」里改名）`
+                                      : profile.name
+                                  }
+                                >
+                                  {profile.name}
+                                  {nameSuffix && (
+                                    <span className="font-normal text-l3"> · {nameSuffix}</span>
+                                  )}
+                                </span>
+                                {isDefault && (
+                                  <StatusPill tone="accent" tip="Mesa 启动栏预选这份连接。只改启动栏，不写外部 CLI 文件。">默认</StatusPill>
+                                )}
+                                {isGlobal && (
+                                  <StatusPill tone="muted" tip="最近一次由 Mesa 写入该 CLI 的全局默认。外部终端会读到这份配置。">全局生效</StatusPill>
+                                )}
                                 {profileIssues[profile.id] ? (
                                   <StatusPill tone="err" tip={profileIssues[profile.id].reason}>配置失效</StatusPill>
                                 ) : hidden ? (
@@ -3441,7 +3524,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                               </span>
                               {/* caption 行：micro 档灰字，相对时间主显、悬浮给绝对时间（白话双层） */}
                               {caption.length > 0 && (
-                                <span className="mt-0.5 block break-words text-micro text-l4">
+                                <span className="mt-0.5 block break-words text-micro text-l3">
                                   {caption.map((c, i) => (
                                     <span key={`${c.text}-${i}`} title={c.tip} className={c.cls}>
                                       {i > 0 ? " · " : ""}
@@ -3453,7 +3536,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                               </span>
                             </span>
                             <span
-                              className={`min-w-0 truncate text-xs ${profile.baseUrl ? "text-l2" : "text-l4"}`}
+                              className={`min-w-0 truncate text-xs ${profile.baseUrl ? "text-l2" : "text-l3"}`}
                               title={
                                 profile.accountType === "official"
                                   ? "官方账号登录（CLI 自身认证，不注入端点/密钥）"
@@ -3483,53 +3566,95 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                 <>
                                   {profile.models.slice(0, 3).map((m, i) => (
                                     // 首个模型是启动默认：字色提一档、悬停说明，其余是会话里可切的
+                                    // （其余用 l3 不用 l4：l4 在卡底上不到 4.5:1，是装饰档不是阅读档）
                                     <span
                                       key={m}
-                                      className={`shrink-0 font-mono text-micro ${i === 0 ? "text-l2" : "text-l4"}`}
+                                      className={`shrink-0 font-mono text-micro ${i === 0 ? "text-l2" : "text-l3"}`}
                                       title={i === 0 ? `${m}（启动默认）` : m}
                                     >
                                       {m}
                                     </span>
                                   ))}
                                   {profile.models.length > 3 && (
-                                    <span className="shrink-0 font-mono text-micro text-l4">
+                                    <span className="shrink-0 font-mono text-micro text-l3">
                                       +{profile.models.length - 3}
                                     </span>
                                   )}
                                 </>
                               ) : (
-                                <span className="text-xs text-l4">
+                                <span className="text-xs text-l3">
                                   未指定模型
                                 </span>
                               )}
                             </span>
-                            {profile.accountType === "official" ? (
-                              <span
-                                className="flex items-center gap-1 text-xs text-l4"
-                                title="官方账号登录，无需 API 密钥"
-                              >
-                                <span className="h-1.5 w-1.5 rounded-full bg-l4" />
-                                无需密钥
-                              </span>
-                            ) : (
-                            <span
-                              className="flex items-center gap-1 text-xs text-l2"
-                              title={
-                                profile.hasKey
-                                  ? `密钥已受限存储${profile.keyHint ? `（${profile.keyHint}）` : ""}`
-                                  : "尚未填写密钥"
-                              }
-                            >
-                              {/* 纯状态 = 中性文字 + 语义色小圆点（设计系统口径）：
-                                  「密钥已存」是事实不是成就，亮绿整列重复会抢走视线 */}
-                              <span
-                                className={`h-1.5 w-1.5 rounded-full ${
-                                  profile.hasKey ? "bg-ok-text" : "bg-l4"
-                                }`}
-                              />
-                              {profile.hasKey ? "已保存密钥" : "未设置"}
+                            {/* 状态列：只说例外与「测试通过」。未测试不常驻，悬停出「测试」，点了就地测，
+                                结果写在原位；测过的结论也能点一下重测 */}
+                            <span className="flex min-w-0 items-center text-xs">
+                              {(() => {
+                                const local = rowProbe[profile.id];
+                                const probeable = canProbeProfile(profile);
+                                if (local?.running) {
+                                  return (
+                                    <span className="flex items-center gap-1 text-l3" role="status">
+                                      <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-l3" />
+                                      测试中…
+                                    </span>
+                                  );
+                                }
+                                // 后端算出结论优先；后端还认不出这次结果（比如被目录过期压住以外的情形）时用就地结果兜底
+                                const shown: ProfileStatus | null =
+                                  status ??
+                                  (local
+                                    ? local.ok
+                                      ? { text: "测试通过", tip: "刚才的连接测试通过", tone: "ok" }
+                                      : { text: "测试失败", tip: "刚才的连接测试没通过", tone: "err" }
+                                    : null);
+                                if (shown) {
+                                  const why =
+                                    local && !local.running && !local.ok && local.message
+                                      ? `\n${local.message}`
+                                      : "";
+                                  const body = (
+                                    <>
+                                      {STATUS_TONE[shown.tone].dot && (
+                                        <span
+                                          className={`h-1.5 w-1.5 shrink-0 rounded-full ${STATUS_TONE[shown.tone].dot}`}
+                                        />
+                                      )}
+                                      <span className="truncate">{shown.text}</span>
+                                    </>
+                                  );
+                                  return probeable ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => void probeRow(profile)}
+                                      title={`${shown.tip}${why}\n点击重新测试`}
+                                      className={`flex min-w-0 items-center gap-1 rounded-md px-1 -mx-1 hover:bg-hover ${STATUS_TONE[shown.tone].text}`}
+                                    >
+                                      {body}
+                                    </button>
+                                  ) : (
+                                    <span
+                                      className={`flex min-w-0 items-center gap-1 ${STATUS_TONE[shown.tone].text}`}
+                                      title={`${shown.tip}${why}`}
+                                    >
+                                      {body}
+                                    </span>
+                                  );
+                                }
+                                return profileNeedsProbe(profile) ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => void probeRow(profile)}
+                                    title="这条连接还没测过。点一下用它的启动模型发一次请求，结果写在这里"
+                                    aria-label={`测试连接：${profile.name}`}
+                                    className={`${ghostActionClass} ${hoverRevealClass}`}
+                                  >
+                                    测试
+                                  </button>
+                                ) : null;
+                              })()}
                             </span>
-                            )}
                             <span className="flex items-center justify-end gap-1 whitespace-nowrap">
                               {/* 「新对话」（2026-10-19 取代 v3.88 的「在终端使用」）：建完连接立刻验证它能不能用——
                                   跳到新对话页、输入框里已选好这条连接，发一句话看有没有回复。
@@ -3647,7 +3772,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                 </ul>
                 <p className="mt-2 leading-5 text-l3">
                   这些文件里残留的密钥会覆盖官方账号登录并产生 API
-                  计费，只在你点「登录」改用官方账号时才碍事；平时用上面的 API
+                  计费，只在你点「官方登录」改用官方账号时才碍事；平时用上面的 API
                   连接，Mesa 启动时自带注入，不受影响。
                 </p>
                 <p className="mt-1.5 leading-5 text-l3">
@@ -3688,6 +3813,8 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
             setGwLib(false);
             setGwFocus(null);
             setGwNew(false);
+            // 网关可能改过地址 / 密钥 / 重测过：行上就地结果作废，以后端重算为准
+            setRowProbe({});
           }}
           onJumpUsage={(id) => {
             sessionStorage.setItem("ccode.statsGateway", id);

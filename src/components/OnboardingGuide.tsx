@@ -555,7 +555,7 @@ function stripText(id: OnboardingStepId, officialPath: boolean): string | null {
       return "点右上「网关库」→「+ 新建网关」：选端点预设、贴 API Key，测试通过后保存。用官方订阅账号登录的，可以跳过这一步。";
     case "connection":
       return officialPath
-        ? "点右上「+ 添加连接」，账号类型选「官方账号」，保存后在这家 Agent 卡片上点「登录」，按终端提示完成。"
+        ? "点右上「+ 添加连接」，账号类型选「官方账号」，保存后在这家 Agent 卡片上点「官方登录」，按终端提示完成。"
         : "点右上「+ 添加连接」，选「选用已有网关」，挑刚建的网关和要用的模型，保存。";
     case "chat":
       return "连接加好了。点侧栏「新对话」发一句话，有回复就是通的。";

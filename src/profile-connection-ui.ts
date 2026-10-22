@@ -1,57 +1,109 @@
-/** 连接行状态文案与「同步目录」是否出现。 */
+/** 连接行状态列文案、行上测试、「同步目录」是否出现、同组重名。 */
+
+import { slotForAgent } from "./gateway-slot.ts";
+
+export type ProfileStatusTone = "ok" | "warn" | "err" | "muted";
+
+export interface ProfileStatus {
+  text: string;
+  tip: string;
+  tone: ProfileStatusTone;
+}
 
 export const CONNECTION_STATUS_CAPTION: Record<
   string,
-  [text: string, tip: string, cls: string]
+  [text: string, tip: string, tone: ProfileStatusTone]
 > = {
-  gateway_missing: ["网关缺失", "绑定的网关已不存在", "text-err-text"],
-  slot_missing: ["缺槽", "这个网关还没配该协议的端点", "text-warn-text"],
-  credential_missing: [
-    "缺密钥",
-    "网关未配置密钥且不是无密钥端点",
-    "text-warn-text",
-  ],
-  untested: ["未测试", "尚未完成该协议槽的连接测试", "text-l4"],
-  probe_failed: ["测试失败", "最近一次连接测试失败，请重新测试", "text-err-text"],
-  catalog_stale: ["目录过期", "模型目录超过 7 天未刷新", "text-warn-text"],
-  model_unsynced: [
-    "模型未同步",
-    "绑定模型与网关目录不同步",
-    "text-warn-text",
-  ],
-  ready: ["已连接", "最近一次连接测试通过", "text-ok-text"],
-  official: ["官方账号", "由 CLI 官方登录态提供", "text-ok-text"],
-  unknown: ["状态未知", "连接状态尚未计算", "text-l4"],
+  gateway_missing: ["网关缺失", "绑定的网关已不存在", "err"],
+  slot_missing: ["缺槽", "这个网关还没配该协议的端点", "warn"],
+  credential_missing: ["缺密钥", "网关未配置密钥且不是无密钥端点", "warn"],
+  probe_failed: ["测试失败", "最近一次连接测试失败，请重新测试", "err"],
+  catalog_stale: ["目录过期", "模型目录超过 7 天未刷新", "warn"],
+  model_unsynced: ["模型未同步", "绑定模型与网关目录不同步", "warn"],
+  ready: ["测试通过", "最近一次连接测试通过", "ok"],
 };
 
-export function profileConnectionCaptions(profile: {
+/** 状态列（2026-10-23 连接页审查）：只说例外和「测过且通过」。
+ *  未测试 / 状态未知 / 密钥已存是几乎每行都一样的事实，常驻只会把真正的问题淹掉——返回 null，
+ *  未测试由调用方在悬停时给「测试」入口（见 profileNeedsProbe）。 */
+export function profileStatusCell(profile: {
+  accountType?: string;
   connectionStatus?: string;
   modelSyncStatus?: string;
   modelSyncNote?: string | null;
-}): { text: string; tip: string; cls: string }[] {
-  const parts: { text: string; tip: string; cls: string }[] = [];
-  const status = profile.connectionStatus;
-  if (status && status !== "ready" && status !== "official") {
-    if (status === "model_unsynced") {
-      const note = profile.modelSyncNote?.trim();
-      parts.push({
-        text: note || "模型未同步",
-        tip: note || CONNECTION_STATUS_CAPTION.model_unsynced[1],
-        cls: "text-warn-text",
-      });
-      return parts;
-    }
-    const lab = CONNECTION_STATUS_CAPTION[status];
-    if (lab) parts.push({ text: lab[0], tip: lab[1], cls: lab[2] });
+  hasKey?: boolean;
+  keyHint?: string | null;
+}): ProfileStatus | null {
+  if (profile.accountType === "official") {
+    return { text: "官方账号", tip: "官方账号登录，无需 API 密钥", tone: "muted" };
   }
+  const status = profile.connectionStatus;
+  if (status === "model_unsynced") {
+    const note = profile.modelSyncNote?.trim();
+    return {
+      text: CONNECTION_STATUS_CAPTION.model_unsynced[0],
+      tip: note || CONNECTION_STATUS_CAPTION.model_unsynced[1],
+      tone: "warn",
+    };
+  }
+  const lab = status ? CONNECTION_STATUS_CAPTION[status] : undefined;
+  if (lab && status !== "ready") return { text: lab[0], tip: lab[1], tone: lab[2] };
   if (profile.modelSyncStatus === "stale" || profile.modelSyncStatus === "missing") {
-    parts.push({
+    return {
       text: profile.modelSyncStatus === "missing" ? "绑定模型失效" : "目录模型失效",
       tip: profile.modelSyncNote ?? "绑定模型与网关目录未同步",
-      cls: "text-warn-text",
-    });
+      tone: "warn",
+    };
   }
-  return parts;
+  if (lab) {
+    const key = profile.keyHint ? `；密钥尾号 ${profile.keyHint}` : "";
+    return { text: lab[0], tip: `${lab[1]}${key}`, tone: lab[2] };
+  }
+  // 后端没算出状态的旧数据：只兜底「没有密钥」这一种例外
+  if (!status && profile.hasKey === false) {
+    return { text: "未设置密钥", tip: "尚未填写密钥", tone: "warn" };
+  }
+  return null;
+}
+
+/** 行上能不能直接测：API 连接、有网关、协议槽支持体检（Gemini / Cursor 槽后端不支持，见 probe_gateway_slot） */
+export function canProbeProfile(profile: {
+  agent: string;
+  protocol?: string | null;
+  accountType?: string;
+  gatewayId?: string | null;
+}): boolean {
+  if (profile.accountType === "official" || !profile.gatewayId) return false;
+  const slot = slotForAgent(profile.agent, profile.protocol);
+  return slot !== "gemini" && slot !== "cursor";
+}
+
+/** 还没测过、且能测的连接：状态列常驻「测试」（点了就地测，结果写在原位） */
+export function profileNeedsProbe(profile: {
+  agent: string;
+  protocol?: string | null;
+  accountType?: string;
+  gatewayId?: string | null;
+  connectionStatus?: string;
+}): boolean {
+  return (
+    canProbeProfile(profile) &&
+    (profile.connectionStatus === "untested" || profile.connectionStatus === "unknown")
+  );
+}
+
+/** 同一 agent 下名字重复的连接 id：列表里给它们补首个模型名，否则启动栏里分不清 */
+export function duplicateNameIds(
+  profiles: { id: string; agent: string; name: string }[],
+): Set<string> {
+  const groups = new Map<string, string[]>();
+  for (const p of profiles) {
+    const k = `${p.agent}\u0000${p.name.trim().toLowerCase()}`;
+    groups.set(k, [...(groups.get(k) ?? []), p.id]);
+  }
+  const out = new Set<string>();
+  for (const ids of groups.values()) if (ids.length > 1) ids.forEach((id) => out.add(id));
+  return out;
 }
 
 /** 「同步目录」只处理目录过期。绑定模型不在目录 / 已标失效，刷新目录清不掉，应去编辑勾选。 */
