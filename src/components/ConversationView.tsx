@@ -179,10 +179,10 @@ export function OutputView({ command, text }: { command?: string | null; text?: 
 }
 
 /** 这一轮的计划（各家待办 / update_plan 收成一份；同一轮只画最新那份，ACP plan 语义） */
-function PlanCard({ entries, compact }: { entries: PlanEntry[]; compact?: boolean }) {
+function PlanCard({ entries }: { entries: PlanEntry[] }) {
   const done = entries.filter((e) => e.status === "completed").length;
   return (
-    <div className={`my-2 rounded-md border border-hairline px-3 py-2 ${compact ? "text-xs" : "ccode-chat-meta"}`}>
+    <div className="my-2 rounded-md border border-hairline px-3 py-2 ccode-chat-meta">
       <div className="mb-1 flex items-center gap-1.5 text-micro text-l4">
         <ListTodo size={12} strokeWidth={1.8} aria-hidden="true" />
         计划 · {done}/{entries.length} 已完成
@@ -261,7 +261,6 @@ function markFirstKeyword(root: Element, keywords: string[]): HTMLElement | null
  */
 export default function ConversationView({
   messages,
-  compact,
   cwd,
   focusIndex = -1,
   focusKeywords,
@@ -272,7 +271,6 @@ export default function ConversationView({
   queuedNote,
 }: {
   messages: ChatMessageDto[];
-  compact?: boolean;
   /** 会话工作目录：AI 正文里相对图片/链接的解析基准（ChatMarkdown 用），也是过程行里文件写相对路径的基准 */
   cwd?: string | null;
   /** 搜索命中的消息下标；≥0 时高亮并滚进视野 */
@@ -439,7 +437,7 @@ export default function ConversationView({
   function renderBlock(b: BlockDto, key: string, isUser: boolean, forceOpen = false) {
     if (b.kind === "thinking" || b.kind === "tool_use" || b.kind === "tool_result") {
       return (
-        <div key={key} className={`my-1 whitespace-pre-wrap break-all text-l3 ${compact ? "font-mono text-xs" : "font-mono ccode-chat-code"}`}>
+        <div key={key} className={`my-1 whitespace-pre-wrap break-all text-l3 font-mono ccode-chat-code`}>
           {b.toolName ? `${b.toolName} ` : ""}
           {b.text.length > 200 ? `${b.text.slice(0, 200)}…` : b.text}
         </div>
@@ -474,10 +472,10 @@ export default function ConversationView({
   }
 
   // 过程行、计划、思考正文：聊天字号阶梯里的 0.94 档（App.css .ccode-chat-meta），随「聊天字号」设置走
-  const rowText = compact ? "text-xs" : "ccode-chat-meta";
+  const rowText = "ccode-chat-meta";
   // 过程行里的命令 / 参数等宽字：0.86 档（原 text-xs 在 Mac 上只有 10.5px）
-  const monoText = compact ? "font-mono text-xs" : "font-mono ccode-chat-code";
-  const iconSize = compact ? 13 : 15;
+  const monoText = "font-mono ccode-chat-code";
+  const iconSize = 15;
 
   /** 过程里的一行：图标 + 动词 + 对象 + 目录 / 补充 + 增删行数；有细节的整行可点开 */
   function processRow(
@@ -532,7 +530,7 @@ export default function ConversationView({
         {live && awaiting && <span className="shrink-0 text-l4">等你决定</span>}
       </>
     );
-    const rowCls = `flex min-w-0 items-center gap-2 ${compact ? "min-h-6" : "min-h-8"} py-0.5 ${rowText}`;
+    const rowCls = `flex min-w-0 items-center gap-2 min-h-8 py-0.5 ${rowText}`;
     if (!row.detail) {
       return (
         <div key={key} className={rowCls}>
@@ -550,7 +548,7 @@ export default function ConversationView({
         >
           {line}
         </button>
-        {open && <div className={`mb-2 mt-1 ${compact ? "pl-5" : "pl-6"}`}>{row.detail()}</div>}
+        {open && <div className={"mb-2 mt-1 pl-6"}>{row.detail()}</div>}
       </div>
     );
   }
@@ -641,7 +639,7 @@ export default function ConversationView({
     if (item.kind === "text") {
       // 过程里的中途说明：这一轮做完后降一级（.ccode-chat-aside），回答才是最醒目的字；还在写时它可能就是回答，不降
       return (
-        <div key={key} className={`my-2 ${live || compact ? "" : "ccode-chat-aside"}`}>
+        <div key={key} className={`my-2 ${live ? "" : "ccode-chat-aside"}`}>
           {renderBlock({ kind: "text", text: item.text, toolName: null }, key, false)}
         </div>
       );
@@ -688,7 +686,7 @@ export default function ConversationView({
             type="button"
             aria-expanded={open}
             onClick={() => toggleExpand(key)}
-            className={`flex max-w-full items-center gap-1.5 ${compact ? "min-h-6" : "min-h-8"} ${rowText} text-l3 hover:text-l1`}
+            className={`flex max-w-full items-center gap-1.5 min-h-8 ${rowText} text-l3 hover:text-l1`}
           >
             <span className="shrink-0">{label}</span>
             {summary.text && <span className="min-w-0 truncate text-l4">· {summary.text}</span>}
@@ -700,7 +698,7 @@ export default function ConversationView({
         )}
         {open && (
           <div className={seg.live ? "" : "mb-3 mt-1 border-t border-hairline pt-2"}>
-            {plan && <PlanCard entries={plan} compact={compact} />}
+            {plan && <PlanCard entries={plan} />}
             {thoughtOnly && !seg.live
               ? richText(
                   `${key}:thought`,
@@ -713,7 +711,7 @@ export default function ConversationView({
         {seg.answer && (
           <>
             {renderBlocks(seg.answer, answerKey, false, hit)}
-            {!compact && messageActions(seg.answer, answerKey, "left")}
+            {messageActions(seg.answer, answerKey, "left")}
           </>
         )}
       </div>
@@ -741,7 +739,7 @@ export default function ConversationView({
               key={mk}
               ref={hit ? hitRef : undefined}
               data-search-hit={hit ? "1" : undefined}
-              className={`mb-3 flex items-start gap-2 ${compact ? "text-xs" : "ccode-chat-meta"} text-l4 ${
+              className={`mb-3 flex items-start gap-2 ccode-chat-meta text-l4 ${
                 hit ? "rounded-md bg-seg-sel px-2 py-1" : ""
               }`}
             >
@@ -769,10 +767,10 @@ export default function ConversationView({
             ref={hit ? hitRef : undefined}
             data-search-hit={hit ? "1" : undefined}
             // 每个新问题前留大空、连着发的几句不拉开（App.css .ccode-chat-user-row）；大圆角气泡（原 6px 像一张卡片）
-            className={`group/msg mb-3 flex flex-col items-end ${compact ? "" : "ccode-chat-user-row"}`}
+            className={"group/msg mb-3 flex flex-col items-end ccode-chat-user-row"}
           >
             <div
-              className={`max-w-[70%] bg-chat-bubble ${compact ? "rounded-xl px-3 py-2 text-xs" : "ccode-chat-user rounded-2xl px-3.5 py-2"} ${
+              className={`max-w-[70%] bg-chat-bubble ccode-chat-user rounded-2xl px-3.5 py-2 ${
                 hit ? "ring-1 ring-cta-bd" : ""
               }`}
             >
@@ -797,7 +795,7 @@ export default function ConversationView({
                 )}
               </span>
             )}
-            {!compact && !m.queued && messageActions(m, mk, "right")}
+            {!m.queued && messageActions(m, mk, "right")}
           </div>
         ) : (
           <div
@@ -807,7 +805,7 @@ export default function ConversationView({
             className={`group/msg mb-3 max-w-full ${hit ? "rounded-md bg-seg-sel px-2 py-1" : ""}`}
           >
             {renderBlocks(m, mk, false, hit)}
-            {!compact && messageActions(m, mk, "left")}
+            {messageActions(m, mk, "left")}
           </div>
         );
       })}

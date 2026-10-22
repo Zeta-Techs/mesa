@@ -634,12 +634,14 @@ export default function ProjectChatsView({
                   这条会话没有可回放的内容。
                 </p>
               ) : (
-                <ConversationView
-                  key={sessionKey(selected)}
-                  messages={messages.slice(firstCompleteTurnIndex(messages, cursor !== null))}
-                  compact
-                  cwd={selected.projectPath ?? project.path}
-                />
+                // 与对话页同一套排版（聊天字号字体、过程行、中途说明降级），只是气泡底色按井的底色重算
+                <div className="ccode-chat-in-well">
+                  <ConversationView
+                    key={sessionKey(selected)}
+                    messages={messages.slice(firstCompleteTurnIndex(messages, cursor !== null))}
+                    cwd={selected.projectPath ?? project.path}
+                  />
+                </div>
               )}
             </>
           )}

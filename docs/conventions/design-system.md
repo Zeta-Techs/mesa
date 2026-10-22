@@ -775,7 +775,10 @@ aria-live）。上下文圆环说明改自绘浮层（portal + 外层定位 / �
   ①**字号阶梯**：聊天里一切字按正文字号取比例——回答 / 用户气泡 / 实时预览 = 1（`.md-chat` / `.ccode-chat-user` / `.ccode-chat-body`）、
   过程行 / 计划卡 / 过程里的中途说明 = 0.94（`.ccode-chat-meta`）、过程里的命令输出与差异 = 0.86（`.ccode-chat-code`），基准
   `var(--ccode-chat-fs, var(--chat-base))`，`--chat-base` Mac 13.5px / Windows 14px；**聊天里不得再用 `text-sm` / `text-xs` 写正文与过程字号**
-  （Mac 根字号 14px 下 text-sm 只有 12.25px、text-xs 10.5px，且不跟「聊天字号」设置走）；项目里的窄预览（`compact`）仍用 text-xs。
+  （Mac 根字号 14px 下 text-sm 只有 12.25px、text-xs 10.5px，且不跟「聊天字号」设置走）。**项目页「对话」页签的预览与对话页回放同一套排版，不另设窄版**
+  （2026-10-22 用户截图：旧 `compact` 只把用户气泡和过程行压成 text-xs，回答却走 `.md-chat` 照常大，用户的字比回答小一截；过程行是 `<button>`，
+  text-xs 还被 `button { font: inherit }` 吃掉；中途说明也不降级——`compact` 已删）。预览在 `.ccode-well` 里，外包 `.ccode-chat-in-well`
+  按井的底色重混气泡令牌（`--color-chat-bubble` 是按 canvas 混的，井上看不见）；别的井里要放 ConversationView 也套这个类。
   ②**栏宽按字数**：`.ccode-chat-column` = 聊天字号 × 52 + 2.5rem（回答一行约 52 字，Claude 约 45–50），对话流、输入框、chat 变体状态栏、
   对话页回放同一个类，不再写 `max-w-4xl`。③**节奏与层级**：新问题前 1.75rem、连着的用户气泡 0.5rem（`.ccode-chat-user-row`）；做完的一轮里
   过程中的中途说明降到 l3 + 0.94 档（`.ccode-chat-aside`，还在写时不降）；段距 0.7em、行高 1.75、序号 l3 等宽。④**用户长消息**：超过约 12 行

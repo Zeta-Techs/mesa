@@ -2495,6 +2495,15 @@ select:focus-visible {
 .ccode-chat-meta {
   font-size: calc(var(--ccode-chat-fs, var(--chat-base)) * 0.94);
 }
+/* 项目页对话预览在 .ccode-well 里：气泡令牌是按 canvas 混的，井比 canvas 亮一档，气泡在井上就看不见了。
+   这里按井的底色（与 .ccode-well 同式）重混同一比例，深浅主题都还是「比底色往 l1 走一点」 */
+.ccode-chat-in-well {
+  --color-chat-bubble: color-mix(
+    in oklab,
+    color-mix(in srgb, var(--ccode-surface-base, var(--color-canvas)) 65%, var(--color-raised)),
+    var(--color-l1) 5%
+  );
+}
 .ccode-chat-code {
   font-size: calc(var(--ccode-chat-fs, var(--chat-base)) * 0.86);
   line-height: 1.6;
