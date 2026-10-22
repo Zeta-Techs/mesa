@@ -480,8 +480,34 @@ fn drop_fetch_line_sync(path: &str, root: &str, doi: &str, title: &str) -> Resul
     if !removed {
         return Ok(false);
     }
-    crate::profiles::atomic_write(&path_c, &kept.concat())?;
+    crate::profiles::atomic_write(&path_c, &recount_fetch_header(&kept.concat()))?;
     Ok(true)
+}
+
+/// 开头那句「已纳入、还没有全文的 N 篇」按剩下没打 ✓ 的条目重算——只删行不改数，
+/// 清单就成了「16 篇」下面列 9 行（2026-10-23 HER 检索步人审排除 7 篇后实证）。
+/// 拼法与 lit_records.py write 同一句；找不到这句（老清单、人改过）原样返回。
+fn recount_fetch_header(text: &str) -> String {
+    const HEAD: &str = "还没有全文的 ";
+    let Some(at) = text.find(HEAD) else {
+        return text.to_string();
+    };
+    let start = at + HEAD.len();
+    let digits = text[start..].chars().take_while(|c| c.is_ascii_digit()).count();
+    if digits == 0 || !text[start + digits..].starts_with(" 篇") {
+        return text.to_string();
+    }
+    let open = text
+        .lines()
+        .filter(|line| {
+            let line = line.trim_start();
+            let n = line.chars().take_while(|c| c.is_ascii_digit()).count();
+            n > 0
+                && line[n..].starts_with('.')
+                && !line[n + 1..].trim_start().starts_with('✓')
+        })
+        .count();
+    format!("{}{}{}", &text[..start], open, &text[start + digits..])
 }
 
 #[tauri::command]
@@ -628,6 +654,27 @@ mod tests {
             std::env::temp_dir().join(format!("ccode-fstree-{name}-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn drop_fetch_line_recounts_header() {
+        let dir = tmpdir("fetch");
+        fs::create_dir_all(dir.join("papers")).unwrap();
+        let path = dir.join("papers/to-fetch.md");
+        fs::write(
+            &path,
+            "# 待获取全文\n\n已纳入、还没有全文的 3 篇。顺序与 papers/to-fetch.ris 一致；补到全文后在编号后加 ✓，编号不重排。\n\n1. A — 10.1/a\n2. ✓ B — 10.1/b\n3. C — 10.1/c\n4. D — 10.1/d\n",
+        )
+        .unwrap();
+        let removed =
+            drop_fetch_line_sync(path.to_str().unwrap(), dir.to_str().unwrap(), "10.1/c", "C").unwrap();
+        assert!(removed);
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("还没有全文的 2 篇。"), "{text}");
+        assert!(!text.contains("3. C"));
+        assert!(text.contains("2. ✓ B"), "已打勾的不算、编号不重排");
+        // 找不到那句的老清单原样只删行
+        assert_eq!(recount_fetch_header("1. A\n2. B\n"), "1. A\n2. B\n");
     }
 
     #[test]

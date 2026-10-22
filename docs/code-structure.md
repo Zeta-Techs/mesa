@@ -1288,7 +1288,7 @@ src-tauri/src/
                              # MERGE_HEAD → merging + git_abort_merge；porcelain 冲突码归 U
   fs_tree.rs                 # 文件树与文件操作（删除走系统回收站 trash；重要路径删除保护，canonicalize 双校验；
                              # existing_files：聊天回复里提到的路径哪些是 cwd 内的文件（只看元数据，返回原样路径 + 规范化绝对路径）；
-                             # drop_ris_record / drop_fetch_line：移出时整份改写超过 256 KB 的 RIS 与 to-fetch.md
+                             # drop_ris_record / drop_fetch_line：移出时整份改写超过 256 KB 的 RIS 与 to-fetch.md（to-fetch.md 开头「还没有全文的 N 篇」按剩下没打 ✓ 的行重算）
                              # read_research_ledger / save_research_ledger：科研台账整份读写（16 MB 上限，白名单
                              #   papers/included.json|included.md|to-fetch.md|to-fetch.ris|endnote-import.ris|screening.md、
                              #   notes/index.json、references.bib；带版本防覆盖，与预览保存同锁）——预览通道 256 KB 截断，
