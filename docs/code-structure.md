@@ -76,8 +76,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   窄于 560px 自动收掉连接名/思考档/token、模型与目录截断，防叠字） 等
   App.tsx                    # 应用壳：标题栏（收件箱/帮助/命令面板）、三段式侧栏（快速入口/项目树/系统段）、主区 page 驱动挂载、
                              #   全局快捷键、启动过渡、跨实例同步、通知、确认框宿主。侧栏（2026-10-16 定稿）：品牌区下是快速入口
-                             #   （工作台 ⌘1 / 快速开聊＋右键历史 / N 运行中——只在有 agent 跑时出现），中段项目树（ProjectTree），
-                             #   底部系统段（对话/连接/技能/MCP/用量/设置）；收起态=图标条（项目树不可用，展开后才有）。
+                             #   （工作台 ⌘1 / 新对话＋右键历史 / 运行（常驻）/ 全部对话），中段项目树（ProjectTree），
+                             #   底部资源段（连接/技能/MCP/用量/设置：展开态一排图标、图标态竖排）；收起态=图标条（项目树不可用，展开后才有）。
                              #   主区：page==="workbench" 显示工作台概览、page==="workspaces" 显示选中课题详情（选中经 selectProjectReq
                              #   一次性请求由项目页消费——与收件箱/对话页/统计页跳转同一条链，禁再拿它当持久选中态渲染）。
                              #   壳与标题栏/侧栏/缝透明，桌面磨砂从窗口底透上来；
@@ -90,7 +90,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   AI 回复不截断、用户长消息 UserText 量行收起；字号走聊天阶梯类（design-system「聊天正文排版」）
   components/ChatMarkdown.tsx # AI 回复 Markdown（独立 Marked 实例、原始 HTML 转义）：长回复分节小标题按级别排、ChatCodeBlock（用户气泡里的
                              #   围栏代码同一套）、上屏后 useChatDecorations 跑表格壳 / 代码高亮 / 公式 / 引用胶囊 / 文件链接，音频播放条、图片卡
-  components/ProjectTree.tsx # 侧栏项目树（展开态）：「项目」标签行（计数＋添加入口）+ 搜索框 + 按工作方式分组的课题列表
+  components/ProjectTree.tsx # 侧栏项目树（展开态）：「项目」标签行（计数＋放大镜＋添加入口）+ 点开才有的搜索框 + 按工作方式分组的课题列表
                              #   （注册项目 + list_workspaces 推导的「未添加」仓库段；重拉触发=store.projectsVersion 管理动作代数
                              #   与 projectPaths 签名变化）。行点击=onSelect(repoPath)（App 侧 setSelectProjectReq+setPage）；
                              #   行右键=重命名/复制路径/从 Mesa 移除/清除痕迹/删除目录，动作自持（invoke+confirmDialog+toast），

@@ -116,25 +116,31 @@ function PageLoading() {
 function RailTooltip({
   label,
   collapsed,
+  up = false,
   children,
 }: {
   label: string;
   collapsed: boolean;
+  /** 展开态底部图标排：没有文字，悬停常显名字、往上弹（下面是窗口底边） */
+  up?: boolean;
   children: React.ReactNode;
 }) {
   const ref = useRef<HTMLSpanElement>(null);
-  const { tip, show, hide } = useHoverTip(ref, false, true);
+  const on = collapsed || up;
+  const { tip, show, hide } = useHoverTip(ref, up && !collapsed, collapsed);
   return (
     <span
       ref={ref}
       className="block"
-      onMouseEnter={collapsed ? show : undefined}
-      onMouseLeave={collapsed ? hide : undefined}
-      onFocus={collapsed ? show : undefined}
-      onBlur={collapsed ? hide : undefined}
+      onMouseEnter={on ? show : undefined}
+      onMouseLeave={on ? hide : undefined}
+      onFocus={on ? show : undefined}
+      onBlur={on ? hide : undefined}
     >
       {children}
-      {collapsed && <HoverTip tip={tip} text={label} side />}
+      {on && (
+        <HoverTip tip={tip} text={label} side={collapsed} up={up && !collapsed} />
+      )}
     </span>
   );
 }
@@ -1457,7 +1463,7 @@ function App() {
             {!chromeHidden && (
               <aside
                 className={`ccode-app-rail flex min-h-0 shrink-0 flex-col overflow-hidden rounded-lg transition-[width] duration-150 ${
-                  collapsed ? "w-14" : "w-56"
+                  collapsed ? "w-14" : "w-52"
                 }`}
               >
                 {/* 品牌区 */}
@@ -1584,13 +1590,14 @@ function App() {
                         ))}
                     </button>
                   </RailTooltip>
-                  <RailTooltip label="对话" collapsed={collapsed}>
+                  {/* 写「全部对话」不写「对话」：紧挨着「新对话」，项目页里还有只列本课题的「对话」页签 */}
+                  <RailTooltip label="全部对话" collapsed={collapsed}>
                     <button
                       type="button"
                       onClick={() => setPage("sessions")}
                       aria-current={page === "sessions" ? "page" : undefined}
-                      aria-label="对话"
-                      title="对话"
+                      aria-label="全部对话"
+                      title="全部对话"
                       className={`relative mb-0.5 flex h-8 w-full items-center rounded-md text-sm transition-colors ${
                         collapsed ? "justify-center" : "px-2.5"
                       } ${
@@ -1605,7 +1612,7 @@ function App() {
                         className={`${collapsed ? "" : "mr-2 shrink-0"} ${page === "sessions" ? "text-nav-accent" : ""}`}
                         aria-hidden="true"
                       />
-                      {!collapsed && <span className="truncate">对话</span>}
+                      {!collapsed && <span className="truncate">全部对话</span>}
                     </button>
                   </RailTooltip>
                   {/* 图标态：项目树不可见，文件夹与其他图标一样只管「去项目页」；
@@ -1705,8 +1712,14 @@ function App() {
                   </div>
                 )}
 
-                {/* 资源与管理段：连接/技能/MCP/用量/设置（对话已归上面的工作入口） */}
-                <div className="shrink-0 border-t border-white/5 px-1.5 py-2">
+                {/* 资源与管理段：连接/技能/MCP/用量/设置（对话已归上面的工作入口）。
+                    展开态压成一排图标、悬停出名字——都是低频入口，竖排五行会把项目树挤出滚动条；
+                    图标态侧栏太窄放不下一排，照旧竖排 */}
+                <div
+                  className={`shrink-0 border-t border-white/5 px-1.5 py-2 ${
+                    collapsed ? "" : "grid grid-cols-5 gap-0.5"
+                  }`}
+                >
                   {[
                     ...NAV_GROUPS.find((g) => g.label === "资源")!.items,
                     ...NAV_BOTTOM,
@@ -1715,28 +1728,27 @@ function App() {
                       key={n.id}
                       label={n.label}
                       collapsed={collapsed}
+                      up={!collapsed}
                     >
                       <button
                         type="button"
                         onClick={() => setPage(n.id)}
                         aria-current={page === n.id ? "page" : undefined}
                         aria-label={n.label}
-                        title={n.label}
-                        className={`relative mb-0.5 flex h-8 items-center rounded-md text-sm transition-colors ${
-                          collapsed ? "w-11 justify-center" : "w-full px-2.5"
+                        className={`relative flex h-8 items-center justify-center rounded-md transition-colors ${
+                          collapsed ? "mb-0.5 w-11" : "w-full"
                         } ${
                           page === n.id
-                            ? "ccode-rail-active bg-rail-sel text-l1"
+                            ? `${collapsed ? "ccode-rail-active" : "ccode-rail-active-under"} bg-rail-sel text-l1`
                             : "text-l3 hover:bg-hover hover:text-l2"
                         }`}
                       >
                         <n.Icon
                           size={16}
                           strokeWidth={1.8}
-                          className={`${collapsed ? "" : "mr-2 shrink-0"} ${page === n.id ? "text-nav-accent" : ""}`}
+                          className={page === n.id ? "text-nav-accent" : ""}
                           aria-hidden="true"
                         />
-                        {!collapsed && <span className="truncate">{n.label}</span>}
                       </button>
                     </RailTooltip>
                   ))}

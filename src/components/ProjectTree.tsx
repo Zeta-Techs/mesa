@@ -13,6 +13,7 @@ import {
   Pencil,
   Pin,
   PinOff,
+  Plus,
   Search,
   Sparkles,
   SquareTerminal,
@@ -46,7 +47,7 @@ import { toast } from "../toast";
 import type { ProjectDto, WorkspaceDto } from "../types";
 
 const GROUPS_KEY = "ccode.projectTreeGroups";
-/** 课题数超过它才出搜索框 */
+/** 课题数超过它才在标签行出放大镜（点开才有搜索框） */
 const SEARCH_MIN = 5;
 
 /** 树行：注册项目（project 非空）与未添加仓库（沉底「未添加」段）统一形状 */
@@ -89,6 +90,8 @@ export default function ProjectTree({
     return new Set(["research", "coding", "office"]);
   });
   const [searchQuery, setSearchQuery] = useState("");
+  // 搜索框平时收成标签行的放大镜，点开才占一行；清空并失焦 / Esc 收回
+  const [searchOpen, setSearchOpen] = useState(false);
   const [menu, setMenu] = useState<{
     x: number;
     y: number;
@@ -369,9 +372,9 @@ export default function ProjectTree({
     return (
       <div
         key={row.key}
-        className={`group flex h-7 items-center rounded-md transition-colors ${
+        className={`group relative flex h-7 items-center rounded-md transition-colors ${
           selected && active
-            ? "bg-rail-sel"
+            ? "ccode-tree-active bg-rail-sel"
             : menuOpen
               ? "bg-hover"
               : "hover:bg-hover"
@@ -421,53 +424,83 @@ export default function ProjectTree({
     );
   }
 
+  const showSearch = searchOpen || searchQuery !== "";
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* 项目标签行：计数 + 添加菜单（添加流程与示例课题创建都在项目页，经一次性请求触发） */}
+      {/* 项目标签行：计数 + 搜索 + 添加菜单（添加流程与示例课题创建都在项目页，经一次性请求触发） */}
       <div className="flex h-7 shrink-0 items-center gap-1.5 px-2">
         <span className="text-micro font-medium tracking-[0.08em] text-l3">
           项目
         </span>
         <span className="text-micro text-l4">{rows.length}</span>
-        <button
-          type="button"
-          onClick={(e) => {
-            const rect = e.currentTarget.getBoundingClientRect();
-            setAddMenu({ x: rect.right - 176, y: rect.bottom + 4 });
-          }}
-          title="添加项目 / 创建示例课题"
-          aria-label="添加项目 / 创建示例课题"
-          className="ml-auto flex h-6 w-6 items-center justify-center rounded-md text-sm text-l3 hover:bg-hover hover:text-l1"
-        >
-          +
-        </button>
+        <span className="ml-auto flex items-center">
+          {(rows.length > SEARCH_MIN || searchQuery) && (
+            <button
+              type="button"
+              // 按下时不抢焦点：否则输入框先失焦收起，紧接着这次点击又把它打开
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setSearchOpen((v) => !v || searchQuery !== "")}
+              title="搜索项目"
+              aria-label="搜索项目"
+              aria-expanded={showSearch}
+              className={`flex h-6 w-6 items-center justify-center rounded-md hover:bg-hover hover:text-l1 ${
+                showSearch ? "text-l1" : "text-l3"
+              }`}
+            >
+              <Search size={13} strokeWidth={1.8} aria-hidden="true" />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              setAddMenu({ x: rect.right - 176, y: rect.bottom + 4 });
+            }}
+            title="添加项目 / 创建示例课题"
+            aria-label="添加项目 / 创建示例课题"
+            className="flex h-6 w-6 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1"
+          >
+            <Plus size={14} strokeWidth={1.8} aria-hidden="true" />
+          </button>
+        </span>
       </div>
 
-      {/* 课题少时一眼看得完，搜索框只是噪音：超过 SEARCH_MIN 个才出现（搜索中途清到少于阈值也保留） */}
-      {(rows.length > SEARCH_MIN || searchQuery) && (
+      {showSearch && (
         <div className="shrink-0 px-1.5 pb-2 pt-1">
           <div className="ccode-rail-search ccode-search-shell flex h-7 items-center gap-1.5 rounded-md px-2">
             <Search size={13} strokeWidth={1.8} className="shrink-0 text-l3" />
             <input
               type="text"
+              autoFocus
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
+              onBlur={() => {
+                if (!searchQuery) setSearchOpen(false);
+              }}
               placeholder="搜索项目"
               onKeyDown={(e) => {
-                if (e.key === "Escape") setSearchQuery("");
+                if (e.key === "Escape") {
+                  setSearchQuery("");
+                  setSearchOpen(false);
+                }
               }}
               className="min-w-0 flex-1 bg-transparent text-xs text-l1 outline-none placeholder:text-l3"
             />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery("")}
-                className="shrink-0 text-l4 hover:text-l1"
-                aria-label="清除"
-              >
-                <X size={13} strokeWidth={1.8} />
-              </button>
-            )}
+            <button
+              type="button"
+              // 按下就处理，抢在输入框失焦之前，免得空框先被 onBlur 收走
+              onMouseDown={(e) => {
+                e.preventDefault();
+                setSearchQuery("");
+                setSearchOpen(false);
+              }}
+              className="shrink-0 text-l4 hover:text-l1"
+              aria-label="关闭搜索"
+              title="关闭搜索（Esc）"
+            >
+              <X size={13} strokeWidth={1.8} />
+            </button>
           </div>
         </div>
       )}
@@ -483,12 +516,11 @@ export default function ProjectTree({
           <>
             {grouped.pinned.length > 0 && (
               <div className="mb-1">
-                <div className="flex h-7 items-center gap-1.5 px-2 text-xs text-l3">
-                  <Pin size={12} strokeWidth={1.8} className="shrink-0" aria-hidden="true" />
+                {/* 不写 text-xs：分组组头是 button，全站 button { font: inherit } 让它吃侧栏字号，
+                    这里是 div，写了反而比「科研 / 编程」小一号 */}
+                <div className="flex h-7 items-center gap-1.5 px-2 text-l3">
+                  <Pin size={13} strokeWidth={1.8} className="shrink-0" aria-hidden="true" />
                   <span className="min-w-0 flex-1 truncate">置顶</span>
-                  <span className="shrink-0 text-micro text-l4">
-                    {grouped.pinned.length}
-                  </span>
                 </div>
                 <div className="ml-3 space-y-0.5 border-l border-hairline pl-1.5">
                   {grouped.pinned.map(renderRow)}
@@ -509,9 +541,12 @@ export default function ProjectTree({
                     <span className="min-w-0 flex-1 truncate text-left">
                       {RAIL_WORK_MODE_LABEL[group.mode]}
                     </span>
-                    <span className="shrink-0 text-micro text-l4">
-                      {group.items.length}
-                    </span>
+                    {/* 展开时子项就在下面，数字是重复信息；收起才报有几个 */}
+                    {!isExpanded && (
+                      <span className="shrink-0 text-micro text-l4">
+                        {group.items.length}
+                      </span>
+                    )}
                   </button>
                   {isExpanded && (
                     <div className="ml-3 space-y-0.5 border-l border-hairline pl-1.5">
