@@ -585,7 +585,8 @@ test("Zotero 域稿写出 ADDIN ZOTERO_ITEM，缺键不交 docx", () => {
     result = run(script, ["--input", md, "--bib", bib, "--output", captioned, "--report", join(root, "cap.md")]);
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stderr, /cited only in captions.*Lee2021/);
-    const capWarn = readFileSync(join(root, "cap.md"), "utf8").split("只在图注或表题里引用")[1]?.split("\n\n")[0] ?? "";
+    // Windows 上报告是 CRLF；本机装了 Zotero 时报告后面还有「库绑定」一节，按空行切不开就会把它算进来
+    const capWarn = readFileSync(join(root, "cap.md"), "utf8").replace(/\r\n/g, "\n").split("只在图注或表题里引用")[1]?.split("\n\n")[0] ?? "";
     assert.match(capWarn, /`Lee2021`/);
     assert.doesNotMatch(capWarn, /`Doe2020`/);
     writeFileSync(md, "See [@Missing].\n");
