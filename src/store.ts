@@ -1331,8 +1331,13 @@ export const useAppStore = create<AppState>((set, get) => {
   },
 
   loadGateways: async () => {
-    const gateways = await invoke<Gateway[]>("list_gateways");
-    set({ gateways });
+    // 连接行的状态（测试通过 / 失败、缺密钥、目录过期）由后端按网关现算：网关库里测试、刷新目录后
+    // 只拉网关会让连接页状态停在旧值，所以连同连接一起重拉
+    const [gateways, profiles] = await Promise.all([
+      invoke<Gateway[]>("list_gateways"),
+      invoke<Profile[]>("list_profiles"),
+    ]);
+    set({ gateways, profiles });
   },
   saveGateway: async (id, input) => {
     const saved = await invoke<Gateway>("save_gateway", { id, input });

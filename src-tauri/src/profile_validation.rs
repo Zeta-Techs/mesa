@@ -1646,10 +1646,12 @@ fn persist_slot_probe(
             _ => crate::profiles::ProbeStatus::Never,
         }
     };
+    let gws = crate::gateway_store::load_gateways().ok();
+    let gw = gws.as_ref().and_then(|v| v.iter().find(|g| g.id == gid));
     let mut rec = crate::profiles::ProbeRecord {
         slot: slot.as_str().into(),
         model: Some(model.to_string()),
-        url_fp: crate::gateway_store::url_fingerprint(base),
+        url_fp: crate::gateway_store::url_fingerprint(probe_fp_url(gw, slot, base)),
         key_fp: crate::gateway_store::key_presence_fp(key.is_some_and(|k| !k.is_empty())),
         streaming: st("流式"),
         effort: st("思考档"),
@@ -1660,26 +1662,37 @@ fn persist_slot_probe(
         latency_ms,
     };
     if basic_only {
-        if let Ok(gws) = crate::gateway_store::load_gateways() {
-            if let Some(prev) = gws.iter().find(|g| g.id == gid).and_then(|g| {
-                g.last_probe
-                    .iter()
-                    .filter(|p| {
-                        p.slot == rec.slot
-                            && p.model == rec.model
-                            && p.url_fp == rec.url_fp
-                            && p.key_fp == rec.key_fp
-                    })
-                    .max_by_key(|p| p.probed_at.as_str())
-            }) {
-                rec.streaming = prev.streaming;
-                rec.effort = prev.effort;
-                rec.sampling = prev.sampling;
-                rec.headers = prev.headers;
-            }
+        if let Some(prev) = gw.and_then(|g| {
+            g.last_probe
+                .iter()
+                .filter(|p| {
+                    p.slot == rec.slot
+                        && p.model == rec.model
+                        && p.url_fp == rec.url_fp
+                        && p.key_fp == rec.key_fp
+                })
+                .max_by_key(|p| p.probed_at.as_str())
+        }) {
+            rec.streaming = prev.streaming;
+            rec.effort = prev.effort;
+            rec.sampling = prev.sampling;
+            rec.headers = prev.headers;
         }
     }
     let _ = store.record_probe(&gid, rec);
+}
+
+/// 体检记录的地址指纹按网关里存的槽地址算，不按物化后的 base：Claude / Gemini 物化时会剥掉末尾版本段，
+/// 而连接状态（`probe_field_status_with_key`）与迟到回包校验（`probe_record_still_valid`）都按槽地址比——
+/// 用 base 算会让测完的结论被当成过期回包丢掉，连接永远停在「未测试」（2026-10-23 连接页行上测试时核对代码发现）。
+/// 只在 persist 时调用：persist 已保证这次没有带不同于已存地址的草稿地址。
+fn probe_fp_url<'a>(
+    gw: Option<&'a crate::profiles::Gateway>,
+    slot: crate::gateway_store::Slot,
+    base: &'a str,
+) -> &'a str {
+    gw.and_then(|g| crate::gateway_store::slot_url(&g.slots, slot))
+        .unwrap_or(base)
 }
 
 pub(crate) fn validate_after_global_write(
@@ -1924,6 +1937,49 @@ mod tests {
             Some("https://old"),
             None
         ));
+    }
+
+    #[test]
+    fn probe_fingerprint_uses_saved_slot_url_not_stripped_base() {
+        // Claude 槽填了 /v1：物化 base 剥掉版本段，指纹必须仍按槽地址算，
+        // 否则 record_probe 把结论当过期回包丢掉，连接永远「未测试」
+        let gw = crate::profiles::Gateway {
+            id: "g".into(),
+            name: "g".into(),
+            no_auth: false,
+            key_hint: None,
+            wallet_user_id: None,
+            wallet_key_hint: None,
+            slots: ProtocolSlots {
+                anthropic: Some("https://relay.example.com/v1".into()),
+                ..Default::default()
+            },
+            header_env: Default::default(),
+            models: Vec::new(),
+            catalog_fetched_at: None,
+            catalog_from_slot: None,
+            last_probe: Vec::new(),
+            slot_probes: Vec::new(),
+            revision: String::new(),
+        };
+        let slot = crate::gateway_store::Slot::Anthropic;
+        let url = probe_fp_url(Some(&gw), slot, "https://relay.example.com");
+        let rec = crate::profiles::ProbeRecord {
+            slot: slot.as_str().into(),
+            model: Some("m".into()),
+            url_fp: crate::gateway_store::url_fingerprint(url),
+            key_fp: crate::gateway_store::key_presence_fp(true),
+            streaming: Default::default(),
+            effort: Default::default(),
+            sampling: Default::default(),
+            headers: Default::default(),
+            basic: crate::profiles::ProbeStatus::Passed,
+            probed_at: "2026-10-23T00:00:00Z".into(),
+            latency_ms: None,
+        };
+        assert!(crate::gateway_store::probe_record_still_valid(&gw, &rec, true));
+        // 没有网关（不会 persist 的草稿）才退回 base
+        assert_eq!(probe_fp_url(None, slot, "https://b"), "https://b");
     }
 
     #[test]
