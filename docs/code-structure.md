@@ -482,6 +482,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
    解析结果）、chat-capture 抓屏，抽指纹与 baseline/<平台>/<agent>.json 比，报告附两版之间更新日志的相关条目；
    .github/workflows/cli-canary.yml 每天在 macOS / Windows 跑；2026-10-22 起九家：有旁路的六家跑旁路端到端，Gemini / Kimi 只抓屏，
    Cursor 连不上假网关只记版本；基线 version 随包进应用（src/cli-verified.ts）；见其 README）
+  （docs/agent-skills/：维护 Mesa 仓库本身的 Agent 技能（不随应用分发）；mesa-cli-canary = 金丝雀日常维护，装法见其 README）
   （scripts/screen-corpus/：抓屏语料库——corpus.ts 读一屏（菜单 / 信任 / 实时预览 / 输入框）、add-from-capture.ts 从抓屏挑三屏存进
    tests/fixtures/screens/<agent>/，tests/screen-corpus.test.ts 逐份重读；规则见 tests/fixtures/screens/README.md）
   （scripts/mirror-latest-json.mjs：应用内更新国内镜像——把 Release 的 latest.json 下载地址改写成镜像地址，签名原样、缺签名拒绝；

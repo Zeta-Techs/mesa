@@ -156,6 +156,7 @@ docs/            architecture.md（总体设计 + §10 决策记录 + §12 当�
   临时 HOME 不拷本机配置（各机器 / CI 可比）；新增一家照 `BIN` / `CHANNEL` / `TOOL_PROMPT` 几张表加。**基线的 `version` 随包进 Mesa**
   （`src/cli-verified.ts`）：用户 CLI 比它新时聊天层不替人自动按键，所以基线要跟上——CI 全绿而只是版本前进时自己 `--accept-unchanged`
   并提交回 main（工作流有 `contents: write`，只动 baseline/），本地推送前先 pull。本地跑统一 `npm run canary`（日常维护见其 README 第一节）。
+  维护交给 Agent：`docs/agent-skills/mesa-cli-canary/SKILL.md`（仓库维护技能放 `docs/agent-skills/`，**不进** `src-tauri/resources/skills/`，那里是随应用分发给用户的）。
   读屏问题修好后把那一屏存进抓屏语料库（`tests/fixtures/screens/`，`scripts/screen-corpus/add-from-capture.ts`），设计见 `docs/design-chat-fidelity.md`。
 - **二进制解析统一走 `agents::resolve_binary`**：先 which（继承 PATH），miss 时按平台候选目录兜底；新增 CLI/工具调用点一律
   用它，禁直接 `which::which` 或裸名 spawn（候选目录清单见 `docs/conventions/safety.md` 对应实现 `agents.rs`）。

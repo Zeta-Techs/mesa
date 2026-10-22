@@ -22,6 +22,8 @@
 
 一次性：Windows 上除 Claude Code、Codex 外的七家还没有基线，在 Windows 上跑一次 `npm run canary -- --accept`。
 
+想交给 Agent 做：发「按 docs/agent-skills/mesa-cli-canary/SKILL.md 做今天的金丝雀维护」，或把它装成技能（`docs/agent-skills/README.md`）。
+
 各家 CLI 几乎每天发一版，默认行为常常没写进更新日志就变了。2026-10-21 的两次实例：Claude Code 新版对第三方模型把工具藏到工具搜索后面；
 又不再给这类模型发任务清单工具。两次都是用户撞上才发现。金丝雀每天装最新版，把 Mesa 依赖的几层抽成「指纹」，和这里存的基线比，
 变了就报。
