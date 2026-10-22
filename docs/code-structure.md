@@ -464,7 +464,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   model-caps-label.ts        # 模型菜单每行右侧的能力灰字（200K · 思考 · 看图），数据来自 model_capabilities
   （scripts/e2e-model-routing/：假网关 + 驱动，用 agents.rs 的 e2e_dump_launch_plans 生成的真实启动计划拉起各家 CLI，核对请求里的模型与路径；
    chat-capture.py 按权限四档拉起、发 TRIGGER_SLOW / TRIGGER_TOOL / 切换命令逐帧抓屏，聊天层第三期逐家核实用（2026-10-20 起
-   Windows 走 ConPTY / pywinpty）；capture-check.ts 把抓屏交给 tui-menu / live-reply 解析器看读不读得出；见其 README）
+   Windows 走 ConPTY / pywinpty）；capture-check.ts 把抓屏交给 tui-menu / live-reply 解析器看读不读得出；live-replay.ts 用真 xterm.js
+   回放抓屏的原始输出（CAP_RAW=1）、逐块读屏接预览，数重复 / 漏行；见其 README）
   （scripts/cli-canary/：CLI 金丝雀——canary.py 串起假网关 E2E_DUMP、chat_channel 的 e2e_channel（E2E_CLEAN_HOME / E2E_KEEP 留会话原件与
    解析结果）、chat-capture 抓屏，抽指纹与 baseline/<平台>/<agent>.json 比，报告附两版之间更新日志的相关条目；
    .github/workflows/cli-canary.yml 每天在 macOS / Windows 跑；见其 README）
@@ -496,7 +497,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   conn-issue.ts              # 认终端画面里的连接错误（额度 / 限流 / 钥匙 / 服务 / 模型）：七家实录形态的 detectConnIssues、按次数判新错误的 newestConnIssue、给人看的 connIssueText
   terminal-quote.ts          # 终端选中文字交给对话 / 存笔记的排版：quoteForChat（每行「> 」）、askAboutText、clipNoteEntry（notes/clips.md 小节）
   live-reply.ts              # 聊天实时预览：按每家画面布局（LAYOUTS：Claude / Codex / Qwen / Gemini / Grok / Kimi，第三期抓屏定的）抽出这一轮正在写的段落
-                             # （extractLiveReply）+ 剔掉会话文件已有的行（unsyncedTail）+ 屏上有没有输入框（terminalHasInputBox）+ Claude 转圈行已生成 token 数（claudeOutputTokens，聊天层「正在回复」后显示）；
+                             # （extractLiveReply）+ 长回复滚出屏后按屏顶位置接到上一次后面（mergeLiveReply，不要求尾巴逐字相同）+ 剔掉会话文件已有的行（unsyncedTail）+ 屏上有没有输入框（terminalHasInputBox）+ Claude 转圈行已生成 token 数（claudeOutputTokens，聊天层「正在回复」后显示）；
                              # CodeBuddy / OpenCode / Cursor 返回 null。新增一家先抓屏、样本进测试
   menu-key-nav.ts            # 聊天输入框小弹层的键盘操作（useMenuKeyNav：打开聚焦当前项、↑↓/Home/End、关闭还焦点）
   auto-load-older.ts         # 回放往上翻自动加载更早一页（useAutoLoadOlder：对话页 / 项目对话 / 聊天层共用；只认用户滚动，

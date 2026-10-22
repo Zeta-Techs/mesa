@@ -69,6 +69,24 @@ Gemini 的临时 HOME 里会把登录方式改成 API Key（Mesa 只在这种情
 让工具跑久一点、`E2E_DUMP=<文件>` 记完整请求，看这句落在哪个请求里（和工具结果同一个 = 插进这一轮）。Qwen 拒绝独立的 `sleep`，用
 `QUEUE_FIRST="TRIGGER_SLOW 讲一段"`。结论见 docs/agent-integration-matrix.md §14「生成中再发一句」。
 
+**长回复实时预览回放（2026-10-22）**：用户说 Claude Code 长回复时聊天层预览一遍遍重贴整屏。假网关起的时候设
+`E2E_LONG_FILE=<Markdown 文件>`（`TRIGGER_LONG` 改为流出这份文件，带标题、列表、表格、代码块才看得出 CLI 重画）、
+`E2E_LONG_CHUNK=6`（按字数切块流出，像真模型那样先出半行）、`E2E_LONG_DELAY=0.03`（每块间隔秒数）；抓屏加 `CAP_RAW=1`
+记下终端原始输出（`CAP_COLS` / `CAP_ROWS` 改终端大小，默认 120×40；Claude 拿拷来的配置起时推「全屏渲染」，脚本默认选 Not now，
+`CAP_FULLSCREEN=1` 选 Yes）。再用真 xterm.js 回放、每写完一块按 Mesa 的口径读一次屏接一次（比 Mesa 300ms 一读更密）：
+
+```bash
+E2E_LONG_FILE=/tmp/reply.md E2E_LONG_CHUNK=6 E2E_LONG_DELAY=0.03 python3 -I scripts/e2e-model-routing/gateway.py 18950 /tmp/e2e-gw.log &
+CAP_RAW=1 CAP_COLS=100 CAP_ROWS=32 REPLY_PROMPT="TRIGGER_LONG 写长一点" REPLY_SECS=30 TOOL_SECS=1 PYTE_DIR=/tmp/pyte \
+  python3 -I scripts/e2e-model-routing/chat-capture.py /tmp/e2e-plans.json claude-code full /tmp/cap/claude-long.json
+node --experimental-strip-types scripts/e2e-model-routing/live-replay.ts /tmp/cap/claude-long.json /tmp/reply.md
+# 输出 duplicated（比原文多出的行）/ missing（原文有、预览没有的行）；LR=<旧版 live-reply.ts> 换接法对比，SHOW=1 打印预览
+```
+
+2026-10-22 结论（Claude 2.1.304 / Kimi 2.2 / Gemini 0.65，100×32）：旧接法重复 158 / 1150 / 1123 行，新接法都是 0；逐块读时约四成落在
+同步输出半帧上（Mesa 读屏改为等这一帧画完）。同日看出、另行处理的三处：Gemini 完全访问（YOLO）时输入框是「*」、认不出输入框，
+预览整轮不出；Gemini 的表格行以「│」开头被当成工具框跳过；Grok 长回复把提问钉在屏顶，读成「看得见开头」，预览只剩最后一屏。
+
 **Windows（2026-10-20，ConPTY）**：同一脚本走 pywinpty（`pip install --target <目录> pywinpty pyte`，`PYTE_DIR` 与 `PYWINPTY_DIR` 都指向它），
 npm 的 `.cmd` 垫片按 Mesa 同口径直启。在 Git Bash 里跑，路径用 `cygpath -w` 转；Python 要用安装目录下的 `python.exe` 并加 `-X utf8`
 （`-I` 会忽略 PYTHONUTF8，计划文件按 GBK 读会报错）；Gemini 的工具幕可能要 `TOOL_SECS=25`（本机全局 hooks、MCP 初始化拖慢审批菜单）：

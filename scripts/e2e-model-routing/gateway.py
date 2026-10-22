@@ -15,6 +15,20 @@ SLOW_LINES = ["第一段：这是一段慢慢流出来的回复。", "", "- 要�
               "", "```bash", "echo mesa", "```", "", "最后一行：完毕。"]
 # TRIGGER_LONG = 比一屏还长的回复（看回复开头滚出屏后预览还接不接得上，2026-10-19 用户：Codex 第 22 行卡住）
 LONG_LINES = [f"第 {i} 行：长回复逐行流出。" for i in range(1, 61)]
+# E2E_LONG_FILE=<Markdown 文件>：TRIGGER_LONG 改为逐行流出这份文件（真回复的样子：标题、代码块、表格，2026-10-22 预览重复）
+if os.environ.get("E2E_LONG_FILE"):
+    LONG_LINES = open(os.environ["E2E_LONG_FILE"], encoding="utf-8").read().rstrip("\n").split("\n")
+LONG_DELAY = float(os.environ.get("E2E_LONG_DELAY", "0.25"))
+# E2E_LONG_CHUNK=<字数>：长回复按这么多字一块流出（真模型是逐词出的：半行、没闭合的 ** 和代码块都会先画一下）
+LONG_CHUNK = int(os.environ.get("E2E_LONG_CHUNK", "0"))
+
+
+def pieces(lines, chunk):
+    """每次流出的一块：默认一行一块（行尾带换行，最后一行不带）；chunk>0 时整段按字数切"""
+    if chunk <= 0:
+        return [ln + ("\n" if i < len(lines) - 1 else "") for i, ln in enumerate(lines)]
+    text = "\n".join(lines)
+    return [text[i:i + chunk] for i in range(0, len(text), chunk)]
 # TRIGGER_THINK 时先出的那段思考（Codex 推理摘要的样子：粗体小标题 + 一句）
 THINK_TEXT = "**规划探针命令**\n\n先跑一条命令看看环境，再回答。"
 # E2E_PROBE_CMD 换探针命令（如写绝对路径，看沙箱里的工作目录对不对）
@@ -158,7 +172,8 @@ class H(BaseHTTPRequestHandler):
         lines = SLOW_LINES if mode == "slow" else LONG_LINES if mode == "long" else [("done" if mode == "done" else "ok")]
         shell = pick_shell(tools) if mode == "tool" else None
         call_args = json.dumps(shell_args(shell[1], b"TRIGGER_ESC" in raw), ensure_ascii=False) if shell else None
-        delay = 0.6 if mode == "slow" else 0.25 if mode == "long" else 0
+        delay = 0.6 if mode == "slow" else LONG_DELAY if mode == "long" else 0
+        parts = pieces(lines, LONG_CHUNK if mode == "long" else 0)
         # TRIGGER_THINK：回答 / 调工具前先出一段思考（Responses 推理摘要、Anthropic thinking 块、Chat 的 reasoning_content），
         # 核对聊天层「现在在想什么」那条线；工具结果回来之后的那次请求不再想
         think = THINK_TEXT if b"TRIGGER_THINK" in raw and mode != "done" else None
@@ -197,8 +212,8 @@ class H(BaseHTTPRequestHandler):
                 self._ev({"type": "message_stop"}, "message_stop")
                 return
             self._ev({"type": "content_block_start", "index": bi, "content_block": {"type": "text", "text": ""}}, "content_block_start")
-            for i, ln in enumerate(lines):
-                self._ev({"type": "content_block_delta", "index": bi, "delta": {"type": "text_delta", "text": ln + ("\n" if i < len(lines) - 1 else "")}}, "content_block_delta")
+            for part in parts:
+                self._ev({"type": "content_block_delta", "index": bi, "delta": {"type": "text_delta", "text": part}}, "content_block_delta")
                 time.sleep(delay)
             self._ev({"type": "content_block_stop", "index": bi}, "content_block_stop")
             self._ev({"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence": None}, "usage": {"output_tokens": 1}}, "message_delta")
@@ -220,8 +235,8 @@ class H(BaseHTTPRequestHandler):
                 self._ev({**base, "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}], "usage": {"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6}})
                 self._ev("[DONE]")
                 return
-            for i, ln in enumerate(lines):
-                delta = {"content": ln + ("\n" if i < len(lines) - 1 else "")}
+            for i, part in enumerate(parts):
+                delta = {"content": part}
                 if i == 0: delta["role"] = "assistant"
                 self._ev({**base, "choices": [{"index": 0, "delta": delta, "finish_reason": None}]})
                 time.sleep(delay)
@@ -254,8 +269,8 @@ class H(BaseHTTPRequestHandler):
                 full = "\n".join(lines)
                 item = {"id": "msg_1", "type": "message", "role": "assistant", "status": "completed", "content": [{"type": "output_text", "text": full, "annotations": []}]}
                 self._ev({"type": "response.output_item.added", "output_index": oi, "item": {**item, "status": "in_progress", "content": []}}, "response.output_item.added")
-                for i, ln in enumerate(lines):
-                    self._ev({"type": "response.output_text.delta", "item_id": "msg_1", "output_index": oi, "content_index": 0, "delta": ln + ("\n" if i < len(lines) - 1 else "")}, "response.output_text.delta")
+                for part in parts:
+                    self._ev({"type": "response.output_text.delta", "item_id": "msg_1", "output_index": oi, "content_index": 0, "delta": part}, "response.output_text.delta")
                     time.sleep(delay)
                 self._ev({"type": "response.output_text.done", "item_id": "msg_1", "output_index": oi, "content_index": 0, "text": full}, "response.output_text.done")
                 self._ev({"type": "response.output_item.done", "output_index": oi, "item": item}, "response.output_item.done")
@@ -273,9 +288,9 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, chunk)
             if "stream" in p:
                 self._sse_start()
-                for i, ln in enumerate(lines):
-                    last = i == len(lines) - 1
-                    c = {"candidates": [{"content": {"role": "model", "parts": [{"text": ln + ("" if last else "\n")}]}, "index": 0, **({"finishReason": "STOP"} if last else {})}]}
+                for i, part in enumerate(parts):
+                    last = i == len(parts) - 1
+                    c = {"candidates": [{"content": {"role": "model", "parts": [{"text": part}]}, "index": 0, **({"finishReason": "STOP"} if last else {})}]}
                     if last: c["usageMetadata"] = usage
                     self._ev(c); time.sleep(delay)
                 return

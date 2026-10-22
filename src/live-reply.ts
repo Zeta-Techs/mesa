@@ -322,9 +322,15 @@ function readReply(layout: Layout, region: readonly string[], start: number, anc
 }
 
 /**
- * 把屏上这一截接到上一次读到的整段后面：找「上一次的结尾」与「这一截的开头」最长的重合，
- * 重合部分只留一份。上一次的最后一行可能只写了半截（逐字出的几家），这一截里同一行写全了也算重合。
- * 找不到重合（两次读之间滚过了一整屏）就直接接上——宁可漏几行也不重复。
+ * 把屏上这一截接到上一次读到的整段后面：在上一次里找到屏顶第一行，从那儿起换成屏上这一截——
+ * 屏上画的是最新的样子，上一次在那之后的部分作废。
+ *
+ * 不能要求「上一次的结尾 = 这一截的开头」逐字相同：生成中 CLI 会重画正在写的那一块（2026-10-22 用户：Claude Code
+ * 流式长回复，聊天层预览一遍遍重贴整屏）。实录里有：列表项先画个「-」再出字、「4.」后面才跟内容、表格每多一格
+ * 列宽和行都重排、「**加粗**」收尾前后是两种样子。原先只要尾巴一处不同就整屏接在后面，每 300ms 重贴一遍。
+ * 所以按「只留字母数字汉字」比（空行、表格边框、光有「-」的行不参与），从屏顶第一行在上一次里的位置起连续对上
+ * 两行以上（或一直对到上一次的结尾，最后一行可以只写了半截）就算找到了。
+ * 找不到时：屏上这一截大半上一次已经有了 = 重画没对上，这次不接；大半是新的 = 两次读之间滚过了一整屏，直接接上。
  */
 export function mergeLiveReply(prev: readonly string[] | null, read: LiveReplyRead): string[] | null {
   if (read.anchored) return read.lines;
@@ -332,21 +338,51 @@ export function mergeLiveReply(prev: readonly string[] | null, read: LiveReplyRe
   // 没见过这一轮的开头（回显 / ⏺），屏上这一截不知道是不是这一轮的：不预览
   if (!prev?.length) return real?.lines ?? null;
   const next = read.lines;
-  const max = Math.min(prev.length, next.length);
-  for (let k = max; k > 0; k--) {
-    let same = true;
-    for (let i = 0; i < k; i++) {
-      const p = prev[prev.length - k + i];
-      if (p === next[i] || (i === k - 1 && p.trim().length >= 4 && next[i].startsWith(p))) continue;
-      same = false;
-      break;
+  const p = keyedLines(prev);
+  const n = keyedLines(next);
+  if (!n.length) return prev.slice();
+  let best = -1;
+  let bestRun = 0;
+  for (let s = 0; s < p.length; s++) {
+    let r = 0;
+    while (s + r < p.length && r < n.length) {
+      const a = p[s + r].key;
+      const b = n[r].key;
+      // 上一次读到的最后一行可能只写了半截
+      if (a === b || (s + r === p.length - 1 && b.startsWith(a))) r++;
+      else break;
     }
-    // 只靠空行重合不算数
-    if (same && next.slice(0, k).some((l) => l.trim())) return [...prev.slice(0, prev.length - k), ...next];
+    // 只对上一行的，要一直对到上一次的结尾才算（普通的「上一次结尾 = 屏顶」）
+    if (r < 2 && !(r === 1 && s + r === p.length)) continue;
+    // 一样长取靠后的：同样几行在回复里出现两次时，屏顶是新的那处
+    if (r >= bestRun) {
+      best = s;
+      bestRun = r;
+    }
+  }
+  if (best >= 0) {
+    const head = prev.slice(0, p[best].at);
+    if (n[0].at === 0) return [...head, ...next];
+    // 屏顶先是表格上边框一类没字的行：用屏上的，上一次在那个位置的同类行去掉（空行留着，是段落之间的间隔）
+    let end = head.length;
+    while (end > 0 && !norm(head[end - 1]) && head[end - 1].trim()) end--;
+    return [...head.slice(0, end), ...next];
   }
   // 屏顶的回显其实是真回显（多行提问刚好滚到第一行）：屏上就是整段，开头应与上一次相同
   if (real && real.lines[0] === prev[0]) return real.lines;
+  const known = new Set(p.map((x) => x.key));
+  if (n.filter((x) => known.has(x.key)).length * 2 >= n.length) return prev.slice();
   return [...prev, ...next];
+}
+
+/** 有字的行（行号 + 比对键）；空行、表格边框、光有列表符号的行不参与对齐 */
+function keyedLines(lines: readonly string[]): { at: number; key: string }[] {
+  const out: { at: number; key: string }[] = [];
+  lines.forEach((l, at) => {
+    const key = norm(l);
+    if (key) out.push({ at, key });
+  });
+  return out;
 }
 
 /** 只留字母、数字、汉字：终端里渲染过的 Markdown（标题去 #、行内代码去反引号、折行）和会话原文才对得上 */

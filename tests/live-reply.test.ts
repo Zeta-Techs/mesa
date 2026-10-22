@@ -111,6 +111,44 @@ test("长回复开头滚出屏后，屏上这一截接到上一次后面，不�
   assert.equal(mergeLiveReply(null, later), null);
 });
 
+// 2026-10-22 用户：Claude Code 流式长回复，聊天层预览一遍遍重贴整屏。假网关按 6 字一块流出真回复
+// （chat-capture.py + E2E_LONG_FILE / E2E_LONG_CHUNK），抓下的相邻两屏：上一次的尾巴被 CLI 重画了
+const LIST = ["两层嵌套的无序列表如下：", "", "- 学习准备", "  - 明确学习目标", "  - 收集必要资料", "- 练习过程"];
+const unanchored = (lines: string[]) => ({ lines, anchored: false });
+
+test("长回复：上一次的尾巴被重画（列表项先画个「-」、「4.」后面才出字）也接得上，不整屏重贴", () => {
+  const prev = ["当不同意见出现时，先确认彼此讨论的是同一个问题，往往很有帮助。", "", ...LIST, "  -"];
+  const screen = ["当不同意见出现时，先确认彼此讨论的是同一个问题，往往很有帮助。", "", ...LIST, "  - 从简单任务开始", "  - 检查每次输出"];
+  assert.deepEqual(mergeLiveReply(prev, unanchored(screen.slice(2))), [...prev.slice(0, 2), ...screen.slice(2)]);
+  const ordered = ["有序列表如下：", "", "1. 明确任务的范围和目标。", "2. 将目标拆分为若干可执行步骤。"];
+  const merged = mergeLiveReply([...LIST, "", ...ordered, "3."], unanchored([...ordered, "3. 按照优先级完成最关键的部分。", "4."]));
+  assert.deepEqual(merged, [...LIST, "", ...ordered, "3. 按照优先级完成最关键的部分。", "4."]);
+});
+
+test("长回复：表格每多一格就重排、加粗收尾前后两种样子，都按屏上最新的接", () => {
+  const rule = (l: string, m: string, r: string) => `${l}──────${m}────────────────────────${m}────────${r}`;
+  const half = [rule("┌", "┬", "┐"), "│ 项目 │          内容          │  状态  │", rule("├", "┼", "┤"), "│ 方法 │ 选择能够执行的具       │        │", rule("└", "┴", "┘")];
+  const full = [rule("┌", "┬", "┐"), "│ 项目 │          内容          │  状态  │", rule("├", "┼", "┤"), "│ 方法 │ 选择能够执行的具体步骤 │ 已规划 │", rule("├", "┼", "┤"), "│ 复盘 │ 根据结果调整后续行动   │ 待开始 │", rule("└", "┴", "┘")];
+  const before = ["4. 检查结果并记录改进方向。", ""];
+  const merged = mergeLiveReply([...LIST, "", ...before, ...half], unanchored([...before, ...full, "", "结构化表达能够让复杂的信息更容易被理解。"]));
+  assert.deepEqual(merged, [...LIST, "", ...before, ...full, "", "结构化表达能够让复杂的信息更容易被理解。"]);
+  // 屏顶正好是表格上边框：段落和表格之间的空行留着，边框只留屏上那条
+  const fromBorder = mergeLiveReply([...before, ...half], unanchored(full));
+  assert.deepEqual(fromBorder, [...before, ...full]);
+  // 「**持续…」没收尾时原样画着星号，收尾后画成加粗：同一行
+  const bold = mergeLiveReply(["每一个小步骤都可能带来反馈。", "**持续而温和的进步，通常比"], unanchored(["每一个小步骤都可能带来反馈。", "持续而温和的进步，通常比短暂而激烈的努力更加可靠。", "有些经验需要时间。"]));
+  assert.deepEqual(bold, ["每一个小步骤都可能带来反馈。", "持续而温和的进步，通常比短暂而激烈的努力更加可靠。", "有些经验需要时间。"]);
+});
+
+test("长回复：对不上时，屏上大半已经有了就不接（重画没对齐），大半是新的才接（滚过了一整屏）", () => {
+  const prev = ["第一行旧内容写完了", "第二行旧内容写完了", "第三行旧内容写完了", "第四行旧内容写完了"];
+  // 屏顶那行认不出（半帧之类），下面都是上一次已有的：不重贴
+  assert.deepEqual(mergeLiveReply(prev, unanchored(["一行认不出的半截", ...prev.slice(1)])), prev);
+  // 全是新的：两次读之间滚过了一整屏，接在后面
+  const fresh = ["第五行新内容", "第六行新内容"];
+  assert.deepEqual(mergeLiveReply(prev, unanchored(fresh)), [...prev, ...fresh]);
+});
+
 // 2026-10-18 聊天层第三期：假 API 慢慢流出 10 行，PTY 抓屏（scripts/e2e-model-routing/chat-capture.py）。
 // 各家都是流到一半（第二个要点刚出来）的那一帧，边框截短
 const HALF = ["第一段：这是一段慢慢流出来的回复。", "", "• 要点一：终端先画出来", "• 要点二：会话文件后落盘"];

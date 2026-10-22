@@ -2310,6 +2310,8 @@ const TerminalView = memo(function TerminalView({
   const liveScanTimerRef = useRef<number | null>(null);
   // 最近一次从聊天发出时屏上的最后一条回显与原文（writeChatMessage 记；读到新回显后清）
   const sendEchoRef = useRef<{ before: string | null; sent: string } | null>(null);
+  // 连续因「一帧还没画完」改期的次数（封顶后照读，免得 CLI 忘了收尾时预览永远不动）
+  const liveSyncWaitsRef = useRef(0);
   function scanLiveReplySoon() {
     if (!liveReplySupported(launchAgentRef.current)) return;
     // 旁路直接送实时文字的家（Qwen / OpenCode / Codex）不再读屏
@@ -2317,41 +2319,46 @@ const TerminalView = memo(function TerminalView({
     if (ch && ch.kind !== "hooks" && channelTurnOpen(ch)) return;
     if (liveScanTimerRef.current) return;
     const wait = Math.max(0, liveScanAtRef.current + 300 - Date.now());
-    liveScanTimerRef.current = window.setTimeout(() => {
-      liveScanTimerRef.current = null;
-      liveScanAtRef.current = Date.now();
-      const term = termRef.current;
-      if (!term || ptyKindRef.current !== "agent") return;
-      const buf = term.buffer.active;
-      const lines: string[] = [];
-      for (let i = 0; i < term.rows; i++) {
-        lines.push(buf.getLine(buf.viewportY + i)?.translateToString(true) ?? "");
+    liveScanTimerRef.current = window.setTimeout(scanLiveReplyNow, wait);
+  }
+  function scanLiveReplyNow() {
+    liveScanTimerRef.current = null;
+    const term = termRef.current;
+    if (!term || ptyKindRef.current !== "agent") return;
+    // 一帧正画到一半（同步输出 ?2026h 还没收尾，Claude Code 每帧都这样包；一帧常分两块到）：这时读到的是
+    // 上半截新、下半截旧的半帧。等这一帧画完再读（2026-10-22 回放实录：逐块读时约四成落在半帧上）
+    if (term.modes.synchronizedOutputMode && liveSyncWaitsRef.current < 20) {
+      liveSyncWaitsRef.current++;
+      liveScanTimerRef.current = window.setTimeout(scanLiveReplyNow, 50);
+      return;
+    }
+    liveSyncWaitsRef.current = 0;
+    liveScanAtRef.current = Date.now();
+    const lines = screenLines();
+    // 长回复滚出屏后只看得见续行：接到上一次读到的整段后面（mergeLiveReply）
+    const read = extractLiveReply(lines, launchAgentRef.current);
+    // Claude 转圈行的已生成 token 数（Windows 上 Claude 不边写边画，聊天层靠它看出还在出字）
+    if (launchAgentRef.current === "claude-code") {
+      const tokens = claudeOutputTokens(lines);
+      if (tokens !== null && tokens !== liveTokensRef.current) {
+        liveTokensRef.current = tokens;
+        setLiveTokens(tokens);
       }
-      // 长回复滚出屏后只看得见续行：接到上一次读到的整段后面（mergeLiveReply）
-      const read = extractLiveReply(lines, launchAgentRef.current);
-      // Claude 转圈行的已生成 token 数（Windows 上 Claude 不边写边画，聊天层靠它看出还在出字）
-      if (launchAgentRef.current === "claude-code") {
-        const tokens = claudeOutputTokens(lines);
-        if (tokens !== null && tokens !== liveTokensRef.current) {
-          liveTokensRef.current = tokens;
-          setLiveTokens(tokens);
-        }
-      }
-      const prev = liveReplyRef.current;
-      // 一时读不出（菜单挂着、重绘半帧）保留上一次的，免得预览闪没；新一轮发送时清
-      if (!read) return;
-      // 刚发的这句 CLI 还没画出来：屏上是上一轮的回显和回复，不当这一轮的预览（Qwen 先把上一段回复又显示一遍）
-      const sent = sendEchoRef.current;
-      if (sent && read.echo !== undefined) {
-        if (staleEcho(read, sent.before, sent.sent)) return;
-        sendEchoRef.current = null;
-      }
-      const next = mergeLiveReply(prev, read);
-      if (!next) return;
-      if ((prev?.join("\n") ?? null) === (next?.join("\n") ?? null)) return;
-      liveReplyRef.current = next;
-      setLiveReply(next);
-    }, wait);
+    }
+    const prev = liveReplyRef.current;
+    // 一时读不出（菜单挂着、重绘半帧）保留上一次的，免得预览闪没；新一轮发送时清
+    if (!read) return;
+    // 刚发的这句 CLI 还没画出来：屏上是上一轮的回显和回复，不当这一轮的预览（Qwen 先把上一段回复又显示一遍）
+    const sent = sendEchoRef.current;
+    if (sent && read.echo !== undefined) {
+      if (staleEcho(read, sent.before, sent.sent)) return;
+      sendEchoRef.current = null;
+    }
+    const next = mergeLiveReply(prev, read);
+    if (!next) return;
+    if ((prev?.join("\n") ?? null) === (next?.join("\n") ?? null)) return;
+    liveReplyRef.current = next;
+    setLiveReply(next);
   }
   // 连接出问题（conn-issue.ts）：Agent 出字时节流 500ms 扫一次可视区。基线 = 「已经看过」的错误（按次数）：
   // 关提示、换连接、发下一句、新进程接上时把屏上已有的记进去，之后同一个错误次数涨了才算新的

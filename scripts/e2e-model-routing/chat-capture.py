@@ -9,7 +9,7 @@
 Windows（2026-10-20）：走 ConPTY（pywinpty，PYWINPTY_DIR 指向 pip --target 目录，可与 PYTE_DIR 同一个），
 看 Windows 上读屏兜底（审批菜单 / 实时预览）抓到的画面与 macOS 是否同形。npm 的 .cmd 垫片按 Mesa 同口径直启（原生 exe / node + js）。
 """
-import json, os, re, shutil, signal, sys, tempfile, time
+import base64, json, os, re, shutil, signal, sys, tempfile, time
 sys.path.insert(0, os.environ.get("PYTE_DIR", ""))
 import pyte
 WIN = os.name == "nt"
@@ -74,7 +74,7 @@ if WIN:
 for k in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "all_proxy"): env.pop(k, None)
 for k in plan.get("env_remove", []): env.pop(k, None)
 for k, v in plan["env"]: env[k] = v
-COLS, ROWS = 120, 40
+COLS, ROWS = int(os.environ.get("CAP_COLS", "120")), int(os.environ.get("CAP_ROWS", "40"))
 screen = pyte.Screen(COLS, ROWS); stream = pyte.ByteStream(screen)
 
 
@@ -138,6 +138,8 @@ else:
     def pty_write(data):
         os.write(fd, data)
 kitty = [False]; alive = [True]; paste = [False]
+# CAP_RAW=1：终端原始输出逐块记进结果的 raw（[秒, base64]），拿真 xterm.js 回放（live-replay.ts）看读屏在每一块之间读到什么
+RAW, T0 = [] if os.environ.get("CAP_RAW") else None, time.time()
 
 
 def pump(sec):
@@ -147,6 +149,7 @@ def pump(sec):
         except OSError:
             alive[0] = False; return
         if not data: continue
+        if RAW is not None: RAW.append([round(time.time() - T0, 3), base64.b64encode(data).decode()])
         # 子进程开 / 关 bracketed paste（同 pty.rs 的检测口径）：Windows 上要看 ConPTY 有没有把它转出来
         if b"\x1b[?2004h" in data: paste[0] = True
         if b"\x1b[?2004l" in data: paste[0] = False
@@ -205,6 +208,10 @@ for _ in range(4):
         if any("Yes, I accept" in r for r in rows):
             pty_write(b"\x1b[B"); pump(0.3); pty_write(b"\x1b[13u" if kitty[0] else b"\r"); pump(2.5)
         elif any(re.search(r"trust this folder|trust folder only|do you trust", r, re.I) for r in rows):
+            pty_write(b"\x1b[13u" if kitty[0] else b"\r"); pump(2.5)
+        elif any("Try the new fullscreen renderer" in r for r in rows):
+            # Claude 2.1.30x 拿拷来的配置起时会推「全屏渲染」：默认选 Not now（用户本机是普通渲染）；CAP_FULLSCREEN=1 选 Yes
+            if not os.environ.get("CAP_FULLSCREEN"): pty_write(b"\x1b[B"); pump(0.3)
             pty_write(b"\x1b[13u" if kitty[0] else b"\r"); pump(2.5)
         elif any("Make auto mode" in r for r in rows):
             pty_write(b"\x1b[27u" if kitty[0] else b"\x1b"); pump(1.5)
@@ -288,6 +295,7 @@ for rel in COPY + [".gemini/settings.json", ".grok/config.toml", ".qwen/settings
         changed[rel] = "".join(difflib.unified_diff((before.get(rel) or "").splitlines(True), now.splitlines(True), n=0))[:1500]
 record["config_changed"] = changed
 record["kitty"] = kitty[0]; record["alive"] = alive[0]; record["bracketed_paste"] = paste[0]
+if RAW is not None: record["raw"] = RAW; record["size"] = [COLS, ROWS]
 json.dump(record, open(out_path, "w"), ensure_ascii=False, indent=1)
 try: proc.terminate(force=True) if WIN else os.kill(pid, signal.SIGKILL)
 except OSError: pass
