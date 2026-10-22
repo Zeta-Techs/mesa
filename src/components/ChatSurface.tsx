@@ -827,13 +827,11 @@ export default function ChatSurface({
             // 生成中那一行（2026-10-21 用户：「正在生成回复」「正在用」太机械）：M▁ 光标一直亮灭，后面说这一轮在做的事——
             // 正在跑的工具（「运行 npm test」）、计划里在做的一项、思考的小标题，都没有才写「思考中」，文字带一道光带扫过；
             // 过程里已经有那一行在动时只留光标。满 10 秒才写时间，Claude 没有逐字预览时写已生成的 token 数，
-            // 安静满 10 秒才给「看实时输出」。预览在出字时这一行不出现，光标接在预览末尾。
-            // 同一时刻只动一样（2026-10-22 用户：「隐现的太多了」——光标亮灭和光带同时在动）：写着字时光带扫、光标常亮；
-            // 没字时（刚发出、过程里那一行在动）光标亮灭
+            // 安静满 10 秒才给「看实时输出」。预览在出字时这一行不出现，光标接在预览末尾
             <div className="mb-2 flex min-w-0 items-center gap-2 text-xs text-l3">
               <MesaMark
                 light={isLightTheme(theme)}
-                typing={!statusText}
+                typing
                 inline
                 className="h-[0.8em] w-auto shrink-0 text-l3"
               />
