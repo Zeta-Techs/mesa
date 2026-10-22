@@ -584,6 +584,13 @@ body {
   font-size: 16px;
 }
 
+/* macOS/Linux 根字号 14px 让 text-xs（0.75rem）只剩 10.5px：比固定 11px 的 text-micro 还小，
+   全站用得最多的一档字号低于自定的 11px 下限，阶梯倒挂（2026-10-22 审查）。只把 xs 钉到 11.5px，
+   阶梯变成 micro 11 → xs 11.5 → sm 12.25，其余档与间距不动，Windows（根 16px，xs 本就 12px）不走这里。 */
+:root:not([data-platform="windows"]) {
+  --text-xs: 11.5px;
+}
+
 /* optimizeLegibility 在 Windows Chromium 会走 DirectWrite 的 natural 渲染模式，
    丢掉字体 hinting，小字号（12–13px）文本明显发糊——Windows 回退 auto */
 [data-platform="windows"] body {
