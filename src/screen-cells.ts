@@ -3,7 +3,8 @@
  *
  * 多数读屏只看文字（translateToString），有两处光看文字认不出、要看样子：
  * - Claude Code 输入框里那行灰字：猜你下一句想说什么（prompt-suggestion.ts），和你自己打的字只差在「灰」；
- * - Claude 提问菜单的题签行「☐ 颜色  ☐ 水果  ✔ Submit」：当前在哪一题只靠底色标出来（tui-ask.ts）。
+ * - Claude 提问菜单的题签行「☐ 颜色  ☐ 水果  ✔ Submit」：当前在哪一题只靠底色标出来（tui-ask.ts）；
+ * - Kimi 选择器每一项下面一行灰字说明，和选项同一缩进，只差在字色（tui-menu.ts）。
  */
 
 /** 画面上的一个字（宽字符占两格，这里只算一个） */
@@ -15,6 +16,8 @@ export interface ScreenCell {
   inverse: boolean;
   /** 有自己的底色（不是终端默认底） */
   bg: boolean;
+  /** 字色（颜色模式:值），终端默认色为 null；来源给不出字色时没有这一项 */
+  fg?: string | null;
 }
 
 /** xterm IBufferCell / IBufferLine 用到的那几个方法（测试里拿假对象顶） */
@@ -24,6 +27,9 @@ export interface CellSource {
   isDim(): number;
   isInverse(): number;
   isBgDefault(): boolean;
+  getFgColor?(): number;
+  getFgColorMode?(): number;
+  isFgDefault?(): boolean;
 }
 export interface LineSource {
   readonly length: number;
@@ -37,12 +43,16 @@ export function lineCells(line: LineSource | undefined): ScreenCell[] {
     const cell = line.getCell(x);
     // 宽字符的第二格宽度为 0
     if (!cell || cell.getWidth() === 0) continue;
-    out.push({
+    const item: ScreenCell = {
       ch: cell.getChars() || " ",
       dim: cell.isDim() !== 0,
       inverse: cell.isInverse() !== 0,
       bg: !cell.isBgDefault(),
-    });
+    };
+    if (cell.getFgColor && cell.getFgColorMode && cell.isFgDefault) {
+      item.fg = cell.isFgDefault() ? null : `${cell.getFgColorMode()}:${cell.getFgColor()}`;
+    }
+    out.push(item);
   }
   return out;
 }

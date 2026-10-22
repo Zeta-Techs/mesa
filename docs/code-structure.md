@@ -511,7 +511,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 卡片在 components/ChatDecisionCard.tsx AskCard（tests/tui-ask.test.ts）
   prompt-suggestion.ts       # Claude「猜你下一句」：输入框那一行除第一个字外全是灰字才算（readPromptSuggestion），排除 Try "…" 等固定提示；
                              # 聊天输入框空着时当占位字显示、Tab 填入（tests/prompt-suggestion.test.ts）
-  screen-cells.ts            # xterm 一行转成每个字的样子（灰 / 反色 / 底色，lineCells）：只看文字认不出的读屏用（猜的下一句、提问表单当前题）
+  screen-cells.ts            # xterm 一行转成每个字的样子（灰 / 反色 / 底色 / 字色，lineCells）：只看文字认不出的读屏用（猜的下一句、提问表单当前题、Kimi 选择器的说明行）
   tui-panel.ts               # parseTuiNotice：没有输入框 + 「Enter to continue」= 要按回车才继续的通知（Claude 中途弹的计费说明），
                              #   聊天层给「继续」卡（回车），认出时不再当面板；
                              # 认「终端里开着一个面板」（parseTuiPanel：没有该家输入框 + Esc to cancel/close 一类关闭提示；/cost、/usage 的 Settings 面板）：

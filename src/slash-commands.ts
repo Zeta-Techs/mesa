@@ -35,6 +35,8 @@ const TABLE: Record<string, SlashCommand[]> = {
   kimi: [
     { cmd: "/model", hint: "切换模型（吃别名）" },
     { cmd: "/effort", hint: "切换思考档位" },
+    // Kimi Code 2.3 实证：单数 /permission，弹三档选择器，聊天层出卡片选
+    { cmd: "/permission", hint: "切换权限模式" },
     HELP,
   ],
   gemini: [

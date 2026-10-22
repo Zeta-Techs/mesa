@@ -315,3 +315,32 @@ test("Grok 输入框里排着的多行编号清单像菜单：按刚发的原文
   assert.equal(menuEchoesText(menu, sent), true);
   assert.equal(menuEchoesText(menu, "上一句"), false);
 });
+
+test("Kimi Code 2.3 选择器：每项下面的灰字说明靠字色和选项分开，不算一项（2026-10-22 /permission 抓屏）", () => {
+  const lines = [
+    " " + "─".repeat(40),
+    "  Select permission mode",
+    "  ↑↓ navigate · Enter select · Esc cancel",
+    "",
+    "     Always Ask ← current",
+    "     Auto-read only; everything else needs your approval first.",
+    "   ❯ Ask When Needed",
+    "     Routine edits and commands run automatically; risky actions, questions, and plans still ask.",
+    "     Never Ask",
+    "     Never interrupts you; everything runs and is decided automatically.",
+    "",
+    " " + "─".repeat(40),
+  ];
+  // 字色：标题 / 选中项 primary，说明与按键提示 textMuted，未选中的选项 text（PTY 实录 4fa8ff / 6b6b6b / e0e0e0）
+  const fgOf = (row: number) =>
+    row === 2 || row === 5 || row === 7 || row === 9 ? "3:7039851" : row === 1 || row === 6 ? "3:5220607" : "3:14737632";
+  const cellsOf = (row: number) => [...lines[row]].map((ch) => ({ ch, dim: false, inverse: false, bg: false, fg: fgOf(row) }));
+  const menu = parseTuiMenu(lines, cellsOf);
+  assert.ok(menu);
+  assert.equal(menu.question, "Select permission mode");
+  assert.deepEqual(menu.options, ["Always Ask ← current", "Ask When Needed", "Never Ask"]);
+  assert.equal(menu.selected, 1);
+  assert.deepEqual(menuAnswerKeys(menu, 2), ["\x1b[B", "\r"]);
+  // 没有字色信息时照旧（读不到样子就按文字认）
+  assert.equal(parseTuiMenu(lines)?.options.length, 6);
+});

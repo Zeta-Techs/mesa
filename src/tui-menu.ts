@@ -14,6 +14,7 @@
  */
 
 import { sameClaudeAsk, type ClaudeAsk } from "./tui-ask.ts";
+import type { ScreenCell } from "./screen-cells.ts";
 
 export interface TuiMenu {
   /** 菜单上方那段说明的第一行（标题，如「Switch model?」） */
@@ -68,19 +69,66 @@ function unbox(line: string): string {
   return t;
 }
 
-export function parseTuiMenu(raw: readonly string[]): TuiMenu | null {
+export function parseTuiMenu(
+  raw: readonly string[],
+  cellsOf?: (row: number) => readonly ScreenCell[],
+): TuiMenu | null {
   const lines = raw.map(unbox);
   for (let i = 0; i < lines.length; i++) {
     const m = MARKED.exec(lines[i]);
     // 「❯ /model xxx」是对话记录里回显的用户命令，不是菜单高亮
     if (!m || m[1].startsWith("/")) continue;
-    const menu = menuAround(lines, i);
+    const menu = menuAround(lines, i, cellsOf);
     if (menu) return menu;
   }
   return null;
 }
 
-function menuAround(lines: readonly string[], markIdx: number): TuiMenu | null {
+/** 第 row 行第一个字的字色（没有字色信息时为 undefined） */
+function leadFg(
+  lines: readonly string[],
+  row: number,
+  cellsOf: (row: number) => readonly ScreenCell[],
+): string | null | undefined {
+  const col = lines[row].search(/[^\s❯›]/);
+  return col < 0 ? undefined : cellsOf(row)[col]?.fg;
+}
+
+/**
+ * Kimi 选择器（/permission、/settings…）每一项下面跟一行说明，和选项同一缩进，光看文字分不出来；
+ * 说明用的是和上方按键提示「↑↓ navigate · Enter select · Esc cancel」同一个灰（textMuted），选项不是。
+ * 返回该当说明处理的行号（2026-10-22 用户：/permission 在聊天层成了六个按钮，选「Ask When Needed」实际落到「Never Ask」）
+ */
+function descriptionRows(
+  lines: readonly string[],
+  start: number,
+  end: number,
+  markIdx: number,
+  cellsOf: ((row: number) => readonly ScreenCell[]) | undefined,
+): Set<number> {
+  const rows = new Set<number>();
+  if (!cellsOf) return rows;
+  let hint = -1;
+  for (let i = start - 1; i >= Math.max(0, start - 3); i--) {
+    if (KEY_HINT.test(lines[i])) {
+      hint = i;
+      break;
+    }
+  }
+  if (hint < 0) return rows;
+  const muted = leadFg(lines, hint, cellsOf);
+  if (!muted || leadFg(lines, markIdx, cellsOf) === muted) return rows;
+  for (let i = start; i <= end; i++) {
+    if (i !== markIdx && leadFg(lines, i, cellsOf) === muted) rows.add(i);
+  }
+  return rows;
+}
+
+function menuAround(
+  lines: readonly string[],
+  markIdx: number,
+  cellsOf?: (row: number) => readonly ScreenCell[],
+): TuiMenu | null {
   const isOption = (line: string) => !KEY_HINT.test(line) && (MARKED.test(line) || PLAIN.test(line));
   let start = markIdx;
   while (start > 0 && isOption(lines[start - 1]) && !MARKED.test(lines[start - 1])) start--;
@@ -95,8 +143,10 @@ function menuAround(lines: readonly string[], markIdx: number): TuiMenu | null {
   const options: string[] = [];
   let selected = -1;
   let textCol = 0;
+  const described = numbered ? new Set<number>() : descriptionRows(lines, start, end, markIdx, cellsOf);
   for (let i = start; i <= end; i++) {
     const line = lines[i];
+    if (described.has(i)) continue;
     if (!numbered || NUMBERED.test(line)) {
       if (i === markIdx) selected = options.length;
       const text = textOf(line);
