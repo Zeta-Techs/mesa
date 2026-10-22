@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>Mesa 聊天画布与输入框配色 · 现在 vs 建议（2026-10-22）</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0a0b0e; color: #bdbab4; font: 14px/1.6 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif; }
+  header { max-width: 1400px; margin: 26px auto 6px; padding: 0 24px; }
+  header h1 { margin: 0; font-size: 19px; color: #e9e6e2; font-weight: 600; }
+  header p { margin: 6px 0 0; color: #95959a; font-size: 13px; max-width: 1100px; }
+  .row { max-width: 1400px; margin: 18px auto 0; padding: 0 24px; }
+  .row h2 { font-size: 13px; color: #95959a; font-weight: 500; margin: 0 0 8px; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+
+  /* 每块面板吃自己的主题变量 */
+  .pane { position: relative; border-radius: 14px; overflow: hidden; background: var(--canvas); color: var(--l2); height: 420px; display: flex; flex-direction: column; border: 1px solid #1d2028; }
+  .tag { position: absolute; top: 10px; left: 14px; font-size: 11px; color: var(--l4); z-index: 2; }
+  .tag b { color: var(--l2); font-weight: 600; margin-right: 6px; }
+  .flow { flex: 1; padding: 34px 40px 0; display: flex; flex-direction: column; gap: 14px; overflow: hidden; position: relative; }
+  .user { align-self: flex-end; max-width: 72%; padding: 8px 14px; border-radius: 18px; color: var(--l1); font-size: 13.5px; }
+  .ai { font-size: 13.5px; line-height: 1.75; color: var(--l1); }
+  .ai .muted { color: var(--l3); }
+  .proc { font-size: 12.5px; color: var(--l3); display: flex; gap: 8px; align-items: center; }
+  .proc i { width: 6px; height: 6px; border-radius: 50%; background: var(--l4); display: inline-block; }
+  .composer-wrap { padding: 8px 28px 0; }
+  .composer { border-radius: 16px; padding: 12px 14px 8px; }
+  .ph { color: var(--l4); font-size: 13.5px; height: 24px; }
+  .bar { display: flex; align-items: center; gap: 10px; font-size: 11.5px; color: var(--l3); margin-top: 6px; }
+  .bar .grow { flex: 1; }
+  .blk { width: 34px; height: 24px; border-radius: 6px; background: var(--seg); }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: #D97757; display: inline-block; margin-right: 5px; }
+  .sbar { height: 32px; display: flex; align-items: center; gap: 12px; padding: 0 30px; font-size: 11.5px; color: var(--l3); }
+  .sbar .sp { flex: 1; }
+  .sbar .l4 { color: var(--l4); }
+  .add { color: #8fd3a8; } .del { color: #d98a93; }
+  .light .add { color: #177245; } .light .del { color: #b02a42; }
+
+  /* 现在：气泡 = bubble 75%；输入框 = raised + hairline 描边 */
+  .now .user { background: color-mix(in srgb, var(--bubble) 75%, transparent); }
+  .now .composer { background: var(--raised); border: 1px solid var(--hair); }
+
+  /* 建议：三层按同一套亮度差，从 canvas 和 l1 混出来，十四套主题差值一致
+     说过的话（气泡）比画布高一点、嵌在画布里；正在写的话（输入框）离你最近 */
+  .new .user { background: color-mix(in oklab, var(--canvas), var(--l1) 4.5%); }
+  .new .composer {
+    background: color-mix(in oklab, var(--canvas), var(--l1) 7%);
+    border: 1px solid color-mix(in oklab, var(--canvas), var(--l1) 13%);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.05);
+  }
+  .new.light .user { background: color-mix(in oklab, var(--canvas), var(--l1) 5%); }
+  .new.light .composer {
+    background: #ffffff;
+    border: 1px solid color-mix(in oklab, var(--canvas), var(--l1) 14%);
+    box-shadow: inset 0 -1px 0 rgb(0 0 0 / 0.03);
+  }
+  /* 对话流底部渐隐：字滚到输入框上面时淡出，不是一刀切 */
+  .new .flow::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 36px; background: linear-gradient(to bottom, transparent, var(--canvas)); }
+
+  .notes { max-width: 1400px; margin: 22px auto 40px; padding: 0 24px; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; font-size: 12.5px; color: #95959a; }
+  .notes div { background: #101218; border: 1px solid #1d2028; border-radius: 12px; padding: 14px 16px; }
+  .notes b { color: #e9e6e2; font-weight: 600; }
+  .notes table { border-collapse: collapse; width: 100%; margin-top: 6px; }
+  .notes td { padding: 4px 6px; border-bottom: 1px solid #1d2028; }
+  .notes td.n { text-align: right; font-variant-numeric: tabular-nums; color: #bdbab4; }
+</style>
+</head>
+<body>
+<header>
+  <h1>聊天画布与输入框配色 · 现在 vs 建议</h1>
+  <p>左边是现在（各主题的 raised 当输入框底、bubble 75% 当气泡），右边是建议：三层——画布、说过的话、正在写的话——用同一套亮度差，从每套主题自己的 canvas 和正文色混出来。数字是 OKLab 亮度差（×100），色相不动、仍零阴影。</p>
+</header>
+
+<script>
+  const THEMES = [
+    { id: "midnight（默认深色）", light: false, canvas: "#101218", raised: "#262a35", bubble: "#343947", hair: "#2c3039", seg: "#313643", l1: "#e9e6e2", l2: "#bdbab4", l3: "#95959a", l4: "#6b6b72" },
+    { id: "terracotta（陶土深色）", light: false, canvas: "#2d2d2b", raised: "#3e3e3b", bubble: "#4a4a46", hair: "#444441", seg: "#434340", l1: "#f9f9f7", l2: "#d2d2cc", l3: "#9d9d97", l4: "#747470" },
+    { id: "midnight-light（默认浅色）", light: true, canvas: "#edede9", raised: "#ffffff", bubble: "#e4e1d8", hair: "#d4d1c8", seg: "#cfcbc2", l1: "#1a1814", l2: "#3d3a33", l3: "#6b675e", l4: "#9a958b" },
+  ];
+  const pane = (t, kind) => `
+    <div class="pane ${kind} ${t.light ? "light" : ""}" style="--canvas:${t.canvas};--raised:${t.raised};--bubble:${t.bubble};--hair:${t.hair};--seg:${t.seg};--l1:${t.l1};--l2:${t.l2};--l3:${t.l3};--l4:${t.l4}">
+      <div class="tag"><b>${kind === "now" ? "现在" : "建议"}</b>${t.id}</div>
+      <div class="flow">
+        <div class="user">把 results.csv 里的显著性结果画成图</div>
+        <div class="proc"><i></i>读取 analysis/results.csv · 运行 plot.py</div>
+        <div class="ai">图已经存到 <span class="muted">figures/fig2.pdf</span>。三组里只有处理组 B 与对照差异显著（p = 0.003），A 组的效应量很小（d = 0.12），建议正文只报 B，A 放补充材料。</div>
+        <div class="user">好，顺便把图注也写一下</div>
+        <div class="ai">图注草稿：<span class="muted">Figure 2. Effect of treatment on …</span>，误差线为 95% 置信区间，样本量标在每组柱上方。</div>
+      </div>
+      <div class="composer-wrap">
+        <div class="composer">
+          <div class="ph">接着说…</div>
+          <div class="bar"><span>＋</span><span>▁| 请求批准</span><span class="grow"></span><span><span class="dot"></span>glm-5.3 · M high</span><span class="blk"></span></div>
+        </div>
+      </div>
+      <div class="sbar"><span>⑂ main</span><span><span class="add">+96</span> <span class="del">−12</span> <span class="l4">· 4 个文件</span></span><span class="sp"></span><span class="l4">经 智谱 GLM</span><span>5.1 万 token · $0.14</span></div>
+    </div>`;
+  for (const t of THEMES) {
+    document.write(`<div class="row"><h2>${t.id}</h2><div class="pair">${pane(t, "now")}${pane(t, "new")}</div></div>`);
+  }
+</script>
+
+<div class="notes">
+  <div>
+    <b>现在的问题</b>
+    <table>
+      <tr><td>主题</td><td class="n">输入框</td><td class="n">气泡</td><td>层级</td></tr>
+      <tr><td>midnight</td><td class="n">+10.3</td><td class="n">+12</td><td>气泡比输入框还亮；输入框像一整块砖</td></tr>
+      <tr><td>terracotta</td><td class="n">+6.6</td><td class="n">+8</td><td>同上，只是差小一些</td></tr>
+      <tr><td>shadcn</td><td class="n">+11.2</td><td class="n">+12</td><td>最重的一套</td></tr>
+      <tr><td>浅色七套</td><td class="n">+5.5</td><td class="n">−3</td><td>输入框浮起、气泡嵌入——和深色反过来</td></tr>
+    </table>
+  </div>
+  <div>
+    <b>建议的规则</b>（新令牌，十四套主题自动成套）
+    <table>
+      <tr><td>画布</td><td class="n">0</td><td>主题 canvas 不动</td></tr>
+      <tr><td>气泡（说过的话）</td><td class="n">深 +3 / 浅 −4</td><td>canvas 混 4.5–5% 正文色：轻轻托一下</td></tr>
+      <tr><td>输入框（正在写的话）</td><td class="n">深 +5 / 浅 白</td><td>离你最近；深色混 7%，浅色纯白</td></tr>
+      <tr><td>输入框描边</td><td class="n">深 +9~10 / 浅 −10</td><td>混 13–14%；顶部 1px 内高光（同浮层手法，零阴影）</td></tr>
+      <tr><td>聚焦描边</td><td class="n">l4</td><td>不变；不加彩色焦点环</td></tr>
+      <tr><td>对话流底部</td><td class="n">—</td><td>36px 渐隐进画布，字滚到输入框上方时淡出</td></tr>
+    </table>
+  </div>
+</div>
+</body>
+</html>

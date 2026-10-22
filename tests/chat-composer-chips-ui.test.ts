@@ -443,7 +443,7 @@ test("对话里的斜杠命令渲染成一行「命令 → 结果」，不当用
     const code = ui.el.querySelector("code");
     assert.equal(code?.textContent, "/model glm-5.2");
     assert.match(ui.el.textContent ?? "", /Set model to/);
-    assert.equal(ui.el.querySelectorAll(".bg-bubble\\/75").length, 1, "只有真正的问题是气泡");
+    assert.equal(ui.el.querySelectorAll(".bg-chat-bubble").length, 1, "只有真正的问题是气泡");
     assert.doesNotMatch(ui.el.innerHTML, /command-name|local-command-stdout/);
   } finally {
     await ui.close();

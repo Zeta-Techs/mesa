@@ -87,6 +87,13 @@
      品牌色不随主题换色相，只在浅色底深一档（下方 -light 覆写）；ink 是压在琥珀上的字 / 图标色 */
   --color-mesa-amber: #f5b83d;
   --color-mesa-amber-ink: #1d1608;
+  /* 聊天三层（2026-10-22，docs/design-chat-color-mockup.html）：画布 / 说过的话（气泡）/ 正在写的话（输入框）。
+     不再借 raised / bubble（那是浮层与通用气泡，每套主题各调各的，深色里气泡比输入框还亮）：一律从每套主题自己的
+     canvas 与正文色按固定比例在 OKLab 里混，十四套主题亮度差一致、色相不动——深色 气泡 +3 / 输入框 +5 / 描边 +9~10；
+     浅色在下方 -light 覆写（输入框纯白、气泡往下嵌）。新主题不用再配这三样 */
+  --color-chat-bubble: color-mix(in oklab, var(--color-canvas), var(--color-l1) 4.5%);
+  --color-composer: color-mix(in oklab, var(--color-canvas), var(--color-l1) 7%);
+  --color-composer-edge: color-mix(in oklab, var(--color-canvas), var(--color-l1) 13%);
 
   /* diff 增删 */
   --color-add: #8fd3a8;
@@ -360,6 +367,9 @@
   color-scheme: light;
   --color-hover: rgb(0 0 0 / 0.05);
   --color-mesa-amber: #e39a1c;
+  --color-chat-bubble: color-mix(in oklab, var(--color-canvas), var(--color-l1) 5%);
+  --color-composer: #ffffff;
+  --color-composer-edge: color-mix(in oklab, var(--color-canvas), var(--color-l1) 14%);
   /* diff 增删行：GitHub 式浅底深字（七套浅色共享，截图口径） */
   --color-diff-add-bg: #d9f2e2; --color-diff-add-fg: #177245;
   --color-diff-del-bg: #fbe3e6; --color-diff-del-fg: #b02a42;
@@ -1913,6 +1923,17 @@ select:focus-visible {
 
 /* 权限写在输入框本身上（2026-10-22）：完全访问 = 上沿一道 caution 细线（两端淡出）；只讨论 = 虚线框。
    其余档不加任何东西——不看芯片也知道这段对话放了多大权 */
+/* 对话流底部渐隐（ChatSurface 滚动区末尾的粘底层）：透明 → 画布 */
+.ccode-chat-fade {
+  background: linear-gradient(to bottom, transparent, var(--color-canvas));
+}
+/* 输入框浮起靠顶部 1px 内高光（同 .ccode-float-surface 的 edge highlight，零阴影）；浅色白底上白高光看不见，改底边极淡内暗线 */
+.ccode-composer-box {
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.05);
+}
+[data-theme$="-light"] .ccode-composer-box {
+  box-shadow: inset 0 -1px 0 rgb(0 0 0 / 0.03);
+}
 .ccode-composer-box[data-tone="discuss"] {
   border-style: dashed;
   border-color: var(--color-field);

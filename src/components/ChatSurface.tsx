@@ -866,6 +866,10 @@ export default function ChatSurface({
               )}
             </div>
           )}
+          {!emptyStart && (
+            // 对话流底部渐隐（2026-10-22 配色）：字滚到输入框上方时淡进画布，不是一刀切；负边距不占高度，不挡点击
+            <div aria-hidden="true" className="ccode-chat-fade pointer-events-none sticky bottom-0 -mx-4 -mt-8 h-8 shrink-0 sm:-mx-5" />
+          )}
           {hasNew && (
             <button
               type="button"
