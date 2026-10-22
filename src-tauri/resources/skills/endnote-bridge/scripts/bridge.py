@@ -2,6 +2,7 @@
 """Offline bibliography exchange. Writes a proposal, never the existing library."""
 import argparse
 import hashlib
+import html
 import json
 import re
 import sys
@@ -140,11 +141,25 @@ def parse_bibtex(text):
         stamp.unlink(missing_ok=True)
 
 
+def _placeholder(value):
+    return str(value).strip() in ('待补', '待核')
+
+
 def load(path):
     records = _load(path)
     # 输入侧统一愈合标识符：老文件里被美化成上下标的数字折回 ASCII，回程对账才对得上。
     # 页码/卷/期/ISSN 同病（A₂₅₇ 这类文章号页码），一并折叠（2026-10-11 对抗审查实证）。
     for record in records:
+        # 引文库里「待补」「待核」是给人看的缺口标记，不是值：进了 RIS / XML 就成了 Zotero、EndNote
+        # 里一格「待补」（2026-10-22 检索步复查）。读进来就当没有这个字段
+        for field in list(record):
+            value = record[field]
+            if isinstance(value, list):
+                kept = [v for v in value if not _placeholder(v)]
+                if kept != value:
+                    record[field] = kept
+            elif isinstance(value, str) and _placeholder(value) and field not in ('id', 'type'):
+                del record[field]
         for field in ('doi', 'url', 'pages', 'volume', 'number', 'issn'):
             if record.get(field):
                 record[field] = plain_id(record[field])
@@ -352,6 +367,9 @@ def clean(value):
     text = re.sub(r'([ₙ₊₁])[ \t]+(?=[A-Z])', r'\1', text)
     # 放回标识符原文（只折空白与上下标数字）
     text = re.sub('[-]', lambda m: plain_id(parked[ord(m.group(0)) - 0xE000]), text)
+    # Crossref 的刊名、标题常带 &amp;（Journal of Materials Science &amp; Technology）。标签已经剥完再还原，
+    # 免得 &lt;5 nm 还原成 < 后被当成标签吃掉
+    text = html.unescape(text)
     return re.sub(r'\s+', ' ', text).strip()
 
 
@@ -766,8 +784,10 @@ def crossref_fill(doi):
         'title': clean((message.get('title') or [''])[0]),
         'authors': authors,
         'year': str(issued[0]) if issued else (str(online[0]) if online else ''),
-        'date': fmt_date(issued or online or printed),
-        'epubDate': fmt_date(online) if printed and online and online != issued else '',
+        # 出版日期取纸本（期）的日期，网络出版日另记。Crossref 的 issued 是两者里早的那个，
+        # 拿它比 online 永远相等，网络出版日就丢了（2026-10-22 检索步实证）
+        'date': fmt_date(printed or issued or online),
+        'epubDate': fmt_date(online) if online and online != (printed or issued) else '',
         'journal': journal,
         'journalAbbreviation': abbrev,
         'volume': plain_id(message.get('volume')) if meaningful(message.get('volume')) else '',
@@ -863,11 +883,12 @@ def iso4_index():
             text = http_text(f'https://abbrv.jabref.org/journals/{name}', timeout=40, attempts=2)
         except Exception:
             continue
-        for row in csv.reader(io.StringIO(text)):
+        # JabRef 表是「"全称", "缩写"」：逗号后有空格，不跳过的话缩写会带上引号（"npj 2D Mater. Appl."）
+        for row in csv.reader(io.StringIO(text), skipinitialspace=True):
             if len(row) < 2:
                 continue
             key = _journal_key(row[0])
-            short = clean(row[1])
+            short = clean(row[1].strip().strip('"'))
             if key and short and key not in index:
                 index[key] = short
     index.update(_MESA_ISO4)

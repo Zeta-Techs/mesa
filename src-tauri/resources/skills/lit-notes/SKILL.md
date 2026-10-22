@@ -66,7 +66,13 @@ provides: [lit-notes]
 
 ### 3. 同步引文库
 
-每篇在 `references.bib` 检查 DOI/版本与键，复用匹配条目，缺失才追加一条 BibTeX。有 DOI 时先向 Crossref 取正式发表版（不用 preprint 顶替）。OpenAlex 只补 Crossref 没有的摘要。期刊缩写用 ISO 4、每个缩写词后加句点，按期刊全称查；现有值是全称、缺句点或对不上刊名的改成「待补」再补。一词刊名不缩。不要用 NLM 的 ISSN 缩写，不要自己编。条目要带上登记库里实际有的这些字段：
+**题录不再另查一遍**：检索步已经用 Crossref / OpenAlex / ISO 4 表把纳入篇的字段补进 `papers/included.json`，引文库从它来，用技能目录里的脚本写（命令里的 `python3` 在 Windows 上换成 `python`）：
+
+```bash
+python3 <技能目录>/scripts/lit_records.py bib --json papers/included.json --bib references.bib
+```
+
+它按 DOI（其次标题）匹配已有条目：已有的**不改键、不覆盖已有值**，只补空着的或写着「待补」的字段；没有的按「第一作者姓 + 年份」起键追加（重名加 a、b）。输出的 `keys` 是 included.json 的 id → bib 键，照着写进 `notes/index.json` 的 `bibKey`。待确认的默认不进引文库（人纳入后再跑一次）。included.json 里没有、只能从别处补的篇（精读中发现的待跟进引用），才按下面的口径手写一条，有 DOI 时先向 Crossref 取正式发表版（不用 preprint 顶替）。期刊缩写用 ISO 4、每个缩写词后加句点，按期刊全称查；一词刊名不缩。不要用 NLM 的 ISSN 缩写，不要自己编。脚本写出的条目带这些字段：
 
 - `author`：全名，`and` 分隔；「名 姓」翻成 `姓, 名`；被截成前三人或同一人重复的名单，改用 Crossref 完整名单
 - `year`、`title`、`journal`、`doi`
@@ -75,7 +81,7 @@ provides: [lit-notes]
 - `journalabbreviation`（与期刊全称不同才写）
 - `issn`、`abstract`、`keywords`（分号分隔）
 
-缺的字段写「待补」，不得编造，也不许用卷号或页码去填空着的期。字段写了但没和 Crossref 对过的标「待核」，核对通过再去掉标记。已有条目只补空字段，不改键、不覆盖人改过的作者和标题。
+缺的字段写「待补」，不得编造，也不许用卷号或页码去填空着的期（「待补」「待核」只是给人看的缺口标记，同步到文献库时 Mesa 不会把它写进 Zotero / EndNote）。字段写了但没和 Crossref 对过的标「待核」，核对通过再去掉标记。已有条目只补空字段，不改键、不覆盖人改过的作者和标题。
 
 ### 用已下载 PDF 核对题录
 

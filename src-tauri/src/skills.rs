@@ -312,7 +312,44 @@ static BUILTIN_SKILLS: &[(&str, &str)] = &[
 ];
 
 /// 随技能一起播种/显式更新的驱动脚本，不能只更新 SKILL.md 留下失效入口。
+/// lit_records.py 检索步与精读步都用（补字段 / 清单与 RIS / 写引文库），连同它依赖的 bridge.py 与
+/// Mesa 期刊缩写兜底表各放一份——单一出处仍是仓库里那一个文件（2026-10-22）
 static BUILTIN_SUPPORT: &[(&str, &str, &str)] = &[
+    (
+        "lit-search",
+        "scripts/lit_records.py",
+        include_str!("../resources/skills/lit-search/scripts/lit_records.py"),
+    ),
+    (
+        "lit-search",
+        "scripts/bridge.py",
+        include_str!("../resources/skills/endnote-bridge/scripts/bridge.py"),
+    ),
+    (
+        "lit-search",
+        "scripts/journal-abbreviations.csv",
+        include_str!("../resources/journal-abbreviations.csv"),
+    ),
+    (
+        "lit-notes",
+        "scripts/lit_records.py",
+        include_str!("../resources/skills/lit-search/scripts/lit_records.py"),
+    ),
+    (
+        "lit-notes",
+        "scripts/bridge.py",
+        include_str!("../resources/skills/endnote-bridge/scripts/bridge.py"),
+    ),
+    (
+        "lit-notes",
+        "scripts/journal-abbreviations.csv",
+        include_str!("../resources/journal-abbreviations.csv"),
+    ),
+    (
+        "endnote-bridge",
+        "scripts/journal-abbreviations.csv",
+        include_str!("../resources/journal-abbreviations.csv"),
+    ),
     (
         "endnote-bridge",
         "scripts/bridge.py",

@@ -276,7 +276,8 @@ function authorsOf(rec: Record<string, unknown>): string {
         return "";
       })
       .filter(Boolean)
-      .join(", ");
+      // 「;」分隔：检索步写的是「姓, 名」数组，逗号拼起来 RIS 就拆不开、整串成了一个作者（2026-10-22）
+      .join("; ");
   }
   return "";
 }
@@ -292,7 +293,12 @@ function yearOf(rec: Record<string, unknown>): string {
 }
 
 function urlOf(rec: Record<string, unknown>, id: string): string {
-  const direct = stringField(rec, ["url", "link", "doi"]);
+  // url 写着「待补」时往后找 doi 字段（检索步脚本没有链接时写待补）
+  const direct =
+    ["url", "link", "doi"]
+      .map((key) => rec[key])
+      .find((v): v is string => typeof v === "string" && v.trim() !== "" && v.trim() !== "待补")
+      ?.trim() ?? "";
   if (/^https?:\/\//i.test(direct)) return direct;
   if (direct.startsWith("10.")) return `https://doi.org/${direct}`;
   const doi = id.startsWith("doi:") ? id.slice(4) : /^10\.\d{4,}/.test(id) ? id : "";
@@ -1105,7 +1111,8 @@ export function includeAllPendingJson(text: string): string {
 }
 
 export function includedMdLine(row: Pick<IncludedRecord, "title" | "authors" | "year" | "source" | "url" | "id">): string {
-  const who = [row.authors, row.year].filter(Boolean).join(", ");
+  // 与检索步脚本 lit_records.py md_line 同一写法：作者超过三位写「等 N 人」
+  const who = [shortAuthors(row.authors), row.year].filter(Boolean).join(", ");
   const tail = row.url || row.id;
   return [row.title, who, row.source, tail].filter(Boolean).join(" — ");
 }
@@ -1258,6 +1265,12 @@ function risValue(value: string): string {
   return value.replace(/\r?\n/g, " ").replace(/\s+/g, " ").trim();
 }
 
+/** 「待补」是给人看的缺口标记，进 RIS 就成了文献库里一格「待补」：当没有 */
+function filled(value: string): string {
+  const text = risValue(value);
+  return text === "待补" || text === "待核" ? "" : text;
+}
+
 /** RIS 正文里的化学式。DOI、年份、卷期页不走这里。 */
 function risText(value: string): string {
   return displayCitationTitle(risValue(value));
@@ -1271,7 +1284,7 @@ function risAuthors(authors: string): string[] {
     : text.includes(";")
       ? text.split(";")
       : [text];
-  return parts.map((part) => risValue(part)).filter(Boolean);
+  return parts.map((part) => filled(part)).filter(Boolean);
 }
 
 function risBlocks(text: string): string[] {
@@ -1341,14 +1354,14 @@ function risBody(row: IncludedRecord, target: "zotero" | "endnote"): string[] {
   if (target === "endnote") pushTag(lines, "ET", row.epubDate);
   pushTag(lines, "VL", row.volume);
   pushTag(lines, "IS", row.issue);
-  const pages = risValue(row.pages).replace(/[–—−]/g, "-");
+  const pages = filled(row.pages).replace(/[–—−]/g, "-");
   const parts = pages ? pages.split(/-+/, 2).map((part) => part.trim()) : [];
   if (parts[0]) {
     lines.push(`SP  - ${parts[0]}`);
     if (target === "endnote") lines.push(`M2  - ${parts[0]}`);
   }
   if (parts[1] && parts[1] !== parts[0]) lines.push(`EP  - ${parts[1]}`);
-  if (target === "endnote") pushTag(lines, "M3", row.articleType || "Journal Article");
+  if (target === "endnote") pushTag(lines, "M3", filled(row.articleType) || "Journal Article");
   pushTag(lines, "SN", row.issn);
   const doi = doiToken(row.id, row.url);
   if (doi) lines.push(`DO  - ${doi}`);
@@ -1357,7 +1370,7 @@ function risBody(row: IncludedRecord, target: "zotero" | "endnote"): string[] {
   }
   pushTag(lines, "AB", risText(row.abstract));
   if (target === "endnote") pushTag(lines, "LA", row.language);
-  const url = risValue(row.url) || (doi ? `https://doi.org/${doi}` : "");
+  const url = filled(row.url) || (doi ? `https://doi.org/${doi}` : "");
   if (url) lines.push(`UR  - ${url}`);
   lines.push("ER  - ");
   return lines;

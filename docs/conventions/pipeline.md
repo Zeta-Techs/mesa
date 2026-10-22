@@ -616,6 +616,11 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   EndNote 2025 RefMan 的 `papers/endnote-import.ris`：全称 `T2`、缩写 `J2`、页 `SP`、起始页码 `M2`、结束页 `EP`、文章类型 `M3`。不写 `JO`/`M1`（`M1` 不进格子）。
   有 DOI 时用 Crossref 补这些字段。期刊缩写用 ISO 4、每个缩写词后加句点，先查 JabRef，没有查 `src-tauri/resources/journal-abbreviations.csv`。一词刊名的缩写写全称。两处都没有时，精读按官网或 ISO 4 补进 bib。不用 NLM 的 ISSN 结果。OpenAlex 只补 Crossref 没有的摘要。没有的标签不写，不编造。补这张表：一行「全称,缩写」，`&` 写成 and，改完重新编译，再点同步。
   「同步到 Zotero」打开 to-fetch.ris；「同步到 EndNote」打开 endnote-import.ris。这份 RIS 只由检索步生成。精读不把它列为产物，不整份重写；bib 里多出来的 DOI 才追加，已有记录保持原样。定稿从 `references.bib` 再生成时，`zotero_rtf.py` 按 Zotero 标签，`bridge.py` 按 EndNote 标签。
+  **题录走固定脚本（2026-10-22）**：上面这些由 `lit-search/scripts/lit_records.py` 实现（enrich → fetch → write → check；精读步 bib），
+  `papers/included.json` 是唯一来源，`included.md`、`to-fetch.md`、两份 RIS、`references.bib` 都从它出，Agent 不再手写也不再自己写补字段脚本。
+  RIS 拼法与 `screening-review.ts risBody`（人点纳入时 Mesa 追加的那条）双端镜像，`tests/lit-records.test.ts` 逐条比对；改任一边两边同改。
+  日期：出版日期取纸本（期），网络出版日另记 `epubDate`；关键词取 OpenAlex 的论文关键词（Crossref 的 subject 是期刊分类，不当关键词）。
+  「待补」「待核」只是缺口标记：两份 RIS 不写，`bridge.load` 读引文库时当没有这个字段，所以同步进 Zotero / EndNote 不会出现「待补」。
   同步只交题录，不打开目录。检索工作区里的 `papers/` 不是课题 PDF 落点，Finder 分栏会把 `~/ccode/workspaces/...` 整条摊开。PDF 由人点「打开 papers」打开课题根。Mesa 不代点合并。
   PDF 补进 Zotero 后回「文献与数据」重新导入即登记（只读引用不复制），再手动勾事项。
   **内核仍不直写用户 Zotero 库**——内核 `zotero_import` 只读快照并写项目；可选技能写库必须有用户明确意图和实机授权（锁库/同步冲突风险）。
