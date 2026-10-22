@@ -56,7 +56,7 @@ function SendBlock({
       aria-label={queued ? "排队发送" : "发送"}
       className="ccode-send-block"
     >
-      <ArrowUp size={15} strokeWidth={2.4} aria-hidden="true" />
+      <ArrowUp size={13} strokeWidth={2.4} aria-hidden="true" />
     </button>
   );
 }
@@ -898,7 +898,7 @@ export default function ChatComposer({
                     data-state="stop"
                     className="ccode-send-block"
                   >
-                    <Square size={10} strokeWidth={0} fill="currentColor" aria-hidden="true" />
+                    <Square size={8} strokeWidth={0} fill="currentColor" aria-hidden="true" />
                   </button>
                   {canSubmit && (
                     <>

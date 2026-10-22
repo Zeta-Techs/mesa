@@ -2005,8 +2005,9 @@ select:focus-visible {
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  width: 2.5rem;
-  height: 1.75rem;
+  /* 2026-10-22 用户：整体看着有点大、光晕减弱——由 2.5×1.75rem 收到 2.125×1.5rem，与芯片（h-6）齐高 */
+  width: 2.125rem;
+  height: 1.5rem;
   border-radius: var(--ccode-radius-control);
   transition:
     background-color 120ms var(--ccode-motion-ease),
@@ -2021,7 +2022,7 @@ select:focus-visible {
 .ccode-send-block[data-state="ready"] {
   background: var(--color-mesa-amber);
   color: var(--color-mesa-amber-ink);
-  box-shadow: 0 0 12px color-mix(in srgb, var(--color-mesa-amber) 35%, transparent);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--color-mesa-amber) 18%, transparent);
 }
 .ccode-send-block[data-state="ready"]:hover {
   filter: brightness(1.06);
@@ -2030,7 +2031,7 @@ select:focus-visible {
   color: var(--color-mesa-amber);
   box-shadow:
     inset 0 0 0 1.5px color-mix(in srgb, var(--color-mesa-amber) 70%, transparent),
-    0 0 10px color-mix(in srgb, var(--color-mesa-amber) 22%, transparent);
+    0 0 5px color-mix(in srgb, var(--color-mesa-amber) 10%, transparent);
 }
 .ccode-send-block[data-state="stop"]:hover {
   background: color-mix(in srgb, var(--color-mesa-amber) 12%, transparent);
