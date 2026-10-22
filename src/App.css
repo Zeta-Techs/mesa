@@ -1935,9 +1935,16 @@ select:focus-visible {
   -webkit-appearance: none;
 }
 
-/* 对话流底部渐隐（ChatSurface 滚动区末尾的粘底层）：透明 → 画布 */
+/* 对话流底部渐隐（ChatSurface 滚动区末尾的粘底层）：透明 → 画布。前段放缓、后段收紧——
+   停在底部时最上沿只轻轻扫到最后一行的下缘，往上翻时贴边那一段淡得明显（2026-10-22 用户：渐隐更突出一点、「思考中」只底部一点点） */
 .ccode-chat-fade {
-  background: linear-gradient(to bottom, transparent, var(--color-canvas));
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    color-mix(in srgb, var(--color-canvas) 35%, transparent) 30%,
+    color-mix(in srgb, var(--color-canvas) 85%, transparent) 70%,
+    var(--color-canvas) 100%
+  );
 }
 /* 输入框浮起靠顶部 1px 内高光（同 .ccode-float-surface 的 edge highlight，零阴影）；浅色白底上白高光看不见，改底边极淡内暗线 */
 .ccode-composer-box {

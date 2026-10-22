@@ -873,23 +873,24 @@ export default function ChatSurface({
               )}
             </div>
           )}
-          {!emptyStart && (
-            // 对话流底部渐隐（2026-10-22 配色）：字滚到输入框上方时淡进画布，不是一刀切；负边距不占高度，不挡点击。
-            // 高度与底部留白 pb-6 一样（同日用户：h-8 时「底部隐现的太多了」——比留白高，滚到底时最后一行、生成中那一行都被盖淡；
-            // 改成一窄条后又说「可以留一点点底部隐上的视觉效果」）：停在底部时整条落在留白里、不碰任何字，往上翻时字在贴边这一段淡出
-            <div aria-hidden="true" className="ccode-chat-fade pointer-events-none sticky bottom-0 -mx-4 -mt-6 h-6 shrink-0 sm:-mx-5" />
-          )}
           {hasNew && (
             <button
               type="button"
               onClick={scrollBottom}
               // 居中只靠 mx-auto：sticky 下 left-1/2 不起定位作用，再叠 -translate-x-1/2 会把按钮往左偏半个身位
-              className="sticky bottom-2 mx-auto rounded-md border border-field bg-raised px-2.5 py-1 text-xs text-l2 hover:bg-inset hover:text-l1"
+              className="sticky bottom-2 z-10 mx-auto rounded-md border border-field bg-raised px-2.5 py-1 text-xs text-l2 hover:bg-inset hover:text-l1"
             >
               有新消息 ↓
             </button>
           )}
         </div>
+        {!emptyStart && (
+          // 对话流底部渐隐（2026-10-22 配色）：字滚到输入框上方时淡进画布，不是一刀切；负边距不占高度，不挡点击。
+          // 挂在滚动区本身（不在内容栏里）：粘底层不能越出所在块的内容框，放在内容栏里时停在底部会落到 pb-6 留白之上、
+          // 正好压在最后一行上（同日用户：「底部隐现的太多了」）。放这里停在底部时先盖住留白，只轻扫「思考中」那一行下缘；
+          // 往上翻时贴边这一段淡得明显（同日用户：「渐隐更突出一点，思考中只底部一点点」；曲线见 App.css .ccode-chat-fade）
+          <div aria-hidden="true" className="ccode-chat-fade pointer-events-none sticky bottom-0 -mt-12 h-12" />
+        )}
       </div>
 
       <ChatComposer
