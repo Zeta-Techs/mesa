@@ -43,6 +43,7 @@ import {
   composerShowsInterrupt,
   slashHandoff,
 } from "../chat-handoff";
+import { decisionKind, recordChatHandoff, type HandoffReason } from "../chat-handoff-log";
 import { chatStatus, STATUS_QUIET_START_MS } from "../chat-status";
 import { confirmChoices } from "../chat-reply";
 import ChatDecisionCard, { type ChatDecision } from "./ChatDecisionCard";
@@ -280,7 +281,10 @@ export default function ChatSurface({
     const rising = stuckWaiting && !prevStuckRef.current;
     prevStuckRef.current = stuckWaiting;
     if (!rising || trustPrompt) return;
-    if (!peek) autoPeekedRef.current = true;
+    if (!peek) {
+      autoPeekedRef.current = true;
+      recordChatHandoff(agentId, "stuck_start");
+    }
     onRequestPeek?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stuckWaiting, trustPrompt]);
@@ -443,6 +447,9 @@ export default function ChatSurface({
   const quiet = generating && Date.now() - progressAt >= QUIET_HINT_MS;
   const extraHint = approvalExtraHint(agentId, hooksEnabled);
   const liveReplyCapable = liveReplySupported(agentId ?? "");
+  // 聊天层接不住、要去终端的那一下记个数（chat-handoff-log.ts），排聊天层下一步补什么
+  const noteHandoff = (reason: HandoffReason, detail?: string) =>
+    recordChatHandoff(agentId, reason, detail);
   // 一轮刚结束、会话文件还没把最后一段写进来：预览和展开的过程再留一会儿，追上了（或 4 秒到了）再收。
   // 原先一停就撤预览、过程同时收起，最后一段落盘前画面空一下才出来（2026-10-19 用户 Codex 实测）
   const [settling, setSettling] = useState(false);
@@ -650,7 +657,10 @@ export default function ChatSurface({
       );
     }
     const event = slashHandoff(text, modelSwitch?.kind ?? null);
-    if (event === "picker_model") onRequestPeek?.();
+    if (event === "picker_model") {
+      if (!peek) recordChatHandoff(agentId, "picker", "slash");
+      onRequestPeek?.();
+    }
     return onSend(text);
   }
 
@@ -802,7 +812,10 @@ export default function ChatSurface({
                   {onTogglePeek && (
                     <button
                       type="button"
-                      onClick={onTogglePeek}
+                      onClick={() => {
+                        if (!peek) noteHandoff("user_stuck", "peek");
+                        onTogglePeek();
+                      }}
                       className="rounded-md border border-field bg-raised px-3 py-1.5 text-xs text-l2 hover:bg-inset hover:text-l1"
                     >
                       {peek ? "终端已露出" : "露出终端"}
@@ -810,7 +823,10 @@ export default function ChatSurface({
                   )}
                   <button
                     type="button"
-                    onClick={onOpenTerminal}
+                    onClick={() => {
+                      noteHandoff("user_stuck", "open");
+                      onOpenTerminal();
+                    }}
                     className="rounded-md border border-field bg-raised px-3 py-1.5 text-xs text-l2 hover:bg-inset hover:text-l1"
                   >
                     打开终端处理
@@ -854,8 +870,18 @@ export default function ChatSurface({
           {decision && (
             <ChatDecisionCard
               decision={decision}
-              onOpenTerminal={onOpenTerminal}
-              onPeek={onTogglePeek && !peek ? onTogglePeek : undefined}
+              onOpenTerminal={() => {
+                noteHandoff("user_decision", decisionKind(decision.key));
+                onOpenTerminal();
+              }}
+              onPeek={
+                onTogglePeek && !peek
+                  ? () => {
+                      noteHandoff("user_decision", decisionKind(decision.key));
+                      onTogglePeek();
+                    }
+                  : undefined
+              }
             />
           )}
           {generating && !decision && livePreview.length === 0 && (
@@ -893,7 +919,10 @@ export default function ChatSurface({
               {onTogglePeek && !peek && !liveReplyCapable && quiet && (
                 <button
                   type="button"
-                  onClick={onTogglePeek}
+                  onClick={() => {
+                    noteHandoff("user_live");
+                    onTogglePeek();
+                  }}
                   className="shrink-0 rounded-sm px-1 text-l4 underline decoration-dotted underline-offset-2 hover:text-l2"
                 >
                   看实时输出
@@ -1050,7 +1079,10 @@ export default function ChatSurface({
               effort={runtime.effort}
               submitCsiU={runtime.submitCsiU}
               onTuiCommand={onTuiCommand}
-              onPicker={onRequestPeek}
+              onPicker={() => {
+                if (!peek) noteHandoff("picker", "menu");
+                onRequestPeek?.();
+              }}
               contextUsed={contextUsed}
               onCompact={mesaCommands.find((c) => c.cmd === "/compact")?.run ?? null}
               onRelaunch={runtime.onRelaunch}

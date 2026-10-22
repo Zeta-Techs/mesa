@@ -192,7 +192,8 @@
   AI 无头调用 `-s read-only`；用户可用 extra_env/参数覆盖。
 - **诊断 unhandledrejection 跳过 monaco CancellationError**（`name` 与 `message` 均为 `"Canceled"`）：WKWebView 下 monaco 剪贴板 workaround 每次点击/按键会取消上一次 `clipboard.write`，属预期取消。上报层 `preventDefault` 且不写 `log_event`；预打包再用 Vite/esbuild 插件在 cancel 前接住 DeferredPromise。不得把这类拒绝当故障刷开发态 stderr。
 - **诊断包是脱敏的有界快照**：设置页一键导出到 `~/Downloads/ccode-exports/`，包含 Windows/WebView2/GPU/WebGL、
-  语言与输入法、当前功能开关、应用日志及自应用启动后的子进程生命周期；进程记录为内存环形缓冲，不读取环境变量，命令参数
+  语言与输入法、当前功能开关、应用日志、聊天层转到终端的计数（`chat-handoffs.json`，只有 agent / 原因 / 次数 / 版本 / 日期，
+  不记屏上文字与会话内容，2026-10-22）及自应用启动后的子进程生命周期；进程记录为内存环形缓冲，不读取环境变量，命令参数
   与日志在导出前必须经 Rust 层脱敏。ZIP 内只放 UTF-8 JSON/TXT，保证从 Windows 带回 macOS 后无需 Mesa 或 Windows 工具
   即可离线分析。系统级活动只额外观察 CTF/TextInputHost，禁止借诊断之名采集无关应用的命令行。
   **诊断包随反馈出站（2026-10-17）**：反馈表单（邮箱直发 / 公司端点）只把诊断包**路径**交给后端，后端经

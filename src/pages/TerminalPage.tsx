@@ -80,6 +80,7 @@ import {
   slashSettledLocally,
   userTextRecorded,
 } from "../chat-handoff";
+import { confirmHandoffReason, recordChatHandoff } from "../chat-handoff-log";
 import { AGENTS, type CustomRuntimeDto, type OfficialAccountStatusDto } from "../types";
 import {
   channelAttention,
@@ -7393,6 +7394,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         label: "打开终端",
         hint: "切到这段对话的终端画面",
         run: () => {
+          recordChatHandoff(agent, "user_switch", "slash");
           setSurfaceModeByTab((prev) => ({ ...prev, [tabId]: "terminal" }));
           useAppStore.getState().ackOnboarding("terminal");
         },
@@ -7494,19 +7496,18 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       window.setTimeout(() => setPeekRecheck((n) => n + 1), wait + 50);
       return;
     }
-    if (
-      !shouldAutoPeek(
-        confirmHandoffEvent(
-          statuses[focusedId]?.agentId,
-          Boolean(
-            useAppStore.getState().settings?.hooksAttention?.[
-              statuses[focusedId]?.agentId ?? ""
-            ] || sessionByTab[focusedId]?.channel,
-          ),
-        ),
-      )
-    ) {
-      return;
+    const confirmEvent = confirmHandoffEvent(
+      statuses[focusedId]?.agentId,
+      Boolean(
+        useAppStore.getState().settings?.hooksAttention?.[
+          statuses[focusedId]?.agentId ?? ""
+        ] || sessionByTab[focusedId]?.channel,
+      ),
+    );
+    if (!shouldAutoPeek(confirmEvent)) return;
+    // 真要露出来（没露着、用户这轮没手动收起）才记数：聊天卡上答不了这次确认
+    if (!peekByTab[focusedId] && !peekLocked[focusedId]) {
+      recordChatHandoff(statuses[focusedId]?.agentId, confirmHandoffReason(confirmEvent));
     }
     setPeek(focusedId, true);
     // peekLocked / 用户手动收起由 setPeek 守
@@ -9714,9 +9715,12 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           <span className="ml-2 flex shrink-0 items-center border-l border-hairline pl-2">
             <button
               type="button"
-              onClick={() =>
-                switchSurface(focusedSurfaceMode === "chat" ? "terminal" : "chat")
-              }
+              onClick={() => {
+                if (focusedSurfaceMode === "chat") {
+                  recordChatHandoff(statuses[focusedId]?.agentId, "user_switch", "tab-bar");
+                }
+                switchSurface(focusedSurfaceMode === "chat" ? "terminal" : "chat");
+              }}
               title={
                 focusedSurfaceMode === "chat" ? "切换到终端" : "切换到聊天"
               }

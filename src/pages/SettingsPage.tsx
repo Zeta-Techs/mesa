@@ -1,4 +1,5 @@
 import BackgroundTasksPanel from "../components/BackgroundTasksPanel";
+import ChatHandoffStatsPanel from "../components/ChatHandoffStatsPanel";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ChartColumn,
@@ -4093,6 +4094,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           </button>
         </Row>
         <BackgroundTasksPanel />
+        <ChatHandoffStatsPanel />
         <Card
           title="应用日志"
           hint="最近 100 条；进程内缓冲，重启即清空"

@@ -112,6 +112,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   feedback.ts                # 反馈与提需求纯逻辑：类型闭集/环境行/正文与主题拼装/mailto 与网页邮箱链接/端点负载/截图常量（≤3 张 ≤2MB）/发送方式闭集与默认（记本机 ccode.feedback.channel）/附件注记（tests/feedback.test.ts）
   components/FeedbackModal.tsx # 反馈表单弹层（帮助菜单、诊断弹窗「附到反馈」、设置→关于三入口）：端点已配只走端点，否则用户选发送方式（邮件应用/网页邮箱/邮箱直发）；附件=截图缩略图+诊断包（表单内现导出或 attachDiagnostics 带入，后端按路径白名单自读）；邮件类通道附件落盘+交接提示（清空/保留草稿由人定）；邮箱直发配置视图（保存并测试、结果就地显示、首存失败回滚授权码）
   components/UpdateNotes.tsx # 更新说明渲染（Markdown→浅底框，原始 HTML 转义、链接/图片只留文字）；设置→更新卡片与帮助「检查更新」弹窗共用
+  components/ChatHandoffStatsPanel.tsx # 设置「诊断」→ 聊天层转到终端：按 agent + 原因 + 细分的次数排序、近 30 天 / 全部、清空
   components/HelpDialogs.tsx # 帮助菜单三个内容弹窗：诊断与日志（日志按级别筛/计数/复制 + 导出诊断包 → 附到反馈）、检查更新（打开即查；状态/更新说明/下载进度/安装，安装走 useAppUpdateInstall）、关于（图标/版本复制/更新状态只读 store/仓库与许可入口，许可页同弹窗切换）；快捷键速查曾短暂存在后按「不与命令面板/设置/说明书重复」删除（2026-10-12）
   components/ThirdPartyNotices.tsx # 「开源许可与致谢」内容区（帮助→关于、设置→关于共用）：致谢与数据来源（Markdown 阅读版式，许可全文收进 details，链接交系统浏览器）/ 组件许可（可搜索）两页签；清单读一次进程内缓存
   third-party-notices.ts     # 随包许可清单解析纯逻辑：依赖表拆组拆行（跳过代码块里的 ##、丢弃文件头生成说明）+ 按名字/许可搜索（tests/third-party-notices.test.ts 含真文件格式守卫）
@@ -368,6 +369,10 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   app-update-install.ts      # 「下载并安装」hook（设置→更新与帮助菜单更新弹窗共用）：先查后台任务要人点头、进度累计、成功 relaunch；模块级闸防双下载
   diagnostics.ts             # 前端诊断：WebGL 探针/软件渲染判定、monaco 取消拒绝识别、诊断包前端采集；应用日志展示纯逻辑（UTC→本机时间、错误/警告短标、计数、复制文本）（tests/diagnostics.test.ts）
                              # （tests/app-update.test.ts）；真正 check()/安装在 store.ts
+  chat-handoff-log.ts        # 聊天层转到终端记数（2026-10-22，tests/chat-handoff-log.test.ts）：原因闭集 HANDOFF_REASONS（与 chat_handoff_log.rs
+                             # REASONS 同名同序，测试钉住）、说法、确认卡种类 decisionKind、同家同原因 3 秒去重；记录失败静默。
+                             # 记数点：TerminalPage 等确认自动露出 / 标签栏与 /terminal 切终端，ChatSurface 卡住自动露出、选择器、卡片与「看实时输出」按钮；
+                             # 查看在 components/ChatHandoffStatsPanel.tsx（设置「诊断」）
   chat-handoff.ts            # 聊天⇄终端交接表：chat_ok / peek / must_switch、卡住时的一句话 CHAT_NO_SESSION_TEXT、斜杠是否要窥视 TUI、
                              # 聊天头状态 chatHeaderStatus（未开始不写「等待会话文件」，tests/chat-handoff.test.ts）；
                              # 本地乐观消息放回解析结果的位置 placePendingUsers（排队中的接末尾，其余插在发送后的第一条新回复前）；
@@ -881,6 +886,8 @@ src-tauri/src/
                              #   一个请求可分段写（段间 2ms，回执等待随段数加长）
   context_breakdown.rs       # 上下文分类明细（2026-10-20）：用标签同一套启动参数在后台跑 CLI 自带的 /context（Claude Code `-p --resume --no-session-persistence`，
                              # 关 hooks；Qwen `-p --resume`），解析分类表；不调用模型、不改会话文件。只有这两家能无头跑，其余家前端只显示总量
+  chat_handoff_log.rs        # 聊天层转到终端的计数（2026-10-22）：app.db chat_handoff_events（日 × agent × CLI 版本 × 原因 × 细分），
+                             #   原因闭集、细分只收短标识、留 180 天；summary_for_bundle 进诊断包 chat-handoffs.json。只计数不记文字
   chat_channel.rs            # 聊天层结构化旁路（2026-10-20，docs/design-chat-structured-channels.md）：pty_spawn 起进程前
                              #   prepare 按家改参数（Claude / CodeBuddy --settings hooks、Qwen Dual Output、OpenCode --port + 口令、
                              #   Codex 私有 app-server + TUI --remote，split_codex_args 恢复时把权限参数改成服务配置），

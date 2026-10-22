@@ -472,10 +472,10 @@ fn add_text(writer: &mut zip::ZipWriter<fs::File>, name: &str, text: &str) -> Re
 /// 诊断包 README（随包分发）。平台分支：Windows 有系统级采集清单；
 /// 其余平台 system.json 只是简表，别让包自称 Windows 包（2026-10-12 口径统一）。
 #[cfg(windows)]
-const BUNDLE_README: &str = "Mesa 诊断包\n\n用途：遇到问题时导出，附到「反馈与提需求」发给维护者；也可以自己解压查看。全部文件为 UTF-8 JSON/TXT，无需安装任何工具。\n\nsystem.json：Windows、WebView2、显卡、语言与输入法\nfrontend.json：WebView 用户代理、语言、屏幕与 WebGL Renderer\nfeature-flags.json：当前功能开关（不含密钥与 profile id）\nprocess-lifecycle.json：Mesa 子孙进程及输入法进程的开始/结束记录；captureMethod=spawn-hook 表示由启动边界精确登记参数，process-scan 表示进程扫描补充，startTimeEstimated=true 表示开始时间为首次观察时间\nprocess-active.json：导出时仍活动的相关进程\napp-log.json / app-log.txt：应用诊断日志\n\n安全：不采集环境变量；参数与日志会脱敏，但路径和普通参数仍可能包含项目名称。发送给他人前可先解压检查。\n";
+const BUNDLE_README: &str = "Mesa 诊断包\n\n用途：遇到问题时导出，附到「反馈与提需求」发给维护者；也可以自己解压查看。全部文件为 UTF-8 JSON/TXT，无需安装任何工具。\n\nsystem.json：Windows、WebView2、显卡、语言与输入法\nfrontend.json：WebView 用户代理、语言、屏幕与 WebGL Renderer\nfeature-flags.json：当前功能开关（不含密钥与 profile id）\nprocess-lifecycle.json：Mesa 子孙进程及输入法进程的开始/结束记录；captureMethod=spawn-hook 表示由启动边界精确登记参数，process-scan 表示进程扫描补充，startTimeEstimated=true 表示开始时间为首次观察时间\nprocess-active.json：导出时仍活动的相关进程\nchat-handoffs.json：聊天层转到终端的次数（哪家、什么原因；只有计数）\napp-log.json / app-log.txt：应用诊断日志\n\n安全：不采集环境变量；参数与日志会脱敏，但路径和普通参数仍可能包含项目名称。发送给他人前可先解压检查。\n";
 
 #[cfg(not(windows))]
-const BUNDLE_README: &str = "Mesa 诊断包\n\n用途：遇到问题时导出，附到「反馈与提需求」发给维护者；也可以自己解压查看。全部文件为 UTF-8 JSON/TXT，无需安装任何工具。\n\nsystem.json：当前平台简表（Windows 专属的 WebView2 / 显卡 / 输入法系统采集在本平台不适用）\nfrontend.json：WebView 用户代理、语言、屏幕与 WebGL Renderer\nfeature-flags.json：当前功能开关（不含密钥与 profile id）\nprocess-lifecycle.json / process-active.json：Mesa 子孙进程的开始/结束与活动记录\napp-log.json / app-log.txt：应用诊断日志\n\n安全：不采集环境变量；参数与日志会脱敏，但路径和普通参数仍可能包含项目名称。发送给他人前可先解压检查。\n";
+const BUNDLE_README: &str = "Mesa 诊断包\n\n用途：遇到问题时导出，附到「反馈与提需求」发给维护者；也可以自己解压查看。全部文件为 UTF-8 JSON/TXT，无需安装任何工具。\n\nsystem.json：当前平台简表（Windows 专属的 WebView2 / 显卡 / 输入法系统采集在本平台不适用）\nfrontend.json：WebView 用户代理、语言、屏幕与 WebGL Renderer\nfeature-flags.json：当前功能开关（不含密钥与 profile id）\nprocess-lifecycle.json / process-active.json：Mesa 子孙进程的开始/结束与活动记录\nchat-handoffs.json：聊天层转到终端的次数（哪家、什么原因；只有计数）\napp-log.json / app-log.txt：应用诊断日志\n\n安全：不采集环境变量；参数与日志会脱敏，但路径和普通参数仍可能包含项目名称。发送给他人前可先解压检查。\n";
 
 fn write_bundle(
     path: &Path,
@@ -483,6 +483,7 @@ fn write_bundle(
     platform: &Value,
     processes: &[ProcessRecord],
     active: &[ProcessRecord],
+    chat_handoffs: &Value,
 ) -> Result<(), String> {
     let tmp = path.with_extension("zip.tmp");
     if tmp.exists() {
@@ -522,6 +523,7 @@ fn write_bundle(
     )?;
     add_json(&mut writer, "process-lifecycle.json", &processes)?;
     add_json(&mut writer, "process-active.json", &active)?;
+    add_json(&mut writer, "chat-handoffs.json", chat_handoffs)?;
 
     let mut logs = crate::logbuf::get_app_log(500);
     for entry in &mut logs {
@@ -568,7 +570,8 @@ pub async fn export_diagnostics_bundle(frontend: FrontendDiagnosticsDto) -> Resu
             "{BUNDLE_FILE_PREFIX}{}.zip",
             now_iso().replace([':', '.'], "-")
         ));
-        write_bundle(&path, &frontend, &platform, &processes, &active)?;
+        let chat_handoffs = crate::chat_handoff_log::summary_for_bundle();
+        write_bundle(&path, &frontend, &platform, &processes, &active, &chat_handoffs)?;
         crate::logbuf::record(
             "info",
             "diagnostics",
@@ -630,7 +633,7 @@ mod tests {
             screen: json!({}),
             webgl: json!({"renderer": "test"}),
         };
-        write_bundle(&path, &frontend, &json!({"windows": {}}), &[], &[]).unwrap();
+        write_bundle(&path, &frontend, &json!({"windows": {}}), &[], &[], &json!({"stats": []})).unwrap();
         let file = fs::File::open(&path).unwrap();
         let mut zip = zip::ZipArchive::new(file).unwrap();
         for name in [
@@ -640,6 +643,7 @@ mod tests {
             "feature-flags.json",
             "process-lifecycle.json",
             "process-active.json",
+            "chat-handoffs.json",
             "app-log.json",
             "app-log.txt",
             "README.txt",
