@@ -1,4 +1,4 @@
-# CLI 金丝雀（Claude Code / Codex）
+# CLI 金丝雀（九家）
 
 各家 CLI 几乎每天发一版，默认行为常常没写进更新日志就变了。2026-10-21 的两次实例：Claude Code 新版对第三方模型把工具藏到工具搜索后面；
 又不再给这类模型发任务清单工具。两次都是用户撞上才发现。金丝雀每天装最新版，把 Mesa 依赖的几层抽成「指纹」，和这里存的基线比，
@@ -18,12 +18,17 @@
 python -I -X utf8 scripts/cli-canary/canary.py
 ```
 
-- `--agents codex`：只跑一家。
+- `--agents codex,qwen`：只跑这几家（默认九家；没装的跳过并写进报告）。
+- `--accept-unchanged`：检查全过、指纹和基线一样、只是版本往前走了——只把基线的核对版本往前挪。
 - `--skip-screen`：不抓屏，不需要 pyte。
 - `--out <目录>`：指定明细落点，默认系统临时目录。
 
 抓屏依赖（pyte，Windows 另加 pywinpty）缺了会自动 `pip install --target` 到 `CANARY_DEPS`，默认在系统临时目录下。
-两家合计约 3–5 分钟，另加首次编译测试的时间。
+一家约 1–3 分钟，九家合计约 15–25 分钟，另加首次编译测试的时间。
+
+各家跑哪几层不一样：有结构化旁路的六家（Claude Code、CodeBuddy、Qwen、OpenCode、Codex、Grok）跑旁路端到端，
+请求、旁路、会话、画面四层都比；Gemini、Kimi 不开全局 hooks、Cursor 没有旁路，只抓屏，请求形状取抓屏那一趟。
+Grok 的程序状态不带会话 id，「旁路认出会话」这项不查，会话文件从临时 HOME 里扫出来。
 
 不用真实密钥，请求只到本机假网关。临时 HOME **不拷本机配置**：用户自己的 MCP、插件、hooks 会改工具清单，那样各台机器和 CI 就没法比。
 所以这里测的是「装好什么都不配的 CLI + Mesa 的注入」，「用户全局配置会不会盖过 Mesa」仍由 e2e-model-routing 的脚本核对。
@@ -53,6 +58,9 @@ python -I -X utf8 scripts/cli-canary/canary.py
 1. 看 report.md 列的变化，对照 Mesa 用到的地方判断要不要适配。比如工具清单变了，看聊天层认不认得新工具；会话字段变了，看 `sessions.rs` 对应的解析器。
 2. Mesa 改好后（或判断不用改），在**同一平台**上跑一次 `--accept`，把新指纹提交进 `baseline/<平台>/<agent>.json`。
    基线文件里的 `version` 就是「Mesa 已核对到的版本」。检查没全过时 `--accept` 会拒绝。
+   **这个版本会随包进 Mesa**（`src/cli-verified.ts`）：用户装的比它新时，聊天层不替人自动按键、确认卡上提醒（`docs/design-chat-fidelity.md`）。
+   所以基线要跟得上：CLI 版本前进而指纹没变时，跑一次 `--accept-unchanged` 把核对版本往前挪。
+4. 有新画面时顺手存进抓屏语料库：`scripts/screen-corpus/add-from-capture.ts <out>/<agent>/screen.json`（见 `tests/fixtures/screens/README.md`）。
 3. 基线按平台分开存（`win32` / `darwin`）：两边的画面本来就不同，比如 Windows 上 Claude 回复不流式，读不到实时预览。
 
 CI：`.github/workflows/cli-canary.yml` 每天北京时间 9:17 在 macOS / Windows 各跑一次，也可以手动触发。

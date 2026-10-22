@@ -49,6 +49,11 @@ interface Layout {
    * 下面一行居中的「▲」，2026-10-22 抓屏）。这时屏上只是一截，要接到上一次后面
    */
   scrolledHint?: RegExp;
+  /**
+   * 顶格的圆角框（╭ … ╰）是这家的提示框，不是回复（Qwen 的「Qwen Code update available!」画在输入框上面，
+   * 原先整段当成回复贴在预览末尾，2026-10-22 金丝雀抓屏）。表格用的是方角（┌），不受影响
+   */
+  noticeBox?: boolean;
 }
 
 // 横线、半格边框，以及方框的上下边（画到一半的输入框「╭────」也算）
@@ -111,6 +116,7 @@ const LAYOUTS: Record<string, Layout> = {
     tool: /^ {2}[?✓✔✗✘⊷○◐-]\s+[A-Z]/,
     // 思考折叠行「∴ Thought for 1s (click or ctrl+o to expand)」（模型带思考时才有，2026-10-21 用户截图）
     skip: /esc to cancel|^\s*●\s*$|Waiting for user confirmation|^\s*∴\s|\((?:click or )?ctrl\+o to expand\)/,
+    noticeBox: true,
     // 段落续行缩进 4、列表 / 代码行缩进 5：最多去 5 格，两种都对齐到行首
     indent: 5,
   },
@@ -224,7 +230,7 @@ export function extractLiveReply(lines: readonly string[], agentId: string): Liv
   // 原先退回整屏，信任菜单的「Accessing workspace / Quick safety check」被当回复画进了聊天层（2026-10-17 用户截图）
   const boxTop = layout.boxTop(rows);
   if (boxTop < 0) return null;
-  const region = rows.slice(0, boxTop);
+  const region = layout.noticeBox ? dropNoticeBoxes(rows.slice(0, boxTop)) : rows.slice(0, boxTop);
   // 最后一条用户回显之后才是这一轮的回复；回显滚出屏幕时从第一段助手行首起
   let echoAt = -1;
   for (let i = region.length - 1; i >= 0; i--) {
@@ -258,6 +264,21 @@ export function extractLiveReply(lines: readonly string[], agentId: string): Liv
   const firstText = region.find((l) => l.trim() && !BORDER.test(l.trim()));
   if (firstText !== undefined && firstText.length - firstText.trimStart().length < 2) return null;
   return readReply(layout, region, 0, false);
+}
+
+/** 去掉顶格圆角框（╭ … ╰ 整块，含框里的行），换成空行保持行距 */
+function dropNoticeBoxes(region: readonly string[]): string[] {
+  const out = [...region];
+  for (let i = 0; i < out.length; i++) {
+    if (!/^╭/.test(out[i])) continue;
+    let j = i + 1;
+    while (j < out.length && /^│/.test(out[j])) j++;
+    if (j < out.length && /^╰/.test(out[j])) {
+      for (let k = i; k <= j; k++) out[k] = "";
+      i = j;
+    }
+  }
+  return out;
 }
 
 /** 多行提问的回显：「› 第一行」之后的续行（缩进）也是用户的话，到第一个空行或助手行首为止都跳过

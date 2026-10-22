@@ -480,7 +480,10 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
    回放抓屏的原始输出（CAP_RAW=1）、逐块读屏接预览，数重复 / 漏行；见其 README）
   （scripts/cli-canary/：CLI 金丝雀——canary.py 串起假网关 E2E_DUMP、chat_channel 的 e2e_channel（E2E_CLEAN_HOME / E2E_KEEP 留会话原件与
    解析结果）、chat-capture 抓屏，抽指纹与 baseline/<平台>/<agent>.json 比，报告附两版之间更新日志的相关条目；
-   .github/workflows/cli-canary.yml 每天在 macOS / Windows 跑；见其 README）
+   .github/workflows/cli-canary.yml 每天在 macOS / Windows 跑；2026-10-22 起九家：有旁路的六家跑旁路端到端，Gemini / Kimi 只抓屏，
+   Cursor 连不上假网关只记版本；基线 version 随包进应用（src/cli-verified.ts）；见其 README）
+  （scripts/screen-corpus/：抓屏语料库——corpus.ts 读一屏（菜单 / 信任 / 实时预览 / 输入框）、add-from-capture.ts 从抓屏挑三屏存进
+   tests/fixtures/screens/<agent>/，tests/screen-corpus.test.ts 逐份重读；规则见 tests/fixtures/screens/README.md）
   （scripts/mirror-latest-json.mjs：应用内更新国内镜像——把 Release 的 latest.json 下载地址改写成镜像地址，签名原样、缺签名拒绝；
    .github/workflows/mirror-release.yml 在 Release 发布时调用，build.yml 打包时按仓库变量 UPDATE_MIRROR_BASE 把镜像加到 updater 地址最前；
    开通步骤 docs/release.md）

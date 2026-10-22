@@ -1,0 +1,56 @@
+{
+ "agent": "codebuddy",
+ "cliVersion": "2.172.1",
+ "platform": "darwin",
+ "source": "chat-capture ask",
+ "note": "跑命令前的审批菜单：问句、选项、默认高亮",
+ "rows": [
+  "│                                   │ <工作目录> │",
+  "│                                   │                                                                        │",
+  "│                                   │                                                                        │",
+  "╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
+  "",
+  "> TRIGGER_SLOW 讲一段",
+  "",
+  "● 第一段：这是一段慢慢流出来的回复。",
+  "",
+  "  - 要点一：终端先画出来",
+  "  - 要点二：会话文件后落盘",
+  "",
+  "  echo mesa",
+  "",
+  "  最后一行：完毕。",
+  "",
+  "✔ Worked for 6s",
+  "",
+  "> TRIGGER_TOOL 跑一下",
+  "",
+  "● REPL · 写一个探针文件",
+  "╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
+  "│ Confirm                                                                                                              │",
+  "│                                                                                                                      │",
+  "│   REPL                                                                                                               │",
+  "│   code: \"return await Bash({ command: \"echo mesa > mesa_probe.txt\", description: \"写一个探针文件\" })\", description:  │",
+  "│    \"写一个探针文件\"                                                                                                  │",
+  "│                                                                                                                      │",
+  "│ Are you sure you want to do this?                                                                                    │",
+  "│                                                                                                                      │",
+  "│ > 1. Yes                                                                                                             │",
+  "│   2. Yes, and don't ask again this session (shift + tab)                                                             │",
+  "│   3. No, and tell CodeBuddy what to do differently (escape)                                                          │",
+  "│                                                                                                                      │",
+  "╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯"
+ ],
+ "expect": {
+  "menu": {
+   "question": "Are you sure you want to do this?",
+   "options": [
+    "Yes",
+    "Yes, and don't ask again this session (shift + tab)",
+    "No, and tell CodeBuddy what to do differently (escape)"
+   ],
+   "selected": 0
+  },
+  "inputBox": null
+ }
+}

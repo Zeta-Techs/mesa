@@ -1,6 +1,6 @@
 name: cli-canary
 
-# 每天装 Claude Code / Codex 的最新版，跑 scripts/cli-canary/canary.py：Mesa 依赖的请求形状、旁路、会话格式、
+# 每天装九家 CLI 的最新版（2026-10-22 从两家扩到九家），跑 scripts/cli-canary/canary.py：Mesa 依赖的请求形状、旁路、会话格式、
 # 读屏和基线比。红了不是 Mesa 代码回退，是 CLI 变了——看 artifact 里的 report.md，Mesa 适配好之后在对应平台
 # 跑一次 --accept 把新指纹提交成基线（README 见 scripts/cli-canary/README.md）
 on:
@@ -19,7 +19,7 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -29,8 +29,21 @@ jobs:
         with:
           python-version: '3.12'
       - uses: dtolnay/rust-toolchain@stable
-      - name: 装最新版 CLI
-        run: npm install -g @anthropic-ai/claude-code@latest @openai/codex@latest
+      - name: 装最新版 CLI（npm 上的八家）
+        run: >-
+          npm install -g @anthropic-ai/claude-code@latest @openai/codex@latest @google/gemini-cli@latest
+          @qwen-code/qwen-code@latest opencode-ai@latest @moonshot-ai/kimi-code@latest
+          @tencent-ai/codebuddy-code@latest @xai-official/grok@latest
+      # Cursor CLI 只有官方安装脚本；装不上不挡别的家（金丝雀会把没装的列为跳过）
+      - name: 装 Cursor CLI（macOS）
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        run: curl https://cursor.com/install -fsS | bash && echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: 装 Cursor CLI（Windows）
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: pwsh
+        run: irm 'https://cursor.com/install?win32=true' | iex
       - name: 跑金丝雀
         shell: bash
         run: python -I -X utf8 scripts/cli-canary/canary.py --out "$RUNNER_TEMP/canary"

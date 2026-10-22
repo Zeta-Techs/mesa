@@ -3954,7 +3954,15 @@ mod e2e {
         if let Ok(keep) = std::env::var("E2E_KEEP") {
             let keep = Path::new(&keep);
             std::fs::create_dir_all(keep).unwrap();
-            let path = first.last.transcript_path.clone();
+            // 程序状态旁路（Grok）不报会话文件：临时 HOME 里只有这一段对话，扫一遍取这家最新的那份
+            let path = first.last.transcript_path.clone().or_else(|| {
+                crate::sessions::scan_sessions()
+                    .sessions
+                    .into_iter()
+                    .filter(|m| m.agent == agent)
+                    .max_by(|a, b| a.updated_at.cmp(&b.updated_at))
+                    .map(|m| m.file_path)
+            });
             if let Some(p) = &path {
                 let _ = std::fs::copy(p, keep.join("transcript.jsonl"));
             }

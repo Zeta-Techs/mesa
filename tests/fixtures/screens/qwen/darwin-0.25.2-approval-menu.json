@@ -1,0 +1,62 @@
+{
+ "agent": "qwen",
+ "cliVersion": "0.25.2",
+ "platform": "darwin",
+ "source": "chat-capture ask",
+ "note": "跑命令前的审批菜单：问句、选项、默认高亮",
+ "rows": [
+  "  ██║   ██║██║ █╗ ██║█████╗  ██╔██╗ ██║  │                                                          │",
+  "  ██║▄▄ ██║██║███╗██║██╔══╝  ██║╚██╗██║  │ API Key | e2e-picked (/model to change)                  │",
+  "  ╚██████╔╝╚███╔███╔╝███████╗██║ ╚████║  │ <工作目录>                     │",
+  "   ╚══▀▀═╝  ╚══╝╚══╝ ╚══════╝╚═╝  ╚═══╝  └──────────────────────────────────────────────────────────┘",
+  "",
+  "  Tips: Type / to open the command popup; Tab autocompletes slash commands and saved prompts.",
+  "  ●",
+  "  ●",
+  "",
+  "  > TRIGGER_SLOW 讲一段",
+  "",
+  "  ◆ 第一段：这是一段慢慢流出来的回复。",
+  "",
+  "     - 要点一：终端先画出来",
+  "     - 要点二：会话文件后落盘",
+  "",
+  "     1 echo mesa",
+  "",
+  "    最后一行：完毕。",
+  "",
+  "  > TRIGGER_TOOL 跑一下",
+  "  ? Shell echo mesa > mesa_probe.txt (写一个探针文件) ←",
+  "",
+  "     echo mesa > mesa_probe.txt",
+  "",
+  "   Allow execution of: 'echo'?",
+  "",
+  "   › 1. Yes, allow once",
+  "     2. Always allow run 'echo *' commands in this project",
+  "     3. Always allow run 'echo *' commands for this user",
+  "     4. No, suggest changes (esc)",
+  "",
+  "",
+  "╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
+  "│ Qwen Code update available! 0.25.2 → 0.26.0                                                                          │",
+  "│ Installed via Homebrew. Please update with \"brew upgrade\".                                                           │",
+  "╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
+  "",
+  "",
+  "  ⠏ Waiting for user confirmation..."
+ ],
+ "expect": {
+  "menu": {
+   "question": "Allow execution of: 'echo'?",
+   "options": [
+    "Yes, allow once",
+    "Always allow run 'echo *' commands in this project",
+    "Always allow run 'echo *' commands for this user",
+    "No, suggest changes (esc)"
+   ],
+   "selected": 0
+  },
+  "inputBox": false
+ }
+}

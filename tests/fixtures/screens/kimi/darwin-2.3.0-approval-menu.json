@@ -1,0 +1,62 @@
+{
+ "agent": "kimi",
+ "cliVersion": "2.3.0",
+ "platform": "darwin",
+ "source": "chat-capture base",
+ "note": "跑命令前的审批菜单：问句、选项、默认高亮",
+ "rows": [
+  " ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
+  "",
+  " ✦ Kimi Code Desktop is here — Everything you love about Kimi Code, now on desktop",
+  "   Run /desktop or visit https://www.kimi.com/code to install",
+  "",
+  "   No session yet — one will be created on your first message.",
+  "",
+  " ❯ TRIGGER_SLOW 讲一段",
+  "",
+  " ● 第一段：这是一段慢慢流出来的回复。",
+  "",
+  "   • 要点一：终端先画出来",
+  "   • 要点二：会话文件后落盘",
+  "",
+  "   ```bash",
+  "     echo mesa",
+  "   ```",
+  "",
+  "   最后一行：完毕。",
+  "",
+  " ❯ TRIGGER_TOOL 跑一下",
+  "",
+  " ● Running a command · $ echo mesa > mesa_probe.txt",
+  "   Press Ctrl+B to run in background",
+  " ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+  "   ▶ Run this command?",
+  "",
+  "   cwd: <工作目录>",
+  "   $ echo mesa > mesa_probe.txt",
+  "     写一个探针文件",
+  "",
+  "   ▶ 1. Approve once",
+  "     2. Approve for this session",
+  "     3. Reject",
+  "     4. Reject with feedback",
+  "",
+  "   ↑/↓ select · 1/2/3/4 choose · ↵ confirm",
+  " ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+  " E2E · e2e-picked thinking  <工作目录>       ctrl+o expand | @: mention files | ! to run a shell command",
+  "                                                                                                   context: 1% (6/256k)"
+ ],
+ "expect": {
+  "menu": {
+   "question": "Run this command?",
+   "options": [
+    "Approve once",
+    "Approve for this session",
+    "Reject",
+    "Reject with feedback"
+   ],
+   "selected": 0
+  },
+  "inputBox": false
+ }
+}

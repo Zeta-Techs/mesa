@@ -150,10 +150,12 @@ docs/            architecture.md（总体设计 + §10 决策记录 + §12 当�
   （本机 ws + 能力令牌，TUI `--remote`），OpenCode 带口令的自带服务；口令 / 令牌只经环境变量。没有别的旁路、CLI 支持程序状态
   （OSC 7501，2026-10-22，`program_status.rs`）的家（Grok；Claude 的 hooks 起不来时）读它自己写进终端流的状态，探询只对这类标签答。改任一家旁路或升级 CLI 前先跑
   `scripts/e2e-model-routing/README.md`「聊天层结构化旁路」两层核对。细则 terminal.md、safety.md 同名条，matrix §14。
-- **CLI 金丝雀（2026-10-21，先做 Claude Code / Codex）**：`.github/workflows/cli-canary.yml` 每天装最新版跑 `scripts/cli-canary/canary.py`，
+- **CLI 金丝雀（2026-10-21；2026-10-22 扩到九家）**：`.github/workflows/cli-canary.yml` 每天装最新版跑 `scripts/cli-canary/canary.py`，
   把请求形状 / 旁路 / 会话格式 / 读屏抽成指纹和 `scripts/cli-canary/baseline/<平台>/` 比。红了是 CLI 变了、不是 Mesa 回退，不挡主线 CI；
   看报告适配（或判定无需适配）后在**同一平台**跑 `--accept` 把新指纹连同改动一起提交——基线里的 `version` 即「Mesa 已核对到的版本」。
-  临时 HOME 不拷本机配置（各机器 / CI 可比）；新增一家照 `BIN` / `TOOL_PROMPT` 两张表加。
+  临时 HOME 不拷本机配置（各机器 / CI 可比）；新增一家照 `BIN` / `CHANNEL` / `TOOL_PROMPT` 几张表加。**基线的 `version` 随包进 Mesa**
+  （`src/cli-verified.ts`）：用户 CLI 比它新时聊天层不替人自动按键，所以基线要跟上——版本前进而指纹没变时跑 `--accept-unchanged`。
+  读屏问题修好后把那一屏存进抓屏语料库（`tests/fixtures/screens/`，`scripts/screen-corpus/add-from-capture.ts`），设计见 `docs/design-chat-fidelity.md`。
 - **二进制解析统一走 `agents::resolve_binary`**：先 which（继承 PATH），miss 时按平台候选目录兜底；新增 CLI/工具调用点一律
   用它，禁直接 `which::which` 或裸名 spawn（候选目录清单见 `docs/conventions/safety.md` 对应实现 `agents.rs`）。
   PATH 上第一个可能是占位程序时（Windows 应用商店的 `python`、macOS CLT 没装时的 `/usr/bin/python3`）改用

@@ -139,6 +139,10 @@
   **整行底栏只从画好的屏上读**（`detectModelOnScreen`，节流 500ms 读可视区、自下往上取第一行）：Codex 差量重绘只重画变了的格子，
   输出流里档位前面不一定是模型名（2026-10-18 用户截图：芯片显示「[14;5H好」＝输入框回显「你好」的光标定位 + 字）。
   所有读回的名字须像模型名（可见 ASCII、不以「[」开头）；拼帧尾巴走 `outputTail`，不从转义序列中间开始。
+- **抓屏语料库（2026-10-22，`tests/fixtures/screens/`）**：读屏解析器（`live-reply.ts` / `tui-menu.ts` / `trust-prompt.ts`）的改动要过语料库回归
+  （`tests/screen-corpus.test.ts`）。修一个读屏问题就把那一屏存进来、expect 写成修好后的样子；老版本样本不删（用户可能还在用）。
+  金丝雀出了新画面用 `scripts/screen-corpus/add-from-capture.ts` 挑三屏（审批菜单 / 边写边显示 / 回到输入框），先 `--dry` 看读得对不对。
+  Qwen 的顶格圆角框（`╭…╰`，「有新版本」提示）不是回复（`Layout.noticeBox`），表格是方角不受影响。
 - **替人选菜单项认准了再回车（2026-10-22，`tui-menu.ts` `menuReadyToConfirm` / `trust-prompt.ts` `trustReadyToConfirm`）**：聊天卡上点了菜单项 /
   信任 / 不信任，先只按方向键挪高亮，读一遍屏（等同步输出画完，最多再等三拍 150ms）：还是同一个菜单、高亮停在要选的那项上才按回车；对不上就不按，
   卡片按屏上现在的样子重画，人再点一次（高亮已在那项时直接回车）。核对期间扫屏不把挪到一半的菜单拿回来当卡片（`askKeysDoneAtRef` /

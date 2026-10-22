@@ -1,4 +1,4 @@
-"""CLI 金丝雀：Claude Code / Codex 每次更新后，自动看 Mesa 依赖它的几层变没变、还通不通。
+"""CLI 金丝雀：九家 CLI 每次更新后，自动看 Mesa 依赖它的几层变没变、还通不通（2026-10-22 从两家扩到九家）。
 
 各家 CLI 几乎每天一版，默认行为常常不写进更新日志就变（2026-10-21：Claude Code 新版对第三方模型藏工具搜索、
 不发任务清单工具，都是用户撞上才发现）。这里把 scripts/e2e-model-routing 的假网关、Mesa 自己的旁路端到端测试、
@@ -11,9 +11,10 @@
   Codex   本机 Codex 的默认提示词还取不取得到（Mesa 给 Codex 的 base_instructions 来源）
 
 用法（仓库根目录）：
-  python -I -X utf8 scripts/cli-canary/canary.py                 # 两家都跑，和 baseline/<平台>/ 比
+  python -I -X utf8 scripts/cli-canary/canary.py                 # 九家都跑（没装的跳过），和 baseline/<平台>/ 比
   python -I -X utf8 scripts/cli-canary/canary.py --accept        # 核对过、Mesa 也改好了：把这次的指纹记成新基线
-  可选：--agents codex  --out <目录>  --skip-screen（不抓屏，不需要 pyte）
+  python -I -X utf8 scripts/cli-canary/canary.py --accept-unchanged  # 只有版本往前走、指纹没变：把核对版本往前挪
+  可选：--agents codex,qwen  --out <目录>  --skip-screen（不抓屏，不需要 pyte）
 退出码：0 = 没变化且检查全过；1 = 有变化或检查没过（看 <out>/report.md）；2 = 环境问题没跑起来。
 不用任何真实密钥：请求只到本机假网关；临时 HOME 不拷本机配置（用户的 MCP / 插件会改工具清单，各台机器才可比）。
 """
@@ -23,8 +24,21 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 E2E = os.path.join(ROOT, "scripts", "e2e-model-routing")
 HERE = os.path.dirname(os.path.abspath(__file__))
 PLATFORM = sys.platform if sys.platform in ("win32", "darwin") else "linux"
-BIN = {"claude-code": "claude", "codex": "codex"}
-TOOL_PROMPT = {"claude-code": "TRIGGER_TOOL 跑一下", "codex": "TRIGGER_TOOL TRIGGER_ESC 跑一下"}
+BIN = {"claude-code": "claude", "codex": "codex", "gemini": "gemini", "qwen": "qwen", "opencode": "opencode",
+       "kimi": "kimi", "codebuddy": "codebuddy", "cursor": "cursor-agent", "grok": "grok"}
+# 不在 PATH 上时的常见安装位置（Kimi 官方安装脚本装在自己的目录里）
+BIN_FALLBACK = {"kimi": "~/.kimi-code/bin/kimi"}
+# 有结构化旁路的家跑 Mesa 的旁路端到端（chat_channel e2e）；Gemini / Kimi 不开全局 hooks、Cursor 没有旁路，只抓屏
+CHANNEL = {"claude-code", "codebuddy", "qwen", "opencode", "codex", "grok"}
+# 旁路直接报会话 id 的家（Grok 的程序状态不带会话 id）
+SESSION_ID = CHANNEL - {"grok"}
+# 连不上假网关的家（Cursor 只走自家云端，临时 HOME 里也没登录）：只记版本，请求 / 画面都不比
+NO_GATEWAY = {"cursor"}
+TOOL_PROMPT = {"codex": "TRIGGER_TOOL TRIGGER_ESC 跑一下"}
+DEFAULT_TOOL_PROMPT = "TRIGGER_TOOL 跑一下"
+# 公开发版说明（GitHub Releases）；Claude 另取 CHANGELOG.md，没有公开说明的家不取
+RELEASES = {"codex": "openai/codex", "gemini": "google-gemini/gemini-cli", "qwen": "QwenLM/qwen-code",
+            "opencode": "sst/opencode"}
 CHANGELOG_KEYWORDS = re.compile(
     r"env|hook|session|transcript|rollout|jsonl|tool|todo|task|config|setting|permission|approv|sandbox|app-server|"
     r"instruction|prompt|windows|stream|render|provider|gateway|base.?url|resume|/clear|third-party|model", re.I)
@@ -60,8 +74,16 @@ def run(cmd, cwd=None, env=None, timeout=600):
         return "timeout", out
 
 
+def bin_path(agent):
+    found = shutil.which(BIN[agent])
+    if found:
+        return found
+    fb = BIN_FALLBACK.get(agent)
+    return os.path.expanduser(fb) if fb and os.path.exists(os.path.expanduser(fb)) else None
+
+
 def version_of(agent):
-    b = shutil.which(BIN[agent])
+    b = bin_path(agent)
     if not b:
         return None
     code, out = run([b, "--version"], timeout=60)
@@ -276,9 +298,11 @@ def ensure_screen_deps(out):
 def screen_phase(agent, gw, out, adir, deps):
     plans = make_plans(gw, out)
     cap = os.path.join(adir, "screen.json")
-    env = dict(os.environ, PYTE_DIR=deps, PYWINPTY_DIR=deps, CLEAN_HOME="1", TOOL_PROMPT=TOOL_PROMPT[agent],
+    env = dict(os.environ, PYTE_DIR=deps, PYWINPTY_DIR=deps, CLEAN_HOME="1", TOOL_PROMPT=TOOL_PROMPT.get(agent, DEFAULT_TOOL_PROMPT),
                MSYS_NO_PATHCONV="1")
-    code, text = run([sys.executable, "-I", "-X", "utf8", os.path.join(E2E, "chat-capture.py"), plans, agent, "ask", cap],
+    # 有「请求批准」档就按它抓（看审批菜单）；没有这一档的家（Kimi、OpenCode）按默认启动参数
+    tier = "ask" if (json.load(open(plans, encoding="utf-8")).get(agent, {}).get("permission") or {}).get("ask") else "base"
+    code, text = run([sys.executable, "-I", "-X", "utf8", os.path.join(E2E, "chat-capture.py"), plans, agent, tier, cap],
                      env=env, timeout=300)
     open(os.path.join(adir, "screen.log"), "w", encoding="utf-8").write(text)
     if not os.path.exists(cap):
@@ -302,28 +326,41 @@ def probe_agent(agent, gw, out, skip_screen, deps):
     os.makedirs(adir, exist_ok=True)
     fp = {"agent": agent, "platform": PLATFORM, "version": version_of(agent)}
     checks = {}
-    log(f"[{agent}] {fp['version']}：旁路端到端…")
-    ok, reqs, keep = channel_phase(agent, gw, out, adir)
-    checks["旁路端到端通过"] = ok
-    fp["request"] = request_fingerprint(reqs)
-    checks["假网关收到主对话请求"] = fp["request"]["main"] is not None
-    ch_path = os.path.join(keep, "channel.json")
-    ch = json.load(open(ch_path, encoding="utf-8")) if os.path.exists(ch_path) else {}
-    checks["旁路认出会话"] = bool(ch.get("sessionId"))
-    checks["旁路拿到会话文件"] = bool(ch.get("transcript"))
-    checks["这一轮走完"] = bool(ch.get("done"))
-    fp["channel"] = {k: ch.get(k) for k in ("kind", "statuses", "approvalKind", "approvalTool", "approvalReplyable")}
-    fp["transcript"] = transcript_fingerprint(os.path.join(keep, "transcript.jsonl"))
-    fp["parsed"], pchecks = parsed_fingerprint(os.path.join(keep, "parsed.json"))
-    checks.update(pchecks or {"解析器读到用户这句": False})
+    if agent in CHANNEL:
+        log(f"[{agent}] {fp['version']}：旁路端到端…")
+        ok, reqs, keep = channel_phase(agent, gw, out, adir)
+        checks["旁路端到端通过"] = ok
+        fp["request"] = request_fingerprint(reqs)
+        checks["假网关收到主对话请求"] = fp["request"]["main"] is not None
+        ch_path = os.path.join(keep, "channel.json")
+        ch = json.load(open(ch_path, encoding="utf-8")) if os.path.exists(ch_path) else {}
+        if agent in SESSION_ID:
+            checks["旁路认出会话"] = bool(ch.get("sessionId"))
+        checks["旁路拿到会话文件"] = bool(ch.get("transcript"))
+        checks["这一轮走完"] = bool(ch.get("done"))
+        fp["channel"] = {k: ch.get(k) for k in ("kind", "statuses", "approvalKind", "approvalTool", "approvalReplyable")}
+        fp["transcript"] = transcript_fingerprint(os.path.join(keep, "transcript.jsonl"))
+        fp["parsed"], pchecks = parsed_fingerprint(os.path.join(keep, "parsed.json"))
+        checks.update(pchecks or {"解析器读到用户这句": False})
+    else:
+        # 没有旁路的家：请求形状取抓屏那一趟假网关收到的（抓屏会发「跑命令」那一句）
+        fp["request"] = None
+        fp["channel"] = None
     if agent == "codex":
         log(f"[{agent}] 取本机默认提示词…")
         checks["取得到 Codex 默认提示词"] = codex_instructions_phase(adir)
-    if skip_screen or not deps:
+    if agent in NO_GATEWAY:
+        log(f"[{agent}] 连不上假网关，只记版本")
+        fp["screen"] = None
+    elif skip_screen or not deps:
         fp["screen"] = None
     else:
         log(f"[{agent}] 抓屏…")
+        mark = gw.mark()
         s = screen_phase(agent, gw, out, adir, deps)
+        if agent not in CHANNEL:
+            fp["request"] = request_fingerprint(gw.since(mark))
+            checks["假网关收到主对话请求"] = fp["request"]["main"] is not None
         checks["抓屏跑完"] = s is not None
         fp["screen"] = s and {
             "menu": s.get("menu") and {"question": s["menu"]["question"], "options": s["menu"]["options"]},
@@ -374,6 +411,8 @@ def changelog(agent, old, new):
     """两个版本之间的更新日志里，和 Mesa 依赖的东西沾边的行（取不到就说取不到）"""
     if not old or not new or vtuple(old) >= vtuple(new):
         return []
+    if agent != "claude-code" and agent not in RELEASES:
+        return ["（这家没有公开的更新日志）"]
     sections = []  # [(版本, [行])]
     if agent == "claude-code":
         text = fetch("https://raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md")
@@ -390,7 +429,7 @@ def changelog(agent, old, new):
             elif cur and line.strip().startswith("-"):
                 cur[1].append(line.strip())
     else:
-        text = fetch("https://api.github.com/repos/openai/codex/releases?per_page=40")
+        text = fetch(f"https://api.github.com/repos/{RELEASES[agent]}/releases?per_page=40")
         if not text:
             return ["（取不到更新日志）"]
         for rel in json.loads(text):
@@ -411,22 +450,31 @@ def baseline_path(agent):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--agents", default="claude-code,codex")
+    ap.add_argument("--agents", default=",".join(BIN))
     ap.add_argument("--out")
     ap.add_argument("--accept", action="store_true", help="把这次的指纹记成新基线（检查没全过时拒绝）")
+    ap.add_argument("--accept-unchanged", action="store_true",
+                    help="检查全过、指纹和基线一样、只有版本往前走时，把基线的核对版本往前挪（随包进 Mesa，见 src/cli-verified.ts）")
     ap.add_argument("--skip-screen", action="store_true")
     args = ap.parse_args()
     agents = [a for a in args.agents.split(",") if a]
     out = args.out or os.path.join(tempfile.gettempdir(), f"mesa-canary-{time.strftime('%Y%m%d-%H%M%S')}")
     os.makedirs(out, exist_ok=True)
-    missing = [a for a in agents if a not in BIN or not shutil.which(BIN[a])]
-    if missing:
-        log(f"没装：{', '.join(missing)}"); sys.exit(2)
+    unknown = [a for a in agents if a not in BIN]
+    if unknown:
+        log(f"不认得：{', '.join(unknown)}"); sys.exit(2)
+    # 没装的跳过（报告里写明），一家都没有才算环境问题
+    missing = [a for a in agents if not bin_path(a)]
+    agents = [a for a in agents if a not in missing]
+    if not agents:
+        log(f"一家都没装：{', '.join(missing)}"); sys.exit(2)
     deps, why = (None, None) if args.skip_screen else ensure_screen_deps(out)
     if why:
         log(why)
     gw = Gateway(out)
     report = [f"# CLI 金丝雀 · {time.strftime('%Y-%m-%d %H:%M')} · {PLATFORM}", ""]
+    if missing:
+        report += [f"> 没装、跳过：{', '.join(missing)}", ""]
     if why:
         report += [f"> 抓屏没跑：{why}", ""]
     bad = False
@@ -458,6 +506,11 @@ def main():
                     open(bp, "a", encoding="utf-8", newline="\n").write("\n")
                     report.append(f"> 已记成新基线：{os.path.relpath(bp, ROOT)}")
                 report.append("")
+            elif args.accept_unchanged and base and not failed and not changes and fp["version"] != base.get("version"):
+                os.makedirs(os.path.dirname(bp), exist_ok=True)
+                json.dump(fp, open(bp, "w", encoding="utf-8", newline="\n"), ensure_ascii=False, indent=1, sort_keys=True)
+                open(bp, "a", encoding="utf-8", newline="\n").write("\n")
+                report += [f"> 指纹没变，核对版本前移到 {fp['version']}：{os.path.relpath(bp, ROOT)}", ""]
             elif failed or changes or not base:
                 bad = True
     finally:
