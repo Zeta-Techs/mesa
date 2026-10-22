@@ -738,7 +738,6 @@ export default function CodingProjectView({
       title,
       reuseKey: `lane:${path}`,
       rightTab: "git",
-      surface: "terminal",
     });
     setPage("terminal");
   }

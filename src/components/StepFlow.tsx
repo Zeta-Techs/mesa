@@ -1350,7 +1350,6 @@ export default function StepFlow({
             ...(projectLaunch ?? {}),
             autoStart: Boolean(projectLaunch?.profileId),
           }),
-      surface: "terminal",
       // 同一步骤的任务书讨论是同一个对话：再点切回已有标签；没有标签才按上面 resume / 新开会话
       reuseKey: `discuss:${projectPath}:${draft.relPath}`,
     });

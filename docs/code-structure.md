@@ -325,7 +325,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   reader.ts                  # 沉浸阅读区纯逻辑：分栏钳制与像素换算（含收起滑动量 readerPanelSlideMargin，栏宽不变负 margin 滑出）/
                              # 圈选命中与 canvas 映射/截图注入格式/
                              # glossary 表格契约（与 reader.rs 双端镜像，改动需同步）/段落边界提取/术语匹配/
-                             # 进度与护眼存储键/右栏显示层记忆（readerSurface，缺省聊天层）/翻译面板高度键（readerSplitT，未拖过不落键 = 内容自适应）/译文卡钉位键（readerTlPinned）与悬浮球位键（readerTlBall，PDF 栏百分比 0–100、渲染层按球半径贴边兜底）/悬浮卡尺寸键（readerTlCard，240×140 下限、拖过才落键）/
+                             # 进度与护眼存储键/翻译面板高度键（readerSplitT，未拖过不落键 = 内容自适应）/译文卡钉位键（readerTlPinned）与悬浮球位键（readerTlBall，PDF 栏百分比 0–100、渲染层按球半径贴边兜底）/悬浮卡尺寸键（readerTlCard，240×140 下限、拖过才落键）/
                              # PDF 适配宽度 nextFitScale（亚像素门槛，防滚动条槽振荡闪白）/
                              # 手势缩放 clampPdfScale、pdfWheelZoomFactor（组件绑定共享在
                              # components/use-pdf-zoom.ts：布局倍率即时重排、渲染倍率 renderScale 延迟重绘、
@@ -465,6 +465,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   terminal-tab-persistence.ts # 终端标签重启恢复白名单（不含 PTY/密钥/env）
   tab-drag.ts                # 标签条拖拽排序纯逻辑：位移钳制 + 目标槽位判定（>= 中线守末槽边界，
                              # tests/tab-drag.test.ts）
+  tab-surface.ts             # 打开对话先显示聊天还是终端（2026-10-22，tests/tab-surface.test.ts）：设置 openSurface 默认值 +
+                             # pendingTerminal 落标签定层（shell 恒终端 / 写死照写 / 复用不动 / 新开跟设置）；进对话的入口禁写死 surface
   terminal-palettes.ts       # 终端调色板共享表（设置页与终端同源）：四套深色 + 四套配对浅色 twin，
                              # ANSI 16 色 + 光标 + 选区全在表内；resolvePaletteId 按主题亮暗自动换 twin；
                              # 没选过 / "auto" = 跟随主题（themeDefaultPalette：深色 One Dark、暮紫 Catppuccin、浅色 Light+）

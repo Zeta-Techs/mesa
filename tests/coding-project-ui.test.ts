@@ -158,7 +158,7 @@ test("编程页：分支地图以基准为根、分支不重复、菜单原操�
     assert.ok(button("查看改动"));
     await click("查看改动");
     assert.deepEqual(pending.at(-1), {
-      cwd: "/project", extraEnv: {}, title: "master", reuseKey: "lane:/project", rightTab: "git", surface: "terminal",
+      cwd: "/project", extraEnv: {}, title: "master", reuseKey: "lane:/project", rightTab: "git",
     });
     await click("更多操作：master", main);
     await click("拉取");

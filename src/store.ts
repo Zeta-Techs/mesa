@@ -197,6 +197,8 @@ export interface AppSettings {
   discussReadonly?: boolean;
   /** 底部状态栏统一开关（默认开）：终端层与聊天层同进退；关 = 两层都不显示（旧 statusBarInChat 已迁移） */
   statusBar?: boolean;
+  /** 打开对话时先显示哪一层（默认聊天）：进入 Agent 对话的入口都跟它走，见 tab-surface.ts */
+  openSurface?: "chat" | "terminal";
   /** 向 agent 主动告知终端底色（Windows 专用，默认开）：ConPTY 吞掉 OSC 10/11
       底色查询，浅色主题下 agent 会回落深色；开 = attach 后主动推当前主题前景/底色 */
   terminalColorReport?: boolean;
@@ -348,7 +350,9 @@ export interface PendingTerminal {
   effort?: string | null;
   /** @deprecated 用 permission；true 等同 discuss */
   readonly?: boolean;
-  /** 打开后切到聊天层（办公「问 AI」）；缺省沿用标签上次选择 / 默认终端 */
+  /** 写死这次落在哪一层，不跟设置「打开对话时先显示」走（tab-surface.ts）。只给两类入口用：
+      「新对话」固定 chat；没有对话可看的固定 terminal（MCP 登录、自定义运行时、「去终端看看」）。
+      缺省 = 新开的标签跟设置、切回已开着的标签不动 */
   surface?: "chat" | "terminal";
   /** 复用键：已有同 key 标签时切换到它而不是新开（「跟 AI 商量一下」等
       重复入口防标签堆积）。仅内存匹配，不进重启持久化白名单（恢复占位不参与复用） */

@@ -133,12 +133,7 @@ import ProjectRail from "../components/ProjectRail";
 import WorkspaceReviewView from "../components/WorkspaceReviewView";
 import ReaderOverlay from "../components/ReaderOverlay";
 import { wireWorkspaceLaunchGuard } from "../pipeline-start";
-import {
-  formatPdfExcerptPrompt,
-  loadReaderSurface,
-  readerReuseKey,
-  saveReaderSurface,
-} from "../reader";
+import { formatPdfExcerptPrompt, readerReuseKey } from "../reader";
 import {
   projectChatLaunch,
   READER_BINDING_SLOT,
@@ -263,6 +258,7 @@ import {
   TERMINAL_TABS_STORAGE_KEY,
 } from "../terminal-tab-persistence";
 import { clampTabDragDx, rubberbandTabDx, tabDragTarget } from "../tab-drag";
+import { launchSurface, openSurfaceDefault } from "../tab-surface";
 import { directoryUnavailableMessage } from "../terminal-cwd";
 import {
   collapseHomeTreeOnce,
@@ -373,9 +369,6 @@ const ImagePreview = lazy(() => import("../components/ImagePreview"));
 
 type PtyKind = "agent" | "shell";
 
-/** 主工作区默认面层：2026-10-17 起默认聊天层（用户要求「点到运行默认显示聊天层」）。
-    纯 shell / 脚本 / 登录标签仍显式落终端（pendingTerminal 消费处），用户手切过的按标签记住 */
-const DEFAULT_SURFACE_MODE: SurfaceMode = "chat";
 /** 聊天层窥视终端：底栏占主区高度的比例。必须是真实分栏（终端按此高度 fit），
     不能只裁全高 xterm 的底部——Codex 主对话是 inline，内容靠上、底下是空行，裁底就是白板。 */
 const CHAT_PEEK_RATIO = 0.32;
@@ -7194,6 +7187,10 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   // 稳定回调（conversationInsert）里读当前层，不随渲染重建
   const surfaceModeRef = useRef(surfaceModeByTab);
   surfaceModeRef.current = surfaceModeByTab;
+  // 没切过的标签显示哪一层：设置「打开对话时先显示」（缺省聊天，tab-surface.ts）；人切过的按标签记住
+  const defaultSurface = openSurfaceDefault(useAppStore((s) => s.settings?.openSurface));
+  const defaultSurfaceRef = useRef(defaultSurface);
+  defaultSurfaceRef.current = defaultSurface;
   const [peekByTab, setPeekByTab] = useState<Record<string, boolean>>({});
   const [peekLocked, setPeekLocked] = useState<Record<string, boolean>>({});
   const [writableForks, setWritableForks] = useState<Record<string, boolean>>({});
@@ -7259,7 +7256,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   const focusedTab = tabs.find((t) => t.id === focusedId);
   const activeCwd =
     statuses[focusedId]?.cwd ?? focusedTab?.initialCwd ?? "~";
-  const focusedSurfaceMode = surfaceModeByTab[focusedId] ?? DEFAULT_SURFACE_MODE;
+  const focusedSurfaceMode = surfaceModeByTab[focusedId] ?? defaultSurface;
   /** 左栏文件树当前根（钻取/切根后与 activeCwd 分叉）：改动面板跟随它而不是终端标签 cwd，
       未分叉时为 null 回落 activeCwd（v3.82 口径：「我在看哪个目录，改动就显示哪个」） */
   const [treeRoot, setTreeRoot] = useState<string | null>(null);
@@ -7464,7 +7461,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   >({});
   const conversationInsert = useCallback(
     (tabId: string, text: string, opts: { send: boolean }) => {
-      const mode = surfaceModeRef.current[tabId] ?? DEFAULT_SURFACE_MODE;
+      const mode = surfaceModeRef.current[tabId] ?? defaultSurfaceRef.current;
       if (mode === "chat") {
         setChatInsertByTab((prev) => ({
           ...prev,
@@ -7537,7 +7534,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       delete confirmSinceRef.current[focusedId];
       return;
     }
-    if ((surfaceModeByTab[focusedId] ?? DEFAULT_SURFACE_MODE) !== "chat") return;
+    if (focusedSurfaceMode !== "chat") return;
     if (Date.now() < (peekHoldUntilRef.current[focusedId] ?? 0)) return;
     // 聊天层卡上就能答的不拉终端：旁路经官方通道答（Codex / Qwen / OpenCode），或屏上认出了菜单（审批 / 信任 /
     // 切换确认，卡上按原文给按钮）。「等确认就弹终端」是聊天层能答之前的兜底，只留给卡上答不了的情形
@@ -7569,7 +7566,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   }, [
     statuses[focusedId]?.attention,
     focusedId,
-    surfaceModeByTab[focusedId],
+    focusedSurfaceMode,
     sessionByTab[focusedId]?.menuPrompt,
     sessionByTab[focusedId]?.trustPrompt,
     sessionByTab[focusedId]?.channel?.approval,
@@ -8444,6 +8441,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         });
         if (bySession) adoptExisting(bySession);
       }
+      const reused = tabId !== null;
       tabId ??= addTab({
         cwd: pt.cwd,
         extraEnv: pt.extraEnv,
@@ -8475,19 +8473,19 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         };
         setInjectTick((n) => n + 1);
       }
-      // 纯 shell/脚本标签（登录、CLI 自更新、run 脚本）没有会话可供聊天层展示——
-      // 显式落终端面（当前默认面层已是终端，这里守住「未来默认值再变也不回到 chat」的口径；
-      // 同分叉不支持注入时落终端的处理，3688 行附近）
+      // 显示哪一层（tab-surface.ts）：纯 shell / 脚本标签落终端；入口写死的照写；切回已开着的标签不动；
+      // 新开的跟设置「打开对话时先显示」——新开时就钉住，之后改设置不把正在用的标签翻过去
       // 闭包不保留 let 的收窄：进回调前用 const 固定，否则 [tabId] 推宽回 string | null 报 TS2464
       const launchedTabId = tabId;
-      if (launchedTabId && (pt.shellOnly || pt.prefillCommand)) {
-        setSurfaceModeByTab((prev) => ({ ...prev, [launchedTabId]: "terminal" }));
-      }
-      if (launchedTabId && pt.surface === "chat") {
-        setSurfaceModeByTab((prev) => ({ ...prev, [launchedTabId]: "chat" }));
-      }
-      if (launchedTabId && pt.surface === "terminal") {
-        setSurfaceModeByTab((prev) => ({ ...prev, [launchedTabId]: "terminal" }));
+      const nextSurface = launchSurface({
+        surface: pt.surface,
+        shellOnly: pt.shellOnly,
+        prefillCommand: pt.prefillCommand,
+        reused,
+        setting: useAppStore.getState().settings?.openSurface,
+      });
+      if (launchedTabId && nextSurface) {
+        setSurfaceModeByTab((prev) => ({ ...prev, [launchedTabId]: nextSurface }));
       }
       // run 脚本标签：登记 nonconcurrent 互斥追踪
       if (pt.wsId && tabId) setRunningScript(pt.wsId, tabId);
@@ -8728,8 +8726,6 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       profileId: launch.profileId,
       ...(launch.model ? { model: launch.model } : {}),
       ...(det?.permissionModes.includes("ask") ? { permissionMode: "ask" as const } : {}),
-      // 右栏看聊天层还是终端画面：按上次在阅读区的选择（缺省聊天层）
-      surface: loadReaderSurface(),
       autoStart: true,
       reuseKey: readerReuseKey(r.projectRoot),
     });
@@ -8764,7 +8760,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       if (!readerTabId) return Promise.resolve("阅读会话还没建好，稍等片刻再试");
       // 聊天层时「放进输入框、不发送」要进聊天输入框（终端输入行被聊天层盖着，看不见）；
       // 直接发送两层都走 PTY，出错能报回来（简报失败要重试）
-      if (!send && (surfaceModeRef.current[readerTabId] ?? DEFAULT_SURFACE_MODE) === "chat") {
+      if (!send && (surfaceModeRef.current[readerTabId] ?? defaultSurfaceRef.current) === "chat") {
         setChatInsertByTab((prev) => ({
           ...prev,
           [readerTabId]: { text: data, send: false, token: Date.now() },
@@ -8777,13 +8773,12 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   );
 
   /** 阅读区右栏切聊天层 / 终端画面：只动阅读会话标签（不走 switchSurface——它按焦点标签改、
-      切聊天还会退出分屏），并记下选择给下次进入 */
+      切聊天还会退出分屏）。只管这一次的会话，下次进入照设置「打开对话时先显示」（2026-10-22） */
   const readerSurface: SurfaceMode = readerTabId
-    ? (surfaceModeByTab[readerTabId] ?? DEFAULT_SURFACE_MODE)
-    : loadReaderSurface();
+    ? (surfaceModeByTab[readerTabId] ?? defaultSurface)
+    : defaultSurface;
   const setReaderSurface = useCallback(
     (mode: SurfaceMode) => {
-      saveReaderSurface(mode);
       if (!readerTabId) return;
       setSurfaceModeByTab((prev) => ({ ...prev, [readerTabId]: mode }));
     },
@@ -9695,7 +9690,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                 {/* 聊天层不放 ✦：输入框「＋」里有同一份「插入技能 / MCP」；对话操作走输入框 /（2026-10-21 用户拍板去掉标签条 ⋯ 与聊天态 ✦） */}
                 {active &&
                   s?.ptyId &&
-                  (surfaceModeByTab[t.id] ?? DEFAULT_SURFACE_MODE) !== "chat" && (
+                  (surfaceModeByTab[t.id] ?? defaultSurface) !== "chat" && (
                   <button
                     type="button"
                     title="插入技能或 MCP"
@@ -9888,13 +9883,13 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                 rightOpen={rightOpen}
                 compactBarHidden={compactBarHidden}
                 onToggleCompactBar={toggleCompactBar}
-                layoutKey={`${rightOpen}-${Math.round(rightWidth)}-${rightExpanded}-${splitActive ? `split${Math.round(splitPct)}` : "single"}-${(surfaceModeByTab[t.id] ?? DEFAULT_SURFACE_MODE) === "chat" && peekByTab[t.id] ? "peek" : "full"}-${reader && readerTabId === t.id ? "reader" : "pane"}-${appSettings?.statusBar === false ? "nostatus" : "status"}`}
+                layoutKey={`${rightOpen}-${Math.round(rightWidth)}-${rightExpanded}-${splitActive ? `split${Math.round(splitPct)}` : "single"}-${(surfaceModeByTab[t.id] ?? defaultSurface) === "chat" && peekByTab[t.id] ? "peek" : "full"}-${reader && readerTabId === t.id ? "reader" : "pane"}-${appSettings?.statusBar === false ? "nostatus" : "status"}`}
                 embedInPeek={
-                  (surfaceModeByTab[t.id] ?? DEFAULT_SURFACE_MODE) === "chat" &&
+                  (surfaceModeByTab[t.id] ?? defaultSurface) === "chat" &&
                   Boolean(peekByTab[t.id])
                 }
                 coveredByChat={
-                  (surfaceModeByTab[t.id] ?? DEFAULT_SURFACE_MODE) === "chat" &&
+                  (surfaceModeByTab[t.id] ?? defaultSurface) === "chat" &&
                   !peekByTab[t.id]
                 }
                 gitTotals={t.id === focusedId ? gitTotals : null}
@@ -10022,7 +10017,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                 <div key="pane-body" className="flex min-h-0 flex-1 flex-col">
                   {(() => {
                     const chatOn =
-                      (surfaceModeByTab[t.id] ?? DEFAULT_SURFACE_MODE) ===
+                      (surfaceModeByTab[t.id] ?? defaultSurface) ===
                       "chat";
                     const peek = Boolean(peekByTab[t.id]);
                     // 阅读区打开时聊天层宿主搬进右栏槽位：在那里要自己定位（pane 里交给包装层）
@@ -10263,7 +10258,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                     const gitOk = focused && !(reader && readerTabId === t.id);
                     // 聊天原生变体：聊天层且 peek 未开（peek 里嵌的是终端画面，仍用终端同底语言）
                     const chatBar =
-                      (surfaceModeByTab[t.id] ?? DEFAULT_SURFACE_MODE) ===
+                      (surfaceModeByTab[t.id] ?? defaultSurface) ===
                         "chat" && !peekByTab[t.id];
                     return (
                       <TerminalStatusBar

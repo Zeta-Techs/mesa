@@ -363,6 +363,10 @@ pub struct AppSettingsDto {
     /// 已废弃（2026-09-19）：仅保留读取迁移——statusBarInChat=false 老用户保持关闭；
     /// 前端不再写此字段，生效值一律看 status_bar
     pub status_bar_in_chat: Option<bool>,
+    /// 打开对话时先显示哪一层（2026-10-22）："chat" / "terminal"，缺省与未知值 = chat。
+    /// 问 AI、开始、商量、继续、接着聊、精读等进入 Agent 对话的入口都跟它走；
+    /// 「新对话」固定聊天，登录 / 脚本 / MCP 登录等没有对话可看的固定终端（前端 tab-surface.ts）
+    pub open_surface: Option<String>,
     /// 向 agent 主动告知终端底色（Windows 专用，默认开）。ConPTY 双向都不转发
     /// OSC 10/11 底色查询——子进程的查询到不了 xterm，回报也回不去子进程——
     /// 浅色主题下 agent 探不到底色就回落深色配色（输入框变深灰）。开 = attach 后
@@ -942,6 +946,9 @@ fn with_defaults(s: AppSettingsDto) -> AppSettingsDto {
         discuss_readonly: s.discuss_readonly.or(Some(true)),
         status_bar: Some(s.status_bar.or(s.status_bar_in_chat).unwrap_or(true)),
         status_bar_in_chat: s.status_bar_in_chat.or(Some(true)),
+        open_surface: Some(
+            if s.open_surface.as_deref() == Some("terminal") { "terminal" } else { "chat" }.into(),
+        ),
         terminal_color_report: s.terminal_color_report.or(Some(true)),
         outbound_proxy: s.outbound_proxy.filter(|v| !v.trim().is_empty()),
         outbound_no_proxy: s.outbound_no_proxy.filter(|v| !v.trim().is_empty()),
@@ -1101,6 +1108,9 @@ fn merge(cur: &mut AppSettingsDto, patch: AppSettingsDto) {
     }
     if patch.status_bar.is_some() {
         cur.status_bar = patch.status_bar;
+    }
+    if patch.open_surface.is_some() {
+        cur.open_surface = patch.open_surface;
     }
     if patch.status_bar_in_chat.is_some() {
         cur.status_bar_in_chat = patch.status_bar_in_chat;
@@ -1951,6 +1961,18 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(miss.custom_theme_card_id, None);
+    }
+
+    #[test]
+    fn open_surface_defaults_to_chat_and_rejects_unknown() {
+        assert_eq!(with_defaults(AppSettingsDto::default()).open_surface.as_deref(), Some("chat"));
+        for (raw, want) in [("terminal", "terminal"), ("chat", "chat"), ("split", "chat")] {
+            let full = with_defaults(AppSettingsDto {
+                open_surface: Some(raw.into()),
+                ..Default::default()
+            });
+            assert_eq!(full.open_surface.as_deref(), Some(want), "{raw}");
+        }
     }
 
     #[test]

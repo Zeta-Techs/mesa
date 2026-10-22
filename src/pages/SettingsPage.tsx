@@ -2838,6 +2838,23 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         </Row>
 
         <Row
+          label="打开对话时先显示"
+          hint="问 AI、开始、商量、继续、精读都按这个；之后每个标签还能自己切"
+          labelTitle="「新对话」总是聊天（选 Agent 和模型在聊天里）；登录、更新、运行脚本这类没有对话可看的总是终端。切回已经开着的标签时不改它当前的显示"
+        >
+          <SegTabs
+            items={[
+              { id: "chat", label: "聊天" },
+              { id: "terminal", label: "终端" },
+            ]}
+            value={settings?.openSurface === "terminal" ? "terminal" : "chat"}
+            onChange={(id) =>
+              void patch({ openSurface: id === "terminal" ? "terminal" : "chat" })
+            }
+          />
+        </Row>
+
+        <Row
           label="底部状态栏"
           hint="关掉后终端和聊天都不显示"
         >

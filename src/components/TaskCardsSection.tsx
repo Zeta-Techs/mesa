@@ -466,7 +466,6 @@ export default function TaskCardsSection({
         : opening,
       ...(discussLaunch ?? {}),
       autoStart: Boolean(discussLaunch?.profileId),
-      surface: "terminal",
     });
     setPage("terminal");
   }
@@ -630,7 +629,6 @@ export default function TaskCardsSection({
       model: launch.model,
       initialPrompt: prompt,
       autoStart: true,
-      surface: "terminal",
     });
     setPage("terminal");
   }
@@ -788,7 +786,7 @@ export default function TaskCardsSection({
           <button
             type="button"
             onClick={() => onDiscuss(card)}
-            title="在项目根开终端聊聊这个想法（不建工作区，只读纯聊），新会话自动归入本卡"
+            title="在项目根开一段对话聊聊这个想法（不建工作区，只读纯聊），新会话自动归入本卡"
             className={`${actionBtn} shrink-0`}
           >
             聊想法
@@ -899,7 +897,7 @@ export default function TaskCardsSection({
             <button
               type="button"
               onClick={() => onDiscuss(card)}
-              title="在项目根开终端聊聊这张卡（不建工作区，只读纯聊），新会话自动归入本卡"
+              title="在项目根开一段对话聊聊这张卡（不建工作区，只读纯聊），新会话自动归入本卡"
               className={`${actionBtn} shrink-0`}
             >
               聊想法
@@ -1318,7 +1316,7 @@ export default function TaskCardsSection({
                     icon: MessageCircle,
                     label: "聊想法",
                     title:
-                      "在项目根开终端聊聊这张卡（不建工作区，只读纯聊），新会话自动归入本卡",
+                      "在项目根开一段对话聊聊这张卡（不建工作区，只读纯聊），新会话自动归入本卡",
                     onSelect: () => onDiscuss(menu.card),
                   },
                 ]
