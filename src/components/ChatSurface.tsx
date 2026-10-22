@@ -474,6 +474,13 @@ export default function ChatSurface({
       .join("\n");
     return unsyncedTail(liveReply, synced);
   })();
+  // 实时预览多出一行：贴着底的就当帧跟到底。原先只在消息列表变化时贴底（生成中 700ms 一次的轮询），新出的那一行先落在
+  // 底部留白和渐隐里，等下一次轮询整段才往上跳一行，看着像那一行在原位闪一下才出新内容（2026-10-22 用户 Claude 长回复）
+  const livePreviewText = livePreview.join("\n");
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (el && followRef.current && livePreviewText) el.scrollTop = el.scrollHeight;
+  }, [livePreviewText]);
   // 会话文件追上了（预览全被盖掉，或者新内容进来了）就收；终端渲染与原文对不上的零星几行不再多挂 4 秒
   const settledMessagesRef = useRef(messages);
   useEffect(() => {
