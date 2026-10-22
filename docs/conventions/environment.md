@@ -50,6 +50,9 @@
     不补 `PYTHONUTF8`，它连 `open()` 默认编码一起改，会让 Agent 读 GBK 数据文件的脚本变样（2026-10-21：管道里打印 `²` 报 UnicodeEncodeError、
     中文读回乱码）；netstat 按列位置解析且
     同时查 `tcp` 与 `tcpv6`；Windows 上结束进程一律 `kill_process_tree` / `taskkill /T /F`。
+  - Windows 上一般没装 poppler：Claude Code 读 PDF 要 `pdftoppm` 转页图，直接报错，Agent 只能抽文字层、图看不到
+    （2026-10-23 HER 精读步）。读 PDF 的步骤（lit-notes / review-figures 或输入里有 `.pdf`）在 Windows 任务书「本机 Python」节
+    多带一行：PyMuPDF 抽字，看图先 `get_pixmap` 存成图片再读（`task-md.ts`；PyMuPDF 是依赖检查里的一项）。
   - 写进 CLI 配置的 Windows hooks 不得含内联 PowerShell、`$` 或单引号（会被 bash / PowerShell / cmd 宿主吞掉），
     逻辑放 `.ps1`、命令只带双引号路径与一个截断字节数（`ccode-hook.ps1` 与 unix 命令同语义：记「unix 秒 + 标签号 `CCODE_TAB_ID`」前缀、超 Cap 截断；聊天层启动注入每次启动 `ensure_win_hook_script` 保证脚本在且正文是当前版）；读任何 CLI 配置（JSON / TOML）先 `mcp::strip_bom`；读失败报错，不得当文件不存在。
   - 外部 cmd 拉起用 `/S /K "<整行>"` + 外层 `^` 转义；带 `%` 或换行的参数走 `.cmd` 包装，只有包装里才把 `%` 翻倍。

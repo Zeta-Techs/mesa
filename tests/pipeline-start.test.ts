@@ -530,6 +530,14 @@ test("TASK.md 本机 Python：只在 Windows 给出，-I 隔离模式要配 -X u
   assert.doesNotMatch(renderTaskMd(step(), cfg(), "/p"), /## 本机 Python/);
 });
 
+test("TASK.md 本机 Python：读 PDF 的步骤在 Windows 上提示用 PyMuPDF 抽字、转页图看图", () => {
+  const notes = step({ skills: ["lit-notes"] });
+  const win = renderTaskMd(notes, cfg(), "C:\\p", undefined, undefined, undefined, undefined, true);
+  assert.match(win, /pdftoppm is not installed[^\n]*get_pixmap/);
+  assert.doesNotMatch(renderTaskMd(step(), cfg(), "C:\\p", undefined, undefined, undefined, undefined, true), /pdftoppm/, "不读 PDF 的步骤不带");
+  assert.doesNotMatch(renderTaskMd(notes, cfg(), "/p"), /pdftoppm/, "只在 Windows");
+});
+
 test("TASK.md 本步骤脚本：简报没点名的不列；只有 bash 写法的条目点名用 Git Bash", () => {
   const s = step({
     brief: "改完跑一次 run 脚本 prep，再跑 render-draft。",
