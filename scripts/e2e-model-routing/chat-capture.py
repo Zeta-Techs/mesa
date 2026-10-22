@@ -269,11 +269,16 @@ record["probe_created"] = os.path.exists(probe)
 # APPROVE_KEYS：审批停着时按这串键（如 y、1、回车），看聊天层的「批准」按钮按哪个键才管用
 approve = os.environ.get("APPROVE_KEYS")
 if approve and not record["probe_created"] and alive[0]:
-    # 用 | 分开的每个键单独写、隔 0.1 秒（同 Mesa answerMenu：Ink 一次只认一个键）
+    # 用 | 分开的每个键单独写、隔 APPROVE_GAP 秒（默认 0.1，同 Mesa answerMenu：Ink 一次只认一个键），每按一个记一帧（approve_steps）
+    # 「:文字」= 原样打一段字（如 Claude 提问菜单的「Type something.」那一项里写答案）
+    gap = float(os.environ.get("APPROVE_GAP", "0.1"))
+    steps = []
     for key in approve.split("|"):
-        try: pty_write(key.encode().decode("unicode_escape").encode())
+        try: pty_write(key[1:].encode() if key.startswith(":") else key.encode().decode("unicode_escape").encode())
         except OSError: break
-        pump(0.1)
+        pump(gap)
+        steps.append({"key": key, "lines": lines()})
+    record["scenes"]["approve_steps"] = steps
     record["scenes"]["approve"] = film(6, 0.5)
     record["approved_by"] = approve
     record["probe_created"] = os.path.exists(probe)

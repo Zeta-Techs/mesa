@@ -51,6 +51,7 @@ import { cwdChipLabel } from "../terminal-welcome";
 import { escInterruptSafe } from "../agent-caps";
 import { midTurnSpec, queueSendHint, queuedNote, runningPlaceholder, stopTitle } from "../mid-turn-send";
 import type { TrustPrompt } from "../trust-prompt";
+import type { AskAction } from "../tui-ask";
 import {
   approvalChoices,
   approvalPreview,
@@ -103,6 +104,7 @@ export default function ChatSurface({
   onTuiCommand,
   menuPrompt = null,
   onAnswerMenu,
+  onAnswerAsk,
   tuiPanel = false,
   tuiNotice = null,
   liveReply = null,
@@ -195,6 +197,8 @@ export default function ChatSurface({
   /** 切换命令之后 CLI 弹出的确认 / 选择菜单 */
   menuPrompt?: TuiMenu | null;
   onAnswerMenu?: (index: number) => void;
+  /** 答 Claude 的提问表单（menuPrompt.ask，tui-ask.ts） */
+  onAnswerAsk?: (action: AskAction) => void;
   /** 终端里开着一个只能在终端看的面板（/cost、/usage 的 Settings 面板等，tui-panel.ts） */
   tuiPanel?: boolean;
   /** 终端里弹了一条要按回车才继续的通知（tui-panel.ts parseTuiNotice）：正文行 */
@@ -565,6 +569,18 @@ export default function ChatSurface({
               onDismiss: () => onDismissConnIssue?.(),
               onOpenProfiles,
             })
+        : menuPrompt?.ask
+          ? {
+              // Claude 的提问表单（AskUserQuestion，tui-ask.ts）：卡片照表单画，答法按表单的键走
+              key: `ask:${menuPrompt.ask.kind === "question" ? menuPrompt.ask.question : "review"}`,
+              title: menuPrompt.question ?? "Claude 在问你",
+              options: [],
+              ask: {
+                form: menuPrompt.ask,
+                pending: Boolean(menuPrompt.pending),
+                onAction: (action) => onAnswerAsk?.(action),
+              },
+            }
         : menuPrompt
           ? {
               key: `menu:${menuPrompt.question ?? ""}:${menuPrompt.options.join("|")}`,
@@ -611,6 +627,15 @@ export default function ChatSurface({
   }, [decisionKey]);
 
   async function sendFromComposer(text: string): Promise<string | null> {
+    // Claude 的提问表单开着时，输入框里写的就是答案：写进表单「自己写」那一行再交（直接打进终端的话，
+    // 回车会选中光标停着的那一项）。确认页没有地方写字，让人先在卡片上提交或取消
+    const ask = menuPrompt?.ask;
+    if (ask && onAnswerAsk) {
+      if (menuPrompt?.pending) return "上一步还在交给终端，稍等一下再发";
+      if (ask.kind === "review") return "先在上面点「提交回答」或「整组不答」";
+      onAnswerAsk({ kind: "text", text, submit: true });
+      return null;
+    }
     // 从聊天层开聊：记下这套搭配，下次在这个项目里点一下就能换回来（launch-combos.ts）
     if (launchPickOpen && launchPick && cwd && launchPick.profileId) {
       recordCombo(
@@ -907,7 +932,11 @@ export default function ChatSurface({
         seedInsert={seedInsert}
         onSeedConsumed={() => setSeedInsert(null)}
         placeholder={
-          decision
+          decision?.ask
+            ? decision.ask.form.kind === "review"
+              ? "先在上面提交或取消这组回答"
+              : "写你自己的答案，发出去就交这一题…"
+            : decision
             ? "先在上面选一项，或者直接回复…"
             : readOnly
             ? "这是只读分叉；可以提问、分析和规划…"

@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import test from "node:test";
 import { build } from "esbuild";
 import { JSDOM } from "jsdom";
+import { parseClaudeAsk } from "../src/tui-ask.ts";
 
 // 聊天输入框的三颗芯片（权限徽标 / 模型·思考 / 命令行渲染）：esbuild 内联打包 + JSDOM，口径同 settings-navigation-ui
 const bundle = await build({
@@ -757,6 +758,150 @@ test("项目弹层：能搜、带项目类型与项目默认、编程项目写�
     assert.doesNotMatch(ui.el.textContent ?? "", /随手聊/, "搜的时候固定两行对不上就不列");
     await ui.click("选择文件夹");
     assert.equal(folders, 1);
+  } finally {
+    await ui.close();
+  }
+});
+
+// Claude 提问表单（tui-ask.ts 同一份实录，横线截短）
+const ASK_RULE = "─".repeat(60);
+const ASK_SINGLE = [
+  ASK_RULE,
+  " ☐ 颜色",
+  "",
+  "红、绿、蓝三种颜色里，你更喜欢哪一种？",
+  "",
+  "❯ 1. 红",
+  "     选择红色",
+  "  2. 绿",
+  "     选择绿色",
+  "  3. 蓝",
+  "     选择蓝色",
+  "  4. Type something.",
+  ASK_RULE,
+  "  5. Chat about this",
+];
+
+async function fillInput(ui: { el: HTMLElement; act: (fn: () => Promise<void>) => Promise<void> }, label: string, text: string) {
+  const box = ui.el.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!;
+  await ui.act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+    setter.call(box, text);
+    box.dispatchEvent(new window.Event("input", { bubbles: true }));
+  });
+}
+
+test("Claude 提问卡片：选项名和说明分开竖排，可以自己写答案、先不答；不再写「高亮的是终端默认项」", async () => {
+  const ui = await mount();
+  try {
+    const actions: unknown[] = [];
+    let terminal = 0;
+    const form = parseClaudeAsk(ASK_SINGLE)!;
+    await ui.render(
+      ui.h(ui.Decision, {
+        decision: { key: "ask", title: "q", options: [], ask: { form, pending: false, onAction: (a: unknown) => actions.push(a) } },
+        onOpenTerminal: () => terminal++,
+      }),
+    );
+    const text = ui.el.textContent ?? "";
+    assert.match(text, /红、绿、蓝三种颜色里，你更喜欢哪一种？/);
+    assert.match(text, /颜色/);
+    assert.doesNotMatch(text, /Type something|高亮的是|☐/);
+    // 选项名与说明是两段字，不是「红 选择红色」一个按钮
+    const second = ui.button("选择绿色");
+    assert.equal(second.querySelector("span span")?.textContent, "绿");
+    await ui.act(async () => second.click());
+    await fillInput(ui, "自己写答案", "紫色");
+    await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="就答这个"]')!.click());
+    assert.equal(ui.el.querySelector<HTMLInputElement>('input[aria-label="自己写答案"]')!.value, "", "交了就清空");
+    await ui.click("先不答，直接聊");
+    await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="打开终端"]')!.click());
+    assert.deepEqual(actions, [{ kind: "pick", index: 1 }, { kind: "text", text: "紫色" }, { kind: "chat" }]);
+    assert.equal(terminal, 1);
+
+    // 刚点过、终端还没换画面：按钮先停用
+    await ui.render(
+      ui.h(ui.Decision, {
+        decision: { key: "ask", title: "q", options: [], ask: { form, pending: true, onAction: (a: unknown) => actions.push(a) } },
+        onOpenTerminal: () => {},
+      }),
+    );
+    assert.equal(ui.button("选择红色").disabled, true);
+  } finally {
+    await ui.close();
+  }
+});
+
+test("Claude 提问卡片：多选打勾、提交这一题、点题签切题；确认页列出每题答案", async () => {
+  const ui = await mount();
+  try {
+    const actions: unknown[] = [];
+    const tabs = "←  ☒ 颜色  ☐ 水果  ✔ Submit  →";
+    const lines = [
+      ASK_RULE,
+      tabs,
+      "下面这些水果你平时会吃哪些？",
+      "  1. [✔] 苹果",
+      "         脆甜，一年四季都有",
+      "❯ 2. [ ] 香蕉",
+      "         软糯，适合当早餐",
+      "  3. [ ] Type something",
+      "     Submit",
+      ASK_RULE,
+      "  4. Chat about this",
+    ];
+    const at = tabs.indexOf("☐ 水果");
+    const form = parseClaudeAsk(lines, (row) =>
+      lines[row] === tabs ? [...tabs].map((ch, i) => ({ ch, dim: false, inverse: false, bg: i >= at - 1 && i <= at + 4 })) : [],
+    )!;
+    const render = (f: typeof form) =>
+      ui.render(
+        ui.h(ui.Decision, {
+          decision: { key: "ask", title: "q", options: [], ask: { form: f, pending: false, onAction: (a: unknown) => actions.push(a) } },
+          onOpenTerminal: () => {},
+        }),
+      );
+    await render(form);
+    const boxes = Array.from(ui.el.querySelectorAll('[role="checkbox"]'));
+    assert.deepEqual(
+      boxes.map((b) => b.getAttribute("aria-checked")),
+      ["true", "false"],
+    );
+    await ui.act(async () => (boxes[1] as HTMLButtonElement).click());
+    await ui.click("提交这一题");
+    // 当前题签不可点，别的题签和「提交」页可以
+    const tabButtons = Array.from(ui.el.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+    assert.deepEqual(
+      tabButtons.map((t) => [t.textContent, t.getAttribute("aria-selected")]),
+      [
+        ["颜色", "false"],
+        ["水果", "true"],
+        ["提交", "false"],
+      ],
+    );
+    await ui.act(async () => tabButtons[0].click());
+    assert.deepEqual(actions, [{ kind: "pick", index: 1 }, { kind: "submit" }, { kind: "tab", index: 0 }]);
+
+    actions.length = 0;
+    const review = parseClaudeAsk([
+      ASK_RULE,
+      "←  ☒ 颜色  ☒ 水果  ✔ Submit  →",
+      "Review your answers",
+      " ● 红、绿、蓝三种颜色里，你更喜欢哪一种？",
+      "   → 红",
+      " ● 下面这些水果你平时会吃哪些？",
+      "   → 苹果",
+      "Ready to submit your answers?",
+      "❯ 1. Submit answers",
+      "  2. Cancel",
+    ])!;
+    await render(review);
+    const text = ui.el.textContent ?? "";
+    assert.match(text, /确认提交这些回答？/);
+    assert.match(text, /下面这些水果你平时会吃哪些？苹果/);
+    await ui.click("提交回答");
+    await ui.click("整组不答");
+    assert.deepEqual(actions, [{ kind: "confirm" }, { kind: "cancel" }]);
   } finally {
     await ui.close();
   }

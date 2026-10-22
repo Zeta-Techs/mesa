@@ -511,13 +511,17 @@ Claude 会话文件：排上记 `queue-operation`（`enqueue` 带原文；轮后
 解析要认它（`sessions.rs parse_claude`），否则聊天层与回放里这句话消失。后台任务通知、别的会话发来的也是 `queued_command`
 （`commandMode: task-notification` / `origin.kind: peer`），不算用户说的。
 
-**Claude 只画在屏上的东西（2026-10-22，2.1.306，假网关 126×29 抓屏 + 源码）**：
+**Claude 只画在屏上的两样（2026-10-22，2.1.306，假网关 126×29 抓屏 + 源码）**：
 - **猜你下一句（prompt suggestion）**：一轮做完另发一次请求（系统提示带 `[SUGGESTION MODE: …]`，带整段历史），回的话当占位字灰着放进输入框；
   Tab 填入、空着回车直接发（`acceptMethod` tab / enter），打出一样的字也算采纳，连着 20 次没用会少出。服务端开关 growthbook
   `tengu_chomp_inflection`，`CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=1/0` 强开强关，设置里 `promptSuggestionEnabled: false` 关；头一轮不猜
   （对话里助手消息少于两条）、计划模式 / 有待批权限 / 限流时不猜；终端失焦（ESC[O）后实测照样出。会话文件、hooks 都不记——
   聊天层读屏（`src/prompt-suggestion.ts`）：占位字整句 SGR 2、终端有焦点时第一个字反色；同一位置还有新手示例 `Try "…"`、排队提示
   `Press up to edit queued messages`、队友 `Message @…`。
+- **提问表单（AskUserQuestion）**：画在输入框的位置（`src/tui-ask.ts` 文件头有逐行样子）；题签行当前题只靠底色（permission 色）标；
+  最后一项「Type something.」是就地输入行，多选里打字自动勾上；横线下是「Chat about this」（工具结果「User declined to answer questions」，
+  模型接着说）；多题答完是确认页，Cancel 同样记 declined 但这一轮直接停。←→ / Tab 换题，↑↓ 逐行，回车选 / 勾。工具结果
+  「User answered Claude's questions: · 问句 → 答案」。
 
 **陷阱（实证）**：
 - **Codex `-c hooks.<事件>=…`** 认得出（来源记作 Session flags），但每次都要在 /hooks 面板审核信任才执行——不能当默认通道。

@@ -164,6 +164,7 @@ import {
   sameTuiMenu,
   type TuiMenu,
 } from "../tui-menu";
+import { askAfter, askAnswerKeys, askMenu, parseClaudeAsk, type AskAction } from "../tui-ask";
 import { promptSuggestionSupported, readPromptSuggestion } from "../prompt-suggestion";
 import { lineCells } from "../screen-cells";
 import { lastContextTokens, type MesaCommand } from "../composer-assist";
@@ -462,6 +463,8 @@ export interface FocusTabActions {
   runTuiCommand: (cmd: string) => void;
   /** 替用户在确认菜单里选第 index 项 */
   answerMenu: (index: number) => void;
+  /** 替用户答 Claude 的提问表单（tui-ask.ts：选一项 / 自己写 / 交这一题 / 切题 / 先不答） */
+  answerAsk: (action: AskAction) => void;
   /** 运行中换权限：停下 Agent，带着新权限接回原来那段对话（权限在启动参数里，只能重开兑现） */
   restartWithPermission: () => void;
   /** 停下 Agent，带着新模型 / 思考档接回原来那段对话（会写回 CLI 全局配置的切换走这条，switch-strategy.ts） */
@@ -2196,6 +2199,7 @@ const TerminalView = memo(function TerminalView({
   const menuPromptRef = useRef<TuiMenu | null>(null);
   const menuWatchUntilRef = useRef(0);
   const menuScanTimerRef = useRef<number | null>(null);
+  const menuSyncWaitsRef = useRef(0);
   // 发命令那一刻屏上已经「像菜单」的东西（如对话记录里一段多行提问）：之后再认出同一个不算
   const menuBaselineRef = useRef<TuiMenu | null>(null);
   // 最近一次从聊天发出的话：扫审批菜单时排除它的回显
@@ -2203,14 +2207,7 @@ const TerminalView = memo(function TerminalView({
   // 见过的启动信任菜单的选项：同一组选项以后不再当通用确认菜单报
   const trustOptionsRef = useRef<string[] | null>(null);
   function screenMenu(): TuiMenu | null {
-    const term = termRef.current;
-    if (!term) return null;
-    const buf = term.buffer.active;
-    const lines: string[] = [];
-    for (let i = 0; i < term.rows; i++) {
-      lines.push(buf.getLine(buf.viewportY + i)?.translateToString(true) ?? "");
-    }
-    return parseTuiMenu(lines);
+    return parseScreenMenu(screenLines());
   }
   /** 可视区第 row 行每个字的样子（灰字 / 反色 / 底色；screen-cells.ts） */
   function screenCells(row: number) {
@@ -2218,6 +2215,11 @@ const TerminalView = memo(function TerminalView({
     if (!term) return [];
     const buf = term.buffer.active;
     return lineCells(buf.getLine(buf.viewportY + row));
+  }
+  /** 屏上等你选的东西：Claude 的提问表单按表单读（tui-ask.ts），其余照通用菜单读 */
+  function parseScreenMenu(lines: string[]): TuiMenu | null {
+    const ask = launchAgentRef.current === "claude-code" ? parseClaudeAsk(lines, screenCells) : null;
+    return ask ? askMenu(ask) : parseTuiMenu(lines);
   }
   // 终端里换权限模式的跟随（fetchConversation 读会话文件；基线 = 这个文件第一次读到的模式）
   const permBaselineRef = useRef<{ file: string; mode: string } | null>(null);
@@ -2287,8 +2289,21 @@ const TerminalView = memo(function TerminalView({
     menuScanTimerRef.current = window.setTimeout(() => {
       menuScanTimerRef.current = null;
       if (!termRef.current || ptyKindRef.current !== "agent") return;
+      // 提问表单的键还没按完：屏上是半路的样子，等按完再读
+      const keysLeft = askKeysDoneAtRef.current - Date.now();
+      if (keysLeft > 0 && menuPromptRef.current?.ask) {
+        window.setTimeout(scanMenuSoon, keysLeft + 50);
+        return;
+      }
+      // 一帧正画到一半（同步输出还没收尾）：表单下半截还是旧的，读出来会缺一截、卡片闪没（同 scanLiveReplyNow）
+      if (termRef.current.modes.synchronizedOutputMode && menuSyncWaitsRef.current < 20) {
+        menuSyncWaitsRef.current++;
+        window.setTimeout(scanMenuSoon, 50);
+        return;
+      }
+      menuSyncWaitsRef.current = 0;
       const lines = screenLines();
-      const found = parseTuiMenu(lines);
+      const found = parseScreenMenu(lines);
       // 用户自己发的多行编号清单回显在屏上（「❯ 1. … / 2. …」）也是这个形状：选项全在刚发的话里就不算
       const echoed = found ? menuEchoesText(found, lastSentRef.current) : false;
       // 启动信任菜单归信任卡管（trust-prompt.ts）：这里再认一遍，点完信任后菜单还在屏上的那一两帧
@@ -2508,6 +2523,38 @@ const TerminalView = memo(function TerminalView({
     // 一个确认之后可能还有下一个（选完模型再问思考档）：再开一小段窗口
     menuWatchUntilRef.current = Date.now() + 3000;
     window.setTimeout(scanMenuSoon, keys.length * 80 + 400);
+  }
+  // 替用户按的键排成一队：每个键隔 80ms（Ink 一次只认一个键），连点几下也不会交错着写
+  const keyQueueAtRef = useRef(0);
+  // 提问表单的键按到什么时候：按完之前屏上是半路的样子（光标挪了、还没回车），扫屏不拿它覆盖卡片
+  const askKeysDoneAtRef = useRef(0);
+  function queuePtyKeys(id: string, keys: string[]): number {
+    const start = Math.max(Date.now(), keyQueueAtRef.current);
+    keys.forEach((key, i) => {
+      window.setTimeout(() => {
+        if (ptyIdRef.current === id) writeInteractivePty(id, key);
+      }, start - Date.now() + i * 80);
+    });
+    keyQueueAtRef.current = start + keys.length * 80;
+    return keyQueueAtRef.current;
+  }
+  function answerAsk(action: AskAction) {
+    const menu = menuPromptRef.current;
+    const ask = menu?.ask;
+    const id = ptyIdRef.current;
+    if (!menu || !ask || !id || menu.pending) return;
+    const keys = askAnswerKeys(ask, action)?.map((k) => (k === "\r" && submitCsiU ? KIMI_CSI_U_ENTER : k));
+    if (!keys) return;
+    // 多选勾一项、往「自己写」里写字：还是这一题，先照按键结果画（askAfter），连点也从对的光标位置算；
+    // 会换题 / 交卷的先停用按钮，等屏上换了再画（答完最后一题表单消失，卡片跟着撤）
+    const after = askAfter(ask, action);
+    const next: TuiMenu = after ? askMenu(after) : { ...menu, pending: true };
+    menuPromptRef.current = next;
+    setMenuPrompt(next);
+    const done = queuePtyKeys(id, keys);
+    askKeysDoneAtRef.current = done + 120;
+    menuWatchUntilRef.current = done + 3000;
+    window.setTimeout(scanMenuSoon, done - Date.now() + 400);
   }
   function clearTrustPrompt() {
     if (trustScanTimerRef.current) window.clearTimeout(trustScanTimerRef.current);
@@ -5319,6 +5366,7 @@ const TerminalView = memo(function TerminalView({
     applyLaunchCombo: () => {},
     runTuiCommand: () => {},
     answerMenu: () => {},
+    answerAsk: () => {},
     restartWithPermission: () => {},
     relaunchWith: () => {},
     switchConnection: () => {},
@@ -5379,6 +5427,7 @@ const TerminalView = memo(function TerminalView({
     applyLaunchCombo,
     runTuiCommand,
     answerMenu,
+    answerAsk,
     restartWithPermission,
     relaunchWith,
     switchConnection,
@@ -5413,6 +5462,7 @@ const TerminalView = memo(function TerminalView({
       applyLaunchCombo: (c) => actionsRef.current.applyLaunchCombo(c),
       runTuiCommand: (cmd) => actionsRef.current.runTuiCommand(cmd),
       answerMenu: (i) => actionsRef.current.answerMenu(i),
+      answerAsk: (a) => actionsRef.current.answerAsk(a),
       restartWithPermission: () => actionsRef.current.restartWithPermission(),
       relaunchWith: (patch) => actionsRef.current.relaunchWith(patch),
       switchConnection: (id) => actionsRef.current.switchConnection(id),
@@ -10048,6 +10098,10 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         onAnswerMenu={(i) => {
                           holdAutoPeek(t.id);
                           tabActionsRef.current.get(t.id)?.answerMenu(i);
+                        }}
+                        onAnswerAsk={(a) => {
+                          holdAutoPeek(t.id);
+                          tabActionsRef.current.get(t.id)?.answerAsk(a);
                         }}
                         onForkFrom={(text) => void forkChat(t.id, text)}
                         connIssue={sessionByTab[t.id]?.connIssue ?? null}

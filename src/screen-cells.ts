@@ -1,8 +1,9 @@
 /**
  * 读屏时看字的样子（纯逻辑 + xterm 一行的薄适配）。
  *
- * 多数读屏只看文字（translateToString），有的光看文字认不出、要看样子：
- * - Claude Code 输入框里那行灰字：猜你下一句想说什么（prompt-suggestion.ts），和你自己打的字只差在「灰」。
+ * 多数读屏只看文字（translateToString），有两处光看文字认不出、要看样子：
+ * - Claude Code 输入框里那行灰字：猜你下一句想说什么（prompt-suggestion.ts），和你自己打的字只差在「灰」；
+ * - Claude 提问菜单的题签行「☐ 颜色  ☐ 水果  ✔ Submit」：当前在哪一题只靠底色标出来（tui-ask.ts）。
  */
 
 /** 画面上的一个字（宽字符占两格，这里只算一个） */

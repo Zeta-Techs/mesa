@@ -464,7 +464,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   model-caps-label.ts        # 模型菜单每行右侧的能力灰字（200K · 思考 · 看图），数据来自 model_capabilities
   （scripts/e2e-model-routing/：假网关 + 驱动，用 agents.rs 的 e2e_dump_launch_plans 生成的真实启动计划拉起各家 CLI，核对请求里的模型与路径；
    chat-capture.py 按权限四档拉起、发 TRIGGER_SLOW / TRIGGER_TOOL / 切换命令逐帧抓屏，聊天层第三期逐家核实用（2026-10-20 起
-   Windows 走 ConPTY / pywinpty；假网关认 SUGGESTION MODE 回猜的下一句）；capture-check.ts 把抓屏交给 tui-menu / live-reply 解析器看读不读得出；live-replay.ts 用真 xterm.js
+   Windows 走 ConPTY / pywinpty；TRIGGER_ASK / TRIGGER_ASK2 回 Claude 提问表单、APPROVE_KEYS 每按一键记一帧，假网关认 SUGGESTION MODE 回猜的下一句）；capture-check.ts 把抓屏交给 tui-menu / live-reply 解析器看读不读得出；live-replay.ts 用真 xterm.js
    回放抓屏的原始输出（CAP_RAW=1）、逐块读屏接预览，数重复 / 漏行；见其 README）
   （scripts/cli-canary/：CLI 金丝雀——canary.py 串起假网关 E2E_DUMP、chat_channel 的 e2e_channel（E2E_CLEAN_HOME / E2E_KEEP 留会话原件与
    解析结果）、chat-capture 抓屏，抽指纹与 baseline/<平台>/<agent>.json 比，报告附两版之间更新日志的相关条目；
@@ -506,9 +506,12 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   tui-menu.ts                # 认屏上的 TUI 选择菜单（parseTuiMenu / menuAnswerKeys / sameTuiMenu / menuEchoesText）：切换命令后 5 秒、启动后 20 秒、
                              # 以及这一轮没结束前都扫屏，切换确认与七家工具审批按原文给按钮；剥方框边与滚动条、Grok 单选改写成序号行、
                              # 折行并回上一项、问句取贴着选项的发问行；回显的 /命令、⎿ 续行、用户刚发的编号清单都不算菜单
+  tui-ask.ts                 # Claude 提问表单（AskUserQuestion）按表单读（parseClaudeAsk：题签 / 当前题靠底色 / 问句 / 选项与说明 / 勾选 / 「自己写」 / Submit 行 /
+                             # Chat about this / 确认页）、要按的键（askAnswerKeys）、多选先照按键结果画（askAfter）、给通用菜单流程的摘要（askMenu）；
+                             # 卡片在 components/ChatDecisionCard.tsx AskCard（tests/tui-ask.test.ts）
   prompt-suggestion.ts       # Claude「猜你下一句」：输入框那一行除第一个字外全是灰字才算（readPromptSuggestion），排除 Try "…" 等固定提示；
                              # 聊天输入框空着时当占位字显示、Tab 填入（tests/prompt-suggestion.test.ts）
-  screen-cells.ts            # xterm 一行转成每个字的样子（灰 / 反色 / 底色，lineCells）：只看文字认不出的读屏用（猜的下一句）
+  screen-cells.ts            # xterm 一行转成每个字的样子（灰 / 反色 / 底色，lineCells）：只看文字认不出的读屏用（猜的下一句、提问表单当前题）
   tui-panel.ts               # parseTuiNotice：没有输入框 + 「Enter to continue」= 要按回车才继续的通知（Claude 中途弹的计费说明），
                              #   聊天层给「继续」卡（回车），认出时不再当面板；
                              # 认「终端里开着一个面板」（parseTuiPanel：没有该家输入框 + Esc to cancel/close 一类关闭提示；/cost、/usage 的 Settings 面板）：

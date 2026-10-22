@@ -69,17 +69,21 @@ Gemini 的临时 HOME 里会把登录方式改成 API Key（Mesa 只在这种情
 让工具跑久一点、`E2E_DUMP=<文件>` 记完整请求，看这句落在哪个请求里（和工具结果同一个 = 插进这一轮）。Qwen 拒绝独立的 `sleep`，用
 `QUEUE_FIRST="TRIGGER_SLOW 讲一段"`。结论见 docs/agent-integration-matrix.md §14「生成中再发一句」。
 
-**Claude 猜的下一句（2026-10-22）**：假网关认 `SUGGESTION MODE`（Claude 一轮做完猜你下一句的那次请求）回 `E2E_SUGGESTION`
-（默认「再运行一次看看输出」）。抓屏加：
+**Claude 猜的下一句与提问表单（2026-10-22）**：假网关认 `SUGGESTION MODE`（Claude 一轮做完猜你下一句的那次请求）回 `E2E_SUGGESTION`
+（默认「再运行一次看看输出」）；`TRIGGER_ASK` 回一个 AskUserQuestion（一题单选），`TRIGGER_ASK2` 一次问两题（单选 + 多选）。抓屏加：
 `CAP_ENV="K=V;…"` 补环境变量（脚本把 `CLAUDE_CODE_*` 都去掉了，猜下一句要 `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=1`，服务端开关假网关拿不到）；
-`CAP_FOCUS=out|in` 开场后告诉 CLI 终端失焦 / 得焦（结果里 `focus_reporting` = 它开没开焦点上报）。猜下一句第二轮起才出，所以两幕都发话：
+`CAP_FOCUS=out|in` 开场后告诉 CLI 终端失焦 / 得焦（结果里 `focus_reporting` = 它开没开焦点上报）；`APPROVE_GAP` 改按键间隔、每按一个键记一帧
+（`scenes.approve_steps`），键写 `:文字` 是原样打一段字（在「Type something.」里写答案）。猜下一句第二轮起才出，所以两幕都发话：
 
 ```bash
 CAP_ENV="CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=1" CAP_RAW=1 CAP_COLS=126 CAP_ROWS=29 REPLY_PROMPT="TRIGGER_SLOW 讲一段" TOOL_PROMPT="TRIGGER_SLOW 再讲一段" TOOL_SECS=16 \
   PYTE_DIR=/tmp/pyte python3 -I scripts/e2e-model-routing/chat-capture.py /tmp/e2e-plans.json claude-code ask /tmp/cap/sug.json
+TOOL_PROMPT="TRIGGER_ASK2 问我两个问题" APPROVE_GAP=0.8 APPROVE_KEYS='\r|\r|\x1b[B|:西瓜|\x1b[B|\x1b[B|\r' \
+  PYTE_DIR=/tmp/pyte python3 -I scripts/e2e-model-routing/chat-capture.py /tmp/e2e-plans.json claude-code ask /tmp/cap/ask.json
 ```
 
-看样子以真 xterm.js 回放为准（`CAP_RAW=1`）。结论见 matrix §14「Claude 只画在屏上的两样」，样本在 tests/prompt-suggestion.test.ts。
+pyte 画 Claude 的光标「❯」偶尔成「u」，看样子以真 xterm.js 回放为准（`CAP_RAW=1`）。结论见 matrix §14「Claude 只画在屏上的两样」，样本在
+tests/tui-ask.test.ts、tests/prompt-suggestion.test.ts。
 
 **长回复实时预览回放（2026-10-22）**：用户说 Claude Code 长回复时聊天层预览一遍遍重贴整屏。假网关起的时候设
 `E2E_LONG_FILE=<Markdown 文件>`（`TRIGGER_LONG` 改为流出这份文件，带标题、列表、表格、代码块才看得出 CLI 重画）、

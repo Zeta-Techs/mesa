@@ -13,6 +13,8 @@
  * （2026-10-18 聊天层第三期 PTY 实录，样本在 tests/tui-menu.test.ts）。
  */
 
+import { sameClaudeAsk, type ClaudeAsk } from "./tui-ask.ts";
+
 export interface TuiMenu {
   /** 菜单上方那段说明的第一行（标题，如「Switch model?」） */
   question: string | null;
@@ -20,6 +22,10 @@ export interface TuiMenu {
   detail: string | null;
   options: string[];
   selected: number;
+  /** Claude 的提问表单（tui-ask.ts）：认得出时按表单答，question / options 只是它的摘要 */
+  ask?: ClaudeAsk | null;
+  /** 刚替用户按过键、终端还没换到新画面（卡片按钮先停用） */
+  pending?: boolean;
 }
 
 const BORDER = /^[─━═│┃╭╮╰╯▔▁]+$/;
@@ -202,6 +208,8 @@ export function sameTuiMenu(a: TuiMenu | null, b: TuiMenu | null): boolean {
     a.question === b.question &&
     a.detail === b.detail &&
     a.selected === b.selected &&
-    a.options.join("\n") === b.options.join("\n")
+    a.options.join("\n") === b.options.join("\n") &&
+    Boolean(a.pending) === Boolean(b.pending) &&
+    sameClaudeAsk(a.ask, b.ask)
   );
 }

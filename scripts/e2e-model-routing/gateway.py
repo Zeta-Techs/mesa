@@ -33,6 +33,13 @@ def pieces(lines, chunk):
 THINK_TEXT = "**规划探针命令**\n\n先跑一条命令看看环境，再回答。"
 # Claude 一轮结束后另发一次请求猜「你下一句想说什么」（系统提示带 SUGGESTION MODE），回这一句，它会灰着字放进输入框（2026-10-22）
 SUGGESTION = os.environ.get("E2E_SUGGESTION", "再运行一次看看输出")
+# TRIGGER_ASK = 回一个 AskUserQuestion 工具调用（Claude 的「问你一个问题」菜单，看聊天层提问卡片）；TRIGGER_ASK2 = 一次问两题
+ASK_COLOR = {"question": "红、绿、蓝三种颜色里，你更喜欢哪一种？", "header": "颜色", "multiSelect": False,
+             "options": [{"label": "红", "description": "选择红色"}, {"label": "绿", "description": "选择绿色"},
+                         {"label": "蓝", "description": "选择蓝色"}]}
+ASK_FRUIT = {"question": "下面这些水果你平时会吃哪些？", "header": "水果", "multiSelect": True,
+             "options": [{"label": "苹果", "description": "脆甜，一年四季都有"}, {"label": "香蕉", "description": "软糯，适合当早餐"},
+                         {"label": "葡萄", "description": "一串一串，夏天最多"}]}
 # E2E_PROBE_CMD 换探针命令（如写绝对路径，看沙箱里的工作目录对不对）
 PROBE = os.environ.get("E2E_PROBE_CMD", "echo mesa > mesa_probe.txt")
 SHELLISH = ("bash", "shell", "run_shell_command", "exec_command", "run_command", "terminal", "execute", "command")
@@ -159,6 +166,8 @@ class H(BaseHTTPRequestHandler):
         if b"SUGGESTION MODE" in raw:
             mode = "suggest"
         # 后一幕的触发词在前：第二幕的请求历史里还带着第一幕的 TRIGGER_SLOW
+        elif tools and b"TRIGGER_ASK" in raw:
+            mode = "done" if has_tool_result(body, raw) else ("ask" if "AskUserQuestion" in dict(tools) else "notool")
         elif tools and b"TRIGGER_TOOL" in raw:
             mode = "done" if has_tool_result(body, raw) else ("tool" if pick_shell(tools) else "notool")
         elif tools and b"TRIGGER_LONG" in raw:
@@ -200,6 +209,15 @@ class H(BaseHTTPRequestHandler):
                 log(note="emit-subagent", tool=name)
                 self._ev({"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": "toolu_e2e", "name": name, "input": {}}}, "content_block_start")
                 self._ev({"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": json.dumps({"description": "e2e", "prompt": "SUBTASK say ok", "subagent_type": "general-purpose"})}}, "content_block_delta")
+                self._ev({"type": "content_block_stop", "index": 0}, "content_block_stop")
+                self._ev({"type": "message_delta", "delta": {"stop_reason": "tool_use", "stop_sequence": None}, "usage": {"output_tokens": 1}}, "message_delta")
+                self._ev({"type": "message_stop"}, "message_stop")
+                return
+            if mode == "ask":
+                ask = {"questions": [ASK_COLOR, ASK_FRUIT] if b"TRIGGER_ASK2" in raw else [ASK_COLOR]}
+                log(note="emit-ask", schema=json.dumps(dict(tool_list(body)).get("AskUserQuestion"), ensure_ascii=False)[:1500])
+                self._ev({"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": "toolu_ask", "name": "AskUserQuestion", "input": {}}}, "content_block_start")
+                self._ev({"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": json.dumps(ask, ensure_ascii=False)}}, "content_block_delta")
                 self._ev({"type": "content_block_stop", "index": 0}, "content_block_stop")
                 self._ev({"type": "message_delta", "delta": {"stop_reason": "tool_use", "stop_sequence": None}, "usage": {"output_tokens": 1}}, "message_delta")
                 self._ev({"type": "message_stop"}, "message_stop")
