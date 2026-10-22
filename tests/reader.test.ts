@@ -215,6 +215,16 @@ test("抽查核对档：笔记栏留阅读宽度、问题单窄；放不下先�
   assert.ok(even.left < 400);
 });
 
+test("译文球心只在 PDF 栏里：近侧栏外距离 + 栏内百分比，按球半径兜住", async () => {
+  const { readerTlBallOffset } = await import("../src/reader.ts");
+  assert.equal(
+    readerTlBallOffset(100, 300, 560),
+    "calc(300px + clamp(18px, calc((100% - 560px) * 1), calc(100% - 560px - 18px)))",
+  );
+  // 没量到边界（0,0）时退回整窗口径
+  assert.match(readerTlBallOffset(45, 0, 0), /^calc\(0px \+ clamp\(18px, calc\(\(100% - 0px\) \* 0\.45\)/);
+});
+
 test("readerColumnWidths 极端窄窗侧栏归零让位", () => {
   assert.deepEqual(readerColumnWidths(READER_PDF_MIN_PX, 22, 28), {
     left: 0,

@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState, type ComponentProps } from "react";
 import ReaderTranslatePanel from "./ReaderTranslatePanel";
-import { clampReaderTlBall, loadReaderTlBall, saveReaderTlBall } from "../reader";
+import {
+  clampReaderTlBall,
+  loadReaderTlBall,
+  readerTlBallOffset,
+  saveReaderTlBall,
+  type ReaderPdfBounds,
+} from "../reader";
 
 type PanelProps = Omit<
   ComponentProps<typeof ReaderTranslatePanel>,
@@ -8,9 +14,10 @@ type PanelProps = Omit<
 >;
 
 /**
- * 译文悬浮球（钉住档与「右栏收起」兜底档的载体），挂在覆盖层根（fixed inset-0）：
- * 坐标域是整窗——右栏/笔记栏展开时球也能拖到窗口边缘（2026-10-14 审查修正：
- * 挂 PDF 栏内会被栏界挡住，正是「拖不到边」的成因）。一颗可拖动的「译」球
+ * 译文悬浮球（钉住档与「右栏收起」兜底档的载体），挂在覆盖层根（fixed inset-0），
+ * 坐标域是 PDF 栏（bounds 换算；2026-10-23 用户：球脱出了 PDF、压在右栏上——
+ * 2026-10-14 曾放开成整窗，球能拖到笔记栏/对话栏上面，译文与原文对不上）。
+ * 仍挂覆盖层根而不挂进 PDF 栏：拖动不被栏内滚动/裁剪挡住。一颗可拖动的「译」球
  * （ccode-float-surface 圆钮），点球在球旁展开译文卡（× 或再点收起回球）；
  * 拖球换位，松手记 localStorage（窗口百分比坐标，换宽高不失位）。
  * 位移 <4px 视为点击；新翻译落地/失败由 openTick 递进信号触发自动展开
@@ -33,8 +40,8 @@ export default function ReaderTlFloat({
   openTick: number;
   /** 挂载即展开（从看得见的卡点「钉住」的接续：卡搬家到球旁，不是缩成球） */
   startOpen?: boolean;
-  /** 卡的横向活动范围（PDF 栏离窗口左右边的 px）：卡只在 PDF 栏里展开，不盖笔记栏 */
-  bounds?: { left: number; right: number };
+  /** PDF 栏离覆盖层四边的 px：球和卡都只在 PDF 栏里，不盖笔记栏/右栏/顶栏 */
+  bounds?: ReaderPdfBounds;
 }) {
   const [pos, setPos] = useState(() => loadReaderTlBall());
   const posRef = useRef(pos);
@@ -69,7 +76,12 @@ export default function ReaderTlFloat({
     const host = ballRef.current?.offsetParent as HTMLElement | null;
     if (!host) return;
     const rect = host.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) return;
+    // 拖动换算的基准是 PDF 栏宽高（百分比存的是球在 PDF 栏里的位置）
+    const spanX = (bounds?.left ?? 0) + (bounds?.right ?? 0);
+    const spanY = (bounds?.top ?? 0) + (bounds?.bottom ?? 0);
+    const w = rect.width - spanX;
+    const h = rect.height - spanY;
+    if (w <= 0 || h <= 0) return;
     const startX = e.clientX;
     const startY = e.clientY;
     const start = posRef.current;
@@ -81,8 +93,8 @@ export default function ReaderTlFloat({
       moved = true;
       setPos(
         clampReaderTlBall(
-          start.xp + (dx / rect.width) * 100,
-          start.yp + (dy / rect.height) * 100,
+          start.xp + (dx / w) * 100,
+          start.yp + (dy / h) * 100,
         ),
       );
     };
@@ -104,7 +116,8 @@ export default function ReaderTlFloat({
     window.addEventListener("pointercancel", onUp);
   }
 
-  if (!hasContent) return null;
+  // PDF 栏边界量到之前不出球：首帧按整窗算会先落在别的栏上再跳回来
+  if (!hasContent || !bounds) return null;
 
   return (
     <>
@@ -119,10 +132,18 @@ export default function ReaderTlFloat({
         onClick={(e) => {
           if (e.detail === 0) setOpen((v) => !v);
         }}
-        // 位置可贴窗边：存档百分比由 clamp 按球半径（18px = size-9 的一半）兜在窗内
+        // 位置可贴 PDF 栏边：存档百分比按球半径（18px = size-9 的一半）兜在 PDF 栏内
         style={{
-          left: `clamp(18px, ${pos.xp}%, calc(100% - 18px))`,
-          top: `clamp(18px, ${pos.yp}%, calc(100% - 18px))`,
+          left: readerTlBallOffset(
+            pos.xp,
+            bounds?.left ?? 0,
+            (bounds?.left ?? 0) + (bounds?.right ?? 0),
+          ),
+          top: readerTlBallOffset(
+            pos.yp,
+            bounds?.top ?? 0,
+            (bounds?.top ?? 0) + (bounds?.bottom ?? 0),
+          ),
         }}
         className="ccode-float-surface absolute z-30 flex size-9 -translate-x-1/2 -translate-y-1/2 cursor-grab touch-none select-none items-center justify-center rounded-full border border-field text-sm font-medium text-l2 hover:text-l1 active:cursor-grabbing"
       >

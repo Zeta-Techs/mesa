@@ -8,6 +8,8 @@ import {
   reflowBlockText,
   saveReaderTlCard,
   type TlHistoryEntry,
+  readerTlBallOffset,
+  type ReaderPdfBounds,
 } from "../reader";
 import { FoldMark } from "./PageFrame";
 
@@ -74,9 +76,9 @@ function ReaderTranslatePanel({
   /** 悬浮档锚点（悬浮球在 PDF 栏内的百分比坐标，球心）：传入即悬浮形态——卡在球旁
    *  展开（球在右半区贴球左侧展开、左半区贴右侧），宽 ≤26rem、高 60% 封顶贴边钳制 */
   floatAnchor?: { xp: number; yp: number };
-  /** 悬浮卡的横向活动范围：PDF 栏离窗口左/右边的距离（px）。卡只在 PDF 栏里展开，
-   *  不盖笔记栏和对话栏（球仍可拖到整窗任何位置）；不传 = 整窗 */
-  floatBounds?: { left: number; right: number };
+  /** 悬浮卡的活动范围：PDF 栏离覆盖层四边的距离（px）。球和卡都只在 PDF 栏里，
+   *  不盖笔记栏和对话栏；不传 = 整窗 */
+  floatBounds?: ReaderPdfBounds;
   /** 表头「钉住/回栏」；不传则不出现该钮（未接线的占位用法） */
   onTogglePlacement?: () => void;
   /** 悬浮档的 ×：收回球（由球组件接管）；不传则 × 走原位档的「一行动作条」退场 */
@@ -271,24 +273,32 @@ function ReaderTranslatePanel({
   // 未钳制百分比锚位压住球（默认 xp=100 实测压 14px）。卡顶/卡高的 min() 用同一份
   // 活钳高度：窗口变小后存档高被渲染压缩，卡顶不再按裸存档值算出负数探出窗顶
   const fixedH = !floating && heightPct != null && showBody && !collapsed;
-  // 球心距某侧窗边的钳制距离（与球渲染同款）：dist = clamp(18px, pct%, 100%-18px)
-  const ballDist = (pct: number) =>
-    `clamp(18px, ${pct}%, calc(100% - 18px))`;
+  // 球心距某侧覆盖层边的距离（与球渲染同一份 readerTlBallOffset：球在 PDF 栏里）
+  const bL = floatBounds?.left ?? 0;
+  const bR = floatBounds?.right ?? 0;
+  const bT = floatBounds?.top ?? 0;
+  const bB = floatBounds?.bottom ?? 0;
   // 锚定边：贴球那一侧（球距 + 22px），且不越过 PDF 栏边（floatBounds）；
   // 宽度 = 锚定边到 PDF 栏另一侧边的可用空间（各留 8px）
   const growLeft = floating && floatAnchor.xp > 50;
-  const nearInset = floatBounds ? (growLeft ? floatBounds.right : floatBounds.left) + 8 : 0;
-  const farInset = floatBounds ? (growLeft ? floatBounds.left : floatBounds.right) + 8 : 8;
+  const nearInset = floatBounds ? (growLeft ? bR : bL) + 8 : 0;
+  const farInset = floatBounds ? (growLeft ? bL : bR) + 8 : 8;
   const edge = floating
-    ? `max(calc(${ballDist(growLeft ? 100 - floatAnchor.xp : floatAnchor.xp)} + 22px), ${nearInset}px)`
+    ? `max(calc(${readerTlBallOffset(
+        growLeft ? 100 - floatAnchor.xp : floatAnchor.xp,
+        growLeft ? bR : bL,
+        bL + bR,
+      )} + 22px), ${nearInset}px)`
     : "0px";
+  const ballTop = floating ? readerTlBallOffset(floatAnchor.yp, bT, bT + bB) : "0px";
   const anchorStyle = floating
     ? {
         left: growLeft ? undefined : edge,
         right: growLeft ? edge : undefined,
+        // 卡顶跟球心齐，底下放不下就往上收，但不越过 PDF 栏顶
         top: cardSize
-          ? `min(${floatAnchor.yp}%, calc(100% - min(${cardSize.h}px, calc(100% - 16px)) - 8px))`
-          : `min(${floatAnchor.yp}%, calc(100% - 60% - 8px))`,
+          ? `max(${bT + 8}px, min(${ballTop}, calc(100% - ${bB}px - min(${cardSize.h}px, calc(100% - 16px)) - 8px)))`
+          : `max(${bT + 8}px, min(${ballTop}, calc(100% - ${bB}px - 60% - 8px)))`,
         width: cardSize
           ? `min(${cardSize.w}px, calc(100% - 16px), calc(100% - ${edge} - ${farInset}px))`
           : `min(26rem, calc(100% - 44px), calc(100% - ${edge} - ${farInset}px))`,

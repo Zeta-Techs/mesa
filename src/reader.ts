@@ -223,6 +223,22 @@ export function clampReaderTlBall(
   return { xp: c(xp), yp: c(yp) };
 }
 
+/** 悬浮球与 PDF 栏的边距（px，相对覆盖层根）：球和卡都只在 PDF 栏里 */
+export interface ReaderPdfBounds {
+  left: number;
+  right: number;
+  top?: number;
+  bottom?: number;
+}
+
+/** 球心离某一侧的距离（CSS 长度，挂覆盖层根的 left/right/top 用）：
+ *  near = 这一侧栏外的距离，span = 两侧栏外距离之和；pct 是球在 PDF 栏里的百分比，
+ *  按球半径 18px 兜在栏内（2026-10-23 用户：球脱出了 PDF，跑到右栏上面）。
+ *  球的渲染与译文卡的锚定共用这一份，二者不会错开 */
+export function readerTlBallOffset(pct: number, near: number, span: number): string {
+  return `calc(${near}px + clamp(18px, calc((100% - ${span}px) * ${pct / 100}), calc(100% - ${span}px - 18px)))`;
+}
+
 /** 读悬浮球位置记忆（坏值/缺省回落右缘中部） */
 export function loadReaderTlBall(): { xp: number; yp: number } {
   try {

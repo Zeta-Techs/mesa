@@ -49,6 +49,7 @@ import {
   saveTlHistory,
   translationSavedToast,
   upsertTlEntry,
+  type ReaderPdfBounds,
   type GlossaryEntry,
   type ReaderTranslateResult,
   type TlHistoryEntry,
@@ -565,13 +566,11 @@ export default function ReaderOverlay({
    *  OR 右栏收起/让位（兜底：终端栏收着时译文有地方看，展开即回原位，无需提前钉） */
   const [tlPinned, setTlPinned] = useState(() => loadReaderTlPinned());
   const tlFloat = tlPinned || !mountRight || !rightOpen;
-  /** 悬浮译文卡只在 PDF 栏里展开（不盖笔记栏/对话栏）：量 PDF 栏离覆盖层左右边的距离。
+  /** 悬浮球与译文卡只在 PDF 栏里（不盖笔记栏/对话栏/顶栏）：量 PDF 栏离覆盖层四边的距离。
    *  栏宽随收起滑动、分隔条拖拽变化，RO 逐帧报、按帧合并；只在悬浮档量 */
   const rootRef = useRef<HTMLDivElement>(null);
   const pdfColRef = useRef<HTMLDivElement>(null);
-  const [pdfBounds, setPdfBounds] = useState<{ left: number; right: number } | undefined>(
-    undefined,
-  );
+  const [pdfBounds, setPdfBounds] = useState<ReaderPdfBounds | undefined>(undefined);
   useEffect(() => {
     const col = pdfColRef.current;
     const root = rootRef.current;
@@ -585,9 +584,17 @@ export default function ReaderOverlay({
         const next = {
           left: Math.max(0, Math.round(c.left - r.left)),
           right: Math.max(0, Math.round(r.right - c.right)),
+          top: Math.max(0, Math.round(c.top - r.top)),
+          bottom: Math.max(0, Math.round(r.bottom - c.bottom)),
         };
         setPdfBounds((prev) =>
-          prev && prev.left === next.left && prev.right === next.right ? prev : next,
+          prev &&
+          prev.left === next.left &&
+          prev.right === next.right &&
+          prev.top === next.top &&
+          prev.bottom === next.bottom
+            ? prev
+            : next,
         );
       });
     };
@@ -1019,7 +1026,8 @@ export default function ReaderOverlay({
     onSaveEntry: (e: TlHistoryEntry) => void saveTlEntry(e),
     onHint: showToast,
     canAsk: Boolean(hasAgentTab),
-    onAsk: (entry: TlHistoryEntry) => {
+    // 抽查核对档没有对话栏：「问这段」不出，免得挂一颗永远点不了的灰钮
+    onAsk: spotMode ? undefined : (entry: TlHistoryEntry) => {
       const pairs = parseBilingual(entry.translated);
       const text = reflowBlockText(
         pairs ? plainFromBilingual(pairs) : entry.translated,
