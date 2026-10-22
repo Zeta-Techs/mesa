@@ -7,7 +7,7 @@
  * 刚落盘的一段思考）> 「思考中」。旁路没接上的家只走会话文件这一档，慢几秒但说法一样。
  */
 import type { ChatMessageDto } from "./types.ts";
-import { groupConversationSegments, turnPlan, type ProcessItem } from "./conversation-tools.ts";
+import { groupConversationSegments, sessionPlan, turnPlan, type ProcessItem } from "./conversation-tools.ts";
 import { toolActivities } from "./tool-activity.ts";
 
 /** 旁路快照里正在跑的工具（ChatChannelSnapshot.activity 的子集） */
@@ -100,8 +100,12 @@ function liveTurn(
   const seg = segs[segs.length - 1];
   if (!seg || seg.kind !== "turn" || !seg.live) return empty;
   const tool = lastTool(seg.items);
+  // 这一轮没碰计划时用整段对话的（Claude Code 的 Task 清单跨轮共用，终端转圈行一直显示它）
   const plan = turnPlan(seg.items);
-  const doing = plan?.find((p) => p.status === "in_progress") ?? null;
+  const doing =
+    plan?.find((p) => p.status === "in_progress") ??
+    (plan ? null : sessionPlan(messages)?.find((p) => p.status === "in_progress")) ??
+    null;
   const last = seg.items[seg.items.length - 1];
   return {
     pendingVisible: Boolean(tool && tool.result === null),
