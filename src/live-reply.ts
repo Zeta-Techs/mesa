@@ -44,6 +44,11 @@ interface Layout {
    * 下一行直接接回复中段，2026-10-19 抓屏）。第一行的回显就不一定是这一轮的开头
    */
   pinnedEcho?: boolean;
+  /**
+   * 回显下面（隔着空行）紧跟这一行 = 回复开头已经卷上去了，回显是钉在屏顶的提问（Grok 1.0：长过一屏后提问钉住、
+   * 下面一行居中的「▲」，2026-10-22 抓屏）。这时屏上只是一截，要接到上一次后面
+   */
+  scrolledHint?: RegExp;
 }
 
 // 横线、半格边框，以及方框的上下边（画到一半的输入框「╭────」也算）
@@ -110,15 +115,19 @@ const LAYOUTS: Record<string, Layout> = {
     indent: 5,
   },
   gemini: {
-    // 输入框与回显都包在 ▄▄▄ / ▀▀▀ 半格边框里：最后一个才是输入框
+    // 输入框与回显都包在 ▄▄▄ / ▀▀▀ 半格边框里：最后一个才是输入框。输入框行首按状态换字：平时「>」、完全访问（YOLO）「*」、
+    // shell 模式「!」、翻历史「(r:)」（Gemini 0.65 InputPrompt）；原先只认「>」，完全访问时整轮认不出输入框、预览不出（2026-10-22 抓屏）
     boxTop: (rows) =>
-      lastBox(rows, (i) => (i > 0 && /^\s?>\s/.test(rows[i]) && /^▄{8,}$/.test(rows[i - 1].trim()) ? i - 1 : -1)),
+      lastBox(rows, (i) =>
+        i > 0 && /^\s?(?:[>*!]|\(r:\))\s/.test(rows[i]) && /^▄{8,}$/.test(rows[i - 1].trim()) ? i - 1 : -1,
+      ),
     echo: /^\s?>\s+\S/,
     lead: /^✦\s/,
     tool: /^\s*[╭│╰]/,
     // 输入框上方的提示与状态行。0.65 起按权限档变字（「auto-accept edits  Shift+Tab to manual」），MCP 后面还跟技能数
-    // （「1 MCP server · 20 skills」）；粘贴多行后回显下面多一行「Press Ctrl+O to expand pasted text」（2026-10-21 用户截图）
-    skip: /esc to cancel|Shift\+Tab to |auto-accept edits|\? for shortcuts|\bMCP servers?\b|\b\d+ skills?\s*$|Press Ctrl\+O to expand|^\s*[╭│╰]/,
+    // （「1 MCP server · 20 skills」）；粘贴多行后回显下面多一行「Press Ctrl+O to expand pasted text」（2026-10-21 用户截图）；
+    // 完全访问时是「YOLO Ctrl+Y」，没有 MCP 时这一行只有它（2026-10-22）
+    skip: /esc to cancel|Shift\+Tab to |auto-accept edits|^\s*YOLO\b.*Ctrl\+Y|\? for shortcuts|\bMCP servers?\b|\b\d+ skills?\s*$|Press Ctrl\+O to expand|^\s*[╭│╰]/,
     // 段落续行缩进 2、列表缩进 3
     indent: 3,
   },
@@ -133,6 +142,7 @@ const LAYOUTS: Record<string, Layout> = {
     skip: /Responding…|^\s*Worked for\b|^\s*[◇○]\s+\S+\s+\[Copy\]$|^\s*[▲▼]$/,
     indent: 5,
     tail: /\s{2,}\d{1,2}:\d{2}\s?[AP]M$/,
+    scrolledHint: /^\s*▲$/,
   },
   kimi: {
     boxTop: (rows) =>
@@ -233,7 +243,8 @@ export function extractLiveReply(lines: readonly string[], agentId: string): Liv
     return pinned ? { ...pinned, ifRealEcho: real } : real;
   }
   if (echoAt >= 0) {
-    const read = readReply(layout, region, echoStart(layout, region, echoAt + 1), true);
+    const start = echoStart(layout, region, echoAt + 1);
+    const read = readReply(layout, region, start, !scrolledBelow(layout, region, start));
     return read ? { ...read, echo: region[echoAt] } : null;
   }
   if (layout.lead) {
@@ -279,18 +290,55 @@ function realEchoShape(layout: Layout, region: readonly string[]): boolean {
   return i >= region.length || lead.test(region[i]);
 }
 
+/** 回显（及其续行）下面隔着空行是不是「上面还有」的滚动提示：是 = 回显钉在屏顶，回复开头卷上去了 */
+function scrolledBelow(layout: Layout, region: readonly string[], start: number): boolean {
+  if (!layout.scrolledHint) return false;
+  let i = start;
+  while (i < region.length && !region[i].trim()) i++;
+  return i < region.length && layout.scrolledHint.test(region[i]);
+}
+
+/**
+ * 表格（直角框 ┌ ├ └、行首 │）占的行。Gemini 的工具框是圆角 ╭ ╰、行首同样是 │，原先表格行一律当工具框跳过，
+ * 表格在预览里只剩边框（2026-10-22 抓屏）。连续一段行首是 │ 或直角框线（┌── ├── └──）的行里有框线才算表格——工具框的行
+ * 全以 │ 开头；表格上沿滚出屏时下面的 ├ / └ 照样认得出。框角后面必须紧跟横线：Codex 工具输出的「└ total 8」不算
+ */
+function tableRows(region: readonly string[]): boolean[] {
+  const out = region.map(() => false);
+  const rule = (l: string) => /^[┌├└][─┬┼┴]/.test(l.trimStart());
+  const edge = (l: string) => rule(l) || /^│/.test(l.trimStart());
+  let i = 0;
+  while (i < region.length) {
+    if (!edge(region[i])) {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j < region.length && edge(region[j])) j++;
+    if (region.slice(i, j).some(rule)) out.fill(true, i, j);
+    i = j;
+  }
+  return out;
+}
+
 function readReply(layout: Layout, region: readonly string[], start: number, anchored: boolean): LiveReplyRead | null {
   const dedent = (raw: string) => {
     let n = 0;
     while (n < layout.indent && raw[n] === " ") n++;
     return raw.slice(n);
   };
+  const table = tableRows(region);
   const out: string[] = [];
   let inTool = false;
   let inWrapSkip = false;
-  for (const raw0 of region.slice(start)) {
+  for (let at = start; at < region.length; at++) {
+    const raw0 = region[at];
     const raw = layout.tail ? raw0.replace(layout.tail, "") : raw0;
     const t = raw.trim();
+    if (table[at]) {
+      if (!inTool) out.push(dedent(raw));
+      continue;
+    }
     if (BORDER.test(t) || SPINNER.test(raw)) continue;
     if (layout.tool.test(raw)) {
       // 有行首符号的几家：工具块一直到下一段正文；Grok 没有行首符号，只跳这一行
@@ -333,7 +381,18 @@ function readReply(layout: Layout, region: readonly string[], start: number, anc
  * 找不到时：屏上这一截大半上一次已经有了 = 重画没对上，这次不接；大半是新的 = 两次读之间滚过了一整屏，直接接上。
  */
 export function mergeLiveReply(prev: readonly string[] | null, read: LiveReplyRead): string[] | null {
-  if (read.anchored) return read.lines;
+  if (read.anchored) {
+    // 看得见开头时以整段为准；但「开头」其实缺了前几行时（Grok 卷动的过渡帧：回显还钉在屏顶、回复头一两行已被裁掉，
+    // 「▲」还没画出来，2026-10-22 抓屏），上一次的开头留着，不然预览从中段开始
+    if (prev?.length) {
+      const p = keyedLines(prev);
+      const n = keyedLines(read.lines);
+      const known = new Set(n.map((x) => x.key));
+      const at = n.length && p.length && !known.has(p[0].key) ? alignTop(p, n) : -1;
+      if (at > 0) return spliceAt(prev, p[at].at, read.lines, n[0].at);
+    }
+    return read.lines;
+  }
   const real = read.ifRealEcho ?? null;
   // 没见过这一轮的开头（回显 / ⏺），屏上这一截不知道是不是这一轮的：不预览
   if (!prev?.length) return real?.lines ?? null;
@@ -341,33 +400,8 @@ export function mergeLiveReply(prev: readonly string[] | null, read: LiveReplyRe
   const p = keyedLines(prev);
   const n = keyedLines(next);
   if (!n.length) return prev.slice();
-  let best = -1;
-  let bestRun = 0;
-  for (let s = 0; s < p.length; s++) {
-    let r = 0;
-    while (s + r < p.length && r < n.length) {
-      const a = p[s + r].key;
-      const b = n[r].key;
-      // 上一次读到的最后一行可能只写了半截
-      if (a === b || (s + r === p.length - 1 && b.startsWith(a))) r++;
-      else break;
-    }
-    // 只对上一行的，要一直对到上一次的结尾才算（普通的「上一次结尾 = 屏顶」）
-    if (r < 2 && !(r === 1 && s + r === p.length)) continue;
-    // 一样长取靠后的：同样几行在回复里出现两次时，屏顶是新的那处
-    if (r >= bestRun) {
-      best = s;
-      bestRun = r;
-    }
-  }
-  if (best >= 0) {
-    const head = prev.slice(0, p[best].at);
-    if (n[0].at === 0) return [...head, ...next];
-    // 屏顶先是表格上边框一类没字的行：用屏上的，上一次在那个位置的同类行去掉（空行留着，是段落之间的间隔）
-    let end = head.length;
-    while (end > 0 && !norm(head[end - 1]) && head[end - 1].trim()) end--;
-    return [...head.slice(0, end), ...next];
-  }
+  const at = alignTop(p, n);
+  if (at >= 0) return spliceAt(prev, p[at].at, next, n[0].at);
   // 屏顶的回显其实是真回显（多行提问刚好滚到第一行）：屏上就是整段，开头应与上一次相同
   if (real && real.lines[0] === prev[0]) return real.lines;
   const known = new Set(p.map((x) => x.key));
@@ -375,9 +409,52 @@ export function mergeLiveReply(prev: readonly string[] | null, read: LiveReplyRe
   return [...prev, ...next];
 }
 
+/**
+ * 屏顶第一行有字的行在上一次里的位置（p 的下标），找不到为 -1：从那儿起连续对上两行以上，或一直对到上一次的结尾
+ * （普通的「上一次结尾 = 屏顶」，末行可以只写了半截）。一样长取靠后的：同样几行在回复里出现两次时，屏顶是新的那处
+ */
+function alignTop(p: readonly Keyed[], n: readonly Keyed[]): number {
+  let best = -1;
+  let bestRun = 0;
+  for (let s = 0; s < p.length; s++) {
+    let r = 0;
+    while (s + r < p.length && r < n.length) {
+      const a = p[s + r].key;
+      const b = n[r].key;
+      if (a === b || (s + r === p.length - 1 && b.startsWith(a))) r++;
+      else break;
+    }
+    if (r < 2 && !(r === 1 && s + r === p.length)) continue;
+    if (r >= bestRun) {
+      best = s;
+      bestRun = r;
+    }
+  }
+  return best;
+}
+
+/**
+ * 上一次的前 cut 行 + 屏上这一截。屏顶先是空行 / 表格边框这类没字的行（next 的前 lead 行）时，上一次在那个位置的同类行
+ * 换成屏上的，一行对一行（都空或都不空才换），免得表格下沿、段落间的空行接出两份
+ */
+function spliceAt(prev: readonly string[], cut: number, next: readonly string[], lead: number): string[] {
+  let end = cut;
+  for (let k = lead - 1; k >= 0 && end > 0; k--) {
+    const h = prev[end - 1];
+    if (norm(h) || !h.trim() !== !next[k].trim()) break;
+    end--;
+  }
+  return [...prev.slice(0, end), ...next];
+}
+
+interface Keyed {
+  at: number;
+  key: string;
+}
+
 /** 有字的行（行号 + 比对键）；空行、表格边框、光有列表符号的行不参与对齐 */
-function keyedLines(lines: readonly string[]): { at: number; key: string }[] {
-  const out: { at: number; key: string }[] = [];
+function keyedLines(lines: readonly string[]): Keyed[] {
+  const out: Keyed[] = [];
   lines.forEach((l, at) => {
     const key = norm(l);
     if (key) out.push({ at, key });

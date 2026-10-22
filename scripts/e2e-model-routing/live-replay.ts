@@ -31,6 +31,7 @@ const [cols, rows] = cap.size;
 const term = new Terminal({ cols, rows, allowProposedApi: true, scrollback: 5000 });
 const write = (b: Uint8Array) => new Promise<void>((done) => term.write(b, () => done()));
 let prev: string[] | null = null;
+let echo: string | null = null;
 let reads = 0;
 let halfFrames = 0;
 for (const c of chunks) {
@@ -45,7 +46,13 @@ for (const c of chunks) {
   const read = lr.extractLiveReply(lines, cap.agent);
   if (!read) continue;
   reads++;
-  prev = lr.mergeLiveReply(prev, read) ?? prev;
+  // 同 scanLiveReplyNow：回显换了是新的一轮，不拿上一轮的开头去补
+  let base = prev;
+  if (read.echo !== undefined) {
+    if (read.echo !== echo) base = null;
+    echo = read.echo;
+  }
+  prev = lr.mergeLiveReply(base, read) ?? prev;
 }
 
 const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");

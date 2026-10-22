@@ -2312,6 +2312,8 @@ const TerminalView = memo(function TerminalView({
   const sendEchoRef = useRef<{ before: string | null; sent: string } | null>(null);
   // 连续因「一帧还没画完」改期的次数（封顶后照读，免得 CLI 忘了收尾时预览永远不动）
   const liveSyncWaitsRef = useRef(0);
+  // 实时预览攒的是哪一条回显后面的回复
+  const liveEchoRef = useRef<string | null>(null);
   function scanLiveReplySoon() {
     if (!liveReplySupported(launchAgentRef.current)) return;
     // 旁路直接送实时文字的家（Qwen / OpenCode / Codex）不再读屏
@@ -2345,7 +2347,7 @@ const TerminalView = memo(function TerminalView({
         setLiveTokens(tokens);
       }
     }
-    const prev = liveReplyRef.current;
+    const shown = liveReplyRef.current;
     // 一时读不出（菜单挂着、重绘半帧）保留上一次的，免得预览闪没；新一轮发送时清
     if (!read) return;
     // 刚发的这句 CLI 还没画出来：屏上是上一轮的回显和回复，不当这一轮的预览（Qwen 先把上一段回复又显示一遍）
@@ -2354,9 +2356,15 @@ const TerminalView = memo(function TerminalView({
       if (staleEcho(read, sent.before, sent.sent)) return;
       sendEchoRef.current = null;
     }
+    // 回显换了 = 新的一轮（在终端里直接发的话不经聊天发送，不会清掉上一轮的预览）：不拿上一轮的开头去补这一轮
+    let prev = shown;
+    if (read.echo !== undefined) {
+      if (read.echo !== liveEchoRef.current) prev = null;
+      liveEchoRef.current = read.echo;
+    }
     const next = mergeLiveReply(prev, read);
     if (!next) return;
-    if ((prev?.join("\n") ?? null) === (next?.join("\n") ?? null)) return;
+    if ((shown?.join("\n") ?? null) === next.join("\n")) return;
     liveReplyRef.current = next;
     setLiveReply(next);
   }

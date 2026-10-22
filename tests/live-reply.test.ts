@@ -648,6 +648,83 @@ test("Gemini 0.65 输入框上方的提示行（随权限档变字、带技能�
   assert.deepEqual(extractLiveReply(screen, "gemini")?.lines, ["第一步完成。"]);
 });
 
+// 2026-10-22 长回复回放（chat-capture.py CAP_RAW=1 + live-replay.ts，Gemini 0.65 / Grok 1.0.62，100×32）
+const GEMINI_BOX = (prompt: string) => ["▄".repeat(60), ` ${prompt}   Type your message or @path/to/file`, "▀".repeat(60)];
+const GEMINI_TABLE = [
+  "  ┌──────┬──────────┬────────┐",
+  "  │ 项目 │ 内容     │ 状态   │",
+  "  ├──────┼──────────┼────────┤",
+  "  │ 目标 │ 明确结果 │ 进行中 │",
+  "  └──────┴──────────┴────────┘",
+];
+
+test("Gemini：完全访问（YOLO）输入框行首是「*」、shell 模式是「!」，照样认得出输入框", () => {
+  const reply = ["▄".repeat(60), " > TRIGGER_LONG 写长一点", "▀".repeat(60), "✦ 一、关于观察与思考", "", "  日常生活中的许多变化。"];
+  const tail = ["  Thinking... (esc to cancel, 8s)                ? for shortcuts", "─".repeat(60), " YOLO Ctrl+Y"];
+  for (const prompt of ["*", "!", ">", "(r:)"]) {
+    const screen = [...reply, ...tail, ...GEMINI_BOX(prompt)];
+    assert.equal(terminalHasInputBox(screen, "gemini"), true, prompt);
+    assert.deepEqual(extractLiveReply(screen, "gemini")?.lines, ["一、关于观察与思考", "", "日常生活中的许多变化。"], prompt);
+  }
+});
+
+test("Gemini：回复里的表格（直角框）进预览，工具框（圆角）照旧不进", () => {
+  const screen = [
+    "▄".repeat(60),
+    " > 列个表再跑一下",
+    "▀".repeat(60),
+    "✦ 结果如下：",
+    "",
+    ...GEMINI_TABLE,
+    "",
+    "  表格之后的一句。",
+    "╭──────────────────────────────╮",
+    "│ ✓  Shell echo mesa           │",
+    "│ ┌──┐ 命令输出里的框也不算     │",
+    "╰──────────────────────────────╯",
+    "✦ done",
+    ...GEMINI_BOX("*"),
+  ];
+  assert.deepEqual(extractLiveReply(screen, "gemini")?.lines, [
+    "结果如下：",
+    "",
+    ...GEMINI_TABLE.map((l) => l.slice(2)),
+    "",
+    "表格之后的一句。",
+    "done",
+  ]);
+  // 表格上沿卷出屏：下面的 ├ / └ 照样认得出是表格
+  const scrolled = [...GEMINI_TABLE.slice(1).map((l) => l), "", "  表格之后的一句。", ...GEMINI_BOX(">")];
+  assert.deepEqual(extractLiveReply(scrolled, "gemini")?.lines, [...GEMINI_TABLE.slice(1).map((l) => l.slice(2)), "", "表格之后的一句。"]);
+  // Codex 工具输出的「└ total 8」不是表格
+  assert.deepEqual(extractLiveReply(["› 看看", "• Ran ls", "  └ total 8", "• 好了。", "› Ask Codex to do anything"], "codex")?.lines, ["好了。"]);
+});
+
+test("Grok：提问钉在屏顶、下面是「▲」时屏上只是一截，接到上一次后面；裁掉开头的过渡帧不丢开头", () => {
+  assert.equal(extractLiveReply(GROK_STICKY, "grok")?.anchored, false);
+  const echo = "     ❯ TRIGGER_LONG 写长一点                                    10:18 AM";
+  const body = (lines: string[]) => lines.map((l) => (l ? `     ${l}` : ""));
+  const first = extractLiveReply([echo, "", "", ...body(["一、关于观察与思考", "", "第一行。", "第二行。", "第三行。"]), ...GROK_BOX], "grok")!;
+  assert.equal(first.anchored, true);
+  // 卷动的过渡帧：回显还在、头两行已被裁掉，「▲」还没画——看着像「看得见开头」，开头要留着
+  const clipped = extractLiveReply([echo, "", "", "", "", ...body(["第一行。", "第二行。", "第三行。", "第四行。"]), ...GROK_BOX], "grok")!;
+  assert.equal(clipped.anchored, true);
+  const merged = mergeLiveReply(first.lines, clipped)!;
+  assert.deepEqual(merged, ["一、关于观察与思考", "", "第一行。", "第二行。", "第三行。", "第四行。"]);
+  // 画出「▲」之后：只是一截，照样接上
+  const pinned = extractLiveReply([echo, "", "                    ▲", ...body(["第三行。", "第四行。", "第五行。"]), ...GROK_BOX], "grok")!;
+  assert.equal(pinned.anchored, false);
+  assert.deepEqual(mergeLiveReply(merged, pinned), [...merged, "第五行。"]);
+  // 看得见开头、开头又和上一次一样：以屏上为准（不受上一次影响）
+  assert.deepEqual(mergeLiveReply(["一、关于观察与思考", "旧的第二行"], first), first.lines);
+});
+
+test("长回复：屏顶正好是表格下沿和空行时，下沿和空行不接出两份", () => {
+  const prev = ["│ 复盘 │ 待开始 │", "└──────┴────────┘", "", "结构化表达能够让复杂的信息更容易被理解。"];
+  const screen = ["└──────┴────────┘", "", "结构化表达能够让复杂的信息更容易被理解。", "标题适合标记主题。"];
+  assert.deepEqual(mergeLiveReply(prev, { lines: screen, anchored: false }), [prev[0], ...screen]);
+});
+
 test("staleEcho：刚发的这句还没画出来时，读到的是上一轮回显后面的回复", () => {
   const before = ["  > 你好", "", "  ◆ 你好！有什么可以帮你？", "─".repeat(60), ">   打字", "─".repeat(60)];
   const read = extractLiveReply(before, "qwen")!;

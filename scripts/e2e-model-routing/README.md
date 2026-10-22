@@ -83,9 +83,10 @@ node --experimental-strip-types scripts/e2e-model-routing/live-replay.ts /tmp/ca
 # 输出 duplicated（比原文多出的行）/ missing（原文有、预览没有的行）；LR=<旧版 live-reply.ts> 换接法对比，SHOW=1 打印预览
 ```
 
-2026-10-22 结论（Claude 2.1.304 / Kimi 2.2 / Gemini 0.65，100×32）：旧接法重复 158 / 1150 / 1123 行，新接法都是 0；逐块读时约四成落在
-同步输出半帧上（Mesa 读屏改为等这一帧画完）。同日看出、另行处理的三处：Gemini 完全访问（YOLO）时输入框是「*」、认不出输入框，
-预览整轮不出；Gemini 的表格行以「│」开头被当成工具框跳过；Grok 长回复把提问钉在屏顶，读成「看得见开头」，预览只剩最后一屏。
+2026-10-22 结论（Claude 2.1.304 / Kimi 2.2 / Gemini 0.65 / Grok 1.0.62，100×32）：旧接法重复 158 / 1150 / 1123 行，新接法都是 0；逐块读时约四成落在
+同步输出半帧上（Mesa 读屏改为等这一帧画完）。同日回放还修了三处：Gemini 完全访问（YOLO）时输入框是「*」、原先认不出，预览整轮不出；
+Gemini 的表格行以「│」开头被当成工具框跳过；Grok 长回复把提问钉在屏顶，原先读成「看得见开头」，预览只剩最后一屏。修完五份抓屏
+（Claude、Gemini 两档、Kimi、Grok）都是重复 0、漏 0。
 
 **Windows（2026-10-20，ConPTY）**：同一脚本走 pywinpty（`pip install --target <目录> pywinpty pyte`，`PYTE_DIR` 与 `PYWINPTY_DIR` 都指向它），
 npm 的 `.cmd` 垫片按 Mesa 同口径直启。在 Git Bash 里跑，路径用 `cygpath -w` 转；Python 要用安装目录下的 `python.exe` 并加 `-X utf8`
