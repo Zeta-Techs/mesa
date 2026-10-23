@@ -1160,13 +1160,205 @@ def iso4_index():
     return index
 
 
+
+# ---------- ISO 4：按 LTWA（ISSN 国际中心的期刊标题词缩写表）给任意刊名算缩写 ----------
+# 同步到文献库时作「另一种写法」（EndNote 缩写 2、Zotero「其他」）：主缩写多是 ACS / CASSI 写法，
+# 选「缩写 2」的样式就要整份都是 ISO 4，所以每本刊都算一份，和主缩写不同才给（2026-10-23 用户拍板「所有刊都做」）。
+# LTWA 不随包：第一次用时从 ISSN 下载，进接口缓存（与 JabRef 缩写表同一处）；脚本旁边有 ltwa.csv 时用它（测试、离线）。
+# 规则取 ISSN Manual 7.1 的常用部分：单词刊名不缩；冠词、连词、介词去掉；分册字母、全大写缩略词、
+# 内含大写的词（ChemCatChem）照写；连字符词逐段缩；括号里的地名限定逐词缩；复数按单数查；
+# 源词不带重音时缩写也不带（LTWA 把 medical 缩成 méd.）；缩写词首字母大写。
+_LTWA_URL = 'https://www.issn.org/wp-content/uploads/2021/07/ltwa_20210702.csv'
+_LTWA_RANK = ('eng', 'mul', 'lat', 'und')
+_ISO4_STOP = frozenset((
+    'a an the of and for in on at to by with from into via & + '
+    'und der die das des dem den für fur fuer zur zum im '
+    'de la le les du et en y e del della dei di da do dos das na no och og i ve'
+).split())
+_ltwa = None
+
+
+def _plain(text):
+    import unicodedata
+    return ''.join(c for c in unicodedata.normalize('NFKD', text) if not unicodedata.combining(c))
+
+
+def _ltwa_key(text):
+    return _plain(text).casefold()
+
+
+def _ltwa_table():
+    """(整词表, 前缀表, 词组表)。下载或读不到时三张空表，调用方不给另一种写法。"""
+    global _ltwa
+    if _ltwa is not None:
+        return _ltwa
+    import csv
+    import io
+    local = Path(__file__).with_name('ltwa.csv')
+    try:
+        text = local.read_text(encoding='utf-8-sig') if local.is_file() else http_text(_LTWA_URL, timeout=60, attempts=2)
+    except Exception:
+        text = ''
+    exact, prefix, phrases = {}, [], []
+    for row in csv.reader(io.StringIO(text.lstrip('﻿')), delimiter=';'):
+        if len(row) < 3 or row[0] == 'WORDS':
+            continue
+        word, abbr, langs = row[0].strip(), row[1].strip(), {x.strip() for x in row[2].split(',')}
+        rank = min((_LTWA_RANK.index(x) for x in langs if x in _LTWA_RANK), default=len(_LTWA_RANK))
+        if not word or word.startswith('-'):
+            continue  # 后缀、词中片段：复合词，不处理
+        if ' ' in word:
+            phrases.append((_ltwa_key(word.rstrip('-')).split(), word.endswith('-'), abbr, rank))
+        elif word.endswith('-'):
+            prefix.append((_ltwa_key(word[:-1]), abbr, rank))
+        else:
+            key = _ltwa_key(word)
+            if key not in exact or rank < exact[key][1]:
+                exact[key] = (abbr, rank)
+    prefix.sort(key=lambda x: (-len(x[0]), x[2]))
+    phrases.sort(key=lambda x: -len(x[0]))
+    _ltwa = (exact, prefix, phrases)
+    return _ltwa
+
+
+def _ltwa_word(word):
+    exact, prefix, _ = _ltwa_table()
+    key = _ltwa_key(word)
+    found = []
+    for k in (key, key[:-1] if key.endswith('s') else '', key[:-2] if key.endswith('es') else ''):
+        if k and k in exact:
+            found.append((exact[k][1], 0, exact[k][0]))
+            break
+    for stem, abbr, rank in prefix:
+        if key.startswith(stem):
+            found.append((rank, 1, abbr))
+            break
+    if not found:
+        return None
+    found.sort()
+    return found[0][2]
+
+
+def _iso4_shape(abbr, source):
+    """n.a. = 不缩；源词不带重音时去掉缩写里的重音；首字母大写"""
+    if abbr == 'n.a.':
+        return source
+    if _plain(source) == source:
+        abbr = _plain(abbr)
+    return abbr[:1].upper() + abbr[1:]
+
+
+def _iso4_word(word):
+    if len(word) == 1 or (word.isupper() and len(word) <= 5) or re.search(r'[a-z][A-Z]', word) or not re.match(r'[^\W\d_]', word):
+        return word
+    parts = []
+    for part in word.split('-'):
+        if not part or len(part) == 1 or (part.isupper() and len(part) <= 5) or re.search(r'[a-z][A-Z]', part):
+            parts.append(part)
+            continue
+        abbr = _ltwa_word(part)
+        parts.append(_iso4_shape(abbr, part) if abbr else part)
+    return '-'.join(parts)
+
+
+def _iso4_phrase(tokens, i):
+    """tokens[i:] 开头能对上 LTWA 词组（United States of America → U. S. A.）就返回 (缩写, 用掉几个词)"""
+    _, _, phrases = _ltwa_table()
+    for seq, is_prefix, abbr, _rank in phrases:
+        span = tokens[i:i + len(seq)]
+        if len(span) != len(seq) or any(s.startswith('(') for s in span):
+            continue
+        keys = [_ltwa_key(s) for s in span]
+        if keys[:-1] == seq[:-1] and (keys[-1] == seq[-1] or (is_prefix and keys[-1].startswith(seq[-1]))):
+            return _iso4_shape(abbr, ' '.join(span)), len(seq)
+    return None, 0
+
+
+def _iso4_qualifier(text):
+    """括号里的地名限定（Amsterdam, Netherlands）：逐段缩，词组优先（United Kingdom → U. K.），不去停用词"""
+    segs = []
+    for seg in text.split(','):
+        words = seg.split()
+        out = []
+        i = 0
+        while i < len(words):
+            abbr, used = _iso4_phrase(words, i)
+            if used:
+                out.append(abbr)
+                i += used
+                continue
+            out.append(_iso4_word(words[i]))
+            i += 1
+        segs.append(' '.join(out))
+    return ', '.join(s for s in segs if s)
+
+
+def iso4_compute(journal):
+    """按 LTWA 算 ISO 4 缩写。LTWA 拿不到或刊名为空返回空。"""
+    # 刊名按原样分词（不先做化学美化：CO2 要当一个词），结果再按导出口径收一遍
+    title = ' '.join(html.unescape(re.sub(r'<[^>]+>', '', str(journal or ''))).replace('&', ' & ').split())
+    # 「: an official journal of …」这类说明性副标题不算刊名（ISSN Manual 7.1 不缩副标题里的机构说明）
+    title = re.sub(r'\s*:\s*(?:an?|the)?\s*official\s+(?:journal|publication)\b.*$', '', title, flags=re.I)
+    if not title or not _ltwa_table()[0]:
+        return ''
+    spans = [(m.group(0), m.end()) for m in re.finditer(r"\([^)]*\)|[^\W\d_][\w'’]*(?:-[\w'’]+)*|\d+[^\W\d_][\w'’]*|\d+", title)]
+    tokens = [tok for tok, _ in spans]
+    words = [tok for tok in tokens if not tok.startswith('(') and not tok.isdigit()]
+    content = [w for w in words if _ltwa_key(w) not in _ISO4_STOP or (len(w) == 1 and w.isupper())]
+    if len(content) <= 1:
+        # 单词刊名不缩，只缩括号里的限定
+        return clean(re.sub(r'\(([^)]*)\)', lambda m: '(' + _iso4_qualifier(m.group(1)) + ')', title))
+    out = []
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok.startswith('('):
+            out.append('(' + _iso4_qualifier(tok[1:-1]) + ')')
+            i += 1
+            continue
+        if tok.isdigit():
+            out.append(tok)
+            i += 1
+            continue
+        # 拉丁短语整段照写（7.1.7：in vitro、in vivo 里的介词不去）
+        pair = ' '.join(tokens[i:i + 2]).casefold()
+        if pair in ('in vitro', 'in vivo', 'in situ', 'in silico'):
+            out.append(' '.join(tokens[i:i + 2]))
+            i += 2
+            continue
+        abbr, used = _iso4_phrase(tokens, i)
+        if used:
+            out.append(abbr)
+            i += used
+            continue
+        if len(tok) == 1 and tok.isupper() and i > 0:
+            # 分册字母（Chem. A、Catal. B）照写；后面紧跟别的词的 A 是冠词（Chemistry - A European Journal）
+            after = title[spans[i][1]:].lstrip()
+            if not (tok == 'A' and after and after[0].isalpha()):
+                out.append(tok)
+        elif _ltwa_key(tok) not in _ISO4_STOP:
+            out.append(_iso4_word(tok))
+        i += 1
+    return clean(' '.join(out))
+
+
+def _abbr_key(text):
+    return re.sub(r'[\s.,:;\-]+', ' ', clean(text)).strip().casefold()
+
+
 def journal_abbreviations(record):
-    """(主缩写, 另一种写法)。主缩写：引文库里有就用，没有查 JabRef 表 + Mesa 兜底，再没有用全称。
-    另一种写法只在 Mesa 表第三列有、且和主缩写不同时给。"""
+    """(主缩写, ISO 4 写法)。主缩写：引文库里有就用，没有查 JabRef 表 + Mesa 兜底，再没有用全称。
+    ISO 4 写法：Mesa 表第三列有就用（人核过的），没有按 LTWA 算；和主缩写只差标点、大小写的不给。"""
     journal = record.get('journal') or ''
     primary = tidy_abbreviation(record.get('journalAbbreviation') or iso4_abbreviation(journal) or journal)
     alt = _MESA_ALT.get(_journal_key(journal), '')
-    if alt and alt.casefold() == primary.casefold():
+    # 只给拉丁字母刊名算（中文刊名 LTWA 管不着，也省得为它下载词表）
+    if not alt and re.search(r'[A-Za-z]{2}', journal):
+        try:
+            alt = iso4_compute(journal)
+        except Exception:
+            alt = ''
+    if not alt or _abbr_key(alt) == _abbr_key(primary) or _abbr_key(alt) == _abbr_key(journal):
         alt = ''
     return primary, alt
 

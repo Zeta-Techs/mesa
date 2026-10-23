@@ -4420,7 +4420,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           </button>
         </Row>
         <div className="space-y-1 pt-3 text-micro leading-4 text-l4">
-          <p title="API 密钥只存本机（仅本人可读的文件）；各 CLI 的会话目录只读。会联网的只有：检查更新（向 Mesa 的更新源问版本：发布页或官方镜像）、文献同步 / 下载 / 远查（把 DOI 或刊名发给 JabRef、NLM、ShowJCR、Unpaywall、Crossref、OpenAlex）、你主动发送的反馈">
+          <p title="API 密钥只存本机（仅本人可读的文件）；各 CLI 的会话目录只读。会联网的只有：检查更新（向 Mesa 的更新源问版本：发布页或官方镜像）、文献同步 / 下载 / 远查（把 DOI 或刊名发给 JabRef、NLM、ShowJCR、Unpaywall、Crossref、OpenAlex；从 ISSN 下载期刊词缩写表）、你主动发送的反馈">
             隐私：密钥只存本机；除检查更新、文献检索和你发出的反馈外，不上传任何数据。
           </p>
           <p>

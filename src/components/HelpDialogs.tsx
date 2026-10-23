@@ -696,7 +696,7 @@ export function HelpAboutDialog({
 
           <p
             className="mt-3 flex items-start gap-1.5 text-left text-micro leading-4 text-l3"
-            title="API 密钥只存本机（仅本人可读的文件）；各 CLI 的会话目录只读。会联网的只有：检查更新（向 Mesa 的更新源问版本：发布页或官方镜像）、文献同步 / 下载 / 远查（把 DOI 或刊名发给 JabRef、NLM、ShowJCR、Unpaywall、Crossref、OpenAlex）、你主动发送的反馈"
+            title="API 密钥只存本机（仅本人可读的文件）；各 CLI 的会话目录只读。会联网的只有：检查更新（向 Mesa 的更新源问版本：发布页或官方镜像）、文献同步 / 下载 / 远查（把 DOI 或刊名发给 JabRef、NLM、ShowJCR、Unpaywall、Crossref、OpenAlex；从 ISSN 下载期刊词缩写表）、你主动发送的反馈"
           >
             <ShieldCheck size={12} strokeWidth={1.8} aria-hidden="true" className="mt-0.5 shrink-0" />
             密钥只存本机；除检查更新、文献检索和你发出的反馈外，不上传任何数据。

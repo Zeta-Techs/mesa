@@ -71,6 +71,8 @@ function syncDir(withZotero = false): string {
   const dir = mkdtempSync(join(tmpdir(), "mesa-cite-format-"));
   copyFileSync(bridgeSrc, join(dir, "bridge.py"));
   copyFileSync(resolve("src-tauri/resources/journal-abbreviations.csv"), join(dir, "journal-abbreviations.csv"));
+  // LTWA 摘录（真表 2021-07-02 版里原样摘的条目），测试不联网下载
+  copyFileSync(resolve("tests/fixtures/ltwa-mini.csv"), join(dir, "ltwa.csv"));
   if (withZotero) {
     copyFileSync(join(scripts, "endnote-bridge/scripts/library_match.py"), join(dir, "library_match.py"));
     copyFileSync(join(scripts, "zotero-sync/scripts/zotero_rtf.py"), join(dir, "zotero_rtf.py"));
@@ -148,4 +150,40 @@ test("同步前补字段：字段已齐的不联网，缺的才按 DOI 问", () 
   const r = spawnSync(python, ["-c", code, bridgeSrc], { encoding: "utf8", timeout: 30_000 });
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(JSON.parse(r.stdout), { asked: ["10.1/thin"], thin: "A" });
+});
+
+// 2026-10-23 用户拍板「所有刊都做」：每本刊按 LTWA 算 ISO 4，和主缩写不同就作第二种写法
+test("ISO 4：按 LTWA 算缩写——单词刊名不缩、冠词介词去掉、分册字母照写、复数按单数查、源词无重音缩写也无重音、括号地名词组优先", () => {
+  const dir = syncDir();
+  try {
+    const code = [
+      "import json, sys, importlib.util",
+      "spec = importlib.util.spec_from_file_location('b', sys.argv[1])",
+      "b = importlib.util.module_from_spec(spec); spec.loader.exec_module(b)",
+      "sys.stdin.reconfigure(encoding='utf-8'); sys.stdout.reconfigure(encoding='utf-8')",
+      "print(json.dumps([b.iso4_compute(x) for x in json.loads(sys.stdin.read())], ensure_ascii=False))",
+    ].join("\n");
+    const cases: [string, string][] = [
+      ["Applied Catalysis B: Environmental", "Appl. Catal. B Environ."],
+      ["Journal of the American Chemical Society", "J. Am. Chem. Soc."],
+      ["International Journal of Hydrogen Energy", "Int. J. Hydrog. Energy"],
+      ["Journal of Materials Chemistry A", "J. Mater. Chem. A"],
+      ["Materials Reports: Energy", "Mater. Rep. Energy"],
+      ["Advanced Sustainable Systems", "Adv. Sustain. Syst."],
+      ["Small", "Small"],
+      ["ChemCatChem", "ChemCatChem"],
+      ["Journal of Medical Toxicology", "J. Med. Toxicol."],
+      ["Toxicology In Vitro", "Toxicol. In Vitro"],
+      ["Science (Washington, DC, United States)", "Science (Washington, DC, U. S.)"],
+      ["Journal of Materials (Amsterdam, Netherlands)", "J. Mater. (Amsterdam, Neth.)"],
+      ["Chemistry - A European Journal", "Chem. European J."],
+      ["Clinical Toxicology: an official journal of the American Academy", "Clinical Toxicol."],
+    ];
+    const r = spawnSync(python, ["-c", code, join(dir, "bridge.py")], { input: JSON.stringify(cases.map(([j]) => j)), encoding: "utf8", timeout: 30_000 });
+    assert.equal(r.status, 0, r.stderr);
+    const got = JSON.parse(r.stdout);
+    cases.forEach(([journal, want], i) => assert.equal(got[i], want, journal));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

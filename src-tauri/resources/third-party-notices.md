@@ -195,6 +195,8 @@ SOFTWARE.
 
 - 期刊缩写与 ISSN 线：JabRef / abbrv.jabref.org 缩写表（CC0-1.0）、NLM Catalog
   eutils（MedlineTA）——EndNote / Zotero 同步时拉取
+- ISO 4 期刊缩写：ISSN 国际中心的期刊标题词缩写表（LTWA，issn.org）——同步到 EndNote / Zotero 时
+  第一次下载、缓存在本机，用来给每本刊算 ISO 4 写法；不随包分发
 - 期刊指标（IF / 分区徽章）：ShowJCR（github.com/hitfyd/ShowJCR——CSV 经 jsDelivr /
   raw.githubusercontent 下载到本机，更新检查经 api.github.com）；刊名缺失时向
   OpenAlex 补查

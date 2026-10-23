@@ -623,7 +623,8 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   **导出题录写法（同日核查整改）**：两份同步文件与界面同一套写法——化学式按「整词能拆成元素 + 计量」认（bridge.py
   `_subscript_formulas` 与 screening-review.ts 镜像，`tests/citation-format.test.ts` 逐条比对；图表编号 Figure S2、B3LYP、H1N1、
   标题里的 As/In 不动）；题名去人手编号前缀（`strip_title_prefix`）；缩写经 `tidy_abbreviation`（Chem.A 补空格、去冒号）；
-  Mesa 兜底表第三列 = 同刊另一种写法（ACS/CASSI 与 ISO 4 不同时），EndNote 进 XML 缩写 2 与期刊术语表
+  第二种写法 = ISO 4：每本刊按 LTWA（ISSN 期刊标题词缩写表，运行时下载进 mesa-lit-cache，不随包；脚本旁有 ltwa.csv 时用它）
+  算（`bridge.py iso4_compute`，同日用户拍板「所有刊都做」），Mesa 兜底表第三列人工值优先；和主缩写只差标点大小写的不给。EndNote 进 XML 缩写 2 与期刊术语表
   `papers/endnote-journals.txt`（gitignored），Zotero 进 M2（「其他」）；同步前 `bridge.py --enrich` 只给缺字段、有 DOI 的条目
   补全到临时副本（字段齐的不联网；bridge 接口缓存与 lit_records 共用 mesa-lit-cache）。
 - **to-fetch.ris 给 Zotero，endnote-import.ris 给 EndNote（2026-09-23 分标签）**：检索步同时写两份 RIS 2004、CRLF。已生成的旧文件不改写。
