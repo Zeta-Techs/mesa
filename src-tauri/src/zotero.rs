@@ -482,6 +482,32 @@ fn bib_entry_type(item_type: &str) -> &'static str {
 }
 
 /// 导出键采用稳定 Zotero 身份；主引用库已有键只由人工对账保留。
+/// 去掉题名前人手加的编号（【77】、[12]、19~.），只用于显示（项目资源名、任务书），引文库照原样。
+/// 与导出脚本 bridge.py `strip_title_prefix` 同一口径。
+fn strip_title_prefix(title: &str) -> &str {
+    let s = title.trim_start();
+    let digits_then = |rest: &str| -> Option<usize> {
+        let rest_trim = rest.trim_start();
+        let lead = rest.len() - rest_trim.len();
+        let n = rest_trim.bytes().take_while(u8::is_ascii_digit).count();
+        (n > 0).then_some(lead + n)
+    };
+    let after = if let Some(rest) = s.strip_prefix('【') {
+        digits_then(rest).and_then(|n| rest[n..].trim_start().strip_prefix('】'))
+    } else if let Some(rest) = s.strip_prefix('[') {
+        digits_then(rest).and_then(|n| rest[n..].trim_start().strip_prefix(']'))
+    } else {
+        digits_then(s).and_then(|n| {
+            let r = s[n..].trim_start().strip_prefix('~')?.trim_start();
+            Some(r.strip_prefix('.').unwrap_or(r))
+        })
+    };
+    match after.map(str::trim_start) {
+        Some(rest) if !rest.is_empty() => rest,
+        _ => title,
+    }
+}
+
 fn bib_key(item: &ZoteroItemDto) -> String {
     // Zotero library + item key 是稳定身份，不随标题修订、排序或同姓条目增减漂移。
     format!("zotero{}{}", item.library_id, item.key.to_ascii_lowercase())
@@ -826,6 +852,18 @@ mod tests {
         drop(snapshot);
         drop(source);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn strip_title_prefix_drops_hand_numbering_only() {
+        assert_eq!(strip_title_prefix("【20】Integrating trace ruthenium"), "Integrating trace ruthenium");
+        assert_eq!(strip_title_prefix(" [12] MoS2 edges"), "MoS2 edges");
+        assert_eq!(strip_title_prefix("19~.Construction of efficient"), "Construction of efficient");
+        assert_eq!(strip_title_prefix("51~ Boron-based"), "Boron-based");
+        // 不是人手编号的不动
+        assert_eq!(strip_title_prefix("2D materials for HER"), "2D materials for HER");
+        assert_eq!(strip_title_prefix("3D well-ordered wood"), "3D well-ordered wood");
+        assert_eq!(strip_title_prefix("【20】"), "【20】");
     }
 
     #[test]
@@ -2368,7 +2406,7 @@ fn import_items_at(root: &Path, items: &[ZoteroItemDto]) -> Result<ZoteroImportD
             .filter(|p| known.insert(p.replace('\\', "/")))
         {
             cfg.resources.push(crate::projects::ResourceDto {
-                name: item.title.clone(),
+                name: strip_title_prefix(&item.title).to_string(),
                 path: path.clone(),
                 kind: "paper".into(),
                 readonly: true,
