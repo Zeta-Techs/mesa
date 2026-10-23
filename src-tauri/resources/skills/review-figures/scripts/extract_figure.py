@@ -282,8 +282,8 @@ def _line_ink(samples, w, n, fixed: int, lo: int, hi: int, vertical: bool) -> fl
     return ink / (hi - lo)
 
 
-def snap_box(pix, box: tuple[float, float, float, float]):
-    """把比例框换成像素框，四条边各自挪到附近墨最少的线上。返回 (像素框, 各边墨迹比例)。"""
+def snap_box(pix, box: tuple[float, float, float, float], snap: bool = True):
+    """把比例框换成像素框，四条边各自挪到附近墨最少的线上（snap=False 不挪，只查）。返回 (像素框, 各边墨迹比例)。"""
     w, h, n, s = pix.width, pix.height, pix.n, pix.samples
     x0, y0, x1, y1 = (int(round(box[0] * w)), int(round(box[1] * h)),
                       min(w - 1, int(round(box[2] * w))), min(h - 1, int(round(box[3] * h))))
@@ -293,7 +293,8 @@ def snap_box(pix, box: tuple[float, float, float, float]):
         """已在全白线上就不动。否则先往框外找墨最少的线（不截掉自己的轴标题、字母下沿），
         够干净（≤1%）就用；再往里找；都不够干净取整个范围里墨最少的线，交给边检查判。"""
         ink = lambda c: _line_ink(s, w, n, c, span[0], span[1], vertical)
-        if ink(cur) == 0:
+        # 贴着整张图外沿的边不挪：外面没有邻块，往里挪只会截掉这一块自己的字
+        if ink(cur) == 0 or cur <= 0 or cur >= limit:
             return cur
         reach = rx if vertical else ry
         sides = []
@@ -307,6 +308,8 @@ def snap_box(pix, box: tuple[float, float, float, float]):
         return min(sides + [cur], key=lambda c: (ink(c), abs(c - cur)))
 
     # 先定左右（用原来的上下范围），再定上下（用定好的左右范围）
+    if not snap:
+        best = lambda cur, outward, span, vertical, limit: cur  # noqa: E731
     x0 = best(x0, -1, (y0, y1), True, w - 1)
     x1 = best(x1, 1, (y0, y1), True, w - 1)
     y0 = best(y0, -1, (x0, x1), False, h - 1)
@@ -314,10 +317,10 @@ def snap_box(pix, box: tuple[float, float, float, float]):
     if x1 - x0 < 20 or y1 - y0 < 20:
         return (x0, y0, x1, y1), {"框太小": 1.0}
     edges = {
-        "左": _line_ink(s, w, n, x0, y0, y1, True),
-        "右": _line_ink(s, w, n, x1, y0, y1, True),
-        "上": _line_ink(s, w, n, y0, x0, x1, False),
-        "下": _line_ink(s, w, n, y1, x0, x1, False),
+        "左": _line_ink(s, w, n, x0, y0, y1, True) if x0 > 0 else 0.0,
+        "右": _line_ink(s, w, n, x1, y0, y1, True) if x1 < w - 1 else 0.0,
+        "上": _line_ink(s, w, n, y0, x0, x1, False) if y0 > 0 else 0.0,
+        "下": _line_ink(s, w, n, y1, x0, x1, False) if y1 < h - 1 else 0.0,
     }
     return (x0, y0, x1, y1), edges
 
@@ -375,7 +378,7 @@ def grid_preview(pix, out: Path) -> None:
 
 def extract(pdf: Path, fig: int, out: Path, dpi: int, panel: str | None,
             box: tuple[float, float, float, float] | None = None, grid: bool = False, page_no: int = 0,
-            erase: tuple[float, float, float, float] | None = None) -> None:
+            erase: list[tuple[float, float, float, float]] | None = None, snap: bool = True) -> None:
     fitz = _need_fitz()
     doc = fitz.open(pdf)
     try:
@@ -399,7 +402,7 @@ def extract(pdf: Path, fig: int, out: Path, dpi: int, panel: str | None,
             grid_preview(pix, out)
             return
         if box:
-            (bx0, by0, bx1, by1), edges = snap_box(pix, box)
+            (bx0, by0, bx1, by1), edges = snap_box(pix, box, snap)
             cut = {k: v for k, v in edges.items() if v > EDGE_LIMIT}
             if cut:
                 detail = "、".join(f"{k}边 {v:.2f}" for k, v in cut.items())
@@ -410,7 +413,7 @@ def extract(pdf: Path, fig: int, out: Path, dpi: int, panel: str | None,
                 )
                 sys.exit(7)
             w, h = pix.width, pix.height
-            print(f"实际裁框（已挪到空白缝）：{bx0 / w:.3f},{by0 / h:.3f},{bx1 / w:.3f},{by1 / h:.3f}")
+            print(f"实际裁框{'（已挪到空白缝）' if snap else '（未挪）'}：{bx0 / w:.3f},{by0 / h:.3f},{bx1 / w:.3f},{by1 / h:.3f}")
             ox, oy = pix.x, pix.y
             rect = fitz.IRect(ox + bx0, oy + by0, ox + bx1 + 1, oy + by1 + 1)
             clipped = fitz.Pixmap(pix.colorspace, rect, pix.alpha)
@@ -433,8 +436,7 @@ def extract(pdf: Path, fig: int, out: Path, dpi: int, panel: str | None,
             clipped = fitz.Pixmap(pix.colorspace, cell, pix.alpha)
             clipped.copy(pix, cell)
             pix = clipped
-        if erase:
-            ex0, ey0, ex1, ey1 = erase
+        for ex0, ey0, ex1, ey1 in erase or []:
             w, h, ox, oy = pix.width, pix.height, pix.x, pix.y
             pix.set_rect(
                 fitz.IRect(ox + int(ex0 * w), oy + int(ey0 * h), ox + int(ex1 * w + 0.999), oy + int(ey1 * h + 0.999)),
@@ -455,7 +457,8 @@ def main() -> None:
     p.add_argument("--grid", action="store_true", help="不裁，输出叠了 0–1 坐标格的整张图预览，用来读 --box")
     p.add_argument("--box", default="", help="按比例裁一块：x0,y0,x1,y1（0–1，左上为原点），数值读自 --grid 预览")
     p.add_argument("--page", type=int, default=0, help="题注认不出（矢量图、扫描版）时按整页出 --grid / 裁 --box；页码从 1 数")
-    p.add_argument("--erase", default="", help="抹白原图的子图字母：x0,y0,x1,y1（0–1，相对裁出的这一块），只许在左上 / 右上角的小框")
+    p.add_argument("--erase", action="append", default=[], help="抹白原图的子图字母：x0,y0,x1,y1（0–1，相对裁出的这一块），只许在左上 / 右上角的小框；邻块字母被带进来时可再给一个")
+    p.add_argument("--no-snap", action="store_true", help="--box 的边不自动挪（挪到的空白缝外面带进了邻块的字母时用），仍查边")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--dpi", type=int, default=300)
     a = p.parse_args()
@@ -474,16 +477,16 @@ def main() -> None:
         print(f"找不到 PDF：{a.pdf}", file=sys.stderr)
         sys.exit(1)
     box = parse_box(a.box) if a.box else None
-    erase = None
-    if a.erase:
-        if a.grid:
-            p.error("--erase 配 --panel / --box 用，预览图不抹")
-        x0, y0, x1, y1 = (float(v) for v in a.erase.replace("，", ",").split(","))
+    erase = []
+    if a.erase and a.grid:
+        p.error("--erase 配 --panel / --box 用，预览图不抹")
+    for spec in a.erase:
+        x0, y0, x1, y1 = (float(v) for v in spec.replace("，", ",").split(","))
         if not (0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1):
             p.error("--erase 要求 0 ≤ x0 < x1 ≤ 1、0 ≤ y0 < y1 ≤ 1")
-        erase = (x0, y0, x1, y1)
-        check_erase(erase)
-    extract(a.pdf, a.fig, a.out, a.dpi, panel or None, box=box, grid=a.grid, page_no=a.page, erase=erase)
+        check_erase((x0, y0, x1, y1))
+        erase.append((x0, y0, x1, y1))
+    extract(a.pdf, a.fig, a.out, a.dpi, panel or None, box=box, grid=a.grid, page_no=a.page, erase=erase, snap=not a.no_snap)
 
 
 if __name__ == "__main__":

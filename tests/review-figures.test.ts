@@ -80,6 +80,12 @@ test("裁子图：--panel 按白缝切到第二块；--box 按比例裁；--eras
     const snapped = r.stdout.match(/实际裁框（已挪到空白缝）：([\d.]+),([\d.]+),([\d.]+),([\d.]+)/);
     assert.ok(snapped, r.stdout);
     assert.ok(Number(snapped[2]) < 0.57 && Number(snapped[3]) > 0.44, "上边往上、右边往右挪出了色块");
+    // --no-snap：不挪，照样查边——切进色块仍拒绝；两个 --erase 都生效
+    r = run(["--pdf", pdf, "--fig", "1", "--box", "0,0.58,0.43,1", "--no-snap", "--out", join(dir, "ns.png")]);
+    assert.equal(r.status, 7, r.stderr);
+    r = run(["--pdf", pdf, "--fig", "1", "--box", "0,0.5,0.5,1", "--no-snap", "--erase", "0,0,0.12,0.12", "--erase", "0.9,0,1,0.1", "--dpi", "144", "--out", join(dir, "two.png")]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /实际裁框（未挪）/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
