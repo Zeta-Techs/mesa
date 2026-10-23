@@ -1208,6 +1208,24 @@ function LiveWorkspaceReviewView({
           invoke<GitStatusDto>("git_status", { cwd: worktreePath }),
         ]);
         if (!nextDiff.inWorkspace) throw new Error("该目录不属于活动工作区或 Run 隔离树");
+        // 先把改动清单交给页面，稿件可以先开始读；健康度、冲突、产物冻结三路并行随后补上
+        // （2026-10-24：三段串行时 HER 初稿要等 2 秒多才出页面）。保存进项目仍要等冻结完成。
+        if (!quiet) {
+          setDiff(nextDiff);
+          setStatus(nextStatus);
+          setLoading(false);
+        }
+        const freezing =
+          !nextDiff.reviewOnly && (!quiet || !deliveryReviewRef.current)
+            ? invoke<WorkspaceDeliverableReviewDto>("workspace_review_deliverables", { id: nextDiff.workspaceId }).then(
+                (review) => {
+                  deliveryReviewRef.current = review; setDeliveryReview(review); setDeliveryError(null);
+                },
+                (reason) => {
+                  deliveryReviewRef.current = null; setDeliveryReview(null); setDeliveryError(String(reason));
+                },
+              )
+            : Promise.resolve();
         const [nextHealth, nextUnmerged] = nextDiff.reviewOnly
           ? [null, { merging: false, files: [], staleBase: false } as UnmergedDto]
           : await Promise.all([
@@ -1218,14 +1236,7 @@ function LiveWorkspaceReviewView({
                 id: nextDiff.workspaceId,
               }),
             ]);
-        if (!nextDiff.reviewOnly && (!quiet || !deliveryReviewRef.current)) {
-          try {
-            const review = await invoke<WorkspaceDeliverableReviewDto>("workspace_review_deliverables", { id: nextDiff.workspaceId });
-            deliveryReviewRef.current = review; setDeliveryReview(review); setDeliveryError(null);
-          } catch (reason) {
-            deliveryReviewRef.current = null; setDeliveryReview(null); setDeliveryError(String(reason));
-          }
-        }
+        await freezing;
         const signature = JSON.stringify({
           files: nextDiff.files,
           status: nextStatus.files,

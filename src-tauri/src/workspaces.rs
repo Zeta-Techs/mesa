@@ -1312,59 +1312,77 @@ fn conflict_files_from_merge_tree(stdout: &str) -> Vec<String> {
 fn health_impl(conn: &Connection, id: &str) -> Result<WsHealthDto, String> {
     let w = get_workspace(conn, id)?;
     let wt = PathBuf::from(&w.worktree_path);
-    let uncommitted =
-        !run_git(&wt, &["status", "--porcelain"], Duration::from_secs(30))?.is_empty();
     let base = base_ref(&wt, &w.base_branch);
-    // A...B 的左侧 = 只在 base（behind），右侧 = 只在 HEAD（ahead）
-    let counts = run_git(
-        &wt,
-        &[
-            "rev-list",
-            "--left-right",
-            "--count",
-            &format!("{base}...HEAD"),
-        ],
-        Duration::from_secs(30),
-    )?;
+    // 主仓库状态也是本地合并的前置条件：提前暴露，别等点了「合并」才报错
+    let repo = live_repo_for(&w);
+    // 八次 git 互不依赖，并行跑：Windows 上每起一个 git 要 100–150ms，串行近 1 秒，
+    // 打开评审要等它（2026-10-24 HER 初稿实测：串行 ~950ms → 并行 ~320ms）
+    fn joined<T>(r: std::thread::Result<T>) -> Result<T, String> {
+        r.map_err(|_| "检查工作区状态时线程异常".to_string())
+    }
+    let (uncommitted, counts, probe, main_off_base, main_dirty, stale_base, worktree_head, gitdir_detached) =
+        std::thread::scope(|s| {
+            let uncommitted = s.spawn(|| run_git(&wt, &["status", "--porcelain"], Duration::from_secs(30)));
+            // A...B 的左侧 = 只在 base（behind），右侧 = 只在 HEAD（ahead）
+            let counts = s.spawn(|| {
+                run_git(
+                    &wt,
+                    &["rev-list", "--left-right", "--count", &format!("{base}...HEAD")],
+                    Duration::from_secs(30),
+                )
+            });
+            let probe = s.spawn(|| conflict_probe(&wt, &base, "HEAD"));
+            let main_off_base = s.spawn(|| {
+                run_git(&repo, &["rev-parse", "--abbrev-ref", "HEAD"], Duration::from_secs(10))
+                    .map(|cur| cur != w.base_branch)
+                    .unwrap_or(false)
+            });
+            let main_dirty = s.spawn(|| {
+                run_git(
+                    &repo,
+                    &["status", "--porcelain", "--untracked-files=all"],
+                    Duration::from_secs(30),
+                )
+                .map(|s| {
+                    s.lines()
+                        .any(|line| !crate::review_contract::is_untracked_ledger_file(line))
+                })
+                .unwrap_or(false)
+            });
+            // 冲突现场是否已落后基准：仅 merge 进行中才有 MERGE_HEAD，多一次 rev-parse 只发生在此时
+            let stale_base = s.spawn(|| {
+                run_git(&wt, &["rev-parse", "--verify", "-q", "MERGE_HEAD"], Duration::from_secs(10))
+                    .ok()
+                    .filter(|mh| !mh.is_empty())
+                    .map(|mh| {
+                        run_git(&wt, &["rev-parse", &base], Duration::from_secs(10))
+                            .map(|tip| tip != mh)
+                            .unwrap_or(false)
+                    })
+                    .unwrap_or(false)
+            });
+            let worktree_head =
+                s.spawn(|| run_git(&wt, &["rev-parse", "HEAD"], Duration::from_secs(10)).ok());
+            let gitdir_detached = s.spawn(|| gitdir_matches_repo(&wt, &repo).is_err());
+            (
+                joined(uncommitted.join()),
+                joined(counts.join()),
+                joined(probe.join()),
+                joined(main_off_base.join()),
+                joined(main_dirty.join()),
+                joined(stale_base.join()),
+                joined(worktree_head.join()),
+                joined(gitdir_detached.join()),
+            )
+        });
+    let uncommitted = !uncommitted??.is_empty();
+    let counts = counts??;
     let mut parts = counts.split_whitespace();
     let behind = parts.next().and_then(|x| x.parse().ok()).unwrap_or(0);
     let ahead = parts.next().and_then(|x| x.parse().ok()).unwrap_or(0);
-    let (conflict, conflict_files) = conflict_probe(&wt, &base, "HEAD");
-    // 主仓库状态也是本地合并的前置条件：提前暴露，别等点了「合并」才报错
-    let repo = live_repo_for(&w);
-    let main_off_base = run_git(
-        &repo,
-        &["rev-parse", "--abbrev-ref", "HEAD"],
-        Duration::from_secs(10),
-    )
-    .map(|cur| cur != w.base_branch)
-    .unwrap_or(false);
-    let main_dirty = run_git(
-        &repo,
-        &["status", "--porcelain", "--untracked-files=all"],
-        Duration::from_secs(30),
-    )
-    .map(|s| {
-        s.lines()
-            .any(|line| !crate::review_contract::is_untracked_ledger_file(line))
-    })
-    .unwrap_or(false);
-    // 冲突现场是否已落后基准：仅 merge 进行中才有 MERGE_HEAD，多一次 rev-parse 只发生在此时
-    let stale_base = run_git(
-        &wt,
-        &["rev-parse", "--verify", "-q", "MERGE_HEAD"],
-        Duration::from_secs(10),
-    )
-    .ok()
-    .filter(|mh| !mh.is_empty())
-    .map(|mh| {
-        run_git(&wt, &["rev-parse", &base], Duration::from_secs(10))
-            .map(|tip| tip != mh)
-            .unwrap_or(false)
-    })
-    .unwrap_or(false);
-    let worktree_head = run_git(&wt, &["rev-parse", "HEAD"], Duration::from_secs(10)).ok();
-    let gitdir_detached = gitdir_matches_repo(&wt, &repo).is_err();
+    let (conflict, conflict_files) = probe?;
+    let (main_off_base, main_dirty, stale_base) = (main_off_base?, main_dirty?, stale_base?);
+    let (worktree_head, gitdir_detached) = (worktree_head?, gitdir_detached?);
     Ok(WsHealthDto {
         uncommitted,
         ahead,
@@ -3735,8 +3753,41 @@ fn freeze_deliverables_at(
     })();
     if result.is_err() {
         let _ = fs::remove_dir_all(&dir);
+    } else {
+        prune_delivery_snapshots(id);
     }
     result
+}
+
+/// 每打开一次评审就冻一份新快照（初稿带 PDF 时一份十几 MB），以前从不清（2026-10-24 HER 初稿
+/// 攒了 9 份 142 MB）。留最新 3 份——另一个标签页可能还开着同一工作区的评审、拿着上一份——
+/// 加上收尾恢复单指着的那份；恢复单读不出时一份都不删。
+fn prune_delivery_snapshots(id: &str) {
+    const KEEP: usize = 3;
+    let Ok(root) = delivery_review_root(id) else { return };
+    let Ok(pending) = read_delivery_pending(id) else { return };
+    let Ok(entries) = fs::read_dir(&root) else { return };
+    let mut snapshots: Vec<(SystemTime, PathBuf, String)> = entries
+        .flatten()
+        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            uuid::Uuid::parse_str(&name).ok()?;
+            let path = e.path();
+            let at = fs::metadata(path.join("review.json"))
+                .or_else(|_| e.metadata())
+                .and_then(|m| m.modified())
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+            Some((at, path, name))
+        })
+        .collect();
+    snapshots.sort_by(|a, b| b.0.cmp(&a.0));
+    for (_, path, name) in snapshots.into_iter().skip(KEEP) {
+        if pending.as_ref().is_some_and(|p| p.review_token == name) {
+            continue;
+        }
+        let _ = fs::remove_dir_all(path);
+    }
 }
 
 fn load_delivery_review(id: &str, token: &str) -> Result<DeliverableReviewDto, String> {
@@ -8337,6 +8388,31 @@ mod tests {
         let pdf = fresh.files.iter().find(|f| f.path == "papers/result.pdf").unwrap();
         assert!(pdf.required);
         assert!(!fresh.files.iter().find(|f| f.path == "artifacts/jabref/acs.csv").unwrap().required);
+    }
+
+    #[test]
+    fn reopening_review_keeps_only_latest_snapshots() {
+        let Some(fx) = Fixture::new() else { return };
+        let w = create_impl(&fx.conn, &fx.ws_root, fx.repo.to_str().unwrap(), "delivery-prune").unwrap();
+        let wt = PathBuf::from(&w.worktree_path);
+        fs::create_dir_all(wt.join("output")).unwrap();
+        fs::write(wt.join("output/draft.pdf"), b"pdf").unwrap();
+        let mut tokens = Vec::new();
+        for _ in 0..5 {
+            tokens.push(freeze_deliverables(&w, &fx.repo).unwrap().token);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let left: Vec<String> = fs::read_dir(delivery_review_root(&w.id).unwrap())
+            .unwrap()
+            .flatten()
+            .filter(|e| e.path().is_dir())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(left.len(), 3, "{left:?}");
+        for token in &tokens[2..] {
+            assert!(load_delivery_review(&w.id, token).is_ok(), "最新的几份还在");
+        }
+        assert!(load_delivery_review(&w.id, &tokens[0]).is_err());
     }
 
     #[test]
