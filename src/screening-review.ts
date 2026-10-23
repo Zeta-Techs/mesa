@@ -243,6 +243,8 @@ export interface IncludedRecord {
   abstract: string;
   keywords: string;
   language: string;
+  /** 已有全文的位置（lit_records.py write 写）：项目根相对路径，或 Zotero 导入登记的库内绝对路径 */
+  pdf?: string;
 }
 
 function stringField(rec: Record<string, unknown>, keys: string[]): string {
@@ -765,6 +767,7 @@ export function parseIncludedRecords(text: string): IncludedRecord[] {
       abstract: stringField(rec, ["abstract"]),
       keywords: keywordsOf(rec),
       language: stringField(rec, ["language"]),
+      ...(stringField(rec, ["pdf"]) ? { pdf: stringField(rec, ["pdf"]) } : {}),
     });
   }
   return out;
@@ -1001,11 +1004,13 @@ export function matchPaperPdf(
   return best?.path ?? null;
 }
 
-/** 待获取只认 DOI 对上文件名；标题模糊命中不能当成已经有全文。 */
+/** 待获取只认 DOI 对上文件名；标题模糊命中不能当成已经有全文。
+ *  json 里记了 pdf 的（脚本认出的全文、Zotero 导入登记的正文 PDF）直接算有。 */
 export function paperHasDoiPdf(
-  record: Pick<IncludedRecord, "id" | "url">,
+  record: Pick<IncludedRecord, "id" | "url" | "pdf">,
   files: readonly { name: string }[],
 ): boolean {
+  if (record.pdf?.trim()) return true;
   const doi = doiToken(record.id, record.url).toLowerCase();
   if (!doi) return false;
   const doiKey = doi.replace(/[/:]/g, "_");

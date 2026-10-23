@@ -635,6 +635,10 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   **题录走固定脚本（2026-10-22）**：上面这些由 `lit-search/scripts/lit_records.py` 实现（enrich → fetch → write → check；精读步 bib），
   `papers/included.json` 是唯一来源，`included.md`、`to-fetch.md`、两份 RIS、`references.bib` 都从它出，Agent 不再手写也不再自己写补字段脚本。
   RIS 拼法与 `screening-review.ts risBody`（人点纳入时 Mesa 追加的那条）双端镜像，`tests/lit-records.test.ts` 逐条比对；改任一边两边同改。
+  **用户自己的库不由 Agent 排除（2026-10-23 用户拍板）**：Zotero / EndNote 导入与 `papers/imports/` 里人放的导出，每条都进 `included.json`；
+  检索的年份窗口等过滤不套用，Agent 不排除，不合适的标 pending、理由「建议排除：…」由人在文献清单定（只写 screening.md 的排除，Mesa 里看不到也改不回）。
+  Zotero 导入登记的正文 PDF（导入清单 `pdfPath`，库内绝对路径）即全文：write 记进 `pdf`、不进待获取，Mesa 纳入时 `paperHasDoiPdf` 认 `pdf` 字段；
+  check 点名没进 json 的导入条目与被 Agent 排除的（人排除的理由以「排除：人工移出 / 评审确认」开头）。
   日期：出版日期取纸本（期），网络出版日另记 `epubDate`；关键词取 OpenAlex 的论文关键词（Crossref 的 subject 是期刊分类，不当关键词）。
   「待补」「待核」只是缺口标记：两份 RIS 不写，`bridge.load` 读引文库时当没有这个字段，所以同步进 Zotero / EndNote 不会出现「待补」。
   同步只交题录，不打开目录。检索工作区里的 `papers/` 不是课题 PDF 落点，Finder 分栏会把 `~/ccode/workspaces/...` 整条摊开。PDF 由人点「打开 papers」打开课题根。Mesa 不代点合并。

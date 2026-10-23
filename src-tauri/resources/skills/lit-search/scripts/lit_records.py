@@ -570,12 +570,41 @@ def _words(text):
     return [w for w in re.split(r"[^a-z0-9]+", ascii_fold(text).lower()) if w]
 
 
+@functools.lru_cache(maxsize=None)
+def zotero_imports(root):
+    """Mesa「从 Zotero 导入」的清单（papers/imports/zotero-*.json）：[(bibKey, DOI, 正文 PDF 绝对路径或空)]。
+    PDF 留在 Zotero 库里不复制，清单里的 pdfPath 就是全文（Mesa 只登记正文，补充材料和没下完的不登记）。"""
+    rows = []
+    for manifest in sorted((Path(root) / "papers" / "imports").glob("zotero-*.json")):
+        try:
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        for row in data if isinstance(data, list) else []:
+            if isinstance(row, dict) and as_text(row.get("bibKey")):
+                rows.append((as_text(row.get("bibKey")), bare_doi(row.get("doi")), as_text(row.get("pdfPath"))))
+    return tuple(rows)
+
+
+def imported_from(rec, root):
+    """这条是不是用户从 Zotero 导入的（id 是导入时的引用键，或 DOI 对上）：返回导入清单那一行，不是返回 None"""
+    rid, doi = as_text(rec.get("id")), record_doi(rec)
+    for row in zotero_imports(str(root)):
+        if rid == row[0] or (doi and doi == row[1]):
+            return row
+    return None
+
+
 def existing_pdf(rec, root):
-    """这篇在项目根 papers/ 里已有的 PDF：json 的 pdf 字段 → 本脚本的命名 → 文件名带 DOI →
-    文件名去掉「作者年份-」后每个词都出现在标题里（人或上一轮按「作者年份-短标题」起的名字）。都对不上返回空。"""
+    """这篇已有的全文：json 的 pdf 字段 → Zotero 导入登记的 PDF（留在 Zotero 库里，绝对路径）→ 项目根 papers/ 里
+    本脚本的命名 → 文件名带 DOI → 文件名去掉「作者年份-」后每个词都出现在标题里（人或上一轮按「作者年份-短标题」起的名字）。
+    都对不上返回空。"""
     rel = as_text(rec.get("pdf"))
     if rel and (root / rel).is_file():
         return rel.replace("\\", "/")
+    row = imported_from(rec, root)
+    if row and row[2] and Path(row[2]).is_file():
+        return row[2].replace("\\", "/")
     papers = root / "papers"
     name = pdf_name(rec)
     if (papers / name).is_file():
@@ -913,6 +942,15 @@ def cmd_check(args):
             warnings.append(f"{tag} 期刊缩写「{abbr}」不像 ISO 4（等于全称或没有句点）")
         if d == "included" and as_text(rec.get("pdf")) and not (root / as_text(rec.get("pdf"))).is_file():
             errors.append(f"{tag} pdf 指向的 {rec.get('pdf')} 不存在")
+    # 用户自己库里导进来的每条都要在 json 里，Agent 不替人排除（2026-10-23 HER：按检索年份窗口排掉 9 篇，
+    # 只写在 screening.md，Mesa 文献清单里看不到也改不回）。人排除的理由以「排除：人工移出 / 评审确认」开头
+    listed = [(as_text(r.get("id")), record_doi(r)) for r in records]
+    for key, doi, _ in zotero_imports(str(root)):
+        if not any(key == rid or (doi and doi == rdoi) for rid, rdoi in listed):
+            errors.append(f"Zotero 导入的 {key} 不在 included.json：用户自己库里的每条都写进来，不合适的标 pending、理由写「建议排除：…」")
+    for rec in records:
+        if decision_of(rec) == "excluded" and imported_from(rec, root) and not re.match(r"排除[：:](人工移出|评审确认)", as_text(rec.get("reason"))):
+            errors.append(f"{as_text(rec.get('id'))} 是用户从 Zotero 导入的，Agent 不排除：改成 pending，理由写「建议排除：…」，由人在文献清单里定")
     included = [r for r in records if decision_of(r) == "included"]
     pending = [r for r in records if decision_of(r) == "pending"]
     md_path = out_dir / "included.md"

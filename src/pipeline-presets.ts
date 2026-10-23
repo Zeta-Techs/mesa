@@ -277,7 +277,7 @@ const LIT_SEARCH_NO_WASTE =
  *  freeze_reading_list_intake 从项目根 papers/reading-list.md 冻结；积累账不回写不改删，
  *  正典仍是本工作区 papers/included.md / included.json，纳入走人审。 */
 const LIT_INTAKE_CLAUSE =
-  "工作区 .ccode/handoff-lit-intake.md（开工时从项目根 papers/reading-list.md 冻结；若缺失则按上方「项目根」绝对路径只读 papers/reading-list.md）是用户日常积累的精读候选：与 included.md 存量、人工导入题录、检索候选池统一去重（同篇不重复列），值得纳入的写入本工作区 papers/included.md/included.json 走人审；不回写、不删除、不清空积累台账。";
+  "工作区 .ccode/handoff-lit-intake.md（开工时从项目根 papers/reading-list.md 冻结；若缺失则按上方「项目根」绝对路径只读 papers/reading-list.md）是用户日常积累的精读候选：与 included.md 存量、人工导入题录、检索候选池统一去重（同篇不重复列），值得纳入的写入本工作区 papers/included.md/included.json 走人审；不回写、不删除、不清空积累台账。人从 Zotero / EndNote 导入或放进 papers/imports/ 的每条都写进 included.json，检索的年份等过滤不套用、Agent 不排除：不合适的标 pending，理由写「建议排除：…」由人定。";
 
 /** 英文综述（review）：文献检索 → 精读笔记 → 大纲 → 初稿 → 润色定稿。
  *  示例课题直接用这份模板（src-tauri/resources/pipeline-review.json）。

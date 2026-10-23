@@ -339,6 +339,11 @@ test("纳入 JSON 计数与待拍板去重", () => {
     paperHasDoiPdf({ id: "doi:10.1000/xyz", url: "" }, [{ name: "bridging-fundamentals.pdf" }]),
     false,
   );
+  // Zotero 导入登记的正文 PDF 在库里、不在 papers/：json 记了 pdf 就算有，纳入时不进待获取
+  assert.equal(
+    paperHasDoiPdf({ id: "zotero1abcd1234", url: "", pdf: "C:/Users/me/Zotero/storage/ABCD1234/a.pdf" }, []),
+    true,
+  );
   const named =
     "Selenium sulfide cathode with copper foam interlayer for promising magnesium electrochemistry..pdf";
   assert.equal(

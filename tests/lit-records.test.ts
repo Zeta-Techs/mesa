@@ -414,3 +414,44 @@ test("认已有全文：原始字节里没有 DOI 时，有 PyMuPDF 就按前两
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// 2026-10-23 HER：用户自己 Zotero 库里导进来的，检索步按年份窗口排掉 9 篇、只写在 screening.md，
+// Mesa 文献清单里看不到也改不回；导入登记的 PDF 也没认成全文，改判纳入后会被列进待获取
+test("Zotero 导入：登记的 PDF 认成全文不进待获取；导入条目都要在 json 里，Agent 不排除", () => {
+  const { root, ws, proj } = fixture();
+  try {
+    const storage = join(root, "Zotero", "storage", "ABCD1234");
+    mkdirSync(storage, { recursive: true });
+    const pdf = join(storage, "Bai et al_2021_MXenes.pdf");
+    writeFileSync(pdf, "%PDF-1.4 fake");
+    mkdirSync(join(proj, "papers/imports"), { recursive: true });
+    const manifest = (rows: unknown[]) =>
+      writeFileSync(join(proj, "papers/imports/zotero-batch.json"), JSON.stringify(rows));
+    manifest([{ id: "1:ABCD1234", title: "MXenes", bibKey: "zotero1abcd1234", doi: "10.1038/s41699-021-00259-4", pdfPath: pdf, status: "imported" }]);
+    let r = run(["write", "--root", proj], ws);
+    assert.equal(r.status, 0, r.stderr);
+    const json = JSON.parse(readFileSync(join(ws, "papers/included.json"), "utf8"));
+    assert.equal(json.find((x: { id: string }) => x.id === "W2").pdf, pdf.replace(/\\/g, "/"));
+    assert.doesNotMatch(readFileSync(join(ws, "papers/to-fetch.md"), "utf8"), /MXenes/);
+    r = run(["check", "--root", proj], ws);
+    assert.equal(r.status, 0, r.stdout);
+    // 导入清单里有、json 里没有的：点名；Agent 自己排除的导入条目：点名；人移出的放过
+    manifest([
+      { id: "1:ABCD1234", title: "MXenes", bibKey: "zotero1abcd1234", doi: "10.1038/s41699-021-00259-4", pdfPath: pdf },
+      { id: "1:EIT3KHJL", title: "Old review", bibKey: "zotero1eit3khjl", doi: "10.3389/fchem.2019.00085", pdfPath: null },
+      { id: "1:OFFTOPIC", title: "Off-topic paper", bibKey: "W5", doi: null, pdfPath: null },
+    ]);
+    r = run(["check", "--root", proj], ws);
+    assert.notEqual(r.status, 0);
+    assert.match(r.stdout, /Zotero 导入的 zotero1eit3khjl 不在 included\.json/);
+    assert.match(r.stdout, /W5 是用户从 Zotero 导入的，Agent 不排除/);
+    const rows = JSON.parse(readFileSync(join(ws, "papers/included.json"), "utf8"));
+    rows.find((x: { id: string }) => x.id === "W5").reason = "排除：人工移出。主题无关";
+    rows.push({ id: "zotero1eit3khjl", title: "Old review", decision: "excluded", reason: "排除：评审确认" });
+    writeFileSync(join(ws, "papers/included.json"), JSON.stringify(rows, null, 2));
+    r = run(["check", "--root", proj], ws);
+    assert.doesNotMatch(r.stdout, /Zotero 导入|Agent 不排除/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
