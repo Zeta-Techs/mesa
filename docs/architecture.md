@@ -457,6 +457,14 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-23 · 非对话模型不进对话菜单；出图模型可配置、Agent 可调
+
+用户报：Codex 报 `The model 'gpt-image-2.5' does not exist`，「我的网关支持这个模型」。查实：New API 的 `/models` 目录把出图模型和对话模型混着列，Mesa 拿来当对话模型选项，Codex 每轮走 `/v1/responses` 被拒；同模型在 `/v1/images/generations` 实测能出图。用户拍板「改模型菜单，并且出图模型可以直接配置使用，包括各家的出图模型」。落地：
+①**模型分类**按名字判（目录的端点类型只有 gpt-image 系标了，不可依赖）：出图 / 视频 / 向量 / 重排 / 语音 / 审核六类非对话模型；前后端镜像（`image_gen.rs` ↔ `src/model-kinds.ts`），两侧测试共读 `tests/fixtures/model-kinds.json`。连接编辑的目录面板不列（报隐藏了几个）、手填标「不能对话」、对话模型菜单置灰说原因、启动栏名单过滤；后端闸放在 `agents::validate_launch_compatibility`，终端 / 无头 / 内置 AI 功能三条启动路径都拦。
+②**出图模型**：设置「AI 与 Agent → 出图模型」存网关 id + 模型 id（同进退）。各家接口按模型自动选：Gemini 系走原生 `generateContent`，不通退对话接口取 markdown 图；其余走 OpenAI 出图接口（gpt-image 回 b64，Grok / 豆包 / 万相回下载地址）。下载地址不带鉴权头；直连不通改走设置的出网代理（x.ai 图床国内直连超时实测）。当日实测 gpt-image-2.5、gemini-3.1-flash-image、grok-imagine-image 三家出图成功；qwen-image 在该网关无通道（网关侧问题，照实报错）。
+③**Agent 怎么调**：随包 `mesa_helper image …` 子命令，密钥由 helper 从 keys.json 现取，**不进 Agent 环境变量**；Mesa 启动 PTY 时只注入 `MESA_IMAGE_TOOL`（helper 路径，试跑 `image --probe` 通过才注入）。内置技能 `image-gen`（种子版本 14）教 Agent 调用、落 `figures/`、不覆盖、不生成冒充实验数据的图；设置卡上「给已装的 Agent 打开」走 `apply_skill`（没装的跳过）。不做：Mesa 内单独的出图页面、MCP 形态、无头运行注入（定时任务里的 Agent 暂无 `MESA_IMAGE_TOOL`）。
+未验：Mesa Dev 窗口里设置卡与对话菜单置灰的实际观感（截图页验过设置卡静态样子）；Windows 上 helper 子命令与 PowerShell 调用。
+
 ### 2026-10-23 · 启动字标换成「Mesa + 琥珀光标」，字晚出、换手叠化
 
 用户问启动动画要不要优化，拍板「三条都做、先看效果」，看静帧后又定了字号与光标长短。**机制不动**（10-16 定的跟主题

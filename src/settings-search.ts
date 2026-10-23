@@ -98,6 +98,7 @@ export const SETTINGS_SEARCH_INDEX: readonly SettingsSearchEntry[] = [
       "翻译", "提交信息", "摘要",
       "想法期", "只读", "保护", "hooks", "注意力", "精确注意力",
       "沙箱", "Windows 沙箱", "Codex 沙箱", "定时任务",
+      "出图", "出图模型", "画图", "生图", "图片生成", "gpt-image", "image",
       "integration", "agent",
     ],
   },

@@ -114,6 +114,9 @@ export interface AppSettings {
   notificationsEnabled: boolean;
   /** 会话自动命名（默认开）：聊完起名 + 打开对话页补名去重；关 = 全停，手改标题不受影响 */
   autoTitleSessions?: boolean;
+  /** 出图模型（网关 id + 模型 id，同进退；传空串 = 两个一起清空），见 image_gen.rs */
+  imageGenGatewayId?: string | null;
+  imageGenModel?: string | null;
   /** 内部对话保留期自动清理（默认开）与保留天数（默认 30），见 internal_sessions.rs */
   internalAutoClean?: boolean;
   internalRetentionDays?: number;

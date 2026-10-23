@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useId, useRef, useState } from "react";
 import { contextLabel } from "../model-caps-label";
+import { nonChatReason, splitChatModels } from "../model-kinds";
 import { invoke } from "@tauri-apps/api/core";
 import { scheduleWarnText, usageWarnText, type UnbindRefs } from "../unbind-impact";
 import { listen } from "@tauri-apps/api/event";
@@ -252,9 +253,10 @@ export function ProfileModal({
         (m) => m.id,
       )
     : null;
-  const pickerModels = showGatewayFields
-    ? (fetchedModels ?? [])
-    : (gatewayCatalog ?? []);
+  // 出图 / 视频 / 向量等模型不能当 Agent 的对话模型：选择面板里不列，只报隐藏了几个（model-kinds.ts）
+  const { chat: pickerModels, hidden: pickerHidden } = splitChatModels(
+    showGatewayFields ? (fetchedModels ?? []) : (gatewayCatalog ?? []),
+  );
 
   // 协议推导（选用已有网关 / 编辑绑定）：qwen/kimi 的候选协议各自落固定槽位
   //（与后端 gateway_store::slot_for_agent 同口径）。所选网关恰好只填了一个候选槽时
@@ -1012,6 +1014,14 @@ export function ProfileModal({
                 value={pickerFilter}
                 onChange={(e) => setPickerFilter(e.target.value)}
               />
+              {pickerHidden.length > 0 && (
+                <p
+                  className="mb-1 px-2 text-micro text-l4"
+                  title={pickerHidden.join("\n")}
+                >
+                  已隐藏 {pickerHidden.length} 个出图、视频、向量等不能对话的模型；出图模型到 设置 → AI 与 Agent → 出图模型 配
+                </p>
+              )}
               {(() => {
                 const groups = groupModelsByVendor(pickerModels, pickerFilter);
                 if (groups.length === 0) {
@@ -1140,6 +1150,15 @@ export function ProfileModal({
                       value={m}
                       onChange={(e) => setModelSlot(i, e.target.value)}
                     />
+                    {/* 手填了出图 / 向量等模型：当场标出来（保存不拦，启动时后端闸会拒） */}
+                    {nonChatReason(m.trim()) && (
+                      <span
+                        className="shrink-0 text-micro text-caution-text"
+                        title={nonChatReason(m.trim()) ?? undefined}
+                      >
+                        不能对话
+                      </span>
+                    )}
                     {i === firstFilled && (
                       // 与连接列表名称旁的「默认」同一枚主题色胶囊
                       <span className="shrink-0 rounded-full bg-cta-pill px-1.5 py-px text-micro text-cta-pill-text">

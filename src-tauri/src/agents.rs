@@ -1338,6 +1338,12 @@ pub fn validate_launch_compatibility(
     profile: &Profile,
     selected_model: Option<&str>,
 ) -> Result<(), String> {
+    // 出图 / 视频 / 向量等模型当对话模型，CLI 每一轮都被网关拒（2026-10-23 gpt-image-2.5 实例）：启动前拦下说原因
+    if let Some(model) = selected_model.or_else(|| profile.models.first().map(String::as_str)) {
+        if let Some(msg) = crate::image_gen::non_chat_launch_error(model) {
+            return Err(msg);
+        }
+    }
     if profile.agent == "grok" && profile.account_type == crate::profiles::AccountType::Api {
         let backend = profile.api_backend.as_deref().unwrap_or("chat_completions");
         if backend != "chat_completions" {

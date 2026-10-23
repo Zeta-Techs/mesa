@@ -219,7 +219,7 @@ fn new_skill(
 /// marker 是库目录下的 . 开头文件（发现逻辑跳过），记录已播种到的版本；
 /// 用户删掉某个内置技能后不会被复活——逐技能删除墓碑（BUILTIN_TOMBSTONE_FILE）
 /// 记下用户删过的内置技能名，版本升级补播时跳过墓碑项。
-const BUILTIN_SEED_VERSION: u32 = 13;
+const BUILTIN_SEED_VERSION: u32 = 14;
 const BUILTIN_SEED_MARKER: &str = ".builtin-seed-version";
 
 /// 内置技能删除墓碑（库目录下 . 开头文件，一行一个技能名）：删除内置技能先落墓碑，
@@ -308,6 +308,10 @@ static BUILTIN_SKILLS: &[(&str, &str)] = &[
     (
         "proposal-writer",
         include_str!("../resources/skills/proposal-writer/SKILL.md"),
+    ),
+    (
+        "image-gen",
+        include_str!("../resources/skills/image-gen/SKILL.md"),
     ),
 ];
 
@@ -3415,7 +3419,7 @@ mod tests {
             .iter()
             .filter(|s| s.category.as_deref() == Some("Mesa 内置"))
             .count();
-        // 20 个内置：18 个默认归组 + zotero-sync 用户自定义 + 被改成 local（用户自有）不归组 = 18
+        // 21 个内置：19 个默认归组 + zotero-sync 用户自定义 + 被改成 local（用户自有）不归组 = 19
         assert_eq!(mesa, BUILTIN_SKILLS.len() - 2, "除用户自定义与 local 同名（用户自有），其余内置归组");
         assert_eq!(
             listed.iter().filter(|s| s.category.as_deref() == Some("我的文献组")).count(),

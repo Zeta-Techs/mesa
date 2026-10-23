@@ -260,6 +260,10 @@ pub struct AppSettingsDto {
     /// 打开对话页的补名去重（ai_retitle_all_sessions）全停；已有标题保留，
     /// 手改标题（title_source=user）本就不被覆盖，与此开关无关。
     pub auto_title_sessions: Option<bool>,
+    /// 出图模型（2026-10-23，设置页「AI 与 Agent → 出图模型」）：网关 id + 模型 id，
+    /// Agent 经 `mesa_helper image` 出图时的默认值（image_gen.rs）。两者同进退，空串 = 清空
+    pub image_gen_gateway_id: Option<String>,
+    pub image_gen_model: Option<String>,
     /// 内部对话保留期自动清理（设置页「数据与存储」，默认开，2026-10-17 用户拍板）。
     /// 只清 Mesa 自己的一次性后台对话，见 internal_sessions.rs
     pub internal_auto_clean: Option<bool>,
@@ -856,6 +860,8 @@ fn with_defaults(s: AppSettingsDto) -> AppSettingsDto {
         auto_title_sessions: s
             .auto_title_sessions
             .or(Some(DEFAULT_AUTO_TITLE_SESSIONS)),
+        image_gen_gateway_id: s.image_gen_gateway_id.filter(|v| !v.trim().is_empty()),
+        image_gen_model: s.image_gen_model.filter(|v| !v.trim().is_empty()),
         internal_auto_clean: s.internal_auto_clean.or(Some(true)),
         internal_retention_days: Some(
             s.internal_retention_days
@@ -995,6 +1001,18 @@ fn merge(cur: &mut AppSettingsDto, patch: AppSettingsDto) {
     }
     if patch.auto_title_sessions.is_some() {
         cur.auto_title_sessions = patch.auto_title_sessions;
+    }
+    // 出图模型：网关与模型同进退，任一传空串 = 两个一起清空
+    if patch.image_gen_gateway_id.is_some() || patch.image_gen_model.is_some() {
+        let gw = patch.image_gen_gateway_id.filter(|v| !v.trim().is_empty());
+        let model = patch.image_gen_model.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+        if gw.is_some() && model.is_some() {
+            cur.image_gen_gateway_id = gw;
+            cur.image_gen_model = model;
+        } else {
+            cur.image_gen_gateway_id = None;
+            cur.image_gen_model = None;
+        }
     }
     if patch.internal_auto_clean.is_some() {
         cur.internal_auto_clean = patch.internal_auto_clean;
@@ -1820,6 +1838,38 @@ mod tests {
             with_defaults(read_from(&p)).auto_title_sessions,
             Some(true)
         );
+        std::fs::remove_dir_all(p.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn image_gen_pair_saves_together_and_clears_together() {
+        let p = tmp();
+        let mut cur = read_from(&p);
+        merge(
+            &mut cur,
+            AppSettingsDto {
+                image_gen_gateway_id: Some("gw-1".into()),
+                image_gen_model: Some(" gpt-image-2.5 ".into()),
+                ..Default::default()
+            },
+        );
+        write_to(&p, &cur).unwrap();
+        let back = with_defaults(read_from(&p));
+        assert_eq!(back.image_gen_gateway_id.as_deref(), Some("gw-1"));
+        assert_eq!(back.image_gen_model.as_deref(), Some("gpt-image-2.5"));
+        // 无关 patch 不动它
+        merge(&mut cur, AppSettingsDto { auto_title_sessions: Some(false), ..Default::default() });
+        assert_eq!(cur.image_gen_model.as_deref(), Some("gpt-image-2.5"));
+        // 只给一半（模型空串）= 两个一起清空，不留半套配置
+        merge(
+            &mut cur,
+            AppSettingsDto {
+                image_gen_gateway_id: Some("gw-1".into()),
+                image_gen_model: Some(String::new()),
+                ..Default::default()
+            },
+        );
+        assert_eq!((cur.image_gen_gateway_id.clone(), cur.image_gen_model.clone()), (None, None));
         std::fs::remove_dir_all(p.parent().unwrap()).ok();
     }
 

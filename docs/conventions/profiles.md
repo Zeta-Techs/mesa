@@ -439,6 +439,17 @@ Codex            → …
 - 私有 JSON 从临时文件创建起就是 0600；普通文本原子替换保留可执行位。损坏密钥原件保留并备份，损坏设置保留且拒绝 patch，不把“读失败”当“空配置”。
 - 定时任务绑定缺失时拒绝静默回落；交互 AI 默认选择仍遵守既有显式/专属/默认优先级。
 
+## 非对话模型与出图模型（2026-10-23）
+
+- 网关目录把出图 / 视频 / 向量 / 重排 / 语音 / 审核模型和对话模型混列（New API `supported_endpoint_types` 只有 gpt-image 系标了
+  `image-generation`，不可依赖），一律**按模型名分类**：`image_gen::model_kind` ↔ `src/model-kinds.ts` 镜像，共读
+  `tests/fixtures/model-kinds.json`。新增厂商命名规则两侧同改并补样例；判定顺序视频先于出图、重排先于向量。
+- 非对话模型不得成为 Agent 的对话模型：连接目录面板隐藏并报数、手填标「不能对话」（保存不拦）、对话菜单置灰、启动栏名单过滤；
+  最终闸在 `agents::validate_launch_compatibility`（终端 / 无头 / 内置 AI 三条路径共用）。分类误伤对话模型时改规则，不加开关绕过。
+- 出图模型是**设置级单选**（`image_gen_gateway_id` + `image_gen_model` 同进退），不进绑定、不进模型名单；Agent 用 `--model`
+  点名别家时按「默认网关目录 → 任一网关目录 → 默认网关」找。接口按模型选：Gemini 系原生 generateContent → 退对话接口；
+  其余 OpenAI `/images/generations`（base 带版本段直接挂，否则补 `/v1`，同 `ends_with_version_segment`）。
+
 ## 模型配置约定（2026-09-05 起）
 
 > 2026-09-22 自 AGENTS.md「模型配置约定」整节迁入（原文未改）。改配置/注入/设为全局/模型能力前与本文件其余章节一起读。

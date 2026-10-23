@@ -524,6 +524,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   auto-load-older.ts         # 回放往上翻自动加载更早一页（useAutoLoadOlder：对话页 / 项目对话 / 聊天层共用；只认用户滚动，
                              # 不满一屏自动补页）+ wasPrepended（聊天层前插判定，最新窗后滑不算）
   model-history.ts           # 「这份连接能选哪些模型」：连接名单 + 按 Agent+连接记的手填历史；开聊前选择器、启动栏、模型芯片同源
+  model-kinds.ts             # 模型分类（出图/视频/向量/重排/语音/审核 = 不能对话）+ isImageGenModel；与 image_gen.rs 镜像，
+                             #   两侧测试共读 tests/fixtures/model-kinds.json。连接目录面板隐藏、对话菜单置灰、启动栏过滤都用它
   tui-menu.ts                # 认屏上的 TUI 选择菜单（parseTuiMenu / menuAnswerKeys / sameTuiMenu / menuEchoesText）：切换命令后 5 秒、启动后 20 秒、
                              # 以及这一轮没结束前都扫屏，切换确认与七家工具审批按原文给按钮；剥方框边与滚动条、Grok 单选改写成序号行、
                              # 折行并回上一项、问句取贴着选项的发问行；回显的 /命令、⎿ 续行、用户刚发的编号清单都不算菜单
@@ -970,7 +972,7 @@ src-tauri/src/
                              #   apps 表是创建时快照，
                              #   list 时现算补齐注册表新 agent 的缺键（否则一键应用永远漏新 agent，不写盘）；
                              #   contentDigest = 库目录清单哈希（与漂移检测同口径），项目上下文/执行快照按它记技能版本；内置技能种子（seed_builtin_skills：
-                             # include_str! 内嵌 src-tauri/resources/skills/ 18 个技能，启动幂等播种，不覆盖/不复活用户改动；
+                             # include_str! 内嵌 src-tauri/resources/skills/ 21 个技能（含 image-gen），启动幂等播种，不覆盖/不复活用户改动；
                              #   删除内置技能先落逐技能墓碑 .builtin-skill-tombstones（删除失败也不留「删了没记」），
                              #   种子版本升级补播跳过墓碑项——墓碑机制前的老删除靠 skill-backups 同名备份回填墓碑）、
                              # 内置技能更新（check_builtin_skill_updates 种子逐字节比对 + apply_builtin_skill_update
@@ -1192,7 +1194,8 @@ src-tauri/src/
                              #   dmjplopfhbdamkihimfllomdmkfainnn）+ bin/mesa_helper.rs（native messaging，读 helper-context.json
                              #   当前项目+打开篇标题/DOI 调 ccode_lib::helper_ingest；PDF 阅读器空标题不得落 paper-5.pdf；
                              #   工具栏图标优先走页内「存到 Mesa」，chrome.downloads 只作无 content script 末路；
-                             #   2026-10-20 起另有 `hook <日志> <截断字节>` 模式：Windows 上给 CLI hooks 写状态日志，只用标准库，见 hooks.rs）
+                             #   2026-10-20 起另有 `hook <日志> <截断字节>` 模式：Windows 上给 CLI hooks 写状态日志，只用标准库，见 hooks.rs；
+                             #   2026-10-23 起另有 `image …` 出图模式：调 ccode_lib::helper_image，唯一会读 keys.json 的模式，见 image_gen.rs）
                              #   + browser_bridge.rs（装 NativeMessagingHosts
                              #   清单）。内嵌窗漏斗保留为过渡，通道 C 稳定后退役——细则见 pipeline.md ⑧
   fonts.rs                   # 终端字体打包与 brew 一键安装（Maple/Sarasa/Iosevka）
@@ -1375,5 +1378,10 @@ src-tauri/src/
                              #   聊天层 Codex app-server 用，Mesa 崩溃不留孤儿）
   models.rs                  # fetch_models 拉目录（候选链 model_list_candidates：gemini 先剥版本段再拼 /v1beta/models，
                              #   strip_trailing_version_segment / ends_with_version_segment 版本段判据单一出处）+ 目录缓存 + 共享 DTO
+  image_gen.rs               # 出图模型：model_kind 分类（与 src/model-kinds.ts 镜像）+ non_chat_launch_error（启动闸，
+                             #   agents::validate_launch_compatibility 调）+ 按模型选接口出图（Gemini 原生→退对话接口 / 其余
+                             #   OpenAI 出图接口）+ 设置页命令（image_gen_candidates/status/test）+ helper 入口 helper_image_cli；
+                             #   红线：密钥只在本进程用、下载图片地址不带鉴权头、Target 不派生 Debug；helper_exe 试跑
+                             #   `image --probe` 通过才把路径作 MESA_IMAGE_TOOL 注入 PTY（pty.rs spawn_tracked）
   lib.rs                     # 模块与 Tauri command 注册
 ```

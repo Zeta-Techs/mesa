@@ -120,6 +120,7 @@ import {
 } from "../quick-chat";
 import { resumeSessionInTerminal, saveQuickChatChoice } from "../quick-chat-launch";
 import { connectionModels, readModelHistory } from "../model-history";
+import { modelKind } from "../model-kinds";
 import FileTree, { type DirEntryDto } from "../components/FileTree";
 import GitPanel, { type GitSummary } from "../components/GitPanel";
 import TerminalStatusBar from "../components/TerminalStatusBar";
@@ -1051,7 +1052,10 @@ const TerminalView = memo(function TerminalView({
   // 历史按「Agent + 连接」分开记：原先按 Agent 混记，别的连接用过的模型（gpt-6-sol、deepseek…）
   // 会出现在 GLM 连接的名单里，选了也调不通（2026-10-17 用户截图）
   const modelOptions = useMemo(() => {
-    return connectionModels(selectedProfile?.models ?? [], readModelHistory(agentId, profileId));
+    // 出图 / 向量等非对话模型不进名单（选了启动也会被后端闸拦下，见 model-kinds.ts）
+    return connectionModels(selectedProfile?.models ?? [], readModelHistory(agentId, profileId)).filter(
+      (m) => modelKind(m) === "chat",
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId, profileId, selectedProfile, model]);
   // 新标签的模型种子来自「上次启动」，可能是另一份连接的模型（上次用 Codex-GPT 的 gpt-5.6-luna，

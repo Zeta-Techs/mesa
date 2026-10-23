@@ -69,6 +69,12 @@ pub fn helper_pending_for_doi(doi: &str) -> Option<(String, String, String)> {
     download_inbox::pending_for_doi(doi).map(|p| (p.title, p.doi, p.project_root))
 }
 
+/// helper 出图子命令（`mesa_helper image …`）：Agent 经 MESA_IMAGE_TOOL 调用，返回退出码
+pub fn helper_image(args: &[String]) -> i32 {
+    image_gen::helper_image_cli(args)
+}
+mod image_gen;
+
 mod browser_bridge;
 mod capability_golden;
 mod capability_manifest;
@@ -468,6 +474,9 @@ pub fn run() {
             agents::digest_external_terminal,
             models::fetch_models,
             models::fetch_gateway_catalog,
+            image_gen::image_gen_candidates,
+            image_gen::image_gen_status,
+            image_gen::image_gen_test,
             model_registry::model_db_status,
             model_registry::download_model_db,
             model_registry::model_capability_brief,

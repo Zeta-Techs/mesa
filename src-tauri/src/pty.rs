@@ -661,6 +661,10 @@ fn spawn_tracked(
     // PWD 跟工作目录一致：否则子进程继承的是 Mesa 启动时那个 shell 的 PWD，按 PWD 取目录的 CLI（opencode run）
     // 会跑到别处干活（process::background_command 同一条，那边是删掉）
     cmd.env("PWD", cwd);
+    // 出图：告诉 Agent 随包 helper 在哪（技能 image-gen 按它调）；密钥不进环境变量，helper 出图时自己取
+    if let Some(tool) = crate::image_gen::helper_exe() {
+        cmd.env(crate::image_gen::TOOL_ENV, tool);
+    }
 
     let pair = native_pty_system()
         .openpty(size)

@@ -4,7 +4,8 @@
 //! 的入库函数落**当前活跃项目** papers/（项目根由主程序写 helper-context.json 告知），
 //! 回 `{ok, saved}` / `{ok:false, error}`。循环处理直到 stdin 关闭。
 //!
-//! 安全边界：stdin/stdout 只对本机浏览器；不监听网络；不读密钥；
+//! 安全边界：stdin/stdout 只对本机浏览器；不监听网络；浏览器桥与 hook 模式不读密钥
+//! （image 出图模式例外，见 main 里的说明与 image_gen.rs）；
 //! 入库走主程序同一套口径（ensure_task_project_root + save_paper_bytes + 60MB/魔数）。
 
 use std::io::{Read, Write};
@@ -167,6 +168,11 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(String::as_str) == Some("hook") {
         std::process::exit(run_hook(&args[2..]));
+    }
+    // `mesa_helper image --prompt … --out …`：Agent 出图（技能 image-gen 经 MESA_IMAGE_TOOL 调用）。
+    // 与浏览器桥不同，这条路会读 keys.json 取出图网关的密钥——只在本机进程里用，不打印、不进环境变量
+    if args.get(1).map(String::as_str) == Some("image") {
+        std::process::exit(ccode_lib::helper_image(&args[2..]));
     }
     let mut stdin = std::io::stdin().lock();
     let mut stdout = std::io::stdout().lock();

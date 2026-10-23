@@ -7,6 +7,7 @@ import { useAppStore } from "../store";
 import { useMenuKeyNav } from "../menu-key-nav";
 import { useRuntimeModelEffort } from "../runtime-model-effort";
 import { connectionModels, readModelHistory } from "../model-history";
+import { nonChatReason } from "../model-kinds";
 import { modelCapsLabel } from "../model-caps-label";
 import { clipBounds, pickPopoverSide, popoverRoom } from "../popover-side";
 import ContextRing from "./ContextRing";
@@ -87,6 +88,8 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<"main" | "who">("main");
   const [customModel, setCustomModel] = useState("");
+  // 手填的是出图 / 向量等不能对话的模型：不收，原因写在输入框下
+  const [customErr, setCustomErr] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   useMenuKeyNav(menuRef, open, view);
@@ -305,20 +308,27 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
     const list = (
       <ul>
         {models.length === 0 && <li className={note}>用配置默认的模型</li>}
-        {models.map((m) => (
+        {models.map((m) => {
+          // 出图 / 视频 / 向量等模型选成对话模型，CLI 每一轮都会被网关拒（2026-10-23 gpt-image 实例）：置灰并说原因
+          const blocked = nonChatReason(m);
+          return (
           <li key={m}>
             <button
               type="button"
               data-selected={m === currentModel}
-              disabled={relaunchWaiting && rt.modelByRelaunch}
+              disabled={Boolean(blocked) || (relaunchWaiting && rt.modelByRelaunch)}
               className={`${twoLine(m === currentModel)} disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent`}
-              title={m}
+              title={blocked ? `${m}\n${blocked}` : m}
               onClick={() => pickModel(m)}
             >
               <span className="min-w-0 flex-1">
                 <span className="block truncate leading-[18px]">{m}</span>
                 {/* 能力灰字（200K · 思考 · 看图）放在名字下面一行，名字长也不挤 */}
-                {caps.labels[m] && <span className="block truncate text-xs leading-[18px] text-l4">{caps.labels[m]}</span>}
+                {blocked ? (
+                  <span className="block truncate text-xs leading-[18px] text-l4">{blocked.split("，")[0]}，不能对话</span>
+                ) : (
+                  caps.labels[m] && <span className="block truncate text-xs leading-[18px] text-l4">{caps.labels[m]}</span>
+                )}
               </span>
               {/* 输入框里有图、这个模型确知看不了：当场标出来（不知道的不标） */}
               {hasImages && caps.vision[m] === false && (
@@ -332,7 +342,8 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
               />
             </button>
           </li>
-        ))}
+          );
+        })}
       </ul>
     );
     if (launch) return list;
@@ -583,6 +594,11 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
                     e.preventDefault();
                     const m = customModel.trim();
                     if (!m) return;
+                    const blocked = nonChatReason(m);
+                    if (blocked) {
+                      setCustomErr(blocked);
+                      return;
+                    }
                     launch.onModel(m);
                     setCustomModel("");
                     setOpen(false);
@@ -590,11 +606,15 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
                 >
                   <input
                     value={customModel}
-                    onChange={(e) => setCustomModel(e.target.value)}
+                    onChange={(e) => {
+                      setCustomModel(e.target.value);
+                      setCustomErr(null);
+                    }}
                     placeholder="其他模型，输入后回车"
                     aria-label="输入其他模型"
                     className="h-7 w-full rounded-lg border border-hairline bg-transparent px-2 text-l2 outline-none placeholder:text-l4 focus:border-field"
                   />
+                  {customErr && <p className="mt-1 px-0.5 leading-4 text-caution-text">{customErr}</p>}
                 </form>
               )}
               {effortSection && (

@@ -53,6 +53,11 @@
   （`resolve_binary`，⧉ 复制命令才用裸名）、shell 必须 `-l -i` 交互登录（非交互不加载 `.zshrc` 的安装器 PATH）。
   **Ghostty** 走 AppleScript（`open -n` 堆实例、不带 `-n` 不投递 `--args`）：激活 → ⌘N → 剪贴板粘贴命令 + 回车
   （用后还原；首次需用户授权自动化）。
+- **出图工具的密钥边界（2026-10-23，image_gen.rs / bin/mesa_helper.rs）**：Agent 出图走随包 `mesa_helper image …`，
+  helper 出图时自己从 keys.json 取网关密钥，只在本进程里发请求，**不打印、不写日志、不进 Agent 环境变量**；Mesa 给 PTY 只注入
+  `MESA_IMAGE_TOOL`（helper 路径）。厂商回的图片下载地址（签名 URL）**不带任何鉴权头**，直连不通才走设置的出网代理；网关报错原文
+  经 `redact_sensitive_text` 脱敏再回给 Agent / 前端。`image_gen::Target` 带 Header 值，不得派生 Debug。浏览器桥与 hook 模式仍不读密钥。
+  技能 image-gen 要求不生成冒充实验观测的图、失败照实报不换模型偷偷重试。
 - **机构访问会话罐（2026-09-16，inst_access.rs）**：登录窗 Cookie 存 0600 `inst-session.json`（与 keys.json 同
   纪律：原子写、私有临时文件、值绝不出站——状态 DTO 只给域名/条数/时间，不进诊断包/生效配置快照）；损坏保留
   原件报错，不当空罐继续。**绝不存机构账号密码、绝不做无人值守自动登录**（MFA 过不去；脚本式批量下载会被
