@@ -3174,15 +3174,31 @@ fn commit_bootstrap_at(repo: &Path) -> Result<BootstrapCommitDto, String> {
     // 不排除的话这一把会把台账提交成 tracked——Mesa 自己制造自己要拦的合并阻塞。
     // 用 pathspec exclude magic，故这一步不用 --literal-pathspecs（路径本身无通配，等价）
     const BOOTSTRAP_EXCLUDES: [&str; 5] = [
-        ":(exclude).ccode/watch-explains.json",
-        ":(exclude).ccode/pending-registrations.json",
-        ":(exclude).ccode/acceptance-log.jsonl",
-        ":(exclude).ccode/acceptance-log.lock",
-        ":(exclude).ccode/watch",
+        ".ccode/watch-explains.json",
+        ".ccode/pending-registrations.json",
+        ".ccode/acceptance-log.jsonl",
+        ".ccode/acceptance-log.lock",
+        ".ccode/watch",
     ];
+    // 已被 .gitignore 忽略的台账不再写 exclude：exclude 点名一个存在且已忽略的文件时，
+    // git add 整条报「paths are ignored」退出 1，档案卡一次也提交不上（2026-10-22 实测：
+    // 新模板 .gitignore 已忽略 acceptance-log 等，每次开工都弹「档案卡自动提交失败」）。
+    // check-ignore：有忽略的退出 0 并逐行列出，一个都没有退出 1（run_git 报错 → 当作都没忽略）
+    let ignored: Vec<String> = {
+        let mut args: Vec<&str> = vec!["check-ignore", "--"];
+        args.extend(BOOTSTRAP_EXCLUDES);
+        crate::workspaces::run_git(repo, &args, T)
+            .map(|out| out.lines().map(|l| l.trim().replace('\\', "/")).collect())
+            .unwrap_or_default()
+    };
+    let excludes: Vec<String> = BOOTSTRAP_EXCLUDES
+        .iter()
+        .filter(|p| !ignored.iter().any(|i| i == *p))
+        .map(|p| format!(":(exclude){p}"))
+        .collect();
     let mut add_args: Vec<&str> = vec!["add", "--"];
     add_args.extend(existing.iter().copied());
-    add_args.extend(BOOTSTRAP_EXCLUDES);
+    add_args.extend(excludes.iter().map(String::as_str));
     crate::workspaces::run_git(repo, &add_args, T)
         .map_err(|e| format!("暂存 .ccode/.gitignore 失败: {e}"))?;
     // 有暂存内容才提交；空仓库（unborn HEAD）下 diff --cached 与空树比较，也能列出新增文件
@@ -6476,6 +6492,45 @@ resources = ["ghost.pdf"]
                 .any(|l| l.starts_with("A ") && l.contains("staged.txt")),
             "{status2}"
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn bootstrap_commit_survives_ignored_ledger_files() {
+        if crate::agents::resolve_binary("git").is_none() {
+            return;
+        }
+        // 2026-10-22 实测：.gitignore 已忽略验收台账且文件存在时，exclude 点名它们让 git add 整条失败，
+        // 每次开工都弹「档案卡自动提交失败」
+        let dir = temp_dir("bootstrap-ledger");
+        let project = dir.join("proj");
+        fs::create_dir_all(&project).unwrap();
+        ensure_git_at(&project).unwrap();
+        write_config_at(&project, &sample_config()).unwrap();
+        write(
+            &project.join(".gitignore"),
+            "/.ccode/pending-registrations.json\n/.ccode/acceptance-log.jsonl\n/.ccode/acceptance-log.lock\n",
+        );
+        write(&project.join(".ccode/acceptance-log.jsonl"), "{}\n");
+        write(&project.join(".ccode/acceptance-log.lock"), "");
+        write(&project.join(".ccode/pending-registrations.json"), "[]");
+        let r = commit_bootstrap_at(&project).unwrap();
+        assert!(r.committed, "{r:?}");
+        let tree = git_ok(&project, &["ls-tree", "-r", "--name-only", "HEAD"]);
+        assert!(tree.contains(".ccode/project.toml"), "{tree}");
+        assert!(!tree.contains("acceptance-log") && !tree.contains("pending-registrations"), "{tree}");
+
+        // 老项目 .gitignore 没忽略这些：仍靠 exclude 挡住，不提交成 tracked
+        let old = dir.join("old");
+        fs::create_dir_all(&old).unwrap();
+        ensure_git_at(&old).unwrap();
+        write_config_at(&old, &sample_config()).unwrap();
+        write(&old.join(".gitignore"), "/output/\n");
+        write(&old.join(".ccode/acceptance-log.jsonl"), "{}\n");
+        let r = commit_bootstrap_at(&old).unwrap();
+        assert!(r.committed, "{r:?}");
+        let tree = git_ok(&old, &["ls-tree", "-r", "--name-only", "HEAD"]);
+        assert!(!tree.contains("acceptance-log"), "{tree}");
         std::fs::remove_dir_all(&dir).ok();
     }
 
