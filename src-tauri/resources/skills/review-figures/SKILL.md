@@ -70,6 +70,14 @@ python3 scripts/assemble_panels.py --out figures/fig2.png --width-cm 8.5 --input
 
 每张图先写一句论点（这张拼图让读者看见什么），写不出就不要拼。图注进 `figures/figN.md`：先一句论点，再**逐块**写画了什么和来源，写明实际放进拼板的是哪一块——`(a) η₁₀ and η₅₀ of Ru@Ni–B/NF versus controls in 1 M KOH. Adapted from Fig. 2b of [@key1]. (b) … Adapted from Fig. 2e of [@key2].` 用了整张才写整张 Fig. n。论断进图注，不进图内。
 
+## 定稿前：换原图与转载许可（2026-10-24）
+
+拼图里的块是从别人论文的 PDF 裁的，投稿前作者要处理两件事，**许可只能作者本人向出版社申请**，Agent 不代办、不代填状态：
+
+- 定稿步跑 `python3 scripts/figure_permissions.py --figures figures --bib references.bib`，写 `submission/figure-permissions.md`：每块的原文、原图编号、出版社、许可（Crossref 按 DOI 查；出版商的 TDM 文本挖掘许可不是转载许可）、要不要申请、去哪申请、图注出处写法、状态栏。CC BY / CC0 标「无需申请」，带 NC / ND 的和非开放获取的标「待申请」。联网失败时加 `--offline`，全部按待申请写并在报告里说明。
+- 期刊要求用出版社原图：作者在文章页下载高清原图，放进项目根 `papers/figure-originals/`。`extract_figure.py --pdf` 直接收图片（png / jpg / tif…），整张就是这张图，按它自己的像素裁，`--grid` / `--box` / `--erase` / `--label` 照用；按 `figures/sources.md` 记的同一块重裁、重拼、重跑两份清单，再重渲。
+- 拿到许可后，图注按许可回执改出处（清单里给的是建议写法）。
+
 ## 自绘示意图
 
 计划要自绘的概念图（设计准则框架、流程示意）用可重跑脚本生成，不含任何实验数字，图注写 schematic。文字多的图最容易互相压住：画完先程序化检查**任意两段文字的外框不相交**，并且都在各自的框里，不过就调字号、换行或挪位置再画（只查「文字在框内」不够——2026-10-23 HER 图 7 斜体标注仍压在正文上）。matplotlib 写法：

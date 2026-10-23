@@ -171,3 +171,62 @@ test("来源清单：每块的原文、DOI、原图编号与 PDF 页码汇总进
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// 2026-10-24 用户：定稿步提醒换原图和申请许可。许可只能作者本人申请，AI 只做清单
+const permScript = resolve("src-tauri/resources/skills/review-figures/scripts/figure_permissions.py");
+
+test("转载许可清单：CC BY 的标无需申请，其余标待申请，图注出处按许可写", { skip: !ready }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "mesa-fig-perm-"));
+  try {
+    const pdf = makePdf(dir);
+    const figures = join(dir, "figures");
+    const src = join(figures, "src");
+    let r = run(["--pdf", pdf, "--fig", "1", "--box", "0,0,0.5,0.5", "--label", "Fig. 1(a)", "--dpi", "72", "--out", join(src, "Open2020-fig1a.png")]);
+    assert.equal(r.status, 0, r.stderr);
+    r = run(["--pdf", pdf, "--fig", "1", "--box", "0.5,0,1,0.5", "--label", "Fig. 3(b)", "--dpi", "72", "--out", join(src, "Shut2019-fig3b.png")]);
+    assert.equal(r.status, 0, r.stderr);
+    r = spawnSync(python, [assemble, "--out", join(figures, "fig1.png"), "--width-cm", "8.5", "--inputs", join(src, "Open2020-fig1a.png"), join(src, "Shut2019-fig3b.png")], { encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    writeFileSync(
+      join(dir, "references.bib"),
+      "@article{Open2020,\n  title = {Open},\n  author = {Doe, Jane},\n  year = {2020},\n  journal = {J. Open},\n  doi = {10.1/open},\n}\n" +
+        "@article{Shut2019,\n  title = {Shut},\n  author = {Roe, Rick},\n  year = {2019},\n  journal = {J. Shut},\n  doi = {10.1/shut},\n}\n",
+    );
+    // Crossref 打桩：一篇 CC BY，一篇只有出版商的文本挖掘许可
+    const code = [
+      "import sys, importlib.util",
+      "spec = importlib.util.spec_from_file_location('fp', sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)",
+      "fake = {'10.1/open': {'publisher': 'Open Press', 'license': [{'URL': 'http://creativecommons.org/licenses/by/4.0/', 'content-version': 'vor'}]},",
+      "        '10.1/shut': {'publisher': 'Shut Inc', 'license': [{'URL': 'https://www.elsevier.com/tdm/userlicense/1.0/', 'content-version': 'tdm'}]}}",
+      "sys.stdout.reconfigure(encoding='utf-8')",
+      "print(m.build(m.Path(sys.argv[2]), m.Path(sys.argv[3]), lambda doi: fake.get(doi, {})))",
+    ].join("\n");
+    r = spawnSync(python, ["-c", code, permScript, figures, join(dir, "references.bib")], { encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    const md = r.stdout;
+    assert.match(md, /拼图共 2 块，其中 1 块要向出版社申请转载许可/);
+    assert.match(md, /\| 1\(a\) \|.*\| Fig\. 1\(a\) \| Open Press \| \[CC BY 4\.0\].*\| Adapted from Fig\. 1\(a\) of \[@Open2020\], licensed under CC BY 4\.0\. \| 无需申请 \|/);
+    assert.match(md, /\| 1\(b\) \|.*\| Fig\. 3\(b\) \| Shut Inc \| 非开放获取.*\| Adapted with permission from Fig\. 3\(b\) of \[@Shut2019\]\. Copyright 2019 Shut Inc\. \| 待申请 \|/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("裁图也收期刊下载的原图图片：整张就是这张图，按它自己的像素裁", { skip: !ready }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "mesa-fig-img-"));
+  try {
+    const img = join(dir, "orig.png");
+    const made = spawnSync(python, ["-c", "import sys; from PIL import Image, ImageDraw; im = Image.new('RGB', (800, 400), 'white'); d = ImageDraw.Draw(im); d.rectangle([20, 20, 380, 380], fill=(0, 0, 200)); d.rectangle([420, 20, 780, 380], fill=(0, 150, 0)); im.save(sys.argv[1], dpi=(96, 96))", img], { encoding: "utf8" });
+    assert.equal(made.status, 0, made.stderr);
+    const r = run(["--pdf", img, "--box", "0.5,0,1,1", "--label", "Fig. 2(b)", "--key", "Orig2020", "--out", join(dir, "b.png")]);
+    assert.equal(r.status, 0, r.stderr);
+    const b = probe(join(dir, "b.png"));
+    assert.ok(Math.abs(b.w - 400) <= 2, `按原图像素裁，不按 dpi 放大：${b.w}`);
+    assert.deepEqual(b.center.map((v) => Math.round(v / 50)), [0, 3, 0]);
+    const side = JSON.parse(readFileSync(join(dir, "b.json"), "utf8"));
+    assert.equal(side.label, "Fig. 2(b)");
+    assert.equal(side.key, "Orig2020");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

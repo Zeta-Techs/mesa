@@ -16,6 +16,10 @@ Panel-level crops (a review figure takes the one panel that carries the point):
                      cannot be located (vector or scanned figures)
   --erase x0,y0,x1,y1  white out the source panel letter in a corner of the crop,
                      so the composite carries only its own (a)(b)(c)
+
+--pdf may also be an image (the publisher's original figure, downloaded by the
+author before submission): the whole image is the figure, cropped at its own
+resolution with --grid / --box / --erase.
 """
 from __future__ import annotations
 
@@ -172,6 +176,14 @@ def _split_cells(pix):
                 return []
             cells.append(box)
     return cells
+
+
+# 作者投稿前从期刊下载的原图（jpg / png / tif / gif）：整张图就是这一张，按它自己的分辨率裁
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".gif", ".bmp", ".webp"}
+
+
+def is_image(path: Path) -> bool:
+    return Path(path).suffix.lower() in IMAGE_SUFFIXES
 
 
 def locate(doc, fig: int):
@@ -384,7 +396,10 @@ def extract(pdf: Path, fig: int, out: Path, dpi: int, panel: str | None,
             erase: list[tuple[float, float, float, float]] | None = None, snap: bool = True, key: str = "",
             label: str = "") -> None:
     fitz = _need_fitz()
+    image = is_image(pdf)
     doc = fitz.open(pdf)
+    if image:
+        page_no = 1
     try:
         if page_no:
             if page_no > doc.page_count:
@@ -396,13 +411,16 @@ def extract(pdf: Path, fig: int, out: Path, dpi: int, panel: str | None,
         else:
             page, clip, caption = locate(doc, fig)
         used_box = box
-        if box and page_no:
+        if box and page_no and not image:
             # 按整页框时同样不许把大半页当成一块子图
             area = sub_rect(clip, box)
             if area.width * area.height / (page.rect.width * page.rect.height) > 0.85:
                 print("框住了接近整页，拒绝当作子图", file=sys.stderr)
                 sys.exit(4)
         scale = (150 if grid else dpi) / 72
+        if image:
+            # 图片按它自己的像素裁，不按 dpi 放大：页面尺寸是按图片里记的 dpi 折算的点数
+            scale = fitz.Pixmap(str(pdf)).width / page.rect.width
         pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=clip, alpha=False)
         if grid:
             grid_preview(pix, out)
@@ -483,7 +501,7 @@ def write_source(out: Path, pdf: Path, page: int, fig: int, caption: str, panel,
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--pdf", type=Path, required=True)
+    p.add_argument("--pdf", type=Path, required=True, help="论文 PDF；也可以是从期刊下载的原图图片（整张即这张图）")
     p.add_argument("--fig", type=int, default=0, help="题注上的图号；用 --page 时可不给")
     p.add_argument("--panel", default="", help="只用多联图里的一块，如 f：按白缝切格子、行优先数第几块。切不出就失败，不回退整张")
     p.add_argument("--grid", action="store_true", help="不裁，输出叠了 0–1 坐标格的整张图预览，用来读 --box")
@@ -500,7 +518,7 @@ def main() -> None:
         p.error("--page 从 1 数")
     if a.page and not (a.grid or a.box):
         p.error("--page 只配 --grid 或 --box 用：整页不能当图")
-    if not a.page and a.fig < 1:
+    if not a.page and a.fig < 1 and not is_image(a.pdf):
         p.error("--fig 必须 ≥ 1")
     panel = a.panel.strip().lower()[:1]
     if panel and panel not in "abcdefgh":
@@ -508,7 +526,7 @@ def main() -> None:
     if sum(bool(x) for x in (panel, a.grid, a.box)) > 1:
         p.error("--panel、--grid、--box 一次只用一个")
     if not a.pdf.is_file():
-        print(f"找不到 PDF：{a.pdf}", file=sys.stderr)
+        print(f"找不到文件：{a.pdf}", file=sys.stderr)
         sys.exit(1)
     box = parse_box(a.box) if a.box else None
     erase = []

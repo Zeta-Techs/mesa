@@ -132,6 +132,19 @@ function endnoteSyncTask(): HumanTaskDto {
   };
 }
 
+/** 拼图是从别人论文 PDF 裁的：投稿前换出版社原图、申请转载许可，只能作者本人做（2026-10-24 用户拍板）。
+ *  AI 在定稿步写清单 submission/figure-permissions.md，人逐块办完自己勾掉；不挡定稿渲染。 */
+function figurePermissionTask(): HumanTaskDto {
+  return {
+    title: "换原图与申请转载许可",
+    guidance:
+      "拼图里的块是从别人论文的 PDF 裁的。投稿前点开这份清单逐块办：标「要申请」的到文章页的 Request permissions（多数走 RightsLink）提交，许可只能你本人申请；开放获取（CC BY）的按清单写好的出处注明即可。期刊要用出版社原图时，在文章页下载高清原图放进项目根 papers/figure-originals/，回到这一步的对话说一声，AI 会从原图重裁重拼。办完把清单里的状态改好，再勾掉这一项。",
+    target: "submission/figure-permissions.md",
+    timing: "after",
+    completion: "manual",
+  };
+}
+
 function reviewDecisionTask(target: string): HumanTaskDto {
   return {
     title: "逐条决定审查报告",
@@ -435,7 +448,8 @@ const REVIEW_STEPS: ProjectStepDto[] = [
       "4. 收尾再按 {skill:bib-check} 复核 review-final.md，结论追加进 citation-check.md；\n" +
       "5. 写 manuscript/verification-decisions.md：把 review-final.md 里每条 [待核实] 与 citation-check.md 里每条「疑似编造/元数据存疑」各列一行，格式 `- V001 | 位置：文件:行 | 原文摘要：…… | 来源：[@键] | 裁决：待裁决 | 依据：`。你只负责把清单列全、编号给上，**「裁决」与「依据」两栏一律留空或写「待裁决」，不得代填**——只有人能对照原始文献拍板。清单里的条数必须与稿子里实际剩余的 [待核实] 处数一致，漏列等于把未决项藏起来。\n" +
       "6. 用本步骤 run 脚本渲染 PDF/docx（按 {skill:quarto-render} 技能：人还没在流程线「更换引用样式」里换形式时，沿用初稿编号制渲，不因没选样式停渲）。正文字体沿用初稿 manuscript/typeface.md，不要另选字体，也不要重问。Word 套 manuscript/reference.docx：确认 YAML 的 format.docx 有 reference-doc 一行（初稿字体脚本写的，路径相对稿件所在目录；旧稿没有就补上）。同一次再生成 output/endnote.docx 与 output/zotero.docx。产物写入本工作区 output/（评审合并后进项目根）。\n" +
-      "完成标准：review-final.md 无语法硬伤、引用键全部可解析；citation-check.md 如实报告；verification-decisions.md 已列全、裁决栏为空等人填；核心支持性缺口未关闭时仅交待审稿，不标通过；changelog.md 已提交；run 脚本渲染通过。人未逐条裁决前，这一稿不得当定稿。\n" +
+      "7. 拼图里的块是从别人论文 PDF 裁的，投稿前作者要换出版社原图、申请转载许可（只能作者本人申请）：按 {skill:review-figures} 跑 figure_permissions.py，写 submission/figure-permissions.md——每块的出版社、许可（Crossref 按 DOI 查）、要不要申请、去哪申请、图注出处写法、状态栏（「待申请」等人改）；没有拼图也写这份并注明无需申请。人把原图放进项目根 papers/figure-originals/ 回来说一声，就按 figures/sources.md 记的同一块从原图重裁（--pdf 给原图文件）、重拼、重渲。验收摘要⑤写还有几块待申请许可。\n" +
+      "完成标准：review-final.md 无语法硬伤、引用键全部可解析；citation-check.md 如实报告；verification-decisions.md 已列全、裁决栏为空等人填；figure-permissions.md 已列全每块拼图；核心支持性缺口未关闭时仅交待审稿，不标通过；changelog.md 已提交；run 脚本渲染通过。人未逐条裁决前，这一稿不得当定稿。\n" +
       RELEASE_GATE + QUALITY_STATUS,
     expectedArtifacts: [
       "manuscript/review-report.md",
@@ -443,6 +457,7 @@ const REVIEW_STEPS: ProjectStepDto[] = [
       "manuscript/changelog.md",
       "manuscript/citation-check.md",
       "manuscript/verification-decisions.md",
+      "submission/figure-permissions.md",
       "output/review-final.pdf",
       "output/review-final.docx",
       "output/endnote.docx",
@@ -452,7 +467,7 @@ const REVIEW_STEPS: ProjectStepDto[] = [
     ],
     acceptanceCriteria: ["machine:contains:manuscript/review-report.md::严重问题"],
     inputs: ["manuscript/draft.md", "manuscript/section-status.md", "manuscript/typeface.md", "manuscript/reference.docx", "outline.md", "notes/", "references.bib"],
-    skills: ["review-writing", "bib-check", "quarto-render", "endnote-bridge", "zotero-sync"],
+    skills: ["review-writing", "bib-check", "quarto-render", "endnote-bridge", "zotero-sync", "review-figures"],
     run: [
       { name: "export-docx", command: "quarto render manuscript/review-final.md --to docx --output-dir ../output", default: true },
       { name: "render-final", command: "quarto render manuscript/review-final.md --to pdf --output-dir ../output", default: true },
@@ -468,6 +483,7 @@ const REVIEW_STEPS: ProjectStepDto[] = [
         timing: "after",
         completion: "decisions_cleared",
       },
+      figurePermissionTask(),
     ],
   },
 ];
