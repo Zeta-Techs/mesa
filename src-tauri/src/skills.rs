@@ -2381,12 +2381,28 @@ pub async fn check_builtin_skill_updates() -> Vec<String> {
     check_builtin_skill_updates_impl(&store)
 }
 
-/// 一键更新内置技能为内嵌种子版（覆盖前原文件自动备份为同目录 SKILL.md.bak-<yyyymmdd>）
+/// 更新内置技能后顺带把新版拷给已启用它的 Agent 复制件（Mesa 分发的 copy，带标记文件）。
+/// 人点「采用新版」就是要用新版：只更新库、让人再去点「同步副本」，Agent 下一轮读到的还是旧版
+/// （2026-10-24 用户：更新完技能卡上又冒出「同步副本」，不知道什么意思）。返回同步了哪些 Agent。
+fn apply_builtin_and_resync(
+    store: &SkillStore,
+    dirs: &HashMap<String, PathBuf>,
+    name: &str,
+) -> Result<Vec<String>, String> {
+    apply_builtin_skill_update_impl(store, name)?;
+    let Some(id) = store.read().into_iter().find(|s| s.name == name).map(|s| s.id) else {
+        return Ok(Vec::new());
+    };
+    resync_impl(store, dirs, &id)
+}
+
+/// 一键更新内置技能为内嵌种子版（覆盖前原文件自动备份为同目录 SKILL.md.bak-<yyyymmdd>），
+/// 并同步已分发的复制件；返回同步了的 Agent
 #[tauri::command]
 pub async fn apply_builtin_skill_update(
     name: String,
     expected_revision: String,
-) -> Result<(), String> {
+) -> Result<Vec<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let _guard = builtin_update_lock()?;
         let store = SkillStore::default_paths()?;
@@ -2395,7 +2411,7 @@ pub async fn apply_builtin_skill_update(
         {
             return Err("预览后技能发生变化，请重新查看差异再更新".into());
         }
-        apply_builtin_skill_update_impl(&store, name.trim())
+        apply_builtin_and_resync(&store, &agent_dirs(), name.trim())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -3655,6 +3671,27 @@ mod tests {
         // 非内置技能名报错
         let err = apply_builtin_skill_update_impl(&fx.store, "not-builtin").unwrap_err();
         assert!(err.contains("不是内置技能"), "{err}");
+    }
+
+    #[test]
+    fn builtin_update_also_refreshes_distributed_copies() {
+        let fx = Fx::new();
+        seed_builtin_skills_impl(&fx.store).unwrap();
+        let first = BUILTIN_SKILLS[0].0;
+        let id = fx.store.read().into_iter().find(|s| s.name == first).unwrap().id;
+        // codex 拿的是复制件；库里改旧后复制件跟着旧
+        let md = fx.store.skill_dir(first).join("SKILL.md");
+        fs::write(&md, "---\nname: old\ndescription: 旧描述\n---\n旧内容\n").unwrap();
+        apply_impl(&fx.store, &fx.agents, &id, "codex", true, false).unwrap();
+        let copy = fx.agents["codex"].join(first).join("SKILL.md");
+        assert!(fs::read_to_string(&copy).unwrap().contains("旧内容"));
+        // 采用新版：库和复制件一起追平，不再留「同步副本」
+        let synced = apply_builtin_and_resync(&fx.store, &fx.agents, first).unwrap();
+        assert_eq!(synced, vec!["codex".to_string()]);
+        let seed = BUILTIN_SKILLS.iter().find(|(n, _)| *n == first).unwrap().1;
+        assert_eq!(fs::read_to_string(&copy).unwrap(), seed);
+        let skill = fx.store.read().into_iter().find(|s| s.id == id).unwrap();
+        assert!(stale_agents(&fx.store, &fx.agents, &skill).is_empty());
     }
 
     #[test]

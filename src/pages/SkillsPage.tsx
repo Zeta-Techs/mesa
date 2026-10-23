@@ -18,6 +18,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { marked } from "marked";
 import { sanitizeDocumentHtml } from "../document-html";
 import { splitSkillFrontmatter } from "../skill-preview";
+import { skillFileDiff } from "../skill-diff";
+import { DiffView } from "../components/ConversationView";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -1463,9 +1465,13 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
     setBuiltinApplying(name);
     setBuiltinErrors((prev) => ({ ...prev, [name]: "" }));
     try {
-      await invoke("apply_builtin_skill_update", { name, expectedRevision });
+      const synced = await invoke<string[]>("apply_builtin_skill_update", { name, expectedRevision });
       setBuiltinUpdates((prev) => prev.filter((n) => n !== name));
-      setNotice(`内置技能「${name}」已更新到最新版（原文件已备份）`);
+      const labels = synced.map((id) => AGENTS.find((a) => a.id === id)?.label ?? id);
+      setNotice(
+        `内置技能「${name}」已更新到最新版（原文件已备份）` +
+          (labels.length ? `，并同步给 ${labels.join("、")}` : ""),
+      );
       setError(null);
       await refresh();
     } catch (e) {
@@ -1852,10 +1858,13 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
               </h3>
               <p className="mt-0.5 text-l4">
                 不会自动覆盖。采用新版前会先备份本机文件；你自己改过的内容不会自动合并。
+                采用后会顺带把新版拷给已启用这项技能的 Agent（它们用的是复制件），不用再点「同步副本」。
               </p>
               <div className="mt-2 space-y-1.5">
                 {builtinPreview.files.map((file) => {
-                  const same = file.current === file.proposed;
+                  // 只画改了的行（「有差异」三个字看不出改了哪；换行符不同不算改动）
+                  const diff = skillFileDiff(file.current, file.proposed);
+                  const same = diff.added + diff.removed === 0;
                   return (
                     <details
                       key={file.path}
@@ -1864,9 +1873,25 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                       <summary className="flex cursor-pointer items-center gap-2 px-2.5 py-1.5 text-l2 hover:bg-hover">
                         <span className="min-w-0 flex-1 truncate font-mono">{file.path}</span>
                         <span className={same ? "text-l4" : "text-warn-text"}>
-                          {same ? "未变" : "有差异"}
+                          {same
+                            ? "未变"
+                            : !file.current
+                              ? `新增文件 ${diff.added} 行`
+                              : `新版 +${diff.added} 行 −${diff.removed} 行`}
                         </span>
                       </summary>
+                      {!same && (
+                        <div className="border-t border-hairline p-2">
+                          <p className="mb-1 text-micro text-l4">
+                            绿底是新版加上的，红底是新版去掉的；没改的段落折成 ⋯
+                          </p>
+                          <DiffView lines={diff.lines} />
+                        </div>
+                      )}
+                      <details className="border-t border-hairline">
+                        <summary className="cursor-pointer px-2.5 py-1 text-micro text-l4 hover:text-l2">
+                          对照两份全文
+                        </summary>
                       <div className="grid grid-cols-2 gap-2 border-t border-hairline p-2">
                         <div className="min-w-0">
                           <div className="mb-1 text-micro text-l4">本机</div>
@@ -1881,6 +1906,7 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                           </pre>
                         </div>
                       </div>
+                      </details>
                     </details>
                   );
                 })}
