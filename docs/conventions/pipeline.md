@@ -53,9 +53,11 @@
 - **检索审阅的清单和文件页**（2026-09-30）：清单页签占满剩余高度，底下不再留一块隐藏的 Git 对照区。文件页签只列 `isScreeningReviewFile`：screening.md、included.md、included.json、to-fetch.md、to-fetch.ris、endnote-import.ris。顶栏文件数与侧栏分母用同一份过滤后的数量。脚本、缓存、TASK.md、.gitignore、技能说明不进这一页。非 Git 产物不列产物目录里的检索过程文件（json、jsonl、xml、tsv、log、txt，不限 `search` 这个目录名）。图、表、成稿和 `papers/` 里的清单仍列出。旧快照里若还冻着这些过程文件，下次打开审阅按当前规则重冻。识别靠步骤工作区名 lit-search / lit-survey-search，或同时出现 screening.md 与 included。
 - **检索步先拍 pending 再下载全文**：Agent 筛完后 `to-fetch` 与开放获取只针对 `decision=included`；pending 禁止进待获取。人工事项顺序为「核对待确认篇目」先于「下载付费墙文献全文」。有 pending 时写入 help-wanted，未回复不把 pending 当已纳入。已有项目不静默改档案卡，需在流程编辑器补该事项或本次评审先拍 pending。
 - **待获取清单拖入按 PDF 内标题匹配（2026-10-10）**：拖进展开的待获取清单时，先对文件名和 DOI，对不上再读 PDF 前 256KB 的可见文字。只命中一篇才复制进 papers/。命中多篇或零篇不猜，提示用该行「关联」。学校账号按钮在可信会话已保存时显示「已登录」。
+  **2026-10-22 补 PDF 元数据段的 DOI**（`pdf_meta_dois`：开头 256KB + 结尾 512KB 里**元数据字段**后的本篇 DOI——XMP dc:identifier / prism:doi / crossmark:DOI / pdfx:doi、文档信息 /doi；ACS 在开头、Elsevier 线性化 PDF 在结尾；认 PDF 字符串里转义的括号 `S1872-2067\(24\)60067-7`；只认与条目**完整相等**；不扫正文里的 DOI——ACS 的参考文献 DOI 以链接注释明文出现，9 份实测全文都只认出本篇一条）：拖入时先于正文标题认（ACS cs2c00851.pdf 的 /Title 是插图的；结尾段的 /Title 也读）；清单进度（每 2 秒）对文件名对不上的 papers/*.pdf 也读这两段，按路径 + mtime + 大小缓存，不重复读——正文标题仍只在拖入时读。
 - **精读用已下载 PDF 校正引文库（2026-10-10）**：精读只改 references.bib。项目根 papers/ 里已对上 DOI 的 PDF，读首页和摘要页；标题、化学式上下标、摘要与 Crossref 纯文本不一致时，以 PDF 改 bib 的 title 和 abstract。抽不出字或对不上 DOI 的保持原字段。不在精读步重写 RIS。人点「同步到文献库」时，Mesa 按这份 bib 生成导入文件。检索步的 to-fetch.ris 与 endnote-import.ris 仍是全文还没到时的导入清单。
 - **标准档发现不空转（2026-10-09）**：发现只用 OpenAlex 一条主检索式，先看命中数再取回；单复数与近义词不另开式子。Consensus / Undermind 各一轮。Semantic Scholar、Crossref 标题检索、不允许预印本时的 arXiv 不做发现；429 记覆盖缺口，不重试。Crossref 只按 DOI 补字段。标准档不做引文扩展。开放获取只下已有 PDF 直链，连续 3 次 403 即停。期刊缩写与两套 RIS 只给最终纳入和待确认各做一次，排除的不补。已有项目的任务书不自动改写。
 - **待确认拍完自动勾上**：`papers/included.json` 里已有篇目，且每篇 `decision` 都是 `included` 或 `excluded` 时，「核对待确认篇目」自动记为完成。空清单、空白判定或解析失败不算拍完。人手取消过（`explicitCancel`）的不覆盖。步骤卡清单和检索评审清单同一口径。已有项目改任务书后才带上新说明，勾选本身不依赖档案卡改写。
+  **勾上后清单不收走（2026-10-22 用户反馈）**：已纳入的仍能移出，所以勾上后「文献清单」照留，说明换成 `PENDING_DONE_HINT`（移出会从纳入清单、待获取、两份 RIS 拿掉，笔记和引文留到精读步清）；当场清完的保持展开不跳，进来时已勾上的默认收起。
 - **检索清单挂期刊标签，已纳入可移出**（2026-09-29）：步骤卡「文献清单」和检索审阅共用 `PendingConfirmList`。待确认、已纳入、已排除三段都显示；已排除默认折叠。每行打开时用 `lookup_journal_metrics` 现查 IF / 中科院分区 / TOP。刊名优先，ISSN 可写成一个或「印刷, 电子」逐个对。本地表对不上（空、待补、缩写、未收录）且这条有 DOI 时，用 DOI 先问 OpenAlex、没有期刊再问 Crossref，补刊名和 ISSN 再查一次，不写入 included.json，也不用接口里的影响因子数字。标签分级与文献雷达共用 `journalMetricTone`：1 区与 TOP 强调色，2 区通过色，3 区提醒色，4 区与仅 IF 中性。待获取从 DOI 段或紧随的下一段取期刊全称；链接认段内的 DOI / http，DOI 后挂刊名仍算出官网按钮。后端 `to_fetch_looks_link` 与前端同一口径。表未装给下载入口，未收录写在行上。已纳入点「移出」把 decision 改成 `excluded`、理由加「排除：人工移出」，并同步拿掉 included.md 那一行。to-fetch.md 与两份 RIS 整份改写（`drop_fetch_line` / `drop_ris_record`），不走 256 KB 预览上限，编号不重排。文件不存在才说明；改写失败写明哪一份没动。PDF、笔记、references.bib 不删；有笔记路径或 bib 命中 DOI/标题时在行上说明。已排除「恢复为待确认」只改 json 与 included.md，不写回待获取；再次纳入才按原纳入链补回。写入仍走 `save_file_preview` 的版本校验。
 - **检索/筛选步骤例外**（`workspaceName` 为 `lit-search` / `lit-survey-search`，或产物同时含 `papers/screening.md` 与纳入清单）：待确认与待获取在步骤卡决策。审阅在基础检查旁切换整页：清单（二次确认）／过程／文件。默认清单；过程里 Agent 未决不挡保存。可选收尾事项不计入审阅「待做」。付费全文和库授权放「稍后」。表在筛选决定之前；决定表单有 pending 时默认收起，不预填「退回」。Git 对照只在「文件」页签，不再从右侧拉对照抽屉。保存进项目不等于接受清单。
 - `research-report.ts` 提取纯文本章节，`research-report-load.ts` 有界只读加载（最多32个声明路径/40文件，精确文件优先，目录只展开一层）。默认不轮询，仅打开或人刷新读取；旧异步响应不得覆盖切换后的项目。HTML 和命令仅文本显示，不执行、不自动转为批准。
@@ -112,6 +114,16 @@
 - **归档禁止丢 ignored 成果（2026-09-11）**：普通归档和合并后归档均检查持久待接收记录；钩子之后、移除前，
   再核对所有本范围非 Git 产物已在项目根有同字节文件。未接收、冲突、过预算、保护跳过但只有工作树有副本、
   或验收后再次修改，一律保留工作区，不因 git worktree remove 允许删除 ignored 文件就直接归档。
+- **逐个勾掉不带回（2026-10-22 用户拍板）**：评审页非 Git 产物清单里「带回」的每一项可取消勾选（`workspace_delivery_skip`），
+  状态 `skipped`：写进这次冻结的 review.json（保存进项目按它走，`apply_delivery_review` 跳过、不进验收记录与内容指纹），
+  同时记进工作区的 `delivery-reviews/<id>/skipped.json`（路径 → 勾掉那一版的 SHA-256），刷新评审重冻时照样勾掉；
+  文件之后变了就是没看过的新版，自动回到带回。归档守卫对**人勾掉且仍是那一版**的文件放行（明确不要，随工作区清掉），
+  其余口径不变。同名冲突、保护路径、过预算、随 Git 提交的不给勾。保存进项目收尾前（有恢复单）不许改。
+  **流程要用的锁定带回**（同日用户追加「哪些文件是流程必要的，这个不能取消」）：这一步档案声明的 `expected_artifacts`
+  （下一步取料、「产物 N/N」都按它）与 `papers/` 下的文献资料，`required=true`、界面锁定勾上标「流程要用」；
+  后端三处同拦——勾掉命令拒绝、重冻时把档案后来新列为预期产物的勾掉项改回带回、合并核对见到勾掉的必要文件拒绝合并。
+  必要性每次按当前档案现算，不信盘上旧值（`artifacts::expected_match` 同一套匹配）。
+  起因：Agent 把备份（included.json.bak-…）、JabRef 缩写表等中间文件放进了 artifacts/，原先只能整批带回。
 
 
 - **合并/补账/归档分离（2026-09-10）**：真正合并要求已审 SHA；采用该不可变提交，不再按稍后可能移动的分支名执行。
@@ -180,7 +192,7 @@
   绝不带走），防评审合并被主仓脏拦截；默认 .gitignore 含 `*.pdf` 与 `.ccode/handoff-*.md`。
   **开工接驳与进料冻结（2026-10-13 双台账）**：①**接驳提交**（bootstrap 之后、create_workspace 之前）——主仓有
   未提交的清单存量（`papers/included.md`/`included.json`/`to-fetch.md`/`to-fetch.ris`）或用户笔记（`notes/*.md`，
-  inbox.md 除外——它 gitignored 不会出现）时，开工确认弹层出「一并带上未保存的清单与笔记：清单 N 条新行 / M 篇未提交笔记」区块（2026-10-20 界面由「开工接驳」改名，内部仍称接驳），
+  inbox.md 除外——它 gitignored 不会出现）时，开工确认弹层出「带上」一行（2026-10-22 由整宽区块「一并带上未保存的清单与笔记」并进标签列；2026-10-20 界面由「开工接驳」改名，内部仍称接驳）：「清单 N 条新行 / M 篇未提交笔记 · 随开工存进历史」，
   **默认勾选、可取消**；勾选即随开工做 scoped 提交（只提交这些路径，用户其他改动绝不带走）把它们并入基准分支，
   本轮工作区带上最新积累；取消则按现状开工（积累面台账豁免不拦合并，开工后仍可从改动面板存入历史）。
   ②**冻结快照**（create_workspace 与任务书落盘之后执行，best-effort 不阻断开工）——`papers/reading-list.md` 非空时原样复制为工作区 `.ccode/handoff-lit-intake.md`
@@ -988,8 +1000,10 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
     **忽略这条**只记本机（`ccode.litDismissed`），只藏雷达行本身，不改 `watch-followup.md`。
     **加入积累**（2026-10-13 由「加入精读」改名）写入积累账 `papers/reading-list.md`（gitignored，去重域＝两表并集，已在正典 included.md 的不重复记）。只写账不跳转（2026-10-14 拍板：不跳精读、不开全文，toast 指路）；再点已积累的书标＝展开抽屉定位该篇，移出只走抽屉 ✕；仅在正典的书标点击＝打开已存全文，没有全文才说明去处。抽屉「精读」进沉浸阅读，有笔记显「继续精读」。开工接驳与检索步进料见「流水线开步与模板」/「评审与采纳口径·双台账」。
   - **机构访问通道（2026-09-16，fetch_paper_fulltext 逐篇获取阶梯）**：形态是**人登录一次、系统复用会话**——
-    用户在检索步「下载付费墙文献全文」展开「待获取」后点「登录学校账号」（跳到设置 → 网络），或自己打开设置 → 网络「学校图书馆」点「登录学校账号」（默认 CARSI，不摆地址框）完成学校
-    SSO（含 MFA），后端 `inst_access.rs` 读取登录窗 Cookie 落 0600 `inst-session.json`（与 keys.json 同纪律，
+    用户在检索步「下载付费墙文献全文」展开「待获取」后点「登录学校账号」（2026-10-22 起直接调起浏览器，不再先跳设置页；旁边「校外访问」跳设置 → 网络），或自己打开设置 → 网络「学校图书馆」点「登录学校账号」（默认 CARSI，不摆地址框）完成学校
+    SSO（含 MFA）。**浏览器通道的「已登录」是人标记的**：Mesa 读不到系统浏览器里的会话，打开登录页后出「登录好了」，
+    点了记本机时间（localStorage `ccode.instBrowserLoginAt`，两处经 `INST_BROWSER_LOGIN_EVENT` 同步），7 天内两处显「已登录」+「重新登录」，
+    过期按钮回来；这个标记**只管显示**，不让 `canAttemptFulltext` / 无头取全文当成机构通道可用（那只认前缀或内嵌会话）。内嵌窗通道：后端 `inst_access.rs` 读取登录窗 Cookie 落 0600 `inst-session.json`（与 keys.json 同纪律，
     值绝不出站）。获取入口三处：检索步付费墙事项的 to-fetch 清单条目、雷达卡「来源」态命中行、watch-followup
     待办行；按钮按 `canAttemptFulltext`（裸 DOI/doi.org 恒可试开放副本查证，其余落地页仅通道可用才摆）。
     `parseToFetchItems` 兼容三代清单格式（编号式 / `- ` 列表符号式 / 旧裸行「标题 — DOI」——
@@ -1009,7 +1023,11 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
     同名换值/会话轮换不算结构变化会让重新登录永不落罐）；③ **出版商反爬墙现实**：Wiley
     等对一切非浏览器客户端返回 403（带全量会话+浏览器 UA 亦然，Akamai TLS 指纹拦截，
     与登录无关）——`institutional_failure_hint` 分流提示走「浏览器打开」
-    （`inst_browser_open`：调起系统浏览器，人手下载 90 秒收货；2026-09-17 审计后文案
+    （`inst_browser_open`：调起系统浏览器，人手下载 90 秒收货；**2026-10-22 起过窗靠确凿凭据续收**：登记 30 分钟有效期内，
+    文件名带 DOI / MDPI 编号、≥24 字符标题包含、或 PDF 元数据段（`lit_watch::pdf_meta_dois`）含**完整** DOI 的照样 Hit——浏览器常把 PDF
+    直接打开、人看完点保存，ACS 存名 cs2c00851.pdf；只凭「窗内只开了一篇」的兜底仍限 90 秒。**没写完的文件不占 5 秒去重**
+    （`release_seen`：空文件 / 大小还在变 / 尾部无 %%EOF 时撤掉去重记录——Edge 另存为先建空文件、4.5 秒后写完，后续写入事件曾全被当重复丢掉）。监听目录加 Chromium
+    `savefile.default_directory`（PDF 阅读器保存走「另存为」上次的目录）；2026-09-17 审计后文案
     与现行口径对齐——付费墙 to-fetch 清单主动作是浏览器打开（这批本是筛剩的硬墙，不摆自动获取；雷达待办仍可试开放副本/机构通道），漏收用关联本地 PDF；界面简称浏览器/关联，完整说明进 title）；雷达/清单的「打开来源」
     （含 ⋯ 菜单，同一条链）在会话态同路径。④ **PDF 中继（同日三轮，已废弃）**：
     登录窗 initialization_script 注入「⤓ 保存 PDF 到 Mesa」浮动钮，页面上下文 fetch PDF 后
@@ -1159,6 +1177,11 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
     出版商反爬针对的是非浏览器客户端，内嵌窗伪装浏览器的漏斗注定逐家踩坑（⑤-⑦
     全天实证）。新主线三通道，Mesa 只干收货的事——
     - **通道 A（下载目录收货，`download_inbox.rs`）**：待获取清单/雷达卡的
+      **2026-10-22 补三层**：①读 Chromium 系 History 库 downloads 表（有登记时每 5 秒看一次、History 没变不读、副本只读即删），
+      另存到任何文件夹的 PDF 都能送进同一条过滤链；②`consider_file_guarded` 隔离单个文件的 panic，监听线程不再静默死掉；
+      ③监听心跳 `WATCHER_BEAT`，`ensure_watcher` 见心跳停超过 60 秒就重起（线程死了标记仍亮，此前每次「官网」都以为在监听）。
+      PDF 的本篇 DOI 只认元数据字段（`pdf_meta_dois`：dc:identifier / prism:doi / crossmark:DOI / pdfx:doi / 文档信息 /doi）——
+      ACS 把参考文献 DOI 以链接注释明文放着，裸扫会把引用了清单里别篇的论文认成那一篇。
       「浏览器打开」（`inst_browser_open`：EZproxy 前缀改写后调起系统默认浏览器，
       登记 PendingCatch + 写 helper-context.json 当前项目）→ 用户在真浏览器里点
       站方下载落 ~/Downloads → notify 监听按**六层过滤链**收货（.pdf 扩展 /

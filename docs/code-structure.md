@@ -30,7 +30,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # ResearchToolPreflight（开工技能/工具只读预检：全部就绪只出一行「已启用到 X」，有缺口才展开带分发/重测的块）、
                              # FigureVisionNotice（开工弹层「技能」行下：步骤挂 review-figures 而所选模型能力库查到不能看图 / 查不到时提醒一行，文案在 figure-vision.ts）、
                              # StepSkillsChips（步骤推荐技能 chip 区：只读/可编辑两态 + 产物冲突/跨步骤链路 ⚠ 警告行；bare = 不画标题行，供开工弹层标签列用）、
-                             # HumanTasksList（人工事项清单 + useHumanTasks 共享逻辑；待确认清完且未手动取消才自动勾）、StepFlow（步骤内协同流程线；付费墙行已登录显示「已登录」，未登录才是「登录学校账号」；拖进待获取清单按文件名、DOI 和 PDF 内标题对条目）、
+                             # HumanTasksList（人工事项清单 + useHumanTasks 共享逻辑；待确认清完且未手动取消才自动勾）、StepFlow（步骤内协同流程线；付费墙行已登录显示「已登录」，未登录才是「登录学校账号」（直接调起浏览器，点「登录好了」记本机标记，见 inst-access）；拖进待获取清单按文件名、DOI、PDF 元数据里的 DOI 和 PDF 内标题对条目）、
                              # ScheduleSection（定时任务：有流程在项目设置抽屉；无流程主区雷达下；编程/办公右侧会话栏；
                              #   onSchedulesChanged = 任务集变更回调，定时任务页里喂 ProjectSchedulesView 的版本号桥）、
                              # LitWatchCard（「◔ 文献雷达」卡片：近 8 周趋势（全部缺巡检日时可按巡检日补记）+
@@ -1160,7 +1160,7 @@ src-tauri/src/
                              #   SD复合/签名直链八型），为一家修问题只动该家命中的最窄分支、禁改通用路径，
                              #   收尾逐一回归各型——细则见 pipeline.md「机构访问通道」⑦。
                              #   收货通道 A/B/C（同日深夜用户定稿「让真实浏览器干浏览器的事」，Mesa 只收货）：
-                             #   A download_inbox.rs 监听系统下载目录 + Chrome/Edge/Firefox 自定义默认下载目录收 PDF（inst_browser_open 调起系统浏览器
+                             #   A download_inbox.rs 监听系统下载目录 + Chrome/Edge/Firefox 自定义默认下载目录收 PDF，另读 Chromium 系 History 库的下载记录补「另存到别处」（只在有登记时、副本只读即删，见 safety.md）（inst_browser_open 调起系统浏览器
                              #   + 登记归属，六层过滤链收货进既有入库链——高置信命中收完进回收站、
                              #   兜底关联（文件名没对上号）原件留在下载夹并弹 inst-pdf-attention 横幅；
                              #   终端只印启动/失败/收货结果，不去重跳过刷屏——macOS 一次落盘连发多条
@@ -1229,7 +1229,7 @@ src-tauri/src/
                              # library_match.py：定稿域稿只读本机 .enl / zotero.sqlite，DOI 唯一才写入记录号或条目地址
                              # papers/endnote-import.xml、.ris、.enw。RIS 作者一人一行，期刊/缩写/卷/期/页/日期/ISSN/摘要/关键词
                              # 随 bib 字段写入；没有的不编造。按钮「同步到 EndNote」把 RIS 放到下载并 open -a 交给 EndNote。
-  research_tools.rs          # 科研外部工具开工 preflight（research_tool_preflight）：Zotero 本地通道 / Origin 平台门槛
+  research_tools.rs          # 科研外部工具开工 preflight（research_tool_preflight）：Zotero 本地只读接口（只管 AI 现查库，导入与「同步到 Zotero」不走它）/ Origin 平台门槛
                              #   （只做 Windows 实机，非 Windows 必需技能=阻塞）/ Blender 探测 / EndNote 桥 /
                              #   Quarto 能否真跑（quarto-render 步骤预报，不阻塞，dep_check::probe_quarto）；
                              #   只探测，不安装、不写个人库、不启动 GUI
@@ -1283,6 +1283,8 @@ src-tauri/src/
                              # 计数口径与前端 step-flow.ts parseToFetchItems 双端镜像：编号/列表行都算，裸行须带「 — DOI」尾巴，说明行与「待补」不算）、import_human_deliverable
                              # 交付导入（复制落点 + 登记提货单；v3.74 起 step/title 可选 + target_override 固定落点，
                              # 无步骤语境 = papers/imports/ 检索结果导入落主仓）、list_help_requests（.ccode/help-wanted.md 人工请求扫描）
+                             # 非 Git 产物冻结/带回（workspace_review_deliverables / apply_delivery_review）；workspace_delivery_skip 逐个勾掉不带回
+                             # （skipped.json 按 SHA-256 记，归档守卫对勾掉的同一版放行，见 pipeline.md）
   portwatch.rs               # 端口监控：LISTEN 列表、归属标注（cwd 最长前缀，回落 CCODE_PORT 段）、校验后 SIGTERM
   ws_settings.rs             # .ccode/settings.toml 三层合并（用户→仓库→local）；开步自动写 quarto 渲染脚本
   git_info.rs                # git 状态/累计 diff/逐 hunk/勾选提交临时索引；
