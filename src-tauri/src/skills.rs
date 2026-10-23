@@ -407,6 +407,11 @@ static BUILTIN_SUPPORT: &[(&str, &str, &str)] = &[
     ),
     (
         "quarto-render",
+        "scripts/references.lua",
+        include_str!("../resources/skills/quarto-render/scripts/references.lua"),
+    ),
+    (
+        "quarto-render",
         "scripts/check_pdf_text.py",
         include_str!("../resources/skills/quarto-render/scripts/check_pdf_text.py"),
     ),

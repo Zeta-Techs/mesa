@@ -5,6 +5,9 @@
 Word 读 reference.docx 的主题字体——同时把 `reference-doc` 写进 YAML 的 format.docx，
 任何渲染入口（流程线 run 脚本、Agent 手敲的命令）出 Word 都自动套用，不靠记得加参数。
 找不到指定字体就退出，不改成另一套。
+
+顺带装上参考文献过滤器（scripts/references.lua → manuscript/references.lua，写进 YAML 的 filters）：
+渲染时标题保住原样大小写、去掉题名前的人手编号、「待补」不印进参考文献表、文末补 References 标题。
 """
 from __future__ import annotations
 
@@ -197,6 +200,28 @@ def ensure_docx_reference(block: str, reference: str) -> str:
     return "\n".join(out) + f"\n  docx:\n    reference-doc: {reference}\n"
 
 
+FILTER = "references.lua"
+
+
+def ensure_filter(block: str, name: str = FILTER) -> str:
+    """顶层 filters 列表里挂上参考文献过滤器；已挂了就不动。"""
+    if re.search(rf"^\s+-\s*\"?{re.escape(name)}\"?\s*$", block, re.M):
+        return block
+    lines = block.splitlines()
+    for i, line in enumerate(lines):
+        if line.startswith("filters:"):
+            if line.strip() != "filters:":
+                # `filters: [a.lua]` 这类行内写法：改成多行列表再追加
+                items = [x.strip().strip("'\"") for x in line.split(":", 1)[1].strip().strip("[]").split(",") if x.strip()]
+                lines[i : i + 1] = ["filters:"] + [f"  - {x}" for x in items]
+            j = i + 1
+            while j < len(lines) and lines[j].startswith((" ", "-")):
+                j += 1
+            lines.insert(j, f"  - {name}")
+            return "\n".join(lines)
+    return block.rstrip("\n") + f"\nfilters:\n  - {name}"
+
+
 def write_markdown(path: Path, latin: str, cjk: str, reference: str = "reference.docx") -> None:
     text = path.read_text(encoding="utf-8")
     front, body = split_frontmatter(text)
@@ -208,6 +233,7 @@ def write_markdown(path: Path, latin: str, cjk: str, reference: str = "reference
     front = ensure_booktabs(front)
     front = ensure_actualtext(front)
     front = ensure_docx_reference(front, reference)
+    front = ensure_filter(front)
     path.write_text(f"---\n{front.strip()}\n---{body if body.startswith(chr(10)) else chr(10) + body}", encoding="utf-8")
 
 
@@ -376,6 +402,8 @@ def apply(root: Path, markdown: str, latin: str, cjk: str) -> int:
     reference = root / "manuscript" / "reference.docx"
     rel = Path(os.path.relpath(reference, source.parent)).as_posix()
     write_markdown(source, latin, cjk, rel)
+    # 过滤器放在源稿旁边（filters 的相对路径按源稿目录算）
+    (source.parent / FILTER).write_bytes((Path(__file__).with_name(FILTER)).read_bytes())
     reference_docx(reference, latin, cjk)
     (root / "manuscript" / "typeface.md").write_text(
         f"英文：{latin}\n中文：{cjk}\n", encoding="utf-8"
