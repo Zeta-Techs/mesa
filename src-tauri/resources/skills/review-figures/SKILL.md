@@ -50,7 +50,9 @@ python3 scripts/extract_figure.py --pdf <来源PDF> --fig 2 --box 0.505,0,1,0.49
 4. 题注认不出（矢量图退出码 5、扫描版没有文本层退出码 3）：`--page <页码> --grid` 看整页，`--box` 框出那一块（框住大半页会被拒绝）。
 5. 读坐标读不准、反复裁不干净：这一块去掉，别把整张塞进来。
 
-Agent 看不了图（模型只拿到地址）时不要猜坐标：只用 `--panel`，切不出的块去掉，并在 README 写明。
+**脚本替你查框（2026-10-23）**：`--box` 的四条边先各自挪到附近的空白缝上（略微读偏的框自动对正，先往框外找，不截掉自己的轴标题），打印「实际裁框」——把这组数记进 README。挪完某条边还切在曲线 / 文字上（墨迹比例超过 0.08），脚本退出码 7、不出图：框没对准这一块，回 `--grid` 重读；两三次还是 7 就去掉这一块。**不要为了过检查把框缩到子图中间的空白里**——那样裁出来的是半块图。
+
+Agent 看不了图（模型只拿到地址、或经第三方看图工具转述）时不要猜坐标：只用 `--panel`，切不出的块去掉，并在 README 写明。2026-10-23 HER 实证：经看图工具读坐标格，子图在 0.505–1.0 读成 0.30–0.60，五张拼图全裁错，README 却写「逐块核验内容正确」。**README 不写「已核验」「内容正确」**，只写裁法和「待人工确认」。
 
 题注认**单独成行、并且以题注开头**的那一行：`Figure n` / `Fig. n` / `图 n`。题注常和上一行正文粘在同一个文本块里，所以不要求整块开头就是题注。行内「Figure n shows」不算。裁切只取该行同一栏、直到相邻题注为止、离题注更近那一侧的**嵌入图像对象**（图可能在题注上，也可能在题注下），再按这些矩形的外沿渲图。过窄的页眉行不当题注。页面上的正文不在图像矩形里，不会进 PNG。没有图像对象的矢量图退出码 5，该板改「见 [@键] Fig.n」，不改回「题注上方切一条页面」。用图计划点名某一块（如 Fig.2f）时只裁那一块（`--panel` 或 `--grid` + `--box`），禁止把整张十几联图放进拼板、图注却写只引用了其中一块。退出码 3 = 无题注，4 = 图像对象接近整页。缺 PyMuPDF 则打印安装提示后停裁，不假装已裁。
 
@@ -67,6 +69,19 @@ python3 scripts/assemble_panels.py --out figures/fig2.png --width-cm 8.5 --input
 默认：白底、300 dpi、间隙 2.5 mm。宽度用 figure-forge 的通用投稿规格（单栏约 8.5 cm / 双栏约 17 cm）。同一行按各图宽高比分这块栏宽，字母写在图上方，不压在曲线上。不再把每张图拉成一样高后再整页缩小。一行最多 4 块；第 5 块起改 `--rows "a.png b.png c.png" "d.png e.png"`。文献拼板**不做 hero 放大某一篇**。脚本不得改源图像素里的曲线或数值。
 
 每张图先写一句论点（这张拼图让读者看见什么），写不出就不要拼。图注进 `figures/figN.md`：先一句论点，再**逐块**写画了什么和来源，写明实际放进拼板的是哪一块——`(a) η₁₀ and η₅₀ of Ru@Ni–B/NF versus controls in 1 M KOH. Adapted from Fig. 2b of [@key1]. (b) … Adapted from Fig. 2e of [@key2].` 用了整张才写整张 Fig. n。论断进图注，不进图内。
+
+## 自绘示意图
+
+计划要自绘的概念图（设计准则框架、流程示意）用可重跑脚本生成，不含任何实验数字，图注写 schematic。文字多的图最容易互相压住：画完先程序化检查**任意两段文字的外框不相交**，并且都在各自的框里，不过就调字号、换行或挪位置再画（只查「文字在框内」不够——2026-10-23 HER 图 7 斜体标注仍压在正文上）。matplotlib 写法：
+
+```python
+fig.canvas.draw()
+r = fig.canvas.get_renderer()
+texts = [t for t in fig.findobj(matplotlib.text.Text) if t.get_visible() and t.get_text().strip()]
+boxes = [(t, t.get_window_extent(r).expanded(1.02, 1.05)) for t in texts]
+clash = [(a.get_text(), b.get_text()) for i, (a, ba) in enumerate(boxes) for b, bb in boxes[i + 1:] if ba.overlaps(bb)]
+assert not clash, clash
+```
 
 ## 写进初稿与复查
 

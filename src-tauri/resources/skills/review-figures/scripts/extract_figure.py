@@ -9,7 +9,9 @@ no image object: exit 5 and cite Fig.n instead of clipping the page.
 Panel-level crops (a review figure takes the one panel that carries the point):
   --panel c          split along white gutters, take the c-th cell (row-major)
   --grid             write a preview with a 0-1 coordinate grid over the figure
-  --box x0,y0,x1,y1  crop that fraction of the figure (read off the grid)
+  --box x0,y0,x1,y1  crop that fraction of the figure (read off the grid); each
+                     edge snaps to a nearby blank line, an edge still cutting
+                     through ink exits 7 (the box missed the panel)
   --page N           with --grid / --box only: work on page N when the caption
                      cannot be located (vector or scanned figures)
   --erase x0,y0,x1,y1  white out the source panel letter in a corner of the crop,
@@ -260,6 +262,66 @@ def parse_box(text: str) -> tuple[float, float, float, float]:
     return x0, y0, x1, y1
 
 
+# 裁框的边必须落在空白里。看不了图的模型读坐标格会偏得很远（2026-10-23 HER 初稿实证：
+# 子图在 0.505–1.0，读成 0.30–0.60），裁出来是半块曲线加邻块的轴；模型自己的「核验」也看不出来。
+# 好框的四条边墨迹比例 ≤ 0.12（微偏的自动挪到附近空白缝就成 0），切进曲线 / 文字的错框至少一条边 ≥ 0.17。
+INK = 200            # 任一通道低于它算墨
+SNAP = 0.03          # 每条边在 ±3% 范围内找墨最少的那条线
+EDGE_LIMIT = 0.08    # 挪完以后某条边墨迹还超过这个比例 = 切进了内容
+
+
+def _line_ink(samples, w, n, fixed: int, lo: int, hi: int, vertical: bool) -> float:
+    """竖线 x=fixed（y 从 lo 到 hi）或横线 y=fixed（x 从 lo 到 hi）上墨的比例"""
+    if hi <= lo:
+        return 0.0
+    ink = 0
+    for k in range(lo, hi):
+        i = (k * w + fixed) * n if vertical else (fixed * w + k) * n
+        if min(samples[i], samples[i + 1], samples[i + 2]) < INK:
+            ink += 1
+    return ink / (hi - lo)
+
+
+def snap_box(pix, box: tuple[float, float, float, float]):
+    """把比例框换成像素框，四条边各自挪到附近墨最少的线上。返回 (像素框, 各边墨迹比例)。"""
+    w, h, n, s = pix.width, pix.height, pix.n, pix.samples
+    x0, y0, x1, y1 = (int(round(box[0] * w)), int(round(box[1] * h)),
+                      min(w - 1, int(round(box[2] * w))), min(h - 1, int(round(box[3] * h))))
+    rx, ry = max(4, int(w * SNAP)), max(4, int(h * SNAP))
+
+    def best(cur: int, outward: int, span: tuple[int, int], vertical: bool, limit: int) -> int:
+        """已在全白线上就不动。否则先往框外找墨最少的线（不截掉自己的轴标题、字母下沿），
+        够干净（≤1%）就用；再往里找；都不够干净取整个范围里墨最少的线，交给边检查判。"""
+        ink = lambda c: _line_ink(s, w, n, c, span[0], span[1], vertical)
+        if ink(cur) == 0:
+            return cur
+        reach = rx if vertical else ry
+        sides = []
+        for direction in (outward, -outward):
+            cands = [cur + direction * k for k in range(1, reach + 1) if 0 <= cur + direction * k <= limit]
+            if cands:
+                sides.append(min(cands, key=lambda c: (ink(c), abs(c - cur))))
+        for c in sides:
+            if ink(c) <= 0.01:
+                return c
+        return min(sides + [cur], key=lambda c: (ink(c), abs(c - cur)))
+
+    # 先定左右（用原来的上下范围），再定上下（用定好的左右范围）
+    x0 = best(x0, -1, (y0, y1), True, w - 1)
+    x1 = best(x1, 1, (y0, y1), True, w - 1)
+    y0 = best(y0, -1, (x0, x1), False, h - 1)
+    y1 = best(y1, 1, (x0, x1), False, h - 1)
+    if x1 - x0 < 20 or y1 - y0 < 20:
+        return (x0, y0, x1, y1), {"框太小": 1.0}
+    edges = {
+        "左": _line_ink(s, w, n, x0, y0, y1, True),
+        "右": _line_ink(s, w, n, x1, y0, y1, True),
+        "上": _line_ink(s, w, n, y0, x0, x1, False),
+        "下": _line_ink(s, w, n, y1, x0, x1, False),
+    }
+    return (x0, y0, x1, y1), edges
+
+
 def check_erase(box: tuple[float, float, float, float]) -> None:
     """只许抹掉原图角上的子图字母：框小、贴着左上 / 右上角。别的地方是数据，不许动。"""
     x0, y0, x1, y1 = box
@@ -325,10 +387,10 @@ def extract(pdf: Path, fig: int, out: Path, dpi: int, panel: str | None,
             clip = page.rect
         else:
             page, clip = locate(doc, fig)
-        if box:
-            clip = sub_rect(clip, box)
+        if box and page_no:
             # 按整页框时同样不许把大半页当成一块子图
-            if page_no and clip.width * clip.height / (page.rect.width * page.rect.height) > 0.85:
+            area = sub_rect(clip, box)
+            if area.width * area.height / (page.rect.width * page.rect.height) > 0.85:
                 print("框住了接近整页，拒绝当作子图", file=sys.stderr)
                 sys.exit(4)
         scale = (150 if grid else dpi) / 72
@@ -336,6 +398,24 @@ def extract(pdf: Path, fig: int, out: Path, dpi: int, panel: str | None,
         if grid:
             grid_preview(pix, out)
             return
+        if box:
+            (bx0, by0, bx1, by1), edges = snap_box(pix, box)
+            cut = {k: v for k, v in edges.items() if v > EDGE_LIMIT}
+            if cut:
+                detail = "、".join(f"{k}边 {v:.2f}" for k, v in cut.items())
+                print(
+                    f"裁框切进了内容（{detail}，墨迹比例超过 {EDGE_LIMIT}）：框没对准这一块。"
+                    "回 --grid 预览重读坐标；读不准就去掉这一块，不要硬裁",
+                    file=sys.stderr,
+                )
+                sys.exit(7)
+            w, h = pix.width, pix.height
+            print(f"实际裁框（已挪到空白缝）：{bx0 / w:.3f},{by0 / h:.3f},{bx1 / w:.3f},{by1 / h:.3f}")
+            ox, oy = pix.x, pix.y
+            rect = fitz.IRect(ox + bx0, oy + by0, ox + bx1 + 1, oy + by1 + 1)
+            clipped = fitz.Pixmap(pix.colorspace, rect, pix.alpha)
+            clipped.copy(pix, rect)
+            pix = clipped
         if panel:
             cells = _split_cells(pix)
             index = ord(panel.lower()) - ord("a")

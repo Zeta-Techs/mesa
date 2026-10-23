@@ -69,7 +69,17 @@ test("裁子图：--panel 按白缝切到第二块；--box 按比例裁；--eras
     const c = probe(join(dir, "c.png"));
     assert.deepEqual(c.center.map((v) => Math.round(v / 40)), [0, 0, 6], "裁到的是蓝块");
     assert.deepEqual(c.corner, [255, 255, 255], "原图字母抹白了");
-    assert.ok(Math.abs(c.w / c.h - 4 / 3) < 0.15, "按比例裁，不拉伸");
+    assert.ok(Math.abs(c.w / c.h - 4 / 3) < 0.25, "按比例裁，不拉伸");
+    // 框的边切进色块（读坐标读偏了）：拒绝，退出码 7
+    r = run(["--pdf", pdf, "--fig", "1", "--box", "0,0.5,0.3,1", "--out", join(dir, "cut.png")]);
+    assert.equal(r.status, 7, r.stderr);
+    assert.match(r.stderr, /裁框切进了内容（右边/);
+    // 上边、右边略微读进色块里：往框外挪到最近的空白线，整块照常裁下
+    r = run(["--pdf", pdf, "--fig", "1", "--box", "0,0.58,0.43,1", "--dpi", "144", "--out", join(dir, "snap.png")]);
+    assert.equal(r.status, 0, r.stderr);
+    const snapped = r.stdout.match(/实际裁框（已挪到空白缝）：([\d.]+),([\d.]+),([\d.]+),([\d.]+)/);
+    assert.ok(snapped, r.stdout);
+    assert.ok(Number(snapped[2]) < 0.57 && Number(snapped[3]) > 0.44, "上边往上、右边往右挪出了色块");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
