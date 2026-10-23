@@ -1364,10 +1364,11 @@ pub async fn zotero_open_papers(project_root: String) -> Result<(), String> {
     .map_err(|e| format!("{e}"))?
 }
 
-/// 按 references.bib 重写 papers/zotero-library.ris（差量：库里已有的 DOI 跳过）。不改 papers/to-fetch.ris。
-/// 返回 (RIS 路径, 差量+库体检提示)：体检由 zotero_rtf --library-ris 打到 stdout。
-/// 差量为零时返回 None——零记录的 RIS 不是合法导入文件（Zotero 报「不支持所选文件的格式」），
-/// 调用方直接把差量结论当反馈，不再拉起 Zotero。
+/// 按 references.bib 重写 papers/zotero-library.ris。不改 papers/to-fetch.ris。
+/// 库里已有同一 DOI 的照样交（2026-10-23 用户拍板：Mesa 的题录字段全，导入后人在 Zotero「重复条目」里挑着合并），
+/// 检索时排除的不交。返回 (RIS 路径, 条数+库体检提示)：都由 zotero_rtf --library-ris 打到 stdout。
+/// 一条都没有时返回 None——零记录的 RIS 不是合法导入文件（Zotero 报「不支持所选文件的格式」），
+/// 调用方直接把提示当反馈，不拉起 Zotero。
 pub fn refresh_library_ris(project_root: &Path) -> Result<(Option<PathBuf>, String), String> {
     let root =
         crate::paths::canonicalize_plain(project_root).map_err(|e| format!("项目目录无效: {e}"))?;
@@ -1438,7 +1439,7 @@ pub fn refresh_library_ris(project_root: &Path) -> Result<(Option<PathBuf>, Stri
         return Err("转换结束但没有 papers/zotero-library.ris".into());
     }
     let health = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if health.contains("新增 0 条") {
+    if health.contains("交给 Zotero 0 条") {
         return Ok((None, health));
     }
     Ok((Some(ris), health))
@@ -1540,7 +1541,7 @@ pub async fn zotero_open_import(path: String, root: String) -> Result<String, St
         } else {
             (Some(std::path::PathBuf::from(&path_exp)), String::new())
         };
-        // 库里已全部存在：没有要导的，不拉起 Zotero，差量结论就是反馈
+        // 一条要导的都没有：不拉起 Zotero，提示就是反馈
         let open_path = match open_path {
             Some(path) => path,
             None => return Ok(health),

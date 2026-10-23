@@ -618,6 +618,8 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   `endnote-import.ris` 只由 lit_records.py 与 Mesa 纳入/移出维护，同步不碰——HER 实证同步整份改写它，主仓留下改了没提交的
   清单文件。included.json 里 decision=excluded 的篇（DOI 优先、其次标题）不进这两份（`bridge.py drop_excluded`，
   bridge 与 zotero_rtf 都带 `--skip-excluded`）：引文库里还留着检索前从 Zotero 导进来、后来全排除的条目。
+  **库里已有的照样导（同日用户拍板，改 2026-10-11 的「Zotero 按 DOI 差量」）**：Mesa 出的题录字段全是卖点，重复的导进去由人在
+  Zotero「重复条目」里挑着合并；反馈只报有几条重复。zotero-library.ris 不写 `#` 头注释（RIS 没有注释语法），条数只进 stdout。
 - **to-fetch.ris 给 Zotero，endnote-import.ris 给 EndNote（2026-09-23 分标签）**：检索步同时写两份 RIS 2004、CRLF。已生成的旧文件不改写。
   Zotero 的 `papers/to-fetch.ris`：期刊全称只写 `T2`，缩写只写 `J2`，页只写 `SP`/`EP`。不写 `JO`（Zotero 会把它放进期刊缩写）、不写 `N1`（会进笔记）、不写 `M1`。
   EndNote 2025 RefMan 的 `papers/endnote-import.ris`：全称 `T2`、缩写 `J2`、页 `SP`、起始页码 `M2`、结束页 `EP`、文章类型 `M3`。不写 `JO`/`M1`（`M1` 不进格子）。

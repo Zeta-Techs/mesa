@@ -689,9 +689,11 @@ test("Zotero 全库 RIS（同步按钮）：T2/J2 字段约定，标识符零化
     else process.env.ZOTERO_CONFIG_DIR = savedCfg;
     assert.equal(result.status, 0, result.stderr);
     const text = readFileSync(out, "utf8");
-    assert.match(text, /本次写入 1 条，库里已有同一 DOI 跳过 0 条/);
-    // 头注释与现行字段约定：T2/J2，不写 N1（进笔记）/JO/JF/JA（JO 进期刊缩写）/ID/DA/M2/M3/N2
-    assert.match(text, /^# 整份引文库，共 1 条。/);
+    // RIS 没有注释语法：文件直接从第一条开始，条数与重复情况只进 stdout
+    assert.match(text, /^TY  - JOUR\r\n/);
+    assert.doesNotMatch(text, /^#/m);
+    assert.match(result.stdout, /本次交给 Zotero 1 条。/);
+    // 现行字段约定：T2/J2，不写 N1（进笔记）/JO/JF/JA（JO 进期刊缩写）/ID/DA/M2/M3/N2
     assert.match(text, /T2  - Energy Storage Materials/);
     assert.match(text, /TI  - MgCl₂ Solubilization with robust Mg²⁺-Conducting interphase/);
     assert.match(text, /DO  - 10\.1016\/s0022-0728\(99\)00146-1/);
@@ -733,8 +735,8 @@ test("Zotero 全库 RIS（同步按钮）：检索时排除的篇不导", () => 
     const text = readFileSync(out, "utf8");
     assert.match(text, /TI  - Kept paper/);
     assert.doesNotMatch(text, /Excluded/);
-    assert.match(text, /^# 整份引文库，共 3 条（检索时排除的 2 条不导）。/);
-    assert.match(result.stdout, /检索时排除的 2 条不导/);
+    assert.equal((text.match(/^TY  - /gm) ?? []).length, 1);
+    assert.match(result.stdout, /本次交给 Zotero 1 条，检索时排除的 2 条不导/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
