@@ -666,6 +666,7 @@ pub fn run() {
             workspaces::read_artifacts_manifest,
             workspaces::workspace_health,
             workspaces::workspace_review_deliverables,
+            workspaces::workspace_delivery_skip,
             workspaces::pending_artifact_checks,
             workspaces::list_human_task_states,
             workspaces::set_human_task_check,

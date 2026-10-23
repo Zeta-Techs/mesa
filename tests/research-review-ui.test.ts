@@ -24,6 +24,7 @@ test("实际评审页接入本步骤摘要/未决项和复现；只读历史不�
   let reviewOnly=false;
   let canMerge=false;
   let mergedArgs:any=null;
+  let skipArgs:any=null;
   const calls:string[]=[];
   const template=PIPELINE_TEMPLATES.find(t=>t.id==='research-paper')!,step=template.steps.find(s=>s.workspaceName==='exp-run')!;
   Object.assign(dom.window,{__TAURI_INTERNALS__:{invoke:async(command:string,args:any)=>{
@@ -33,6 +34,7 @@ test("实际评审页接入本步骤摘要/未决项和复现；只读历史不�
     if(command==='workspace_health')return {conflict:false,uncommitted:false,mainDirty:false,mainOffBase:false,readyToMerge:canMerge,worktreeHead:'a'.repeat(40),ahead:canMerge?1:0,behind:0};
     if(command==='merge_workspace'){mergedArgs=args;canMerge=false;return {merged:true,archived:false,ledgerWritten:true,versionId:'b'.repeat(40),message:'已接收',output:''};}
     if(command==='workspace_review_deliverables')return {token:'frozen-files',workspaceId:'w',projectRoot:'/project',payloadDir:'/frozen/files',files:[{path:'papers/result.pdf',size:12,sha256:'a'.repeat(64),disposition:'copy'}]};
+    if(command==='workspace_delivery_skip'){skipArgs=args;return {token:'frozen-files',workspaceId:'w',projectRoot:'/project',payloadDir:'/frozen/files',files:[{path:'papers/result.pdf',size:12,sha256:'a'.repeat(64),disposition:args.skip?'skipped':'copy'},{path:'output/report.pdf',size:20,sha256:'b'.repeat(64),disposition:'copy',required:true}]};}
     if(command==='workspace_unmerged_files')return {merging:false,files:[],staleBase:false};
     if(command==='list_workspaces')return [{id:'w',name:'exp-run',status:'active',repoPath:'/project',worktreePath:'/tree',mergedAt:null}];
     if(command==='read_project_config')return {config:{steps:[step],resources:[]}};
@@ -56,6 +58,17 @@ test("实际评审页接入本步骤摘要/未决项和复现；只读历史不�
     assert.match(host.textContent!,/复现运行/);assert.match(host.textContent!,/科研验收决定/);
     assert.match(host.textContent!,/非 Git 产物/);
     assert.match(host.textContent!,/papers\/result.pdf/);
+    // 逐个勾掉不带回（2026-10-22）：取消勾选即记成不带回，计数随之变
+    const keep=host.querySelector('section[aria-label="非 Git 产物评审"] input[type=checkbox]') as HTMLInputElement;
+    assert.ok(keep&&keep.checked,'可带回的产物默认勾上');
+    await act(async()=>keep.click());
+    assert.deepEqual({path:skipArgs.path,skip:skipArgs.skip,token:skipArgs.token},{path:'papers/result.pdf',skip:true,token:'frozen-files'});
+    assert.match(host.textContent!,/带回 1 \/ 2 项/);assert.match(host.textContent!,/不带回/);
+    // 流程要用的锁定勾上，不给取消
+    const boxes=Array.from(host.querySelectorAll('section[aria-label="非 Git 产物评审"] input[type=checkbox]')) as HTMLInputElement[];
+    assert.equal(boxes.length,2);assert.ok(boxes[1].checked&&boxes[1].disabled);assert.match(host.textContent!,/流程要用/);
+    await act(async()=>keep.click());
+    assert.equal(skipArgs.skip,false,'再勾上就是带回');
     assert.ok(!calls.some(c=>['shell_spawn','pty_write','merge_workspace'].includes(c)), '打开评审不会执行代码或保存进项目');
     reviewOnly=true;
     await act(async()=>root.render(h(Review,{key:'history',worktreePath:'/history',onClose(){}})));

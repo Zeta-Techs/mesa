@@ -64,7 +64,7 @@ fn component_match(pattern: &str, value: &str) -> bool {
 }
 
 /// `dir/` 匹配其下任意文件；`*` 不跨目录，`**` 可跨目录。
-fn expected_match(path: &str, expected: &str) -> bool {
+pub(crate) fn expected_match(path: &str, expected: &str) -> bool {
     let Some((pattern, directory)) = clean_pattern(expected) else {
         return false;
     };
