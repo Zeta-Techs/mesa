@@ -19,6 +19,14 @@ function looksPosixShell(command: string): boolean {
   return /(?:&&|\|\||\bmkdir -p\b|\bcommand -v\b|\$\(|\bthen\b|\bfi\b|\bexport\b|>\s*\/dev\/null)/.test(command);
 }
 
+/** 本步「项目资源」段列哪些：步骤绑了就只列绑的，没绑列全部 */
+function stepResources(step: ProjectStepDto, cfg: ProjectConfigDto) {
+  const boundPaths = step.resources ?? [];
+  return boundPaths.length > 0
+    ? cfg.resources.filter((r) => boundPaths.includes(r.path))
+    : cfg.resources;
+}
+
 /** TASK.md 拼装单一出处：弹层预览与开工落盘共用。纯函数，不碰文件系统。
  *  isWindows 显式传参（纯逻辑模块不读平台）：只影响「本步骤脚本」给哪种写法 */
 export function renderTaskMd(
@@ -155,9 +163,11 @@ export function renderTaskMd(
     );
     // Windows 上一般没装 poppler：Claude Code 的 Read 读 PDF 要 pdftoppm 转页图，直接报错，
     // Agent 只抽文字层、图一张没看（2026-10-23 HER 精读步实证）。PyMuPDF 是 Mesa 依赖检查里的一项
+    // 2026-10-23 HER 大纲步：输入写「17 篇原文 PDF（路径见项目资源）」、项目资源挂着 PDF，也要读
     const readsPdf =
       step.skills.some((s) => s === "lit-notes" || s === "review-figures") ||
-      [...(step.inputs ?? []), ...(step.optionalInputs ?? [])].some((p) => p.toLowerCase().endsWith(".pdf"));
+      [...(step.inputs ?? []), ...(step.optionalInputs ?? [])].some((p) => /pdf/i.test(p)) ||
+      stepResources(step, cfg).some((r) => r.path.toLowerCase().endsWith(".pdf"));
     if (readsPdf) {
       lines.push(
         "- 读 PDF：这台机器多半没装 poppler，直接读 PDF 文件会报 `pdftoppm is not installed`。文字用 PyMuPDF 抽（`import pymupdf`，`page.get_text()`）；要看图，先把那一页存成图片（`page.get_pixmap(dpi=150).save(\"artifacts/p5.png\")`）再读这张图，不要只凭图注写图里的内容。",
@@ -236,11 +246,7 @@ export function renderTaskMd(
       "写作红线以写作/渲染技能为准，即使本文件简报写了相反的话：不凑字数；禁止把「待绘制」当图；G1 不准进稿件；摘要不准出现 [待核实]；摘要级来源必须在句中降级；PDF 首页必须可读。不得把大纲或项目「目标篇幅」改写成必须凑到的词数，也不得把「文件非空」当成渲染通过。",
     );
   }
-  const boundPaths = step.resources ?? [];
-  const resources =
-    boundPaths.length > 0
-      ? cfg.resources.filter((r) => boundPaths.includes(r.path))
-      : cfg.resources;
+  const resources = stepResources(step, cfg);
   if (resources.length > 0) {
     lines.push("", "## 项目资源（只读引用，勿复制到本工作区）");
     for (const r of resources) {

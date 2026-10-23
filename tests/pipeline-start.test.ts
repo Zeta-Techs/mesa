@@ -536,6 +536,11 @@ test("TASK.md 本机 Python：读 PDF 的步骤在 Windows 上提示用 PyMuPDF 
   assert.match(win, /pdftoppm is not installed[^\n]*get_pixmap/);
   assert.doesNotMatch(renderTaskMd(step(), cfg(), "C:\\p", undefined, undefined, undefined, undefined, true), /pdftoppm/, "不读 PDF 的步骤不带");
   assert.doesNotMatch(renderTaskMd(notes, cfg(), "/p"), /pdftoppm/, "只在 Windows");
+  // 大纲步一类：输入里写着要读原文 PDF，或项目资源挂着 PDF
+  const outline = step({ inputs: ["17 篇主线批原文 PDF（路径见「项目资源」，只读）"] });
+  assert.match(renderTaskMd(outline, cfg(), "C:\\p", undefined, undefined, undefined, undefined, true), /pdftoppm/);
+  const withPdf = cfg({ resources: [{ name: "Fan 2022", path: "C:\\Zotero\\storage\\K\\Fan.pdf", type: "paper", readonly: true, note: "" }] });
+  assert.match(renderTaskMd(step(), withPdf, "C:\\p", undefined, undefined, undefined, undefined, true), /pdftoppm/);
 });
 
 test("TASK.md 本步骤脚本：简报没点名的不列；只有 bash 写法的条目点名用 Git Bash", () => {
