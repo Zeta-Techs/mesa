@@ -165,9 +165,10 @@ def write_library_ris(bib_text: str, dest: Path, skip_excluded: Path | None = No
         # Zotero 份字段口径（2026-10-11 与 zotero-sync/lit-search SKILL、screening-review.ts 的
         # recordToZoteroRis 对齐）：期刊全称只写 T2、缩写只写 J2；不写 ID（Zotero 导入不读，
         # 键的回流职责在 EndNote 份）、不写 N1（会进笔记）、不写 JO/JF/JA（JO 会进期刊缩写格）、
-        # 不写 DA/ET/M2/M3/LA/N2（EndNote 格子或重复）。
+        # 不写 DA/ET/M3/LA/N2（EndNote 格子或重复）。M2 只放期刊的另一种缩写，Zotero 收进「其他」。
+        # 题名去掉人手加的编号前缀（【77】、19~.），与 EndNote 份同一个 bridge.title_text。
         if rec.get("title"):
-            lines.append(f"TI  - {bridge.clean(rec['title'])}")
+            lines.append(f"TI  - {bridge.title_text(rec['title'])}")
         for author in rec.get("authors") or []:
             lines.append(f"AU  - {bridge.family_comma(author)}")
         if rec.get("year"):
@@ -175,9 +176,13 @@ def write_library_ris(bib_text: str, dest: Path, skip_excluded: Path | None = No
         journal = rec.get("journal") or ""
         if journal:
             lines.append(f"T2  - {bridge.clean(journal)}")
-        short = journal_short(journal, rec.get("journalAbbreviation") or "")
+        # 缩写与 EndNote 份同一套：引文库里有就用，没有查 JabRef 表 + Mesa 兜底（原先只查 Mesa 兜底，
+        # 从 Zotero 导进来的条目在 Zotero 这份里全没有缩写，EndNote 那份却有）
+        short, alt = bridge.journal_abbreviations(rec)
         if short and short.lower() != journal.lower():
             lines.append(f"J2  - {short}")
+        if alt:
+            lines.append(f"M2  - ISO 4 abbreviation: {alt}")
         if rec.get("volume"):
             lines.append(f"VL  - {rec['volume']}")
         if rec.get("number"):
@@ -324,7 +329,7 @@ def main(argv: list[str] | None = None) -> int:
         ris_lines.append("TY  - JOUR")
         ris_lines.append(f"ID  - {key}")
         if rec["title"]:
-            ris_lines.append(f"TI  - {load_bridge().clean(rec['title'])}")
+            ris_lines.append(f"TI  - {load_bridge().title_text(rec['title'])}")
         for author in [part.strip() for part in rec["author"].split(" and ") if part.strip()]:
             ris_lines.append(f"AU  - {author}")
         if rec["year"] and rec["year"] != "n.d.":

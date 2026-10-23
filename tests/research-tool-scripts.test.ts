@@ -164,7 +164,8 @@ test("EndNote 出库：标识符行零化学美化，标签前空格与电荷上
     const adv = join(root, "adv.ris");
     assert.equal(run(bridge, ["--input", input, "--output", adv, "--report", join(root, "adv.json")]).status, 0);
     const advText = readFileSync(adv, "utf8");
-    assert.match(advText, /TI  - Study of Mg₂Cl₃⁺ and MgCl2 in 2020/);
+    // 2026-10-23 起整词判定：MgCl2 这类多元素式子也收成下标（原先逐字符认，漏掉）
+    assert.match(advText, /TI  - Study of Mg₂Cl₃⁺ and MgCl₂ in 2020/);
     assert.match(advText, /AB  - See https:\/\/example\.com\/a and In 2020 we showed Mg₂Cl₃⁺; old MgCl₂ data/);
     assert.doesNotMatch(advText, /\x00|[-]/);
     assert.doesNotMatch(advText, /In₂₀₂₀|Cl³⁺|₂0|0₂/);

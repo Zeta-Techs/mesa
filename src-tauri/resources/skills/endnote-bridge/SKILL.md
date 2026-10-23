@@ -38,7 +38,7 @@ provides: [endnote-bridge]
 
 ### 1. 出库桥接（references.bib → EndNote）
 
-- 产出 `papers/endnote-import.xml`（EndNote XML，字段保真最好；本技能主产物）和同内容的 `papers/endnote-library.ris`（不进 git；检索时排除的篇不导）。Mesa 的「同步到 EndNote」交的是这份 RIS：拖到 EndNote 图标上，选 Reference Manager (RIS)。不要改写 `papers/endnote-import.ris`——那是检索步维护的纳入篇题录，进 git。XML 仍给 File → Import → EndNote XML。
+- 产出 `papers/endnote-import.xml`（EndNote XML，字段保真最好；本技能主产物）和同内容的 `papers/endnote-library.ris`（不进 git；检索时排除的篇不导）。Mesa 的「同步到 EndNote」交的是这份 RIS：拖到 EndNote 图标上，选 Reference Manager (RIS)。不要改写 `papers/endnote-import.ris`——那是检索步维护的纳入篇题录，进 git。同步时另写 `papers/endnote-journals.txt`（EndNote 期刊术语表：全称、缩写 1/2/3），ACS 与 ISO 4 写法不同的刊（Mesa 兜底表第三列）两种都在里面；XML 的 abbr-2 同样放另一种写法。题名开头人手加的编号（【77】、19~.）导出时去掉。XML 仍给 File → Import → EndNote XML。
   - bib 里有的字段都要写进导入文件，没有的留空，不编造。期刊文献对应 EndNote 里这些格子：作者（`姓, 名`，一位一个 author / 一条 `AU`；「名 姓」无逗号源串翻转为末词作姓，末词为缩写如 `Smith JM` 时首词作姓）、年份、标题、期刊（secondary-title / `T2`+`JO`）、卷、期、页、起始页码、日期、网络出版日期（RIS 的 `ET`；XML 的 `edition`）、文章类型、其他形式的期刊名（与全称不同才写：`periodical/abbr-1` 与 `titles/alt-title`，RIS 为 `J2`）、ISSN、DOI、关键词（一词一条）、摘要、URL。注释只写文献本身的内容，不写筛选过程、来源库或出版商。
   - 附件：项目 `papers/` 下已配对的 PDF 写进 `pdf-urls`（用 absolute file URL），导入后人工核对附件是否成功绑定，不能假定每个版本/路径都自动成功
   - 转换用随包 `scripts/bridge.py`。bib 里的 `journalabbreviation`、`issn`、`abstract`、`keywords`、`date`、`epubdate`、`language`、`note` 会进上面这些格子。回流 .bib 保持源作者格式。

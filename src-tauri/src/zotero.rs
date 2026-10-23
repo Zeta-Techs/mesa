@@ -1421,11 +1421,38 @@ pub fn refresh_library_ris(project_root: &Path) -> Result<(Option<PathBuf>, Stri
     let py = crate::dep_check::usable_python().ok_or_else(|| {
         "本机找不到 python 3，无法生成 Zotero 导入文件（设置 → 诊断可一键安装 Python）".to_string()
     })?;
+    // 从 Zotero / EndNote 导进引文库的老条目常缺摘要、ISSN、日期：有 DOI 的先按 Crossref / OpenAlex 补到
+    // 临时副本里再导（同 EndNote 那份；引文库不动，字段已齐的不联网，补不成照原样导）
+    let enriched = papers.join(format!(".ccode-zotero-{stamp}.bib"));
+    let mut enrich = crate::process::background_command(&py);
+    enrich
+        .arg(&bridge)
+        .arg("--enrich")
+        .arg("--input")
+        .arg(&bib)
+        .arg("--output")
+        .arg(&enriched)
+        .current_dir(&root);
+    // 排除的篇本来就不导，也就不用替它们联网补字段
+    if papers.join("included.json").is_file() {
+        enrich.arg("--skip-excluded").arg(papers.join("included.json"));
+    }
+    let mut filled = String::new();
+    let source = match crate::process::capture_command(&mut enrich, Duration::from_secs(600), 1024 * 1024) {
+        Ok(out) if !out.timed_out && out.status.is_some_and(|s| s.success()) && enriched.is_file() => {
+            filled = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            enriched.clone()
+        }
+        _ => {
+            let _ = std::fs::remove_file(&enriched);
+            bib.clone()
+        }
+    };
     let mut cmd = crate::process::background_command(&py);
     cmd.arg(&script)
         .arg("--library-ris")
         .arg("--bib")
-        .arg(&bib)
+        .arg(&source)
         .arg("--ris")
         .arg(&ris)
         .current_dir(&root);
@@ -1434,7 +1461,11 @@ pub fn refresh_library_ris(project_root: &Path) -> Result<(Option<PathBuf>, Stri
     if included.is_file() {
         cmd.arg("--skip-excluded").arg(&included);
     }
-    let out = cmd.output().map_err(|e| format!("无法生成 Zotero RIS: {e}"))?;
+    let out = cmd.output().map_err(|e| format!("无法生成 Zotero RIS: {e}"));
+    if source != bib {
+        let _ = std::fs::remove_file(&source);
+    }
+    let out = out?;
     let _ = std::fs::remove_file(&script);
     let _ = std::fs::remove_file(script.with_file_name("bridge.py"));
     let _ = std::fs::remove_file(script.with_file_name("library_match.py"));
@@ -1454,6 +1485,7 @@ pub fn refresh_library_ris(project_root: &Path) -> Result<(Option<PathBuf>, Stri
     if health.contains("交给 Zotero 0 条") {
         return Ok((None, health));
     }
+    let health = if filled.is_empty() { health } else { format!("{filled}\n{health}") };
     Ok((Some(ris), health))
 }
 

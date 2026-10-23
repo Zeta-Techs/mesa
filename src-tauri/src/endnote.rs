@@ -8,6 +8,9 @@ const BRIDGE_PY: &str = include_str!("../resources/skills/endnote-bridge/scripts
 /// 按 references.bib 生成、交给 EndNote 的整库 RIS（gitignored）。检索清单那份 `endnote-import.ris` 另有人维护，不改写
 const LIBRARY_RIS: &str = "endnote-library.ris";
 
+/// 同步时顺手写的 EndNote 期刊术语表（全称、缩写 1/2/3，gitignored）：RIS 只有一格缩写，另一种写法放这里
+const JOURNAL_TERMS: &str = "endnote-journals.txt";
+
 /// 找真能跑的 Python（dep_check::usable_python）：Windows 上 `python3` 永远先命中应用商店
 /// 占位程序，python.org 安装包又只提供 python.exe，按名字先找 python3 必然拿到占位
 fn python_bin() -> Result<PathBuf, String> {
@@ -72,6 +75,23 @@ fn run_bridge_args(
     root: &Path,
     enrich: bool,
 ) -> Result<String, String> {
+    run_bridge_terms(py, script, bib, papers, stamp, kind, dest, report, root, enrich, None)
+}
+
+/// 同 run_bridge_args，另可让 bridge 顺手写一份 EndNote 期刊术语表（`--journal-terms`）
+fn run_bridge_terms(
+    py: &Path,
+    script: &Path,
+    bib: &Path,
+    papers: &Path,
+    stamp: &uuid::Uuid,
+    kind: &str,
+    dest: &Path,
+    report: &Path,
+    root: &Path,
+    enrich: bool,
+    terms: Option<&Path>,
+) -> Result<String, String> {
     let out_tmp = papers.join(format!(".ccode-endnote-{stamp}.{kind}"));
     let report_tmp = papers.join(format!(".ccode-endnote-{stamp}-{kind}.json"));
     let mut cmd = python_command(py);
@@ -88,7 +108,10 @@ fn run_bridge_args(
         .current_dir(root);
     // 检索时人排除的篇不进导入文件（引文库里还留着检索前导进来、后来排除的条目；2026-10-23 HER）
     let included = papers.join("included.json");
-    if !enrich && included.is_file() {
+    if let Some(terms) = terms {
+        cmd.arg("--journal-terms").arg(terms);
+    }
+    if included.is_file() {
         cmd.arg("--skip-excluded").arg(&included);
     }
     let out = crate::process::capture_command(&mut cmd, bridge_timeout(enrich), 1024 * 1024)
@@ -157,7 +180,26 @@ pub fn export_ris_only(project_root: &Path) -> Result<(PathBuf, String), String>
         true,
     )?;
     let py = python_bin()?;
-    let dropped = run_bridge(&py, &script, &bib, &papers, &stamp, "ris", &ris, &report, &root)?;
+    // 从 Zotero / EndNote 导进引文库的老条目常缺摘要、ISSN、日期：有 DOI 的先按 Crossref / OpenAlex 补到
+    // 这次导出的临时副本里（引文库不动；字段已齐的不联网；补不成照原样导，不挡同步）
+    let enriched = papers.join(format!(".ccode-endnote-{stamp}.bib"));
+    let (source, filled) = match run_bridge_args(
+        &py, &script, &bib, &papers, &stamp, "bib", &enriched, &report, &root, true,
+    ) {
+        Ok(note) if enriched.is_file() => (enriched.clone(), note),
+        _ => {
+            let _ = std::fs::remove_file(&enriched);
+            (bib.clone(), String::new())
+        }
+    };
+    let terms = papers.join(JOURNAL_TERMS);
+    let dropped = run_bridge_terms(
+        &py, &script, &source, &papers, &stamp, "ris", &ris, &report, &root, false, Some(&terms),
+    );
+    if source != bib {
+        let _ = std::fs::remove_file(&source);
+    }
+    let dropped = dropped?;
     // 库体检（只读）：人指定了库就顺手查一遍旧版导出的脏记录，并进按钮反馈
     let mut health = String::new();
     if let Some(enl) = endnote_library_pointer(&root) {
@@ -191,7 +233,22 @@ pub fn export_ris_only(project_root: &Path) -> Result<(PathBuf, String), String>
     if !ris.is_file() {
         return Err(format!("转换结束但没有 papers/{LIBRARY_RIS}"));
     }
-    let note = [dropped, health]
+    // 有刊给了两种缩写才提一句（术语表每次都写，平常不打扰）
+    let has_alt = std::fs::read_to_string(&terms).is_ok_and(|text| {
+        text.lines().any(|line| {
+            let cols: Vec<&str> = line.split('\t').collect();
+            cols.len() >= 3 && cols[1] != cols[2]
+        })
+    });
+    let terms_note = if has_alt {
+        format!(
+            "期刊两种缩写（如 Appl. Catal., B 与 ISO 4 的 Appl. Catal. B Environ.）在 papers/{JOURNAL_TERMS}：\
+             EndNote「工具 → 打开术语表 → 期刊术语表 → 列表 → 导入列表」导入一次，样式里选缩写 1 / 缩写 2 就能切换。"
+        )
+    } else {
+        String::new()
+    };
+    let note = [filled, dropped, terms_note, health]
         .into_iter()
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
@@ -649,17 +706,18 @@ mod tests {
         std::fs::create_dir_all(dir.join("papers")).unwrap();
         std::fs::write(
             dir.join("references.bib"),
-            "@article{keep,\n  title = {Kept paper},\n  author = {Doe, Jane},\n  year = {2024},\n  doi = {10.1/keep},\n}\n\n@article{gone,\n  title = {Excluded boride paper},\n  author = {Roe, John},\n  year = {2020},\n  doi = {10.1/GONE},\n}\n",
+            "@article{keep,\n  title = {【7】Kept paper on MoS2},\n  author = {Doe, Jane},\n  year = {2024},\n  journal = {Applied Catalysis B: Environmental},\n  journalabbreviation = {Appl. Catal., B},\n}\n\n@article{gone,\n  title = {Excluded boride paper},\n  author = {Roe, John},\n  year = {2020},\n}\n",
         )
         .unwrap();
         std::fs::write(
             dir.join("papers/included.json"),
-            r#"[{"id":"A","title":"Kept paper","decision":"included","reason":"","doi":"10.1/keep"},{"id":"B","title":"Excluded boride paper","decision":"excluded","reason":"","doi":"10.1/gone"}]"#,
+            r#"[{"id":"A","title":"Kept paper on MoS2","decision":"included","reason":""},{"id":"B","title":"Excluded boride paper","decision":"excluded","reason":""}]"#,
         )
         .unwrap();
         std::fs::write(dir.join("papers/endnote-import.ris"), "TY  - JOUR\r\nTI  - Kept paper\r\nER  - \r\n").unwrap();
         let out = export_ris_only(&dir);
         let library = std::fs::read_to_string(dir.join("papers/endnote-library.ris")).ok();
+        let terms = std::fs::read_to_string(dir.join("papers/endnote-journals.txt")).ok();
         let canonical = std::fs::read_to_string(dir.join("papers/endnote-import.ris")).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
         if out.as_ref().is_err_and(|e| e.contains("找不到 python")) {
@@ -668,9 +726,18 @@ mod tests {
         let (path, note) = out.expect("ris export");
         assert!(path.ends_with("papers/endnote-library.ris"));
         let library = library.expect("library ris");
-        assert!(library.contains("Kept paper"), "{library}");
+        // 题名编号前缀去掉、式子收成下标；排除的不导
+        assert!(library.contains("TI  - Kept paper on MoS₂\r\n"), "{library}");
+        assert!(library.contains("J2  - Appl. Catal., B\r\n"), "{library}");
         assert!(!library.contains("Excluded boride paper"), "{library}");
         assert!(note.contains("排除的 1 篇不导"), "{note}");
+        // 两种缩写进期刊术语表（缩写 1 = J2，缩写 2 = ISO 4），反馈里提一句怎么导入
+        let terms = terms.expect("journal terms");
+        assert!(
+            terms.contains("Applied Catalysis B: Environmental\tAppl. Catal., B\tAppl. Catal. B Environ.\t"),
+            "{terms}"
+        );
+        assert!(note.contains("endnote-journals.txt"), "{note}");
         assert_eq!(canonical, "TY  - JOUR\r\nTI  - Kept paper\r\nER  - \r\n", "检索清单那份不动");
     }
 

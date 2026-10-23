@@ -95,7 +95,7 @@ def mesa_abbreviations():
             if not row or row[0].strip().startswith("#") or len(row) < 2:
                 continue
             key = B._journal_key(row[0])
-            short = B.clean(row[1])
+            short = B.tidy_abbreviation(row[1])
             if key and short:
                 table[key] = short
         break
@@ -288,8 +288,8 @@ def journal_abbreviation(venue, current, mesa):
         return short
     if unabbreviable(venue):
         return venue
-    cur = as_text(current)
-    if meaningful(cur) and "." in cur and cur.casefold() != venue.casefold():
+    cur = B.tidy_abbreviation(as_text(current)) if meaningful(current) else ""
+    if cur and "." in cur and cur.casefold() != venue.casefold():
         return cur
     return PLACEHOLDER
 

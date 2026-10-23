@@ -314,11 +314,11 @@ function isElementSymbol(token: string): boolean {
   return ELEMENT_SYMBOLS.has(token);
 }
 
-/** 下一个字母若还在拼单词（Cobalt、Complex），这里就不是元素。单独的计量 x 除外。 */
+/** 下一个字母若还在拼单词（Cobalt、Complex），这里就不是元素。计量 x 后面是下一个元素（MgxMo3S4）或词尾时除外。 */
 function continuesWord(text: string, index: number): boolean {
   const next = text[index] ?? "";
   if (!/[a-z]/.test(next)) return false;
-  if (next === "x" && !/[A-Za-z]/.test(text[index + 1] ?? "")) return false;
+  if (next === "x" && !/[a-z]/.test(text[index + 1] ?? "")) return false;
   return true;
 }
 
@@ -350,6 +350,15 @@ function formulaCovers(text: string): boolean {
     const num = /^(?:\d+(?:\.\d+)?)(?:\/\d+(?:\.\d+)?)?/.exec(rest);
     if (num && (pos === 0 || /[A-Za-z)\u2013\u2212/-]/.test(text[pos - 1] ?? ""))) {
       pos += num[0].length;
+      continue;
+    }
+    // \u5408\u91d1\u5f0f\u91cc\u7684 TM\uff08\u8fc7\u6e21\u91d1\u5c5e\u5360\u4f4d\uff1aY(TM1TM2)B4\u3001Zr1-xTMxB2\uff09\u6309\u4e00\u4e2a\u5143\u7d20\u7b97\uff1bMXene \u7aef\u57fa Tx / Tz \u6536\u5728\u8bcd\u5c3e
+    if (rest.startsWith("TM") && (!/[a-z]/.test(rest[2] ?? "") || (rest[2] === "x" && !/[a-z]/.test(rest[3] ?? "")))) {
+      pos += 2;
+      continue;
+    }
+    if (pos > 0 && (rest === "Tx" || rest === "Tz")) {
+      pos += 2;
       continue;
     }
     const two = rest.slice(0, 2);
@@ -389,11 +398,18 @@ function hasRealElement(token: string): boolean {
   return found;
 }
 
+/** 这些词后面的 S1、S2、2 是补充材料 / 图表编号，不是硫、不是下标（与 bridge.py _REF_WORD 同一份） */
+const REF_WORD =
+  /^(?:Fig|Figs|Figure|Figures|Table|Tables|Scheme|Schemes|Eq|Eqs|Equation|Equations|Note|Notes|Movie|Movies|Video|Videos|Section|Appendix|Supplementary|Text|Data)\.?$/i;
+
 export function isFormulaToken(token: string): boolean {
   const body = token.replace(/^[α-ωΑ-Ω]+/, "");
   const core = body.replace(/[\u2013\u2212-]+$/u, "");
   if (!core) return false;
   if (core === "x" || /^[\u2013\u2212-]?x$/.test(core)) return true;
+  // 流感毒株（H1N1）不是式子；只有计量 x、没有数字的单元素词（Lux、Nox）是普通词（与 bridge.py _is_formula 同口径）
+  if (/^H\d+N\d+$/.test(core)) return false;
+  if (/^[A-Z][a-z]?x$/.test(core)) return false;
   // \u7eaf\u6570\u5b57 token \u53ea\u8ba4 1\u20132 \u4f4d\uff08\u5316\u5b66\u8ba1\u91cf\uff09\uff1a3 \u4f4d\u4ee5\u4e0a\u662f\u5e74\u4efd/\u6e29\u5ea6/\u9875\u7801\u4e00\u7c7b\u7684\u6563\u6587\u6570\u5b57\uff0c
   // \u4e0d\u80fd\u5f53\u5f0f\u5b50\u6210\u5206\u53c2\u4e0e\u7c98\u63a5\uff08\u300cIn 2020,\u300d\u4f1a\u88ab\u62fc\u6210 In2020\uff0c2026-10-11 \u5bf9\u6297\u5ba1\u67e5\u5b9e\u8bc1\uff09
   if (/^(?:\d{1,2}(?:\.\d+)?)(?:\/\d{1,2}(?:\.\d+)?)?(?:[\u2013\u2212-]x?)?$/.test(core)) return true;
@@ -484,10 +500,23 @@ function markFormulaDigits(formula: string): string {
     i += 1;
   }
   let text = out.join("");
-  text = text.replace(/([₀₁₂₃₄₅₆₇₈₉ₓᵧ])[ \t]+([A-Z][a-z]?)(?![a-z])/g, "$1$2");
+  text = text.replace(SPLIT_FORMULA, joinFormulaWord);
   text = text.replace(/([₀₁₂₃₄₅₆₇₈₉ₓᵧ])[ \t]+\)/g, "$1)");
   text = text.replace(/(\d{1,2}\+|\d{1,2}-(?!-))(?![A-Za-z0-9])/g, (charge) => shiftMarks(charge, SUP_MARKS));
   return text;
+}
+
+const SPLIT_FORMULA = /([₀₁₂₃₄₅₆₇₈₉ₓᵧ])[ \t]+([A-Z][A-Za-z0-9₀₁₂₃₄₅₆₇₈₉ₓᵧ]*)/g;
+const UNSUB: Record<string, string> = {
+  "₀": "0", "₁": "1", "₂": "2", "₃": "3", "₄": "4", "₅": "5", "₆": "6", "₇": "7", "₈": "8", "₉": "9", "ₓ": "x", "ᵧ": "y",
+};
+
+/** 下标后隔空格的下一个词：能拆成元素 + 计量、且带数字（SO₃）或只是单个元素字母（B），才是同一个式子。
+ *  标题里首字母大写的 As、In、At 不接（与 bridge.py _join_formula_word 同口径）。 */
+function joinFormulaWord(match: string, lead: string, word: string): string {
+  const plain = [...word].map((ch) => UNSUB[ch] ?? ch).join("");
+  if ((plain.length === 1 || /\d/.test(plain)) && formulaCovers(plain) && hasRealElement(plain)) return lead + word;
+  return match;
 }
 
 /** 整句里已经成形的化学式再收一次。摘要里的「Co₂ B.」不靠分词。 */
@@ -506,7 +535,8 @@ function tightenMarkedFormula(text: string): string {
       continue;
     }
     const nextWord = chars.slice(i + 1).join("").match(/^[A-Za-z]+/)?.[0] ?? "";
-    if (ch === " " && sub.has(prev) && isElementSymbol(nextWord)) {
+    // 只接单个元素字母（Co₂ B.）；两个字母的（标题里的 As、In、At）是下一个词
+    if (ch === " " && sub.has(prev) && nextWord.length === 1 && isElementSymbol(nextWord)) {
       continue;
     }
     out.push(ch);
@@ -525,7 +555,7 @@ export function displayCitationTitle(title: string): string {
   const parked: string[] = [];
   const prepared = title
     .replace(/[\x00\uE000-\uE3FF]/g, "")
-    .replace(/(https?:\/\/[^<>\s]+|(?<![\w.])10\.\d{4,9}\/[^<>\s]+)/gi, (hit) => {
+    .replace(/(https?:\/\/[^<>\s]+|(?<![\w.])10\.\d{4,9}\/[^<>\s]+|\bH\d+N\d+\b)/gi, (hit) => {
       parked.push(hit);
       return String.fromCharCode(0xe000 + parked.length - 1);
     })
@@ -534,6 +564,7 @@ export function displayCitationTitle(title: string): string {
     // 先剥斜体粗体，再吃掉标签前的排版空格（MgCl <sub>2</sub> → MgCl₂），最后收上下标。
     // 标签内容以数字/正负号/x/y 开头、前一字符是字母数字或右括号才吃，纯文字不受影响。
     .replace(/<\/?(?:i|b|em|strong)>/gi, "")
+    .replace(/<(sub|sup)>\s*(.*?)\s*<\/\1>/gi, "<$1>$2</$1>")
     .replace(/(?<=[A-Za-z0-9)\]])[ \t ]+(?=<[sS][uU][bB]>[+\-−0-9xy]|<[sS][uU][pP]>[+\-−0-9xy])/g, "")
     .replace(/<sup>(.*?)<\/sup>/gi, (_m, inner: string) => shiftMarks(inner, SUP_MARKS))
     .replace(/<sub>(.*?)<\/sub>/gi, (_m, inner: string) => shiftMarks(inner, SUB_MARKS))
@@ -555,7 +586,9 @@ export function displayCitationTitle(title: string): string {
   let i = 0;
   while (i < raw.length) {
     const token = raw[i] ?? "";
-    if (!isFormulaToken(token)) {
+    // 图表编号（Figure S2、Table S1、Eq. 3）不是式子（与 bridge.py _REF_WORD 同一份词表）
+    const lastWord = [...out].reverse().find((piece) => !/^\s+$/.test(piece)) ?? "";
+    if (!isFormulaToken(token) || REF_WORD.test(lastWord)) {
       out.push(token);
       i += 1;
       continue;
@@ -625,7 +658,7 @@ export function displayCitationTitle(title: string): string {
       isElementSymbol(el) ? el + shiftMarks(digits, SUB_MARKS) : _m,
     )
     .replace(/([₀₁₂₃₄₅₆₇₈₉])[ \t]*[A-Z][ \t]+(\d+(?:\.\d+)?)/g, (_m, lead: string, rest: string) => `${lead}T${shiftMarks(rest, SUB_MARKS)}`)
-    .replace(/([₀₁₂₃₄₅₆₇₈₉])–ₓ/g, "$1₋ₓ")
+    .replace(/([₀₁₂₃₄₅₆₇₈₉])[–−-]ₓ/g, "$1₋ₓ")
     .replace(/([A-Z][a-z]?) x(?![A-Za-z])/g, (match, element: string) =>
       isElementSymbol(element) ? `${element}ₓ` : match,
     )
@@ -644,23 +677,34 @@ export function displayCitationTitle(title: string): string {
     )
     .replace(/TMB (\d+)/g, (_m, digits: string) => `TMB${shiftMarks(digits, SUB_MARKS)}`)
     .replace(/\)(\d+)/g, (_m, digits: string) => `)${shiftMarks(digits, SUB_MARKS)}`)
+    .replace(/\)[ \t]+(\d{1,2})(?![0-9+])/g, (_m, digits: string) => `)${shiftMarks(digits, SUB_MARKS)}`)
+    .replace(/([A-Z][a-z]?)(\d+)-x(?![a-z])/g, (match, element: string, digits: string) =>
+      isElementSymbol(element) ? `${element}${shiftMarks(digits, SUB_MARKS)}₋ₓ` : match,
+    )
+    .replace(/TMx(?=[A-Z])/g, "TMₓ")
     .replace(/(\d+)A cm [−-]2(?![0-9A-Za-z])/g, (_m, amount: string) => `${amount} A cm⁻²`)
     .replace(/cm ?[−–-]2(?![0-9A-Za-z])/g, "cm⁻²")
     .replace(/([a-z]) -(?=[A-Z])/g, "$1-")
     .replace(/[ \t]+ₓ/g, "ₓ")
     .replace(/([₀₁₂₃₄₅₆₇₈₉])\.(\d)/g, (_m, lead: string, tail: string) => `${lead}\u2024${shiftMarks(tail, SUB_MARKS)}`)
-    .replace(/([A-Z][a-z]?)(\d+)(?=[@A-Z])/g, (match, element: string, digits: string) =>
-      isElementSymbol(element) ? element + shiftMarks(digits, SUB_MARKS) : match,
+    .replace(/([A-Z][a-z]?)(\d+)(?=@|([A-Z][a-z]?))/g, (match, element: string, digits: string, next: string | undefined) =>
+      isElementSymbol(element) && (next === undefined || isElementSymbol(next) || next === "T")
+        ? element + shiftMarks(digits, SUB_MARKS)
+        : match,
     )
     .replace(/([ₙ₊₁])[ \t]+(?=[A-Z])/g, "$1")
-    .replace(/([₀₁₂₃₄₅₆₇₈₉ₓᵧⁿ])[ \t]+-(?=[A-Za-z0-9])/g, "$1-")
+    .replace(/([₀₁₂₃₄₅₆₇₈₉ₓᵧⁿ])[ \t]+([-–])(?=[A-Za-z0-9])/g, "$1$2")
     .replace(/([₀₁₂₃₄₅₆₇₈₉])\/(\d+)/g, (_m, lead: string, tail: string) => `${lead}/${shiftMarks(tail, SUB_MARKS)}`)
-    .replace(/([₀₁₂₃₄₅₆₇₈₉])[ \t]+([A-Z](?![a-z]{2}))/g, "$1$2")
+    .replace(SPLIT_FORMULA, joinFormulaWord)
+    // MXene 端基：Ti₃C₂Tx → Ti₃C₂Tₓ
+    .replace(/([₀₁₂₃₄₅₆₇₈₉])T([xz])(?![A-Za-z])/g, (_m, lead: string, end: string) => `${lead}T${end === "x" ? "ₓ" : "z"}`)
     .replace(/T[ \t]+z(?![A-Za-z])/g, "Tz")
-    .replace(/([₀₁₂₃₄₅₆₇₈₉])([A-Z][a-z]?)(\d+)/g, (_m, lead: string, element: string, digits: string) =>
+    .replace(/([₀₁₂₃₄₅₆₇₈₉ₓᵧ])([A-Z][a-z]?)(\d+)/g, (_m, lead: string, element: string, digits: string) =>
       isElementSymbol(element) ? `${lead}${element}${shiftMarks(digits, SUB_MARKS)}` : _m,
     )
-    .replace(/([A-Z]{2,3})(\d+)/g, (_m, mark: string, digits: string) => `${mark}${shiftMarks(digits, SUB_MARKS)}`)
+    .replace(/([A-Z]{2,3})(\d+)/g, (match, mark: string, digits: string) =>
+      formulaCovers(mark) ? `${mark}${shiftMarks(digits, SUB_MARKS)}` : match,
+    )
     .replace(/([A-Z][a-z]?)(\d+)(?=-)/g, (match, element: string, digits: string) =>
       isElementSymbol(element) ? `${element}${shiftMarks(digits, SUB_MARKS)}` : match,
     )

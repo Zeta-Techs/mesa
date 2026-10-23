@@ -259,7 +259,8 @@ test("清单题名只改显示：苹果字符和能整段拆开的化学式", ()
   assert.equal(displayCitationTitle("a Current Density of 2A cm −2"), "a Current Density of 2 A cm⁻²");
   assert.equal(displayCitationTitle("CoMoO 4– x"), "CoMoO₄₋ₓ");
   assert.equal(displayCitationTitle("Ni/MoBT x for"), "Ni/MoBTₓ for");
-  assert.equal(displayCitationTitle("CeO x –NiB"), "CeOₓ –NiB");
+  // 下标后的排版空格连同连接号一起收紧（2026-10-23：原题是 CeOx–NiB，空格是 Crossref 排版留下的）
+  assert.equal(displayCitationTitle("CeO x –NiB"), "CeOₓ–NiB");
   assert.equal(displayCitationTitle("Ni n +1 ZnB n"), "Niₙ₊₁ZnBₙ");
   assert.equal(displayCitationTitle("CoxMnyB nanosheet"), "CoₓMnᵧB nanosheet");
   assert.equal(displayCitationTitle("(WB 2 -191)"), "(WB₂-191)");

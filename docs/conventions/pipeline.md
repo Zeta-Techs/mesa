@@ -620,6 +620,12 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   bridge 与 zotero_rtf 都带 `--skip-excluded`）：引文库里还留着检索前从 Zotero 导进来、后来全排除的条目。
   **库里已有的照样导（同日用户拍板，改 2026-10-11 的「Zotero 按 DOI 差量」）**：Mesa 出的题录字段全是卖点，重复的导进去由人在
   Zotero「重复条目」里挑着合并；反馈只报有几条重复。zotero-library.ris 不写 `#` 头注释（RIS 没有注释语法），条数只进 stdout。
+  **导出题录写法（同日核查整改）**：两份同步文件与界面同一套写法——化学式按「整词能拆成元素 + 计量」认（bridge.py
+  `_subscript_formulas` 与 screening-review.ts 镜像，`tests/citation-format.test.ts` 逐条比对；图表编号 Figure S2、B3LYP、H1N1、
+  标题里的 As/In 不动）；题名去人手编号前缀（`strip_title_prefix`）；缩写经 `tidy_abbreviation`（Chem.A 补空格、去冒号）；
+  Mesa 兜底表第三列 = 同刊另一种写法（ACS/CASSI 与 ISO 4 不同时），EndNote 进 XML 缩写 2 与期刊术语表
+  `papers/endnote-journals.txt`（gitignored），Zotero 进 M2（「其他」）；同步前 `bridge.py --enrich` 只给缺字段、有 DOI 的条目
+  补全到临时副本（字段齐的不联网；bridge 接口缓存与 lit_records 共用 mesa-lit-cache）。
 - **to-fetch.ris 给 Zotero，endnote-import.ris 给 EndNote（2026-09-23 分标签）**：检索步同时写两份 RIS 2004、CRLF。已生成的旧文件不改写。
   Zotero 的 `papers/to-fetch.ris`：期刊全称只写 `T2`，缩写只写 `J2`，页只写 `SP`/`EP`。不写 `JO`（Zotero 会把它放进期刊缩写）、不写 `N1`（会进笔记）、不写 `M1`。
   EndNote 2025 RefMan 的 `papers/endnote-import.ris`：全称 `T2`、缩写 `J2`、页 `SP`、起始页码 `M2`、结束页 `EP`、文章类型 `M3`。不写 `JO`/`M1`（`M1` 不进格子）。
