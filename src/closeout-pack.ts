@@ -55,6 +55,7 @@ const CATALOG: CatalogItem[] = [
   { group: "library", rel: "papers/included.md", label: "纳入清单" },
   { group: "library", rel: "papers/to-fetch.md", label: "待获取全文" },
   { group: "library", rel: "papers/zotero-library.ris", label: "给 Zotero 的全库" },
+  { group: "library", rel: "papers/endnote-library.ris", label: "给 EndNote 的全库" },
   { group: "library", rel: "papers/endnote-import.ris", label: "给 EndNote 的题录" },
   { group: "library", rel: "references.bib", label: "文献库" },
   { group: "library", rel: "notes/index.json", label: "笔记索引" },

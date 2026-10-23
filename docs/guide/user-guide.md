@@ -1753,8 +1753,8 @@ macOS 用户还会在屏幕顶部的应用菜单里看到 About Mesa——系统
 | 软件 | 导入 | 同步 | 交稿 |
 |---|---|---|---|
 | 不用 | PDF 留在项目里，按 DOI 写入 `references.bib` | 无 | Quarto 的 docx |
-| **Zotero** | 拖进分类后点「从 Zotero 导入」；要与项目共用同一份 PDF，用「链接到文件」并把链接附件根目录指到 `papers/` | 待获取页或精读步的 **同步到 Zotero**：只交库里还没有的条目（已有的跳过；全都在时提示「新增 0 条」，不拉起 Zotero），并体检你的库、点名旧脏记录；Zotero 会弹出「导入文件」确认，点「确定」才进库（Windows 与 macOS 一样） | `output/zotero.docx`，先开 Zotero 应用再用 Word 打开 → 点 **Refresh**（首次弹样式选择框，属正常；插件无反应是 Zotero 未就绪，等它加载完或重开文档）→ 光标点进 References 标题下面的空行（不是标题行本身），点 **Add/Edit Bibliography** 插入参考文献表。**换 Document Preferences 里的 CSL 样式再 Refresh，参考文献格式全局跟着变** |
-| **EndNote** | 在 EndNote 导出 XML 或 RIS，放进 `papers/imports/`。不要把 `papers/` 设成 EndNote 的自动导入文件夹 | **同步到 EndNote**（把 `papers/endnote-import.ris` 交给 EndNote 导入进当前打开的库；没开库时 EndNote 会先让你选库。EndNote 装在 D 盘等非默认目录也能找到），并体检你的库、点名旧脏记录 | `output/endnote.docx`，先开 EndNote 应用再用 Word 打开 → 点一次 **Update Citations and Bibliography**（插件无反应是 EndNote 未就绪，等它加载完或重开文档）。引用绑定你的库：**换 Output Style 再 Update，全部参考文献格式一键重排**，不用手动调一条 |
+| **Zotero** | 拖进分类后点「从 Zotero 导入」；要与项目共用同一份 PDF，用「链接到文件」并把链接附件根目录指到 `papers/` | 待获取页或精读步的 **同步到 Zotero**：只交库里还没有、检索时也没被排除的条目（已有的跳过；全都在时提示「新增 0 条」，不拉起 Zotero），并体检你的库、点名旧脏记录；Zotero 会弹出「导入文件」确认，点「确定」才进库（Windows 与 macOS 一样） | `output/zotero.docx`，先开 Zotero 应用再用 Word 打开 → 点 **Refresh**（首次弹样式选择框，属正常；插件无反应是 Zotero 未就绪，等它加载完或重开文档）→ 光标点进 References 标题下面的空行（不是标题行本身），点 **Add/Edit Bibliography** 插入参考文献表。**换 Document Preferences 里的 CSL 样式再 Refresh，参考文献格式全局跟着变** |
+| **EndNote** | 在 EndNote 导出 XML 或 RIS，放进 `papers/imports/`。不要把 `papers/` 设成 EndNote 的自动导入文件夹 | **同步到 EndNote**（按引文库生成 `papers/endnote-library.ris`，交给 EndNote 导入进当前打开的库，检索时排除的不导；没开库时 EndNote 会先让你选库。EndNote 装在 D 盘等非默认目录也能找到），并体检你的库、点名旧脏记录 | `output/endnote.docx`，先开 EndNote 应用再用 Word 打开 → 点一次 **Update Citations and Bibliography**（插件无反应是 EndNote 未就绪，等它加载完或重开文档）。引用绑定你的库：**换 Output Style 再 Update，全部参考文献格式一键重排**，不用手动调一条 |
 
 注意事项：
 

@@ -17,6 +17,45 @@ def identity(record):
     return "doi:" + doi if doi else "title:" + re.sub(r"\W+", "", record.get("title", "").casefold())
 
 
+def excluded_identities(included_json):
+    """papers/included.json 里人排除的篇（decision=excluded）：DOI 身份与标题身份都收。读不到返回空集。"""
+    try:
+        data = json.loads(Path(included_json).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return set()
+    rows = data if isinstance(data, list) else (data.get('records') or data.get('items') or []) if isinstance(data, dict) else []
+    out = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get('decision', '')).strip().lower() not in ('excluded', 'exclude'):
+            continue
+        doi = str(row.get('doi') or '').strip()
+        if not doi:
+            for field in ('url', 'id'):
+                value = str(row.get(field) or '')
+                hit = re.search(r'(10\.\d{4,9}/\S+)', value)
+                if hit:
+                    doi = hit.group(1)
+                    break
+        if doi:
+            out.add(identity({'doi': doi}))
+        title = str(row.get('title') or '')
+        if re.sub(r"\W+", "", title):
+            out.add(identity({'title': title}))
+    return out
+
+
+def drop_excluded(records, included_json):
+    """「同步到文献库」只交没被排除的：引文库里还留着检索时导进来、后来人排除的篇（2026-10-23 HER：
+    18 条 Zotero 硼化物批全排除，同步到 EndNote 仍整份 27 条导了进去）。返回 (留下的, 去掉几条)。"""
+    gone = excluded_identities(included_json) if included_json else set()
+    if not gone:
+        return records, 0
+    kept = [r for r in records if identity(r) not in gone and identity({'title': r.get('title', '')}) not in gone]
+    return kept, len(records) - len(kept)
+
+
 def decode_bib_text(value):
     # Preserve escaped literals; strip only TeX grouping, reject macros requiring a real TeX parser.
     out = []
@@ -625,6 +664,7 @@ def main():
     p.add_argument('--input',type=Path);p.add_argument('--output',type=Path)
     p.add_argument('--report',type=Path);p.add_argument('--existing',type=Path)
     p.add_argument('--check-endnote-library',type=Path,dest='check_endnote_library')
+    p.add_argument('--skip-excluded',type=Path,dest='skip_excluded',help='papers/included.json：其中排除的篇不进输出')
     a=p.parse_args()
     if a.check_endnote_library is not None:
         # 库体检（同步按钮用）：只读列出旧版导出的污染记录，永远成功退出
@@ -643,6 +683,9 @@ def main():
         print('--input/--output/--report are required',file=sys.stderr);return 1
     try:
         records=load(a.input); existing=load(a.existing) if a.existing else []
+        if a.skip_excluded:
+            records,dropped=drop_excluded(records,a.skip_excluded)
+            if dropped: print(f'检索时排除的 {dropped} 篇不导。')
         for dest in (a.output,a.report):
             if dest.exists() or dest.is_symlink(): raise ValueError('Output exists; choose a new proposal path')
         if a.output.resolve()==a.report.resolve(): raise ValueError('Report and proposal paths must differ')

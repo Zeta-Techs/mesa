@@ -5,6 +5,9 @@ use std::path::{Path, PathBuf};
 
 const BRIDGE_PY: &str = include_str!("../resources/skills/endnote-bridge/scripts/bridge.py");
 
+/// 按 references.bib 生成、交给 EndNote 的整库 RIS（gitignored）。检索清单那份 `endnote-import.ris` 另有人维护，不改写
+const LIBRARY_RIS: &str = "endnote-library.ris";
+
 /// 找真能跑的 Python（dep_check::usable_python）：Windows 上 `python3` 永远先命中应用商店
 /// 占位程序，python.org 安装包又只提供 python.exe，按名字先找 python3 必然拿到占位
 fn python_bin() -> Result<PathBuf, String> {
@@ -53,7 +56,7 @@ fn run_bridge(
     dest: &Path,
     report: &Path,
     root: &Path,
-) -> Result<(), String> {
+) -> Result<String, String> {
     run_bridge_args(py, script, bib, papers, stamp, kind, dest, report, root, false)
 }
 
@@ -68,7 +71,7 @@ fn run_bridge_args(
     report: &Path,
     root: &Path,
     enrich: bool,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let out_tmp = papers.join(format!(".ccode-endnote-{stamp}.{kind}"));
     let report_tmp = papers.join(format!(".ccode-endnote-{stamp}-{kind}.json"));
     let mut cmd = python_command(py);
@@ -83,6 +86,11 @@ fn run_bridge_args(
         .arg("--report")
         .arg(&report_tmp)
         .current_dir(root);
+    // 检索时人排除的篇不进导入文件（引文库里还留着检索前导进来、后来排除的条目；2026-10-23 HER）
+    let included = papers.join("included.json");
+    if !enrich && included.is_file() {
+        cmd.arg("--skip-excluded").arg(&included);
+    }
     let out = crate::process::capture_command(&mut cmd, bridge_timeout(enrich), 1024 * 1024)
         .map_err(|e| format!("无法启动转换: {e}"))?;
     let success = !out.timed_out && out.status.is_some_and(|s| s.success());
@@ -106,7 +114,7 @@ fn run_bridge_args(
     } else {
         let _ = std::fs::remove_file(&report_tmp);
     }
-    Ok(())
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 /// 人指定的 EndNote 库路径（papers/endnote-library.path，一行）。没有或不止一行就 None。
@@ -124,7 +132,10 @@ fn endnote_library_pointer(root: &Path) -> Option<PathBuf> {
 }
 
 /// 同步按钮只需要 RIS。不再连写 XML 和 ENW，也不等 EndNote 把文件导完。
-/// 返回 (RIS 路径, 库体检提示)：检出旧版导出的脏记录时提示先删再导，干净时为空。
+/// 写 `papers/endnote-library.ris`（gitignored），不碰检索清单那份 `endnote-import.ris`——
+/// 那份是 lit_records.py / Mesa 纳入时维护的纳入篇题录，进 git；同步整份改写它，主仓就带着
+/// 一个改了没提交的清单文件，开下一步时被开工确认拦下（2026-10-23 HER 实证）。
+/// 返回 (RIS 路径, 提示)：排除不导的篇数、库体检（检出旧版导出的脏记录时提示先删再导）。
 pub fn export_ris_only(project_root: &Path) -> Result<(PathBuf, String), String> {
     let root =
         crate::paths::canonicalize_plain(project_root).map_err(|e| format!("项目目录无效: {e}"))?;
@@ -134,7 +145,7 @@ pub fn export_ris_only(project_root: &Path) -> Result<(PathBuf, String), String>
     }
     let papers = root.join("papers");
     std::fs::create_dir_all(&papers).map_err(|e| format!("无法创建 papers/: {e}"))?;
-    let ris = papers.join("endnote-import.ris");
+    let ris = papers.join(LIBRARY_RIS);
     let report = papers.join("endnote-report.json");
     let stamp = uuid::Uuid::new_v4();
     let script = std::env::temp_dir().join(format!("ccode-endnote-bridge-{stamp}.py"));
@@ -146,7 +157,7 @@ pub fn export_ris_only(project_root: &Path) -> Result<(PathBuf, String), String>
         true,
     )?;
     let py = python_bin()?;
-    run_bridge(&py, &script, &bib, &papers, &stamp, "ris", &ris, &report, &root)?;
+    let dropped = run_bridge(&py, &script, &bib, &papers, &stamp, "ris", &ris, &report, &root)?;
     // 库体检（只读）：人指定了库就顺手查一遍旧版导出的脏记录，并进按钮反馈
     let mut health = String::new();
     if let Some(enl) = endnote_library_pointer(&root) {
@@ -178,9 +189,14 @@ pub fn export_ris_only(project_root: &Path) -> Result<(PathBuf, String), String>
     let _ = std::fs::remove_file(&script);
     let _ = std::fs::remove_file(&abbr);
     if !ris.is_file() {
-        return Err("转换结束但没有 papers/endnote-import.ris".into());
+        return Err(format!("转换结束但没有 papers/{LIBRARY_RIS}"));
     }
-    Ok((ris, health))
+    let note = [dropped, health]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok((ris, note))
 }
 
 pub fn export_xml(project_root: &Path) -> Result<PathBuf, String> {
@@ -202,7 +218,7 @@ fn export_xml_with(project_root: &Path, enrich: bool) -> Result<PathBuf, String>
     let papers = root.join("papers");
     std::fs::create_dir_all(&papers).map_err(|e| format!("无法创建 papers/: {e}"))?;
     let xml = papers.join("endnote-import.xml");
-    let ris = papers.join("endnote-import.ris");
+    let ris = papers.join(LIBRARY_RIS);
     let report = papers.join("endnote-report.json");
     let stamp = uuid::Uuid::new_v4();
     let script = std::env::temp_dir().join(format!("ccode-endnote-bridge-{stamp}.py"));
@@ -224,7 +240,7 @@ fn export_xml_with(project_root: &Path, enrich: bool) -> Result<PathBuf, String>
         match run_bridge_args(
         &py, &script, &bib, &papers, &stamp, "bib", &enriched, &report, &root, true,
     ) {
-        Ok(()) if enriched.is_file() => enriched.clone(),
+        Ok(_) if enriched.is_file() => enriched.clone(),
         _ => {
             let _ = std::fs::remove_file(&enriched);
             bib.clone()
@@ -488,7 +504,7 @@ fn clip_utf16_payload(text: &str) -> Vec<u8> {
 
 fn launch_endnote_with_file(file: &Path) -> Result<(), String> {
     let app = find_endnote_app().ok_or_else(|| {
-        "找不到 EndNote。把产物里的 papers/endnote-import.ris 拖到 EndNote 图标上（不要拖进窗口）。".to_string()
+        "找不到 EndNote。".to_string()
     })?;
     #[cfg(target_os = "macos")]
     {
@@ -517,7 +533,7 @@ fn launch_endnote_with_file(file: &Path) -> Result<(), String> {
     #[cfg(not(any(target_os = "macos", windows)))]
     {
         let _ = (app, file);
-        Err("请把 papers/endnote-import.ris 拖到 EndNote 图标上。".into())
+        Err("这个系统上没有 EndNote 桌面版可交。".into())
     }
 }
 
@@ -553,18 +569,22 @@ pub async fn endnote_export_xml(project_root: String) -> Result<String, String> 
     tauri::async_runtime::spawn_blocking(move || {
         let root = crate::sessions::expand_tilde(&project_root);
         let root_path = Path::new(&root);
-        // 精读之后同步：有引文库就按它重写，不再打开检索时的旧文件。
-        let mut health = String::new();
-        if root_path.join("references.bib").is_file() {
-            let (_, note) = export_ris_only(root_path)?;
-            health = note;
-        }
-        let Some(ris) = find_import_ris(root_path) else {
-            return Err(
-                "还没有 papers/endnote-import.ris。检索保存进项目后才会有这一份，同步只打开它，不再重新检索。"
-                    .into(),
-            );
+        // 精读之后同步：有引文库就按它生成整库 RIS（endnote-library.ris）；还没有引文库（检索步）才交检索清单那份。
+        let (ris, health) = if root_path.join("references.bib").is_file() {
+            export_ris_only(root_path)?
+        } else {
+            let Some(ris) = find_import_ris(root_path) else {
+                return Err(
+                    "还没有 papers/endnote-import.ris。检索保存进项目后才会有这一份，同步只打开它，不再重新检索。"
+                        .into(),
+                );
+            };
+            (ris, String::new())
         };
+        let shown = ris
+            .file_name()
+            .map(|n| format!("papers/{}", n.to_string_lossy()))
+            .unwrap_or_else(|| ris.display().to_string());
         copy_path_to_clipboard(&ris);
         let health_note = if health.is_empty() {
             String::new()
@@ -573,10 +593,10 @@ pub async fn endnote_export_xml(project_root: String) -> Result<String, String> 
         };
         match launch_endnote_with_file(&ris) {
             Ok(()) => Ok(format!(
-                "已交给 EndNote。PDF 用「打开 papers」拖到对应条目。{health_note}"
+                "已交给 EndNote，导入当前打开的库。PDF 用「打开 papers」拖到对应条目。{health_note}"
             )),
             Err(e) => Ok(format!(
-                "文件在 papers/endnote-import.ris。把它拖到 EndNote 图标上（不要拖进窗口）。{e}{health_note}"
+                "文件在 {shown}。把它拖到 EndNote 图标上（不要拖进窗口）。{e}{health_note}"
             )),
         }
     })
@@ -611,7 +631,7 @@ mod tests {
         )
         .unwrap();
         let ris = export_ris_only(&dir);
-        let text = std::fs::read_to_string(dir.join("papers/endnote-import.ris")).ok();
+        let text = std::fs::read_to_string(dir.join("papers/endnote-library.ris")).ok();
         let _ = std::fs::remove_dir_all(&dir);
         if ris.as_ref().is_err_and(|e| e.contains("找不到 python")) {
             return;
@@ -620,6 +640,38 @@ mod tests {
         let text = text.expect("ris");
         assert!(text.contains("镁电池穿梭效应研究"), "{text}");
         assert!(text.contains("化学学报"), "{text}");
+    }
+
+    /// 同步写整库 RIS（endnote-library.ris），不改写检索清单那份 endnote-import.ris；检索时排除的篇不导
+    #[test]
+    fn sync_writes_library_ris_and_skips_excluded() {
+        let dir = std::env::temp_dir().join(format!("ccode-endnote-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("papers")).unwrap();
+        std::fs::write(
+            dir.join("references.bib"),
+            "@article{keep,\n  title = {Kept paper},\n  author = {Doe, Jane},\n  year = {2024},\n  doi = {10.1/keep},\n}\n\n@article{gone,\n  title = {Excluded boride paper},\n  author = {Roe, John},\n  year = {2020},\n  doi = {10.1/GONE},\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("papers/included.json"),
+            r#"[{"id":"A","title":"Kept paper","decision":"included","reason":"","doi":"10.1/keep"},{"id":"B","title":"Excluded boride paper","decision":"excluded","reason":"","doi":"10.1/gone"}]"#,
+        )
+        .unwrap();
+        std::fs::write(dir.join("papers/endnote-import.ris"), "TY  - JOUR\r\nTI  - Kept paper\r\nER  - \r\n").unwrap();
+        let out = export_ris_only(&dir);
+        let library = std::fs::read_to_string(dir.join("papers/endnote-library.ris")).ok();
+        let canonical = std::fs::read_to_string(dir.join("papers/endnote-import.ris")).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        if out.as_ref().is_err_and(|e| e.contains("找不到 python")) {
+            return;
+        }
+        let (path, note) = out.expect("ris export");
+        assert!(path.ends_with("papers/endnote-library.ris"));
+        let library = library.expect("library ris");
+        assert!(library.contains("Kept paper"), "{library}");
+        assert!(!library.contains("Excluded boride paper"), "{library}");
+        assert!(note.contains("排除的 1 篇不导"), "{note}");
+        assert_eq!(canonical, "TY  - JOUR\r\nTI  - Kept paper\r\nER  - \r\n", "检索清单那份不动");
     }
 
     #[test]
@@ -666,7 +718,7 @@ mod tests {
         )
         .unwrap();
         let xml = export_xml(&dir);
-        let ris = std::fs::read_to_string(dir.join("papers/endnote-import.ris")).ok();
+        let ris = std::fs::read_to_string(dir.join("papers/endnote-library.ris")).ok();
         let _ = std::fs::remove_dir_all(&dir);
         if xml.is_err() && xml.as_ref().unwrap_err().contains("找不到 python") {
             return;
@@ -709,7 +761,7 @@ mod tests {
         )
         .unwrap();
         let xml = export_xml(&dir);
-        let ris = std::fs::read_to_string(dir.join("papers/endnote-import.ris")).ok();
+        let ris = std::fs::read_to_string(dir.join("papers/endnote-library.ris")).ok();
         let xml_text = std::fs::read_to_string(dir.join("papers/endnote-import.xml")).ok();
         let _ = std::fs::remove_dir_all(&dir);
         if xml.is_err() && xml.as_ref().unwrap_err().contains("找不到 python") {

@@ -178,7 +178,7 @@ export function withResearchTools(source: ProjectStepDto, tools: ResearchTools, 
       "endnote-bridge",
       ownsImport ? ["papers/endnote-import.ris"] : [],
       ownsImport
-        ? "EndNote：papers/endnote-import.ris 只在检索步生成。同步打开这一份。已有记录不覆盖。"
+        ? "EndNote：papers/endnote-import.ris 只在检索步生成（纳入篇题录）。精读后人点同步时，Mesa 按引文库另写 papers/endnote-library.ris 交给 EndNote，不改这一份。已有记录不覆盖。"
         : "EndNote：精读只按已对上 DOI 的 PDF 改 references.bib 的标题和摘要，不写 RIS。人点「同步到文献库」时，Mesa 按这份 bib 生成导入文件。PDF 从「打开 papers」拖进库，挂到对应条目上。",
     );
   }

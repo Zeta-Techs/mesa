@@ -3041,6 +3041,10 @@ fn gitignore_text(work_mode: &str, artifact_dir: &str) -> String {
          .ccode/handoff-*.md\n\
          .ccode/help-wanted.md\n\
          \n\
+         # 同步到文献库时 Mesa 按引文库生成的导入文件：每次重写，不进 git\n\
+         /papers/zotero-library.ris\n\
+         /papers/endnote-library.ris\n\
+         \n\
          # 文献 PDF 等大文件登记为资源引用，不进 git\n\
          *.pdf\n\
          \n\
@@ -8317,6 +8321,10 @@ briefs = "not-an-array"
         // 人工请求一步一份、不进 git（2026-10-22：提交进去后一路带到下一步，收件箱里全是上一步答过的问题）
         for mode in ["research", "coding"] {
             assert!(gitignore_text(mode, "artifacts").lines().any(|l| l == ".ccode/help-wanted.md"), "{mode}");
+        }
+        // 同步到文献库生成的导入文件不进 git（科研项目才有文献库）
+        for path in ["/papers/zotero-library.ris", "/papers/endnote-library.ris"] {
+            assert!(gitignore_text("research", "artifacts").lines().any(|l| l == path), "{path}");
         }
     }
 

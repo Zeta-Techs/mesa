@@ -705,6 +705,39 @@ test("Zotero 全库 RIS（同步按钮）：T2/J2 字段约定，标识符零化
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+// 2026-10-23 HER：引文库里还留着检索前从 Zotero 导进来、后来全排除的 18 条，同步整份交了出去
+test("Zotero 全库 RIS（同步按钮）：检索时排除的篇不导", () => {
+  const root = mkdtempSync(join(tmpdir(), "mesa-zotero-skip-"));
+  try {
+    const bib = join(root, "references.bib");
+    writeFileSync(
+      bib,
+      "@article{Keep2024, title={Kept paper}, author={Doe, Jane}, year={2024}, doi={10.1/keep}}\n" +
+        "@article{Gone2020, title={Excluded boride paper}, author={Roe, John}, year={2020}, doi={10.1/GONE}}\n" +
+        "@article{Gone2019, title={Excluded without doi}, author={Poe, Ann}, year={2019}}\n",
+    );
+    const included = join(root, "included.json");
+    writeFileSync(included, JSON.stringify([
+      { id: "A", title: "Kept paper", decision: "included", reason: "", doi: "10.1/keep" },
+      { id: "B", title: "Excluded boride paper", decision: "excluded", reason: "", doi: "https://doi.org/10.1/gone" },
+      { id: "C", title: "Excluded without DOI", decision: "excluded", reason: "" },
+    ]));
+    const script = resolve("src-tauri/resources/skills/zotero-sync/scripts/zotero_rtf.py");
+    const out = join(root, "zotero-library.ris");
+    const savedCfg = process.env.ZOTERO_CONFIG_DIR;
+    process.env.ZOTERO_CONFIG_DIR = root;
+    const result = run(script, ["--library-ris", "--bib", bib, "--ris", out, "--skip-excluded", included]);
+    if (savedCfg === undefined) delete process.env.ZOTERO_CONFIG_DIR;
+    else process.env.ZOTERO_CONFIG_DIR = savedCfg;
+    assert.equal(result.status, 0, result.stderr);
+    const text = readFileSync(out, "utf8");
+    assert.match(text, /TI  - Kept paper/);
+    assert.doesNotMatch(text, /Excluded/);
+    assert.match(text, /^# 整份引文库，共 3 条（检索时排除的 2 条不导）。/);
+    assert.match(result.stdout, /检索时排除的 2 条不导/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("ISO 4 缩写按期刊全称，带句点；一词刊名不缩", () => {
   const script = resolve("src-tauri/resources/skills/endnote-bridge/scripts/bridge.py");
   const probe = [

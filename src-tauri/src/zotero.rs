@@ -1395,16 +1395,20 @@ pub fn refresh_library_ris(project_root: &Path) -> Result<(Option<PathBuf>, Stri
     let py = crate::dep_check::usable_python().ok_or_else(|| {
         "本机找不到 python 3，无法生成 Zotero 导入文件（设置 → 诊断可一键安装 Python）".to_string()
     })?;
-    let out = crate::process::background_command(&py)
-        .arg(&script)
+    let mut cmd = crate::process::background_command(&py);
+    cmd.arg(&script)
         .arg("--library-ris")
         .arg("--bib")
         .arg(&bib)
         .arg("--ris")
         .arg(&ris)
-        .current_dir(&root)
-        .output()
-        .map_err(|e| format!("无法生成 Zotero RIS: {e}"))?;
+        .current_dir(&root);
+    // 检索时人排除的篇不导（引文库里还留着检索前从 Zotero 导进来、后来排除的条目）
+    let included = papers.join("included.json");
+    if included.is_file() {
+        cmd.arg("--skip-excluded").arg(&included);
+    }
+    let out = cmd.output().map_err(|e| format!("无法生成 Zotero RIS: {e}"))?;
     let _ = std::fs::remove_file(&script);
     let _ = std::fs::remove_file(script.with_file_name("bridge.py"));
     let _ = std::fs::remove_file(script.with_file_name("library_match.py"));

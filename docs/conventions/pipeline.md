@@ -613,6 +613,11 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   标注与笔记都按路径认文件（2026-10-23 HER 实证：精读步改名 9 个，暂缓登记全指向旧名）。模板 guidance 必须写明
   「文件名随意」，不得暗示用户要自己整理命名。
 - **精读笔记是读后消化，不是覆盖索引（2026-09-18）**：写法 SSOT 为 `lit-notes` 技能。叙述用中文，材料名/离子/电解液/方法缩写/图表编号等惯用英文原词保留，不强翻；禁止把英文摘要整段贴进笔记。TASK 简报不得写「每篇产出笔记文件」当完成标准。机器验收 `same-ids` 只对 index 覆盖；`records` 不要求 `notePath` 非空。可逆准备 = 认 PDF（lit_records.py write）/ index 骨架 / bib 对账 / 合法 OA，不包括从摘要批量生成笔记正文。「按摘要记」= 根据摘要消化来写并标「仅摘要」。用户确认的核心篇有 PDF 却未写出精读时，质量状态不得高于「已生成待审」。已有项目不静默改 TASK.md，下一轮开步才带新简报；技能更新走内置技能「有新版」。
+- **同步到文献库写单独的整库文件，不改清单那份（2026-10-23）**：「同步到 Zotero / EndNote」按 references.bib 生成
+  `papers/zotero-library.ris` / `papers/endnote-library.ris`（每次重写，新项目 .gitignore 模板带这两行）；检索清单的
+  `endnote-import.ris` 只由 lit_records.py 与 Mesa 纳入/移出维护，同步不碰——HER 实证同步整份改写它，主仓留下改了没提交的
+  清单文件。included.json 里 decision=excluded 的篇（DOI 优先、其次标题）不进这两份（`bridge.py drop_excluded`，
+  bridge 与 zotero_rtf 都带 `--skip-excluded`）：引文库里还留着检索前从 Zotero 导进来、后来全排除的条目。
 - **to-fetch.ris 给 Zotero，endnote-import.ris 给 EndNote（2026-09-23 分标签）**：检索步同时写两份 RIS 2004、CRLF。已生成的旧文件不改写。
   Zotero 的 `papers/to-fetch.ris`：期刊全称只写 `T2`，缩写只写 `J2`，页只写 `SP`/`EP`。不写 `JO`（Zotero 会把它放进期刊缩写）、不写 `N1`（会进笔记）、不写 `M1`。
   EndNote 2025 RefMan 的 `papers/endnote-import.ris`：全称 `T2`、缩写 `J2`、页 `SP`、起始页码 `M2`、结束页 `EP`、文章类型 `M3`。不写 `JO`/`M1`（`M1` 不进格子）。
