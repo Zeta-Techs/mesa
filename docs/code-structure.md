@@ -28,6 +28,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 上游未保存软门：unsavedUpstream（ProjectGroup 按步进器状态算）置顶 + 「去评审」，与收尾软门共用二击；
                              # 工作区名在标题行，不挂弹层 title（会悬浮压正文））、
                              # ResearchToolPreflight（开工技能/工具只读预检：全部就绪只出一行「已启用到 X」，有缺口才展开带分发/重测的块）、
+                             # FigureVisionNotice（开工弹层「技能」行下：步骤挂 review-figures 而所选模型能力库查到不能看图 / 查不到时提醒一行，文案在 figure-vision.ts）、
                              # StepSkillsChips（步骤推荐技能 chip 区：只读/可编辑两态 + 产物冲突/跨步骤链路 ⚠ 警告行；bare = 不画标题行，供开工弹层标签列用）、
                              # HumanTasksList（人工事项清单 + useHumanTasks 共享逻辑；待确认清完且未手动取消才自动勾）、StepFlow（步骤内协同流程线；付费墙行已登录显示「已登录」，未登录才是「登录学校账号」；拖进待获取清单按文件名、DOI 和 PDF 内标题对条目）、
                              # ScheduleSection（定时任务：有流程在项目设置抽屉；无流程主区雷达下；编程/办公右侧会话栏；
