@@ -55,7 +55,8 @@ test("任务书减重不靠删阶段/门禁：共用摘要一次，格式适配�
   // 同日再加一句：决策暂停策略带人工请求文件的用法（只放没答的、答完删、不提交；每步一句，六模板同涨）。
   // 实测 review 26621、论文 36303、数据 12734、学位 34257、投稿 8993、LaTeX 13863。
   // 2026-10-23 检索链加「人导入的每条进 included.json、Agent 不排除」一句（三模板同涨）。实测 review 26884、论文 36437、学位 34391。
-  const before: Record<string, number> = { review: 27000, "research-paper": 36600, "data-processing": 12900, thesis: 34600, "submission-rebuttal": 9100, "latex-paper": 14000 };
+  // 同日再改：综述拼图按论点取子图（笔记可引用图细到子图、大纲用图计划逐块列、初稿裁子图流程）。实测 review 27082、论文 36466、学位 34420。
+  const before: Record<string, number> = { review: 27200, "research-paper": 36600, "data-processing": 12900, thesis: 34600, "submission-rebuttal": 9100, "latex-paper": 14000 };
   for (const t of PIPELINE_TEMPLATES) {
     const tasks = md(t.id);
     assert.ok(tasks.reduce((n, s) => n+s.length, 0) < before[t.id], t.id);

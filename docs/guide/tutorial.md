@@ -814,7 +814,7 @@ AI 开始时不问引用样式，先按初稿的方括号编号做。想换，�
 | zotero-sync / endnote-bridge | 定稿（zotero-sync 在科研论文、毕业论文两套模板还挂检索步） | 文献软件桥接 |
 | review-framework | 大纲 | 空白清单、范式卡片、框架推演 |
 | review-writing | 初稿、定稿 | 综述写作约束 |
-| review-figures | 初稿 | 从 PDF 裁图拼板 |
+| review-figures | 初稿 | 按论点从几篇 PDF 里各裁一块子图拼成一张图 |
 | quarto-render | 初稿、定稿 | 渲染 PDF / Word |
 | bib-check、stats-check | 定稿 | 核对引用与参考文献是否一一对应、审查统计口径 |
 | lit-watch | 定时任务（文献雷达） | 按订阅关键词追踪新文献，去重后进雷达收件箱 |

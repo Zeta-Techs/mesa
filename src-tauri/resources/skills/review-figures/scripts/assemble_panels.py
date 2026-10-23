@@ -16,10 +16,24 @@ def _need_pil():
     return Image, ImageDraw, ImageFont
 
 
+# Pillow 按文件名找字体时区分大小写：Windows 上只有 arial.ttf，写 Arial.ttf 找不到，
+# 落到 10 px 的位图默认字体，子图字母小到看不见（2026-10-23 HER 初稿拼图实证）
+FONT_NAMES = (
+    "arial.ttf", "Arial.ttf", "/System/Library/Fonts/Supplemental/Arial.ttf", "/Library/Fonts/Arial.ttf",
+    "Helvetica.ttc", "/System/Library/Fonts/Helvetica.ttc", "DejaVuSans.ttf", "LiberationSans-Regular.ttf",
+)
+
+
 def _font(ImageFont, dpi: int):
+    size = max(18, int(dpi * 8 / 72))
+    for name in FONT_NAMES:
+        try:
+            return ImageFont.truetype(name, size)
+        except OSError:
+            continue
     try:
-        return ImageFont.truetype("Arial.ttf", max(18, int(dpi * 8 / 72)))
-    except OSError:
+        return ImageFont.load_default(size=size)
+    except TypeError:
         return ImageFont.load_default()
 
 
