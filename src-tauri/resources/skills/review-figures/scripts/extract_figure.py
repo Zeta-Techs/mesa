@@ -20,6 +20,7 @@ Panel-level crops (a review figure takes the one panel that carries the point):
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -174,7 +175,7 @@ def _split_cells(pix):
 
 
 def locate(doc, fig: int):
-    """题注旁的图：返回 (页, 裁切矩形)。找不到按退出码说明原因。"""
+    """题注旁的图：返回 (页, 裁切矩形, 题注那一行)。找不到按退出码说明原因。"""
     fitz = _need_fitz()
     pat = _caption_line_pat(fig)
     found_caption = False
@@ -194,10 +195,12 @@ def locate(doc, fig: int):
             return (0 if titled else 1, rect.y0)
         captions.sort(key=caption_rank)
         cap = None
-        for candidate, _text in captions:
+        cap_text = ""
+        for candidate, text in captions:
             if candidate.y0 < 36:
                 continue
             cap = candidate
+            cap_text = text
             break
         if cap is None:
             continue
@@ -241,7 +244,7 @@ def locate(doc, fig: int):
         if area <= 0 or area / page_area > 0.85:
             print("图像对象接近整页，拒绝当作单图", file=sys.stderr)
             sys.exit(4)
-        return page, clip
+        return page, clip, cap_text
     if found_caption:
         print(f"Fig. {fig} 题注旁没有可分离的图像对象：用 --page <页码> --grid 看整页坐标、--box 框出那一块；框不准就改为引用 Fig.{fig}", file=sys.stderr)
         sys.exit(5)
@@ -378,7 +381,8 @@ def grid_preview(pix, out: Path) -> None:
 
 def extract(pdf: Path, fig: int, out: Path, dpi: int, panel: str | None,
             box: tuple[float, float, float, float] | None = None, grid: bool = False, page_no: int = 0,
-            erase: list[tuple[float, float, float, float]] | None = None, snap: bool = True) -> None:
+            erase: list[tuple[float, float, float, float]] | None = None, snap: bool = True, key: str = "",
+            label: str = "") -> None:
     fitz = _need_fitz()
     doc = fitz.open(pdf)
     try:
@@ -388,8 +392,10 @@ def extract(pdf: Path, fig: int, out: Path, dpi: int, panel: str | None,
                 sys.exit(1)
             page = doc[page_no - 1]
             clip = page.rect
+            caption = ""
         else:
-            page, clip = locate(doc, fig)
+            page, clip, caption = locate(doc, fig)
+        used_box = box
         if box and page_no:
             # 按整页框时同样不许把大半页当成一块子图
             area = sub_rect(clip, box)
@@ -413,7 +419,8 @@ def extract(pdf: Path, fig: int, out: Path, dpi: int, panel: str | None,
                 )
                 sys.exit(7)
             w, h = pix.width, pix.height
-            print(f"实际裁框{'（已挪到空白缝）' if snap else '（未挪）'}：{bx0 / w:.3f},{by0 / h:.3f},{bx1 / w:.3f},{by1 / h:.3f}")
+            used_box = (round(bx0 / w, 3), round(by0 / h, 3), round(bx1 / w, 3), round(by1 / h, 3))
+            print(f"实际裁框{'（已挪到空白缝）' if snap else '（未挪）'}：{used_box[0]:.3f},{used_box[1]:.3f},{used_box[2]:.3f},{used_box[3]:.3f}")
             ox, oy = pix.x, pix.y
             rect = fitz.IRect(ox + bx0, oy + by0, ox + bx1 + 1, oy + by1 + 1)
             clipped = fitz.Pixmap(pix.colorspace, rect, pix.alpha)
@@ -444,9 +451,34 @@ def extract(pdf: Path, fig: int, out: Path, dpi: int, panel: str | None,
             )
         out.parent.mkdir(parents=True, exist_ok=True)
         pix.save(str(out))
+        write_source(out, pdf, page.number + 1, fig, caption, panel, used_box, erase or [], key, label)
         print(out)
     finally:
         doc.close()
+
+
+def key_from_name(out: Path) -> str:
+    """按技能约定的文件名 <bib键>-fig3b.png / <bib键>-scheme1.png 取 bib 键"""
+    m = re.match(r"(.+?)-(?:fig|scheme|table|tab)\d", out.stem, re.I)
+    return m.group(1) if m else out.stem
+
+
+def write_source(out: Path, pdf: Path, page: int, fig: int, caption: str, panel, box, erase, key: str, label: str = "") -> None:
+    """每块旁边落一份来源记录 <块>.json：用户投稿前要去期刊换高清原图、申请转载许可，
+    得知道这一块出自哪篇（bib 键）、原图几号哪一块、PDF 第几页、怎么裁的。figure_sources.py 汇总成 sources.md。"""
+    record = {
+        "key": key or key_from_name(out),
+        # 原文里这一块叫什么（Fig. 2(b)、Scheme 1）：--label 给的为准，没给按图号和 --panel 拼
+        "label": label or (f"Fig. {fig}" + (f"({panel})" if panel else "") if fig else ""),
+        "pdf": str(Path(pdf).resolve()),
+        "page": page,
+        "figure": fig or None,
+        "caption": caption[:200],
+        "panel": panel,
+        "box": list(box) if box else None,
+        "erase": [list(e) for e in erase],
+    }
+    out.with_suffix(".json").write_text(json.dumps(record, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
 def main() -> None:
@@ -459,6 +491,8 @@ def main() -> None:
     p.add_argument("--page", type=int, default=0, help="题注认不出（矢量图、扫描版）时按整页出 --grid / 裁 --box；页码从 1 数")
     p.add_argument("--erase", action="append", default=[], help="抹白原图的子图字母：x0,y0,x1,y1（0–1，相对裁出的这一块），只许在左上 / 右上角的小框；邻块字母被带进来时可再给一个")
     p.add_argument("--no-snap", action="store_true", help="--box 的边不自动挪（挪到的空白缝外面带进了邻块的字母时用），仍查边")
+    p.add_argument("--label", default="", help="原文里这一块的名字，如 \"Fig. 2(b)\"、\"Scheme 1\"：记进来源清单，用户去期刊换原图时按它找")
+    p.add_argument("--key", default="", help="这块出自哪篇（references.bib 的键）；不给就按文件名 <键>-fig3b.png 取")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--dpi", type=int, default=300)
     a = p.parse_args()
@@ -486,7 +520,7 @@ def main() -> None:
             p.error("--erase 要求 0 ≤ x0 < x1 ≤ 1、0 ≤ y0 < y1 ≤ 1")
         check_erase((x0, y0, x1, y1))
         erase.append((x0, y0, x1, y1))
-    extract(a.pdf, a.fig, a.out, a.dpi, panel or None, box=box, grid=a.grid, page_no=a.page, erase=erase, snap=not a.no_snap)
+    extract(a.pdf, a.fig, a.out, a.dpi, panel or None, box=box, grid=a.grid, page_no=a.page, erase=erase, snap=not a.no_snap, key=a.key, label=a.label)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
@@ -133,6 +133,40 @@ test("拼板：9 块排 3×3 照常出图；一行挤太多、单栏放 3 块读
     r = go(["--width-cm", "17", "--rows", panel, panel, panel]);
     assert.equal(r.status, 3);
     assert.match(r.stderr, /超过一页/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// 2026-10-24 用户：拼图是从 PDF 裁的，作者投稿前要去期刊换原图，每块从哪取的要写清
+const sourcesScript = resolve("src-tauri/resources/skills/review-figures/scripts/figure_sources.py");
+
+test("来源清单：每块的原文、DOI、原图编号与 PDF 页码汇总进 figures/sources.md", { skip: !ready }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "mesa-fig-src-"));
+  try {
+    const pdf = makePdf(dir);
+    const figures = join(dir, "figures");
+    const src = join(figures, "src");
+    let r = run(["--pdf", pdf, "--fig", "1", "--box", "0,0,0.5,0.5", "--label", "Fig. 1(a)", "--dpi", "72", "--out", join(src, "Doe2020-fig1a.png")]);
+    assert.equal(r.status, 0, r.stderr);
+    r = run(["--pdf", pdf, "--fig", "1", "--panel", "b", "--dpi", "144", "--key", "Roe2021", "--out", join(src, "other-b.png")]);
+    assert.equal(r.status, 0, r.stderr);
+    r = spawnSync(python, [assemble, "--out", join(figures, "fig1.png"), "--width-cm", "8.5", "--inputs", join(src, "Doe2020-fig1a.png"), join(src, "other-b.png")], { encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    writeFileSync(join(figures, "fig1.md"), "**Figure 1.** Colours differ across studies. (a) red. (b) green.");
+    writeFileSync(
+      join(dir, "references.bib"),
+      "@article{Doe2020,\n  title = {【7】Red panels},\n  author = {Doe, Jane and Poe, Al and Zoe, Bo},\n  year = {2020},\n  journal = {J. Colour},\n  volume = {3},\n  pages = {10--20},\n  doi = {10.1/red},\n}\n" +
+        "@article{Roe2021,\n  title = {Green panels},\n  author = {Roe, Rick},\n  year = {2021},\n  journal = {Colour Lett.},\n  doi = {10.1/green},\n}\n",
+    );
+    r = spawnSync(python, [sourcesScript, "--figures", figures, "--bib", join(dir, "references.bib")], { encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    const md = readFileSync(join(figures, "sources.md"), "utf8");
+    assert.match(md, /## Figure 1/);
+    assert.match(md, /论点：Colours differ across studies\./);
+    assert.match(md, /\| \(a\) \| Doe et al\., 2020, \*J\. Colour\* 3, 10–20 — Red panels \[@Doe2020\] \| Fig\. 1\(a\)，PDF 第 1 页，裁框 /);
+    assert.match(md, /\[10\.1\/red\]\(https:\/\/doi\.org\/10\.1\/red\)/);
+    assert.match(md, /\| \(b\) \| Roe, 2021, \*Colour Lett\.\* — Green panels \[@Roe2021\] \| Fig\. 1\(b\)，PDF 第 1 页/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

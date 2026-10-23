@@ -39,7 +39,7 @@ provides: [review-figures]
 python3 scripts/extract_figure.py --pdf <来源PDF> --fig 3 --out figures/src/<bibKey>-fig3.png
 python3 scripts/extract_figure.py --pdf <来源PDF> --fig 2 --panel f --out figures/src/<bibKey>-fig2f.png
 python3 scripts/extract_figure.py --pdf <来源PDF> --fig 2 --grid --out artifacts/<bibKey>-fig2-grid.png
-python3 scripts/extract_figure.py --pdf <来源PDF> --fig 2 --box 0.505,0,1,0.49 --erase 0,0,0.11,0.1 --out figures/src/<bibKey>-fig2b.png
+python3 scripts/extract_figure.py --pdf <来源PDF> --fig 2 --box 0.505,0,1,0.49 --erase 0,0,0.11,0.1 --label "Fig. 2(b)" --out figures/src/<bibKey>-fig2b.png
 ```
 
 **裁子图的顺序**：
@@ -88,6 +88,7 @@ assert not clash, clash
 - 拼成：`![...](../figures/figN.png)`，图注用 `figN.md`
 - 仅引用：不插图，写「见 [@key] Fig. n」
 - **禁止**在稿里写「Figure N（待绘制）」充产出。计划是「拼」但裁失败 → 降级为仅引用并记 `figures/README.md`，不要留空占位。
+- **来源清单 `figures/sources.md`（2026-10-24）**：拼图是从 PDF 裁的，作者投稿前要去期刊换高清原图、申请转载许可，得知道每块从哪来。裁每块时用 `--label` 写它在原文里的编号（`Fig. 2(b)`、`Scheme 1`），文件名按 `<bib键>-fig2b.png`（或 `--key` 指定）——脚本在每块旁边落一份来源记录 `<块>.json`（bib 键、原图编号、PDF 页码、裁框）；拼板脚本在 `figN.png` 旁边落 `figN.json`（新编号对应哪块）。全部拼完跑 `python3 scripts/figure_sources.py --figures figures --bib references.bib`，生成 `figures/sources.md`：每张图的论点，每块的原文（作者、年份、期刊卷页、题名）、DOI 链接、原图编号与 PDF 页码、裁框、本地 PDF。技能脚本外裁的块（自写脚本、按 xref 渲染）手写一份同格式的 `.json`，不然清单里只能按文件名推断、记不上页码。
 - `figures/README.md` 一张图一节：论点一句；每块一行（新编号｜来源 [@键] Fig.n 子图｜裁法：`--panel` / `--box` 坐标 / `--erase`）；去掉的块和原因；**待人工确认**。Agent 读 PNG 经常只拿到地址、看不全一批图，不得把「已目检」写进完成标准。人没看过 PNG，拼图就还是待确认。
 
 ## 完成标准

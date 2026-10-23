@@ -386,6 +386,11 @@ static BUILTIN_SUPPORT: &[(&str, &str, &str)] = &[
         include_str!("../resources/skills/review-figures/scripts/assemble_panels.py"),
     ),
     (
+        "review-figures",
+        "scripts/figure_sources.py",
+        include_str!("../resources/skills/review-figures/scripts/figure_sources.py"),
+    ),
+    (
         "quarto-render",
         "ieee.csl",
         include_str!("../resources/skills/quarto-render/ieee.csl"),

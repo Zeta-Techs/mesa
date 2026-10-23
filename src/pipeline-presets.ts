@@ -398,7 +398,7 @@ const REVIEW_STEPS: ProjectStepDto[] = [
       `写作范围由你按笔记判断：${DRAFT_EVIDENCE_DEFAULT}。人在审阅初稿时拍板，开工前不再问范围。\n` +
       "1. 按 outline.md 用规范学术英文撰写综述初稿，产出 manuscript/draft.md。**词数不是完成标准**（项目/大纲里的篇幅数字是读者预期，禁止改写成「以 N 词为目标」）。某节薄只回 notes/ 对应笔记的方法/结果/可引用点；笔记有来源 PDF 且非仅摘要时打开该 PDF 核对原文位置再补一句可定位证据；没有更多证据就保持短并标 [待核实]。禁止同义复述、空转场、防御性套话为凑字数。中心论点引言一次、结论一次。标题不要手写序号（Quarto 会再编号）；空白编号 G1 不准进稿件。全局设定的「综述深度」为严格检索档时，Methods 须写检索策略（库、日期、式、筛选流程），并如实声明方法类型、单人筛选及实际复核范围，不把严格检索当作系统综述质量证明；\n" +
       "2. 引用一律用 [@bib键] 形式，且只能引用 references.bib 中已存在的键——严禁编造文献、严禁新造键。大纲「仅线索」/摘要级来源：定量句必须 [待核实] 或改成「摘要报告了」；不得把方法段的「32 篇全文」当许可，把其余文献写成已确立。\n" +
-      "3. 对照表用 markdown 真表。先读 outline.md 每一条用图计划，再按 {skill:review-figures} 出图，写正文之前做完。计划写「拼」：按计划逐块从全文 PDF 裁子图（--panel 切不准就 --grid 看坐标再 --box 裁，原图子图字母用 --erase 抹掉，裁完打开看），至少两块裁到才拼成 figures/figN.png，新编号 (a)(b)(c)，一行最多 4 块，第 5 块起用 --rows 分行（9 块排 3×3）；拼板脚本报读不清（退出码 3）就一行少放几块或按子论点拆成两张。图注先写论点，再逐块写来源（(a) Adapted from Fig. 2c of [@键]），正文插入该图。某块裁不准就去掉，剩不到两块、题注对不上或会裁成整页：不猜，正文改成「见 [@键] Fig.n」，并在 figures/README.md 写原因。计划写「仅引用」的不插图。禁止「待绘制」「Figure N（待绘制）」和空的图片占位。撑主论点的图没有数据就改口。不臆造图号、不把整页当图、不非等比拉伸。Agent 读图不能代替人看 PNG。\n" +
+      "3. 对照表用 markdown 真表。先读 outline.md 每一条用图计划，再按 {skill:review-figures} 出图，写正文之前做完。计划写「拼」：按计划逐块从全文 PDF 裁子图（--panel 切不准就 --grid 看坐标再 --box 裁，原图子图字母用 --erase 抹掉，裁完打开看），至少两块裁到才拼成 figures/figN.png，新编号 (a)(b)(c)，一行最多 4 块，第 5 块起用 --rows 分行（9 块排 3×3）；拼板脚本报读不清（退出码 3）就一行少放几块或按子论点拆成两张。裁每块时用 --label 写它在原文里的编号（如 Fig. 2(b)），拼完跑 figure_sources.py 生成 figures/sources.md：每块的原文、DOI、原图编号与 PDF 页码，供作者投稿前换出版社原图、申请转载许可。图注先写论点，再逐块写来源（(a) Adapted from Fig. 2c of [@键]），正文插入该图。某块裁不准就去掉，剩不到两块、题注对不上或会裁成整页：不猜，正文改成「见 [@键] Fig.n」，并在 figures/README.md 写原因。计划写「仅引用」的不插图。禁止「待绘制」「Figure N（待绘制）」和空的图片占位。撑主论点的图没有数据就改口。不臆造图号、不把整页当图、不非等比拉伸。Agent 读图不能代替人看 PNG。\n" +
       "4. 没有文献支撑的论断不得下。摘要只放全文撑得住的主张，禁止摘要里出现 [待核实] 或未测的近端动作（operando/软包等放 outlook 并标明是建议）。范围点名的主题后文必须展开，否则从范围删除。结论只写本综述论证了什么。\n" +
       "5. 用本步骤 run 脚本先渲 docx、再渲 PDF（环境检查、编号引用 YAML、产物登记按 {skill:quarto-render} 技能）。**初稿固定用编号制（方括号 [1]）渲，不要问人要哪种引用格式**：YAML 写 `csl: citation.csl` 并放随包的 ieee.csl。引用格式到定稿步再问：沿用这份编号，或改成目标期刊。" + DRAFT_TYPEFACE + "PDF 若 lualatex 无日志空转，按技能停掉改 xelatex，不要空等。产物写入本工作区 output/（评审合并后进项目根）。\n" +
       "6. 交稿前自检：打开 output/draft.pdf 第一页，必须能读出英文标题和段落；乱码、空心方框、目录页码变成字母 = 渲染失败，质量状态不得高于已生成待审，docx 仍交人审。引用键先对 references.bib，笔误键改正文不删句；材料名里的 @ 写成 \\@。正文数字若与笔记不符，按原文改稿并回写该笔记，记入 section-status.md。图裁不到就改成「见 [@键] Fig.n」，禁止用「待绘制」充产出。正文不得留 G1/任务编号、内部清单号。作者「待补」写进验收摘要等人填，不假装齐套。\n" +
@@ -408,7 +408,7 @@ const REVIEW_STEPS: ProjectStepDto[] = [
     inputs: ["outline.md", "notes/", "notes/handoff.md", "references.bib"],
     optionalInputs: ["papers/*.pdf"],
     skills: ["review-writing", "review-figures", "quarto-render"],
-    expectedArtifacts: ["manuscript/draft.md", "manuscript/section-status.md", "manuscript/typeface.md", "manuscript/reference.docx", "figures/README.md", "output/draft.pdf", "output/draft.docx"],
+    expectedArtifacts: ["manuscript/draft.md", "manuscript/section-status.md", "manuscript/typeface.md", "manuscript/reference.docx", "figures/README.md", "figures/sources.md", "output/draft.pdf", "output/draft.docx"],
     acceptanceCriteria: [
       "machine:contains:manuscript/section-status.md::要回答",
       "machine:contains:manuscript/section-status.md::允许集",

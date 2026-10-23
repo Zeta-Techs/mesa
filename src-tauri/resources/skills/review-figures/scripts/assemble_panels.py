@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -62,6 +63,15 @@ MIN_PANEL_CM = 3.5
 MAX_HEIGHT_CM = 23.0
 
 
+def write_layout(out: Path, panels: list[Path], width_cm: float) -> None:
+    """拼板旁边落 <图>.json：新编号 (a)(b)… 各是哪个子图文件。figure_sources.py 顺着它找到每块的来源记录。"""
+    record = {
+        "width_cm": width_cm,
+        "panels": [{"letter": chr(ord("a") + i), "source": str(p)} for i, p in enumerate(panels)],
+    }
+    out.with_suffix(".json").write_text(json.dumps(record, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
 def check_readable(widths_px: list[int], height_px: int, dpi: int) -> None:
     narrow = [i for i, w in enumerate(widths_px) if w / dpi * 2.54 < MIN_PANEL_CM]
     height_cm = height_px / dpi * 2.54
@@ -99,6 +109,7 @@ def assemble(inputs: list[Path], out: Path, width_cm: float, dpi: int, gap_mm: f
         x += im.width + gap
     out.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(out, dpi=(dpi, dpi))
+    write_layout(out, inputs, width_cm)
     print(out)
 
 
@@ -140,6 +151,7 @@ def assemble_rows(rows: list[list[Path]], out: Path, width_cm: float, dpi: int, 
         y += canvas.height + row_gap
     out.parent.mkdir(parents=True, exist_ok=True)
     sheet.save(out, dpi=(dpi, dpi))
+    write_layout(out, [p for row in rows for p in row], width_cm)
     print(out)
 
 
