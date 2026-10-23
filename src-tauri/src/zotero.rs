@@ -496,6 +496,19 @@ pub fn render_bibtex(items: &[ZoteroItemDto]) -> String {
 mod tests {
     use super::*;
 
+    /// 交给 Zotero 的 file URL 全是 ASCII：中文目录、空格都编码，盘符冒号与分隔符留着
+    #[test]
+    fn file_url_is_ascii_with_drive_kept() {
+        assert_eq!(
+            file_url(Path::new(r"D:\HER综述\HER\papers\zotero-library.ris")),
+            "file:///D:/HER%E7%BB%BC%E8%BF%B0/HER/papers/zotero-library.ris"
+        );
+        assert_eq!(
+            file_url(Path::new("/Users/me/My Papers/a.ris")),
+            "file:///Users/me/My%20Papers/a.ris"
+        );
+    }
+
     #[test]
     fn ris_parser_builds_doi_map_with_full_metadata() {
         let ris = "TY  - JOUR\r\nAU  - Wang, Lei\r\nAU  - Chen, Xiaoming\r\nPY  - 2023-05-01\r\nTI  - Deep Learning for Materials\r\nT2  - Advanced Materials\r\nDO  - 10.1002/adma.202304268\r\nER  - \r\n\r\nTY  - JOUR\r\nAU  - 单作者无逗号\r\nPY  - 2024\r\nDO  - 10.1109/ICRA.1.\r\nER  - \r\n";
@@ -1436,6 +1449,9 @@ pub fn refresh_library_ris(project_root: &Path) -> Result<(Option<PathBuf>, Stri
 /// Windows 上「用 Zotero 打开」= 拿路径当裸参数起 zotero.exe，而 Zotero 的命令行只认 `-file <路径>`
 /// 和 `-url file:///…`，裸参数不理——Zotero 打开了、没有导入（2026-10-23 用户实测，Zotero 6.0.36；
 /// 见安装目录 components/zotero-service.js 的命令行处理）。Zotero 已经开着时，新起的 zotero.exe 把参数转给它后退出。
+/// 用 `-url` 交百分号编码的 file URL，不用 `-file <路径>`：路径里有中文（D:\HER综述\…）时，`-file` 经「转给已开着的
+/// Zotero」那一程变了样，Zotero 弹了导入确认、随后报「不支持所选文件的格式」（同日实测）；URL 全是 ASCII，不经编码转换。
+/// Zotero 自己登记的 zotero:// 打开命令、macOS 的 Apple 事件走的也是 `-url`。
 fn hand_file_to_zotero(path: &Path) -> Result<(), String> {
     #[cfg(windows)]
     {
@@ -1446,8 +1462,8 @@ fn hand_file_to_zotero(path: &Path) -> Result<(), String> {
             )
         })?;
         crate::process::background_command(&exe)
-            .arg("-file")
-            .arg(path)
+            .arg("-url")
+            .arg(file_url(path))
             .spawn()
             .map_err(|e| format!("没法交给 Zotero 打开: {e}"))?;
         Ok(())
@@ -1457,6 +1473,30 @@ fn hand_file_to_zotero(path: &Path) -> Result<(), String> {
         tauri_plugin_opener::open_path(path, Some("Zotero"))
             .or_else(|_| tauri_plugin_opener::open_path(path, None::<&str>))
             .map_err(|e| format!("没法交给 Zotero 打开: {e}"))
+    }
+}
+
+/// 本地路径 → 百分号编码的 file URL（`file:///D:/HER%E7%BB%BC%E8%BF%B0/…`）。盘符的冒号与目录分隔留着，其余非 unreserved 字节编码
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn file_url(path: &Path) -> String {
+    let text = path.to_string_lossy().replace('\\', "/");
+    let segments: Vec<String> = text
+        .split('/')
+        .enumerate()
+        .map(|(i, seg)| {
+            let drive = i == 0 && seg.len() == 2 && seg.ends_with(':') && seg.as_bytes()[0].is_ascii_alphabetic();
+            if drive {
+                seg.to_string()
+            } else {
+                crate::client_open::percent_encode(seg)
+            }
+        })
+        .collect();
+    let joined = segments.join("/");
+    if joined.starts_with('/') {
+        format!("file://{joined}")
+    } else {
+        format!("file:///{joined}")
     }
 }
 
