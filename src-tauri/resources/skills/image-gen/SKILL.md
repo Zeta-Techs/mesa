@@ -1,19 +1,19 @@
 ---
 name: image-gen
-description: 用 Mesa 设置里配好的出图模型生成图片（gpt-image、Gemini、Grok、豆包 Seedream、通义万相、CogView 等各家都可）。用户要插图、示意图、封面、配图、海报、图标草图等「按描述画一张图」时使用；数据图表、统计图不用它（交给 figure-forge / data-eda 用脚本画），不生成冒充实验结果的图像。
+description: 用 Mesa 连接页里配好的出图模型生成图片（gpt-image、Gemini、Grok、豆包 Seedream、通义万相、CogView 等各家都可）。用户要插图、示意图、封面、配图、海报、图标草图等「按描述画一张图」时使用；数据图表、统计图不用它（交给 figure-forge / data-eda 用脚本画），不生成冒充实验结果的图像。
 outputs: [figures/]
 ---
 
 # 出图（Mesa 出图模型）
 
-Mesa 启动你时在环境变量 `MESA_IMAGE_TOOL` 里放了出图工具的路径。它用用户在 Mesa「设置 → AI 与 Agent → 出图模型」选的网关和模型，密钥由工具自己取——**你看不到也不需要密钥，不要去找、不要打印任何密钥**。
+Mesa 启动你时在环境变量 `MESA_IMAGE_TOOL` 里放了出图工具的路径。它用用户在 Mesa 连接页最下方「出图模型」选的网关和模型，密钥由工具自己取——**你看不到也不需要密钥，不要去找、不要打印任何密钥**。
 
 ## 先确认能用
 
 - macOS / Linux：`"$MESA_IMAGE_TOOL" image --list`
 - Windows PowerShell：`& $env:MESA_IMAGE_TOOL image --list`
 
-输出第一行是默认出图模型，后面是各网关目录里能出图的模型。`MESA_IMAGE_TOOL` 为空：说明不是在 Mesa 里启动的，或这版 Mesa 还没带出图工具——停下告诉用户，不要改用别的方式绕过。第一行说「还没配置出图模型」：请用户到上述设置里选一个，或者用户指定了模型时加 `--model`。
+输出第一行是默认出图模型，后面是各网关目录里能出图的模型。`MESA_IMAGE_TOOL` 为空：说明不是在 Mesa 里启动的，或这版 Mesa 还没带出图工具——停下告诉用户，不要改用别的方式绕过。第一行说「还没配置出图模型」：请用户到 Mesa 连接页最下方「出图模型」里选一个，或者用户指定了模型时加 `--model`。
 
 ## 出图
 

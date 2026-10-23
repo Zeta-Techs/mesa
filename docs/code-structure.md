@@ -83,6 +83,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   壳与标题栏/侧栏/缝透明，桌面磨砂从窗口底透上来；
                              #   顶栏帮助菜单（HELP_MENU：命令面板左侧 ? 钮，分组下拉，关闭范式同收件箱；首项「上手引导」）；
                              #   侧栏系统段上方「上手引导」行（useOnboardingRail，引导进行中才渲染，data-onboarding-anchor 供清单定位）
+  components/ImageGenPanel.tsx # 出图模型面板（连接页最下方「出图模型」一块，唯一编辑处；设置页只显示现状跳过来）：
+                             #   按网关分组选出图模型、试出一张、给已装 Agent 打开技能 image-gen；setImageGenModel 供连接行「改作出图模型」
   components/InternalSessionsCard.tsx # 设置「数据与存储」→ Mesa 内部对话：条数/体积/最早、自动清理开关、保留天数、立即清理
   components/InsertMenuItems.tsx # 「插入技能/MCP」菜单条目：运行页收缩行、标签栏 ✦（仅终端层）、聊天输入框 ＋ 三处共用（只画 <li>，浮层由调用方定位）
   components/ConversationView.tsx # 对话渲染（聊天层 / 对话页回放 / 项目对话预览共用）：气泡与正文、一轮过程收在「已工作 X 分 Y 秒」下，

@@ -60,7 +60,7 @@ const KIND_LABEL: Record<Exclude<ModelKind, "chat">, string> = {
 export function nonChatReason(id: string): string | null {
   const kind = modelKind(id);
   if (kind === "chat") return null;
-  const tail = kind === "image" ? "，到设置 → AI 与 Agent → 出图模型 里配，Agent 就能用它出图" : "";
+  const tail = kind === "image" ? "，在连接页最下方「出图模型」里配，Agent 就能用它出图" : "";
   return `${KIND_LABEL[kind]}，不能用来对话${tail}`;
 }
 

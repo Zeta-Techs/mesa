@@ -159,7 +159,7 @@ docs/            architecture.md（总体设计 + §10 决策记录 + §12 当�
   维护交给 Agent：`docs/agent-skills/mesa-cli-canary/SKILL.md`（仓库维护技能放 `docs/agent-skills/`，**不进** `src-tauri/resources/skills/`，那里是随应用分发给用户的）。
   读屏问题修好后把那一屏存进抓屏语料库（`tests/fixtures/screens/`，`scripts/screen-corpus/add-from-capture.ts`），设计见 `docs/design-chat-fidelity.md`。
 - **非对话模型与出图（2026-10-23）**：出图 / 视频 / 向量等模型按名分类（`image_gen.rs` ↔ `src/model-kinds.ts` 镜像，共读
-  `tests/fixtures/model-kinds.json`），不得成为 Agent 对话模型（启动闸 `agents::validate_launch_compatibility`）。出图模型在设置里单选，
+  `tests/fixtures/model-kinds.json`），不得成为 Agent 对话模型（启动闸 `agents::validate_launch_compatibility`）。出图模型单选、编辑处只在连接页「出图模型」一块（设置页只显示现状），
   Agent 经随包 `mesa_helper image` 调用、密钥 helper 自取不进 Agent env，PTY 只注入 `MESA_IMAGE_TOOL`；技能 image-gen 随包播种。细则 profiles.md / safety.md 同名条。
 - **二进制解析统一走 `agents::resolve_binary`**：先 which（继承 PATH），miss 时按平台候选目录兜底；新增 CLI/工具调用点一律
   用它，禁直接 `which::which` 或裸名 spawn（候选目录清单见 `docs/conventions/safety.md` 对应实现 `agents.rs`）。

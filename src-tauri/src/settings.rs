@@ -260,7 +260,7 @@ pub struct AppSettingsDto {
     /// 打开对话页的补名去重（ai_retitle_all_sessions）全停；已有标题保留，
     /// 手改标题（title_source=user）本就不被覆盖，与此开关无关。
     pub auto_title_sessions: Option<bool>,
-    /// 出图模型（2026-10-23，设置页「AI 与 Agent → 出图模型」）：网关 id + 模型 id，
+    /// 出图模型（2026-10-23；2026-10-24 起编辑处在连接页「出图模型」，设置页只显示现状）：网关 id + 模型 id，
     /// Agent 经 `mesa_helper image` 出图时的默认值（image_gen.rs）。两者同进退，空串 = 清空
     pub image_gen_gateway_id: Option<String>,
     pub image_gen_model: Option<String>,

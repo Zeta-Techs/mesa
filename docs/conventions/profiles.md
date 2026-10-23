@@ -446,7 +446,7 @@ Codex            → …
   `tests/fixtures/model-kinds.json`。新增厂商命名规则两侧同改并补样例；判定顺序视频先于出图、重排先于向量。
 - 非对话模型不得成为 Agent 的对话模型：连接目录面板隐藏并报数、手填标「不能对话」（保存不拦）、对话菜单置灰、启动栏名单过滤；
   最终闸在 `agents::validate_launch_compatibility`（终端 / 无头 / 内置 AI 三条路径共用）。分类误伤对话模型时改规则，不加开关绕过。
-- 出图模型是**设置级单选**（`image_gen_gateway_id` + `image_gen_model` 同进退），不进绑定、不进模型名单；Agent 用 `--model`
+- 出图模型是**单选**（存设置 `image_gen_gateway_id` + `image_gen_model`，同进退），不进绑定、不进模型名单；**编辑处只在连接页**「出图模型」一块（2026-10-24），设置页只显示现状跳过去；名单全是非对话模型的连接标「只有出图模型」并给「改作出图模型」，不自动删连接；Agent 用 `--model`
   点名别家时按「默认网关目录 → 任一网关目录 → 默认网关」找。接口按模型选：Gemini 系原生 generateContent → 退对话接口；
   其余 OpenAI `/images/generations`（base 带版本段直接挂，否则补 `/v1`，同 `ends_with_version_segment`）。
 

@@ -71,7 +71,7 @@ import {
   monoFallbackStack,
   terminalFontStack,
 } from "../terminal-font";
-import type { CustomRuntimeDto, DetectResult, SkillDto, StorageEntryDto, UnpricedModelDto } from "../types";
+import type { CustomRuntimeDto, StorageEntryDto, UnpricedModelDto } from "../types";
 import { AGENTS } from "../types";
 import { getVersion } from "@tauri-apps/api/app";
 import {
@@ -797,179 +797,6 @@ function groupRows(children: React.ReactNode): React.ReactNode[] {
   });
   flush();
   return out;
-}
-
-/** 出图模型（2026-10-23）：从各网关目录里挑一个出图模型给 Agent 用（image_gen.rs）。
- *  Agent 经随包 helper 调它（MESA_IMAGE_TOOL + 技能 image-gen）；这里管选、试出一张、给 Agent 打开技能 */
-type ImageGenGateway = { gatewayId: string; gatewayName: string; models: string[] };
-type ImageGenTest = { dataUrl: string; protocol: string; elapsedMs: number; note?: string | null };
-const IMAGE_GEN_SEP = "\u0001";
-const NO_AGENTS: DetectResult[] = [];
-
-function ImageGenCard({
-  settings,
-  patch,
-}: {
-  settings: AppSettings | null;
-  patch: (p: Partial<AppSettings>) => Promise<void> | void;
-}) {
-  const agents = useAppStore((s) => s.agents ?? NO_AGENTS);
-  const [groups, setGroups] = useState<ImageGenGateway[] | null>(null);
-  const [helperReady, setHelperReady] = useState<boolean | null>(null);
-  const [skill, setSkill] = useState<SkillDto | null | undefined>(undefined);
-  const [testing, setTesting] = useState(false);
-  const [test, setTest] = useState<ImageGenTest | null>(null);
-  const [testErr, setTestErr] = useState<string | null>(null);
-  const [enabling, setEnabling] = useState(false);
-
-  async function loadSkill() {
-    const lib = await invoke<SkillDto[]>("list_skills").catch(() => null);
-    setSkill(Array.isArray(lib) ? (lib.find((s) => s.name === "image-gen") ?? null) : null);
-  }
-  useEffect(() => {
-    void invoke<ImageGenGateway[]>("image_gen_candidates").then(
-      (r) => setGroups(Array.isArray(r) ? r : []),
-      () => setGroups([]),
-    );
-    void invoke<{ helperReady: boolean }>("image_gen_status").then(
-      (r) => setHelperReady(Boolean(r?.helperReady)),
-      () => setHelperReady(false),
-    );
-    void loadSkill();
-  }, []);
-
-  const gatewayId = settings?.imageGenGatewayId ?? "";
-  const model = settings?.imageGenModel ?? "";
-  const value = gatewayId && model ? `${gatewayId}${IMAGE_GEN_SEP}${model}` : "";
-  const listed = groups?.some((g) => g.gatewayId === gatewayId && g.models.includes(model)) ?? false;
-  const savedGateway = groups?.find((g) => g.gatewayId === gatewayId);
-
-  function choose(v: string) {
-    const [gid, m] = v ? v.split(IMAGE_GEN_SEP) : ["", ""];
-    setTest(null);
-    setTestErr(null);
-    void patch({ imageGenGatewayId: gid, imageGenModel: m });
-  }
-
-  async function runTest() {
-    if (!gatewayId || !model || testing) return;
-    setTesting(true);
-    setTest(null);
-    setTestErr(null);
-    try {
-      setTest(await invoke<ImageGenTest>("image_gen_test", { gatewayId, model }));
-    } catch (e) {
-      setTestErr(String(e));
-    } finally {
-      setTesting(false);
-    }
-  }
-
-  // 已装、技能目录可分发、还没打开的 Agent（与技能页「一键应用」同口径：没装的不塞副本）
-  const installed = new Set(agents.filter((a) => a.binaryPath).map((a) => a.id));
-  const pendingAgents = skill
-    ? Object.keys(skill.apps).filter((a) => !skill.apps[a] && (agents.length === 0 || installed.has(a)))
-    : [];
-  const enabledAgents = skill ? Object.keys(skill.apps).filter((a) => skill.apps[a]) : [];
-  const labelOf = (id: string) => AGENTS.find((a) => a.id === id)?.label ?? id;
-
-  async function enableForAll() {
-    if (!skill || enabling) return;
-    setEnabling(true);
-    try {
-      for (const agent of pendingAgents) {
-        await invoke("apply_skill", { id: skill.id, agent, enabled: true });
-      }
-      toast(`已给 ${pendingAgents.map(labelOf).join("、")} 打开出图技能`);
-    } catch (e) {
-      toast(`打开出图技能失败：${String(e)}`);
-    } finally {
-      await loadSkill();
-      setEnabling(false);
-    }
-  }
-
-  return (
-    <Card>
-      <div className="flex flex-wrap items-center gap-2 px-2">
-        <select
-          className={selectLg}
-          aria-label="出图模型"
-          title={value ? `${model} · 网关「${savedGateway?.gatewayName ?? "已删除"}」` : undefined}
-          value={value}
-          disabled={groups === null}
-          onChange={(e) => choose(e.target.value)}
-        >
-          <option value="">{groups === null ? "读取中…" : "不用（Agent 不能出图）"}</option>
-          {value && !listed && (
-            <option value={value}>
-              {model} · {savedGateway?.gatewayName ?? "网关已删除"}（目录里没有了）
-            </option>
-          )}
-          {(groups ?? []).map((g) => (
-            <optgroup key={g.gatewayId} label={g.gatewayName}>
-              {g.models.map((m) => (
-                <option key={m} value={`${g.gatewayId}${IMAGE_GEN_SEP}${m}`}>
-                  {m}
-                </option>
-              ))}
-            </optgroup>
-          ))}
-        </select>
-        <button
-          type="button"
-          className={ghostActionClass}
-          disabled={!value || testing}
-          onClick={() => void runTest()}
-          title="按选中的模型真出一张图（会按一张图计费）"
-        >
-          {testing ? "出图中…" : "试出一张"}
-        </button>
-      </div>
-      {groups !== null && groups.length === 0 && (
-        <p className="mt-2 px-2 text-micro leading-4 text-l3">
-          网关目录里还没有出图模型：到「连接」页给网关同步一次模型目录，或换一个开通了出图模型的网关。
-        </p>
-      )}
-      {testing && <p className="mt-2 px-2 text-micro text-l3">一张图常要 20 秒到 3 分钟。</p>}
-      {testErr && <p className="mt-2 px-2 text-micro leading-4 text-err-text">{testErr}</p>}
-      {test && (
-        <div className="mt-3 flex items-start gap-3 px-2">
-          <img src={test.dataUrl} alt="试出的图" className="h-28 w-auto rounded-md border border-hairline" />
-          <p className="text-micro leading-4 text-l3">
-            能用：{test.protocol} · {(test.elapsedMs / 1000).toFixed(1)} 秒
-            {test.note ? `。${test.note}` : ""}
-          </p>
-        </div>
-      )}
-      <div className="mt-3 border-t border-hairline px-2 pt-3 text-micro leading-4 text-l3">
-        {helperReady === false ? (
-          <span className="text-caution-text">
-            这版 Mesa 没找到随包的出图工具（mesa_helper），Agent 暂时调不了；设置里先选好，装正式版后即可用。
-          </span>
-        ) : skill === null ? (
-          <span>技能库里还没有「image-gen」，重启 Mesa 后会自动加入。</span>
-        ) : (
-          <div className="flex flex-wrap items-center gap-2">
-            <span>
-              在 Mesa 里启动的 Agent 打开技能「image-gen」后就能出图：
-              {enabledAgents.length > 0 ? `已打开 ${enabledAgents.map(labelOf).join("、")}` : "还没给任何 Agent 打开"}
-            </span>
-            {pendingAgents.length > 0 && (
-              <button
-                type="button"
-                className={ghostActionClass}
-                disabled={enabling || !skill}
-                onClick={() => void enableForAll()}
-              >
-                {enabling ? "打开中…" : "给已装的 Agent 打开"}
-              </button>
-            )}
-          </div>
-        )}
-      </div>
-    </Card>
-  );
 }
 
 /** 应用图标外观三选一（设置 → 外观）。「跟随系统」预览深浅各半，说明它会自己变 */
@@ -3751,11 +3578,25 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           </Row>
         )}
 
-        <SubHeading
-          title="出图模型"
-          hint="Agent 要画插图、示意图、封面时用它；各家网关目录里的出图模型都能选（gpt-image、Gemini、Grok、豆包 Seedream、通义万相等）"
-        />
-        <ImageGenCard settings={settings} patch={patch} />
+        {/* 出图模型的编辑处在连接页（2026-10-24 用户「连接这里配置生图模型」）；这里只说现状并跳过去，不留第二个编辑入口 */}
+        <SubHeading title="出图" hint="Agent 要画图时用的模型，和对话模型分开配" />
+        <Row
+          label="出图模型"
+          hint={
+            settings?.imageGenModel
+              ? `Agent 画图用 ${settings.imageGenModel}`
+              : "还没选：Agent 不能画图"
+          }
+          labelTitle="插图、示意图、封面这类按描述画的图用它；在连接页最下方「出图模型」里选、试出一张、给 Agent 打开技能"
+        >
+          <button
+            type="button"
+            className={ghostActionClass}
+            onClick={() => useAppStore.getState().setPage("profiles")}
+          >
+            去连接页设置
+          </button>
+        </Row>
 
         <SubHeading title="对 Agent 的约束" hint="Mesa 拉起各家 CLI 时额外加的保护与标记" />
         <Row

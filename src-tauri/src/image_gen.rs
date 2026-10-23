@@ -3,7 +3,7 @@
 //! - 分类：网关的 `/models` 目录把出图 / 视频 / 向量 / 语音模型和对话模型混在一起列，
 //!   只有个别网关标了端点类型，所以按模型名判断。规则与前端 `src/model-kinds.ts` 互为镜像，
 //!   两侧测试共读 `tests/fixtures/model-kinds.json`，改一侧必须同改另一侧。
-//! - 出图：设置页「出图模型」选定网关 + 模型；Gemini 系走原生 generateContent，
+//! - 出图：连接页「出图模型」选定网关 + 模型（存在设置里）；Gemini 系走原生 generateContent，
 //!   不通再退对话接口取图；其余（gpt-image / Grok / 豆包 Seedream / 通义万相 / CogView …）
 //!   走 OpenAI 出图接口 `/images/generations`。
 //! - Agent 侧：随包 `mesa_helper image …` 调本模块（helper_image_cli），密钥由 helper 从
@@ -110,7 +110,7 @@ pub fn non_chat_launch_error(model: &str) -> Option<String> {
         ModelKind::Chat => return None,
         ModelKind::Image => {
             return Some(format!(
-                "{model} 是出图模型，不能用来和 Agent 对话。换一个对话模型启动；要出图，到 设置 → AI 与 Agent → 出图模型 选它，Agent 就能调用它出图"
+                "{model} 是出图模型，不能用来和 Agent 对话。换一个对话模型启动；要出图，到连接页最下方「出图模型」选它，Agent 就能调用它出图"
             ))
         }
         ModelKind::Video => "视频模型",
@@ -395,15 +395,15 @@ fn resolve_target_in(
         return Ok(target_from_gateway(gw, model));
     }
     if default_gateway.is_some() {
-        return Err("设置里选的出图网关已经不在了：到 Mesa 设置 → AI 与 Agent → 出图模型 重新选一个".into());
+        return Err("设置里选的出图网关已经不在了：到 Mesa 连接页最下方「出图模型」重新选一个".into());
     }
     Err(format!(
-        "没有哪个网关的模型目录里有 {model}：到 Mesa 设置 → AI 与 Agent → 出图模型 选一个网关"
+        "没有哪个网关的模型目录里有 {model}：到 Mesa 连接页最下方「出图模型」选一个网关"
     ))
 }
 
 const NOT_CONFIGURED: &str =
-    "还没配置出图模型：到 Mesa 设置 → AI 与 Agent → 出图模型 选一个（各家网关目录里的出图模型都能选）";
+    "还没配置出图模型：到 Mesa 连接页最下方「出图模型」选一个（各家网关目录里的出图模型都能选）";
 
 pub fn resolve_target(model_override: Option<&str>) -> Result<Target, String> {
     let s = crate::settings::read_current();

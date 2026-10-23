@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useId, useRef, useState } from "react";
 import { contextLabel } from "../model-caps-label";
-import { nonChatReason, splitChatModels } from "../model-kinds";
+import { isImageGenModel, modelKind, nonChatReason, splitChatModels } from "../model-kinds";
+import ImageGenPanel, { setImageGenModel } from "../components/ImageGenPanel";
 import { invoke } from "@tauri-apps/api/core";
 import { scheduleWarnText, usageWarnText, type UnbindRefs } from "../unbind-impact";
 import { listen } from "@tauri-apps/api/event";
@@ -1019,7 +1020,7 @@ export function ProfileModal({
                   className="mb-1 px-2 text-micro text-l4"
                   title={pickerHidden.join("\n")}
                 >
-                  已隐藏 {pickerHidden.length} 个出图、视频、向量等不能对话的模型；出图模型到 设置 → AI 与 Agent → 出图模型 配
+                  已隐藏 {pickerHidden.length} 个出图、视频、向量等不能对话的模型；出图模型在连接页最下方「出图模型」里配
                 </p>
               )}
               {(() => {
@@ -3021,6 +3022,19 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     }
   }
 
+  // 连接行「改作出图模型」：把这条连接里的出图模型设成出图模型，滚到本页最下方那块
+  const imageGenRef = useRef<HTMLElement | null>(null);
+  const imageGenSetting = useAppStore((s) => `${s.settings?.imageGenGatewayId ?? ""}\u0001${s.settings?.imageGenModel ?? ""}`);
+  async function convertToImageGen(gatewayId: string, model: string) {
+    try {
+      await setImageGenModel(gatewayId, model);
+      setNotice(`已把 ${model} 设为出图模型（本页最下方）。这条连接里没有能对话的模型，用不上了可以在 ⋯ 里删除`);
+      imageGenRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
   /** 行上「测试」：就地对这条连接用的协议槽 + 它的启动模型发一次基础请求（与网关库「测试」同一条命令，
    *  结果按槽 / 模型 / 地址密钥指纹存进网关，后端据此算出这条连接的「测试通过 / 测试失败」），不开网关库 */
   async function probeRow(profile: Profile) {
@@ -3558,6 +3572,12 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                             }
                           }
                           const status = profileStatusCell(profile);
+                          const imageOnly =
+                            profile.models.length > 0 && profile.models.every((m) => modelKind(m) !== "chat");
+                          const imageGenPick = imageOnly ? (profile.models.find(isImageGenModel) ?? null) : null;
+                          // 已经是出图模型了：不再给按钮，状态改说「已作出图模型」
+                          const imageGenDone =
+                            imageGenPick !== null && imageGenSetting === `${profile.gatewayId ?? ""}\u0001${imageGenPick}`;
                           // 同组重名：补首个模型名区分（只改显示，不动名字）
                           const nameSuffix =
                             dupNameIds.has(profile.id) && profile.models[0]
@@ -3672,6 +3692,18 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                 结果写在原位；测过的结论也能点一下重测 */}
                             <span className="flex min-w-0 items-center text-xs">
                               {(() => {
+                                // 名单里全是出图 / 视频等模型：这条连接对话不了（启动闸会拒），状态列直说
+                                if (imageOnly) {
+                                  return (
+                                    <span
+                                      className="flex min-w-0 items-center gap-1 text-warn-text"
+                                      title={`${profile.models.join("、")} 不能用来和 Agent 对话。出图模型在本页最下方「出图模型」里配；点「改作出图模型」一步转过去`}
+                                    >
+                                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn-text" />
+                                      <span className="truncate">{imageGenDone ? "已作出图模型" : "只有出图模型"}</span>
+                                    </span>
+                                  );
+                                }
                                 const local = rowProbe[profile.id];
                                 const probeable = canProbeProfile(profile);
                                 if (local?.running) {
@@ -3759,6 +3791,16 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                               >
                                 <SquareArrowOutUpRight size={14} strokeWidth={1.8} aria-hidden="true" />
                               </button>
+                              {imageGenPick && profile.gatewayId && !imageGenDone && (
+                                <button
+                                  type="button"
+                                  className={`${rowActionClass} text-warn-text`}
+                                  title={`把 ${imageGenPick} 设为出图模型（本页最下方），Agent 画图时用它；这条连接本身不动，用不上了可在 ⋯ 里删除`}
+                                  onClick={() => void convertToImageGen(profile.gatewayId!, imageGenPick)}
+                                >
+                                  改作出图模型
+                                </button>
+                              )}
                               {showCatalogSyncAction(profile) && (
                                   <button
                                     type="button"
@@ -3805,6 +3847,21 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
             );
           })}
         </div>
+        {/* 出图模型（2026-10-24 用户「连接这里配置生图模型」）：不属于哪个 Agent 的对话连接，单独一块；
+            编辑处只此一处，设置页只显示现状并跳过来 */}
+        {!q && (
+          <section ref={imageGenRef} className="mb-4 overflow-hidden rounded-xl border border-field ccode-well">
+            <div className="flex h-11 items-center gap-2 px-3">
+              <h2 className="text-sm font-medium text-l1">出图模型</h2>
+              <span className="truncate text-micro text-l3">
+                Agent 画插图、示意图、封面时用；各家网关目录里的出图模型都能选，和上面的对话模型分开配
+              </span>
+            </div>
+            <div className="border-t border-hairline px-4 py-3">
+              <ImageGenPanel />
+            </div>
+          </section>
+        )}
       </PageFrame>
       {/* 连接冲突弹层：组头琥珀胶囊点出，列出具体文件/变量；只含文件名与变量名，密钥值不出后端 */}
       {conflictPop &&
