@@ -496,6 +496,18 @@ pub fn render_bibtex(items: &[ZoteroItemDto]) -> String {
 mod tests {
     use super::*;
 
+    /// Zotero 6 导不进 RIS / BibTeX：按 application.ini 的版本号先拦下
+    #[test]
+    fn zotero_six_is_too_old() {
+        let ini = "[App]\r\nVendor=Zotero\r\nName=Zotero\r\nVersion=6.0.36\r\nBuildID=20240313202508\r\n\r\n[Gecko]\r\nMinVersion=60.0\r\n";
+        assert_eq!(ini_version(ini).as_deref(), Some("6.0.36"));
+        assert!(zotero_too_old("6.0.36"));
+        assert!(!zotero_too_old("7.0.11"));
+        assert!(!zotero_too_old("8.0"));
+        assert!(!zotero_too_old("unknown"), "认不出版本不拦");
+        assert!(zotero_too_old_message("6.0.36", "papers/zotero-library.ris").contains("Zotero 7"));
+    }
+
     /// 交给 Zotero 的 file URL 全是 ASCII：中文目录、空格都编码，盘符冒号与分隔符留着
     #[test]
     fn file_url_is_ascii_with_drive_kept() {
@@ -1445,6 +1457,58 @@ pub fn refresh_library_ris(project_root: &Path) -> Result<(Option<PathBuf>, Stri
     Ok((Some(ris), health))
 }
 
+/// 本机装的 Zotero 版本（application.ini 的 Version=）。找不到返回 None，调用方照常交文件。
+/// Windows 跟 zotero_exe 同一处找；macOS 看「应用程序」里的 Zotero.app。Zotero 6 的 ini 在安装根目录，
+/// Zotero 7 起挪进 app/ 子目录，两处都看。
+fn installed_zotero_version() -> Option<String> {
+    #[allow(unused_mut)]
+    let mut roots: Vec<PathBuf> = Vec::new();
+    #[cfg(windows)]
+    if let Some(dir) = zotero_exe().and_then(|exe| exe.parent().map(Path::to_path_buf)) {
+        roots.push(dir);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        roots.push(PathBuf::from("/Applications/Zotero.app/Contents/Resources"));
+        if let Some(home) = dirs::home_dir() {
+            roots.push(home.join("Applications/Zotero.app/Contents/Resources"));
+        }
+    }
+    roots.into_iter().find_map(|root| {
+        [root.join("application.ini"), root.join("app").join("application.ini")]
+            .iter()
+            .find_map(|ini| fs::read_to_string(ini).ok().and_then(|t| ini_version(&t)))
+    })
+}
+
+/// application.ini 里 [App] 段的 Version=（Gecko 段也有 MinVersion=，不认它）
+fn ini_version(text: &str) -> Option<String> {
+    text.lines()
+        .map(str::trim)
+        .find_map(|line| line.strip_prefix("Version="))
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+/// Zotero 6 及更早：2026 年起它自动更新下来的格式转换器（RIS.js 字符串里有 U+2028、BibTeX.js 用了新正则写法）
+/// 在它的 Firefox 60 内核上解析失败，导入 RIS / BibTeX 一律报「不支持所选文件的格式」（2026-10-23 用户调试日志实证：
+/// 「Detect using RIS failed: SyntaxError: "" string literal contains an unescaped line break」）。
+fn zotero_too_old(version: &str) -> bool {
+    version
+        .split('.')
+        .next()
+        .and_then(|major| major.trim().parse::<u32>().ok())
+        .is_some_and(|major| major < 7)
+}
+
+fn zotero_too_old_message(version: &str, file: &str) -> String {
+    format!(
+        "没有交给 Zotero：你装的是 Zotero {version}。Zotero 6 已停止更新，它自动下载的新版格式转换器它自己读不了，\
+         导入 RIS、BibTeX 都会报「不支持所选文件的格式」。请升级到 Zotero 7 或更新版本（zotero.org/download；\
+         原有文献、分类和附件在第一次打开时自动迁移），再点一次「同步到 Zotero」。导入文件已经生成：{file}。"
+    )
+}
+
 /// 把导入文件交给 Zotero，让它弹「导入」确认。
 /// macOS 的「用 Zotero 打开」走 Apple 事件，Zotero 收到的是 `-url file:///…`，会导入。
 /// Windows 上「用 Zotero 打开」= 拿路径当裸参数起 zotero.exe，而 Zotero 的命令行只认 `-file <路径>`
@@ -1558,6 +1622,21 @@ pub async fn zotero_open_import(path: String, root: String) -> Result<String, St
             .to_ascii_lowercase();
         if !zotero_native_import_ext(&ext) {
             return Err("只打开 RIS / BibTeX / CSL JSON 给 Zotero 导入".into());
+        }
+        // Zotero 6 导不进：先说清楚，不拉起一个注定报「不支持所选文件的格式」的导入
+        if let Some(version) = installed_zotero_version() {
+            if zotero_too_old(&version) {
+                let shown = path_c
+                    .strip_prefix(&root_c)
+                    .map(|p| p.to_string_lossy().replace('\\', "/"))
+                    .unwrap_or_else(|_| path_c.display().to_string());
+                let mut message = zotero_too_old_message(&version, &shown);
+                if !health.is_empty() {
+                    message.push_str("\n\n");
+                    message.push_str(&health);
+                }
+                return Ok(message);
+            }
         }
         hand_file_to_zotero(&path_c)?;
         let mut message =

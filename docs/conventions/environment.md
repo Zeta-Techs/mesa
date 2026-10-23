@@ -56,7 +56,10 @@
   - 把文件交给外部文献软件导入（2026-10-23 Windows 实测）：「用 Zotero 打开」在 Windows 上是拿路径当裸参数起 zotero.exe，
     Zotero 命令行只认 `-file <路径>` / `-url file:///…`，裸参数不理——Zotero 开了、不导入；所以 Windows 直起 `zotero.exe -url file:///…`
     （`zotero.rs hand_file_to_zotero`；URL 百分号编码成纯 ASCII——用 `-file <中文路径>` 时转给已开着的 Zotero 那一程路径变样，
-    弹了导入确认又报「不支持所选文件的格式」）。插件 .xpi 在 Windows 上没有命令行装法，只给路径让人在插件管理里从文件装。
+    弹了导入确认又报「不支持所选文件的格式」）。
+    **Zotero 6 导不进任何 RIS / BibTeX**（同日用户调试日志实证）：它自动更新来的 2026 年格式转换器在 Firefox 60 内核上解析失败
+    （RIS.js 字符串里有 U+2028、BibTeX.js 正则用了新写法），导入一律「不支持所选文件的格式」。同步前读 application.ini 的版本，
+    低于 7 直接提示升级、不交文件（`zotero.rs installed_zotero_version`；Zotero 7 起 ini 在 app/ 子目录，两处都看）。插件 .xpi 在 Windows 上没有命令行装法，只给路径让人在插件管理里从文件装。
     EndNote 可能装在 D 盘等非默认目录，只扫 Program Files 找不到：先查注册表（App Paths、`.enw` 打开命令、
     ISI ResearchSoft 各版本的 CFDIR，`process::reg_string` 只读），`EndNote.exe <文件>` 即 Direct Export，自动认 RIS。
   - 写进 CLI 配置的 Windows hooks 不得含内联 PowerShell、`$` 或单引号（会被 bash / PowerShell / cmd 宿主吞掉），
