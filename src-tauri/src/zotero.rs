@@ -321,10 +321,62 @@ fn read_creators(conn: &Connection, item_id: i64) -> Vec<String> {
     .unwrap_or_default()
 }
 
-/// 找该条目已下载的 PDF。附件 path 有三种形态：
+/// 附件是补充材料（SI / ESI）而不是正文：附件标题、下载地址、文件名、Zotero 全文索引开头任一处说是就算。
+/// 一个条目常挂正文 + SI 两份 PDF，库里谁先谁后不定（2026-10-23 HER 实证：Fan2022 正文、SI 都在，拿成了 26 页 SI）。
+fn is_supplement(title: &str, url: &str, file_name: &str, text_head: &str) -> bool {
+    let meta = format!("{title} {file_name}").to_lowercase();
+    let url = url.to_lowercase();
+    // 全文索引只看第一行开头（SI 文件以「Electronic Supplementary Material (ESI) for…」「1 Supporting Information」起头）：
+    // 正文首页脚注里也常有「Electronic supplementary information (ESI) available」，不能整页搜
+    let head: String = text_head
+        .trim_start_matches(|c: char| !c.is_alphabetic())
+        .chars()
+        .take(60)
+        .collect::<String>()
+        .to_lowercase();
+    ["supplementary", "supporting information", "supplemental"]
+        .iter()
+        .any(|m| meta.contains(m))
+        || ["suppdata", "/suppl", "supplementary", "supporting-information"]
+            .iter()
+            .any(|m| url.contains(m))
+        || [
+            "supplementary material",
+            "supplementary information",
+            "supporting information",
+            "electronic supplementary",
+            "supplementary data",
+        ]
+        .iter()
+        .any(|m| head.contains(m))
+}
+
+/// 文件是完整的 PDF：开头有 %PDF、结尾有 %%EOF。没下完的（浏览器中断、镜像站截断）读出来只剩一两页
+fn pdf_complete(path: &Path) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut file) = fs::File::open(path) else {
+        return false;
+    };
+    let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+    let mut head = [0u8; 1024];
+    let n = file.read(&mut head).unwrap_or(0);
+    if !head[..n].windows(4).any(|w| w == b"%PDF") {
+        return false;
+    }
+    let tail_len = len.min(2048);
+    if file.seek(SeekFrom::Start(len - tail_len)).is_err() {
+        return false;
+    }
+    let mut tail = Vec::with_capacity(tail_len as usize);
+    file.read_to_end(&mut tail).is_ok() && tail.windows(5).any(|w| w == b"%%EOF")
+}
+
+/// 找该条目已下载的正文 PDF。附件 path 有三种形态：
 /// - `storage:<文件名>`（导入的副本）→ 实际落在 <storage>/<附件key>/<文件名>
 /// - 绝对路径（linkMode=2 链接文件，ZotFile 等常见）→ 直接用
 /// - `attachments:<相对路径>`：只在用户明确选择链接附件基目录后解析；拒绝越界。
+///
+/// 补充材料和没下完的文件不算全文：只剩这些时返回 None，交给待获取补正文（不然 Agent 拿 SI 当正文读）。
 fn find_pdf(
     conn: &Connection,
     storage: &Path,
@@ -333,10 +385,18 @@ fn find_pdf(
 ) -> Option<String> {
     let mut stmt = conn
         .prepare(
-            "SELECT ai.key, a.path FROM itemAttachments a \
+            "SELECT ai.key, a.path, \
+               (SELECT v.value FROM itemData d JOIN fields f ON f.fieldID = d.fieldID \
+                  JOIN itemDataValues v ON v.valueID = d.valueID \
+                  WHERE d.itemID = a.itemID AND f.fieldName = 'title'), \
+               (SELECT v.value FROM itemData d JOIN fields f ON f.fieldID = d.fieldID \
+                  JOIN itemDataValues v ON v.valueID = d.valueID \
+                  WHERE d.itemID = a.itemID AND f.fieldName = 'url') \
+             FROM itemAttachments a \
              JOIN items ai ON ai.itemID = a.itemID \
              WHERE a.parentItemID = ?1 AND a.contentType = 'application/pdf' \
-               AND a.itemID NOT IN (SELECT itemID FROM deletedItems)",
+               AND a.itemID NOT IN (SELECT itemID FROM deletedItems) \
+             ORDER BY ai.dateAdded, a.itemID",
         )
         .ok()?;
     let rows = stmt
@@ -344,10 +404,12 @@ fn find_pdf(
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                row.get::<_, Option<String>>(3)?.unwrap_or_default(),
             ))
         })
         .ok()?;
-    for (key, path) in rows.filter_map(|r| r.ok()) {
+    for (key, path, title, url) in rows.filter_map(|r| r.ok()) {
         if path.is_empty() {
             continue;
         }
@@ -378,9 +440,27 @@ fn find_pdf(
                 None => PathBuf::from(&path),
             }
         };
-        if candidate.is_file() {
-            return Some(candidate.to_string_lossy().into_owned());
+        if !candidate.is_file() {
+            continue;
         }
+        // Zotero 的全文索引（.zotero-ft-cache）在附件自己的 storage 目录里，链接文件也是
+        let text_head = fs::File::open(storage.join(&key).join(".zotero-ft-cache"))
+            .ok()
+            .and_then(|f| {
+                use std::io::Read;
+                let mut buf = Vec::new();
+                f.take(1024).read_to_end(&mut buf).ok()?;
+                Some(String::from_utf8_lossy(&buf).into_owned())
+            })
+            .unwrap_or_default();
+        let file_name = candidate
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if is_supplement(&title, &url, &file_name, &text_head) || !pdf_complete(&candidate) {
+            continue;
+        }
+        return Some(candidate.to_string_lossy().into_owned());
     }
     None
 }
@@ -745,6 +825,53 @@ mod tests {
         tx.rollback().unwrap();
         drop(snapshot);
         drop(source);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn find_pdf_prefers_main_text_over_supplement_and_truncated() {
+        let root = std::env::temp_dir().join(format!("mesa-zotero-pdf-{}", uuid::Uuid::new_v4()));
+        let storage = root.join("storage");
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE items(itemID INTEGER PRIMARY KEY, key TEXT, dateAdded TEXT);
+             CREATE TABLE itemAttachments(itemID INTEGER, parentItemID INTEGER, contentType TEXT, path TEXT);
+             CREATE TABLE deletedItems(itemID INTEGER);
+             CREATE TABLE fields(fieldID INTEGER, fieldName TEXT);
+             CREATE TABLE itemDataValues(valueID INTEGER, value TEXT);
+             CREATE TABLE itemData(itemID INTEGER, fieldID INTEGER, valueID INTEGER);
+             INSERT INTO fields VALUES (1, 'title'), (2, 'url');",
+        )
+        .unwrap();
+        let full = b"%PDF-1.6\n1 0 obj\nendobj\ntrailer\nstartxref\n9\n%%EOF\n".to_vec();
+        // (附件 key, 加入时间, 文件内容, 附件标题, 下载地址, 全文索引开头)
+        let attach = |parent: i64, id: i64, key: &str, added: &str, body: &[u8], title: &str, url: &str, ft: &str| {
+            fs::create_dir_all(storage.join(key)).unwrap();
+            fs::write(storage.join(key).join("paper.pdf"), body).unwrap();
+            if !ft.is_empty() {
+                fs::write(storage.join(key).join(".zotero-ft-cache"), ft).unwrap();
+            }
+            conn.execute("INSERT INTO items VALUES (?1, ?2, ?3)", rusqlite::params![id, key, added]).unwrap();
+            conn.execute(
+                "INSERT INTO itemAttachments VALUES (?1, ?2, 'application/pdf', 'storage:paper.pdf')",
+                rusqlite::params![id, parent],
+            )
+            .unwrap();
+            for (field, value) in [(1, title), (2, url)] {
+                let vid = id * 10 + field;
+                conn.execute("INSERT INTO itemDataValues VALUES (?1, ?2)", rusqlite::params![vid, value]).unwrap();
+                conn.execute("INSERT INTO itemData VALUES (?1, ?2, ?3)", rusqlite::params![id, field, vid]).unwrap();
+            }
+        };
+        // 条目 1：先加的是 SI（地址带 suppdata、全文开头 ESI），后加的才是正文
+        attach(1, 11, "SIFIRST1", "2023-06-16", &full, "Fan et al_2022.pdf", "https://www.rsc.org/suppdata/d1/ta/x1.pdf", "Electronic Supplementary Material (ESI) for Journal of Materials Chemistry A");
+        attach(1, 12, "MAINTEXT", "2023-07-06", &full, "Construction.pdf", "", "Journal of Materials Chemistry A Published on 10 December 2021. Electronic supplementary information (ESI) available");
+        // 条目 2：正文没下完（无 %%EOF），另一份是 SI——都不算全文
+        attach(2, 21, "TRUNCATE", "2023-09-18", b"%PDF-1.6\n9 0 obj<</Subtype/Link>>", "Bak et al_2011.pdf", "", "");
+        attach(2, 22, "BAKSUPPL", "2023-09-18", &full, "Supplementary Information PDF", "", "");
+        let got = find_pdf(&conn, &storage, 1, None).unwrap();
+        assert!(Path::new(&got).starts_with(storage.join("MAINTEXT")), "{got}");
+        assert_eq!(find_pdf(&conn, &storage, 2, None), None);
         fs::remove_dir_all(root).unwrap();
     }
 
