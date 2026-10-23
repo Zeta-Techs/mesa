@@ -252,11 +252,13 @@ fn export_xml_with(project_root: &Path, enrich: bool) -> Result<PathBuf, String>
 }
 
 /// 不写死版本号或本机路径。macOS 先问 Launch Services（刚装完拖进「应用程序」就会登记），
-/// 再扫常见安装目录；Windows 扫 Program Files 下名字带 EndNote 的文件夹。
+/// 再扫常见安装目录；Windows 先问注册表（装在 D 盘这类非默认目录时只有它知道），再扫 Program Files 下名字带 EndNote 的文件夹。
 fn find_endnote_app() -> Option<PathBuf> {
     let mut apps = Vec::new();
     #[cfg(target_os = "macos")]
     apps.extend(mdfind_endnote_apps());
+    #[cfg(windows)]
+    apps.extend(registry_endnote_apps());
     apps.extend(scan_endnote_install_dirs());
     apps.sort_by(|a, b| {
         b.file_name()
@@ -293,6 +295,45 @@ fn mdfind_endnote_apps() -> Vec<PathBuf> {
             break;
         }
     }
+    out
+}
+
+/// Windows 注册表里登记的 EndNote：安装包写的 App Paths、「.enw 用 EndNote 打开」的命令、
+/// ISI ResearchSoft 下各版本的安装目录（CFDIR）。2026-10-23 用户实测：EndNote 装在 D:\applications\Endnote，
+/// 只扫 Program Files 找不到，「同步到 EndNote」就只剩一句「拖到图标上」。只读注册表。
+#[cfg(windows)]
+fn registry_endnote_apps() -> Vec<PathBuf> {
+    use crate::process::{command_line_exe, reg_string, reg_sz_value};
+    let mut out = Vec::new();
+    for hive in ["HKLM", "HKCU"] {
+        let key = format!(r"{hive}\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\EndNote.exe");
+        if let Some(value) = reg_string(&key, None) {
+            out.push(PathBuf::from(value.trim_matches('"')));
+        }
+    }
+    if let Some(command) = reg_string(r"HKCR\EndNotePlus.ENW\shell\open\command", None) {
+        out.extend(command_line_exe(&command));
+    }
+    for key in [
+        r"HKLM\SOFTWARE\WOW6432Node\ISI ResearchSoft\EndNote",
+        r"HKLM\SOFTWARE\ISI ResearchSoft\EndNote",
+    ] {
+        let Ok(result) = crate::process::background_command("reg")
+            .args(["query", key, "/s", "/v", "CFDIR"])
+            .output()
+        else {
+            continue;
+        };
+        for line in String::from_utf8_lossy(&result.stdout).lines() {
+            if !line.trim_start().starts_with("CFDIR") {
+                continue;
+            }
+            if let Some(dir) = reg_sz_value(line) {
+                out.push(PathBuf::from(dir.trim_matches('"')).join("EndNote.exe"));
+            }
+        }
+    }
+    out.retain(|path| path.is_file());
     out
 }
 

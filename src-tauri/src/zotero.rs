@@ -1193,18 +1193,35 @@ pub async fn zotero_install_bbt() -> Result<ZoteroBbtInstallDto, String> {
         fs::create_dir_all(&dir).map_err(|e| format!("无法创建临时目录: {e}"))?;
         let dest = dir.join("better-bibtex.xpi");
         crate::storage::atomic_write(&dest, &bytes, true)?;
-        tauri_plugin_opener::open_path(&dest, Some("Zotero")).or_else(|_| {
-            tauri_plugin_opener::open_path(&dest, None::<&str>)
-        }).map_err(|e| {
-            format!(
-                "已下载安装包，但没法交给 Zotero 打开：{e}。请在 Zotero「工具 → 插件 → 从文件安装」里选这份文件：{}",
-                dest.display()
-            )
-        })?;
-        Ok(ZoteroBbtInstallDto {
-            staged: true,
-            message: "已交给 Zotero，请在弹出的窗口里点安装。装好后完全退出再打开（macOS 用 ⌘Q）。拖 RIS 不需要这个插件。".into(),
-        })
+        // Windows 上 Zotero 的命令行不装插件（裸参数不理，-file 是导入题录），只能人在插件管理里从文件装
+        #[cfg(windows)]
+        {
+            if let Some(exe) = zotero_exe() {
+                let _ = crate::process::background_command(&exe).spawn();
+            }
+            Ok(ZoteroBbtInstallDto {
+                staged: true,
+                message: format!(
+                    "安装包已下载：{}\nWindows 上 Zotero 不能从外部直接装插件：在 Zotero「工具 → 插件」（Zotero 6 叫「附加组件」）右上角齿轮里选「从文件安装」，选上面这份文件。装好后完全退出 Zotero 再打开。拖 RIS 不需要这个插件。",
+                    dest.display()
+                ),
+            })
+        }
+        #[cfg(not(windows))]
+        {
+            tauri_plugin_opener::open_path(&dest, Some("Zotero"))
+                .or_else(|_| tauri_plugin_opener::open_path(&dest, None::<&str>))
+                .map_err(|e| {
+                    format!(
+                        "已下载安装包，但没法交给 Zotero 打开：{e}。请在 Zotero「工具 → 插件 → 从文件安装」里选这份文件：{}",
+                        dest.display()
+                    )
+                })?;
+            Ok(ZoteroBbtInstallDto {
+                staged: true,
+                message: "已交给 Zotero，请在弹出的窗口里点安装。装好后完全退出再打开（macOS 用 ⌘Q）。拖 RIS 不需要这个插件。".into(),
+            })
+        }
     })
     .await
     .map_err(|e| format!("打开 Zotero 安装窗口失败: {e}"))?
@@ -1410,6 +1427,61 @@ pub fn refresh_library_ris(project_root: &Path) -> Result<(Option<PathBuf>, Stri
     Ok((Some(ris), health))
 }
 
+/// 把导入文件交给 Zotero，让它弹「导入」确认。
+/// macOS 的「用 Zotero 打开」走 Apple 事件，Zotero 收到的是 `-url file:///…`，会导入。
+/// Windows 上「用 Zotero 打开」= 拿路径当裸参数起 zotero.exe，而 Zotero 的命令行只认 `-file <路径>`
+/// 和 `-url file:///…`，裸参数不理——Zotero 打开了、没有导入（2026-10-23 用户实测，Zotero 6.0.36；
+/// 见安装目录 components/zotero-service.js 的命令行处理）。Zotero 已经开着时，新起的 zotero.exe 把参数转给它后退出。
+fn hand_file_to_zotero(path: &Path) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let exe = zotero_exe().ok_or_else(|| {
+            format!(
+                "没找到 Zotero（zotero.exe）。打开 Zotero 后用「文件 → 导入」选这份文件：{}",
+                path.display()
+            )
+        })?;
+        crate::process::background_command(&exe)
+            .arg("-file")
+            .arg(path)
+            .spawn()
+            .map_err(|e| format!("没法交给 Zotero 打开: {e}"))?;
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        tauri_plugin_opener::open_path(path, Some("Zotero"))
+            .or_else(|_| tauri_plugin_opener::open_path(path, None::<&str>))
+            .map_err(|e| format!("没法交给 Zotero 打开: {e}"))
+    }
+}
+
+/// Windows 上的 zotero.exe：安装包写的注册表 App Paths → 常见安装目录。找不到返回 None。
+#[cfg(windows)]
+fn zotero_exe() -> Option<PathBuf> {
+    for hive in ["HKLM", "HKCU"] {
+        let key = format!(r"{hive}\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\zotero.exe");
+        if let Some(value) = crate::process::reg_string(&key, None) {
+            let exe = PathBuf::from(value.trim_matches('"'));
+            if exe.is_file() {
+                return Some(exe);
+            }
+        }
+    }
+    let mut dirs: Vec<PathBuf> = ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"]
+        .iter()
+        .filter_map(|var| std::env::var_os(var))
+        .map(|dir| PathBuf::from(dir).join("Zotero"))
+        .collect();
+    if let Some(local) = dirs::data_local_dir() {
+        dirs.push(local.join("Zotero"));
+        dirs.push(local.join("Programs").join("Zotero"));
+    }
+    dirs.into_iter()
+        .map(|dir| dir.join("zotero.exe"))
+        .find(|exe| exe.is_file())
+}
+
 /// 用 Zotero 打开 RIS/BibTeX/CSL JSON（原生导入，不需要 Better BibTeX）。
 #[tauri::command]
 pub async fn zotero_open_import(path: String, root: String) -> Result<String, String> {
@@ -1442,9 +1514,7 @@ pub async fn zotero_open_import(path: String, root: String) -> Result<String, St
         if !zotero_native_import_ext(&ext) {
             return Err("只打开 RIS / BibTeX / CSL JSON 给 Zotero 导入".into());
         }
-        tauri_plugin_opener::open_path(&path_c, Some("Zotero"))
-            .or_else(|_| tauri_plugin_opener::open_path(&path_c, None::<&str>))
-            .map_err(|e| format!("没法交给 Zotero 打开: {e}"))?;
+        hand_file_to_zotero(&path_c)?;
         let mut message =
             "已交给 Zotero。确认导入后，点「打开 papers」，把 PDF 拖到对应条目上。".to_string();
         if !health.is_empty() {
