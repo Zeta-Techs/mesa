@@ -391,6 +391,11 @@ static BUILTIN_SUPPORT: &[(&str, &str, &str)] = &[
         include_str!("../resources/skills/review-figures/scripts/figure_sources.py"),
     ),
     (
+        "review-figures",
+        "scripts/figure_permissions.py",
+        include_str!("../resources/skills/review-figures/scripts/figure_permissions.py"),
+    ),
+    (
         "quarto-render",
         "ieee.csl",
         include_str!("../resources/skills/quarto-render/ieee.csl"),
@@ -3433,6 +3438,38 @@ mod tests {
                 .any(|l| l.starts_with("outputs: [") && l.len() > 11);
             assert!(has_outputs, "{name} 未声明 outputs");
         }
+    }
+
+    #[test]
+    fn every_bundled_skill_file_is_embedded() {
+        // 2026-10-24 实证：figure_permissions.py 进了仓库、SKILL.md 也写了要跑它，但没登记进
+        // BUILTIN_SUPPORT，用户装到的技能里就没有这个脚本，定稿步一跑就找不到
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/skills");
+        let mut missing = Vec::new();
+        for (name, _) in BUILTIN_SKILLS {
+            let dir = root.join(name);
+            let mut stack = vec![dir.clone()];
+            while let Some(d) = stack.pop() {
+                for entry in fs::read_dir(&d).unwrap().flatten() {
+                    let path = entry.path();
+                    let file = entry.file_name().to_string_lossy().into_owned();
+                    if path.is_dir() {
+                        if file != "__pycache__" {
+                            stack.push(path);
+                        }
+                        continue;
+                    }
+                    if file == "SKILL.md" || file.ends_with(".pyc") || file.contains(".bak") {
+                        continue;
+                    }
+                    let rel = path.strip_prefix(&dir).unwrap().to_string_lossy().replace('\\', "/");
+                    if !BUILTIN_SUPPORT.iter().any(|(s, r, _)| s == name && *r == rel) {
+                        missing.push(format!("{name}/{rel}"));
+                    }
+                }
+            }
+        }
+        assert!(missing.is_empty(), "随包技能文件没登记进 BUILTIN_SUPPORT：{missing:?}");
     }
 
     #[test]
