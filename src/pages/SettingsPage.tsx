@@ -100,9 +100,15 @@ import { THEMES, isCustomThemeId, isLightTheme } from "../themes";
 import { followedTheme } from "../theme-follow";
 import {
   DEFAULT_INST_LOGIN_URL,
+  instBrowserLoginDay,
+  instBrowserLoginFresh,
+  instLoginOpenUrl,
   instOtherPanelDefaultOpen,
   instPrefixPanelDefaultOpen,
   instSessionLabel,
+  INST_BROWSER_LOGIN_EVENT,
+  readInstBrowserLogin,
+  writeInstBrowserLogin,
   type InstSessionStatus,
 } from "../inst-access";
 import appCss from "../App.css?raw";
@@ -1540,6 +1546,14 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
   const [institutionalLoginUrl, setInstitutionalLoginUrl] = useState("");
   const [instStatus, setInstStatus] = useState<InstSessionStatus | null>(null);
   const [instBusy, setInstBusy] = useState<"login" | "capture" | "clear" | "bridge" | null>(null);
+  // 浏览器登录标记（inst-access）：与付费墙行共用，任一处点「登录好了」两处同步
+  const [instBrowserLoginAt, setInstBrowserLoginAt] = useState<number | null>(() => readInstBrowserLogin());
+  const [instBrowserOpened, setInstBrowserOpened] = useState(false);
+  useEffect(() => {
+    const sync = () => setInstBrowserLoginAt(readInstBrowserLogin());
+    window.addEventListener(INST_BROWSER_LOGIN_EVENT, sync);
+    return () => window.removeEventListener(INST_BROWSER_LOGIN_EVENT, sync);
+  }, []);
   // null = 跟随默认（已填前缀 / 自定义入口 / 已有内嵌会话则展开）；人手点过之后不再抢
   const [instPrefixOpen, setInstPrefixOpen] = useState<boolean | null>(null);
   const [instOtherOpen, setInstOtherOpen] = useState<boolean | null>(null);
@@ -1867,7 +1881,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
    *  什么都不填也行：默认开 CARSI 高校联盟入口（选学校 → 登录 → 顺手点进一个数据库） */
   async function openInstLogin() {
     const typed = institutionalLoginUrl.trim() || institutionalPrefix.trim();
-    const url = typed || DEFAULT_INST_LOGIN_URL;
+    const url = instLoginOpenUrl(institutionalLoginUrl, institutionalPrefix);
     if (!/^https?:\/\//i.test(url)) {
       setError("机构登录页须是 http(s):// 开头的完整地址（学校图书馆入口或代理登录页）");
       return;
@@ -1877,8 +1891,10 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
     try {
       if (typed) await patch({ institutionalLoginUrl: typed });
       await invoke("inst_browser_open", { url });
+      writeInstBrowserLogin(null);
+      setInstBrowserOpened(true);
       setNotice(
-        "已打开浏览器。选学校、完成登录后，待获取清单点「浏览器」下载，PDF 自动进项目",
+        "已打开浏览器。选学校、完成登录后回来点「登录好了」，之后待获取清单点「浏览器」下载，PDF 自动进项目",
       );
     } catch (e) {
       setError(String(e));
@@ -3756,14 +3772,40 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           labelTitle="登录一次，之后待获取清单点「浏览器」下载，PDF 自动进项目。不存账号密码。"
         >
           <div className="flex max-w-[34rem] flex-col gap-2">
-            <button
-              type="button"
-              onClick={() => void openInstLogin()}
-              disabled={instBusy !== null}
-              className={`${primaryActionClass} w-fit shrink-0`}
-            >
-              {instBusy === "login" ? "打开中…" : "登录学校账号"}
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void openInstLogin()}
+                disabled={instBusy !== null}
+                className={`${primaryActionClass} w-fit shrink-0`}
+              >
+                {instBusy === "login"
+                  ? "打开中…"
+                  : instBrowserLoginFresh(instBrowserLoginAt, Date.now())
+                    ? "重新登录"
+                    : "登录学校账号"}
+              </button>
+              {instBrowserLoginFresh(instBrowserLoginAt, Date.now()) ? (
+                <span
+                  className="text-xs text-done"
+                  title="Mesa 看不到浏览器里的登录，这是你点「登录好了」的日子；官网又要你登录时点「重新登录」"
+                >
+                  已登录 · {instBrowserLoginDay(instBrowserLoginAt!)}
+                </span>
+              ) : instBrowserOpened ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    writeInstBrowserLogin(Date.now());
+                    setInstBrowserOpened(false);
+                    setNotice("已记下登录。待获取清单点「浏览器」下载，PDF 自动进项目");
+                  }}
+                  className="rounded-sm border border-field px-1.5 py-0.5 text-xs text-l1 hover:bg-hover"
+                >
+                  登录好了
+                </button>
+              ) : null}
+            </div>
             <SettingsFold
               label={
                 !prefixOpen && instStatus?.prefixHost

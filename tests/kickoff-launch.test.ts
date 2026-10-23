@@ -162,6 +162,15 @@ test("formatKickoffChip：included 用篇、缺的标还没有", () => {
     { label: "notes/ · 8 份", missing: false },
   );
   assert.equal(chipFileName("notes/*.md"), "notes/");
+  // 单个文件只写文件名：「included.json · 1 篇」读着像只有一篇文献（2026-10-22 截图）
+  assert.deepEqual(
+    formatKickoffChip({ pattern: "papers/included.json", role: "optional", present: true, count: 1 }),
+    { label: "included.json", missing: false },
+  );
+  assert.deepEqual(
+    formatKickoffChip({ pattern: "papers/*.pdf", role: "required", present: true, count: 15 }),
+    { label: "papers/ · 15 篇", missing: false },
+  );
   assert.deepEqual(
     formatKickoffChip({
       pattern: "outline.md",

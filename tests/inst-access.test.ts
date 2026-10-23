@@ -5,6 +5,9 @@ import {
   DEFAULT_INST_LOGIN_URL,
   fulltextViaLabel,
   instActiveFrom,
+  instBrowserLoginFresh,
+  instLoginOpenUrl,
+  INST_BROWSER_LOGIN_TTL_MS,
   instOpenTarget,
   instOtherPanelDefaultOpen,
   instPrefixPanelDefaultOpen,
@@ -172,4 +175,21 @@ test("instOtherPanelDefaultOpen: 自定义入口或已有内嵌会话才默认�
   assert.equal(instOtherPanelDefaultOpen("https://lib.uni.edu.cn/", false), true);
   assert.equal(instOtherPanelDefaultOpen("", true), true);
   assert.equal(instOtherPanelDefaultOpen(DEFAULT_INST_LOGIN_URL, true), true);
+});
+
+test("instLoginOpenUrl: 登录入口 > 前缀 > 默认 CARSI", () => {
+  assert.equal(instLoginOpenUrl("", ""), DEFAULT_INST_LOGIN_URL);
+  assert.equal(instLoginOpenUrl(null, undefined), DEFAULT_INST_LOGIN_URL);
+  assert.equal(instLoginOpenUrl("  ", "https://proxy.x.edu.cn/login?url="), "https://proxy.x.edu.cn/login?url=");
+  assert.equal(instLoginOpenUrl("https://lib.x.edu.cn/", "https://proxy.x.edu.cn/login?url="), "https://lib.x.edu.cn/");
+});
+
+test("instBrowserLoginFresh: 点过「登录好了」一周内算已登录，过期或没点不算", () => {
+  const now = 1_800_000_000_000;
+  assert.equal(instBrowserLoginFresh(null, now), false);
+  assert.equal(instBrowserLoginFresh(now - 1000, now), true);
+  assert.equal(instBrowserLoginFresh(now - INST_BROWSER_LOGIN_TTL_MS + 1, now), true);
+  assert.equal(instBrowserLoginFresh(now - INST_BROWSER_LOGIN_TTL_MS, now), false);
+  // 系统时间被往回调过：未来的标记不当真
+  assert.equal(instBrowserLoginFresh(now + 60_000, now), false);
 });

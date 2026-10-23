@@ -19,25 +19,27 @@ fn check(name: &str, status: &str, detail: impl Into<String>, blocking: bool) ->
     }
 }
 
-/// Zotero 本地通道判定：HTTP 状态码 → (状态, 白话)。None = 请求失败。
+/// Zotero 本地接口判定：HTTP 状态码 → (状态, 白话)。None = 请求失败。
 /// 任何非明确成功/403 的响应都归 unknown，不猜测写入能力（宁缺毋滥）。
+/// 文案写清它只管「AI 这一轮能不能现查你的 Zotero 库」：从 Zotero 导入读的是数据库文件，
+/// 「同步到 Zotero」是交给 Zotero 打开 RIS，都不走这个接口（2026-10-22 用户问「这个是什么作用」）。
 fn zotero_channel(status: Option<u16>) -> (&'static str, &'static str) {
     match status {
         Some(code) if (200..300).contains(&code) => (
             "readable",
-            "本地 API 可访问；未请求写库授权，版本与写入权限仍需逐批核对",
+            "开着，AI 这一轮能查你 Zotero 库里的条目（只读；进库仍走「同步到 Zotero」导入）",
         ),
         Some(403) => (
             "disabled",
-            "Zotero 本机通信未开启；可继续使用已导入题录/PDF，写库未授权",
+            "开着，但没允许别的程序访问（Zotero 设置 → 高级 → 允许此计算机上的其他应用程序与 Zotero 通信）；只影响 AI 现查你的库，已导入的题录和 PDF 照常用",
         ),
         Some(_) => (
             "unknown",
-            "本地服务响应不兼容；不猜测写入能力，使用文件流程",
+            "响应对不上，AI 这一轮不现查你的库；已导入的题录和 PDF 照常用",
         ),
         None => (
             "offline",
-            "未连到 Zotero；已导入文件仍可用，不阻塞离线文献工作",
+            "没在运行，AI 这一轮查不了你 Zotero 库里的条目；已导入的题录和 PDF 照常用，不影响开工",
         ),
     }
 }
@@ -116,7 +118,7 @@ pub async fn research_tool_preflight(
             .ok()
             .map(|response| response.status().as_u16());
         let (status, detail) = zotero_channel(code);
-        out.push(check("Zotero 本地通道", status, detail, false));
+        out.push(check("Zotero", status, detail, false));
     }
     if step.skills.iter().any(|s| s == "origin-plot") {
         let windows = cfg!(windows);

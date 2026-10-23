@@ -950,7 +950,28 @@ export default function KickoffConfirmDialog({
 
         {/* 材料（读入/产出）与执行（谁做/怎么做）两组之间只靠留白分开，不画线 */}
         <div className="mt-3">
-        <KickoffRow label="执行" title="这一步用哪家 AI、哪条连接、哪个模型">
+        {/* 本次思考档（2026-09-15）：只在有注入通道时出现（见上方 combo 判定）。
+            2026-10-22 并进「执行」一行：思考档本就是这条绑定的一部分，单占一行像另一件事 */}
+        {(() => {
+          const effortSelect =
+            launch && effortInjectable ? (
+              <select
+                className="h-6 shrink-0 rounded-md border border-field bg-canvas px-1 text-micro text-l2 outline-none focus:border-l4"
+                value={kickEffort}
+                onChange={(e) => setKickEffort(e.target.value)}
+                title="思考档：只影响这一次运行，不改绑定的默认；运行中还可在底部状态栏调整"
+                aria-label="思考档"
+              >
+                <option value="">思考档 默认</option>
+                {effortLevels.map((lv) => (
+                  <option key={lv} value={lv}>
+                    思考档 {lv}
+                  </option>
+                ))}
+              </select>
+            ) : null;
+          return (
+        <KickoffRow label="执行" title="这一步用哪家 AI、哪条连接、哪个模型、什么思考档">
         {profiles.length === 0 ? (
           <p>
             还没有可用连接。
@@ -970,6 +991,7 @@ export default function KickoffConfirmDialog({
             <span className="min-w-0 truncate" title={launchLine}>
               {launchLine}
             </span>
+            {effortSelect}
             {selectionMatchesSlot && (
               <span
                 className="shrink-0 text-micro text-l4"
@@ -1051,12 +1073,15 @@ export default function KickoffConfirmDialog({
                 </select>
               </label>
             </div>
-            <Checkbox
-              className="mt-2 text-micro text-l3"
-              checked={saveStepDefault}
-              onChange={(checked) => { saveTouchedRef.current = true; setSaveStepDefault(checked); }}
-              label="存为本步骤默认（下次开工直接用它）"
-            />
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+              {effortSelect}
+              <Checkbox
+                className="text-micro text-l3"
+                checked={saveStepDefault}
+                onChange={(checked) => { saveTouchedRef.current = true; setSaveStepDefault(checked); }}
+                label="存为本步骤默认（下次开工直接用它）"
+              />
+            </div>
             {stepBinding && !selectionMatchesSlot && slotLine && (
               // 披露（终检钉住）：已有绑定且本次选择偏离时明说，防止「被顶掉」的无知感
               <p className="mt-1 truncate text-micro text-l4" title={`${slotLine}；本次 ${launchLine}`}>
@@ -1066,26 +1091,8 @@ export default function KickoffConfirmDialog({
           </div>
         )}
         </KickoffRow>
-
-        {/* 本次思考档（2026-09-15）：只在有注入通道时出现（见上方 combo 判定） */}
-        {launch && effortInjectable && (
-          <KickoffRow label="思考档" title="只影响这一次运行，不改绑定的默认策略；运行中还可在底部状态栏调整">
-            <div className="text-micro">
-              <select
-                className="h-6 rounded-md border border-field bg-canvas px-1 text-l2 outline-none focus:border-l4"
-                value={kickEffort}
-                onChange={(e) => setKickEffort(e.target.value)}
-              >
-                <option value="">不设（用绑定默认）</option>
-                {effortLevels.map((lv) => (
-                  <option key={lv} value={lv}>
-                    {lv}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </KickoffRow>
-        )}
+          );
+        })()}
 
         {/* 技能：挂载芯片（增删写回步骤定义）+ 只读预检。预检全部就绪只留一行小字，
             有缺口才展开成块——原先就绪时也摆一整块，和技能芯片把同一件事说两遍 */}
@@ -1142,32 +1149,37 @@ export default function KickoffConfirmDialog({
             未提交改动才出现，默认勾选。勾选 = 随开工提交进基准分支；不勾选 = 照常开工，
             文件留在项目根未提交（它们仍是这一步要读的输入时，走上方存进历史软门） */}
         {intakeHits.length > 0 && (
-          <div className="mb-3 shrink-0 rounded-md ccode-well px-2.5 py-2">
+          // 并进标签列（原先是整宽一块，打断「读入/产出/执行…」的对齐，路径等宽字体还折成两行，2026-10-22 截图）
+          <KickoffRow
+            label="带上"
+            title="项目文件夹里还没存进历史的清单与笔记。勾上：随开工一起存进历史，这一轮工作区直接读得到"
+          >
             <Checkbox
               checked={intakeChecked}
               onChange={setIntakeChecked}
               label={
                 <span className="text-xs text-l2">
-                  一并带上未保存的清单与笔记{intakeLine ? `：${intakeLine}` : ""}
+                  {intakeLine || `${intakeHits.length} 个未保存的清单与笔记`}
+                  <span className="ml-1.5 text-micro text-l4">随开工存进历史</span>
                 </span>
               }
             />
-            <p
-              className={`mt-1 pl-5 text-micro leading-4 ${
-                intakeChecked ? "text-l4" : "text-warn-text"
-              }`}
-            >
-              {intakeChecked
-                ? "将随开工提交进基准分支，供检索步/精读步直接使用你的积累与笔记。"
-                : "不带上：这批积累与笔记不进本轮基准分支，工作区里用不到；仍留在项目根（不拦合并），需要时可在终端自行提交。"}
-            </p>
-            <p
-              className="mt-1 break-all pl-5 font-mono text-micro leading-4 text-l4"
-              title={intakeHits.map((h) => h.path).join("\n")}
-            >
-              {intakeHits.map((h) => h.path).join("、")}
-            </p>
-          </div>
+            <ul className="mt-1 space-y-0.5 pl-5 text-micro text-l4">
+              {intakeHits.slice(0, 3).map((h) => (
+                <li key={h.path} className="truncate" title={h.path}>
+                  {h.path}
+                </li>
+              ))}
+              {intakeHits.length > 3 && (
+                <li title={intakeHits.map((h) => h.path).join("\n")}>等 {intakeHits.length} 个</li>
+              )}
+            </ul>
+            {!intakeChecked && (
+              <p className="mt-1 pl-5 text-micro leading-4 text-warn-text">
+                不带上：这一轮工作区里读不到它们；文件仍留在项目文件夹，需要时可在终端自行提交。
+              </p>
+            )}
+          </KickoffRow>
         )}
 
         {/* 旧版简报兜底（只提醒不阻断）：新口径沉淀走任务书草稿，旧 brief-*.md 不再自动带入 */}
@@ -1322,14 +1334,14 @@ export default function KickoffConfirmDialog({
               </button>
             )}
           </div>
+          {taskMdOpen && draftText?.trim() && !isTaskMdStub(draftText) && (
+            <p className="mt-0.5 text-micro text-l4" title={draftRel ?? undefined}>
+              来自你改过的 {draftRel ?? "TASK.md"}；这里再改只影响这一次，不写回
+            </p>
+          )}
         </KickoffRow>
         {taskMdOpen && (
           <>
-            {draftText?.trim() && !isTaskMdStub(draftText) && (
-              <p className="mb-1 shrink-0 text-micro text-l4">
-                内容来自你编辑过的 TASK.md（{draftRel ?? ""}；改这里只影响本次落盘，不回写该文件）
-              </p>
-            )}
             <div className="mb-3 min-h-0 flex-1 overflow-hidden rounded-md border border-field bg-canvas">
               {!editorReady ? (
                 <div className="p-3">

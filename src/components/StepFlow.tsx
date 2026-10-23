@@ -88,7 +88,13 @@ import {
 } from "../academic-mcp";
 import {
   instActiveFrom,
+  instBrowserLoginDay,
+  instBrowserLoginFresh,
+  instLoginOpenUrl,
   instOpenTarget,
+  INST_BROWSER_LOGIN_EVENT,
+  readInstBrowserLogin,
+  writeInstBrowserLogin,
   type FetchedFulltextDto,
   type InstSessionStatus,
 } from "../inst-access";
@@ -202,7 +208,7 @@ function PublisherOpenButton({
       <button
         type="button"
         className={`${inlineActionClass} shrink-0`}
-        title="去出版商官网打开这篇；点站方下载，90 秒内落下的 PDF 会收进 papers/。没收到用「关联」"
+        title="去出版商官网打开这篇。点站方下载，或 PDF 在浏览器里打开后点保存、存进「下载」文件夹。PDF 里带本篇 DOI 的，30 分钟内存下都能收进 papers/。没收到就把文件拖进清单，或用「关联」"
         onClick={() => {
           onError("");
           void invoke("inst_browser_open", {
@@ -398,6 +404,8 @@ function SpotCheckPicks({
 /** 按钮没说的那一句：可选/跳过的后果。做法进行内按钮 title。 */
 const PAYWALL_HINT = "跳过的篇目下一篇按摘要记。";
 const PENDING_HINT = "待确认点纳入或排除。已纳入不想要就点移出，笔记和引文留着。";
+const PENDING_DONE_HINT =
+  "待确认都定了，这一项已自动勾上。已纳入的仍可移出：移出会从纳入清单、待获取和两份 RIS 里拿掉，已写的笔记和引文留着，要到精读那一步清。";
 
 const LIT_SOURCES: {
   id: string;
@@ -690,6 +698,15 @@ export default function StepFlow({
   // 首次点开才读文件，收起不清缓存（agent 不会在展示期间改它）。
   // 位置口径：agent 的产出落在步骤工作区，评审合并后才进项目根——先读工作区再回落项目根
   const [pendingListOpen, setPendingListOpen] = useState(true);
+  // 开工后「确定文献来源」收成一行；点「更改」才摊开选项
+  const [litSourceEditing, setLitSourceEditing] = useState(false);
+  // 进来时「核对待确认篇目」已经做完：文献清单先收起（回看不铺一长串）；当场清完的保持展开，画面不跳
+  const pendingFoldInit = useRef(false);
+  useEffect(() => {
+    if (pendingFoldInit.current || !states) return;
+    pendingFoldInit.current = true;
+    if (states.some((s) => isPendingConfirmTaskTitle(s.title) && s.done)) setPendingListOpen(false);
+  }, [states]);
   const pendingListRef = useRef<PendingConfirmHandle>(null);
   const [pendingMeta, setPendingMeta] = useState({ count: 0, busy: false });
   const [academicMcp, setAcademicMcp] = useState<AcademicMcpLogin | null>(null);
@@ -739,6 +756,11 @@ export default function StepFlow({
   // 渲染在滚动区最底部、语义也错位）
   const [browserOpenErr, setBrowserOpenErr] = useState<string | null>(null);
   const [instLoggedIn, setInstLoggedIn] = useState(false);
+  // 浏览器里登录的标记（inst-access：Mesa 读不到浏览器会话，只记人点「登录好了」的时间）
+  const [browserLoginAt, setBrowserLoginAt] = useState<number | null>(() => readInstBrowserLogin());
+  const [instLoginOpened, setInstLoginOpened] = useState(false);
+  const [instLoginErr, setInstLoginErr] = useState<string | null>(null);
+  const appSettings = useAppStore((s) => s.settings);
   const [dropNote, setDropNote] = useState<string | null>(null);
   const paywallDropRef = useRef<HTMLDivElement>(null);
   // 点「浏览器」或已存标题后离开，回来要立刻找到刚才那行：主题强调色框，
@@ -988,17 +1010,42 @@ export default function StepFlow({
   useEffect(() => {
     if (!paywallListOpen) return;
     let stale = false;
-    void invoke<InstSessionStatus>("inst_session_status")
-      .then((status) => {
-        if (!stale) setInstLoggedIn(instActiveFrom(status));
-      })
-      .catch(() => {
-        if (!stale) setInstLoggedIn(false);
-      });
+    const load = () =>
+      void invoke<InstSessionStatus>("inst_session_status")
+        .then((status) => {
+          if (!stale) setInstLoggedIn(instActiveFrom(status));
+        })
+        .catch(() => {
+          if (!stale) setInstLoggedIn(false);
+        });
+    load();
+    // 内嵌窗登录存下会话时后端发这个事件；清单开着也要跟上
+    const un = listen("inst-session-captured", load);
     return () => {
       stale = true;
+      void un.then((f) => f());
     };
   }, [paywallListOpen]);
+
+  useEffect(() => {
+    const sync = () => setBrowserLoginAt(readInstBrowserLogin());
+    window.addEventListener(INST_BROWSER_LOGIN_EVENT, sync);
+    return () => window.removeEventListener(INST_BROWSER_LOGIN_EVENT, sync);
+  }, []);
+
+  /** 付费墙行「登录学校账号」：直接调起浏览器（与设置页同一入口地址），不再先跳设置页 */
+  async function openInstLogin() {
+    setInstLoginErr(null);
+    try {
+      await invoke("inst_browser_open", {
+        url: instLoginOpenUrl(appSettings?.institutionalLoginUrl, appSettings?.institutionalPrefix),
+      });
+      writeInstBrowserLogin(null);
+      setInstLoginOpened(true);
+    } catch (e) {
+      setInstLoginErr(String(e));
+    }
+  }
 
   useEffect(() => {
     if (!paywallListOpen || !projectPath) return;
@@ -2165,6 +2212,37 @@ export default function StepFlow({
         {node.kind === "input" && node.key === "input" && onSetLitSource && (
           // pl-9 与其余内容区（hint/agentContent）对齐到步骤名左缘，不顶到序号
           <div className="ml-9 mt-2.5">
+            {runStatus !== "pending" && !litSourceEditing ? (
+              // 开工后收成一行（2026-10-22）：这一轮的任务书已按当时的来源写好，
+              // 再点选项会改主仓档案卡与任务书草稿，正在跑的 agent 看不到——不能摆成随手可点
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                <span className="text-l3">
+                  {(LIT_SOURCES.find((o) => o.id === (litSource || "search")) ?? LIT_SOURCES[0]).label}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setLitSourceEditing(true)}
+                  className="rounded-sm px-1 py-0.5 text-micro text-l4 underline decoration-dotted underline-offset-2 hover:bg-hover hover:text-l2"
+                  title="这一轮已按这个来源开工；改了要下次重新开工这一步才生效"
+                >
+                  更改
+                </button>
+              </div>
+            ) : (
+            <>
+            {runStatus !== "pending" && (
+              <p className="mb-1 text-micro text-l4">
+                这一轮已经按「{(LIT_SOURCES.find((o) => o.id === (litSource || "search")) ?? LIT_SOURCES[0]).label}」开工。改了只写进项目设置和任务书草稿，
+                工作区里的任务书不变，「继续」「新开一轮」的 AI 都看不到；下次重新开工这一步才按新来源。
+                <button
+                  type="button"
+                  onClick={() => setLitSourceEditing(false)}
+                  className="ml-1 text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                >
+                  不改了
+                </button>
+              </p>
+            )}
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               {LIT_SOURCES.map((o) => {
                 const on = (litSource || "search") === o.id;
@@ -2173,7 +2251,9 @@ export default function StepFlow({
                     key={o.id}
                     type="button"
                     disabled={litBusy}
-                    onClick={() => void onSetLitSource(o.id)}
+                    onClick={() =>
+                      void Promise.resolve(onSetLitSource(o.id)).then(() => setLitSourceEditing(false))
+                    }
                     title={o.hint}
                     className={`rounded-full px-2 py-0.5 text-xs disabled:opacity-50 ${
                       on
@@ -2202,6 +2282,8 @@ export default function StepFlow({
                 ) : null;
               })()}
             </div>
+            </>
+            )}
           </div>
         )}
         {/* 想法区与「跟 AI 商量」：discuss 节点存在时挂它，否则挂 agent 节点（v3.89）——
@@ -2575,10 +2657,10 @@ export default function StepFlow({
         {node.kind === "human" &&
           human &&
           isPendingConfirmTaskTitle(human.title) &&
-          !node.done &&
           !dense && (
             <div className="mt-1 pl-9 text-micro leading-5 text-l4">
-              <p>{PENDING_HINT}</p>
+              {/* 清完会自动勾上，但已纳入的仍能移出——勾上后清单不收走，提醒移出的后果 */}
+              <p>{node.done ? PENDING_DONE_HINT : PENDING_HINT}</p>
               <div className="mt-1.5">
                 <div className="flex items-center gap-2">
                   <button
@@ -2596,7 +2678,8 @@ export default function StepFlow({
                       type="button"
                       disabled={pendingMeta.busy}
                       onClick={() => pendingListRef.current?.includeAll()}
-                      className="rounded-sm border border-cta-bd bg-cta px-1.5 py-0.5 text-micro text-cta-text disabled:opacity-50"
+                      // 不做主按钮：这一步要人逐篇拍板，强调色留给勾选后的「纳入所选」
+                      className="rounded-sm border border-field px-1.5 py-0.5 text-micro text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50"
                       title={`把 ${pendingMeta.count} 篇待确认全部改为纳入。没有 PDF 的会追加到待获取。`}
                     >
                       {pendingMeta.busy ? "纳入中…" : "全部纳入"}
@@ -2712,34 +2795,89 @@ export default function StepFlow({
                     title="agent 筛完列出的缺全文清单"
                   >
                     <FoldMark open={paywallListOpen} />
-                    {paywallListOpen
-                      ? `待获取${paywallList.from ? ` · ${paywallList.from}` : ""}`
-                      : paywallList.text
-                        ? `待获取（还缺 ${missingToFetchCount(paywallList.text, toFetchDone)} 篇）`
-                        : "待获取"}
+                    {paywallList.text
+                      ? `待获取（还缺 ${missingToFetchCount(paywallList.text, toFetchDone)} 篇）`
+                      : "待获取"}
+                    {paywallListOpen && paywallList.from && (
+                      <span className="text-l4">· {paywallList.from}</span>
+                    )}
                   </button>
+                  {/* 学校登录跟在清单标题右侧，不单占一行（2026-10-22：单占一行右边整块空着） */}
+                  {paywallListOpen && (
+                    instLoggedIn || instBrowserLoginFresh(browserLoginAt, Date.now()) ? (
+                        <span className="ml-auto inline-flex flex-wrap items-center gap-2">
+                          <span
+                            className="inline-flex rounded-sm border border-done/40 px-1.5 py-0.5 text-xs text-done"
+                            title={
+                              instLoggedIn
+                                ? "学校账号会话已保存。清单里点官网即可下载。"
+                                : `${instBrowserLoginDay(browserLoginAt!)}在浏览器里登录过（你点的「登录好了」，Mesa 看不到浏览器里的登录）。官网又要你登录时点「重新登录」。`
+                            }
+                          >
+                            已登录
+                          </span>
+                          {!instLoggedIn && (
+                            <button
+                              type="button"
+                              onClick={() => void openInstLogin()}
+                              className="text-micro text-l4 underline decoration-dotted underline-offset-2 hover:text-l2"
+                            >
+                              重新登录
+                            </button>
+                          )}
+                        </span>
+                      ) : instLoginOpened ? (
+                        <span className="ml-auto inline-flex flex-wrap items-center gap-2">
+                          <span className="text-micro text-l3">在浏览器里选学校、登录完，回来点</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              writeInstBrowserLogin(Date.now());
+                              setInstLoginOpened(false);
+                            }}
+                            className="rounded-sm border border-field px-1.5 py-0.5 text-xs text-l1 hover:bg-hover"
+                          >
+                            登录好了
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void openInstLogin()}
+                            className="text-micro text-l4 underline decoration-dotted underline-offset-2 hover:text-l2"
+                          >
+                            再打开一次
+                          </button>
+                        </span>
+                      ) : (
+                        <span className="ml-auto inline-flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void openInstLogin()}
+                            className="rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1"
+                            title="在浏览器里打开学校登录（默认 CARSI 高校联盟）。登录一次后，清单里点官网即可下载"
+                          >
+                            登录学校账号
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSettingsSectionReq("network");
+                              setPage("settings");
+                            }}
+                            className="text-micro text-l4 underline decoration-dotted underline-offset-2 hover:text-l2"
+                            title="设置 → 网络：换登录入口，或贴图书馆「校外访问」链接"
+                          >
+                            校外访问
+                          </button>
+                        </span>
+                    )
+                  )}
                   </div>
                   {paywallListOpen && (
                     <div ref={paywallDropRef} className="mt-1">
-                      {instLoggedIn ? (
-                        <span
-                          className="mb-1 inline-flex rounded-sm border border-done/40 px-1.5 py-0.5 text-xs text-done"
-                          title="学校账号会话已保存。清单里点官网即可下载。"
-                        >
-                          已登录
-                        </span>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSettingsSectionReq("network");
-                            setPage("settings");
-                          }}
-                          className="mb-1 rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1"
-                          title="打开设置 → 网络，登录学校账号。登录一次后，清单里点官网即可下载"
-                        >
-                          登录学校账号
-                        </button>
+                      {instLoginErr && (
+                        <p className="mb-1 break-words text-micro text-err-text" role="alert">
+                          {instLoginErr}
+                        </p>
                       )}
                       {dropNote && <p className="mb-1 text-micro text-l3">{dropNote}</p>}
                       {paywallList.error ? (

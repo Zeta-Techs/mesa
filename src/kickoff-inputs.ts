@@ -57,6 +57,12 @@ export function formatKickoffChip(chip: KickoffInputChip): {
     return { label: `积累 ${chip.count} 条`, missing: false };
   }
   const unit = unitForPattern(chip.pattern);
+  // 单个文件（不是目录、通配或 included.md 条目数）：计数只是「1 个文件」，
+  // 写成「included.json · 1 篇」读着像只有一篇文献（2026-10-22 截图）
+  const single = !chip.pattern.includes("*") && !/[\\/]$/.test(chip.pattern);
+  if (single && !chip.pattern.toLowerCase().endsWith("included.md")) {
+    return { label: base, missing: false };
+  }
   if (chip.count === 1 && unit === "个" && !chip.pattern.includes("*")) {
     return { label: base, missing: false };
   }
