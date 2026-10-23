@@ -3848,20 +3848,8 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
           })}
         </div>
         {/* 出图模型（2026-10-24 用户「连接这里配置生图模型」）：不属于哪个 Agent 的对话连接，单独一块；
-            编辑处只此一处，设置页只显示现状并跳过来 */}
-        {!q && (
-          <section ref={imageGenRef} className="mb-4 overflow-hidden rounded-xl border border-field ccode-well">
-            <div className="flex h-11 items-center gap-2 px-3">
-              <h2 className="text-sm font-medium text-l1">出图模型</h2>
-              <span className="truncate text-micro text-l3">
-                Agent 画插图、示意图、封面时用；各家网关目录里的出图模型都能选，和上面的对话模型分开配
-              </span>
-            </div>
-            <div className="border-t border-hairline px-4 py-3">
-              <ImageGenPanel />
-            </div>
-          </section>
-        )}
+            长相与 Agent 分组一致、行与连接行同一列模板。编辑处只此一处，设置页只显示现状并跳过来 */}
+        {!q && <ImageGenPanel gridClass={PROFILE_GRID} sectionRef={imageGenRef} />}
       </PageFrame>
       {/* 连接冲突弹层：组头琥珀胶囊点出，列出具体文件/变量；只含文件名与变量名，密钥值不出后端 */}
       {conflictPop &&

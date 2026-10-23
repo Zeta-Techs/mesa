@@ -901,7 +901,7 @@ pub struct ImageGenTestDto {
     pub note: Option<String>,
 }
 
-/// 设置页「试出一张」：按表单里的网关 + 模型出一张，图只回前端预览、不落盘
+/// 连接页「试出与对比」：按网关 + 模型 + 用户写的描述出一张，图只回前端预览、不落盘（对比时前端并行调多次）
 #[tauri::command]
 pub async fn image_gen_test(
     gateway_id: String,

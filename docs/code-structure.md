@@ -83,8 +83,10 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   壳与标题栏/侧栏/缝透明，桌面磨砂从窗口底透上来；
                              #   顶栏帮助菜单（HELP_MENU：命令面板左侧 ? 钮，分组下拉，关闭范式同收件箱；首项「上手引导」）；
                              #   侧栏系统段上方「上手引导」行（useOnboardingRail，引导进行中才渲染，data-onboarding-anchor 供清单定位）
-  components/ImageGenPanel.tsx # 出图模型面板（连接页最下方「出图模型」一块，唯一编辑处；设置页只显示现状跳过来）：
-                             #   按网关分组选出图模型、试出一张、给已装 Agent 打开技能 image-gen；setImageGenModel 供连接行「改作出图模型」
+  components/ImageGenPanel.tsx # 出图模型一块（连接页最下方，唯一编辑处；设置页只显示现状跳过来）：组头 + 一行与连接行同列模板
+                             #   （gridClass 由连接页传入）；更换走 ImageModelPicker；「试出与对比」自写描述、1–4 个模型并行出图、
+                             #   估算进度条、「用这个」；最近用过 / 各模型耗时存 localStorage；setImageGenModel 供连接行「改作出图模型」
+  components/ImageModelPicker.tsx # 出图模型选择浮层：搜索 → 最近用过 → 推荐（各家最新）→ 按家族折叠；下方放不下翻到上方
   components/InternalSessionsCard.tsx # 设置「数据与存储」→ Mesa 内部对话：条数/体积/最早、自动清理开关、保留天数、立即清理
   components/InsertMenuItems.tsx # 「插入技能/MCP」菜单条目：运行页收缩行、标签栏 ✦（仅终端层）、聊天输入框 ＋ 三处共用（只画 <li>，浮层由调用方定位）
   components/ConversationView.tsx # 对话渲染（聊天层 / 对话页回放 / 项目对话预览共用）：气泡与正文、一轮过程收在「已工作 X 分 Y 秒」下，
@@ -526,6 +528,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   auto-load-older.ts         # 回放往上翻自动加载更早一页（useAutoLoadOlder：对话页 / 项目对话 / 聊天层共用；只认用户滚动，
                              # 不满一屏自动补页）+ wasPrepended（聊天层前插判定，最新窗后滑不算）
   model-history.ts           # 「这份连接能选哪些模型」：连接名单 + 按 Agent+连接记的手填历史；开聊前选择器、启动栏、模型芯片同源
+  image-models.ts            # 出图模型的家族归类、「最新在前」排序、各家推荐、耗时估算与进度（到结果前不满格）；纯逻辑
   model-kinds.ts             # 模型分类（出图/视频/向量/重排/语音/审核 = 不能对话）+ isImageGenModel；与 image_gen.rs 镜像，
                              #   两侧测试共读 tests/fixtures/model-kinds.json。连接目录面板隐藏、对话菜单置灰、启动栏过滤都用它
   tui-menu.ts                # 认屏上的 TUI 选择菜单（parseTuiMenu / menuAnswerKeys / sameTuiMenu / menuEchoesText）：切换命令后 5 秒、启动后 20 秒、

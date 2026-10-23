@@ -3587,7 +3587,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
               ? `Agent 画图用 ${settings.imageGenModel}`
               : "还没选：Agent 不能画图"
           }
-          labelTitle="插图、示意图、封面这类按描述画的图用它；在连接页最下方「出图模型」里选、试出一张、给 Agent 打开技能"
+          labelTitle="插图、示意图、封面这类按描述画的图用它；在连接页最下方「出图模型」里选、试出与对比、给 Agent 打开技能"
         >
           <button
             type="button"
