@@ -48,7 +48,7 @@ export function inlineDecisionLine(
   if (kind === "verify") {
     return state === "empty"
       ? "没有待核实或存疑条目，勾上跳过。"
-      : "接受留着，拒绝删掉，修改按你写的改。";
+      : "接受＝核过原文，去掉「待核实」保留这句；拒绝删掉这句；修改按你写的改，核不了就写怎么降级。";
   }
   return state === "empty"
     ? "审查报告还没写出来。"
@@ -212,11 +212,13 @@ export function reviewItemSummary(item: ReviewItem, kind: ReviewItemKind): strin
     .trim();
 }
 
-/** 点完后接回这一步原来的对话，让 Agent 按决定继续，不打开评审页。 */
+/** 点完后接回这一步原来的对话，让 Agent 按决定继续，不打开评审页。
+ *  待核实裁决在渲染之后才做（2026-10-24）：改完必须重渲、重出域稿、复核引用，否则交的是改之前的成稿；
+ *  「确认」= 人对过原文，去掉标记，不是连标记一起留着。 */
 export function continueAfterDecisionsPrompt(target: string, kind: ReviewItemKind): string {
   const file = target.trim();
   if (kind === "verify") {
-    return `manuscript 里的待核实清单 ${file} 已经逐条写上裁决。确认的保留；写了删除该论断的删掉对应句子；写了改正为的按依据改。没写裁决的不要动。改完继续这一步还没做完的事，不要停下来等我再点评审。`;
+    return `manuscript 里的待核实清单 ${file} 已经逐条写上裁决。写了确认的：人已对过原文，保留这句，句中的 [待核实] 标记删掉；写了删除该论断的：删掉对应句子（引用检查里的存疑条目删掉对应引用及只靠它撑的论断）；写了改正为的：按依据改，依据写明保留待核实的就留着标记。没写裁决的不要动。改完把稿件里实际剩余的 [待核实] 与清单对一遍，用本步骤 run 脚本重渲 PDF 和 Word，重新生成 output/endnote.docx 与 output/zotero.docx（LaTeX 稿不生成这两份），再按 bib-check 复核一次、结论追加进 citation-check.md，changelog 记下按裁决改了哪些句。然后继续这一步还没做完的事，不要停下来等我再点评审。`;
   }
   return `${file} 里每条都已经写了「决定：」。接受和要求修改的按报告改；拒绝的不改。数字、因果、样本、结论范围的改动写入 changelog 的「科学改动」。改完继续这一步还没做完的事，不要停下来等我再点评审。`;
 }

@@ -58,7 +58,8 @@ test("任务书减重不靠删阶段/门禁：共用摘要一次，格式适配�
   // 同日再改：综述拼图按论点取子图（笔记可引用图细到子图、大纲用图计划逐块列、初稿裁子图流程）。实测 review 27082、论文 36466、学位 34420。
   // 2026-10-24 初稿步加拼图块数按可读性、每块记来源生成 figures/sources.md 两句。实测 review 27303。
   // 同日再加：综述定稿步写换原图与转载许可清单一条。实测 review 27799。
-  const before: Record<string, number> = { review: 28000, "research-paper": 36600, "data-processing": 12900, thesis: 34600, "submission-rebuttal": 9100, "latex-paper": 14000 };
+  // 同日再加：综述定稿步写投稿声明空白模板一条（作者、基金、利益冲突、AI 使用声明由人填）。实测 review 28194。
+  const before: Record<string, number> = { review: 28400, "research-paper": 36600, "data-processing": 12900, thesis: 34600, "submission-rebuttal": 9100, "latex-paper": 14000 };
   for (const t of PIPELINE_TEMPLATES) {
     const tasks = md(t.id);
     assert.ok(tasks.reduce((n, s) => n+s.length, 0) < before[t.id], t.id);

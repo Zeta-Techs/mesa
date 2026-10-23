@@ -109,6 +109,21 @@ test("审查条目逐条点，点完最后一条也不自己跳去对话", async
     assert.equal(continued, 1);
     assert.match(saved, /R001[\s\S]*决定：接受/);
     assert.match(saved, /R002[\s\S]*决定：接受/);
+    // 待核实清单的「接受」= 人对过原文、去掉标记：不给一键全部接受
+    saved = "- V001 | 位置：manuscript/review-final.md:3 | 原文摘要：过电位 30 mV | 来源：[@a] | 裁决：待裁决 | 依据：\n";
+    await act(async () => {
+      root.render(
+        h(List, {
+          projectRoot: "/proj",
+          target: "manuscript/verification-decisions.md",
+          kind: "verify",
+          onAllDecided: () => {},
+        }),
+      );
+    });
+    assert.match(host.textContent ?? "", /V001/);
+    assert.match(host.textContent ?? "", /去掉「待核实」/);
+    assert.equal([...host.querySelectorAll("button")].some((button) => button.textContent === "全部接受"), false);
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

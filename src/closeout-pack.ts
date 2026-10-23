@@ -67,6 +67,8 @@ const CATALOG: CatalogItem[] = [
   { group: "checks", rel: "papers/endnote-cite-report.md", label: "EndNote 域稿报告" },
   { group: "checks", rel: "papers/zotero-cite-report.md", label: "Zotero 域稿报告" },
   { group: "checks", rel: "submission/target-journal.md", label: "目标期刊" },
+  { group: "checks", rel: "submission/figure-permissions.md", label: "换原图与转载许可清单" },
+  { group: "checks", rel: "submission/declarations.md", label: "投稿声明" },
   { group: "checks", rel: "manuscript/section-status.md", label: "章节状态" },
 ];
 

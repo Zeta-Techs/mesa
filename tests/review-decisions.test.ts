@@ -79,7 +79,10 @@ test("全部接受只给还没决定的条目写接受", () => {
 test("点完接回对话，不把人送去评审", () => {
   assert.match(continueAfterDecisionsPrompt("manuscript/review-report.md", "report"), /决定：/);
   assert.match(continueAfterDecisionsPrompt("manuscript/verification-decisions.md", "verify"), /删除该论断/);
+  // 裁决在渲染之后做：确认要去掉标记，改完要重渲、重出域稿（2026-10-24）
+  assert.match(continueAfterDecisionsPrompt("manuscript/verification-decisions.md", "verify"), /\[待核实\] 标记删掉/);
+  assert.match(continueAfterDecisionsPrompt("manuscript/verification-decisions.md", "verify"), /重渲 PDF 和 Word.*endnote\.docx/);
   assert.equal(isInlineDecisionTaskTitle("逐条决定审查报告"), true);
   assert.equal(isInlineDecisionTaskTitle("逐条裁决 [待核实] 与存疑条目"), true);
-  assert.equal(isInlineDecisionTaskTitle("换样式时打开域稿"), false);
+  assert.equal(isInlineDecisionTaskTitle("在 Word 里换样式（打开域稿）"), false);
 });

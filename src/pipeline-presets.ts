@@ -145,6 +145,19 @@ function figurePermissionTask(): HumanTaskDto {
   };
 }
 
+/** 综述流程到定稿就结束，后面没有投稿材料步：作者、单位、基金、利益冲突、AI 使用声明只能由作者本人填
+ *  （2026-10-24 HER 实证：初稿 author 写着待补，全流程没有一处提醒）。AI 只写空白模板，不代填。 */
+function declarationsTask(): HumanTaskDto {
+  return {
+    title: "填作者、单位与投稿声明",
+    guidance:
+      "投稿前由你填：作者、单位、通讯作者邮箱，以及 submission/declarations.md 里的基金、利益冲突、作者贡献和 AI 使用声明（AI 起了草稿的，核对后改定）。AI 不代填这些。填好回到这一步的对话说一声，AI 会把作者写进稿件开头、声明并进文末，再重渲。",
+    target: "submission/declarations.md",
+    timing: "after",
+    completion: "manual",
+  };
+}
+
 function reviewDecisionTask(target: string): HumanTaskDto {
   return {
     title: "逐条决定审查报告",
@@ -449,7 +462,8 @@ const REVIEW_STEPS: ProjectStepDto[] = [
       "5. 写 manuscript/verification-decisions.md：把 review-final.md 里每条 [待核实] 与 citation-check.md 里每条「疑似编造/元数据存疑」各列一行，格式 `- V001 | 位置：文件:行 | 原文摘要：…… | 来源：[@键] | 裁决：待裁决 | 依据：`。你只负责把清单列全、编号给上，**「裁决」与「依据」两栏一律留空或写「待裁决」，不得代填**——只有人能对照原始文献拍板。清单里的条数必须与稿子里实际剩余的 [待核实] 处数一致，漏列等于把未决项藏起来。\n" +
       "6. 用本步骤 run 脚本渲染 PDF/docx（按 {skill:quarto-render} 技能：人还没在流程线「更换引用样式」里换形式时，沿用初稿编号制渲，不因没选样式停渲）。正文字体沿用初稿 manuscript/typeface.md，不要另选字体，也不要重问。Word 套 manuscript/reference.docx：确认 YAML 的 format.docx 有 reference-doc 一行（初稿字体脚本写的，路径相对稿件所在目录；旧稿没有就补上）。同一次再生成 output/endnote.docx 与 output/zotero.docx。产物写入本工作区 output/（评审合并后进项目根）。\n" +
       "7. 拼图里的块是从别人论文 PDF 裁的，投稿前作者要换出版社原图、申请转载许可（只能作者本人申请）：按 {skill:review-figures} 跑 figure_permissions.py，写 submission/figure-permissions.md——每块的出版社、许可（Crossref 按 DOI 查）、要不要申请、去哪申请、图注出处写法、状态栏（「待申请」等人改）；没有拼图也写这份并注明无需申请。人把原图放进项目根 papers/figure-originals/ 回来说一声，就按 figures/sources.md 记的同一块从原图重裁（--pdf 给原图文件）、重拼、重渲。验收摘要⑤写还有几块待申请许可。\n" +
-      "完成标准：review-final.md 无语法硬伤、引用键全部可解析；citation-check.md 如实报告；verification-decisions.md 已列全、裁决栏为空等人填；figure-permissions.md 已列全每块拼图；核心支持性缺口未关闭时仅交待审稿，不标通过；changelog.md 已提交；run 脚本渲染通过。人未逐条裁决前，这一稿不得当定稿。\n" +
+      "8. 写 submission/declarations.md 空白模板，四节：基金、利益冲突、作者贡献（CRediT）、AI 使用声明，每节写「待填」；AI 使用声明可按本稿实际用到的 AI 工具与用途起一段草稿，标「待作者核对」。不得代填基金号、单位、作者贡献；review-final.md 的 author 保留待补。人填好回来说一声，就把作者、单位写进 YAML，声明并进 review-final.md 文末 Declarations 一节，重渲 PDF、Word 和两份域稿。\n" +
+      "完成标准：review-final.md 无语法硬伤、引用键全部可解析；citation-check.md 如实报告；verification-decisions.md 已列全、裁决栏为空等人填；figure-permissions.md 已列全每块拼图；declarations.md 模板已写、待填栏留给人；核心支持性缺口未关闭时仅交待审稿，不标通过；changelog.md 已提交；run 脚本渲染通过。人未逐条裁决前，这一稿不得当定稿。\n" +
       RELEASE_GATE + QUALITY_STATUS,
     expectedArtifacts: [
       "manuscript/review-report.md",
@@ -458,6 +472,7 @@ const REVIEW_STEPS: ProjectStepDto[] = [
       "manuscript/citation-check.md",
       "manuscript/verification-decisions.md",
       "submission/figure-permissions.md",
+      "submission/declarations.md",
       "output/review-final.pdf",
       "output/review-final.docx",
       "output/endnote.docx",
@@ -472,18 +487,20 @@ const REVIEW_STEPS: ProjectStepDto[] = [
       { name: "export-docx", command: "quarto render manuscript/review-final.md --to docx --output-dir ../output", default: true },
       { name: "render-final", command: "quarto render manuscript/review-final.md --to pdf --output-dir ../output", default: true },
     ],
+    // 顺序即做事顺序（2026-10-24）：先定内容（审查报告 → 待核实），再换样式，最后是投稿前的人工事项
     humanTasks: [
-      styleChoiceTask(),
       reviewDecisionTask("manuscript/review-report.md"),
       {
         title: "逐条裁决 [待核实] 与存疑条目",
         guidance:
-          "只处理定稿里还标着「待核实」的句子，以及引用检查里疑似编造、元数据存疑的条目。没有这些就勾上跳过。接受表示这句话先留着，拒绝删掉这句，修改按你写的说明改。",
+          "只处理定稿里还标着「待核实」的句子，以及引用检查里疑似编造、元数据存疑的条目，没有就勾上跳过。接受＝你对过原文、这句没问题：保留这句并去掉「待核实」；拒绝＝删掉这句；修改＝按你写的改。暂时核不了的（比如补充材料还没拿到）选修改，写「改成摘要级表述」或「保留待核实」。点完 AI 按裁决改稿，并重渲 PDF、Word 和两份域稿。",
         target: "manuscript/verification-decisions.md",
         timing: "after",
         completion: "decisions_cleared",
       },
+      styleChoiceTask(),
       figurePermissionTask(),
+      declarationsTask(),
     ],
   },
 ];
@@ -797,9 +814,9 @@ const RESEARCH_PAPER_STEPS: ProjectStepDto[] = [
     inputs: ["manuscript/draft.md", "manuscript/section-status.md", "manuscript/typeface.md", "manuscript/reference.docx", "manuscript/outline.md", "design.md", "analysis/results-table.md", "analysis/findings.md", "analysis/stats-check-results.md", "results/run-manifest.json", "notes/", "references.bib"],
     skills: ["bib-check", "stats-check", "quarto-render", "endnote-bridge", "zotero-sync"],
     humanTasks: [
+      reviewDecisionTask("manuscript/review-report.md"),
       styleChoiceTask(),
       endnoteSyncTask(),
-      reviewDecisionTask("manuscript/review-report.md"),
       {
         title: "核对 G5 证据就绪、作者信息与投稿目标",
         guidance:
@@ -1236,9 +1253,9 @@ const THESIS_STEPS: ProjectStepDto[] = [
     inputs: ["manuscript/thesis-draft.md", "manuscript/section-status.md", "manuscript/typeface.md", "manuscript/reference.docx", "chapters/results.md", "analysis/thesis-results-stats-check.md", "results/run-manifest.json", "notes/", "references.bib"],
     skills: ["bib-check", "quarto-render", "endnote-bridge", "zotero-sync"],
     humanTasks: [
+      reviewDecisionTask("manuscript/review-report.md"),
       styleChoiceTask(),
       endnoteSyncTask(),
-      reviewDecisionTask("manuscript/review-report.md"),
       {
         title: "按 G5 核验证据、送导师审阅并完成学校要求",
         guidance:
@@ -1332,13 +1349,13 @@ const SUBMISSION_INITIAL_STEPS: ProjectStepDto[] = [
         timing: "before",
         optional: true,
       },
-      styleChoiceTask(),
-      endnoteSyncTask(),
       {
         ...reviewDecisionTask("submission/review-report.md"),
         guidance:
           "报告写出来后，在这一行逐条点接受、拒绝或修改。点完会回到原来的对话，按决定继续改稿。改过数字或结论的，在 format-notes.md 能点到名。",
       },
+      styleChoiceTask(),
+      endnoteSyncTask(),
       {
         title: "拍板目标期刊、字数裁剪方案并补齐「待填」信息",
         guidance:
@@ -1442,12 +1459,12 @@ function submissionRevisionSteps(round: number): ProjectStepDto[] {
         { name: `render-revised-r${r}`, command: `quarto render manuscript/revised-r${r}.md --to pdf --output-dir ../output`, default: true },
       ],
       humanTasks: [
-        styleChoiceTask(),
-        endnoteSyncTask(),
         {
           ...reviewDecisionTask(`rebuttal/review-report-r${r}.md`),
           guidance: `报告写出来后，在这一行逐条点接受、拒绝或修改。点完会回到原来的对话。没有决定之前，科学改动不会进修订稿。`,
         },
+        styleChoiceTask(),
+        endnoteSyncTask(),
         {
           title: `保存第${r}轮审稿意见全文`,
           guidance: `把编辑来信/审稿意见保存为 reviews/round-${r}.md；缺该文件 agent 会停止`,

@@ -198,7 +198,7 @@ test("域稿说明含 EndNote 也不挂文献库同步，审查条目不交文�
     target: "",
   });
   assert.equal(stepNodeAction(humanNode(field), ctx({ runStatus: "review" })), null);
-  const merged = humanState({ title: "换样式时打开域稿", timing: "after", target: "" });
+  const merged = humanState({ title: "在 Word 里换样式（打开域稿）", timing: "after", target: "" });
   assert.equal(stepNodeAction(humanNode(merged), ctx({ runStatus: "done" })), null);
   const report = humanState({
     title: "逐条决定审查报告",

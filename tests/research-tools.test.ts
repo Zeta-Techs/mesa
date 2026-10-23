@@ -53,7 +53,7 @@ test("Blender 只挂研究设计/结构示意，不替代统计图；EndNote 交
   assert.ok(paperPolish.skills.includes("endnote-bridge"));
   assert.ok(paperPolish.expectedArtifacts.includes("output/endnote.docx"));
   assert.ok(paperPolish.expectedArtifacts.includes("papers/endnote-cite-report.md"));
-  assert.ok((paperPolish.humanTasks ?? []).some((h) => h.title === "换样式时打开域稿"));
+  assert.ok((paperPolish.humanTasks ?? []).some((h) => h.title === "在 Word 里换样式（打开域稿）"));
   assert.equal((paperPolish.humanTasks ?? []).some((h) => h.title.includes("EndNote")), true);
   assert.equal((paperPolish.humanTasks ?? []).filter((h) => h.title.includes("域稿")).length, 1);
   const reviewDraft = withResearchTools(template("review").steps.find((s) => s.workspaceName === "draft")!, tools);
@@ -85,7 +85,16 @@ test("定稿同时交 EndNote 与 Zotero 两份域稿，不看文献库选项", 
   assert.ok(plain.expectedArtifacts.includes("output/endnote.docx"));
   assert.ok(plain.expectedArtifacts.includes("output/zotero.docx"));
   assert.equal(plain.expectedArtifacts.includes("output/zotero.rtf"), false);
-  assert.ok(plain.humanTasks?.some((h) => h.title === "换样式时打开域稿"));
+  assert.ok(plain.humanTasks?.some((h) => h.title === "在 Word 里换样式（打开域稿）"));
+  // 2026-10-24：顺序即做事顺序——先定内容，再换样式（两种换法紧挨着），最后投稿前的人工事项
+  assert.deepEqual(plain.humanTasks?.map((h) => h.title), [
+    "逐条决定审查报告",
+    "逐条裁决 [待核实] 与存疑条目",
+    "更换引用样式",
+    "在 Word 里换样式（打开域稿）",
+    "换原图与申请转载许可",
+    "填作者、单位与投稿声明",
+  ]);
   assert.equal(plain.humanTasks?.some((h) => /打开 (EndNote|Zotero) 域稿/.test(h.title)), false);
   assert.equal(withResearchTools(notes, { ...DEFAULT_RESEARCH_TOOLS, libraryExport: "zotero" }).expectedArtifacts.includes("output/zotero.docx"), false);
   const notesEndnote = withResearchTools(notes, { ...DEFAULT_RESEARCH_TOOLS, libraryExport: "endnote" });

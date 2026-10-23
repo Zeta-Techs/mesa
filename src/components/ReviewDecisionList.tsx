@@ -169,6 +169,8 @@ export default function ReviewDecisionList({
       ) : (
         <>
           <p className="mb-1 text-micro leading-5 text-l4">{inlineDecisionLine(kind, "open")}</p>
+          {/* 待核实的「接受」= 人对过原文、AI 去掉标记：一键全部接受等于没核就全转正（2026-10-24） */}
+          {kind !== "verify" && (
           <button
             type="button"
             disabled={busy}
@@ -177,6 +179,7 @@ export default function ReviewDecisionList({
           >
             {acceptingAll ? "接受中…" : "全部接受"}
           </button>
+          )}
         <ul className="max-h-72 space-y-2 overflow-auto">
           {open.map((item) => {
             const draft = drafts[item.id] ?? "";
@@ -207,7 +210,7 @@ export default function ReviewDecisionList({
                     onChange={(event) =>
                       setDrafts((prev) => ({ ...prev, [item.id]: event.target.value }))
                     }
-                    placeholder="修改时写一句"
+                    placeholder={kind === "verify" ? "修改时写一句；核不了写「改成摘要级表述」或「保留待核实」" : "修改时写一句"}
                     className="min-w-0 flex-1 rounded-sm border border-field bg-canvas px-1.5 py-0.5 text-micro text-l2 outline-none placeholder:text-l4"
                   />
                 </div>
