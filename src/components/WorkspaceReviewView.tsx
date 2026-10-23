@@ -1087,6 +1087,16 @@ function LiveWorkspaceReviewView({
   const [deliveryFollowup, setDeliveryFollowup] = useState("");
   // 正在勾选 / 取消的那个非 Git 产物（逐个勾掉不带回，2026-10-22）
   const [deliverySkipBusy, setDeliverySkipBusy] = useState<string | null>(null);
+  // 非 Git 产物清单默认收成一行：十几项中间文件摊开会把下面的稿件挤没（2026-10-24 截图）
+  const [deliveryOpen, setDeliveryOpen] = useState(false);
+
+  /** 「只带流程要用的」：其余能勾的一次性勾掉（AI 过程中留的截图、预览、调试输出）。后端一次只认一个文件 */
+  async function keepRequiredOnly(paths: string[]) {
+    for (const path of paths) {
+      await toggleDeliverySkip(path, true);
+      if (deliveryReviewRef.current?.files.find((f) => f.path === path)?.disposition !== "skipped") break;
+    }
+  }
 
   async function toggleDeliverySkip(path: string, skip: boolean) {
     const review = deliveryReviewRef.current;
@@ -2675,7 +2685,16 @@ function LiveWorkspaceReviewView({
             (humanClosing && humanClosing.length > 0)) && (
             <div className="border-t border-hairline px-3 py-1.5 text-xs">
               <div className="flex min-h-6 items-center gap-3">
-                <span className="shrink-0 text-l4" title="仅检查引用键和产物；不验证内容正确性或结论是否成立">基础检查</span>
+                <span
+                  className="shrink-0 cursor-help text-l4"
+                  title={
+                    reviewProfile.showReportDisclaimer
+                      ? "只查引用键能不能解析、产物有没有产出。文件已产出、引用键可解析不代表内容已通过审查；接受改动前仍须核对证据与未决事项"
+                      : "仅检查引用键和产物；不验证内容正确性或结论是否成立"
+                  }
+                >
+                  基础检查 ⓘ
+                </span>
                 {citations && citations.bibFound && citations.totalRefs > 0 && (
                   <button
                     type="button"
@@ -2724,8 +2743,18 @@ function LiveWorkspaceReviewView({
                     审阅时核对：{writingHits.map((hit) => hit.label).join("；")}
                   </span>
                 )}
+                {contentReview && !mergeDone && !notesOpen && !reviewNotes.trim() && (
+                  <button
+                    type="button"
+                    onClick={() => setNotesOpen(true)}
+                    className={`${paneTabs ? "ml-auto" : ""} shrink-0 rounded-sm px-1 py-0.5 text-l3 hover:bg-hover hover:text-l1`}
+                    title="写下意见退回给 Agent 改，或按意见整份重写；也可以在稿件里划一段点「加进意见」。不会保存进项目"
+                  >
+                    写意见退回修改…
+                  </button>
+                )}
                 {contentReview && paneTabs && (
-                  <div className="ml-auto flex shrink-0 gap-1">
+                  <div className={`${!mergeDone && !notesOpen && !reviewNotes.trim() ? "" : "ml-auto"} flex shrink-0 gap-1`}>
                     {paneTabs.map((tab) => (
                       <button
                         key={tab.id}
@@ -2743,26 +2772,10 @@ function LiveWorkspaceReviewView({
                   </div>
                 )}
               </div>
-              {reviewProfile.showReportDisclaimer && (
-              <p className="mt-1 text-micro text-l4">文件已产出、引用键可解析不代表内容已通过审查；接受改动前仍须核对证据与未决事项。</p>
-              )}
               {citeExpanded && citations && citations.missing.length > 0 && (
                 <p className="mt-1 break-all font-mono text-micro text-warn-text">
                   缺失引用键：{citations.missing.join("、")}
                 </p>
-              )}
-              {contentReview && !mergeDone && !notesOpen && !reviewNotes.trim() && (
-                <div className="mt-1.5 flex items-center gap-2 border-t border-hairline pt-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setNotesOpen(true)}
-                    className="rounded-sm px-1 py-0.5 text-l3 hover:bg-hover hover:text-l1"
-                    title="写下意见退回给 Agent 改，或按意见整份重写。不会保存进项目"
-                  >
-                    写意见退回修改…
-                  </button>
-                  <span className="text-micro text-l4">也可以在稿件里划一段点「加进意见」</span>
-                </div>
               )}
               {contentReview && !mergeDone && (notesOpen || reviewNotes.trim() !== "") && (
                 <div className="mt-2 border-t border-hairline pt-2">
@@ -2874,23 +2887,50 @@ function LiveWorkspaceReviewView({
           验收（acceptance）本来没有页签、整页显示，这次重构才给它加了「结果/过程/文件」——
           若按 showGitFiles 走，它会在打开时的「结果」页签上凭空消失，
           而「保存进项目」按钮在顶栏、每个页签都在，清单不该跟着页签隐掉。 */}
-      {!diff?.reviewOnly && (showGitFiles || !paneTabs || reviewProfile.kind === "acceptance") && deliveryFiles.length > 0 && <section aria-label="非 Git 产物评审" className="max-h-48 shrink-0 overflow-auto border-b border-hairline px-3 py-2 text-xs">
-        {/* 说明句收进 ⓘ：常驻一整行灰字压在清单上方（2026-10-22 截图） */}
-        <h3 className="flex items-center gap-1.5 font-medium text-l2">
-          非 Git 产物 · {(() => {
-            const skipped = deliveryFiles.filter((f) => f.disposition === "skipped").length;
-            return skipped > 0
-              ? `带回 ${deliveryFiles.length - skipped} / ${deliveryFiles.length} 项`
-              : `${deliveryFiles.length} 项`;
-          })()}
-          <span
-            className="cursor-help font-normal text-l4"
-            title="保存进项目只带回勾着的这版固定副本；勾掉的留在工作区、不进项目，归档时随工作区清掉。看过后内容变化会要求重看；同名冲突不覆盖。"
-          >
-            ⓘ
-          </span>
-        </h3>
-        <ul className="mt-0.5">{deliveryFiles.map((file) => {
+      {!diff?.reviewOnly && (showGitFiles || !paneTabs || reviewProfile.kind === "acceptance") && deliveryFiles.length > 0 && <section aria-label="非 Git 产物评审" className={`${deliveryOpen ? "max-h-48 overflow-auto" : ""} shrink-0 border-b border-hairline px-3 py-1.5 text-xs`}>
+        {/* 2026-10-24 用户：这一块占地方，而且不懂编程的人不知道该带什么。默认收成一行摘要；
+            展开后「流程要用」的锁定带回，其余是 AI 过程中留的文件，给一句白话和「只带流程要用的」 */}
+        {(() => {
+          const kept = deliveryFiles.filter((f) => f.disposition === "copy");
+          const required = kept.filter((f) => f.required);
+          const optional = deliveryFiles.filter((f) => (f.disposition === "copy" || f.disposition === "skipped") && !f.required);
+          const optionalKept = optional.filter((f) => f.disposition === "copy");
+          return (
+            <div className="flex min-h-6 items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setDeliveryOpen((v) => !v)}
+                aria-expanded={deliveryOpen}
+                className="flex min-w-0 items-center gap-1.5 rounded-sm text-left text-l2 hover:text-l1"
+                title="Git 管不到的文件（PDF、Word、图片等）。保存进项目只带回勾着的那些；勾掉的留在工作区，归档时随工作区清掉"
+              >
+                <span aria-hidden="true" className="text-l4">{deliveryOpen ? "▾" : "▸"}</span>
+                <span className="font-medium">附带文件</span>
+                <span className="truncate text-l3">
+                  带回 {kept.length} / {deliveryFiles.length} 项
+                  {required.length > 0 && `（流程要用 ${required.length} 项）`}
+                </span>
+              </button>
+              {optionalKept.length > 0 && (
+                <button
+                  type="button"
+                  disabled={deliverySkipBusy !== null || busy}
+                  onClick={() => void keepRequiredOnly(optionalKept.map((f) => f.path))}
+                  className="ml-auto shrink-0 rounded-sm px-1.5 py-0.5 text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50"
+                  title="其余是 AI 干活时留下的截图、预览、中间结果，不带回也不影响下一步；勾掉的留在工作区，想要再勾回来"
+                >
+                  只带流程要用的
+                </button>
+              )}
+            </div>
+          );
+        })()}
+        {deliveryOpen && deliveryFiles.some((f) => !f.required && (f.disposition === "copy" || f.disposition === "skipped")) && (
+          <p className="mt-0.5 text-micro text-l4">
+            没标「流程要用」的是 AI 干活时留下的文件（截图、预览、中间结果），不带回也不影响下一步；拿不准就留着勾。
+          </p>
+        )}
+        {deliveryOpen && <ul className="mt-0.5">{[...deliveryFiles].sort((a, b) => Number(!!b.required) - Number(!!a.required)).map((file) => {
           // 只有「带回 / 不带回」两态能勾；同名冲突、保护路径等本来就不带回，不给框；
           // 流程要用的（这一步的预期产物、papers/ 文献资料）锁定勾上（后端同样拒绝勾掉）
           const choosable = (file.disposition === "copy" || file.disposition === "skipped") && !file.required;
@@ -2925,7 +2965,7 @@ function LiveWorkspaceReviewView({
             {file.disposition === "copy" ? formatDeliverySize(file.size) : file.disposition === "skipped" ? "不带回" : file.disposition === "conflict" ? "同名存在，不覆盖" : file.disposition === "protected" ? "保护路径跳过" : file.disposition === "too_large" ? "超出冻结预算" : "随 Git 提交"}
           </span>
         </li>;
-        })}</ul>
+        })}</ul>}
       </section>}
       {deliveryPreview && deliveryReview && <Suspense fallback={<p className="px-3 py-2 text-xs text-l3">加载固定副本预览…</p>}><OfficePreviewModal path={`${deliveryReview.payloadDir}/${deliveryPreview}`} root={deliveryReview.payloadDir} onClose={() => setDeliveryPreview(null)} /></Suspense>}
       {!diff?.reviewOnly && researchError && <p role="alert" className="px-3 py-2 text-xs text-err-text">{researchError}</p>}
