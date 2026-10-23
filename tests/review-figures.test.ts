@@ -109,3 +109,31 @@ test("裁子图：--erase 只许角上的小框；--page 只配 --grid / --box�
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// 2026-10-24 用户：系统综述一段论述可能拼 9 块。块数不设死上限，按印出来读不读得清卡
+const assemble = resolve("src-tauri/resources/skills/review-figures/scripts/assemble_panels.py");
+
+test("拼板：9 块排 3×3 照常出图；一行挤太多、单栏放 3 块读不清就拒绝", { skip: !ready }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "mesa-asm-"));
+  try {
+    const panel = join(dir, "p.png");
+    const made = spawnSync(python, ["-c", "import sys; from PIL import Image; Image.new('RGB', (600, 450), (200, 60, 60)).save(sys.argv[1])", panel], { encoding: "utf8" });
+    assert.equal(made.status, 0, made.stderr);
+    const row = (n: number) => Array(n).fill(panel).join(" ");
+    const go = (args: string[]) =>
+      spawnSync(python, [assemble, "--out", join(dir, "out.png"), ...args], { encoding: "utf8", env: { ...process.env, PYTHONIOENCODING: "utf-8" } });
+    let r = go(["--width-cm", "17", "--rows", row(3), row(3), row(3)]);
+    assert.equal(r.status, 0, r.stderr);
+    r = go(["--width-cm", "17", "--rows", row(5), row(4)]);
+    assert.equal(r.status, 3);
+    assert.match(r.stderr, /不到 3\.5 cm 宽/);
+    r = go(["--width-cm", "8.5", "--inputs", panel, panel, panel]);
+    assert.equal(r.status, 3);
+    // 太高：整宽的块一行一块竖排三块，整张超过一页
+    r = go(["--width-cm", "17", "--rows", panel, panel, panel]);
+    assert.equal(r.status, 3);
+    assert.match(r.stderr, /超过一页/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
