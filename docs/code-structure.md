@@ -725,7 +725,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   portal 到 body 同活动面板）+ 搜对话…；活动胶囊管「谁在跑」，这里管「切到哪段」
   components/RailPeek.tsx    # 探出整栏（2026-10-24 A+E）：图标态 / 完全隐藏时把同一棵 ProjectTree 盖在内容上滑出（App 挂、store.railPeekOpen）；
                              #   去了别处（换页 / 换正看着的标签 / 选项目）、鼠标离开、Esc、点外面收；开着菜单或在改名时离开不收；useRailPeekTrigger 管悬停触发
-                             #   （图标栏中段空白 0.12 秒、隐藏态左边缘 8px 0.32 秒），⌘0 也开。ProjectTree 的 focusRailReq 只认挂载后的新请求，探出层挂上不抢焦点
+                             #   （图标栏中段空白 0.12 秒、隐藏态左边缘 8px 0.32 秒），⌘0 也开。ProjectTree 的 focusRailReq 只认挂载后的新请求，探出层挂上不抢焦点；
+                             #   动画是 data-shown 驱动的 CSS 过渡（App.css .ccode-rail-peek，可半路改向），收起由 App 的 useExitRender(180) 多挂一会儿
   nav-capsule.ts             # 侧栏可配置胶囊入口（恢复侧栏始终保留，不在此列）
   components/WindowControls.tsx # Windows 自绘窗口按钮（最小化/最大化-还原/关闭，46px 宽、关闭悬停红）；仅 Windows 渲染，
                              #   App 标题栏与 ReaderOverlay 顶栏（盖住标题栏）各挂一份；对应 Rust lib.rs setup 的 set_decorations(false)

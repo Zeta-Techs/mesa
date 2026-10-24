@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useAppStore } from "../store";
 
@@ -13,9 +13,12 @@ const TRIGGER_LEAVE = "ccode-rail-peek-trigger-leave";
 export function RailPeek({
   left,
   width,
+  closing = false,
   onClose,
   children,
 }: {
+  /** 正在播收起（App 用 useExitRender 多挂一会儿）：这时不接鼠标，样式退回藏着的位置 */
+  closing?: boolean;
   /** 相对所在行容器的左边距（图标栏右边 / 窗口左边） */
   left: number;
   width: number;
@@ -23,6 +26,13 @@ export function RailPeek({
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  // 动画用过渡不用关键帧（2026-10-24 用户：「弹出和收起的动画丝滑一点」）：挂上那一帧先停在藏着的位置，
+  // 下一帧再翻到 shown，过渡才有起点；收起时翻回去。过渡可以半路改向，滑出一半又被叫回不会跳
+  const [entered, setEntered] = useState(false);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => requestAnimationFrame(() => setEntered(true)));
+    return () => cancelAnimationFrame(id);
+  }, []);
   const pointerInside = useRef(false);
   const timer = useRef<number | null>(null);
   const onCloseRef = useRef(onClose);
@@ -102,6 +112,8 @@ export function RailPeek({
       role="navigation"
       aria-label="项目与对话"
       style={{ left, width }}
+      data-shown={entered && !closing ? "true" : undefined}
+      aria-hidden={closing || undefined}
       onMouseEnter={() => {
         pointerInside.current = true;
         clearTimer();
@@ -110,7 +122,7 @@ export function RailPeek({
         pointerInside.current = false;
         closeLater();
       }}
-      className="ccode-rail-peek ccode-float-surface ccode-sheet-left absolute bottom-[5px] top-0 z-30 flex min-h-0 flex-col overflow-hidden rounded-lg border border-field pt-2"
+      className="ccode-rail-peek ccode-float-surface absolute bottom-[5px] top-0 z-30 flex min-h-0 flex-col overflow-hidden rounded-lg border border-field pt-2"
     >
       {children}
     </div>

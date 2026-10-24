@@ -87,6 +87,7 @@ import { RunActivityButton } from "./components/RunActivity";
 import { shellContextPlacement, shellMode } from "./shell-context";
 import RunCaret from "./components/RunCaret";
 import { RailPeek, useRailPeekTrigger } from "./components/RailPeek";
+import { useExitRender } from "./exit-animation";
 import { normalizeNavCapsuleDelay, resolveStartupNavMode } from "./nav-capsule";
 import { chromeOpacityScale } from "./chrome-opacity";
 import {
@@ -566,6 +567,8 @@ function App() {
   const railPeekOpen = useAppStore((s) => s.railPeekOpen);
   const setRailPeekOpen = useAppStore((s) => s.setRailPeekOpen);
   const peekVisible = railPeekOpen && (collapsed || chromeHidden);
+  // 收起也要有动画：关掉后再挂 180ms 播退场（重开会接着从当前位置滑回来，见 RailPeek / App.css .ccode-rail-peek）
+  const peekRender = useExitRender(peekVisible, 180);
   // 图标栏中段 0.12 秒（2026-10-24 用户两次「再快一点」：0.32 → 0.2 → 0.12）；完全隐藏时的左边缘留 0.32 秒——鼠标常往窗口左边甩，太快会误弹
   const peekTrigger = useRailPeekTrigger(120);
   const peekEdgeTrigger = useRailPeekTrigger(320);
@@ -1673,8 +1676,9 @@ function App() {
             {chromeHidden && (
               <div {...peekEdgeTrigger} aria-hidden="true" className="absolute bottom-0 left-0 top-0 z-20 w-2" />
             )}
-            {peekVisible && (
+            {peekRender.render && (
               <RailPeek
+                closing={peekRender.exiting}
                 // 图标态贴着图标栏右边（行容器左内边距 5 + 图标栏宽 + 间隙 5）；完全隐藏时贴窗口左边。宽度同展开侧栏
                 left={chromeHidden ? 5 : 5 + (railRef.current?.offsetWidth ?? 49) + 5}
                 width={railWidth}

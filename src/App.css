@@ -2263,9 +2263,40 @@ select:focus-visible {
 
 /* 探出整栏（RailPeek，2026-10-24）：同一棵项目树盖在内容上，所以不能用侧栏的半透明罩色——实心 rail2 底，
    选中胶囊用实心 rail-sel（不乘透明度系数），字号、选中左条与侧栏同一套（上面几条并列了 .ccode-rail-peek）。
-   入场用 ccode-sheet-left 从左滑进；浮层外壳的描边与内高光沿用 .ccode-float-surface */
+   浮层外壳的描边与内高光沿用 .ccode-float-surface，但不要它的 pop 关键帧。
+
+   动画（2026-10-24 用户：「弹出和收起的动画丝滑一点」）：用过渡、不用关键帧，滑出一半被叫回能半路改向不跳。
+   藏着 = 往左 16px + 透明；data-shown 时归位。进场位移 260ms 快起慢落（easeOutQuint：一出手就动、轻轻停住；
+   试过 --ccode-motion-spring，起步太慢，前 80ms 只挪 1.5px，看着像顿了一下），透明度 160ms 先到（先看见再落定）；
+   退场是同一条路反着走，但更短、先慢后快（180ms，cubic-bezier(0.4,0,1,1) 加速离开），和 App 里 useExitRender(180) 对齐。
+   transform 只是平移，不缩放——树里的字不会糊 */
 .ccode-rail-peek {
   background-color: var(--color-rail2);
+  animation: none;
+  opacity: 0;
+  transform: translateX(-16px);
+  transition:
+    opacity 140ms cubic-bezier(0.4, 0, 1, 1),
+    transform 180ms cubic-bezier(0.4, 0, 1, 1);
+  will-change: transform, opacity;
+}
+/* 还没滑到位、正在收起时不接鼠标：收起途中指针扫过不会把它叫住 */
+.ccode-rail-peek:not([data-shown]) {
+  pointer-events: none;
+}
+.ccode-rail-peek[data-shown="true"] {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity 160ms var(--ccode-motion-ease),
+    transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ccode-rail-peek,
+  .ccode-rail-peek[data-shown="true"] {
+    transform: none;
+    transition: opacity 100ms linear;
+  }
 }
 .ccode-rail-peek .bg-rail-sel {
   background-color: var(--color-rail-sel);
