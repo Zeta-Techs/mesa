@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { ExternalLink } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "../store";
 import { IS_WINDOWS } from "../hotkeys";
@@ -9,6 +10,7 @@ import FileTypeMark from "./FileTypeMark";
 import type { DirEntryDto } from "./FileTree";
 import {
   closeoutFigureCards,
+  closeoutHint,
   closeoutNoteRows,
   groupCloseoutFiles,
   FIELD_DOC_HINT,
@@ -138,13 +140,17 @@ export default function CloseoutPack({
   const fileCount = groups.reduce((sum, group) => sum + group.files.length, 0);
   if (groups.length === 0) return <p className="text-xs text-l4">完结文件 · 定稿还没写出来</p>;
 
+  function openExternal(file: CloseoutFile) {
+    const roots = [projectRoot, ...worktrees];
+    const root = roots.find((r) => pathWithin(file.abs, r, IS_WINDOWS)) ?? projectRoot;
+    setOpenError(null);
+    void invoke("open_in_system", { path: file.abs, root }).catch((reason) => setOpenError(String(reason)));
+  }
+
   function openFile(file: CloseoutFile) {
     if (isCloseoutFieldDoc(file.rel)) {
       // 域稿交给系统里的 Word（Mesa 的预览跑不了 EndNote / Zotero 插件）
-      const roots = [projectRoot, ...worktrees];
-      const root = roots.find((r) => pathWithin(file.abs, r, IS_WINDOWS)) ?? projectRoot;
-      setOpenError(null);
-      void invoke("open_in_system", { path: file.abs, root }).catch((reason) => setOpenError(String(reason)));
+      openExternal(file);
       return;
     }
     setFilePreviewReq({ projectRoot, path: file.abs, token: Date.now() });
@@ -169,15 +175,50 @@ export default function CloseoutPack({
       >
         <span className="text-micro text-l4">{packOpen ? "▾" : "▸"}</span>
         完结文件
-        <span className="text-micro text-l4">{finals.length > 0 ? `${finals.length} 份最终稿` : fileCount}</span>
+        <span className="text-micro text-l4">
+          {finals.length > 0 ? `${finals.length} 份最终稿 · 共 ${fileCount} 份` : `${fileCount} 份`}
+        </span>
       </button>
       {packOpen && (
     <div className="mt-2 space-y-2.5">
       {finals.length > 0 && (
-        <FileSection label="最终稿" files={finals} onOpen={openFile} />
-      )}
-      {finals.some((file) => isCloseoutFieldDoc(file.rel)) && (
-        <p className="px-1 text-micro leading-5 text-l4">{FIELD_DOC_HINT}</p>
+        <section>
+          <h3 className="px-1 pb-1 text-micro text-l4">最终稿</h3>
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-1.5">
+            {finals.map((file) => {
+              const fieldDoc = isCloseoutFieldDoc(file.rel);
+              return (
+                <div key={file.rel} className="group flex items-center rounded-md bg-inset hover:bg-hover">
+                  <button
+                    type="button"
+                    onClick={() => openFile(file)}
+                    title={fieldDoc ? FIELD_DOC_HINT : file.rel}
+                    className="flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pl-1.5 text-left"
+                  >
+                    <FileTypeMark path={file.name} />
+                    <span className="min-w-0">
+                      <span className="block truncate text-xs text-l1">{file.label}</span>
+                      {closeoutHint(file.rel) && (
+                        <span className="block truncate text-micro text-l4">{closeoutHint(file.rel)}</span>
+                      )}
+                    </span>
+                  </button>
+                  {!fieldDoc && (
+                    <button
+                      type="button"
+                      onClick={() => openExternal(file)}
+                      title="用系统默认应用打开（PDF 阅读器、Word）"
+                      aria-label={`用系统应用打开 ${file.label}`}
+                      className="mr-1 flex size-6 shrink-0 items-center justify-center rounded-sm text-l4 opacity-0 hover:bg-hover hover:text-l2 focus:opacity-100 group-hover:opacity-100"
+                    >
+                      <ExternalLink size={13} strokeWidth={1.8} aria-hidden="true" />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
       )}
       {openError && <p className="px-1 text-micro text-err-text">{openError}</p>}
       {LINE_GROUPS.map(({ id, label }) => {
@@ -261,33 +302,33 @@ export default function CloseoutPack({
   );
 }
 
+/** 过程文件：一行一份，名字后面跟一句用途，多列按格对齐（原先一排胶囊挤着换行，看不出哪份做什么） */
 function FileSection({
-  label,
   files,
   onOpen,
 }: {
-  label?: string;
   files: readonly CloseoutFile[];
   onOpen: (file: CloseoutFile) => void;
 }) {
   return (
-    <section>
-      {label && <h3 className="px-1 pt-1 text-micro text-l4">{label}</h3>}
-      <div className="flex flex-wrap gap-1">
-        {files.map((file) => (
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-x-3">
+      {files.map((file) => {
+        const hint = closeoutHint(file.rel);
+        return (
           <button
             key={file.rel}
             type="button"
             title={file.rel}
             onClick={() => onOpen(file)}
-            className="inline-flex h-7 max-w-full items-center gap-1.5 rounded-md px-1.5 text-xs text-l2 hover:bg-hover hover:text-l1"
+            className="flex h-7 min-w-0 items-center gap-1.5 rounded-md px-1 text-left text-xs hover:bg-hover"
           >
             <FileTypeMark path={file.name} />
-            <span className="truncate">{file.label}</span>
+            <span className="shrink-0 text-l2">{file.label}</span>
+            {hint && <span className="min-w-0 truncate text-micro text-l4">{hint}</span>}
           </button>
-        ))}
-      </div>
-    </section>
+        );
+      })}
+    </div>
   );
 }
 
