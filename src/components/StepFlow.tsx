@@ -735,6 +735,10 @@ export default function StepFlow({
   /** 人指定的 EndNote 库（papers/endnote-library.path 那一行）。undefined = 还没读；null = 没指定 */
   const [endnoteLib, setEndnoteLib] = useState<{ path: string | null; revision: string } | undefined>(undefined);
   const [endnoteLibNote, setEndnoteLibNote] = useState<string | null>(null);
+  /** 「选这个 EndNote 库」展开的候选：EndNote 最近打开过的库，加文稿 / 桌面里的 .enl */
+  const [endnoteChoices, setEndnoteChoices] = useState<
+    { path: string; name: string; recent: boolean }[] | null
+  >(null);
   const [endnoteChecked, setEndnoteChecked] = useState(false);
   const [continueNotesChecked, setContinueNotesChecked] = useState(false);
   const [toFetchBusy, setToFetchBusy] = useState<
@@ -1010,13 +1014,36 @@ export default function StepFlow({
     };
   }, [projectPath, endnoteStep]);
 
+  /** 先列 EndNote 最近打开过的库让人点一个（文件对话框里 .enl 旁边有同名 .Data 文件夹，容易点进文件夹）；
+   *  一个都没找到才直接开对话框 */
   async function pickEndnoteLibrary() {
     setEndnoteLibNote(null);
+    if (endnoteChoices) {
+      setEndnoteChoices(null);
+      return;
+    }
+    const found = await invoke<{ path: string; name: string; recent: boolean }[]>(
+      "endnote_library_choices",
+    ).catch(() => []);
+    if (found.length > 0) {
+      setEndnoteChoices(found);
+      return;
+    }
+    await browseEndnoteLibrary();
+  }
+
+  async function browseEndnoteLibrary() {
     const selected = await openFileDialog({
       multiple: false,
+      title: "选 EndNote 库：选 .enl 文件，不是旁边同名的 .Data 文件夹",
       filters: [{ name: "EndNote 库", extensions: ["enl"] }],
     });
     if (!selected || typeof selected !== "string") return;
+    await saveEndnoteLibrary(selected);
+  }
+
+  async function saveEndnoteLibrary(selected: string) {
+    setEndnoteLibNote(null);
     try {
       const revision = await invoke<string>("save_file_preview", {
         path: `${projectPath.replace(/[\\/]+$/, "")}/papers/endnote-library.path`,
@@ -1025,6 +1052,7 @@ export default function StepFlow({
         expectedRevision: endnoteLib?.revision ?? "new",
       });
       setEndnoteLib({ path: selected, revision });
+      setEndnoteChoices(null);
     } catch (e) {
       setEndnoteLibNote(String(e));
     }
@@ -2360,6 +2388,33 @@ export default function StepFlow({
             )}
             {endnoteLibNote && <span className="ml-1 text-err-text">{endnoteLibNote}</span>}
           </p>
+        )}
+        {!dense && node.key === "endnote-export" && endnoteChoices && (
+          <div className="mt-1 ml-9 flex flex-wrap items-center gap-1">
+            <span className="text-micro text-l4">选你导入题录的那个库：</span>
+            {endnoteChoices.map((choice) => (
+              <button
+                key={choice.path}
+                type="button"
+                onClick={() => void saveEndnoteLibrary(choice.path)}
+                title={choice.path}
+                className="rounded-sm bg-inset px-1.5 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1"
+              >
+                {choice.name}
+                <span className="ml-1 text-micro text-l4">
+                  {choice.path.split(/[\\/]/).slice(-2, -1)[0]}
+                  {choice.recent ? " · 最近打开" : ""}
+                </span>
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => void browseEndnoteLibrary()}
+              className="rounded-sm px-1.5 py-0.5 text-xs text-l3 hover:bg-hover hover:text-l1"
+            >
+              从别处选…
+            </button>
+          </div>
         )}
         {node.kind === "input" && node.key.startsWith("tool:") && onSetResearchTool && tools && (
           <div className="ml-9 mt-2.5">

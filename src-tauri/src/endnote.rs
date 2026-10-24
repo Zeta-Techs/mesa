@@ -620,6 +620,122 @@ fn find_import_ris(project_root: &Path) -> Option<PathBuf> {
     found.into_iter().next().map(|(_, path)| path)
 }
 
+/// 「选这个 EndNote 库」的候选：EndNote 最近打开过的库（Windows 读它自己的
+/// `HKCU\Software\ISI ResearchSoft\EndNote\Recent Libraries\File1…`，File1 最近），再补上文稿 / 桌面
+/// 顶层与「文稿/EndNote」里的 .enl。只列给人点，不替人挑；不深扫磁盘（2026-10-24 用户：点了是打开文件夹，
+/// 不知道选哪个——文件对话框里 .enl 旁边还有同名的 .Data 文件夹，很容易点错）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EndnoteLibraryChoice {
+    pub path: String,
+    pub name: String,
+    /// 来自 EndNote 最近打开的库
+    pub recent: bool,
+}
+
+#[tauri::command]
+pub async fn endnote_library_choices() -> Result<Vec<EndnoteLibraryChoice>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let mut dirs_to_look = Vec::new();
+        for base in [dirs::document_dir(), dirs::desktop_dir()].into_iter().flatten() {
+            dirs_to_look.push(base.join("EndNote"));
+            dirs_to_look.push(base);
+        }
+        Ok(library_choices(recent_library_paths(), &dirs_to_look))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn library_choices(recent: Vec<String>, dirs_to_look: &[PathBuf]) -> Vec<EndnoteLibraryChoice> {
+    let mut out: Vec<EndnoteLibraryChoice> = Vec::new();
+    let mut push = |path: PathBuf, recent: bool| {
+        if !path.is_file()
+            || !path
+                .extension()
+                .is_some_and(|e| e.to_string_lossy().eq_ignore_ascii_case("enl"))
+        {
+            return;
+        }
+        let shown = crate::paths::strip_verbatim(path.clone())
+            .to_string_lossy()
+            .into_owned();
+        if out.iter().any(|c| crate::paths::same_path(&c.path, &shown)) {
+            return;
+        }
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        out.push(EndnoteLibraryChoice { path: shown, name, recent });
+    };
+    for raw in recent {
+        push(PathBuf::from(raw.trim()), true);
+    }
+    for dir in dirs_to_look {
+        let Ok(entries) = std::fs::read_dir(dir) else { continue };
+        let mut found: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+        found.sort();
+        for path in found {
+            push(path, false);
+        }
+    }
+    out
+}
+
+#[cfg(windows)]
+fn recent_library_paths() -> Vec<String> {
+    use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ};
+    let key: Vec<u16> = "Software\\ISI ResearchSoft\\EndNote\\Recent Libraries"
+        .encode_utf16()
+        .chain([0])
+        .collect();
+    (1..=20)
+        .filter_map(|i| {
+            let name: Vec<u16> = format!("File{i}").encode_utf16().chain([0]).collect();
+            let mut size: u32 = 0;
+            // 先问长度再取值；REG_SZ 按 UTF-16 读，中文路径不走控制台代码页（reg query 会出乱码）
+            let rc = unsafe {
+                RegGetValueW(
+                    HKEY_CURRENT_USER,
+                    key.as_ptr(),
+                    name.as_ptr(),
+                    RRF_RT_REG_SZ,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    &mut size,
+                )
+            };
+            if rc != 0 || size < 2 {
+                return None;
+            }
+            let mut buf = vec![0u16; (size as usize).div_ceil(2)];
+            let rc = unsafe {
+                RegGetValueW(
+                    HKEY_CURRENT_USER,
+                    key.as_ptr(),
+                    name.as_ptr(),
+                    RRF_RT_REG_SZ,
+                    std::ptr::null_mut(),
+                    buf.as_mut_ptr().cast(),
+                    &mut size,
+                )
+            };
+            if rc != 0 {
+                return None;
+            }
+            let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+            Some(String::from_utf16_lossy(&buf[..len]))
+        })
+        .collect()
+}
+
+/// macOS / Linux 没有登记表可读：只靠文稿 / 桌面里的 .enl，读不到就让人在对话框里选
+#[cfg(not(windows))]
+fn recent_library_paths() -> Vec<String> {
+    Vec::new()
+}
+
 #[tauri::command]
 pub async fn endnote_export_xml(project_root: String) -> Result<String, String> {
     // 转换和打开 EndNote 都在后台线程，不占界面。
@@ -664,6 +780,25 @@ pub async fn endnote_export_xml(project_root: String) -> Result<String, String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn library_choices_list_recent_first_then_folders_without_duplicates_or_data_dirs() {
+        let dir = std::env::temp_dir().join(format!("ccode-enl-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("我的EndNote库.Data")).unwrap();
+        std::fs::write(dir.join("我的EndNote库.enl"), b"x").unwrap();
+        std::fs::write(dir.join("旧库.enl"), b"x").unwrap();
+        std::fs::write(dir.join("说明.txt"), b"x").unwrap();
+        let gone = dir.join("已删除.enl");
+        let recent = vec![
+            dir.join("我的EndNote库.enl").to_string_lossy().into_owned(),
+            gone.to_string_lossy().into_owned(),
+        ];
+        let got = library_choices(recent, &[dir.clone()]);
+        let names: Vec<(&str, bool)> = got.iter().map(|c| (c.name.as_str(), c.recent)).collect();
+        // 最近打开的排前、只出一次；不存在的不列；.Data 文件夹和别的文件不列
+        assert_eq!(names, vec![("我的EndNote库.enl", true), ("旧库.enl", false)]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     /// clip.exe 吃带 BOM 的 UTF-16LE；中文路径逐码元小端写入
     #[test]
