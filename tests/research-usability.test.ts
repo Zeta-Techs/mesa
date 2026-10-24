@@ -64,7 +64,9 @@ test("任务书减重不靠删阶段/门禁：共用摘要一次，格式适配�
   // 同日再加：投稿声明模板加 Authors 一节、模型名说不准不硬写。实测 review 28353。
   // 同日按 HER 一轮推到其他模板：论文、学位论文定稿加待核实清单（共用一条款），投稿前清单 / 投稿材料清单分节写并带 AI 使用声明。
   // 实测 review 28353、论文 37076、学位 34943、投稿 9148。
-  const before: Record<string, number> = { review: 28400, "research-paper": 37200, "data-processing": 12900, thesis: 35100, "submission-rebuttal": 9200, "latex-paper": 14000 };
+  // 2026-10-25 合并 Windows 分支：macOS / Linux 读 PDF 的步骤单列「读 PDF」一节（报 pdftoppm 时改用 PyMuPDF；
+  // 本测试按非 Windows 渲染）。综述三步、论文与学位各一步带。实测 review 28860、论文 37245、学位 35112。
+  const before: Record<string, number> = { review: 29000, "research-paper": 37400, "data-processing": 12900, thesis: 35300, "submission-rebuttal": 9200, "latex-paper": 14000 };
   for (const t of PIPELINE_TEMPLATES) {
     const tasks = md(t.id);
     assert.ok(tasks.reduce((n, s) => n+s.length, 0) < before[t.id], t.id);

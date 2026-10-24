@@ -1368,7 +1368,7 @@ src-tauri/src/
                              # library_match.py：定稿域稿只读本机 .enl / zotero.sqlite，DOI 唯一才写入记录号或条目地址
                              # papers/endnote-import.xml、.ris、.enw。RIS 作者一人一行，期刊/缩写/卷/期/页/日期/ISSN/摘要/关键词
                              # 随 bib 字段写入；没有的不编造。按钮「同步到 EndNote」把 RIS 放到下载并 open -a 交给 EndNote。
-                             # endnote_library_choices：「选这个 EndNote 库」的候选（Windows 读 EndNote 最近打开的库登记 + 文稿/桌面顶层 .enl），只列不挑
+                             # endnote_library_choices：「选这个 EndNote 库」的候选（Windows 读 EndNote 最近打开的库登记、macOS 问 Spotlight 家目录里的 .enl（打开过的按上次打开排前）+ 文稿/桌面顶层 .enl），只列不挑
   research_tools.rs          # 科研外部工具开工 preflight（research_tool_preflight）：Zotero 本地只读接口（只管 AI 现查库，导入与「同步到 Zotero」不走它）/ Origin 平台门槛
                              #   （只做 Windows 实机，非 Windows 必需技能=阻塞）/ Blender 探测 / EndNote 桥 /
                              #   Quarto 能否真跑（quarto-render 步骤预报，不阻塞，dep_check::probe_quarto）；

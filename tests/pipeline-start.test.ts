@@ -530,12 +530,16 @@ test("TASK.md 本机 Python：只在 Windows 给出，-I 隔离模式要配 -X u
   assert.doesNotMatch(renderTaskMd(step(), cfg(), "/p"), /## 本机 Python/);
 });
 
-test("TASK.md 本机 Python：读 PDF 的步骤在 Windows 上提示用 PyMuPDF 抽字、转页图看图", () => {
+test("TASK.md 读 PDF 的步骤提示用 PyMuPDF 抽字、转页图看图（Windows 在本机 Python 节，macOS 单列）", () => {
   const notes = step({ skills: ["lit-notes"] });
   const win = renderTaskMd(notes, cfg(), "C:\\p", undefined, undefined, undefined, undefined, true);
   assert.match(win, /pdftoppm is not installed[^\n]*get_pixmap/);
   assert.doesNotMatch(renderTaskMd(step(), cfg(), "C:\\p", undefined, undefined, undefined, undefined, true), /pdftoppm/, "不读 PDF 的步骤不带");
-  assert.doesNotMatch(renderTaskMd(notes, cfg(), "/p"), /pdftoppm/, "只在 Windows");
+  // macOS 默认也没有 poppler：单列「读 PDF」一节，写成报错时改用，不进 Windows 的本机 Python 节
+  const mac = renderTaskMd(notes, cfg(), "/p");
+  assert.match(mac, /## 读 PDF\n[^\n]*pdftoppm is not installed[^\n]*get_pixmap/);
+  assert.doesNotMatch(mac, /## 本机 Python/);
+  assert.doesNotMatch(renderTaskMd(step(), cfg(), "/p"), /pdftoppm/, "不读 PDF 的步骤不带");
   // 大纲步一类：输入里写着要读原文 PDF，或项目资源挂着 PDF
   const outline = step({ inputs: ["17 篇主线批原文 PDF（路径见「项目资源」，只读）"] });
   assert.match(renderTaskMd(outline, cfg(), "C:\\p", undefined, undefined, undefined, undefined, true), /pdftoppm/);

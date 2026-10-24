@@ -659,13 +659,19 @@ pub async fn endnote_library_choices() -> Result<Vec<EndnoteLibraryChoice>, Stri
             dirs_to_look.push(base.join("EndNote"));
             dirs_to_look.push(base);
         }
-        Ok(library_choices(recent_library_paths(), &dirs_to_look))
+        let (recent, elsewhere) = recent_library_paths();
+        Ok(library_choices(recent, elsewhere, &dirs_to_look))
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
-fn library_choices(recent: Vec<String>, dirs_to_look: &[PathBuf]) -> Vec<EndnoteLibraryChoice> {
+/// recent = EndNote 最近打开的（排最前、标「最近打开」）；elsewhere = 别处搜到的（macOS Spotlight），排在文稿 / 桌面之后
+fn library_choices(
+    recent: Vec<String>,
+    elsewhere: Vec<String>,
+    dirs_to_look: &[PathBuf],
+) -> Vec<EndnoteLibraryChoice> {
     let mut out: Vec<EndnoteLibraryChoice> = Vec::new();
     let mut push = |path: PathBuf, recent: bool| {
         if !path.is_file()
@@ -699,17 +705,20 @@ fn library_choices(recent: Vec<String>, dirs_to_look: &[PathBuf]) -> Vec<Endnote
             push(path, false);
         }
     }
+    for raw in elsewhere {
+        push(PathBuf::from(raw.trim()), false);
+    }
     out
 }
 
 #[cfg(windows)]
-fn recent_library_paths() -> Vec<String> {
+fn recent_library_paths() -> (Vec<String>, Vec<String>) {
     use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ};
     let key: Vec<u16> = "Software\\ISI ResearchSoft\\EndNote\\Recent Libraries"
         .encode_utf16()
         .chain([0])
         .collect();
-    (1..=20)
+    let recent = (1..=20)
         .filter_map(|i| {
             let name: Vec<u16> = format!("File{i}").encode_utf16().chain([0]).collect();
             let mut size: u32 = 0;
@@ -746,13 +755,66 @@ fn recent_library_paths() -> Vec<String> {
             let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
             Some(String::from_utf16_lossy(&buf[..len]))
         })
-        .collect()
+        .collect::<Vec<_>>();
+    (recent, Vec::new())
 }
 
-/// macOS / Linux 没有登记表可读：只靠文稿 / 桌面里的 .enl，读不到就让人在对话框里选
-#[cfg(not(windows))]
-fn recent_library_paths() -> Vec<String> {
-    Vec::new()
+/// macOS 没有那张登记表：问 Spotlight 家目录里的 .enl（.Data 文件夹旁边的那份，对话框里容易点错的就是它）。
+/// 打开过的带 kMDItemLastUsedDate，按它新到旧排在最前、算「最近打开」；其余排在文稿 / 桌面之后。
+/// 废纸篓和 ~/Library 里的不列；Spotlight 关着或超时就只剩文稿 / 桌面
+#[cfg(target_os = "macos")]
+fn recent_library_paths() -> (Vec<String>, Vec<String>) {
+    let Some(home) = dirs::home_dir() else {
+        return (Vec::new(), Vec::new());
+    };
+    let mut cmd = crate::process::background_command("mdfind");
+    cmd.arg("-onlyin")
+        .arg(&home)
+        .arg("-attr")
+        .arg("kMDItemLastUsedDate")
+        .arg("kMDItemFSName == '*.enl'c");
+    match crate::process::capture_command(&mut cmd, std::time::Duration::from_secs(5), 256 * 1024) {
+        Ok(out) if !out.timed_out && out.status.is_some_and(|s| s.success()) => {
+            spotlight_libraries(&String::from_utf8_lossy(&out.stdout), &home)
+        }
+        _ => (Vec::new(), Vec::new()),
+    }
+}
+
+/// Linux 没有可问的登记：只靠文稿 / 桌面里的 .enl，读不到就让人在对话框里选
+#[cfg(not(any(windows, target_os = "macos")))]
+fn recent_library_paths() -> (Vec<String>, Vec<String>) {
+    (Vec::new(), Vec::new())
+}
+
+/// `mdfind -attr kMDItemLastUsedDate` 的输出：每行「路径   kMDItemLastUsedDate = 2026-10-24 08:00:00 +0000」，
+/// 没打开过的是「= (null)」。日期同为 UTC 定宽格式，按字符串比就是按时间比
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+fn spotlight_libraries(text: &str, home: &Path) -> (Vec<String>, Vec<String>) {
+    let skip = [home.join(".Trash"), home.join("Library")];
+    let mut used: Vec<(String, String)> = Vec::new();
+    let mut other: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let Some((path, date)) = line.rsplit_once(" kMDItemLastUsedDate = ") else {
+            continue;
+        };
+        let path = path.trim_end().to_string();
+        if path.is_empty() || skip.iter().any(|dir| Path::new(&path).starts_with(dir)) {
+            continue;
+        }
+        let date = date.trim();
+        if date.is_empty() || date == "(null)" {
+            other.push(path);
+        } else {
+            used.push((date.to_string(), path));
+        }
+    }
+    used.sort_by(|a, b| b.0.cmp(&a.0));
+    other.sort();
+    (
+        used.into_iter().take(20).map(|(_, path)| path).collect(),
+        other.into_iter().take(30).collect(),
+    )
 }
 
 #[tauri::command]
@@ -816,15 +878,45 @@ mod tests {
             dir.join("我的EndNote库.enl").to_string_lossy().into_owned(),
             gone.to_string_lossy().into_owned(),
         ];
-        let got = library_choices(recent, &[dir.clone()]);
+        let got = library_choices(recent, vec![], &[dir.clone()]);
         let names: Vec<(&str, bool)> = got.iter().map(|c| (c.name.as_str(), c.recent)).collect();
         // 最近打开的排前、只出一次；不存在的不列；.Data 文件夹和别的文件不列
         assert_eq!(names, vec![("我的EndNote库.enl", true), ("旧库.enl", false)]);
         // 同名 .Data 下有 rdb = X9 老格式
         std::fs::create_dir_all(dir.join("我的EndNote库.Data").join("rdb")).unwrap();
-        let again = library_choices(vec![], &[dir.clone()]);
+        let again = library_choices(vec![], vec![], &[dir.clone()]);
         assert!(again.iter().find(|c| c.name == "我的EndNote库.enl").unwrap().legacy);
         assert!(!again.iter().find(|c| c.name == "旧库.enl").unwrap().legacy);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn spotlight_libraries_put_opened_first_and_skip_trash_and_library() {
+        let home = Path::new("/Users/me");
+        let text = "/Users/me/Documents/旧库.enl   kMDItemLastUsedDate = (null)\n\
+                    /Users/me/Library/Caches/x.enl   kMDItemLastUsedDate = 2026-10-20 08:00:00 +0000\n\
+                    /Users/me/.Trash/扔了.enl   kMDItemLastUsedDate = 2026-10-23 08:00:00 +0000\n\
+                    /Users/me/iCloud/课题 A.enl   kMDItemLastUsedDate = 2026-10-01 08:00:00 +0000\n\
+                    /Users/me/Work/HER.enl   kMDItemLastUsedDate = 2026-10-24 08:00:00 +0000\n";
+        let (recent, other) = spotlight_libraries(text, home);
+        assert_eq!(recent, vec!["/Users/me/Work/HER.enl", "/Users/me/iCloud/课题 A.enl"]);
+        assert_eq!(other, vec!["/Users/me/Documents/旧库.enl"]);
+    }
+
+    #[test]
+    fn library_choices_list_spotlight_hits_after_folders() {
+        let dir = std::env::temp_dir().join(format!("ccode-enl-sp-{}", uuid::Uuid::new_v4()));
+        let far = dir.join("别处");
+        std::fs::create_dir_all(&far).unwrap();
+        std::fs::write(dir.join("文稿里.enl"), b"x").unwrap();
+        std::fs::write(far.join("别处的.enl"), b"x").unwrap();
+        let elsewhere = vec![
+            far.join("别处的.enl").to_string_lossy().into_owned(),
+            dir.join("文稿里.enl").to_string_lossy().into_owned(),
+        ];
+        let got = library_choices(vec![], elsewhere, &[dir.clone()]);
+        let names: Vec<&str> = got.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["文稿里.enl", "别处的.enl"]);
         std::fs::remove_dir_all(&dir).ok();
     }
 

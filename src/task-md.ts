@@ -152,6 +152,14 @@ export function renderTaskMd(
       );
     }
   }
+  // 读 PDF 的步骤：Claude Code 的 Read 按页读 PDF 要 pdftoppm（poppler）转页图，没装就报错，
+  // Agent 只抽文字层、图一张没看（2026-10-23 HER 精读步实证，Windows）。macOS 默认也没有 poppler（要 Homebrew 另装），
+  // 论文常超过 10 页、必须按页读，同样会撞上。PyMuPDF 是 Mesa 依赖检查里的一项
+  // 2026-10-23 HER 大纲步：输入写「17 篇原文 PDF（路径见项目资源）」、项目资源挂着 PDF，也要读
+  const readsPdf =
+    step.skills.some((s) => s === "lit-notes" || s === "review-figures") ||
+    [...(step.inputs ?? []), ...(step.optionalInputs ?? [])].some((p) => /pdf/i.test(p)) ||
+    stepResources(step, cfg).some((r) => r.path.toLowerCase().endsWith(".pdf"));
   // Mesa 补的 PYTHONIOENCODING 遇 -I / -E 失效（隔离模式忽略全部 PYTHON* 环境变量），
   // 中文系统回落 GBK，打印 Č、² 即 UnicodeEncodeError（2026-10-22 实测：Claude Code 读外部数据时习惯加 -I）
   if (isWindows) {
@@ -161,18 +169,17 @@ export function renderTaskMd(
       "- 命令名用 `python`，不要用 `python3`（Windows 上的 `python3` 是应用商店占位程序，一运行就失败）。",
       "- 加了 `-I` 或 `-E` 时，Python 会忽略 Mesa 设好的 UTF-8 输出，打印中文或 Č、² 这类字符就报 `'gbk' codec can't encode`：这时同时加 `-X utf8`。它也会把 `open()` 的默认编码改成 UTF-8，读 GBK 文件要显式写 `encoding=\"gbk\"`。",
     );
-    // Windows 上一般没装 poppler：Claude Code 的 Read 读 PDF 要 pdftoppm 转页图，直接报错，
-    // Agent 只抽文字层、图一张没看（2026-10-23 HER 精读步实证）。PyMuPDF 是 Mesa 依赖检查里的一项
-    // 2026-10-23 HER 大纲步：输入写「17 篇原文 PDF（路径见项目资源）」、项目资源挂着 PDF，也要读
-    const readsPdf =
-      step.skills.some((s) => s === "lit-notes" || s === "review-figures") ||
-      [...(step.inputs ?? []), ...(step.optionalInputs ?? [])].some((p) => /pdf/i.test(p)) ||
-      stepResources(step, cfg).some((r) => r.path.toLowerCase().endsWith(".pdf"));
     if (readsPdf) {
       lines.push(
         "- 读 PDF：这台机器多半没装 poppler，直接读 PDF 文件会报 `pdftoppm is not installed`。文字用 PyMuPDF 抽（`import pymupdf`，`page.get_text()`）；要看图，先把那一页存成图片（`page.get_pixmap(dpi=150).save(\"artifacts/p5.png\")`）再读这张图，不要只凭图注写图里的内容。",
       );
     }
+  } else if (readsPdf) {
+    lines.push(
+      "",
+      "## 读 PDF",
+      "- 读 PDF 报 `pdftoppm is not installed`（没装 poppler）时改用 PyMuPDF：`page.get_text()` 抽字；看图先 `page.get_pixmap(dpi=150).save(\"artifacts/p5.png\")` 存成图片再读，不要只凭图注写图里的内容。",
+    );
   }
   if ((step.decisions?.length ?? 0) > 0) {
     lines.push(

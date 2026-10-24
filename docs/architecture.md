@@ -457,6 +457,17 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-25 · 合并 Windows 分支 windows/fix/1022（科研流程 HER 一轮），Mac 端同类问题同步修
+
+用户让把 Windows 上做的科研流程修复合进 main，冲突逐处核实，并查 Mac 端是否有同样问题。定下：
+一，**冲突口径**：阅读区右栏先显示聊天还是终端以 main 的统一设置「打开对话时先显示」为准（分支里的 `loadReaderSurface / saveReaderSurface` 记忆不再引入）；
+运行页认回已有标签时分支的两道兜底（`focusSession` 持有者、同一工作树里正在跑的 Agent 标签）接在 main 的 resume 认回之后、`reused` 判定之前。
+二，**Windows 上发现的科研流程问题要按平台核一遍 Mac**：本轮核出三处——
+① Claude Code 按页读 PDF 要 pdftoppm，macOS 默认同样没有 poppler：非 Windows 任务书单列「读 PDF」一节，写成「报 pdftoppm is not installed 时改用 PyMuPDF」（条件句，装了 poppler 的机器不受影响）；
+② 「选这个 EndNote 库」的候选：macOS 没有 Recent Libraries 登记，改问 Spotlight 家目录里的 .enl（`kMDItemLastUsedDate` 有值的算「最近打开」按时间排前，其余排在文稿 / 桌面之后，废纸篓与 ~/Library 不列，5 秒超时）；
+③ 路径闸门在 canonicalize 之前先拒带 `..` 的相对路径：Windows 的 canonicalize 按字面消 `..`，macOS / Linux 要每级目录存在，同一输入两边报错不同（抽查笔记 `notes/../x.md` 实证，Mac 上 cargo test 红）。
+其余分支改动（Python 编码、注册表找 EndNote / Zotero、`-url` 交 Zotero、CRLF 测试）核过是 Windows 独有，Mac 走原路径。
+
 ### 2026-10-24 · 5 个 Agent 并发的卡顿定位：Agent、PTY 后端、WebGL 渲染都不是瓶颈，先收掉主线程上等 app.db 写锁这一条
 
 用户问「运行 5 个 Agent 卡顿怎么办、终端卡顿会不会让聊天层显示异常」，随后要求测试定位并按推荐优化。四层测量（脚本留在 /tmp，不入库）：
@@ -999,7 +1010,7 @@ prompt suggestion：一轮做完另发一次请求（系统提示带 SUGGESTION 
 二，**逐条决定**：条目带「建议」预填（审查报告的「建议改法」、待核实清单新增「建议」栏），→ / Tab 收下；列表随步骤状态重读，清单没写出来时锁勾选；接回对话的话要求把 Mesa 写进的决定文件一起提交。待核实「接受」= 人对过原文、去标记，无「全部接受」。论文、学位论文定稿也列待核实清单（共用 `verificationListClause`）。
 三，**AI 写、人填、交回**一类事项（`handback-tasks.ts`）：许可清单按论文一篇一行，其余按「## 小标题」一节一框离开即存，「交给 AI」接回原对话；投稿声明、论文投稿前清单、投稿材料清单、数据字典的「待确认」字段都走这一类，不再给「提交产物」。
 四，**接回会话发消息**：刚起来的 20 秒内输入框安静 1.5 秒才写，写完 1.6 秒还在框里就补粘贴结束标记 + 回车；接回带步骤绑定 / 项目默认作预填，不换模型。
-五，**EndNote 对库**：库路径不是域稿前置；「选这个 EndNote 库」列 EndNote 最近打开的库（Windows 读其 Recent Libraries 登记）；X9 及更早的库读不了，引导导出 XML，脚本从 XML 取记录号与 db-id；没有 DOI 的按题名 + 年份唯一才绑；同步后提醒去重（HER 实证：重复条目是 27 条只挂上 8 条的主因）。
+五，**EndNote 对库**：库路径不是域稿前置；「选这个 EndNote 库」列 EndNote 最近打开的库（Windows 读其 Recent Libraries 登记；macOS 没有这张登记，问 Spotlight 家目录里的 .enl，打开过的按上次打开时间排前——2026-10-25 合并 Windows 分支时补）；X9 及更早的库读不了，引导导出 XML，脚本从 XML 取记录号与 db-id；没有 DOI 的按题名 + 年份唯一才绑；同步后提醒去重（HER 实证：重复条目是 27 条只挂上 8 条的主因）。
 六，**完结文件**：最终稿卡片带用途、域稿直接 Word 打开；「在 Word 里换样式」撤出定稿步人工事项改到这里；其余文件一行一份带用途。
 七，任务书商量不得把可选事项改成硬前置；新增模板检查清单补「人工事项入口对不对、定稿事项顺序」两条（step-panel.md §四）。
 

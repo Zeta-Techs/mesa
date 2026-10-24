@@ -53,6 +53,8 @@
   - Windows 上一般没装 poppler：Claude Code 读 PDF 要 `pdftoppm` 转页图，直接报错，Agent 只能抽文字层、图看不到
     （2026-10-23 HER 精读步）。读 PDF 的步骤（lit-notes / review-figures、输入里提到 PDF、或项目资源挂着 PDF——大纲步同日实证）在 Windows 任务书「本机 Python」节
     多带一行：PyMuPDF 抽字，看图先 `get_pixmap` 存成图片再读（`task-md.ts`；PyMuPDF 是依赖检查里的一项）。
+    macOS 默认同样没有 poppler（Claude Code 的报错本身就叫人 `brew install poppler`；论文多超过 10 页，Read 必须按页读，
+    就要 pdftoppm），所以 macOS / Linux 任务书单列「读 PDF」一节，写成「报 pdftoppm is not installed 时改用 PyMuPDF」（2026-10-25 合并 Windows 分支时补）。
   - 把文件交给外部文献软件导入（2026-10-23 Windows 实测）：「用 Zotero 打开」在 Windows 上是拿路径当裸参数起 zotero.exe，
     Zotero 命令行只认 `-file <路径>` / `-url file:///…`，裸参数不理——Zotero 开了、不导入；所以 Windows 直起 `zotero.exe -url file:///…`
     （`zotero.rs hand_file_to_zotero`；URL 百分号编码成纯 ASCII——用 `-file <中文路径>` 时转给已开着的 Zotero 那一程路径变样，
