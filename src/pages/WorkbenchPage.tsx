@@ -71,7 +71,6 @@ import {
   LoadingRows,
   MenuSelect,
   PageFrame,
-  PageHeader,
   fieldClass,
   ghostActionClass,
   hoverRevealClass,
@@ -826,10 +825,11 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
   const heroSaid = hero ? lastSaidFor(hero.path) : null;
 
   return (
-    <PageFrame width="fluid" className="pb-12">
-      {/* 页头不带副标题：当前步骤已在主卡里说过，同一事实只说一次。
+    <PageFrame width="fluid" className="pb-12 pt-6">
+      {/* 首页不放页面大标题（2026-10-24 用户）：侧栏「工作台」已高亮，大字只重复一遍、还占掉最显眼的一行；
+          标题只留给屏幕阅读器，顶上 pt-6 留白免得「最近在做」贴着窗口顶边。其他页的标题照旧。
           「新对话」不在这里放（2026-10-23 侧栏挂对话第一期）：侧栏「新对话」就在左边，两个按钮一模一样 */}
-      <PageHeader title="工作台" />
+      <h1 className="sr-only">工作台</h1>
       {loadError && (
         <div className="mb-4 flex items-center justify-between gap-3 rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn-text">
           <span>{loadError}</span>
