@@ -158,6 +158,28 @@ function declarationsTask(): HumanTaskDto {
   };
 }
 
+/** 定稿里剩下的 [待核实] 列成一张清单给人逐条裁决（综述先有；2026-10-24 按 HER 那一轮推到论文、学位论文定稿：
+ *  三套定稿都会标 [待核实]，原先只有综述把它们列出来，另两套留在稿子里没人管）。 */
+function verificationListClause(finalMd: string): string {
+  return (
+    `写 manuscript/verification-decisions.md：把 ${finalMd} 里每条 [待核实] 与 citation-check.md 里每条「疑似编造/元数据存疑」各列一行，` +
+    "格式 `- V001 | 位置：文件:行 | 原文摘要：…… | 来源：[@键] | 建议：…… | 裁决：待裁决 | 依据：`。" +
+    "「建议」写你对过原文后建议的改法（一句，人点「修改」时预填）；**「裁决」与「依据」两栏一律留空或写「待裁决」，不得代填**——只有人能对照原始文献拍板。" +
+    "清单里的条数必须与稿子里实际剩余的 [待核实] 处数一致，漏列等于把未决项藏起来。"
+  );
+}
+
+function verificationDecisionTask(): HumanTaskDto {
+  return {
+    title: "逐条裁决 [待核实] 与存疑条目",
+    guidance:
+      "只处理定稿里还标着「待核实」的句子，以及引用检查里疑似编造、元数据存疑的条目，没有就勾上跳过。接受＝你对过原文、这句没问题：保留这句并去掉「待核实」；拒绝＝删掉这句；修改＝按你写的改。暂时核不了的（比如补充材料还没拿到）选修改，写「改成摘要级表述」或「保留待核实」。点完 AI 按裁决改稿，并重渲 PDF、Word 和两份域稿。",
+    target: "manuscript/verification-decisions.md",
+    timing: "after",
+    completion: "decisions_cleared",
+  };
+}
+
 function reviewDecisionTask(target: string): HumanTaskDto {
   return {
     title: "逐条决定审查报告",
@@ -459,7 +481,7 @@ const REVIEW_STEPS: ProjectStepDto[] = [
       "2. 第二轮才改稿：未解析引用键改为 references.bib 中正确键或补条目（补条目缺字段标「待补」）；「疑似编造」不得自行删除对应论断，句末标 [待核实] 并记入「科学改动」；「未引用条目」只列出、不删。语言润色只改表达：语法、用词、句式与段落衔接；去掉防御性套话、空转场和重复立论；对照大纲把摘要级定量句降级或补 [待核实]；删正文 G 编号；摘要清掉 [待核实]。发现内容性错误标 [待核实]，不得自行改写事实。\n" +
       "3. 产出 manuscript/review-final.md 候选定稿（文末文献表按稿子里已在用的样式生成，不要手写 References；人还没换样式时沿用初稿编号，不因没有 citation-style.md 停渲）与 manuscript/changelog.md（逐条列出主要修改点及对应 citation-check.md 条目；未补的「待绘制」占位列入 changelog，不得假装已绘）。" + STYLE_AT_FINAL + "\n" +
       "4. 收尾再按 {skill:bib-check} 复核 review-final.md，结论追加进 citation-check.md；\n" +
-      "5. 写 manuscript/verification-decisions.md：把 review-final.md 里每条 [待核实] 与 citation-check.md 里每条「疑似编造/元数据存疑」各列一行，格式 `- V001 | 位置：文件:行 | 原文摘要：…… | 来源：[@键] | 建议：…… | 裁决：待裁决 | 依据：`。「建议」写你对过原文后建议的改法（一句，人点「修改」时预填）；**「裁决」与「依据」两栏一律留空或写「待裁决」，不得代填**——只有人能对照原始文献拍板。清单里的条数必须与稿子里实际剩余的 [待核实] 处数一致，漏列等于把未决项藏起来。\n" +
+      "5. " + verificationListClause("review-final.md") + "\n" +
       "6. 用本步骤 run 脚本渲染 PDF/docx（按 {skill:quarto-render} 技能：人还没在流程线「更换引用样式」里换形式时，沿用初稿编号制渲，不因没选样式停渲）。正文字体沿用初稿 manuscript/typeface.md，不要另选字体，也不要重问。Word 套 manuscript/reference.docx：确认 YAML 的 format.docx 有 reference-doc 一行（初稿字体脚本写的，路径相对稿件所在目录；旧稿没有就补上）。同一次再生成 output/endnote.docx 与 output/zotero.docx。产物写入本工作区 output/（评审合并后进项目根）。\n" +
       "7. 拼图里的块是从别人论文 PDF 裁的，投稿前作者要换出版社原图、申请转载许可（只能作者本人申请）：按 {skill:review-figures} 跑 figure_permissions.py，写 submission/figure-permissions.md——每块的出版社、许可（Crossref 按 DOI 查）、要不要申请、去哪申请、图注出处写法、状态栏（「待申请」等人改）；没有拼图也写这份并注明无需申请。人把原图放进项目根 papers/figure-originals/ 回来说一声，就按 figures/sources.md 记的同一块从原图重裁（--pdf 给原图文件）、重拼、重渲。验收摘要⑤写还有几块待申请许可。\n" +
       "8. 写 submission/declarations.md 空白模板，五节：Authors（作者、单位、通讯作者邮箱）、基金、利益冲突、作者贡献（CRediT）、AI 使用声明，每节写「待填」；AI 使用声明可按本稿实际用到的 AI 工具与用途起一段草稿，标「待作者核对」，模型名说不准就写「（模型名待作者填写）」，不要默认写成自己以为的模型。不得代填基金号、单位、作者贡献；review-final.md 的 author 保留待补。人填好回来说一声，就把作者、单位写进 YAML，声明并进 review-final.md 文末 Declarations 一节，重渲 PDF、Word 和两份域稿。\n" +
@@ -490,14 +512,7 @@ const REVIEW_STEPS: ProjectStepDto[] = [
     // 顺序即做事顺序（2026-10-24）：先定内容（审查报告 → 待核实），再换样式，最后是投稿前的人工事项
     humanTasks: [
       reviewDecisionTask("manuscript/review-report.md"),
-      {
-        title: "逐条裁决 [待核实] 与存疑条目",
-        guidance:
-          "只处理定稿里还标着「待核实」的句子，以及引用检查里疑似编造、元数据存疑的条目，没有就勾上跳过。接受＝你对过原文、这句没问题：保留这句并去掉「待核实」；拒绝＝删掉这句；修改＝按你写的改。暂时核不了的（比如补充材料还没拿到）选修改，写「改成摘要级表述」或「保留待核实」。点完 AI 按裁决改稿，并重渲 PDF、Word 和两份域稿。",
-        target: "manuscript/verification-decisions.md",
-        timing: "after",
-        completion: "decisions_cleared",
-      },
+      verificationDecisionTask(),
       styleChoiceTask(),
       figurePermissionTask(),
       declarationsTask(),
@@ -792,7 +807,8 @@ const RESEARCH_PAPER_STEPS: ProjectStepDto[] = [
       ENDNOTE_SYNC +
       "审查报告写 manuscript/review-report.md。第一轮按 {skill:bib-check} 写 manuscript/citation-check.md，并按 {skill:stats-check} 把统计问题写入 analysis/stats-check.md；这三份只列问题，不改稿。核对：每个论断有引用、未用 bib 条目只列出、图表编号连续、数字与 results-table.md 和已认可结论条目一致。\n" +
       "第二轮才改稿：语言只改表达。发现内容性错误标 [待核实]，不得自行改写事实。产出 manuscript/paper-final.md 与 manuscript/changelog.md。\n" +
-      "投稿前清单写入 submission/pre-submission-checklist.md：目标期刊/会议（按主题匹配给出 2-3 个候选及理由）、cover letter 要点、图表源文件清单、代码/数据可用性占位、作者信息与利益声明占位；未知信息一律占位「待填」，不编造。\n" +
+      verificationListClause("paper-final.md") + "\n" +
+      "投稿前清单写入 submission/pre-submission-checklist.md，每项一节「## 小标题」（人在流程线上一节一框地填）：目标期刊/会议（按主题匹配给出 2-3 个候选及理由）、cover letter 要点、图表源文件清单、代码/数据可用性、作者与单位、利益声明、AI 使用声明；未知信息一律写「待填」，不编造；AI 使用声明可按本稿实际用到的 AI 工具与用途起草、标「待作者核对」，模型名说不准写「（模型名待作者填写）」。\n" +
       STYLE_AT_FINAL + "用本步骤 run 脚本渲染 PDF/docx（按 {skill:quarto-render} 技能：人还没在流程线「更换引用样式」里换形式时，沿用初稿编号制渲，不因没选样式停渲）。正文字体沿用初稿 manuscript/typeface.md，不要另选字体，也不要重问。Word 套 manuscript/reference.docx：确认 YAML 的 format.docx 有 reference-doc 一行（初稿字体脚本写的，路径相对稿件所在目录；旧稿没有就补上）。同一次再生成 output/endnote.docx 与 output/zotero.docx。产物写入本工作区 output/（评审合并后进项目根）。\n" +
       "完成标准：paper-final.md 引用闭环；manuscript/citation-check.md 与 analysis/stats-check.md 各节齐全，问题逐条处置；阻塞项未关闭时只交草稿，预清单注明不可投稿；changelog.md 与 submission/pre-submission-checklist.md 已提交；[待补实验] 不得仅删除标记；有证据补齐或经人确认撤回/缩窄对应主张，否则阻塞。\n" +
       RELEASE_GATE + QUALITY_STATUS,
@@ -809,18 +825,20 @@ const RESEARCH_PAPER_STEPS: ProjectStepDto[] = [
       "analysis/stats-check.md",
       "submission/pre-submission-checklist.md",
       "manuscript/changelog.md",
+      "manuscript/verification-decisions.md",
     ],
     acceptanceCriteria: ["machine:contains:manuscript/review-report.md::严重问题"],
     inputs: ["manuscript/draft.md", "manuscript/section-status.md", "manuscript/typeface.md", "manuscript/reference.docx", "manuscript/outline.md", "design.md", "analysis/results-table.md", "analysis/findings.md", "analysis/stats-check-results.md", "results/run-manifest.json", "notes/", "references.bib"],
     skills: ["bib-check", "stats-check", "quarto-render", "endnote-bridge", "zotero-sync"],
     humanTasks: [
       reviewDecisionTask("manuscript/review-report.md"),
+      verificationDecisionTask(),
       styleChoiceTask(),
       endnoteSyncTask(),
       {
         title: "核对 G5 证据就绪、作者信息与投稿目标",
         guidance:
-          "submission/pre-submission-checklist.md 中的作者信息/利益声明「待填」占位逐条补齐；目标期刊候选 2-3 个已附理由，可改选",
+          "点「打开填写」，清单一节一个框：作者与单位、利益声明、AI 使用声明里的「待填」逐项补上（AI 起了草稿的核对后改定），目标期刊候选 2-3 个已附理由，可改选。填好点「填好了，交给 AI」，AI 把这些落到投稿稿件里再重渲。",
         target: "submission/pre-submission-checklist.md",
         timing: "after",
         completion: "manual",
@@ -873,7 +891,7 @@ const DATA_PROCESSING_STEPS: ProjectStepDto[] = [
       {
         title: "解答「待确认」字段的业务含义",
         guidance:
-          "data-dictionary.md 中标注「待确认」的字段逐条回复含义与口径；可直接改文件，或在对话中说明",
+          "点「打开填写」，把 data-dictionary.md 里标「待确认」的字段写上含义与口径；填好点「填好了，交给 AI」，AI 按你写的更新字典并点名会影响清洗的字段。",
         target: "data-dictionary.md",
         timing: "after",
         completion: "manual",
@@ -1232,6 +1250,7 @@ const THESIS_STEPS: ProjectStepDto[] = [
       ENDNOTE_SYNC +
       "审查报告写 manuscript/review-report.md。第一轮只核对，不改正文：格式问题写入 manuscript/format-check.md；引用闭环按 {skill:bib-check} 写入 manuscript/citation-check.md；查重降重建议写入 manuscript/plagiarism-advice.md，只给改写建议，不直接代写。\n" +
       "第二轮才产出 manuscript/thesis-final.md 与 manuscript/changelog.md。语言只改表达；内容性错误标 [待核实]。同时交 output/endnote.docx 与 output/zotero.docx 两份带引用域的 Word。\n" +
+      verificationListClause("thesis-final.md") + "\n" +
       "6. " + STYLE_AT_FINAL + "渲染验证：用本步骤 run 脚本渲染 PDF/docx（环境检查、编号引用 YAML、产物登记按 {skill:quarto-render} 技能：人还没在流程线「更换引用样式」里换形式时，沿用初稿编号制渲，不因没选样式停渲）。正文字体沿用初稿 manuscript/typeface.md，不要另选字体，也不要重问。Word 套 manuscript/reference.docx：确认 YAML 的 format.docx 有 reference-doc 一行（初稿字体脚本写的，路径相对稿件所在目录；旧稿没有就补上）。同一次再生成 output/endnote.docx 与 output/zotero.docx。\n" +
       "完成标准：format-check.md 与 citation-check.md 问题逐条有处理结论，thesis-final.md 引用闭环，changelog.md 已提交，run 脚本渲染通过。\n" +
       RELEASE_GATE + QUALITY_STATUS,
@@ -1242,6 +1261,7 @@ const THESIS_STEPS: ProjectStepDto[] = [
       "manuscript/format-check.md",
       "manuscript/plagiarism-advice.md",
       "manuscript/changelog.md",
+      "manuscript/verification-decisions.md",
       "output/thesis-final.pdf",
       "output/thesis-final.docx",
       "output/endnote.docx",
@@ -1254,6 +1274,7 @@ const THESIS_STEPS: ProjectStepDto[] = [
     skills: ["bib-check", "quarto-render", "endnote-bridge", "zotero-sync"],
     humanTasks: [
       reviewDecisionTask("manuscript/review-report.md"),
+      verificationDecisionTask(),
       styleChoiceTask(),
       endnoteSyncTask(),
       {
@@ -1379,7 +1400,7 @@ const SUBMISSION_INITIAL_STEPS: ProjectStepDto[] = [
       "1. 产出 submission/cover-letter.md：编辑称呼占位、研究问题与有证据支持的亮点（不凑数量）、与期刊读者群的契合点、原创性与未一稿多投声明（占位「待填」处不编造）；\n" +
       "2. 产出 submission/highlights.md：按目标期刊要求与实际贡献写 highlights（目标期刊无此要求时在该文件注明并跳过）；\n" +
       "3. 投稿前自查 formatted.md（模拟审稿人视角逐项过）：摘要与结论自洽、正文数字与表格一致、图表 standalone 可读、方法节可复现、局限有交代；问题按 CRITICAL（不处理大概率被拒，如数据不一致）/ MAJOR（影响评审印象）/ MINOR（措辞格式）三级写入 submission/pre-review.md。每条末尾写「决定：待定」。只有人改成接受、拒绝或修改，该条才算已处理；不得代填决定。CRITICAL/MAJOR 还要有修正证据或经人确认撤回受影响主张；无法解决则阻塞，不以说明理由代替解决，MINOR 列出即可；\n" +
-      "4. 产出 submission/checklist.md 投稿清单：投稿系统入口（未知标「待填」）、需上传文件清单、作者信息与利益声明占位、推荐审稿人 2-4 位（只给研究领域与选择理由，具体姓名标「待填」）。\n" +
+      "4. 产出 submission/checklist.md 投稿清单，每项一节「## 小标题」：投稿系统入口（未知标「待填」）、需上传文件清单、作者与单位、利益声明、AI 使用声明、推荐审稿人 2-4 位（只给研究领域与选择理由，具体姓名标「待填」）；AI 使用声明可按本稿实际用到的 AI 工具与用途起草、标「待作者核对」，模型名说不准写「（模型名待作者填写）」。\n" +
       "完成标准：cover-letter.md、highlights.md、pre-review.md、checklist.md 均已提交；pre-review.md 中 CRITICAL/MAJOR 全部有复核证据；未关闭时就绪度为阻塞，不能提交。\n" +
       RELEASE_GATE + QUALITY_STATUS,
     expectedArtifacts: [
@@ -1396,7 +1417,7 @@ const SUBMISSION_INITIAL_STEPS: ProjectStepDto[] = [
       {
         title: "按 G5 确认无阻塞问题、补齐声明并决定是否提交",
         guidance:
-          "checklist.md 中投稿系统入口、作者信息与利益声明逐条补齐；推荐审稿人只给了研究领域与选择理由，具体姓名由你定",
+          "点「打开填写」，清单一节一个框：投稿系统入口、作者与单位、利益声明、AI 使用声明逐项补齐；推荐审稿人只给了研究领域与选择理由，具体姓名由你定。填好点「填好了，交给 AI」落实到投稿材料；交不交稿由你决定。",
         target: "submission/checklist.md",
         timing: "after",
         completion: "manual",

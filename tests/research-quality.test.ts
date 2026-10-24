@@ -161,9 +161,10 @@ test("有文件落点的科研人工判断仍须手动确认，不能以产物�
     const tasks = step(id, workspace).humanTasks!.filter((h) => h.timing === "after");
     assert.ok(tasks.length > 0);
     for (const task of tasks) {
-      // 「逐条决定审查报告」的完成条件就是裁决清单清空（decisions_cleared，5a86579
-      // 引入），不算「以产物出现自动完成」；其余人工判断仍须手动勾选
-      const expected = task.title === "逐条决定审查报告" ? "decisions_cleared" : "manual";
+      // 「逐条决定审查报告」「逐条裁决」的完成条件就是裁决清单清空（decisions_cleared，5a86579
+      // 引入；逐条裁决 2026-10-24 推到论文定稿），不算「以产物出现自动完成」；其余人工判断仍须手动勾选
+      const expected =
+        task.title === "逐条决定审查报告" || task.title.startsWith("逐条裁决") ? "decisions_cleared" : "manual";
       assert.equal(task.completion, expected, task.title);
     }
   }

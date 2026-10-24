@@ -101,6 +101,7 @@ import {
 import PendingConfirmList, { type PendingConfirmHandle } from "./PendingConfirmList";
 import ReviewDecisionList from "./ReviewDecisionList";
 import { DeclarationsForm, FigurePermissionsPanel } from "./HandbackPanels";
+import ProjectFilePreview from "./ProjectFilePreview";
 import { handbackTask } from "../handback-tasks";
 import {
   continueAfterDecisionsPrompt,
@@ -1551,6 +1552,8 @@ export default function StepFlow({
               `先通读一遍，把拿不准的点（范围、口径、标准等）逐个问我，按我的回答直接修改这份文件。` +
               `只允许新建/修改这一个文件，以及下面点名的项目规则行。其他文件一律不要动。` +
               `讨论中没定下来的问题，记到这份任务书的「## 待拍板」小节。` +
+              // 2026-10-24 HER 润色：商量时把「导入 EndNote 库、写库路径」写成了域稿的硬前置，AI 做好的 docx 又撤下
+              `不要把模板里的可选事项改成开工前必须办的前置，也不要因为某个可选设置没办就让某份产物不交，除非我明确这么说。` +
               ((openSettings ?? []).filter((line) => line.trim()).length
                 ? `项目规则里还有没定的全局设定。开场先逐项问我，说明括号里的说法。我确定一项，就把 .ccode/project.toml 的 settings 里对应那一行从「名称：（提示）」改成「名称：我的答案」，不要改这个文件的其他内容。还没定的是：${(openSettings ?? []).filter((line) => line.trim()).join("；")}。`
                 : "") +
@@ -3006,10 +3009,21 @@ export default function StepFlow({
             <div className="mt-1.5 ml-9 rounded-md border border-hairline px-2.5 py-2">
               {/* 不再就地开 Markdown 编辑（2026-10-24 用户：打开清单、打开填写很不方便）：
                   许可清单一篇一行、下拉改状态；声明一节一框，离开就存 */}
-              {human.title.includes("转载许可") ? (
+              {handbackTask(human.title)!.panel === "permissions" ? (
                 <FigurePermissionsPanel root={stepFileRoot} rel={human.target} projectRoot={projectPath} />
               ) : (
-                <DeclarationsForm root={stepFileRoot} rel={human.target} />
+                <DeclarationsForm
+                  root={stepFileRoot}
+                  rel={human.target}
+                  fallback={
+                    <div className="flex h-[24rem] flex-col overflow-hidden rounded-sm">
+                      <ProjectFilePreview
+                        path={`${stepFileRoot.replace(/[\\/]+$/, "")}/${human.target}`}
+                        root={stepFileRoot}
+                      />
+                    </div>
+                  }
+                />
               )}
             </div>
           )}

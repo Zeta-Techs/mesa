@@ -14,3 +14,21 @@ test("AI 写好、人来填的清单认得出来，交回的话指向落点文�
   assert.equal(handbackTask("更换引用样式"), null);
   assert.equal(handbackTask("逐条决定审查报告"), null);
 });
+
+test("同一套「AI 写、人填、交回」推到各模板：论文投稿前清单、投稿材料清单、数据字典（2026-10-24）", async () => {
+  const { PIPELINE_TEMPLATES } = await import("../src/pipeline-presets.ts");
+  const titles = PIPELINE_TEMPLATES.flatMap((t) => t.steps.flatMap((s) => (s.humanTasks ?? []).map((h) => h.title)));
+  for (const [title, file] of [
+    ["核对 G5 证据就绪、作者信息与投稿目标", "submission/pre-submission-checklist.md"],
+    ["按 G5 确认无阻塞问题、补齐声明并决定是否提交", "submission/checklist.md"],
+    ["解答「待确认」字段的业务含义", "data-dictionary.md"],
+  ] as const) {
+    assert.ok(titles.includes(title), title);
+    const task = handbackTask(title);
+    assert.ok(task, title);
+    assert.equal(task.panel, "sections");
+    assert.match(task.prompt(file), new RegExp(file.replace(/[.]/g, "\.")));
+  }
+  assert.match(handbackTask("按 G5 确认无阻塞问题、补齐声明并决定是否提交")!.prompt("submission/checklist.md"), /不要替我提交/);
+  assert.equal(handbackTask("换原图与申请转载许可")!.panel, "permissions");
+});

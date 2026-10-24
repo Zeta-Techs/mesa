@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { ExternalLink } from "lucide-react";
@@ -194,8 +194,9 @@ export function FigurePermissionsPanel({
   );
 }
 
-/** 填作者、单位与投稿声明：一节一个框，离开框就存（不用找「保存」，也不会丢） */
-export function DeclarationsForm({ root, rel }: { root: string; rel: string }) {
+/** 按「## 小标题」一节一个框，离开框就存（不用找「保存」，也不会丢）。投稿声明、投稿前清单、数据字典都用它；
+ *  文件没分节时显示 fallback（原文编辑） */
+export function DeclarationsForm({ root, rel, fallback }: { root: string; rel: string; fallback?: ReactNode }) {
   const file = useStepFile(root, rel);
   const parsed = useMemo(() => parseDeclarations(file.text ?? ""), [file.text]);
   const [drafts, setDrafts] = useState<DeclarationSection[] | null>(null);
@@ -204,7 +205,9 @@ export function DeclarationsForm({ root, rel }: { root: string; rel: string }) {
   if (file.text == null || drafts == null) {
     return file.error ? <InlineNotice tone="err" size="micro">{file.error}</InlineNotice> : <p className="text-micro text-l4">读取声明…</p>;
   }
-  if (drafts.length === 0) return <p className="text-micro text-l4">这份文件里没有「## 小标题」分节，回对话让 AI 按模板重写。</p>;
+  if (drafts.length === 0) {
+    return fallback ?? <p className="text-micro text-l4">这份文件里没有「## 小标题」分节，回对话让 AI 按模板重写。</p>;
+  }
 
   async function saveIfChanged() {
     if (!drafts || drafts.every((s, i) => s.body === parsed[i]?.body)) return;

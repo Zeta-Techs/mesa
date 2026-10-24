@@ -62,7 +62,9 @@ test("任务书减重不靠删阶段/门禁：共用摘要一次，格式适配�
   // 同日再改：先报后改的停点写明「去流程线那一行点、不手改文件、不留空决定行」（各定稿步同涨）。实测 review 28272、论文 36544、学位 34498、投稿 9071、LaTeX 13941，未超上限。
   // 同日再加：待核实清单每行多一栏「建议」（人点修改时预填）。实测 review 28296。
   // 同日再加：投稿声明模板加 Authors 一节、模型名说不准不硬写。实测 review 28353。
-  const before: Record<string, number> = { review: 28400, "research-paper": 36600, "data-processing": 12900, thesis: 34600, "submission-rebuttal": 9100, "latex-paper": 14000 };
+  // 同日按 HER 一轮推到其他模板：论文、学位论文定稿加待核实清单（共用一条款），投稿前清单 / 投稿材料清单分节写并带 AI 使用声明。
+  // 实测 review 28353、论文 37076、学位 34943、投稿 9148。
+  const before: Record<string, number> = { review: 28400, "research-paper": 37200, "data-processing": 12900, thesis: 35100, "submission-rebuttal": 9200, "latex-paper": 14000 };
   for (const t of PIPELINE_TEMPLATES) {
     const tasks = md(t.id);
     assert.ok(tasks.reduce((n, s) => n+s.length, 0) < before[t.id], t.id);
