@@ -457,6 +457,19 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-25 · Mac 端 10-22～10-25 的改动在 Windows 上核一遍：程序状态旁路 Windows 不接，金丝雀 Windows 会话层不读本机对话
+
+用户让查 main 上 Mac 端新提交在 Windows 上有什么问题。基线（npm test / cargo test / npm run build）在 Windows 全绿，问题出在只能实机跑出来的聊天层，
+所以在本机跑了一遍九家金丝雀。定下：
+一，**程序状态（OSC 7501）旁路 Windows 不接**：ConPTY 两个方向都吞 OSC（与 terminal.md「OSC 底色握手」同一机制），本机 Grok 1.0.67 经 ConPTY 的输出里
+只有 OSC 0 / 12 和 DA1，`OSC 7501;?` 没了，e2e 一轮的回合状态始终是空。接了只是一条永远空着的旁路（还会让启动期的信任菜单读屏多等），
+`chat_channel::prepare` 在 Windows 直接不建；聊天层说明按平台分（`chatFidelity(agent, isWindows)`，Windows 上 Grok 第 3 档「简化」）。
+以后再借 OSC 类协议做旁路，先在 Windows 上抓一次 ConPTY 原始输出确认过得来。
+二，**金丝雀在 Windows 上的会话层核对不能用 Mesa 的扫描兜底**：`dirs::home_dir` 在 Windows 不看 HOME / USERPROFILE，扫的是本机真实 HOME，
+旁路没报会话文件的家（Qwen、OpenCode）会读到用户自己最近的一段旧对话、报「解析器没读到用户这句」。Windows 改在临时 HOME 里按会话 id 找；
+Windows 上 Grok 不跑旁路端到端，只抓屏。
+三，界面文字里写死的 Mac 键位（看图标注「撤销（⌘Z）」、固定快捷键说明里的「⌃Tab」）按平台写；启动字标给 Windows 补 Segoe UI。
+
 ### 2026-10-25 · 合并 Windows 分支 windows/fix/1022（科研流程 HER 一轮），Mac 端同类问题同步修
 
 用户让把 Windows 上做的科研流程修复合进 main，冲突逐处核实，并查 Mac 端是否有同样问题。定下：

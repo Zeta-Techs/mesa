@@ -52,7 +52,9 @@ npm run canary
 
 各家跑哪几层不一样：有结构化旁路的六家（Claude Code、CodeBuddy、Qwen、OpenCode、Codex、Grok）跑旁路端到端，
 请求、旁路、会话、画面四层都比；Gemini、Kimi 不开全局 hooks、Cursor 没有旁路，只抓屏，请求形状取抓屏那一趟。
-Grok 的程序状态不带会话 id，「旁路认出会话」这项不查，会话文件从临时 HOME 里扫出来。
+Grok 的程序状态不带会话 id，「旁路认出会话」这项不查，会话文件从临时 HOME 里扫出来。**Windows 上 Grok 也只抓屏**：程序状态（OSC 7501）
+过不了 ConPTY，Mesa 在 Windows 不接这条旁路。Windows 上 Mesa 的会话扫描不认临时 HOME（`dirs::home_dir` 不看 HOME / USERPROFILE），
+旁路没报会话文件时（Qwen、OpenCode）改在临时 HOME 里按会话 id 找，不会读到本机自己的对话。
 
 不用真实密钥，请求只到本机假网关。临时 HOME **不拷本机配置**：用户自己的 MCP、插件、hooks 会改工具清单，那样各台机器和 CI 就没法比。
 所以这里测的是「装好什么都不配的 CLI + Mesa 的注入」，「用户全局配置会不会盖过 Mesa」仍由 e2e-model-routing 的脚本核对。

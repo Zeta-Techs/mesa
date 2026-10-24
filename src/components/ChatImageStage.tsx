@@ -17,6 +17,7 @@ import {
   type MarkTool,
   type Markup,
 } from "../image-markup";
+import { IS_MAC } from "../hotkeys";
 
 const TOOLS: { id: MarkTool; label: string; icon: ReactNode; hint: string }[] = [
   {
@@ -371,7 +372,7 @@ export default function ChatImageStage({
             type="button"
             disabled={!hasMarks}
             onClick={undo}
-            title="撤销上一笔（⌘Z）"
+            title={`撤销上一笔（${IS_MAC ? "⌘Z" : "Ctrl+Z"}）`}
             className={`${toolBtn(false)} disabled:cursor-not-allowed disabled:opacity-40`}
           >
             <Undo2 size={14} strokeWidth={1.8} aria-hidden="true" />

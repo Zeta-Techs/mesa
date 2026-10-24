@@ -94,8 +94,22 @@ export const CHAT_FIDELITY: Record<string, ChatFidelity> = {
   },
 };
 
-export function chatFidelity(agentId: string | null | undefined): ChatFidelity | null {
-  return (agentId && CHAT_FIDELITY[agentId]) || null;
+/**
+ * Windows 上与上表不同的家：ConPTY 两个方向都吞 OSC，Grok 自己报的状态（OSC 7501）到不了 Mesa，
+ * 后端 Windows 不接这条旁路（chat_channel.rs prepare），Grok 退回和 Gemini、Kimi 一样读画面（2026-10-25 本机实测）
+ */
+const CHAT_FIDELITY_WINDOWS: Record<string, ChatFidelity> = {
+  grok: {
+    tier: 3,
+    beta: false,
+    source: "Windows 的终端层会吞掉 Grok 自己报的状态；没开「精确注意力标记」时，在干活还是在等你都靠读终端画面推断",
+    terminalOnly: "登录、方向键选择的菜单、认不出的确认",
+  },
+};
+
+export function chatFidelity(agentId: string | null | undefined, isWindows = false): ChatFidelity | null {
+  if (!agentId) return null;
+  return (isWindows && CHAT_FIDELITY_WINDOWS[agentId]) || CHAT_FIDELITY[agentId] || null;
 }
 
 /**

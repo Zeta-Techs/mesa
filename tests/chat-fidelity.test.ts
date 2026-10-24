@@ -14,6 +14,16 @@ test("九家都写了聊天层能做到哪一步", () => {
   assert.equal(chatFidelity("custom"), null);
 });
 
+test("Windows 上 Grok 没有程序状态旁路，降到读画面那一档；其余家两平台一样", () => {
+  assert.equal(chatFidelity("grok")?.tier, 2);
+  const win = chatFidelity("grok", true);
+  assert.equal(win?.tier, 3);
+  assert.equal(win?.beta, false);
+  assert.match(win?.source ?? "", /读终端画面/);
+  assert.equal(chatFidelity("codex", true), chatFidelity("codex"));
+  assert.equal(chatFidelity("custom", true), null);
+});
+
 test("版本串里取 x.y.z", () => {
   assert.deepEqual(parseVersion("2.1.306 (Claude Code)"), [2, 1, 306]);
   assert.deepEqual(parseVersion("codex-cli 0.163.0"), [0, 163, 0]);

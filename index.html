@@ -51,7 +51,8 @@
         align-items: center;
         justify-content: center;
         color: #5d6474;
-        font-family: -apple-system, "SF Pro", sans-serif;
+        /* Windows 没有 SF：给 Segoe UI，否则落到通用 sans-serif（中文系统常是宋体 / 雅黑），字标走样 */
+        font-family: -apple-system, "SF Pro", "Segoe UI Variable", "Segoe UI", sans-serif;
         font-size: 22px;
         font-weight: 400;
         letter-spacing: 0.3em;
