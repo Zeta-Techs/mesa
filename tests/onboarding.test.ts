@@ -126,6 +126,9 @@ test("完成提示：切过终端之后讲对话标题与怎么改名（没有�
   assert.ok(n.text.startsWith("对话会自动起标题\n"));
   assert.ok(n.text.includes("月日|类型|主题"));
   assert.ok(n.text.includes("编辑标题与标签"));
+  // 2026-10-24 侧栏改版：项目页没有「对话」页签了，改名先指侧栏右键
+  assert.ok(n.text.includes("侧栏") && n.text.includes("重命名"));
+  assert.ok(!n.text.includes("页签"));
 });
 
 test("完成提示：全部做完给收尾句", () => {

@@ -45,6 +45,7 @@ import {
   DEFAULT_FOCUS_RAIL_HOTKEY,
   DEFAULT_NEW_CHAT_HOTKEY,
   FIXED_HOTKEYS,
+  hotkeyClashes,
   IS_MAC,
   IS_WINDOWS,
   PAGE_HOTKEY_DEFS,
@@ -874,6 +875,7 @@ function HotkeyCapture({
   value,
   defaultValue,
   conflictsWith,
+  clashWith,
   onSave,
   capturing,
   setCapturing,
@@ -884,6 +886,8 @@ function HotkeyCapture({
   defaultValue: string;
   /** 其余在用的绑定值，用于防冲突（空串不计） */
   conflictsWith: string[];
+  /** 存下的绑定已经和这一条撞了（hotkeyClashes 给的另一条名字）：按下去只会到排在前面那条 */
+  clashWith?: string;
   onSave: (combo: string) => void;
   /** 当前处于监听态的行 id（null = 没有行在录） */
   capturing: string | null;
@@ -944,16 +948,20 @@ function HotkeyCapture({
         className={`inline-flex h-7 min-w-14 shrink-0 items-center justify-center rounded-md border px-2 font-mono ${
           listening
             ? "border-cta-bd bg-inset text-cta"
-            : conflict
+            : conflict || clashWith
               ? "border-err-text/50 text-err-text"
               : value === ""
                 ? "border-dashed border-hairline bg-transparent text-l4"
                 : "border-field bg-inset text-l2"
         }`}
+        title={clashWith && !listening ? `和「${clashWith}」重复，按下去只会到排在前面的那一个；点这里换一个，或点「恢复」` : undefined}
       >
         {listening ? "按下新快捷键…" : comboLabel(value)}
       </button>
       {conflict && <span className="text-err-text">与其他快捷键冲突</span>}
+      {!conflict && clashWith && !listening && (
+        <span className="text-err-text">和「{clashWith}」重复</span>
+      )}
       {/* 「恢复」「禁用」两格固定占位（不适用时 invisible）：条件渲染会让改过默认值的行
           把快捷键钮往左挤，与同列其他行对不齐（2026-10-17 截图实证 ⌘L 比 ⌘9 左移一截）。
           「禁用」低频，悬停行才显现 */}
@@ -1006,6 +1014,16 @@ function HotkeysSection({
     PAGE_HOTKEY_DEFS.find((p) => p.id === id)?.combo ??
     "";
   const pageCombos = PAGE_HOTKEY_DEFS.map((p) => pageCombo(p.id));
+  // 存量撞车（录制时会拒，但重排前存下的旧绑定会撞）：页面九条只在总开关开着时参与，关着它们本就不生效
+  const clashes = hotkeyClashes([
+    ...(pageSwitchOn
+      ? PAGE_HOTKEY_DEFS.map((p) => ({ id: p.id, label: p.label, combo: pageCombo(p.id) }))
+      : []),
+    { id: "newChat", label: "新对话", combo: newChat },
+    { id: "focusRail", label: "在侧栏里选对话", combo: focusRail },
+    { id: "palette", label: "命令面板", combo: palette },
+    { id: "chrome", label: "隐藏侧栏", combo: chrome },
+  ]);
 
   return (
     <>
@@ -1016,7 +1034,7 @@ function HotkeysSection({
         title="页面快捷键"
         hint={
           pageSwitchOn
-            ? "一键直达下面九个主页面，顺序同侧栏"
+            ? "一键直达下面九个页面；编号按侧栏收成图标时从上到下排"
             : "已关闭：下面九个绑定暂不生效，仍可先改好"
         }
         action={
@@ -1034,6 +1052,7 @@ function HotkeysSection({
               <HotkeyCapture
                 id={p.id}
                 value={pageCombo(p.id)}
+                clashWith={clashes.get(p.id)}
                 defaultValue={p.combo}
                 conflictsWith={[
                   palette,
@@ -1072,6 +1091,7 @@ function HotkeysSection({
             <HotkeyCapture
               id="newChat"
               value={newChat}
+              clashWith={clashes.get("newChat")}
               defaultValue={DEFAULT_NEW_CHAT_HOTKEY}
               conflictsWith={[palette, chrome, focusRail, ...pageCombos]}
               onSave={(combo) => void patch({ hotkeyNewChat: combo })}
@@ -1086,6 +1106,7 @@ function HotkeysSection({
             <HotkeyCapture
               id="focusRail"
               value={focusRail}
+              clashWith={clashes.get("focusRail")}
               defaultValue={DEFAULT_FOCUS_RAIL_HOTKEY}
               conflictsWith={[palette, chrome, newChat, ...pageCombos]}
               onSave={(combo) => void patch({ hotkeyFocusRail: combo })}
@@ -1097,6 +1118,7 @@ function HotkeysSection({
             <HotkeyCapture
               id="palette"
               value={palette}
+              clashWith={clashes.get("palette")}
               defaultValue="mod+k"
               conflictsWith={[chrome, newChat, focusRail, ...pageCombos]}
               onSave={(combo) => void patch({ hotkeyPalette: combo })}
@@ -1108,6 +1130,7 @@ function HotkeysSection({
             <HotkeyCapture
               id="chrome"
               value={chrome}
+              clashWith={clashes.get("chrome")}
               // JSX 属性里的字符串不认反斜杠转义："mod+\\" 会是两个反斜杠，和真绑定对不上（原先「恢复」常亮、点了还会存坏）
               defaultValue={"mod+\\"}
               conflictsWith={[palette, newChat, focusRail, ...pageCombos]}

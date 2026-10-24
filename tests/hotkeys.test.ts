@@ -7,7 +7,9 @@ import {
   DEFAULT_FOCUS_RAIL_HOTKEY,
   DEFAULT_NEW_CHAT_HOTKEY,
   eventMatchesCombo,
+  FIXED_HOTKEYS,
   globalHotkeyAllowed,
+  hotkeyClashes,
   PAGE_HOTKEY_DEFS,
   READER_MODE_HOTKEY,
 } from "../src/hotkeys.ts";
@@ -120,4 +122,29 @@ test("新对话 / 光标移到侧栏：默认 ⌘N / ⌘0，不和九页、命�
   assert.equal(globalHotkeyAllowed(true, true), true, "Mac 上 ⌘ 不进终端，照接");
   assert.equal(globalHotkeyAllowed(true, false), false, "Ctrl+N 在终端里是下一条历史");
   assert.equal(globalHotkeyAllowed(false, false), true);
+});
+
+test("hotkeyClashes：存下的旧绑定和新默认撞车时两条都标出（2026-10-24 项目 ⌘2 撞运行 ⌘2）；禁用不算撞", () => {
+  const pages = PAGE_HOTKEY_DEFS.map((p) => ({
+    id: p.id,
+    label: p.label,
+    // 重排前改过、存成旧默认的「项目」⌘2
+    combo: p.id === "workspaces" ? "mod+2" : p.combo,
+  }));
+  const clashes = hotkeyClashes([...pages, { id: "newChat", label: "新对话", combo: "" }]);
+  assert.equal(clashes.get("workspaces"), "运行");
+  assert.equal(clashes.get("terminal"), "项目");
+  assert.equal(clashes.size, 2);
+  assert.equal(hotkeyClashes(PAGE_HOTKEY_DEFS.map((p) => ({ ...p }))).size, 0, "默认绑定互不相撞");
+  assert.equal(
+    hotkeyClashes([
+      { id: "a", label: "甲", combo: "" },
+      { id: "b", label: "乙", combo: "" },
+    ]).size,
+    0,
+  );
+});
+
+test("FIXED_HOTKEYS：名字不超过 8 个字（设置页双列放得下，不被截成「…」）", () => {
+  for (const k of FIXED_HOTKEYS) assert.ok([...k.label].length <= 8, k.label);
 });

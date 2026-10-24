@@ -39,14 +39,32 @@ export function globalHotkeyAllowed(inTerminal: boolean, isMac: boolean): boolea
   return isMac || !inTerminal;
 }
 
-/** 改不了、但要让人知道的快捷键（设置页「固定快捷键」只列出）；mac / other 分写，因为 Ctrl+Tab 在 Mac 上也是 Ctrl */
+/** 改不了、但要让人知道的快捷键（设置页「固定快捷键」只列出）；mac / other 分写，因为 Ctrl+Tab 在 Mac 上也是 Ctrl。
+ *  label 控制在 8 个字以内：设置页双列时键帽后面还留着「恢复」「禁用」两格空位，长了会被截成「切到刚才看的那段…」 */
 export const FIXED_HOTKEYS: readonly { label: string; mac: string; other: string; hint?: string }[] = [
-  { label: "切到刚才看的那段对话", mac: "⌃Tab", other: "Ctrl+Tab", hint: "在运行页里按，按最近看过的顺序" },
-  { label: "切到最早看的那段对话", mac: "⌃⇧Tab", other: "Ctrl+Shift+Tab" },
-  { label: "侧栏里上下选对话", mac: "↑ ↓ · 回车打开", other: "↑ ↓ · Enter 打开", hint: "光标在侧栏里时；← → 收起 / 展开课题" },
+  { label: "切回刚看的对话", mac: "⌃Tab", other: "Ctrl+Tab", hint: "在运行页里按，按最近看过的顺序往回切" },
+  { label: "切到最早看的对话", mac: "⌃⇧Tab", other: "Ctrl+Shift+Tab", hint: "在运行页里按，和 ⌃Tab 反方向" },
+  { label: "侧栏里上下选", mac: "↑ ↓ ↵", other: "↑ ↓ Enter", hint: "光标在侧栏里时：↑ ↓ 选，回车打开，← → 收起 / 展开课题" },
   { label: "打开设置", mac: "⌘,", other: "Ctrl+," },
   { label: "终端里查找", mac: "⌘F", other: "Ctrl+F", hint: "光标在终端里时" },
 ];
+
+/**
+ * 已存下的绑定里互相撞车的：id → 同组合的另一条的名字（第一个撞上的）。录制时撞车会被拒，但存量绑定可能撞——
+ * 2026-10-24 页面快捷键重排后，以前改过、存成旧默认的（如「项目」⌘2）会和新默认（「运行」⌘2）撞，
+ * 按下去只会到排在前面那页。设置页据此把两行都标出来。空串（禁用）不算撞
+ */
+export function hotkeyClashes(
+  bindings: readonly { id: string; label: string; combo: string }[],
+): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const b of bindings) {
+    if (!b.combo) continue;
+    const other = bindings.find((x) => x.id !== b.id && x.combo === b.combo);
+    if (other) out.set(b.id, other.label);
+  }
+  return out;
+}
 
 export interface Combo {
   mod: boolean;

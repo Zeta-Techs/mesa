@@ -140,10 +140,11 @@ function stepActions(id: OnboardingStepId, facts: OnboardingFacts): StepAction[]
       return [
         { label: "知道了", primary: true, keepOpen: true, run: () => ack("naming") },
         {
-          label: "去对话页看看",
+          label: "打开搜对话",
           run: () => {
             ack("naming");
-            s().setPage("sessions");
+            // 同侧栏「搜对话」：进对话页、光标落进搜索框
+            s().goEntry("sessions");
           },
         },
       ];
@@ -165,7 +166,7 @@ function stepActions(id: OnboardingStepId, facts: OnboardingFacts): StepAction[]
           },
         },
         {
-          label: "建示例课题",
+          label: "创建示例课题",
           run: () => {
             s().setPage("workspaces");
             s().setDemoProjectOpenReq(Date.now());
