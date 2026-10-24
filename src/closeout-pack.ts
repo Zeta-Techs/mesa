@@ -27,6 +27,15 @@ interface CatalogItem {
   label: string;
 }
 
+/** 两份带引用域的 Word：在 Mesa 里预览不了 EndNote / Zotero 的域，点开交给系统里的 Word。
+ *  「在 Word 里换样式」是保存进项目之后人自己的可选事，不放在定稿步的人工事项里（2026-10-24 用户拍板）。 */
+export function isCloseoutFieldDoc(rel: string): boolean {
+  return rel === "output/endnote.docx" || rel === "output/zotero.docx";
+}
+
+export const FIELD_DOC_HINT =
+  "两份域稿点开会用 Word 打开。要在 Word 里接着改、让 EndNote 或 Zotero 换样式时：在 EndNote 选项卡点 Update Citations and Bibliography，或在 Zotero 选项卡点 Refresh，再在那里选样式。不在 Word 里改稿就不用管。";
+
 /** 脉络顺序。同一路径只出现一次。 */
 const CATALOG: CatalogItem[] = [
   { group: "final", rel: "output/review-final.pdf", label: "定稿 PDF" },

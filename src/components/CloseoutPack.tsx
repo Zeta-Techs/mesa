@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "../store";
+import { IS_WINDOWS } from "../hotkeys";
+import { pathWithin } from "../path-utils";
 import { readResearchFile } from "../research-report-load";
 import { loadArtifactRows } from "./ArtifactChecklist";
 import FileTypeMark from "./FileTypeMark";
@@ -9,6 +11,8 @@ import {
   closeoutFigureCards,
   closeoutNoteRows,
   groupCloseoutFiles,
+  FIELD_DOC_HINT,
+  isCloseoutFieldDoc,
   isCloseoutVisible,
   parseCloseoutIndex,
   type CloseoutFile,
@@ -63,6 +67,7 @@ export default function CloseoutPack({
   const [packOpen, setPackOpen] = useState(false);
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
+  const [openError, setOpenError] = useState<string | null>(null);
   const entryKey = entries.join("\n");
   const rootKey = [projectRoot, ...worktrees].join("\n");
 
@@ -134,6 +139,14 @@ export default function CloseoutPack({
   if (groups.length === 0) return <p className="text-xs text-l4">完结文件 · 定稿还没写出来</p>;
 
   function openFile(file: CloseoutFile) {
+    if (isCloseoutFieldDoc(file.rel)) {
+      // 域稿交给系统里的 Word（Mesa 的预览跑不了 EndNote / Zotero 插件）
+      const roots = [projectRoot, ...worktrees];
+      const root = roots.find((r) => pathWithin(file.abs, r, IS_WINDOWS)) ?? projectRoot;
+      setOpenError(null);
+      void invoke("open_in_system", { path: file.abs, root }).catch((reason) => setOpenError(String(reason)));
+      return;
+    }
     setFilePreviewReq({ projectRoot, path: file.abs, token: Date.now() });
     setPage("workspaces");
   }
@@ -163,6 +176,10 @@ export default function CloseoutPack({
       {finals.length > 0 && (
         <FileSection label="最终稿" files={finals} onOpen={openFile} />
       )}
+      {finals.some((file) => isCloseoutFieldDoc(file.rel)) && (
+        <p className="px-1 text-micro leading-5 text-l4">{FIELD_DOC_HINT}</p>
+      )}
+      {openError && <p className="px-1 text-micro text-err-text">{openError}</p>}
       {LINE_GROUPS.map(({ id, label }) => {
         const group = byId.get(id);
         if (!group) return null;

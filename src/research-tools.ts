@@ -1,4 +1,4 @@
-import type { HumanTaskDto, ProjectStepDto } from "./types";
+import type { ProjectStepDto } from "./types";
 
 export interface ResearchTools {
   libraryExport: "none" | "zotero" | "endnote";
@@ -255,23 +255,8 @@ export function withResearchTools(source: ProjectStepDto, tools: ResearchTools, 
       ["output/zotero.docx", "papers/zotero-cite-report.md"],
       `Zotero 交稿：用技能 scripts/zotero_docx.py 从同一份 ${md} 的 [@键] 写出 output/zotero.docx（真正的 ADDIN ZOTERO_ITEM CSL_CITATION，文献嵌在域里）。只读当前默认 Zotero 配置写明的数据目录，只查用户库。DOI 整段相同且只有一条未删除条目时，才写入那条的条目地址；多条或不唯一都不猜，写进报告。未匹配键只写 papers/zotero-cite-report.md、不交 docx。不点 Zotero 插件。`,
     );
-    const fieldDoc = "在 Word 里换样式（打开域稿）";
-    if (!step.humanTasks.some((h) => h.title === fieldDoc || h.title.includes("域稿"))) {
-      // 2026-10-24：和「更换引用样式」是两种换法，紧挨着放并在说明里讲清楚该走哪条
-      const task: HumanTaskDto = {
-        title: fieldDoc,
-        guidance:
-          "这是另一种换样式的做法：要在 Word 里接着改稿、让 EndNote 或 Zotero 管引用时才用。点右边按钮用 Word 打开 EndNote 版或 Zotero 版，在 Word 的 EndNote 选项卡点 Update Citations and Bibliography，或 Zotero 选项卡点 Refresh，再在那里选样式。不在 Word 里改稿就跳过：上面「更换引用样式」已经让 AI 把 PDF 和 Word 换好。Mesa 不会替你点 Word 里的按钮。",
-        target: "",
-        timing: "after",
-        completion: "manual",
-        optional: true,
-      };
-      const style = step.humanTasks.findIndex((h) => h.title === "更换引用样式");
-      if (style >= 0) step.humanTasks.splice(style + 1, 0, task);
-      else step.humanTasks.push(task);
-      added.human.push(fieldDoc);
-    }
+    // 「在 Word 里换样式」不再挂成这一步的人工事项（2026-10-24 用户拍板）：那是保存进项目之后人自己的可选事，
+    // 入口在项目卡「完结文件」——两份域稿点开用 Word 打开，下面一句做法（closeout-pack.ts FIELD_DOC_HINT）。
   }
   if (notes.length) step.brief = `${step.brief.trimEnd()}\n\n${START}${JSON.stringify(added)} -->\n本项目选定工具（优先于默认软件示例）：\n${notes.map((n) => `- ${n}`).join("\n")}\n${END}\n`;
   return step;

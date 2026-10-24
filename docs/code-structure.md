@@ -656,7 +656,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   索引里没有的笔记（沉浸阅读建的）按 list_paper_notes 来源行配 PDF、题名取 PDF 文件名
   research-tools.ts          # 科研工具注入 withResearchTools；定稿步同时挂 output/endnote.docx 与 output/zotero.docx（LaTeX 不挂）；
   skill-slots.ts             # 技能位单一出处：{skill:锚名} 占位解析（provides 优先、名字兜底）、行为键判定、provides 映射 hook；锚名闭集见 pipeline.md（tests/skill-slots.test.ts）
-                             # 域稿刷新收成一句可选「在 Word 里换样式（打开域稿）」，插在「更换引用样式」后面，不挂文献库同步按钮；来源只认 lit_source
+                             # 域稿不再挂成定稿步人工事项（入口在完结文件，2026-10-24）；老档案的域稿行不挂文献库同步按钮；来源只认 lit_source
   review-decisions.ts        # 审查报告 R/S 与待核实 V 的拆条、接受/拒绝/修改写回、点完后的继续提示
   handback-tasks.ts          # AI 写好、人来填再交回的人工事项（转载许可清单、投稿声明）：按标题认，给「打开」「交给 AI」与交回的话
                              # （tests/review-decisions.test.ts）

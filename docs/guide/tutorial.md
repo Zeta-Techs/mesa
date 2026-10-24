@@ -630,7 +630,7 @@ AI 开始时不问引用样式，先按初稿的方括号编号做。想换，�
 
 人工事项 **填作者、单位与投稿声明**：综述流程到这一步就结束，投稿前的作者信息只能你填。AI 写好 `submission/declarations.md` 空白模板（基金、利益冲突、作者贡献、AI 使用声明，AI 使用声明它会按实际用到的工具起一段草稿等你核对）；点这一行的 **打开填写**，在 Authors 一节写作者、单位、通讯邮箱，再把其余几节填好（AI 使用声明核对用过的模型和用途），点 **填好了，交给 AI**，AI 把作者写进稿件开头、声明并进文末，再重渲。
 
-「域稿」指正文引用写成 Word 域、与你的文献库绑定的两份 Word（`endnote.docx`、`zotero.docx`），下面单独说明。要在 Word 里接着改稿、让 EndNote 或 Zotero 管引用时，用可选事项 **在 Word 里换样式（打开域稿）**：打开其中一份，点一次 Update 或 Refresh，再在 EndNote / Zotero 里选样式。不在 Word 里改稿就跳过它，「更换引用样式」已经让 AI 把 PDF 和 Word 换好。
+「域稿」指正文引用写成 Word 域、与你的文献库绑定的两份 Word（`endnote.docx`、`zotero.docx`），下面单独说明。要在 Word 里接着改稿、让 EndNote 或 Zotero 管引用，是保存进项目之后你自己的可选事：在项目卡 **完结文件** 里点 EndNote 域稿或 Zotero 域稿，会用 Word 打开，点一次 Update 或 Refresh，再在 EndNote / Zotero 里选样式。不在 Word 里改稿就不用管，「更换引用样式」已经让 AI 把 PDF 和 Word 换好。
 
 #### ④ 产出
 
