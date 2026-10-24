@@ -2667,6 +2667,7 @@ mod tests {
         let target = root.join("目标 dir");
         std::fs::create_dir_all(&start).unwrap();
         std::fs::create_dir_all(&target).unwrap();
+        let target_long = crate::paths::canonicalize_plain(&target).unwrap();
         for opt in terminal_shell_options() {
             let (shell, mut args, kind) = interactive_shell(Some(opt.id));
             let mut cmd = CommandBuilder::new(&shell);
@@ -2716,8 +2717,10 @@ mod tests {
                 let _ = std::fs::remove_file(f);
             }
             let got = got.unwrap_or_else(|| panic!("{}：读不到目录", opt.id));
+            // CI 的 TEMP 是 8.3 短名（C:\Users\RUNNER~1\…），PowerShell 报的是长名（runneradmin）：两种写法都算对
             assert!(
-                crate::paths::same_path(&got, &target.to_string_lossy()),
+                crate::paths::same_path(&got, &target.to_string_lossy())
+                    || crate::paths::same_path(&got, &target_long.to_string_lossy()),
                 "{}：cd 后应是 {}，实际 {got}",
                 opt.id,
                 target.display()
