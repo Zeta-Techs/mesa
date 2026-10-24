@@ -75,6 +75,13 @@ test("Blender 只挂研究设计/结构示意，不替代统计图；EndNote 交
   assert.ok(!latexFormat.expectedArtifacts.includes("output/zotero.docx"));
 });
 
+test("没指定 EndNote 库不是前置：照样交域稿，只有未匹配键才不交（2026-10-24 HER 润色：开工商量把库路径写成硬前置，docx 生成后又撤下）", () => {
+  const polish = withResearchTools(template("review").steps.find((s) => s.workspaceName === "polish")!, DEFAULT_RESEARCH_TOOLS);
+  assert.match(polish.brief, /没指定库不是前置条件：照样交 docx/);
+  assert.match(polish.brief, /库里找不到不是前置条件：照样交 docx/);
+  assert.match(polish.brief, /只有未匹配键才不交/);
+});
+
 test("定稿同时交 EndNote 与 Zotero 两份域稿，不看文献库选项", () => {
   const review = template("review").steps;
   const polish = review.find((s) => s.workspaceName === "polish")!;
