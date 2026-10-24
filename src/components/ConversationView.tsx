@@ -25,9 +25,10 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { BlockDto, ChatMessageDto } from "../types";
-import { FoldMark } from "./PageFrame";
+import { Collapse, FoldMark } from "./PageFrame";
 import ChatMarkdown, { ChatCodeBlock, ChatImageCard } from "./ChatMarkdown";
 import { splitImagePaths } from "../chat-image";
+import { splitLaunchPrompt } from "../project-context";
 import { splitFenced } from "../text-fences";
 import { useAppStore } from "../store";
 import {
@@ -192,12 +193,14 @@ function PlanCard({ entries }: { entries: PlanEntry[] }) {
           const Icon = e.status === "completed" ? CircleCheck : e.status === "in_progress" ? CircleDot : Circle;
           return (
             <li key={i} className="flex items-start gap-2">
-              <Icon
-                size={13}
-                strokeWidth={1.8}
-                aria-hidden="true"
-                className={`mt-[3px] shrink-0 ${e.status === "in_progress" ? "text-l1" : "text-l4"}`}
-              />
+              <span className="ccode-icon-line">
+                <Icon
+                  size={13}
+                  strokeWidth={1.8}
+                  aria-hidden="true"
+                  className={e.status === "in_progress" ? "text-l1" : "text-l4"}
+                />
+              </span>
               <span
                 className={
                   e.status === "completed" ? "text-l4 line-through" : e.status === "in_progress" ? "text-l1" : "text-l2"
@@ -339,7 +342,7 @@ export default function ConversationView({
             type="button"
             className={btn}
             onClick={() => onForkHere(text)}
-            title="新开一个标签，带着到这条回复为止的对话接着聊（原对话不动）"
+            title="另开一段对话，带着到这条回复为止的内容接着聊（原对话不动）"
           >
             <GitFork size={12} strokeWidth={1.8} aria-hidden="true" />
             从这里分叉
@@ -444,14 +447,31 @@ export default function ConversationView({
       );
     }
     // text（用户消息同样截断：超大粘贴不全量渲染）；
-    // 整行是图片路径的行剥离成内嵌图片卡（粘贴/拖拽图片在会话里就是一行路径文本）
-    const { text: bodyText, images } = splitImagePaths(b.text);
+    // 整行是图片路径的行剥离成内嵌图片卡（粘贴/拖拽图片在会话里就是一行路径文本）。
+    // 用户消息开头 Mesa 塞的项目说明（项目里「＋ 新对话」发第一句时附上）不当人话显示，折成一行（2026-10-24 用户）
+    const { pack, said } = isUser ? splitLaunchPrompt(b.text) : { pack: null, said: b.text };
+    const { text: bodyText, images } = splitImagePaths(said);
     const imageRow = images.map((p) => (
       <ChatImageCard key={p} path={p} cwd={cwd} />
     ));
     if (isUser) {
+      const packKey = `${key}:pack`;
+      const packOpen = expanded.has(packKey);
       return (
         <div key={key} className="my-1">
+          {pack && (
+            <div className={bodyText ? "mb-1 ccode-chat-meta text-l4" : "ccode-chat-meta text-l4"}>
+              <button
+                type="button"
+                onClick={() => toggleExpand(packKey)}
+                title="Mesa 开这段对话时附上的项目说明：Agent 看得到，不算你说的话"
+                className="underline decoration-dotted underline-offset-2 hover:text-l2"
+              >
+                {packOpen ? "收起项目说明" : "已附项目说明"}
+              </button>
+              {packOpen && <div className="mt-1 whitespace-pre-wrap break-words text-l3">{pack}</div>}
+            </div>
+          )}
           {bodyText && <UserText text={bodyText} cwd={cwd} forceOpen={forceOpen} />}
           {imageRow}
         </div>
@@ -548,7 +568,9 @@ export default function ConversationView({
         >
           {line}
         </button>
-        {open && <div className={"mb-2 mt-1 pl-6"}>{row.detail()}</div>}
+        <Collapse open={open} className="mb-2 mt-1 pl-6">
+          {row.detail()}
+        </Collapse>
       </div>
     );
   }
@@ -696,18 +718,16 @@ export default function ConversationView({
             <FoldMark open={open} />
           </button>
         )}
-        {open && (
-          <div className={seg.live ? "" : "mb-3 mt-1 border-t border-hairline pt-2"}>
-            {plan && <PlanCard entries={plan} />}
-            {thoughtOnly && !seg.live
-              ? richText(
-                  `${key}:thought`,
-                  seg.items.map((item) => (item.kind === "thinking" ? item.text : "")).join("\n\n"),
-                  `whitespace-pre-wrap border-l border-hairline pl-3 ${rowText} leading-relaxed text-l3`,
-                )
-              : items.map((item, i) => renderItem(item, `${key}:${i}`, seg.live))}
-          </div>
-        )}
+        <Collapse open={open} className={seg.live ? "" : "mb-3 mt-1 border-t border-hairline pt-2"}>
+          {plan && <PlanCard entries={plan} />}
+          {thoughtOnly && !seg.live
+            ? richText(
+                `${key}:thought`,
+                seg.items.map((item) => (item.kind === "thinking" ? item.text : "")).join("\n\n"),
+                `whitespace-pre-wrap border-l border-hairline pl-3 ${rowText} leading-relaxed text-l3`,
+              )
+            : items.map((item, i) => renderItem(item, `${key}:${i}`, seg.live))}
+        </Collapse>
         {seg.answer && (
           <>
             {renderBlocks(seg.answer, answerKey, false, hit)}
@@ -743,7 +763,9 @@ export default function ConversationView({
                 hit ? "rounded-md bg-seg-sel px-2 py-1" : ""
               }`}
             >
-              <Terminal size={12} strokeWidth={1.8} aria-hidden="true" className="mt-0.5 shrink-0" />
+              <span className="ccode-icon-line">
+                <Terminal size={12} strokeWidth={1.8} aria-hidden="true" />
+              </span>
               <div className="min-w-0">
                 {m.blocks.map((b, bi) =>
                   b.kind === "command" ? (

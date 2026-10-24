@@ -74,11 +74,13 @@ import ConversationView from "../components/ConversationView";
 import { firstCompleteTurnIndex } from "../conversation-tools";
 import { useAutoLoadOlder } from "../auto-load-older";
 import { useReadingAnchor } from "../reading-anchor";
+import RunCaret from "../components/RunCaret";
+import { caretOfAttention, type RunCaretState } from "../run-caret";
 import GitPanel from "../components/GitPanel";
 import HandoffPicker from "../components/HandoffPicker";
 import DigestPicker from "../components/DigestPicker";
 import { alertDialog, confirmDialog } from "../components/ConfirmDialog";
-import { openQuickChat, resumeSessionInTerminal } from "../quick-chat-launch";
+import { openConversation, openQuickChat } from "../quick-chat-launch";
 import { isScratchCwd } from "../quick-chat";
 import SessionImportModal from "../components/SessionImportModal";
 import SessionSlimDialog from "../components/SessionSlimDialog";
@@ -210,6 +212,12 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     () => new Set(terminalRunInputs.filter((r) => r.attention === "confirm").map((r) => r.tabId)),
     [terminalRunInputs],
   );
+  /** 列表行尾的运行状态光标：Mesa 里有标签开着它就按那个标签的注意力，只是 Mesa 外的终端在写算在干活 */
+  const liveCaret = (s: { agent: string; sessionId: string }): RunCaretState => {
+    const tab = liveSessions[sessionRuntimeKey(s.agent, s.sessionId)];
+    const run = tab ? terminalRunInputs.find((r) => r.tabId === tab) : undefined;
+    return run ? caretOfAttention(run.attention) : "working";
+  };
   const profiles = useAppStore((s) => s.profiles);
   const appSettings = useAppStore((s) => s.settings);
   const currentPage = useAppStore((s) => s.page);
@@ -220,6 +228,8 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
   const setSessionsQuery = useAppStore((s) => s.setSessionsQuery);
   const sessionsScratchReq = useAppStore((s) => s.sessionsScratchReq);
   const setSessionsScratchReq = useAppStore((s) => s.setSessionsScratchReq);
+  const sessionsProjectPathReq = useAppStore((s) => s.sessionsProjectPathReq);
+  const setSessionsProjectPathReq = useAppStore((s) => s.setSessionsProjectPathReq);
   // 话题：移到卡片菜单的候选列表（按项目根缓存）+ 卡片 chip 跳工作区页的一次性请求
   const taskCards = useAppStore((s) => s.taskCards);
   const loadTaskCards = useAppStore((s) => s.loadTaskCards);
@@ -406,6 +416,30 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     setSessionsScratchReq(false);
   }, [sessionsScratchReq, setSessionsScratchReq]);
 
+  // 侧栏项目树「全部 N 条」：只列这个目录的对话（同「范围 → 项目」）
+  useEffect(() => {
+    if (!sessionsProjectPathReq) return;
+    setFilter({ kind: "projectPath", path: sessionsProjectPathReq });
+    setQuery("");
+    setScopes([]);
+    setSessionsProjectPathReq(null);
+  }, [sessionsProjectPathReq, setSessionsProjectPathReq]);
+
+  // 侧栏「搜对话」点进来：光标直接落在搜索框（页面显示出来之后才聚焦得上）
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const sessionsSearchFocusReq = useAppStore((s) => s.sessionsSearchFocusReq);
+  // 页面是懒挂载的：第一次点「搜对话」时本页才挂上，从 0 比起才接得住这一次
+  const searchFocusHandledRef = useRef(0);
+  useEffect(() => {
+    if (!visible || sessionsSearchFocusReq === searchFocusHandledRef.current) return;
+    searchFocusHandledRef.current = sessionsSearchFocusReq;
+    const raf = requestAnimationFrame(() => {
+      searchInputRef.current?.focus({ preventScroll: true });
+      searchInputRef.current?.select();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [visible, sessionsSearchFocusReq]);
+
   useEffect(() => {
     const clearPoll = () => {
       if (searchPollRef.current != null) {
@@ -519,9 +553,9 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     [searched, query],
   );
 
-  /** A. 会话恢复：把会话交给终端页以 resume 语义自动重启 */
+  /** A. 会话恢复：进运行页这段对话（记录先摆出来、能直接写，发第一句才接回；同侧栏项目树） */
   function resumeInTerminal(s: SessionMetaDto) {
-    resumeSessionInTerminal(s);
+    openConversation(s);
   }
 
   /** 恢复用的兼容配置（codex 内联 provider 会话只认带 Base URL 的）；
@@ -1647,6 +1681,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
           )}
           {/* 搜索框：inset 底色分层（无描边），共享 searchFieldClass */}
           <input
+            ref={searchInputRef}
             className={`mt-2 w-full ${searchFieldClass}`}
             placeholder="搜索标题、标签，或对话里说过的话"
             title={SEARCH_SYNTAX_HINT}
@@ -2215,13 +2250,8 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                         }
                         className="-ml-1 flex h-6 w-4 shrink-0 items-center justify-center rounded-sm disabled:cursor-default"
                       >
-                        <span
-                          className={`size-2 rounded-full ${
-                            waitingTabs.has(liveSessions[sessionRuntimeKey(s.agent, s.sessionId)] ?? "")
-                              ? "bg-warn-text"
-                              : "bg-ok-text"
-                          }`}
-                        />
+                        {/* 运行状态光标（2026-10-24，同侧栏）：Mesa 里开着的按注意力，Mesa 外在写的算在干活 */}
+                        <RunCaret state={liveCaret(s)} decorative />
                       </button>
                     )}
                     {s.pinned && (
@@ -2504,8 +2534,8 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                     className="flex shrink-0 items-center gap-1 rounded-sm bg-inset px-1.5 py-0.5 text-xs text-warn-text hover:bg-hover"
                     title="终端里在等你确认（批准一个操作或选一项），点击跳过去"
                   >
-                    <span className="size-2 rounded-full bg-warn-text" />
                     等你确认
+                    <RunCaret state="confirm" decorative className="-ml-0.5" />
                   </button>
                 ) : (
                   selected.live && (
@@ -2513,8 +2543,8 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                       className="flex shrink-0 items-center gap-1 rounded-sm bg-inset px-1.5 py-0.5 text-xs text-l2"
                       title="该对话的 CLI 进程仍在运行（外部探测）"
                     >
-                      <span className="size-2 rounded-full bg-ok-text" />
                       进行中
+                      <RunCaret state="working" decorative className="-ml-0.5" />
                     </span>
                   )
                 )}

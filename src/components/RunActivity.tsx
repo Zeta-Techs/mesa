@@ -5,11 +5,13 @@ import { useAppStore } from "../store";
 import { useAnimatedDismiss } from "../exit-animation";
 import {
   RUN_ACTIVITY_STATE_LABEL,
+  runActivityAgentCaret,
+  runActivityCaret,
   runActivitySummary,
-  type RunActivityAgent,
   type RunActivitySummary,
 } from "../shell-context";
 import { AGENTS } from "../types";
+import RunCaret from "./RunCaret";
 
 /** 运行摘要（顶栏芯片 / 灵动岛胶囊共用同一份口径） */
 export function useRunActivity(): RunActivitySummary {
@@ -18,16 +20,11 @@ export function useRunActivity(): RunActivitySummary {
   return runActivitySummary(inputs, liveCount);
 }
 
-const DOT: Record<RunActivityAgent["state"], string> = {
-  confirm: "bg-warn-text",
-  working: "bg-ok-text animate-pulse",
-  done: "bg-l4",
-  running: "bg-ok-text",
-};
-
-/** 运行活动入口：一枚芯片报「谁在跑 / 谁在等你」，点开是 agent 列表、点行直达那个终端标签。
+/** 运行活动入口：一枚芯片报「谁在跑 / 谁在等你」，点开是 agent 列表、点行直达那段对话。
  *  取代旧「N 运行中」——那只是个跳页按钮，看不到哪个 agent 在等确认。
- *  没有在跑的就不渲染（无状态不占位）。variant 只管外形：顶栏是平铺小按钮，岛上是岛内胶囊。 */
+ *  没有在跑的就不渲染（无状态不占位）。variant 只管外形：顶栏是平铺小按钮，岛上是岛内胶囊。
+ *  （展开侧栏原先「运行」行尾那一份 2026-10-24 随这一行撤掉：项目树各对话行尾的光标已经报了）。
+ *  状态不画绿点 / 黄点，字后面跟一道运行状态光标（RunCaret，2026-10-24） */
 export function RunActivityButton({
   variant,
   tabIndex,
@@ -39,9 +36,8 @@ export function RunActivityButton({
   const [anchor, setAnchor] = useState<{ left: number; top: number } | null>(
     null,
   );
-  if (summary.tone === "idle") return null;
-  const dot =
-    summary.tone === "confirm" ? "bg-warn-text" : "bg-ok-text animate-pulse";
+  const caret = runActivityCaret(summary);
+  if (!caret) return null;
   return (
     <>
       <button
@@ -52,7 +48,7 @@ export function RunActivityButton({
         title={
           summary.tone === "confirm"
             ? "有 Agent 在等你确认，点开看是哪个"
-            : "正在运行的 Agent，点开可直达对应终端"
+            : "正在运行的 Agent，点开可直达那段对话"
         }
         onClick={(e) => {
           const r = e.currentTarget.getBoundingClientRect();
@@ -66,8 +62,9 @@ export function RunActivityButton({
               }`
         }
       >
-        <span className={`size-1.5 shrink-0 rounded-full ${dot}`} aria-hidden="true" />
         {summary.label}
+        {/* 光标贴着字（两种外形的 gap 都收回到 2px），读作「运行中▁」 */}
+        <RunCaret state={caret} decorative className={variant === "island" ? "-ml-0.5" : "-ml-1"} />
       </button>
       {anchor && (
         <RunActivityPanel
@@ -173,10 +170,6 @@ function RunActivityPanel({
                 onClick={() => go(a.tabId)}
                 className="ccode-menu-item flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-hover focus-visible:bg-hover"
               >
-                <span
-                  className={`size-1.5 shrink-0 rounded-full ${DOT[a.state]}`}
-                  aria-hidden="true"
-                />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-xs text-l1">{a.label}</span>
                   <span className="block truncate text-micro text-l3">
@@ -186,11 +179,12 @@ function RunActivityPanel({
                   </span>
                 </span>
                 <span
-                  className={`shrink-0 text-micro ${
+                  className={`flex shrink-0 items-center gap-1 text-micro ${
                     a.state === "confirm" ? "text-warn-text" : "text-l3"
                   }`}
                 >
                   {RUN_ACTIVITY_STATE_LABEL[a.state]}
+                  <RunCaret state={runActivityAgentCaret(a.state)} decorative className="-ml-0.5" />
                 </span>
               </button>
             ))}
@@ -222,20 +216,16 @@ function RunActivityPanel({
  *  （指针一进岛就展开、休眠面被藏），所以那里只放展示，可点的胶囊在展开面。 */
 export function RunActivityStatus() {
   const summary = useRunActivity();
-  if (summary.tone === "idle") return null;
+  const caret = runActivityCaret(summary);
+  if (!caret) return null;
   return (
     <span
       className={`ccode-nav-island-status ${
         summary.tone === "confirm" ? "ccode-nav-island-status-warn" : ""
       }`}
     >
-      <span
-        className={`size-1.5 shrink-0 rounded-full ${
-          summary.tone === "confirm" ? "bg-warn-text" : "bg-ok-text animate-pulse"
-        }`}
-        aria-hidden="true"
-      />
       {summary.label}
+      <RunCaret state={caret} decorative className="-ml-1" />
     </span>
   );
 }

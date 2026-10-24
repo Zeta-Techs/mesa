@@ -5,6 +5,8 @@ import { compactPrimaryActionClass, inlineActionClass } from "./PageFrame";
 import {
   PIPELINE_TEMPLATES,
   pipelineStepsForTemplate,
+  UNTESTED_TEMPLATE_BADGE,
+  UNTESTED_TEMPLATE_HINT,
   type SubmissionMode,
 } from "../pipeline-presets";
 import type { PipelineTemplateDto, ProjectStepDto } from "../types";
@@ -81,6 +83,7 @@ export default function TemplatePicker({
       steps: ProjectStepDto[];
       projectRules?: string[];
       projectSettings?: string[];
+      fieldTested?: boolean;
     },
     key: string,
     onDelete?: () => void,
@@ -93,6 +96,14 @@ export default function TemplatePicker({
           <span className="shrink-0 rounded-sm bg-strip px-1.5 py-0.5 text-xs text-l3">
             {t.steps.length} 步
           </span>
+          {!onDelete && !t.fieldTested && (
+            <span
+              className="shrink-0 rounded-sm bg-strip px-1.5 py-0.5 text-xs text-l3"
+              title={UNTESTED_TEMPLATE_HINT}
+            >
+              {UNTESTED_TEMPLATE_BADGE}
+            </span>
+          )}
           {onDelete && (
             <span className="shrink-0 rounded-sm bg-strip px-1.5 py-0.5 text-xs text-l3">
               我的

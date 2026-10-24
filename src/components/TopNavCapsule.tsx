@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import { PanelLeftOpen } from "lucide-react";
 import { NAV_GROUPS, NAV_BOTTOM, type NavItem } from "../navigation";
 import {
@@ -24,7 +24,6 @@ export default function TopNavCapsule({
   page,
   onPage,
   onQuickChat,
-  onQuickChatContextMenu,
   onRestore,
   hideDelayMs,
   displayMode,
@@ -36,7 +35,6 @@ export default function TopNavCapsule({
   page: string;
   onPage: (id: string) => void;
   onQuickChat: () => void;
-  onQuickChatContextMenu: (e: React.MouseEvent) => void;
   onRestore: () => void;
   hideDelayMs: number;
   displayMode?: string;
@@ -207,32 +205,34 @@ export default function TopNavCapsule({
     </>
   );
   /** 展开面的导航项。`interactive` 决定是否可聚焦——休眠时整面 aria-hidden 且不可 Tab。 */
+  /** 新对话不是页：照侧栏的顺序插在「工作台」后面；工作台被隐藏时排在第一组最前（2026-10-24 侧栏改版同步） */
+  const quickChatItem = (interactive: boolean) => (
+    <button
+      key="quick-chat"
+      ref={(el) => {
+        itemRefs.current["quick-chat"] = el;
+      }}
+      type="button"
+      tabIndex={interactive ? 0 : -1}
+      onClick={onQuickChat}
+      aria-label="新对话"
+      title="新对话：直接开一段空白对话，默认在随手聊里"
+      className="ccode-top-nav-item shrink-0"
+    >
+      {itemContent(NAV_ICONS.quickChat, "新对话")}
+    </button>
+  );
+  const quickChatAfterWorkbench = groups[0]?.items[0]?.id === "workbench";
+  /** 展开面的导航项。`interactive` 决定是否可聚焦——休眠时整面 aria-hidden 且不可 Tab。 */
   const navItems = (interactive: boolean) => (
     <>
-      {showQuickChat && (
-        <button
-          ref={(el) => {
-            itemRefs.current["quick-chat"] = el;
-          }}
-          type="button"
-          tabIndex={interactive ? 0 : -1}
-          onClick={onQuickChat}
-          onContextMenu={onQuickChatContextMenu}
-          aria-label="新对话"
-          title="新对话：右键看最近的随手聊"
-          className="ccode-top-nav-item shrink-0"
-        >
-          {itemContent(NAV_ICONS.quickChat, "新对话")}
-        </button>
-      )}
-      {showQuickChat && groups.length > 0 && (
-        <span className="ccode-top-nav-separator" aria-hidden="true" />
-      )}
+      {showQuickChat && groups.length === 0 && quickChatItem(interactive)}
       {groups.map((group, groupIndex) => (
         <span key={group.label} className="contents">
+          {showQuickChat && groupIndex === 0 && !quickChatAfterWorkbench && quickChatItem(interactive)}
           {group.items.map((item) => {
             const active = page === item.id;
-            return (
+            const button = (
               <button
                 key={item.id}
                 ref={(el) => {
@@ -248,6 +248,14 @@ export default function TopNavCapsule({
               >
                 {itemContent(item.Icon, item.label)}
               </button>
+            );
+            return item.id === "workbench" && showQuickChat ? (
+              <Fragment key={item.id}>
+                {button}
+                {quickChatItem(interactive)}
+              </Fragment>
+            ) : (
+              button
             );
           })}
           {groupIndex < groups.length - 1 && (
@@ -424,13 +432,13 @@ export default function TopNavCapsule({
               tabIndex={!expanded ? 0 : -1}
               onClick={reveal}
               onFocus={revealForKeyboard}
-              aria-label={`展开导航（当前：${currentNav?.label ?? "Mesa"}）`}
+              aria-label={`展开导航（当前：${currentNav?.page ?? currentNav?.label ?? "Mesa"}）`}
               className="ccode-top-nav-item ccode-nav-island-current shrink-0"
             >
               {currentNav && (
                 <currentNav.Icon size={15} strokeWidth={1.8} aria-hidden="true" />
               )}
-              <span>{currentNav?.label ?? "Mesa"}</span>
+              <span>{currentNav?.page ?? currentNav?.label ?? "Mesa"}</span>
             </button>
             <RunActivityStatus />
             {announceItem(false)}

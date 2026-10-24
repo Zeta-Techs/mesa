@@ -13,6 +13,7 @@ import {
   Info,
   Megaphone,
   RefreshCw,
+  Search,
   ShieldAlert,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
@@ -29,7 +30,9 @@ import {
 import { LIT_WATCH_SLOT } from "./skill-slots.ts";
 import ErrorBoundary from "./components/ErrorBoundary";
 import CommandPalette from "./components/CommandPalette";
-import { openQuickChat, resumeSessionInTerminal } from "./quick-chat-launch";
+import { openQuickChat } from "./quick-chat-launch";
+import { nextUnread, sameKeys } from "./chat-unread";
+import { clampRailWidth, parseRailWidth, RAIL_DEFAULT_REM, RAIL_WIDTH_KEY } from "./rail-width";
 import AskAiModal from "./components/AskAiModal";
 import FeedbackModal from "./components/FeedbackModal";
 import {
@@ -38,9 +41,7 @@ import {
   HelpUpdateDialog,
   type HelpDialogKind,
 } from "./components/HelpDialogs";
-import QuickChatHistoryMenu from "./components/QuickChatHistoryMenu";
 import TopNavCapsule from "./components/TopNavCapsule";
-import { pickQuickChatHistory } from "./quick-chat";
 import { ConfirmDialogHost } from "./components/ConfirmDialog";
 import { HoverTip, useHoverTip } from "./components/HoverTip";
 import { LoadingRows, rowActionClass } from "./components/PageFrame";
@@ -65,11 +66,13 @@ import {
 import type {
   SchedulerRunDonePayload,
   SchedulerRunStartedPayload,
-  SessionMetaDto,
 } from "./types";
 import {
   eventMatchesCombo,
   comboLabel,
+  DEFAULT_FOCUS_RAIL_HOTKEY,
+  DEFAULT_NEW_CHAT_HOTKEY,
+  globalHotkeyAllowed,
   PAGE_HOTKEY_DEFS,
   IS_MAC,
   IS_WINDOWS,
@@ -79,7 +82,8 @@ import { NAV_GROUPS, NAV_BOTTOM } from "./navigation";
 import { isLightTheme } from "./themes";
 import ProjectTree, { TitlebarProjectChip } from "./components/ProjectTree";
 import { RunActivityButton, useRunActivity } from "./components/RunActivity";
-import { shellContextPlacement, shellMode } from "./shell-context";
+import { runActivityCaret, shellContextPlacement, shellMode } from "./shell-context";
+import RunCaret from "./components/RunCaret";
 import { normalizeNavCapsuleDelay, resolveStartupNavMode } from "./nav-capsule";
 import { chromeOpacityScale } from "./chrome-opacity";
 import {
@@ -334,12 +338,6 @@ function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const { fullscreen: macFullscreen, animating: macFullscreenAnimating } =
     useMacFullscreenState(IS_MAC);
-  // 侧栏「快速开聊」右键 = scratch 随手聊历史（左键直接开空白对话，右键是回看口）
-  const [quickChatMenu, setQuickChatMenu] = useState<{
-    x: number;
-    y: number;
-    sessions: SessionMetaDto[];
-  } | null>(null);
   // 收货反馈横幅（成功 8s 自动消失；失败/需注意常驻直到处理）
   const [relayToasts, setRelayToasts] = useState<RelayToast[]>([]);
   const relayToastId = useRef(0);
@@ -388,23 +386,36 @@ function App() {
       });
     dismissRelayToast(t.id);
   };
-  function openQuickChatMenu(e: React.MouseEvent) {
-    e.preventDefault();
-    const { clientX: x, clientY: y } = e;
-    const s = useAppStore.getState();
-    setQuickChatMenu({
-      x,
-      y,
-      sessions: pickQuickChatHistory(
-        s.sessions,
-        s.projectPaths,
-        s.liveSessions,
-        IS_WINDOWS,
-      ),
-    });
-  }
   // 运行状态镜像（任意页面可见）：播报与待确认提醒用；运行计数统一走 useRunActivity（shell-context 口径）
   const terminalRunInputs = useAppStore((s) => s.terminalRunInputs);
+
+  // 跑完了没看的对话（chat-unread.ts，2026-10-24）：这一轮做完那一刻你没在看它就记一笔，看到就消。
+  // 「在看」= 在运行页、是正看着的那段、Mesa 在前台；切回前台的那一下也要再算一次
+  const terminalActiveTabId = useAppStore((s) => s.terminalActiveTabId);
+  const [appInFront, setAppInFront] = useState(() => document.hasFocus());
+  useEffect(() => {
+    const sync = () => setAppInFront(document.hasFocus() && document.visibilityState === "visible");
+    window.addEventListener("focus", sync);
+    window.addEventListener("blur", sync);
+    document.addEventListener("visibilitychange", sync);
+    return () => {
+      window.removeEventListener("focus", sync);
+      window.removeEventListener("blur", sync);
+      document.removeEventListener("visibilitychange", sync);
+    };
+  }, []);
+  const unreadBeforeRef = useRef<RunOverviewInput[]>([]);
+  useEffect(() => {
+    const st = useAppStore.getState();
+    const next = nextUnread({
+      prev: st.unreadChats,
+      before: unreadBeforeRef.current,
+      now: terminalRunInputs,
+      viewingTabId: page === "terminal" && appInFront ? terminalActiveTabId : null,
+    });
+    unreadBeforeRef.current = terminalRunInputs;
+    if (!sameKeys(next, st.unreadChats)) st.setUnreadChats(next);
+  }, [terminalRunInputs, page, terminalActiveTabId, appInFront]);
 
   const [islandExpanded, setIslandExpanded] = useState(false);
   /* 岛收起 / 切回有侧栏时归位。有侧栏（!chromeHidden）时岛整个不挂载，
@@ -524,8 +535,67 @@ function App() {
     shellMode(collapsed, chromeHidden),
     page,
   );
-  // 侧栏「运行」行的点：有人等确认时转黄（展开态顶栏不再报活动，确认信号落在这一行）
+  // 侧栏宽度（rail-width.ts）：拖右边缘改、双击回默认，记本机；窗口变小时实际宽度跟着收（偏好不改）
+  const rootRem = () => parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 14;
+  const [railPref, setRailPref] = useState(() => parseRailWidth(localStorage.getItem(RAIL_WIDTH_KEY), rootRem()));
+  const [winWidth, setWinWidth] = useState(() => window.innerWidth);
+  useEffect(() => {
+    const on = () => setWinWidth(window.innerWidth);
+    window.addEventListener("resize", on);
+    return () => window.removeEventListener("resize", on);
+  }, []);
+  const railWidth = clampRailWidth(railPref, rootRem(), winWidth);
+  const [railDragging, setRailDragging] = useState(false);
+  function startRailResize(e: React.PointerEvent<HTMLDivElement>) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const handle = e.currentTarget;
+    handle.setPointerCapture(e.pointerId);
+    const startX = e.clientX;
+    const startW = railWidth;
+    let last = startW;
+    setRailDragging(true);
+    const move = (ev: PointerEvent) => {
+      last = clampRailWidth(startW + ev.clientX - startX, rootRem(), window.innerWidth);
+      setRailPref(last);
+    };
+    const end = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", end);
+      handle.removeEventListener("pointercancel", end);
+      setRailDragging(false);
+      try {
+        localStorage.setItem(RAIL_WIDTH_KEY, String(last));
+      } catch {
+        /* 存不下只影响下次启动 */
+      }
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", end);
+    handle.addEventListener("pointercancel", end);
+  }
+  function resetRailWidth() {
+    const w = RAIL_DEFAULT_REM * rootRem();
+    setRailPref(w);
+    try {
+      localStorage.removeItem(RAIL_WIDTH_KEY);
+    } catch {
+      /* 同上 */
+    }
+  }
+  // 侧栏入口悬停里带上快捷键（跟设置页的绑定走，禁用 / 页切总开关关掉时不写）
+  const keyHint = (id: string): string => {
+    const combo =
+      id === "new-chat"
+        ? (settings?.hotkeyNewChat ?? DEFAULT_NEW_CHAT_HOTKEY)
+        : settings?.hotkeyPageSwitch === false
+          ? ""
+          : (settings?.hotkeyPages?.[id] ?? PAGE_HOTKEY_DEFS.find((p) => p.id === id)?.combo ?? "");
+    return combo ? `（${comboLabel(combo)}）` : "";
+  };
+  // 图标态「运行」图标上的光标：等确认琥珀、在干活灰色呼吸、都闲着淡灰（展开态由项目树各对话行的光标报，见 shell-context.ts）
   const runActivity = useRunActivity();
+  const runCaret = runActivityCaret(runActivity);
   // 侧栏「上手引导」行：引导进行中才有（进度 + 下一步，点开清单浮层）
   const onboardingRail = useOnboardingRail();
   const setOnboardingPanelOpen = useAppStore((s) => s.setOnboardingPanelOpen);
@@ -632,8 +702,8 @@ function App() {
 
   // 侧栏收展完全由用户手动控制（品牌区点击）；曾有的按页面自动收展被用户否决（v3.43）
 
-  // 全局快捷键（设置页可自定义，存 settings.json）：命令面板（默认 ⌘K）、
-  // 隐藏/显示侧栏（默认 ⌘\）、页切逐页绑定（默认 ⌘1–⌘9，hotkeyPages 按页覆盖 + 整组总开关）。
+  // 全局快捷键（设置页可自定义，存 settings.json）：新对话（默认 ⌘N）、光标移到侧栏（默认 ⌘0）、命令面板（默认 ⌘K）、
+  // 隐藏/显示侧栏（默认 ⌘\）、页切逐页绑定（默认 ⌘1–⌘9，hotkeyPages 按页覆盖 + 整组总开关，顺序同侧栏）。
   // 空串 = 禁用；⌘F 已被终端搜索占用故不用。
   const settings = useAppStore((s) => s.settings);
   const lightChrome = isLightTheme(settings?.theme);
@@ -651,6 +721,8 @@ function App() {
   useEffect(() => {
     const paletteCombo = settings?.hotkeyPalette ?? "mod+k";
     const chromeCombo = settings?.hotkeyHideChrome ?? "mod+\\";
+    const newChatCombo = settings?.hotkeyNewChat ?? DEFAULT_NEW_CHAT_HOTKEY;
+    const focusRailCombo = settings?.hotkeyFocusRail ?? DEFAULT_FOCUS_RAIL_HOTKEY;
     const pageSwitchOn = settings?.hotkeyPageSwitch !== false;
     const onKey = (e: KeyboardEvent) => {
       if (e.isComposing) return;
@@ -662,6 +734,25 @@ function App() {
         return;
       }
       const target = e.target as HTMLElement | null;
+      // 新对话（默认 ⌘N）与「光标移到侧栏」（默认 ⌘0）在输入框里也生效——正写着一句时最常想开新的；
+      // 只有 Windows / Linux 上焦点在终端里时让给 shell（Ctrl+N 是下一条历史，globalHotkeyAllowed）
+      const allowed = globalHotkeyAllowed(Boolean(target?.closest?.(".xterm")), IS_MAC);
+      if (allowed && eventMatchesCombo(e, newChatCombo)) {
+        e.preventDefault();
+        setPaletteOpen(false);
+        void openQuickChat();
+        return;
+      }
+      if (allowed && eventMatchesCombo(e, focusRailCombo)) {
+        e.preventDefault();
+        setPaletteOpen(false);
+        // 侧栏得看得见才谈得上在里面选：隐藏 / 收成图标时先展开
+        const st = useAppStore.getState();
+        if (st.chromeHidden) st.exitChromeHidden();
+        if (st.navCollapsed) st.setNavCollapsed(false);
+        st.requestFocusRail();
+        return;
+      }
       const isEditable =
         target?.isContentEditable ||
         target?.tagName === "INPUT" ||
@@ -686,7 +777,7 @@ function App() {
         );
         if (hit) {
           e.preventDefault();
-          setPage(hit.id);
+          useAppStore.getState().goEntry(hit.id);
         }
       }
     };
@@ -704,8 +795,28 @@ function App() {
     let cancelled = false;
     listen<string>("menu:action", (e) => {
       if (e.payload === "settings") setPage("settings");
+      else if (e.payload === "new-chat") void openQuickChat();
       else if (e.payload === "palette") setPaletteOpen((v) => !v);
       else if (e.payload === "feedback") setFeedbackOpen(true);
+    }).then((f) => {
+      if (cancelled) f();
+      else un = f;
+    });
+    return () => {
+      cancelled = true;
+      un?.();
+    };
+  }, [setPage]);
+
+  // 托盘「设为全局」被 cc-switch 挡路（三平台都有托盘）：跳连接页，由连接页弹该连接的二次确认
+  useEffect(() => {
+    let un: (() => void) | undefined;
+    let cancelled = false;
+    listen<{ agent: string; profileId: string | null }>("tray:set-global", (e) => {
+      setPage("profiles");
+      useAppStore
+        .getState()
+        .setTrayGlobalReq({ agent: e.payload.agent, profileId: e.payload.profileId, token: Date.now() });
     }).then((f) => {
       if (cancelled) f();
       else un = f;
@@ -1239,7 +1350,7 @@ function App() {
                 永不被挡。两组让位由 CSS 统一处理（.ccode-titlebar[data-island=expanded] 兄弟选择器）：
                 岛一展开两侧一起淡出并停止接受指针——岛压着的时候本来也点不到。 */}
             {/* 左侧「位置与活动」：同一件事每种侧栏形态只出现一处（规则与单测见 shell-context.ts）。
-                展开态侧栏已有项目树与「运行」行，这里留空，只做拖拽区；图标态补项目芯片（不在
+                展开态侧栏已有项目树（在跑的对话行尾有点），这里留空，只做拖拽区；图标态补项目芯片（不在
                 项目页时）与活动芯片；全隐藏时项目芯片常驻（唯一切项目入口），活动挪进灵动岛。 */}
             <div className="ccode-titlebar-side relative flex min-w-0 shrink items-center gap-1.5">
               {shellPlacement.projectChip && (
@@ -1490,9 +1601,8 @@ function App() {
             {chromeHidden && (
               <TopNavCapsule
                 page={page}
-                onPage={setPage}
+                onPage={(p) => useAppStore.getState().goEntry(p)}
                 onQuickChat={() => void openQuickChat()}
-                onQuickChatContextMenu={(e) => void openQuickChatMenu(e)}
                 onRestore={exitChromeHidden}
                 hideDelayMs={navCapsuleDelay}
                 displayMode={settings?.navCapsuleDisplayMode}
@@ -1506,9 +1616,11 @@ function App() {
           <div className="flex min-h-0 flex-1 gap-[5px] px-[5px] pb-[5px]">
             {!chromeHidden && (
               <aside
-                className={`ccode-app-rail flex min-h-0 shrink-0 flex-col overflow-hidden rounded-lg transition-[width] duration-150 ${
-                  collapsed ? "w-14" : "w-52"
-                }`}
+                // 展开时宽度可拖（rail-width.ts，2026-10-24）：拖着时关掉宽度过渡，不然跟手慢半拍
+                style={collapsed ? undefined : { width: railWidth }}
+                className={`ccode-app-rail relative flex min-h-0 shrink-0 flex-col overflow-hidden rounded-lg ${
+                  railDragging ? "" : "transition-[width] duration-150"
+                } ${collapsed ? "w-14" : ""}`}
               >
                 {/* 品牌区 */}
                 <button
@@ -1539,7 +1651,7 @@ function App() {
                       onClick={() => setPage("workbench")}
                       aria-current={page === "workbench" ? "page" : undefined}
                       aria-label="工作台"
-                      title="工作台"
+                      title={`工作台${keyHint("workbench")}`}
                       className={`relative mb-0.5 flex h-8 w-full items-center rounded-md text-sm transition-colors ${
                         collapsed ? "justify-center" : "px-2.5"
                       } ${
@@ -1561,9 +1673,8 @@ function App() {
                     <button
                       type="button"
                       onClick={() => void openQuickChat()}
-                      onContextMenu={(e) => void openQuickChatMenu(e)}
                       aria-label="新对话"
-                      title="新对话：不建项目，直接开一段空白对话（右键看最近的随手聊）"
+                      title={`新对话：直接开一段空白对话，默认在随手聊里，可在输入框下换项目${keyHint("new-chat")}`}
                       className={`relative mb-0.5 flex h-8 w-full items-center rounded-md text-sm text-l3 transition-colors hover:bg-hover hover:text-l2 ${
                         collapsed ? "justify-center" : "px-2.5"
                       }`}
@@ -1577,71 +1688,56 @@ function App() {
                       {!collapsed && <span className="truncate">新对话</span>}
                     </button>
                   </RailTooltip>
-                  {/* 运行页常驻（原先只在有 agent 跑时出现，平时只能 ⌘3 进）：跑着时行尾绿点 + 数量；
-                      有 agent 等确认时点转黄、数字换成「N 待确认」——展开态顶栏不报活动，这行就是信号 */}
-                  <RailTooltip
-                    label={
-                      runActivity.tone === "idle"
-                        ? "运行"
-                        : `运行（${runActivity.label}）`
-                    }
-                    collapsed={collapsed}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => setPage("terminal")}
-                      aria-current={page === "terminal" ? "page" : undefined}
-                      aria-label="运行"
-                      title={runActivity.tone === "idle" ? "运行" : runActivity.label}
-                      className={`relative mb-0.5 flex h-8 w-full items-center rounded-md text-sm transition-colors ${
-                        collapsed ? "justify-center" : "px-2.5"
-                      } ${
-                        page === "terminal"
-                          ? "ccode-rail-active bg-rail-sel text-l1"
-                          : "text-l3 hover:bg-hover hover:text-l2"
-                      }`}
+                  {/* 「运行」只在图标态（2026-10-24 用户：「新对话和运行这两个都要保留吗」）：展开态的项目树里每段在跑的
+                      对话行尾有点、折起的项目头上也有，没挂在树上的在「其他打开的」，点哪段就进运行页看哪段——
+                      这一行（跳页 + 在跑计数）在展开态是重复的。图标态没有树，靠它回到对话；跑着时右上角一个点、等确认转黄 */}
+                  {collapsed && (
+                    <RailTooltip
+                      label={
+                        runActivity.tone === "idle"
+                          ? "运行"
+                          : `运行（${runActivity.label}）`
+                      }
+                      collapsed={collapsed}
                     >
-                      <NAV_ICONS.terminal
-                        size={16}
-                        strokeWidth={1.8}
-                        className={`${collapsed ? "" : "mr-2 shrink-0"} ${page === "terminal" ? "text-nav-accent" : ""}`}
-                        aria-hidden="true"
-                      />
-                      {!collapsed && <span className="truncate">运行</span>}
-                      {runActivity.tone !== "idle" &&
-                        (collapsed ? (
-                          <span
-                            className={`absolute right-2 top-1.5 size-1.5 rounded-full ${
-                              runActivity.tone === "confirm" ? "bg-warn-text" : "bg-ok-text"
-                            }`}
-                            aria-hidden="true"
+                      <button
+                        type="button"
+                        onClick={() => setPage("terminal")}
+                        aria-current={page === "terminal" ? "page" : undefined}
+                        aria-label="运行"
+                        title={`${runActivity.tone === "idle" ? "运行：回到正看着的那段对话" : runActivity.label}${keyHint("terminal")}`}
+                        className={`relative mb-0.5 flex h-8 w-full items-center justify-center rounded-md text-sm transition-colors ${
+                          page === "terminal"
+                            ? "ccode-rail-active bg-rail-sel text-l1"
+                            : "text-l3 hover:bg-hover hover:text-l2"
+                        }`}
+                      >
+                        <NAV_ICONS.terminal
+                          size={16}
+                          strokeWidth={1.8}
+                          className={page === "terminal" ? "text-nav-accent" : ""}
+                          aria-hidden="true"
+                        />
+                        {/* 运行状态光标跟在图标右边、竖着居中（RunCaret，2026-10-24；同日改居中，原先贴在右下） */}
+                        {runCaret && (
+                          <RunCaret
+                            state={runCaret}
+                            decorative
+                            className="absolute top-1/2 left-[calc(50%+0.6rem)] -translate-y-1/2"
                           />
-                        ) : (
-                          <span
-                            className={`ml-auto flex shrink-0 items-center gap-1 text-micro ${
-                              runActivity.tone === "confirm" ? "text-warn-text" : "text-l3"
-                            }`}
-                          >
-                            <span
-                              className={`size-1.5 rounded-full ${
-                                runActivity.tone === "confirm" ? "bg-warn-text" : "bg-ok-text"
-                              }`}
-                            />
-                            {runActivity.tone === "confirm"
-                              ? `${runActivity.confirm} 待确认`
-                              : runActivity.running}
-                          </span>
-                        ))}
-                    </button>
-                  </RailTooltip>
-                  {/* 写「全部对话」不写「对话」：紧挨着「新对话」，项目页里还有只列本课题的「对话」页签 */}
-                  <RailTooltip label="全部对话" collapsed={collapsed}>
+                        )}
+                      </button>
+                    </RailTooltip>
+                  )}
+                  {/* 「搜对话」（2026-10-23 侧栏挂对话第一期，原「全部对话」）：日常找对话在下面项目树里，
+                      对话页管跨项目搜索与整理（归档、导出），点进去光标直接在搜索框 */}
+                  <RailTooltip label="搜对话" collapsed={collapsed}>
                     <button
                       type="button"
-                      onClick={() => setPage("sessions")}
+                      onClick={() => useAppStore.getState().goEntry("sessions")}
                       aria-current={page === "sessions" ? "page" : undefined}
-                      aria-label="全部对话"
-                      title="全部对话"
+                      aria-label="搜对话"
+                      title={`搜对话：在所有项目的对话里找，也在那里归档、导出${keyHint("sessions")}`}
                       className={`relative mb-0.5 flex h-8 w-full items-center rounded-md text-sm transition-colors ${
                         collapsed ? "justify-center" : "px-2.5"
                       } ${
@@ -1650,13 +1746,13 @@ function App() {
                           : "text-l3 hover:bg-hover hover:text-l2"
                       }`}
                     >
-                      <NAV_ICONS.sessions
+                      <Search
                         size={16}
                         strokeWidth={1.8}
                         className={`${collapsed ? "" : "mr-2 shrink-0"} ${page === "sessions" ? "text-nav-accent" : ""}`}
                         aria-hidden="true"
                       />
-                      {!collapsed && <span className="truncate">全部对话</span>}
+                      {!collapsed && <span className="truncate">搜对话</span>}
                     </button>
                   </RailTooltip>
                   {/* 图标态：项目树不可见，文件夹与其他图标一样只管「去项目页」；
@@ -1797,6 +1893,18 @@ function App() {
                     </RailTooltip>
                   ))}
                 </div>
+                {/* 右边缘拖动改宽、双击回默认（只在展开时有） */}
+                {!collapsed && (
+                  <div
+                    role="separator"
+                    aria-orientation="vertical"
+                    aria-label="拖动改侧栏宽度，双击回默认"
+                    title="拖动改侧栏宽度，双击回默认"
+                    onPointerDown={startRailResize}
+                    onDoubleClick={resetRailWidth}
+                    className="absolute inset-y-0 right-0 z-10 w-1.5 cursor-col-resize transition-colors hover:bg-hairline"
+                  />
+                )}
               </aside>
             )}
             {titleInboxCat !== null && (
@@ -1822,10 +1930,7 @@ function App() {
               >
                 {visited.has("workbench") && (
                   <Suspense fallback={<PageLoading />}>
-                    <WorkbenchPage
-                      visible={page === "workbench"}
-                      onQuickChat={() => void openQuickChat()}
-                    />
+                    <WorkbenchPage visible={page === "workbench"} />
                   </Suspense>
                 )}
               </div>
@@ -1946,15 +2051,6 @@ function App() {
             onCheckUpdate={() => setHelpDialog("update")}
           />
           <AskAiModal />
-          {quickChatMenu && (
-            <QuickChatHistoryMenu
-              x={quickChatMenu.x}
-              y={quickChatMenu.y}
-              sessions={quickChatMenu.sessions}
-              onPick={resumeSessionInTerminal}
-              onClose={() => setQuickChatMenu(null)}
-            />
-          )}
           {/* 全局确认框宿主（confirmDialog）：z-70，压过一切覆盖层 */}
           <ConfirmDialogHost />
           {/* 上手引导：首次判定、欢迎页、清单浮层、每做完一步的「下一步」提示 */}
@@ -1965,7 +2061,8 @@ function App() {
           {confirmHint && (
             <div className="pointer-events-none fixed bottom-5 right-5 z-100 flex flex-col items-end">
               <div className="pointer-events-auto flex items-center gap-2.5 rounded-lg border border-field bg-raised px-3.5 py-2.5 shadow-lg">
-                <span className="size-2 shrink-0 animate-pulse rounded-full bg-warn-text" />
+                {/* 等确认的琥珀光标放在最前（原先是一颗闪的黄点）：夹在句子中间读成破折号 */}
+                <RunCaret state="confirm" decorative />
                 <button
                   type="button"
                   className="min-w-0 text-left text-sm text-l1 hover:text-cta"

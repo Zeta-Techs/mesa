@@ -141,7 +141,12 @@ export default function ProjectFilesView({
 }) {
   const setPage = useAppStore((s) => s.setPage);
   const setReaderReq = useAppStore((s) => s.setReaderReq);
-  const setEnterCwdReq = useAppStore((s) => s.setEnterCwdReq);
+  /** 在这个目录开一个纯终端（shell）：侧栏所属文件夹下多一行「终端」（2026-10-24 起不再借「进入目录」改正在聊的那段） */
+  const openShellAt = (path: string) => {
+    const st = useAppStore.getState();
+    st.setPendingTerminal({ cwd: path, extraEnv: {}, title: path.split(/[\\/]/).filter(Boolean).pop() ?? path, shellOnly: true });
+    st.setPage("terminal");
+  };
   const [cache, setCache] = useState<EntryCache>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
@@ -794,8 +799,7 @@ export default function ProjectFilesView({
                 aria-label={entry.isDir ? "打开终端" : "问 AI"}
                 onClick={() => {
                   if (entry.isDir) {
-                    setEnterCwdReq(entry.path);
-                    setPage("terminal");
+                    openShellAt(entry.path);
                   } else {
                     askAi(entry);
                   }
@@ -1200,10 +1204,7 @@ export default function ProjectFilesView({
                   {
                     label: "在此打开新终端",
                     icon: SquareTerminal,
-                    onSelect: () => {
-                      setEnterCwdReq(menu.path);
-                      setPage("terminal");
-                    },
+                    onSelect: () => openShellAt(menu.path),
                   },
                   {
                     label: "新建文件夹",

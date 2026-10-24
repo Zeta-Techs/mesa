@@ -4,6 +4,8 @@ import {
   clampTabDragDx,
   rubberbandTabDx,
   tabDragTarget,
+  tabDragSettleDx,
+  tabDragShift,
 } from "../src/tab-drag.ts";
 
 // 等宽三槽（130px + 4px gap）：left 0 / 134 / 268
@@ -95,4 +97,34 @@ test("橡胶带不改变槽位判定：视觉极值位置的目标与钳制极�
       0,
     );
   }
+});
+
+test("高矮不一的块：让位按源的尺寸算，吸附时源的尾缘对齐目标块尾缘", () => {
+  // 三块：高 28（收起）、高 120（展开了对话）、高 28，块间缝 2
+  const slots = [
+    { left: 0, width: 28 },
+    { left: 30, width: 120 },
+    { left: 152, width: 28 },
+  ];
+  // 第 0 块拖到最后：中间两块各往上让 30（源高 28 + 缝 2）
+  assert.equal(tabDragShift(slots, 0, 2, 1), -30);
+  assert.equal(tabDragShift(slots, 0, 2, 2), -30);
+  assert.equal(tabDragSettleDx(slots, 0, 2), 152);
+  // 第 2 块拖到最前：前两块各往下让 30
+  assert.equal(tabDragShift(slots, 2, 0, 0), 30);
+  assert.equal(tabDragShift(slots, 2, 0, 1), 30);
+  assert.equal(tabDragSettleDx(slots, 2, 0), -152);
+  // 展开的第 1 块往下挪一位：第 2 块往上让 122，源落到 152+28-120=60
+  assert.equal(tabDragShift(slots, 1, 2, 2), -122);
+  assert.equal(tabDragSettleDx(slots, 1, 2), 30);
+  // 不在中间的不动
+  assert.equal(tabDragShift(slots, 1, 2, 0), 0);
+});
+
+test("等宽槽位时让位与吸附和挪到相邻槽位一致", () => {
+  const slots = [0, 1, 2, 3].map((i) => ({ left: i * 100, width: 96 }));
+  assert.equal(tabDragShift(slots, 0, 3, 2), slots[1].left - slots[2].left);
+  assert.equal(tabDragShift(slots, 3, 0, 1), slots[2].left - slots[1].left);
+  assert.equal(tabDragSettleDx(slots, 0, 3), slots[3].left - slots[0].left);
+  assert.equal(tabDragSettleDx(slots, 3, 1), slots[1].left - slots[3].left);
 });

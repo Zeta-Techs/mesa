@@ -3,7 +3,6 @@ import test from "node:test";
 import {
   escapeShellPath,
   joinDroppedPaths,
-  joinDroppedChatPaths,
   dropHitsRect,
   firstImageItem,
   imageExtFromMime,
@@ -52,14 +51,6 @@ test("joinDroppedPaths 多路径转义后空格拼接", () => {
   );
   assert.equal(joinDroppedPaths([]), "");
   assert.equal(joinDroppedPaths(["/tmp/a.png", ""]), "/tmp/a.png");
-});
-
-test("joinDroppedChatPaths 一行一个路径", () => {
-  assert.equal(
-    joinDroppedChatPaths(["/tmp/a.png", "/tmp/b c.png"]),
-    "/tmp/a.png\n'/tmp/b c.png'",
-  );
-  assert.equal(joinDroppedChatPaths([]), "");
 });
 
 test("dropHitsRect 物理像素与 CSS 像素都算命中", () => {

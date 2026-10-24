@@ -115,6 +115,7 @@ export default function ChatPermissionBadge({
   live = null,
   context = "general",
   cycleHint = false,
+  flash = false,
 }: {
   agentLabel: string;
   permission: Permission;
@@ -132,6 +133,8 @@ export default function ChatPermissionBadge({
   context?: StarterContext;
   /** 输入框里 ⇧Tab 能轮换（开聊前）：菜单底部提一句 */
   cycleHint?: boolean;
+  /** 刚切到完全访问：和输入框上沿那道细线同一次亮起、同一条曲线淡回灰字（useToneFlash） */
+  flash?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -193,8 +196,10 @@ export default function ChatPermissionBadge({
     live?.onRestart();
   }
 
-  const chip = `ml-1 flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-micro ${
-    loud ? "text-caution-text" : "text-l3"
+  // 灰字（2026-10-23 用户：照 Claude 客户端，Bypass 也是灰的）。完全访问只在切到的那一下亮 caution，
+  // 和输入框上沿细线同步淡掉（App.css .ccode-perm-flash）
+  const chip = `ml-1 flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-micro text-l3 ${
+    loud && flash ? "ccode-perm-flash" : ""
   }`;
 
   if (!interactive) {
@@ -221,7 +226,7 @@ export default function ChatPermissionBadge({
             ? `${explain}\n点击换权限（会停下 Agent，再带新权限接回这段对话）`
             : `${explain}\n点击选择这次的权限${cycleHint ? "（输入框里 ⇧Tab 也能换）" : ""}`
         }
-        className={`${chip} hover:bg-hover ${loud ? "" : "hover:text-l1"} ${open ? "bg-hover" : ""}`}
+        className={`${chip} hover:bg-hover hover:text-l1 ${open ? "bg-hover" : ""}`}
       >
         <PermissionGlyph tier={current} />
         {label}
@@ -232,7 +237,7 @@ export default function ChatPermissionBadge({
           role="menu"
           aria-label="AI 动手前怎么问你"
           // 字号挂在容器上：全站 button { font: inherit } 会吞掉按钮自己的 text-*
-          className={`absolute left-0 z-30 w-[21rem] rounded-xl border border-field ccode-float-surface p-1 text-sm shadow-lg ${
+          className={`absolute left-0 z-30 w-[21rem] rounded-xl border border-field ccode-float-surface p-1 text-sm shadow-lg whitespace-normal ${
             side === "below" ? "top-full mt-2" : "bottom-full mb-2"
           }`}
         >

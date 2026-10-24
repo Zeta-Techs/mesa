@@ -66,10 +66,11 @@ test("两端单独措辞：它们不是某一档，是两种观感", () => {
 /* 基数是 CSS 变量、由壳上的系数相乘，JS 不持有 42/78/28 这些数。
    这条守住那个分工：规则本体一旦写死数字，改主题基数就要在 App.css 和 TS 两处对账。 */
 test("App.css 收紧到基数 × 系数，规则本体不再写死百分比", () => {
-  assert.match(css, /--ccode-rail-base:\s*42%/);
-  assert.match(css, /--ccode-shell-base:\s*0%/);
+  // 深色：侧栏、顶栏、四周缝同一块玻璃（2026-10-23）——罩色只在壳上一层 48%，侧栏基数 0、不再分展开 / 图标态
+  assert.match(css, /--ccode-rail-base:\s*0%/);
+  assert.match(css, /--ccode-shell-base:\s*48%/);
   assert.match(css, /data-chrome="light"\]\s*\{[^}]*--ccode-rail-base:\s*78%/);
-  assert.match(css, /data-nav="icons"\]\s*\{[^}]*--ccode-rail-base:\s*28%/);
+  assert.ok(!/data-nav="icons"\]\s*\{[^}]*--ccode-rail-base/.test(css), "图标态不再另设基数");
 
   const rail = /\.ccode-app-rail\s*\{[^}]*\}/.exec(css);
   assert.ok(rail, "找不到 .ccode-app-rail 规则");
@@ -100,9 +101,9 @@ test("选中行胶囊同乘系数，88% 只作为基数出现", () => {
   assert.match(sel[0], /var\(--ccode-lsel-base\), transparent\)/);
 });
 
-/* 深色顶栏不铺色（靠窗口材质），浅色顶栏靠壳那层罩——两者都不该自己铺。
-   这一条钉住「顶栏那条规则没有藏着 percentage」，否则浅色下会与壳叠成约 95%。 */
-test("顶栏不自己铺罩色：深色让窗口材质透出，浅色靠壳那层", () => {
+/* 顶栏自己不铺：深浅两套都靠壳那层罩（深色 48%、浅色 78%）。
+   这一条钉住「顶栏那条规则没有藏着 percentage」，否则会与壳叠成两层。 */
+test("顶栏不自己铺罩色：颜色由壳那层代表", () => {
   const titlebar = /\.ccode-titlebar\s*\{[^}]*\}/.exec(css);
   assert.ok(titlebar, "找不到 .ccode-titlebar 规则");
   assert.match(titlebar[0], /background:\s*transparent/);

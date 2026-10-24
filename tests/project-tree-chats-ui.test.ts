@@ -1,0 +1,498 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { build } from "esbuild";
+import { createRequire } from "node:module";
+import { JSDOM } from "jsdom";
+import type { SessionMetaDto } from "../src/types.ts";
+
+// 侧栏项目树挂对话（2026-10-23 第一期）：真组件 + 桩掉 store / 开对话入口，看列什么、点了交给谁
+const bundle = await build({
+  stdin: {
+    contents: `export {createElement} from 'react'; export {act} from 'react'; export {createRoot} from 'react-dom/client'; export {default as Tree} from './src/components/ProjectTree';`,
+    resolveDir: process.cwd(),
+    loader: "tsx",
+  },
+  bundle: true,
+  write: false,
+  format: "cjs",
+  platform: "node",
+  jsx: "automatic",
+  external: ["react", "react-dom", "react-dom/client", "react/jsx-runtime"],
+  plugins: [
+    {
+      name: "boundaries",
+      setup(b) {
+        b.onResolve({ filter: /^\.\.?\/store$/ }, () => ({ path: "store", namespace: "stub" }));
+        b.onResolve({ filter: /quick-chat-launch$/ }, () => ({ path: "launch", namespace: "stub" }));
+        b.onResolve({ filter: /\/AskAiModal$/ }, () => ({ path: "askai", namespace: "stub" }));
+        b.onLoad({ filter: /^store$/, namespace: "stub" }, () => ({
+          contents: `
+            const st = () => window.__treeStore;
+            export const useAppStore = Object.assign((sel) => sel(st()), {
+              getState: st,
+              setState: (p) => Object.assign(st(), typeof p === "function" ? p(st()) : p),
+            });`,
+          loader: "js",
+        }));
+        b.onLoad({ filter: /^launch$/, namespace: "stub" }, () => ({
+          contents: `
+            export const openConversation = (...a) => window.__calls.push(["openConversation", ...a]);
+            export const openQuickChat = () => window.__calls.push(["openQuickChat"]);
+            export const prefetchConversation = () => {};`,
+          loader: "js",
+        }));
+        b.onLoad({ filter: /^askai$/, namespace: "stub" }, () => ({
+          contents: `export const startProjectChat = (...a) => window.__calls.push(["startProjectChat", ...a]);`,
+          loader: "js",
+        }));
+      },
+    },
+  ],
+});
+
+function session(over: Partial<SessionMetaDto>): SessionMetaDto {
+  return {
+    agent: "claude-code",
+    sessionId: "s",
+    projectPath: "/work/review",
+    title: null,
+    createdAt: null,
+    updatedAt: null,
+    filePath: "/f",
+    tokenUsage: null,
+    cliVersion: null,
+    pinned: false,
+    archived: false,
+    customTitle: null,
+    tags: [],
+    alive: true,
+    chainCount: 1,
+    workspace: null,
+    stepName: null,
+    summary: null,
+    live: false,
+    source: "cli",
+    internal: false,
+    handoffFromAgent: null,
+    handoffFromSession: null,
+    taskId: null,
+    taskName: null,
+    ...over,
+  };
+}
+
+const PROJECT = {
+  path: "/work/review",
+  name: "综述流程测试",
+  workMode: "research",
+  defaultAgent: "codex",
+  defaultProfiles: { codex: "p-codex" },
+};
+
+const reviewChats = Array.from({ length: 6 }, (_, i) =>
+  session({
+    sessionId: `r${i}`,
+    agent: i === 1 ? "codex" : "claude-code",
+    customTitle: `09${20 + i}|研究|镁硫电池第${i}篇精读`,
+    updatedAt: `2026-10-2${i}T00:00:00Z`,
+  }),
+);
+
+async function renderTree(store: Record<string, unknown> = {}) {
+  const dom = new JSDOM('<div id="root"></div>', { url: "http://localhost/" });
+  const restore: Array<[string, PropertyDescriptor | undefined]> = [];
+  for (const [key, value] of Object.entries({
+    window: dom.window,
+    document: dom.window.document,
+    navigator: dom.window.navigator,
+    localStorage: dom.window.localStorage,
+    requestAnimationFrame: (cb: () => void) => setTimeout(cb, 0),
+    IS_REACT_ACT_ENVIRONMENT: true,
+  })) {
+    restore.push([key, Object.getOwnPropertyDescriptor(globalThis, key)]);
+    Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
+  }
+  const calls: unknown[][] = [];
+  const pages: string[] = [];
+  const reqs: Record<string, unknown> = {};
+  Object.assign(dom.window, {
+    __calls: calls,
+    __treeStore: {
+      projectsVersion: 0,
+      projectPaths: [PROJECT.path, "/work/code"],
+      terminalRunInputs: [
+        {
+          tabId: "t1",
+          title: "",
+          agentId: "claude-code",
+          model: "",
+          cwd: PROJECT.path,
+          running: true,
+          shell: false,
+          attention: "confirm",
+          sessionId: "r5",
+        },
+      ],
+      terminalActiveTabId: "t1",
+      page: "terminal",
+      sessions: [
+        ...reviewChats,
+        session({ sessionId: "sc1", projectPath: "/Users/u/ccode/scratch", customTitle: "1023|探索|截图区块内容询问" }),
+        session({ sessionId: "gone", alive: false, customTitle: "源文件不在了" }),
+      ],
+      profiles: [{ id: "p-codex", agent: "codex", models: [] }],
+      loadSessions: async () => [],
+      setPage: (p: string) => pages.push(p),
+      setSessionsProjectPathReq: (p: string) => {
+        reqs.projectPath = p;
+      },
+      setSessionsScratchReq: (on: boolean) => {
+        reqs.scratch = on;
+      },
+      setOpenSessionReq: (r: unknown) => {
+        reqs.openSession = r;
+      },
+      ...store,
+    },
+    __TAURI_INTERNALS__: {
+      transformCallback: () => 0,
+      invoke: async (command: string) => {
+        if (command === "list_projects") return [PROJECT, { path: "/work/code", name: "Ccode", workMode: "coding" }];
+        if (command === "list_workspaces") return [];
+        throw new Error(`Unexpected IPC: ${command}`);
+      },
+    },
+  });
+  const compiled = { exports: {} as Record<string, any> };
+  new Function("require", "module", "exports", bundle.outputFiles[0].text)(
+    createRequire(import.meta.url),
+    compiled,
+    compiled.exports,
+  );
+  const { createElement: h, act, createRoot, Tree } = compiled.exports;
+  const host = dom.window.document.getElementById("root")!;
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(h(Tree, { selectedRoot: null, active: false, onSelect: (p: string) => pages.push(`project:${p}`) }));
+  });
+  // 等 list_projects 回来再渲一遍
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  const button = (label: string) => {
+    const found = Array.from(host.querySelectorAll("button")).find(
+      (b) => (b.getAttribute("aria-label") ?? b.textContent?.trim()) === label,
+    );
+    assert.ok(found, `缺少按钮：${label}`);
+    return found!;
+  };
+  const chatGroup = (name: string) => host.querySelector(`[aria-label="${name} 的对话"]`);
+  return {
+    host,
+    act,
+    calls,
+    pages,
+    reqs,
+    button,
+    chatGroup,
+    close: async () => {
+      await act(async () => root.unmount());
+      dom.window.close();
+      for (const [key, descriptor] of restore) {
+        if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+        else Reflect.deleteProperty(globalThis, key);
+      }
+    },
+  };
+}
+
+test("正在聊的项目默认展开：量不到侧栏高度时列 5 段 + 「展开更多」，标题去掉日期类型前缀，等确认的那段行尾是琥珀光标", async () => {
+  const view = await renderTree();
+  try {
+    const group = view.chatGroup("综述流程测试");
+    assert.ok(group, "当前标签所在的项目应默认展开");
+    // 每段后面还有一个只有图标的 ⋯，取有字的按钮
+    const rows = Array.from(group!.querySelectorAll("button"))
+      .map((b) => b.textContent?.trim())
+      .filter(Boolean);
+    assert.deepEqual(rows, [
+      "镁硫电池第5篇精读",
+      "镁硫电池第4篇精读",
+      "镁硫电池第3篇精读",
+      "镁硫电池第2篇精读",
+      "镁硫电池第1篇精读",
+      "展开更多",
+    ]);
+    const first = view.button("镁硫电池第5篇精读");
+    const caret = first.querySelector(".ccode-run-caret");
+    assert.equal(caret?.getAttribute("data-state"), "confirm", "等你确认的那段行尾是琥珀光标（不再是黄点）");
+    assert.equal(caret?.getAttribute("aria-label"), "等你确认");
+    assert.equal(first.getAttribute("aria-current"), "true", "正看着的这段铺选中底");
+    assert.match(first.title, /0925\|研究\|镁硫电池第5篇精读/, "完整标题在悬停里");
+    // 随手聊没在聊，收着
+    assert.equal(view.chatGroup("随手聊"), null);
+  } finally {
+    await view.close();
+  }
+});
+
+test("点一段对话交给 openConversation，项目给这家设的连接一并带上；源文件不在的不列", async () => {
+  const view = await renderTree();
+  try {
+    await view.act(async () => view.button("镁硫电池第1篇精读").click());
+    const call = view.calls.find((c) => c[0] === "openConversation")!;
+    assert.equal((call[1] as SessionMetaDto).sessionId, "r1");
+    assert.deepEqual(call[2], { preferredProfileId: "p-codex" });
+    assert.ok(!view.host.textContent?.includes("源文件不在了"));
+  } finally {
+    await view.close();
+  }
+});
+
+test("「展开更多」在原地多列、列完了出「收起」；节头 ⋯ 能去对话页看全部；随手聊点开才列，展开记下来", async () => {
+  const view = await renderTree();
+  try {
+    await view.act(async () => view.button("展开更多").click());
+    const group = view.chatGroup("综述流程测试")!;
+    assert.ok(group.textContent?.includes("镁硫电池第0篇精读"), "第 6 段列出来了");
+    assert.ok(!group.textContent?.includes("展开更多"), "列完了不再有展开更多");
+    await view.act(async () => view.button("收起").click());
+    assert.ok(!view.chatGroup("综述流程测试")!.textContent?.includes("镁硫电池第0篇精读"));
+    await view.act(async () => view.button("综述流程测试 的更多操作").click());
+    await view.act(async () => view.button("在对话页看全部对话").click());
+    assert.equal(view.reqs.projectPath, PROJECT.path);
+    assert.ok(view.pages.includes("sessions"));
+    await view.act(async () => view.button("展开「随手聊」的对话").click());
+    const scratch = view.chatGroup("随手聊");
+    assert.ok(scratch);
+    assert.equal(scratch!.textContent?.trim(), "截图区块内容询问");
+    assert.equal(
+      JSON.parse(globalThis.localStorage.getItem("ccode.projectTreeChats") ?? "{}").scratch,
+      true,
+    );
+  } finally {
+    await view.close();
+  }
+});
+
+test("行尾 ＋：项目里开新对话走 startProjectChat，随手聊走 openQuickChat；点项目名进项目页并展开它的对话", async () => {
+  const view = await renderTree();
+  try {
+    await view.act(async () => view.button("在「综述流程测试」里开新对话").click());
+    const start = view.calls.find((c) => c[0] === "startProjectChat")!;
+    assert.equal((start[1] as { path: string }).path, PROJECT.path);
+    assert.equal(start.length, 2, "不再有 ⌘ 点先选 Agent 的参数：Agent 在输入框里选");
+    await view.act(async () => view.button("开一段新的随手聊").click());
+    assert.ok(view.calls.some((c) => c[0] === "openQuickChat"));
+    await view.act(async () => view.button("综述流程测试").click());
+    assert.ok(view.pages.includes(`project:${PROJECT.path}`));
+    // 收着的项目：点名字进项目页的同时展开（2026-10-24 用户），记进展开偏好
+    assert.equal(view.chatGroup("Ccode"), null);
+    await view.act(async () => view.button("Ccode").click());
+    assert.ok(view.pages.includes("project:/work/code"));
+    assert.ok(view.chatGroup("Ccode"), "点名字后它的对话展开了");
+    assert.equal(
+      JSON.parse(globalThis.localStorage.getItem("ccode.projectTreeChats") ?? "{}")["/work/code"],
+      true,
+    );
+    // 再点名字不收起（收起只走箭头）
+    await view.act(async () => view.button("Ccode").click());
+    assert.ok(view.chatGroup("Ccode"));
+  } finally {
+    await view.close();
+  }
+});
+
+test("收起正在聊的项目：人手关过的不再自动展开", async () => {
+  const view = await renderTree();
+  try {
+    await view.act(async () => view.button("收起「综述流程测试」的对话").click());
+    assert.equal(view.chatGroup("综述流程测试"), null);
+    assert.equal(
+      JSON.parse(globalThis.localStorage.getItem("ccode.projectTreeChats") ?? "{}")[PROJECT.path],
+      false,
+    );
+  } finally {
+    await view.close();
+  }
+});
+
+test("不再按科研 / 编程 / 工作分组：课题平铺成节，没在聊的收着；课题名前是文件夹图标（点它开合），对话缩进到名字起点", async () => {
+  const view = await renderTree();
+  try {
+    const text = view.host.textContent ?? "";
+    for (const group of ["科研", "编程", "工作", "未添加"]) {
+      assert.ok(!text.includes(group), `不该有「${group}」分组头`);
+    }
+    // 没在聊的课题只剩节头；名字前的图标格就是开合钮（2026-10-24 用户：分不清项目和对话 → 课题带文件夹图标、对话缩进）
+    assert.equal(view.chatGroup("Ccode"), null);
+    const chevron = view.button("展开「Ccode」的对话");
+    assert.ok(chevron.querySelector("svg"), "图标格里有文件夹图标");
+    const head = chevron.parentElement!;
+    assert.equal(head.children[0], chevron, "图标在名字前面");
+    const chatRow = view.button("镁硫电池第5篇精读");
+    assert.match(chatRow.className, /\bpl-7\b/, "课题下的对话缩进到名字起点");
+    // 名字右边的空白也能开合（2026-10-24 用户：点那里没反应）；点名字是进项目页
+    const blank = head.children[2] as HTMLElement;
+    await view.act(async () => blank.click());
+    assert.ok(view.chatGroup("Ccode"), "点空白展开");
+    await view.act(async () => blank.click());
+    assert.equal(view.chatGroup("Ccode"), null, "再点收起");
+    await view.act(async () => chevron.click());
+    assert.ok(view.chatGroup("Ccode"));
+    assert.equal(view.chatGroup("Ccode")!.textContent?.trim(), "还没有对话");
+  } finally {
+    await view.close();
+  }
+});
+
+test("每段对话行尾有 ⋯：和右键同一份菜单（重命名 / 归档 / 在对话页查看）", async () => {
+  const view = await renderTree();
+  try {
+    await view.act(async () => view.button("「镁硫电池第3篇精读」的更多操作").click());
+    for (const item of ["重命名", "归档", "在对话页查看"]) view.button(item);
+    await view.act(async () => view.button("在对话页查看").click());
+    assert.deepEqual(view.reqs.openSession, { agent: "claude-code", sessionId: "r3" });
+    assert.ok(view.pages.includes("sessions"));
+  } finally {
+    await view.close();
+  }
+});
+
+test("开着、列表里还没有的挂在文件夹最上面（新对话 / 终端），点了切过去，× 交给运行页关", async () => {
+  const closed: string[] = [];
+  const focused: string[] = [];
+  const view = await renderTree({
+    terminalRunInputs: [
+      {
+        tabId: "t1",
+        title: "",
+        agentId: "claude-code",
+        model: "",
+        cwd: PROJECT.path,
+        running: true,
+        shell: false,
+        attention: "confirm",
+        sessionId: "r5",
+      },
+      {
+        tabId: "t-new",
+        title: "综述流程测试",
+        agentId: "codex",
+        model: "",
+        cwd: PROJECT.path,
+        running: false,
+        shell: false,
+        attention: null,
+        sessionId: null,
+      },
+      {
+        tabId: "t-sh",
+        title: "zsh",
+        agentId: "",
+        model: "",
+        cwd: "/Users/u/elsewhere",
+        running: false,
+        shell: true,
+        attention: null,
+        sessionId: null,
+      },
+    ],
+    terminalActiveTabId: "t-new",
+    requestCloseTab: (id: string) => closed.push(id),
+    focusTab: (id: string) => focused.push(id),
+  });
+  try {
+    const group = view.chatGroup("综述流程测试")!;
+    const labels = Array.from(group.querySelectorAll("button"))
+      .map((b) => b.textContent?.trim())
+      .filter(Boolean);
+    assert.equal(labels[0], "新对话", "正看着的空白新对话排在这个项目最上面");
+    assert.equal(view.button("新对话").getAttribute("aria-current"), "true");
+    // 不在任何项目里的终端：单列「其他打开的」
+    const orphan = view.host.querySelector('[aria-label="其他打开的"]');
+    assert.ok(orphan?.textContent?.includes("zsh"));
+    await view.act(async () => view.button("关掉「zsh」").click());
+    assert.deepEqual(closed, ["t-sh"]);
+    // 点开着的那行：切过去
+    await view.act(async () => view.button("zsh").click());
+    assert.deepEqual(focused, ["t-sh"]);
+    assert.ok(view.pages.includes("terminal"));
+  } finally {
+    await view.close();
+  }
+});
+
+test("对话 ⋯ 里能在右侧分屏打开；在跑的还能停下 Agent", async () => {
+  const closed: string[] = [];
+  const view = await renderTree({ requestCloseTab: (id: string) => closed.push(id) });
+  try {
+    await view.act(async () => view.button("「镁硫电池第5篇精读」的更多操作").click());
+    await view.act(async () => view.button("停下 Agent").click());
+    assert.deepEqual(closed, ["t1"]);
+    await view.act(async () => view.button("「镁硫电池第2篇精读」的更多操作").click());
+    assert.ok(
+      !Array.from(view.host.ownerDocument.querySelectorAll("button")).some((b) => b.textContent?.trim() === "停下 Agent"),
+      "没开着的不给停下",
+    );
+    await view.act(async () => view.button("在右侧分屏打开").click());
+    const call = view.calls.find((c) => c[0] === "openConversation")!;
+    assert.equal((call[1] as SessionMetaDto).sessionId, "r2");
+    assert.deepEqual(call[2], { preferredProfileId: undefined, split: true });
+  } finally {
+    await view.close();
+  }
+});
+
+test("对话 ⋯ 置顶：挪到最上面「置顶」一节、原课题下不再列，记在本机；取消置顶放回去", async () => {
+  const view = await renderTree();
+  try {
+    await view.act(async () => view.button("「镁硫电池第3篇精读」的更多操作").click());
+    await view.act(async () => view.button("置顶").click());
+    const pinned = view.host.querySelector('[aria-label="置顶的对话"]');
+    assert.ok(pinned?.textContent?.includes("镁硫电池第3篇精读"), "置顶一节里有它");
+    assert.ok(!view.chatGroup("综述流程测试")!.textContent!.includes("镁硫电池第3篇精读"), "原课题下不重复列");
+    assert.deepEqual(JSON.parse(localStorage.getItem("ccode.sidebarChatPins")!), ["claude-code\nr3"]);
+    await view.act(async () => view.button("「镁硫电池第3篇精读」的更多操作").click());
+    await view.act(async () => view.button("取消置顶").click());
+    assert.equal(view.host.querySelector('[aria-label="置顶的对话"]'), null);
+    assert.ok(view.chatGroup("综述流程测试")!.textContent!.includes("镁硫电池第3篇精读"));
+  } finally {
+    await view.close();
+  }
+});
+
+test("跑完没看的那段标题亮到 l1、悬停写明；收着的课题（随手聊）名字也亮", async () => {
+  const view = await renderTree({ unreadChats: ["claude-code\nr2", "claude-code\nsc1"] });
+  try {
+    const row = view.button("镁硫电池第2篇精读");
+    assert.match(row.className, /\btext-l1\b/);
+    assert.match(row.title, /跑完了，还没看/);
+    assert.doesNotMatch(view.button("镁硫电池第1篇精读").className, /\btext-l1\b/);
+    assert.match(view.button("随手聊").className, /\btext-l1\b/, "随手聊收着，里面那段没看，名字亮");
+  } finally {
+    await view.close();
+  }
+});
+
+test("键盘：↓ 走到下一行，对话上 ← 回到课题名，课题名上 ← 收起、→ 展开", async () => {
+  const view = await renderTree();
+  try {
+    const doc = view.host.ownerDocument;
+    const press = (key: string) =>
+      view.act(async () => {
+        (doc.activeElement as HTMLElement).dispatchEvent(new doc.defaultView!.KeyboardEvent("keydown", { key, bubbles: true }));
+      });
+    view.button("镁硫电池第5篇精读").focus();
+    await press("ArrowDown");
+    assert.equal(doc.activeElement?.textContent?.trim(), "镁硫电池第4篇精读");
+    await press("ArrowLeft");
+    assert.equal(doc.activeElement?.textContent?.trim(), "综述流程测试", "回到它的课题名");
+    await press("ArrowLeft");
+    assert.equal(view.chatGroup("综述流程测试"), null, "收起");
+    await press("ArrowRight");
+    assert.ok(view.chatGroup("综述流程测试"), "展开");
+  } finally {
+    await view.close();
+  }
+});

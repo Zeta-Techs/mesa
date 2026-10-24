@@ -27,7 +27,7 @@ test("Grok 支持启动时列出并运行中切换多个模型", () => {
 });
 
 test("codex 与 cursor 给各自的重启/参数提示", () => {
-  assert.match(launchModelNote("codex", 3) ?? "", /重开标签/);
+  assert.match(launchModelNote("codex", 3) ?? "", /停下 AI 再接着聊/);
   assert.match(launchModelNote("cursor", 3) ?? "", /启动参数|不能在会话/);
 });
 

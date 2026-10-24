@@ -3820,14 +3820,19 @@ pub(crate) fn has_active_run_in(path: &str) -> Result<bool, String> {
     .any(|r| crate::paths::path_within(&r.isolation_path, path)))
 }
 // 仅入口允许用旧键查身份，页面之间绝不传 tabId/reuseKey。
+// 侧栏点开对话要先等它（quick-chat-launch.ts）：放后台线程，不和终端输出抢主线程
 #[tauri::command]
-pub fn run_find(
+pub async fn run_find(
     reuse_key: Option<String>,
     agent: Option<String>,
     session_id: Option<String>,
 ) -> Result<Option<RunDto>, String> {
-    Ok(query_runs(&db()?,"WHERE (?1 IS NOT NULL AND reuse_key=?1 AND closed_at IS NULL) OR (?2 IS NOT NULL AND agent=?2 AND session_id=?3) ORDER BY created_at DESC LIMIT 1",
-        params![reuse_key,agent,session_id])?.into_iter().next())
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(query_runs(&db()?,"WHERE (?1 IS NOT NULL AND reuse_key=?1 AND closed_at IS NULL) OR (?2 IS NOT NULL AND agent=?2 AND session_id=?3) ORDER BY created_at DESC LIMIT 1",
+            params![reuse_key,agent,session_id])?.into_iter().next())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 #[tauri::command]
 pub async fn active_background_runs() -> Result<Vec<RunDto>, String> {

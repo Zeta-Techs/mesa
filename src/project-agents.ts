@@ -4,6 +4,7 @@ import {
   visibleDeclaredTasks,
 } from "./project-tasks.ts";
 import { goalReviewCopy } from "./goal-review.ts";
+import { samePath } from "./path-utils.ts";
 
 export type AgentCatalogItem = { id: string; label: string };
 
@@ -365,6 +366,31 @@ export function slotPrefs(
     };
   }
   return projectAgentPrefs(project);
+}
+
+/** 接着聊项目里的一段旧对话用哪条连接（侧栏项目树点对话；原项目页「对话」页签「继续」同口径）：
+ *  项目「对话」槽绑的正是这家就用那条，否则用项目给这家设的默认连接；都没有返回 undefined，交给原会话那条 */
+export function projectResumeProfileId(
+  profiles: readonly { id: string; agent: string; models?: readonly string[] }[],
+  project: Parameters<typeof slotPrefs>[1],
+  agentId: string,
+): string | undefined {
+  const chat = slotPrefs(profiles, project, CHAT_BINDING_SLOT);
+  const fromChat = chat.preferredAgent === agentId ? chat.preferredProfile : undefined;
+  return fromChat || projectBoundProfileId(project?.defaultProfiles, agentId);
+}
+
+/** 接回一段旧对话时，按它所属的项目给连接预填（2026-10-24 用户问会不会和项目绑定错乱）：侧栏、工作台「最近对话」、
+ *  对话页「继续」都走这里，同一段对话从哪儿点开都一样。会话目录就是某个项目的根才算（工作区会话扫描时已归并回仓库）；
+ *  随手聊与别的目录不算。只是预填：这段对话自己上次用的连接还在就用它（resumeProfileChoice） */
+export function sessionProjectResumeProfileId(
+  profiles: readonly { id: string; agent: string; models?: readonly string[] }[],
+  projects: readonly (NonNullable<Parameters<typeof slotPrefs>[1]> & { path: string })[],
+  session: { agent: string; projectPath: string },
+  isWindows = false,
+): string | undefined {
+  const project = projects.find((p) => samePath(p.path, session.projectPath, isWindows));
+  return project ? projectResumeProfileId(profiles, project, session.agent) : undefined;
 }
 
 // ===== 步骤槽位（B1）：step:<步骤名> 绑定，解析链 = 步骤槽 ?? 项目默认三元组 =====

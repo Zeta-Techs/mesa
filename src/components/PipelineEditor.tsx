@@ -26,6 +26,8 @@ import {
   pipelineStepsForTemplate,
   RESOURCE_TYPE_LABELS,
   settingsForTemplateApply,
+  UNTESTED_TEMPLATE_BADGE,
+  UNTESTED_TEMPLATE_HINT,
   type SubmissionMode,
 } from "../pipeline-presets";
 import type {
@@ -1460,6 +1462,14 @@ export default function PipelineEditor({
                       <span className="ml-2 rounded-sm bg-strip px-1.5 py-0.5 text-xs text-l3">
                         {t.steps.length} 步
                       </span>
+                      {!t.fieldTested && (
+                        <span
+                          className="ml-1 rounded-sm bg-strip px-1.5 py-0.5 text-xs text-l3"
+                          title={UNTESTED_TEMPLATE_HINT}
+                        >
+                          {UNTESTED_TEMPLATE_BADGE}
+                        </span>
+                      )}
                       <span className="mt-1 block truncate text-xs text-l4">
                         {t.steps.map((s) => s.name).join(" → ")}
                       </span>

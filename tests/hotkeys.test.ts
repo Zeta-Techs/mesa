@@ -4,7 +4,10 @@ import {
   captureDecision,
   comboFromEvent,
   comboLabel,
+  DEFAULT_FOCUS_RAIL_HOTKEY,
+  DEFAULT_NEW_CHAT_HOTKEY,
   eventMatchesCombo,
+  globalHotkeyAllowed,
   PAGE_HOTKEY_DEFS,
   READER_MODE_HOTKEY,
 } from "../src/hotkeys.ts";
@@ -81,11 +84,16 @@ test("captureDecision：冲突拒绝（多冲突方任一命中即拒）/ 正常
   });
 });
 
-test("PAGE_HOTKEY_DEFS：九页、顺序与默认绑定唯一", () => {
+test("PAGE_HOTKEY_DEFS：九页、顺序同侧栏（工作台 · 运行 · 搜对话 · 项目，2026-10-24）、默认绑定唯一", () => {
   assert.equal(PAGE_HOTKEY_DEFS.length, 9);
   assert.deepEqual(
     PAGE_HOTKEY_DEFS.map((p) => p.id),
-    ["workbench", "workspaces", "terminal", "sessions", "profiles", "skills", "mcp", "stats", "settings"],
+    ["workbench", "terminal", "sessions", "workspaces", "profiles", "skills", "mcp", "stats", "settings"],
+  );
+  assert.deepEqual(
+    PAGE_HOTKEY_DEFS.slice(0, 4).map((p) => p.label),
+    ["工作台", "运行", "搜对话", "项目"],
+    "字同侧栏入口",
   );
   const combos = PAGE_HOTKEY_DEFS.map((p) => p.combo);
   assert.equal(new Set(combos).size, 9, "默认绑定不得互相冲突");
@@ -102,4 +110,14 @@ test("READER_MODE_HOTKEY：⌘E/Ctrl+E 命中，裸 E 与带 Shift 不命中", (
   );
   // 不与九页页切绑定（mod+1..9）冲突
   assert.ok(!PAGE_HOTKEY_DEFS.some((p) => p.combo === READER_MODE_HOTKEY));
+});
+
+test("新对话 / 光标移到侧栏：默认 ⌘N / ⌘0，不和九页、命令面板、隐藏侧栏撞；Windows / Linux 焦点在终端里时让给 shell", () => {
+  const taken = [...PAGE_HOTKEY_DEFS.map((p) => p.combo), "mod+k", "mod+\\", READER_MODE_HOTKEY];
+  assert.ok(!taken.includes(DEFAULT_NEW_CHAT_HOTKEY));
+  assert.ok(!taken.includes(DEFAULT_FOCUS_RAIL_HOTKEY));
+  assert.notEqual(DEFAULT_NEW_CHAT_HOTKEY, DEFAULT_FOCUS_RAIL_HOTKEY);
+  assert.equal(globalHotkeyAllowed(true, true), true, "Mac 上 ⌘ 不进终端，照接");
+  assert.equal(globalHotkeyAllowed(true, false), false, "Ctrl+N 在终端里是下一条历史");
+  assert.equal(globalHotkeyAllowed(false, false), true);
 });

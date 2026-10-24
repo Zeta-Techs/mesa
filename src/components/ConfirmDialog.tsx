@@ -224,12 +224,9 @@ export function ConfirmDialogHost() {
                     key={i}
                     className="flex gap-2 rounded-md bg-hover px-3 py-2 text-xs leading-5 text-l2"
                   >
-                    <CircleAlert
-                      size={13}
-                      strokeWidth={1.8}
-                      className="mt-1 shrink-0 text-l3"
-                      aria-hidden="true"
-                    />
+                    <span className="ccode-icon-line">
+                      <CircleAlert size={13} strokeWidth={1.8} className="text-l3" aria-hidden="true" />
+                    </span>
                     <span className="min-w-0 whitespace-pre-wrap break-words">
                       {block.text}
                     </span>

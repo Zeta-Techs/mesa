@@ -32,8 +32,12 @@ const bundle = await build({
         const stubs: Record<string, string> = {
           "./ConfirmDialog": `export const confirmDialog = async (...args) => { window.__chips.confirms.push(args); return window.__chips.confirmAnswer; };
             export const alertDialog = async () => {};`,
-          "@tauri-apps/plugin-opener": `export const openUrl = async (url) => { window.__chips.opened.push(url); };`,
+          "@tauri-apps/plugin-opener": `export const openUrl = async (url) => { window.__chips.opened.push(url); };
+            export const openPath = async () => {}; export const revealItemInDir = async () => {};`,
           "@tauri-apps/plugin-dialog": `export const open = async () => window.__chips.pickFiles;`,
+          // 文档首页预览：pdf.js / mammoth 不进测试包，只记谁要了 PDF 缩略图
+          "./pdf-thumb": `export const pdfFirstPageThumb = async (path) => { window.__chips.pdfThumbs.push(path); return "data:image/jpeg;base64,AAAA"; };`,
+          "./docx-thumb": `export const docxFirstPageThumb = async () => null;`,
           "./ChatMarkdown": `import { createElement } from 'react';
             export default function ChatMarkdown(p) { return createElement('div', null, p.text); }
             export function ChatImageCard() { return null; }
@@ -76,6 +80,9 @@ async function mount() {
     opened: [] as string[],
     pickFiles: ["/proj/docs/报告.pdf"] as string[] | null,
     searches: [] as unknown[],
+    imageReads: [] as string[],
+    pdfThumbs: [] as string[],
+    pickDirs: [] as unknown[],
   };
   Object.assign(dom.window, {
     __chips: host,
@@ -97,6 +104,14 @@ async function mount() {
         }
         if (command === "git_status") {
           return { isRepo: true, branch: "main" };
+        }
+        if (command === "pick_attachment_files") {
+          host.pickDirs.push((args as { defaultDir: string | null }).defaultDir);
+          return host.pickFiles ?? [];
+        }
+        if (command === "read_image_bytes") {
+          host.imageReads.push((args as { path: string }).path);
+          return { mime: "image/png", data: "iVBORw0KGgo=" };
         }
         if (command === "combo_surface") {
           return { showNativeEffort: true, effortLevels: [], launchEffort: "high", thinking: true, mixedModelsNote: null, injectEffortAllowed: true };
@@ -288,6 +303,66 @@ test("模型菜单开聊前：顶部 Agent · 配置可进二级，模型带能�
     assert.match(ui.el.textContent ?? "", /思考强度/);
     await ui.click("glm-5.2");
     assert.deepEqual(calls.at(-1), "model:glm-5.2");
+  } finally {
+    await ui.close();
+  }
+});
+
+test("输入区收字（2026-10-23）：框里只有 + 与发送，下面那一行由调用方给；权限平时灰字、切到时同步亮；测试版收进模型菜单", async () => {
+  const ui = await mount();
+  try {
+    await ui.render(
+      ui.h(ui.Composer, {
+        onSend: async () => null,
+        footer: ui.h("div", { "data-testid": "meta" }, "权限 · 项目"),
+      }),
+    );
+    const box = ui.el.querySelector(".ccode-composer-box")!;
+    assert.deepEqual(
+      Array.from(box.querySelectorAll("button")).map((b) => b.getAttribute("aria-label")),
+      ["添加", "发送"],
+      "框里只留 + 和发送",
+    );
+    const meta = ui.el.querySelector('[data-testid="meta"]')!;
+    assert.ok(meta && !box.contains(meta), "那一行画在框外");
+
+    // 权限：完全访问平时灰字，flash 时与输入框细线同一条曲线亮一下
+    const badge = {
+      agentLabel: "Claude Code",
+      permission: "write_tree",
+      mode: "full",
+      modes: ["ask", "auto", "full"],
+      readonlySupported: true,
+      note: null,
+      editable: true,
+    };
+    await ui.render(ui.h(ui.Badge, badge));
+    const chip = () => ui.button("完全访问");
+    assert.match(chip().className, /text-l3/);
+    assert.doesNotMatch(chip().className, /caution|ccode-perm-flash/, "常驻不染色");
+    await ui.render(ui.h(ui.Badge, { ...badge, flash: true }));
+    assert.match(chip().className, /ccode-perm-flash/);
+
+    // 测试版：不再单占一格，在模型菜单底部一行，点进去是说明与「切到终端」
+    let toTerminal = 0;
+    await ui.render(
+      ui.h(ui.Menu, {
+        kind: "runtime",
+        status: status(),
+        profileModels: ["glm-5.3"],
+        modelSwitch: { kind: "direct", command: "/model {model}" },
+        effort: null,
+        submitCsiU: false,
+        onTuiCommand: () => {},
+        onOpenTerminal: () => toTerminal++,
+      }),
+    );
+    assert.doesNotMatch(ui.el.textContent ?? "", /测试版/, "芯片上不写测试版");
+    await ui.click("glm-5.3");
+    await ui.click("测试版");
+    assert.match(ui.el.textContent ?? "", /以终端为准/);
+    await ui.click("切到终端");
+    assert.equal(toTerminal, 1);
   } finally {
     await ui.close();
   }
@@ -485,7 +560,12 @@ test("输入框「+」：选文件成文件卡、随消息按路径发出；没�
     await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="添加"]')!.click());
     assert.match(ui.el.textContent ?? "", /引用项目文件/);
     await ui.click("文件或图片");
-    assert.match(ui.el.textContent ?? "", /报告\.pdf/, "选中的文件显示成文件名卡");
+    assert.match(ui.el.textContent ?? "", /报告\.pdf/, "选中的文件显示成文件卡");
+    assert.deepEqual(ui.host.pickDirs, ["/proj"], "选择器从工作目录打开（Rust 侧弹，选中的才进读取白名单）");
+    await ui.act(async () => new Promise((r) => setTimeout(r, 0)));
+    assert.deepEqual(ui.host.pdfThumbs, ["/proj/docs/报告.pdf"], "PDF 要首页缩略图");
+    assert.ok(ui.el.querySelector('img[src="data:image/jpeg;base64,AAAA"]'), "PDF 卡带首页缩略图");
+    assert.match(ui.el.textContent ?? "", /PDF/, "文件名下写类型");
     await typeInto(ui, "帮我看看");
     // 发送钮是光标块（只有图标），按 aria-label 找
     await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="发送"]')!.click());
@@ -494,6 +574,79 @@ test("输入框「+」：选文件成文件卡、随消息按路径发出；没�
     await ui.render(ui.h(ui.Composer, { ...props, cwd: null }));
     await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="添加"]')!.click());
     assert.equal(ui.button("引用项目文件").disabled, true);
+  } finally {
+    await ui.close();
+  }
+});
+
+test("输入框图片：编辑后重发还原成缩略卡；点图在输入框上方看图标注、消息照常写；意见框编号接进消息", async () => {
+  const ui = await mount();
+  try {
+    const win = ui.el.ownerDocument.defaultView!;
+    // JSDOM 不做布局：给显示区和标注层一个尺寸，图按 1000×500 读进来
+    Object.defineProperty(win.HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 800 });
+    Object.defineProperty(win.HTMLElement.prototype, "clientHeight", { configurable: true, get: () => 600 });
+    win.SVGElement.prototype.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 768, height: 384, right: 768, bottom: 384, x: 0, y: 0 }) as DOMRect;
+    const sent: string[] = [];
+    const props = {
+      onSend: async (t: string) => {
+        sent.push(t);
+        return null;
+      },
+      cwd: "/proj",
+      seedInsert: { text: "这张图哪里不对", paths: ["/tmp/ccode/paste-1.png", "/tmp/ccode/paste-2.png"] },
+      onSeedConsumed: () => undefined,
+    };
+    await ui.render(ui.h(ui.Composer, props));
+    const box = ui.el.querySelector("textarea")!;
+    assert.equal(box.value, "这张图哪里不对", "正文回输入框，路径不当文字塞回去");
+    const thumbs = () => ui.el.querySelectorAll<HTMLButtonElement>('button[aria-label="看图与标注"]');
+    assert.equal(thumbs().length, 2, "两张图都还原成缩略卡");
+    assert.deepEqual(ui.host.imageReads, ["/tmp/ccode/paste-1.png", "/tmp/ccode/paste-2.png"]);
+
+    await ui.act(async () => thumbs()[0].click());
+    const stage = () => ui.el.querySelector('[role="region"][aria-label="看图与标注"]');
+    assert.ok(stage(), "点缩略图在输入框上方展开看图台");
+    assert.equal(ui.el.ownerDocument.querySelector('[role="dialog"]'), null, "不是挡住输入框的弹窗");
+    assert.equal(box.disabled, false, "看图时输入框照常能写");
+    assert.equal(thumbs()[0].getAttribute("aria-pressed"), "true");
+
+    const img = stage()!.querySelector("img")!;
+    Object.defineProperty(img, "naturalWidth", { value: 1000 });
+    Object.defineProperty(img, "naturalHeight", { value: 500 });
+    await ui.act(async () => img.dispatchEvent(new win.Event("load")));
+    await ui.click("意见框");
+    const svg = () => stage()!.querySelector<SVGSVGElement>('svg[aria-label="标注"]')!;
+    const pointer = (type: string, x: number, y: number) =>
+      ui.act(async () => {
+        svg().dispatchEvent(new win.MouseEvent(type, { bubbles: true, clientX: x, clientY: y, button: 0 }));
+      });
+    await pointer("pointerdown", 100, 100);
+    await pointer("pointermove", 300, 250);
+    await pointer("pointerup", 300, 250);
+    assert.equal(box.value, "这张图哪里不对\n① ", "画好意见框，消息末尾另起一行接上 ①");
+    assert.ok(svg().querySelector("rect"), "图上出现框");
+    assert.ok(thumbs()[0].querySelector('svg[aria-label="已标注"]'), "缩略图上也看得到标注");
+
+    await ui.click("撤销");
+    assert.equal(thumbs()[0].querySelector('svg[aria-label="已标注"]'), null, "撤销后标注没了，消息里的字不动");
+    assert.equal(box.value, "这张图哪里不对\n① ");
+
+    await ui.act(async () => {
+      box.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    assert.equal(stage(), null, "Esc 收起看图台");
+
+    await ui.act(async () => ui.el.querySelectorAll<HTMLButtonElement>('button[aria-label="移除图片"]')[0].click());
+    assert.equal(thumbs().length, 1);
+    await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="发送"]')!.click());
+    assert.deepEqual(sent, ["这张图哪里不对\n①\n/tmp/ccode/paste-2.png"], "没标注的图照原路径发，正文 + 一行一个路径");
+
+    ui.host.pickFiles = ["/proj/fig/结果.png"];
+    await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="添加"]')!.click());
+    await ui.click("文件或图片");
+    assert.equal(thumbs().length, 1, "选来的图片也出缩略图、能点开");
   } finally {
     await ui.close();
   }

@@ -76,6 +76,8 @@ try {
     run("rsvg-convert", ["-w", "256", "-h", "256", svg(`mesa-${tone}-windows`), "-o", join(runtime, `window-${tone}.png`)]);
     run("rsvg-convert", ["-w", "128", "-h", "128", svg(`mesa-${tone}`), "-o", join(previews, `${tone}.png`)]);
   }
+  // macOS 菜单栏托盘模板图：系统把它缩到 18pt 高，出 3 倍像素即可，宽度随源比例
+  run("rsvg-convert", ["-h", "54", join(source, "mesa-tray-template.svg"), "-o", join(runtime, "tray-template.png")]);
   console.log("图标已重新生成：src-tauri/icons/（含 Assets.car 与 runtime/）+ src/assets/app-icon/");
 } finally {
   rmSync(tmp, { recursive: true, force: true });

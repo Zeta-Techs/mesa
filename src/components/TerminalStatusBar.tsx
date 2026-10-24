@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { FolderOpen, GitBranch, GitMerge, MessageCircle, Settings2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { FolderOpen, GitBranch, GitMerge } from "lucide-react";
 import { fmtTokensZh, usageTitle, usageTotal } from "../token-format";
 import { invoke } from "@tauri-apps/api/core";
 import { AGENTS } from "../types";
@@ -70,6 +70,7 @@ export default function TerminalStatusBar({
   onTuiCommand,
   contextUsed = null,
   onRelaunch,
+  chatMetaRef,
 }: {
   /** null = 终端尚未上报（刚挂载）：显示 cwd + 未启动占位 */
   status: TabStatus | null;
@@ -100,10 +101,15 @@ export default function TerminalStatusBar({
   variant?: "terminal" | "chat";
   /** 写一条 TUI 命令（标签动作 runTuiCommand：写完盯屏，CLI 弹确认菜单时聊天层给按钮）；缺省直写 PTY */
   onTuiCommand?: (cmd: string) => void;
-  /** 上一轮请求喂进去的 token（输入 + 缓存）：终端变体右区画上下文用量圆环（聊天变体在输入框里画，这里不重复） */
+  /** 上一轮请求喂进去的 token（输入 + 缓存）：两种变体右区都画上下文用量圆环（聊天变体 2026-10-23 起由这里画，模型芯片挂进来时不再自己画） */
   contextUsed?: number | null;
   /** 停下 Agent、带新模型 / 思考档接回原对话（会写回 CLI 全局配置的切换走这条，switch-strategy.ts） */
   onRelaunch?: (patch: { model?: string; effort?: string | null }) => void;
+  /**
+   * 聊天变体留给聊天层的两格（2026-10-23 用户：输入框底下只要一行）：左「权限 · 项目」、右「模型 · 思考」，
+   * ChatSurface 用 portal 挂进来（芯片的状态都在聊天层）。终端变体不留
+   */
+  chatMetaRef?: (side: "left" | "right", el: HTMLElement | null) => void;
 }) {
   const agentLabel = status
     ? (AGENTS.find((a) => a.id === status.agentId)?.label ?? status.agentId)
@@ -213,15 +219,6 @@ export default function TerminalStatusBar({
     try {
       localStorage.setItem("ccode.commitStyle", s);
     } catch {}
-  }
-
-  /** 聊天变体提交按钮的字（终端变体同一套中文） */
-  function cpLabel(): string {
-    if (phase === "generating") return "生成提交信息…";
-    if (phase === "review") return `(${Math.max(1, Math.ceil((countPct / 100) * 3))}) 停`;
-    if (phase === "pushing") return "推送中…";
-    if (phase === "success") return `已推送${successHash ? ` ${successHash}` : ""}`;
-    return "提交…";
   }
 
   function reset() {
@@ -380,6 +377,24 @@ export default function TerminalStatusBar({
   // 目录浮层改路径：仅未启动可编辑；进程存活期间 cwd 由 pty_get_cwd 回写跟随（shell 里 cd 即可）
   const cwdLocked = !!status?.ptyId;
   const idle = isTerminalIdle(status);
+  // 聊天变体还没起进程：栏里自己的东西不画，只留给聊天层的两格
+  const ownHidden = chat && !status?.ptyId;
+  const chatMetaLeftRef = useCallback((el: HTMLSpanElement | null) => chatMetaRef?.("left", el), [chatMetaRef]);
+  const chatMetaRightRef = useCallback((el: HTMLSpanElement | null) => chatMetaRef?.("right", el), [chatMetaRef]);
+  // 上下文用量圆环（两种变体同一份）：窗口大小来自模型能力库，读不到的家（如 Grok）不画
+  const ring =
+    combo?.context && contextUsed
+      ? { ratio: Math.min(1, contextUsed / combo.context), window: combo.context }
+      : null;
+  const compact =
+    running && onTuiCommand && status && slashCommandsFor(status.agentId).some((c) => c.cmd === "/compact")
+      ? () => onTuiCommand("/compact")
+      : null;
+  // 底栏不再单写的两件事收进圆环悬停（2026-10-23）：这段对话累计多少、经哪条连接
+  const ringExtra = [
+    ...(usage && usageTotal(usage) > 0 ? [`这段对话累计 ${fmtTokensZh(usageTotal(usage))} token`] : []),
+    ...(profileName ? [`经「${profileName}」`] : []),
+  ];
   const [cwdMenuOpen, setCwdMenuOpen] = useState(false);
   const [cwdDraft, setCwdDraft] = useState("");
 
@@ -413,13 +428,16 @@ export default function TerminalStatusBar({
       }}
     >
       <div
-        // 聊天变体未启动时整栏内容隐藏、只留 32px 高度（2026-10-23 运行页审查）：这时栏里只剩目录胶囊，
-        // 和输入框里的项目芯片说的是同一件事，还压在窗口最底边；高度照留，开聊时终端几何不跳
-        aria-hidden={chat && !status?.ptyId ? true : undefined}
+        // 聊天变体未启动时栏里自己的东西（目录 / git / 用量）不画（2026-10-23 运行页审查）：和输入框旁的项目芯片说的是同一件事；
+        // 留给聊天层的两格照常在（芯片在居中空态时画在输入框下面，不挂进来）。高度照留，开聊时终端几何不跳
         className={`flex h-full min-w-0 items-center gap-2.5 ${
           chat ? "ccode-chat-column mx-auto w-full" : ""
-        } ${chat && !status?.ptyId ? "invisible" : ""}`}
+        }`}
       >
+      {/* 聊天层的「权限 · 项目」挂在最左（ChatSurface metaSlots） */}
+      {chat && chatMetaRef && (
+        <span ref={chatMetaLeftRef} className="flex min-w-0 shrink items-center gap-0.5 empty:hidden" />
+      )}
       {/* 左区：状态圆点 + agent · 配置 · 模型 + 思考滑块。聊天变体不画（2026-10-22 状态栏去重）：
           在回复 / 已停下对话末尾已经说了，Agent 看输入框模型芯片的品牌色圆点，模型思考在输入框里，连接挪到右边 */}
       {!chat && (
@@ -645,15 +663,10 @@ export default function TerminalStatusBar({
 
       {/* 中区：目录胶囊常驻（点击浮层改目录，仅未启动可编辑）+ git 连体胶囊（有改动/未推送时）。
           终端内 TUI 自己那行状态是字符流删不掉，底栏侧把路径做出辨识度即是冗余的解。
-          聊天变体不画目录（输入框的项目芯片管选、开聊后不能换）；不是 git 仓库时只写项目名 / 随手聊 */}
-      {chat && !git?.isRepo && (
-        <span className="flex min-w-0 items-center gap-1.5 text-l4" title={cwdRaw}>
-          {isScratch ? (
-            <MessageCircle size={12} strokeWidth={1.8} aria-hidden="true" className="shrink-0" />
-          ) : (
-            <FolderOpen size={12} strokeWidth={1.8} aria-hidden="true" className="shrink-0" />
-          )}
-          <span className="truncate">{isScratch ? "随手聊" : cwdBase}</span>
+          聊天变体不画目录（输入框的项目芯片管选、开聊后不能换）；不是 git 仓库时只写项目名 / 随手聊（不带图标，2026-10-23） */}
+      {chat && !ownHidden && !git?.isRepo && (
+        <span className="min-w-0 truncate text-l4" title={cwdRaw}>
+          {isScratch ? "随手聊" : cwdBase}
         </span>
       )}
       {!chat && (
@@ -720,91 +733,38 @@ export default function TerminalStatusBar({
         )}
       </span>
       )}
-      {((chat && git?.isRepo) || (!chat && !idle && hasGit)) && (
+      {((chat && !ownHidden && git?.isRepo) || (!chat && !idle && hasGit)) && (
         /* 外包一层 relative 给浮层做锚（菜单右对齐 ▾、气泡左对齐胶囊左缘）；
            内层胶囊保持 overflow-hidden 裁圆角；min-w-0 允许窄窗时收缩防溢出右栏 */
         <span className="relative min-w-0">
         {chat ? (
-          /* 聊天变体（2026-10-22 状态栏重排）：不铺胶囊底、不用等宽字、不用绿色渐变，与聊天正文同一套灰阶，
-             只有 +/− 带一点增删色。是 git 仓库就常驻（干净写「无改动」），生成中数字跟着涨；点分支 / 改动打开改动面板。
-             「提交…」与终端变体同一套流程（生成信息 → 倒计时 → 提交推送）和同一道门（Agent 在跑不给提交） */
-          <span className="flex min-w-0 items-center gap-3 text-l3">
-            <button
-              type="button"
-              onClick={onOpenGit}
-              title="点击查看改动"
-              className="flex min-w-0 cursor-pointer items-center gap-2 border-0 bg-transparent p-0 hover:text-l1"
-            >
-              <span className="flex min-w-0 items-center gap-1 text-l2">
-                <GitBranch size={12} strokeWidth={1.8} aria-hidden="true" className="shrink-0" />
-                <span className="min-w-0 max-w-[10rem] truncate">{git!.branch || "HEAD"}</span>
-              </span>
-              {git!.files.length > 0 ? (
-                <span className="flex shrink-0 items-center gap-1 tabular-nums">
-                  <span className="text-add">+{git!.add}</span>
-                  <span className="text-del">−{git!.del}</span>
-                  {!narrow && <span className="text-l4">· {git!.files.length} 个文件</span>}
-                </span>
-              ) : (
-                <span className="shrink-0 text-l4">无改动</span>
-              )}
-            </button>
-            {git!.ahead > 0 && !narrow && (
-              <span className="shrink-0 text-l4" title={`比远程多出 ${git!.ahead} 个提交`}>
-                ↑{git!.ahead} 未推送
+          /* 聊天变体（2026-10-23 用户：这些信息都要放在聊天层吗）：只留「分支 + 增删」一项，点开改动面板。
+             文件数、↑↓ 未推送 / 待拉取收进悬停；「提交…」与提交设置不放聊天层——提交只在改动面板一处做
+             （终端变体的提交胶囊不变）。干净时只写分支，不写「无改动」 */
+          <button
+            type="button"
+            onClick={onOpenGit}
+            title={[
+              git!.files.length > 0 ? `${git!.files.length} 个文件有改动` : "没有未提交的改动",
+              git!.ahead > 0 ? `${git!.ahead} 个提交还没推送` : null,
+              git!.behind > 0 ? `远程有 ${git!.behind} 个新提交还没拉取` : null,
+              "点击打开改动面板：看 diff、提交、推送",
+            ]
+              .filter(Boolean)
+              .join("\n")}
+            className="flex min-w-0 cursor-pointer items-center gap-2 border-0 bg-transparent p-0 text-l3 hover:text-l1"
+          >
+            <span className="flex min-w-0 items-center gap-1 text-l2">
+              <GitBranch size={12} strokeWidth={1.8} aria-hidden="true" className="shrink-0" />
+              <span className="min-w-0 max-w-[10rem] truncate">{git!.branch || "HEAD"}</span>
+            </span>
+            {git!.files.length > 0 && (
+              <span className="flex shrink-0 items-center gap-1 tabular-nums">
+                <span className="text-add">+{git!.add}</span>
+                <span className="text-del">−{git!.del}</span>
               </span>
             )}
-            {git!.behind > 0 && !narrow && (
-              <span className="shrink-0 text-l4" title={`远程新增 ${git!.behind} 个提交`}>
-                ↓{git!.behind} 待拉取
-              </span>
-            )}
-            {hasCommittable && !agentBusy && (
-              <span className="flex shrink-0 items-center">
-                <button
-                  type="button"
-                  onClick={() =>
-                    phase === "generating" || phase === "review" ? reset() : phase === "idle" ? void startGenerate() : undefined
-                  }
-                  disabled={phase === "pushing"}
-                  title={
-                    phase === "idle"
-                      ? `AI 生成提交信息 → ${mode === "auto" ? "3 秒后自动提交并推送" : "停在预览"}（Esc 随时取消）`
-                      : phase === "generating"
-                        ? "点击或 Esc 取消"
-                        : phase === "review"
-                          ? "点击停止自动提交（信息留在预览里）"
-                          : undefined
-                  }
-                  className="cursor-pointer rounded-md border-0 bg-hover px-1.5 py-0.5 text-l2 hover:text-l1 disabled:cursor-wait"
-                >
-                  {cpLabel()}
-                </button>
-                {phase === "idle" && (
-                  <button
-                    type="button"
-                    onClick={() => setSplitOpen((v) => !v)}
-                    title="提交设置：自动推送还是只预览、提交信息风格"
-                    aria-expanded={splitOpen}
-                    className="ml-0.5 flex cursor-pointer items-center rounded-md border-0 bg-transparent p-1 text-l4 hover:bg-hover hover:text-l2"
-                  >
-                    <Settings2 size={11} strokeWidth={1.8} aria-hidden="true" />
-                  </button>
-                )}
-              </span>
-            )}
-            {canPushOnly && !agentBusy && (
-              <button
-                type="button"
-                onClick={() => void pushOnly()}
-                disabled={pushBusy}
-                title="推送到远程（无上游分支时自动建立跟踪）"
-                className="shrink-0 cursor-pointer rounded-md border-0 bg-hover px-1.5 py-0.5 text-l2 hover:text-l1 disabled:cursor-wait"
-              >
-                {pushBusy ? "推送中…" : "推送"}
-              </button>
-            )}
-          </span>
+          </button>
         ) : (
         <span
           className="flex items-stretch overflow-hidden rounded-full font-mono"
@@ -1147,19 +1107,29 @@ export default function TerminalStatusBar({
           </span>
         ))}
 
-      {/* 右区：时长 · token（等宽小字）。聊天变体：经哪条连接 · 这段对话用了多少（不写运行时长——每一轮的用时在生成那一行） */}
+      {/* 右区：时长 · token（等宽小字）。聊天变体（2026-10-23 照 Claude 客户端收字）：模型 · 思考芯片（聊天层挂进来）+ 上下文圆环；
+          这段对话用了多少、经哪条连接收进圆环的悬停。窗口大小不知道的家（如 Grok）没有圆环，照旧写 token 数 */}
       {chat ? (
-        <span className="ml-auto flex min-w-0 shrink-0 items-center gap-3 overflow-hidden text-l4">
-          {!idle && profileName && !narrow && (
-            <span className="min-w-0 truncate" title={`${agentLabel ?? ""} 经「${profileName}」连接（额度、限流、花费都按这条连接算）`}>
-              经 {profileName}
-            </span>
-          )}
-          {usage && usageTotal(usage) > 0 && (
-            <span className="shrink-0 tabular-nums text-l3" title={usageTitle(usage, fmtTokensZh)}>
+        <span className="ml-auto flex min-w-0 shrink-0 items-center gap-1.5 text-l4">
+          {chatMetaRef && <span ref={chatMetaRightRef} className="flex min-w-0 items-center gap-1.5 empty:hidden" />}
+          {!ownHidden && ring ? (
+            <ContextRing
+              ratio={ring.ratio}
+              used={contextUsed!}
+              window={ring.window}
+              agentId={status?.agentId ?? ""}
+              breakdown={breakdownRequest(status)}
+              onCompact={compact}
+              extra={ringExtra}
+            />
+          ) : !ownHidden && usage && usageTotal(usage) > 0 ? (
+            <span
+              className="shrink-0 tabular-nums text-l3"
+              title={`${usageTitle(usage, fmtTokensZh)}${profileName ? `\n经「${profileName}」连接（额度、限流都按这条连接算）` : ""}`}
+            >
               {fmtTokensZh(usageTotal(usage))} token
             </span>
-          )}
+          ) : null}
         </span>
       ) : (
       <span
@@ -1167,28 +1137,26 @@ export default function TerminalStatusBar({
         style={{ color: faint }}
       >
         {/* 上下文用量（2026-10-18 与聊天层同步）：窗口大小来自模型能力库，读不到就不画 */}
-        {!chat && running && combo?.context && contextUsed ? (
+        {running && ring ? (
           <span className="flex items-center gap-0.5">
             <ContextRing
-              ratio={Math.min(1, contextUsed / combo.context)}
-              used={contextUsed}
-              window={combo.context}
+              ratio={ring.ratio}
+              used={contextUsed!}
+              window={ring.window}
               agentId={status?.agentId ?? ""}
               breakdown={breakdownRequest(status)}
-              onCompact={
-                onTuiCommand && status && slashCommandsFor(status.agentId).some((c) => c.cmd === "/compact")
-                  ? () => onTuiCommand("/compact")
-                  : null
-              }
+              onCompact={compact}
+              extra={ringExtra}
               color={faint}
               warnColor={colors.yellow}
               trackColor={`${fg}26`}
               className="size-4"
             />
-            {Math.round(Math.min(1, contextUsed / combo.context) * 100)}%
+            {Math.round(ring.ratio * 100)}%
           </span>
         ) : null}
-        {!narrow && usage && usageTotal(usage) > 0 && (
+        {/* 有圆环时 token 数收进它的悬停（2026-10-23 与聊天层同口径）；没有圆环的家照旧写 ↑↓ */}
+        {!narrow && !(running && ring) && usage && usageTotal(usage) > 0 && (
           // ↑ = 喂给模型的全部输入（含读写缓存），↓ = 输出；拆分在悬停里
           <span title={usageTitle(usage, fmtTokens)}>
             {fmtTokens(usage.input + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0))}↑ {fmtTokens(usage.output)}↓

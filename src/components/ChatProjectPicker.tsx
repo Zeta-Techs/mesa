@@ -164,7 +164,7 @@ export default function ChatProjectPicker({
           role="dialog"
           aria-label="在哪个项目里聊"
           // 字号挂在容器上：全站 button / input { font: inherit } 会吞掉控件自己的 text-*
-          className={`absolute left-0 z-30 flex w-[20rem] flex-col rounded-xl border border-field ccode-float-surface p-1 text-sm shadow-lg ${
+          className={`absolute left-0 z-30 flex w-[20rem] flex-col rounded-xl border border-field ccode-float-surface p-1 text-sm shadow-lg whitespace-normal select-text ${
             side === "below" ? "top-full mt-2" : "bottom-full mb-2"
           }`}
           style={{ maxHeight: room }}

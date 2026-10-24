@@ -6,19 +6,17 @@ import {
   BookOpen,
   Copy,
   File,
-  Folder,
   FolderClosed,
   FolderOpen,
   FolderPlus,
-  GitBranch,
   SquareTerminal,
   Trash2,
 } from "lucide-react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import ContextMenu from "./ContextMenu";
 import { confirmDialog } from "./ConfirmDialog";
-import { FoldMark, ghostActionClass, LoadingRows } from "./PageFrame";
-import { useAppStore } from "../store";
+import { FoldMark, LoadingRows } from "./PageFrame";
+import { isScratchCwd } from "../quick-chat";
 import {
   hasChangedInside,
   normSep,
@@ -89,7 +87,6 @@ interface TreeNodeCtx {
   highlight: string | null;
   load: (path: string) => Promise<void>;
   toggle: (path: string) => void;
-  nav: (path: string) => Promise<boolean>;
   visibleFiles: DirEntryDto[];
   onOpenFile: (path: string, name: string, root: string, files: DirEntryDto[]) => void;
   onOpenTerminal: (path: string) => void;
@@ -109,7 +106,12 @@ const FileTreeNode = memo(function FileTreeNode({
   depth: number;
   ctx: TreeNodeCtx;
 }) {
-  const { expanded, cache, gitMap, highlight, root, load, toggle, nav } = ctx;
+  const { expanded, cache, gitMap, highlight, root, load, toggle } = ctx;
+  const rowRef = useRef<HTMLDivElement>(null);
+  // 搜索定位到这一项：滚进可视区（树已逐级展开）
+  useEffect(() => {
+    if (highlight === entry.path) rowRef.current?.scrollIntoView({ block: "nearest" });
+  }, [highlight, entry.path]);
   const isOpen = expanded.has(entry.path);
   const children = cache[entry.path];
   const gitStatus = entry.isDir ? undefined : gitMap[normSep(entry.path)];
@@ -121,6 +123,7 @@ const FileTreeNode = memo(function FileTreeNode({
   return (
     <>
       <div
+        ref={rowRef}
         onClick={() =>
           entry.isDir
             ? toggle(entry.path)
@@ -130,7 +133,7 @@ const FileTreeNode = memo(function FileTreeNode({
           e.preventDefault();
           ctx.onMenu({ x: e.clientX, y: e.clientY, path: entry.path, isDir: entry.isDir });
         }}
-        title={`${entry.isDir ? `${entry.path}\n单击展开或收起，右键在此打开终端` : entry.path}${entry.isSystem ? "\n系统目录" : ""}`}
+        title={`${entry.isDir ? `${entry.path}\n单击展开或收起；右键可在这里打开终端、新建文件夹` : `${entry.path}\n单击在右边预览；右键看更多操作`}${entry.isSystem ? "\n系统目录" : ""}`}
         className={`group flex cursor-pointer items-center gap-1 py-0.5 pr-2 text-xs hover:bg-hover ${
           highlight === entry.path ? "bg-white/10" : ""
         } ${entry.isSystem ? "opacity-50" : ""}`}
@@ -175,32 +178,6 @@ const FileTreeNode = memo(function FileTreeNode({
               ●
             </span>
           )}
-          {entry.isDir && (
-            <>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void nav(entry.path);
-                }}
-                title="进入此文件夹（只改浏览，不改终端目录）"
-                className="hidden shrink-0 text-micro text-l4 hover:text-l1 group-hover:block"
-              >
-                进入
-              </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  ctx.onOpenTerminal(entry.path);
-                }}
-                title="在此打开新终端"
-                className="hidden shrink-0 text-l4 hover:text-l1 group-hover:block"
-              >
-                ↗
-              </button>
-            </>
-          )}
         </span>
       </div>
       {entry.isDir && isOpen && !children && (
@@ -225,16 +202,23 @@ interface PathContext {
   kind: "worktree" | "main" | "other";
   workspaceName: string | null;
   branch: string | null;
-  worktreePath: string | null;
-  repoPath: string | null;
-  /** 同仓库其他活跃工作区（主项目⇄多分支的切换列表） */
-  siblings: { workspaceName: string; branch: string; worktreePath: string }[];
+}
+
+/** 栏头写的目录名：随手聊目录写「随手聊」，主目录写「主目录」，其余写文件夹名 */
+function rootLabel(root: string): string {
+  const p = root.trim();
+  if (!p || p === "~") return "主目录";
+  if (isScratchCwd(p, IS_WINDOWS)) return "随手聊";
+  return basenameOf(p);
 }
 
 /**
- * 文件树（借鉴 VS Code Explorer 的懒加载）：外部锚点是活动终端标签的 cwd，
- * 用户可悬停「进入」钻取重定根（manual root），切换标签时重置回该标签 cwd。
- * 单击目录（含折叠箭头）= 原地展开/收起；悬停「进入」才重定根；右键 / ↗ = 在此打开新终端。
+ * 文件树（借鉴 VS Code Explorer 的懒加载）：根就是正看着的这段对话的目录，跟着对话走
+ * （2026-10-24 用户：「左侧的这个上下文重新做一下，没必要的就删了」）。栏头一行写目录名（在工作区分支里标「分支」）+ 动作，
+ * 下面搜索框和树。单击目录 = 原地展开 / 收起；单击文件 = 右边预览；右键 = 在此打开新终端 / 新建文件夹 / 沉浸阅读 /
+ * 在访达中显示 / 复制路径 / 删除。搜索命中后在树里逐级展开到那一项并亮一下，不另换根。
+ * 同日撤掉：「最近项目」⌄ 下拉与「进行中的项目」区（切项目、切对话归侧栏项目树）、悬停「进入」钻取与「← 上一级」
+ * （浏览出了对话目录，树就和对话对不上）、主项目 ⇄ 分支互切（一段对话只属于一个目录）、悬停 ↗（右键里有）。
  */
 function FileTree({
   cwd,
@@ -244,12 +228,11 @@ function FileTree({
   onOpenTerminal,
   onOpenReader,
   onFsEvent,
-  onEnterProject,
   onRootChange,
   onRootNavigated,
   onRecoverDirectory,
   onShowHidden,
-  belowRecent,
+  actions,
 }: {
   cwd: string;
   showHidden: boolean;
@@ -263,18 +246,16 @@ function FileTree({
   onOpenReader?: (path: string, name: string, root: string) => void;
   /** 文件系统变化回调（fs-changed 防抖后触发，供 GitPanel 等联动刷新） */
   onFsEvent?: () => void;
-  /** 最近项目「真进入」：切树根 + 切换活动标签启动栏 cwd */
-  onEnterProject?: (path: string) => void;
   /** 根目录切换前通知；返回/resolve false 时保留当前根（用于保护未保存预览，确认框为异步）。 */
   onRootChange?: (path: string) => boolean | Promise<boolean>;
   /** 根目录切换成功后通知（供改动面板等跟随树根；与 onRootChange 守卫配对，只在真切换后触发） */
   onRootNavigated?: (path: string) => void;
   /** 当前根不可用时，打开终端的目录选择器 */
   onRecoverDirectory?: () => void;
-  /** 插在搜索行（含最近项目下拉）与完整树之间的自定义区块（如项目树） */
-  belowRecent?: ReactNode;
+  /** 栏头行尾的按钮（显示隐藏文件 / 刷新 / 收起，由运行页给） */
+  actions?: ReactNode;
 }) {
-  // manual root：默认锚定活动标签 cwd，钻取/上级由用户驱动
+  // 根跟着正看着的那段对话的目录；切到别的对话时换根（未保存的预览可以拦下）
   const [root, setRoot] = useState(cwd);
   const rootRef = useRef(root);
   rootRef.current = root;
@@ -282,39 +263,9 @@ function FileTree({
   onRootChangeRef.current = onRootChange;
   const onRootNavigatedRef = useRef(onRootNavigated);
   onRootNavigatedRef.current = onRootNavigated;
-  /** 所有主动跳转统一走 nav；未保存预览可阻止切换。走 ref 保持稳定身份（树节点 memo 依赖） */
-  const nav = useCallback(async (path: string): Promise<boolean> => {
-    if (path === rootRef.current) return true;
-    if ((await onRootChangeRef.current?.(path)) === false) return false;
-    setRoot(path);
-    onRootNavigatedRef.current?.(path);
-    return true;
-  }, []);
-  /** 返回上一级目录（不受项目范围限制） */
-  function goUp() {
-    const p = parentDir(root);
-    if (p) void nav(p);
-  }
-  const recentRepos = useAppStore((s) => s.recentRepos);
-  const recentReposLoading = useAppStore((s) => s.recentReposLoading);
-  const recentReposLoaded = useAppStore((s) => s.recentReposLoaded);
-  const loadRecentRepos = useAppStore((s) => s.loadRecentRepos);
-  // 最近项目：搜索框旁 ⌄ 下拉浮层（Esc / 点外部关闭）
-  const [recentMenuOpen, setRecentMenuOpen] = useState(false);
-  useEffect(() => {
-    if (!recentMenuOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setRecentMenuOpen(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [recentMenuOpen]);
-
-  // App 启动时已预取；终端首次挂载再兜底触发一次，store 会合并并发请求。
-  useEffect(() => {
-    void loadRecentRepos().catch(() => {});
-  }, [loadRecentRepos]);
   const [cache, setCache] = useState<Record<string, DirEntryDto[]>>({});
+  const cacheRef = useRef(cache);
+  cacheRef.current = cache;
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const expandedRef = useRef(expanded);
   expandedRef.current = expanded;
@@ -340,16 +291,7 @@ function FileTree({
     };
   }, [root]);
 
-  /** 主项目 ⇄ 分支互切：重定树根 + 终端真进入（同最近项目语义） */
-  function switchTo(path: string) {
-    void nav(path).then((ok) => {
-      if (ok) onEnterProject?.(path);
-    });
-  }
-  // ⇄ 下拉：主项目 + 同仓库全部活跃工作区（多工作区时不再只能两点互切）
-  const [switchMenu, setSwitchMenu] = useState<{ x: number; y: number } | null>(null);
-
-  // 切换活动标签（cwd 变化）时重置回该标签的 cwd
+  // 切换对话（cwd 变化）时换根
   useEffect(() => {
     if (cwd === rootRef.current) return;
     void (async () => {
@@ -366,7 +308,7 @@ function FileTree({
         const entries = await invoke<DirEntryDto[]>("list_dir", { path, showHidden });
         setCache((prev) => ({ ...prev, [path]: entries }));
         if (entries.length >= 2000 && treeRootAtStart === rootRef.current) {
-          setError("此目录达到 2000 项展示上限，部分文件未列出。请用搜索查找或进入更小的子目录。");
+          setError("此目录达到 2000 项展示上限，部分文件未列出。请用搜索查找。");
           setErrorPath(path);
           return;
         }
@@ -434,7 +376,7 @@ function FileTree({
     };
   }, [root, load, loadGitMap, onFsEvent]);
 
-  // 重定根：清空缓存与展开状态
+  // 换根：清空缓存与展开状态
   useEffect(() => {
     setCache({});
     setExpanded(new Set());
@@ -466,7 +408,6 @@ function FileTree({
     });
   }, []);
 
-  const parent = parentDir(root);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResultDto[] | null>(null);
   const [highlight, setHighlight] = useState<string | null>(null);
@@ -495,23 +436,30 @@ function FileTree({
     }
   }
 
-  /** 搜索结果定位：跳到所在目录并高亮（不打开预览） */
+  /** 搜索结果定位：在树里从根逐级展开到那一项所在的文件夹，亮一下（不打开预览、不换根） */
   async function locate(r: SearchResultDto) {
     if (relNeedsHidden(r.rel) && !showHidden) onShowHidden?.(true);
     const target = r.isDir ? r.path : parentDir(r.path);
-    if (target) {
-      if (!(await nav(target))) return;
-      setResults(null);
-      setQuery("");
-      setHighlight(r.path);
-      setExpanded((prev) => new Set(prev).add(target));
-      // 连续定位先清旧定时器，避免旧计时提前熄灭新高亮
-      if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
-      highlightTimerRef.current = setTimeout(() => setHighlight(null), 2000);
+    const chain: string[] = [];
+    for (let p = target, i = 0; p && i < 64; p = parentDir(p), i++) {
+      if (!pathWithin(p, root, IS_WINDOWS) || normSep(p) === normSep(root)) break;
+      chain.unshift(p);
     }
+    for (const dir of chain) if (!cacheRef.current[dir]) await load(dir);
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      for (const dir of chain) next.add(dir);
+      return next;
+    });
+    setResults(null);
+    setQuery("");
+    setHighlight(r.path);
+    // 连续定位先清旧定时器，避免旧计时提前熄灭新高亮
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    highlightTimerRef.current = setTimeout(() => setHighlight(null), 2000);
   }
 
-  // 搜索防抖：300ms 后在项目根内按文件名查找
+  // 搜索防抖：300ms 后在这段对话的目录内按文件名查找
   useEffect(() => {
     const q = query.trim();
     if (!q) {
@@ -548,164 +496,43 @@ function FileTree({
       highlight,
       load,
       toggle,
-      nav,
       visibleFiles,
       onOpenFile,
       onOpenTerminal,
       onMenu: setMenu,
     }),
-    [root, expanded, cache, gitMap, highlight, load, toggle, nav, visibleFiles, onOpenFile, onOpenTerminal],
+    [root, expanded, cache, gitMap, highlight, load, toggle, visibleFiles, onOpenFile, onOpenTerminal],
   );
 
-  // 当前项目已在下方文件树中，不在“最近”里重复；最多保留四个真正可切换的目标。
-  const recent = recentRepos
-    .filter((repo) => !pathWithin(root, repo.path, IS_WINDOWS))
-    .slice(0, 4);
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* 顶部：文件名搜索（无描边，底色分层）+ 最近项目 ⌄ 下拉浮层（浮层允许边框） */}
-      <div className="relative shrink-0 px-2 py-1.5">
-        <div className="flex items-center gap-1">
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Escape" && setQuery("")}
-            placeholder="搜索文件名或后缀（pdf / .docx）"
-            className="min-w-0 flex-1 rounded-md bg-inset px-2 py-1 text-xs text-l2 outline-none transition-colors placeholder:text-l4 focus:bg-raised"
-          />
-          {(recent.length > 0 || (!recentReposLoaded && recentReposLoading)) && (
-            <button
-              onClick={() => setRecentMenuOpen((v) => !v)}
-              title="最近项目"
-              aria-expanded={recentMenuOpen}
-              className={`${ghostActionClass} shrink-0`}
-            >
-              ⌄
-            </button>
-          )}
-        </div>
-        {recentMenuOpen && (
-          <>
-            {/* 透明罩：点浮层外任意处关闭 */}
-            <div
-              className="fixed inset-0 z-40"
-              onClick={() => setRecentMenuOpen(false)}
-            />
-            <div className="absolute inset-x-2 top-full z-50 mt-0.5 max-h-56 overflow-auto rounded-md border border-field ccode-float-surface py-1">
-              {!recentReposLoaded && recent.length === 0 ? (
-                <div className="space-y-1 px-2 py-0.5" aria-label="正在加载最近项目">
-                  {[0, 1, 2, 3].map((index) => (
-                    <div key={index} className="h-4 animate-pulse rounded-sm bg-inset" />
-                  ))}
-                </div>
-              ) : (
-                recent.map((r) => (
-                  <div
-                    key={r.path}
-                    onClick={async () => {
-                      try {
-                        // 目录可能已归档/移动，先验证再切换，避免树卡进无效根
-                        await invoke("list_dir", { path: r.path, showHidden: false });
-                        if (!(await nav(r.path))) return;
-                        onEnterProject?.(r.path);
-                        setResults(null);
-                        setQuery("");
-                        setError(null);
-                        setRecentMenuOpen(false);
-                      } catch {
-                        setError(`目录不存在或已移动：${r.path}`);
-                      }
-                    }}
-                    title={`${r.path}${r.lastActive ? `\n最近活动：${new Date(r.lastActive).toLocaleString("zh-CN")}` : ""}\n点击进入；↗ 打开新终端`}
-                    className="group cursor-pointer px-2 py-1 text-xs text-l2 hover:bg-hover hover:text-l1"
-                  >
-                    <span className="flex items-center gap-1">
-                      <span className="shrink-0 text-l4">◔</span>
-                      <span className="min-w-0 flex-1 truncate">{r.name}</span>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onOpenTerminal(r.path);
-                          setRecentMenuOpen(false);
-                        }}
-                        title="在此打开新终端"
-                        className="hidden shrink-0 text-l4 hover:text-l1 group-hover:block"
-                      >
-                        ↗
-                      </button>
-                    </span>
-                  </div>
-                ))
-              )}
-            </div>
-          </>
-        )}
-      </div>
-      {belowRecent}
-      {/* 当前浏览根：终端 cwd 与浏览根是两种独立上下文，避免钻取目录偷偷改变 Agent 运行目录。 */}
-      <div
-        className="flex items-center gap-1 px-2 py-1 text-xs font-semibold text-l1"
-        title={root}
-      >
-        {parent && (
-          <button
-            onClick={goUp}
-            title={`上一级：${parent}`}
-            className="shrink-0 text-l4 hover:text-l1"
-          >
-            ←
-          </button>
-        )}
-        <span className="truncate">{basenameOf(root)}</span>
+      {/* 栏头：这段对话的目录（在工作区分支里时标「分支」；主仓库是常态，不标——没事不画点）+ 行尾动作 */}
+      <div className="flex h-9 shrink-0 items-center gap-1.5 pl-2.5 pr-1" title={root}>
+        <span className="min-w-0 truncate text-xs font-medium text-l2">{rootLabel(root)}</span>
         {ctx?.kind === "worktree" && (
           <span
-            className="flex shrink-0 items-center gap-1 font-normal text-l3"
+            className="flex shrink-0 items-center gap-1 text-micro text-l3"
             title={`工作区「${ctx.workspaceName}」的工作树，改动属于分支 ${ctx.branch}`}
           >
             <span className="h-1.5 w-1.5 rounded-full bg-ok-text" />
             分支
           </span>
         )}
-        {ctx?.kind === "main" && (
-          <span
-            className="flex shrink-0 items-center gap-1 font-normal text-warn-text"
-            title={`主仓库（${ctx.branch}），这里的改动不属于任何工作区分支`}
-          >
-            <span className="h-1.5 w-1.5 rounded-full bg-warn-text" />
-            主仓库
-          </span>
-        )}
-        {((ctx?.kind === "worktree" && ctx.repoPath) ||
-          (ctx?.kind === "main" && ctx.siblings.length > 0)) && (
-          <button
-            onClick={(e) => {
-              const r = e.currentTarget.getBoundingClientRect();
-              setSwitchMenu({ x: r.left, y: r.bottom + 4 });
-            }}
-            title="切换主项目 / 分支工作树"
-            className="shrink-0 text-l4 hover:text-l1"
-          >
-            ⇄
-          </button>
-        )}
-        {root !== cwd && (
-          <button
-            onClick={() => void nav(cwd)}
-            title={`回到当前终端目录：${cwd}`}
-            className="ml-auto flex shrink-0 items-center gap-1 rounded-sm px-1 text-micro font-normal text-l4 hover:bg-hover hover:text-l1"
-          >
-            <span aria-hidden="true">⌂</span>
-            回到当前目录
-          </button>
-        )}
+        <span className="ml-auto flex shrink-0 items-center">{actions}</span>
       </div>
-      {root !== cwd && (
-        <p className="truncate px-2 pb-1 text-micro text-l4" title={`浏览：${root}\n终端：${cwd}`}>
-          正在浏览：{basenameOf(root)} · 终端仍在：{basenameOf(cwd)}
-        </p>
-      )}
+      {/* 文件名搜索（无描边，底色分层） */}
+      <div className="shrink-0 px-2 pb-1.5">
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => e.key === "Escape" && setQuery("")}
+          placeholder="搜文件名或后缀（pdf / .docx）"
+          aria-label="搜这个目录里的文件"
+          className="w-full rounded-md bg-inset px-2 py-1 text-xs text-l2 outline-none transition-colors placeholder:text-l4 focus:bg-raised"
+        />
+      </div>
       {newFolderFor && (
-        <div className="flex items-center gap-1 px-2 py-1">
+        <div className="flex shrink-0 items-center gap-1 px-2 py-1">
           <span className="shrink-0 text-xs text-l4">新建于 {basenameOf(newFolderFor)}:</span>
           <input
             autoFocus
@@ -722,7 +549,7 @@ function FileTree({
         </div>
       )}
       {error && (
-        <div className="mx-2 my-1 rounded-md border border-field ccode-well px-2 py-1.5 text-xs">
+        <div className="mx-2 my-1 shrink-0 rounded-md border border-field ccode-well px-2 py-1.5 text-xs">
           <p className="text-warn-text">{error}</p>
           {errorPath === root && onRecoverDirectory && (
             <button
@@ -736,16 +563,16 @@ function FileTree({
         </div>
       )}
 
-      {results !== null ? (
-        <div className="min-h-0 flex-1 overflow-auto">
-          {results.length === 0 ? (
+      <div className="min-h-0 flex-1 overflow-auto pb-1">
+        {results !== null ? (
+          results.length === 0 ? (
             <p className="px-2 py-1 text-xs text-l4">无匹配文件</p>
           ) : (
             results.map((r) => (
               <div
                 key={r.path}
-                onClick={() => locate(r)}
-                title={r.path}
+                onClick={() => void locate(r)}
+                title={`${r.path}\n点一下在树里找到它`}
                 className="cursor-pointer truncate px-2 py-0.5 text-xs text-l2 hover:bg-hover"
               >
                 {r.isDir ? (
@@ -762,17 +589,17 @@ function FileTree({
                 {r.rel}
               </div>
             ))
-          )}
-        </div>
-      ) : !children ? (
-        <div className="px-2">
-          <LoadingRows compact />
-        </div>
-      ) : children.length === 0 ? (
-        <p className="px-2 py-1 text-xs text-l4">空目录</p>
-      ) : (
-        children.map((c) => <FileTreeNode key={c.path} entry={c} depth={0} ctx={nodeCtx} />)
-      )}
+          )
+        ) : !children ? (
+          <div className="px-2">
+            <LoadingRows compact />
+          </div>
+        ) : children.length === 0 ? (
+          <p className="px-2 py-1 text-xs text-l4">空目录</p>
+        ) : (
+          children.map((c) => <FileTreeNode key={c.path} entry={c} depth={0} ctx={nodeCtx} />)
+        )}
+      </div>
 
       {menu && (
         <ContextMenu
@@ -845,31 +672,6 @@ function FileTree({
                 }
               },
             },
-          ]}
-        />
-      )}
-
-      {/* ⇄ 切换下拉：主项目 + 同仓库全部活跃工作区 */}
-      {switchMenu && ctx && (
-        <ContextMenu
-          x={switchMenu.x}
-          y={switchMenu.y}
-          onClose={() => setSwitchMenu(null)}
-          items={[
-            ...(ctx.kind === "worktree" && ctx.repoPath
-              ? [
-                  {
-                    icon: Folder,
-                    label: `主项目（${basenameOf(ctx.repoPath)}）`,
-                    onSelect: () => switchTo(ctx.repoPath!),
-                  },
-                ]
-              : []),
-            ...ctx.siblings.map((s) => ({
-              icon: GitBranch,
-              label: `分支「${s.workspaceName}」`,
-              onSelect: () => switchTo(s.worktreePath),
-            })),
           ]}
         />
       )}

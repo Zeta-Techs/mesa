@@ -39,7 +39,16 @@ import {
   settingsPillClass,
   InlineNotice,
 } from "../components/PageFrame";
-import { captureDecision, comboLabel, IS_MAC, IS_WINDOWS, PAGE_HOTKEY_DEFS } from "../hotkeys";
+import {
+  captureDecision,
+  comboLabel,
+  DEFAULT_FOCUS_RAIL_HOTKEY,
+  DEFAULT_NEW_CHAT_HOTKEY,
+  FIXED_HOTKEYS,
+  IS_MAC,
+  IS_WINDOWS,
+  PAGE_HOTKEY_DEFS,
+} from "../hotkeys";
 import {
   canOneClickInstall,
   depMissingReason,
@@ -408,10 +417,13 @@ const AI_FN_GROUPS: { title: string; rows: { key: string; label: string; hint: s
   },
 ];
 
+/** 顺序同岛上（也同图标态侧栏）：新对话插在工作台后面（2026-10-24 侧栏改版同步） */
 const NAV_CAPSULE_SETTING_ITEMS: { id: NavCapsuleItemId; label: string }[] = [
-  { id: "quick-chat", label: "新对话" },
   ...NAV_GROUPS.flatMap((group) =>
-    group.items.map((item) => ({ id: item.id as NavCapsuleItemId, label: item.label })),
+    group.items.flatMap((item) => [
+      { id: item.id as NavCapsuleItemId, label: item.label },
+      ...(item.id === "workbench" ? [{ id: "quick-chat" as NavCapsuleItemId, label: "新对话" }] : []),
+    ]),
   ),
   ...NAV_BOTTOM.map((item) => ({
     id: item.id as NavCapsuleItemId,
@@ -974,7 +986,8 @@ function HotkeyCapture({
   );
 }
 
-/** 快捷键分区内容：页切九行 + 全局两行；录制互斥态 capturing 在此层持有 */
+/** 快捷键分区内容：页切九行 + 全局四行 + 固定的几个（只列出）；录制互斥态 capturing 在此层持有。
+ *  2026-10-24 侧栏改版同步：页切顺序与字同侧栏（工作台 · 运行 · 搜对话 · 项目…），新增新对话、光标移到侧栏 */
 function HotkeysSection({
   settings,
   patch,
@@ -985,6 +998,8 @@ function HotkeysSection({
   const [capturing, setCapturing] = useState<string | null>(null);
   const palette = settings?.hotkeyPalette ?? "mod+k";
   const chrome = settings?.hotkeyHideChrome ?? "mod+\\";
+  const newChat = settings?.hotkeyNewChat ?? DEFAULT_NEW_CHAT_HOTKEY;
+  const focusRail = settings?.hotkeyFocusRail ?? DEFAULT_FOCUS_RAIL_HOTKEY;
   const pageSwitchOn = settings?.hotkeyPageSwitch !== false;
   const pageCombo = (id: string) =>
     settings?.hotkeyPages?.[id] ??
@@ -999,7 +1014,11 @@ function HotkeysSection({
           「页面切换」总开关管的就是这张卡，放进卡头，不再单独占一行悬在卡外 */}
       <Card
         title="页面快捷键"
-        hint={pageSwitchOn ? "一键直达下面九个主页面" : "已关闭：下面九个绑定暂不生效，仍可先改好"}
+        hint={
+          pageSwitchOn
+            ? "一键直达下面九个主页面，顺序同侧栏"
+            : "已关闭：下面九个绑定暂不生效，仍可先改好"
+        }
         action={
           <Toggle
             checked={pageSwitchOn}
@@ -1011,7 +1030,7 @@ function HotkeysSection({
         {/* 总开关关闭时整组弱化示意（仍可编辑，方便先配好再开） */}
         <div className={`grid grid-cols-1 gap-1 lg:grid-cols-2 ${pageSwitchOn ? "" : "opacity-50"}`}>
           {PAGE_HOTKEY_DEFS.map((p) => (
-            <CardRow key={p.id} label={p.label}>
+            <CardRow key={p.id} label={p.label} title={p.hint}>
               <HotkeyCapture
                 id={p.id}
                 value={pageCombo(p.id)}
@@ -1019,6 +1038,8 @@ function HotkeysSection({
                 conflictsWith={[
                   palette,
                   chrome,
+                  newChat,
+                  focusRail,
                   ...PAGE_HOTKEY_DEFS.filter((x) => x.id !== p.id).map(
                     (x) => pageCombo(x.id),
                   ),
@@ -1040,12 +1061,44 @@ function HotkeysSection({
       </Card>
       <Card title="全局快捷键" hint="在任何页面都生效">
         <div className="grid grid-cols-1 gap-1 lg:grid-cols-2">
+          <CardRow
+            label="新对话"
+            title={
+              IS_MAC
+                ? "同侧栏「新对话」：开一段空白对话。正在输入框里写字时也能按；菜单栏「文件 → 新对话」固定是 ⌘N"
+                : "同侧栏「新对话」：开一段空白对话。正在输入框里写字时也能按；光标在终端里时让给终端"
+            }
+          >
+            <HotkeyCapture
+              id="newChat"
+              value={newChat}
+              defaultValue={DEFAULT_NEW_CHAT_HOTKEY}
+              conflictsWith={[palette, chrome, focusRail, ...pageCombos]}
+              onSave={(combo) => void patch({ hotkeyNewChat: combo })}
+              capturing={capturing}
+              setCapturing={setCapturing}
+            />
+          </CardRow>
+          <CardRow
+            label="在侧栏里选对话"
+            title="光标移到侧栏里正看着的那段，之后 ↑ ↓ 选、回车打开、← → 收起 / 展开课题；侧栏收着时先展开"
+          >
+            <HotkeyCapture
+              id="focusRail"
+              value={focusRail}
+              defaultValue={DEFAULT_FOCUS_RAIL_HOTKEY}
+              conflictsWith={[palette, chrome, newChat, ...pageCombos]}
+              onSave={(combo) => void patch({ hotkeyFocusRail: combo })}
+              capturing={capturing}
+              setCapturing={setCapturing}
+            />
+          </CardRow>
           <CardRow label="命令面板" title="页面跳转 / 主题 / 侧栏">
             <HotkeyCapture
               id="palette"
               value={palette}
               defaultValue="mod+k"
-              conflictsWith={[chrome, ...pageCombos]}
+              conflictsWith={[chrome, newChat, focusRail, ...pageCombos]}
               onSave={(combo) => void patch({ hotkeyPalette: combo })}
               capturing={capturing}
               setCapturing={setCapturing}
@@ -1055,13 +1108,32 @@ function HotkeysSection({
             <HotkeyCapture
               id="chrome"
               value={chrome}
-              defaultValue="mod+\\"
-              conflictsWith={[palette, ...pageCombos]}
+              // JSX 属性里的字符串不认反斜杠转义："mod+\\" 会是两个反斜杠，和真绑定对不上（原先「恢复」常亮、点了还会存坏）
+              defaultValue={"mod+\\"}
+              conflictsWith={[palette, newChat, focusRail, ...pageCombos]}
               onSave={(combo) => void patch({ hotkeyHideChrome: combo })}
               capturing={capturing}
               setCapturing={setCapturing}
             />
           </CardRow>
+        </div>
+      </Card>
+      {/* 改不了的几个也列出来（Ctrl+Tab 换对话、侧栏里 ↑↓ 等），免得只能在说明书里找 */}
+      <Card title="固定快捷键" hint="不能改，列在这里方便查">
+        <div className="grid grid-cols-1 gap-1 lg:grid-cols-2">
+          {FIXED_HOTKEYS.map((k) => (
+            <CardRow key={k.label} label={k.label} title={k.hint}>
+              {/* 只读：同绑定钮的高度与等宽字，但不铺底、不带边框色，看得出点不了；
+                  后面留「恢复」「禁用」两格的空位，和上面两张卡的绑定钮对齐 */}
+              <span className="flex shrink-0 items-center gap-1 whitespace-nowrap text-xs">
+                <kbd className="inline-flex h-7 min-w-14 items-center justify-center rounded-md border border-hairline px-2 font-mono text-l3">
+                  {IS_MAC ? k.mac : k.other}
+                </kbd>
+                <span className={`${ghostActionClass} invisible shrink-0`} aria-hidden="true">恢复</span>
+                <span className={`${ghostActionClass} invisible shrink-0`} aria-hidden="true">禁用</span>
+              </span>
+            </CardRow>
+          ))}
         </div>
       </Card>
     </>
@@ -2724,7 +2796,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         <Row
           label="侧栏 / 顶栏透明度"
           hint="百分数是罩色浓度，立即生效；壁纸越花越往「原样」调"
-          labelTitle="原样（100%）是各主题本来的样子，越小越透出桌面磨砂，全透（0%）完全不铺罩色、文字直接压在壁纸上。侧栏选中行的底色也跟着一起变淡，最透时选中只剩文字和图标变色。深浅主题与图标态各有自己的底色，同一个百分数看起来的浓淡会不同。Mac 全屏时一律不透明，不受这一档影响"
+          labelTitle="原样（100%）是各主题本来的样子，越小越透出桌面磨砂，全透（0%）完全不铺罩色、文字直接压在壁纸上。侧栏选中行的底色也跟着一起变淡，最透时选中只剩文字和图标变色。深色主题下侧栏、顶栏和四周缝是同一层，一起变；深浅主题各有自己的底色，同一个百分数看起来的浓淡会不同。Mac 全屏时一律不透明，不受这一档影响"
         >
           <SegTabs
             items={CHROME_OPACITIES.map((pct) => ({
@@ -2839,7 +2911,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
 
         <Row
           label="打开对话时先显示"
-          hint="问 AI、开始、商量、继续、精读都按这个；之后每个标签还能自己切"
+          hint="问 AI、开始、商量、继续、精读都按这个；之后每段对话还能自己切"
           labelTitle="「新对话」总是聊天（选 Agent 和模型在聊天里）；登录、更新、运行脚本这类没有对话可看的总是终端。切回已经开着的标签时不改它当前的显示"
         >
           <SegTabs
@@ -2856,7 +2928,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
 
         <Row
           label="底部状态栏"
-          hint="关掉后终端和聊天都不显示"
+          hint="关掉后终端底下那条消失；聊天里只收掉分支、改动和用量，权限与模型仍在输入框下面"
         >
           <Toggle
             label="底部状态栏"
@@ -3088,7 +3160,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           );
         })()}
 
-        <Row label="滚动缓冲行数" hint="新开标签生效（1000–20000）">
+        <Row label="滚动缓冲行数" hint="之后新起的终端生效（1000–20000）">
           <input
             type="number"
             min={1000}
@@ -3120,7 +3192,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         {IS_WINDOWS && (
           <Row
             label="向 agent 告知终端底色"
-            hint="浅色主题下告诉 gemini / qwen 底色，新开标签生效"
+            hint="浅色主题下告诉 gemini / qwen 底色，之后新起的终端生效"
           >
             <Toggle
               label="向 agent 告知终端底色"
@@ -3161,7 +3233,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           >
             {PAGE_HOTKEY_DEFS.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.label}
+                {p.page}
               </option>
             ))}
           </select>

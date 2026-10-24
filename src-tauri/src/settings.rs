@@ -21,6 +21,9 @@ pub const DEFAULT_TERMINAL_FONT_FAMILY: &str = "JetBrains Mono";
 /// 全局快捷键默认绑定（前端 hotkeys.ts 解析；mod = macOS ⌘ / 其他平台 Ctrl）
 pub const DEFAULT_HOTKEY_PALETTE: &str = "mod+k";
 pub const DEFAULT_HOTKEY_HIDE_CHROME: &str = "mod+\\";
+/// 新对话（侧栏「新对话」同一入口，2026-10-24）与「光标移到侧栏对话」（↑↓ 选、回车打开）
+pub const DEFAULT_HOTKEY_NEW_CHAT: &str = "mod+n";
+pub const DEFAULT_HOTKEY_FOCUS_RAIL: &str = "mod+0";
 pub const DEFAULT_HOTKEY_PAGE_SWITCH: bool = true;
 pub const DEFAULT_NAV_CAPSULE_HIDE_DELAY_MS: u32 = 1000;
 /// 侧栏 / 顶栏罩色的透明度系数（百分比，100 = 各主题本来的罩色，越小越透）。
@@ -353,6 +356,8 @@ pub struct AppSettingsDto {
     /// 快捷键绑定（"mod+shift+k" 格式，mod=⌘/Ctrl；空串 = 禁用该快捷键）
     pub hotkey_palette: Option<String>,
     pub hotkey_hide_chrome: Option<String>,
+    pub hotkey_new_chat: Option<String>,
+    pub hotkey_focus_rail: Option<String>,
     /// ⌘1–⌘9 页切整组总开关（关 = 全部页切绑定不生效）
     pub hotkey_page_switch: Option<bool>,
     /// 页切逐页绑定：键 = 页面 id（前端 hotkeys.ts PAGE_HOTKEY_DEFS），值 = 组合串；
@@ -946,6 +951,12 @@ fn with_defaults(s: AppSettingsDto) -> AppSettingsDto {
         hotkey_hide_chrome: s
             .hotkey_hide_chrome
             .or_else(|| Some(DEFAULT_HOTKEY_HIDE_CHROME.to_string())),
+        hotkey_new_chat: s
+            .hotkey_new_chat
+            .or_else(|| Some(DEFAULT_HOTKEY_NEW_CHAT.to_string())),
+        hotkey_focus_rail: s
+            .hotkey_focus_rail
+            .or_else(|| Some(DEFAULT_HOTKEY_FOCUS_RAIL.to_string())),
         hotkey_page_switch: s.hotkey_page_switch.or(Some(DEFAULT_HOTKEY_PAGE_SWITCH)),
         // 逐页绑定不做默认值填充：键缺失即「跟随默认」（同 ai_profiles 口径）
         hotkey_pages: s.hotkey_pages,
@@ -1113,6 +1124,12 @@ fn merge(cur: &mut AppSettingsDto, patch: AppSettingsDto) {
     }
     if patch.hotkey_hide_chrome.is_some() {
         cur.hotkey_hide_chrome = patch.hotkey_hide_chrome;
+    }
+    if patch.hotkey_new_chat.is_some() {
+        cur.hotkey_new_chat = patch.hotkey_new_chat;
+    }
+    if patch.hotkey_focus_rail.is_some() {
+        cur.hotkey_focus_rail = patch.hotkey_focus_rail;
     }
     if patch.hotkey_page_switch.is_some() {
         cur.hotkey_page_switch = patch.hotkey_page_switch;

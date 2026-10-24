@@ -45,7 +45,7 @@ import {
   themeSwatchFor,
   type ThemeSwatch,
 } from "../theme-swatch";
-import { comboLabel, PAGE_HOTKEY_DEFS } from "../hotkeys";
+import { comboLabel, DEFAULT_NEW_CHAT_HOTKEY, PAGE_HOTKEY_DEFS } from "../hotkeys";
 import { NAV_ICONS } from "../navigation-icons";
 import { SETTINGS_SEARCH_INDEX } from "../settings-search";
 import { WORK_MODE_LABEL, normalizeWorkMode } from "../work-mode";
@@ -297,6 +297,7 @@ export default function CommandPalette({
   const searching = query.trim().length > 0;
   const pageSwitchOn = settings?.hotkeyPageSwitch !== false;
   const chromeCombo = settings?.hotkeyHideChrome ?? "mod+\\";
+  const newChatCombo = settings?.hotkeyNewChat ?? DEFAULT_NEW_CHAT_HOTKEY;
   const openExternal = (url: string) =>
     openUrl(url).catch(() => toast("浏览器没打开，稍后再试", "warning"));
 
@@ -309,6 +310,7 @@ export default function CommandPalette({
               id: "quick-chat",
               title: "新对话",
               group: "快速操作",
+              hint: newChatCombo ? comboLabel(newChatCombo) : undefined,
               keywords: ["chat", "聊", "开聊", "随便聊", "quick", "new", "新会话", "新聊天", "快速开聊", "xindh", "xdh", "kuaisu", "kslt"],
             },
             icon: icon(NAV_ICONS.quickChat),
@@ -394,7 +396,8 @@ export default function CommandPalette({
               },
               icon: icon(NAV_ICONS[p.id]),
               kbd: true,
-              run: () => setPage(p.id),
+              // 同侧栏入口：「搜对话」进对话页时光标落进搜索框
+              run: () => useAppStore.getState().goEntry(p.id),
             };
           }),
           {

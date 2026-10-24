@@ -190,6 +190,9 @@ export interface AppSettings {
   /** 快捷键绑定（"mod+shift+k" 格式，mod=⌘/Ctrl；空串 = 禁用） */
   hotkeyPalette?: string;
   hotkeyHideChrome?: string;
+  /** 新对话（默认 mod+n）、光标移到侧栏对话（默认 mod+0，之后 ↑↓ 选、回车打开） */
+  hotkeyNewChat?: string;
+  hotkeyFocusRail?: string;
   /** ⌘1–⌘9 页切整组总开关（关 = 全部页切绑定不生效） */
   hotkeyPageSwitch?: boolean;
   /** 页切逐页绑定：键 = 页面 id（hotkeys.ts PAGE_HOTKEY_DEFS），值 = 组合串；
@@ -366,6 +369,8 @@ export interface PendingTerminal {
   /** 与 reuseBlank 配合：切到空白标签时把它的输入框改成这次指定的 Agent / 连接 / 模型。
       默认（不设）不改——快速开聊要保留人在输入框里已换过的选择；连接页「新对话」是点名要这条连接，必须改 */
   reseedBlank?: boolean;
+  /** 在右侧分屏打开（侧栏对话 ⋯「在右侧分屏打开」）：正看着的那段留在左边，这段放右边 */
+  split?: boolean;
   /** 步骤认领（「跟 AI 商量一下」）：启动 spawn 时以最终 agent/cwd 登记
       claim_next_session_for_step，让会话归到该步骤（项目「对话」页按 stepName 过滤）。
       不在发起时提前登记——启动栏还可改 agent/目录，spawn 时的实时值才作数 */
@@ -374,6 +379,9 @@ export interface PendingTerminal {
   runId?: string;
   /** 新建 Task 后预创建的 Run 所属 Task。 */
   taskId?: string;
+  /** 与 resume 配合（2026-10-23 侧栏挂对话）：只打开这段对话、先把记录摆出来，不起进程；发第一句才接回。
+      列表里点对话（侧栏项目树、工作台、对话页「继续」）都走这条 */
+  resumeLazy?: boolean;
 }
 
 /** 工作区页 / 改动面板 → 终端全宽审阅视图的一次性交接。 */
@@ -643,6 +651,8 @@ interface AppState {
   /** 当前页面（nav id），放 store 里让任意页面可跳转 */
   page: string;
   setPage: (p: string) => void;
+  /** 按侧栏入口的意思去一页（快捷键、命令面板、灵动岛共用）：「搜对话」进对话页时光标落进搜索框，其余同 setPage */
+  goEntry: (p: string) => void;
   /** 侧栏收缩状态（localStorage 持久化，品牌区点击切换） */
   navCollapsed: boolean;
   setNavCollapsed: (collapsed: boolean) => void;
@@ -669,6 +679,12 @@ interface AppState {
   /** 终端标签运行状态镜像（TerminalPage 写入；工作区首页「待你处理」跨页只读） */
   terminalRunInputs: RunOverviewInput[];
   setTerminalRunInputs: (inputs: RunOverviewInput[]) => void;
+  /** 运行页正看着的标签（分屏时是活跃那一栏；TerminalPage 写入）：侧栏项目树认「正在看的这段对话」、默认展开它的文件夹 */
+  terminalActiveTabId: string | null;
+  setTerminalActiveTabId: (tabId: string | null) => void;
+  /** 跑完了没看的对话（chat-unread.ts：会话键 agent\nsessionId，没认出会话的是 tab:<id>）；App 维护，侧栏读 */
+  unreadChats: string[];
+  setUnreadChats: (keys: string[]) => void;
   /** 「待你处理」收件箱条目镜像（WorkspacesPage 唯一写入方，签名变更才写）；
       App 标题栏收件箱与工作区页 strip 共同消费；action 为可序列化跳转描述 */
   inboxItems: InboxItem[];
@@ -709,6 +725,9 @@ interface AppState {
   /** 一次性「打开添加连接弹窗」请求（token；连接页消费并清空） */
   profileModalReq: number | null;
   setProfileModalReq: (token: number | null) => void;
+  /** 托盘被挡路后转来的一次性请求：连接页弹出该连接的「设为全局」确认（profileId 为空 = 只跳连接页） */
+  trayGlobalReq: { agent: string; profileId: string | null; token: number } | null;
+  setTrayGlobalReq: (req: { agent: string; profileId: string | null; token: number } | null) => void;
   /** 一次性「当前标签切聊天 / 终端」请求（上手引导「切到终端」；运行页可见时消费并清空） */
   surfaceSwitchReq: { mode: SurfaceMode; token: number } | null;
   setSurfaceSwitchReq: (req: { mode: SurfaceMode; token: number } | null) => void;
@@ -755,11 +774,24 @@ interface AppState {
   /** 对话页 → 终端页的焦点跳转请求（终端页消费并清空） */
   focusTabId: string | null;
   focusTab: (tabId: string | null) => void;
+  /** 侧栏 → 运行页「关掉这个标签」（停下 Agent，记录留在侧栏；在跑的照旧先确认）。
+      运行页标签条 2026-10-24 撤掉后，开着的东西在侧栏列着，关也从侧栏发 */
+  closeTabReq: { tabId: string; token: number } | null;
+  requestCloseTab: (tabId: string | null) => void;
   /** 工作区页 → 对话页的搜索词交接（对话页消费并清空） */
   sessionsQuery: string | null;
-  /** 快速开聊「查看全部」→ 对话页只列随手聊（消费并清空） */
+  /** 侧栏项目树随手聊「全部 N 条」→ 对话页只列随手聊（消费并清空） */
   sessionsScratchReq: boolean;
   setSessionsScratchReq: (on: boolean) => void;
+  /** 侧栏项目树项目「全部 N 条」→ 对话页只列这个目录的（跨 Agent，消费并清空） */
+  sessionsProjectPathReq: string | null;
+  setSessionsProjectPathReq: (path: string | null) => void;
+  /** 侧栏「搜对话」→ 对话页把光标放进搜索框（递增令牌，对话页见新值就聚焦） */
+  sessionsSearchFocusReq: number;
+  requestSessionsSearchFocus: () => void;
+  /** 把光标移到侧栏里正看着的那段对话（快捷键默认 mod+0；ProjectTree 消费，之后 ↑↓ 选、回车打开） */
+  focusRailReq: number;
+  requestFocusRail: () => void;
   /** 请求对话页打开指定会话（终端页「⤴对话」跳转用） */
   openSessionReq: { agent: string; sessionId: string } | null;
   setOpenSessionReq: (r: { agent: string; sessionId: string } | null) => void;
@@ -929,6 +961,12 @@ export const useAppStore = create<AppState>((set, get) => {
   },
   page: "workbench",
   setPage: (p) => set({ page: p }),
+  goEntry: (p) =>
+    set((s) =>
+      p === "sessions"
+        ? { page: p, sessionsSearchFocusReq: s.sessionsSearchFocusReq + 1 }
+        : { page: p },
+    ),
   navCollapsed: localStorage.getItem("ccode.navCollapsed") === "1",
   setNavCollapsed: (collapsed) => {
     localStorage.setItem("ccode.navCollapsed", collapsed ? "1" : "0");
@@ -978,6 +1016,10 @@ export const useAppStore = create<AppState>((set, get) => {
     set({ workspaceReviewRequest: request }),
   terminalRunInputs: [],
   setTerminalRunInputs: (inputs) => set({ terminalRunInputs: inputs }),
+  terminalActiveTabId: null,
+  setTerminalActiveTabId: (tabId) => set({ terminalActiveTabId: tabId }),
+  unreadChats: [],
+  setUnreadChats: (keys) => set({ unreadChats: keys }),
   inboxItems: [],
   setInboxItems: (items) => set({ inboxItems: items }),
   inboxDismissed: loadInboxDismissed(),
@@ -1037,6 +1079,8 @@ export const useAppStore = create<AppState>((set, get) => {
   setGatewayLibraryReq: (req) => set({ gatewayLibraryReq: req }),
   profileModalReq: null,
   setProfileModalReq: (token) => set({ profileModalReq: token }),
+  trayGlobalReq: null,
+  setTrayGlobalReq: (req) => set({ trayGlobalReq: req }),
   surfaceSwitchReq: null,
   setSurfaceSwitchReq: (req) => set({ surfaceSwitchReq: req }),
   helpDismissed: loadHelpDismissed(),
@@ -1074,11 +1118,20 @@ export const useAppStore = create<AppState>((set, get) => {
     }),
   focusTabId: null,
   focusTab: (tabId) => set({ focusTabId: tabId }),
+  closeTabReq: null,
+  requestCloseTab: (tabId) => set({ closeTabReq: tabId ? { tabId, token: Date.now() } : null }),
   sessionsQuery: null,
   sessionsScratchReq: false,
   openSessionReq: null,
   setSessionsQuery: (q) => set({ sessionsQuery: q }),
   setSessionsScratchReq: (on) => set({ sessionsScratchReq: on }),
+  sessionsProjectPathReq: null,
+  setSessionsProjectPathReq: (path) => set({ sessionsProjectPathReq: path }),
+  sessionsSearchFocusReq: 0,
+  requestSessionsSearchFocus: () =>
+    set((s) => ({ sessionsSearchFocusReq: s.sessionsSearchFocusReq + 1 })),
+  focusRailReq: 0,
+  requestFocusRail: () => set((s) => ({ focusRailReq: s.focusRailReq + 1 })),
   setOpenSessionReq: (r) => set({ openSessionReq: r }),
   skillDraftReq: null,
   setSkillDraftReq: (r) => set({ skillDraftReq: r }),

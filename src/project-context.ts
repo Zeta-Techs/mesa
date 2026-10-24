@@ -485,3 +485,16 @@ export function composeLaunchPrompt(
   if (!body) return pack;
   return `${pack}${LAUNCH_PROMPT_SEPARATOR}${body}`;
 }
+
+/** 把第一句话里 Mesa 塞的项目上下文包和人说的话分开（聊天气泡、工作台「上次停在」只认人说的，2026-10-24 用户）。
+ *  以默认包头开头才认：有分隔（单独一行 ----）取后面那段，没有分隔就整条都是包（只发了包）。
+ *  自定义模板的包头认不出，照旧当人话——宁可偶尔显示包，不误删人话 */
+export function splitLaunchPrompt(text: string): { pack: string | null; said: string } {
+  if (!text.startsWith(PROJECT_PACK_HEAD)) return { pack: null, said: text };
+  const sep = /\n[ \t]*----[ \t]*\r?\n/.exec(text);
+  if (!sep) return { pack: text.trim(), said: "" };
+  return {
+    pack: text.slice(0, sep.index).trim(),
+    said: text.slice(sep.index + sep[0].length).trim(),
+  };
+}

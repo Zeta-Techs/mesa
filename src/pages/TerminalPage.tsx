@@ -1,5 +1,4 @@
 import {
-  Fragment,
   memo,
   lazy,
   Suspense,
@@ -97,6 +96,8 @@ import {
 } from "../chat-channel";
 import { resolveCustomRuntimeCwd } from "../custom-runtime";
 import { normSep, pathWithin as pathWithinDialect, samePath, stripVerbatim } from "../path-utils";
+import { composeLaunchPrompt } from "../project-context";
+import { loadProjectContextPack } from "../project-context-load";
 import { cwdIsCodingWorktree } from "../coding-git";
 import { loadCodingOverview } from "../components/CodingProjectView";
 import { normalizeWorkMode } from "../work-mode";
@@ -104,6 +105,7 @@ import { exitCodeClause, exitCodeSummary, exitToneClass } from "../exit-code";
 import ChatSurface from "../components/ChatSurface";
 import { confirmDialog, alertDialog } from "../components/ConfirmDialog";
 import ContextMenu from "../components/ContextMenu";
+import RunCaret from "../components/RunCaret";
 import InsertMenuItems from "../components/InsertMenuItems";
 import {
   detectEffortInOutput,
@@ -116,9 +118,9 @@ import {
   QUICK_CHAT_KEY_PREFIX,
   codexSandboxCoversHome,
   isBlankChatTab,
-  newTabCwd,
+  isThrowawayTab,
 } from "../quick-chat";
-import { resumeSessionInTerminal, saveQuickChatChoice } from "../quick-chat-launch";
+import { conversationPageFor, saveQuickChatChoice } from "../quick-chat-launch";
 import { connectionModels, readModelHistory } from "../model-history";
 import { modelKind } from "../model-kinds";
 import FileTree, { type DirEntryDto } from "../components/FileTree";
@@ -130,7 +132,6 @@ import LaunchMenu, {
   useDownMenu,
   type LaunchMenuOption,
 } from "../components/LaunchMenu";
-import ProjectRail from "../components/ProjectRail";
 import WorkspaceReviewView from "../components/WorkspaceReviewView";
 import ReaderOverlay from "../components/ReaderOverlay";
 import { wireWorkspaceLaunchGuard } from "../pipeline-start";
@@ -157,6 +158,16 @@ import {
   type ResizeLatch,
 } from "../terminal-geometry";
 import { toast } from "../toast";
+import { idleStopPass } from "../idle-stop";
+import {
+  RIGHT_DEFAULT_PX,
+  RIGHT_MIN_PX,
+  TREE_DEFAULT_REM,
+  clampTreeWidth,
+  runLayout,
+} from "../run-layout";
+import { sidebarChatTitle } from "../sidebar-chats";
+import { tidySessionTitle } from "../session-title";
 import {
   menuMoveKeys,
   menuReadyToConfirm,
@@ -228,7 +239,6 @@ import {
   MessagesSquare,
   PanelLeftClose,
   PanelLeftOpen,
-  PanelRightClose,
   PanelRightOpen,
   PanelTopClose,
   PanelTopOpen,
@@ -241,6 +251,9 @@ import {
   Minimize2,
   Download,
   GitCompare,
+  FileDiff,
+  MoreHorizontal,
+  Terminal as TerminalIcon,
 } from "lucide-react";
 import {
   PERMISSION_TIERS,
@@ -258,7 +271,6 @@ import {
   serializeRecoverableTerminalState,
   TERMINAL_TABS_STORAGE_KEY,
 } from "../terminal-tab-persistence";
-import { clampTabDragDx, rubberbandTabDx, tabDragTarget } from "../tab-drag";
 import { launchSurface, openSurfaceDefault } from "../tab-surface";
 import { directoryUnavailableMessage } from "../terminal-cwd";
 import {
@@ -278,7 +290,7 @@ import {
   shouldArmWorkingOnLaunch,
   PTY_LIVE_MS,
 } from "../tab-working";
-import type { RunOverviewInput } from "../run-overview";
+import { tabRunInput, type RunOverviewInput } from "../run-overview";
 import type {
   ChatMessageDto,
   CodingOpDto,
@@ -492,6 +504,10 @@ export interface LaunchPickState {
   editable: boolean;
   /** 恢复占位：这个标签上次的会话还没接回（聊天空态给「接着聊」而不是新对话入口） */
   resumeSessionId: string | null;
+  /** 只看不接：这段对话的记录正在读出来 / 已经摆出来（发第一句才接回）；没有摆为 null */
+  preview?: "loading" | "shown" | null;
+  /** 只看不接、还没起进程：输入框底部能改这次接回用的连接 / 模型 / 思考档 / 权限（Agent 与目录跟着这段对话，不能换） */
+  resumePick?: boolean;
   agentId: string;
   profileId: string;
   model: string;
@@ -608,10 +624,10 @@ const CONVERSATION_ACTION_ICONS: Record<string, typeof SquarePen | undefined> = 
 };
 
 const RIGHT_PANEL_WIDTH_KEY = "ccode.terminalRightWidth";
-const RIGHT_PANEL_DEFAULT_WIDTH = 460;
-const RIGHT_PANEL_MIN_WIDTH = 360;
-// 右栏最大宽度不写死像素：随窗口自由拉宽，只给中带终端保留最小可用宽度
-const TERMINAL_MIN_RESERVE = 340;
+/** 文件树偏好宽度（px）；右栏、文件树、对话三块怎么分见 run-layout.ts */
+const TREE_WIDTH_KEY = "ccode.terminal.treeWidth";
+const RIGHT_PANEL_DEFAULT_WIDTH = RIGHT_DEFAULT_PX;
+const RIGHT_PANEL_MIN_WIDTH = RIGHT_MIN_PX;
 // 分屏：左 pane 宽度百分比的本地记忆（分屏开关状态本身不持久化）
 const SPLIT_PCT_KEY = "ccode.terminalSplitPct";
 const SPLIT_MIN_PCT = 20;
@@ -620,8 +636,8 @@ const clampSplitPct = (pct: number) =>
   Math.min(SPLIT_MAX_PCT, Math.max(SPLIT_MIN_PCT, pct));
 const RIGHT_TABS = [
   { key: "preview", label: "文件", symbol: "▤" },
-  // ⌘ 只在 macOS 有意义，Windows / Linux 换成中性的增减号
-  { key: "git", label: "改动", symbol: IS_MAC ? "⌘" : "±" },
+  // 与对话头 ± 改动同一个记号（原 Mac 上用 ⌘，2026-10-24 统一成 ±）
+  { key: "git", label: "改动", symbol: "±" },
 ] as const;
 type RightTab = (typeof RIGHT_TABS)[number]["key"];
 
@@ -1011,6 +1027,8 @@ const TerminalView = memo(function TerminalView({
   );
   /** 本次启动实际注入的模型（状态栏求交用它，不跟 CLI 内 /model 或启动栏事后改选） */
   const [launchModel, setLaunchModel] = useState<string | null>(null);
+  /** 这个进程启动时的模型与思考档（空串 = 默认）：会话文件锁定时连同连接一起记进 session_meta */
+  const launchRecordRef = useRef<{ model: string; effort: string } | null>(null);
   // 状态栏思考档的真值来源之一：CLI 自己画在屏上的档位（detectEffortInOutput）
   const [effortSeen, setEffortSeen] = useState<string | null>(null);
   const [modelSeen, setModelSeen] = useState<string | null>(null);
@@ -1595,6 +1613,66 @@ const TerminalView = memo(function TerminalView({
     createdAt: string | null;
   } | null>(null);
   const linkTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // 只看不接（2026-10-23 侧栏挂对话第一期）：标签带着要接的会话、还没起进程时，先把这段对话从会话文件读出来摆着，
+  // 输入框照常能写，发第一句才接回（sendMessage 的恢复占位分支）。接上之后记录归 SessionLink 管。
+  // 会话文件路径取本机会话列表里的那一条；列表里没有就不摆（退回「这段对话还没接回」）
+  const previewFilePath = useAppStore((s) =>
+    resumeSessionId && !customRuntimeId
+      ? (s.sessions.find((x) => x.agent === agentId && x.sessionId === resumeSessionId)
+          ?.filePath ?? null)
+      : null,
+  );
+  // 记录页按会话更新时间认缓存：鼠标移到侧栏那一行时已经取过、来回切没变过的，点开不再重读（conversation-prefetch.ts）。
+  // 只在第一次摆的时候读它（不进下面 effect 的依赖），列表刷新改了更新时间不触发重摆
+  const previewVersion = useAppStore((s) =>
+    resumeSessionId && !customRuntimeId
+      ? (s.sessions.find((x) => x.agent === agentId && x.sessionId === resumeSessionId)
+          ?.updatedAt ?? "")
+      : "",
+  );
+  const previewVersionRef = useRef(previewVersion);
+  previewVersionRef.current = previewVersion;
+  const previewSrcRef = useRef<{ agentId: string; filePath: string } | null>(null);
+  // 有记录可摆的标签一开始就算「在读」：第一次上报就不让聊天层画空态（下面的 effect 挂载后才跑，晚一帧）
+  const [previewState, setPreviewState] = useState<"loading" | "shown" | null>(() =>
+    previewFilePath ? "loading" : null,
+  );
+  /** 摆着的记录转接回的那一次 resetLink 不清空对话（见 sendMessage） */
+  const keepPreviewConvRef = useRef(false);
+  useEffect(() => {
+    if (running || shellActive || linkState !== "idle" || !previewFilePath) {
+      setPreviewState(null);
+      return;
+    }
+    // 已经摆过这一份（接回没成功又回到闲置）：不重读
+    if (previewSrcRef.current?.filePath === previewFilePath) {
+      setPreviewState("shown");
+      return;
+    }
+    // 看到这个标签才读：重启后恢复出一排占位标签时不一次全读
+    if (!visible) return;
+    let stale = false;
+    const src = { agentId, filePath: previewFilePath };
+    setPreviewState("loading");
+    conversationPageFor(src.agentId, src.filePath, previewVersionRef.current)
+      .then((page) => {
+        if (stale || linkCtxRef.current) return;
+        previewSrcRef.current = src;
+        olderRef.current = [];
+        latestWindowRef.current = page.messages;
+        convCursorRef.current = page.cursor;
+        setConvCursor(page.cursor);
+        setConv(page.messages);
+        setPreviewState("shown");
+      })
+      .catch(() => {
+        // 读不出就不摆，聊天层退回「这段对话还没接回」，发一句照样接回
+        if (!stale) setPreviewState(null);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [running, shellActive, linkState, previewFilePath, agentId, visible]);
   const sessionWatchIdRef = useRef<string | null>(null);
   const sessionWatchUnlistenRef = useRef<(() => void) | null>(null);
   const sessionWatchStartingRef = useRef(false);
@@ -1771,6 +1849,8 @@ const TerminalView = memo(function TerminalView({
       editable: launchPickEditable,
       resumeSessionId:
         !running && !shellActive && !customRuntimeId ? (resumeSessionId ?? null) : null,
+      preview: previewState,
+      resumePick: previewState === "shown" && !running && !shellActive && !customRuntimeId,
       agentId,
       profileId,
       model,
@@ -1792,6 +1872,7 @@ const TerminalView = memo(function TerminalView({
       running,
       shellActive,
       resumeSessionId,
+      previewState,
       agentId,
       profileId,
       model,
@@ -4369,22 +4450,27 @@ const TerminalView = memo(function TerminalView({
 
   async function loadOlderConversation(settle?: () => Promise<void>) {
     const ctx = linkCtxRef.current;
+    // 只看没接的对话也能往上翻（来源是摆出来的那份会话文件）
+    const preview = ctx ? null : previewSrcRef.current;
+    const src = ctx?.filePath
+      ? { agentId: ctx.agentId, filePath: ctx.filePath }
+      : preview;
     const cursor = convCursorRef.current;
-    if (!ctx?.filePath || cursor == null || loadingOlder) return;
+    if (!src || cursor == null || loadingOlder) return;
     setLoadingOlder(true);
     try {
       const page = await invoke<ConversationPageDto>(
         "get_session_conversation_page",
         {
-          agent: ctx.agentId,
-          filePath: ctx.filePath,
+          agent: src.agentId,
+          filePath: src.filePath,
           before: cursor,
           around: null,
         },
       );
       // 等手停下来再接到上面，滑动途中插入会顿一下
       await settle?.();
-      if (linkCtxRef.current !== ctx) return;
+      if (ctx ? linkCtxRef.current !== ctx : previewSrcRef.current !== preview) return;
       olderRef.current = mergeConversationPages(page.messages, olderRef.current);
       convCursorRef.current = page.cursor;
       setConvCursor(page.cursor);
@@ -4424,10 +4510,13 @@ const TerminalView = memo(function TerminalView({
     if (rid) {
       invoke("run_attach_session", { id: rid, sessionId }).catch(() => {});
     }
+    // 连同这次启动的模型与思考档一起记：下次从侧栏点开这段对话，输入框默认就是它（session_resume_config）
+    const rec = launchRecordRef.current;
     void invoke("set_session_profile_command", {
       agent: ctx.agentId,
       sessionId,
       profileId,
+      ...(rec ? { model: rec.model, effort: rec.effort } : {}),
     });
     void startSessionWatcher(filePath, ctx.agentId);
     // 关联成功后降低兜底轮询频率；实时刷新以 watcher 事件为主。
@@ -4719,7 +4808,9 @@ const TerminalView = memo(function TerminalView({
     setLinkedSessionTitle(null);
     setLinkState("idle");
     setSyncState("waiting");
-    setConv([]);
+    // 摆着的记录正转接回：先留在画面上，接上后会话文件刷新会整份替换
+    if (!keepPreviewConvRef.current) setConv([]);
+    previewSrcRef.current = null;
     setPendingReply(false);
     pendingUsersRef.current = [];
     pendingAssistantKeysRef.current = new Set();
@@ -5032,6 +5123,7 @@ const TerminalView = memo(function TerminalView({
       const effectiveModel = res.model ?? model;
       if (res.model && res.model !== model) setModel(res.model);
       setLaunchModel(effectiveModel.trim() || null);
+      launchRecordRef.current = { model: effectiveModel.trim(), effort: effortOverride?.trim() ?? "" };
       localStorage.setItem(
         "ccode.lastLaunch",
         JSON.stringify({ agentId, profileId, model: effectiveModel, cwd }),
@@ -5364,6 +5456,24 @@ const TerminalView = memo(function TerminalView({
     setPendingReply(true);
   }
 
+  /** 这个目录是已添加的项目：取它开聊附带的项目说明（自动 / 自定义 / 不附带，见项目设置）；不是项目或读不到给空串 */
+  async function projectPackFor(dir: string): Promise<string> {
+    try {
+      const list = await invoke<ProjectDto[]>("list_projects");
+      const project = list.find((p) => samePath(p.path, dir, IS_WINDOWS));
+      if (!project) return "";
+      return await loadProjectContextPack({
+        name: project.name,
+        path: project.path,
+        workMode: normalizeWorkMode(project.workMode),
+        writeReview: false,
+        kind: "session",
+      });
+    } catch {
+      return "";
+    }
+  }
+
   async function sendMessage(text: string): Promise<ChatSendResult> {
     const message = text.trim();
     if (!message) return { error: null };
@@ -5395,13 +5505,17 @@ const TerminalView = memo(function TerminalView({
       return result;
     }
 
-    // 恢复占位（重启后留下、还没接回的标签）：先按原会话恢复，再把这句写进去。
+    // 恢复占位（重启后留下、还没接回的标签）与只看没接的对话（列表里点开的）：先按原会话恢复，再把这句写进去。
     // 恢复启动会忽略首条指令注入，直接带 prompt 启动这句话会被吞掉
     if (!running && !shellActive && resumeSessionId && !customRuntimeId) {
       if (!selectedProfile) {
         return { error: "上次使用的配置已不存在，切到终端在启动栏重新选择" };
       }
-      const res = await launch(undefined, { prompt: "" });
+      // 摆着的记录在接回途中不清掉：接上之后由会话文件刷新接替，不闪回空态
+      keepPreviewConvRef.current = previewSrcRef.current != null;
+      const res = await launch(undefined, { prompt: "" }).finally(() => {
+        keepPreviewConvRef.current = false;
+      });
       if (!res) return { error: launchCancelRef.current ?? error ?? "恢复会话失败，请切到终端检查" };
       await new Promise((r) => setTimeout(r, 1200));
       if (!mountedRef.current || ptyIdRef.current !== res.ptyId)
@@ -5423,13 +5537,17 @@ const TerminalView = memo(function TerminalView({
     }
     setPromptText(message);
     setShowPrompt(true);
-    const res = await launch(undefined, { prompt: message, typeDroppedPrompt: true });
+    // 在已添加的项目里开的新对话（项目行 ＋、新对话换到这个项目都算）：项目说明（项目设置里的对话注入）悄悄附在第一句前面，
+    // 发的时候按项目当时的内容现拼；聊天气泡、起名只认人说的（splitLaunchPrompt / strip_mesa_launch_pack）
+    const pack = await projectPackFor(cwd);
+    const firstPrompt = pack ? composeLaunchPrompt(pack, message) : message;
+    const res = await launch(undefined, { prompt: firstPrompt, typeDroppedPrompt: true });
     if (!res) return { error: launchCancelRef.current ?? "启动 Agent 失败，请切到终端查看详细信息" };
     if (res.promptDropped) {
       // Kimi 没有带首条指令启动的参数：等输入框就绪后照普通消息写进去（与之后每句同一条路）
       if (!mountedRef.current || ptyIdRef.current !== res.ptyId) return { error: null };
       armPtyWorking();
-      const result = await writeChatMessage(res.ptyId, message);
+      const result = await writeChatMessage(res.ptyId, firstPrompt);
       if (result.error) disarmPtyWorking();
       else showOptimisticUserMessage(message);
       return result;
@@ -5440,7 +5558,7 @@ const TerminalView = memo(function TerminalView({
 
   async function restartWritable(): Promise<ChatSendResult> {
     const prompt = forkPromptRef.current.trim();
-    if (!prompt) return { error: "当前标签没有可重建的分叉摘要" };
+    if (!prompt) return { error: "这段对话没有可重建的分叉摘要" };
     setPromptText(prompt);
     setShowPrompt(true);
     const res = await launch(undefined, { prompt, readonly: false, typeDroppedPrompt: true });
@@ -5478,7 +5596,7 @@ const TerminalView = memo(function TerminalView({
     setCwd: () => {},
     chooseCwd: () => {},
     sendMessage: async () => ({ error: "终端尚未准备好" }),
-    restartWritable: async () => ({ error: "当前标签不是可写分叉" }),
+    restartWritable: async () => ({ error: "这段对话不是可写分叉" }),
     writePty: () => {},
     writeCommand: () => {},
     noteUserTurn: () => {},
@@ -6378,7 +6496,7 @@ const TerminalView = memo(function TerminalView({
               <button
                 type="button"
                 onClick={onToggleCompactBar}
-                title="收起此行（底部状态栏仍有身份信息；标签栏可召回）"
+                title="收起此行（底部状态栏仍有身份信息；顶部对话头可召回）"
                 aria-label="收起启动配置行"
                 className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1"
               >
@@ -6927,11 +7045,16 @@ interface Tab {
   taskId?: string;
   /** 递增则把已挂载标签的启动栏改成 initialAgent/Profile/Model（见 TerminalView） */
   launchSeed?: number;
+  /** 列表里点开、只看没接的对话（pendingTerminal.resumeLazy）：发第一句前离开就收掉（isThrowawayTab）。
+      仅内存标记，不进重启持久化白名单 */
+  preview?: boolean;
 }
 
 export default function TerminalPage({ visible }: { visible: boolean }) {
   const setPage = useAppStore((s) => s.setPage);
   const liveSessions = useAppStore((s) => s.liveSessions);
+  /** 对话头写标题用（与侧栏同一份会话列表） */
+  const headSessions = useAppStore((s) => s.sessions);
   const [initialState] = useState(() => {
     const saved = parseRecoverableTerminalState(
       localStorage.getItem(TERMINAL_TABS_STORAGE_KEY),
@@ -6991,118 +7114,6 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   const handleTabForkChat = useCallback((tabId: string) => {
     void forkChatRef.current(tabId);
   }, []);
-  // 标签条拖拽排序（Ghostty 式跟手拖动）：源标签随指针平移、其余标签滑动让位（150ms
-  // transition）、松手先吸附到目标槽位再真正重排——全程无 HTML5 DnD（Tauri 原生文件拖放
-  // dragDropEnabled 默认开，会拦截 WKWebView 拖拽手势，dragstart 根本不触发）。
-  // 拖拽期间 tabs 顺序不变（布局稳定，槽位测量值才有效），落定时才 moveTab 重排；
-  // 顺序即 tabs 数组顺序，重启持久化按数组存，重排自动带过去
-  const [tabDrag, setTabDrag] = useState<{
-    id: string;
-    /** 源标签原索引（= 当前渲染索引，拖拽期间顺序不变） */
-    from: number;
-    /** 指针当前落在的槽位索引（让位动画与落定位置都按它） */
-    target: number;
-    /** 源标签当前位移 px（钳制在标签条内容范围内） */
-    dx: number;
-    /** 拖拽开始时各槽位测量值（viewport 坐标；顺序 = tabs 顺序） */
-    rects: { left: number; width: number }[];
-    /** true = 松手吸附动画中：源标签 transition 到落点，结束才重排清态 */
-    settling: boolean;
-  } | null>(null);
-  // 拖拽落定后的那次 click 要吞掉（否则拖完还会触发激活切换）
-  const suppressTabClickRef = useRef(false);
-  const moveTab = useCallback((from: number, to: number) => {
-    setTabs((prev) => {
-      if (from < 0 || to < 0 || from >= prev.length || to >= prev.length || from === to)
-        return prev;
-      const next = [...prev];
-      const [moved] = next.splice(from, 1);
-      next.splice(to, 0, moved);
-      return next;
-    });
-  }, []);
-  /** 标签按下即挂 window 级 move/up 监听：横向位移超 6px 才进入拖拽，否则当普通点击放过 */
-  function onTabPointerDown(e: React.PointerEvent, tabId: string) {
-    if (e.button !== 0) return;
-    const tabEl = e.currentTarget as HTMLElement;
-    const startX = e.clientX;
-    let active = false;
-    let rects: { left: number; width: number }[] = [];
-    let from = 0;
-    // finish 里要用最新 target（setState 闭包拿不到），ref 镜像
-    let lastTarget = 0;
-    const cleanup = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", finish);
-      window.removeEventListener("pointercancel", finish);
-      document.body.style.userSelect = "";
-    };
-    const finish = () => {
-      cleanup();
-      if (!active) return;
-      suppressTabClickRef.current = true;
-      const target = lastTarget;
-      if (target === from) {
-        setTabDrag(null);
-        return;
-      }
-      // 先吸附：源标签 transition 滑到目标槽位，动画结束才重排（与 transition 时长对齐）
-      setTabDrag((cur) =>
-        cur
-          ? {
-              ...cur,
-              dx: cur.rects[target].left - cur.rects[from].left,
-              settling: true,
-            }
-          : null,
-      );
-      window.setTimeout(() => {
-        moveTab(from, target);
-        setTabDrag(null);
-      }, 170);
-    };
-    const onMove = (ev: PointerEvent) => {
-      if (!active) {
-        if (Math.abs(ev.clientX - startX) <= 6) return;
-        active = true;
-        // 进入拖拽态才测量槽位（此刻布局未变）；querySelectorAll 顺序 = tabs 顺序
-        const els = Array.from(
-          (tabEl.parentElement ?? tabEl).querySelectorAll<HTMLElement>(
-            "[data-tab-id]",
-          ),
-        );
-        rects = els.map((el) => {
-          const r = el.getBoundingClientRect();
-          return { left: r.left, width: r.width };
-        });
-        from = Math.max(
-          0,
-          els.findIndex((el) => el.getAttribute("data-tab-id") === tabId),
-        );
-        lastTarget = from;
-        // 拖动经过的标签标题会被划选，拖拽期间全局禁选
-        document.body.style.userSelect = "none";
-      }
-      // 钳制：源标签不出标签条内容范围；目标槽位：源中心越过谁的中线就占谁的位
-      // （纯逻辑在 tab-drag.ts——>= 判定守「拖到最右」边界，曾翻车：严格 > 永远够不到末槽）
-      const rawDx = ev.clientX - startX;
-      const dx = clampTabDragDx(rects, from, rawDx);
-      const target = tabDragTarget(rects, from, dx);
-      lastTarget = target;
-      // 视觉位移走橡胶带：越界阻力递增不在边界冻住，槽位判定仍用钳制值（语义不动）
-      setTabDrag({
-        id: tabId,
-        from,
-        target,
-        dx: rubberbandTabDx(rects, from, rawDx),
-        rects,
-        settling: false,
-      });
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", finish);
-    window.addEventListener("pointercancel", finish);
-  }
   const [statuses, setStatuses] = useState<Record<string, TabStatus>>({});
   // 关闭守卫（关标签/关窗）在异步链路里取最新状态，避免闭包过期
   const statusesRef = useRef(statuses);
@@ -7158,13 +7169,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       return next;
     });
   }, []);
-  const [rightOpen, setRightOpen] = useState(() => {
-    try {
-      return localStorage.getItem("ccode.terminal.rightOpen") === "1";
-    } catch {
-      return false;
-    }
-  });
+  // 右栏不跨重启恢复（2026-10-24）：它只在点了文件或 ± 改动时才有内容，启动时摆一块空的「文件」没有用
+  const [rightOpen, setRightOpen] = useState(false);
   const [rightWidth, setRightWidth] = useState(() => {
     const saved = Number(localStorage.getItem(RIGHT_PANEL_WIDTH_KEY));
     const width =
@@ -7174,6 +7180,21 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   });
   const [rightExpanded, setRightExpanded] = useState(false);
   const terminalRootRef = useRef<HTMLDivElement>(null);
+  // 三块宽度（run-layout.ts）：文件树与右栏的宽度是偏好，实际宽度按运行页总宽现算，地方不够时先压右栏、再让文件树
+  const remPx = () => parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 14;
+  const [treeWidth, setTreeWidth] = useState(() => {
+    const saved = Number(localStorage.getItem(TREE_WIDTH_KEY));
+    return Number.isFinite(saved) && saved > 0 ? saved : TREE_DEFAULT_REM * remPx();
+  });
+  const [rootWidth, setRootWidth] = useState(() => window.innerWidth);
+  useEffect(() => {
+    const el = terminalRootRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setRootWidth(el.clientWidth));
+    ro.observe(el);
+    setRootWidth(el.clientWidth);
+    return () => ro.disconnect();
+  }, []);
   const normalRightWidthRef = useRef(rightWidth);
   // 各标签动作表（TerminalView 挂载时注册）：查找图标、聊天发送、改目录等
   const tabActionsRef = useRef(new Map<string, FocusTabActions>());
@@ -7217,6 +7238,25 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   const defaultSurfaceRef = useRef(defaultSurface);
   defaultSurfaceRef.current = defaultSurface;
   const [peekByTab, setPeekByTab] = useState<Record<string, boolean>>({});
+  // 聊天变体状态栏留给聊天层的两格（权限 · 项目 | 模型，2026-10-23）：状态栏挂上 / 卸下时报元素，ChatSurface 用 portal 挂进去。
+  // ref 回调按标签缓存成稳定函数，否则每次渲染 React 先报 null 再报元素，setState 来回翻
+  const [chatMetaSlots, setChatMetaSlots] = useState<
+    Record<string, { left: HTMLElement | null; right: HTMLElement | null }>
+  >({});
+  const chatMetaRefs = useRef(new Map<string, (side: "left" | "right", el: HTMLElement | null) => void>());
+  const chatMetaRefFor = (tabId: string) => {
+    let fn = chatMetaRefs.current.get(tabId);
+    if (!fn) {
+      fn = (side, el) =>
+        setChatMetaSlots((cur) => {
+          const prev = cur[tabId] ?? { left: null, right: null };
+          if (prev[side] === el) return cur;
+          return { ...cur, [tabId]: { ...prev, [side]: el } };
+        });
+      chatMetaRefs.current.set(tabId, fn);
+    }
+    return fn;
+  };
   const [peekLocked, setPeekLocked] = useState<Record<string, boolean>>({});
   const [writableForks, setWritableForks] = useState<Record<string, boolean>>({});
   const [chatBusy, setChatBusy] = useState(false);
@@ -7434,8 +7474,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     if (link?.file && link.sessionId) {
       list.push({
         cmd: "/fork",
-        label: "分叉到新标签",
-        hint: "带着这段对话的摘要另开一个只讨论的标签",
+        label: "分叉成新对话",
+        hint: "带着这段对话的摘要另开一段只讨论的对话",
         run: () => void forkChat(tabId),
       });
       list.push({
@@ -7658,12 +7698,48 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   }
 
   function maxRightWidth(expanded = rightExpanded): number {
-    const total = terminalRootRef.current?.clientWidth ?? window.innerWidth;
-    const railWidth = expanded ? 0 : 240;
-    return Math.max(
-      RIGHT_PANEL_MIN_WIDTH,
-      total - railWidth - TERMINAL_MIN_RESERVE,
-    );
+    return runLayout({
+      total: terminalRootRef.current?.clientWidth ?? rootWidth,
+      rem: remPx(),
+      treeOpen,
+      treeWidth,
+      rightOpen: true,
+      rightWidth,
+      rightExpanded: expanded,
+    }).rightMax;
+  }
+
+  const layout = runLayout({
+    total: rootWidth,
+    rem: remPx(),
+    treeOpen,
+    treeWidth,
+    rightOpen,
+    rightWidth,
+    rightExpanded,
+  });
+
+  /** 拖文件树右缘调宽（12–22rem，还要给对话与右栏最窄留地方）；双击回默认 15rem */
+  function startTreeResize(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const start = layout.tree;
+    const max = layout.treeMax;
+    const rem = remPx();
+    const clampW = (w: number) => Math.min(max, clampTreeWidth(w, rem));
+    const onMove = (e: PointerEvent) => setTreeWidth(clampW(start + e.clientX - startX));
+    const onUp = (e: PointerEvent) => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      const final = clampW(start + e.clientX - startX);
+      setTreeWidth(final);
+      localStorage.setItem(TREE_WIDTH_KEY, String(Math.round(final)));
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
   }
 
   function clampRightWidth(width: number, expanded = rightExpanded): number {
@@ -7691,11 +7767,6 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       setRightWidth(clampRightWidth(normalRightWidthRef.current, false));
     }
     persistRightOpen(false);
-  }
-
-  function toggleRightPanel() {
-    if (rightOpen) closeRightPanel();
-    else persistRightOpen(true);
   }
 
   function startRightResize(event: React.PointerEvent<HTMLDivElement>) {
@@ -7731,13 +7802,6 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     window.addEventListener("pointercancel", onUp);
   }
 
-  useEffect(() => {
-    const onResize = () => setRightWidth((width) => clampRightWidth(width));
-    onResize();
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rightExpanded]);
 
   // Esc 退出专注内容：仅在右栏铺满时才挂监听并拦截，
   // 平时完全不碰 Esc，避免与终端内的 Esc 输入（如 vim）冲突
@@ -7973,7 +8037,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     async (tabId: string, data: string, send?: boolean): Promise<string | null> => {
       const s = statuses[tabId];
       if (!s?.running || !s.ptyId) {
-        return "当前标签没有运行中的 Agent，请先启动再试";
+        return "这段对话的 AI 没在运行，请先发一句或启动再试";
       }
       try {
         // 直接发送走聊天层同一条发送链（pty_write_submit：正文按粘贴写入、提交键单独补写）。
@@ -7981,7 +8045,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         // 聊天层却已记成「正在回复」一直转（2026-10-18 阅读区简报实测）
         if (send) {
           const action = tabActionsRef.current.get(tabId);
-          if (!action) return "当前终端标签尚未准备好";
+          if (!action) return "这段对话还没准备好，稍等再试";
           return (await action.sendMessage(data)).error;
         }
         await invoke("pty_write", {
@@ -8061,7 +8125,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
 
   async function sendChatToActive(text: string): Promise<string | null> {
     const action = tabActionsRef.current.get(focusedId);
-    if (!action) return "当前终端标签尚未准备好";
+    if (!action) return "这段对话还没准备好，稍等再试";
     setChatBusy(true);
     try {
       const result = await action.sendMessage(text);
@@ -8145,6 +8209,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       stepName?: string;
       runId?: string;
       taskId?: string;
+      preview?: boolean;
     }): string => {
       const t: Tab = {
         id: crypto.randomUUID(),
@@ -8170,6 +8235,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         stepName: init?.stepName,
         runId: init?.runId,
         taskId: init?.taskId,
+        preview: init?.preview,
       };
       setTabs((prev) => [...prev, t]);
       setActiveId(t.id);
@@ -8250,9 +8316,10 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   }
 
   /** 工作树「在此打开新终端」：新建标签并预填 cwd，用户选 agent/profile 后启动 */
+  // 「在此打开新终端」：开一个纯终端（shell），侧栏所属文件夹下多一行「终端」；不是一段新对话
   const openTerminalAt = useCallback(
     (path: string) => {
-      addTab({ cwd: path, title: basename(path) });
+      addTab({ cwd: path, title: basename(path), shellOnly: true });
     },
     [addTab],
   );
@@ -8335,13 +8402,15 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       // 显式打开另一任务的终端时，不让上一次任务审阅继续盖住新标签。
       setReviewPath(null);
       const pt = pendingTerminal;
+      const prevActiveId = activeId;
       // 会话恢复：显式带了原配置（runId 恢复）时优先原配置；否则依次
       // autoLaunchProfileId → ccode.lastProfile → 该 agent 首个配置；
       // Codex 三条渠道分开挑（网关 / ChatGPT 官方 / 客户端磁盘渠道），见 pickResumeProfile。
       const launchAgentId = pt.agentId ?? pt.resume?.agentId;
       let profileId = pt.profileId;
       let model = pt.model;
-      let autoStart = !!pt.resume || !!pt.autoStart;
+      // 列表里点开的对话（resumeLazy）只摆记录、不起进程，发第一句才接回
+      let autoStart = (!!pt.resume && !pt.resumeLazy) || !!pt.autoStart;
       if (pt.resume && launchAgentId) {
         const pick = resolveResumeLaunch(
           profiles,
@@ -8368,7 +8437,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         } else if (pick.channelChanged) {
           autoStart = false;
           toast(
-            "已换成项目默认的连接。这条对话上次用的渠道不同，确认后点运行。",
+            pt.resumeLazy
+              ? "已换成项目默认的连接。这条对话上次用的渠道不同，发第一句时按这条连接接回。"
+              : "已换成项目默认的连接。这条对话上次用的渠道不同，确认后点运行。",
             "info",
           );
         }
@@ -8387,8 +8458,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         }
         const st = statusesRef.current[existing.id];
         // Agent 还在跑：只聚焦。回落 shell / 已退出：同一标签再 launch，不另开一套抢锁。
+        // 只打开不接回（resumeLazy）的不重启：切过去看着，发第一句再接
         const kick = pt.resume
-          ? shouldRelaunchResumeTab(st)
+          ? !pt.resumeLazy && shouldRelaunchResumeTab(st)
           : Boolean(pt.autoStart && st && !st.running);
         // 闲置标签把启动栏改成这次交接的配置（步骤绑定或接回的原会话）。
         // 正在跑的不改，活会话仍是原来那家 Agent。
@@ -8490,7 +8562,18 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         stepName: pt.stepName,
         runId: pt.runId,
         taskId: pt.taskId,
+        preview: Boolean(pt.resume && pt.resumeLazy) || undefined,
       });
+      // 从列表点开一段对话：刚才看着的那个标签若只是看了没说 / 还没说过话的空白新对话、输入框没字，切走后收掉
+      // （等新标签切到前台再关，见 dropBlankAfterOpenRef）。
+      // 「在右侧分屏打开」：正看着的那段留在左边（活跃标签固定在左 pane），这段放右边，谁都不收
+      if (pt.split && prevActiveId && tabId && prevActiveId !== tabId) {
+        setActiveId(prevActiveId);
+        setSplitTabId(tabId);
+        setActivePane("right");
+      } else if (pt.resumeLazy && prevActiveId && prevActiveId !== tabId) {
+        dropBlankAfterOpenRef.current = prevActiveId;
+      }
       if (tabId && pt.resume && pt.initialPrompt?.trim()) {
         pendingChatInjectRef.current = {
           tabId,
@@ -8956,8 +9039,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     }
   }
 
-  // 步骤胶囊「📁」交来的文件树切根请求：复用 enterCwd/externalCwd「真进入」机制，
-  // 落地到活动标签启动栏（shell 存活时写 cd），文件树根随活动标签 cwd 切换
+  // 别处交来的「进这个目录」（工作台继续、未添加目录等）：正看着的是还没说话的空白对话，就把它挪过去
+  // （复用 enterCwd/externalCwd「真进入」机制）；正看着的已经在聊 / 开着终端，另开一段落在那个目录，
+  // 不去动正在用的那段（2026-10-24 起：一段对话只属于一个目录，文件树跟着对话的目录走）
   const enterCwdReq = useAppStore((s) => s.enterCwdReq);
   const setEnterCwdReq = useAppStore((s) => s.setEnterCwdReq);
   useEffect(() => {
@@ -8967,7 +9051,13 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     setReviewPath(null);
     setReviewRunId(null);
     setReviewAction(null);
-    setEnterCwd(enterCwdReq);
+    const focused = tabsRef.current.find((t) => t.id === focusedId);
+    if (focused && isBlankChatTab(focused, statusesRef.current[focusedId])) {
+      setEnterCwd(enterCwdReq);
+    } else {
+      addTab({ cwd: enterCwdReq, title: basename(enterCwdReq) });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, enterCwdReq, setEnterCwdReq]);
 
   /** PDF 选段「整理为笔记」（§11.4 P2b）：精读步骤的工作区正在跑就写进它的 notes/excerpts.md
@@ -9082,7 +9172,11 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   const focusTab = useAppStore((s) => s.focusTab);
   useEffect(() => {
     if (visible && focusTabId) {
-      if (tabs.some((t) => t.id === focusTabId)) activateTab(focusTabId);
+      if (tabs.some((t) => t.id === focusTabId)) {
+        // 从侧栏点一段已经开着的对话：刚才只看没说的那个标签同样收掉（同列表点开）
+        if (activeId !== focusTabId) dropBlankAfterOpenRef.current = activeId;
+        activateTab(focusTabId);
+      }
       focusTab(null);
     }
   }, [visible, focusTabId, tabs, focusTab]);
@@ -9182,7 +9276,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         });
         if (
           alive &&
-          !(await confirmDialog("该标签的 Agent 还在运行，确认关闭并终止？", {
+          !(await confirmDialog("这段对话的 AI 还在运行，确认停下它？\n\n记录还在侧栏，再点开发一句就接回。", {
             danger: true,
           }))
         )
@@ -9195,25 +9289,134 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     doCloseTab(id);
   }
 
-  /** 空白随手聊里点「最近的随手聊」一条：接着聊那段（开 / 切到它的标签），这个还没说过话的空白标签随后收掉，
-   *  免得留一排空标签。等新标签切到前台再关（doCloseTab 读当次渲染的 tabs，同拍关会把刚加的标签一起丢掉） */
+  /** 从列表点开一段对话（或从别处跳到某个标签）时，刚才看着的那个标签若只是看了没说、或是还没说过话的空白新对话，
+   *  输入框里也没字，切走后顺手收掉，免得一路点下来留一排标签（isThrowawayTab）。
+   *  等新标签切到前台再关（doCloseTab 读当次渲染的 tabs，同拍关会把刚加的标签一起丢掉）；分屏右栏里那个不收 */
   const dropBlankAfterOpenRef = useRef<string | null>(null);
-  function openRecentChat(blankTabId: string, s: SessionMetaDto) {
-    dropBlankAfterOpenRef.current = blankTabId;
-    resumeSessionInTerminal(s, {
-      onSkipped: () => {
-        if (dropBlankAfterOpenRef.current === blankTabId) dropBlankAfterOpenRef.current = null;
-      },
-    });
-  }
+  /** 各标签输入框里有没有没发的字 / 图（ChatSurface 报上来）：有就不收 */
+  const draftByTabRef = useRef<Record<string, boolean>>({});
+  const reportDraft = useCallback((tabId: string, has: boolean) => {
+    draftByTabRef.current[tabId] = has;
+  }, []);
+  // 只看没接的标签发出第一句、Agent 起来了：它就是一段正在用的对话，不再算「只看」——
+  // 不然 Agent 之后退出、切走时会被当成看了没说的顺手收掉
+  useEffect(() => {
+    if (!tabs.some((t) => t.preview && statuses[t.id]?.running)) return;
+    setTabs((prev) =>
+      prev.map((t) => (t.preview && statuses[t.id]?.running ? { ...t, preview: undefined } : t)),
+    );
+  }, [tabs, statuses]);
   useEffect(() => {
     const id = dropBlankAfterOpenRef.current;
     if (!id || activeId === id) return;
     dropBlankAfterOpenRef.current = null;
     const tab = tabs.find((t) => t.id === id);
-    if (tab && isBlankChatTab(tab, statusesRef.current[id])) doCloseTab(id);
+    if (
+      tab &&
+      id !== splitTabId &&
+      isThrowawayTab(tab, statusesRef.current[id], Boolean(draftByTabRef.current[id]))
+    ) {
+      delete draftByTabRef.current[id];
+      doCloseTab(id);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId, tabs]);
+
+  // —— 标签条撤掉之后（2026-10-24 侧栏挂对话第二期）：开着的东西列在侧栏，关、切、收都不靠标签条 ——
+  const activeIdRef = useRef(activeId);
+  activeIdRef.current = activeId;
+  /** 对话头 ⋯ 菜单的位置 */
+  const [headMenu, setHeadMenu] = useState<{ x: number; y: number } | null>(null);
+
+  // 侧栏发来的「关掉这个标签」（在跑的照旧先确认）
+  const closeTabReq = useAppStore((s) => s.closeTabReq);
+  useEffect(() => {
+    if (!closeTabReq) return;
+    useAppStore.getState().requestCloseTab(null);
+    if (tabs.some((t) => t.id === closeTabReq.tabId)) void requestCloseTab(closeTabReq.tabId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [closeTabReq]);
+
+  // 空闲对话的后台进程自动收（idle-stop.ts）：回完话、你也没在看的普通对话，空闲满 30 分钟停掉进程、收掉标签，
+  // 记录还在侧栏，再点开发一句就接回。每分钟看一次，一次收一个（doCloseTab 读当次渲染的 tabs，连收会互相覆盖）
+  const idleSinceRef = useRef<Record<string, number>>({});
+  const idleTickRef = useRef<() => void>(() => {});
+  idleTickRef.current = () => {
+    const kept = new Set<string>([activeId]);
+    if (splitTabId) kept.add(splitTabId);
+    for (const [id, has] of Object.entries(draftByTabRef.current)) if (has) kept.add(id);
+    const { since, stop } = idleStopPass({
+      tabs,
+      statuses,
+      kept,
+      since: idleSinceRef.current,
+      now: Date.now(),
+    });
+    idleSinceRef.current = since;
+    const id = stop[0];
+    if (!id) return;
+    delete idleSinceRef.current[id];
+    const title = statuses[id]?.title;
+    void invoke("drop_terminal_replay", { tabId: id }).catch(() => {});
+    doCloseTab(id);
+    toast(
+      `${title && title !== "终端" ? `「${title}」` : "一段对话"}空闲了 30 分钟，已停下 Agent；记录在侧栏，点开发一句就接回`,
+      "info",
+    );
+  };
+  useEffect(() => {
+    const timer = window.setInterval(() => idleTickRef.current(), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  // 重启后只回到上次看的那段：别的恢复占位若进程已经不在（应用重启过），收掉——它们的记录都在侧栏；
+  // 网页重载（开发热更新）时进程还活着的照旧接回（pty_id_for_run 认得出）
+  useEffect(() => {
+    const others = initialState.tabs.filter((t) => t.restored && t.id !== initialState.activeId);
+    if (others.length === 0) return;
+    let cancelled = false;
+    void (async () => {
+      const drop = new Set<string>();
+      for (const t of others) {
+        const live = t.runId
+          ? await invoke<string | null>("pty_id_for_run", { runId: t.runId }).catch(() => null)
+          : null;
+        if (!live) drop.add(t.id);
+      }
+      if (cancelled || drop.size === 0) return;
+      for (const id of drop) void invoke("drop_terminal_replay", { tabId: id }).catch(() => {});
+      setTabs((prev) => {
+        const keep = prev.filter((t) => !(drop.has(t.id) && t.restored && t.id !== activeIdRef.current));
+        return keep.length > 0 ? keep : prev;
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ⌃Tab / ⌃⇧Tab：在最近看过的对话之间切（上一段 / 最早那段）
+  const mruRef = useRef<string[]>([]);
+  useEffect(() => {
+    mruRef.current = [activeId, ...mruRef.current.filter((id) => id !== activeId)];
+  }, [activeId]);
+  const activateTabRef = useRef(activateTab);
+  activateTabRef.current = activateTab;
+  useEffect(() => {
+    if (!visible) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.ctrlKey || e.metaKey || e.altKey || e.key !== "Tab") return;
+      const open = new Set(tabsRef.current.map((t) => t.id));
+      const order = mruRef.current.filter((id) => open.has(id));
+      if (order.length < 2) return;
+      e.preventDefault();
+      e.stopPropagation();
+      activateTabRef.current(e.shiftKey ? order[order.length - 1] : order[1]);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [visible]);
 
   function doCloseTab(id: string) {
     const idx = tabs.findIndex((t) => t.id === id);
@@ -9320,7 +9523,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           if (
             alive > 0 &&
             !(await confirmDialog(
-              `还有 ${alive} 个标签的 Agent 正在运行，确认退出并终止？`,
+              `还有 ${alive} 段对话的 AI 正在运行，确认退出并停下它们？`,
               { danger: true },
             ))
           )
@@ -9362,28 +9565,17 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   // （排序/分类由首页自行用 buildRunOverview 完成）。
   const setTerminalRunInputs = useAppStore((s) => s.setTerminalRunInputs);
   const runInputs: RunOverviewInput[] = useMemo(
-    () =>
-      tabs.map((t) => {
-        const s = statuses[t.id];
-        return {
-          tabId: t.id,
-          title: s?.title ?? "终端",
-          agentId: s?.agentId ?? "",
-          model: s?.model ?? "",
-          cwd: s?.cwd ?? "",
-          running: s?.running ?? false,
-          shell: s?.shell ?? false,
-          attention: s?.attention ?? null,
-          reuseKey: t.reuseKey,
-          runId: s?.runId ?? t.runId,
-          taskId: t.taskId,
-        };
-      }),
+    () => tabs.map((t) => tabRunInput(t, statuses[t.id])),
     [tabs, statuses],
   );
   useEffect(() => {
     setTerminalRunInputs(runInputs);
   }, [runInputs, setTerminalRunInputs]);
+  // 正看着的标签（分屏时是活跃那一栏）：侧栏项目树据此高亮「正在看的这段对话」、默认展开它的文件夹
+  const setTerminalActiveTabId = useAppStore((s) => s.setTerminalActiveTabId);
+  useEffect(() => {
+    setTerminalActiveTabId(focusedId);
+  }, [focusedId, setTerminalActiveTabId]);
 
   // 可合并 pill 数据：归属口径与 ProjectRail 一致（cwd 落工作树→其 repo；落 repo→该仓；
   // 注册项目兜底），健康检查只对当前项目的活跃工作区做（同工作区页 Promise.all 模式）
@@ -9467,265 +9659,146 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       ref={terminalRootRef}
       className="terminal-workbench relative flex h-full bg-canvas"
     >
-      {/* 左栏：工作树（专注内容下整体隐藏；默认完全收起，标签栏左侧钮打开） */}
-      {!rightExpanded && treeOpen && (
-        <div className="flex w-56 shrink-0 flex-col border-r border-hairline bg-rail2">
-          <div className="flex h-8 shrink-0 items-center gap-2 px-2">
-            <span className="mr-auto text-xs font-medium text-l3">
-              上下文
-            </span>
-            <button
-              onClick={() => setShowHidden((v) => !v)}
-              title={showHidden ? "隐藏隐藏文件" : "显示隐藏文件"}
-              className={`flex h-7 w-7 items-center justify-center rounded-sm text-xs hover:bg-hover ${
-                showHidden ? "text-l1" : "text-l4 hover:text-l2"
-              }`}
-            >
-              {showHidden ? <EyeOff size={14} /> : <Eye size={14} />}
-            </button>
-            <button
-              onClick={() => setRefreshKey((k) => k + 1)}
-              title="刷新文件树"
-              className={railBtn}
-            >
-              <RefreshCw size={14} />
-            </button>
-            <button
-              type="button"
-              onClick={() => persistTreeOpen(false)}
-              title="隐藏文件树"
-              aria-label="隐藏文件树"
-              className={railBtn}
-            >
-              <PanelLeftClose size={14} />
-            </button>
+      {/* 左栏：这段对话的文件（2026-10-24 重做，原「上下文」栏：栏头就是目录名，只留搜索与树；
+          专注内容下整体隐藏；默认收起，对话头最左的钮打开） */}
+      {layout.treeShown && (
+        <div
+          style={{ width: layout.tree }}
+          className="relative flex shrink-0 flex-col border-r border-hairline bg-rail2"
+        >
+          {/* 右缘拖动调宽（热区压在边线上，平时透明、悬停显色，同右栏手法） */}
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="调整文件树宽度"
+            title="拖动调整宽度；双击恢复默认宽度"
+            onPointerDown={startTreeResize}
+            onDoubleClick={() => {
+              const w = TREE_DEFAULT_REM * remPx();
+              setTreeWidth(w);
+              localStorage.setItem(TREE_WIDTH_KEY, String(Math.round(w)));
+            }}
+            className="group absolute inset-y-0 -right-1 z-10 w-2 cursor-col-resize"
+          >
+            <span className="absolute inset-y-0 left-[3px] w-0.5 bg-transparent transition-colors group-hover:bg-cta" />
           </div>
-          <div className="min-h-0 flex-1 overflow-auto py-1">
-            <FileTree
-              cwd={activeCwd}
-              showHidden={showHidden}
-              onShowHidden={setShowHidden}
-              refreshKey={refreshKey}
-              onOpenFile={openPreview}
-              onOpenTerminal={openTerminalAt}
-              onFsEvent={bumpFsChangeTick}
-              onEnterProject={setEnterCwd}
-              onRootChange={closePreviewForRootChange}
-              onRootNavigated={setTreeRoot}
-              onRecoverDirectory={() =>
-                tabActionsRef.current.get(focusedId)?.chooseCwd()
-              }
-              onOpenReader={(path) =>
-                void (/\.pdf$/i.test(path)
-                  ? openReaderForPdf(path)
-                  : openReaderForNote(path))
-              }
-              belowRecent={
-                /* 项目区：进行中的已添加项目 + 科研活跃工作区；当前标签置顶 */
-                <ProjectRail
-                  cwd={activeCwd}
-                  pageVisible={visible}
-                  refreshKey={refreshKey}
-                  agentRunning={statuses[focusedId]?.running ?? false}
-                  tabs={Object.values(statuses).map((s) => ({
-                    cwd: s.cwd,
-                    running: s.running,
-                    attention: s.attention,
-                  }))}
-                  onEnter={setEnterCwd}
-                  onOpenNewTab={openTerminalAt}
-                />
-              }
-            />
-          </div>
+          <FileTree
+            cwd={activeCwd}
+            showHidden={showHidden}
+            onShowHidden={setShowHidden}
+            refreshKey={refreshKey}
+            onOpenFile={openPreview}
+            onOpenTerminal={openTerminalAt}
+            onFsEvent={bumpFsChangeTick}
+            onRootChange={closePreviewForRootChange}
+            onRootNavigated={setTreeRoot}
+            onRecoverDirectory={() => tabActionsRef.current.get(focusedId)?.chooseCwd()}
+            onOpenReader={(path) =>
+              void (/\.pdf$/i.test(path) ? openReaderForPdf(path) : openReaderForNote(path))
+            }
+            actions={
+              <>
+                <button
+                  type="button"
+                  onClick={() => setShowHidden((v) => !v)}
+                  title={showHidden ? "不显示隐藏文件" : "显示隐藏文件（. 开头的）"}
+                  aria-label={showHidden ? "不显示隐藏文件" : "显示隐藏文件"}
+                  aria-pressed={showHidden}
+                  className={`flex h-7 w-7 items-center justify-center rounded-sm hover:bg-hover ${
+                    showHidden ? "text-l1" : "text-l4 hover:text-l2"
+                  }`}
+                >
+                  {showHidden ? <EyeOff size={14} /> : <Eye size={14} />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRefreshKey((k) => k + 1)}
+                  title="刷新文件树"
+                  aria-label="刷新文件树"
+                  className={railBtn}
+                >
+                  <RefreshCw size={14} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => persistTreeOpen(false)}
+                  title="收起文件树"
+                  aria-label="收起文件树"
+                  className={railBtn}
+                >
+                  <PanelLeftClose size={14} />
+                </button>
+              </>
+            }
+          />
         </div>
       )}
 
       {/* 中带：终端标签区。向上盖 1px，挡住顶栏透出的那条窗口黑缝。 */}
       <div className="relative -mt-px flex min-w-0 flex-1 flex-col bg-canvas">
-        {/* 顶部标签条：常驻中带顶部 */}
+        {/* 对话头（2026-10-24 侧栏挂对话第二期）：标签条撤掉，侧栏就是对话列表——切换、新开、看谁在跑都在侧栏。
+            这里只写正看着的这段：生成中 / 等你确认、标题、终端上报的进度。不放 ×（同日用户问「× 的作用是什么」）：
+            对话没有「关」，AI 进程空闲 30 分钟自己收，要立刻停走侧栏对话 ⋯「停下 Agent」 */}
         <div className="flex h-9 items-center gap-1 overflow-hidden px-2">
-          <div className="min-w-0 flex-1 overflow-x-auto">
-            <div className="flex w-full min-w-0 items-center">
-          {tabs.map((t, tabIndex) => {
-            const s = statuses[t.id];
-            const active = t.id === activeId;
-            // 注意力点：仅 待确认 渲染黄点，无状态/空闲不渲染（降噪）；「已回复」不打点——
-            // 回合结束每轮都发生，不是待办。与关闭 × 一样只在悬停 / 激活 / 键盘聚焦时显现
-            // （待确认的全局注意力入口在顶栏收件箱，标签级只做 hover 提示）。
-            const confirmDot =
-              s?.attention === "confirm"
-                ? { cls: "text-warn-text", tip: "待确认" }
-                : null;
-            // 拖拽（Ghostty 式）：源标签跟手平移；位于「原位置→目标位置」之间的标签
-            // 各退/进一个槽位（滑动让位）；松手时源标签 transition 吸附到目标槽位后重排
-            const isDragSource = tabDrag?.id === t.id;
-            let shift = 0;
-            if (tabDrag && !isDragSource) {
-              const { from, target, rects } = tabDrag;
-              if (from < target && tabIndex > from && tabIndex <= target) {
-                shift = rects[tabIndex - 1].left - rects[tabIndex].left;
-              } else if (from > target && tabIndex < from && tabIndex >= target) {
-                shift = rects[tabIndex + 1].left - rects[tabIndex].left;
+          {!rightExpanded && !layout.treeShown && (
+            <button
+              type="button"
+              title={
+                layout.treeYielded
+                  ? "文件树（窗口不够宽，右栏开着时先让出位置）：点一下收起右栏，文件树回来"
+                  : "显示文件树"
               }
-            }
+              aria-label="显示文件树"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => (layout.treeYielded ? closeRightPanel() : persistTreeOpen(true))}
+              className="flex size-7 shrink-0 items-center justify-center rounded-md text-l4 hover:bg-hover hover:text-l2"
+            >
+              <PanelLeftOpen size={15} strokeWidth={1.8} aria-hidden="true" />
+            </button>
+          )}
+          {(() => {
+            const s = statuses[focusedId];
+            // 写这段对话的标题（和侧栏同一个：自动起名去掉「MMDD|类型|」）；还没说话的写「新对话」，纯终端写终端名
+            const meta =
+              s?.sessionId
+                ? headSessions.find((x) => x.agent === s.agentId && x.sessionId === s.sessionId)
+                : undefined;
+            const fallback = s?.title && s.title !== "终端" ? s.title : "终端";
+            const title = meta
+              ? sidebarChatTitle(tidySessionTitle(meta).title)
+              : s && !s.shell && !s.running && !s.sessionId
+                ? "新对话"
+                : fallback;
+            const p = tabProgress[focusedId];
             return (
-              <Fragment key={t.id}>
-                {/* 标签间分隔：居中短刻度线（h-4 w-px），全高边框太重。
-                    刻度只出现在两颗未激活标签之间——紧贴激活胶囊的刻度会撞上胶囊边。
-                    注意这与启动栏分段工具条无关：那边是 gap 分段的胶囊组、不用分隔线
-                    （divide 方案被否为「粘在一起」，见 design-system.md）；标签是平铺的
-                    并列项，刻度承担的是分组边界，两处不共用口径。 */}
-                {tabIndex > 0 &&
-                  tabs[tabIndex - 1].id !== activeId &&
-                  !active && (
-                    <span
-                      aria-hidden="true"
-                      className="h-4 w-px shrink-0 bg-field"
-                    />
-                  )}
-                <div
-                  data-tab-id={t.id}
-                onClick={() => {
-                  // 拖拽落定后的那次 click 吞掉（拖排序不该顺手切换标签）
-                  if (suppressTabClickRef.current) {
-                    suppressTabClickRef.current = false;
-                    return;
-                  }
-                  activateTab(t.id);
-                }}
-                onPointerDown={(e) => onTabPointerDown(e, t.id)}
-                style={{
-                  transform:
-                    isDragSource && tabDrag
-                      ? `translateX(${tabDrag.dx}px)`
-                      : shift !== 0
-                        ? `translateX(${shift}px)`
-                        : undefined,
-                  // 让位标签始终滑动；源标签跟手不动画、吸附时才有
-                  transition:
-                    tabDrag && (!isDragSource || tabDrag.settling)
-                      ? "transform 150ms ease"
-                      : undefined,
-                  // 源标签浮在让位标签之上（零阴影体系下用层级表达浮起）
-                  position: isDragSource ? "relative" : undefined,
-                  zIndex: isDragSource ? 10 : undefined,
-                }}
-                className={`group/tab flex h-8 min-w-[72px] flex-1 basis-0 cursor-pointer items-center gap-1.5 rounded-full border text-xs ${
-                  tabIndex === 0 && !rightExpanded && !treeOpen ? "pl-1 pr-2.5" : "px-2.5"
-                } ${
-                  active
-                    ? "border-field bg-raised text-l1"
-                    : "border-transparent text-l3 hover:bg-hover hover:text-l1"
-                } ${isDragSource ? "bg-raised" : ""}`}
-              >
-                {/* 「正在生成回答」：只认 working。8 段虚线按相位差闪 opacity
-                    （合成器驱动，终端出字满载也不掉帧）；既不用 CSS rotate——
-                    WKWebView 会让圆心晃，也不用 dashoffset 动画——主线程重绘，
-                    xterm 渲染挤占时一卡一卡（2026-09-15 实测）。 */}
-                {tabIndex === 0 && !rightExpanded && !treeOpen && (
-                  <button
-                    type="button"
-                    title="显示文件树"
-                    aria-label="显示文件树"
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      persistTreeOpen(true);
-                    }}
-                    onClick={(event) => event.stopPropagation()}
-                    className="flex size-6 shrink-0 items-center justify-center rounded-full text-l4 hover:bg-hover hover:text-l2"
-                  >
-                    <PanelLeftOpen size={15} strokeWidth={1.8} aria-hidden="true" />
-                  </button>
-                )}
-                {s?.attention === "working" && (
-                  <span
-                    className="inline-flex size-3 shrink-0 items-center justify-center"
-                    title="生成回答中"
-                  >
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      className="ccode-working-spinner text-l2"
-                      aria-label="生成中"
-                    >
-                      {Array.from({ length: 8 }, (_, i) => (
-                        <circle
-                          key={i}
-                          cx="12"
-                          cy="12"
-                          r="9"
-                          pathLength="8"
-                          stroke="currentColor"
-                          strokeWidth="3"
-                          strokeLinecap="butt"
-                          strokeDasharray="1.5 6.5"
-                          strokeDashoffset={-i}
-                        />
-                      ))}
-                    </svg>
-                  </span>
-                )}
-                {confirmDot && (
-                  <span
-                    className={`shrink-0 text-micro ${confirmDot.cls} ${
-                      active
-                        ? ""
-                        : "invisible group-hover/tab:visible group-focus-within/tab:visible"
-                    }`}
-                    title={confirmDot.tip}
-                  >
-                    ●
-                  </span>
-                )}
-                <span className="min-w-0 flex-1 truncate">
-                  {s?.title && s.title !== "终端" ? s.title : "终端"}
+              <div className="flex h-8 min-w-0 flex-1 items-center gap-1.5 px-1.5 text-xs text-l2">
+                {/* 标题不加粗、不顶到最亮（l2）：它是「现在在哪」的提示，不是页面主角（2026-10-24 用户） */}
+                <span className="min-w-0 truncate text-l2" title={title}>
+                  {title}
                 </span>
-                {(() => {
-                  // 任务进度徽章（终端 OSC 9;4 上报）：后台跑长任务时标签条可见，
-                  // 不用切过去盯；state 0 = 结束不显示，1 带百分比，2 = 错误（!），
-                  // 3/4 = 进行中/暂停（…）
-                  const p = tabProgress[t.id];
-                  if (!p || p.state === 0) return null;
-                  const label =
-                    p.state === 1 && p.progress != null
-                      ? `${Math.round(p.progress)}%`
-                      : p.state === 2
-                        ? "!"
-                        : "…";
-                  return (
-                    <span
-                      className={`shrink-0 text-micro ${
-                        p.state === 2 ? "text-err-text" : "text-l4"
-                      }`}
-                      title={
-                        p.state === 2
-                          ? "任务报错（终端上报）"
-                          : "任务进度（终端上报）"
-                      }
-                    >
-                      {label}
-                    </span>
-                  );
-                })()}
-                {/* 聊天层不放 ✦：输入框「＋」里有同一份「插入技能 / MCP」；对话操作走输入框 /（2026-10-21 用户拍板去掉标签条 ⋯ 与聊天态 ✦） */}
-                {active &&
-                  s?.ptyId &&
-                  (surfaceModeByTab[t.id] ?? defaultSurface) !== "chat" && (
+                {/* 标题后面跟一道运行状态光标（2026-10-24，同侧栏，原先是前面的转圈 / 黄点）：在干活灰色呼吸、等你确认琥珀。
+                    闲着不画——正看着的这段，闲着就是常态 */}
+                {s?.attention === "working" && <RunCaret state="working" className="-ml-1" />}
+                {s?.attention === "confirm" && <RunCaret state="confirm" className="-ml-1" />}
+                {/* 任务进度徽章（终端 OSC 9;4 上报）：state 0 = 结束不显示，1 带百分比，2 = 错误（!），3/4 = 进行中/暂停（…） */}
+                {p && p.state !== 0 && (
+                  <span
+                    className={`shrink-0 text-micro ${p.state === 2 ? "text-err-text" : "text-l4"}`}
+                    title={p.state === 2 ? "任务报错（终端上报）" : "任务进度（终端上报）"}
+                  >
+                    {p.state === 1 && p.progress != null ? `${Math.round(p.progress)}%` : p.state === 2 ? "!" : "…"}
+                  </span>
+                )}
+                {/* 聊天层不放 ✦：输入框「＋」里有同一份「插入技能 / MCP」（2026-10-21 用户拍板） */}
+                {s?.ptyId && (surfaceModeByTab[focusedId] ?? defaultSurface) !== "chat" && (
                   <button
                     type="button"
                     title="插入技能或 MCP"
                     aria-label="插入技能或 MCP"
-                    onPointerDown={(event) => event.stopPropagation()}
                     onClick={(event) => {
-                      event.stopPropagation();
                       const r = event.currentTarget.getBoundingClientRect();
                       tabActionsRef.current
-                        .get(t.id)
+                        .get(focusedId)
                         ?.toggleInsert({ left: r.left, bottom: r.bottom });
                     }}
                     className="flex size-5 shrink-0 items-center justify-center rounded-full text-l4 hover:bg-hover hover:text-l2"
@@ -9733,60 +9806,13 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                     <Sparkles size={13} strokeWidth={1.8} aria-hidden="true" />
                   </button>
                 )}
-                {t.restored && (
-                  <span
-                    className="shrink-0 text-micro text-l4"
-                    title="应用重启前未结束，点恢复任务"
-                  >
-                    恢复
-                  </span>
-                )}
-                {splitActive && t.id === splitTabId && (
-                  <span
-                    className="shrink-0 rounded-sm bg-inset px-1 text-micro text-l3"
-                    title="分屏右侧对照（点击交换到左侧）"
-                  >
-                    ◧
-                  </span>
-                )}
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void requestCloseTab(t.id);
-                  }}
-                  aria-label="关闭标签"
-                  className={`shrink-0 text-l4 hover:text-err-text focus-visible:visible ${active ? "" : "invisible group-hover/tab:visible"}`}
-                >
-                  ×
-                </button>
               </div>
-              </Fragment>
             );
-          })}
-            </div>
-          </div>
-          <button
-            // 「+」＝在当前项目里再开一个 Agent：目录跟当前标签走（2026-10-18 用户拍板；原先一律主目录）。
-            // 随手问用侧栏「快速开聊」
-            onClick={() => addTab({ cwd: newTabCwd(statuses[focusedId]?.cwd, IS_WINDOWS) })}
-            title="新建标签：在当前标签的目录里再开一个 Agent"
-            className="flex size-8 shrink-0 items-center justify-center rounded-full border border-hairline bg-inset text-sm text-l4 hover:border-field hover:bg-raised hover:text-l2"
-          >
-            ＋
-          </button>
-          {/* 收缩启动行被隐藏时的召回钮：身份信息状态栏虽有，插入/修改/⋯ 在行里 */}
-          {compactBarHidden && (
-            <button
-              type="button"
-              onClick={toggleCompactBar}
-              title="显示启动配置行（插入 / 修改 / 更多操作）"
-              aria-label="显示启动配置行"
-              className="flex size-7 shrink-0 items-center justify-center rounded-md text-l4 hover:bg-hover hover:text-l2"
-            >
-              <PanelTopOpen size={16} strokeWidth={1.8} aria-hidden="true" />
-            </button>
-          )}
-          <span className="ml-2 flex shrink-0 items-center border-l border-hairline pl-2">
+          })()}
+          {/* 右上角三个（2026-10-24 照 Claude 客户端「一个图标管一块，亮着就是开着」重做，原 聊天/终端 · 成果面板 · 分屏 · 查找 四个）：
+              >_ 终端（亮着 = 正看着这段对话的终端）、± 改动（右栏改动窗格，有改动带数字）、⋯ 更多（分屏、查找、启动配置行、文件预览）。
+              「成果面板」一词取消：文件预览由左边点文件打开，改动由 ± 打开，右栏自己带收起 */}
+          <span className="ml-auto flex shrink-0 items-center gap-1">
             <button
               type="button"
               onClick={() => {
@@ -9795,85 +9821,126 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                 }
                 switchSurface(focusedSurfaceMode === "chat" ? "terminal" : "chat");
               }}
-              title={
-                focusedSurfaceMode === "chat" ? "切换到终端" : "切换到聊天"
-              }
-              aria-label={
-                focusedSurfaceMode === "chat" ? "切换到终端" : "切换到聊天"
-              }
-              className="flex size-7 items-center justify-center rounded-md text-l4 hover:bg-hover hover:text-l2"
-            >
-              {focusedSurfaceMode === "chat" ? (
-                <MessageSquare size={14} strokeWidth={1.8} aria-hidden="true" />
-              ) : (
-                <SquareTerminal size={14} strokeWidth={1.8} aria-hidden="true" />
-              )}
-            </button>
-          </span>
-          <span className="ml-auto flex shrink-0 items-center gap-1">
-            <button
-              type="button"
-              onClick={toggleRightPanel}
-              aria-pressed={rightOpen}
-              title={rightOpen ? "隐藏成果面板" : "显示成果面板"}
-              aria-label={rightOpen ? "隐藏成果面板" : "显示成果面板"}
+              aria-pressed={focusedSurfaceMode !== "chat"}
+              title={focusedSurfaceMode === "chat" ? "看这段对话的终端" : "回到聊天"}
+              aria-label={focusedSurfaceMode === "chat" ? "看这段对话的终端" : "回到聊天"}
               className={`flex size-7 items-center justify-center rounded-md transition-colors ${
-                rightOpen
-                  ? "bg-seg-sel text-l1"
-                  : "text-l4 hover:bg-hover hover:text-l2"
+                focusedSurfaceMode !== "chat" ? "bg-seg-sel text-l1" : "text-l4 hover:bg-hover hover:text-l2"
               }`}
             >
-              {rightOpen ? (
-                <PanelRightClose size={14} strokeWidth={1.8} aria-hidden="true" />
-              ) : (
-                <PanelRightOpen size={14} strokeWidth={1.8} aria-hidden="true" />
-              )}
+              <TerminalIcon size={15} strokeWidth={1.8} aria-hidden="true" />
             </button>
+            {(() => {
+              const changesOpen = rightOpen && rightTab === "git";
+              const count = gitTotals && gitTotals.add + gitTotals.del > 0 ? gitTotals.files.length : 0;
+              return (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (changesOpen) closeRightPanel();
+                    else {
+                      setRightTab("git");
+                      persistRightOpen(true);
+                    }
+                  }}
+                  aria-pressed={changesOpen}
+                  title={
+                    changesOpen
+                      ? "收起改动"
+                      : count > 0
+                        ? `改动：这个文件夹里 ${count} 个文件没提交（+${gitTotals!.add} −${gitTotals!.del}）`
+                        : "改动"
+                  }
+                  aria-label={changesOpen ? "收起改动" : "看改动"}
+                  className={`relative flex size-7 items-center justify-center rounded-md transition-colors ${
+                    changesOpen ? "bg-seg-sel text-l1" : "text-l4 hover:bg-hover hover:text-l2"
+                  }`}
+                >
+                  <FileDiff size={15} strokeWidth={1.8} aria-hidden="true" />
+                  {/* 有改动只点一个小点，个数放悬停（文件夹里别的会话的改动也算在内，写个大数字像是这段对话改的） */}
+                  {count > 0 && !changesOpen && (
+                    <span className="absolute right-1 top-1 size-1.5 rounded-full bg-l3" aria-hidden="true" />
+                  )}
+                </button>
+              );
+            })()}
             <button
               type="button"
-              onClick={() => {
-                if (focusedSurfaceMode === "chat") switchSurface("terminal");
-                toggleSplit();
+              onClick={(e) => {
+                const r = e.currentTarget.getBoundingClientRect();
+                setHeadMenu({ x: r.right, y: r.bottom + 4 });
               }}
-              disabled={!splitActive && tabs.length < 2}
-              aria-pressed={splitActive}
-              title={
-                splitActive
-                  ? "退出分屏"
-                  : tabs.length < 2
-                    ? "分屏对照（需要两个标签）"
-                    : "分屏对照"
-              }
-              aria-label={
-                splitActive
-                  ? "退出分屏"
-                  : tabs.length < 2
-                    ? "分屏对照（需要两个标签）"
-                    : "分屏对照"
-              }
-              className={`flex size-7 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-                splitActive
-                  ? "bg-seg-sel text-l1"
-                  : "text-l4 hover:bg-hover hover:text-l2"
+              aria-haspopup="menu"
+              aria-expanded={headMenu != null}
+              title="更多：分屏对照、查找终端输出…"
+              aria-label="更多操作"
+              className={`flex size-7 items-center justify-center rounded-md transition-colors ${
+                headMenu ? "bg-hover text-l1" : "text-l4 hover:bg-hover hover:text-l2"
               }`}
             >
-              <Columns2 size={14} strokeWidth={1.8} aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (focusedSurfaceMode === "chat" && !peekByTab[focusedId]) {
-                  switchSurface("terminal");
-                }
-                tabActionsRef.current.get(focusedId)?.search();
-              }}
-              title="查找终端输出"
-              aria-label="查找终端输出"
-              className="flex size-7 items-center justify-center rounded-md text-l4 hover:bg-hover hover:text-l2"
-            >
-              <Search size={14} strokeWidth={1.8} aria-hidden="true" />
+              <MoreHorizontal size={15} strokeWidth={1.8} aria-hidden="true" />
             </button>
           </span>
+          {headMenu && (
+            <ContextMenu
+              x={headMenu.x}
+              y={headMenu.y}
+              alignRight
+              onClose={() => setHeadMenu(null)}
+              items={[
+                ...(preview && !(rightOpen && rightTab === "preview")
+                  ? [
+                      {
+                        label: "打开文件预览",
+                        icon: PanelRightOpen,
+                        hint: basename(preview.path),
+                        title: "右栏回到刚才预览的文件",
+                        onSelect: () => {
+                          setRightTab("preview");
+                          persistRightOpen(true);
+                        },
+                      },
+                    ]
+                  : []),
+                {
+                  label: splitActive ? "退出分屏" : "分屏对照",
+                  icon: Columns2,
+                  disabled: !splitActive && tabs.length < 2,
+                  title:
+                    !splitActive && tabs.length < 2
+                      ? "先开着两段对话；或在侧栏对话 ⋯ 里选「在右侧分屏打开」"
+                      : splitActive
+                        ? "回到一段"
+                        : "左右两段对着看",
+                  onSelect: () => {
+                    if (focusedSurfaceMode === "chat") switchSurface("terminal");
+                    toggleSplit();
+                  },
+                },
+                {
+                  label: "查找终端输出",
+                  icon: Search,
+                  title: "在这段对话的终端输出里找字（会切到终端）",
+                  onSelect: () => {
+                    if (focusedSurfaceMode === "chat" && !peekByTab[focusedId]) {
+                      switchSurface("terminal");
+                    }
+                    tabActionsRef.current.get(focusedId)?.search();
+                  },
+                },
+                ...(compactBarHidden
+                  ? [
+                      {
+                        label: "显示启动配置行",
+                        icon: PanelTopOpen,
+                        title: "终端上方那一行（插入 / 修改 / 更多操作）",
+                        onSelect: toggleCompactBar,
+                      },
+                    ]
+                  : []),
+              ]}
+            />
+          )}
         </div>
         <div
           ref={splitAreaRef}
@@ -9908,7 +9975,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                 rightOpen={rightOpen}
                 compactBarHidden={compactBarHidden}
                 onToggleCompactBar={toggleCompactBar}
-                layoutKey={`${rightOpen}-${Math.round(rightWidth)}-${rightExpanded}-${splitActive ? `split${Math.round(splitPct)}` : "single"}-${(surfaceModeByTab[t.id] ?? defaultSurface) === "chat" && peekByTab[t.id] ? "peek" : "full"}-${reader && readerTabId === t.id ? "reader" : "pane"}-${appSettings?.statusBar === false ? "nostatus" : "status"}`}
+                layoutKey={`${rightOpen}-${layout.right}-${layout.treeShown ? layout.tree : 0}-${rightExpanded}-${splitActive ? `split${Math.round(splitPct)}` : "single"}-${(surfaceModeByTab[t.id] ?? defaultSurface) === "chat" && peekByTab[t.id] ? "peek" : "full"}-${reader && readerTabId === t.id ? "reader" : "pane"}-${appSettings?.statusBar === false ? "nostatus" : "status"}`}
                 embedInPeek={
                   (surfaceModeByTab[t.id] ?? defaultSurface) === "chat" &&
                   Boolean(peekByTab[t.id])
@@ -10003,7 +10070,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                           value={splitTabId ?? ""}
                           onChange={(e) => setSplitTabId(e.target.value)}
                           className="h-6 min-w-0 flex-1 rounded-sm border border-field bg-inset px-1.5 text-xs text-l2 outline-none focus:border-l4"
-                          title="选择右侧对照显示的标签"
+                          title="选右边对照的那段（开着的对话；别的从侧栏对话 ⋯「在右侧分屏打开」）"
                         >
                           {tabs
                             .filter((other) => other.id !== activeId)
@@ -10029,8 +10096,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                       onClick={() => closePane(isRightPane ? "right" : "left")}
                       title={
                         isRightPane
-                          ? "关闭此 pane（退出分屏，保留当前标签）"
-                          : "关闭此 pane（退出分屏，切换到对照标签）"
+                          ? "关掉右边这栏（退出分屏，留左边这段）"
+                          : "关掉左边这栏（退出分屏，换成右边那段）"
                       }
                       aria-label="关闭此 pane"
                       className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-xs text-l4 hover:bg-hover hover:text-l1"
@@ -10099,6 +10166,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         }
                       >
                       <ChatSurface
+                        metaSlots={chatMetaSlots[t.id] ?? null}
                         messages={sessionByTab[t.id]?.conv ?? []}
                         state={sessionByTab[t.id]?.state ?? "idle"}
                         syncState={sessionByTab[t.id]?.sync ?? "waiting"}
@@ -10125,8 +10193,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         trustPrompt={sessionByTab[t.id]?.trustPrompt ?? null}
                         ptyQuiet={sessionByTab[t.id]?.ptyQuiet ?? false}
                         launchPick={sessionByTab[t.id]?.launchPick ?? null}
+                        recordPending={Boolean(t.resumeSessionId && !t.customRuntimeId && !sessionByTab[t.id])}
                         onRestore={() => tabActionsRef.current.get(t.id)?.restoreHere()}
-                        onPickRecent={(s) => openRecentChat(t.id, s)}
+                        onDraftChange={(has) => reportDraft(t.id, has)}
                         onPickDir={(pick) => tabActionsRef.current.get(t.id)?.pickDir(pick)}
                         onNewProject={() => tabActionsRef.current.get(t.id)?.newProject()}
                         onPickLaunch={{
@@ -10322,6 +10391,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         contextUsed={lastContextTokens(sessionByTab[t.id]?.conv ?? [])}
                         onRelaunch={(patch) => tabActionsRef.current.get(t.id)?.relaunchWith(patch)}
                         colors={statusBarColors}
+                        chatMetaRef={chatBar ? chatMetaRefFor(t.id) : undefined}
                       />
                     );
                   })()}
@@ -10393,7 +10463,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
             <span className="absolute inset-y-0 left-0.5 w-0.5 bg-transparent transition-colors group-hover:bg-cta" />
           </div>
           <div
-            style={{ width: rightWidth }}
+            style={{ width: layout.right }}
             className="flex shrink-0 flex-col border-l border-hairline bg-raised/70"
           >
             {/* 右侧工作台只保留文件与改动；聊天已经进入主工作区，避免同一会话重复显示。 */}
@@ -10443,8 +10513,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                   onClick={toggleRightExpanded}
                   title={
                     rightExpanded
-                      ? "退出专注内容（Esc，恢复工作树分栏）"
-                      : "专注内容（暂时隐藏工作树，右栏铺满，Esc 退出）"
+                      ? "退出铺满（Esc，文件树回来）"
+                      : "右栏铺满（文件树先收起、对话只留一窄条，Esc 退出）"
                   }
                   className={`flex size-7 shrink-0 items-center justify-center rounded-sm text-xs text-l4 hover:bg-hover hover:text-l1 ${hoverRevealClass}`}
                 >
@@ -10452,7 +10522,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                 </button>
                 <button
                   onClick={closeRightPanel}
-                  title="收起工作台"
+                  title="收起右栏"
+                  aria-label="收起右栏"
                   className={`flex size-7 shrink-0 items-center justify-center rounded-sm text-xs text-l4 hover:bg-hover hover:text-l1 ${hoverRevealClass}`}
                 >
                   ×
@@ -10526,7 +10597,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                 <div className="flex min-h-0 flex-1 flex-col">
                   <div className="p-3">
                     <p className="text-sm text-l4">
-                      在左侧工作树中单击文件预览
+                      在左边文件树里点一个文件，就在这里看
                     </p>
                   </div>
                 </div>

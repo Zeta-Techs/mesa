@@ -3,16 +3,14 @@ import test from "node:test";
 import {
   chatChoiceForProfile,
   isBlankChatTab,
+  isNewChatKey,
   isScratchCwd,
-  newTabCwd,
+  isThrowawayTab,
   codexSandboxCoversHome,
   pickQuickChatDefault,
-  pickQuickChatHistory,
-  pickQuickChatSessions,
   profileCanAutoStart,
   sessionHomeLabel,
   sessionDisplayTitle,
-  withLiveSessionFlags,
 } from "../src/quick-chat.ts";
 import type { SessionMetaDto } from "../src/types.ts";
 
@@ -49,34 +47,6 @@ function session(over: Partial<SessionMetaDto>): SessionMetaDto {
 
 const SCRATCH = "/Users/u/ccode/scratch";
 
-test("随手聊历史：按顺序取前 N 条", () => {
-  const list = Array.from({ length: 12 }, (_, i) =>
-    session({ sessionId: `s-${i}`, projectPath: SCRATCH }),
-  );
-  const out = pickQuickChatSessions(list, [], 8);
-  assert.equal(out.length, 8);
-  assert.equal(out[0].sessionId, "s-0");
-  assert.equal(out[7].sessionId, "s-7");
-});
-
-test("随手聊历史：排除归档/内部/live/源文件已删的（这些都恢复不了）", () => {
-  const out = pickQuickChatSessions(
-    [
-      session({ sessionId: "s-archived", archived: true }),
-      session({ sessionId: "s-internal", internal: true }),
-      session({ sessionId: "s-live", live: true }),
-      session({ sessionId: "s-gone", alive: false }),
-      session({ sessionId: "s-ok", projectPath: SCRATCH }),
-    ],
-    [],
-    8,
-  );
-  assert.deepEqual(
-    out.map((s) => s.sessionId),
-    ["s-ok"],
-  );
-});
-
 test("归属标注：工作区会话显工作区名，否则目录尾段", () => {
   assert.equal(
     sessionHomeLabel(session({ workspace: "lit-search" })),
@@ -103,30 +73,6 @@ test("标题优先级：自定义 > 会话标题 > 摘要 > 兜底", () => {
   assert.equal(
     sessionDisplayTitle(session({ title: null, summary: null })),
     "未命名对话",
-  );
-});
-
-test("随手聊历史：只列 scratch，排除工作区/已注册项目/其他仓库", () => {
-  const out = pickQuickChatSessions(
-    [
-      session({ sessionId: "s-scratch", projectPath: SCRATCH }),
-      session({
-        sessionId: "s-ccode",
-        projectPath: "/Users/u/Documents/Ccode",
-      }),
-      session({ sessionId: "s-ws", workspace: "lit-search", projectPath: SCRATCH }),
-      session({
-        sessionId: "s-project",
-        projectPath: "/Users/u/papers/proj",
-      }),
-      session({ sessionId: "s-loose", projectPath: "/tmp/elsewhere" }),
-    ],
-    ["/Users/u/papers/proj/"],
-  );
-  assert.deepEqual(
-    out.map((s) => s.sessionId),
-    ["s-scratch"],
-    "未注册的编码仓库、工作区、项目内会话都不算随手聊",
   );
 });
 
@@ -221,19 +167,6 @@ test("空白标签：没起过进程、没接上会话、不是等接回的占�
   assert.equal(isBlankChatTab({ resumeSessionId: "s1" }, undefined), false);
 });
 
-test("运行页「+」的目录跟当前标签走；主目录 / 没有 / Mesa 隔离目录不跟", () => {
-  assert.equal(newTabCwd("/Users/me/proj"), "/Users/me/proj");
-  assert.equal(newTabCwd("/Users/me/ccode/scratch"), "/Users/me/ccode/scratch");
-  assert.equal(newTabCwd("~"), undefined);
-  assert.equal(newTabCwd(""), undefined);
-  assert.equal(newTabCwd(null), undefined);
-  assert.equal(newTabCwd("/Users/me/ccode/workspaces/abc"), undefined);
-  assert.equal(newTabCwd("/Volumes/D/ccode/worktrees/proj/lane-1"), undefined);
-  assert.equal(newTabCwd("/Users/me/ccode/watch-worktrees/x"), undefined);
-  assert.equal(newTabCwd("D:\\ccode\\worktrees\\p", true), undefined);
-  assert.equal(newTabCwd("C:\\Users\\me\\proj", true), "C:\\Users\\me\\proj");
-});
-
 test("codexSandboxCoversHome：只在 Windows + Codex + 主目录 + 非完全访问时提醒", () => {
   const base = { agentId: "codex", home: "C:\\Users\\me", permissionMode: "ask", isWindows: true };
   assert.equal(codexSandboxCoversHome({ ...base, cwd: "~" }), true);
@@ -244,30 +177,6 @@ test("codexSandboxCoversHome：只在 Windows + Codex + 主目录 + 非完全访
   assert.equal(codexSandboxCoversHome({ ...base, cwd: "~", permissionMode: "full" }), false);
   assert.equal(codexSandboxCoversHome({ ...base, cwd: "~", agentId: "claude-code" }), false);
   assert.equal(codexSandboxCoversHome({ ...base, cwd: "~", isWindows: false }), false);
-});
-
-test("withLiveSessionFlags：终端页正在跑的会话补标 live", () => {
-  const listed = session({ sessionId: "s-run", live: false });
-  const out = withLiveSessionFlags([listed], {
-    "claude-code\ns-run": "tab-1",
-  });
-  assert.equal(out[0].live, true);
-  assert.equal(listed.live, false, "不改入参");
-});
-
-test("pickQuickChatHistory：正在跑的随手聊不进列表", () => {
-  const out = pickQuickChatHistory(
-    [
-      session({ sessionId: "s-live", projectPath: SCRATCH, live: false }),
-      session({ sessionId: "s-ok", projectPath: SCRATCH }),
-    ],
-    [],
-    { "claude-code\ns-live": "tab-1" },
-  );
-  assert.deepEqual(
-    out.map((s) => s.sessionId),
-    ["s-ok"],
-  );
 });
 
 test("连接页「新对话」：点哪条用哪条，模型取名单第一个，不看记住的默认", () => {
@@ -291,4 +200,18 @@ test("连接页「新对话」：跳过名单里的空白项取第一个有内�
     chatChoiceForProfile({ id: "p", agent: "qwen", models: ["", "qwen3-coder"] }).model,
     "qwen3-coder",
   );
+});
+
+test("「新对话」开的空白标签：快速开聊与项目行 ＋（每次一把带 uuid 的键）都算，切走时没说话就收", () => {
+  assert.equal(isNewChatKey("quickchat:1b2c"), true);
+  assert.equal(isNewChatKey("research:/Users/u/测试项目:project:1b2c"), true);
+  assert.equal(isNewChatKey("coding:C:\\repo:project:1b2c"), true);
+  // 2026-10-24 前的项目对话键（同一项目共用一把）、问 AI、阅读：不算
+  assert.equal(isNewChatKey("research:/Users/u/测试项目:project"), false);
+  assert.equal(isNewChatKey("office:/p:notes/a.docx"), false);
+  assert.equal(isNewChatKey(undefined), false);
+  const blank = { reuseKey: "research:/p:project:1b2c" };
+  assert.equal(isThrowawayTab(blank, null, false), true);
+  assert.equal(isThrowawayTab(blank, null, true), false, "输入框里有字");
+  assert.equal(isThrowawayTab(blank, { running: true }, false), false, "说过话了");
 });

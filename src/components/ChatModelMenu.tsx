@@ -16,6 +16,7 @@ import { effortDepth, effortGloss } from "../effort-depth";
 import { agentBrand } from "../agent-colors";
 import type { LaunchCombo } from "../launch-combos";
 import { breakdownRequest } from "../context-breakdown";
+import { ChatBetaNotes, useChatBeta } from "./ChatBetaBadge";
 import type {
   LaunchPickState,
   NativePermissionMode,
@@ -52,6 +53,8 @@ type SharedProps = {
   /** 输入框里有图：看不了图的模型在名单里标出来，当前模型看不了时经 onImageWarning 告诉输入框 */
   hasImages?: boolean;
   onImageWarning?: (warning: string | null) => void;
+  /** 菜单底部「测试版」那一行点开后的「切到终端」 */
+  onOpenTerminal?: () => void;
 };
 
 type RuntimeProps = {
@@ -67,6 +70,8 @@ type RuntimeProps = {
   next?: NextLaunchPick | null;
   /** 上一轮请求喂进去的 token（输入 + 缓存），画上下文用量圆环用；没有为 null */
   contextUsed?: number | null;
+  /** 圆环画在芯片右边；芯片挂进底部状态栏时由状态栏画（它手里有本段用量和连接名），这里传 false */
+  showRing?: boolean;
   /** 上下文浮层里的「压缩上下文」（斜杠面板 Mesa 组同一个动作；这家没有压缩命令或没在运行时不给） */
   onCompact?: (() => void) | null;
   /** 停下 Agent、带新模型 / 思考档接回原对话（会写回 CLI 全局配置的切换走这条，switch-strategy.ts） */
@@ -86,7 +91,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
   const launch = props.kind === "launch" ? props : null;
   const runtime = props.kind === "runtime" ? props : null;
   const [open, setOpen] = useState(false);
-  const [view, setView] = useState<"main" | "who">("main");
+  const [view, setView] = useState<"main" | "who" | "beta">("main");
   const [customModel, setCustomModel] = useState("");
   // 手填的是出图 / 向量等不能对话的模型：不收，原因写在输入框下
   const [customErr, setCustomErr] = useState<string | null>(null);
@@ -169,6 +174,9 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
   const profileLabel = launch
     ? (launch.pick.profiles.find((p) => p.value === profileId)?.label ?? "选择配置")
     : (profile?.name ?? "");
+  const beta = useChatBeta(agentId || null);
+  // 连接名不再单写在底栏（2026-10-23）：芯片悬停里带上「经哪条连接」
+  const via = profileLabel && profileId ? ` · 经「${profileLabel}」` : "";
 
   // ---- 模型名单与当前模型（三种情形各取各的来源，名单同源 model-history.ts） ----
   let models: string[];
@@ -242,11 +250,15 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
     const noConn = launch.pick.profiles.length === 0;
     label = noConn ? `${agentLabel} · 还没有连接` : currentModel || agentLabel;
     chipEffort = noConn ? null : launch.pick.effort || null;
-    title = `${agentLabel}${profileId ? ` · ${profileLabel}` : ""}${currentModel ? ` · ${currentModel}` : ""}\n选择这次用哪个 Agent、配置、模型和思考强度（发出第一句前都能改）`;
+    title = `${agentLabel}${profileId ? ` · ${profileLabel}` : ""}${currentModel ? ` · ${currentModel}` : ""}\n${
+      launch.pick.resumePick
+        ? "这段对话上次用的配置；接着聊前可以换配置、模型和思考强度"
+        : "选择这次用哪个 Agent、配置、模型和思考强度（发出第一句前都能改）"
+    }`;
   } else if (next) {
     label = currentModel || "模型";
     chipEffort = next.effort || null;
-    title = `${[label, chipEffort].filter(Boolean).join(" · ")}\n接着聊时用的模型和思考强度（下次启动生效）`;
+    title = `${[label, chipEffort].filter(Boolean).join(" · ")}${via}\n接着聊时用的模型和思考强度（下次启动生效）`;
   } else {
     label = rt.shownModel || "模型";
     chipEffort = runtimeEffortText;
@@ -257,7 +269,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
         ? `${shown}\n已发送切换，等 CLI 回显确认`
         : rt.modelState === "unverifiable"
           ? `${shown}\n已发送切换；这家 CLI 不回显当前模型，以终端里显示的为准`
-          : `${agentLabel} · ${shown}\n换模型或思考强度`;
+          : `${agentLabel} · ${shown}${via}\n换模型或思考强度`;
   }
   const pendingMark = !launch && !next && rt.modelState !== "confirmed";
 
@@ -334,12 +346,14 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
               {hasImages && caps.vision[m] === false && (
                 <span className="mt-0.5 shrink-0 text-xs text-caution-text">看不了图</span>
               )}
-              <Check
-                size={14}
-                strokeWidth={2}
-                aria-hidden="true"
-                className={`mt-0.5 shrink-0 ${m === currentModel ? "text-l2" : "invisible"}`}
-              />
+              <span className="ccode-icon-line leading-[18px]">
+                <Check
+                  size={14}
+                  strokeWidth={2}
+                  aria-hidden="true"
+                  className={m === currentModel ? "text-l2" : "invisible"}
+                />
+              </span>
             </button>
           </li>
           );
@@ -410,7 +424,12 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
 
   // 底部说明压到一两行，完整原委放悬停提示（原先 Claude 的说明三行，比菜单本身还抢眼）
   const footer: { short: string; full: string } | null = launch
-    ? null
+    ? launch.pick.resumePick
+      ? {
+          short: "发第一句时按这里的选择接回这段对话。",
+          full: "默认是这段对话上次用的配置、模型和思考强度。Agent 跟着这段对话，不能换；要换 Agent 请新开一段对话。",
+        }
+      : null
     : next
       ? {
           short: "Agent 已经停了。发下一句时按这里的选择接回原来的对话。",
@@ -439,27 +458,18 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
   // 上下文用量圆环（docs/design-chat-layer.md §4.4）：上一轮输入占模型窗口的比例，>80% 变 warn；窗口不知道就不画
   const ctxWindow = rt.combo?.context ?? null;
   const ctxUsed = runtime?.contextUsed ?? null;
-  const ctxRatio = ctxWindow && ctxUsed ? Math.min(1, ctxUsed / ctxWindow) : null;
+  const ctxRatio =
+    runtime?.showRing !== false && ctxWindow && ctxUsed ? Math.min(1, ctxUsed / ctxWindow) : null;
 
   return (
     <div ref={rootRef} className="relative flex min-w-0 items-center gap-1">
-      {ctxRatio !== null && ctxWindow && ctxUsed && (
-        <ContextRing
-          ratio={ctxRatio}
-          used={ctxUsed}
-          window={ctxWindow}
-          agentId={agentId}
-          breakdown={breakdownRequest(runtime?.status ?? null)}
-          onCompact={runtime?.onCompact}
-        />
-      )}
       <button
         type="button"
         aria-haspopup="dialog"
         aria-expanded={open}
         disabled={!launch && !live && !next}
         onClick={() => setOpen((v) => !v)}
-        title={title}
+        title={beta.newer ? `${title}\n你装的 CLI 比 Mesa 核对过的新，点开看底部「${beta.badge}」` : title}
         className={`flex h-6 min-w-0 max-w-[20rem] items-center gap-1.5 rounded-md px-1.5 text-micro text-l3 hover:bg-hover hover:text-l1 disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-l3 ${
           open ? "bg-hover text-l1" : ""
         }`}
@@ -473,7 +483,20 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
           {chipEffort ? ` · ${chipEffort}` : ""}
         </span>
         {pendingMark && rt.modelState === "pending" && <span className="shrink-0 text-l4">待确认</span>}
+        {/* CLI 比 Mesa 核对过的新（原「测试版」格上的小点，2026-10-23 随它收进菜单） */}
+        {beta.newer && <span aria-label="CLI 比核对过的新" className="size-1.5 shrink-0 rounded-full bg-caution-text" />}
       </button>
+      {/* 上下文圆环在芯片右边（2026-10-23 照 Claude 客户端）；窗口大小不知道的家（如 Grok）不画 */}
+      {ctxRatio !== null && ctxWindow && ctxUsed && (
+        <ContextRing
+          ratio={ctxRatio}
+          used={ctxUsed}
+          window={ctxWindow}
+          agentId={agentId}
+          breakdown={breakdownRequest(runtime?.status ?? null)}
+          onCompact={runtime?.onCompact}
+        />
+      )}
       {open && (
         <div
           ref={menuRef}
@@ -481,7 +504,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
           aria-label={next ? "接着聊用的模型与思考强度" : "模型与思考强度"}
           // 字号挂在容器上：全站 button / input { font: inherit } 会吞掉按钮自己的 text-*
           // 限高（room）+ 纵向三段：顶部 Agent 行与底部思考 / 说明固定，中间名单区滚动
-          className={`absolute right-0 z-30 flex w-[19rem] flex-col overflow-y-auto rounded-xl border border-field ccode-float-surface p-1 text-sm shadow-lg ${
+          className={`absolute right-0 z-30 flex w-[19rem] flex-col overflow-y-auto rounded-xl border border-field ccode-float-surface p-1 text-sm shadow-lg whitespace-normal select-text ${
             side === "below" ? "top-full mt-2 origin-top-right" : "bottom-full mb-2 origin-bottom-right"
           }`}
           style={{ maxHeight: room }}
@@ -516,6 +539,31 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
               section={section}
               note={note}
             />
+          ) : view === "beta" ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setView("main")}
+                className="flex h-8 w-full shrink-0 items-center gap-1 rounded-lg px-2 text-left text-xs text-l3 outline-none hover:bg-hover hover:text-l1 focus-visible:bg-hover"
+              >
+                <ChevronLeft size={14} strokeWidth={1.8} aria-hidden="true" />
+                <span className="text-xs">{beta.heading}</span>
+              </button>
+              <div className="mx-1 my-1 h-px shrink-0 bg-hairline" />
+              <div ref={bodyRef} className={scrollBody}>
+                <ChatBetaNotes
+                  agentId={agentId || null}
+                  onOpenTerminal={
+                    props.onOpenTerminal
+                      ? () => {
+                          setOpen(false);
+                          props.onOpenTerminal?.();
+                        }
+                      : undefined
+                  }
+                />
+              </div>
+            </>
           ) : (
             <>
               {launch && shownCombos.length > 0 && (
@@ -556,7 +604,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
                   type="button"
                   className="flex h-8 w-full shrink-0 items-center gap-1.5 rounded-lg px-2 text-left text-l1 outline-none hover:bg-hover focus-visible:bg-hover"
                   onClick={() => setView("who")}
-                  title="换 Agent 或配置"
+                  title={launch.pick.resumePick ? "换配置（Agent 跟着这段对话，不能换）" : "换 Agent 或配置"}
                 >
                   <AgentMark agentId={agentId} />
                   <span className="truncate font-medium">{agentLabel}</span>
@@ -630,9 +678,26 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
                   className="mx-1 mt-1 flex shrink-0 gap-1.5 border-t border-hairline px-1 pb-0.5 pt-1.5 text-micro leading-4 text-l4"
                   title={footer.full}
                 >
-                  <Info size={12} strokeWidth={1.8} aria-hidden="true" className="mt-0.5 shrink-0" />
+                  <span className="ccode-icon-line">
+                    <Info size={12} strokeWidth={1.8} aria-hidden="true" />
+                  </span>
                   <span>{footer.short}</span>
                 </p>
+              )}
+              {beta.badge && (
+                // 「测试版」原先单占输入框底下一格（2026-10-23 收进来）：点进二级看这一家在聊天里能做到哪一步
+                <button
+                  type="button"
+                  onClick={() => setView("beta")}
+                  className="mt-1 flex h-7 w-full shrink-0 items-center gap-1.5 rounded-lg border-t border-hairline px-2 text-left text-micro text-l4 outline-none hover:bg-hover hover:text-l2 focus-visible:bg-hover"
+                >
+                  <span className="shrink-0 text-l3">{beta.badge}</span>
+                  <span className="min-w-0 truncate">
+                    {beta.newer ? "CLI 比 Mesa 核对过的新" : "聊天里能做到哪一步"}
+                  </span>
+                  {beta.newer && <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-caution-text" />}
+                  <ChevronRight size={13} strokeWidth={1.8} aria-hidden="true" className="ml-auto shrink-0" />
+                </button>
               )}
             </>
           )}
@@ -681,28 +746,33 @@ function WhoView({
       <div className="mx-1 my-1 h-px shrink-0 bg-hairline" />
       {/* Agent 与配置同在一个滚动区里：原先两段各自 max-h 再叠起来，九家 Agent 一摆就顶出窗口（2026-10-20 用户） */}
       <div ref={bodyRef} className={bodyClass}>
-        <h4 className={section}>Agent</h4>
-        {/* 九家排成两列：名字都短，单列一家一行太占高度 */}
-        <div className="grid grid-cols-2 gap-x-0.5">
-          {AGENTS.map((a) => {
-            const installed = agents.find((x) => x.id === a.id)?.binaryPath != null;
-            const selected = a.id === pick.agentId;
-            return (
-              <button
-                key={a.id}
-                type="button"
-                data-selected={selected}
-                className={`${item(selected)} ${selected ? "bg-seg-sel hover:bg-seg-sel" : ""}`}
-                title={installed ? a.label : `${a.label}（本机还没装）`}
-                onClick={() => onAgent(a.id)}
-              >
-                <span className={`min-w-0 flex-1 truncate ${installed ? "" : "text-l4"}`}>{a.label}</span>
-                {!installed && <span className="shrink-0 text-micro text-l4">未安装</span>}
-              </button>
-            );
-          })}
-        </div>
-        <div className="mx-1 my-1 h-px bg-hairline" />
+        {/* 接着聊一段已有的对话：Agent 跟着对话走，只列配置 */}
+        {!pick.resumePick && (
+          <>
+            <h4 className={section}>Agent</h4>
+            {/* 九家排成两列：名字都短，单列一家一行太占高度 */}
+            <div className="grid grid-cols-2 gap-x-0.5">
+              {AGENTS.map((a) => {
+                const installed = agents.find((x) => x.id === a.id)?.binaryPath != null;
+                const selected = a.id === pick.agentId;
+                return (
+                  <button
+                    key={a.id}
+                    type="button"
+                    data-selected={selected}
+                    className={`${item(selected)} ${selected ? "bg-seg-sel hover:bg-seg-sel" : ""}`}
+                    title={installed ? a.label : `${a.label}（本机还没装）`}
+                    onClick={() => onAgent(a.id)}
+                  >
+                    <span className={`min-w-0 flex-1 truncate ${installed ? "" : "text-l4"}`}>{a.label}</span>
+                    {!installed && <span className="shrink-0 text-micro text-l4">未安装</span>}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mx-1 my-1 h-px bg-hairline" />
+          </>
+        )}
         <h4 className={section}>配置</h4>
         <ul>
           {pick.profiles.length === 0 && (

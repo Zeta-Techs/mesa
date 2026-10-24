@@ -22,11 +22,12 @@ import {
 const MODE_LABEL: Record<SessionInjectionMode, string> = {
   auto: "自动",
   custom: "自定义",
-  off: "不注入",
+  off: "不附带",
 };
 
-/** 对话注入（2026-10-16 拍板）：＋新对话 / 问 AI 开头带给 AI 的项目说明，按项目三态可配。
- *  自动 = 现状生成；自定义 = 占位符模板（开对话按项目当时数据填入）；不注入 = 只带用户输入。
+/** 项目说明（原名「对话注入」，2026-10-16 拍板；2026-10-24 改名，与聊天里折起的「已附项目说明」同一个词）：
+ *  在这个项目里开对话时附在第一句前面的那段说明，按项目三态可配。
+ *  自动 = 现状生成；自定义 = 占位符模板（开对话按项目当时数据填入）；不附带 = 只发用户输入。
  *  开工任务书 / 验收后写入 / 编程车道目标的目标包不受这里控制。
  *  2026-10-17 收口：切到自定义时模板为空就先填默认版式（空模板会静默按自动走，选了等于没选）；
  *  预览按面板里还没保存的档位/模板渲染（所见即所得，不必先失焦保存）。 */
@@ -105,7 +106,7 @@ export default function ProjectInjectionPanel({
       })
       .catch((reason) => {
         if (!stale) {
-          const message = `读取对话注入设置失败：${String(reason)}`;
+          const message = `读取项目说明设置失败：${String(reason)}`;
           setError(message);
           onError?.(message);
         }
@@ -164,7 +165,7 @@ export default function ProjectInjectionPanel({
           window.setTimeout(() => setSaved(false), 2000);
           onSaved?.();
         } catch (reason) {
-          const message = `保存对话注入设置失败：${String(reason)}`;
+          const message = `保存项目说明设置失败：${String(reason)}`;
           setError(message);
           onError?.(message);
         }
@@ -256,7 +257,7 @@ export default function ProjectInjectionPanel({
   // 字号写在 section 上：全站 button { font: inherit } 会吞掉按钮上的 text-*，
   // 页签、占位符按钮只能从容器继承（2026-10-17 截图：页签与占位符都大了一号）
   return (
-    <section className={`text-xs ${compact ? "" : "space-y-3"}`} aria-label="对话注入">
+    <section className={`text-xs ${compact ? "" : "space-y-3"}`} aria-label="项目说明">
       <button
         type="button"
         className="flex w-full items-center gap-1.5 text-left"
@@ -264,7 +265,7 @@ export default function ProjectInjectionPanel({
         aria-expanded={open}
       >
         <FoldMark open={open} />
-        <span className="font-medium text-l3">对话注入</span>
+        <span className="font-medium text-l3">项目说明</span>
         <span className="min-w-0 flex-1 truncate text-micro text-l4">
           {MODE_LABEL[mode]}
         </span>
@@ -272,13 +273,14 @@ export default function ProjectInjectionPanel({
       {open && (
         <div className="mt-2 space-y-2.5">
           <p className="text-micro leading-5 text-l4">
-            直接开聊时（＋新对话、问 AI、编程页「进入」、巡检开聊）放在开头的项目说明。开工任务书与验收写入不受影响。
+            在这个项目里开对话时，悄悄附在你第一句前面，让 AI 知道是哪个课题（侧栏课题的 ＋、项目页「＋ 新对话」、新对话换到这个项目、问 AI、编程页「进入」、定时任务开聊）。
+            聊天里它折成一行「已附项目说明」，自动起名不看它。开工任务书与验收写入不受影响。
           </p>
           <SegTabs<SessionInjectionMode>
             items={[
               { id: "auto", label: "自动" },
               { id: "custom", label: "自定义" },
-              { id: "off", label: "不注入" },
+              { id: "off", label: "不附带" },
             ]}
             value={mode}
             onChange={switchMode}
@@ -302,7 +304,7 @@ export default function ProjectInjectionPanel({
                     }}
                     onBlur={() => save(mode, templateDraft)}
                     placeholder="写你自己的说明；{{名字}} 每次开对话按项目当时内容填入。"
-                    aria-label="对话注入模板"
+                    aria-label="项目说明模板"
                   />
                   <div className="flex flex-wrap items-center gap-1 text-micro">
                     <span className="mr-0.5 text-l4">插入</span>
@@ -360,12 +362,12 @@ export default function ProjectInjectionPanel({
               </div>
               {emptyCustom && (
                 <p className="text-l2">
-                  一项都没选、也没写补充：开对话仍按「自动」带项目说明；不想带任何说明请选「不注入」。
+                  一项都没选、也没写补充：开对话仍按「自动」带项目说明；不想带任何说明请选「不附带」。
                 </p>
               )}
               {unknownTokens.length > 0 && (
                 <p className="text-warn-text">
-                  未识别的占位符会原样注入：{unknownTokens.join("、")}
+                  未识别的占位符会原样带上：{unknownTokens.join("、")}
                 </p>
               )}
               {separatorClash && (
@@ -378,7 +380,7 @@ export default function ProjectInjectionPanel({
           )}
           {mode === "off" && (
             <p className="text-l2">
-              开对话只带你说的话：AI 不知道项目背景，也不带「按用户这次说的做」的纪律句。
+              开对话只发你说的话：AI 不知道项目背景，也不带「按用户这次说的做」的纪律句。
             </p>
           )}
           <div>
@@ -390,7 +392,7 @@ export default function ProjectInjectionPanel({
                 aria-expanded={previewOpen}
               >
                 <FoldMark open={previewOpen} />
-                <span className="font-medium text-l2">预览下次注入</span>
+                <span className="font-medium text-l2">预览下次附带的说明</span>
                 {previewLoading && (
                   <span className="text-micro text-l4">渲染中…</span>
                 )}
@@ -418,7 +420,7 @@ export default function ProjectInjectionPanel({
                   </pre>
                 ) : (
                   <p className="rounded-md ccode-well p-2 text-micro text-l3">
-                    （不注入：开对话只带你说的话）
+                    （不附带：开对话只发你说的话）
                   </p>
                 )}
               </div>

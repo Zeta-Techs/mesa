@@ -15,6 +15,7 @@ import {
   projectUsesSkillPool,
   renderProjectContextPack,
   renderSessionInjection,
+  splitLaunchPrompt,
 } from "../src/project-context.ts";
 
 test("research pack names the project, lists files, and states write-review", () => {
@@ -380,4 +381,21 @@ test("memory cap applies inside the placeholder block", () => {
   });
   assert.match(rendered, /已按最新有效知识优先/);
   assert.ok(rendered.length < 6200);
+});
+
+test("第一句里的项目说明和人说的话分开：气泡与取回只认人说的", () => {
+  const pack = "你正在项目「测试项目」中工作。\n工作方式：科研";
+  assert.deepEqual(splitLaunchPrompt(composeLaunchPrompt(pack, "帮我整理文献")), {
+    pack,
+    said: "帮我整理文献",
+  });
+  // 只发了包（以前项目 ＋ 新对话自己开跑的那种）
+  assert.deepEqual(splitLaunchPrompt(pack), { pack, said: "" });
+  // Windows 换行
+  assert.equal(splitLaunchPrompt(`${pack}\r\n\r\n----\r\n\r\n你好`).said, "你好");
+  // 不是 Mesa 的包头：原样当人话，哪怕里面有分隔线
+  assert.deepEqual(splitLaunchPrompt("第一段\n\n----\n\n第二段"), {
+    pack: null,
+    said: "第一段\n\n----\n\n第二段",
+  });
 });

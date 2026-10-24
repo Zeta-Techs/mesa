@@ -99,6 +99,16 @@ export function fileRefPath(token: string): string | null {
   return t;
 }
 
+/**
+ * 反引号里其实是中文说法、不是代码（模型爱把界面按钮名、术语也包进反引号：`随手聊`、`接着做 Ccode`）：
+ * 聊天里按正文排，不上行内代码的强调色。含汉字 / 假名 / 谚文、且没有路径、点号、等号、括号这类代码符号才算；
+ * `notes/笔记.md`、`f(中文)` 仍是代码。
+ */
+export function isProseCodeSpan(text: string): boolean {
+  if (!/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(text)) return false;
+  return !/[/\\.=_(){}[\]<>$#@:;|&*~^%`'"]/.test(text);
+}
+
 export interface FileRefHit {
   /** 在原文里的起点（已跳过包裹的 * _） */
   index: number;

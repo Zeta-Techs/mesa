@@ -1,4 +1,4 @@
-import { mentionedAudioFiles, splitReplySections, type ReplySection } from "../chat-reply";
+import { isProseCodeSpan, mentionedAudioFiles, splitReplySections, type ReplySection } from "../chat-reply";
 import { sanitizeDocumentHtml } from "../document-html";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -13,6 +13,8 @@ import { chatMathExtensions, renderMathInto } from "../md-math";
 import { highlightCodeBlocks } from "../code-highlight";
 import { citeTipFor, decorateCitations, linkFileRefs } from "../chat-inline-refs";
 import { HoverTip } from "./HoverTip";
+import { Collapse } from "./PageFrame";
+import ChatImageViewer from "./ChatImageViewer";
 
 /**
  * 聊天消息 Markdown 渲染（AI 回复正文；用户气泡保持纯文本）。
@@ -38,6 +40,10 @@ chatMarked.use({
   renderer: {
     html({ text }) {
       return escapeHtml(text);
+    },
+    // 反引号里的中文说法不当代码排（chat-reply isProseCodeSpan）；其余走默认 <code>
+    codespan({ text }) {
+      return isProseCodeSpan(text) ? `<span class="md-code-prose">${escapeHtml(text)}</span>` : false;
     },
   },
   extensions: chatMathExtensions,
@@ -96,7 +102,11 @@ export default function ChatMarkdown({
                   })
                 }
               />
-              {open && section.body && <MarkdownBody text={section.body} cwd={cwd} />}
+              {section.body && (
+                <Collapse open={open}>
+                  <MarkdownBody text={section.body} cwd={cwd} />
+                </Collapse>
+              )}
             </div>
           );
         })}
@@ -373,6 +383,7 @@ export function ChatImageCard({
   const setPreviewReq = useAppStore((s) => s.setPreviewReq);
   const [src, setSrc] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  const [viewing, setViewing] = useState(false);
   const abs = cwd ? resolveMdPath(`${cwd}/_`, path) : path;
   const name = abs.split(/[\\/]/).pop() ?? abs;
 
@@ -401,26 +412,32 @@ export function ChatImageCard({
         className="my-1 flex items-start gap-1.5 break-all rounded-md border border-hairline bg-inset px-2.5 py-1.5 font-mono text-xs text-l3"
         title={abs}
       >
-        <ImageOff size={13} strokeWidth={1.8} aria-hidden="true" className="mt-0.5 shrink-0 text-l4" />
+        <span className="ccode-icon-line">
+          <ImageOff size={13} strokeWidth={1.8} aria-hidden="true" className="text-l4" />
+        </span>
         <span>{name}（不在可读取范围或文件已删除）</span>
       </div>
     );
   if (!src) return <div className="md-img-pending my-1">图片加载中…</div>;
+  // 有工作目录：右栏文件预览（可以边看边聊）；随手聊没有工作目录：弹层看大图（原先点了没反应）
   return (
-    <button
-      type="button"
-      className="my-1 block cursor-zoom-in border-0 bg-transparent p-0"
-      title={`${name}（点击放大预览）`}
-      onClick={() => {
-        if (cwd)
-          setPreviewReq({ path: abs, name, root: cwd });
-      }}
-    >
-      <img
-        src={src}
-        alt={name}
-        className="max-h-64 max-w-full rounded-md border border-hairline object-contain"
-      />
-    </button>
+    <>
+      <button
+        type="button"
+        className="my-1 block cursor-zoom-in border-0 bg-transparent p-0"
+        title={`${name}（点击放大预览）`}
+        onClick={() => {
+          if (cwd) setPreviewReq({ path: abs, name, root: cwd });
+          else setViewing(true);
+        }}
+      >
+        <img
+          src={src}
+          alt={name}
+          className="max-h-64 max-w-full rounded-md border border-hairline object-contain"
+        />
+      </button>
+      {viewing && <ChatImageViewer path={abs} cwdHint={null} onClose={() => setViewing(false)} />}
+    </>
   );
 }

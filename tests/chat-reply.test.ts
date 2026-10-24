@@ -4,6 +4,7 @@ import {
   confirmChoices,
   fileRefPath,
   findFileRefs,
+  isProseCodeSpan,
   mentionedAudioFiles,
   REPLY_FOLD_MIN_CHARS,
   splitReplySections,
@@ -133,4 +134,11 @@ test("回复里提到的本机音频给播放条：相对 / 绝对 / ~/ 都认�
   ]);
   assert.deepEqual(findFileRefs(text).map((h) => h.path), ["notes/demo.md"]);
   assert.deepEqual(mentionedAudioFiles("没有音频的回复。say Mesa"), []);
+});
+
+test("反引号里的中文说法按正文排，带代码符号的仍是代码", () => {
+  for (const t of ["随手聊", "完全访问", "接着做 Ccode", "解释一个概念"]) assert.equal(isProseCodeSpan(t), true, t);
+  for (const t of ["glm-5.3-flash", "+", "↑", "notes/笔记.md", "f(中文)", "key=值", "npm test"]) {
+    assert.equal(isProseCodeSpan(t), false, t);
+  }
 });

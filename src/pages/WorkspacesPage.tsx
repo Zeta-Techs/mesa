@@ -19,8 +19,10 @@ import {
   LocateFixed,
   MessagesSquare,
   Play,
+  Plus,
   Trash2,
 } from "lucide-react";
+import { startProjectChat } from "../components/AskAiModal";
 import {
   appUpdateInboxEntry,
   runInboxAction,
@@ -125,7 +127,6 @@ import {
   readProjectSurfaceTab,
   type ProjectSurfaceTab,
 } from "../project-surface";
-import ProjectChatsView from "../components/ProjectChatsView";
 import ProjectSchedulesView from "../components/ProjectSchedulesView";
 
 /** 保留工作区的合并已完成，且分支尚未产生新的待合并提交。 */
@@ -2241,14 +2242,22 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
               />
             ) : undefined
           }
+          trailing={
+            // 「对话」页签撤掉后（2026-10-23，对话挂在侧栏项目树下面），从项目里开聊留这一个入口
+            selectedGroup.project ? (
+              <button
+                type="button"
+                onClick={() => selectedGroup.project && startProjectChat(selectedGroup.project)}
+                title={`在「${selectedGroup.project.name}」里开一段新对话：发第一句才启动，Agent 和模型在输入框里选`}
+                className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
+              >
+                <Plus size={13} strokeWidth={1.8} aria-hidden="true" />
+                新对话
+              </button>
+            ) : undefined
+          }
         >
-        {selectedGroup.project && selectedSurfaceTab === "chats" ? (
-          <ProjectChatsView
-            project={selectedGroup.project}
-            extraRoots={selectedGroup.list.map((item) => item.worktreePath)}
-            onError={setError}
-          />
-        ) : selectedGroup.project && selectedSurfaceTab === "schedules" ? (
+        {selectedGroup.project && selectedSurfaceTab === "schedules" ? (
           <ProjectSchedulesView
             project={selectedGroup.project}
             focusToken={

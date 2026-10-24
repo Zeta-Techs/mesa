@@ -2988,6 +2988,21 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
   const loadSettings = useAppStore((s) => s.loadSettings);
+  // 托盘被 cc-switch 挡路后转来的请求：弹该连接的「设为全局」确认（挡路说明在确认框里）。
+  // 连接还没加载完就等下一轮；profileId 为空只是跳到本页
+  const trayGlobalReq = useAppStore((s) => s.trayGlobalReq);
+  useEffect(() => {
+    if (!trayGlobalReq) return;
+    if (!trayGlobalReq.profileId) {
+      useAppStore.getState().setTrayGlobalReq(null);
+      return;
+    }
+    if (profiles.length === 0 && !connectionLoadError) return;
+    useAppStore.getState().setTrayGlobalReq(null);
+    const p = profiles.find((x) => x.id === trayGlobalReq.profileId);
+    if (p) void onApplyGlobal(p);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trayGlobalReq, profiles, connectionLoadError]);
 
   /** 「新对话」：用这条连接开一段空白对话（与侧栏「新对话」同一落点），发一句话就能看出连接可不可用。
    *  不预先挡缺端点 / 缺密钥 / 已停用的连接——问题由输入框和启动提示如实说出来 */
@@ -3969,7 +3984,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
             // 注入模式：改动只对**新启动**的标签生效，已在跑的要重开
             if (runningAgents.has(agent))
               setSavedNote(
-                `已保存「${name}」。这个 agent 有终端标签正在运行——连接是在启动那一刻注入的，改动要**重开标签**才生效。`,
+                `已保存「${name}」。这家 Agent 有对话正在运行——连接是在启动那一刻注入的，那几段要**停下再接着聊**才用上改动。`,
               );
           }}
         />

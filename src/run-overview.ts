@@ -55,6 +55,51 @@ export interface RunOverviewInput {
   runId?: string;
   /** 人声明目标身份（task:<id> 的 id 部分；重启恢复的标签 reuseKey 不在白名单里，靠它归属项目） */
   taskId?: string;
+  /** 这个标签接着的会话（已接上的、或带着要接的）：侧栏对话行按它亮状态点、认「正在看的这段」 */
+  sessionId?: string | null;
+}
+
+/** 一个标签折成 RunOverviewInput。标签刚开、TerminalView 还没上报状态时先用开标签时就知道的（Agent / 目录 / 要接的会话）：
+ *  否则侧栏这一拍认不出它是哪段对话，在最上面闪一行「其他打开的 · 新对话」又收回去，整列跳一下（2026-10-24 用户：切对话画面跳动） */
+export function tabRunInput(
+  tab: {
+    id: string;
+    initialTitle?: string;
+    initialAgentId?: string;
+    initialCwd?: string;
+    resumeSessionId?: string;
+    reuseKey?: string;
+    runId?: string;
+    taskId?: string;
+  },
+  status:
+    | {
+        title: string;
+        agentId: string;
+        model: string;
+        cwd: string;
+        running: boolean;
+        shell: boolean;
+        attention: RunOverviewInput["attention"];
+        runId?: string | null;
+        sessionId: string | null;
+      }
+    | undefined,
+): RunOverviewInput {
+  return {
+    tabId: tab.id,
+    title: status?.title ?? tab.initialTitle ?? "终端",
+    agentId: status?.agentId ?? tab.initialAgentId ?? "",
+    model: status?.model ?? "",
+    cwd: status?.cwd ?? tab.initialCwd ?? "",
+    running: status?.running ?? false,
+    shell: status?.shell ?? false,
+    attention: status?.attention ?? null,
+    reuseKey: tab.reuseKey,
+    runId: status?.runId ?? tab.runId,
+    taskId: tab.taskId,
+    sessionId: status ? status.sessionId : (tab.resumeSessionId ?? null),
+  };
 }
 
 /** Resolve a Run only from the already-mirrored terminal identity, never by

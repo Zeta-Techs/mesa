@@ -2,16 +2,19 @@
 //!
 //! Finder、启动台、开始菜单、安装包里的图标由打包资源决定（macOS 26+ 由 Assets.car 随系统外观
 //! 切深浅，见 design-system「应用图标」），这里只换**运行中**的那一份：macOS 程序坞、
-//! Windows/Linux 主窗（任务栏）与托盘。system = 不干预——macOS 打包运行时交还打包资源，
+//! Windows/Linux 主窗（任务栏）与托盘（macOS 菜单栏托盘是单色模板图，见 tray.rs）。system = 不干预——macOS 打包运行时交还打包资源，
 //! 其余情况（Windows/Linux、macOS 开发态裸二进制）用墨底版，与打包默认一致。
 
+#[cfg(not(target_os = "macos"))]
 use tauri::image::Image;
 use tauri::AppHandle;
 #[cfg(not(target_os = "macos"))]
 use tauri::Manager;
 
 // include_image! 存原始像素进二进制，所以主窗/托盘只放 256 的撑满版
+#[cfg(not(target_os = "macos"))]
 const WINDOW_DARK: Image<'static> = tauri::include_image!("icons/runtime/window-dark.png");
+#[cfg(not(target_os = "macos"))]
 const WINDOW_LIGHT: Image<'static> = tauri::include_image!("icons/runtime/window-light.png");
 
 #[cfg(target_os = "macos")]
@@ -20,18 +23,20 @@ const DOCK_DARK: &[u8] = include_bytes!("../icons/runtime/dock-dark.png");
 const DOCK_LIGHT: &[u8] = include_bytes!("../icons/runtime/dock-light.png");
 
 pub fn apply(app: &AppHandle, style: &str) {
-    let window_icon = if style == "light" {
-        WINDOW_LIGHT
-    } else {
-        WINDOW_DARK
-    };
-    if let Some(tray) = app.tray_by_id(crate::tray::TRAY_ID) {
-        let _ = tray.set_icon(Some(window_icon.clone()));
-    }
-    // macOS 窗口没有自己的图标（程序坞才是），set_icon 在那边是空操作
+    // macOS 窗口没有自己的图标（程序坞才是），菜单栏托盘是单色模板图（tray.rs），都不跟这里换
     #[cfg(not(target_os = "macos"))]
-    for window in app.webview_windows().values() {
-        let _ = window.set_icon(window_icon.clone());
+    {
+        let window_icon = if style == "light" {
+            WINDOW_LIGHT
+        } else {
+            WINDOW_DARK
+        };
+        if let Some(tray) = app.tray_by_id(crate::tray::TRAY_ID) {
+            let _ = tray.set_icon(Some(window_icon.clone()));
+        }
+        for window in app.webview_windows().values() {
+            let _ = window.set_icon(window_icon.clone());
+        }
     }
     #[cfg(target_os = "macos")]
     set_dock_icon(app, style);

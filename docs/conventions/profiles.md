@@ -310,7 +310,14 @@ Grok 还须同时写 `[models].default` = 本次启动模型（2026-09-20 1.0.34
 
 「写入 CLI 全局默认」是绑定上的动作，复用现事务写入 / 备份 / 原始快照 / 复检弹层。确认前 `preview_profile_global` 给出脱敏变更预览（文件、字段增删改、此入口带不上的策略、已开进程需新开）。成功更新「外部 CLI 上次写入」追踪，**不**改 Mesa 启动默认，也不改项目默认。无密钥网关仍禁止（`plan_writes` 现拒绝 `noAuth`，保持）。
 
-**设为全局挡路（v3.252 / v3.253）**：本机有 `~/.cc-switch` 时，所有支持「设为全局」的 Agent 连接页二次确认（默认焦点在取消）；托盘一点不写盘，通知去连接页。Codex 另认 live `config.toml` 的 cc-switch catalog / `custom` 渠道（即使卸了 cc-switch）。不挡 Codex「注册到客户端」。官方账号「设为全局」（恢复初始）不挡。
+**设为全局挡路（v3.252 / v3.253）**：本机有 `~/.cc-switch` 时，所有支持「设为全局」的 Agent 连接页二次确认（默认焦点在取消）；托盘一点不写盘，转连接页确认（见下「托盘挡路转交」）。Codex 另认 live `config.toml` 的 cc-switch catalog / `custom` 渠道（即使卸了 cc-switch）。不挡 Codex「注册到客户端」。官方账号「设为全局」（恢复初始）不挡。
+
+**托盘挡路转交（2026-10-23 用户拍板）**：原「托盘一点只发系统通知」作废——通知没授权 / 被专注模式吞掉时点了等于没反应。现口径：
+- 挡路判定在**点击时**现算（`set_global_conflict_message`），建菜单时同口径决定首行；
+- 挡路时该 Agent 子菜单**首行可点**：装着 cc-switch 写「本机装了 cc-switch · 在 Mesa 里设为全局…」，只有 Codex live 痕迹写「config.toml 里有 cc-switch 的渠道 · …」；点首行 = 打开主窗口跳连接页；
+- 点 api 绑定 = 不写盘，打开主窗口、跳连接页、弹**该绑定**的设为全局确认（与连接页同一个 `onApplyGlobal` 预览 + 挡路说明，默认焦点在取消）；事件 `tray:set-global {agent, profileId|null}` → store `trayGlobalReq`（连接未加载完等下一轮）；重绘撤回 macOS 点击自带的勾选翻转；
+- 每次被挡记一条 `logbuf`（source `tray`，info），设置 → 诊断可查；
+- 托盘绝不替人过二次确认，也不因挡路把该 Agent 藏掉或整组置灰。
 
 **官方绑定「设为全局」改语义**（今日 `plan_writes` 对 official 直接报错）：改为 `restore_original_backup`——清掉 Mesa 写入的 API 配置，让 CLI 登录态接手，并 `clear_active_global`。没有原始快照（从未对这个 agent 设过全局）= 无事可恢复，按钮说明「当前全局文件不是 Mesa 写的，无需恢复」。这是切回官方账号的托盘 / 菜单入口，不是新发明（`global_config.rs` `original/` + `restore_original_backup`）。
 
@@ -335,7 +342,7 @@ Codex            → …
 | 比对 | 托盘 |
 |---|---|
 | 与某绑定计划一致 | 该项 `●`，其余 `○` |
-| 谁都比不上（手改 / 他方工具写过） | 全部 `○`，菜单顶一行「全局文件已在 Mesa 外改过」 |
+| 谁都比不上（手改 / 他方工具写过） | 全部 `○`，菜单顶一行「全局文件已在 Mesa 外改过」；装着 cc-switch 时加「，多半是 cc-switch」（比对只知道变了、不知道谁改的，不得写成断言） |
 | dry-run 失败（读文件失败、超时） | 回落「上次写入」徽标口径，并在该项 title 标明「未校验磁盘」 |
 
 不在托盘做 cc-switch 式回填保真。比对只影响显示，不自动写回。

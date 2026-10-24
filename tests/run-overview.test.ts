@@ -258,3 +258,39 @@ test("Windows 路径方言：反斜杠 / 大小写 / verbatim 前缀都算同一
     false,
   );
 });
+
+test("tabRunInput：标签刚开还没上报状态时用开标签时的 Agent / 目录 / 要接的会话，侧栏不闪「新对话」", async () => {
+  const { tabRunInput } = await import("../src/run-overview.ts");
+  const { openTabRows } = await import("../src/sidebar-chats.ts");
+  const tab = {
+    id: "t1",
+    initialAgentId: "claude-code",
+    initialCwd: "/p",
+    initialTitle: "精读",
+    resumeSessionId: "s1",
+  };
+  const input = tabRunInput(tab, undefined);
+  assert.equal(input.agentId, "claude-code");
+  assert.equal(input.sessionId, "s1");
+  assert.equal(input.cwd, "/p");
+  const rows = openTabRows({
+    runs: [input],
+    listed: new Set(["claude-code\ns1"]),
+    focusedTabId: "t1",
+    folderOf: () => null,
+  });
+  assert.deepEqual(rows, []);
+  // 上报之后以上报的为准（接上了别的会话、或还没认出会话）
+  const reported = tabRunInput(tab, {
+    title: "x",
+    agentId: "claude-code",
+    model: "",
+    cwd: "/p",
+    running: true,
+    shell: false,
+    attention: null,
+    runId: null,
+    sessionId: null,
+  });
+  assert.equal(reported.sessionId, null);
+});

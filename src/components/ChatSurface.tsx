@@ -1,11 +1,14 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import ConversationView from "./ConversationView";
-import ChatComposer from "./ChatComposer";
+import ChatComposer, { useToneFlash, type ComposerSeed } from "./ChatComposer";
+import { splitImagePaths } from "../chat-image";
 import ChatEmptyStart from "./ChatEmptyStart";
 import { firstCompleteTurnIndex } from "../conversation-tools";
 import { useAutoLoadOlder, wasPrepended } from "../auto-load-older";
+import { useReadingAnchor } from "../reading-anchor";
 import { chatGreeting, resolveChatCwd, starterContextFor } from "../chat-empty-start";
 import { useAppStore } from "../store";
 import { isLightTheme } from "../themes";
@@ -25,7 +28,7 @@ import type { TuiMenu } from "../tui-menu";
 import { liveReplySupported, unsyncedTail } from "../live-reply";
 import { useRevealedText } from "../text-reveal";
 import { lastContextTokens, userTextHistory, type MesaCommand } from "../composer-assist";
-import { AGENTS, type ProjectDto, type SessionMetaDto } from "../types";
+import { AGENTS, type ProjectDto } from "../types";
 import type {
   ChatMessageDto,
   DetectResult,
@@ -35,7 +38,7 @@ import type {
 } from "../types";
 import { IS_WINDOWS } from "../hotkeys";
 import { samePath } from "../path-utils";
-import { dropHitsRect, joinDroppedChatPaths } from "../terminal-input";
+import { dropHitsRect } from "../terminal-input";
 import {
   approvalExtraHint,
   chatHeaderStatus,
@@ -48,7 +51,6 @@ import { decisionKind, recordChatHandoff, type HandoffReason } from "../chat-han
 import { chatStatus, STATUS_QUIET_START_MS } from "../chat-status";
 import { confirmChoices } from "../chat-reply";
 import ChatDecisionCard, { type ChatDecision } from "./ChatDecisionCard";
-import ChatBetaBadge from "./ChatBetaBadge";
 import { useCliNewer } from "../cli-verified";
 import { connIssueDecision } from "../chat-decision";
 import { cwdChipLabel } from "../terminal-welcome";
@@ -99,9 +101,10 @@ export default function ChatSurface({
   onAnswerTrust,
   ptyQuiet = false,
   launchPick = null,
+  recordPending = false,
   onPickLaunch,
   onRestore,
-  onPickRecent,
+  onDraftChange,
   onPickDir,
   onNewProject,
   runtime = null,
@@ -126,6 +129,7 @@ export default function ChatSurface({
   channel = null,
   onChannelReply,
   onSendNow,
+  metaSlots = null,
 }: {
   messages: ChatMessageDto[];
   state: "idle" | "detecting" | "linked" | "timeout";
@@ -167,6 +171,8 @@ export default function ChatSurface({
   ptyQuiet?: boolean;
   /** 开聊前的 Agent / 配置 / 模型选择（与终端启动栏同一份；进程起来后不再显示） */
   launchPick?: LaunchPickState | null;
+  /** 接一段旧对话的标签刚开、状态还没报上来：记录在路上，不画空态 */
+  recordPending?: boolean;
   onPickLaunch?: {
     agent: (id: string) => void;
     profile: (id: string) => void;
@@ -181,8 +187,8 @@ export default function ChatSurface({
   };
   /** 恢复占位：接回这个标签上次的会话 */
   onRestore?: () => void;
-  /** 空态「最近的随手聊」点一条：接着聊它（快速开聊的空白标签用） */
-  onPickRecent?: (s: SessionMetaDto) => void;
+  /** 输入框里有没有没发的字或附件（标签那边据此决定切走时能不能顺手收掉这个标签） */
+  onDraftChange?: (hasDraft: boolean) => void;
   /** 开聊前换项目 / 文件夹（项目芯片弹层、把文件夹拖进来）：选了项目由标签那边带上项目默认的 Agent */
   onPickDir?: (pick: DirPick) => void;
   /** 项目弹层「新建项目…」 */
@@ -235,6 +241,11 @@ export default function ChatSurface({
   onChannelReply?: (requestId: string, decision: ChannelReplyDecision) => void;
   /** 往终端写一串键（「立即发送」：这家 CLI 让排着的那句马上处理的键，mid-turn-send.ts） */
   onSendNow?: (keys: string) => void;
+  /**
+   * 底部状态栏（聊天变体）留给「权限 · 项目 | 模型」的左右两格（TerminalStatusBar chatMetaRef）。
+   * 两格都在、输入框不在居中空态时挂进去（输入框下面只有一行，2026-10-23）；否则画在输入框下面
+   */
+  metaSlots?: { left: HTMLElement | null; right: HTMLElement | null } | null;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -242,9 +253,8 @@ export default function ChatSurface({
   const followRef = useRef(true);
   const [hasNew, setHasNew] = useState(false);
   const [stuckWaiting, setStuckWaiting] = useState(false);
-  const [seedInsert, setSeedInsert] = useState<string | null>(null);
+  const [seedInsert, setSeedInsert] = useState<string | ComposerSeed | null>(null);
   const [homeDir, setHomeDir] = useState("");
-  const prevScrollHeightRef = useRef(0);
   const loadingOlderRef = useRef(false);
   const prevFirstKeyRef = useRef<string | null>(null);
   // 被分页切断的半轮先不显示（它的提问在更早一页里），否则收起行的时长 / 条数会在加载更早一页后变
@@ -305,6 +315,16 @@ export default function ChatSurface({
     el.scrollTop = el.scrollHeight;
   }
 
+  // 阅读位置：上面多了更早一页、图片晚到撑高时把正看着的那行留在原处，跟着底部时贴底（reading-anchor.ts）。
+  // 人刚点开了什么（过程、长文）而内容变高：先锚住，再按现在离底多远重算跟不跟
+  useReadingAnchor(scrollRef, {
+    stickToBottom: () => followRef.current,
+    onUserShift: () => {
+      const el = scrollRef.current;
+      if (el) followRef.current = nearBottom(el);
+    },
+  });
+
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -312,15 +332,12 @@ export default function ChatSurface({
       loadingOlderRef.current &&
       wasPrepended(prevFirstKeyRef.current, shownMessages.map(chatMessageKey));
     prevFirstKeyRef.current = shownMessages[0] ? chatMessageKey(shownMessages[0]) : null;
-    // 只在头部真的多了消息时补偿：等更早一页的途中最新窗口刷新了（只在尾部追加），
-    // 那次不能把补偿用掉，否则阅读位置会跳
+    // 头部真的多了更早一页：位置由 useReadingAnchor 在绘制前挪回，这次不算「有新消息」。
+    // 等更早一页的途中最新窗口刷新了（只在尾部追加）不算前插，标记留给真前插那次
     if (loadingOlderRef.current && prepended) {
-      const delta = el.scrollHeight - prevScrollHeightRef.current;
-      el.scrollTop += delta;
       loadingOlderRef.current = false;
       return;
     }
-    if (loadingOlderRef.current) prevScrollHeightRef.current = el.scrollHeight;
     // 贴底当帧就贴（不等下一帧）：切到一段刚摆出来的对话时，先画一帧停在最上面、再跳到底，看着是一跳。
     // 下一帧再补一次，接住这一帧之后才排好版的内容
     if (followRef.current) {
@@ -336,38 +353,41 @@ export default function ChatSurface({
 
   // 拖放监听只挂一次：开聊前能不能换目录随渲染变，经 ref 读最新的
   const dropPickDirRef = useRef<((pick: DirPick) => void) | null>(null);
+  // 拖着文件悬在聊天区上方：盖一层「松开添加」（2026-10-23 用户：像 ChatGPT 那样拖进输入框）
+  const [dropHover, setDropHover] = useState(false);
   useEffect(() => {
     if (!active) return;
     let cancelled = false;
     const unlisten = getCurrentWebviewWindow().onDragDropEvent((event) => {
-      if (event.payload.type !== "drop") return;
-      const rect = rootRef.current?.getBoundingClientRect();
-      if (!rect || rect.width === 0) return;
-      if (
-        !dropHitsRect(
-          event.payload.position,
-          rect,
-          window.devicePixelRatio || 1,
-        )
-      ) {
+      const hits = (position: { x: number; y: number }) => {
+        const rect = rootRef.current?.getBoundingClientRect();
+        return Boolean(rect && rect.width > 0 && dropHitsRect(position, rect, window.devicePixelRatio || 1));
+      };
+      const p = event.payload;
+      if (p.type === "enter" || p.type === "over") {
+        if (!cancelled) setDropHover(hits(p.position));
         return;
       }
-      const text = joinDroppedChatPaths(event.payload.paths, IS_WINDOWS);
-      if (!text) return;
-      // 开聊前拖进来一个文件夹 = 在这个文件夹里聊（项目弹层底部写着「也可以把文件夹拖进来」）；文件照旧当附件路径
+      if (!cancelled) setDropHover(false);
+      if (p.type !== "drop" || !hits(p.position)) return;
+      const paths = p.paths.filter((x) => x.length > 0);
+      if (paths.length === 0) return;
+      // 拖进来的成附件卡（同「+ → 文件或图片」，图片和 PDF 带缩略图），发送时一行一个路径
+      const seed = { text: "", paths };
+      // 开聊前拖进来一个文件夹 = 在这个文件夹里聊（项目弹层底部写着「也可以把文件夹拖进来」）；文件照旧当附件
       const pickDir = dropPickDirRef.current;
-      if (pickDir && event.payload.paths.length === 1) {
-        const path = event.payload.paths[0];
+      if (pickDir && paths.length === 1) {
+        const path = paths[0];
         void invoke("list_dir", { path, showHidden: false })
           .then(() => {
             if (!cancelled) pickDir({ kind: "folder", path });
           })
           .catch(() => {
-            if (!cancelled) setSeedInsert(text);
+            if (!cancelled) setSeedInsert(seed);
           });
         return;
       }
-      if (!cancelled) setSeedInsert(text);
+      if (!cancelled) setSeedInsert(seed);
     });
     return () => {
       cancelled = true;
@@ -383,24 +403,38 @@ export default function ChatSurface({
     messageCount: messages.length,
   });
   // 未就绪状态注记（原头部第一行文案迁入输入框左下角）：识别中/等待会话文件/可恢复才显示，
-  // linked 稳态（实时同步/已结束·可继续）不显——运行态由底部状态栏状态点覆盖
+  // linked 稳态（实时同步/已结束·可继续）不显——运行态由底部状态栏状态点覆盖。
+  // 只看没接的对话（列表里点开的）：输入框底部照常摆这段对话上次的「权限 · 模型 · 思考」、能改（2026-10-24 用户），
+  // 不加注记（原「发一句就接着聊」，同日用户删：看着像提示语、占地方，发一句接回是自然的事）
+  const resumePickOpen = Boolean(launchPick?.resumePick && !running);
   const statusNote =
-    syncState === "waiting" || state === "detecting" || state === "timeout"
-      ? headerStatus
-      : null;
+    launchPick?.preview === "shown" && !running
+      ? null
+      : syncState === "waiting" || state === "detecting" || state === "timeout"
+        ? headerStatus
+        : null;
   const canSend = state !== "timeout" || running || canResume;
   // 开聊前选择（Agent·模型 / 权限）：可改、没起进程、还没有对话
   const launchPickOpen = Boolean(launchPick?.editable && !running && messages.length === 0);
   dropPickDirRef.current = launchPickOpen && onPickDir ? onPickDir : null;
 
-  // 空态：输入框挪到画面中间偏上，起手提示与「接着上一段」在它下方（2026-10-17 二轮收敛）
-  const emptyStart = state === "idle" && messages.length === 0 && !stuckWaiting;
+  // 空态：输入框挪到画面中间偏上，起手提示与「接着上一段」在它下方（2026-10-17 二轮收敛）。
+  // 只看没接的对话还在读记录时不进空态，免得问候语闪一下；标签刚开、这段对话的状态还没报上来时同样不进
+  //（recordPending，2026-10-24 用户：切对话画面跳一下——先画一帧居中的空态再沉到底）
+  const emptyStart =
+    state === "idle" &&
+    messages.length === 0 &&
+    !stuckWaiting &&
+    launchPick?.preview !== "loading" &&
+    !recordPending;
+  // 输入框上方的看图标注台开着时不用居中空态：输入框沉到底，把整块高度让给图（2026-10-23 用户：图太小了）
+  const [imageStageOpen, setImageStageOpen] = useState(false);
+  const emptyLayout = emptyStart && !imageStageOpen;
 
   async function loadOlder(settle?: () => Promise<void>) {
     if (!onLoadOlder) return;
     followRef.current = false;
     loadingOlderRef.current = true;
-    prevScrollHeightRef.current = scrollRef.current?.scrollHeight ?? 0;
     await onLoadOlder(settle);
   }
   useAutoLoadOlder(scrollRef, {
@@ -733,6 +767,8 @@ export default function ChatSurface({
       ? effectivePermissionTier(launchPick.permission, launchPick.permissionMode, launchPick.permissionNote)
       : null;
   const composerTone = permTier === "full" ? "full" : permTier === "discuss" || readOnly ? "discuss" : null;
+  // 权限字平时灰；切到完全访问时与输入框上沿细线同一下亮 caution（2026-10-23 用户）
+  const toneFlash = useToneFlash(composerTone);
   // ⇧Tab 轮换权限：只在开聊前（开聊后换档要重开，留给菜单里那条确认）
   async function cyclePermission() {
     if (!launchPick || !onPickLaunch) return;
@@ -764,12 +800,155 @@ export default function ChatSurface({
   );
   const contextUsed = lastContextTokens(messages);
 
+  // 输入框下面那一行（2026-10-23 用户：照 Claude 客户端那样简洁）：框里只留 + 和发送，
+  // 左边「权限 · 项目」、右边「模型 · 思考」挪到框外；居中空态时紧贴输入框，开聊后挂进底部状态栏同一行
+  const metaSlotted = !emptyLayout && Boolean(metaSlots?.left && metaSlots?.right);
+  const metaLeft = (
+    <>
+      {/* 权限：开聊前可选，开聊后换 = 重开接回；只读分叉另有「只读分叉」标签，不重复。
+          平时灰字，切到完全访问时与输入框上沿细线同一下亮 caution（flash） */}
+      {launchPick && !readOnly && (launchPickOpen || resumePickOpen || running || canResume) && (
+        <ChatPermissionBadge
+          agentLabel={launchAgentLabel}
+          context={workContext}
+          cycleHint={launchPickOpen || resumePickOpen}
+          permission={launchPick.permission}
+          mode={launchPick.permissionMode}
+          modes={launchPick.permissionModes}
+          readonlySupported={launchPick.readonlySupported}
+          note={launchPick.permissionNote}
+          // 开聊前、只看没接、或 Agent 停了还能接着聊：改的是下次启动的参数；运行中：换 = 重开接回
+          editable={launchPickOpen || resumePickOpen || (!running && canResume)}
+          onPermission={onPickLaunch?.permission}
+          live={running && onRestartPermission ? { busy: generating, onRestart: onRestartPermission } : null}
+          flash={toneFlash}
+        />
+      )}
+      {/* 项目芯片（2026-10-17 用户：「将在 ~ 开始」应该是选项目；2026-10-22 换成与权限、模型同一族的弹层）：
+          能搜、带项目类型与项目默认；开聊后目录不能再换，不显示（开聊后状态栏自己写项目名 / 分支）。
+          换了目录，空态「最近的对话」随之列那个文件夹的 */}
+      {cwd && launchPick?.editable && !running && messages.length === 0 && (
+        <ChatProjectPicker
+          cwd={cwd}
+          homeDir={homeDir}
+          label={cwdLabel}
+          projects={projects}
+          recentRepos={recentRepos ?? []}
+          isWindows={IS_WINDOWS}
+          onPick={(pick) => onPickDir?.(pick)}
+          onChooseFolder={() => onChooseCwd?.()}
+          onNewProject={onNewProject}
+        />
+      )}
+      {statusNote ? (
+        <span
+          // 窄栏（阅读区右栏）里让它截断，不然顶到右侧的模型芯片上叠字
+          className="ml-1 min-w-0 truncate text-micro text-l4"
+          title={statusNote === "等待会话文件" ? "会话文件还没出现；Agent 起来后会自动接上" : statusNote}
+        >
+          {statusNote}
+        </span>
+      ) : null}
+      {readOnly && (
+        <span
+          className="ml-1 shrink-0 rounded-md bg-inset px-1.5 py-0.5 text-micro text-warn-text"
+          title={
+            readonlySupported
+              ? "该分叉会话启用了 Agent 原生只读/计划模式"
+              : "该 Agent 没有原生只读参数，仅提供提示约束"
+          }
+        >
+          只读分叉
+        </span>
+      )}
+      {readOnly && (
+        <button
+          type="button"
+          onClick={onAllowWrite}
+          className="shrink-0 rounded px-1 text-micro text-warn-text hover:bg-hover"
+        >
+          允许修改
+        </button>
+      )}
+    </>
+  );
+  // 「测试版」收进模型菜单底部一行（2026-10-23）：点进去说这一家在聊天里能做到哪一步、哪些要回终端
+  const openTerminalFromBeta = () => {
+    noteHandoff("user_switch", "beta");
+    onOpenTerminal();
+  };
+  // 「模型 · 思考」菜单：开聊前、运行中、停了可接着聊同一个菜单（ChatModelMenu）
+  const metaRight =
+    (launchPickOpen || resumePickOpen) && onPickLaunch ? (
+      <>
+        {/* 刚选的项目设了对话默认，Agent 跟着换了：说一声（几秒后自己消失） */}
+        {launchPick?.autoNote && (
+          <span className="shrink-0 animate-pulse-brief text-micro text-l4">{launchPick.autoNote}</span>
+        )}
+        <ChatModelMenu
+          kind="launch"
+          pick={launchPick!}
+          onAgent={onPickLaunch.agent}
+          onProfile={onPickLaunch.profile}
+          onModel={onPickLaunch.model}
+          onEffort={onPickLaunch.effort}
+          onPermission={onPickLaunch.permission}
+          combos={combos}
+          combosWhere={cwdLabel || null}
+          onCombo={onPickLaunch.combo}
+          hasImages={hasImages}
+          onImageWarning={setImageWarning}
+          onOpenTerminal={openTerminalFromBeta}
+        />
+      </>
+    ) : (running || canResume) && runtime && onTuiCommand ? (
+      <ChatModelMenu
+        kind="runtime"
+        status={runtime.status}
+        profileModels={runtime.profileModels}
+        modelSwitch={modelSwitch ?? null}
+        effort={runtime.effort}
+        submitCsiU={runtime.submitCsiU}
+        onTuiCommand={onTuiCommand}
+        onPicker={() => {
+          if (!peek) noteHandoff("picker", "menu");
+          onRequestPeek?.();
+        }}
+        contextUsed={contextUsed}
+        // 挂进状态栏时圆环由状态栏画（它有本段用量与连接名，悬停一起说）
+        showRing={!metaSlotted}
+        onCompact={mesaCommands.find((c) => c.cmd === "/compact")?.run ?? null}
+        onRelaunch={runtime.onRelaunch}
+        hasImages={hasImages}
+        onImageWarning={setImageWarning}
+        onOpenTerminal={openTerminalFromBeta}
+        // 进程退出、还能接着聊：改选「接着聊用哪个模型」，写标签的启动选择（与终端启动栏同一份）
+        next={
+          !running && canResume && launchPick && onPickLaunch
+            ? {
+                models: launchPick.models,
+                model: launchPick.model,
+                onModel: onPickLaunch.model,
+                effortLevels: launchPick.effortLevels,
+                effort: launchPick.effort,
+                onEffort: onPickLaunch.effort,
+              }
+            : null
+        }
+      />
+    ) : null;
+
   return (
     <div
       ref={rootRef}
       data-chat-drop="1"
-      className="flex h-full min-h-0 w-full flex-col bg-canvas"
+      className="relative flex h-full min-h-0 w-full flex-col bg-canvas"
     >
+      {dropHover && (
+        <div className="pointer-events-none absolute inset-2 z-40 flex items-center justify-center rounded-lg border-2 border-dashed border-mesa-amber/60 bg-canvas/80">
+          <p className="text-sm text-l2">松开，添加到消息里</p>
+        </div>
+      )}
       {/* 聊天头部整条取消（2026-09-13）：标题归标签条，身份/模型/目录/状态点归底部状态栏
           （chat 变体）——两行头部与它们完全重复。原头部独有功能就近收编：
           停止 → 发送钮同体（正在生成变「进行中」符号钮，点击往终端发 Esc 暂停，会话保留）；
@@ -789,20 +968,20 @@ export default function ChatSurface({
           scrollFadeTimer.current = setTimeout(() => {
             delete el.dataset.scrolling;
           }, 900);
-          const nearBottom =
-            el.scrollHeight - el.scrollTop - el.clientHeight < 56;
-          followRef.current = nearBottom;
-          if (nearBottom) setHasNew(false);
+          const atBottom = nearBottom(el);
+          followRef.current = atBottom;
+          if (atBottom) setHasNew(false);
         }}
+        // 浏览器自带的滚动锚定关掉，由 useReadingAnchor 一家做（两家叠着会补两遍）
         className={
-          emptyStart
+          emptyLayout
             ? "min-h-0 flex-[0.75_1_0]"
-            : "ccode-chat-scroll relative min-h-0 flex-1 overflow-auto"
+            : "ccode-chat-scroll relative min-h-0 flex-1 overflow-auto [overflow-anchor:none]"
         }
       >
         {/* 栏宽跟聊天字号走（App.css .ccode-chat-column，回答一行约 52 字），与输入框、底部状态栏同一条中轴 */}
         <div className="ccode-chat-column mx-auto flex min-h-full w-full flex-col px-4 pb-6 pt-8 sm:px-5">
-          {emptyStart && (
+          {emptyLayout && (
             // 空态问候：Mesa 光标标志 + 时段问候，贴在输入框正上方（2026-10-17 用户选定）。
             // 只是问候：不重复「问一个问题…」，不写 Agent 身份（v3.214 否决的是居中引导语）。
             // 标志用去掉底板的字标（2026-10-18 用户：方块图标像摆了个 App 图标）：M 随主题字色、
@@ -861,7 +1040,11 @@ export default function ChatSurface({
               cwd={cwd}
               working={generating || settling}
               awaiting={attention === "confirm" || channel?.turn?.status === "awaiting_approval"}
-              onEditResend={(text) => setSeedInsert(text)}
+              // 消息里整行的图片路径还原成附件缩略卡，不当文字塞回输入框
+              onEditResend={(text) => {
+                const split = splitImagePaths(text);
+                setSeedInsert({ text: split.text, paths: split.images });
+              }}
               onForkHere={onForkFrom}
               queuedNote={{
                 ...note,
@@ -956,7 +1139,7 @@ export default function ChatSurface({
             </button>
           )}
         </div>
-        {!emptyStart && (
+        {!emptyLayout && (
           // 对话流底部渐隐（2026-10-22 配色）：字滚到输入框上方时淡进画布，不是一刀切；负边距不占高度，不挡点击。
           // 挂在滚动区本身（不在内容栏里）：粘底层不能越出所在块的内容框，放在内容栏里时停在底部会落到 pb-6 留白之上、
           // 正好压在最后一行上（同日用户：「底部隐现的太多了」）。放这里停在底部时先盖住留白，只轻扫「思考中」那一行下缘；
@@ -992,140 +1175,14 @@ export default function ChatSurface({
         }
         // Claude 猜的下一句：只在它停在输入框、没有等你决定的事时给（生成中屏上那行是排队提示，不是建议）
         suggestion={running && !generating && !decision ? promptSuggestion : null}
-        leftExtras={
-          <>
-            {/* 项目芯片（2026-10-17 用户：「将在 ~ 开始」应该是选项目；2026-10-22 换成与权限、模型同一族的弹层）：
-                能搜、带项目类型与项目默认；开聊后目录不能再换，不显示 */}
-            {cwd && launchPick?.editable && !running && messages.length === 0 && (
-              <ChatProjectPicker
-                cwd={cwd}
-                homeDir={homeDir}
-                label={cwdLabel}
-                projects={projects}
-                recentRepos={recentRepos ?? []}
-                isWindows={IS_WINDOWS}
-                onPick={(pick) => onPickDir?.(pick)}
-                onChooseFolder={() => onChooseCwd?.()}
-                onNewProject={onNewProject}
-              />
-            )}
-            {/* 权限徽标：开聊前可选两档，开聊后只读；只读分叉另有「只读分叉」标签，不重复 */}
-            {launchPick && !readOnly && (launchPickOpen || running || canResume) && (
-              <ChatPermissionBadge
-                agentLabel={launchAgentLabel}
-                context={workContext}
-                cycleHint={launchPickOpen}
-                permission={launchPick.permission}
-                mode={launchPick.permissionMode}
-                modes={launchPick.permissionModes}
-                readonlySupported={launchPick.readonlySupported}
-                note={launchPick.permissionNote}
-                // 开聊前、或 Agent 停了还能接着聊：改的是下次启动的参数；运行中：换 = 重开接回
-                editable={launchPickOpen || (!running && canResume)}
-                onPermission={onPickLaunch?.permission}
-                live={
-                  running && onRestartPermission
-                    ? { busy: generating, onRestart: onRestartPermission }
-                    : null
-                }
-              />
-            )}
-            {/* 聊天层是测试版（chat-fidelity.ts）：点开说这一家在聊天里能做到哪一步、哪些要回终端 */}
-            <ChatBetaBadge
-              agentId={agentId ?? launchPick?.agentId ?? null}
-              onOpenTerminal={() => {
-                noteHandoff("user_switch", "beta");
-                onOpenTerminal();
-              }}
-            />
-            {statusNote ? (
-              <span
-                // 窄栏（阅读区右栏）里让它截断，不然顶到右侧的模型芯片上叠字
-                className="ml-1 min-w-0 truncate text-micro text-l4"
-                title={statusNote === "等待会话文件" ? "会话文件还没出现；Agent 起来后会自动接上" : statusNote}
-              >
-                {statusNote}
-              </span>
-            ) : null}
-            {readOnly && (
-              <span
-                className="ml-1 shrink-0 rounded-md bg-inset px-1.5 py-0.5 text-micro text-warn-text"
-                title={
-                  readonlySupported
-                    ? "该分叉会话启用了 Agent 原生只读/计划模式"
-                    : "该 Agent 没有原生只读参数，仅提供提示约束"
-                }
-              >
-                只读分叉
-              </span>
-            )}
-            {readOnly && (
-              <button
-                type="button"
-                onClick={onAllowWrite}
-                className="shrink-0 rounded px-1 text-micro text-warn-text hover:bg-hover"
-              >
-                允许修改
-              </button>
-            )}
-          </>
-        }
-        rightExtras={
-          // 「模型 · 思考」菜单：开聊前、运行中、停了可接着聊同一个菜单（ChatModelMenu）
-          launchPickOpen && onPickLaunch ? (
-            <>
-              {/* 刚选的项目设了对话默认，Agent 跟着换了：说一声（几秒后自己消失） */}
-              {launchPick?.autoNote && (
-                <span className="shrink-0 animate-pulse-brief text-micro text-l4">{launchPick.autoNote}</span>
-              )}
-            <ChatModelMenu
-              kind="launch"
-              pick={launchPick!}
-              onAgent={onPickLaunch.agent}
-              onProfile={onPickLaunch.profile}
-              onModel={onPickLaunch.model}
-              onEffort={onPickLaunch.effort}
-              onPermission={onPickLaunch.permission}
-              combos={combos}
-              combosWhere={cwdLabel || null}
-              onCombo={onPickLaunch.combo}
-              hasImages={hasImages}
-              onImageWarning={setImageWarning}
-            />
-            </>
-          ) : (running || canResume) && runtime && onTuiCommand ? (
-            <ChatModelMenu
-              kind="runtime"
-              status={runtime.status}
-              profileModels={runtime.profileModels}
-              modelSwitch={modelSwitch ?? null}
-              effort={runtime.effort}
-              submitCsiU={runtime.submitCsiU}
-              onTuiCommand={onTuiCommand}
-              onPicker={() => {
-                if (!peek) noteHandoff("picker", "menu");
-                onRequestPeek?.();
-              }}
-              contextUsed={contextUsed}
-              onCompact={mesaCommands.find((c) => c.cmd === "/compact")?.run ?? null}
-              onRelaunch={runtime.onRelaunch}
-              hasImages={hasImages}
-              onImageWarning={setImageWarning}
-              // 进程退出、还能接着聊：改选「接着聊用哪个模型」，写标签的启动选择（与终端启动栏同一份）
-              next={
-                !running && canResume && launchPick && onPickLaunch
-                  ? {
-                      models: launchPick.models,
-                      model: launchPick.model,
-                      onModel: onPickLaunch.model,
-                      effortLevels: launchPick.effortLevels,
-                      effort: launchPick.effort,
-                      onEffort: onPickLaunch.effort,
-                    }
-                  : null
-              }
-            />
-          ) : null
+        // 权限 · 项目 | 模型：状态栏在就挂进状态栏，否则画在框下面（metaSlots 注释）
+        footer={
+          metaSlotted ? null : (
+            <div className="mt-1 flex h-7 min-w-0 items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-0.5">{metaLeft}</div>
+              <div className="flex min-w-0 shrink items-center gap-1.5">{metaRight}</div>
+            </div>
+          )
         }
         running={composerShowsInterrupt({
           running,
@@ -1133,18 +1190,22 @@ export default function ChatSurface({
           pendingReply: loading,
         })}
         onInterrupt={onInterrupt}
-        narrow={emptyStart}
+        narrow={emptyLayout}
         cwd={cwd ?? null}
         mesaCommands={mesaCommands}
         recallHistory={recallHistory}
         tone={composerTone}
-        onCyclePermission={launchPickOpen && launchPick && !readOnly ? () => void cyclePermission() : undefined}
+        onCyclePermission={
+          (launchPickOpen || resumePickOpen) && launchPick && !readOnly ? () => void cyclePermission() : undefined
+        }
         imageWarning={imageWarning}
         onImagesChange={setHasImages}
+        onDraftChange={onDraftChange}
+        onImageStageChange={setImageStageOpen}
         queueHint={queueSendHint(midTurn)}
         stopTitle={stopTitle(midTurn)}
       />
-      {emptyStart && (
+      {emptyLayout && (
         // 输入框后面同一层级渲染，切出空态时输入框不重挂载（已输入的字、焦点都在）
         <div className="min-h-0 flex-1 overflow-auto">
           <div className="mx-auto w-full max-w-[45rem] px-4">
@@ -1154,7 +1215,6 @@ export default function ChatSurface({
               onPickPrompt={(text) => setSeedInsert(text)}
               resumeSessionId={launchPick?.resumeSessionId ?? null}
               onRestore={onRestore}
-              onPickRecent={onPickRecent}
               onPickProject={
                 // 与输入框里的项目芯片同一条换目录路径；开聊后目录不能再换，不给
                 launchPick?.editable && !running && onPickDir
@@ -1166,6 +1226,8 @@ export default function ChatSurface({
           </div>
         </div>
       )}
+      {metaSlotted && metaSlots?.left && createPortal(metaLeft, metaSlots.left)}
+      {metaSlotted && metaSlots?.right && createPortal(metaRight, metaSlots.right)}
       {peek && (
         <button
           type="button"
@@ -1182,6 +1244,11 @@ export default function ChatSurface({
 
 /** 安静多久才给「看实时输出」 */
 const QUIET_HINT_MS = 10_000;
+
+/** 离底不到 56px 算贴着底部：跟着新消息走 */
+function nearBottom(el: HTMLElement): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 56;
+}
 
 /** 1234 → 1.2k；千以下原样 */
 function fmtTokens(n: number): string {

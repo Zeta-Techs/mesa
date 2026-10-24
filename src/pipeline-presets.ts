@@ -28,7 +28,14 @@ export interface PipelineTemplateDef {
    *  没填的保留「名称：（提示）」占位，人在项目设置里改，或让商量时的 Agent 问完再改。
    *  占位不写进 TASK.md。 */
   projectSettings?: string[];
+  /** 已在真实课题上从头到尾走完过一遍。没走过的在选择器上标「未实测」，走完一套再改成 true。 */
+  fieldTested?: boolean;
 }
+
+/** 未实测模板的徽标与悬停说明（三处模板选择器共用） */
+export const UNTESTED_TEMPLATE_BADGE = "未实测";
+export const UNTESTED_TEMPLATE_HINT =
+  "这套步骤还没有在真实课题上从头到尾走过一遍，用的时候任务书可能要边走边改";
 
 /** 应用模板时写入 settings：本模板纪律 + 全局设定。没填的保留模板里的占位行。 */
 export function settingsForTemplateApply(
@@ -1701,6 +1708,7 @@ const BUILTIN_PIPELINE_TEMPLATES: PipelineTemplateDef[] = [
     description:
       "文献检索与筛选 → 精读笔记 → 大纲 → 初稿 → 润色定稿",
     steps: REVIEW_STEPS,
+    fieldTested: true,
     projectRules: [
       "优先使用项目里已有的 papers/、notes/ 和 references.bib，不要虚构文献。",
       "引用必须能追溯到项目中的来源。",

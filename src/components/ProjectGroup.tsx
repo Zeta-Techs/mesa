@@ -853,10 +853,15 @@ export default function ProjectGroup({
         ? [
             {
               icon: SquareTerminal,
-              label: "在终端定位目录",
-              title: "跳到终端页，文件树定位到该工作区目录",
+              label: "在终端打开工作区",
+              title: "在运行页开一个终端，目录就是这一步的工作区；左边文件树跟着显示它的文件",
               onSelect: () => {
-                setEnterCwdReq(activeWs.worktreePath);
+                useAppStore.getState().setPendingTerminal({
+                  cwd: activeWs.worktreePath,
+                  extraEnv: {},
+                  title: activeWs.name,
+                  shellOnly: true,
+                });
                 setPage("terminal");
               },
             },
@@ -1186,8 +1191,6 @@ export default function ProjectGroup({
 
   // PDF 资源「查看」：拼绝对路径交给终端页预览（后端按登记资源白名单放行，可选段问 AI）
   const setPage = useAppStore((s) => s.setPage);
-  // RX2b：步骤胶囊的「◫」切根交接与产物面板的 agent/profile 显示
-  const setEnterCwdReq = useAppStore((s) => s.setEnterCwdReq);
   const setWorkspaceReviewRequest = useAppStore(
     (s) => s.setWorkspaceReviewRequest,
   );

@@ -1,7 +1,7 @@
-/** 「快速开聊」纯逻辑（tests/quick-chat.test.ts）：默认选择、空白标签复用、随手聊历史，以及运行页「+」的目录。
- *  2026-10-18 用户拍板：快速开聊＝新对话（不弹窗、选择全在输入框里），「+」＝在当前项目里再开一个 Agent。
- *  随手聊历史只排除「点了也没法恢复」的——归档 / Mesa 内部无头会话 / 源文件已不在的 /
- *  进程仍活着的（live，resume 同会话会被 CLI 拒：active writer 冲突）。 */
+/** 「快速开聊」纯逻辑（tests/quick-chat.test.ts）：默认选择、空白标签复用与收起。
+ *  2026-10-18 用户拍板：快速开聊＝新对话（不弹窗、选择全在输入框里）。
+ *  随手聊历史列表（新对话右键菜单、聊天空态）2026-10-23 撤掉：对话挂进侧栏项目树（sidebar-chats.ts）；
+ *  运行页标签条与它的「+」2026-10-24 撤掉，新开只走侧栏「新对话」与项目行 ＋。 */
 import type { SessionMetaDto } from "./types";
 import { pathKey } from "./path-utils.ts";
 
@@ -114,15 +114,24 @@ export function isBlankChatTab(
   return !status.alive && !status.running && !status.sessionId;
 }
 
-/** 运行页「+」的目录：跟当前标签走（在同一个项目里再开一个 Agent）。当前标签没有目录，
- *  或在 Mesa 管的隔离目录（科研工作副本 / 编程工作树 / 定时隔离树，各有自己的入口和 Run 身份）里时，
- *  不跟，返回 undefined——新标签落到随手聊（TerminalView 挂载时补成 ensure_scratch_dir，2026-10-20 起不再默认主目录） */
-export function newTabCwd(focusedCwd: string | null | undefined, isWindows = false): string | undefined {
-  const cwd = focusedCwd?.trim();
-  if (!cwd || cwd === "~") return undefined;
-  const k = pathKey(cwd, isWindows);
-  if (/\/ccode\/(workspaces|worktrees|watch-worktrees)\//.test(`${k}/`)) return undefined;
-  return cwd;
+/** 从列表点开一段对话时，刚才看着的那个标签能不能顺手收掉（2026-10-23 侧栏挂对话第一期）：
+ *  只看了没说的对话（preview：带着要接的会话、还没起进程），或还没说过话的空白新对话；
+ *  输入框里有字、有图的不收（收了就丢了） */
+export function isThrowawayTab(
+  tab: { resumeSessionId?: string | null; reuseKey?: string; preview?: boolean },
+  status: { alive?: boolean; running?: boolean; sessionId?: string | null } | null | undefined,
+  hasDraft: boolean,
+): boolean {
+  if (hasDraft || status?.alive || status?.running) return false;
+  if (tab.preview && tab.resumeSessionId) return true;
+  return isNewChatKey(tab.reuseKey) && isBlankChatTab(tab, status);
+}
+
+/** 「新对话」入口开的空白标签：快速开聊（`quickchat:<uuid>`）与项目行「＋ 新对话」（`<类型>:<项目>:project:<uuid>`，
+ *  2026-10-24 起每次 ＋ 都是一段新对话）。别的入口开的空白标签（问 AI、阅读、步骤…）不算 */
+export function isNewChatKey(key: string | null | undefined): boolean {
+  if (!key) return false;
+  return key.startsWith(QUICK_CHAT_KEY_PREFIX) || /^(?:office|coding|research):.+:project:[^:]+$/.test(key);
 }
 
 /** Windows 上 Codex 在主目录启动、又跑在沙箱里（非「完全访问」）时要先提醒：Codex 的 Windows 沙箱跑命令前
@@ -142,78 +151,12 @@ export function codexSandboxCoversHome(input: {
   return !!input.home && pathKey(cwd, true) === pathKey(input.home, true);
 }
 
-/** 「没法恢复」的会话统一排除口径 */
-function recoverable(s: SessionMetaDto): boolean {
-  return !s.archived && !s.internal && !s.live && s.alive;
-}
-
 /** 默认随手聊目录：家目录下 `ccode/scratch`（与 ensure_scratch_dir 同口径）。
  *  未添加到项目的编码仓库（例如 Mesa 源码目录）不算随手聊。 */
 export function isScratchCwd(path: string, isWindows = false): boolean {
   if (!path) return false;
   const k = pathKey(path, isWindows);
   return k.endsWith("/ccode/scratch") || k.includes("/ccode/scratch/");
-}
-
-/** 快速开聊（随手聊）历史：只列 `~/ccode/scratch` 里可恢复的会话。
- *  工作区 / 已注册项目 / 别的未注册仓库都走对话页，不进这张卡。
- *  「转为项目」后 scratch 若被登记，也会被 projectPaths 挡掉。 */
-export function pickQuickChatSessions(
-  sessions: SessionMetaDto[],
-  projectPaths: string[],
-  limit = 8,
-  isWindows = false,
-): SessionMetaDto[] {
-  // 注册项目路径来自后端注册表、会话 projectPath 来自 CLI 写的 cwd —— 两种来源在
-  // Windows 上可能是 verbatim/普通、大小写、分隔符三重不同。只去尾斜杠比不中。
-  // isWindows 显式传入而非在此读 IS_WINDOWS：本模块是纯逻辑层，
-  // 隐式依赖平台会让单测随宿主机器变化。
-  const projects = new Set(
-    (projectPaths ?? []).filter(Boolean).map((p) => pathKey(p, isWindows)),
-  );
-  return (sessions ?? [])
-    .filter(
-      (s) =>
-        s != null &&
-        recoverable(s) &&
-        s.workspace === null &&
-        isScratchCwd(s.projectPath, isWindows) &&
-        !projects.has(pathKey(s.projectPath, isWindows)),
-    )
-    .slice(0, limit);
-}
-
-/** 终端页正在跑的会话键，与 store.sessionRuntimeKey 同形（agent + 换行 + sessionId） */
-function liveSessionKey(agent: string, sessionId: string): string {
-  return `${agent}\n${sessionId}`;
-}
-
-/** 用终端页 liveSessions 补标正在跑的会话（比上次 list_sessions 更新） */
-export function withLiveSessionFlags(
-  sessions: readonly SessionMetaDto[],
-  liveSessions: Record<string, string>,
-): SessionMetaDto[] {
-  const live = liveSessions ?? {};
-  return (sessions ?? []).map((s) => {
-    const isLive = s.live || liveSessionKey(s.agent, s.sessionId) in live;
-    return isLive === s.live ? s : { ...s, live: isLive };
-  });
-}
-
-/** 聊天空态 / 右键菜单共用：本机会话列表现算随手聊历史，不 round-trip */
-export function pickQuickChatHistory(
-  sessions: SessionMetaDto[],
-  projectPaths: string[],
-  liveSessions: Record<string, string>,
-  isWindows = false,
-  limit = 8,
-): SessionMetaDto[] {
-  return pickQuickChatSessions(
-    withLiveSessionFlags(sessions, liveSessions),
-    projectPaths,
-    limit,
-    isWindows,
-  );
 }
 
 /** 列表行的归属标注：工作区会话显工作区名，否则显目录尾段 */

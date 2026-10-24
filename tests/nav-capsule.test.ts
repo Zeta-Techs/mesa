@@ -168,7 +168,8 @@ function islandFaces() {
 
 test("休眠面报当前页且恒带文字（不走受 displayMode 影响的 itemContent）", () => {
   const { dormant } = islandFaces();
-  assert.match(dormant, /<span>\{currentNav\?\.label \?\? "Mesa"\}<\/span>/);
+  // 报页名（「搜对话」那一页报「对话」），没有页名的报入口名
+  assert.match(dormant, /<span>\{currentNav\?\.page \?\? currentNav\?\.label \?\? "Mesa"\}<\/span>/);
   assert.doesNotMatch(dormant, /itemContent\(/);
 });
 

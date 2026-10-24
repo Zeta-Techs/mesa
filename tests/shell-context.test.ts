@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  runActivityCaret,
   runActivitySummary,
   shellContextPlacement,
   shellMode,
@@ -82,4 +83,12 @@ test("运行摘要：全员待确认只报待确认；只有外部会话时回�
   assert.deepEqual([ext.running, ext.external, ext.tone, ext.label], [3, 3, "running", "3 运行中"]);
   const idle = runActivitySummary([], 0);
   assert.deepEqual([idle.tone, idle.label], ["idle", ""]);
+});
+
+test("活动光标：等确认 > 有在干活的（Mesa 外在写的也算）> 都闲着；没人在跑不画", () => {
+  assert.equal(runActivityCaret(runActivitySummary([run({ attention: "confirm" }), run({ attention: "working" })], 0)), "confirm");
+  assert.equal(runActivityCaret(runActivitySummary([run({ attention: "done" }), run({ attention: "working" })], 0)), "working");
+  assert.equal(runActivityCaret(runActivitySummary([run({ attention: "done" }), run({ attention: null })], 0)), "idle");
+  assert.equal(runActivityCaret(runActivitySummary([], 2)), "working");
+  assert.equal(runActivityCaret(runActivitySummary([], 0)), null);
 });

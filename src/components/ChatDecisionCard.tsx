@@ -63,12 +63,10 @@ export default function ChatDecisionCard({
       className="mb-3 rounded-xl border border-field bg-raised px-3.5 py-3"
     >
       <div className="flex items-start gap-2">
-        <CircleHelp
-          size={15}
-          strokeWidth={1.8}
-          aria-hidden="true"
-          className="mt-0.5 shrink-0 text-warn-text"
-        />
+        {/* 壳取标题的字号，图标对准标题那一行 */}
+        <span className="ccode-icon-line text-sm">
+          <CircleHelp size={15} strokeWidth={1.8} aria-hidden="true" className="text-warn-text" />
+        </span>
         <div className="min-w-0 flex-1">
           <div className="break-words text-sm text-l1">{decision.title}</div>
           {decision.detail && (

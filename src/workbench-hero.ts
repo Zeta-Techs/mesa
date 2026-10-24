@@ -11,7 +11,7 @@ import {
   isWorkbenchSurfaceRun,
 } from "./run-model.ts";
 import { goalBucket } from "./project-tasks.ts";
-import { LAUNCH_PROMPT_SEPARATOR, PROJECT_PACK_HEAD } from "./project-context.ts";
+import { splitLaunchPrompt } from "./project-context.ts";
 import { projectNowLine } from "./project-status.ts";
 import { sessionExcludedFromProjectList } from "./session-filter.ts";
 import {
@@ -797,13 +797,9 @@ const LAST_SAID_INJECTED_RE = /^(?:<[a-z][\w-]*[\s>]|caveat:)/i;
 const LAST_SAID_INTERRUPT_RE =
   /\[?\s*request interrupted by user[^\]]*\]?|请求(?:已)?中断|被用户中断/gi;
 
-/** Mesa 开对话时把项目上下文包塞在第一句话前面（composeLaunchPrompt）：包不是人话。
- *  以默认包头开头的消息，有分隔就只留分隔后面你说的那句，没有分隔（只发了包）就整条不算。
- *  自定义模板的包头认不出，照旧当人话——宁可偶尔显示包，不误删人话 */
+/** Mesa 开对话时把项目上下文包塞在第一句话前面（composeLaunchPrompt）：包不是人话，只留你说的（splitLaunchPrompt） */
 function stripProjectPack(text: string): string {
-  if (!text.startsWith(PROJECT_PACK_HEAD)) return text;
-  const at = text.indexOf(LAUNCH_PROMPT_SEPARATOR.trim());
-  return at < 0 ? "" : text.slice(at + LAUNCH_PROMPT_SEPARATOR.trim().length).trim();
+  return splitLaunchPrompt(text).said;
 }
 
 function clampLastSaid(text: string): string {
@@ -835,7 +831,8 @@ export function lastUserInstruction(
       .join("\n")
       .trim();
     if (!raw) continue;
-    const unwrapped = stripProjectPack(unwrapPromptTags(raw));
+    // 先拆项目说明再展开标签：展开会把换行压成空格，认不出单独一行的分隔
+    const unwrapped = unwrapPromptTags(stripProjectPack(raw));
     if (!unwrapped || LAST_SAID_INJECTED_RE.test(unwrapped)) continue;
     let full = replaceAbsFsPaths(unwrapped.replace(LAST_SAID_INTERRUPT_RE, " "));
     full = stripTitleMarkdown(full.replace(/\s+/g, " ").trim());

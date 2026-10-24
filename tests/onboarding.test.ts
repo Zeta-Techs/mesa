@@ -116,7 +116,7 @@ test("完成提示：网关不重复「已保存」（网关库自己会说）�
 test("完成提示：第一段对话开始时提示可以切到终端看", () => {
   const n = completionNotice("chat", "terminal");
   assert.ok(n.text.startsWith("第一段对话开始了\n对话可以切到终端看\n"));
-  assert.ok(n.text.includes("切换到终端"));
+  assert.ok(n.text.includes("看这段对话的终端"), "说的是现在按钮上的字");
   assert.ok(n.text.includes("不会打断 AI"));
 });
 

@@ -58,10 +58,10 @@ export function launchModelNote(
     return "这个 CLI 只认一个模型：启动后想换，得在 CLI 里自己切（/model）。";
   }
   if (agentId === "codex") {
-    return "改了配置里的模型列表要重开标签才生效——模型目录只在 CLI 启动那一下读一次。";
+    return "改了配置里的模型列表要停下 AI 再接着聊才生效——模型目录只在 CLI 启动那一下读一次。";
   }
   if (agentId === "cursor") {
-    return "模型是启动参数，启动后不能在会话里换；换模型 = 重开标签。";
+    return "模型是启动参数，启动后不能在会话里换；换模型 = 停下 AI、换好再接着聊。";
   }
   if (info.max !== null && modelCount > info.max) {
     return `这个 CLI 的选择器只放得下 ${info.max} 个，第 ${info.max + 1} 个起要在 CLI 里手输 /model <id>。`;

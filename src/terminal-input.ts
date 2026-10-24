@@ -29,17 +29,6 @@ export function joinDroppedPaths(paths: string[], isWindows = false): string {
     .join(" ");
 }
 
-/** 聊天层拖入：一行一个路径（和粘贴图片附件同形，发给 Agent 当正文） */
-export function joinDroppedChatPaths(
-  paths: string[],
-  isWindows = false,
-): string {
-  return paths
-    .filter((p) => p.length > 0)
-    .map((p) => escapeShellPath(p, isWindows))
-    .join("\n");
-}
-
 /** Tauri 拖放坐标命中检测：物理像素与 CSS 像素都试（HumanTasksList / 终端同款） */
 export function dropHitsRect(
   position: { x: number; y: number },

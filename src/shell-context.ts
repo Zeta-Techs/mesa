@@ -2,12 +2,14 @@
  * 顶栏 / 灵动岛的「位置与活动」分工（纯逻辑，tests/shell-context.test.ts）。
  *
  * 2026-10-17 侧栏工作台化后定的规矩：同一件事在每种侧栏形态下只出现在一处。
- *   展开     项目在项目树、运行在侧栏「运行」行 → 顶栏左侧什么都不放
+ *   展开     项目在项目树、运行在项目树各对话行尾的点（折起的项目头上也有）→ 顶栏左侧什么都不放；
+ *            侧栏「运行」行 2026-10-24 撤掉，只在图标态留一个图标（没有树时靠它回到对话）
  *   图标态   项目树不可见 → 顶栏项目芯片常驻（回项目 + 切换；侧栏文件夹只管去项目页，不再兼做切换）；活动芯片在顶栏
  *   全隐藏   没有侧栏 → 项目芯片常驻（这是唯一的切项目入口）；活动挪进灵动岛，顶栏不再报
  */
 import { announceLabel } from "./run-announce.ts";
 import { itemRank, type RunOverviewInput } from "./run-overview.ts";
+import type { RunCaretState } from "./run-caret.ts";
 
 export type ShellMode = "expanded" | "collapsed" | "hidden";
 
@@ -19,7 +21,7 @@ export function shellMode(collapsed: boolean, hidden: boolean): ShellMode {
 export interface ShellContextPlacement {
   /** 顶栏左侧的项目芯片 */
   projectChip: boolean;
-  /** 运行活动摘要放在哪：顶栏芯片 / 灵动岛 / 不单独放（侧栏「运行」行已承担） */
+  /** 运行活动摘要放在哪：顶栏芯片 / 灵动岛 / 不单独放（展开态项目树的对话行已承担） */
   activity: "titlebar" | "island" | "none";
 }
 
@@ -77,6 +79,19 @@ export const RUN_ACTIVITY_STATE_LABEL: Record<RunActivityState, string> = {
 function baseName(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean);
   return parts[parts.length - 1] ?? path;
+}
+
+/** 活动芯片 / 图标态「运行」上那一道光标（run-caret.ts）：有等确认的 > 有在干活的（Mesa 外在写的也算）> 都闲着 */
+export function runActivityCaret(summary: RunActivitySummary): RunCaretState | null {
+  if (summary.tone === "idle") return null;
+  if (summary.confirm > 0) return "confirm";
+  if (summary.external > 0 || summary.agents.some((a) => a.state === "working")) return "working";
+  return "idle";
+}
+
+/** 列表里每一个的光标：做完了（done）和刚起来不知道的（running）都按闲着 */
+export function runActivityAgentCaret(state: RunActivityState): RunCaretState {
+  return state === "confirm" ? "confirm" : state === "working" ? "working" : "idle";
 }
 
 /** 运行摘要：只认在跑的 agent（回落 shell 不算），待确认排最前（itemRank 同口径）。 */

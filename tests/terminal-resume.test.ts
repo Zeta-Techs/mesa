@@ -3,8 +3,11 @@ import assert from "node:assert/strict";
 import {
   findResumeHolderTab,
   fittedPtySize,
+  lastWriteIsMesas,
   launchPtySize,
   resolveResumeLaunch,
+  resumeModelChoice,
+  resumeProfileChoice,
   shouldRelaunchResumeTab,
 } from "../src/terminal-resume.ts";
 
@@ -224,4 +227,49 @@ test("项目默认与会话渠道一致时仍自动启动", () => {
   });
   assert.equal(pick.profileId, "p-official");
   assert.equal(pick.channelChanged, false);
+});
+
+test("接着聊用这段对话自己的连接：还在就用它，项目默认不再盖过；不在了才按项目默认", () => {
+  const profiles = [
+    { id: "glm", agent: "claude-code" },
+    { id: "proj", agent: "claude-code" },
+    { id: "cx", agent: "codex" },
+  ];
+  const base = { agentId: "claude-code", profiles };
+  assert.deepEqual(resumeProfileChoice({ ...base, own: "glm", preferred: "proj" }), { profileId: "glm" });
+  // 自己那条删了 / 停用了：按项目默认（交给 resolveResumeLaunch 的 autoLaunchProfileId）
+  assert.deepEqual(resumeProfileChoice({ ...base, own: "gone", preferred: "proj" }), {
+    autoLaunchProfileId: "proj",
+  });
+  assert.deepEqual(resumeProfileChoice({ ...base, own: "glm", preferred: "proj", hidden: ["glm"] }), {
+    autoLaunchProfileId: "proj",
+  });
+  // 别家的连接不算
+  assert.deepEqual(resumeProfileChoice({ ...base, own: "cx", preferred: null }), { profileId: "cx" });
+  // 都没有：交给「上次使用」
+  assert.deepEqual(resumeProfileChoice({ ...base, own: null, preferred: null }), {});
+  // 自己那条不在、项目也没设：照旧带上，由「原配置已失效」提示重选
+  assert.deepEqual(resumeProfileChoice({ ...base, own: "gone", preferred: "" }), { profileId: "gone" });
+});
+
+test("接着聊默认的模型：换到的连接名单里有它（或名单空着）才带上", () => {
+  assert.equal(resumeModelChoice("glm-5.3", { models: ["glm-4.7", "glm-5.3"] }), "glm-5.3");
+  assert.equal(resumeModelChoice("glm-5.3", { models: [] }), "glm-5.3");
+  assert.equal(resumeModelChoice("glm-5.3", { models: ["deepseek-v4"] }), undefined);
+  assert.equal(resumeModelChoice(null, { models: ["glm-5.3"] }), undefined);
+  assert.equal(resumeModelChoice("glm-5.3", undefined), undefined);
+});
+
+test("最近一分钟的写入是 Mesa 自己刚停掉的进程写的：不算别的终端在跑（2026-10-24 误报实证）", () => {
+  // 关掉标签 03:54:48，最后一笔 03:54:45
+  const run = { closedAt: "2026-10-24T03:54:48.020+08:00" };
+  assert.equal(lastWriteIsMesas("2026-10-23T19:54:45.282Z", run), true);
+  // 停下之后几秒内的最后一笔（CLI 退出前收尾）也算
+  assert.equal(lastWriteIsMesas("2026-10-23T19:54:52Z", run), true);
+  // 停下之后很久又写了：是别处在写
+  assert.equal(lastWriteIsMesas("2026-10-23T19:55:30Z", run), false);
+  // 没停过 / 没有 Run 记录 / 时间读不出：不知道，照旧提醒
+  assert.equal(lastWriteIsMesas("2026-10-23T19:54:45Z", { closedAt: null }), false);
+  assert.equal(lastWriteIsMesas("2026-10-23T19:54:45Z", null), false);
+  assert.equal(lastWriteIsMesas(null, run), false);
 });

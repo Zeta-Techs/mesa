@@ -7,7 +7,7 @@ import {
   InlineNotice,
 } from "./PageFrame";
 import { useAppStore } from "../store";
-import { AGENTS } from "../types";
+import { AGENTS, type ProjectDto } from "../types";
 import { officialModelAllowed } from "../model-switch";
 import {
   loadAskAiRemembered,
@@ -18,7 +18,7 @@ import {
   type AskAiFile,
 } from "../ask-ai";
 import { IS_WINDOWS } from "../hotkeys";
-import { projectChatReuseKey } from "../work-mode";
+import { openProjectChat } from "../quick-chat-launch";
 import { Modal } from "./Modal";
 import { composeLaunchPrompt } from "../project-context";
 import { loadProjectContextPack } from "../project-context-load";
@@ -71,34 +71,10 @@ export function beginAskAi(
   })();
 }
 
-/** 项目侧栏「＋ 新对话」：在项目根开聊，不预览文件。⌘/Ctrl 点可重选配置。 */
-export function beginProjectChat(
-  input: {
-    cwd: string;
-    name: string;
-    kind: "office" | "coding" | "research";
-    preferredAgent?: string | null;
-    preferredProfile?: string | null;
-    preferredModel?: string | null;
-  },
-  opts?: { forcePick?: boolean },
-): void {
-  beginAskAi(
-    {
-      path: "",
-      name: input.name,
-      cwd: input.cwd,
-      root: input.cwd,
-      reuseKey: projectChatReuseKey(input.kind, input.cwd),
-      prompt: "",
-      preview: false,
-      preferredAgent: input.preferredAgent,
-      preferredProfile: input.preferredProfile,
-      preferredModel: input.preferredModel,
-      workMode: input.kind,
-    },
-    opts,
-  );
+/** 在某个项目里开一段新对话（侧栏项目行「＋」、项目页「＋ 新对话」共用）：空白输入框、发第一句才启动，
+ *  用谁按项目「对话」槽 / 项目默认（2026-10-24 起不再带着项目说明自己开跑，见 quick-chat-launch.ts openProjectChat） */
+export function startProjectChat(project: ProjectDto): void {
+  openProjectChat(project);
 }
 
 export default function AskAiModal() {

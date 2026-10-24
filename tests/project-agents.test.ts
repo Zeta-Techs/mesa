@@ -9,6 +9,8 @@ import {
   projectAgentsHint,
   projectNeedsDefaultAgent,
   projectBoundProfileId,
+  projectResumeProfileId,
+  sessionProjectResumeProfileId,
   resolveProfileModel,
   resolvedTaskAgentId,
   taskBindingLaunch,
@@ -491,6 +493,43 @@ test("slotPrefs：项目对话槽与问 AI 槽互不借用", () => {
     preferredModel: "n-1",
   });
   assert.deepEqual(slotPrefs(profiles, project, DISCUSS_BINDING_SLOT).preferredAgent, "claude-code");
+});
+
+test("projectResumeProfileId：接着聊旧对话——对话槽绑的是这家用它，否则项目给这家的默认，都没有交给原会话", () => {
+  const profiles = [
+    { id: "p1", agent: "claude-code", models: ["m-a"] },
+    { id: "p2", agent: "codex", models: ["n-1"] },
+    { id: "p3", agent: "codex", models: ["n-2"] },
+  ];
+  const project = {
+    defaultAgent: "claude-code",
+    defaultProfiles: { "claude-code": "p1", codex: "p3" },
+    taskBindings: { chat: { profile: "p2" } },
+  };
+  assert.equal(projectResumeProfileId(profiles, project, "codex"), "p2");
+  assert.equal(projectResumeProfileId(profiles, project, "claude-code"), "p1");
+  assert.equal(projectResumeProfileId(profiles, { ...project, taskBindings: {} }, "codex"), "p3");
+  assert.equal(projectResumeProfileId(profiles, {}, "gemini"), undefined);
+  assert.equal(projectResumeProfileId(profiles, null, "codex"), undefined);
+});
+
+test("sessionProjectResumeProfileId：按会话目录找所属项目，同一段对话从哪个入口接回预填都一样", () => {
+  const profiles = [
+    { id: "p1", agent: "claude-code", models: [] },
+    { id: "p2", agent: "codex", models: [] },
+  ];
+  const projects = [
+    { path: "/work/a", defaultProfiles: { codex: "p2" }, taskBindings: { chat: { profile: "p1" } } },
+  ];
+  assert.equal(sessionProjectResumeProfileId(profiles, projects, { agent: "codex", projectPath: "/work/a" }), "p2");
+  assert.equal(sessionProjectResumeProfileId(profiles, projects, { agent: "claude-code", projectPath: "/work/a/" }), "p1");
+  // 随手聊、别的目录：不吃任何项目的绑定
+  assert.equal(sessionProjectResumeProfileId(profiles, projects, { agent: "codex", projectPath: "/work/b" }), undefined);
+  // Windows 路径不分大小写
+  assert.equal(
+    sessionProjectResumeProfileId(profiles, [{ ...projects[0], path: "C:\\Work\\A" }], { agent: "codex", projectPath: "c:\\work\\a" }, true),
+    "p2",
+  );
 });
 
 

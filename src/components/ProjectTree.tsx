@@ -1,14 +1,18 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
+  Archive,
   Check,
   ChevronDown,
   ChevronRight,
+  CircleStop,
+  Columns2,
   Copy,
   Eraser,
   Folder,
   FolderMinus,
   FolderOpen,
   FolderPlus,
+  MessagesSquare,
   MoreHorizontal,
   Pencil,
   Pin,
@@ -16,6 +20,7 @@ import {
   Plus,
   Search,
   Sparkles,
+  SquarePen,
   SquareTerminal,
   Trash2,
   X,
@@ -30,9 +35,8 @@ import {
   RAIL_WORK_MODE_LABEL,
 } from "../work-mode";
 import { useAnimatedDismiss } from "../exit-animation";
-import { revealFolderLabel, samePath } from "../path-utils";
+import { pathKey, revealFolderLabel, samePath } from "../path-utils";
 import { IS_MAC, IS_WINDOWS } from "../hotkeys";
-import { projectRailStatus } from "../run-overview";
 import {
   applyOrder,
   isPinned,
@@ -43,17 +47,64 @@ import {
   splitPinned,
   togglePin,
 } from "../project-tree";
-import { clampTabDragDx, rubberbandTabDx, tabDragTarget } from "../tab-drag";
+import {
+  clampTabDragDx,
+  rubberbandTabDx,
+  tabDragSettleDx,
+  tabDragShift,
+  tabDragTarget,
+} from "../tab-drag";
 import ContextMenu, { type ContextMenuItem } from "./ContextMenu";
 import { confirmDialog } from "./ConfirmDialog";
+import RunCaret from "./RunCaret";
+import { RUN_CARET_LABEL } from "../run-caret";
+import { unreadKeyOf } from "../chat-unread";
 import RenameProjectModal from "./RenameProjectModal";
 import { toast } from "../toast";
-import type { ProjectDto, WorkspaceDto } from "../types";
+import { AGENTS, type ProjectDto, type SessionMetaDto, type WorkspaceDto } from "../types";
+import {
+  CHAT_PINS_KEY,
+  chatDot,
+  currentFolderKey,
+  parseChatPins,
+  pinnedChats,
+  railNavIndex,
+  toggleChatPin,
+  folderDot,
+  folderOpen,
+  projectChats,
+  SCRATCH_FOLDER_KEY,
+  scratchChats,
+  scratchDot,
+  SIDEBAR_CHAT_LIMIT,
+  SIDEBAR_CHAT_STEP,
+  sidebarChatTitle,
+  chatQuotas,
+  chatSlots,
+  expandedExtra,
+  openTabRows,
+  type ChatDot,
+  type OpenTabRow,
+} from "../sidebar-chats";
+import { tidySessionTitle } from "../session-title";
+import { openConversation, openQuickChat, prefetchConversation } from "../quick-chat-launch";
+import { projectResumeProfileId } from "../project-agents";
+import { startProjectChat } from "./AskAiModal";
+import { imeBlocksEnter } from "../ime-guard";
+import { relTime } from "../rel-time";
+import RailSearchPalette from "./RailSearchPalette";
+import type { RailSearchChat, RailSearchProject } from "../rail-search";
 
 const GROUPS_KEY = "ccode.projectTreeGroups";
-/** 课题数超过它才在标签行出放大镜（点开才有搜索框） */
-const SEARCH_MIN = 5;
+/** 各文件夹（项目 / 随手聊）对话展开与否：人手开关过的才记，没碰过的只展开正在聊的那个（sidebar-chats.ts folderOpen） */
+const CHAT_OPEN_KEY = "ccode.projectTreeChats";
+/** 侧栏里的分节标签（「项目」「置顶」「其他打开的」）：小一号、灰、字距拉开，读作标签，不是能点的一行（2026-10-24 侧栏三层） */
+const RAIL_SECTION_LABEL = "text-xs font-medium tracking-[0.08em] text-l3";
 
+/** 对话行尾的运行状态光标的说明（run-caret.ts：干活 / 闲着 / 等你确认） */
+function dotTitle(dot: ChatDot): string | undefined {
+  return dot ? RUN_CARET_LABEL[dot] : undefined;
+}
 /** 树行：注册项目（project 非空）与未添加仓库（沉底「未添加」段）统一形状 */
 type TreeRow = {
   key: string;
@@ -83,18 +134,7 @@ export default function ProjectTree({
   const [repos, setRepos] = useState<
     Pick<WorkspaceDto, "repoPath" | "repoName" | "worktreePath">[]
   >([]);
-  // 分组折叠态跨重启记忆；缺省三种方式展开、「未添加」收着
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => {
-    try {
-      const raw = localStorage.getItem(GROUPS_KEY);
-      if (raw) return new Set(JSON.parse(raw) as string[]);
-    } catch {
-      /* 读不出就用缺省 */
-    }
-    return new Set(["research", "coding", "office"]);
-  });
-  const [searchQuery, setSearchQuery] = useState("");
-  // 搜索框平时收成标签行的放大镜，点开才占一行；清空并失焦 / Esc 收回
+  // 标签行的放大镜打开「搜索对话和项目」弹层（RailSearchPalette，2026-10-24 照 Claude 客户端），树本身不再就地筛
   const [searchOpen, setSearchOpen] = useState(false);
   const [menu, setMenu] = useState<{
     x: number;
@@ -158,8 +198,11 @@ export default function ProjectTree({
     paths: string[],
     key: string,
   ) {
-    if (e.button !== 0 || searchQuery || paths.length < 2) return;
-    const rowEl = e.currentTarget as HTMLElement;
+    if (e.button !== 0 || paths.length < 2) return;
+    // 一个课题是「行 + 展开的对话」一整块：量和挪都按整块（data-tree-row 挂在块上）
+    const rowEl =
+      (e.currentTarget as HTMLElement).closest<HTMLElement>("[data-tree-row]") ??
+      (e.currentTarget as HTMLElement);
     const startY = e.clientY;
     let active = false;
     let slots: { left: number; width: number }[] = [];
@@ -186,9 +229,7 @@ export default function ProjectTree({
         return;
       }
       setDrag((cur) =>
-        cur
-          ? { ...cur, dy: cur.slots[target].left - cur.slots[from].left, settling: true }
-          : null,
+        cur ? { ...cur, dy: tabDragSettleDx(cur.slots, from, target), settling: true } : null,
       );
       window.setTimeout(() => {
         if (section === "pinned") {
@@ -251,6 +292,191 @@ export default function ProjectTree({
   const pathsSig = useAppStore((s) => s.projectPaths.join("\n"));
   const terminalRunInputs = useAppStore((s) => s.terminalRunInputs);
 
+  // —— 对话挂在文件夹下面（2026-10-23 侧栏挂对话第一期，纯逻辑 sidebar-chats.ts）——
+  // 对话是唯一的对象，每段只归一个文件夹；点一段进运行页能直接写，只看不起进程
+  const sessions = useAppStore((s) => s.sessions);
+  const profiles = useAppStore((s) => s.profiles);
+  // 跑完了没看的（chat-unread.ts，App 维护）：那一行标题亮到 l1，收着的课题名也亮
+  const unreadChats = useAppStore((s) => s.unreadChats);
+  const unreadSet = useMemo(() => new Set(unreadChats), [unreadChats]);
+  // 置顶的对话（sidebar-chats.ts CHAT_PINS_KEY）：钉在树最上面「置顶」一节，原课题下不重复列
+  const [chatPins, setChatPins] = useState<string[]>(() => {
+    try {
+      return parseChatPins(localStorage.getItem(CHAT_PINS_KEY));
+    } catch {
+      return [];
+    }
+  });
+  function toggleChatPinFor(key: string) {
+    setChatPins((prev) => {
+      const next = toggleChatPin(prev, key);
+      try {
+        localStorage.setItem(CHAT_PINS_KEY, JSON.stringify(next));
+      } catch {
+        /* 存不下只影响下次启动 */
+      }
+      return next;
+    });
+  }
+  const pinnedList = useMemo(() => pinnedChats(sessions, chatPins), [sessions, chatPins]);
+  const pinnedKeys = useMemo(
+    () => new Set(pinnedList.map((s) => `${s.agent}\n${s.sessionId}`)),
+    [pinnedList],
+  );
+  const page = useAppStore((s) => s.page);
+  const projectPaths = useAppStore((s) => s.projectPaths);
+  const terminalActiveTabId = useAppStore((s) => s.terminalActiveTabId);
+  const [chatOpenPrefs, setChatOpenPrefs] = useState<Record<string, boolean>>(() => {
+    try {
+      const v: unknown = JSON.parse(localStorage.getItem(CHAT_OPEN_KEY) ?? "{}");
+      return v && typeof v === "object" ? (v as Record<string, boolean>) : {};
+    } catch {
+      return {};
+    }
+  });
+  function toggleFolder(key: string, open: boolean) {
+    setChatOpenPrefs((prev) => {
+      if (prev[key] === !open) return prev;
+      const next = { ...prev, [key]: !open };
+      try {
+        localStorage.setItem(CHAT_OPEN_KEY, JSON.stringify(next));
+      } catch {
+        /* 存不下只影响下次启动 */
+      }
+      return next;
+    });
+    // 展开时拉一次：外部终端里刚聊的、自动起好的名字都跟上
+    if (!open) void useAppStore.getState().loadSessions();
+  }
+  // 侧栏常驻，会话列表要自己保鲜（App 聚焦时不拉会话，见 App.tsx 那段约定）：窗口看得见时每分钟拉一次。
+  // Mesa 里开的对话不靠它：终端页接上 / 停下时就强刷了
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (document.visibilityState === "visible") void useAppStore.getState().loadSessions();
+    }, 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+  const [chatMenu, setChatMenu] = useState<{
+    x: number;
+    y: number;
+    s: SessionMetaDto;
+    project: ProjectDto | null;
+    /** ⋯ 打开时菜单右缘对齐按钮；右键打开时贴光标 */
+    alignRight?: boolean;
+  } | null>(null);
+  const [renaming, setRenaming] = useState<{ key: string; value: string } | null>(null);
+  const composingRef = useRef(false);
+
+  function chatKey(s: SessionMetaDto): string {
+    return `${s.agent}\n${s.sessionId}`;
+  }
+  /** 置顶一节里的那段属于哪个课题（接回时带这个课题给这家设的连接；随手聊 / 认不出的为 null） */
+  function projectOfChat(s: SessionMetaDto): ProjectDto | null {
+    const key = currentFolderKey(s.projectPath, folders, projectPaths, IS_WINDOWS);
+    return key ? (rows.find((r) => pathKey(r.repoPath, IS_WINDOWS) === key)?.project ?? null) : null;
+  }
+  function openChat(s: SessionMetaDto, project: ProjectDto | null, split = false) {
+    openConversation(s, {
+      preferredProfileId: project ? projectResumeProfileId(profiles, project, s.agent) : undefined,
+      ...(split ? { split: true } : {}),
+    });
+  }
+  /** 改名 / 归档：写会话元数据（不碰 CLI 源文件），先改本地镜像再强刷 */
+  async function writeChatMeta(
+    s: SessionMetaDto,
+    patch: { customTitle?: string | null; archived?: boolean },
+  ) {
+    const customTitle = patch.customTitle !== undefined ? patch.customTitle : s.customTitle;
+    const archived = patch.archived ?? s.archived;
+    try {
+      await invoke("set_session_meta", {
+        agent: s.agent,
+        sessionId: s.sessionId,
+        customTitle,
+        tags: s.tags,
+        archived,
+      });
+      useAppStore.setState({
+        sessions: useAppStore
+          .getState()
+          .sessions.map((x) =>
+            x.agent === s.agent && x.sessionId === s.sessionId ? { ...x, customTitle, archived } : x,
+          ),
+      });
+      void useAppStore.getState().loadSessions(true);
+    } catch (reason) {
+      toast(`${patch.archived ? "归档" : "改名"}失败：${String(reason)}`, "error");
+    }
+  }
+  function commitRename(s: SessionMetaDto) {
+    const cur = renaming;
+    setRenaming(null);
+    if (!cur || cur.key !== chatKey(s)) return;
+    const next = cur.value.trim();
+    const shown = tidySessionTitle(s).title;
+    if (next === shown || (!next && !s.customTitle)) return;
+    void writeChatMeta(s, { customTitle: next || null });
+  }
+  function chatMenuItems(s: SessionMetaDto, project: ProjectDto | null): ContextMenuItem[] {
+    const holder = useAppStore
+      .getState()
+      .terminalRunInputs.find((r) => r.agentId === s.agent && r.sessionId === s.sessionId);
+    return [
+      {
+        label: "在右侧分屏打开",
+        icon: Columns2,
+        title: "正看着的那段留在左边，这段放右边对照",
+        onSelect: () => openChat(s, project, true),
+      },
+      ...(holder?.running && !holder.shell
+        ? [
+            {
+              label: "停下 Agent",
+              icon: CircleStop,
+              title: "停下这段对话的 Agent、收起它；记录还在，再点开发一句就接回",
+              onSelect: () => useAppStore.getState().requestCloseTab(holder.tabId),
+            },
+          ]
+        : []),
+      { separator: true },
+      chatPins.includes(chatKey(s))
+        ? {
+            label: "取消置顶",
+            icon: PinOff,
+            title: "放回它所在的课题下面",
+            onSelect: () => toggleChatPinFor(chatKey(s)),
+          }
+        : {
+            label: "置顶",
+            icon: Pin,
+            title: "钉到侧栏最上面「置顶」一节，不管它在哪个课题",
+            onSelect: () => toggleChatPinFor(chatKey(s)),
+          },
+      {
+        label: "重命名",
+        icon: Pencil,
+        onSelect: () => setRenaming({ key: chatKey(s), value: tidySessionTitle(s).title }),
+      },
+      {
+        label: "归档",
+        icon: Archive,
+        title: "从这里收起；对话页筛「已归档」还能找到",
+        onSelect: () => void writeChatMeta(s, { archived: true }),
+      },
+      { separator: true },
+      {
+        label: "在对话页查看",
+        icon: MessagesSquare,
+        title: "看完整过程，导出、提炼接力这些也在那里",
+        onSelect: () => {
+          const st = useAppStore.getState();
+          st.setOpenSessionReq({ agent: s.agent, sessionId: s.sessionId });
+          st.setPage("sessions");
+        },
+      },
+    ];
+  }
+
   // 列表数据：注册表 + 工作区清单（后者推「未添加」段与工作区计数）。重拉触发：
   // 管理动作后的 projectsVersion、跨实例/终端侧注册落盘后的 projectPaths 签名变化
   useEffect(() => {
@@ -303,39 +529,490 @@ export default function ProjectTree({
   }, [projects, repos]);
 
   const grouped = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    const filtered = q
-      ? rows.filter(
-          (r) =>
-            r.name.toLowerCase().includes(q) ||
-            r.repoPath.toLowerCase().includes(q),
-        )
-      : rows;
-    const { pinned, rest } = splitPinned(filtered, pins, IS_WINDOWS);
+    const { pinned, rest } = splitPinned(rows, pins, IS_WINDOWS);
+    // 不再按科研 / 编程 / 工作分组（2026-10-23 照 Claude 客户端侧栏）：置顶的在前，其余按最近打开 / 拖过的顺序，
+    // 没添加到 Mesa 的仓库沉底
     return {
       pinned,
-      groups: groupByWorkMode(
-        applyOrder(rest, order, (r) => r.repoPath, IS_WINDOWS),
-        (r) => (r.project ? r.project.workMode : "unregistered"),
+      projects: applyOrder(
+        rest.filter((r) => r.project),
+        order,
+        (r) => r.repoPath,
+        IS_WINDOWS,
       ),
+      unregistered: rest.filter((r) => !r.project),
     };
-  }, [rows, searchQuery, pins, order]);
+  }, [rows, pins, order]);
 
-  const toggleGroup = (mode: string) => {
-    setExpandedGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(mode)) next.delete(mode);
-      else next.add(mode);
-      try {
-        localStorage.setItem(GROUPS_KEY, JSON.stringify([...next]));
-      } catch {
-        /* 存不下只影响下次启动 */
-      }
-      return next;
+  // 每个课题的工作区 / 工作树目录（对话归属、状态点都要把它们算成这个课题）
+  const worktreesOf = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const w of repos) {
+      const k = pathKey(w.repoPath, IS_WINDOWS);
+      const list = m.get(k) ?? [];
+      list.push(w.worktreePath);
+      m.set(k, list);
+    }
+    return m;
+  }, [repos]);
+  // 运行页正看着的那个标签：它的文件夹默认展开、它那段对话铺选中底（只在运行页时铺）
+  const activeRun = terminalRunInputs.find((r) => r.tabId === terminalActiveTabId) ?? null;
+  const folders = useMemo(
+    () =>
+      rows.map((r) => ({
+        root: r.repoPath,
+        worktrees: worktreesOf.get(pathKey(r.repoPath, IS_WINDOWS)) ?? [],
+      })),
+    [rows, worktreesOf],
+  );
+  const currentKey = useMemo(
+    () => currentFolderKey(activeRun?.cwd, folders, projectPaths, IS_WINDOWS),
+    [activeRun?.cwd, folders, projectPaths],
+  );
+  const selectedChatKey =
+    page === "terminal" && activeRun?.sessionId
+      ? `${activeRun.agentId}\n${activeRun.sessionId}`
+      : null;
+  // 置顶的不在原课题下重复列
+  const unpinnedSessions = useMemo(
+    () => (pinnedKeys.size ? sessions.filter((s) => !pinnedKeys.has(`${s.agent}\n${s.sessionId}`)) : sessions),
+    [sessions, pinnedKeys],
+  );
+  const chatsByRoot = useMemo(() => {
+    const m = new Map<string, SessionMetaDto[]>();
+    for (const r of rows) {
+      const k = pathKey(r.repoPath, IS_WINDOWS);
+      m.set(k, projectChats(unpinnedSessions, r.repoPath, worktreesOf.get(k) ?? [], IS_WINDOWS));
+    }
+    return m;
+  }, [rows, unpinnedSessions, worktreesOf]);
+  const scratchList = useMemo(
+    () => scratchChats(unpinnedSessions, projectPaths, IS_WINDOWS),
+    [unpinnedSessions, projectPaths],
+  );
+  // 运行页开着、但列表里还没有的（新对话、纯终端、刚起来还没认出会话的…）：挂在所属文件夹最上面，
+  // 不在任何项目里的放「其他打开的」（标签条撤掉后开着的东西都在这里能找到，2026-10-24 第二期）
+  const openByFolder = useMemo(() => {
+    const listed = new Set<string>(pinnedKeys);
+    for (const s of scratchList) listed.add(chatKey(s));
+    for (const list of chatsByRoot.values()) for (const s of list) listed.add(chatKey(s));
+    const m = new Map<string | null, OpenTabRow[]>();
+    for (const r of openTabRows({
+      runs: terminalRunInputs,
+      listed,
+      focusedTabId: terminalActiveTabId,
+      folderOf: (cwd) => currentFolderKey(cwd, folders, projectPaths, IS_WINDOWS),
+    })) {
+      const list = m.get(r.folderKey) ?? [];
+      list.push(r);
+      m.set(r.folderKey, list);
+    }
+    return m;
+  }, [scratchList, chatsByRoot, pinnedKeys, terminalRunInputs, terminalActiveTabId, folders, projectPaths]);
+
+  // 「展开更多」点过的文件夹多列几段（只记这次打开 Mesa 期间；收起即删）
+  const [chatExtra, setChatExtra] = useState<Record<string, number>>({});
+  // 树的滚动区有多高：侧栏还有空位就多列几段对话（chatQuotas），窗口拉高拉矮跟着变
+  const listRef = useRef<HTMLDivElement>(null);
+  const [listHeight, setListHeight] = useState(0);
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setListHeight(el.clientHeight));
+    ro.observe(el);
+    setListHeight(el.clientHeight);
+    return () => ro.disconnect();
+  }, []);
+  const quotaOf = useMemo(() => {
+    const sections = [...grouped.pinned, ...grouped.projects, ...grouped.unregistered];
+    const open: { key: string; count: number }[] = [];
+    if (folderOpen(SCRATCH_FOLDER_KEY, chatOpenPrefs, currentKey)) {
+      open.push({ key: SCRATCH_FOLDER_KEY, count: scratchList.length });
+    }
+    for (const r of sections) {
+      const k = pathKey(r.repoPath, IS_WINDOWS);
+      if (folderOpen(k, chatOpenPrefs, currentKey)) open.push({ key: k, count: chatsByRoot.get(k)?.length ?? 0 });
+    }
+    // 行高按 rem 折算（Mac 根 14px、Windows 16px）：对话行 h-8 + 1px 行距；节头 h-7 + pt-2；
+    // 每个展开的文件夹再留一行「展开更多」与底边距；三段容器各 pt-2
+    const rem = parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 14;
+    const headers = sections.length + 1;
+    // 「置顶」一节（节头 + 每段一行）也占地方，先扣掉
+    const pinnedRows = pinnedList.length > 0 ? 2.25 * rem + pinnedList.length * (2 * rem + 1) : 0;
+    const fixed = headers * 2.25 * rem + open.length * 2 * rem + 1.5 * rem + pinnedRows;
+    const slots = chatSlots({ available: listHeight, fixed, rowHeight: 2 * rem + 1 });
+    const shown = chatQuotas({
+      counts: open.map((o) => o.count),
+      extra: open.map((o) => chatExtra[o.key] ?? 0),
+      slots,
     });
-  };
+    return new Map(open.map((o, i) => [o.key, shown[i]]));
+  }, [grouped, chatOpenPrefs, currentKey, scratchList, chatsByRoot, listHeight, chatExtra, pinnedList.length]);
 
-  /** 管理动作收尾：拉平 store 镜像 + 自增代数（本树与项目页都据此重拉） */
+  /** 一段对话（2026-10-23 照 Claude 客户端侧栏）：与所属文件夹的名字左对齐、不再缩进，只写主题（去掉「MMDD|类型|」，
+   *  完整标题放悬停），状态点放行尾；右键改名 / 归档 / 去对话页 */
+  /** `indent`：挂在课题 / 随手聊下面的缩进到名字的起点（图标后面），「置顶」一节里的不缩（2026-10-24 用户：分不清项目和对话） */
+  function renderChat(s: SessionMetaDto, project: ProjectDto | null, indent = true) {
+    const key = chatKey(s);
+    const full = tidySessionTitle(s).title;
+    const dot = chatDot(s, terminalRunInputs);
+    const selected = key === selectedChatKey;
+    // 跑完了没看：标题亮到 l1（同正看着的那段的字色，但不铺底），点开就消
+    const unread = !selected && unreadSet.has(key);
+    const agent = AGENTS.find((a) => a.id === s.agent)?.label ?? s.agent;
+    if (renaming?.key === key) {
+      return (
+        <div key={key} className="flex h-8 items-center rounded-md bg-hover px-2">
+          <input
+            autoFocus
+            value={renaming.value}
+            aria-label="对话名称"
+            onChange={(e) => setRenaming({ key, value: e.target.value })}
+            onFocus={(e) => e.currentTarget.select()}
+            onCompositionStart={() => {
+              composingRef.current = true;
+            }}
+            onCompositionEnd={() => {
+              requestAnimationFrame(() => {
+                composingRef.current = false;
+              });
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                setRenaming(null);
+                return;
+              }
+              if (e.key !== "Enter") return;
+              if (
+                imeBlocksEnter({
+                  isComposing: e.nativeEvent.isComposing,
+                  keyCode: e.keyCode,
+                  composingLock: composingRef.current,
+                })
+              )
+                return;
+              e.preventDefault();
+              commitRename(s);
+            }}
+            onBlur={() => commitRename(s)}
+            className="min-w-0 flex-1 bg-transparent text-l1 outline-none"
+          />
+        </div>
+      );
+    }
+    const menuOpen = chatMenu != null && chatKey(chatMenu.s) === key;
+    return (
+      <div
+        key={key}
+        className={`group/chat relative flex h-8 items-center rounded-md transition-colors ${
+          selected ? "ccode-rail-active bg-rail-sel" : menuOpen ? "bg-hover" : "hover:bg-hover"
+        }`}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setChatMenu({ x: e.clientX, y: e.clientY, s, project });
+        }}
+      >
+        <button
+          type="button"
+          data-rail-nav
+          // 点下去就开、不等松手（2026-10-24 用户：切对话要和 Claude 客户端一样点了就出来）；
+          // 键盘回车 / 空格触发的 click（detail 为 0）照旧开。鼠标移上来 / 键盘走到这行就先取点开要等的东西
+          onMouseDown={(e) => {
+            if (e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) openChat(s, project);
+          }}
+          onClick={(e) => {
+            if (e.detail === 0) openChat(s, project);
+          }}
+          onPointerEnter={() => prefetchConversation(s)}
+          onFocus={() => prefetchConversation(s)}
+          aria-current={selected ? "true" : undefined}
+          title={`${full}\n${agent} · ${relTime(s.updatedAt)}${dot ? ` · ${dotTitle(dot)}` : ""}${unread ? " · 跑完了，还没看" : ""}\n点一下接着聊`}
+          className={`flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md ${indent ? "pl-7" : "pl-2"} pr-1 ${
+            selected || unread ? "text-l1" : "text-l3 group-hover/chat:text-l2"
+          }`}
+        >
+          {/* 字号 13px（.ccode-rail-text，2026-10-24 用户：比「工作台 / 搜对话」的 14px 再小一点点）。写在内层 span 上：
+              按钮上写字号会被全站 button { font: inherit } 吞掉。
+              字色同工作入口：平时 l3、悬停 l2，只有正看着的那段亮到 l1（2026-10-24 用户：标题不用全亮着） */}
+          <span className="ccode-rail-text min-w-0 flex-1 truncate text-left">{sidebarChatTitle(full)}</span>
+          {/* 运行状态光标（2026-10-24 用户：绿点换成 Mesa 的光标）：悬停时不让位，⋯ 出现在它右边；
+              干活时的呼吸在悬停时停下、常亮（App.css .ccode-run-caret） */}
+          {dot && <RunCaret state={dot} className="mr-1.5" />}
+        </button>
+        <button
+          type="button"
+          aria-label={`「${sidebarChatTitle(full)}」的更多操作`}
+          title="更多操作"
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          onClick={(e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            setChatMenu({ x: r.right, y: r.bottom + 4, s, project, alignRight: true });
+          }}
+          className={`mr-0.5 h-6 w-6 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1 ${
+            menuOpen ? "flex" : "hidden group-hover/chat:flex group-focus-within/chat:flex"
+          }`}
+        >
+          <MoreHorizontal size={14} strokeWidth={1.8} aria-hidden="true" />
+        </button>
+      </div>
+    );
+  }
+
+  /** 开着、但列表里还没有的一行（openTabRows）：点了切过去，行尾 × 关掉（在跑的会先问）。
+   *  新对话 / 纯终端前面带个小图标，和对话行区分开；`indent` 同 renderChat（图标在缩进之后，不放进课题图标那一列，免得看成课题） */
+  function renderOpenRow(r: OpenTabRow, indent = true) {
+    const selected = page === "terminal" && r.tabId === terminalActiveTabId;
+    const run = terminalRunInputs.find((x) => x.tabId === r.tabId);
+    const unread = !selected && run != null && unreadSet.has(unreadKeyOf(run));
+    const Icon = r.kind === "terminal" ? SquareTerminal : r.kind === "new" ? SquarePen : null;
+    return (
+      <div
+        key={`tab:${r.tabId}`}
+        className={`group/chat relative flex h-8 items-center rounded-md transition-colors ${
+          selected ? "ccode-rail-active bg-rail-sel" : "hover:bg-hover"
+        }`}
+      >
+        <button
+          type="button"
+          data-rail-nav
+          onClick={() => {
+            const st = useAppStore.getState();
+            st.setPage("terminal");
+            st.focusTab(r.tabId);
+          }}
+          aria-current={selected ? "true" : undefined}
+          title={
+            r.kind === "new"
+              ? "还没说话的新对话：发第一句才启动"
+              : r.kind === "terminal"
+                ? `${r.label}\n开着的终端`
+                : `${r.label}${r.dot ? ` · ${dotTitle(r.dot)}` : ""}${unread ? " · 跑完了，还没看" : ""}`
+          }
+          className={`flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md ${indent ? "pl-7" : "pl-2"} pr-1 ${
+            selected || unread ? "text-l1" : "text-l3 group-hover/chat:text-l2"
+          }`}
+        >
+          {Icon && <Icon size={13} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l4" />}
+          <span className="ccode-rail-text min-w-0 flex-1 truncate text-left">{r.label}</span>
+          {r.dot && (
+            <RunCaret state={r.dot} className="mr-1.5" />
+          )}
+        </button>
+        <button
+          type="button"
+          aria-label={`关掉「${r.label}」`}
+          title={r.kind === "new" ? "不要这段新对话了" : "关掉：停下它，记录还在（在跑的会先问你）"}
+          onClick={() => useAppStore.getState().requestCloseTab(r.tabId)}
+          className="mr-0.5 hidden h-6 w-6 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1 group-hover/chat:flex group-focus-within/chat:flex"
+        >
+          <X size={13} strokeWidth={1.8} aria-hidden="true" />
+        </button>
+      </div>
+    );
+  }
+
+  /** 文件夹展开后的那一串：列几段由 chatQuotas 按侧栏空位算（至少 5 段），没列完的点「展开更多」在原地多列 10 段；
+   *  点过展开更多的给「收起」回到按空位列。要看全部、搜、整理，去对话页（节头 ⋯ 里有入口） */
+  function renderChats(chats: SessionMetaDto[], project: ProjectDto | null, name: string, folderKey: string) {
+    const shown = quotaOf.get(folderKey) ?? Math.min(chats.length, SIDEBAR_CHAT_LIMIT);
+    const more = chats.length > shown;
+    const folded = (chatExtra[folderKey] ?? 0) > 0;
+    // 「展开更多 / 收起」是动作不是对话：缩进同对话、再淡一档（l4），小一号（2026-10-24 用户：原先 l3 12px 和课题名一模一样，分不清）
+    const linkCls = "flex h-7 items-center rounded-md pl-7 pr-2 text-left text-l4 hover:bg-hover hover:text-l2";
+    const opened = openByFolder.get(folderKey) ?? [];
+    // 正看着的那段排得比较靠后（从对话页点开的旧对话）：也摆出来，不然侧栏里找不到「现在在哪」
+    const selIdx = selectedChatKey ? chats.findIndex((s) => chatKey(s) === selectedChatKey) : -1;
+    const visible = selIdx >= shown ? [...chats.slice(0, shown), chats[selIdx]] : chats.slice(0, shown);
+    return (
+      <div role="group" aria-label={`${name} 的对话`} className="space-y-px pb-1">
+        {opened.map((r) => renderOpenRow(r))}
+        {chats.length === 0 ? (
+          opened.length === 0 && <p className="py-1 pl-7 pr-2 text-xs text-l4">还没有对话</p>
+        ) : (
+          visible.map((s) => renderChat(s, project))
+        )}
+        {(more || folded) && (
+          <div className="flex items-center">
+            {more && (
+              <button
+                type="button"
+                onClick={() =>
+                  setChatExtra((prev) => ({ ...prev, [folderKey]: expandedExtra(shown) }))
+                }
+                title={`还有 ${chats.length - shown} 段，在这里多列 ${Math.min(SIDEBAR_CHAT_STEP, chats.length - shown)} 段`}
+                data-rail-nav
+                className={linkCls}
+              >
+                <span className="text-xs">展开更多</span>
+              </button>
+            )}
+            {folded && (
+              <button
+                type="button"
+                onClick={() =>
+                  setChatExtra((prev) => {
+                    const next = { ...prev };
+                    delete next[folderKey];
+                    return next;
+                  })
+                }
+                title="收回到按侧栏空位列的段数"
+                data-rail-nav
+                className={linkCls}
+              >
+                <span className="text-xs">收起</span>
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  /** 节头最前的图标格（2026-10-24 用户：「分不清哪些是项目、哪些是会话」）：平时是文件夹（收着 Folder、展开 FolderOpen；
+   *  随手聊是对话气泡），一眼看出这一行是装对话的；鼠标移到这一行上换成箭头，点它只开合对话（点名字是进项目页）。
+   *  原先的名字后小箭头撤掉，状态由图标本身带 */
+  function renderFolderToggle(name: string, open: boolean, onToggle: () => void, kind: "project" | "scratch" | "unregistered") {
+    const Icon = kind === "scratch" ? MessagesSquare : open ? FolderOpen : Folder;
+    return (
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-label={open ? `收起「${name}」的对话` : `展开「${name}」的对话`}
+        title={open ? "收起对话" : "展开对话"}
+        // 图标上按下不起拖
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={onToggle}
+        className={`relative ml-1 flex size-6 shrink-0 items-center justify-center rounded hover:text-l1 ${
+          kind === "unregistered" ? "text-l4" : "text-l3"
+        }`}
+      >
+        <Icon size={14} strokeWidth={1.8} aria-hidden="true" className="group-hover:invisible group-focus-within:invisible" />
+        <span className="absolute inset-0 hidden items-center justify-center group-hover:flex group-focus-within:flex" aria-hidden="true">
+          {open ? <ChevronDown size={14} strokeWidth={1.8} /> : <ChevronRight size={14} strokeWidth={1.8} />}
+        </span>
+      </button>
+    );
+  }
+
+  /** 树里能用键盘走到的行，按屏上顺序（收着的课题下面的对话本来就不画，不用另判可见） */
+  function railNavRows(): HTMLElement[] {
+    const root = listRef.current;
+    return root ? Array.from(root.querySelectorAll<HTMLElement>("[data-rail-nav]")) : [];
+  }
+  function focusRailRow(el: HTMLElement | null | undefined) {
+    if (!el) return;
+    el.focus({ preventScroll: true });
+    el.scrollIntoView?.({ block: "nearest" });
+  }
+  function onRailKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.nativeEvent.isComposing || e.metaKey || e.ctrlKey || e.altKey) return;
+    const target = e.target as HTMLElement;
+    // 改名输入框里的方向键归输入框
+    if (target.tagName === "INPUT") return;
+    const rows = railNavRows();
+    const current = rows.indexOf(target);
+    const next = railNavIndex(e.key, current, rows.length);
+    if (next != null) {
+      e.preventDefault();
+      focusRailRow(rows[next]);
+      return;
+    }
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    const folder = target.dataset.railFolder;
+    if (folder != null) {
+      const open = target.dataset.railOpen === "1";
+      // → 展开、← 收起；已经是那个状态就不动
+      if ((e.key === "ArrowRight") !== open) {
+        e.preventDefault();
+        toggleFolder(folder, open);
+      }
+      return;
+    }
+    // 在一段对话上按 ←：回到它所在课题的节头
+    if (e.key === "ArrowLeft") {
+      const head = target.closest<HTMLElement>("[data-rail-group]")?.querySelector<HTMLElement>("[data-rail-folder]");
+      if (head && head !== target) {
+        e.preventDefault();
+        focusRailRow(head);
+      }
+    }
+  }
+  // ⌘0（设置里可改，App 发 requestFocusRail）：光标落到正看着的那段；没有就落到它的课题、再没有落第一行。
+  // 侧栏刚从收着展开时树还没画出来，等两帧
+  const focusRailReq = useAppStore((s) => s.focusRailReq);
+  useEffect(() => {
+    if (!focusRailReq) return;
+    let raf = requestAnimationFrame(() => {
+      raf = requestAnimationFrame(() => {
+        const root = listRef.current;
+        const rows = railNavRows();
+        const pick =
+          root?.querySelector<HTMLElement>('[data-rail-nav][aria-current="true"]') ??
+          (currentKey ? root?.querySelector<HTMLElement>(`[data-rail-folder="${CSS.escape(currentKey)}"]`) : null) ??
+          rows[0];
+        focusRailRow(pick);
+      });
+    });
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusRailReq]);
+
+  /** 这个文件夹里有没有跑完没看的（列表里的对话 + 挂在它下面开着的） */
+  function folderHasUnread(fkey: string, chats: readonly SessionMetaDto[]): boolean {
+    if (unreadSet.size === 0) return false;
+    if (chats.some((c) => unreadSet.has(chatKey(c)))) return true;
+    return (openByFolder.get(fkey) ?? []).some((r) => {
+      const run = terminalRunInputs.find((x) => x.tabId === r.tabId);
+      return run != null && unreadSet.has(unreadKeyOf(run));
+    });
+  }
+
+  /** 节头名字右边到行尾的空白（连同收着时的状态光标）：点了开合对话（2026-10-24 用户：「点击项目名字右边的空白区域无法展开收起」）。
+   *  点名字是进项目页，点空白和最前的图标是开合。不进键盘顺序（键盘有图标钮与 ← →）；拖动排序松手那一下不算点 */
+  function renderToggleSpace(open: boolean, dot: ChatDot, onToggle: () => void) {
+    return (
+      <div
+        aria-hidden="true"
+        onClick={() => {
+          if (suppressClickRef.current) {
+            suppressClickRef.current = false;
+            return;
+          }
+          onToggle();
+        }}
+        className="flex h-7 min-w-0 flex-1 items-center justify-end"
+      >
+        {renderHeadDot(open, dot)}
+      </div>
+    );
+  }
+
+  /** 收着的文件夹在节头行尾报状态（展开时各段对话自己报） */
+  function renderHeadDot(open: boolean, dot: ChatDot) {
+    if (open || !dot) return null;
+    // 悬停时不让位：＋ 与 ⋯ 出现在它右边。mr-2.5 = 对话行的 pr-1 + mr-1.5，平时两种行的光标竖着对齐
+    return <RunCaret state={dot} className="mr-2.5" />;
+  }
+
+  /** 行尾悬停的「＋」：在这个文件夹里开一段新对话。
+   *  平时不占宽（侧栏窄，名字要这点地方），悬停 / 键盘聚焦到这一行才出来（⋯ 同） */
+  function renderNewChat(label: string, title: string, onClick: (e: React.MouseEvent) => void) {
+    return (
+      <button
+        type="button"
+        aria-label={label}
+        title={title}
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={onClick}
+        className="hidden h-6 w-6 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1 group-hover:flex group-focus-within:flex"
+      >
+        <Plus size={13} strokeWidth={1.8} aria-hidden="true" />
+      </button>
+    );
+  }
+
   function reload() {
     const s = useAppStore.getState();
     s.loadProjects().catch(() => {});
@@ -354,12 +1031,22 @@ export default function ProjectTree({
         onSelect: () => togglePinFor(row),
       },
       {
-        label: "在终端打开",
-        icon: SquareTerminal,
-        title: "在运行页开一个终端标签，目录就是这个课题",
+        label: "在对话页看全部对话",
+        icon: MessagesSquare,
+        title: "对话页只列这个课题的对话，能搜、能整理",
         onSelect: () => {
           const st = useAppStore.getState();
-          st.setEnterCwdReq(row.repoPath);
+          st.setSessionsProjectPathReq(row.repoPath);
+          st.setPage("sessions");
+        },
+      },
+      {
+        label: "在终端打开",
+        icon: SquareTerminal,
+        title: "在运行页开一个终端，目录就是这个课题（侧栏这个课题下多一行「终端」）",
+        onSelect: () => {
+          const st = useAppStore.getState();
+          st.setPendingTerminal({ cwd: row.repoPath, extraEnv: {}, title: row.name, shellOnly: true });
           st.setPage("terminal");
         },
       },
@@ -475,41 +1162,29 @@ export default function ProjectTree({
     }
   }
 
-  /** 一行课题：整行是主按钮（点进项目页、右键出菜单），右侧 ⋯ 悬停 / 键盘聚焦 / 菜单开着时出现。
-   *  按钮不能嵌套，所以外层是 div 承载底色，主按钮与 ⋯ 并排。 */
-  function renderRow(row: TreeRow, index: number, section: string, paths: string[]) {
+  /** 一节课题（2026-10-23 照 Claude 客户端侧栏，去掉科研 / 编程 / 工作分组）：节头是课题名（点名字进项目页，名字后的箭头开合对话，
+   *  行尾悬停出 ＋ 与 ⋯，右键同 ⋯），展开时下面平铺它的对话。拖动排序按整节挪（data-tree-row 挂在节上）。 */
+  function renderRow(row: TreeRow, index: number, section: string, paths: string[], pinned = false) {
     const selected =
       selectedRoot != null && samePath(selectedRoot, row.repoPath, IS_WINDOWS);
-    // needsAttention 恒 0：黄点归顶栏收件箱，树里只认「此刻在跑」
-    const running =
-      projectRailStatus({
-        isWindows: IS_WINDOWS,
-        needsAttention: 0,
-        roots: [
-          row.repoPath,
-          ...repos
-            .filter((w) => samePath(w.repoPath, row.repoPath, IS_WINDOWS))
-            .map((w) => w.worktreePath),
-        ],
-        runs: terminalRunInputs,
-      }) === "running";
+    const fkey = pathKey(row.repoPath, IS_WINDOWS);
+    const open = folderOpen(fkey, chatOpenPrefs, currentKey);
+    // 收着时节头行尾报状态：这个课题里有标签等你确认＝黄、在跑＝绿
+    const dot = folderDot([row.repoPath, ...(worktreesOf.get(fkey) ?? [])], terminalRunInputs, IS_WINDOWS);
+    // 收着、里面有跑完没看的：课题名亮到 l1（展开时各段自己亮）
+    const unreadInside = !open && folderHasUnread(fkey, chatsByRoot.get(fkey) ?? []);
     const menuOpen = menu?.row.key === row.key;
-    // 拖动：源行跟手；落在「原位 → 目标」之间的行各让一个槽位（同运行页标签条）
+    // 拖动：源节跟手；落在「原位 → 目标」之间的节各让出源那么高（节高矮不一，见 tabDragShift）
     const inSection = drag?.section === section ? drag : null;
     const isSource = inSection?.key === row.key;
-    let shift = 0;
-    if (inSection && !isSource) {
-      const { from, target, slots } = inSection;
-      if (from < target && index > from && index <= target)
-        shift = slots[index - 1].left - slots[index].left;
-      else if (from > target && index < from && index >= target)
-        shift = slots[index + 1].left - slots[index].left;
-    }
+    const shift =
+      inSection && !isSource ? tabDragShift(inSection.slots, inSection.from, inSection.target, index) : 0;
     return (
       <div
         key={row.key}
         data-tree-row={row.key}
-        onPointerDown={(e) => onRowPointerDown(e, section, paths, row.key)}
+        data-rail-group
+        // 节与节之间留一点白（首节除外），节头读作分节标题，不和上一节的对话挤成一串
         style={
           inSection
             ? {
@@ -519,95 +1194,172 @@ export default function ProjectTree({
               }
             : undefined
         }
-        className={`group relative flex h-7 items-center rounded-md transition-colors ${
-          isSource ? "z-10 bg-raised" : ""
-        } ${
-          selected && active
-            ? "ccode-tree-active bg-rail-sel"
-            : menuOpen
-              ? "bg-hover"
-              : "hover:bg-hover"
-        }`}
-        onContextMenu={(e) => {
-          e.preventDefault();
-          setMenu({ x: e.clientX, y: e.clientY, row });
-        }}
+        className={`${index > 0 ? "pt-3" : ""} ${isSource ? "relative z-10 rounded-md bg-raised" : ""}`}
       >
-        <button
-          type="button"
-          onClick={() => {
-            if (suppressClickRef.current) {
-              suppressClickRef.current = false;
-              return;
-            }
-            onSelect(row.repoPath);
-          }}
-          title={row.repoPath}
-          aria-current={selected && active ? "page" : undefined}
-          className={`flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md px-1.5 text-xs ${
+        <div
+          onPointerDown={(e) => onRowPointerDown(e, section, paths, row.key)}
+          className={`group relative flex h-7 items-center rounded-md transition-colors ${
             selected && active
-              ? "font-medium text-l1"
-              : selected
-                ? "font-medium text-l2 group-hover:text-l1"
-                : "text-l3 group-hover:text-l2"
+              ? "ccode-rail-active bg-rail-sel"
+              : menuOpen
+                ? "bg-hover"
+                : "hover:bg-hover"
           }`}
-        >
-          {running ? (
-            <span className="size-1.5 shrink-0 rounded-full bg-ok-text" title="运行中" />
-          ) : (
-            <span className="size-1.5 shrink-0" aria-hidden="true" />
-          )}
-          <span className="min-w-0 flex-1 truncate text-left">{row.name}</span>
-        </button>
-        <button
-          type="button"
-          aria-label={`${row.name} 的更多操作`}
-          title="更多操作"
-          aria-haspopup="menu"
-          aria-expanded={menuOpen}
-          // ⋯ 上按下不起拖
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            const r = e.currentTarget.getBoundingClientRect();
-            setMenu({ x: r.right, y: r.bottom + 4, row, alignRight: true });
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setMenu({ x: e.clientX, y: e.clientY, row });
           }}
-          className={`mr-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-l3 transition-opacity hover:bg-hover hover:text-l1 focus-visible:opacity-100 ${
-            menuOpen ? "opacity-100" : "opacity-0 group-hover:opacity-100"
-          }`}
         >
-          <MoreHorizontal size={14} strokeWidth={1.8} aria-hidden="true" />
-        </button>
+          {renderFolderToggle(row.name, open, () => toggleFolder(fkey, open), row.project ? "project" : "unregistered")}
+          <button
+            type="button"
+            onClick={() => {
+              if (suppressClickRef.current) {
+                suppressClickRef.current = false;
+                return;
+              }
+              onSelect(row.repoPath);
+              // 进项目页的同时把它的对话展开（2026-10-24 用户）；收起只走名字后的箭头
+              if (!open) toggleFolder(fkey, false);
+            }}
+            data-rail-nav
+            data-rail-folder={fkey}
+            data-rail-open={open ? "1" : "0"}
+            title={row.project ? row.repoPath : `${row.repoPath}\n这个文件夹还没添加到 Mesa`}
+            aria-current={selected && active ? "page" : undefined}
+            // 名字起点 = ml-1 + 图标格 size-6 = 28px，与缩进的对话（pl-7）对齐
+            className={`flex h-7 min-w-0 items-center gap-1 rounded-md pr-0.5 ${
+              selected && active
+                ? "font-medium text-l1"
+                : selected
+                  ? "font-medium text-l2 group-hover:text-l1"
+                  : unreadInside
+                    ? "text-l1"
+                    : row.project
+                      ? "text-l3 group-hover:text-l2"
+                      : "text-l4 group-hover:text-l3"
+            }`}
+          >
+            {/* 课题名与对话同字号（13px），靠图标和对话缩进分层，不靠字号与粗细 */}
+            <span className="ccode-rail-text min-w-0 truncate text-left">{row.name}</span>
+            {pinned && <Pin size={10} strokeWidth={1.8} aria-label="已置顶" className="shrink-0 text-l4" />}
+          </button>
+          {renderToggleSpace(open, dot, () => toggleFolder(fkey, open))}
+          {row.project &&
+            renderNewChat(
+              `在「${row.name}」里开新对话`,
+              `在这个项目里开一段新对话（发第一句才启动）`,
+              () => startProjectChat(row.project!),
+            )}
+          <button
+            type="button"
+            aria-label={`${row.name} 的更多操作`}
+            title="更多操作"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            // ⋯ 上按下不起拖
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              setMenu({ x: r.right, y: r.bottom + 4, row, alignRight: true });
+            }}
+            className={`mr-0.5 h-6 w-6 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1 ${
+              menuOpen ? "flex" : "hidden group-hover:flex group-focus-within:flex"
+            }`}
+          >
+            <MoreHorizontal size={14} strokeWidth={1.8} aria-hidden="true" />
+          </button>
+        </div>
+        {open && renderChats(chatsByRoot.get(fkey) ?? [], row.project, row.name, fkey)}
       </div>
     );
   }
 
-  const showSearch = searchOpen || searchQuery !== "";
+  /** 随手聊：不挂在项目下的对话，排在最上面。没有项目页，点名字也只开合 */
+  function renderScratch() {
+    const open = folderOpen(SCRATCH_FOLDER_KEY, chatOpenPrefs, currentKey);
+    const dot = scratchDot(terminalRunInputs, IS_WINDOWS);
+    const unreadInside = !open && folderHasUnread(SCRATCH_FOLDER_KEY, scratchList);
+    const toggle = () => toggleFolder(SCRATCH_FOLDER_KEY, open);
+    return (
+      <div data-rail-group>
+        <div className="group relative flex h-7 items-center rounded-md transition-colors hover:bg-hover">
+          {renderFolderToggle("随手聊", open, toggle, "scratch")}
+          <button
+            type="button"
+            onClick={toggle}
+            data-rail-nav
+            data-rail-folder={SCRATCH_FOLDER_KEY}
+            data-rail-open={open ? "1" : "0"}
+            title="不挂在项目下的对话（新对话默认开在这里）"
+            className={`flex h-7 min-w-0 items-center rounded-md pr-0.5 ${unreadInside ? "text-l1" : "text-l3 group-hover:text-l2"}`}
+          >
+            <span className="ccode-rail-text min-w-0 truncate text-left">随手聊</span>
+          </button>
+          {renderToggleSpace(open, dot, toggle)}
+          {renderNewChat("开一段新的随手聊", "开一段新的随手聊（同侧栏「新对话」）", () => void openQuickChat())}
+          {/* 与课题行的 ⋯ 同宽留白，悬停时 ＋ 上下对齐 */}
+          <span className="mr-0.5 hidden w-6 shrink-0 group-hover:block group-focus-within:block" aria-hidden="true" />
+        </div>
+        {open && renderChats(scratchList, null, "随手聊", SCRATCH_FOLDER_KEY)}
+      </div>
+    );
+  }
+
+  /** 搜索弹层的料：侧栏能列出的全部对话（置顶 / 随手聊 / 各课题，不受「展开更多」限额）+ 全部课题 */
+  function searchSources() {
+    type ChatRef = { s: SessionMetaDto; project: ProjectDto | null };
+    const chats: RailSearchChat<ChatRef>[] = [];
+    const push = (s: SessionMetaDto, project: ProjectDto | null, folder: string) => {
+      const fullTitle = tidySessionTitle(s).title;
+      chats.push({
+        key: chatKey(s),
+        title: sidebarChatTitle(fullTitle),
+        fullTitle,
+        folder,
+        updatedAt: s.updatedAt,
+        data: { s, project },
+      });
+    };
+    for (const s of pinnedList) {
+      const key = currentFolderKey(s.projectPath, folders, projectPaths, IS_WINDOWS);
+      const row = key ? rows.find((r) => pathKey(r.repoPath, IS_WINDOWS) === key) : undefined;
+      push(s, row?.project ?? null, row?.name ?? "随手聊");
+    }
+    for (const s of scratchList) push(s, null, "随手聊");
+    for (const r of rows) {
+      for (const s of chatsByRoot.get(pathKey(r.repoPath, IS_WINDOWS)) ?? []) push(s, r.project, r.name);
+    }
+    const projectItems: RailSearchProject<TreeRow>[] = rows.map((r) => ({
+      key: r.key,
+      name: r.name,
+      path: r.repoPath,
+      data: r,
+    }));
+    return { chats, projects: projectItems };
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* 项目标签行：计数 + 搜索 + 添加菜单（添加流程与示例课题创建都在项目页，经一次性请求触发） */}
       <div className="flex h-7 shrink-0 items-center gap-1.5 px-2">
-        <span className="text-micro font-medium tracking-[0.08em] text-l3">
+        <span className={RAIL_SECTION_LABEL}>
           项目
         </span>
-        <span className="text-micro text-l4">{rows.length}</span>
+        <span className="text-xs text-l4">{rows.length}</span>
         <span className="ml-auto flex items-center">
-          {(rows.length > SEARCH_MIN || searchQuery) && (
-            <button
-              type="button"
-              // 按下时不抢焦点：否则输入框先失焦收起，紧接着这次点击又把它打开
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => setSearchOpen((v) => !v || searchQuery !== "")}
-              title="搜索项目"
-              aria-label="搜索项目"
-              aria-expanded={showSearch}
-              className={`flex h-6 w-6 items-center justify-center rounded-md hover:bg-hover hover:text-l1 ${
-                showSearch ? "text-l1" : "text-l3"
-              }`}
-            >
-              <Search size={13} strokeWidth={1.8} aria-hidden="true" />
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => setSearchOpen(true)}
+            title="搜索对话和项目"
+            aria-label="搜索对话和项目"
+            aria-haspopup="dialog"
+            className={`flex h-6 w-6 items-center justify-center rounded-md hover:bg-hover hover:text-l1 ${
+              searchOpen ? "text-l1" : "text-l3"
+            }`}
+          >
+            <Search size={13} strokeWidth={1.8} aria-hidden="true" />
+          </button>
           <button
             type="button"
             onClick={(e) => {
@@ -623,100 +1375,59 @@ export default function ProjectTree({
         </span>
       </div>
 
-      {showSearch && (
-        <div className="shrink-0 px-1.5 pb-2 pt-1">
-          <div className="ccode-rail-search ccode-search-shell flex h-7 items-center gap-1.5 rounded-md px-2">
-            <Search size={13} strokeWidth={1.8} className="shrink-0 text-l3" />
-            <input
-              type="text"
-              autoFocus
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onBlur={() => {
-                if (!searchQuery) setSearchOpen(false);
-              }}
-              placeholder="搜索项目"
-              onKeyDown={(e) => {
-                if (e.key === "Escape") {
-                  setSearchQuery("");
-                  setSearchOpen(false);
-                }
-              }}
-              className="min-w-0 flex-1 bg-transparent text-xs text-l1 outline-none placeholder:text-l3"
-            />
-            <button
-              type="button"
-              // 按下就处理，抢在输入框失焦之前，免得空框先被 onBlur 收走
-              onMouseDown={(e) => {
-                e.preventDefault();
-                setSearchQuery("");
-                setSearchOpen(false);
-              }}
-              className="shrink-0 text-l4 hover:text-l1"
-              aria-label="关闭搜索"
-              title="关闭搜索（Esc）"
-            >
-              <X size={13} strokeWidth={1.8} />
-            </button>
+      {/* 顶边 6px 渐隐：往下滚时上面的行淡出，不在「项目」标题行下面硬切半行。
+          键盘（2026-10-24）：光标在树里时 ↑↓ / Home / End 走行，回车打开，← → 收起 / 展开课题，在对话上按 ← 回到它的课题 */}
+      <div
+        ref={listRef}
+        onKeyDown={onRailKeyDown}
+        className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1.5 pb-1 pt-1.5 [mask-image:linear-gradient(to_bottom,transparent,black_6px)]"
+      >
+        {/* 置顶的对话（2026-10-24）：跨课题钉在最上面，原课题下不重复列 */}
+        {pinnedList.length > 0 && (
+          <div className="pb-2">
+            <div className="flex h-7 items-center px-2">
+              <span className={RAIL_SECTION_LABEL}>置顶</span>
+            </div>
+            <div role="group" aria-label="置顶的对话" className="space-y-px">
+              {pinnedList.map((s) => renderChat(s, projectOfChat(s), false))}
+            </div>
           </div>
-        </div>
-      )}
-
-      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1.5 pb-1">
+        )}
+        {/* 开着、但不在任何项目里也不是随手聊的（主目录、别的文件夹里开的终端 / 对话）：单列一节放最上 */}
+        {(openByFolder.get(null)?.length ?? 0) > 0 && (
+          <div className="pb-2">
+            <div className="flex h-7 items-center px-2">
+              <span className={RAIL_SECTION_LABEL}>其他打开的</span>
+            </div>
+            <div role="group" aria-label="其他打开的" className="space-y-px">
+              {openByFolder.get(null)!.map((r) => renderOpenRow(r, false))}
+            </div>
+          </div>
+        )}
+        {/* 随手聊排最上 */}
+        {renderScratch()}
         {rows.length === 0 ? (
           <p className="px-2 py-3 text-xs text-l4">
             还没有项目，点上面的 ＋ 添加
           </p>
-        ) : grouped.pinned.length === 0 && grouped.groups.length === 0 ? (
-          <p className="px-2 py-3 text-xs text-l4">没有匹配的项目</p>
         ) : (
+          // 三段各自一个容器：拖动只在同一段里挪（置顶段的顺序是置顶表本身）
           <>
-            {grouped.pinned.length > 0 && (
-              <div className="mb-1">
-                {/* 不写 text-xs：分组组头是 button，全站 button { font: inherit } 让它吃侧栏字号，
-                    这里是 div，写了反而比「科研 / 编程」小一号 */}
-                <div className="flex h-7 items-center gap-1.5 px-2 text-l3">
-                  <Pin size={13} strokeWidth={1.8} className="shrink-0" aria-hidden="true" />
-                  <span className="min-w-0 flex-1 truncate">置顶</span>
-                </div>
-                <div className="ml-3 space-y-0.5 border-l border-hairline pl-1.5">
-                  {grouped.pinned.map((r, i, all) =>
-                    renderRow(r, i, "pinned", all.map((x) => x.repoPath)),
+            {(
+              [
+                ["pinned", grouped.pinned],
+                ["projects", grouped.projects],
+                ["unregistered", grouped.unregistered],
+              ] as const
+            ).map(([section, list]) =>
+              list.length === 0 ? null : (
+                <div key={section} className="pt-2">
+                  {list.map((r, i, all) =>
+                    renderRow(r, i, section, all.map((x) => x.repoPath), section === "pinned"),
                   )}
                 </div>
-              </div>
+              ),
             )}
-            {grouped.groups.map((group) => {
-              const isExpanded = expandedGroups.has(group.mode);
-              const Icon = isExpanded ? ChevronDown : ChevronRight;
-              return (
-                <div key={group.mode} className="mb-1">
-                  <button
-                    type="button"
-                    onClick={() => toggleGroup(group.mode)}
-                    className="flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-xs text-l3 hover:bg-hover hover:text-l2"
-                  >
-                    <Icon size={13} strokeWidth={1.8} className="shrink-0" />
-                    <span className="min-w-0 flex-1 truncate text-left">
-                      {RAIL_WORK_MODE_LABEL[group.mode]}
-                    </span>
-                    {/* 展开时子项就在下面，数字是重复信息；收起才报有几个 */}
-                    {!isExpanded && (
-                      <span className="shrink-0 text-micro text-l4">
-                        {group.items.length}
-                      </span>
-                    )}
-                  </button>
-                  {isExpanded && (
-                    <div className="ml-3 space-y-0.5 border-l border-hairline pl-1.5">
-                      {group.items.map((r, i, all) =>
-                        renderRow(r, i, group.mode, all.map((x) => x.repoPath)),
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
           </>
         )}
       </div>
@@ -730,6 +1441,32 @@ export default function ProjectTree({
           items={menuItems(menu.row)}
         />
       )}
+      {chatMenu && (
+        <ContextMenu
+          x={chatMenu.x}
+          y={chatMenu.y}
+          alignRight={chatMenu.alignRight}
+          onClose={() => setChatMenu(null)}
+          items={chatMenuItems(chatMenu.s, chatMenu.project)}
+        />
+      )}
+      {searchOpen && (() => {
+        const { chats, projects: projectItems } = searchSources();
+        return (
+          <RailSearchPalette
+            chats={chats}
+            projects={projectItems}
+            onClose={() => setSearchOpen(false)}
+            onOpenChat={(c) => openChat(c.data.s, c.data.project)}
+            onOpenProject={(p) => {
+              // 同点课题行：进项目页并展开它的对话
+              const fkey = pathKey(p.path, IS_WINDOWS);
+              onSelect(p.path);
+              if (!folderOpen(fkey, chatOpenPrefs, currentKey)) toggleFolder(fkey, false);
+            }}
+          />
+        );
+      })()}
       {addMenu && (
         <ContextMenu
           x={addMenu.x}
@@ -791,7 +1528,8 @@ const RECENT_COUNT = 5;
 
 type SwitchRow = {
   project: ProjectDto;
-  running: boolean;
+  /** 这个课题里开着的 Agent 最要紧的状态（folderDot 同口径） */
+  caret: ChatDot;
   current: boolean;
 };
 
@@ -836,18 +1574,16 @@ export function useProjectSwitch(
         project: p,
         current:
           selectedRoot != null && samePath(selectedRoot, p.path, IS_WINDOWS),
-        running:
-          projectRailStatus({
-            isWindows: IS_WINDOWS,
-            needsAttention: 0,
-            roots: [
-              p.path,
-              ...workspaces
-                .filter((w) => samePath(w.repoPath, p.path, IS_WINDOWS))
-                .map((w) => w.worktreePath),
-            ],
-            runs,
-          }) === "running",
+        caret: folderDot(
+          [
+            p.path,
+            ...workspaces
+              .filter((w) => samePath(w.repoPath, p.path, IS_WINDOWS))
+              .map((w) => w.worktreePath),
+          ],
+          runs,
+          IS_WINDOWS,
+        ),
       }));
       setPanel({ ...pos, rows });
     } catch (reason) {
@@ -1204,12 +1940,7 @@ function ProjectSwitchPanel({
                               }
                             </span>
                           )}
-                          {r.running && (
-                            <span
-                              className="size-1.5 shrink-0 rounded-full bg-ok-text"
-                              title="有 Agent 在跑"
-                            />
-                          )}
+                          {r.caret && <RunCaret state={r.caret} />}
                           {r.current && (
                             <Check
                               size={13}

@@ -1,5 +1,6 @@
+/** 项目页页签。「对话」2026-10-23 撤掉（侧栏挂对话第一期）：项目的对话挂在侧栏项目树下面，
+ *  项目页只管课题本身；存过「chats」的项目回落到默认页签 */
 export type ProjectSurfaceTab =
-  | "chats"
   | "tasks"
   | "schedules"
   | "files"
@@ -16,7 +17,7 @@ export function projectTaskLabel(workMode: string | null | undefined): string {
 export function projectSurfaceTabsForMode(
   _workMode: string | null | undefined,
 ): ProjectSurfaceTab[] {
-  return ["chats", "tasks", "schedules", "files", "agents"];
+  return ["tasks", "schedules", "files", "agents"];
 }
 
 export function normalizeProjectSurfaceTab(

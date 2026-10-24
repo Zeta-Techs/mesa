@@ -78,6 +78,7 @@ export default function ContextRing({
   warnColor,
   trackColor = "var(--color-field)",
   className = "",
+  extra = [],
 }: {
   ratio: number;
   used: number;
@@ -92,6 +93,8 @@ export default function ContextRing({
   warnColor?: string;
   trackColor?: string;
   className?: string;
+  /** 悬停里多写的几行（2026-10-23 底栏收字：本段用了多少 token、经哪条连接不再单写在底栏上） */
+  extra?: string[];
 }) {
   const r = 6;
   const c = 2 * Math.PI * r;
@@ -214,6 +217,11 @@ export default function ContextRing({
               <div className="mt-0.5 tabular-nums text-l3">
                 {contextFmtTokens(used)} / {contextFmtTokens(win)} tokens
               </div>
+              {extra.map((line) => (
+                <div key={line} className="mt-0.5 tabular-nums text-l3">
+                  {line}
+                </div>
+              ))}
               <div className="mt-1 leading-[18px] text-l4">点一下看分类{onCompact ? "，也能在里面压缩" : ""}</div>
             </div>
           </div>,

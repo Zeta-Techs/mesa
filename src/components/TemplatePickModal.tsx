@@ -7,6 +7,8 @@ import {
   PIPELINE_TEMPLATES,
   pipelineStepsForTemplate,
   settingsForTemplateApply,
+  UNTESTED_TEMPLATE_BADGE,
+  UNTESTED_TEMPLATE_HINT,
   type PipelineTemplateDef,
   type SubmissionMode,
 } from "../pipeline-presets";
@@ -397,6 +399,14 @@ export default function TemplatePickModal({
                       <span className="shrink-0 rounded-sm bg-strip px-1.5 py-0.5 text-xs text-l3">
                         {t.steps.length} 步
                       </span>
+                      {!t.fieldTested && (
+                        <span
+                          className="shrink-0 rounded-sm bg-strip px-1.5 py-0.5 text-xs text-l3"
+                          title={UNTESTED_TEMPLATE_HINT}
+                        >
+                          {UNTESTED_TEMPLATE_BADGE}
+                        </span>
+                      )}
                       {busy === t.id && (
                         <span className="ml-auto text-xs text-l3">写入中…</span>
                       )}

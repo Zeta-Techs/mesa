@@ -249,6 +249,12 @@ pub fn run() {
                     .separator()
                     .quit()
                     .build()?;
+                // 文件 → 新对话（2026-10-24，HIG：常用命令进菜单；⌘N 与侧栏「新对话」同一出口）。
+                // 加速键写死 ⌘N（同命令面板 ⌘K 先例）：设置页改了绑定，菜单这一条照旧
+                let new_chat_item = MenuItemBuilder::with_id("new-chat", "新对话")
+                    .accelerator("CmdOrCtrl+N")
+                    .build(app)?;
+                let file_menu = SubmenuBuilder::new(app, "文件").item(&new_chat_item).build()?;
                 let edit_menu = SubmenuBuilder::new(app, "编辑")
                     .undo()
                     .redo()
@@ -276,6 +282,7 @@ pub fn run() {
                     .build()?;
                 let menu = MenuBuilder::new(app)
                     .item(&app_menu)
+                    .item(&file_menu)
                     .item(&edit_menu)
                     .item(&window_menu)
                     .item(&help_menu)
@@ -288,6 +295,9 @@ pub fn run() {
                     }
                     "palette" => {
                         let _ = app_handle.emit("menu:action", "palette");
+                    }
+                    "new-chat" => {
+                        let _ = app_handle.emit("menu:action", "new-chat");
                     }
                     "docs" => {
                         use tauri_plugin_opener::OpenerExt;

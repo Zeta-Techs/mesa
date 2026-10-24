@@ -170,3 +170,48 @@ export function resolveResumeLaunch<
     reselectNeeded: false,
   };
 }
+
+/** 列表里点一段对话接着聊时，交给 resolveResumeLaunch 的连接（2026-10-24 用户：点开一段对话，输入框底部应是它之前用的配置）。
+ *  这段对话自己记下的连接（session_meta.profile_id，没有退回原 Run 的）还在、没停用就用它，项目默认不再盖过它；
+ *  它不在了才按项目给这家设的连接（autoLaunchProfileId，Codex 渠道不同时预填不自动跑）；都没有交给原配置失效提示 / 上次使用 */
+export function resumeProfileChoice(input: {
+  agentId: string;
+  own: string | null | undefined;
+  preferred: string | null | undefined;
+  profiles: readonly { id: string; agent: string }[];
+  hidden?: readonly string[];
+}): { profileId?: string; autoLaunchProfileId?: string } {
+  const own = input.own?.trim() || "";
+  const preferred = input.preferred?.trim() || "";
+  const usable = (id: string) =>
+    input.profiles.some((p) => p.id === id && p.agent === input.agentId) &&
+    !(input.hidden ?? []).includes(id);
+  if (own && usable(own)) return { profileId: own };
+  if (preferred) return { autoLaunchProfileId: preferred };
+  return own ? { profileId: own } : {};
+}
+
+/** 接着聊默认的模型：这段对话最后一轮用的那个，换到的连接名单里有它（或名单空着，任填）才带上，
+ *  否则交给连接默认（resolveResumeLaunch 取名单第一个） */
+export function resumeModelChoice(
+  model: string | null | undefined,
+  profile: { models: readonly string[] } | null | undefined,
+): string | undefined {
+  const m = model?.trim();
+  if (!m || !profile) return undefined;
+  return profile.models.length === 0 || profile.models.includes(m) ? m : undefined;
+}
+
+/** 会话文件最近一分钟有写入时，是不是 Mesa 自己写的：这段对话最近一次是 Mesa 起的、已经停了，
+ *  最后一次写入不晚于停下的时刻（留 5 秒给 CLI 退出前的最后一笔）。是的话就不是「别的终端里在跑」，不用提醒
+ *  （2026-10-24 实证：关掉一个刚起的 Codex 标签，一分钟内再从侧栏点它就误报） */
+export function lastWriteIsMesas(
+  updatedAt: string | null | undefined,
+  run: { closedAt: string | null } | null | undefined,
+): boolean {
+  if (!updatedAt || !run?.closedAt) return false;
+  const wrote = Date.parse(updatedAt);
+  const closed = Date.parse(run.closedAt);
+  if (Number.isNaN(wrote) || Number.isNaN(closed)) return false;
+  return wrote <= closed + 5000;
+}

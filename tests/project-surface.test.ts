@@ -17,29 +17,27 @@ test("projectTaskLabel keeps the user-facing mode names", () => {
 test("project surface tabs normalize damaged values to tasks", () => {
   assert.equal(normalizeProjectSurfaceTab("files"), "files");
   assert.equal(normalizeProjectSurfaceTab("agents"), "agents");
-  assert.equal(normalizeProjectSurfaceTab("chats"), "chats");
+  // 「对话」页签已撤（对话挂进侧栏项目树），旧值回落默认
+  assert.equal(normalizeProjectSurfaceTab("chats"), "tasks");
   assert.equal(normalizeProjectSurfaceTab("schedules"), "schedules");
   assert.equal(normalizeProjectSurfaceTab("unknown"), "tasks");
   assert.equal(normalizeProjectSurfaceTab(null), "tasks");
 });
 
-test("all work modes put chats, tasks, schedules, files, and agents in that order", () => {
+test("all work modes put tasks, schedules, files, and agents in that order", () => {
   assert.deepEqual(projectSurfaceTabsForMode("office"), [
-    "chats",
     "tasks",
     "schedules",
     "files",
     "agents",
   ]);
   assert.deepEqual(projectSurfaceTabsForMode("research"), [
-    "chats",
     "tasks",
     "schedules",
     "files",
     "agents",
   ]);
   assert.deepEqual(projectSurfaceTabsForMode("coding"), [
-    "chats",
     "tasks",
     "schedules",
     "files",

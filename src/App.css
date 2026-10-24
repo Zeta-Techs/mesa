@@ -667,15 +667,14 @@ body {
   /* 侧栏 / 顶栏罩色的**基数**：各主题、各形态本来的透明度，也就是「没调过」的样子。
      用户设置只写一个系数 --ccode-chrome-scale（App.tsx 内联进来），乘在基数上——
      一个值同时管侧栏与顶栏、深浅两套。存绝对值就得按主题各存一个滑块，而基数本来
-     就不一样（侧栏深色 42% / 浅色 78% / 图标态 28%），存哪个都会在别的主题里对不上。
+     就不一样（深色壳 48% / 浅色壳与侧栏各 78%），存哪个都会在别的主题里对不上。
      scale = 1 逐字节还原改版前——这条不变式是有意的：装上新版、不动设置，
      界面不该有任何变化。档位表见 Rust KNOWN_CHROME_OPACITIES。
 
      基数的分工：
-       rail   侧栏那层罩。
-       shell  壳自己那层。浅色下它同时是「顶栏 + 四周缝」的可见来源——顶栏自己不铺色，
-              是壳这层罩从背后透出来的，所以调低时顶栏跟着一起变；深色壳是 0%，
-              纯窗口材质，顶栏直接透出桌面（见 .ccode-titlebar 上那段）。
+       rail   侧栏那层罩（深色 0%：侧栏与顶栏、缝同一块玻璃，不再另铺）。
+       shell  壳自己那层，「顶栏 + 四周缝」（深色还有侧栏）的可见来源——顶栏自己不铺色，
+              是壳这层罩从背后透出来的，所以调低时顶栏跟着一起变（见 .ccode-titlebar 上那段）。
        lsel   选中行胶囊。与 rail 同乘一个系数：胶囊填色和罩色是同一类东西（rail 色系
               的表面处理），罩色淡下去而胶囊不淡，它就不再读作「这行被高亮」，而读作
               「壁纸上贴了一块不透明的东西」——用户把侧栏调透，最显眼的那块却没动，
@@ -687,8 +686,13 @@ body {
               选中态不只有填色：文字 text-l1、图标 text-nav-accent 都不随系数变，
               0 档下这两个信号仍在，只是没有底衬（与 hover 的强弱关系见该规则处）。 */
   --ccode-chrome-scale: 1;
-  --ccode-rail-base: 42%;
-  --ccode-shell-base: 0%;
+  /* 深色：侧栏、顶栏、四周缝是同一块磨砂（2026-10-23 用户截图：四周缝透出的彩色壁纸像一圈霓虹框，看对话分神）。
+     罩色只铺在壳上一层 48%，侧栏自己不再另铺（基数 0），三处同色——主画布是这块玻璃上唯一浮起的面板，
+     缝读作「玻璃露出来的一点边」而不是另一种颜色的裂缝。48% 介于改版前展开 42% 与「62% 以上看成实心」之间：
+     壁纸压掉一半，色相还透得出来。原先展开 42% / 图标态 28% 两套分开、深色壳 0%，都作废；
+     图标态因此也是 48%，收起侧栏专心聊天时四周最安静。 */
+  --ccode-rail-base: 0%;
+  --ccode-shell-base: 48%;
   --ccode-lsel-base: 88%;
 
   /* 每条 color-mix 前都留一条不含 calc 的同基数声明：万一 WebKit 不接受 color-mix()
@@ -705,12 +709,6 @@ body {
   );
 }
 
-/* 图标态侧栏更透：只改写基数，规则本体不再写死数字。
-   与浅色块同权重（各一条属性选择器），浅色块排在后面，所以浅色 + 图标态落到 78%
-   ——与改版前一致：那时这条规则写在浅色块之前，也是被盖掉。 */
-.ccode-app-shell[data-nav="icons"] {
-  --ccode-rail-base: 28%;
-}
 
 /* 全局内容卡：普通页面取 canvas，项目工作面取 rail2；嵌套卡不再叠加透明度。
    放在 components 层，让显式的 hover/选中工具类仍能覆盖常态卡片底色。 */
@@ -853,12 +851,12 @@ body {
 }
 
 /* 顶栏自己不铺罩色——两种 chrome 都不铺，但理由不同，别当成一处口子：
-   · 深色：窗口材质（Menu / Mica）直接透出来，这已经是顶栏最透的状态，
-     没有可再调低的余量。系数调到最低，这一条也不动。
+   · 深色：窗口材质（Menu / Mica）之上是壳那层 48% 罩（2026-10-23 起，原 0% 直接透出桌面），
+     跟着系数走；这里再铺就和壳叠成两层。
    · 浅色：壳那层罩（--ccode-shell-base，78%）从背后透上来就是顶栏看到的颜色，
      它跟着系数走，所以浅色顶栏会跟着调。这里再铺一层会与壳合成到约 95%，
      顶栏和侧栏分成两块深浅——改版前就是因为这个才只让壳铺。
-   一句话：**顶栏在浅色下由壳的罩色代表，深色下由窗口材质代表**；两者都不在本规则里。
+   一句话：**顶栏的颜色由壳的罩色代表**（浅色 78%、深色 48%）；不在本规则里。
    position + z-index 是导航岛的定位上下文与层级：岛嵌在栏内，靠这里的 39 给整条栏
    （含岛、含收件箱下拉）定基准——和岛当年独立待在根层级时的 z-39 同一读数，仍在
    各挡浮层 z-40~70 之下。没有这个 z-index 时栏不构成层叠上下文，岛的 z-1 会掉进
@@ -870,8 +868,8 @@ body {
 }
 
 /* 侧栏罩色：基数（.ccode-app-shell 里声明）× 用户系数。
-   展开 42% 是改版前的值；62% 以上在深色壁纸上会看成实心 rail。图标态 28% 由下面
-   那条改写基数，规则本体不再出现数字。选中行也走这一套（基数 lsel，见下面那条规则）。
+   深色基数 0：侧栏与顶栏、缝同是壳那一层 48%（62% 以上在深色壁纸上会看成实心 rail）；浅色 78% 叠在壳上。
+   规则本体不出现数字。选中行也走这一套（基数 lsel，见下面那条规则）。
    每条 color-mix 前留一条不含 calc 的同基数声明：万一 WebKit 不接受 color-mix() 里的
    calc()，作废的只是后一条、罩色退回基数，而不是整条失效——侧栏一旦没有罩色就是
    直接透出壁纸，l1/l2 压在上面不再有对比度保证。 */
@@ -898,8 +896,7 @@ body {
    浅色不另铺色，只改基数——壳与侧栏取同一个 78%，正是这里的原意（原来是一串选择器
    各自铺 78%，现在是壳一层罩 + 侧栏罩色基数跟上）。
    基数是自定义属性、沿 DOM 继承，所以一条声明同时喂给壳与缩进多层的侧栏。
-   图标态那条同权重规则排在前面，这里自然盖过它，浅色 + 图标态因此是 78%——
-   与改版前一致（那时它也在浅色块之前，本就被盖掉）。 */
+   浅色展开与图标态同是 78%（与改版前一致）。 */
 .ccode-app-shell[data-chrome="light"] {
   --ccode-rail-base: 78%;
   --ccode-shell-base: 78%;
@@ -1330,6 +1327,52 @@ html[data-material="none"] .ccode-app-rail .bg-rail-sel {
   }
 }
 
+/* 折叠区展开 / 收起（PageFrame Collapse）：grid 行轨 0fr ↔ 1fr，浏览器按内容自然高度插值，不用 JS 量高；
+   内容随之淡入淡出。过渡中只竖向裁切（横向不切：行的悬停底常用负外边距伸出栏边），停稳后整块不裁 */
+.ccode-collapse {
+  display: grid;
+  /* 列宽锁在容器宽：隐式列默认 auto，里面一行不换行的长命令会把整列撑到命令那么宽，
+     对话栏居中后左半截出窗、正文被挤出视野（2026-10-23 用户截图） */
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 200ms var(--ccode-motion-ease);
+}
+.ccode-collapse[data-phase="opening"],
+.ccode-collapse[data-phase="open"] {
+  grid-template-rows: 1fr;
+}
+.ccode-collapse > div {
+  min-height: 0;
+  min-width: 0;
+  overflow-x: visible;
+  overflow-y: clip;
+  opacity: 0;
+  transition: opacity 160ms var(--ccode-motion-ease);
+}
+.ccode-collapse[data-phase="opening"] > div,
+.ccode-collapse[data-phase="open"] > div {
+  opacity: 1;
+}
+.ccode-collapse[data-phase="open"] > div {
+  overflow: visible;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ccode-collapse,
+  .ccode-collapse > div {
+    transition: none;
+  }
+}
+
+/* 多行文字旁的图标（items-start 的提示行、计划项、决策卡）：包一层恰好一行高的壳，图标对准第一行的中线。
+   以前逐处手调 mt-px / mt-0.5 / mt-[3px]，对话字号、行高一变就偏；壳的行高取自身所在的文字，
+   与第一行字号不同时在壳上补同一个字号类 */
+.ccode-icon-line {
+  display: flex;
+  height: 1lh;
+  flex-shrink: 0;
+  align-items: center;
+}
+
 /* 完全隐藏侧栏时的顶部灵动岛（替代旧的"幽灵胶囊"）。
    旧结构是一条隐形热区 + 悬停唤出后自己跑掉的胶囊，全收起后窗口顶部是空的，
    用户不主动去摸就以为导航没了。现在岛常驻，只在休眠/展开两态之间收缩展开：
@@ -1721,7 +1764,6 @@ button.ccode-nav-island-announce:hover {
   .ccode-app-main > div,
   .ccode-app-shell :where(.animate-spin),
   :where(.animate-pulse),
-  .ccode-working-spinner circle,
   .ccode-float-surface.ccode-exiting,
   .ccode-fade.ccode-exiting,
   .ccode-sheet-right,
@@ -2012,7 +2054,8 @@ select:focus-visible {
     var(--color-canvas) 100%
   );
 }
-/* 输入框浮起靠顶部 1px 内高光（同 .ccode-float-surface 的 edge highlight，零阴影）；浅色白底上白高光看不见，改底边极淡内暗线 */
+/* 输入框浮起靠顶部 1px 内高光（同 .ccode-float-surface 的 edge highlight，零阴影）；浅色白底上白高光看不见，改底边极淡内暗线。
+   聚焦只把边框换成 l4（ChatComposer 上的 focus-within:border-l4）；2026-10-23 试过双圈柔环，用户要求恢复，勿再改 */
 .ccode-composer-box {
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.05);
 }
@@ -2020,7 +2063,8 @@ select:focus-visible {
   box-shadow: inset 0 -1px 0 rgb(0 0 0 / 0.03);
 }
 /* 权限写在输入框本身上（2026-10-22）：只讨论 = 虚线框（常驻）；完全访问 = 切到这一档时上沿亮一道 caution 细线
-   （两端淡出）约 2.4 秒后淡掉，不常驻（同日用户：一直亮着输入框太花）——常驻的提醒交给权限芯片的琥珀字。
+   （两端淡出）约 2.4 秒后淡掉，不常驻（同日用户：一直亮着输入框太花）。权限字平时灰字（2026-10-23 用户），
+   只在同一时刻跟着亮一下 caution 再淡回灰（.ccode-perm-flash，同一条曲线）。
    其余档不加任何东西 */
 .ccode-composer-box[data-tone="discuss"] {
   border-style: dashed;
@@ -2061,6 +2105,27 @@ select:focus-visible {
   .ccode-composer-box[data-tone="full"][data-tone-flash]::before {
     animation: none;
     opacity: 0.85;
+  }
+}
+.ccode-perm-flash {
+  animation: ccode-perm-flash 2.4s ease-out forwards;
+}
+@keyframes ccode-perm-flash {
+  0% {
+    color: var(--color-l3);
+  }
+  12%,
+  65% {
+    color: var(--color-caution-text);
+  }
+  100% {
+    color: var(--color-l3);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ccode-perm-flash {
+    animation: none;
+    color: var(--color-caution-text);
   }
 }
 
@@ -2175,6 +2240,21 @@ select:focus-visible {
 .terminal-workbench .text-micro {
   font-size: 12px;
   line-height: 1rem;
+}
+
+/* 侧栏的小字（2026-10-23 用户：侧栏太窄、字有点小；对话挂进项目树后照 Claude 客户端侧栏）：
+   节头 / 「项目」标签 / 「展开更多」用 xs。原提到 12.5px；2026-10-24 对话标题降到 13px 后，节头跟着回到 12px，
+   保持比对话小一档、读作分节标题（两者都是 l3，差半像素时分不出哪行是节头）。两个平台同值。 */
+.ccode-app-rail .text-xs {
+  font-size: 12px;
+  line-height: 1rem;
+}
+/* 侧栏对话标题与课题名（2026-10-24 用户：「字号再小一点点」）：13px，比「工作台 / 搜对话」的 14px 小一档。两个平台同值。
+   同日用户「分不清项目和对话」后课题名也用这一档：课题和对话靠课题前的文件夹图标、对话缩进到名字起点分层，不靠字号；
+   12px 的 xs 只留给分节标签（项目 / 置顶 / 其他打开的）与「展开更多」这类动作 */
+.ccode-app-rail .ccode-rail-text {
+  font-size: 13px;
+  line-height: 1.15rem;
 }
 
 /* 终端未启动空态点阵（v3.213 补齐 v3.92 口径）：1px 点 / 18px 格距，走令牌。 */
@@ -2964,6 +3044,67 @@ select:focus-visible {
   }
 }
 
+/* 运行状态光标（2026-10-24 用户：侧栏在跑的绿点换成 Mesa 自己的光标；规则 src/run-caret.ts，组件 RunCaret）：
+   M▁ 里那一道横光标，跟着所在行的字号走。大小（同日三改，用户：「光标放在标题垂直居中的位置，大小长短粗细你看如何更合适」）：
+   0.5em × 0.2em（侧栏行里约 7×2.8px，最薄 2.5px），长宽比约 2.5:1，同聊天插入符 MesaCaret；原先 0.62em × 2px 细长，
+   挪到行中间后读成减号「–」，收短加厚才读作一小块光标。比过的：更短更厚（6×3 / 5×5）就成了圆点，竖条（|）是普通插入符、丢了 M▁ 的横向。
+   working 灰（l3，同对话行的字）呼吸：2.4s 一明一暗、缓入缓出
+   （同日用户：「不要闪烁，做成呼吸」——原先同聊天插入符那样硬亮灭，一列里好几个在闪太吵）；
+   鼠标放到它所在的那一行上，呼吸停下、常亮（看清楚它在不在），也不再给 ⋯ 让位（同日用户）。
+   idle 更淡（l4）、常亮；confirm 品牌琥珀、常亮，深色底带一点同色余辉（浅色底余辉发脏不加）。
+   放进 items-center 的行里就和标题字竖着居中（同日用无头 Chrome 量过：与中文字墨的中线只差约 0.2px，不另挪）；
+   原先坐在基线上读作「字后面的下划线」，同日用户要求居中；居中后不夹在句子中间用（读成破折号），只放行尾、状态字后或最前。
+   减弱动态效果时 working 常亮；Windows 高对比度下背景被系统接管，改用系统前景色 / 高亮色 */
+@keyframes ccode-run-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.22;
+  }
+}
+.ccode-run-caret {
+  display: inline-block;
+  flex: none;
+  width: 0.5em;
+  height: max(2.5px, 0.2em);
+  border-radius: 1px;
+  background: var(--color-l3);
+}
+.ccode-run-caret[data-state="working"] {
+  animation: ccode-run-breathe 2.4s ease-in-out infinite;
+}
+/* 悬停停呼吸：侧栏对话行（group/chat）、节头与其他行（group）、或直接指着它所在的元素 */
+.group\/chat:hover .ccode-run-caret[data-state="working"],
+.group:hover .ccode-run-caret[data-state="working"],
+:hover > .ccode-run-caret[data-state="working"] {
+  animation: none;
+}
+.ccode-run-caret[data-state="idle"] {
+  background: var(--color-l4);
+}
+.ccode-run-caret[data-state="confirm"] {
+  background: var(--color-mesa-amber);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--color-mesa-amber) 55%, transparent);
+}
+[data-theme$="-light"] .ccode-run-caret[data-state="confirm"] {
+  box-shadow: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ccode-run-caret[data-state="working"] {
+    animation: none;
+  }
+}
+@media (forced-colors: active) {
+  .ccode-run-caret {
+    background: CanvasText;
+  }
+  .ccode-run-caret[data-state="confirm"] {
+    background: Highlight;
+  }
+}
+
 /* 聊天「这一轮在做什么」的光带（2026-10-21，对照 Claude / Codex 客户端）：生成中那一行的文字、过程里还没回结果的
    那一行，底色 l3，一道 l1 的亮带从左扫到右——字本身在动，不再多写「进行中…」。
    background-clip:text 连后代的字一起裁（过程行的动词与对象两个 span 共用一道光带）；WebKit 要带前缀。
@@ -3007,54 +3148,6 @@ select:focus-visible {
   }
 }
 
-
-/* 终端标签「生成中」：虚线沿圆周爬，圆本身不旋转。
-   WKWebView 里 CSS rotate 会让变换原点跟着描边外接框晃。 */
-/* 「生成中」转圈（2026-09-15 重做）：8 段虚线按相位差闪 opacity——合成器线程驱动，
-   终端满载出字（xterm 渲染抢主线程）也不掉帧。此前用 stroke-dashoffset 关键帧是
-   主线程重绘，出字高峰一卡一卡；CSS rotate 也不用——WKWebView 转轴会让圆心晃。
-   静态 opacity 供 prefers-reduced-motion（animation:none）时兜底显示。 */
-@keyframes ccode-working-pulse {
-  0%,
-  100% {
-    opacity: 0.25;
-  }
-  40% {
-    opacity: 1;
-  }
-}
-.ccode-working-spinner {
-  display: block;
-  overflow: visible;
-}
-.ccode-working-spinner circle {
-  opacity: 0.45;
-  animation: ccode-working-pulse 0.9s linear infinite;
-}
-.ccode-working-spinner circle:nth-child(1) {
-  animation-delay: 0s;
-}
-.ccode-working-spinner circle:nth-child(2) {
-  animation-delay: -0.1125s;
-}
-.ccode-working-spinner circle:nth-child(3) {
-  animation-delay: -0.225s;
-}
-.ccode-working-spinner circle:nth-child(4) {
-  animation-delay: -0.3375s;
-}
-.ccode-working-spinner circle:nth-child(5) {
-  animation-delay: -0.45s;
-}
-.ccode-working-spinner circle:nth-child(6) {
-  animation-delay: -0.5625s;
-}
-.ccode-working-spinner circle:nth-child(7) {
-  animation-delay: -0.675s;
-}
-.ccode-working-spinner circle:nth-child(8) {
-  animation-delay: -0.7875s;
-}
 
 /* ===== 沉浸式阅读区（批次 B3） ===== */
 

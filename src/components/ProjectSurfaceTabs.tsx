@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
-import { Bot, Clock3, Files, ListChecks, MessageSquare } from "lucide-react";
+import { Bot, Clock3, Files, ListChecks } from "lucide-react";
 import {
   projectTaskLabel,
   projectSurfaceTabsForMode,
@@ -10,7 +10,6 @@ import { nextTabIndex, tabNavDelta, tabStopIndex } from "../tab-keys";
 import type { ProjectDto } from "../types";
 
 const TAB_ICONS = {
-  chats: MessageSquare,
   tasks: ListChecks,
   schedules: Clock3,
   files: Files,
@@ -22,12 +21,15 @@ export default function ProjectSurfaceTabs({
   active,
   onChange,
   taskPanel,
+  trailing,
   children,
 }: {
   project: ProjectDto | null;
   active: ProjectSurfaceTab;
   onChange: (tab: ProjectSurfaceTab) => void;
   taskPanel?: ReactNode;
+  /** 页签行右端（「＋ 新对话」：在这个项目里开一段对话） */
+  trailing?: ReactNode;
   children?: ReactNode;
 }) {
   // hooks 必须在提前 return 之前——project 为空时也要照常调用
@@ -55,7 +57,6 @@ export default function ProjectSurfaceTabs({
   }
 
   const labels: Record<ProjectSurfaceTab, string> = {
-    chats: "对话",
     tasks: projectTaskLabel(project.workMode),
     schedules: "定时任务",
     files: "文件",
@@ -81,8 +82,9 @@ export default function ProjectSurfaceTabs({
 
   return (
     <section aria-label="项目视图" className="flex min-h-0 flex-1 flex-col">
+      <div className="mb-4 flex shrink-0 items-end border-b border-hairline">
       <div
-        className="mb-4 flex shrink-0 items-center gap-1 border-b border-hairline"
+        className="flex items-center gap-1"
         role="tablist"
         aria-label="项目视图"
         onKeyDown={moveFocus}
@@ -113,6 +115,8 @@ export default function ProjectSurfaceTabs({
             </button>
           );
         })}
+      </div>
+      {trailing && <div className="ml-auto flex items-center pb-1">{trailing}</div>}
       </div>
       <div
         data-project-main-scroll

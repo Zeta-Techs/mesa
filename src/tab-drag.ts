@@ -1,4 +1,4 @@
-/** 终端标签条拖拽排序纯逻辑（tests/tab-drag.test.ts）。
+/** 跟手拖拽排序纯逻辑（tests/tab-drag.test.ts）。原是运行页标签条的，标签条 2026-10-24 撤掉后只剩侧栏项目树的节在用（纵向，left/width 当 top/height 读）。
  *  槽位 = 各标签拖拽开始时实测的 { left, width }（viewport 坐标，顺序 = tabs 顺序）。 */
 
 export interface TabSlot {
@@ -63,4 +63,32 @@ export function tabDragTarget(
     if (cx >= slots[k].left + slots[k].width / 2) target = k;
   }
   return target;
+}
+
+/** 拖动中其余槽位的让位位移（2026-10-23：侧栏项目树的课题块展开对话后高矮不一）：
+ *  源往后拖，夹在中间的往前让「源的尺寸 + 源后那道缝」；往前拖，夹在中间的往后让「源的尺寸 + 源前那道缝」。
+ *  等宽槽位时与「挪到相邻槽位」相同 */
+export function tabDragShift(
+  slots: TabSlot[],
+  from: number,
+  target: number,
+  index: number,
+): number {
+  if (index === from) return 0;
+  if (from < target && index > from && index <= target) {
+    return slots[from].left - slots[from + 1].left;
+  }
+  if (from > target && index < from && index >= target) {
+    const gap = slots[from].left - (slots[from - 1].left + slots[from - 1].width);
+    return slots[from].width + gap;
+  }
+  return 0;
+}
+
+/** 松手吸附：源落到目标位时的位移。往后拖时源的尾缘对齐目标槽尾缘（尺寸不等时不能直接取目标槽起点） */
+export function tabDragSettleDx(slots: TabSlot[], from: number, target: number): number {
+  if (target > from) {
+    return slots[target].left + slots[target].width - slots[from].width - slots[from].left;
+  }
+  return slots[target].left - slots[from].left;
 }

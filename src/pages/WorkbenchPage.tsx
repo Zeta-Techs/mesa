@@ -16,6 +16,7 @@ import {
   SquareArrowOutUpRight,
 } from "lucide-react";
 import { useAppStore, runInboxAction, visibleInboxItems } from "../store";
+import { openConversation } from "../quick-chat-launch";
 import { usePhoneDropStore } from "../phone-drop-store";
 import { phonePendingCount } from "../phone-drop";
 import { bulkReadableItems } from "../inbox";
@@ -79,6 +80,8 @@ import {
   secondaryActionClass,
 } from "../components/PageFrame";
 import { toast } from "../toast";
+import RunCaret from "../components/RunCaret";
+import { caretOfAttention, type RunCaretState } from "../run-caret";
 import { workbenchScheduleRows } from "../schedule-tasks";
 
 const iconClass = "shrink-0 text-l4";
@@ -127,13 +130,7 @@ function SectionHeading({
   );
 }
 
-function WorkbenchPage({
-  visible,
-  onQuickChat,
-}: {
-  visible?: boolean;
-  onQuickChat: () => void;
-}) {
+function WorkbenchPage({ visible }: { visible?: boolean }) {
   const setPage = useAppStore((s) => s.setPage);
   const contextLabel = useAppStore((s) => s.contextLabel);
   const terminalRunInputs = useAppStore((s) => s.terminalRunInputs);
@@ -764,6 +761,7 @@ function WorkbenchPage({
 
   const recentSessions = useMemo(() => {
     return workbenchRecentSessions(sessions).map((session) => ({
+      meta: session,
       agent: session.agent,
       sessionId: session.sessionId,
       title: namedSessionTitle(session) ?? "",
@@ -779,7 +777,7 @@ function WorkbenchPage({
   const reviewTasks = userTasks.filter((task) => task.status === "pending_review");
   // 定时任务摘要：在跑 / 上次失败 / 24 小时内要跑的；暂停与待评审已在「待你处理」里，不重复
   const scheduleRows = workbenchScheduleRows(schedules, projects, new Date(), IS_WINDOWS);
-  /** 右栏「等你的事」：待你处理 + 待你验收 + 定时任务，有一样就分两栏 */
+  /** 「等你的事」：待你处理 + 待你验收 + 定时任务，排在「正在进行」下面，一样都没有就整块不出 */
   const hasSide = hasInbox || reviewTasks.length > 0 || scheduleRows.length > 0;
   function openProjectSchedules(root: string) {
     setSelectProjectReq(root);
@@ -814,35 +812,24 @@ function WorkbenchPage({
         attention: hero.attention,
       })
     : "";
-  const statusDot =
-    hero?.attention === "confirm"
-      ? "bg-warn-text"
-      : hero && hero.runningCount > 0
-        ? "bg-ok-text"
-        : "";
+  const heroCaret = hero ? itemCaret(hero) : null;
   const runningBadge = nowItems.reduce((n, item) => n + item.runningCount, 0)
     || (hero?.runningCount ?? 0);
-  function itemDot(item: {
+  /** 运行状态光标（run-caret.ts，2026-10-24 取代绿点 / 黄点）：等确认 / 在干活照注意力，开着闲着淡灰，没开着不画 */
+  function itemCaret(item: {
     attention: "confirm" | "working" | "done" | null;
     runningCount: number;
-  }): string {
-    if (item.attention === "confirm") return "bg-warn-text";
-    if (item.runningCount > 0) return "bg-ok-text";
-    return "bg-transparent";
+  }): RunCaretState | null {
+    if (item.attention === "confirm" || item.attention === "working") return item.attention;
+    return item.runningCount > 0 ? "idle" : null;
   }
   const heroSaid = hero ? lastSaidFor(hero.path) : null;
 
   return (
     <PageFrame width="fluid" className="pb-12">
-      {/* 页头不带副标题：当前步骤已在主卡里说过，同一事实只说一次 */}
-      <PageHeader
-        title="工作台"
-        actions={
-          <button type="button" className={secondaryActionClass} onClick={onQuickChat}>
-            新对话
-          </button>
-        }
-      />
+      {/* 页头不带副标题：当前步骤已在主卡里说过，同一事实只说一次。
+          「新对话」不在这里放（2026-10-23 侧栏挂对话第一期）：侧栏「新对话」就在左边，两个按钮一模一样 */}
+      <PageHeader title="工作台" />
       {loadError && (
         <div className="mb-4 flex items-center justify-between gap-3 rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn-text">
           <span>{loadError}</span>
@@ -856,14 +843,8 @@ function WorkbenchPage({
         </div>
       )}
 
-      <div
-        className={
-          hasSide
-            ? "grid gap-8 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,0.42fr)]"
-            : undefined
-        }
-      >
-        <section className="min-w-0">
+      {/* 单栏自上而下：正在进行 → 待你处理 → 待你验收 → 定时任务 → 最近对话（2026-10-23 用户：两栏怪异，撤掉右栏） */}
+      <section className="min-w-0">
           <div className="mb-2.5 flex items-center gap-2 px-1">
             <CircleDot size={14} strokeWidth={1.8} className="text-nav-accent" aria-hidden="true" />
             <h2 className="text-micro font-medium text-l2">
@@ -933,8 +914,9 @@ function WorkbenchPage({
               <div className="mt-4 flex items-center gap-2 border-t border-hairline pt-3 text-micro text-l3">
                 {statusText ? (
                   <>
-                    <span className={`size-1.5 rounded-full ${statusDot}`} />
-                    <span className="min-w-0 flex-1 truncate">{statusText}</span>
+                    <span className="min-w-0 truncate">{statusText}</span>
+                    {heroCaret && <RunCaret state={heroCaret} decorative className="-ml-1.5" />}
+                    <span className="flex-1" />
                   </>
                 ) : (
                   <span className="flex-1" />
@@ -967,15 +949,6 @@ function WorkbenchPage({
                           }
                         }}
                       >
-                        <span
-                          className={`size-1.5 shrink-0 rounded-full ${
-                            r.attention === "confirm"
-                              ? "bg-warn-text"
-                              : r.live === false
-                                ? "bg-l4"
-                                : "bg-ok-text"
-                          }`}
-                        />
                         <span className="min-w-0 flex-1 truncate">
                           {r.taskLabel}
                           {r.agentId ? (
@@ -989,6 +962,8 @@ function WorkbenchPage({
                             待确认
                           </span>
                         ) : null}
+                        {/* 已经停了的（live === false）不画；还开着的按注意力 */}
+                        {r.live !== false && <RunCaret state={caretOfAttention(r.attention)} className="mr-1" />}
                       </button>
                     </li>
                   ))}
@@ -1012,10 +987,6 @@ function WorkbenchPage({
                     void openContinueTarget(continueWorkbenchTarget(item))
                   }
                 >
-                  {/* 没事不画点（同侧栏口径）：灰点不表达任何状态，留位保持对齐 */}
-                  <span
-                    className={`size-1.5 shrink-0 rounded-full ${itemDot(item)}`}
-                  />
                   <span className="min-w-0 flex-1 truncate text-sm text-l2">
                     {item.name}
                     {item.workMode ? (
@@ -1041,6 +1012,9 @@ function WorkbenchPage({
                       运行中
                     </span>
                   ) : null}
+                  {/* 运行状态光标跟在状态字后面、竖着居中（同侧栏口径，没事不画）。不贴在课题名后面：
+                      夹在名字和「科研」之间读成破折号（2026-10-24 光标改居中时看出来的） */}
+                  {itemCaret(item) && <RunCaret state={itemCaret(item)!} decorative className="-ml-2 text-micro" />}
                   {/* 整行可点即「继续」，不再每行常驻同一个「继续」字 */}
                   <ChevronRight
                     size={14}
@@ -1149,10 +1123,11 @@ function WorkbenchPage({
                 记下一个目标
               </button>
             ))}
-        </section>
+      </section>
 
         {hasSide && (
-        <div className="min-w-0 space-y-8">
+        // 区块间距 28px（2026-10-23 用户：定时任务上下留白太大）：撤掉右栏后单栏里 40px 一段段断开，读着散
+        <div className="mt-7 min-w-0 space-y-7">
         {hasInbox && (
         <section className="min-w-0">
           <SectionHeading
@@ -1326,11 +1301,10 @@ function WorkbenchPage({
         )}
         </div>
         )}
-      </div>
 
       {/* 「最近项目」栏已删（2026-10-22 审查）：侧栏项目树与上面的「最近在做」已经列了项目，一屏三处重复；
           它带来的「哪些项目最近在动」改由对话行尾的项目名承担 */}
-      <div className="mt-10">
+      <div className="mt-7">
         <section className="min-w-0">
           <SectionHeading
             icon={MessagesSquare}
@@ -1350,13 +1324,8 @@ function WorkbenchPage({
                   key={`${session.agent}:${session.sessionId}`}
                   type="button"
                   className="group flex min-h-9 w-full items-center gap-3 rounded-md px-2.5 text-left transition-colors hover:bg-hover"
-                  onClick={() => {
-                    setOpenSessionReq({
-                      agent: session.agent,
-                      sessionId: session.sessionId,
-                    });
-                    setPage("sessions");
-                  }}
+                  // 进运行页这段对话、能直接写（发第一句才接回；源文件不在的去对话页看快照）
+                  onClick={() => openConversation(session.meta)}
                 >
                   <MessageSquare size={15} strokeWidth={1.8} className={iconClass} aria-hidden="true" />
                   <span className="min-w-0 flex-1 truncate text-sm text-l2">{session.title}</span>

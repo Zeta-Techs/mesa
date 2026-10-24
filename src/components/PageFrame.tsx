@@ -1,11 +1,18 @@
 import type { MouseEvent, ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown, CircleCheck, CircleX, Info, TriangleAlert } from "lucide-react";
 import { splitNoticeText } from "../notice-text";
 import { HoverTip, useHoverTip } from "./HoverTip";
 import { nextTabIndex, tabNavDelta, tabStopIndex } from "../tab-keys";
-import { useExitRender } from "../exit-animation";
+import {
+  COLLAPSE_MS,
+  nextCollapsePhase,
+  prefersReducedMotion,
+  settledCollapsePhase,
+  useExitRender,
+  type CollapsePhase,
+} from "../exit-animation";
 
 const WIDTHS = {
   narrow: "max-w-2xl",
@@ -485,6 +492,37 @@ export function FoldMark({
   );
 }
 
+/**
+ * 折叠区的内容：展开 / 收起走 grid 行轨 0fr ↔ 1fr 过渡，不用 JS 量高度。收起完才卸载（长对话里收着的过程不常驻 DOM），
+ * 过渡中的内容 inert；reduced-motion 下直接切。className 落在内容层上，外边距在过渡里一起收
+ */
+export function Collapse({ open, className = "", children }: { open: boolean; className?: string; children: ReactNode }) {
+  const [phase, setPhase] = useState<CollapsePhase>(open ? "open" : "closed");
+  const ref = useRef<HTMLDivElement>(null);
+  const next = nextCollapsePhase(phase, open, prefersReducedMotion());
+  if (next !== phase) setPhase(next);
+  useLayoutEffect(() => {
+    if (phase !== "pre") return;
+    // 先让 0fr 落定一次，过渡才有起点
+    void ref.current?.offsetHeight;
+    setPhase("opening");
+  }, [phase]);
+  useEffect(() => {
+    const settled = settledCollapsePhase(phase);
+    if (!settled) return;
+    const t = window.setTimeout(() => setPhase(settled), COLLAPSE_MS);
+    return () => window.clearTimeout(t);
+  }, [phase]);
+  if (phase === "closed") return null;
+  return (
+    <div ref={ref} className="ccode-collapse" data-phase={phase}>
+      <div inert={phase !== "open"}>
+        <div className={className}>{children}</div>
+      </div>
+    </div>
+  );
+}
+
 export function Checkbox({
   checked,
   onChange,
@@ -581,12 +619,9 @@ export function NoticeBar({
       role={tone === "err" ? "alert" : "status"}
       className={`flex items-start gap-2 rounded-md ccode-well px-3 py-2.5 text-xs leading-5 text-l2 ${className}`}
     >
-      <Glyph
-        size={14}
-        strokeWidth={1.8}
-        aria-hidden="true"
-        className={`mt-[3px] shrink-0 ${iconCls}`}
-      />
+      <span className="ccode-icon-line">
+        <Glyph size={14} strokeWidth={1.8} aria-hidden="true" className={iconCls} />
+      </span>
       <span className="min-w-0 flex-1 break-words">
         {parts ? (
           <>

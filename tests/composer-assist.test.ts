@@ -29,7 +29,7 @@ test("Mesa 操作按命令名前缀或中文名匹配", () => {
   const run = () => {};
   const list = [
     { cmd: "/new", label: "新对话", hint: "", run },
-    { cmd: "/fork", label: "分叉到新标签", hint: "", run },
+    { cmd: "/fork", label: "分叉成新对话", hint: "", run },
   ];
   assert.deepEqual(filterMesaCommands(list, "f").map((c) => c.cmd), ["/fork"]);
   assert.deepEqual(filterMesaCommands(list, "分叉").map((c) => c.cmd), ["/fork"]);
@@ -65,4 +65,13 @@ test("↑ 历史：最近的在前，连着发的同一句只留一条，只认�
   assert.deepEqual(userTextHistory(msgs), ["第三句", "第二句", "第一句"]);
   assert.deepEqual(userTextHistory(msgs, 2), ["第三句", "第二句"]);
   assert.deepEqual(userTextHistory([]), []);
+});
+
+test("↑ 取回上一句：第一句前面 Mesa 塞的项目说明不取回", () => {
+  const msg = (text: string) => ({ role: "user", blocks: [{ kind: "text", text }] });
+  assert.equal(
+    lastUserText([msg("你正在项目「测试项目」中工作。\n工作方式：科研\n\n----\n\n帮我整理文献")]),
+    "帮我整理文献",
+  );
+  assert.equal(lastUserText([msg("先这样"), msg("你正在项目「测试项目」中工作。")]), "先这样");
 });

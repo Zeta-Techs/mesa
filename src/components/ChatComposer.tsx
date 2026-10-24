@@ -1,8 +1,7 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ArrowUp, AtSign, FileText, Paperclip, Plus, Smartphone, Square, TriangleAlert } from "lucide-react";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import type { McpServerDto, SkillDto } from "../types";
 import type { SearchResultDto } from "./FileTree";
 import {
@@ -23,11 +22,56 @@ import { escInterruptSafe } from "../agent-caps";
 import InsertMenuItems from "./InsertMenuItems";
 import { usePhoneDropStore } from "../phone-drop-store";
 import type { PhoneItem } from "../phone-drop";
+import ChatImageStage, { MarkupLayer } from "./ChatImageStage";
+import { appendMarkRef, exportMarkup, nextMarkNumber, type Markup } from "../image-markup";
+import { docThumb, docThumbKind, docTypeLabel } from "../doc-thumb";
+import { fileTypeIcon } from "../file-icons";
 
-/** 按扩展名认图片附件（「+ → 文件或图片」选来的没有缩略图，也要算） */
+/** 按扩展名认图片附件（选来的、读不出缩略图的也要算） */
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|heif|tiff?)$/i;
+
+/** 带附件的插入：正文进输入框，paths 按路径成附件卡（编辑后重发还原的图、拖进来的文件；图片与 PDF 补缩略图） */
+export interface ComposerSeed {
+  text: string;
+  paths: readonly string[];
+}
+/** 文件卡左边没有首页预览时的类型色块（Word 蓝 W、Excel 绿 X、PPT 橙 P…，同文件列表的识别色） */
+function FileKindBlock({ path }: { path: string }) {
+  const icon = fileTypeIcon(path);
+  return (
+    <span
+      aria-hidden="true"
+      className="flex h-full w-10 shrink-0 items-center justify-center border-r border-hairline font-mono text-xs"
+      style={icon ? { color: icon.color, backgroundColor: `${icon.color}1f` } : undefined}
+    >
+      {icon ? icon.label : <FileText size={15} strokeWidth={1.6} className="text-l4" />}
+    </span>
+  );
+}
+
 /** 切到完全访问时细线亮多久（与 App.css ccode-tone-flash 动画时长一致） */
 const TONE_FLASH_MS = 2400;
+
+/**
+ * 完全访问的提醒只在「切到」这一档时亮一下（用户：常驻显得输入框花哨）；挂载时已是完全访问不亮。
+ * 输入框上沿细线与底下那行的权限字（2026-10-23：平时灰字，切到时同步亮一下 caution）各调一次，同一次提交里一起翻
+ */
+export function useToneFlash(tone: "full" | "discuss" | null): boolean {
+  const [flash, setFlash] = useState(false);
+  const prevRef = useRef(tone);
+  useEffect(() => {
+    const prev = prevRef.current;
+    prevRef.current = tone;
+    if (tone !== "full" || prev === "full") {
+      setFlash(false);
+      return;
+    }
+    setFlash(true);
+    const timer = setTimeout(() => setFlash(false), TONE_FLASH_MS);
+    return () => clearTimeout(timer);
+  }, [tone]);
+  return flash;
+}
 
 /**
  * 发送钮 = Mesa 图标里 M▁ 那块光标（2026-10-22 用户：圆形按钮做成图标里的小方块）：横向圆角块，
@@ -54,6 +98,7 @@ function SendBlock({
       data-state={disabled ? "empty" : "ready"}
       title={queued ? (queuedTitle ?? "排队：这一轮结束后处理（Enter 也是）") : busy ? "正在发送…" : "Enter 发送 · Shift+Enter 换行"}
       aria-label={queued ? "排队发送" : "发送"}
+      aria-busy={busy || undefined}
       className="ccode-send-block"
     >
       <ArrowUp size={13} strokeWidth={2.4} aria-hidden="true" />
@@ -189,11 +234,7 @@ export default function ChatComposer({
   agentId,
   seedInsert,
   onSeedConsumed,
-  cwdHint,
-  cwdTitle,
-  onChooseCwd,
-  leftExtras,
-  rightExtras,
+  footer,
   running,
   onInterrupt,
   narrow = false,
@@ -204,6 +245,8 @@ export default function ChatComposer({
   onCyclePermission,
   imageWarning = null,
   onImagesChange,
+  onDraftChange,
+  onImageStageChange,
   queueHint = null,
   stopTitle = null,
   suggestion = null,
@@ -218,17 +261,14 @@ export default function ChatComposer({
   focusWhen?: boolean;
   /** 当前 agent id：斜杠命令面板按 agent 出命令清单 */
   agentId?: string | null;
-  /** 拖入文件等外部插入：追加到输入框并消费 */
-  seedInsert?: string | null;
+  /** 拖入文件等外部插入：追加到输入框并消费；对象形式（编辑后重发）里的图片还原成附件缩略卡 */
+  seedInsert?: string | ComposerSeed | null;
   onSeedConsumed?: () => void;
-  /** 空态目录短句，画在 + 右侧，不另占一行 */
-  cwdHint?: string | null;
-  cwdTitle?: string;
-  onChooseCwd?: () => void;
-  /** 左下角扩展位（原聊天头部功能迁入：状态注记 / 只读分叉） */
-  leftExtras?: ReactNode;
-  /** 发送钮左边（开聊前 Agent·模型选择 / 开聊后「模型 · 思考」芯片） */
-  rightExtras?: ReactNode;
+  /**
+   * 输入框下面那一行（2026-10-23 用户：照 Claude 客户端那样简洁）：权限 · 项目 | 模型 · 思考。
+   * 框里只留「+ 正在写的话 发送」；这一行由调用方给，底部状态栏在时调用方改挂进状态栏、这里不传
+   */
+  footer?: ReactNode;
   /** 正在生成：发送钮本体变成「进行中」停止钮（符号），点击走 onInterrupt。
    *  进程活着但停在提示符时不要传 true——那时要点发送，Esc 会误伤 TUI。
    *  Grok Build 不适用（非 prompt 态 Esc 会退出整进程），调用方按 agent 过滤。 */
@@ -251,6 +291,10 @@ export default function ChatComposer({
   imageWarning?: string | null;
   /** 附件里有没有图片（给调用方判断要不要查模型能不能看图） */
   onImagesChange?: (hasImages: boolean) => void;
+  /** 输入框里有没有没发的字或附件 */
+  onDraftChange?: (hasDraft: boolean) => void;
+  /** 看图标注台开 / 关（调用方据此把居中空态换成输入框在底部，让图有地方放） */
+  onImageStageChange?: (open: boolean) => void;
   /** 生成中停止块旁那组的字：这家 CLI 是「下一步交给它」还是「排队」（mid-turn-send.ts queueSendHint）；不传写「排队」 */
   queueHint?: { label: string; title: string } | null;
   /** 停止块的悬停说明（按 Esc 的几家，有排着的话时停下就马上处理那句，mid-turn-send.ts stopTitle） */
@@ -261,20 +305,7 @@ export default function ChatComposer({
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
-  // 完全访问的细线只在「切到」这一档时亮一下（用户：常驻显得输入框花哨）；挂载时已是完全访问不亮
-  const [toneFlash, setToneFlash] = useState(false);
-  const prevToneRef = useRef(tone);
-  useEffect(() => {
-    const prev = prevToneRef.current;
-    prevToneRef.current = tone;
-    if (tone !== "full" || prev === "full") {
-      setToneFlash(false);
-      return;
-    }
-    setToneFlash(true);
-    const timer = setTimeout(() => setToneFlash(false), TONE_FLASH_MS);
-    return () => clearTimeout(timer);
-  }, [tone]);
+  const toneFlash = useToneFlash(tone);
   // WKWebView：确认候选的 Enter 在 compositionend 之后、isComposing 已是 false。
   // 组词开始锁上，compositionend 后再留一帧，让那次 Enter 只上屏不发送。
   const composingLockRef = useRef(false);
@@ -305,11 +336,13 @@ export default function ChatComposer({
     [],
   );
   // 图片附件（缩略卡）：粘贴的图片经 save_clipboard_image 落盘后按路径随消息发送，
-  // url 是本地 object URL 只用于输入框里的预览缩略图
-  // url 为 null = 「+ → 文件或图片」选来的文件：不做缩略图，显示文件名卡
+  // url 是缩略图（粘贴的是本地 object URL，其余经 read_image_bytes 读成 data URL），点开看大图
+  // url 为 null = 不是图片或读不出缩略图（HEIC、白名单外）：显示文件名卡
   // phoneId：「从手机添加」送来的（× 掉时退回手机列表的「还没处理」）
+  // markup：在看图标注台上画的标注（原图坐标，path 仍指原图；发送时才生成标注图替换这一行路径）
+  // thumb：文档首页预览（PDF / Word / 表格）——不是图片，不算「有图」、不进看图标注台
   const [attachments, setAttachments] = useState<
-    { path: string; url: string | null; phoneId?: string }[]
+    { path: string; url: string | null; phoneId?: string; markup?: Markup; thumb?: string }[]
   >([]);
   const attachmentsRef = useRef(attachments);
   attachmentsRef.current = attachments;
@@ -326,6 +359,12 @@ export default function ChatComposer({
     onImagesChange?.(hasImages);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasImages]);
+  // 有没有没发出去的东西（字或附件）：调用方据此决定切走时能不能把这个标签顺手收掉
+  const hasDraft = value.trim() !== "" || attachments.length > 0;
+  useEffect(() => {
+    onDraftChange?.(hasDraft);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasDraft]);
   // ↑ 一路往回取：-1 = 没在翻；翻出来的那条被改过就退出翻历史，↑ ↓ 回到在文字里移动光标
   const recallIdxRef = useRef(-1);
 
@@ -363,16 +402,7 @@ export default function ChatComposer({
       const path = item.path;
       if (!path || attachmentsRef.current.some((a) => a.path === path)) continue;
       setAttachments((cur) => [...cur, { path, url: null, phoneId: item.id }]);
-      if (item.kind === "image") {
-        // 缩略图走白名单读图（暂存区已在白名单）；HEIC 等读不了的就保持文件名卡
-        void invoke<{ mime: string; data: string }>("read_image_bytes", { path })
-          .then((img) =>
-            setAttachments((cur) =>
-              cur.map((a) => (a.path === path ? { ...a, url: `data:${img.mime};base64,${img.data}` } : a)),
-            ),
-          )
-          .catch(() => undefined);
-      }
+      if (item.kind === "image") loadThumb(path);
     }
     // insertResourceText 每次渲染重建，只按送达队列翻转
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -381,6 +411,100 @@ export default function ChatComposer({
   function openPhoneDrop() {
     // 有已配对的手机：直接开始接收，不弹窗；没有：弹窗扫码配对
     usePhoneDropStore.getState().openForComposer({ composerId, cwd: cwd ?? null });
+  }
+
+  /** 已在附件里的图片补缩略图：走白名单读图（粘贴区 / 手机暂存区 / 工作目录）；HEIC 等读不了的保持文件名卡 */
+  function loadThumb(path: string) {
+    void invoke<{ mime: string; data: string }>("read_image_bytes", { path, cwdHint: cwd ?? null })
+      .then((img) =>
+        setAttachments((cur) =>
+          cur.map((a) => (a.path === path ? { ...a, url: `data:${img.mime};base64,${img.data}` } : a)),
+        ),
+      )
+      .catch(() => undefined);
+  }
+
+  /** 文档附件补首页预览（PDF / Word / 表格，doc-thumb.ts；读不到就留类型色块） */
+  function loadDocThumb(path: string) {
+    void docThumb(path, cwd ?? null)
+      .then((thumb) => {
+        if (thumb) setAttachments((cur) => cur.map((a) => (a.path === path ? { ...a, thumb } : a)));
+      })
+      .catch(() => undefined);
+  }
+
+  /** 加一批按路径的附件（选文件 / 拖进来 / 编辑后重发还原的图）：去重，图片补缩略图、文档补首页预览 */
+  function addPathAttachments(paths: readonly string[]) {
+    const fresh = paths.filter(
+      (p, i) => paths.indexOf(p) === i && !attachmentsRef.current.some((a) => a.path === p),
+    );
+    if (fresh.length === 0) return;
+    setAttachments((cur) => [
+      ...cur,
+      ...fresh.filter((p) => !cur.some((a) => a.path === p)).map((p) => ({ path: p, url: null })),
+    ]);
+    fresh.filter((p) => IMAGE_EXT.test(p)).forEach(loadThumb);
+    fresh.filter((p) => docThumbKind(p) !== null).forEach(loadDocThumb);
+  }
+
+  // 看图标注台（2026-10-23 用户：点图只能放大、看不着编辑消息）：点缩略图在输入框上方展开、盖住对话区，
+  // 输入框照常能写；再点一次同一张或 Esc 收起
+  const [viewing, setViewing] = useState<string | null>(null);
+  const outerRef = useRef<HTMLDivElement>(null);
+  const [stageRoom, setStageRoom] = useState(0);
+  // 发过的最大意见框编号（撤销掉的也算，免得和消息里已写的圈码重号）；发送后归零
+  const markCounterRef = useRef(0);
+  // 标注台高度 = 输入框上沿到聊天面板顶：每次渲染量一遍（输入框随字数 / 附件长高时跟着让），
+  // 窗口或面板尺寸变了由 ResizeObserver 补量
+  const measureStage = () => {
+    const outer = outerRef.current;
+    const parent = outer?.parentElement;
+    if (!outer || !parent) return;
+    setStageRoom(Math.max(0, outer.getBoundingClientRect().top - parent.getBoundingClientRect().top));
+  };
+  useLayoutEffect(() => {
+    if (viewing) measureStage();
+  });
+  useLayoutEffect(() => {
+    const outer = outerRef.current;
+    const parent = outer?.parentElement;
+    if (!viewing || !outer || !parent || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measureStage);
+    ro.observe(outer);
+    ro.observe(parent);
+    return () => ro.disconnect();
+  }, [viewing]);
+  const viewed = viewing ? attachments.find((a) => a.path === viewing && a.url) : undefined;
+  const stageOpen = Boolean(viewed);
+  useEffect(() => {
+    onImageStageChange?.(stageOpen);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stageOpen]);
+
+  function toggleStage(path: string) {
+    setViewing((cur) => (cur === path ? null : path));
+    requestAnimationFrame(() => ref.current?.focus());
+  }
+  function closeStage() {
+    setViewing(null);
+    requestAnimationFrame(() => ref.current?.focus());
+  }
+  function setMarkup(path: string, markup: Markup) {
+    setAttachments((cur) => cur.map((a) => (a.path === path ? { ...a, markup } : a)));
+  }
+  /** 画好意见框：消息末尾另起一行写上圈码，光标停在后面接着写意见 */
+  function addMarkRef(n: number) {
+    markCounterRef.current = Math.max(markCounterRef.current, n);
+    setError(null);
+    setValue((cur) => appendMarkRef(cur, n));
+    requestAnimationFrame(() => {
+      const el = ref.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+      el.style.height = "0";
+      el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+    });
   }
 
   /** 剪贴板图片落盘（与终端粘贴同一通道 save_clipboard_image）→ 附件卡 */
@@ -418,16 +542,13 @@ export default function ChatComposer({
     requestAnimationFrame(() => ref.current?.setSelectionRange(ghost.length, ghost.length));
   }
 
-  /** 「+ → 文件或图片」：系统选文件，按路径随消息发出（与拖入同口径） */
+  /** 「+ → 文件或图片」：系统选文件，按路径随消息发出（与拖入同口径）。选择器在 Rust 侧弹，
+   *  选中的文件才登记进读取白名单，项目外的图片 / PDF 也能出缩略图（attach_grants.rs） */
   async function pickFiles() {
     try {
-      const picked = await openDialog({ multiple: true, directory: false, defaultPath: cwd ?? undefined });
-      const paths = picked == null ? [] : Array.isArray(picked) ? picked : [picked];
+      const paths = await invoke<string[]>("pick_attachment_files", { defaultDir: cwd ?? null });
       if (paths.length === 0) return;
-      setAttachments((cur) => [
-        ...cur,
-        ...paths.filter((p) => !cur.some((a) => a.path === p)).map((p) => ({ path: p, url: null })),
-      ]);
+      addPathAttachments(paths);
       requestAnimationFrame(() => ref.current?.focus());
     } catch (reason) {
       setError(`选文件失败：${String(reason)}`);
@@ -499,7 +620,12 @@ export default function ChatComposer({
 
   useEffect(() => {
     if (!seedInsert) return;
-    insertResourceText(seedInsert);
+    if (typeof seedInsert === "string") insertResourceText(seedInsert);
+    else {
+      if (seedInsert.text) insertResourceText(seedInsert.text);
+      else requestAnimationFrame(() => ref.current?.focus());
+      addPathAttachments(seedInsert.paths);
+    }
     onSeedConsumed?.();
     // 只在 seedInsert 翻转时插入一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -517,26 +643,46 @@ export default function ChatComposer({
 
   const canSubmit = !disabled && !busy && (value.trim() !== "" || attachments.length > 0);
 
+  const submittingRef = useRef(false);
   async function submit(override?: string) {
     const text = (override ?? value).trim();
-    if ((!text && attachments.length === 0) || disabled || busy) return;
+    if ((!text && attachments.length === 0) || disabled || busy || submittingRef.current) return;
     setError(null);
-    // 图片附件按绝对路径追加在正文后（一行一个）：路径文本是九家 CLI 通吃的图片输入方式，
-    // 会话文件记下这行路径，回放/聊天层据此渲染内嵌图片卡
-    const payload = [text, ...attachments.map((a) => a.path)]
-      .filter(Boolean)
-      .join("\n");
-    const err = await onSend(payload);
-    if (err) {
-      setError(err);
-      return;
+    submittingRef.current = true;
+    try {
+      // 标了的图这时才生成新图（原图不动），落盘到粘贴区，发出去的是新图路径
+      let paths: string[];
+      try {
+        paths = await Promise.all(
+          attachments.map(async (a) => {
+            if (!a.url || !a.markup || a.markup.marks.length === 0) return a.path;
+            const out = await exportMarkup(a.url, a.path, a.markup);
+            return saveClipboardImage(out.bytes, out.ext);
+          }),
+        );
+      } catch (reason) {
+        setError(`生成标注图失败：${String(reason)}`);
+        return;
+      }
+      // 图片附件按绝对路径追加在正文后（一行一个）：路径文本是九家 CLI 通吃的图片输入方式，
+      // 会话文件记下这行路径，回放/聊天层据此渲染内嵌图片卡
+      const payload = [text, ...paths].filter(Boolean).join("\n");
+      const err = await onSend(payload);
+      if (err) {
+        setError(err);
+        return;
+      }
+      setValue("");
+      setSlashDismissed(false);
+      setViewing(null);
+      markCounterRef.current = 0;
+      setAttachments((cur) => {
+        cur.forEach((a) => a.url && URL.revokeObjectURL(a.url));
+        return [];
+      });
+    } finally {
+      submittingRef.current = false;
     }
-    setValue("");
-    setSlashDismissed(false);
-    setAttachments((cur) => {
-      cur.forEach((a) => a.url && URL.revokeObjectURL(a.url));
-      return [];
-    });
   }
 
   // 斜杠命令面板：/ 开头且无空格无换行时弹出；Enter 选中并发送，Tab 仅补全，↑/↓ 移动，Esc 收起
@@ -573,7 +719,20 @@ export default function ChatComposer({
   }
 
   return (
-    <div className="ccode-chat-composer shrink-0 bg-canvas px-4 pb-2 pt-2.5">
+    <div ref={outerRef} className="ccode-chat-composer relative shrink-0 bg-canvas px-4 pb-2 pt-2.5">
+      {viewed?.url && (
+        <ChatImageStage
+          key={viewed.path}
+          name={viewed.path.split(/[\\/]/).pop() ?? "图片"}
+          url={viewed.url}
+          markup={viewed.markup ?? null}
+          nextNumber={nextMarkNumber(attachments.map((a) => a.markup), markCounterRef.current)}
+          height={stageRoom}
+          onChange={(m) => setMarkup(viewed.path, m)}
+          onBoxAdded={addMarkRef}
+          onClose={closeStage}
+        />
+      )}
       {/* 开聊后与对话流同一条中轴：栏宽跟聊天字号走（App.css .ccode-chat-column） */}
       <div className={`mx-auto w-full ${narrow ? "max-w-[45rem]" : "ccode-chat-column"}`}>
         <div
@@ -676,7 +835,7 @@ export default function ChatComposer({
               </button>
             </div>
           )}
-          {/* 图片附件缩略卡（粘贴落盘后展示，× 移除；发送时按路径随消息发出） */}
+          {/* 附件缩略卡（粘贴落盘 / 选来 / 拖进来 / 手机送来；× 移除，点图在上方看图标注；发送时按路径随消息发出） */}
           {attachments.length > 0 && (
             <div className="flex flex-wrap gap-2 px-3 pt-3">
               {attachments.map((a) => (
@@ -686,15 +845,50 @@ export default function ChatComposer({
                   title={a.path}
                 >
                   {a.url ? (
-                    <img
-                      src={a.url}
-                      alt={a.path.split(/[\\/]/).pop() ?? "图片"}
-                      className="h-14 w-auto rounded-md border border-hairline object-cover"
-                    />
+                    <button
+                      type="button"
+                      className={`relative block cursor-zoom-in rounded-md border-0 bg-transparent p-0 ${
+                        viewing === a.path ? "ring-2 ring-mesa-amber/70" : ""
+                      }`}
+                      onClick={() => toggleStage(a.path)}
+                      aria-label="看图与标注"
+                      aria-pressed={viewing === a.path}
+                      title={viewing === a.path ? "收起图片" : "在上方看大图、标注，消息照常写"}
+                    >
+                      <img
+                        src={a.url}
+                        alt={a.path.split(/[\\/]/).pop() ?? "图片"}
+                        className="h-14 w-auto rounded-md border border-hairline object-cover"
+                      />
+                      {a.markup && a.markup.marks.length > 0 && (
+                        <svg
+                          aria-label="已标注"
+                          className="pointer-events-none absolute inset-0 h-full w-full rounded-md"
+                          viewBox={`0 0 ${a.markup.width} ${a.markup.height}`}
+                          preserveAspectRatio="none"
+                        >
+                          <MarkupLayer markup={a.markup} />
+                        </svg>
+                      )}
+                    </button>
                   ) : (
-                    <span className="flex h-9 max-w-[14rem] items-center gap-1.5 rounded-md border border-hairline bg-canvas px-2 text-xs text-l2">
-                      <FileText size={13} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l3" />
-                      <span className="truncate">{a.path.split(/[\\/]/).pop()}</span>
+                    // 文件卡：左边首页预览（PDF / Word / 表格），读不出预览的画类型色块；右边文件名 + 类型，和图片卡同高
+                    <span className="flex h-14 w-52 items-center gap-2 overflow-hidden rounded-md border border-hairline bg-canvas pr-2.5">
+                      {a.thumb ? (
+                        <img
+                          src={a.thumb}
+                          alt=""
+                          className="h-full w-10 shrink-0 border-r border-hairline bg-white object-cover object-top"
+                        />
+                      ) : (
+                        <FileKindBlock path={a.path} />
+                      )}
+                      <span className="flex min-w-0 flex-col gap-0.5">
+                        <span className="line-clamp-2 break-all text-xs leading-snug text-l2">
+                          {a.path.split(/[\\/]/).pop()}
+                        </span>
+                        <span className="text-micro text-l4">{docTypeLabel(a.path)}</span>
+                      </span>
                     </span>
                   )}
                   <button
@@ -711,11 +905,36 @@ export default function ChatComposer({
           )}
           {imageWarning && hasImages && (
             <p className="flex items-start gap-1.5 px-4 pt-2 text-micro text-caution-text">
-              <TriangleAlert size={12} strokeWidth={1.8} aria-hidden="true" className="mt-px shrink-0" />
+              <span className="ccode-icon-line">
+                <TriangleAlert size={12} strokeWidth={1.8} aria-hidden="true" />
+              </span>
               <span className="min-w-0">{imageWarning}</span>
             </p>
           )}
-          <div className="relative">
+          {/* 只在出错时占一行。发送中不再写「正在发送…」（2026-10-24 用户：顶在框上面把框撑高，破坏原本的样子）：
+              发送中输入框与发送钮本就是灰的，说明放在发送钮悬停里 */}
+          {error && (
+            <p className="truncate px-4 pt-2 text-micro text-l4" title={error}>
+              {error}
+            </p>
+          )}
+          {/* 框里只有一行：+ · 正在写的话 · 发送（2026-10-23 用户：照 Claude 客户端那样简洁）；
+              权限、项目、模型挪到框下面那一行。多行时 + 和发送钮贴底。
+              居中空态也是一行（同日用户：两行高、上下两排都嫌大），只是栏宽收窄 */}
+          <div className="flex items-end gap-1 px-2 py-1.5">
+          <span className="flex h-[34px] shrink-0 items-center">
+            <AddMenu
+              skills={skills}
+              mcps={mcps}
+              disabled={Boolean(disabled || busy)}
+              canMention={Boolean(cwd)}
+              onInsert={insertResourceText}
+              onPickFiles={() => void pickFiles()}
+              onMention={startMention}
+              onPhone={openPhoneDrop}
+            />
+          </span>
+          <div className="relative min-w-0 flex-1">
           <textarea
             ref={ref}
             value={value}
@@ -843,18 +1062,22 @@ export default function ChatComposer({
                   return;
                 }
               }
+              // 看图标注台开着：Esc 先收起它（面板类都收完了才轮到这里）
+              if (e.key === "Escape" && viewing) {
+                e.preventDefault();
+                closeStage();
+                return;
+              }
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 void submit();
               }
             }}
-            // 空态（居中）两行高，好落笔；开聊后一行起，长对话里把高度让给内容（2026-10-22）
-            rows={narrow ? 2 : 1}
+            // 一行起，随内容长高（2026-10-23 用户：空态两行高太大，一行就行）
+            rows={1}
             placeholder={ghost ?? placeholder ?? "输入消息…"}
             // 插入符是 M▁ 那道琥珀（--color-mesa-amber），光标本身就是品牌
-            className={`block max-h-40 w-full resize-none bg-transparent px-4 pb-2 pt-3 text-sm leading-6 text-l1 caret-mesa-amber outline-none focus:outline-none focus-visible:outline-none focus-visible:outline-offset-0 placeholder:text-l3 disabled:cursor-not-allowed disabled:opacity-60 ${
-              narrow ? "min-h-16" : ""
-            } ${ghost ? "pr-20" : ""}`}
+            className={`block max-h-40 w-full resize-none bg-transparent px-1.5 py-[5px] text-sm leading-6 text-l1 caret-mesa-amber outline-none focus:outline-none focus-visible:outline-none focus-visible:outline-offset-0 placeholder:text-l3 disabled:cursor-not-allowed disabled:opacity-60 ${ghost ? "pr-20" : ""}`}
           />
           {ghost && (
             // 灰字是 CLI 猜的下一句：右上角说一声怎么填，点一下也行
@@ -863,7 +1086,7 @@ export default function ChatComposer({
               onMouseDown={(e) => e.preventDefault()}
               onClick={acceptSuggestion}
               title={`灰字是它猜你下一句想说的话，按 Tab 填进输入框，改完再发`}
-              className="absolute right-3 top-3 flex h-6 items-center gap-1 rounded-md px-1.5 text-l4 transition-colors hover:bg-hover hover:text-l2"
+              className="absolute right-0 top-[5px] flex h-6 items-center gap-1 rounded-md px-1.5 text-l4 transition-colors hover:bg-hover hover:text-l2"
             >
               {/* 字号写在里层（全站 button { font: inherit } 会吞掉按钮自己的 text-*） */}
               <kbd className="rounded border border-hairline px-1 font-sans text-micro leading-4">Tab</kbd>
@@ -871,46 +1094,7 @@ export default function ChatComposer({
             </button>
           )}
           </div>
-          <div className="flex min-h-10 items-center justify-between gap-2 px-3 pb-1.5">
-            <div className="flex min-w-0 items-center gap-0.5">
-              <AddMenu
-                skills={skills}
-                mcps={mcps}
-                disabled={Boolean(disabled || busy)}
-                canMention={Boolean(cwd)}
-                onInsert={insertResourceText}
-                onPickFiles={() => void pickFiles()}
-                onMention={startMention}
-                onPhone={openPhoneDrop}
-              />
-              {cwdHint && !error && !busy ? (
-                onChooseCwd ? (
-                  <button
-                    type="button"
-                    onClick={onChooseCwd}
-                    title={cwdTitle}
-                    className="ml-1 max-w-[14rem] truncate font-mono text-micro text-l4 hover:text-l2"
-                  >
-                    {cwdHint}
-                  </button>
-                ) : (
-                  <span
-                    className="ml-1 max-w-[14rem] truncate font-mono text-micro text-l4"
-                    title={cwdTitle}
-                  >
-                    {cwdHint}
-                  </span>
-                )
-              ) : null}
-              {(error || busy) && (
-                <span className="ml-2 truncate text-micro text-l4">
-                  {error ?? "正在发送…"}
-                </span>
-              )}
-              {leftExtras}
-            </div>
-            <div className="flex min-w-0 shrink items-center gap-1.5">
-              {rightExtras}
+            <div className="flex h-[34px] shrink-0 items-center gap-1.5">
               {running &&
               onInterrupt &&
               !busy &&
@@ -953,6 +1137,7 @@ export default function ChatComposer({
             </div>
           </div>
         </div>
+        {footer}
       </div>
     </div>
   );

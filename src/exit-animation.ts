@@ -36,12 +36,33 @@ export function nextExitRenderState(
   return { render: prev.render, exiting: prev.render };
 }
 
-function prefersReducedMotion(): boolean {
+export function prefersReducedMotion(): boolean {
   return (
     typeof window !== "undefined" &&
     typeof window.matchMedia === "function" &&
     window.matchMedia("(prefers-reduced-motion: reduce)").matches
   );
+}
+
+/** 折叠区展开 / 收起时长（ms）：同侧栏收起 200ms，UI 反馈都在 200ms 内 */
+export const COLLAPSE_MS = 200;
+
+/**
+ * 折叠区的阶段（PageFrame `Collapse`）：closed 不挂载；pre 刚挂上、行轨还在 0fr；opening / closing 过渡中，内容竖向裁切；
+ * open 停稳后不再裁切（悬停底、焦点环不被切掉）
+ */
+export type CollapsePhase = "closed" | "pre" | "opening" | "open" | "closing";
+
+/** 纯逻辑：open 翻转时的下一阶段。收起途中重开直接接着展开；reduced-motion 下收起立即卸载 */
+export function nextCollapsePhase(phase: CollapsePhase, open: boolean, reducedMotion: boolean): CollapsePhase {
+  if (open) return phase === "closed" ? "pre" : phase === "closing" ? "opening" : phase;
+  if (phase === "closed" || phase === "closing") return phase;
+  return reducedMotion ? "closed" : "closing";
+}
+
+/** 过渡跑完后落到的阶段；其余阶段不计时 */
+export function settledCollapsePhase(phase: CollapsePhase): CollapsePhase | null {
+  return phase === "opening" ? "open" : phase === "closing" ? "closed" : null;
 }
 
 /** 自带 open prop 的弹层壳（Modal/Sheet/MenuSelect/项目设置抽屉…）用：

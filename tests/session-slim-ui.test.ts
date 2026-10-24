@@ -134,7 +134,7 @@ test("瘦身并在终端继续：成功后依次回调 applied → close → res
 
 test("被拦时（Mesa 终端里在跑 / 最近一分钟有写入）：两个动作都不可点，也不会调用后端", async () => {
   for (const [props, reason] of [
-    [{ runningInMesaTab: true }, /终端标签/],
+    [{ runningInMesaTab: true }, /正在 Mesa 里运行/],
     [{ inspect: inspect({ recentlyWritten: true }) }, /最近一分钟/],
   ] as const) {
     const ui = await mount(props);
