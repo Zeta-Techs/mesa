@@ -2076,7 +2076,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
               {tree.length === 0 && (
                 <EmptyState
                   title="还没有对话"
-                  detail="各项目里 Agent 做过的记录会列在这里。定时巡检等后台跑的不进这份列表。"
+                  detail="各项目里 Agent 做过的记录会列在这里。定时任务等后台跑的不进这份列表。"
                 />
               )}
             </div>

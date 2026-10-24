@@ -878,6 +878,7 @@ export function inboxItemProjectRoot(
   switch (action.type) {
     case "project":
     case "litWatch":
+    case "schedules":
     case "help":
       return toProject(str(action.projectRoot));
     case "artifacts": {

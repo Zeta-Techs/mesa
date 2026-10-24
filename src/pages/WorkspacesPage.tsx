@@ -84,6 +84,10 @@ import {
   litInboxForRegisteredProjects,
   type LitInboxCandidate,
 } from "../lit-watch";
+import {
+  scheduleInboxCandidates,
+  type ScheduleInboxCandidate,
+} from "../schedule-tasks";
 import { IS_MAC, IS_WINDOWS } from "../hotkeys";
 import type {
   HelpRequestDto,
@@ -947,11 +951,14 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   const [helpRequests, setHelpRequests] = useState<HelpRequestDto[]>([]);
   // 文献雷达新命中（收件箱「文献」胶囊）：随 refresh 同频次拉 schedules，判定纯逻辑在 lit-watch.ts
   const [litCandidates, setLitCandidates] = useState<LitInboxCandidate[]>([]);
+  // 定时任务条目（其他巡检待评审 / 自动暂停）：同一次 list_schedules 现算，纯逻辑在 schedule-tasks.ts
+  const [schedCandidates, setSchedCandidates] = useState<ScheduleInboxCandidate[]>([]);
 
   async function loadLitInbox() {
     try {
       const list = await invoke<ScheduleDto[]>("list_schedules");
       setLitCandidates(litInboxCandidates(list));
+      setSchedCandidates(scheduleInboxCandidates(list));
     } catch {
       /* 下轮重试 */
     }
@@ -1588,6 +1595,35 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
         action: { type: "litWatch" as const, projectRoot: c.projectRoot },
       };
     }),
+    // 定时任务：其他巡检有新产物待评审（去评审）、任务被自动暂停（去项目定时任务页看原因）。
+    // 已删项目的任务不出（与文献条目同口径）
+    ...schedCandidates
+      .filter((c) => projects.some((p) => samePath(p.path, c.projectRoot)))
+      .map((c): InboxItem => {
+        const projectName =
+          projects.find((p) => samePath(p.path, c.projectRoot))?.name ??
+          pathBaseName(c.projectRoot);
+        if (c.kind === "paused") {
+          return {
+            key: `sched:paused:${c.scheduleId}`,
+            dot: "bg-warn-text",
+            text: inboxTaskLine(projectName, `「${c.scheduleName}」已自动暂停`),
+            actionLabel: "去看看",
+            action: { type: "schedules" as const, projectRoot: c.projectRoot },
+          };
+        }
+        return {
+          key: `sched:review:${c.scheduleId}:${c.runId ?? ""}`,
+          dot: "bg-ok-text",
+          text: inboxTaskLine(projectName, `「${c.scheduleName}」有新产物待评审`),
+          actionLabel: "去评审",
+          action: {
+            type: "review" as const,
+            worktreePath: c.isolationPath ?? "",
+            runId: c.runId ?? null,
+          },
+        };
+      }),
     ...active
       .filter((w) =>
         workspaceReviewInboxEligible({

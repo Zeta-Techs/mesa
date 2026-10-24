@@ -4,7 +4,9 @@ import {
   LIT_WATCH_SKILL,
   WATCH_SKILL_CATEGORY,
   buildWatchSkillSeedPrompt,
+  defaultScheduleKind,
   defaultScheduleName,
+  scheduleExamples,
   followSkillName,
   isLitWatchSkill,
   scheduleSkillOptions,
@@ -90,4 +92,35 @@ test("写技能种子：指向草稿路径、禁止 inbox.md、等确认落盘",
   assert.ok(p.includes("notes/inbox.md"));
   assert.ok(p.includes("确认落盘"));
   assert.ok(!p.includes("{skill}"));
+  // 没给周期建议路径：只写一个文件，不提 JSON
+  assert.ok(p.includes("只写这一个文件"));
+  assert.ok(!p.includes("intervalHours"));
 });
+
+test("种子 prompt：给了周期建议路径就请 AI 顺带写周期 JSON", () => {
+  const p = buildWatchSkillSeedPrompt({
+    intent: "工作日早上查模型",
+    draftRelPath: ".ccode/drafts/watch-abc.md",
+    scheduleRelPath: ".ccode/drafts/watch-abc.schedule.json",
+    skillName: "model-watch",
+    scheduleName: "查模型更新",
+  });
+  assert.ok(p.includes(".ccode/drafts/watch-abc.schedule.json"));
+  assert.ok(p.includes("weekdays"));
+  assert.ok(p.includes("intervalHours"));
+  assert.ok(!p.includes("只写这一个文件"));
+});
+
+test("默认种类与空态示例按项目类型", () => {
+  assert.equal(defaultScheduleKind(true), "lit");
+  assert.equal(defaultScheduleKind(false), "new");
+  const research = scheduleExamples("research");
+  assert.equal(research[0].kind, "lit");
+  for (const mode of ["coding", "office"] as const) {
+    const list = scheduleExamples(mode);
+    assert.ok(list.length >= 2);
+    // 非科研项目不给文献雷达；新建类示例都带预填描述
+    assert.ok(list.every((e) => e.kind === "new" && (e.intent ?? "").length > 10), mode);
+  }
+});
+

@@ -13,6 +13,7 @@ export type InboxCategory =
   | "dep"
   | "update"
   | "lit"
+  | "schedule"
   | "ready"
   | "artifacts"
   | "digest"
@@ -29,6 +30,7 @@ export interface InboxCategoryMeta {
 /** 固定展示顺序（与原 strip 摘要口径一致，confirm: 与 live: 合并为「待确认」；
  *  dep: 依赖缺失紧随「待确认」（git 不在 = 工作区/评审停工，与待确认同级紧迫）；
  *  update: 应用可更新（不阻断干活，但必须能看见）；lit: 文献雷达新命中随后；
+ *  sched: 定时任务（其他巡检有产物待评审 / 被自动暂停，2026-10-23）紧跟文献；
  *  phone: 手机发来还没处理的（从手机添加，2026-10-20）跟在「待发送」后；help 追加在末尾） */
 export const INBOX_CATEGORIES: readonly InboxCategoryMeta[] = [
   { id: "conflict", label: "冲突" },
@@ -36,6 +38,7 @@ export const INBOX_CATEGORIES: readonly InboxCategoryMeta[] = [
   { id: "dep", label: "依赖" },
   { id: "update", label: "更新" },
   { id: "lit", label: "文献" },
+  { id: "schedule", label: "定时任务" },
   { id: "ready", label: "可合并" },
   { id: "artifacts", label: "待核验" },
   { id: "digest", label: "待发送" },
@@ -52,6 +55,7 @@ export function inboxCategoryOf(key: string): InboxCategory {
   if (key.startsWith("dep:")) return "dep";
   if (key.startsWith("update:")) return "update";
   if (key.startsWith("lit:")) return "lit";
+  if (key.startsWith("sched:")) return "schedule";
   if (key.startsWith("ready:")) return "ready";
   if (key.startsWith("artifacts:")) return "artifacts";
   if (key.startsWith("digest")) return "digest";

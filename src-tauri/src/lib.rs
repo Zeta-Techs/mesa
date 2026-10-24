@@ -1,6 +1,7 @@
 use tauri::{Emitter, Manager};
 
 mod about;
+mod attach_grants;
 mod agent_specs;
 mod client_open;
 mod app_icon;
@@ -399,7 +400,16 @@ pub fn run() {
             }
             Ok(())
         })
+        .on_webview_event(|_webview, event| {
+            // 拖进窗口的文件登记为「用户交给 Mesa 的」，附件卡据此出缩略图（attach_grants.rs）
+            if let tauri::WebviewEvent::DragDrop(drop) = event {
+                attach_grants::grant_drop(drop);
+            }
+        })
         .on_window_event(|window, event| {
+            if let tauri::WindowEvent::DragDrop(drop) = event {
+                attach_grants::grant_drop(drop);
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if process::capture_count() > 0
                     && !ALLOW_CLOSE.load(std::sync::atomic::Ordering::Acquire)
@@ -860,6 +870,8 @@ pub fn run() {
             scheduler::discard_watch_skill_draft,
             scheduler::commit_watch_skill_draft,
             scheduler::ensure_schedule_skill_distributed,
+            scheduler::schedule_memory_read,
+            scheduler::schedule_memory_write,
             lit_watch::list_watch_entries,
             lit_watch::repair_watch_batch_dates,
             lit_watch::save_watch_explain,
@@ -899,6 +911,7 @@ pub fn run() {
             reader::list_paper_notes,
             reader::reader_for_note,
             reader::read_image_bytes,
+            attach_grants::pick_attachment_files,
             reader::read_audio_bytes,
             reader::save_reader_capture,
             reader::append_note_image,

@@ -1,8 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  catchupNotify,
   frequencyLabel,
   hhmm,
+  lastRunAction,
+  lastRunBrief,
+  nextRunLabel,
+  otherProjectSchedules,
+  scheduleInboxCandidates,
+  shouldNotifyRunDone,
+  skipLine,
+  slotLabel,
+  triggerTag,
+  workbenchScheduleRows,
   reconcileRunningSchedules,
   runDoneNotifyBody,
   runDoneNotifyTitle,
@@ -167,3 +178,169 @@ test("reconcileRunningSchedules：后端曾报在跑、现在不再跑的清除�
 test("reconcileRunningSchedules：空集合对账返回空", () => {
   assert.deepEqual([...reconcileRunningSchedules(new Set(), new Set(), new Set())], []);
 });
+
+// ===== 2026-10-23 定时任务完善 =====
+
+test("frequencyLabel：工作日 / 每 N 小时 / 仅手动", () => {
+  assert.equal(frequencyLabel("weekdays", null, 9, 0), "工作日 09:00");
+  assert.equal(frequencyLabel("hourly", null, 0, 15, 6), "每 6 小时，在 :15");
+  assert.equal(frequencyLabel("hourly", null, 0, 5, 1), "每小时，在 :05");
+  // 间隔越界回落每小时
+  assert.equal(frequencyLabel("hourly", null, 0, 0, 5), "每小时，在 :00");
+  assert.equal(frequencyLabel("manual", null, 9, 0), "仅手动");
+});
+
+test("slotLabel / nextRunLabel：今天、明天、其他日期；停用不显示", () => {
+  const now = new Date(2026, 9, 23, 10, 0);
+  assert.equal(slotLabel("2026-10-23T14:00:00", now), "今天 14:00");
+  assert.equal(slotLabel("2026-10-24T09:00:00", now), "明天 09:00");
+  assert.equal(slotLabel("2026-10-22T09:00:00", now), "昨天 09:00");
+  assert.equal(slotLabel("2026-10-26T09:05:00", now), "10月26日 09:05");
+  assert.equal(slotLabel(null, now), "");
+  assert.equal(nextRunLabel({ enabled: true, nextRunAt: "2026-10-24T09:00:00" }, now), "下次 明天 09:00");
+  assert.equal(nextRunLabel({ enabled: false, nextRunAt: "2026-10-24T09:00:00" }, now), null);
+  assert.equal(nextRunLabel({ enabled: true, nextRunAt: null }, now), null);
+});
+
+test("跳过行与来由小标", () => {
+  assert.equal(skipLine({ skipReason: "unreviewed", skipCount: 3 }), "已跳过 3 次：上一轮还没评审");
+  assert.equal(skipLine({ skipReason: "missed_asleep", skipCount: 1 }), "已跳过：电脑在睡眠");
+  assert.equal(scheduleStatusMark("skipped").label, "已跳过");
+  assert.equal(
+    summaryPreview({ at: "x", status: "skipped", summary: "已跳过：应用没开", skipReason: "missed_closed", skipCount: 2 }),
+    "已跳过 2 次：应用没开",
+  );
+  assert.equal(
+    summaryPreview({ at: "x", status: "ok", summary: "新命中 0 篇", noop: true }),
+    "无新内容 · 新命中 0 篇",
+  );
+  const now = new Date(2026, 9, 23, 23, 0);
+  assert.equal(triggerTag({ trigger: "catchup", scheduledFor: "2026-10-23T09:00:00" }, now), "补跑 · 原定 今天 09:00");
+  assert.equal(triggerTag({ trigger: "manual", scheduledFor: null }, now), "手动");
+  assert.equal(triggerTag({ trigger: "schedule", scheduledFor: "2026-10-23T09:00:00" }, now), null);
+});
+
+test("shouldNotifyRunDone：无新内容不打扰，自动暂停一定说", () => {
+  assert.equal(shouldNotifyRunDone({ status: "ok", noop: true }), false);
+  assert.equal(shouldNotifyRunDone({ status: "ok", noop: false }), true);
+  assert.equal(shouldNotifyRunDone({ status: "error" }), true);
+  assert.equal(shouldNotifyRunDone({ status: "ok", noop: true, autoPaused: "连续 3 次" }), true);
+  assert.equal(
+    runDoneNotifyTitle("课题", "error", "查模型", true),
+    "查模型 · 课题（已自动暂停）",
+  );
+});
+
+test("catchupNotify：原定时刻与之前错过的次数", () => {
+  const now = new Date(2026, 9, 23, 23, 0);
+  const n = catchupNotify("文献雷达", "课题", "2026-10-23T09:00:00", 2, now);
+  assert.equal(n.title, "补跑：文献雷达 · 课题");
+  assert.match(n.body, /原定 今天 09:00，之前还错过 2 次/);
+});
+
+test("scheduleInboxCandidates：其他巡检待评审只认新记录；自动暂停单独一条；雷达不进", () => {
+  const generic: ScheduleDto = {
+    ...schedule("/repo/a", "g-1"),
+    skill: "model-watch",
+    name: "查模型",
+    history: [
+      { at: "t3", status: "skipped", summary: "", skipReason: "unreviewed" },
+      { at: "t2", status: "ok", summary: "改了表", noop: false, runId: "r2", isolationPath: "/iso" },
+    ],
+  };
+  const legacy: ScheduleDto = {
+    ...generic,
+    id: "g-2",
+    history: [{ at: "t1", status: "ok", summary: "旧", runId: "r1", isolationPath: "/iso" }],
+  };
+  const noop: ScheduleDto = {
+    ...generic,
+    id: "g-3",
+    history: [{ at: "t1", status: "ok", summary: "", noop: true, runId: "r3", isolationPath: "/iso" }],
+  };
+  const paused: ScheduleDto = {
+    ...schedule("/repo/b", "r-1"),
+    enabled: false,
+    pausedReason: "连续 3 次没跑成",
+    history: [{ at: "t1", status: "ok", summary: "", noop: false, runId: "r4", isolationPath: "/iso" }],
+  };
+  const out = scheduleInboxCandidates([generic, legacy, noop, paused]);
+  assert.deepEqual(
+    out.map((c) => [c.kind, c.scheduleId, c.runId ?? null]),
+    [
+      ["review", "g-1", "r2"],
+      ["paused", "r-1", null],
+    ],
+  );
+});
+
+test("otherProjectSchedules：排除本项目", () => {
+  const list = [schedule("/repo/a", "s-1"), schedule("/repo/b", "s-2")];
+  assert.deepEqual(otherProjectSchedules(list, "/repo/a/", false).map((s) => s.id), ["s-2"]);
+});
+
+test("lastRunBrief / lastRunAction：上次结果一句话与入口", () => {
+  const base = { at: "t", summary: "检索 3 条\n第二行" };
+  assert.deepEqual(lastRunBrief({ ...base, status: "ok", newEntries: 3 }, true), { text: "3 篇新命中", tone: "ok" });
+  assert.deepEqual(lastRunBrief({ ...base, status: "ok", newEntries: 3, adopted: true }, true), { text: "3 篇新命中 · 已采纳", tone: "ok" });
+  assert.deepEqual(lastRunBrief({ ...base, status: "ok", noop: true }, false), { text: "无新内容", tone: "muted" });
+  assert.deepEqual(
+    lastRunBrief({ ...base, status: "ok", noop: false, isolationPath: "/iso", runId: "r" }, false),
+    { text: "有新产物待评审", tone: "ok" },
+  );
+  assert.deepEqual(lastRunBrief({ ...base, status: "error", summary: "\n连接不存在\n细节" }, false), { text: "失败：连接不存在", tone: "err" });
+  assert.equal(lastRunBrief({ ...base, status: "timeout" }, false).tone, "warn");
+  assert.equal(lastRunBrief({ ...base, status: "skipped", skipReason: "unreviewed", skipCount: 2 }, false).text, "已跳过 2 次：上一轮还没评审");
+  // 入口：待评审优先，其次看过程；旧的 0 命中雷达记录不给评审
+  assert.equal(lastRunAction({ ...base, status: "ok", isolationPath: "/iso", agent: "codex", sessionId: "s" }), "review");
+  assert.equal(lastRunAction({ ...base, status: "ok", isolationPath: "/iso", newEntries: 0, agent: "codex", sessionId: "s" }), "process");
+  assert.equal(lastRunAction({ ...base, status: "ok", isolationPath: "/iso", adopted: true }), null);
+  assert.equal(lastRunAction({ ...base, status: "error", agent: "codex", sessionId: "s" }), "process");
+});
+
+test("workbenchScheduleRows：只放在跑 / 上次失败 / 24 小时内要跑的；暂停、成功、停用、已删项目不上", () => {
+  const now = new Date(2026, 9, 23, 10, 0);
+  const projects = [
+    { path: "/repo/a", name: "课题 A" },
+    { path: "/repo/b", name: "项目 B" },
+  ];
+  const mk = (id: string, patch: Partial<ScheduleDto>): ScheduleDto => ({
+    ...schedule("/repo/a", id),
+    name: `任务${id}`,
+    ...patch,
+  });
+  const rows = workbenchScheduleRows(
+    [
+      mk("run", { runningRunId: "r1" }),
+      mk("fail", {
+        projectRoot: "/repo/b",
+        consecutiveFailures: 1,
+        history: [
+          { at: "t2", status: "skipped", summary: "", skipReason: "unreviewed" },
+          { at: "t1", status: "error", summary: "\n钉住的连接不存在\n细节" },
+        ],
+      }),
+      mk("late", { nextRunAt: "2026-10-23T18:00:00" }),
+      mk("soon", { nextRunAt: "2026-10-23T14:00:00" }),
+      mk("far", { nextRunAt: "2026-10-25T09:00:00" }),
+      mk("paused", { enabled: false, pausedReason: "连续 3 次没跑成", nextRunAt: null }),
+      mk("ok", { nextRunAt: null, history: [{ at: "t", status: "ok", summary: "3 篇" }] }),
+      mk("gone", { projectRoot: "/repo/deleted", runningRunId: "r2" }),
+    ],
+    projects,
+    now,
+  );
+  assert.deepEqual(
+    rows.map((r) => [r.kind, r.scheduleId, r.detail]),
+    [
+      ["running", "run", "正在跑"],
+      ["failing", "fail", "上次失败：钉住的连接不存在"],
+      ["upcoming", "soon", "今天 14:00"],
+      ["upcoming", "late", "今天 18:00"],
+    ],
+  );
+  assert.equal(rows[1].remaining, 2);
+  assert.equal(rows[1].projectName, "项目 B");
+  assert.deepEqual(workbenchScheduleRows([], projects, now), []);
+});
+
