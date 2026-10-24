@@ -468,6 +468,9 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   diff-intraline.ts          # 改动面板（GitPanel）diff 纯逻辑：块头白话「第 N 行 · 上下文」、成对删加行的行内高亮区间（去同头同尾，整句重写不标）；评审页 diff 解析在 diff-view.ts
   main-history-save.ts       # 科研步骤卡一键「存进历史」：冲突拦截 / 白话说明 / 路径（tests/main-history-save.test.ts）
   text-fences.ts             # 纯文本消息（用户气泡）的围栏代码拆分 splitFenced：只认行首的 ``` / ~~~，行中间的三个反引号是行内写法不开围栏（旧实现按任意位置切会吞掉后面整段）；未收尾按代码到结尾（tests/text-fences.test.ts）
+  chat-image.ts              # 消息里的图片行（tests/chat-image.test.ts）：整行图片路径 imagePathFromLine、改图的「原图：」「标注图：」行
+                             # labeledImageFromLine / attachmentLines（Claude Code 只把单独一行的路径升级成图片附件，带前缀不升级）、
+                             # 要不要模型看图 composerImageKind（plain / marks / null，ChatModelMenu 据此出看不了图的提示）
   chat-reply.ts              # 聊天长回复按小标题分段（带级别；识别代码围栏；有 ## 时冒号行不当标题）、正文里像文件路径的段（fileRefPath /
                              # findFileRefs，真假由 existing_files 核实）与本机音频（mentionedAudioFiles → ChatMarkdown 播放条）、本机图片（mentionedImageFiles → 正文下图片卡，读不到不出卡）、
                              # 确认按钮是否给出（tests/chat-reply.test.ts）

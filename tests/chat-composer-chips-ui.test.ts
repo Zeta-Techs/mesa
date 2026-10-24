@@ -656,14 +656,19 @@ test("点对话里的图接着改：图进输入框、直接展开看图台，�
   const ui = await mount();
   try {
     const sent: string[] = [];
+    const kinds: (string | null)[] = [];
     await ui.render(
       ui.h(ui.Composer, {
         onSend: async (t: string) => (sent.push(t), null),
         cwd: "/proj",
         seedInsert: { text: "", paths: [], edit: "/proj/scratch/puppy.jpg" },
         onSeedConsumed: () => undefined,
+        onImagesChange: (k: string | null) => kinds.push(k),
+        imageWarning: "glm-5.3 看不了图：带图发出去会报错",
       }),
     );
+    assert.equal(kinds.at(-1), null, "没标过的改图不算要模型看图");
+    assert.doesNotMatch(ui.el.textContent ?? "", /看不了图/, "也就不出看不了图的提示");
     const stage = () => ui.el.querySelector('[role="region"][aria-label="看图与标注"]');
     assert.ok(stage(), "不用再点缩略图，看图台直接展开");
     assert.deepEqual(ui.host.imageReads, ["/proj/scratch/puppy.jpg"]);
@@ -674,7 +679,7 @@ test("点对话里的图接着改：图进输入框、直接展开看图台，�
     assert.equal(box.value, "去掉背景，只留主体（透明或纯白底），其余不变", "常用说法写进输入框，不直接发");
     assert.deepEqual(sent, []);
     await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="发送"]')!.click());
-    assert.deepEqual(sent, ["去掉背景，只留主体（透明或纯白底），其余不变\n/proj/scratch/puppy.jpg"], "没标注就发原图路径");
+    assert.deepEqual(sent, ["去掉背景，只留主体（透明或纯白底），其余不变\n原图：/proj/scratch/puppy.jpg"], "没标注就发「原图：」一行（Claude Code 不会当图片附件）");
     assert.equal(stage(), null);
   } finally {
     await ui.close();
@@ -879,12 +884,18 @@ test("模型菜单开聊前：最近在这个项目用过的搭配一点四样�
         { agentId: "claude-code", profileId: "p1", model: "glm-flash", effort: "" },
       ],
       onCombo: (c: unknown) => combos.push(c),
-      hasImages: true,
+      imageKind: "plain",
       onImageWarning: (w: string | null) => warnings.push(w),
     };
     await ui.render(ui.h(ui.Menu, props));
     await ui.act(async () => new Promise((r) => setTimeout(r, 0)));
     assert.match(String(warnings.at(-1)), /glm-flash 看不了图：带图发出去会报错.*先移除图片/, "当前模型看不了图：告诉输入框会报错、怎么办");
+    // 接着改的图标过：不会报错（标注图按文字行交），只是标注白画
+    await ui.render(ui.h(ui.Menu, { ...props, imageKind: "marks" }));
+    await ui.act(async () => new Promise((r) => setTimeout(r, 0)));
+    assert.match(String(warnings.at(-1)), /glm-flash 看不了图，图上的标注它看不到，只会按你写的字在原图上改/);
+    await ui.render(ui.h(ui.Menu, props));
+    await ui.act(async () => new Promise((r) => setTimeout(r, 0)));
     await ui.click("glm-flash");
     await ui.act(async () => new Promise((r) => setTimeout(r, 0)));
     const text = ui.el.textContent ?? "";

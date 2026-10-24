@@ -55,6 +55,10 @@ TOOL_PROMPT="TRIGGER_TOOL TRIGGER_ESC 跑一下" PYTE_DIR=/tmp/pyte python3 -I s
 REPLY_PROMPT="TRIGGER_LONG 写长一点" REPLY_SECS=25 PYTE_DIR=/tmp/pyte python3 -I scripts/e2e-model-routing/chat-capture.py /tmp/e2e-plans.json codex ask /tmp/cap/codex-long.json
 ```
 
+**出图 / 改图逐家核对（2026-10-25）**：假网关起的时候设 `E2E_PROBE_CMD='"$MESA_IMAGE_TOOL" image --image <图> --prompt x --out edited.png'`、
+`E2E_DONE_TEXT='改好了，新图在 ./edited.png'`、`E2E_DUMP=<文件>`；抓屏加 `CAP_ENV="MESA_IMAGE_TOOL=<同参数的桩脚本>"`（不花出图钱），
+`REPLY_PROMPT` / `TOOL_PROMPT` 里分别放单独一行的图片路径与「原图：路径」，看请求体里有没有图片块、工具跑没跑。结论见 matrix §11 末两条。
+
 **生成计划后马上跑**：Claude 的连接全在计划里的 `--settings` 文件中，Mesa 会清理 external-launch 下的旧文件；文件不在时脚本直接停下。
 不能退回去掉这个参数——那样会落回拷进临时 HOME 的本机 `~/.claude/settings.json`，请求打到真实网关、用的是真钥匙（2026-10-18 踩过一次）。
 Gemini 的临时 HOME 里会把登录方式改成 API Key（Mesa 只在这种情况下放行第三方连接）。逐帧结果是 JSON（`scenes.<幕>[].lines`），

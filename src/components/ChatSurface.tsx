@@ -784,7 +784,7 @@ export default function ChatSurface({
   }
 
   // 输入框里有图、当前模型确知看不了图：附件下面说一句（模型能力库，ChatModelMenu 查）
-  const [hasImages, setHasImages] = useState(false);
+  const [imageKind, setImageKind] = useState<"plain" | "marks" | null>(null);
   const [imageWarning, setImageWarning] = useState<string | null>(null);
 
   // 「最近在这个项目用过」的搭配：连接已删的不列
@@ -898,7 +898,7 @@ export default function ChatSurface({
           combos={combos}
           combosWhere={cwdLabel || null}
           onCombo={onPickLaunch.combo}
-          hasImages={hasImages}
+          imageKind={imageKind}
           onImageWarning={setImageWarning}
           onOpenTerminal={openTerminalFromBeta}
         />
@@ -921,7 +921,7 @@ export default function ChatSurface({
         showRing={!metaSlotted}
         onCompact={mesaCommands.find((c) => c.cmd === "/compact")?.run ?? null}
         onRelaunch={runtime.onRelaunch}
-        hasImages={hasImages}
+        imageKind={imageKind}
         onImageWarning={setImageWarning}
         onOpenTerminal={openTerminalFromBeta}
         // 进程退出、还能接着聊：改选「接着聊用哪个模型」，写标签的启动选择（与终端启动栏同一份）
@@ -1204,7 +1204,7 @@ export default function ChatSurface({
           (launchPickOpen || resumePickOpen) && launchPick && !readOnly ? () => void cyclePermission() : undefined
         }
         imageWarning={imageWarning}
-        onImagesChange={setHasImages}
+        onImagesChange={setImageKind}
         onDraftChange={onDraftChange}
         onImageStageChange={setImageStageOpen}
         queueHint={queueSendHint(midTurn)}

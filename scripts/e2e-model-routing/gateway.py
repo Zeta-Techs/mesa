@@ -43,6 +43,8 @@ ASK_FRUIT = {"question": "下面这些水果你平时会吃哪些？", "header":
                          {"label": "葡萄", "description": "一串一串，夏天最多"}]}
 # E2E_PROBE_CMD 换探针命令（如写绝对路径，看沙箱里的工作目录对不对）
 PROBE = os.environ.get("E2E_PROBE_CMD", "echo mesa > mesa_probe.txt")
+# E2E_DONE_TEXT 换工具跑完后的那句回复（如带图片路径，看聊天层出不出图）
+DONE = os.environ.get("E2E_DONE_TEXT", "done")
 SHELLISH = ("bash", "shell", "run_shell_command", "exec_command", "run_command", "terminal", "execute", "command")
 
 
@@ -185,7 +187,7 @@ class H(BaseHTTPRequestHandler):
         p = self.path
         text = "ok"
         lines = (SLOW_LINES if mode == "slow" else LONG_LINES if mode == "long" else [SUGGESTION] if mode == "suggest"
-                 else [("done" if mode == "done" else "ok")])
+                 else [(DONE if mode == "done" else "ok")])
         if mode == "suggest":
             text = SUGGESTION
         shell = pick_shell(tools) if mode == "tool" else None

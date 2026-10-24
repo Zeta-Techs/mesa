@@ -24,6 +24,7 @@ import { usePhoneDropStore } from "../phone-drop-store";
 import type { PhoneItem } from "../phone-drop";
 import ChatImageStage, { MarkupLayer } from "./ChatImageStage";
 import { appendMarkRef, exportMarkup, nextMarkNumber, type Markup } from "../image-markup";
+import { attachmentLines, composerImageKind } from "../chat-image";
 import { docThumb, docThumbKind, docTypeLabel } from "../doc-thumb";
 import { fileTypeIcon } from "../file-icons";
 
@@ -292,7 +293,7 @@ export default function ChatComposer({
   /** 输入框里有图、而当前模型看不了图时的一句提示（模型能力库判定，调用方给） */
   imageWarning?: string | null;
   /** 附件里有没有图片（给调用方判断要不要查模型能不能看图） */
-  onImagesChange?: (hasImages: boolean) => void;
+  onImagesChange?: (kind: "plain" | "marks" | null) => void;
   /** 输入框里有没有没发的字或附件 */
   onDraftChange?: (hasDraft: boolean) => void;
   /** 看图标注台开 / 关（调用方据此把居中空态换成输入框在底部，让图有地方放） */
@@ -356,12 +357,20 @@ export default function ChatComposer({
     },
     [],
   );
-  // 有没有图片附件：调用方据此查当前模型能不能看图（看不了的在附件下面说一句）
-  const hasImages = attachments.some((a) => a.url != null || IMAGE_EXT.test(a.path));
+  // 发出去会不会要模型看图：调用方据此查当前模型能不能看图（看不了的在附件下面说一句）。
+  // 接着改的图没标过时只交路径给出图工具，不算（composerImageKind）
+  const imageKind = composerImageKind(
+    attachments.map((a) => ({
+      path: a.path,
+      isImage: a.url != null || IMAGE_EXT.test(a.path),
+      edit: a.edit,
+      marked: (a.markup?.marks.length ?? 0) > 0,
+    })),
+  );
   useEffect(() => {
-    onImagesChange?.(hasImages);
+    onImagesChange?.(imageKind);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasImages]);
+  }, [imageKind]);
   // 有没有没发出去的东西（字或附件）：调用方据此决定切走时能不能把这个标签顺手收掉
   const hasDraft = value.trim() !== "" || attachments.length > 0;
   useEffect(() => {
@@ -664,18 +673,21 @@ export default function ChatComposer({
     setError(null);
     submittingRef.current = true;
     try {
-      // 标了的图这时才生成新图（原图不动），落盘到粘贴区，发出去的是新图路径
+      // 标了的图这时才生成新图（原图不动），落盘到粘贴区，发出去的是新图路径；
+      // 接着改的图写成「原图：」「标注图：」行（attachmentLines），不让 Claude Code 当图片附件发给模型
       let paths: string[];
       try {
-        paths = await Promise.all(
+        const lines = await Promise.all(
           attachments.map(async (a) => {
-            if (!a.url || !a.markup || a.markup.marks.length === 0) return a.path;
-            const out = await exportMarkup(a.url, a.path, a.markup);
-            const marked = await saveClipboardImage(out.bytes, out.ext);
-            // 改图：标注只是指位置，出图模型要在原图上改（技能 image-gen 认「原图：」这一行）
-            return a.edit ? `${marked}\n原图：${a.path}` : marked;
+            let marked: string | null = null;
+            if (a.url && a.markup && a.markup.marks.length > 0) {
+              const out = await exportMarkup(a.url, a.path, a.markup);
+              marked = await saveClipboardImage(out.bytes, out.ext);
+            }
+            return attachmentLines({ path: a.path, edit: a.edit, marked });
           }),
         );
+        paths = lines.flat();
       } catch (reason) {
         setError(`生成标注图失败：${String(reason)}`);
         return;
@@ -920,7 +932,7 @@ export default function ChatComposer({
               ))}
             </div>
           )}
-          {imageWarning && hasImages && (
+          {imageWarning && imageKind && (
             <p className="flex items-start gap-1.5 px-4 pt-2 text-micro text-caution-text">
               <span className="ccode-icon-line">
                 <TriangleAlert size={12} strokeWidth={1.8} aria-hidden="true" />

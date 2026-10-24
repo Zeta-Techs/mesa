@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { imagePathFromLine, splitImagePaths } from "../src/chat-image.ts";
+import { attachmentLines, composerImageKind, imagePathFromLine, labeledImageFromLine, splitImagePaths } from "../src/chat-image.ts";
 
 test("整行绝对路径识别为图片", () => {
   assert.equal(imagePathFromLine("/Users/x/pic/a.png"), "/Users/x/pic/a.png");
@@ -57,4 +57,25 @@ test("整条消息就是图片路径时正文为空", () => {
   const { text, images } = splitImagePaths("/tmp/a.png");
   assert.equal(text, "");
   assert.deepEqual(images, ["/tmp/a.png"]);
+});
+
+test("改图的图写成「原图：」「标注图：」行，消息里照样认成图片（2026-10-25）", () => {
+  assert.deepEqual(attachmentLines({ path: "/a/p.png" }), ["/a/p.png"]);
+  assert.deepEqual(attachmentLines({ path: "/a/p.png", marked: "/tmp/m.png" }), ["/tmp/m.png"]);
+  assert.deepEqual(attachmentLines({ path: "/a/p.png", edit: true }), ["原图：/a/p.png"]);
+  assert.deepEqual(attachmentLines({ path: "/a/p.png", edit: true, marked: "/tmp/m.png" }), ["标注图：/tmp/m.png", "原图：/a/p.png"]);
+  assert.deepEqual(labeledImageFromLine("原图：/a/p.png"), { label: "原图", path: "/a/p.png" });
+  assert.equal(labeledImageFromLine("原图：不是路径"), null);
+  const { text, images } = splitImagePaths("帽子换蓝色\n标注图：/tmp/m.png\n原图：/a/p.png");
+  assert.equal(text, "帽子换蓝色");
+  assert.deepEqual(images, ["/tmp/m.png", "/a/p.png"]);
+});
+
+test("要不要模型看图：普通图片附件要；接着改的图只在标过时要", () => {
+  const img = (o: { edit?: boolean; marked?: boolean }) => ({ path: "/a.png", isImage: true, marked: false, ...o });
+  assert.equal(composerImageKind([]), null);
+  assert.equal(composerImageKind([img({ edit: true })]), null);
+  assert.equal(composerImageKind([img({ edit: true, marked: true })]), "marks");
+  assert.equal(composerImageKind([img({ edit: true, marked: true }), img({})]), "plain");
+  assert.equal(composerImageKind([{ path: "/a.pdf", isImage: false, marked: false }]), null);
 });

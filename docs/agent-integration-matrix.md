@@ -387,6 +387,17 @@ Ccode 清单模型只收公共子集：stdio（command/args/env/cwd）+ remote�
   （多模态直读）；gemini/kimi/codebuddy/cursor 是路径原文进上下文、模型经工具读图。两派用户体验等价，
   Ccode 只需保证写进去的是**转义后的绝对路径**。
 - 临时落盘文件在 `<config>/ccode/tmp/paste-*`，保存时顺带清理 7 天前残留（clipboard.rs）。
+- **2026-10-25 按聊天层的发法逐家实测（修正上一条）**：聊天层发的是「正文 + 换行 + 图片路径」整段（多行走 bracketed paste，
+  pty_write_submit）。假网关 `E2E_DUMP` 看请求体：**只有 Claude Code 2.1.306** 把单独一行的图片路径升级成图片块（粘贴当下就变 `[Image #1]`）；
+  Codex 0.164.0、Qwen 0.25.3、OpenCode 1.19.3、Grok 1.0.70、Gemini 0.65.0、Kimi 2.3.1、CodeBuddy 2.175.0 都按文字原样发（假模型 e2e-picked，
+  能力未知；它们的升级可能只在「整段粘贴就是一个路径」或模型声明能看图时发生）。前面带字的行（`原图：/a.png`）九家都按文字发，
+  Claude Code 也不升级。聊天层改图据此把图写成「原图：」「标注图：」行（`src/chat-image.ts attachmentLines`），看不了图的模型也不报错。
+  Cursor 只能用官方账号，没走假网关，改用 `cursor-agent -p` 真跑一次核对出图工具可用。
+- **出图工具逐家核对（2026-10-25）**：Mesa 给每个 PTY 都注入 `MESA_IMAGE_TOOL`（pty.rs，不分 agent）。九家都在完全访问档跑通
+  `"$MESA_IMAGE_TOOL" image --image … --out …`（假网关回 shell 工具调用、出图工具换成同参数的桩）。
+  回复里写出的图片路径，聊天层按回复文字出图片卡（`mentionedImageFiles`，与 agent 无关），前提是这家的回复能从会话文件读出来——
+  九家都能，金丝雀每天核「解析器读到回复」。
+  Codex 默认沙箱不让命令联网，真出图时它会申请出沙箱（技能 image-gen 已写）；其余八家没有默认沙箱。
 
 ## 12. 精确注意力 hooks 桥接调研（2026-08-20；实现 = hooks.rs 的 BRIDGE_SPECS，写字段/事件名前以本节为准）
 

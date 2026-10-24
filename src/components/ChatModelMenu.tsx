@@ -50,8 +50,9 @@ type LaunchProps = {
 } & SharedProps;
 
 type SharedProps = {
-  /** 输入框里有图：看不了图的模型在名单里标出来，当前模型看不了时经 onImageWarning 告诉输入框 */
-  hasImages?: boolean;
+  /** 输入框里有要模型看的图（plain = 普通图片附件；marks = 接着改的图上画了标注）：看不了图的模型在名单里标出来，
+   *  当前模型看不了时经 onImageWarning 告诉输入框。接着改的图没标过不算（只交路径给出图工具，chat-image.ts composerImageKind） */
+  imageKind?: "plain" | "marks" | null;
   onImageWarning?: (warning: string | null) => void;
   /** 菜单底部「测试版」那一行点开后的「切到终端」 */
   onOpenTerminal?: () => void;
@@ -196,8 +197,8 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
     currentModel = rt.shownModel;
   }
   // 能力灰字菜单打开才查；输入框里有图时也查（要知道当前模型能不能看图）
-  const caps = useModelCaps(open || props.hasImages ? models : [], profile?.gatewayId ?? null);
-  const hasImages = Boolean(props.hasImages);
+  const caps = useModelCaps(open || props.imageKind ? models : [], profile?.gatewayId ?? null);
+  const hasImages = Boolean(props.imageKind);
   // 和当前选择一模一样的那套不列（列了也是点了没变化）
   const shownCombos = (launch?.combos ?? []).filter(
     (c) =>
@@ -210,7 +211,9 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
   );
   const imageWarning =
     hasImages && currentModel && caps.vision[currentModel] === false
-      ? `${currentModel} 看不了图：带图发出去会报错，这段对话之后也会接着报错。先移除图片，或换个能看图的模型`
+      ? props.imageKind === "marks"
+        ? `${currentModel} 看不了图，图上的标注它看不到，只会按你写的字在原图上改。要按标注改，换个能看图的模型`
+        : `${currentModel} 看不了图：带图发出去会报错，这段对话之后也会接着报错。先移除图片，或换个能看图的模型`
       : null;
   const onImageWarning = props.onImageWarning;
   useEffect(() => {
