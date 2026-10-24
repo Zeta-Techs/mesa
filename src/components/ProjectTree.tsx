@@ -571,6 +571,14 @@ export default function ProjectTree({
     () => currentFolderKey(activeRun?.cwd, folders, projectPaths, IS_WINDOWS),
     [activeRun?.cwd, folders, projectPaths],
   );
+  // 正聊着的那个项目整块提到最上面（2026-10-24 用户）：随手聊里的对话不提（随手聊本来就在项目前面）
+  const currentRow = useMemo(
+    () =>
+      currentKey && currentKey !== SCRATCH_FOLDER_KEY
+        ? (rows.find((r) => pathKey(r.repoPath, IS_WINDOWS) === currentKey) ?? null)
+        : null,
+    [rows, currentKey],
+  );
   // 开步刚建的工作副本这里还不认识（工作区清单只在项目有变动时重读）：那段对话会先挂到最上面「其他打开的」，
   // 等后台认出会话才挪回课题下（2026-10-24 用户「修掉」）。开着的对话里出现认不出归属的目录就重读一次清单；
   // 重读后还认不出的（主目录里的终端这类）签名不变，不会反复读
@@ -1446,6 +1454,18 @@ export default function ProjectTree({
             </div>
           </div>
         )}
+        {/* 正聊着的项目提到随手聊上面；它是单独一块，不参与拖动排序 */}
+        {currentRow && (
+          <div className="pb-2">
+            {renderRow(
+              currentRow,
+              0,
+              "current",
+              [currentRow.repoPath],
+              grouped.pinned.some((r) => r.key === currentRow.key),
+            )}
+          </div>
+        )}
         {/* 随手聊排最上 */}
         {renderScratch()}
         {rows.length === 0 ? (
@@ -1461,15 +1481,16 @@ export default function ProjectTree({
                 ["projects", grouped.projects],
                 ["unregistered", grouped.unregistered],
               ] as const
-            ).map(([section, list]) =>
-              list.length === 0 ? null : (
+            ).map(([section, all]) => {
+              const list = currentRow ? all.filter((r) => r.key !== currentRow.key) : all;
+              return list.length === 0 ? null : (
                 <div key={section} className="pt-2">
-                  {list.map((r, i, all) =>
-                    renderRow(r, i, section, all.map((x) => x.repoPath), section === "pinned"),
+                  {list.map((r, i, rest) =>
+                    renderRow(r, i, section, rest.map((x) => x.repoPath), section === "pinned"),
                   )}
                 </div>
-              ),
-            )}
+              );
+            })}
           </>
         )}
       </div>
