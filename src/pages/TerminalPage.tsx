@@ -63,7 +63,7 @@ import {
 import { hitCellRange, terminalPathHits } from "../terminal-links";
 import { pasteGuardPlan } from "../paste-guard";
 import type { TerminalProgress } from "../terminal-notify";
-import { terminalReplayText } from "../terminal-replay";
+import { REPLAY_HEAD, REPLAY_TAIL, terminalReplayText } from "../terminal-replay";
 import {
   confirmHandoffEvent,
   hasAssistantText,
@@ -3648,9 +3648,9 @@ const TerminalView = memo(function TerminalView({
     void invoke<string>("load_terminal_replay", { tabId }).then((text) => {
       const term = termRef.current;
       if (cancelled || !term || !text.trim() || ptyIdRef.current) return;
-      term.writeln("\x1b[90m── 上次离开时的画面 ──\x1b[0m");
+      term.writeln(`\x1b[90m${REPLAY_HEAD}\x1b[0m`);
       term.write(text.replace(/\n/g, "\r\n"));
-      term.writeln("\r\n\x1b[90m── 点恢复任务后重新接上 ──\x1b[0m");
+      term.writeln(`\r\n\x1b[90m${REPLAY_TAIL}\x1b[0m`);
     }).catch(() => {});
     return () => {
       cancelled = true;
