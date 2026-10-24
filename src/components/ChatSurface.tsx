@@ -321,8 +321,12 @@ export default function ChatSurface({
       return;
     }
     if (loadingOlderRef.current) prevScrollHeightRef.current = el.scrollHeight;
-    if (followRef.current) requestAnimationFrame(scrollBottom);
-    else setHasNew(true);
+    // 贴底当帧就贴（不等下一帧）：切到一段刚摆出来的对话时，先画一帧停在最上面、再跳到底，看着是一跳。
+    // 下一帧再补一次，接住这一帧之后才排好版的内容
+    if (followRef.current) {
+      scrollBottom();
+      requestAnimationFrame(scrollBottom);
+    } else setHasNew(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shownMessages]);
   // 加载结束（loadingOlder 与新消息同一批到）还没前插：这页没带来更早的消息，补偿标记作废
