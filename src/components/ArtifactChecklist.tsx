@@ -2,6 +2,7 @@ import { previewSaveCompletion, type FilePreviewSnapshot } from "../file-preview
 import { sanitizeDocumentHtml } from "../document-html";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { ExternalLink, GripVertical } from "lucide-react";
 import { marked } from "marked";
 import { renderMathInto } from "../md-math";
 import {
@@ -44,14 +45,14 @@ function OpenExternalHandle({ path, root, onError }: { path: string; root: strin
       role="button"
       aria-label="用系统应用打开"
       title="用系统默认应用打开（PDF 阅读器、Word 等）"
-      className="shrink-0 cursor-pointer select-none px-0.5 text-micro text-l4 hover:text-l2"
+      className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm text-l4 hover:bg-hover hover:text-l2"
       onClick={(e) => {
         e.preventDefault();
         e.stopPropagation();
         void invoke("open_in_system", { path, root }).catch((reason) => onError(String(reason)));
       }}
     >
-      ↗
+      <ExternalLink size={13} strokeWidth={1.8} aria-hidden="true" />
     </span>
   );
 }
@@ -63,7 +64,7 @@ function DragOutHandle({ path }: { path: string }) {
       role="button"
       aria-label="拖出到其他应用"
       title={`按住拖进其他应用（如 Zotero、${IS_MAC ? "Finder" : IS_WINDOWS ? "资源管理器" : "文件管理器"}）`}
-      className="shrink-0 cursor-grab select-none px-0.5 text-micro text-l4 hover:text-l2"
+      className="flex size-5 shrink-0 cursor-grab select-none items-center justify-center rounded-sm text-l4 hover:bg-hover hover:text-l2"
       onMouseDown={(e) => {
         if (e.button !== 0) return;
         e.preventDefault();
@@ -75,7 +76,7 @@ function DragOutHandle({ path }: { path: string }) {
         e.stopPropagation();
       }}
     >
-      ⠿
+      <GripVertical size={13} strokeWidth={1.8} aria-hidden="true" />
     </span>
   );
 }

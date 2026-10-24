@@ -15,7 +15,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   全局 page id schedules 仅作旧值重定向（App.tsx 转项目定时任务页签），SchedulesPage.tsx 已删
   components/                # WorkspaceReviewView、PipelineEditor（含「＋ 从模板追加」）、ProjectGroup/ProjectRail、ArtifactChecklist（文本类产物就地预览层；pdf/docx/表格/图同页弹层 +
                              # md 笔记「⛶ 沉浸阅读」入口（v3.98：pdf_for_note 配对后发 readerReq 带 notePath 进阅读区）+
-                             # ⠿ 拖出手柄经 tauri-plugin-drag 做 OS 级文件拖出——WebView HTML5 拖拽出不了窗口）、TaskCardsSection、FileTree、
+                             # 拖出手柄（GripVertical）经 tauri-plugin-drag 做 OS 级文件拖出——WebView HTML5 拖拽出不了窗口）、TaskCardsSection、FileTree、
                              # FilePreviewEditor、PdfPreview/DocxPreview/XlsxPreview/ImagePreview、ImagePairView、GitPanel、HandoffPicker/DigestPicker、SessionSlimDialog（会话瘦身确认弹层：先讲清动什么、结果页给备份位置与「客户端里需归档再恢复」提醒；提示条与菜单项在 SessionsPage 回放头部）、
                              #   PDF 字节模块级 LRU 缓存（loadPdfBytes，上限 8 份）：预览⇄阅读区重挂载不再重走
                              #   read_pdf_bytes IPC+atob+解析三程，骨架期只剩 pdf.js 解析一程；PdfPageView 页内标记层 marks
@@ -151,7 +151,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # （Agent/配置/模型三段共用；隐藏配置沉「已停用（可手选）」组）
   components/StepEvidenceChip.tsx # 步骤卡证据徽标：读当前步骤报告，显示质量状态与未决标记计数（解析在 step-evidence.ts）
   components/ReviewDecisionList.tsx # 步骤上的审查/待核实清单：逐条接受、拒绝、修改，写回报告后再接回对话
-  components/HandbackPanels.tsx # 定稿步「打开清单 / 打开填写」展开的面板：许可清单一篇一行（文章页 ↗、状态下拉即存、原图文件夹），投稿声明一节一框离开即存
+  components/HandbackPanels.tsx # 定稿步「打开清单 / 打开填写」展开的面板：许可清单一篇一行（文章页、状态下拉即存、原图文件夹），投稿声明一节一框离开即存
   components/PendingConfirmList.tsx # 检索步文献清单：待确认纳入/排除、已纳入移出、已排除恢复；行上现查 IF/分区/TOP；
                              #   指标表状态与排序跟在「纳入所选 / 排除所选」右侧，没有待确认时单独靠右
   components/ProjectFilesView.tsx # 项目面「文件」页：左目录树右预览（v3.231 三态合一）。watch_dir/fs-changed 自动跟上

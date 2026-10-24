@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { ExternalLink } from "lucide-react";
 import { readResearchFile } from "../research-report-load";
 import { researchAbsolutePath } from "../research-report";
 import {
@@ -162,9 +163,10 @@ export function FigurePermissionsPanel({
                   type="button"
                   onClick={() => void openUrl(group.doiUrl!).catch(() => {})}
                   title="打开文章页：找 Request permissions / Rights and permissions（多数走 RightsLink）申请；要原图也在这里下载"
-                  className="shrink-0 rounded-sm px-1.5 py-0.5 text-l3 hover:bg-hover hover:text-l1"
+                  className="flex shrink-0 items-center gap-1 rounded-sm px-1.5 py-0.5 text-l3 hover:bg-hover hover:text-l1"
                 >
-                  文章页 ↗
+                  文章页
+                  <ExternalLink size={12} strokeWidth={1.8} aria-hidden="true" />
                 </button>
               )}
               <select

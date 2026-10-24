@@ -708,10 +708,10 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   居中弹层（marked 渲染 + textarea 编辑 + save_file_preview 原子写，截断只读，Esc/背景点击关闭前
   守未保存改动）；pdf/docx/表格/图同页弹层（`ProjectFilePreview`，不跳运行页）。
   **产物文件 OS 级拖出（v3.97，tauri-plugin-drag）**：WebView 的 HTML5 拖拽出不了窗口，产物核验清单
-  每个文件行有「⠿」拖出手柄——mousedown 里同步调 `plugin:drag|start_drag`（macOS 要求拖拽会话挂在
+  每个文件行有拖出手柄（Lucide GripVertical，2026-10-24 前是「⠿」字符）——mousedown 里同步调 `plugin:drag|start_drag`（macOS 要求拖拽会话挂在
   鼠标按下事件上，故手柄独占图标、不与点击预览抢手势），产物（to-fetch.ris、PDF 等）可直接拖进
   Zotero/Finder。拖拽图标是前端内联的 48×48 文档形 PNG data URL（无文件读盘）；失败静默
-  （拖拽没起来 = 没拖）。capabilities 加 `drag:default`。**外部打开（2026-10-24 用户）**：文件行「⠿」左边的「↗」与两种预览弹层底部「用系统应用打开」交给系统默认应用，走 `open_in_system`（路径须在这一步的根目录内、限文档 / 表格 / 图片 / 文本类型），不直接调 opener 的 openPath。**「去终端」类入口（流程线
+  （拖拽没起来 = 没拖）。capabilities 加 `drag:default`。**外部打开（2026-10-24 用户）**：文件行拖出手柄左边的外链图标（Lucide ExternalLink，与命令面板外链同一图标；同日用户嫌字符丑，「↗」「⠿」都换成 13px 线宽 1.8 的图标）与两种预览弹层底部「用系统应用打开」交给系统默认应用，走 `open_in_system`（路径须在这一步的根目录内、限文档 / 表格 / 图片 / 文本类型），不直接调 opener 的 openPath。**「去终端」类入口（流程线
   「去终端看看」、工作区行「去终端」）是「回到那个对话」而非新开**（v3.93，用户拍板）：交接构造
   单一出处 `pipeline-start.ts buildWorkspaceTerminalRequest`——始终带 reuseKey `ws:<worktreePath>`
   （开工起的标签之后能找回，同一工作区永远回到同一个终端标签），无 initialPrompt 时自动 resume
