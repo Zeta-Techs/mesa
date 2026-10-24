@@ -1,7 +1,31 @@
 fn main() {
     placeholder_for_sidecar();
     ensure_extension_src();
-    tauri_build::build()
+    // Windows MSVC：通用控件 v6 的 manifest 改由链接器嵌进**每个**链接产物（含 lib 的测试 exe），
+    // tauri-build 自己那份只进 bins——测试 exe 没有它，comctl32 落到 5.82、缺 TaskDialogIndirect，
+    // 一启动就 0xc0000139 退出，一条测试都不跑（2026-10-21 起 CI Windows 一直红在这）。两份都嵌会撞 MANIFEST 资源，所以关掉 tauri-build 那份
+    if embed_common_controls_manifest() {
+        let windows = tauri_build::WindowsAttributes::new_without_app_manifest();
+        tauri_build::try_build(tauri_build::Attributes::new().windows_attributes(windows))
+            .expect("failed to run tauri-build");
+    } else {
+        tauri_build::build()
+    }
+}
+
+/// 内容与 tauri-build 默认的 windows-app-manifest.xml 相同（只依赖 Common-Controls 6.0.0.0）
+fn embed_common_controls_manifest() -> bool {
+    let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+    if os != "windows" || env != "msvc" {
+        return false;
+    }
+    let manifest = std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default())
+        .join("windows-app-manifest.xml");
+    println!("cargo:rerun-if-changed={}", manifest.display());
+    println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+    println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", manifest.display());
+    true
 }
 
 /// `bundle.resources` 的 extension-src/** 同样每次构建都校验（fresh clone 没有
