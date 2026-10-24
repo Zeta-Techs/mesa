@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -73,6 +73,7 @@ import {
 import ConversationView from "../components/ConversationView";
 import { firstCompleteTurnIndex } from "../conversation-tools";
 import { useAutoLoadOlder } from "../auto-load-older";
+import { useReadingAnchor } from "../reading-anchor";
 import GitPanel from "../components/GitPanel";
 import HandoffPicker from "../components/HandoffPicker";
 import DigestPicker from "../components/DigestPicker";
@@ -1137,12 +1138,6 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
         `${currentSelected.agent}\n${currentSelected.sessionId}` !== selectedKey
       )
         return;
-      const scroller = scrollRef.current;
-      if (scroller)
-        prependRestoreRef.current = {
-          height: scroller.scrollHeight,
-          top: scroller.scrollTop,
-        };
       setMessages((current) => [...page.messages, ...current]);
       olderCountRef.current += page.messages.length;
       setConversationCursor(page.cursor);
@@ -1154,14 +1149,9 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     }
   }
 
-  // 前插更早一页后在绘制前把阅读位置挪回原处（放到 rAF 里会先画一帧跳位，滑动时一闪一闪）
-  const prependRestoreRef = useRef<{ height: number; top: number } | null>(null);
-  useLayoutEffect(() => {
-    const restore = prependRestoreRef.current;
-    const el = scrollRef.current;
-    prependRestoreRef.current = null;
-    if (restore && el) el.scrollTop = restore.top + el.scrollHeight - restore.height;
-  }, [messages]);
+  // 前插更早一页、图片晚到撑高：在绘制前把阅读位置挪回原处（reading-anchor.ts；
+  // 原先按 scrollHeight 差值补偿，与浏览器自带锚定叠着补两遍）
+  useReadingAnchor(scrollRef);
 
   useAutoLoadOlder(scrollRef, {
     enabled: !loadingConv && conversationCursor !== null,
@@ -2785,7 +2775,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                     </div>
                   </div>
                 )}
-                <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
+                <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto [overflow-anchor:none]">
                   {/* 阅读栏居中限宽：与聊天层同一个栏宽（跟聊天字号走，App.css .ccode-chat-column）；
                       scrollRef 仍挂滚动容器，分页语义不变 */}
                   <div className="ccode-chat-column mx-auto p-4">
