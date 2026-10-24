@@ -13,6 +13,7 @@ import {
   serializeOnboarding,
   type OnboardingFacts,
   type OnboardingState,
+  ONBOARDING_PHASES,
 } from "../src/onboarding.ts";
 
 const blank: OnboardingFacts = {
@@ -150,5 +151,12 @@ test("本地存档：往返一致；损坏、旧格式、未知字段都安全�
   assert.deepEqual(
     parseOnboarding(JSON.stringify({ status: "weird", welcomed: "yes", acks: { naming: 1, bogus: true } })),
     DEFAULT_ONBOARDING,
+  );
+});
+
+test("三段分组按顺序覆盖全部七步、不重不漏", () => {
+  assert.deepEqual(
+    ONBOARDING_PHASES.flatMap((p) => p.steps),
+    ONBOARDING_STEPS.map((s) => s.id),
   );
 });

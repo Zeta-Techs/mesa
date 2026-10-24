@@ -124,6 +124,14 @@ export const ONBOARDING_STEPS: readonly OnboardingStep[] = [
   },
 ];
 
+/** 七步分三段（2026-10-24 引导视觉重做）：欢迎页和清单按段排，一眼看出「先接 AI、再试一段、最后建项目」，
+ *  不再是平铺的七行。段内顺序与 ONBOARDING_STEPS 一致，合起来正好覆盖全部步骤（测试钉住） */
+export const ONBOARDING_PHASES: readonly { label: string; steps: readonly OnboardingStepId[] }[] = [
+  { label: "接上 AI", steps: ["install", "gateway", "connection"] },
+  { label: "跑通一段对话", steps: ["chat", "terminal", "naming"] },
+  { label: "开始做课题", steps: ["project"] },
+];
+
 export function stepById(id: OnboardingStepId): OnboardingStep {
   return ONBOARDING_STEPS.find((s) => s.id === id)!;
 }

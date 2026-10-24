@@ -10,12 +10,15 @@ import {
   decideInitialStatus,
   doneStepIds,
   newlyDone,
+  ONBOARDING_PHASES,
   onboardingProgress,
   stepById,
   type OnboardingFacts,
   type OnboardingStepId,
 } from "../onboarding";
 import { Modal } from "./Modal";
+import { MesaMark } from "./MesaMark";
+import { isLightTheme } from "../themes";
 import {
   compactPrimaryActionClass,
   ghostActionClass,
@@ -220,24 +223,61 @@ export function OnboardingRing({
   );
 }
 
-/** 步骤序号圈：做完 = 实心绿底 + 反色对勾（bg-ok-text / text-ok 深浅主题都成对，不能用 bg-ok：
- *  深色下它近黑，和浮层底融成一团）；当前 = 品牌色描边；其余 = 淡描边 */
+/** 步骤序号圈（2026-10-24 重做）：做完 = 淡底圈里一个绿勾（原先实心亮绿圆，七个里勾了几个就一排亮绿，
+ *  抢过当前那一步）；当前 = 品牌琥珀实心、深字序号，整张清单只有它最亮；其余 = 发丝描边淡字 */
 function StepMark({ done, current, index }: { done: boolean; current: boolean; index: number }) {
   if (done) {
     return (
-      <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-ok-text text-ok">
-        <Check size={13} strokeWidth={3} aria-hidden="true" />
+      <span className="relative z-10 flex size-5 shrink-0 items-center justify-center rounded-full bg-field text-ok-text">
+        <Check size={12} strokeWidth={3} aria-hidden="true" />
       </span>
     );
   }
   return (
     <span
-      className={`flex size-5 shrink-0 items-center justify-center rounded-full border text-micro tabular-nums ${
-        current ? "border-cta font-medium text-l1" : "border-field text-l3"
+      className={`relative z-10 flex size-5 shrink-0 items-center justify-center rounded-full text-micro tabular-nums ${
+        current
+          ? "bg-cta font-semibold text-cta-text"
+          : "border border-field text-l3"
       }`}
     >
       {index}
     </span>
+  );
+}
+
+/** 段内相邻两步之间的连线（时间线）：从这一步的圈底下接到下一步的圈顶上，两头各留 2px 缝；
+ *  这一步做完了线带一点绿。left = 圈心的横坐标，由所在列表的左内距决定 */
+function StepLink({ done, left }: { done: boolean; left: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      style={{ left }}
+      className={`absolute -bottom-1 top-7 w-px ${done ? "bg-ok-text/45" : "bg-field"}`}
+    />
+  );
+}
+
+/** 按三段排的步骤，每步带全局序号；做完 / 当前由 progress 现算 */
+function phasedSteps(progress: ReturnType<typeof onboardingProgress>) {
+  let n = 0;
+  return ONBOARDING_PHASES.map((phase) => ({
+    label: phase.label,
+    steps: phase.steps.map((id) => {
+      n += 1;
+      const entry = progress.steps.find((s) => s.step.id === id)!;
+      return { ...entry, index: n, current: progress.current === id };
+    }),
+  }));
+}
+
+/** 段标题：和侧栏分节标签同一手法（小字加字距），段里做完了在后面写「已完成」 */
+function PhaseLabel({ label, done }: { label: string; done: boolean }) {
+  return (
+    <div className="flex items-center gap-2 pb-1.5 text-micro font-medium tracking-[0.08em] text-l3">
+      <span>{label}</span>
+      {done && <span className="font-normal tracking-normal text-ok-text">已完成</span>}
+    </div>
   );
 }
 
@@ -324,6 +364,7 @@ function OnboardingWelcome({ facts }: { facts: OnboardingFacts }) {
   const state = useAppStore((s) => s.onboarding);
   const updateOnboarding = useAppStore((s) => s.updateOnboarding);
   const chromeHidden = useAppStore((s) => s.chromeHidden);
+  const light = isLightTheme(useAppStore((s) => s.settings?.theme));
   const open = state.status === "active" && !state.welcomed;
   const progress = onboardingProgress(facts, state);
   const current = progress.current;
@@ -335,7 +376,13 @@ function OnboardingWelcome({ facts }: { facts: OnboardingFacts }) {
   return (
     <Modal
       open={open}
-      title="欢迎使用 Mesa"
+      title={
+        // 字标 M▁ 坐在标题基线上（同聊天空态问候的手法），光标出现时闪三下
+        <span className="flex items-baseline gap-2.5 text-lg">
+          <MesaMark light={light} blink className="h-[0.85em] w-auto shrink-0" />
+          <span>欢迎使用 Mesa</span>
+        </span>
+      }
       description="AI 科研工作台：AI 负责干活，Mesa 负责管活，你负责拍板。"
       onClose={close}
       size="md"
@@ -350,19 +397,33 @@ function OnboardingWelcome({ facts }: { facts: OnboardingFacts }) {
         </>
       }
     >
-      <p className="text-sm leading-6 text-l2">第一次用，先花几分钟把 AI 接上，照下面几步走：</p>
-      <ol className="mt-3 space-y-2.5">
-        {progress.steps.map(({ step, done }, i) => (
-          <li key={step.id} className="flex gap-2.5">
-            <StepMark done={done} current={step.id === current} index={i + 1} />
-            <span className="min-w-0">
-              <span className={`block text-sm ${done ? "text-l3" : "text-l1"}`}>{step.title}</span>
-              <span className="block text-xs leading-5 text-l3">{step.summary}</span>
-            </span>
-          </li>
+      <p className="text-sm leading-6 text-l2">第一次用，先花几分钟把 AI 接上。分三段，照着走就行：</p>
+      <div className="mt-4 space-y-4">
+        {phasedSteps(progress).map((phase) => (
+          <section key={phase.label}>
+            <PhaseLabel label={phase.label} done={phase.steps.every((s) => s.done)} />
+            <ol>
+              {phase.steps.map(({ step, done, current, index }, i) => (
+                <li key={step.id} className="relative flex gap-3 py-1.5">
+                  {i < phase.steps.length - 1 && <StepLink done={done} left="9.5px" />}
+                  <StepMark done={done} current={current} index={index} />
+                  <span className="min-w-0">
+                    <span
+                      className={`block text-sm leading-5 ${
+                        current ? "font-medium text-l1" : done ? "text-l3" : "text-l2"
+                      }`}
+                    >
+                      {step.title}
+                    </span>
+                    <span className="mt-0.5 block text-xs leading-5 text-l3">{step.summary}</span>
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </section>
         ))}
-      </ol>
-      <p className="mt-4 text-xs leading-5 text-l3">
+      </div>
+      <p className="mt-4 border-t border-hairline pt-3 text-xs leading-5 text-l3">
         {chromeHidden
           ? "顶栏「帮助」里的「上手引导」记着进度，随时点开看下一步；做完的步骤会自动打勾。"
           : "左侧栏下方的「上手引导」记着进度，随时点开看下一步；做完的步骤会自动打勾。"}
@@ -436,98 +497,104 @@ function OnboardingPanel({ facts }: { facts: OnboardingFacts }) {
       style={pos}
       className="ccode-float-surface fixed z-50 flex w-[22rem] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-lg border border-field"
     >
-      <div className="shrink-0 px-4 pb-3 pt-3.5">
-        <div className="flex items-center gap-2">
-          <h2 className="text-sm font-semibold text-l1">上手引导</h2>
-          <span className={`text-micro tabular-nums ${allDone ? "font-medium text-ok-text" : "text-l3"}`}>
-            {progress.doneCount}/{progress.total}
-          </span>
-          <button
-            type="button"
-            aria-label="关闭"
-            title="关闭（Esc）"
-            className="-mr-1.5 ml-auto flex h-7 w-7 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1"
-            onClick={() => setOpen(false)}
-          >
-            <X size={15} strokeWidth={1.8} aria-hidden="true" />
-          </button>
+      {/* 头部：大一号的进度环当图标，右边两行——名字 + 进度，下一步是什么（原先的细进度条和环说同一件事，撤掉） */}
+      <div className="flex shrink-0 items-center gap-3 px-4 pb-3 pt-3.5">
+        <OnboardingRing done={progress.doneCount} total={progress.total} size={30} />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline gap-2">
+            <h2 className="text-sm font-semibold text-l1">上手引导</h2>
+            <span className={`text-micro tabular-nums ${allDone ? "font-medium text-ok-text" : "text-l3"}`}>
+              {progress.doneCount}/{progress.total}
+            </span>
+          </div>
+          <p className="truncate text-xs leading-5 text-l3">
+            {allDone
+              ? "都做完了，每一步还能点开回看做法"
+              : `下一步：${stepById(progress.current!).title}`}
+          </p>
         </div>
-        <p className="mt-0.5 text-xs leading-5 text-l3">
-          {allDone
-            ? "都做完了。每一步还能点开回看做法。"
-            : "几分钟接上 AI、跑通第一段对话。做完的步骤会自动打勾。"}
-        </p>
-        <div className="mt-2.5 h-1 overflow-hidden rounded-full bg-hairline">
-          <div
-            className={`h-full rounded-full transition-[width,background-color] duration-300 ${
-              allDone ? "bg-ok-text" : "bg-cta"
-            }`}
-            style={{ width: `${(progress.doneCount / progress.total) * 100}%` }}
-          />
-        </div>
+        <button
+          type="button"
+          aria-label="关闭"
+          title="关闭（Esc）"
+          className="-mr-1.5 flex h-7 w-7 shrink-0 items-center justify-center self-start rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1"
+          onClick={() => setOpen(false)}
+        >
+          <X size={15} strokeWidth={1.8} aria-hidden="true" />
+        </button>
       </div>
-      <ol className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-        {progress.steps.map(({ step, done }, i) => {
-          const isOpen = expanded === step.id;
-          const isCurrent = progress.current === step.id;
-          return (
-            <li key={step.id}>
-              <button
-                type="button"
-                aria-expanded={isOpen}
-                onClick={() => setExpanded(isOpen ? null : step.id)}
-                className="flex min-h-8 w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-hover"
-              >
-                <StepMark done={done} current={isCurrent} index={i + 1} />
-                <span
-                  className={`min-w-0 flex-1 truncate text-sm ${
-                    isCurrent ? "font-medium text-l1" : done && !allDone ? "text-l3" : "text-l2"
-                  }`}
-                >
-                  {step.title}
-                </span>
-                <ChevronRight
-                  size={14}
-                  strokeWidth={1.8}
-                  aria-hidden="true"
-                  className={`shrink-0 text-l4 transition-transform duration-150 ${isOpen ? "rotate-90" : ""}`}
-                />
-              </button>
-              {isOpen && (
-                <div className="pb-3 pl-[2.625rem] pr-2">
-                  <p className="text-xs leading-5 text-l2">{step.summary}</p>
-                  {step.how.map((line) => (
-                    <p key={line} className="mt-1 text-xs leading-5 text-l3">
-                      {line}
-                    </p>
-                  ))}
-                  <div className="mt-2.5 flex flex-wrap gap-1.5 text-xs">
-                    {stepActions(step.id, facts).map((action) => (
-                      <button
-                        key={action.label}
-                        type="button"
-                        className={
-                          action.primary
-                            ? compactPrimaryActionClass
-                            : action.keepOpen
-                              ? ghostActionClass
-                              : rowActionClass
-                        }
-                        onClick={() => {
-                          if (!action.keepOpen) setOpen(false);
-                          action.run();
-                        }}
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto border-t border-hairline px-2 pb-2 pt-3">
+        {phasedSteps(progress).map((phase) => (
+          <section key={phase.label}>
+            <div className="px-2">
+              <PhaseLabel label={phase.label} done={phase.steps.every((s) => s.done)} />
+            </div>
+            <ol>
+              {phase.steps.map(({ step, done, current, index }, i) => {
+                const isOpen = expanded === step.id;
+                return (
+                  <li key={step.id} className="relative">
+                    {i < phase.steps.length - 1 && <StepLink done={done} left="17.5px" />}
+                    <button
+                      type="button"
+                      aria-expanded={isOpen}
+                      onClick={() => setExpanded(isOpen ? null : step.id)}
+                      className="flex min-h-8 w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-hover"
+                    >
+                      <StepMark done={done} current={current} index={index} />
+                      <span
+                        className={`min-w-0 flex-1 truncate text-sm ${
+                          current ? "font-medium text-l1" : done && !allDone ? "text-l3" : "text-l2"
+                        }`}
                       >
-                        {action.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </li>
-          );
-        })}
-      </ol>
+                        {step.title}
+                      </span>
+                      <ChevronRight
+                        size={14}
+                        strokeWidth={1.8}
+                        aria-hidden="true"
+                        className={`shrink-0 text-l4 transition-transform duration-150 ${isOpen ? "rotate-90" : ""}`}
+                      />
+                    </button>
+                    {isOpen && (
+                      // 展开的做法放进一块内嵌底（和浮层本身分开一层），按钮贴在块底
+                      <div className="mb-1.5 ml-[2.375rem] mr-1 rounded-md bg-inset px-3 py-2.5">
+                        <p className="text-xs leading-5 text-l1">{step.summary}</p>
+                        {step.how.map((line) => (
+                          <p key={line} className="mt-1.5 text-xs leading-5 text-l3">
+                            {line}
+                          </p>
+                        ))}
+                        <div className="mt-2.5 flex flex-wrap gap-1.5 text-xs">
+                          {stepActions(step.id, facts).map((action) => (
+                            <button
+                              key={action.label}
+                              type="button"
+                              className={
+                                action.primary
+                                  ? compactPrimaryActionClass
+                                  : action.keepOpen
+                                    ? ghostActionClass
+                                    : rowActionClass
+                              }
+                              onClick={() => {
+                                if (!action.keepOpen) setOpen(false);
+                                action.run();
+                              }}
+                            >
+                              {action.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ol>
+          </section>
+        ))}
+      </div>
       <div className="flex shrink-0 items-center gap-2 border-t border-hairline px-4 py-2 text-xs">
         {state.status === "active" && (
           <button
