@@ -468,7 +468,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   main-history-save.ts       # 科研步骤卡一键「存进历史」：冲突拦截 / 白话说明 / 路径（tests/main-history-save.test.ts）
   text-fences.ts             # 纯文本消息（用户气泡）的围栏代码拆分 splitFenced：只认行首的 ``` / ~~~，行中间的三个反引号是行内写法不开围栏（旧实现按任意位置切会吞掉后面整段）；未收尾按代码到结尾（tests/text-fences.test.ts）
   chat-reply.ts              # 聊天长回复按小标题分段（带级别；识别代码围栏；有 ## 时冒号行不当标题）、正文里像文件路径的段（fileRefPath /
-                             # findFileRefs，真假由 existing_files 核实）与本机音频（mentionedAudioFiles → ChatMarkdown 播放条）、
+                             # findFileRefs，真假由 existing_files 核实）与本机音频（mentionedAudioFiles → ChatMarkdown 播放条）、本机图片（mentionedImageFiles → 正文下图片卡，读不到不出卡）、
                              # 确认按钮是否给出（tests/chat-reply.test.ts）
   mid-turn-send.ts           # 生成中再发一句：各家 CLI 把这句插进这一轮还是排到轮后、「立即发送」按哪个键（Esc / 回车 / Ctrl+S），
                              # 排队气泡与占位字的写法；依据 matrix §14「生成中再发一句」逐家实测（tests/mid-turn-send.test.ts）

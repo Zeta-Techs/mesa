@@ -6,6 +6,7 @@ import {
   findFileRefs,
   isProseCodeSpan,
   mentionedAudioFiles,
+  mentionedImageFiles,
   REPLY_FOLD_MIN_CHARS,
   splitReplySections,
 } from "../src/chat-reply.ts";
@@ -134,6 +135,22 @@ test("回复里提到的本机音频给播放条：相对 / 绝对 / ~/ 都认�
   ]);
   assert.deepEqual(findFileRefs(text).map((h) => h.path), ["notes/demo.md"]);
   assert.deepEqual(mentionedAudioFiles("没有音频的回复。say Mesa"), []);
+});
+
+test("回复里提到的本机图片给图片卡：带目录的路径才认，裸文件名、网址、![]() 内嵌的不重复列", () => {
+  const text = [
+    "- **文件**：`/Users/me/ccode/scratch/puppy-fishing.jpg`（2048×2048）",
+    "- **描述原文**：已存到同目录 `puppy-fishing.prompt.txt`，图名 puppy-fishing.jpg",
+    "另存了 figures/cover.PNG，Windows 上是 C:\\Users\\me\\out\\a.webp；~/Pictures/b.gif。",
+    "在线版 https://example.com/c.png，已内嵌 ![封面](figures/inline.png)",
+  ].join("\n");
+  assert.deepEqual(mentionedImageFiles(text), [
+    "/Users/me/ccode/scratch/puppy-fishing.jpg",
+    "figures/cover.PNG",
+    "C:\\Users\\me\\out\\a.webp",
+    "~/Pictures/b.gif",
+  ]);
+  assert.deepEqual(mentionedImageFiles("没有图片的回复。"), []);
 });
 
 test("反引号里的中文说法按正文排，带代码符号的仍是代码", () => {

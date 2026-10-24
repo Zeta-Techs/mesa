@@ -1,4 +1,4 @@
-import { isProseCodeSpan, mentionedAudioFiles, splitReplySections, type ReplySection } from "../chat-reply";
+import { isProseCodeSpan, mentionedAudioFiles, mentionedImageFiles, splitReplySections, type ReplySection } from "../chat-reply";
 import { sanitizeDocumentHtml } from "../document-html";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -75,6 +75,7 @@ export default function ChatMarkdown({
 }) {
   const sections = useMemo(() => splitReplySections(text), [text]);
   const audios = useMemo(() => mentionedAudioFiles(text), [text]);
+  const images = useMemo(() => mentionedImageFiles(text), [text]);
   // 默认全部展开、点小节标题收起：原先只开第一节，长回答大半被藏在一串标题后面，
   // 读起来像内容丢了（2026-10-17 用户截图）
   const [closedSections, setClosedSections] = useState<Set<number>>(() => new Set());
@@ -110,6 +111,7 @@ export default function ChatMarkdown({
             </div>
           );
         })}
+        <MentionedImages paths={images} cwd={cwd} />
         <MentionedAudios paths={audios} cwd={cwd} />
       </div>
     );
@@ -117,6 +119,7 @@ export default function ChatMarkdown({
   return (
     <div>
       <MarkdownBody text={text} cwd={cwd} />
+      <MentionedImages paths={images} cwd={cwd} />
       <MentionedAudios paths={audios} cwd={cwd} />
     </div>
   );
@@ -188,6 +191,27 @@ export function ChatCodeBlock({ lang, text, cwd }: { lang: string; text: string;
     return `${fence}${lang.trim()}\n${text.replace(/\n+$/, "")}\n${fence}`;
   }, [lang, text]);
   return <MarkdownBody text={md} cwd={cwd} />;
+}
+
+/** 回复里提到的本机图片：正文下方一排图片卡（同一张图写成相对 / 绝对两种只出一张；读不到的不出卡） */
+function MentionedImages({ paths, cwd }: { paths: string[]; cwd?: string | null }) {
+  const unique = useMemo(() => {
+    const seen = new Set<string>();
+    return paths.filter((path) => {
+      const abs = path.startsWith("~") || !cwd ? path : resolveMdPath(`${cwd}/_`, path);
+      if (seen.has(abs)) return false;
+      seen.add(abs);
+      return true;
+    });
+  }, [paths, cwd]);
+  if (unique.length === 0) return null;
+  return (
+    <div className="mt-2 flex flex-wrap gap-2">
+      {unique.slice(0, 6).map((path) => (
+        <ChatImageCard key={path} path={path} cwd={cwd} quiet />
+      ))}
+    </div>
+  );
 }
 
 function MentionedAudios({ paths, cwd }: { paths: string[]; cwd?: string | null }) {
@@ -372,19 +396,22 @@ function MarkdownBody({
 }
 
 /** 消息级图片卡：整行图片路径经 read_image_bytes 白名单换 data URL 内嵌，点击放大到预览页签；
- *  不可读（白名单外/文件已删）回落为路径文本卡。相对路径以 cwd 为基准解析 */
+ *  不可读（白名单外/文件已删）回落为路径文本卡（quiet：回复里顺口提到的路径，读不到就不出卡）。
+ *  相对路径以 cwd 为基准解析，~/ 原样交后端展开 */
 export function ChatImageCard({
   path,
   cwd,
+  quiet = false,
 }: {
   path: string;
   cwd?: string | null;
+  quiet?: boolean;
 }) {
   const setPreviewReq = useAppStore((s) => s.setPreviewReq);
   const [src, setSrc] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [viewing, setViewing] = useState(false);
-  const abs = cwd ? resolveMdPath(`${cwd}/_`, path) : path;
+  const abs = path.startsWith("~") || !cwd ? path : resolveMdPath(`${cwd}/_`, path);
   const name = abs.split(/[\\/]/).pop() ?? abs;
 
   useEffect(() => {
@@ -406,6 +433,7 @@ export function ChatImageCard({
     };
   }, [abs, cwd]);
 
+  if (failed && quiet) return null;
   if (failed)
     return (
       <div
@@ -418,7 +446,7 @@ export function ChatImageCard({
         <span>{name}（不在可读取范围或文件已删除）</span>
       </div>
     );
-  if (!src) return <div className="md-img-pending my-1">图片加载中…</div>;
+  if (!src) return quiet ? null : <div className="md-img-pending my-1">图片加载中…</div>;
   // 有工作目录：右栏文件预览（可以边看边聊）；随手聊没有工作目录：弹层看大图（原先点了没反应）
   return (
     <>

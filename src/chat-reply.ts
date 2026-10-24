@@ -85,6 +85,26 @@ export function mentionedAudioFiles(text: string): string[] {
   return [...found];
 }
 
+/** 聊天层能内嵌的图片（与 chat-image.ts / reader.rs image_mime_for 同一张表） */
+const IMAGE_EXT = /\.(?:png|jpe?g|gif|webp|svg)$/i;
+
+/**
+ * 回复里提到的本机图片（2026-10-25 用户：出图后聊天里只有一串路径，看不到图）：切词口径同 mentionedAudioFiles，
+ * 但只收带目录的路径（绝对、~/、含 / 或 \ 的相对路径）——裸文件名和正文短语分不开，且常和同一张图的完整路径重复。
+ * `![…](…)` 已由 Markdown 就地内嵌，不再重复列。
+ */
+export function mentionedImageFiles(text: string): string[] {
+  const found = new Set<string>();
+  const plain = text.replace(/!\[[^\]]*\]\([^)]*\)/g, " ");
+  for (const raw of plain.split(/[\s`'"()（）<>[\]，。；：！？、「」]+/)) {
+    const token = raw.replace(/^[*_]+/, "").replace(/[*_.,;:!?]+$/, "");
+    if (!token || token.includes("://") || !IMAGE_EXT.test(token)) continue;
+    if (!/[\\/]/.test(token)) continue;
+    found.add(token);
+  }
+  return [...found];
+}
+
 /**
  * 一段文字是不是项目里的文件路径（回复里就地可点，md-file-links）：相对、绝对、~/ 都收，可带「:行号」，
  * 返回去掉行号与 ./ 前缀的路径；网址、带空白的、没有扩展名的、音频（另有播放条）返回 null。
