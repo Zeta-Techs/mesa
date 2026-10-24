@@ -1,0 +1,61 @@
+{
+ "agent": "grok",
+ "cliVersion": "1.0.67",
+ "platform": "win32",
+ "source": "chat-capture ask",
+ "note": "跑命令前的审批菜单：问句、选项、默认高亮",
+ "rows": [
+  "",
+  "  ~/work                                                                                        6 / 256K │ [Dashboard]",
+  "",
+  "",
+  "     > TRIGGER_TOOL 跑一下                                                                                   1:47 AM",
+  "",
+  "",
+  "     ♦ Running 写一个探针文件",
+  "",
+  "",
+  "",
+  "",
+  "                                                                                                                       █",
+  "                                                                                                                       █",
+  "                                                                                                                       █",
+  "                                                                                                                       █",
+  "                                                                                                                       █",
+  "                                                                                                                       █",
+  "                                                                                                                       █",
+  "                                                                                                                       █",
+  "                                                                                                                       █",
+  "                                                                                                                       █",
+  "                                                                                                                       █",
+  "                                                                                                                       █",
+  "",
+  "    ♦ 写一个探针文件… 10s                                                                             10s ↓6 [↓][stop]",
+  "",
+  "  │",
+  "  │  >  写一个探针文件",
+  "  │  │ echo mesa > mesa_probe.txt",
+  "  │  ← → narrow scope",
+  "  │",
+  "  │  1 (○) Yes, and don't ask again for anything (always-approve mode)",
+  "  │  2 (•) Yes, proceed",
+  "  │  3 (○) No, reject (type to add feedback)",
+  "  │  4 (○) Never allow: echo",
+  "  │",
+  "",
+  "  1/4:select  │  Tab:next option  │  ←/→:scope  │  Ctrl+o:always-approve  │  Ctrl+c:cancel  │  Esc:scrollback"
+ ],
+ "expect": {
+  "menu": {
+   "question": "echo mesa > mesa_probe.txt",
+   "options": [
+    "Yes, and don't ask again for anything (always-approve mode)",
+    "Yes, proceed",
+    "No, reject (type to add feedback)",
+    "Never allow: echo"
+   ],
+   "selected": 1
+  },
+  "inputBox": false
+ }
+}

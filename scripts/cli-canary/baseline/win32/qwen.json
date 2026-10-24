@@ -1,0 +1,228 @@
+{
+ "agent": "qwen",
+ "channel": {
+  "approvalKind": "execute",
+  "approvalReplyable": true,
+  "approvalTool": "run_shell_command",
+  "kind": "qwen",
+  "statuses": [
+   "-",
+   "running",
+   "awaiting_approval",
+   "running",
+   "completed"
+  ]
+ },
+ "checks": {
+  "假网关收到主对话请求": true,
+  "抓屏跑完": true,
+  "旁路拿到会话文件": true,
+  "旁路端到端通过": true,
+  "旁路认出会话": true,
+  "解析器读到回复": true,
+  "解析器读到工具结果": true,
+  "解析器读到工具调用": true,
+  "解析器读到用户这句": true,
+  "这一轮走完": true
+ },
+ "parsed": {
+  "blockKinds": [
+   "assistant:text",
+   "assistant:tool_result",
+   "assistant:tool_use",
+   "user:text"
+  ],
+  "toolNames": [
+   "run_shell_command"
+  ]
+ },
+ "platform": "win32",
+ "request": {
+  "main": {
+   "bodyKeys": [
+    "max_tokens",
+    "messages",
+    "model",
+    "stream",
+    "stream_options",
+    "tools"
+   ],
+   "contextHeadings": [
+    "Before recommending from memory",
+    "Bundled",
+    "Communicating With the User",
+    "Core Mandates",
+    "Examples (Illustrating Tone and Workflow)",
+    "Exception",
+    "Executing actions with care",
+    "Final Reminder",
+    "How to save memories",
+    "Interaction Details",
+    "Keep technical artifacts unchanged",
+    "Memory and other forms of persistence",
+    "Memory categories",
+    "Mixed-language input",
+    "New Applications",
+    "Operational Guidelines",
+    "Output language preference: auto",
+    "Outside of Sandbox",
+    "Primary Workflows",
+    "Rule",
+    "Security and Safety Rules",
+    "Software Engineering Tasks",
+    "Tone and Style (CLI Interaction)",
+    "Tool / system outputs",
+    "Types of memory",
+    "Using Your Tools",
+    "What NOT to save in memory",
+    "When to access memories",
+    "auto memory"
+   ],
+   "contextTags": [
+    "available_skills",
+    "body_structure",
+    "description",
+    "example",
+    "examples",
+    "how_to_use",
+    "location",
+    "name",
+    "persisted-output",
+    "project-hash",
+    "scope",
+    "skill",
+    "slug",
+    "system-reminder",
+    "type",
+    "types",
+    "when_to_save"
+   ],
+   "headers": {
+    "user-agent": "<有>"
+   },
+   "model": "e2e-picked",
+   "path": "/qwen/v1/chat/completions",
+   "systemHeadings": [],
+   "tools": [
+    "artifact",
+    "ask_user_question",
+    "display_image",
+    "edit",
+    "enter_plan_mode",
+    "exit_plan_mode",
+    "glob",
+    "grep_search",
+    "notebook_edit",
+    "read_file",
+    "run_shell_command",
+    "skill",
+    "tool_call",
+    "tool_search",
+    "write_file"
+   ]
+  },
+  "other": []
+ },
+ "screen": {
+  "liveReplySupported": true,
+  "menu": {
+   "options": [
+    "是，允许一次",
+    "在本项目中总是允许run 'echo *' commands",
+    "对该用户总是允许run 'echo *' commands",
+    "否，建议更改 (esc)"
+   ],
+   "question": "允许执行：'echo'？"
+  },
+  "previewReadable": true
+ },
+ "transcript": {
+  "assistant": {
+   "keys": [
+    "cwd",
+    "message",
+    "model",
+    "parentUuid",
+    "provenance",
+    "sessionId",
+    "timestamp",
+    "type",
+    "usageMetadata",
+    "uuid",
+    "version"
+   ]
+  },
+  "system/attribution_snapshot": {
+   "keys": [
+    "cwd",
+    "parentUuid",
+    "provenance",
+    "sessionId",
+    "subtype",
+    "systemPayload",
+    "timestamp",
+    "type",
+    "uuid",
+    "version"
+   ]
+  },
+  "system/file_history_snapshot": {
+   "keys": [
+    "cwd",
+    "parentUuid",
+    "provenance",
+    "sessionId",
+    "subtype",
+    "systemPayload",
+    "timestamp",
+    "type",
+    "uuid",
+    "version"
+   ]
+  },
+  "system/ui_telemetry": {
+   "keys": [
+    "cwd",
+    "parentUuid",
+    "provenance",
+    "sessionId",
+    "subtype",
+    "systemPayload",
+    "timestamp",
+    "type",
+    "uuid",
+    "version"
+   ]
+  },
+  "tool_result": {
+   "keys": [
+    "cwd",
+    "message",
+    "parentUuid",
+    "provenance",
+    "sessionId",
+    "timestamp",
+    "toolCallResult",
+    "type",
+    "uuid",
+    "version"
+   ]
+  },
+  "user": {
+   "keys": [
+    "cwd",
+    "executionContext",
+    "message",
+    "parentUuid",
+    "promptId",
+    "provenance",
+    "sessionId",
+    "timestamp",
+    "type",
+    "uuid",
+    "version"
+   ]
+  }
+ },
+ "version": "0.26.1"
+}

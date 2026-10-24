@@ -457,6 +457,16 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-25 · Windows 金丝雀补齐九家基线与抓屏样本
+
+用户让把 Windows 端金丝雀做齐（macOS 九家齐，Windows 只有 Claude Code / Codex）。本机九家检查全过后在 Windows `--accept`，
+各家画面（审批菜单 / 边写边显示 / 回到输入框）同批存进抓屏语料库的 `win32-*` 样本，读屏结果与 macOS 同形（Qwen 菜单跟系统语言走中文）。定下：
+一，**本机 Windows 跑金丝雀不再手工绕 0xc0000139**：`canary.py` 碰上就改跑带 manifest 的测试副本（environment.md 同条），CI 不受影响、行为不变。
+二，**本机跑金丝雀前先把 CLI 升到最新、不与另一轮同时跑**：Qwen 0.26.0 在 npm 出了 0.26.1 后于干净 HOME 里启动即自更新，提示重绘吞掉发出的那句，
+旁路端到端连红两次；两轮并发时 Gemini 慢到 10 秒内没画出审批菜单。两者都是环境假红，不得据此改基线。
+三，抓屏脚本在 Windows 上 CLI 中途退出不再整段崩（pywinpty 抛 EOFError，统一当「已退出」收尾）。
+基线依赖同日 e06a932（Windows 不接 Grok 程序状态、Qwen / OpenCode 会话层在临时 HOME 里找），须在它之后进主线。
+
 ### 2026-10-25 · Mac 端 10-22～10-25 的改动在 Windows 上核一遍：程序状态旁路 Windows 不接，金丝雀 Windows 会话层不读本机对话
 
 用户让查 main 上 Mac 端新提交在 Windows 上有什么问题。基线（npm test / cargo test / npm run build）在 Windows 全绿，问题出在只能实机跑出来的聊天层，

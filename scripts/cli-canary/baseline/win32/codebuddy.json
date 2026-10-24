@@ -1,0 +1,204 @@
+{
+ "agent": "codebuddy",
+ "channel": {
+  "approvalKind": "execute",
+  "approvalReplyable": false,
+  "approvalTool": "REPL",
+  "kind": "hooks",
+  "statuses": [
+   "-",
+   "running",
+   "awaiting_approval",
+   "running",
+   "completed"
+  ]
+ },
+ "checks": {
+  "假网关收到主对话请求": true,
+  "抓屏跑完": true,
+  "旁路拿到会话文件": true,
+  "旁路端到端通过": true,
+  "旁路认出会话": true,
+  "解析器读到回复": true,
+  "解析器读到工具结果": true,
+  "解析器读到工具调用": true,
+  "解析器读到用户这句": true,
+  "这一轮走完": true
+ },
+ "parsed": {
+  "blockKinds": [
+   "assistant:text",
+   "assistant:tool_result",
+   "assistant:tool_use",
+   "user:text"
+  ],
+  "toolNames": [
+   "REPL"
+  ]
+ },
+ "platform": "win32",
+ "request": {
+  "main": {
+   "bodyKeys": [
+    "cache_retention",
+    "extra_vars",
+    "messages",
+    "model",
+    "stream",
+    "stream_options",
+    "temperature",
+    "tools"
+   ],
+   "contextHeadings": [
+    "Asking questions as you work",
+    "Before recommending from memory",
+    "Before saving a memory",
+    "How to save memories",
+    "MEMORY.md",
+    "Memory and other forms of persistence",
+    "PTC / Code Mode",
+    "Searching past context",
+    "Tool usage policy",
+    "Types of memory",
+    "What NOT to save in memory",
+    "When to access memories",
+    "auto memory"
+   ],
+   "contextTags": [
+    "body_structure",
+    "codebuddy_background_info",
+    "content_policy",
+    "description",
+    "env",
+    "example",
+    "examples",
+    "how_to_use",
+    "memory",
+    "name",
+    "system-reminder",
+    "type",
+    "types",
+    "user-prompt-submit-hook",
+    "user_query",
+    "when_to_save"
+   ],
+   "headers": {
+    "user-agent": "<有>"
+   },
+   "model": "e2e-picked",
+   "path": "/codebuddy/v1/chat/completions",
+   "systemHeadings": [],
+   "tools": [
+    "REPL"
+   ]
+  },
+  "other": [
+   "/codebuddy/v1/chat/completions tools=False"
+  ]
+ },
+ "screen": {
+  "liveReplySupported": false,
+  "menu": {
+   "options": [
+    "Yes",
+    "Yes, and don't ask again this session (shift + tab)",
+    "No, and tell CodeBuddy what to do differently (escape)"
+   ],
+   "question": "Are you sure you want to do this?"
+  },
+  "previewReadable": false
+ },
+ "transcript": {
+  "file-history-snapshot": {
+   "keys": [
+    "_meta",
+    "cwd",
+    "isSnapshotUpdate",
+    "messageId",
+    "snapshot",
+    "timestamp",
+    "type"
+   ]
+  },
+  "function_call": {
+   "keys": [
+    "_meta",
+    "arguments",
+    "callId",
+    "cwd",
+    "id",
+    "message",
+    "name",
+    "parentId",
+    "providerData",
+    "sessionId",
+    "timestamp",
+    "type"
+   ]
+  },
+  "function_call_result": {
+   "keys": [
+    "_meta",
+    "callId",
+    "cwd",
+    "id",
+    "name",
+    "output",
+    "parentId",
+    "providerData",
+    "sessionId",
+    "status",
+    "timestamp",
+    "type"
+   ]
+  },
+  "message": {
+   "keys": [
+    "__codebuddyLocal",
+    "_meta",
+    "content",
+    "cwd",
+    "id",
+    "message",
+    "parentId",
+    "providerData",
+    "role",
+    "sessionId",
+    "status",
+    "timestamp",
+    "type"
+   ]
+  },
+  "session-meta": {
+   "keys": [
+    "id",
+    "meta",
+    "sessionId",
+    "timestamp",
+    "type"
+   ]
+  },
+  "summary": {
+   "keys": [
+    "_meta",
+    "id",
+    "providerData",
+    "summary",
+    "timestamp",
+    "type"
+   ]
+  },
+  "turn-metrics": {
+   "keys": [
+    "_meta",
+    "cwd",
+    "durationMs",
+    "id",
+    "timestamp",
+    "tokenDelta",
+    "type"
+   ]
+  }
+ },
+ "version": "2.175.0"
+}

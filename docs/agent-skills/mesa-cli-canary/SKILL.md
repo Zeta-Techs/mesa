@@ -66,7 +66,7 @@ ls /tmp/canary-<运行号>/*/            # canary-macos-latest / canary-windows-
 | 检查没过 | Mesa 依赖的东西断了 | 本机复现（下面），找原因，修 |
 | N 处变化 | 某一层的形状变了 | 按下表判断要不要适配 |
 
-本机复现某一家：
+本机复现某一家（先把这家 CLI 升到最新：本机版本落后时 Qwen 这类会在干净 HOME 里启动就自更新，把发出去的那句吞掉，旁路整段报红；也别和另一轮金丝雀同时跑）：
 
 ```bash
 npm run canary -- --agents <家> --out /tmp/canary-local

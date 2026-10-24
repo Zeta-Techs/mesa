@@ -1,0 +1,9 @@
+{
+ "agent": "cursor",
+ "channel": null,
+ "checks": {},
+ "platform": "win32",
+ "request": null,
+ "screen": null,
+ "version": "2026.10.19"
+}
