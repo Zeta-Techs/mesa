@@ -42,21 +42,6 @@ export function welcomeCwdActionLabel(
   return welcomeCwdLine(cwd, home, restored ? "恢复" : "启动", isWindows);
 }
 
-/**
- * 主目录文件树自动收起，只做一次。
- * 人已经点过「显示文件树」时 handled 为 true，这次必须保持打开。
- * 离开主目录时 handled 复位，下次再落到主目录可以再收一次。
- */
-export function collapseHomeTreeOnce(
-  atHome: boolean,
-  treeOpen: boolean,
-  handled: boolean,
-): { open: boolean; handled: boolean } {
-  if (!atHome) return { open: treeOpen, handled: false };
-  if (treeOpen && !handled) return { open: false, handled: true };
-  return { open: treeOpen, handled };
-}
-
 /** 未启动且目录是家/裸 ~/随手聊（新标签默认落在随手聊）时，标签不要显示成 ~ 或 scratch。 */
 export function idleTabTitle(cwd: string, idle: boolean): string | null {
   if (!idle) return null;

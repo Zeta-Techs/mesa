@@ -159,13 +159,7 @@ import {
 } from "../terminal-geometry";
 import { toast } from "../toast";
 import { idleStopPass } from "../idle-stop";
-import {
-  RIGHT_DEFAULT_PX,
-  RIGHT_MIN_PX,
-  TREE_DEFAULT_REM,
-  clampTreeWidth,
-  runLayout,
-} from "../run-layout";
+import { RIGHT_DEFAULT_PX, RIGHT_MIN_PX, runLayout } from "../run-layout";
 import { sidebarChatTitle } from "../sidebar-chats";
 import { tidySessionTitle } from "../session-title";
 import {
@@ -237,9 +231,7 @@ import {
   GitFork,
   MessageSquare,
   MessagesSquare,
-  PanelLeftClose,
-  PanelLeftOpen,
-  PanelRightOpen,
+  FolderTree,
   PanelTopClose,
   PanelTopOpen,
   RefreshCw,
@@ -274,7 +266,6 @@ import {
 import { launchSurface, openSurfaceDefault } from "../tab-surface";
 import { directoryUnavailableMessage } from "../terminal-cwd";
 import {
-  collapseHomeTreeOnce,
   idleTabTitle,
   isTerminalIdle,
   welcomeCwdActionLabel,
@@ -624,8 +615,6 @@ const CONVERSATION_ACTION_ICONS: Record<string, typeof SquarePen | undefined> = 
 };
 
 const RIGHT_PANEL_WIDTH_KEY = "ccode.terminalRightWidth";
-/** 文件树偏好宽度（px）；右栏、文件树、对话三块怎么分见 run-layout.ts */
-const TREE_WIDTH_KEY = "ccode.terminal.treeWidth";
 const RIGHT_PANEL_DEFAULT_WIDTH = RIGHT_DEFAULT_PX;
 const RIGHT_PANEL_MIN_WIDTH = RIGHT_MIN_PX;
 // 分屏：左 pane 宽度百分比的本地记忆（分屏开关状态本身不持久化）
@@ -634,12 +623,11 @@ const SPLIT_MIN_PCT = 20;
 const SPLIT_MAX_PCT = 80;
 const clampSplitPct = (pct: number) =>
   Math.min(SPLIT_MAX_PCT, Math.max(SPLIT_MIN_PCT, pct));
-const RIGHT_TABS = [
-  { key: "preview", label: "文件", symbol: "▤" },
-  // 与对话头 ± 改动同一个记号（原 Mac 上用 ⌘，2026-10-24 统一成 ±）
-  { key: "git", label: "改动", symbol: "±" },
-] as const;
-type RightTab = (typeof RIGHT_TABS)[number]["key"];
+/** 右栏一次只显示一个窗格（2026-10-24）：preview＝「文件」窗格（树 / 预览），git＝「改动」窗格；
+ *  各由对话头的一个按钮开关，右栏里不再画「文件 | 改动」标签条 */
+type RightTab = "preview" | "git";
+/** 文件窗格里正显示的是树还是预览标签（预览标签只在点开文件后才有） */
+type FilesView = "tree" | "preview";
 
 /** 往 shell 写完整命令后的「回车」：ConPTY 把裸 LF 当 Ctrl+Enter，PowerShell 只换行不执行；
  *  Windows 用 \r（VS Code sendText 同口径），其他平台保持 \n */
@@ -800,7 +788,7 @@ const TerminalView = memo(function TerminalView({
   onToggleCompactBar?: () => void;
   /** 右侧面板开关影响 xterm 可用宽度，变化时需要重新 fit */
   rightOpen: boolean;
-  /** 布局版本号（左栏显隐/分屏/窥视等宽度变化时递增，触发 xterm 重新 fit） */
+  /** 布局版本号（右栏开合/分屏/窥视等宽度变化时递增，触发 xterm 重新 fit） */
   layoutKey?: string;
   /** 该标签 cwd 的 git 变更统计（Codex 风：状态行常驻 +N -N） */
   gitTotals?: { add: number; del: number } | null;
@@ -7133,22 +7121,12 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   const [sessionByTab, setSessionByTab] = useState<
     Record<string, SessionLinkState>
   >({});
-  // 左栏（工作树）：显示 / 被专注内容隐藏
+  // 文件树（在右栏文件窗格里）：是否显示隐藏文件、刷新信号
   const [showHidden, setShowHidden] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   /** 最近项目「真进入」：待注入活动标签启动栏的目录 */
   const [enterCwd, setEnterCwd] = useState<string | null>(null);
-  // 右侧成果工作台默认可见；文件、改动在同一处切换，聊天留在主工作区。
-  const [treeOpen, setTreeOpen] = useState(() => {
-    try {
-      return localStorage.getItem("ccode.terminal.treeOpen") === "1";
-    } catch {
-      return false;
-    }
-  });
-  // 主目录自动收起只做一次。人点「显示文件树」先记下，效果里不得再收掉这一下。
-  const homeTreeHandledRef = useRef(false);
-  const homeTreeUserOpenRef = useRef(false);
+  // 右侧成果工作台：文件、改动各开各的窗格（对话头两个按钮），聊天留在主工作区。
   // 收缩态启动行可整体隐藏（全局偏好，2026-09-13）：身份信息底部状态栏都有，
   // 隐藏后标签栏出现召回钮；hidden 时恢复提示等一并在召回行里
   const [compactBarHidden, setCompactBarHidden] = useState(() => {
@@ -7180,12 +7158,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   });
   const [rightExpanded, setRightExpanded] = useState(false);
   const terminalRootRef = useRef<HTMLDivElement>(null);
-  // 三块宽度（run-layout.ts）：文件树与右栏的宽度是偏好，实际宽度按运行页总宽现算，地方不够时先压右栏、再让文件树
-  const remPx = () => parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 14;
-  const [treeWidth, setTreeWidth] = useState(() => {
-    const saved = Number(localStorage.getItem(TREE_WIDTH_KEY));
-    return Number.isFinite(saved) && saved > 0 ? saved : TREE_DEFAULT_REM * remPx();
-  });
+  // 两块宽度（run-layout.ts）：右栏宽度是偏好，实际宽度按运行页总宽现算，地方不够时只压右栏
   const [rootWidth, setRootWidth] = useState(() => window.innerWidth);
   useEffect(() => {
     const el = terminalRootRef.current;
@@ -7209,15 +7182,6 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     }
   }, []);
 
-  function persistTreeOpen(next: boolean) {
-    if (next) homeTreeUserOpenRef.current = true;
-    setTreeOpen(next);
-    try {
-      localStorage.setItem("ccode.terminal.treeOpen", next ? "1" : "0");
-    } catch {
-      /* ignore */
-    }
-  }
   function persistRightOpen(next: boolean) {
     setRightOpen(next);
     try {
@@ -7228,6 +7192,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   }
 
   const [rightTab, setRightTab] = useState<RightTab>("preview");
+  // 文件窗格停在树还是预览；没有预览时一律显示树（见 filesView 的派生值）
+  const [filesViewPref, setFilesViewPref] = useState<FilesView>("tree");
   // 主工作区模式按标签隔离；切换只改变显示层，不改变标签/PTY/会话。
   const [surfaceModeByTab, setSurfaceModeByTab] = useState<Record<string, SurfaceMode>>({});
   // 稳定回调（conversationInsert）里读当前层，不随渲染重建
@@ -7322,7 +7288,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   const activeCwd =
     statuses[focusedId]?.cwd ?? focusedTab?.initialCwd ?? "~";
   const focusedSurfaceMode = surfaceModeByTab[focusedId] ?? defaultSurface;
-  /** 左栏文件树当前根（钻取/切根后与 activeCwd 分叉）：改动面板跟随它而不是终端标签 cwd，
+  /** 文件树当前根（钻取/切根后与 activeCwd 分叉）：改动面板跟随它而不是终端标签 cwd，
       未分叉时为 null 回落 activeCwd（v3.82 口径：「我在看哪个目录，改动就显示哪个」） */
   const [treeRoot, setTreeRoot] = useState<string | null>(null);
   const gitPanelCwd = treeRoot ?? activeCwd;
@@ -7365,41 +7331,13 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           },
         ).catch((e) => alertDialog(String(e)))
     : undefined;
-  // 切标签/分屏焦点变化时回到新标签 cwd：树若未挂载（收起或专注内容）就没人发 onRootNavigated，
+  // 切标签/分屏焦点变化时回到新标签 cwd：树若未挂载（右栏关着）就没人发 onRootNavigated，
   // 必须在这里清掉分叉，否则改动面板会停在旧标签的目录上
   useEffect(() => {
     setTreeRoot(null);
   }, [activeCwd]);
-
-  // 文件树根落在主目录时自动收起一次（不写偏好）：主目录下全是系统文件夹。
-  // 人点「显示文件树」当次保持打开。离开主目录后守卫复位。
-  const [homeDir, setHomeDir] = useState("");
-  useEffect(() => {
-    void invoke<string>("home_dir")
-      .then(setHomeDir)
-      .catch(() => {});
-  }, []);
-  useEffect(() => {
-    const root = treeRoot ?? activeCwd;
-    // 家目录还没问到、cwd 又不是 ~ 时，先别判断，避免人刚点开就被补上的 homeDir 收掉
-    const homeKnown = root === "~" || !!homeDir;
-    const atHome =
-      homeKnown &&
-      !!root &&
-      (root === "~" || samePath(root, homeDir, IS_WINDOWS));
-    if (homeTreeUserOpenRef.current) {
-      homeTreeUserOpenRef.current = false;
-      homeTreeHandledRef.current = true;
-    }
-    if (!homeKnown) return;
-    const next = collapseHomeTreeOnce(
-      atHome,
-      treeOpen,
-      homeTreeHandledRef.current,
-    );
-    homeTreeHandledRef.current = next.handled;
-    if (next.open !== treeOpen) setTreeOpen(next.open);
-  }, [treeRoot, activeCwd, homeDir, treeOpen]);
+  /** 文件窗格正显示的：没有预览标签时只能是树 */
+  const filesView: FilesView = preview ? filesViewPref : "tree";
 
   /** 标签激活：分屏时点到右 pane 的标签则左右互换（活跃标签始终固定在左 pane） */
   function activateTab(id: string) {
@@ -7697,76 +7635,74 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     window.addEventListener("pointercancel", onUp);
   }
 
-  function maxRightWidth(expanded = rightExpanded): number {
+  function maxRightWidth(): number {
     return runLayout({
       total: terminalRootRef.current?.clientWidth ?? rootWidth,
-      rem: remPx(),
-      treeOpen,
-      treeWidth,
       rightOpen: true,
       rightWidth,
-      rightExpanded: expanded,
     }).rightMax;
   }
 
   const layout = runLayout({
     total: rootWidth,
-    rem: remPx(),
-    treeOpen,
-    treeWidth,
     rightOpen,
     rightWidth,
-    rightExpanded,
   });
 
-  /** 拖文件树右缘调宽（12–22rem，还要给对话与右栏最窄留地方）；双击回默认 15rem */
-  function startTreeResize(event: React.PointerEvent<HTMLDivElement>) {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    const startX = event.clientX;
-    const start = layout.tree;
-    const max = layout.treeMax;
-    const rem = remPx();
-    const clampW = (w: number) => Math.min(max, clampTreeWidth(w, rem));
-    const onMove = (e: PointerEvent) => setTreeWidth(clampW(start + e.clientX - startX));
-    const onUp = (e: PointerEvent) => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onUp);
-      const final = clampW(start + e.clientX - startX);
-      setTreeWidth(final);
-      localStorage.setItem(TREE_WIDTH_KEY, String(Math.round(final)));
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onUp);
-  }
-
-  function clampRightWidth(width: number, expanded = rightExpanded): number {
-    return Math.min(
-      maxRightWidth(expanded),
-      Math.max(RIGHT_PANEL_MIN_WIDTH, width),
-    );
+  function clampRightWidth(width: number): number {
+    return Math.min(maxRightWidth(), Math.max(RIGHT_PANEL_MIN_WIDTH, width));
   }
 
   function toggleRightExpanded() {
     if (rightExpanded) {
       setRightExpanded(false);
-      setRightWidth(clampRightWidth(normalRightWidthRef.current, false));
+      setRightWidth(clampRightWidth(normalRightWidthRef.current));
       return;
     }
+    expandRight();
+  }
+
+  /** 进入专注内容（右栏拉到窗口宽的约六成）；已在里面就不动 */
+  function expandRight() {
+    if (rightExpanded) return;
     normalRightWidthRef.current = rightWidth;
     const total = terminalRootRef.current?.clientWidth ?? window.innerWidth;
     setRightExpanded(true);
-    setRightWidth(clampRightWidth(Math.round(total * 0.58), true));
+    setRightWidth(clampRightWidth(Math.round(total * 0.58)));
   }
 
   function closeRightPanel() {
     if (rightExpanded) {
       setRightExpanded(false);
-      setRightWidth(clampRightWidth(normalRightWidthRef.current, false));
+      setRightWidth(clampRightWidth(normalRightWidthRef.current));
     }
     persistRightOpen(false);
+  }
+
+  /** 对话头「文件」钮：亮着就收起右栏，否则打开右栏并停在文件窗格（树 / 预览停在上次的位置） */
+  function toggleFilesPane() {
+    if (rightOpen && rightTab === "preview") {
+      closeRightPanel();
+      return;
+    }
+    setRightTab("preview");
+    persistRightOpen(true);
+  }
+
+  /** 关掉预览标签回到树；有未保存改动先确认 */
+  async function closePreviewTab() {
+    if (
+      previewDirty &&
+      !(await confirmDialog("当前预览文件有未保存改动。关闭预览将放弃这些改动，继续？", {
+        danger: true,
+      }))
+    ) {
+      return;
+    }
+    setPreview(null);
+    setPreviewFiles([]);
+    setPreviewDirty(false);
+    setFilesViewPref("tree");
   }
 
   function startRightResize(event: React.PointerEvent<HTMLDivElement>) {
@@ -7776,18 +7712,13 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     const startWidth = rightWidth;
     const expanded = rightExpanded;
     const onMove = (moveEvent: PointerEvent) => {
-      setRightWidth(
-        clampRightWidth(startWidth + startX - moveEvent.clientX, expanded),
-      );
+      setRightWidth(clampRightWidth(startWidth + startX - moveEvent.clientX));
     };
     const onUp = (upEvent: PointerEvent) => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
-      const finalWidth = clampRightWidth(
-        startWidth + startX - upEvent.clientX,
-        expanded,
-      );
+      const finalWidth = clampRightWidth(startWidth + startX - upEvent.clientX);
       setRightWidth(finalWidth);
       if (!expanded) {
         normalRightWidthRef.current = finalWidth;
@@ -7987,6 +7918,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     (path: string, name: string, root?: string, files?: DirEntryDto[]) => {
       setRightOpen(true);
       setRightTab("preview");
+      setFilesViewPref("preview");
       setPreview({ path, name, root: root ?? null });
       setPreviewFiles(files ?? []);
       setPreviewDirty(false);
@@ -8597,12 +8529,10 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       }
       // run 脚本标签：登记 nonconcurrent 互斥追踪
       if (pt.wsId && tabId) setRunningScript(pt.wsId, tabId);
-      // 「快速开聊」：落到最干净的终端——收起工作树与右栏，只剩标签条 + 终端。
-      // 走既有文件树/成果面板开关，不再另开「专注终端」。
-      // 理由：随手聊没有项目上下文——文件树是空目录、改动面板是「不是 git 仓库」、
+      // 「快速开聊」：落到最干净的终端——收起右栏，只剩标签条 + 终端。
+      // 理由：随手聊没有项目上下文——文件是空目录、改动面板是「不是 git 仓库」、
       // 对话面板要等会话关联，三个面板都没东西可给，摆着只是噪音
       if (pt.clean) {
-        persistTreeOpen(false);
         setRightOpen(false);
       }
       // 指定右栏页签（如「主仓改动」提醒 → 改动面板）
@@ -8615,8 +8545,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       if (pt.previewPath) {
         setRightOpen(true);
         setRightTab("preview");
+        setFilesViewPref("preview");
         if (pt.previewPath.toLowerCase().endsWith(".pdf")) {
-          setRightExpanded(true);
+          expandRight();
         }
         setPreview({
           path: pt.previewPath,
@@ -8699,8 +8630,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     setReviewAction(null);
     setRightOpen(true);
     setRightTab("preview");
-    // PDF 是阅读动作：打开时自动进入专注内容（隐藏工作树），用户可随时 ⇲/Esc 还原
-    if (previewReq.path.toLowerCase().endsWith(".pdf")) setRightExpanded(true);
+    setFilesViewPref("preview");
+    // PDF 是阅读动作：打开时自动把右栏拉宽（专注内容），用户可随时 ⇲/Esc 还原
+    if (previewReq.path.toLowerCase().endsWith(".pdf")) expandRight();
     setPreview({
       path: previewReq.path,
       name: previewReq.name,
@@ -9114,7 +9046,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           ok: true,
           msg: step
             ? `已写入项目 notes/excerpts.md。「${step.name}」开工时会带进工作区，AI 精读到这篇时并进笔记。`
-            : "已写入项目 notes/excerpts.md。可在文件树打开这份摘录继续写。",
+            : "已写入项目 notes/excerpts.md。可在右边「文件」里打开这份摘录继续写。",
         };
       }
       await invoke("append_notes_excerpt", {
@@ -9659,103 +9591,12 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       ref={terminalRootRef}
       className="terminal-workbench relative flex h-full bg-canvas"
     >
-      {/* 左栏：这段对话的文件（2026-10-24 重做，原「上下文」栏：栏头就是目录名，只留搜索与树；
-          专注内容下整体隐藏；默认收起，对话头最左的钮打开） */}
-      {layout.treeShown && (
-        <div
-          style={{ width: layout.tree }}
-          className="relative flex shrink-0 flex-col border-r border-hairline bg-rail2"
-        >
-          {/* 右缘拖动调宽（热区压在边线上，平时透明、悬停显色，同右栏手法） */}
-          <div
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="调整文件树宽度"
-            title="拖动调整宽度；双击恢复默认宽度"
-            onPointerDown={startTreeResize}
-            onDoubleClick={() => {
-              const w = TREE_DEFAULT_REM * remPx();
-              setTreeWidth(w);
-              localStorage.setItem(TREE_WIDTH_KEY, String(Math.round(w)));
-            }}
-            className="group absolute inset-y-0 -right-1 z-10 w-2 cursor-col-resize"
-          >
-            <span className="absolute inset-y-0 left-[3px] w-0.5 bg-transparent transition-colors group-hover:bg-cta" />
-          </div>
-          <FileTree
-            cwd={activeCwd}
-            showHidden={showHidden}
-            onShowHidden={setShowHidden}
-            refreshKey={refreshKey}
-            onOpenFile={openPreview}
-            onOpenTerminal={openTerminalAt}
-            onFsEvent={bumpFsChangeTick}
-            onRootChange={closePreviewForRootChange}
-            onRootNavigated={setTreeRoot}
-            onRecoverDirectory={() => tabActionsRef.current.get(focusedId)?.chooseCwd()}
-            onOpenReader={(path) =>
-              void (/\.pdf$/i.test(path) ? openReaderForPdf(path) : openReaderForNote(path))
-            }
-            actions={
-              <>
-                <button
-                  type="button"
-                  onClick={() => setShowHidden((v) => !v)}
-                  title={showHidden ? "不显示隐藏文件" : "显示隐藏文件（. 开头的）"}
-                  aria-label={showHidden ? "不显示隐藏文件" : "显示隐藏文件"}
-                  aria-pressed={showHidden}
-                  className={`flex h-7 w-7 items-center justify-center rounded-sm hover:bg-hover ${
-                    showHidden ? "text-l1" : "text-l4 hover:text-l2"
-                  }`}
-                >
-                  {showHidden ? <EyeOff size={14} /> : <Eye size={14} />}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setRefreshKey((k) => k + 1)}
-                  title="刷新文件树"
-                  aria-label="刷新文件树"
-                  className={railBtn}
-                >
-                  <RefreshCw size={14} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => persistTreeOpen(false)}
-                  title="收起文件树"
-                  aria-label="收起文件树"
-                  className={railBtn}
-                >
-                  <PanelLeftClose size={14} />
-                </button>
-              </>
-            }
-          />
-        </div>
-      )}
-
       {/* 中带：终端标签区。向上盖 1px，挡住顶栏透出的那条窗口黑缝。 */}
       <div className="relative -mt-px flex min-w-0 flex-1 flex-col bg-canvas">
         {/* 对话头（2026-10-24 侧栏挂对话第二期）：标签条撤掉，侧栏就是对话列表——切换、新开、看谁在跑都在侧栏。
             这里只写正看着的这段：生成中 / 等你确认、标题、终端上报的进度。不放 ×（同日用户问「× 的作用是什么」）：
             对话没有「关」，AI 进程空闲 30 分钟自己收，要立刻停走侧栏对话 ⋯「停下 Agent」 */}
         <div className="flex h-9 items-center gap-1 overflow-hidden px-2">
-          {!rightExpanded && !layout.treeShown && (
-            <button
-              type="button"
-              title={
-                layout.treeYielded
-                  ? "文件树（窗口不够宽，右栏开着时先让出位置）：点一下收起右栏，文件树回来"
-                  : "显示文件树"
-              }
-              aria-label="显示文件树"
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => (layout.treeYielded ? closeRightPanel() : persistTreeOpen(true))}
-              className="flex size-7 shrink-0 items-center justify-center rounded-md text-l4 hover:bg-hover hover:text-l2"
-            >
-              <PanelLeftOpen size={15} strokeWidth={1.8} aria-hidden="true" />
-            </button>
-          )}
           {(() => {
             const s = statuses[focusedId];
             // 写这段对话的标题（和侧栏同一个：自动起名去掉「MMDD|类型|」）；还没说话的写「新对话」，纯终端写终端名
@@ -9864,6 +9705,23 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                 </button>
               );
             })()}
+            {(() => {
+              const filesOpen = rightOpen && rightTab === "preview";
+              return (
+                <button
+                  type="button"
+                  onClick={toggleFilesPane}
+                  aria-pressed={filesOpen}
+                  title={filesOpen ? "收起文件" : "文件：这段对话文件夹里的文件，点开就在右边看"}
+                  aria-label={filesOpen ? "收起文件" : "看文件"}
+                  className={`flex size-7 items-center justify-center rounded-md transition-colors ${
+                    filesOpen ? "bg-seg-sel text-l1" : "text-l4 hover:bg-hover hover:text-l2"
+                  }`}
+                >
+                  <FolderTree size={15} strokeWidth={1.8} aria-hidden="true" />
+                </button>
+              );
+            })()}
             <button
               type="button"
               onClick={(e) => {
@@ -9888,20 +9746,6 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
               alignRight
               onClose={() => setHeadMenu(null)}
               items={[
-                ...(preview && !(rightOpen && rightTab === "preview")
-                  ? [
-                      {
-                        label: "打开文件预览",
-                        icon: PanelRightOpen,
-                        hint: basename(preview.path),
-                        title: "右栏回到刚才预览的文件",
-                        onSelect: () => {
-                          setRightTab("preview");
-                          persistRightOpen(true);
-                        },
-                      },
-                    ]
-                  : []),
                 {
                   label: splitActive ? "退出分屏" : "分屏对照",
                   icon: Columns2,
@@ -9975,7 +9819,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                 rightOpen={rightOpen}
                 compactBarHidden={compactBarHidden}
                 onToggleCompactBar={toggleCompactBar}
-                layoutKey={`${rightOpen}-${layout.right}-${layout.treeShown ? layout.tree : 0}-${rightExpanded}-${splitActive ? `split${Math.round(splitPct)}` : "single"}-${(surfaceModeByTab[t.id] ?? defaultSurface) === "chat" && peekByTab[t.id] ? "peek" : "full"}-${reader && readerTabId === t.id ? "reader" : "pane"}-${appSettings?.statusBar === false ? "nostatus" : "status"}`}
+                layoutKey={`${rightOpen}-${layout.right}-${rightExpanded}-${splitActive ? `split${Math.round(splitPct)}` : "single"}-${(surfaceModeByTab[t.id] ?? defaultSurface) === "chat" && peekByTab[t.id] ? "peek" : "full"}-${reader && readerTabId === t.id ? "reader" : "pane"}-${appSettings?.statusBar === false ? "nostatus" : "status"}`}
                 embedInPeek={
                   (surfaceModeByTab[t.id] ?? defaultSurface) === "chat" &&
                   Boolean(peekByTab[t.id])
@@ -10448,7 +10292,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
             title="拖动调整宽度；双击恢复默认宽度"
             onPointerDown={startRightResize}
             onDoubleClick={() => {
-              const width = clampRightWidth(RIGHT_PANEL_DEFAULT_WIDTH, false);
+              const width = clampRightWidth(RIGHT_PANEL_DEFAULT_WIDTH);
               setRightExpanded(false);
               setRightWidth(width);
               normalRightWidthRef.current = width;
@@ -10466,44 +10310,76 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
             style={{ width: layout.right }}
             className="flex shrink-0 flex-col border-l border-hairline bg-raised/70"
           >
-            {/* 右侧工作台只保留文件与改动；聊天已经进入主工作区，避免同一会话重复显示。 */}
+            {/* 窗格头（2026-10-24）：右栏一次只显示一个窗格，由对话头的「文件」「± 改动」两个钮开关。
+                文件窗格头 = 固定的「树」标签 + 点开文件后出现的斜体预览标签（再点别的文件就替换它，× 关掉回到树）；
+                改动窗格头只写「改动」+ 汇总。 */}
             <div className="group flex h-8 shrink-0 items-center gap-1 bg-raised/70 px-2">
-              {RIGHT_TABS.map(({ key: k, label, symbol }) => {
-                const gitBadge =
-                  k === "git" && gitTotals && gitTotals.add + gitTotals.del > 0
-                    ? gitTotals.add + gitTotals.del
-                    : null;
-                return (
+              {rightTab === "preview" ? (
+                <>
                   <button
-                    key={k}
-                    onClick={() => setRightTab(k)}
+                    type="button"
+                    onClick={() => setFilesViewPref("tree")}
                     onDoubleClick={toggleRightExpanded}
-                    title={`${label}；双击${rightExpanded ? "退出专注内容" : "进入专注内容"}`}
-                    className={`flex h-7 shrink-0 items-center gap-1 rounded-sm px-2.5 text-xs ${
-                      rightTab === k
-                        ? "bg-seg-sel text-l1"
-                        : "text-l3 hover:text-l1"
+                    aria-pressed={filesView === "tree"}
+                    title={`文件树；双击${rightExpanded ? "退出专注内容" : "进入专注内容"}`}
+                    aria-label="文件树"
+                    className={`flex h-7 shrink-0 items-center rounded-sm px-2 ${
+                      filesView === "tree" ? "bg-seg-sel text-l1" : "text-l3 hover:text-l1"
                     }`}
                   >
-                    <span className="text-micro text-l4">{symbol}</span>
-                    {label}
-                    {k === "preview" && previewDirty && (
-                      <span className="ml-1 text-l3" title="有未保存的修改">
-                        ●
-                      </span>
-                    )}
-                    {gitBadge && (
-                      <span className="ml-1 rounded-sm bg-ok px-1 text-ok-text">
-                        +{gitBadge}
-                      </span>
-                    )}
+                    <FolderTree size={14} strokeWidth={1.8} aria-hidden="true" />
                   </button>
-                );
-              })}
-              {rightTab === "preview" && preview && previewFiles.length > 1 && (
-                <span className="ml-1 flex items-center gap-0.5 text-micro text-l4">
-                  <button type="button" onClick={() => switchPreview(-1)} disabled={previewFiles[0]?.path === preview.path} className="rounded px-1 hover:bg-hover disabled:opacity-30" title="上一个文件（↑）">↑</button>
-                  <button type="button" onClick={() => switchPreview(1)} disabled={previewFiles[previewFiles.length - 1]?.path === preview.path} className="rounded px-1 hover:bg-hover disabled:opacity-30" title="下一个文件（↓）">↓</button>
+                  {preview && (
+                    <span
+                      className={`flex h-7 min-w-0 max-w-[60%] items-center gap-1 rounded-sm pl-2.5 pr-1 text-xs ${
+                        filesView === "preview" ? "bg-seg-sel text-l1" : "text-l3 hover:text-l1"
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setFilesViewPref("preview")}
+                        onDoubleClick={toggleRightExpanded}
+                        title={`${preview.path}；双击${rightExpanded ? "退出专注内容" : "进入专注内容"}`}
+                        className="min-w-0 truncate italic"
+                      >
+                        {preview.name}
+                      </button>
+                      {previewDirty && (
+                        <span className="shrink-0 text-l3" title="有未保存的修改">
+                          ●
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => void closePreviewTab()}
+                        title="关闭预览，回到文件树"
+                        aria-label="关闭预览"
+                        className="flex size-5 shrink-0 items-center justify-center rounded-sm text-l4 hover:bg-hover hover:text-l1"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  )}
+                  {filesView === "preview" && preview && previewFiles.length > 1 && (
+                    <span className="ml-1 flex items-center gap-0.5 text-micro text-l4">
+                      <button type="button" onClick={() => switchPreview(-1)} disabled={previewFiles[0]?.path === preview.path} className="rounded px-1 hover:bg-hover disabled:opacity-30" title="上一个文件（↑）">↑</button>
+                      <button type="button" onClick={() => switchPreview(1)} disabled={previewFiles[previewFiles.length - 1]?.path === preview.path} className="rounded px-1 hover:bg-hover disabled:opacity-30" title="下一个文件（↓）">↓</button>
+                    </span>
+                  )}
+                </>
+              ) : (
+                <span
+                  onDoubleClick={toggleRightExpanded}
+                  title={`改动；双击${rightExpanded ? "退出专注内容" : "进入专注内容"}`}
+                  className="flex h-7 shrink-0 items-center gap-1 px-2 text-xs text-l1"
+                >
+                  <span className="text-micro text-l4">±</span>
+                  改动
+                  {gitTotals && gitTotals.add + gitTotals.del > 0 && (
+                    <span className="ml-1 rounded-sm bg-ok px-1 text-ok-text">
+                      +{gitTotals.add + gitTotals.del}
+                    </span>
+                  )}
                 </span>
               )}
               {/* 右侧动作区：专注内容 + 收起。 */}
@@ -10513,8 +10389,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                   onClick={toggleRightExpanded}
                   title={
                     rightExpanded
-                      ? "退出铺满（Esc，文件树回来）"
-                      : "右栏铺满（文件树先收起、对话只留一窄条，Esc 退出）"
+                      ? "退出铺满（Esc）"
+                      : "右栏铺满（对话只留一窄条，Esc 退出）"
                   }
                   className={`flex size-7 shrink-0 items-center justify-center rounded-sm text-xs text-l4 hover:bg-hover hover:text-l1 ${hoverRevealClass}`}
                 >
@@ -10530,6 +10406,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                 </button>
               </span>
             </div>
+            {/* 文件窗格：树和预览都保持挂载（树的展开状态、预览编辑器的撤销栈不因切换丢），一次只显示一个 */}
             <div
               className={
                 rightTab === "preview"
@@ -10537,6 +10414,57 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                   : "hidden"
               }
             >
+              <div
+                className={
+                  filesView === "tree" ? "flex min-h-0 flex-1 flex-col" : "hidden"
+                }
+              >
+                <FileTree
+                  cwd={activeCwd}
+                  showHidden={showHidden}
+                  onShowHidden={setShowHidden}
+                  refreshKey={refreshKey}
+                  onOpenFile={openPreview}
+                  onOpenTerminal={openTerminalAt}
+                  onFsEvent={bumpFsChangeTick}
+                  onRootChange={closePreviewForRootChange}
+                  onRootNavigated={setTreeRoot}
+                  onRecoverDirectory={() => tabActionsRef.current.get(focusedId)?.chooseCwd()}
+                  onOpenReader={(path) =>
+                    void (/\.pdf$/i.test(path) ? openReaderForPdf(path) : openReaderForNote(path))
+                  }
+                  actions={
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setShowHidden((v) => !v)}
+                        title={showHidden ? "不显示隐藏文件" : "显示隐藏文件（. 开头的）"}
+                        aria-label={showHidden ? "不显示隐藏文件" : "显示隐藏文件"}
+                        aria-pressed={showHidden}
+                        className={`flex h-7 w-7 items-center justify-center rounded-sm hover:bg-hover ${
+                          showHidden ? "text-l1" : "text-l4 hover:text-l2"
+                        }`}
+                      >
+                        {showHidden ? <EyeOff size={14} /> : <Eye size={14} />}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRefreshKey((k) => k + 1)}
+                        title="刷新文件树"
+                        aria-label="刷新文件树"
+                        className={railBtn}
+                      >
+                        <RefreshCw size={14} />
+                      </button>
+                    </>
+                  }
+                />
+              </div>
+              <div
+                className={
+                  filesView === "preview" ? "flex min-h-0 flex-1 flex-col" : "hidden"
+                }
+              >
               {preview ? (
                 <Suspense
                   fallback={
@@ -10593,15 +10521,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                     />
                   )}
                 </Suspense>
-              ) : (
-                <div className="flex min-h-0 flex-1 flex-col">
-                  <div className="p-3">
-                    <p className="text-sm text-l4">
-                      在左边文件树里点一个文件，就在这里看
-                    </p>
-                  </div>
-                </div>
-              )}
+              ) : null}
+              </div>
             </div>
             {/* 改动面板保持挂载：右栏打开期间持续轮询，页签徽标才有数据 */}
             <div

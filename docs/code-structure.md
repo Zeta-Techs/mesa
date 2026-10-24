@@ -602,8 +602,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # （nextUnread；App 维护 store.unreadChats，ProjectTree 把那一行标题亮到 l1；tests/chat-unread.test.ts）
   rail-width.ts              # 应用侧栏宽度（2026-10-24）：14–26rem、默认 18rem、窗口小时上限收到窗宽 40%，localStorage 记偏好（tests/rail-width.test.ts）
   start-page.ts              # 「启动时进入」四种去处（2026-10-24）：工作台 / 上次的对话 / 上次的项目 / 新对话，旧存值当工作台；与 settings.rs KNOWN_START_PAGES 同步；上次的项目 = 最后看的那段对话所在的项目（projectOfCwd 取最深的项目根），App 在运行页正看着时写 localStorage ccode.lastProject（tests/start-page.test.ts）
-  run-layout.ts              # 运行页三块宽度（2026-10-24）：对话 ≥ 360、文件树 12–22rem、右栏 ≥ 360，偏好与实际分开，不够时先压右栏再让文件树
-                             # （runLayout / clampTreeWidth；tests/run-layout.test.ts）
+  run-layout.ts              # 运行页两块宽度（2026-10-24，文件树并进右栏后由三块变两块）：对话 ≥ 360、右栏默认 460 / ≥ 360，偏好与实际分开，不够时只压右栏
+                             # （runLayout；tests/run-layout.test.ts）
   idle-stop.ts               # 空闲对话的后台进程自动收（2026-10-24 用户拍板 A）：普通对话（isPlainChatTab）Agent 回完话、没在看、输入框没字，
                              # 满 30 分钟（IDLE_STOP_MS）该收哪些（idleStopPass 维护开始空闲时刻）；纯终端 / 步骤 / 车道 / 阅读 / 自定义运行时不收
                              # （tests/idle-stop.test.ts；TerminalPage 每分钟一检）
