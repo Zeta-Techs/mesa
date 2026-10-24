@@ -261,7 +261,7 @@ export function withResearchTools(source: ProjectStepDto, tools: ResearchTools, 
       const task: HumanTaskDto = {
         title: fieldDoc,
         guidance:
-          "这是另一种换样式的做法：要在 Word 里接着改稿、让 EndNote 或 Zotero 管引用时才用。打开 output/endnote.docx（EndNote）或 output/zotero.docx（Zotero），在 Word 的 EndNote 选项卡点 Update Citations and Bibliography，或 Zotero 选项卡点 Refresh，再在那里选样式。不在 Word 里改稿就跳过：上面「更换引用样式」已经让 AI 把 PDF 和 Word 换好。Mesa 不会替你点 Word 里的按钮。",
+          "这是另一种换样式的做法：要在 Word 里接着改稿、让 EndNote 或 Zotero 管引用时才用。点右边按钮用 Word 打开 EndNote 版或 Zotero 版，在 Word 的 EndNote 选项卡点 Update Citations and Bibliography，或 Zotero 选项卡点 Refresh，再在那里选样式。不在 Word 里改稿就跳过：上面「更换引用样式」已经让 AI 把 PDF 和 Word 换好。Mesa 不会替你点 Word 里的按钮。",
         target: "",
         timing: "after",
         completion: "manual",

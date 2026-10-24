@@ -17,6 +17,7 @@
 import type { HumanTaskStateDto } from "./types";
 import { isCitationStyleTask } from "./citation-style-choice.ts";
 import { isInlineDecisionTaskTitle } from "./review-decisions.ts";
+import { handbackTask } from "./handback-tasks.ts";
 import {
   isEndnoteTaskTitle,
   isPaywallTaskTitle,
@@ -114,6 +115,10 @@ export type StepNodeAction =
     }
   /** 非文献类交付（学校格式规范、审稿意见原文等）：直接选文件提交到落点 */
   | { kind: "submit-deliverable" }
+  /** AI 写好的清单 / 模板，人打开填，再交回原对话（转载许可清单、投稿声明） */
+  | { kind: "edit-handback" }
+  /** 两份域稿用 Word 打开（在 Word 里换样式那一行） */
+  | { kind: "open-field-docs" }
   /** 工作区已归档：主入口换成恢复 */
   | { kind: "restore-workspace" }
   /** 开工。示例课题精读步另挂「开读这一篇」，此时降为次要按钮 */
@@ -175,13 +180,16 @@ export function stepNodeAction(
       ) {
         return null;
       }
-      // 4. 行内点选与域稿说明不交文件。排在文献落点之前，避免报告落在 papers/ 时被送去导入。
-      if (
-        isCitationStyleTask(human.title) ||
-        isInlineDecisionTaskTitle(human.title) ||
-        isFieldDocRefreshTitle(human.title)
-      ) {
+      // 4. 行内点选与域稿不交文件。排在文献落点之前，避免报告落在 papers/ 时被送去导入。
+      //    域稿给「用 Word 打开」；AI 写好、人来填的清单给「打开 / 交给 AI」，不给「提交产物」（2026-10-24）
+      if (isCitationStyleTask(human.title) || isInlineDecisionTaskTitle(human.title)) {
         return null;
+      }
+      if (isFieldDocRefreshTitle(human.title)) {
+        return node.done ? null : { kind: "open-field-docs" };
+      }
+      if (handbackTask(human.title)) {
+        return node.done ? null : { kind: "edit-handback" };
       }
       // 5. 文献类交付统一去「文献与数据」：那里三个进料口齐全，在每个事项行再复制
       //    一套入口等于把同一件事摆三个地方。付费墙/待确认例外——它们的入口是行内

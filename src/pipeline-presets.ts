@@ -138,7 +138,7 @@ function figurePermissionTask(): HumanTaskDto {
   return {
     title: "换原图与申请转载许可",
     guidance:
-      "拼图里的块是从别人论文的 PDF 裁的。投稿前点开这份清单逐块办：标「要申请」的到文章页的 Request permissions（多数走 RightsLink）提交，许可只能你本人申请；开放获取（CC BY）的按清单写好的出处注明即可。期刊要用出版社原图时，在文章页下载高清原图放进项目根 papers/figure-originals/，回到这一步的对话说一声，AI 会从原图重裁重拼。办完把清单里的状态改好，再勾掉这一项。",
+      "拼图里的块是从别人论文的 PDF 裁的，投稿前要处理版权。点「打开清单」逐块办：标「要申请」的到文章页的 Request permissions（多数走 RightsLink）提交，许可只能你本人申请；开放获取（CC BY）的照清单写的出处注明即可。办一块就在清单里改一块的「状态」。期刊要出版社原图时，在文章页下载高清原图放进项目根 papers/figure-originals/。改好点「清单改好了，交给 AI」，AI 按状态改图注、有原图的块重裁重拼。全部办完勾掉这一项。",
     target: "submission/figure-permissions.md",
     timing: "after",
     completion: "manual",
@@ -151,7 +151,7 @@ function declarationsTask(): HumanTaskDto {
   return {
     title: "填作者、单位与投稿声明",
     guidance:
-      "投稿前由你填：作者、单位、通讯作者邮箱，以及 submission/declarations.md 里的基金、利益冲突、作者贡献和 AI 使用声明（AI 起了草稿的，核对后改定）。AI 不代填这些。填好回到这一步的对话说一声，AI 会把作者写进稿件开头、声明并进文末，再重渲。",
+      "点「打开填写」：在 Authors 一节写作者、单位、通讯作者邮箱，再填基金、利益冲突、作者贡献；AI 使用声明是 AI 起的草稿，核对用过的模型和用途后改定。AI 不代填这些。填好点「填好了，交给 AI」，AI 把作者写进稿件开头、声明并进文末，再重渲。",
     target: "submission/declarations.md",
     timing: "after",
     completion: "manual",
@@ -462,7 +462,7 @@ const REVIEW_STEPS: ProjectStepDto[] = [
       "5. 写 manuscript/verification-decisions.md：把 review-final.md 里每条 [待核实] 与 citation-check.md 里每条「疑似编造/元数据存疑」各列一行，格式 `- V001 | 位置：文件:行 | 原文摘要：…… | 来源：[@键] | 建议：…… | 裁决：待裁决 | 依据：`。「建议」写你对过原文后建议的改法（一句，人点「修改」时预填）；**「裁决」与「依据」两栏一律留空或写「待裁决」，不得代填**——只有人能对照原始文献拍板。清单里的条数必须与稿子里实际剩余的 [待核实] 处数一致，漏列等于把未决项藏起来。\n" +
       "6. 用本步骤 run 脚本渲染 PDF/docx（按 {skill:quarto-render} 技能：人还没在流程线「更换引用样式」里换形式时，沿用初稿编号制渲，不因没选样式停渲）。正文字体沿用初稿 manuscript/typeface.md，不要另选字体，也不要重问。Word 套 manuscript/reference.docx：确认 YAML 的 format.docx 有 reference-doc 一行（初稿字体脚本写的，路径相对稿件所在目录；旧稿没有就补上）。同一次再生成 output/endnote.docx 与 output/zotero.docx。产物写入本工作区 output/（评审合并后进项目根）。\n" +
       "7. 拼图里的块是从别人论文 PDF 裁的，投稿前作者要换出版社原图、申请转载许可（只能作者本人申请）：按 {skill:review-figures} 跑 figure_permissions.py，写 submission/figure-permissions.md——每块的出版社、许可（Crossref 按 DOI 查）、要不要申请、去哪申请、图注出处写法、状态栏（「待申请」等人改）；没有拼图也写这份并注明无需申请。人把原图放进项目根 papers/figure-originals/ 回来说一声，就按 figures/sources.md 记的同一块从原图重裁（--pdf 给原图文件）、重拼、重渲。验收摘要⑤写还有几块待申请许可。\n" +
-      "8. 写 submission/declarations.md 空白模板，四节：基金、利益冲突、作者贡献（CRediT）、AI 使用声明，每节写「待填」；AI 使用声明可按本稿实际用到的 AI 工具与用途起一段草稿，标「待作者核对」。不得代填基金号、单位、作者贡献；review-final.md 的 author 保留待补。人填好回来说一声，就把作者、单位写进 YAML，声明并进 review-final.md 文末 Declarations 一节，重渲 PDF、Word 和两份域稿。\n" +
+      "8. 写 submission/declarations.md 空白模板，五节：Authors（作者、单位、通讯作者邮箱）、基金、利益冲突、作者贡献（CRediT）、AI 使用声明，每节写「待填」；AI 使用声明可按本稿实际用到的 AI 工具与用途起一段草稿，标「待作者核对」，模型名说不准就写「（模型名待作者填写）」，不要默认写成自己以为的模型。不得代填基金号、单位、作者贡献；review-final.md 的 author 保留待补。人填好回来说一声，就把作者、单位写进 YAML，声明并进 review-final.md 文末 Declarations 一节，重渲 PDF、Word 和两份域稿。\n" +
       "完成标准：review-final.md 无语法硬伤、引用键全部可解析；citation-check.md 如实报告；verification-decisions.md 已列全、裁决栏为空等人填；figure-permissions.md 已列全每块拼图；declarations.md 模板已写、待填栏留给人；核心支持性缺口未关闭时仅交待审稿，不标通过；changelog.md 已提交；run 脚本渲染通过。人未逐条裁决前，这一稿不得当定稿。\n" +
       RELEASE_GATE + QUALITY_STATUS,
     expectedArtifacts: [

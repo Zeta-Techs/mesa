@@ -100,6 +100,8 @@ import {
 } from "../inst-access";
 import PendingConfirmList, { type PendingConfirmHandle } from "./PendingConfirmList";
 import ReviewDecisionList from "./ReviewDecisionList";
+import ProjectFilePreview from "./ProjectFilePreview";
+import { handbackTask } from "../handback-tasks";
 import {
   continueAfterDecisionsPrompt,
   isInlineDecisionTaskTitle,
@@ -681,6 +683,9 @@ export default function StepFlow({
    *  商量改的就是最终落盘的 TASK.md，从零起草会把简报/预期产物/提货单全丢掉 */
   const [chatBusy, setChatBusy] = useState(false);
   const [decisionNote, setDecisionNote] = useState<string | null>(null);
+  /** 「打开清单 / 打开填写」展开的是哪一行（按事项标题） */
+  const [editOpen, setEditOpen] = useState<string | null>(null);
+  const [handbackNote, setHandbackNote] = useState<{ title: string; text: string } | null>(null);
   const [decisionOpen, setDecisionOpen] = useState<Map<string, number>>(new Map());
   const [citeOpen, setCiteOpen] = useState<string | null>(null);
   const [citeBusy, setCiteBusy] = useState(false);
@@ -1283,6 +1288,48 @@ export default function StepFlow({
    *  不带时模型落到连接名单第一个（2026-10-24 HER 润色：Mesa 重启后接回，glm-5.3 换成了 glm-5.3-flash） */
   const resumeLaunch = stepSlotLaunch ?? projectLaunch ?? undefined;
 
+  /** 这一步的文件放在哪：工作区还在用工作区（AI 写在那里，人改完 AI 接着用），否则用项目根 */
+  const stepFileRoot = ws?.worktreePath ?? projectPath;
+
+  /** 「交给 AI」：接回这一步原来的对话，把话发过去（同「让 Agent 按决定继续」） */
+  async function handBack(title: string, target: string) {
+    const task = handbackTask(title);
+    if (!ws || !task) return;
+    setHandbackNote(null);
+    try {
+      const req = await buildWorkspaceTerminalRequest(ws, task.prompt(target), {
+        autoStart: true,
+        resumeSession: true,
+        stepLaunch: resumeLaunch,
+      });
+      setPendingTerminal(req);
+      setPage("terminal");
+    } catch (reason) {
+      setHandbackNote({ title, text: String(reason) });
+    }
+  }
+
+  /** 域稿用系统里的 Word 打开；没出这一份就说一声 */
+  async function openFieldDoc(title: string, file: "endnote" | "zotero") {
+    setHandbackNote(null);
+    const roots = [...new Set([ws?.worktreePath, projectPath].filter((p): p is string => Boolean(p)))];
+    for (const root of roots) {
+      try {
+        await invoke("open_in_system", { path: `${root.replace(/[\\/]+$/, "")}/output/${file}.docx`, root });
+        return;
+      } catch {
+        /* 试下一处 */
+      }
+    }
+    setHandbackNote({
+      title,
+      text:
+        file === "endnote"
+          ? "没有 EndNote 版（output/endnote.docx）：这一步没出。要用 EndNote，回对话让 AI 照出这一份。"
+          : "没有 Zotero 版（output/zotero.docx）：这一步没出。",
+    });
+  }
+
   async function continueAfterDecisions(target: string, title: string) {
     const kind = reviewItemKind(title);
     if (!ws || !kind) return;
@@ -1730,6 +1777,55 @@ export default function StepFlow({
             到「文献与数据」导入
           </button>
         );
+      case "edit-handback": {
+        const human = node.human!;
+        const task = handbackTask(human.title)!;
+        const open = editOpen === human.title;
+        return (
+          <span className="flex shrink-0 items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setEditOpen(open ? null : human.title)}
+              aria-expanded={open}
+              title={`在这里打开 ${human.target}，改完点上面的「保存」`}
+              className={outline}
+            >
+              {open ? "收起" : task.open}
+            </button>
+            {ws && (
+              <button
+                type="button"
+                onClick={() => void handBack(human.title, human.target ?? "")}
+                title="回到这一步原来的对话，让 AI 按你改好的内容接着做"
+                className={outline}
+              >
+                {task.handback}
+              </button>
+            )}
+          </span>
+        );
+      }
+      case "open-field-docs":
+        return (
+          <span className="flex shrink-0 items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => void openFieldDoc(node.human!.title, "endnote")}
+              title="用 Word 打开 output/endnote.docx，在 EndNote 选项卡点 Update Citations and Bibliography，再选样式"
+              className={outline}
+            >
+              Word 打开 EndNote 版
+            </button>
+            <button
+              type="button"
+              onClick={() => void openFieldDoc(node.human!.title, "zotero")}
+              title="用 Word 打开 output/zotero.docx，在 Zotero 选项卡点 Refresh，再选样式"
+              className={outline}
+            >
+              Word 打开 Zotero 版
+            </button>
+          </span>
+        );
       case "submit-deliverable":
         return (
           <button
@@ -2010,7 +2106,7 @@ export default function StepFlow({
                 清单 {human.expectedCount}
               </span>
             ) : null
-          ) : node.kind === "human" && human?.hitCount != null && !isCitationStyleTask(human.title) && !isInlineDecisionTaskTitle(human.title) ? (
+          ) : node.kind === "human" && human?.hitCount != null && !isCitationStyleTask(human.title) && !isInlineDecisionTaskTitle(human.title) && !handbackTask(human.title) ? (
             <span className="shrink-0 text-micro text-l4">
               已见到 {human.hitCount} 个文件
               {human.expectedCount != null
@@ -2169,6 +2265,11 @@ export default function StepFlow({
                   </button>
                 </div>
               </form>
+            )}
+            {!node.done && !citeOpen && (
+              <p className="mt-1 text-micro text-l4">
+                现在是方括号编号 [1]。不换就勾掉这一行；想换就点一种，AI 回原对话重渲 PDF、Word 和带引用域的 Word。
+              </p>
             )}
             {citeNote && <p className="mt-1 text-micro text-l4">{citeNote}</p>}
           </div>
@@ -2745,6 +2846,23 @@ export default function StepFlow({
                 }}
               />
               {decisionNote && <InlineNotice tone="err" size="micro" className="mt-1">{decisionNote}</InlineNotice>}
+            </div>
+          )}
+        {node.kind === "human" && human && handbackNote?.title === human.title && (
+          <div className="mt-1 pl-9">
+            <InlineNotice tone="err" size="micro">{handbackNote.text}</InlineNotice>
+          </div>
+        )}
+        {node.kind === "human" &&
+          human?.target &&
+          !node.done &&
+          editOpen === human.title &&
+          handbackTask(human.title) && (
+            <div className="mt-1.5 ml-9 flex h-[26rem] flex-col overflow-hidden rounded-md border border-hairline">
+              <ProjectFilePreview
+                path={`${stepFileRoot.replace(/[\\/]+$/, "")}/${human.target}`}
+                root={stepFileRoot}
+              />
             </div>
           )}
         {!dense &&
