@@ -46,16 +46,6 @@ export function fmtTokens(n: number): string {
 /** 状态栏窄于这个宽度按窄栏排（阅读区右栏默认约 450px，终端页单栏远宽于此） */
 const STATUS_BAR_NARROW_PX = 560;
 
-function fmtDuration(ms: number): string {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const ss = s % 60;
-  return h > 0
-    ? `${h}:${String(m).padStart(2, "0")}:${String(ss).padStart(2, "0")}`
-    : `${m}:${String(ss).padStart(2, "0")}`;
-}
-
 export default function TerminalStatusBar({
   status,
   fallbackCwd,
@@ -154,15 +144,8 @@ export default function TerminalStatusBar({
     rt.pickModel(m);
   }
 
-  // 运行时长：运行中每秒走时，退出后定格
-  const [now, setNow] = useState(() => Date.now());
   const running = status?.running ?? false;
   const startedAt = status?.startedAt ?? null;
-  useEffect(() => {
-    if (!running || startedAt == null) return;
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [running, startedAt]);
 
   // 本会话 token：60s 轮询 + 注意力跃迁时即刷；无会话关联不显示
   const [usage, setUsage] = useState<SessionUsageDto | null>(null);
@@ -640,6 +623,7 @@ export default function TerminalStatusBar({
         {!chat &&
           !narrow &&
           !effortLive &&
+          !rt.effortSwitchable &&
           running &&
           combo?.thinking &&
           (knownEffort || effortSeenDefault) && (
@@ -1173,7 +1157,6 @@ export default function TerminalStatusBar({
           {usage && usageTotal(usage) > 0 && (
             <span className="shrink-0 tabular-nums text-l3" title={usageTitle(usage, fmtTokensZh)}>
               {fmtTokensZh(usageTotal(usage))} token
-              {usage.priced && ` · $${usage.costUsd.toFixed(2)}`}
             </span>
           )}
         </span>
@@ -1182,11 +1165,6 @@ export default function TerminalStatusBar({
         className="ml-auto flex min-w-0 items-center gap-3 overflow-hidden font-mono"
         style={{ color: faint }}
       >
-        {/* 时长只在 agent 运行中显示：退出回落 shell 后 alive 仍为 true，
-            定格的旧时长挂在底栏会误导（远看像还在计时） */}
-        {startedAt != null && running && (
-          <span title="本次启动的运行时长">{fmtDuration(now - startedAt)}</span>
-        )}
         {/* 上下文用量（2026-10-18 与聊天层同步）：窗口大小来自模型能力库，读不到就不画 */}
         {!chat && running && combo?.context && contextUsed ? (
           <span className="flex items-center gap-0.5">
@@ -1213,7 +1191,6 @@ export default function TerminalStatusBar({
           // ↑ = 喂给模型的全部输入（含读写缓存），↓ = 输出；拆分在悬停里
           <span title={usageTitle(usage, fmtTokens)}>
             {fmtTokens(usage.input + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0))}↑ {fmtTokens(usage.output)}↓
-            {usage.priced && ` · $${usage.costUsd.toFixed(3)}`}
           </span>
         )}
       </span>
