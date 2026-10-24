@@ -245,12 +245,14 @@ fn save_file_preview_sync(
     }
     let _guard = PREVIEW_SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _file_guard = crate::storage::config_lock("preview-save")?;
-    // 定稿选定的目标期刊。文件第一次还不存在，只允许新建这一份。
+    // 文件第一次还不存在时，只允许新建这几份人在界面上点出来的小文件：定稿选定的目标期刊、
+    // 「选这个 EndNote 库」写的库路径（2026-10-24：原先只放行目标期刊，选库报「文件不存在」）
     let expanded = expand_tilde(path);
     let rel = expanded.replace('\\', "/");
+    const CREATABLE: [&str; 2] = ["submission/target-journal.md", "papers/endnote-library.path"];
     if !std::path::Path::new(&expanded).exists()
         && expected_revision == "new"
-        && (rel.ends_with("/submission/target-journal.md") || rel.ends_with("submission/target-journal.md"))
+        && CREATABLE.iter().any(|name| rel == *name || rel.ends_with(&format!("/{name}")))
         && !rel.contains("..")
     {
         let root_c = crate::paths::canonicalize_plain(std::path::Path::new(&expand_tilde(root)))
@@ -258,7 +260,7 @@ fn save_file_preview_sync(
         let parent = std::path::Path::new(&expanded)
             .parent()
             .ok_or_else(|| "路径没有父目录".to_string())?;
-        fs::create_dir_all(parent).map_err(|e| format!("建立投稿目录失败: {e}"))?;
+        fs::create_dir_all(parent).map_err(|e| format!("建立目录失败: {e}"))?;
         let parent_c = crate::paths::canonicalize_plain(parent)
             .map_err(|e| format!("父目录无效: {e}"))?;
         if !crate::paths::path_within_path(&parent_c, &root_c) {
@@ -801,6 +803,20 @@ mod tests {
         )
         .is_err());
         assert_eq!(fs::read_to_string(&f).unwrap(), "new content\n");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn save_creates_only_whitelisted_new_files() {
+        let dir = tmpdir("save-new");
+        // 「选这个 EndNote 库」第一次写库路径：文件还不存在，papers/ 也可能没有（2026-10-24 用户实测报「文件不存在」）
+        let pointer = dir.join("papers").join("endnote-library.path");
+        save_file_preview_sync(pointer.to_str().unwrap(), dir.to_str().unwrap(), "D:\\lib.enl\n", "new").unwrap();
+        assert_eq!(fs::read_to_string(&pointer).unwrap(), "D:\\lib.enl\n");
+        // 名单外的新文件照旧不让建
+        let other = dir.join("papers").join("random.txt");
+        assert!(save_file_preview_sync(other.to_str().unwrap(), dir.to_str().unwrap(), "x", "new").is_err());
+        assert!(!other.exists());
         fs::remove_dir_all(&dir).ok();
     }
 
