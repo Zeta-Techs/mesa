@@ -457,10 +457,6 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
-### 2026-10-23 · 带图发给看不了图的模型：发送前就说清后果
-
-用户实测：Grok + glm-5.3 带图发送，中转回 400「messages.content.type 参数非法，取值范围 ['text']」，而输入框的「看不了图」提醒没出现。根因：`model_capability_for` 把视觉能力折成「能看 = Some(true)，其余 = None」，公共能力库里确知 glm-5.3 不能看图的 false 到不了界面，提醒条件 `vision === false` 永不成立。规则：**能力 DTO 的 vision 三态如实出线**（显式 false 不得折成 None，查不到才 None）；提醒写明后果——带图发出去会报错、图进了对话之后每条都会再报——并给出路（先移除图片，或换能看图的模型），提醒折行显示不截断。不拦发送：能力库可能误判，用户可在连接页「能力声明」改正。
-
 ### 2026-10-23 · macOS 窗口材质换菜单材质，全屏时壳铺实心
 
 用户对照 Codex 客户端截图：「他的全屏不会太透彩色壁纸」。拆 Codex 安装包核对：主窗 `vibrancy: 'menu'`、网页层侧栏不铺色，失焦或物理像素 ≥ 3840×2160 时整窗转实心（本机 2560×1664 全屏不触发，所以它全屏不花靠的是材质本身）。Mesa 原用 `underWindowBackground` 叠 48% 罩，前者只模糊不压色，全屏时整面壁纸色相透上来。用户拍板按推荐做两处：①macOS 材质改 `menu`（lib.rs 与各份 tauri 配置同步，测试对账），48% 罩色基数不动；②macOS 全屏时壳铺实心 `--color-rail`，不乘透明度系数。失焦转实心不做。细则 design-system.md「侧栏桌面磨砂」。
@@ -505,6 +501,37 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 ③**Agent 怎么调**：随包 `mesa_helper image …` 子命令，密钥由 helper 从 keys.json 现取，**不进 Agent 环境变量**；Mesa 启动 PTY 时只注入 `MESA_IMAGE_TOOL`（helper 路径，试跑 `image --probe` 通过才注入）。内置技能 `image-gen`（种子版本 14）教 Agent 调用、落 `figures/`、不覆盖、不生成冒充实验数据的图；设置卡上「给已装的 Agent 打开」走 `apply_skill`（没装的跳过）。不做：Mesa 内单独的出图页面、MCP 形态、无头运行注入（定时任务里的 Agent 暂无 `MESA_IMAGE_TOOL`）。
 未验：Mesa Dev 窗口里设置卡与对话菜单置灰的实际观感（截图页验过设置卡静态样子）；Windows 上 helper 子命令与 PowerShell 调用。
 
+### 2026-10-23 · 工作台右栏加「定时任务」摘要
+
+用户让做工作台摘要，并问工作台能放定时任务的哪些部分。定：只放「此刻值得看一眼、又还不到待处理」的三样——正在跑的、上次失败或超时
+但还没自动暂停的（悬停写再失败几次会暂停）、24 小时内要跑的前三条；点行去该项目「定时任务」页签。不放：自动暂停与有产物待评审
+（已在「待你处理」，同一事实只说一次）、跑成功 / 无新内容 / 跳过（守「无头巡检成功工作台不出现刚巡检过」）、新建与编辑（在项目里）。
+三样都没有整块不出（空闲不报状态）。数据每分钟与定时事件时重拉 `list_schedules`，筛选口径 `schedule-tasks.ts workbenchScheduleRows`。
+
+
+### 2026-10-23 · 定时任务不单独开页，使用上六处收口
+
+用户问定时任务要不要单独放一块、使用怎么优化。拍板「不放单独一页了，6 条全做」：定时任务仍只在项目「定时任务」页签
+（跟项目的隔离目录、订阅、评审采纳绑在一起），跨项目看靠页签底部的「其他项目的定时任务」总览。六处：①新建的默认种类按项目
+类型——科研默认文献雷达，编程 / 工作默认新建巡检技能且不列文献雷达（雷达卡只在科研项目有）；②空态给示例（按项目类型三两个，
+点了预填种类、名称、要做什么）；③任务行去掉技能目录名和行内连接下拉（连接改在编辑弹层，行上只在钉了连接或连接已删时写一句），
+加第二行「上次 …」直接给结果和「去评审 / 看过程」；④统一叫「定时任务」，「巡检技能」只指技能；⑤新建弹层把运行配置和模型
+收进「更多设置」；⑥建好后行下提示「现在试跑一次？」。工作台跨项目摘要不在这次范围。细则 pipeline.md「定时雷达 · 运行管理」末条。
+
+
+### 2026-10-23 · 定时任务对照别家客户端补齐运行管理
+
+用户问定时任务怎么完善、让看别的客户端怎么做；对照 Claude 桌面版本地定时任务、Claude 云端定时任务、Cursor Automations、
+GitHub Agentic Workflows 后列了三批建议，用户「全部做」。保留 Mesa 已领先的隔离运行 + 人评审采纳；补的是运行管理：
+周期加工作日 / 每 N 小时（24 的因数）/ 仅手动（不开 cron）；到点没跑也记一行「已跳过」（应用没开、电脑睡着、上一轮还没评审、
+没关键词，同因合并计数，错过只往回数 7 天），补跑时通知并在任务说明里告诉 Agent 原定时刻和上一次成功运行；历史行记后台对话
+可「看过程」，被引用的对话不进内部对话保留期清理；无新内容不弹通知不进待处理；其他巡检默认「上一轮没评审就跳过」（雷达默认
+不跳）；定时触发连续 3 次没跑成或钉的连接被删就自动暂停并进待处理；跑的时候阻止空闲睡眠；通用巡检有跨轮记忆文件；立即跑可带
+附言；单次上限每任务可调（5–180 分钟）；新建巡检技能由 AI 顺带建议周期、落盘时人确认。跨项目总览不恢复全局页（09-13 移除），
+只在项目「定时任务」页签底部折叠列出其他项目的任务。不做：cron、云端或关机也跑、事件触发、自动开 PR / 合并、任务自改计划。
+细则 pipeline.md「定时雷达 · 运行管理」。
+
+
 ### 2026-10-23 · 启动字标换成「Mesa + 琥珀光标」，字晚出、换手叠化
 
 用户问启动动画要不要优化，拍板「三条都做、先看效果」，看静帧后又定了字号与光标长短。**机制不动**（10-16 定的跟主题
@@ -518,13 +545,6 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 React 换上的字标用负 animation-delay 接 HTML 占位的进度，挂载时刻只取一次（重渲染改 delay 不重启动画、只会跳进度）；
 时长常量 `BOOT_SHOW_DELAY_MS` / `BOOT_BLINK_MS` 与 index.html 的 boot-show / boot-blink 同步改。减弱动态效果：
 光标常亮不闪，淡入淡出属溶解不是位移，保留。
-
-### 2026-10-23 · 改动面板：主仓不再被误当 Run 评审；diff 折行、块头白话、行内高亮
-
-用户截图问 diff 查看器怎么完善。查下来头部「main 相对主分支 HEAD」、勾选框消失、「1 个文件」与「修改的 70」对不上是同一个 bug：
-`workspace_diff` 找不到工作区行时按路径回落「Run 评审」，而项目里开的聊天也登记 Run（隔离路径 = 项目根），主仓就被当成了隔离树。
-改为只认非主工作树（`git rev-parse --git-dir` 与 `--git-common-dir` 不同）。界面同批收口：长行折行、块头「第 N 行 · 上下文」、
-成对删加行行内高亮、「提交并推送」去渐变降为次要钮。细则 coding-git.md「改动面板收口」。未验：Mesa Dev 里的实际观感。
 
 ### 2026-10-23 · MCP 页与用量页按 HIG 审查收口
 
@@ -2802,7 +2822,9 @@ Claude Code 用量无法恢复。
 | 2026-10-17 | **项目页走查二批（用户：「两个建议都做」+「综述项目雷达怎么没了」）**。①**步进器圆下加状态小字**（修订 v3.46「状态文字只进悬浮」）：第三条同列网格，进行中/等你确认/等你查看/待评审/有冲突/已完成/已归档，待开始与检查中不写、全不写时不占行；文案色单一出处 `src/stepper-status.ts`。②**精读步挂可选人工事项「抽查 3 篇笔记」**（综述/科研论文/毕业论文三套模板；after+optional+manual，不挡评审、不触发收尾软门），行下就地列三篇候选（全文/仅摘要各一+尾部补，确定性），点开在运行页预览；测试项目档案卡已同步加上（干跑副本验证 TOML 结构后落盘），综述流程测试精读步已完成未加。③**雷达「没了」根因是数据丢失**：订阅弹层「编辑源文件」把弹层 `initial` 整表写回，从巡检行打开时 initial 恒为空——一点就把关键词清光（综述流程测试 `.ccode/watch/<id>/watchlist.md` 10-17 14:59 被写成只剩注释）；关键词清空后雷达卡又整块收成一行「还没订阅读」，攒下的命中全被藏掉。修：新增 `ensure_watch_subscriptions_file`（不存在才建，存在不动）取代写回；关键词为空但有命中时整卡照常显示并加黄字提示行；用户的两条关键词（镁硫电池、球磨法）按当日巡检隔离树里的副本恢复。 |
 | 2026-10-17 | **「N 处改动未存入历史」不再催 Mesa 自己的档案（用户截图：只列 project.toml）**。该提醒本义是「你改的文件下一步 AI 看不到」，但 `.ccode/`（台账除外）与 `.gitignore` 是 Mesa 自有档案，开工前已由 `commit_project_bootstrap` 自动提交——提醒它们等于让人提交一份自己没碰过的文件；且主仓脏会挡评审合并（ready_to_merge 要求 !main_dirty），设置页改规则、选文献来源都会写档案卡，人得先去提交面板处理。改：项目页提醒与开工弹层改用 `userWorkDirtyFiles`（剔档案路径）；评审打开时主仓脏先调 `commit_project_bootstrap`（同提交信息「Mesa: 项目档案卡与 gitignore 自动提交」，每次打开每主仓一次），剩下的才交提交面板（面板仍用 `userDirtyFiles`）。不改成「写档案卡即提交」：一次设置点击一个提交是历史噪声。本次触发源是二批给测试项目档案卡加「抽查 3 篇笔记」时直接改了被 git 跟踪的 project.toml。 |
 | 2026-10-19 | **Windows 去原生标题栏（用户：比 Mac 多一行框，三个系统按钮应放命令面板右边）**。`lib.rs` setup 里 `#[cfg(windows)] set_decorations(false)`（不进 tauri.conf：`titleBarStyle` 只在 macOS 生效，且 dev 配置覆盖会整体替换 windows 数组）；前端标题栏 Windows 也走 `data-tauri-drag-region`，自绘 `WindowControls` 紧贴命令面板/待处理右侧（不放进会淡出的右组）；`ReaderOverlay` 顶栏盖住标题栏，同样挂一份；capability 补 `allow-minimize` / `allow-toggle-maximize`。代价：失去 Win11 最大化按钮的贴靠布局悬浮菜单（Win+方向键仍可用）。**Windows 字体发虚排查定论**（同日用户两轮并排对比，不再重复试）：透明窗口（Mica）下 WebView2 根层一律灰度抗锯齿；铺不透明 body、`--enable-lcd-text` / `--disable-font-subpixel-positioning`（WebView2 经环境变量追加，渲染进程不收）、`-webkit-text-stroke` 加粗均无效。曾用「页面容器 `will-change: opacity` 独立合成为不透明层 + 主区禁 `backdrop-filter`」拿到 ClearType，**用户实看彩边像马赛克，当日撤回**；且 `PrintWindow` 无损抓 Claude 客户端证实其正文同样是灰度抗锯齿——它看着清楚靠白字压近黑底的高对比，不靠渲染方式。**Windows 保持灰度渲染，清晰度只从文字对比度/字重上补**（同日已落：Windows 下深浅 14 套主题 l3/l4 再加深一档，细则 design-system「文字梯队」），不要再走 ClearType 合成层路线（另有层叠上下文压住页内弹层、`transform` 会成为 fixed 定位基准等副作用）。截图对比用 `PrintWindow` 抓窗口自身 PNG，别用 webp（有损压缩抹淡彩边、导致误判）；Windows 注册表缩放与实际不一致，以渲染进程 `--device-scale-factor` 为准（本机 1.5）。 |
-| 2026-10-19 | **依赖一键安装 Windows 实测三处修复 + 选择器死循环**。①Windows 的 TeX：winget 源里没有 Tectonic（`winget search tectonic` 无结果，原 `TectonicTypesetting.Tectonic` 一装即「找不到程序包」），改 `quarto install tinytex --no-prompt --update-path`（Quarto 官方推荐、渲染时自动补宏包；须先装 Quarto），Windows 候选目录补 `%APPDATA%`/`%ProgramData%` `TinyTeXinwindows|win32`；macOS 仍 brew tectonic 不变。②Python：Windows 未装 Python 时 PATH 上的 python 是应用商店占位程序（AppInstallerPythonRedirector，跑起来无输出、错误码退出），找 Python 改为「PATH 与候选目录的全部同名程序逐个试跑 `import sys`」（`agents::resolve_binary_all`；macOS CLT 未装时跳过 `/usr/bin/python3` 不试跑，免弹系统窗）。**同日用户拍板「一键补齐」（Windows + Mac）**：缺 Python 时 DTO 带 `prereq: "python"`，按钮照给，先代装 Python（Windows `winget install Python.Python.3.13 --scope user --custom PrependPath=1`，不弹 UAC、排在应用商店占位前；macOS `brew install python`；无渠道给 python.org 出口），再一条 pip 把 PyMuPDF + Pillow 一起装（两行按钮前后端都互斥）；PEP 668 重试改带 `--user --break-system-packages`（旧的只加 `--user` 必然再失败）；Windows 候选目录补 `%LOCALAPPDATA%\Programs\Python\Python3xx` / `%ProgramFiles%\Python3xx`（新版本优先），装完不重启就能找到；PyMuPDF 探测优先 `import pymupdf`、旧版退 `fitz`，版本取末行（新版 `fitz` 导入先打弃用警告，曾被当成版本号）；设置页两行加白话用途（综述拼图：从 PDF 里裁图 / 把图排成一版）。本机实测：点一次装好 Python 3.13 + PyMuPDF 1.28.2 + Pillow 13.0.0，约 2 分钟。 **同日追加「用到时再装」的 Git / Node.js 收口**：①共用 `GitInstallOffer`（dep-install.tsx）——错误为「找不到 git 可执行文件」时就地一键安装，用在改动面板、科研步骤「历史」浮层、开步失败的项目页报错条（装好后前两者自动重读，开工提示再点一次）；Mac 无 brew 走 xcode 时只提示「已打开系统安装窗口」不报装好。②连接页缺 Node.js：记住要装的 Agent，Node 装好后清报错并自动接着弹该 Agent 的安装确认。③winget 装 Node.js 钉 `--scope machine`（其用户范围包是绿色解压版、没有 npm.cmd，winget 偏好用户范围时会被选中）；winget 系统级安装前先提示 UAC 要点「是」。④安装类子进程 PATH 前插程序所在目录（刚装的 Node 不在已运行 Mesa 的 PATH 上，npm postinstall 里的 `node` 会找不到）。⑤安装命令报错但程序已就位（winget「已安装/无可用升级」）按装好处理。⑥Windows 候选目录补 `%LOCALAPPDATA%\Programs\Git\cmd`。**未实测**：本机已装 Git / Node.js，拆掉会断开发环境，全新安装需在干净 Windows 与 Mac 上点验。 **同日 Windows 排查修复 python3**：`endnote.rs` / `research_quality.rs` / `zotero.rs` 原先先找 `python3`，Windows 上必中应用商店占位（python.org 只装 python.exe），EndNote 导出、Zotero 导出、复现检查装了 Python 照样失败（cargo test 4 项实证）；三处改走 `dep_check::usable_python()`（PATH 未刷新也靠候选目录找到）。技能 blender-research / endnote-bridge / zotero-sync / review-figures 标题下注明「Windows 上改用 python」，review-figures 的 `python` 统一为 `python3`（Mac 常无 `python`）；正文字体指令（manuscript-font.ts）同注。 **同日 Windows 全量排查修复（用户「全部修」，四组并行）**：①自绘标题栏回归——z-30 全屏页（流水线编辑器 / 历史 / 沉浸编辑）右上按钮压在窗口按钮下、z≥40 遮罩挡住窗口按钮，Windows 上一律从标题栏下沿起铺（沉浸阅读 `ccode-covers-titlebar` 豁免）；②WebView2 刷新 / 打印 / 查找 / Alt+←→ / 鼠标侧键与正式版默认右键收口（windows-shell.ts）；③内嵌终端 PowerShell `-ExecutionPolicy Bypass`，复制命令写 .exe/.cmd 绝对路径；④精确注意力 hooks 改 `.ps1 -File`，启动自动迁移旧写法；⑤人工事项勾选、交接摘要、产物清单的 `\?\` 前缀；⑥终端开在工作树里时拒绝归档 / 删除（Windows 删不掉会删一半）；⑦写配置有限重试、git longpaths、删除保护补 Windows 目录（AppData 整体保护但放行 %TEMP% 子路径）；⑧编码：卸载按退出码判、诊断 PowerShell 切 UTF-8、Python 子进程 UTF-8、clip.exe UTF-16；⑨MCP 的 npx.cmd 解析、外部 cmd 拉起引号与 `%`、配置 BOM；⑩端口监控 /T /F + IPv6、更新超时杀进程树、winget show 参数与超时、更新渠道识别、EndNote 启动不等待；⑪终端中文标点重复、Ctrl+C 复制后清选区、写 shell 用 `\r`、Win10 无 Mica 回实心底、收件箱重复、Finder/⌘ 文案、字体安装按钮；⑫「用系统应用打开」补 opener 打开路径权限（全平台）、`CLAUDE_CONFIG_DIR` 下技能目录（全平台）。验证：cargo test 1473 / npm test 1738 全过、生产构建通过；**界面点验未做**（实施时 Windows 锁屏）。规则沉淀见 conventions/environment.md「Windows 硬化规则」。PTY 命令失败且零输出时回报退出码。③安装日志刷屏：`` 改为拼接后再展开（`strip_ansi_keep_cr` + `collapse_cr`；`CSI G` 回第 1 列视同 ``），前端 `stream-text.ts` 同口径，依赖安装 / CLI 更新 / 字体安装三处日志共用。④zustand 5 选择器 `?? []` 每次新数组，`hiddenProfiles` 为 null 时项目页三组件一挂载就 Maximum update depth exceeded、应用起不来（跨平台潜伏 bug）：改共用 `selectHiddenProfiles` 回落模块常量，`tests/store-selector-lint` 钉住选择器里不写新建对象的缺省值。 |
+| 2026-10-19 | **依赖一键安装 Windows 实测三处修复 + 选择器死循环**。①Windows 的 TeX：winget 源里没有 Tectonic（`winget search tectonic` 无结果，原 `TectonicTypesetting.Tectonic` 一装即「找不到程序包」），改 `quarto install tinytex --no-prompt --update-path`（Quarto 官方推荐、渲染时自动补宏包；须先装 Quarto），Windows 候选目录补 `%APPDATA%`/`%ProgramData%` `TinyTeXinwindows|win32`；macOS 仍 brew tectonic 不变。②Python：Windows 未装 Python 时 PATH 上的 python 是应用商店占位程序（AppInstallerPythonRedirector，跑起来无输出、错误码退出），找 Python 改为「PATH 与候选目录的全部同名程序逐个试跑 `import sys`」（`agents::resolve_binary_all`；macOS CLT 未装时跳过 `/usr/bin/python3` 不试跑，免弹系统窗）。**同日用户拍板「一键补齐」（Windows + Mac）**：缺 Python 时 DTO 带 `prereq: "python"`，按钮照给，先代装 Python（Windows `winget install Python.Python.3.13 --scope user --custom PrependPath=1`，不弹 UAC、排在应用商店占位前；macOS `brew install python`；无渠道给 python.org 出口），再一条 pip 把 PyMuPDF + Pillow 一起装（两行按钮前后端都互斥）；PEP 668 重试改带 `--user --break-system-packages`（旧的只加 `--user` 必然再失败）；Windows 候选目录补 `%LOCALAPPDATA%\Programs\Python\Python3xx` / `%ProgramFiles%\Python3xx`（新版本优先），装完不重启就能找到；PyMuPDF 探测优先 `import pymupdf`、旧版退 `fitz`，版本取末行（新版 `fitz` 导入先打弃用警告，曾被当成版本号）；设置页两行加白话用途（综述拼图：从 PDF 里裁图 / 把图排成一版）。本机实测：点一次装好 Python 3.13 + PyMuPDF 1.28.2 + Pillow 13.0.0，约 2 分钟。 **同日追加「用到时再装」的 Git / Node.js 收口**：①共用 `GitInstallOffer`（dep-install.tsx）——错误为「找不到 git 可执行文件」时就地一键安装，用在改动面板、科研步骤「历史」浮层、开步失败的项目页报错条（装好后前两者自动重读，开工提示再点一次）；Mac 无 brew 走 xcode 时只提示「已打开系统安装窗口」不报装好。②连接页缺 Node.js：记住要装的 Agent，Node 装好后清报错并自动接着弹该 Agent 的安装确认。③winget 装 Node.js 钉 `--scope machine`（其用户范围包是绿色解压版、没有 npm.cmd，winget 偏好用户范围时会被选中）；winget 系统级安装前先提示 UAC 要点「是」。④安装类子进程 PATH 前插程序所在目录（刚装的 Node 不在已运行 Mesa 的 PATH 上，npm postinstall 里的 `node` 会找不到）。⑤安装命令报错但程序已就位（winget「已安装/无可用升级」）按装好处理。⑥Windows 候选目录补 `%LOCALAPPDATA%\Programs\Git\cmd`。**未实测**：本机已装 Git / Node.js，拆掉会断开发环境，全新安装需在干净 Windows 与 Mac 上点验。 **同日 Windows 排查修复 python3**：`endnote.rs` / `research_quality.rs` / `zotero.rs` 原先先找 `python3`，Windows 上必中应用商店占位（python.org 只装 python.exe），EndNote 导出、Zotero 导出、复现检查装了 Python 照样失败（cargo test 4 项实证）；三处改走 `dep_check::usable_python()`（PATH 未刷新也靠候选目录找到）。技能 blender-research / endnote-bridge / zotero-sync / review-figures 标题下注明「Windows 上改用 python」，review-figures 的 `python` 统一为 `python3`（Mac 常无 `python`）；正文字体指令（manuscript-font.ts）同注。 **同日 Windows 全量排查修复（用户「全部修」，四组并行）**：①自绘标题栏回归——z-30 全屏页（流水线编辑器 / 历史 / 沉浸编辑）右上按钮压在窗口按钮下、z≥40 遮罩挡住窗口按钮，Windows 上一律从标题栏下沿起铺（沉浸阅读 `ccode-covers-titlebar` 豁免）；②WebView2 刷新 / 打印 / 查找 / Alt+←→ / 鼠标侧键与正式版默认右键收口（windows-shell.ts）；③内嵌终端 PowerShell `-ExecutionPolicy Bypass`，复制命令写 .exe/.cmd 绝对路径；④精确注意力 hooks 改 `.ps1 -File`，启动自动迁移旧写法；⑤人工事项勾选、交接摘要、产物清单的 `\?\` 前缀；⑥终端开在工作树里时拒绝归档 / 删除（Windows 删不掉会删一半）；⑦写配置有限重试、git longpaths、删除保护补 Windows 目录（AppData 整体保护但放行 %TEMP% 子路径）；⑧编码：卸载按退出码判、诊断 PowerShell 切 UTF-8、Python 子进程 UTF-8、clip.exe UTF-16；⑨MCP 的 npx.cmd 解析、外部 cmd 拉起引号与 `%`、配置 BOM；⑩端口监控 /T /F + IPv6、更新超时杀进程树、winget show 参数与超时、更新渠道识别、EndNote 启动不等待；⑪终端中文标点重复、Ctrl+C 复制后清选区、写 shell 用 `\r`、Win10 无 Mica 回实心底、收件箱重复、Finder/⌘ 文案、字体安装按钮；⑫「用系统应用打开」补 opener 打开路径权限（全平台）、`CLAUDE_CONFIG_DIR` 下技能目录（全平台）。验证：cargo test 1473 / npm test 1738 全过、生产构建通过；**界面点验未做**（实施时 Windows 锁屏）。规则沉淀见 conventions/environment.md「Windows 硬化规则」。PTY 命令失败且零输出时回报退出码。③安装日志刷屏：`
+` 改为拼接后再展开（`strip_ansi_keep_cr` + `collapse_cr`；`CSI G` 回第 1 列视同 `
+`），前端 `stream-text.ts` 同口径，依赖安装 / CLI 更新 / 字体安装三处日志共用。④zustand 5 选择器 `?? []` 每次新数组，`hiddenProfiles` 为 null 时项目页三组件一挂载就 Maximum update depth exceeded、应用起不来（跨平台潜伏 bug）：改共用 `selectHiddenProfiles` 回落模块常量，`tests/store-selector-lint` 钉住选择器里不写新建对象的缺省值。 |
 | 2026-10-18 | **编程页分支地图（用户截图：要清楚体现复杂的分支关系和状态、保持美观；领先落后进度条不美观）**。规则：①领先/落后只相对基准算 → 工作树与本地分支合成一棵以基准为根的树（`arrangeBranchMap`），节点形状表位置（基准环+芯 / 已检出实心 / 未检出空心）、颜色表活动（空闲 / Agent 在跑 / 冲突），圆角肘线挂主干；②**撤掉双向进度条**（取代 2026-09-07 `codingDivergenceBar`），改写「比 <基准> 领先 N · 落后 M 个提交」（GitHub 中文口径），只有落后数着 warn 色；③其余 git 事实语义色只给图标、正文中性、不铺胶囊底（整行琥珀色让什么都不突出）；④「本地分支」区并入地图：已检出分支只出现一次，未检出收末尾折叠头（≤3 默认展开），「合并进 <基准>」随工作树卡 ⋯；⑤身份段不再重复「基准 X」，孤立的「为 X 建工作树」与「主仓不在基准」芯片收进地图根行。细则 design-system.md / coding-git.md §4。 |
 | 2026-10-18 | **工作副本家目录可自定义（用户：Windows 缓存越用越多撑满 C 盘；「只做工作副本根目录」）**。设置 → 数据与存储 →「工作副本位置」选目录 `B`，此后新建的编程工作树 / 科研工作副本 / 定时隔离树落 `B/ccode/{worktrees,workspaces,watch-worktrees}`。**保留 `ccode` 这一层**：`runs.rs` / `run-model.ts` 靠路径片段 `/ccode/workspaces/` 等推断任务类型，不能因挪位置失灵。**只管新建、不自动搬**：已有树的路径在库里，原地照常用（git 工作树带内部路径引用，悄悄搬会坏）；换位置后旧位置仍在「本机占用」里单列「旧位置」让人看见 C 盘还剩什么，走项目页归档/删除释放。**红线**：①所有「在哪新建」走 `ccode_home::current()`，所有「是不是 Mesa 自己的路径」类判定（会话归并编程树、watch 会话兜底标 internal、recent_repos 排除、卸载、定时任务删除时清隔离树）走 `all_roots()/all_sub()`（当前根 + 曾用根 + 默认根），漏一处就会让旧位置的树被当成普通项目或清不掉；②自定义位置不可用（盘没挂上）时**不悄悄回落 C 盘**，建目录处报错，免得两处各放一半；③只经 `set_workspace_root` 写（校验：绝对路径、非盘根、不落进 `~/ccode` 或配置目录、可写探测），`update_settings` 的 merge 不搬运这两个字段；④`workspace_root_history` 记曾用基目录（封顶 8），换位置/恢复默认时旧值入名单、新值出名单。**不动**：Mesa 数据（`%APPDATA%\ccode`，app.db/密钥/锁都在里面，56 处直读平台配置目录，改整体位置风险大）、`scratch`（快速开聊历史按 `~/ccode/scratch` 列）、`reproductions`（复现输出受「须在受管目录内」校验）、`%LOCALAPPDATA%\ccode\task-runs`（普通目标副本，有自己的清理入口）、各家 CLI 自己的会话目录。 |
 | 2026-10-17 | **开工确认弹层重排 + 上游未保存提醒（用户截图「开工卡片的 UI 优化一下」）**。截图暴露三类问题：①**流程**——检索步待评审时开精读，「已有材料」只列项目里的旧清单（included.md 6 篇、included.json 还没有），新清单 191 篇还在检索工作区，弹层不点破，人会读着旧清单开工；②**同一事实说两遍**——「所选 Agent 的技能与工具」整块只说 lit-notes 已启用，下面「技能」又列一遍；③**版式**——标签各占一行、间距各异，「已有材料」芯片因全站 `button { font: inherit }` 吞掉 text-micro 比「本步产物」大一号，弹层容器的 title 悬浮「工作区 lit-notes」压在任务书正文上。改：上游未保存软门（`unsavedUpstreamSteps`，必读输入与前面进行中/待评审/有冲突步骤的预期产物重叠即报，置顶 + 去评审/去处理冲突，与收尾软门共用二击「仍要开工」，不阻断，守 R6）；技能预检就绪时收成一行小字；标签列版式 读入→产出→执行→思考档→技能→权限→任务书（「已有材料/本步产物」改名「读入/产出」并按先读后写排序）；工作区名移到标题行。用临时 harness + 17575 Vite + headless Chrome 截真组件核过两态（上游未保存 / 技能缺口）。全站按钮字号被吞的问题未在本批处理（另起任务）。 |

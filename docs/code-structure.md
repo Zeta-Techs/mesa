@@ -30,8 +30,14 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # ResearchToolPreflight（开工技能/工具只读预检：全部就绪只出一行「已启用到 X」，有缺口才展开带分发/重测的块）、
                              # StepSkillsChips（步骤推荐技能 chip 区：只读/可编辑两态 + 产物冲突/跨步骤链路 ⚠ 警告行；bare = 不画标题行，供开工弹层标签列用）、
                              # HumanTasksList（人工事项清单 + useHumanTasks 共享逻辑；待确认清完且未手动取消才自动勾）、StepFlow（步骤内协同流程线；付费墙行已登录显示「已登录」，未登录才是「登录学校账号」；拖进待获取清单按文件名、DOI 和 PDF 内标题对条目）、
-                             # ScheduleSection（定时任务：有流程在项目设置抽屉；无流程主区雷达下；编程/办公右侧会话栏；
-                             #   onSchedulesChanged = 任务集变更回调，定时任务页里喂 ProjectSchedulesView 的版本号桥）、
+                             # ScheduleSection（定时任务：唯一挂载点是项目「定时任务」页签 ProjectSchedulesView；
+                             #   onSchedulesChanged = 任务集变更回调，定时任务页里喂 ProjectSchedulesView 的版本号桥；
+                             #   2026-10-23：CadenceFields 五种周期（每天/工作日/每周/每 N 小时/仅手动）三个弹层共用；行内「下次 …」、
+                             #   已自动暂停 + 重新打开；历史行跳过 ↷ / 无新内容淡显不给去评审 / 补跑·手动小标 / 看过程（setOpenSessionReq）；
+                             #   ⋯ 带附言运行（RunWithNoteModal）、跨轮记忆（MemoryModal，仅非雷达）；编辑弹层管积压闸门与单次上限；
+                             #   落盘弹层预填 AI 周期建议；showOthers = 底部「其他项目的定时任务」只读总览，只 ProjectSchedulesView 开；
+                             #   同日使用收口：workMode 定新建默认种类（非科研不列文献雷达）与空态示例；行上去掉技能名和连接下拉，
+                             #   第二行「上次 …」带去评审 / 看过程；运行配置收进「更多设置」；新建 / 落盘后 trialFor 提示试跑）、
                              # LitWatchCard（「◔ 文献雷达」卡片：近 8 周趋势（全部缺巡检日时可按巡检日补记）+
                              #   命中固定两行（标题一行；第二行摘要+徽章+日期+加入积累，解读/来源/⋯ 悬停才现；无获取全文）+
                              #   书标三态：加入积累只写账不跳转；已积累点击＝展开「积累 N」抽屉定位该篇（移出只走抽屉 ✕）；
@@ -314,10 +320,6 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   md-pdf-refs.ts             # md 阅读视图里把 p.3/第 3 页/Fig. 2/Table 1 包成可点引用（每次布局幂等重扫，跳过 a/code/公式；
                              # 标注行/译段引用块带上原文）+ 点中取跳转请求 + focusMdText（滚到含某段文字的块并闪）；
                              # 只在阅读区笔记栏接线（FilePreviewEditor onPdfRef/focusText）（tests/reader-note.test.ts）
-  doc-thumb.ts               # 聊天附件文件卡：哪些能出预览（docThumbKind）、类型字（docTypeLabel）、HTML 排进一张纸出 SVG foreignObject 图片地址（htmlPageThumb）、表格前几行（read_sheet_preview）；
-                             #   docThumb 按类型分派，pdf.js / mammoth 各自动态 import
-  docx-thumb.ts              # Word（docx）附件首页预览：read_docx_bytes → mammoth → sanitizeDocumentHtml → htmlPageThumb
-  pdf-thumb.ts               # 聊天附件卡的 PDF 首页缩略图（read_pdf_bytes + pdf.js 画第一页出 data URL，失败 null）；输入框按需动态 import，不进主包
   pdf-search.ts              # PDF 文本检索纯逻辑（2026-10-18）：页文本组装与归一（文本项原样拼、行尾补空格、断词复原、
                              # 大小写/弯引号/短横线/连字）——页级计数与页内高亮同一口径；命中→文本项分段、同行碎矩形合并、
                              # 标注重定位候选 quoteSearchCandidates（原样→去词内连字符→前 60 字）、图表定位 locateFigure（行首图注优先）、
@@ -372,10 +374,18 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   skill-conflicts.ts         # 技能接口对账纯逻辑：产物冲突（skillOutputConflicts，outputs 两两相交）+
                              # 跨步骤链路（skillChainWarnings：inputs 找供给/outputs 对账预期产物，
                              # 支持 * 通配与目录/文件互含，推断接口打标；tests/skill-conflicts.test.ts）
-  schedule-tasks.ts          # 定时任务纯逻辑：周期白话/相对时间/按 projectRoot 过滤（tests/schedule-tasks.test.ts）
+  schedule-tasks.ts          # 定时任务纯逻辑：周期白话/相对时间/按 projectRoot 过滤（tests/schedule-tasks.test.ts）；
+                             # 2026-10-23：周期闭集与间隔/上限选项、slotLabel/nextRunLabel、跳过白话与悬停提示、补跑小标、
+                             # 无新内容不通知（shouldNotifyRunDone）、补跑通知文案、待处理「定时任务」候选（scheduleInboxCandidates：
+                             # 其他巡检待评审只认 noop===false 的新记录 + 自动暂停）、其他项目总览过滤；
+                             # lastRunBrief / lastRunAction：任务行「上次 …」一句话与入口；
+                             # workbenchScheduleRows：工作台右栏「定时任务」摘要（在跑 / 上次失败未暂停 / 24h 内前三条，WorkbenchPage 消费）
   schedule-skill.ts          # 定时巡检种类：文献雷达 + 分类「巡检」的技能；新建种子 prompt / 草稿路径
+                             # （给了 scheduleRelPath 时种子请 AI 顺带写周期建议 JSON，2026-10-23）；
+                             # defaultScheduleKind / scheduleExamples：按工作方式给新建默认种类与空态示例
                              # （value 用目录名不是 UUID；tests/schedule-skill.test.ts）
   inbox.ts                   # 收件箱分类胶囊纯逻辑：key 前缀→类别、分组、help dismiss 签名、人工请求通知 edge-trigger（tests/inbox.test.ts）；
+                             #   sched: = 「定时任务」类（其他巡检待评审 / 自动暂停，不进一键已读；2026-10-23）；
                              #   phone: 类别（从手机添加还没处理的）与 update: 一样由 store.ts visibleInboxItems 现算合并
   app-update.ts              # 应用自更新展示纯逻辑：收件箱字段/合并、检查失败文案、http(s) 代理、下载进度
   app-update-install.ts      # 「下载并安装」hook（设置→更新与帮助菜单更新弹窗共用）：先查后台任务要人点头、进度累计、成功 relaunch；模块级闸防双下载
@@ -422,7 +432,6 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   workspace-visibility.ts    # 聚焦步骤工作区可见性过滤纯逻辑（不匹配任何步骤的手动工作区始终可见，
                              # tests/workspace-visibility.test.ts）
   git-commit-message.ts      # 空提交信息的本地默认信息生成
-  diff-intraline.ts          # 改动面板（GitPanel）diff 纯逻辑：块头白话「第 N 行 · 上下文」、成对删加行的行内高亮区间（去同头同尾，整句重写不标）；评审页 diff 解析在 diff-view.ts
   main-history-save.ts       # 科研步骤卡一键「存进历史」：冲突拦截 / 白话说明 / 路径（tests/main-history-save.test.ts）
   text-fences.ts             # 纯文本消息（用户气泡）的围栏代码拆分 splitFenced：只认行首的 ``` / ~~~，行中间的三个反引号是行内写法不开围栏（旧实现按任意位置切会吞掉后面整段）；未收尾按代码到结尾（tests/text-fences.test.ts）
   chat-reply.ts              # 聊天长回复按小标题分段（带级别；识别代码围栏；有 ## 时冒号行不当标题）、正文里像文件路径的段（fileRefPath /
@@ -1034,7 +1043,8 @@ src-tauri/src/
                              #   命中存绝对路径 + cwd 规范化、不命中 fail-open 收进清单，分发试解失败才拒写）+
                              #   命令路径探测 mcp_command_path_status（ok/relative/missing 闭集，$VAR 引用不判）+
                              #   resolve_mcp_command_fix 一键修复候选（origin 推断来源 agent）
-  internal_sessions.rs       # Mesa 内部对话保留期清理：统计 / 立即清理 / 开机后台每日一次；只删 internal + ccode-ai 临时目录或雷达隔离目录 + 未保留，
+  internal_sessions.rs       # Mesa 内部对话保留期清理：统计 / 立即清理 / 开机后台每日一次；只删 internal + ccode-ai 临时目录或雷达隔离目录 + 未保留
+                             # + 定时历史没引用（scheduler::referenced_sessions，「看过程」要用；2026-10-23），
                              # 永久删除、用量行保留；顺扫 ~/.claude/projects 下 ccode-ai 空壳目录（2026-10-17）
   usage.rs                   # 用量统计（§6.11）：usage 事件提取、usage_daily 按天聚合、任务成本归因、订阅口径、
                              # rebuild_locked 进程互斥（DELETE→upsert 非事务，并发双跑会 ON CONFLICT 累加翻倍，
@@ -1217,6 +1227,7 @@ src-tauri/src/
                              #   （引导重设全局默认），网关自己拒 = 密钥错（引导重填），该判定必须先于 401+unauthorized
                              #   归官方账号失效的笼统分支；
                              # headless_task_args/run_agent_task 供 scheduler 复用（定时任务要写项目文件，codex 用 -s workspace-write）；
+                             #   run_agent_task 收尾时把会话 id（锁定的 --session-id 或输出里抠到的）记到 Run 上（定时历史「看过程」用）；
                              # 会话自动命名（ai_auto_title_session early/final + ai_retitle_all_sessions 补名去重）：
                              #   settings::auto_title_sessions_enabled 关 = 两命令入口直接跳过（最终闸门在此，前端跳过只为省白跑），
                              #   补名批循环逐轮复查闸门（中途关掉即停）；retitle impl 闸门收进参数是关停语义的单测锚点
@@ -1231,6 +1242,15 @@ src-tauri/src/
                              # RunRecord.newEntries 新命中计数；2026-09-29 起界面不再写关联步骤，保存时清掉旧 linkedStep
                              # （跑 lit-watch 前后数 inbox.md `## ` 标题数取差，超时/失败不记；项目配了雷达筛选时
                              # 前后各数一次过滤后条目取差，推送/收件箱胶囊只算符合筛选的）
+                             # 2026-10-23 运行管理（细则 pipeline.md「定时雷达 · 运行管理」）：Cadence/latest_slot/next_slot 五种周期；
+                             # last_slot_at + apply_skip 跳过记账（同因合并、同刻幂等）；classify_trigger 准点/补跑（应用没开、电脑睡过）+
+                             # missed_before 只数 7 天；run_context_prompt 把原定时刻/上次成功/附言写进任务说明；RunRecord 记 agent+session_id
+                             # （referenced_sessions 给内部对话清理豁免）、noop、trigger、note；gate_reason 积压闸门（只认带 trigger 的新记录）；
+                             # apply_run_record 定时触发连续 3 次失败 / 钉的连接被删 → 自动暂停，reenable 清原因并把已处理拨到当前；
+                             # AwakeGuard 运行期间防空闲睡眠（macOS caffeinate -w / Windows SetThreadExecutionState）；
+                             # 跨轮记忆 .ccode/watch/<id>/memory.md（seed_memory 新者为准、adopt_memory 采纳带回、schedule_memory_read/write）；
+                             # run_schedule_now(note)；每任务 timeout_minutes；草稿 .schedule.json 周期建议（read_schedule_suggestion 闭集校验，
+                             # commit_watch_skill_draft 收人确认的周期）
   lit_watch.rs               # 文献雷达应用层（v3.95）：巡检产物解析 DTO（notes/inbox.md 有效文献块含 watch-run 批次标记日期、上限 500 条；
                              # 漏写批次时 stamp_undated_inbox 只插入标记行：冻结前按本次完成日、打开雷达时按最近已采纳成功巡检；
                              # repair_watch_batch_dates 供空态「按巡检日补记」，已有任一条带日期则不写；
@@ -1328,9 +1348,7 @@ src-tauri/src/
                              #   两百篇带摘要的纳入清单就超；台账读写禁止回落预览通道
                              #   家目录直下系统目录标 isSystem 供前端置灰）
   pdf.rs                     # PDF/docx 字节读取：read_pdf_bytes 白名单 + canonicalize + 上限，base64 传输
-                             #   （白名单根含 ccode/tmp 粘贴图与 phone_drop 暂存区，精确路径含 attach_grants 登记的文件）
-  attach_grants.rs           # 用户亲手交来的文件（拖进窗口的原生事件 / pick_attachment_files 选择器）进程内登记，供读取白名单按精确路径放行；
-                             #   前端传来的路径不登记（红线）
+                             #   （白名单根含 ccode/tmp 粘贴图与 phone_drop 暂存区）
   phone_drop.rs              # 从手机添加（2026-10-20，docs/design-phone-drop.md；安全口径 safety.md 同名条）：人点了才在各张局域网
                              #   网卡的私网 IPv4 上同端口起 tiny_http 收件服务（单线程轮询；令牌在路径、Host 校验、错令牌/未知路径同一个 404、只收不出），
                              #   2026-10-21 记住这台手机：/p/<配对令牌>/ 扫码即配对（pair）→ /d/<设备令牌>/ 主屏网页；配对簿
@@ -1354,6 +1372,7 @@ src-tauri/src/
   updater.rs                 # CLI 安装/更新（brew TUNA、npm_for 同目录 npm、Windows winget 渠道：claude/codex/opencode/kimi/grok 五家有官方包）+ 应用自身 Tauri updater；
                              #   run_streaming_pty/run_streaming/emit_done/winget_args 为 pub(crate)，dep_check 复用同一管线
   watch_review.rs            # 定时巡检产物评审：工作目录可复用，但评审和采纳只读每次执行冻结的副本
+                             #   （freeze_at 返回这轮改动数＝契约文件变化 + 新 PDF，0 = 无新内容；2026-10-23）
                              #   （2026-10-13 起：new_hits_of 评审只列该次新命中=after−initial；watch_run_decide 校验冻结证据并对已采纳运行拒绝；
                              #   决定存隔离树 .ccode/watch-review.json，文件损坏时写入 fail-closed）
                              #   **采纳按条目追加合并**（2026-10-17）：四类台账 ledger_merge＝主仓当前 + 本轮新增

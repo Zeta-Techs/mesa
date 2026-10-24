@@ -1290,41 +1290,6 @@ fn review_diff_for_run(wt: &str, run: &crate::runs::RunDto) -> Result<WorkspaceD
     })
 }
 
-/// 这个目录是不是 `git worktree add` 出来的工作树（不是仓库的主工作树，也不是非 git 目录）。
-/// 用户在自己项目里开的聊天也会登记 Run（隔离路径 = 项目根），只按路径找 Run 会把主仓的改动面板
-/// 当成「Run 评审」：头部写「相对主分支 HEAD」、勾选框消失、提交数对不上（2026-10-23 用户截图）。
-/// 只有隔离出来的工作树（定时 / 无头 / 目标）才走 Run 评审；非 git 目录评审出来也是空的，
-/// 还白读一遍全部 Run（几千行）拖慢改动面板第一次出数（同日「接着聊时分支改动不会一下显示」）。
-fn is_linked_worktree(wt: &str) -> bool {
-    let Ok(out) = run_git(wt, &["rev-parse", "--git-dir", "--git-common-dir"]) else {
-        return false;
-    };
-    if !out.status.success() {
-        return false;
-    }
-    let text = String::from_utf8_lossy(&out.stdout);
-    let mut lines = text.lines();
-    let (Some(dir), Some(common)) = (lines.next(), lines.next()) else {
-        return false;
-    };
-    // 两行可能一相对一绝对（从子目录调用时），拼到 wt 上再规范化比
-    let abs = |p: &str| {
-        let path = std::path::Path::new(wt).join(p.trim());
-        std::fs::canonicalize(&path).unwrap_or(path)
-    };
-    abs(dir) != abs(common)
-}
-
-/// 按路径找可以只读评审的 Run：路径相同、且是隔离出来的工作树
-fn review_run_for_path(wt: &str) -> Result<Option<crate::runs::RunDto>, String> {
-    if !is_linked_worktree(wt) {
-        return Ok(None);
-    }
-    Ok(crate::runs::run_list(None)?
-        .into_iter()
-        .find(|run| crate::paths::same_path(&run.isolation_path, wt)))
-}
-
 /// 累计任务改动 = diff merge-base（已提交 + 未提交的已跟踪部分）+ 未跟踪文件行数。
 /// rows 参数化以便测试注入；命中不到工作区时返回默认（前端回落普通 git_status）
 fn find_worktree_row<'a>(
@@ -1433,8 +1398,11 @@ pub async fn workspace_diff(worktree_path: String) -> Result<WorkspaceDiffDto, S
             return Ok(diff);
         }
         let wt = expand_tilde(&worktree_path);
-        review_run_for_path(&wt)?
-            .map(|run| review_diff_for_run(&wt, &run))
+        let runs = crate::runs::run_list(None)?;
+        let run = runs
+            .into_iter()
+            .find(|run| crate::paths::same_path(&run.isolation_path, &wt));
+        run.map(|run| review_diff_for_run(&wt, &run))
             .unwrap_or(Ok(diff))
     })
     .await
@@ -1491,7 +1459,10 @@ pub async fn workspace_file_diff(worktree_path: String, path: String) -> Result<
         let current = workspace_diff_with_rows(&wt, &rows)?;
         let row = find_worktree_row(&wt, &rows);
         if row.is_none() {
-            let run = review_run_for_path(&wt)?.ok_or("该目录不在任何工作区或 Run 隔离树内")?;
+            let run = crate::runs::run_list(None)?
+                .into_iter()
+                .find(|run| crate::paths::same_path(&run.isolation_path, &wt))
+                .ok_or("该目录不在任何工作区或 Run 隔离树内")?;
             let review = review_diff_for_run(&wt, &run)?;
             if !review.files.iter().any(|file| file.path == path) {
                 return Err(format!(
@@ -2147,12 +2118,6 @@ mod tests {
         // 非工作区路径：in_workspace=false，前端回落普通 git_status
         let outside = workspace_diff_with_rows(repo.to_str().unwrap(), &rows).unwrap();
         assert!(!outside.in_workspace);
-        // 主工作树不走 Run 评审（项目里开的聊天也登记 Run，隔离路径就是项目根）；隔离出来的工作树才走
-        assert!(!is_linked_worktree(repo.to_str().unwrap()));
-        assert!(is_linked_worktree(wt.to_str().unwrap()));
-        fs::create_dir_all(repo.join("sub")).unwrap();
-        assert!(!is_linked_worktree(repo.join("sub").to_str().unwrap()), "从子目录看也认得出主工作树");
-        assert!(!is_linked_worktree(dir.to_str().unwrap()), "非 git 目录不走 Run 评审");
         git(
             &repo,
             &["worktree", "remove", "--force", wt.to_str().unwrap()],

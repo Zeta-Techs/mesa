@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import {
+  AlarmClock,
   CheckCheck,
   ChevronRight,
   CircleDot,
@@ -31,6 +33,7 @@ import type {
   ProjectStepDto,
   RepoDto,
   RunDto,
+  ScheduleDto,
   TaskDto,
   WorkspaceDto,
 } from "../types";
@@ -76,6 +79,7 @@ import {
   secondaryActionClass,
 } from "../components/PageFrame";
 import { toast } from "../toast";
+import { workbenchScheduleRows } from "../schedule-tasks";
 
 const iconClass = "shrink-0 text-l4";
 /** 工作方式标签：描边不铺底（铺 bg-strip 在 well 上看不出边界，像一段错位的字） */
@@ -155,6 +159,7 @@ function WorkbenchPage({
   const setSelectProjectReq = useAppStore((s) => s.setSelectProjectReq);
   const setTaskReviewReq = useAppStore((s) => s.setTaskReviewReq);
   const setFocusTabReq = useAppStore((s) => s.setFocusTabReq);
+  const setProjectFocusReq = useAppStore((s) => s.setProjectFocusReq);
 
   function openRun(runId: string, tabId?: string) {
     if (tabId && terminalRunInputs.some((run) => run.tabId === tabId)) {
@@ -190,6 +195,8 @@ function WorkbenchPage({
     {},
   );
   const [userTasks, setUserTasks] = useState<TaskDto[]>([]);
+  /** 定时任务全集（list_schedules）：工作台「定时任务」摘要的数据源，筛选口径在 schedule-tasks.ts */
+  const [schedules, setSchedules] = useState<ScheduleDto[]>([]);
   /** 「待你处理」默认只列 5 条，展开后全列出（页内展开，不跳收件箱浮层） */
   const [inboxExpanded, setInboxExpanded] = useState(false);
   const [lastSaid, setLastSaid] = useState<Record<string, LastSaid | null>>({});
@@ -241,6 +248,37 @@ function WorkbenchPage({
       .then(setAllRuns)
       .catch(() => setAllRuns([]));
   }, [visible, runCwdSig, reloadToken]);
+
+  // 定时任务摘要：可见时拉一次；拉起 / 跑完 / 采纳时重拉；每分钟刷一次让「接下来」滚动
+  useEffect(() => {
+    if (!visible) return;
+    let stale = false;
+    const load = () => {
+      invoke<ScheduleDto[]>("list_schedules")
+        .then((list) => {
+          if (!stale) setSchedules(list);
+        })
+        .catch(() => {
+          /* 摘要是附加信息：读不到就不显示，下轮再试 */
+        });
+    };
+    load();
+    const timer = window.setInterval(load, 60_000);
+    const unlisteners: Array<() => void> = [];
+    for (const event of ["scheduler-run-started", "scheduler-run-done", "watch-run-adopted"]) {
+      listen(event, load)
+        .then((u) => {
+          if (stale) u();
+          else unlisteners.push(u);
+        })
+        .catch(() => {});
+    }
+    return () => {
+      stale = true;
+      window.clearInterval(timer);
+      unlisteners.forEach((u) => u());
+    };
+  }, [visible, reloadToken]);
 
   // 逐项目的重活（编程项目跑 git、科研项目读档案卡）：只在项目集合变化、有运行跑完、
   // 回到本页或点重试时拉；失败按类合成一条提示，不再一个项目弹一条
@@ -739,8 +777,15 @@ function WorkbenchPage({
 
   const hasInbox = inboxItems.length > 0;
   const reviewTasks = userTasks.filter((task) => task.status === "pending_review");
-  /** 右栏「等你的事」：待你处理 + 待你验收，有一样就分两栏 */
-  const hasSide = hasInbox || reviewTasks.length > 0;
+  // 定时任务摘要：在跑 / 上次失败 / 24 小时内要跑的；暂停与待评审已在「待你处理」里，不重复
+  const scheduleRows = workbenchScheduleRows(schedules, projects, new Date(), IS_WINDOWS);
+  /** 右栏「等你的事」：待你处理 + 待你验收 + 定时任务，有一样就分两栏 */
+  const hasSide = hasInbox || reviewTasks.length > 0 || scheduleRows.length > 0;
+  function openProjectSchedules(root: string) {
+    setSelectProjectReq(root);
+    setProjectFocusReq({ projectRoot: root, focus: "schedule", token: Date.now() });
+    setPage("workspaces");
+  }
   // 信息类（可一键已读）之外的条目要人拍板：按钮常驻，不靠悬停才现
   const bulkKeys = new Set(bulkInboxItems.map((item) => item.key));
   const tabCwds = Object.fromEntries(
@@ -1234,6 +1279,48 @@ function WorkbenchPage({
                 </button>
               );
             })}
+          </div>
+        </section>
+        )}
+
+        {scheduleRows.length > 0 && (
+        <section className="min-w-0">
+          <SectionHeading icon={AlarmClock} title="定时任务" />
+          <div className="space-y-0.5">
+            {scheduleRows.map((row) => (
+              <button
+                key={row.scheduleId}
+                type="button"
+                className="group flex min-h-10 w-full items-center gap-2 rounded-md px-2.5 text-left transition-colors hover:bg-hover"
+                title={
+                  row.kind === "failing"
+                    ? `${row.remaining != null ? `再失败 ${row.remaining} 次会自动暂停。` : ""}点进去看历史和过程`
+                    : "去这个项目的定时任务页"
+                }
+                onClick={() => openProjectSchedules(row.projectRoot)}
+              >
+                <span
+                  className={`size-1.5 shrink-0 rounded-full ${
+                    row.kind === "running"
+                      ? "bg-ok-text"
+                      : row.kind === "failing"
+                        ? "bg-err-text"
+                        : "bg-transparent"
+                  }`}
+                />
+                <span className="min-w-0 flex-1 truncate text-sm text-l2">{row.name}</span>
+                <span className="max-w-[8rem] shrink-0 truncate text-micro text-l3">
+                  {row.projectName}
+                </span>
+                <span
+                  className={`max-w-[12rem] shrink-0 truncate text-micro ${
+                    row.kind === "failing" ? "text-err-text" : "text-l3"
+                  }`}
+                >
+                  {row.detail}
+                </span>
+              </button>
+            ))}
           </div>
         </section>
         )}

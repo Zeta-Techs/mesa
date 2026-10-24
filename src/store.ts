@@ -419,6 +419,7 @@ export interface InboxItem {
     | { type: "artifacts"; workspaceId: string }
     | { type: "project"; projectRoot: string }
     | { type: "litWatch"; projectRoot: string }
+    | { type: "schedules"; projectRoot: string }
     | { type: "help"; projectRoot: string }
     | { type: "run"; runId?: string; tabId?: string }
     | { type: "settings"; section: string }
@@ -580,6 +581,16 @@ export function runInboxAction(item: InboxItem) {
     s.setProjectFocusReq({
       projectRoot: act.projectRoot,
       focus: "lit",
+      token: Date.now(),
+    });
+    s.setPage("workspaces");
+  } else if (item.action.type === "schedules") {
+    // 定时任务条目（自动暂停 / 其他巡检待评审之外的去处）：进项目「定时任务」页签
+    const act = item.action;
+    s.setSelectProjectReq(act.projectRoot);
+    s.setProjectFocusReq({
+      projectRoot: act.projectRoot,
+      focus: "schedule",
       token: Date.now(),
     });
     s.setPage("workspaces");

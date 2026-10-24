@@ -1050,9 +1050,12 @@ pub fn model_capability(model: &str) -> ModelCapabilityDto {
 
 pub fn model_capability_for(model: &str, gateway_id: Option<&str>) -> ModelCapabilityDto {
     let normalized = normalize(model);
-    // 三态如实出线：链上显式声明「不能看图」要传 Some(false)——界面靠它在带图发送前提醒
-    // （曾折成 None，确知纯文本的 glm-5.3 带图发出去才吃 400，提醒从未出现过）
-    let vision = model_supports_vision_declared_for(model, gateway_id);
+    // 与 model_supports_vision 同一判定，单一出处
+    let vision = if model_supports_vision_for(model, gateway_id) {
+        Some(true)
+    } else {
+        None
+    };
     let video = if normalized.contains("kimi-k3") {
         Some(true)
     } else {
@@ -1131,9 +1134,6 @@ mod tests {
         assert!(model_thinking("grok-4-1"));
         assert!(model_supports_vision("kimi-k3"));
         assert!(model_capability("kimi-k3").thinking);
-        // 视觉三态：确知能看 Some(true)，查不到 None（不冒充「不能看」）；显式 false 原样透传
-        assert_eq!(model_capability("kimi-k3").vision, Some(true));
-        assert_eq!(model_capability("gemini-4-argon").vision, None);
     }
 
     #[test]

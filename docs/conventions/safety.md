@@ -162,7 +162,8 @@
      双校验堵 symlink 绕过）；
   6. **内部对话保留期清理**（2026-10-17，`internal_sessions.rs`）：设置「数据与存储」的自动清理开关（默认开、保留 30 天）
      或「立即清理」即用户授权。目标三条件同时成立：provenance/会话 meta 标为 internal、cwd 是 `ccode-ai-<uuid>`
-     临时目录或定时雷达隔离 worktree 根下、未 pin；时间不明 / 源文件已不在（只剩快照）一律不删。删除复用会话删除的
+     临时目录或定时雷达隔离 worktree 根下、未 pin；时间不明 / 源文件已不在（只剩快照）一律不删；**定时任务历史还引用着的
+     （「看过程」入口，`scheduler::referenced_sessions`，2026-10-23）也不删**，掉出 20 条历史后照常到期。删除复用会话删除的
      白名单校验（`deletable_session_file`），但**永久删除**（`delete_source_file_mode(.., true)`）——成千上万条逐个进
      回收站既慢又塞满回收站；session_meta 与搜索索引随删，用量行刻意保留。另扫 `~/.claude/projects` 下名字以
      `ccode-ai-<uuid>` 结尾、无任何 .jsonl、一天内未改动的空壳目录。2026-10-17 在真实数据副本（HOME 指向 /tmp 拷贝）
@@ -226,9 +227,7 @@
 - **GitHub Desktop 只走文档化 CLI**：`coding_open_desktop(repo_path, path)` 现场 `git worktree list` + `same_path`，只打开本仓工作树。argv 锁死 `github <absPath>`（`resolve_binary`，没有则用应用捆绑的 `github.sh` / Windows `%LOCALAPPDATA%\GitHubDesktop\bin`）；不对 CLI 传 `--cli-open`，不走已删除的 `x-github-client://openLocalRepo`，Windows **不**给 `GitHubDesktop.exe` 传路径。macOS 再回落必须 `open -n <GitHub Desktop.app> --args --cli-open=<path>`（与官方 cli.js 相同；`open -a` 不加 `-n` 只激活窗口不切仓）。禁止给 WebView 开 `opener:allow-open-path` 或自定义协议。`gh` / `github.bat` 走 `background_command`（Windows `CREATE_NO_WINDOW`）。
 - **PDF 预览（P2a）**：pdf.js 渲染器必须随 PdfPreview 组件动态 import 拆独立 chunk（禁进主包）；`read_pdf_bytes` 只放行五类
   白名单（注册项目登记资源/注册项目根/工作区·仓库根/终端标签 cwd hint/Mesa 自管剪贴板图片目录 `<config>/ccode/tmp`
-  ——paste-* 写入侧已有扩展名白名单 + 50MB 上限 + 7 天清理），外加「用户亲手交来的文件」精确路径（2026-10-23，
-  `attach_grants.rs`：只认原生拖放事件与 Rust 侧弹的附件选择器 `pick_attachment_files`，进程内、只收文件、不落盘；
-  **禁止加「前端传路径就登记」的命令**，那等于取消白名单），canonicalize 后判定，传输用 base64 字符串（macOS
+  ——paste-* 写入侧已有扩展名白名单 + 50MB 上限 + 7 天清理），canonicalize 后判定，传输用 base64 字符串（macOS
   Raw 响应会退化为逐字节 JSON 数组，禁改 raw bytes）；选段问 AI 只 pty_write 注入活跃标签输入框，不自动回车。
 - **聊天区 Markdown 渲染（ChatMarkdown）**：会话内容可能含联网抓取文本，按不可信处理——独立 Marked 实例，
   原始 HTML 一律转义（raw `<img>`/`<script>` 是追踪/注入通道）；http(s) 图片不加载只显示文本，本地图片经

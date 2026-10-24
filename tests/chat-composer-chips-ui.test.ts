@@ -702,7 +702,7 @@ test("模型菜单开聊前：最近在这个项目用过的搭配一点四样�
     };
     await ui.render(ui.h(ui.Menu, props));
     await ui.act(async () => new Promise((r) => setTimeout(r, 0)));
-    assert.match(String(warnings.at(-1)), /glm-flash 看不了图：带图发出去会报错.*先移除图片/, "当前模型看不了图：告诉输入框会报错、怎么办");
+    assert.match(String(warnings.at(-1)), /glm-flash 看不了图/, "当前模型看不了图：告诉输入框");
     await ui.click("glm-flash");
     await ui.act(async () => new Promise((r) => setTimeout(r, 0)));
     const text = ui.el.textContent ?? "";

@@ -153,7 +153,7 @@ surface(agent, modelId, gatewayId, slot, launchSelected: bool) → ControlSurfac
 
 消费：
 
-- 模型能力：`model_registry` 五层链（thinking / context / output / vision）。relay 层按 §6 带网关维度。给界面的能力 DTO 逐字段三态：链上显式 false 原样出线，只有查不到才 None（2026-10-23：vision 曾把 false 折成 None，带图提醒失效）。
+- 模型能力：`model_registry` 五层链（thinking / context / output / vision）。relay 层按 §6 带网关维度。
 - Agent 通道：`request_policy_support`（supported / unsupported / unknown）。
 - 用户在该模型上存的策略（稀疏）。
 - `lastProbe`（§8）。
