@@ -535,7 +535,7 @@
   结果存进网关体检记录，`loadAll` 后由后端算出 ready / probe_failed，后端认不出时用就地结果兜底，关网关库时清空就地结果。
   Gemini / Cursor 槽后端不支持体检，不给按钮（`canProbeProfile`）。体检记录的地址指纹按网关槽地址算（`probe_fp_url`），
   不按物化后剥了 /v1 的 base——否则结论被当过期回包丢掉。`loadGateways` 连同连接一起重拉，网关库里测完连接页状态也跟着变。「默认」（`bg-cta-pill`）与「全局生效」（inset 灰）提到名称旁做胶囊，caption 只留上次使用 / 外部文件被改过。
-  分组卡片上方一行列标题（连接 / 端点 / 模型 / 状态，`mx-px px-4` 同 PROFILE_GRID 对齐），只在有展开组时显示。同一 agent 下重名的
+  分组卡片上方不设列标题行（2026-10-25 用户拍板删去「连接 / 端点 / 模型 / 状态」，各列内容自明）。同一 agent 下重名的
   连接名称后补 l3「· 首个模型」（`duplicateNameIds`，只改显示），编辑弹层名称框下非阻塞提醒。「全部折叠 / 展开」是动作不是筛选，
   做成搜索框左侧的 32px 图标钮（ChevronsDownUp / ChevronsUpDown），不再挨着筛选胶囊。组头官方登录按钮文案「官方登录」。
   行内会被阅读的灰字（副模型、+N、caption、默认端点、计数）用 l3，l4 只留装饰。纯逻辑与测试：`src/profile-connection-ui.ts` /

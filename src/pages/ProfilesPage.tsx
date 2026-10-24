@@ -1566,7 +1566,7 @@ const OFFICIAL_LOGOUT_HINT: Record<string, string> = {
 const displayHost = endpointHost;
 
 /** 连接列表五列网格模板：名称 | 端点 | 模型 | 状态 | 操作。
- *  列标题行、官方账号行与数据行共用同一模板，保证上下行严格垂直对齐；
+ *  官方账号行与数据行共用同一模板，保证上下行严格垂直对齐；
  *  操作列 170px 刚好容纳「两枚 hover 图标钮 + 编辑 + ⋯」，再宽会在中等窗口把行撑出横向滚动 */
 const PROFILE_GRID =
   "grid-cols-[minmax(150px,1.1fr)_minmax(140px,0.9fr)_minmax(150px,1fr)_110px_170px]";
@@ -3268,20 +3268,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
           </NoticeBar>
         )}
 
-        {/* agent 分组（可折叠）。上方一行列标题，与卡内行同一网格模板：
-            mx-px 抵卡片 1px 边框、px-4 同行内边距，列严格对齐 */}
-        {anyExpanded && profiles.length > 0 && (
-          <div
-            aria-hidden="true"
-            className={`mx-px mb-1.5 grid ${PROFILE_GRID} gap-3 px-4 text-micro text-l3`}
-          >
-            <span>连接</span>
-            <span>端点</span>
-            <span>模型</span>
-            <span>状态</span>
-            <span />
-          </div>
-        )}
+        {/* agent 分组（可折叠）。列标题行已去掉（2026-10-25 用户拍板），各列内容自明 */}
         <div>
           {visibleAgents.map((agent) => {
             const det = agents.find((a) => a.id === agent.id);
