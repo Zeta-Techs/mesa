@@ -101,6 +101,9 @@ test("点完接回对话，不把人送去评审", () => {
   // 裁决在渲染之后做：确认要去掉标记，改完要重渲、重出域稿（2026-10-24）
   assert.match(continueAfterDecisionsPrompt("manuscript/verification-decisions.md", "verify"), /\[待核实\] 标记删掉/);
   assert.match(continueAfterDecisionsPrompt("manuscript/verification-decisions.md", "verify"), /重渲 PDF 和 Word.*endnote\.docx/);
+  // 决定是 Mesa 写进工作区文件的：Agent 要随这一轮一起提交，否则挡保存进项目（2026-10-24）
+  assert.match(continueAfterDecisionsPrompt("manuscript/review-report.md", "report"), /review-report\.md 里的决定是 Mesa 替人写进去的，随这一轮改动一起提交/);
+  assert.match(continueAfterDecisionsPrompt("manuscript/verification-decisions.md", "verify"), /随这一轮改动一起提交/);
   assert.equal(isInlineDecisionTaskTitle("逐条决定审查报告"), true);
   assert.equal(isInlineDecisionTaskTitle("逐条裁决 [待核实] 与存疑条目"), true);
   assert.equal(isInlineDecisionTaskTitle("在 Word 里换样式（打开域稿）"), false);
