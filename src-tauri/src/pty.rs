@@ -2661,7 +2661,8 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn windows_shells_report_cwd_after_cd() {
-        let root = scratch("shells");
+        // 临时目录可能是 8.3 短名（CI 上 C:\Users\RUNNER~1），shell 报回的是长名，same_path 不认这两种写法是同一处：先规范成长名
+        let root = crate::paths::canonicalize_plain(&scratch("shells")).unwrap();
         let _guard = crate::storage::TestConfigRoot::redirect_to(&root);
         let start = root.join("start");
         let target = root.join("目标 dir");
