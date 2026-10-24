@@ -25,6 +25,25 @@ R001 位置：manuscript/draft.md:12
 无
 `;
 
+test("Agent 预留的空「决定：」行不进正文，点选时就地替换（2026-10-24 HER 润色实证）", () => {
+  const text = `## 严重问题
+
+**R001** 位置：§2（draft.md:45）。问题：论证方向与所引数字相反。
+决定：
+
+**R002** 位置：§5。问题：误述失活分类。
+决定：
+`;
+  const items = parseReviewItems(text, "report");
+  assert.deepEqual(items.map((i) => i.id), ["R001", "R002"]);
+  assert.doesNotMatch(items[0].body, /决定/);
+  assert.equal(items[0].verdict, null);
+  const after = applyReportVerdict(text, "R001", "修改", "按原文三档列数字");
+  assert.match(after, /数字相反。\n决定：修改：按原文三档列数字\n\n\*\*R002\*\*/);
+  assert.equal(after.match(/决定：/g)?.length, 2);
+  assert.equal(parseReviewItems(after, "report")[0].verdict, "修改");
+});
+
 test("审查报告按编号拆条，决定行不算进正文", () => {
   const once = applyReportVerdict(REPORT, "R001", "接受");
   const twice = applyReportVerdict(once, "R001", "修改", "改回 12%");

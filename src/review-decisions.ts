@@ -85,6 +85,9 @@ export function verifyVerdict(body: string): { verdict: ReviewVerdict | null; no
   return { verdict: null, note: "" };
 }
 
+/** Agent 预留给人填的空「决定：」行（2026-10-24 HER 实证：每条末尾都留了一行）。不进条目正文，点选时就地替换。 */
+const VERDICT_PLACEHOLDER = /^(?:[-*]\s+)?决定[：:]\s*$/;
+
 export function parseReviewItems(text: string, kind: ReviewItemKind): ReviewItem[] {
   const lines = text.replace(/\r\n/g, "\n").split("\n");
   const items: ReviewItem[] = [];
@@ -102,6 +105,7 @@ export function parseReviewItems(text: string, kind: ReviewItemKind): ReviewItem
         note = parsed.note;
         continue;
       }
+      if (VERDICT_PLACEHOLDER.test(line.trim())) continue;
       bodyLines.push(line);
     }
     let body = bodyLines.join("\n").trim();
@@ -157,11 +161,13 @@ export function applyReportVerdict(
     }
   }
   const block = lines.slice(start, end);
-  while (block.length > 0 && block[block.length - 1].trim() === "") block.pop();
+  // 条目之间的空行留着，否则写决定会把这一条和下一条粘在一起
+  const trailing: string[] = [];
+  while (block.length > 0 && block[block.length - 1].trim() === "") trailing.push(block.pop()!);
   const last = block[block.length - 1] ?? "";
-  if (parseVerdictLine(last)) block[block.length - 1] = verdictLine(verdict, note);
+  if (parseVerdictLine(last) || VERDICT_PLACEHOLDER.test(last.trim())) block[block.length - 1] = verdictLine(verdict, note);
   else block.push(verdictLine(verdict, note));
-  const next = [...lines.slice(0, start), ...block, ...lines.slice(end)];
+  const next = [...lines.slice(0, start), ...block, ...trailing, ...lines.slice(end)];
   return next.join("\n");
 }
 
