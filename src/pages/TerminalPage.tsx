@@ -5068,7 +5068,10 @@ const TerminalView = memo(function TerminalView({
       if (byBox) {
         const lines = screenLines();
         const trust = parseTrustPrompt(lines) !== null;
-        if (!trust && ((quiet >= 300 && terminalHasInputBox(lines, agent) === true) || since >= 20_000)) {
+        // 刚起来的 20 秒里要安静 1.5 秒才算就绪：接回的会话先画输入框、再回放、再写「※ recap」，
+        // 中途写进去开头会丢、提交键被当成粘贴里的换行（2026-10-24 HER 润色：输入框画出 1 秒就写，整段卡在框里）
+        const settle = since < 20_000 ? 1500 : 300;
+        if (!trust && ((quiet >= settle && terminalHasInputBox(lines, agent) === true) || since >= 20_000)) {
           inputReadyRef.current = true;
           break;
         }
@@ -5116,20 +5119,29 @@ const TerminalView = memo(function TerminalView({
     }
   }
 
-  /** 交出去了没有：这句连着 1.6 秒还躺在输入框里，就再按一次回车，最多补两次。
-   *  刚接回的会话（resume 回放、启动钩子还在跑）会吞掉跟在正文后的回车（2026-10-24 HER 润色：
-   *  Mesa 重启后「让 Agent 按决定继续」，接回的 Claude 把整段意见留在输入框里没发）。只认屏上的输入框，没有布局表的家不管 */
+  /** 交出去了没有：这句连着 1.6 秒还躺在输入框里，就补一次「粘贴结束 + 提交键」，最多补三次。
+   *  刚接回的会话（resume 回放、recap 还在写）里写进去，CLI 会停在粘贴状态：后面的回车都被当成粘贴里的换行，
+   *  人自己按回车也只多一行（2026-10-24 HER 润色两次实证：Claude 框里多出一空行、按回车只出「ctrl+g 编辑」提示）。
+   *  先补粘贴结束标记把它拉出粘贴状态，再按提交键；没在粘贴状态时这个标记被忽略。只认屏上的输入框，没有布局表的家不管 */
   async function confirmSubmitted(ptyId: string, text: string) {
     const agent = launchAgentRef.current;
-    for (let attempt = 0; attempt < 2; attempt++) {
+    const PASTE_END = "\x1b[201~";
+    for (let attempt = 0; attempt < 3; attempt++) {
       let stuckFor = 0;
-      for (let waited = 0; waited < 4000 && stuckFor < 1600; waited += 400) {
+      for (let waited = 0; waited < 6000 && stuckFor < 1600; waited += 400) {
         await new Promise((r) => setTimeout(r, 400));
         if (!mountedRef.current || ptyIdRef.current !== ptyId) return;
-        if (sentTextStuckInBox(screenLines(), agent, text) !== true) return;
+        if (sentTextStuckInBox(screenLines(), agent, text) !== true) {
+          stuckFor = 0;
+          if (waited >= 2000) return;
+          continue;
+        }
         stuckFor += 400;
       }
       if (stuckFor < 1600) return;
+      await invoke("pty_write", { ptyId, data: PASTE_END }).catch(() => {});
+      await new Promise((r) => setTimeout(r, 300));
+      if (!mountedRef.current || ptyIdRef.current !== ptyId) return;
       await invoke("pty_write", { ptyId, data: submitCsiU ? KIMI_CSI_U_ENTER : "\r" }).catch(() => {});
     }
   }
