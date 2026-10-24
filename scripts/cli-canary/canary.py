@@ -35,6 +35,9 @@ CHANNEL = {"claude-code", "codebuddy", "qwen", "opencode", "codex", "grok"} - ({
 SESSION_ID = CHANNEL - {"grok"}
 # 连不上假网关的家（Cursor 只走自家云端，临时 HOME 里也没登录）：只记版本，请求 / 画面都不比
 NO_GATEWAY = {"cursor"}
+# CI 标记变量不往下传：Gemini 见 CI / GITHUB_ACTIONS 就走无头模式（「No input provided via stdin」），Ink 写的界面
+# （CodeBuddy、Qwen）在 CI 里不画动态画面、这一轮发不出去。金丝雀要模拟的是用户终端里的 CLI（2026-10-25 CI 首次跑完时实证）
+CI_ENV = ("CI", "CONTINUOUS_INTEGRATION", "GITHUB_ACTIONS", "BUILD_NUMBER", "RUN_ID")
 TOOL_PROMPT = {"codex": "TRIGGER_TOOL TRIGGER_ESC 跑一下"}
 DEFAULT_TOOL_PROMPT = "TRIGGER_TOOL 跑一下"
 # 公开发版说明（GitHub Releases）；Claude 另取 CHANGELOG.md，没有公开说明的家不取
@@ -513,6 +516,8 @@ def main():
                     help="检查全过、指纹和基线一样、只有版本往前走时，把基线的核对版本往前挪（随包进 Mesa，见 src/cli-verified.ts）")
     ap.add_argument("--skip-screen", action="store_true")
     args = ap.parse_args()
+    for k in [k for k in os.environ if k in CI_ENV or k.startswith("CI_")]:
+        del os.environ[k]
     agents = [a for a in args.agents.split(",") if a]
     out = args.out or os.path.join(tempfile.gettempdir(), f"mesa-canary-{time.strftime('%Y%m%d-%H%M%S')}")
     os.makedirs(out, exist_ok=True)

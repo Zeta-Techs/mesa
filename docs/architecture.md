@@ -464,6 +464,7 @@ macOS 三天都是「假网关没起来」。定下：
 一，**假网关不用 `HTTPServer` 默认的 `server_bind`**：它在 listen 之前做 `getfqdn` 反查，GitHub 的 macOS runner 上会卡好几秒，金丝雀只等 5 秒。网关跳过反查；金丝雀等 30 秒、进程退了立刻报，网关 stderr 留成 `gateway-stderr.log` 进 artifact。
 二，**`channel.statuses` 比较时不看 `running`**：假网关秒回，批准前后那一下「在干活」抓不抓得到看时序（同版本 Grok 两次跑一次有一次没有，Codex darwin / win32 基线也不同），按它报变化就是假红；审批、走完这些稳定信号照比。
 三，macOS 本机九家检查全过；CodeBuddy 2.175.0（系统提示词多一节记忆说明）与 Grok 1.0.70 无需适配，darwin 基线已 `--accept`。
+四，**CLI 子进程不带 CI 标记变量**（同日手动触发后 CI 首次跑完，Gemini / Kimi / CodeBuddy 两平台、Qwen / Grok 的 Windows 报「假网关没收到请求」）：GitHub Actions 的 `CI=true` 一路传给 CLI，Gemini 见了走无头模式、Ink 界面不画动态画面、这一轮发不出去；本机加 `CI=true` 原样复现。`canary.py` 启动即去掉 `CI` / `GITHUB_ACTIONS` / `CI_*` 等（`CI_ENV`）。另修抓屏脚本把 kimi 写死成 `~/.kimi-code/bin/kimi`（CI 上是 npm 装在 PATH 上）。
 
 ### 2026-10-25 · 改图不要求对话模型能看图；九家出图 / 改图逐家核对
 

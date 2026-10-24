@@ -28,7 +28,8 @@ plans = json.load(open(sys.argv[1])); agent = sys.argv[2]; tier = sys.argv[3]; o
 switch_cmd = sys.argv[5] if len(sys.argv) > 5 else None
 real_home = os.path.expanduser("~")
 BIN = {"claude-code": "claude", "codebuddy": "codebuddy", "codex": "codex", "qwen": "qwen",
-       "kimi": os.path.join(real_home, ".kimi-code/bin/kimi"), "opencode": "opencode", "grok": "grok",
+       # npm 装的在 PATH 上（CI 就是这样），官方安装脚本装在 ~/.kimi-code；与 canary.py bin_path 同一顺序
+       "kimi": shutil.which("kimi") or os.path.join(real_home, ".kimi-code/bin/kimi"), "opencode": "opencode", "grok": "grok",
        "gemini": "gemini", "cursor": "cursor-agent"}
 COPY = [".claude/settings.json", ".claude.json", ".codex/config.toml", ".grok/config.toml", ".qwen/settings.json",
         ".kimi-code/config.toml", ".config/opencode/opencode.json", ".gemini/settings.json", ".codebuddy/settings.json"]
