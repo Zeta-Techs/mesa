@@ -86,20 +86,19 @@ test("captureDecision：冲突拒绝（多冲突方任一命中即拒）/ 正常
   });
 });
 
-test("PAGE_HOTKEY_DEFS：九页、顺序同侧栏（工作台 · 运行 · 搜对话 · 项目，2026-10-24）、默认绑定唯一", () => {
-  assert.equal(PAGE_HOTKEY_DEFS.length, 9);
+test("PAGE_HOTKEY_DEFS：八页、顺序同展开的侧栏、没有「运行」（2026-10-24 用户二改）、默认 ⌘1–⌘8 唯一", () => {
+  assert.equal(PAGE_HOTKEY_DEFS.length, 8);
   assert.deepEqual(
     PAGE_HOTKEY_DEFS.map((p) => p.id),
-    ["workbench", "terminal", "sessions", "workspaces", "profiles", "skills", "mcp", "stats", "settings"],
+    ["workbench", "sessions", "workspaces", "profiles", "skills", "mcp", "stats", "settings"],
   );
   assert.deepEqual(
-    PAGE_HOTKEY_DEFS.slice(0, 4).map((p) => p.label),
-    ["工作台", "运行", "搜对话", "项目"],
+    PAGE_HOTKEY_DEFS.slice(0, 3).map((p) => p.label),
+    ["工作台", "搜对话", "项目"],
     "字同侧栏入口",
   );
   const combos = PAGE_HOTKEY_DEFS.map((p) => p.combo);
-  assert.equal(new Set(combos).size, 9, "默认绑定不得互相冲突");
-  assert.deepEqual(combos, [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `mod+${n}`));
+  assert.deepEqual(combos, [1, 2, 3, 4, 5, 6, 7, 8].map((n) => `mod+${n}`));
 });
 
 
@@ -124,7 +123,7 @@ test("新对话 / 光标移到侧栏：默认 ⌘N / ⌘0，不和九页、命�
   assert.equal(globalHotkeyAllowed(false, false), true);
 });
 
-test("hotkeyClashes：存下的旧绑定和新默认撞车时两条都标出（2026-10-24 项目 ⌘2 撞运行 ⌘2）；禁用不算撞", () => {
+test("hotkeyClashes：存下的旧绑定和新默认撞车时两条都标出（项目存成旧默认 ⌘2，撞搜对话 ⌘2）；禁用不算撞", () => {
   const pages = PAGE_HOTKEY_DEFS.map((p) => ({
     id: p.id,
     label: p.label,
@@ -132,8 +131,8 @@ test("hotkeyClashes：存下的旧绑定和新默认撞车时两条都标出（2
     combo: p.id === "workspaces" ? "mod+2" : p.combo,
   }));
   const clashes = hotkeyClashes([...pages, { id: "newChat", label: "新对话", combo: "" }]);
-  assert.equal(clashes.get("workspaces"), "运行");
-  assert.equal(clashes.get("terminal"), "项目");
+  assert.equal(clashes.get("workspaces"), "搜对话");
+  assert.equal(clashes.get("sessions"), "项目");
   assert.equal(clashes.size, 2);
   assert.equal(hotkeyClashes(PAGE_HOTKEY_DEFS.map((p) => ({ ...p }))).size, 0, "默认绑定互不相撞");
   assert.equal(

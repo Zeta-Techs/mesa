@@ -384,8 +384,8 @@ export default function CommandPalette({
               s.setPage("workspaces");
             },
           })),
-          // 「运行」不列（2026-10-24 用户：和侧栏统一）：展开的侧栏里没有这一行，点项目里的对话就进运行页；⌘2 照旧
-          ...PAGE_HOTKEY_DEFS.filter((p) => p.id !== "terminal").map((p) => {
+          // 「运行」不列（2026-10-24 用户：和侧栏统一）：PAGE_HOTKEY_DEFS 里本就没有它，回到对话点侧栏里那一段
+          ...PAGE_HOTKEY_DEFS.map((p) => {
             const combo = settings?.hotkeyPages?.[p.id] ?? p.combo;
             return {
               cmd: {

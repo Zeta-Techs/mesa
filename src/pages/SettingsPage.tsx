@@ -50,6 +50,7 @@ import {
   IS_WINDOWS,
   PAGE_HOTKEY_DEFS,
 } from "../hotkeys";
+import { normalizeStartPage, START_PAGE_OPTIONS, type StartPageId } from "../start-page";
 import {
   canOneClickInstall,
   depMissingReason,
@@ -418,10 +419,18 @@ const AI_FN_GROUPS: { title: string; rows: { key: string; label: string; hint: s
   },
 ];
 
-/** 顺序同岛上（也同图标态侧栏）：新对话插在工作台后面（2026-10-24 侧栏改版同步） */
+/** 「启动时进入」每个去处的一句说明（下次启动生效） */
+const START_PAGE_HINT: Record<StartPageId, string> = {
+  workbench: "下次启动生效",
+  "last-chat": "下次启动生效；回到上次正看着的那段，发一句才接着跑；上次都关了就进工作台",
+  "last-project": "下次启动生效；回到上次看的那个项目页",
+  "new-chat": "下次启动生效；直接开一段空白对话",
+};
+
+/** 顺序同岛上：新对话插在工作台后面（2026-10-24 侧栏改版同步）；「运行」不上岛，这里也不列 */
 const NAV_CAPSULE_SETTING_ITEMS: { id: NavCapsuleItemId; label: string }[] = [
   ...NAV_GROUPS.flatMap((group) =>
-    group.items.flatMap((item) => [
+    group.items.filter((item) => item.id !== "terminal").flatMap((item) => [
       { id: item.id as NavCapsuleItemId, label: item.label },
       ...(item.id === "workbench" ? [{ id: "quick-chat" as NavCapsuleItemId, label: "新对话" }] : []),
     ]),
@@ -994,7 +1003,7 @@ function HotkeyCapture({
   );
 }
 
-/** 快捷键分区内容：页切九行 + 全局四行 + 固定的几个（只列出）；录制互斥态 capturing 在此层持有。
+/** 快捷键分区内容：页切八行 + 全局四行 + 固定的几个（只列出）；录制互斥态 capturing 在此层持有。
  *  2026-10-24 侧栏改版同步：页切顺序与字同侧栏（工作台 · 运行 · 搜对话 · 项目…），新增新对话、光标移到侧栏 */
 function HotkeysSection({
   settings,
@@ -1014,7 +1023,7 @@ function HotkeysSection({
     PAGE_HOTKEY_DEFS.find((p) => p.id === id)?.combo ??
     "";
   const pageCombos = PAGE_HOTKEY_DEFS.map((p) => pageCombo(p.id));
-  // 存量撞车（录制时会拒，但重排前存下的旧绑定会撞）：页面九条只在总开关开着时参与，关着它们本就不生效
+  // 存量撞车（录制时会拒，但重排前存下的旧绑定会撞）：页面八条只在总开关开着时参与，关着它们本就不生效
   const clashes = hotkeyClashes([
     ...(pageSwitchOn
       ? PAGE_HOTKEY_DEFS.map((p) => ({ id: p.id, label: p.label, combo: pageCombo(p.id) }))
@@ -1034,8 +1043,8 @@ function HotkeysSection({
         title="页面快捷键"
         hint={
           pageSwitchOn
-            ? "一键直达下面九个页面；编号按侧栏收成图标时从上到下排"
-            : "已关闭：下面九个绑定暂不生效，仍可先改好"
+            ? "一键直达下面八个页面，编号同侧栏从上到下；「运行」不占编号，回到对话点侧栏里那一段"
+            : "已关闭：下面八个绑定暂不生效，仍可先改好"
         }
         action={
           <Toggle
@@ -3248,15 +3257,16 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
       </Section>
 
       <Section id="startup" active={activeSection}>
-        <Row label="启动时进入" hint="下次启动生效">
+        {/* 2026-10-24 用户：四种去处，不再是九个页面任选（start-page.ts） */}
+        <Row label="启动时进入" hint={START_PAGE_HINT[normalizeStartPage(settings?.startPage)]}>
           <select
             className={selectSm}
-            value={settings?.startPage ?? "workbench"}
+            value={normalizeStartPage(settings?.startPage)}
             onChange={(e) => patch({ startPage: e.target.value })}
           >
-            {PAGE_HOTKEY_DEFS.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.page}
+            {START_PAGE_OPTIONS.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.label}
               </option>
             ))}
           </select>
@@ -3406,7 +3416,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         id="hotkeys"
         active={activeSection}
       >
-        {/* 全部在用的绑定（命令面板/侧栏/九页切）在 HotkeysSection 内互判冲突 */}
+        {/* 全部在用的绑定（命令面板/侧栏/八页切）在 HotkeysSection 内互判冲突 */}
         <HotkeysSection settings={settings} patch={patch} />
       </Section>
 

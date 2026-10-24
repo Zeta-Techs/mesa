@@ -7,6 +7,7 @@ import {
   NAV_CAPSULE_DELAYS,
   isIslandExpanded,
   isNavCapsuleItemVisible,
+  NAV_CAPSULE_ITEM_IDS,
   reconcileIsland,
   cycleBrandState,
   enterChromeHidden,
@@ -95,6 +96,12 @@ test("hidden current page remains temporarily visible", () => {
   assert.equal(isNavCapsuleItemVisible("workbench", "workbench", []), true);
   assert.equal(isNavCapsuleItemVisible("workbench", "settings", []), false);
   assert.equal(isNavCapsuleItemVisible("settings", "workbench", ["settings"]), true);
+});
+
+test("「运行」不上岛（2026-10-24）：不在可配名单里，正在运行页、存过旧名单都不显示", () => {
+  assert.ok(!(NAV_CAPSULE_ITEM_IDS as readonly string[]).includes("terminal"));
+  assert.equal(isNavCapsuleItemVisible("terminal", "terminal", ["terminal"]), false);
+  assert.deepEqual(normalizeNavCapsuleVisibleItems(["workbench", "terminal"]), ["workbench"]);
 });
 
 /* --- 完全隐藏侧栏时的顶部灵动岛状态机 --- */

@@ -8,13 +8,14 @@ export type NavCapsuleDelayMs = (typeof NAV_CAPSULE_DELAYS)[number];
 export const NAV_CAPSULE_DISPLAY_MODES = ["both", "icons", "labels"] as const;
 export type NavCapsuleDisplayMode = (typeof NAV_CAPSULE_DISPLAY_MODES)[number];
 
-/** 可由用户配置的胶囊入口；恢复侧栏不在此列，始终保留。 */
+/** 可由用户配置的胶囊入口；恢复侧栏不在此列，始终保留。
+ *  没有「运行」（2026-10-24 用户：「灵动岛岛上显示入口怎么还有运行」）：同展开的侧栏、命令面板、页面快捷键；
+ *  岛上回到对话靠活动胶囊（「2 运行中」点开列着在跑的）或恢复侧栏 */
 export const NAV_CAPSULE_ITEM_IDS = [
   "quick-chat",
   "workbench",
-  "workspaces",
-  "terminal",
   "sessions",
+  "workspaces",
   "profiles",
   "skills",
   "mcp",
@@ -54,12 +55,13 @@ export function normalizeNavCapsuleVisibleItems(value: unknown): NavCapsuleItemI
   );
 }
 
-/** 当前页即使被用户隐藏，也临时保留入口，避免完全隐藏后无法回到该页。 */
+/** 当前页即使被用户隐藏，也临时保留入口，避免完全隐藏后无法回到该页。不在可配名单里的（「运行」）永不上岛 */
 export function isNavCapsuleItemVisible(
   id: string,
   page: string,
   visibleItems: readonly string[],
 ): boolean {
+  if (!(NAV_CAPSULE_ITEM_IDS as readonly string[]).includes(id)) return false;
   return id === page || visibleItems.includes(id);
 }
 

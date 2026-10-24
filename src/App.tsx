@@ -31,6 +31,8 @@ import { LIT_WATCH_SLOT } from "./skill-slots.ts";
 import ErrorBoundary from "./components/ErrorBoundary";
 import CommandPalette from "./components/CommandPalette";
 import { openQuickChat } from "./quick-chat-launch";
+import { LAST_PROJECT_KEY, resolveStartAction } from "./start-page";
+import { parseRecoverableTerminalState, TERMINAL_TABS_STORAGE_KEY } from "./terminal-tab-persistence";
 import { nextUnread, sameKeys } from "./chat-unread";
 import { clampRailWidth, parseRailWidth, RAIL_DEFAULT_REM, RAIL_WIDTH_KEY } from "./rail-width";
 import AskAiModal from "./components/AskAiModal";
@@ -272,7 +274,7 @@ function RelayToasts(props: {
   );
 }
 
-/** 页切顺序/逐页绑定/默认值的单一出处在 hotkeys.ts PAGE_HOTKEY_DEFS（与侧栏顺序一致） */
+/** 页切顺序/逐页绑定/默认值的单一出处在 hotkeys.ts PAGE_HOTKEY_DEFS（与展开的侧栏顺序一致，不含「运行」） */
 
 /** 仓库对外地址：帮助菜单外链（文档 / 安全报告）都挂在这里，转 org 时同步 */
 
@@ -590,7 +592,9 @@ function App() {
         ? (settings?.hotkeyNewChat ?? DEFAULT_NEW_CHAT_HOTKEY)
         : settings?.hotkeyPageSwitch === false
           ? ""
-          : (settings?.hotkeyPages?.[id] ?? PAGE_HOTKEY_DEFS.find((p) => p.id === id)?.combo ?? "");
+          : PAGE_HOTKEY_DEFS.some((p) => p.id === id)
+            ? (settings?.hotkeyPages?.[id] ?? PAGE_HOTKEY_DEFS.find((p) => p.id === id)?.combo ?? "")
+            : ""; // 「运行」没有页面快捷键（2026-10-24），存过的旧覆盖值也不算
     return combo ? `（${comboLabel(combo)}）` : "";
   };
   // 图标态「运行」图标上的光标：等确认琥珀、在干活灰色呼吸、都闲着淡灰（展开态由项目树各对话行的光标报，见 shell-context.ts）
@@ -703,7 +707,7 @@ function App() {
   // 侧栏收展完全由用户手动控制（品牌区点击）；曾有的按页面自动收展被用户否决（v3.43）
 
   // 全局快捷键（设置页可自定义，存 settings.json）：新对话（默认 ⌘N）、光标移到侧栏（默认 ⌘0）、命令面板（默认 ⌘K）、
-  // 隐藏/显示侧栏（默认 ⌘\）、页切逐页绑定（默认 ⌘1–⌘9，hotkeyPages 按页覆盖 + 整组总开关，顺序同侧栏）。
+  // 隐藏/显示侧栏（默认 ⌘\）、页切逐页绑定（默认 ⌘1–⌘8，hotkeyPages 按页覆盖 + 整组总开关，顺序同展开的侧栏，没有「运行」）。
   // 空串 = 禁用；⌘F 已被终端搜索占用故不用。
   const settings = useAppStore((s) => s.settings);
   const lightChrome = isLightTheme(settings?.theme);
@@ -1151,13 +1155,11 @@ function App() {
     }
   }, [settings, lightChrome]);
 
-  // 启动页与导航形态（设置页可选）：设置载入后只应用一次，之后用户手动切换不受影响。
+  // 导航形态（设置页可选）：设置载入后只应用一次，之后用户手动切换不受影响。启动去处见下面 bootDataReady 之后那段
   const startPageAppliedRef = useRef(false);
   useEffect(() => {
     if (startPageAppliedRef.current || !settings) return;
     startPageAppliedRef.current = true;
-    const target = settings.startPage;
-    if (target && target !== page) setPage(target);
     const legacyCollapsed = localStorage.getItem("ccode.navCollapsed") === "1";
     const mode = resolveStartupNavMode(
       settings.startupNavMode,
@@ -1183,6 +1185,33 @@ function App() {
     const cap = setTimeout(() => setBootCapReached(true), 2500);
     return () => clearTimeout(cap);
   }, []);
+
+  // 启动时进入（设置 → 通用，start-page.ts）：工作台 / 上次的对话 / 上次的项目 / 新对话。
+  // 等首屏数据就位再定——「上次的项目」要项目列表，「新对话」要连接列表挑默认 Agent。只做一次
+  const startActionAppliedRef = useRef(false);
+  useEffect(() => {
+    if (startActionAppliedRef.current || !settings || !(bootDataReady || bootCapReached)) return;
+    startActionAppliedRef.current = true;
+    const read = (key: string) => {
+      try {
+        return localStorage.getItem(key);
+      } catch {
+        return null;
+      }
+    };
+    const store = useAppStore.getState();
+    const action = resolveStartAction(settings.startPage, {
+      hasLastChat: parseRecoverableTerminalState(read(TERMINAL_TABS_STORAGE_KEY)).tabs.length > 0,
+      lastProjectPath: read(LAST_PROJECT_KEY),
+      projectPaths: store.projectPaths,
+    });
+    if (action.kind === "last-chat") setPage("terminal");
+    else if (action.kind === "project") {
+      if (action.path) store.setSelectProjectReq(action.path);
+      setPage("workspaces");
+    } else if (action.kind === "new-chat") void openQuickChat();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings, bootDataReady, bootCapReached]);
 
   useEffect(() => {
     // 各加载的 catch 已就地弹 toast 并把 promise 救回 resolved，allSettled 只等完成

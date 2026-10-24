@@ -4,26 +4,20 @@
  * 空串 = 该快捷键禁用。
  */
 
-/** 页切绑定清单单一出处（App.tsx 全局监听、设置页录制 UI、命令面板、启动页同源）：
- *  顺序与侧栏一致（2026-10-24 侧栏改版后重排：工作台 · 运行 · 搜对话 · 项目，是图标态侧栏从上到下的顺序；
- *  原 ⌘2 项目 / ⌘3 运行 / ⌘4 对话），label = 侧栏上的入口名，page = 启动页下拉里的页名，hint = 设置页悬停说明。
- *  combo 为该页默认绑定（settings.hotkeyPages 按页覆盖，存的是页 id，重排不影响改过的绑定） */
+/** 页切绑定清单单一出处（App.tsx 全局监听、设置页录制 UI、命令面板同源）：
+ *  顺序与展开的侧栏一致：工作台 · 搜对话 · 项目 · 连接 · 技能 · MCP · 用量 · 设置，⌘1–⌘8。
+ *  「运行」不在里面（2026-10-24 用户二改：「快捷键也还有运行」）——展开的侧栏、命令面板、灵动岛都不列它，
+ *  回到对话点侧栏里那一段；同日早先一版是九页、按图标态侧栏排（⌘2 运行 / ⌘3 搜对话 / ⌘4 项目），再早是 ⌘2 项目 / ⌘3 运行 / ⌘4 对话。
+ *  label = 侧栏上的入口名，hint = 设置页悬停说明。combo 为该页默认绑定（settings.hotkeyPages 按页 id 覆盖） */
 export const PAGE_HOTKEY_DEFS = [
-  { id: "workbench", label: "工作台", page: "工作台", combo: "mod+1", hint: "所有课题的总览" },
-  {
-    id: "terminal",
-    label: "运行",
-    page: "运行页",
-    combo: "mod+2",
-    hint: "回到运行页正看着的那段对话（展开的侧栏里没有这一行，点项目里的对话也一样）",
-  },
-  { id: "sessions", label: "搜对话", page: "对话页", combo: "mod+3", hint: "打开对话页，光标落在搜索框" },
-  { id: "workspaces", label: "项目", page: "项目页", combo: "mod+4", hint: "当前课题的项目页" },
-  { id: "profiles", label: "连接", page: "连接", combo: "mod+5", hint: "API 连接与官方账号" },
-  { id: "skills", label: "技能", page: "技能", combo: "mod+6", hint: "给 Agent 装的技能" },
-  { id: "mcp", label: "MCP", page: "MCP", combo: "mod+7", hint: "给 Agent 接的 MCP 服务" },
-  { id: "stats", label: "用量", page: "用量", combo: "mod+8", hint: "token 与费用" },
-  { id: "settings", label: "设置", page: "设置", combo: "mod+9", hint: "也可以用 ⌘, / Ctrl+," },
+  { id: "workbench", label: "工作台", combo: "mod+1", hint: "所有课题的总览" },
+  { id: "sessions", label: "搜对话", combo: "mod+2", hint: "打开对话页，光标落在搜索框" },
+  { id: "workspaces", label: "项目", combo: "mod+3", hint: "当前课题的项目页" },
+  { id: "profiles", label: "连接", combo: "mod+4", hint: "API 连接与官方账号" },
+  { id: "skills", label: "技能", combo: "mod+5", hint: "给 Agent 装的技能" },
+  { id: "mcp", label: "MCP", combo: "mod+6", hint: "给 Agent 接的 MCP 服务" },
+  { id: "stats", label: "用量", combo: "mod+7", hint: "token 与费用" },
+  { id: "settings", label: "设置", combo: "mod+8", hint: "也可以用 ⌘, / Ctrl+," },
 ] as const;
 
 /** 新对话（侧栏「新对话」同一入口；macOS「文件」菜单里也有，菜单那条固定 ⌘N）的默认绑定 */
@@ -51,7 +45,7 @@ export const FIXED_HOTKEYS: readonly { label: string; mac: string; other: string
 
 /**
  * 已存下的绑定里互相撞车的：id → 同组合的另一条的名字（第一个撞上的）。录制时撞车会被拒，但存量绑定可能撞——
- * 2026-10-24 页面快捷键重排后，以前改过、存成旧默认的（如「项目」⌘2）会和新默认（「运行」⌘2）撞，
+ * 页面快捷键重排后，以前改过、存成旧默认的（如「项目」⌘2）会和新默认（「搜对话」⌘2）撞，
  * 按下去只会到排在前面那页。设置页据此把两行都标出来。空串（禁用）不算撞
  */
 export function hotkeyClashes(

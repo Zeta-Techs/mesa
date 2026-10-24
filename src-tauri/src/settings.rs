@@ -47,21 +47,12 @@ const KNOWN_THEMES: [&str; 16] = [
     "custom",
     "custom-light",
 ];
+/// 「启动时进入」白名单（与前端 src/start-page.ts START_PAGE_OPTIONS 同步）。2026-10-24 起是四种去处，
+/// 不再是页面 id；旧存值（workspaces / sessions 这些）不在表里，读出来落回 None = 工作台
+const KNOWN_START_PAGES: [&str; 4] = ["workbench", "last-chat", "last-project", "new-chat"];
 /// 终端 ANSI 调色板：四套深色 + 四套配对浅色。
 /// 单一出处在前端 `src/terminal-palettes.ts` 的 PALETTE_LIST，此处是持久化白名单，两边须同步
 /// （不在名单里的值会被静默丢弃，表现为「设置页选了调色板但没生效」）。
-/// 启动页白名单（与前端 hotkeys.ts PAGE_HOTKEY_DEFS 同步）
-const KNOWN_PAGES: [&str; 9] = [
-    "workbench",
-    "workspaces",
-    "terminal",
-    "sessions",
-    "profiles",
-    "skills",
-    "mcp",
-    "stats",
-    "settings",
-];
 /// "auto" = 跟随主题（前端 terminal-palettes.ts AUTO_PALETTE；没存值与它同义，设置页用它「回到跟随」）
 const KNOWN_PALETTES: [&str; 9] = [
     "auto",
@@ -120,12 +111,12 @@ const KNOWN_CHAT_FONT_SIZES: [&str; 4] = ["small", "normal", "large", "xlarge"];
 const KNOWN_CHAT_FONT_FAMILIES: [&str; 3] = ["system", "serif", "mono"];
 const KNOWN_CHAT_ACCENTS: [&str; 5] = ["off", "warm", "amber", "teal", "violet"];
 const KNOWN_CHAT_SCROLLBARS: [&str; 2] = ["auto", "always"];
-const KNOWN_NAV_CAPSULE_ITEMS: [&str; 10] = [
+/// 顶部岛可配入口（与前端 nav-capsule.ts NAV_CAPSULE_ITEM_IDS 同步）；「运行」2026-10-24 起不上岛，存过的读出来丢掉
+const KNOWN_NAV_CAPSULE_ITEMS: [&str; 9] = [
     "quick-chat",
     "workbench",
-    "workspaces",
-    "terminal",
     "sessions",
+    "workspaces",
     "profiles",
     "skills",
     "mcp",
@@ -903,7 +894,7 @@ fn with_defaults(s: AppSettingsDto) -> AppSettingsDto {
         ai_profiles: s.ai_profiles,
         ai_profile_models: s.ai_profile_models,
         default_profiles: s.default_profiles,
-        start_page: s.start_page.filter(|p| KNOWN_PAGES.contains(&p.as_str())),
+        start_page: s.start_page.filter(|p| KNOWN_START_PAGES.contains(&p.as_str())),
         startup_nav_mode: s
             .startup_nav_mode
             .filter(|m| KNOWN_STARTUP_NAV_MODES.contains(&m.as_str())),
