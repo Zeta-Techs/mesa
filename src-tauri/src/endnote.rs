@@ -784,8 +784,12 @@ pub async fn endnote_export_xml(project_root: String) -> Result<String, String> 
             format!("\n\n{health}")
         };
         match launch_endnote_with_file(&ris) {
+            // 每次同步都是整份导入：同一个库点两次就是两份（2026-10-24 HER：27 篇里 18 篇在库里有 3 条，
+            // Word 里 Update 后只有 8 条挂上库）。导完提醒去重，并引向「选这个 EndNote 库」
             Ok(()) => Ok(format!(
-                "已交给 EndNote，导入当前打开的库。PDF 用「打开 papers」拖到对应条目。{health_note}"
+                "已交给 EndNote，导入当前打开的库。PDF 用「打开 papers」拖到对应条目。\
+                 每次同步都会把全部文献再导一遍：同一个库以前导过的，导完在 EndNote 用 References → Find Duplicates 去重，\
+                 不然定稿的 EndNote 版 Word 对不上这些条目。导完点下面「选这个 EndNote 库」指一下用的是哪个库。{health_note}"
             )),
             Err(e) => Ok(format!(
                 "文件在 {shown}。把它拖到 EndNote 图标上（不要拖进窗口）。{e}{health_note}"
