@@ -602,8 +602,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # （nextUnread；App 维护 store.unreadChats，ProjectTree 把那一行标题亮到 l1；tests/chat-unread.test.ts）
   rail-width.ts              # 应用侧栏宽度（2026-10-24）：14–26rem、默认 18rem、窗口小时上限收到窗宽 40%，localStorage 记偏好（tests/rail-width.test.ts）
   start-page.ts              # 「启动时进入」四种去处（2026-10-24）：工作台 / 上次的对话 / 上次的项目 / 新对话，旧存值当工作台；与 settings.rs KNOWN_START_PAGES 同步；上次的项目 = 最后看的那段对话所在的项目（projectOfCwd 取最深的项目根），App 在运行页正看着时写 localStorage ccode.lastProject（tests/start-page.test.ts）
-  run-layout.ts              # 运行页三块宽度（2026-10-24）：对话 ≥ 360、文件树 12–22rem、右栏 ≥ 360，偏好与实际分开，不够时先压右栏再让文件树
-                             # （runLayout / clampTreeWidth；tests/run-layout.test.ts）
+  run-layout.ts              # 运行页两块宽度（2026-10-24，文件树并进右栏后由三块变两块）：对话 ≥ 360、右栏默认 460 / ≥ 360，偏好与实际分开，不够时只压右栏
+                             # （runLayout；tests/run-layout.test.ts）
   idle-stop.ts               # 空闲对话的后台进程自动收（2026-10-24 用户拍板 A）：普通对话（isPlainChatTab）Agent 回完话、没在看、输入框没字，
                              # 满 30 分钟（IDLE_STOP_MS）该收哪些（idleStopPass 维护开始空闲时刻）；纯终端 / 步骤 / 车道 / 阅读 / 自定义运行时不收
                              # （tests/idle-stop.test.ts；TerminalPage 每分钟一检）
@@ -725,7 +725,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   portal 到 body 同活动面板）+ 搜对话…；活动胶囊管「谁在跑」，这里管「切到哪段」
   components/RailPeek.tsx    # 探出整栏（2026-10-24 A+E）：图标态 / 完全隐藏时把同一棵 ProjectTree 盖在内容上滑出（App 挂、store.railPeekOpen）；
                              #   去了别处（换页 / 换正看着的标签 / 选项目）、鼠标离开、Esc、点外面收；开着菜单或在改名时离开不收；useRailPeekTrigger 管悬停触发
-                             #   （图标栏中段空白、隐藏态左边缘 8px），⌘0 也开。ProjectTree 的 focusRailReq 只认挂载后的新请求，探出层挂上不抢焦点
+                             #   （图标栏中段空白 0.2 秒、隐藏态左边缘 8px 0.32 秒），⌘0 也开。ProjectTree 的 focusRailReq 只认挂载后的新请求，探出层挂上不抢焦点
   nav-capsule.ts             # 侧栏可配置胶囊入口（恢复侧栏始终保留，不在此列）
   components/WindowControls.tsx # Windows 自绘窗口按钮（最小化/最大化-还原/关闭，46px 宽、关闭悬停红）；仅 Windows 渲染，
                              #   App 标题栏与 ReaderOverlay 顶栏（盖住标题栏）各挂一份；对应 Rust lib.rs setup 的 set_decorations(false)

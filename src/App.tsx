@@ -566,7 +566,9 @@ function App() {
   const railPeekOpen = useAppStore((s) => s.railPeekOpen);
   const setRailPeekOpen = useAppStore((s) => s.setRailPeekOpen);
   const peekVisible = railPeekOpen && (collapsed || chromeHidden);
-  const peekTrigger = useRailPeekTrigger();
+  // 图标栏中段 0.2 秒（2026-10-24 用户：0.32 秒「再快一点点」）；完全隐藏时的左边缘留 0.32 秒——鼠标常往窗口左边甩，太快会误弹
+  const peekTrigger = useRailPeekTrigger(200);
+  const peekEdgeTrigger = useRailPeekTrigger(320);
   useEffect(() => {
     if (!collapsed && !chromeHidden) setRailPeekOpen(false);
   }, [collapsed, chromeHidden, setRailPeekOpen]);
@@ -1669,7 +1671,7 @@ function App() {
           <div className="relative flex min-h-0 flex-1 gap-[5px] px-[5px] pb-[5px]">
             {/* 完全隐藏时窗口左边缘一条看不见的触发带：贴边停一下探出整栏（2026-10-24 用户定 A+D+E） */}
             {chromeHidden && (
-              <div {...peekTrigger} aria-hidden="true" className="absolute bottom-0 left-0 top-0 z-20 w-2" />
+              <div {...peekEdgeTrigger} aria-hidden="true" className="absolute bottom-0 left-0 top-0 z-20 w-2" />
             )}
             {peekVisible && (
               <RailPeek
