@@ -1,0 +1,160 @@
+<!doctype html><meta charset="utf-8"><title>侧栏收成图标 / 完全隐藏时怎么切对话（2026-10-24 对照稿）</title><style>
+:root{--rail:#0c0b09;--canvas:#131210;--rail2:#1a1917;--strip:#1e1d1b;--inset:#232220;--raised:#2b2a28;--sel:#31302d;--hair:#31302d;--field:#464542;
+--l1:#e9e6e2;--l2:#bdbab4;--l3:#95959a;--l4:#6b6b72;--amber:#f5b83d;--ok:#4cc38a}
+body{margin:0;padding:20px 24px 40px;background:#6f6f6f;font:13px -apple-system,"PingFang SC",sans-serif;color:#111}
+h1{font-size:17px;margin:0 0 6px} h2{font-size:15px;margin:26px 0 4px} .lead{margin:0 0 10px;max-width:1180px;line-height:1.65}
+.rec{display:inline-block;background:#1d6b45;color:#fff;border-radius:4px;padding:0 6px;font-size:11px;margin-left:6px;vertical-align:1px}
+.grid{display:grid;grid-template-columns:repeat(3,380px);gap:14px;align-items:start}
+.grid.two{grid-template-columns:repeat(2,570px)}
+.card{border-radius:10px;overflow:hidden;background:var(--canvas);color:var(--l2)}
+.card>header{background:var(--rail);color:var(--l1);padding:7px 11px;font-weight:600}
+.card>header small{font-weight:400;color:var(--l3);font-size:11px;margin-left:6px}
+.note{background:#ededed;color:#222;padding:9px 11px;font-size:12px;line-height:1.6}
+.note b{color:#000} .note .con{color:#8a3a12}
+.app{position:relative;display:flex;height:330px}
+nav{width:40px;background:var(--rail);display:flex;flex-direction:column;align-items:center;gap:9px;padding:10px 0;flex-shrink:0}
+nav .m{font:700 12px -apple-system;color:var(--l1)} nav .m span{display:inline-block;width:5px;height:2px;background:var(--amber);margin-left:1px}
+nav i{width:16px;height:16px;border-radius:4px;background:var(--l4);opacity:.55;position:relative;flex-shrink:0}
+nav i.on{background:var(--l2);opacity:1}
+nav .gap{flex:1} nav hr{width:18px;border:0;border-top:1px solid var(--hair);margin:2px 0}
+nav .tile{width:22px;height:22px;border-radius:6px;background:var(--inset);color:var(--l2);font-size:11px;display:flex;align-items:center;justify-content:center;position:relative}
+nav .tile.hot{box-shadow:inset 0 0 0 1px var(--field);color:var(--l1)}
+.cw{position:absolute;right:-3px;bottom:-1px;width:7px;height:2.5px;border-radius:1px;background:var(--l3)}
+.cw.c{background:var(--amber)}
+main{flex:1;min-width:0;display:flex;flex-direction:column}
+.top{height:28px;display:flex;align-items:center;gap:8px;padding:0 10px;background:var(--strip);font-size:11px;color:var(--l3)}
+.top .chip{background:var(--inset);border-radius:5px;padding:1px 7px;color:var(--l2)}
+.chat{flex:1;padding:12px 16px;display:flex;flex-direction:column;gap:8px}
+.chat .b{align-self:flex-end;background:var(--raised);color:var(--l1);border-radius:10px;padding:4px 9px;font-size:11.5px}
+.chat p{margin:0;font-size:11.5px;line-height:1.6;color:var(--l2)}
+.comp{margin-top:auto;height:30px;border-radius:9px;background:var(--inset);border:1px solid var(--hair)}
+.fly{position:absolute;background:var(--rail2);border:1px solid var(--field);border-radius:9px;padding:6px;font-size:11.5px;color:var(--l2)}
+.fly .h{font-size:10px;letter-spacing:.08em;color:var(--l3);padding:5px 7px 3px}
+.fly .r{display:flex;align-items:center;gap:6px;padding:4px 7px;border-radius:6px;white-space:nowrap}
+.fly .r.sel{background:var(--sel);color:var(--l1)} .fly .r.dim{color:var(--l3)}
+.fly .r .t{flex:1;overflow:hidden;text-overflow:ellipsis}
+.fly .r.ind{padding-left:22px}
+.fly .fold{width:11px;height:9px;border:1.3px solid var(--l3);border-radius:2px;flex-shrink:0}
+.k{width:7px;height:2.5px;border-radius:1px;background:var(--l3);flex-shrink:0} .k.w{animation:br 2.4s ease-in-out infinite} .k.c{background:var(--amber)} .k.i{background:var(--l4)}
+@keyframes br{50%{opacity:.22}}
+.fly .more{color:var(--l4);padding:4px 7px 4px 22px;font-size:11px}
+.kbd{font:10px ui-monospace,Menlo;color:var(--l3);border:1px solid var(--hair);border-radius:4px;padding:0 4px}
+.peek{left:40px;top:0;bottom:0;width:190px;border-radius:0 9px 9px 0;border-left:0}
+.island{position:absolute;left:50%;top:6px;transform:translateX(-50%);background:var(--rail2);border:1px solid var(--field);border-radius:99px;padding:3px 10px;font-size:11px;color:var(--l2);display:flex;gap:7px;align-items:center;white-space:nowrap}
+.island .sep{width:1px;height:10px;background:var(--hair)}
+.ptr{position:absolute;width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-bottom:9px solid #fff;filter:drop-shadow(0 0 1px #000)}
+</style>
+
+<h1>侧栏收成图标、完全隐藏时怎么切对话</h1>
+<p class="lead">背景：「运行」已从展开侧栏、⌘ 快捷键、命令面板、灵动岛撤掉，你也决定图标态侧栏不再留它。那图标态下看不到项目树，完全隐藏时连图标都没有，切对话要有别的路。
+已经有的路：<b>⌘K「打开的对话」</b>（这一轮刚加，等确认 / 干活的排前面）、运行页里 <b>⌃Tab</b> 按最近看过的顺序切、顶栏 / 岛上的<b>活动芯片</b>（只列开着 Agent 的）。
+下面是还缺的那一块——鼠标怎么切。示意只画结构，排版、尺寸、动效你来定。</p>
+
+<h2>一、侧栏收成图标时</h2>
+<div class="grid">
+
+ <div class="card"><header>A · 探出整栏<span class="rec">推荐</span><small>悬停图标栏中段 / 按 ⌘0</small></header>
+  <div class="app">
+   <nav><b class="m">M<span></span></b><i></i><i></i><i></i><hr><div class="gap"></div><hr><i></i><i></i><i></i></nav>
+   <main><div class="top"><span class="chip">泛函综述</span><span style="flex:1"></span><span class="chip">1 待确认</span></div>
+    <div class="chat"><div class="b">把第三节的引用补齐</div><p>已核对 12 条……</p><div class="comp"></div></div></main>
+   <div class="fly peek">
+    <div class="h">项目</div>
+    <div class="r"><span class="fold"></span><span class="t">随手聊</span></div>
+    <div class="r"><span class="fold"></span><span class="t">泛函综述</span><span class="k c"></span></div>
+    <div class="r ind sel"><span class="t">1024|研究|补齐第三节引用</span><span class="k c"></span></div>
+    <div class="r ind"><span class="t">1023|设计|图 2 配色</span><span class="k w"></span></div>
+    <div class="more">展开更多</div>
+    <div class="r"><span class="fold"></span><span class="t">后端管理</span></div>
+    <div class="r ind dim"><span class="t">1022|修复|登录超时</span></div>
+   </div>
+  </div>
+  <div class="note"><b>怎么用</b>：鼠标停在图标栏中间那段空白（原来放项目树的位置）约 0.3 秒，或按 ⌘0，整棵项目树从图标栏右边滑出来、<b>盖在内容上</b>（不挤动聊天区）；点一段就打开并收回，鼠标移走 / Esc 也收回。⌘0 进来时光标已在正看着那段，↑↓ 回车照旧。<br>
+  <b>好处</b>：没有新东西要学，就是同一棵树、同一套光标和置顶；⌘0 在三种侧栏形态下意思一致。<br>
+  <span class="con">代价</span>：平时看不到哪段在跑（靠顶栏活动芯片补）；中段悬停要防误触，所以只认空白区、要停一下。</div>
+ </div>
+
+ <div class="card"><header>B · 课题图块 + 弹出列表<small>点图块</small></header>
+  <div class="app">
+   <nav><b class="m">M<span></span></b><i></i><i></i><i></i><hr>
+    <div class="tile">聊</div><div class="tile hot">泛<span class="cw c"></span></div><div class="tile hot">后<span class="cw"></span></div><div class="tile">网</div>
+    <div class="gap"></div><hr><i></i><i></i></nav>
+   <main><div class="top"><span class="chip">泛函综述</span></div>
+    <div class="chat"><div class="b">把第三节的引用补齐</div><p>已核对 12 条……</p><div class="comp"></div></div></main>
+   <div class="fly" style="left:46px;top:96px;width:200px">
+    <div class="h">泛函综述</div>
+    <div class="r sel"><span class="t">1024|研究|补齐第三节引用</span><span class="k c"></span></div>
+    <div class="r"><span class="t">1023|设计|图 2 配色</span><span class="k w"></span></div>
+    <div class="r dim"><span class="t">1020|研究|检索式定稿</span></div>
+    <div class="r dim"><span class="t">＋ 新对话</span></div>
+   </div>
+  </div>
+  <div class="note"><b>怎么用</b>：图标栏中段每个课题一个小图块（名字第一个字），有对话开着的描一圈、右下角带运行光标；点图块弹出这个课题的对话（开着的在前、再列最近几段、最后「＋ 新对话」）。<br>
+  <b>好处</b>：收成图标也一眼看到哪个课题在跑、哪个等你确认。<br>
+  <span class="con">代价</span>：课题多了竖着放不下（要「只列有动静的 + 置顶的」）；首字图块容易撞（两个「泛」开头）；多了一种和展开态不一样的长相。</div>
+ </div>
+
+ <div class="card"><header>C · 一个「对话」切换器<small>点图标</small></header>
+  <div class="app">
+   <nav><b class="m">M<span></span></b><i></i><i></i><i></i><i class="on" style="border-radius:50%"></i><hr><div class="gap"></div><hr><i></i><i></i></nav>
+   <main><div class="top"><span class="chip">泛函综述</span></div>
+    <div class="chat"><div class="b">把第三节的引用补齐</div><p>已核对 12 条……</p><div class="comp"></div></div></main>
+   <div class="fly" style="left:46px;top:70px;width:220px">
+    <div class="h">打开的</div>
+    <div class="r"><span class="k c"></span><span class="t">补齐第三节引用</span><span style="color:var(--l4)">泛函综述</span></div>
+    <div class="r"><span class="k w"></span><span class="t">图 2 配色</span><span style="color:var(--l4)">泛函综述</span></div>
+    <div class="r sel"><span class="k i"></span><span class="t">登录超时</span><span style="color:var(--l4)">后端管理</span></div>
+    <div class="h">最近</div>
+    <div class="r dim"><span class="t">检索式定稿</span><span style="color:var(--l4)">泛函综述</span></div>
+    <div class="r dim"><span class="t">搜对话… <span class="kbd">⌘2</span></span></div>
+   </div>
+  </div>
+  <div class="note"><b>怎么用</b>：图标栏里一个对话图标（图标右下角带最强的那个状态光标），点开是「打开的 + 最近」两段平铺列表，和 ⌘K「打开的对话」同一份数据。<br>
+  <b>好处</b>：做法最小、一处就够；列表扁平好扫。<br>
+  <span class="con">代价</span>：本质上是把「运行」图标换了个样子留着，和你「不留」的意思冲突；按项目分的结构没了。</div>
+ </div>
+</div>
+
+<h2>二、侧栏完全隐藏时（只有顶部灵动岛）</h2>
+<div class="grid two">
+ <div class="card"><header>D · 岛上「你在哪」变成切换器<span class="rec">推荐</span><small>点岛上的对话名</small></header>
+  <div class="app" style="height:250px">
+   <main><div class="top" style="background:var(--canvas)"></div>
+    <div class="chat"><div class="b">把第三节的引用补齐</div><p>已核对 12 条……</p><div class="comp"></div></div></main>
+   <div class="island"><span style="color:var(--l1)">补齐第三节引用 ▾</span><span class="sep"></span><span class="k c"></span><span>1 待确认</span></div>
+   <div class="fly" style="left:50%;transform:translateX(-50%);top:36px;width:250px">
+    <div class="h">打开的对话</div>
+    <div class="r"><span class="k w"></span><span class="t">图 2 配色</span><span style="color:var(--l4)">泛函综述</span></div>
+    <div class="r"><span class="k i"></span><span class="t">登录超时</span><span style="color:var(--l4)">后端管理</span></div>
+    <div class="r dim"><span class="t">zsh</span><span style="color:var(--l4)">终端</span></div>
+    <div class="r sel"><span class="k c"></span><span class="t">补齐第三节引用</span><span style="color:var(--l4)">正看着</span></div>
+    <div class="r dim"><span class="t">搜对话… <span class="kbd">⌘2</span></span></div>
+   </div>
+  </div>
+  <div class="note"><b>怎么用</b>：在运行页时，岛平时那句「▢ 运行」换成正看着的对话名加 ▾；点它往下展开「打开的对话」（同 ⌘K 那一组，纯终端也在），最后一行去搜对话。<br>
+  <b>好处</b>：岛本来就在报「你在哪」，在那儿切最顺手；不加新入口。活动胶囊照旧只管「谁在跑 / 谁等你」。<br>
+  <span class="con">代价</span>：岛的休眠面变宽一点（对话名要截断，建议最多 12 个字）。</div>
+ </div>
+ <div class="card"><header>E · 不加界面，只靠键盘与 ⌘0 探出<small>⌘0 / ⌘K / ⌃Tab</small></header>
+  <div class="app" style="height:250px">
+   <nav style="width:0;padding:0"></nav>
+   <main><div class="top" style="background:var(--canvas)"></div>
+    <div class="chat"><div class="b">把第三节的引用补齐</div><p>已核对 12 条……</p><div class="comp"></div></div></main>
+   <div class="island"><span>▢ 运行</span><span class="sep"></span><span class="k c"></span><span>1 待确认</span></div>
+   <div class="fly peek" style="left:0;border-radius:0 9px 9px 0;border-left:1px solid var(--field)">
+    <div class="h">项目 <span class="kbd" style="margin-left:4px">⌘0</span></div>
+    <div class="r"><span class="fold"></span><span class="t">泛函综述</span><span class="k c"></span></div>
+    <div class="r ind sel"><span class="t">补齐第三节引用</span><span class="k c"></span></div>
+    <div class="r ind"><span class="t">图 2 配色</span><span class="k w"></span></div>
+    <div class="r"><span class="fold"></span><span class="t">后端管理</span></div>
+   </div>
+  </div>
+  <div class="note"><b>怎么用</b>：完全隐藏时按 ⌘0 也是方案 A 的「探出整栏」，从窗口左边缘滑出、选完收回，侧栏仍保持隐藏；鼠标贴左边缘停一下同样探出。<br>
+  <b>好处</b>：和 A 是同一个东西，三种形态一个规则。<br>
+  <span class="con">代价</span>：鼠标用户不知道要贴左边缘；和 D 不冲突，可以都做。</div>
+ </div>
+</div>
+
+<h2>我的建议</h2>
+<p class="lead"><b>A + D + E</b>：图标态和完全隐藏都用「探出整栏」（同一棵树，⌘0 / 悬停空白处 / 贴左边缘），完全隐藏时岛上的对话名再当一个快捷切换器。图标态的「运行」图标等探出做好后一起撤掉（先撤就没有鼠标路径回到对话）。
+B 适合「收成图标也要盯着几个课题在跑」的用法，代价是多一套长相；C 等于把「运行」换个样子留着，不建议。</p>

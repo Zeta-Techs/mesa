@@ -1852,7 +1852,7 @@ function App() {
                   <div className="shrink-0 px-1.5 pb-1.5">
                     <RailTooltip
                       label={`上手引导 ${onboardingRail.done}/${onboardingRail.total}${
-                        onboardingRail.next ? ` · 下一步：${onboardingRail.next}` : ""
+                        onboardingRail.next ? ` · 下一步：${onboardingRail.phase} · ${onboardingRail.next}` : ""
                       }`}
                       collapsed={collapsed}
                     >
@@ -1870,9 +1870,11 @@ function App() {
                             : "text-l2 hover:bg-hover hover:text-l1"
                         }`}
                       >
+                        {/* 环比原先大一号（同清单头的大环），收成图标时也好认 */}
                         <OnboardingRing
                           done={onboardingRail.done}
                           total={onboardingRail.total}
+                          size={20}
                         />
                         {!collapsed && (
                           <span className="min-w-0 flex-1">

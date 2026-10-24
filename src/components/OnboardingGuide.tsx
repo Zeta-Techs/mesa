@@ -12,6 +12,7 @@ import {
   newlyDone,
   ONBOARDING_PHASES,
   onboardingProgress,
+  phaseOf,
   stepById,
   type OnboardingFacts,
   type OnboardingStepId,
@@ -286,6 +287,8 @@ export function useOnboardingRail(): {
   done: number;
   total: number;
   next: string | null;
+  /** 下一步在哪一段（悬停说明用） */
+  phase: string | null;
   open: boolean;
 } | null {
   const facts = useOnboardingFacts();
@@ -297,6 +300,7 @@ export function useOnboardingRail(): {
     done: progress.doneCount,
     total: progress.total,
     next: progress.current ? stepById(progress.current).title : null,
+    phase: progress.current ? phaseOf(progress.current) : null,
     open,
   };
 }
@@ -648,14 +652,19 @@ export function OnboardingPageStrip() {
   const index = progress.steps.findIndex((s) => s.step.id === current) + 1;
   const actions = stepActions(current, facts).filter((a) => !a.toProfiles);
   return (
+    // 同清单的长相（2026-10-24）：左边是这一步的琥珀实心序号，上面一行小字写在哪一段、做到第几步，下面是步名和做法
     <div role="status" className="mb-4 flex items-start gap-3 rounded-lg ccode-well px-3.5 py-3">
-      <span className="mt-0.5">
-        <OnboardingRing done={progress.doneCount} total={progress.total} />
+      <span className="mt-[1.25rem]">
+        <StepMark done={false} current index={index} />
       </span>
       <div className="min-w-0 flex-1">
-        <p className="text-xs font-medium text-l1">
-          上手第 {index} 步 · {stepById(current).title}
+        <p className="text-micro font-medium tracking-[0.08em] text-l3">
+          上手引导 · {phaseOf(current)}
+          <span className="ml-1.5 font-normal tracking-normal tabular-nums">
+            {progress.doneCount}/{progress.total}
+          </span>
         </p>
+        <p className="mt-0.5 text-sm font-medium text-l1">{stepById(current).title}</p>
         <p className="mt-0.5 text-xs leading-5 text-l3">{text}</p>
         {actions.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-1.5 text-xs">

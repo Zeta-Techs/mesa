@@ -132,6 +132,11 @@ export const ONBOARDING_PHASES: readonly { label: string; steps: readonly Onboar
   { label: "开始做课题", steps: ["project"] },
 ];
 
+/** 这一步在哪一段（连接页引导条、侧栏那一行的悬停说明写「接上 AI · 第 2 步」） */
+export function phaseOf(id: OnboardingStepId): string {
+  return ONBOARDING_PHASES.find((p) => p.steps.includes(id))!.label;
+}
+
 export function stepById(id: OnboardingStepId): OnboardingStep {
   return ONBOARDING_STEPS.find((s) => s.id === id)!;
 }
