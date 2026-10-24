@@ -105,7 +105,6 @@ import { exitCodeClause, exitCodeSummary, exitToneClass } from "../exit-code";
 import ChatSurface from "../components/ChatSurface";
 import { confirmDialog, alertDialog } from "../components/ConfirmDialog";
 import ContextMenu from "../components/ContextMenu";
-import RunCaret from "../components/RunCaret";
 import InsertMenuItems from "../components/InsertMenuItems";
 import {
   detectEffortInOutput,
@@ -9778,10 +9777,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                 <span className="min-w-0 truncate text-l2" title={title}>
                   {title}
                 </span>
-                {/* 标题后面跟一道运行状态光标（2026-10-24，同侧栏，原先是前面的转圈 / 黄点）：在干活灰色呼吸、等你确认琥珀。
-                    闲着不画——正看着的这段，闲着就是常态 */}
-                {s?.attention === "working" && <RunCaret state="working" className="-ml-1" />}
-                {s?.attention === "confirm" && <RunCaret state="confirm" className="-ml-1" />}
+                {/* 标题后不画运行状态光标：侧栏这一行已经有，下面的回合进度也看得见（2026-10-25 用户） */}
                 {/* 任务进度徽章（终端 OSC 9;4 上报）：state 0 = 结束不显示，1 带百分比，2 = 错误（!），3/4 = 进行中/暂停（…） */}
                 {p && p.state !== 0 && (
                   <span
