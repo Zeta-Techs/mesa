@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { File, Maximize2 } from "lucide-react";
+import { File, Maximize2, PanelRightClose, PanelRightOpen } from "lucide-react";
 import type {
   ArtifactEntryDto,
   GitCommitResultDto,
@@ -25,6 +25,7 @@ import { GitInstallOffer } from "../dep-install";
 import { fileTypeIcon } from "../file-icons";
 import { groupFilesByStatus, statusBadgeTitle } from "../git-status-groups";
 import { IS_MAC } from "../hotkeys";
+import { hunkLabel, pairIntraline } from "../diff-intraline";
 
 interface GitStatusDto {
   isRepo: boolean;
@@ -63,6 +64,45 @@ function hunkBodyLines(patch: string): string[] {
   if (body.length > 0 && body[body.length - 1] === "") body.pop();
   return body;
 }
+
+/**
+ * diff 正文：长行折行（窄栏里每块各带一条横向滚动条没法读，2026-10-23 用户），前缀 +/- 悬在左边、折下来的行对齐正文；
+ * 成对的删加行标出改了的那一段（diff-intraline.ts pairIntraline）
+ */
+function DiffBody({ lines, lineClass }: { lines: readonly string[]; lineClass: (line: string) => string }) {
+  const marks = pairIntraline(lines);
+  return (
+    <pre className="py-1 font-mono text-xs leading-5">
+      {lines.map((line, index) => {
+        const mark = marks.get(index);
+        const hl = line.startsWith("+") ? "ccode-diff-hl-add" : "ccode-diff-hl-del";
+        return (
+          <span
+            key={`${index}:${line.slice(0, 24)}`}
+            className={`block whitespace-pre-wrap pr-2 pl-[calc(0.5rem+1ch)] [overflow-wrap:anywhere] ${lineClass(line)}`}
+            style={{ textIndent: "-1ch" }}
+          >
+            {mark ? (
+              <>
+                {line.slice(0, 1 + mark[0])}
+                <span className={hl}>{line.slice(1 + mark[0], 1 + mark[1])}</span>
+                {line.slice(1 + mark[1])}
+              </>
+            ) : (
+              line || " "
+            )}
+          </span>
+        );
+      })}
+    </pre>
+  );
+}
+
+/** 面板宽到这么多才把文件列放到 diff 右边（左 diff 至少四百来像素 + 右列 w-44） */
+const SPLIT_MIN_WIDTH = 640;
+
+/** 看 diff 时右边文件列收起与否（localStorage） */
+const LIST_COLLAPSED_KEY = "ccode.gitPanel.listCollapsed";
 
 /** 状态 → 文件名单色（v3.92 起替代独立 M/?? 徽标块：状态色直接上到文件名，
     前缀只剩勾选框 + 类型图标，更清爽；黄=修改 绿=新增 红=删除） */
@@ -184,6 +224,30 @@ function GitPanel({
   const diffFocusReq = useAppStore((s) => s.diffFocusReq);
   const setDiffFocusReq = useAppStore((s) => s.setDiffFocusReq);
   const [diffPath, setDiffPath] = useState<string | null>(null);
+  // 面板够宽才分左右两栏（右栏宽度可拖，量自己）
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [wide, setWide] = useState(false);
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const measure = () => setWide(el.clientWidth >= SPLIT_MIN_WIDTH);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  // 看 diff 时右边那列文件名可收起，让 diff 占满整栏（2026-10-23 用户）；记住上次的选择
+  const [listCollapsed, setListCollapsed] = useState(
+    () => typeof localStorage !== "undefined" && localStorage.getItem(LIST_COLLAPSED_KEY) === "1",
+  );
+  function toggleList() {
+    setListCollapsed((v) => {
+      try {
+        localStorage.setItem(LIST_COLLAPSED_KEY, v ? "0" : "1");
+      } catch {}
+      return !v;
+    });
+  }
   const [diffDetail, setDiffDetail] = useState<GitFileDiffDto | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
   const [diffError, setDiffError] = useState<string | null>(null);
@@ -230,6 +294,8 @@ function GitPanel({
   }
 
   const refresh = useCallback(async () => {
+    // 两个查询同时发（原先串行：工作区探测慢时分支 / 改动要等它一起才出来，2026-10-23 用户：接着聊时不会一下显示）
+    const diffReq = invoke<WorkspaceDiffDto>("workspace_diff", { worktreePath: cwd }).catch(() => null);
     let s: GitStatusDto | null = null;
     try {
       s = await invoke<GitStatusDto>("git_status", { cwd });
@@ -239,15 +305,8 @@ function GitPanel({
       setError(String(e));
     }
     // 工作区探测：cwd 落在 worktree 里时切任务 diff 视图；失败/非工作区保持普通视图
-    let d: WorkspaceDiffDto | null = null;
-    try {
-      const diff = await invoke<WorkspaceDiffDto>("workspace_diff", {
-        worktreePath: cwd,
-      });
-      if (diff.inWorkspace) d = diff;
-    } catch {
-      // 保持普通 git 视图
-    }
+    const diff = await diffReq;
+    const d: WorkspaceDiffDto | null = diff?.inWorkspace ? diff : null;
     setWsDiff(d);
     // 提货单：工作区根的 artifacts.yaml（未提交也可见，提交后才随分支传递）
     if (d) {
@@ -582,10 +641,12 @@ function GitPanel({
     await loadExpandedDiff(file);
   }
 
-  // 主从分栏：选中文件后左栏 diff 主区 + 右栏紧凑文件列；未选中时全宽文件列表
+  // 宽栏（≥ SPLIT_MIN_WIDTH）：选中文件后左栏 diff 主区 + 右栏紧凑文件列；
+  // 窄栏（终端页右栏这类）：diff 就在那一行下面展开，往下滑接着看（2026-10-23 用户：窄了两栏都看不下）
   const diffFile = diffPath
     ? (files.find((f) => f.path === diffPath) ?? null)
     : null;
+  const split = Boolean(diffFile) && wide;
 
   /** 全宽模式文件行：勾选 + 状态徽标 + 路径 + 增删数 + hover diff 提示 */
   function renderFullRow(f: GitFileDto) {
@@ -632,6 +693,7 @@ function GitPanel({
             </span>
           </button>
         </div>
+        {expanded && !wide && <div className="pb-2 pl-1 pr-0.5">{renderDiffContent(f, true)}</div>}
       </div>
     );
   }
@@ -670,16 +732,35 @@ function GitPanel({
   }
 
   /** 左栏 diff 主区：文件头（路径 + 二进制/截断标记 + 收起）+ 逐 hunk / 只读文本 / 图片对比 */
-  function renderDiffContent(f: GitFileDto) {
+  function renderDiffContent(f: GitFileDto, inline = false) {
     const diffLines = diffDetail ? diffDetail.text.split("\n") : null;
     return (
       <div className="overflow-hidden rounded-md bg-strip">
+        {/* 行内展开时路径就在上面那一行，文件头只在有「二进制 / 已截断」要说时出现 */}
+        {(!inline || diffDetail?.binary || diffDetail?.truncated) && (
         <div className="flex items-center gap-2 border-b border-hairline px-2 py-1 text-micro text-l4">
-          <span className="min-w-0 flex-1 truncate font-mono">{f.path}</span>
+          <span className="min-w-0 flex-1 truncate font-mono">{inline ? "" : f.path}</span>
           {diffDetail?.binary && <span>二进制</span>}
           {diffDetail?.truncated && (
             <span className="text-warn-text">已截断</span>
           )}
+          {!inline && (
+          <button
+            type="button"
+            onClick={toggleList}
+            title={listCollapsed ? "展开右边的文件列表" : "收起右边的文件列表，diff 占满整栏"}
+            aria-label={listCollapsed ? "展开文件列表" : "收起文件列表"}
+            aria-pressed={listCollapsed}
+            className="shrink-0 rounded-sm p-0.5 text-l3 hover:bg-hover hover:text-l1"
+          >
+            {listCollapsed ? (
+              <PanelRightOpen aria-hidden="true" className="h-3.5 w-3.5" />
+            ) : (
+              <PanelRightClose aria-hidden="true" className="h-3.5 w-3.5" />
+            )}
+          </button>
+          )}
+          {!inline && (
           <button
             type="button"
             onClick={() => void toggleDiff(f)}
@@ -688,7 +769,9 @@ function GitPanel({
           >
             ×
           </button>
+          )}
         </div>
+        )}
         {isImagePath(f.path) ? (
           <ImagePairView cwd={cwd} path={f.path} />
         ) : diffLoading ? (
@@ -712,11 +795,12 @@ function GitPanel({
                   className="border-b border-hairline/60 last:border-b-0"
                 >
                   <div className="flex items-center gap-1 border-b border-hairline/60 bg-inset px-2 py-0.5">
-                    <span
-                      className="min-w-0 flex-1 truncate font-mono text-micro text-link"
-                      title={h.header}
-                    >
-                      {h.header}
+                    {/* 块头白话「第 340 行 · 小标题」，git 原样的 @@ 头放悬停 */}
+                    <span className="flex min-w-0 flex-1 items-baseline gap-1.5 text-micro" title={h.header}>
+                      <span className="shrink-0 text-l3">{hunkLabel(h.header).line}</span>
+                      {hunkLabel(h.header).context && (
+                        <span className="min-w-0 truncate text-l4">{hunkLabel(h.header).context}</span>
+                      )}
                     </span>
                     {!readOnly && (
                       <>
@@ -741,16 +825,7 @@ function GitPanel({
                       </>
                     )}
                   </div>
-                  <pre className="overflow-auto py-1 font-mono text-xs leading-5">
-                    {body.slice(0, DIFF_LINE_CAP).map((line, index) => (
-                      <span
-                        key={`${index}:${line.slice(0, 24)}`}
-                        className={`block min-w-max whitespace-pre px-2 ${diffLineClass(line)}`}
-                      >
-                        {line || " "}
-                      </span>
-                    ))}
-                  </pre>
+                  <DiffBody lines={body.slice(0, DIFF_LINE_CAP)} lineClass={diffLineClass} />
                   {body.length > DIFF_LINE_CAP && (
                     <p className="border-t border-hairline px-2 py-1 text-micro text-l4">
                       仅渲染前 {DIFF_LINE_CAP} 行（共 {body.length}{" "}
@@ -770,16 +845,7 @@ function GitPanel({
                 改动已全部暂存；勾选后「保存到任务分支」将提交这些内容
               </p>
             )}
-            <pre className="overflow-auto py-1 font-mono text-xs leading-5">
-              {diffLines.slice(0, DIFF_LINE_CAP).map((line, index) => (
-                <span
-                  key={`${index}:${line.slice(0, 24)}`}
-                  className={`block min-w-max whitespace-pre px-2 ${diffLineClass(line)}`}
-                >
-                  {line || " "}
-                </span>
-              ))}
-            </pre>
+            <DiffBody lines={diffLines.slice(0, DIFF_LINE_CAP)} lineClass={diffLineClass} />
             {diffLines.length > DIFF_LINE_CAP && (
               <p className="border-t border-hairline px-2 py-1 text-micro text-l4">
                 仅渲染前 {DIFF_LINE_CAP} 行（共 {diffLines.length}{" "}
@@ -807,12 +873,12 @@ function GitPanel({
       line.startsWith("---") ||
       line.startsWith("+++")
     )
-      return "border-l-2 border-transparent text-l4";
-    return "border-l-2 border-transparent text-l2";
+      return "text-l4";
+    return "text-l2";
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div ref={rootRef} className="flex min-h-0 flex-1 flex-col">
       {/* 头部：分支 / 上游差距（工作区模式：任务基准）/ 总增删 */}
       <div className="flex shrink-0 items-center gap-2 border-b border-hairline px-3 py-2 text-xs">
         {status?.isRepo ? (
@@ -821,9 +887,14 @@ function GitPanel({
               <span className="font-medium text-l1">⑂ {status.branch}</span>
               <span
                 className="text-l3"
-                title={`merge-base：任务改动是相对主分支 ${wsDiff!.baseBranch} 的共同起点（${wsDiff!.mergeBase.slice(0, 7)}）计算的`}
+                title={
+                  wsDiff!.baseBranch === "HEAD"
+                    ? "隔离运行的改动：相对这棵树最近一次提交，加上还没跟踪的新文件"
+                    : `merge-base：任务改动是相对主分支 ${wsDiff!.baseBranch} 的共同起点（${wsDiff!.mergeBase.slice(0, 7)}）计算的`
+                }
               >
-                相对主分支 {wsDiff!.baseBranch}
+                {/* Run 隔离树的基准是 HEAD，写「相对主分支 HEAD」读不通 */}
+                {wsDiff!.baseBranch === "HEAD" ? "未提交的改动" : `相对主分支 ${wsDiff!.baseBranch}`}
               </span>
               {(wsDiff!.totalAdd > 0 || wsDiff!.totalDel > 0) && (
                 <span className="ml-auto font-mono">
@@ -907,14 +978,15 @@ function GitPanel({
         ) : (
           // 白话分组：组名给中文，状态字母保留为文件名前的小号 mono 徽标（悬浮 title 双语义）
           <div className="flex h-full">
-            {diffFile && (
+            {split && diffFile && (
               <div className="min-w-0 flex-1 overflow-auto px-2 py-1.5">
                 {renderDiffContent(diffFile)}
               </div>
             )}
+            {!(split && listCollapsed) && (
             <div
               className={
-                diffFile
+                split
                   ? "w-44 shrink-0 overflow-auto border-l border-hairline p-1"
                   : "min-w-0 flex-1 overflow-auto p-2"
               }
@@ -929,11 +1001,12 @@ function GitPanel({
                     {group.label} {group.files.length}
                   </p>
                   {group.files.map((f) =>
-                    diffFile ? renderCompactRow(f) : renderFullRow(f),
+                    split ? renderCompactRow(f) : renderFullRow(f),
                   )}
                 </div>
               ))}
             </div>
+            )}
           </div>
         )}
       </div>
@@ -1001,8 +1074,9 @@ function GitPanel({
           {hasChanges && (
             <div className="mb-2 flex items-center justify-between text-xs text-l3">
               <span>
+                {/* 工作区模式上面列的是累计改动，提交的只是还没提交的那部分：写清楚，免得和列表条数对不上 */}
                 {inWs
-                  ? `${selectedFiles.length} 个文件`
+                  ? `这次提交 ${selectedFiles.length} 个未提交的文件`
                   : `${selectedFiles.length} / ${files.length}`}
               </span>
               {!inWs && (
@@ -1060,10 +1134,12 @@ function GitPanel({
               onClick={() => void doCommit(true)}
               disabled={!canCommit}
               title="git commit + push：提交到任务分支并推送到远程"
-              className={`flex-1 rounded-sm px-3 py-1.5 text-sm disabled:opacity-50 ${
+              // 次要钮（2026-10-23）：原来绿色渐变与「提交」两颗实心大钮抢主次，渐变也违反设计规范；
+              // 推送是往外发的那一步，不当默认动作
+              className={`flex-1 rounded-sm border px-3 py-1.5 text-sm disabled:opacity-50 ${
                 canCommit
-                  ? "bg-[linear-gradient(90deg,var(--color-ok,#22c55e),#10b981)] text-[var(--color-bg)] hover:brightness-110"
-                  : "bg-inset text-l4"
+                  ? "border-field text-l2 hover:bg-hover hover:text-l1"
+                  : "border-field bg-inset text-l4"
               }`}
             >
               {running === "push" ? "推送中…" : "提交并推送"}

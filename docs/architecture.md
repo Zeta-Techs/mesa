@@ -519,6 +519,13 @@ React 换上的字标用负 animation-delay 接 HTML 占位的进度，挂载时
 时长常量 `BOOT_SHOW_DELAY_MS` / `BOOT_BLINK_MS` 与 index.html 的 boot-show / boot-blink 同步改。减弱动态效果：
 光标常亮不闪，淡入淡出属溶解不是位移，保留。
 
+### 2026-10-23 · 改动面板：主仓不再被误当 Run 评审；diff 折行、块头白话、行内高亮
+
+用户截图问 diff 查看器怎么完善。查下来头部「main 相对主分支 HEAD」、勾选框消失、「1 个文件」与「修改的 70」对不上是同一个 bug：
+`workspace_diff` 找不到工作区行时按路径回落「Run 评审」，而项目里开的聊天也登记 Run（隔离路径 = 项目根），主仓就被当成了隔离树。
+改为只认非主工作树（`git rev-parse --git-dir` 与 `--git-common-dir` 不同）。界面同批收口：长行折行、块头「第 N 行 · 上下文」、
+成对删加行行内高亮、「提交并推送」去渐变降为次要钮。细则 coding-git.md「改动面板收口」。未验：Mesa Dev 里的实际观感。
+
 ### 2026-10-23 · MCP 页与用量页按 HIG 审查收口
 
 用户请审 MCP 页和用量页后「全部修」。MCP：健康状态不再只靠颜色（异常写「需登录 / 连不上」）；「N 个 CLI」改「N 个 Agent」、全正常不画点；
