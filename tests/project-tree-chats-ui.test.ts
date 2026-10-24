@@ -98,7 +98,11 @@ const reviewChats = Array.from({ length: 6 }, (_, i) =>
   }),
 );
 
-async function renderTree(store: Record<string, unknown> = {}) {
+async function renderTree(
+  store: Record<string, unknown> = {},
+  /** 换掉 list_workspaces 的返回（第几次调用 → 结果）；不给 = 一直空 */
+  workspaces?: (call: number) => unknown[],
+) {
   const dom = new JSDOM('<div id="root"></div>', { url: "http://localhost/" });
   const restore: Array<[string, PropertyDescriptor | undefined]> = [];
   for (const [key, value] of Object.entries({
@@ -113,6 +117,7 @@ async function renderTree(store: Record<string, unknown> = {}) {
     Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
   }
   const calls: unknown[][] = [];
+  let wsCalls = 0;
   const pages: string[] = [];
   const reqs: Record<string, unknown> = {};
   Object.assign(dom.window, {
@@ -158,7 +163,10 @@ async function renderTree(store: Record<string, unknown> = {}) {
       transformCallback: () => 0,
       invoke: async (command: string) => {
         if (command === "list_projects") return [PROJECT, { path: "/work/code", name: "Ccode", workMode: "coding" }];
-        if (command === "list_workspaces") return [];
+        if (command === "list_workspaces") {
+          wsCalls += 1;
+          return workspaces ? workspaces(wsCalls) : [];
+        }
         throw new Error(`Unexpected IPC: ${command}`);
       },
     },
@@ -195,6 +203,7 @@ async function renderTree(store: Record<string, unknown> = {}) {
     reqs,
     button,
     chatGroup,
+    wsCalls: () => wsCalls,
     close: async () => {
       await act(async () => root.unmount());
       dom.window.close();
@@ -492,6 +501,44 @@ test("键盘：↓ 走到下一行，对话上 ← 回到课题名，课题名�
     assert.equal(view.chatGroup("综述流程测试"), null, "收起");
     await press("ArrowRight");
     assert.ok(view.chatGroup("综述流程测试"), "展开");
+  } finally {
+    await view.close();
+  }
+});
+
+test("开步刚建的工作副本：侧栏先不认识，开着的对话出现认不出的目录就重读工作区清单，挂回课题下面（2026-10-24）", async () => {
+  const WT = "/Users/u/ccode/workspaces/review-step2";
+  const view = await renderTree(
+    {
+      terminalRunInputs: [
+        {
+          tabId: "t-step",
+          title: "综述流程测试 · 第二步",
+          agentId: "claude-code",
+          model: "",
+          cwd: WT,
+          running: false,
+          shell: false,
+          attention: null,
+          sessionId: null,
+        },
+      ],
+      terminalActiveTabId: "t-step",
+    },
+    // 挂上时拉到的清单里还没有这个工作副本（开步刚建），重读一次才有
+    (call) => (call >= 2 ? [{ repoPath: PROJECT.path, repoName: "review", worktreePath: WT }] : []),
+  );
+  try {
+    await view.act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    await view.act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    assert.equal(view.wsCalls(), 2, "认不出归属的目录触发了一次重读，之后不再反复读");
+    assert.equal(view.host.querySelector('[aria-label="其他打开的"]'), null, "不再挂在「其他打开的」");
+    const group = view.chatGroup("综述流程测试");
+    assert.ok(group?.textContent?.includes("新对话"), "挂在这个课题下面");
   } finally {
     await view.close();
   }

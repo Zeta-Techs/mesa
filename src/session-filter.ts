@@ -269,13 +269,14 @@ export function sessionLooksInternal(s: {
 }
 
 /**
- * 本项目会话再排除 Mesa 按钮拉起的交互会话（问 AI / 沉浸阅读注入 / 接力简报）。
- * 这些仍是普通项目对话，对话页照常列出，不进「内部 AI」。
+ * 本项目会话再排除 Mesa 按钮拉起的交互会话（问 AI / 沉浸阅读注入）。
+ * 这些仍是普通项目对话，对话页（搜对话）照常列出，不进「内部 AI」；侧栏项目树、工作台、任务卡都按这一份筛。
+ * 接力简报（`.ccode/handoff-`，在一步里换 Agent 接着做）2026-10-24 移出本表（用户：「其他按推荐改」）——
+ * 那是这一步的正式工作，原先随项目页「对话」页签的口径一起藏掉，侧栏挂对话之后就找不到了。
  */
 export const PROJECT_SESSION_EXCLUDE_HINTS = [
   "看这份文件",
   "【阅读上下文】",
-  ".ccode/handoff-",
 ] as const;
 
 export function sessionExcludedFromProjectList(s: {

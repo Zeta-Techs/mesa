@@ -257,7 +257,8 @@ test("本项目会话不收雷达解读和无头 AI", () => {
   );
   assert.deepEqual(
     rows.map((r) => r.id),
-    ["real"],
+    ["real", "handoff"],
+    "接力简报（换 Agent 接着做）是这一步的正式工作，照列；问 AI、沉浸阅读不列",
   );
 });
 

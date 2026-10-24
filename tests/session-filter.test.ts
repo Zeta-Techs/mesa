@@ -273,11 +273,12 @@ test("Ccode 无头 AI 临时目录：只认 ccode-ai-<uuid> 目录名", () => {
     ),
     true,
   );
+  // 接力简报（换 Agent 接着做）是这一步的正式工作，2026-10-24 起列进侧栏项目下面
   assert.equal(
     sessionExcludedFromProjectList(
       s({ title: "读 .ccode/handoff-20260822T021523Z.md 分叉简报" }),
     ),
-    true,
+    false,
   );
   assert.equal(
     sessionExcludedFromProjectList(s({ title: "继续写实验" })),

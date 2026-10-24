@@ -478,7 +478,9 @@ export default function ProjectTree({
   }
 
   // 列表数据：注册表 + 工作区清单（后者推「未添加」段与工作区计数）。重拉触发：
-  // 管理动作后的 projectsVersion、跨实例/终端侧注册落盘后的 projectPaths 签名变化
+  // 管理动作后的 projectsVersion、跨实例/终端侧注册落盘后的 projectPaths 签名变化、
+  // 开着的对话里有认不出归属的目录（reposTick，见下方 unmatchedCwdSig）
+  const [reposTick, setReposTick] = useState(0);
   useEffect(() => {
     let cancelled = false;
     invoke<ProjectDto[]>("list_projects")
@@ -500,7 +502,7 @@ export default function ProjectTree({
     return () => {
       cancelled = true;
     };
-  }, [projectsVersion, pathsSig]);
+  }, [projectsVersion, pathsSig, reposTick]);
 
   const rows = useMemo<TreeRow[]>(() => {
     const unregistered: TreeRow[] = [];
@@ -569,6 +571,27 @@ export default function ProjectTree({
     () => currentFolderKey(activeRun?.cwd, folders, projectPaths, IS_WINDOWS),
     [activeRun?.cwd, folders, projectPaths],
   );
+  // 开步刚建的工作副本这里还不认识（工作区清单只在项目有变动时重读）：那段对话会先挂到最上面「其他打开的」，
+  // 等后台认出会话才挪回课题下（2026-10-24 用户「修掉」）。开着的对话里出现认不出归属的目录就重读一次清单；
+  // 重读后还认不出的（主目录里的终端这类）签名不变，不会反复读
+  const unmatchedCwdSig = useMemo(
+    () =>
+      [...new Set(terminalRunInputs.map((r) => r.cwd).filter(Boolean))]
+        .filter((cwd) => currentFolderKey(cwd, folders, projectPaths, IS_WINDOWS) === null)
+        .sort()
+        .join("\n"),
+    [terminalRunInputs, folders, projectPaths],
+  );
+  const lastUnmatchedSig = useRef("");
+  useEffect(() => {
+    if (!unmatchedCwdSig) {
+      lastUnmatchedSig.current = "";
+      return;
+    }
+    if (unmatchedCwdSig === lastUnmatchedSig.current) return;
+    lastUnmatchedSig.current = unmatchedCwdSig;
+    setReposTick((t) => t + 1);
+  }, [unmatchedCwdSig]);
   const selectedChatKey =
     page === "terminal" && activeRun?.sessionId
       ? `${activeRun.agentId}\n${activeRun.sessionId}`

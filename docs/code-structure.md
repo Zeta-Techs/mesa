@@ -110,6 +110,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   放大镜开 RailSearchPalette（对话和项目一起搜，料由 searchSources 现组：置顶 / 随手聊 / 各课题的全部对话，
                              #   不受「展开更多」限额），树本身不再就地筛。分三层（2026-10-24）：分节标签 RAIL_SECTION_LABEL / 课题行最前
                              #   renderFolderToggle（文件夹图标，悬停换箭头，点它开合）/ 对话 pl-7 缩进到课题名，置顶与「其他打开的」下不缩
+                             #   工作区清单（课题的工作副本）在开着的对话出现认不出归属的目录时重读一次（reposTick；开步刚建的副本），
+                             #   重读后仍认不出的签名不变、不反复读
   components/RailSearchPalette.tsx # 「搜索对话和项目」弹层（2026-10-24 照 Claude 客户端）：只管列和选，打开由宿主回调；排序筛选在 rail-search.ts
   rail-search.ts             # 搜索弹层纯逻辑：空查询=最近对话 50 段；有查询=命中项目在前、命中对话在后（标题命中先于只命中文件夹名），多词全中
                              #   （2026-10-23 照 Claude 客户端侧栏，不再按工作方式分组；置顶 / 课题 / 未添加三段，段内可拖动排序）
@@ -762,7 +764,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   review-decisions.ts        # 审查报告 R/S 与待核实 V 的拆条、接受/拒绝/修改写回、点完后的继续提示
                              # （tests/review-decisions.test.ts）
   academic-mcp.ts            # 检索步「配置学术检索 MCP」：预设名、登录注入；登录态由 academic_mcp_login_status 回一句现状（tests/academic-mcp.test.ts）
-  session-filter.ts          # 对话页筛选纯逻辑 + 列表行项目名 sessionProjectLabel（Claude 编码目录名经 claudeProjectDirName 认回项目；tests/session-filter.test.ts）
+  session-filter.ts          # 对话页筛选纯逻辑 + 列表行项目名 sessionProjectLabel（Claude 编码目录名经 claudeProjectDirName 认回项目；tests/session-filter.test.ts）；
+                             #   PROJECT_SESSION_EXCLUDE_HINTS = 侧栏 / 工作台 / 任务卡不列的按钮拉起会话（问 AI、沉浸阅读），接力简报 2026-10-24 起照列
   session-search.ts          # 对话搜索纯逻辑：分词、元数据即时过滤、正文命中合并排序
   session-slim.ts            # 会话瘦身纯逻辑（撞网关 413）：提示条/菜单项出现条件、拦路原因（Mesa 终端在跑 / 最近一分钟有写入）、瘦身后体积预告、结果文案（tests/session-slim.test.ts）
   session-transfer.ts        # 会话导入向导纯逻辑：状态文案、目标目录预填、可否执行
