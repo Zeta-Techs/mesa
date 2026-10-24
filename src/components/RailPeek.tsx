@@ -6,9 +6,10 @@ const TRIGGER_LEAVE = "ccode-rail-peek-trigger-leave";
 
 /**
  * 探出整栏（2026-10-24 用户定 A+D+E，对照稿 docs/design-collapsed-rail-chats-mockup.html）：侧栏收成图标、
- * 或完全隐藏时，项目树临时盖在内容上（不挤动内容），选完一段就收回；侧栏本身的形态不变。
- * 开：悬停图标栏中段空白 / 贴窗口左边缘停一下 / ⌘0（App 管）。收：去了别处（换页、换了正看着的那段、
- * 选了另一个项目）、鼠标离开一会儿、Esc、点到外面。树里正开着菜单或正在改名时，鼠标离开不收。
+ * 或完全隐藏时，项目树临时盖在内容上（不挤动内容）；侧栏本身的形态不变。
+ * 开：悬停图标栏中段空白 / 贴窗口左边缘停一下 / ⌘0（App 管）。收：鼠标离开一会儿、Esc、点到外面；
+ * 去了别处（换页、换了正看着的那段、选了另一个项目）时，鼠标还在里面就先不收（2026-10-25 用户：点了不要立马收，
+ * 移开再收），鼠标不在里面（⌘0 键盘选的）才立刻收。树里正开着菜单或正在改名时，鼠标离开不收。
  */
 export function RailPeek({
   left,
@@ -60,7 +61,8 @@ export function RailPeek({
     }, 280);
   };
 
-  // 去了别处就收：点对话（换页 / 换了正看着的那段）、点课题名（进项目页或换项目）。
+  // 去了别处就收：点对话（换页 / 换了正看着的那段）、点课题名（进项目页或换项目）；鼠标还在探出层里就不收，
+  // 等它移开（onMouseLeave → closeLater）。
   // 收起要播动画、这段时间组件还挂着，而 onClose 自己就改 store（railPeekOpen）——不设「只收一次」会在 store 回调里
   // 递归到栈溢出（界面渲染出错）；收起中不监听，半路又被叫回（closing 翻回 false）时重新拍快照，不拿旧页面当基准
   useEffect(() => {
@@ -73,7 +75,7 @@ export function RailPeek({
     };
     let fired = false;
     return useAppStore.subscribe((s) => {
-      if (fired) return;
+      if (fired || pointerInside.current) return;
       if (
         s.page !== snap.page ||
         s.terminalActiveTabId !== snap.tab ||

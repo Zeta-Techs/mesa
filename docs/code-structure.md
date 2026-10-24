@@ -736,7 +736,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   components/ChatSwitcher.tsx # 灵动岛对话切换器（2026-10-24 A+D+E 的 D）：按钮写正看着那段 / 「打开的对话 N」，点开弹打开的对话（sidebar-chats.paletteOpenChats，
                              #   portal 到 body 同活动面板）+ 搜对话…；活动胶囊管「谁在跑」，这里管「切到哪段」
   components/RailPeek.tsx    # 探出整栏（2026-10-24 A+E）：图标态 / 完全隐藏时把同一棵 ProjectTree 盖在内容上滑出（App 挂、store.railPeekOpen）；
-                             #   去了别处（换页 / 换正看着的标签 / 选项目）、鼠标离开、Esc、点外面收；开着菜单或在改名时离开不收；useRailPeekTrigger 管悬停触发
+                             #   鼠标离开、Esc、点外面收，去了别处（换页 / 换正看着的标签 / 选项目）时鼠标还在里面不收、不在里面（⌘0 键盘选的）才立刻收（2026-10-25）；开着菜单或在改名时离开不收；useRailPeekTrigger 管悬停触发
                              #   （图标栏中段空白 0.12 秒、隐藏态左边缘 8px 0.32 秒），⌘0 也开。ProjectTree 的 focusRailReq 只认挂载后的新请求，探出层挂上不抢焦点；
                              #   动画是 data-shown 驱动的 CSS 过渡（App.css .ccode-rail-peek，可半路改向），收起由 App 的 useExitRender(180) 多挂一会儿
   nav-capsule.ts             # 侧栏可配置胶囊入口（恢复侧栏始终保留，不在此列）

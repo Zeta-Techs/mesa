@@ -1692,7 +1692,6 @@ function App() {
                     onSelect={(repoPath) => {
                       useAppStore.getState().setSelectProjectReq(repoPath);
                       setPage("workspaces");
-                      setRailPeekOpen(false);
                     }}
                   />
                 </div>

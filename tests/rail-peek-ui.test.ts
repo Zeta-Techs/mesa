@@ -85,6 +85,7 @@ async function mount() {
   await render(false);
   return {
     store,
+    act,
     render,
     closes: () => closes,
     close: async () => {
@@ -123,6 +124,26 @@ test("收起动画期间不监听；半路又被叫回时拿当下的页面当�
     assert.equal(v.closes(), 1, "重新探出后 store 没有「去了别处」的变化，不收");
     v.store.setState({ page: "sessions" });
     assert.equal(v.closes(), 2, "再换页照样收");
+  } finally {
+    await v.close();
+  }
+});
+
+test("鼠标还在探出层里时点了别处不立刻收，鼠标移开才收（鼠标不在里面时立刻收见上面两条）", async () => {
+  const v = await mount();
+  try {
+    const nav = (globalThis as any).document.querySelector('[role="navigation"]');
+    const fire = (type: string) =>
+      v.act(async () => {
+        nav.dispatchEvent(new (globalThis as any).window.MouseEvent(type, { bubbles: true, relatedTarget: null }));
+      });
+    await fire("mouseover");
+    v.store.setState({ page: "workbench" });
+    v.store.setState({ terminalActiveTabId: "t2" });
+    assert.equal(v.closes(), 0, "鼠标在里面：点了别处也不收");
+    await fire("mouseout");
+    for (let i = 0; i < 60 && v.closes() === 0; i += 1) await new Promise((r) => setTimeout(r, 50));
+    assert.ok(v.closes() >= 1, "鼠标移开后收起");
   } finally {
     await v.close();
   }
