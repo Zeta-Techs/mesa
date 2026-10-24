@@ -710,9 +710,9 @@ export default function ChatComposer({
             </div>
           )}
           {imageWarning && hasImages && (
-            <p className="flex items-center gap-1.5 px-4 pt-2 text-micro text-caution-text">
-              <TriangleAlert size={12} strokeWidth={1.8} aria-hidden="true" className="shrink-0" />
-              <span className="min-w-0 truncate" title={imageWarning}>{imageWarning}</span>
+            <p className="flex items-start gap-1.5 px-4 pt-2 text-micro text-caution-text">
+              <TriangleAlert size={12} strokeWidth={1.8} aria-hidden="true" className="mt-px shrink-0" />
+              <span className="min-w-0">{imageWarning}</span>
             </p>
           )}
           <div className="relative">

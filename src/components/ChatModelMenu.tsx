@@ -202,7 +202,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
   );
   const imageWarning =
     hasImages && currentModel && caps.vision[currentModel] === false
-      ? `${currentModel} 看不了图，换个能看图的模型更稳`
+      ? `${currentModel} 看不了图：带图发出去会报错，这段对话之后也会接着报错。先移除图片，或换个能看图的模型`
       : null;
   const onImageWarning = props.onImageWarning;
   useEffect(() => {

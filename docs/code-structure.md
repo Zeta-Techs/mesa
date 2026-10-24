@@ -320,6 +320,10 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   md-pdf-refs.ts             # md 阅读视图里把 p.3/第 3 页/Fig. 2/Table 1 包成可点引用（每次布局幂等重扫，跳过 a/code/公式；
                              # 标注行/译段引用块带上原文）+ 点中取跳转请求 + focusMdText（滚到含某段文字的块并闪）；
                              # 只在阅读区笔记栏接线（FilePreviewEditor onPdfRef/focusText）（tests/reader-note.test.ts）
+  doc-thumb.ts               # 聊天附件文件卡：哪些能出预览（docThumbKind）、类型字（docTypeLabel）、HTML 排进一张纸出 SVG foreignObject 图片地址（htmlPageThumb）、表格前几行（read_sheet_preview）；
+                             #   docThumb 按类型分派，pdf.js / mammoth 各自动态 import
+  docx-thumb.ts              # Word（docx）附件首页预览：read_docx_bytes → mammoth → sanitizeDocumentHtml → htmlPageThumb
+  pdf-thumb.ts               # 聊天附件卡的 PDF 首页缩略图（read_pdf_bytes + pdf.js 画第一页出 data URL，失败 null）；输入框按需动态 import，不进主包
   pdf-search.ts              # PDF 文本检索纯逻辑（2026-10-18）：页文本组装与归一（文本项原样拼、行尾补空格、断词复原、
                              # 大小写/弯引号/短横线/连字）——页级计数与页内高亮同一口径；命中→文本项分段、同行碎矩形合并、
                              # 标注重定位候选 quoteSearchCandidates（原样→去词内连字符→前 60 字）、图表定位 locateFigure（行首图注优先）、
@@ -432,6 +436,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   workspace-visibility.ts    # 聚焦步骤工作区可见性过滤纯逻辑（不匹配任何步骤的手动工作区始终可见，
                              # tests/workspace-visibility.test.ts）
   git-commit-message.ts      # 空提交信息的本地默认信息生成
+  diff-intraline.ts          # 改动面板（GitPanel）diff 纯逻辑：块头白话「第 N 行 · 上下文」、成对删加行的行内高亮区间（去同头同尾，整句重写不标）；评审页 diff 解析在 diff-view.ts
   main-history-save.ts       # 科研步骤卡一键「存进历史」：冲突拦截 / 白话说明 / 路径（tests/main-history-save.test.ts）
   text-fences.ts             # 纯文本消息（用户气泡）的围栏代码拆分 splitFenced：只认行首的 ``` / ~~~，行中间的三个反引号是行内写法不开围栏（旧实现按任意位置切会吞掉后面整段）；未收尾按代码到结尾（tests/text-fences.test.ts）
   chat-reply.ts              # 聊天长回复按小标题分段（带级别；识别代码围栏；有 ## 时冒号行不当标题）、正文里像文件路径的段（fileRefPath /
@@ -1348,7 +1353,9 @@ src-tauri/src/
                              #   两百篇带摘要的纳入清单就超；台账读写禁止回落预览通道
                              #   家目录直下系统目录标 isSystem 供前端置灰）
   pdf.rs                     # PDF/docx 字节读取：read_pdf_bytes 白名单 + canonicalize + 上限，base64 传输
-                             #   （白名单根含 ccode/tmp 粘贴图与 phone_drop 暂存区）
+                             #   （白名单根含 ccode/tmp 粘贴图与 phone_drop 暂存区，精确路径含 attach_grants 登记的文件）
+  attach_grants.rs           # 用户亲手交来的文件（拖进窗口的原生事件 / pick_attachment_files 选择器）进程内登记，供读取白名单按精确路径放行；
+                             #   前端传来的路径不登记（红线）
   phone_drop.rs              # 从手机添加（2026-10-20，docs/design-phone-drop.md；安全口径 safety.md 同名条）：人点了才在各张局域网
                              #   网卡的私网 IPv4 上同端口起 tiny_http 收件服务（单线程轮询；令牌在路径、Host 校验、错令牌/未知路径同一个 404、只收不出），
                              #   2026-10-21 记住这台手机：/p/<配对令牌>/ 扫码即配对（pair）→ /d/<设备令牌>/ 主屏网页；配对簿

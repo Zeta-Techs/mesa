@@ -365,10 +365,11 @@ export default function TerminalStatusBar({
             : "已退出";
 
   const hasGit = !!(git?.isRepo && (git.files.length > 0 || git.ahead > 0));
-  // Agent 还在本标签干活时禁用提交段（与改动面板 running === null 门控同口径）：
-  // 中途提交会把半成品存进历史，还可能与 Agent 自己的收尾提交相撞；
-  // 此前只看「有没有改动」，Agent 工作中按钮照常亮着（用户实测误以为「可提交」）
-  const agentBusy = status?.running === true;
+  // Agent 正在本标签干活时禁用提交段：中途提交会把半成品存进历史，还可能与 Agent 自己的收尾提交相撞；
+  // 此前只看「有没有改动」，Agent 工作中按钮照常亮着（用户实测误以为「可提交」）。
+  // 只拦「正在干」（工作中 / 等你确认），不拦「进程开着」：CLI 停在提示符等你说话时照样能提交——
+  // 原先按 running（进程活着）拦，开着对话就永远提交不了（2026-10-23 用户截图）
+  const agentBusy = status?.running === true && (attention === "working" || attention === "confirm");
   const hasCommittable = !!git?.isRepo && git.files.length > 0;
   // 无未提交改动但有未推送提交时，右段退化为纯推送（同改动面板「保存并推送」的推送半段）
   const canPushOnly = !hasCommittable && !!git?.isRepo && git.ahead > 0;

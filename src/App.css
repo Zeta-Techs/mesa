@@ -3233,3 +3233,14 @@ select:focus-visible {
 #root .monaco-hover {
   display: none;
 }
+
+/* 改动面板 diff：成对删加行里真正改了的那一段（GitPanel DiffBody，diff-intraline.ts pairIntraline）。
+   整行已铺 diff-add/del 底色，这一段再叠一层同色相的实色，深浅主题都比整行深一档 */
+.ccode-diff-hl-add {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--color-add) 30%, transparent);
+}
+.ccode-diff-hl-del {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--color-del) 30%, transparent);
+}
