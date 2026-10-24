@@ -733,11 +733,13 @@ export default function StepFlow({
   const [endnoteSyncing, setEndnoteSyncing] = useState(false);
   const [endnoteSyncResult, setEndnoteSyncResult] = useState<string | null>(null);
   /** 人指定的 EndNote 库（papers/endnote-library.path 那一行）。undefined = 还没读；null = 没指定 */
-  const [endnoteLib, setEndnoteLib] = useState<{ path: string | null; revision: string } | undefined>(undefined);
+  const [endnoteLib, setEndnoteLib] = useState<
+    { path: string | null; revision: string; legacy?: boolean } | undefined
+  >(undefined);
   const [endnoteLibNote, setEndnoteLibNote] = useState<string | null>(null);
   /** 「选这个 EndNote 库」展开的候选：EndNote 最近打开过的库，加文稿 / 桌面里的 .enl */
   const [endnoteChoices, setEndnoteChoices] = useState<
-    { path: string; name: string; recent: boolean }[] | null
+    { path: string; name: string; recent: boolean; legacy: boolean }[] | null
   >(null);
   const [endnoteChecked, setEndnoteChecked] = useState(false);
   const [continueNotesChecked, setContinueNotesChecked] = useState(false);
@@ -1007,6 +1009,11 @@ export default function StepFlow({
           .map((l) => l.trim())
           .find((l) => l && !l.startsWith("#"));
         setEndnoteLib({ path: line ?? null, revision: file.revision ?? "new" });
+        if (line) {
+          void invoke<boolean>("endnote_library_legacy", { path: line })
+            .then((legacy) => !stale && setEndnoteLib((cur) => (cur && cur.path === line ? { ...cur, legacy } : cur)))
+            .catch(() => {});
+        }
       })
       .catch(() => !stale && setEndnoteLib({ path: null, revision: "new" }));
     return () => {
@@ -1022,7 +1029,7 @@ export default function StepFlow({
       setEndnoteChoices(null);
       return;
     }
-    const found = await invoke<{ path: string; name: string; recent: boolean }[]>(
+    const found = await invoke<{ path: string; name: string; recent: boolean; legacy: boolean }[]>(
       "endnote_library_choices",
     ).catch(() => []);
     if (found.length > 0) {
@@ -1035,8 +1042,8 @@ export default function StepFlow({
   async function browseEndnoteLibrary() {
     const selected = await openFileDialog({
       multiple: false,
-      title: "选 EndNote 库：选 .enl 文件，不是旁边同名的 .Data 文件夹",
-      filters: [{ name: "EndNote 库", extensions: ["enl"] }],
+      title: "选 EndNote 库：选 .enl 文件（不是旁边同名的 .Data 文件夹），或从 EndNote 导出的 .xml",
+      filters: [{ name: "EndNote 库或导出的 XML", extensions: ["enl", "xml"] }],
     });
     if (!selected || typeof selected !== "string") return;
     await saveEndnoteLibrary(selected);
@@ -1051,7 +1058,8 @@ export default function StepFlow({
         text: `${selected}\n`,
         expectedRevision: endnoteLib?.revision ?? "new",
       });
-      setEndnoteLib({ path: selected, revision });
+      const legacy = await invoke<boolean>("endnote_library_legacy", { path: selected }).catch(() => false);
+      setEndnoteLib({ path: selected, revision, legacy });
       setEndnoteChoices(null);
     } catch (e) {
       setEndnoteLibNote(String(e));
@@ -2372,7 +2380,17 @@ export default function StepFlow({
                 <span className="text-l3" title={endnoteLib.path}>
                   {endnoteLib.path.split(/[\\/]/).pop()}
                 </span>
-                。定稿出的 EndNote 版 Word 按它对上库里的条目，在 Word 里点 Update 即可。
+                {endnoteLib.legacy ? (
+                  <>
+                    。这是 EndNote X9 及更早版本的库，Mesa 读不到里面的记录，Word 只能对上一部分条目。在 EndNote 里打开这个库，File → Export，「保存类型」选 XML，存到项目的 papers 文件夹，再
+                    <button type="button" onClick={() => void browseEndnoteLibrary()} className="mx-1 rounded-sm bg-inset px-1.5 py-0.5 text-l2 hover:bg-hover hover:text-l1">
+                      选导出的 XML
+                    </button>
+                    ，然后回定稿对话让 AI 重出 EndNote 版。
+                  </>
+                ) : (
+                  "。定稿出的 EndNote 版 Word 按它对上库里的条目，在 Word 里点 Update 即可。"
+                )}
                 <button type="button" onClick={() => void pickEndnoteLibrary()} className="ml-1 rounded-sm px-1 text-l3 hover:bg-hover hover:text-l1">
                   换一个
                 </button>
@@ -2404,6 +2422,7 @@ export default function StepFlow({
                 <span className="ml-1 text-micro text-l4">
                   {choice.path.split(/[\\/]/).slice(-2, -1)[0]}
                   {choice.recent ? " · 最近打开" : ""}
+                  {choice.legacy ? " · X9 库，需导出 XML" : ""}
                 </span>
               </button>
             ))}

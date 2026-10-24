@@ -631,6 +631,24 @@ pub struct EndnoteLibraryChoice {
     pub name: String,
     /// 来自 EndNote 最近打开的库
     pub recent: bool,
+    /// EndNote X9 及更早的库：记录在同名 .Data/rdb，脚本读不了，要人先导出 XML
+    pub legacy: bool,
+}
+
+/// .enl 是不是 X9 及更早的格式（同名 .Data 下有 rdb）。这种库脚本读不到记录（2026-10-24 HER：「file is not a database」）
+fn is_legacy_library(path: &Path) -> bool {
+    path.with_extension("Data").join("rdb").is_dir()
+}
+
+/// 指定的库是不是 X9 老格式：界面据此提示「先在 EndNote 里导出 XML」
+#[tauri::command]
+pub async fn endnote_library_legacy(path: String) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let p = PathBuf::from(crate::sessions::expand_tilde(&path));
+        Ok(p.extension().is_some_and(|e| e.to_string_lossy().eq_ignore_ascii_case("enl")) && is_legacy_library(&p))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -667,7 +685,8 @@ fn library_choices(recent: Vec<String>, dirs_to_look: &[PathBuf]) -> Vec<Endnote
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        out.push(EndnoteLibraryChoice { path: shown, name, recent });
+        let legacy = is_legacy_library(&path);
+        out.push(EndnoteLibraryChoice { path: shown, name, recent, legacy });
     };
     for raw in recent {
         push(PathBuf::from(raw.trim()), true);
@@ -797,6 +816,11 @@ mod tests {
         let names: Vec<(&str, bool)> = got.iter().map(|c| (c.name.as_str(), c.recent)).collect();
         // 最近打开的排前、只出一次；不存在的不列；.Data 文件夹和别的文件不列
         assert_eq!(names, vec![("我的EndNote库.enl", true), ("旧库.enl", false)]);
+        // 同名 .Data 下有 rdb = X9 老格式
+        std::fs::create_dir_all(dir.join("我的EndNote库.Data").join("rdb")).unwrap();
+        let again = library_choices(vec![], &[dir.clone()]);
+        assert!(again.iter().find(|c| c.name == "我的EndNote库.enl").unwrap().legacy);
+        assert!(!again.iter().find(|c| c.name == "旧库.enl").unwrap().legacy);
         std::fs::remove_dir_all(&dir).ok();
     }
 

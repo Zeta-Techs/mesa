@@ -541,6 +541,25 @@ z.commit()
     const zoReport = readFileSync(join(root, "zo.md"), "utf8");
     assert.match(zoReport, /已绑定 1 条/);
     assert.match(zoReport, /Dup2021.*2 条/);
+
+    // EndNote X9 及更早：.enl 不是 SQLite、记录在 .Data/rdb——报告说清怎么导出 XML（2026-10-24 HER：「file is not a database」）
+    const legacy = join(root, "old.enl");
+    writeFileSync(legacy, "not sqlite");
+    mkdirSync(join(root, "old.Data", "rdb"), { recursive: true });
+    result = run(citeDocx, ["--input", md, "--bib", bib, "--output", join(root, "legacy.docx"), "--report", join(root, "legacy.md"), "--endnote-library", legacy]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(readFileSync(join(root, "legacy.md"), "utf8"), /EndNote X9 及更早[\s\S]*File → Export[\s\S]*XML/);
+    // 导出的 XML 能绑：记录号与库编号取自 XML
+    const exported = join(root, "endnote-library.xml");
+    const style = (s: string) => `<style face="normal" font="default" size="100%">${s}</style>`;
+    const rec = (n: number, doi: string) =>
+      `<record><rec-number>${n}</rec-number><foreign-keys><key app="EN" db-id="x9dbid0001" timestamp="1690000000">${n}</key></foreign-keys><ref-type name="Journal Article">17</ref-type><titles><title>${style("T")}</title></titles><electronic-resource-num>${style(doi)}</electronic-resource-num></record>`;
+    writeFileSync(exported, `<?xml version="1.0" encoding="UTF-8" ?><xml><records>${rec(7, "10.1000/only")}${rec(8, "10.1000/dup")}${rec(9, "10.1000/dup")}</records></xml>`);
+    const viaXml = join(root, "via-xml.docx");
+    result = run(citeDocx, ["--input", md, "--bib", bib, "--output", viaXml, "--report", join(root, "xml.md"), "--endnote-library", exported]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(readFileSync(join(root, "xml.md"), "utf8"), /已绑定 1 条/);
+    assert.match(fldData(viaXml).stdout, /<rec-number>7<\/rec-number><foreign-keys><key app="EN" db-id="x9dbid0001" timestamp="1690000000">7<\/key>/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

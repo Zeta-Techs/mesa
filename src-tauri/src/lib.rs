@@ -722,6 +722,7 @@ pub fn run() {
             zotero::zotero_open_import,
             endnote::endnote_export_xml,
             endnote::endnote_library_choices,
+            endnote::endnote_library_legacy,
             zotero::zotero_match_dois,
             zotero::zotero_open_papers,
             projects::pdf_owner_project,
