@@ -1390,21 +1390,10 @@ export default function ProjectTree({
         onKeyDown={onRailKeyDown}
         onScroll={(e) => {
           const el = e.currentTarget;
-          // WKWebView 只改属性不会重画滚动条拇指（实测显示和消失都不重画），翻转时轻推一下不透明度强制重画
-          const nudge = () => {
-            el.style.opacity = "0.999";
-            requestAnimationFrame(() => {
-              el.style.opacity = "";
-            });
-          };
-          if (el.dataset.scrolling === undefined) {
-            el.dataset.scrolling = "1";
-            nudge();
-          }
+          el.dataset.scrolling = "1";
           if (scrollFadeTimer.current) clearTimeout(scrollFadeTimer.current);
           scrollFadeTimer.current = setTimeout(() => {
             delete el.dataset.scrolling;
-            nudge();
           }, 900);
         }}
         className="ccode-rail-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1.5 pb-1 pt-1.5 [mask-image:linear-gradient(to_bottom,transparent,black_6px)]"

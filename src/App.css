@@ -2360,7 +2360,12 @@ select:focus-visible {
 }
 
 /* 侧栏树滚动区：静止时不显示滚动条，滚动期间（ProjectTree 打 data-scrolling，停 0.9s 后摘）
-   或鼠标移到拇指上（透明拇指仍可抓）才显现。 */
+   或鼠标移到拇指上（透明拇指仍可抓）才显现。
+   Mac 不走这套：WKWebView 改属性不重画 ::-webkit-scrollbar 拇指（实测显示/消失都不重画），
+   scrollbar-width 一设就改用系统原生浮层滚动条（布局宽 0、滚动时出现、停下自动淡出，随系统设置）。 */
+[data-platform="mac"] .ccode-rail-scroll {
+  scrollbar-width: thin;
+}
 .ccode-rail-scroll::-webkit-scrollbar-thumb {
   background-color: transparent;
 }
