@@ -26,3 +26,10 @@ test("所有保存预览入口都传读取版本；只讨论恢复不跳过参�
   assert.ok(!pty.includes("discuss && resume_session_id.is_none()"));
   assert.match(pty, /if discuss \{[\s\S]*?readonly_launch_args/);
 });
+
+test("本步文件的外部打开走 open_in_system（限根目录内、限文档类型），不直接调 openPath（2026-10-24）", () => {
+  const src = read("src/components/ArtifactChecklist.tsx");
+  assert.match(src, /function OpenExternalHandle[\s\S]*?invoke\("open_in_system", \{ path, root \}\)/);
+  assert.equal((src.match(/<OpenExternalHandle /g) ?? []).length, 2);
+  assert.ok(!/openPath\(/.test(src));
+});

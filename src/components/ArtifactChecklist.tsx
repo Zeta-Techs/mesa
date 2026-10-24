@@ -36,6 +36,26 @@ function startOsFileDrag(path: string) {
   }).catch(() => {});
 }
 
+/** 行内「外部打开」：交给系统默认应用（PDF 阅读器、Word、图片查看器……）。阻止冒泡，不触发行点击预览。
+ *  走 open_in_system：路径必须在这一步的根目录内，类型限文档 / 表格 / 图片 / 文本（2026-10-24 用户：本步文件加外部打开） */
+function OpenExternalHandle({ path, root, onError }: { path: string; root: string; onError: (msg: string) => void }) {
+  return (
+    <span
+      role="button"
+      aria-label="用系统应用打开"
+      title="用系统默认应用打开（PDF 阅读器、Word 等）"
+      className="shrink-0 cursor-pointer select-none px-0.5 text-micro text-l4 hover:text-l2"
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        void invoke("open_in_system", { path, root }).catch((reason) => onError(String(reason)));
+      }}
+    >
+      ↗
+    </span>
+  );
+}
+
 /** 行内拖出手柄：mousedown 即起系统拖拽；阻止冒泡避免触发行点击预览 */
 function DragOutHandle({ path }: { path: string }) {
   return (
@@ -202,6 +222,11 @@ export default function ArtifactChecklist({
     path: string;
     name: string;
   } | null>(null);
+  const [openError, setOpenError] = useState<string | null>(null);
+  function openExternal(path: string) {
+    setOpenError(null);
+    void invoke("open_in_system", { path, root }).catch((reason) => setOpenError(String(reason)));
+  }
 
   async function openInlinePreview(f: DirEntryDto) {
     setInlinePreview({
@@ -465,6 +490,7 @@ export default function ArtifactChecklist({
                     <span className="min-w-0 flex-1 truncate font-mono">
                       {single.name}
                     </span>
+                    <OpenExternalHandle path={single.path} root={root} onError={setOpenError} />
                     <DragOutHandle path={single.path} />
                     {fileMeta(single)}
                   </button>
@@ -491,6 +517,7 @@ export default function ArtifactChecklist({
                             <span className="min-w-0 flex-1 truncate font-mono">
                               {f.name}
                             </span>
+                            <OpenExternalHandle path={f.path} root={root} onError={setOpenError} />
                             <DragOutHandle path={f.path} />
                             {fileMeta(f)}
                           </button>
@@ -503,6 +530,7 @@ export default function ArtifactChecklist({
             );
           })}
         </ul>
+        {openError && <p className="mt-1 px-1 text-micro text-err-text">{openError}</p>}
         </>
       )}
       {/* 文本类产物就地预览弹层（v3.97）：与 TASK.md 预览/编辑同款——标题栏 +
@@ -586,6 +614,15 @@ export default function ArtifactChecklist({
               >
                 在终端页打开
               </button>
+              <button
+                type="button"
+                onClick={() => openExternal(inlinePreview.path)}
+                title="用系统默认应用打开（如 Typora、记事本）"
+                className="rounded-sm px-2 py-1.5 text-micro text-l4 hover:bg-hover hover:text-l2"
+              >
+                用系统应用打开
+              </button>
+              {openError && <span className="min-w-0 truncate text-micro text-err-text">{openError}</span>}
               {isMd && (
                 <button
                   type="button"
@@ -678,6 +715,15 @@ export default function ArtifactChecklist({
               >
                 在运行页打开
               </button>
+              <button
+                type="button"
+                onClick={() => openExternal(mediaPreview.path)}
+                title="用系统默认应用打开（PDF 阅读器、Word、图片查看器）"
+                className="rounded-sm px-2 py-1.5 text-micro text-l4 hover:bg-hover hover:text-l2"
+              >
+                用系统应用打开
+              </button>
+              {openError && <span className="min-w-0 truncate text-micro text-err-text">{openError}</span>}
               <button
                 type="button"
                 onClick={() => setMediaPreview(null)}
