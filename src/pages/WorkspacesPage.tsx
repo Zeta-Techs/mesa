@@ -29,7 +29,6 @@ import {
   useAppStore,
   type InboxItem,
 } from "../store";
-import { LAST_PROJECT_KEY } from "../start-page";
 import { absTime, relTime } from "../rel-time";
 import {
   groupInbox,
@@ -1383,15 +1382,6 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   useEffect(() => {
     setIdentityChrome(null);
   }, [selectedGroupKey]);
-  // 「启动时进入 → 上次的项目」用（start-page.ts）：项目页正看着哪个就记哪个
-  useEffect(() => {
-    if (!visible || !selectedProjectPath) return;
-    try {
-      localStorage.setItem(LAST_PROJECT_KEY, selectedProjectPath);
-    } catch {
-      /* 存不进只影响下次启动的去处 */
-    }
-  }, [visible, selectedProjectPath]);
   useEffect(() => {
     if (visible) return;
     setIdentityChrome(null);

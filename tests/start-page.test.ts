@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeStartPage, resolveStartAction, START_PAGE_OPTIONS } from "../src/start-page.ts";
+import { normalizeStartPage, projectOfCwd, resolveStartAction, START_PAGE_OPTIONS } from "../src/start-page.ts";
 
 const ctx = { hasLastChat: true, lastProjectPath: "/p/a", projectPaths: ["/p/b", "/p/a"] };
 
@@ -38,4 +38,13 @@ test("新对话：不看别的条件", () => {
     resolveStartAction("new-chat", { hasLastChat: false, lastProjectPath: null, projectPaths: [] }),
     { kind: "new-chat" },
   );
+});
+
+test("上次的项目按对话目录认：落在项目里取最深的那个，随手聊 / 主目录不算", () => {
+  const roots = ["/u/research", "/u/research/sub", "/u/code"];
+  assert.equal(projectOfCwd("/u/research/sub/notes", roots), "/u/research/sub");
+  assert.equal(projectOfCwd("/u/research", roots), "/u/research");
+  assert.equal(projectOfCwd("/u/research-old", roots), null, "段边界，不按前缀");
+  assert.equal(projectOfCwd("/u/ccode/scratch", roots), null);
+  assert.equal(projectOfCwd("C:\\U\\Code\\x", ["c:/u/code"], true), "c:/u/code");
 });

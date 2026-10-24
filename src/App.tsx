@@ -31,7 +31,7 @@ import { LIT_WATCH_SLOT } from "./skill-slots.ts";
 import ErrorBoundary from "./components/ErrorBoundary";
 import CommandPalette from "./components/CommandPalette";
 import { openQuickChat } from "./quick-chat-launch";
-import { LAST_PROJECT_KEY, resolveStartAction } from "./start-page";
+import { LAST_PROJECT_KEY, projectOfCwd, resolveStartAction } from "./start-page";
 import { parseRecoverableTerminalState, TERMINAL_TABS_STORAGE_KEY } from "./terminal-tab-persistence";
 import { nextUnread, sameKeys } from "./chat-unread";
 import { clampRailWidth, parseRailWidth, RAIL_DEFAULT_REM, RAIL_WIDTH_KEY } from "./rail-width";
@@ -406,6 +406,19 @@ function App() {
       document.removeEventListener("visibilitychange", sync);
     };
   }, []);
+  // 「启动时进入 → 上次的项目」= 最后看的那段对话所在的项目（start-page.ts）：运行页正看着的对话目录落在已添加项目里就记下
+  const projectPathsForLast = useAppStore((s) => s.projectPaths);
+  useEffect(() => {
+    if (page !== "terminal") return;
+    const cwd = terminalRunInputs.find((r) => r.tabId === terminalActiveTabId)?.cwd;
+    const project = cwd ? projectOfCwd(cwd, projectPathsForLast, IS_WINDOWS) : null;
+    if (!project) return;
+    try {
+      localStorage.setItem(LAST_PROJECT_KEY, project);
+    } catch {
+      /* 存不进只影响下次启动的去处 */
+    }
+  }, [page, terminalRunInputs, terminalActiveTabId, projectPathsForLast]);
   const unreadBeforeRef = useRef<RunOverviewInput[]>([]);
   useEffect(() => {
     const st = useAppStore.getState();

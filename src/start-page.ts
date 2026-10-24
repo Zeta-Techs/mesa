@@ -4,6 +4,8 @@
  * 存在 settings.startPage（后端 settings.rs KNOWN_START_PAGES 白名单，两边同步）；旧值（页面 id）一律当工作台。
  */
 
+import { pathWithin } from "./path-utils.ts";
+
 export const START_PAGE_OPTIONS = [
   { id: "workbench", label: "工作台" },
   { id: "last-chat", label: "上次的对话" },
@@ -13,8 +15,22 @@ export const START_PAGE_OPTIONS = [
 
 export type StartPageId = (typeof START_PAGE_OPTIONS)[number]["id"];
 
-/** 上次看的项目页（WorkspacesPage 在项目页可见时记），「上次的项目」从这里取 */
+/** 「上次的项目」= 最后看的那段对话所在的项目（2026-10-24 用户选定，不是最后看的项目页）：
+ *  App 在运行页正看着一段对话、它的目录落在某个已添加项目里时记下项目根 */
 export const LAST_PROJECT_KEY = "ccode.lastProject";
+
+/** 对话目录属于哪个已添加项目：落在多个里（项目套项目）取最深的那个；都不在返回 null（随手聊、主目录里的终端） */
+export function projectOfCwd(
+  cwd: string,
+  projectPaths: readonly string[],
+  isWindows = false,
+): string | null {
+  let best: string | null = null;
+  for (const p of projectPaths) {
+    if (pathWithin(cwd, p, isWindows) && (!best || p.length > best.length)) best = p;
+  }
+  return best;
+}
 
 export function normalizeStartPage(value: unknown): StartPageId {
   return START_PAGE_OPTIONS.some((o) => o.id === value) ? (value as StartPageId) : "workbench";

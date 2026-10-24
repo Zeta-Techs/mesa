@@ -423,7 +423,7 @@ const AI_FN_GROUPS: { title: string; rows: { key: string; label: string; hint: s
 const START_PAGE_HINT: Record<StartPageId, string> = {
   workbench: "下次启动生效",
   "last-chat": "下次启动生效；回到上次正看着的那段，发一句才接着跑；上次都关了就进工作台",
-  "last-project": "下次启动生效；回到上次看的那个项目页",
+  "last-project": "下次启动生效；回到最后那段对话所在的项目页",
   "new-chat": "下次启动生效；直接开一段空白对话",
 };
 
