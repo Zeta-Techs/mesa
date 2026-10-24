@@ -560,6 +560,26 @@ z.commit()
     assert.equal(result.status, 0, result.stderr);
     assert.match(readFileSync(join(root, "xml.md"), "utf8"), /已绑定 1 条/);
     assert.match(fldData(viaXml).stdout, /<rec-number>7<\/rec-number><foreign-keys><key app="EN" db-id="x9dbid0001" timestamp="1690000000">7<\/key>/);
+    // 没有 DOI 的（中文期刊常见）：题名去标点大小写 + 年份恰好一条才绑（2026-10-24 HER：梁珂明 2020 两边都没 DOI）
+    const recNoDoi = (n: number, title: string, year: string) =>
+      `<record><rec-number>${n}</rec-number><foreign-keys><key app="EN" db-id="x9dbid0001" timestamp="1690000000">${n}</key></foreign-keys><ref-type name="Journal Article">17</ref-type><titles><title>${style(title)}</title></titles><dates><year>${style(year)}</year></dates></record>`;
+    writeFileSync(exported, `<?xml version="1.0" encoding="UTF-8" ?><xml><records>${rec(7, "10.1000/only")}${recNoDoi(30, "碳纳米纤维负载铁钴镍硼化物可控制备", "2020")}${recNoDoi(31, "Same Title", "2019")}${recNoDoi(32, "Same title.", "2019")}</records></xml>`);
+    const md2 = join(root, "nodoi.md");
+    writeFileSync(md2, "See [@Cn2020] and [@Twin2019].\n");
+    const bib2 = join(root, "nodoi.bib");
+    writeFileSync(bib2, [
+      "@article{Cn2020, title={碳纳米纤维负载铁钴镍硼化物可控制备}, author={梁珂明 and 姜彬}, year={2020}}",
+      "@article{Twin2019, title={Same Title}, author={Roe, Ann}, year={2019}}",
+      "",
+    ].join("\n"));
+    const noDoi = join(root, "nodoi.docx");
+    result = run(citeDocx, ["--input", md2, "--bib", bib2, "--output", noDoi, "--report", join(root, "nodoi-report.md"), "--endnote-library", exported]);
+    assert.equal(result.status, 0, result.stderr);
+    const noDoiReport = readFileSync(join(root, "nodoi-report.md"), "utf8");
+    assert.match(noDoiReport, /已绑定 1 条/);
+    assert.match(noDoiReport, /Cn2020.*按题名与年份对上记录 30/);
+    assert.match(noDoiReport, /Twin2019.*2 条，未绑定/);
+    assert.match(fldData(noDoi).stdout, /<rec-number>30<\/rec-number><foreign-keys><key app="EN" db-id="x9dbid0001"/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

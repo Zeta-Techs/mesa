@@ -201,6 +201,52 @@ def _endnote_sqlite_rows(path: Path) -> tuple[list, str, str]:
     return rows, db_id, error
 
 
+def norm_title(raw: str) -> str:
+    """题名比对口径：大小写、空白、标点都不算，中文原样。只用于没有 DOI 的条目，仍要整段相等。"""
+    return re.sub(r"[\W_]+", "", (raw or "").casefold())
+
+
+def endnote_title_index(path: Path) -> dict[tuple[str, str], list[int]]:
+    """(题名, 年份) → 活记录号。只给没有 DOI 的条目用（中文期刊常没有 DOI，2026-10-24 HER：梁珂明 2020 这一条
+    两边都没有 DOI，EndNote 自己 Update 也没对上）。读不了就返回空，不影响按 DOI 绑定。"""
+    rows: list[tuple[int, str, str]] = []
+    if path.suffix.lower() == ".xml":
+        import xml.etree.ElementTree as ET
+
+        try:
+            root = ET.parse(path).getroot()
+        except (OSError, ET.ParseError):
+            return {}
+        for rec in root.iter("record"):
+            num = _xml_text(rec.find("rec-number"))
+            if num.isdigit():
+                rows.append((int(num), _xml_text(rec.find("titles/title")), _xml_text(rec.find("dates/year"))))
+    else:
+        try:
+            conn, copied = open_library_copy(path)
+        except (OSError, sqlite3.Error):
+            return {}
+        try:
+            rows = [
+                (int(rec_id), str(title or ""), str(year or ""))
+                for rec_id, trash, title, year in conn.execute(
+                    "SELECT id, trash_state, title, year FROM refs"
+                ).fetchall()
+                if not trash
+            ]
+        except sqlite3.Error:
+            rows = []
+        finally:
+            conn.close()
+            copied.close()
+    index: dict[tuple[str, str], list[int]] = {}
+    for rec_id, title, year in rows:
+        key = norm_title(title)
+        if key:
+            index.setdefault((key, year.strip()[:4]), []).append(rec_id)
+    return index
+
+
 def bind_endnote(records: dict[str, dict], cited: list[str], library: Path | None, project_root: Path | None = None) -> list[str]:
     if library is None:
         library = endnote_pointer(project_root)
@@ -213,6 +259,7 @@ def bind_endnote(records: dict[str, dict], cited: list[str], library: Path | Non
     if note:
         lines.append(note)
         return lines
+    titles: dict[tuple[str, str], list[int]] | None = None
     bound = 0
     for key in cited:
         rec = records.get(key)
@@ -220,7 +267,19 @@ def bind_endnote(records: dict[str, dict], cited: list[str], library: Path | Non
             continue
         doi = norm_doi(rec.get("doi") or "")
         if not doi_ok(doi):
-            lines.append(f"- `{key}` 没有可用 DOI，未绑定")
+            # 没有 DOI：题名（去标点大小写）+ 年份在库里恰好一条才绑，否则照旧不猜
+            if titles is None:
+                titles = endnote_title_index(library)
+            hits = titles.get((norm_title(rec.get("title") or ""), str(rec.get("year") or "").strip()[:4])) or []
+            if len(hits) == 1:
+                rec["_en_rec"] = hits[0]
+                rec["_en_db"] = db_id
+                bound += 1
+                lines.append(f"- `{key}` 没有 DOI，按题名与年份对上记录 {hits[0]}")
+            elif len(hits) > 1:
+                lines.append(f"- `{key}` 没有 DOI，同题名同年份在库里有 {len(hits)} 条，未绑定")
+            else:
+                lines.append(f"- `{key}` 没有可用 DOI，库里也没有同题名同年份的记录，未绑定")
             continue
         hits = index.get(doi) or []
         if len(hits) == 1:
