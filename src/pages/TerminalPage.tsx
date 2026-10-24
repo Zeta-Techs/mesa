@@ -617,6 +617,13 @@ const CONVERSATION_ACTION_ICONS: Record<string, typeof SquarePen | undefined> = 
 const RIGHT_PANEL_WIDTH_KEY = "ccode.terminalRightWidth";
 const RIGHT_PANEL_DEFAULT_WIDTH = RIGHT_DEFAULT_PX;
 const RIGHT_PANEL_MIN_WIDTH = RIGHT_MIN_PX;
+/** 文件窗格「树与预览左右并排」：开关与并排时树栏宽度的本地记忆 */
+const FILES_SPLIT_KEY = "ccode.terminal.filesSplit";
+const FILES_TREE_WIDTH_KEY = "ccode.terminal.filesTreeWidth";
+const FILES_TREE_DEFAULT_WIDTH = 220;
+const FILES_TREE_MIN_WIDTH = 160;
+/** 并排时预览栏至少留这么宽，树栏最宽不挤到它 */
+const FILES_PREVIEW_MIN_WIDTH = 240;
 // 分屏：左 pane 宽度百分比的本地记忆（分屏开关状态本身不持久化）
 const SPLIT_PCT_KEY = "ccode.terminalSplitPct";
 const SPLIT_MIN_PCT = 20;
@@ -7194,6 +7201,20 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   const [rightTab, setRightTab] = useState<RightTab>("preview");
   // 文件窗格停在树还是预览；没有预览时一律显示树（见 filesView 的派生值）
   const [filesViewPref, setFilesViewPref] = useState<FilesView>("tree");
+  // 树与预览左右并排（偏好，记住）；并排时树栏宽度可拖
+  const [filesSplit, setFilesSplit] = useState(() => {
+    try {
+      return localStorage.getItem(FILES_SPLIT_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [filesTreeWidth, setFilesTreeWidth] = useState(() => {
+    const saved = Number(localStorage.getItem(FILES_TREE_WIDTH_KEY));
+    return Number.isFinite(saved) && saved > 0
+      ? Math.max(FILES_TREE_MIN_WIDTH, saved)
+      : FILES_TREE_DEFAULT_WIDTH;
+  });
   // 主工作区模式按标签隔离；切换只改变显示层，不改变标签/PTY/会话。
   const [surfaceModeByTab, setSurfaceModeByTab] = useState<Record<string, SurfaceMode>>({});
   // 稳定回调（conversationInsert）里读当前层，不随渲染重建
@@ -7338,6 +7359,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   }, [activeCwd]);
   /** 文件窗格正显示的：没有预览标签时只能是树 */
   const filesView: FilesView = preview ? filesViewPref : "tree";
+  /** 并排：树和预览同时显示（没有预览时就是整栏树，并排无从谈起） */
+  const filesSideBySide = filesSplit && !!preview;
 
   /** 标签激活：分屏时点到右 pane 的标签则左右互换（活跃标签始终固定在左 pane） */
   function activateTab(id: string) {
@@ -7703,6 +7726,45 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     setPreviewFiles([]);
     setPreviewDirty(false);
     setFilesViewPref("tree");
+  }
+
+  /** 文件窗格「树与预览左右并排」开关；右栏还窄时顺手拉宽（并排至少要放下树栏 + 预览栏） */
+  function toggleFilesSplit() {
+    const next = !filesSplit;
+    setFilesSplit(next);
+    try {
+      localStorage.setItem(FILES_SPLIT_KEY, next ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+    if (next && layout.right < filesTreeWidth + FILES_PREVIEW_MIN_WIDTH + 40) expandRight();
+  }
+
+  /** 并排时拖树栏右缘调宽（预览栏至少留 FILES_PREVIEW_MIN_WIDTH） */
+  function startFilesTreeResize(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = filesTreeWidth;
+    const clampW = (w: number) =>
+      Math.round(
+        Math.max(
+          FILES_TREE_MIN_WIDTH,
+          Math.min(w, Math.max(FILES_TREE_MIN_WIDTH, layout.right - FILES_PREVIEW_MIN_WIDTH)),
+        ),
+      );
+    const onMove = (e: PointerEvent) => setFilesTreeWidth(clampW(startWidth + e.clientX - startX));
+    const onUp = (e: PointerEvent) => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      const final = clampW(startWidth + e.clientX - startX);
+      setFilesTreeWidth(final);
+      localStorage.setItem(FILES_TREE_WIDTH_KEY, String(final));
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
   }
 
   function startRightResize(event: React.PointerEvent<HTMLDivElement>) {
@@ -10320,11 +10382,11 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                     type="button"
                     onClick={() => setFilesViewPref("tree")}
                     onDoubleClick={toggleRightExpanded}
-                    aria-pressed={filesView === "tree"}
+                    aria-pressed={filesView === "tree" || filesSideBySide}
                     title={`文件树；双击${rightExpanded ? "退出专注内容" : "进入专注内容"}`}
                     aria-label="文件树"
                     className={`flex h-7 shrink-0 items-center rounded-sm px-2 ${
-                      filesView === "tree" ? "bg-seg-sel text-l1" : "text-l3 hover:text-l1"
+                      filesView === "tree" || filesSideBySide ? "bg-seg-sel text-l1" : "text-l3 hover:text-l1"
                     }`}
                   >
                     <FolderTree size={14} strokeWidth={1.8} aria-hidden="true" />
@@ -10332,7 +10394,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                   {preview && (
                     <span
                       className={`flex h-7 min-w-0 max-w-[60%] items-center gap-1 rounded-sm pl-2.5 pr-1 text-xs ${
-                        filesView === "preview" ? "bg-seg-sel text-l1" : "text-l3 hover:text-l1"
+                        filesView === "preview" || filesSideBySide ? "bg-seg-sel text-l1" : "text-l3 hover:text-l1"
                       }`}
                     >
                       <button
@@ -10360,7 +10422,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                       </button>
                     </span>
                   )}
-                  {filesView === "preview" && preview && previewFiles.length > 1 && (
+                  {(filesView === "preview" || filesSideBySide) && preview && previewFiles.length > 1 && (
                     <span className="ml-1 flex items-center gap-0.5 text-micro text-l4">
                       <button type="button" onClick={() => switchPreview(-1)} disabled={previewFiles[0]?.path === preview.path} className="rounded px-1 hover:bg-hover disabled:opacity-30" title="上一个文件（↑）">↑</button>
                       <button type="button" onClick={() => switchPreview(1)} disabled={previewFiles[previewFiles.length - 1]?.path === preview.path} className="rounded px-1 hover:bg-hover disabled:opacity-30" title="下一个文件（↓）">↓</button>
@@ -10382,8 +10444,26 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                   )}
                 </span>
               )}
-              {/* 右侧动作区：专注内容 + 收起。 */}
+              {/* 右侧动作区：（文件窗格）树与预览并排 + 专注内容 + 收起。 */}
               <span className="ml-auto flex min-w-0 items-center gap-1 pl-1">
+                {rightTab === "preview" && (
+                  <button
+                    type="button"
+                    onClick={toggleFilesSplit}
+                    aria-pressed={filesSplit}
+                    title={
+                      filesSplit
+                        ? "树与预览改回一次看一个"
+                        : "树与预览左右并排（点开文件后左边是树、右边是预览）"
+                    }
+                    aria-label={filesSplit ? "取消左右并排" : "树与预览左右并排"}
+                    className={`flex size-7 shrink-0 items-center justify-center rounded-sm hover:bg-hover ${
+                      filesSplit ? "bg-seg-sel text-l1" : "text-l4 hover:text-l1"
+                    }`}
+                  >
+                    <Columns2 size={14} strokeWidth={1.8} aria-hidden="true" />
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={toggleRightExpanded}
@@ -10406,19 +10486,39 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                 </button>
               </span>
             </div>
-            {/* 文件窗格：树和预览都保持挂载（树的展开状态、预览编辑器的撤销栈不因切换丢），一次只显示一个 */}
+            {/* 文件窗格：树和预览都保持挂载（树的展开状态、预览编辑器的撤销栈不因切换丢）；
+                默认一次只显示一个，开了「左右并排」就是左树右预览 */}
             <div
               className={
                 rightTab === "preview"
-                  ? "flex min-h-0 flex-1 flex-col"
+                  ? filesSideBySide
+                    ? "flex min-h-0 flex-1 flex-row"
+                    : "flex min-h-0 flex-1 flex-col"
                   : "hidden"
               }
             >
               <div
+                style={filesSideBySide ? { width: filesTreeWidth } : undefined}
                 className={
-                  filesView === "tree" ? "flex min-h-0 flex-1 flex-col" : "hidden"
+                  filesSideBySide
+                    ? "relative flex min-h-0 shrink-0 flex-col border-r border-hairline"
+                    : filesView === "tree"
+                      ? "flex min-h-0 flex-1 flex-col"
+                      : "hidden"
                 }
               >
+                {filesSideBySide && (
+                  <div
+                    role="separator"
+                    aria-orientation="vertical"
+                    aria-label="调整文件树宽度"
+                    title="拖动调整树的宽度"
+                    onPointerDown={startFilesTreeResize}
+                    className="group absolute inset-y-0 -right-1 z-10 w-2 cursor-col-resize"
+                  >
+                    <span className="absolute inset-y-0 left-[3px] w-0.5 bg-transparent transition-colors group-hover:bg-cta" />
+                  </div>
+                )}
                 <FileTree
                   cwd={activeCwd}
                   showHidden={showHidden}
@@ -10462,7 +10562,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
               </div>
               <div
                 className={
-                  filesView === "preview" ? "flex min-h-0 flex-1 flex-col" : "hidden"
+                  filesSideBySide || filesView === "preview"
+                    ? "flex min-h-0 min-w-0 flex-1 flex-col"
+                    : "hidden"
                 }
               >
               {preview ? (
