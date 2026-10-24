@@ -52,7 +52,7 @@ ls /tmp/canary-<运行号>/*/            # canary-macos-latest / canary-windows-
 | 现象 | 是什么 | 怎么办 |
 |---|---|---|
 | 没有 `report.md`，日志里是装依赖失败（rustup / npm / pip / curl 超时、网络错误） | 环境故障 | `gh run rerun <运行号> --failed`，报告里记一笔，不动代码 |
-| 没有 `report.md`，有 `plans-error.txt`，或测试进程起不来（如 Windows `0xc0000139 STATUS_ENTRYPOINT_NOT_FOUND`） | Mesa 自己的编译 / 测试问题，不是 CLI 变了 | 再看主线 `gh run list --workflow build.yml --limit 3` 是否同样红。作为单独的修复报告给用户（主线 CI 必须绿），**不动基线** |
+| 没有 `report.md`，有 `plans-error.txt`，或测试进程起不来（如 Windows `0xc0000139 STATUS_ENTRYPOINT_NOT_FOUND`） | Mesa 自己的编译 / 测试问题，不是 CLI 变了 | 再看主线 `gh run list --workflow build.yml --limit 3` 是否同样红。作为单独的修复报告给用户（主线 CI 必须绿），**不动基线**。本机 Windows 的 `0xc0000139` 是已知的机器差异，`canary.py` 会自动改跑带 manifest 的测试副本，本机复现时不用管 |
 | 有 `report.md` | 金丝雀跑完了 | 第三步 |
 
 ## 第三步：逐家处理 report.md

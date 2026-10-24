@@ -49,6 +49,8 @@ npm run canary
 
 抓屏依赖（pyte，Windows 另加 pywinpty）缺了会自动 `pip install --target` 到 `CANARY_DEPS`，默认在系统临时目录下。
 一家约 1–3 分钟，九家合计约 15–25 分钟，另加首次编译测试的时间。
+Windows 上有的机器 lib 测试 exe 一启动就报 `0xc0000139`（没嵌 manifest，见 `docs/conventions/environment.md`）：`canary.py` 碰上一次就自己
+`cargo test --lib --no-run`，把测试 exe 连同 manifest 复制到 `<out>/test-bin/` 改跑副本，不用手工绕。
 
 各家跑哪几层不一样：有结构化旁路的六家（Claude Code、CodeBuddy、Qwen、OpenCode、Codex、Grok）跑旁路端到端，
 请求、旁路、会话、画面四层都比；Gemini、Kimi 不开全局 hooks、Cursor 没有旁路，只抓屏，请求形状取抓屏那一趟。

@@ -128,7 +128,11 @@ if WIN:
         return data
 
     def pty_write(data):
-        proc.write(data.decode("utf-8", "surrogateescape"))
+        # pywinpty 在子进程退出后写入抛 EOFError（不是 OSError）：统一成 OSError，各处按「CLI 已退出」收尾
+        try:
+            proc.write(data.decode("utf-8", "surrogateescape"))
+        except EOFError as e:
+            raise OSError(str(e)) from e
 else:
     pid, fd = pty.fork()
     if pid == 0:
