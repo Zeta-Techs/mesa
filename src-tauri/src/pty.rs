@@ -1348,7 +1348,7 @@ fn pty_spawn_custom_sync(
     let runtime = crate::custom_runtime::get_custom_runtime(&runtime_id)?;
     let cwd = crate::custom_runtime::resolve_custom_cwd(&cwd, runtime.cwd.as_deref())?;
     let cwd = expand_tilde(&cwd);
-    let run = crate::runs::run_get(run_id.clone())?
+    let run = crate::runs::run_get_sync(run_id.clone())?
         .ok_or_else(|| "Custom Runtime 对应的 Run 不存在".to_string())?;
     let isolation = expand_tilde(&run.isolation_path);
     let cwd_path = crate::paths::canonicalize_plain(std::path::Path::new(&cwd))

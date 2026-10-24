@@ -5249,6 +5249,8 @@ pub(crate) fn open_db() -> Result<Connection, String> {
     // 本连接是并发写下最先吃 SQLITE_BUSY 的那个（session_meta / card_claims 的写入走这里）
     conn.busy_timeout(std::time::Duration::from_secs(5))
         .map_err(|e| format!("设置 app.db 等待时间失败: {e}"))?;
+    static WAL_TRIED: std::sync::Once = std::sync::Once::new();
+    WAL_TRIED.call_once(|| ensure_wal_mode(&conn));
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS session_meta(
           agent TEXT NOT NULL, session_id TEXT NOT NULL,
@@ -5261,6 +5263,17 @@ pub(crate) fn open_db() -> Result<Connection, String> {
     .map_err(|e| format!("初始化 session_meta 表失败: {e}"))?;
     migrate_session_meta(&conn);
     Ok(conn)
+}
+
+/// 多个 Agent 同时落库时，WAL 让读不被写的提交挡住（默认的回滚日志模式下写提交会短暂独占整库）。
+/// journal_mode 写进库文件、一次生效，所以每个进程只试一次；别的连接占着切不动就保持现状，不影响使用
+pub(crate) fn ensure_wal_mode(conn: &Connection) {
+    let Ok(mode) = conn.query_row("PRAGMA journal_mode", [], |r| r.get::<_, String>(0)) else {
+        return;
+    };
+    if !mode.eq_ignore_ascii_case("wal") {
+        let _ = conn.query_row("PRAGMA journal_mode=WAL", [], |r| r.get::<_, String>(0));
+    }
 }
 
 /// 老库补列（AI 摘要、接力来源、会话归卡、步骤归属）：已存在则报错忽略，幂等
@@ -11832,3 +11845,33 @@ mod tests {
 
 
 
+
+#[cfg(test)]
+mod wal_mode_tests {
+    use super::*;
+
+    #[test]
+    fn ensure_wal_mode_switches_once_and_persists() {
+        let path = std::env::temp_dir().join(format!("ccode-wal-{}.db", uuid::Uuid::new_v4()));
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch("CREATE TABLE t(x INTEGER);").unwrap();
+        let mode = |c: &Connection| c.query_row("PRAGMA journal_mode", [], |r| r.get::<_, String>(0)).unwrap();
+        assert_eq!(mode(&conn), "delete");
+        ensure_wal_mode(&conn);
+        ensure_wal_mode(&conn);
+        assert_eq!(mode(&conn), "wal");
+        // 写进库文件：新连接不用再设
+        let again = Connection::open(&path).unwrap();
+        assert_eq!(mode(&again), "wal");
+        // 写事务进行中，读连接立刻读到提交前的数据、不被挡
+        conn.execute_batch("INSERT INTO t VALUES (1); BEGIN IMMEDIATE; INSERT INTO t VALUES (2);").unwrap();
+        again.busy_timeout(std::time::Duration::from_millis(0)).unwrap();
+        let n: i64 = again.query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1);
+        conn.execute_batch("ROLLBACK").unwrap();
+        drop((conn, again));
+        for ext in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{ext}", path.display()));
+        }
+    }
+}

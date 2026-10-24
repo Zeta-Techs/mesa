@@ -245,16 +245,31 @@ fn backfill_project_ids(conn: &Connection) -> Result<(), String> {
     if !has_projects {
         return Ok(());
     }
-    conn.execute(
-        "UPDATE tasks SET project_id=(SELECT id FROM projects WHERE projects.path=tasks.project_root) WHERE project_id IS NULL AND project_root IS NOT NULL",
-        [],
-    )
-    .map_err(|e| format!("回填 tasks.project_id 失败: {e}"))?;
-    conn.execute(
-        "UPDATE runs SET project_id=(SELECT id FROM projects WHERE projects.path=runs.project_root) WHERE project_id IS NULL AND project_root IS NOT NULL",
-        [],
-    )
-    .map_err(|e| format!("回填 runs.project_id 失败: {e}"))?;
+    // UPDATE 哪怕命中 0 行也要申请写锁；db() 每次调用都过这里，先用只读 EXISTS 判断有没有可回填的行，
+    // 否则主线程上的轮询命令会和后台写入抢锁、最多等 busy_timeout
+    for table in ["tasks", "runs"] {
+        let pending: bool = conn
+            .query_row(
+                &format!(
+                    "SELECT EXISTS(SELECT 1 FROM {table} WHERE project_id IS NULL AND project_root IS NOT NULL \
+                     AND EXISTS(SELECT 1 FROM projects WHERE projects.path={table}.project_root))"
+                ),
+                [],
+                |r| r.get(0),
+            )
+            .map_err(|e| format!("检查 {table}.project_id 回填失败: {e}"))?;
+        if !pending {
+            continue;
+        }
+        conn.execute(
+            &format!(
+                "UPDATE {table} SET project_id=(SELECT id FROM projects WHERE projects.path={table}.project_root) \
+                 WHERE project_id IS NULL AND project_root IS NOT NULL"
+            ),
+            [],
+        )
+        .map_err(|e| format!("回填 {table}.project_id 失败: {e}"))?;
+    }
     Ok(())
 }
 
@@ -2055,7 +2070,7 @@ fn task_review_dir(task_id: &str, run_id: &str) -> Result<PathBuf, String> {
 }
 
 pub(crate) fn result_version_for(run_id: &str) -> Result<Option<String>, String> {
-    let run = run_get(run_id.to_string())?.ok_or("Run 不存在")?;
+    let run = run_get_sync(run_id.to_string())?.ok_or("Run 不存在")?;
     if run.task_id.is_empty() {
         return Ok(None);
     }
@@ -2751,7 +2766,15 @@ fn attach_pending_goal_apply(conn: &Connection, task: TaskDto) -> Result<TaskDto
 }
 
 #[tauri::command]
-pub fn task_list(
+pub async fn task_list(
+    project_root: Option<String>,
+    include_archived: Option<bool>,
+) -> Result<Vec<TaskDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || task_list_sync(project_root, include_archived))
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn task_list_sync(
     project_root: Option<String>,
     include_archived: Option<bool>,
 ) -> Result<Vec<TaskDto>, String> {
@@ -3736,8 +3759,14 @@ fn reconcile_ids(conn: &Connection, dir: &Path, ids: &[String]) -> Result<usize,
 pub fn run_open(input: OpenRunInput) -> Result<RunDto, String> {
     open_run_impl(input)
 }
+// 前端轮询 / 页面挂载时调：开库要等文件锁，放后台线程，不和终端输出抢主线程（Rust 内部调用走 *_sync）
 #[tauri::command]
-pub fn run_get(id: String) -> Result<Option<RunDto>, String> {
+pub async fn run_get(id: String) -> Result<Option<RunDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || run_get_sync(id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+pub fn run_get_sync(id: String) -> Result<Option<RunDto>, String> {
     get_run_at(&db()?, &id)
 }
 
@@ -3790,7 +3819,12 @@ pub(crate) fn delete_watch_task_row(task_ref: &str) -> Result<(), String> {
     Ok(())
 }
 #[tauri::command]
-pub fn run_list(project_root: Option<String>) -> Result<Vec<RunDto>, String> {
+pub async fn run_list(project_root: Option<String>) -> Result<Vec<RunDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || run_list_sync(project_root))
+        .await
+        .map_err(|e| e.to_string())?
+}
+pub fn run_list_sync(project_root: Option<String>) -> Result<Vec<RunDto>, String> {
     let conn = db()?;
     match project_root.as_deref() {
         None => query_runs(&conn, "ORDER BY created_at DESC LIMIT 500", []),
@@ -3854,7 +3888,7 @@ pub async fn active_background_runs() -> Result<Vec<RunDto>, String> {
 
 #[tauri::command]
 pub fn run_cancel(id: String) -> Result<(), String> {
-    let run = run_get(id.clone())?.ok_or("Run 不存在")?;
+    let run = run_get_sync(id.clone())?.ok_or("Run 不存在")?;
     if run.runtime != "headless" {
         return Err("交互终端请使用终端停止按钮".into());
     }
@@ -4663,6 +4697,46 @@ mod tests {
         // 无 projects 表的纯净库跳过不报错
         let bare = Connection::open_in_memory().unwrap();
         ensure_schema(&bare).unwrap();
+    }
+
+    /// db() 每次调用都过 ensure_schema；别的连接正持有写锁（后台落库）时，它不能再去申请写锁，
+    /// 否则主线程上的轮询命令会等满 busy_timeout。回填 UPDATE 命中 0 行也要写锁，这里钉住「无事可做就不写」
+    #[test]
+    fn ensure_schema_needs_no_write_lock_when_nothing_to_backfill() {
+        let path = std::env::temp_dir().join(format!("ccode-schema-lock-{}.db", uuid::Uuid::new_v4()));
+        let writer = Connection::open(&path).unwrap();
+        ensure_schema(&writer).unwrap();
+        writer
+            .execute_batch("CREATE TABLE projects(path TEXT PRIMARY KEY, name TEXT NOT NULL, id TEXT);")
+            .unwrap();
+        // 有项目表、有行但都已有归属 / 都没有匹配项目：都不该触发写
+        writer.execute("INSERT INTO projects(path,name,id) VALUES('/p','课题','pid-1')", []).unwrap();
+        writer.execute("INSERT INTO tasks(id,identity_key,kind,name,project_root,project_id,created_at,updated_at) VALUES('t1','user:a','free_research','a','/p','pid-1','n','n')", []).unwrap();
+        writer.execute("INSERT INTO tasks(id,identity_key,kind,name,project_root,created_at,updated_at) VALUES('t2','user:b','free_research','b','/unregistered','n','n')", []).unwrap();
+        writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let reader = Connection::open(&path).unwrap();
+        reader.busy_timeout(std::time::Duration::from_millis(0)).unwrap();
+        let result = ensure_schema(&reader);
+        writer.execute_batch("ROLLBACK").unwrap();
+        drop((writer, reader));
+        let _ = std::fs::remove_file(&path);
+        assert!(result.is_ok(), "写锁被占时 ensure_schema 不该失败：{result:?}");
+    }
+
+    /// 回填判断不能把真正需要回填的行漏掉
+    #[test]
+    fn backfill_still_runs_when_a_registered_project_matches() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+        conn.execute_batch("CREATE TABLE projects(path TEXT PRIMARY KEY, name TEXT NOT NULL, id TEXT);").unwrap();
+        conn.execute("INSERT INTO tasks(id,identity_key,kind,name,project_root,created_at,updated_at) VALUES('t','user:x','free_research','x','/late','n','n')", []).unwrap();
+        backfill_project_ids(&conn).unwrap();
+        let none: Option<String> = conn.query_row("SELECT project_id FROM tasks WHERE id='t'", [], |r| r.get(0)).unwrap();
+        assert_eq!(none, None, "项目还没登记，不该凭空分配");
+        conn.execute("INSERT INTO projects(path,name,id) VALUES('/late','迟到','pid-late')", []).unwrap();
+        backfill_project_ids(&conn).unwrap();
+        let got: Option<String> = conn.query_row("SELECT project_id FROM tasks WHERE id='t'", [], |r| r.get(0)).unwrap();
+        assert_eq!(got.as_deref(), Some("pid-late"));
     }
 
     #[test]

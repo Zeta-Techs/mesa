@@ -1687,7 +1687,7 @@ pub async fn adopt_watch_run(app: tauri::AppHandle, run_id: String) -> Result<Ve
 }
 
 fn adopt_watch_run_sync(app: tauri::AppHandle, run_id: String) -> Result<Vec<String>, String> {
-    let run = crate::runs::run_get(run_id.clone())?.ok_or("Run 不存在")?;
+    let run = crate::runs::run_get_sync(run_id.clone())?.ok_or("Run 不存在")?;
     if run.task_kind != "watch" {
         return Err("只有定时巡检 Run 可以采纳进主仓".into());
     }
@@ -2274,7 +2274,7 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
     // Run 已创建但在 CLI 进入 ai.rs 前失败（例如技能未分发）时，补齐失败终态。
     if result.is_err() {
         if let Some(id) = run_id.as_deref() {
-            if let Ok(Some(run)) = crate::runs::run_get(id.to_string()) {
+            if let Ok(Some(run)) = crate::runs::run_get_sync(id.to_string()) {
                 if run.closed_at.is_none() {
                     let _ = crate::runs::close_run_with_result(
                         id,
@@ -2352,7 +2352,7 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
     // 这次的后台对话（看过程用）：Run 收尾时由 ai.rs 记下会话 id
     let (agent, session_id) = run_id
         .as_deref()
-        .and_then(|id| crate::runs::run_get(id.to_string()).ok().flatten())
+        .and_then(|id| crate::runs::run_get_sync(id.to_string()).ok().flatten())
         .map(|run| (Some(run.agent).filter(|a| a != "scheduler"), run.session_id))
         .unwrap_or((None, None));
     let record = RunRecord {
@@ -2634,7 +2634,12 @@ pub fn start_scheduler(app: tauri::AppHandle) {
 // ===== Tauri commands =====
 
 #[tauri::command]
-pub fn list_schedules() -> Result<Vec<ScheduleDto>, String> {
+pub async fn list_schedules() -> Result<Vec<ScheduleDto>, String> {
+    tauri::async_runtime::spawn_blocking(list_schedules_sync)
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn list_schedules_sync() -> Result<Vec<ScheduleDto>, String> {
     // 已删项目留下的 schedules 会继续把「N 条新命中」送进收件箱；列表出口顺手清孤儿。
     // 注册表读失败则不动盘（空清单会误删全部任务）。
     let registered = match crate::projects::registered_path_keys() {
@@ -2659,7 +2664,7 @@ pub fn list_schedules() -> Result<Vec<ScheduleDto>, String> {
         }
     }
     drop(_g);
-    let runs = crate::runs::run_list(None)?;
+    let runs = crate::runs::run_list_sync(None)?;
     let now = Local::now().naive_local();
     Ok(list
         .into_iter()
@@ -2852,7 +2857,7 @@ fn schedule_run_delete_sync(
 #[tauri::command]
 pub fn cancel_schedule_run(id: String) -> Result<(), String> {
     for run_id in crate::process::active_capture_ids() {
-        if let Some(run) = crate::runs::run_get(run_id.clone())? {
+        if let Some(run) = crate::runs::run_get_sync(run_id.clone())? {
             if run.task_ref.as_deref() == Some(&id) && run.task_kind == "watch" {
                 return crate::process::cancel_capture(&run_id);
             }

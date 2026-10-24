@@ -762,7 +762,7 @@ fn write_watch_decision(root: &Path, id: &str, decision: &str) -> Result<(), Str
 }
 
 fn watch_isolation_of(run_id: &str) -> Result<(crate::runs::RunDto, PathBuf), String> {
-    let run = crate::runs::run_get(run_id.to_string())?.ok_or("运行记录不存在")?;
+    let run = crate::runs::run_get_sync(run_id.to_string())?.ok_or("运行记录不存在")?;
     if run.task_kind != "watch" {
         return Err("不是定时任务".into());
     }
@@ -858,7 +858,7 @@ pub async fn watch_run_decide(
 #[tauri::command]
 pub async fn watch_run_snapshot(run_id: String) -> Result<WatchSnapshot, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let run = crate::runs::run_get(run_id.clone())?.ok_or("运行记录不存在")?;
+        let run = crate::runs::run_get_sync(run_id.clone())?.ok_or("运行记录不存在")?;
         if run.task_kind != "watch" {
             return Err("不是定时任务".into());
         }

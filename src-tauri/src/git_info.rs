@@ -1320,7 +1320,7 @@ fn review_run_for_path(wt: &str) -> Result<Option<crate::runs::RunDto>, String> 
     if !is_linked_worktree(wt) {
         return Ok(None);
     }
-    Ok(crate::runs::run_list(None)?
+    Ok(crate::runs::run_list_sync(None)?
         .into_iter()
         .find(|run| crate::paths::same_path(&run.isolation_path, wt)))
 }

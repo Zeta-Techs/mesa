@@ -829,7 +829,7 @@ pub(crate) fn run_agent_task(
     let reuse = reuse_key.unwrap_or(&default_reuse);
     let project_root_owned = project_root.map(|p| p.to_string_lossy().into_owned());
     let run = if let Some(id) = existing_run_id {
-        crate::runs::run_get(id.to_string())?.ok_or("预登记的 Run 不存在")?
+        crate::runs::run_get_sync(id.to_string())?.ok_or("预登记的 Run 不存在")?
     } else {
         crate::runs::open_headless_with_root(
             project_root_owned.as_deref(),

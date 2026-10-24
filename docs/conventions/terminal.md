@@ -13,7 +13,10 @@
   open / start）、等端口就绪、走回收站、删拷目录树、冻结评审快照的命令，一律 `async fn` + `tauri::async_runtime::spawn_blocking`，
   需要的 State 在闭包里经 `app.state()` 取。已挪出：`pty_spawn` / `shell_spawn` / `pty_spawn_custom` / `pty_kill`、三个外部终端命令、
   `run_close`、`delete_schedule` / `schedule_run_delete` / `adopt_watch_run`、`save_clipboard_image`（pty.rs `waiting_commands_stay_off_main_thread` 钉住）、
-  `run_find`（侧栏点开对话要等它，2026-10-24）。
+  `run_find`（侧栏点开对话要等它，2026-10-24）、`task_list` / `run_list` / `run_get` / `list_schedules`（页面轮询 / 挂载时调，要开 app.db，2026-10-24；Rust 内部调用走 `run_get_sync` / `run_list_sync`，别回头调 async 版）。
+  **app.db 的轮询读不得申请写锁**：`runs::db()` 每次调用都过 `ensure_schema`，其中项目归属回填的 UPDATE 命中 0 行也要写锁，所以必须先用只读 EXISTS 判断有无可回填行
+  （`ensure_schema_needs_no_write_lock_when_nothing_to_backfill` 钉住）；新增每次开库都跑的迁移同口径，没事可做就不写。`journal_mode=WAL` 由 `sessions::ensure_wal_mode` 在进程内第一次开库时尝试，
+  写进库文件：对 app.db 做文件级备份要连 `-wal` / `-shm` 一起拷，或先 checkpoint。
   三种拉起之间用 `SPAWN_LOCK` 保持逐个进行——原先靠主线程天然串行，Run 认领、会话预登记、启动前文件准备都按这个前提写。挪出后
   命令之间**不再按调用顺序串行**：停止后要按同一 Run 重新拉起的调用方必须 await `pty_kill`（`cleanupPty` 已是），否则这边
   随后的 Run 收尾会关掉新进程认领的 Run。只碰内存、读写一两个小文件的命令（`pty_resize` / `pty_set_visible` / 配置读写等）

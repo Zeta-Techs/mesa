@@ -145,7 +145,7 @@ fn resolve_source(
     ))?;
     let project_id = crate::projects::project_id_at(&project);
     if let Some(run_id) = source_run_id {
-        let run = crate::runs::run_get(run_id.into())?.ok_or("来源运行不存在")?;
+        let run = crate::runs::run_get_sync(run_id.into())?.ok_or("来源运行不存在")?;
         if !run
             .project_root
             .as_deref()
