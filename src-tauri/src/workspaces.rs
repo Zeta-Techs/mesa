@@ -1312,59 +1312,77 @@ fn conflict_files_from_merge_tree(stdout: &str) -> Vec<String> {
 fn health_impl(conn: &Connection, id: &str) -> Result<WsHealthDto, String> {
     let w = get_workspace(conn, id)?;
     let wt = PathBuf::from(&w.worktree_path);
-    let uncommitted =
-        !run_git(&wt, &["status", "--porcelain"], Duration::from_secs(30))?.is_empty();
     let base = base_ref(&wt, &w.base_branch);
-    // A...B 的左侧 = 只在 base（behind），右侧 = 只在 HEAD（ahead）
-    let counts = run_git(
-        &wt,
-        &[
-            "rev-list",
-            "--left-right",
-            "--count",
-            &format!("{base}...HEAD"),
-        ],
-        Duration::from_secs(30),
-    )?;
+    // 主仓库状态也是本地合并的前置条件：提前暴露，别等点了「合并」才报错
+    let repo = live_repo_for(&w);
+    // 八次 git 互不依赖，并行跑：Windows 上每起一个 git 要 100–150ms，串行近 1 秒，
+    // 打开评审要等它（2026-10-24 HER 初稿实测：串行 ~950ms → 并行 ~320ms）
+    fn joined<T>(r: std::thread::Result<T>) -> Result<T, String> {
+        r.map_err(|_| "检查工作区状态时线程异常".to_string())
+    }
+    let (uncommitted, counts, probe, main_off_base, main_dirty, stale_base, worktree_head, gitdir_detached) =
+        std::thread::scope(|s| {
+            let uncommitted = s.spawn(|| run_git(&wt, &["status", "--porcelain"], Duration::from_secs(30)));
+            // A...B 的左侧 = 只在 base（behind），右侧 = 只在 HEAD（ahead）
+            let counts = s.spawn(|| {
+                run_git(
+                    &wt,
+                    &["rev-list", "--left-right", "--count", &format!("{base}...HEAD")],
+                    Duration::from_secs(30),
+                )
+            });
+            let probe = s.spawn(|| conflict_probe(&wt, &base, "HEAD"));
+            let main_off_base = s.spawn(|| {
+                run_git(&repo, &["rev-parse", "--abbrev-ref", "HEAD"], Duration::from_secs(10))
+                    .map(|cur| cur != w.base_branch)
+                    .unwrap_or(false)
+            });
+            let main_dirty = s.spawn(|| {
+                run_git(
+                    &repo,
+                    &["status", "--porcelain", "--untracked-files=all"],
+                    Duration::from_secs(30),
+                )
+                .map(|s| {
+                    s.lines()
+                        .any(|line| !crate::review_contract::is_untracked_ledger_file(line))
+                })
+                .unwrap_or(false)
+            });
+            // 冲突现场是否已落后基准：仅 merge 进行中才有 MERGE_HEAD，多一次 rev-parse 只发生在此时
+            let stale_base = s.spawn(|| {
+                run_git(&wt, &["rev-parse", "--verify", "-q", "MERGE_HEAD"], Duration::from_secs(10))
+                    .ok()
+                    .filter(|mh| !mh.is_empty())
+                    .map(|mh| {
+                        run_git(&wt, &["rev-parse", &base], Duration::from_secs(10))
+                            .map(|tip| tip != mh)
+                            .unwrap_or(false)
+                    })
+                    .unwrap_or(false)
+            });
+            let worktree_head =
+                s.spawn(|| run_git(&wt, &["rev-parse", "HEAD"], Duration::from_secs(10)).ok());
+            let gitdir_detached = s.spawn(|| gitdir_matches_repo(&wt, &repo).is_err());
+            (
+                joined(uncommitted.join()),
+                joined(counts.join()),
+                joined(probe.join()),
+                joined(main_off_base.join()),
+                joined(main_dirty.join()),
+                joined(stale_base.join()),
+                joined(worktree_head.join()),
+                joined(gitdir_detached.join()),
+            )
+        });
+    let uncommitted = !uncommitted??.is_empty();
+    let counts = counts??;
     let mut parts = counts.split_whitespace();
     let behind = parts.next().and_then(|x| x.parse().ok()).unwrap_or(0);
     let ahead = parts.next().and_then(|x| x.parse().ok()).unwrap_or(0);
-    let (conflict, conflict_files) = conflict_probe(&wt, &base, "HEAD");
-    // 主仓库状态也是本地合并的前置条件：提前暴露，别等点了「合并」才报错
-    let repo = live_repo_for(&w);
-    let main_off_base = run_git(
-        &repo,
-        &["rev-parse", "--abbrev-ref", "HEAD"],
-        Duration::from_secs(10),
-    )
-    .map(|cur| cur != w.base_branch)
-    .unwrap_or(false);
-    let main_dirty = run_git(
-        &repo,
-        &["status", "--porcelain", "--untracked-files=all"],
-        Duration::from_secs(30),
-    )
-    .map(|s| {
-        s.lines()
-            .any(|line| !crate::review_contract::is_untracked_ledger_file(line))
-    })
-    .unwrap_or(false);
-    // 冲突现场是否已落后基准：仅 merge 进行中才有 MERGE_HEAD，多一次 rev-parse 只发生在此时
-    let stale_base = run_git(
-        &wt,
-        &["rev-parse", "--verify", "-q", "MERGE_HEAD"],
-        Duration::from_secs(10),
-    )
-    .ok()
-    .filter(|mh| !mh.is_empty())
-    .map(|mh| {
-        run_git(&wt, &["rev-parse", &base], Duration::from_secs(10))
-            .map(|tip| tip != mh)
-            .unwrap_or(false)
-    })
-    .unwrap_or(false);
-    let worktree_head = run_git(&wt, &["rev-parse", "HEAD"], Duration::from_secs(10)).ok();
-    let gitdir_detached = gitdir_matches_repo(&wt, &repo).is_err();
+    let (conflict, conflict_files) = probe?;
+    let (main_off_base, main_dirty, stale_base) = (main_off_base?, main_dirty?, stale_base?);
+    let (worktree_head, gitdir_detached) = (worktree_head?, gitdir_detached?);
     Ok(WsHealthDto {
         uncommitted,
         ahead,
@@ -3339,6 +3357,10 @@ pub struct FrozenDeliverable {
     pub size: u64,
     pub sha256: Option<String>,
     pub disposition: String,
+    /// 流程要用、不能勾掉（这一步声明的预期产物、papers/ 下的文献资料）。每次出评审现算，
+    /// 不信盘上旧值
+    #[serde(default)]
+    pub required: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3404,6 +3426,28 @@ fn delivery_review_root(id: &str) -> Result<PathBuf, String> {
 
 fn delivery_pending_path(id: &str) -> Result<PathBuf, String> {
     Ok(delivery_review_root(id)?.join("apply-pending.json"))
+}
+
+/// 人在评审页勾掉、不带回项目的非 Git 产物（2026-10-22）：路径 → 勾掉时那一版的 SHA-256。
+/// 按指纹记：文件之后变了就是没看过的新版，回到默认带回。重新冻结（刷新评审）时照这份恢复勾选。
+fn delivery_skips_path(id: &str) -> Result<PathBuf, String> {
+    Ok(delivery_review_root(id)?.join("skipped.json"))
+}
+
+/// 读不出（缺失 / 损坏）按「全部带回」处理：错的方向只是多带回文件，不会丢
+fn read_delivery_skips(id: &str) -> std::collections::BTreeMap<String, String> {
+    delivery_skips_path(id)
+        .ok()
+        .and_then(|p| fs::read(p).ok())
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+fn write_delivery_skips(id: &str, skips: &std::collections::BTreeMap<String, String>) -> Result<(), String> {
+    crate::profiles::atomic_write(
+        &delivery_skips_path(id)?,
+        &serde_json::to_string_pretty(skips).map_err(|e| e.to_string())?,
+    )
 }
 
 fn read_delivery_pending(id: &str) -> Result<Option<PipelineFilePending>, String> {
@@ -3575,11 +3619,16 @@ fn delivery_paths(worktree: &Path, repo: &Path) -> Result<Vec<String>, String> {
 fn assert_deliverables_retained(w: &WorkspaceDto, repo: &Path) -> Result<(), String> {
     let worktree = Path::new(&w.worktree_path);
     let tracked = tracked_delivery_paths(worktree)?;
+    let skips = read_delivery_skips(&w.id);
     for path in delivery_paths(worktree, repo)? {
         if tracked.contains(&path) {
             continue;
         }
         let source = delivery_hash(&worktree.join(&path))?;
+        // 人明确勾掉、且还是勾掉时那一版：不要它，归档时随工作区一起清掉
+        if skips.get(&path) == Some(&source.1) {
+            continue;
+        }
         if delivery_hash(&repo.join(&path)).ok().as_ref() != Some(&source) {
             return Err(format!("非 Git 产物 {path} 尚未完整接收或在验收后变化，工作区仍保留；请先重新评审，不会随归档删除"));
         }
@@ -3588,12 +3637,55 @@ fn assert_deliverables_retained(w: &WorkspaceDto, repo: &Path) -> Result<(), Str
 }
 
 fn freeze_deliverables(w: &WorkspaceDto, repo: &Path) -> Result<DeliverableReviewDto, String> {
-    freeze_deliverables_at(
+    let mut review = freeze_deliverables_at(
         &w.id,
         Path::new(&w.worktree_path),
         repo,
         &crate::projects::protected_paths_at(repo)?,
-    )
+    )?;
+    mark_required_deliverables(&mut review, w, repo)?;
+    Ok(review)
+}
+
+/// 流程要用的非 Git 产物（2026-10-22 用户：哪些文件是流程必要的，这个不能取消）：
+/// 这一步在档案里声明的预期产物（下一步按它取料、「产物 N/N 已产出」也按它数），
+/// 加上 papers/ 下的文献资料（全文 PDF、导入题录，精读要读）。
+fn delivery_required_patterns(w: &WorkspaceDto, repo: &Path) -> Vec<String> {
+    let cfg = crate::projects::read_config_at(repo).config;
+    let mut patterns: Vec<String> = cfg
+        .steps
+        .iter()
+        .filter(|s| s.workspace_name == w.name)
+        .flat_map(|s| s.expected_artifacts.iter().cloned())
+        .collect();
+    patterns.push("papers/".into());
+    patterns
+}
+
+/// 按当前档案标 required；档案改过、以前勾掉的文件现在成了必要的，改回带回并落盘
+fn mark_required_deliverables(
+    review: &mut DeliverableReviewDto,
+    w: &WorkspaceDto,
+    repo: &Path,
+) -> Result<(), String> {
+    let patterns = delivery_required_patterns(w, repo);
+    let mut changed = false;
+    for file in &mut review.files {
+        file.required = patterns
+            .iter()
+            .any(|p| crate::artifacts::expected_match(&file.path, p));
+        if file.required && file.disposition == "skipped" {
+            file.disposition = "copy".into();
+            changed = true;
+        }
+    }
+    if changed {
+        crate::profiles::atomic_write(
+            &delivery_review_root(&w.id)?.join(&review.token).join("review.json"),
+            &serde_json::to_string_pretty(review).map_err(|e| e.to_string())?,
+        )?;
+    }
+    Ok(())
 }
 
 fn freeze_deliverables_at(
@@ -3603,6 +3695,7 @@ fn freeze_deliverables_at(
     protected: &[String],
 ) -> Result<DeliverableReviewDto, String> {
     let tracked = tracked_delivery_paths(worktree)?;
+    let skips = read_delivery_skips(id);
     let token = uuid::Uuid::new_v4().to_string();
     let dir = delivery_review_root(id)?.join(&token);
     let result = (|| {
@@ -3625,6 +3718,7 @@ fn freeze_deliverables_at(
                 size,
                 sha256: None,
                 disposition: "copy".into(),
+                required: false,
             };
             if crate::projects::path_is_protected(&path, &protected) {
                 file.disposition = "protected".into();
@@ -3643,6 +3737,10 @@ fn freeze_deliverables_at(
                     return Err("科研产物快照超过 4 GB，未发布新快照".into());
                 }
                 file.size = actual_size;
+                // 人勾掉过的同一版：照旧不带回（副本照冻，改回带回不用重看）
+                if skips.get(&path) == Some(&sha) {
+                    file.disposition = "skipped".into();
+                }
                 file.sha256 = Some(sha);
             }
             review.files.push(file);
@@ -3655,8 +3753,41 @@ fn freeze_deliverables_at(
     })();
     if result.is_err() {
         let _ = fs::remove_dir_all(&dir);
+    } else {
+        prune_delivery_snapshots(id);
     }
     result
+}
+
+/// 每打开一次评审就冻一份新快照（初稿带 PDF 时一份十几 MB），以前从不清（2026-10-24 HER 初稿
+/// 攒了 9 份 142 MB）。留最新 3 份——另一个标签页可能还开着同一工作区的评审、拿着上一份——
+/// 加上收尾恢复单指着的那份；恢复单读不出时一份都不删。
+fn prune_delivery_snapshots(id: &str) {
+    const KEEP: usize = 3;
+    let Ok(root) = delivery_review_root(id) else { return };
+    let Ok(pending) = read_delivery_pending(id) else { return };
+    let Ok(entries) = fs::read_dir(&root) else { return };
+    let mut snapshots: Vec<(SystemTime, PathBuf, String)> = entries
+        .flatten()
+        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            uuid::Uuid::parse_str(&name).ok()?;
+            let path = e.path();
+            let at = fs::metadata(path.join("review.json"))
+                .or_else(|_| e.metadata())
+                .and_then(|m| m.modified())
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+            Some((at, path, name))
+        })
+        .collect();
+    snapshots.sort_by(|a, b| b.0.cmp(&a.0));
+    for (_, path, name) in snapshots.into_iter().skip(KEEP) {
+        if pending.as_ref().is_some_and(|p| p.review_token == name) {
+            continue;
+        }
+        let _ = fs::remove_dir_all(path);
+    }
 }
 
 fn load_delivery_review(id: &str, token: &str) -> Result<DeliverableReviewDto, String> {
@@ -3679,7 +3810,7 @@ fn load_delivery_review(id: &str, token: &str) -> Result<DeliverableReviewDto, S
         }
         if !matches!(
             file.disposition.as_str(),
-            "copy" | "tracked" | "protected" | "conflict" | "too_large"
+            "copy" | "tracked" | "protected" | "conflict" | "too_large" | "skipped"
         ) {
             return Err("产物快照状态无效".into());
         }
@@ -3713,6 +3844,17 @@ fn check_delivery_review(
             "非 Git 产物超过冻结预算，请先拆分或移出本次交付范围后重新评审；尚未合并".into(),
         );
     }
+    // 勾掉之后档案又把它列成了预期产物：流程要用的不能不带回
+    let patterns = delivery_required_patterns(w, repo);
+    if let Some(file) = review.files.iter().find(|f| {
+        f.disposition == "skipped"
+            && patterns.iter().any(|p| crate::artifacts::expected_match(&f.path, p))
+    }) {
+        return Err(format!(
+            "{} 是流程要用的文件，不能不带回；请刷新评审后再保存",
+            file.path
+        ));
+    }
     for file in &mut review.files {
         if file.disposition != "copy" {
             continue;
@@ -3745,7 +3887,8 @@ fn apply_delivery_review(
     let mut report = SalvageReport::default();
     for file in &review.files {
         match file.disposition.as_str() {
-            "tracked" => continue,
+            // 人在评审页勾掉了：留在工作区，不进项目、不进验收记录
+            "tracked" | "skipped" => continue,
             "protected" => {
                 report.skipped_protected.push(file.path.clone());
                 continue;
@@ -3805,9 +3948,16 @@ pub async fn workspace_review_deliverables(id: String) -> Result<DeliverableRevi
     tauri::async_runtime::spawn_blocking(move || {
         let w = get_workspace(&db()?, &id)?;
         if let Some(pending) = read_delivery_pending(&id)? {
-            if let Ok(review) = load_delivery_review(&id, &pending.review_token) {
+            if let Ok(mut review) = load_delivery_review(&id, &pending.review_token) {
                 let stale = review.files.iter().any(|file| is_delivery_process_file(&file.path));
                 if !stale {
+                    // 收尾中按当时的清单走：只标必要性给界面，不改带回范围
+                    let patterns = delivery_required_patterns(&w, &live_repo_for(&w));
+                    for file in &mut review.files {
+                        file.required = patterns
+                            .iter()
+                            .any(|p| crate::artifacts::expected_match(&file.path, p));
+                    }
                     return Ok(review);
                 }
             }
@@ -3816,6 +3966,70 @@ pub async fn workspace_review_deliverables(id: String) -> Result<DeliverableRevi
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// 评审页逐个勾掉 / 勾回非 Git 产物（2026-10-22）：只在「带回 copy」与「不带回 skipped」之间切，
+/// 同时改这次冻结的 review.json（保存进项目按它走）和工作区的勾掉记录（刷新评审后照样）。
+/// 保存进项目进行到一半（有恢复单）时不让改：恢复按当时的清单接着走。
+#[tauri::command]
+pub async fn workspace_delivery_skip(
+    id: String,
+    token: String,
+    path: String,
+    skip: bool,
+) -> Result<DeliverableReviewDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let w = get_workspace(&db()?, &id)?;
+        set_delivery_skip(&w, &live_repo_for(&w), &token, &path, skip)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn set_delivery_skip(
+    w: &WorkspaceDto,
+    repo: &Path,
+    token: &str,
+    path: &str,
+    skip: bool,
+) -> Result<DeliverableReviewDto, String> {
+    let id = w.id.as_str();
+    if read_delivery_pending(id)?.is_some() {
+        return Err("这次保存进项目还没收尾，暂时不能改带回哪些文件".into());
+    }
+    if skip
+        && delivery_required_patterns(w, repo)
+            .iter()
+            .any(|p| crate::artifacts::expected_match(path, p))
+    {
+        return Err("这个文件是流程要用的（这一步的预期产物或文献资料），不能不带回".into());
+    }
+    let mut review = load_delivery_review(id, token)?;
+    let file = review
+        .files
+        .iter_mut()
+        .find(|f| f.path == path)
+        .ok_or("这份产物清单里没有这个文件，请刷新评审")?;
+    let next = match (file.disposition.as_str(), skip) {
+        ("copy", true) | ("skipped", true) => "skipped",
+        ("skipped", false) | ("copy", false) => "copy",
+        _ => return Err("这个文件不在带回清单里，不能勾选".into()),
+    };
+    let sha = file.sha256.clone().ok_or("缺少产物指纹，请刷新评审")?;
+    file.disposition = next.into();
+    let mut skips = read_delivery_skips(id);
+    if skip {
+        skips.insert(path.to_string(), sha);
+    } else {
+        skips.remove(path);
+    }
+    write_delivery_skips(id, &skips)?;
+    crate::profiles::atomic_write(
+        &delivery_review_root(id)?.join(token).join("review.json"),
+        &serde_json::to_string_pretty(&review).map_err(|e| e.to_string())?,
+    )?;
+    mark_required_deliverables(&mut review, w, repo)?;
+    Ok(review)
 }
 
 const DELIVERABLE_COPY_CAP: usize = 2000;
@@ -3983,20 +4197,38 @@ pub async fn write_review_notes(
     .map_err(|e| e.to_string())?
 }
 
+/// 只收条目行（「- 」「* 」「1. 」「1、」开头）；表格、普通段落不算（2026-10-22 实证：一张检索命中数表被拆成九条请求）。
+/// 标题写着已拍板 / 已解决 / 已回复 / 备查的那一节整节跳过——那是记录，不是在等人回答的问题
 fn parse_help_wanted(text: &str) -> Vec<String> {
+    let mut answered_section = false;
     text.chars()
         .take(32 * 1024)
         .collect::<String>()
         .lines()
         .filter_map(|l| {
             let t = l.trim();
+            if let Some(heading) = t.strip_prefix('#') {
+                // 「已拍板」「已由人拍板」都算；「待你拍板」不算
+                answered_section = ["已解决", "已回复", "已答复", "已处理", "已完成", "备查"]
+                    .iter()
+                    .any(|w| heading.contains(w))
+                    || (heading.contains('已') && heading.contains("拍板"));
+                return None;
+            }
+            if answered_section {
+                return None;
+            }
             let item = t
                 .strip_prefix("- ")
                 .or_else(|| t.strip_prefix("* "))
-                .unwrap_or(t);
+                .or_else(|| {
+                    let digits = t.chars().take_while(|c| c.is_ascii_digit()).count();
+                    (digits > 0)
+                        .then(|| &t[digits..])
+                        .and_then(|rest| rest.strip_prefix(". ").or_else(|| rest.strip_prefix('、')))
+                })?;
             let item = item.trim();
-            // 跳过标题/空行/分隔线，只收实质条目
-            if item.is_empty() || item.starts_with('#') || item.starts_with("---") {
+            if item.is_empty() {
                 return None;
             }
             Some(item.chars().take(300).collect())
@@ -7758,6 +7990,16 @@ mod tests {
         assert!(items[0].starts_with("请补充检索词"));
         assert_eq!(items[2], "星号条目也算");
         assert_eq!(parse_help_wanted("# 只有标题\n\n"), Vec::<String>::new());
+        // 表格、段落不算条目；已拍板 / 备查的小节整节跳过；编号条目算
+        let text = "# 需要人决定的事\n\n## 收尾\n\n- 7 篇 SI 未下载（兜底：只用正文数字）\n1. Zotero 进库待人操作\n\n## 0. 已由人拍板\n\n- **规模**：人答 20 篇\n\n## 1. 粗检依据（已拍板，保留备查）\n\n| # | 限定 | 命中数 |\n|---|---|---|\n| ① | 裸查 | 46,048 |\n\n复现：python scripts/x.py\n\n## 2. 待你拍板\n\n2、硼化物批身份最迟大纲前定\n";
+        assert_eq!(
+            parse_help_wanted(text),
+            vec![
+                "7 篇 SI 未下载（兜底：只用正文数字）".to_string(),
+                "Zotero 进库待人操作".to_string(),
+                "硼化物批身份最迟大纲前定".to_string(),
+            ]
+        );
     }
 
     #[test]
@@ -8098,6 +8340,79 @@ mod tests {
         assert!(assert_deliverables_retained(&w, &fx.repo)
             .unwrap_err()
             .contains("仍保留"));
+    }
+
+    #[test]
+    fn unticked_deliverable_stays_out_and_does_not_block_archive() {
+        let Some(fx) = Fixture::new() else { return };
+        let w = create_impl(
+            &fx.conn,
+            &fx.ws_root,
+            fx.repo.to_str().unwrap(),
+            "delivery-skip",
+        )
+        .unwrap();
+        let wt = PathBuf::from(&w.worktree_path);
+        fs::create_dir_all(wt.join("papers")).unwrap();
+        fs::create_dir_all(wt.join("artifacts/jabref")).unwrap();
+        fs::write(wt.join("papers/result.pdf"), b"keep-me").unwrap();
+        fs::write(wt.join("artifacts/jabref/acs.csv"), b"scratch").unwrap();
+        let review = freeze_deliverables(&w, &fx.repo).unwrap();
+        // 勾掉 JabRef 缩写表（2026-10-22 实测：Agent 的中间文件混在产物里）
+        let review = set_delivery_skip(&w, &fx.repo, &review.token, "artifacts/jabref/acs.csv", true).unwrap();
+        let disposition = |r: &DeliverableReviewDto, p: &str| {
+            r.files.iter().find(|f| f.path == p).unwrap().disposition.clone()
+        };
+        assert_eq!(disposition(&review, "artifacts/jabref/acs.csv"), "skipped");
+        // 保存进项目只带回勾着的
+        let checked = load_delivery_review(&w.id, &review.token).unwrap();
+        let report = apply_delivery_review(&checked, &fx.repo, &[]);
+        assert!(report.failed.is_empty(), "{:?}", report.failed);
+        assert_eq!(fs::read(fx.repo.join("papers/result.pdf")).unwrap(), b"keep-me");
+        assert!(!fx.repo.join("artifacts/jabref/acs.csv").exists());
+        // 勾掉的那一版不挡归档
+        assert_deliverables_retained(&w, &fx.repo).unwrap();
+        // 刷新评审（重新冻结）照样勾掉
+        let again = freeze_deliverables(&w, &fx.repo).unwrap();
+        assert_eq!(disposition(&again, "artifacts/jabref/acs.csv"), "skipped");
+        // 文件变了就是没看过的新版：回到带回，归档也重新拦
+        fs::write(wt.join("artifacts/jabref/acs.csv"), b"scratch-v2").unwrap();
+        let fresh = freeze_deliverables(&w, &fx.repo).unwrap();
+        assert_eq!(disposition(&fresh, "artifacts/jabref/acs.csv"), "copy");
+        assert!(assert_deliverables_retained(&w, &fx.repo).is_err());
+        // 冲突 / 保护等不在带回清单里的不能勾
+        assert!(set_delivery_skip(&w, &fx.repo, &fresh.token, "papers/nope.pdf", true).is_err());
+        // 流程要用的（papers/ 下的文献资料、这一步的预期产物）不能勾掉，界面也标出来
+        let err = set_delivery_skip(&w, &fx.repo, &fresh.token, "papers/result.pdf", true).unwrap_err();
+        assert!(err.contains("流程要用"), "{err}");
+        let pdf = fresh.files.iter().find(|f| f.path == "papers/result.pdf").unwrap();
+        assert!(pdf.required);
+        assert!(!fresh.files.iter().find(|f| f.path == "artifacts/jabref/acs.csv").unwrap().required);
+    }
+
+    #[test]
+    fn reopening_review_keeps_only_latest_snapshots() {
+        let Some(fx) = Fixture::new() else { return };
+        let w = create_impl(&fx.conn, &fx.ws_root, fx.repo.to_str().unwrap(), "delivery-prune").unwrap();
+        let wt = PathBuf::from(&w.worktree_path);
+        fs::create_dir_all(wt.join("output")).unwrap();
+        fs::write(wt.join("output/draft.pdf"), b"pdf").unwrap();
+        let mut tokens = Vec::new();
+        for _ in 0..5 {
+            tokens.push(freeze_deliverables(&w, &fx.repo).unwrap().token);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let left: Vec<String> = fs::read_dir(delivery_review_root(&w.id).unwrap())
+            .unwrap()
+            .flatten()
+            .filter(|e| e.path().is_dir())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(left.len(), 3, "{left:?}");
+        for token in &tokens[2..] {
+            assert!(load_delivery_review(&w.id, token).is_ok(), "最新的几份还在");
+        }
+        assert!(load_delivery_review(&w.id, &tokens[0]).is_err());
     }
 
     #[test]

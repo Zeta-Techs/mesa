@@ -1064,7 +1064,7 @@ export default function ProjectGroup({
       setZoteroMsg(
         `已导入 ${out.itemCount} 条 → ${out.bibRel}` +
           (out.pdfCount > 0 ? `，${out.pdfCount} 篇 PDF 已登记为项目资源` : "") +
-          (out.missingPdf > 0 ? `；${out.missingPdf} 条无本地 PDF（agent 会列进待获取）` : ""),
+          (out.missingPdf > 0 ? `；${out.missingPdf} 条没有正文 PDF（只有补充材料或文件没下完的也算在内，agent 会列进待获取）` : ""),
       );
       await onRefresh();
     } catch (reason) {

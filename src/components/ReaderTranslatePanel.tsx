@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   clampReaderTlCard,
   clampReaderTlPct,
@@ -8,6 +8,9 @@ import {
   reflowBlockText,
   saveReaderTlCard,
   type TlHistoryEntry,
+  readerTlBallOffset,
+  readerTlCardAvoid,
+  type ReaderPdfBounds,
 } from "../reader";
 import { FoldMark } from "./PageFrame";
 
@@ -28,11 +31,12 @@ function plainTextOf(e: TlHistoryEntry): string {
 }
 
 /**
- * 阅读区翻译面板，两种摆位（表头「钉住/回栏」切换，状态由上层持有）：
+ * 阅读区翻译面板，两种摆位（表头「⋯」里「钉在 PDF 上 / 回到右栏」切换，状态由上层持有）：
  * 原位 = 右栏状态行之下、xterm 之上（占布局流，% 高度/底缘拖拽只在这档有意义）；
  * 悬浮 = 锚在「译」悬浮球旁（ReaderTlFloat 持球拖位）：absolute 定位、60% 封顶自适应、
  * 历史抽屉按球位上下弹、× 直接收回球（不走「一行动作条」退场——那是原位档的形态）。
- * 上下结构——表头行（chevron 收起/展开 +「译 · 第 N 页」+ 原文显隐/钉位/存进笔记/复制/历史/×），
+ * 上下结构——表头行（chevron 收起/展开 +「译 · 第 N 页」+ 原文显隐/存进笔记/复制/⋯/×；
+ * 2026-10-23 起钉位、问这段、历史收进「⋯」，表头不再一排六个钮），
  * 之下块级对照正文（原文整段弱色小字在上可隐藏、译文整段正文在下，均两端对齐；
  * 悬浮档默认只看译文求紧凑，点「原文」临时对照）。
  * 历史抽屉点行 = 载入主面板（viewingAt，新翻译进来自动回最新）。
@@ -59,6 +63,8 @@ function ReaderTranslatePanel({
   onHint,
   onAsk,
   canAsk,
+  onDisplay,
+  avoidRect,
 }: {
   /** 最新历史条目（无历史且在途翻译时为 null） */
   latest: TlHistoryEntry | null;
@@ -74,9 +80,9 @@ function ReaderTranslatePanel({
   /** 悬浮档锚点（悬浮球在 PDF 栏内的百分比坐标，球心）：传入即悬浮形态——卡在球旁
    *  展开（球在右半区贴球左侧展开、左半区贴右侧），宽 ≤26rem、高 60% 封顶贴边钳制 */
   floatAnchor?: { xp: number; yp: number };
-  /** 悬浮卡的横向活动范围：PDF 栏离窗口左/右边的距离（px）。卡只在 PDF 栏里展开，
-   *  不盖笔记栏和对话栏（球仍可拖到整窗任何位置）；不传 = 整窗 */
-  floatBounds?: { left: number; right: number };
+  /** 悬浮卡的活动范围：PDF 栏离覆盖层四边的距离（px）。球和卡都只在 PDF 栏里，
+   *  不盖笔记栏和对话栏；不传 = 整窗 */
+  floatBounds?: ReaderPdfBounds;
   /** 表头「钉住/回栏」；不传则不出现该钮（未接线的占位用法） */
   onTogglePlacement?: () => void;
   /** 悬浮档的 ×：收回球（由球组件接管）；不传则 × 走原位档的「一行动作条」退场 */
@@ -97,6 +103,10 @@ function ReaderTranslatePanel({
   /** 把当前译文放进下方对话的输入框，不发送。 */
   onAsk?: (entry: TlHistoryEntry) => void;
   canAsk?: boolean;
+  /** 正文区此刻摆出来的那条译文（收起/× 掉/在途/卸载 = null）：上层据此在 PDF 上标出它的原文段 */
+  onDisplay?: (entry: TlHistoryEntry | null) => void;
+  /** 悬浮档要避开的原文段（覆盖层根坐标 px）：卡横向压到它时改摆到它上方或下方 */
+  avoidRect?: { top: number; bottom: number; left: number; right: number } | null;
 }) {
   const floating = floatAnchor != null;
   /** chevron 收起：只折正文区、表头常驻（与「×」区分：× = 面板整体消失、新翻译再回来）。
@@ -259,6 +269,88 @@ function ReaderTranslatePanel({
     window.addEventListener("pointercancel", onUp);
   }
 
+  // 告诉上层正文区摆着哪条（PDF 上标它的原文段）；卸载时撤掉
+  const displayed = !pending && panelOpen && !collapsed ? current : null;
+  const displayedAt = displayed?.at ?? null;
+  const onDisplayRef = useRef(onDisplay);
+  onDisplayRef.current = onDisplay;
+  const displayedRef = useRef(displayed);
+  displayedRef.current = displayed;
+  useEffect(() => {
+    onDisplayRef.current?.(displayedRef.current);
+  }, [displayedAt]);
+  useEffect(() => () => onDisplayRef.current?.(null), []);
+
+  /** 悬浮卡避让原文段：只看横向是否压到（上下换位不改横向范围，判定不会来回翻）；
+      压到了就摆到原文段上方或下方空间大的那边，两边都不足 120px 就不避让 */
+  const [avoid, setAvoid] = useState<{ side: "above" | "below"; px: number; room: number } | null>(
+    null,
+  );
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    const host = root?.offsetParent as HTMLElement | null;
+    if (!floating || !avoidRect || !root || !host) {
+      setAvoid((v) => (v === null ? v : null));
+      return;
+    }
+    const hr = host.getBoundingClientRect();
+    const r = root.getBoundingClientRect();
+    const next = readerTlCardAvoid(
+      { left: r.left - hr.left, right: r.right - hr.left },
+      avoidRect,
+      hr.height,
+      floatBounds,
+    );
+    setAvoid((v) =>
+      v === next ||
+      (v && next && v.side === next.side && v.px === next.px && v.room === next.room)
+        ? v
+        : next,
+    );
+  }, [floating, avoidRect, floatAnchor?.xp, floatAnchor?.yp, floatBounds, cardSize]);
+
+  /** 正文区下面还有没露出来的：卡底渐隐，别把一行拦腰切断还看不出下面有字 */
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const [moreBelow, setMoreBelow] = useState(false);
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) {
+      setMoreBelow(false);
+      return;
+    }
+    const check = () => setMoreBelow(el.scrollHeight - el.scrollTop - el.clientHeight > 4);
+    check();
+    el.addEventListener("scroll", check, { passive: true });
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    if (el.firstElementChild) ro.observe(el.firstElementChild);
+    return () => {
+      el.removeEventListener("scroll", check);
+      ro.disconnect();
+    };
+  }, [displayedAt, showOriginal, pending, collapsed, showBody]);
+
+  /** 表头「⋯」：钉住/回栏、问这段、历史收进来，表头只留原文 / 存进笔记 / 复制 / × */
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.isComposing) return;
+      e.stopPropagation();
+      setMoreOpen(false);
+    };
+    const onDown = (e: PointerEvent) => {
+      if (!moreRef.current?.contains(e.target as Node)) setMoreOpen(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("pointerdown", onDown);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("pointerdown", onDown);
+    };
+  }, [moreOpen]);
+
   // 空历史且无在途翻译：面板整体不出现（空节点不出现）
   if (!latest && !pending) return null;
   const drawerUp = drawerGeom?.up ?? false; // 没量到（极端）缺省向下弹
@@ -271,31 +363,49 @@ function ReaderTranslatePanel({
   // 未钳制百分比锚位压住球（默认 xp=100 实测压 14px）。卡顶/卡高的 min() 用同一份
   // 活钳高度：窗口变小后存档高被渲染压缩，卡顶不再按裸存档值算出负数探出窗顶
   const fixedH = !floating && heightPct != null && showBody && !collapsed;
-  // 球心距某侧窗边的钳制距离（与球渲染同款）：dist = clamp(18px, pct%, 100%-18px)
-  const ballDist = (pct: number) =>
-    `clamp(18px, ${pct}%, calc(100% - 18px))`;
+  // 球心距某侧覆盖层边的距离（与球渲染同一份 readerTlBallOffset：球在 PDF 栏里）
+  const bL = floatBounds?.left ?? 0;
+  const bR = floatBounds?.right ?? 0;
+  const bT = floatBounds?.top ?? 0;
+  const bB = floatBounds?.bottom ?? 0;
   // 锚定边：贴球那一侧（球距 + 22px），且不越过 PDF 栏边（floatBounds）；
   // 宽度 = 锚定边到 PDF 栏另一侧边的可用空间（各留 8px）
   const growLeft = floating && floatAnchor.xp > 50;
-  const nearInset = floatBounds ? (growLeft ? floatBounds.right : floatBounds.left) + 8 : 0;
-  const farInset = floatBounds ? (growLeft ? floatBounds.left : floatBounds.right) + 8 : 8;
+  const nearInset = floatBounds ? (growLeft ? bR : bL) + 8 : 0;
+  const farInset = floatBounds ? (growLeft ? bL : bR) + 8 : 8;
   const edge = floating
-    ? `max(calc(${ballDist(growLeft ? 100 - floatAnchor.xp : floatAnchor.xp)} + 22px), ${nearInset}px)`
+    ? `max(calc(${readerTlBallOffset(
+        growLeft ? 100 - floatAnchor.xp : floatAnchor.xp,
+        growLeft ? bR : bL,
+        bL + bR,
+      )} + 22px), ${nearInset}px)`
     : "0px";
+  const ballTop = floating ? readerTlBallOffset(floatAnchor.yp, bT, bT + bB) : "0px";
   const anchorStyle = floating
     ? {
         left: growLeft ? undefined : edge,
         right: growLeft ? edge : undefined,
-        top: cardSize
-          ? `min(${floatAnchor.yp}%, calc(100% - min(${cardSize.h}px, calc(100% - 16px)) - 8px))`
-          : `min(${floatAnchor.yp}%, calc(100% - 60% - 8px))`,
         width: cardSize
           ? `min(${cardSize.w}px, calc(100% - 16px), calc(100% - ${edge} - ${farInset}px))`
           : `min(26rem, calc(100% - 44px), calc(100% - ${edge} - ${farInset}px))`,
-        // 显式尺寸走 height（60% 封顶会让拖大的卡被裁）；自适应走 60% 封顶
-        ...(cardSize
-          ? { height: `min(${cardSize.h}px, calc(100% - 16px))` }
-          : { maxHeight: "60%" }),
+        ...(avoid
+          ? {
+              // 避让原文段：贴在它下方（top）或上方（bottom），高度不超过那一侧的空间
+              ...(avoid.side === "below" ? { top: `${avoid.px}px` } : { bottom: `${avoid.px}px` }),
+              ...(cardSize
+                ? { height: `min(${cardSize.h}px, ${avoid.room}px)` }
+                : { maxHeight: `min(60%, ${avoid.room}px)` }),
+            }
+          : {
+              // 卡顶跟球心齐，底下放不下就往上收，但不越过 PDF 栏顶
+              top: cardSize
+                ? `max(${bT + 8}px, min(${ballTop}, calc(100% - ${bB}px - min(${cardSize.h}px, calc(100% - 16px)) - 8px)))`
+                : `max(${bT + 8}px, min(${ballTop}, calc(100% - ${bB}px - 60% - 8px)))`,
+              // 显式尺寸走 height（60% 封顶会让拖大的卡被裁）；自适应走 60% 封顶
+              ...(cardSize
+                ? { height: `min(${cardSize.h}px, calc(100% - 16px))` }
+                : { maxHeight: "60%" }),
+            }),
       }
     : fixedH
       ? { height: `${heightPct}%` }
@@ -350,17 +460,6 @@ function ReaderTranslatePanel({
                   >
                     原文
                   </button>
-                  {onAsk && (
-                    <button
-                      type="button"
-                      disabled={!canAsk}
-                      title={canAsk ? "放进下方对话的输入框，不发送" : "对话还没准备好"}
-                      onClick={() => onAsk(current)}
-                      className="rounded-sm px-1.5 py-0.5 text-l2 hover:bg-hover hover:text-l1 disabled:opacity-40"
-                    >
-                      问这段
-                    </button>
-                  )}
                   {canSave && (
                     <button
                       type="button"
@@ -369,24 +468,6 @@ function ReaderTranslatePanel({
                       className="rounded-sm px-1.5 py-0.5 text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50"
                     >
                       {current.saved ? "✓ 已存" : "存进笔记"}
-                    </button>
-                  )}
-                  {onTogglePlacement && (
-                    <button
-                      type="button"
-                      onClick={onTogglePlacement}
-                      title={
-                        floating
-                          ? "回到右栏对话上方（右栏收着会顺手展开）"
-                          : "变成 PDF 边上的「译」悬浮球（可拖动，收起终端栏也在）"
-                      }
-                      className={`rounded-sm px-1.5 py-0.5 ${
-                        floating
-                          ? "bg-seg-sel text-l1"
-                          : "text-l3 hover:bg-hover hover:text-l1"
-                      }`}
-                    >
-                      {floating ? "回栏" : "钉住"}
                     </button>
                   )}
                   {/* 复制当前显示条的纯译文（兼容 shim 口径同 drawer/存笔记）；
@@ -421,19 +502,64 @@ function ReaderTranslatePanel({
                   </button>
                 </>
               )}
+              <div ref={moreRef} className="relative">
+                <button
+                  type="button"
+                  aria-label="更多"
+                  aria-expanded={moreOpen}
+                  onClick={() => setMoreOpen((v) => !v)}
+                  className={`flex h-5 w-6 items-center justify-center rounded-sm ${
+                    moreOpen || drawerOpen
+                      ? "bg-seg-sel text-l1"
+                      : "text-l3 hover:bg-hover hover:text-l1"
+                  }`}
+                >
+                  ⋯
+                </button>
+                {moreOpen && (
+                  <div className="ccode-float-surface absolute right-0 top-full z-40 mt-1 flex min-w-[9rem] flex-col rounded-md border border-field py-1 text-xs">
+                    {onAsk && current && !pending && (
+                      <button
+                        type="button"
+                        disabled={!canAsk}
+                        title={canAsk ? "放进下方对话的输入框，不发送" : "对话还没准备好"}
+                        onClick={() => {
+                          setMoreOpen(false);
+                          onAsk(current);
+                        }}
+                        className="px-3 py-1.5 text-left text-l2 hover:bg-hover hover:text-l1 disabled:opacity-40"
+                      >
+                        问这段
+                      </button>
+                    )}
+                    {onTogglePlacement && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMoreOpen(false);
+                          onTogglePlacement();
+                        }}
+                        className="px-3 py-1.5 text-left text-l2 hover:bg-hover hover:text-l1"
+                      >
+                        {floating ? "回到右栏" : "钉在 PDF 上（悬浮球）"}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMoreOpen(false);
+                        toggleDrawer();
+                      }}
+                      className="px-3 py-1.5 text-left text-l2 hover:bg-hover hover:text-l1"
+                    >
+                      历史（{history.length}）
+                    </button>
+                  </div>
+                )}
+              </div>
               <button
                 type="button"
-                onClick={toggleDrawer}
-                className={`rounded-sm px-1.5 py-0.5 ${
-                  drawerOpen
-                    ? "bg-seg-sel text-l1"
-                    : "text-l3 hover:bg-hover hover:text-l1"
-                }`}
-              >
-                历史 {history.length}
-              </button>
-              <button
-                type="button"
+                aria-label={floating ? "收起译文卡" : "关掉这条译文"}
                 onClick={() => {
                   onCancelPending();
                   // 悬浮档 × = 收回球；原位档 × = 本轮不再弹出（留一行动作条，历史随时可开）
@@ -448,7 +574,20 @@ function ReaderTranslatePanel({
             </div>
           </div>
           {!collapsed && (
-            <div className="min-h-0 overflow-y-auto px-3.5 pb-2.5">
+            <div
+              ref={scrollerRef}
+              // 下面还有字时卡底渐隐：一眼看出没完，不会以为最后那半行就是结尾
+              style={
+                moreBelow
+                  ? {
+                      maskImage: "linear-gradient(to bottom, black calc(100% - 28px), transparent)",
+                      WebkitMaskImage:
+                        "linear-gradient(to bottom, black calc(100% - 28px), transparent)",
+                    }
+                  : undefined
+              }
+              className="min-h-0 overflow-y-auto px-3.5 pb-2.5"
+            >
               {pending ? (
                 pending.phase === "loading" ? (
                   // 在途提示：旋转小标 + 文本（TerminalStatusBar 的 ◌ animate-spin 同款克制写法）
@@ -481,7 +620,15 @@ function ReaderTranslatePanel({
                         {reflowBlockText(current.original, { cjk: false })}
                       </p>
                     )}
-                    <p className="mt-1 whitespace-pre-line text-justify text-sm leading-6 text-l1">
+                    <p
+                      // 悬浮卡按阅读字号排（text-xs 在终端工作台里是 13px）：原先 14px/24px 在 PDF 旁边
+                      // 像标题，几行就占满一张卡。行高写内联：工作台给 .text-xs 的 1.15rem 不在 layer 里，
+                      // leading-* 工具类压不过它，中文正文挤成一团
+                      style={floating ? { lineHeight: 1.7 } : undefined}
+                      className={`mt-1 whitespace-pre-line text-justify text-l1 ${
+                        floating ? "text-xs" : "text-sm leading-6"
+                      }`}
+                    >
                       {reflowBlockText(plainTextOf(current), { cjk: true })}
                     </p>
                   </>

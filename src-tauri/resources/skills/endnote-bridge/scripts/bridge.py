@@ -2,7 +2,9 @@
 """Offline bibliography exchange. Writes a proposal, never the existing library."""
 import argparse
 import hashlib
+import html
 import json
+import os
 import re
 import sys
 import tempfile
@@ -14,6 +16,45 @@ from pathlib import Path
 def identity(record):
     doi = re.sub(r"^https?://(?:dx\.)?doi\.org/", "", record.get("doi", "").strip(), flags=re.I).lower()
     return "doi:" + doi if doi else "title:" + re.sub(r"\W+", "", record.get("title", "").casefold())
+
+
+def excluded_identities(included_json):
+    """papers/included.json 里人排除的篇（decision=excluded）：DOI 身份与标题身份都收。读不到返回空集。"""
+    try:
+        data = json.loads(Path(included_json).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return set()
+    rows = data if isinstance(data, list) else (data.get('records') or data.get('items') or []) if isinstance(data, dict) else []
+    out = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get('decision', '')).strip().lower() not in ('excluded', 'exclude'):
+            continue
+        doi = str(row.get('doi') or '').strip()
+        if not doi:
+            for field in ('url', 'id'):
+                value = str(row.get(field) or '')
+                hit = re.search(r'(10\.\d{4,9}/\S+)', value)
+                if hit:
+                    doi = hit.group(1)
+                    break
+        if doi:
+            out.add(identity({'doi': doi}))
+        title = str(row.get('title') or '')
+        if re.sub(r"\W+", "", title):
+            out.add(identity({'title': title}))
+    return out
+
+
+def drop_excluded(records, included_json):
+    """「同步到文献库」只交没被排除的：引文库里还留着检索时导进来、后来人排除的篇（2026-10-23 HER：
+    18 条 Zotero 硼化物批全排除，同步到 EndNote 仍整份 27 条导了进去）。返回 (留下的, 去掉几条)。"""
+    gone = excluded_identities(included_json) if included_json else set()
+    if not gone:
+        return records, 0
+    kept = [r for r in records if identity(r) not in gone and identity({'title': r.get('title', '')}) not in gone]
+    return kept, len(records) - len(kept)
 
 
 def decode_bib_text(value):
@@ -140,11 +181,26 @@ def parse_bibtex(text):
         stamp.unlink(missing_ok=True)
 
 
+def _placeholder(value):
+    # 「无期号」= 这本刊不分期（lit_records.py 补字段时按 Crossref 判定），同样不是值
+    return str(value).strip() in ('待补', '待核', '无期号')
+
+
 def load(path):
     records = _load(path)
     # 输入侧统一愈合标识符：老文件里被美化成上下标的数字折回 ASCII，回程对账才对得上。
     # 页码/卷/期/ISSN 同病（A₂₅₇ 这类文章号页码），一并折叠（2026-10-11 对抗审查实证）。
     for record in records:
+        # 引文库里「待补」「待核」是给人看的缺口标记，不是值：进了 RIS / XML 就成了 Zotero、EndNote
+        # 里一格「待补」（2026-10-22 检索步复查）。读进来就当没有这个字段
+        for field in list(record):
+            value = record[field]
+            if isinstance(value, list):
+                kept = [v for v in value if not _placeholder(v)]
+                if kept != value:
+                    record[field] = kept
+            elif isinstance(value, str) and _placeholder(value) and field not in ('id', 'type'):
+                del record[field]
         for field in ('doi', 'url', 'pages', 'volume', 'number', 'issn'):
             if record.get(field):
                 record[field] = plain_id(record[field])
@@ -267,6 +323,140 @@ def _shift_marks(text, table):
     return text.translate(table)
 
 
+# IUPAC 元素符号（与 src/screening-review.ts 的 ELEMENT_SYMBOLS 同一份）
+_ELEMENTS = frozenset(
+    'H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Ge As Se Br Kr '
+    'Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Sb Te I Xe Cs Ba La Ce Pr Nd Pm Sm Eu Gd Tb Dy Ho Er Tm Yb Lu '
+    'Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Po At Rn Fr Ra Ac Th Pa U Np Pu Am Cm Bk Cf Es Fm Md No Lr Rf Db Sg '
+    'Bh Hs Mt Ds Rg Cn Nh Fl Mc Lv Ts Og'.split())
+# 这些词后面的 S1、S2、2 是补充材料 / 图表编号，不是硫、不是下标
+_REF_WORD = re.compile(
+    r'(?:Fig|Figs|Figure|Figures|Table|Tables|Scheme|Schemes|Eq|Eqs|Equation|Equations|Note|Notes|'
+    r'Movie|Movies|Video|Videos|Section|Appendix|Supplementary|Text|Data)\.?\s*$', re.I)
+_FORMULA_WORD = re.compile(r'[A-Za-z0-9()]+(?:\.\d+[A-Za-z0-9()]*)*')
+
+
+def _element_len(word, i):
+    """word[i:] 开头的元素符号长度；后面还在拼单词（Cobalt）就不算。单独的计量 x 除外。"""
+    def continues(j):
+        if j >= len(word) or not word[j].islower():
+            return False
+        # 计量 x 后面是下一个元素（MgxMo3S4）或词尾，就不是在拼单词
+        return not (word[j] == 'x' and (j + 1 >= len(word) or not word[j + 1].islower()))
+    two = word[i:i + 2]
+    if len(two) == 2 and two[0].isupper() and two[1].islower() and two in _ELEMENTS and not continues(i + 2):
+        return 2
+    if word[i].isupper() and word[i] in _ELEMENTS and not continues(i + 1):
+        return 1
+    return 0
+
+
+def _formula_parts(word):
+    """整词拆成元素 / 括号 / 计量数 / 计量 x，拆不完返回 None。MXene 的端基 Tx 也认。"""
+    parts = []
+    i = 0
+    while i < len(word):
+        ch = word[i]
+        if ch in '()':
+            parts.append(('paren', ch))
+            i += 1
+            continue
+        if ch == 'x' and parts and parts[-1][0] in ('el', 'paren', 'num') and (i + 1 >= len(word) or not word[i + 1].islower()):
+            parts.append(('x', ch))
+            i += 1
+            continue
+        num = re.match(r'\d{1,2}(?:\.\d+)?(?!\d)', word[i:])
+        if num and parts and parts[-1][0] in ('el', 'paren'):
+            parts.append(('num', num.group(0)))
+            i += len(num.group(0))
+            continue
+        # 合金式里的 TM（过渡金属占位，Y(TM1TM2)B4、Zr1-xTMxB2）按一个元素算
+        if word[i:i + 2] == 'TM' and word[i + 2:i + 3] in ('', 'x') or word[i:i + 2] == 'TM' and not word[i + 2:i + 3].islower():
+            parts.append(('el', 'TM'))
+            i += 2
+            continue
+        if word[i:] in ('Tx', 'Tz') and parts:
+            parts.append(('el', 'T'))
+            parts.append(('x', word[i + 1]))
+            i += 2
+            continue
+        n = _element_len(word, i)
+        if n:
+            parts.append(('el', word[i:i + n]))
+            i += n
+            continue
+        return None
+    return parts
+
+
+def _is_formula(word):
+    """MoS2、TiO2、Ni(OH)2、MoSx、Ti3C2Tx 是式子；B3LYP、Lux、H1N1、单个 V 不是。"""
+    if not word or not (word[0].isupper() or word[0] == '('):
+        return False
+    if re.fullmatch(r'H\d+N\d+', word):
+        return False
+    parts = _formula_parts(word)
+    if not parts:
+        return False
+    elements = sum(1 for kind, _ in parts if kind == 'el')
+    has_num = any(kind == 'num' for kind, _ in parts)
+    has_x = any(kind == 'x' for kind, _ in parts)
+    # 有计量数就算；只有计量 x 的（MoSx、NiOx）要两个以上元素，Lux、Nox 这类单元素加 x 的是普通词
+    return has_num or (has_x and elements >= 2)
+
+
+def _subscript_formulas(text):
+    """整句里逐个词判：是化学式才把元素 / 括号后的计量数和计量 x 收成下标。
+    图表编号（Figure S2、Table S1）跳过。已经是下标的不再动。"""
+    out = []
+    last = 0
+    for m in _FORMULA_WORD.finditer(text):
+        word = m.group(0)
+        start = m.start()
+        out.append(text[last:start])
+        last = m.end()
+        if _REF_WORD.search(text[max(0, start - 16):start]) or not _is_formula(word):
+            out.append(word)
+            continue
+        parts = _formula_parts(word)
+        piece = []
+        for kind, value in parts:
+            if kind in ('num', 'x'):
+                piece.append(value.translate(_SUB))
+            else:
+                piece.append(value)
+        out.append(''.join(piece))
+    out.append(text[last:])
+    return ''.join(out)
+
+
+_SPLIT_FORMULA = re.compile(r'([₀₁₂₃₄₅₆₇₈₉ₓᵧ])[ \t]+([A-Z][A-Za-z0-9₀₁₂₃₄₅₆₇₈₉ₓᵧ]*)')
+_UNSUB = str.maketrans('₀₁₂₃₄₅₆₇₈₉ₓᵧ', '0123456789xy')
+
+
+def _join_formula_word(m):
+    """下标后隔空格的下一个词：能拆成元素 + 计量、且带数字（SO₃）或只是单个元素字母（B），才是同一个式子。
+    标题里首字母大写的 As、In、At 不接。"""
+    word = m.group(2)
+    plain = word.translate(_UNSUB)
+    if (len(plain) == 1 or re.search(r'\d', plain)) and _formula_parts(plain):
+        return m.group(1) + word
+    return m.group(0)
+
+
+_TITLE_PREFIX = re.compile(r'^\s*(?:【\s*\d+\s*】|\[\s*\d+\s*\]|\d+\s*~\s*\.?)\s*')
+
+
+def strip_title_prefix(title):
+    """去掉题名前人手加的编号（【77】、[12]、19~.）。只给导出文件用，不改引文库。"""
+    return _TITLE_PREFIX.sub('', str(title or ''), count=1)
+
+
+def title_text(value):
+    return strip_title_prefix(clean(value))
+
+
+
 def clean(value):
     if value is None:
         return ''
@@ -286,6 +476,8 @@ def clean(value):
     text = re.sub(r'https?://[^<>\s]+|(?<![\w.])10\.\d{4,9}/[^<>\s]+', _park, text, flags=re.I)
     # 先去掉斜体粗体标签，再把上下标收成 Unicode。两个库都按字符显示，不再留 <sup> 或变成 S0。
     text = re.sub(r'</?(?:i|b|em|strong)>', '', text, flags=re.I)
+    # 标签里的排版空格（<sub> x </sub>）先收掉，下一条才认得出这是化学附件
+    text = re.sub(r'<(sub|sup)>\s*(.*?)\s*</\1>', lambda m: f'<{m.group(1)}>{m.group(2)}</{m.group(1)}>', text, flags=re.I)
     # Crossref 在标签前留的排版空格：MgCl <sub>2</sub>、cm <sup>−2</sup>、) <sub>2</sub>。
     # 前一字符是字母数字/右括号/右中括号、标签内容以数字或正负号/x/y 开头才算化学附件，吃掉这个空格；
     # 纯文字（"…in <sub>…"）不带这些标签，不受影响。标签名允许大小写混写，内容类保持大小写敏感
@@ -314,23 +506,25 @@ def clean(value):
         # 豁免它就整串不动（2026-10-11 实证：Mg2+-Conducting 原样进了参考文献表）。
         text = re.sub(r'([A-Za-z])[ \t]*(\d{1,2}\+)(?![A-Za-z0-9])', lambda m: m.group(1) + sup_num(m.group(2)), text)
         text = re.sub(r'([A-Z][a-z]?)(\d+)-x(?![a-z])', lambda m: m.group(1) + sub_num(m.group(2)) + '₋ₓ', text)
-        # 元素紧跟的计量 x 收成 ₓ（进循环：MgxMo3S4 要先变 Mgₓ，Mo₃ 才不会被字母 x 的
-        # 回溯断言挡住——放循环外会留半转换的 Mo3）
-        text = re.sub(r'([A-Z][a-z]?)x(?![a-z])', r'\1ₓ', text)
+        # 元素后的计量数与计量 x：按「整词能拆成元素 + 计量」认（_subscript_formulas）。原先逐字符认，
+        # MoS2、TiO2、NiFe2O4 这类多元素式子中间那几位漏掉，Figure S2、B3LYP、Lux 反被下标
+        # （2026-10-23 HER 导出核查：界面显示 MoS₂，导出仍是 MoS2）
+        text = _subscript_formulas(text)
         # 存量已损坏形态的愈合：老产物里「字母+空格+上下标字」（MgCl ₂、cm ⁻²）把空格吃掉。
         # 正常散文里不会出现 Unicode 上下标字符，此规则只命中被旧版污染过的题录。
         text = re.sub(r'(?<=[A-Za-z0-9)\]])[ \t ]+(?=[₀₁₂₃₄₅₆₇₈₉⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻])', '', text)
         # 位数收到 1–2 位：化学计量鲜有 3 位以上，而「In 2020,」「At 300 K」这类散文高频句式
         # 会被 3+ 位整段下标（2026-10-11 对抗审查实证）。页码 A257 也靠「1–2 位+后视断言」自然豁免。
-        text = re.sub(r'([A-Z][a-z]?|\))[ \t]+(\d{1,2}(?:\.\d+)?)(?![0-9+])', lambda m: m.group(1) + sub_num(m.group(2)), text)
-        text = re.sub(r'(?<![A-Za-z])([A-Z][a-z]?)(\d{1,2}(?:\.\d+)?)(?![0-9+])', lambda m: m.group(1) + sub_num(m.group(2)), text)
-        text = re.sub(r'([₀₁₂₃₄₅₆₇₈₉ₓᵧ])[ \t]+([A-Z][a-z]?)(?![a-z])', r'\1\2', text)
+        text = re.sub(r'([A-Z][a-z]?|\))[ \t]+(\d{1,2}(?:\.\d+)?)(?![0-9+])', lambda m: m.group(1) + sub_num(m.group(2)) if m.group(1) == ')' or m.group(1) in _ELEMENTS else m.group(0), text)
+        # 下标后隔空格的式子后半截接上（Crossref 的 Co₂ B、CF₃ SO₃）；下一个是普通词就不接（Ti₃C₂Tₓ MXene）
+        text = _SPLIT_FORMULA.sub(_join_formula_word, text)
         text = re.sub(r'([₀₁₂₃₄₅₆₇₈₉ₓᵧ])[ \t]+\)', r'\1)', text)
     # 界面显示规则已经收住的写法。这里只补导入，不把两套合成一个函数。
     text = text.replace('\uf8ff', '–').replace('\u2500', '–').replace('\u2010', '-')
     text = re.sub(r'([A-Z][a-z]?)(\d+)-([A-Z]{2,4})B(\d+)', lambda m: m.group(1) + sub_num(m.group(2)) + '₋ₓ' + m.group(3) + 'ₓB' + sub_num(m.group(4)), text)
     text = re.sub(r'([A-Z][a-z]?)x([A-Z][a-z]?)yB', lambda m: m.group(1) + 'ₓ' + m.group(2) + 'ᵧB', text)
-    text = re.sub(r'([A-Z]{2,3})(\d+)', lambda m: m.group(1) + sub_num(m.group(2)), text)
+    # CO2RR 这类缩略词里的式子；字母拆不成元素的（PM2.5、MOF5 里的 MOF）不动
+    text = re.sub(r'([A-Z]{2,3})(\d+)', lambda m: m.group(1) + sub_num(m.group(2)) if _formula_parts(m.group(1)) else m.group(0), text)
     text = re.sub(r'([A-Z][a-z]?) (\d+)(?= -\d)', lambda m: m.group(1) + sub_num(m.group(2)), text)
     text = re.sub(r'([₀₁₂₃₄₅₆₇₈₉])[ \t]*[A-Z][ \t]+(\d+(?:\.\d+)?)', lambda m: m.group(1) + 'T' + sub_num(m.group(2)), text)
     text = re.sub(r'([₀₁₂₃₄₅₆₇₈₉])[–−-]ₓ', r'\1₋ₓ', text)
@@ -346,12 +540,15 @@ def clean(value):
     text = re.sub(r'(?<=\bh) -(?=[A-Z])', '-', text)
     text = re.sub(r'([₀₁₂₃₄₅₆₇₈₉])\.(\d)', lambda m: m.group(1) + '\u2024' + sub_num(m.group(2)), text)
     text = re.sub(r'([₀₁₂₃₄₅₆₇₈₉])/(\d+)', lambda m: m.group(1) + '/' + sub_num(m.group(2)), text)
-    text = re.sub(r'([₀₁₂₃₄₅₆₇₈₉])[ \t]+([A-Z](?![a-z]{2}))', r'\1\2', text)
+    text = _SPLIT_FORMULA.sub(_join_formula_word, text)
     text = re.sub(r'T[ \t]+z(?![A-Za-z])', 'Tz', text)
-    text = re.sub(r'([₀₁₂₃₄₅₆₇₈₉ₓᵧⁿ])[ \t]+-(?=[A-Za-z0-9])', r'\1-', text)
+    text = re.sub(r'([₀₁₂₃₄₅₆₇₈₉ₓᵧⁿ])[ \t]+([-–])(?=[A-Za-z0-9])', r'\1\2', text)
     text = re.sub(r'([ₙ₊₁])[ \t]+(?=[A-Z])', r'\1', text)
     # 放回标识符原文（只折空白与上下标数字）
     text = re.sub('[-]', lambda m: plain_id(parked[ord(m.group(0)) - 0xE000]), text)
+    # Crossref 的刊名、标题常带 &amp;（Journal of Materials Science &amp; Technology）。标签已经剥完再还原，
+    # 免得 &lt;5 nm 还原成 < 后被当成标签吃掉
+    text = html.unescape(text)
     return re.sub(r'\s+', ' ', text).strip()
 
 
@@ -428,14 +625,16 @@ def render(records, suffix):
             put('rec-number', i)
             put('ref-type', code, {'name': type_name.get(code, 'Generic')})
             for author in r.get('authors', []): put('contributors/authors/author', family_comma(author))
-            if r.get('title'): put('titles/title', clean(r['title']))
+            if r.get('title'): put('titles/title', title_text(r['title']))
             if r.get('journal'): put('titles/secondary-title', clean(r['journal']))
-            short = r.get('journalAbbreviation') or iso4_abbreviation(r.get('journal')) or r.get('journal') or ''
+            short, alt = journal_abbreviations(r)
             if short:
                 # EndNote.dtd 里期刊缩写在 periodical/abbr-1。EndNote 2025 期刊类型的
                 # 「其他形式的期刊名」是 Field 29（Generic 的 Alternate Title = titles/alt-title）。
-                # 两处都写：XML 导入认 abbr-1，界面字段认 alt-title。
+                # 两处都写：XML 导入认 abbr-1，界面字段认 alt-title。另一种写法进 abbr-2。
                 put('periodical/abbr-1', short)
+                if alt:
+                    put('periodical/abbr-2', alt)
                 put('titles/alt-title', short)
             # EndNote.dtd 的 record 子元素顺序：pages → volume → number → keywords → dates
             # → isbn → abstract → notes → work-type → urls → electronic-resource-num → language。
@@ -488,12 +687,13 @@ def render(records, suffix):
             for author in r.get('authors', []):
                 result.append(line('AU', family_comma(author)))
             if r.get('title'):
-                result.append(line('TI', r['title']))
+                result.append(line('TI', strip_title_prefix(r['title'])))
             # EndNote 2025 RefMan RIS：期刊全称 T2，缩写 J2。
             # 不再写 JO/JF/JA。Zotero 会把 JO 放进期刊缩写；这份只给 EndNote。
             if r.get('journal'):
                 result.append(line('T2', r['journal']))
-            short = r.get('journalAbbreviation') or iso4_abbreviation(r.get('journal')) or r.get('journal') or ''
+            # 另一种写法 RIS 没有地方放（EndNote 的期刊只有一格缩写），进期刊术语表（--journal-terms）
+            short, _alt = journal_abbreviations(r)
             if short:
                 result.append(line('J2', short))
             if r.get('year'):
@@ -552,10 +752,10 @@ def render(records, suffix):
             if r.get('date'):
                 result.append('%8 ' + clean(r['date']))
             if r.get('title'):
-                result.append('%T ' + clean(r['title']))
+                result.append('%T ' + title_text(r['title']))
             if r.get('journal'):
                 result.append('%J ' + clean(r['journal']))
-            short = r.get('journalAbbreviation') or iso4_abbreviation(r.get('journal')) or r.get('journal') or ''
+            short, _alt = journal_abbreviations(r)
             if short:
                 result.append('%B ' + clean(short))
             if r.get('volume'):
@@ -606,6 +806,8 @@ def main():
     p.add_argument('--input',type=Path);p.add_argument('--output',type=Path)
     p.add_argument('--report',type=Path);p.add_argument('--existing',type=Path)
     p.add_argument('--check-endnote-library',type=Path,dest='check_endnote_library')
+    p.add_argument('--skip-excluded',type=Path,dest='skip_excluded',help='papers/included.json：其中排除的篇不进输出')
+    p.add_argument('--journal-terms',type=Path,dest='journal_terms',help='另写一份 EndNote 期刊术语表（全称、缩写 1/2/3）')
     a=p.parse_args()
     if a.check_endnote_library is not None:
         # 库体检（同步按钮用）：只读列出旧版导出的污染记录，永远成功退出
@@ -624,6 +826,11 @@ def main():
         print('--input/--output/--report are required',file=sys.stderr);return 1
     try:
         records=load(a.input); existing=load(a.existing) if a.existing else []
+        if a.skip_excluded:
+            records,dropped=drop_excluded(records,a.skip_excluded)
+            if dropped: print(f'检索时排除的 {dropped} 篇不导。')
+        if a.journal_terms:
+            a.journal_terms.write_text(journal_terms(records), encoding='utf-8', newline='')
         for dest in (a.output,a.report):
             if dest.exists() or dest.is_symlink(): raise ValueError('Output exists; choose a new proposal path')
         if a.output.resolve()==a.report.resolve(): raise ValueError('Report and proposal paths must differ')
@@ -677,9 +884,45 @@ TYPE_LABEL = {
 }
 
 
+# 接口缓存：与 lit_records.py 同一个目录、同一种文件名（sha1(url).body），检索步查过的同步时直接用；
+# 30 天过期。同步按钮每次都要拉 JabRef 缩写表、补缺字段时要问 Crossref，不缓存每次都等。
+_CACHE_DIR = Path(tempfile.gettempdir()) / 'mesa-lit-cache'
+_CACHE_TTL = 30 * 24 * 3600
+
+
+def _cache_file(url):
+    return _CACHE_DIR / (hashlib.sha1(url.encode('utf-8')).hexdigest() + '.body')
+
+
+def _cache_get(url):
+    path = _cache_file(url)
+    try:
+        if path.is_file() and time.time() - path.stat().st_mtime < _CACHE_TTL and path.stat().st_size > 0:
+            return path.read_bytes()
+    except OSError:
+        pass
+    return None
+
+
+def _cache_put(url, body):
+    try:
+        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = _cache_file(url).with_suffix('.tmp%d' % os.getpid())
+        tmp.write_bytes(body)
+        os.replace(tmp, _cache_file(url))
+    except OSError:
+        pass
+
+
 def http_json(url, timeout=40, attempts=4):
     import urllib.error
     import urllib.request
+    cached = _cache_get(url)
+    if cached is not None:
+        try:
+            return json.loads(cached.decode('utf-8'))
+        except ValueError:
+            pass
     last = None
     for i in range(attempts):
         req = urllib.request.Request(url, headers={
@@ -688,7 +931,10 @@ def http_json(url, timeout=40, attempts=4):
         })
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return json.load(resp)
+                body = resp.read()
+            data = json.loads(body.decode('utf-8'))
+            _cache_put(url, body)
+            return data
         except urllib.error.HTTPError as err:
             last = err
             if err.code in (429, 500, 502, 503, 504):
@@ -766,8 +1012,10 @@ def crossref_fill(doi):
         'title': clean((message.get('title') or [''])[0]),
         'authors': authors,
         'year': str(issued[0]) if issued else (str(online[0]) if online else ''),
-        'date': fmt_date(issued or online or printed),
-        'epubDate': fmt_date(online) if printed and online and online != issued else '',
+        # 出版日期取纸本（期）的日期，网络出版日另记。Crossref 的 issued 是两者里早的那个，
+        # 拿它比 online 永远相等，网络出版日就丢了（2026-10-22 检索步实证）
+        'date': fmt_date(printed or issued or online),
+        'epubDate': fmt_date(online) if online and online != (printed or issued) else '',
         'journal': journal,
         'journalAbbreviation': abbrev,
         'volume': plain_id(message.get('volume')) if meaningful(message.get('volume')) else '',
@@ -790,6 +1038,9 @@ _nlm_cache = {}
 def http_text(url, timeout=40, attempts=4):
     import urllib.error
     import urllib.request
+    cached = _cache_get(url)
+    if cached is not None:
+        return cached.decode('utf-8', 'replace')
     last = None
     for i in range(attempts):
         req = urllib.request.Request(url, headers={
@@ -798,7 +1049,9 @@ def http_text(url, timeout=40, attempts=4):
         })
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return resp.read().decode('utf-8', 'replace')
+                body = resp.read()
+            _cache_put(url, body)
+            return body.decode('utf-8', 'replace')
         except urllib.error.HTTPError as err:
             last = err
             if err.code in (429, 500, 502, 503, 504):
@@ -828,24 +1081,55 @@ def _journal_key(name):
     return ' '.join(text.split())
 
 
-def load_mesa_iso4():
-    """resources/journal-abbreviations.csv。同步时由调用方放到脚本旁边。"""
+def tidy_abbreviation(value):
+    """缩写写法收拾：句点后直接跟大写补空格（JabRef 表里的 J. Mater. Chem.A），句点后的冒号去掉
+    （ISO 4 不留冒号：Mater. Rep.: Energy → Mater. Rep. Energy）。"""
+    text = clean(value)
+    # 只补「句点 + 大写开头的词 / 末尾单个大写」：U.S.A. 这类缩略不拆
+    text = re.sub(r'\.(?=[A-Z](?:[a-z]|$))', '. ', text)
+    text = re.sub(r'\.:\s*', '. ', text)
+    return ' '.join(text.split())
+
+
+def _mesa_rows():
     import csv
     path = Path(__file__).with_name('journal-abbreviations.csv')
-    table = {}
     if not path.is_file():
-        return table
+        return []
+    rows = []
     for row in csv.reader(path.read_text(encoding='utf-8').splitlines()):
         if not row or row[0].strip().startswith('#') or len(row) < 2:
             continue
+        rows.append(row)
+    return rows
+
+
+def load_mesa_iso4():
+    """resources/journal-abbreviations.csv 的「全称,缩写」。同步时由调用方放到脚本旁边。"""
+    table = {}
+    for row in _mesa_rows():
         key = _journal_key(row[0])
-        short = clean(row[1])
+        short = tidy_abbreviation(row[1])
         if key and short:
             table[key] = short
     return table
 
 
+def load_mesa_alt():
+    """第三列：同一本刊的另一种通行缩写（ACS/CASSI 与 ISO 4 不一样时两种都给：Appl. Catal., B 与 Appl. Catal. B Environ.）"""
+    table = {}
+    for row in _mesa_rows():
+        if len(row) < 3:
+            continue
+        key = _journal_key(row[0])
+        alt = tidy_abbreviation(row[2])
+        if key and alt:
+            table[key] = alt
+    return table
+
+
 _MESA_ISO4 = load_mesa_iso4()
+_MESA_ALT = load_mesa_alt()
 
 
 def iso4_index():
@@ -863,16 +1147,234 @@ def iso4_index():
             text = http_text(f'https://abbrv.jabref.org/journals/{name}', timeout=40, attempts=2)
         except Exception:
             continue
-        for row in csv.reader(io.StringIO(text)):
+        # JabRef 表是「"全称", "缩写"」：逗号后有空格，不跳过的话缩写会带上引号（"npj 2D Mater. Appl."）
+        for row in csv.reader(io.StringIO(text), skipinitialspace=True):
             if len(row) < 2:
                 continue
             key = _journal_key(row[0])
-            short = clean(row[1])
+            short = tidy_abbreviation(row[1].strip().strip('"'))
             if key and short and key not in index:
                 index[key] = short
     index.update(_MESA_ISO4)
     _iso4_index = index
     return index
+
+
+
+# ---------- ISO 4：按 LTWA（ISSN 国际中心的期刊标题词缩写表）给任意刊名算缩写 ----------
+# 同步到文献库时作「另一种写法」（EndNote 缩写 2、Zotero「其他」）：主缩写多是 ACS / CASSI 写法，
+# 选「缩写 2」的样式就要整份都是 ISO 4，所以每本刊都算一份，和主缩写不同才给（2026-10-23 用户拍板「所有刊都做」）。
+# LTWA 不随包：第一次用时从 ISSN 下载，进接口缓存（与 JabRef 缩写表同一处）；脚本旁边有 ltwa.csv 时用它（测试、离线）。
+# 规则取 ISSN Manual 7.1 的常用部分：单词刊名不缩；冠词、连词、介词去掉；分册字母、全大写缩略词、
+# 内含大写的词（ChemCatChem）照写；连字符词逐段缩；括号里的地名限定逐词缩；复数按单数查；
+# 源词不带重音时缩写也不带（LTWA 把 medical 缩成 méd.）；缩写词首字母大写。
+_LTWA_URL = 'https://www.issn.org/wp-content/uploads/2021/07/ltwa_20210702.csv'
+_LTWA_RANK = ('eng', 'mul', 'lat', 'und')
+_ISO4_STOP = frozenset((
+    'a an the of and for in on at to by with from into via & + '
+    'und der die das des dem den für fur fuer zur zum im '
+    'de la le les du et en y e del della dei di da do dos das na no och og i ve'
+).split())
+_ltwa = None
+
+
+def _plain(text):
+    import unicodedata
+    return ''.join(c for c in unicodedata.normalize('NFKD', text) if not unicodedata.combining(c))
+
+
+def _ltwa_key(text):
+    return _plain(text).casefold()
+
+
+def _ltwa_table():
+    """(整词表, 前缀表, 词组表)。下载或读不到时三张空表，调用方不给另一种写法。"""
+    global _ltwa
+    if _ltwa is not None:
+        return _ltwa
+    import csv
+    import io
+    local = Path(__file__).with_name('ltwa.csv')
+    try:
+        text = local.read_text(encoding='utf-8-sig') if local.is_file() else http_text(_LTWA_URL, timeout=60, attempts=2)
+    except Exception:
+        text = ''
+    exact, prefix, phrases = {}, [], []
+    for row in csv.reader(io.StringIO(text.lstrip('﻿')), delimiter=';'):
+        if len(row) < 3 or row[0] == 'WORDS':
+            continue
+        word, abbr, langs = row[0].strip(), row[1].strip(), {x.strip() for x in row[2].split(',')}
+        rank = min((_LTWA_RANK.index(x) for x in langs if x in _LTWA_RANK), default=len(_LTWA_RANK))
+        if not word or word.startswith('-'):
+            continue  # 后缀、词中片段：复合词，不处理
+        if ' ' in word:
+            phrases.append((_ltwa_key(word.rstrip('-')).split(), word.endswith('-'), abbr, rank))
+        elif word.endswith('-'):
+            prefix.append((_ltwa_key(word[:-1]), abbr, rank))
+        else:
+            key = _ltwa_key(word)
+            if key not in exact or rank < exact[key][1]:
+                exact[key] = (abbr, rank)
+    prefix.sort(key=lambda x: (-len(x[0]), x[2]))
+    phrases.sort(key=lambda x: -len(x[0]))
+    _ltwa = (exact, prefix, phrases)
+    return _ltwa
+
+
+def _ltwa_word(word):
+    exact, prefix, _ = _ltwa_table()
+    key = _ltwa_key(word)
+    found = []
+    for k in (key, key[:-1] if key.endswith('s') else '', key[:-2] if key.endswith('es') else ''):
+        if k and k in exact:
+            found.append((exact[k][1], 0, exact[k][0]))
+            break
+    for stem, abbr, rank in prefix:
+        if key.startswith(stem):
+            found.append((rank, 1, abbr))
+            break
+    if not found:
+        return None
+    found.sort()
+    return found[0][2]
+
+
+def _iso4_shape(abbr, source):
+    """n.a. = 不缩；源词不带重音时去掉缩写里的重音；首字母大写"""
+    if abbr == 'n.a.':
+        return source
+    if _plain(source) == source:
+        abbr = _plain(abbr)
+    return abbr[:1].upper() + abbr[1:]
+
+
+def _iso4_word(word):
+    if len(word) == 1 or (word.isupper() and len(word) <= 5) or re.search(r'[a-z][A-Z]', word) or not re.match(r'[^\W\d_]', word):
+        return word
+    parts = []
+    for part in word.split('-'):
+        if not part or len(part) == 1 or (part.isupper() and len(part) <= 5) or re.search(r'[a-z][A-Z]', part):
+            parts.append(part)
+            continue
+        abbr = _ltwa_word(part)
+        parts.append(_iso4_shape(abbr, part) if abbr else part)
+    return '-'.join(parts)
+
+
+def _iso4_phrase(tokens, i):
+    """tokens[i:] 开头能对上 LTWA 词组（United States of America → U. S. A.）就返回 (缩写, 用掉几个词)"""
+    _, _, phrases = _ltwa_table()
+    for seq, is_prefix, abbr, _rank in phrases:
+        span = tokens[i:i + len(seq)]
+        if len(span) != len(seq) or any(s.startswith('(') for s in span):
+            continue
+        keys = [_ltwa_key(s) for s in span]
+        if keys[:-1] == seq[:-1] and (keys[-1] == seq[-1] or (is_prefix and keys[-1].startswith(seq[-1]))):
+            return _iso4_shape(abbr, ' '.join(span)), len(seq)
+    return None, 0
+
+
+def _iso4_qualifier(text):
+    """括号里的地名限定（Amsterdam, Netherlands）：逐段缩，词组优先（United Kingdom → U. K.），不去停用词"""
+    segs = []
+    for seg in text.split(','):
+        words = seg.split()
+        out = []
+        i = 0
+        while i < len(words):
+            abbr, used = _iso4_phrase(words, i)
+            if used:
+                out.append(abbr)
+                i += used
+                continue
+            out.append(_iso4_word(words[i]))
+            i += 1
+        segs.append(' '.join(out))
+    return ', '.join(s for s in segs if s)
+
+
+def iso4_compute(journal):
+    """按 LTWA 算 ISO 4 缩写。LTWA 拿不到或刊名为空返回空。"""
+    # 刊名按原样分词（不先做化学美化：CO2 要当一个词），结果再按导出口径收一遍
+    title = ' '.join(html.unescape(re.sub(r'<[^>]+>', '', str(journal or ''))).replace('&', ' & ').split())
+    # 「: an official journal of …」这类说明性副标题不算刊名（ISSN Manual 7.1 不缩副标题里的机构说明）
+    title = re.sub(r'\s*:\s*(?:an?|the)?\s*official\s+(?:journal|publication)\b.*$', '', title, flags=re.I)
+    if not title or not _ltwa_table()[0]:
+        return ''
+    spans = [(m.group(0), m.end()) for m in re.finditer(r"\([^)]*\)|[^\W\d_][\w'’]*(?:-[\w'’]+)*|\d+[^\W\d_][\w'’]*|\d+", title)]
+    tokens = [tok for tok, _ in spans]
+    words = [tok for tok in tokens if not tok.startswith('(') and not tok.isdigit()]
+    content = [w for w in words if _ltwa_key(w) not in _ISO4_STOP or (len(w) == 1 and w.isupper())]
+    if len(content) <= 1:
+        # 单词刊名不缩，只缩括号里的限定
+        return clean(re.sub(r'\(([^)]*)\)', lambda m: '(' + _iso4_qualifier(m.group(1)) + ')', title))
+    out = []
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok.startswith('('):
+            out.append('(' + _iso4_qualifier(tok[1:-1]) + ')')
+            i += 1
+            continue
+        if tok.isdigit():
+            out.append(tok)
+            i += 1
+            continue
+        # 拉丁短语整段照写（7.1.7：in vitro、in vivo 里的介词不去）
+        pair = ' '.join(tokens[i:i + 2]).casefold()
+        if pair in ('in vitro', 'in vivo', 'in situ', 'in silico'):
+            out.append(' '.join(tokens[i:i + 2]))
+            i += 2
+            continue
+        abbr, used = _iso4_phrase(tokens, i)
+        if used:
+            out.append(abbr)
+            i += used
+            continue
+        if len(tok) == 1 and tok.isupper() and i > 0:
+            # 分册字母（Chem. A、Catal. B）照写；后面紧跟别的词的 A 是冠词（Chemistry - A European Journal）
+            after = title[spans[i][1]:].lstrip()
+            if not (tok == 'A' and after and after[0].isalpha()):
+                out.append(tok)
+        elif _ltwa_key(tok) not in _ISO4_STOP:
+            out.append(_iso4_word(tok))
+        i += 1
+    return clean(' '.join(out))
+
+
+def _abbr_key(text):
+    return re.sub(r'[\s.,:;\-]+', ' ', clean(text)).strip().casefold()
+
+
+def journal_abbreviations(record):
+    """(主缩写, ISO 4 写法)。主缩写：引文库里有就用，没有查 JabRef 表 + Mesa 兜底，再没有用全称。
+    ISO 4 写法：Mesa 表第三列有就用（人核过的），没有按 LTWA 算；和主缩写只差标点、大小写的不给。"""
+    journal = record.get('journal') or ''
+    primary = tidy_abbreviation(record.get('journalAbbreviation') or iso4_abbreviation(journal) or journal)
+    alt = _MESA_ALT.get(_journal_key(journal), '')
+    # 只给拉丁字母刊名算（中文刊名 LTWA 管不着，也省得为它下载词表）
+    if not alt and re.search(r'[A-Za-z]{2}', journal):
+        try:
+            alt = iso4_compute(journal)
+        except Exception:
+            alt = ''
+    if not alt or _abbr_key(alt) == _abbr_key(primary) or _abbr_key(alt) == _abbr_key(journal):
+        alt = ''
+    return primary, alt
+
+
+def journal_terms(records):
+    """EndNote 期刊术语表（工具 → 打开术语表 → 期刊术语表 → 列表 → 导入列表）：全称、缩写 1、缩写 2、缩写 3，制表符分隔。
+    缩写 1 = 主缩写（与 RIS 的 J2 一致）；缩写 2 = 另一种写法，没有就同缩写 1；缩写 3 = 缩写 1 去掉句点。
+    EndNote 的输出样式按「缩写 1 / 2 / 3」挑，两种写法都能用上。"""
+    seen = {}
+    for r in records:
+        journal = clean(r.get('journal') or '')
+        if not journal or journal.casefold() in seen:
+            continue
+        primary, alt = journal_abbreviations(r)
+        seen[journal.casefold()] = '\t'.join([journal, primary, alt or primary, primary.replace('.', '')])
+    return '\r\n'.join(seen.values()) + ('\r\n' if seen else '')
 
 
 def iso4_abbreviation(journal):
@@ -983,18 +1485,25 @@ def meaningful(value):
     if isinstance(value, list):
         return any(meaningful(item) for item in value)
     text = clean(value)
-    return bool(text) and text.casefold() not in ('none', 'null', '待补')
+    return bool(text) and text.casefold() not in ('none', 'null', '待补', '待核', '无期号')
 
 
 def blank(record, field):
     return not meaningful(record.get(field))
 
 
+# 这几格都有就算齐，补字段时不再联网（检索步 lit_records.py 补过的纳入篇都是齐的；
+# 从 Zotero / EndNote 导进引文库的老条目常缺摘要、ISSN、日期，同步前要补）
+_COMPLETE_FIELDS = ('abstract', 'issn', 'date', 'journalAbbreviation')
+
+
 def enrich_records(records):
-    """按 DOI 补 Crossref 上实际有的字段。查不到的保持原记录。"""
+    """按 DOI 补 Crossref 上实际有的字段（Crossref 没摘要再问 OpenAlex）。查不到的保持原记录；字段已齐的跳过。"""
     for record in records:
         doi = re.sub(r'^https?://(?:dx\.)?doi\.org/', '', clean(record.get('doi')), flags=re.I)
         if not doi:
+            continue
+        if all(not blank(record, field) for field in _COMPLETE_FIELDS):
             continue
         try:
             filled = crossref_fill(doi)
@@ -1041,12 +1550,25 @@ def enrich_main():
     p.add_argument('--input', type=Path, required=True)
     p.add_argument('--output', type=Path, required=True)
     p.add_argument('--report', type=Path)
+    p.add_argument('--skip-excluded', type=Path, dest='skip_excluded', help='papers/included.json：其中排除的篇不补也不输出')
     a = p.parse_args()
+    # Windows 管道默认按系统代码页编码，补字段提示含中文与连接号
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, 'reconfigure'):
+            stream.reconfigure(encoding='utf-8', errors='replace')
     try:
         if a.output.exists() or a.output.is_symlink():
             raise ValueError('Output exists; choose a new path')
         records = load(a.input)
+        if a.skip_excluded:
+            records, dropped = drop_excluded(records, a.skip_excluded)
+            if dropped:
+                print(f'检索时排除的 {dropped} 篇不导。')
+        before = [json.dumps(r, sort_keys=True, ensure_ascii=False) for r in records]
         enrich_records(records)
+        changed = sum(1 for old, r in zip(before, records) if json.dumps(r, sort_keys=True, ensure_ascii=False) != old)
+        if changed:
+            print(f'按 DOI 补全了 {changed} 条缺字段的题录（摘要、ISSN、日期等；只改这次导出的副本，引文库不动）。')
         text = render(records, '.bib')
         a.output.parent.mkdir(parents=True, exist_ok=True)
         with a.output.open('x', encoding='utf-8', newline='\n') as handle:

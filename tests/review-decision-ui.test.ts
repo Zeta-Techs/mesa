@@ -41,10 +41,13 @@ test("审查条目逐条点，点完最后一条也不自己跳去对话", async
   }
   let saved = REPORT;
   let continued = 0;
+  let missingFile = false;
+  let openCount = -1;
   Object.assign(dom.window, {
     __TAURI_INTERNALS__: {
       invoke: async (command: string, args: { path?: string; text?: string }) => {
         if (command === "read_file_preview") {
+          if (missingFile) throw new Error("文件不存在");
           return { text: saved, truncated: false, revision: "r1" };
         }
         if (command === "save_file_preview") {
@@ -109,6 +112,61 @@ test("审查条目逐条点，点完最后一条也不自己跳去对话", async
     assert.equal(continued, 1);
     assert.match(saved, /R001[\s\S]*决定：接受/);
     assert.match(saved, /R002[\s\S]*决定：接受/);
+    // 待核实清单的「接受」= 人对过原文、去掉标记：不给一键全部接受
+    saved = "- V001 | 位置：manuscript/review-final.md:3 | 原文摘要：过电位 30 mV | 来源：[@a] | 裁决：待裁决 | 依据：\n";
+    await act(async () => {
+      root.render(
+        h(List, {
+          projectRoot: "/proj",
+          target: "manuscript/verification-decisions.md",
+          kind: "verify",
+          onAllDecided: () => {},
+        }),
+      );
+    });
+    assert.match(host.textContent ?? "", /V001/);
+    assert.match(host.textContent ?? "", /去掉「待核实」/);
+    assert.equal([...host.querySelectorAll("button")].some((button) => button.textContent === "全部接受"), false);
+    // 第一轮后这一行就挂上了，清单第二轮才写：读不到时不说「勾上跳过」、不放行勾选；
+    // 步骤状态一变（refreshKey）就重读（2026-10-24 HER 润色实证）
+    const verifyText = saved;
+    missingFile = true;
+    const renderVerify = (refreshKey: string) =>
+      h(List, {
+        projectRoot: "/proj2",
+        target: "manuscript/verification-decisions.md",
+        kind: "verify",
+        refreshKey,
+        onOpenCount: (n: number) => {
+          openCount = n;
+        },
+        onAllDecided: () => {},
+      });
+    await act(async () => {
+      root.render(renderVerify("working"));
+    });
+    assert.match(host.textContent ?? "", /还没写出来/);
+    assert.doesNotMatch(host.textContent ?? "", /勾上跳过/);
+    assert.equal(openCount, 1);
+    missingFile = false;
+    saved = verifyText;
+    await act(async () => {
+      root.render(renderVerify("done"));
+    });
+    assert.match(host.textContent ?? "", /V001/);
+    // 条目自带建议：灰字接在框里，→ 收下（2026-10-24 用户：建议应该预填好，向右补全）
+    saved = "- V001 | 位置：review-final.md:51 | 原文摘要：方向矛盾 | 来源：[@a] | 建议：写明原文两处说法相反，去掉待核实 | 裁决：待裁决 | 依据：\n";
+    await act(async () => {
+      root.render(renderVerify("suggest"));
+    });
+    assert.match(host.textContent ?? "", /写明原文两处说法相反/);
+    const box = host.querySelector<HTMLInputElement>('input[aria-label="V001 修改说明"]')!;
+    assert.equal(box.value, "");
+    await act(async () => {
+      box.focus();
+      box.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    });
+    assert.equal(box.value, "写明原文两处说法相反，去掉待核实");
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

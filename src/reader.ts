@@ -38,6 +38,12 @@ export const READER_PDF_MIN_PX = 280;
 /** 侧栏缺省百分比（笔记栏窄些、Agent 栏宽些——对话内容比笔记目录长） */
 export const READER_PCT_DEFAULT_L = 22;
 export const READER_PCT_DEFAULT_R = 28;
+/** 抽查核对档（2026-10-23 用户：问题单窄一点、左侧保留阅读宽度）：栏宽另记一套，
+ *  拖动不影响平时读文献的三栏；笔记栏给到正常阅读的宽度，问题单只要放得下卡片 */
+export const SPOT_SPLIT_L_KEY = "ccode.spotSplitL";
+export const SPOT_SPLIT_R_KEY = "ccode.spotSplitR";
+export const SPOT_PCT_DEFAULT_L = 34;
+export const SPOT_PCT_DEFAULT_R = 18;
 
 /**
  * 适配宽度：新 scale 换算回页面 CSS 宽度后与当前差不到半像素则保持原值。
@@ -217,6 +223,42 @@ export function clampReaderTlBall(
   return { xp: c(xp), yp: c(yp) };
 }
 
+/** 悬浮球与 PDF 栏的边距（px，相对覆盖层根）：球和卡都只在 PDF 栏里 */
+export interface ReaderPdfBounds {
+  left: number;
+  right: number;
+  top?: number;
+  bottom?: number;
+}
+
+/** 球心离某一侧的距离（CSS 长度，挂覆盖层根的 left/right/top 用）：
+ *  near = 这一侧栏外的距离，span = 两侧栏外距离之和；pct 是球在 PDF 栏里的百分比，
+ *  按球半径 18px 兜在栏内（2026-10-23 用户：球脱出了 PDF，跑到右栏上面）。
+ *  球的渲染与译文卡的锚定共用这一份，二者不会错开 */
+export function readerTlBallOffset(pct: number, near: number, span: number): string {
+  return `calc(${near}px + clamp(18px, calc((100% - ${span}px) * ${pct / 100}), calc(100% - ${span}px - 18px)))`;
+}
+
+/** 译文卡避让它的原文段（覆盖层根坐标 px）：只看横向压没压到——上下换位不改横向范围，
+ *  判定不会来回翻；压到了摆到原文段下方或上方（下方够 160px 或比上方大就放下方），
+ *  两边都不足 120px 就不避让。below：top = px；above：bottom = px；room = 那一侧可用高度 */
+export function readerTlCardAvoid(
+  card: { left: number; right: number },
+  source: { top: number; bottom: number; left: number; right: number },
+  hostHeight: number,
+  bounds?: ReaderPdfBounds,
+): { side: "above" | "below"; px: number; room: number } | null {
+  if (!(card.right > source.left + 4 && card.left < source.right - 4)) return null;
+  const top = bounds?.top ?? 0;
+  const bottom = hostHeight - (bounds?.bottom ?? 0);
+  const below = bottom - source.bottom - 16;
+  const above = source.top - top - 16;
+  if (Math.max(below, above) < 120) return null;
+  return below >= 160 || below >= above
+    ? { side: "below", px: Math.round(source.bottom + 8), room: Math.round(below) }
+    : { side: "above", px: Math.round(hostHeight - source.top + 8), room: Math.round(above) };
+}
+
 /** 读悬浮球位置记忆（坏值/缺省回落右缘中部） */
 export function loadReaderTlBall(): { xp: number; yp: number } {
   try {
@@ -286,17 +328,23 @@ export function saveReaderTlCard(size: { w: number; h: number } | null): void {
 }
 
 /** 三栏像素换算：侧栏按百分比取整后保底 240px；两侧合计超出「总宽 − PDF 保底」时按比例压缩；
- *  窗口窄到 PDF 保底都拿不出时侧栏归零让位（PDF 全宽） */
+ *  窗口窄到 PDF 保底都拿不出时侧栏归零让位（PDF 全宽）。
+ *  keepLeft（抽查核对档）：放不下时先把右栏压到保底，左栏的阅读宽度最后才让 */
 export function readerColumnWidths(
   totalPx: number,
   pctL: number,
   pctR: number,
+  keepLeft = false,
 ): { left: number; right: number } {
   const budget = totalPx - READER_PDF_MIN_PX;
   if (budget <= 0) return { left: 0, right: 0 };
   const left = Math.max(READER_SIDE_MIN_PX, Math.round((pctL / 100) * totalPx));
-  const right = Math.max(READER_SIDE_MIN_PX, Math.round((pctR / 100) * totalPx));
+  let right = Math.max(READER_SIDE_MIN_PX, Math.round((pctR / 100) * totalPx));
   if (left + right <= budget) return { left, right };
+  if (keepLeft) {
+    right = Math.max(READER_SIDE_MIN_PX, budget - left);
+    if (left + right <= budget) return { left, right };
+  }
   const k = budget / (left + right);
   return { left: Math.floor(left * k), right: Math.floor(right * k) };
 }

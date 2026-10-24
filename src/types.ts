@@ -1004,7 +1004,8 @@ export interface WorkspaceDeliverableReviewDto {
   workspaceId: string;
   projectRoot: string;
   payloadDir: string;
-  files: { path: string; size: number; sha256: string | null; disposition: "copy" | "protected" | "conflict" | "too_large" | "tracked" }[];
+  /** skipped = 人在评审页勾掉、不带回项目（留在工作区）；required = 流程要用、不能勾掉（预期产物与 papers/） */
+  files: { path: string; size: number; sha256: string | null; disposition: "copy" | "protected" | "conflict" | "too_large" | "tracked" | "skipped"; required?: boolean }[];
 }
 
 export interface WorkspaceMergeResultDto {

@@ -976,6 +976,177 @@ prompt suggestion：一轮做完另发一次请求（系统提示带 SUGGESTION 
 **空着回车不替你发**——终端里会直接发出这句猜的话，聊天层不照搬，免得手滑替用户发出一句猜的话。
 未验：Mesa Dev 窗口里真模型出建议时的样子（假网关下已回放核对读法）。
 
+### 2026-10-23 · 抽查精读笔记改在沉浸阅读里对照原文看
+
+用户：「抽查三篇笔记还要跳转到运行页，太麻烦了，且无法对照原文。」原先点名单走运行页单栏预览，看不到 PDF；能对照原文的
+沉浸阅读又拒收未合并的工作区笔记（`reader_for_note` 报「评审合并后再进」），而抽查恰在保存进项目之前。设计两处由用户拍板
+「都按推荐做」：
+
+一，**抽查 = 沉浸阅读的核对档**：点一篇直接盖上阅读区（左笔记、中原文，仅摘要的篇中栏放题录摘要），三篇在顶栏切，退出回流程页。
+二，**笔记只读**：工作区笔记是待评审产物，人在这里改，评审看到的就不再是 AI 交付的那一版；写笔记的动作（标注、插图、存译段、
+让 AI 起草）在核对档全收。
+三，**右栏是问题单，不派阅读会话**：阅读会话在项目根运行，改的是主仓笔记，会改错地方。划段「记成问题」带出处进问题单，看完一次
+「发给这一步的 AI」（接回原对话，要求改这几篇并复查同类，事项不勾），或「N 篇都没问题」勾上。
+后端新命令 `spot_check_item` 解析每篇（不复用 `reader_for_note` 的主仓映射）。实现口径见 terminal.md「抽查核对档」。
+同日追加（用户：问题单窄一点，左侧保留阅读宽度）：核对档栏宽另记一套，缺省笔记 34%、问题单 18%，放不下先压问题单。
+同日再追加（用户：翻译悬浮球脱出了 PDF）：「译」球的坐标域从整窗收回 PDF 栏（修订 2026-10-14「整窗可拖」），球与卡共用 `readerTlBallOffset`；核对档译文卡不出「问这段」。
+同日第三批（用户：译文悬浮窗可以做什么优化，「1–4 都做」）：卡开着时 PDF 上常驻标出它的原文段，悬浮卡压到就挪到那段上方或下方；表头只留原文 / 存进笔记 / 复制 / ⋯ / ×；悬浮卡译文改阅读字号 13px；下面还有字时卡底渐隐。逐句对照（第 5 条）暂缓。
+
+### 2026-10-24 · HER 综述走完全程后的一轮收口（评审提速、逐条决定、AI 写人填、EndNote 对库、完结文件）
+
+用户用 HER 项目把英文综述从检索走到定稿，逐步反馈；最后让「按这次经验把其他科研步骤整体优化一轮」。定下：
+一，**评审页先出改动清单再补检查**：健康度、冲突、附带文件冻结三路并行，git 调用并行（Windows 每起一个 git 100–150 ms）；附带文件快照只留最新 3 份。
+二，**逐条决定**：条目带「建议」预填（审查报告的「建议改法」、待核实清单新增「建议」栏），→ / Tab 收下；列表随步骤状态重读，清单没写出来时锁勾选；接回对话的话要求把 Mesa 写进的决定文件一起提交。待核实「接受」= 人对过原文、去标记，无「全部接受」。论文、学位论文定稿也列待核实清单（共用 `verificationListClause`）。
+三，**AI 写、人填、交回**一类事项（`handback-tasks.ts`）：许可清单按论文一篇一行，其余按「## 小标题」一节一框离开即存，「交给 AI」接回原对话；投稿声明、论文投稿前清单、投稿材料清单、数据字典的「待确认」字段都走这一类，不再给「提交产物」。
+四，**接回会话发消息**：刚起来的 20 秒内输入框安静 1.5 秒才写，写完 1.6 秒还在框里就补粘贴结束标记 + 回车；接回带步骤绑定 / 项目默认作预填，不换模型。
+五，**EndNote 对库**：库路径不是域稿前置；「选这个 EndNote 库」列 EndNote 最近打开的库（Windows 读其 Recent Libraries 登记）；X9 及更早的库读不了，引导导出 XML，脚本从 XML 取记录号与 db-id；没有 DOI 的按题名 + 年份唯一才绑；同步后提醒去重（HER 实证：重复条目是 27 条只挂上 8 条的主因）。
+六，**完结文件**：最终稿卡片带用途、域稿直接 Word 打开；「在 Word 里换样式」撤出定稿步人工事项改到这里；其余文件一行一份带用途。
+七，任务书商量不得把可选事项改成硬前置；新增模板检查清单补「人工事项入口对不对、定稿事项顺序」两条（step-panel.md §四）。
+
+### 2026-10-24 · 定稿步人工事项按做事顺序排、待核实「接受」去标记、作者与投稿声明
+
+用户让核对综述「润色与定稿」五项人工事项是否需要、是否完善（「全部按你建议的来」）。定为：
+一，**顺序即做事顺序**：审查报告 → 逐条裁决 → 更换引用样式 → 域稿 → 投稿前人工事项；论文、学位、期刊格式、返修的定稿步同样把审查报告挪到换样式前面。
+二，**逐条裁决的「接受」= 人对过原文**：AI 保留该句、去掉 [待核实]（原「确认的保留」会连标记留在定稿里）；所以逐条裁决不给「全部接受」。裁决在渲染之后做，接回对话的话要求重渲 PDF / Word / 两份域稿、复核引用；核不了的走「修改」写降级或保留标记。
+三，域稿事项改名「在 Word 里换样式（打开域稿）」，紧跟「更换引用样式」，说明讲清是另一种换法、不在 Word 里改稿就跳过。（同日用户再拍板：这件是保存进项目之后人自己的可选事，撤出定稿步人工事项，入口改在项目卡「完结文件」——两份域稿点开用 Word 打开，下附一句换样式做法。）
+四，综述流程后面没有投稿材料步（HER 初稿 author 写着待补，全流程无一处提醒）：定稿步写 `submission/declarations.md` 空白模板，新增人工事项「填作者、单位与投稿声明」，AI 只起草 AI 使用声明、其余不代填。
+同日顺带修：`figure_permissions.py` 没登记进随包技能清单，用户装到的 review-figures 里没有它；加测试——技能目录每个随包文件都必须登记。
+
+### 2026-10-24 · 拼图块数按可读性、每块记来源、定稿步换原图与转载许可
+
+用户三问：系统综述一段论述可能拼 9 块；拼图是 PDF 裁的，作者要去期刊换原图；换原图和许可谁来做。定为：
+一，块数不设死上限（撤掉 2–6），`assemble_panels.py` 按栏宽卡可读性——任一块印出不到 3.5 cm 或整张高过 23 cm 不出图。
+二，每块落来源记录（`--label` 原图编号、PDF 页、裁框），`figure_sources.py` 汇总 `figures/sources.md`，进初稿预期产物。
+三，换原图与许可只能作者本人做：定稿步 `figure_permissions.py` 写 `submission/figure-permissions.md`（Crossref 查许可，TDM 许可不算；
+CC BY 无需申请），人工事项「换原图与申请转载许可」manual 完成、不挡渲染；原图放 `papers/figure-originals/`，`extract_figure.py` 直接收图片重裁。
+
+### 2026-10-23 · 拼图裁框由脚本查边、开工提醒看图能力
+
+按子图重拼后 HER 初稿复跑（glm-5.3）：模型看不到图，经第三方看图工具读坐标格，子图在 0.505–1.0 读成 0.30–0.60，
+图 1、2、4、5、6 全裁错，README 却写「逐块核验内容正确」。用户「全部按建议来，HER 的图你直接重裁」：
+一，**裁框由脚本查边**：`--box` 四条边先挪到附近空白缝（先往框外，外沿边不动），挪完仍切进曲线 / 文字（墨迹 > 0.08）退出码 7 不出图；
+`--no-snap` 手定边仍查边；`--erase` 可多个。实测好框四边 ≤ 0.12（挪后为 0）、错框至少一边 ≥ 0.17。README 不许写「已核验」。
+二，**开工确认提醒看图能力**：步骤挂 review-figures、所选模型能力库查到不能看图或查不到时，「技能」行下提醒一行，不拦开工。
+三，自绘示意图要断言任意两段文字外框不相交（只查「在框内」漏掉了图 7 斜体压正文）。
+HER 五张图由 Mesa 侧按坐标预览逐块重裁、逐块打开核对，图注按实际子图改，提交在初稿工作区。
+
+### 2026-10-23 · 综述拼图按论点取子图
+
+用户：英文综述的拼图应是「一个逻辑段从不同文献里取一个或几个图拼成一幅」。原设计粒度是整张——笔记按整张登记可引用图、
+大纲写「[@A] Fig.2 + [@B] Fig.4」，HER 初稿 6 张拼图全是两篇整张多联图并排（一张塞进 10 个子图、原图 a–f 与新 (a)(b) 叠着）。
+定为**一张拼图 = 一个论点，按子图取材**：笔记可引用图细到子图；大纲逐块列（2–6 块、至少两篇，整张只限示意图 / 照片）；
+初稿逐块裁，`extract_figure.py` 加 `--grid` 坐标预览 + `--box` 按比例裁 + `--erase` 抹原图字母（只许角上小框）+ `--page` 整页兜底，
+裁完 Agent 必须自己打开看，看不了图的模型只用 `--panel`、切不出的块去掉。不做 Mesa 内裁图界面（沿用 2026-09-20 口径），人在评审时看 PNG。
+同批修两处旧缺陷：`--panel` 没算 clip 偏移（切出空图）；拼板字母字体在 Windows 上找不到 `Arial.ttf`、落到 10 px 位图字体。
+
+### 2026-10-23 · 初稿步复查整改：参考文献表在渲染时整理
+
+用户跑完 HER 综述「综述初稿」后让查产物（「全部按建议来」）。PDF 文献表三处毛病：Pandoc 读 BibTeX 把英文标题改成
+句首大写，元素符号跟着变小写（Ru → ru、Ni-Mo-B → ni-mo-b）；Zotero 题名前的人手编号（【74】、19~.）与「p. 待补」
+印进文献表；没有 References 标题。定为**渲染时整理、引文库不改**：quarto-render 新增 `scripts/references.lua`，
+`manuscript_font.py` 拷到源稿旁并写进 YAML `filters`（标题整体加保护、去编号、缺口标记字段不印、缺 `#refs` 时补不编号标题）。
+不选「引文库标题统一加双花括号」：写引文库的入口多（Zotero 导入、lit_records、Agent 手写），读的地方也多，渲染是唯一咽喉。
+稿件内容的事实错误（摘要把非贵金属 NiSb 写成贵金属标杆等）与自绘示意图文字重叠发回该步 AI 改，不改模板。
+
+### 2026-10-23 · 大纲步复查整改：用户自己的库不由 Agent 排除、Zotero 只登记正文 PDF
+
+用户跑完 HER 综述的「综述大纲」后让看会话（「全部按建议来」）：大纲本身扎实，问题都在上游。
+
+一，**用户自己的库不由 Agent 排除**：检索步把人从 Zotero 导入的 9 篇按检索年份窗口排掉，只写在 screening.md、不进
+included.json——Mesa 文献清单里看不到、改不回，大纲步任务书拍板「改判纳入」后 Agent 只能让人手改 JSON。定为：
+人导入的每条都进 included.json，检索过滤不套用，Agent 最多标待确认、写「建议排除」；Zotero 导入登记的正文 PDF 即全文，
+不进待获取。`lit_records.py check` 机器点名。细则 pipeline.md「用户自己的库不由 Agent 排除」条。
+
+二，**从 Zotero 导入只登记正文 PDF**：一个条目挂正文和 SI 两份时按数据库顺序取第一份，Fan2022 拿成了 SI。按附件标题、
+下载地址、文件名与 Zotero 全文索引第一行认补充材料，缺 %%EOF 的没下完文件也不算；只剩这些时不当全文（列待获取）。
+项目资源名同时去掉人手编号前缀。
+
+三，Windows 任务书「读 PDF 用 PyMuPDF」提示扩到输入提到 PDF 或项目资源挂着 PDF 的步骤（大纲步要直读原文）。
+
+### 2026-10-23 · 同步到文献库：Windows 真导入、整份导入、导出题录写法
+
+用户在 Windows 上点「同步到 Zotero / EndNote」导不进、核查导出题录后定下：
+
+一，**Windows 交给 Zotero 用 `zotero.exe -url <百分号编码的 file URL>`**：「用 Zotero 打开」在 Windows 是裸路径参数，Zotero 命令行不理；
+`-file <中文路径>` 转给已开着的 Zotero 时路径变样。**Zotero 6 一律导不进**（自动更新来的 2026 年格式转换器在 Firefox 60 内核上解析失败，
+用户调试日志实证），同步前读 application.ini 版本，低于 7 提示升级、不交文件。EndNote 装在非默认目录时先查注册表（只读）。
+
+二，**整份导入、库里已有的也交**（改 2026-10-11 的「Zotero 按 DOI 差量」）：Mesa 题录字段全是卖点，重复条目由人在文献库里挑着合并；
+检索时排除的篇不导；同步写单独的 `papers/zotero-library.ris` / `endnote-library.ris` / `endnote-journals.txt`（gitignored），
+不改检索清单那份 `endnote-import.ris`。
+
+三，**导出题录与界面同一写法**：化学式按整词判定（bridge.py 与 screening-review.ts 镜像、测试逐条比对）；题名去人手编号前缀；
+缩写收拾写法；ACS 与 ISO 4 不同的刊两种都给（Mesa 兜底表第三列；EndNote 缩写 2 + 期刊术语表，Zotero「其他」）；
+缺字段、有 DOI 的老条目同步前补到临时副本。细则 pipeline.md「同步到文献库写单独的整库文件」条。
+
+### 2026-10-23 · 精读步复查整改（HER 文献精读与笔记）
+
+用户跑完 HER 综述的「文献精读与笔记」后让看会话：23 分钟读完 9 篇 117 页，没有空转；查出的问题用户「全部按建议来」，定下：
+
+一，**「继续」接回原对话带上绑定的模型**：resume 时只带连接（autoLaunchProfileId），启动侧落到连接名单第一个——glm-5.3
+的对话接回成 glm-5.3-flash。同一家 Agent 时绑定的模型一并预填（agent-binding.md resume 行）。
+
+二，**只按卷编排的刊期号记「无期号」**：Appl. Catal. B、Chin. J. Catal. 在 Crossref 有卷没期，旧口径写「待补」——永远补不上，
+引文库 `number = {待补}` 会渲染进参考文献。`lit_records.py` 补字段时 Crossref 有正式记录、有卷没期就记「无期号」，
+不算缺口、不进 RIS、引文库不写 number（早先写的待补行拿掉）；`screening-review.ts` 与 bridge.py 同口径，「待核」也不再漏进 RIS 标签。
+
+三，**精读步不给项目根 PDF 改名**（推翻 v3.97「精读开工统一重命名」）：Agent 照简报把 9 个 PDF 改成「作者年份-短标题」，
+流程期间暂缓的资源登记（`.ccode/pending-registrations.json`）全指向旧名，收尾回放会登记一串不存在的路径；沉浸阅读的标注与笔记
+也按路径认。改为开工跑 `lit_records.py write --root`：按 DOI、标题认已有 PDF，在 included.json 记 `pdf`、给 to-fetch.md 打 ✓，
+to-fetch.md 不手改。认 PDF 多一层：原始字节里搜不到 DOI（元数据在对象流里）时有 PyMuPDF 就抽前两页文字找。
+
+四，**评审移出文献后待获取篇数重算**：`drop_fetch_line` 只删行，留下「还没有全文的 16 篇」下面列 9 行。
+
+五，**Windows 读 PDF 的步骤提示用 PyMuPDF**：本机没装 poppler，Claude Code 读 PDF 报 pdftoppm is not installed，Agent 只抽文字层、
+图一张没看；任务书「本机 Python（Windows）」节对精读 / 拼图 / 输入含 PDF 的步骤多带一行（抽字 get_text，看图先 get_pixmap 存图）。
+
+核对后不改的一条：照 PDF 首页补的摘要只进了 references.bib——同步到文献库本就按 references.bib 生成（`zotero.rs refresh_library_ris`），不缺。
+HER 当日处理：lit-notes 工作区三篇改「无期号」、引文库去掉 number 行、清单经 write 重出（9 篇 pdf 全认出，先在副本干跑一致）；
+主仓暂缓登记里 9 条旧文件名换成新名（备份在临时目录）。
+
+### 2026-10-22 · 检索步复查整改（Windows 实跑 3 小时没跑完）
+
+用户在 Windows 上跑 HER 综述的「文献检索与筛选」（Claude Code 2.1.307 经网关跑 deepseek-v4.1-flash，权限档「自动」），3 小时没收尾。
+逐条看会话记录：等模型约 80 分钟、每条 Bash 前的自动档安全检查约 65 分钟（含 9 次超时），真正跑命令约 14 分钟；补字段 / 出 RIS
+整条链重跑 26 次；116 次 Python 调用加了 `-I`，69 次输出乱码。用户「按建议全部改」，定下：
+
+一，**开工首句的 MCP 盘点只看工具列表**：Agent 为找 MCP 去读 `~/.claude/settings.json`，网关密钥进了会话记录（已请用户作废换新）。
+首句与 lit-search 技能写明不读 `~/.claude`、`~/.codex` 等 CLI 配置文件；某个 MCP 只剩 `authenticate` / `complete_authentication`
+两个工具 = 没登录，不调用、不停下来问，记覆盖缺口后继续（登录是步骤面板「配置学术检索 MCP」那一项）。
+
+二，**开放获取版本规则**（`OA_VERSION_CLAUSE`，进检索与精读两步的共用合同）：先正式发表版，其次机构库里的已录用稿；预印本服务器
+（arXiv、Research Square、bioRxiv、ChemRxiv、SSRN 等）上的版本只在来源级别允许预印本时才下——看托管处，不只看版本标签
+（OpenAlex 把 Research Square 标成 acceptedVersion）。原简报把「作者主页 preprint」列进开放获取，与「不收预印本」矛盾。
+
+三，**要提交的脚本放 `scripts/`**：TASK.md 产物目录段写明「简报没指定位置就放 scripts/（进 git），产物目录只放一次性调试脚本和接口
+缓存」。实证：14 个脚本写进被忽略的 `artifacts/`，收尾提交不了又整体搬家。
+
+四，**步骤「继续」默认接回原会话**（改 2026-10-15 的「新会话、不接回」）：上次工作区对话是同一家 Agent 就 resume 它，下一句
+`CONTINUE_RESUME_PROMPT`（接着做到完成标准，任务书有改动以新版为准）；另一家仍先问带不带接力简报；没有可接的才新开。有可接对话时
+「继续」前面跟一个次要的「新开一轮」（原对话太长或跑偏时用）。理由：新开的 Agent 不知道上次做到哪、卡在哪（本例它正在修
+to-fetch.md 32 行对 RIS 16 条的不一致），只能从文件重新摸索；代价是长会话每一步上下文都大，所以留「新开一轮」。
+
+五，**聊天层状态行的计划跨轮找**：Claude Code 的 Task 清单整个会话共用，终端转圈行一直显示进行中那一项（「检索候选…」）；聊天层原先
+只在最后一句提问之后拼计划，人发过「继续」就拼不出、只剩光标。这一轮没动计划时改用整段对话的（`conversation-tools.ts sessionPlan`，
+只扫待办类工具块按 callId 配结果，不做整段分组）；这一轮自己更新过的仍以这一轮为准。与平台无关，Mac 同样受益。
+
+六，**题录走固定脚本，检索 → 精读 → 文献库一条数据链**（用户：「后面要同步到文献库作为参考文献的，每个步骤任务是一环扣一环的」）：
+`lit-search/scripts/lit_records.py`（lit-search、lit-notes 各随一份，依赖同目录的 bridge.py 与 Mesa 缩写表）。`papers/included.json` 是唯一来源：
+enrich 一次补齐（Crossref 为准、OpenAlex 补摘要与论文关键词、ISO 4 查表，接口缓存在系统临时目录、6 路并发，HER 28 篇首轮 25 秒、重跑 0 次联网），
+fetch 按版本规则下开放获取全文并在 json 记 `pdf`，write 只从 json 出 included.md / to-fetch.md / 两份 RIS，check 校验同序与标签，
+精读步 bib 从 json 写 references.bib（已有条目不改键、只补空的）。RIS 拼法与 `screening-review.ts risBody` 双端镜像、测试逐条比对。
+顺带修了链上四处：Crossref 日期（issued 取早的，拿它比网络出版日永远相等，网络出版日一直丢）、JabRef 缩写表逗号后带空格
+（缩写带上引号）、刊名里的 `&amp;`、引文库里的「待补」被原样同步进 Zotero / EndNote；TS 侧数组作者用逗号拼、RIS 整串成一个作者。
+干跑：HER 检索步的 28 篇在临时目录跑 enrich → write → check 通过，4 篇已有全文按文件名认出。
+
+七，**同一步只有一个终端标签**（用户实证：收件箱「去终端回答」新开了终端，标签名一会儿 lit-notes 一会儿「文献精读与笔记」）：
+「继续 / 新开一轮」也带 `ws:` 复用键；工作区复用键进重启持久化白名单；最近那条还在外部跑时不 resume 更早的、带 `focusSession`
+认回持有它的标签；复用键与会话 id 都对不上（Claude 接续换了新会话文件）时按工作树认正在跑 Agent 的标签；标签名统一步骤名。
+
+八，**人工请求一步一份、只放没答的**（用户：「这个人工请求的作用在哪」——收件箱里全是检索步早答过的问题、一张表被拆成九条）：
+`.ccode/help-wanted.md` 进 `.gitignore`（新项目模板；HER 当日补上并停止跟踪，已在临时克隆里试合并精读分支无冲突）；
+任务书写明答完删、不写历史、不放表格；Mesa 只认条目行，已拍板 / 备查小节整节跳过。
+
 ### 2026-10-22 · 实时预览长回复不再重贴整屏：接法按位置对齐，读屏避开半帧
 
 用户截图：Claude Code（经网关跑 gpt-6-luna）流式写一段一千五百多字的 Markdown，聊天层预览上下滑全是重复段落，第二节写到一半
@@ -3098,7 +3269,9 @@ Claude Code 用量无法恢复。
 | 2026-10-17 | **项目页走查二批（用户：「两个建议都做」+「综述项目雷达怎么没了」）**。①**步进器圆下加状态小字**（修订 v3.46「状态文字只进悬浮」）：第三条同列网格，进行中/等你确认/等你查看/待评审/有冲突/已完成/已归档，待开始与检查中不写、全不写时不占行；文案色单一出处 `src/stepper-status.ts`。②**精读步挂可选人工事项「抽查 3 篇笔记」**（综述/科研论文/毕业论文三套模板；after+optional+manual，不挡评审、不触发收尾软门），行下就地列三篇候选（全文/仅摘要各一+尾部补，确定性），点开在运行页预览；测试项目档案卡已同步加上（干跑副本验证 TOML 结构后落盘），综述流程测试精读步已完成未加。③**雷达「没了」根因是数据丢失**：订阅弹层「编辑源文件」把弹层 `initial` 整表写回，从巡检行打开时 initial 恒为空——一点就把关键词清光（综述流程测试 `.ccode/watch/<id>/watchlist.md` 10-17 14:59 被写成只剩注释）；关键词清空后雷达卡又整块收成一行「还没订阅读」，攒下的命中全被藏掉。修：新增 `ensure_watch_subscriptions_file`（不存在才建，存在不动）取代写回；关键词为空但有命中时整卡照常显示并加黄字提示行；用户的两条关键词（镁硫电池、球磨法）按当日巡检隔离树里的副本恢复。 |
 | 2026-10-17 | **「N 处改动未存入历史」不再催 Mesa 自己的档案（用户截图：只列 project.toml）**。该提醒本义是「你改的文件下一步 AI 看不到」，但 `.ccode/`（台账除外）与 `.gitignore` 是 Mesa 自有档案，开工前已由 `commit_project_bootstrap` 自动提交——提醒它们等于让人提交一份自己没碰过的文件；且主仓脏会挡评审合并（ready_to_merge 要求 !main_dirty），设置页改规则、选文献来源都会写档案卡，人得先去提交面板处理。改：项目页提醒与开工弹层改用 `userWorkDirtyFiles`（剔档案路径）；评审打开时主仓脏先调 `commit_project_bootstrap`（同提交信息「Mesa: 项目档案卡与 gitignore 自动提交」，每次打开每主仓一次），剩下的才交提交面板（面板仍用 `userDirtyFiles`）。不改成「写档案卡即提交」：一次设置点击一个提交是历史噪声。本次触发源是二批给测试项目档案卡加「抽查 3 篇笔记」时直接改了被 git 跟踪的 project.toml。 |
 | 2026-10-19 | **Windows 去原生标题栏（用户：比 Mac 多一行框，三个系统按钮应放命令面板右边）**。`lib.rs` setup 里 `#[cfg(windows)] set_decorations(false)`（不进 tauri.conf：`titleBarStyle` 只在 macOS 生效，且 dev 配置覆盖会整体替换 windows 数组）；前端标题栏 Windows 也走 `data-tauri-drag-region`，自绘 `WindowControls` 紧贴命令面板/待处理右侧（不放进会淡出的右组）；`ReaderOverlay` 顶栏盖住标题栏，同样挂一份；capability 补 `allow-minimize` / `allow-toggle-maximize`。代价：失去 Win11 最大化按钮的贴靠布局悬浮菜单（Win+方向键仍可用）。**Windows 字体发虚排查定论**（同日用户两轮并排对比，不再重复试）：透明窗口（Mica）下 WebView2 根层一律灰度抗锯齿；铺不透明 body、`--enable-lcd-text` / `--disable-font-subpixel-positioning`（WebView2 经环境变量追加，渲染进程不收）、`-webkit-text-stroke` 加粗均无效。曾用「页面容器 `will-change: opacity` 独立合成为不透明层 + 主区禁 `backdrop-filter`」拿到 ClearType，**用户实看彩边像马赛克，当日撤回**；且 `PrintWindow` 无损抓 Claude 客户端证实其正文同样是灰度抗锯齿——它看着清楚靠白字压近黑底的高对比，不靠渲染方式。**Windows 保持灰度渲染，清晰度只从文字对比度/字重上补**（同日已落：Windows 下深浅 14 套主题 l3/l4 再加深一档，细则 design-system「文字梯队」），不要再走 ClearType 合成层路线（另有层叠上下文压住页内弹层、`transform` 会成为 fixed 定位基准等副作用）。截图对比用 `PrintWindow` 抓窗口自身 PNG，别用 webp（有损压缩抹淡彩边、导致误判）；Windows 注册表缩放与实际不一致，以渲染进程 `--device-scale-factor` 为准（本机 1.5）。 |
-| 2026-10-19 | **依赖一键安装 Windows 实测三处修复 + 选择器死循环**。①Windows 的 TeX：winget 源里没有 Tectonic（`winget search tectonic` 无结果，原 `TectonicTypesetting.Tectonic` 一装即「找不到程序包」），改 `quarto install tinytex --no-prompt --update-path`（Quarto 官方推荐、渲染时自动补宏包；须先装 Quarto），Windows 候选目录补 `%APPDATA%`/`%ProgramData%` `TinyTeXinwindows|win32`；macOS 仍 brew tectonic 不变。②Python：Windows 未装 Python 时 PATH 上的 python 是应用商店占位程序（AppInstallerPythonRedirector，跑起来无输出、错误码退出），找 Python 改为「PATH 与候选目录的全部同名程序逐个试跑 `import sys`」（`agents::resolve_binary_all`；macOS CLT 未装时跳过 `/usr/bin/python3` 不试跑，免弹系统窗）。**同日用户拍板「一键补齐」（Windows + Mac）**：缺 Python 时 DTO 带 `prereq: "python"`，按钮照给，先代装 Python（Windows `winget install Python.Python.3.13 --scope user --custom PrependPath=1`，不弹 UAC、排在应用商店占位前；macOS `brew install python`；无渠道给 python.org 出口），再一条 pip 把 PyMuPDF + Pillow 一起装（两行按钮前后端都互斥）；PEP 668 重试改带 `--user --break-system-packages`（旧的只加 `--user` 必然再失败）；Windows 候选目录补 `%LOCALAPPDATA%\Programs\Python\Python3xx` / `%ProgramFiles%\Python3xx`（新版本优先），装完不重启就能找到；PyMuPDF 探测优先 `import pymupdf`、旧版退 `fitz`，版本取末行（新版 `fitz` 导入先打弃用警告，曾被当成版本号）；设置页两行加白话用途（综述拼图：从 PDF 里裁图 / 把图排成一版）。本机实测：点一次装好 Python 3.13 + PyMuPDF 1.28.2 + Pillow 13.0.0，约 2 分钟。 **同日追加「用到时再装」的 Git / Node.js 收口**：①共用 `GitInstallOffer`（dep-install.tsx）——错误为「找不到 git 可执行文件」时就地一键安装，用在改动面板、科研步骤「历史」浮层、开步失败的项目页报错条（装好后前两者自动重读，开工提示再点一次）；Mac 无 brew 走 xcode 时只提示「已打开系统安装窗口」不报装好。②连接页缺 Node.js：记住要装的 Agent，Node 装好后清报错并自动接着弹该 Agent 的安装确认。③winget 装 Node.js 钉 `--scope machine`（其用户范围包是绿色解压版、没有 npm.cmd，winget 偏好用户范围时会被选中）；winget 系统级安装前先提示 UAC 要点「是」。④安装类子进程 PATH 前插程序所在目录（刚装的 Node 不在已运行 Mesa 的 PATH 上，npm postinstall 里的 `node` 会找不到）。⑤安装命令报错但程序已就位（winget「已安装/无可用升级」）按装好处理。⑥Windows 候选目录补 `%LOCALAPPDATA%\Programs\Git\cmd`。**未实测**：本机已装 Git / Node.js，拆掉会断开发环境，全新安装需在干净 Windows 与 Mac 上点验。 **同日 Windows 排查修复 python3**：`endnote.rs` / `research_quality.rs` / `zotero.rs` 原先先找 `python3`，Windows 上必中应用商店占位（python.org 只装 python.exe），EndNote 导出、Zotero 导出、复现检查装了 Python 照样失败（cargo test 4 项实证）；三处改走 `dep_check::usable_python()`（PATH 未刷新也靠候选目录找到）。技能 blender-research / endnote-bridge / zotero-sync / review-figures 标题下注明「Windows 上改用 python」，review-figures 的 `python` 统一为 `python3`（Mac 常无 `python`）；正文字体指令（manuscript-font.ts）同注。 **同日 Windows 全量排查修复（用户「全部修」，四组并行）**：①自绘标题栏回归——z-30 全屏页（流水线编辑器 / 历史 / 沉浸编辑）右上按钮压在窗口按钮下、z≥40 遮罩挡住窗口按钮，Windows 上一律从标题栏下沿起铺（沉浸阅读 `ccode-covers-titlebar` 豁免）；②WebView2 刷新 / 打印 / 查找 / Alt+←→ / 鼠标侧键与正式版默认右键收口（windows-shell.ts）；③内嵌终端 PowerShell `-ExecutionPolicy Bypass`，复制命令写 .exe/.cmd 绝对路径；④精确注意力 hooks 改 `.ps1 -File`，启动自动迁移旧写法；⑤人工事项勾选、交接摘要、产物清单的 `\?\` 前缀；⑥终端开在工作树里时拒绝归档 / 删除（Windows 删不掉会删一半）；⑦写配置有限重试、git longpaths、删除保护补 Windows 目录（AppData 整体保护但放行 %TEMP% 子路径）；⑧编码：卸载按退出码判、诊断 PowerShell 切 UTF-8、Python 子进程 UTF-8、clip.exe UTF-16；⑨MCP 的 npx.cmd 解析、外部 cmd 拉起引号与 `%`、配置 BOM；⑩端口监控 /T /F + IPv6、更新超时杀进程树、winget show 参数与超时、更新渠道识别、EndNote 启动不等待；⑪终端中文标点重复、Ctrl+C 复制后清选区、写 shell 用 `\r`、Win10 无 Mica 回实心底、收件箱重复、Finder/⌘ 文案、字体安装按钮；⑫「用系统应用打开」补 opener 打开路径权限（全平台）、`CLAUDE_CONFIG_DIR` 下技能目录（全平台）。验证：cargo test 1473 / npm test 1738 全过、生产构建通过；**界面点验未做**（实施时 Windows 锁屏）。规则沉淀见 conventions/environment.md「Windows 硬化规则」。PTY 命令失败且零输出时回报退出码。③安装日志刷屏：`` 改为拼接后再展开（`strip_ansi_keep_cr` + `collapse_cr`；`CSI G` 回第 1 列视同 ``），前端 `stream-text.ts` 同口径，依赖安装 / CLI 更新 / 字体安装三处日志共用。④zustand 5 选择器 `?? []` 每次新数组，`hiddenProfiles` 为 null 时项目页三组件一挂载就 Maximum update depth exceeded、应用起不来（跨平台潜伏 bug）：改共用 `selectHiddenProfiles` 回落模块常量，`tests/store-selector-lint` 钉住选择器里不写新建对象的缺省值。 |
+| 2026-10-19 | **依赖一键安装 Windows 实测三处修复 + 选择器死循环**。①Windows 的 TeX：winget 源里没有 Tectonic（`winget search tectonic` 无结果，原 `TectonicTypesetting.Tectonic` 一装即「找不到程序包」），改 `quarto install tinytex --no-prompt --update-path`（Quarto 官方推荐、渲染时自动补宏包；须先装 Quarto），Windows 候选目录补 `%APPDATA%`/`%ProgramData%` `TinyTeXinwindows|win32`；macOS 仍 brew tectonic 不变。②Python：Windows 未装 Python 时 PATH 上的 python 是应用商店占位程序（AppInstallerPythonRedirector，跑起来无输出、错误码退出），找 Python 改为「PATH 与候选目录的全部同名程序逐个试跑 `import sys`」（`agents::resolve_binary_all`；macOS CLT 未装时跳过 `/usr/bin/python3` 不试跑，免弹系统窗）。**同日用户拍板「一键补齐」（Windows + Mac）**：缺 Python 时 DTO 带 `prereq: "python"`，按钮照给，先代装 Python（Windows `winget install Python.Python.3.13 --scope user --custom PrependPath=1`，不弹 UAC、排在应用商店占位前；macOS `brew install python`；无渠道给 python.org 出口），再一条 pip 把 PyMuPDF + Pillow 一起装（两行按钮前后端都互斥）；PEP 668 重试改带 `--user --break-system-packages`（旧的只加 `--user` 必然再失败）；Windows 候选目录补 `%LOCALAPPDATA%\Programs\Python\Python3xx` / `%ProgramFiles%\Python3xx`（新版本优先），装完不重启就能找到；PyMuPDF 探测优先 `import pymupdf`、旧版退 `fitz`，版本取末行（新版 `fitz` 导入先打弃用警告，曾被当成版本号）；设置页两行加白话用途（综述拼图：从 PDF 里裁图 / 把图排成一版）。本机实测：点一次装好 Python 3.13 + PyMuPDF 1.28.2 + Pillow 13.0.0，约 2 分钟。 **同日追加「用到时再装」的 Git / Node.js 收口**：①共用 `GitInstallOffer`（dep-install.tsx）——错误为「找不到 git 可执行文件」时就地一键安装，用在改动面板、科研步骤「历史」浮层、开步失败的项目页报错条（装好后前两者自动重读，开工提示再点一次）；Mac 无 brew 走 xcode 时只提示「已打开系统安装窗口」不报装好。②连接页缺 Node.js：记住要装的 Agent，Node 装好后清报错并自动接着弹该 Agent 的安装确认。③winget 装 Node.js 钉 `--scope machine`（其用户范围包是绿色解压版、没有 npm.cmd，winget 偏好用户范围时会被选中）；winget 系统级安装前先提示 UAC 要点「是」。④安装类子进程 PATH 前插程序所在目录（刚装的 Node 不在已运行 Mesa 的 PATH 上，npm postinstall 里的 `node` 会找不到）。⑤安装命令报错但程序已就位（winget「已安装/无可用升级」）按装好处理。⑥Windows 候选目录补 `%LOCALAPPDATA%\Programs\Git\cmd`。**未实测**：本机已装 Git / Node.js，拆掉会断开发环境，全新安装需在干净 Windows 与 Mac 上点验。 **同日 Windows 排查修复 python3**：`endnote.rs` / `research_quality.rs` / `zotero.rs` 原先先找 `python3`，Windows 上必中应用商店占位（python.org 只装 python.exe），EndNote 导出、Zotero 导出、复现检查装了 Python 照样失败（cargo test 4 项实证）；三处改走 `dep_check::usable_python()`（PATH 未刷新也靠候选目录找到）。技能 blender-research / endnote-bridge / zotero-sync / review-figures 标题下注明「Windows 上改用 python」，review-figures 的 `python` 统一为 `python3`（Mac 常无 `python`）；正文字体指令（manuscript-font.ts）同注。 **同日 Windows 全量排查修复（用户「全部修」，四组并行）**：①自绘标题栏回归——z-30 全屏页（流水线编辑器 / 历史 / 沉浸编辑）右上按钮压在窗口按钮下、z≥40 遮罩挡住窗口按钮，Windows 上一律从标题栏下沿起铺（沉浸阅读 `ccode-covers-titlebar` 豁免）；②WebView2 刷新 / 打印 / 查找 / Alt+←→ / 鼠标侧键与正式版默认右键收口（windows-shell.ts）；③内嵌终端 PowerShell `-ExecutionPolicy Bypass`，复制命令写 .exe/.cmd 绝对路径；④精确注意力 hooks 改 `.ps1 -File`，启动自动迁移旧写法；⑤人工事项勾选、交接摘要、产物清单的 `\?\` 前缀；⑥终端开在工作树里时拒绝归档 / 删除（Windows 删不掉会删一半）；⑦写配置有限重试、git longpaths、删除保护补 Windows 目录（AppData 整体保护但放行 %TEMP% 子路径）；⑧编码：卸载按退出码判、诊断 PowerShell 切 UTF-8、Python 子进程 UTF-8、clip.exe UTF-16；⑨MCP 的 npx.cmd 解析、外部 cmd 拉起引号与 `%`、配置 BOM；⑩端口监控 /T /F + IPv6、更新超时杀进程树、winget show 参数与超时、更新渠道识别、EndNote 启动不等待；⑪终端中文标点重复、Ctrl+C 复制后清选区、写 shell 用 `\r`、Win10 无 Mica 回实心底、收件箱重复、Finder/⌘ 文案、字体安装按钮；⑫「用系统应用打开」补 opener 打开路径权限（全平台）、`CLAUDE_CONFIG_DIR` 下技能目录（全平台）。验证：cargo test 1473 / npm test 1738 全过、生产构建通过；**界面点验未做**（实施时 Windows 锁屏）。规则沉淀见 conventions/environment.md「Windows 硬化规则」。PTY 命令失败且零输出时回报退出码。③安装日志刷屏：`
+` 改为拼接后再展开（`strip_ansi_keep_cr` + `collapse_cr`；`CSI G` 回第 1 列视同 `
+`），前端 `stream-text.ts` 同口径，依赖安装 / CLI 更新 / 字体安装三处日志共用。④zustand 5 选择器 `?? []` 每次新数组，`hiddenProfiles` 为 null 时项目页三组件一挂载就 Maximum update depth exceeded、应用起不来（跨平台潜伏 bug）：改共用 `selectHiddenProfiles` 回落模块常量，`tests/store-selector-lint` 钉住选择器里不写新建对象的缺省值。 |
 | 2026-10-18 | **编程页分支地图（用户截图：要清楚体现复杂的分支关系和状态、保持美观；领先落后进度条不美观）**。规则：①领先/落后只相对基准算 → 工作树与本地分支合成一棵以基准为根的树（`arrangeBranchMap`），节点形状表位置（基准环+芯 / 已检出实心 / 未检出空心）、颜色表活动（空闲 / Agent 在跑 / 冲突），圆角肘线挂主干；②**撤掉双向进度条**（取代 2026-09-07 `codingDivergenceBar`），改写「比 <基准> 领先 N · 落后 M 个提交」（GitHub 中文口径），只有落后数着 warn 色；③其余 git 事实语义色只给图标、正文中性、不铺胶囊底（整行琥珀色让什么都不突出）；④「本地分支」区并入地图：已检出分支只出现一次，未检出收末尾折叠头（≤3 默认展开），「合并进 <基准>」随工作树卡 ⋯；⑤身份段不再重复「基准 X」，孤立的「为 X 建工作树」与「主仓不在基准」芯片收进地图根行。细则 design-system.md / coding-git.md §4。 |
 | 2026-10-18 | **工作副本家目录可自定义（用户：Windows 缓存越用越多撑满 C 盘；「只做工作副本根目录」）**。设置 → 数据与存储 →「工作副本位置」选目录 `B`，此后新建的编程工作树 / 科研工作副本 / 定时隔离树落 `B/ccode/{worktrees,workspaces,watch-worktrees}`。**保留 `ccode` 这一层**：`runs.rs` / `run-model.ts` 靠路径片段 `/ccode/workspaces/` 等推断任务类型，不能因挪位置失灵。**只管新建、不自动搬**：已有树的路径在库里，原地照常用（git 工作树带内部路径引用，悄悄搬会坏）；换位置后旧位置仍在「本机占用」里单列「旧位置」让人看见 C 盘还剩什么，走项目页归档/删除释放。**红线**：①所有「在哪新建」走 `ccode_home::current()`，所有「是不是 Mesa 自己的路径」类判定（会话归并编程树、watch 会话兜底标 internal、recent_repos 排除、卸载、定时任务删除时清隔离树）走 `all_roots()/all_sub()`（当前根 + 曾用根 + 默认根），漏一处就会让旧位置的树被当成普通项目或清不掉；②自定义位置不可用（盘没挂上）时**不悄悄回落 C 盘**，建目录处报错，免得两处各放一半；③只经 `set_workspace_root` 写（校验：绝对路径、非盘根、不落进 `~/ccode` 或配置目录、可写探测），`update_settings` 的 merge 不搬运这两个字段；④`workspace_root_history` 记曾用基目录（封顶 8），换位置/恢复默认时旧值入名单、新值出名单。**不动**：Mesa 数据（`%APPDATA%\ccode`，app.db/密钥/锁都在里面，56 处直读平台配置目录，改整体位置风险大）、`scratch`（快速开聊历史按 `~/ccode/scratch` 列）、`reproductions`（复现输出受「须在受管目录内」校验）、`%LOCALAPPDATA%\ccode\task-runs`（普通目标副本，有自己的清理入口）、各家 CLI 自己的会话目录。 |
 | 2026-10-17 | **开工确认弹层重排 + 上游未保存提醒（用户截图「开工卡片的 UI 优化一下」）**。截图暴露三类问题：①**流程**——检索步待评审时开精读，「已有材料」只列项目里的旧清单（included.md 6 篇、included.json 还没有），新清单 191 篇还在检索工作区，弹层不点破，人会读着旧清单开工；②**同一事实说两遍**——「所选 Agent 的技能与工具」整块只说 lit-notes 已启用，下面「技能」又列一遍；③**版式**——标签各占一行、间距各异，「已有材料」芯片因全站 `button { font: inherit }` 吞掉 text-micro 比「本步产物」大一号，弹层容器的 title 悬浮「工作区 lit-notes」压在任务书正文上。改：上游未保存软门（`unsavedUpstreamSteps`，必读输入与前面进行中/待评审/有冲突步骤的预期产物重叠即报，置顶 + 去评审/去处理冲突，与收尾软门共用二击「仍要开工」，不阻断，守 R6）；技能预检就绪时收成一行小字；标签列版式 读入→产出→执行→思考档→技能→权限→任务书（「已有材料/本步产物」改名「读入/产出」并按先读后写排序）；工作区名移到标题行。用临时 harness + 17575 Vite + headless Chrome 截真组件核过两态（上游未保存 / 技能缺口）。全站按钮字号被吞的问题未在本批处理（另起任务）。 |
@@ -3109,6 +3282,10 @@ Claude Code 用量无法恢复。
 | 2026-10-19 | **Codex 终端启动 warning 收口（用户：终端显示 3 个 warning）**。本机 0.163 PTY 实录 F2 逐条：①`disable_response_storage` 是用户 `~/.codex/config.toml` 里的旧键（cc-switch 模板写入，Mesa 不写）；②`service_tier auto not advertised`——Mesa 的 `-c service_tier="auto"`（v3.188 防 priority 进中转）；③`Running without the shared background server`——Mesa 用 -c 注入就只能内嵌运行。0.163 起 CLI 自己丢掉没声明的档位（实测：配置 priority 时网关收不到 service_tier），②改为只给旧版 / 查不到版本时塞；③交互式启动显式加 `--no-daemon`（`resume`/`fork` 也认，`exec` 不认，所以只加在 `prepare_launch` 不进 `launch_plan`）。版本门槛 = 实测过的 0.163，旧版不认 `--no-daemon`，带了起不来。①不替用户改 CLI 配置（只读口径），说明来源由用户决定删不删。MCP 两条（Consensus 密钥、Undermind 登录）是用户环境，不在此列。 |
 | 2026-10-20 | **用户文档术语统一（用户：按术语审查建议优化教程与说明书）**。说明书 §14.1 改为「常用词对照」，作为 tutorial.md / user-guide.md 共用的术语表：同一概念只用一个词（项目＝通用、课题＝科研叙述、项目文件夹＝讲路径；工作副本＝AI 处理成果的独立空间，工作树只用于编程；审核成果→保存到项目，「合并」只用于 Git 机制；运行＝一次执行过程、对话＝交流内容、历史会话＝已保存记录；Agent / 模型 / 网关 / 连接分开说）。**界面原文不在文档里单方面改名**：去评审、保存进项目、逐条裁决、主仓、任务书等仍以粗体原样写出，首次出现用括号白话解释；要改按钮名须先改界面再同步两份文档。「任务书」保留（高校常用词，界面 26 处在用），文档不另造「任务说明」。**同日界面改名三处**（用户「你觉得需要改吗」→ 同意推荐）：开工确认弹层勾选项「开工接驳」→「一并带上未保存的清单与笔记」，评审横幅「沉淀到下一步」→「带到下一步」，想法卡「◈ 沉淀进任务书」→「◈ 写入任务书」；内部代码名、接驳提交的 git 提交信息与 TASK.md 里「评审沉淀」小节标题（step-decisions 解析标记）不改。叙述性口语与内部黑话（课题是家、成稿走副本、密钥不出门、拍板、随口问一句、总账、闭环、留痕等）退出用户文档。 |
 | 2026-10-21 | **回放往上翻自动加载更早的（用户：对话列表看对话、聊天层都要一直点「加载更早」）**。两处一起改：后端一页从至少 6 条提到 40 条（工具调用也算条数，6 条往往不到一轮），凑不够时窗口 192KB 起逐次翻倍、单步封顶 1.5MB、单次请求最多扫约 7.5MB；前端对话页、项目「对话」、聊天层共用 `useAutoLoadOlder`，滚到离顶 360px 内或在顶部向上滚轮即拉下一页，不满一屏自动补页，只认用户滚动、不在挂载时按 scrollTop 判断（首屏先在顶部渲染，会被误判成翻到顶一路拉完）。同日用户反馈「按钮还在，滑的时候闪」：顶部按钮去掉；前插后的位置恢复从 rAF 挪到 layout effect（绘制前），不再先画一帧跳位。随后用户要「无缝衔接」：加载提示行也去掉、顶部不留占位，预取提前到离顶一屏半（下限 360px），滑到顶之前更早的内容已经接上。再反馈「一瞬间的顿挫感」：滑动途中前插要同步改 scrollTop，WebKit 里打断惯性外加整列重排；改为预取提前到三屏、拉回来先攒着，手停（140ms 无滚动事件）才接上去，离顶不到半屏才不等。再反馈「已工作」收起行在加载更多时时长、命令数会变：分页按字节切，开头常是半轮（提问在更早一页），所以还有更早一页时先不显示开头的半轮（`firstCompleteTurnIndex`），加载到它的提问再一起出来；分页本身不改。项目「对话」原先前插后不保阅读位置，同批补上；聊天层的位置补偿改成只在原首条往后挪时生效（等旧页途中最新窗刷新会把补偿用错）。 |
+| 2026-10-22 | **学校账号「已登录」改为人标记（用户：登录过后应该显示已登录）**。默认通道在系统浏览器里登录，Mesa 读不到那边的会话，原先只有内嵌窗会话或前缀才显示「已登录」，走浏览器的人永远看到「登录学校账号」。付费墙行「登录学校账号」改为直接调起浏览器（与设置页同一地址口径 `instLoginOpenUrl`），之后出「登录好了」；点了记本机时间，付费墙行与设置页同步显示「已登录」+「重新登录」，7 天后按钮回来。标记只管显示，不让无头取全文当机构通道可用。前缀/换入口改从旁边「校外访问」进设置页。同批：待确认清单逐篇拍板的行原地留着改显结果（抽走会让下面的篇目上窜、连点点错篇），清单区强调色收到一处。 |
+| 2026-10-22 | **待确认清完后清单照留 + 浏览器保存的 PDF 过窗也收（用户：勾上后仍能移出要提醒；PDF 是在浏览器里点保存、收不到）**。「核对待确认篇目」自动勾上后不再把文献清单收走，说明改为提醒移出的后果。下载收货：实测 ACS 全文在 Edge 阅读器里打开、几分钟后点保存，文件名 cs2c00851.pdf，过了 90 秒窗只剩「下载晚了」横幅。改为登记 30 分钟有效期内认确凿凭据（文件名 DOI / MDPI 编号 / 长标题、PDF 开头 XMP 里的完整 DOI），只凭「只开了一篇」的兜底仍限 90 秒；监听目录加 Chromium 另存为目录 `savefile.default_directory`。本机项目里 6 份已下全文和这篇 ACS 开头都带 DOI（Nature、Springer、Wiley、ACS；Elsevier 未实测）。同日追加两处：①拖进清单 / 清单「已存」也按 PDF 里的 DOI 认（ACS 的 /Title 是插图名）；②Elsevier 实测（main.pdf）元数据在文件**末尾**、DOI 带转义括号，DOI 读取改为开头 256KB + 结尾 512KB 并认括号；同一实测暴露收货监听真 bug——Edge 另存为先建空文件、4.5 秒后才写完，首个事件读到空文件返回后，后续写入事件全落进 5 秒去重被丢，窗内的下载也收不到；没写完时撤掉去重记录。③同日第三轮（用户：MXene 也没收，能不能监听浏览器的下载）：该篇点官网 17 秒后落进下载夹、窗内只此一篇，却连登记都没被消费——监听线程没在处理事件（日志在内存里，原因没能坐实）。补三层：读 Chromium 系 History 库的下载记录（另存到任何文件夹都收；只在有登记时、副本只读即删，口径进 safety.md）、单文件 panic 隔离、监听心跳停 60 秒即重起。同轮发现 ACS 全文把参考文献 DOI 明文放在链接注释里，DOI 只认元数据字段后的本篇 DOI，否则会把引用了清单别篇的论文认错；9 份实测全文都只认出本篇。改后在 Mesa Dev 实测：复制 MXene 全文进下载夹，12 秒内按 DOI 收进 papers/ 并改成标题名、登记消费。浏览器下载记录这条尚未经真实下载验收。 |
+| 2026-10-22 | **评审页逐个勾掉非 Git 产物（用户拍板「可以，加上」）**。起因：Agent 把 included.json 备份、JabRef 缩写表放进 artifacts/，原先只能整批带回项目。新状态 `skipped`：改这次冻结的 review.json（保存进项目按它走、不进验收记录），并按 SHA-256 记进工作区勾掉记录，刷新评审照样勾掉，文件变了自动回到带回。归档守卫对人勾掉且仍是那一版的放行——这是对「有未接收产物不得归档」的唯一放宽，前提是人明确不要。用户追加「流程必要的不能取消」：这一步的预期产物与 papers/ 文献资料锁定带回（界面标「流程要用」，勾掉命令、重冻、合并核对三处后端同拦，按当前档案现算）。同批评审页压缩：统计行单行、意见框默认收起、新增文件不铺绿、产物说明进 ⓘ。 |
+| 2026-10-22 | **档案卡自动提交每次失败（用户：刚开工就提示档案卡存档失败）**。`commit_bootstrap_at` 的 `git add` 带验收台账的 `:(exclude)`，而新模板 .gitignore 已忽略这些台账：exclude 点名一个存在且被忽略的文件时，git 整条报「paths are ignored」退出 1。开工前与打开评审时两处调用都失败——开工弹「档案卡自动提交失败」，评审页因 `.ccode/drafts/*.md` 一直没提交而挂着「主文件夹里还有没保存的改动」（该项目主仓唯一的脏文件就是它）。改为先 `git check-ignore`，只对没被忽略的台账写 exclude；老项目没忽略的照旧挡住。已在该项目上干跑新命令通过。 |
 
 ### 从 AGENTS.md 迁入的拍板记录（2026-09-06 ~ 09-08，2026-09-22 归档）
 

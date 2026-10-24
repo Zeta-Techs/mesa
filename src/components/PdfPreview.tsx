@@ -110,13 +110,14 @@ function basename(p: string): string {
  *  补渲爆发被拆到不同帧，等闸页旧位图 CSS 拉伸兜底（机制见 render-gate.ts） */
 const pageRenderGate = new RenderGate(2);
 
-/** 页内高亮：查找命中、笔记标注、跳转时的一闪。quote 为原文摘句（页内按 pdf-search 口径重定位，
- *  不存坐标——缩放、重渲后都能重新落位）；nth = 第几处命中（0 起），"all" = 本页全部 */
+/** 页内高亮：查找命中、笔记标注、跳转时的一闪、译文卡开着时它的原文段（source）。
+ *  quote 为原文摘句（页内按 pdf-search 口径重定位，不存坐标——缩放、重渲后都能重新落位）；
+ *  nth = 第几处命中（0 起），"all" = 本页全部 */
 export interface PdfPageMark {
   id: string;
   quote: string;
   nth: number | "all";
-  kind: "find" | "find-active" | "note" | "flash";
+  kind: "find" | "find-active" | "note" | "flash" | "source";
 }
 
 /** 页内高亮的矩形（页内百分比坐标） */

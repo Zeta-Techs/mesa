@@ -82,6 +82,7 @@ pub fn background_command<S: AsRef<OsStr>>(program: S) -> BackgroundCommand {
 /// 只设 PYTHONIOENCODING（标准输入输出），不设 PYTHONUTF8：后者连 `open()` 的默认编码一起改，
 /// 会让 Agent 写的、读 GBK 文件的脚本行为变掉。用户自己设过就尊重。
 /// 控制台（ConPTY）里的 Python 输出本来就是 UTF-8，不受影响。
+/// Agent 加 `-I` / `-E` 时本变量失效，靠任务书「本机 Python（Windows）」提示改加 `-X utf8`（task-md.ts）。
 pub fn agent_python_io_env() -> Option<(&'static str, &'static str)> {
     python_io_env_for(cfg!(windows), std::env::var_os("PYTHONIOENCODING").as_deref())
 }
@@ -92,6 +93,48 @@ fn python_io_env_for(windows: bool, existing: Option<&OsStr>) -> Option<(&'stati
     } else {
         None
     }
+}
+
+/// Windows 注册表里的字符串值：`reg query <键> /ve`（默认值）或 `/v <值名>`。读不到返回 None。
+/// 用来找装在非默认目录的外部应用（EndNote 装在 D 盘、Zotero 的 App Paths），不写注册表。
+#[cfg(windows)]
+pub fn reg_string(key: &str, name: Option<&str>) -> Option<String> {
+    let mut cmd = background_command("reg");
+    cmd.args(["query", key]);
+    match name {
+        Some(name) => cmd.args(["/v", name]),
+        None => cmd.arg("/ve"),
+    };
+    let out = cmd.output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    reg_sz_value(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// `reg query` 输出里第一个字符串值：取 REG_SZ / REG_EXPAND_SZ 之后那一段，原样（引号留给调用方按用途处理）
+/// （值名列是本地化的「(默认)」/「(Default)」，不认它）
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+pub fn reg_sz_value(text: &str) -> Option<String> {
+    text.lines().find_map(|line| {
+        let (_, value) = line
+            .split_once("REG_EXPAND_SZ")
+            .or_else(|| line.split_once("REG_SZ"))?;
+        let value = value.trim();
+        (!value.is_empty()).then(|| value.to_string())
+    })
+}
+
+/// 注册表里登记的打开命令（`"D:\…\EndNote.EXE" "%1"`）里的可执行文件路径
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+pub fn command_line_exe(command: &str) -> Option<std::path::PathBuf> {
+    let command = command.trim();
+    let exe = if let Some(rest) = command.strip_prefix('"') {
+        rest.split('"').next()?
+    } else {
+        command.split_whitespace().next()?
+    };
+    (!exe.is_empty()).then(|| std::path::PathBuf::from(exe))
 }
 
 /// 构建 PTY 命令。Windows 上 npm 系 CLI（npm 自己、npm 全局装的 codex 等）是
@@ -939,6 +982,31 @@ pub(crate) fn join_with_timeout(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// reg query 的值名列随系统语言变（「(默认)」/「(Default)」），按 REG_SZ 列取；引号原样留给调用方
+    #[test]
+    fn reg_values_and_command_exe() {
+        let zh = "\r\nHKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\EndNote.exe\r\n    (默认)    REG_SZ    \"D:\\applications\\Endnote\\EndNote.EXE\"\r\n\r\n";
+        assert_eq!(
+            reg_sz_value(zh).as_deref(),
+            Some(r#""D:\applications\Endnote\EndNote.EXE""#)
+        );
+        let en = "    (Default)    REG_SZ    C:\\Program Files (x86)\\Zotero\\zotero.exe\r\n";
+        assert_eq!(
+            reg_sz_value(en).as_deref(),
+            Some(r"C:\Program Files (x86)\Zotero\zotero.exe")
+        );
+        assert_eq!(reg_sz_value("    CFDIR    REG_EXPAND_SZ    %ProgramFiles%\\EndNote\\").as_deref(), Some(r"%ProgramFiles%\EndNote\"));
+        assert_eq!(reg_sz_value("    (默认)    REG_SZ    \r\n"), None);
+        assert_eq!(
+            command_line_exe(r#""D:\applications\Endnote\EndNote.EXE" "%1""#),
+            Some(std::path::PathBuf::from(r"D:\applications\Endnote\EndNote.EXE"))
+        );
+        assert_eq!(
+            command_line_exe(r"C:\EN\EndNote.exe %1"),
+            Some(std::path::PathBuf::from(r"C:\EN\EndNote.exe"))
+        );
+    }
 
     /// 子进程不继承 Mesa 的 PWD（opencode run 按 PWD 取目录）：环境里显式删掉，三平台同口径
     #[test]

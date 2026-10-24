@@ -74,6 +74,9 @@ test("初稿字体写入 YAML：英文新罗马，中文宋体", () => {
     assert.match(text, /parindent\}\{2em\}/);
     assert.ok(text.includes("\\XeTeXgenerateactualtext=1"), "header 应带 ActualText 开关");
     assert.match(readFileSync(join(root, "manuscript/typeface.md"), "utf8"), /英文：Times New Roman/);
+    // 参考文献过滤器拷到源稿旁边、写进 filters
+    assert.match(text, /filters:\r?\n  - references\.lua/);
+    assert.match(readFileSync(join(root, "manuscript/references.lua"), "utf8"), /function Pandoc/);
     // Word 主题的标题/正文字体槽真的换过（2026-10-18：旧写法从没生效，Word 一直是 Aptos / 等线）
     const theme = spawnSync(
       python,
@@ -221,6 +224,38 @@ test("PDF 码位抽检脚本：干净的 PDF 退出 0，打不开的文件退出
       { encoding: "utf8" },
     );
     assert.equal(labels.stdout.trim(), "[True, True, True, True, False, False]");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+// 2026-10-23 HER 初稿：参考文献表里元素符号被改小写（Ru → ru）、印出 Zotero 题名前的【74】和「p. 待补」、没有 References 标题
+test("参考文献过滤器：YAML 挂上 filters，已挂不重复，行内写法改成列表", () => {
+  const plain = callScript("m.ensure_filter(sys.argv[2])", "title: Draft\nformat:\n  pdf:\n    pdf-engine: xelatex");
+  assert.match(plain.stdout, /\nfilters:\n  - references\.lua\n?$/);
+  const twice = callScript("m.ensure_filter(m.ensure_filter(sys.argv[2]))", "title: Draft");
+  assert.equal(twice.stdout.match(/references\.lua/g)?.length, 1);
+  const inline = callScript("m.ensure_filter(sys.argv[2])", "title: Draft\nfilters: [other.lua]\nformat: docx");
+  assert.match(inline.stdout, /filters:\n  - other\.lua\n  - references\.lua\nformat: docx/);
+});
+
+const luaFilter = resolve("src-tauri/resources/skills/quarto-render/scripts/references.lua");
+
+test("参考文献过滤器：标题保住大小写、去人手编号、「待补」不印、补 References 标题", { skip: !quartoWorks() }, () => {
+  const root = mkdtempSync(join(tmpdir(), "mesa-refs-lua-"));
+  try {
+    writeFileSync(
+      join(root, "refs.bib"),
+      "@article{a,\n  title = {【74】Monolithic Ni-Mo-B Bifunctional Electrode},\n  author = {Liu, Hao},\n  year = {2022},\n  journal = {Adv. Funct. Mater.},\n  pages = {待补},\n}\n" +
+        "@article{b,\n  title = {19~.Single atom Ru doping 2H-MoS2 on Si},\n  author = {Wang, Jing},\n  year = {2021},\n  journal = {Appl. Catal. B},\n  number = {无期号},\n}\n",
+    );
+    writeFileSync(join(root, "doc.md"), "---\nbibliography: refs.bib\n---\n\n## Intro\n\nText [@a; @b].\n");
+    const r = spawnSync("quarto", ["pandoc", "doc.md", "--lua-filter", luaFilter, "--citeproc", "-t", "markdown"], { cwd: root, encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    const out = r.stdout;
+    assert.match(out, /Monolithic Ni-Mo-B Bifunctional Electrode/);
+    assert.match(out, /Single atom Ru doping 2H-MoS2 on Si/);
+    assert.doesNotMatch(out, /【74】|19~|19 \.|待补|无期号/);
+    assert.match(out, /## References \{#references \.unnumbered\}/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

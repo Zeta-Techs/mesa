@@ -50,6 +50,18 @@
     不补 `PYTHONUTF8`，它连 `open()` 默认编码一起改，会让 Agent 读 GBK 数据文件的脚本变样（2026-10-21：管道里打印 `²` 报 UnicodeEncodeError、
     中文读回乱码）；netstat 按列位置解析且
     同时查 `tcp` 与 `tcpv6`；Windows 上结束进程一律 `kill_process_tree` / `taskkill /T /F`。
+  - Windows 上一般没装 poppler：Claude Code 读 PDF 要 `pdftoppm` 转页图，直接报错，Agent 只能抽文字层、图看不到
+    （2026-10-23 HER 精读步）。读 PDF 的步骤（lit-notes / review-figures、输入里提到 PDF、或项目资源挂着 PDF——大纲步同日实证）在 Windows 任务书「本机 Python」节
+    多带一行：PyMuPDF 抽字，看图先 `get_pixmap` 存成图片再读（`task-md.ts`；PyMuPDF 是依赖检查里的一项）。
+  - 把文件交给外部文献软件导入（2026-10-23 Windows 实测）：「用 Zotero 打开」在 Windows 上是拿路径当裸参数起 zotero.exe，
+    Zotero 命令行只认 `-file <路径>` / `-url file:///…`，裸参数不理——Zotero 开了、不导入；所以 Windows 直起 `zotero.exe -url file:///…`
+    （`zotero.rs hand_file_to_zotero`；URL 百分号编码成纯 ASCII——用 `-file <中文路径>` 时转给已开着的 Zotero 那一程路径变样，
+    弹了导入确认又报「不支持所选文件的格式」）。
+    **Zotero 6 导不进任何 RIS / BibTeX**（同日用户调试日志实证）：它自动更新来的 2026 年格式转换器在 Firefox 60 内核上解析失败
+    （RIS.js 字符串里有 U+2028、BibTeX.js 正则用了新写法），导入一律「不支持所选文件的格式」。同步前读 application.ini 的版本，
+    低于 7 直接提示升级、不交文件（`zotero.rs installed_zotero_version`；Zotero 7 起 ini 在 app/ 子目录，两处都看）。插件 .xpi 在 Windows 上没有命令行装法，只给路径让人在插件管理里从文件装。
+    EndNote 可能装在 D 盘等非默认目录，只扫 Program Files 找不到：先查注册表（App Paths、`.enw` 打开命令、
+    ISI ResearchSoft 各版本的 CFDIR，`process::reg_string` 只读），`EndNote.exe <文件>` 即 Direct Export，自动认 RIS。
   - 写进 CLI 配置的 Windows hooks 不得含内联 PowerShell、`$` 或单引号（会被 bash / PowerShell / cmd 宿主吞掉），
     逻辑放 `.ps1`、命令只带双引号路径与一个截断字节数（`ccode-hook.ps1` 与 unix 命令同语义：记「unix 秒 + 标签号 `CCODE_TAB_ID`」前缀、超 Cap 截断；聊天层启动注入每次启动 `ensure_win_hook_script` 保证脚本在且正文是当前版）；读任何 CLI 配置（JSON / TOML）先 `mcp::strip_bom`；读失败报错，不得当文件不存在。
   - 外部 cmd 拉起用 `/S /K "<整行>"` + 外层 `^` 转义；带 `%` 或换行的参数走 `.cmd` 包装，只有包装里才把 `%` 翻倍。
@@ -100,6 +112,10 @@
   Python `urllib` 正常。Mesa 在 Windows 附加给 Codex 的说明（`codex_windows_patch_note.md`）写明这条、让它改用 Node / Python
   或申请跳出沙箱：同一问题（查 crates.io 上 Tauri 版本）从 9 条命令多数失败降到 3 条（首条因没带 User-Agent 被拒，已补进说明）。
   本机已于当日改为全机安装 3.13.15（`C:\Program Files\Python313`，含 pillow / pymupdf），沙箱里 `python` / `py` 均可用。
+- **本机 Windows 跑 `cargo test` 报 0xc0000139（STATUS_ENTRYPOINT_NOT_FOUND，2026-10-22 实证）**：lib 测试 exe 没嵌 manifest，
+  comctl32 落到 5.82，缺 `TaskDialogIndirect`，进程一启动就退，一条测试都不跑。绕法（不改仓库）：`cargo test --lib --no-run` 后把
+  `target/debug/deps/ccode_lib-*.exe` **复制到新路径**，旁边放同名 `.exe.manifest`（依赖 Microsoft.Windows.Common-Controls 6.0.0.0），
+  在 `src-tauri/` 下运行它。原路径放 manifest 不生效（Windows 按路径缓存了激活上下文）。CI 的 Windows runner 不受影响。
 - **Windows PDF 预览白屏**：WebView2 + 全局 `color-scheme:dark` 下，pdf.js 默认不透明 2d canvas 与
   `.textLayer { color-scheme:only light }` 会合成整页白块；经典滚动条改 clientWidth 再叠加
   `key={renderKey}` 会拆掉 canvas 振荡闪白。渲染前必须先绑 `alpha:true` 上下文，页宿主锁定 light

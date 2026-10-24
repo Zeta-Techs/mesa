@@ -1,5 +1,6 @@
 # Mesa 期刊缩写兜底。公开表没有时用这里。一行一个刊：全称,缩写
 # & 写成 and。一词刊名的缩写就写全称。改完重新编译 Mesa，再点同步。
+# 第三列可选：同一本刊另一种通行缩写（ACS/CASSI 与 ISO 4 不一样时两种都给），导出时进 EndNote 缩写 2 与 Zotero 的「其他」。值里有逗号要加英文双引号。
 Energy Storage Materials,Energy Storage Mater.
 Journal of Energy Chemistry,J. Energy Chem.
 Angewandte Chemie,Angew. Chem.
@@ -40,3 +41,11 @@ Green Energy & Environment,Green Energy Environ.
 Fundamental Research,Fundam. Res.
 Nature,Nature
 Science,Science
+Journal of Materials Chemistry A,J. Mater. Chem. A
+Journal of Materials Chemistry B,J. Mater. Chem. B
+Journal of Materials Chemistry C,J. Mater. Chem. C
+Applied Catalysis B: Environmental,"Appl. Catal., B",Appl. Catal. B Environ.
+Applied Catalysis B: Environment and Energy,"Appl. Catal., B",Appl. Catal. B Environ. Energy
+Applied Catalysis A: General,"Appl. Catal., A",Appl. Catal. A Gen.
+Materials Reports: Energy,Mater. Rep. Energy
+Advanced Sustainable Systems,Adv. Sustainable Syst.

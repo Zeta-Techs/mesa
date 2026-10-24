@@ -53,9 +53,11 @@
 - **检索审阅的清单和文件页**（2026-09-30）：清单页签占满剩余高度，底下不再留一块隐藏的 Git 对照区。文件页签只列 `isScreeningReviewFile`：screening.md、included.md、included.json、to-fetch.md、to-fetch.ris、endnote-import.ris。顶栏文件数与侧栏分母用同一份过滤后的数量。脚本、缓存、TASK.md、.gitignore、技能说明不进这一页。非 Git 产物不列产物目录里的检索过程文件（json、jsonl、xml、tsv、log、txt，不限 `search` 这个目录名）。图、表、成稿和 `papers/` 里的清单仍列出。旧快照里若还冻着这些过程文件，下次打开审阅按当前规则重冻。识别靠步骤工作区名 lit-search / lit-survey-search，或同时出现 screening.md 与 included。
 - **检索步先拍 pending 再下载全文**：Agent 筛完后 `to-fetch` 与开放获取只针对 `decision=included`；pending 禁止进待获取。人工事项顺序为「核对待确认篇目」先于「下载付费墙文献全文」。有 pending 时写入 help-wanted，未回复不把 pending 当已纳入。已有项目不静默改档案卡，需在流程编辑器补该事项或本次评审先拍 pending。
 - **待获取清单拖入按 PDF 内标题匹配（2026-10-10）**：拖进展开的待获取清单时，先对文件名和 DOI，对不上再读 PDF 前 256KB 的可见文字。只命中一篇才复制进 papers/。命中多篇或零篇不猜，提示用该行「关联」。学校账号按钮在可信会话已保存时显示「已登录」。
+  **2026-10-22 补 PDF 元数据段的 DOI**（`pdf_meta_dois`：开头 256KB + 结尾 512KB 里**元数据字段**后的本篇 DOI——XMP dc:identifier / prism:doi / crossmark:DOI / pdfx:doi、文档信息 /doi；ACS 在开头、Elsevier 线性化 PDF 在结尾；认 PDF 字符串里转义的括号 `S1872-2067\(24\)60067-7`；只认与条目**完整相等**；不扫正文里的 DOI——ACS 的参考文献 DOI 以链接注释明文出现，9 份实测全文都只认出本篇一条）：拖入时先于正文标题认（ACS cs2c00851.pdf 的 /Title 是插图的；结尾段的 /Title 也读）；清单进度（每 2 秒）对文件名对不上的 papers/*.pdf 也读这两段，按路径 + mtime + 大小缓存，不重复读——正文标题仍只在拖入时读。
 - **精读用已下载 PDF 校正引文库（2026-10-10）**：精读只改 references.bib。项目根 papers/ 里已对上 DOI 的 PDF，读首页和摘要页；标题、化学式上下标、摘要与 Crossref 纯文本不一致时，以 PDF 改 bib 的 title 和 abstract。抽不出字或对不上 DOI 的保持原字段。不在精读步重写 RIS。人点「同步到文献库」时，Mesa 按这份 bib 生成导入文件。检索步的 to-fetch.ris 与 endnote-import.ris 仍是全文还没到时的导入清单。
 - **标准档发现不空转（2026-10-09）**：发现只用 OpenAlex 一条主检索式，先看命中数再取回；单复数与近义词不另开式子。Consensus / Undermind 各一轮。Semantic Scholar、Crossref 标题检索、不允许预印本时的 arXiv 不做发现；429 记覆盖缺口，不重试。Crossref 只按 DOI 补字段。标准档不做引文扩展。开放获取只下已有 PDF 直链，连续 3 次 403 即停。期刊缩写与两套 RIS 只给最终纳入和待确认各做一次，排除的不补。已有项目的任务书不自动改写。
 - **待确认拍完自动勾上**：`papers/included.json` 里已有篇目，且每篇 `decision` 都是 `included` 或 `excluded` 时，「核对待确认篇目」自动记为完成。空清单、空白判定或解析失败不算拍完。人手取消过（`explicitCancel`）的不覆盖。步骤卡清单和检索评审清单同一口径。已有项目改任务书后才带上新说明，勾选本身不依赖档案卡改写。
+  **勾上后清单不收走（2026-10-22 用户反馈）**：已纳入的仍能移出，所以勾上后「文献清单」照留，说明换成 `PENDING_DONE_HINT`（移出会从纳入清单、待获取、两份 RIS 拿掉，笔记和引文留到精读步清）；当场清完的保持展开不跳，进来时已勾上的默认收起。
 - **检索清单挂期刊标签，已纳入可移出**（2026-09-29）：步骤卡「文献清单」和检索审阅共用 `PendingConfirmList`。待确认、已纳入、已排除三段都显示；已排除默认折叠。每行打开时用 `lookup_journal_metrics` 现查 IF / 中科院分区 / TOP。刊名优先，ISSN 可写成一个或「印刷, 电子」逐个对。本地表对不上（空、待补、缩写、未收录）且这条有 DOI 时，用 DOI 先问 OpenAlex、没有期刊再问 Crossref，补刊名和 ISSN 再查一次，不写入 included.json，也不用接口里的影响因子数字。标签分级与文献雷达共用 `journalMetricTone`：1 区与 TOP 强调色，2 区通过色，3 区提醒色，4 区与仅 IF 中性。待获取从 DOI 段或紧随的下一段取期刊全称；链接认段内的 DOI / http，DOI 后挂刊名仍算出官网按钮。后端 `to_fetch_looks_link` 与前端同一口径。表未装给下载入口，未收录写在行上。已纳入点「移出」把 decision 改成 `excluded`、理由加「排除：人工移出」，并同步拿掉 included.md 那一行。to-fetch.md 与两份 RIS 整份改写（`drop_fetch_line` / `drop_ris_record`），不走 256 KB 预览上限，编号不重排。文件不存在才说明；改写失败写明哪一份没动。PDF、笔记、references.bib 不删；有笔记路径或 bib 命中 DOI/标题时在行上说明。已排除「恢复为待确认」只改 json 与 included.md，不写回待获取；再次纳入才按原纳入链补回。写入仍走 `save_file_preview` 的版本校验。
 - **检索/筛选步骤例外**（`workspaceName` 为 `lit-search` / `lit-survey-search`，或产物同时含 `papers/screening.md` 与纳入清单）：待确认与待获取在步骤卡决策。审阅在基础检查旁切换整页：清单（二次确认）／过程／文件。默认清单；过程里 Agent 未决不挡保存。可选收尾事项不计入审阅「待做」。付费全文和库授权放「稍后」。表在筛选决定之前；决定表单有 pending 时默认收起，不预填「退回」。Git 对照只在「文件」页签，不再从右侧拉对照抽屉。保存进项目不等于接受清单。
 - `research-report.ts` 提取纯文本章节，`research-report-load.ts` 有界只读加载（最多32个声明路径/40文件，精确文件优先，目录只展开一层）。默认不轮询，仅打开或人刷新读取；旧异步响应不得覆盖切换后的项目。HTML 和命令仅文本显示，不执行、不自动转为批准。
@@ -65,6 +67,7 @@
 - 科研验收决定单独记在 `.ccode/research-acceptance.json`：接受／有条件接受／退回，绑定文件版本、结论范围、未关闭阻塞项、可选运行 id。Git 提交/保存进项目仍是保存工作，不因未验收而禁止。文件版本变化后标「需要重新确认」，不要求所有阶段全部重来。
 - **评审壳按步骤类型拼区块**（闭集 `screening` / `files` / `acceptance` / `default`，`step-review.ts`）：一张 `WorkspaceReviewView`，档案声明证据主面、验收表单、文件分组与默认 diff。禁止每步一张独立评审页。检索、精读、大纲、写作、实验同一套顶栏页签（清单 / 笔记或稿件 / 结果／过程／文件），默认内容页不是 Git 对照。文件页只看 Git 对照，不再在顶部再列一条非 Git 产物。「过程」只放这一步怎么做成的记录：检索页用 Markdown 预览打开 papers/screening.md；精读是 notes/index.json 和仍缺的全文；写作是章节状态、引用核对、修改记录；实验是运行清单和实现检查；清洗是清洗清单。help-wanted 和 .ccode 也在这里。脚本、.py、接口缓存、.gitignore 不进「过程」，留在「文件」。对照抽屉（旧 `filesInDrawer`）已整体移除：档案不再有这个字段，文件面一律走顶栏页签。精读、大纲、写作、排版、投稿材料、返修走 files（笔记/稿件/引文分组；`survey/` `submission/` `rebuttal/` 算稿件；渲染 PDF/docx 不抢源稿；无科研决定表；`.ccode/help-wanted.md` 进过程组）。实验执行、结果分析、清洗、EDA 走 acceptance，但页签同为「结果／过程／文件」：结果页放验收摘要、复现和接受退回。有步骤但不是前两类时默认 files。六套模板含返修轮次都必须能分到这四档，files 档预期产物必须进笔记/稿件主面。
 - **综述用图**（2026-09-20；2026-09-28 收紧）：笔记可引用图 → 大纲每章/小节用图计划 → 初稿 `review-figures` 用随包 `extract_figure.py` / `assemble_panels.py` 裁拼（`figures/figN.png`，图注 Adapted from）。题注块必须以 `Figure N.` 开头，并只取同栏上方的图；页内「Figure N shows」不算题注。一行最多 4 块，更多用 `--rows`。无用图计划则停。裁不到或不能拼则只写「见 [@键] Fig.n」。fail-closed：不对题注不猜最大图、不非等比拉伸、不把整页当图。Agent 读图不能代替人看 PNG。不在 Mesa 里做独立裁图 GUI。
+  **一张拼图 = 一个论点，按子图取材**（2026-10-23 用户拍板，HER 初稿实证：整张对整张并排，一张图塞进 10 个子图、新旧编号叠在一起）：笔记可引用图细到子图一行一块；大纲写「拼 图N（论点）= (a) [@键] Fig.2c + (b) [@键] Fig.3a + …」，至少 2 块、至少两篇，整张只限本身是一幅示意图 / 照片；块数不设死上限（2026-10-24 用户：系统综述一段论述可拼 9 块），按印出来可读性卡——`assemble_panels.py` 按栏宽算，任一块印出宽度不到 3.5 cm 或整张高过 23 cm 退出码 3，交给人少放或按子论点拆两张；**每块记来源**（2026-10-24 用户：作者投稿前要去期刊换原图）——`extract_figure.py --label` 写原文编号，每块旁落 `<块>.json`（bib 键 / 原图编号 / PDF 页 / 裁框），拼板落 `figN.json`，`figure_sources.py` 汇总成 `figures/sources.md`（进初稿预期产物）；**定稿步换原图与转载许可**（2026-10-24 用户拍板）：许可只能作者本人申请，AI 跑 `figure_permissions.py` 写 `submission/figure-permissions.md`（Crossref 按 DOI 查许可，出版商 TDM 许可不算转载许可；CC BY 无需申请、其余待申请；图注出处写法；状态栏人填），人工事项「换原图与申请转载许可」manual 完成、不挡渲染；人把原图放进 `papers/figure-originals/`，`extract_figure.py --pdf` 直接收图片按原图像素重裁；初稿逐块裁：`--panel` 按白缝切格子，切不出用 `--grid` 出 0–1 坐标预览再 `--box` 裁，原图子图字母用 `--erase`（只许角上小框）抹掉，题注认不出用 `--page`；裁完 Agent 自己打开看，某块裁不准就去掉，剩不到两块才降级「见 [@键] Fig.n」；图注先论点再逐块写来源。拼板字母字体按小写文件名找（Windows 上 `Arial.ttf` 找不到会落到 10 px 位图字体）。
 - **科研保存链白话**（`review-save-copy.ts`）：按钮「提交并保存进项目 / 保存进项目 / 已保存进项目」，时间线「✓ 保存进项目」，步骤卡「你核对后，保存进项目」。不是编程「合进基准」，也不是科研验收决定。
 - 新组件：`ResearchEvidencePanel` 共用摘要/原文预览，`ResearchDecisionFields` 编辑状态+说明，`ResearchReproductionPanel` 执行并回看本次结果，`ResearchAcceptancePanel` 记科研验收；不另建质量仪表盘，不自动路由/合并/改变模板。
 
@@ -112,6 +115,16 @@
 - **归档禁止丢 ignored 成果（2026-09-11）**：普通归档和合并后归档均检查持久待接收记录；钩子之后、移除前，
   再核对所有本范围非 Git 产物已在项目根有同字节文件。未接收、冲突、过预算、保护跳过但只有工作树有副本、
   或验收后再次修改，一律保留工作区，不因 git worktree remove 允许删除 ignored 文件就直接归档。
+- **逐个勾掉不带回（2026-10-22 用户拍板）**：评审页非 Git 产物清单里「带回」的每一项可取消勾选（`workspace_delivery_skip`），
+  状态 `skipped`：写进这次冻结的 review.json（保存进项目按它走，`apply_delivery_review` 跳过、不进验收记录与内容指纹），
+  同时记进工作区的 `delivery-reviews/<id>/skipped.json`（路径 → 勾掉那一版的 SHA-256），刷新评审重冻时照样勾掉；
+  文件之后变了就是没看过的新版，自动回到带回。归档守卫对**人勾掉且仍是那一版**的文件放行（明确不要，随工作区清掉），
+  其余口径不变。同名冲突、保护路径、过预算、随 Git 提交的不给勾。保存进项目收尾前（有恢复单）不许改。
+  **流程要用的锁定带回**（同日用户追加「哪些文件是流程必要的，这个不能取消」）：这一步档案声明的 `expected_artifacts`
+  （下一步取料、「产物 N/N」都按它）与 `papers/` 下的文献资料，`required=true`、界面锁定勾上标「流程要用」；
+  后端三处同拦——勾掉命令拒绝、重冻时把档案后来新列为预期产物的勾掉项改回带回、合并核对见到勾掉的必要文件拒绝合并。
+  必要性每次按当前档案现算，不信盘上旧值（`artifacts::expected_match` 同一套匹配）。
+  起因：Agent 把备份（included.json.bak-…）、JabRef 缩写表等中间文件放进了 artifacts/，原先只能整批带回。
 
 
 - **合并/补账/归档分离（2026-09-10）**：真正合并要求已审 SHA；采用该不可变提交，不再按稍后可能移动的分支名执行。
@@ -180,7 +193,7 @@
   绝不带走），防评审合并被主仓脏拦截；默认 .gitignore 含 `*.pdf` 与 `.ccode/handoff-*.md`。
   **开工接驳与进料冻结（2026-10-13 双台账）**：①**接驳提交**（bootstrap 之后、create_workspace 之前）——主仓有
   未提交的清单存量（`papers/included.md`/`included.json`/`to-fetch.md`/`to-fetch.ris`）或用户笔记（`notes/*.md`，
-  inbox.md 除外——它 gitignored 不会出现）时，开工确认弹层出「一并带上未保存的清单与笔记：清单 N 条新行 / M 篇未提交笔记」区块（2026-10-20 界面由「开工接驳」改名，内部仍称接驳），
+  inbox.md 除外——它 gitignored 不会出现）时，开工确认弹层出「带上」一行（2026-10-22 由整宽区块「一并带上未保存的清单与笔记」并进标签列；2026-10-20 界面由「开工接驳」改名，内部仍称接驳）：「清单 N 条新行 / M 篇未提交笔记 · 随开工存进历史」，
   **默认勾选、可取消**；勾选即随开工做 scoped 提交（只提交这些路径，用户其他改动绝不带走）把它们并入基准分支，
   本轮工作区带上最新积累；取消则按现状开工（积累面台账豁免不拦合并，开工后仍可从改动面板存入历史）。
   ②**冻结快照**（create_workspace 与任务书落盘之后执行，best-effort 不阻断开工）——`papers/reading-list.md` 非空时原样复制为工作区 `.ccode/handoff-lit-intake.md`
@@ -272,9 +285,13 @@
   **原「确认引用样式」形态已撤回**（2026-09-28 提出，2026-09-29 撤）：不再有确认面板、`manuscript/citation-confirmed.md` 落盘、绑定 csl 版本与 `isCitationConfirmTask`。引用样式只有「更换」一种形态，`isCitationStyleTask` 认新旧标题（「更换引用样式」/「填写引用样式」）。
   **任何步骤选期刊都写 `submission/target-journal.md`**（2026-09-28，原先只在「润色与定稿」步写；2026-09-30 起它不再是润色步的必交产物）：来源记「沿用已定」或「本次选定」；打开「按期刊」面板时按「工作区 → 项目根」读回，已定刊名显示成「沿用已定：X」按钮，不再重问。人沿用初稿编号、没有刊名时不要写这份文件，交付检查也不再要求它。投稿格式适配那一步仍然必交，因为那一步的工作就是定期刊。**点选时记下改前 `manuscript/citation.csl` 的样式类别**，人再打开这一排时重读比对——样式文件没变就提示「可能只重渲了 PDF」，不谎报成功；`citation.csl` 不进 `expectedArtifacts`（从没选过样式的稿子不该被机械门卡住）。
   **初稿正文字体在开工时问**（2026-09-30）：三套初稿在第一次渲染前问一次，默认英文 Times New Roman、中文宋体。问和写都在本步工作区：`manuscript_font.py` 产出 `manuscript/typeface.md` 与 `manuscript/reference.docx`，两份进预期产物。不放进「跟 AI 商量一下」，那条会话只改任务书。
+  **参考文献表在渲染时整理，引文库不改**（2026-10-23 HER 初稿实证：Pandoc 读 BibTeX 把英文标题改句首大写，Ru → ru、Ni-Mo-B → ni-mo-b；Zotero 题名前的【74】与「p. 待补」印进文献表；没有 References 标题）：
+  `manuscript_font.py` 同时把 `scripts/references.lua` 拷到源稿旁、写进 YAML `filters`——标题整体加保护、去人手编号、「待补 / 待核 / 无期号」字段不进文献表、没有 `#refs` 时文末补不编号的 References。存量稿重跑一次脚本即装上。
   **渲染命令与产物落点**（2026-10-21 Windows 实测，细则 architecture §10 当日条）：所有 `quarto render` run 脚本写 `--output-dir ../output`、**不带 `--output`**，稿件在一级目录；项目根不放 `_quarto.yml`。写 `output` 会落进 `manuscript/output/` 且后一次渲染清掉前一次（docx 丢）。存量项目的 run 命令存在各自 `.ccode/project.toml`，改模板不会自动更新，要手工处理。PDF 的 header 带 ActualText 开关（`manuscript_font.py` 写），渲完跑 `check_pdf_text.py` 抽检分号码位；域稿字体读 `typeface.md`。
   **审查报告和待核实在步骤上点**（2026-09-29）：「逐条决定审查报告」和「逐条裁决」展开成条目，按钮是接受、拒绝、修改，另有全部接受。待核实这一行只在定稿还有「待核实」、或引用检查有疑似编造和元数据存疑时才有条目；没有就说明为空，可以勾上跳过。审查报告写该条末尾「决定：接受 / 拒绝 / 修改：说明」；待核实把「裁决：」写成确认、删除该论断或改正为…。两条都用 `decisions_cleared`，每一条都有决定才算完成。全部点完后点「让 Agent 按决定继续」，才勾上并接回这一步原来的对话。去评审仍是看稿、写意见、退回和保存，不负责写入这些决定，也不等这些点完才出现。
-  **域稿刷新收成一句做法**（2026-09-29）：定稿步不再各挂「打开 EndNote 域稿」「打开 Zotero 域稿」。合成可选事项「换样式时打开域稿」：打开 `output/endnote.docx` 或 `output/zotero.docx`，在 Word 里点 Update 或 Refresh。标题不含 EndNote，避免误挂文献库同步三连。文献库同步仍在精读待获取清单。
+  **域稿刷新收成一句做法**（2026-09-29）：定稿步不再各挂「打开 EndNote 域稿」「打开 Zotero 域稿」。合成一句做法：打开 `output/endnote.docx` 或 `output/zotero.docx`，在 Word 里点 Update 或 Refresh。**2026-10-24 用户拍板：不再挂成定稿步的人工事项**——在 Word 里换样式是保存进项目之后人自己的可选事，入口在项目卡「完结文件」：两份域稿点开交给系统 Word（`open_in_system`），最终稿下一句做法（`closeout-pack.ts FIELD_DOC_HINT`）。老档案里留着的「换样式时打开域稿 / 在 Word 里换样式（打开域稿）」行仍按标题含「域稿」认，给「Word 打开」两个按钮，不挂文献库同步三连。**库路径不是域稿前置**（同日 HER 润色实证：开工商量把「导入文献库、写 papers/endnote-library.path」写成 EndNote 域稿的硬前置，AI 生成 docx 后又撤下）：没指定库照样交 endnote.docx（不写记录号，Update 时走漫游库），Zotero 库里找不到照样交 zotero.docx；只有未匹配键才不交。任务书的交稿句写明这一点。要和库里条目对上，人在精读步「资料库同步」那一行同步到 EndNote 后点「选这个 EndNote 库（.enl）」，Mesa 写 `papers/endnote-library.path`（前端经 save_file_preview 写；候选由 `endnote.rs endnote_library_choices` 列：Windows 读 EndNote 自己的 `HKCU\Software\ISI ResearchSoft\EndNote\Recent Libraries`（RegGetValueW，中文路径不走控制台代码页），再补文稿 / 桌面顶层与「文稿/EndNote」里的 .enl；只列给人点、不替人挑、不深扫磁盘，一个没找到才开文件对话框）；**EndNote X9 及更早的库**（同名 `.Data/rdb`，.enl 不是 SQLite）读不到记录：候选标「X9 库，需导出 XML」，已指定时引导人在 EndNote 里导出 XML 并改指这份 XML，`library_match.py` 从 XML 取记录号与 db-id 绑定（2026-10-24 HER：X9 库直读失败，Update 后 27 条只有 8 条挂上库）；Zotero 不用指（脚本读默认数据目录）。
+  **定稿步人工事项顺序即做事顺序**（2026-10-24）：先「逐条决定审查报告」（综述再接「逐条裁决」），再「更换引用样式」与域稿，最后投稿前的人工事项。**逐条裁决的「接受」= 人对过原文**：AI 保留该句并去掉 [待核实]，因此逐条裁决不给「全部接受」；裁决在渲染之后做，接回对话的话必须要求重渲 PDF / Word / 两份域稿并复核引用。综述流程后面没有投稿材料步，定稿步写 `submission/declarations.md` 空白模板（基金、利益冲突、作者贡献、AI 使用声明），作者信息与声明由人填（人工事项「填作者、单位与投稿声明」），AI 不代填。
+  **先报后改的停点只指向流程线**（2026-10-24 HER 润色实证：Agent 让人「在 review-report.md 每条末尾写决定、写完回来说一声」，还每条预留空「决定：」行）：REVIEW_FIRST 写明决定由人在「逐条决定审查报告」一行点、Mesa 写回、点完自动接回对话，不让人手改文件、不留空决定行；解析端照样容错——空「决定：」行不进条目正文，点选时就地替换，条目间空行保留。**逐条点选列表随步骤状态重读**（2026-10-24 HER 润色实证：「逐条裁决」第一轮后就挂上，那时清单还没写，显示「没有待核实，勾上跳过」，第二轮写出 9 条后列表不再读）：步骤运行状态 / Agent 注意力一变就重读，文件还没写出来时每 5 秒看一眼；读不到文件说「还没写出来」且不放行勾选，只有文件在、确实没有条目才说「勾上跳过」。**建议预填**（同日用户：建议应该预填好、向右补全）：审查报告取每条的「建议改法：」，待核实清单每行加「建议：」栏（Agent 对过原文后写，裁决 / 依据仍不代填）；「修改」输入框灰字接着显示，→ / Tab 收下，框空着点「修改」即按建议（`review-decisions.ts itemSuggestion`）。**AI 写好、人来填再交回的事项**（同日：转载许可清单、投稿声明，`handback-tasks.ts`）不给「提交产物」和「已见到 N 个文件」——清单是 AI 写的，人要的是打开改、再交回：行上「打开清单 / 打开填写」展开结构化面板（同日用户：就地开 Markdown 编辑不方便，`HandbackPanels.tsx` + `handback-files.ts`）：许可清单按论文一篇一行，文章页直达 DOI、状态下拉即存（只改表格最后一格）、原图文件夹没有就建；投稿声明一节一框、离开即存、空节写回「待填」；「…交给 AI」走原对话（同按决定继续的连接预填）；域稿那一行给「Word 打开 EndNote 版 / Zotero 版」（`open_in_system`，没出那份就说一声）；更换引用样式一行在选项下写一句「现在是方括号编号，不换就勾掉」。文献库同步仍在精读待获取清单。
   **润色步的裁决清单**（2026-09-28；2026-09-29 改成步骤上点）：agent 按 `[待核实]` 与 citation-check 的「疑似编造/元数据存疑」列全 `manuscript/verification-decisions.md`，**裁决与依据两栏留空、不得代填**。`decisions_cleared` 认「决定：接受/拒绝/修改：…」和「裁决：确认/删除该论断/改正为…」；待裁决、空修改说明不算完成。该判定与 `no_placeholders` 分开：后者认的「待填/待确认/[待补/TODO」在正文里是正常行文，会把这一步误卡死。
   EndNote 与 Zotero 域稿嵌入正文 `![说明](../figures/figN.png)`，说明里的 `[@键]` 仍写成引用域；缺图不交 docx（2026-09-29）。`output/figures/` 是渲染复制的同一张图，不进非 Git 产物清单。人在 Word 里增删后，`sync_docx.py` 只出 `papers/endnote-sync-report.md`，接受的删除和新文献才写回源稿与 `references.bib`。Export Traveling Library 由人在 EndNote 菜单里把文献抄进自己的库。
 - **流水线编辑器（RX1）是步骤编辑唯一入口**：`src/components/PipelineEditor.tsx` 全宽覆盖层（fixed inset-0 z-30，与评审
@@ -485,7 +502,7 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   `src/task-cards.ts`（按步骤分桶——失效步骤并入「未挂步骤」桶恒在末尾、cardForStep、groupSessionsByTask——
   「未归置」恒最前同原「无工作区会话排最前」口径）。工作区页卡片区 = `TaskCardsSection`（ProjectGroup 内、步进器下方，
   展开手风琴按卡片 id 记忆、切项目随 key 重挂载清空）：「开工」= 打开开工确认弹层（TASK.md 预览/编辑，草稿优先），
-  确认才走 startPipelineStep；「继续」= 当前步骤已有活跃工作区、且这一步的 Agent 没在出字/等确认时，单独出现在「AI 干活」行（与「去终端看看」互斥；聚焦步骤自己的工作区卡片不再重复这颗按钮）：新开会话，不接回旧 Agent；pendingTerminal initialPrompt 为 `CONTINUE_STEP_PROMPT`（阅读 TASK.md 并继续做到完成标准），配置为步骤绑定 > discuss > 项目默认。上次会话是另一家 Agent 时先问要不要带接力简报（用户原话逐条原文；配了提炼才加结论），同一家不问
+  确认才走 startPipelineStep；「继续」= 当前步骤已有活跃工作区、且这一步的 Agent 没在出字/等确认时，单独出现在「AI 干活」行（与「去终端看看」互斥；聚焦步骤自己的工作区卡片不再重复这颗按钮）：**上次工作区对话是同一家 Agent 就接回它**（2026-10-22 用户拍板：新开一轮的 Agent 不知道做到哪、上次卡在哪，只能从文件重新摸索），下一句是 `CONTINUE_RESUME_PROMPT`；没有可接的才新开会话，initialPrompt 为 `CONTINUE_STEP_PROMPT`（阅读 TASK.md 并继续做到完成标准）；有可接对话时前面跟一个次要的「新开一轮」（原对话太长或跑偏时用，不接回、不问带不带）。配置为步骤绑定 > discuss > 项目默认。上次会话是另一家 Agent 时先问要不要带接力简报（用户原话逐条原文；配了提炼才加结论）
   （cwd = 卡片绑定工作区工作树否则项目根，工作树内引用用绝对路径；kimi 无注入由启动栏 promptDropped
   既有处理兜底）。**主仓改动协同**（v3.64；2026-09-10 就地保存）：聊想法在主仓进行，agent 改动留主仓合法——
   弹层顶部与卡片区标题行各一条警告色提醒（复用 `git_status`，进项目详情读一次 + 弹层打开刷新，不轮询，非 git 不渲染）。
@@ -607,16 +624,41 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   （旧口径「非空非 # 行全算」会把说明行多数进去，与展开面板条目数对不上，且补齐全量后 completion=all 永不满足）。
   UI 显示「已见到 N 个文件 / 清单共 M 篇」的进度感；**仍是存在性检测，不做逐篇对账**（标题匹配脆弱；
   逐篇对齐靠精读步 agent 收尾复查的简报约定）。
-- **人工补投的命名规范化职责在下游 agent，不在用户（v3.97 拍板）**：人工补投的 PDF 文件名随意，
-  精读步（lit-notes）开工第一条 = 对照 included.md/to-fetch.md 判定归属后按「作者年份-短标题.pdf」
-  统一重命名并勾掉 to-fetch.md 已补行；拿不准归属的不改名、标「待确认」。模板 guidance 必须写明
+- **人工补投的 PDF 不改名，对账交给固定脚本（v3.97 拍板；2026-10-23 改：不再重命名）**：人工补投的 PDF 文件名随意，
+  精读步（lit-notes）开工第一条 = 跑 `lit_records.py write --root <项目根>`，按 DOI、标题认出已有 PDF，在 included.json
+  记 `pdf`、给 to-fetch.md 打 ✓、重算篇数；脚本没认出的由 agent 按内容写 `pdf` 再跑，拿不准的列进报告。**项目根
+  papers/ 的 PDF 一律不改名不移动**——资源登记（含流程期间暂缓的 `.ccode/pending-registrations.json`）、沉浸阅读
+  标注与笔记都按路径认文件（2026-10-23 HER 实证：精读步改名 9 个，暂缓登记全指向旧名）。模板 guidance 必须写明
   「文件名随意」，不得暗示用户要自己整理命名。
-- **精读笔记是读后消化，不是覆盖索引（2026-09-18）**：写法 SSOT 为 `lit-notes` 技能。叙述用中文，材料名/离子/电解液/方法缩写/图表编号等惯用英文原词保留，不强翻；禁止把英文摘要整段贴进笔记。TASK 简报不得写「每篇产出笔记文件」当完成标准。机器验收 `same-ids` 只对 index 覆盖；`records` 不要求 `notePath` 非空。可逆准备 = 改名 / index 骨架 / bib 对账 / 合法 OA，不包括从摘要批量生成笔记正文。「按摘要记」= 根据摘要消化来写并标「仅摘要」。用户确认的核心篇有 PDF 却未写出精读时，质量状态不得高于「已生成待审」。已有项目不静默改 TASK.md，下一轮开步才带新简报；技能更新走内置技能「有新版」。
+- **精读笔记是读后消化，不是覆盖索引（2026-09-18）**：写法 SSOT 为 `lit-notes` 技能。叙述用中文，材料名/离子/电解液/方法缩写/图表编号等惯用英文原词保留，不强翻；禁止把英文摘要整段贴进笔记。TASK 简报不得写「每篇产出笔记文件」当完成标准。机器验收 `same-ids` 只对 index 覆盖；`records` 不要求 `notePath` 非空。可逆准备 = 认 PDF（lit_records.py write）/ index 骨架 / bib 对账 / 合法 OA，不包括从摘要批量生成笔记正文。「按摘要记」= 根据摘要消化来写并标「仅摘要」。用户确认的核心篇有 PDF 却未写出精读时，质量状态不得高于「已生成待审」。已有项目不静默改 TASK.md，下一轮开步才带新简报；技能更新走内置技能「有新版」。
+- **同步到文献库写单独的整库文件，不改清单那份（2026-10-23）**：「同步到 Zotero / EndNote」按 references.bib 生成
+  `papers/zotero-library.ris` / `papers/endnote-library.ris`（每次重写，新项目 .gitignore 模板带这两行）；检索清单的
+  `endnote-import.ris` 只由 lit_records.py 与 Mesa 纳入/移出维护，同步不碰——HER 实证同步整份改写它，主仓留下改了没提交的
+  清单文件。included.json 里 decision=excluded 的篇（DOI 优先、其次标题）不进这两份（`bridge.py drop_excluded`，
+  bridge 与 zotero_rtf 都带 `--skip-excluded`）：引文库里还留着检索前从 Zotero 导进来、后来全排除的条目。
+  **库里已有的照样导（同日用户拍板，改 2026-10-11 的「Zotero 按 DOI 差量」）**：Mesa 出的题录字段全是卖点，重复的导进去由人在
+  Zotero「重复条目」里挑着合并；反馈只报有几条重复。zotero-library.ris 不写 `#` 头注释（RIS 没有注释语法），条数只进 stdout。
+  **导出题录写法（同日核查整改）**：两份同步文件与界面同一套写法——化学式按「整词能拆成元素 + 计量」认（bridge.py
+  `_subscript_formulas` 与 screening-review.ts 镜像，`tests/citation-format.test.ts` 逐条比对；图表编号 Figure S2、B3LYP、H1N1、
+  标题里的 As/In 不动）；题名去人手编号前缀（`strip_title_prefix`）；缩写经 `tidy_abbreviation`（Chem.A 补空格、去冒号）；
+  第二种写法 = ISO 4：每本刊按 LTWA（ISSN 期刊标题词缩写表，运行时下载进 mesa-lit-cache，不随包；脚本旁有 ltwa.csv 时用它）
+  算（`bridge.py iso4_compute`，同日用户拍板「所有刊都做」），Mesa 兜底表第三列人工值优先；和主缩写只差标点大小写的不给。EndNote 进 XML 缩写 2 与期刊术语表
+  `papers/endnote-journals.txt`（gitignored），Zotero 进 M2（「其他」）；同步前 `bridge.py --enrich` 只给缺字段、有 DOI 的条目
+  补全到临时副本（字段齐的不联网；bridge 接口缓存与 lit_records 共用 mesa-lit-cache）。
 - **to-fetch.ris 给 Zotero，endnote-import.ris 给 EndNote（2026-09-23 分标签）**：检索步同时写两份 RIS 2004、CRLF。已生成的旧文件不改写。
   Zotero 的 `papers/to-fetch.ris`：期刊全称只写 `T2`，缩写只写 `J2`，页只写 `SP`/`EP`。不写 `JO`（Zotero 会把它放进期刊缩写）、不写 `N1`（会进笔记）、不写 `M1`。
   EndNote 2025 RefMan 的 `papers/endnote-import.ris`：全称 `T2`、缩写 `J2`、页 `SP`、起始页码 `M2`、结束页 `EP`、文章类型 `M3`。不写 `JO`/`M1`（`M1` 不进格子）。
   有 DOI 时用 Crossref 补这些字段。期刊缩写用 ISO 4、每个缩写词后加句点，先查 JabRef，没有查 `src-tauri/resources/journal-abbreviations.csv`。一词刊名的缩写写全称。两处都没有时，精读按官网或 ISO 4 补进 bib。不用 NLM 的 ISSN 结果。OpenAlex 只补 Crossref 没有的摘要。没有的标签不写，不编造。补这张表：一行「全称,缩写」，`&` 写成 and，改完重新编译，再点同步。
   「同步到 Zotero」打开 to-fetch.ris；「同步到 EndNote」打开 endnote-import.ris。这份 RIS 只由检索步生成。精读不把它列为产物，不整份重写；bib 里多出来的 DOI 才追加，已有记录保持原样。定稿从 `references.bib` 再生成时，`zotero_rtf.py` 按 Zotero 标签，`bridge.py` 按 EndNote 标签。
+  **题录走固定脚本（2026-10-22）**：上面这些由 `lit-search/scripts/lit_records.py` 实现（enrich → fetch → write → check；精读步 bib），
+  `papers/included.json` 是唯一来源，`included.md`、`to-fetch.md`、两份 RIS、`references.bib` 都从它出，Agent 不再手写也不再自己写补字段脚本。
+  RIS 拼法与 `screening-review.ts risBody`（人点纳入时 Mesa 追加的那条）双端镜像，`tests/lit-records.test.ts` 逐条比对；改任一边两边同改。
+  **用户自己的库不由 Agent 排除（2026-10-23 用户拍板）**：Zotero / EndNote 导入与 `papers/imports/` 里人放的导出，每条都进 `included.json`；
+  检索的年份窗口等过滤不套用，Agent 不排除，不合适的标 pending、理由「建议排除：…」由人在文献清单定（只写 screening.md 的排除，Mesa 里看不到也改不回）。
+  Zotero 导入登记的正文 PDF（导入清单 `pdfPath`，库内绝对路径）即全文：write 记进 `pdf`、不进待获取，Mesa 纳入时 `paperHasDoiPdf` 认 `pdf` 字段；
+  check 点名没进 json 的导入条目与被 Agent 排除的（人排除的理由以「排除：人工移出 / 评审确认」开头）。
+  日期：出版日期取纸本（期），网络出版日另记 `epubDate`；关键词取 OpenAlex 的论文关键词（Crossref 的 subject 是期刊分类，不当关键词）。
+  「待补」「待核」只是缺口标记：两份 RIS 不写，`bridge.load` 读引文库时当没有这个字段，所以同步进 Zotero / EndNote 不会出现「待补」。
   同步只交题录，不打开目录。检索工作区里的 `papers/` 不是课题 PDF 落点，Finder 分栏会把 `~/ccode/workspaces/...` 整条摊开。PDF 由人点「打开 papers」打开课题根。Mesa 不代点合并。
   PDF 补进 Zotero 后回「文献与数据」重新导入即登记（只读引用不复制），再手动勾事项。
   **内核仍不直写用户 Zotero 库**——内核 `zotero_import` 只读快照并写项目；可选技能写库必须有用户明确意图和实机授权（锁库/同步冲突风险）。
@@ -667,20 +709,23 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   居中弹层（marked 渲染 + textarea 编辑 + save_file_preview 原子写，截断只读，Esc/背景点击关闭前
   守未保存改动）；pdf/docx/表格/图同页弹层（`ProjectFilePreview`，不跳运行页）。
   **产物文件 OS 级拖出（v3.97，tauri-plugin-drag）**：WebView 的 HTML5 拖拽出不了窗口，产物核验清单
-  每个文件行有「⠿」拖出手柄——mousedown 里同步调 `plugin:drag|start_drag`（macOS 要求拖拽会话挂在
+  每个文件行有拖出手柄（Lucide GripVertical，2026-10-24 前是「⠿」字符）——mousedown 里同步调 `plugin:drag|start_drag`（macOS 要求拖拽会话挂在
   鼠标按下事件上，故手柄独占图标、不与点击预览抢手势），产物（to-fetch.ris、PDF 等）可直接拖进
   Zotero/Finder。拖拽图标是前端内联的 48×48 文档形 PNG data URL（无文件读盘）；失败静默
-  （拖拽没起来 = 没拖）。capabilities 加 `drag:default`。**「去终端」类入口（流程线
+  （拖拽没起来 = 没拖）。capabilities 加 `drag:default`。**外部打开（2026-10-24 用户）**：文件行拖出手柄左边的外链图标（Lucide ExternalLink，与命令面板外链同一图标；同日用户嫌字符丑，「↗」「⠿」都换成 13px 线宽 1.8 的图标）与两种预览弹层底部「用系统应用打开」交给系统默认应用，走 `open_in_system`（路径须在这一步的根目录内、限文档 / 表格 / 图片 / 文本类型），不直接调 opener 的 openPath。**「去终端」类入口（流程线
   「去终端看看」、工作区行「去终端」）是「回到那个对话」而非新开**（v3.93，用户拍板）：交接构造
   单一出处 `pipeline-start.ts buildWorkspaceTerminalRequest`——始终带 reuseKey `ws:<worktreePath>`
   （开工起的标签之后能找回，同一工作区永远回到同一个终端标签），无 initialPrompt 时自动 resume
-  该工作区最近会话（`latestWorkspaceSession`：按 workspace 名 + 仓库路径匹配列表，排除归档/内部
+  该工作区最近会话（`pickWorkspaceResume`：按 workspace 名 + 仓库路径匹配列表，排除归档/内部
   无头/live 中的会话）；有 prompt（开工/整理笔记）是明确新任务，不 resume。StepFlow `goTerminal`
   与 WorkspacesPage `useOpenInTerminal` 都走它，禁再各自手搓 pendingTerminal。
-  **resume 前还有一道 cwd 活标签兜底**（TerminalPage 消费处）：reuseKey 没命中（restored/手动开的
-  标签不带 key）时若某活标签的 cwd 就是目标目录，聚焦它而不是新开 resume——`live` 只标外部进程，
-  本应用标签里活着的会话不在其列，直接去 resume 会被 CLI 拒（codex：thread already has an
-  active writer）。
+  **同一步只有一个终端标签（2026-10-22 修，用户实证收件箱「去终端回答」新开了终端、标签名一会儿 lit-notes 一会儿
+  「文献精读与笔记」）**：①「继续」「新开一轮」也带 `ws:` 复用键（原先新开一轮不带，之后谁都认不出这个标签）；
+  ② 工作区复用键进重启持久化白名单（`terminal-tab-persistence.ts` 只留 `ws:` 前缀），重启后照样回到原标签；
+  ③ 最近那条对话还在跑（外部进程，`live`）时不 resume 任何一条，交接带 `focusSession` 让终端页认回持有它的标签；
+  ④ 复用键与会话 id 都没对上时（Claude 接续后换了新会话文件），这棵工作树里正有 Agent 在跑的标签就是这一步的对话，
+  聚焦它不另开（工作树一步一棵，按目录认不会认错）；⑤ 标签名统一用步骤名（`workspaceStepName` 读项目配置），
+  手建工作区才用工作区名。
   **人工事项是步骤级，不进卡片**（v3.69 修正：卡片是想法容器，一步多卡时步骤级清单在每张卡重复渲染 = 噪声）；
   **v3.70 起大圆点击语义从「终端入口」改为「步骤聚焦」**（用户拍板：圆上不再跳终端/开步——推进动作归流程
   线节点、卡片行、任务行）：点圆 = 卡片区只看该步骤（种子 + 卡片 + 人工事项清单一屏内），选中圆中性高亮环，
@@ -718,6 +763,10 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   平铺清单（开工弹层）与流程线共用一份。
 - **agent 动态人工请求（HELP-WANTED 约定文件，非阻断）**：agent 需要人协助时写工作树（或主仓）
   `.ccode/help-wanted.md`，每条一行「- 」开头，写明问题、建议/影响、待人决定及可继续的无依赖准备；
+  **一步一份、只放没答的（2026-10-22）**：文件进 `.gitignore`（新项目模板自带），人回复后 Agent 删掉那一条、答案写进 TASK.md
+  「已定口径」或本步报告，不写已拍板记录、不放表格（TASK.md 决策暂停策略固定带 `HELP_WANTED_RULE`）；Mesa 只把「- 」「* 」
+  「1. 」「1、」开头的行算请求，标题含已拍板 / 已解决 / 已回复 / 备查的小节整节跳过（`parse_help_wanted`）。实证：检索步把它提交进
+  git、精读步在上面追加，收件箱里全是上一步答过的问题和被拆开的表格行；
   关键决定未回复时暂停受影响操作，不把后置评审当授权兜底。Mesa 侧 `list_help_requests` 扫活跃工作区工作树 +
   主仓根（无工作区的项目不扫；上限 20 条 × 300 字符）→ 收件箱「人工请求」类条目（`help:<root>`），
   「去查看」经 selectProjectReq 跳工作区页**并弹出该来源的完整内容层**（v3.97：strip 行只有 40 字截断预览、
@@ -996,8 +1045,10 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
     **忽略这条**只记本机（`ccode.litDismissed`），只藏雷达行本身，不改 `watch-followup.md`。
     **加入积累**（2026-10-13 由「加入精读」改名）写入积累账 `papers/reading-list.md`（gitignored，去重域＝两表并集，已在正典 included.md 的不重复记）。只写账不跳转（2026-10-14 拍板：不跳精读、不开全文，toast 指路）；再点已积累的书标＝展开抽屉定位该篇，移出只走抽屉 ✕；仅在正典的书标点击＝打开已存全文，没有全文才说明去处。抽屉「精读」进沉浸阅读，有笔记显「继续精读」。开工接驳与检索步进料见「流水线开步与模板」/「评审与采纳口径·双台账」。
   - **机构访问通道（2026-09-16，fetch_paper_fulltext 逐篇获取阶梯）**：形态是**人登录一次、系统复用会话**——
-    用户在检索步「下载付费墙文献全文」展开「待获取」后点「登录学校账号」（跳到设置 → 网络），或自己打开设置 → 网络「学校图书馆」点「登录学校账号」（默认 CARSI，不摆地址框）完成学校
-    SSO（含 MFA），后端 `inst_access.rs` 读取登录窗 Cookie 落 0600 `inst-session.json`（与 keys.json 同纪律，
+    用户在检索步「下载付费墙文献全文」展开「待获取」后点「登录学校账号」（2026-10-22 起直接调起浏览器，不再先跳设置页；旁边「校外访问」跳设置 → 网络），或自己打开设置 → 网络「学校图书馆」点「登录学校账号」（默认 CARSI，不摆地址框）完成学校
+    SSO（含 MFA）。**浏览器通道的「已登录」是人标记的**：Mesa 读不到系统浏览器里的会话，打开登录页后出「登录好了」，
+    点了记本机时间（localStorage `ccode.instBrowserLoginAt`，两处经 `INST_BROWSER_LOGIN_EVENT` 同步），7 天内两处显「已登录」+「重新登录」，
+    过期按钮回来；这个标记**只管显示**，不让 `canAttemptFulltext` / 无头取全文当成机构通道可用（那只认前缀或内嵌会话）。内嵌窗通道：后端 `inst_access.rs` 读取登录窗 Cookie 落 0600 `inst-session.json`（与 keys.json 同纪律，
     值绝不出站）。获取入口三处：检索步付费墙事项的 to-fetch 清单条目、雷达卡「来源」态命中行、watch-followup
     待办行；按钮按 `canAttemptFulltext`（裸 DOI/doi.org 恒可试开放副本查证，其余落地页仅通道可用才摆）。
     `parseToFetchItems` 兼容三代清单格式（编号式 / `- ` 列表符号式 / 旧裸行「标题 — DOI」——
@@ -1017,7 +1068,11 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
     同名换值/会话轮换不算结构变化会让重新登录永不落罐）；③ **出版商反爬墙现实**：Wiley
     等对一切非浏览器客户端返回 403（带全量会话+浏览器 UA 亦然，Akamai TLS 指纹拦截，
     与登录无关）——`institutional_failure_hint` 分流提示走「浏览器打开」
-    （`inst_browser_open`：调起系统浏览器，人手下载 90 秒收货；2026-09-17 审计后文案
+    （`inst_browser_open`：调起系统浏览器，人手下载 90 秒收货；**2026-10-22 起过窗靠确凿凭据续收**：登记 30 分钟有效期内，
+    文件名带 DOI / MDPI 编号、≥24 字符标题包含、或 PDF 元数据段（`lit_watch::pdf_meta_dois`）含**完整** DOI 的照样 Hit——浏览器常把 PDF
+    直接打开、人看完点保存，ACS 存名 cs2c00851.pdf；只凭「窗内只开了一篇」的兜底仍限 90 秒。**没写完的文件不占 5 秒去重**
+    （`release_seen`：空文件 / 大小还在变 / 尾部无 %%EOF 时撤掉去重记录——Edge 另存为先建空文件、4.5 秒后写完，后续写入事件曾全被当重复丢掉）。监听目录加 Chromium
+    `savefile.default_directory`（PDF 阅读器保存走「另存为」上次的目录）；2026-09-17 审计后文案
     与现行口径对齐——付费墙 to-fetch 清单主动作是浏览器打开（这批本是筛剩的硬墙，不摆自动获取；雷达待办仍可试开放副本/机构通道），漏收用关联本地 PDF；界面简称浏览器/关联，完整说明进 title）；雷达/清单的「打开来源」
     （含 ⋯ 菜单，同一条链）在会话态同路径。④ **PDF 中继（同日三轮，已废弃）**：
     登录窗 initialization_script 注入「⤓ 保存 PDF 到 Mesa」浮动钮，页面上下文 fetch PDF 后
@@ -1167,6 +1222,11 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
     出版商反爬针对的是非浏览器客户端，内嵌窗伪装浏览器的漏斗注定逐家踩坑（⑤-⑦
     全天实证）。新主线三通道，Mesa 只干收货的事——
     - **通道 A（下载目录收货，`download_inbox.rs`）**：待获取清单/雷达卡的
+      **2026-10-22 补三层**：①读 Chromium 系 History 库 downloads 表（有登记时每 5 秒看一次、History 没变不读、副本只读即删），
+      另存到任何文件夹的 PDF 都能送进同一条过滤链；②`consider_file_guarded` 隔离单个文件的 panic，监听线程不再静默死掉；
+      ③监听心跳 `WATCHER_BEAT`，`ensure_watcher` 见心跳停超过 60 秒就重起（线程死了标记仍亮，此前每次「官网」都以为在监听）。
+      PDF 的本篇 DOI 只认元数据字段（`pdf_meta_dois`：dc:identifier / prism:doi / crossmark:DOI / pdfx:doi / 文档信息 /doi）——
+      ACS 把参考文献 DOI 以链接注释明文放着，裸扫会把引用了清单里别篇的论文认成那一篇。
       「浏览器打开」（`inst_browser_open`：EZproxy 前缀改写后调起系统默认浏览器，
       登记 PendingCatch + 写 helper-context.json 当前项目）→ 用户在真浏览器里点
       站方下载落 ~/Downloads → notify 监听按**六层过滤链**收货（.pdf 扩展 /

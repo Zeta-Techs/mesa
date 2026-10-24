@@ -1358,14 +1358,23 @@ fn workspace_diff_with_rows(
         return Err(output_tail(&mb));
     }
     let merge_base = String::from_utf8_lossy(&mb.stdout).trim().to_string();
-    let numstat = run_git(&wt, &["diff", "--numstat", &merge_base])
+    // 三次 git 互不依赖，并行跑（Windows 上每起一个 git 要 100–150ms，打开评审要等它）
+    let (numstat, ns, porc) = std::thread::scope(|s| {
+        let numstat = s.spawn(|| run_git(&wt, &["diff", "--numstat", &merge_base]));
+        let ns = s.spawn(|| run_git(&wt, &["diff", "--name-status", &merge_base]));
+        let porc =
+            s.spawn(|| run_git(&wt, &["status", "--porcelain=v1", "--untracked-files=all"]));
+        (numstat.join(), ns.join(), porc.join())
+    });
+    let numstat = numstat
         .ok()
+        .and_then(|r| r.ok())
         .filter(|o| o.status.success())
         .map(|o| parse_numstat(&String::from_utf8_lossy(&o.stdout)))
         .unwrap_or_default();
     // name-status 给每个文件的改动类型（R 取新名）
     let mut status_map: HashMap<String, String> = HashMap::new();
-    if let Ok(ns) = run_git(&wt, &["diff", "--name-status", &merge_base]) {
+    if let Some(Ok(ns)) = ns.ok() {
         if ns.status.success() {
             for line in String::from_utf8_lossy(&ns.stdout).lines() {
                 let parts: Vec<&str> = line.split('\t').collect();
@@ -1390,7 +1399,7 @@ fn workspace_diff_with_rows(
         });
     }
     // 未跟踪文件：numstat 覆盖不到，行数当 additions（与 git_status 同一口径）
-    if let Ok(porc) = run_git(&wt, &["status", "--porcelain=v1", "--untracked-files=all"]) {
+    if let Some(Ok(porc)) = porc.ok() {
         if porc.status.success() {
             let (_, _, _, raw) = parse_porcelain(&String::from_utf8_lossy(&porc.stdout));
             for (status, path) in raw {

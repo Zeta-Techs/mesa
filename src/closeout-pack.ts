@@ -25,24 +25,35 @@ interface CatalogItem {
   group: CloseoutGroupId;
   rel: string;
   label: string;
+  /** 一句「这份拿来干什么」，显示在名字后面（2026-10-24 用户：完结文件只有一排名字，看不出哪份做什么用） */
+  hint?: string;
 }
+
+/** 两份带引用域的 Word：在 Mesa 里预览不了 EndNote / Zotero 的域，点开交给系统里的 Word。
+ *  「在 Word 里换样式」是保存进项目之后人自己的可选事，不放在定稿步的人工事项里（2026-10-24 用户拍板）。 */
+export function isCloseoutFieldDoc(rel: string): boolean {
+  return rel === "output/endnote.docx" || rel === "output/zotero.docx";
+}
+
+export const FIELD_DOC_HINT =
+  "两份域稿点开会用 Word 打开。要在 Word 里接着改、让 EndNote 或 Zotero 换样式时：在 EndNote 选项卡点 Update Citations and Bibliography，或在 Zotero 选项卡点 Refresh，再在那里选样式。不在 Word 里改稿就不用管。";
 
 /** 脉络顺序。同一路径只出现一次。 */
 const CATALOG: CatalogItem[] = [
-  { group: "final", rel: "output/review-final.pdf", label: "定稿 PDF" },
-  { group: "final", rel: "output/paper-final.pdf", label: "论文 PDF" },
-  { group: "final", rel: "output/thesis-final.pdf", label: "学位论文 PDF" },
-  { group: "final", rel: "output/formatted.pdf", label: "期刊格式 PDF" },
+  { group: "final", rel: "output/review-final.pdf", label: "定稿 PDF", hint: "阅读、投稿" },
+  { group: "final", rel: "output/paper-final.pdf", label: "论文 PDF", hint: "阅读、投稿" },
+  { group: "final", rel: "output/thesis-final.pdf", label: "学位论文 PDF", hint: "阅读、送审" },
+  { group: "final", rel: "output/formatted.pdf", label: "期刊格式 PDF", hint: "按目标期刊排好的版本" },
   { group: "final", rel: "output/main.pdf", label: "LaTeX PDF" },
-  { group: "final", rel: "output/review-final.docx", label: "普通 Word" },
-  { group: "final", rel: "output/paper-final.docx", label: "论文 Word" },
-  { group: "final", rel: "output/thesis-final.docx", label: "学位论文 Word" },
+  { group: "final", rel: "output/review-final.docx", label: "普通 Word", hint: "阅读用，换不了文献样式" },
+  { group: "final", rel: "output/paper-final.docx", label: "论文 Word", hint: "阅读用，换不了文献样式" },
+  { group: "final", rel: "output/thesis-final.docx", label: "学位论文 Word", hint: "阅读用，换不了文献样式" },
   { group: "final", rel: "output/formatted.docx", label: "期刊格式 Word" },
-  { group: "final", rel: "output/endnote.docx", label: "EndNote 域稿" },
-  { group: "final", rel: "output/zotero.docx", label: "Zotero 域稿" },
-  { group: "manuscript", rel: "manuscript/review-final.md", label: "定稿源稿" },
-  { group: "manuscript", rel: "manuscript/paper-final.md", label: "论文源稿" },
-  { group: "manuscript", rel: "manuscript/thesis-final.md", label: "学位论文源稿" },
+  { group: "final", rel: "output/endnote.docx", label: "EndNote 域稿", hint: "Word 打开，Update 后可换样式" },
+  { group: "final", rel: "output/zotero.docx", label: "Zotero 域稿", hint: "Word 打开，Refresh 后可换样式" },
+  { group: "manuscript", rel: "manuscript/review-final.md", label: "定稿源稿", hint: "要再改稿从这里改" },
+  { group: "manuscript", rel: "manuscript/paper-final.md", label: "论文源稿", hint: "要再改稿从这里改" },
+  { group: "manuscript", rel: "manuscript/thesis-final.md", label: "学位论文源稿", hint: "要再改稿从这里改" },
   { group: "manuscript", rel: "submission/formatted.md", label: "期刊格式稿" },
   { group: "manuscript", rel: "manuscript/main.tex", label: "LaTeX 主文件" },
   { group: "manuscript", rel: "manuscript/source.docx", label: "Word 原件" },
@@ -51,22 +62,25 @@ const CATALOG: CatalogItem[] = [
   { group: "manuscript", rel: "output/draft.docx", label: "初稿 Word" },
   { group: "manuscript", rel: "outline.md", label: "大纲" },
   { group: "manuscript", rel: "manuscript/outline.md", label: "论文大纲" },
-  { group: "library", rel: "papers/screening.md", label: "检索与筛选" },
-  { group: "library", rel: "papers/included.md", label: "纳入清单" },
-  { group: "library", rel: "papers/to-fetch.md", label: "待获取全文" },
-  { group: "library", rel: "papers/zotero-library.ris", label: "给 Zotero 的全库" },
-  { group: "library", rel: "papers/endnote-import.ris", label: "给 EndNote 的题录" },
-  { group: "library", rel: "references.bib", label: "文献库" },
-  { group: "library", rel: "notes/index.json", label: "笔记索引" },
-  { group: "library", rel: "notes/handoff.md", label: "精读交到写作的要点" },
-  { group: "checks", rel: "manuscript/citation-check.md", label: "引用检查" },
-  { group: "checks", rel: "manuscript/verification-decisions.md", label: "待核实裁决" },
-  { group: "checks", rel: "manuscript/review-report.md", label: "审查报告" },
-  { group: "checks", rel: "manuscript/changelog.md", label: "修改记录" },
-  { group: "checks", rel: "papers/endnote-cite-report.md", label: "EndNote 域稿报告" },
-  { group: "checks", rel: "papers/zotero-cite-report.md", label: "Zotero 域稿报告" },
-  { group: "checks", rel: "submission/target-journal.md", label: "目标期刊" },
-  { group: "checks", rel: "manuscript/section-status.md", label: "章节状态" },
+  { group: "library", rel: "papers/screening.md", label: "检索与筛选", hint: "怎么查的、为什么纳入或排除" },
+  { group: "library", rel: "papers/included.md", label: "纳入清单", hint: "最终用到的文献" },
+  { group: "library", rel: "papers/to-fetch.md", label: "待获取全文", hint: "还缺全文的篇目" },
+  { group: "library", rel: "papers/zotero-library.ris", label: "给 Zotero 的全库", hint: "导入 Zotero，全部引用文献" },
+  { group: "library", rel: "papers/endnote-library.ris", label: "给 EndNote 的全库", hint: "导入 EndNote，全部引用文献" },
+  { group: "library", rel: "papers/endnote-import.ris", label: "给 EndNote 的题录", hint: "导入 EndNote，检索步纳入的那批" },
+  { group: "library", rel: "references.bib", label: "文献库", hint: "引用键与题录（BibTeX）" },
+  { group: "library", rel: "notes/index.json", label: "笔记索引", hint: "每篇读到什么程度" },
+  { group: "library", rel: "notes/handoff.md", label: "精读交到写作的要点", hint: "写作时要守的约束" },
+  { group: "checks", rel: "manuscript/citation-check.md", label: "引用检查", hint: "引用和文献库对不对得上" },
+  { group: "checks", rel: "manuscript/verification-decisions.md", label: "待核实裁决", hint: "存疑句子你怎么定的" },
+  { group: "checks", rel: "manuscript/review-report.md", label: "审查报告", hint: "审查意见和你的决定" },
+  { group: "checks", rel: "manuscript/changelog.md", label: "修改记录", hint: "润色改了哪些地方" },
+  { group: "checks", rel: "papers/endnote-cite-report.md", label: "EndNote 域稿报告", hint: "哪些引用对上了库" },
+  { group: "checks", rel: "papers/zotero-cite-report.md", label: "Zotero 域稿报告", hint: "哪些引用对上了库" },
+  { group: "checks", rel: "submission/target-journal.md", label: "目标期刊", hint: "选定的期刊和理由" },
+  { group: "checks", rel: "submission/figure-permissions.md", label: "转载许可清单", hint: "每块拼图的许可状态" },
+  { group: "checks", rel: "submission/declarations.md", label: "投稿声明", hint: "作者、基金、利益冲突、AI 使用" },
+  { group: "checks", rel: "manuscript/section-status.md", label: "章节状态", hint: "各章证据与审核状态" },
 ];
 
 const GROUP_LABEL: Record<CloseoutGroupId, string> = {
@@ -214,6 +228,8 @@ export function closeoutNoteLabel(name: string): string {
 export function isCloseoutVisible(rel: string): boolean {
   const path = rel.replace(/\\/g, "/");
   if (isManuscriptScaffold(path)) return false;
+  // 渲染用的字体说明、Word 模板、参考文献过滤器：给工具用的，不是成果
+  if (/^manuscript\/(?:typeface\.md|reference\.docx|references\.lua)$/i.test(path)) return false;
   if (path === "output/figures" || path.startsWith("output/figures/")) return false;
   if (path.startsWith("figures/src/")) return false;
   return true;
@@ -244,6 +260,11 @@ function groupOf(rel: string): CloseoutGroupId | null {
   if (path.startsWith("output/") && /\.(pdf|docx)$/i.test(base)) return "final";
   if (path.startsWith("manuscript/") && base.endsWith(".md")) return "manuscript";
   return null;
+}
+
+/** 这份文件拿来干什么（清单里登记过的才有） */
+export function closeoutHint(rel: string): string {
+  return CATALOG_BY_REL.get(rel.replace(/\\/g, "/"))?.hint ?? "";
 }
 
 function labelOf(rel: string, group: CloseoutGroupId): string {

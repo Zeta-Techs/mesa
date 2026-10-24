@@ -135,38 +135,40 @@ def rtf_escape(text: str) -> str:
     return text.replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}")
 
 
-def write_library_ris(bib_text: str, dest: Path) -> tuple[int, int]:
+def write_library_ris(bib_text: str, dest: Path, skip_excluded: Path | None = None) -> tuple[int, int, int]:
     """整份 bib 写成 Zotero RIS。用 bridge 解析，避免花括号和括号把作者、标题截断。
 
-    Zotero 的文件导入不会对已有条目去重——整份重复导入会逐条建重复项（2026-10-11 实证：
-    72 条全量重导后库里 144 条）。所以按 DOI 做差量：库里已有的跳过，只交缺的。
-    返回 (写入条数, 跳过条数)。
+    库里已有同一 DOI 的照样交（2026-10-23 用户拍板，改 2026-10-11 的「按 DOI 差量」）：Mesa 出的题录字段是全的，
+    导进去后人在 Zotero「重复条目」里自己挑着合并，比跳过、留着库里那条旧的缺字段记录好。这里只数一下有几条重复，进反馈。
+    检索时人排除的篇（included.json 的 decision=excluded）不交。
+    文件里不写注释行：RIS 没有注释语法，各家导入器认不认没保证。
+    返回 (写入条数, 其中库里已有同一 DOI 的条数, 排除不导条数)。
     """
     bridge = load_bridge()
     match = load_library_match()
-    records = bridge.parse_bibtex(bib_text)
+    records, dropped = bridge.drop_excluded(bridge.parse_bibtex(bib_text), skip_excluded)
     known_dois: set[str] = set()
     db = match.zotero_db_path()
     if db is not None:
         index, _owner, _note = match.zotero_index(db)
         known_dois = set(index)
     lines = []
-    skipped = 0
+    duplicated = 0
     written = []
     for rec in records:
         doi = match.norm_doi(rec.get("doi") or "")
         if doi and doi in known_dois:
-            skipped += 1
-            continue
+            duplicated += 1
         written.append(rec)
         kind = {"article": "JOUR", "book": "BOOK", "incollection": "CHAP", "inproceedings": "CONF", "phdthesis": "THES"}.get(rec.get("type"), "JOUR")
         lines.append(f"TY  - {kind}")
         # Zotero 份字段口径（2026-10-11 与 zotero-sync/lit-search SKILL、screening-review.ts 的
         # recordToZoteroRis 对齐）：期刊全称只写 T2、缩写只写 J2；不写 ID（Zotero 导入不读，
         # 键的回流职责在 EndNote 份）、不写 N1（会进笔记）、不写 JO/JF/JA（JO 会进期刊缩写格）、
-        # 不写 DA/ET/M2/M3/LA/N2（EndNote 格子或重复）。
+        # 不写 DA/ET/M3/LA/N2（EndNote 格子或重复）。M2 只放期刊的另一种缩写，Zotero 收进「其他」。
+        # 题名去掉人手加的编号前缀（【77】、19~.），与 EndNote 份同一个 bridge.title_text。
         if rec.get("title"):
-            lines.append(f"TI  - {bridge.clean(rec['title'])}")
+            lines.append(f"TI  - {bridge.title_text(rec['title'])}")
         for author in rec.get("authors") or []:
             lines.append(f"AU  - {bridge.family_comma(author)}")
         if rec.get("year"):
@@ -174,9 +176,13 @@ def write_library_ris(bib_text: str, dest: Path) -> tuple[int, int]:
         journal = rec.get("journal") or ""
         if journal:
             lines.append(f"T2  - {bridge.clean(journal)}")
-        short = journal_short(journal, rec.get("journalAbbreviation") or "")
+        # 缩写与 EndNote 份同一套：引文库里有就用，没有查 JabRef 表 + Mesa 兜底（原先只查 Mesa 兜底，
+        # 从 Zotero 导进来的条目在 Zotero 这份里全没有缩写，EndNote 那份却有）
+        short, alt = bridge.journal_abbreviations(rec)
         if short and short.lower() != journal.lower():
             lines.append(f"J2  - {short}")
+        if alt:
+            lines.append(f"M2  - ISO 4 abbreviation: {alt}")
         if rec.get("volume"):
             lines.append(f"VL  - {rec['volume']}")
         if rec.get("number"):
@@ -201,13 +207,8 @@ def write_library_ris(bib_text: str, dest: Path) -> tuple[int, int]:
         lines.append("ER  - ")
         lines.append("")
     dest.parent.mkdir(parents=True, exist_ok=True)
-    header = (
-        f"# 整份引文库，共 {len(records)} 条。不是 papers/to-fetch.md 的待获取名单。\r\n"
-        f"# 本次写入 {len(written)} 条，库里已有同一 DOI 跳过 {skipped} 条"
-        "（Zotero 的文件导入不去重，全量重导会建重复条目）。\r\n"
-    )
-    dest.write_bytes((header + "\r\n".join(lines)).encode("utf-8"))
-    return len(written), skipped
+    dest.write_bytes("\r\n".join(lines).encode("utf-8"))
+    return len(written), duplicated, dropped
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -222,12 +223,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--rtf")
     parser.add_argument("--ris", required=True)
     parser.add_argument("--report")
+    parser.add_argument("--skip-excluded", help="papers/included.json：其中排除的篇不导")
     args = parser.parse_args(argv)
     if args.library_ris:
-        written, skipped = write_library_ris(Path(args.bib).read_text(encoding="utf-8"), Path(args.ris))
+        written, duplicated, dropped = write_library_ris(
+            Path(args.bib).read_text(encoding="utf-8"),
+            Path(args.ris),
+            Path(args.skip_excluded) if args.skip_excluded else None,
+        )
+        # 「交给 Zotero 0 条」是调用方的判据：零记录的 RIS 不是合法导入文件，不拉起 Zotero
         print(
-            f"差量导入：本次新增 {written} 条"
-            + (f"，库里已有跳过 {skipped} 条（重复条目请在 Zotero「重复项」里合并）" if skipped else "")
+            f"本次交给 Zotero {written} 条"
+            + (f"（其中 {duplicated} 条库里已有同一 DOI，导入后在 Zotero「重复条目」里挑着合并）" if duplicated else "")
+            + (f"，检索时排除的 {dropped} 条不导" if dropped else "")
             + "。"
         )
         # 库体检（同步按钮反馈）：旧版导出的脏记录会让本次导入的去重认不出、旧数据残留。
@@ -321,7 +329,7 @@ def main(argv: list[str] | None = None) -> int:
         ris_lines.append("TY  - JOUR")
         ris_lines.append(f"ID  - {key}")
         if rec["title"]:
-            ris_lines.append(f"TI  - {load_bridge().clean(rec['title'])}")
+            ris_lines.append(f"TI  - {load_bridge().title_text(rec['title'])}")
         for author in [part.strip() for part in rec["author"].split(" and ") if part.strip()]:
             ris_lines.append(f"AU  - {author}")
         if rec["year"] and rec["year"] != "n.d.":

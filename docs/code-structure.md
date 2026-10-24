@@ -15,7 +15,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   全局 page id schedules 仅作旧值重定向（App.tsx 转项目定时任务页签），SchedulesPage.tsx 已删
   components/                # WorkspaceReviewView、PipelineEditor（含「＋ 从模板追加」）、ProjectGroup、ArtifactChecklist（文本类产物就地预览层；pdf/docx/表格/图同页弹层 +
                              # md 笔记「⛶ 沉浸阅读」入口（v3.98：pdf_for_note 配对后发 readerReq 带 notePath 进阅读区）+
-                             # ⠿ 拖出手柄经 tauri-plugin-drag 做 OS 级文件拖出——WebView HTML5 拖拽出不了窗口）、TaskCardsSection、FileTree、
+                             # 拖出手柄（GripVertical）经 tauri-plugin-drag 做 OS 级文件拖出——WebView HTML5 拖拽出不了窗口）、TaskCardsSection、FileTree、
                              # FilePreviewEditor、PdfPreview/DocxPreview/XlsxPreview/ImagePreview、ImagePairView、GitPanel、HandoffPicker/DigestPicker、SessionSlimDialog（会话瘦身确认弹层：先讲清动什么、结果页给备份位置与「客户端里需归档再恢复」提醒；提示条与菜单项在 SessionsPage 回放头部）、
                              #   PDF 字节模块级 LRU 缓存（loadPdfBytes，上限 8 份）：预览⇄阅读区重挂载不再重走
                              #   read_pdf_bytes IPC+atob+解析三程，骨架期只剩 pdf.js 解析一程；PdfPageView 页内标记层 marks
@@ -28,8 +28,9 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 上游未保存软门：unsavedUpstream（ProjectGroup 按步进器状态算）置顶 + 「去评审」，与收尾软门共用二击；
                              # 工作区名在标题行，不挂弹层 title（会悬浮压正文））、
                              # ResearchToolPreflight（开工技能/工具只读预检：全部就绪只出一行「已启用到 X」，有缺口才展开带分发/重测的块）、
+                             # FigureVisionNotice（开工弹层「技能」行下：步骤挂 review-figures 而所选模型能力库查到不能看图 / 查不到时提醒一行，文案在 figure-vision.ts）、
                              # StepSkillsChips（步骤推荐技能 chip 区：只读/可编辑两态 + 产物冲突/跨步骤链路 ⚠ 警告行；bare = 不画标题行，供开工弹层标签列用）、
-                             # HumanTasksList（人工事项清单 + useHumanTasks 共享逻辑；待确认清完且未手动取消才自动勾）、StepFlow（步骤内协同流程线；付费墙行已登录显示「已登录」，未登录才是「登录学校账号」；拖进待获取清单按文件名、DOI 和 PDF 内标题对条目）、
+                             # HumanTasksList（人工事项清单 + useHumanTasks 共享逻辑；待确认清完且未手动取消才自动勾）、StepFlow（步骤内协同流程线；付费墙行已登录显示「已登录」，未登录才是「登录学校账号」（直接调起浏览器，点「登录好了」记本机标记，见 inst-access）；拖进待获取清单按文件名、DOI、PDF 元数据里的 DOI 和 PDF 内标题对条目）、
                              # ScheduleSection（定时任务：唯一挂载点是项目「定时任务」页签 ProjectSchedulesView；
                              #   onSchedulesChanged = 任务集变更回调，定时任务页里喂 ProjectSchedulesView 的版本号桥；
                              #   2026-10-23：CadenceFields 五种周期（每天/工作日/每周/每 N 小时/仅手动）三个弹层共用；行内「下次 …」、
@@ -72,6 +73,10 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   页内标记 marks 按页 memo 交 PdfPageView）、
                              #   阅读区 2026-10-18 补齐：笔记 watcher 自订一份（标注高亮与「让 AI 起草」显隐看盘上笔记）、
                              #   reader_paper_title 顶栏真实题名、标注增删/在笔记里看/笔记→PDF 跳转接线、悬浮译文卡 floatBounds（PDF 栏边界）、
+                             #   spotCheck prop = 精读步抽查核对档（2026-10-23：pdfPath/notePath 按篇由 spot_check_item 解析，工作区笔记只读，
+                             #   右栏换问题单、不派阅读会话；口径 terminal.md「抽查核对档」）、
+                             # SpotCheckPanel（抽查核对档的部件：useSpotCheck 状态 hook（当前篇/已看/解析缓存/问题单）、
+                             #   SpotCheckStrip 顶栏下切篇条、SpotAbstractPane 无 PDF 时中栏摘要、SpotCheckPanel 右栏问题单与两个收尾按钮）、
                              # TemplatePickModal（科研项目注册成功后的研究流程模板选择层：顶部课题主题 +
                              # 六套内置模板 + 「不使用研究流程」（写 pipeline_opt_out 标记；只读文献走这条）/
                              # 「稍后再选」（不留痕，已填主题仍落盘）两出口）、
@@ -182,6 +187,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # （Agent/配置/模型三段共用；隐藏配置沉「已停用（可手选）」组）
   components/StepEvidenceChip.tsx # 步骤卡证据徽标：读当前步骤报告，显示质量状态与未决标记计数（解析在 step-evidence.ts）
   components/ReviewDecisionList.tsx # 步骤上的审查/待核实清单：逐条接受、拒绝、修改，写回报告后再接回对话
+  components/HandbackPanels.tsx # 定稿步「打开清单 / 打开填写」展开的面板：许可清单一篇一行（文章页、状态下拉即存、原图文件夹），投稿声明一节一框离开即存
   components/PendingConfirmList.tsx # 检索步文献清单：待确认纳入/排除、已纳入移出、已排除恢复；行上现查 IF/分区/TOP；
                              #   指标表状态与排序跟在「纳入所选 / 排除所选」右侧，没有待确认时单独靠右
   components/ProjectFilesView.tsx # 项目面「文件」页：左目录树右预览（v3.231 三态合一）。watch_dir/fs-changed 自动跟上
@@ -743,8 +749,10 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   loadSessionTemplateValues = 每个占位符此刻的内容（project-context.ts sessionTemplateValues，与渲染同一出处）
   notes-progress.ts          # 精读进度：notes/index.json 按 reviewStatus=reviewed（旧索引的 done/read 同义）数已写笔记、按 fulltextStatus 分全文/仅摘要，
                              #   StepFlow 精读步「AI 干活」行下一行进度（工作区优先、项目根兜底）；spotCheckPicks =
-                             #   「抽查 3 篇笔记」三篇候选（全文/仅摘要各取中间一篇再从尾部补，确定性；tests/notes-progress.test.ts）；
+                             #   「抽查 3 篇笔记」三篇候选（全文/仅摘要各取中间一篇再从尾部补，确定性，带 included.json id；tests/notes-progress.test.ts）；
                              #   excludedIncludedIds：included.json 里 decision=excluded 的篇不进进度分母
+  spot-check.ts              # 抽查核对档纯逻辑：SpotCheckSession（readerReq.spotCheck 外形）、问题单按 base 记 localStorage、
+                             #   spotCheckFocus 每篇要看什么、buildSpotCheckPrompt 交回这一步 AI 的消息（按篇分组带出处，tests/spot-check.test.ts）
   stepper-status.ts          # 步进器圆下状态小字的文案与色（待开始/检查中不写，进行中按终端注意力细分等你确认/等你查看；
                              #   ProjectGroup 状态带唯一出处，tests/stepper-status.test.ts）
   research-report.ts         # 研究报告节抽取/相对路径解析（只认显式报告节，不认 TASK 指令或推断结论）
@@ -755,13 +763,17 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 移出：removeToFetchEntry 不重排编号、removeRisRecord 按 DOI/标题删整条、notePathForRecord / bibMentionsRecord 只提示不删；
                              # 接口缓存、脚本、.gitignore 进「过程」，不进非 Git 产物清单；
                              # pendingConfirmCleared = 有篇且无 pending，步骤卡据此自动勾「核对待确认篇目」（tests/screening-review.test.ts）
+                             # risBody / includedMdLine 与检索步脚本 lit_records.py 的 ris_block / md_line 同一拼法（双端镜像，
+                             #   tests/lit-records.test.ts 逐条比对）；「待补」不进任何 RIS 标签（filled）
   review-file-groups.ts      # 精读/写作评审文件分组：笔记/稿件/引文/待获取/过程（tests/review-file-groups.test.ts）
   closeout-pack.ts           # 项目卡完结清单：最终稿 / 源稿 / 图 / 文献 / 核对 / 笔记（tests/closeout-pack.test.ts）；
                              #   索引里没有的笔记（沉浸阅读建的）按 list_paper_notes 来源行配 PDF、题名取 PDF 文件名
   research-tools.ts          # 科研工具注入 withResearchTools；定稿步同时挂 output/endnote.docx 与 output/zotero.docx（LaTeX 不挂）；
   skill-slots.ts             # 技能位单一出处：{skill:锚名} 占位解析（provides 优先、名字兜底）、行为键判定、provides 映射 hook；锚名闭集见 pipeline.md（tests/skill-slots.test.ts）
-                             # 域稿刷新收成一句可选「换样式时打开域稿」，不挂文献库同步按钮；来源只认 lit_source
+                             # 域稿不再挂成定稿步人工事项（入口在完结文件，2026-10-24）；老档案的域稿行不挂文献库同步按钮；来源只认 lit_source
   review-decisions.ts        # 审查报告 R/S 与待核实 V 的拆条、接受/拒绝/修改写回、点完后的继续提示
+  handback-tasks.ts          # AI 写好、人来填再交回的人工事项（转载许可清单、投稿声明）：按标题认，给「打开」「交给 AI」与交回的话
+  handback-files.ts          # 上面两份文件的结构化读写：许可清单表格逐行拆、只改状态格；投稿声明按 ## 分节，空节写回「待填」
                              # （tests/review-decisions.test.ts）
   academic-mcp.ts            # 检索步「配置学术检索 MCP」：预设名、登录注入；登录态由 academic_mcp_login_status 回一句现状（tests/academic-mcp.test.ts）
   session-filter.ts          # 对话页筛选纯逻辑 + 列表行项目名 sessionProjectLabel（Claude 编码目录名经 claudeProjectDirName 认回项目；tests/session-filter.test.ts）；
@@ -1276,7 +1288,7 @@ src-tauri/src/
                              #   SD复合/签名直链八型），为一家修问题只动该家命中的最窄分支、禁改通用路径，
                              #   收尾逐一回归各型——细则见 pipeline.md「机构访问通道」⑦。
                              #   收货通道 A/B/C（同日深夜用户定稿「让真实浏览器干浏览器的事」，Mesa 只收货）：
-                             #   A download_inbox.rs 监听系统下载目录 + Chrome/Edge/Firefox 自定义默认下载目录收 PDF（inst_browser_open 调起系统浏览器
+                             #   A download_inbox.rs 监听系统下载目录 + Chrome/Edge/Firefox 自定义默认下载目录收 PDF，另读 Chromium 系 History 库的下载记录补「另存到别处」（只在有登记时、副本只读即删，见 safety.md）（inst_browser_open 调起系统浏览器
                              #   + 登记归属，六层过滤链收货进既有入库链——高置信命中收完进回收站、
                              #   兜底关联（文件名没对上号）原件留在下载夹并弹 inst-pdf-attention 横幅；
                              #   终端只印启动/失败/收货结果，不去重跳过刷屏——macOS 一次落盘连发多条
@@ -1348,11 +1360,16 @@ src-tauri/src/
                              # journal_metrics_status（含 downloadedAt：两份 CSV 取较新 mtime）+ check_journal_metrics_update
                              # （GitHub commits API 按数据目录查最近 commit，与本地 mtime 比对出 hasUpdate，前端静默失败）
   research_quality.rs        # 科研复现运行记录与验收决定：独立输出 ~/ccode/reproductions/；验收写 .ccode/research-acceptance.json，不替代 Git 合并
+  （技能脚本）lit-search/scripts/lit_records.py  # 题录固定脚本：enrich（Crossref 为准 + OpenAlex 关键词 + ISO 4，接口缓存在系统临时目录）/
+                             #   fetch（开放获取只取正式版或已录用稿，预印本服务器按来源级别）/ write（included.md、to-fetch.md、两份 RIS 只从 json 出）/
+                             #   check / bib（精读步从 json 写 references.bib，不另查）。依赖同目录 bridge.py（endnote-bridge 那一份）与
+                             #   journal-abbreviations.csv；skills.rs BUILTIN_SUPPORT 给 lit-search 与 lit-notes 各放一份
   endnote.rs                 # EndNote 出库：references.bib 经 endnote-bridge/scripts/bridge.py 生成
                              # library_match.py：定稿域稿只读本机 .enl / zotero.sqlite，DOI 唯一才写入记录号或条目地址
                              # papers/endnote-import.xml、.ris、.enw。RIS 作者一人一行，期刊/缩写/卷/期/页/日期/ISSN/摘要/关键词
                              # 随 bib 字段写入；没有的不编造。按钮「同步到 EndNote」把 RIS 放到下载并 open -a 交给 EndNote。
-  research_tools.rs          # 科研外部工具开工 preflight（research_tool_preflight）：Zotero 本地通道 / Origin 平台门槛
+                             # endnote_library_choices：「选这个 EndNote 库」的候选（Windows 读 EndNote 最近打开的库登记 + 文稿/桌面顶层 .enl），只列不挑
+  research_tools.rs          # 科研外部工具开工 preflight（research_tool_preflight）：Zotero 本地只读接口（只管 AI 现查库，导入与「同步到 Zotero」不走它）/ Origin 平台门槛
                              #   （只做 Windows 实机，非 Windows 必需技能=阻塞）/ Blender 探测 / EndNote 桥 /
                              #   Quarto 能否真跑（quarto-render 步骤预报，不阻塞，dep_check::probe_quarto）；
                              #   只探测，不安装、不写个人库、不启动 GUI
@@ -1362,6 +1379,8 @@ src-tauri/src/
                              # pdf_for_note 笔记→配对 PDF（来源行锚点优先；无锚点回落笔记 stem ×「type=paper 资源 + papers/ 顶层 PDF」
                              # 做 normalize_title 互相包含（2026-09-20 起 papers/ 直扫：agent 直下全文没走登记通道也能配），多命中取最长，无命中返回 None；lit_watch.rs normalize_title 提 pub(crate) 复用）+
                              # reader_for_note 归属反查版（注册项目根直含 / 工作区 worktree 映射主仓副本，未合并明确报错）+
+                             # spot_check_item 抽查核对档一篇（2026-10-23：笔记限 base/notes，base 为本项目工作区即只读——不映射主仓；
+                             # PDF 项目根配对优先、再看 included.json pdf 字段；题名/摘要取 included.json，「待补」「待核」不算）+
                              # read_image_bytes 图片通道（png/jpg/jpeg/gif/webp/svg、20MB，白名单判定复用 pdf.rs 内核）+
                              # read_audio_bytes 聊天层音频通道（mp3/wav/m4a/aac/aiff/flac/ogg、20MB、文件头校验，同一套白名单）+
                              # save_reader_capture 圈选截图落 notes/assets/（PNG 魔数 + 同秒重名 -2/-3；写入内核 write_notes_asset
@@ -1405,13 +1424,15 @@ src-tauri/src/
                              # 计数口径与前端 step-flow.ts parseToFetchItems 双端镜像：编号/列表行都算，裸行须带「 — DOI」尾巴，说明行与「待补」不算）、import_human_deliverable
                              # 交付导入（复制落点 + 登记提货单；v3.74 起 step/title 可选 + target_override 固定落点，
                              # 无步骤语境 = papers/imports/ 检索结果导入落主仓）、list_help_requests（.ccode/help-wanted.md 人工请求扫描）
+                             # 非 Git 产物冻结/带回（workspace_review_deliverables / apply_delivery_review）；workspace_delivery_skip 逐个勾掉不带回
+                             # （skipped.json 按 SHA-256 记，归档守卫对勾掉的同一版放行，见 pipeline.md）
   portwatch.rs               # 端口监控：LISTEN 列表、归属标注（cwd 最长前缀，回落 CCODE_PORT 段）、校验后 SIGTERM
   ws_settings.rs             # .ccode/settings.toml 三层合并（用户→仓库→local）；开步自动写 quarto 渲染脚本
   git_info.rs                # git 状态/累计 diff/逐 hunk/勾选提交临时索引；
                              # MERGE_HEAD → merging + git_abort_merge；porcelain 冲突码归 U
   fs_tree.rs                 # 文件树与文件操作（删除走系统回收站 trash；重要路径删除保护，canonicalize 双校验；
                              # existing_files：聊天回复里提到的路径哪些是 cwd 内的文件（只看元数据，返回原样路径 + 规范化绝对路径）；
-                             # drop_ris_record / drop_fetch_line：移出时整份改写超过 256 KB 的 RIS 与 to-fetch.md
+                             # drop_ris_record / drop_fetch_line：移出时整份改写超过 256 KB 的 RIS 与 to-fetch.md（to-fetch.md 开头「还没有全文的 N 篇」按剩下没打 ✓ 的行重算）
                              # read_research_ledger / save_research_ledger：科研台账整份读写（16 MB 上限，白名单
                              #   papers/included.json|included.md|to-fetch.md|to-fetch.ris|endnote-import.ris|screening.md、
                              #   notes/index.json、references.bib；带版本防覆盖，与预览保存同锁）——预览通道 256 KB 截断，

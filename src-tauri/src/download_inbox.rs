@@ -215,10 +215,20 @@ fn browser_user_data_dirs() -> Vec<PathBuf> {
     out
 }
 
-fn chrome_default_directory(preferences: &str) -> Option<PathBuf> {
-    let value: serde_json::Value = serde_json::from_str(preferences).ok()?;
-    let raw = value.pointer("/download/default_directory")?.as_str()?.trim();
-    if raw.is_empty() { None } else { Some(PathBuf::from(raw)) }
+/// Chromium 偏好里两个落盘位置：默认下载目录，和「另存为」对话框上次停的目录
+/// （PDF 阅读器里点保存走的是后者——2026-10-22 用户实测：PDF 在浏览器里直接打开、
+/// 点保存，存的地方不是下载夹，收不到）
+fn chrome_default_directories(preferences: &str) -> Vec<PathBuf> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(preferences) else {
+        return Vec::new();
+    };
+    ["/download/default_directory", "/savefile/default_directory"]
+        .iter()
+        .filter_map(|key| value.pointer(key)?.as_str())
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+        .map(PathBuf::from)
+        .collect()
 }
 
 fn firefox_custom_directory(prefs: &str) -> Option<PathBuf> {
@@ -254,9 +264,7 @@ fn browser_download_dirs() -> Vec<PathBuf> {
                 continue;
             }
             if let Ok(text) = std::fs::read_to_string(&prefs) {
-                if let Some(dir) = chrome_default_directory(&text) {
-                    out.push(dir);
-                }
+                out.extend(chrome_default_directories(&text));
             }
         }
     }
@@ -443,39 +451,48 @@ enum PendingMatch {
 /// 归属匹配（纯逻辑供单测）：按时间窗 + 标题互相包含挑出 PDF 属于哪条 pending；
 /// MDPI 编号归一（文件名 reactions-07-00016 ↔ DOI 10.3390/reactions7010016）；
 /// 名字对不上时：**窗内只有一篇**才 Fallback；多篇返回 None（调用方弹横幅让人点）。
-/// 包含匹配带「短边 ≥8 字符」护栏（与 lit_watch.to_fetch_progress_inner 同款纪律）
+/// 包含匹配带「短边 ≥8 字符」护栏（与 lit_watch.to_fetch_progress_inner 同款纪律）。
+///
+/// 过了 90 秒窗、仍在登记有效期内的，只认**确凿凭据**：文件名或 PDF 元数据段（`content_dois`，
+/// XMP / 文档信息里的 DOI）带这篇的 DOI、MDPI 编号、或 ≥24 字符的标题包含（2026-10-22：
+/// 浏览器先在 PDF 阅读器里打开、人看完再点保存，学校登录也要几分钟——ACS 存下来叫
+/// cs2c00851.pdf，过了窗就只剩「下载晚了」横幅，用户以为收不到）。
 fn match_pending(
     pendings: &[PendingCatch],
     file_stem: &str,
+    content_dois: &[String],
     now: std::time::SystemTime,
 ) -> Option<PendingMatch> {
     let file_norm = crate::lit_watch::normalize_title(file_stem);
-    let in_window: Vec<usize> = pendings
-        .iter()
-        .enumerate()
-        // 时钟偏移 fail-closed（2026-09-17 修正）：opened_at 在未来（重启回拨/跨进程
-        // 落盘时间戳漂移）时 duration_since 报 Err——旧 unwrap_or(ZERO) 把它当
-        // 「刚打开」永久留在窗内；一律按出窗处理
-        .filter(|(_, p)| {
-            now.duration_since(p.opened_at)
-                .map(|d| d <= CATCH_WINDOW)
-                .unwrap_or(false)
-        })
-        .map(|(i, _)| i)
-        .collect();
-    if in_window.is_empty() {
+    let age = |p: &PendingCatch| now.duration_since(p.opened_at).ok();
+    // 时钟偏移 fail-closed（2026-09-17 修正）：opened_at 在未来（重启回拨/跨进程
+    // 落盘时间戳漂移）时 duration_since 报 Err——旧 unwrap_or(ZERO) 把它当
+    // 「刚打开」永久留在窗内；一律按出窗处理
+    let within = |limit: Duration| -> Vec<usize> {
+        pendings
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| age(p).is_some_and(|d| d <= limit))
+            .map(|(i, _)| i)
+            .collect()
+    };
+    let in_window = within(CATCH_WINDOW);
+    let in_ttl = within(PENDING_TTL);
+    if in_ttl.is_empty() {
         return None;
     }
-    // 标题互相包含（多条命中取最近打开的——旧口径取队首第一条，短 norm 先入队者截胡）
-    let title_hit = in_window
+    // 标题互相包含（多条命中取最近打开的——旧口径取队首第一条，短 norm 先入队者截胡）；
+    // 窗外要求短边 ≥24，短标题只在窗内算
+    let title_hit = in_ttl
         .iter()
         .copied()
         .filter(|&i| {
             let t = &pendings[i].title_norm;
             let short = t.len().min(file_norm.len());
+            let need = if in_window.contains(&i) { 8 } else { 24 };
             !t.is_empty()
                 && !file_norm.is_empty()
-                && short >= 8
+                && short >= need
                 && (t.contains(&file_norm) || file_norm.contains(t))
         })
         .max_by_key(|&i| pendings[i].opened_at);
@@ -487,7 +504,7 @@ fn match_pending(
     // 刊名+卷+期(2位)+编号(末4位)，文件名 = 刊名-卷(2位)-编号(5位)。两边都归一
     // 成「刊名+卷整数+编号整数」比较；仅 10.3390 前缀启用（分型纪律：最窄分支）
     if let Some(fkey) = mdpi_file_key(file_stem) {
-        let mdpi_hit = in_window
+        let mdpi_hit = in_ttl
             .iter()
             .copied()
             .find(|&i| mdpi_doi_key(&pendings[i].doi).as_deref() == Some(fkey.as_str()));
@@ -496,11 +513,24 @@ fn match_pending(
         }
     }
     // 文件名里带 DOI（10.1002_adma.xxx / 斜杠改成 -_）
-    let doi_hit = in_window
+    let doi_hit = in_ttl
         .iter()
         .copied()
         .find(|&i| doi_in_stem(&pendings[i].doi, file_stem));
     if let Some(i) = doi_hit {
+        return Some(PendingMatch::Hit(i));
+    }
+    // PDF 元数据段带完整 DOI（`lit_watch::pdf_meta_dois`：XMP / 文档信息，ACS 在开头、
+    // Elsevier 在结尾）。只认与登记完全相等的 DOI：后缀片段撞上别篇的面太大
+    let content_hit = in_ttl
+        .iter()
+        .copied()
+        .filter(|&i| {
+            let doi = pendings[i].doi.trim().to_ascii_lowercase();
+            doi.len() >= 8 && content_dois.iter().any(|t| *t == doi)
+        })
+        .max_by_key(|&i| pendings[i].opened_at);
+    if let Some(i) = content_hit {
         return Some(PendingMatch::Hit(i));
     }
     // 窗内只开了一篇：文件名对不上也按这篇收。开了多篇不猜。
@@ -798,13 +828,20 @@ fn ensure_watcher(app: &tauri::AppHandle) -> Result<(), String> {
             .lock()
             .ok()
             .is_some_and(|have| same_watch_dirs(&have, &dirs));
-        if same {
+        // 心跳停了：监听线程已经不在（或卡死），标记还亮着——照样重起
+        if same && !watcher_stalled() {
             return Ok(());
+        }
+        if !same {
+            dinbox_log("下载目录变了，按新目录重启监听");
+        } else {
+            dinbox_log("监听心跳停了，重启监听");
         }
         WATCHER_STOP.store(true, std::sync::atomic::Ordering::Release);
         let restart = app.clone();
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(400));
+            WATCHER_BEAT.store(0, std::sync::atomic::Ordering::Release);
             WATCHER_RUNNING.store(false, std::sync::atomic::Ordering::Release);
             WATCHER_STOP.store(false, std::sync::atomic::Ordering::Release);
             let _ = ensure_watcher(&restart);
@@ -868,6 +905,15 @@ fn is_pdf_path(p: &Path) -> bool {
     p.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| e.eq_ignore_ascii_case("pdf"))
+}
+
+/// 这一轮看到的文件还没写完（空文件 / 大小还在变 / 尾部没 %%EOF）：撤掉 5 秒去重记录，
+/// 后续写入事件照常进来。2026-10-22 实测：Edge 另存为先建空 main.pdf、4.5 秒后才写完，
+/// 首个事件读到空文件返回，之后的写入事件全落在 5 秒去重窗里被丢，这篇再没人看
+fn release_seen(path: &Path) {
+    if let Ok(mut seen) = LAST_SEEN.lock() {
+        seen.remove(path);
+    }
 }
 
 /// dl-reports 游标（持久化到 dl-reports.cursor——进程内偏移重启归零会把全部
@@ -969,7 +1015,7 @@ fn drain_dl_reports(app: &tauri::AppHandle) {
             continue;
         }
         dinbox_log(&format!("扩展上报下载: {path}"));
-        consider_file(app, &p);
+        consider_file_guarded(app, &p);
     }
     DL_REPORT_OFFSET.store(end as u64, std::sync::atomic::Ordering::Relaxed);
     let _ = std::fs::write(&cursor_file, end.to_string());
@@ -1017,6 +1063,7 @@ fn watcher_loop(app: tauri::AppHandle, dirs: Vec<PathBuf>) {
         return;
     }
     let mut last_event = std::time::Instant::now();
+    beat();
     loop {
         // 扩展上报的下载（浏览器下载位置不在系统 Downloads 时目录监听看不见，
         // 2026-09-17 审计 #17）：helper 落 dl-reports.jsonl，这里增量消费——
@@ -1044,7 +1091,12 @@ fn watcher_loop(app: tauri::AppHandle, dirs: Vec<PathBuf>) {
         {
             break;
         }
-        match rx.recv_timeout(Duration::from_secs(15)) {
+        beat();
+        // 浏览器自己的下载记录：下到哪个文件夹都在里面（目录监听只看得见下载夹）
+        if !pending_empty {
+            drain_browser_history(&app);
+        }
+        match rx.recv_timeout(Duration::from_secs(5)) {
             Ok(Ok(event)) => {
                 last_event = std::time::Instant::now();
                 if !event_worth_considering(&event.kind) {
@@ -1060,7 +1112,7 @@ fn watcher_loop(app: tauri::AppHandle, dirs: Vec<PathBuf>) {
                     continue;
                 }
                 for p in touched {
-                    consider_file(&app, &p);
+                    consider_file_guarded(&app, &p);
                 }
             }
             Ok(Err(_)) | Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
@@ -1068,6 +1120,146 @@ fn watcher_loop(app: tauri::AppHandle, dirs: Vec<PathBuf>) {
         }
     }
     WATCHER_RUNNING.store(false, std::sync::atomic::Ordering::Release);
+}
+
+/// 事件过滤链主体：去重 → 既有快照排除 → 稳定检测（写不完就放手等 Modify）→
+/// 魔数/尾部完整性 → 归属（Hit 自动收+挪走；Fallback 收但原件留在下载夹）→ 入库
+///
+/// 监听线程只经这一层调：单个文件出错（panic）只丢这一个，线程不死。线程一死
+/// WATCHER_RUNNING 仍是 true，之后每次「官网」都以为在监听、谁也收不到（2026-10-22 实测
+/// 漏收、查不出原因时补的保险）
+fn consider_file_guarded(app: &tauri::AppHandle, path: &Path) {
+    let run = std::panic::AssertUnwindSafe(|| consider_file(app, path));
+    if std::panic::catch_unwind(run).is_err() {
+        dinbox_log(&format!("处理出错，跳过这个文件: {}", path.display()));
+    }
+}
+
+/// 监听循环心跳（UNIX 秒）。循环每 5 秒至少走一圈；ensure_watcher 见心跳停了超过
+/// 60 秒就当线程已死、重新起一个
+static WATCHER_BEAT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn beat() {
+    WATCHER_BEAT.store(now_secs(), std::sync::atomic::Ordering::Release);
+}
+
+fn watcher_stalled() -> bool {
+    let last = WATCHER_BEAT.load(std::sync::atomic::Ordering::Acquire);
+    // 稳定检测最多占 30 秒，留足余量
+    last != 0 && now_secs().saturating_sub(last) > 60
+}
+
+// ===== 浏览器下载记录（2026-10-22，用户：不论下到哪里都该收到） =====
+//
+// Chromium 系（Edge / Chrome / Brave / Chromium）把每次下载记在 profile 的 History
+// 库 downloads 表：保存路径、完成时间、类型。目录监听只看得见下载夹和默认目录，
+// 另存到别处的看不见；这里补上。只在有收货登记时读；History 没变就不读；
+// 浏览器开着时库被占用，复制一份到临时目录只读查询、读完即删；只取登记之后完成的
+// PDF 下载行，不读浏览历史。
+
+/// 每份 History 上次看过的修改时间与大小（没变就跳过）
+static HISTORY_STAMP: std::sync::LazyLock<Mutex<HashMap<PathBuf, (std::time::SystemTime, u64)>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+/// 已经送去判定过的下载（guid）
+static HISTORY_DONE: std::sync::LazyLock<Mutex<std::collections::HashSet<String>>> =
+    std::sync::LazyLock::new(|| Mutex::new(std::collections::HashSet::new()));
+
+/// Chromium 时间戳（1601-01-01 起的微秒）
+fn chromium_micros(t: std::time::SystemTime) -> i64 {
+    const EPOCH_GAP_US: i64 = 11_644_473_600_000_000;
+    t.duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_micros() as i64 + EPOCH_GAP_US)
+        .unwrap_or(0)
+}
+
+fn browser_history_files() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for root in browser_user_data_dirs() {
+        let Ok(rd) = std::fs::read_dir(&root) else { continue };
+        for entry in rd.flatten().take(12) {
+            let history = entry.path().join("History");
+            if history.is_file() {
+                out.push(history);
+            }
+        }
+    }
+    out
+}
+
+/// 从 History 库（副本）读 `since` 之后完成的 PDF 下载：(guid, 保存路径)
+fn completed_pdf_downloads(db: &Path, since: std::time::SystemTime) -> Vec<(String, PathBuf)> {
+    let Ok(conn) = rusqlite::Connection::open_with_flags(
+        db,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) else {
+        return Vec::new();
+    };
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT guid, target_path, mime_type FROM downloads \
+         WHERE state = 1 AND end_time > ?1 ORDER BY end_time",
+    ) else {
+        return Vec::new();
+    };
+    let rows = stmt.query_map([chromium_micros(since)], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, Option<String>>(2)?.unwrap_or_default(),
+        ))
+    });
+    let Ok(rows) = rows else {
+        return Vec::new();
+    };
+    rows.flatten()
+        .filter(|(_, path, mime)| {
+            !path.is_empty() && (mime.eq_ignore_ascii_case("application/pdf") || is_pdf_path(Path::new(path)))
+        })
+        .map(|(guid, path, _)| (guid, PathBuf::from(path)))
+        .collect()
+}
+
+fn drain_browser_history(app: &tauri::AppHandle) {
+    // 最早一条有效登记之前的下载与这次收货无关
+    let Some(since) = PENDING.lock().ok().and_then(|q| q.iter().map(|p| p.opened_at).min()) else {
+        return;
+    };
+    let since = since.checked_sub(Duration::from_secs(10)).unwrap_or(since);
+    for history in browser_history_files() {
+        let Ok(meta) = std::fs::metadata(&history) else { continue };
+        let stamp = (meta.modified().unwrap_or(std::time::UNIX_EPOCH), meta.len());
+        let changed = HISTORY_STAMP
+            .lock()
+            .map(|mut m| m.insert(history.clone(), stamp) != Some(stamp))
+            .unwrap_or(false);
+        if !changed {
+            continue;
+        }
+        let copy = std::env::temp_dir().join(format!(
+            "mesa-history-{}-{}.sqlite",
+            std::process::id(),
+            now_secs()
+        ));
+        if std::fs::copy(&history, &copy).is_err() {
+            continue;
+        }
+        let rows = completed_pdf_downloads(&copy, since);
+        let _ = std::fs::remove_file(&copy);
+        for (guid, path) in rows {
+            let fresh = HISTORY_DONE.lock().map(|mut s| s.insert(guid)).unwrap_or(false);
+            if !fresh || !path.is_file() || already_considered(&path) {
+                continue;
+            }
+            dinbox_log(&format!("浏览器下载记录: {}", path.display()));
+            consider_file_guarded(app, &path);
+        }
+    }
 }
 
 /// 事件过滤链主体：去重 → 既有快照排除 → 稳定检测（写不完就放手等 Modify）→
@@ -1127,12 +1319,14 @@ fn consider_file(app: &tauri::AppHandle, path: &Path) {
     // 进回收站，完整版永远收不进）；后续 Modify 事件会重走稳定检测
     if !settled {
         dinbox_log(&format!("仍在写入，放手等下一次事件: {}", path.display()));
+        release_seen(path);
         return;
     }
     // ⑤ 魔数 + 上限（下载内容可能是「另存网页」的 HTML）。超 60MB 不再静默
     // （终检二轮：>40MB 改道已承诺自动收，超限静默丢弃变成无痕丢失归属）——
     // TTL 内有 pending 时发 oversize 提示，没有 pending 的无关大文件保持安静
     if len == 0 {
+        release_seen(path);
         return;
     }
     if len > crate::lit_watch::DOWNLOAD_CAP as u64 {
@@ -1155,7 +1349,10 @@ fn consider_file(app: &tauri::AppHandle, path: &Path) {
     }
     let bytes = match std::fs::read(path) {
         Ok(b) => b,
-        Err(_) => return,
+        Err(_) => {
+            release_seen(path);
+            return;
+        }
     };
     if !crate::lit_watch::looks_like_pdf(&bytes) {
         dinbox_logbuf(&format!("非 PDF 跳过：{}", name.to_string_lossy()));
@@ -1168,6 +1365,7 @@ fn consider_file(app: &tauri::AppHandle, path: &Path) {
             "尾部无 %%EOF（可能仍在写入），等下一次事件: {}",
             path.display()
         ));
+        release_seen(path);
         return;
     }
     // ⑥ 归属匹配；Hit 即消费（出队落盘，同一登记不占后续下载的窗口名额），
@@ -1176,6 +1374,8 @@ fn consider_file(app: &tauri::AppHandle, path: &Path) {
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
+    // PDF 元数据段的 DOI：文件名是出版商编号（cs2c00851 / main）时靠它认
+    let head = crate::lit_watch::pdf_meta_dois(&bytes);
     let matched = PENDING.lock().ok().and_then(|mut q| {
         dinbox_logbuf(&format!(
             "归属判定: stem={stem:?} 窗内登记 {} 条",
@@ -1188,7 +1388,7 @@ fn consider_file(app: &tauri::AppHandle, path: &Path) {
                 })
                 .count()
         ));
-        match match_pending(&q, &stem, first_seen) {
+        match match_pending(&q, &stem, &head, first_seen) {
             Some(PendingMatch::Hit(i)) => {
                 let p = q.get(i).cloned();
                 if let Some(kept) = q.get(i) {
@@ -1319,14 +1519,62 @@ mod tests {
     }
 
     #[test]
+    fn browser_history_lists_completed_pdfs_after_since() {
+        // 结构按 Edge 实测 downloads 表的相关列（2026-10-22）
+        let dir = std::env::temp_dir().join(format!("mesa-hist-{}-{}", std::process::id(), now_secs()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("History");
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE downloads (id INTEGER PRIMARY KEY, guid TEXT, target_path TEXT, \
+             end_time INTEGER, state INTEGER, mime_type TEXT);",
+        )
+        .unwrap();
+        let since = std::time::SystemTime::now() - Duration::from_secs(60);
+        let before = chromium_micros(since) - 5_000_000;
+        let after = chromium_micros(since) + 5_000_000;
+        for (guid, path, end, state, mime) in [
+            ("old", "D:\\x\\old.pdf", before, 1, "application/pdf"),
+            ("mx", "D:\\papers\\1-s2.0-S2666935821001245-main.pdf", after, 1, "application/pdf"),
+            ("ext", "D:\\x\\noext", after, 1, "application/pdf"),
+            ("half", "D:\\x\\half.pdf", after, 0, "application/pdf"),
+            ("zip", "D:\\x\\data.zip", after, 1, "application/zip"),
+        ] {
+            conn.execute(
+                "INSERT INTO downloads (guid, target_path, end_time, state, mime_type) VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![guid, path, end, state, mime],
+            )
+            .unwrap();
+        }
+        drop(conn);
+        let got: Vec<String> = completed_pdf_downloads(&db, since).into_iter().map(|(g, _)| g).collect();
+        // 登记之前的、没下完的、不是 PDF 的都不要；按类型认，不挑扩展名
+        assert_eq!(got, vec!["mx", "ext"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn chromium_time_matches_edge_rows() {
+        // Edge 实测（MXene 那次下载）：start_time 13437145524762633 = 2026-10-22 12:25:24 UTC
+        let t = std::time::UNIX_EPOCH + Duration::from_secs(1_792_671_924);
+        assert_eq!(chromium_micros(t) / 1_000_000, 13_437_145_524);
+    }
+
+    #[test]
     fn browser_download_dirs_read_custom_defaults_only() {
         let chrome = r#"{"download":{"default_directory":"/Users/me/Literature"},"other":1}"#;
         assert_eq!(
-            chrome_default_directory(chrome).unwrap(),
-            PathBuf::from("/Users/me/Literature")
+            chrome_default_directories(chrome),
+            vec![PathBuf::from("/Users/me/Literature")]
         );
-        assert!(chrome_default_directory(r#"{"download":{"default_directory":""}}"#).is_none());
-        assert!(chrome_default_directory("not json").is_none());
+        // PDF 阅读器里点保存落在「另存为」上次停的目录
+        let both = r#"{"download":{"default_directory":"/Users/me/Literature"},"savefile":{"default_directory":"/Users/me/Desktop"}}"#;
+        assert_eq!(
+            chrome_default_directories(both),
+            vec![PathBuf::from("/Users/me/Literature"), PathBuf::from("/Users/me/Desktop")]
+        );
+        assert!(chrome_default_directories(r#"{"download":{"default_directory":""}}"#).is_empty());
+        assert!(chrome_default_directories("not json").is_empty());
 
         let firefox = [
             r#"user_pref("browser.download.folderList", 2);"#,
@@ -1354,7 +1602,7 @@ mod tests {
         let stem =
             "Development of a chloride-free dual-salt electrolyte for magnesium-sulfur batteries";
         assert_eq!(
-            match_pending(&q, stem, std::time::SystemTime::now()),
+            match_pending(&q, stem, &[], std::time::SystemTime::now()),
             Some(PendingMatch::Hit(0))
         );
     }
@@ -1365,7 +1613,7 @@ mod tests {
         // ——原件留在下载夹、应用内横幅交代归属依据（2026-09-17 审计改口径）
         let q = vec![pending("Some Paper", Duration::from_secs(30))];
         assert_eq!(
-            match_pending(&q, "unrelated download", std::time::SystemTime::now()),
+            match_pending(&q, "unrelated download", &[], std::time::SystemTime::now()),
             Some(PendingMatch::Fallback(0))
         );
     }
@@ -1378,7 +1626,7 @@ mod tests {
             pending("Paper B another distinct title", Duration::from_secs(20)),
         ];
         assert_eq!(
-            match_pending(&q, "unrelated", std::time::SystemTime::now()),
+            match_pending(&q, "unrelated", &[], std::time::SystemTime::now()),
             None
         );
     }
@@ -1391,7 +1639,7 @@ mod tests {
         b.doi = "10.1016/j.jallcom.2026.190140".into();
         let q = vec![a, b];
         assert_eq!(
-            match_pending(&q, "10.1002_adma.202304268", std::time::SystemTime::now()),
+            match_pending(&q, "10.1002_adma.202304268", &[], std::time::SystemTime::now()),
             Some(PendingMatch::Hit(0))
         );
     }
@@ -1412,7 +1660,7 @@ mod tests {
         let stem = "Magnetic materials based sensors for battery systems";
         // A 的 norm（8 字符）虽达护栏，但多条包含命中取最近打开 → B
         assert_eq!(
-            match_pending(&q, stem, std::time::SystemTime::now()),
+            match_pending(&q, stem, &[], std::time::SystemTime::now()),
             Some(PendingMatch::Hit(1))
         );
         // 超短 norm（2 字符）永不构成命中：只剩 Fallback
@@ -1423,6 +1671,7 @@ mod tests {
             match_pending(
                 &[tiny],
                 "Magnetic materials based sensors",
+                &[],
                 std::time::SystemTime::now()
             ),
             Some(PendingMatch::Fallback(0))
@@ -1433,9 +1682,62 @@ mod tests {
     fn out_of_window_not_matched() {
         let q = vec![pending("Old Paper", CATCH_WINDOW + Duration::from_secs(5))];
         assert_eq!(
-            match_pending(&q, "Old Paper", std::time::SystemTime::now()),
+            match_pending(&q, "Old Paper", &[], std::time::SystemTime::now()),
             None
         );
+    }
+
+    #[test]
+    fn past_window_needs_firm_evidence() {
+        // 浏览器先在 PDF 阅读器里打开、几分钟后才点保存（2026-10-22 实测 ACS：
+        // 存下来叫 cs2c00851.pdf）：过了 90 秒窗，PDF 元数据里带本篇 DOI 照收
+        let mut acs = pending(
+            "Pt–Ru Dimer Electrocatalyst with Electron Redistribution for Hydrogen Evolution Reaction",
+            Duration::from_secs(300),
+        );
+        acs.doi = "10.1021/acscatal.2c00851".into();
+        let xmp = crate::lit_watch::pdf_meta_dois(
+            b"%PDF-1.7\n<dc:identifier>10.1021/acscatal.2c00851</dc:identifier>\n",
+        );
+        let now = std::time::SystemTime::now();
+        assert_eq!(
+            match_pending(std::slice::from_ref(&acs), "cs2c00851", &xmp, now),
+            Some(PendingMatch::Hit(0))
+        );
+        // 长标题包含也算；名字对不上又没 DOI 的，窗外不猜
+        assert_eq!(
+            match_pending(
+                std::slice::from_ref(&acs),
+                "Pt-Ru Dimer Electrocatalyst with Electron Redistribution",
+                &[],
+                now
+            ),
+            Some(PendingMatch::Hit(0))
+        );
+        assert_eq!(match_pending(std::slice::from_ref(&acs), "main (1)", &[], now), None);
+        // 只认完整 DOI：别篇的 DOI 不算
+        assert_eq!(
+            match_pending(
+                std::slice::from_ref(&acs),
+                "main (1)",
+                &["10.1021/acscatal.2c00852".to_string()],
+                now
+            ),
+            None
+        );
+        // Elsevier：文件名 main.pdf，DOI 带括号、在文档信息里转义
+        let mut els = pending(
+            "An efficient and stable high-entropy alloy electrocatalyst for hydrogen evolution reaction",
+            Duration::from_secs(400),
+        );
+        els.doi = "10.1016/s1872-2067(24)60067-7".into();
+        let info = crate::lit_watch::pdf_meta_dois(
+            b"%PDF-1.7\n/doi (10.1016/S1872-2067\\(24\\)60067-7)\n",
+        );
+        assert_eq!(match_pending(std::slice::from_ref(&els), "main", &info, now), Some(PendingMatch::Hit(0)));
+        // 过了登记有效期一律不收
+        acs.opened_at = now - PENDING_TTL - Duration::from_secs(5);
+        assert_eq!(match_pending(&[acs], "cs2c00851", &xmp, now), None);
     }
 
     #[test]
@@ -1451,7 +1753,7 @@ mod tests {
             opened_at: std::time::SystemTime::now() + Duration::from_secs(300),
         }];
         assert_eq!(
-            match_pending(&q, "Future Paper", std::time::SystemTime::now()),
+            match_pending(&q, "Future Paper", &[], std::time::SystemTime::now()),
             None
         );
     }
@@ -1487,12 +1789,12 @@ mod tests {
         b.doi = "10.3390/reactions7010016".into();
         let q = vec![a, b];
         assert_eq!(
-            match_pending(&q, "reactions-07-00016", std::time::SystemTime::now()),
+            match_pending(&q, "reactions-07-00016", &[], std::time::SystemTime::now()),
             Some(PendingMatch::Hit(1))
         );
         // 非 MDPI 文件名、窗内两篇：不猜
         assert_eq!(
-            match_pending(&q, "main (1)", std::time::SystemTime::now()),
+            match_pending(&q, "main (1)", &[], std::time::SystemTime::now()),
             None
         );
     }

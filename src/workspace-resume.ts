@@ -84,3 +84,42 @@ export function workspaceCarrySource(
     title: hit.customTitle?.trim() || hit.title,
   };
 }
+
+/** 步骤「继续」走哪条路（2026-10-22 用户拍板：同一家 Agent 默认接回原会话）。
+ *  resume = 上次的工作区对话就是这家，接回它；carry = 上次是另一家，先问要不要带接力简报；
+ *  fresh = 没有可接的，或人点了「新开一轮」（也不问带不带）。挑选口径同 pickWorkspaceResume。 */
+export function continueRoute(
+  sessions: SessionMetaDto[],
+  workspaceName: string,
+  repoPath: string,
+  agentId: string,
+  fresh = false,
+):
+  | { kind: "resume"; sessionId: string }
+  | { kind: "carry"; source: NonNullable<ReturnType<typeof workspaceCarrySource>> }
+  | { kind: "fresh" } {
+  if (fresh) return { kind: "fresh" };
+  const prior = pickWorkspaceResume(sessions, workspaceName, repoPath);
+  if (prior && prior.agentId === agentId.trim()) return { kind: "resume", sessionId: prior.sessionId };
+  const source = workspaceCarrySource(sessions, workspaceName, repoPath, agentId);
+  return source ? { kind: "carry", source } : { kind: "fresh" };
+}
+
+/** 这个工作区里还在跑的那条对话（CLI 进程活着）。「去终端看看 / 回答」用它找持有的标签，
+ *  不 resume——活会话再 resume 一份就是两个 CLI 抢同一会话。 */
+export function pickLiveWorkspaceSession(
+  sessions: SessionMetaDto[],
+  workspaceName: string,
+  repoPath: string,
+): { agentId: string; sessionId: string } | null {
+  const repo = repoPath.replace(/[\\/]+$/, "");
+  const hit = sessions.find(
+    (s) =>
+      s.workspace === workspaceName &&
+      s.projectPath.replace(/[\\/]+$/, "") === repo &&
+      !s.archived &&
+      !s.internal &&
+      s.live,
+  );
+  return hit ? { agentId: hit.agent, sessionId: hit.sessionId } : null;
+}

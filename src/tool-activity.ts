@@ -90,7 +90,7 @@ function normName(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-function kindOf(name: string): ActivityKind {
+export function kindOf(name: string): ActivityKind {
   const n = normName(name);
   for (const [kind, names] of NAMES) if (names.includes(n)) return kind;
   return "other";

@@ -87,14 +87,89 @@ def endnote_pointer(project_root: Path | None) -> Path | None:
     return Path(lines[0]).expanduser()
 
 
+def _legacy_note(path: Path) -> str:
+    """EndNote X9 及更早：.enl 只是个壳，记录在同名 .Data/rdb（内嵌 MySQL 表），脚本直接读不了。"""
+    data = path.with_suffix(".Data")
+    if (data / "rdb").is_dir():
+        return (
+            "这是 EndNote X9 及更早版本的库（记录在 .Data/rdb 里），脚本直接读不了。"
+            "在 EndNote 里打开这个库，File → Export，「保存类型」选 XML，存成项目里的 papers/endnote-library.xml，"
+            "再在 Mesa 精读步「同步到文献库」那一行「选这个 EndNote 库」里选这份 XML，重出 EndNote 版 Word。"
+        )
+    return ""
+
+
+def _xml_text(node) -> str:
+    return "".join(node.itertext()).strip() if node is not None else ""
+
+
+def endnote_xml_records(path: Path) -> tuple[list[tuple[int, str, str, int]], str, str]:
+    """EndNote 导出的 XML：每条 (记录号, DOI, 题名, 入库时间戳)、库编号（db-id）、说明。
+    X9 等老库脚本读不了库文件本身，人从 EndNote 导出一份 XML，记录号和库编号都在里面。"""
+    import xml.etree.ElementTree as ET
+
+    try:
+        root = ET.parse(path).getroot()
+    except (OSError, ET.ParseError) as exc:
+        return [], "", f"EndNote 导出的 XML 读不了：{exc}"
+    rows: list[tuple[int, str, str, int]] = []
+    db_ids: set[str] = set()
+    for rec in root.iter("record"):
+        num = _xml_text(rec.find("rec-number"))
+        key = next((k for k in rec.iter("key") if k.get("app") == "EN"), None)
+        if key is not None and key.get("db-id"):
+            db_ids.add(key.get("db-id", "").strip())
+        if not num.isdigit():
+            continue
+        stamp = key.get("timestamp", "") if key is not None else ""
+        rows.append((
+            int(num),
+            _xml_text(rec.find("electronic-resource-num")),
+            _xml_text(rec.find("titles/title")),
+            int(stamp) if stamp.isdigit() else 0,
+        ))
+    if not rows:
+        return [], "", "EndNote 导出的 XML 里没有带记录号的条目（导出时选 XML 格式、导出全部文献）"
+    if len(db_ids) != 1:
+        return rows, "", "EndNote 导出的 XML 里库编号缺失或不止一个，记录号不写入域。"
+    return rows, db_ids.pop(), ""
+
+
 def endnote_index(path: Path) -> tuple[dict[str, list[int]], dict[int, int], str, str]:
     """DOI → live record ids, record id → added_to_library 时间戳, library db-id, and a note."""
     if not path.is_file():
         return {}, {}, "", f"EndNote 库不存在：{path}"
+    if path.suffix.lower() == ".xml":
+        xml_rows, db_id, note = endnote_xml_records(path)
+        if note and not db_id:
+            return {}, {}, "", note
+        rows = [(rec_id, 0, doi, added) for rec_id, doi, _title, added in xml_rows]
+    else:
+        rows, db_id, error = _endnote_sqlite_rows(path)
+        if error:
+            return {}, {}, "", (_legacy_note(path) or error)
+    index: dict[str, list[int]] = {}
+    stamps: dict[int, int] = {}
+    for rec_id, trash, doi, added in rows:
+        if trash:
+            continue
+        key = norm_doi(str(doi))
+        if doi_ok(key):
+            index.setdefault(key, []).append(int(rec_id))
+            # 外键上的 timestamp 用库里的入库时间，与 EndNote 自己插引文时写的一致。
+            if isinstance(added, int) and added > 0:
+                stamps[int(rec_id)] = added
+    if not db_id:
+        return index, stamps, "", "EndNote 库读不到库编号，记录号不写入域。"
+    return index, stamps, db_id, ""
+
+
+def _endnote_sqlite_rows(path: Path) -> tuple[list, str, str]:
+    """EndNote 20 起的库：.enl 本身是 SQLite。返回 (行, 库编号, 错误)。"""
     try:
         conn, copied = open_library_copy(path)
     except (OSError, sqlite3.Error) as exc:
-        return {}, {}, "", f"EndNote 库打不开（只读副本）：{exc}"
+        return [], "", f"EndNote 库打不开（只读副本）：{exc}"
     error = ""
     try:
         raw = conn.execute("SELECT value FROM misc WHERE code = 14 AND subcode = 0").fetchone()
@@ -123,22 +198,53 @@ def endnote_index(path: Path) -> tuple[dict[str, list[int]], dict[int, int], str
     finally:
         conn.close()
         copied.close()
-    if error:
-        return {}, {}, "", error
-    index: dict[str, list[int]] = {}
-    stamps: dict[int, int] = {}
-    for rec_id, trash, doi, added in rows:
-        if trash:
-            continue
-        key = norm_doi(str(doi))
-        if doi_ok(key):
-            index.setdefault(key, []).append(int(rec_id))
-            # 外键上的 timestamp 用库里的入库时间，与 EndNote 自己插引文时写的一致。
-            if isinstance(added, int) and added > 0:
-                stamps[int(rec_id)] = added
-    if not db_id:
-        return index, stamps, "", "EndNote 库读不到库编号，记录号不写入域。"
-    return index, stamps, db_id, ""
+    return rows, db_id, error
+
+
+def norm_title(raw: str) -> str:
+    """题名比对口径：大小写、空白、标点都不算，中文原样。只用于没有 DOI 的条目，仍要整段相等。"""
+    return re.sub(r"[\W_]+", "", (raw or "").casefold())
+
+
+def endnote_title_index(path: Path) -> dict[tuple[str, str], list[int]]:
+    """(题名, 年份) → 活记录号。只给没有 DOI 的条目用（中文期刊常没有 DOI，2026-10-24 HER：梁珂明 2020 这一条
+    两边都没有 DOI，EndNote 自己 Update 也没对上）。读不了就返回空，不影响按 DOI 绑定。"""
+    rows: list[tuple[int, str, str]] = []
+    if path.suffix.lower() == ".xml":
+        import xml.etree.ElementTree as ET
+
+        try:
+            root = ET.parse(path).getroot()
+        except (OSError, ET.ParseError):
+            return {}
+        for rec in root.iter("record"):
+            num = _xml_text(rec.find("rec-number"))
+            if num.isdigit():
+                rows.append((int(num), _xml_text(rec.find("titles/title")), _xml_text(rec.find("dates/year"))))
+    else:
+        try:
+            conn, copied = open_library_copy(path)
+        except (OSError, sqlite3.Error):
+            return {}
+        try:
+            rows = [
+                (int(rec_id), str(title or ""), str(year or ""))
+                for rec_id, trash, title, year in conn.execute(
+                    "SELECT id, trash_state, title, year FROM refs"
+                ).fetchall()
+                if not trash
+            ]
+        except sqlite3.Error:
+            rows = []
+        finally:
+            conn.close()
+            copied.close()
+    index: dict[tuple[str, str], list[int]] = {}
+    for rec_id, title, year in rows:
+        key = norm_title(title)
+        if key:
+            index.setdefault((key, year.strip()[:4]), []).append(rec_id)
+    return index
 
 
 def bind_endnote(records: dict[str, dict], cited: list[str], library: Path | None, project_root: Path | None = None) -> list[str]:
@@ -146,13 +252,14 @@ def bind_endnote(records: dict[str, dict], cited: list[str], library: Path | Non
         library = endnote_pointer(project_root)
     if library is None:
         return ["未指定 EndNote 库，记录号未绑定。把库的绝对路径写进 papers/endnote-library.path（一行），或运行时加 --endnote-library。"]
-    if library.suffix.lower() != ".enl" or not library.is_file():
-        return [f"EndNote 库路径不是已有的 .enl：{library}"]
+    if library.suffix.lower() not in (".enl", ".xml") or not library.is_file():
+        return [f"EndNote 库路径不是已有的 .enl 或 EndNote 导出的 .xml：{library}"]
     index, stamps, db_id, note = endnote_index(library)
     lines = [f"EndNote 库：{library}"]
     if note:
         lines.append(note)
         return lines
+    titles: dict[tuple[str, str], list[int]] | None = None
     bound = 0
     for key in cited:
         rec = records.get(key)
@@ -160,7 +267,19 @@ def bind_endnote(records: dict[str, dict], cited: list[str], library: Path | Non
             continue
         doi = norm_doi(rec.get("doi") or "")
         if not doi_ok(doi):
-            lines.append(f"- `{key}` 没有可用 DOI，未绑定")
+            # 没有 DOI：题名（去标点大小写）+ 年份在库里恰好一条才绑，否则照旧不猜
+            if titles is None:
+                titles = endnote_title_index(library)
+            hits = titles.get((norm_title(rec.get("title") or ""), str(rec.get("year") or "").strip()[:4])) or []
+            if len(hits) == 1:
+                rec["_en_rec"] = hits[0]
+                rec["_en_db"] = db_id
+                bound += 1
+                lines.append(f"- `{key}` 没有 DOI，按题名与年份对上记录 {hits[0]}")
+            elif len(hits) > 1:
+                lines.append(f"- `{key}` 没有 DOI，同题名同年份在库里有 {len(hits)} 条，未绑定")
+            else:
+                lines.append(f"- `{key}` 没有可用 DOI，库里也没有同题名同年份的记录，未绑定")
             continue
         hits = index.get(doi) or []
         if len(hits) == 1:
@@ -353,6 +472,16 @@ def endnote_stale_records(path: Path | None) -> tuple[list[str], str]:
     """EndNote 库活记录里的旧版污染清单。返回 (清单, 说明)：说明非空表示没查成。"""
     if path is None or not path.is_file():
         return [], f"EndNote 库不存在：{path}"
+    if path.suffix.lower() == ".xml":
+        xml_rows, _db, note = endnote_xml_records(path)
+        if not xml_rows:
+            return [], note
+        hits = []
+        for rec_id, doi, title, _added in xml_rows:
+            which = _stale_flag(doi, title)
+            if which:
+                hits.append(f"记录 {rec_id}（{which}）｜{title[:44]}")
+        return hits, ""
     try:
         conn, copied = open_library_copy(path)
     except (OSError, sqlite3.Error) as exc:
@@ -362,7 +491,7 @@ def endnote_stale_records(path: Path | None) -> tuple[list[str], str]:
             "SELECT id, electronic_resource_number, title FROM refs WHERE trash_state = 0"
         ).fetchall()
     except sqlite3.Error as exc:
-        return [], f"EndNote 库读不到记录：{exc}"
+        return [], (_legacy_note(path) or f"EndNote 库读不到记录：{exc}")
     finally:
         conn.close()
         copied.close()

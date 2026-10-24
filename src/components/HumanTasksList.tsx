@@ -9,6 +9,7 @@ import type {
   ProjectConfigDto,
 } from "../types";
 import { stripOptionalTitlePrefix } from "../step-flow";
+import { useAppStore } from "../store";
 
 /** 检索结果导入的固定落点（lit-search 人肉中转协议：agent 开工自动解析、去重、合并进筛选清单） */
 export const SEARCH_IMPORTS_DIR = "papers/imports/";
@@ -83,6 +84,16 @@ export function useHumanTasks({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectPath, stepName]);
+
+  // 别处勾过（阅读区抽查「都没问题」）：重取一次，流程线计数一并通知父级
+  const humanTasksTick = useAppStore((s) => s.humanTasksTick);
+  const seenTickRef = useRef(humanTasksTick);
+  useEffect(() => {
+    if (seenTickRef.current === humanTasksTick) return;
+    seenTickRef.current = humanTasksTick;
+    void reload().then(() => onChanged?.());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [humanTasksTick]);
 
   // 窗口级文件拖放：命中本清单某行 = 提交该事项的交付物
   useEffect(() => {

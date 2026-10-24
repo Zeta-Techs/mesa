@@ -1283,7 +1283,7 @@ def main(argv: list[str] | None = None) -> int:
                 "重新导入时去重认不出，旧数据会残留："
             )
             binding.extend(f"- {h}" for h in stale)
-            binding.append("处方：在 EndNote 按上面清单的标题搜索并删除这些记录，再导入新的 endnote-import.ris。")
+            binding.append("处方：在 EndNote 按上面清单的标题搜索并删除这些记录，再导入新的 endnote-library.ris。")
     body_el, images, missing_images = build_body(
         blocks, source.parent, records, rec_nums, cited, missing
     )

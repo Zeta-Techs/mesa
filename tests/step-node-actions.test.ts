@@ -197,15 +197,31 @@ test("域稿说明含 EndNote 也不挂文献库同步，审查条目不交文�
     timing: "after",
     target: "",
   });
-  assert.equal(stepNodeAction(humanNode(field), ctx({ runStatus: "review" })), null);
-  const merged = humanState({ title: "换样式时打开域稿", timing: "after", target: "" });
-  assert.equal(stepNodeAction(humanNode(merged), ctx({ runStatus: "done" })), null);
+  // 域稿给「用 Word 打开」，不挂文献库同步三连（2026-10-24）
+  assert.deepEqual(stepNodeAction(humanNode(field), ctx({ runStatus: "review" })), { kind: "open-field-docs" });
+  const merged = humanState({ title: "在 Word 里换样式（打开域稿）", timing: "after", target: "" });
+  assert.deepEqual(stepNodeAction(humanNode(merged), ctx({ runStatus: "done" })), { kind: "open-field-docs" });
+  assert.equal(stepNodeAction(humanNode(merged, { done: true }), ctx({ runStatus: "done" })), null);
   const report = humanState({
     title: "逐条决定审查报告",
     timing: "after",
     target: "manuscript/review-report.md",
   });
   assert.equal(stepNodeAction(humanNode(report), ctx({ runStatus: "review" })), null);
+});
+
+test("AI 写好、人来填的清单：给「打开 / 交给 AI」，不给「提交产物」（2026-10-24）", () => {
+  for (const [title, target] of [
+    ["换原图与申请转载许可", "submission/figure-permissions.md"],
+    ["填作者、单位与投稿声明", "submission/declarations.md"],
+  ] as const) {
+    const h = humanState({ title, timing: "after", target });
+    assert.deepEqual(stepNodeAction(humanNode(h), ctx({ runStatus: "review" })), { kind: "edit-handback" }, title);
+    assert.equal(stepNodeAction(humanNode(h, { done: true }), ctx({ runStatus: "review" })), null);
+  }
+  // 普通带落点的交付照旧
+  const spec = humanState({ title: "放入学校格式规范", timing: "before", target: "docs/format/" });
+  assert.deepEqual(stepNodeAction(humanNode(spec), ctx({ runStatus: "pending" })), { kind: "submit-deliverable" });
 });
 
 test("文献类交付：去「文献与数据」导入，按来源高亮", () => {

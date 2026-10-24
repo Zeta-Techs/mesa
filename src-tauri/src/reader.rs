@@ -494,6 +494,147 @@ pub async fn reader_for_note(note_path: String) -> Result<ReaderForNoteDto, Stri
         .map_err(|e| format!("打开沉浸阅读失败: {e}"))?
 }
 
+// ===== 精读步「抽查 3 篇笔记」：保存进项目前就在阅读区对照原文看 =====
+
+/// 抽查一篇的阅读区要素。笔记还在工作区里（待评审）时只读：人在这里改了，
+/// 评审看到的就不是 AI 交付的那一版；有问题记进问题单交回这一步的 AI。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpotCheckItemDto {
+    pub note_path: String,
+    /// 原文 PDF；仅摘要的篇通常没有
+    pub pdf_path: Option<String>,
+    pub read_only: bool,
+    /// included.json 里的题名与摘要（仅摘要的篇拿摘要当原文对照；「待补」不算）
+    pub title: Option<String>,
+    pub abstract_text: Option<String>,
+}
+
+/// papers/included.json 里按 id 找一条（数组或 {records/items/papers/entries: []} 两种外形）
+fn included_record(base: &Path, id: &str) -> Option<serde_json::Value> {
+    let text = crate::lit_watch::read_text_inside(base, "papers/included.json")
+        .ok()
+        .flatten()?;
+    let parsed: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let rows = parsed.as_array().cloned().or_else(|| {
+        ["records", "items", "papers", "entries"]
+            .iter()
+            .find_map(|k| parsed.get(*k).and_then(|v| v.as_array()).cloned())
+    })?;
+    rows.into_iter()
+        .find(|r| r.get("id").and_then(|v| v.as_str()) == Some(id))
+}
+
+fn record_text(record: Option<&serde_json::Value>, key: &str) -> Option<String> {
+    let s = record?.get(key)?.as_str()?.trim();
+    (!s.is_empty() && !s.starts_with("待补") && !s.starts_with("待核")).then(|| s.to_string())
+}
+
+/// 内核（根与 base 已 canonical、只读与否已判定）：笔记必须在 base/notes 里；
+/// PDF 先按笔记来源行 / 文件名在项目根配对（全文原始资料直写项目根 papers/），
+/// 配不上再看 included.json 的 pdf 字段（项目根优先，工作区里的只在只读档认）
+fn spot_check_item_at(
+    root: &Path,
+    base: &Path,
+    read_only: bool,
+    note_path: &str,
+    id: Option<&str>,
+) -> Result<SpotCheckItemDto, String> {
+    let rel = note_path.trim().replace('\\', "/");
+    let raw = PathBuf::from(crate::sessions::expand_tilde(&rel));
+    let note = if raw.is_absolute() {
+        raw
+    } else {
+        base.join(rel.trim_start_matches("./"))
+    };
+    if !note
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("md"))
+    {
+        return Err("只支持 Markdown 笔记（.md）".into());
+    }
+    // 带 .. 的一律拒：Windows 的 canonicalize 按字面消掉 ..，macOS / Linux 要每级目录都在，
+    // notes/ 还没建时 notes/../x.md 只报「不存在」，两边说法不一样
+    if note.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        return Err("笔记不在 notes/ 里，拒绝打开".into());
+    }
+    let note_c =
+        crate::paths::canonicalize_plain(&note).map_err(|e| format!("笔记不存在或不可读: {e}"))?;
+    if !inside(&note_c, &base.join("notes")) {
+        return Err("笔记不在 notes/ 里，拒绝打开".into());
+    }
+    let id = id.map(str::trim).filter(|s| !s.is_empty());
+    let record = id.and_then(|id| included_record(base, id).or_else(|| included_record(root, id)));
+    let mut pdf = pair_pdf_at(root, &note_c)?;
+    if pdf.is_none() {
+        if let Some(rel_pdf) = record_text(record.as_ref(), "pdf") {
+            let in_root = anchor_pdf_candidate(&rel_pdf, root).filter(|c| readable_project_pdf(root, c));
+            let in_base = || {
+                anchor_pdf_candidate(&rel_pdf, base).filter(|c| {
+                    read_only
+                        && inside(c, base)
+                        && c.is_file()
+                        && c.extension().is_some_and(|s| s.eq_ignore_ascii_case("pdf"))
+                })
+            };
+            pdf = in_root
+                .or_else(in_base)
+                .map(|c| c.to_string_lossy().replace('\\', "/"));
+        }
+    }
+    Ok(SpotCheckItemDto {
+        note_path: note_c.to_string_lossy().replace('\\', "/"),
+        pdf_path: pdf,
+        read_only,
+        title: record_text(record.as_ref(), "title"),
+        abstract_text: record_text(record.as_ref(), "abstract"),
+    })
+}
+
+/// base = notes/index.json 所在根：项目根（已保存进项目，可改），或本项目某个工作区（只读）
+fn spot_check_item_sync(
+    project_root: &str,
+    base: &str,
+    note_path: &str,
+    id: Option<&str>,
+) -> Result<SpotCheckItemDto, String> {
+    let root = gated_root(project_root)?;
+    let base_c =
+        crate::paths::canonicalize_plain(Path::new(&crate::sessions::expand_tilde(base)))
+            .map_err(|e| format!("笔记所在目录不可读: {e}"))?;
+    let read_only = !crate::paths::same_path(&base_c.to_string_lossy(), &root.to_string_lossy());
+    if read_only {
+        let conn = crate::workspaces::db()?;
+        let owned = crate::workspaces::query_workspaces(&conn)?.into_iter().any(|w| {
+            let wt = PathBuf::from(&w.worktree_path);
+            let wt = crate::paths::canonicalize_plain(&wt).unwrap_or(wt);
+            let repo = PathBuf::from(crate::sessions::expand_tilde(&w.repo_path));
+            let repo = crate::paths::canonicalize_plain(&repo).unwrap_or(repo);
+            crate::paths::same_path(&wt.to_string_lossy(), &base_c.to_string_lossy())
+                && crate::paths::same_path(&repo.to_string_lossy(), &root.to_string_lossy())
+        });
+        if !owned {
+            return Err("这份笔记不在本项目的工作区里".into());
+        }
+    }
+    spot_check_item_at(&root, &base_c, read_only, note_path, id)
+}
+
+#[tauri::command]
+pub async fn spot_check_item(
+    project_root: String,
+    base: String,
+    note_path: String,
+    id: Option<String>,
+) -> Result<SpotCheckItemDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        spot_check_item_sync(&project_root, &base, &note_path, id.as_deref())
+    })
+    .await
+    .map_err(|e| format!("打开抽查失败: {e}"))?
+}
+
 // ===== 批次 B2：图片通道 =====
 
 /// 图片单文件上限 20MB（笔记内嵌图远超此值基本是误操作）
@@ -1966,6 +2107,75 @@ mod tests {
         let err =
             pdf_for_note_sync(&root.to_string_lossy(), &outside.to_string_lossy()).unwrap_err();
         assert!(err.contains("项目目录之外"), "{err}");
+    }
+
+    // ===== 抽查笔记：工作区里的笔记配项目根的原文 =====
+
+    #[test]
+    fn spot_check_pairs_worktree_note_with_root_pdf() {
+        let (root, pdf) = project_with_pdf("spot-root", "Smith 2024 Mg cathode.pdf");
+        let wt = tmpdir("spot-wt");
+        fs::create_dir_all(wt.join("notes")).unwrap();
+        fs::create_dir_all(wt.join("papers")).unwrap();
+        fs::write(
+            wt.join("notes/012-镁正极.md"),
+            "> 来源 PDF：papers/Smith 2024 Mg cathode.pdf\n\n# 镁正极\n",
+        )
+        .unwrap();
+        fs::write(
+            wt.join("papers/included.json"),
+            r#"[{"id":"p12","title":"Mg cathode","abstract":"We report a cathode."},
+                {"id":"p13","title":"Other","abstract":"待补"}]"#,
+        )
+        .unwrap();
+        let got = spot_check_item_at(&root, &wt, true, "notes/012-镁正极.md", Some("p12")).unwrap();
+        assert!(got.read_only);
+        assert!(
+            crate::paths::same_path(got.pdf_path.as_deref().unwrap_or(""), &pdf.to_string_lossy()),
+            "{got:?}"
+        );
+        assert!(Path::new(&got.note_path).starts_with(&wt), "{got:?}");
+        assert_eq!(got.title.as_deref(), Some("Mg cathode"));
+        assert_eq!(got.abstract_text.as_deref(), Some("We report a cathode."));
+
+        // 仅摘要的篇：没有 PDF，「待补」摘要不当原文
+        fs::write(wt.join("notes/013-其他.md"), "# 其他\n").unwrap();
+        let brief = spot_check_item_at(&root, &wt, true, "notes/013-其他.md", Some("p13")).unwrap();
+        assert!(brief.pdf_path.is_none(), "{brief:?}");
+        assert!(brief.abstract_text.is_none(), "{brief:?}");
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(wt).unwrap();
+    }
+
+    #[test]
+    fn spot_check_falls_back_to_included_pdf_field() {
+        let (root, _) = project_with_pdf("spot-field", "unrelated.pdf");
+        fs::write(root.join("papers/oa-download.pdf"), b"%PDF-oa").unwrap();
+        fs::create_dir_all(root.join("notes")).unwrap();
+        fs::write(root.join("notes/001-短标题.md"), "# 短标题\n").unwrap();
+        fs::write(
+            root.join("papers/included.json"),
+            r#"{"records":[{"id":"a1","pdf":"papers/oa-download.pdf"}]}"#,
+        )
+        .unwrap();
+        let got = spot_check_item_at(&root, &root, false, "notes/001-短标题.md", Some("a1")).unwrap();
+        assert!(!got.read_only);
+        assert!(
+            got.pdf_path.as_deref().is_some_and(|p| p.ends_with("papers/oa-download.pdf")),
+            "{got:?}"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn spot_check_rejects_note_outside_notes_dir() {
+        let (root, _) = project_with_pdf("spot-out", "a.pdf");
+        fs::write(root.join("secret.md"), "# x").unwrap();
+        let err = spot_check_item_at(&root, &root, false, "secret.md", None).unwrap_err();
+        assert!(err.contains("notes/"), "{err}");
+        let err = spot_check_item_at(&root, &root, false, "notes/../secret.md", None).unwrap_err();
+        assert!(err.contains("notes/"), "{err}");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

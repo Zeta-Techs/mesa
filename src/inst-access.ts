@@ -57,6 +57,50 @@ export function instActiveFrom(status: InstSessionStatus | null): boolean {
   return status.prefixConfigured || (status.sessionPresent && status.sessionCredible !== false);
 }
 
+/** 「登录学校账号」打开的地址：登录入口 > 前缀 > 默认 CARSI（设置页与付费墙行同一口径） */
+export function instLoginOpenUrl(loginUrl?: string | null, prefix?: string | null): string {
+  return (loginUrl ?? "").trim() || (prefix ?? "").trim() || DEFAULT_INST_LOGIN_URL;
+}
+
+/** 浏览器登录标记（2026-10-22）：默认通道在系统浏览器里登录，Mesa 读不到那边的会话，
+ *  只能记下人点「登录好了」的时间。只管界面显示「已登录」——不算机构通道可用，
+ *  无头取全文仍只认前缀或内嵌会话（instActiveFrom）。 */
+const INST_BROWSER_LOGIN_KEY = "ccode.instBrowserLoginAt";
+/** 设置页与付费墙行都挂着，同一窗口里 storage 事件不触发，改了靠这个互相通知 */
+export const INST_BROWSER_LOGIN_EVENT = "ccode-inst-browser-login";
+/** 学校统一认证的登录多在一周内失效；过了就当没登录，按钮回来 */
+export const INST_BROWSER_LOGIN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+export function instBrowserLoginFresh(at: number | null, now: number): boolean {
+  return at != null && at <= now && now - at < INST_BROWSER_LOGIN_TTL_MS;
+}
+
+export function readInstBrowserLogin(): number | null {
+  try {
+    const at = Number(localStorage.getItem(INST_BROWSER_LOGIN_KEY));
+    return Number.isFinite(at) && at > 0 ? at : null;
+  } catch {
+    return null;
+  }
+}
+
+/** null = 清掉标记 */
+export function writeInstBrowserLogin(at: number | null): void {
+  try {
+    if (at == null) localStorage.removeItem(INST_BROWSER_LOGIN_KEY);
+    else localStorage.setItem(INST_BROWSER_LOGIN_KEY, String(at));
+  } catch {
+    /* 写不进就只靠本次 */
+  }
+  window.dispatchEvent(new Event(INST_BROWSER_LOGIN_EVENT));
+}
+
+/** 「已登录」旁的日期：M月D日 */
+export function instBrowserLoginDay(at: number): string {
+  const d = new Date(at);
+  return `${d.getMonth() + 1}月${d.getDate()}日`;
+}
+
 /** 「获取全文」按钮可见性（不摆装死钮原则）：
  *  - 裸 DOI / doi.org 链接：可查合法开放副本（Unpaywall/OpenAlex），离线也值得试；
  *  - 其余 http(s) 落地页：仅机构通道可用时才给（后端会走前缀改写 + 落地页提取）；

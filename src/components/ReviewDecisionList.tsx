@@ -6,6 +6,7 @@ import {
   applyReportVerdict,
   applyVerifyVerdict,
   inlineDecisionLine,
+  itemSuggestion,
   parseReviewItems,
   reviewItemSummary,
   type ReviewItem,
@@ -35,6 +36,7 @@ export default function ReviewDecisionList({
   kind,
   onAllDecided,
   onOpenCount,
+  refreshKey,
 }: {
   worktreePath?: string | null;
   projectRoot: string;
@@ -44,10 +46,13 @@ export default function ReviewDecisionList({
   onAllDecided?: () => void;
   /** 还没决定的条数。0 表示可以勾上这一行。 */
   onOpenCount?: (count: number) => void;
+  /** 变了就重读文件（步骤的运行状态 / Agent 注意力）：这一行常在文件写出来之前就挂上了 */
+  refreshKey?: string;
 }) {
   const roots = [...new Set([worktreePath, projectRoot].filter((p): p is string => Boolean(p)))];
   const rel = target.trim();
   const [error, setError] = useState<string | null>(null);
+  const [missing, setMissing] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [items, setItems] = useState<ReviewItem[] | null>(null);
   const [fileRoot, setFileRoot] = useState(projectRoot);
@@ -66,11 +71,14 @@ export default function ReviewDecisionList({
     }
     const found = await readFirst(roots, rel);
     if (!found) {
+      // 还没写出来不等于没有条目：不放行勾选（2026-10-24 HER 润色：第一轮后就挂上这一行，
+      // 读不到清单显示「没有待核实，勾上跳过」，第二轮写出 9 条后也没再读）
       setItems([]);
-      onOpenCount?.(kind === "verify" ? 0 : 1);
-      setError(inlineDecisionLine(kind, "empty"));
+      setMissing(true);
+      onOpenCount?.(1);
       return;
     }
+    setMissing(false);
     setFileRoot(found.root);
     setText(found.file.text);
     setRevision(found.file.revision);
@@ -81,11 +89,20 @@ export default function ReviewDecisionList({
 
   useEffect(() => {
     void load();
-  }, [worktreePath, projectRoot, rel, kind]);
+  }, [worktreePath, projectRoot, rel, kind, refreshKey]);
+
+  // 文件还没写出来时隔几秒再看一眼，写出来就停
+  useEffect(() => {
+    if (!missing) return;
+    const timer = window.setInterval(() => void load(), 5000);
+    return () => window.clearInterval(timer);
+  }, [missing, worktreePath, projectRoot, rel, kind]);
 
   async function choose(item: ReviewItem, verdict: ReviewVerdict) {
     if (!revision) return;
-    const note = verdict === "修改" ? (drafts[item.id] ?? item.note).trim() : "";
+    // 框里没写就用条目自带的建议改法（灰字那句）
+    const note =
+      verdict === "修改" ? ((drafts[item.id] ?? item.note).trim() || itemSuggestion(item, kind)) : "";
     if (verdict === "修改" && !note) {
       setError(`${item.id} 选了修改，先写一句要改成什么样。`);
       return;
@@ -148,7 +165,13 @@ export default function ReviewDecisionList({
   }
 
   if (items == null) return <p className="text-micro text-l4">加载条目…</p>;
-  if (items.length === 0) return <p className="text-micro text-l4">{error}</p>;
+  if (items.length === 0) {
+    return (
+      <p className="text-micro text-l4">
+        {error ?? inlineDecisionLine(kind, missing ? "missing" : "empty")}
+      </p>
+    );
+  }
   const open = items.filter((item) => item.verdict == null);
   const busy = acceptingAll || busyId != null;
 
@@ -169,6 +192,8 @@ export default function ReviewDecisionList({
       ) : (
         <>
           <p className="mb-1 text-micro leading-5 text-l4">{inlineDecisionLine(kind, "open")}</p>
+          {/* 待核实的「接受」= 人对过原文、AI 去掉标记：一键全部接受等于没核就全转正（2026-10-24） */}
+          {kind !== "verify" && (
           <button
             type="button"
             disabled={busy}
@@ -177,6 +202,7 @@ export default function ReviewDecisionList({
           >
             {acceptingAll ? "接受中…" : "全部接受"}
           </button>
+          )}
         <ul className="max-h-72 space-y-2 overflow-auto">
           {open.map((item) => {
             const draft = drafts[item.id] ?? "";
@@ -202,14 +228,50 @@ export default function ReviewDecisionList({
                       {verdict}
                     </button>
                   ))}
-                  <input
-                    value={draft}
-                    onChange={(event) =>
-                      setDrafts((prev) => ({ ...prev, [item.id]: event.target.value }))
-                    }
-                    placeholder="修改时写一句"
-                    className="min-w-0 flex-1 rounded-sm border border-field bg-canvas px-1.5 py-0.5 text-micro text-l2 outline-none placeholder:text-l4"
-                  />
+                  {(() => {
+                    const suggestion = itemSuggestion(item, kind);
+                    // 灰字补全：框里是空的或者打的正是建议的开头，就把剩下的灰着接在后面，→ / Tab 收下
+                    const rest =
+                      suggestion && suggestion !== draft && suggestion.startsWith(draft)
+                        ? suggestion.slice(draft.length)
+                        : "";
+                    return (
+                      <div className="relative min-w-0 flex-1 rounded-sm bg-canvas" title={suggestion ? `建议改法：${suggestion}` : undefined}>
+                        {rest && (
+                          <div
+                            aria-hidden="true"
+                            className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre rounded-sm border border-transparent px-1.5 py-0.5 text-micro"
+                          >
+                            <span className="invisible">{draft}</span>
+                            <span className="text-l4">{rest}</span>
+                          </div>
+                        )}
+                        <input
+                          value={draft}
+                          aria-label={`${item.id} 修改说明`}
+                          onChange={(event) =>
+                            setDrafts((prev) => ({ ...prev, [item.id]: event.target.value }))
+                          }
+                          onKeyDown={(event) => {
+                            const el = event.currentTarget;
+                            const atEnd = el.selectionStart === draft.length && el.selectionEnd === draft.length;
+                            if (rest && atEnd && (event.key === "ArrowRight" || event.key === "Tab")) {
+                              event.preventDefault();
+                              setDrafts((prev) => ({ ...prev, [item.id]: suggestion }));
+                            }
+                          }}
+                          placeholder={
+                            suggestion
+                              ? undefined
+                              : kind === "verify"
+                                ? "修改时写一句；核不了写「改成摘要级表述」或「保留待核实」"
+                                : "修改时写一句"
+                          }
+                          className="relative w-full rounded-sm border border-field bg-transparent px-1.5 py-0.5 text-micro text-l2 outline-none placeholder:text-l4"
+                        />
+                      </div>
+                    );
+                  })()}
                 </div>
               </li>
             );

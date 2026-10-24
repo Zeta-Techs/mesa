@@ -125,3 +125,22 @@ test("索引里没有的笔记（沉浸阅读建的）按来源行配 PDF、题�
   assert.equal(bare[0].title, "A Mg hybrid electrolyte");
   assert.equal(bare[0].pdf, null);
 });
+
+test("两份域稿在完结文件里交给 Word 打开，并附一句换样式做法（2026-10-24 用户：在 Word 里换样式不放在定稿步）", async () => {
+  const { isCloseoutFieldDoc, FIELD_DOC_HINT } = await import("../src/closeout-pack.ts");
+  assert.equal(isCloseoutFieldDoc("output/endnote.docx"), true);
+  assert.equal(isCloseoutFieldDoc("output/zotero.docx"), true);
+  assert.equal(isCloseoutFieldDoc("output/review-final.docx"), false);
+  assert.match(FIELD_DOC_HINT, /Update Citations and Bibliography[\s\S]*Refresh[\s\S]*不用管/);
+});
+
+test("完结文件每份带一句用途；渲染用的字体说明、Word 模板、过滤器不算成果（2026-10-24 用户：完结文件 UI 优化）", async () => {
+  const { closeoutHint, isCloseoutVisible } = await import("../src/closeout-pack.ts");
+  assert.equal(closeoutHint("output/endnote.docx"), "Word 打开，Update 后可换样式");
+  assert.equal(closeoutHint("papers/endnote-import.ris"), "导入 EndNote，检索步纳入的那批");
+  assert.equal(closeoutHint("figures/fig1.png"), "");
+  for (const rel of ["manuscript/typeface.md", "manuscript/reference.docx", "manuscript/references.lua"]) {
+    assert.equal(isCloseoutVisible(rel), false, rel);
+  }
+  assert.equal(isCloseoutVisible("manuscript/review-final.md"), true);
+});

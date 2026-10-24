@@ -144,6 +144,7 @@ function PdfContinuousView({
   path,
   cwdHint,
   onAskAi,
+  askAs,
   onBack,
   onCaptureAgent,
   onCaptureNote,
@@ -161,6 +162,7 @@ function PdfContinuousView({
   onRevealAnnotation,
   jumpReq,
   findHotkey,
+  sourceMark,
 }: {
   path: string;
   /** 项目根：后端白名单的来源之一（同 PdfPreview 的 cwdHint） */
@@ -172,6 +174,8 @@ function PdfContinuousView({
     fileName: string,
     send?: boolean,
   ) => string | null | Promise<string | null>;
+  /** 选段主钮改作别的用途（阅读区抽查 =「记成问题」）：换按钮字与回执，且不出「↵ 直接发送」 */
+  askAs?: { label: string; done: string };
   /** 加载失败/被白名单拒绝时错误条上的「← 返回」 */
   onBack?: () => void;
   /** 圈选截图「◈ 发给 agent」：返回 null 成功，否则为要展示的提示（批次 B2） */
@@ -226,6 +230,8 @@ function PdfContinuousView({
   onRevealAnnotation?: (a: PdfAnnotation) => void;
   /** 笔记里点 p.3 / Fig. 2 交来的跳转（nonce 递增即执行一次） */
   jumpReq?: PdfJumpReq | null;
+  /** 译文卡正在显示的那段原文：常驻淡高亮（卡收起即撤），宿主据此让卡避开它 */
+  sourceMark?: { page: number; quote: string } | null;
   /** ⌘/Ctrl+F 呼出查找（阅读区接线；其他宿主只有工具条按钮） */
   findHotkey?: boolean;
 }) {
@@ -992,9 +998,12 @@ function PdfContinuousView({
         add(cur.page, { id: "find-active", quote: findQuery, nth: cur.nth, kind: "find-active" });
       }
     }
+    if (sourceMark?.quote.trim()) {
+      add(sourceMark.page, { id: "tl-source", quote: sourceMark.quote, nth: 0, kind: "source" });
+    }
     if (flash) add(flash.page, { id: "flash", quote: flash.quote, nth: 0, kind: "flash" });
     return m;
-  }, [annotations, findOpen, findQuery, findHits, findIdx, flash]);
+  }, [annotations, findOpen, findQuery, findHits, findIdx, flash, sourceMark]);
 
   // 工具条下拉（目录/标注列表）与高亮小卡：点外面或 Esc 收起（capture 相抢在关阅读区之前）
   const toolsRef = useRef<HTMLDivElement>(null);
@@ -1055,7 +1064,8 @@ function PdfContinuousView({
         "当前页面不支持问 AI",
     ).then((err) => {
       showHint(
-        err ?? (send ? "已发送给阅读会话" : "已放进对话的输入框，检查后发送"),
+        err ??
+          (askAs ? askAs.done : send ? "已发送给阅读会话" : "已放进对话的输入框，检查后发送"),
       );
       if (!err) clearSelection();
     });
@@ -1811,7 +1821,7 @@ function PdfContinuousView({
                   onClick={() => askAi()}
                   className="rounded-sm border border-cta-bd bg-cta px-2 py-1 text-xs text-cta-text hover:brightness-110"
                 >
-                  ◈ 问 AI
+                  {askAs?.label ?? "◈ 问 AI"}
                 </button>
               )}
               {onAddGlossary && (
@@ -1829,7 +1839,7 @@ function PdfContinuousView({
               <FloatBarOverflow
                 items={[
                   ...(onAddAnnotation ? [{ label: "＋ 批注…", run: openAnnotCard }] : []),
-                  ...(onAskAi ? [{ label: "↵ 直接发送", run: () => askAi(true) }] : []),
+                  ...(onAskAi && !askAs ? [{ label: "↵ 直接发送", run: () => askAi(true) }] : []),
                 ]}
               />
               {onOrganize && (

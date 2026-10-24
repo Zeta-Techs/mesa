@@ -321,10 +321,62 @@ fn read_creators(conn: &Connection, item_id: i64) -> Vec<String> {
     .unwrap_or_default()
 }
 
-/// 找该条目已下载的 PDF。附件 path 有三种形态：
+/// 附件是补充材料（SI / ESI）而不是正文：附件标题、下载地址、文件名、Zotero 全文索引开头任一处说是就算。
+/// 一个条目常挂正文 + SI 两份 PDF，库里谁先谁后不定（2026-10-23 HER 实证：Fan2022 正文、SI 都在，拿成了 26 页 SI）。
+fn is_supplement(title: &str, url: &str, file_name: &str, text_head: &str) -> bool {
+    let meta = format!("{title} {file_name}").to_lowercase();
+    let url = url.to_lowercase();
+    // 全文索引只看第一行开头（SI 文件以「Electronic Supplementary Material (ESI) for…」「1 Supporting Information」起头）：
+    // 正文首页脚注里也常有「Electronic supplementary information (ESI) available」，不能整页搜
+    let head: String = text_head
+        .trim_start_matches(|c: char| !c.is_alphabetic())
+        .chars()
+        .take(60)
+        .collect::<String>()
+        .to_lowercase();
+    ["supplementary", "supporting information", "supplemental"]
+        .iter()
+        .any(|m| meta.contains(m))
+        || ["suppdata", "/suppl", "supplementary", "supporting-information"]
+            .iter()
+            .any(|m| url.contains(m))
+        || [
+            "supplementary material",
+            "supplementary information",
+            "supporting information",
+            "electronic supplementary",
+            "supplementary data",
+        ]
+        .iter()
+        .any(|m| head.contains(m))
+}
+
+/// 文件是完整的 PDF：开头有 %PDF、结尾有 %%EOF。没下完的（浏览器中断、镜像站截断）读出来只剩一两页
+fn pdf_complete(path: &Path) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut file) = fs::File::open(path) else {
+        return false;
+    };
+    let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+    let mut head = [0u8; 1024];
+    let n = file.read(&mut head).unwrap_or(0);
+    if !head[..n].windows(4).any(|w| w == b"%PDF") {
+        return false;
+    }
+    let tail_len = len.min(2048);
+    if file.seek(SeekFrom::Start(len - tail_len)).is_err() {
+        return false;
+    }
+    let mut tail = Vec::with_capacity(tail_len as usize);
+    file.read_to_end(&mut tail).is_ok() && tail.windows(5).any(|w| w == b"%%EOF")
+}
+
+/// 找该条目已下载的正文 PDF。附件 path 有三种形态：
 /// - `storage:<文件名>`（导入的副本）→ 实际落在 <storage>/<附件key>/<文件名>
 /// - 绝对路径（linkMode=2 链接文件，ZotFile 等常见）→ 直接用
 /// - `attachments:<相对路径>`：只在用户明确选择链接附件基目录后解析；拒绝越界。
+///
+/// 补充材料和没下完的文件不算全文：只剩这些时返回 None，交给待获取补正文（不然 Agent 拿 SI 当正文读）。
 fn find_pdf(
     conn: &Connection,
     storage: &Path,
@@ -333,10 +385,18 @@ fn find_pdf(
 ) -> Option<String> {
     let mut stmt = conn
         .prepare(
-            "SELECT ai.key, a.path FROM itemAttachments a \
+            "SELECT ai.key, a.path, \
+               (SELECT v.value FROM itemData d JOIN fields f ON f.fieldID = d.fieldID \
+                  JOIN itemDataValues v ON v.valueID = d.valueID \
+                  WHERE d.itemID = a.itemID AND f.fieldName = 'title'), \
+               (SELECT v.value FROM itemData d JOIN fields f ON f.fieldID = d.fieldID \
+                  JOIN itemDataValues v ON v.valueID = d.valueID \
+                  WHERE d.itemID = a.itemID AND f.fieldName = 'url') \
+             FROM itemAttachments a \
              JOIN items ai ON ai.itemID = a.itemID \
              WHERE a.parentItemID = ?1 AND a.contentType = 'application/pdf' \
-               AND a.itemID NOT IN (SELECT itemID FROM deletedItems)",
+               AND a.itemID NOT IN (SELECT itemID FROM deletedItems) \
+             ORDER BY ai.dateAdded, a.itemID",
         )
         .ok()?;
     let rows = stmt
@@ -344,10 +404,12 @@ fn find_pdf(
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                row.get::<_, Option<String>>(3)?.unwrap_or_default(),
             ))
         })
         .ok()?;
-    for (key, path) in rows.filter_map(|r| r.ok()) {
+    for (key, path, title, url) in rows.filter_map(|r| r.ok()) {
         if path.is_empty() {
             continue;
         }
@@ -378,9 +440,27 @@ fn find_pdf(
                 None => PathBuf::from(&path),
             }
         };
-        if candidate.is_file() {
-            return Some(candidate.to_string_lossy().into_owned());
+        if !candidate.is_file() {
+            continue;
         }
+        // Zotero 的全文索引（.zotero-ft-cache）在附件自己的 storage 目录里，链接文件也是
+        let text_head = fs::File::open(storage.join(&key).join(".zotero-ft-cache"))
+            .ok()
+            .and_then(|f| {
+                use std::io::Read;
+                let mut buf = Vec::new();
+                f.take(1024).read_to_end(&mut buf).ok()?;
+                Some(String::from_utf8_lossy(&buf).into_owned())
+            })
+            .unwrap_or_default();
+        let file_name = candidate
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if is_supplement(&title, &url, &file_name, &text_head) || !pdf_complete(&candidate) {
+            continue;
+        }
+        return Some(candidate.to_string_lossy().into_owned());
     }
     None
 }
@@ -402,6 +482,32 @@ fn bib_entry_type(item_type: &str) -> &'static str {
 }
 
 /// 导出键采用稳定 Zotero 身份；主引用库已有键只由人工对账保留。
+/// 去掉题名前人手加的编号（【77】、[12]、19~.），只用于显示（项目资源名、任务书），引文库照原样。
+/// 与导出脚本 bridge.py `strip_title_prefix` 同一口径。
+fn strip_title_prefix(title: &str) -> &str {
+    let s = title.trim_start();
+    let digits_then = |rest: &str| -> Option<usize> {
+        let rest_trim = rest.trim_start();
+        let lead = rest.len() - rest_trim.len();
+        let n = rest_trim.bytes().take_while(u8::is_ascii_digit).count();
+        (n > 0).then_some(lead + n)
+    };
+    let after = if let Some(rest) = s.strip_prefix('【') {
+        digits_then(rest).and_then(|n| rest[n..].trim_start().strip_prefix('】'))
+    } else if let Some(rest) = s.strip_prefix('[') {
+        digits_then(rest).and_then(|n| rest[n..].trim_start().strip_prefix(']'))
+    } else {
+        digits_then(s).and_then(|n| {
+            let r = s[n..].trim_start().strip_prefix('~')?.trim_start();
+            Some(r.strip_prefix('.').unwrap_or(r))
+        })
+    };
+    match after.map(str::trim_start) {
+        Some(rest) if !rest.is_empty() => rest,
+        _ => title,
+    }
+}
+
 fn bib_key(item: &ZoteroItemDto) -> String {
     // Zotero library + item key 是稳定身份，不随标题修订、排序或同姓条目增减漂移。
     format!("zotero{}{}", item.library_id, item.key.to_ascii_lowercase())
@@ -495,6 +601,31 @@ pub fn render_bibtex(items: &[ZoteroItemDto]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Zotero 6 导不进 RIS / BibTeX：按 application.ini 的版本号先拦下
+    #[test]
+    fn zotero_six_is_too_old() {
+        let ini = "[App]\r\nVendor=Zotero\r\nName=Zotero\r\nVersion=6.0.36\r\nBuildID=20240313202508\r\n\r\n[Gecko]\r\nMinVersion=60.0\r\n";
+        assert_eq!(ini_version(ini).as_deref(), Some("6.0.36"));
+        assert!(zotero_too_old("6.0.36"));
+        assert!(!zotero_too_old("7.0.11"));
+        assert!(!zotero_too_old("8.0"));
+        assert!(!zotero_too_old("unknown"), "认不出版本不拦");
+        assert!(zotero_too_old_message("6.0.36", "papers/zotero-library.ris").contains("Zotero 7"));
+    }
+
+    /// 交给 Zotero 的 file URL 全是 ASCII：中文目录、空格都编码，盘符冒号与分隔符留着
+    #[test]
+    fn file_url_is_ascii_with_drive_kept() {
+        assert_eq!(
+            file_url(Path::new(r"D:\HER综述\HER\papers\zotero-library.ris")),
+            "file:///D:/HER%E7%BB%BC%E8%BF%B0/HER/papers/zotero-library.ris"
+        );
+        assert_eq!(
+            file_url(Path::new("/Users/me/My Papers/a.ris")),
+            "file:///Users/me/My%20Papers/a.ris"
+        );
+    }
 
     #[test]
     fn ris_parser_builds_doi_map_with_full_metadata() {
@@ -720,6 +851,65 @@ mod tests {
         tx.rollback().unwrap();
         drop(snapshot);
         drop(source);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn strip_title_prefix_drops_hand_numbering_only() {
+        assert_eq!(strip_title_prefix("【20】Integrating trace ruthenium"), "Integrating trace ruthenium");
+        assert_eq!(strip_title_prefix(" [12] MoS2 edges"), "MoS2 edges");
+        assert_eq!(strip_title_prefix("19~.Construction of efficient"), "Construction of efficient");
+        assert_eq!(strip_title_prefix("51~ Boron-based"), "Boron-based");
+        // 不是人手编号的不动
+        assert_eq!(strip_title_prefix("2D materials for HER"), "2D materials for HER");
+        assert_eq!(strip_title_prefix("3D well-ordered wood"), "3D well-ordered wood");
+        assert_eq!(strip_title_prefix("【20】"), "【20】");
+    }
+
+    #[test]
+    fn find_pdf_prefers_main_text_over_supplement_and_truncated() {
+        let root = std::env::temp_dir().join(format!("mesa-zotero-pdf-{}", uuid::Uuid::new_v4()));
+        let storage = root.join("storage");
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE items(itemID INTEGER PRIMARY KEY, key TEXT, dateAdded TEXT);
+             CREATE TABLE itemAttachments(itemID INTEGER, parentItemID INTEGER, contentType TEXT, path TEXT);
+             CREATE TABLE deletedItems(itemID INTEGER);
+             CREATE TABLE fields(fieldID INTEGER, fieldName TEXT);
+             CREATE TABLE itemDataValues(valueID INTEGER, value TEXT);
+             CREATE TABLE itemData(itemID INTEGER, fieldID INTEGER, valueID INTEGER);
+             INSERT INTO fields VALUES (1, 'title'), (2, 'url');",
+        )
+        .unwrap();
+        let full = b"%PDF-1.6\n1 0 obj\nendobj\ntrailer\nstartxref\n9\n%%EOF\n".to_vec();
+        // (附件 key, 加入时间, 文件内容, 附件标题, 下载地址, 全文索引开头)
+        let attach = |parent: i64, id: i64, key: &str, added: &str, body: &[u8], title: &str, url: &str, ft: &str| {
+            fs::create_dir_all(storage.join(key)).unwrap();
+            fs::write(storage.join(key).join("paper.pdf"), body).unwrap();
+            if !ft.is_empty() {
+                fs::write(storage.join(key).join(".zotero-ft-cache"), ft).unwrap();
+            }
+            conn.execute("INSERT INTO items VALUES (?1, ?2, ?3)", rusqlite::params![id, key, added]).unwrap();
+            conn.execute(
+                "INSERT INTO itemAttachments VALUES (?1, ?2, 'application/pdf', 'storage:paper.pdf')",
+                rusqlite::params![id, parent],
+            )
+            .unwrap();
+            for (field, value) in [(1, title), (2, url)] {
+                let vid = id * 10 + field;
+                conn.execute("INSERT INTO itemDataValues VALUES (?1, ?2)", rusqlite::params![vid, value]).unwrap();
+                conn.execute("INSERT INTO itemData VALUES (?1, ?2, ?3)", rusqlite::params![id, field, vid]).unwrap();
+            }
+        };
+        // 条目 1：先加的是 SI（地址带 suppdata、全文开头 ESI），后加的才是正文
+        attach(1, 11, "SIFIRST1", "2023-06-16", &full, "Fan et al_2022.pdf", "https://www.rsc.org/suppdata/d1/ta/x1.pdf", "Electronic Supplementary Material (ESI) for Journal of Materials Chemistry A");
+        attach(1, 12, "MAINTEXT", "2023-07-06", &full, "Construction.pdf", "", "Journal of Materials Chemistry A Published on 10 December 2021. Electronic supplementary information (ESI) available");
+        // 条目 2：正文没下完（无 %%EOF），另一份是 SI——都不算全文
+        attach(2, 21, "TRUNCATE", "2023-09-18", b"%PDF-1.6\n9 0 obj<</Subtype/Link>>", "Bak et al_2011.pdf", "", "");
+        attach(2, 22, "BAKSUPPL", "2023-09-18", &full, "Supplementary Information PDF", "", "");
+        let got = find_pdf(&conn, &storage, 1, None).unwrap();
+        assert!(Path::new(&got).starts_with(storage.join("MAINTEXT")), "{got}");
+        assert_eq!(find_pdf(&conn, &storage, 2, None), None);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1193,18 +1383,35 @@ pub async fn zotero_install_bbt() -> Result<ZoteroBbtInstallDto, String> {
         fs::create_dir_all(&dir).map_err(|e| format!("无法创建临时目录: {e}"))?;
         let dest = dir.join("better-bibtex.xpi");
         crate::storage::atomic_write(&dest, &bytes, true)?;
-        tauri_plugin_opener::open_path(&dest, Some("Zotero")).or_else(|_| {
-            tauri_plugin_opener::open_path(&dest, None::<&str>)
-        }).map_err(|e| {
-            format!(
-                "已下载安装包，但没法交给 Zotero 打开：{e}。请在 Zotero「工具 → 插件 → 从文件安装」里选这份文件：{}",
-                dest.display()
-            )
-        })?;
-        Ok(ZoteroBbtInstallDto {
-            staged: true,
-            message: "已交给 Zotero，请在弹出的窗口里点安装。装好后完全退出再打开（macOS 用 ⌘Q）。拖 RIS 不需要这个插件。".into(),
-        })
+        // Windows 上 Zotero 的命令行不装插件（裸参数不理，-file 是导入题录），只能人在插件管理里从文件装
+        #[cfg(windows)]
+        {
+            if let Some(exe) = zotero_exe() {
+                let _ = crate::process::background_command(&exe).spawn();
+            }
+            Ok(ZoteroBbtInstallDto {
+                staged: true,
+                message: format!(
+                    "安装包已下载：{}\nWindows 上 Zotero 不能从外部直接装插件：在 Zotero「工具 → 插件」（Zotero 6 叫「附加组件」）右上角齿轮里选「从文件安装」，选上面这份文件。装好后完全退出 Zotero 再打开。拖 RIS 不需要这个插件。",
+                    dest.display()
+                ),
+            })
+        }
+        #[cfg(not(windows))]
+        {
+            tauri_plugin_opener::open_path(&dest, Some("Zotero"))
+                .or_else(|_| tauri_plugin_opener::open_path(&dest, None::<&str>))
+                .map_err(|e| {
+                    format!(
+                        "已下载安装包，但没法交给 Zotero 打开：{e}。请在 Zotero「工具 → 插件 → 从文件安装」里选这份文件：{}",
+                        dest.display()
+                    )
+                })?;
+            Ok(ZoteroBbtInstallDto {
+                staged: true,
+                message: "已交给 Zotero，请在弹出的窗口里点安装。装好后完全退出再打开（macOS 用 ⌘Q）。拖 RIS 不需要这个插件。".into(),
+            })
+        }
     })
     .await
     .map_err(|e| format!("打开 Zotero 安装窗口失败: {e}"))?
@@ -1334,10 +1541,11 @@ pub async fn zotero_open_papers(project_root: String) -> Result<(), String> {
     .map_err(|e| format!("{e}"))?
 }
 
-/// 按 references.bib 重写 papers/zotero-library.ris（差量：库里已有的 DOI 跳过）。不改 papers/to-fetch.ris。
-/// 返回 (RIS 路径, 差量+库体检提示)：体检由 zotero_rtf --library-ris 打到 stdout。
-/// 差量为零时返回 None——零记录的 RIS 不是合法导入文件（Zotero 报「不支持所选文件的格式」），
-/// 调用方直接把差量结论当反馈，不再拉起 Zotero。
+/// 按 references.bib 重写 papers/zotero-library.ris。不改 papers/to-fetch.ris。
+/// 库里已有同一 DOI 的照样交（2026-10-23 用户拍板：Mesa 的题录字段全，导入后人在 Zotero「重复条目」里挑着合并），
+/// 检索时排除的不交。返回 (RIS 路径, 条数+库体检提示)：都由 zotero_rtf --library-ris 打到 stdout。
+/// 一条都没有时返回 None——零记录的 RIS 不是合法导入文件（Zotero 报「不支持所选文件的格式」），
+/// 调用方直接把提示当反馈，不拉起 Zotero。
 pub fn refresh_library_ris(project_root: &Path) -> Result<(Option<PathBuf>, String), String> {
     let root =
         crate::paths::canonicalize_plain(project_root).map_err(|e| format!("项目目录无效: {e}"))?;
@@ -1378,16 +1586,51 @@ pub fn refresh_library_ris(project_root: &Path) -> Result<(Option<PathBuf>, Stri
     let py = crate::dep_check::usable_python().ok_or_else(|| {
         "本机找不到 python 3，无法生成 Zotero 导入文件（设置 → 诊断可一键安装 Python）".to_string()
     })?;
-    let out = crate::process::background_command(&py)
-        .arg(&script)
+    // 从 Zotero / EndNote 导进引文库的老条目常缺摘要、ISSN、日期：有 DOI 的先按 Crossref / OpenAlex 补到
+    // 临时副本里再导（同 EndNote 那份；引文库不动，字段已齐的不联网，补不成照原样导）
+    let enriched = papers.join(format!(".ccode-zotero-{stamp}.bib"));
+    let mut enrich = crate::process::background_command(&py);
+    enrich
+        .arg(&bridge)
+        .arg("--enrich")
+        .arg("--input")
+        .arg(&bib)
+        .arg("--output")
+        .arg(&enriched)
+        .current_dir(&root);
+    // 排除的篇本来就不导，也就不用替它们联网补字段
+    if papers.join("included.json").is_file() {
+        enrich.arg("--skip-excluded").arg(papers.join("included.json"));
+    }
+    let mut filled = String::new();
+    let source = match crate::process::capture_command(&mut enrich, Duration::from_secs(600), 1024 * 1024) {
+        Ok(out) if !out.timed_out && out.status.is_some_and(|s| s.success()) && enriched.is_file() => {
+            filled = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            enriched.clone()
+        }
+        _ => {
+            let _ = std::fs::remove_file(&enriched);
+            bib.clone()
+        }
+    };
+    let mut cmd = crate::process::background_command(&py);
+    cmd.arg(&script)
         .arg("--library-ris")
         .arg("--bib")
-        .arg(&bib)
+        .arg(&source)
         .arg("--ris")
         .arg(&ris)
-        .current_dir(&root)
-        .output()
-        .map_err(|e| format!("无法生成 Zotero RIS: {e}"))?;
+        .current_dir(&root);
+    // 检索时人排除的篇不导（引文库里还留着检索前从 Zotero 导进来、后来排除的条目）
+    let included = papers.join("included.json");
+    if included.is_file() {
+        cmd.arg("--skip-excluded").arg(&included);
+    }
+    let out = cmd.output().map_err(|e| format!("无法生成 Zotero RIS: {e}"));
+    if source != bib {
+        let _ = std::fs::remove_file(&source);
+    }
+    let out = out?;
     let _ = std::fs::remove_file(&script);
     let _ = std::fs::remove_file(script.with_file_name("bridge.py"));
     let _ = std::fs::remove_file(script.with_file_name("library_match.py"));
@@ -1404,10 +1647,145 @@ pub fn refresh_library_ris(project_root: &Path) -> Result<(Option<PathBuf>, Stri
         return Err("转换结束但没有 papers/zotero-library.ris".into());
     }
     let health = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if health.contains("新增 0 条") {
+    if health.contains("交给 Zotero 0 条") {
         return Ok((None, health));
     }
+    let health = if filled.is_empty() { health } else { format!("{filled}\n{health}") };
     Ok((Some(ris), health))
+}
+
+/// 本机装的 Zotero 版本（application.ini 的 Version=）。找不到返回 None，调用方照常交文件。
+/// Windows 跟 zotero_exe 同一处找；macOS 看「应用程序」里的 Zotero.app。Zotero 6 的 ini 在安装根目录，
+/// Zotero 7 起挪进 app/ 子目录，两处都看。
+fn installed_zotero_version() -> Option<String> {
+    #[allow(unused_mut)]
+    let mut roots: Vec<PathBuf> = Vec::new();
+    #[cfg(windows)]
+    if let Some(dir) = zotero_exe().and_then(|exe| exe.parent().map(Path::to_path_buf)) {
+        roots.push(dir);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        roots.push(PathBuf::from("/Applications/Zotero.app/Contents/Resources"));
+        if let Some(home) = dirs::home_dir() {
+            roots.push(home.join("Applications/Zotero.app/Contents/Resources"));
+        }
+    }
+    roots.into_iter().find_map(|root| {
+        [root.join("application.ini"), root.join("app").join("application.ini")]
+            .iter()
+            .find_map(|ini| fs::read_to_string(ini).ok().and_then(|t| ini_version(&t)))
+    })
+}
+
+/// application.ini 里 [App] 段的 Version=（Gecko 段也有 MinVersion=，不认它）
+fn ini_version(text: &str) -> Option<String> {
+    text.lines()
+        .map(str::trim)
+        .find_map(|line| line.strip_prefix("Version="))
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+/// Zotero 6 及更早：2026 年起它自动更新下来的格式转换器（RIS.js 字符串里有 U+2028、BibTeX.js 用了新正则写法）
+/// 在它的 Firefox 60 内核上解析失败，导入 RIS / BibTeX 一律报「不支持所选文件的格式」（2026-10-23 用户调试日志实证：
+/// 「Detect using RIS failed: SyntaxError: "" string literal contains an unescaped line break」）。
+fn zotero_too_old(version: &str) -> bool {
+    version
+        .split('.')
+        .next()
+        .and_then(|major| major.trim().parse::<u32>().ok())
+        .is_some_and(|major| major < 7)
+}
+
+fn zotero_too_old_message(version: &str, file: &str) -> String {
+    format!(
+        "没有交给 Zotero：你装的是 Zotero {version}。Zotero 6 已停止更新，它自动下载的新版格式转换器它自己读不了，\
+         导入 RIS、BibTeX 都会报「不支持所选文件的格式」。请升级到 Zotero 7 或更新版本（zotero.org/download；\
+         原有文献、分类和附件在第一次打开时自动迁移），再点一次「同步到 Zotero」。导入文件已经生成：{file}。"
+    )
+}
+
+/// 把导入文件交给 Zotero，让它弹「导入」确认。
+/// macOS 的「用 Zotero 打开」走 Apple 事件，Zotero 收到的是 `-url file:///…`，会导入。
+/// Windows 上「用 Zotero 打开」= 拿路径当裸参数起 zotero.exe，而 Zotero 的命令行只认 `-file <路径>`
+/// 和 `-url file:///…`，裸参数不理——Zotero 打开了、没有导入（2026-10-23 用户实测，Zotero 6.0.36；
+/// 见安装目录 components/zotero-service.js 的命令行处理）。Zotero 已经开着时，新起的 zotero.exe 把参数转给它后退出。
+/// 用 `-url` 交百分号编码的 file URL，不用 `-file <路径>`：路径里有中文（D:\HER综述\…）时，`-file` 经「转给已开着的
+/// Zotero」那一程变了样，Zotero 弹了导入确认、随后报「不支持所选文件的格式」（同日实测）；URL 全是 ASCII，不经编码转换。
+/// Zotero 自己登记的 zotero:// 打开命令、macOS 的 Apple 事件走的也是 `-url`。
+fn hand_file_to_zotero(path: &Path) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let exe = zotero_exe().ok_or_else(|| {
+            format!(
+                "没找到 Zotero（zotero.exe）。打开 Zotero 后用「文件 → 导入」选这份文件：{}",
+                path.display()
+            )
+        })?;
+        crate::process::background_command(&exe)
+            .arg("-url")
+            .arg(file_url(path))
+            .spawn()
+            .map_err(|e| format!("没法交给 Zotero 打开: {e}"))?;
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        tauri_plugin_opener::open_path(path, Some("Zotero"))
+            .or_else(|_| tauri_plugin_opener::open_path(path, None::<&str>))
+            .map_err(|e| format!("没法交给 Zotero 打开: {e}"))
+    }
+}
+
+/// 本地路径 → 百分号编码的 file URL（`file:///D:/HER%E7%BB%BC%E8%BF%B0/…`）。盘符的冒号与目录分隔留着，其余非 unreserved 字节编码
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn file_url(path: &Path) -> String {
+    let text = path.to_string_lossy().replace('\\', "/");
+    let segments: Vec<String> = text
+        .split('/')
+        .enumerate()
+        .map(|(i, seg)| {
+            let drive = i == 0 && seg.len() == 2 && seg.ends_with(':') && seg.as_bytes()[0].is_ascii_alphabetic();
+            if drive {
+                seg.to_string()
+            } else {
+                crate::client_open::percent_encode(seg)
+            }
+        })
+        .collect();
+    let joined = segments.join("/");
+    if joined.starts_with('/') {
+        format!("file://{joined}")
+    } else {
+        format!("file:///{joined}")
+    }
+}
+
+/// Windows 上的 zotero.exe：安装包写的注册表 App Paths → 常见安装目录。找不到返回 None。
+#[cfg(windows)]
+fn zotero_exe() -> Option<PathBuf> {
+    for hive in ["HKLM", "HKCU"] {
+        let key = format!(r"{hive}\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\zotero.exe");
+        if let Some(value) = crate::process::reg_string(&key, None) {
+            let exe = PathBuf::from(value.trim_matches('"'));
+            if exe.is_file() {
+                return Some(exe);
+            }
+        }
+    }
+    let mut dirs: Vec<PathBuf> = ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"]
+        .iter()
+        .filter_map(|var| std::env::var_os(var))
+        .map(|dir| PathBuf::from(dir).join("Zotero"))
+        .collect();
+    if let Some(local) = dirs::data_local_dir() {
+        dirs.push(local.join("Zotero"));
+        dirs.push(local.join("Programs").join("Zotero"));
+    }
+    dirs.into_iter()
+        .map(|dir| dir.join("zotero.exe"))
+        .find(|exe| exe.is_file())
 }
 
 /// 用 Zotero 打开 RIS/BibTeX/CSL JSON（原生导入，不需要 Better BibTeX）。
@@ -1424,7 +1802,7 @@ pub async fn zotero_open_import(path: String, root: String) -> Result<String, St
         } else {
             (Some(std::path::PathBuf::from(&path_exp)), String::new())
         };
-        // 库里已全部存在：没有要导的，不拉起 Zotero，差量结论就是反馈
+        // 一条要导的都没有：不拉起 Zotero，提示就是反馈
         let open_path = match open_path {
             Some(path) => path,
             None => return Ok(health),
@@ -1442,9 +1820,22 @@ pub async fn zotero_open_import(path: String, root: String) -> Result<String, St
         if !zotero_native_import_ext(&ext) {
             return Err("只打开 RIS / BibTeX / CSL JSON 给 Zotero 导入".into());
         }
-        tauri_plugin_opener::open_path(&path_c, Some("Zotero"))
-            .or_else(|_| tauri_plugin_opener::open_path(&path_c, None::<&str>))
-            .map_err(|e| format!("没法交给 Zotero 打开: {e}"))?;
+        // Zotero 6 导不进：先说清楚，不拉起一个注定报「不支持所选文件的格式」的导入
+        if let Some(version) = installed_zotero_version() {
+            if zotero_too_old(&version) {
+                let shown = path_c
+                    .strip_prefix(&root_c)
+                    .map(|p| p.to_string_lossy().replace('\\', "/"))
+                    .unwrap_or_else(|_| path_c.display().to_string());
+                let mut message = zotero_too_old_message(&version, &shown);
+                if !health.is_empty() {
+                    message.push_str("\n\n");
+                    message.push_str(&health);
+                }
+                return Ok(message);
+            }
+        }
+        hand_file_to_zotero(&path_c)?;
         let mut message =
             "已交给 Zotero。确认导入后，点「打开 papers」，把 PDF 拖到对应条目上。".to_string();
         if !health.is_empty() {
@@ -2015,7 +2406,7 @@ fn import_items_at(root: &Path, items: &[ZoteroItemDto]) -> Result<ZoteroImportD
             .filter(|p| known.insert(p.replace('\\', "/")))
         {
             cfg.resources.push(crate::projects::ResourceDto {
-                name: item.title.clone(),
+                name: strip_title_prefix(&item.title).to_string(),
                 path: path.clone(),
                 kind: "paper".into(),
                 readonly: true,

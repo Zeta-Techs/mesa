@@ -41,6 +41,7 @@ test("抽查候选：全文与仅摘要各取一篇，再从尾部补齐，只�
   const picks = spotCheckPicks(JSON.stringify(rows));
   assert.deepEqual(picks.map((p) => p.notePath), ["notes/02.md", "notes/04.md", "notes/03.md"]);
   assert.deepEqual(picks.map((p) => p.fulltext), [true, false, true]);
+  assert.deepEqual(picks.map((p) => p.id), ["2", "4", "3"]);
   // 同一份索引每次挑同样几篇
   assert.deepEqual(spotCheckPicks(JSON.stringify(rows)), picks);
   assert.deepEqual(spotCheckPicks("[]"), []);

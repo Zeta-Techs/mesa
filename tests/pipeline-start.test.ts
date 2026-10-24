@@ -47,6 +47,12 @@ test("TASK.md 派生产物写本工作区、文献 PDF 直写项目根", () => {
   assert.doesNotMatch(md, /`\/Users\/me\/proj\/output\/`/);
 });
 
+test("TASK.md 产物目录：要提交的脚本放 scripts/，产物目录只放一次性脚本和缓存", () => {
+  const md = renderTaskMd(step(), cfg(), "/tmp/p");
+  assert.match(md, /简报没指定就放 `scripts\/`（进 git）/);
+  assert.match(md, /`artifacts\/` 不进 git，只放一次性调试脚本和接口缓存/);
+});
+
 test("TASK.md 收尾：派生产物走工作区，直写项目根的是未验收产物", () => {
   const md = renderTaskMd(step(), cfg(), "/tmp/p");
   assert.match(md, /派生产物只写本工作区产物目录/);
@@ -452,6 +458,49 @@ test("wsLast 记忆层闸门：停用连接不被自动预填（autoStart 落空
   }
 });
 
+// 2026-10-23 HER 精读步：接回时只带连接不带模型，启动侧落到连接名单第一个（glm-5.3 接回成 glm-5.3-flash）
+test("继续接回原对话：同一家 Agent 带上绑定的模型，不落到连接名单第一个", async () => {
+  const api = await bundleStartPipeline();
+  const ws = {
+    id: "w1", repoPath: "/p", repoName: "p", name: "lit-notes", branch: "ccode/lit-notes",
+    worktreePath: "/p/.mesa/ws-lit-notes", baseBranch: "main", portBase: 4200,
+    status: "active", createdAt: "2026-10-22T00:00:00Z", archivedAt: null,
+  };
+  const session = {
+    agent: "claude-code", sessionId: "s1", workspace: "lit-notes", projectPath: "/p",
+    archived: false, internal: false, live: false,
+  };
+  const lsPrev = (globalThis as { localStorage?: unknown }).localStorage;
+  (globalThis as { localStorage?: unknown }).localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+  const prevHost = (globalThis as { __pipelineStartHost?: unknown }).__pipelineStartHost;
+  (globalThis as { __pipelineStartHost?: unknown }).__pipelineStartHost = {
+    invoke: async (cmd: string) => {
+      if (cmd === "workspace_env_for") return [];
+      if (cmd === "list_sessions") return [session];
+      throw new Error(`测试未预期的命令：${cmd}`);
+    },
+  };
+  try {
+    const bound = { agentId: "claude-code", profileId: "gw", model: "glm-5.3" };
+    const req = await api.buildWorkspaceTerminalRequest(ws, "接着上次停下的地方继续", {
+      autoStart: true, resumeSession: true, stepLaunch: bound,
+    });
+    assert.equal(req.resume?.sessionId, "s1");
+    assert.equal(req.autoLaunchProfileId, "gw");
+    assert.equal(req.model, "glm-5.3");
+    // 绑定是另一家：接回的会话自选连接，不把别家的模型塞过去
+    const other = await api.buildWorkspaceTerminalRequest(ws, "接着上次停下的地方继续", {
+      autoStart: true, resumeSession: true, stepLaunch: { agentId: "codex", profileId: "cx", model: "gpt-x" },
+    });
+    assert.equal(other.resume?.sessionId, "s1");
+    assert.equal(other.model, undefined);
+  } finally {
+    if (lsPrev === undefined) delete (globalThis as { localStorage?: unknown }).localStorage;
+    else (globalThis as { localStorage?: unknown }).localStorage = lsPrev;
+    (globalThis as { __pipelineStartHost?: unknown }).__pipelineStartHost = prevHost;
+  }
+});
+
 test("TASK.md 本步骤脚本：只在 Windows、只列简报点名的 run 脚本；有 PowerShell 写法时两种都给", () => {
   const latex = PIPELINE_TEMPLATES.flatMap((t) => t.steps).find((s) =>
     s.run.some((r) => r.name === "render-pdf"),
@@ -473,6 +522,27 @@ test("TASK.md 本步骤脚本：只在 Windows、只列简报点名的 run 脚�
   assert.doesNotMatch(win, /没有给 PowerShell 写法的条目/);
 });
 
+test("TASK.md 本机 Python：只在 Windows 给出，-I 隔离模式要配 -X utf8", () => {
+  const win = renderTaskMd(step(), cfg(), "C:\\p", undefined, undefined, undefined, undefined, true);
+  assert.match(win, /## 本机 Python（Windows）/);
+  assert.match(win, /不要用 `python3`/);
+  assert.match(win, /`-I` 或 `-E`[^\n]*`-X utf8`/);
+  assert.doesNotMatch(renderTaskMd(step(), cfg(), "/p"), /## 本机 Python/);
+});
+
+test("TASK.md 本机 Python：读 PDF 的步骤在 Windows 上提示用 PyMuPDF 抽字、转页图看图", () => {
+  const notes = step({ skills: ["lit-notes"] });
+  const win = renderTaskMd(notes, cfg(), "C:\\p", undefined, undefined, undefined, undefined, true);
+  assert.match(win, /pdftoppm is not installed[^\n]*get_pixmap/);
+  assert.doesNotMatch(renderTaskMd(step(), cfg(), "C:\\p", undefined, undefined, undefined, undefined, true), /pdftoppm/, "不读 PDF 的步骤不带");
+  assert.doesNotMatch(renderTaskMd(notes, cfg(), "/p"), /pdftoppm/, "只在 Windows");
+  // 大纲步一类：输入里写着要读原文 PDF，或项目资源挂着 PDF
+  const outline = step({ inputs: ["17 篇主线批原文 PDF（路径见「项目资源」，只读）"] });
+  assert.match(renderTaskMd(outline, cfg(), "C:\\p", undefined, undefined, undefined, undefined, true), /pdftoppm/);
+  const withPdf = cfg({ resources: [{ name: "Fan 2022", path: "C:\\Zotero\\storage\\K\\Fan.pdf", type: "paper", readonly: true, note: "" }] });
+  assert.match(renderTaskMd(step(), withPdf, "C:\\p", undefined, undefined, undefined, undefined, true), /pdftoppm/);
+});
+
 test("TASK.md 本步骤脚本：简报没点名的不列；只有 bash 写法的条目点名用 Git Bash", () => {
   const s = step({
     brief: "改完跑一次 run 脚本 prep，再跑 render-draft。",
@@ -490,4 +560,11 @@ test("TASK.md 本步骤脚本：简报没点名的不列；只有 bash 写法的
   const quartoOnly = step({ brief: "跑 render-draft。", run: [s.run[0]] });
   assert.doesNotMatch(renderTaskMd(quartoOnly, cfg(), "C:\\p", undefined, undefined, undefined, undefined, true), /用 Git Bash 执行/);
   assert.doesNotMatch(renderTaskMd(step(), cfg(), "/p"), /## 本步骤脚本/);
+});
+
+test("TASK.md 决策暂停策略带人工请求文件的用法：只放没答的、答完删、不提交", () => {
+  const md = renderTaskMd(step(), cfg(), "/tmp/p");
+  assert.match(md, /\.ccode\/help-wanted\.md 只放还没回答的问题/);
+  assert.match(md, /人回复后把那一条删掉/);
+  assert.match(md, /这个文件不提交/);
 });

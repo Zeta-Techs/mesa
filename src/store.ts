@@ -42,6 +42,7 @@ import {
 import type { RunOverviewInput } from "./run-overview";
 import type { DepCheckDto } from "./dep-check";
 import type { AskAiFile } from "./ask-ai";
+import type { SpotCheckSession } from "./spot-check";
 import { toast } from "./toast";
 import { phoneInboxFields } from "./phone-drop";
 import { usePhoneDropStore } from "./phone-drop-store";
@@ -361,8 +362,11 @@ export interface PendingTerminal {
       缺省 = 新开的标签跟设置、切回已开着的标签不动 */
   surface?: "chat" | "terminal";
   /** 复用键：已有同 key 标签时切换到它而不是新开（「跟 AI 商量一下」等
-      重复入口防标签堆积）。仅内存匹配，不进重启持久化白名单（恢复占位不参与复用） */
+      重复入口防标签堆积）。只有工作区键（ws:）进重启持久化白名单，别的恢复占位不参与复用 */
   reuseKey?: string;
+  /** 这一步的对话还在跑（CLI 活着，不能再 resume 一份）：有标签持有它就切过去，不另开会话。
+      复用键没命中（老标签没带键）时按会话 id 认，再不行认同一工作树里正在跑 Agent 的标签 */
+  focusSession?: { agentId: string; sessionId: string };
   /** 只复用空白标签（快速开聊）：有复用键以此开头、还没说过话的标签就切过去（不改它输入框里已换的选择），
       没有就用 reuseKey 新开。说过话的不复用——快速开聊是开新对话 */
   reuseBlank?: string;
@@ -396,6 +400,8 @@ export interface WorkspaceReviewRequest {
   requestId: string;
   /** 从项目页签进来的：返回时回到这个项目的这个页签，而不是停在终端页。 */
   returnTo?: { projectRoot: string; surface: ProjectSurfaceTab } | null;
+  /** 发起页，store 自动记（调用方不写）：评审只挂在运行页，从别的页进来的返回时回那一页。 */
+  fromPage?: string;
   /** 这次已经采纳：评审只查看，不能再改纳入或排除。 */
   locked?: boolean;
 }
@@ -743,12 +749,14 @@ interface AppState {
   setDiffFocusReq: (r: { cwd: string; path: string } | null) => void;
   /** 沉浸式阅读区的一次性打开请求（终端页消费并清空）：PDF 绝对路径 + 所属项目根；
       notePath 指定后笔记栏直接编辑该 md（不按 PDF slug 另建模板笔记）；
-      fromPage 由 store 自动记发起页——阅读区只挂在终端页，跨页进入退出时回到来源页 */
+      fromPage 由 store 自动记发起页——阅读区只挂在终端页，跨页进入退出时回到来源页；
+      spotCheck = 精读步「抽查 3 篇笔记」的核对档（三篇一起带进来，pdfPath/notePath 由阅读区按篇解析） */
   readerReq: {
     pdfPath: string;
     projectRoot: string;
     notePath?: string;
     fromPage?: string;
+    spotCheck?: SpotCheckSession;
   } | null;
   setReaderReq: (
     r: {
@@ -756,8 +764,12 @@ interface AppState {
       projectRoot: string;
       notePath?: string;
       fromPage?: string;
+      spotCheck?: SpotCheckSession;
     } | null,
   ) => void;
+  /** 人工事项状态在流程页之外被改过（阅读区抽查「都没问题」勾上）：useHumanTasks 见变化即重取 */
+  humanTasksTick: number;
+  bumpHumanTasks: () => void;
   /** 步骤胶囊「📁」→ 终端页文件树切根的一次性交接（终端页消费并清空） */
   enterCwdReq: string | null;
   setEnterCwdReq: (p: string | null) => void;
@@ -1016,8 +1028,11 @@ export const useAppStore = create<AppState>((set, get) => {
   askAiReq: null,
   setAskAiReq: (r) => set({ askAiReq: r }),
   workspaceReviewRequest: null,
+  // 发起页同 readerReq 在 store 层自动记：流程线、任务卡、收件箱、上游提醒等入口都是先发请求再切运行页
   setWorkspaceReviewRequest: (request) =>
-    set({ workspaceReviewRequest: request }),
+    set({
+      workspaceReviewRequest: request ? { ...request, fromPage: get().page } : null,
+    }),
   terminalRunInputs: [],
   setTerminalRunInputs: (inputs) => set({ terminalRunInputs: inputs }),
   terminalActiveTabId: null,
@@ -1101,6 +1116,8 @@ export const useAppStore = create<AppState>((set, get) => {
   // 都该在退出阅读区时回来源页；终端页自己的入口不走 readerReq，天然不带回跳
   setReaderReq: (r) =>
     set({ readerReq: r ? { ...r, fromPage: get().page } : null }),
+  humanTasksTick: 0,
+  bumpHumanTasks: () => set((s) => ({ humanTasksTick: s.humanTasksTick + 1 })),
   enterCwdReq: null,
   setEnterCwdReq: (p) => set({ enterCwdReq: p }),
   runningScripts: {},

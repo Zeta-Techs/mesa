@@ -5,6 +5,12 @@ use std::path::{Path, PathBuf};
 
 const BRIDGE_PY: &str = include_str!("../resources/skills/endnote-bridge/scripts/bridge.py");
 
+/// 按 references.bib 生成、交给 EndNote 的整库 RIS（gitignored）。检索清单那份 `endnote-import.ris` 另有人维护，不改写
+const LIBRARY_RIS: &str = "endnote-library.ris";
+
+/// 同步时顺手写的 EndNote 期刊术语表（全称、缩写 1/2/3，gitignored）：RIS 只有一格缩写，另一种写法放这里
+const JOURNAL_TERMS: &str = "endnote-journals.txt";
+
 /// 找真能跑的 Python（dep_check::usable_python）：Windows 上 `python3` 永远先命中应用商店
 /// 占位程序，python.org 安装包又只提供 python.exe，按名字先找 python3 必然拿到占位
 fn python_bin() -> Result<PathBuf, String> {
@@ -53,7 +59,7 @@ fn run_bridge(
     dest: &Path,
     report: &Path,
     root: &Path,
-) -> Result<(), String> {
+) -> Result<String, String> {
     run_bridge_args(py, script, bib, papers, stamp, kind, dest, report, root, false)
 }
 
@@ -68,7 +74,24 @@ fn run_bridge_args(
     report: &Path,
     root: &Path,
     enrich: bool,
-) -> Result<(), String> {
+) -> Result<String, String> {
+    run_bridge_terms(py, script, bib, papers, stamp, kind, dest, report, root, enrich, None)
+}
+
+/// 同 run_bridge_args，另可让 bridge 顺手写一份 EndNote 期刊术语表（`--journal-terms`）
+fn run_bridge_terms(
+    py: &Path,
+    script: &Path,
+    bib: &Path,
+    papers: &Path,
+    stamp: &uuid::Uuid,
+    kind: &str,
+    dest: &Path,
+    report: &Path,
+    root: &Path,
+    enrich: bool,
+    terms: Option<&Path>,
+) -> Result<String, String> {
     let out_tmp = papers.join(format!(".ccode-endnote-{stamp}.{kind}"));
     let report_tmp = papers.join(format!(".ccode-endnote-{stamp}-{kind}.json"));
     let mut cmd = python_command(py);
@@ -83,6 +106,14 @@ fn run_bridge_args(
         .arg("--report")
         .arg(&report_tmp)
         .current_dir(root);
+    // 检索时人排除的篇不进导入文件（引文库里还留着检索前导进来、后来排除的条目；2026-10-23 HER）
+    let included = papers.join("included.json");
+    if let Some(terms) = terms {
+        cmd.arg("--journal-terms").arg(terms);
+    }
+    if included.is_file() {
+        cmd.arg("--skip-excluded").arg(&included);
+    }
     let out = crate::process::capture_command(&mut cmd, bridge_timeout(enrich), 1024 * 1024)
         .map_err(|e| format!("无法启动转换: {e}"))?;
     let success = !out.timed_out && out.status.is_some_and(|s| s.success());
@@ -106,7 +137,7 @@ fn run_bridge_args(
     } else {
         let _ = std::fs::remove_file(&report_tmp);
     }
-    Ok(())
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 /// 人指定的 EndNote 库路径（papers/endnote-library.path，一行）。没有或不止一行就 None。
@@ -124,7 +155,10 @@ fn endnote_library_pointer(root: &Path) -> Option<PathBuf> {
 }
 
 /// 同步按钮只需要 RIS。不再连写 XML 和 ENW，也不等 EndNote 把文件导完。
-/// 返回 (RIS 路径, 库体检提示)：检出旧版导出的脏记录时提示先删再导，干净时为空。
+/// 写 `papers/endnote-library.ris`（gitignored），不碰检索清单那份 `endnote-import.ris`——
+/// 那份是 lit_records.py / Mesa 纳入时维护的纳入篇题录，进 git；同步整份改写它，主仓就带着
+/// 一个改了没提交的清单文件，开下一步时被开工确认拦下（2026-10-23 HER 实证）。
+/// 返回 (RIS 路径, 提示)：排除不导的篇数、库体检（检出旧版导出的脏记录时提示先删再导）。
 pub fn export_ris_only(project_root: &Path) -> Result<(PathBuf, String), String> {
     let root =
         crate::paths::canonicalize_plain(project_root).map_err(|e| format!("项目目录无效: {e}"))?;
@@ -134,7 +168,7 @@ pub fn export_ris_only(project_root: &Path) -> Result<(PathBuf, String), String>
     }
     let papers = root.join("papers");
     std::fs::create_dir_all(&papers).map_err(|e| format!("无法创建 papers/: {e}"))?;
-    let ris = papers.join("endnote-import.ris");
+    let ris = papers.join(LIBRARY_RIS);
     let report = papers.join("endnote-report.json");
     let stamp = uuid::Uuid::new_v4();
     let script = std::env::temp_dir().join(format!("ccode-endnote-bridge-{stamp}.py"));
@@ -146,7 +180,26 @@ pub fn export_ris_only(project_root: &Path) -> Result<(PathBuf, String), String>
         true,
     )?;
     let py = python_bin()?;
-    run_bridge(&py, &script, &bib, &papers, &stamp, "ris", &ris, &report, &root)?;
+    // 从 Zotero / EndNote 导进引文库的老条目常缺摘要、ISSN、日期：有 DOI 的先按 Crossref / OpenAlex 补到
+    // 这次导出的临时副本里（引文库不动；字段已齐的不联网；补不成照原样导，不挡同步）
+    let enriched = papers.join(format!(".ccode-endnote-{stamp}.bib"));
+    let (source, filled) = match run_bridge_args(
+        &py, &script, &bib, &papers, &stamp, "bib", &enriched, &report, &root, true,
+    ) {
+        Ok(note) if enriched.is_file() => (enriched.clone(), note),
+        _ => {
+            let _ = std::fs::remove_file(&enriched);
+            (bib.clone(), String::new())
+        }
+    };
+    let terms = papers.join(JOURNAL_TERMS);
+    let dropped = run_bridge_terms(
+        &py, &script, &source, &papers, &stamp, "ris", &ris, &report, &root, false, Some(&terms),
+    );
+    if source != bib {
+        let _ = std::fs::remove_file(&source);
+    }
+    let dropped = dropped?;
     // 库体检（只读）：人指定了库就顺手查一遍旧版导出的脏记录，并进按钮反馈
     let mut health = String::new();
     if let Some(enl) = endnote_library_pointer(&root) {
@@ -178,9 +231,29 @@ pub fn export_ris_only(project_root: &Path) -> Result<(PathBuf, String), String>
     let _ = std::fs::remove_file(&script);
     let _ = std::fs::remove_file(&abbr);
     if !ris.is_file() {
-        return Err("转换结束但没有 papers/endnote-import.ris".into());
+        return Err(format!("转换结束但没有 papers/{LIBRARY_RIS}"));
     }
-    Ok((ris, health))
+    // 有刊给了两种缩写才提一句（术语表每次都写，平常不打扰）
+    let has_alt = std::fs::read_to_string(&terms).is_ok_and(|text| {
+        text.lines().any(|line| {
+            let cols: Vec<&str> = line.split('\t').collect();
+            cols.len() >= 3 && cols[1] != cols[2]
+        })
+    });
+    let terms_note = if has_alt {
+        format!(
+            "期刊两种缩写（如 Appl. Catal., B 与 ISO 4 的 Appl. Catal. B Environ.）在 papers/{JOURNAL_TERMS}：\
+             EndNote「工具 → 打开术语表 → 期刊术语表 → 列表 → 导入列表」导入一次，样式里选缩写 1 / 缩写 2 就能切换。"
+        )
+    } else {
+        String::new()
+    };
+    let note = [filled, dropped, terms_note, health]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok((ris, note))
 }
 
 pub fn export_xml(project_root: &Path) -> Result<PathBuf, String> {
@@ -202,7 +275,7 @@ fn export_xml_with(project_root: &Path, enrich: bool) -> Result<PathBuf, String>
     let papers = root.join("papers");
     std::fs::create_dir_all(&papers).map_err(|e| format!("无法创建 papers/: {e}"))?;
     let xml = papers.join("endnote-import.xml");
-    let ris = papers.join("endnote-import.ris");
+    let ris = papers.join(LIBRARY_RIS);
     let report = papers.join("endnote-report.json");
     let stamp = uuid::Uuid::new_v4();
     let script = std::env::temp_dir().join(format!("ccode-endnote-bridge-{stamp}.py"));
@@ -224,7 +297,7 @@ fn export_xml_with(project_root: &Path, enrich: bool) -> Result<PathBuf, String>
         match run_bridge_args(
         &py, &script, &bib, &papers, &stamp, "bib", &enriched, &report, &root, true,
     ) {
-        Ok(()) if enriched.is_file() => enriched.clone(),
+        Ok(_) if enriched.is_file() => enriched.clone(),
         _ => {
             let _ = std::fs::remove_file(&enriched);
             bib.clone()
@@ -252,11 +325,13 @@ fn export_xml_with(project_root: &Path, enrich: bool) -> Result<PathBuf, String>
 }
 
 /// 不写死版本号或本机路径。macOS 先问 Launch Services（刚装完拖进「应用程序」就会登记），
-/// 再扫常见安装目录；Windows 扫 Program Files 下名字带 EndNote 的文件夹。
+/// 再扫常见安装目录；Windows 先问注册表（装在 D 盘这类非默认目录时只有它知道），再扫 Program Files 下名字带 EndNote 的文件夹。
 fn find_endnote_app() -> Option<PathBuf> {
     let mut apps = Vec::new();
     #[cfg(target_os = "macos")]
     apps.extend(mdfind_endnote_apps());
+    #[cfg(windows)]
+    apps.extend(registry_endnote_apps());
     apps.extend(scan_endnote_install_dirs());
     apps.sort_by(|a, b| {
         b.file_name()
@@ -293,6 +368,45 @@ fn mdfind_endnote_apps() -> Vec<PathBuf> {
             break;
         }
     }
+    out
+}
+
+/// Windows 注册表里登记的 EndNote：安装包写的 App Paths、「.enw 用 EndNote 打开」的命令、
+/// ISI ResearchSoft 下各版本的安装目录（CFDIR）。2026-10-23 用户实测：EndNote 装在 D:\applications\Endnote，
+/// 只扫 Program Files 找不到，「同步到 EndNote」就只剩一句「拖到图标上」。只读注册表。
+#[cfg(windows)]
+fn registry_endnote_apps() -> Vec<PathBuf> {
+    use crate::process::{command_line_exe, reg_string, reg_sz_value};
+    let mut out = Vec::new();
+    for hive in ["HKLM", "HKCU"] {
+        let key = format!(r"{hive}\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\EndNote.exe");
+        if let Some(value) = reg_string(&key, None) {
+            out.push(PathBuf::from(value.trim_matches('"')));
+        }
+    }
+    if let Some(command) = reg_string(r"HKCR\EndNotePlus.ENW\shell\open\command", None) {
+        out.extend(command_line_exe(&command));
+    }
+    for key in [
+        r"HKLM\SOFTWARE\WOW6432Node\ISI ResearchSoft\EndNote",
+        r"HKLM\SOFTWARE\ISI ResearchSoft\EndNote",
+    ] {
+        let Ok(result) = crate::process::background_command("reg")
+            .args(["query", key, "/s", "/v", "CFDIR"])
+            .output()
+        else {
+            continue;
+        };
+        for line in String::from_utf8_lossy(&result.stdout).lines() {
+            if !line.trim_start().starts_with("CFDIR") {
+                continue;
+            }
+            if let Some(dir) = reg_sz_value(line) {
+                out.push(PathBuf::from(dir.trim_matches('"')).join("EndNote.exe"));
+            }
+        }
+    }
+    out.retain(|path| path.is_file());
     out
 }
 
@@ -447,7 +561,7 @@ fn clip_utf16_payload(text: &str) -> Vec<u8> {
 
 fn launch_endnote_with_file(file: &Path) -> Result<(), String> {
     let app = find_endnote_app().ok_or_else(|| {
-        "找不到 EndNote。把产物里的 papers/endnote-import.ris 拖到 EndNote 图标上（不要拖进窗口）。".to_string()
+        "找不到 EndNote。".to_string()
     })?;
     #[cfg(target_os = "macos")]
     {
@@ -476,7 +590,7 @@ fn launch_endnote_with_file(file: &Path) -> Result<(), String> {
     #[cfg(not(any(target_os = "macos", windows)))]
     {
         let _ = (app, file);
-        Err("请把 papers/endnote-import.ris 拖到 EndNote 图标上。".into())
+        Err("这个系统上没有 EndNote 桌面版可交。".into())
     }
 }
 
@@ -506,24 +620,163 @@ fn find_import_ris(project_root: &Path) -> Option<PathBuf> {
     found.into_iter().next().map(|(_, path)| path)
 }
 
+/// 「选这个 EndNote 库」的候选：EndNote 最近打开过的库（Windows 读它自己的
+/// `HKCU\Software\ISI ResearchSoft\EndNote\Recent Libraries\File1…`，File1 最近），再补上文稿 / 桌面
+/// 顶层与「文稿/EndNote」里的 .enl。只列给人点，不替人挑；不深扫磁盘（2026-10-24 用户：点了是打开文件夹，
+/// 不知道选哪个——文件对话框里 .enl 旁边还有同名的 .Data 文件夹，很容易点错）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EndnoteLibraryChoice {
+    pub path: String,
+    pub name: String,
+    /// 来自 EndNote 最近打开的库
+    pub recent: bool,
+    /// EndNote X9 及更早的库：记录在同名 .Data/rdb，脚本读不了，要人先导出 XML
+    pub legacy: bool,
+}
+
+/// .enl 是不是 X9 及更早的格式（同名 .Data 下有 rdb）。这种库脚本读不到记录（2026-10-24 HER：「file is not a database」）
+fn is_legacy_library(path: &Path) -> bool {
+    path.with_extension("Data").join("rdb").is_dir()
+}
+
+/// 指定的库是不是 X9 老格式：界面据此提示「先在 EndNote 里导出 XML」
+#[tauri::command]
+pub async fn endnote_library_legacy(path: String) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let p = PathBuf::from(crate::sessions::expand_tilde(&path));
+        Ok(p.extension().is_some_and(|e| e.to_string_lossy().eq_ignore_ascii_case("enl")) && is_legacy_library(&p))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn endnote_library_choices() -> Result<Vec<EndnoteLibraryChoice>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let mut dirs_to_look = Vec::new();
+        for base in [dirs::document_dir(), dirs::desktop_dir()].into_iter().flatten() {
+            dirs_to_look.push(base.join("EndNote"));
+            dirs_to_look.push(base);
+        }
+        Ok(library_choices(recent_library_paths(), &dirs_to_look))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn library_choices(recent: Vec<String>, dirs_to_look: &[PathBuf]) -> Vec<EndnoteLibraryChoice> {
+    let mut out: Vec<EndnoteLibraryChoice> = Vec::new();
+    let mut push = |path: PathBuf, recent: bool| {
+        if !path.is_file()
+            || !path
+                .extension()
+                .is_some_and(|e| e.to_string_lossy().eq_ignore_ascii_case("enl"))
+        {
+            return;
+        }
+        let shown = crate::paths::strip_verbatim(path.clone())
+            .to_string_lossy()
+            .into_owned();
+        if out.iter().any(|c| crate::paths::same_path(&c.path, &shown)) {
+            return;
+        }
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let legacy = is_legacy_library(&path);
+        out.push(EndnoteLibraryChoice { path: shown, name, recent, legacy });
+    };
+    for raw in recent {
+        push(PathBuf::from(raw.trim()), true);
+    }
+    for dir in dirs_to_look {
+        let Ok(entries) = std::fs::read_dir(dir) else { continue };
+        let mut found: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+        found.sort();
+        for path in found {
+            push(path, false);
+        }
+    }
+    out
+}
+
+#[cfg(windows)]
+fn recent_library_paths() -> Vec<String> {
+    use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ};
+    let key: Vec<u16> = "Software\\ISI ResearchSoft\\EndNote\\Recent Libraries"
+        .encode_utf16()
+        .chain([0])
+        .collect();
+    (1..=20)
+        .filter_map(|i| {
+            let name: Vec<u16> = format!("File{i}").encode_utf16().chain([0]).collect();
+            let mut size: u32 = 0;
+            // 先问长度再取值；REG_SZ 按 UTF-16 读，中文路径不走控制台代码页（reg query 会出乱码）
+            let rc = unsafe {
+                RegGetValueW(
+                    HKEY_CURRENT_USER,
+                    key.as_ptr(),
+                    name.as_ptr(),
+                    RRF_RT_REG_SZ,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    &mut size,
+                )
+            };
+            if rc != 0 || size < 2 {
+                return None;
+            }
+            let mut buf = vec![0u16; (size as usize).div_ceil(2)];
+            let rc = unsafe {
+                RegGetValueW(
+                    HKEY_CURRENT_USER,
+                    key.as_ptr(),
+                    name.as_ptr(),
+                    RRF_RT_REG_SZ,
+                    std::ptr::null_mut(),
+                    buf.as_mut_ptr().cast(),
+                    &mut size,
+                )
+            };
+            if rc != 0 {
+                return None;
+            }
+            let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+            Some(String::from_utf16_lossy(&buf[..len]))
+        })
+        .collect()
+}
+
+/// macOS / Linux 没有登记表可读：只靠文稿 / 桌面里的 .enl，读不到就让人在对话框里选
+#[cfg(not(windows))]
+fn recent_library_paths() -> Vec<String> {
+    Vec::new()
+}
+
 #[tauri::command]
 pub async fn endnote_export_xml(project_root: String) -> Result<String, String> {
     // 转换和打开 EndNote 都在后台线程，不占界面。
     tauri::async_runtime::spawn_blocking(move || {
         let root = crate::sessions::expand_tilde(&project_root);
         let root_path = Path::new(&root);
-        // 精读之后同步：有引文库就按它重写，不再打开检索时的旧文件。
-        let mut health = String::new();
-        if root_path.join("references.bib").is_file() {
-            let (_, note) = export_ris_only(root_path)?;
-            health = note;
-        }
-        let Some(ris) = find_import_ris(root_path) else {
-            return Err(
-                "还没有 papers/endnote-import.ris。检索保存进项目后才会有这一份，同步只打开它，不再重新检索。"
-                    .into(),
-            );
+        // 精读之后同步：有引文库就按它生成整库 RIS（endnote-library.ris）；还没有引文库（检索步）才交检索清单那份。
+        let (ris, health) = if root_path.join("references.bib").is_file() {
+            export_ris_only(root_path)?
+        } else {
+            let Some(ris) = find_import_ris(root_path) else {
+                return Err(
+                    "还没有 papers/endnote-import.ris。检索保存进项目后才会有这一份，同步只打开它，不再重新检索。"
+                        .into(),
+                );
+            };
+            (ris, String::new())
         };
+        let shown = ris
+            .file_name()
+            .map(|n| format!("papers/{}", n.to_string_lossy()))
+            .unwrap_or_else(|| ris.display().to_string());
         copy_path_to_clipboard(&ris);
         let health_note = if health.is_empty() {
             String::new()
@@ -531,11 +784,15 @@ pub async fn endnote_export_xml(project_root: String) -> Result<String, String> 
             format!("\n\n{health}")
         };
         match launch_endnote_with_file(&ris) {
+            // 每次同步都是整份导入：同一个库点两次就是两份（2026-10-24 HER：27 篇里 18 篇在库里有 3 条，
+            // Word 里 Update 后只有 8 条挂上库）。导完提醒去重，并引向「选这个 EndNote 库」
             Ok(()) => Ok(format!(
-                "已交给 EndNote。PDF 用「打开 papers」拖到对应条目。{health_note}"
+                "已交给 EndNote，导入当前打开的库。PDF 用「打开 papers」拖到对应条目。\
+                 每次同步都会把全部文献再导一遍：同一个库以前导过的，导完在 EndNote 用 References → Find Duplicates 去重，\
+                 不然定稿的 EndNote 版 Word 对不上这些条目。导完点下面「选这个 EndNote 库」指一下用的是哪个库。{health_note}"
             )),
             Err(e) => Ok(format!(
-                "文件在 papers/endnote-import.ris。把它拖到 EndNote 图标上（不要拖进窗口）。{e}{health_note}"
+                "文件在 {shown}。把它拖到 EndNote 图标上（不要拖进窗口）。{e}{health_note}"
             )),
         }
     })
@@ -546,6 +803,30 @@ pub async fn endnote_export_xml(project_root: String) -> Result<String, String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn library_choices_list_recent_first_then_folders_without_duplicates_or_data_dirs() {
+        let dir = std::env::temp_dir().join(format!("ccode-enl-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("我的EndNote库.Data")).unwrap();
+        std::fs::write(dir.join("我的EndNote库.enl"), b"x").unwrap();
+        std::fs::write(dir.join("旧库.enl"), b"x").unwrap();
+        std::fs::write(dir.join("说明.txt"), b"x").unwrap();
+        let gone = dir.join("已删除.enl");
+        let recent = vec![
+            dir.join("我的EndNote库.enl").to_string_lossy().into_owned(),
+            gone.to_string_lossy().into_owned(),
+        ];
+        let got = library_choices(recent, &[dir.clone()]);
+        let names: Vec<(&str, bool)> = got.iter().map(|c| (c.name.as_str(), c.recent)).collect();
+        // 最近打开的排前、只出一次；不存在的不列；.Data 文件夹和别的文件不列
+        assert_eq!(names, vec![("我的EndNote库.enl", true), ("旧库.enl", false)]);
+        // 同名 .Data 下有 rdb = X9 老格式
+        std::fs::create_dir_all(dir.join("我的EndNote库.Data").join("rdb")).unwrap();
+        let again = library_choices(vec![], &[dir.clone()]);
+        assert!(again.iter().find(|c| c.name == "我的EndNote库.enl").unwrap().legacy);
+        assert!(!again.iter().find(|c| c.name == "旧库.enl").unwrap().legacy);
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     /// clip.exe 吃带 BOM 的 UTF-16LE；中文路径逐码元小端写入
     #[test]
@@ -570,7 +851,7 @@ mod tests {
         )
         .unwrap();
         let ris = export_ris_only(&dir);
-        let text = std::fs::read_to_string(dir.join("papers/endnote-import.ris")).ok();
+        let text = std::fs::read_to_string(dir.join("papers/endnote-library.ris")).ok();
         let _ = std::fs::remove_dir_all(&dir);
         if ris.as_ref().is_err_and(|e| e.contains("找不到 python")) {
             return;
@@ -579,6 +860,48 @@ mod tests {
         let text = text.expect("ris");
         assert!(text.contains("镁电池穿梭效应研究"), "{text}");
         assert!(text.contains("化学学报"), "{text}");
+    }
+
+    /// 同步写整库 RIS（endnote-library.ris），不改写检索清单那份 endnote-import.ris；检索时排除的篇不导
+    #[test]
+    fn sync_writes_library_ris_and_skips_excluded() {
+        let dir = std::env::temp_dir().join(format!("ccode-endnote-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("papers")).unwrap();
+        std::fs::write(
+            dir.join("references.bib"),
+            "@article{keep,\n  title = {【7】Kept paper on MoS2},\n  author = {Doe, Jane},\n  year = {2024},\n  journal = {Applied Catalysis B: Environmental},\n  journalabbreviation = {Appl. Catal., B},\n}\n\n@article{gone,\n  title = {Excluded boride paper},\n  author = {Roe, John},\n  year = {2020},\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("papers/included.json"),
+            r#"[{"id":"A","title":"Kept paper on MoS2","decision":"included","reason":""},{"id":"B","title":"Excluded boride paper","decision":"excluded","reason":""}]"#,
+        )
+        .unwrap();
+        std::fs::write(dir.join("papers/endnote-import.ris"), "TY  - JOUR\r\nTI  - Kept paper\r\nER  - \r\n").unwrap();
+        let out = export_ris_only(&dir);
+        let library = std::fs::read_to_string(dir.join("papers/endnote-library.ris")).ok();
+        let terms = std::fs::read_to_string(dir.join("papers/endnote-journals.txt")).ok();
+        let canonical = std::fs::read_to_string(dir.join("papers/endnote-import.ris")).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        if out.as_ref().is_err_and(|e| e.contains("找不到 python")) {
+            return;
+        }
+        let (path, note) = out.expect("ris export");
+        assert!(path.ends_with("papers/endnote-library.ris"));
+        let library = library.expect("library ris");
+        // 题名编号前缀去掉、式子收成下标；排除的不导
+        assert!(library.contains("TI  - Kept paper on MoS₂\r\n"), "{library}");
+        assert!(library.contains("J2  - Appl. Catal., B\r\n"), "{library}");
+        assert!(!library.contains("Excluded boride paper"), "{library}");
+        assert!(note.contains("排除的 1 篇不导"), "{note}");
+        // 两种缩写进期刊术语表（缩写 1 = J2，缩写 2 = ISO 4），反馈里提一句怎么导入
+        let terms = terms.expect("journal terms");
+        assert!(
+            terms.contains("Applied Catalysis B: Environmental\tAppl. Catal., B\tAppl. Catal. B Environ.\t"),
+            "{terms}"
+        );
+        assert!(note.contains("endnote-journals.txt"), "{note}");
+        assert_eq!(canonical, "TY  - JOUR\r\nTI  - Kept paper\r\nER  - \r\n", "检索清单那份不动");
     }
 
     #[test]
@@ -625,7 +948,7 @@ mod tests {
         )
         .unwrap();
         let xml = export_xml(&dir);
-        let ris = std::fs::read_to_string(dir.join("papers/endnote-import.ris")).ok();
+        let ris = std::fs::read_to_string(dir.join("papers/endnote-library.ris")).ok();
         let _ = std::fs::remove_dir_all(&dir);
         if xml.is_err() && xml.as_ref().unwrap_err().contains("找不到 python") {
             return;
@@ -668,7 +991,7 @@ mod tests {
         )
         .unwrap();
         let xml = export_xml(&dir);
-        let ris = std::fs::read_to_string(dir.join("papers/endnote-import.ris")).ok();
+        let ris = std::fs::read_to_string(dir.join("papers/endnote-library.ris")).ok();
         let xml_text = std::fs::read_to_string(dir.join("papers/endnote-import.xml")).ok();
         let _ = std::fs::remove_dir_all(&dir);
         if xml.is_err() && xml.as_ref().unwrap_err().contains("找不到 python") {

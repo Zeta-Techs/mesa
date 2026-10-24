@@ -39,19 +39,24 @@ export function reviewItemKind(title: string): ReviewItemKind | null {
   return null;
 }
 
-/** 步骤行上只留一句：有条目、空清单、已经点完，三种状态各一句。 */
+/** 步骤行上只留一句：有条目、空清单、文件还没写出来、已经点完，各一句。 */
 export function inlineDecisionLine(
   kind: ReviewItemKind,
-  state: "open" | "empty" | "done",
+  state: "open" | "empty" | "missing" | "done",
 ): string {
   if (state === "done") return "都已决定，点旁边的按钮回到原来的对话继续。";
+  if (state === "missing") {
+    return kind === "verify"
+      ? "待核实清单还没写出来：AI 改完稿才写，写好会自动出现在这里。"
+      : "审查报告还没写出来，写好会自动出现在这里。";
+  }
   if (kind === "verify") {
     return state === "empty"
       ? "没有待核实或存疑条目，勾上跳过。"
-      : "接受留着，拒绝删掉，修改按你写的改。";
+      : "接受＝核过原文，去掉「待核实」保留这句；拒绝删掉这句；修改按你写的改，核不了就写怎么降级。";
   }
   return state === "empty"
-    ? "审查报告还没写出来。"
+    ? "报告里没认出编号条目（R001 起），回对话让 AI 按格式补上编号。"
     : "接受按建议改，拒绝不改，修改按你写的改。";
 }
 
@@ -85,6 +90,9 @@ export function verifyVerdict(body: string): { verdict: ReviewVerdict | null; no
   return { verdict: null, note: "" };
 }
 
+/** Agent 预留给人填的空「决定：」行（2026-10-24 HER 实证：每条末尾都留了一行）。不进条目正文，点选时就地替换。 */
+const VERDICT_PLACEHOLDER = /^(?:[-*]\s+)?决定[：:]\s*$/;
+
 export function parseReviewItems(text: string, kind: ReviewItemKind): ReviewItem[] {
   const lines = text.replace(/\r\n/g, "\n").split("\n");
   const items: ReviewItem[] = [];
@@ -102,6 +110,7 @@ export function parseReviewItems(text: string, kind: ReviewItemKind): ReviewItem
         note = parsed.note;
         continue;
       }
+      if (VERDICT_PLACEHOLDER.test(line.trim())) continue;
       bodyLines.push(line);
     }
     let body = bodyLines.join("\n").trim();
@@ -157,11 +166,13 @@ export function applyReportVerdict(
     }
   }
   const block = lines.slice(start, end);
-  while (block.length > 0 && block[block.length - 1].trim() === "") block.pop();
+  // 条目之间的空行留着，否则写决定会把这一条和下一条粘在一起
+  const trailing: string[] = [];
+  while (block.length > 0 && block[block.length - 1].trim() === "") trailing.push(block.pop()!);
   const last = block[block.length - 1] ?? "";
-  if (parseVerdictLine(last)) block[block.length - 1] = verdictLine(verdict, note);
+  if (parseVerdictLine(last) || VERDICT_PLACEHOLDER.test(last.trim())) block[block.length - 1] = verdictLine(verdict, note);
   else block.push(verdictLine(verdict, note));
-  const next = [...lines.slice(0, start), ...block, ...lines.slice(end)];
+  const next = [...lines.slice(0, start), ...block, ...trailing, ...lines.slice(end)];
   return next.join("\n");
 }
 
@@ -198,6 +209,16 @@ export function applyVerifyVerdict(
   return lines.join("\n");
 }
 
+/** 条目自带的改法：审查报告的「建议改法：」、待核实清单的「建议：」。选「修改」时预填，
+ *  输入框里灰字显示，→ 或 Tab 补全（2026-10-24 用户：建议应该预填好，向右补全）。没有返回空串。 */
+export function itemSuggestion(item: ReviewItem, kind: ReviewItemKind): string {
+  const raw =
+    kind === "verify"
+      ? (item.body.match(/\|\s*建议[：:]\s*([^|]*)/)?.[1] ?? "")
+      : (item.body.match(/建议改法[：:]\s*([\s\S]*)$/)?.[1] ?? "");
+  return raw.replace(/\s+/g, " ").trim();
+}
+
 export function reviewItemSummary(item: ReviewItem, kind: ReviewItemKind): string {
   if (kind === "verify") {
     const place = fieldValue(item.body, "位置");
@@ -212,11 +233,14 @@ export function reviewItemSummary(item: ReviewItem, kind: ReviewItemKind): strin
     .trim();
 }
 
-/** 点完后接回这一步原来的对话，让 Agent 按决定继续，不打开评审页。 */
+/** 点完后接回这一步原来的对话，让 Agent 按决定继续，不打开评审页。
+ *  决定写在工作区文件里，Agent 不顺手提交就挡「保存进项目」（2026-10-24 HER 润色：第二轮提交漏了 review-report.md）。
+ *  待核实裁决在渲染之后才做（2026-10-24）：改完必须重渲、重出域稿、复核引用，否则交的是改之前的成稿；
+ *  「确认」= 人对过原文，去掉标记，不是连标记一起留着。 */
 export function continueAfterDecisionsPrompt(target: string, kind: ReviewItemKind): string {
   const file = target.trim();
   if (kind === "verify") {
-    return `manuscript 里的待核实清单 ${file} 已经逐条写上裁决。确认的保留；写了删除该论断的删掉对应句子；写了改正为的按依据改。没写裁决的不要动。改完继续这一步还没做完的事，不要停下来等我再点评审。`;
+    return `manuscript 里的待核实清单 ${file} 已经逐条写上裁决。写了确认的：人已对过原文，保留这句，句中的 [待核实] 标记删掉；写了删除该论断的：删掉对应句子（引用检查里的存疑条目删掉对应引用及只靠它撑的论断）；写了改正为的：按依据改，依据写明保留待核实的就留着标记。没写裁决的不要动。改完把稿件里实际剩余的 [待核实] 与清单对一遍，用本步骤 run 脚本重渲 PDF 和 Word，重新生成 output/endnote.docx 与 output/zotero.docx（LaTeX 稿不生成这两份），再按 bib-check 复核一次、结论追加进 citation-check.md，changelog 记下按裁决改了哪些句。${file} 里的裁决是 Mesa 替人写进去的，随这一轮改动一起提交。然后继续这一步还没做完的事，不要停下来等我再点评审。`;
   }
-  return `${file} 里每条都已经写了「决定：」。接受和要求修改的按报告改；拒绝的不改。数字、因果、样本、结论范围的改动写入 changelog 的「科学改动」。改完继续这一步还没做完的事，不要停下来等我再点评审。`;
+  return `${file} 里每条都已经写了「决定：」。接受和要求修改的按报告改；拒绝的不改。数字、因果、样本、结论范围的改动写入 changelog 的「科学改动」。${file} 里的决定是 Mesa 替人写进去的，随这一轮改动一起提交。改完继续这一步还没做完的事，不要停下来等我再点评审。`;
 }

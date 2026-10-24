@@ -150,6 +150,13 @@ const STATUS_STYLE: Record<string, string> = {
 
 const fileDiffCache = new Map<string, { text: string; rows: DiffLine[] }>();
 
+/** 非 Git 产物大小：KB 起步，过 1MB 换 MB */
+function formatDeliverySize(bytes: number): string {
+  return bytes >= 1024 * 1024
+    ? `${(bytes / 1024 / 1024).toFixed(1)} MB`
+    : `${(bytes / 1024).toFixed(1)} KB`;
+}
+
 /** 健康检查拦截项：key 用于给「主仓脏」挂快速提交入口，text 为面向用户的白话文案 */
 function DiffSide({
   lineNo,
@@ -193,15 +200,21 @@ function DiffSide({
 function DiffTable({
   rows,
   unified = false,
+  plainAdds = false,
 }: {
   rows: DiffLine[];
   unified?: boolean;
+  /** 整份新文件：每行都是新增，铺绿只剩一面绿墙（2026-10-22 截图）——按正文显示，
+   *  文件头的「A +N」已经说明是新增 */
+  plainAdds?: boolean;
 }) {
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const displayRows = useMemo(
     () => foldContextRows(rows, expanded),
     [expanded, rows],
   );
+  const tone = (kind: "context" | "add" | "delete" | "blank") =>
+    plainAdds && kind === "add" ? "context" : kind;
 
   useEffect(() => {
     setExpanded(new Set());
@@ -244,7 +257,7 @@ function DiffTable({
               <DiffSide
                 lineNo={row.newNo ?? row.oldNo}
                 text={row.newKind === "blank" ? row.oldText : row.newText}
-                kind={row.newKind === "blank" ? row.oldKind : row.newKind}
+                kind={tone(row.newKind === "blank" ? row.oldKind : row.newKind)}
               />
             </div>
           );
@@ -265,7 +278,7 @@ function DiffTable({
               <DiffSide
                 lineNo={row.newNo}
                 text={row.newText}
-                kind={row.newKind}
+                kind={tone(row.newKind)}
               />
             </div>
           </div>
@@ -385,7 +398,12 @@ function DiffFileSection({
       ) : rows.length === 0 ? (
         <p className="px-4 py-5 text-xs text-l4">无可显示的文本差异</p>
       ) : (
-        <DiffTable rows={rows} unified={unified} />
+        // 新文件左边（旧版）整列是空的：一律单栏
+        <DiffTable
+          rows={rows}
+          unified={unified || file.status === "A" || file.status === "??"}
+          plainAdds={file.status === "A" || file.status === "??"}
+        />
       )}
     </section>
   );
@@ -1067,6 +1085,39 @@ function LiveWorkspaceReviewView({
   const [deliveryError, setDeliveryError] = useState<string | null>(null);
   const [deliveryPreview, setDeliveryPreview] = useState<string | null>(null);
   const [deliveryFollowup, setDeliveryFollowup] = useState("");
+  // 正在勾选 / 取消的那个非 Git 产物（逐个勾掉不带回，2026-10-22）
+  const [deliverySkipBusy, setDeliverySkipBusy] = useState<string | null>(null);
+  // 非 Git 产物清单默认收成一行：十几项中间文件摊开会把下面的稿件挤没（2026-10-24 截图）
+  const [deliveryOpen, setDeliveryOpen] = useState(false);
+
+  /** 「只带流程要用的」：其余能勾的一次性勾掉（AI 过程中留的截图、预览、调试输出）。后端一次只认一个文件 */
+  async function keepRequiredOnly(paths: string[]) {
+    for (const path of paths) {
+      await toggleDeliverySkip(path, true);
+      if (deliveryReviewRef.current?.files.find((f) => f.path === path)?.disposition !== "skipped") break;
+    }
+  }
+
+  async function toggleDeliverySkip(path: string, skip: boolean) {
+    const review = deliveryReviewRef.current;
+    if (!review) return;
+    setDeliverySkipBusy(path);
+    try {
+      const next = await invoke<WorkspaceDeliverableReviewDto>("workspace_delivery_skip", {
+        id: review.workspaceId,
+        token: review.token,
+        path,
+        skip,
+      });
+      deliveryReviewRef.current = next;
+      setDeliveryReview(next);
+      setDeliveryError(null);
+    } catch (reason) {
+      setDeliveryError(String(reason));
+    } finally {
+      setDeliverySkipBusy(null);
+    }
+  }
   const [nextStep, setNextStep] = useState<{
     step: ProjectStepDto;
     cfg: ProjectConfigDto;
@@ -1093,6 +1144,8 @@ function LiveWorkspaceReviewView({
   const [wsRow, setWsRow] = useState<WorkspaceDto | null>(null);
   const [writingHits, setWritingHits] = useState<WritingReviewHit[]>([]);
   const [reviewNotes, setReviewNotes] = useState("");
+  // 退回意见框默认收成一行（常开时每个页签都被它占掉一大块）；有字时自己展开
+  const [notesOpen, setNotesOpen] = useState(false);
   const [returnBusy, setReturnBusy] = useState(false);
   // 上游漂移提醒：上游步骤晚于本步最后推进时间合并 → 产物可能过期（list_workspaces 顺带取回）
   const [staleUpstream, setStaleUpstream] = useState<string | null>(null);
@@ -1155,6 +1208,24 @@ function LiveWorkspaceReviewView({
           invoke<GitStatusDto>("git_status", { cwd: worktreePath }),
         ]);
         if (!nextDiff.inWorkspace) throw new Error("该目录不属于活动工作区或 Run 隔离树");
+        // 先把改动清单交给页面，稿件可以先开始读；健康度、冲突、产物冻结三路并行随后补上
+        // （2026-10-24：三段串行时 HER 初稿要等 2 秒多才出页面）。保存进项目仍要等冻结完成。
+        if (!quiet) {
+          setDiff(nextDiff);
+          setStatus(nextStatus);
+          setLoading(false);
+        }
+        const freezing =
+          !nextDiff.reviewOnly && (!quiet || !deliveryReviewRef.current)
+            ? invoke<WorkspaceDeliverableReviewDto>("workspace_review_deliverables", { id: nextDiff.workspaceId }).then(
+                (review) => {
+                  deliveryReviewRef.current = review; setDeliveryReview(review); setDeliveryError(null);
+                },
+                (reason) => {
+                  deliveryReviewRef.current = null; setDeliveryReview(null); setDeliveryError(String(reason));
+                },
+              )
+            : Promise.resolve();
         const [nextHealth, nextUnmerged] = nextDiff.reviewOnly
           ? [null, { merging: false, files: [], staleBase: false } as UnmergedDto]
           : await Promise.all([
@@ -1165,14 +1236,7 @@ function LiveWorkspaceReviewView({
                 id: nextDiff.workspaceId,
               }),
             ]);
-        if (!nextDiff.reviewOnly && (!quiet || !deliveryReviewRef.current)) {
-          try {
-            const review = await invoke<WorkspaceDeliverableReviewDto>("workspace_review_deliverables", { id: nextDiff.workspaceId });
-            deliveryReviewRef.current = review; setDeliveryReview(review); setDeliveryError(null);
-          } catch (reason) {
-            deliveryReviewRef.current = null; setDeliveryReview(null); setDeliveryError(String(reason));
-          }
-        }
+        await freezing;
         const signature = JSON.stringify({
           files: nextDiff.files,
           status: nextStatus.files,
@@ -2486,34 +2550,36 @@ function LiveWorkspaceReviewView({
 
         {diff && (
           <div className="flex min-h-9 items-center gap-3 border-t border-hairline px-3 py-1.5 text-xs">
-            <div className="flex min-w-0 items-center gap-2 text-l3">
+            <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden whitespace-nowrap text-l3">
               {reviewProfile.headerHint ? (
-                <span className="text-l2">
+                <span className="truncate text-l2">
                   {reviewProfile.kind === "screening" ? filteredFiles.length : diff.files.length} 个文件 · {reviewProfile.headerHint}
                 </span>
               ) : (
                 <>
-              <GitBranch aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
-              <span className="max-w-44 truncate font-mono text-l2">
-                {diff.branch}
+              {/* 分支 → 主分支合成一段截断（两段各自截断时成了「ccode/lit… → ma…」，2026-10-22 截图）；
+                  全名放悬停 */}
+              <span
+                className="flex min-w-0 shrink items-center gap-1.5"
+                title={`${diff.branch} → ${diff.baseBranch}`}
+              >
+                <GitBranch aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate font-mono text-l2">
+                  {diff.branch} <span className="text-l4">→</span> {diff.baseBranch}
+                </span>
               </span>
-              <span className="text-l4">→</span>
-              <span className="max-w-32 truncate font-mono">
-                {diff.baseBranch}
-              </span>
-              <span className="ml-1 text-l4">
+              <span className="shrink-0 text-l4">
                 {reviewProfile.kind === "screening" ? filteredFiles.length : diff.files.length} 个文件
               </span>
-              <span className="font-mono text-add">+{diff.totalAdd}</span>
-              <span className="font-mono text-del">-{diff.totalDel}</span>
-              {health && (health.ahead > 0 || health.behind > 0) && (
+              <span className="shrink-0 font-mono text-add">+{diff.totalAdd}</span>
+              <span className="shrink-0 font-mono text-del">-{diff.totalDel}</span>
+              {/* 领先几个保存点就是这次要审的东西，不另写；只有主分支另有新保存点才值得说 */}
+              {health && health.behind > 0 && (
                 <span
-                  className="font-mono text-l4"
-                  title={`相对主分支：领先 ${health.ahead} · 落后 ${health.behind}`}
+                  className="shrink-0 text-l4"
+                  title={`相对主分支：这次多出 ${health.ahead} 个保存点，主分支在你开工后新增 ${health.behind} 个`}
                 >
-                  {health.ahead > 0 && `多出 ${health.ahead} 个保存点`}
-                  {health.ahead > 0 && health.behind > 0 && " · "}
-                  {health.behind > 0 && `主分支新增 ${health.behind} 个保存点`}
+                  主分支新增 {health.behind} 个保存点
                 </span>
               )}
                 </>
@@ -2585,7 +2651,7 @@ function LiveWorkspaceReviewView({
                 </span>
               </div>
             ) : hasUncommitted ? (
-              <div className="ml-auto flex w-[360px] shrink-0 flex-col gap-0.5">
+              <div className="ml-auto flex w-80 min-w-48 shrink flex-col gap-0.5">
                 <div className="flex items-center gap-1.5">
                   <input
                     value={message}
@@ -2603,9 +2669,9 @@ function LiveWorkspaceReviewView({
                     onClick={() => void generateMessage()}
                     disabled={aiBusy || busy}
                     title="让 AI 看改动内容写一句；不写也行——留空会自动写「更新 N 个文件」"
-                    className="flex h-7 min-w-7 items-center justify-center rounded-sm px-1.5 text-l2 hover:bg-hover disabled:opacity-50"
+                    className="flex h-7 shrink-0 items-center justify-center whitespace-nowrap rounded-sm px-1.5 text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50"
                   >
-                    {aiBusy ? "◈…" : "◈"}
+                    {aiBusy ? "◈ 写着…" : "◈ AI 写"}
                   </button>
                 </div>
               </div>
@@ -2630,7 +2696,16 @@ function LiveWorkspaceReviewView({
             (humanClosing && humanClosing.length > 0)) && (
             <div className="border-t border-hairline px-3 py-1.5 text-xs">
               <div className="flex min-h-6 items-center gap-3">
-                <span className="shrink-0 text-l4" title="仅检查引用键和产物；不验证内容正确性或结论是否成立">基础检查</span>
+                <span
+                  className="shrink-0 cursor-help text-l4"
+                  title={
+                    reviewProfile.showReportDisclaimer
+                      ? "只查引用键能不能解析、产物有没有产出。文件已产出、引用键可解析不代表内容已通过审查；接受改动前仍须核对证据与未决事项"
+                      : "仅检查引用键和产物；不验证内容正确性或结论是否成立"
+                  }
+                >
+                  基础检查 ⓘ
+                </span>
                 {citations && citations.bibFound && citations.totalRefs > 0 && (
                   <button
                     type="button"
@@ -2679,8 +2754,18 @@ function LiveWorkspaceReviewView({
                     审阅时核对：{writingHits.map((hit) => hit.label).join("；")}
                   </span>
                 )}
+                {contentReview && !mergeDone && !notesOpen && !reviewNotes.trim() && (
+                  <button
+                    type="button"
+                    onClick={() => setNotesOpen(true)}
+                    className={`${paneTabs ? "ml-auto" : ""} shrink-0 rounded-sm px-1 py-0.5 text-l3 hover:bg-hover hover:text-l1`}
+                    title="写下意见退回给 Agent 改，或按意见整份重写；也可以在稿件里划一段点「加进意见」。不会保存进项目"
+                  >
+                    写意见退回修改…
+                  </button>
+                )}
                 {contentReview && paneTabs && (
-                  <div className="ml-auto flex shrink-0 gap-1">
+                  <div className={`${!mergeDone && !notesOpen && !reviewNotes.trim() ? "" : "ml-auto"} flex shrink-0 gap-1`}>
                     {paneTabs.map((tab) => (
                       <button
                         key={tab.id}
@@ -2698,15 +2783,12 @@ function LiveWorkspaceReviewView({
                   </div>
                 )}
               </div>
-              {reviewProfile.showReportDisclaimer && (
-              <p className="mt-1 text-micro text-l4">文件已产出、引用键可解析不代表内容已通过审查；接受改动前仍须核对证据与未决事项。</p>
-              )}
               {citeExpanded && citations && citations.missing.length > 0 && (
                 <p className="mt-1 break-all font-mono text-micro text-warn-text">
                   缺失引用键：{citations.missing.join("、")}
                 </p>
               )}
-              {contentReview && !mergeDone && (
+              {contentReview && !mergeDone && (notesOpen || reviewNotes.trim() !== "") && (
                 <div className="mt-2 border-t border-hairline pt-2">
                   <p className="mb-1 text-micro text-l4">
                     写下意见，或在稿件里划一段点「加进意见」。退回后交给 Agent。不会保存进项目。
@@ -2715,6 +2797,7 @@ function LiveWorkspaceReviewView({
                     value={reviewNotes}
                     onChange={(e) => setReviewNotes(e.target.value)}
                     rows={3}
+                    autoFocus={notesOpen && !reviewNotes}
                     placeholder="例如：摘要去掉未核实句；删 G1；空图改成见 Fig.n；不要凑字数。"
                     className="w-full resize-y rounded-sm border border-field bg-canvas px-2 py-1.5 text-xs text-l2 outline-none placeholder:text-l4 focus:border-l4"
                   />
@@ -2735,6 +2818,15 @@ function LiveWorkspaceReviewView({
                     >
                       按意见重写
                     </button>
+                    {!reviewNotes.trim() && (
+                      <button
+                        type="button"
+                        onClick={() => setNotesOpen(false)}
+                        className="ml-auto rounded-sm px-1 py-0.5 text-micro text-l4 hover:text-l2"
+                      >
+                        收起
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
@@ -2806,13 +2898,85 @@ function LiveWorkspaceReviewView({
           验收（acceptance）本来没有页签、整页显示，这次重构才给它加了「结果/过程/文件」——
           若按 showGitFiles 走，它会在打开时的「结果」页签上凭空消失，
           而「保存进项目」按钮在顶栏、每个页签都在，清单不该跟着页签隐掉。 */}
-      {!diff?.reviewOnly && (showGitFiles || !paneTabs || reviewProfile.kind === "acceptance") && deliveryFiles.length > 0 && <section aria-label="非 Git 产物评审" className="max-h-48 shrink-0 overflow-auto border-b border-hairline px-3 py-2 text-xs">
-        <h3 className="font-medium">非 Git 产物 · {deliveryFiles.length} 项</h3>
-        <p className="text-micro text-l3">保存进项目只带回这版固定副本。看过后内容变化会要求重看；同名冲突不覆盖，未接收文件保留在工作区。</p>
-        <ul>{deliveryFiles.map((file) => <li key={file.path} className="flex gap-2 py-0.5">
-          <button type="button" className="min-w-0 flex-1 truncate text-left text-l2 hover:underline disabled:text-l4" disabled={file.disposition !== "copy"} onClick={() => setDeliveryPreview(file.path)}>{file.path}</button>
-          <span className="shrink-0 text-micro text-l3">{file.disposition === "copy" ? `${(file.size / 1024).toFixed(1)} KB · ${file.sha256?.slice(0, 8)}` : file.disposition === "conflict" ? "同名存在，不覆盖" : file.disposition === "protected" ? "保护路径跳过" : file.disposition === "too_large" ? "超出冻结预算" : "随 Git 提交"}</span>
-        </li>)}</ul>
+      {!diff?.reviewOnly && (showGitFiles || !paneTabs || reviewProfile.kind === "acceptance") && deliveryFiles.length > 0 && <section aria-label="非 Git 产物评审" className={`${deliveryOpen ? "max-h-48 overflow-auto" : ""} shrink-0 border-b border-hairline px-3 py-1.5 text-xs`}>
+        {/* 2026-10-24 用户：这一块占地方，而且不懂编程的人不知道该带什么。默认收成一行摘要；
+            展开后「流程要用」的锁定带回，其余是 AI 过程中留的文件，给一句白话和「只带流程要用的」 */}
+        {(() => {
+          const kept = deliveryFiles.filter((f) => f.disposition === "copy");
+          const required = kept.filter((f) => f.required);
+          const optional = deliveryFiles.filter((f) => (f.disposition === "copy" || f.disposition === "skipped") && !f.required);
+          const optionalKept = optional.filter((f) => f.disposition === "copy");
+          return (
+            <div className="flex min-h-6 items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setDeliveryOpen((v) => !v)}
+                aria-expanded={deliveryOpen}
+                className="flex min-w-0 items-center gap-1.5 rounded-sm text-left text-l2 hover:text-l1"
+                title="Git 管不到的文件（PDF、Word、图片等）。保存进项目只带回勾着的那些；勾掉的留在工作区，归档时随工作区清掉"
+              >
+                <span aria-hidden="true" className="text-l4">{deliveryOpen ? "▾" : "▸"}</span>
+                <span className="font-medium">附带文件</span>
+                <span className="truncate text-l3">
+                  带回 {kept.length} / {deliveryFiles.length} 项
+                  {required.length > 0 && `（流程要用 ${required.length} 项）`}
+                </span>
+              </button>
+              {optionalKept.length > 0 && (
+                <button
+                  type="button"
+                  disabled={deliverySkipBusy !== null || busy}
+                  onClick={() => void keepRequiredOnly(optionalKept.map((f) => f.path))}
+                  className="ml-auto shrink-0 rounded-sm px-1.5 py-0.5 text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50"
+                  title="其余是 AI 干活时留下的截图、预览、中间结果，不带回也不影响下一步；勾掉的留在工作区，想要再勾回来"
+                >
+                  只带流程要用的
+                </button>
+              )}
+            </div>
+          );
+        })()}
+        {deliveryOpen && deliveryFiles.some((f) => !f.required && (f.disposition === "copy" || f.disposition === "skipped")) && (
+          <p className="mt-0.5 text-micro text-l4">
+            没标「流程要用」的是 AI 干活时留下的文件（截图、预览、中间结果），不带回也不影响下一步；拿不准就留着勾。
+          </p>
+        )}
+        {deliveryOpen && <ul className="mt-0.5">{[...deliveryFiles].sort((a, b) => Number(!!b.required) - Number(!!a.required)).map((file) => {
+          // 只有「带回 / 不带回」两态能勾；同名冲突、保护路径等本来就不带回，不给框；
+          // 流程要用的（这一步的预期产物、papers/ 文献资料）锁定勾上（后端同样拒绝勾掉）
+          const choosable = (file.disposition === "copy" || file.disposition === "skipped") && !file.required;
+          const locked = file.disposition === "copy" && !!file.required;
+          const kept = file.disposition === "copy";
+          return <li key={file.path} className={`flex items-center gap-2 py-0.5 ${file.disposition === "skipped" ? "opacity-60" : ""}`}>
+          {choosable ? (
+            <Checkbox
+              className="shrink-0"
+              checked={kept}
+              disabled={deliverySkipBusy !== null || busy}
+              onChange={(next) => void toggleDeliverySkip(file.path, !next)}
+              title={kept ? "取消勾选 = 不带回项目，留在工作区" : "勾上 = 保存进项目时带回"}
+            />
+          ) : locked ? (
+            <Checkbox
+              className="shrink-0"
+              checked
+              disabled
+              onChange={() => {}}
+              title="流程要用（这一步的预期产物或文献资料），必须带回"
+            />
+          ) : (
+            <span aria-hidden="true" className="h-4 w-4 shrink-0" />
+          )}
+          <button type="button" className={`min-w-0 flex-1 truncate text-left text-l2 hover:underline disabled:text-l4 ${file.disposition === "skipped" ? "line-through" : ""}`} disabled={!(file.disposition === "copy" || file.disposition === "skipped")} onClick={() => setDeliveryPreview(file.path)}>{file.path}</button>
+          {locked && <span className="shrink-0 text-micro text-l3" title="下一步要用、或「产物 N/N」按它数，不能不带回">流程要用</span>}
+          <span
+            className="shrink-0 text-micro tabular-nums text-l4"
+            title={(file.disposition === "copy" || file.disposition === "skipped") && file.sha256 ? `SHA-256 ${file.sha256}` : undefined}
+          >
+            {file.disposition === "copy" ? formatDeliverySize(file.size) : file.disposition === "skipped" ? "不带回" : file.disposition === "conflict" ? "同名存在，不覆盖" : file.disposition === "protected" ? "保护路径跳过" : file.disposition === "too_large" ? "超出冻结预算" : "随 Git 提交"}
+          </span>
+        </li>;
+        })}</ul>}
       </section>}
       {deliveryPreview && deliveryReview && <Suspense fallback={<p className="px-3 py-2 text-xs text-l3">加载固定副本预览…</p>}><OfficePreviewModal path={`${deliveryReview.payloadDir}/${deliveryPreview}`} root={deliveryReview.payloadDir} onClose={() => setDeliveryPreview(null)} /></Suspense>}
       {!diff?.reviewOnly && researchError && <p role="alert" className="px-3 py-2 text-xs text-err-text">{researchError}</p>}

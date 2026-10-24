@@ -134,7 +134,8 @@ import LaunchMenu, {
 } from "../components/LaunchMenu";
 import WorkspaceReviewView from "../components/WorkspaceReviewView";
 import ReaderOverlay from "../components/ReaderOverlay";
-import { wireWorkspaceLaunchGuard } from "../pipeline-start";
+import { buildWorkspaceTerminalRequest, wireWorkspaceLaunchGuard } from "../pipeline-start";
+import type { SpotCheckSession } from "../spot-check";
 import { formatPdfExcerptPrompt, readerReuseKey } from "../reader";
 import {
   projectChatLaunch,
@@ -175,7 +176,7 @@ import { promptSuggestionSupported, readPromptSuggestion } from "../prompt-sugge
 import { lineCells } from "../screen-cells";
 import { lastContextTokens, type MesaCommand } from "../composer-assist";
 import { slashCommandsFor } from "../slash-commands";
-import { claudeOutputTokens, extractLiveReply, liveReplySupported, mergeLiveReply, staleEcho, terminalHasInputBox } from "../live-reply";
+import { claudeOutputTokens, extractLiveReply, liveReplySupported, mergeLiveReply, sentTextStuckInBox, staleEcho, terminalHasInputBox } from "../live-reply";
 import { parseTuiNotice, parseTuiPanel } from "../tui-panel";
 import {
   connIssueCounts,
@@ -5370,7 +5371,10 @@ const TerminalView = memo(function TerminalView({
       if (byBox) {
         const lines = screenLines();
         const trust = parseTrustPrompt(lines) !== null;
-        if (!trust && ((quiet >= 300 && terminalHasInputBox(lines, agent) === true) || since >= 20_000)) {
+        // 刚起来的 20 秒里要安静 1.5 秒才算就绪：接回的会话先画输入框、再回放、再写「※ recap」，
+        // 中途写进去开头会丢、提交键被当成粘贴里的换行（2026-10-24 HER 润色：输入框画出 1 秒就写，整段卡在框里）
+        const settle = since < 20_000 ? 1500 : 300;
+        if (!trust && ((quiet >= settle && terminalHasInputBox(lines, agent) === true) || since >= 20_000)) {
           inputReadyRef.current = true;
           break;
         }
@@ -5411,9 +5415,37 @@ const TerminalView = memo(function TerminalView({
               ? "shift-enter"
               : null,
       });
+      void confirmSubmitted(ptyId, text);
       return { error: null };
     } catch (e) {
       return { error: `发送失败：${String(e)}` };
+    }
+  }
+
+  /** 交出去了没有：这句连着 1.6 秒还躺在输入框里，就补一次「粘贴结束 + 提交键」，最多补三次。
+   *  刚接回的会话（resume 回放、recap 还在写）里写进去，CLI 会停在粘贴状态：后面的回车都被当成粘贴里的换行，
+   *  人自己按回车也只多一行（2026-10-24 HER 润色两次实证：Claude 框里多出一空行、按回车只出「ctrl+g 编辑」提示）。
+   *  先补粘贴结束标记把它拉出粘贴状态，再按提交键；没在粘贴状态时这个标记被忽略。只认屏上的输入框，没有布局表的家不管 */
+  async function confirmSubmitted(ptyId: string, text: string) {
+    const agent = launchAgentRef.current;
+    const PASTE_END = "\x1b[201~";
+    for (let attempt = 0; attempt < 3; attempt++) {
+      let stuckFor = 0;
+      for (let waited = 0; waited < 6000 && stuckFor < 1600; waited += 400) {
+        await new Promise((r) => setTimeout(r, 400));
+        if (!mountedRef.current || ptyIdRef.current !== ptyId) return;
+        if (sentTextStuckInBox(screenLines(), agent, text) !== true) {
+          stuckFor = 0;
+          if (waited >= 2000) return;
+          continue;
+        }
+        stuckFor += 400;
+      }
+      if (stuckFor < 1600) return;
+      await invoke("pty_write", { ptyId, data: PASTE_END }).catch(() => {});
+      await new Promise((r) => setTimeout(r, 300));
+      if (!mountedRef.current || ptyIdRef.current !== ptyId) return;
+      await invoke("pty_write", { ptyId, data: submitCsiU ? KIMI_CSI_U_ENTER : "\r" }).catch(() => {});
     }
   }
 
@@ -7069,6 +7101,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       resumeSessionId: tab.customRuntimeId ? undefined : tab.sessionId ?? undefined,
       runId: tab.runId ?? undefined,
       taskId: tab.taskId ?? undefined,
+      reuseKey: tab.reuseKey ?? undefined,
       restored: true,
     }));
     return {
@@ -7272,15 +7305,18 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   const [reviewAction, setReviewAction] = useState<
     "pr" | "archive" | "resolve-conflict" | null
   >(null);
-  /** 从项目页签进来的评审：返回时回到那个项目的那个页签。
+  /** 从项目页签进来的评审：返回时回到那个项目的那个页签；没指定页签的回发起页。
    *  关评审的入口不止返回键（开新终端、开阅读、切目录都会盖掉它），
    *  ref 让这些入口清状态时不用逐个改依赖 */
   const reviewReturnRef = useRef<{
-    projectRoot: string;
-    surface: ProjectSurfaceTab;
+    target: { projectRoot: string; surface: ProjectSurfaceTab } | null;
+    fromPage: string | null;
   } | null>(null);
   const setReviewReturn = (
-    value: { projectRoot: string; surface: ProjectSurfaceTab } | null,
+    value: {
+      target: { projectRoot: string; surface: ProjectSurfaceTab } | null;
+      fromPage: string | null;
+    } | null,
   ) => {
     reviewReturnRef.current = value;
   };
@@ -7296,6 +7332,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     notePath?: string;
     /** 跨页进入时的来源页（readerReq 自动记）：退出阅读区回那里；终端页自身入口无此字段 */
     fromPage?: string;
+    /** 精读步「抽查 3 篇笔记」核对档：右栏是问题单、不派阅读会话 */
+    spotCheck?: SpotCheckSession;
   } | null>(null);
 
   // 分屏开启时右栏/文件树/改动跟随「活跃 pane」（点击 pane 或点标签条切换），否则跟随活跃标签
@@ -7915,6 +7953,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
             sessionId,
             runId: status?.runId ?? tab.runId ?? null,
             taskId: tab.taskId ?? null,
+            reuseKey: tab.reuseKey ?? null,
           },
         },
       ];
@@ -8439,7 +8478,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         }
       }
       // 复用键：已有同 key 标签就切过去，不再新开（「快速开聊」「跟 AI 商量一下」等
-      // 重复入口防标签堆积；恢复出的占位标签不带 reuseKey，不参与复用——会话已断，新开才诚实）。
+      // 重复入口防标签堆积；恢复出的占位标签只留工作区键 ws:，别的不参与复用——会话已断，新开才诚实）。
       // 复用时不跳过右侧收尾：previewPath/rightTab 等交接对复用标签同样生效（重进即回到该有的布局）
       let tabId: string | null = null;
       const adoptExisting = (existing: (typeof tabs)[number]) => {
@@ -8531,6 +8570,21 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           return agent === pt.resume?.agentId && sid === pt.resume?.sessionId;
         });
         if (bySession) adoptExisting(bySession);
+      }
+      // 这一步的对话还在跑：找到持有它的标签只聚焦，不另开一份（另开就是两个 CLI 抢同一会话）
+      if (!tabId && pt.focusSession) {
+        const holder = findResumeHolderTab(tabsRef.current, statusesRef.current, pt.focusSession);
+        if (holder) adoptExisting(holder);
+      }
+      // 工作区入口的最后一道：会话 id 对不上（Claude 接续后换了新会话文件、老标签没带复用键）时，
+      // 这棵工作树里正有 Agent 在跑的标签就是这一步的对话。工作树一步一棵，按目录认不会认错别的对话
+      //（2026-10-22 实证：收件箱「去终端回答」在 Agent 还在跑时新开了一个终端）
+      if (!tabId && (pt.focusSession || pt.reuseKey?.startsWith("ws:"))) {
+        const running = tabsRef.current.find((t) => {
+          const st = statusesRef.current[t.id];
+          return st?.running && !st.shell && samePath(st.cwd ?? "", pt.cwd, IS_WINDOWS);
+        });
+        if (running) adoptExisting(running);
       }
       const reused = tabId !== null;
       tabId ??= addTab({
@@ -8629,7 +8683,10 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     setReviewRunId(workspaceReviewRequest.runId ?? null);
     setReviewAction(workspaceReviewRequest.action ?? null);
     setReviewRequestId(workspaceReviewRequest.requestId);
-    setReviewReturn(workspaceReviewRequest.returnTo ?? null);
+    setReviewReturn({
+      target: workspaceReviewRequest.returnTo ?? null,
+      fromPage: workspaceReviewRequest.fromPage ?? null,
+    });
     setReviewLocked(!!workspaceReviewRequest.locked);
     setWorkspaceReviewRequest(null);
   }, [visible, workspaceReviewRequest, setWorkspaceReviewRequest]);
@@ -8721,10 +8778,12 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       projectRoot: readerReq.projectRoot,
       notePath: readerReq.notePath,
       fromPage: readerReq.fromPage,
+      spotCheck: readerReq.spotCheck,
     });
   }, [visible, readerReq, setReaderReq]);
 
-  const readerKey = reader ? readerReuseKey(reader.projectRoot) : null;
+  // 抽查核对档不派阅读会话：阅读会话在项目根运行，改的是主仓里的笔记，不是工作区里待评审的那份
+  const readerKey = reader && !reader.spotCheck ? readerReuseKey(reader.projectRoot) : null;
   /** 阅读会话标签（reuseKey 找回：退出再进接着聊；恢复出的占位标签不带 reuseKey 不参与复用） */
   const readerTabId = readerKey
     ? (tabs.find((t) => t.reuseKey === readerKey)?.id ?? null)
@@ -8908,6 +8967,46 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       setPage(back);
     }
   }, [reader, readerTabId, setPage]);
+
+  /** 抽查问题单交回这一步的 AI：走步骤「继续」同一条链（接回原对话；还在跑就认回持有它的标签，
+      消息注入那个标签），关掉阅读区留在运行页看 AI 改。返回 null 成功，否则为提示 */
+  const sendSpotCheck = useCallback(
+    async (prompt: string): Promise<string | null> => {
+      const ws = reader?.spotCheck?.ws;
+      if (!ws) return "这一步没有可以接着改的对话";
+      try {
+        const req = await buildWorkspaceTerminalRequest(ws, prompt, {
+          autoStart: true,
+          resumeSession: true,
+        });
+        setReader(null);
+        setPendingTerminal(req);
+        return null;
+      } catch (e) {
+        return `没交回去：${String(e)}`;
+      }
+    },
+    [reader],
+  );
+
+  /** 抽查都没问题：勾上这一项、通知流程页重取，回来源页 */
+  const clearSpotCheck = useCallback(async (): Promise<string | null> => {
+    const spot = reader?.spotCheck;
+    if (!spot) return null;
+    try {
+      await invoke("set_human_task_check", {
+        projectRoot: spot.projectRoot,
+        step: spot.stepName,
+        title: spot.taskTitle,
+        checked: true,
+      });
+    } catch (e) {
+      return `没勾上：${String(e)}`;
+    }
+    useAppStore.getState().bumpHumanTasks();
+    closeReader();
+    return null;
+  }, [reader, closeReader]);
 
   // 阅读区打开时把阅读会话标签提到活跃（右栏 xterm 就是那个标签的画面；
   // 退出阅读区时该标签随 closeReader 一起关掉，不再「正好落在它上面」）
@@ -10640,6 +10739,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                 onOpenPr={gitPanelOpenPr}
                 onOpenReview={(path, runId) => {
                   setReviewAction(null);
+                  setReviewReturn(null);
                   setReviewPath(path);
                   setReviewRunId(runId ?? null);
                 }}
@@ -10664,11 +10764,19 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
             setReviewRequestId(null);
             setReviewReturn(null);
             setReviewLocked(false);
-            if (back) {
-              const s = useAppStore.getState();
-              s.setSelectProjectReq(back.projectRoot);
-              s.setProjectSurfaceReq(back.surface);
+            const s = useAppStore.getState();
+            // 「回给 Agent」「看复现日志」先交终端请求再关评审：人要看的就是这页的终端，不回跳
+            if (!back || s.pendingTerminal) return;
+            if (back.target) {
+              s.setSelectProjectReq(back.target.projectRoot);
+              s.setProjectSurfaceReq(back.target.surface);
               s.setPage("workspaces");
+            } else if (
+              back.fromPage &&
+              back.fromPage !== "terminal" &&
+              back.fromPage !== s.page
+            ) {
+              s.setPage(back.fromPage);
             }
           }}
         />
@@ -10678,6 +10786,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           右栏 xterm 由上面的 useLayoutEffect 把阅读会话标签的宿主节点搬进 termSlot */}
       {reader && (
         <ReaderOverlay
+          // 抽查核对档与平时阅读各有一套栏宽记忆，换档要重挂才按各自的读
+          key={reader.spotCheck ? "spot" : "read"}
           pdfPath={reader.pdfPath}
           projectRoot={reader.projectRoot}
           notePath={reader.notePath ?? null}
@@ -10697,6 +10807,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           agentSurface={readerSurface}
           agentPeek={Boolean(readerTabId && peekByTab[readerTabId])}
           onAgentSurface={setReaderSurface}
+          spotCheck={reader.spotCheck ?? null}
+          onSpotSend={sendSpotCheck}
+          onSpotAllClear={clearSpotCheck}
         />
       )}
     </div>

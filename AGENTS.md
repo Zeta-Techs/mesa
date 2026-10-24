@@ -131,7 +131,7 @@ docs/            architecture.md（总体设计 + §10 决策记录 + §12 当�
   `NO_COLOR` 必须 `env_remove`；`TERM=xterm-256color`/`COLORTERM=truecolor`/`TERM_PROGRAM=Mesa` 必须显式设置。
 - **会话文本出站前必须在 Rust 层脱敏**：标题/摘要、结构化回放、AI 摘要、Markdown 导出均不得把已保存密钥或常见密钥前缀
   送到 React；只作用于 DTO/导出副本，不得回写会话源文件；前端遮盖不是安全边界。
-- **gitignored 科研产物最终落点是项目根，但分两类走法**（2026-09-09 口径 C）：文献 PDF 与人工导入属**原始资料**，直写项目根 `papers/`；清洗后数据、实验结果、渲染成品等 **Agent 派生产物**写工作区产物目录或 `output/`（不进 git），评审时经 `workspace_review_deliverables` 冻结非 Git 文件，合并只由 `apply_delivery_review` 带回所审副本（同名冲突点名交人、保护路径跳过；有未接收产物不得归档）。派生产物直写项目根 = 未验收产物。TASK.md 必须给出项目根绝对路径（读提货单、写 papers/）。
+- **gitignored 科研产物最终落点是项目根，但分两类走法**（2026-09-09 口径 C）：文献 PDF 与人工导入属**原始资料**，直写项目根 `papers/`；清洗后数据、实验结果、渲染成品等 **Agent 派生产物**写工作区产物目录或 `output/`（不进 git），评审时经 `workspace_review_deliverables` 冻结非 Git 文件，合并只由 `apply_delivery_review` 带回所审副本（同名冲突点名交人、保护路径跳过；人在评审页逐个勾掉的不带回；有未接收产物不得归档——人勾掉且仍是那一版的除外，见 pipeline.md「逐个勾掉不带回」）。派生产物直写项目根 = 未验收产物。TASK.md 必须给出项目根绝对路径（读提货单、写 papers/）。
 - **Codex 全局写入不碰 `~/.codex/auth.json`**（v3.249 / v3.250）：「设为全局」与客户端接力的渠道补写（`register_codex_client_provider_named`）都只写 `config.toml` 的 provider 块，认证用 `experimental_bearer_token`（ChatGPT 自带 Codex 认这个字段）。禁止写 `http_headers`（MCP 字段，写在 provider 上客户端加载失败报 Model provider not found）。禁止退回 `requires_openai_auth=true` + 改 auth.json。
 - **各 CLI 会话/配置目录一律只读**；例外仅限用户显式操作（设为全局默认、hooks 精确注意力开关（2026-10-20 起只剩 Gemini / Kimi / Grok 三家；其余五家改为启动时注入，
   以前写过的启动时收回，见 hooks.rs）、会话删除、工作树文件删除、**会话导入**、
@@ -168,7 +168,11 @@ docs/            architecture.md（总体设计 + §10 决策记录 + §12 当�
   **Python 一律走 `dep_check::usable_python()`**，禁 `resolve_binary("python3")`：python.org 的 Windows 安装包只有
   `python.exe`，`python3` 在 Windows 上永远先命中应用商店占位。给 Agent 的指令 / 技能里写 `python3` 时同时注明
   「Windows 上改用 `python`」。**Agent 起的 Python（PTY 子进程与无头运行）在 Windows 由 `process::agent_python_io_env`
-  补 `PYTHONIOENCODING=utf-8`，禁补 `PYTHONUTF8`**（它连 `open()` 默认编码一起改）。
+  补 `PYTHONIOENCODING=utf-8`，禁补 `PYTHONUTF8`**（它连 `open()` 默认编码一起改）。Agent 加 `-I` / `-E` 时该变量失效
+  （中文系统回落 GBK），Windows 任务书固定带「本机 Python（Windows）」节提示改加 `-X utf8`（2026-10-22，`task-md.ts`）。
+- **检索 / 精读的题录只经 `lit-search/scripts/lit_records.py` 从 `papers/included.json` 出**（2026-10-22）：included.md、to-fetch.md、
+  两份 RIS、references.bib 都是它生成，简报与技能不得再让 Agent 手写或自写补字段脚本；RIS 拼法与 `screening-review.ts risBody`
+  双端镜像（`tests/lit-records.test.ts` 逐条比对），改一边两边同改；「待补」「待核」「无期号」不得进任何 RIS / 文献库字段（「无期号」= Crossref 有卷没期，不是缺口，2026-10-23）。
 - **`quarto render` 命令（模板 run 脚本与技能）统一 `--output-dir ../output`、不带 `--output`**（2026-10-21 Windows 实测：写 `output`
   落进 `manuscript/output/` 且后一次渲染清掉前一次）；项目根不放 `_quarto.yml`；存量项目的 run 命令存在各自 `.ccode/project.toml`，
   改模板不会自动更新，要手工处理。PDF 走 xelatex 时 header 必须带 ActualText 开关（`manuscript_font.py` 写），否则分号文本层变 U+037E。

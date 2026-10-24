@@ -100,11 +100,15 @@ export default forwardRef<PendingConfirmHandle, {
   const [metricsBusy, setMetricsBusy] = useState(false);
   const [metricsLoading, setMetricsLoading] = useState(false);
   const [excludedOpen, setExcludedOpen] = useState(false);
+  /** 这次展开里逐篇拍过板的篇目，原地留在待确认里改显结果：一抽走，下面每篇都往上窜一行，
+   *  连着点时点到的就不是想点的那篇。值是拍板前那一行（理由会加前缀变长，显示用旧的保持行高）。 */
+  const [settled, setSettled] = useState<Map<string, IncludedRecord>>(new Map());
   const onClearedRef = useRef(onCleared);
   onClearedRef.current = onCleared;
 
   async function load() {
     setError(null);
+    setSettled(new Map());
     const json = await readFirst(roots, "papers/included.json");
     if (!json) {
       setRecords([]);
@@ -395,6 +399,7 @@ export default forwardRef<PendingConfirmHandle, {
       const nextJsonRev = await saveResearchLedger(jsonRoot, "papers/included.json", nextJson, jsonRevision);
       setJsonText(nextJson);
       setJsonRevision(nextJsonRev);
+      setSettled((prev) => (prev.has(key) ? prev : new Map(prev).set(key, row)));
       setRecords(parseIncludedRecords(nextJson));
       if (mdText != null && mdRevision) {
         const nextMd = syncIncludedSummary(
@@ -447,6 +452,7 @@ export default forwardRef<PendingConfirmHandle, {
       setJsonText(nextJson);
       setJsonRevision(nextJsonRev);
       setRecords(parseIncludedRecords(nextJson));
+      setSettled(new Map());
       let nextMd = mdText;
       let nextMdRev = mdRevision;
       if (nextMd != null && nextMdRev) {
@@ -499,6 +505,7 @@ export default forwardRef<PendingConfirmHandle, {
       setJsonText(nextJson);
       setJsonRevision(nextJsonRev);
       setRecords(parseIncludedRecords(nextJson));
+      setSettled(new Map());
       let nextMd = mdText;
       let nextMdRev = mdRevision;
       if (nextMd != null && nextMdRev) {
@@ -541,6 +548,10 @@ export default forwardRef<PendingConfirmHandle, {
 
   const papersDir = `${projectRoot.replace(/[\\/]+$/, "")}/papers`;
   const pendingShown = shown(pending);
+  // 待确认区实际画的行：真待确认 + 这次原地拍过板的（顺序不变）
+  const pendingView = shown(
+    records.filter((row) => row.decision === "pending" || settled.has(includedRecordKey(row))),
+  );
   const includedShown = shown(included);
   const excludedShown = shown(excluded);
   const pickedRows = pending.filter((row) => picked.has(includedRecordKey(row)));
@@ -565,7 +576,7 @@ export default forwardRef<PendingConfirmHandle, {
             type="button"
             disabled={metricsBusy}
             onClick={() => void downloadMetrics()}
-            className="ml-1 text-cta-pill-text hover:underline disabled:opacity-50"
+            className="ml-1 text-l3 underline decoration-dotted underline-offset-2 hover:text-l1 disabled:opacity-50"
           >
             {metricsUpdate?.hasUpdate ? "更新" : "重新下载"}
           </button>
@@ -590,6 +601,14 @@ export default forwardRef<PendingConfirmHandle, {
     </>
   );
   const showListTools = pending.length > 0 || included.length > 0 || metricsReady != null;
+  // 指标表状态 + 排序跟在第一个分段头的右侧；单独占一行时左边整块空着（2026-10-22 截图）
+  const toolsAt: "pending" | "included" | "top" | null = !showListTools
+    ? null
+    : pending.length > 0
+      ? "pending"
+      : included.length > 0
+        ? "included"
+        : "top";
 
   function toggleIn(set: Dispatch<SetStateAction<Set<string>>>, key: string) {
     set((cur) => {
@@ -601,12 +620,14 @@ export default forwardRef<PendingConfirmHandle, {
   }
 
   /** 一篇一行。`side` = 动作放行尾、悬停才现（已纳入的「移出」、已排除的「恢复」——
-   *  低频，且勾选 +「移出所选」已能批量做）；待确认的纳入/排除是要做的决定，放标题下常显。 */
+   *  低频，且勾选 +「移出所选」已能批量做）；待确认的纳入/排除是要做的决定，放标题下常显。
+   *  `selection` 传 null = 占住勾选框的位置不画框（原地拍过板的行，标题不左移）。 */
   function rowBody(
     row: IncludedRecord,
     actions: ReactNode,
-    selection?: { picked: Set<string>; toggle: (key: string) => void },
+    selection?: { picked: Set<string>; toggle: (key: string) => void } | null,
     side = false,
+    dim = false,
   ) {
     const key = includedRecordKey(row);
     const pdfPath = matchPaperPdf(row, pdfFiles, papersDir);
@@ -614,7 +635,8 @@ export default forwardRef<PendingConfirmHandle, {
     const title = displayCitationTitle(row.title);
     const metric = metrics.get(key);
     return (
-      <li key={key} className="group flex gap-2 border-t border-hairline pt-2">
+      <li key={key} className={`group flex gap-2 border-t border-hairline pt-2${dim ? " opacity-60" : ""}`}>
+        {selection === null && <span aria-hidden="true" className="h-4 w-4 shrink-0" />}
         {selection && (
           <label className={`relative mt-0.5 flex h-4 w-4 shrink-0 ${includingAll ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}>
             <input
@@ -641,7 +663,7 @@ export default forwardRef<PendingConfirmHandle, {
         {pdfPath && onOpenPdf ? (
           <button
             type="button"
-            className="text-left text-xs leading-5 text-cta-pill-text hover:underline"
+            className="text-left text-xs leading-5 text-l1 hover:underline"
             title="已有 PDF，点击在文件页预览"
             onClick={() => onOpenPdf(pdfPath)}
           >
@@ -659,7 +681,7 @@ export default forwardRef<PendingConfirmHandle, {
         {!pdfPath && row.url && (
           <button
             type="button"
-            className="mt-0.5 text-left text-micro text-cta-pill-text hover:underline"
+            className="mt-0.5 text-left text-micro text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
             onClick={() => void openUrl(row.url)}
           >
             {doiToken(row.id, row.url) || row.url.replace(/^https?:\/\//, "")}
@@ -686,7 +708,7 @@ export default forwardRef<PendingConfirmHandle, {
             type="button"
             disabled={metricsBusy}
             onClick={() => void downloadMetrics()}
-            className="ml-1 text-cta-pill-text hover:underline disabled:opacity-50"
+            className="ml-1 text-l3 underline decoration-dotted underline-offset-2 hover:text-l1 disabled:opacity-50"
           >
             {metricsBusy ? "下载中…" : "下载期刊指标表"}
           </button>
@@ -695,12 +717,13 @@ export default forwardRef<PendingConfirmHandle, {
       {metricsLoading && (
         <p className="text-micro text-l4">正在按 DOI 补期刊名，影响因子稍后出现。</p>
       )}
-      {showListTools && pending.length === 0 && (
+      {toolsAt === "top" && (
         <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">{listTools}</div>
       )}
       {error && <InlineNotice tone="err" size="micro">{error}</InlineNotice>}
-      {pending.length > 0 && (
+      {pendingView.length > 0 && (
         <section>
+          {pending.length > 0 && (
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <p className="text-micro text-l3">待确认 {pendingShown.length}{pendingShown.length === pending.length ? "" : ` / ${pending.length}`}</p>
             <button
@@ -719,7 +742,12 @@ export default forwardRef<PendingConfirmHandle, {
               type="button"
               disabled={includingAll || pickedRows.length === 0}
               onClick={() => void applyMany(pickedRows, "included", (previous) => confirmReason("included", previous))}
-              className="rounded-sm border border-cta-bd bg-cta px-1.5 py-0.5 text-micro text-cta-text disabled:opacity-50"
+              // 勾了篇目才成主按钮：没勾时它点不了，不该占强调色
+              className={`rounded-sm border px-1.5 py-0.5 text-micro disabled:opacity-50 ${
+                pickedRows.length > 0
+                  ? "border-cta-bd bg-cta text-cta-text"
+                  : "border-field text-l2"
+              }`}
             >
               {includingAll ? "处理中…" : `纳入所选${pickedRows.length > 0 ? ` ${pickedRows.length}` : ""}`}
             </button>
@@ -731,21 +759,47 @@ export default forwardRef<PendingConfirmHandle, {
             >
               排除所选
             </button>
-            {showListTools && (
+            {toolsAt === "pending" && (
               <div className="ml-auto flex flex-wrap items-center justify-end gap-x-3 gap-y-1">{listTools}</div>
             )}
           </div>
+          )}
           <ul className="space-y-2">
-            {pendingShown.map((row) => {
+            {pendingView.map((row) => {
               const key = includedRecordKey(row);
+              if (row.decision !== "pending") {
+                // 原地拍过板：显结果 + 反悔入口，行高与待确认行一致（同样一行描边钮）
+                const kept = row.decision === "included";
+                return rowBody(
+                  settled.get(key) ?? row,
+                  <div className="mt-1 flex flex-wrap items-center gap-1">
+                    <span className="border border-transparent px-1.5 py-0.5 text-micro text-l2">
+                      {kept ? "✓ 已纳入" : "已排除"}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={busyKey === key || includingAll}
+                      onClick={() => void (kept ? removeRow(row) : confirmRow(row, "included"))}
+                      title={kept ? "改成排除，并从纳入清单和待获取里拿掉。笔记和引文不动。" : undefined}
+                      className="rounded-sm border border-field px-1.5 py-0.5 text-micro text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50"
+                    >
+                      {busyKey === key ? "处理中…" : kept ? "改为排除" : "改为纳入"}
+                    </button>
+                  </div>,
+                  null,
+                  false,
+                  true,
+                );
+              }
               return rowBody(
                 row,
                 <div className="mt-1 flex flex-wrap gap-1">
+                  {/* 行内纳入与排除等重：每行一颗实心强调钮，八篇就是八块色，盖过真正要看的标题 */}
                   <button
                     type="button"
                     disabled={busyKey === key || includingAll}
                     onClick={() => void confirmRow(row, "included")}
-                    className="rounded-sm border border-cta-bd bg-cta px-1.5 py-0.5 text-micro text-cta-text disabled:opacity-50"
+                    className="rounded-sm border border-field px-1.5 py-0.5 text-micro text-l1 hover:bg-hover disabled:opacity-50"
                   >
                     纳入
                   </button>
@@ -789,6 +843,9 @@ export default forwardRef<PendingConfirmHandle, {
             >
               {includingAll ? "处理中…" : `移出所选${pickedIncludedRows.length > 0 ? ` ${pickedIncludedRows.length}` : ""}`}
             </button>
+            {toolsAt === "included" && (
+              <div className="ml-auto flex flex-wrap items-center justify-end gap-x-3 gap-y-1">{listTools}</div>
+            )}
           </div>
           <ul className="space-y-2">
             {includedShown.map((row) => {

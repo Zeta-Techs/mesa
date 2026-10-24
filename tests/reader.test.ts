@@ -192,6 +192,58 @@ test("readerColumnWidths 两侧超预算时按比例压缩，PDF 保底不被压
   assert.ok(left < 360);
 });
 
+test("抽查核对档：笔记栏留阅读宽度、问题单窄；放不下先压问题单", async () => {
+  const { SPOT_PCT_DEFAULT_L, SPOT_PCT_DEFAULT_R } = await import("../src/reader.ts");
+  // 1440 宽：笔记约 490px（一行三十来个字），问题单压到保底附近，PDF 仍有六百多
+  const wide = readerColumnWidths(1440, SPOT_PCT_DEFAULT_L, SPOT_PCT_DEFAULT_R, true);
+  assert.ok(wide.left > 450, `${wide.left}`);
+  assert.ok(wide.right < wide.left);
+  assert.ok(1440 - wide.left - wide.right > 600);
+  // 1000 宽放不下（400 + 350 > 720）：问题单让出差额，笔记栏不动
+  const narrow = readerColumnWidths(1000, 40, 35, true);
+  assert.equal(narrow.left, 400);
+  assert.equal(narrow.right, 320);
+  // 问题单压到 240 保底仍放不下，才两边等比让
+  const tight = readerColumnWidths(800, 40, 35, true);
+  assert.ok(tight.left + tight.right <= 800 - READER_PDF_MIN_PX);
+  assert.ok(tight.left < 320);
+  // 不传 keepLeft 照旧等比压缩
+  const even = readerColumnWidths(1000, 40, 35);
+  assert.ok(even.left < 400);
+});
+
+test("译文球心只在 PDF 栏里：近侧栏外距离 + 栏内百分比，按球半径兜住", async () => {
+  const { readerTlBallOffset } = await import("../src/reader.ts");
+  assert.equal(
+    readerTlBallOffset(100, 300, 560),
+    "calc(300px + clamp(18px, calc((100% - 560px) * 1), calc(100% - 560px - 18px)))",
+  );
+  // 没量到边界（0,0）时退回整窗口径
+  assert.match(readerTlBallOffset(45, 0, 0), /^calc\(0px \+ clamp\(18px, calc\(\(100% - 0px\) \* 0\.45\)/);
+});
+
+test("译文卡避让原文段：横向压到才挪，下方够放下方，否则上方，都不够不挪", async () => {
+  const { readerTlCardAvoid } = await import("../src/reader.ts");
+  const bounds = { left: 300, right: 260, top: 76, bottom: 0 };
+  const card = { left: 500, right: 900 };
+  // 原文段在上半页：卡挪到它下方
+  assert.deepEqual(readerTlCardAvoid(card, { top: 200, bottom: 360, left: 340, right: 980 }, 900, bounds), {
+    side: "below",
+    px: 368,
+    room: 524,
+  });
+  // 原文段贴底：卡挪到它上方（bottom 锚）
+  assert.deepEqual(readerTlCardAvoid(card, { top: 620, bottom: 860, left: 340, right: 980 }, 900, bounds), {
+    side: "above",
+    px: 288,
+    room: 528,
+  });
+  // 横向没压到：不挪
+  assert.equal(readerTlCardAvoid(card, { top: 200, bottom: 360, left: 920, right: 1100 }, 900, bounds), null);
+  // 原文段占满整栏：两边都放不下，不挪
+  assert.equal(readerTlCardAvoid(card, { top: 120, bottom: 820, left: 340, right: 980 }, 900, bounds), null);
+});
+
 test("readerColumnWidths 极端窄窗侧栏归零让位", () => {
   assert.deepEqual(readerColumnWidths(READER_PDF_MIN_PX, 22, 28), {
     left: 0,

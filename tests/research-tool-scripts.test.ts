@@ -164,7 +164,8 @@ test("EndNote 出库：标识符行零化学美化，标签前空格与电荷上
     const adv = join(root, "adv.ris");
     assert.equal(run(bridge, ["--input", input, "--output", adv, "--report", join(root, "adv.json")]).status, 0);
     const advText = readFileSync(adv, "utf8");
-    assert.match(advText, /TI  - Study of Mg₂Cl₃⁺ and MgCl2 in 2020/);
+    // 2026-10-23 起整词判定：MgCl2 这类多元素式子也收成下标（原先逐字符认，漏掉）
+    assert.match(advText, /TI  - Study of Mg₂Cl₃⁺ and MgCl₂ in 2020/);
     assert.match(advText, /AB  - See https:\/\/example\.com\/a and In 2020 we showed Mg₂Cl₃⁺; old MgCl₂ data/);
     assert.doesNotMatch(advText, /\x00|[-]/);
     assert.doesNotMatch(advText, /In₂₀₂₀|Cl³⁺|₂0|0₂/);
@@ -540,6 +541,45 @@ z.commit()
     const zoReport = readFileSync(join(root, "zo.md"), "utf8");
     assert.match(zoReport, /已绑定 1 条/);
     assert.match(zoReport, /Dup2021.*2 条/);
+
+    // EndNote X9 及更早：.enl 不是 SQLite、记录在 .Data/rdb——报告说清怎么导出 XML（2026-10-24 HER：「file is not a database」）
+    const legacy = join(root, "old.enl");
+    writeFileSync(legacy, "not sqlite");
+    mkdirSync(join(root, "old.Data", "rdb"), { recursive: true });
+    result = run(citeDocx, ["--input", md, "--bib", bib, "--output", join(root, "legacy.docx"), "--report", join(root, "legacy.md"), "--endnote-library", legacy]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(readFileSync(join(root, "legacy.md"), "utf8"), /EndNote X9 及更早[\s\S]*File → Export[\s\S]*XML/);
+    // 导出的 XML 能绑：记录号与库编号取自 XML
+    const exported = join(root, "endnote-library.xml");
+    const style = (s: string) => `<style face="normal" font="default" size="100%">${s}</style>`;
+    const rec = (n: number, doi: string) =>
+      `<record><rec-number>${n}</rec-number><foreign-keys><key app="EN" db-id="x9dbid0001" timestamp="1690000000">${n}</key></foreign-keys><ref-type name="Journal Article">17</ref-type><titles><title>${style("T")}</title></titles><electronic-resource-num>${style(doi)}</electronic-resource-num></record>`;
+    writeFileSync(exported, `<?xml version="1.0" encoding="UTF-8" ?><xml><records>${rec(7, "10.1000/only")}${rec(8, "10.1000/dup")}${rec(9, "10.1000/dup")}</records></xml>`);
+    const viaXml = join(root, "via-xml.docx");
+    result = run(citeDocx, ["--input", md, "--bib", bib, "--output", viaXml, "--report", join(root, "xml.md"), "--endnote-library", exported]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(readFileSync(join(root, "xml.md"), "utf8"), /已绑定 1 条/);
+    assert.match(fldData(viaXml).stdout, /<rec-number>7<\/rec-number><foreign-keys><key app="EN" db-id="x9dbid0001" timestamp="1690000000">7<\/key>/);
+    // 没有 DOI 的（中文期刊常见）：题名去标点大小写 + 年份恰好一条才绑（2026-10-24 HER：梁珂明 2020 两边都没 DOI）
+    const recNoDoi = (n: number, title: string, year: string) =>
+      `<record><rec-number>${n}</rec-number><foreign-keys><key app="EN" db-id="x9dbid0001" timestamp="1690000000">${n}</key></foreign-keys><ref-type name="Journal Article">17</ref-type><titles><title>${style(title)}</title></titles><dates><year>${style(year)}</year></dates></record>`;
+    writeFileSync(exported, `<?xml version="1.0" encoding="UTF-8" ?><xml><records>${rec(7, "10.1000/only")}${recNoDoi(30, "碳纳米纤维负载铁钴镍硼化物可控制备", "2020")}${recNoDoi(31, "Same Title", "2019")}${recNoDoi(32, "Same title.", "2019")}</records></xml>`);
+    const md2 = join(root, "nodoi.md");
+    writeFileSync(md2, "See [@Cn2020] and [@Twin2019].\n");
+    const bib2 = join(root, "nodoi.bib");
+    writeFileSync(bib2, [
+      "@article{Cn2020, title={碳纳米纤维负载铁钴镍硼化物可控制备}, author={梁珂明 and 姜彬}, year={2020}}",
+      "@article{Twin2019, title={Same Title}, author={Roe, Ann}, year={2019}}",
+      "",
+    ].join("\n"));
+    const noDoi = join(root, "nodoi.docx");
+    result = run(citeDocx, ["--input", md2, "--bib", bib2, "--output", noDoi, "--report", join(root, "nodoi-report.md"), "--endnote-library", exported]);
+    assert.equal(result.status, 0, result.stderr);
+    const noDoiReport = readFileSync(join(root, "nodoi-report.md"), "utf8");
+    assert.match(noDoiReport, /已绑定 1 条/);
+    assert.match(noDoiReport, /Cn2020.*按题名与年份对上记录 30/);
+    assert.match(noDoiReport, /Twin2019.*2 条，未绑定/);
+    assert.match(fldData(noDoi).stdout, /<rec-number>30<\/rec-number><foreign-keys><key app="EN" db-id="x9dbid0001"/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -585,7 +625,8 @@ test("Zotero 域稿写出 ADDIN ZOTERO_ITEM，缺键不交 docx", () => {
     result = run(script, ["--input", md, "--bib", bib, "--output", captioned, "--report", join(root, "cap.md")]);
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stderr, /cited only in captions.*Lee2021/);
-    const capWarn = readFileSync(join(root, "cap.md"), "utf8").split("只在图注或表题里引用")[1]?.split("\n\n")[0] ?? "";
+    // Windows 上报告是 CRLF；本机装了 Zotero 时报告后面还有「库绑定」一节，按空行切不开就会把它算进来
+    const capWarn = readFileSync(join(root, "cap.md"), "utf8").replace(/\r\n/g, "\n").split("只在图注或表题里引用")[1]?.split("\n\n")[0] ?? "";
     assert.match(capWarn, /`Lee2021`/);
     assert.doesNotMatch(capWarn, /`Doe2020`/);
     writeFileSync(md, "See [@Missing].\n");
@@ -688,9 +729,11 @@ test("Zotero 全库 RIS（同步按钮）：T2/J2 字段约定，标识符零化
     else process.env.ZOTERO_CONFIG_DIR = savedCfg;
     assert.equal(result.status, 0, result.stderr);
     const text = readFileSync(out, "utf8");
-    assert.match(text, /本次写入 1 条，库里已有同一 DOI 跳过 0 条/);
-    // 头注释与现行字段约定：T2/J2，不写 N1（进笔记）/JO/JF/JA（JO 进期刊缩写）/ID/DA/M2/M3/N2
-    assert.match(text, /^# 整份引文库，共 1 条。/);
+    // RIS 没有注释语法：文件直接从第一条开始，条数与重复情况只进 stdout
+    assert.match(text, /^TY  - JOUR\r\n/);
+    assert.doesNotMatch(text, /^#/m);
+    assert.match(result.stdout, /本次交给 Zotero 1 条。/);
+    // 现行字段约定：T2/J2，不写 N1（进笔记）/JO/JF/JA（JO 进期刊缩写）/ID/DA/M2/M3/N2
     assert.match(text, /T2  - Energy Storage Materials/);
     assert.match(text, /TI  - MgCl₂ Solubilization with robust Mg²⁺-Conducting interphase/);
     assert.match(text, /DO  - 10\.1016\/s0022-0728\(99\)00146-1/);
@@ -701,6 +744,39 @@ test("Zotero 全库 RIS（同步按钮）：T2/J2 字段约定，标识符零化
     assert.doesNotMatch(text, /₀₀₁₄₆|D₂EE|₂EE|A₂₅₇|MgCl ₂/);
     // 同步按钮的反馈：stdout 必带库体检结论（查不成也说明，不静默）
     assert.match(result.stdout, /库体检：/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+// 2026-10-23 HER：引文库里还留着检索前从 Zotero 导进来、后来全排除的 18 条，同步整份交了出去
+test("Zotero 全库 RIS（同步按钮）：检索时排除的篇不导", () => {
+  const root = mkdtempSync(join(tmpdir(), "mesa-zotero-skip-"));
+  try {
+    const bib = join(root, "references.bib");
+    writeFileSync(
+      bib,
+      "@article{Keep2024, title={Kept paper}, author={Doe, Jane}, year={2024}, doi={10.1/keep}}\n" +
+        "@article{Gone2020, title={Excluded boride paper}, author={Roe, John}, year={2020}, doi={10.1/GONE}}\n" +
+        "@article{Gone2019, title={Excluded without doi}, author={Poe, Ann}, year={2019}}\n",
+    );
+    const included = join(root, "included.json");
+    writeFileSync(included, JSON.stringify([
+      { id: "A", title: "Kept paper", decision: "included", reason: "", doi: "10.1/keep" },
+      { id: "B", title: "Excluded boride paper", decision: "excluded", reason: "", doi: "https://doi.org/10.1/gone" },
+      { id: "C", title: "Excluded without DOI", decision: "excluded", reason: "" },
+    ]));
+    const script = resolve("src-tauri/resources/skills/zotero-sync/scripts/zotero_rtf.py");
+    const out = join(root, "zotero-library.ris");
+    const savedCfg = process.env.ZOTERO_CONFIG_DIR;
+    process.env.ZOTERO_CONFIG_DIR = root;
+    const result = run(script, ["--library-ris", "--bib", bib, "--ris", out, "--skip-excluded", included]);
+    if (savedCfg === undefined) delete process.env.ZOTERO_CONFIG_DIR;
+    else process.env.ZOTERO_CONFIG_DIR = savedCfg;
+    assert.equal(result.status, 0, result.stderr);
+    const text = readFileSync(out, "utf8");
+    assert.match(text, /TI  - Kept paper/);
+    assert.doesNotMatch(text, /Excluded/);
+    assert.equal((text.match(/^TY  - /gm) ?? []).length, 1);
+    assert.match(result.stdout, /本次交给 Zotero 1 条，检索时排除的 2 条不导/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

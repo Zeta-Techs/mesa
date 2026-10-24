@@ -316,7 +316,44 @@ static BUILTIN_SKILLS: &[(&str, &str)] = &[
 ];
 
 /// 随技能一起播种/显式更新的驱动脚本，不能只更新 SKILL.md 留下失效入口。
+/// lit_records.py 检索步与精读步都用（补字段 / 清单与 RIS / 写引文库），连同它依赖的 bridge.py 与
+/// Mesa 期刊缩写兜底表各放一份——单一出处仍是仓库里那一个文件（2026-10-22）
 static BUILTIN_SUPPORT: &[(&str, &str, &str)] = &[
+    (
+        "lit-search",
+        "scripts/lit_records.py",
+        include_str!("../resources/skills/lit-search/scripts/lit_records.py"),
+    ),
+    (
+        "lit-search",
+        "scripts/bridge.py",
+        include_str!("../resources/skills/endnote-bridge/scripts/bridge.py"),
+    ),
+    (
+        "lit-search",
+        "scripts/journal-abbreviations.csv",
+        include_str!("../resources/journal-abbreviations.csv"),
+    ),
+    (
+        "lit-notes",
+        "scripts/lit_records.py",
+        include_str!("../resources/skills/lit-search/scripts/lit_records.py"),
+    ),
+    (
+        "lit-notes",
+        "scripts/bridge.py",
+        include_str!("../resources/skills/endnote-bridge/scripts/bridge.py"),
+    ),
+    (
+        "lit-notes",
+        "scripts/journal-abbreviations.csv",
+        include_str!("../resources/journal-abbreviations.csv"),
+    ),
+    (
+        "endnote-bridge",
+        "scripts/journal-abbreviations.csv",
+        include_str!("../resources/journal-abbreviations.csv"),
+    ),
     (
         "endnote-bridge",
         "scripts/bridge.py",
@@ -353,6 +390,16 @@ static BUILTIN_SUPPORT: &[(&str, &str, &str)] = &[
         include_str!("../resources/skills/review-figures/scripts/assemble_panels.py"),
     ),
     (
+        "review-figures",
+        "scripts/figure_sources.py",
+        include_str!("../resources/skills/review-figures/scripts/figure_sources.py"),
+    ),
+    (
+        "review-figures",
+        "scripts/figure_permissions.py",
+        include_str!("../resources/skills/review-figures/scripts/figure_permissions.py"),
+    ),
+    (
         "quarto-render",
         "ieee.csl",
         include_str!("../resources/skills/quarto-render/ieee.csl"),
@@ -371,6 +418,11 @@ static BUILTIN_SUPPORT: &[(&str, &str, &str)] = &[
         "quarto-render",
         "scripts/manuscript_font.py",
         include_str!("../resources/skills/quarto-render/scripts/manuscript_font.py"),
+    ),
+    (
+        "quarto-render",
+        "scripts/references.lua",
+        include_str!("../resources/skills/quarto-render/scripts/references.lua"),
     ),
     (
         "quarto-render",
@@ -2343,12 +2395,28 @@ pub async fn check_builtin_skill_updates() -> Vec<String> {
     check_builtin_skill_updates_impl(&store)
 }
 
-/// 一键更新内置技能为内嵌种子版（覆盖前原文件自动备份为同目录 SKILL.md.bak-<yyyymmdd>）
+/// 更新内置技能后顺带把新版拷给已启用它的 Agent 复制件（Mesa 分发的 copy，带标记文件）。
+/// 人点「采用新版」就是要用新版：只更新库、让人再去点「同步副本」，Agent 下一轮读到的还是旧版
+/// （2026-10-24 用户：更新完技能卡上又冒出「同步副本」，不知道什么意思）。返回同步了哪些 Agent。
+fn apply_builtin_and_resync(
+    store: &SkillStore,
+    dirs: &HashMap<String, PathBuf>,
+    name: &str,
+) -> Result<Vec<String>, String> {
+    apply_builtin_skill_update_impl(store, name)?;
+    let Some(id) = store.read().into_iter().find(|s| s.name == name).map(|s| s.id) else {
+        return Ok(Vec::new());
+    };
+    resync_impl(store, dirs, &id)
+}
+
+/// 一键更新内置技能为内嵌种子版（覆盖前原文件自动备份为同目录 SKILL.md.bak-<yyyymmdd>），
+/// 并同步已分发的复制件；返回同步了的 Agent
 #[tauri::command]
 pub async fn apply_builtin_skill_update(
     name: String,
     expected_revision: String,
-) -> Result<(), String> {
+) -> Result<Vec<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let _guard = builtin_update_lock()?;
         let store = SkillStore::default_paths()?;
@@ -2357,7 +2425,7 @@ pub async fn apply_builtin_skill_update(
         {
             return Err("预览后技能发生变化，请重新查看差异再更新".into());
         }
-        apply_builtin_skill_update_impl(&store, name.trim())
+        apply_builtin_and_resync(&store, &agent_dirs(), name.trim())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -3377,6 +3445,38 @@ mod tests {
     }
 
     #[test]
+    fn every_bundled_skill_file_is_embedded() {
+        // 2026-10-24 实证：figure_permissions.py 进了仓库、SKILL.md 也写了要跑它，但没登记进
+        // BUILTIN_SUPPORT，用户装到的技能里就没有这个脚本，定稿步一跑就找不到
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/skills");
+        let mut missing = Vec::new();
+        for (name, _) in BUILTIN_SKILLS {
+            let dir = root.join(name);
+            let mut stack = vec![dir.clone()];
+            while let Some(d) = stack.pop() {
+                for entry in fs::read_dir(&d).unwrap().flatten() {
+                    let path = entry.path();
+                    let file = entry.file_name().to_string_lossy().into_owned();
+                    if path.is_dir() {
+                        if file != "__pycache__" {
+                            stack.push(path);
+                        }
+                        continue;
+                    }
+                    if file == "SKILL.md" || file.ends_with(".pyc") || file.contains(".bak") {
+                        continue;
+                    }
+                    let rel = path.strip_prefix(&dir).unwrap().to_string_lossy().replace('\\', "/");
+                    if !BUILTIN_SUPPORT.iter().any(|(s, r, _)| s == name && *r == rel) {
+                        missing.push(format!("{name}/{rel}"));
+                    }
+                }
+            }
+        }
+        assert!(missing.is_empty(), "随包技能文件没登记进 BUILTIN_SUPPORT：{missing:?}");
+    }
+
+    #[test]
     fn seed_adds_all_builtin_skills_once() {
         let fx = Fx::new();
         let added = seed_builtin_skills_impl(&fx.store).unwrap();
@@ -3617,6 +3717,27 @@ mod tests {
         // 非内置技能名报错
         let err = apply_builtin_skill_update_impl(&fx.store, "not-builtin").unwrap_err();
         assert!(err.contains("不是内置技能"), "{err}");
+    }
+
+    #[test]
+    fn builtin_update_also_refreshes_distributed_copies() {
+        let fx = Fx::new();
+        seed_builtin_skills_impl(&fx.store).unwrap();
+        let first = BUILTIN_SKILLS[0].0;
+        let id = fx.store.read().into_iter().find(|s| s.name == first).unwrap().id;
+        // codex 拿的是复制件；库里改旧后复制件跟着旧
+        let md = fx.store.skill_dir(first).join("SKILL.md");
+        fs::write(&md, "---\nname: old\ndescription: 旧描述\n---\n旧内容\n").unwrap();
+        apply_impl(&fx.store, &fx.agents, &id, "codex", true, false).unwrap();
+        let copy = fx.agents["codex"].join(first).join("SKILL.md");
+        assert!(fs::read_to_string(&copy).unwrap().contains("旧内容"));
+        // 采用新版：库和复制件一起追平，不再留「同步副本」
+        let synced = apply_builtin_and_resync(&fx.store, &fx.agents, first).unwrap();
+        assert_eq!(synced, vec!["codex".to_string()]);
+        let seed = BUILTIN_SKILLS.iter().find(|(n, _)| *n == first).unwrap().1;
+        assert_eq!(fs::read_to_string(&copy).unwrap(), seed);
+        let skill = fx.store.read().into_iter().find(|s| s.id == id).unwrap();
+        assert!(stale_agents(&fx.store, &fx.agents, &skill).is_empty());
     }
 
     #[test]

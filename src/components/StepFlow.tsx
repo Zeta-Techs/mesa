@@ -47,7 +47,7 @@ import {
   type ResearchTools,
 } from "../research-tools";
 import { displayCitationTitle } from "../screening-review";
-import { readResearchLedger } from "../research-report-load";
+import { readResearchFile, readResearchLedger } from "../research-report-load";
 import { excludedIncludedIds, notesProgress, notesProgressLine, spotCheckPicks, type SpotCheckPick } from "../notes-progress";
 import { stepNodeAction, stepNodeReady } from "../step-node-actions.ts";
 import {
@@ -88,12 +88,21 @@ import {
 } from "../academic-mcp";
 import {
   instActiveFrom,
+  instBrowserLoginDay,
+  instBrowserLoginFresh,
+  instLoginOpenUrl,
   instOpenTarget,
+  INST_BROWSER_LOGIN_EVENT,
+  readInstBrowserLogin,
+  writeInstBrowserLogin,
   type FetchedFulltextDto,
   type InstSessionStatus,
 } from "../inst-access";
 import PendingConfirmList, { type PendingConfirmHandle } from "./PendingConfirmList";
 import ReviewDecisionList from "./ReviewDecisionList";
+import { DeclarationsForm, FigurePermissionsPanel } from "./HandbackPanels";
+import ProjectFilePreview from "./ProjectFilePreview";
+import { handbackTask } from "../handback-tasks";
 import {
   continueAfterDecisionsPrompt,
   isInlineDecisionTaskTitle,
@@ -202,7 +211,7 @@ function PublisherOpenButton({
       <button
         type="button"
         className={`${inlineActionClass} shrink-0`}
-        title="去出版商官网打开这篇；点站方下载，90 秒内落下的 PDF 会收进 papers/。没收到用「关联」"
+        title="去出版商官网打开这篇。点站方下载，或 PDF 在浏览器里打开后点保存、存进「下载」文件夹。PDF 里带本篇 DOI 的，30 分钟内存下都能收进 papers/。没收到就把文件拖进清单，或用「关联」"
         onClick={() => {
           onError("");
           void invoke("inst_browser_open", {
@@ -318,11 +327,22 @@ function NotesProgressLine({ roots, live }: { roots: string[]; live: boolean }) 
 }
 
 /** 「抽查 3 篇笔记」就地给出三篇候选（notes/index.json，工作区优先、项目根兜底）：
- *  点一篇在运行页预览打开——保存进项目前笔记还只在工作区里，文件页看不到。 */
-function SpotCheckPicks({ roots }: { roots: string[] }) {
-  const setPreviewReq = useAppStore((s) => s.setPreviewReq);
+ *  点一篇直接盖上阅读区的核对档（笔记｜原文），三篇在里面切，退出回流程页（2026-10-23）。 */
+function SpotCheckPicks({
+  projectPath,
+  ws,
+  stepName,
+  taskTitle,
+}: {
+  projectPath: string;
+  ws: WorkspaceDto | undefined;
+  stepName: string;
+  taskTitle: string;
+}) {
+  const setReaderReq = useAppStore((s) => s.setReaderReq);
   const setPage = useAppStore((s) => s.setPage);
   const [picks, setPicks] = useState<{ root: string; items: SpotCheckPick[] } | null>(null);
+  const roots = ws ? [ws.worktreePath, projectPath] : [projectPath];
   const rootsKey = roots.join("\n");
   useEffect(() => {
     let stale = false;
@@ -348,20 +368,30 @@ function SpotCheckPicks({ roots }: { roots: string[] }) {
   return (
     <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
       <span className="text-micro text-l4">抽这几篇：</span>
-      {picks.items.map((pick) => {
+      {picks.items.map((pick, index) => {
         const rel = pick.notePath.replace(/\\/g, "/");
-        const abs = /^(?:[A-Za-z]:)?\//.test(rel)
-          ? rel
-          : `${picks.root.replace(/[\\/]+$/, "")}/${rel.replace(/^\.?\//, "")}`;
         const name = rel.split("/").pop() ?? rel;
         return (
           <button
             key={pick.notePath}
             type="button"
             className="inline-flex max-w-[16rem] items-center gap-1 rounded-sm px-1 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1"
-            title={`在运行页预览 ${rel}`}
+            title={`对照原文看 ${rel}`}
             onClick={() => {
-              setPreviewReq({ path: abs, name, root: picks.root });
+              setReaderReq({
+                pdfPath: "",
+                projectRoot: projectPath,
+                spotCheck: {
+                  projectRoot: projectPath,
+                  base: picks.root,
+                  stepName,
+                  taskTitle,
+                  // 索引读自项目根（已保存进项目）就没有可交回的对话
+                  ws: ws && picks.root === ws.worktreePath ? ws : null,
+                  items: picks.items,
+                  index,
+                },
+              });
               setPage("terminal");
             }}
           >
@@ -377,6 +407,8 @@ function SpotCheckPicks({ roots }: { roots: string[] }) {
 /** 按钮没说的那一句：可选/跳过的后果。做法进行内按钮 title。 */
 const PAYWALL_HINT = "跳过的篇目下一篇按摘要记。";
 const PENDING_HINT = "待确认点纳入或排除。已纳入不想要就点移出，笔记和引文留着。";
+const PENDING_DONE_HINT =
+  "待确认都定了，这一项已自动勾上。已纳入的仍可移出：移出会从纳入清单、待获取和两份 RIS 里拿掉，已写的笔记和引文留着，要到精读那一步清。";
 
 const LIT_SOURCES: {
   id: string;
@@ -465,6 +497,7 @@ export default function StepFlow({
   projectLaunch = null,
   stepSlotLaunch = null,
   onContinueStep,
+  onContinueFresh,
 }: {
   projectPath: string;
   step: ProjectStepDto;
@@ -547,6 +580,8 @@ export default function StepFlow({
   stepSlotLaunch?: { agentId: string; profileId: string; model: string } | null;
   /** 工作区已开时：新会话，用步骤绑定接着做到完成标准。不接回旧 Agent。 */
   onContinueStep?: () => void;
+  /** 有能接回的上次对话时才给：不接原对话，新开一个会话从任务书读起 */
+  onContinueFresh?: () => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const {
@@ -649,6 +684,9 @@ export default function StepFlow({
    *  商量改的就是最终落盘的 TASK.md，从零起草会把简报/预期产物/提货单全丢掉 */
   const [chatBusy, setChatBusy] = useState(false);
   const [decisionNote, setDecisionNote] = useState<string | null>(null);
+  /** 「打开清单 / 打开填写」展开的是哪一行（按事项标题） */
+  const [editOpen, setEditOpen] = useState<string | null>(null);
+  const [handbackNote, setHandbackNote] = useState<{ title: string; text: string } | null>(null);
   const [decisionOpen, setDecisionOpen] = useState<Map<string, number>>(new Map());
   const [citeOpen, setCiteOpen] = useState<string | null>(null);
   const [citeBusy, setCiteBusy] = useState(false);
@@ -666,6 +704,15 @@ export default function StepFlow({
   // 首次点开才读文件，收起不清缓存（agent 不会在展示期间改它）。
   // 位置口径：agent 的产出落在步骤工作区，评审合并后才进项目根——先读工作区再回落项目根
   const [pendingListOpen, setPendingListOpen] = useState(true);
+  // 开工后「确定文献来源」收成一行；点「更改」才摊开选项
+  const [litSourceEditing, setLitSourceEditing] = useState(false);
+  // 进来时「核对待确认篇目」已经做完：文献清单先收起（回看不铺一长串）；当场清完的保持展开，画面不跳
+  const pendingFoldInit = useRef(false);
+  useEffect(() => {
+    if (pendingFoldInit.current || !states) return;
+    pendingFoldInit.current = true;
+    if (states.some((s) => isPendingConfirmTaskTitle(s.title) && s.done)) setPendingListOpen(false);
+  }, [states]);
   const pendingListRef = useRef<PendingConfirmHandle>(null);
   const [pendingMeta, setPendingMeta] = useState({ count: 0, busy: false });
   const [academicMcp, setAcademicMcp] = useState<AcademicMcpLogin | null>(null);
@@ -686,6 +733,15 @@ export default function StepFlow({
   } | null>(null);
   const [endnoteSyncing, setEndnoteSyncing] = useState(false);
   const [endnoteSyncResult, setEndnoteSyncResult] = useState<string | null>(null);
+  /** 人指定的 EndNote 库（papers/endnote-library.path 那一行）。undefined = 还没读；null = 没指定 */
+  const [endnoteLib, setEndnoteLib] = useState<
+    { path: string | null; revision: string; legacy?: boolean } | undefined
+  >(undefined);
+  const [endnoteLibNote, setEndnoteLibNote] = useState<string | null>(null);
+  /** 「选这个 EndNote 库」展开的候选：EndNote 最近打开过的库，加文稿 / 桌面里的 .enl */
+  const [endnoteChoices, setEndnoteChoices] = useState<
+    { path: string; name: string; recent: boolean; legacy: boolean }[] | null
+  >(null);
   const [endnoteChecked, setEndnoteChecked] = useState(false);
   const [continueNotesChecked, setContinueNotesChecked] = useState(false);
   const [toFetchBusy, setToFetchBusy] = useState<
@@ -715,6 +771,11 @@ export default function StepFlow({
   // 渲染在滚动区最底部、语义也错位）
   const [browserOpenErr, setBrowserOpenErr] = useState<string | null>(null);
   const [instLoggedIn, setInstLoggedIn] = useState(false);
+  // 浏览器里登录的标记（inst-access：Mesa 读不到浏览器会话，只记人点「登录好了」的时间）
+  const [browserLoginAt, setBrowserLoginAt] = useState<number | null>(() => readInstBrowserLogin());
+  const [instLoginOpened, setInstLoginOpened] = useState(false);
+  const [instLoginErr, setInstLoginErr] = useState<string | null>(null);
+  const appSettings = useAppStore((s) => s.settings);
   const [dropNote, setDropNote] = useState<string | null>(null);
   const paywallDropRef = useRef<HTMLDivElement>(null);
   // 点「浏览器」或已存标题后离开，回来要立刻找到刚才那行：主题强调色框，
@@ -929,6 +990,83 @@ export default function StepFlow({
     }
   }
 
+  // EndNote 在 Word 里只认库里的记录号：同步把题录导进了「当前打开的库」，可 Mesa 不知道那是哪个 .enl。
+  // 人在这里指一次，后面定稿出的 EndNote 版 Word 就按这个库绑记录号，在 Word 里点 Update 即和库里条目对上
+  // （2026-10-24 用户：精读那步同步过，后续域稿应该直接关联好）。Zotero 不用指：脚本直接读默认数据目录。
+  /** 这一步有「同步到文献库」那一行（精读、期刊格式、投稿材料、返修） */
+  const endnoteStep =
+    step.workspaceName === "lit-notes" ||
+    step.workspaceName === "journal-format" ||
+    step.workspaceName === "submission-materials" ||
+    /^rebuttal-r\d+$/.test(step.workspaceName ?? "");
+  useEffect(() => {
+    if (!endnoteStep) return;
+    let stale = false;
+    readResearchFile(projectPath, "papers/endnote-library.path")
+      .then((file) => {
+        if (stale) return;
+        const line = file.text
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .find((l) => l && !l.startsWith("#"));
+        setEndnoteLib({ path: line ?? null, revision: file.revision ?? "new" });
+        if (line) {
+          void invoke<boolean>("endnote_library_legacy", { path: line })
+            .then((legacy) => !stale && setEndnoteLib((cur) => (cur && cur.path === line ? { ...cur, legacy } : cur)))
+            .catch(() => {});
+        }
+      })
+      .catch(() => !stale && setEndnoteLib({ path: null, revision: "new" }));
+    return () => {
+      stale = true;
+    };
+  }, [projectPath, endnoteStep]);
+
+  /** 先列 EndNote 最近打开过的库让人点一个（文件对话框里 .enl 旁边有同名 .Data 文件夹，容易点进文件夹）；
+   *  一个都没找到才直接开对话框 */
+  async function pickEndnoteLibrary() {
+    setEndnoteLibNote(null);
+    if (endnoteChoices) {
+      setEndnoteChoices(null);
+      return;
+    }
+    const found = await invoke<{ path: string; name: string; recent: boolean; legacy: boolean }[]>(
+      "endnote_library_choices",
+    ).catch(() => []);
+    if (found.length > 0) {
+      setEndnoteChoices(found);
+      return;
+    }
+    await browseEndnoteLibrary();
+  }
+
+  async function browseEndnoteLibrary() {
+    const selected = await openFileDialog({
+      multiple: false,
+      title: "选 EndNote 库：选 .enl 文件（不是旁边同名的 .Data 文件夹），或从 EndNote 导出的 .xml",
+      filters: [{ name: "EndNote 库或导出的 XML", extensions: ["enl", "xml"] }],
+    });
+    if (!selected || typeof selected !== "string") return;
+    await saveEndnoteLibrary(selected);
+  }
+
+  async function saveEndnoteLibrary(selected: string) {
+    setEndnoteLibNote(null);
+    try {
+      const revision = await invoke<string>("save_file_preview", {
+        path: `${projectPath.replace(/[\\/]+$/, "")}/papers/endnote-library.path`,
+        root: projectPath,
+        text: `${selected}\n`,
+        expectedRevision: endnoteLib?.revision ?? "new",
+      });
+      const legacy = await invoke<boolean>("endnote_library_legacy", { path: selected }).catch(() => false);
+      setEndnoteLib({ path: selected, revision, legacy });
+      setEndnoteChoices(null);
+    } catch (e) {
+      setEndnoteLibNote(String(e));
+    }
+  }
+
   async function openEndnoteImport() {
     if (endnoteSyncing) return;
     setEndnoteSyncing(true);
@@ -964,17 +1102,42 @@ export default function StepFlow({
   useEffect(() => {
     if (!paywallListOpen) return;
     let stale = false;
-    void invoke<InstSessionStatus>("inst_session_status")
-      .then((status) => {
-        if (!stale) setInstLoggedIn(instActiveFrom(status));
-      })
-      .catch(() => {
-        if (!stale) setInstLoggedIn(false);
-      });
+    const load = () =>
+      void invoke<InstSessionStatus>("inst_session_status")
+        .then((status) => {
+          if (!stale) setInstLoggedIn(instActiveFrom(status));
+        })
+        .catch(() => {
+          if (!stale) setInstLoggedIn(false);
+        });
+    load();
+    // 内嵌窗登录存下会话时后端发这个事件；清单开着也要跟上
+    const un = listen("inst-session-captured", load);
     return () => {
       stale = true;
+      void un.then((f) => f());
     };
   }, [paywallListOpen]);
+
+  useEffect(() => {
+    const sync = () => setBrowserLoginAt(readInstBrowserLogin());
+    window.addEventListener(INST_BROWSER_LOGIN_EVENT, sync);
+    return () => window.removeEventListener(INST_BROWSER_LOGIN_EVENT, sync);
+  }, []);
+
+  /** 付费墙行「登录学校账号」：直接调起浏览器（与设置页同一入口地址），不再先跳设置页 */
+  async function openInstLogin() {
+    setInstLoginErr(null);
+    try {
+      await invoke("inst_browser_open", {
+        url: instLoginOpenUrl(appSettings?.institutionalLoginUrl, appSettings?.institutionalPrefix),
+      });
+      writeInstBrowserLogin(null);
+      setInstLoginOpened(true);
+    } catch (e) {
+      setInstLoginErr(String(e));
+    }
+  }
 
   useEffect(() => {
     if (!paywallListOpen || !projectPath) return;
@@ -1208,6 +1371,52 @@ export default function StepFlow({
     }
   }
 
+  /** 接回这一步对话时的连接预填：步骤绑定 > 商量 / 项目默认，与任务卡「继续」同一口径。
+   *  不带时模型落到连接名单第一个（2026-10-24 HER 润色：Mesa 重启后接回，glm-5.3 换成了 glm-5.3-flash） */
+  const resumeLaunch = stepSlotLaunch ?? projectLaunch ?? undefined;
+
+  /** 这一步的文件放在哪：工作区还在用工作区（AI 写在那里，人改完 AI 接着用），否则用项目根 */
+  const stepFileRoot = ws?.worktreePath ?? projectPath;
+
+  /** 「交给 AI」：接回这一步原来的对话，把话发过去（同「让 Agent 按决定继续」） */
+  async function handBack(title: string, target: string) {
+    const task = handbackTask(title);
+    if (!ws || !task) return;
+    setHandbackNote(null);
+    try {
+      const req = await buildWorkspaceTerminalRequest(ws, task.prompt(target), {
+        autoStart: true,
+        resumeSession: true,
+        stepLaunch: resumeLaunch,
+      });
+      setPendingTerminal(req);
+      setPage("terminal");
+    } catch (reason) {
+      setHandbackNote({ title, text: String(reason) });
+    }
+  }
+
+  /** 域稿用系统里的 Word 打开；没出这一份就说一声 */
+  async function openFieldDoc(title: string, file: "endnote" | "zotero") {
+    setHandbackNote(null);
+    const roots = [...new Set([ws?.worktreePath, projectPath].filter((p): p is string => Boolean(p)))];
+    for (const root of roots) {
+      try {
+        await invoke("open_in_system", { path: `${root.replace(/[\\/]+$/, "")}/output/${file}.docx`, root });
+        return;
+      } catch {
+        /* 试下一处 */
+      }
+    }
+    setHandbackNote({
+      title,
+      text:
+        file === "endnote"
+          ? "没有 EndNote 版（output/endnote.docx）：这一步没出。要用 EndNote，回对话让 AI 照出这一份。"
+          : "没有 Zotero 版（output/zotero.docx）：这一步没出。",
+    });
+  }
+
   async function continueAfterDecisions(target: string, title: string) {
     const kind = reviewItemKind(title);
     if (!ws || !kind) return;
@@ -1216,7 +1425,7 @@ export default function StepFlow({
       const req = await buildWorkspaceTerminalRequest(
         ws,
         continueAfterDecisionsPrompt(target, kind),
-        { autoStart: true, resumeSession: true },
+        { autoStart: true, resumeSession: true, stepLaunch: resumeLaunch },
       );
       setPendingTerminal(req);
       setPage("terminal");
@@ -1244,7 +1453,7 @@ export default function StepFlow({
       const req = await buildWorkspaceTerminalRequest(
         ws,
         citationRerenderPrompt(ask),
-        { autoStart: true, resumeSession: true },
+        { autoStart: true, resumeSession: true, stepLaunch: resumeLaunch },
       );
       setPendingTerminal(req);
       setPage("terminal");
@@ -1343,6 +1552,8 @@ export default function StepFlow({
               `先通读一遍，把拿不准的点（范围、口径、标准等）逐个问我，按我的回答直接修改这份文件。` +
               `只允许新建/修改这一个文件，以及下面点名的项目规则行。其他文件一律不要动。` +
               `讨论中没定下来的问题，记到这份任务书的「## 待拍板」小节。` +
+              // 2026-10-24 HER 润色：商量时把「导入 EndNote 库、写库路径」写成了域稿的硬前置，AI 做好的 docx 又撤下
+              `不要把模板里的可选事项改成开工前必须办的前置，也不要因为某个可选设置没办就让某份产物不交，除非我明确这么说。` +
               ((openSettings ?? []).filter((line) => line.trim()).length
                 ? `项目规则里还有没定的全局设定。开场先逐项问我，说明括号里的说法。我确定一项，就把 .ccode/project.toml 的 settings 里对应那一行从「名称：（提示）」改成「名称：我的答案」，不要改这个文件的其他内容。还没定的是：${(openSettings ?? []).filter((line) => line.trim()).join("；")}。`
                 : "") +
@@ -1500,11 +1711,7 @@ export default function StepFlow({
     litSource,
     pendingDecisions: decisionGaps.length,
     toolAsks: toolAskFields.map((field) => ({ key: field.key, label: field.label })),
-    endnoteExport:
-      step.workspaceName === "lit-notes" ||
-      step.workspaceName === "journal-format" ||
-      step.workspaceName === "submission-materials" ||
-      /^rebuttal-r\d+$/.test(step.workspaceName ?? ""),
+    endnoteExport: endnoteStep,
     continueNotes: notesStep,
   });
   const seeds = step.discussionSeeds ?? [];
@@ -1654,6 +1861,55 @@ export default function StepFlow({
             到「文献与数据」导入
           </button>
         );
+      case "edit-handback": {
+        const human = node.human!;
+        const task = handbackTask(human.title)!;
+        const open = editOpen === human.title;
+        return (
+          <span className="flex shrink-0 items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setEditOpen(open ? null : human.title)}
+              aria-expanded={open}
+              title={`在这一行下面展开 ${human.target}`}
+              className={outline}
+            >
+              {open ? "收起" : task.open}
+            </button>
+            {ws && (
+              <button
+                type="button"
+                onClick={() => void handBack(human.title, human.target ?? "")}
+                title="回到这一步原来的对话，让 AI 按你改好的内容接着做"
+                className={outline}
+              >
+                {task.handback}
+              </button>
+            )}
+          </span>
+        );
+      }
+      case "open-field-docs":
+        return (
+          <span className="flex shrink-0 items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => void openFieldDoc(node.human!.title, "endnote")}
+              title="用 Word 打开 output/endnote.docx，在 EndNote 选项卡点 Update Citations and Bibliography，再选样式"
+              className={outline}
+            >
+              Word 打开 EndNote 版
+            </button>
+            <button
+              type="button"
+              onClick={() => void openFieldDoc(node.human!.title, "zotero")}
+              title="用 Word 打开 output/zotero.docx，在 Zotero 选项卡点 Refresh，再选样式"
+              className={outline}
+            >
+              Word 打开 Zotero 版
+            </button>
+          </span>
+        );
       case "submit-deliverable":
         return (
           <button
@@ -1706,13 +1962,23 @@ export default function StepFlow({
           </span>
         );
       case "go-terminal": {
-        // 这一行只留一个入口。会话还在出字或等确认：回去看。否则「继续」新开一轮，
-        // 用这一步的绑定。两颗同时出现会和下面工作区的「继续」叠成三件同一件事。
+        // 这一行只留一个主入口。会话还在出字或等确认：回去看。否则「继续」接回这一步上次的对话
+        // （同一家 Agent，2026-10-22），用这一步的绑定；「新开一轮」是次要出口，只在有能接回的对话时跟在前面。
         const live =
           agentAttention === "working" || agentAttention === "confirm";
         return (
           <span className="flex shrink-0 items-center gap-1.5">
             {action.agentDone && <span className="text-xs text-l3">Agent 已跑完</span>}
+            {!live && onContinueStep && onContinueFresh && (
+              <button
+                type="button"
+                onClick={onContinueFresh}
+                title="不接上次的对话，新开一个会话从任务书读起（上次对话太长或跑偏时用）"
+                className="shrink-0 rounded-sm px-1 text-xs text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+              >
+                新开一轮
+              </button>
+            )}
             {live || !onContinueStep ? (
               <button
                 type="button"
@@ -1726,7 +1992,11 @@ export default function StepFlow({
               <button
                 type="button"
                 onClick={onContinueStep}
-                title="在这一步的工作区开新会话，用这一步绑定的配置，接着做到完成标准"
+                title={
+                  onContinueFresh
+                    ? "接回这一步上次的对话，用这一步绑定的配置，接着做到完成标准"
+                    : "在这一步的工作区开新会话，用这一步绑定的配置，接着做到完成标准"
+                }
                 className="shrink-0 rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover"
               >
                 继续
@@ -1920,7 +2190,7 @@ export default function StepFlow({
                 清单 {human.expectedCount}
               </span>
             ) : null
-          ) : node.kind === "human" && human?.hitCount != null && !isCitationStyleTask(human.title) && !isInlineDecisionTaskTitle(human.title) ? (
+          ) : node.kind === "human" && human?.hitCount != null && !isCitationStyleTask(human.title) && !isInlineDecisionTaskTitle(human.title) && !handbackTask(human.title) ? (
             <span className="shrink-0 text-micro text-l4">
               已见到 {human.hitCount} 个文件
               {human.expectedCount != null
@@ -2080,6 +2350,11 @@ export default function StepFlow({
                 </div>
               </form>
             )}
+            {!node.done && !citeOpen && (
+              <p className="mt-1 text-micro text-l4">
+                现在是方括号编号 [1]。不换就勾掉这一行；想换就点一种，AI 回原对话重渲 PDF、Word 和带引用域的 Word。
+              </p>
+            )}
             {citeNote && <p className="mt-1 text-micro text-l4">{citeNote}</p>}
           </div>
         )}
@@ -2098,6 +2373,69 @@ export default function StepFlow({
               ? [zoteroSyncResult?.line, endnoteSyncResult].filter(Boolean).join(" ")
               : node.hint}
           </p>
+        )}
+        {!dense && node.key === "endnote-export" && endnoteLib && (
+          <p className="mt-0.5 pl-9 text-micro leading-5 text-l4">
+            {endnoteLib.path ? (
+              <>
+                EndNote 库：
+                <span className="text-l3" title={endnoteLib.path}>
+                  {endnoteLib.path.split(/[\\/]/).pop()}
+                </span>
+                {endnoteLib.legacy ? (
+                  <>
+                    。这是 EndNote X9 及更早版本的库，Mesa 读不到里面的记录，Word 只能对上一部分条目。在 EndNote 里打开这个库，File → Export，「保存类型」选 XML，存到项目的 papers 文件夹，再
+                    <button type="button" onClick={() => void browseEndnoteLibrary()} className="mx-1 rounded-sm bg-inset px-1.5 py-0.5 text-l2 hover:bg-hover hover:text-l1">
+                      选导出的 XML
+                    </button>
+                    ，然后回定稿对话让 AI 重出 EndNote 版。
+                  </>
+                ) : (
+                  "。定稿出的 EndNote 版 Word 按它对上库里的条目，在 Word 里点 Update 即可。"
+                )}
+                <button type="button" onClick={() => void pickEndnoteLibrary()} className="ml-1 rounded-sm px-1 text-l3 hover:bg-hover hover:text-l1">
+                  换一个
+                </button>
+              </>
+            ) : (
+              <>
+                用 EndNote 的话，导入后
+                <button type="button" onClick={() => void pickEndnoteLibrary()} className="mx-1 rounded-sm bg-inset px-1.5 py-0.5 text-l2 hover:bg-hover hover:text-l1">
+                  选这个 EndNote 库（.enl）
+                </button>
+                ：定稿出的 EndNote 版 Word 才能和库里的条目对上。不选也能用，只是条目算在 Word 自带的漫游库里。Zotero 不用选。
+              </>
+            )}
+            {endnoteLibNote && <span className="ml-1 text-err-text">{endnoteLibNote}</span>}
+          </p>
+        )}
+        {!dense && node.key === "endnote-export" && endnoteChoices && (
+          <div className="mt-1 ml-9 flex flex-wrap items-center gap-1">
+            <span className="text-micro text-l4">选你导入题录的那个库：</span>
+            {endnoteChoices.map((choice) => (
+              <button
+                key={choice.path}
+                type="button"
+                onClick={() => void saveEndnoteLibrary(choice.path)}
+                title={choice.path}
+                className="rounded-sm bg-inset px-1.5 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1"
+              >
+                {choice.name}
+                <span className="ml-1 text-micro text-l4">
+                  {choice.path.split(/[\\/]/).slice(-2, -1)[0]}
+                  {choice.recent ? " · 最近打开" : ""}
+                  {choice.legacy ? " · X9 库，需导出 XML" : ""}
+                </span>
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => void browseEndnoteLibrary()}
+              className="rounded-sm px-1.5 py-0.5 text-xs text-l3 hover:bg-hover hover:text-l1"
+            >
+              从别处选…
+            </button>
+          </div>
         )}
         {node.kind === "input" && node.key.startsWith("tool:") && onSetResearchTool && tools && (
           <div className="ml-9 mt-2.5">
@@ -2126,6 +2464,37 @@ export default function StepFlow({
         {node.kind === "input" && node.key === "input" && onSetLitSource && (
           // pl-9 与其余内容区（hint/agentContent）对齐到步骤名左缘，不顶到序号
           <div className="ml-9 mt-2.5">
+            {runStatus !== "pending" && !litSourceEditing ? (
+              // 开工后收成一行（2026-10-22）：这一轮的任务书已按当时的来源写好，
+              // 再点选项会改主仓档案卡与任务书草稿，正在跑的 agent 看不到——不能摆成随手可点
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                <span className="text-l3">
+                  {(LIT_SOURCES.find((o) => o.id === (litSource || "search")) ?? LIT_SOURCES[0]).label}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setLitSourceEditing(true)}
+                  className="rounded-sm px-1 py-0.5 text-micro text-l4 underline decoration-dotted underline-offset-2 hover:bg-hover hover:text-l2"
+                  title="这一轮已按这个来源开工；改了要下次重新开工这一步才生效"
+                >
+                  更改
+                </button>
+              </div>
+            ) : (
+            <>
+            {runStatus !== "pending" && (
+              <p className="mb-1 text-micro text-l4">
+                这一轮已经按「{(LIT_SOURCES.find((o) => o.id === (litSource || "search")) ?? LIT_SOURCES[0]).label}」开工。改了只写进项目设置和任务书草稿，
+                工作区里的任务书不变，「继续」「新开一轮」的 AI 都看不到；下次重新开工这一步才按新来源。
+                <button
+                  type="button"
+                  onClick={() => setLitSourceEditing(false)}
+                  className="ml-1 text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                >
+                  不改了
+                </button>
+              </p>
+            )}
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               {LIT_SOURCES.map((o) => {
                 const on = (litSource || "search") === o.id;
@@ -2134,7 +2503,9 @@ export default function StepFlow({
                     key={o.id}
                     type="button"
                     disabled={litBusy}
-                    onClick={() => void onSetLitSource(o.id)}
+                    onClick={() =>
+                      void Promise.resolve(onSetLitSource(o.id)).then(() => setLitSourceEditing(false))
+                    }
                     title={o.hint}
                     className={`rounded-full px-2 py-0.5 text-xs disabled:opacity-50 ${
                       on
@@ -2163,6 +2534,8 @@ export default function StepFlow({
                 ) : null;
               })()}
             </div>
+            </>
+            )}
           </div>
         )}
         {/* 想法区与「跟 AI 商量」：discuss 节点存在时挂它，否则挂 agent 节点（v3.89）——
@@ -2536,10 +2909,10 @@ export default function StepFlow({
         {node.kind === "human" &&
           human &&
           isPendingConfirmTaskTitle(human.title) &&
-          !node.done &&
           !dense && (
             <div className="mt-1 pl-9 text-micro leading-5 text-l4">
-              <p>{PENDING_HINT}</p>
+              {/* 清完会自动勾上，但已纳入的仍能移出——勾上后清单不收走，提醒移出的后果 */}
+              <p>{node.done ? PENDING_DONE_HINT : PENDING_HINT}</p>
               <div className="mt-1.5">
                 <div className="flex items-center gap-2">
                   <button
@@ -2557,7 +2930,8 @@ export default function StepFlow({
                       type="button"
                       disabled={pendingMeta.busy}
                       onClick={() => pendingListRef.current?.includeAll()}
-                      className="rounded-sm border border-cta-bd bg-cta px-1.5 py-0.5 text-micro text-cta-text disabled:opacity-50"
+                      // 不做主按钮：这一步要人逐篇拍板，强调色留给勾选后的「纳入所选」
+                      className="rounded-sm border border-field px-1.5 py-0.5 text-micro text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50"
                       title={`把 ${pendingMeta.count} 篇待确认全部改为纳入。没有 PDF 的会追加到待获取。`}
                     >
                       {pendingMeta.busy ? "纳入中…" : "全部纳入"}
@@ -2604,6 +2978,7 @@ export default function StepFlow({
                 projectRoot={projectPath}
                 target={human.target}
                 kind={reviewItemKind(human.title)!}
+                refreshKey={`${runStatus}|${agentAttention ?? ""}`}
                 onOpenCount={(count) =>
                   setDecisionOpen((prev) => {
                     if (prev.get(human.title) === count) return prev;
@@ -2618,6 +2993,37 @@ export default function StepFlow({
                 }}
               />
               {decisionNote && <InlineNotice tone="err" size="micro" className="mt-1">{decisionNote}</InlineNotice>}
+            </div>
+          )}
+        {node.kind === "human" && human && handbackNote?.title === human.title && (
+          <div className="mt-1 pl-9">
+            <InlineNotice tone="err" size="micro">{handbackNote.text}</InlineNotice>
+          </div>
+        )}
+        {node.kind === "human" &&
+          human?.target &&
+          !node.done &&
+          editOpen === human.title &&
+          handbackTask(human.title) && (
+            <div className="mt-1.5 ml-9 rounded-md border border-hairline px-2.5 py-2">
+              {/* 不再就地开 Markdown 编辑（2026-10-24 用户：打开清单、打开填写很不方便）：
+                  许可清单一篇一行、下拉改状态；声明一节一框，离开就存 */}
+              {handbackTask(human.title)!.panel === "permissions" ? (
+                <FigurePermissionsPanel root={stepFileRoot} rel={human.target} projectRoot={projectPath} />
+              ) : (
+                <DeclarationsForm
+                  root={stepFileRoot}
+                  rel={human.target}
+                  fallback={
+                    <div className="flex h-[24rem] flex-col overflow-hidden rounded-sm">
+                      <ProjectFilePreview
+                        path={`${stepFileRoot.replace(/[\\/]+$/, "")}/${human.target}`}
+                        root={stepFileRoot}
+                      />
+                    </div>
+                  }
+                />
+              )}
             </div>
           )}
         {!dense &&
@@ -2653,7 +3059,12 @@ export default function StepFlow({
                 </>
               )}
               {isSpotCheckTaskTitle(human.title) && !node.done && (
-                <SpotCheckPicks roots={ws ? [ws.worktreePath, projectPath] : [projectPath]} />
+                <SpotCheckPicks
+                  projectPath={projectPath}
+                  ws={ws}
+                  stepName={step.name}
+                  taskTitle={human.title}
+                />
               )}
               {/* 付费墙：清单就是入口。折叠标题带缺篇数；做法进行内按钮 title，
                   不再在清单上下各写一段说明书。 */}
@@ -2668,34 +3079,89 @@ export default function StepFlow({
                     title="agent 筛完列出的缺全文清单"
                   >
                     <FoldMark open={paywallListOpen} />
-                    {paywallListOpen
-                      ? `待获取${paywallList.from ? ` · ${paywallList.from}` : ""}`
-                      : paywallList.text
-                        ? `待获取（还缺 ${missingToFetchCount(paywallList.text, toFetchDone)} 篇）`
-                        : "待获取"}
+                    {paywallList.text
+                      ? `待获取（还缺 ${missingToFetchCount(paywallList.text, toFetchDone)} 篇）`
+                      : "待获取"}
+                    {paywallListOpen && paywallList.from && (
+                      <span className="text-l4">· {paywallList.from}</span>
+                    )}
                   </button>
+                  {/* 学校登录跟在清单标题右侧，不单占一行（2026-10-22：单占一行右边整块空着） */}
+                  {paywallListOpen && (
+                    instLoggedIn || instBrowserLoginFresh(browserLoginAt, Date.now()) ? (
+                        <span className="ml-auto inline-flex flex-wrap items-center gap-2">
+                          <span
+                            className="inline-flex rounded-sm border border-done/40 px-1.5 py-0.5 text-xs text-done"
+                            title={
+                              instLoggedIn
+                                ? "学校账号会话已保存。清单里点官网即可下载。"
+                                : `${instBrowserLoginDay(browserLoginAt!)}在浏览器里登录过（你点的「登录好了」，Mesa 看不到浏览器里的登录）。官网又要你登录时点「重新登录」。`
+                            }
+                          >
+                            已登录
+                          </span>
+                          {!instLoggedIn && (
+                            <button
+                              type="button"
+                              onClick={() => void openInstLogin()}
+                              className="text-micro text-l4 underline decoration-dotted underline-offset-2 hover:text-l2"
+                            >
+                              重新登录
+                            </button>
+                          )}
+                        </span>
+                      ) : instLoginOpened ? (
+                        <span className="ml-auto inline-flex flex-wrap items-center gap-2">
+                          <span className="text-micro text-l3">在浏览器里选学校、登录完，回来点</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              writeInstBrowserLogin(Date.now());
+                              setInstLoginOpened(false);
+                            }}
+                            className="rounded-sm border border-field px-1.5 py-0.5 text-xs text-l1 hover:bg-hover"
+                          >
+                            登录好了
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void openInstLogin()}
+                            className="text-micro text-l4 underline decoration-dotted underline-offset-2 hover:text-l2"
+                          >
+                            再打开一次
+                          </button>
+                        </span>
+                      ) : (
+                        <span className="ml-auto inline-flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void openInstLogin()}
+                            className="rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1"
+                            title="在浏览器里打开学校登录（默认 CARSI 高校联盟）。登录一次后，清单里点官网即可下载"
+                          >
+                            登录学校账号
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSettingsSectionReq("network");
+                              setPage("settings");
+                            }}
+                            className="text-micro text-l4 underline decoration-dotted underline-offset-2 hover:text-l2"
+                            title="设置 → 网络：换登录入口，或贴图书馆「校外访问」链接"
+                          >
+                            校外访问
+                          </button>
+                        </span>
+                    )
+                  )}
                   </div>
                   {paywallListOpen && (
                     <div ref={paywallDropRef} className="mt-1">
-                      {instLoggedIn ? (
-                        <span
-                          className="mb-1 inline-flex rounded-sm border border-done/40 px-1.5 py-0.5 text-xs text-done"
-                          title="学校账号会话已保存。清单里点官网即可下载。"
-                        >
-                          已登录
-                        </span>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSettingsSectionReq("network");
-                            setPage("settings");
-                          }}
-                          className="mb-1 rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1"
-                          title="打开设置 → 网络，登录学校账号。登录一次后，清单里点官网即可下载"
-                        >
-                          登录学校账号
-                        </button>
+                      {instLoginErr && (
+                        <p className="mb-1 break-words text-micro text-err-text" role="alert">
+                          {instLoginErr}
+                        </p>
                       )}
                       {dropNote && <p className="mb-1 text-micro text-l3">{dropNote}</p>}
                       {paywallList.error ? (

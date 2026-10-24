@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -16,10 +17,24 @@ def _need_pil():
     return Image, ImageDraw, ImageFont
 
 
+# Pillow 按文件名找字体时区分大小写：Windows 上只有 arial.ttf，写 Arial.ttf 找不到，
+# 落到 10 px 的位图默认字体，子图字母小到看不见（2026-10-23 HER 初稿拼图实证）
+FONT_NAMES = (
+    "arial.ttf", "Arial.ttf", "/System/Library/Fonts/Supplemental/Arial.ttf", "/Library/Fonts/Arial.ttf",
+    "Helvetica.ttc", "/System/Library/Fonts/Helvetica.ttc", "DejaVuSans.ttf", "LiberationSans-Regular.ttf",
+)
+
+
 def _font(ImageFont, dpi: int):
+    size = max(18, int(dpi * 8 / 72))
+    for name in FONT_NAMES:
+        try:
+            return ImageFont.truetype(name, size)
+        except OSError:
+            continue
     try:
-        return ImageFont.truetype("Arial.ttf", max(18, int(dpi * 8 / 72)))
-    except OSError:
+        return ImageFont.load_default(size=size)
+    except TypeError:
         return ImageFont.load_default()
 
 
@@ -41,6 +56,36 @@ def _fit_row(Image, images, width_px: int, gap: int, pad: int):
     return fitted, height
 
 
+# 块数不设死上限（系统综述一段论述拼 9 块、排 3×3 很常见），按印出来读不读得清卡：
+# 每块印出宽度不到 MIN_PANEL_CM，块里的坐标轴数字就小到读不清；整张高过 MAX_HEIGHT_CM，
+# 连图注放不进一页。两条都按 --width-cm（期刊栏宽）算，超了不出图，交给人按子论点拆成两张。
+MIN_PANEL_CM = 3.5
+MAX_HEIGHT_CM = 23.0
+
+
+def write_layout(out: Path, panels: list[Path], width_cm: float) -> None:
+    """拼板旁边落 <图>.json：新编号 (a)(b)… 各是哪个子图文件。figure_sources.py 顺着它找到每块的来源记录。"""
+    record = {
+        "width_cm": width_cm,
+        "panels": [{"letter": chr(ord("a") + i), "source": str(p)} for i, p in enumerate(panels)],
+    }
+    out.with_suffix(".json").write_text(json.dumps(record, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def check_readable(widths_px: list[int], height_px: int, dpi: int) -> None:
+    narrow = [i for i, w in enumerate(widths_px) if w / dpi * 2.54 < MIN_PANEL_CM]
+    height_cm = height_px / dpi * 2.54
+    problems = []
+    if narrow:
+        letters = "、".join(f"({chr(ord('a') + i)}) {widths_px[i] / dpi * 2.54:.1f} cm" for i in narrow)
+        problems.append(f"{letters} 印出来不到 {MIN_PANEL_CM} cm 宽，字读不清：这一行少放几块（--rows 多分一行）")
+    if height_cm > MAX_HEIGHT_CM:
+        problems.append(f"整张高 {height_cm:.1f} cm，超过一页能放的 {MAX_HEIGHT_CM} cm：按子论点拆成两张图")
+    if problems:
+        print("拼板读不清，没出图：" + "；".join(problems), file=sys.stderr)
+        sys.exit(3)
+
+
 def assemble(inputs: list[Path], out: Path, width_cm: float, dpi: int, gap_mm: float) -> None:
     Image, ImageDraw, ImageFont = _need_pil()
     images = [Image.open(p).convert("RGB") for p in inputs]
@@ -52,6 +97,7 @@ def assemble(inputs: list[Path], out: Path, width_cm: float, dpi: int, gap_mm: f
     label_h = max(18, int(dpi * 3.2 / 25.4))
     width_px = max(1, int(width_cm / 2.54 * dpi))
     fitted, row_h = _fit_row(Image, images, width_px, gap, pad)
+    check_readable([im.width for im in fitted], row_h + pad * 2 + label_h, dpi)
     font = _font(ImageFont, dpi)
     canvas = Image.new("RGB", (width_px, row_h + pad * 2 + label_h), (255, 255, 255))
     draw = ImageDraw.Draw(canvas)
@@ -63,6 +109,7 @@ def assemble(inputs: list[Path], out: Path, width_cm: float, dpi: int, gap_mm: f
         x += im.width + gap
     out.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(out, dpi=(dpi, dpi))
+    write_layout(out, inputs, width_cm)
     print(out)
 
 
@@ -81,9 +128,11 @@ def assemble_rows(rows: list[list[Path]], out: Path, width_cm: float, dpi: int, 
     letters = "abcdefghijklmnopqrstuvwxyz"
     letter = 0
     rendered = []
+    widths = []
     for row in rows:
         images = [Image.open(p).convert("RGB") for p in row]
         fitted, row_h = _fit_row(Image, images, width_px, gap, pad)
+        widths += [im.width for im in fitted]
         canvas = Image.new("RGB", (width_px, row_h + label_h), (255, 255, 255))
         draw = ImageDraw.Draw(canvas)
         x = pad
@@ -94,6 +143,7 @@ def assemble_rows(rows: list[list[Path]], out: Path, width_cm: float, dpi: int, 
             x += im.width + gap
         rendered.append(canvas)
     sheet_h = sum(c.height for c in rendered) + row_gap * (len(rendered) - 1) + pad * 2
+    check_readable(widths, sheet_h, dpi)
     sheet = Image.new("RGB", (width_px, sheet_h), (255, 255, 255))
     y = pad
     for canvas in rendered:
@@ -101,6 +151,7 @@ def assemble_rows(rows: list[list[Path]], out: Path, width_cm: float, dpi: int, 
         y += canvas.height + row_gap
     out.parent.mkdir(parents=True, exist_ok=True)
     sheet.save(out, dpi=(dpi, dpi))
+    write_layout(out, [p for row in rows for p in row], width_cm)
     print(out)
 
 

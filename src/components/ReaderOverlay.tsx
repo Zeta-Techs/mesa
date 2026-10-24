@@ -23,6 +23,10 @@ import {
   READER_SPLITTER_PX,
   READER_SPLIT_L_KEY,
   READER_SPLIT_R_KEY,
+  SPOT_PCT_DEFAULT_L,
+  SPOT_PCT_DEFAULT_R,
+  SPOT_SPLIT_L_KEY,
+  SPOT_SPLIT_R_KEY,
   READER_SPLIT_T_KEY,
   buildReaderTranslatePrompt,
   bytesToBase64,
@@ -45,6 +49,7 @@ import {
   saveTlHistory,
   translationSavedToast,
   upsertTlEntry,
+  type ReaderPdfBounds,
   type GlossaryEntry,
   type ReaderTranslateResult,
   type TlHistoryEntry,
@@ -63,6 +68,18 @@ import {
 } from "../reader-note";
 import ReaderTlFloat from "./ReaderTlFloat";
 import type { SessionLinkState, TabStatus } from "../pages/TerminalPage";
+import {
+  buildSpotCheckPrompt,
+  spotCheckFocus,
+  type SpotCheckSession,
+} from "../spot-check";
+import {
+  SpotAbstractPane,
+  SpotCheckPanel,
+  SpotCheckStrip,
+  useSpotCheck,
+} from "./SpotCheckPanel";
+import type { AnnotateCopy } from "./FilePreviewEditor";
 
 // Monaco 与 pdf.js 都不进主包：首次进入阅读区才加载（同终端页预览的懒加载姿势）
 const FilePreviewEditor = lazy(() => import("./FilePreviewEditor"));
@@ -84,6 +101,17 @@ function stemOf(p: string): string {
   return basename(p).replace(/\.pdf$/i, "");
 }
 
+/** 抽查核对档：笔记还在工作区里等评审，不在这里改 */
+const SPOT_READONLY_REASON =
+  "抽查时只读：笔记还在工作区里等评审，有问题划出来记进右边的问题单，交给 AI 改";
+const SPOT_ANNOTATE_COPY: AnnotateCopy = {
+  button: "记成问题",
+  submit: "记下",
+  placeholder: "哪里不对（可不写）",
+  done: "已记进右边的问题单",
+};
+const SPOT_PDF_ASK = { label: "记成问题", done: "已记进右边的问题单，可在那里补一句哪里不对" };
+
 /** 顶栏图标钮（‹ › 收起/展开侧栏共用样式） */
 const topBtn =
   "flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-xs text-l4 hover:bg-hover hover:text-l1";
@@ -95,9 +123,9 @@ const topBtn =
  * （Monaco 宿主移动同款先例，PTY/scrollback 不重建）；会话起停/注入也在 TerminalPage。
  */
 export default function ReaderOverlay({
-  pdfPath,
+  pdfPath: pdfPathProp,
   projectRoot,
-  notePath,
+  notePath: notePathProp,
   hasAgentTab,
   agentTabId,
   agentStatus,
@@ -112,6 +140,9 @@ export default function ReaderOverlay({
   agentSurface,
   agentPeek,
   onAgentSurface,
+  spotCheck,
+  onSpotSend,
+  onSpotAllClear,
 }: {
   pdfPath: string;
   projectRoot: string;
@@ -147,7 +178,39 @@ export default function ReaderOverlay({
   /** 聊天层露出终端（peek）：聊天在上、终端画面在下 */
   agentPeek: boolean;
   onAgentSurface: (mode: "chat" | "terminal") => void;
+  /** 精读步「抽查 3 篇笔记」核对档（2026-10-23）：三篇在这里切，pdfPath/notePath 按篇解析；
+      工作区里的笔记只读，右栏换成问题单（不派阅读会话） */
+  spotCheck?: SpotCheckSession | null;
+  /** 问题单交回这一步的 AI；返回 null 成功（阅读区随即关闭），否则为提示 */
+  onSpotSend?: (prompt: string) => Promise<string | null>;
+  /** 都没问题：勾上抽查这一项；返回 null 成功 */
+  onSpotAllClear?: () => Promise<string | null>;
 }) {
+  const spot = useSpotCheck(spotCheck);
+  const spotMode = Boolean(spotCheck);
+  const pdfPath = spotMode ? (spot.item?.pdfPath ?? "") : pdfPathProp;
+  const notePath = spotMode ? (spot.item?.notePath ?? null) : notePathProp;
+  /** 笔记只读（抽查且笔记还在工作区里）：不写笔记的动作全收起，FilePreviewEditor 锁编辑 */
+  const noteReadOnly = spotMode && spot.item?.readOnly ? SPOT_READONLY_REASON : undefined;
+  /** 笔记栏的预览根：工作区里的笔记以工作区为根（图片相对路径按它解析） */
+  const noteRoot = noteReadOnly && spotCheck ? spotCheck.base : projectRoot;
+  const [spotBusy, setSpotBusy] = useState(false);
+  const [spotError, setSpotError] = useState<string | null>(null);
+  async function spotFinish(send: boolean) {
+    if (!spotCheck || spotBusy) return;
+    setSpotBusy(true);
+    setSpotError(null);
+    const err = send
+      ? await (onSpotSend?.(buildSpotCheckPrompt(spotCheck.items, spot.issues)) ??
+          Promise.resolve("发不出去"))
+      : await (onSpotAllClear?.() ?? Promise.resolve("勾不上"));
+    if (err) {
+      setSpotError(err);
+      setSpotBusy(false);
+      return;
+    }
+    spot.clearIssues();
+  }
   const stem = stemOf(pdfPath);
   const macFullscreen = useMacFullscreen(IS_MAC);
 
@@ -203,11 +266,14 @@ export default function ReaderOverlay({
     // open 态进依赖让每次翻转重臂定时器，避免中途到期把过渡掐断
     return () => clearTimeout(t);
   }, [leftSlide, rightSlide, leftOpen, rightOpen]);
+  // 抽查核对档另记一套栏宽：笔记栏留阅读宽度、问题单窄（拖了只记抽查自己的，不动平时三栏）
+  const splitKeyL = spotMode ? SPOT_SPLIT_L_KEY : READER_SPLIT_L_KEY;
+  const splitKeyR = spotMode ? SPOT_SPLIT_R_KEY : READER_SPLIT_R_KEY;
   const [pctL, setPctL] = useState(() =>
-    loadReaderPct(READER_SPLIT_L_KEY, READER_PCT_DEFAULT_L),
+    loadReaderPct(splitKeyL, spotMode ? SPOT_PCT_DEFAULT_L : READER_PCT_DEFAULT_L),
   );
   const [pctR, setPctR] = useState(() =>
-    loadReaderPct(READER_SPLIT_R_KEY, READER_PCT_DEFAULT_R),
+    loadReaderPct(splitKeyR, spotMode ? SPOT_PCT_DEFAULT_R : READER_PCT_DEFAULT_R),
   );
   const areaRef = useRef<HTMLDivElement>(null);
   // 初始值直接取窗口宽（覆盖层恒为全窗口宽）：避免首帧按 0 渲染成只剩 PDF 栏的闪帧
@@ -220,7 +286,7 @@ export default function ReaderOverlay({
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const { left: leftPx, right: rightPx } = readerColumnWidths(areaW, pctL, pctR);
+  const { left: leftPx, right: rightPx } = readerColumnWidths(areaW, pctL, pctR, spotMode);
   // 极端窄窗（PDF 保底都拿不出）时换算结果为 0：侧栏整栏让位，只留 PDF。
   // 平时收起/展开不卸载——整块（栏 + 分隔条）负 margin 滑出（readerPanelSlideMargin），
   // 栏宽不变 → Monaco/xterm 宿主零重排零搬移，PDF 栏重排由其停稳防抖收口
@@ -237,7 +303,7 @@ export default function ReaderOverlay({
     const rect = areaRef.current?.getBoundingClientRect();
     if (!rect || rect.width <= 0) return;
     const setPct = side === "left" ? setPctL : setPctR;
-    const key = side === "left" ? READER_SPLIT_L_KEY : READER_SPLIT_R_KEY;
+    const key = side === "left" ? splitKeyL : splitKeyR;
     const fallback = side === "left" ? pctL : pctR;
     const pctOf = (clientX: number) =>
       clampReaderPct(
@@ -282,6 +348,14 @@ export default function ReaderOverlay({
     setNote(null);
     setNoteError(null);
     setNoteViewPath(null);
+    // 抽查核对档：笔记由 spot_check_item 解析（还没回来就等），绝不按 PDF 另建模板笔记
+    if (spotMode) {
+      if (spot.itemError) setNoteError(spot.itemError);
+      else if (notePath) setNote({ path: notePath, created: false });
+      return () => {
+        cancelled = true;
+      };
+    }
     // 指定笔记（精读笔记产物入口）：直接用它，跳过 ensure 建档——
     // 否则会按 PDF slug 再建一份模板笔记，与 lit-notes 的 <序号-短标题>.md 并存打架
     if (notePath) {
@@ -300,7 +374,7 @@ export default function ReaderOverlay({
     return () => {
       cancelled = true;
     };
-  }, [projectRoot, pdfPath, notePath]);
+  }, [projectRoot, pdfPath, notePath, spotMode, spot.itemError]);
 
   /** 笔记栏编辑态脏标记（FilePreviewEditor onDirtyChange 上报）：保存译段/插入图片成功后
       的 toast 口径要用——dirty 时 watcher 停订，界面不会回显刚写入的内容 */
@@ -363,6 +437,7 @@ export default function ReaderOverlay({
   useEffect(() => {
     let cancelled = false;
     setPaperTitle(null);
+    if (!pdfPath) return;
     invoke<string | null>("reader_paper_title", { projectRoot, pdfPath })
       .then((t) => {
         if (!cancelled) setPaperTitle(t?.trim() || null);
@@ -374,7 +449,10 @@ export default function ReaderOverlay({
       cancelled = true;
     };
   }, [projectRoot, pdfPath]);
-  const displayTitle = paperTitle ?? stem;
+  const displayTitle =
+    (spotMode ? spot.item?.title : null) ??
+    paperTitle ??
+    (stem || (note ? basename(note.path).replace(/\.md$/i, "") : ""));
 
   // ===== 右栏启动占位（2026-09-20）：退出即关标签后，每次进入都新派 CLI 会话——
   // 头几帧标签还没建出来（hasAgentTab=false，不能闪「阅读会话未在运行」引导卡），
@@ -488,13 +566,11 @@ export default function ReaderOverlay({
    *  OR 右栏收起/让位（兜底：终端栏收着时译文有地方看，展开即回原位，无需提前钉） */
   const [tlPinned, setTlPinned] = useState(() => loadReaderTlPinned());
   const tlFloat = tlPinned || !mountRight || !rightOpen;
-  /** 悬浮译文卡只在 PDF 栏里展开（不盖笔记栏/对话栏）：量 PDF 栏离覆盖层左右边的距离。
+  /** 悬浮球与译文卡只在 PDF 栏里（不盖笔记栏/对话栏/顶栏）：量 PDF 栏离覆盖层四边的距离。
    *  栏宽随收起滑动、分隔条拖拽变化，RO 逐帧报、按帧合并；只在悬浮档量 */
   const rootRef = useRef<HTMLDivElement>(null);
   const pdfColRef = useRef<HTMLDivElement>(null);
-  const [pdfBounds, setPdfBounds] = useState<{ left: number; right: number } | undefined>(
-    undefined,
-  );
+  const [pdfBounds, setPdfBounds] = useState<ReaderPdfBounds | undefined>(undefined);
   useEffect(() => {
     const col = pdfColRef.current;
     const root = rootRef.current;
@@ -508,9 +584,17 @@ export default function ReaderOverlay({
         const next = {
           left: Math.max(0, Math.round(c.left - r.left)),
           right: Math.max(0, Math.round(r.right - c.right)),
+          top: Math.max(0, Math.round(c.top - r.top)),
+          bottom: Math.max(0, Math.round(r.bottom - c.bottom)),
         };
         setPdfBounds((prev) =>
-          prev && prev.left === next.left && prev.right === next.right ? prev : next,
+          prev &&
+          prev.left === next.left &&
+          prev.right === next.right &&
+          prev.top === next.top &&
+          prev.bottom === next.bottom
+            ? prev
+            : next,
         );
       });
     };
@@ -822,6 +906,27 @@ export default function ReaderOverlay({
   const jumpToPdf = useCallback((ref: PdfJumpRef) => {
     setJumpReq({ ...ref, nonce: ++jumpNonceRef.current });
   }, []);
+  // 抽查切篇：上一篇的跳转/定位请求不带给下一篇
+  useEffect(() => {
+    setJumpReq(null);
+    setNoteFocus(null);
+  }, [pdfPath, notePath]);
+
+  /** 抽查：笔记里划一段「记成问题」/ 原文里划一段「记成问题」，都进右栏问题单 */
+  const addNoteIssue = useCallback(
+    (text: string, _fileName: string, comment: string): string | null => {
+      spot.addIssue({ source: "note", page: null, quote: text, comment });
+      return null;
+    },
+    [spot.addIssue],
+  );
+  const addPdfIssue = useCallback(
+    (text: string, page: number): string | null => {
+      spot.addIssue({ source: "pdf", page, quote: text, comment: "" });
+      return null;
+    },
+    [spot.addIssue],
+  );
 
   /** 「让 AI 起草」：八小节全空时笔记栏顶上给一行入口，直发给右栏阅读会话 */
   const draftEmpty = noteText !== null && noteDraftEmpty(noteText);
@@ -875,6 +980,64 @@ export default function ReaderOverlay({
       ? "未在运行"
       : "启动中…";
 
+  /** 译文卡正在摆出来的那条（面板经 onDisplay 报上来）：PDF 上常驻标出它的原文段，
+      悬浮卡据此避开那段——卡压在原文上就没法对照（2026-10-23 用户点名） */
+  const [tlShown, setTlShown] = useState<TlHistoryEntry | null>(null);
+  const tlSource = useMemo(
+    () => (tlShown ? { page: tlShown.page, quote: tlShown.original } : null),
+    // 按条目身份比，不按对象：面板每次渲染报上来的是同一条
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tlShown?.at, tlShown?.page],
+  );
+  /** 原文段在覆盖层根里的外框（悬浮卡避让用）：标记由文本层异步落位，换条目/开卡后量两次；
+      不跟滚动——读者滚走了卡也不该追着跳 */
+  const [tlAvoid, setTlAvoid] = useState<{
+    top: number;
+    bottom: number;
+    left: number;
+    right: number;
+  } | null>(null);
+  useEffect(() => {
+    if (!tlSource || !tlFloat) {
+      setTlAvoid(null);
+      return;
+    }
+    const measure = () => {
+      const root = rootRef.current;
+      const marks = pdfColRef.current?.querySelectorAll<HTMLElement>('[data-mark-id="tl-source"]');
+      if (!root || !marks || marks.length === 0) return;
+      const rr = root.getBoundingClientRect();
+      const col = pdfColRef.current!.getBoundingClientRect();
+      let top = Infinity;
+      let bottom = -Infinity;
+      let left = Infinity;
+      let right = -Infinity;
+      marks.forEach((m) => {
+        const r = m.getBoundingClientRect();
+        // 只算露在 PDF 栏里的那部分（滚出去的行不参与避让）
+        if (r.bottom < col.top || r.top > col.bottom) return;
+        top = Math.min(top, r.top);
+        bottom = Math.max(bottom, r.bottom);
+        left = Math.min(left, r.left);
+        right = Math.max(right, r.right);
+      });
+      if (!Number.isFinite(top)) return;
+      setTlAvoid({
+        top: Math.round(top - rr.top),
+        bottom: Math.round(bottom - rr.top),
+        left: Math.round(left - rr.left),
+        right: Math.round(right - rr.left),
+      });
+    };
+    setTlAvoid(null);
+    const t1 = setTimeout(measure, 120);
+    const t2 = setTimeout(measure, 500);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, [tlSource, tlFloat]);
+
   /** 表头「钉住/回栏」：钉住落记忆键（跨收起/展开、跨次进入保持悬浮）；回栏 = 取钉
       并确保右栏展开——右栏收着时点回栏就是「把侧栏叫回来接住面板」，不让它无声消失。
       从看得见的卡点钉住时球先展开接续（卡搬家，不是缩成球）；该标记只在本次悬浮
@@ -898,11 +1061,13 @@ export default function ReaderOverlay({
 
   // 翻译面板两档摆位共用一套 props；摆位差异只在 heightPct（% 右栏高，悬浮档恒 null）
   const tlPanelProps = {
+    onDisplay: setTlShown,
+    avoidRect: tlFloat ? tlAvoid : null,
     latest: tlHistory[0] ?? null,
     pending: tlPending,
     history: tlHistory,
     saving: tlSaving,
-    canSave: true,
+    canSave: !noteReadOnly,
     onTogglePlacement: toggleTlPlacement,
     onResize: setTlPct,
     onResizeEnd: (pct: number) => {
@@ -921,7 +1086,8 @@ export default function ReaderOverlay({
     onSaveEntry: (e: TlHistoryEntry) => void saveTlEntry(e),
     onHint: showToast,
     canAsk: Boolean(hasAgentTab),
-    onAsk: (entry: TlHistoryEntry) => {
+    // 抽查核对档没有对话栏：「问这段」不出，免得挂一颗永远点不了的灰钮
+    onAsk: spotMode ? undefined : (entry: TlHistoryEntry) => {
       const pairs = parseBilingual(entry.translated);
       const text = reflowBlockText(
         pairs ? plainFromBilingual(pairs) : entry.translated,
@@ -1062,9 +1228,25 @@ export default function ReaderOverlay({
         />
         <HoverTip
           tip={rightTip.tip}
-          text={rightOpen ? "收起终端栏" : "展开终端栏"}
+          text={
+            spotMode
+              ? rightOpen
+                ? "收起问题单"
+                : "展开问题单"
+              : rightOpen
+                ? "收起终端栏"
+                : "展开终端栏"
+          }
         />
       </div>
+
+      {spotMode && spotCheck && (
+        <SpotCheckStrip
+          session={spotCheck}
+          spot={spot}
+          focus={spotCheckFocus(spotCheck.items[spot.index]?.fulltext ?? true)}
+        />
+      )}
 
       {/* 三栏区：笔记 | PDF | Agent 终端（侧栏收起 = 整块滑出，拖拽条记百分比）。
           侧栏块常挂载：收起用负 margin 滑出窗口外（过渡配方 ccode-reader-panel
@@ -1091,7 +1273,8 @@ export default function ReaderOverlay({
                 {noteError ? (
                   <div className="p-3">
                     <p className="text-xs text-err-text">
-                      笔记建档失败：{noteError}
+                      {spotMode ? "这篇打不开：" : "笔记建档失败："}
+                      {noteError}
                     </p>
                   </div>
                 ) : !note ? (
@@ -1120,7 +1303,7 @@ export default function ReaderOverlay({
                         </button>
                       </div>
                     )}
-                    {draftEmpty && (!noteViewPath || noteViewPath === note.path) && (
+                    {draftEmpty && !spotMode && (!noteViewPath || noteViewPath === note.path) && (
                       // 八小节还空着：一行入口，让右栏的 Agent 按精读写法起草（写盘后自动刷新、这行随之消失）
                       <div className="flex shrink-0 items-center gap-2 border-b border-hairline bg-strip px-3 py-1.5 text-xs">
                         <span className="min-w-0 flex-1 text-l3">
@@ -1143,9 +1326,16 @@ export default function ReaderOverlay({
                     )}
                     <FilePreviewEditor
                       path={noteViewPath ?? note.path}
-                      root={projectRoot}
+                      root={noteRoot}
                       hideImmersive
-                      mainRepoIsHome
+                      mainRepoIsHome={!noteReadOnly}
+                      readOnly={noteReadOnly}
+                      onAnnotate={
+                        spotMode && (!noteViewPath || noteViewPath === note.path)
+                          ? addNoteIssue
+                          : undefined
+                      }
+                      annotateCopy={SPOT_ANNOTATE_COPY}
                       compact
                       onOpenFile={setNoteViewPath}
                       modeTick={noteModeTick}
@@ -1163,6 +1353,22 @@ export default function ReaderOverlay({
         )}
 
         <div ref={pdfColRef} className="flex min-w-0 flex-1 flex-col">
+          {spotMode && !pdfPath ? (
+            // 抽查：还在解析这一篇 / 没有全文——拿题录摘要当原文对照
+            spot.item ? (
+              <SpotAbstractPane
+                title={spot.item.title}
+                abstractText={spot.item.abstractText}
+                fulltext={spotCheck?.items[spot.index]?.fulltext ?? false}
+              />
+            ) : spot.itemError ? (
+              <p className="p-3 text-xs text-l3">这篇的原文没法打开，见左栏的原因。</p>
+            ) : (
+              <div className="p-3">
+                <LoadingRows compact />
+              </div>
+            )
+          ) : (
           <Suspense
             fallback={
               <div className="p-3">
@@ -1171,25 +1377,30 @@ export default function ReaderOverlay({
             }
           >
             <PdfContinuousView
+              // 抽查切篇换 PDF：整块重挂，查找/缩放/跳转状态不带到下一篇
+              key={pdfPath}
               path={pdfPath}
               cwdHint={projectRoot}
-              onAskAi={askAiFromPdf}
+              onAskAi={spotMode ? addPdfIssue : askAiFromPdf}
+              askAs={spotMode ? SPOT_PDF_ASK : undefined}
               onBack={onClose}
-              onCaptureAgent={captureToAgent}
-              onCaptureNote={captureToNote}
+              onCaptureAgent={spotMode ? undefined : captureToAgent}
+              onCaptureNote={noteReadOnly ? undefined : captureToNote}
               glossTerms={glossary}
               dark={readerDark}
               onRequestTranslate={requestTranslate}
               onTranslate={translateFromPdf}
               onAddGlossary={addGlossary}
               annotations={annotations}
-              onAddAnnotation={addAnnotation}
-              onRemoveAnnotation={removeAnnotation}
+              onAddAnnotation={noteReadOnly ? undefined : addAnnotation}
+              onRemoveAnnotation={noteReadOnly ? undefined : removeAnnotation}
               onRevealAnnotation={revealAnnotation}
               jumpReq={jumpReq}
+              sourceMark={tlSource}
               findHotkey
             />
           </Suspense>
+          )}
         </div>
 
         {mountRight && (
@@ -1216,7 +1427,17 @@ export default function ReaderOverlay({
                 {!tlFloat && (
                   <ReaderTranslatePanel {...tlPanelProps} heightPct={tlPct} />
                 )}
-                {needsProfile ? (
+                {spotMode && spotCheck ? (
+                  // 抽查核对档：右栏是问题单（不派阅读会话——它在项目根运行，改不到工作区里这份笔记）
+                  <SpotCheckPanel
+                    session={spotCheck}
+                    spot={spot}
+                    busy={spotBusy}
+                    error={spotError}
+                    onSend={() => void spotFinish(true)}
+                    onAllClear={() => void spotFinish(false)}
+                  />
+                ) : needsProfile ? (
                   // 无可用配置：引导卡（一句话 + 跳配置页）
                   <div className="mx-2 mb-2 mt-2 flex min-h-0 flex-1 flex-col items-center justify-center gap-3 rounded-lg border border-field bg-canvas p-4 text-center">
                     <p className="text-sm text-l3">还没有可用的 API 配置</p>

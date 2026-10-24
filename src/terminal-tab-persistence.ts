@@ -14,6 +14,9 @@ export interface RecoverableTerminalTab {
   sessionId: string | null;
   runId?: string | null;
   taskId?: string | null;
+  /** 只留工作区标签的复用键（ws:<工作树>）：重启后「去终端看看 / 回答」「继续」仍回到这个标签，
+   *  不另开一个（2026-10-22 实证：重启后点收件箱「去终端回答」新开了终端）。快速开聊等别的键不留 */
+  reuseKey?: string | null;
 }
 
 export interface RecoverableTerminalState {
@@ -51,7 +54,13 @@ function parseTab(value: unknown): RecoverableTerminalTab | null {
     ...(textField(tab.taskId, 64)
       ? { taskId: textField(tab.taskId, 64) }
       : {}),
+    ...(workspaceReuseKey(tab.reuseKey) ? { reuseKey: workspaceReuseKey(tab.reuseKey) } : {}),
   };
+}
+
+function workspaceReuseKey(value: unknown): string | null {
+  const key = textField(value, 4100, false);
+  return key && key.startsWith("ws:") ? key : null;
 }
 
 /** 只接受当前版本并逐字段白名单化；损坏或未来版本直接回落为空状态。 */
@@ -92,6 +101,7 @@ export function serializeRecoverableTerminalState(
     sessionId: tab.sessionId?.slice(0, 256) ?? null,
     runId: tab.runId?.slice(0, 64) ?? null,
     ...(tab.taskId ? { taskId: tab.taskId.slice(0, 64) } : {}),
+    ...(workspaceReuseKey(tab.reuseKey) ? { reuseKey: workspaceReuseKey(tab.reuseKey) } : {}),
   }));
   const activeIndex = tabs.length > 0
     ? Math.min(Math.max(Math.trunc(state.activeIndex), 0), tabs.length - 1)

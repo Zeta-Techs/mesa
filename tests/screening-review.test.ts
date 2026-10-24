@@ -259,7 +259,8 @@ test("清单题名只改显示：苹果字符和能整段拆开的化学式", ()
   assert.equal(displayCitationTitle("a Current Density of 2A cm −2"), "a Current Density of 2 A cm⁻²");
   assert.equal(displayCitationTitle("CoMoO 4– x"), "CoMoO₄₋ₓ");
   assert.equal(displayCitationTitle("Ni/MoBT x for"), "Ni/MoBTₓ for");
-  assert.equal(displayCitationTitle("CeO x –NiB"), "CeOₓ –NiB");
+  // 下标后的排版空格连同连接号一起收紧（2026-10-23：原题是 CeOx–NiB，空格是 Crossref 排版留下的）
+  assert.equal(displayCitationTitle("CeO x –NiB"), "CeOₓ–NiB");
   assert.equal(displayCitationTitle("Ni n +1 ZnB n"), "Niₙ₊₁ZnBₙ");
   assert.equal(displayCitationTitle("CoxMnyB nanosheet"), "CoₓMnᵧB nanosheet");
   assert.equal(displayCitationTitle("(WB 2 -191)"), "(WB₂-191)");
@@ -337,6 +338,11 @@ test("纳入 JSON 计数与待拍板去重", () => {
   assert.equal(
     paperHasDoiPdf({ id: "doi:10.1000/xyz", url: "" }, [{ name: "bridging-fundamentals.pdf" }]),
     false,
+  );
+  // Zotero 导入登记的正文 PDF 在库里、不在 papers/：json 记了 pdf 就算有，纳入时不进待获取
+  assert.equal(
+    paperHasDoiPdf({ id: "zotero1abcd1234", url: "", pdf: "C:/Users/me/Zotero/storage/ABCD1234/a.pdf" }, []),
+    true,
   );
   const named =
     "Selenium sulfide cathode with copper foam interlayer for promising magnesium electrochemistry..pdf";

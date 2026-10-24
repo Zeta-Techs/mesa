@@ -82,3 +82,17 @@ test("damaged, future and incomplete states fall back safely", () => {
   assert.equal(parsed.tabs[0].profileId, "");
   assert.equal(parsed.tabs[0].sessionId, null);
 });
+
+test("工作区标签的复用键 ws: 跨重启保留（去终端回答 / 继续回到同一个标签），别的复用键不留", () => {
+  const base = { label: "文献精读与笔记", cwd: "C:\Users\me\ccode\workspaces\HER\lit-notes", agentId: "claude-code", profileId: "p", model: "", sessionId: "s1" };
+  const raw = serializeRecoverableTerminalState({
+    tabs: [
+      { ...base, reuseKey: "ws:C:\Users\me\ccode\workspaces\HER\lit-notes" },
+      { ...base, reuseKey: "quick-chat:claude-code" },
+    ],
+    activeIndex: 0,
+  });
+  const back = parseRecoverableTerminalState(raw);
+  assert.equal(back.tabs[0].reuseKey, "ws:C:\Users\me\ccode\workspaces\HER\lit-notes");
+  assert.equal(back.tabs[1].reuseKey, undefined);
+});

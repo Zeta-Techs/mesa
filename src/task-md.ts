@@ -19,6 +19,14 @@ function looksPosixShell(command: string): boolean {
   return /(?:&&|\|\||\bmkdir -p\b|\bcommand -v\b|\$\(|\bthen\b|\bfi\b|\bexport\b|>\s*\/dev\/null)/.test(command);
 }
 
+/** 本步「项目资源」段列哪些：步骤绑了就只列绑的，没绑列全部 */
+function stepResources(step: ProjectStepDto, cfg: ProjectConfigDto) {
+  const boundPaths = step.resources ?? [];
+  return boundPaths.length > 0
+    ? cfg.resources.filter((r) => boundPaths.includes(r.path))
+    : cfg.resources;
+}
+
 /** TASK.md 拼装单一出处：弹层预览与开工落盘共用。纯函数，不碰文件系统。
  *  isWindows 显式传参（纯逻辑模块不读平台）：只影响「本步骤脚本」给哪种写法 */
 export function renderTaskMd(
@@ -144,6 +152,28 @@ export function renderTaskMd(
       );
     }
   }
+  // Mesa 补的 PYTHONIOENCODING 遇 -I / -E 失效（隔离模式忽略全部 PYTHON* 环境变量），
+  // 中文系统回落 GBK，打印 Č、² 即 UnicodeEncodeError（2026-10-22 实测：Claude Code 读外部数据时习惯加 -I）
+  if (isWindows) {
+    lines.push(
+      "",
+      "## 本机 Python（Windows）",
+      "- 命令名用 `python`，不要用 `python3`（Windows 上的 `python3` 是应用商店占位程序，一运行就失败）。",
+      "- 加了 `-I` 或 `-E` 时，Python 会忽略 Mesa 设好的 UTF-8 输出，打印中文或 Č、² 这类字符就报 `'gbk' codec can't encode`：这时同时加 `-X utf8`。它也会把 `open()` 的默认编码改成 UTF-8，读 GBK 文件要显式写 `encoding=\"gbk\"`。",
+    );
+    // Windows 上一般没装 poppler：Claude Code 的 Read 读 PDF 要 pdftoppm 转页图，直接报错，
+    // Agent 只抽文字层、图一张没看（2026-10-23 HER 精读步实证）。PyMuPDF 是 Mesa 依赖检查里的一项
+    // 2026-10-23 HER 大纲步：输入写「17 篇原文 PDF（路径见项目资源）」、项目资源挂着 PDF，也要读
+    const readsPdf =
+      step.skills.some((s) => s === "lit-notes" || s === "review-figures") ||
+      [...(step.inputs ?? []), ...(step.optionalInputs ?? [])].some((p) => /pdf/i.test(p)) ||
+      stepResources(step, cfg).some((r) => r.path.toLowerCase().endsWith(".pdf"));
+    if (readsPdf) {
+      lines.push(
+        "- 读 PDF：这台机器多半没装 poppler，直接读 PDF 文件会报 `pdftoppm is not installed`。文字用 PyMuPDF 抽（`import pymupdf`，`page.get_text()`）；要看图，先把那一页存成图片（`page.get_pixmap(dpi=150).save(\"artifacts/p5.png\")`）再读这张图，不要只凭图注写图里的内容。",
+      );
+    }
+  }
   if ((step.decisions?.length ?? 0) > 0) {
     lines.push(
       "",
@@ -216,11 +246,7 @@ export function renderTaskMd(
       "写作红线以写作/渲染技能为准，即使本文件简报写了相反的话：不凑字数；禁止把「待绘制」当图；G1 不准进稿件；摘要不准出现 [待核实]；摘要级来源必须在句中降级；PDF 首页必须可读。不得把大纲或项目「目标篇幅」改写成必须凑到的词数，也不得把「文件非空」当成渲染通过。",
     );
   }
-  const boundPaths = step.resources ?? [];
-  const resources =
-    boundPaths.length > 0
-      ? cfg.resources.filter((r) => boundPaths.includes(r.path))
-      : cfg.resources;
+  const resources = stepResources(step, cfg);
   if (resources.length > 0) {
     lines.push("", "## 项目资源（只读引用，勿复制到本工作区）");
     for (const r of resources) {
@@ -282,6 +308,8 @@ export function renderTaskMd(
       `大型派生产物（清洗后数据、实验原始结果、渲染成品）写入本工作区的 \`${artifactRel}/\` 或 \`output/\`（相对路径），不进 git；评审合并进主仓时自动带到项目根同名目录。`,
       `文献 PDF 是外部获取的原始资料，直接写入 \`${projectRoot}/papers/\`（项目根绝对路径），不进 git。`,
       "清单/摘要里记录产物一律用项目根相对路径（如 artifacts/xxx.csv），不要写本工作区绝对路径。本工作区只提交源稿、脚本与清单。",
+      // 2026-10-22 实证：检索步把 14 个脚本写进 artifacts/，收尾提交不了又整体搬家
+      `要提交、能重跑出产物的脚本放简报指定的位置，简报没指定就放 \`scripts/\`（进 git）；\`${artifactRel}/\` 不进 git，只放一次性调试脚本和接口缓存。`,
     );
   }
   lines.push(

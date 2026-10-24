@@ -44,13 +44,14 @@ provides: [lit-search]
 
 - 标准档的发现库是 **OpenAlex 一条主检索式**（概念块 2–4 个，块内 OR、块间 AND；单复数与近义词并进同一条，不另开检索式）。先取命中数，再取回这一条的记录。命中多时收紧这一条式子，不要拆成十几条近义式各抓一页。
 - **不做发现的库**：标准档不用 Semantic Scholar、Crossref 标题检索、arXiv 建候选池。429 或请求失败在检索日志记一行并写入覆盖缺口，**不重试**。来源级别允许预印本时才查 arXiv。Crossref 只在已有 DOI 时补字段（见下），不当发现库。PubMed（生物医学）、DBLP（CS）、CNKI（中文，手动导出）按学科需要再加，不加则写入覆盖缺口。
-- **Consensus / Undermind MCP（挂了就必须用，2026-09-15 实测被跳过后收紧）**：开工第一件事盘点本会话可用工具——只要存在 mcp__undermind / mcp__consensus 类工具就各跑**一轮**（Undermind = 语义深搜补漏；Consensus = 按研究问题搜同行评议论文，免费档有多少收多少）。命中并进候选池，检索日志「库」写 Consensus / Undermind，去重与纳排与其他库同一套；**不替代** OpenAlex，也不另写一份清单。**工具在而没检索 = 违规**，必须在覆盖缺口里写明原因；工具不存在、未登录或调用失败则记缺口后继续，不反复授权、不中断检索；
+- **Consensus / Undermind MCP（挂了就必须用，2026-09-15 实测被跳过后收紧）**：开工第一件事看本会话的工具列表——只要存在 mcp__undermind / mcp__consensus 类工具就各跑**一轮**（Undermind = 语义深搜补漏；Consensus = 按研究问题搜同行评议论文，免费档有多少收多少）。命中并进候选池，检索日志「库」写 Consensus / Undermind，去重与纳排与其他库同一套；**不替代** OpenAlex，也不另写一份清单。**工具在而没检索 = 违规**，必须在覆盖缺口里写明原因；工具不存在、未登录或调用失败则记缺口后继续，不反复授权、不中断检索。**盘点只看工具列表，不读 `~/.claude`、`~/.codex` 等 CLI 配置文件**（里面有 API 密钥，读出来就进了会话记录）。某个 MCP 只剩 `authenticate` / `complete_authentication` 两个工具 = 没登录：不调用它、不停下来问人授权，覆盖缺口写「Undermind 未登录」后继续——登录是步骤面板「配置学术检索 MCP」那一项的人工事项；
 - 检索日志用固定六字段表头，逐库一行记入 `papers/screening.md`：**日期 / 库 / 完整检索式 / 命中数 / 去重后数 / 筛后保留数**，保证检索过程可复现；
 - 各库结果合并去重后，同一篇（DOI 或标题归一判定）被 ≥2 个库命中的，在记录上标「**多源命中**」——这是优先阅读的提示，不是纳入标准；
-- 每篇记录：标题、作者（全名，一位一行）、年份、期刊全称、卷、期、页码、出版日期、文章类型、ISSN、DOI、链接。有摘要、关键词、期刊缩写一并记下。字段未知一律标「待补」，不得留空或猜测。
-- **有 DOI 就用 Crossref 把上面这些字段补全再写入筛选记录和 RIS**（`https://api.crossref.org/works/<DOI>`，礼貌 User-Agent）。标题用 Crossref 的 `title`，不要改用 OpenAlex 的 `display_name`。`title` 里的 `<sub>` `<sup>` 先收成 Unicode 下标和上标再写入 `included.json` 与两份 RIS；OpenAlex 的空格标题会把 `Mo<sub>2</sub>` 收成 `Mo 2`。Crossref 纯文本把 `Zr1-xTMxB2` 收成 `Zr1-TMB2` 时，按出版商这种残缺形状写回 `Zr₁₋ₓTMₓB₂`，不要再删字母。Crossref 没有摘要时再用 OpenAlex。期刊缩写用 **ISO 4，每个缩写词后面加句点**（`Adv. Mater.`，不是 `Adv Mater`）。按期刊全称查 JabRef 的 ACS / mechanical / geology_physics / general / lifescience 表（`https://abbrv.jabref.org/journals/`），或期刊官网、CASSI。不要用 NLM Catalog 的 ISSN 结果：它不带句点，还会把 *Advanced Materials* 对成 `Adv Eng Mater`。Crossref 的 short-container-title 经常就是全称，不能当缩写。表里没有、现有值等于全称、缺句点、或对不上这本期刊全称的，先写「待补」，再按官网或 ISO 4 补上。一词刊名（*Nature*、*Science*、*Small*）不缩，写全称。不要自己编。没有期、没有独立网络出版日也标「待补」，不把卷、页或创建日期挪去填。作者以 Crossref 的 `family`/`given` 为准，写成 `姓, 名`，一人一行；来源名单被截成「前三人, et al.」或同一人重复出现时，用 Crossref 的完整名单替换，不沿用截断名单。
+- 每篇记录：标题、作者（全名，一位一行）、年份、期刊全称、卷、期、页码、出版日期、文章类型、ISSN、DOI、链接。有摘要、关键词、期刊缩写一并记下。字段未知一律标「待补」，不得留空或猜测。Crossref 有正式记录、有卷没期的（只按卷编排的刊），期写「无期号」——不是缺口，不用补。
+- **字段由随技能脚本补，不手写**（见下「4b. 题录固定脚本」）。下面是脚本实现的口径，脚本跑不了时才按它手工补：**有 DOI 就用 Crossref 把上面这些字段补全再写入筛选记录和 RIS**（`https://api.crossref.org/works/<DOI>`，礼貌 User-Agent）。标题用 Crossref 的 `title`，不要改用 OpenAlex 的 `display_name`。`title` 里的 `<sub>` `<sup>` 先收成 Unicode 下标和上标再写入 `included.json` 与两份 RIS；OpenAlex 的空格标题会把 `Mo<sub>2</sub>` 收成 `Mo 2`。Crossref 纯文本把 `Zr1-xTMxB2` 收成 `Zr1-TMB2` 时，按出版商这种残缺形状写回 `Zr₁₋ₓTMₓB₂`，不要再删字母。Crossref 没有摘要时再用 OpenAlex。期刊缩写用 **ISO 4，每个缩写词后面加句点**（`Adv. Mater.`，不是 `Adv Mater`）。按期刊全称查 JabRef 的 ACS / mechanical / geology_physics / general / lifescience 表（`https://abbrv.jabref.org/journals/`），或期刊官网、CASSI。不要用 NLM Catalog 的 ISSN 结果：它不带句点，还会把 *Advanced Materials* 对成 `Adv Eng Mater`。Crossref 的 short-container-title 经常就是全称，不能当缩写。表里没有、现有值等于全称、缺句点、或对不上这本期刊全称的，先写「待补」，再按官网或 ISO 4 补上。一词刊名（*Nature*、*Science*、*Small*）不缩，写全称。不要自己编。没有期、没有独立网络出版日也标「待补」，不把卷、页或创建日期挪去填。作者以 Crossref 的 `family`/`given` 为准，写成 `姓, 名`，一人一行；来源名单被截成「前三人, et al.」或同一人重复出现时，用 Crossref 的完整名单替换，不沿用截断名单。
 
 - **用户积累进料（双台账口径，2026-10-13）**：工作区 `.ccode/handoff-lit-intake.md`（开工冻结的进料快照）或项目根 `papers/reading-list.md`（积累清单）是用户平时攒下的文献候选，与 `papers/included.md` 存量、`papers/imports/` 导入、本轮检索候选统一去重后并入候选池一起走纳排；这两份积累文件只读——不回写、不删改，产出契约不变。
+- **用户自己的库不由 Agent 排除（2026-10-23）**：从 Zotero / EndNote 导进来的、`papers/imports/` 里人放的导出，都是人已经挑过的文献。**每条都写进 `papers/included.json`**；检索用的年份窗口、文章类型、来源级别等过滤不套到它们身上；看着不合适的（年份早、主题偏）标 `pending`，`reason` 写「建议排除：……」，由人在 Mesa 的文献清单里定。只写在 `screening.md`、不进 json 的，人在 Mesa 里看不到、也改不回（当日实证：9 篇按检索年份窗口被排掉）。Zotero 导入登记的正文 PDF（`papers/imports/zotero-*.json` 的 `pdfPath`，留在 Zotero 库里）就是全文：`lit_records.py write` 自动记进 `pdf`、不进待获取；`check` 点名没进 json 的导入条目和被 Agent 排除的导入条目。
 
 #### 外部 AI 检索站导出导入（人肉中转）
 
@@ -98,7 +99,20 @@ Elicit / Undermind / X-MOL / Google Scholar 等闭源站点无法程序化检索
 - **「待确认」不是题录没查全。** `decision=pending` 只表示相关性等人拍板。期刊全称、ISSN、`doi`、`url` 与已纳入同一套：有 DOI 就必须先向 Crossref 取 `container-title` 写入 `venue`，没有再问 OpenAlex。书章没有期刊才把 `venue` 写成「待补」。禁止因为这篇还没拍板，就把 `venue`/`doi`/`url` 整列写成「待补」或留空。
 - **先拍 pending，再下载全文**：`to-fetch.md` 与开放获取下载都只针对 `decision=included`。禁止把 pending 写入待获取或先下其全文。有 pending 时写入 `.ccode/help-wanted.md` 请人逐篇纳入或排除（未回复则不把 pending 当已纳入）；人改成 included 后才允许补进 to-fetch。
 - **开放获取失败就停**：只下载接口已经给出的 PDF 直链。连续 3 次 HTTP 403 即停止其余下载，未下到的写入 `to-fetch.md`，不要换链重试。
+- **开放获取取哪个版本**：先取正式发表版（出版商页面、PMC、开放获取期刊），其次是机构库里作者的已录用稿。预印本服务器（arXiv、Research Square、bioRxiv、ChemRxiv、SSRN 等）上的版本只在来源级别允许预印本时才下；不允许时这篇写入 `to-fetch.md`。接口把 Research Square 标成 acceptedVersion 也照样算预印本——看托管处，不只看版本标签。
 - **排除的不补字段**：期刊全称、卷期页、ISSN、摘要、ISO 4 缩写和两套 RIS 只对最终纳入与待确认各做一次。排除篇留在筛选记录里即可，不向 Crossref 补全。
+
+### 4b. 题录固定脚本（补字段 → 开放获取 → 清单与 RIS → 校验）
+
+补字段、下开放获取全文、出 `included.md` / `to-fetch.md` / 两份 RIS 是确定性的活，**一律用技能目录里的 `scripts/lit_records.py`**，不要自己写脚本、不要手写这几份文件（2026-10-22 实证：手写一套脚本修格式整条链重跑 26 次）。脚本在技能目录里直接调用，不要复制进工作区。命令里的 `python3` 在 Windows 上换成 `python`。
+
+1. 筛选判定写进 `papers/included.json`：每条至少 `id`、`title`、`decision`（included / pending / excluded）、`reason`，加上 `doi`（没有 DOI 就给 `url`）。其余字段可以先不填。
+2. `python3 <技能目录>/scripts/lit_records.py enrich`：纳入与待确认一次补齐（Crossref 为准，OpenAlex 补摘要和论文关键词，ISO 4 缩写查 JabRef 表与 Mesa 兜底表），排除的不补。输出里点名的「期刊缩写待补」按期刊官网或 ISO 4 手填进 json 的 `journalAbbreviation`（每个缩写词后加句点）；其余「待补」是登记库里真没有，保持待补，不编。
+3. `python3 <技能目录>/scripts/lit_records.py fetch --root <项目根>`：只给已纳入篇目下开放获取全文到项目根 `papers/`，按上面的版本规则选链接（来源级别允许预印本时加 `--allow-preprint`），连续 3 次 403 自动停，下到的在 json 里记 `pdf`。
+4. `python3 <技能目录>/scripts/lit_records.py write --root <项目根>`：从 json 生成 `papers/included.md`、`papers/to-fetch.md`、`papers/to-fetch.ris`、`papers/endnote-import.ris`。要改清单先改 json，再重跑 write；不要手改这四份。
+5. `python3 <技能目录>/scripts/lit_records.py check --root <项目根>`：校验 json、清单与两份 RIS 是否一致（篇数、同序、CRLF、没有待确认混进待获取、没有「待补」进标签）。**不通过不算完成**，按提示重跑。
+
+改了判定或补了缩写，重跑 write 与 check 即可（不联网，几秒）。enrich 的接口结果缓存在系统临时目录，重跑不重复联网。`papers/screening.md` 仍由你写。Python 跑不起来时如实记进覆盖缺口，再按「产出格式」手工写。
 
 ### 5. 引用扩展与停止
 
@@ -108,7 +122,7 @@ Elicit / Undermind / X-MOL / Google Scholar 等闭源站点无法程序化检索
 
 ### 6. 定稿纳入清单
 
-纳入的文献写入 `papers/included.md`，一行一篇，格式：
+纳入的文献写进 `papers/included.json`，`papers/included.md` 由脚本 write 生成，一行一篇，格式：
 
 ```
 标题 — 作者, 年份 — 来源 — 链接/DOI
@@ -125,8 +139,8 @@ Elicit / Undermind / X-MOL / Google Scholar 等闭源站点无法程序化检索
 ## 产出格式
 
 - `papers/screening.md`：固定结构——深度档与假设 → 纳入/排除标准 → 概念块与检索词 → 检索日志表（六字段）→ 逐条判定（含「待确认」「多源命中」标注）→ 引用扩展轮次记录 → **覆盖缺口声明**（哪些库没检、意味着什么缺失，如「未检 CNKI，中文核心期刊覆盖缺失」「WoS 无订阅未检」）
-- `papers/included.md`：纳入清单（一行一篇，固定行格式；尚待确认单列，不冒充已决）
-- `papers/included.json`：与 included.md 一一对应的记录数组。每条有稳定非空字符串 `id`、`title`、`decision`、`reason`。decision 为 included / pending。**pending 与 included 同一套题录，检索时一次查全**，不要等纳入后再查。pending 只是相关性未拍板，不是期刊未知。有 DOI 时 `venue` 必须是期刊全称（书章除外），`doi` 与 `url` 不得留空：`authors`（数组，`姓, 名`）、`year`、`venue`、`volume`、`issue`、`pages`、`date`、`epubDate`、`articleType`、`issn`、`journalAbbreviation`、`abstract`、`keywords`、`language`、`doi`、`url`。查不到的写「待补」。人点纳入时 Mesa 把这条原样追加进 `endnote-import.ris` 和 `to-fetch.ris`，不再另查。空清单用 `[]`。不用修改 id 隐藏旧记录。
+- `papers/included.md`：纳入清单（脚本 write 生成：开头一句篇数，「纳入清单」「待确认清单」两节，一行一篇，作者超过三位写「等 N 人」；尚待确认单列，不冒充已决）
+- `papers/included.json`：与 included.md 一一对应的记录数组。每条有稳定非空字符串 `id`、`title`、`decision`、`reason`。decision 为 included / pending。**pending 与 included 同一套题录，检索时一次查全**，不要等纳入后再查。pending 只是相关性未拍板，不是期刊未知。有 DOI 时 `venue` 必须是期刊全称（书章除外），`doi` 与 `url` 不得留空：`authors`（数组，`姓, 名`）、`year`、`venue`、`volume`、`issue`、`pages`、`date`、`epubDate`、`articleType`、`issn`、`journalAbbreviation`、`abstract`、`keywords`、`language`、`doi`、`url`。查不到的写「待补」。已有全文的另有 `pdf`（脚本 fetch / write 写：项目根相对路径；Zotero 导入的是 Zotero 库里的绝对路径）。人点纳入时 Mesa 把这条原样追加进 `endnote-import.ris` 和 `to-fetch.ris`，不再另查；精读步也从这里写 `references.bib`，不另查。空清单用 `[]`。不用修改 id 隐藏旧记录。
 - `papers/to-fetch.md`：仅 **已纳入（decision=included）** 且未获得全文的付费墙清单，**不得列入 pending**（2026-09-15 收紧格式——裸「标题 — DOI」堆叠没编号，用户无法对照追踪进度）：**编号列表，每行 `N. 标题 — DOI`，N 从 1 连续**，顺序与 to-fetch.ris 条目一致；补齐全文的行在编号后加 `✓`（如 `3. ✓ 标题 — DOI`），编号不重排；无待获取则注明为空
 - 两份 RIS 同一批篇目、标签分开。pending 的完整题录写在 included.json。人把 pending 改成纳入后，Mesa 按各自标签追加（同一 DOI 或标题已在则不重复）。排除的不写。不在纳入这一下重新检索。
 - `papers/to-fetch.ris` 给 Zotero。RIS 2004、CRLF，顺序与 to-fetch.md 一致。一位作者一条 `AU`（`姓, 名`）。期刊全称只写 `T2`，缩写与全称不同才写 `J2`。再写 `PY`、`VL`、`IS`、`SP`、`EP`、`SN`、`DO`、`KW`（一词一条）、`AB`、`UR`。不要写 `JO`/`JF`/`JA`/`N1`/`N2`/`M1`：Zotero 把 `JO` 放进期刊缩写，把 `N1` 放进笔记。
@@ -140,8 +154,8 @@ Elicit / Undermind / X-MOL / Google Scholar 等闭源站点无法程序化检索
 
 ## 完成标准
 
-文件均存在，每条记录无空缺字段（未知则标「待补」）。筛选记录必须能让第三人按标准复现每条判定。深度档已声明；检索日志六字段无缺；覆盖缺口声明已写；严格档最小披露四项齐全。`papers/imports/` 里的导出文件处理后保留原档备查，不删除。
+文件均存在，每条记录无空缺字段（未知则标「待补」），`lit_records.py check` 通过。筛选记录必须能让第三人按标准复现每条判定。深度档已声明；检索日志六字段无缺；覆盖缺口声明已写；严格档最小披露四项齐全。`papers/imports/` 里的导出文件处理后保留原档备查，不删除。
 
 ## 人工补投的命名整理
 
-开放获取全文下载到 **TASK.md 写明的项目根 `papers/`**，不要写当前工作区（PDF 不进 git，写在工作区会在合并后丢失）。文件名「作者年份-短标题.pdf」。**人工补投的文件名随意，不改名压力不交给用户**——下一步精读（lit-notes）开工时由 agent 对照 included.md/to-fetch.md 判定归属后统一重命名，并在 to-fetch.md 勾掉已补行；拿不准归属的不改名、标注「待确认」。
+开放获取全文下载到 **TASK.md 写明的项目根 `papers/`**，不要写当前工作区（PDF 不进 git，写在工作区会在合并后丢失）。文件名「作者年份-短标题.pdf」。**人工补投的文件名随意，不改名**——下一步精读（lit-notes）开工时跑 `lit_records.py write`，按 DOI、标题认出这些文件，在 included.json 记 `pdf` 路径、给 to-fetch.md 打 ✓；Mesa 的资源登记和沉浸阅读按路径认文件，改名就对不上。

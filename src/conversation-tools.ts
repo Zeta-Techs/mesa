@@ -5,6 +5,7 @@
  */
 import type { BlockDto, ChatMessageDto } from "./types.ts";
 import {
+  kindOf,
   orphanResultActivity,
   resultStatus,
   toolActivities,
@@ -334,14 +335,41 @@ export function planEntries(input: string): PlanEntry[] | null {
   return out.length ? out : null;
 }
 
-/** 这一轮最后一次更新的计划（同一轮里计划整表替换，只画最新那份；ACP plan 语义） */
-export function turnPlan(items: readonly ProcessItem[]): PlanEntry[] | null {
-  const tools = allTools(items).filter((t) => t.activity.kind === "todo");
+/** 拼计划只用到的工具字段 */
+type PlanTool = { activity: { toolName: string; input: string }; result: string | null };
+
+function latestPlan(tools: readonly PlanTool[]): PlanEntry[] | null {
   for (let i = tools.length - 1; i >= 0; i--) {
     const entries = planEntries(tools[i].activity.input);
     if (entries) return entries;
   }
   return taskPlan(tools);
+}
+
+/** 这一轮最后一次更新的计划（同一轮里计划整表替换，只画最新那份；ACP plan 语义） */
+export function turnPlan(items: readonly ProcessItem[]): PlanEntry[] | null {
+  return latestPlan(allTools(items).filter((t) => t.activity.kind === "todo"));
+}
+
+/** 整段对话的计划（不分轮）。Claude Code 的 Task 清单整个会话共用、终端转圈行一直显示进行中那一项；
+ *  上一轮建、这一轮没动时按这一轮拼不出（2026-10-22 实证：发了「继续」后聊天层状态行丢了「检索候选」）。
+ *  只扫待办类工具块、按 callId 配结果，不做整段分组 */
+export function sessionPlan(messages: readonly ChatMessageDto[]): PlanEntry[] | null {
+  const results = new Map<string, string>();
+  for (const m of messages) {
+    for (const b of m.blocks) if (b.kind === "tool_result" && b.callId) results.set(b.callId, b.text);
+  }
+  const tools: PlanTool[] = [];
+  for (const m of messages) {
+    for (const b of m.blocks) {
+      if (b.kind !== "tool_use" || !b.toolName || kindOf(b.toolName) !== "todo") continue;
+      tools.push({
+        activity: { toolName: b.toolName, input: b.text },
+        result: b.callId ? (results.get(b.callId) ?? null) : null,
+      });
+    }
+  }
+  return tools.length ? latestPlan(tools) : null;
 }
 
 function taskArgs(input: string): Record<string, unknown> | null {
@@ -358,7 +386,7 @@ function taskArgs(input: string): Record<string, unknown> | null {
 /** Claude Code 新版的任务工具不传整张清单：TaskCreate 一次建一条（编号在结果「Task #3 created successfully」里），
  *  TaskUpdate 按编号改状态 / 删除。照 Claude Code 自己的拼法把这一轮的调用拼回一张清单；
  *  上一轮建的任务这一轮只改状态时拼不出（不知道标题），不画 */
-function taskPlan(tools: readonly ProcessTool[]): PlanEntry[] | null {
+function taskPlan(tools: readonly PlanTool[]): PlanEntry[] | null {
   const tasks = new Map<string, PlanEntry>();
   tools.forEach((t, i) => {
     const name = t.activity.toolName.toLowerCase();

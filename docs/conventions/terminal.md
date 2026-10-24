@@ -26,7 +26,7 @@
 
 ## 终端行为（用户明确要求；配色 = VS Code Dark+ 调色板，集中在 `TerminalPage.tsx` 的 `theme` 一处）
 
-- **Run 与标签（v3.221 / v3.223 / v3.225）**：终端标签是一次 Run 的视图，不是身份。同一 `reuseKey` 只留一个活标签；标题先任务名（工作区/分支/文档）后 Agent（Agent 只在进程起来后的状态栏）。交互 `pty_spawn` 必先登记 `runs` 行（登录标签除外）；无头标 `internal` 不进工作台。启动入口用 `permission`（`discuss` / `write_tree`），旧 `readonly` 仅回落。重启白名单含 `runId`，仍禁 PTY/密钥/env。关标签后按 `runId` 恢复。会话恢复自动启动必须可取消（开发态 StrictMode 假卸载），失败不得写成「进程已退出」。细则 `docs/conventions/agent-workbench.md`。
+- **Run 与标签（v3.221 / v3.223 / v3.225）**：终端标签是一次 Run 的视图，不是身份。同一 `reuseKey` 只留一个活标签；标题先任务名（工作区/分支/文档）后 Agent（Agent 只在进程起来后的状态栏）。交互 `pty_spawn` 必先登记 `runs` 行（登录标签除外）；无头标 `internal` 不进工作台。启动入口用 `permission`（`discuss` / `write_tree`），旧 `readonly` 仅回落。重启白名单含 `runId` 与工作区复用键（只留 `ws:` 前缀，2026-10-22），仍禁 PTY/密钥/env。关标签后按 `runId` 恢复。会话恢复自动启动必须可取消（开发态 StrictMode 假卸载），失败不得写成「进程已退出」。细则 `docs/conventions/agent-workbench.md`。
 - ~~**运行页上下文分工（v3.127）**~~（2026-10-24 左栏重做后作废：项目区删了、文件树不再钻取换根，见下文「左栏只剩这段对话的文件」）：左栏「项目与工作区」只负责切换终端上下文；目录浏览、搜索、钻取和返回由「文件树」独立负责。文件树悬停「进入」才改变浏览根，不改变 Agent 实际运行目录；单击文件夹只原地展开/收起。两者不一致时必须显示「正在浏览 … · 终端仍在 …」并提供「回到当前目录」。Agent 运行中点击项目/工作区不得静默失败，改为在新标签打开目标上下文并给出短提示。
 - **聊天/终端按标签隔离（v3.127）**：每个终端标签独立保存显示层（聊天或终端），切换标签不继承另一标签的显示选择；两种显示层仍共享同一 PTY、会话文件和 TerminalView。
 - **项目区问 AI（v3.186）**：第一次选 Agent / 配置 / 模型，可设为默认（`ccode.askAi`）；未设默认不沿用 `lastLaunch` / 快速开聊。先显示哪一层跟设置「打开对话时先显示」（见下「表层默认」）；`previewPath` 打开右栏预览，PDF 与「查看」一样撑开。⌘/Ctrl 点问 AI 强制重选。指定了 `profileId` 时启动栏不得用上次留下的模型。
@@ -284,6 +284,9 @@
   重做 merge commit。「解决冲突」后干净工作区必须自动以**当前基准 tip** 准备两侧（完成前禁以 merge-base diff 冒充）；
   处理中基准前进立即停止展示和选边，经用户确认 `merge --abort` 后重新同步。评审入口以 intent 区分
   （`WorkspaceReviewRequest.action`：pr/archive/resolve-conflict）：仅 `resolve-conflict` 允许自动同步基准、准备冲突两侧。
+- **评审关掉回发起页（2026-10-23）**：`setWorkspaceReviewRequest` 在 store 层自动记 `fromPage`（同 `readerReq`，调用方不写）；
+  关评审（返回、保存进项目后归档）时显式 `returnTo` 优先（定时任务回项目的定时页签），否则回 `fromPage`，运行页自己的入口
+  （改动面板）不带回跳。关之前已交出终端请求的（退回修改 / 按意见重写 / 看复现日志，`pendingTerminal` 非空）留在运行页。
 - **评审覆盖层以代码为中心**：顶部固定任务/分支/增删统计与唯一主动作，提交信息和批量冲突操作在第二工具行；右侧文件目录默认收起，顶栏「文件列表 / 收起文件」开关，窄窗口仍是抽屉。对照长行换行，不再按 720px 硬撑；左右分栏只在 xl 及以上，更窄时上下叠。diff 连续浏览、标题吸顶、长段未修改折叠，目录打开时选中随主区滚动同步；冲突选边用文件标题下
   紧凑双侧控件，AI 理由单行展示、用户显式执行。**提交信息可留空（v3.97，面向不懂编程的用户）**：留空走
   `defaultCommitMessage` 本地规则默认信息（chore: 更新 N 个文件），不调 AI、不拦提交——评审与归档弹层同口径，
@@ -405,7 +408,7 @@
   Gemini 回复超过一屏时进「整屏重画」（清屏 + 全部历史 + 动态区）每帧一次，回滚区就叠出一份份历史（ConPTY 原样转出；实录一段 60 行回复重画 251 次，
   xterm 回放：修前横幅 252 份 / 8944 行，修后 1 份 / 85 行）。`terminal-protocols.ts consumeHostSequences` 把这对序列补成 `ESC[2J ESC[3J ESC[0f`，
   切在两帧之间先扣住再补；与 macOS 同效果，不分平台（macOS 上不出现这对写法）。
-- **聊天写入 PTY（v3.133）**：聊天发送必须取 `TerminalView` 当前 `ptyIdRef/ptyKindRef` 作为目标，不依赖异步状态镜像；文本和提交键通过后端 `pty_write_submit` 写入，文本先遵守 bracketed-paste 规则。2026-08-24 起正文与提交键分两次写、中间留间隔（spawn_blocking + thread::sleep，不占主线程）——背靠背写入时开了 bracketed paste 的 TUI 来不及把粘贴内容收进输入框，回车会被吞掉。**间隔不得低于 150ms，现取 250ms（`pty_input::SUBMIT_GAP`）**：Codex 把连着到达的字当粘贴，粘贴后 120ms 内的回车只换行不发送（2026-10-20 Windows 实测：原 60ms 下聊天层发给 Codex 的话留在输入框里；`E2E_SUBMIT_GAP_MS` 可在 chat_channel e2e 复核）。**正文是粘贴包（多行）时提交间隔取 650ms（`PASTE_SUBMIT_GAP`，2026-10-21）**：Qwen Code 在 Windows 上开着 pasteWorkaround，粘贴后 500ms 内的回车一律吞掉（InputPrompt `recentPasteTime`），250ms 时多行消息停在输入框没发（ConPTY 探针 250ms 复现、600ms 通过）；单行不包粘贴，照旧 250ms。恢复会话路径发送前再额外等 1.2s（进程引导/会话回放/信任提示期写入会落在未就绪的 TUI 上）。普通 CLI 使用 `\r`，Kimi 继续使用 CSI-u Enter。**多行正文的换行**（2026-10-20 Windows 八家逐个实测）：ConPTY 会转出 `?2004h`，粘贴包照常包；包里的换行默认写 LF（Claude / Qwen / Gemini / Kimi / CodeBuddy / OpenCode 都保留成换行，2026-10-21 复测），**Windows 上的 Grok 改写 CR**（LF 会被它丢掉、两行连成一行；`pty_write_submit` 的 `paste_newline`，pty.rs `chat_paste_body`），**Windows 上的 Codex 改送 Shift+Enter 按键记录**（`paste_newline: "shift-enter"`，pty.rs `shift_enter_pieces`；2026-10-21 Codex 0.163 复测：LF 被丢、几行连成一行，CR 拆成几条消息各自发出，Shift+Enter / Ctrl+J 记录三行原样——10-20「Codex 保留 LF」已不成立）——不得统一改 CR：CodeBuddy / OpenCode 会把字写错位。macOS 不改。
+- **聊天写入 PTY（v3.133）**：聊天发送必须取 `TerminalView` 当前 `ptyIdRef/ptyKindRef` 作为目标，不依赖异步状态镜像；文本和提交键通过后端 `pty_write_submit` 写入，文本先遵守 bracketed-paste 规则。2026-08-24 起正文与提交键分两次写、中间留间隔（spawn_blocking + thread::sleep，不占主线程）——背靠背写入时开了 bracketed paste 的 TUI 来不及把粘贴内容收进输入框，回车会被吞掉。**间隔不得低于 150ms，现取 250ms（`pty_input::SUBMIT_GAP`）**：Codex 把连着到达的字当粘贴，粘贴后 120ms 内的回车只换行不发送（2026-10-20 Windows 实测：原 60ms 下聊天层发给 Codex 的话留在输入框里；`E2E_SUBMIT_GAP_MS` 可在 chat_channel e2e 复核）。**正文是粘贴包（多行）时提交间隔取 650ms（`PASTE_SUBMIT_GAP`，2026-10-21）**：Qwen Code 在 Windows 上开着 pasteWorkaround，粘贴后 500ms 内的回车一律吞掉（InputPrompt `recentPasteTime`），250ms 时多行消息停在输入框没发（ConPTY 探针 250ms 复现、600ms 通过）；单行不包粘贴，照旧 250ms。恢复会话路径发送前再额外等 1.2s（进程引导/会话回放/信任提示期写入会落在未就绪的 TUI 上）。**发出后核对交没交出去**（2026-10-24 HER 润色实证：Mesa 重启后步骤上「让 Agent 按决定继续」，接回的 Claude 输入框画出来 1 秒内就写进去，回车被吞，整段意见留在框里）：有画面布局表的家，这句末尾一段连着 1.6 秒还在输入框里就再补一次提交键，最多补两次（`live-reply.ts sentTextStuckInBox`，TerminalPage `confirmSubmitted`）；多行粘贴显示成占位的认不出，不补。同日二次实证（接回后先写「※ recap」，输入框画出 2 秒就写入，开头丢一截，之后人按回车也只多一行、出「ctrl+g 编辑」提示——CLI 停在粘贴状态）：刚起来的 20 秒里输入框要安静 1.5 秒才算就绪；补提交前先补一个粘贴结束标记 `ESC[201~` 把它拉出粘贴状态，最多补三次。普通 CLI 使用 `\r`，Kimi 继续使用 CSI-u Enter。**多行正文的换行**（2026-10-20 Windows 八家逐个实测）：ConPTY 会转出 `?2004h`，粘贴包照常包；包里的换行默认写 LF（Claude / Qwen / Gemini / Kimi / CodeBuddy / OpenCode 都保留成换行，2026-10-21 复测），**Windows 上的 Grok 改写 CR**（LF 会被它丢掉、两行连成一行；`pty_write_submit` 的 `paste_newline`，pty.rs `chat_paste_body`），**Windows 上的 Codex 改送 Shift+Enter 按键记录**（`paste_newline: "shift-enter"`，pty.rs `shift_enter_pieces`；2026-10-21 Codex 0.163 复测：LF 被丢、几行连成一行，CR 拆成几条消息各自发出，Shift+Enter / Ctrl+J 记录三行原样——10-20「Codex 保留 LF」已不成立）——不得统一改 CR：CodeBuddy / OpenCode 会把字写错位。macOS 不改。
 - **聊天层常驻挂载（2026-08-24）**：ChatSurface 不再随 chat⇄terminal 切换卸载（display:contents/none 仅隐藏），输入框草稿、滚动位置、ConversationView 展开状态切层不丢；ChatComposer 的一次性 autofocus 改为 `focusWhen` 可见性信号（隐藏态 focus() 被浏览器忽略，不会抢终端焦点）。AI 正文经 ChatMarkdown 渲染 Markdown（安全口径见 safety.md），超长未展开仍保持截断纯文本 + 展开按钮。
 - **会话同步（v3.125 / v3.168）**：关联成功后优先注册专用 session watcher，普通 JSONL 监听目标文件目录，OpenCode 监听数据库与 WAL；事件短防抖后通知前端，前端用会话文件尾窗替换最新一页并与已向前翻页的旧窗去重拼接。签名轮询保留为 watcher 失败或丢事件时的兜底，并以请求代次防止旧读取覆盖新消息。同步状态显式区分识别中、已监听、等待文件、兜底轮询。
 - **分叉聊天（v3.125）**：新建聊天只在已有 session 文件和 session ID 时启用；复用结构化接力简报与 handoff 链，不复制完整原始历史。新标签继承 Agent/连接/模型/目录，默认聊天模式、自动启动、只读；不支持原生只读参数的 CLI 标注「提示约束」。点击「允许修改」确认风险后停止只读 PTY，以同一摘要和配置重启可写会话，原会话保持不变。
@@ -794,14 +797,24 @@
   （分隔条拖拽同享这套收口；停稳换挡前的过渡窗内页盒仍按旧宽渲染，栏变窄方向会有短暂的横向溢出/页缘裁切，停稳即收——这是防抖的既定代价，勿为消除它退回逐帧重算）；禁止改回条件卸载（收起卸 Monaco、右栏卸槽位是当年卡顿根源）；
   翻译面板两档摆位（2026-10-14，当日三批改为悬浮球+整窗坐标）：表头「钉住/回栏」切换——原位 = 右栏 xterm 上方
   （布局流，% 高度/底缘拖拽只在这档有意义）；钉住 = **可拖动「译」悬浮球**（`ReaderTlFloat`：点球在球旁展开
-  同一张译文卡，×/再点收回球；拖球换位记 `ccode.readerTlBall` 百分比坐标（0–100 归一，可贴边；出界由渲染层
-  `clamp(18px, x%, calc(100% - 18px))` 按球半径兜住），位移 <4px 判点击）。**球与卡挂覆盖层根（fixed inset-0），
-  坐标域是整窗**——当日审查实证挂 PDF 栏内会被栏界挡住（右栏展开时球到不了窗口边，正是用户报障）；卡的锚定
-  left/right 用与球同一份 clamp 值（裸百分比锚位在贴边时压球，默认 xp=100 实测压 14px），宽度再按锚定侧可用
-  空间限幅（2026-10-18 起锚定边与宽度另受 PDF 栏边界 `floatBounds` 约束：卡不盖笔记栏/对话栏，球照旧整窗可拖）；卡顶/卡高共用同一活钳 min()（窗口变小后存档高被压缩，卡顶按裸存档算会探出窗顶、表头不可点）。
+  同一张译文卡，×/再点收回球；拖球换位记 `ccode.readerTlBall` 百分比坐标（0–100 归一，可贴边），位移 <4px 判点击）。
+  **球与卡挂覆盖层根（fixed inset-0），坐标域是 PDF 栏**（2026-10-23 用户：球脱出了 PDF、压在右栏上；修订 10-14
+  的「整窗可拖」）：百分比 = 球在 PDF 栏里的位置，渲染与卡的锚定共用 `readerTlBallOffset`（reader.ts：栏外距离 +
+  `clamp(18px, (100% − 两侧栏外距离) × pct, …)` 按球半径兜在栏内），拖动按 PDF 栏宽高换算；`floatBounds` 量
+  PDF 栏离覆盖层四边（含顶栏/抽查条），量到之前不出球。仍挂覆盖层根不挂进 PDF 栏——挂栏内会被栏内滚动/裁剪挡住。
+  卡的锚定 left/right 用与球同一份偏移（裸百分比锚位在贴边时压球，默认 xp=100 实测压 14px），宽度再按锚定侧可用
+  空间限幅（锚定边与宽度受 PDF 栏边界约束：卡不盖笔记栏/对话栏，卡顶不越过 PDF 栏顶）；卡顶/卡高共用同一活钳 min()（窗口变小后存档高被压缩，卡顶按裸存档算会探出窗顶、表头不可点）。
   拖动状态留在球组件内不惊动三栏树。悬浮卡 absolute 锚在球旁（右半区贴左展开/左半区贴右，宽 ≤26rem、高 60% 封顶 min() 钳底）、
   默认只看译文（原文要点开对照）、历史抽屉按球位上下弹、× 直接收球不落「一行动作条」、
   表头没有「只折正文」chevron（点球/× 已是完全收起，纯标识行，窄卡时表头折行）。
+  **2026-10-23 用户「1–4 都做」四处修订**：①**原文段常驻标出 + 卡避让**——面板经 `onDisplay` 报上正文区摆着的条目
+  （收起/×/在途/卸载报 null），ReaderOverlay 据此给 PdfContinuousView `sourceMark`（PdfPageMark kind `source`，
+  `.ccode-mark-source` 淡蓝底 + 下划线，复用标记的摘句重定位）；悬浮档在换条目/开卡后 120ms、500ms 量
+  `[data-mark-id="tl-source"]` 的外框（只算露在 PDF 栏里的行，**不跟滚动**），`readerTlCardAvoid`（reader.ts）只按横向
+  是否压到判定（上下换位不改横向范围，判定不来回翻），压到就摆到原文段下方或上方（下方够 160px 或比上方大放下方，
+  两边都不足 120px 不避让）；②**表头收成 原文 / 存进笔记 / 复制 / ⋯ / ×**，钉位（菜单文案「钉在 PDF 上（悬浮球）」/
+  「回到右栏」）、问这段、历史收进「⋯」（Esc / 点外关，capture 相）；③悬浮卡译文 `text-xs`（工作台内 13px）行高 1.7（原位档仍 text-sm；字号走令牌，禁 text-[Npx]）；
+  ④正文区下面还有字时 mask 渐隐卡底 28px（scroll + RO 判定）。
   从看得见的卡点「钉住」球先展开接续（卡搬家，不是缩成球）；兜底档（收起右栏自动出球）收着球起步。悬浮卡可**自由改形**：球对侧
   下角角柄拖宽高（`clampReaderTlCard` 240×140 下限、窗内空间上限，显式尺寸记 `ccode.readerTlCard`，
   双击角柄复位自适应——「拖过 = 显式记忆」与右栏高度条同款口径；角柄与球同款 4px 位移阈值——1px 抖动不得
@@ -834,6 +847,23 @@
   配对 = 笔记 stem 与 project.toml `type="paper"` 资源的文件 stem 做 `normalize_title`（lit_watch.rs，已提
   pub(crate) 复用）**互相包含**（与前端 lit-watch.ts `paperResourceFor` 同口径），多命中取规范化最长者，
   无命中报错透出。另有根已知的变体 `pdf_for_note`（返回 Option，供已知 projectRoot 的调用方）。
+- **抽查核对档（2026-10-23 用户拍板「都按推荐做」）**：精读步人工事项「抽查 3 篇笔记」点一篇 → `readerReq.spotCheck`
+  （`src/spot-check.ts SpotCheckSession`：三篇、index.json 所在根 base、步骤名/事项标题、工作区）→ 阅读区不跳运行页、
+  退出回流程页。**pdfPath/notePath 由阅读区按篇经 `spot_check_item`（reader.rs）解析**：笔记限 base/notes 内；
+  base 是本项目某工作区时 `readOnly`（工作区归属查 workspaces 表，repo 必须是本项目根）——**不走 reader_for_note**
+  （它把工作区笔记映射回主仓副本，抽查要看的恰是待评审那份）；PDF 先按来源行/文件名在**项目根**配对（原始资料
+  直写项目根 papers/），再看 included.json 的 `pdf` 字段；题名/摘要取 included.json（「待补」「待核」不算）。
+  只读档：FilePreviewEditor `readOnly`、标注增删 / 圈选插笔记 / 译段存笔记 / 让 AI 起草全收；无 PDF 时中栏
+  `SpotAbstractPane` 摆摘要。**核对档不派阅读会话**（readerKey 置空）：阅读会话在项目根、`Edit(./notes/**)`
+  预放行改的是主仓笔记，会改错地方。右栏 = `SpotCheckPanel` 问题单：笔记划选走 FilePreviewEditor `onAnnotate` +
+  `annotateCopy`、PDF 划选走 `onAskAi` + `askAs`（不出「直接发送」），都记「记成问题」；问题单按 base 记
+  localStorage（Esc 退出不丢，发出/勾上清）。「发给这一步的 AI」= `buildWorkspaceTerminalRequest(ws, prompt,
+  {autoStart, resumeSession})`（与决策后续跑同链：活会话认回标签注入、否则 resume），关阅读区留运行页、事项不勾；
+  「N 篇都没问题」三篇都看过才可点 → `set_human_task_check` + store `bumpHumanTasks`（useHumanTasks 见 tick 重取）
+  → 回来源页。索引读自项目根（已保存进项目）时 ws 为空：笔记可改、问题单只记不发。
+  栏宽另记一套（`ccode.spotSplitL/R`，缺省笔记 34% / 问题单 18%，同日用户「问题单窄一点、左侧保留阅读宽度」），
+  拖动不影响平时三栏；窗口放不下时 `readerColumnWidths(…, keepLeft)` 先把问题单压到 240px 保底，笔记栏最后才让；
+  ReaderOverlay 以 `key` 区分两档，换档重挂才按各自记忆读宽度。
 - **右栏可切「聊天 / 终端」（2026-10-18 用户要求补上聊天层切换）**：对话卡标题行右侧分段钮切阅读会话标签的
   surface（与终端页同一份 `surfaceModeByTab`，不走 switchSurface——它按焦点标签改、切聊天会退出分屏）。
   2026-10-22 起不再单独记 `ccode.readerSurface`：进入时跟设置「打开对话时先显示」，右栏里切只管这一次的会话。
@@ -915,7 +945,7 @@
 - **顶栏题名**：`reader_paper_title`（reader.rs `paper_title_for`）在题录里找真实题名——配对笔记 H1（不是文件名本身时）
   → notes/index.json → papers/included.json（fulltext 字段写着这个文件名的优先）→ included.md / reading-list.md →
   雷达收件箱；匹配 = `normalize_title` 相等，或文件名规范化后 ≥24 字且是题名前缀（雷达限长截断）。新建档笔记的
-  H1 同口径。悬浮译文卡只在 PDF 栏里展开（`floatBounds` = PDF 栏离覆盖层左右边的 px，RO 按帧合并），球仍整窗可拖；
+  H1 同口径。悬浮译文卡与「译」球只在 PDF 栏里（`floatBounds` = PDF 栏离覆盖层四边的 px，RO 按帧合并）；
   笔记栏 md 用 `compact` 排版（标题收一档）。
 - **注入单一内核 `injectToTab(tabId, data, send)`**：原 `injectToActiveAgent` 抽成按 tabId 的共用内核，
   右栏选段（活跃标签）与阅读区注入（阅读会话标签）走同一条链路（缺省只写输入行不回车）；选段「◈ 问 AI」/

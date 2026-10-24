@@ -2018,6 +2018,145 @@ fn item_hits_pdf(it: &ToFetchProbe, pdf: &PdfFact) -> bool {
         || pdf.hints.iter().any(|hint| title_hits(&it.title, hint))
 }
 
+/// PDF 元数据段：开头 256KB + 结尾 512KB。出版商把本篇 DOI / 标题写进 XMP 与文档信息，
+/// 这部分不压缩——ACS 在开头，Elsevier（线性化 PDF）在结尾（2026-10-22 实测：3.4MB 的
+/// 文件元数据在 3.03MB 处）。正文与参考文献在压缩流里，读不到别篇的 DOI。
+const PDF_META_HEAD: usize = 256 * 1024;
+const PDF_META_TAIL: usize = 512 * 1024;
+
+fn pdf_meta_window(bytes: &[u8]) -> Vec<u8> {
+    if bytes.len() <= PDF_META_HEAD + PDF_META_TAIL {
+        return bytes.to_vec();
+    }
+    let mut out = bytes[..PDF_META_HEAD].to_vec();
+    out.extend_from_slice(&bytes[bytes.len() - PDF_META_TAIL..]);
+    out
+}
+
+/// PDF 元数据段里**本篇自己的** DOI（小写、去尾标点）。只认元数据字段后面的 DOI：
+/// XMP `dc:identifier` / `prism:doi` / `crossmark:DOI` / `pdfx:doi`、文档信息 `/doi`。
+/// 2026-10-22 实测：ACS 全文把整份参考文献的 DOI 以链接注释（/URI）明文放着，
+/// 「文件里出现的 DOI」会把引用了清单里别篇的论文认成那一篇。六份实测全文（ACS、
+/// Elsevier×2、Nature、Wiley、Springer）的本篇 DOI 都在这些字段里。
+/// 认 PDF 字符串里转义的括号（Elsevier `S1872-2067\(24\)60067-7`），括号按配对收。
+pub(crate) fn pdf_meta_dois(bytes: &[u8]) -> Vec<String> {
+    const MARKERS: [&str; 7] = [
+        "<dc:identifier>",
+        "<prism:doi>",
+        "<crossmark:doi>",
+        "<pdfx:doi>",
+        "/doi (",
+        "/doi(",
+        "/wps-articledoi(",
+    ];
+    const PREFIXES: [&str; 5] = [
+        "doi:",
+        "https://doi.org/",
+        "http://doi.org/",
+        "https://dx.doi.org/",
+        "http://dx.doi.org/",
+    ];
+    let window = pdf_meta_window(bytes);
+    let text = String::from_utf8_lossy(&window)
+        .to_ascii_lowercase()
+        .replace("\\(", "(")
+        .replace("\\)", ")");
+    let mut out: Vec<String> = Vec::new();
+    for marker in MARKERS {
+        let mut from = 0;
+        while let Some(off) = text[from..].find(marker) {
+            let mut at = from + off + marker.len();
+            from = at;
+            while text.as_bytes().get(at).is_some_and(|c| c.is_ascii_whitespace()) {
+                at += 1;
+            }
+            if let Some(p) = PREFIXES.iter().find(|p| text[at..].starts_with(*p)) {
+                at += p.len();
+            }
+            if let Some(doi) = doi_token_at(&text, at) {
+                if !out.contains(&doi) {
+                    out.push(doi);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// 从 `at` 起读一个 DOI（须以 10.xxxx/ 开头）。括号按配对收，不配对的右括号是字符串收尾。
+fn doi_token_at(text: &str, at: usize) -> Option<String> {
+    if !text[at..].starts_with("10.") {
+        return None;
+    }
+    let b = text.as_bytes();
+    let mut end = at;
+    let mut depth = 0usize;
+    while end < b.len() {
+        let c = b[end];
+        if c == b'(' {
+            depth += 1;
+        } else if c == b')' {
+            if depth == 0 {
+                break;
+            }
+            depth -= 1;
+        } else if !(c.is_ascii_alphanumeric() || b"._;/:-".contains(&c)) {
+            break;
+        }
+        end += 1;
+    }
+    if depth != 0 {
+        return None;
+    }
+    let tok = text[at..end].trim_end_matches(['.', ';', ':', '-']);
+    let (prefix, suffix) = tok.split_once('/')?;
+    let reg = &prefix[3..];
+    ((4..=9).contains(&reg.len()) && reg.bytes().all(|c| c.is_ascii_digit()) && suffix.len() >= 4)
+        .then(|| tok.to_string())
+}
+
+/// papers/ 里某份 PDF 元数据段的 DOI，按路径 + 修改时间 + 大小缓存：待获取清单开着时
+/// 每 2 秒对一次进度，不能每次重读文件
+fn pdf_meta_dois_cached(path: &Path) -> Vec<String> {
+    use std::io::{Read as _, Seek as _, SeekFrom};
+    type Entry = (std::time::SystemTime, u64, Vec<String>);
+    static CACHE: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<PathBuf, Entry>>> =
+        std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    let Ok(meta) = fs::metadata(path) else {
+        return Vec::new();
+    };
+    let mtime = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+    let len = meta.len();
+    if let Ok(cache) = CACHE.lock() {
+        if let Some((m, l, dois)) = cache.get(path) {
+            if *m == mtime && *l == len {
+                return dois.clone();
+            }
+        }
+    }
+    // 只读开头和结尾两段，不读整份
+    let read = || -> std::io::Result<Vec<u8>> {
+        let mut f = fs::File::open(path)?;
+        let mut buf = Vec::new();
+        (&mut f).take(PDF_META_HEAD as u64).read_to_end(&mut buf)?;
+        if len > (PDF_META_HEAD + PDF_META_TAIL) as u64 {
+            f.seek(SeekFrom::End(-(PDF_META_TAIL as i64)))?;
+        }
+        let mut tail = Vec::new();
+        f.read_to_end(&mut tail)?;
+        buf.extend_from_slice(&tail);
+        Ok(buf)
+    };
+    let dois = read().map(|buf| pdf_meta_dois(&buf)).unwrap_or_default();
+    if let Ok(mut cache) = CACHE.lock() {
+        if cache.len() > 512 {
+            cache.clear();
+        }
+        cache.insert(path.to_path_buf(), (mtime, len, dois.clone()));
+    }
+    dois
+}
+
 fn to_fetch_progress_inner(root: &Path, items: &[ToFetchProbe]) -> Vec<Option<String>> {
     to_fetch_progress_with(root, items, &crate::download_inbox::catch_idents())
 }
@@ -2089,7 +2228,25 @@ fn to_fetch_progress_with(
             }
         })
         .collect();
-    // 清单刷新只对文件名和 DOI。读 PDF 正文只发生在人把文件拖进清单时。
+    // 文件名对不上的：看 PDF 开头的 DOI（2026-10-22：ACS 存名 cs2c00851.pdf，人拖进 papers/ 后
+    // 一直不亮「已存」）。只读开头 256KB、按文件缓存；正文标题仍只在拖进清单时读
+    for (i, it) in items.iter().enumerate() {
+        if out[i].is_some() {
+            continue;
+        }
+        let doi = probe_doi_norm(&it.url);
+        if doi.len() < 8 || !doi.starts_with("10.") {
+            continue;
+        }
+        let hit = pdfs.iter().position(|p| {
+            !taken.contains(&p.filename) && pdf_meta_dois_cached(&p.path).iter().any(|t| *t == doi)
+        });
+        if let Some(pos) = hit {
+            taken.insert(pdfs[pos].filename.clone());
+            out[i] = Some(apply_title_filename(root, &pdfs[pos].filename, &it.title, &it.url));
+        }
+    }
+    // 清单刷新只对文件名和 DOI（含 PDF 开头的 DOI）。读 PDF 正文标题只发生在人把文件拖进清单时。
     // 文件名是 paper-5 这类对不上标题：用「浏览器打开」登记把最近落下的 PDF 挂到那一行
     let root_s = root.to_string_lossy();
     let mine: Vec<&crate::download_inbox::CatchIdent> = catches
@@ -2234,11 +2391,33 @@ pub fn match_dropped_pdf(root: &Path, source: &Path, items: &[ToFetchProbe]) -> 
         };
     }
     let bytes = fs::read(source).map_err(|e| format!("读取 PDF 失败: {e}"))?;
+    // PDF 开头带的 DOI 先认：出版商编号文件名（ACS cs2c00851.pdf）的 /Title 常是插图的
+    // （「cite_this_logo_trans.eps」），按标题对不上
+    let head_dois = pdf_meta_dois(&bytes);
+    let doi_hits_head: Vec<usize> = items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| {
+            let doi = probe_doi_norm(&item.url);
+            doi.len() >= 8 && head_dois.iter().any(|t| *t == doi)
+        })
+        .map(|(i, _)| i)
+        .collect();
+    if let [one] = doi_hits_head.as_slice() {
+        return Ok(*one);
+    }
     let fact = PdfFact {
         filename: name.clone(),
         path: source.to_path_buf(),
         aliases: vec![name, stem],
-        hints: pdf_title_hints(&bytes),
+        // 结尾段也读：Elsevier 的文档信息 /Title 在文件末尾
+        hints: {
+            let mut hints = pdf_title_hints(&bytes);
+            if bytes.len() > PDF_META_HEAD {
+                hints.extend(pdf_title_hints(&bytes[bytes.len().saturating_sub(PDF_META_TAIL).max(PDF_META_HEAD)..]));
+            }
+            hints
+        },
         hints_loaded: true,
         mtime: std::time::SystemTime::UNIX_EPOCH,
     };
@@ -3107,6 +3286,51 @@ mod tests {
             },
         ];
         assert_eq!(match_dropped_pdf(&dir, &pdf, &items).unwrap(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // 2026-10-22 实测 ACS：文件名 cs2c00851.pdf，/Title 是插图的，本篇 DOI 在 XMP 里；
+    // 参考文献的 DOI 以链接注释明文放着（这里放一条清单里别篇的），不得认
+    const ACS_HEAD: &[u8] = b"%PDF-1.7\n<</Creator(Adobe Illustrator)/Title(cite_this_logo_trans.eps)>>\n<dc:identifier>10.1021/acscatal.2c00851</dc:identifier>\n<</S/URI/URI(https://doi.org/10.1000/other)>>\n";
+
+    #[test]
+    fn pdf_meta_dois_reads_own_doi_fields_only() {
+        assert_eq!(super::pdf_meta_dois(ACS_HEAD), vec!["10.1021/acscatal.2c00851"]);
+        // Nature / Springer：文档信息 /doi 与 dc:identifier 带 doi: / https://doi.org/ 前缀
+        let nature = b"%PDF-1.4\n<dc:identifier>doi:10.1038/s41467-023-40972-w</dc:identifier>\n/doi(10.1038/s41467-023-40972-w)\n<prism:doi>10.1007/x</prism:doi>\n";
+        assert_eq!(super::pdf_meta_dois(nature), vec!["10.1038/s41467-023-40972-w"]);
+        // 不在元数据字段后的 DOI、版本号、小数都不算
+        assert!(super::pdf_meta_dois(b"%PDF-1.7 version 10.1 see 10.1021/acscatal.7b02225").is_empty());
+        // Elsevier（2026-10-22 实测 main.pdf）：元数据在文件末尾，文档信息里括号转义
+        let mut els = b"%PDF-1.7\n".to_vec();
+        els.extend(std::iter::repeat_n(b'x', 2 * 1024 * 1024));
+        els.extend_from_slice(b"<crossmark:DOI>10.1016/S1872-2067(24)60067-7</crossmark:DOI>\n/doi (10.1016/S1872-2067\\(24\\)60067-7)\n%%EOF\n");
+        assert_eq!(super::pdf_meta_dois(&els), vec!["10.1016/s1872-2067(24)60067-7"]);
+    }
+
+    #[test]
+    fn dropped_and_saved_pdf_match_by_head_doi() {
+        let dir = tmpdir("drop-doi");
+        let items = vec![
+            ToFetchProbe {
+                title: "Unrelated nickel phosphide paper about seawater splitting".into(),
+                url: "10.1000/other".into(),
+            },
+            ToFetchProbe {
+                title: "Pt–Ru Dimer Electrocatalyst with Electron Redistribution for Hydrogen Evolution Reaction".into(),
+                url: "10.1021/acscatal.2c00851".into(),
+            },
+        ];
+        let pdf = dir.join("cs2c00851.pdf");
+        std::fs::write(&pdf, ACS_HEAD).unwrap();
+        assert_eq!(match_dropped_pdf(&dir, &pdf, &items).unwrap(), 1);
+        // 已经躺在 papers/ 里的同一份：清单进度按开头 DOI 亮「已存」
+        let papers = dir.join("papers");
+        std::fs::create_dir_all(&papers).unwrap();
+        std::fs::write(papers.join("cs2c00851.pdf"), ACS_HEAD).unwrap();
+        let got = super::to_fetch_progress_with(&dir, &items, &[]);
+        assert!(got[0].is_none());
+        assert_eq!(got[1].as_deref(), Some("cs2c00851.pdf"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

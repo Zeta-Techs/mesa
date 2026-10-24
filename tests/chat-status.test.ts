@@ -86,3 +86,32 @@ test("只看最后一句提问之后：上一轮没回结果的调用不算这�
   const s = chatStatus({ ...base, messages: [msg("user", [text("上一问")]), prev, ask] });
   assert.deepEqual(s, { kind: "waiting", text: "思考中" });
 });
+
+test("Claude Code 的 Task 清单跨轮共用：发了「继续」后这一轮没动计划，状态行仍说进行中那一项", () => {
+  // 2026-10-22 实证：任务在上一轮建好、标成进行中，人发「继续」后终端转圈行写「检索候选…」，聊天层只剩光标
+  const earlier = [
+    msg("user", [text("读 TASK.md，按简报做到完成标准")]),
+    msg("assistant", [
+      use("TaskCreate", { subject: "检索候选文献并去重", activeForm: "检索候选" }, "t1"),
+      use("TaskCreate", { subject: "逐条筛选与字段补全", activeForm: "筛选并补字段" }, "t2"),
+    ]),
+    msg("user", [result("Task #3 created successfully: 检索候选文献并去重", "t1"), result("Task #4 created successfully: 逐条筛选与字段补全", "t2")]),
+    msg("assistant", [use("TaskUpdate", { taskId: "3", status: "in_progress" }, "u1")]),
+    msg("user", [result("Updated task #3 status", "u1")]),
+  ];
+  const resumed = [
+    ...earlier,
+    msg("user", [text("继续")]),
+    msg("assistant", [use("Bash", { command: "python fetch_oa.py" }, "c9")]),
+  ];
+  assert.deepEqual(chatStatus({ ...base, messages: resumed }), { kind: "plan", text: "检索候选" });
+  // 这一轮自己更新过计划时以这一轮为准（全部做完就不再说）
+  const finished = [
+    ...resumed,
+    msg("user", [result("ok", "c9")]),
+    msg("assistant", [use("TodoWrite", { todos: [{ content: "检索候选文献并去重", status: "completed" }] }, "p9")]),
+    msg("user", [result("ok", "p9")]),
+    msg("assistant", [use("Bash", { command: "ls" }, "c10")]),
+  ];
+  assert.deepEqual(chatStatus({ ...base, messages: finished }), { kind: "none", text: null });
+});

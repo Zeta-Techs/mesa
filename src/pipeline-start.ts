@@ -5,6 +5,7 @@ import { isGitMissingError } from "./dep-check";
 import { decisionGate, orderedAnswers, parseDecisions } from "./step-decisions";
 import {
   keepWorkspaceResume,
+  pickLiveWorkspaceSession,
   pickWorkspaceResume,
   shouldResumeWorkspaceSession,
 } from "./workspace-resume";
@@ -335,12 +336,16 @@ export async function buildWorkspaceTerminalRequest(
       lastLaunch = { ...last, model: undefined };
     }
   }
-  const resumeCandidate = shouldResumeWorkspaceSession({
+  const wantsResume = shouldResumeWorkspaceSession({
     hasPrompt: Boolean(initialPrompt?.trim()),
     resumeSession: opts?.resumeSession,
-  })
-    ? await latestWorkspaceSession(ws)
-    : null;
+  });
+  const sessions = wantsResume ? await workspaceSessions() : [];
+  // 这一步有对话还在跑：不 resume 任何一条（更早的那条接回来就是两个 Agent 同时干这一步），
+  // 交给终端页按会话认回持有它的标签
+  const live = wantsResume ? pickLiveWorkspaceSession(sessions, ws.name, ws.repoPath) : null;
+  const resumeCandidate =
+    wantsResume && !live ? pickWorkspaceResume(sessions, ws.name, ws.repoPath) : null;
   const resume =
     resumeCandidate &&
     keepWorkspaceResume({
@@ -360,13 +365,16 @@ export async function buildWorkspaceTerminalRequest(
   return {
     cwd: ws.worktreePath,
     extraEnv: Object.fromEntries(pairs),
-    title: ws.name,
+    // 标签名统一用步骤名（「文献精读与笔记」），不再有时是工作区名 lit-notes、有时是步骤名
+    title: (await workspaceStepName(ws)) ?? ws.name,
+    focusSession: live ?? undefined,
     // resume 命中时以会话的 agent 为准（TerminalPage 的 resume 分支会自选 profile/model）；
-    // 同一家 Agent 时，步骤绑定的连接只作 autoLaunchProfileId 预填。
+    // 同一家 Agent 时，步骤绑定的连接与模型作预填——不带模型时会落到连接名单第一个，
+    // 接回的对话被悄悄换模型（2026-10-23 HER 精读步：glm-5.3 接回成 glm-5.3-flash）。
     // 未命中按三链预填
     agentId: resume?.agentId ?? chain.agentId,
     profileId: resume ? undefined : chain.profileId,
-    model: resume ? undefined : chain.model,
+    model: resume ? sameAgentBinding?.model || undefined : chain.model,
     autoLaunchProfileId: sameAgentBinding?.profileId,
     // 开工弹层的本次思考档覆盖（空 = 绑定默认）：随标签种子传递，launch 时经
     // pty_spawn effortOverride 注入，不写回绑定
@@ -407,14 +415,24 @@ export function workspaceReuseKey(ws: WorkspaceDto): string {
   return `ws:${ws.worktreePath}`;
 }
 
-/** 该工作区最近一次的会话（resume 用）：纯筛选逻辑在 workspace-resume.ts（可测）。
+/** 会话列表（resume / 认回活会话用）：纯筛选逻辑在 workspace-resume.ts（可测）。
  *  列表失败降级为不 resume（仍新开标签），不阻断「去终端」 */
-async function latestWorkspaceSession(
-  ws: WorkspaceDto,
-): Promise<{ agentId: string; sessionId: string } | null> {
+async function workspaceSessions(): Promise<SessionMetaDto[]> {
   try {
-    const sessions = await invoke<SessionMetaDto[]>("list_sessions");
-    return pickWorkspaceResume(sessions, ws.name, ws.repoPath);
+    return await invoke<SessionMetaDto[]>("list_sessions");
+  } catch {
+    return [];
+  }
+}
+
+/** 工作区对应的步骤名（标签名用）；读不到项目配置或手建工作区返回 null */
+async function workspaceStepName(ws: WorkspaceDto): Promise<string | null> {
+  try {
+    const read = await invoke<{ config: { steps: readonly { name: string; workspaceName: string }[] } }>(
+      "read_project_config",
+      { path: ws.repoPath },
+    );
+    return read.config.steps.find((s) => s.workspaceName === ws.name)?.name ?? null;
   } catch {
     return null;
   }
