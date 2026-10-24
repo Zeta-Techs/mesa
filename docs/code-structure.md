@@ -954,6 +954,9 @@ src-tauri/src/
                              # 字节是请求体原样（tauri::ipc::Request，postMessage 退路收 JSON 数组）、扩展名在 x-image-ext 头，后台线程落盘；
                              # read_clipboard_files = 文件管理器复制文件的粘贴（mac NSPasteboard / win CF_HDROP / linux 空）
   sessions.rs                # 会话浏览：九 agent 会话扫描/解析（Codex .zst、OpenCode SQLite/JSON）、session_meta、pin 快照、
+                             # 会话连接与启动模型 / 思考档记录（set_session_profile，launch_model / launch_effort 列）与接着聊默认配置
+                             #   session_resume_config（模型取文件最后一轮、Codex 思考档取 rollout，读不到用启动记录，2026-10-24）、
+                             # 列表标题与起名去掉 Mesa 塞的项目上下文包（strip_mesa_launch_pack）、
                              # Codex 归档 zst 懒解压（read_head_only：列表只要头窗元数据、头窗满即停，
                              #   归档 token_usage 宁缺毋滥给 None，2026-10-16）+
                              # 会话删除、注意力分类（session_tail_state）、步骤名映射（RX3a）、
@@ -1052,6 +1055,7 @@ src-tauri/src/
                              # + 定时历史没引用（scheduler::referenced_sessions，「看过程」要用；2026-10-23），
                              # 永久删除、用量行保留；顺扫 ~/.claude/projects 下 ccode-ai 空壳目录（2026-10-17）
   usage.rs                   # 用量统计（§6.11）：usage 事件提取、usage_daily 按天聚合、任务成本归因、订阅口径、
+                             # 复用提取器给接着聊取会话最后一轮的模型 last_session_model / Codex 思考档 last_codex_effort（2026-10-24）、
                              # rebuild_locked 进程互斥（DELETE→upsert 非事务，并发双跑会 ON CONFLICT 累加翻倍，
                              #   四个调用点 session_usage/rebuild_usage_index/get_usage_stats 首跑/usage_activity 全走它）；
                              # usage_activity 活跃度热力图：全历史非零日序列（day×agent×model 聚合 +
