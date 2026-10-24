@@ -81,8 +81,10 @@ fn tray_icon(_app: &AppHandle) -> Result<tauri::image::Image<'static>, String> {
 
 #[cfg(not(target_os = "macos"))]
 fn tray_icon(app: &AppHandle) -> Result<tauri::image::Image<'static>, String> {
+    // cloned() 出来的 Image 仍借着 app，要拷出一份才能当 'static 返回（Windows CI 编译失败过）；
+    // 写全路径：icon.to_owned() 会先命中 ToOwned（&Image → Image<'_>），不是 Image 自己的 to_owned
     app.default_window_icon()
-        .cloned()
+        .map(|icon| tauri::image::Image::to_owned(icon.clone()))
         .ok_or_else(|| "无窗口图标，无法建托盘".to_string())
 }
 
