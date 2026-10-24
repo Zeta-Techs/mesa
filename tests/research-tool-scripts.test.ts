@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 
@@ -733,12 +733,17 @@ test("Zotero 全库 RIS（同步按钮）：T2/J2 字段约定，标识符零化
     assert.match(text, /^TY  - JOUR\r\n/);
     assert.doesNotMatch(text, /^#/m);
     assert.match(result.stdout, /本次交给 Zotero 1 条。/);
-    // 现行字段约定：T2/J2，不写 N1（进笔记）/JO/JF/JA（JO 进期刊缩写）/ID/DA/M2/M3/N2
+    // 现行字段约定：T2/J2，不写 N1（进笔记）/JO/JF/JA（JO 进期刊缩写）/ID/DA/M3/N2；
+    // M2 只放期刊的另一种缩写（「ISO 4 abbreviation: …」）。有没有这一行看联网查到的缩写表（JabRef 没收这本刊时
+    // 主缩写回落全称、LTWA 算出的 ISO 4 就作另一种写法），不在这里断言有无，只断言不拿 M2 放别的
     assert.match(text, /T2  - Energy Storage Materials/);
+    for (const line of text.split(/\r\n/).filter((l) => l.startsWith("M2  - "))) {
+      assert.match(line, /^M2  - ISO 4 abbreviation: \S/, line);
+    }
     assert.match(text, /TI  - MgCl₂ Solubilization with robust Mg²⁺-Conducting interphase/);
     assert.match(text, /DO  - 10\.1016\/s0022-0728\(99\)00146-1/);
     assert.match(text, /AB  - See 10\.1039\/D2EE04121A for data/);
-    for (const banned of ["N1  - ", "JO  - ", "JF  - ", "JA  - ", "ID  - ", "DA  - ", "M2  - ", "M3  - ", "N2  - "]) {
+    for (const banned of ["N1  - ", "JO  - ", "JF  - ", "JA  - ", "ID  - ", "DA  - ", "M3  - ", "N2  - "]) {
       assert.doesNotMatch(text, new RegExp(banned.replace(/[- ]/g, (c) => "\\" + c)), banned);
     }
     assert.doesNotMatch(text, /₀₀₁₄₆|D₂EE|₂EE|A₂₅₇|MgCl ₂/);
@@ -805,8 +810,15 @@ test("ISO 4 缩写按期刊全称，带句点；一词刊名不缩", () => {
     "assert mod.iso4_abbreviation('The Chemical Record') == 'Chem. Rec.'",
     "assert mod.iso4_abbreviation('Nature') == 'Nature'",
   ].join("\n");
-  const result = spawnSync(python, ["-c", probe], { encoding: "utf8", timeout: 20_000 });
-  assert.equal(result.status, 0, result.stderr);
+  // 探针把兜底表写到脚本旁边（与同步时调用方的放法一致），跑完必须删掉：留在仓库里会让别的测试
+  // 拿到这张表、本机绿而 CI 红（2026-10-25 实证：Zotero 全库 RIS 测试本机不出 M2、CI 出）
+  const leftover = join(dirname(script), "journal-abbreviations.csv");
+  try {
+    const result = spawnSync(python, ["-c", probe], { encoding: "utf8", timeout: 20_000 });
+    assert.equal(result.status, 0, result.stderr);
+  } finally {
+    rmSync(leftover, { force: true });
+  }
 });
 
 test("Blender validates provenance and dimensions without executing Blender; Origin probe starts no GUI", () => {
