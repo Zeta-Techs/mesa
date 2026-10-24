@@ -26,8 +26,8 @@ test("十四套主题都能从 App.css 抽到预览色", () => {
 test("沉浸黑预览色来自 @theme，不是空块", () => {
   const midnight = parseThemeSwatchesFromCss(css).midnight;
   assert.deepEqual(midnight, {
-    rail: "#0a0b0e",
-    canvas: "#101218",
+    rail: "#0c0b09",
+    canvas: "#131210",
     accent: "#faa8d4",
     ink: "#e9e6e2",
   });

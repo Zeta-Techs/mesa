@@ -34,17 +34,17 @@
 
   /* 沉浸工作台（v3.48 长时工作校准）：去蓝化——墨蓝基底改为暖中性炭黑（蓝光少、适合长时间
      编码/读文档），文字冷白灰蓝改暖纸白；侧栏沉入近虚无 → 内容面 → 面板逐级浮起的结构不变 */
-  --color-rail: #0a0b0e; /* 应用侧栏（近虚无，最暗） */
-  --color-canvas: #101218; /* 主内容底（暖中性炭黑，非墨蓝） */
-  --color-rail2: #161920; /* 页面左栏（会话树 / 终端工作栏） */
-  --color-strip: #1a1d26; /* 顶栏 / 面板头条 / 输入区 */
-  --color-inset: #1e222c; /* 卡片 / 结果块（与 strip 拉开一档，梯度不塌） */
-  --color-raised: #262a35; /* 浮起面板 / 状态 pill 底 */
-  --color-rail-sel: #2b303d; /* 侧栏选中行（保持亮于 raised） */
-  --color-seg-sel: #313643; /* 分段控件选中 */
-  --color-bubble: #343947; /* 用户消息气泡 */
-  --color-hairline: #2c3039; /* 隐式 0.5px 细线 */
-  --color-field: #40454f; /* 输入框 / 弹层边线（保持亮于 hairline） */
+  --color-rail: #0c0b09; /* 应用侧栏（近虚无，最暗） */
+  --color-canvas: #131210; /* 主内容底（暖中性炭黑，非墨蓝） */
+  --color-rail2: #1a1917; /* 页面左栏（会话树 / 终端工作栏） */
+  --color-strip: #1e1d1b; /* 顶栏 / 面板头条 / 输入区 */
+  --color-inset: #232220; /* 卡片 / 结果块（与 strip 拉开一档，梯度不塌） */
+  --color-raised: #2b2a28; /* 浮起面板 / 状态 pill 底 */
+  --color-rail-sel: #31302d; /* 侧栏选中行（保持亮于 raised） */
+  --color-seg-sel: #373633; /* 分段控件选中 */
+  --color-bubble: #3a3936; /* 用户消息气泡 */
+  --color-hairline: #31302d; /* 隐式 0.5px 细线 */
+  --color-field: #464542; /* 输入框 / 弹层边线（保持亮于 hairline） */
 
   /* 微信息字号令牌（badge/时间戳/副注释统一口径）：替代散落的 text-[10px]/text-[11px]，
      阶梯为 micro 11 → xs 12 → sm 14 → base 16（Linear 式小阶梯，11px 为下限保证可读） */
@@ -70,7 +70,7 @@
   --color-nav-accent: var(--color-cta); /* 2026-10-22 起与其余主题同口径（原靛蓝 #5a51d0，粉 + 靛蓝 + 琥珀三色打架） */
 
   /* 文件树文件夹图标着色（每主题一个 muted 色调；文件图标保持 l4 灰） */
-  --color-folder: #8f8fa0;
+  --color-folder: #939189;
 
   /* 状态 pill：深底 + 同色相浅字（文字/小点用法不变）
      ok 绿取深色底兼容的哑光绿（v3.43，用户反馈原霓虹绿 #40d080 在深底上发飘） */
@@ -132,13 +132,13 @@
   /* 开关（Toggle）：滑块恒为浅色、状态由轨道表达。深色沿用原值（外观不变），
      浅色在 [data-theme$="-light"] 覆写为「白滑块 + 可见灰轨道」——
      原实现滑块用 bg-l1、轨道用 bg-inset，在浅色主题分别是近黑与近白，成了白底上的黑疙瘩 */
-  --color-switch-off: #1e222c;
+  --color-switch-off: #232220;
   --color-switch-knob: #e9e6e2;
 
   /* 编辑器面（Monaco 经 getComputedStyle 读这三个变量，比 canvas 更暗半档，代码块感） */
-  --color-editor-bg: #101218; /* = canvas：终端 / 编辑器与聊天层同底（2026-10-22） */
+  --color-editor-bg: #131210; /* = canvas：终端 / 编辑器与聊天层同底（2026-10-22） */
   --color-editor-fg: #b3b0aa;
-  --color-editor-line: #57555c;
+  --color-editor-line: #585651;
 
   /* 活跃度热力图五档（2026-10-16 重做，cta 单极梯子）：色相经 var(--color-cta)
      透传（oklch 相对色语法在 Lightning/WKWebView 链上不跟主题，仍否决），全部
@@ -147,8 +147,7 @@
      深色梯子：50/68/86% → black，顶档纯 cta——底档收敛成石板色、中档起发力、
      顶档发亮（凸彩度曲线）；空槽 --heat-0 比卡底微亮（inset×canvas 70:30），
      若隐若现，日历形状在而极安静（2026-10-16 参考图口径）。cta 偏暗的主题
-     （neutral 深蓝）锚点先向白抬、画布偏亮的主题（terracotta）比例上调，见
-     各自主题块。浅色梯子（白/黑双极倒转，空槽仍用 inset——浅色空格该是可见
+     （neutral 深蓝）锚点先向白抬，见主题块。浅色梯子（白/黑双极倒转，空槽仍用 inset——浅色空格该是可见
      浅灰）在 [data-theme$="-light"] 段。档差断言钉 tests/theme-contrast.test.ts */
   --heat-0: color-mix(in oklab, var(--color-inset) 70%, var(--color-canvas));
   --heat-1: color-mix(in oklab, var(--color-cta) 50%, black);
@@ -163,62 +162,61 @@
    nav-accent 默认取各主题 CTA 色，保持各自性格 */
 
 [data-theme="terracotta"] {
-  --color-rail: #232322; --color-rail2: #262624; --color-rail-sel: #3d3d3a;
-  --color-strip: #333331; --color-canvas: #2d2d2b; --color-inset: #383836;
-  --color-raised: #3e3e3b; --color-bubble: #4a4a46;
-  --color-seg-sel: #434340; --color-hairline: #444441; --color-field: #4a4a47;
-  --color-l1: #f9f9f7; --color-l2: #d2d2cc; --color-l3: #9d9d97; --color-l4: #747470;
+  --color-rail: #0f0f0e; --color-rail2: #1d1d1b; --color-rail-sel: #333330;
+  --color-strip: #21211f; --color-canvas: #181816; --color-inset: #262624;
+  --color-raised: #2e2e2b; --color-bubble: #3b3b38;
+  --color-seg-sel: #383834; --color-hairline: #2f2f2c; --color-field: #454542;
+  --color-l1: #e5e4e3; --color-l2: #c5c4c0; --color-l3: #91918b; --color-l4: #6b6a67;
   --color-cta: #cc7d5e; --color-cta-text: #f9f9f7; --color-cta-bd: #8f4f38;
   --color-nav-accent: var(--color-cta);
   --color-cta-pill: #3d211a;
   --color-cta-pill-text: #eda586;
   --color-folder: #ab9a85;
-  --color-editor-bg: #2d2d2b; --color-editor-fg: #c9c9c4; --color-editor-line: #6a6a66;
+  --color-editor-bg: #181816; --color-editor-fg: #bdbcb8; --color-editor-line: #62625f;
   --color-done: #6d9a6f;
-  /* 热力图：inset 偏亮（L≈0.33）而 cta 中亮（L≈0.62），通用 54% 底档会贴死底色；
-     整梯比例上调到 66/78/89，步距保持均匀（2026-10-16） */
-  --heat-1: color-mix(in oklab, var(--color-cta) 66%, black);
-  --heat-2: color-mix(in oklab, var(--color-cta) 78%, black);
-  --heat-3: color-mix(in oklab, var(--color-cta) 89%, black);
+  /* 2026-10-24 用户「陶土整体太灰太亮」：画布 L 0.30 → 0.21，底色阶梯与其余深色同步距，字按琥珀同一组对比度目标重算；
+     原「inset 偏亮、热力图比例上调到 66/78/89」的前提没了，回到通用梯子 */
 }
 [data-theme="ayu"] {
-  --color-rail: #0b0e14; --color-rail2: #0d1118; --color-rail-sel: #1e232e;
-  --color-strip: #181c23; --color-canvas: #10141c; --color-inset: #1c212b;
-  --color-raised: #222834; --color-bubble: #2b303c;
-  --color-seg-sel: #262c37; --color-hairline: #272a33; --color-field: #31353f;
-  --color-l1: #d9d7d2; --color-l2: #c8c6bf; --color-l3: #908e88; --color-l4: #6a6963;
-  --color-cta: #e6b450; --color-cta-text: #1d1608; --color-cta-bd: #8a6a26;
+  /* Mesa 默认深色「暖炭」（2026-10-24 重配，docs/design-default-theme-mockup.html）：底、字、强调同一个暖色相（OKLCH H≈75–80），
+     不再是 Ayu 的冷墨蓝底配暖白字；强调色就是品牌光标琥珀 #f5b83d（= --color-mesa-amber），整屏一种琥珀。
+     底色阶梯与沉浸黑同次序 rail < canvas < rail2 < strip < inset < raised */
+  --color-rail: #0d0b08; --color-rail2: #1b1815; --color-rail-sel: #312d29;
+  --color-strip: #1e1b18; --color-canvas: #15130f; --color-inset: #23211d;
+  --color-raised: #2c2925; --color-bubble: #383530;
+  --color-seg-sel: #35322d; --color-hairline: #2c2a26; --color-field: #413f3c;
+  --color-l1: #e5e0d9; --color-l2: #c5bfb6; --color-l3: #928c84; --color-l4: #6b675f;
+  --color-cta: #f5b83d; --color-cta-text: #1d1608; --color-cta-bd: #855d00;
   --color-nav-accent: var(--color-cta);
-  --color-cta-pill: #3a2e10;
-  --color-cta-pill-text: #eec363;
-  --color-folder: #9a8a5f;
-  --color-editor-bg: #10141c; --color-editor-fg: #bfbdb6; --color-editor-line: #5f5e59;
-  --color-done: #7da668;
+  --color-cta-pill: #3a2b0f;
+  --color-cta-pill-text: #ffc65d;
+  --color-folder: #9c896a;
+  --color-switch-off: #23211d;
+  --color-editor-bg: #15130f; --color-editor-fg: #bdb8b0; --color-editor-line: #635f58;
+  --color-done: #7fa56a;
 }
 [data-theme="mocha"] {
-  /* 聊天正文去掉一半蓝紫色偏（Catppuccin 的正文色在大段阅读里发蓝），亮度不变 */
-  --color-chat-text: #bfc3d2; --color-chat-strong: #d3d7e5;
-  --color-rail: #181824; --color-rail2: #1a1a28; --color-rail-sel: #2e2e44;
-  --color-strip: #262738; --color-canvas: #1e1e2e; --color-inset: #2b2c40;
-  --color-raised: #313249; --color-bubble: #3a3b56;
-  --color-seg-sel: #353650; --color-hairline: #34354a; --color-field: #3d3e54;
-  --color-l1: #cdd6f4; --color-l2: #b8c1e2; --color-l3: #8790b8; --color-l4: #626a8e;
+  /* 2026-10-24 用户「暮紫太紫了」：底色彩度降到四分之一、文字降到四成，同日两轮；色相与亮度不动，只留强调色是 Catppuccin 的 Mauve；
+     文字本身不再发蓝，原聊天正文去色偏覆写随之取消 */
+  --color-rail: #19191c; --color-rail2: #232428; --color-rail-sel: #303035;
+  --color-strip: #28282c; --color-canvas: #1f1f23; --color-inset: #2d2d32;
+  --color-raised: #34343a; --color-bubble: #3d3e44;
+  --color-seg-sel: #38393f; --color-hairline: #36363c; --color-field: #404045;
+  --color-l1: #e4e8f1; --color-l2: #bec2cf; --color-l3: #8e92a2; --color-l4: #686c7a;
   --color-cta: #cba6f7; --color-cta-text: #2a1b3d; --color-cta-bd: #6b4d94;
   --color-nav-accent: var(--color-cta);
   --color-cta-pill: #2e2145;
   --color-cta-pill-text: #d3b3fa;
-  --color-folder: #8f97b8;
-  --color-editor-bg: #1e1e2e; --color-editor-fg: #aeb8dc; --color-editor-line: #565e83;
+  --color-folder: #9598a5;
+  --color-editor-bg: #1f1f23; --color-editor-fg: #b5b9c7; --color-editor-line: #5c606f;
   --color-done: #63a48c;
 }
 [data-theme="neutral"] {
-  /* 近纯黑底 + 近纯白字，聊天正文 12.5:1、加粗 18:1，长读晕光：正文收到约 10:1 */
-  --color-chat-text: #bebebe; --color-chat-strong: #d6d6d6;
-  --color-rail: #0d0d0d; --color-rail2: #101010; --color-rail-sel: #262626;
+  --color-rail: #0d0d0d; --color-rail2: #161616; --color-rail-sel: #262626;
   --color-strip: #1c1c1c; --color-canvas: #111111; --color-inset: #212121;
   --color-raised: #272727; --color-bubble: #303030;
   --color-seg-sel: #2b2b2b; --color-hairline: #2c2c2c; --color-field: #383838;
-  --color-l1: #fcfcfc; --color-l2: #d2d2d2; --color-l3: #989898; --color-l4: #6e6e6e;
+  --color-l1: #e5e5e5; --color-l2: #c2c2c2; --color-l3: #989898; --color-l4: #6e6e6e;
   --color-cta: #0169cc; --color-cta-text: #eaf4ff; --color-cta-bd: #014a8f;
   --color-nav-accent: var(--color-cta);
   --color-cta-pill: #0d2d4d;
@@ -235,17 +233,18 @@
   --heat-4: var(--heat-anchor);
 }
 [data-theme="dracula"] {
-  --color-rail: #1e2029; --color-rail2: #22242e; --color-rail-sel: #3d3f4e;
-  --color-strip: #33343f; --color-canvas: #282a36; --color-inset: #393a47;
-  --color-raised: #3f404f; --color-bubble: #484a5c;
-  --color-seg-sel: #434453; --color-hairline: #434455; --color-field: #494a5a;
-  --color-l1: #f8f8f2; --color-l2: #d8d8d2; --color-l3: #9d9d97; --color-l4: #747476;
+  /* 2026-10-24 用户「哥特底色太紫」：底色彩度降到约三分之一（OKLCH C≈0.022 → 0.008），色相与亮度不动；Dracula 粉强调、带紫蓝调的冷白字不动 */
+  --color-rail: #202024; --color-rail2: #2f2f33; --color-rail-sel: #3f4045;
+  --color-strip: #343539; --color-canvas: #2a2b2f; --color-inset: #3a3b3f;
+  --color-raised: #404146; --color-bubble: #4a4b52;
+  --color-seg-sel: #44454a; --color-hairline: #45454b; --color-field: #4b4b51;
+  --color-l1: #f5f7ff; --color-l2: #d5d7e1; --color-l3: #9a9ca7; --color-l4: #72747e;
   --color-cta: #ff79c6; --color-cta-text: #38102a; --color-cta-bd: #a64a80;
   --color-nav-accent: var(--color-cta);
   --color-cta-pill: #401a35;
   --color-cta-pill-text: #ff8fd0;
   --color-folder: #8289b0;
-  --color-editor-bg: #282a36; --color-editor-fg: #cfcfc9; --color-editor-line: #68686a;
+  --color-editor-bg: #2a2b2f; --color-editor-fg: #ccced8; --color-editor-line: #666872;
   --color-done: #54b890;
 }
 [data-theme="shadcn"] {
@@ -298,36 +297,35 @@
   --color-done: #4a7d4f;
 }
 [data-theme="ayu-light"] {
-  /* 首装浅色默认：聊天正文对暖纸底只有 8:1，压深到 9.5:1，加粗用 l1 */
-  --color-chat-text: #353c48; --color-chat-strong: var(--color-l1);
-  --color-rail: #e7e4da; --color-rail2: #f3f2ec; --color-rail-sel: #e2dfd9;
-  --color-strip: #f7f6f3; --color-canvas: #efede6; --color-inset: #fefaf6;
-  --color-raised: #ffffff; --color-bubble: #e7e4de;
-  --color-seg-sel: #d4d0c8; --color-hairline: #d9d5cd; --color-field: #bab4a8;
-  --color-l1: #20242e; --color-l2: #3f4754; --color-l3: #6c7380; --color-l4: #9ea3ac;
-  --color-cta: #e6a417; --color-cta-text: #241a02; --color-cta-bd: #b27d12;
+  /* Mesa 默认浅色「暖炭 · 浅」：米白纸 + 墨棕字，与深色同一暖色相（原暖纸底配冷石板字）；强调 = 浅色品牌琥珀 #e39a1c */
+  --color-rail: #e7e2db; --color-rail2: #f6f2e9; --color-rail-sel: #e1dcd3;
+  --color-strip: #fbf5ed; --color-canvas: #f2eee5; --color-inset: #fefaf6;
+  --color-raised: #ffffff; --color-bubble: #eae5dc;
+  --color-seg-sel: #d2cdc3; --color-hairline: #dad4cc; --color-field: #bab4aa;
+  --color-l1: #2a2119; --color-l2: #443a31; --color-l3: #7b7068; --color-l4: #a79f98;
+  --color-cta: #e39a1c; --color-cta-text: #241a02; --color-cta-bd: #ab7000;
   --color-nav-accent: var(--color-cta);
-  --color-cta-pill: #f7e8c8; --color-cta-pill-text: #8a6a26;
-  --color-folder: #a2905e;
-  --color-link: #2470d8; --color-tabline: #5f6470;
-  --color-editor-bg: #ffffff; --color-editor-fg: #2a313d; --color-editor-line: #a7adb8;
-  --color-done: #567d3d;
+  --color-cta-pill: #fce4c5; --color-cta-pill-text: #7e5000;
+  --color-folder: #a28763;
+  --color-switch-off: #d5d0c8;
+  --color-link: #2470d8; --color-tabline: #5c5249;
+  --color-editor-bg: #ffffff; --color-editor-fg: #392f27; --color-editor-line: #a8a097;
+  --color-done: #4f7a3a;
 }
 [data-theme="mocha-light"] {
-  /* 正文对画布只有 7.1:1、整段发灰紫：聊天正文压深到 9:1，加粗用 l1 */
-  --color-chat-text: #3e3c52; --color-chat-strong: var(--color-l1);
-  /* Catppuccin Latte：灰里带 Mauve，和 shadcn-light 的冷石板灰分开（原先两套底色同 hex）。 */
-  --color-rail: #e3dfea; --color-rail2: #f2f0f6; --color-rail-sel: #d8d3e4;
-  --color-strip: #f6f5fa; --color-canvas: #eeebf3; --color-inset: #fbfafc;
-  --color-raised: #ffffff; --color-bubble: #e2ddec;
-  --color-seg-sel: #c9c3d8; --color-hairline: #d0cadc; --color-field: #aea7c0;
-  --color-l1: #2c2a3d; --color-l2: #4e4b63; --color-l3: #6e6b82; --color-l4: #9c99ad;
+  /* Catppuccin Latte：灰里带一点 Mauve，和 shadcn-light 的冷石板灰分开（原先两套底色同 hex）。
+     2026-10-24 同深色一起去紫：底色彩度约五成半、文字五成，强调色不动 */
+  --color-rail: #e2e0e6; --color-rail2: #f2f0f4; --color-rail-sel: #d7d4de;
+  --color-strip: #f6f5f8; --color-canvas: #edecf0; --color-inset: #fbfafb;
+  --color-raised: #ffffff; --color-bubble: #e1dee7;
+  --color-seg-sel: #c8c5d0; --color-hairline: #cfccd5; --color-field: #ada9b7;
+  --color-l1: #2c2b35; --color-l2: #3d3b47; --color-l3: #6e6d78; --color-l4: #9c9aa4;
   --color-cta: #8839ef; --color-cta-text: #ffffff; --color-cta-bd: #6d2bd0;
   --color-nav-accent: var(--color-cta);
   --color-cta-pill: #e6d6fb; --color-cta-pill-text: #6d2bd0;
-  --color-folder: #7d7898;
-  --color-link: #1e66f5; --color-tabline: #5c5870;
-  --color-editor-bg: #ffffff; --color-editor-fg: #2c2a3d; --color-editor-line: #9c99ad;
+  --color-folder: #7d7b8b;
+  --color-link: #1e66f5; --color-tabline: #5c5a66;
+  --color-editor-bg: #ffffff; --color-editor-fg: #2c2b35; --color-editor-line: #9c9aa4;
   --color-done: #3f7d6a;
 }
 [data-theme="neutral-light"] {
@@ -455,12 +453,12 @@
   --color-l4: #6f6862;
 }
 [data-platform="windows"][data-theme="ayu-light"] {
-  --color-l3: #535966;
-  --color-l4: #686d78;
+  --color-l3: #5c5249;
+  --color-l4: #685e56;
 }
 [data-platform="windows"][data-theme="mocha-light"] {
-  --color-l3: #56536b;
-  --color-l4: #67647b;
+  --color-l3: #565561;
+  --color-l4: #676671;
 }
 [data-platform="windows"][data-theme="neutral-light"] {
   --color-l3: #505050;
@@ -479,24 +477,24 @@
   --color-l4: #808086;
 }
 [data-platform="windows"][data-theme="terracotta"] {
-  --color-l3: #b0b0aa;
-  --color-l4: #898984;
+  --color-l3: #a3a39e;
+  --color-l4: #7e7d79;
 }
 [data-platform="windows"][data-theme="ayu"] {
-  --color-l3: #a4a29b;
-  --color-l4: #7d7c76;
+  --color-l3: #a49e96;
+  --color-l4: #7e7971;
 }
 [data-platform="windows"][data-theme="mocha"] {
-  --color-l3: #98a1c7;
-  --color-l4: #757da3;
+  --color-l3: #9ea2b2;
+  --color-l4: #7b7f8e;
 }
 [data-platform="windows"][data-theme="neutral"] {
   --color-l3: #acacac;
   --color-l4: #838383;
 }
 [data-platform="windows"][data-theme="dracula"] {
-  --color-l3: #b2b2ac;
-  --color-l4: #898987;
+  --color-l3: #afb1bc;
+  --color-l4: #878893;
 }
 [data-platform="windows"][data-theme="shadcn"] {
   --color-l3: #9c9ca7;
@@ -516,12 +514,12 @@
   --color-l4: #867e77;
 }
 [data-platform="mac"][data-theme="ayu-light"] {
-  --color-l3: #626976;
-  --color-l4: #81868f;
+  --color-l3: #675c54;
+  --color-l4: #7d746c;
 }
 [data-platform="mac"][data-theme="mocha-light"] {
-  --color-l3: #625f76;
-  --color-l4: #817e94;
+  --color-l3: #62616c;
+  --color-l4: #81808b;
 }
 [data-platform="mac"][data-theme="neutral-light"] {
   --color-l3: #626262;

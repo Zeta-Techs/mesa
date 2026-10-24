@@ -1,0 +1,183 @@
+<!doctype html><meta charset="utf-8"><title>Mesa 默认主题重新配色（2026-10-24）</title><style>
+body{margin:0;padding:18px;background:#7d7d7d;font:13px -apple-system,"PingFang SC",sans-serif}
+h2{font-size:15px;margin:22px 0 4px;color:#111} .lead{margin:0 0 10px;color:#1a1a1a;max-width:1300px;line-height:1.6}
+.grid{display:grid;grid-template-columns:repeat(2,640px);gap:12px}
+.card{border-radius:10px;overflow:hidden;background:var(--canvas);color:var(--l2)}
+.card>header{background:var(--rail);color:var(--l1);padding:6px 10px;font-weight:600;display:flex;gap:8px;align-items:baseline}
+.card>header small{font-weight:400;color:var(--l3);font-size:11px}
+.app{display:flex;height:262px}
+nav{width:38px;background:var(--rail);display:flex;flex-direction:column;gap:11px;padding:10px 0;align-items:center}
+nav i{width:14px;height:14px;border-radius:4px;background:var(--l4);opacity:.6;position:relative}
+nav i.sel{background:var(--nav-accent,var(--cta));opacity:1}
+nav i.sel:before{content:"";position:absolute;left:-12px;top:2px;width:2px;height:10px;border-radius:2px;background:var(--nav-accent,var(--cta))}
+.logo{font:700 13px -apple-system;color:var(--l1);display:flex;align-items:flex-end;gap:1px}.logo span{width:6px;height:2px;background:var(--amber);margin-bottom:3px}
+aside{width:132px;background:var(--rail2);padding:8px 6px;font-size:11.5px}
+aside .h{color:var(--l4);font-size:10.5px;margin:6px 4px 3px}
+aside .row{padding:3px 6px;border-radius:5px;color:var(--l2);white-space:nowrap;overflow:hidden}
+aside .row.sel{background:var(--rail-sel);color:var(--l1)} aside .row.dim{color:var(--l3)}
+main{flex:1;min-width:0;display:flex;flex-direction:column}
+.top{display:flex;align-items:center;gap:10px;padding:6px 10px;background:var(--strip);font-size:12px}
+.tab{color:var(--l3)} .tab.on{color:var(--l1);box-shadow:0 2px 0 -0.5px var(--tabline)}
+.sp{flex:1}
+button{font:12px -apple-system,"PingFang SC";border:0;border-radius:6px;padding:3px 10px}
+.cta{background:var(--cta);color:var(--cta-text)} .sec{background:var(--inset);color:var(--l1);box-shadow:inset 0 0 0 .5px var(--field)}
+.body{flex:1;display:flex;min-height:0}
+.chat{flex:1;padding:9px 12px;display:flex;flex-direction:column;gap:7px;min-width:0}
+.bubble{align-self:flex-end;background:color-mix(in oklab,var(--canvas),var(--l1) 5%);color:var(--l1);padding:4px 9px;border-radius:10px;font-size:12px}
+.chat p{margin:0;font-size:12px;line-height:1.6;color:var(--chat-text)}
+.chat strong{color:color-mix(in oklab,var(--l1) 60%,var(--l2))}
+code{color:var(--code);background:color-mix(in srgb,var(--code) 14%,var(--inset));padding:0 3px;border-radius:3px;font:11px ui-monospace,Menlo}
+a{color:var(--link);text-decoration:underline;text-decoration-thickness:.5px}
+.well{background:var(--well);border-radius:8px;padding:7px 9px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:11px}
+.wt{width:100%;color:var(--l1);font-weight:600;font-size:11.5px}
+.pill{display:inline-flex;align-items:center;gap:4px;background:var(--raised);color:var(--l2);border-radius:99px;padding:1px 7px}
+.pill i{width:6px;height:6px;border-radius:9px}.ok i{background:var(--ok-text)}.warn i{background:var(--warn-text)}.err i{background:var(--err-text)}
+.diff{margin-left:auto;font:10.5px ui-monospace,Menlo;display:flex;gap:6px}.diff .a{background:var(--diff-add-bg);color:var(--diff-add-fg);padding:0 4px;border-radius:3px}.diff .d{background:var(--diff-del-bg);color:var(--diff-del-fg);padding:0 4px;border-radius:3px}
+.composer{margin-top:auto;background:color-mix(in oklab,var(--canvas),var(--l1) 7%);border:1px solid color-mix(in oklab,var(--canvas),var(--l1) 13%);border-radius:10px;padding:7px 8px;display:flex;align-items:center;gap:6px;font-size:12px}
+.caret{width:1.5px;height:14px;background:var(--amber)} .ph{color:var(--l3);flex:1}
+.chip{color:color-mix(in srgb,var(--warn-text) 62%,var(--l2));font-size:11px}
+.send{width:20px;height:12px;border-radius:4px;background:var(--amber);box-shadow:0 0 6px color-mix(in srgb,var(--amber) 18%,transparent)}
+.term{width:190px;background:var(--term);color:var(--editor-fg);padding:9px 10px;font:10.5px/1.7 ui-monospace,Menlo,monospace;white-space:nowrap;overflow:hidden;box-shadow:inset .5px 0 0 var(--hairline)}
+.tc{display:inline-block;width:6px;height:11px;background:var(--amber);vertical-align:-1px}
+</style>
+<p class="lead">示意稿：令牌与 App.css 同一套（底色阶梯 / 四档字色 / 强调 / 状态 / diff / 聊天三层 / 终端），只换默认主题「琥珀」那两块的值。第一行是现在，下面三套候选，左深右浅。终端字与 ANSI 色只示意底色。</p>
+<h2>现在</h2><p class="lead">底是冷墨蓝、字是暖纸白，冷暖两套；强调色 #e6b450 与品牌光标 #f5b83d 差一截；浅色是暖纸配冷石板字。</p><div class="grid"><section class="card" style="--rail:#0d0b08;--canvas:#15130f;--rail2:#1b1815;--strip:#1e1b18;--inset:#23211d;--raised:#2c2925;--rail-sel:#312d29;--seg-sel:#35322d;--bubble:#383530;--hairline:#2c2a26;--field:#413f3c;--l1:#e5e0d9;--l2:#c5bfb6;--l3:#928c84;--l4:#6b675f;--cta:#f5b83d;--cta-text:#1d1608;--cta-bd:#855d00;--folder:#9c896a;--ok:#10331f;--ok-text:#4cc38a;--err:#381e24;--err-text:#f07070;--warn:#37300f;--warn-text:#f0c010;--mesa-amber:#f5b83d;--mesa-amber-ink:#1d1608;--add:#8fd3a8;--del:#d98a93;--diff-add-bg:#10331f;--diff-add-fg:#4cc38a;--diff-del-bg:#381e24;--diff-del-fg:#f07070;--done:#7fa56a;--link:#60a0f0;--tabline:#c6c2ba;--cta-pill:#3a2b0f;--cta-pill-text:#ffc65d;--btn:#464543;--switch-off:#23211d;--switch-knob:#e9e6e2;--editor-bg:#15130f;--editor-fg:#bdb8b0;--editor-line:#635f58;--amber:#f5b83d;--code:#66cdb9;--chat-text:#c5bfb6;--well:color-mix(in srgb,#15130f 65%,#2c2925);--term:#15130f">
+<header>现在的琥珀<small>深色</small></header>
+<div class="app">
+ <nav><b class="logo">M<span></span></b><i></i><i class="sel"></i><i></i><i></i></nav>
+ <aside><div class="h">项目</div><div class="row">文献综述 · 睡眠</div><div class="row sel">论文 · 图 2 重画</div><div class="row">数据清洗</div><div class="h">对话</div><div class="row dim">0824|修复|导出 DPI</div><div class="row dim">0823|研究|检索式</div></aside>
+ <main>
+  <div class="top"><span class="tab on">对话</span><span class="tab">文件</span><span class="tab">改动</span><span class="sp"></span><button class="sec">在终端打开</button><button class="cta">开工</button></div>
+  <div class="body">
+   <div class="chat">
+    <div class="bubble">把 figures 里的图按期刊规格重画</div>
+    <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落用这个正文色读起来是否舒服，看这两行就知道。<a>查看改动</a></p>
+    <div class="well"><div class="wt">验收 · 图 2</div><span class="pill ok"><i></i>可合并</span><span class="pill warn"><i></i>待确认</span><span class="pill err"><i></i>冲突</span><div class="diff"><span class="a">+ dpi=600</span><span class="d">- dpi=150</span></div></div>
+    <div class="composer"><span class="caret"></span><span class="ph">接着说…</span><span class="chip">完全访问</span><span class="send"></span></div>
+   </div>
+   <div class="term"><div><span style="color:var(--l3)">~/thesis</span> $ quarto render</div><div style="color:var(--ok-text)">✓ output/paper.pdf</div><div style="color:var(--l4)">  12 pages · 2.1 MB</div><div>$ <span class="tc"></span></div></div>
+  </div>
+ </main>
+</div></section><section class="card" style="--rail:#e7e2db;--canvas:#f2eee5;--rail2:#f6f2e9;--strip:#fbf5ed;--inset:#fefaf6;--raised:#ffffff;--rail-sel:#e1dcd3;--seg-sel:#d2cdc3;--bubble:#eae5dc;--hairline:#dad4cc;--field:#bab4aa;--l1:#2a2119;--l2:#443a31;--l3:#675c54;--l4:#7d746c;--cta:#e39a1c;--cta-text:#241a02;--cta-bd:#ab7000;--folder:#a28763;--ok:#d9f2e2;--ok-text:#177245;--err:#fbe3e6;--err-text:#b02a42;--warn:#fdf1cd;--warn-text:#8a6100;--mesa-amber:#e39a1c;--mesa-amber-ink:#1d1608;--add:#177245;--del:#b02a42;--diff-add-bg:#d9f2e2;--diff-add-fg:#177245;--diff-del-bg:#fbe3e6;--diff-del-fg:#b02a42;--done:#4f7a3a;--link:#2470d8;--tabline:#5c5249;--cta-pill:#fce4c5;--cta-pill-text:#7e5000;--btn:#464543;--switch-off:#d5d0c8;--switch-knob:#ffffff;--editor-bg:#ffffff;--editor-fg:#392f27;--editor-line:#a8a097;--composer:#ffffff;--amber:#e39a1c;--code:#0d6f66;--chat-text:#443a31;--well:color-mix(in srgb,#f2eee5 65%,#ffffff);--term:#fffefd">
+<header>现在的琥珀<small>浅色</small></header>
+<div class="app">
+ <nav><b class="logo">M<span></span></b><i></i><i class="sel"></i><i></i><i></i></nav>
+ <aside><div class="h">项目</div><div class="row">文献综述 · 睡眠</div><div class="row sel">论文 · 图 2 重画</div><div class="row">数据清洗</div><div class="h">对话</div><div class="row dim">0824|修复|导出 DPI</div><div class="row dim">0823|研究|检索式</div></aside>
+ <main>
+  <div class="top"><span class="tab on">对话</span><span class="tab">文件</span><span class="tab">改动</span><span class="sp"></span><button class="sec">在终端打开</button><button class="cta">开工</button></div>
+  <div class="body">
+   <div class="chat">
+    <div class="bubble">把 figures 里的图按期刊规格重画</div>
+    <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落用这个正文色读起来是否舒服，看这两行就知道。<a>查看改动</a></p>
+    <div class="well"><div class="wt">验收 · 图 2</div><span class="pill ok"><i></i>可合并</span><span class="pill warn"><i></i>待确认</span><span class="pill err"><i></i>冲突</span><div class="diff"><span class="a">+ dpi=600</span><span class="d">- dpi=150</span></div></div>
+    <div class="composer"><span class="caret"></span><span class="ph">接着说…</span><span class="chip">完全访问</span><span class="send"></span></div>
+   </div>
+   <div class="term"><div><span style="color:var(--l3)">~/thesis</span> $ quarto render</div><div style="color:var(--ok-text)">✓ output/paper.pdf</div><div style="color:var(--l4)">  12 pages · 2.1 MB</div><div>$ <span class="tc"></span></div></div>
+  </div>
+ </main>
+</div></section></div>
+<h2>A · 暖炭</h2><p class="lead">推荐。底、字、强调同一个暖色相：炭黑带一点烟熏暖，像台灯下的纸；强调色就是品牌光标琥珀。浅色是米白纸 + 墨棕字。</p><div class="grid"><section class="card" style="--rail:#0d0b08;--canvas:#15130f;--rail2:#1b1815;--strip:#1e1b18;--inset:#23211d;--raised:#2c2925;--rail-sel:#312d29;--seg-sel:#35322d;--bubble:#383530;--hairline:#2c2a26;--field:#413f3c;--l1:#e5e0d9;--l2:#c5bfb6;--l3:#928c84;--l4:#6b675f;--cta:#f5b83d;--cta-text:#1d1608;--cta-bd:#855d00;--folder:#9c896a;--ok:#10331f;--ok-text:#4cc38a;--err:#381e24;--err-text:#f07070;--warn:#37300f;--warn-text:#f0c010;--mesa-amber:#f5b83d;--mesa-amber-ink:#1d1608;--add:#8fd3a8;--del:#d98a93;--diff-add-bg:#10331f;--diff-add-fg:#4cc38a;--diff-del-bg:#381e24;--diff-del-fg:#f07070;--done:#7fa56a;--link:#60a0f0;--tabline:#c6c2ba;--cta-pill:#3a2b0f;--cta-pill-text:#ffc65d;--btn:#464543;--switch-off:#1e222c;--switch-knob:#e9e6e2;--editor-bg:#15130f;--editor-fg:#bdb8b0;--editor-line:#635f58;--amber:#f5b83d;--code:#66cdb9;--chat-text:#c5bfb6;--well:color-mix(in srgb,#15130f 65%,#2c2925);--term:#15130f">
+<header>暖炭<small>深色</small></header>
+<div class="app">
+ <nav><b class="logo">M<span></span></b><i></i><i class="sel"></i><i></i><i></i></nav>
+ <aside><div class="h">项目</div><div class="row">文献综述 · 睡眠</div><div class="row sel">论文 · 图 2 重画</div><div class="row">数据清洗</div><div class="h">对话</div><div class="row dim">0824|修复|导出 DPI</div><div class="row dim">0823|研究|检索式</div></aside>
+ <main>
+  <div class="top"><span class="tab on">对话</span><span class="tab">文件</span><span class="tab">改动</span><span class="sp"></span><button class="sec">在终端打开</button><button class="cta">开工</button></div>
+  <div class="body">
+   <div class="chat">
+    <div class="bubble">把 figures 里的图按期刊规格重画</div>
+    <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落用这个正文色读起来是否舒服，看这两行就知道。<a>查看改动</a></p>
+    <div class="well"><div class="wt">验收 · 图 2</div><span class="pill ok"><i></i>可合并</span><span class="pill warn"><i></i>待确认</span><span class="pill err"><i></i>冲突</span><div class="diff"><span class="a">+ dpi=600</span><span class="d">- dpi=150</span></div></div>
+    <div class="composer"><span class="caret"></span><span class="ph">接着说…</span><span class="chip">完全访问</span><span class="send"></span></div>
+   </div>
+   <div class="term"><div><span style="color:var(--l3)">~/thesis</span> $ quarto render</div><div style="color:var(--ok-text)">✓ output/paper.pdf</div><div style="color:var(--l4)">  12 pages · 2.1 MB</div><div>$ <span class="tc"></span></div></div>
+  </div>
+ </main>
+</div></section><section class="card" style="--rail:#e7e2db;--canvas:#f2eee5;--rail2:#f6f2e9;--strip:#fbf5ed;--inset:#fefaf6;--raised:#ffffff;--rail-sel:#e1dcd3;--seg-sel:#d2cdc3;--bubble:#eae5dc;--hairline:#dad4cc;--field:#bab4aa;--l1:#2a2119;--l2:#443a31;--l3:#7b7068;--l4:#a79f98;--cta:#e39a1c;--cta-text:#241a02;--cta-bd:#ab7000;--folder:#a28763;--ok:#d9f2e2;--ok-text:#177245;--err:#fbe3e6;--err-text:#b02a42;--warn:#fdf1cd;--warn-text:#8a6100;--mesa-amber:#e39a1c;--mesa-amber-ink:#1d1608;--add:#177245;--del:#b02a42;--diff-add-bg:#d9f2e2;--diff-add-fg:#177245;--diff-del-bg:#fbe3e6;--diff-del-fg:#b02a42;--done:#4f7a3a;--link:#2470d8;--tabline:#5c5249;--cta-pill:#fce4c5;--cta-pill-text:#7e5000;--btn:#464543;--switch-off:#ccd1da;--switch-knob:#ffffff;--editor-bg:#ffffff;--editor-fg:#392f27;--editor-line:#beb6af;--composer:#ffffff;--amber:#e39a1c;--code:#0d6f66;--chat-text:#443a31;--well:color-mix(in srgb,#f2eee5 65%,#ffffff);--term:#fffefd">
+<header>暖炭<small>浅色</small></header>
+<div class="app">
+ <nav><b class="logo">M<span></span></b><i></i><i class="sel"></i><i></i><i></i></nav>
+ <aside><div class="h">项目</div><div class="row">文献综述 · 睡眠</div><div class="row sel">论文 · 图 2 重画</div><div class="row">数据清洗</div><div class="h">对话</div><div class="row dim">0824|修复|导出 DPI</div><div class="row dim">0823|研究|检索式</div></aside>
+ <main>
+  <div class="top"><span class="tab on">对话</span><span class="tab">文件</span><span class="tab">改动</span><span class="sp"></span><button class="sec">在终端打开</button><button class="cta">开工</button></div>
+  <div class="body">
+   <div class="chat">
+    <div class="bubble">把 figures 里的图按期刊规格重画</div>
+    <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落用这个正文色读起来是否舒服，看这两行就知道。<a>查看改动</a></p>
+    <div class="well"><div class="wt">验收 · 图 2</div><span class="pill ok"><i></i>可合并</span><span class="pill warn"><i></i>待确认</span><span class="pill err"><i></i>冲突</span><div class="diff"><span class="a">+ dpi=600</span><span class="d">- dpi=150</span></div></div>
+    <div class="composer"><span class="caret"></span><span class="ph">接着说…</span><span class="chip">完全访问</span><span class="send"></span></div>
+   </div>
+   <div class="term"><div><span style="color:var(--l3)">~/thesis</span> $ quarto render</div><div style="color:var(--ok-text)">✓ output/paper.pdf</div><div style="color:var(--l4)">  12 pages · 2.1 MB</div><div>$ <span class="tc"></span></div></div>
+  </div>
+ </main>
+</div></section></div>
+<h2>B · 夜蓝</h2><p class="lead">保留 Ayu 的夜蓝底，但字也改冷，蓝 × 琥珀做互补色。最「工具感」，夜里琥珀最跳；浅色是冷灰白。</p><div class="grid"><section class="card" style="--rail:#050c14;--canvas:#0d141d;--rail2:#121923;--strip:#151d26;--inset:#1a222c;--raised:#222a34;--rail-sel:#252f3b;--seg-sel:#293340;--bubble:#2d3642;--hairline:#242b34;--field:#394049;--l1:#dbe2eb;--l2:#b9c2cb;--l3:#868e98;--l4:#616970;--cta:#f5b83d;--cta-text:#1d1608;--cta-bd:#855d00;--folder:#9c896a;--ok:#10331f;--ok-text:#4cc38a;--err:#381e24;--err-text:#f07070;--warn:#37300f;--warn-text:#f0c010;--mesa-amber:#f5b83d;--mesa-amber-ink:#1d1608;--add:#8fd3a8;--del:#d98a93;--diff-add-bg:#10331f;--diff-add-fg:#4cc38a;--diff-del-bg:#381e24;--diff-del-fg:#f07070;--done:#6fa98f;--link:#60a0f0;--tabline:#c6c2ba;--cta-pill:#3a2b0f;--cta-pill-text:#ffc65d;--btn:#464543;--switch-off:#1e222c;--switch-knob:#e9e6e2;--editor-bg:#0d141d;--editor-fg:#b2b9c1;--editor-line:#596067;--amber:#f5b83d;--code:#66cdb9;--chat-text:#b9c2cb;--well:color-mix(in srgb,#0d141d 65%,#222a34);--term:#0d141d">
+<header>夜蓝<small>深色</small></header>
+<div class="app">
+ <nav><b class="logo">M<span></span></b><i></i><i class="sel"></i><i></i><i></i></nav>
+ <aside><div class="h">项目</div><div class="row">文献综述 · 睡眠</div><div class="row sel">论文 · 图 2 重画</div><div class="row">数据清洗</div><div class="h">对话</div><div class="row dim">0824|修复|导出 DPI</div><div class="row dim">0823|研究|检索式</div></aside>
+ <main>
+  <div class="top"><span class="tab on">对话</span><span class="tab">文件</span><span class="tab">改动</span><span class="sp"></span><button class="sec">在终端打开</button><button class="cta">开工</button></div>
+  <div class="body">
+   <div class="chat">
+    <div class="bubble">把 figures 里的图按期刊规格重画</div>
+    <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落用这个正文色读起来是否舒服，看这两行就知道。<a>查看改动</a></p>
+    <div class="well"><div class="wt">验收 · 图 2</div><span class="pill ok"><i></i>可合并</span><span class="pill warn"><i></i>待确认</span><span class="pill err"><i></i>冲突</span><div class="diff"><span class="a">+ dpi=600</span><span class="d">- dpi=150</span></div></div>
+    <div class="composer"><span class="caret"></span><span class="ph">接着说…</span><span class="chip">完全访问</span><span class="send"></span></div>
+   </div>
+   <div class="term"><div><span style="color:var(--l3)">~/thesis</span> $ quarto render</div><div style="color:var(--ok-text)">✓ output/paper.pdf</div><div style="color:var(--l4)">  12 pages · 2.1 MB</div><div>$ <span class="tc"></span></div></div>
+  </div>
+ </main>
+</div></section><section class="card" style="--rail:#dee4e9;--canvas:#e9eef4;--rail2:#edf2f8;--strip:#f2f8fe;--inset:#f8fcff;--raised:#ffffff;--rail-sel:#d6dde3;--seg-sel:#c7ced4;--bubble:#e0e6ec;--hairline:#d0d5dc;--field:#aeb4bc;--l1:#192331;--l2:#313b4b;--l3:#687382;--l4:#98a0ad;--cta:#e39a1c;--cta-text:#241a02;--cta-bd:#ab7000;--folder:#a28763;--ok:#d9f2e2;--ok-text:#177245;--err:#fbe3e6;--err-text:#b02a42;--warn:#fdf1cd;--warn-text:#8a6100;--mesa-amber:#e39a1c;--mesa-amber-ink:#1d1608;--add:#177245;--del:#b02a42;--diff-add-bg:#d9f2e2;--diff-add-fg:#177245;--diff-del-bg:#fbe3e6;--diff-del-fg:#b02a42;--done:#3b7d64;--link:#2470d8;--tabline:#495363;--cta-pill:#fce4c5;--cta-pill-text:#7e5000;--btn:#464543;--switch-off:#ccd1da;--switch-knob:#ffffff;--editor-bg:#ffffff;--editor-fg:#273140;--editor-line:#afb8c5;--composer:#ffffff;--amber:#e39a1c;--code:#0d6f66;--chat-text:#313b4b;--well:color-mix(in srgb,#e9eef4 65%,#ffffff);--term:#fffefd">
+<header>夜蓝<small>浅色</small></header>
+<div class="app">
+ <nav><b class="logo">M<span></span></b><i></i><i class="sel"></i><i></i><i></i></nav>
+ <aside><div class="h">项目</div><div class="row">文献综述 · 睡眠</div><div class="row sel">论文 · 图 2 重画</div><div class="row">数据清洗</div><div class="h">对话</div><div class="row dim">0824|修复|导出 DPI</div><div class="row dim">0823|研究|检索式</div></aside>
+ <main>
+  <div class="top"><span class="tab on">对话</span><span class="tab">文件</span><span class="tab">改动</span><span class="sp"></span><button class="sec">在终端打开</button><button class="cta">开工</button></div>
+  <div class="body">
+   <div class="chat">
+    <div class="bubble">把 figures 里的图按期刊规格重画</div>
+    <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落用这个正文色读起来是否舒服，看这两行就知道。<a>查看改动</a></p>
+    <div class="well"><div class="wt">验收 · 图 2</div><span class="pill ok"><i></i>可合并</span><span class="pill warn"><i></i>待确认</span><span class="pill err"><i></i>冲突</span><div class="diff"><span class="a">+ dpi=600</span><span class="d">- dpi=150</span></div></div>
+    <div class="composer"><span class="caret"></span><span class="ph">接着说…</span><span class="chip">完全访问</span><span class="send"></span></div>
+   </div>
+   <div class="term"><div><span style="color:var(--l3)">~/thesis</span> $ quarto render</div><div style="color:var(--ok-text)">✓ output/paper.pdf</div><div style="color:var(--l4)">  12 pages · 2.1 MB</div><div>$ <span class="tc"></span></div></div>
+  </div>
+ </main>
+</div></section></div>
+<h2>C · 台地</h2><p class="lead">取 Mesa（台地）的砂岩意象：深褐底、沙色字，性格最强；浅色是暖沙纸。长看偏暖偏闷，和陶土有点近。</p><div class="grid"><section class="card" style="--rail:#110906;--canvas:#19110d;--rail2:#1f1712;--strip:#221a15;--inset:#281f1a;--raised:#302722;--rail-sel:#362b25;--seg-sel:#3b3029;--bubble:#3d332d;--hairline:#302824;--field:#453d39;--l1:#ebdfd1;--l2:#cbbdae;--l3:#988b7c;--l4:#716659;--cta:#f5b83d;--cta-text:#1d1608;--cta-bd:#855d00;--folder:#9c896a;--ok:#10331f;--ok-text:#4cc38a;--err:#381e24;--err-text:#f07070;--warn:#37300f;--warn-text:#f0c010;--mesa-amber:#f5b83d;--mesa-amber-ink:#1d1608;--add:#8fd3a8;--del:#d98a93;--diff-add-bg:#10331f;--diff-add-fg:#4cc38a;--diff-del-bg:#381e24;--diff-del-fg:#f07070;--done:#8aa564;--link:#60a0f0;--tabline:#c6c2ba;--cta-pill:#3a2b0f;--cta-pill-text:#ffc65d;--btn:#464543;--switch-off:#1e222c;--switch-knob:#e9e6e2;--editor-bg:#19110d;--editor-fg:#c2b7aa;--editor-line:#675d52;--amber:#f5b83d;--code:#66cdb9;--chat-text:#cbbdae;--well:color-mix(in srgb,#19110d 65%,#302722);--term:#19110d">
+<header>台地<small>深色</small></header>
+<div class="app">
+ <nav><b class="logo">M<span></span></b><i></i><i class="sel"></i><i></i><i></i></nav>
+ <aside><div class="h">项目</div><div class="row">文献综述 · 睡眠</div><div class="row sel">论文 · 图 2 重画</div><div class="row">数据清洗</div><div class="h">对话</div><div class="row dim">0824|修复|导出 DPI</div><div class="row dim">0823|研究|检索式</div></aside>
+ <main>
+  <div class="top"><span class="tab on">对话</span><span class="tab">文件</span><span class="tab">改动</span><span class="sp"></span><button class="sec">在终端打开</button><button class="cta">开工</button></div>
+  <div class="body">
+   <div class="chat">
+    <div class="bubble">把 figures 里的图按期刊规格重画</div>
+    <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落用这个正文色读起来是否舒服，看这两行就知道。<a>查看改动</a></p>
+    <div class="well"><div class="wt">验收 · 图 2</div><span class="pill ok"><i></i>可合并</span><span class="pill warn"><i></i>待确认</span><span class="pill err"><i></i>冲突</span><div class="diff"><span class="a">+ dpi=600</span><span class="d">- dpi=150</span></div></div>
+    <div class="composer"><span class="caret"></span><span class="ph">接着说…</span><span class="chip">完全访问</span><span class="send"></span></div>
+   </div>
+   <div class="term"><div><span style="color:var(--l3)">~/thesis</span> $ quarto render</div><div style="color:var(--ok-text)">✓ output/paper.pdf</div><div style="color:var(--l4)">  12 pages · 2.1 MB</div><div>$ <span class="tc"></span></div></div>
+  </div>
+ </main>
+</div></section><section class="card" style="--rail:#eee1d5;--canvas:#f9ecdf;--rail2:#fef0e4;--strip:#fff6e9;--inset:#fffbf3;--raised:#ffffff;--rail-sel:#e8dacc;--seg-sel:#dacbbc;--bubble:#f1e3d5;--hairline:#e1d3c5;--field:#c2b2a2;--l1:#2f1f17;--l2:#49372e;--l3:#816e65;--l4:#ad9d96;--cta:#e39a1c;--cta-text:#241a02;--cta-bd:#ab7000;--folder:#a28763;--ok:#d9f2e2;--ok-text:#177245;--err:#fbe3e6;--err-text:#b02a42;--warn:#fdf1cd;--warn-text:#8a6100;--mesa-amber:#e39a1c;--mesa-amber-ink:#1d1608;--add:#177245;--del:#b02a42;--diff-add-bg:#d9f2e2;--diff-add-fg:#177245;--diff-del-bg:#fbe3e6;--diff-del-fg:#b02a42;--done:#5e7a35;--link:#2470d8;--tabline:#624f46;--cta-pill:#fce4c5;--cta-pill-text:#7e5000;--btn:#464543;--switch-off:#ccd1da;--switch-knob:#ffffff;--editor-bg:#ffffff;--editor-fg:#3f2e25;--editor-line:#c4b4ad;--composer:#ffffff;--amber:#e39a1c;--code:#0d6f66;--chat-text:#49372e;--well:color-mix(in srgb,#f9ecdf 65%,#ffffff);--term:#fffefd">
+<header>台地<small>浅色</small></header>
+<div class="app">
+ <nav><b class="logo">M<span></span></b><i></i><i class="sel"></i><i></i><i></i></nav>
+ <aside><div class="h">项目</div><div class="row">文献综述 · 睡眠</div><div class="row sel">论文 · 图 2 重画</div><div class="row">数据清洗</div><div class="h">对话</div><div class="row dim">0824|修复|导出 DPI</div><div class="row dim">0823|研究|检索式</div></aside>
+ <main>
+  <div class="top"><span class="tab on">对话</span><span class="tab">文件</span><span class="tab">改动</span><span class="sp"></span><button class="sec">在终端打开</button><button class="cta">开工</button></div>
+  <div class="body">
+   <div class="chat">
+    <div class="bubble">把 figures 里的图按期刊规格重画</div>
+    <p>已读 <code>fig2.py</code>，要改<strong>三处</strong>：字号、线宽、导出 DPI。长段落用这个正文色读起来是否舒服，看这两行就知道。<a>查看改动</a></p>
+    <div class="well"><div class="wt">验收 · 图 2</div><span class="pill ok"><i></i>可合并</span><span class="pill warn"><i></i>待确认</span><span class="pill err"><i></i>冲突</span><div class="diff"><span class="a">+ dpi=600</span><span class="d">- dpi=150</span></div></div>
+    <div class="composer"><span class="caret"></span><span class="ph">接着说…</span><span class="chip">完全访问</span><span class="send"></span></div>
+   </div>
+   <div class="term"><div><span style="color:var(--l3)">~/thesis</span> $ quarto render</div><div style="color:var(--ok-text)">✓ output/paper.pdf</div><div style="color:var(--l4)">  12 pages · 2.1 MB</div><div>$ <span class="tc"></span></div></div>
+  </div>
+ </main>
+</div></section></div>

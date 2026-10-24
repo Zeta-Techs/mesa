@@ -53,7 +53,7 @@ test("沉浸黑三色派生为深色，画布保持用户值，文字可读", ()
   const d = deriveThemeTokens(DEFAULT_CUSTOM_THEME);
   assert.equal(d.light, false);
   assert.equal(d.themeId, "custom");
-  assert.equal(d.tokens.canvas, "#101218");
+  assert.equal(d.tokens.canvas, "#131210");
   assert.equal(d.tokens.cta, "#faa8d4");
   assert.ok(lum(rgb(d.tokens.rail)) < lum(rgb(d.tokens.canvas)));
   assert.ok(contrast(rgb(d.tokens.l1), rgb(d.tokens.canvas)) >= 7);

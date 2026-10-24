@@ -90,6 +90,20 @@ test("浅色浮起次序：rail < canvas < rail2 < strip < inset < raised", () =
   }
 });
 
+test("深色浮起次序：rail < canvas < rail2 < strip < inset < raised（七套同一顺序）", () => {
+  // 2026-10-24：原先四套 rail2 比画布暗、三套比画布亮，项目页（rail2 底）在不同主题里一会儿沉一会儿浮
+  for (const { id } of THEMES.filter((t) => !("light" in t))) {
+    const t = { ...tokens(null), ...(id === "midnight" ? {} : tokens(id)) };
+    const order = ["rail", "canvas", "rail2", "strip", "inset", "raised"];
+    for (let i = 0; i < order.length - 1; i++) {
+      assert.ok(
+        lum(t[order[i]]) < lum(t[order[i + 1]]),
+        `${id}: ${order[i]} 不比 ${order[i + 1]} 暗`,
+      );
+    }
+  }
+});
+
 test("浅色选中态与线条必须比所在底色深", () => {
   for (const id of LIGHT_THEMES) {
     const t = tokens(id);
@@ -468,7 +482,7 @@ test("热力图五档色阶（cta 单极梯子）全主题可辨：方向单调 
   // 公式从 App.css 解析（单一出处）：改百分比即改测试。
   // 2026-10-16 重做口径：全部只向无彩极点（黑/白）做 oklab 混合——色相恒定、
   // 彩度按比例单调按构造成立，断言钉住防回潮（向画布/srgb 混会拉色相、塌彩度）。
-  // 深色 = cta→黑 54/69/84 + 纯 cta 顶档；terracotta 画布偏亮比例上调、neutral
+  // 深色 = cta→黑 54/69/84 + 纯 cta 顶档；neutral
   // 深蓝 cta 锚点先向白抬（各主题块覆写）；浅色 = 白/黑双极倒转（越深越浓），
   // 顶档 58%黑保任意 cta（含黄色）对近白卡底 ≥3:1。
   const themeSrc = /@theme \{(.*?)\n\}/s.exec(css)?.[1] ?? "";
@@ -486,10 +500,6 @@ test("热力图五档色阶（cta 单极梯子）全主题可辨：方向单调 
     pct(new RegExp(`--heat-${n}: color-mix\\(in oklab, var\\(--color-cta\\) (\\d+)%, white\\)`), lightSrc, `浅色 --heat-${n}`));
   const lightBlack = [3, 4].map((n) =>
     pct(new RegExp(`--heat-${n}: color-mix\\(in oklab, var\\(--color-cta\\) (\\d+)%, black\\)`), lightSrc, `浅色 --heat-${n}`));
-
-  const terrSrc = /\[data-theme="terracotta"\] \{(.*?)\n\}/s.exec(css)?.[1] ?? "";
-  const terrP = [1, 2, 3].map((n) =>
-    pct(new RegExp(`--heat-${n}: color-mix\\(in oklab, var\\(--color-cta\\) (\\d+)%, black\\)`), terrSrc, `terracotta --heat-${n}`));
 
   const neutSrc = /\[data-theme="neutral"\] \{(.*?)\n\}/s.exec(css)?.[1] ?? "";
   const anchorP = pct(/--heat-anchor: color-mix\(in oklab, var\(--color-cta\) (\d+)%, white\)/, neutSrc, "--heat-anchor");
@@ -511,9 +521,7 @@ test("热力图五档色阶（cta 单极梯子）全主题可辨：方向单调 
   function check(name: string, id: string | null, t: Record<string, string>, isLight: boolean) {
     const bg = wellColor(t, "canvas");
     const ladder =
-      id === "terracotta"
-        ? [...terrP.map((p) => mixOklab(t.cta, "#000000", p)), t.cta]
-        : id === "neutral"
+      id === "neutral"
           ? (() => {
               const anchor = mixOklab(t.cta, "#ffffff", anchorP);
               return [...neutP.map((p) => mixOklab(anchor, "#000000", p)), anchor];

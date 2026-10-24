@@ -7,8 +7,8 @@ export const CUSTOM_THEME_ID = "custom";
 export const CUSTOM_LIGHT_THEME_ID = "custom-light";
 
 export const DEFAULT_CUSTOM_THEME: CustomThemeSeeds = {
-  rail: "#0a0b0e",
-  canvas: "#101218",
+  rail: "#0c0b09",
+  canvas: "#131210",
   accent: "#faa8d4",
 };
 
