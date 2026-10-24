@@ -60,24 +60,30 @@ export function RailPeek({
     }, 280);
   };
 
-  // 去了别处就收：点对话（换页 / 换了正看着的那段）、点课题名（进项目页或换项目）
+  // 去了别处就收：点对话（换页 / 换了正看着的那段）、点课题名（进项目页或换项目）。
+  // 收起要播动画、这段时间组件还挂着，而 onClose 自己就改 store（railPeekOpen）——不设「只收一次」会在 store 回调里
+  // 递归到栈溢出（界面渲染出错）；收起中不监听，半路又被叫回（closing 翻回 false）时重新拍快照，不拿旧页面当基准
   useEffect(() => {
+    if (closing) return;
     const start = useAppStore.getState();
     const snap = {
       page: start.page,
       tab: start.terminalActiveTabId,
       project: start.selectProjectReq,
     };
+    let fired = false;
     return useAppStore.subscribe((s) => {
+      if (fired) return;
       if (
         s.page !== snap.page ||
         s.terminalActiveTabId !== snap.tab ||
         (s.selectProjectReq !== snap.project && s.selectProjectReq !== null)
       ) {
+        fired = true;
         onCloseRef.current();
       }
     });
-  }, []);
+  }, [closing]);
 
   // Esc / 点到外面（菜单与触发区除外）收
   useEffect(() => {
