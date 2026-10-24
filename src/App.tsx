@@ -83,9 +83,10 @@ import { NAV_ICONS } from "./navigation-icons";
 import { NAV_GROUPS, NAV_BOTTOM } from "./navigation";
 import { isLightTheme } from "./themes";
 import ProjectTree, { TitlebarProjectChip } from "./components/ProjectTree";
-import { RunActivityButton, useRunActivity } from "./components/RunActivity";
-import { runActivityCaret, shellContextPlacement, shellMode } from "./shell-context";
+import { RunActivityButton } from "./components/RunActivity";
+import { shellContextPlacement, shellMode } from "./shell-context";
 import RunCaret from "./components/RunCaret";
+import { RailPeek, useRailPeekTrigger } from "./components/RailPeek";
 import { normalizeNavCapsuleDelay, resolveStartupNavMode } from "./nav-capsule";
 import { chromeOpacityScale } from "./chrome-opacity";
 import {
@@ -560,6 +561,15 @@ function App() {
     return () => window.removeEventListener("resize", on);
   }, []);
   const railWidth = clampRailWidth(railPref, rootRem(), winWidth);
+  // 探出整栏（RailPeek）：只在图标态 / 完全隐藏时有意义，展开侧栏时一律不画
+  const railRef = useRef<HTMLElement>(null);
+  const railPeekOpen = useAppStore((s) => s.railPeekOpen);
+  const setRailPeekOpen = useAppStore((s) => s.setRailPeekOpen);
+  const peekVisible = railPeekOpen && (collapsed || chromeHidden);
+  const peekTrigger = useRailPeekTrigger();
+  useEffect(() => {
+    if (!collapsed && !chromeHidden) setRailPeekOpen(false);
+  }, [collapsed, chromeHidden, setRailPeekOpen]);
   const [railDragging, setRailDragging] = useState(false);
   function startRailResize(e: React.PointerEvent<HTMLDivElement>) {
     if (e.button !== 0) return;
@@ -610,9 +620,6 @@ function App() {
             : ""; // 「运行」没有页面快捷键（2026-10-24），存过的旧覆盖值也不算
     return combo ? `（${comboLabel(combo)}）` : "";
   };
-  // 图标态「运行」图标上的光标：等确认琥珀、在干活灰色呼吸、都闲着淡灰（展开态由项目树各对话行的光标报，见 shell-context.ts）
-  const runActivity = useRunActivity();
-  const runCaret = runActivityCaret(runActivity);
   // 侧栏「上手引导」行：引导进行中才有（进度 + 下一步，点开清单浮层）
   const onboardingRail = useOnboardingRail();
   const setOnboardingPanelOpen = useAppStore((s) => s.setOnboardingPanelOpen);
@@ -763,11 +770,15 @@ function App() {
       if (allowed && eventMatchesCombo(e, focusRailCombo)) {
         e.preventDefault();
         setPaletteOpen(false);
-        // 侧栏得看得见才谈得上在里面选：隐藏 / 收成图标时先展开
+        // 侧栏收成图标 / 完全隐藏时不改形态，把项目树探出来（2026-10-24 用户定 A+D+E）；
+        // 探出层是新挂的树，等它挂上再要焦点（ProjectTree 只认挂载之后的请求）
         const st = useAppStore.getState();
-        if (st.chromeHidden) st.exitChromeHidden();
-        if (st.navCollapsed) st.setNavCollapsed(false);
-        st.requestFocusRail();
+        if (st.chromeHidden || st.navCollapsed) {
+          st.setRailPeekOpen(true);
+          requestAnimationFrame(() => useAppStore.getState().requestFocusRail());
+        } else {
+          st.requestFocusRail();
+        }
         return;
       }
       const isEditable =
@@ -1655,9 +1666,34 @@ function App() {
               />
             )}
           </header>
-          <div className="flex min-h-0 flex-1 gap-[5px] px-[5px] pb-[5px]">
+          <div className="relative flex min-h-0 flex-1 gap-[5px] px-[5px] pb-[5px]">
+            {/* 完全隐藏时窗口左边缘一条看不见的触发带：贴边停一下探出整栏（2026-10-24 用户定 A+D+E） */}
+            {chromeHidden && (
+              <div {...peekTrigger} aria-hidden="true" className="absolute bottom-0 left-0 top-0 z-20 w-2" />
+            )}
+            {peekVisible && (
+              <RailPeek
+                // 图标态贴着图标栏右边（行容器左内边距 5 + 图标栏宽 + 间隙 5）；完全隐藏时贴窗口左边。宽度同展开侧栏
+                left={chromeHidden ? 5 : 5 + (railRef.current?.offsetWidth ?? 49) + 5}
+                width={railWidth}
+                onClose={() => setRailPeekOpen(false)}
+              >
+                <div className="flex min-h-0 flex-1 flex-col">
+                  <ProjectTree
+                    selectedRoot={contextLabel?.projectPath ?? null}
+                    active={page === "workspaces"}
+                    onSelect={(repoPath) => {
+                      useAppStore.getState().setSelectProjectReq(repoPath);
+                      setPage("workspaces");
+                      setRailPeekOpen(false);
+                    }}
+                  />
+                </div>
+              </RailPeek>
+            )}
             {!chromeHidden && (
               <aside
+                ref={railRef}
                 // 展开时宽度可拖（rail-width.ts，2026-10-24）：拖着时关掉宽度过渡，不然跟手慢半拍
                 style={collapsed ? undefined : { width: railWidth }}
                 className={`ccode-app-rail relative flex min-h-0 shrink-0 flex-col overflow-hidden rounded-lg ${
@@ -1730,47 +1766,8 @@ function App() {
                       {!collapsed && <span className="truncate">新对话</span>}
                     </button>
                   </RailTooltip>
-                  {/* 「运行」只在图标态（2026-10-24 用户：「新对话和运行这两个都要保留吗」）：展开态的项目树里每段在跑的
-                      对话行尾有点、折起的项目头上也有，没挂在树上的在「其他打开的」，点哪段就进运行页看哪段——
-                      这一行（跳页 + 在跑计数）在展开态是重复的。图标态没有树，靠它回到对话；跑着时右上角一个点、等确认转黄 */}
-                  {collapsed && (
-                    <RailTooltip
-                      label={
-                        runActivity.tone === "idle"
-                          ? "运行"
-                          : `运行（${runActivity.label}）`
-                      }
-                      collapsed={collapsed}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => setPage("terminal")}
-                        aria-current={page === "terminal" ? "page" : undefined}
-                        aria-label="运行"
-                        title={`${runActivity.tone === "idle" ? "运行：回到正看着的那段对话" : runActivity.label}${keyHint("terminal")}`}
-                        className={`relative mb-0.5 flex h-8 w-full items-center justify-center rounded-md text-sm transition-colors ${
-                          page === "terminal"
-                            ? "ccode-rail-active bg-rail-sel text-l1"
-                            : "text-l3 hover:bg-hover hover:text-l2"
-                        }`}
-                      >
-                        <NAV_ICONS.terminal
-                          size={16}
-                          strokeWidth={1.8}
-                          className={page === "terminal" ? "text-nav-accent" : ""}
-                          aria-hidden="true"
-                        />
-                        {/* 运行状态光标跟在图标右边、竖着居中（RunCaret，2026-10-24；同日改居中，原先贴在右下） */}
-                        {runCaret && (
-                          <RunCaret
-                            state={runCaret}
-                            decorative
-                            className="absolute top-1/2 left-[calc(50%+0.6rem)] -translate-y-1/2"
-                          />
-                        )}
-                      </button>
-                    </RailTooltip>
-                  )}
+                  {/* 图标态的「运行」图标 2026-10-24 撤掉（用户定 A+D+E）：回到对话改走探出整栏——悬停下面那段空白或按 ⌘0，
+                      项目树盖在内容上滑出来；在跑的看顶栏活动芯片 */}
                   {/* 「搜对话」（2026-10-23 侧栏挂对话第一期，原「全部对话」）：日常找对话在下面项目树里，
                       对话页管跨项目搜索与整理（归档、导出），点进去光标直接在搜索框 */}
                   <RailTooltip label="搜对话" collapsed={collapsed}>
@@ -1844,7 +1841,8 @@ function App() {
                     />
                   </div>
                 )}
-                {collapsed && <div className="min-h-0 flex-1" />}
+                {/* 图标态中段空白 = 探出整栏的触发区（悬停停一下）；探出层画在下面那一行容器里 */}
+                {collapsed && <div {...peekTrigger} className="min-h-0 flex-1" />}
 
                 {/* 上手引导（新装才有，做完 / 收起即消失）：贴在系统段上方，进度环 + 下一步，
                     点开清单浮层向右展开（OnboardingGuide 按 data-onboarding-anchor 定位） */}

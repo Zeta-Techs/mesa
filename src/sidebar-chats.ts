@@ -267,7 +267,10 @@ export function openTabRows(input: {
 export interface PaletteOpenChat {
   tabId: string;
   kind: OpenTabKind;
+  /** 同侧栏：去掉「MMDD|类型|」只留主题 */
   label: string;
+  /** 完整标题（搜索、悬停用） */
+  fullTitle: string;
   /** 开着的 Agent 的光标；纯终端 / 没起进程的为 null */
   caret: ChatDot;
   cwd: string;
@@ -290,7 +293,8 @@ export function paletteOpenChats(
     return {
       tabId: r.tabId,
       kind: r.kind,
-      label: r.label,
+      label: r.kind === "chat" ? sidebarChatTitle(r.label) : r.label,
+      fullTitle: r.label,
       caret: r.kind === "chat" && run.running ? caretOfAttention(run.attention) : null,
       cwd: run.cwd,
       current: r.tabId === focusedTabId,

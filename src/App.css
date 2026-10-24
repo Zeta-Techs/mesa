@@ -923,7 +923,8 @@ body {
 /* 选中左条：胶囊随透明度系数变淡、0 档消失，hover 底色却不变——没有这条，低档位下 hover 行
    会比选中行更显眼。左条是实心强调色、不乘系数，0 档也认得出选中；它不是罩色，不违背
    「0 档不铺罩色」。图标态同样画在左缘。 */
-.ccode-app-rail .ccode-rail-active::before {
+.ccode-app-rail .ccode-rail-active::before,
+.ccode-rail-peek .ccode-rail-active::before {
   content: "";
   position: absolute;
   left: 0;
@@ -936,7 +937,8 @@ body {
 
 /* 项目树选中行：同一根实心强调色短条，但压在分组的缩进竖线上（竖线在行左 6.25px 处：
    ml-3 border-l 0.5px + pl-1.5），读作「竖线在这一行亮起」，不在线旁再多画一根。 */
-.ccode-app-rail .ccode-tree-active::before {
+.ccode-app-rail .ccode-tree-active::before,
+.ccode-rail-peek .ccode-tree-active::before {
   content: "";
   position: absolute;
   left: -7.25px;
@@ -2245,16 +2247,28 @@ select:focus-visible {
 /* 侧栏的小字（2026-10-23 用户：侧栏太窄、字有点小；对话挂进项目树后照 Claude 客户端侧栏）：
    节头 / 「项目」标签 / 「展开更多」用 xs。原提到 12.5px；2026-10-24 对话标题降到 13px 后，节头跟着回到 12px，
    保持比对话小一档、读作分节标题（两者都是 l3，差半像素时分不出哪行是节头）。两个平台同值。 */
-.ccode-app-rail .text-xs {
+.ccode-app-rail .text-xs,
+.ccode-rail-peek .text-xs {
   font-size: 12px;
   line-height: 1rem;
 }
 /* 侧栏对话标题与课题名（2026-10-24 用户：「字号再小一点点」）：13px，比「工作台 / 搜对话」的 14px 小一档。两个平台同值。
    同日用户「分不清项目和对话」后课题名也用这一档：课题和对话靠课题前的文件夹图标、对话缩进到名字起点分层，不靠字号；
    12px 的 xs 只留给分节标签（项目 / 置顶 / 其他打开的）与「展开更多」这类动作 */
-.ccode-app-rail .ccode-rail-text {
+.ccode-app-rail .ccode-rail-text,
+.ccode-rail-peek .ccode-rail-text {
   font-size: 13px;
   line-height: 1.15rem;
+}
+
+/* 探出整栏（RailPeek，2026-10-24）：同一棵项目树盖在内容上，所以不能用侧栏的半透明罩色——实心 rail2 底，
+   选中胶囊用实心 rail-sel（不乘透明度系数），字号、选中左条与侧栏同一套（上面几条并列了 .ccode-rail-peek）。
+   入场用 ccode-sheet-left 从左滑进；浮层外壳的描边与内高光沿用 .ccode-float-surface */
+.ccode-rail-peek {
+  background-color: var(--color-rail2);
+}
+.ccode-rail-peek .bg-rail-sel {
+  background-color: var(--color-rail-sel);
 }
 
 /* 终端未启动空态点阵（v3.213 补齐 v3.92 口径）：1px 点 / 18px 格距，走令牌。 */

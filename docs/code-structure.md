@@ -136,7 +136,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   侧栏树在主 chunk，静态引入会把整页拖进主包），树右键与页面共用同一份
   navigation.ts              # 导航清单单一出处（九页全量）。侧栏本身不按本表渲染（App.tsx 自排三段），本表供隐藏态导航胶囊
                              #   （TopNavCapsule）、设置页「岛上显示的入口」勾选消费——删页会静默弄坏这两处；顺序与字同图标态侧栏
-                             #   （2026-10-24：工作台 · 运行 · 搜对话 · 项目；新对话不是页，岛上插在工作台后；page = 停在这一页时报的页名）
+                             #   （2026-10-24：工作台 · 运行 · 搜对话 · 项目；新对话不是页，岛上插在工作台后；page = 停在这一页时报的页名）；
+                             #   「运行」只留给岛上休眠面报页名，不是任何地方的入口（同日撤出图标态侧栏、岛、快捷键）
   App.css                    # 主题令牌与壳层样式。侧栏罩色：展开 42%、图标态 28%、选中行 88%；Linux 与减少透明度回落实心
   feedback.ts                # 反馈与提需求纯逻辑：类型闭集/环境行/正文与主题拼装/mailto 与网页邮箱链接/端点负载/截图常量（≤3 张 ≤2MB）/发送方式闭集与默认（记本机 ccode.feedback.channel）/附件注记（tests/feedback.test.ts）
   components/FeedbackModal.tsx # 反馈表单弹层（帮助菜单、诊断弹窗「附到反馈」、设置→关于三入口）：端点已配只走端点，否则用户选发送方式（邮件应用/网页邮箱/邮箱直发）；附件=截图缩略图+诊断包（表单内现导出或 attachDiagnostics 带入，后端按路径白名单自读）；邮件类通道附件落盘+交接提示（清空/保留草稿由人定）；邮箱直发配置视图（保存并测试、结果就地显示、首存失败回滚授权码）
@@ -173,7 +174,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   shell-context.ts           # 顶栏左侧/灵动岛分工（shellContextPlacement：按侧栏形态定项目芯片与活动落点；侧栏无项目树时芯片常驻）+ 运行摘要
                              #   runActivitySummary（shell 不算、待确认排首、外部 live 会话回落计数；tests/shell-context.test.ts）
   components/RunCaret.tsx    # 运行状态光标（M▁ 那一道，样式 App.css .ccode-run-caret）；place row / inline / free，decorative 不念
-  components/RunActivity.tsx # 活动芯片/岛胶囊 RunActivityButton（titlebar / island；展开侧栏「运行」行尾那份 10-24 随该行撤掉）+ agent 列表浮层（portal 到 body，点行直达那段对话）；useRunActivity 供图标态「运行」图标的点
+  components/RunActivity.tsx # 活动芯片/岛胶囊 RunActivityButton（titlebar / island；展开侧栏「运行」行尾那份 10-24 随该行撤掉）+ agent 列表浮层（portal 到 body，点行直达那段对话）；useRunActivity 供岛上休眠面（图标态「运行」图标 2026-10-24 撤掉）
   context-menu.ts            # ContextMenuItem 类型 + normalizeMenuItems（危险项自动补分隔、收首尾/连续分隔线；tests/context-menu.test.ts）
   components/LaunchMenu.tsx  # 启动栏下拉菜单组件：portal 到 body、分组标题、键盘导航，替代原生 select
                              # （Agent/配置/模型三段共用；隐藏配置沉「已停用（可手选）」组）
@@ -718,7 +719,13 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   model-switch.ts            # 各 CLI 多模型注入能力表 + 启动栏提示纯逻辑（对应 agent_specs.model_switch）；
                              # runtimeModelSwitch 按连接收窄运行中切模型（Kimi 接口连接只带一个模型，/model 别名换不了）
   components/TopNavCapsule.tsx # 隐藏侧栏时的灵动岛：休眠面＝状态（当前页标签 + RunActivityStatus 只读活动 + 只读播报，当前页格聚焦/点击只展开岛）；
-                             #   展开面＝操作（恢复侧栏居首 + 导航 + 可点活动胶囊 + 可点播报）。休眠面控件指针够不着，只放展示；不挂导航角标
+                             #   展开面＝操作（恢复侧栏居首 + 对话切换器 + 导航 + 可点活动胶囊 + 可点播报）。休眠面控件指针够不着，只放展示；不挂导航角标；
+                             #   运行页上休眠面写正看着的对话名（ChatSwitcher.useCurrentChatLabel）；「运行」不上岛（nav-capsule 可见判定拦掉）
+  components/ChatSwitcher.tsx # 灵动岛对话切换器（2026-10-24 A+D+E 的 D）：按钮写正看着那段 / 「打开的对话 N」，点开弹打开的对话（sidebar-chats.paletteOpenChats，
+                             #   portal 到 body 同活动面板）+ 搜对话…；活动胶囊管「谁在跑」，这里管「切到哪段」
+  components/RailPeek.tsx    # 探出整栏（2026-10-24 A+E）：图标态 / 完全隐藏时把同一棵 ProjectTree 盖在内容上滑出（App 挂、store.railPeekOpen）；
+                             #   去了别处（换页 / 换正看着的标签 / 选项目）、鼠标离开、Esc、点外面收；开着菜单或在改名时离开不收；useRailPeekTrigger 管悬停触发
+                             #   （图标栏中段空白、隐藏态左边缘 8px），⌘0 也开。ProjectTree 的 focusRailReq 只认挂载后的新请求，探出层挂上不抢焦点
   nav-capsule.ts             # 侧栏可配置胶囊入口（恢复侧栏始终保留，不在此列）
   components/WindowControls.tsx # Windows 自绘窗口按钮（最小化/最大化-还原/关闭，46px 宽、关闭悬停红）；仅 Windows 渲染，
                              #   App 标题栏与 ReaderOverlay 顶栏（盖住标题栏）各挂一份；对应 Rust lib.rs setup 的 set_decorations(false)

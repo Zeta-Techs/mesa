@@ -950,8 +950,11 @@ export default function ProjectTree({
   // ⌘0（设置里可改，App 发 requestFocusRail）：光标落到正看着的那段；没有就落到它的课题、再没有落第一行。
   // 侧栏刚从收着展开时树还没画出来，等两帧
   const focusRailReq = useAppStore((s) => s.focusRailReq);
+  // 只认挂载之后来的请求：探出整栏每次都新挂一棵树，挂上就照旧值抢焦点的话，鼠标路过图标栏会把光标从输入框里拽走
+  const seenFocusRailReq = useRef(focusRailReq);
   useEffect(() => {
-    if (!focusRailReq) return;
+    if (!focusRailReq || focusRailReq === seenFocusRailReq.current) return;
+    seenFocusRailReq.current = focusRailReq;
     let raf = requestAnimationFrame(() => {
       raf = requestAnimationFrame(() => {
         const root = listRef.current;

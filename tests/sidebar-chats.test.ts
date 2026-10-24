@@ -290,7 +290,7 @@ test("命令面板「打开的对话」：侧栏列着的也列（侧栏这时�
       { ...base, tabId: "cur", running: true, sessionId: "s0", attention: "done", title: "正看着" },
       { ...base, tabId: "idle", running: true, sessionId: "s1", attention: "done", title: "闲着" },
       { ...base, tabId: "blank-bg" },
-      { ...base, tabId: "work", running: true, sessionId: "s2", attention: "working", title: "干活" },
+      { ...base, tabId: "work", running: true, sessionId: "s2", attention: "working", title: "1024|研究|干活" },
       { ...base, tabId: "sh", shell: true, title: "zsh" },
       { ...base, tabId: "ask", running: true, sessionId: "s3", attention: "confirm", title: "等确认" },
       { ...base, tabId: "preview", sessionId: "s4", title: "只看了记录" },
@@ -307,4 +307,7 @@ test("命令面板「打开的对话」：侧栏列着的也列（侧栏这时�
       ["cur", "idle", true],
     ],
   );
+  const work = rows.find((r) => r.tabId === "work")!;
+  assert.equal(work.label, "干活", "同侧栏去掉「MMDD|类型|」");
+  assert.equal(work.fullTitle, "1024|研究|干活");
 });

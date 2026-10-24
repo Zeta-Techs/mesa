@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
-import { PanelLeftOpen } from "lucide-react";
+import { MessageSquare, PanelLeftOpen } from "lucide-react";
+import { ChatSwitcherButton, useCurrentChatLabel } from "./ChatSwitcher";
 import { NAV_GROUPS, NAV_BOTTOM, type NavItem } from "../navigation";
 import {
   INITIAL_NAV_ISLAND,
@@ -313,6 +314,8 @@ export default function TopNavCapsule({
     ...NAV_BOTTOM,
   ];
   const currentNav = allNav.find((item) => item.id === page);
+  // 运行页上「你在哪」写正看着的对话名（2026-10-24 用户定 D），展开面同一格是切换器
+  const chatLabel = useCurrentChatLabel();
 
   const hasNav = showQuickChat || groups.length > 0 || bottomItems.length > 0;
 
@@ -432,13 +435,22 @@ export default function TopNavCapsule({
               tabIndex={!expanded ? 0 : -1}
               onClick={reveal}
               onFocus={revealForKeyboard}
-              aria-label={`展开导航（当前：${currentNav?.page ?? currentNav?.label ?? "Mesa"}）`}
+              aria-label={`展开导航（当前：${chatLabel ?? currentNav?.page ?? currentNav?.label ?? "Mesa"}）`}
               className="ccode-top-nav-item ccode-nav-island-current shrink-0"
             >
-              {currentNav && (
-                <currentNav.Icon size={15} strokeWidth={1.8} aria-hidden="true" />
+              {chatLabel ? (
+                <>
+                  <MessageSquare size={15} strokeWidth={1.8} aria-hidden="true" />
+                  <span className="max-w-[12em] truncate">{chatLabel}</span>
+                </>
+              ) : (
+                <>
+                  {currentNav && (
+                    <currentNav.Icon size={15} strokeWidth={1.8} aria-hidden="true" />
+                  )}
+                  <span>{currentNav?.page ?? currentNav?.label ?? "Mesa"}</span>
+                </>
               )}
-              <span>{currentNav?.page ?? currentNav?.label ?? "Mesa"}</span>
             </button>
             <RunActivityStatus />
             {announceItem(false)}
@@ -449,6 +461,8 @@ export default function TopNavCapsule({
             aria-hidden={!expanded}
           >
             {restoreItem(expanded)}
+            {/* 对话切换器：紧跟恢复侧栏，在运行页时写正看着的那段（ChatSwitcher.tsx） */}
+            <ChatSwitcherButton tabIndex={expanded ? 0 : -1} />
             {hasNav && (
               <span className="ccode-top-nav-separator" aria-hidden="true" />
             )}

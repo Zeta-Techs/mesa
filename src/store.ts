@@ -792,6 +792,10 @@ interface AppState {
   /** 把光标移到侧栏里正看着的那段对话（快捷键默认 mod+0；ProjectTree 消费，之后 ↑↓ 选、回车打开） */
   focusRailReq: number;
   requestFocusRail: () => void;
+  /** 探出整栏（2026-10-24 用户定 A+D+E）：侧栏收成图标 / 完全隐藏时，项目树临时盖在内容上滑出来，选完收回；
+      侧栏本身的形态不变。App 管开合（悬停图标栏空白处 / 贴窗口左边缘 / ⌘0），RailPeek 画 */
+  railPeekOpen: boolean;
+  setRailPeekOpen: (open: boolean) => void;
   /** 请求对话页打开指定会话（终端页「⤴对话」跳转用） */
   openSessionReq: { agent: string; sessionId: string } | null;
   setOpenSessionReq: (r: { agent: string; sessionId: string } | null) => void;
@@ -1132,6 +1136,8 @@ export const useAppStore = create<AppState>((set, get) => {
     set((s) => ({ sessionsSearchFocusReq: s.sessionsSearchFocusReq + 1 })),
   focusRailReq: 0,
   requestFocusRail: () => set((s) => ({ focusRailReq: s.focusRailReq + 1 })),
+  railPeekOpen: false,
+  setRailPeekOpen: (open) => set({ railPeekOpen: open }),
   setOpenSessionReq: (r) => set({ openSessionReq: r }),
   skillDraftReq: null,
   setSkillDraftReq: (r) => set({ skillDraftReq: r }),

@@ -1110,7 +1110,7 @@ function HotkeysSection({
           </CardRow>
           <CardRow
             label="在侧栏里选对话"
-            title="光标移到侧栏里正看着的那段，之后 ↑ ↓ 选、回车打开、← → 收起 / 展开课题；侧栏收着时先展开"
+            title="光标移到侧栏里正看着的那段，之后 ↑ ↓ 选、回车打开、← → 收起 / 展开课题；侧栏收成图标或隐藏时项目树临时探出来"
           >
             <HotkeyCapture
               id="focusRail"

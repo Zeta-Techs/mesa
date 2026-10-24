@@ -406,7 +406,7 @@ export default function CommandPalette({
                 title: c.label,
                 group: "打开的对话",
                 hint: [state, where].filter(Boolean).join(" · ") || undefined,
-                keywords: [c.cwd, where, "对话", "切换", "打开", "duihua"],
+                keywords: [c.fullTitle, c.cwd, where, "对话", "切换", "打开", "duihua"],
                 searchOnly: i >= OPEN_CHATS,
               },
               icon: icon(c.kind === "terminal" ? SquareTerminal : c.kind === "new" ? SquarePen : MessageSquare),
