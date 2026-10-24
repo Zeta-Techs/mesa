@@ -1939,12 +1939,21 @@ fn trim_dir_backslash(p: String) -> String {
 }
 
 /// 活动 PTY 进程的真实工作目录（文件树/git 面板跟随 shell 内的 cd）
+/// macOS 上取 cwd 要起 lsof（实测 25–50ms）：全局锁里只取 pid，锁外再查；同步命令还会占主线程，所以放后台线程
 #[tauri::command]
-pub fn pty_get_cwd(manager: tauri::State<'_, PtyManager>, pty_id: String) -> Option<String> {
-    let mut entries = manager.entries.lock().unwrap();
-    let entry = entries.get_mut(&pty_id)?;
-    let file = entry.cwd_file.clone();
-    process_cwd(entry.child.process_id()?, file.as_deref())
+pub async fn pty_get_cwd(app: AppHandle, pty_id: String) -> Option<String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let (pid, file) = {
+            let manager = app.state::<PtyManager>();
+            let mut entries = manager.entries.lock().unwrap();
+            let entry = entries.get_mut(&pty_id)?;
+            (entry.child.process_id()?, entry.cwd_file.clone())
+        };
+        process_cwd(pid, file.as_deref())
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 /// 终端里点到的路径能不能打开：相对路径按 cwd 拼、`~` 按 home 展开，
@@ -2137,18 +2146,22 @@ mod tests {
             (
                 "pty.rs",
                 include_str!("pty.rs"),
-                &["pty_spawn", "shell_spawn", "pty_spawn_custom", "pty_kill"],
+                &["pty_spawn", "shell_spawn", "pty_spawn_custom", "pty_kill", "pty_get_cwd"],
             ),
             (
                 "agents.rs",
                 include_str!("agents.rs"),
                 &["resume_external_terminal", "new_external_terminal", "digest_external_terminal"],
             ),
-            ("runs.rs", include_str!("runs.rs"), &["run_close"]),
+            (
+                "runs.rs",
+                include_str!("runs.rs"),
+                &["run_close", "run_get", "run_list", "task_list"],
+            ),
             (
                 "scheduler.rs",
                 include_str!("scheduler.rs"),
-                &["delete_schedule", "schedule_run_delete", "adopt_watch_run"],
+                &["delete_schedule", "schedule_run_delete", "adopt_watch_run", "list_schedules"],
             ),
             ("clipboard.rs", include_str!("clipboard.rs"), &["save_clipboard_image"]),
         ];
