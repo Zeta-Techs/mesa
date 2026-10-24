@@ -2359,6 +2359,20 @@ select:focus-visible {
   background-color: rgba(0, 0, 0, 0.58);
 }
 
+/* 侧栏树滚动区：静止时不显示滚动条，滚动期间（ProjectTree 打 data-scrolling，停 0.9s 后摘）
+   或鼠标移到拇指上（透明拇指仍可抓）才显现。 */
+.ccode-rail-scroll::-webkit-scrollbar-thumb {
+  background-color: transparent;
+}
+.ccode-rail-scroll[data-scrolling]::-webkit-scrollbar-thumb,
+.ccode-rail-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255, 255, 255, 0.4);
+}
+[data-theme$="-light"] .ccode-rail-scroll[data-scrolling]::-webkit-scrollbar-thumb,
+[data-theme$="-light"] .ccode-rail-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(0, 0, 0, 0.44);
+}
+
 /* Markdown 阅读版式（RX2a 笔记阅读模式）：全部走主题令牌，七套深色主题通用；
    .md-body-lg 为沉浸阅读覆盖层的大号排版 */
 .md-body {

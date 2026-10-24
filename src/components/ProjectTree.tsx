@@ -615,6 +615,14 @@ export default function ProjectTree({
   // 树的滚动区有多高：侧栏还有空位就多列几段对话（chatQuotas），窗口拉高拉矮跟着变
   const listRef = useRef<HTMLDivElement>(null);
   const [listHeight, setListHeight] = useState(0);
+  // 滚动条静止时不显示：滚动期间打标，停 0.9s 摘掉（样式见 App.css .ccode-rail-scroll）
+  const scrollFadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (scrollFadeTimer.current) clearTimeout(scrollFadeTimer.current);
+    },
+    [],
+  );
   useEffect(() => {
     const el = listRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
@@ -1380,7 +1388,15 @@ export default function ProjectTree({
       <div
         ref={listRef}
         onKeyDown={onRailKeyDown}
-        className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1.5 pb-1 pt-1.5 [mask-image:linear-gradient(to_bottom,transparent,black_6px)]"
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          el.dataset.scrolling = "1";
+          if (scrollFadeTimer.current) clearTimeout(scrollFadeTimer.current);
+          scrollFadeTimer.current = setTimeout(() => {
+            delete el.dataset.scrolling;
+          }, 900);
+        }}
+        className="ccode-rail-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1.5 pb-1 pt-1.5 [mask-image:linear-gradient(to_bottom,transparent,black_6px)]"
       >
         {/* 置顶的对话（2026-10-24）：跨课题钉在最上面，原课题下不重复列 */}
         {pinnedList.length > 0 && (
