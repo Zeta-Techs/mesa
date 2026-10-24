@@ -36,8 +36,12 @@ Rust 不在默认 PATH 时先 `export PATH="$HOME/.cargo/bin:$PATH"`。本地跑
 
 ```bash
 gh run list --workflow cli-canary.yml --limit 3
-gh run view <运行号> --json jobs --jq '.jobs[] | "\(.name) \(.conclusion)"'
+gh run view <运行号> --json jobs,headSha --jq '.headSha, (.jobs[] | "\(.name) \(.conclusion)")'
+git log --oneline <headSha>..main -- scripts/cli-canary scripts/e2e-model-routing src-tauri/build.rs .github/workflows/cli-canary.yml
 ```
+
+先看最后一行：有输出说明那次运行之后 main 上又修过金丝雀本身，它的失败可能已经过时。这时不按它下结论——
+要在 CI 上复核得先推送 main 再 `gh workflow run cli-canary.yml`（推送要用户点头），或者先在本机平台复现。
 
 - **两个平台都 success**：读那次运行的摘要（`gh run view <运行号>`，摘要就是 report.md），记下各家版本；看 main 上有没有「金丝雀核对版本前移」的新提交。没别的事，直接写报告。
 - **有 failure**：继续第二步。
@@ -52,8 +56,11 @@ ls /tmp/canary-<运行号>/*/            # canary-macos-latest / canary-windows-
 | 现象 | 是什么 | 怎么办 |
 |---|---|---|
 | 没有 `report.md`，日志里是装依赖失败（rustup / npm / pip / curl 超时、网络错误） | 环境故障 | `gh run rerun <运行号> --failed`，报告里记一笔，不动代码 |
-| 没有 `report.md`，有 `plans-error.txt`，或测试进程起不来（如 Windows `0xc0000139 STATUS_ENTRYPOINT_NOT_FOUND`） | Mesa 自己的编译 / 测试问题，不是 CLI 变了 | 再看主线 `gh run list --workflow build.yml --limit 3` 是否同样红。作为单独的修复报告给用户（主线 CI 必须绿），**不动基线**。本机 Windows 的 `0xc0000139` 是已知的机器差异，`canary.py` 会自动改跑带 manifest 的测试副本，本机复现时不用管 |
+| 没有 `report.md`，日志最后是「假网关没起来」 | 金丝雀脚本自己的问题 | 看 artifact 里的 `gateway-stderr.log`：有报错按报错修 `scripts/e2e-model-routing/gateway.py`；空的说明网关起得慢（2026-10-25 先例：`HTTPServer` 监听前的 `getfqdn` 反查在 macOS runner 上卡住，网关已改成跳过反查） |
+| 没有 `report.md`，有 `plans-error.txt`，或测试进程起不来（如 Windows `0xc0000139 STATUS_ENTRYPOINT_NOT_FOUND`） | Mesa 自己的编译 / 测试问题，不是 CLI 变了 | 再看主线 `gh run list --workflow build.yml --limit 3` 是否同样红。作为单独的修复报告给用户（主线 CI 必须绿），**不动基线**。`0xc0000139` 自 2026-10-25 起由 `src-tauri/build.rs` 给测试 exe 嵌通用控件 manifest 解决，CI 再出现就是这处嵌入失效了，先查它；`canary.py` 另有兜底（改跑带 manifest 的副本），本机碰上不用管 |
 | 有 `report.md` | 金丝雀跑完了 | 第三步 |
+
+**同一个错连着出现几天，就不是环境抖动**：归成「环境故障」重跑之前，先 `gh run list --workflow cli-canary.yml --limit 5` 看前几次是不是同样死在这一步（2026-10-22～24 macOS 天天「假网关没起来」，重跑救不了）。
 
 ## 第三步：逐家处理 report.md
 
@@ -78,7 +85,7 @@ npm run canary -- --agents <家> --out /tmp/canary-local
 | 层（指纹里的键） | 管什么 | Mesa 里对应的代码 |
 |---|---|---|
 | `request` | 发给模型的请求：工具清单、系统提示词小标题、请求头 | `src-tauri/src/agents.rs`（启动参数与注入）、`docs/agent-integration-matrix.md` 这家那一节 |
-| `channel` | 结构化旁路：回合状态、审批形态 | `src-tauri/src/chat_channel.rs`、`src-tauri/src/program_status.rs` |
+| `channel` | 结构化旁路：回合状态、审批形态（`statuses` 是 Mesa 归一后的名字；一闪而过的 `running` 不参与比较，少了 `awaiting_approval` / `completed` 才是真断） | `src-tauri/src/chat_channel.rs`、`src-tauri/src/program_status.rs` |
 | `transcript` / `parsed` | 会话文件格式与 Mesa 解析器读出的对话 | `src-tauri/src/sessions.rs` 里这家的 `parse_*` |
 | `screen` | 读屏：审批菜单、边写边显示 | `src/tui-menu.ts`、`src/live-reply.ts`、`src/trust-prompt.ts` |
 
@@ -90,7 +97,10 @@ npm run canary -- --agents <家> --out /tmp/canary-local
 
 ```bash
 npm run canary -- --accept --agents <家>
+git diff scripts/cli-canary/baseline/
 ```
+
+`--accept` 会把这家重跑一遍再记，记下的是重跑的结果，不是你刚看过的那次：提交前看一眼 `git diff`，变化要和你判断过的那处对得上，对不上就别提交、回去查。
 
 ## 第四步：新画面存进抓屏语料库
 
