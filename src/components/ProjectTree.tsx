@@ -1394,6 +1394,11 @@ export default function ProjectTree({
           if (scrollFadeTimer.current) clearTimeout(scrollFadeTimer.current);
           scrollFadeTimer.current = setTimeout(() => {
             delete el.dataset.scrolling;
+            // WKWebView 只改属性不会重画滚动条拇指（实测会一直留着），轻推一下不透明度强制重画
+            el.style.opacity = "0.999";
+            requestAnimationFrame(() => {
+              el.style.opacity = "";
+            });
           }, 900);
         }}
         className="ccode-rail-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1.5 pb-1 pt-1.5 [mask-image:linear-gradient(to_bottom,transparent,black_6px)]"
