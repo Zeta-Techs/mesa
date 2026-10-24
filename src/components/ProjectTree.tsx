@@ -122,12 +122,15 @@ type TreeRow = {
 export default function ProjectTree({
   selectedRoot,
   active,
+  liftCurrent = false,
   onSelect,
 }: {
   selectedRoot: string | null;
   /** 主区此刻就在项目页：当前课题铺选中底；在别的页时只留「当前课题」弱提示（加粗、不铺底），
    *  不和系统段的选中项抢成两处选中 */
   active: boolean;
+  /** 正聊着的项目整块提到最上面（随手聊上面）：只给收起侧栏时弹出的那份用——展开的侧栏点来点去，位置不动 */
+  liftCurrent?: boolean;
   onSelect: (repoPath: string) => void;
 }) {
   const [projects, setProjects] = useState<ProjectDto[]>([]);
@@ -571,13 +574,14 @@ export default function ProjectTree({
     () => currentFolderKey(activeRun?.cwd, folders, projectPaths, IS_WINDOWS),
     [activeRun?.cwd, folders, projectPaths],
   );
-  // 正聊着的那个项目整块提到最上面（2026-10-24 用户）：随手聊里的对话不提（随手聊本来就在项目前面）
+  // 弹出列表里正聊着的那个项目整块提到最上面（2026-10-25 用户：展开的侧栏点击不动，只改弹出列表）；
+  // 随手聊里的对话不提（随手聊本来就在项目前面）
   const currentRow = useMemo(
     () =>
-      currentKey && currentKey !== SCRATCH_FOLDER_KEY
+      liftCurrent && currentKey && currentKey !== SCRATCH_FOLDER_KEY
         ? (rows.find((r) => pathKey(r.repoPath, IS_WINDOWS) === currentKey) ?? null)
         : null,
-    [rows, currentKey],
+    [rows, currentKey, liftCurrent],
   );
   // 开步刚建的工作副本这里还不认识（工作区清单只在项目有变动时重读）：那段对话会先挂到最上面「其他打开的」，
   // 等后台认出会话才挪回课题下（2026-10-24 用户「修掉」）。开着的对话里出现认不出归属的目录就重读一次清单；
@@ -1454,7 +1458,7 @@ export default function ProjectTree({
             </div>
           </div>
         )}
-        {/* 正聊着的项目提到随手聊上面；它是单独一块，不参与拖动排序 */}
+        {/* 弹出列表：正聊着的项目提到随手聊上面；它是单独一块，不参与拖动排序 */}
         {currentRow && (
           <div className="pb-2">
             {renderRow(

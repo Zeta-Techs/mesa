@@ -102,6 +102,7 @@ async function renderTree(
   store: Record<string, unknown> = {},
   /** 换掉 list_workspaces 的返回（第几次调用 → 结果）；不给 = 一直空 */
   workspaces?: (call: number) => unknown[],
+  opts: { liftCurrent?: boolean } = {},
 ) {
   const dom = new JSDOM('<div id="root"></div>', { url: "http://localhost/" });
   const restore: Array<[string, PropertyDescriptor | undefined]> = [];
@@ -181,7 +182,7 @@ async function renderTree(
   const host = dom.window.document.getElementById("root")!;
   const root = createRoot(host);
   await act(async () => {
-    root.render(h(Tree, { selectedRoot: null, active: false, onSelect: (p: string) => pages.push(`project:${p}`) }));
+    root.render(h(Tree, { selectedRoot: null, active: false, liftCurrent: opts.liftCurrent, onSelect: (p: string) => pages.push(`project:${p}`) }));
   });
   // 等 list_projects 回来再渲一遍
   await act(async () => {
@@ -544,7 +545,7 @@ test("开步刚建的工作副本：侧栏先不认识，开着的对话出现�
   }
 });
 
-test("正聊着的项目整块提到最上面（随手聊上面），换到别的项目就换过去；不聊项目时顺序不变", async () => {
+test("弹出列表（liftCurrent）：正聊着的项目整块提到最上面（随手聊上面），换项目就换过去；展开的侧栏不动", async () => {
   const openIn = (cwd: string) => ({
     terminalRunInputs: [
       { tabId: "t1", title: "", agentId: "claude-code", model: "", cwd, running: true, shell: false, attention: "idle", sessionId: "x" },
@@ -554,23 +555,30 @@ test("正聊着的项目整块提到最上面（随手聊上面），换到别�
     const text = view.host.textContent ?? "";
     return ["随手聊", "综述流程测试", "Ccode"].sort((a, b) => text.indexOf(a) - text.indexOf(b));
   };
-  const onCode = await renderTree(openIn("/work/code"));
+  const lift = { liftCurrent: true };
+  const onCode = await renderTree(openIn("/work/code"), undefined, lift);
   try {
     assert.deepEqual(order(onCode), ["Ccode", "随手聊", "综述流程测试"], "在 Ccode 里聊，Ccode 提到最上");
     assert.equal(onCode.host.querySelectorAll("[data-rail-folder]").length, 3, "两个项目 + 随手聊各一行，提上来的不重复列");
   } finally {
     await onCode.close();
   }
-  const onReview = await renderTree(openIn("/work/review"));
+  const onReview = await renderTree(openIn("/work/review"), undefined, lift);
   try {
     assert.deepEqual(order(onReview), ["综述流程测试", "随手聊", "Ccode"], "在综述项目里聊，它提到随手聊上面");
   } finally {
     await onReview.close();
   }
-  const onScratch = await renderTree(openIn("/Users/u/ccode/scratch"));
+  const onScratch = await renderTree(openIn("/Users/u/ccode/scratch"), undefined, lift);
   try {
     assert.deepEqual(order(onScratch), ["随手聊", "综述流程测试", "Ccode"], "在随手聊里聊，项目顺序不变");
   } finally {
     await onScratch.close();
+  }
+  const sidebar = await renderTree(openIn("/work/code"));
+  try {
+    assert.deepEqual(order(sidebar), ["随手聊", "综述流程测试", "Ccode"], "展开的侧栏不提：位置不跟着正聊的项目跳");
+  } finally {
+    await sidebar.close();
   }
 });

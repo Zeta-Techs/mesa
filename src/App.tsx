@@ -1688,6 +1688,7 @@ function App() {
                   <ProjectTree
                     selectedRoot={contextLabel?.projectPath ?? null}
                     active={page === "workspaces"}
+                    liftCurrent
                     onSelect={(repoPath) => {
                       useAppStore.getState().setSelectProjectReq(repoPath);
                       setPage("workspaces");

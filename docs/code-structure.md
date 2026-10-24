@@ -114,7 +114,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   MarkupLayer = 标注的 SVG 画法（标注台与缩略图共用，几何与导出同源 image-markup.ts）
   components/ProjectTree.tsx # 侧栏项目树（展开态）：「项目」标签行（计数＋放大镜＋添加入口）+ 一节一节平铺的随手聊与课题；
                              #   放大镜开 RailSearchPalette（对话和项目一起搜，料由 searchSources 现组：置顶 / 随手聊 / 各课题的全部对话，
-                             #   不受「展开更多」限额），树本身不再就地筛。正聊着的课题（currentKey 对应行）整块提到随手聊上面、不参与拖动排序（2026-10-24 用户）。分三层（2026-10-24）：分节标签 RAIL_SECTION_LABEL / 课题行最前
+                             #   不受「展开更多」限额），树本身不再就地筛。`liftCurrent`（只 App 里探出层传）时正聊着的课题（currentKey 对应行）整块提到随手聊上面、不参与拖动排序；展开侧栏不提（2026-10-25 用户）。分三层（2026-10-24）：分节标签 RAIL_SECTION_LABEL / 课题行最前
                              #   renderFolderToggle（文件夹图标，悬停换箭头，点它开合）/ 对话 pl-7 缩进到课题名，置顶与「其他打开的」下不缩
                              #   工作区清单（课题的工作副本）在开着的对话出现认不出归属的目录时重读一次（reposTick；开步刚建的副本），
                              #   重读后仍认不出的签名不变、不反复读
