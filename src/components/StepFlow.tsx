@@ -100,7 +100,7 @@ import {
 } from "../inst-access";
 import PendingConfirmList, { type PendingConfirmHandle } from "./PendingConfirmList";
 import ReviewDecisionList from "./ReviewDecisionList";
-import ProjectFilePreview from "./ProjectFilePreview";
+import { DeclarationsForm, FigurePermissionsPanel } from "./HandbackPanels";
 import { handbackTask } from "../handback-tasks";
 import {
   continueAfterDecisionsPrompt,
@@ -1787,7 +1787,7 @@ export default function StepFlow({
               type="button"
               onClick={() => setEditOpen(open ? null : human.title)}
               aria-expanded={open}
-              title={`在这里打开 ${human.target}，改完点上面的「保存」`}
+              title={`在这一行下面展开 ${human.target}`}
               className={outline}
             >
               {open ? "收起" : task.open}
@@ -2858,11 +2858,14 @@ export default function StepFlow({
           !node.done &&
           editOpen === human.title &&
           handbackTask(human.title) && (
-            <div className="mt-1.5 ml-9 flex h-[26rem] flex-col overflow-hidden rounded-md border border-hairline">
-              <ProjectFilePreview
-                path={`${stepFileRoot.replace(/[\\/]+$/, "")}/${human.target}`}
-                root={stepFileRoot}
-              />
+            <div className="mt-1.5 ml-9 rounded-md border border-hairline px-2.5 py-2">
+              {/* 不再就地开 Markdown 编辑（2026-10-24 用户：打开清单、打开填写很不方便）：
+                  许可清单一篇一行、下拉改状态；声明一节一框，离开就存 */}
+              {human.title.includes("转载许可") ? (
+                <FigurePermissionsPanel root={stepFileRoot} rel={human.target} projectRoot={projectPath} />
+              ) : (
+                <DeclarationsForm root={stepFileRoot} rel={human.target} />
+              )}
             </div>
           )}
         {!dense &&
