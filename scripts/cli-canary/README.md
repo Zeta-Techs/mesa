@@ -32,7 +32,7 @@
 | 层 | 看什么 | 来源 |
 |---|---|---|
 | 请求 | 主对话请求的工具清单、系统提示词小标题、用户这句之前注入的上下文标签、请求字段、`anthropic-beta` 等请求头 | 假网关 `E2E_DUMP` |
-| 旁路 | Mesa `chat_channel` 端到端：认出会话、回合状态序列、审批形态 | `e2e_channel`（`E2E_CLEAN_HOME` + `E2E_KEEP`） |
+| 旁路 | Mesa `chat_channel` 端到端：认出会话、回合状态序列（比较时不看一闪而过的 `running`）、审批形态 | `e2e_channel`（`E2E_CLEAN_HOME` + `E2E_KEEP`） |
 | 会话 | 会话文件的记录类型与字段；Mesa 解析器读出用户这句、工具调用 / 结果、回复 | 同上留下的 `transcript.jsonl` / `parsed.json` |
 | 画面 | 审批菜单认不认得出、实时预览读不读得到 | `chat-capture.py`（`CLEAN_HOME`）+ `capture-check.ts` |
 | Codex 提示词 | 本机 Codex 的默认提示词还取得到（Mesa 给 Codex 的 `base_instructions` 来源） | `codex_instructions_extract_real` |
@@ -75,7 +75,7 @@ Grok 的程序状态不带会话 id，「旁路认出会话」这项不查，会
 - `channel/parsed.json`：Mesa 解析结果。
 - `screen.json`：逐帧画面。
 
-`<out>/gateway-dump.jsonl` 是完整请求体，系统提示词原文在里面。
+`<out>/gateway-dump.jsonl` 是完整请求体，系统提示词原文在里面。报「假网关没起来」时看同目录的 `gateway-stderr.log`。
 
 退出码：
 - 0：没变化，检查全过。

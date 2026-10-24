@@ -1,5 +1,5 @@
 """假网关：记录每个请求打到哪个路径、带的什么模型；按协议回一个最小可用的回复（让 CLI 至少能走完一轮）。"""
-import json, os, sys, time
+import json, os, socketserver, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LOG = open(sys.argv[2], "a", buffering=1)
@@ -327,4 +327,11 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, chunk)
         self._send(404, {"error": {"message": f"e2e gateway: unknown path {p}"}})
 
-ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+class Server(ThreadingHTTPServer):
+    # HTTPServer.server_bind 在 listen 之前做 getfqdn 反查，GitHub 的 macOS runner 上会卡住好几秒，金丝雀等不到端口就判「没起来」
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
+Server(("127.0.0.1", int(sys.argv[1])), H).serve_forever()

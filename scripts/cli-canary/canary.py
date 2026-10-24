@@ -284,15 +284,18 @@ class Gateway:
         self.dump = os.path.join(out, "gateway-dump.jsonl")
         self.log = os.path.join(out, "gateway.log")
         env = dict(os.environ, E2E_DUMP=self.dump)
+        # stderr 留成文件：CI 上起不来时 artifact 里能看到为什么
+        self.err = os.path.join(out, "gateway-stderr.log")
         self.proc = subprocess.Popen([sys.executable, "-I", "-X", "utf8", os.path.join(E2E, "gateway.py"), str(self.port), self.log],
-                                     env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        for _ in range(50):
+                                     env=env, stdout=subprocess.DEVNULL, stderr=open(self.err, "w", encoding="utf-8"))
+        deadline = time.time() + 30
+        while time.time() < deadline and self.proc.poll() is None:
             try:
                 socket.create_connection(("127.0.0.1", self.port), timeout=0.2).close()
                 return
             except OSError:
                 time.sleep(0.1)
-        sys.exit("假网关没起来")
+        sys.exit(f"假网关没起来，见 {self.err}")
 
     @property
     def base(self):
@@ -439,6 +442,10 @@ def diff(old, new, path=""):
     elif isinstance(old, list) and isinstance(new, list) and all(isinstance(x, str) for x in old + new):
         add = [x for x in new if x not in old]
         gone = [x for x in old if x not in new]
+        if path == "channel.statuses":
+            # running 是批准前后一闪而过的中间态，假网关秒回时抓不抓得到看时序（同一版本时有时无），只比审批 / 走完这些稳定信号
+            add = [x for x in add if x != "running"]
+            gone = [x for x in gone if x != "running"]
         if add:
             out.append(f"`{path}` 多了：{', '.join(add)}")
         if gone:

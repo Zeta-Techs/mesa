@@ -457,6 +457,14 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-25 · CLI 金丝雀 CI 两平台从 10-22 起天天红：macOS 假网关等不到端口，回合状态比较不看 `running`
+
+合并 windows/feat/1025 后用户问金丝雀两个系统能不能正常跑。查 CI：10-22 起每天两边都红、都没出报告——Windows 是 lib 测试 exe 0xc0000139（caeac16 嵌 manifest + 本次合并的 canary.py 兜底已治），
+macOS 三天都是「假网关没起来」。定下：
+一，**假网关不用 `HTTPServer` 默认的 `server_bind`**：它在 listen 之前做 `getfqdn` 反查，GitHub 的 macOS runner 上会卡好几秒，金丝雀只等 5 秒。网关跳过反查；金丝雀等 30 秒、进程退了立刻报，网关 stderr 留成 `gateway-stderr.log` 进 artifact。
+二，**`channel.statuses` 比较时不看 `running`**：假网关秒回，批准前后那一下「在干活」抓不抓得到看时序（同版本 Grok 两次跑一次有一次没有，Codex darwin / win32 基线也不同），按它报变化就是假红；审批、走完这些稳定信号照比。
+三，macOS 本机九家检查全过；CodeBuddy 2.175.0（系统提示词多一节记忆说明）与 Grok 1.0.70 无需适配，darwin 基线已 `--accept`。
+
 ### 2026-10-25 · 改图不要求对话模型能看图；九家出图 / 改图逐家核对
 
 用户看到改图时输入框下的「glm-5.3 看不了图：带图发出去会报错」，问这个提示还要不要留，并要求确认九家 Agent 都能出图预览和改图。定下：

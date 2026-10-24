@@ -52,6 +52,7 @@
    "contextHeadings": [
     "Asking questions as you work",
     "Before recommending from memory",
+    "Before saving a memory",
     "How to save memories",
     "MEMORY.md",
     "Memory and other forms of persistence",
@@ -199,5 +200,5 @@
    ]
   }
  },
- "version": "2.172.1"
+ "version": "2.175.0"
 }
