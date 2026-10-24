@@ -566,8 +566,8 @@ function App() {
   const railPeekOpen = useAppStore((s) => s.railPeekOpen);
   const setRailPeekOpen = useAppStore((s) => s.setRailPeekOpen);
   const peekVisible = railPeekOpen && (collapsed || chromeHidden);
-  // 图标栏中段 0.2 秒（2026-10-24 用户：0.32 秒「再快一点点」）；完全隐藏时的左边缘留 0.32 秒——鼠标常往窗口左边甩，太快会误弹
-  const peekTrigger = useRailPeekTrigger(200);
+  // 图标栏中段 0.12 秒（2026-10-24 用户两次「再快一点」：0.32 → 0.2 → 0.12）；完全隐藏时的左边缘留 0.32 秒——鼠标常往窗口左边甩，太快会误弹
+  const peekTrigger = useRailPeekTrigger(120);
   const peekEdgeTrigger = useRailPeekTrigger(320);
   useEffect(() => {
     if (!collapsed && !chromeHidden) setRailPeekOpen(false);
