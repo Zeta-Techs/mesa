@@ -47,7 +47,7 @@ import {
   type ResearchTools,
 } from "../research-tools";
 import { displayCitationTitle } from "../screening-review";
-import { readResearchLedger } from "../research-report-load";
+import { readResearchFile, readResearchLedger } from "../research-report-load";
 import { excludedIncludedIds, notesProgress, notesProgressLine, spotCheckPicks, type SpotCheckPick } from "../notes-progress";
 import { stepNodeAction, stepNodeReady } from "../step-node-actions.ts";
 import {
@@ -732,6 +732,9 @@ export default function StepFlow({
   } | null>(null);
   const [endnoteSyncing, setEndnoteSyncing] = useState(false);
   const [endnoteSyncResult, setEndnoteSyncResult] = useState<string | null>(null);
+  /** 人指定的 EndNote 库（papers/endnote-library.path 那一行）。undefined = 还没读；null = 没指定 */
+  const [endnoteLib, setEndnoteLib] = useState<{ path: string | null; revision: string } | undefined>(undefined);
+  const [endnoteLibNote, setEndnoteLibNote] = useState<string | null>(null);
   const [endnoteChecked, setEndnoteChecked] = useState(false);
   const [continueNotesChecked, setContinueNotesChecked] = useState(false);
   const [toFetchBusy, setToFetchBusy] = useState<
@@ -977,6 +980,53 @@ export default function StepFlow({
       await invoke("zotero_open_papers", { projectRoot: projectPath });
     } catch (e) {
       setZoteroSyncResult({ line: String(e), detail: String(e) });
+    }
+  }
+
+  // EndNote 在 Word 里只认库里的记录号：同步把题录导进了「当前打开的库」，可 Mesa 不知道那是哪个 .enl。
+  // 人在这里指一次，后面定稿出的 EndNote 版 Word 就按这个库绑记录号，在 Word 里点 Update 即和库里条目对上
+  // （2026-10-24 用户：精读那步同步过，后续域稿应该直接关联好）。Zotero 不用指：脚本直接读默认数据目录。
+  /** 这一步有「同步到文献库」那一行（精读、期刊格式、投稿材料、返修） */
+  const endnoteStep =
+    step.workspaceName === "lit-notes" ||
+    step.workspaceName === "journal-format" ||
+    step.workspaceName === "submission-materials" ||
+    /^rebuttal-r\d+$/.test(step.workspaceName ?? "");
+  useEffect(() => {
+    if (!endnoteStep) return;
+    let stale = false;
+    readResearchFile(projectPath, "papers/endnote-library.path")
+      .then((file) => {
+        if (stale) return;
+        const line = file.text
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .find((l) => l && !l.startsWith("#"));
+        setEndnoteLib({ path: line ?? null, revision: file.revision ?? "new" });
+      })
+      .catch(() => !stale && setEndnoteLib({ path: null, revision: "new" }));
+    return () => {
+      stale = true;
+    };
+  }, [projectPath, endnoteStep]);
+
+  async function pickEndnoteLibrary() {
+    setEndnoteLibNote(null);
+    const selected = await openFileDialog({
+      multiple: false,
+      filters: [{ name: "EndNote 库", extensions: ["enl"] }],
+    });
+    if (!selected || typeof selected !== "string") return;
+    try {
+      const revision = await invoke<string>("save_file_preview", {
+        path: `${projectPath.replace(/[\\/]+$/, "")}/papers/endnote-library.path`,
+        root: projectPath,
+        text: `${selected}\n`,
+        expectedRevision: endnoteLib?.revision ?? "new",
+      });
+      setEndnoteLib({ path: selected, revision });
+    } catch (e) {
+      setEndnoteLibNote(String(e));
     }
   }
 
@@ -1623,11 +1673,7 @@ export default function StepFlow({
     litSource,
     pendingDecisions: decisionGaps.length,
     toolAsks: toolAskFields.map((field) => ({ key: field.key, label: field.label })),
-    endnoteExport:
-      step.workspaceName === "lit-notes" ||
-      step.workspaceName === "journal-format" ||
-      step.workspaceName === "submission-materials" ||
-      /^rebuttal-r\d+$/.test(step.workspaceName ?? ""),
+    endnoteExport: endnoteStep,
     continueNotes: notesStep,
   });
   const seeds = step.discussionSeeds ?? [];
@@ -2288,6 +2334,31 @@ export default function StepFlow({
             {node.key === "endnote-export" && (zoteroSyncResult?.line || endnoteSyncResult)
               ? [zoteroSyncResult?.line, endnoteSyncResult].filter(Boolean).join(" ")
               : node.hint}
+          </p>
+        )}
+        {!dense && node.key === "endnote-export" && endnoteLib && (
+          <p className="mt-0.5 pl-9 text-micro leading-5 text-l4">
+            {endnoteLib.path ? (
+              <>
+                EndNote 库：
+                <span className="text-l3" title={endnoteLib.path}>
+                  {endnoteLib.path.split(/[\\/]/).pop()}
+                </span>
+                。定稿出的 EndNote 版 Word 按它对上库里的条目，在 Word 里点 Update 即可。
+                <button type="button" onClick={() => void pickEndnoteLibrary()} className="ml-1 rounded-sm px-1 text-l3 hover:bg-hover hover:text-l1">
+                  换一个
+                </button>
+              </>
+            ) : (
+              <>
+                用 EndNote 的话，导入后
+                <button type="button" onClick={() => void pickEndnoteLibrary()} className="mx-1 rounded-sm bg-inset px-1.5 py-0.5 text-l2 hover:bg-hover hover:text-l1">
+                  选这个 EndNote 库（.enl）
+                </button>
+                ：定稿出的 EndNote 版 Word 才能和库里的条目对上。不选也能用，只是条目算在 Word 自带的漫游库里。Zotero 不用选。
+              </>
+            )}
+            {endnoteLibNote && <span className="ml-1 text-err-text">{endnoteLibNote}</span>}
           </p>
         )}
         {node.kind === "input" && node.key.startsWith("tool:") && onSetResearchTool && tools && (

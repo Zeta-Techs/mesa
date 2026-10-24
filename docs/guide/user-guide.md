@@ -1759,11 +1759,11 @@ macOS 用户还会在屏幕顶部的应用菜单里看到 About Mesa——系统
 |---|---|---|---|
 | 不用 | PDF 留在项目里，按 DOI 写入 `references.bib` | 无 | Quarto 的 docx |
 | **Zotero** | 拖进分类后点「从 Zotero 导入」；要与项目共用同一份 PDF，用「链接到文件」并把链接附件根目录指到 `papers/`。一个条目挂了正文和补充材料两份 PDF 时只登记正文；只有补充材料（SI / ESI）或文件没下完的不算全文，导入提示里算进「没有正文 PDF」，后面会列进待获取 | 待获取页或精读步的 **同步到 Zotero**：按引文库整份交给 Zotero，检索时排除的不交；两份导入文件题录写法一致：缺摘要、ISSN、日期的老条目（从 Zotero / EndNote 导进来的）同步前先按 DOI 补全（只补这次导出的副本，引文库不动，第一次会多等十几秒）；题名开头人手加的编号（【77】、19~.）去掉；化学式与界面同一写法（MoS₂、Ni(OH)₂）；期刊缩写按 JabRef 表与 Mesa 兜底表（多是 ACS 写法）；每本刊另按 ISO 4 规则算一份（用 ISSN 的期刊标题词缩写表，第一次同步时下载），两种不同时都给（Zotero 的「期刊缩写」放主缩写，另一种写法放进「其他」）；你的库里已有同一 DOI 的也照样导入（Mesa 的题录字段是全的），提示会写有几条重复，导入后在 Zotero「重复条目」里挑着合并；需要 Zotero 7 及以上（Zotero 6 读不了自动更新来的新版格式转换器，导入一律报「不支持所选文件的格式」，Mesa 检测到 6 会直接提示升级、不交文件），并体检你的库、点名旧脏记录；Zotero 会弹出「导入文件」确认，点「确定」才进库（Windows 与 macOS 一样） | `output/zotero.docx`，先开 Zotero 应用再用 Word 打开 → 点 **Refresh**（首次弹样式选择框，属正常；插件无反应是 Zotero 未就绪，等它加载完或重开文档）→ 光标点进 References 标题下面的空行（不是标题行本身），点 **Add/Edit Bibliography** 插入参考文献表。**换 Document Preferences 里的 CSL 样式再 Refresh，参考文献格式全局跟着变** |
-| **EndNote** | 在 EndNote 导出 XML 或 RIS，放进 `papers/imports/`。不要把 `papers/` 设成 EndNote 的自动导入文件夹 | **同步到 EndNote**（按引文库生成 `papers/endnote-library.ris`，交给 EndNote 导入进当前打开的库，检索时排除的不导；没开库时 EndNote 会先让你选库。EndNote 装在 D 盘等非默认目录也能找到；题录处理同 Zotero 那份。两种期刊缩写另写在 `papers/endnote-journals.txt`（每本刊一行，缩写 2 一律是 ISO 4）：在 EndNote「工具 → 打开术语表 → 期刊术语表 → 列表 → 导入列表」导入一次，输出样式里选「缩写 1」整份用 ACS 写法、选「缩写 2」整份用 ISO 4 写法），并体检你的库、点名旧脏记录 | `output/endnote.docx`，先开 EndNote 应用再用 Word 打开 → 点一次 **Update Citations and Bibliography**（插件无反应是 EndNote 未就绪，等它加载完或重开文档）。引用绑定你的库：**换 Output Style 再 Update，全部参考文献格式一键重排**，不用手动调一条 |
+| **EndNote** | 在 EndNote 导出 XML 或 RIS，放进 `papers/imports/`。不要把 `papers/` 设成 EndNote 的自动导入文件夹 | **同步到 EndNote**（按引文库生成 `papers/endnote-library.ris`，交给 EndNote 导入进当前打开的库，检索时排除的不导；没开库时 EndNote 会先让你选库。EndNote 装在 D 盘等非默认目录也能找到；题录处理同 Zotero 那份。两种期刊缩写另写在 `papers/endnote-journals.txt`（每本刊一行，缩写 2 一律是 ISO 4）：在 EndNote「工具 → 打开术语表 → 期刊术语表 → 列表 → 导入列表」导入一次，输出样式里选「缩写 1」整份用 ACS 写法、选「缩写 2」整份用 ISO 4 写法），并体检你的库、点名旧脏记录。导入后在同一行点 **选这个 EndNote 库（.enl）** 指一次刚导进的库（Mesa 不知道 EndNote 当前开的是哪个库），定稿出的 EndNote 版 Word 就按它对上库里的条目；不选也能用，只是条目算在 Word 自带的漫游库里。Zotero 不用选，Mesa 直接读 Zotero 的数据目录 | `output/endnote.docx`，先开 EndNote 应用再用 Word 打开 → 点一次 **Update Citations and Bibliography**（插件无反应是 EndNote 未就绪，等它加载完或重开文档）。引用绑定你的库：**换 Output Style 再 Update，全部参考文献格式一键重排**，不用手动调一条 |
 
 注意事项：
 
-- Mesa 不读 `.enl`，也不把 Zotero 库再倒一遍进 EndNote。
+- Mesa 平时不读 `.enl`，也不把 Zotero 库再倒一遍进 EndNote；只有你指定了库（`papers/endnote-library.path`），出 EndNote 版 Word 时才只读那一个库、按 DOI 对记录号。
 - PDF 要拖到 EndNote 里对应的那一条上；拖到库列表的空白处会另建一条重复记录。
 - 域稿绑定的是库里的记录号：在库里删过条目或重新导入过，就要重新生成域稿再 Update/Refresh，否则 Word 里会落到「漫游个人图书馆」。
 - 步骤说明不会替你点 Word。
