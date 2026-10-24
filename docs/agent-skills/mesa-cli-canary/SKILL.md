@@ -52,7 +52,7 @@ ls /tmp/canary-<运行号>/*/            # canary-macos-latest / canary-windows-
 | 现象 | 是什么 | 怎么办 |
 |---|---|---|
 | 没有 `report.md`，日志里是装依赖失败（rustup / npm / pip / curl 超时、网络错误） | 环境故障 | `gh run rerun <运行号> --failed`，报告里记一笔，不动代码 |
-| 没有 `report.md`，有 `plans-error.txt`，或测试进程起不来（如 Windows `0xc0000139 STATUS_ENTRYPOINT_NOT_FOUND`） | Mesa 自己的编译 / 测试问题，不是 CLI 变了 | 再看主线 `gh run list --workflow build.yml --limit 3` 是否同样红。作为单独的修复报告给用户（主线 CI 必须绿），**不动基线** |
+| 没有 `report.md`，有 `plans-error.txt`，或测试进程起不来（如 Windows `0xc0000139 STATUS_ENTRYPOINT_NOT_FOUND`） | Mesa 自己的编译 / 测试问题，不是 CLI 变了 | 再看主线 `gh run list --workflow build.yml --limit 3` 是否同样红。作为单独的修复报告给用户（主线 CI 必须绿），**不动基线**。本机 Windows 的 `0xc0000139` 是已知的机器差异，`canary.py` 会自动改跑带 manifest 的测试副本，本机复现时不用管 |
 | 有 `report.md` | 金丝雀跑完了 | 第三步 |
 
 ## 第三步：逐家处理 report.md
@@ -66,7 +66,7 @@ ls /tmp/canary-<运行号>/*/            # canary-macos-latest / canary-windows-
 | 检查没过 | Mesa 依赖的东西断了 | 本机复现（下面），找原因，修 |
 | N 处变化 | 某一层的形状变了 | 按下表判断要不要适配 |
 
-本机复现某一家：
+本机复现某一家（先把这家 CLI 升到最新：本机版本落后时 Qwen 这类会在干净 HOME 里启动就自更新，把发出去的那句吞掉，旁路整段报红；也别和另一轮金丝雀同时跑）：
 
 ```bash
 npm run canary -- --agents <家> --out /tmp/canary-local

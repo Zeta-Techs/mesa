@@ -1,0 +1,46 @@
+{
+ "agent": "gemini",
+ "channel": null,
+ "checks": {
+  "假网关收到主对话请求": true,
+  "抓屏跑完": true
+ },
+ "platform": "win32",
+ "request": {
+  "main": {
+   "bodyKeys": [
+    "contents",
+    "generationConfig",
+    "systemInstruction",
+    "tools"
+   ],
+   "contextHeadings": [],
+   "contextTags": [],
+   "headers": {
+    "user-agent": "<有>"
+   },
+   "model": null,
+   "path": "/gemini/v1beta/models/e2e-picked:streamGenerateContent",
+   "systemHeadings": [],
+   "tools": [
+    ""
+   ]
+  },
+  "other": [
+   "/gemini/v1beta/models/e2e-picked:streamGenerateContent tools=True"
+  ]
+ },
+ "screen": {
+  "liveReplySupported": true,
+  "menu": {
+   "options": [
+    "Allow once",
+    "Allow for this session",
+    "No, suggest changes (esc)"
+   ],
+   "question": "Allow execution of [Shell]?"
+  },
+  "previewReadable": true
+ },
+ "version": "0.65.0"
+}

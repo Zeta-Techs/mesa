@@ -2020,11 +2020,14 @@ pub(crate) fn prepare(
     if prepared.is_some() {
         return (env, prepared);
     }
-    // 没有别的旁路：CLI 支持程序状态（OSC 7501）就用它——不写任何配置，PTY 读线程答探询、读报告
+    // 没有别的旁路：CLI 支持程序状态（OSC 7501）就用它——不写任何配置，PTY 读线程答探询、读报告。
+    // Windows 不用：ConPTY 两个方向都吞 OSC（terminal.md「OSC 底色握手被 ConPTY 双向封死」），Grok 的探询到不了 Mesa、
+    // 报告也出不来（2026-10-25 本机 Grok 1.0.67 实测输出里只有 OSC 0 / 12），开了只会让聊天层等一条永远不来的旁路
     let tab = tab_id.map(sanitize_tab).filter(|t| !t.is_empty());
-    let supported = PROGRAM_STATUS_MIN
-        .iter()
-        .any(|(a, min)| *a == agent && version_at_least(agent, *min));
+    let supported = !cfg!(windows)
+        && PROGRAM_STATUS_MIN
+            .iter()
+            .any(|(a, min)| *a == agent && version_at_least(agent, *min));
     match tab {
         Some(tab) if supported => (
             env,
@@ -3836,6 +3839,32 @@ mod e2e {
         println!("{agent}{label}: 思考摘要 {:?}", r.thoughts);
     }
 
+    /// 旁路没报会话文件时，在临时 HOME 里找这段对话：OpenCode 是库路径 + `#` + 会话 id，其余按 `<会话 id>.jsonl`
+    fn temp_home_transcript(agent: &str, home: &Path, session_id: Option<&str>) -> Option<String> {
+        let sid = session_id?;
+        let mut stack = vec![(home.to_path_buf(), 0)];
+        while let Some((dir, depth)) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+            for e in entries.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    if depth < 8 {
+                        stack.push((p, depth + 1));
+                    }
+                    continue;
+                }
+                let name = e.file_name().to_string_lossy().into_owned();
+                if agent == "opencode" && name == "opencode.db" {
+                    return Some(format!("{}#{sid}", p.display()));
+                }
+                if agent != "opencode" && name == format!("{sid}.jsonl") {
+                    return Some(p.to_string_lossy().into_owned());
+                }
+            }
+        }
+        None
+    }
+
     /// E2E_CLEAR=1：走完再发 /clear 看会话跟随；E2E_RESUME=1：停掉后按 Mesa 的恢复参数接回这段对话再跑一轮
     #[test]
     #[ignore]
@@ -3956,6 +3985,11 @@ mod e2e {
             std::fs::create_dir_all(keep).unwrap();
             // 程序状态旁路（Grok）不报会话文件：临时 HOME 里只有这一段对话，扫一遍取这家最新的那份
             let path = first.last.transcript_path.clone().or_else(|| {
+                // Windows 上 dirs::home_dir 不认 HOME / USERPROFILE，Mesa 的扫描看的是本机真实 HOME，
+                // 会拿到用户自己最近的一段旧对话（2026-10-25 实测 Qwen / OpenCode）：直接在临时 HOME 里按会话 id 找
+                if cfg!(windows) {
+                    return temp_home_transcript(&agent, &home, first.last.session_id.as_deref());
+                }
                 crate::sessions::scan_sessions()
                     .sessions
                     .into_iter()

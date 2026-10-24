@@ -489,6 +489,29 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 用户贴截图：「聊天层顶部标题后面不需要加这个光标，侧边栏已经有了」。对话头只写标题、OSC 进度与终端面的 ✦；运行状态只在侧栏对话行尾画一处（同一段对话两处同亮是重复）。
 2026-10-24「同一个概念一个画法」清单里的「对话头（标题后）」一项撤掉，其余照旧。
 
+### 2026-10-25 · Windows 金丝雀补齐九家基线与抓屏样本
+
+用户让把 Windows 端金丝雀做齐（macOS 九家齐，Windows 只有 Claude Code / Codex）。本机九家检查全过后在 Windows `--accept`，
+各家画面（审批菜单 / 边写边显示 / 回到输入框）同批存进抓屏语料库的 `win32-*` 样本，读屏结果与 macOS 同形（Qwen 菜单跟系统语言走中文）。定下：
+一，**本机 Windows 跑金丝雀不再手工绕 0xc0000139**：`canary.py` 碰上就改跑带 manifest 的测试副本（environment.md 同条），CI 不受影响、行为不变。
+二，**本机跑金丝雀前先把 CLI 升到最新、不与另一轮同时跑**：Qwen 0.26.0 在 npm 出了 0.26.1 后于干净 HOME 里启动即自更新，提示重绘吞掉发出的那句，
+旁路端到端连红两次；两轮并发时 Gemini 慢到 10 秒内没画出审批菜单。两者都是环境假红，不得据此改基线。
+三，抓屏脚本在 Windows 上 CLI 中途退出不再整段崩（pywinpty 抛 EOFError，统一当「已退出」收尾）。
+基线依赖同日 e06a932（Windows 不接 Grok 程序状态、Qwen / OpenCode 会话层在临时 HOME 里找），须在它之后进主线。
+
+### 2026-10-25 · Mac 端 10-22～10-25 的改动在 Windows 上核一遍：程序状态旁路 Windows 不接，金丝雀 Windows 会话层不读本机对话
+
+用户让查 main 上 Mac 端新提交在 Windows 上有什么问题。基线（npm test / cargo test / npm run build）在 Windows 全绿，问题出在只能实机跑出来的聊天层，
+所以在本机跑了一遍九家金丝雀。定下：
+一，**程序状态（OSC 7501）旁路 Windows 不接**：ConPTY 两个方向都吞 OSC（与 terminal.md「OSC 底色握手」同一机制），本机 Grok 1.0.67 经 ConPTY 的输出里
+只有 OSC 0 / 12 和 DA1，`OSC 7501;?` 没了，e2e 一轮的回合状态始终是空。接了只是一条永远空着的旁路（还会让启动期的信任菜单读屏多等），
+`chat_channel::prepare` 在 Windows 直接不建；聊天层说明按平台分（`chatFidelity(agent, isWindows)`，Windows 上 Grok 第 3 档「简化」）。
+以后再借 OSC 类协议做旁路，先在 Windows 上抓一次 ConPTY 原始输出确认过得来。
+二，**金丝雀在 Windows 上的会话层核对不能用 Mesa 的扫描兜底**：`dirs::home_dir` 在 Windows 不看 HOME / USERPROFILE，扫的是本机真实 HOME，
+旁路没报会话文件的家（Qwen、OpenCode）会读到用户自己最近的一段旧对话、报「解析器没读到用户这句」。Windows 改在临时 HOME 里按会话 id 找；
+Windows 上 Grok 不跑旁路端到端，只抓屏。
+三，界面文字里写死的 Mac 键位（看图标注「撤销（⌘Z）」、固定快捷键说明里的「⌃Tab」）按平台写；启动字标给 Windows 补 Segoe UI。
+
 ### 2026-10-25 · 合并 Windows 分支 windows/fix/1022（科研流程 HER 一轮），Mac 端同类问题同步修
 
 用户让把 Windows 上做的科研流程修复合进 main，冲突逐处核实，并查 Mac 端是否有同样问题。定下：

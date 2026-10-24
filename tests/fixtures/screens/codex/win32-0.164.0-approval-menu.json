@@ -1,0 +1,61 @@
+{
+ "agent": "codex",
+ "cliVersion": "0.164.0",
+ "platform": "win32",
+ "source": "chat-capture ask",
+ "note": "跑命令前的审批菜单：问句、选项、默认高亮",
+ "rows": [
+  "  /permissions - choose what Codex is allowed to do",
+  "  /model - choose what model and reasoning effort to use",
+  "  /review - review any changes and find issues",
+  "",
+  "",
+  "› TRIGGER_SLOW 讲一段",
+  "",
+  "",
+  "• 第一段：这是一段慢慢流出来的回复。",
+  "",
+  "  • 要点一：终端先画出来",
+  "  • 要点二：会话文件后落盘",
+  "",
+  "  echo mesa",
+  "",
+  "  最后一行：完毕。",
+  "",
+  "  Worked for 7s • 01:42",
+  "",
+  "",
+  "› TRIGGER_TOOL TRIGGER_ESC 跑一下",
+  "",
+  "",
+  "• Runningecho mesa > mesa_probe.txt",
+  "",
+  "",
+  "  Would you like to run the following command?",
+  "",
+  "  Environment: local",
+  "",
+  "  Reason: 写一个探针文件，可以吗？",
+  "",
+  "  $ echo mesa > mesa_probe.txt",
+  "",
+  "",
+  "› 1. Yes, proceed (y)",
+  "  2. Yes, and don't ask again for commands that start with `echo mesa > mesa_probe.txt` (p)",
+  "  3. No, and tell Codex what to do differently (esc)",
+  "",
+  "  Press enter to confirm or esc to cancel"
+ ],
+ "expect": {
+  "menu": {
+   "question": "Would you like to run the following command?",
+   "options": [
+    "Yes, proceed (y)",
+    "Yes, and don't ask again for commands that start with `echo mesa > mesa_probe.txt` (p)",
+    "No, and tell Codex what to do differently (esc)"
+   ],
+   "selected": 0
+  },
+  "inputBox": true
+ }
+}

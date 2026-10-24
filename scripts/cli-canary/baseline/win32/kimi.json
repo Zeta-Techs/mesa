@@ -1,0 +1,88 @@
+{
+ "agent": "kimi",
+ "channel": null,
+ "checks": {
+  "假网关收到主对话请求": true,
+  "抓屏跑完": true
+ },
+ "platform": "win32",
+ "request": {
+  "main": {
+   "bodyKeys": [
+    "messages",
+    "model",
+    "prompt_cache_key",
+    "stream",
+    "stream_options",
+    "tools"
+   ],
+   "contextHeadings": [
+    "Available skills",
+    "Built-in",
+    "Coding",
+    "Communicating with the user",
+    "Context management",
+    "Delivering work",
+    "Environment",
+    "Project information",
+    "Risky actions",
+    "Skills",
+    "Tool use"
+   ],
+   "contextTags": [
+    "system-reminder"
+   ],
+   "headers": {
+    "user-agent": "<有>"
+   },
+   "model": "e2e-picked",
+   "path": "/kimi/v1/chat/completions",
+   "systemHeadings": [],
+   "tools": [
+    "Agent",
+    "AgentSwarm",
+    "AskUserQuestion",
+    "Bash",
+    "CreateGoal",
+    "CronCreate",
+    "CronDelete",
+    "CronList",
+    "Edit",
+    "EnterPlanMode",
+    "ExitPlanMode",
+    "FetchURL",
+    "GetGoal",
+    "Glob",
+    "Grep",
+    "Read",
+    "ReadMediaFile",
+    "SetGoalBudget",
+    "Skill",
+    "TaskList",
+    "TaskOutput",
+    "TaskStop",
+    "TodoList",
+    "UpdateGoal",
+    "WaitFor",
+    "Write"
+   ]
+  },
+  "other": [
+   "/kimi/v1/chat/completions tools=True"
+  ]
+ },
+ "screen": {
+  "liveReplySupported": true,
+  "menu": {
+   "options": [
+    "Approve once",
+    "Approve for this session",
+    "Reject",
+    "Reject with feedback"
+   ],
+   "question": "Run this command?"
+  },
+  "previewReadable": true
+ },
+ "version": "2.3.1"
+}

@@ -20,7 +20,8 @@
 - 推送前先 `git pull`：CI 会往 main 提交版本前移。
 - 核对版本是打包时带进应用的：基线前移了，用户要等下一版 Mesa 才拿到，聊天层「未核对」的降级才解除。
 
-一次性：Windows 上除 Claude Code、Codex 外的七家还没有基线，在 Windows 上跑一次 `npm run canary -- --accept`。
+本机跑（尤其在本机 accept 之前）先把各家升到最新：CLI 有新版时，Qwen 这类会在干净 HOME 里启动就自更新，更新提示一重绘就把发出去的那句吞掉，
+旁路端到端整段报红（2026-10-25 Windows 实测 Qwen 0.26.0→0.26.1）。几家进程一起跑也会把 Gemini 拖慢到抓不到审批菜单，别和另一轮金丝雀同时跑。
 
 想交给 Agent 做：发「按 docs/agent-skills/mesa-cli-canary/SKILL.md 做今天的金丝雀维护」，或把它装成技能（`docs/agent-skills/README.md`）。
 
@@ -49,10 +50,14 @@ npm run canary
 
 抓屏依赖（pyte，Windows 另加 pywinpty）缺了会自动 `pip install --target` 到 `CANARY_DEPS`，默认在系统临时目录下。
 一家约 1–3 分钟，九家合计约 15–25 分钟，另加首次编译测试的时间。
+Windows 上有的机器 lib 测试 exe 一启动就报 `0xc0000139`（没嵌 manifest，见 `docs/conventions/environment.md`）：`canary.py` 碰上一次就自己
+`cargo test --lib --no-run`，把测试 exe 连同 manifest 复制到 `<out>/test-bin/` 改跑副本，不用手工绕。
 
 各家跑哪几层不一样：有结构化旁路的六家（Claude Code、CodeBuddy、Qwen、OpenCode、Codex、Grok）跑旁路端到端，
 请求、旁路、会话、画面四层都比；Gemini、Kimi 不开全局 hooks、Cursor 没有旁路，只抓屏，请求形状取抓屏那一趟。
-Grok 的程序状态不带会话 id，「旁路认出会话」这项不查，会话文件从临时 HOME 里扫出来。
+Grok 的程序状态不带会话 id，「旁路认出会话」这项不查，会话文件从临时 HOME 里扫出来。**Windows 上 Grok 也只抓屏**：程序状态（OSC 7501）
+过不了 ConPTY，Mesa 在 Windows 不接这条旁路。Windows 上 Mesa 的会话扫描不认临时 HOME（`dirs::home_dir` 不看 HOME / USERPROFILE），
+旁路没报会话文件时（Qwen、OpenCode）改在临时 HOME 里按会话 id 找，不会读到本机自己的对话。
 
 不用真实密钥，请求只到本机假网关。临时 HOME **不拷本机配置**：用户自己的 MCP、插件、hooks 会改工具清单，那样各台机器和 CI 就没法比。
 所以这里测的是「装好什么都不配的 CLI + Mesa 的注入」，「用户全局配置会不会盖过 Mesa」仍由 e2e-model-routing 的脚本核对。
@@ -85,7 +90,7 @@ Grok 的程序状态不带会话 id，「旁路认出会话」这项不查，会
    **这个版本会随包进 Mesa**（`src/cli-verified.ts`）：用户装的比它新时，聊天层不替人自动按键、确认卡上提醒（`docs/design-chat-fidelity.md`）。
    所以基线要跟得上：CLI 版本前进而指纹没变时，跑一次 `--accept-unchanged` 把核对版本往前挪。
 4. 有新画面时顺手存进抓屏语料库：`scripts/screen-corpus/add-from-capture.ts <out>/<agent>/screen.json`（见 `tests/fixtures/screens/README.md`）。
-3. 基线按平台分开存（`win32` / `darwin`）：两边的画面本来就不同，比如 Windows 上 Claude 回复不流式，读不到实时预览。
+3. 基线按平台分开存（`win32` / `darwin`）：两边的画面本来就不同，比如 Qwen 的审批菜单跟系统语言走，中文 Windows 上是「允许执行：'echo'？」，Windows 上 Grok 不跑旁路端到端。
 
 CI：`.github/workflows/cli-canary.yml` 每天北京时间 9:17 在 macOS / Windows 各跑一次，也可以手动触发。
 - 红了不是 Mesa 代码回退，是 CLI 变了。

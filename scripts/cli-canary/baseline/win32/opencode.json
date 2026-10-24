@@ -1,0 +1,100 @@
+{
+ "agent": "opencode",
+ "channel": {
+  "approvalKind": null,
+  "approvalReplyable": null,
+  "approvalTool": null,
+  "kind": "opencode",
+  "statuses": [
+   "-",
+   "running",
+   "completed"
+  ]
+ },
+ "checks": {
+  "假网关收到主对话请求": true,
+  "抓屏跑完": true,
+  "旁路拿到会话文件": true,
+  "旁路端到端通过": true,
+  "旁路认出会话": true,
+  "解析器读到回复": true,
+  "解析器读到工具结果": true,
+  "解析器读到工具调用": true,
+  "解析器读到用户这句": true,
+  "这一轮走完": true
+ },
+ "parsed": {
+  "blockKinds": [
+   "assistant:text",
+   "assistant:tool_result",
+   "assistant:tool_use",
+   "user:text"
+  ],
+  "toolNames": [
+   "bash"
+  ]
+ },
+ "platform": "win32",
+ "request": {
+  "main": {
+   "bodyKeys": [
+    "max_tokens",
+    "messages",
+    "model",
+    "stream",
+    "stream_options",
+    "tool_choice",
+    "tools"
+   ],
+   "contextHeadings": [
+    "Code References",
+    "Code style",
+    "Doing tasks",
+    "Following conventions",
+    "Proactiveness",
+    "Tone and style",
+    "Tool usage policy"
+   ],
+   "contextTags": [
+    "answer",
+    "available_skills",
+    "description",
+    "env",
+    "example",
+    "location",
+    "name",
+    "skill",
+    "system-reminder"
+   ],
+   "headers": {
+    "user-agent": "<有>"
+   },
+   "model": "e2e-picked",
+   "path": "/opencode/v1/chat/completions",
+   "systemHeadings": [],
+   "tools": [
+    "bash",
+    "edit",
+    "glob",
+    "grep",
+    "question",
+    "read",
+    "skill",
+    "task",
+    "todowrite",
+    "webfetch",
+    "write"
+   ]
+  },
+  "other": [
+   "/opencode/v1/chat/completions tools=False"
+  ]
+ },
+ "screen": {
+  "liveReplySupported": false,
+  "menu": null,
+  "previewReadable": false
+ },
+ "transcript": null,
+ "version": "1.19.4"
+}

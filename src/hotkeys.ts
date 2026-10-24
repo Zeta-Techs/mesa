@@ -37,7 +37,7 @@ export function globalHotkeyAllowed(inTerminal: boolean, isMac: boolean): boolea
  *  label 控制在 8 个字以内：设置页双列时键帽后面还留着「恢复」「禁用」两格空位，长了会被截成「切到刚才看的那段…」 */
 export const FIXED_HOTKEYS: readonly { label: string; mac: string; other: string; hint?: string }[] = [
   { label: "切回刚看的对话", mac: "⌃Tab", other: "Ctrl+Tab", hint: "在运行页里按，按最近看过的顺序往回切" },
-  { label: "切到最早看的对话", mac: "⌃⇧Tab", other: "Ctrl+Shift+Tab", hint: "在运行页里按，和 ⌃Tab 反方向" },
+  { label: "切到最早看的对话", mac: "⌃⇧Tab", other: "Ctrl+Shift+Tab", hint: "在运行页里按，和上一条反方向" },
   { label: "侧栏里上下选", mac: "↑ ↓ ↵", other: "↑ ↓ Enter", hint: "光标在侧栏里时：↑ ↓ 选，回车打开，← → 收起 / 展开课题" },
   { label: "打开设置", mac: "⌘,", other: "Ctrl+," },
   { label: "终端里查找", mac: "⌘F", other: "Ctrl+F", hint: "光标在终端里时" },

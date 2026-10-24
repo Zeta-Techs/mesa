@@ -1,0 +1,62 @@
+{
+ "agent": "claude-code",
+ "cliVersion": "2.1.310",
+ "platform": "win32",
+ "source": "chat-capture ask",
+ "note": "跑命令前的审批菜单：问句、选项、默认高亮",
+ "rows": [
+  "",
+  " ▐▛███▛█   Claude Code v2.1.310",
+  "▝▜██████▀  e2e-picked · API Usage Billing",
+  " ▝▝   ▝▝   ~\\work",
+  "",
+  "⚠ Model \"e2e-picked\" isn't recognized · context assumed to be 200k tokens · update Claude Code, or see",
+  "  https://code.claude.com/docs/en/model-config",
+  "",
+  "❯ TRIGGER_SLOW 讲一段",
+  "",
+  "● 第一段：这是一段慢慢流出来的回复。",
+  "",
+  "  - 要点一：终端先画出来",
+  "  - 要点二：会话文件后落盘",
+  "",
+  "  echo mesa",
+  "",
+  "  最后一行：完毕。",
+  "",
+  "✻ Baked for 6s · done 1:41",
+  "",
+  "❯ TRIGGER_TOOL 跑一下",
+  "",
+  "● 写一个探针文件",
+  "  ⎿  $ echo mesa > mesa_probe.txt",
+  "",
+  "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+  " Bash command",
+  " Tip: auto mode handles these prompts for you — choose \"switch to auto mode\" below",
+  " 写一个探针文件",
+  "╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌",
+  " echo mesa > mesa_probe.txt",
+  "╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌",
+  " Do you want to proceed?",
+  " ❯ 1. Yes",
+  "   2. Yes, and always allow access to <工作目录> from this project",
+  "   3. Yes, and switch to auto mode · auto mode handles these prompts for you",
+  "   4. No",
+  "",
+  " Esc to cancel · Tab to amend"
+ ],
+ "expect": {
+  "menu": {
+   "question": "Do you want to proceed?",
+   "options": [
+    "Yes",
+    "Yes, and always allow access to <工作目录> from this project",
+    "Yes, and switch to auto mode · auto mode handles these prompts for you",
+    "No"
+   ],
+   "selected": 0
+  },
+  "inputBox": false
+ }
+}

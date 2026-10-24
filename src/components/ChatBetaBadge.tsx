@@ -2,6 +2,7 @@ import { useAppStore } from "../store";
 import { AGENTS } from "../types";
 import { chatFidelity, fidelityBadge, tierLabel, verifiedVersion } from "../chat-fidelity";
 import { CANARY_PLATFORM, VERIFIED_VERSIONS, useCliNewer } from "../cli-verified";
+import { IS_WINDOWS } from "../hotkeys";
 
 /**
  * 聊天层「测试版」说明（2026-10-22 用户：聊天层要不要标一个测试版）：说清楚这一家在聊天里能做到哪一步、
@@ -9,7 +10,7 @@ import { CANARY_PLATFORM, VERIFIED_VERSIONS, useCliNewer } from "../cli-verified
  * 2026-10-23 起不再单独占输入框底下一格，收进模型菜单底部一行（点开是这里的正文）；CLI 比核对过的新时模型芯片上带个小点
  */
 export function useChatBeta(agentId: string | null) {
-  const fidelity = chatFidelity(agentId);
+  const fidelity = chatFidelity(agentId, IS_WINDOWS);
   const newer = useCliNewer(agentId);
   const badge = fidelityBadge(fidelity, newer);
   const heading = fidelity?.beta ? "聊天是测试版" : fidelity && fidelity.tier >= 3 ? "这家的聊天是简化的" : "聊天层说明";
@@ -24,7 +25,7 @@ export function ChatBetaNotes({
   onOpenTerminal?: () => void;
 }) {
   const installed = useAppStore((s) => s.agents.find((a) => a.id === agentId)?.version ?? null);
-  const fidelity = chatFidelity(agentId);
+  const fidelity = chatFidelity(agentId, IS_WINDOWS);
   const label = AGENTS.find((a) => a.id === agentId)?.label ?? "这家 Agent";
   const verified = agentId ? verifiedVersion(VERIFIED_VERSIONS, CANARY_PLATFORM, agentId) : null;
   const newer = useCliNewer(agentId);

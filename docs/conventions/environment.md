@@ -121,6 +121,7 @@
   **CI 的 Windows runner 同样中招**（2026-10-21 起 cargo test 一直红在这，被前后几处编译 / 测试错误盖住没人看见）。2026-10-25 起 `build.rs`
   在 Windows MSVC 上用 `/MANIFEST:EMBED /MANIFESTINPUT:windows-app-manifest.xml` 把通用控件 v6 manifest 嵌进每个链接产物（含 lib 测试 exe），
   同时关掉 tauri-build 只给 bins 的那份（两份都嵌会撞 MANIFEST 资源）；本机上面的绕法应当不再需要。
+  CLI 金丝雀（`npm run canary`）另内置这套绕法兜底：碰上 0xc0000139 就自动改跑 `<out>/test-bin/` 下带 manifest 的副本（2026-10-25，build.rs 嵌入后正常不会触发）。
 - **Windows PDF 预览白屏**：WebView2 + 全局 `color-scheme:dark` 下，pdf.js 默认不透明 2d canvas 与
   `.textLayer { color-scheme:only light }` 会合成整页白块；经典滚动条改 clientWidth 再叠加
   `key={renderKey}` 会拆掉 canvas 振荡闪白。渲染前必须先绑 `alpha:true` 上下文，页宿主锁定 light
