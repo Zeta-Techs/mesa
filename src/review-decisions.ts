@@ -39,19 +39,24 @@ export function reviewItemKind(title: string): ReviewItemKind | null {
   return null;
 }
 
-/** 步骤行上只留一句：有条目、空清单、已经点完，三种状态各一句。 */
+/** 步骤行上只留一句：有条目、空清单、文件还没写出来、已经点完，各一句。 */
 export function inlineDecisionLine(
   kind: ReviewItemKind,
-  state: "open" | "empty" | "done",
+  state: "open" | "empty" | "missing" | "done",
 ): string {
   if (state === "done") return "都已决定，点旁边的按钮回到原来的对话继续。";
+  if (state === "missing") {
+    return kind === "verify"
+      ? "待核实清单还没写出来：AI 改完稿才写，写好会自动出现在这里。"
+      : "审查报告还没写出来，写好会自动出现在这里。";
+  }
   if (kind === "verify") {
     return state === "empty"
       ? "没有待核实或存疑条目，勾上跳过。"
       : "接受＝核过原文，去掉「待核实」保留这句；拒绝删掉这句；修改按你写的改，核不了就写怎么降级。";
   }
   return state === "empty"
-    ? "审查报告还没写出来。"
+    ? "报告里没认出编号条目（R001 起），回对话让 AI 按格式补上编号。"
     : "接受按建议改，拒绝不改，修改按你写的改。";
 }
 

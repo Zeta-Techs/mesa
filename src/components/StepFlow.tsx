@@ -2730,6 +2730,7 @@ export default function StepFlow({
                 projectRoot={projectPath}
                 target={human.target}
                 kind={reviewItemKind(human.title)!}
+                refreshKey={`${runStatus}|${agentAttention ?? ""}`}
                 onOpenCount={(count) =>
                   setDecisionOpen((prev) => {
                     if (prev.get(human.title) === count) return prev;
