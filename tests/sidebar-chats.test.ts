@@ -9,6 +9,7 @@ import {
   folderDot,
   folderOpen,
   openTabRows,
+  paletteOpenChats,
   parseChatPins,
   pinnedChats,
   projectChats,
@@ -280,4 +281,30 @@ test("侧栏键盘走：↑↓ 一行、到头不绕回，Home / End 到头尾�
   assert.equal(railNavIndex("End", 0, 5), 4);
   assert.equal(railNavIndex("Enter", 0, 5), null);
   assert.equal(railNavIndex("ArrowDown", 0, 0), null);
+});
+
+test("命令面板「打开的对话」：侧栏列着的也列（侧栏这时看不见）；等确认 > 干活 > 其余按开的顺序，正看着的沉底", () => {
+  const base = { agentId: "claude-code", sessionId: null, cwd: "/repo", running: false, shell: false, attention: null, title: "" };
+  const rows = paletteOpenChats(
+    [
+      { ...base, tabId: "cur", running: true, sessionId: "s0", attention: "done", title: "正看着" },
+      { ...base, tabId: "idle", running: true, sessionId: "s1", attention: "done", title: "闲着" },
+      { ...base, tabId: "blank-bg" },
+      { ...base, tabId: "work", running: true, sessionId: "s2", attention: "working", title: "干活" },
+      { ...base, tabId: "sh", shell: true, title: "zsh" },
+      { ...base, tabId: "ask", running: true, sessionId: "s3", attention: "confirm", title: "等确认" },
+      { ...base, tabId: "preview", sessionId: "s4", title: "只看了记录" },
+    ],
+    "cur",
+  );
+  assert.deepEqual(
+    rows.map((r) => [r.tabId, r.caret, r.current]),
+    [
+      ["ask", "confirm", false],
+      ["work", "working", false],
+      ["idle", "idle", false],
+      ["sh", null, false],
+      ["cur", "idle", true],
+    ],
+  );
 });

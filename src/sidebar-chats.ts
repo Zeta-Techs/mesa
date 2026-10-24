@@ -264,6 +264,44 @@ export function openTabRows(input: {
   return out;
 }
 
+export interface PaletteOpenChat {
+  tabId: string;
+  kind: OpenTabKind;
+  label: string;
+  /** 开着的 Agent 的光标；纯终端 / 没起进程的为 null */
+  caret: ChatDot;
+  cwd: string;
+  /** 运行页正看着的那段 */
+  current: boolean;
+}
+
+/**
+ * 命令面板「打开的对话」（2026-10-24 用户：侧栏完全隐藏 / 收成图标时回不到没在跑的对话）：运行页里开着的全部，
+ * 不管侧栏有没有列着（侧栏这时看不见）。等你确认的排最前，其次在干活的，其余按开的顺序；正看着的那段沉底（已经在它上面了）。
+ * 没起进程的空白新对话只列正看着的那个（同 openTabRows：别的切走就收了）
+ */
+export function paletteOpenChats(
+  runs: readonly OpenTabInput[],
+  focusedTabId: string | null,
+): PaletteOpenChat[] {
+  const rows = openTabRows({ runs, listed: new Set(), focusedTabId, folderOf: () => null });
+  const out = rows.map((r) => {
+    const run = runs.find((x) => x.tabId === r.tabId)!;
+    return {
+      tabId: r.tabId,
+      kind: r.kind,
+      label: r.label,
+      caret: r.kind === "chat" && run.running ? caretOfAttention(run.attention) : null,
+      cwd: run.cwd,
+      current: r.tabId === focusedTabId,
+    };
+  });
+  const rank = (c: PaletteOpenChat) =>
+    c.current ? 3 : c.caret === "confirm" ? 0 : c.caret === "working" ? 1 : 2;
+  // sort 稳定：同档保持开的顺序
+  return out.sort((a, b) => rank(a) - rank(b));
+}
+
 /**
  * 侧栏里用键盘走（2026-10-24 用户：侧栏「都做」）：↑↓ 一行、Home / End 到头尾，到头不绕回；
  * 光标不在任何一行上时 ↓ 从第一行起、↑ 从最后一行起。别的键返回 null（不归这里管）

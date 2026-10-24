@@ -13,6 +13,7 @@ import {
   FolderClosed,
   Info,
   Megaphone,
+  MessageSquare,
   Palette,
   PanelLeftClose,
   PanelLeftOpen,
@@ -21,6 +22,8 @@ import {
   Settings2,
   ShieldAlert,
   Smartphone,
+  SquarePen,
+  SquareTerminal,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -54,6 +57,11 @@ import { imeBlocksEnter } from "../ime-guard";
 import type { ProjectDto } from "../types";
 import { useAnimatedDismiss } from "../exit-animation";
 import { toast } from "../toast";
+import { paletteOpenChats } from "../sidebar-chats";
+import { RUN_CARET_LABEL } from "../run-caret";
+import { projectOfCwd } from "../start-page";
+import { isScratchCwd } from "../quick-chat";
+import { IS_WINDOWS } from "../hotkeys";
 
 /** 面板里能打开的帮助类弹窗（宿主在 App：反馈表单与 HelpDialogs） */
 export type PaletteHelpTarget = "feedback" | "diag" | "update" | "about";
@@ -147,6 +155,8 @@ const icon = (I: typeof Search) => (
 
 /** 默认列表里最近项目只列这么多，其余搜得到 */
 const RECENT_PROJECTS = 5;
+/** 「打开的对话」默认列这么多（等确认、干活的排在前面），其余搜得到 */
+const OPEN_CHATS = 6;
 
 /** 主题色样只从 App.css 文本解析（不临时切 data-theme 读计算值，见 theme-swatch.ts）；
  *  CSS 文本按需懒加载，面板首次打开后缓存 */
@@ -159,7 +169,7 @@ function systemIsDark(): boolean {
 }
 
 /**
- * ⌘K 命令面板（浮层，边框按浮层规则保留）。默认列表：快速操作 / 最近项目 / 页面 / 外观 / 帮助；
+ * ⌘K 命令面板（浮层，边框按浮层规则保留）。默认列表：快速操作 / 打开的对话 / 最近项目 / 页面 / 外观 / 帮助；
  * 设置分区、单个主题、较早的项目只在搜索时出现。「切换主题…」进主题网格（与设置页主题卡同长相，
  * 方向键四向移动、标当前），⌫（空输入）或 Esc 退回。↑↓ 循环移动、Enter 执行（输入法组词中的 Enter 不算）、Esc 或点遮罩关闭。
  */
@@ -181,6 +191,9 @@ export default function CommandPalette({
   const settings = useAppStore((s) => s.settings);
   const chromeHidden = useAppStore((s) => s.chromeHidden);
   const toggleChromeHidden = useAppStore((s) => s.toggleChromeHidden);
+  const terminalRunInputs = useAppStore((s) => s.terminalRunInputs);
+  const terminalActiveTabId = useAppStore((s) => s.terminalActiveTabId);
+  const page = useAppStore((s) => s.page);
 
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<"root" | "theme">("root");
@@ -368,6 +381,42 @@ export default function CommandPalette({
                 },
               ]
             : []),
+          // 打开的对话（2026-10-24 用户：侧栏收成图标 / 完全隐藏时也要能切对话）：运行页开着的全部，
+          // 等你确认的排最前；行尾写状态和所在项目。默认列前 OPEN_CHATS 条，其余搜得到
+          ...paletteOpenChats(
+            terminalRunInputs,
+            page === "terminal" ? terminalActiveTabId : null,
+          ).map((c, i) => {
+            const project = projectOfCwd(c.cwd, projects.map((p) => p.path), IS_WINDOWS);
+            const where = project
+              ? (projects.find((p) => p.path === project)?.name ?? "")
+              : isScratchCwd(c.cwd, IS_WINDOWS)
+                ? "随手聊"
+                : "";
+            const state = c.current
+              ? "正看着"
+              : c.caret === "confirm"
+                ? RUN_CARET_LABEL.confirm
+                : c.caret === "working"
+                  ? RUN_CARET_LABEL.working
+                  : "";
+            return {
+              cmd: {
+                id: `tab:${c.tabId}`,
+                title: c.label,
+                group: "打开的对话",
+                hint: [state, where].filter(Boolean).join(" · ") || undefined,
+                keywords: [c.cwd, where, "对话", "切换", "打开", "duihua"],
+                searchOnly: i >= OPEN_CHATS,
+              },
+              icon: icon(c.kind === "terminal" ? SquareTerminal : c.kind === "new" ? SquarePen : MessageSquare),
+              run: () => {
+                const s = useAppStore.getState();
+                s.setPage("terminal");
+                s.focusTab(c.tabId);
+              },
+            };
+          }),
           ...projects.map((p, i) => ({
             cmd: {
               id: `project:${p.path}`,
