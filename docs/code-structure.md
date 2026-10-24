@@ -788,6 +788,10 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   terminal-renderer.ts       # 用哪种渲染器：设置「终端渲染」（自动 = WebGL，两个平台同；只有「兼容（DOM）」不走）；
                              # webglLetterSpacing = WebGL 单元格宽就近取整的补位（tests/terminal-renderer.test.ts）
   store.ts                   # zustand 状态。applyTheme 同步原生窗口外观；Windows 上同时把整窗 Mica 切到 micaDark/micaLight
+src-tauri/
+  build.rs                   # 构建脚本：mesa_helper 占位、extension-src 预拷贝、tauri-build；MSVC 下应用 manifest 改由链接器嵌进
+                             #   所有链接产物（含 lib 测试 exe，否则 cargo test 报 0xc0000139），别退回 tauri_build::build()
+  windows-app-manifest.xml   # Windows 应用 manifest（Common-Controls 6.0，与 tauri-build 默认相同），build.rs 交给链接器
 src-tauri/src/
   agent_specs.rs             # AgentSpec 中央注册表：一个 CLI 一张规格（detect/launch_plan/env/技能分发/安装更新/官方账号 login/readonly_args 只读模式参数/permission_args 原生权限档（聊天权限徽标，agents::permission_launch_args）/
                              #   model_switch 运行中切模型（claude/gemini/kimi/grok 带参直切；codex/opencode 唤选择器——两家 CLI 无带参直切：
