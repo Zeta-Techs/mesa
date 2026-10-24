@@ -591,6 +591,8 @@ fn iso_within_secs(iso: &str, within_secs: u64) -> bool {
 }
 
 /// live 是时间派生值：文件指纹缓存不得冻结它。出站现算——过了 60 秒就熄绿点。
+/// 文件刚写过但尾部已是确定的回合结束（settled）不算 live：Claude 闲着也会往会话文件补 away_summary /
+/// cost-state 这类元数据行，只看 mtime 时侧栏光标在 Agent 闲着时也呼吸（2026-10-25 用户）。
 /// Qwen 另认 runtime sidecar（进程还在但 jsonl 可能停更）。
 fn refresh_live_flag(meta: &mut SessionMetaDto) {
     if !meta.alive {
@@ -600,7 +602,8 @@ fn refresh_live_flag(meta: &mut SessionMetaDto) {
     let mut live = meta
         .updated_at
         .as_deref()
-        .is_some_and(|t| iso_within_secs(t, 60));
+        .is_some_and(|t| iso_within_secs(t, 60))
+        && tail_state_impl(&meta.agent, &meta.file_path) != "settled";
     if !live && meta.agent == "qwen" {
         live = qwen_runtime_sidecar(Path::new(&meta.file_path)).is_some();
     }
@@ -10679,6 +10682,40 @@ mod tests {
         dead.alive = false;
         refresh_live_flag(&mut dead);
         assert!(!dead.live, "源文件已失效即使时间新也不 live");
+    }
+
+    #[test]
+    fn refresh_live_flag_ignores_metadata_writes_after_turn_end() {
+        // Claude 闲着也补写元数据行（away_summary / cost-state）：文件是新的，但回合早已收尾
+        let dir = std::env::temp_dir().join(format!("ccode-livemeta-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("s1.jsonl");
+        let ended = [
+            r#"{"type":"user","message":{"role":"user","content":"你好"}}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"好的，已处理。"}]}}"#,
+            r#"{"type":"system","subtype":"turn_duration","durationMs":3000}"#,
+            r#"{"type":"system","subtype":"away_summary"}"#,
+            r#"{"type":"cost-state"}"#,
+        ];
+        fs::write(&path, ended.join("\n")).unwrap();
+        let now = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let mut meta = live_meta("claude-code", Some(&iso_from_unix(now)), true);
+        meta.file_path = path.to_string_lossy().into_owned();
+        refresh_live_flag(&mut meta);
+        assert!(!meta.live, "回合已收尾，补写元数据不算在干活");
+
+        // 又发了一句：回到 live
+        fs::write(
+            &path,
+            format!("{}\n{}", ended.join("\n"), r#"{"type":"user","message":{"role":"user","content":"再改一下"}}"#),
+        )
+        .unwrap();
+        refresh_live_flag(&mut meta);
+        assert!(meta.live, "收尾后又发了一句，算在干活");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -110,7 +110,7 @@ export interface ChatRunInput {
 /** 行尾的运行状态光标（run-caret.ts）；null = 没开着 */
 export type ChatDot = RunCaretState | null;
 
-/** 对话行的状态：Mesa 里开着它的标签按注意力（等确认 / 干活 / 闲着）；Mesa 外的终端正在写它算在干活 */
+/** 对话行的状态：Mesa 里开着它的标签按注意力（等确认 / 干活 / 闲着）；Mesa 外的终端正在写它、这一轮还没收尾算在干活（后端 live：闲着补写元数据不算） */
 export function chatDot(s: SessionMetaDto, runs: readonly ChatRunInput[]): ChatDot {
   const run = runs.find((r) => r.sessionId === s.sessionId && r.agentId === s.agent);
   if (run) {
