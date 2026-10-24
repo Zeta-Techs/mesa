@@ -5,6 +5,7 @@ import {
   applyVerifyVerdict,
   continueAfterDecisionsPrompt,
   isInlineDecisionTaskTitle,
+  itemSuggestion,
   parseReviewItems,
   reviewItemsCleared,
 } from "../src/review-decisions.ts";
@@ -107,4 +108,23 @@ test("点完接回对话，不把人送去评审", () => {
   assert.equal(isInlineDecisionTaskTitle("逐条决定审查报告"), true);
   assert.equal(isInlineDecisionTaskTitle("逐条裁决 [待核实] 与存疑条目"), true);
   assert.equal(isInlineDecisionTaskTitle("在 Word 里换样式（打开域稿）"), false);
+});
+
+test("条目自带的改法取出来给「修改」预填（2026-10-24 用户：建议应该预填好）", () => {
+  const report = parseReviewItems(`## 严重问题
+
+**R005** 位置：§5。问题：无来源定量估计。类别：数据。建议改法：挂 [@Zhai2022] 口径，或删数字改
+ "substantial and grows linearly with current"。
+决定：
+`, "report");
+  assert.equal(itemSuggestion(report[0], "report"), '挂 [@Zhai2022] 口径，或删数字改 "substantial and grows linearly with current"。');
+  const verify = parseReviewItems(
+    "- V004 | 位置：manuscript/review-final.md:67 | 原文摘要：110 °C | 来源：[@k] | 建议：改成油浴设定 110 °C，去掉待核实 | 裁决：待裁决 | 依据：\n",
+    "verify",
+  );
+  assert.equal(itemSuggestion(verify[0], "verify"), "改成油浴设定 110 °C，去掉待核实");
+  assert.equal(itemSuggestion(parseReviewItems("- V001 | 位置：a | 裁决：待裁决 | 依据：\n", "verify")[0], "verify"), "");
+  // 修改的落盘：裁决写改正为，建议栏原样留着
+  const ruled = applyVerifyVerdict("- V004 | 位置：a | 建议：改成油浴设定 | 裁决：待裁决 | 依据：\n", "V004", "修改", "改成油浴设定");
+  assert.match(ruled, /建议：改成油浴设定 \| 裁决：改正为改成油浴设定 \| 依据：改成油浴设定/);
 });

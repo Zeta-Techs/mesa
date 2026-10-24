@@ -60,6 +60,7 @@ test("任务书减重不靠删阶段/门禁：共用摘要一次，格式适配�
   // 同日再加：综述定稿步写换原图与转载许可清单一条。实测 review 27799。
   // 同日再加：综述定稿步写投稿声明空白模板一条（作者、基金、利益冲突、AI 使用声明由人填）。实测 review 28194。
   // 同日再改：先报后改的停点写明「去流程线那一行点、不手改文件、不留空决定行」（各定稿步同涨）。实测 review 28272、论文 36544、学位 34498、投稿 9071、LaTeX 13941，未超上限。
+  // 同日再加：待核实清单每行多一栏「建议」（人点修改时预填）。实测 review 28296。
   const before: Record<string, number> = { review: 28400, "research-paper": 36600, "data-processing": 12900, thesis: 34600, "submission-rebuttal": 9100, "latex-paper": 14000 };
   for (const t of PIPELINE_TEMPLATES) {
     const tasks = md(t.id);

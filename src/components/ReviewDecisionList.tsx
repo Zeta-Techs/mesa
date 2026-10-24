@@ -6,6 +6,7 @@ import {
   applyReportVerdict,
   applyVerifyVerdict,
   inlineDecisionLine,
+  itemSuggestion,
   parseReviewItems,
   reviewItemSummary,
   type ReviewItem,
@@ -99,7 +100,9 @@ export default function ReviewDecisionList({
 
   async function choose(item: ReviewItem, verdict: ReviewVerdict) {
     if (!revision) return;
-    const note = verdict === "修改" ? (drafts[item.id] ?? item.note).trim() : "";
+    // 框里没写就用条目自带的建议改法（灰字那句）
+    const note =
+      verdict === "修改" ? ((drafts[item.id] ?? item.note).trim() || itemSuggestion(item, kind)) : "";
     if (verdict === "修改" && !note) {
       setError(`${item.id} 选了修改，先写一句要改成什么样。`);
       return;
@@ -225,14 +228,50 @@ export default function ReviewDecisionList({
                       {verdict}
                     </button>
                   ))}
-                  <input
-                    value={draft}
-                    onChange={(event) =>
-                      setDrafts((prev) => ({ ...prev, [item.id]: event.target.value }))
-                    }
-                    placeholder={kind === "verify" ? "修改时写一句；核不了写「改成摘要级表述」或「保留待核实」" : "修改时写一句"}
-                    className="min-w-0 flex-1 rounded-sm border border-field bg-canvas px-1.5 py-0.5 text-micro text-l2 outline-none placeholder:text-l4"
-                  />
+                  {(() => {
+                    const suggestion = itemSuggestion(item, kind);
+                    // 灰字补全：框里是空的或者打的正是建议的开头，就把剩下的灰着接在后面，→ / Tab 收下
+                    const rest =
+                      suggestion && suggestion !== draft && suggestion.startsWith(draft)
+                        ? suggestion.slice(draft.length)
+                        : "";
+                    return (
+                      <div className="relative min-w-0 flex-1 rounded-sm bg-canvas" title={suggestion ? `建议改法：${suggestion}` : undefined}>
+                        {rest && (
+                          <div
+                            aria-hidden="true"
+                            className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre rounded-sm border border-transparent px-1.5 py-0.5 text-micro"
+                          >
+                            <span className="invisible">{draft}</span>
+                            <span className="text-l4">{rest}</span>
+                          </div>
+                        )}
+                        <input
+                          value={draft}
+                          aria-label={`${item.id} 修改说明`}
+                          onChange={(event) =>
+                            setDrafts((prev) => ({ ...prev, [item.id]: event.target.value }))
+                          }
+                          onKeyDown={(event) => {
+                            const el = event.currentTarget;
+                            const atEnd = el.selectionStart === draft.length && el.selectionEnd === draft.length;
+                            if (rest && atEnd && (event.key === "ArrowRight" || event.key === "Tab")) {
+                              event.preventDefault();
+                              setDrafts((prev) => ({ ...prev, [item.id]: suggestion }));
+                            }
+                          }}
+                          placeholder={
+                            suggestion
+                              ? undefined
+                              : kind === "verify"
+                                ? "修改时写一句；核不了写「改成摘要级表述」或「保留待核实」"
+                                : "修改时写一句"
+                          }
+                          className="relative w-full rounded-sm border border-field bg-transparent px-1.5 py-0.5 text-micro text-l2 outline-none placeholder:text-l4"
+                        />
+                      </div>
+                    );
+                  })()}
                 </div>
               </li>
             );

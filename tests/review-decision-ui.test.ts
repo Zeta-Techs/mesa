@@ -154,6 +154,19 @@ test("审查条目逐条点，点完最后一条也不自己跳去对话", async
       root.render(renderVerify("done"));
     });
     assert.match(host.textContent ?? "", /V001/);
+    // 条目自带建议：灰字接在框里，→ 收下（2026-10-24 用户：建议应该预填好，向右补全）
+    saved = "- V001 | 位置：review-final.md:51 | 原文摘要：方向矛盾 | 来源：[@a] | 建议：写明原文两处说法相反，去掉待核实 | 裁决：待裁决 | 依据：\n";
+    await act(async () => {
+      root.render(renderVerify("suggest"));
+    });
+    assert.match(host.textContent ?? "", /写明原文两处说法相反/);
+    const box = host.querySelector<HTMLInputElement>('input[aria-label="V001 修改说明"]')!;
+    assert.equal(box.value, "");
+    await act(async () => {
+      box.focus();
+      box.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    });
+    assert.equal(box.value, "写明原文两处说法相反，去掉待核实");
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

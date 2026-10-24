@@ -209,6 +209,16 @@ export function applyVerifyVerdict(
   return lines.join("\n");
 }
 
+/** 条目自带的改法：审查报告的「建议改法：」、待核实清单的「建议：」。选「修改」时预填，
+ *  输入框里灰字显示，→ 或 Tab 补全（2026-10-24 用户：建议应该预填好，向右补全）。没有返回空串。 */
+export function itemSuggestion(item: ReviewItem, kind: ReviewItemKind): string {
+  const raw =
+    kind === "verify"
+      ? (item.body.match(/\|\s*建议[：:]\s*([^|]*)/)?.[1] ?? "")
+      : (item.body.match(/建议改法[：:]\s*([\s\S]*)$/)?.[1] ?? "");
+  return raw.replace(/\s+/g, " ").trim();
+}
+
 export function reviewItemSummary(item: ReviewItem, kind: ReviewItemKind): string {
   if (kind === "verify") {
     const place = fieldValue(item.body, "位置");
