@@ -167,7 +167,7 @@ import {
 } from "../tui-menu";
 import { lastContextTokens, type MesaCommand } from "../composer-assist";
 import { slashCommandsFor } from "../slash-commands";
-import { claudeOutputTokens, extractLiveReply, liveReplySupported, mergeLiveReply, staleEcho, terminalHasInputBox } from "../live-reply";
+import { claudeOutputTokens, extractLiveReply, liveReplySupported, mergeLiveReply, sentTextStuckInBox, staleEcho, terminalHasInputBox } from "../live-reply";
 import { parseTuiNotice, parseTuiPanel } from "../tui-panel";
 import {
   connIssueCounts,
@@ -5109,9 +5109,28 @@ const TerminalView = memo(function TerminalView({
               ? "shift-enter"
               : null,
       });
+      void confirmSubmitted(ptyId, text);
       return { error: null };
     } catch (e) {
       return { error: `发送失败：${String(e)}` };
+    }
+  }
+
+  /** 交出去了没有：这句连着 1.6 秒还躺在输入框里，就再按一次回车，最多补两次。
+   *  刚接回的会话（resume 回放、启动钩子还在跑）会吞掉跟在正文后的回车（2026-10-24 HER 润色：
+   *  Mesa 重启后「让 Agent 按决定继续」，接回的 Claude 把整段意见留在输入框里没发）。只认屏上的输入框，没有布局表的家不管 */
+  async function confirmSubmitted(ptyId: string, text: string) {
+    const agent = launchAgentRef.current;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let stuckFor = 0;
+      for (let waited = 0; waited < 4000 && stuckFor < 1600; waited += 400) {
+        await new Promise((r) => setTimeout(r, 400));
+        if (!mountedRef.current || ptyIdRef.current !== ptyId) return;
+        if (sentTextStuckInBox(screenLines(), agent, text) !== true) return;
+        stuckFor += 400;
+      }
+      if (stuckFor < 1600) return;
+      await invoke("pty_write", { ptyId, data: submitCsiU ? KIMI_CSI_U_ENTER : "\r" }).catch(() => {});
     }
   }
 

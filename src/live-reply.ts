@@ -195,6 +195,31 @@ export function terminalHasInputBox(lines: readonly string[], agentId: string): 
 }
 
 /**
+ * 刚发的这句是不是还躺在输入框里没交出去：输入框里（框顶到下一条横线之间）去掉空白后含着这句的末尾一段。
+ * 刚接回的会话（resume 回放、SessionStart 钩子还在跑）会把回车吞掉，字留在框里（2026-10-24 HER 润色实证：
+ * Mesa 重启后「让 Agent 按决定继续」，接回的 Claude 把整段意见留在输入框里没发）。null = 这家没有画面布局表。
+ */
+export function sentTextStuckInBox(lines: readonly string[], agentId: string, sent: string): boolean | null {
+  const layout = LAYOUTS[agentId];
+  if (!layout) return null;
+  const rows = cleanRows(lines);
+  const top = layout.boxTop(rows);
+  if (top < 0) return false;
+  const box: string[] = [];
+  for (let i = top; i < rows.length; i++) {
+    const row = rows[i].trim();
+    if (BORDER.test(row)) {
+      if (i === top) continue;
+      break;
+    }
+    box.push(row.replace(/^[❯›>]\s*/, ""));
+  }
+  const squash = (s: string) => s.replace(/\s+/g, "");
+  const tail = squash(sent).slice(-16);
+  return tail.length > 0 && squash(box.join("")).includes(tail);
+}
+
+/**
  * anchored = 这一屏看得见这一轮的开头（用户回显或第一段助手行首），lines 就是整段；
  * 否则回复已经长过一屏、开头滚出去了，lines 只是屏上这一截，调用方用 {@link mergeLiveReply} 接到上一次读到的后面。
  */

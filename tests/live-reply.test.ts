@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { claudeOutputTokens, extractLiveReply, liveReplySupported, mergeLiveReply, staleEcho, terminalHasInputBox, unsyncedTail } from "../src/live-reply.ts";
+import { claudeOutputTokens, extractLiveReply, liveReplySupported, mergeLiveReply, sentTextStuckInBox, staleEcho, terminalHasInputBox, unsyncedTail } from "../src/live-reply.ts";
 
 const RULE = "─".repeat(100);
 // Claude Code 2.1.292 本机 PTY 实录（流式写到一半；假 API 慢速吐字）
@@ -737,4 +737,33 @@ test("staleEcho：刚发的这句还没画出来时，读到的是上一轮回�
   // 重复发同一句：认作新的；发送前屏上没有回显：不拦
   assert.equal(staleEcho(read, "  > 你好", "你好"), false);
   assert.equal(staleEcho(read, null, "讲个笑话"), false);
+});
+
+test("刚发的这句还躺在 Claude 输入框里没交出去（2026-10-24 HER 润色：接回的会话吞了回车）", () => {
+  const sent = "manuscript/review-report.md 里每条都已经写了「决定：」。接受和要求修改的按报告改；拒绝的不改。改完继续这一步还没做完的事，不要停下来等我再点评审。";
+  const line = "─".repeat(60);
+  const stuck = [
+    "● 已按「中途提交只存档」提交 6581e4d。等你逐条写完决定回来说一声，即进第二轮。",
+    "",
+    line,
+    "❯ manuscript/review-report.md 里每条都已经写了「决定：」。接受和要求修改的按报告改；拒绝的不改",
+    "  。改完继续这一步还没做完的事，不要停下来等我再点评审。",
+    "",
+    line,
+    "  ⏵⏵ auto mode on (shift+tab to cycle)                    ● high · /effort",
+  ];
+  assert.equal(sentTextStuckInBox(stuck, "claude-code", sent), true);
+  // 交出去了：这句成了框上方的回显，输入框空了
+  const sentOk = [
+    "❯ manuscript/review-report.md 里每条都已经写了「决定：」。接受和要求修改的按报告改；拒绝的不改",
+    "  。改完继续这一步还没做完的事，不要停下来等我再点评审。",
+    "",
+    "✶ Thinking…",
+    line,
+    "❯ ",
+    line,
+    "  ⏵⏵ auto mode on (shift+tab to cycle)",
+  ];
+  assert.equal(sentTextStuckInBox(sentOk, "claude-code", sent), false);
+  assert.equal(sentTextStuckInBox(stuck, "no-such-agent", sent), null);
 });

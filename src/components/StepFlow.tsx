@@ -1279,6 +1279,10 @@ export default function StepFlow({
     }
   }
 
+  /** 接回这一步对话时的连接预填：步骤绑定 > 商量 / 项目默认，与任务卡「继续」同一口径。
+   *  不带时模型落到连接名单第一个（2026-10-24 HER 润色：Mesa 重启后接回，glm-5.3 换成了 glm-5.3-flash） */
+  const resumeLaunch = stepSlotLaunch ?? projectLaunch ?? undefined;
+
   async function continueAfterDecisions(target: string, title: string) {
     const kind = reviewItemKind(title);
     if (!ws || !kind) return;
@@ -1287,7 +1291,7 @@ export default function StepFlow({
       const req = await buildWorkspaceTerminalRequest(
         ws,
         continueAfterDecisionsPrompt(target, kind),
-        { autoStart: true, resumeSession: true },
+        { autoStart: true, resumeSession: true, stepLaunch: resumeLaunch },
       );
       setPendingTerminal(req);
       setPage("terminal");
@@ -1315,7 +1319,7 @@ export default function StepFlow({
       const req = await buildWorkspaceTerminalRequest(
         ws,
         citationRerenderPrompt(ask),
-        { autoStart: true, resumeSession: true },
+        { autoStart: true, resumeSession: true, stepLaunch: resumeLaunch },
       );
       setPendingTerminal(req);
       setPage("terminal");
