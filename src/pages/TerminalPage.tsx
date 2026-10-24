@@ -288,6 +288,7 @@ import type {
   HandoffTargetDto,
   ProjectConfigReadDto,
   ProjectDto,
+  RunDto,
   SessionMetaDto,
   SkillDto,
   McpServerDto,
@@ -4896,6 +4897,26 @@ const TerminalView = memo(function TerminalView({
     }
     if (existingPty) {
       resizeLatchRef.current = { kind: "frozen" };
+      // 接回活进程也要先立关联上下文：标签重新挂载后 linkCtxRef 是空的，linkTick 见空直接返回，
+      // 聊天层永远停在「正在连接当前会话…」、20 秒超时也不触发（2026-10-23 用户点随手聊会话实测）。
+      // 会话 id 依次取：这次要接的会话 > 这个 Run 已登记的会话；都没有才走按标签认领
+      const runSessionId = (resumeId ?? resumeSessionId)
+        ? null
+        : await invoke<RunDto | null>("run_get", { id: probeRun })
+            .then((r) => r?.sessionId ?? null)
+            .catch(() => null);
+      if (!linkCtxRef.current) {
+        channelSeqSeenRef.current = 0;
+        channelEndHandledRef.current = null;
+        linkCtxRef.current = {
+          agentId,
+          cwd,
+          hint: resumeId ?? resumeSessionId ?? runSessionId,
+          filePath: null,
+          sessionId: null,
+          createdAt: null,
+        };
+      }
       setLinkState("detecting");
       setSyncState("detecting");
       linkStartedAtRef.current = Date.now();
