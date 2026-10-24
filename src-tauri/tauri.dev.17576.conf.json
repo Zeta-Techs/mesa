@@ -17,7 +17,7 @@
         "hiddenTitle": false,
         "transparent": true,
         "windowEffects": {
-          "effects": ["underWindowBackground", "mica"],
+          "effects": ["menu", "mica"],
           "state": "followsWindowActiveState"
         }
       }

@@ -286,7 +286,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # / 本项目会话过滤（filterProjectSessions，排除无头 AI / 问 AI / 阅读注入 / 已归档；默认全部列出）
                              # （tests/project-status.test.ts）
   mac-titlebar.ts            # macOS Overlay 顶栏左边距：窗口态红绿灯让 78px，全屏取消
-                             # （macOverlayPadClass / useMacFullscreen；tests/mac-titlebar.test.ts）
+                             # （macOverlayPadClass / useMacFullscreen；tests/mac-titlebar.test.ts）；
+                             # useMacFullscreenState 另给「全屏动画中」：原生预告先翻状态，onResized 查询经 resolveFullscreen 对账
   folder-groups.ts           # 项目页分级文件夹树（本层文件与子夹并列；可剥 papers/notes/data）
                              # 展开路径 persist（默认全收起，跟随上次；tests/folder-groups.test.ts）
   project-rail.ts            # 运行页左栏项目区：活标签已添加项目 ∪ 科研活跃工作区 ∪ 当前项
@@ -1364,6 +1365,7 @@ src-tauri/src/
                              #   TeX 两平台都可由 Quarto 装 TinyTeX（install_tex_via_quarto，Windows 写 PATH、macOS 不写）
   win_snap.rs                # Windows 11 贴靠布局：自绘最大化按钮悬停够久，替用户按一次 Win+Z（只在 Win11、Mesa 在前台时）
   logbuf.rs                  # 诊断日志环形缓冲
+  mac_fullscreen.rs          # macOS 订阅 NSWindow 将进 / 将出全屏通知，emit window:fullscreen-will-change（只报不改；前端壳底色借此跟系统动画淡变）
   diagnostics.rs             # 诊断包：系统/WebView/GPU/输入法、功能开关、日志、进程生命周期采集与 ZIP 导出；bundle_dir/BUNDLE_FILE_PREFIX 是反馈附件闸门的同一出处
   config_dump.rs             # 生效配置自省（只读，不建/不改任何用户配置文件）：dump_effective_config /
                              # export_effective_config（落 ~/Downloads/ccode-exports/ccode-effective-config-<时间戳>.json）——

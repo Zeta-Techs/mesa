@@ -85,6 +85,8 @@ mod inst_access;
 mod journal_metrics;
 mod lit_watch;
 mod logbuf;
+#[cfg(target_os = "macos")]
+mod mac_fullscreen;
 mod mcp;
 mod mcp_blender;
 mod model_registry;
@@ -309,7 +311,7 @@ pub fn run() {
                 if let Err(e) = window.set_decorations(false) {
                     logbuf::record("warn", "window", &format!("原生标题栏未去掉: {e}"));
                 }
-                // 窗口外观必须先于材质定下来：underWindowBackground 是 NSVisualEffectView，
+                // 窗口外观必须先于材质定下来：macOS 材质是 NSVisualEffectView，
                 // 底色由 NSAppearance 决定，不跟应用主题走。系统深色 + 应用浅色时材质本体
                 // 是近黑的，浅色那层罩色压不住，四周缝与圆角处就渗黑边。
                 //
@@ -330,9 +332,12 @@ pub fn run() {
                     }
                 }
 
+                // macOS 用菜单材质（Menu），不用 UnderWindowBackground（2026-10-23，对照 Codex 客户端）：
+                // 后者只模糊不压色，全屏时整面都是桌面壁纸，彩色壁纸的色相直接透上来；
+                // 菜单材质本身更实、饱和度压得低，壁纸只剩一层偏灰的明暗。必须与各份 tauri*.conf.json 同步。
                 let effects = tauri::utils::config::WindowEffectsConfig {
                     effects: vec![
-                        tauri::utils::WindowEffect::UnderWindowBackground,
+                        tauri::utils::WindowEffect::Menu,
                         tauri::utils::WindowEffect::Mica,
                     ],
                     state: Some(tauri::utils::WindowEffectState::FollowsWindowActiveState),
@@ -346,6 +351,8 @@ pub fn run() {
                 // 关掉 drawsBackground，侧栏罩色才能透出桌面磨砂。
                 #[cfg(target_os = "macos")]
                 {
+                    // 全屏切换一开始就告诉前端，壳的实心底跟着系统动画淡变（mac_fullscreen.rs）
+                    mac_fullscreen::observe(&window);
                     let _ = window.with_webview(|webview| unsafe {
                         use objc2::runtime::AnyObject;
                         let wk = &*(webview.inner() as *mut AnyObject);

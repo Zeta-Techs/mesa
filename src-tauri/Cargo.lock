@@ -517,6 +517,7 @@ name = "ccode"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "block2",
  "calamine",
  "chrono",
  "csv",
@@ -527,6 +528,7 @@ dependencies = [
  "md5",
  "notify",
  "objc2",
+ "objc2-foundation",
  "portable-pty",
  "qrcode",
  "reqwest 0.12.28",

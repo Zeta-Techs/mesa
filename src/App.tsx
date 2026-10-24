@@ -78,7 +78,7 @@ import {
   normalizeChatAccent,
   normalizeChatScrollbar,
 } from "./chat-style";
-import { macOverlayPadClass, useMacFullscreen } from "./mac-titlebar";
+import { macOverlayPadClass, useMacFullscreenState } from "./mac-titlebar";
 import ToastHost from "./components/ToastHost";
 import {
   OnboardingHost,
@@ -323,7 +323,8 @@ function App() {
   const exitChromeHidden = useAppStore((s) => s.exitChromeHidden);
   const toggleChromeHidden = useAppStore((s) => s.toggleChromeHidden);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const macFullscreen = useMacFullscreen(IS_MAC);
+  const { fullscreen: macFullscreen, animating: macFullscreenAnimating } =
+    useMacFullscreenState(IS_MAC);
   // 侧栏「快速开聊」右键 = scratch 随手聊历史（左键直接开空白对话，右键是回看口）
   const [quickChatMenu, setQuickChatMenu] = useState<{
     x: number;
@@ -1145,6 +1146,11 @@ function App() {
           data-nav={collapsed ? "icons" : "expanded"}
           data-chrome={lightChrome ? "light" : "dark"}
           data-nav-hidden={chromeHidden ? "true" : undefined}
+          /* macOS 全屏：壳改实心底（App.css 同名规则）。全屏空间里窗口后面只剩桌面壁纸，
+             材质透上来的就是整面壁纸色 */
+          data-fullscreen={macFullscreen ? "true" : undefined}
+          /* 进 / 出全屏的系统动画期间底色淡变，过后撤掉（换主题等不跟着慢） */
+          data-fullscreen-anim={macFullscreenAnimating ? "true" : undefined}
           data-chat-accent={normalizeChatAccent(settings?.chatAccent)}
           data-chat-scrollbar={normalizeChatScrollbar(settings?.chatScrollbar)}
           /* 侧栏 / 顶栏罩色的系数。只写这一个变量，各主题的基数留在 App.css 里乘——

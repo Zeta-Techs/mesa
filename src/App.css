@@ -430,7 +430,7 @@
   border-color: rgb(0 0 0 / 0.07);
 }
 
-/* 浅色壳层描线：壳自己不铺实心底，桌面磨砂（underWindowBackground）从窗口底透上来，
+/* 浅色壳层描线：壳自己不铺实心底，桌面磨砂（macOS 菜单材质 Menu）从窗口底透上来，
    而材质底色由窗口的 NSAppearance 决定、不跟应用主题——系统深色 + 应用浅色时材质本体
    近黑，四周 5px 缝与圆角外露处渗出黑边，深色模式两边同向才看不出问题。
    根治靠原生侧把外观钉到应用主题（Rust setup + App.tsx 的 setTheme），这条是兜底：
@@ -657,9 +657,9 @@ body {
 }
 
 .ccode-app-shell {
-  /* 桌面磨砂（macOS underWindowBackground / Windows Mica）从窗口底透上来。
+  /* 桌面磨砂（macOS 菜单材质 Menu / Windows Mica）从窗口底透上来。
      shell 本身不铺实心底，罩色只落在标题栏和侧栏；主画布仍是不透明面板。
-     Linux 与「减少透明度」由下面的回退块盖回实心 rail。 */
+     Linux、「减少透明度」与 macOS 全屏由下面的回退块盖回实心 rail。 */
   background: transparent;
   color: var(--color-l2);
   isolation: isolate;
@@ -853,7 +853,7 @@ body {
 }
 
 /* 顶栏自己不铺罩色——两种 chrome 都不铺，但理由不同，别当成一处口子：
-   · 深色：窗口材质（underWindowBackground / Mica）直接透出来，这已经是顶栏最透的状态，
+   · 深色：窗口材质（Menu / Mica）直接透出来，这已经是顶栏最透的状态，
      没有可再调低的余量。系数调到最低，这一条也不动。
    · 浅色：壳那层罩（--ccode-shell-base，78%）从背后透上来就是顶栏看到的颜色，
      它跟着系数走，所以浅色顶栏会跟着调。这里再铺一层会与壳合成到约 95%，
@@ -1022,6 +1022,25 @@ body {
   }
 }
 
+/* macOS 全屏：壳铺实心 rail（2026-10-23，对照 Codex 客户端）。全屏空间里窗口后面没有别的窗口，
+   材质透上来的是整面桌面壁纸，彩色壁纸在侧栏、顶栏和四周缝铺满一片色；窗口态桌面上还有别的窗口，
+   不受此影响。只铺壳一层就够：深色侧栏基数 0、浅色侧栏是同色 78% 叠在实心壳上，合成都是实心 rail。
+   不乘用户系数——「全透」档在全屏下也是实心，设置页 hint 写明。data-fullscreen 由 App.tsx 按
+   useMacFullscreen 写入，只有 Mac 会出现。 */
+.ccode-app-shell[data-fullscreen="true"] {
+  background: var(--color-rail);
+}
+
+/* 进 / 出全屏的过渡：底色在实心与磨砂之间淡变，与系统放大 / 缩回动画同步走（约 0.5s）。起点由原生在动画开头预告（mac_fullscreen.rs → useMacFullscreenState），
+   不然退全屏时 tao 要等动画放完才报，实心底撑完整段缩回再一下跳回磨砂。
+   只在 data-fullscreen-anim 期间挂 transition：常驻的话换主题、调透明度时壳会慢半拍，
+   和别的面板不同步。属溶解、不是位移动画，减弱动态效果下保留。
+   标题栏给红绿灯的让位（78px ↔ 12px）进出都一步到位、不挂过渡（2026-10-23 用户拍板）：退全屏滑动时
+   红绿灯先出现、半秒里压住项目芯片；进全屏不压字但窗口本身在放大，再叠一段横向滑动是动画套动画，
+   原生应用也是在动画开头一次排好、由放大缩回把跳动盖住。 */
+.ccode-app-shell[data-fullscreen-anim] {
+  transition: background-color 0.5s ease-in-out;
+}
 /* Windows 10 没有 Mica（或 setEffects 失败）：同「减少透明度」回到实心底，否则深色主题下
    标题栏与四周缝直接透出桌面。data-material 由 main.tsx 按系统版本 / store.ts 按挂材质结果写入 */
 html[data-material="none"],

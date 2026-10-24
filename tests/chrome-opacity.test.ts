@@ -115,3 +115,34 @@ test("分段短标签：两端用词、中间只写数", () => {
     ["全透", "25", "50", "75", "85", "原样"],
   );
 });
+
+/* macOS 全屏壳铺实心（2026-10-23）：全屏空间里材质透上来的是整面桌面壁纸。
+   不乘系数是有意的——「全透」档在全屏下也不透，设置页 hint 写明。 */
+test("Mac 全屏时壳铺实心 rail，不吃用户系数", () => {
+  const fs = /\.ccode-app-shell\[data-fullscreen="true"\]\s*\{[^}]*\}/.exec(css);
+  assert.ok(fs, "找不到 .ccode-app-shell[data-fullscreen=\"true\"] 规则");
+  assert.match(fs[0], /background:\s*var\(--color-rail\)/);
+  assert.ok(!fs[0].includes("--ccode-chrome-scale"), "全屏实心底不该乘透明度系数");
+
+  const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+  assert.match(app, /data-fullscreen=\{macFullscreen \? "true" : undefined\}/);
+});
+
+/* macOS 材质用菜单材质（Menu）：UnderWindowBackground 只模糊不压色，彩色壁纸色相直接透上来。
+   建窗配置与 setup 里补挂的那一份必须一致，否则首帧和补挂后材质不同（窗口一闪）。 */
+test("macOS 窗口材质：各份 tauri 配置与 lib.rs 都是 Menu", () => {
+  for (const name of [
+    "tauri.conf.json",
+    "tauri.dev.conf.json",
+    "tauri.dev.17576.conf.json",
+    "tauri.dev.17577.conf.json",
+  ]) {
+    const conf = JSON.parse(
+      readFileSync(new URL(`../src-tauri/${name}`, import.meta.url), "utf8"),
+    );
+    assert.deepEqual(conf.app.windows[0].windowEffects.effects, ["menu", "mica"], name);
+  }
+  const lib = readFileSync(new URL("../src-tauri/src/lib.rs", import.meta.url), "utf8");
+  assert.match(lib, /WindowEffect::Menu,\s*tauri::utils::WindowEffect::Mica/);
+  assert.ok(!lib.includes("WindowEffect::UnderWindowBackground"));
+});

@@ -21,7 +21,7 @@
         "transparent": true,
         "windowEffects": {
           "effects": [
-            "underWindowBackground",
+            "menu",
             "mica"
           ],
           "state": "followsWindowActiveState"

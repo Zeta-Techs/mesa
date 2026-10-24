@@ -1343,7 +1343,7 @@ fn theme_is_light(theme: &str) -> bool {
 
 /// 当前持久化主题对应的原生窗口外观。
 ///
-/// 为什么原生侧要一份：`underWindowBackground` 是 NSVisualEffectView，它的底色由
+/// 为什么原生侧要一份：macOS 窗口材质（菜单材质 Menu）是 NSVisualEffectView，它的底色由
 /// 窗口的 NSAppearance 决定，**不跟应用主题走**。系统深色 + 应用浅色时，材质本体是
 /// 近黑的，浅色主题那层 78% 罩色压不住，四周 5px 缝（App.tsx 行容器 py/px）与圆角
 /// 外露处就渗出黑边；深色模式两边同向，所以看不出问题。

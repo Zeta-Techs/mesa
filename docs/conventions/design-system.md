@@ -373,8 +373,15 @@
   （取代重复的区间名），日期轴 l3；切换页签「花费 / tokens」（页面名已是「用量」）。⑧币种用两格分段「$ | ¥」，不放裸符号钮。
   ⑨全站 `PageHeader`：所在滚动容器 scrollTop>0 时写 `data-stuck`，页头底边出 hairline（玻璃页头下内容像被切掉）。
 - **侧栏桌面磨砂（2026-09-24）**：透的是窗口背后的桌面，不是页头那种网页内 `backdrop-filter`。
-  窗口 `transparent` + macOS `underWindowBackground`（`macOSPrivateApi`，不上 Mac App Store）/
+  窗口 `transparent` + macOS 菜单材质 `menu`（`macOSPrivateApi`，不上 Mac App Store）/
   Windows 11 Mica（深浅跟 Mesa 主题，不跟系统外观）；Linux 没有同等材质，侧栏保持实心 rail。
+  macOS 材质 2026-10-23 由 `underWindowBackground` 改为 `menu`（对照 Codex 客户端，它的主窗也是 `vibrancy: 'menu'`、侧栏不铺色）：
+  前者只模糊不压色，彩色壁纸的色相直接透上来；菜单材质更实、饱和度低，壁纸只剩偏灰的明暗。改材质要同步 lib.rs 与各份 `tauri*.conf.json`（测试对账）。
+  **macOS 全屏壳铺实心 `--color-rail`**（`data-fullscreen`，同日）：全屏空间里窗口背后只剩桌面壁纸，材质透上来的是整面壁纸色；
+  不乘用户系数，「全透」档在全屏下也不透（设置页 hint 写明）。Codex 的转实心条件是失焦与物理像素 ≥ 3840×2160，Mesa 只取全屏这一条。
+  **进 / 出全屏的过渡**（同日用户追加）：底色 0.5s 淡变，与系统放大 / 缩回动画同步；标题栏红绿灯让位进出都一步到位、不挂过渡（同日用户拍板：退全屏滑动时先出现的红绿灯会压住项目芯片；进全屏滑动是动画套动画，原生应用也是在动画开头一次排好）。起点靠原生预告
+  （`mac_fullscreen.rs` 订阅 NSWindow will 通知 → `window:fullscreen-will-change`）——tao 退全屏要等动画放完才翻状态，只靠 onResized
+  会实心底撑满缩回动画再一下跳回磨砂。transition 只在 `data-fullscreen-anim` 期间挂（约 0.9s），常驻会让换主题时壳慢半拍。
   `html/body/#root/.ccode-app-shell` 透明。罩色只铺在两处：壳自己一层（只有浅色铺）、
   圆角侧栏 `.ccode-app-rail` 一层。顶栏自己不铺色——深色靠窗口材质直接透出桌面，
   浅色靠壳那层罩从背后透上来。四周缝不另铺色（铺了会和窗口边连成一块直角玻璃）。
