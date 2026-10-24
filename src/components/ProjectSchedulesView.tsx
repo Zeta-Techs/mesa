@@ -6,7 +6,7 @@ import { normalizeWorkMode } from "../work-mode";
 import type { ProjectConfigDto, ProjectDto } from "../types";
 
 
-/** 项目「定时任务」页：文献雷达（科研）+ 本项目全部定时任务 + 底部其他项目的只读总览。 */
+/** 项目「定时任务」页：文献雷达（科研）+ 本项目全部定时任务。 */
 export default function ProjectSchedulesView({
   project,
   focusToken = null,
@@ -70,8 +70,6 @@ export default function ProjectSchedulesView({
           layout="card"
           subsVersion={subsVersion}
           onSchedulesChanged={() => setSchedulesVersion((v) => v + 1)}
-          showOthers
-          workMode={project.workMode}
         />
       </div>
     </div>

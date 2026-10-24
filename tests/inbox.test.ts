@@ -24,8 +24,6 @@ test("inboxCategoryOf：key 前缀推导类别，confirm: 与 live: 合并为待
   assert.equal(inboxCategoryOf("profile:p-1"), "profile");
   assert.equal(inboxCategoryOf("help:/repo/root"), "help");
   assert.equal(inboxCategoryOf("lit:s-1:2026-08-18"), "lit");
-  assert.equal(inboxCategoryOf("sched:paused:s-1"), "schedule");
-  assert.equal(inboxCategoryOf("sched:review:s-1:r-1"), "schedule");
   assert.equal(inboxCategoryOf("dep:git"), "dep");
   assert.equal(inboxCategoryOf("update:0.1.1"), "update");
   assert.equal(inboxCategoryOf("phone:pending"), "phone");

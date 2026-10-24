@@ -585,6 +585,14 @@ fn extract_file_events(agent: &str, path: &Path, session_id: Option<&str>) -> Ve
         .split(b'\n')
         .map_while(Result::ok)
         .map(|line| String::from_utf8_lossy(&line).into_owned());
+    events_from_lines(agent, lines, session_id)
+}
+
+fn events_from_lines<I, S>(agent: &str, lines: I, session_id: Option<&str>) -> Vec<UsageEvent>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
     match agent {
         "codex" => codex_events(lines),
         "gemini" => gemini_events(lines),
@@ -597,6 +605,56 @@ fn extract_file_events(agent: &str, path: &Path, session_id: Option<&str>) -> Ve
     }
 }
 
+/// 尾窗起步大小；之后每轮翻倍，读到文件头就等于整份
+const TAIL_WINDOW_START: u64 = 512 * 1024;
+
+/// 从文件尾往前按窗口找最后一次出现的东西（2026-10-24 侧栏切对话卡顿：几十 MB 的 Claude 会话整份解析要几百毫秒，
+/// 点开对话要先等它才出标签）。窗口首行多半是半截，丢掉；`pick` 在当前窗口里找不到就翻倍再找。
+/// 返回 None 表示没法倒着读（zstd 压缩、打不开），调用方走整份流式；Some(None) 是整份都找过了也没有
+fn find_in_tail<T>(path: &Path, mut pick: impl FnMut(&[String]) -> Option<T>) -> Option<Option<T>> {
+    let mut file = File::open(path).ok()?;
+    let mut magic = [0u8; 4];
+    if file.read(&mut magic).ok()? == magic.len() && magic == ZSTD_MAGIC {
+        return None;
+    }
+    let len = file.metadata().ok()?.len();
+    let mut step = TAIL_WINDOW_START;
+    loop {
+        let start = len.saturating_sub(step);
+        file.seek(SeekFrom::Start(start)).ok()?;
+        let mut buf = Vec::with_capacity((len - start) as usize);
+        file.by_ref().take(len - start).read_to_end(&mut buf).ok()?;
+        let body = if start == 0 {
+            &buf[..]
+        } else {
+            match buf.iter().position(|&b| b == b'\n') {
+                Some(at) => &buf[at + 1..],
+                None => &[][..],
+            }
+        };
+        let lines: Vec<String> = body
+            .split(|&b| b == b'\n')
+            .filter(|l| !l.is_empty())
+            .map(|l| String::from_utf8_lossy(l).into_owned())
+            .collect();
+        if let Some(found) = pick(&lines) {
+            return Some(Some(found));
+        }
+        if start == 0 {
+            return Some(None);
+        }
+        step = step.saturating_mul(2);
+    }
+}
+
+fn last_model_of(events: Vec<UsageEvent>) -> Option<String> {
+    events
+        .into_iter()
+        .rev()
+        .map(|e| e.model)
+        .find(|m| !m.is_empty() && m != "<synthetic>")
+}
+
 /// 会话 → usage 事件流；普通 JSONL 与 zstd 会话均流式读取。
 fn extract_events(session: &crate::sessions::SessionMetaDto) -> Vec<UsageEvent> {
     if session.agent == "opencode" {
@@ -607,6 +665,55 @@ fn extract_events(session: &crate::sessions::SessionMetaDto) -> Vec<UsageEvent> 
     }
     let path = Path::new(&session.file_path);
     extract_file_events(&session.agent, path, Some(&session.session_id))
+}
+
+/// 这段对话最后一轮实际用的模型（接着聊时输入框默认选它，2026-10-24 用户：点开一段对话，底部应是它之前用的配置）。
+/// 复用用量提取器：各家把模型名记在哪不一样，提取器已经各认各的；读不到为 None。
+/// `<synthetic>` 是 Claude 自己补的占位消息（中断、出错），不是模型
+pub(crate) fn last_session_model(agent: &str, file_path: &str, session_id: &str) -> Option<String> {
+    if agent == "opencode" {
+        let (db, sid) = file_path.split_once('#')?;
+        return last_model_of(opencode_events(Path::new(db), sid));
+    }
+    let path = Path::new(file_path);
+    // 先倒着读尾窗：最后一轮的模型就在文件末尾附近（单个 JSON 文档的家尾窗解析不出，会一路翻倍到整份）
+    if let Some(found) = find_in_tail(path, |lines| {
+        last_model_of(events_from_lines(agent, lines, Some(session_id)))
+    }) {
+        return found;
+    }
+    last_model_of(extract_file_events(agent, path, Some(session_id)))
+}
+
+/// 一行 Codex rollout 若是带思考档的 turn_context，取出思考档
+fn codex_turn_effort(text: &str) -> Option<String> {
+    if !text.contains("\"turn_context\"") {
+        return None;
+    }
+    let v = serde_json::from_str::<Value>(text).ok()?;
+    if get_str(&v, "type") != Some("turn_context") {
+        return None;
+    }
+    let e = v.get("payload").and_then(|p| get_str(p, "effort"))?;
+    (!e.is_empty()).then(|| e.to_string())
+}
+
+/// Codex 会话最后一轮的思考档（rollout 的 turn_context 每轮都记 effort）；别家会话文件不记，返回 None
+pub(crate) fn last_codex_effort(file_path: &str) -> Option<String> {
+    let path = Path::new(file_path);
+    if let Some(found) = find_in_tail(path, |lines| {
+        lines.iter().rev().find_map(|l| codex_turn_effort(l))
+    }) {
+        return found;
+    }
+    let reader = usage_line_reader(path)?;
+    let mut effort = None;
+    for line in reader.split(b'\n').map_while(Result::ok) {
+        if let Some(e) = codex_turn_effort(&String::from_utf8_lossy(&line)) {
+            effort = Some(e);
+        }
+    }
+    effort
 }
 
 // ===== 聚合 =====
@@ -3049,6 +3156,52 @@ pub async fn usage_activity_agents(year: i32) -> Result<UsageActivityAgentsDto, 
 mod tests {
     use super::*;
 
+    fn claude_assistant(model: &str) -> String {
+        format!(
+            r#"{{"type":"assistant","timestamp":"2026-10-24T01:00:00Z","message":{{"model":"{model}","usage":{{"input_tokens":1,"output_tokens":1}}}}}}"#
+        )
+    }
+
+    #[test]
+    fn last_session_model_reads_tail_and_widens_until_found() {
+        let dir = std::env::temp_dir().join(format!("ccode-tail-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let filler = format!(r#"{{"type":"user","message":{{"content":"{}"}}}}"#, "x".repeat(4000));
+        // 模型在末尾：尾窗一次读到，取最后那个
+        let near = dir.join("near.jsonl");
+        let mut body = vec![claude_assistant("old-model")];
+        body.extend(std::iter::repeat(filler.clone()).take(800));
+        body.push(claude_assistant("new-model"));
+        std::fs::write(&near, body.join("\n") + "\n").unwrap();
+        assert_eq!(
+            last_session_model("claude-code", near.to_str().unwrap(), "s").as_deref(),
+            Some("new-model")
+        );
+        // 模型只在文件头、后面 3MB 都没有：窗口一路翻倍到能读到它
+        let far = dir.join("far.jsonl");
+        let mut body = vec![claude_assistant("only-model")];
+        body.extend(std::iter::repeat(filler).take(800));
+        std::fs::write(&far, body.join("\n")).unwrap();
+        assert_eq!(
+            last_session_model("claude-code", far.to_str().unwrap(), "s").as_deref(),
+            Some("only-model")
+        );
+        // Codex：turn_context 在头、token_count 在尾，尾窗里的事件没模型名就继续往前
+        let codex = dir.join("codex.jsonl");
+        let mut body = vec![
+            r#"{"type":"turn_context","payload":{"model":"gpt-5.5","effort":"high"}}"#.to_string(),
+        ];
+        body.extend(
+            std::iter::repeat(format!(r#"{{"type":"response_item","payload":{{"t":"{}"}}}}"#, "y".repeat(4000)))
+                .take(400),
+        );
+        body.push(r#"{"type":"event_msg","timestamp":"2026-10-24T01:00:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":3,"output_tokens":1}}}}"#.to_string());
+        std::fs::write(&codex, body.join("\n")).unwrap();
+        let path = codex.to_str().unwrap();
+        assert_eq!(last_session_model("codex", path, "s").as_deref(), Some("gpt-5.5"));
+        assert_eq!(last_codex_effort(path).as_deref(), Some("high"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
     fn ev(day: &str, model: &str, input: u64, output: u64) -> UsageEvent {
         UsageEvent {
             day: day.into(),

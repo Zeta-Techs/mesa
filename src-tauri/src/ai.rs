@@ -474,10 +474,10 @@ pub(crate) fn extract_headless_session_id(detail: &str) -> Option<String> {
     None
 }
 
-fn remember_headless_session(agent: &str, out: &str, err: &str) -> Option<String> {
-    let id = extract_headless_session_id(&format!("{out}\n{err}"))?;
-    let _ = crate::sessions::mark_session_internal(agent, &id);
-    Some(id)
+fn remember_headless_session(agent: &str, out: &str, err: &str) {
+    if let Some(id) = extract_headless_session_id(&format!("{out}\n{err}")) {
+        let _ = crate::sessions::mark_session_internal(agent, &id);
+    }
 }
 
 /// 支持 --session-id 的 CLI：无头启动前锁死文件名并立刻标 internal。
@@ -511,7 +511,6 @@ fn run_capture_for(
     cmd: &mut crate::process::BackgroundCommand,
     timeout: Duration,
     run_id: Option<&str>,
-    session_out: &mut Option<String>,
 ) -> Result<String, String> {
     let captured = crate::process::capture_command_for(cmd, timeout, 8 * 1024 * 1024, run_id)?;
     if captured.cancelled {
@@ -520,7 +519,7 @@ fn run_capture_for(
     let out = strip_known_cli_noise(&String::from_utf8_lossy(&captured.stdout));
     let err = strip_known_cli_noise(&String::from_utf8_lossy(&captured.stderr));
     if let Some(agent) = agent {
-        *session_out = remember_headless_session(agent, &out, &err);
+        remember_headless_session(agent, &out, &err);
     }
     if captured.timed_out {
         let detail = summarize_headless_error(format!("{out}\n{err}").trim(), expected_host);
@@ -678,7 +677,6 @@ pub(crate) fn ai_prompt_impl(
         &mut cmd,
         AI_TIMEOUT,
         Some(&run.id),
-        &mut None,
     );
     // 不落盘调用：JSON 里拆出正文与用量，用量直接记账（扫描不到会话文件，重建补不回来）
     let result = if ephemeral {
@@ -852,18 +850,13 @@ pub(crate) fn run_agent_task(
         );
         return Err(error);
     }
-    let mut seen_session = None;
     let out = run_capture_for(
         Some(&profile.agent),
         host.as_deref(),
         &mut cmd,
         timeout,
         Some(&run.id),
-        &mut seen_session,
     );
-    // 会话 id 记到 Run 上（定时历史「看过程」据此打开那次后台对话）：
-    // 能锁定 id 的 CLI 用启动前锁的，其余用输出里抠到的
-    let session = lock_id.or(seen_session);
     let status = if out.is_ok() {
         "completed"
     } else if out.as_ref().err().is_some_and(|e| e.contains("已取消")) {
@@ -873,7 +866,7 @@ pub(crate) fn run_agent_task(
     };
     let closed = crate::runs::close_run_with_result(
         &run.id,
-        session.as_deref(),
+        None,
         status,
         None,
         (out.is_err()).then_some("定时/无头 Agent 执行失败"),
@@ -1294,7 +1287,8 @@ fn user_turn_text(m: &crate::sessions::ChatMessageDto) -> Option<String> {
         if b.kind != "text" {
             continue;
         }
-        let t = b.text.trim();
+        // Mesa 塞在第一句前面的项目上下文包不是人话（项目里「＋ 新对话」），起名只认你说的
+        let t = crate::sessions::strip_mesa_launch_pack(b.text.trim()).trim();
         if t.is_empty() || crate::sessions::is_injected_context_message(t) {
             continue;
         }

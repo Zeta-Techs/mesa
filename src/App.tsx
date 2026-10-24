@@ -56,17 +56,8 @@ import {
   type RunAnnouncement,
 } from "./run-announce";
 import type { RunOverviewInput } from "./run-overview";
-import {
-  catchupNotify,
-  runDoneNotifyBody,
-  runDoneNotifyTitle,
-  shouldNotifyRunDone,
-} from "./schedule-tasks";
-import type {
-  SchedulerRunDonePayload,
-  SchedulerRunStartedPayload,
-  SessionMetaDto,
-} from "./types";
+import { runDoneNotifyBody, runDoneNotifyTitle } from "./schedule-tasks";
+import type { SchedulerRunDonePayload, SessionMetaDto } from "./types";
 import {
   eventMatchesCombo,
   comboLabel,
@@ -816,60 +807,31 @@ function App() {
 
   // 定时雷达运行完成 → OS 通知（scheduler.rs 的 scheduler-run-done；summary 后端已脱敏）。
   // 只负责通知：工作区页 ScheduleSection 自行监听同一事件刷新列表。
-  // 跑完但没有新内容不弹（2026-10-23）；被自动暂停一定弹，正文写原因。
-  // 补跑开始（scheduler-run-started 且 trigger=catchup）另弹一条，说明原定时刻。
   useEffect(() => {
     let unlisten: (() => void) | undefined;
-    let unlistenStarted: (() => void) | undefined;
     listen<SchedulerRunDonePayload>("scheduler-run-done", (e) => {
       const enabled =
         useAppStore.getState().settings?.notificationsEnabled ?? true;
-      if (!enabled || !shouldNotifyRunDone(e.payload)) return;
+      if (!enabled) return;
       void fireScheduleNotification(
         runDoneNotifyTitle(
           baseName(e.payload.projectRoot),
           e.payload.status,
           e.payload.scheduleName ||
             (e.payload.skill === LIT_WATCH_SLOT ? "文献雷达" : "定时任务"),
-          Boolean(e.payload.autoPaused),
         ),
-        runDoneNotifyBody(e.payload.autoPaused || e.payload.summary),
+        runDoneNotifyBody(e.payload.summary),
         {
           projectRoot: e.payload.projectRoot,
           scheduleId: e.payload.scheduleId,
           skill: e.payload.skill,
-          focus:
-            e.payload.skill === LIT_WATCH_SLOT && !e.payload.autoPaused
-              ? "lit"
-              : "schedule",
+          focus: e.payload.skill === LIT_WATCH_SLOT ? "lit" : "schedule",
         },
       );
     })
       .then((u) => (unlisten = u))
       .catch(() => {});
-    listen<SchedulerRunStartedPayload>("scheduler-run-started", (e) => {
-      if (e.payload.trigger !== "catchup") return;
-      const enabled =
-        useAppStore.getState().settings?.notificationsEnabled ?? true;
-      if (!enabled || !e.payload.projectRoot) return;
-      const note = catchupNotify(
-        e.payload.scheduleName || "定时任务",
-        baseName(e.payload.projectRoot),
-        e.payload.scheduledFor,
-        e.payload.missed ?? 0,
-      );
-      void fireScheduleNotification(note.title, note.body, {
-        projectRoot: e.payload.projectRoot,
-        scheduleId: e.payload.scheduleId,
-        focus: "schedule",
-      });
-    })
-      .then((u) => (unlistenStarted = u))
-      .catch(() => {});
-    return () => {
-      unlisten?.();
-      unlistenStarted?.();
-    };
+    return () => unlisten?.();
   }, []);
 
   // 机构窗口「⤓ 保存 PDF 到 Mesa」→ 自动入库（inst_access 中继）。带落盘语境的

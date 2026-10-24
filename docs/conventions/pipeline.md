@@ -763,14 +763,11 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   发明任务内容、不在 schedules.json 存长 prompt。SKILL.md 侧同规则落在 lit-watch 技能 §5（随包种子修订，
   走内置技能更新通道补到存量库）。
 - **存储**：app 级 `schedules.json`（config_dir/ccode/，原子写 + 进程内锁，同 profiles/skills 口径）；历史留最近
-  20 条（简报脱敏 + 截 2000 字符）；周期闭集「每天 / 工作日（周一到周五）/ 每周 + 时分 / 每 N 小时（N 只取
-  1、2、3、4、6、8、12，0 点起算，在第几分）/ 仅手动」（本地时区；2026-10-23 扩），**不引入 cron 表达式**。
+  20 条（简报脱敏 + 截 2000 字符）；周期只支持「每日/每周 + 时分」（本地时区），**不引入 cron 表达式**。
   **项目移除/清除痕迹/删除目录必须同步删该根上的定时任务**（`delete_schedules_for_project`，路径走 `same_path`）；
   `list_schedules` 出口再丢掉注册表里已经没有的孤儿。收件箱文献条目只对还在的项目生成，禁止用文件夹名给已删项目续命。
-- **due 判定即补跑**：「最近应跑时刻 > max(last_run_at, last_slot_at)」即 due——应用没开 / 电脑睡着错过的时间点
-  在之后首个 tick 自动补跑，多次漏跑 coalesce 只补一次；防重入用进程内 Mutex<HashSet>，tick 与「立即跑」共用。
-  `last_slot_at` = 最近一次已处理（跑过或记了跳过）的应跑时刻，跳过的时刻不反复到点。人重新打开停用的任务时
-  把它拨到当前时刻（`reenable`）：停用期间错过的不补跑也不记「错过」。
+- **due 判定即补跑**：「最近应跑时刻 > last_run_at」即 due——应用没开错过的时间点在启动后首个 tick 自动补跑，
+  多次漏跑 coalesce 只补一次；防重入用进程内 Mutex<HashSet>，tick 与「立即跑」共用。
 - **执行模型：跨项目并行 + 同项目互斥（2026-10-16 拍板，取代 v3.75 的全串行）**：due 任务各自 spawn 并行跑，
   两道闸门没过的保持 due、下一 tick（60s）自动重试，界面呈「排队中」（`ScheduleDto.queued` = enabled 且 due
   且当前无在跑 Run；关键词/注册表闸门不在该层）。闸门一：**同一项目根一次只跑一条**（`project_lock`，锁键
@@ -800,7 +797,7 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
 - **执行复用 ai.rs 无头链路**（`run_agent_task`）：cwd 用隔离 worktree（`~/ccode/watch-worktrees/<仓>/<日程id>`，
   项目根只用于归属与播种；非 Git 项目 fail-closed），`headless_task_args`（codex 用 `-s workspace-write`，
   巡检要写 notes/inbox.md 与 watch-seen.md，read-only 跑不了）；超时 30 分钟（2026-10-03 由 10 分钟提高：GLM 跑 lit-watch 实测超 10 分钟，
-  600s 在掐死健康任务；定时任务无人等，超时只担防僵尸职责；2026-10-23 起每任务可调 5–180 分钟，不填仍 30）记 `timeout` 与真失败 `error` 分列；安全口径照旧（密钥拉起瞬间注入、
+  600s 在掐死健康任务；定时任务无人等，超时只担防僵尸职责）记 `timeout` 与真失败 `error` 分列；安全口径照旧（密钥拉起瞬间注入、
   background_command、出站脱敏）。建树后从主仓播种订阅/台账，跑完只读评审，人点「采纳进主仓」才拷产出回项目根。**codex 参数顺序坑（v3.98 实测踩坑）**：`exec` 是子命令，plan 注入的
   `-c`/`-m` 必须跟在子命令头之后，且 plan 默认带的 `-s workspace-write` 要剥离、由 headless 尾部的档位定夺
   （`-s` 单值参数，重复直接报「cannot be used multiple times」）；统一由 `compose_headless_args` 拼装
@@ -811,51 +808,12 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   （profiles.delete → settings::clear_profile_refs：ai_profile_id / ai_profiles 指到已删 id 的一并清掉，
   持锁内联、失败只记日志），从源头减少悬空指针。
 - **投递**：跑完发 `scheduler-run-done` 事件（summary 已脱敏）→ App.tsx 全局监听弹 OS 通知（复用
-  notificationsEnabled 开关，不新增设置项；**无新内容不弹、自动暂停一定弹**，见下条「运行管理」）；命中正文写在隔离树 `notes/inbox.md`，调度器不自动搬进主仓。
+  notificationsEnabled 开关，不新增设置项）；命中正文写在隔离树 `notes/inbox.md`，调度器不自动搬进主仓。
   收件箱「去评审」打开该 Run 的命中评审；「采纳进项目」才把 `notes/inbox.md`、`papers/watch-seen.md`、
   `papers/watch-followup.md`、`notes/references.bib` 的本轮新增并进主仓（不回写 watchlist）。采纳后发 `watch-run-adopted`。
   **待采纳提示指向最近一次「成功且未采纳且有命中」的运行**（litInboxCandidates / LitWatchCard pendingRow，
   2026-10-16 修「0 命中轮遮住前一轮待采纳」——不能只盯最近一次成功 run）；`newEntries` 口径 = 该次巡检在
   隔离树收件箱的净新增（跑时点数、评审/采纳之前，设雷达筛选只数过筛的），说「发现了几篇」不说「采纳了几篇」。
-- **运行管理（2026-10-23 用户「全部做」，对照 Claude 桌面版 / 云端定时任务、Cursor Automations、gh-aw 后定）**：
-  - **跳过也记账**：到点没跑的写一行 `status=skipped` 的历史（`skip_reason`：`missed_closed` 应用没开 /
-    `missed_asleep` 电脑在睡眠 / `missed` / `unreviewed` 上一轮还没评审 / `no_keywords` 雷达没关键词），同一原因
-    连着跳过合并成一行累加 `skip_count`、同一时刻重复记账不变（`apply_skip`）。补跑之前更早错过的几次只往回数
-    **7 天**（`missed_before`）。应跑时刻早于本次启动 = 应用没开；落在上一个 tick 之后且两次 tick 隔了 3 分钟以上
-    = 电脑睡过（`classify_trigger`）；排队等出来的晚到仍算准点。补跑开始时 `scheduler-run-started` 带
-    `trigger=catchup`，前端另弹一条通知说明原定时刻。
-  - **补跑时告诉 Agent**：任务说明末尾追加「本轮时间」（原定 / 实际开始 / 补跑原因 / 上一次成功运行时刻，技能
-    没另定时间窗时以它为起点）与用户附言（`run_context_prompt`）。lit-watch 专用文案本身一字不动，只在后面追加。
-  - **看过程**：`run_agent_task` 收尾时把会话 id（锁定的 `--session-id` 或输出里抠到的）记到 Run 上，
-    `RunRecord.agent/session_id` 随之落历史，历史行「看过程」打开那次后台对话的只读回放。**被历史引用的后台对话
-    不进内部对话保留期清理**（`scheduler::referenced_sessions`，历史只留 20 条，掉出历史后照常到期）。
-  - **无新内容**：雷达看新命中数为 0；其他巡检看冻结证据里契约文件没有变化也没新 PDF（`freeze_at` 返回改动数）。
-    无新内容的运行不弹通知、不进待处理、历史行淡显、不给「去评审」。通用巡检的任务说明写明「没有新内容不要改文件」。
-  - **积压闸门**：`skip_if_unreviewed` 开着时，最近一次成功运行还有没采纳、也不是无新内容的产物，这一轮记
-    `unreviewed` 跳过（算处理过）。None = 按技能默认：文献雷达不跳（采纳可乱序），其他巡检跳。只认 10-23 之后记的
-    运行（带 `trigger`），升级前的旧记录不拦人。`no_keywords` 不算处理过：订上关键词后下一 tick 就跑。
-  - **自动暂停**：定时触发（准点 / 补跑）连续 3 次失败或超时，或钉住的连接已被删，就 `enabled=false` 并写
-    `paused_reason`；手动立即跑不进计数，成功清零。人重新打开开关清掉原因与计数。自动暂停的任务进「待处理」
-    （`sched:paused:`），通知一定弹。
-  - **跑的时候不让电脑睡**：只在一次运行期间阻止空闲睡眠（macOS `caffeinate -i -w <Mesa pid>`、Windows
-    `SetThreadExecutionState`），不唤醒睡着的电脑，合盖照样睡；不加设置项。
-  - **跨轮记忆**（仅通用巡检）：`.ccode/watch/<任务id>/memory.md`。隔离树那份是活的、每轮接着记；项目那份比它新
-    （人改过 / 隔离目录重建）才播种进去；采纳时带回项目（不进验收清单）；人在「⋯ → 跨轮记忆」改的同时写两份。
-    删任务时整个 `.ccode/watch/<任务id>/` 一起删（不再只限雷达）。
-  - **带附言运行**：⋯ 菜单「带附言运行…」，附言只进这一轮任务说明（≤500 字，记在历史行），不改任务与技能。
-  - **一句话建任务**：新建巡检技能时弹层不再问周期；种子 prompt 请 AI 顺带把周期建议写进
-    `.ccode/drafts/watch-<id>.schedule.json`（闭集校验，不合法当没有），落盘弹层预填建议、人可改后才建任务。
-  - **跨项目总览**：不恢复全局定时任务页（2026-09-13 移除），只在项目「定时任务」页签底部折叠列出其他项目的任务
-    （只读，点一行去那个项目）。列表行显示「下次 …」（`ScheduleDto.next_run_at` 现算）。
-  - 待处理新类别「定时任务」（`sched:` 前缀）：其他巡检有新产物待评审（只认 `noop === false` 的新记录）/ 自动暂停；
-    文献雷达新命中仍走 `lit:`。不进一键已读（暂停是故障类）。
-  - 不做：cron 表达式、云端 / 关机也跑、事件触发（GitHub / webhook）、自动开 PR / 自动合并、任务自己改自己的计划。
-  - **使用收口（同日二批，用户「不放单独一页了，6 条全做」）**：不开侧栏页，总览只在项目页签底部。叫法统一「定时任务」
-    （按钮「＋ 新建定时任务」、弹层「新建定时任务」、卡头「定时任务（N）」），「巡检技能」只指技能。新建默认种类按工作方式
-    （`defaultScheduleKind`：科研文献雷达，其他新建巡检技能且不列文献雷达）；空态示例 `scheduleExamples(mode)`；运行配置 / 模型
-    收进「更多设置」；任务行不再显示技能目录名与行内连接下拉（钉了连接才写名字、已删写「原连接已删除」），第二行「上次 …」
-    （`lastRunBrief` / `lastRunAction`：待评审给去评审，否则有后台对话给看过程）；新建或落盘成功后行下提示试跑（雷达没关键词先提示订）。
-  - **工作台摘要（同日三批）**：右栏「定时任务」只列正在跑 / 上次失败未暂停 / 24 小时内要跑的前三条；暂停与待评审只在待处理，细则 agent-workbench.md §4.3。
 - **评审与采纳口径（2026-10-13 定稿，修「每次评审都列旧命中、排除无效果、已采纳仍可再采纳」）**：
   - 评审页只列**这次运行的新命中**＝冻结 `after` 条目 − `initial` 条目（`watch_review::new_hits_of`）；
     收件箱在按日程复用的隔离树里只增不改，不扣旧条目的话每次评审都把以前各次命中再列一遍。

@@ -342,7 +342,25 @@ fn is_generic_greeting(text: &str) -> bool {
     )
 }
 
+/// Mesa 在项目里开对话时塞在第一句前面的项目上下文包（前端 project-context.ts composeLaunchPrompt / splitLaunchPrompt 镜像）：
+/// 不是人话。列表标题与自动起名只认分隔（单独一行 ----）后面你说的；只有包没有分隔的整条返回空串。
+/// 只认默认包头，自定义模板的包头认不出，照旧当人话
+pub(crate) fn strip_mesa_launch_pack(text: &str) -> &str {
+    if !text.trim_start().starts_with("你正在项目「") {
+        return text;
+    }
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        offset += line.len();
+        if line.trim() == "----" {
+            return text[offset..].trim_start();
+        }
+    }
+    ""
+}
+
 fn usable_title(text: &str) -> Option<String> {
+    let text = strip_mesa_launch_pack(text);
     let title = truncate_title(&unwrap_pasted_content(&unwrap_prompt_tags(text)));
     let lower = title.trim().to_ascii_lowercase();
     let generic = matches!(
@@ -5259,6 +5277,8 @@ pub(crate) fn migrate_session_meta(conn: &Connection) {
         "internal INTEGER NOT NULL DEFAULT 0",
         "title_source TEXT",
         "project_id TEXT",
+        "launch_model TEXT",
+        "launch_effort TEXT",
     ] {
         let _ = conn.execute_batch(&format!("ALTER TABLE session_meta ADD COLUMN {col}"));
     }
@@ -6097,20 +6117,43 @@ pub(crate) fn rewrite_session_profile_ids(rewrites: &[(String, String)]) -> Resu
     Ok(())
 }
 
+/// 记下这段对话用哪条连接启动的；`launch` 带上时一并记这次启动的模型与思考档（空串 = 用连接 / CLI 默认）。
+/// 接着聊时输入框默认按它来（session_resume_config），会话文件里读得到的以文件为准
 pub(crate) fn set_session_profile(
     agent: &str,
     session_id: &str,
     profile_id: &str,
+    launch: Option<(&str, &str)>,
 ) -> Result<(), String> {
     let conn = open_db()?;
-    conn.execute(
-        "INSERT INTO session_meta(agent, session_id, profile_id) VALUES(?1, ?2, ?3)
-         ON CONFLICT(agent, session_id) DO UPDATE SET profile_id=?3",
-        params![agent, session_id, profile_id],
-    )
-    .map_err(|e| format!("写入会话连接归属失败: {e}"))?;
+    set_session_profile_at(&conn, agent, session_id, profile_id, launch)?;
     invalidate_scan_cache();
     Ok(())
+}
+
+fn set_session_profile_at(
+    conn: &Connection,
+    agent: &str,
+    session_id: &str,
+    profile_id: &str,
+    launch: Option<(&str, &str)>,
+) -> Result<(), String> {
+    match launch {
+        Some((model, effort)) => conn.execute(
+            "INSERT INTO session_meta(agent, session_id, profile_id, launch_model, launch_effort)
+             VALUES(?1, ?2, ?3, NULLIF(?4, ''), NULLIF(?5, ''))
+             ON CONFLICT(agent, session_id) DO UPDATE SET profile_id=?3,
+               launch_model=COALESCE(NULLIF(?4, ''), launch_model), launch_effort=NULLIF(?5, '')",
+            params![agent, session_id, profile_id, model.trim(), effort.trim()],
+        ),
+        None => conn.execute(
+            "INSERT INTO session_meta(agent, session_id, profile_id) VALUES(?1, ?2, ?3)
+             ON CONFLICT(agent, session_id) DO UPDATE SET profile_id=?3",
+            params![agent, session_id, profile_id],
+        ),
+    }
+    .map(|_| ())
+    .map_err(|e| format!("写入会话连接归属失败: {e}"))
 }
 
 #[tauri::command]
@@ -6118,8 +6161,61 @@ pub fn set_session_profile_command(
     agent: String,
     session_id: String,
     profile_id: String,
+    model: Option<String>,
+    effort: Option<String>,
 ) -> Result<(), String> {
-    set_session_profile(&agent, &session_id, &profile_id)
+    let launch = model
+        .as_deref()
+        .map(|m| (m, effort.as_deref().unwrap_or("")));
+    set_session_profile(&agent, &session_id, &profile_id, launch)
+}
+
+/// 接着聊一段对话时默认用的模型与思考档（2026-10-24 用户：点开一段对话，输入框底部应是它之前用的配置）
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionResumeConfigDto {
+    pub model: Option<String>,
+    pub effort: Option<String>,
+}
+
+/// 模型：会话文件里最后一轮实际用的（CLI 里中途 /model 换过的也算），读不到用 Mesa 启动时记下的；
+/// 思考档：Codex 文件每轮都记，别家只有 Mesa 启动时记下的。连接不在这里：列表里的 profileId 已经带着
+fn session_resume_config_at(
+    conn: &Connection,
+    agent: &str,
+    session_id: &str,
+    file_path: &str,
+) -> SessionResumeConfigDto {
+    let (launch_model, launch_effort) = conn
+        .query_row(
+            "SELECT launch_model, launch_effort FROM session_meta WHERE agent=?1 AND session_id=?2",
+            params![agent, session_id],
+            |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?)),
+        )
+        .unwrap_or((None, None));
+    let file_effort = if agent == "codex" {
+        crate::usage::last_codex_effort(file_path)
+    } else {
+        None
+    };
+    SessionResumeConfigDto {
+        model: crate::usage::last_session_model(agent, file_path, session_id).or(launch_model),
+        effort: file_effort.or(launch_effort),
+    }
+}
+
+#[tauri::command]
+pub async fn session_resume_config(
+    agent: String,
+    session_id: String,
+    file_path: String,
+) -> Result<SessionResumeConfigDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = open_db()?;
+        Ok(session_resume_config_at(&conn, &agent, &session_id, &file_path))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 pub(crate) fn release_session_claim_impl(claim_id: &str) {
@@ -10677,6 +10773,81 @@ mod tests {
         apply_meta(&mut merged, &HashMap::new(), &meta);
         assert_eq!(merged[0].summary.as_deref(), Some("AI 摘要内容"));
         drop(conn);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn mesa_launch_pack_is_not_a_title() {
+        let composed = "你正在项目「测试项目」中工作。\n工作方式：科研\n\n----\n\n帮我整理 HER 硼化物文献";
+        assert_eq!(strip_mesa_launch_pack(composed), "帮我整理 HER 硼化物文献");
+        assert_eq!(usable_title(composed).as_deref(), Some("帮我整理 HER 硼化物文献"));
+        // 只发了包（2026-10-24 前项目 ＋ 新对话会这样自己开跑）：不当标题
+        assert_eq!(strip_mesa_launch_pack("你正在项目「测试项目」中工作。\n工作方式：科研"), "");
+        assert_eq!(usable_title("你正在项目「测试项目」中工作。\n工作方式：科研"), None);
+        // 别的话原样
+        assert_eq!(strip_mesa_launch_pack("看看这个\n----\n分隔"), "看看这个\n----\n分隔");
+    }
+
+    #[test]
+    fn resume_config_prefers_file_model_and_falls_back_to_launch_record() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE session_meta(
+              agent TEXT NOT NULL, session_id TEXT NOT NULL,
+              pinned INTEGER NOT NULL DEFAULT 0, archived INTEGER NOT NULL DEFAULT 0,
+              custom_title TEXT, tags TEXT NOT NULL DEFAULT '[]',
+              note TEXT, pinned_at TEXT,
+              PRIMARY KEY(agent, session_id));",
+        )
+        .unwrap();
+        migrate_session_meta(&conn);
+        let dir = std::env::temp_dir().join(format!("ccode-resume-config-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Claude：文件里最后一轮的模型说了算（中途换过的也算），Claude 自补的 <synthetic> 不算；思考档只有启动记录
+        let claude = dir.join("c1.jsonl");
+        std::fs::write(
+            &claude,
+            [
+                r#"{"type":"assistant","sessionId":"c1","timestamp":"2026-10-23T01:00:00Z","message":{"model":"glm-4.7","usage":{"input_tokens":1,"output_tokens":1}}}"#,
+                r#"{"type":"assistant","sessionId":"c1","timestamp":"2026-10-23T02:00:00Z","message":{"model":"glm-5.3","usage":{"input_tokens":1,"output_tokens":1}}}"#,
+                r#"{"type":"assistant","sessionId":"c1","timestamp":"2026-10-23T03:00:00Z","message":{"model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0}}}"#,
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+        set_session_profile_at(&conn, "claude-code", "c1", "p-glm", Some(("glm-4.7", "high"))).unwrap();
+        let cfg = session_resume_config_at(&conn, "claude-code", "c1", claude.to_str().unwrap());
+        assert_eq!(cfg.model.as_deref(), Some("glm-5.3"));
+        assert_eq!(cfg.effort.as_deref(), Some("high"));
+
+        // 再启动一次用默认思考档：记成「默认」；模型空串不覆盖上次记下的
+        set_session_profile_at(&conn, "claude-code", "c1", "p-glm", Some(("", ""))).unwrap();
+        let cfg = session_resume_config_at(&conn, "claude-code", "c1", "/no/such/file.jsonl");
+        assert_eq!(cfg.model.as_deref(), Some("glm-4.7"), "文件读不到用启动记录");
+        assert_eq!(cfg.effort, None);
+
+        // Codex：思考档以 rollout 每轮的 turn_context 为准
+        let codex = dir.join("x1.jsonl");
+        std::fs::write(
+            &codex,
+            [
+                r#"{"type":"turn_context","payload":{"model":"gpt-5.5","effort":"medium"}}"#,
+                r#"{"type":"turn_context","payload":{"model":"gpt-5.5","effort":"xhigh"}}"#,
+                r#"{"type":"event_msg","timestamp":"2026-10-23T01:00:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":5,"output_tokens":1}}}}"#,
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+        set_session_profile_at(&conn, "codex", "x1", "p-codex", Some(("gpt-5.4", "low"))).unwrap();
+        let cfg = session_resume_config_at(&conn, "codex", "x1", codex.to_str().unwrap());
+        assert_eq!(cfg.model.as_deref(), Some("gpt-5.5"));
+        assert_eq!(cfg.effort.as_deref(), Some("xhigh"));
+
+        // 旧调用只记连接：不动已记的模型
+        set_session_profile_at(&conn, "codex", "x1", "p-codex-2", None).unwrap();
+        let cfg = session_resume_config_at(&conn, "codex", "x1", "/no/such/file.jsonl");
+        assert_eq!(cfg.model.as_deref(), Some("gpt-5.4"));
         std::fs::remove_dir_all(&dir).ok();
     }
 

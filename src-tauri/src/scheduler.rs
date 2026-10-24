@@ -3,13 +3,8 @@
 //! 隔离树先从主仓播种订阅/台账，产物经只读评审后由用户「采纳进主仓」，不自动合并。
 //!
 //! 存储：应用配置目录 ccode/schedules.json（snake_case）；给前端的 DTO 用 camelCase。
-//! due 判定按本地时间算「最近一次应跑时刻」，last_run_at / last_slot_at 都早于它即 due——应用关闭错过
-//! 的时间点在启动后第一个 tick 自动补跑一次（多次漏跑只补一次，coalesce），更早错过的几次记一条「已跳过」。
-//!
-//! 2026-10-23「定时任务全部完善」：周期加工作日 / 每 N 小时 / 仅手动；跳过也记账（应用没开、电脑睡着、
-//! 上一轮还没评审、没有关键词）；补跑告诉 Agent 原定时刻；历史行记会话 id 可看过程；无新内容不打扰；
-//! 积压闸门；连续失败或连接被删自动暂停；跑的时候不让电脑睡；通用巡检的跨轮记忆；立即跑可带附言；
-//! 单次上限可调；AI 草稿顺带建议周期。
+//! due 判定按本地时间算「最近一次应跑时刻」，last_run_at 早于它即 due——应用关闭错过
+//! 的时间点在启动后第一个 tick 自动补跑一次（多次漏跑只补一次，coalesce）。
 
 use chrono::{Datelike, Duration as ChronoDuration, Local, NaiveDate, NaiveDateTime};
 use serde::{Deserialize, Serialize};
@@ -21,21 +16,11 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 use tauri::Emitter;
 
-/// 定时任务单次预算默认值。v3.75 定 600s；2026-10-03 提高到 30 分钟——实测 GLM 跑 lit-watch
-/// （三路检索 + 去重 + 写文件）超 10 分钟，600s 在掐死健康任务。2026-10-23 起每任务可调
-/// （timeout_minutes，5–180 分钟），不填仍是 30 分钟。
-const DEFAULT_TIMEOUT_MINUTES: u32 = 30;
-const TIMEOUT_MINUTES_RANGE: std::ops::RangeInclusive<u32> = 5..=180;
-/// 「每 N 小时」只收 24 的因数：每天的时刻表一样，界面能说清「每 N 小时，在 :MM」
-const INTERVAL_HOURS_ALLOWED: &[u8] = &[1, 2, 3, 4, 6, 8, 12];
-/// 连续这么多次没跑成（失败 / 超时）就自动暂停，原因写在任务上
-const AUTO_PAUSE_AFTER_FAILURES: u32 = 3;
-/// 错过的次数只往回数这么多天（与 Claude 桌面版同口径：一周以前的不再提）
-const MISSED_LOOKBACK_DAYS: i64 = 7;
-/// 两次 tick 相隔超过这么久 = 电脑睡过（tick 间隔 60s）
-const SLEEP_GAP_MINUTES: i64 = 3;
-/// 立即跑附言的长度上限（字符）
-const NOTE_CAP: usize = 500;
+/// 单条任务执行超时：无头 CLI 巡检 10 分钟足够
+/// 定时任务单次预算。v3.75 定 600s；2026-10-03 提高到 30 分钟——实测 GLM 跑 lit-watch
+/// （三路检索 + 去重 + 写文件）超 10 分钟，600s 在掐死健康任务；定时任务是后台哨兵、
+/// 无人等它，超时只担防僵尸职责，放宽代价小（用户拍板方案 A，不做每任务可配）。
+const RUN_TIMEOUT: Duration = Duration::from_secs(1800);
 /// 调度 tick 间隔
 const TICK_INTERVAL: Duration = Duration::from_secs(60);
 /// tick 同时拉起的运行上限（2026-10-16 跨项目并行拍板）：不同项目的雷达并行跑、
@@ -51,18 +36,18 @@ const SUMMARY_CAP: usize = 2000;
 /// 任务 prompt 模板按技能分派：lit-watch 用文献巡检专用文案（一字不动），
 /// 其他技能用通用模板（技能自有规范为准，调度器不复制关键词/路径口径）
 const TASK_PROMPT_LIT_WATCH: &str = "请使用 {skill} 技能执行一次文献巡检：按 papers/watchlist.md 的订阅清单检索新文献，并按规范跑关联推荐通道，去重、精选后把命中追加到 notes/inbox.md。追加本次条目前必须先单独写一行 <!-- watch-run: YYYY-MM-DD -->（本次巡检的本地日期，上海时区），已有批次标记的旧条目不要改。免费全文按规范以 OpenAlex 的 best_oa_location.pdf_url、arXiv /pdf/ 直链或 .pdf 结尾直链为准，在结束前用 curl 下到项目根 papers/，文件名用标题，并确认以 %PDF- 开头；下载带硬时间盒：每篇 curl 加 --max-time 60，全部下载合计不超过 5 分钟，到点放弃、残文件删掉、题录留在 papers/watch-followup.md，同一链接不重试；出版商页、DOI 落地页和付费墙不要下。不要写 papers/included.md、notes/index.json 或 references.bib——雷达文献是项目的日常积累，精读与引文库由人发起检索/科研流程后才动。结束时输出三行以内的简报（检索了几条关键词/来源、关联推荐是否跑/命中几篇、新命中几篇、其中推荐几篇、哪些来源未达、免费全文下了几篇）。本任务由 Mesa 定时雷达自动触发。";
-const TASK_PROMPT_GENERIC: &str = "请使用 {skill} 技能在项目内执行一次定时巡检，按该技能的既定规范产出结果；这一轮没有新内容时不要改任何文件（Mesa 据此判断「无新内容」，不打扰用户）。结束时输出三行以内简报。本任务由 Mesa 定时雷达自动触发。";
+const TASK_PROMPT_GENERIC: &str = "请使用 {skill} 技能在项目内执行一次定时巡检，按该技能的既定规范产出结果，结束时输出三行以内简报。本任务由 Mesa 定时雷达自动触发。";
 
 // ===== 数据模型 =====
 
 /// 单次运行记录（存储/前端共用）。整体 camelCase 序列化（随 ScheduleDto 直出前端）；
 /// 多词字段带蛇形 alias 兼容读旧 schedules.json（历史上 started_at/run_id/isolation_path
 /// 以蛇形落盘，2026-10-03 修「isolationPath 从未到达前端」时统一驼峰并保留 alias）。
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RunRecord {
     pub at: String,
-    /// "ok" | "error" | "timeout" | "cancelled" | "skipped"（跳过也记账，2026-10-23）
+    /// "ok" | "error"
     pub status: String,
     /// 脱敏后截 2000 字符的简报/错误信息
     pub summary: String,
@@ -84,34 +69,10 @@ pub struct RunRecord {
     /// 隔离树产物是否已采纳进主仓；旧记录缺省 false。
     #[serde(default)]
     pub adopted: bool,
-    /// 这次运行的后台对话（agent + 会话 id）：历史行「看过程」据此打开只读回放；
-    /// 被历史引用的对话不进内部对话保留期清理（internal_sessions.rs）。
-    #[serde(default)]
-    pub agent: Option<String>,
-    #[serde(default, alias = "session_id")]
-    pub session_id: Option<String>,
-    /// 跑完了但没有新内容（雷达 0 条新命中 / 其他巡检没有可采纳的改动）：不弹通知、不进待处理
-    #[serde(default)]
-    pub noop: bool,
-    /// 这次对应的应跑时刻（本地时间 ISO，无时区）；手动跑为 None
-    #[serde(default, alias = "scheduled_for")]
-    pub scheduled_for: Option<String>,
-    /// "schedule" 准点 | "catchup" 补跑 | "manual" 立即跑；旧记录 None
-    #[serde(default)]
-    pub trigger: Option<String>,
-    /// 立即跑时用户附的一句话
-    #[serde(default)]
-    pub note: Option<String>,
-    /// 跳过原因代码（status=skipped）：missed_closed / missed_asleep / unreviewed / no_keywords
-    #[serde(default, alias = "skip_reason")]
-    pub skip_reason: Option<String>,
-    /// 同一原因连着跳过的次数（合并成一行，防历史被刷屏）
-    #[serde(default, alias = "skip_count")]
-    pub skip_count: Option<u32>,
 }
 
 /// 存储形态（schedules.json，snake_case）
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Schedule {
     pub id: String,
     pub name: String,
@@ -129,35 +90,16 @@ pub struct Schedule {
     /// 关联的流水线步骤名（步骤 name；未关联为 None）。serde default 兼容老 schedules.json
     #[serde(default)]
     pub linked_step: Option<String>,
-    /// "daily" | "weekly" | "weekdays"（周一到周五）| "hourly"（每 interval_hours 小时）| "manual"（只手动跑）
+    /// "daily" | "weekly"
     pub frequency: String,
     /// weekly 时 1-7（周一=1）；daily 忽略
     pub weekday: Option<u8>,
-    /// hourly 时有效：每天 0 点起每 N 小时一次，在 minute 分（N 取 24 的因数）；hour 忽略
-    #[serde(default)]
-    pub interval_hours: Option<u8>,
     pub hour: u8,
     pub minute: u8,
     pub enabled: bool,
     pub last_run_at: Option<String>,
     pub last_status: Option<String>,
     pub history: Vec<RunRecord>,
-    /// 最近一次已处理（跑过或记了跳过）的应跑时刻，本地时间 ISO（无时区）。
-    /// due 判定取它与 last_run_at 较晚者——跳过的时刻不再反复到点
-    #[serde(default)]
-    pub last_slot_at: Option<String>,
-    /// 上一轮还没评审时这一轮跳过。None = 按技能默认：文献雷达不跳（采纳可以乱序），其他巡检跳
-    #[serde(default)]
-    pub skip_if_unreviewed: Option<bool>,
-    /// 单次上限（分钟）；None = 30
-    #[serde(default)]
-    pub timeout_minutes: Option<u32>,
-    /// 自动暂停的原因（连续失败 / 连接已删）；人重新打开开关时清掉
-    #[serde(default)]
-    pub paused_reason: Option<String>,
-    /// 连续没跑成的次数（失败 / 超时；取消不算，成功清零）
-    #[serde(default)]
-    pub consecutive_failures: u32,
 }
 
 /// 前端 DTO（camelCase）
@@ -178,21 +120,12 @@ pub struct ScheduleDto {
     pub linked_step: Option<String>,
     pub frequency: String,
     pub weekday: Option<u8>,
-    pub interval_hours: Option<u8>,
     pub hour: u8,
     pub minute: u8,
     pub enabled: bool,
     pub last_run_at: Option<String>,
     pub last_status: Option<String>,
     pub history: Vec<RunRecord>,
-    /// 生效值（None 已按技能默认展开）
-    pub skip_if_unreviewed: bool,
-    /// 生效值（None 已展开为 30）
-    pub timeout_minutes: u32,
-    pub paused_reason: Option<String>,
-    pub consecutive_failures: u32,
-    /// 下一次应跑时刻（本地时间 ISO，无时区）；停用 / 仅手动为 None。list_schedules 现算
-    pub next_run_at: Option<String>,
 }
 
 impl From<Schedule> for ScheduleDto {
@@ -200,9 +133,6 @@ impl From<Schedule> for ScheduleDto {
         Self {
             running_run_id: None,
             queued: false,
-            skip_if_unreviewed: effective_skip_if_unreviewed(&s),
-            timeout_minutes: effective_timeout_minutes(&s),
-            next_run_at: None,
             id: s.id,
             name: s.name,
             project_root: s.project_root,
@@ -212,27 +142,14 @@ impl From<Schedule> for ScheduleDto {
             linked_step: s.linked_step,
             frequency: s.frequency,
             weekday: s.weekday,
-            interval_hours: s.interval_hours,
             hour: s.hour,
             minute: s.minute,
             enabled: s.enabled,
             last_run_at: s.last_run_at,
             last_status: s.last_status,
             history: s.history,
-            paused_reason: s.paused_reason,
-            consecutive_failures: s.consecutive_failures,
         }
     }
-}
-
-fn effective_skip_if_unreviewed(s: &Schedule) -> bool {
-    s.skip_if_unreviewed.unwrap_or(s.skill != "lit-watch")
-}
-
-fn effective_timeout_minutes(s: &Schedule) -> u32 {
-    s.timeout_minutes
-        .filter(|m| TIMEOUT_MINUTES_RANGE.contains(m))
-        .unwrap_or(DEFAULT_TIMEOUT_MINUTES)
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -248,14 +165,8 @@ pub struct CreateScheduleInput {
     pub linked_step: Option<String>,
     pub frequency: String,
     pub weekday: Option<u8>,
-    #[serde(default)]
-    pub interval_hours: Option<u8>,
     pub hour: u8,
     pub minute: u8,
-    #[serde(default)]
-    pub skip_if_unreviewed: Option<bool>,
-    #[serde(default)]
-    pub timeout_minutes: Option<u32>,
 }
 
 /// 更新补丁：字段全 Option（None = 不改）；profile_id/linked_step 用 Option<Option<String>>，
@@ -276,15 +187,9 @@ pub struct UpdateSchedulePatch {
     pub linked_step: Option<Option<String>>,
     pub frequency: Option<String>,
     pub weekday: Option<u8>,
-    #[serde(default)]
-    pub interval_hours: Option<u8>,
     pub hour: Option<u8>,
     pub minute: Option<u8>,
     pub enabled: Option<bool>,
-    #[serde(default)]
-    pub skip_if_unreviewed: Option<bool>,
-    #[serde(default)]
-    pub timeout_minutes: Option<u32>,
 }
 
 /// `scheduler-run-done` 事件载荷
@@ -299,10 +204,6 @@ struct RunDonePayload {
     status: String,
     summary: String,
     artifacts: Vec<String>,
-    /// 跑完但没有新内容：前端不弹通知
-    noop: bool,
-    /// 这次之后任务被自动暂停的原因（连续失败 / 连接已删）
-    auto_paused: Option<String>,
 }
 
 // ===== 存储 =====
@@ -355,7 +256,9 @@ pub(crate) fn delete_schedules_for_project(project_root: &Path) -> Result<usize,
         removed
     };
     for task in &removed {
-        crate::lit_watch::delete_schedule_subscriptions(&task.project_root, &task.id);
+        if task.skill == "lit-watch" {
+            crate::lit_watch::delete_schedule_subscriptions(&task.project_root, &task.id);
+        }
         purge_schedule_side_effects(task);
     }
     Ok(removed.len())
@@ -372,27 +275,6 @@ fn delete_schedules_for_project_at(store: &Path, project_root: &Path) -> Result<
         write_schedules_at(store, &list)?;
     }
     Ok(n)
-}
-
-/// 定时历史还引用着的后台对话（agent, 会话 id）：内部对话保留期清理跳过它们，「看过程」才打得开。
-/// 读不到 schedules.json 时返回空集（清理照旧按保留期走，不因此卡住）
-pub(crate) fn referenced_sessions() -> HashSet<(String, String)> {
-    let Ok(path) = schedules_path() else {
-        return HashSet::new();
-    };
-    let Ok(_g) = sched_lock() else {
-        return HashSet::new();
-    };
-    read_schedules_at(&path)
-        .map(|list| referenced_sessions_of(&list))
-        .unwrap_or_default()
-}
-
-fn referenced_sessions_of(list: &[Schedule]) -> HashSet<(String, String)> {
-    list.iter()
-        .flat_map(|t| t.history.iter())
-        .filter_map(|r| Some((r.agent.clone()?, r.session_id.clone()?)))
-        .collect()
 }
 
 /// 丢掉项目已经不在注册表里的定时任务。`registered` 读失败时不要调用——空表会清光全部任务。
@@ -522,110 +404,28 @@ fn at_hms(date: NaiveDate, hour: u8, minute: u8) -> Option<NaiveDateTime> {
     date.and_hms_opt(hour as u32, minute as u32, 0)
 }
 
-/// 周期：due 判定的全部输入（纯数据，测试直接构造）
-#[derive(Debug, Clone, Copy)]
-struct Cadence<'a> {
-    frequency: &'a str,
+/// 「最近一次应跑时刻」（本地时间）：daily = 今天 hour:minute（还没到则昨天）；
+/// weekly = 本周 weekday+hour:minute（还没到则上周）
+fn latest_due_moment(
+    frequency: &str,
     weekday: Option<u8>,
-    interval_hours: Option<u8>,
     hour: u8,
     minute: u8,
-}
-
-impl<'a> Cadence<'a> {
-    fn of(s: &'a Schedule) -> Self {
-        Self {
-            frequency: &s.frequency,
-            weekday: s.weekday,
-            interval_hours: s.interval_hours,
-            hour: s.hour,
-            minute: s.minute,
-        }
-    }
-
-    #[cfg(test)]
-    fn simple(frequency: &'a str, weekday: Option<u8>, hour: u8, minute: u8) -> Self {
-        Self {
-            frequency,
-            weekday,
-            interval_hours: None,
-            hour,
-            minute,
-        }
-    }
-}
-
-fn is_workday(date: NaiveDate) -> bool {
-    date.weekday().num_days_from_monday() < 5
-}
-
-/// 不晚于 now 的最近一个应跑时刻（本地时间）：daily = 今天 hour:minute（还没到则昨天）；
-/// weekly = 本周 weekday+hour:minute（还没到则上周）；weekdays = 最近一个周一到周五；
-/// hourly = 今天 0 点起每 N 小时的 :minute（还没到第一个则昨天最后一个）；manual 永远没有
-fn latest_slot(c: Cadence, now: NaiveDateTime) -> Option<NaiveDateTime> {
+    now: NaiveDateTime,
+) -> Option<NaiveDateTime> {
     let today = now.date();
-    match c.frequency {
-        "manual" => None,
-        "hourly" => {
-            let n = c
-                .interval_hours
-                .filter(|n| INTERVAL_HOURS_ALLOWED.contains(n))
-                .unwrap_or(1);
-            let mut best = None;
-            for h in (0..24u8).step_by(n as usize) {
-                let moment = at_hms(today, h, c.minute)?;
-                if moment <= now {
-                    best = Some(moment);
-                }
-            }
-            best.or_else(|| at_hms(today - ChronoDuration::days(1), 24 - n, c.minute))
-        }
-        "weekdays" => (0..8).find_map(|back| {
-            let date = today - ChronoDuration::days(back);
-            let moment = at_hms(date, c.hour, c.minute)?;
-            (is_workday(date) && moment <= now).then_some(moment)
-        }),
-        "weekly" => {
-            // weekday 1-7（周一=1）→ chrono num_days_from_monday 0-6
-            let target = (c.weekday.unwrap_or(1) as i64 - 1).clamp(0, 6);
-            let cur = today.weekday().num_days_from_monday() as i64;
-            let date = today + ChronoDuration::days(target - cur);
-            let moment = at_hms(date, c.hour, c.minute)?;
-            if moment > now {
-                at_hms(date - ChronoDuration::days(7), c.hour, c.minute)
-            } else {
-                Some(moment)
-            }
-        }
-        _ => {
-            let moment = at_hms(today, c.hour, c.minute)?;
-            if moment > now {
-                at_hms(today - ChronoDuration::days(1), c.hour, c.minute)
-            } else {
-                Some(moment)
-            }
-        }
+    let mut date = today;
+    if frequency == "weekly" {
+        // weekday 1-7（周一=1）→ chrono num_days_from_monday 0-6
+        let target = (weekday.unwrap_or(1) as i64 - 1).clamp(0, 6);
+        let cur = today.weekday().num_days_from_monday() as i64;
+        date = today + ChronoDuration::days(target - cur);
     }
-}
-
-/// 严格早于 slot 的上一个应跑时刻
-fn prev_slot(c: Cadence, slot: NaiveDateTime) -> Option<NaiveDateTime> {
-    latest_slot(c, slot - ChronoDuration::seconds(1))
-}
-
-/// 严格晚于 now 的下一个应跑时刻（列表「下次」显示用）：从一周多以后往回走
-fn next_slot(c: Cadence, now: NaiveDateTime) -> Option<NaiveDateTime> {
-    let mut slot = latest_slot(c, now + ChronoDuration::days(8))?;
-    if slot <= now {
-        return None;
+    let moment = at_hms(date, hour, minute)?;
+    if moment > now {
+        date = date - ChronoDuration::days(if frequency == "weekly" { 7 } else { 1 });
     }
-    while let Some(prev) = prev_slot(c, slot) {
-        if prev <= now {
-            break;
-        }
-        slot = prev;
-    }
-    Some(slot)
+    at_hms(date, hour, minute)
 }
 
 /// last_run_at（ISO UTC 字符串）→ 本地 NaiveDateTime；解析失败按「没跑过」处理（更安全的方向：补跑）
@@ -637,42 +437,8 @@ fn parse_last_run_local(last_run_at: Option<&str>) -> Option<NaiveDateTime> {
     })
 }
 
-const SLOT_FORMAT: &str = "%Y-%m-%dT%H:%M:%S";
-
-fn format_slot(slot: NaiveDateTime) -> String {
-    slot.format(SLOT_FORMAT).to_string()
-}
-
-fn parse_slot(text: Option<&str>) -> Option<NaiveDateTime> {
-    text.and_then(|t| NaiveDateTime::parse_from_str(t, SLOT_FORMAT).ok())
-}
-
-/// 已处理到哪个时刻：最近一次运行结束与最近一次记账（跑过或跳过）的应跑时刻取较晚者
-fn last_handled(s: &Schedule) -> Option<NaiveDateTime> {
-    let ran = parse_last_run_local(s.last_run_at.as_deref());
-    let slot = parse_slot(s.last_slot_at.as_deref());
-    match (ran, slot) {
-        (Some(a), Some(b)) => Some(a.max(b)),
-        (a, b) => a.or(b),
-    }
-}
-
-/// 到点了就返回这次的应跑时刻。last_handled 早于最近一次应跑时刻即 due；None（从没跑过）恒 due。
-/// 漏跑多次只算一次 due：跑一次后已处理时刻落到最新时刻之后，自然不再 due（coalesce）
-fn due_slot(
-    c: Cadence,
-    last_handled: Option<NaiveDateTime>,
-    now: NaiveDateTime,
-) -> Option<NaiveDateTime> {
-    let moment = latest_slot(c, now)?;
-    match last_handled {
-        Some(last) if last >= moment => None,
-        _ => Some(moment),
-    }
-}
-
-/// daily / weekly 的旧入口（测试沿用）
-#[cfg(test)]
+/// last_run 早于最近一次应跑时刻即 due；None（从没跑过）恒 due。
+/// 漏跑多天只算一次 due：跑一次后 last_run 落到最新时刻之后，自然不再 due（coalesce）
 fn is_due(
     frequency: &str,
     weekday: Option<u8>,
@@ -681,58 +447,12 @@ fn is_due(
     last_run_local: Option<NaiveDateTime>,
     now: NaiveDateTime,
 ) -> bool {
-    due_slot(Cadence::simple(frequency, weekday, hour, minute), last_run_local, now).is_some()
-}
-
-/// 这次补跑之前还错过了几次（只往回数一周；从没跑过的任务不算错过）
-fn missed_before(
-    c: Cadence,
-    slot: NaiveDateTime,
-    last_handled: Option<NaiveDateTime>,
-    now: NaiveDateTime,
-) -> u32 {
-    let Some(last) = last_handled else {
-        return 0;
+    let Some(moment) = latest_due_moment(frequency, weekday, hour, minute, now) else {
+        return false;
     };
-    let floor = now - ChronoDuration::days(MISSED_LOOKBACK_DAYS);
-    let mut count = 0;
-    let mut cur = slot;
-    while let Some(prev) = prev_slot(c, cur) {
-        if prev <= last || prev < floor || count >= 500 {
-            break;
-        }
-        count += 1;
-        cur = prev;
-    }
-    count
-}
-
-/// 这次到点是准点还是补跑：应跑时刻早于本次启动 = 应用没开；落在上一个 tick 之后、而两次 tick
-/// 隔了好几分钟 = 电脑睡过。排队等出来的晚到仍算准点。返回（触发方式, 错过原因）
-fn classify_trigger(
-    slot: NaiveDateTime,
-    app_started: NaiveDateTime,
-    prev_tick: Option<NaiveDateTime>,
-    now: NaiveDateTime,
-) -> (&'static str, Option<&'static str>) {
-    if slot < app_started {
-        return ("catchup", Some("missed_closed"));
-    }
-    if let Some(prev) = prev_tick {
-        if now - prev > ChronoDuration::minutes(SLEEP_GAP_MINUTES) && slot > prev {
-            return ("catchup", Some("missed_asleep"));
-        }
-    }
-    ("schedule", None)
-}
-
-fn skip_reason_text(code: &str) -> &'static str {
-    match code {
-        "missed_closed" => "应用没开",
-        "missed_asleep" => "电脑在睡眠",
-        "unreviewed" => "上一轮还没评审",
-        "no_keywords" => "还没有关键词",
-        _ => "没赶上",
+    match last_run_local {
+        Some(last) => last < moment,
+        None => true,
     }
 }
 
@@ -749,10 +469,8 @@ fn validate_fields(
     if !Path::new(&root).is_dir() {
         return Err(format!("项目目录不存在: {root}"));
     }
-    if !matches!(frequency, "daily" | "weekly" | "weekdays" | "hourly" | "manual") {
-        return Err(format!(
-            "frequency 必须是 daily / weekly / weekdays / hourly / manual: {frequency}"
-        ));
+    if frequency != "daily" && frequency != "weekly" {
+        return Err(format!("frequency 必须是 daily 或 weekly: {frequency}"));
     }
     if frequency == "weekly" {
         match weekday {
@@ -767,26 +485,6 @@ fn validate_fields(
         return Err(format!("minute 必须在 0-59: {minute}"));
     }
     Ok(root)
-}
-
-/// 周期之外的两项：每 N 小时只收 24 的因数；单次上限 5–180 分钟
-fn validate_extras(
-    frequency: &str,
-    interval_hours: Option<u8>,
-    timeout_minutes: Option<u32>,
-) -> Result<(), String> {
-    if frequency == "hourly" {
-        match interval_hours {
-            Some(n) if INTERVAL_HOURS_ALLOWED.contains(&n) => {}
-            _ => return Err("每 N 小时只能选 1、2、3、4、6、8、12".into()),
-        }
-    }
-    if let Some(m) = timeout_minutes {
-        if !TIMEOUT_MINUTES_RANGE.contains(&m) {
-            return Err("单次上限要在 5 到 180 分钟之间".into());
-        }
-    }
-    Ok(())
 }
 
 fn build_task_prompt(skill: &str) -> String {
@@ -830,7 +528,6 @@ fn create_schedule_at(path: &Path, input: CreateScheduleInput) -> Result<Schedul
         input.hour,
         input.minute,
     )?;
-    validate_extras(&input.frequency, input.interval_hours, input.timeout_minutes)?;
     let name = input
         .name
         .map(|n| n.trim().to_string())
@@ -852,15 +549,14 @@ fn create_schedule_at(path: &Path, input: CreateScheduleInput) -> Result<Schedul
             .linked_step
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty()),
-        interval_hours: (input.frequency == "hourly").then_some(input.interval_hours).flatten(),
         frequency: input.frequency,
         weekday: input.weekday,
         hour: input.hour,
         minute: input.minute,
         enabled: true,
-        skip_if_unreviewed: input.skip_if_unreviewed,
-        timeout_minutes: input.timeout_minutes,
-        ..Default::default()
+        last_run_at: None,
+        last_status: None,
+        history: Vec::new(),
     };
     let mut list = read_schedules_at(path)?;
     list.push(task.clone());
@@ -939,29 +635,13 @@ fn update_schedule_at(
     if let Some(weekday) = patch.weekday {
         task.weekday = Some(weekday);
     }
-    if let Some(n) = patch.interval_hours {
-        task.interval_hours = Some(n);
-    }
-    if task.frequency != "hourly" {
-        task.interval_hours = None;
-    }
     if let Some(hour) = patch.hour {
         task.hour = hour;
     }
     if let Some(minute) = patch.minute {
         task.minute = minute;
     }
-    if let Some(skip) = patch.skip_if_unreviewed {
-        task.skip_if_unreviewed = Some(skip);
-    }
-    if let Some(minutes) = patch.timeout_minutes {
-        // 0 = 回到默认 30 分钟
-        task.timeout_minutes = (minutes != 0).then_some(minutes);
-    }
     if let Some(enabled) = patch.enabled {
-        if enabled && !task.enabled {
-            reenable(task, Local::now().naive_local());
-        }
         task.enabled = enabled;
     }
     // 校验合并后的整体（如 daily→weekly 时必须已有合法 weekday）
@@ -972,31 +652,25 @@ fn update_schedule_at(
         task.hour,
         task.minute,
     )?;
-    validate_extras(&task.frequency, task.interval_hours, task.timeout_minutes)?;
     task.project_root = root;
     let task = task.clone();
     write_schedules_at(path, &list)?;
     Ok(task)
 }
 
-/// 人重新打开开关：清掉自动暂停的原因与失败计数；停用期间错过的时刻算处理过——
-/// 打开后从下一次到点开始跑，不补跑也不记「错过」（想马上跑点立即跑）
-fn reenable(task: &mut Schedule, now: NaiveDateTime) {
-    task.paused_reason = None;
-    task.consecutive_failures = 0;
-    if let Some(slot) = latest_slot(Cadence::of(task), now) {
-        task.last_slot_at = Some(format_slot(slot));
-    }
-}
-
 /// 跑一次后回填 last_run_at/last_status/history（新的在前，只留 20 条）并原子写。
-/// 返回这次新触发的自动暂停原因（前端据此弹通知、收件箱据 paused_reason 出条目）
+/// new_entries 仅 lit-watch 类任务成功时才有值（超时/失败由调用方传 None）
 fn record_run(
     id: &str,
-    rec: RunRecord,
-    slot: Option<NaiveDateTime>,
-    force_pause: Option<String>,
-) -> Result<Option<String>, String> {
+    status: &str,
+    summary: &str,
+    new_entries: Option<u32>,
+    started_at: String,
+    finished_at: String,
+    artifacts: Vec<String>,
+    run_id: Option<String>,
+    isolation_path: Option<String>,
+) -> Result<(), String> {
     let _g = sched_lock()?;
     let path = schedules_path()?;
     let mut list = read_schedules_at(&path)?;
@@ -1004,144 +678,26 @@ fn record_run(
         .iter_mut()
         .find(|t| t.id == id)
         .ok_or_else(|| format!("定时任务不存在: {id}"))?;
-    let paused = apply_run_record(task, rec, slot, force_pause);
-    write_schedules_at(&path, &list)?;
-    Ok(paused)
-}
-
-/// 已处理时刻只往后推
-fn bump_slot(task: &mut Schedule, slot: NaiveDateTime) {
-    if parse_slot(task.last_slot_at.as_deref()).is_none_or(|cur| cur < slot) {
-        task.last_slot_at = Some(format_slot(slot));
-    }
-}
-
-fn first_line(text: &str, max: usize) -> String {
-    let line = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
-    let mut out: String = line.chars().take(max).collect();
-    if line.chars().count() > max {
-        out.push('…');
-    }
-    out
-}
-
-/// record_run 的纯逻辑（单测钉住）：回填、失败计数、自动暂停。
-/// 手动「立即跑」不进失败计数（人在场调试，不该把任务停掉），成功一律清零。
-fn apply_run_record(
-    task: &mut Schedule,
-    rec: RunRecord,
-    slot: Option<NaiveDateTime>,
-    force_pause: Option<String>,
-) -> Option<String> {
-    task.last_run_at = Some(rec.at.clone());
-    task.last_status = Some(rec.status.clone());
-    if let Some(slot) = slot {
-        bump_slot(task, slot);
-    }
-    let counted = rec.trigger.as_deref() != Some("manual");
-    match rec.status.as_str() {
-        "ok" => task.consecutive_failures = 0,
-        "error" | "timeout" if counted => task.consecutive_failures += 1,
-        _ => {}
-    }
-    let reason = force_pause.or_else(|| {
-        (task.consecutive_failures >= AUTO_PAUSE_AFTER_FAILURES).then(|| {
-            format!(
-                "连续 {} 次没跑成，已自动暂停。最后一次：{}",
-                task.consecutive_failures,
-                first_line(&rec.summary, 80)
-            )
-        })
-    });
-    let paused = match reason {
-        Some(reason) if task.enabled => {
-            task.enabled = false;
-            task.paused_reason = Some(reason.clone());
-            Some(reason)
-        }
-        _ => None,
-    };
-    task.history.insert(0, rec);
-    task.history.truncate(HISTORY_CAP);
-    paused
-}
-
-/// 记一次跳过（到点没跑）。handled = 这个时刻算处理过（不再反复到点）；
-/// 没有关键词的雷达不算处理过——订上关键词后下一个 tick 就接着跑。
-fn record_skip(
-    id: &str,
-    code: &str,
-    slot: NaiveDateTime,
-    count: u32,
-    handled: bool,
-) -> Result<(), String> {
-    let _g = sched_lock()?;
-    let path = schedules_path()?;
-    let mut list = read_schedules_at(&path)?;
-    let Some(task) = list.iter_mut().find(|t| t.id == id) else {
-        return Ok(());
-    };
-    if apply_skip(task, code, slot, count, handled, &crate::sessions::now_iso()) {
-        write_schedules_at(&path, &list)?;
-    }
-    Ok(())
-}
-
-/// record_skip 的纯逻辑：同一原因连着跳过合并成一行（次数累加），同一时刻重复记账不变。
-/// 返回是否改了任务。
-fn apply_skip(
-    task: &mut Schedule,
-    code: &str,
-    slot: NaiveDateTime,
-    count: u32,
-    handled: bool,
-    now_iso: &str,
-) -> bool {
-    let before = task.last_slot_at.clone();
-    if handled {
-        bump_slot(task, slot);
-    }
-    let slot_text = format_slot(slot);
-    if let Some(top) = task.history.first_mut() {
-        if top.status == "skipped" && top.skip_reason.as_deref() == Some(code) {
-            if top.scheduled_for.as_deref() == Some(slot_text.as_str()) {
-                return task.last_slot_at != before;
-            }
-            top.skip_count = Some(top.skip_count.unwrap_or(1) + count.max(1));
-            top.at = now_iso.to_string();
-            top.scheduled_for = Some(slot_text);
-            return true;
-        }
-    }
+    let at = crate::sessions::now_iso();
+    task.last_run_at = Some(at.clone());
+    task.last_status = Some(status.to_string());
     task.history.insert(
         0,
         RunRecord {
-            at: now_iso.to_string(),
-            status: "skipped".into(),
-            summary: format!("已跳过：{}", skip_reason_text(code)),
-            scheduled_for: Some(slot_text),
-            skip_reason: Some(code.to_string()),
-            skip_count: Some(count.max(1)),
-            ..Default::default()
+            at: at.clone(),
+            status: status.to_string(),
+            summary: summary.to_string(),
+            new_entries,
+            started_at: Some(started_at),
+            finished_at: Some(finished_at),
+            artifacts,
+            run_id,
+            isolation_path,
+            adopted: false,
         },
     );
     task.history.truncate(HISTORY_CAP);
-    true
-}
-
-/// 上一轮还有没评审的产物：最近一次成功运行有隔离产物、没采纳、也不是「无新内容」。
-/// 只认 2026-10-23 之后记的运行（带 trigger）：之前的记录没算过「无新内容」，升级后不拿它们拦人
-fn has_unreviewed(task: &Schedule) -> bool {
-    task.history
-        .iter()
-        .find(|r| r.status == "ok")
-        .is_some_and(|r| {
-            r.trigger.is_some()
-                && r.isolation_path.is_some()
-                && r.run_id.is_some()
-                && !r.adopted
-                && !r.noop
-        })
+    write_schedules_at(&path, &list)
 }
 
 /// 追踪任务时间窗内写入的项目产物。只返回项目根内的文件，避免把密钥/绝对路径
@@ -1484,143 +1040,6 @@ pub(crate) fn seed_watch_isolation(project_root: &Path, isolation: &Path) -> Res
     merge_seen_into_isolation(project_root, isolation)
 }
 
-// ===== 跨轮记忆（通用巡检技能；2026-10-23） =====
-//
-// 每条任务一份 `.ccode/watch/<任务id>/memory.md`（与雷达订阅同目录，gitignored）。隔离树里那份是
-// 活的：每轮在它上面接着记，没采纳也不丢；项目里那份在人「采纳进项目」时更新，人在界面改的写项目
-// 那份。播种：项目那份比隔离那份新（人改过 / 隔离目录重建）才拷进去。
-
-fn memory_rel(id: &str) -> Result<String, String> {
-    if !schedule_id_ok(id) {
-        return Err("无效的任务编号".into());
-    }
-    Ok(format!(".ccode/watch/{id}/memory.md"))
-}
-
-fn modified(path: &Path) -> Option<std::time::SystemTime> {
-    fs::symlink_metadata(path)
-        .ok()
-        .filter(|m| m.is_file())
-        .and_then(|m| m.modified().ok())
-}
-
-/// 项目那份比隔离那份新（或隔离没有）才拷进隔离树
-fn seed_memory(project_root: &Path, isolation: &Path, id: &str) -> Result<(), String> {
-    let rel = memory_rel(id)?;
-    let main = modified(&project_root.join(&rel));
-    let iso = modified(&isolation.join(&rel));
-    match (main, iso) {
-        (Some(m), Some(i)) if m <= i => Ok(()),
-        (Some(_), _) => copy_watch_rel(project_root, isolation, &rel, true).map(|_| ()),
-        (None, _) => Ok(()),
-    }
-}
-
-/// 采纳时把隔离那份带回项目（内容相同不写）
-fn adopt_memory(isolation: &Path, project_root: &Path, id: &str) -> Result<bool, String> {
-    let rel = memory_rel(id)?;
-    let Ok(text) = fs::read_to_string(isolation.join(&rel)) else {
-        return Ok(false);
-    };
-    if fs::read_to_string(project_root.join(&rel)).ok().as_deref() == Some(text.as_str()) {
-        return Ok(false);
-    }
-    let dest = watch_dest_checked(project_root, &rel)?;
-    crate::profiles::atomic_write(&dest, &text)?;
-    Ok(true)
-}
-
-/// 给通用巡检的任务说明追加：记忆文件在哪、记什么
-fn memory_prompt_line(isolation: &Path, id: &str) -> Option<String> {
-    let rel = memory_rel(id).ok()?;
-    let path = crate::paths::strip_verbatim(isolation.join(rel));
-    Some(format!(
-        "\n\n跨轮记忆：{}。开始前先读它（没有就是第一次跑）；结束前把以后各轮还用得上的内容更新进去——已经处理过的条目标识、对比用的基线数字、还要跟进的事。只记这些，控制在 200 行以内，不写这一轮的流水账。",
-        path.display()
-    ))
-}
-
-/// 任务的隔离目录（与 schedule_isolation / purge 同一拼接规则）；不建
-fn isolation_dir_of(task: &Schedule) -> Option<PathBuf> {
-    let repo_name = Path::new(&task.project_root)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("project");
-    let path = crate::workspaces::watch_worktrees_root()
-        .ok()?
-        .join(repo_name)
-        .join(&task.id);
-    path.is_dir().then_some(path)
-}
-
-fn find_schedule(id: &str) -> Result<Schedule, String> {
-    let _g = sched_lock()?;
-    read_schedules_at(&schedules_path()?)?
-        .into_iter()
-        .find(|t| t.id == id)
-        .ok_or_else(|| format!("定时任务不存在: {id}"))
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ScheduleMemoryDto {
-    pub text: String,
-    /// 读的是哪一份：isolation = 最近一轮巡检自己记的（还没采纳），project = 项目里那份
-    pub source: String,
-    pub exists: bool,
-}
-
-/// 读跨轮记忆：两份里较新的那份
-#[tauri::command]
-pub fn schedule_memory_read(id: String) -> Result<ScheduleMemoryDto, String> {
-    let task = find_schedule(&id)?;
-    let rel = memory_rel(&id)?;
-    let root = gated_project_root(&task.project_root)?;
-    let main = root.join(&rel);
-    let iso = isolation_dir_of(&task).map(|d| d.join(&rel));
-    let use_iso = match (&iso, modified(&main)) {
-        (Some(p), Some(m)) => modified(p).is_some_and(|i| i > m),
-        (Some(p), None) => modified(p).is_some(),
-        _ => false,
-    };
-    let (path, source) = if use_iso {
-        (iso.unwrap_or(main), "isolation")
-    } else {
-        (main, "project")
-    };
-    match fs::read_to_string(&path) {
-        Ok(text) => Ok(ScheduleMemoryDto {
-            text,
-            source: source.into(),
-            exists: true,
-        }),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(ScheduleMemoryDto {
-            text: String::new(),
-            source: "project".into(),
-            exists: false,
-        }),
-        Err(e) => Err(format!("读取跨轮记忆失败：{e}")),
-    }
-}
-
-/// 人改跨轮记忆：写项目那份，隔离目录在就一并写（下一轮从人改过的接着记）
-#[tauri::command]
-pub fn schedule_memory_write(id: String, text: String) -> Result<(), String> {
-    if text.len() > 256 * 1024 {
-        return Err("跨轮记忆超过 256 KB，先删掉些旧内容".into());
-    }
-    let task = find_schedule(&id)?;
-    let rel = memory_rel(&id)?;
-    let root = gated_project_root(&task.project_root)?;
-    let dest = watch_dest_checked(&root, &rel)?;
-    crate::profiles::atomic_write(&dest, &text)?;
-    if let Some(iso) = isolation_dir_of(&task) {
-        let dest = watch_dest_checked(&iso, &rel)?;
-        crate::profiles::atomic_write(&dest, &text)?;
-    }
-    Ok(())
-}
-
 /// 文献雷达这次跑只看这一份订阅。空清单也写入，巡检据此停下来，
 /// 不回退去读项目根那份已废弃的共享 watchlist。
 pub(crate) fn seed_schedule_watchlist(
@@ -1759,12 +1178,6 @@ fn adopt_watch_run_sync(app: tauri::AppHandle, run_id: String) -> Result<Vec<Str
             }
         }
     }
-    // 通用巡检的跨轮记忆跟着采纳回到项目（不进验收清单：它是 Mesa 的内部台账，不是交付物）
-    if schedule.skill != "lit-watch" {
-        if let Err(e) = adopt_memory(&isolation, &project, &schedule.id) {
-            crate::logbuf::record("warn", "scheduler", &format!("跨轮记忆没带回项目：{e}"));
-        }
-    }
     let fact = crate::projects::AcceptanceLogEntry {
         goal_id: String::new(),
         goal_name: schedule.skill.clone(),
@@ -1852,155 +1265,41 @@ fn headless_write_block_reason(agent: &str) -> Option<String> {
 
 // ===== 执行 =====
 
-/// 一次运行的来由：准点 / 补跑 / 手动，以及应跑时刻、之前错过几次、附言
-#[derive(Debug, Clone, Default)]
-struct RunContext {
-    /// "schedule" | "catchup" | "manual"
-    trigger: String,
-    slot: Option<NaiveDateTime>,
-    missed: u32,
-    missed_reason: Option<&'static str>,
-    note: Option<String>,
-}
-
-impl RunContext {
-    fn manual(note: Option<String>) -> Self {
-        Self {
-            trigger: "manual".into(),
-            note,
-            ..Default::default()
-        }
-    }
-}
-
-fn human_time(t: NaiveDateTime) -> String {
-    t.format("%m月%d日 %H:%M").to_string()
-}
-
-/// 最近一次成功运行的结束时刻（本地）
-fn last_ok_local(task: &Schedule) -> Option<NaiveDateTime> {
-    task.history
-        .iter()
-        .find(|r| r.status == "ok")
-        .and_then(|r| parse_last_run_local(r.finished_at.as_deref().or(Some(r.at.as_str()))))
-}
-
-/// 追加在任务说明后的「本轮时间」与附言（补跑时告诉 Agent 原定时刻；Claude 桌面版只建议用户
-/// 自己在提示词里写护栏，这里由 Mesa 直接写进去）
-fn run_context_prompt(
-    ctx: &RunContext,
-    now: NaiveDateTime,
-    last_ok: Option<NaiveDateTime>,
-) -> String {
-    let mut out = String::from("\n\n【本轮时间】");
-    match (ctx.trigger.as_str(), ctx.slot) {
-        ("catchup", Some(slot)) => out.push_str(&format!(
-            "这是补跑：原定 {}，实际 {} 才开始（{}）。",
-            human_time(slot),
-            human_time(now),
-            skip_reason_text(ctx.missed_reason.unwrap_or("missed"))
-        )),
-        ("schedule", Some(slot)) => out.push_str(&format!(
-            "原定 {}，实际 {} 开始。",
-            human_time(slot),
-            human_time(now)
-        )),
-        _ => out.push_str(&format!("这是用户手动立即跑，开始于 {}。", human_time(now))),
-    }
-    match last_ok {
-        Some(t) => out.push_str(&format!(
-            "上一次成功运行在 {}；技能规范没另定时间窗时，以它为起点取新内容。",
-            human_time(t)
-        )),
-        None => out.push_str("这是第一次成功运行。"),
-    }
-    if let Some(note) = ctx.note.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
-        out.push_str("\n\n【这次的附加说明（用户写的）】");
-        out.push_str(note);
-    }
-    out
-}
-
-// ===== 跑的时候不让电脑睡（2026-10-23） =====
-
-/// 只在一次定时运行期间阻止系统空闲睡眠：macOS 起 caffeinate（-w 绑 Mesa 进程，Mesa 退了它也退），
-/// Windows 用 SetThreadExecutionState（只对调用线程生效——execute_one 整轮在同一个阻塞线程上）。
-/// 合盖、手动睡眠照样会睡；也不会把睡着的电脑叫醒。
-struct AwakeGuard {
-    #[cfg(target_os = "macos")]
-    child: Option<std::process::Child>,
-}
-
-impl AwakeGuard {
-    #[cfg(target_os = "macos")]
-    fn hold() -> Self {
-        let mut cmd = crate::process::background_command("/usr/bin/caffeinate");
-        cmd.args(["-i", "-w", &std::process::id().to_string()])
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
-        Self {
-            child: cmd.spawn().ok(),
-        }
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    fn hold() -> Self {
-        #[cfg(windows)]
-        unsafe {
-            use windows_sys::Win32::System::Power::{
-                SetThreadExecutionState, ES_CONTINUOUS, ES_SYSTEM_REQUIRED,
-            };
-            SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED);
-        }
-        Self {}
-    }
-}
-
-impl Drop for AwakeGuard {
-    fn drop(&mut self) {
-        #[cfg(target_os = "macos")]
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-        #[cfg(windows)]
-        unsafe {
-            use windows_sys::Win32::System::Power::{SetThreadExecutionState, ES_CONTINUOUS};
-            SetThreadExecutionState(ES_CONTINUOUS);
-        }
-    }
-}
-
-fn error_payload(id: &str, summary: String) -> RunDonePayload {
-    RunDonePayload {
-        schedule_id: id.to_string(),
-        project_root: String::new(),
-        schedule_name: "定时任务".into(),
-        skill: String::new(),
-        new_entries: None,
-        status: "error".into(),
-        summary,
-        artifacts: Vec::new(),
-        noop: false,
-        auto_paused: None,
-    }
-}
-
 /// 执行一条任务并回填历史，返回事件载荷。失败（进程错误/超时/解析不到 profile/
 /// 找不到二进制/项目目录不存在）同样记 history（status="error"）。
 /// 绝不真的在测试里调用（会拉起 CLI）。
-fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
-    let _awake = AwakeGuard::hold();
+fn execute_one(id: &str) -> RunDonePayload {
     let started_at = crate::sessions::now_iso();
     let path = match schedules_path() {
         Ok(p) => p,
-        Err(e) => return error_payload(id, e),
+        Err(e) => {
+            return RunDonePayload {
+                schedule_id: id.to_string(),
+                project_root: String::new(),
+                schedule_name: "定时任务".into(),
+                skill: String::new(),
+                new_entries: None,
+                status: "error".into(),
+                summary: e,
+                artifacts: Vec::new(),
+            }
+        }
     };
     let task = {
         let _g = match sched_lock() {
             Ok(g) => g,
-            Err(error) => return error_payload(id, error),
+            Err(error) => {
+                return RunDonePayload {
+                    schedule_id: id.into(),
+                    project_root: String::new(),
+                    schedule_name: "定时任务".into(),
+                    skill: String::new(),
+                    new_entries: None,
+                    status: "error".into(),
+                    summary: error,
+                    artifacts: Vec::new(),
+                }
+            }
         };
         match read_schedules_at(&path) {
             Ok(list) => list.into_iter().find(|t| t.id == id),
@@ -2015,22 +1314,17 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
         }
     };
     let Some(task) = task else {
-        return error_payload(id, format!("定时任务不存在: {id}"));
+        return RunDonePayload {
+            schedule_id: id.to_string(),
+            project_root: String::new(),
+            schedule_name: "定时任务".into(),
+            skill: String::new(),
+            new_entries: None,
+            status: "error".into(),
+            summary: format!("定时任务不存在: {id}"),
+            artifacts: Vec::new(),
+        };
     };
-    // 补跑之前还错过的几次记一行「已跳过」（合并成一行，悬停看原因）
-    if ctx.missed > 0 {
-        if let Some(prev) = ctx.slot.and_then(|s| prev_slot(Cadence::of(&task), s)) {
-            if let Err(e) = record_skip(
-                id,
-                ctx.missed_reason.unwrap_or("missed"),
-                prev,
-                ctx.missed,
-                false,
-            ) {
-                crate::logbuf::record("warn", "scheduler", &format!("记错过次数失败: {e}"));
-            }
-        }
-    }
     // 新增条目计数仅对 lit-watch 类任务有意义（只有它往 notes/inbox.md 追加条目）
     let is_lit_watch = task.skill == "lit-watch";
     let scheduled_isolation = schedule_isolation(&task).and_then(|path| {
@@ -2041,8 +1335,6 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
                 &task.id,
             )?;
             seed_schedule_watchlist(&path, &subs)?;
-        } else {
-            seed_memory(Path::new(&task.project_root), &path, &task.id)?;
         }
         Ok(path)
     });
@@ -2070,11 +1362,6 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
     let mut run_id: Option<String> = None;
     // B3 模型换档披露：执行闭包写、成功简报读（无人值守不静默换档）
     let mut model_note = String::new();
-    // 钉住的连接已被删：这次照常记失败，并把任务自动暂停（不在无人确认时换一家出站）
-    let mut connection_missing = false;
-    // 冻结证据里这轮改了几个可采纳文件（通用巡检据此判「无新内容」）
-    let mut changed_files: Option<usize> = None;
-    let timeout = Duration::from_secs(u64::from(effective_timeout_minutes(&task)) * 60);
     let result: Result<String, String> = (|| {
         let root = scheduled_isolation.as_ref().map_err(Clone::clone)?;
         actual_isolation = Some(root.to_string_lossy().into_owned());
@@ -2090,9 +1377,6 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
             .into_iter()
             .collect();
         let pinned = task.profile_id.clone().filter(|v| !v.trim().is_empty());
-        if let Some(pid) = pinned.as_deref() {
-            connection_missing = !profiles.iter().any(|p| p.id == pid);
-        }
         // 未钉连接先按项目默认（解析塔 L4 未钉 → L2）；项目没设默认、或默认那家不能无头写盘，
         // 才回落既有自动链（设置页 AI 专用配置 → 最近用过的连接），并在运行历史里说一句
         let project_pick = if pinned.is_none() {
@@ -2219,16 +1503,6 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
             .map(str::to_string)
         };
         let mut task_prompt = build_task_prompt(&task.skill);
-        if !is_lit_watch {
-            if let Some(line) = memory_prompt_line(root, &task.id) {
-                task_prompt.push_str(&line);
-            }
-        }
-        task_prompt.push_str(&run_context_prompt(
-            &ctx,
-            Local::now().naive_local(),
-            last_ok_local(&task),
-        ));
         if let Some(note) = codex_win_unelevated_note(&profile.agent, root) {
             task_prompt.push_str(&note);
         }
@@ -2237,7 +1511,7 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
             model.as_deref(),
             &task_prompt,
             root,
-            timeout,
+            RUN_TIMEOUT,
             Some(&reuse),
             false,
             Some(Path::new(&task.project_root)),
@@ -2260,14 +1534,13 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
                     }
                 }
             }
-            let changed = crate::watch_review::freeze_at(
+            crate::watch_review::freeze_at(
                 &crate::watch_review::review_dir()?,
                 evidence,
                 root,
                 &patterns,
             )
             .map_err(|e| format!("任务执行完成，但冻结产物证据失败，未开放自动采纳：{e}"))?;
-            changed_files = Some(changed);
             Ok(output)
         })
     })();
@@ -2348,41 +1621,19 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
     } else {
         summary
     };
-    let noop = status == "ok" && is_noop(is_lit_watch, new_entries, changed_files);
-    // 这次的后台对话（看过程用）：Run 收尾时由 ai.rs 记下会话 id
-    let (agent, session_id) = run_id
-        .as_deref()
-        .and_then(|id| crate::runs::run_get(id.to_string()).ok().flatten())
-        .map(|run| (Some(run.agent).filter(|a| a != "scheduler"), run.session_id))
-        .unwrap_or((None, None));
-    let record = RunRecord {
-        at: crate::sessions::now_iso(),
-        status: status.to_string(),
-        summary: summary.clone(),
+    if let Err(e) = record_run(
+        id,
+        status,
+        &summary,
         new_entries,
-        started_at: Some(started_at),
-        finished_at: Some(finished_at),
-        artifacts: artifacts.clone(),
+        started_at,
+        finished_at,
+        artifacts.clone(),
         run_id,
-        isolation_path: actual_isolation,
-        agent: session_id.as_ref().and(agent),
-        session_id,
-        noop,
-        scheduled_for: ctx.slot.map(format_slot),
-        trigger: Some(ctx.trigger.clone()),
-        note: ctx.note.clone(),
-        ..Default::default()
-    };
-    let force_pause = (connection_missing && status == "error").then(|| {
-        "绑定的连接已删除，已自动暂停。换一条连接后重新打开开关".to_string()
-    });
-    let auto_paused = match record_run(id, record, ctx.slot, force_pause) {
-        Ok(paused) => paused,
-        Err(e) => {
-            crate::logbuf::record("error", "scheduler", &format!("回填运行历史失败: {e}"));
-            None
-        }
-    };
+        actual_isolation,
+    ) {
+        crate::logbuf::record("error", "scheduler", &format!("回填运行历史失败: {e}"));
+    }
     RunDonePayload {
         schedule_id: id.to_string(),
         project_root: task.project_root,
@@ -2392,17 +1643,6 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
         status: status.to_string(),
         summary,
         artifacts,
-        noop,
-        auto_paused,
-    }
-}
-
-/// 跑完了但没有新内容：雷达看新命中数；其他巡检看冻结证据里有没有可采纳的改动
-fn is_noop(is_lit_watch: bool, new_entries: Option<u32>, changed_files: Option<usize>) -> bool {
-    if is_lit_watch {
-        new_entries == Some(0)
-    } else {
-        changed_files == Some(0)
     }
 }
 
@@ -2416,21 +1656,15 @@ fn emit_done(app: &tauri::AppHandle, payload: RunDonePayload) {
     }
 }
 
-/// `scheduler-run-started` 事件载荷：tick/手动拉起即发，前端据此刷新「排队中/运行中」；
-/// 补跑（trigger=catchup）时前端另弹一条通知说明原定时刻
+/// `scheduler-run-started` 事件载荷：tick/手动拉起即发，前端据此刷新「排队中/运行中」
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RunStartedPayload {
     schedule_id: String,
-    schedule_name: String,
-    project_root: String,
-    trigger: String,
-    scheduled_for: Option<String>,
-    missed: u32,
 }
 
-fn emit_started(app: &tauri::AppHandle, payload: RunStartedPayload) {
-    if let Err(e) = app.emit("scheduler-run-started", &payload) {
+fn emit_started(app: &tauri::AppHandle, id: &str) {
+    if let Err(e) = app.emit("scheduler-run-started", &RunStartedPayload { schedule_id: id.to_string() }) {
         crate::logbuf::record(
             "warn",
             "scheduler",
@@ -2439,44 +1673,33 @@ fn emit_started(app: &tauri::AppHandle, payload: RunStartedPayload) {
     }
 }
 
-/// claim 后读任务（同项目互斥锁的键 + 事件里的名字）。任务在 claim 与执行之间被删则 None。
-fn schedule_brief(id: &str) -> Option<(String, String)> {
+/// claim 后读任务的项目根（同项目互斥锁的键）。任务在 claim 与执行之间被删则 None。
+fn schedule_project_root(id: &str) -> Option<String> {
     let _g = sched_lock().ok()?;
     read_schedules_at(&schedules_path().ok()?)
         .ok()?
         .into_iter()
         .find(|t| t.id == id)
-        .map(|t| (t.project_root, t.name))
+        .map(|t| t.project_root)
 }
 
 /// 排队中 = 到点该跑（enabled 且 due）但当前没有在跑的 Run。等的是并发上限或同项目
 /// 互斥，闸门一过下一 tick 自动接上。list_schedules 出口用，纯函数可测。
 fn queued_for_list(s: &Schedule, now: NaiveDateTime, running: bool) -> bool {
-    s.enabled && !running && due_slot(Cadence::of(s), last_handled(s), now).is_some()
+    s.enabled
+        && !running
+        && is_due(
+            &s.frequency,
+            s.weekday,
+            s.hour,
+            s.minute,
+            parse_last_run_local(s.last_run_at.as_deref()),
+            now,
+        )
 }
 
-/// 本轮该跑的一条：应跑时刻 + 之前还错过几次
-#[derive(Debug, Clone)]
-struct DuePlan {
-    id: String,
-    slot: NaiveDateTime,
-    missed: u32,
-}
-
-/// 闸门判定（纯函数）：到点了但不跑的原因。no_keywords 不算处理过（订上关键词下一 tick 就跑），
-/// unreviewed 算处理过（这个时刻跳过，下一次到点再看）
-fn gate_reason(task: &Schedule, has_keywords: impl FnOnce() -> bool) -> Option<(&'static str, bool)> {
-    if task.skill == "lit-watch" && !has_keywords() {
-        return Some(("no_keywords", false));
-    }
-    if effective_skip_if_unreviewed(task) && has_unreviewed(task) {
-        return Some(("unreviewed", true));
-    }
-    None
-}
-
-/// 收集本轮 due 的任务（enabled、项目还在、未在跑、过了闸门）；没过闸门的记一条「已跳过」
-fn collect_due() -> Vec<DuePlan> {
+/// 收集本轮 due 的任务 id（enabled 且未在跑）
+fn collect_due_ids() -> Vec<String> {
     // 到点的文献雷达还没有自己的关键词时不跑。共享 watchlist 已不再是真源。
     if let Err(error) = crate::lit_watch::adopt_shared_watchlists() {
         crate::logbuf::record("warn", "scheduler", &error);
@@ -2506,36 +1729,35 @@ fn collect_due() -> Vec<DuePlan> {
     };
     let now = Local::now().naive_local();
     let registered = crate::projects::registered_path_keys().ok();
-    let mut out = Vec::new();
-    for t in list.iter().filter(|t| t.enabled) {
-        let alive = registered
-            .as_ref()
-            .map(|keys| keys.iter().any(|k| crate::paths::same_path(k, &t.project_root)))
-            .unwrap_or(true);
-        if !alive || with_running(|s| s.contains(&t.id)) {
-            continue;
-        }
-        let handled = last_handled(t);
-        let Some(slot) = due_slot(Cadence::of(t), handled, now) else {
-            continue;
-        };
-        if let Some((code, mark_handled)) = gate_reason(t, || schedule_has_keywords(t)) {
-            if let Err(e) = record_skip(&t.id, code, slot, 1, mark_handled) {
-                crate::logbuf::record("warn", "scheduler", &format!("记跳过失败: {e}"));
-            }
-            continue;
-        }
-        out.push(DuePlan {
-            id: t.id.clone(),
-            slot,
-            missed: missed_before(Cadence::of(t), slot, handled, now),
-        });
-    }
-    out
+    list.into_iter()
+        .filter(|t| t.enabled)
+        .filter(|t| {
+            registered
+                .as_ref()
+                .map(|keys| {
+                    keys.iter()
+                        .any(|k| crate::paths::same_path(k, &t.project_root))
+                })
+                .unwrap_or(true)
+        })
+        .filter(|t| t.skill != "lit-watch" || schedule_has_keywords(t))
+        .filter(|t| {
+            is_due(
+                &t.frequency,
+                t.weekday,
+                t.hour,
+                t.minute,
+                parse_last_run_local(t.last_run_at.as_deref()),
+                now,
+            )
+        })
+        .filter(|t| with_running(|s| !s.contains(&t.id)))
+        .map(|t| t.id)
+        .collect()
 }
 
-fn claim_due_after_lock(id: &str, due: &[DuePlan]) -> bool {
-    due.iter().any(|candidate| candidate.id == id) && mark_running(id)
+fn claim_due_after_lock(id: &str, due: &[String]) -> bool {
+    due.iter().any(|candidate| candidate == id) && mark_running(id)
 }
 
 /// 启动调度引擎（lib.rs setup 里调用一次）：后台线程每 60s 一个 tick，
@@ -2544,90 +1766,66 @@ fn claim_due_after_lock(id: &str, due: &[DuePlan]) -> bool {
 /// project_lock 互斥，tick 同时在跑的运行数封顶 MAX_CONCURRENT_TICK_RUNS——
 /// 两个闸门没过的任务保持 due，下一 tick 自动重试（界面呈「排队中」）。
 /// 用 spawn_blocking + thread::sleep（参照 diagnostics 后台循环），不为一个 sleep 引入 tokio 依赖。
-/// 记住本次启动时刻与上一个 tick：应跑时刻早于启动 = 应用没开；两次 tick 隔太久 = 电脑睡过。
 pub fn start_scheduler(app: tauri::AppHandle) {
-    let app_started = Local::now().naive_local();
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut prev_tick: Option<NaiveDateTime> = None;
-        loop {
-            if crate::process::shutting_down() {
+    tauri::async_runtime::spawn_blocking(move || loop {
+        if crate::process::shutting_down() {
+            break;
+        }
+        for id in collect_due_ids() {
+            // 并发上限：满了本轮不再接新任务（break 而非 continue——后面的也一样接不上）
+            if TICK_INFLIGHT.load(Ordering::SeqCst) >= MAX_CONCURRENT_TICK_RUNS {
                 break;
             }
-            let now = Local::now().naive_local();
-            for plan in collect_due() {
-                // 并发上限：满了本轮不再接新任务（break 而非 continue——后面的也一样接不上）
-                if TICK_INFLIGHT.load(Ordering::SeqCst) >= MAX_CONCURRENT_TICK_RUNS {
-                    break;
-                }
-                let id = plan.id.clone();
-                let lease = match execution_lock(&id) {
-                    Ok(lease) => lease,
-                    Err(error) => {
-                        crate::logbuf::record("warn", "scheduler", &error);
-                        continue;
-                    }
-                };
-                // 到期集合排除 RUNNING：必须在本进程登记前重查，否则会把自己过滤掉。
-                if !claim_due_after_lock(&id, &collect_due()) {
+            let lease = match execution_lock(&id) {
+                Ok(lease) => lease,
+                Err(error) => {
+                    crate::logbuf::record("warn", "scheduler", &error);
                     continue;
                 }
-                let Some((project, name)) = schedule_brief(&id) else {
-                    // claim 与执行之间任务被删：不执行也不报事件（任务已不存在）
-                    unmark_running(&id);
-                    continue;
-                };
-                // 同项目互斥：锁被占说明这个项目另一条雷达在跑，本轮让位、保持 due
-                let project_lease = match project_lock(&project) {
-                    Ok(lock) => lock,
-                    Err(_) => {
-                        unmark_running(&id);
-                        continue;
-                    }
-                };
-                let (trigger, reason) = classify_trigger(plan.slot, app_started, prev_tick, now);
-                let ctx = RunContext {
-                    trigger: trigger.into(),
-                    slot: Some(plan.slot),
-                    missed: plan.missed,
-                    missed_reason: reason.or((plan.missed > 0).then_some("missed")),
-                    note: None,
-                };
-                let started = RunStartedPayload {
-                    schedule_id: id.clone(),
-                    schedule_name: name,
-                    project_root: project,
-                    trigger: trigger.into(),
-                    scheduled_for: Some(format_slot(plan.slot)),
-                    missed: plan.missed,
-                };
-                TICK_INFLIGHT.fetch_add(1, Ordering::SeqCst);
-                let app2 = app.clone();
-                tauri::async_runtime::spawn(async move {
-                    emit_started(&app2, started);
-                    let id2 = id.clone();
-                    let outcome = tauri::async_runtime::spawn_blocking(move || {
-                        let _lease = lease;
-                        let _project_lease = project_lease;
-                        execute_one(&id2, ctx)
-                    })
-                    .await;
-                    TICK_INFLIGHT.fetch_sub(1, Ordering::SeqCst);
-                    unmark_running(&id);
-                    match outcome {
-                        Ok(payload) => emit_done(&app2, payload),
-                        Err(e) => {
-                            crate::logbuf::record(
-                                "error",
-                                "scheduler",
-                                &format!("任务执行线程异常: {e}"),
-                            );
-                        }
-                    }
-                });
+            };
+            // 到期集合排除 RUNNING：必须在本进程登记前重查，否则会把自己过滤掉。
+            if !claim_due_after_lock(&id, &collect_due_ids()) {
+                continue;
             }
-            prev_tick = Some(now);
-            std::thread::sleep(TICK_INTERVAL);
+            let Some(project) = schedule_project_root(&id) else {
+                // claim 与执行之间任务被删：不执行也不报事件（任务已不存在）
+                unmark_running(&id);
+                continue;
+            };
+            // 同项目互斥：锁被占说明这个项目另一条雷达在跑，本轮让位、保持 due
+            let project_lease = match project_lock(&project) {
+                Ok(lock) => lock,
+                Err(_) => {
+                    unmark_running(&id);
+                    continue;
+                }
+            };
+            TICK_INFLIGHT.fetch_add(1, Ordering::SeqCst);
+            let app2 = app.clone();
+            tauri::async_runtime::spawn(async move {
+                emit_started(&app2, &id);
+                let id2 = id.clone();
+                let outcome = tauri::async_runtime::spawn_blocking(move || {
+                    let _lease = lease;
+                    let _project_lease = project_lease;
+                    execute_one(&id2)
+                })
+                .await;
+                TICK_INFLIGHT.fetch_sub(1, Ordering::SeqCst);
+                unmark_running(&id);
+                match outcome {
+                    Ok(payload) => emit_done(&app2, payload),
+                    Err(e) => {
+                        crate::logbuf::record(
+                            "error",
+                            "scheduler",
+                            &format!("任务执行线程异常: {e}"),
+                        );
+                    }
+                }
+            });
         }
+        std::thread::sleep(TICK_INTERVAL);
     });
 }
 
@@ -2670,13 +1868,7 @@ pub fn list_schedules() -> Result<Vec<ScheduleDto>, String> {
                     && crate::process::capture_active(&r.id)
             });
             let queued = queued_for_list(&schedule, now, running);
-            let next = schedule
-                .enabled
-                .then(|| next_slot(Cadence::of(&schedule), now))
-                .flatten()
-                .map(format_slot);
             let mut dto = ScheduleDto::from(schedule);
-            dto.next_run_at = next;
             if running {
                 dto.running_run_id = runs
                     .iter()
@@ -2728,8 +1920,10 @@ fn delete_schedule_sync(id: String) -> Result<(), String> {
         write_schedules_at(&path, &list)?;
         removed
     };
-    // 关键词 / 跨轮记忆跟着任务走：日程删了，`.ccode/watch/<id>/` 整个目录也删
-    crate::lit_watch::delete_schedule_subscriptions(&removed.project_root, &removed.id);
+    // 关键词跟着任务走：日程删了，这一份订阅目录也删
+    if removed.skill == "lit-watch" {
+        crate::lit_watch::delete_schedule_subscriptions(&removed.project_root, &removed.id);
+    }
     purge_schedule_side_effects(&removed);
     Ok(())
 }
@@ -2867,18 +2061,10 @@ fn schedule_has_keywords(task: &Schedule) -> bool {
         .unwrap_or(false)
 }
 
-/// 立即触发一次（不等结果）：走同一执行路径与防重入集合，结果经 scheduler-run-done 事件回前端。
-/// note = 这次的附言（只进这一轮的任务说明，不改任务本身；最长 500 字）
+/// 立即触发一次（不等结果）：走同一执行路径与防重入集合，结果经 scheduler-run-done 事件回前端
 #[tauri::command]
-pub fn run_schedule_now(
-    app: tauri::AppHandle,
-    id: String,
-    note: Option<String>,
-) -> Result<(), String> {
-    let note = note
-        .map(|n| n.trim().chars().take(NOTE_CAP).collect::<String>())
-        .filter(|n| !n.is_empty());
-    let (project, name) = {
+pub fn run_schedule_now(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    let project = {
         let _g = sched_lock()?;
         let list = read_schedules_at(&schedules_path()?)?;
         let task = list
@@ -2888,7 +2074,7 @@ pub fn run_schedule_now(
         if task.skill == "lit-watch" && !schedule_has_keywords(task) {
             return Err("先给这个巡检添加关键词，再立即运行".into());
         }
-        (task.project_root.clone(), task.name.clone())
+        task.project_root.clone()
     };
     if !mark_running(&id) {
         return Err("该任务正在运行中".into());
@@ -2908,21 +2094,13 @@ pub fn run_schedule_now(
             return Err("这个项目已有雷达在跑，等它结束或先停止它".into());
         }
     };
-    let started = RunStartedPayload {
-        schedule_id: id.clone(),
-        schedule_name: name,
-        project_root: project,
-        trigger: "manual".into(),
-        scheduled_for: None,
-        missed: 0,
-    };
     tauri::async_runtime::spawn(async move {
-        emit_started(&app, started);
+        emit_started(&app, &id);
         let id2 = id.clone();
         let outcome = tauri::async_runtime::spawn_blocking(move || {
             let _lease = lease;
             let _project_lease = project_lease;
-            execute_one(&id2, RunContext::manual(note))
+            execute_one(&id2)
         })
         .await;
         unmark_running(&id);
@@ -2949,57 +2127,10 @@ struct WatchSkillPending {
     intent: String,
     frequency: String,
     weekday: Option<u8>,
-    #[serde(default)]
-    interval_hours: Option<u8>,
     hour: u8,
     minute: u8,
     profile_id: Option<String>,
     linked_step: Option<String>,
-}
-
-/// AI 写技能时顺带建议的周期（`.ccode/drafts/watch-<id>.schedule.json`）。落盘弹层用它预填，人可改
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct ScheduleSuggestion {
-    pub frequency: String,
-    #[serde(default)]
-    pub weekday: Option<u8>,
-    #[serde(default)]
-    pub interval_hours: Option<u8>,
-    #[serde(default)]
-    pub hour: u8,
-    #[serde(default)]
-    pub minute: u8,
-    #[serde(default)]
-    pub reason: Option<String>,
-}
-
-/// 读 AI 写的周期建议；格式不对、值不合法都当没有（落盘弹层回落到建草稿时的默认）
-fn read_schedule_suggestion(text: &str) -> Option<ScheduleSuggestion> {
-    let s: ScheduleSuggestion = serde_json::from_str(text.trim()).ok()?;
-    let freq_ok = matches!(s.frequency.as_str(), "daily" | "weekly" | "weekdays" | "hourly" | "manual");
-    let weekday_ok = s.frequency != "weekly" || s.weekday.is_some_and(|d| (1..=7).contains(&d));
-    (freq_ok
-        && weekday_ok
-        && s.hour < 24
-        && s.minute < 60
-        && validate_extras(&s.frequency, s.interval_hours, None).is_ok())
-    .then(|| ScheduleSuggestion {
-        reason: s.reason.map(|r| r.trim().chars().take(120).collect()).filter(|r: &String| !r.is_empty()),
-        ..s
-    })
-}
-
-/// 落盘时人确认过的周期（覆盖草稿里的默认）
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DraftScheduleInput {
-    pub frequency: String,
-    pub weekday: Option<u8>,
-    #[serde(default)]
-    pub interval_hours: Option<u8>,
-    pub hour: u8,
-    pub minute: u8,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -3011,17 +2142,13 @@ pub struct WatchSkillDraftDto {
     pub intent: String,
     pub frequency: String,
     pub weekday: Option<u8>,
-    pub interval_hours: Option<u8>,
     pub hour: u8,
     pub minute: u8,
     pub profile_id: Option<String>,
     pub linked_step: Option<String>,
     pub draft_rel_path: String,
-    /// AI 写周期建议的位置（种子 prompt 里给出）
-    pub schedule_rel_path: String,
     pub has_draft: bool,
     pub draft_text: Option<String>,
-    pub suggestion: Option<ScheduleSuggestion>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -3032,8 +2159,6 @@ pub struct StartWatchSkillInput {
     pub intent: String,
     pub frequency: String,
     pub weekday: Option<u8>,
-    #[serde(default)]
-    pub interval_hours: Option<u8>,
     pub hour: u8,
     pub minute: u8,
     pub profile_id: Option<String>,
@@ -3054,10 +2179,6 @@ fn watch_draft_rel(id: &str) -> String {
 
 fn watch_meta_rel(id: &str) -> String {
     format!(".ccode/drafts/watch-{id}.meta.json")
-}
-
-fn watch_schedule_rel(id: &str) -> String {
-    format!(".ccode/drafts/watch-{id}.schedule.json")
 }
 
 fn gated_project_root(project_root: &str) -> Result<PathBuf, String> {
@@ -3115,11 +2236,6 @@ fn pending_to_dto(root: &Path, p: WatchSkillPending) -> WatchSkillDraftDto {
         .ok()
         .and_then(|path| fs::read_to_string(path).ok())
         .filter(|t| !t.trim().is_empty());
-    let schedule_rel = watch_schedule_rel(&p.id);
-    let suggestion = drafts_path(root, &schedule_rel)
-        .ok()
-        .and_then(|path| fs::read_to_string(path).ok())
-        .and_then(|t| read_schedule_suggestion(&t));
     WatchSkillDraftDto {
         id: p.id,
         name: p.name,
@@ -3127,16 +2243,13 @@ fn pending_to_dto(root: &Path, p: WatchSkillPending) -> WatchSkillDraftDto {
         intent: p.intent,
         frequency: p.frequency,
         weekday: p.weekday,
-        interval_hours: p.interval_hours,
         hour: p.hour,
         minute: p.minute,
         profile_id: p.profile_id,
         linked_step: p.linked_step,
         draft_rel_path: rel,
-        schedule_rel_path: schedule_rel,
         has_draft: text.is_some(),
         draft_text: text,
-        suggestion,
     }
 }
 
@@ -3150,7 +2263,6 @@ pub fn start_watch_skill_draft(input: StartWatchSkillInput) -> Result<WatchSkill
         input.hour,
         input.minute,
     )?;
-    validate_extras(&input.frequency, input.interval_hours, None)?;
     let name = input.name.trim();
     if name.is_empty() {
         return Err("请填写任务名".into());
@@ -3165,7 +2277,6 @@ pub fn start_watch_skill_draft(input: StartWatchSkillInput) -> Result<WatchSkill
         name: name.to_string(),
         skill_name: sanitize_watch_skill_name(name),
         intent: intent.to_string(),
-        interval_hours: (input.frequency == "hourly").then_some(input.interval_hours).flatten(),
         frequency: input.frequency,
         weekday: input.weekday,
         hour: input.hour,
@@ -3271,9 +2382,6 @@ pub fn discard_watch_skill_draft(project_root: String, id: String) -> Result<(),
     let meta = drafts_path(&root, &watch_meta_rel(&id))?;
     let md = drafts_path(&root, &watch_draft_rel(&id))?;
     let _ = fs::remove_file(md);
-    if let Ok(p) = drafts_path(&root, &watch_schedule_rel(&id)) {
-        let _ = fs::remove_file(p);
-    }
     fs::remove_file(&meta).map_err(|e| format!("删除草稿失败: {e}"))
 }
 
@@ -3282,7 +2390,6 @@ pub fn commit_watch_skill_draft(
     project_root: String,
     id: String,
     draft_text: Option<String>,
-    schedule: Option<DraftScheduleInput>,
 ) -> Result<ScheduleDto, String> {
     let root = gated_project_root(&project_root)?;
     if !watch_id_ok(&id) {
@@ -3303,25 +2410,6 @@ pub fn commit_watch_skill_draft(
     if md.trim().is_empty() {
         return Err("SKILL.md 草稿是空的".into());
     }
-    // 周期：人在落盘弹层确认的 > 建草稿时的默认。先校验再入库，周期不合法不留半截技能
-    let cadence = match schedule {
-        Some(s) => s,
-        None => DraftScheduleInput {
-            frequency: pending.frequency.clone(),
-            weekday: pending.weekday,
-            interval_hours: pending.interval_hours,
-            hour: pending.hour,
-            minute: pending.minute,
-        },
-    };
-    validate_fields(
-        &root.to_string_lossy(),
-        &cadence.frequency,
-        cadence.weekday,
-        cadence.hour,
-        cadence.minute,
-    )?;
-    validate_extras(&cadence.frequency, cadence.interval_hours, None)?;
     let skill = crate::skills::create_skill_from_full_md(
         &md,
         &pending.skill_name,
@@ -3350,19 +2438,14 @@ pub fn commit_watch_skill_draft(
             // 直建链路不透传 model（设计拍板）：落 None=名单第一，要绑去编辑弹层
             model: None,
             linked_step: pending.linked_step.clone(),
-            frequency: cadence.frequency,
-            weekday: cadence.weekday,
-            interval_hours: cadence.interval_hours,
-            hour: cadence.hour,
-            minute: cadence.minute,
-            skip_if_unreviewed: None,
-            timeout_minutes: None,
+            frequency: pending.frequency.clone(),
+            weekday: pending.weekday,
+            hour: pending.hour,
+            minute: pending.minute,
         },
     )?;
-    for rel in [watch_draft_rel(&id), watch_schedule_rel(&id)] {
-        if let Ok(p) = drafts_path(&root, &rel) {
-            let _ = fs::remove_file(p);
-        }
+    if let Ok(p) = drafts_path(&root, &watch_draft_rel(&id)) {
+        let _ = fs::remove_file(p);
     }
     let _ = fs::remove_file(meta_path);
     Ok(ScheduleDto::from(created))
@@ -3456,7 +2539,6 @@ mod tests {
             last_run_at: None,
             last_status: None,
             history: vec![],
-            ..Default::default()
         }
     }
 
@@ -3620,9 +2702,7 @@ mod tests {
                 run_id: None,
                 isolation_path: None,
                 adopted: false,
-                ..Default::default()
             }],
-            ..Default::default()
         };
         write_schedules_at(&path, &[task.clone()]).unwrap();
         // 原子写不留 tmp 残影
@@ -3717,9 +2797,6 @@ mod tests {
         let root = dir.to_string_lossy().into_owned();
         let input = |frequency: &str, weekday: Option<u8>, hour: u8, minute: u8, root: &str| {
             CreateScheduleInput {
-                interval_hours: None,
-                skip_if_unreviewed: None,
-                timeout_minutes: None,
                 name: None,
                 model: None,
                 project_root: root.to_string(),
@@ -3807,7 +2884,6 @@ mod tests {
             intent: "每天查".into(),
             frequency: "daily".into(),
             weekday: None,
-            interval_hours: None,
             hour: 9,
             minute: 0,
             profile_id: None,
@@ -4026,20 +3102,12 @@ mod tests {
         }
     }
 
-    fn plan(id: &str) -> DuePlan {
-        DuePlan {
-            id: id.to_string(),
-            slot: dt(ymd(2026, 10, 23), 9, 0),
-            missed: 0,
-        }
-    }
-
     #[test]
     fn scheduler_rechecks_due_before_marking_itself_running() {
         let id = uuid::Uuid::new_v4().to_string();
         assert!(!claim_due_after_lock(&id, &[]));
-        assert!(claim_due_after_lock(&id, &[plan(&id)]));
-        assert!(!claim_due_after_lock(&id, &[plan(&id)]));
+        assert!(claim_due_after_lock(&id, &[id.clone()]));
+        assert!(!claim_due_after_lock(&id, &[id.clone()]));
         unmark_running(&id);
     }
 
@@ -4147,7 +3215,6 @@ mod tests {
                 run_id: Some("run-keep".into()),
                 isolation_path: None,
                 adopted: true,
-                ..Default::default()
             },
             RunRecord {
                 at: "2026-10-13T10:00:00+08:00".into(),
@@ -4160,7 +3227,6 @@ mod tests {
                 run_id: Some("run-drop".into()),
                 isolation_path: None,
                 adopted: false,
-                ..Default::default()
             },
         ];
         write_schedules_at(&store, &[task]).unwrap();
@@ -4192,7 +3258,6 @@ mod tests {
                 run_id: None,
                 isolation_path: None,
                 adopted: false,
-                ..Default::default()
             },
         ];
         write_schedules_at(&store, &[task]).unwrap();
@@ -4211,7 +3276,6 @@ mod tests {
             run_id: None,
             isolation_path: None,
             adopted: false,
-            ..Default::default()
         }];
         write_schedules_at(&store, &[task]).unwrap();
         assert!(remove_failed_record_at(&store, "sched-f2", "别的时间").is_err());
@@ -4234,7 +3298,6 @@ mod tests {
                 run_id: Some("run-a".into()),
                 isolation_path: None,
                 adopted: false,
-                ..Default::default()
             },
             RunRecord {
                 at: "2026-10-13T10:00:00+08:00".into(),
@@ -4247,7 +3310,6 @@ mod tests {
                 run_id: Some("run-b".into()),
                 isolation_path: None,
                 adopted: true,
-                ..Default::default()
             },
         ];
         // 失败记录不构成可采纳历史
@@ -4285,372 +3347,4 @@ mod tests {
         // 表外 agent 与能力表 `_` 兜底同口径：放行
         assert!(headless_write_block_reason("no-such-agent").is_none());
     }
-
-    // ===== 2026-10-23 定时任务完善 =====
-
-    fn cad<'a>(frequency: &'a str, weekday: Option<u8>, n: Option<u8>, h: u8, m: u8) -> Cadence<'a> {
-        Cadence {
-            frequency,
-            weekday,
-            interval_hours: n,
-            hour: h,
-            minute: m,
-        }
-    }
-
-    #[test]
-    fn weekdays_skip_saturday_and_sunday() {
-        let c = cad("weekdays", None, None, 9, 0);
-        // 周一 08:00：最近一个是上周五 09:00
-        assert_eq!(
-            latest_slot(c, dt(ymd(2026, 10, 26), 8, 0)),
-            Some(dt(ymd(2026, 10, 23), 9, 0))
-        );
-        // 周日整天：仍是周五
-        assert_eq!(
-            latest_slot(c, dt(ymd(2026, 10, 25), 22, 0)),
-            Some(dt(ymd(2026, 10, 23), 9, 0))
-        );
-        // 周三 10:00：当天
-        assert_eq!(
-            latest_slot(c, dt(ymd(2026, 10, 21), 10, 0)),
-            Some(dt(ymd(2026, 10, 21), 9, 0))
-        );
-        // 周五 10:00 之后下一次是下周一
-        assert_eq!(
-            next_slot(c, dt(ymd(2026, 10, 23), 10, 0)),
-            Some(dt(ymd(2026, 10, 26), 9, 0))
-        );
-    }
-
-    #[test]
-    fn hourly_slots_and_day_boundary() {
-        let c = cad("hourly", None, Some(6), 0, 15);
-        // 6 小时一次，在 :15 → 00:15 06:15 12:15 18:15
-        assert_eq!(
-            latest_slot(c, dt(ymd(2026, 10, 23), 13, 0)),
-            Some(dt(ymd(2026, 10, 23), 12, 15))
-        );
-        // 00:10 还没到当天第一个：昨天 18:15
-        assert_eq!(
-            latest_slot(c, dt(ymd(2026, 10, 23), 0, 10)),
-            Some(dt(ymd(2026, 10, 22), 18, 15))
-        );
-        assert_eq!(
-            next_slot(c, dt(ymd(2026, 10, 23), 18, 20)),
-            Some(dt(ymd(2026, 10, 24), 0, 15))
-        );
-        // 每小时
-        let every = cad("hourly", None, Some(1), 0, 0);
-        assert_eq!(
-            prev_slot(every, dt(ymd(2026, 10, 23), 0, 0)),
-            Some(dt(ymd(2026, 10, 22), 23, 0))
-        );
-    }
-
-    #[test]
-    fn manual_is_never_due() {
-        let c = cad("manual", None, None, 9, 0);
-        let now = dt(ymd(2026, 10, 23), 12, 0);
-        assert_eq!(latest_slot(c, now), None);
-        assert_eq!(next_slot(c, now), None);
-        assert_eq!(due_slot(c, None, now), None);
-    }
-
-    #[test]
-    fn skipped_slot_counts_as_handled() {
-        // last_slot_at 晚于最近应跑时刻：不再 due（跳过的时刻不反复到点）
-        let mut task = sample_task("t", "/p");
-        task.hour = 9;
-        let now = dt(ymd(2026, 10, 23), 10, 0);
-        assert!(due_slot(Cadence::of(&task), last_handled(&task), now).is_some());
-        task.last_slot_at = Some(format_slot(dt(ymd(2026, 10, 23), 9, 0)));
-        assert!(due_slot(Cadence::of(&task), last_handled(&task), now).is_none());
-        // 存储格式往返
-        assert_eq!(
-            parse_slot(task.last_slot_at.as_deref()),
-            Some(dt(ymd(2026, 10, 23), 9, 0))
-        );
-    }
-
-    #[test]
-    fn missed_counts_only_slots_between_last_and_now_within_a_week() {
-        let c = cad("daily", None, None, 9, 0);
-        let now = dt(ymd(2026, 10, 23), 11, 0);
-        let slot = dt(ymd(2026, 10, 23), 9, 0);
-        // 上次跑在 10-20 09:05：错过 21、22 两天，今天这次去补跑
-        assert_eq!(
-            missed_before(c, slot, Some(dt(ymd(2026, 10, 20), 9, 5)), now),
-            2
-        );
-        // 从没跑过：不算错过
-        assert_eq!(missed_before(c, slot, None, now), 0);
-        // 一个月没开：只往回数一周
-        assert_eq!(
-            missed_before(c, slot, Some(dt(ymd(2026, 9, 1), 9, 5)), now),
-            6
-        );
-    }
-
-    #[test]
-    fn trigger_classifies_closed_asleep_and_on_time() {
-        let started = dt(ymd(2026, 10, 23), 10, 0);
-        // 应跑时刻早于启动：应用没开
-        assert_eq!(
-            classify_trigger(dt(ymd(2026, 10, 23), 9, 0), started, None, started),
-            ("catchup", Some("missed_closed"))
-        );
-        // 两次 tick 隔了两小时、时刻落在中间：电脑睡过
-        let prev = dt(ymd(2026, 10, 23), 12, 0);
-        let now = dt(ymd(2026, 10, 23), 14, 0);
-        assert_eq!(
-            classify_trigger(dt(ymd(2026, 10, 23), 13, 0), started, Some(prev), now),
-            ("catchup", Some("missed_asleep"))
-        );
-        // 正常 tick：准点
-        let prev = dt(ymd(2026, 10, 23), 12, 59);
-        let now = dt(ymd(2026, 10, 23), 13, 0);
-        assert_eq!(
-            classify_trigger(dt(ymd(2026, 10, 23), 13, 0), started, Some(prev), now),
-            ("schedule", None)
-        );
-    }
-
-    #[test]
-    fn skips_merge_by_reason_and_same_slot_is_idempotent() {
-        let mut task = sample_task("t", "/p");
-        let s1 = dt(ymd(2026, 10, 22), 9, 0);
-        let s2 = dt(ymd(2026, 10, 23), 9, 0);
-        assert!(apply_skip(&mut task, "unreviewed", s1, 1, true, "a"));
-        // 同一时刻再记一次：不变
-        assert!(!apply_skip(&mut task, "unreviewed", s1, 1, true, "b"));
-        assert!(apply_skip(&mut task, "unreviewed", s2, 1, true, "c"));
-        assert_eq!(task.history.len(), 1);
-        assert_eq!(task.history[0].skip_count, Some(2));
-        assert_eq!(task.history[0].status, "skipped");
-        assert_eq!(task.last_slot_at.as_deref(), Some("2026-10-23T09:00:00"));
-        // 原因不同另起一行；没有关键词不算处理过
-        let before = task.last_slot_at.clone();
-        assert!(apply_skip(&mut task, "no_keywords", dt(ymd(2026, 10, 24), 9, 0), 1, false, "d"));
-        assert_eq!(task.history.len(), 2);
-        assert_eq!(task.last_slot_at, before);
-        assert!(task.history[0].summary.contains("还没有关键词"));
-    }
-
-    fn rec(status: &str, trigger: &str) -> RunRecord {
-        RunRecord {
-            at: "2026-10-23T01:00:00Z".into(),
-            status: status.into(),
-            summary: "AI 调用超时（1800s）\n第二行".into(),
-            trigger: Some(trigger.into()),
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn three_scheduled_failures_auto_pause_and_manual_runs_do_not_count() {
-        let mut task = sample_task("t", "/p");
-        assert_eq!(apply_run_record(&mut task, rec("error", "schedule"), None, None), None);
-        // 手动立即跑失败不计数
-        assert_eq!(apply_run_record(&mut task, rec("error", "manual"), None, None), None);
-        assert_eq!(task.consecutive_failures, 1);
-        assert_eq!(apply_run_record(&mut task, rec("timeout", "catchup"), None, None), None);
-        let paused = apply_run_record(&mut task, rec("error", "schedule"), None, None);
-        assert!(paused.as_deref().is_some_and(|r| r.contains("连续 3 次")), "{paused:?}");
-        assert!(!task.enabled);
-        assert!(task.paused_reason.as_deref().unwrap().contains("AI 调用超时（1800s）"));
-        assert!(!task.paused_reason.as_deref().unwrap().contains("第二行"));
-        // 重新打开：清原因与计数，停用期间的时刻算处理过
-        let now = dt(ymd(2026, 10, 23), 10, 0);
-        reenable(&mut task, now);
-        assert_eq!(task.paused_reason, None);
-        assert_eq!(task.consecutive_failures, 0);
-        assert!(due_slot(Cadence::of(&task), last_handled(&task), now).is_none());
-        // 成功清零
-        let mut t2 = sample_task("t2", "/p");
-        apply_run_record(&mut t2, rec("error", "schedule"), None, None);
-        apply_run_record(&mut t2, rec("ok", "schedule"), None, None);
-        assert_eq!(t2.consecutive_failures, 0);
-    }
-
-    #[test]
-    fn deleted_connection_pauses_at_once() {
-        let mut task = sample_task("t", "/p");
-        let paused = apply_run_record(
-            &mut task,
-            rec("error", "schedule"),
-            Some(dt(ymd(2026, 10, 23), 9, 0)),
-            Some("绑定的连接已删除".into()),
-        );
-        assert_eq!(paused.as_deref(), Some("绑定的连接已删除"));
-        assert!(!task.enabled);
-        assert_eq!(task.last_slot_at.as_deref(), Some("2026-10-23T09:00:00"));
-        // 已停用的任务（手动跑）不再重复报暂停
-        let again = apply_run_record(&mut task, rec("error", "manual"), None, Some("x".into()));
-        assert_eq!(again, None);
-    }
-
-    #[test]
-    fn unreviewed_gate_defaults_by_skill() {
-        let mut generic = sample_task("g", "/p");
-        generic.skill = "model-check".into();
-        assert!(gate_reason(&generic, || true).is_none());
-        generic.history.insert(
-            0,
-            RunRecord {
-                status: "ok".into(),
-                run_id: Some("r".into()),
-                isolation_path: Some("/iso".into()),
-                ..Default::default()
-            },
-        );
-        // 升级前的旧记录（没有 trigger）不拦
-        assert!(gate_reason(&generic, || true).is_none());
-        generic.history[0].trigger = Some("schedule".into());
-        assert_eq!(gate_reason(&generic, || true), Some(("unreviewed", true)));
-        // 跳过记录不挡判断：看的是最近一次成功运行
-        generic.history.insert(
-            0,
-            RunRecord {
-                status: "skipped".into(),
-                ..Default::default()
-            },
-        );
-        assert_eq!(gate_reason(&generic, || true), Some(("unreviewed", true)));
-        // 无新内容 / 已采纳的不算待评审
-        generic.history[1].noop = true;
-        assert!(gate_reason(&generic, || true).is_none());
-        // 关掉开关就不拦
-        generic.history[1].noop = false;
-        generic.skip_if_unreviewed = Some(false);
-        assert!(gate_reason(&generic, || true).is_none());
-        // 雷达默认不拦，没关键词照旧拦（不算处理过）
-        let mut radar = sample_task("r", "/p");
-        radar.history = generic.history.clone();
-        assert!(gate_reason(&radar, || true).is_none());
-        assert_eq!(gate_reason(&radar, || false), Some(("no_keywords", false)));
-        assert!(effective_skip_if_unreviewed(&sample_task("x", "/p")) == false);
-    }
-
-    #[test]
-    fn noop_by_skill() {
-        assert!(is_noop(true, Some(0), Some(3)));
-        assert!(!is_noop(true, Some(2), Some(0)));
-        assert!(is_noop(false, None, Some(0)));
-        assert!(!is_noop(false, None, Some(1)));
-        assert!(!is_noop(false, None, None));
-    }
-
-    #[test]
-    fn context_prompt_tells_catchup_time_last_ok_and_note() {
-        let ctx = RunContext {
-            trigger: "catchup".into(),
-            slot: Some(dt(ymd(2026, 10, 23), 9, 0)),
-            missed: 2,
-            missed_reason: Some("missed_asleep"),
-            note: Some("  这次重点看 MoE 路由  ".into()),
-        };
-        let text = run_context_prompt(
-            &ctx,
-            dt(ymd(2026, 10, 23), 23, 10),
-            Some(dt(ymd(2026, 10, 20), 9, 2)),
-        );
-        assert!(text.contains("这是补跑：原定 10月23日 09:00，实际 10月23日 23:10 才开始（电脑在睡眠）"), "{text}");
-        assert!(text.contains("上一次成功运行在 10月20日 09:02"), "{text}");
-        assert!(text.contains("【这次的附加说明（用户写的）】这次重点看 MoE 路由"), "{text}");
-        let manual = run_context_prompt(&RunContext::manual(None), dt(ymd(2026, 10, 23), 8, 0), None);
-        assert!(manual.contains("手动立即跑"));
-        assert!(manual.contains("第一次成功运行"));
-        assert!(!manual.contains("附加说明"));
-    }
-
-    #[test]
-    fn extras_validation() {
-        assert!(validate_extras("hourly", Some(6), None).is_ok());
-        assert!(validate_extras("hourly", Some(5), None).is_err());
-        assert!(validate_extras("hourly", None, None).is_err());
-        assert!(validate_extras("daily", None, Some(60)).is_ok());
-        assert!(validate_extras("daily", None, Some(4)).is_err());
-        assert!(validate_extras("daily", None, Some(181)).is_err());
-        let dir = std::env::temp_dir();
-        let root = dir.to_string_lossy();
-        for f in ["weekdays", "hourly", "manual"] {
-            assert!(validate_fields(&root, f, None, 9, 0).is_ok(), "{f}");
-        }
-        let task = Schedule {
-            timeout_minutes: Some(60),
-            ..sample_task("t", "/p")
-        };
-        assert_eq!(effective_timeout_minutes(&task), 60);
-        assert_eq!(effective_timeout_minutes(&sample_task("t", "/p")), 30);
-    }
-
-    #[test]
-    fn schedule_suggestion_is_validated() {
-        let ok = read_schedule_suggestion(
-            r#"{"frequency":"weekdays","hour":8,"minute":30,"reason":"工作日早上看"}"#,
-        )
-        .unwrap();
-        assert_eq!(ok.frequency, "weekdays");
-        assert_eq!(ok.reason.as_deref(), Some("工作日早上看"));
-        assert!(read_schedule_suggestion(r#"{"frequency":"hourly","intervalHours":6,"minute":0}"#).is_some());
-        assert!(read_schedule_suggestion(r#"{"frequency":"hourly","intervalHours":5}"#).is_none());
-        assert!(read_schedule_suggestion(r#"{"frequency":"weekly","hour":9}"#).is_none());
-        assert!(read_schedule_suggestion(r#"{"frequency":"monthly"}"#).is_none());
-        assert!(read_schedule_suggestion("不是 JSON").is_none());
-    }
-
-    #[test]
-    fn referenced_sessions_come_from_history() {
-        let mut task = sample_task("t", "/p");
-        task.history = vec![
-            RunRecord {
-                agent: Some("codex".into()),
-                session_id: Some("s1".into()),
-                ..Default::default()
-            },
-            RunRecord {
-                session_id: Some("s2".into()),
-                ..Default::default()
-            },
-        ];
-        let set = referenced_sessions_of(&[task]);
-        assert!(set.contains(&("codex".to_string(), "s1".to_string())));
-        assert_eq!(set.len(), 1);
-    }
-
-    #[test]
-    fn memory_seeds_when_project_copy_is_newer_and_adopts_back() {
-        let base = std::env::temp_dir().join(format!("ccode-sched-mem-{}", uuid::Uuid::new_v4()));
-        let project = base.join("project");
-        let iso = base.join("iso");
-        std::fs::create_dir_all(&project).unwrap();
-        std::fs::create_dir_all(&iso).unwrap();
-        let id = "0123abcd-0000-0000-0000-000000000000";
-        let rel = memory_rel(id).unwrap();
-        // 项目没有：不动隔离树
-        seed_memory(&project, &iso, id).unwrap();
-        assert!(!iso.join(&rel).exists());
-        // 项目有、隔离没有：拷进去
-        std::fs::create_dir_all(project.join(&rel).parent().unwrap()).unwrap();
-        std::fs::write(project.join(&rel), "基线 3\n").unwrap();
-        seed_memory(&project, &iso, id).unwrap();
-        assert_eq!(std::fs::read_to_string(iso.join(&rel)).unwrap(), "基线 3\n");
-        // 隔离那份被巡检更新（更新）：再播种不覆盖
-        std::fs::write(iso.join(&rel), "基线 4\n").unwrap();
-        // 不靠墙钟：把隔离那份的修改时间显式拨到项目那份之后
-        let later = std::fs::metadata(project.join(&rel)).unwrap().modified().unwrap()
-            + std::time::Duration::from_secs(10);
-        std::fs::File::options().write(true).open(iso.join(&rel)).unwrap().set_modified(later).unwrap();
-        seed_memory(&project, &iso, id).unwrap();
-        assert_eq!(std::fs::read_to_string(iso.join(&rel)).unwrap(), "基线 4\n");
-        // 采纳带回项目；内容相同再采纳不写
-        assert!(adopt_memory(&iso, &project, id).unwrap());
-        assert_eq!(std::fs::read_to_string(project.join(&rel)).unwrap(), "基线 4\n");
-        assert!(!adopt_memory(&iso, &project, id).unwrap());
-        // 非法 id 拒绝
-        assert!(memory_rel("../x").is_err());
-        let _ = std::fs::remove_dir_all(&base);
-    }
 }
-

@@ -5,7 +5,6 @@
 //! 用户项目目录里的对话一条都不碰。删除是永久删除（不进回收站），用量历史不受影响
 //! （usage::rebuild 对消失的会话只撤索引标记、保留用量行）。
 //! 打开设置页这一项即视为用户对「CLI 会话目录只读」铁律的显式授权（同会话删除一类例外）。
-//! 定时任务历史还引用着的后台对话（「看过程」入口）不删：历史只留最近 20 条，引用掉出历史后照常到期清理。
 
 use crate::sessions::SessionMetaDto;
 use chrono::{DateTime, Duration, Utc};
@@ -92,7 +91,6 @@ pub(crate) fn stats_impl() -> InternalSessionsStatsDto {
         last_clean_at: crate::usage::kv_get(LAST_CLEAN_KEY),
     };
     let mut oldest: Option<DateTime<Utc>> = None;
-    let kept = crate::scheduler::referenced_sessions();
     for s in crate::sessions::list_sessions_sync() {
         if !is_mesa_owned(&s) {
             continue;
@@ -105,7 +103,7 @@ pub(crate) fn stats_impl() -> InternalSessionsStatsDto {
                 oldest = Some(t);
             }
         }
-        if is_eligible(&s, cutoff) && !kept.contains(&(s.agent.clone(), s.session_id.clone())) {
+        if is_eligible(&s, cutoff) {
             out.eligible += 1;
             out.eligible_bytes += bytes;
         }
@@ -170,11 +168,9 @@ fn dir_has_jsonl(dir: &Path) -> bool {
 pub(crate) fn cleanup_impl() -> Result<InternalCleanupResultDto, String> {
     let (_, days) = settings();
     let cutoff = Utc::now() - Duration::days(i64::from(days));
-    let kept = crate::scheduler::referenced_sessions();
     let targets: Vec<SessionMetaDto> = crate::sessions::list_sessions_sync()
         .into_iter()
         .filter(|s| is_eligible(s, cutoff))
-        .filter(|s| !kept.contains(&(s.agent.clone(), s.session_id.clone())))
         .collect();
     let chain_members = crate::sessions::cached_scan().chain_members;
     let mut out = InternalCleanupResultDto {

@@ -252,14 +252,12 @@ fn replace_text(path: &Path, bytes: &[u8]) -> Result<(), String> {
     result
 }
 
-/// 冻结本次证据，返回这轮改了几处（契约内文本有变化的文件数 + 新下的 PDF 数）；
-/// 0 = 没有可采纳的新内容（定时任务据此记「无新内容」，不弹通知不进待处理）
 pub(crate) fn freeze_at(
     dir: &Path,
     mut snapshot: WatchSnapshot,
     isolation: &Path,
     patterns: &[String],
-) -> Result<usize, String> {
+) -> Result<(), String> {
     // 收尾时再展开一次契约：运行期间新出现的契约文件（新产出）并入证据，before/initial 记 None
     let wanted = expand_contract(Path::new(&snapshot.project_root), isolation, patterns)?;
     for rel in wanted {
@@ -285,18 +283,7 @@ pub(crate) fn freeze_at(
     if bytes.len() as u64 > SNAPSHOT_CAP {
         return Err("产物证据超过安全容量上限".into());
     }
-    replace_text(&path, &bytes)?;
-    Ok(changed_count(&snapshot))
-}
-
-/// 这轮改了几处：after 与 initial 不同的契约文件 + 本轮新下的 PDF
-fn changed_count(snapshot: &WatchSnapshot) -> usize {
-    let files = snapshot
-        .files
-        .iter()
-        .filter(|file| file.after != file.initial)
-        .count();
-    files + new_pdfs_of(snapshot).map_or(0, |pdfs| pdfs.len())
+    replace_text(&path, &bytes)
 }
 
 pub(crate) fn load_at(dir: &Path, id: &str) -> Result<WatchSnapshot, String> {
@@ -1114,21 +1101,6 @@ mod tests {
         assert!(got.contains(&"新条目".to_string()));
         assert!(got.contains(&"第二轮".to_string()));
         assert_eq!(got.len(), 3);
-    }
-
-    #[test]
-    fn freeze_reports_how_many_contract_files_changed() {
-        let f = Fixture::new();
-        let evidence = prepare(&f.id, &f.project, &f.isolation, &base_patterns()).unwrap();
-        // 什么都没改：0（定时任务据此记「无新内容」）
-        assert_eq!(freeze_at(&f.reviews, evidence, &f.isolation, &base_patterns()).unwrap(), 0);
-        let f = Fixture::new();
-        let evidence = prepare(&f.id, &f.project, &f.isolation, &base_patterns()).unwrap();
-        let inbox = f.isolation.join("notes/inbox.md");
-        let mut text = fs::read_to_string(&inbox).unwrap();
-        text.push_str("\n## 新的一条\n");
-        fs::write(&inbox, text).unwrap();
-        assert_eq!(freeze_at(&f.reviews, evidence, &f.isolation, &base_patterns()).unwrap(), 1);
     }
 
     #[test]

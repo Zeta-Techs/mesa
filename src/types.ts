@@ -1936,21 +1936,6 @@ export interface RunRecordDto {
   isolationPath?: string | null;
   /** 隔离树产物是否已采纳进主仓 */
   adopted?: boolean;
-  /** 这次的后台对话：历史行「看过程」据此打开只读回放 */
-  agent?: string | null;
-  sessionId?: string | null;
-  /** 跑完了但没有新内容：不弹通知、不进待处理 */
-  noop?: boolean;
-  /** 这次对应的应跑时刻（本地时间，无时区 ISO）；手动跑为空 */
-  scheduledFor?: string | null;
-  /** "schedule" 准点 | "catchup" 补跑 | "manual" 立即跑 */
-  trigger?: string | null;
-  /** 立即跑时附的一句话 */
-  note?: string | null;
-  /** status="skipped" 时的原因：missed_closed / missed_asleep / missed / unreviewed / no_keywords */
-  skipReason?: string | null;
-  /** 同一原因连着跳过的次数 */
-  skipCount?: number | null;
 }
 
   /** 定时任务（serde camelCase）；默认 lit-watch，也可运行技能库中的其它技能 */
@@ -1967,26 +1952,15 @@ export interface ScheduleDto {
   profileId: string | null;
   /** 任务钉住的模型（B3）：在所选连接名单内生效；null = 名单第一 */
   model?: string | null;
-  /** "daily" | "weekly" | "weekdays" | "hourly" | "manual" */
+  /** "daily" | "weekly" */
   frequency: string;
   /** weekly 时 1-7（周一=1）；daily 忽略 */
   weekday: number | null;
-  /** hourly 时每 N 小时（1/2/3/4/6/8/12），在 minute 分 */
-  intervalHours?: number | null;
   hour: number;
   minute: number;
   enabled: boolean;
   lastRunAt: string | null;
   lastStatus: string | null;
-  /** 上一轮还没评审时跳过这一轮（生效值：雷达默认否，其他巡检默认是） */
-  skipIfUnreviewed?: boolean;
-  /** 单次上限（分钟，生效值） */
-  timeoutMinutes?: number;
-  /** 自动暂停的原因（连续失败 / 连接已删）；人重新打开开关时清掉 */
-  pausedReason?: string | null;
-  consecutiveFailures?: number;
-  /** 下一次应跑时刻（本地时间，无时区 ISO）；停用 / 仅手动为空 */
-  nextRunAt?: string | null;
   /** 旧字段。2026-09-29 起界面不再设置；保存时写 null 清掉。 */
   linkedStep?: string | null;
   /** 最近 20 条，新的在前 */
@@ -2002,11 +1976,8 @@ export interface CreateScheduleInput {
   model?: string | null;
   frequency: string;
   weekday?: number | null;
-  intervalHours?: number | null;
   hour: number;
   minute: number;
-  skipIfUnreviewed?: boolean | null;
-  timeoutMinutes?: number | null;
   /** 固定不传。旧客户端若还带着，后端仍能收下，界面不再提供。 */
   linkedStep?: string | null;
 }
@@ -2019,13 +1990,9 @@ export interface UpdateSchedulePatch {
   profileId?: string | null;
   frequency?: string;
   weekday?: number | null;
-  intervalHours?: number | null;
   hour?: number;
   minute?: number;
   enabled?: boolean;
-  skipIfUnreviewed?: boolean;
-  /** 0 = 回到默认 30 分钟 */
-  timeoutMinutes?: number;
   /** 传 null 清掉旧的关联步骤。 */
   linkedStep?: string | null;
 }
@@ -2038,27 +2005,13 @@ export interface WatchSkillDraftDto {
   intent: string;
   frequency: string;
   weekday: number | null;
-  intervalHours?: number | null;
   hour: number;
   minute: number;
   profileId: string | null;
   linkedStep?: string | null;
   draftRelPath: string;
-  /** AI 写周期建议的位置（.ccode/drafts/watch-<id>.schedule.json） */
-  scheduleRelPath?: string;
   hasDraft: boolean;
   draftText?: string | null;
-  /** AI 按描述给的周期建议；落盘弹层据此预填，人可改 */
-  suggestion?: ScheduleSuggestionDto | null;
-}
-
-export interface ScheduleSuggestionDto {
-  frequency: string;
-  weekday?: number | null;
-  intervalHours?: number | null;
-  hour: number;
-  minute: number;
-  reason?: string | null;
 }
 
 /** scheduler-run-done 事件载荷（summary 已脱敏） */
@@ -2072,20 +2025,6 @@ export interface SchedulerRunDonePayload {
   summary: string;
   /** 本次运行改动过的文件（changed_artifacts，相对项目根） */
   artifacts?: string[];
-  /** 跑完但没有新内容：不弹通知 */
-  noop?: boolean;
-  /** 这次之后任务被自动暂停的原因 */
-  autoPaused?: string | null;
-}
-
-/** scheduler-run-started 事件载荷：补跑（trigger=catchup）时另弹一条通知 */
-export interface SchedulerRunStartedPayload {
-  scheduleId: string;
-  scheduleName?: string;
-  projectRoot?: string;
-  trigger?: string;
-  scheduledFor?: string | null;
-  missed?: number;
 }
 
 /** 应用数据占用（设置页「数据与存储」） */

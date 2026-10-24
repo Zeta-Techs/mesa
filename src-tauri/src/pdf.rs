@@ -3,8 +3,7 @@
 //! 已注册项目的登记资源（project.toml resources）、已注册项目根内、
 //! 工作区/仓库根内、终端标签 cwd 根内（前端 hint，风格同 read_file_preview 的 root 约束）、
 //! Ccode 自管的剪贴板图片目录（<config>/ccode/tmp/paste-*，clipboard.rs 写入侧白名单），
-//! 以及上述各根 artifacts.yaml 提货单中登记产物的精确路径（P4：登记产物可位于根之外），
-//! 和用户本次运行里拖进窗口 / 在附件选择器里选的文件（attach_grants.rs，精确路径）。
+//! 以及上述各根 artifacts.yaml 提货单中登记产物的精确路径（P4：登记产物可位于根之外）。
 //! 目标路径 canonicalize 后再判定，堵符号链接绕过。
 
 use base64::Engine;
@@ -75,8 +74,6 @@ pub(crate) fn read_whitelisted_sync(
     if let Some(c) = crate::phone_drop::stage_dir_path().and_then(|p| canon(&p)) {
         roots.push(c);
     }
-    // 用户亲手交过来的文件（拖进窗口 / Rust 侧选择器选的，attach_grants.rs）：按精确路径放行
-    resources.extend(crate::attach_grants::granted());
     roots.extend(
         crate::workspaces::worktree_rows()
             .into_iter()
