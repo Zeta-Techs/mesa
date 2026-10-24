@@ -467,7 +467,7 @@ Agent 进程自身（5 家流式合计均值约 0.6 核、峰值约 1.65 核、�
 项目页每 2.5–5 秒轮询 `task_list` / `run_list` / `list_schedules`；5 个 Agent 同时落库时主线程最多等 `busy_timeout` 5 秒。
 **改法**：回填先判断再写；四个轮询命令改 async + `spawn_blocking`（Rust 内部调用走 `_sync` 版）；`ensure_wal_mode` 保证新库也是 WAL（本机 app.db 实测早已是 WAL，对本机是空操作，审计时误报为 delete）。
 **对聊天层**：返回数据不变，聊天层不直接依赖这几个命令；`run_get` 的前端调用点都 await，改异步不改顺序。
-**同日另两项各为单独提交**：`pty_get_cwd` 不再持 PTY 全局锁跑 `lsof`（并挪到后台线程，守卫测试 `waiting_commands_stay_off_main_thread` 一并钉住上面四个轮询命令）；流控先发后记账的竞态。**未验证**：真实窗口里 5 个 Agent 的端到端体感，React 重渲染与 IPC 开销没量。
+**同日另两项各为单独提交**：`pty_get_cwd` 不再持 PTY 全局锁跑 `lsof`（并挪到后台线程，守卫测试 `waiting_commands_stay_off_main_thread` 一并钉住上面四个轮询命令）；流控先发后记账的竞态（`send_counted` 先记账再发，发送失败退账，`flow_ack_arriving_during_send_is_not_swallowed` 钉住；复刻里 5 路刷屏即时确认 5 次触发 3 次，真实路径窗口小得多、未在真实环境复现）。**未验证**：真实窗口里 5 个 Agent 的端到端体感，React 重渲染与 IPC 开销没量。
 
 ### 2026-10-24 · 侧栏挂对话：开步对话不再先落「其他打开的」；接力对话照列，问 AI / 沉浸阅读仍不列
 

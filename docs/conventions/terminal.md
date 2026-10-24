@@ -461,7 +461,7 @@
   5000 字（`OUTPUT_ACK_CHUNK`，必须 ≤ 后端 `FLOW_LOW`）发一次 `pty_ack`；后端已发未确认超过 10 万字（`FLOW_HIGH`）读线程停读，
   降到 5000 以下再读——子进程写不出去自然减速，刷屏时 Ctrl+C 立刻见效。计数单位两端都是 UTF-16 码元（`string.length` /
   `encode_utf16`）。隐藏标签进 backlog 不计数；换通道、转后台清零；关标签 / 退出 `close` 放行；停读期间 5 秒没收到任何确认
-  视为前端失联，记一条警告后放行，不让子进程卡死在写上。`pty-exit` 与后台标签的 `pty-signal` 仍是事件。
+  视为前端失联，记一条警告后放行，不让子进程卡死在写上。**记账必须先于发送**（`send_counted`，发送失败再退账）：前端收到帧立刻确认，确认可能在 `channel.send` 返回前就到，先发后记会让确认落在 0 上被吃掉，随后记上的字数永远没人抵消、读线程白等 5 秒。`pty-exit` 与后台标签的 `pty-signal` 仍是事件。
 - **终端字体链单一出处 `src/terminal-font.ts`（2026-09-21 修）**：xterm 的 `fontFamily` 就是一段 CSS 字体列表。
   以前 TerminalPage 手拼一份、App.css `--font-mono` 另一份——手拼那份缺 `ui-monospace` 且重复 `'SF Mono'`，
   设置页选「SF Mono（macOS）」永远落 Menlo。现统一走 `terminalFontStack(族名, monoFallbackStack())`：

@@ -416,10 +416,21 @@ fn send_frame(sink: &mut OutputSink, flow: &FlowGate, text: String) {
             Err(_) => return,
         }
     };
-    if channel.send(body).is_ok() {
-        flow.sent(units);
-    } else {
+    if !send_counted(flow, units, || channel.send(body).is_ok()) {
         sink.channel = None;
+    }
+}
+
+/// 先记账再发：前端收到帧后立刻确认，确认可能在 send 返回之前就到 FlowGate；先发后记的话，
+/// 确认落在计数 0 上被吃掉，随后记上的字数永远没人抵消，读线程白等 5 秒（FLOW_STALL）才放行。
+/// 发送失败要把刚记的账退回去
+fn send_counted(flow: &FlowGate, units: usize, send: impl FnOnce() -> bool) -> bool {
+    flow.sent(units);
+    if send() {
+        true
+    } else {
+        flow.ack(units);
+        false
     }
 }
 
@@ -2418,6 +2429,22 @@ mod tests {
         // 多确认不会减成负数
         flow.ack(FLOW_HIGH);
         assert_eq!(flow.state.lock().unwrap().unacked, 0);
+    }
+
+    #[test]
+    fn flow_ack_arriving_during_send_is_not_swallowed() {
+        let flow = FlowGate::default();
+        // 前端在 send 返回前就确认了这一帧：账已先记，确认正好抵消
+        assert!(send_counted(&flow, 5000, || {
+            flow.ack(5000);
+            true
+        }));
+        assert_eq!(flow.state.lock().unwrap().unacked, 0, "不该留下没人确认的残账");
+        // 发送失败：刚记的账退回，不让读线程为一帧没送出去的输出等确认
+        assert!(!send_counted(&flow, FLOW_HIGH + 1, || false));
+        let s = flow.state.lock().unwrap();
+        assert_eq!(s.unacked, 0);
+        assert!(!s.paused);
     }
 
     #[test]
