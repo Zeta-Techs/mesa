@@ -1,6 +1,6 @@
 import { isProseCodeSpan, mentionedAudioFiles, mentionedImageFiles, splitReplySections, type ReplySection } from "../chat-reply";
 import { sanitizeDocumentHtml } from "../document-html";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Marked } from "marked";
@@ -15,6 +15,12 @@ import { citeTipFor, decorateCitations, linkFileRefs } from "../chat-inline-refs
 import { HoverTip } from "./HoverTip";
 import { Collapse } from "./PageFrame";
 import ChatImageViewer from "./ChatImageViewer";
+
+/**
+ * 聊天层里点对话中的图 =「接着改这张图」（2026-10-25 用户对照 ChatGPT）：ChatSurface 提供，把图放进输入框并展开看图标注台。
+ * 没有提供的地方（会话浏览等只读视图）点图照旧预览 / 看大图
+ */
+export const ChatImageEditContext = createContext<((absPath: string) => void) | null>(null);
 
 /**
  * 聊天消息 Markdown 渲染（AI 回复正文；用户气泡保持纯文本）。
@@ -299,6 +305,7 @@ function MarkdownBody({
   );
   const bodyRef = useRef<HTMLDivElement>(null);
   const setPreviewReq = useAppStore((s) => s.setPreviewReq);
+  const editImage = useContext(ChatImageEditContext);
   // resolveMdPath 按「文件所在目录」解析相对路径：传 cwd 下的伪文件名，目录即 cwd
   const baseFile = cwd ? `${cwd}/_` : null;
 
@@ -351,6 +358,10 @@ function MarkdownBody({
       return;
     }
     const img = target.closest("img");
+    if (img?.dataset.ccodePath && editImage) {
+      editImage(img.dataset.ccodePath);
+      return;
+    }
     if (img?.dataset.ccodePath && cwd) {
       const abs = img.dataset.ccodePath;
       setPreviewReq({
@@ -408,6 +419,7 @@ export function ChatImageCard({
   quiet?: boolean;
 }) {
   const setPreviewReq = useAppStore((s) => s.setPreviewReq);
+  const editImage = useContext(ChatImageEditContext);
   const [src, setSrc] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [viewing, setViewing] = useState(false);
@@ -447,15 +459,16 @@ export function ChatImageCard({
       </div>
     );
   if (!src) return quiet ? null : <div className="md-img-pending my-1">图片加载中…</div>;
-  // 有工作目录：右栏文件预览（可以边看边聊）；随手聊没有工作目录：弹层看大图（原先点了没反应）
+  // 聊天层：点图进输入框上方的看图标注台接着改；只读视图里有工作目录走右栏文件预览，随手聊弹层看大图
   return (
     <>
       <button
         type="button"
-        className="my-1 block cursor-zoom-in border-0 bg-transparent p-0"
-        title={`${name}（点击放大预览）`}
+        className={`my-1 block border-0 bg-transparent p-0 ${editImage ? "cursor-pointer" : "cursor-zoom-in"}`}
+        title={editImage ? `${name}（点击查看、标注，接着改）` : `${name}（点击放大预览）`}
         onClick={() => {
-          if (cwd) setPreviewReq({ path: abs, name, root: cwd });
+          if (editImage) editImage(abs);
+          else if (cwd) setPreviewReq({ path: abs, name, root: cwd });
           else setViewing(true);
         }}
       >

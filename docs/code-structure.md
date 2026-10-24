@@ -106,10 +106,11 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   AI 回复不截断、用户长消息 UserText 量行收起；字号走聊天阶梯类（design-system「聊天正文排版」）
   components/ChatMarkdown.tsx # AI 回复 Markdown（独立 Marked 实例、原始 HTML 转义）：长回复分节小标题按级别排、ChatCodeBlock（用户气泡里的
                              #   围栏代码同一套）、上屏后 useChatDecorations 跑表格壳 / 代码高亮 / 公式 / 引用胶囊 / 文件链接，音频播放条、图片卡
-                             #   （图片卡点击：有工作目录走右栏预览，随手聊弹 ChatImageViewer）
+                             #   （图片卡点击：聊天层经 ChatImageEditContext 进输入框标注台接着改；只读视图有工作目录走右栏预览，随手聊弹 ChatImageViewer）
   components/ChatImageViewer.tsx # 对话图片看大图弹层（Modal + ImagePreview 可缩放）：随手聊没有右栏预览时用
   components/ChatImageStage.tsx # 输入框上方的看图标注台（design-chat-layer §4.7）：盖住对话区、不挡输入框；
                              #   意见框 / 画笔 / 箭头 / 打码 / 裁剪 + 撤销清空，标注存原图坐标交回输入框；
+                             #   onQuickText 给了 = 从对话里点进来接着改的图：改图提示 + 「移除背景 / 调整画幅」写进输入框（不直接发）；
                              #   MarkupLayer = 标注的 SVG 画法（标注台与缩略图共用，几何与导出同源 image-markup.ts）
   components/ProjectTree.tsx # 侧栏项目树（展开态）：「项目」标签行（计数＋放大镜＋添加入口）+ 一节一节平铺的随手聊与课题；
                              #   放大镜开 RailSearchPalette（对话和项目一起搜，料由 searchSources 现组：置顶 / 随手聊 / 各课题的全部对话，
@@ -1510,7 +1511,8 @@ src-tauri/src/
                              #   strip_trailing_version_segment / ends_with_version_segment 版本段判据单一出处）+ 目录缓存 + 共享 DTO
   image_gen.rs               # 出图模型：model_kind 分类（与 src/model-kinds.ts 镜像）+ non_chat_launch_error（启动闸，
                              #   agents::validate_launch_compatibility 调）+ 按模型选接口出图（Gemini 原生→退对话接口 / 其余
-                             #   OpenAI 出图接口）+ 设置页命令（image_gen_candidates/status/test）+ helper 入口 helper_image_cli；
+                             #   OpenAI 出图接口）+ 改图 --image（Seedream 出图接口带 image / 其余 /images/edits 手拼 multipart，
+                             #   不认再退带 image；Gemini inlineData）+ 设置页命令（image_gen_candidates/status/test）+ helper 入口 helper_image_cli；
                              #   红线：密钥只在本进程用、下载图片地址不带鉴权头、Target 不派生 Debug；helper_exe 试跑
                              #   `image --probe` 通过才把路径作 MESA_IMAGE_TOOL 注入 PTY（pty.rs spawn_tracked）
   lib.rs                     # 模块与 Tauri command 注册

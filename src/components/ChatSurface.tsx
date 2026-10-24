@@ -1,8 +1,9 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import ConversationView from "./ConversationView";
+import { ChatImageEditContext } from "./ChatMarkdown";
 import ChatComposer, { useToneFlash, type ComposerSeed } from "./ChatComposer";
 import { splitImagePaths } from "../chat-image";
 import ChatEmptyStart from "./ChatEmptyStart";
@@ -254,6 +255,7 @@ export default function ChatSurface({
   const [hasNew, setHasNew] = useState(false);
   const [stuckWaiting, setStuckWaiting] = useState(false);
   const [seedInsert, setSeedInsert] = useState<string | ComposerSeed | null>(null);
+  const editImage = useCallback((absPath: string) => setSeedInsert({ text: "", paths: [], edit: absPath }), []);
   const [homeDir, setHomeDir] = useState("");
   const loadingOlderRef = useRef(false);
   const prevFirstKeyRef = useRef<string | null>(null);
@@ -1035,6 +1037,8 @@ export default function ChatSurface({
           ) : messages.length === 0 ? (
             <div className="flex flex-1" />
           ) : (
+            // 点对话里的图 = 接着改：放进输入框、展开看图标注台（ChatMarkdown ChatImageEditContext）
+            <ChatImageEditContext.Provider value={editImage}>
             <ConversationView
               messages={shownMessages}
               cwd={cwd}
@@ -1055,6 +1059,7 @@ export default function ChatSurface({
                     : null,
               }}
             />
+            </ChatImageEditContext.Provider>
           )}
           {livePreview.length > 0 && (
             // 与助手正文同一栏、同字号，但不走 Markdown（终端里已渲染过）：灰一级表示「还在写、以落盘为准」。

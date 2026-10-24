@@ -34,6 +34,8 @@ const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|heif|tiff?)$/i;
 export interface ComposerSeed {
   text: string;
   paths: readonly string[];
+  /** 点了对话里的图「接着改」（2026-10-25）：这张图成附件后直接展开看图标注台，按改图口径（提示、占位字、发送时附原图） */
+  edit?: string;
 }
 /** 文件卡左边没有首页预览时的类型色块（Word 蓝 W、Excel 绿 X、PPT 橙 P…，同文件列表的识别色） */
 function FileKindBlock({ path }: { path: string }) {
@@ -341,8 +343,9 @@ export default function ChatComposer({
   // phoneId：「从手机添加」送来的（× 掉时退回手机列表的「还没处理」）
   // markup：在看图标注台上画的标注（原图坐标，path 仍指原图；发送时才生成标注图替换这一行路径）
   // thumb：文档首页预览（PDF / Word / 表格）——不是图片，不算「有图」、不进看图标注台
+  // edit：从对话里点进来接着改的图（标注台给改图提示与常用说法；标过的话发送时另写一行原图路径，AI 改图要用原图）
   const [attachments, setAttachments] = useState<
-    { path: string; url: string | null; phoneId?: string; markup?: Markup; thumb?: string }[]
+    { path: string; url: string | null; phoneId?: string; markup?: Markup; thumb?: string; edit?: boolean }[]
   >([]);
   const attachmentsRef = useRef(attachments);
   attachmentsRef.current = attachments;
@@ -625,6 +628,17 @@ export default function ChatComposer({
       if (seedInsert.text) insertResourceText(seedInsert.text);
       else requestAnimationFrame(() => ref.current?.focus());
       addPathAttachments(seedInsert.paths);
+      const edit = seedInsert.edit;
+      if (edit) {
+        // 已在附件里（又点了一次同一张）也照样标成改图、展开
+        setAttachments((cur) =>
+          cur.some((a) => a.path === edit)
+            ? cur.map((a) => (a.path === edit ? { ...a, edit: true } : a))
+            : [...cur, { path: edit, url: null, edit: true }],
+        );
+        if (!attachmentsRef.current.some((a) => a.path === edit && a.url)) loadThumb(edit);
+        setViewing(edit);
+      }
     }
     onSeedConsumed?.();
     // 只在 seedInsert 翻转时插入一次
@@ -657,7 +671,9 @@ export default function ChatComposer({
           attachments.map(async (a) => {
             if (!a.url || !a.markup || a.markup.marks.length === 0) return a.path;
             const out = await exportMarkup(a.url, a.path, a.markup);
-            return saveClipboardImage(out.bytes, out.ext);
+            const marked = await saveClipboardImage(out.bytes, out.ext);
+            // 改图：标注只是指位置，出图模型要在原图上改（技能 image-gen 认「原图：」这一行）
+            return a.edit ? `${marked}\n原图：${a.path}` : marked;
           }),
         );
       } catch (reason) {
@@ -731,6 +747,7 @@ export default function ChatComposer({
           onChange={(m) => setMarkup(viewed.path, m)}
           onBoxAdded={addMarkRef}
           onClose={closeStage}
+          onQuickText={viewed.edit ? insertResourceText : undefined}
         />
       )}
       {/* 开聊后与对话流同一条中轴：栏宽跟聊天字号走（App.css .ccode-chat-column） */}
@@ -1075,7 +1092,7 @@ export default function ChatComposer({
             }}
             // 一行起，随内容长高（2026-10-23 用户：空态两行高太大，一行就行）
             rows={1}
-            placeholder={ghost ?? placeholder ?? "输入消息…"}
+            placeholder={ghost ?? (viewed?.edit ? "描述修改内容" : placeholder) ?? "输入消息…"}
             // 插入符是 M▁ 那道琥珀（--color-mesa-amber），光标本身就是品牌
             className={`block max-h-40 w-full resize-none bg-transparent px-1.5 py-[5px] text-sm leading-6 text-l1 caret-mesa-amber outline-none focus:outline-none focus-visible:outline-none focus-visible:outline-offset-0 placeholder:text-l3 disabled:cursor-not-allowed disabled:opacity-60 ${ghost ? "pr-20" : ""}`}
           />

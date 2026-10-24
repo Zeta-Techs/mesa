@@ -652,6 +652,35 @@ test("输入框图片：编辑后重发还原成缩略卡；点图在输入框�
   }
 });
 
+test("点对话里的图接着改：图进输入框、直接展开看图台，占位字与常用说法按改图口径", async () => {
+  const ui = await mount();
+  try {
+    const sent: string[] = [];
+    await ui.render(
+      ui.h(ui.Composer, {
+        onSend: async (t: string) => (sent.push(t), null),
+        cwd: "/proj",
+        seedInsert: { text: "", paths: [], edit: "/proj/scratch/puppy.jpg" },
+        onSeedConsumed: () => undefined,
+      }),
+    );
+    const stage = () => ui.el.querySelector('[role="region"][aria-label="看图与标注"]');
+    assert.ok(stage(), "不用再点缩略图，看图台直接展开");
+    assert.deepEqual(ui.host.imageReads, ["/proj/scratch/puppy.jpg"]);
+    const box = ui.el.querySelector("textarea")!;
+    assert.equal(box.placeholder, "描述修改内容");
+    assert.match(stage()!.textContent ?? "", /出图模型在原图上改/);
+    await ui.click("移除背景");
+    assert.equal(box.value, "去掉背景，只留主体（透明或纯白底），其余不变", "常用说法写进输入框，不直接发");
+    assert.deepEqual(sent, []);
+    await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="发送"]')!.click());
+    assert.deepEqual(sent, ["去掉背景，只留主体（透明或纯白底），其余不变\n/proj/scratch/puppy.jpg"], "没标注就发原图路径");
+    assert.equal(stage(), null);
+  } finally {
+    await ui.close();
+  }
+});
+
 test("输入框 @：在工作目录里搜文件，选中换成相对路径，带空格的加引号", async () => {
   const ui = await mount();
   try {

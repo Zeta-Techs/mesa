@@ -422,6 +422,72 @@ pub struct GenRequest {
     pub prompt: String,
     pub size: Option<String>,
     pub n: u32,
+    /// 改图：在这几张图上改（--image，可多张）；空 = 文生图
+    pub images: Vec<InputImage>,
+}
+
+/// 改图的输入图：字节 + 按文件头认出的格式
+pub struct InputImage {
+    pub bytes: Vec<u8>,
+    pub ext: &'static str,
+}
+
+impl InputImage {
+    fn data_url(&self) -> String {
+        format!(
+            "data:{};base64,{}",
+            mime_of(self.ext),
+            base64::engine::general_purpose::STANDARD.encode(&self.bytes)
+        )
+    }
+}
+
+/// 改图输入单张上限（与聊天层读图同档）
+const INPUT_IMAGE_CAP: u64 = 20 * 1024 * 1024;
+/// 一次最多带几张参考图
+const INPUT_IMAGE_MAX: usize = 4;
+
+/// 读一张改图输入：只认真图片（按文件头），超限拒绝
+pub fn load_input_image(path: &Path) -> Result<InputImage, String> {
+    let meta = std::fs::metadata(path).map_err(|e| format!("读不了图片 {}: {e}", path.display()))?;
+    if meta.len() > INPUT_IMAGE_CAP {
+        return Err(format!("图片 {} 超过 20 MB", path.display()));
+    }
+    let bytes = std::fs::read(path).map_err(|e| format!("读不了图片 {}: {e}", path.display()))?;
+    let ext = image_ext(&bytes).ok_or_else(|| format!("{} 不是 png / jpg / webp / gif 图片", path.display()))?;
+    Ok(InputImage { bytes, ext })
+}
+
+/// 豆包 Seedream / SeedEdit 的改图是出图接口里带 `image` 字段（火山方舟口径），不走 /images/edits
+fn edits_via_generations(model: &str) -> bool {
+    let t = tokens(model);
+    any_prefix(&t, &["seedream", "seededit"])
+}
+
+/// 手拼 multipart/form-data（/images/edits 用；不为这一处给 reqwest 加 multipart 特性）
+fn multipart_body(fields: &[(&str, String)], files: &[(&str, &InputImage)]) -> (String, Vec<u8>) {
+    let boundary = format!("mesa-{}", uuid::Uuid::new_v4().simple());
+    let mut body = Vec::new();
+    for (name, value) in fields {
+        body.extend_from_slice(
+            format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n").as_bytes(),
+        );
+    }
+    for (i, (name, img)) in files.iter().enumerate() {
+        body.extend_from_slice(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"; filename=\"image-{}.{}\"\r\nContent-Type: {}\r\n\r\n",
+                i + 1,
+                img.ext,
+                mime_of(img.ext)
+            )
+            .as_bytes(),
+        );
+        body.extend_from_slice(&img.bytes);
+        body.extend_from_slice(b"\r\n");
+    }
+    body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+    (format!("multipart/form-data; boundary={boundary}"), body)
 }
 
 pub struct GenImage {
@@ -466,7 +532,26 @@ async fn post_json(
     body: &serde_json::Value,
     gemini: bool,
 ) -> Result<serde_json::Value, String> {
-    let mut req = client.post(url).json(body);
+    send(client.post(url).json(body), target, key, gemini).await
+}
+
+async fn post_multipart(
+    client: &reqwest::Client,
+    url: &str,
+    target: &Target,
+    key: Option<&str>,
+    (content_type, body): (String, Vec<u8>),
+) -> Result<serde_json::Value, String> {
+    let req = client.post(url).header(reqwest::header::CONTENT_TYPE, content_type).body(body);
+    send(req, target, key, false).await
+}
+
+async fn send(
+    mut req: reqwest::RequestBuilder,
+    target: &Target,
+    key: Option<&str>,
+    gemini: bool,
+) -> Result<serde_json::Value, String> {
     if let Some(k) = key {
         req = req.bearer_auth(k);
         if gemini {
@@ -585,8 +670,33 @@ pub async fn generate(target: &Target, req: &GenRequest) -> Result<GenOutcome, S
             if let Some(size) = req.size.as_deref().filter(|s| !s.trim().is_empty()) {
                 body["size"] = serde_json::json!(size.trim());
             }
-            let v = post_json(&client, &openai_url(base, "images/generations"), target, key.as_deref(), &body, false)
-                .await?;
+            // 改图带的参考图写进出图接口的 image 字段（data URL；一张给字符串、多张给数组）
+            let with_images = |mut body: serde_json::Value| {
+                let urls: Vec<String> = req.images.iter().map(InputImage::data_url).collect();
+                body["image"] = if urls.len() == 1 { serde_json::json!(urls[0]) } else { serde_json::json!(urls) };
+                body
+            };
+            let gen_url = openai_url(base, "images/generations");
+            let v = if req.images.is_empty() {
+                post_json(&client, &gen_url, target, key.as_deref(), &body, false).await?
+            } else if edits_via_generations(&target.model) {
+                post_json(&client, &gen_url, target, key.as_deref(), &with_images(body), false).await?
+            } else {
+                // OpenAI 口径改图：/images/edits（multipart）；网关不认再试出图接口带 image 字段
+                let mut fields = vec![("model", target.model.clone()), ("prompt", prompt.to_string()), ("n", n.to_string())];
+                if let Some(size) = req.size.as_deref().filter(|s| !s.trim().is_empty()) {
+                    fields.push(("size", size.trim().to_string()));
+                }
+                let name = if req.images.len() == 1 { "image" } else { "image[]" };
+                let files: Vec<(&str, &InputImage)> = req.images.iter().map(|i| (name, i)).collect();
+                let edits_url = openai_url(base, "images/edits");
+                match post_multipart(&client, &edits_url, target, key.as_deref(), multipart_body(&fields, &files)).await {
+                    Ok(v) => v,
+                    Err(edit_err) => post_json(&client, &gen_url, target, key.as_deref(), &with_images(body), false)
+                        .await
+                        .map_err(|e| format!("改图接口：{edit_err}；出图接口带图：{e}"))?,
+                }
+            };
             let images = materialize(&client, parse_openai_images(&v)).await?;
             if images.is_empty() {
                 return Err(format!("网关回话里没有图片：{}", preview(&v.to_string())));
@@ -598,8 +708,15 @@ pub async fn generate(target: &Target, req: &GenRequest) -> Result<GenOutcome, S
             if let Some(ar) = req.size.as_deref().and_then(aspect_ratio) {
                 config["imageConfig"] = serde_json::json!({ "aspectRatio": ar });
             }
+            let mut parts = vec![serde_json::json!({ "text": prompt })];
+            for img in &req.images {
+                parts.push(serde_json::json!({ "inlineData": {
+                    "mimeType": mime_of(img.ext),
+                    "data": base64::engine::general_purpose::STANDARD.encode(&img.bytes),
+                } }));
+            }
             let body = serde_json::json!({
-                "contents": [{ "role": "user", "parts": [{ "text": prompt }] }],
+                "contents": [{ "role": "user", "parts": parts }],
                 "generationConfig": config,
             });
             let mut images = Vec::new();
@@ -625,9 +742,18 @@ pub async fn generate(target: &Target, req: &GenRequest) -> Result<GenOutcome, S
             let Some(base) = target.openai_base.as_deref() else {
                 return Err(native_err.unwrap_or_else(|| "Gemini 原生接口没回图片".into()));
             };
+            let content = if req.images.is_empty() {
+                serde_json::json!(prompt)
+            } else {
+                let mut parts = vec![serde_json::json!({ "type": "text", "text": prompt })];
+                for img in &req.images {
+                    parts.push(serde_json::json!({ "type": "image_url", "image_url": { "url": img.data_url() } }));
+                }
+                serde_json::json!(parts)
+            };
             let chat = serde_json::json!({
                 "model": target.model,
-                "messages": [{ "role": "user", "content": prompt }],
+                "messages": [{ "role": "user", "content": content }],
             });
             let mut fallback = Vec::new();
             for _ in 0..n {
@@ -721,6 +847,7 @@ pub const TOOL_ENV: &str = "MESA_IMAGE_TOOL";
 
 const CLI_USAGE: &str = "用法：mesa_helper image --prompt \"描述\" --out 路径.png [--model 模型] [--size 1024x1024] [--n 1]\n\
      \x20     mesa_helper image --prompt-file 描述.txt --out 路径.png …   （长描述写进文件，避开命令行转义）\n\
+     \x20     mesa_helper image --image 原图.png --prompt \"要怎么改\" --out 新图.png   （改图：在原图上改，--image 可给多张）\n\
      \x20     mesa_helper image --list   （列出设置里的出图模型和各网关可用的出图模型）";
 
 struct CliArgs {
@@ -730,11 +857,12 @@ struct CliArgs {
     model: Option<String>,
     size: Option<String>,
     n: u32,
+    images: Vec<String>,
     list: bool,
 }
 
 fn parse_cli(args: &[String]) -> Result<CliArgs, String> {
-    let mut a = CliArgs { prompt: None, prompt_file: None, out: None, model: None, size: None, n: 1, list: false };
+    let mut a = CliArgs { prompt: None, prompt_file: None, out: None, model: None, size: None, n: 1, images: Vec::new(), list: false };
     let mut it = args.iter();
     while let Some(flag) = it.next() {
         let mut val = || it.next().cloned().ok_or_else(|| format!("{flag} 后面缺值"));
@@ -745,6 +873,7 @@ fn parse_cli(args: &[String]) -> Result<CliArgs, String> {
             "--model" => a.model = Some(val()?),
             "--size" => a.size = Some(val()?),
             "--n" => a.n = val()?.parse().map_err(|_| "--n 要填 1–4 的数字".to_string())?,
+            "--image" => a.images.push(val()?),
             "--list" => a.list = true,
             "-h" | "--help" => return Err(CLI_USAGE.into()),
             other => return Err(format!("不认识的参数 {other}\n{CLI_USAGE}")),
@@ -812,7 +941,21 @@ pub fn helper_image_cli(args: &[String]) -> i32 {
             return 1;
         }
     };
-    let req = GenRequest { prompt, size: a.size.clone(), n: a.n };
+    if a.images.len() > INPUT_IMAGE_MAX {
+        eprintln!("--image 最多 {INPUT_IMAGE_MAX} 张");
+        return 2;
+    }
+    let mut images = Vec::new();
+    for p in &a.images {
+        match load_input_image(Path::new(p)) {
+            Ok(img) => images.push(img),
+            Err(e) => {
+                eprintln!("{e}");
+                return 2;
+            }
+        }
+    }
+    let req = GenRequest { prompt, size: a.size.clone(), n: a.n, images };
     let started = Instant::now();
     let result = tauri::async_runtime::block_on(generate(&target, &req));
     match result.and_then(|o| save_images(&o.images, Path::new(&out)).map(|p| (o, p))) {
@@ -920,6 +1063,7 @@ pub async fn image_gen_test(
             .unwrap_or_else(|| "A small ceramic cup of tea on a wooden desk, soft morning light, simple composition".into()),
         size: None,
         n: 1,
+        images: Vec::new(),
     };
     let started = Instant::now();
     let outcome = generate(&target, &req).await?;
@@ -1140,5 +1284,42 @@ mod tests {
         assert_eq!(a.n, 2);
         assert!(parse_cli(&["--bogus".to_string()]).is_err());
         assert!(parse_cli(&["--out".to_string()]).is_err());
+        let edit: Vec<String> = ["--image", "a.png", "--image", "b.jpg", "--prompt", "x"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(parse_cli(&edit).unwrap().images, vec!["a.png".to_string(), "b.jpg".to_string()]);
+    }
+
+    #[test]
+    fn edit_routes_seedream_through_generations_others_through_edits() {
+        assert!(edits_via_generations("doubao-seedream-4-0-250828"));
+        assert!(edits_via_generations("doubao-seededit-3-0-i2i-250628"));
+        assert!(!edits_via_generations("gpt-image-2.5"));
+        assert!(!edits_via_generations("grok-imagine-image"));
+    }
+
+    #[test]
+    fn input_image_must_be_real_image_and_encodes_as_data_url() {
+        let dir = tempfile_dir();
+        let png = dir.join("a.png");
+        std::fs::write(&png, decode_b64(PNG_1PX).unwrap()).unwrap();
+        let img = load_input_image(&png).unwrap();
+        assert_eq!(img.ext, "png");
+        assert!(img.data_url().starts_with("data:image/png;base64,iVBOR"));
+        let fake = dir.join("b.png");
+        std::fs::write(&fake, b"<html>not an image</html>").unwrap();
+        assert!(load_input_image(&fake).err().unwrap().contains("不是"));
+        assert!(load_input_image(&dir.join("missing.png")).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn multipart_body_has_fields_files_and_closing_boundary() {
+        let img = InputImage { bytes: decode_b64(PNG_1PX).unwrap(), ext: "png" };
+        let (ct, body) = multipart_body(&[("model", "gpt-image-2.5".into()), ("prompt", "蓝色帽子".into())], &[("image", &img)]);
+        let boundary = ct.strip_prefix("multipart/form-data; boundary=").unwrap();
+        let text = String::from_utf8_lossy(&body);
+        assert!(text.contains("name=\"model\"\r\n\r\ngpt-image-2.5\r\n"));
+        assert!(text.contains("name=\"prompt\"\r\n\r\n蓝色帽子\r\n"));
+        assert!(text.contains("name=\"image\"; filename=\"image-1.png\"\r\nContent-Type: image/png\r\n\r\n"));
+        assert!(text.ends_with(&format!("--{boundary}--\r\n")));
     }
 }

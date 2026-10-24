@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
-import { ArrowUpRight, Crop, EyeOff, PenLine, SquareDashedMousePointer, Trash2, Undo2, X } from "lucide-react";
+import { ArrowUpRight, Crop, EyeOff, PenLine, Ratio, SquareDashedMousePointer, Trash2, Undo2, WandSparkles, X } from "lucide-react";
 import {
   HALO_COLOR,
   MARK_COLOR,
@@ -52,6 +52,22 @@ const TOOLS: { id: MarkTool; label: string; icon: ReactNode; hint: string }[] = 
 ];
 
 const IDLE_HINT = "选一样工具在图上标；消息照常在下面写，标好的图随消息发出，原图不动";
+/** 点 AI 回复里的图进来（接着改这张图）：说清发出去会怎样 */
+const EDIT_HINT = "在下面写怎么改，要改的地方可以先框出来；发出去由 AI 用出图模型在原图上改，原图不动";
+
+/** 改图时的常用说法：点一下写进输入框，照常可改（不直接发） */
+const EDIT_QUICK: { label: string; text: string; icon: ReactNode }[] = [
+  {
+    label: "移除背景",
+    text: "去掉背景，只留主体（透明或纯白底），其余不变",
+    icon: <WandSparkles size={14} strokeWidth={1.8} aria-hidden="true" />,
+  },
+  {
+    label: "调整画幅",
+    text: "改成 16:9 横图，主体和风格不变，两边自然补全",
+    icon: <Ratio size={14} strokeWidth={1.8} aria-hidden="true" />,
+  },
+];
 
 /** 标注画成 SVG（放在 viewBox = 原图尺寸的 svg 里）：与导出的 paintMarkup 同一套几何 */
 export function MarkupLayer({ markup, draft = null }: { markup: Markup; draft?: Mark | null }) {
@@ -150,6 +166,7 @@ export default function ChatImageStage({
   onChange,
   onBoxAdded,
   onClose,
+  onQuickText,
 }: {
   name: string;
   url: string;
@@ -162,6 +179,8 @@ export default function ChatImageStage({
   /** 画好一个意见框：输入框在消息末尾接上它的圈码 */
   onBoxAdded: (n: number) => void;
   onClose: () => void;
+  /** 给了 = 这张是从 AI 回复里点进来接着改的：提示换成改图说明、工具条后面多「移除背景 / 调整画幅」，点了把说法写进输入框 */
+  onQuickText?: (text: string) => void;
 }) {
   const [tool, setTool] = useState<MarkTool | null>(null);
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(
@@ -275,7 +294,7 @@ export default function ChatImageStage({
     }
   }
 
-  const hint = tool ? TOOLS.find((t) => t.id === tool)?.hint : IDLE_HINT;
+  const hint = tool ? TOOLS.find((t) => t.id === tool)?.hint : onQuickText ? EDIT_HINT : IDLE_HINT;
   const hasMarks = (current?.marks.length ?? 0) > 0;
   const toolBtn = (on: boolean) =>
     `flex h-7 items-center gap-1 rounded-full px-2.5 text-xs transition-colors ${
@@ -387,6 +406,23 @@ export default function ChatImageStage({
             <Trash2 size={14} strokeWidth={1.8} aria-hidden="true" />
             清空
           </button>
+          {onQuickText && (
+            <>
+              <span aria-hidden="true" className="mx-1 h-4 w-px bg-hairline" />
+              {EDIT_QUICK.map((q) => (
+                <button
+                  key={q.label}
+                  type="button"
+                  title={`在消息里写上「${q.text}」，可以再改`}
+                  onClick={() => onQuickText(q.text)}
+                  className={toolBtn(false)}
+                >
+                  {q.icon}
+                  {q.label}
+                </button>
+              ))}
+            </>
+          )}
         </div>
       </div>
     </div>
