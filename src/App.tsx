@@ -1711,7 +1711,7 @@ function App() {
                   type="button"
                   onClick={cycleNavState}
                   title={collapsed ? "展开侧栏" : "收起为图标"}
-                  className={`ccode-brand-bar group mx-1.5 mt-1 flex h-11 shrink-0 select-none items-center rounded-md text-left transition-colors hover:bg-hover ${
+                  className={`ccode-brand-bar group mx-1.5 mt-1 flex h-9 shrink-0 select-none items-center rounded-md text-left transition-colors hover:bg-hover ${
                     collapsed ? "justify-center" : "px-2"
                   }`}
                 >
@@ -1728,7 +1728,7 @@ function App() {
                 </button>
 
                 {/* 快速入口：贴品牌区（2026-10-16 用户拍板：工作台/新对话在 Mesa 下、项目标签之上；「新对话」原名「快速开聊」，2026-10-18 改） */}
-                <div className="shrink-0 px-1.5 pt-2">
+                <div className="shrink-0 px-1.5 pt-1">
                   <RailTooltip label="工作台" collapsed={collapsed}>
                     <button
                       type="button"
@@ -1836,7 +1836,7 @@ function App() {
                 {/* 项目区（展开态）：「项目」标签在搜索框上面，列表/搜索/右键管理都在 ProjectTree；
                     flex 列容器让树拿到受限高度，课题多时在树内滚动而不是被侧栏裁掉 */}
                 {!collapsed && (
-                  <div className="flex min-h-0 flex-1 flex-col pt-3">
+                  <div className="flex min-h-0 flex-1 flex-col pt-1.5">
                     <ProjectTree
                       selectedRoot={contextLabel?.projectPath ?? null}
                       active={page === "workspaces"}
