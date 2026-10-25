@@ -127,12 +127,12 @@
   "liveReplySupported": true,
   "menu": {
    "options": [
-    "是，允许一次",
-    "在本项目中总是允许run 'echo *' commands",
-    "对该用户总是允许run 'echo *' commands",
-    "否，建议更改 (esc)"
+    "Yes, allow once",
+    "Always allow run 'echo *' commands in this project",
+    "Always allow run 'echo *' commands for this user",
+    "No, suggest changes (esc)"
    ],
-   "question": "允许执行：'echo'？"
+   "question": "Allow execution of: 'echo'?"
   },
   "previewReadable": true
  },

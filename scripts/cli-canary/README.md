@@ -88,7 +88,8 @@ Grok 的程序状态不带会话 id，「旁路认出会话」这项不查，会
    **这个版本会随包进 Mesa**（`src/cli-verified.ts`）：用户装的比它新时，聊天层不替人自动按键、确认卡上提醒（`docs/design-chat-fidelity.md`）。
    所以基线要跟得上：CLI 版本前进而指纹没变时，跑一次 `--accept-unchanged` 把核对版本往前挪。
 4. 有新画面时顺手存进抓屏语料库：`scripts/screen-corpus/add-from-capture.ts <out>/<agent>/screen.json`（见 `tests/fixtures/screens/README.md`）。
-3. 基线按平台分开存（`win32` / `darwin`）：两边的画面本来就不同，比如 Qwen 的审批菜单跟系统语言走，中文 Windows 上是「允许执行：'echo'？」，Windows 上 Grok 不跑旁路端到端。
+3. 基线按平台分开存（`win32` / `darwin`）：两边的画面和跑的层本来就不同，比如 Windows 上 Grok 不跑旁路端到端。
+   跟系统语言走的界面要钉成英文再记基线（Qwen 已由 `QWEN_CODE_LANG=en` 钉住），否则中文机器和 CI 记出来的菜单对不上。
 
 CI：`.github/workflows/cli-canary.yml` 每天北京时间 9:17 在 macOS / Windows 各跑一次，也可以手动触发。
 - 红了不是 Mesa 代码回退，是 CLI 变了。
