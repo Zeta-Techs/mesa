@@ -1388,7 +1388,7 @@ export default function ProjectTree({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* 项目标签行：计数 + 搜索 + 添加菜单（添加流程与示例课题创建都在项目页，经一次性请求触发） */}
-      <div className="flex h-7 shrink-0 items-center gap-1.5 px-2">
+      <div className="flex h-7 shrink-0 items-center gap-1.5 pl-4 pr-2">
         <span className={RAIL_SECTION_LABEL}>
           项目
         </span>
@@ -1421,7 +1421,8 @@ export default function ProjectTree({
         </span>
       </div>
 
-      {/* 顶边 6px 渐隐：往下滚时上面的行淡出，不在「项目」标题行下面硬切半行。
+      {/* 顶边 6px、底边 12px 渐隐：往下滚时上面的行淡出，不在「项目」标题行下面硬切半行，底下的行也不撞上工具栏分隔线；
+          底部留 12px 内边距，滚到底时最后一行落在渐隐区上面。分节标签（项目 / 置顶 / 其他打开的）的左缘对齐上面导航图标的左缘（16px）。
           键盘（2026-10-24）：光标在树里时 ↑↓ / Home / End 走行，回车打开，← → 收起 / 展开课题，在对话上按 ← 回到它的课题 */}
       <div
         ref={listRef}
@@ -1434,12 +1435,12 @@ export default function ProjectTree({
             delete el.dataset.scrolling;
           }, 900);
         }}
-        className="ccode-rail-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1.5 pb-1 pt-1.5 [mask-image:linear-gradient(to_bottom,transparent,black_6px)]"
+        className="ccode-rail-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1.5 pb-3 pt-1.5 [mask-image:linear-gradient(to_bottom,transparent,black_6px,black_calc(100%_-_12px),transparent)]"
       >
         {/* 置顶的对话（2026-10-24）：跨课题钉在最上面，原课题下不重复列 */}
         {pinnedList.length > 0 && (
           <div className="pb-2">
-            <div className="flex h-7 items-center px-2">
+            <div className="flex h-7 items-center px-2.5">
               <span className={RAIL_SECTION_LABEL}>置顶</span>
             </div>
             <div role="group" aria-label="置顶的对话" className="space-y-px">
@@ -1450,7 +1451,7 @@ export default function ProjectTree({
         {/* 开着、但不在任何项目里也不是随手聊的（主目录、别的文件夹里开的终端 / 对话）：单列一节放最上 */}
         {(openByFolder.get(null)?.length ?? 0) > 0 && (
           <div className="pb-2">
-            <div className="flex h-7 items-center px-2">
+            <div className="flex h-7 items-center px-2.5">
               <span className={RAIL_SECTION_LABEL}>其他打开的</span>
             </div>
             <div role="group" aria-label="其他打开的" className="space-y-px">
