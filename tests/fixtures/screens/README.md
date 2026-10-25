@@ -12,7 +12,7 @@
 | `agent` / `cliVersion` / `platform` | 哪家、哪个版本、哪个平台（Windows 的画面和 macOS 不同） |
 | `source` / `note` | 从哪来、为什么值得留 |
 | `rows` | 一屏的文字行；临时工作目录换成 `<工作目录>` |
-| `expect` | 只核对写了的几项：`menu`（问句 / 选项 / 高亮）、`trust`、`liveReply`（读出的段落）、`inputBox`；`null` = 该读不出 |
+| `expect` | 只核对写了的几项：`menu`（问句 / 选项 / 高亮）、`trust`、`liveReply`（读出的段落）、`inputBox`、`ask`（Claude 提问表单：问句 / 单选多选 / 选项名 / 光标能停的行）；`null` = 该读不出 |
 
 ## 什么时候加
 

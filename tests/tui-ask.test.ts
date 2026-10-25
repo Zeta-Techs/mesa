@@ -270,3 +270,33 @@ test("哪一下算交卷：卡片当场收起、到确认页替人按 Submit ans
   assert.equal(firstOfTwo.current, 0);
   assert.equal(askFinishes(firstOfTwo, { kind: "pick", index: 0 }), false);
 });
+
+test("多题里的多选题：后面还有题时那行写「Next」，也认成「选好这一题」（2.1.308，2026-10-25 用户截图）", () => {
+  const lines = [
+    RULE,
+    "←  ☐ 效率时段  ☐ 饮品偏好  ☐ 放松方式  ☐ 题材偏好  ✔ Submit  →",
+    "",
+    "你更喜欢用哪些方式放松？（可多选）",
+    "",
+    "❯ 1. [ ] 散步",
+    "         随便走走看看城市",
+    "  2. [ ] 阅读",
+    "         翻几页书",
+    "  3. [ ] Type something",
+    "     Next",
+    RULE,
+    "  4. Chat about this",
+    "",
+    "Enter to select · Tab/Arrow keys to navigate · Esc to cancel",
+  ];
+  const ask = parseClaudeAsk(lines);
+  assert.ok(ask && ask.kind === "question");
+  assert.equal(ask.multiSelect, true);
+  assert.deepEqual(ask.options.map((o) => [o.label, o.description, o.checked]), [
+    ["散步", "随便走走看看城市", false],
+    ["阅读", "翻几页书", false],
+  ]);
+  assert.deepEqual(ask.tabs.map((t) => t.label), ["效率时段", "饮品偏好", "放松方式", "题材偏好"]);
+  // 光标在第一项，「Next」是第四行：往下三格再回车
+  assert.deepEqual(askAnswerKeys(ask, { kind: "submit" }), [DOWN, DOWN, DOWN, ENTER]);
+});

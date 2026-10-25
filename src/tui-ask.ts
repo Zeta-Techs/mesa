@@ -13,7 +13,7 @@
  *   ❯ 1. 红                               ← 选项（❯ = 光标；多选题是「1. [ ] 苹果」「[✔]」= 勾上）
  *        选择红色                          ← 选项说明（缩进）
  *     4. Type something.                  ← 最后一项永远是「自己写」：光标停上去直接打字，字就写在这一行（多选题打字自动勾上）
- *        Submit                           ← 只有多选题有：这一题选好了
+ *        Submit                           ← 只有多选题有：这一题选好了（多题里后面还有题时写「Next」）
  *   ──────────────
  *     5. Chat about this                  ← 先不答：工具结果记「User declined」，模型接着说
  *   Enter to select · ↑/↓ to navigate · Esc to cancel
@@ -99,7 +99,8 @@ const SINGLE_HEADER = /^\s?([☐☒])\s+(\S.*)$/;
 const TAB = /^([☐☒✔])\s+(.+)$/;
 // 「❯ 1. 红」「  2. [✔] 香蕉」：第 1 列是光标位
 const OPTION = /^([❯ ])\s(\d+)\.\s+(?:\[(.)\]\s*)?(.*?)\s*$/;
-const SUBMIT_ROW = /^([❯ ])\s+Submit\s*$/;
+// 多选题选好这一题的那一行：只剩这一题没答时写「Submit」，后面还有题时写「Next」（2.1.308 实录，2026-10-25 用户截图）
+const SUBMIT_ROW = /^([❯ ])\s+(?:Submit|Next)\s*$/;
 const FREE_LABEL = /^Type something\.?$/;
 const CHECKED = /[✔✓xX]/;
 

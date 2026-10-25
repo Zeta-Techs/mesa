@@ -592,7 +592,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   tui-menu.ts                # 认屏上的 TUI 选择菜单（parseTuiMenu / menuAnswerKeys / sameTuiMenu / menuEchoesText）：切换命令后 5 秒、启动后 20 秒、
                              # 以及这一轮没结束前都扫屏，切换确认与七家工具审批按原文给按钮；剥方框边与滚动条、Grok 单选改写成序号行、
                              # 折行并回上一项、问句取贴着选项的发问行；回显的 /命令、⎿ 续行、用户刚发的编号清单、上下被横线夹住的输入框草稿都不算菜单
-  tui-ask.ts                 # Claude 提问表单（AskUserQuestion）按表单读（parseClaudeAsk：题签 / 当前题靠底色 / 问句 / 选项与说明 / 勾选 / 「自己写」 / Submit 行 /
+  tui-ask.ts                 # Claude 提问表单（AskUserQuestion）按表单读（parseClaudeAsk：题签 / 当前题靠底色 / 问句 / 选项与说明 / 勾选 / 「自己写」 / Submit（多题未完时写 Next） 行 /
                              # Chat about this / 确认页）、要按的键（askAnswerKeys）、哪一下算交卷（askFinishes：卡片当场收起、到确认页替人确认）、多选先照按键结果画（askAfter）、给通用菜单流程的摘要（askMenu）；
                              # 卡片在 components/ChatDecisionCard.tsx AskCard（tests/tui-ask.test.ts）
   prompt-suggestion.ts       # Claude「猜你下一句」：输入框那一行除第一个字外全是灰字才算（readPromptSuggestion），排除 Try "…" 等固定提示；

@@ -4,6 +4,7 @@
  * 规则见 tests/fixtures/screens/README.md。
  */
 import { parseTuiMenu } from "../../src/tui-menu.ts";
+import { parseClaudeAsk } from "../../src/tui-ask.ts";
 import { parseTrustPrompt } from "../../src/trust-prompt.ts";
 import { extractLiveReply, terminalHasInputBox } from "../../src/live-reply.ts";
 
@@ -22,6 +23,8 @@ export interface ScreenFixture {
     trust?: { options: string[]; selected: number; yesIndex: number; noIndex: number } | null;
     liveReply?: string[] | null;
     inputBox?: boolean | null;
+    /** Claude 提问表单（tui-ask.ts，不看颜色所以读不出当前题）：问句、单选 / 多选、选项名、光标能停的行 */
+    ask?: { question: string; multiSelect: boolean; options: string[]; rows: string[] } | { review: true; answers: number } | null;
   };
 }
 
@@ -39,6 +42,13 @@ export function readScreen(agent: string, rows: string[], keys: readonly (keyof 
       out.liveReply = extractLiveReply(rows, agent)?.lines ?? null;
     } else if (k === "inputBox") {
       out.inputBox = terminalHasInputBox(rows, agent);
+    } else if (k === "ask") {
+      const a = parseClaudeAsk(rows);
+      out.ask = !a
+        ? null
+        : a.kind === "review"
+          ? { review: true, answers: a.answers.length }
+          : { question: a.question, multiSelect: a.multiSelect, options: a.options.map((o) => o.label), rows: a.rows.map((r) => r.kind) };
     }
   }
   return out;
