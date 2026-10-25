@@ -446,6 +446,7 @@ fn feature_flags() -> Value {
         "hotkeyHideChromeEnabled": settings.hotkey_hide_chrome.as_deref().is_some_and(|v| !v.is_empty()),
         "hotkeyNewChatEnabled": settings.hotkey_new_chat.as_deref().is_some_and(|v| !v.is_empty()),
         "hotkeyFocusRailEnabled": settings.hotkey_focus_rail.as_deref().is_some_and(|v| !v.is_empty()),
+        "hotkeyToggleSurfaceEnabled": settings.hotkey_toggle_surface.as_deref().is_some_and(|v| !v.is_empty()),
         "hotkeyPageSwitch": settings.hotkey_page_switch,
         "aiDefaultProfileConfigured": settings.ai_profile_id.is_some(),
         "aiFunctionProfilesConfigured": ai_functions,

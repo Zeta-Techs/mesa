@@ -30,7 +30,13 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import { sessionRuntimeKey, useAppStore } from "../store";
 import type { ProjectSurfaceTab } from "../project-surface";
-import { IS_MAC, IS_WINDOWS } from "../hotkeys";
+import {
+  DEFAULT_TOGGLE_SURFACE_HOTKEY,
+  IS_MAC,
+  IS_WINDOWS,
+  comboLabel,
+  eventMatchesCombo,
+} from "../hotkeys";
 import { monoFallbackStack, terminalFontStack } from "../terminal-font";
 import { installDomScrollRowReuse } from "../terminal-row-reuse";
 import { installTrackpadWheelCoalescing } from "../terminal-wheel-scroll";
@@ -1516,6 +1522,17 @@ const TerminalView = memo(function TerminalView({
     searchInputRef.current?.select();
     setAltBufferActive(termRef.current?.buffer.active.type === "alternate");
   }, [searchOpen]);
+
+  // 从聊天切到终端（>_、/terminal、快捷键都算）：光标落进终端，切过来就能打字。
+  // 只认「整块终端从盖着变成露着」这一下——窥视条开合、挂载、换标签都不抢焦点
+  const fullTerminal = !coveredByChat && !embedInPeek;
+  const fullTerminalPrevRef = useRef(fullTerminal);
+  useEffect(() => {
+    const was = fullTerminalPrevRef.current;
+    fullTerminalPrevRef.current = fullTerminal;
+    if (!was && fullTerminal && visible && primaryFocus) termRef.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fullTerminal]);
 
   // Cmd/Ctrl+F 呼出搜索条：只挂当前可见且活跃的 pane，保证只作用于活跃终端。
   // 终端聚焦时按键经 xterm 的 customKeyEventHandler 拦截（见创建 effect），这里兜底页面其余焦点。
@@ -7519,6 +7536,14 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     if (mode === "terminal") useAppStore.getState().ackOnboarding("terminal");
   }
 
+  /** 右上角 >_ 与快捷键同一动作：聊天 ↔ 终端 */
+  function toggleSurface(via: "tab-bar" | "hotkey") {
+    if (focusedSurfaceMode === "chat") {
+      recordChatHandoff(statuses[focusedId]?.agentId, "user_switch", via);
+    }
+    switchSurface(focusedSurfaceMode === "chat" ? "terminal" : "chat");
+  }
+
   // 聊天层「Mesa」操作（斜杠面板上半组，docs/design-chat-layer.md §6）：由 Mesa 执行，不写进终端
   function mesaCommandsFor(tabId: string): MesaCommand[] {
     const st = statuses[tabId];
@@ -9589,6 +9614,27 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     return () => window.removeEventListener("keydown", onKey, true);
   }, [visible]);
 
+  // 聊天 / 终端来回切（默认 ⌘⇧T / Ctrl+Shift+T，设置页可改）：捕获阶段挂 window，光标在终端里也先于 xterm 拿到
+  const toggleSurfaceCombo = useAppStore(
+    (s) => s.settings?.hotkeyToggleSurface ?? DEFAULT_TOGGLE_SURFACE_HOTKEY,
+  );
+  const toggleSurfaceRef = useRef(toggleSurface);
+  toggleSurfaceRef.current = toggleSurface;
+  useEffect(() => {
+    if (!visible || !toggleSurfaceCombo) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.isComposing || !eventMatchesCombo(e, toggleSurfaceCombo)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      // 切回聊天时光标还在被盖住的终端里，接着打的字会进 PTY：先放掉，聊天输入框随后自己要焦点
+      const el = document.activeElement;
+      if (el instanceof HTMLElement && el.closest(".xterm")) el.blur();
+      toggleSurfaceRef.current("hotkey");
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [visible, toggleSurfaceCombo]);
+
   function doCloseTab(id: string) {
     const idx = tabs.findIndex((t) => t.id === id);
     const next = tabs.filter((t) => t.id !== id);
@@ -9892,14 +9938,11 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           <span className="ml-auto flex shrink-0 items-center gap-1">
             <button
               type="button"
-              onClick={() => {
-                if (focusedSurfaceMode === "chat") {
-                  recordChatHandoff(statuses[focusedId]?.agentId, "user_switch", "tab-bar");
-                }
-                switchSurface(focusedSurfaceMode === "chat" ? "terminal" : "chat");
-              }}
+              onClick={() => toggleSurface("tab-bar")}
               aria-pressed={focusedSurfaceMode !== "chat"}
-              title={focusedSurfaceMode === "chat" ? "看这段对话的终端" : "回到聊天"}
+              title={`${focusedSurfaceMode === "chat" ? "看这段对话的终端" : "回到聊天"}${
+                toggleSurfaceCombo ? `（${comboLabel(toggleSurfaceCombo)}）` : ""
+              }`}
               aria-label={focusedSurfaceMode === "chat" ? "看这段对话的终端" : "回到聊天"}
               className={`flex size-7 items-center justify-center rounded-md transition-colors ${
                 focusedSurfaceMode !== "chat" ? "bg-seg-sel text-l1" : "text-l4 hover:bg-hover hover:text-l2"

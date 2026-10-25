@@ -679,7 +679,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   **重置卡里不写「已用 X%」**（用量已经在上面两个窗口）；
                              #   planLevelLabel 全小写等级首字母大写（智谱实测回 level:"max"）
                              #   （tests/plan-quota.test.ts）
-  hotkeys.ts                 # 快捷键组合串纯逻辑 + 页切清单 PAGE_HOTKEY_DEFS（顺序 / 字同侧栏，10-24 重排）+ 新对话 / 在侧栏里选对话默认绑定
+  hotkeys.ts                 # 快捷键组合串纯逻辑 + 页切清单 PAGE_HOTKEY_DEFS（顺序 / 字同侧栏，10-24 重排）+ 新对话 / 在侧栏里选对话 / 聊天↔终端默认绑定
                              # + globalHotkeyAllowed（Win / Linux 焦点在终端里不抢 Ctrl+N 等）+ FIXED_HOTKEYS（设置页只读列出）
   themes.ts                  # 主题清单单一出处 + isLightTheme() 亮暗判定单一出处 + DEFAULT_THEME_ID（首装琥珀，与 settings.rs 同步）（禁另造判定；
                              #   custom / custom-light 不进十四套清单）

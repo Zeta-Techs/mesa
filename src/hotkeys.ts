@@ -24,6 +24,9 @@ export const PAGE_HOTKEY_DEFS = [
 export const DEFAULT_NEW_CHAT_HOTKEY = "mod+n";
 /** 光标移到侧栏里正看着的那段对话，之后 ↑↓ 选、回车打开（2026-10-24；同 VS Code Ctrl+0 聚焦侧栏） */
 export const DEFAULT_FOCUS_RAIL_HOTKEY = "mod+0";
+/** 运行页里聊天 / 终端来回切（同右上角 >_，2026-10-25）。光标在终端里也要接——从终端切回聊天正是这时候按，
+ *  所以不走 globalHotkeyAllowed：带 Shift 的 Ctrl+Shift+T 不是 shell / CLI 的键（Ctrl+T 照常进终端） */
+export const DEFAULT_TOGGLE_SURFACE_HOTKEY = "mod+shift+t";
 
 /**
  * 全局快捷键这次按下去该不该由 Mesa 接：Windows / Linux 上 mod 是 Ctrl，焦点在终端里时 Ctrl+N（下一条历史）、

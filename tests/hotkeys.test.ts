@@ -6,6 +6,7 @@ import {
   comboLabel,
   DEFAULT_FOCUS_RAIL_HOTKEY,
   DEFAULT_NEW_CHAT_HOTKEY,
+  DEFAULT_TOGGLE_SURFACE_HOTKEY,
   eventMatchesCombo,
   FIXED_HOTKEYS,
   globalHotkeyAllowed,
@@ -146,4 +147,24 @@ test("hotkeyClashes：存下的旧绑定和新默认撞车时两条都标出（�
 
 test("FIXED_HOTKEYS：名字不超过 8 个字（设置页双列放得下，不被截成「…」）", () => {
   for (const k of FIXED_HOTKEYS) assert.ok([...k.label].length <= 8, k.label);
+});
+
+test("聊天 / 终端切换：默认 ⌘⇧T / Ctrl+Shift+T，按住 Shift 时 key 是大写也命中；裸 Ctrl+T 不拦（终端里照常进 CLI）", () => {
+  const taken = [
+    ...PAGE_HOTKEY_DEFS.map((p) => p.combo),
+    "mod+k",
+    "mod+\\",
+    READER_MODE_HOTKEY,
+    DEFAULT_NEW_CHAT_HOTKEY,
+    DEFAULT_FOCUS_RAIL_HOTKEY,
+  ];
+  assert.ok(!taken.includes(DEFAULT_TOGGLE_SURFACE_HOTKEY));
+  assert.ok(eventMatchesCombo(ev({ metaKey: true, shiftKey: true, key: "T" }), DEFAULT_TOGGLE_SURFACE_HOTKEY));
+  assert.ok(eventMatchesCombo(ev({ ctrlKey: true, shiftKey: true, key: "T" }), DEFAULT_TOGGLE_SURFACE_HOTKEY));
+  assert.ok(!eventMatchesCombo(ev({ ctrlKey: true, key: "t" }), DEFAULT_TOGGLE_SURFACE_HOTKEY));
+  // 设置页录下来的就是默认值本身
+  assert.deepEqual(captureDecision(ev({ metaKey: true, shiftKey: true, key: "T" }), []), {
+    action: "save",
+    combo: DEFAULT_TOGGLE_SURFACE_HOTKEY,
+  });
 });

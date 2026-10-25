@@ -43,6 +43,7 @@ import {
   captureDecision,
   comboLabel,
   DEFAULT_FOCUS_RAIL_HOTKEY,
+  DEFAULT_TOGGLE_SURFACE_HOTKEY,
   DEFAULT_NEW_CHAT_HOTKEY,
   FIXED_HOTKEYS,
   hotkeyClashes,
@@ -1023,6 +1024,7 @@ function HotkeysSection({
   const chrome = settings?.hotkeyHideChrome ?? "mod+\\";
   const newChat = settings?.hotkeyNewChat ?? DEFAULT_NEW_CHAT_HOTKEY;
   const focusRail = settings?.hotkeyFocusRail ?? DEFAULT_FOCUS_RAIL_HOTKEY;
+  const toggleSurface = settings?.hotkeyToggleSurface ?? DEFAULT_TOGGLE_SURFACE_HOTKEY;
   const pageSwitchOn = settings?.hotkeyPageSwitch !== false;
   const pageCombo = (id: string) =>
     settings?.hotkeyPages?.[id] ??
@@ -1036,6 +1038,7 @@ function HotkeysSection({
       : []),
     { id: "newChat", label: "新对话", combo: newChat },
     { id: "focusRail", label: "在侧栏里选对话", combo: focusRail },
+    { id: "toggleSurface", label: "聊天 / 终端", combo: toggleSurface },
     { id: "palette", label: "命令面板", combo: palette },
     { id: "chrome", label: "隐藏侧栏", combo: chrome },
   ]);
@@ -1074,6 +1077,7 @@ function HotkeysSection({
                   chrome,
                   newChat,
                   focusRail,
+                  toggleSurface,
                   ...PAGE_HOTKEY_DEFS.filter((x) => x.id !== p.id).map(
                     (x) => pageCombo(x.id),
                   ),
@@ -1093,7 +1097,7 @@ function HotkeysSection({
           ))}
         </div>
       </Card>
-      <Card title="全局快捷键" hint="在任何页面都生效">
+      <Card title="全局快捷键" hint="在任何页面都生效；「聊天 / 终端」只在运行页">
         <div className="grid grid-cols-1 gap-1 lg:grid-cols-2">
           <CardRow
             label="新对话"
@@ -1108,7 +1112,7 @@ function HotkeysSection({
               value={newChat}
               clashWith={clashes.get("newChat")}
               defaultValue={DEFAULT_NEW_CHAT_HOTKEY}
-              conflictsWith={[palette, chrome, focusRail, ...pageCombos]}
+              conflictsWith={[palette, chrome, focusRail, toggleSurface, ...pageCombos]}
               onSave={(combo) => void patch({ hotkeyNewChat: combo })}
               capturing={capturing}
               setCapturing={setCapturing}
@@ -1123,8 +1127,23 @@ function HotkeysSection({
               value={focusRail}
               clashWith={clashes.get("focusRail")}
               defaultValue={DEFAULT_FOCUS_RAIL_HOTKEY}
-              conflictsWith={[palette, chrome, newChat, ...pageCombos]}
+              conflictsWith={[palette, chrome, newChat, toggleSurface, ...pageCombos]}
               onSave={(combo) => void patch({ hotkeyFocusRail: combo })}
+              capturing={capturing}
+              setCapturing={setCapturing}
+            />
+          </CardRow>
+          <CardRow
+            label="聊天 / 终端"
+            title="在运行页里按：同右上角 >_，在聊天和这段对话的终端之间来回切；光标在终端里也能按"
+          >
+            <HotkeyCapture
+              id="toggleSurface"
+              value={toggleSurface}
+              clashWith={clashes.get("toggleSurface")}
+              defaultValue={DEFAULT_TOGGLE_SURFACE_HOTKEY}
+              conflictsWith={[palette, chrome, newChat, focusRail, ...pageCombos]}
+              onSave={(combo) => void patch({ hotkeyToggleSurface: combo })}
               capturing={capturing}
               setCapturing={setCapturing}
             />
@@ -1135,7 +1154,7 @@ function HotkeysSection({
               value={palette}
               clashWith={clashes.get("palette")}
               defaultValue="mod+k"
-              conflictsWith={[chrome, newChat, focusRail, ...pageCombos]}
+              conflictsWith={[chrome, newChat, focusRail, toggleSurface, ...pageCombos]}
               onSave={(combo) => void patch({ hotkeyPalette: combo })}
               capturing={capturing}
               setCapturing={setCapturing}
@@ -1148,7 +1167,7 @@ function HotkeysSection({
               clashWith={clashes.get("chrome")}
               // JSX 属性里的字符串不认反斜杠转义："mod+\\" 会是两个反斜杠，和真绑定对不上（原先「恢复」常亮、点了还会存坏）
               defaultValue={"mod+\\"}
-              conflictsWith={[palette, newChat, focusRail, ...pageCombos]}
+              conflictsWith={[palette, newChat, focusRail, toggleSurface, ...pageCombos]}
               onSave={(combo) => void patch({ hotkeyHideChrome: combo })}
               capturing={capturing}
               setCapturing={setCapturing}

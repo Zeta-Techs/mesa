@@ -631,6 +631,9 @@
   `hotkeys.ts` 组合串，空串=禁用，settings.json 四字段；录制冲突判定对全部在用绑定互判）。通知动作 `ccode.attention` → 聚焦窗口 + 聚焦对应终端标签，
   无 extra 回首页收件箱；通知 extra 带 tabId/cwd（v3.60 起通知只有「待确认」一种，原「已回复直达评审覆盖层」链路随 done 通知一并移除）；
   收件箱经 `session_tail_state` 直查外部 live 会话（≤10 条）。
+- **运行页里要「光标在终端里也接」的快捷键**（⌃Tab、聊天 / 终端 `hotkeyToggleSurface` 默认 mod+shift+t，2026-10-25）：只在运行页可见时挂，
+  window 捕获阶段 `preventDefault` + `stopPropagation`，先于 xterm 拿到；默认组合必须避开 CLI 会用的键（Windows 上不带 Shift 的 Ctrl+字母多半有用，Ctrl+J 是换行）。
+  换层时管好焦点：切回聊天先 blur 被盖住的 xterm（否则接着打的字进 PTY），切到整块终端时 `term.focus()`。
 - **终端分屏（SplitView）只是显隐与排序变化**：全部标签仍在同一容器保持挂载，靠 flex order 把活跃标签（左）与对照标签
   （右）排到分隔条两侧，禁止把标签移进第二棵子树（会重挂载杀 PTY）；右栏/文件树/改动跟随「活跃 pane」（点击切换，
   focusedId），分屏时两个 pane 的 PTY 都推流；分屏状态不进持久化白名单，仅分隔比例本地记忆。
