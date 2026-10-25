@@ -137,7 +137,7 @@
   聊天层仍用 `wasPrepended`（原首条在新列表里往后挪了）区分前插与最新窗后滑，前插那次不亮「有新消息」。
 - **运行中换权限（2026-10-17 用户：发完消息权限就改不了了）**：各家权限都在启动参数里，换 = 父级先写标签 permission /
   permissionMode，下一拍调标签动作 `restartWithPermission`：停下 Agent，回落 shell 后 effect 用最新 props
-  `launch(lastResume)` 按原会话恢复，对话不丢。权限徽标确认框写明「会重开」，正在生成时只显示不可点。
+  `launch(lastResume)` 按原会话恢复，对话不丢；**接回期间置 `keepPreviewConvRef`**，`launch` 开头的 `resetLink` 不清聊天，接上后会话文件刷新整份替换（换模型 / 换连接同口径；原先先清空再出现，用户看着像整页刷新，2026-10-25）。权限徽标确认框写明「会重开」，正在生成时只显示不可点。
   **重开另开一条 Run（`freshRun`，2026-10-21）**：旧 Run 刚被 pty_kill 关掉，权限（只讨论 ↔ 可改文件）又是 Run 身份的一部分，
   沿用旧 Run 会被 `open_at` 拒（「此 Run 不支持恢复」「Run 身份与启动目标不一致」）。另：**轮询 / 旁路回调里读 Run 一律用 `runIdRef`**——
   闭包是 launch 那一轮捕获的，读 state 是旧值，`lockLink` 曾因此从不给 Gemini / Kimi / OpenCode 的交互 Run 登记会话；

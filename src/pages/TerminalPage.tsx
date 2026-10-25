@@ -5319,8 +5319,13 @@ const TerminalView = memo(function TerminalView({
   useEffect(() => {
     if (!permissionRestartRef.current || running || !shellActive) return;
     permissionRestartRef.current = false;
-    // 另开一条 Run 接回原对话：旧 Run 已停、权限也变了（只讨论 ↔ 可改文件是 Run 身份的一部分）
-    void launch(lastResumeRef.current ?? undefined, { prompt: "", freshRun: true });
+    // 另开一条 Run 接回原对话：旧 Run 已停、权限也变了（只讨论 ↔ 可改文件是 Run 身份的一部分）。
+    // 接回途中原来的对话留在画面上，接上后会话文件刷新整份替换——原先 launch 先清空聊天，换权限 / 换模型像整页刷新了一次（2026-10-25 用户）
+    const resume = lastResumeRef.current ?? undefined;
+    keepPreviewConvRef.current = Boolean(resume);
+    void launch(resume, { prompt: "", freshRun: true }).finally(() => {
+      keepPreviewConvRef.current = false;
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running, shellActive]);
 
@@ -5343,7 +5348,11 @@ const TerminalView = memo(function TerminalView({
     if (!target || running || !shellActive || profileId !== target) return;
     switchPendingRef.current = null;
     if (!lastResumeRef.current) return;
-    void launch(lastResumeRef.current, { prompt: "" });
+    // 同换权限：接回途中原来的对话留在画面上
+    keepPreviewConvRef.current = true;
+    void launch(lastResumeRef.current, { prompt: "" }).finally(() => {
+      keepPreviewConvRef.current = false;
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running, shellActive, profileId]);
 
