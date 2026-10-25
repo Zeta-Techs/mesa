@@ -5543,17 +5543,27 @@ const TerminalView = memo(function TerminalView({
 
     // Agent 已回落 shell：聊天框继续沿用最后一个会话，而不是启动新上下文。
     if (!running && shellActive && lastResumeRef.current) {
-      const res = await launch(lastResumeRef.current, { prompt: "" });
-      if (!res) return { error: launchCancelRef.current ?? error ?? "恢复会话失败，请切到终端检查" };
+      const early = showEarlyBubble(message);
+      const res = await launch(lastResumeRef.current, { prompt: "" }).finally(endEarlyBubbleLaunch);
+      if (!res) {
+        early.retract();
+        return { error: launchCancelRef.current ?? error ?? "恢复会话失败，请切到终端检查" };
+      }
+      early.reRegister();
       // 恢复启动要经历进程引导/会话回放（可能还有信任提示）：等一拍再写，
       // 否则正文+提交键落在尚未就绪的 TUI 上，表现为消息躺在输入框里没发出去
       await new Promise((r) => setTimeout(r, 1200));
-      if (!mountedRef.current || ptyIdRef.current !== res.ptyId)
-        return { error: null };
+      if (!mountedRef.current) return { error: null };
+      if (ptyIdRef.current !== res.ptyId) {
+        early.retract();
+        return { error: "终端已重新启动，这句没有发出，请再发一次" };
+      }
       armPtyWorking();
       const result = await writeChatMessage(res.ptyId, message);
-      if (result.error) disarmPtyWorking();
-      else showOptimisticUserMessage(message);
+      if (result.error) {
+        disarmPtyWorking();
+        early.retract();
+      }
       return result;
     }
 
@@ -5563,19 +5573,26 @@ const TerminalView = memo(function TerminalView({
       if (!selectedProfile) {
         return { error: "上次使用的配置已不存在，切到终端在启动栏重新选择" };
       }
-      // 摆着的记录在接回途中不清掉：接上之后由会话文件刷新接替，不闪回空态
-      keepPreviewConvRef.current = previewSrcRef.current != null;
-      const res = await launch(undefined, { prompt: "" }).finally(() => {
-        keepPreviewConvRef.current = false;
-      });
-      if (!res) return { error: launchCancelRef.current ?? error ?? "恢复会话失败，请切到终端检查" };
+      // 摆着的记录在接回途中不清掉：接上之后由会话文件刷新接替，不闪回空态（showEarlyBubble 一并管）
+      const early = showEarlyBubble(message);
+      const res = await launch(undefined, { prompt: "" }).finally(endEarlyBubbleLaunch);
+      if (!res) {
+        early.retract();
+        return { error: launchCancelRef.current ?? error ?? "恢复会话失败，请切到终端检查" };
+      }
+      early.reRegister();
       await new Promise((r) => setTimeout(r, 1200));
-      if (!mountedRef.current || ptyIdRef.current !== res.ptyId)
-        return { error: null };
+      if (!mountedRef.current) return { error: null };
+      if (ptyIdRef.current !== res.ptyId) {
+        early.retract();
+        return { error: "终端已重新启动，这句没有发出，请再发一次" };
+      }
       armPtyWorking();
       const result = await writeChatMessage(res.ptyId, message);
-      if (result.error) disarmPtyWorking();
-      else showOptimisticUserMessage(message);
+      if (result.error) {
+        disarmPtyWorking();
+        early.retract();
+      }
       return result;
     }
 
@@ -5593,19 +5610,50 @@ const TerminalView = memo(function TerminalView({
     // 发的时候按项目当时的内容现拼；聊天气泡、起名只认人说的（splitLaunchPrompt / strip_mesa_launch_pack）
     const pack = await projectPackFor(cwd);
     const firstPrompt = pack ? composeLaunchPrompt(pack, message) : message;
-    const res = await launch(undefined, { prompt: firstPrompt, typeDroppedPrompt: true });
-    if (!res) return { error: launchCancelRef.current ?? "启动 Agent 失败，请切到终端查看详细信息" };
+    const early = showEarlyBubble(message);
+    const res = await launch(undefined, { prompt: firstPrompt, typeDroppedPrompt: true }).finally(endEarlyBubbleLaunch);
+    if (!res) {
+      early.retract();
+      return { error: launchCancelRef.current ?? "启动 Agent 失败，请切到终端查看详细信息" };
+    }
+    early.reRegister();
+    // 读屏比对「刚发的话」要用整段首条指令（项目说明拼在前面），不是气泡里那句
+    lastSentRef.current = firstPrompt;
     if (res.promptDropped) {
       // Kimi 没有带首条指令启动的参数：等输入框就绪后照普通消息写进去（与之后每句同一条路）
-      if (!mountedRef.current || ptyIdRef.current !== res.ptyId) return { error: null };
+      if (!mountedRef.current) return { error: null };
+      if (ptyIdRef.current !== res.ptyId) {
+        early.retract();
+        return { error: "终端已重新启动，这句没有发出，请再发一次" };
+      }
       armPtyWorking();
       const result = await writeChatMessage(res.ptyId, firstPrompt);
-      if (result.error) disarmPtyWorking();
-      else showOptimisticUserMessage(message);
+      if (result.error) {
+        disarmPtyWorking();
+        early.retract();
+      }
       return result;
     }
-    showOptimisticUserMessage(message);
     return { error: null };
+  }
+
+  /**
+   * 要先启动 / 接回 Agent 的发送（几秒）：气泡先出。launch 开头的 resetLink 会清对话和待确认列表——
+   * 期间置 keepPreviewConvRef 让画面上的（连同这条气泡）留着，launch 回来马上重新登记成待确认，接上后会话文件刷新不把它冲掉
+   * （2026-10-25 用户：输入框清空了，聊天里却过几秒才出来）
+   */
+  function showEarlyBubble(text: string) {
+    const shown: ChatMessageDto[] = [showOptimisticUserMessage(text)];
+    keepPreviewConvRef.current = true;
+    return {
+      reRegister: () => {
+        shown.push(showOptimisticUserMessage(text));
+      },
+      retract: () => shown.forEach((m) => retractOptimisticUserMessage(m, false)),
+    };
+  }
+  function endEarlyBubbleLaunch() {
+    keepPreviewConvRef.current = false;
   }
 
   async function restartWritable(): Promise<ChatSendResult> {
