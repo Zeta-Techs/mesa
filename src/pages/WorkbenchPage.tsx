@@ -6,6 +6,7 @@ import { listen } from "@tauri-apps/api/event";
 import {
   AlarmClock,
   CheckCheck,
+  ArrowRight,
   ChevronRight,
   CircleDot,
   ClipboardCheck,
@@ -1015,13 +1016,15 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                   {/* 运行状态光标跟在状态字后面、竖着居中（同侧栏口径，没事不画）。不贴在课题名后面：
                       夹在名字和「科研」之间读成破折号（2026-10-24 光标改居中时看出来的） */}
                   {itemCaret(item) && <RunCaret state={itemCaret(item)!} decorative className="-ml-2 text-micro" />}
-                  {/* 整行可点即「继续」，不再每行常驻同一个「继续」字 */}
-                  <ChevronRight
-                    size={14}
-                    strokeWidth={1.8}
-                    className={`text-l4 ${hoverRevealClass}`}
+                  {/* 整行可点即「继续」，不每行常驻同一个字；悬停时行尾出「继续 →」。
+                      原先是单个 ›，读作「展开」（2026-10-25 用户：「看着像展开」） */}
+                  <span
+                    className={`flex shrink-0 items-center gap-1 text-micro text-l3 group-focus-within:opacity-100 ${hoverRevealClass}`}
                     aria-hidden="true"
-                  />
+                  >
+                    继续
+                    <ArrowRight size={12} strokeWidth={1.8} />
+                  </span>
                 </button>
                 {showClientJump && (
                   <button

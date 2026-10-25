@@ -457,6 +457,10 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-25 · 工作台紧凑行行尾 › 换「继续 →」
+
+用户：「工作台的这个继续按钮是不是换个，看着像展开」。紧凑行整行就是继续，行尾单个 ChevronRight 在列表里通常读作「展开 / 进下一级」；改成悬停才出现的「继续 + ArrowRight」（micro l3，hoverReveal + 行内获焦也显示）。「待你处理」列表的 › 是跳去项目页，不动。
+
 ### 2026-10-25 · 侧栏底部记号换 ›、展开改抽屉动画
 
 用户：「侧栏底部的 ⋯ 是不是需要换个符号，动画也优化一下，现在是直接出现」。⋯ 是「更多菜单」的通用记号，这里其实是往右展开，换成 › （ChevronRight 15px l4）；三个图标常驻在抽屉里（不再按开合增删节点），抽屉 max-width 200ms 从一个 › 滑到三格，图标 opacity + translate 依次入场（40ms 起每个 +35ms）、› 同时淡出右移，收回不排队；收着时三个图标 tabIndex -1。Tailwind v4 的 translate-x 走 `translate` 属性，transition 列表写 translate 不写 transform。
