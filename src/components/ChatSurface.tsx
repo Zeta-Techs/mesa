@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { ArrowDown } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import ConversationView from "./ConversationView";
@@ -1144,13 +1145,18 @@ export default function ChatSurface({
             </div>
           )}
           {hasNew && (
+            // 浮在对话流底部正中的小胶囊（2026-10-26 用户：原先方角带框的灰块像个输入框）：浮层统一表面 + 细描边、
+            // 圆角满、↓ 用图标不用字符，出现时轻弹入（.ccode-float-surface 自带，减弱动态效果时不播）。
+            // 居中只靠 mx-auto：sticky 下 left-1/2 不起定位作用，再叠 -translate-x-1/2 会把按钮往左偏半个身位
             <button
               type="button"
               onClick={scrollBottom}
-              // 居中只靠 mx-auto：sticky 下 left-1/2 不起定位作用，再叠 -translate-x-1/2 会把按钮往左偏半个身位
-              className="sticky bottom-2 z-10 mx-auto rounded-md border border-field bg-raised px-2.5 py-1 text-xs text-l2 hover:bg-inset hover:text-l1"
+              aria-label="跳到最新消息"
+              className="ccode-float-surface sticky bottom-3 z-10 mx-auto flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-hairline pl-2 pr-3 text-l2 transition-colors hover:border-field hover:text-l1"
             >
-              有新消息 ↓
+              <ArrowDown size={13} strokeWidth={2} aria-hidden="true" />
+              {/* 字号写在内层：全站 button { font: inherit } 会吞掉按钮上的 text-*，否则跟着聊天字号变大 */}
+              <span className="text-xs">有新消息</span>
             </button>
           )}
         </div>
