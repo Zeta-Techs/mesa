@@ -851,31 +851,21 @@ test("输入框（2026-10-22）：发送钮是光标块，生成中有字时停�
   }
 });
 
-test("完全访问细线：切到一段完全访问的对话也亮一下，藏着的标签不亮（2026-10-25）", async () => {
+test("完全访问细线：聊天层给定亮不亮时以它为准，切换对话档位读进来不亮（2026-10-25）", async () => {
   const flashing = (ui: Awaited<ReturnType<typeof mount>>) =>
     ui.el.querySelector(".ccode-composer-box")?.hasAttribute("data-tone-flash");
   const base = { onSend: async () => null };
-  const hidden = await mount();
+  const ui = await mount();
   try {
-    await hidden.render(hidden.h(hidden.Composer, { ...base, tone: "full", toneShown: false }));
-    assert.equal(flashing(hidden), false, "藏着的标签挂上来不亮");
-    // 切到这段对话
-    await hidden.render(hidden.h(hidden.Composer, { ...base, tone: "full", toneShown: true }));
-    assert.equal(flashing(hidden), true, "切过来时亮一下");
-    // 切走：立刻收掉；再切回来又亮
-    await hidden.render(hidden.h(hidden.Composer, { ...base, tone: "full", toneShown: false }));
-    assert.equal(flashing(hidden), false);
-    await hidden.render(hidden.h(hidden.Composer, { ...base, tone: "full", toneShown: true }));
-    assert.equal(flashing(hidden), true);
+    await ui.render(ui.h(ui.Composer, { ...base, tone: null, toneFlash: false }));
+    // 切到一段完全访问的对话：档位从没读到变成 full，但不是人换的档
+    await ui.render(ui.h(ui.Composer, { ...base, tone: "full", toneFlash: false }));
+    assert.equal(flashing(ui), false, "切换对话不亮");
+    // 人亲手切到完全访问：聊天层给 true
+    await ui.render(ui.h(ui.Composer, { ...base, tone: "full", toneFlash: true }));
+    assert.equal(flashing(ui), true);
   } finally {
-    await hidden.close();
-  }
-  const opened = await mount();
-  try {
-    await opened.render(opened.h(opened.Composer, { ...base, tone: "full", toneShown: true }));
-    assert.equal(flashing(opened), true, "新打开就摆在眼前的那段也亮");
-  } finally {
-    await opened.close();
+    await ui.close();
   }
 });
 

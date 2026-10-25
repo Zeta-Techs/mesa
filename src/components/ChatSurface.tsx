@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import ConversationView from "./ConversationView";
 import { ChatImageEditContext } from "./ChatMarkdown";
-import ChatComposer, { useToneFlash, type ComposerSeed } from "./ChatComposer";
+import ChatComposer, { useFlashOnSeq, type ComposerSeed } from "./ChatComposer";
 import { splitImagePaths } from "../chat-image";
 import ChatEmptyStart from "./ChatEmptyStart";
 import { firstCompleteTurnIndex } from "../conversation-tools";
@@ -73,7 +73,6 @@ export default function ChatSurface({
   syncState,
   loading,
   active = true,
-  shown,
   agentId,
   confirmDetail,
   cwd,
@@ -139,8 +138,6 @@ export default function ChatSurface({
   loading: boolean;
   /** 聊天层当前可见（常驻挂载仅隐藏后，用作输入框聚焦信号） */
   active?: boolean;
-  /** 这段对话正摆在眼前（是看着的标签、且在聊天这一面）：切过来时完全访问的细线亮一下（useToneFlash） */
-  shown?: boolean;
   agentId?: string | null;
   confirmDetail?: string | null;
   cwd?: string | null;
@@ -772,18 +769,26 @@ export default function ChatSurface({
       ? effectivePermissionTier(launchPick.permission, launchPick.permissionMode, launchPick.permissionNote)
       : null;
   const composerTone = permTier === "full" ? "full" : permTier === "discuss" || readOnly ? "discuss" : null;
-  // 权限字平时灰；切到完全访问时与输入框上沿细线同一下亮 caution（2026-10-23 用户）
-  const toneFlash = useToneFlash(composerTone, shown);
+  // 权限字平时灰；人亲手切到完全访问时与输入框上沿细线同一下亮 caution（2026-10-23 用户）。
+  // 只认人换档：切换对话、刚打开时档位读进来都不亮（2026-10-25 用户：每切一段对话都亮很难看）
+  const [fullPickSeq, setFullPickSeq] = useState(0);
+  const toneFlash = useFlashOnSeq(fullPickSeq);
+  const pickPermission = onPickLaunch
+    ? (permission: "discuss" | "write_tree", mode?: NativePermissionMode | null) => {
+        onPickLaunch.permission(permission, mode);
+        if (permission === "write_tree" && mode === "full" && permTier !== "full") setFullPickSeq((n) => n + 1);
+      }
+    : undefined;
   // ⇧Tab 轮换权限：只在开聊前（开聊后换档要重开，留给菜单里那条确认）
   async function cyclePermission() {
-    if (!launchPick || !onPickLaunch) return;
+    if (!launchPick || !pickPermission) return;
     const next = nextPermissionTier(permTier, (id) =>
       id === "discuss" ? launchPick.readonlySupported : launchPick.permissionModes.includes(id),
     );
     if (!next) return;
     if (next === "full" && !(await confirmPermissionChoice(launchAgentLabel, "full", false))) return;
-    if (next === "discuss") onPickLaunch.permission("discuss", null);
-    else onPickLaunch.permission("write_tree", next);
+    if (next === "discuss") pickPermission("discuss", null);
+    else pickPermission("write_tree", next);
   }
 
   // 输入框里有图、当前模型确知看不了图：附件下面说一句（模型能力库，ChatModelMenu 查）
@@ -824,7 +829,7 @@ export default function ChatSurface({
           note={launchPick.permissionNote}
           // 开聊前、只看没接、或 Agent 停了还能接着聊：改的是下次启动的参数；运行中：换 = 重开接回
           editable={launchPickOpen || resumePickOpen || (!running && canResume)}
-          onPermission={onPickLaunch?.permission}
+          onPermission={pickPermission}
           live={running && onRestartPermission ? { busy: generating, onRestart: onRestartPermission } : null}
           flash={toneFlash}
         />
@@ -897,7 +902,7 @@ export default function ChatSurface({
           onProfile={onPickLaunch.profile}
           onModel={onPickLaunch.model}
           onEffort={onPickLaunch.effort}
-          onPermission={onPickLaunch.permission}
+          onPermission={pickPermission ?? onPickLaunch.permission}
           combos={combos}
           combosWhere={cwdLabel || null}
           onCombo={onPickLaunch.combo}
@@ -1203,7 +1208,7 @@ export default function ChatSurface({
         mesaCommands={mesaCommands}
         recallHistory={recallHistory}
         tone={composerTone}
-        toneShown={shown}
+        toneFlash={toneFlash}
         onCyclePermission={
           (launchPickOpen || resumePickOpen) && launchPick && !readOnly ? () => void cyclePermission() : undefined
         }

@@ -56,27 +56,41 @@ function FileKindBlock({ path }: { path: string }) {
 const TONE_FLASH_MS = 2400;
 
 /**
- * 完全访问的提醒只在「切到」这一档时亮一下（用户：常驻显得输入框花哨）。
+ * 完全访问的提醒只在「切到」这一档时亮一下（用户：常驻显得输入框花哨）；挂载时已是完全访问不亮。
  * 输入框上沿细线与底下那行的权限字（2026-10-23：平时灰字，切到时同步亮一下 caution）各调一次，同一次提交里一起翻。
- * `shown`（这段对话的聊天层正摆在眼前）给了时，切到一段完全访问的对话也亮一下（2026-10-25 用户：切换对话时不亮，
- * 只有手动切档才亮）：挂载时按「之前没摆出来」算，新打开的那段同样亮；藏着的标签不亮。不给时同旧口径，挂载时已是完全访问不亮
+ * 单独用输入框（没有聊天层）时按档位变化认；聊天层里改用 useFlashOnSeq，只认人亲手换档（见下）
  */
-export function useToneFlash(tone: "full" | "discuss" | null, shown?: boolean): boolean {
+export function useToneFlash(tone: "full" | "discuss" | null): boolean {
   const [flash, setFlash] = useState(false);
-  const prevRef = useRef({ tone, shown: shown === undefined });
-  const on = shown ?? true;
+  const prevRef = useRef(tone);
   useEffect(() => {
     const prev = prevRef.current;
-    prevRef.current = { tone, shown: on };
-    if (tone !== "full" || !on) {
+    prevRef.current = tone;
+    if (tone !== "full" || prev === "full") {
       setFlash(false);
       return;
     }
-    if (prev.tone === "full" && prev.shown) return;
     setFlash(true);
     const timer = setTimeout(() => setFlash(false), TONE_FLASH_MS);
     return () => clearTimeout(timer);
-  }, [tone, on]);
+  }, [tone]);
+  return flash;
+}
+
+/**
+ * 聊天层的完全访问提醒：只在人亲手切到完全访问（权限菜单、模型菜单、⇧Tab）时亮一下，`seq` 每次加一。
+ * 切换对话、对话刚打开时档位读进来（null → full）都不亮（2026-10-25 用户：每切一段对话都亮一下很难看）
+ */
+export function useFlashOnSeq(seq: number): boolean {
+  const [flash, setFlash] = useState(false);
+  const prevRef = useRef(seq);
+  useEffect(() => {
+    if (prevRef.current === seq) return;
+    prevRef.current = seq;
+    setFlash(true);
+    const timer = setTimeout(() => setFlash(false), TONE_FLASH_MS);
+    return () => clearTimeout(timer);
+  }, [seq]);
   return flash;
 }
 
@@ -249,7 +263,7 @@ export default function ChatComposer({
   mesaCommands = [],
   recallHistory = [],
   tone = null,
-  toneShown,
+  toneFlash: toneFlashGiven,
   onCyclePermission,
   imageWarning = null,
   onImagesChange,
@@ -293,8 +307,8 @@ export default function ChatComposer({
   recallHistory?: readonly string[];
   /** 权限写在输入框本身上（2026-10-22）：切到完全访问时上沿亮一下 caution 细线再淡掉（不常驻）；只讨论虚线框。其余档不加任何东西 */
   tone?: "full" | "discuss" | null;
-  /** 聊天层正摆在眼前（useToneFlash 的 shown）：切到一段完全访问的对话时细线也亮一下；不给按旧口径 */
-  toneShown?: boolean;
+  /** 聊天层给定的「细线现在亮不亮」（只认人亲手换档，useFlashOnSeq）；不给时按 tone 变化自己认 */
+  toneFlash?: boolean;
   /** ⇧Tab 轮换权限档（只在开聊前给；开聊后换档要重开，不走快捷键） */
   onCyclePermission?: () => void;
   /** 输入框里有图、而当前模型看不了图时的一句提示（模型能力库判定，调用方给） */
@@ -315,7 +329,8 @@ export default function ChatComposer({
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
-  const toneFlash = useToneFlash(tone, toneShown);
+  const toneFlashOwn = useToneFlash(tone);
+  const toneFlash = toneFlashGiven ?? toneFlashOwn;
   // WKWebView：确认候选的 Enter 在 compositionend 之后、isComposing 已是 false。
   // 组词开始锁上，compositionend 后再留一帧，让那次 Enter 只上屏不发送。
   const composingLockRef = useRef(false);

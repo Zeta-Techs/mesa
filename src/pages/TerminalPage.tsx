@@ -10266,7 +10266,6 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                           inReader ? setReaderSurface("terminal") : switchSurface("terminal")
                         }
                         active={chatOn}
-                        shown={chatOn && tabVisible}
                         agentId={agentKey ?? null}
                         confirmDetail={
                           sessionByTab[t.id]?.confirmDetail ?? null
