@@ -8,6 +8,7 @@ import { ChatImageEditContext } from "./ChatMarkdown";
 import ChatComposer, { useFlashOnSeq, type ComposerSeed } from "./ChatComposer";
 import { splitImagePaths } from "../chat-image";
 import ChatEmptyStart from "./ChatEmptyStart";
+import MesaThinkingDots from "./MesaThinkingDots";
 import { firstCompleteTurnIndex } from "../conversation-tools";
 import { useAutoLoadOlder, wasPrepended } from "../auto-load-older";
 import { useReadingAnchor } from "../reading-anchor";
@@ -1162,8 +1163,8 @@ export default function ChatSurface({
           // 回到最新（2026-10-26 用户：往上翻找内容时要有个悬浮按钮回到最新）：离底超过三分之一屏，或底下来了新内容才出现。
           // 零高粘底层挂在滚动区本身，
           // 按钮浮在可视区底边上方、和对话栏同一条中轴，不占版面（出现 / 收起不推动正文）。
-          // 立体小圆珠（同日三改，照 Claude 客户端：径向渐变 + 内高光 + 落影，半透明带模糊）。
-          // 三种样子：生成中 = 三枚琥珀光标依次呼吸、圆钮外一圈琥珀光晕慢慢明暗，鼠标移上去 / 键盘聚焦换成 ↓；
+          // 扁平浮层圆钮（同日四改撤掉立体珠：和全站格格不入）。
+          // 三种样子：生成中 = 三枚琥珀光标随机变换队形并呼吸，鼠标移上去 / 键盘聚焦换成 ↓；
           // 不在生成、有新消息 = 「↓ 有新消息」小胶囊；只是翻上去了 = 只有 ↓ 的圆钮。
           // 生成中不写「有新消息」：一直在出字，那句话没有信息量
           <div className="pointer-events-none sticky bottom-3 z-10 h-0">
@@ -1171,23 +1172,17 @@ export default function ChatSurface({
               <button
                 type="button"
                 onClick={scrollBottom}
+                // 光标换队时会探出内容框一点点：Chromium（WebView2）给 button 的 overflow 不是 visible，会冒出滚动条，行内写死
+                style={{ overflow: "visible" }}
                 aria-label={generating ? "回到最新（正在生成）" : hasNew ? "跳到最新消息" : "回到最新"}
-                data-generating={generating || undefined}
-                className={`ccode-jump-orb group/jump pointer-events-auto relative flex h-9 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-full border border-hairline text-l2 hover:border-field hover:text-l1 ${
-                  hasNew && !generating ? "pl-3 pr-3.5" : "w-9"
+                className={`ccode-float-surface group/jump pointer-events-auto relative flex h-8 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-full border border-hairline text-l2 transition-colors hover:border-field hover:text-l1 ${
+                  hasNew && !generating ? "pl-2.5 pr-3" : "w-8"
                 }`}
               >
                 {generating ? (
                   <>
-                    {/* 生成中：三枚琥珀光标依次呼吸（立体圆钮与节拍见 App.css .ccode-jump-orb / .ccode-jump-dots） */}
-                    <span
-                      aria-hidden="true"
-                      className="ccode-jump-dots absolute inset-0 justify-center transition-opacity group-hover/jump:opacity-0 group-focus-visible/jump:opacity-0"
-                    >
-                      <span />
-                      <span />
-                      <span />
-                    </span>
+                    {/* 生成中：三枚琥珀光标随机变换队形，带呼吸（MesaThinkingDots / App.css .ccode-jump-dots） */}
+                    <MesaThinkingDots className="absolute inset-0 transition-opacity group-hover/jump:opacity-0 group-focus-visible/jump:opacity-0" />
                     <span className="relative flex size-3.5 items-center justify-center">
                       <ArrowDown
                         size={14}

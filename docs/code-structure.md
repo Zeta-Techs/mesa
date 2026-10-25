@@ -156,6 +156,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   components/ThirdPartyNotices.tsx # 「开源许可与致谢」内容区（帮助→关于、设置→关于共用）：致谢与数据来源（Markdown 阅读版式，许可全文收进 details，链接交系统浏览器）/ 组件许可（可搜索）两页签；清单读一次进程内缓存
   third-party-notices.ts     # 随包许可清单解析纯逻辑：依赖表拆组拆行（跳过代码块里的 ##、丢弃文件头生成说明）+ 按名字/许可搜索（tests/third-party-notices.test.ts 含真文件格式守卫）
   components/MesaMark.tsx    # Mesa 光标标志的字标版（去底板，M 跟文字色、光标品牌琥珀 + 深色底余辉，viewBox 裁到图形、底边即基线）；聊天空态问候在用
+  components/MesaThinkingDots.tsx # 聊天「回到最新」浮钮生成中的三枚琥珀光标：每 3.2s 随机换队形（jump-formations.ts），位置走 CSS translate 过渡，呼吸在 App.css .ccode-jump-dots；减弱动态效果时不换队
   components/CommandPalette.tsx # ⌘K 面板：默认列表 快速操作/最近项目（list_projects 前 5）/页面（快捷键跟随设置）/外观/帮助；设置分区（SETTINGS_SEARCH_INDEX）、单个主题、较早项目、外链只在搜索时出现；「切换主题…」进主题网格（与设置页主题卡同长相、7 列深浅上下对齐、方向键四向移动、当前打勾；色样懒加载 App.css?raw；跟随系统只列与系统同深浅的一排并走 followedTheme）；输入法组词 Enter 不执行、↑↓ 循环、键盘移动跟随滚动；帮助类动作经 onHelp 交 App 的同一批弹窗（「上手引导」直接调 openOnboardingGuide）
   money-format.ts            # 金额千分位两位小数 groupedMoney（用量页费用、网关余额共用；币种与 ≥ ~ 前缀由调用方拼）
   project-tree.ts            # 侧栏项目树置顶与组内顺序纯逻辑：togglePin / splitPinned（置顶段按先后、移出原分组）/ parsePins（坏数据当空表）/ applyOrder + reorderGroup（拖动排序，只比同组相对先后）；
@@ -560,6 +561,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 符号「界线」在 components/ChatPermissionBadge.tsx PermissionGlyph（tests/chat-permission.test.ts）
   chat-project-picker.ts     # 输入框项目弹层纯逻辑：最近 6 个 / 搜索 12 个、类型与项目默认、随手聊 / 主目录固定行（pickerRows）；UI 在 components/ChatProjectPicker.tsx，
                              # 选了项目带项目默认由 TerminalPage pickDir 做（chat 槽 > 项目默认，project-agents.ts projectChatLaunch）（tests/chat-project-picker.test.ts）
+  jump-formations.ts         # 聊天「回到最新」浮钮三枚光标（MesaThinkingDots）的队形表（一行 / 三角 / 倒三角 / 一摞 / 台阶 / 竖排圆点 / 折行）+ 随机挑下一个（不重复）+ 按总路程最短分配格子（换队不交叉）（tests/jump-formations.test.ts）
   launch-combos.ts           # 模型菜单「最近在这个项目用过」：按工作目录记 Agent + 连接 + 模型 + 思考档，最多 3 套，localStorage 只存 id（tests/launch-combos.test.ts）
   effort-depth.ts            # 思考档深度 0..1 与一句白话（effortDepth / effortGloss / effortValleyY）；小 M 画在 components/EffortMark.tsx（tests/effort-depth.test.ts）
   token-format.ts            # 聊天变体状态栏的 token 中文计数（千分位 / 万 / 亿，fmtTokensZh）；终端变体仍用 k / M（tests/token-format.test.ts）
