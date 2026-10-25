@@ -254,6 +254,9 @@ export default function ChatSurface({
   const scrollFadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const followRef = useRef(true);
   const [hasNew, setHasNew] = useState(false);
+  // 往上翻得远了：底部正中浮一枚「回到最新」（2026-10-26 用户）。离底一点就冒出来太吵（同日用户：「不要离底立马就显现，
+  // 用户可能需要的时候再显示」），所以只在离底超过一屏（手动滚回去要费点劲了）时出；底下来了新内容另由 hasNew 叫出来
+  const [awayFromBottom, setAwayFromBottom] = useState(false);
   const [stuckWaiting, setStuckWaiting] = useState(false);
   const [seedInsert, setSeedInsert] = useState<string | ComposerSeed | null>(null);
   const editImage = useCallback((absPath: string) => setSeedInsert({ text: "", paths: [], edit: absPath }), []);
@@ -315,6 +318,7 @@ export default function ChatSurface({
     if (!el) return;
     followRef.current = true;
     setHasNew(false);
+    setAwayFromBottom(false);
     el.scrollTop = el.scrollHeight;
   }
 
@@ -981,6 +985,7 @@ export default function ChatSurface({
           }, 900);
           const atBottom = nearBottom(el);
           followRef.current = atBottom;
+          setAwayFromBottom(farFromBottom(el));
           if (atBottom) setHasNew(false);
         }}
         // 浏览器自带的滚动锚定关掉，由 useReadingAnchor 一家做（两家叠着会补两遍）
@@ -1144,21 +1149,6 @@ export default function ChatSurface({
               )}
             </div>
           )}
-          {hasNew && (
-            // 浮在对话流底部正中的小胶囊（2026-10-26 用户：原先方角带框的灰块像个输入框）：浮层统一表面 + 细描边、
-            // 圆角满、↓ 用图标不用字符，出现时轻弹入（.ccode-float-surface 自带，减弱动态效果时不播）。
-            // 居中只靠 mx-auto：sticky 下 left-1/2 不起定位作用，再叠 -translate-x-1/2 会把按钮往左偏半个身位
-            <button
-              type="button"
-              onClick={scrollBottom}
-              aria-label="跳到最新消息"
-              className="ccode-float-surface sticky bottom-3 z-10 mx-auto flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-hairline pl-2 pr-3 text-l2 transition-colors hover:border-field hover:text-l1"
-            >
-              <ArrowDown size={13} strokeWidth={2} aria-hidden="true" />
-              {/* 字号写在内层：全站 button { font: inherit } 会吞掉按钮上的 text-*，否则跟着聊天字号变大 */}
-              <span className="text-xs">有新消息</span>
-            </button>
-          )}
         </div>
         </div>
         {!emptyLayout && (
@@ -1167,6 +1157,54 @@ export default function ChatSurface({
           // 正好压在最后一行上（同日用户：「底部隐现的太多了」）。放这里停在底部时先盖住留白，只轻扫「思考中」那一行下缘；
           // 往上翻时贴边这一段淡得明显（同日用户：「渐隐更突出一点，思考中只底部一点点」；曲线见 App.css .ccode-chat-fade）
           <div aria-hidden="true" className="ccode-chat-fade pointer-events-none sticky bottom-0 -mt-12 h-12" />
+        )}
+        {!emptyLayout && (awayFromBottom || hasNew) && (
+          // 回到最新（2026-10-26 用户：往上翻找内容时要有个悬浮按钮回到最新）：离底超过一屏，或底下来了新内容才出现。
+          // 零高粘底层挂在滚动区本身，
+          // 按钮浮在可视区底边上方、和对话栏同一条中轴，不占版面（出现 / 收起不推动正文）。
+          // 三种样子：生成中 = 圆钮外圈一道转动的弧 + 中间琥珀光标（同聊天插入符），鼠标移上去 / 键盘聚焦换成 ↓；
+          // 不在生成、有新消息 = 「↓ 有新消息」小胶囊；只是翻上去了 = 只有 ↓ 的圆钮。
+          // 生成中不写「有新消息」：一直在出字，那句话没有信息量
+          <div className="pointer-events-none sticky bottom-3 z-10 h-0">
+            <div className="absolute inset-x-0 bottom-0 flex justify-center">
+              <button
+                type="button"
+                onClick={scrollBottom}
+                aria-label={generating ? "回到最新（正在生成）" : hasNew ? "跳到最新消息" : "回到最新"}
+                className={`ccode-float-surface group/jump pointer-events-auto relative flex h-8 shrink-0 items-center overflow-hidden justify-center gap-1 whitespace-nowrap rounded-full border border-hairline text-l2 transition-colors hover:border-field hover:text-l1 ${
+                  hasNew && !generating ? "pl-2.5 pr-3" : "w-8"
+                }`}
+              >
+                {generating ? (
+                  <>
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 32 32"
+                      className="ccode-jump-spin pointer-events-none absolute inset-0 size-full transition-opacity group-hover/jump:opacity-0 group-focus-visible/jump:opacity-0"
+                    >
+                      <circle cx="16" cy="16" r="15.25" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeDasharray="22 74" />
+                    </svg>
+                    <span className="relative flex size-3.5 items-center justify-center">
+                      <span
+                        aria-hidden="true"
+                        className="ccode-jump-caret absolute transition-opacity group-hover/jump:opacity-0 group-focus-visible/jump:opacity-0"
+                      />
+                      <ArrowDown
+                        size={14}
+                        strokeWidth={2}
+                        aria-hidden="true"
+                        className="absolute opacity-0 transition-opacity group-hover/jump:opacity-100 group-focus-visible/jump:opacity-100"
+                      />
+                    </span>
+                  </>
+                ) : (
+                  <ArrowDown size={14} strokeWidth={2} aria-hidden="true" />
+                )}
+                {/* 字号写在内层：全站 button { font: inherit } 会吞掉按钮上的 text-*，否则跟着聊天字号变大 */}
+                {hasNew && !generating && <span className="text-xs">有新消息</span>}
+              </button>
+            </div>
+          </div>
         )}
       </div>
 
@@ -1272,6 +1310,11 @@ const QUIET_HINT_MS = 10_000;
 /** 离底不到 56px 算贴着底部：跟着新消息走 */
 function nearBottom(el: HTMLElement): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight < 56;
+}
+
+/** 离底超过一屏：这时才给「回到最新」浮钮（离底一点点自己滚回去就行，常驻一枚按钮反而挡字） */
+function farFromBottom(el: HTMLElement): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight > el.clientHeight;
 }
 
 /** 1234 → 1.2k；千以下原样 */
