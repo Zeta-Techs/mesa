@@ -57,7 +57,7 @@ ls /tmp/canary-<运行号>/*/            # canary-macos-latest / canary-windows-
 |---|---|---|
 | 没有 `report.md`，日志里是装依赖失败（rustup / npm / pip / curl 超时、网络错误） | 环境故障 | `gh run rerun <运行号> --failed`，报告里记一笔，不动代码 |
 | 没有 `report.md`，日志最后是「假网关没起来」 | 金丝雀脚本自己的问题 | 看 artifact 里的 `gateway-stderr.log`：有报错按报错修 `scripts/e2e-model-routing/gateway.py`；空的说明网关起得慢（2026-10-25 先例：`HTTPServer` 监听前的 `getfqdn` 反查在 macOS runner 上卡住，网关已改成跳过反查） |
-| 没有 `report.md`，有 `plans-error.txt`，或测试进程起不来（如 Windows `0xc0000139 STATUS_ENTRYPOINT_NOT_FOUND`） | Mesa 自己的编译 / 测试问题，不是 CLI 变了 | 再看主线 `gh run list --workflow build.yml --limit 3` 是否同样红。作为单独的修复报告给用户（主线 CI 必须绿），**不动基线**。`0xc0000139` 自 2026-10-25 起由 `src-tauri/build.rs` 给测试 exe 嵌通用控件 manifest 解决，CI 再出现就是这处嵌入失效了，先查它；`canary.py` 另有兜底（改跑带 manifest 的副本），本机碰上不用管 |
+| 没有 `report.md`，有 `plans-error.txt`，或测试进程起不来（如 Windows `0xc0000139 STATUS_ENTRYPOINT_NOT_FOUND`） | Mesa 自己的编译 / 测试问题，不是 CLI 变了 | 再看主线 `gh run list --workflow build.yml --limit 3` 是否同样红。作为单独的修复报告给用户（主线 CI 必须绿），**不动基线**。Windows 的 `0xc0000139` 已由 `src-tauri/build.rs` 给测试 exe 嵌 manifest 修掉，再出现说明有人退回了 `tauri_build::build()`（见 environment.md） |
 | 有 `report.md` | 金丝雀跑完了 | 第三步 |
 
 **同一个错连着出现几天，就不是环境抖动**：归成「环境故障」重跑之前，先 `gh run list --workflow cli-canary.yml --limit 5` 看前几次是不是同样死在这一步（2026-10-22～24 macOS 天天「假网关没起来」，重跑救不了）。

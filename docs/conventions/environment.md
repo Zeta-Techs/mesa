@@ -114,14 +114,12 @@
   Python `urllib` 正常。Mesa 在 Windows 附加给 Codex 的说明（`codex_windows_patch_note.md`）写明这条、让它改用 Node / Python
   或申请跳出沙箱：同一问题（查 crates.io 上 Tauri 版本）从 9 条命令多数失败降到 3 条（首条因没带 User-Agent 被拒，已补进说明）。
   本机已于当日改为全机安装 3.13.15（`C:\Program Files\Python313`，含 pillow / pymupdf），沙箱里 `python` / `py` 均可用。
-- **本机 Windows 跑 `cargo test` 报 0xc0000139（STATUS_ENTRYPOINT_NOT_FOUND，2026-10-22 实证）**：lib 测试 exe 没嵌 manifest，
-  comctl32 落到 5.82，缺 `TaskDialogIndirect`，进程一启动就退，一条测试都不跑。绕法（不改仓库）：`cargo test --lib --no-run` 后把
-  `target/debug/deps/ccode_lib-*.exe` **复制到新路径**，旁边放同名 `.exe.manifest`（依赖 Microsoft.Windows.Common-Controls 6.0.0.0），
-  在 `src-tauri/` 下运行它。原路径放 manifest 不生效（Windows 按路径缓存了激活上下文）。
-  **CI 的 Windows runner 同样中招**（2026-10-21 起 cargo test 一直红在这，被前后几处编译 / 测试错误盖住没人看见）。2026-10-25 起 `build.rs`
-  在 Windows MSVC 上用 `/MANIFEST:EMBED /MANIFESTINPUT:windows-app-manifest.xml` 把通用控件 v6 manifest 嵌进每个链接产物（含 lib 测试 exe），
-  同时关掉 tauri-build 只给 bins 的那份（两份都嵌会撞 MANIFEST 资源）；本机上面的绕法应当不再需要。
-  CLI 金丝雀（`npm run canary`）另内置这套绕法兜底：碰上 0xc0000139 就自动改跑 `<out>/test-bin/` 下带 manifest 的副本（2026-10-25，build.rs 嵌入后正常不会触发）。
+- **Windows 跑 `cargo test` 报 0xc0000139（STATUS_ENTRYPOINT_NOT_FOUND，2026-10-22 本机实证，2026-10-25 已从根上修）**：tauri-build 把应用
+  manifest 编进资源、只链给 bin，lib 测试 exe 没有 manifest，comctl32 落到 5.82，缺 `TaskDialogIndirect`，进程一启动就退，一条测试都不跑。
+  CI 的 Windows runner 也会碰上（10-21～10-24 主线 build 的 Windows cargo test 有五次就是这样红的，有的 runner 镜像不触发）。
+  现在 `src-tauri/build.rs` 在 MSVC 下改由链接器把同一份 manifest（`src-tauri/windows-app-manifest.xml`，与 tauri-build 默认那份相同）
+  嵌进所有链接产物，资源里不再放；应用 exe 的 manifest 与原来一致（mt.exe 核对过），`/MANIFESTUAC:NO` 免得链接器多补 trustInfo。
+  **不要退回 `tauri_build::build()`**；要改应用 manifest 就改那份 xml。
 - **Windows PDF 预览白屏**：WebView2 + 全局 `color-scheme:dark` 下，pdf.js 默认不透明 2d canvas 与
   `.textLayer { color-scheme:only light }` 会合成整页白块；经典滚动条改 clientWidth 再叠加
   `key={renderKey}` 会拆掉 canvas 振荡闪白。渲染前必须先绑 `alpha:true` 上下文，页宿主锁定 light

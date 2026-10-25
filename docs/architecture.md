@@ -499,11 +499,23 @@ macOS 三天都是「假网关没起来」。定下：
 用户贴截图：「聊天层顶部标题后面不需要加这个光标，侧边栏已经有了」。对话头只写标题、OSC 进度与终端面的 ✦；运行状态只在侧栏对话行尾画一处（同一段对话两处同亮是重复）。
 2026-10-24「同一个概念一个画法」清单里的「对话头（标题后）」一项撤掉，其余照旧。
 
+### 2026-10-25 · Windows CI 的 cargo test 红了五天：测试 exe 没有 manifest、CI 临时目录是 8.3 短名
+
+用户问 Windows CI 为什么没过。主线 build 的 Windows cargo test 从 10-21 起没绿过，按日志分三类：①五次 0xc0000139——lib 测试 exe
+没有应用 manifest（tauri-build 只把 manifest 资源链给 bin），comctl32 落到 5.82 缺 `TaskDialogIndirect`，测试进程一启动就退；
+environment.md 原写「CI 不受影响」不对，有的 runner 镜像触发、有的不触发；②两次 Windows 编译错（8ca9bb4 已修）；③最近两次
+`pty::tests::windows_shells_report_cwd_after_cd`——runner 的 TEMP 是 8.3 短名 `C:\Users\RUNNER~1\…`，PowerShell 报回长名 `runneradmin`，
+测试只认短名。定下：
+一，**manifest 由链接器嵌进所有链接产物**（`build.rs`：MSVC 下 `WindowsAttributes::new_without_app_manifest()` + `/MANIFEST:EMBED`
+`/MANIFESTINPUT:windows-app-manifest.xml` `/MANIFESTUAC:NO`），测试 exe 也有；应用与 mesa_helper 的 manifest 与原来一致（mt.exe 核对）。
+本机裸跑 `cargo test` 从此可用，同日给金丝雀加的「改跑带 manifest 副本」绕法随之删掉（取代下条第一点）。
+二，路径断言碰上系统临时目录时，先把临时目录 `canonicalize_plain` 成长名再比（本机用 8.3 短名 TMP 复现了 CI 的失败；合并时与主线同题的两种修法只留这一种，fbfb102 上 Windows CI 已绿）。
+
 ### 2026-10-25 · Windows 金丝雀补齐九家基线与抓屏样本
 
 用户让把 Windows 端金丝雀做齐（macOS 九家齐，Windows 只有 Claude Code / Codex）。本机九家检查全过后在 Windows `--accept`，
 各家画面（审批菜单 / 边写边显示 / 回到输入框）同批存进抓屏语料库的 `win32-*` 样本，读屏结果与 macOS 同形（Qwen 菜单跟系统语言走中文）。定下：
-一，**本机 Windows 跑金丝雀不再手工绕 0xc0000139**：`canary.py` 碰上就改跑带 manifest 的测试副本（environment.md 同条），CI 不受影响、行为不变。
+一，**本机 Windows 跑金丝雀不再手工绕 0xc0000139**：`canary.py` 碰上就改跑带 manifest 的测试副本（environment.md 同条），CI 不受影响、行为不变（同日改为从根上修、绕法删掉，见上条）。
 二，**本机跑金丝雀前先把 CLI 升到最新、不与另一轮同时跑**：Qwen 0.26.0 在 npm 出了 0.26.1 后于干净 HOME 里启动即自更新，提示重绘吞掉发出的那句，
 旁路端到端连红两次；两轮并发时 Gemini 慢到 10 秒内没画出审批菜单。两者都是环境假红，不得据此改基线。
 三，抓屏脚本在 Windows 上 CLI 中途退出不再整段崩（pywinpty 抛 EOFError，统一当「已退出」收尾）。

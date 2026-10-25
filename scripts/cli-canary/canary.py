@@ -62,57 +62,6 @@ def cargo():
     sys.exit("找不到 cargo（Rust 不在 PATH，也不在 ~/.cargo/bin）")
 
 
-# Windows 上有的机器 lib 测试 exe 一启动就报 0xc0000139（没嵌 manifest，comctl32 落到 5.82 缺 TaskDialogIndirect，
-# 见 docs/conventions/environment.md）。碰上一次就改跑带 manifest 的副本（原路径放 manifest 不生效，必须换路径）
-COMCTL_MANIFEST = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <dependency>
-    <dependentAssembly>
-      <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0"
-        processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*"/>
-    </dependentAssembly>
-  </dependency>
-</assembly>
-"""
-_test_exe = None
-
-
-def manifest_test_exe(out):
-    code, text = run([cargo(), "test", "--lib", "--no-run", "--message-format=json"],
-                     cwd=os.path.join(ROOT, "src-tauri"), timeout=1800)
-    exe = None
-    for line in text.splitlines():
-        try:
-            d = json.loads(line)
-        except Exception:
-            continue
-        if d.get("reason") == "compiler-artifact" and d.get("executable") and (d.get("profile") or {}).get("test"):
-            exe = d["executable"]
-    if code != 0 or not exe:
-        return None
-    dst_dir = os.path.join(out, "test-bin")
-    os.makedirs(dst_dir, exist_ok=True)
-    dst = os.path.join(dst_dir, "ccode_lib_test.exe")
-    shutil.copy2(exe, dst)
-    open(dst + ".manifest", "w", encoding="utf-8").write(COMCTL_MANIFEST)
-    return dst
-
-
-def cargo_test(out, name, flags, env=None, timeout=600):
-    """跑一条 lib 测试（cargo test --lib <name> -- <flags>），返回 (退出码, 合并输出)"""
-    global _test_exe
-    cwd = os.path.join(ROOT, "src-tauri")
-    if _test_exe is None:
-        code, text = run([cargo(), "test", "--lib", name, "--", *flags], cwd=cwd, env=env, timeout=timeout)
-        if not (PLATFORM == "win32" and "0xc0000139" in text):
-            return code, text
-        _test_exe = manifest_test_exe(out)
-        if not _test_exe:
-            return code, text + "\n（改跑带 manifest 的测试副本也没成：cargo test --lib --no-run 失败）"
-        log("  测试 exe 起不来（0xc0000139），改跑带 manifest 的副本")
-    return run([_test_exe, name, *flags], cwd=cwd, env=env, timeout=timeout)
-
-
 def free_port():
     s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
     return port
@@ -321,7 +270,8 @@ def make_plans(gw, out):
     """Mesa 的真实启动计划（Claude 的 --settings 文件 60 秒后会被 Mesa 清理，每个阶段前重新生成）"""
     plans = os.path.join(out, "plans.json")
     env = dict(os.environ, E2E_BASE=gw.base, E2E_OUT=plans)
-    code, text = cargo_test(out, "e2e_dump_launch_plans", ["--ignored"], env=env, timeout=1800)
+    code, text = run([cargo(), "test", "--lib", "e2e_dump_launch_plans", "--", "--ignored"],
+                     cwd=os.path.join(ROOT, "src-tauri"), env=env, timeout=1800)
     if code != 0 or not os.path.exists(plans):
         open(os.path.join(out, "plans-error.txt"), "w", encoding="utf-8").write(text)
         sys.exit(f"生成启动计划失败，见 {out}/plans-error.txt")
@@ -333,7 +283,8 @@ def channel_phase(agent, gw, out, adir):
     keep = os.path.join(adir, "channel")
     env = dict(os.environ, MESA_E2E_REAL_CLI="1", E2E_PLANS=plans, E2E_AGENT=agent, E2E_CLEAN_HOME="1", E2E_KEEP=keep)
     mark = gw.mark()
-    code, text = cargo_test(out, "e2e_channel", ["--ignored", "--nocapture"], env=env)
+    code, text = run([cargo(), "test", "--lib", "e2e_channel", "--", "--ignored", "--nocapture"],
+                     cwd=os.path.join(ROOT, "src-tauri"), env=env, timeout=600)
     open(os.path.join(adir, "channel.log"), "w", encoding="utf-8").write(text)
     time.sleep(0.5)
     return code == 0, gw.since(mark), keep
@@ -370,8 +321,9 @@ def screen_phase(agent, gw, out, adir, deps):
     return json.loads(line) if line else None
 
 
-def codex_instructions_phase(out, adir):
-    code, text = cargo_test(out, "codex_instructions_extract_real", ["--ignored", "--nocapture"])
+def codex_instructions_phase(adir):
+    code, text = run([cargo(), "test", "--lib", "codex_instructions_extract_real", "--", "--ignored", "--nocapture"],
+                     cwd=os.path.join(ROOT, "src-tauri"), timeout=600)
     open(os.path.join(adir, "codex-instructions.log"), "w", encoding="utf-8").write(text)
     return code == 0
 
@@ -403,7 +355,7 @@ def probe_agent(agent, gw, out, skip_screen, deps):
         fp["channel"] = None
     if agent == "codex":
         log(f"[{agent}] 取本机默认提示词…")
-        checks["取得到 Codex 默认提示词"] = codex_instructions_phase(out, adir)
+        checks["取得到 Codex 默认提示词"] = codex_instructions_phase(adir)
     if agent in NO_GATEWAY:
         log(f"[{agent}] 连不上假网关，只记版本")
         fp["screen"] = None
