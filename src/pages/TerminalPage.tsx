@@ -5048,6 +5048,9 @@ const TerminalView = memo(function TerminalView({
       return null;
     }
     interactiveLaunchLocks.add(lockKey);
+    // 启动参数带进去的首条指令也算「刚发的话」：没经过 writeChatMessage，原先 lastSentRef 是空的。CLI 把它留在输入框里时
+    // （2026-10-25 用户截图，Claude 2.1.308），「❯ 首行 + 缩进续行 + 上方横线」被扫菜单认成五个选项，拿它比对才排除得掉
+    if (launchPrompt && !isResume) lastSentRef.current = launchPrompt;
     try {
       resizeLatchRef.current = {
         kind: "measured",

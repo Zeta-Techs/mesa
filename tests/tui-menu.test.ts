@@ -357,3 +357,35 @@ test("认准了再回车：挪完高亮读屏还是同一个菜单、停在要�
   assert.equal(menuReadyToConfirm(menu, 2, { ...menu, options: ["A", "B", "C"], selected: 2 }), false);
   assert.equal(menuReadyToConfirm(menu, 2, null), false);
 });
+
+test("Claude 输入框里的多行草稿不是菜单：上下紧贴两条横线、没有序号（2026-10-25 用户截图，2.1.308 开场长指令留在框里）", () => {
+  const rule = "─".repeat(107);
+  const said =
+    "我们一起敲定「综述大纲」这一步的任务书（.ccode/drafts/outline.md）。它现在的内容就是 TASK.md 的默认拼装（步骤简报、预期产物等都在里面），" +
+    "定稿后会原样落成工作区的 TASK.md。先通读一遍，把拿不准的点（范围、口径、标准等）逐个问我，按我的回答直接修改这份文件。" +
+    "只允许新建/修改这一个文件，以及下面点名的项目规则行。其他文件一律不要动。讨论中没定下来的问题，记到这份任务书的「## 待拍板」小节。" +
+    "不要把模板里的可选事项改成开工前必须办的前置，也不要因为某个可选设置没办就让某份产物不交，除非我明确这么说。";
+  const lines = [
+    " ▐▛███▛█   Claude Code v2.1.308",
+    "▝▜██████▀  glm-5.3 with high effort · API Usage Billing",
+    " ▝▝   ▝▝   ~/Desktop/测试项目",
+    "",
+    "",
+    rule,
+    "❯ 我们一起敲定「综述大纲」这一步的任务书（.ccode/drafts/outline.md）。它现在的内容就是 TASK.md",
+    "  的默认拼装（步骤简报、预期产物等都在里面），定稿后会原样落成工作区的 TASK.md。先通读一遍，把拿不准的点",
+    "  （范围、口径、标准等）逐个问我，按我的回答直接修改这份文件。只允许新建/修改这一个文件，以及下面点名的项",
+    "  目规则行。其他文件一律不要动。讨论中没定下来的问题，记到这份任务书的「## 待拍板」小节。不要把模板里的可",
+    "  选事项改成开工前必须办的前置，也不要因为某个可选设置没办就让某份产物不交，除非我明确这么说。",
+    rule,
+    "  glm-5.3 | Desktop/测试项目 | 0 tok",
+    "  ⏵⏵ bypass permissions on (shift+tab to cycle)",
+  ];
+  assert.equal(parseTuiMenu(lines), null);
+  // 源头那道防护：启动参数带进去的开场话也记成「刚发的话」后，就算认成菜单也按回显排除
+  const asMenu = { question: null, detail: null, selected: 0, options: lines.slice(6, 11).map((l) => l.replace(/^❯?\s*/, "")) };
+  assert.equal(menuEchoesText(asMenu, said), true);
+  // 有问句的带框菜单照认（上方是问句不是横线）
+  const real = parseTuiMenu([rule, "Select effort", "  low", "❯ medium", "  high", rule]);
+  assert.deepEqual(real?.options, ["low", "medium", "high"]);
+});

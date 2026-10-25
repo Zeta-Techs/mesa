@@ -162,6 +162,11 @@ function menuAround(
     }
   }
   if (options.length < 2 || options.length > 9 || selected < 0) return null;
+  // 上下紧贴两条横线、没有序号：是输入框里的多行草稿（Claude 输入框就是「─── / ❯ 首行 / 缩进续行 / ───」），
+  // 不是菜单。真菜单上方总有一行问句或标题，不会被横线上下夹住（2026-10-25 用户截图：开场的长指令留在输入框里，
+  // 折行被认成五个选项）
+  const isRule = (row: number) => row >= 0 && row < lines.length && BORDER.test(lines[row].trim());
+  if (!numbered && isRule(start - 1) && isRule(end + 1)) return null;
   // 菜单上方的说明：有边框圈住时收到边框为止（最多 8 行，跳过虚线）。
   // Claude Code 2.1.292 实录：「▔▔▔ / Switch model? / Your next response will be slower… / ❯ 1. Yes…」；
   // 审批框：「─── / Bash command / Tip: … / 写一个探针文件 / ╌╌╌ / echo mesa > x / ╌╌╌ / Do you want to proceed? / ❯ 1. Yes…」
