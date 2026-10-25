@@ -73,6 +73,7 @@ export default function ChatSurface({
   syncState,
   loading,
   active = true,
+  shown,
   agentId,
   confirmDetail,
   cwd,
@@ -138,6 +139,8 @@ export default function ChatSurface({
   loading: boolean;
   /** 聊天层当前可见（常驻挂载仅隐藏后，用作输入框聚焦信号） */
   active?: boolean;
+  /** 这段对话正摆在眼前（是看着的标签、且在聊天这一面）：切过来时完全访问的细线亮一下（useToneFlash） */
+  shown?: boolean;
   agentId?: string | null;
   confirmDetail?: string | null;
   cwd?: string | null;
@@ -770,7 +773,7 @@ export default function ChatSurface({
       : null;
   const composerTone = permTier === "full" ? "full" : permTier === "discuss" || readOnly ? "discuss" : null;
   // 权限字平时灰；切到完全访问时与输入框上沿细线同一下亮 caution（2026-10-23 用户）
-  const toneFlash = useToneFlash(composerTone);
+  const toneFlash = useToneFlash(composerTone, shown);
   // ⇧Tab 轮换权限：只在开聊前（开聊后换档要重开，留给菜单里那条确认）
   async function cyclePermission() {
     if (!launchPick || !onPickLaunch) return;
@@ -1200,6 +1203,7 @@ export default function ChatSurface({
         mesaCommands={mesaCommands}
         recallHistory={recallHistory}
         tone={composerTone}
+        toneShown={shown}
         onCyclePermission={
           (launchPickOpen || resumePickOpen) && launchPick && !readOnly ? () => void cyclePermission() : undefined
         }

@@ -56,23 +56,27 @@ function FileKindBlock({ path }: { path: string }) {
 const TONE_FLASH_MS = 2400;
 
 /**
- * 完全访问的提醒只在「切到」这一档时亮一下（用户：常驻显得输入框花哨）；挂载时已是完全访问不亮。
- * 输入框上沿细线与底下那行的权限字（2026-10-23：平时灰字，切到时同步亮一下 caution）各调一次，同一次提交里一起翻
+ * 完全访问的提醒只在「切到」这一档时亮一下（用户：常驻显得输入框花哨）。
+ * 输入框上沿细线与底下那行的权限字（2026-10-23：平时灰字，切到时同步亮一下 caution）各调一次，同一次提交里一起翻。
+ * `shown`（这段对话的聊天层正摆在眼前）给了时，切到一段完全访问的对话也亮一下（2026-10-25 用户：切换对话时不亮，
+ * 只有手动切档才亮）：挂载时按「之前没摆出来」算，新打开的那段同样亮；藏着的标签不亮。不给时同旧口径，挂载时已是完全访问不亮
  */
-export function useToneFlash(tone: "full" | "discuss" | null): boolean {
+export function useToneFlash(tone: "full" | "discuss" | null, shown?: boolean): boolean {
   const [flash, setFlash] = useState(false);
-  const prevRef = useRef(tone);
+  const prevRef = useRef({ tone, shown: shown === undefined });
+  const on = shown ?? true;
   useEffect(() => {
     const prev = prevRef.current;
-    prevRef.current = tone;
-    if (tone !== "full" || prev === "full") {
+    prevRef.current = { tone, shown: on };
+    if (tone !== "full" || !on) {
       setFlash(false);
       return;
     }
+    if (prev.tone === "full" && prev.shown) return;
     setFlash(true);
     const timer = setTimeout(() => setFlash(false), TONE_FLASH_MS);
     return () => clearTimeout(timer);
-  }, [tone]);
+  }, [tone, on]);
   return flash;
 }
 
@@ -245,6 +249,7 @@ export default function ChatComposer({
   mesaCommands = [],
   recallHistory = [],
   tone = null,
+  toneShown,
   onCyclePermission,
   imageWarning = null,
   onImagesChange,
@@ -288,6 +293,8 @@ export default function ChatComposer({
   recallHistory?: readonly string[];
   /** 权限写在输入框本身上（2026-10-22）：切到完全访问时上沿亮一下 caution 细线再淡掉（不常驻）；只讨论虚线框。其余档不加任何东西 */
   tone?: "full" | "discuss" | null;
+  /** 聊天层正摆在眼前（useToneFlash 的 shown）：切到一段完全访问的对话时细线也亮一下；不给按旧口径 */
+  toneShown?: boolean;
   /** ⇧Tab 轮换权限档（只在开聊前给；开聊后换档要重开，不走快捷键） */
   onCyclePermission?: () => void;
   /** 输入框里有图、而当前模型看不了图时的一句提示（模型能力库判定，调用方给） */
@@ -308,7 +315,7 @@ export default function ChatComposer({
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
-  const toneFlash = useToneFlash(tone);
+  const toneFlash = useToneFlash(tone, toneShown);
   // WKWebView：确认候选的 Enter 在 compositionend 之后、isComposing 已是 false。
   // 组词开始锁上，compositionend 后再留一帧，让那次 Enter 只上屏不发送。
   const composingLockRef = useRef(false);

@@ -851,6 +851,34 @@ test("输入框（2026-10-22）：发送钮是光标块，生成中有字时停�
   }
 });
 
+test("完全访问细线：切到一段完全访问的对话也亮一下，藏着的标签不亮（2026-10-25）", async () => {
+  const flashing = (ui: Awaited<ReturnType<typeof mount>>) =>
+    ui.el.querySelector(".ccode-composer-box")?.hasAttribute("data-tone-flash");
+  const base = { onSend: async () => null };
+  const hidden = await mount();
+  try {
+    await hidden.render(hidden.h(hidden.Composer, { ...base, tone: "full", toneShown: false }));
+    assert.equal(flashing(hidden), false, "藏着的标签挂上来不亮");
+    // 切到这段对话
+    await hidden.render(hidden.h(hidden.Composer, { ...base, tone: "full", toneShown: true }));
+    assert.equal(flashing(hidden), true, "切过来时亮一下");
+    // 切走：立刻收掉；再切回来又亮
+    await hidden.render(hidden.h(hidden.Composer, { ...base, tone: "full", toneShown: false }));
+    assert.equal(flashing(hidden), false);
+    await hidden.render(hidden.h(hidden.Composer, { ...base, tone: "full", toneShown: true }));
+    assert.equal(flashing(hidden), true);
+  } finally {
+    await hidden.close();
+  }
+  const opened = await mount();
+  try {
+    await opened.render(opened.h(opened.Composer, { ...base, tone: "full", toneShown: true }));
+    assert.equal(flashing(opened), true, "新打开就摆在眼前的那段也亮");
+  } finally {
+    await opened.close();
+  }
+});
+
 test("模型菜单开聊前：最近在这个项目用过的搭配一点四样一起换；输入框有图时标出看不了图的模型", async () => {
   const ui = await mount();
   try {
