@@ -1711,7 +1711,7 @@ function App() {
                   type="button"
                   onClick={cycleNavState}
                   title={collapsed ? "展开侧栏" : "收起为图标"}
-                  className={`ccode-brand-bar group mx-1.5 mt-1 flex h-9 shrink-0 select-none items-center rounded-md text-left transition-colors hover:bg-hover ${
+                  className={`ccode-brand-bar group mx-1.5 mt-1 flex h-[34px] shrink-0 select-none items-center rounded-md text-left transition-colors hover:bg-hover ${
                     collapsed ? "justify-center" : "px-2"
                   }`}
                 >
