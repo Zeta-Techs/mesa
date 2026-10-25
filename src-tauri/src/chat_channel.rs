@@ -3723,13 +3723,25 @@ mod e2e {
                         let _ = writeln!(f.lock().unwrap(), "{line}");
                     }
                 } else if started.elapsed() > Duration::from_secs(3) {
-                    send(b"\r");
-                    answered = Some("终端菜单回车".into());
+                    // E2E_ANSWER=esc：不答，在终端按 Esc 取消（Claude 提问表单 / 审批菜单被拒时不发 Stop，看会话文件收尾能不能收掉回合）
+                    if std::env::var("E2E_ANSWER").as_deref() == Ok("esc") {
+                        send(b"\x1b");
+                        answered = Some("终端菜单 Esc".into());
+                    } else {
+                        send(b"\r");
+                        answered = Some("终端菜单回车".into());
+                    }
                 }
             }
-            let ran = last.turn.as_ref().is_some_and(|t| t.status == "completed");
+            // 同前端读会话文件时顺带问的那一下（chat_channel_settle_from_transcript）
+            if answered.as_deref() == Some("终端菜单 Esc") && chat_channel_settle_from_transcript("e2e-tab".into()) {
+                println!("{agent}: 会话文件收尾收掉了回合");
+            }
+            let ran = last.turn.as_ref().is_some_and(|t| t.status == "completed" || t.status == "cancelled");
             // 新进程的状态机从第 0 轮起算：走完一轮就是发的这句（回放的旧轮不算回合）
-            if ran && (!need_probe || probe.exists()) {
+            // 按 Esc 不答的那一轮不会跑命令，没有探针文件
+            let esc = answered.as_deref() == Some("终端菜单 Esc");
+            if ran && (!need_probe || esc || probe.exists()) {
                 done = true;
                 break;
             }

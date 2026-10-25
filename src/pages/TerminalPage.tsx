@@ -4251,7 +4251,6 @@ const TerminalView = memo(function TerminalView({
   async function fetchConversation(force = false) {
     const ctx = linkCtxRef.current;
     if (!ctx?.filePath) return;
-    const requestId = ++conversationRequestRef.current;
     let nextSig: string | null = null;
     let turnSettled = false;
     // 签名门控仍作兜底，但 watcher 事件会强制刷新。每次都记录新签名，避免事件后
@@ -4259,10 +4258,16 @@ const TerminalView = memo(function TerminalView({
     const sig = await invoke<[number, number] | null>("session_file_sig", {
       filePath: ctx.filePath,
     }).catch(() => null);
+    // hooks 家的旁路回合还开着：照「等回复」一样每轮都读到尾部检查——拒绝工具 / Esc 打断时 Claude 不发 Stop，
+    // 只能靠读会话文件收掉（chat_channel_settle_from_transcript），文件不再变也要接着查
+    const hooksTurnOpen = channelRef.current?.kind === "hooks" && channelTurnOpen(channelRef.current);
     if (sig) {
       nextSig = `${sig[0]}:${sig[1]}`;
-      if (!force && !pendingReplyRef.current && nextSig === convSigRef.current) return;
+      if (!force && !pendingReplyRef.current && !hooksTurnOpen && nextSig === convSigRef.current) return;
     }
+    // 过了签名门才占序号：被门挡掉的轮询不能把正在等后端的那次读取作废——原先先占号，那次读取回来见号变了就退出，
+    // 而签名已经记下、之后的轮询都被门挡掉，收尾检查再也没人做，聊天层一直「还在回复」（2026-10-25 用户：提问被拒后终端已结束）
+    const requestId = ++conversationRequestRef.current;
     try {
       const page = await invoke<ConversationPageDto>(
         "get_session_conversation_page",
