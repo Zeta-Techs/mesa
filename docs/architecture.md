@@ -457,6 +457,10 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-25 · 聊天区细字 + 正文提亮（A/B/C 对照选 C）
+
+用户在真 WKWebView 渲染的三张对照里选 C。只动聊天区：`.ccode-chat-scroll` / `.ccode-chat-composer` / `.md-chat` / `.ccode-chat-user` / `.ccode-chat-body` 用 `-webkit-font-smoothing: antialiased`，`--color-chat-text` 与 `--color-chat-strong` 都改 l1（细笔画下 l1 不再刺眼，加粗靠字重）；Windows 没有这条渲染开关，`[data-platform="windows"]` 留原口径（l2 / 六成 l1）。全站 body 的 `auto` 不动——2026-10 那次「字发白发飘」的取舍仍对其余页面成立。`tests/theme-contrast.test.ts` 改钉 Mac l1 11.5–16:1、Windows 原区间。
+
 ### 2026-10-25 · 顶栏帮助改纯图标（对照 Claude 客户端第三批 11）
 
 顶栏「? 帮助」去掉文字只留 ? 图标（size-6，悬停 title「帮助」），菜单内容不变；「待处理」本来就只在 `inboxGroups` 非空时出现。命令面板入口（⌘K + 「命令面板」）待用户定，本条不动。

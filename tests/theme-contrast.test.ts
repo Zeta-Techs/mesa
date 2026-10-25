@@ -582,19 +582,24 @@ test("热力图五档色阶（cta 单极梯子）全主题可辨：方向单调 
   assert.deepEqual(failures, [], `热力图色阶断档：\n${failures.join("\n")}`);
 });
 
-test("聊天回答的字适合长读：正文对画布 8.5–11.5:1，加粗比正文亮且不超过 14:1", () => {
+test("聊天回答的字适合长读：Mac 细字下正文 l1 对画布 11.5–16:1、加粗同色；Windows 不认细字，正文 l2 8.5–11.5:1、加粗更亮且不超过 14:1", () => {
+  // 2026-10-25 用户选 C：聊天区灰度抗锯齿（笔画细一档）+ 正文提到 l1；Windows 没有细字，留原口径
+  const root = /@theme \{(.*?)\n\}/s.exec(css)?.[1] ?? "";
+  assert.match(root, /--color-chat-text:\s*var\(--color-l1\)/);
+  assert.match(root, /--color-chat-strong:\s*var\(--color-l1\)/);
+  assert.match(css, /\.ccode-chat-body,\s*\.ccode-chat-user,\s*\.md-chat,\s*\.ccode-chat-composer,\s*\.ccode-chat-scroll \{\s*-webkit-font-smoothing:\s*antialiased/);
+  const win = /\[data-platform="windows"\] \{\s*--color-chat-text:\s*var\(--color-l2\);\s*--color-chat-strong:\s*color-mix\(in oklab, var\(--color-l1\) 60%, var\(--color-l2\)\);/;
+  assert.match(css, win, "Windows 留 l2 正文 + 六成 l1 加粗");
   const bad: string[] = [];
   for (const t of THEMES) {
-    const own = new RegExp(`\\[data-theme="${t.id}"\\] \\{(.*?)\\n\\}`, "s").exec(css)?.[1] ?? "";
     const v = { ...tokens(null), ...(t.id === "midnight" ? {} : tokens(t.id)) };
-    const text = v["chat-text"] ?? v.l2;
-    const strong =
-      v["chat-strong"] ?? (/--color-chat-strong:\s*var\(--color-l1\)/.test(own) ? v.l1 : mixOklab(v.l1, v.l2, 60));
-    const ct = contrast(text, v.canvas);
-    const cs = contrast(strong, v.canvas);
-    if (ct < 8.5 || ct > 11.5) bad.push(`${t.id} 正文 ${text} 对画布 ${ct.toFixed(2)}:1`);
-    if (cs <= ct) bad.push(`${t.id} 加粗 ${strong} 不比正文亮（${cs.toFixed(2)} ≤ ${ct.toFixed(2)}）`);
-    if (cs > 14) bad.push(`${t.id} 加粗 ${strong} 对画布 ${cs.toFixed(2)}:1，长读刺眼`);
+    const mac = contrast(v.l1, v.canvas);
+    if (mac < 11.5 || mac > 16) bad.push(`${t.id} Mac 正文 l1 对画布 ${mac.toFixed(2)}:1`);
+    const ct = contrast(v.l2, v.canvas);
+    const cs = contrast(mixOklab(v.l1, v.l2, 60), v.canvas);
+    if (ct < 8.5 || ct > 11.5) bad.push(`${t.id} Windows 正文 l2 对画布 ${ct.toFixed(2)}:1`);
+    if (cs <= ct) bad.push(`${t.id} Windows 加粗不比正文亮（${cs.toFixed(2)} ≤ ${ct.toFixed(2)}）`);
+    if (cs > 14) bad.push(`${t.id} Windows 加粗对画布 ${cs.toFixed(2)}:1，长读刺眼`);
   }
   assert.deepEqual(bad, [], bad.join("\n"));
 });

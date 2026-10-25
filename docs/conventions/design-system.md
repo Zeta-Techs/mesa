@@ -35,6 +35,7 @@
   **聊天回答的字（2026-10-22，用户：有的主题在聊天层不适合长时间聊）**：`.md-chat` 正文走 `--color-chat-text`（默认 l2），
   加粗与 h1–h4 走 `--color-chat-strong`（默认 l1 与 l2 在 OKLab 六四混，不跳满格 l1）；正文偏离 8.5–11.5:1 或带明显色偏的主题
   在自己块里覆写（2026-10-24 起十四套都不需要了——极简灰蓝、暮紫、暮紫·浅改为直接调 l1/l2 与彩度，正文本身就在长读区间；令牌机制保留给以后的主题），范围钉 `tests/theme-contrast.test.ts`。只管聊天回答，其余页面层级不动。
+  **2026-10-25 改（用户 A/B/C 对照选 C）**：聊天区（`.ccode-chat-scroll` / `.ccode-chat-composer` / `.md-chat` / `.ccode-chat-user` / `.ccode-chat-body`）改灰度抗锯齿细字，正文与加粗都走 l1（对画布 11.9–15.5:1，加粗只靠字重）；Windows 不认 font-smoothing，`[data-platform="windows"]` 留 l2 正文 + 六成 l1 加粗。全站其余地方仍是 `auto`（「字发白发飘」的取舍不变）。
   **深色主题终端底 = 画布底**（XTERM_BG_FG 深色行 = editor-bg = canvas，`tests/theme-tokens.test.ts` 钉住）：聊天层与终端切换不跳色；
   浅色终端仍是近白卡（灰画布上 Light+ 绿 / 黄对比掉到 2.2，不跟画布）。
 - **底色与文字同一色调（2026-10-24，十四套）**：一套主题的底色和文字四档取同一色相（OKLCH 色相差不超过约 30°），禁冷底配暖字或暖纸配冷字；

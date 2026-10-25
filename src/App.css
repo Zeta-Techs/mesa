@@ -97,9 +97,11 @@
   /* 聊天里的字（2026-10-22 用户：有的主题在聊天层不适合长时间聊）：回答正文 = 正文色；加粗与小标题只往 l1 走六成——
      回答里加粗多，满格 l1（对画布 13–18:1）在 10:1 左右的正文里一粒粒跳出来，长读刺眼。
      正文偏离 8.5–11.5:1 或带色偏的主题（极简灰蓝太亮、暮紫偏蓝、暮紫·浅与琥珀·浅偏淡）在各自块里覆写，
-     tests/theme-contrast.test.ts 钉范围。只管聊天回答（.md-chat），其余页面的层级不动 */
-  --color-chat-text: var(--color-l2);
-  --color-chat-strong: color-mix(in oklab, var(--color-l1) 60%, var(--color-l2));
+     tests/theme-contrast.test.ts 钉范围。只管聊天回答（.md-chat），其余页面的层级不动。
+     2026-10-25 用户在 A/B/C 对照里选 C：聊天区改细字（.ccode-chat-scroll / .ccode-chat-composer 灰度抗锯齿），
+     笔画变细后正文提到 l1 补回实感（对画布 11.9–15.5:1），加粗同色、只靠字重——细笔画下 l1 不再「一粒粒跳出来」 */
+  --color-chat-text: var(--color-l1);
+  --color-chat-strong: var(--color-l1);
 
   /* diff 增删 */
   --color-add: #8fd3a8;
@@ -2371,6 +2373,21 @@ select:focus-visible {
 }
 ::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* 聊天区细字（2026-10-25 用户选 C）：对话流、输入框、回放里的回答都用灰度抗锯齿，笔画比全站的 auto 细一档，
+   配合 --color-chat-text 提到 l1。只有 macOS / Linux 的 WebKit 认这条；Windows 不认，正文色也留在原来的 l2（下一条） */
+.ccode-chat-body,
+.ccode-chat-user,
+.md-chat,
+.ccode-chat-composer,
+.ccode-chat-scroll {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+[data-platform="windows"] {
+  --color-chat-text: var(--color-l2);
+  --color-chat-strong: color-mix(in oklab, var(--color-l1) 60%, var(--color-l2));
 }
 
 /* 聊天滚动区（.ccode-chat-scroll）：轨道加宽到 10px 好抓，拇指用透明描边「内缩」成 4px 细条，
