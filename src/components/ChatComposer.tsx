@@ -695,19 +695,22 @@ export default function ChatComposer({
       // 图片附件按绝对路径追加在正文后（一行一个）：路径文本是九家 CLI 通吃的图片输入方式，
       // 会话文件记下这行路径，回放/聊天层据此渲染内嵌图片卡
       const payload = [text, ...paths].filter(Boolean).join("\n");
-      const err = await onSend(payload);
-      if (err) {
-        setError(err);
-        return;
-      }
+      // 先清空再发：写进终端要等 CLI 能收键、多行正文粘进去后还要等 0.65 秒才按提交，原先等发完才清空，
+      // 字在框里停一下才走（2026-10-25 用户：不够丝滑）。发失败再放回去——人这时已经接着打了字就不覆盖
+      const sent = { value, attachments: attachmentsRef.current };
       setValue("");
       setSlashDismissed(false);
       setViewing(null);
+      setAttachments([]);
+      const err = await onSend(payload);
+      if (err) {
+        setError(err);
+        setValue((cur) => (cur === "" ? sent.value : cur));
+        setAttachments((cur) => (cur.length === 0 ? sent.attachments : cur));
+        return;
+      }
       markCounterRef.current = 0;
-      setAttachments((cur) => {
-        cur.forEach((a) => a.url && URL.revokeObjectURL(a.url));
-        return [];
-      });
+      sent.attachments.forEach((a) => a.url && URL.revokeObjectURL(a.url));
     } finally {
       submittingRef.current = false;
     }

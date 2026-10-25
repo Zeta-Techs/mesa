@@ -5461,7 +5461,7 @@ const TerminalView = memo(function TerminalView({
   }
 
   /** queued = 上一轮还在生成时发的：CLI 自己排队，这一轮结束才处理（聊天层气泡标「排队中」） */
-  function showOptimisticUserMessage(text: string, queued = false) {
+  function showOptimisticUserMessage(text: string, queued = false): ChatMessageDto {
     lastSentRef.current = text;
     lastSendAtRef.current = Date.now();
     // 发送发生在后台读取途中时，令旧读取失效，避免它把刚显示的本地消息覆盖掉。
@@ -5492,6 +5492,14 @@ const TerminalView = memo(function TerminalView({
       return [...current, message].slice(-50);
     });
     setPendingReply(true);
+    return message;
+  }
+
+  /** 先显示了、却没写进终端：把那条气泡撤掉（同一个对象；同文去重时没加进去的不受影响），「等回复」回到发送前 */
+  function retractOptimisticUserMessage(message: ChatMessageDto, wasPending: boolean) {
+    pendingUsersRef.current = pendingUsersRef.current.filter((m) => m !== message);
+    setConv((current) => current.filter((m) => m !== message));
+    setPendingReply(wasPending);
   }
 
   /** 这个目录是已添加的项目：取它开聊附带的项目说明（自动 / 自定义 / 不附带，见项目设置）；不是项目或读不到给空串 */
@@ -5519,11 +5527,17 @@ const TerminalView = memo(function TerminalView({
     // 聊天层与终端层共享这个 PTY；刚启动或刚从 shell 回落时，React 状态可能尚未完成一帧更新。
     const currentPtyId = ptyIdRef.current;
     if (ptyKindRef.current === "agent" && currentPtyId) {
-      const queued = pendingReplyRef.current || attention === "working";
+      const wasPending = pendingReplyRef.current;
+      const queued = wasPending || attention === "working";
       armPtyWorking();
+      // 气泡先出、再往终端里写（要等 CLI 能收键、多行正文还要等 0.65 秒才按提交）：输入框一清空，这句就在对话里了，
+      // 不留一段「哪儿都看不见」的空当（2026-10-25 用户：发送不够丝滑）。没写进去再撤掉
+      const shown = showOptimisticUserMessage(message, queued);
       const result = await writeChatMessage(currentPtyId, message);
-      if (result.error) disarmPtyWorking();
-      else showOptimisticUserMessage(message, queued);
+      if (result.error) {
+        disarmPtyWorking();
+        retractOptimisticUserMessage(shown, wasPending);
+      }
       return result;
     }
 

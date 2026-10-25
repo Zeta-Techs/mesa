@@ -1121,3 +1121,39 @@ test("输入框：CLI 猜的下一句空着时灰着显示，Tab 填进来；有
     await ui.close();
   }
 });
+
+test("输入框：点发送就清空，不等写进终端；发失败把原话放回去，已经接着打的字不覆盖（2026-10-25 用户：发送不够丝滑）", async () => {
+  const ui = await mount();
+  try {
+    let finish: (err: string | null) => void = () => {};
+    const sent: string[] = [];
+    const onSend = (t: string) => {
+      sent.push(t);
+      return new Promise<string | null>((resolve) => (finish = resolve));
+    };
+    await ui.render(ui.h(ui.Composer, { onSend }));
+    const box = ui.el.querySelector("textarea")!;
+    await typeInto(ui, "第一句");
+    await key(ui, "Enter");
+    assert.deepEqual(sent, ["第一句"]);
+    assert.equal(box.value, "", "写进终端之前就清空");
+    await ui.act(async () => finish(null));
+    assert.equal(box.value, "");
+
+    // 发失败：框里还空着就放回原话，并显示错误
+    await typeInto(ui, "第二句");
+    await key(ui, "Enter");
+    assert.equal(box.value, "");
+    await ui.act(async () => finish("终端已重新启动，这句没有发出，请再发一次"));
+    assert.equal(box.value, "第二句");
+    assert.ok(ui.el.textContent?.includes("这句没有发出"));
+
+    // 发失败时人已经接着打了字：不覆盖
+    await key(ui, "Enter");
+    await typeInto(ui, "新写的");
+    await ui.act(async () => finish("发送失败：x"));
+    assert.equal(box.value, "新写的");
+  } finally {
+    await ui.close();
+  }
+});
