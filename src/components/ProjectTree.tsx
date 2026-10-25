@@ -677,12 +677,12 @@ export default function ProjectTree({
       if (folderOpen(k, chatOpenPrefs, currentKey)) open.push({ key: k, count: chatsByRoot.get(k)?.length ?? 0 });
     }
     // 行高按 rem 折算（Mac 根 14px、Windows 16px）：对话行 h-8 + 1px 行距；节头 h-7 + pt-2；
-    // 每个展开的文件夹再留一行「展开更多」与底边距；三段容器各 pt-2
+    // 每个展开的文件夹再留一行「还有 N 段」（h-6）与底边距 pb-1；三段容器各 pt-2
     const rem = parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 14;
     const headers = sections.length + 1;
     // 「置顶」一节（节头 + 每段一行）也占地方，先扣掉
     const pinnedRows = pinnedList.length > 0 ? 2.25 * rem + pinnedList.length * (2 * rem + 1) : 0;
-    const fixed = headers * 2.25 * rem + open.length * 2 * rem + 1.5 * rem + pinnedRows;
+    const fixed = headers * 2.25 * rem + open.length * 1.75 * rem + 1.5 * rem + pinnedRows;
     const slots = chatSlots({ available: listHeight, fixed, rowHeight: 2 * rem + 1 });
     const shown = chatQuotas({
       counts: open.map((o) => o.count),
@@ -694,8 +694,9 @@ export default function ProjectTree({
 
   /** 一段对话（2026-10-23 照 Claude 客户端侧栏）：与所属文件夹的名字左对齐、不再缩进，只写主题（去掉「MMDD|类型|」，
    *  完整标题放悬停），状态点放行尾；右键改名 / 归档 / 去对话页 */
-  /** `indent`：挂在课题 / 随手聊下面的缩进到名字的起点（图标后面），「置顶」一节里的不缩（2026-10-24 用户：分不清项目和对话） */
-  function renderChat(s: SessionMetaDto, project: ProjectDto | null, indent = true) {
+  /** 对话不缩进，左缘对齐课题行的图标（2026-10-25 用户对照 Claude 客户端：课题名降成小号灰字的分组标题，
+   *  项目和对话靠字号、字色分层，不再靠缩进；原 2026-10-24 缩进到名字起点） */
+  function renderChat(s: SessionMetaDto, project: ProjectDto | null) {
     const key = chatKey(s);
     const full = tidySessionTitle(s).title;
     const dot = chatDot(s, terminalRunInputs);
@@ -770,7 +771,7 @@ export default function ProjectTree({
           onFocus={() => prefetchConversation(s)}
           aria-current={selected ? "true" : undefined}
           title={`${full}\n${agent} · ${relTime(s.updatedAt)}${dot ? ` · ${dotTitle(dot)}` : ""}${unread ? " · 跑完了，还没看" : ""}\n点一下接着聊`}
-          className={`flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md ${indent ? "pl-7" : "pl-2"} pr-1 ${
+          className={`flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md pl-2 pr-1 ${
             selected || unread ? "text-l1" : "text-l3 group-hover/chat:text-l2"
           }`}
         >
@@ -803,8 +804,8 @@ export default function ProjectTree({
   }
 
   /** 开着、但列表里还没有的一行（openTabRows）：点了切过去，行尾 × 关掉（在跑的会先问）。
-   *  新对话 / 纯终端前面带个小图标，和对话行区分开；`indent` 同 renderChat（图标在缩进之后，不放进课题图标那一列，免得看成课题） */
-  function renderOpenRow(r: OpenTabRow, indent = true) {
+   *  新对话 / 纯终端前面带个小图标，和对话行区分开；不缩进同 renderChat */
+  function renderOpenRow(r: OpenTabRow) {
     const selected = page === "terminal" && r.tabId === terminalActiveTabId;
     const run = terminalRunInputs.find((x) => x.tabId === r.tabId);
     const unread = !selected && run != null && unreadSet.has(unreadKeyOf(run));
@@ -832,7 +833,7 @@ export default function ProjectTree({
                 ? `${r.label}\n开着的终端`
                 : `${r.label}${r.dot ? ` · ${dotTitle(r.dot)}` : ""}${unread ? " · 跑完了，还没看" : ""}`
           }
-          className={`flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md ${indent ? "pl-7" : "pl-2"} pr-1 ${
+          className={`flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md pl-2 pr-1 ${
             selected || unread ? "text-l1" : "text-l3 group-hover/chat:text-l2"
           }`}
         >
@@ -861,8 +862,9 @@ export default function ProjectTree({
     const shown = quotaOf.get(folderKey) ?? Math.min(chats.length, SIDEBAR_CHAT_LIMIT);
     const more = chats.length > shown;
     const folded = (chatExtra[folderKey] ?? 0) > 0;
-    // 「展开更多 / 收起」是动作不是对话：缩进同对话、再淡一档（l4），小一号（2026-10-24 用户：原先 l3 12px 和课题名一模一样，分不清）
-    const linkCls = "flex h-7 items-center rounded-md pl-7 pr-2 text-left text-l4 hover:bg-hover hover:text-l2";
+    // 「还有 N 段 / 收起」是动作不是对话：比对话行矮、再小一号、最淡（l4），读作挂在最后一段下面的注脚
+    // （2026-10-25 用户：原「展开更多」整行和对话一样高，读着像一段对话）
+    const linkCls = "flex h-6 items-center rounded-md pl-2 pr-2 text-left text-l4 hover:bg-hover hover:text-l2";
     const opened = openByFolder.get(folderKey) ?? [];
     // 正看着的那段排得比较靠后（从对话页点开的旧对话）：也摆出来，不然侧栏里找不到「现在在哪」
     const selIdx = selectedChatKey ? chats.findIndex((s) => chatKey(s) === selectedChatKey) : -1;
@@ -871,7 +873,7 @@ export default function ProjectTree({
       <div role="group" aria-label={`${name} 的对话`} className="space-y-px pb-1">
         {opened.map((r) => renderOpenRow(r))}
         {chats.length === 0 ? (
-          opened.length === 0 && <p className="py-1 pl-7 pr-2 text-xs text-l4">还没有对话</p>
+          opened.length === 0 && <p className="py-1 pl-2 pr-2 text-xs text-l4">还没有对话</p>
         ) : (
           visible.map((s) => renderChat(s, project))
         )}
@@ -887,7 +889,7 @@ export default function ProjectTree({
                 data-rail-nav
                 className={linkCls}
               >
-                <span className="text-xs">展开更多</span>
+                <span className="text-micro">还有 {chats.length - shown} 段</span>
               </button>
             )}
             {folded && (
@@ -904,7 +906,7 @@ export default function ProjectTree({
                 data-rail-nav
                 className={linkCls}
               >
-                <span className="text-xs">收起</span>
+                <span className="text-micro">收起</span>
               </button>
             )}
           </div>
@@ -927,11 +929,11 @@ export default function ProjectTree({
         // 图标上按下不起拖
         onPointerDown={(e) => e.stopPropagation()}
         onClick={onToggle}
-        className={`relative ml-1 flex size-6 shrink-0 items-center justify-center rounded hover:text-l1 ${
-          kind === "unregistered" ? "text-l4" : "text-l3"
+        className={`relative ml-1 flex size-6 shrink-0 items-center justify-center rounded text-l4 hover:text-l1 ${
+          kind === "unregistered" ? "opacity-70" : ""
         }`}
       >
-        <Icon size={14} strokeWidth={1.8} aria-hidden="true" className="group-hover:invisible group-focus-within:invisible" />
+        <Icon size={13} strokeWidth={1.8} aria-hidden="true" className="group-hover:invisible group-focus-within:invisible" />
         <span className="absolute inset-0 hidden items-center justify-center group-hover:flex group-focus-within:flex" aria-hidden="true">
           {open ? <ChevronDown size={14} strokeWidth={1.8} /> : <ChevronRight size={14} strokeWidth={1.8} />}
         </span>
@@ -1273,7 +1275,7 @@ export default function ProjectTree({
             data-rail-open={open ? "1" : "0"}
             title={row.project ? row.repoPath : `${row.repoPath}\n这个文件夹还没添加到 Mesa`}
             aria-current={selected && active ? "page" : undefined}
-            // 名字起点 = ml-1 + 图标格 size-6 = 28px，与缩进的对话（pl-7）对齐
+            // 课题名是分组标题（2026-10-25 用户对照 Claude 客户端）：小一号（12px）、淡一档（l4），对话 13px l3 不缩进，靠字号字色分层
             className={`flex h-7 min-w-0 items-center gap-1 rounded-md pr-0.5 ${
               selected && active
                 ? "font-medium text-l1"
@@ -1282,12 +1284,11 @@ export default function ProjectTree({
                   : unreadInside
                     ? "text-l1"
                     : row.project
-                      ? "text-l3 group-hover:text-l2"
-                      : "text-l4 group-hover:text-l3"
+                      ? "text-l4 group-hover:text-l2"
+                      : "text-l4 opacity-70 group-hover:text-l3 group-hover:opacity-100"
             }`}
           >
-            {/* 课题名与对话同字号（13px），靠图标和对话缩进分层，不靠字号与粗细 */}
-            <span className="ccode-rail-text min-w-0 truncate text-left">{row.name}</span>
+            <span className="min-w-0 truncate text-left text-xs">{row.name}</span>
             {pinned && <Pin size={10} strokeWidth={1.8} aria-label="已置顶" className="shrink-0 text-l4" />}
           </button>
           {renderToggleSpace(open, dot, () => toggleFolder(fkey, open))}
@@ -1338,9 +1339,9 @@ export default function ProjectTree({
             data-rail-folder={SCRATCH_FOLDER_KEY}
             data-rail-open={open ? "1" : "0"}
             title="不挂在项目下的对话（新对话默认开在这里）"
-            className={`flex h-7 min-w-0 items-center rounded-md pr-0.5 ${unreadInside ? "text-l1" : "text-l3 group-hover:text-l2"}`}
+            className={`flex h-7 min-w-0 items-center rounded-md pr-0.5 ${unreadInside ? "text-l1" : "text-l4 group-hover:text-l2"}`}
           >
-            <span className="ccode-rail-text min-w-0 truncate text-left">随手聊</span>
+            <span className="min-w-0 truncate text-left text-xs">随手聊</span>
           </button>
           {renderToggleSpace(open, dot, toggle)}
           {renderNewChat("开一段新的随手聊", "开一段新的随手聊（同侧栏「新对话」）", () => void openQuickChat())}
@@ -1444,7 +1445,7 @@ export default function ProjectTree({
               <span className={RAIL_SECTION_LABEL}>置顶</span>
             </div>
             <div role="group" aria-label="置顶的对话" className="space-y-px">
-              {pinnedList.map((s) => renderChat(s, projectOfChat(s), false))}
+              {pinnedList.map((s) => renderChat(s, projectOfChat(s)))}
             </div>
           </div>
         )}
@@ -1455,7 +1456,7 @@ export default function ProjectTree({
               <span className={RAIL_SECTION_LABEL}>其他打开的</span>
             </div>
             <div role="group" aria-label="其他打开的" className="space-y-px">
-              {openByFolder.get(null)!.map((r) => renderOpenRow(r, false))}
+              {openByFolder.get(null)!.map((r) => renderOpenRow(r))}
             </div>
           </div>
         )}

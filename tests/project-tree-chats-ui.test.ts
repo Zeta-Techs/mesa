@@ -216,7 +216,7 @@ async function renderTree(
   };
 }
 
-test("正在聊的项目默认展开：量不到侧栏高度时列 5 段 + 「展开更多」，标题去掉日期类型前缀，等确认的那段行尾是琥珀光标", async () => {
+test("正在聊的项目默认展开：量不到侧栏高度时列 5 段 + 「还有 N 段」，标题去掉日期类型前缀，等确认的那段行尾是琥珀光标", async () => {
   const view = await renderTree();
   try {
     const group = view.chatGroup("综述流程测试");
@@ -231,7 +231,7 @@ test("正在聊的项目默认展开：量不到侧栏高度时列 5 段 + 「�
       "镁硫电池第3篇精读",
       "镁硫电池第2篇精读",
       "镁硫电池第1篇精读",
-      "展开更多",
+      "还有 1 段",
     ]);
     const first = view.button("镁硫电池第5篇精读");
     const caret = first.querySelector(".ccode-run-caret");
@@ -259,13 +259,13 @@ test("点一段对话交给 openConversation，项目给这家设的连接一并
   }
 });
 
-test("「展开更多」在原地多列、列完了出「收起」；节头 ⋯ 能去对话页看全部；随手聊点开才列，展开记下来", async () => {
+test("「还有 N 段」在原地多列、列完了出「收起」；节头 ⋯ 能去对话页看全部；随手聊点开才列，展开记下来", async () => {
   const view = await renderTree();
   try {
-    await view.act(async () => view.button("展开更多").click());
+    await view.act(async () => view.button("还有 1 段").click());
     const group = view.chatGroup("综述流程测试")!;
     assert.ok(group.textContent?.includes("镁硫电池第0篇精读"), "第 6 段列出来了");
-    assert.ok(!group.textContent?.includes("展开更多"), "列完了不再有展开更多");
+    assert.ok(!group.textContent?.includes("还有"), "列完了不再有「还有 N 段」");
     await view.act(async () => view.button("收起").click());
     assert.ok(!view.chatGroup("综述流程测试")!.textContent?.includes("镁硫电池第0篇精读"));
     await view.act(async () => view.button("综述流程测试 的更多操作").click());
@@ -327,7 +327,7 @@ test("收起正在聊的项目：人手关过的不再自动展开", async () =>
   }
 });
 
-test("不再按科研 / 编程 / 工作分组：课题平铺成节，没在聊的收着；课题名前是文件夹图标（点它开合），对话缩进到名字起点", async () => {
+test("不再按科研 / 编程 / 工作分组：课题平铺成节，没在聊的收着；课题名前是文件夹图标（点它开合），课题名是小号灰字分组标题、对话不缩进", async () => {
   const view = await renderTree();
   try {
     const text = view.host.textContent ?? "";
@@ -341,7 +341,8 @@ test("不再按科研 / 编程 / 工作分组：课题平铺成节，没在聊�
     const head = chevron.parentElement!;
     assert.equal(head.children[0], chevron, "图标在名字前面");
     const chatRow = view.button("镁硫电池第5篇精读");
-    assert.match(chatRow.className, /\bpl-7\b/, "课题下的对话缩进到名字起点");
+    assert.match(chatRow.className, /\bpl-2\b/, "对话不缩进，左缘对齐课题行图标（2026-10-25）");
+    assert.ok(view.button("Ccode").querySelector(".text-xs"), "课题名是 12px 的分组标题");
     // 名字右边的空白也能开合（2026-10-24 用户：点那里没反应）；点名字是进项目页
     const blank = head.children[2] as HTMLElement;
     await view.act(async () => blank.click());

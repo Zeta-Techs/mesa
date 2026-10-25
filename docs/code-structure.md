@@ -89,7 +89,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   App.tsx                    # 应用壳：标题栏（收件箱/帮助/命令面板）、三段式侧栏（快速入口/项目树/系统段）、主区 page 驱动挂载、
                              #   全局快捷键、启动过渡、跨实例同步、通知、确认框宿主。侧栏纵向间距收紧（2026-10-25 用户：品牌区到导航、导航到「项目」嫌松）：品牌区 h-[34px]、导航区 pt-1、项目区 pt-1.5。侧栏（2026-10-16 定稿）：品牌区下是快速入口
                              #   （工作台 ⌘1 / 新对话 / 运行（常驻）/ 搜对话），中段项目树（ProjectTree，课题下挂对话），
-                             #   底部资源段（连接/技能/MCP/用量/设置：展开态一排图标、图标态竖排）；收起态=图标条（项目树不可用，展开后才有）。
+                             #   底部资源段（连接/技能/MCP/用量/设置：展开态只留连接、设置 + ⋯ 菜单收技能 / MCP / 用量（RAIL_MORE_PAGES，2026-10-25）、图标态竖排五个）；收起态=图标条（项目树不可用，展开后才有）。
                              #   主区：page==="workbench" 显示工作台概览、page==="workspaces" 显示选中课题详情（选中经 selectProjectReq
                              #   一次性请求由项目页消费——与收件箱/对话页/统计页跳转同一条链，禁再拿它当持久选中态渲染）。
                              #   壳与标题栏/侧栏/缝透明，桌面磨砂从窗口底透上来；
@@ -115,7 +115,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   components/ProjectTree.tsx # 侧栏项目树（展开态）：「项目」标签行（计数＋放大镜＋添加入口）+ 一节一节平铺的随手聊与课题；
                              #   放大镜开 RailSearchPalette（对话和项目一起搜，料由 searchSources 现组：置顶 / 随手聊 / 各课题的全部对话，
                              #   不受「展开更多」限额），树本身不再就地筛。树滚动区顶 6px / 底 12px 渐隐（底部留 12px 内边距），分节标签（项目 / 置顶 / 其他打开的）左缘对齐导航图标左缘 16px（2026-10-25）。`liftCurrent`（只 App 里探出层传）时正聊着的课题（currentKey 对应行）整块提到随手聊上面、不参与拖动排序；展开侧栏不提（2026-10-25 用户）。分三层（2026-10-24）：分节标签 RAIL_SECTION_LABEL / 课题行最前
-                             #   renderFolderToggle（文件夹图标，悬停换箭头，点它开合）/ 对话 pl-7 缩进到课题名，置顶与「其他打开的」下不缩
+                             #   renderFolderToggle（文件夹图标，悬停换箭头，点它开合）+ 课题名 xs l4 分组标题 / 对话 pl-2 不缩进（2026-10-25）
                              #   工作区清单（课题的工作副本）在开着的对话出现认不出归属的目录时重读一次（reposTick；开步刚建的副本），
                              #   重读后仍认不出的签名不变、不反复读
   components/RailSearchPalette.tsx # 「搜索对话和项目」弹层（2026-10-24 照 Claude 客户端）：只管列和选，打开由宿主回调；排序筛选在 rail-search.ts
@@ -126,7 +126,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   行右键=重命名/复制路径/从 Mesa 移除/清除痕迹/删除目录，动作自持（invoke+confirmDialog+toast），
                              #   完成后 loadProjects+bumpProjectsVersion 通知本树与项目页重拉；
                              #   2026-10-23 挂对话（纯逻辑 sidebar-chats.ts）：最上面「随手聊」、节头名字后的箭头开合对话（默认只展开运行页
-                             #   正看着的那个，人手开关记 ccode.projectTreeChats）、展开按侧栏空位列（至少 5 段）+ 「展开更多 / 收起」，行尾运行状态光标（RunCaret，收着也报）；
+                             #   正看着的那个，人手开关记 ccode.projectTreeChats）、展开按侧栏空位列（至少 5 段）+ 「还有 N 段 / 收起」，行尾运行状态光标（RunCaret，收着也报）；
                              #   点对话 openConversation（只看不起进程）；点课题名进项目页并展开它的对话（10-24）；行尾悬停 ＋（startProjectChat / openQuickChat）与 ⋯ 平时不占宽；
                              #   对话行尾 ⋯ 与右键：在右侧分屏打开 / 停下 Agent（开着在跑才有）/ 重命名 / 归档 / 在对话页查看；会话列表自己保鲜（展开拉一次、看得见时每分钟）；拖动按整块（tabDragShift）；
                              #   2026-10-24 第二期（运行页标签条退场）：开着、列表里还没有的挂在文件夹最上面（openTabRows，带 ×，经 store.requestCloseTab 关），
@@ -606,7 +606,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 归档 / 内部 / 源文件不在的不列）、对话与文件夹的运行状态（chatDot / folderDot / scratchDot：run-caret 三态，文件夹取最要紧的）、
                              # 正在看的标签归哪个文件夹（currentFolderKey，工作树归主仓）、展开默认（folderOpen）、短标题去「MMDD|类型|」
                              # （sidebarChatTitle）、各文件夹列几段（chatQuotas / chatSlots：至少 5 段、按侧栏空位补满；expandedExtra：
-                             # 「展开更多」在眼下段数上多 10 段）、开着但列表里还没有的标签挂到哪（openTabRows，10-24）、
+                             # 「还有 N 段」在眼下段数上多 10 段）、开着但列表里还没有的标签挂到哪（openTabRows，10-24）、
                              # 置顶对话（CHAT_PINS_KEY / parseChatPins / toggleChatPin / pinnedChats，10-24，localStorage，与「保留」快照无关）、
                              # 侧栏键盘走（railNavIndex，10-24）
                              # （tests/sidebar-chats.test.ts；界面 ProjectTree，tests/project-tree-chats-ui.test.ts）

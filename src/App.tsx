@@ -12,6 +12,7 @@ import {
   Inbox,
   Info,
   Megaphone,
+  MoreHorizontal,
   RefreshCw,
   Search,
   ShieldAlert,
@@ -46,6 +47,7 @@ import {
 import TopNavCapsule from "./components/TopNavCapsule";
 import { ConfirmDialogHost } from "./components/ConfirmDialog";
 import { HoverTip, useHoverTip } from "./components/HoverTip";
+import ContextMenu from "./components/ContextMenu";
 import { LoadingRows, rowActionClass } from "./components/PageFrame";
 import "./App.css";
 import { useAppStore, runInboxAction, visibleInboxItems } from "./store";
@@ -128,6 +130,9 @@ function PageLoading() {
     </div>
   );
 }
+
+/** 展开侧栏底部收进「⋯ 更多」的页（只留连接、设置两个图标） */
+const RAIL_MORE_PAGES: readonly string[] = ["skills", "mcp", "stats"];
 
 /** 侧栏收起态的应用内 tooltip：展开态已有文字，不再重复弹提示。 */
 function RailTooltip({
@@ -657,6 +662,8 @@ function App() {
   }, [titleInboxCat]);
   // 顶栏帮助菜单：开关态 + Esc 关闭，关闭范式与收件箱下拉一致（遮罩在 JSX 尾部 z-20）
   const [helpOpen, setHelpOpen] = useState(false);
+  // 展开侧栏底部「⋯ 更多」菜单的位置（技能 / MCP / 用量收在这里）
+  const [railMoreAt, setRailMoreAt] = useState<{ x: number; y: number } | null>(null);
   // 帮助菜单/关于页共用的反馈表单弹层（FeedbackModal，通道见 feedback.ts）
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   // 诊断弹窗「附到反馈」带进反馈表单的诊断包路径（表单关闭即清）
@@ -1901,17 +1908,19 @@ function App() {
                 )}
 
                 {/* 资源与管理段：连接/技能/MCP/用量/设置（对话已归上面的工作入口）。
-                    展开态压成一排图标、悬停出名字——都是低频入口，竖排五行会把项目树挤出滚动条；
-                    图标态侧栏太窄放不下一排，照旧竖排 */}
+                    展开态只留连接、设置两个图标，技能 / MCP / 用量收进「⋯ 更多」（2026-10-25 用户对照 Claude 客户端：
+                    五个没字的图标只能靠猜）；悬停出名字。图标态侧栏照旧竖排五个 */}
                 <div
                   className={`shrink-0 border-t border-white/5 px-1.5 py-2 ${
-                    collapsed ? "" : "grid grid-cols-5 gap-0.5"
+                    collapsed ? "" : "flex items-center gap-0.5"
                   }`}
                 >
                   {[
                     ...NAV_GROUPS.find((g) => g.label === "资源")!.items,
                     ...NAV_BOTTOM,
-                  ].map((n) => (
+                  ]
+                    .filter((n) => collapsed || !RAIL_MORE_PAGES.includes(n.id))
+                    .map((n) => (
                     <RailTooltip
                       key={n.id}
                       label={n.label}
@@ -1924,7 +1933,7 @@ function App() {
                         aria-current={page === n.id ? "page" : undefined}
                         aria-label={n.label}
                         className={`relative flex h-8 items-center justify-center rounded-md transition-colors ${
-                          collapsed ? "mb-0.5 w-11" : "w-full"
+                          collapsed ? "mb-0.5 w-11" : "w-9"
                         } ${
                           page === n.id
                             ? `${collapsed ? "ccode-rail-active" : "ccode-rail-active-under"} bg-rail-sel text-l1`
@@ -1940,6 +1949,43 @@ function App() {
                       </button>
                     </RailTooltip>
                   ))}
+                  {!collapsed && (
+                    <RailTooltip label="技能、MCP、用量" collapsed={false} up>
+                      <button
+                        type="button"
+                        aria-label="更多：技能、MCP、用量"
+                        aria-haspopup="menu"
+                        aria-expanded={railMoreAt !== null}
+                        onClick={(e) => {
+                          const r = e.currentTarget.getBoundingClientRect();
+                          // 菜单往上弹（下面是窗口底边）：三行约 92px
+                          setRailMoreAt({ x: r.left, y: r.top - 96 });
+                        }}
+                        className={`relative flex h-8 w-9 items-center justify-center rounded-md transition-colors ${
+                          RAIL_MORE_PAGES.includes(page)
+                            ? "ccode-rail-active-under bg-rail-sel text-l1"
+                            : "text-l3 hover:bg-hover hover:text-l2"
+                        }`}
+                      >
+                        <MoreHorizontal size={16} strokeWidth={1.8} aria-hidden="true" />
+                      </button>
+                    </RailTooltip>
+                  )}
+                  {railMoreAt && (
+                    <ContextMenu
+                      x={railMoreAt.x}
+                      y={railMoreAt.y}
+                      onClose={() => setRailMoreAt(null)}
+                      items={[...NAV_GROUPS.find((g) => g.label === "资源")!.items, ...NAV_BOTTOM]
+                        .filter((n) => RAIL_MORE_PAGES.includes(n.id))
+                        .map((n) => ({
+                          label: n.label,
+                          icon: n.Icon,
+                          checked: page === n.id,
+                          onSelect: () => setPage(n.id),
+                        }))}
+                    />
+                  )}
                 </div>
                 {/* 右边缘拖动改宽、双击回默认（只在展开时有） */}
                 {!collapsed && (
