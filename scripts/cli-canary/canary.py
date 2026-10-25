@@ -518,6 +518,8 @@ def main():
     args = ap.parse_args()
     for k in [k for k in os.environ if k in CI_ENV or k.startswith("CI_")]:
         del os.environ[k]
+    # Qwen 界面语言按 QWEN_CODE_LANG → LANG → 系统区域取：中文 Windows 上菜单是中文，CI 是英文，画面指纹就对不上。统一钉英文
+    os.environ["QWEN_CODE_LANG"] = "en"
     agents = [a for a in args.agents.split(",") if a]
     out = args.out or os.path.join(tempfile.gettempdir(), f"mesa-canary-{time.strftime('%Y%m%d-%H%M%S')}")
     os.makedirs(out, exist_ok=True)

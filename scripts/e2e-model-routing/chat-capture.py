@@ -211,8 +211,21 @@ def film(sec, step=0.4):
     return frames
 
 
+def settle(frames, quiet=1.5, cap=45, t0=None):
+    """接着拍，直到画面 quiet 秒没变或总共 cap 秒：固定等 9 秒在 CI 慢机器上会把字打进还没准备好的输入框（同 chat_channel e2e）"""
+    t0 = t0 or time.time()
+    last, still = lines(), time.time()
+    while time.time() - t0 < cap and alive[0] and time.time() - still < quiet:
+        pump(0.3)
+        cur = lines()
+        if cur != last:
+            frames.append({"t": round(time.time() - t0, 1), "lines": cur}); last, still = cur, time.time()
+    return frames
+
+
 record = {"agent": agent, "tier": tier, "args": a, "scenes": {}}
-record["scenes"]["startup"] = film(9, 0.6)
+_t0 = time.time()
+record["scenes"]["startup"] = settle(film(9, 0.6), t0=_t0)
 # 一次性对话框：照原文记下后放行（信任目录选默认；Claude 完全访问警告选「Yes, I accept」——抓屏是看形态，不是替用户选）
 for _ in range(4):
     rows = lines()
@@ -229,6 +242,7 @@ for _ in range(4):
             pty_write(b"\x1b[27u" if kitty[0] else b"\x1b"); pump(1.5)
     except OSError:
         break
+settle([], cap=20)
 record["scenes"]["ready"] = [{"t": 0, "lines": lines()}]
 # CAP_FOCUS=out / in：开场后告诉 CLI 终端失焦 / 得焦（Mesa 聊天层盖住终端时 xterm.js 的输入区是失焦的），看它还出不出「猜下一句」
 if os.environ.get("CAP_FOCUS") and focus[0]:

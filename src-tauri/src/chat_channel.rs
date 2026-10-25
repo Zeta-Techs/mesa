@@ -3570,6 +3570,7 @@ mod e2e {
         let mut reader = pair.master.try_clone_reader().unwrap();
         let writer = Arc::new(Mutex::new(pair.master.take_writer().unwrap()));
         let screen = Arc::new(Mutex::new(String::new()));
+        let last_out = Arc::new(Mutex::new(Instant::now()));
         // E2E_RAW=<文件>：终端原始输出按时间逐块记下（{"t":毫秒,"d":原文}，审批答完之后另记一行 {"t","mark"}），
         // 用终端模拟器回放就能看到「聊天层答过以后终端里还挂着什么」
         let raw_log: Option<Arc<Mutex<std::fs::File>>> = std::env::var("E2E_RAW")
@@ -3580,7 +3581,7 @@ mod e2e {
         // 程序状态旁路（OSC 7501）：照 pty.rs 读线程答探询、把报告交给旁路
         let program_status = prepared.program_status();
         {
-            let (screen, writer, raw_log) = (screen.clone(), writer.clone(), raw_log.clone());
+            let (screen, writer, raw_log, last_out) = (screen.clone(), writer.clone(), raw_log.clone(), last_out.clone());
             std::thread::spawn(move || {
                 let mut queries = crate::term_query::QueryScanner::new(program_status);
                 let mut reports = crate::program_status::ReportScanner::default();
@@ -3589,6 +3590,7 @@ mod e2e {
                     if n == 0 {
                         break;
                     }
+                    *last_out.lock().unwrap() = Instant::now();
                     let chunk = String::from_utf8_lossy(&buf[..n]).into_owned();
                     if let Some(f) = &raw_log {
                         let line = json!({ "t": t0.elapsed().as_millis() as u64, "d": chunk }).to_string();
@@ -3645,7 +3647,20 @@ mod e2e {
             let _ = w.write_all(bytes);
             let _ = w.flush();
         };
-        std::thread::sleep(Duration::from_secs(9));
+        // 等 CLI 画完再动手：至少 min，之后要有输出且安静 1.5 秒，最多 max。固定等 9 秒在 CI 的慢机器上会把字打进
+        // 还没准备好的输入框（2026-10-25：Windows Codex、macOS Grok 同版本时过时不过）；一直在转圈的家到 max 照旧往下走
+        let settle = |min: u64, max: u64| {
+            let t = Instant::now();
+            std::thread::sleep(Duration::from_secs(min));
+            while t.elapsed() < Duration::from_secs(max) {
+                let quiet = last_out.lock().unwrap().elapsed() >= Duration::from_millis(1500);
+                if quiet && !screen.lock().unwrap().is_empty() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        };
+        settle(9, 45);
         for _ in 0..4 {
             let text = screen.lock().unwrap().clone();
             if text.contains("Make auto mode") {
@@ -3660,7 +3675,7 @@ mod e2e {
                 break;
             }
             screen.lock().unwrap().clear();
-            std::thread::sleep(Duration::from_millis(2500));
+            settle(2, 20);
         }
         // E2E_DELETE_SETTINGS=1：模拟网关连接的 --settings 覆盖文件被 60 秒清理删掉，看 hooks 还到不到
         if std::env::var("E2E_DELETE_SETTINGS").is_ok() {
