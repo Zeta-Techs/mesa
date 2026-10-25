@@ -529,6 +529,9 @@ Claude 会话文件：排上记 `queue-operation`（`enqueue` 带原文；轮后
 插进去的那句另记一行 `attachment` / `queued_command`（`prompt` 原文、`commandMode: prompt`、`origin.kind: human`），**不是 user 行**——
 解析要认它（`sessions.rs parse_claude`），否则聊天层与回放里这句话消失。后台任务通知、别的会话发来的也是 `queued_command`
 （`commandMode: task-notification` / `origin.kind: peer`），不算用户说的。
+Agent 闲着时到的后台通知（后台命令 / 子 Agent 跑完、2.1.310 起第三方网关下也开放的 Monitor 事件）则是**普通 user 行**：
+`origin.kind: task-notification`、`promptSource: system`、**不标 `isMeta`**，内容是 `<task-notification>…`。`parse_claude` 对 user 行只认
+`origin.kind` 缺省（旧版）或 `human`，其余跳过（2026-10-25；`peer` 本来就标 `isMeta`）。
 
 **Claude 只画在屏上的两样（2026-10-22，2.1.306，假网关 126×29 抓屏 + 源码）**：
 - **猜你下一句（prompt suggestion）**：一轮做完另发一次请求（系统提示带 `[SUGGESTION MODE: …]`，带整段历史），回的话当占位字灰着放进输入框；

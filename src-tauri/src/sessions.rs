@@ -1230,6 +1230,11 @@ fn parse_claude(lines: &[String]) -> Vec<ChatMessageDto> {
         let ts = get_str(&v, "timestamp").map(String::from);
         match get_str(&v, "type") {
             Some("user") => {
+                // Agent 闲着时到的后台通知（后台命令 / 子 Agent 跑完、Monitor 事件）记成普通 user 行，只带
+                // origin.kind = task-notification、不标 isMeta，不是用户说的话（2026-10-25）。只认 human，没有 origin 的旧版照旧
+                if v.get("origin").and_then(|o| get_str(o, "kind")).is_some_and(|kind| kind != "human") {
+                    continue;
+                }
                 let Some(content) = v.get("message").and_then(|m| m.get("content")) else {
                     continue;
                 };
@@ -8367,6 +8372,29 @@ mod tests {
             .map(|m| (m.blocks[0].text.as_str(), m.id.as_deref()))
             .collect();
         assert_eq!(users, vec![("跑一下测试", Some("u1")), ("顺便看看 lint", Some("q1"))]);
+    }
+
+    #[test]
+    fn claude_idle_task_notification_is_not_user_message() {
+        // Agent 闲着时到的后台通知（后台命令跑完、Monitor 事件）是普通 user 行：origin.kind = task-notification、
+        // promptSource = system、不标 isMeta（本机 2.1.30x 实录形状）。不算用户说的，也不进起名 / 接力用的用户原话
+        let lines = s(&[
+            r#"{"type":"user","uuid":"u1","origin":{"kind":"human"},"promptSource":"typed","message":{"role":"user","content":"盯一下构建日志"}}"#,
+            r#"{"type":"assistant","uuid":"a1","message":{"role":"assistant","content":[{"type":"text","text":"开了监视，有动静告诉你"}]}}"#,
+            r#"{"type":"user","uuid":"n1","origin":{"kind":"task-notification"},"promptSource":"system","message":{"role":"user","content":"<task-notification>\n<task-id>m1</task-id>\n<output>Build failed</output>\n</task-notification>"}}"#,
+            r#"{"type":"user","uuid":"n2","origin":{"kind":"task-notification"},"promptSource":"system","message":{"role":"user","content":[{"type":"text","text":"<task-notification>m2</task-notification>"}]}}"#,
+            r#"{"type":"assistant","uuid":"a2","message":{"role":"assistant","content":[{"type":"text","text":"构建失败了"}]}}"#,
+            r#"{"type":"user","uuid":"u2","message":{"role":"user","content":"旧版没有 origin 的照旧算"}}"#,
+        ]);
+        let msgs = parse_claude(&lines);
+        let users: Vec<_> = msgs
+            .iter()
+            .filter(|m| m.role == "user")
+            .map(|m| (m.blocks[0].text.as_str(), m.id.as_deref()))
+            .collect();
+        assert_eq!(users, vec![("盯一下构建日志", Some("u1")), ("旧版没有 origin 的照旧算", Some("u2"))]);
+        assert_eq!(msgs.iter().filter(|m| m.role == "assistant").count(), 2, "助手对通知的回复照常显示");
+        assert!(!crate::ai::user_title_material(&msgs, false).contains("task-notification"));
     }
 
     #[test]

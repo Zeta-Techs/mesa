@@ -457,6 +457,13 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-25 · Claude 会话里闲时到的后台通知不算用户说的
+
+核对 Claude Code 2.1.310 金丝雀变化（Monitor 工具在第三方网关下开放、少一个 beta 头、会话多 `base` / `sandboxed` 字段，均无需适配）时查出：
+Agent 闲着时到的后台通知记成普通 user 行（`origin.kind: task-notification`、`promptSource: system`、不标 `isMeta`），`parse_claude` 只看 `isMeta`，
+于是以用户身份显示一段 `<task-notification>`，起名 / 接力的「用户原话」也会带上（本机 5 天 29 条；Monitor 每行输出一条，开放后更多）。
+定下：Claude user 行只认 `origin.kind` 缺省（旧版）或 `human`，其余跳过，与 `queued_command` 同口径；助手对通知的回复照常显示。
+
 ### 2026-10-25 · CLI 金丝雀 CI 两平台从 10-22 起天天红：macOS 假网关等不到端口，回合状态比较不看 `running`
 
 合并 windows/feat/1025 后用户问金丝雀两个系统能不能正常跑。查 CI：10-22 起每天两边都红、都没出报告——Windows 是 lib 测试 exe 0xc0000139（caeac16 嵌 manifest + 本次合并的 canary.py 兜底已治），
