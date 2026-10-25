@@ -75,7 +75,9 @@ export function HoverTip({
     <div
       ref={ref}
       role="tooltip"
-      className={`pointer-events-none fixed z-50 max-w-72 whitespace-pre-line rounded-md border border-hairline ccode-float-surface px-2.5 py-1.5 text-left text-xs leading-5 text-l2 ${side ? "-translate-y-1/2" : ""} ${up && !side ? "-translate-y-full" : ""}`}
+      // 样子照系统原生提示（2026-10-25 用户贴侧栏对话行悬停的原生提示：「底部图标的悬浮说明做成这种样式」）：
+      // 比浮层底亮一档的灰底 + 看得见的细描边 + l1 字，样式在 App.css .ccode-tooltip
+      className={`ccode-tooltip pointer-events-none fixed z-50 max-w-72 whitespace-pre-line px-2.5 py-1 text-left ${side ? "-translate-y-1/2" : ""} ${up && !side ? "-translate-y-full" : ""}`}
       style={{ left: tip.x, top: tip.y }}
     >
       {text}

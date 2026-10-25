@@ -457,6 +457,10 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-25 · 正文退一档、悬停提示照原生样子、侧栏底部悬停展开
+
+用户三条反馈：①「正文字体现在有点太亮了」——`--color-chat-text` 从满格 l1 退到 l1/l2 五五混，加粗留 l1（加粗又分得出了），测试钉 Mac 10–13:1；②「底部图标的悬浮说明做成这种样式」（贴侧栏对话行悬停的原生提示）——HoverTip 换 `.ccode-tooltip`，固定中性灰 + 1px 描边，全站 HoverTip 一起换；③「三个点点击比较麻烦」——撤掉 ⋯ 菜单，鼠标进底部这一排就把技能 / MCP / 用量接在设置后面展开、移开收回，⋯ 只当记号不可聚焦（Tab 进「连接」时整排已展开）。
+
 ### 2026-10-25 · 聊天区细字 + 正文提亮（A/B/C 对照选 C）
 
 用户在真 WKWebView 渲染的三张对照里选 C。只动聊天区：`.ccode-chat-scroll` / `.ccode-chat-composer` / `.md-chat` / `.ccode-chat-user` / `.ccode-chat-body` 用 `-webkit-font-smoothing: antialiased`，`--color-chat-text` 与 `--color-chat-strong` 都改 l1（细笔画下 l1 不再刺眼，加粗靠字重）；Windows 没有这条渲染开关，`[data-platform="windows"]` 留原口径（l2 / 六成 l1）。全站 body 的 `auto` 不动——2026-10 那次「字发白发飘」的取舍仍对其余页面成立。`tests/theme-contrast.test.ts` 改钉 Mac l1 11.5–16:1、Windows 原区间。

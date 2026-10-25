@@ -99,8 +99,9 @@
      正文偏离 8.5–11.5:1 或带色偏的主题（极简灰蓝太亮、暮紫偏蓝、暮紫·浅与琥珀·浅偏淡）在各自块里覆写，
      tests/theme-contrast.test.ts 钉范围。只管聊天回答（.md-chat），其余页面的层级不动。
      2026-10-25 用户在 A/B/C 对照里选 C：聊天区改细字（.ccode-chat-scroll / .ccode-chat-composer 灰度抗锯齿），
-     笔画变细后正文提到 l1 补回实感（对画布 11.9–15.5:1），加粗同色、只靠字重——细笔画下 l1 不再「一粒粒跳出来」 */
-  --color-chat-text: var(--color-l1);
+     笔画变细后正文提亮补回实感；同日用户「正文有点太亮了」：从满格 l1 退到 l1 与 l2 五五混（对画布约 10.5–12.5:1），
+     加粗走满格 l1——细笔画下 l1 不再「一粒粒跳出来」 */
+  --color-chat-text: color-mix(in oklab, var(--color-l1) 50%, var(--color-l2));
   --color-chat-strong: var(--color-l1);
 
   /* diff 增删 */
@@ -1203,6 +1204,47 @@ html[data-material="none"] .ccode-app-rail .bg-rail-sel {
   background-color: var(--color-raised);
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06);
   animation: ccode-pop 150ms var(--ccode-motion-ease);
+}
+
+/* 侧栏底部那一排展开时，技能 / MCP / 用量淡入（App railNavExpanded）；减弱动态效果时直接出现 */
+.ccode-rail-reveal {
+  animation: ccode-rail-reveal 120ms var(--ccode-motion-ease);
+}
+@keyframes ccode-rail-reveal {
+  from {
+    opacity: 0;
+    transform: translateX(-4px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ccode-rail-reveal {
+    animation: none;
+  }
+}
+
+/* 悬停提示（HoverTip）：照 macOS 原生提示的样子——中性灰底、1px 描边看得见、圆角 7px、12.5px 字。
+   原生提示的颜色跟系统、不跟主题，这里也用固定的中性灰（主题的 raised 在琥珀里偏棕），只分深浅两套。
+   原先用 .ccode-float-surface（raised 底 + hairline），深色下几乎是一块黑，和侧栏对话行的原生提示两样（2026-10-25 用户） */
+.ccode-tooltip {
+  background-color: #2c2c2e;
+  border: 1px solid rgb(255 255 255 / 0.2);
+  border-radius: 7px;
+  color: #ececec;
+  font-size: 12.5px;
+  line-height: 1.35rem;
+  animation: ccode-pop 150ms var(--ccode-motion-ease);
+}
+[data-theme$="-light"] .ccode-tooltip {
+  background-color: #f6f6f6;
+  border-color: rgb(0 0 0 / 0.16);
+  color: #1d1d1f;
+}
+@media (forced-colors: active) {
+  .ccode-tooltip {
+    background-color: Canvas;
+    border-color: CanvasText;
+    color: CanvasText;
+  }
 }
 
 /* ===== 浮层退场与锚定（apple-motion 手感批 2026-10-12）=====
