@@ -307,6 +307,9 @@ def screen_phase(agent, gw, out, adir, deps):
     cap = os.path.join(adir, "screen.json")
     env = dict(os.environ, PYTE_DIR=deps, PYWINPTY_DIR=deps, CLEAN_HOME="1", TOOL_PROMPT=TOOL_PROMPT.get(agent, DEFAULT_TOOL_PROMPT),
                MSYS_NO_PATHCONV="1")
+    # Grok 认不认注入的密钥、为什么转去浏览器登录，只有它自己的日志看得出（2026-10-25 Windows CI 停在登录页，本机复现不了）
+    if agent == "grok":
+        env["GROK_LOG_FILE"] = os.path.join(adir, "grok-debug.log")
     # 有「请求批准」档就按它抓（看审批菜单）；没有这一档的家（Kimi、OpenCode）按默认启动参数
     tier = "ask" if (json.load(open(plans, encoding="utf-8")).get(agent, {}).get("permission") or {}).get("ask") else "base"
     code, text = run([sys.executable, "-I", "-X", "utf8", os.path.join(E2E, "chat-capture.py"), plans, agent, tier, cap],
