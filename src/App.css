@@ -2786,14 +2786,14 @@ select:focus-visible {
   text-autospace: no-autospace;
 }
 /* 一问一答的节奏（2026-10-25 用户对照 Claude 客户端：间距太松、忽大忽小）：
-   上一轮回答到下一个问题约 32px（回答自带 mb-6，悬停操作浮在这段留白里，这里再补 0.5rem）；
-   问题到它的回答 16px（问题 mb-2 + 下面这条 0.5rem）；连着发的几句（排队）之间 8px。
-   悬停操作不再占高度（ConversationView messageActions）——原先每条下面都垫着一行隐形按钮，看着松 */
+   上一轮回答到下一个问题约 28px（回答自带 mb-6，悬停操作浮在这段留白里，这里再补 0.5rem）；
+   问题到它的回答、连着发的几句之间都约 21px（问题 mb-4 + 0.5rem）——问题的悬停操作挂在气泡下面、靠右缘，
+   这段留白要放得下它那一行（h-5 + 2px），不然会压到下一条。
+   悬停操作不占高度（ConversationView messageActions）——原先每条下面都垫着一行隐形按钮，问答间 60–75px */
 .ccode-chat-user-row {
   margin-top: 0.5rem;
 }
-.ccode-chat-user-row:first-child,
-.ccode-chat-user-row + .ccode-chat-user-row {
+.ccode-chat-user-row:first-child {
   margin-top: 0;
 }
 .ccode-chat-user-row + :not(.ccode-chat-user-row) {

@@ -235,7 +235,7 @@ test("没有时长的一轮：摘要本身就是那一行，不再前缀「过�
   }
 });
 
-test("悬停操作浮着不占高度：用户的贴在气泡里（左侧浮出），回答的挂在回答下面（2026-10-25）", async () => {
+test("悬停操作浮着不占高度：用户的挂在气泡下面靠右缘，回答的挂在回答下面（2026-10-25）", async () => {
   const ui = await mount();
   try {
     await ui.render({
@@ -244,7 +244,9 @@ test("悬停操作浮着不占高度：用户的贴在气泡里（左侧浮出�
     });
     const edit = ui.button("编辑后重发").parentElement!;
     assert.match(edit.className, /(^|\s)absolute(\s|$)/);
-    assert.ok(edit.closest(".rounded-2xl"), "用户消息的操作在气泡里，往左浮出");
+    assert.ok(edit.closest(".rounded-2xl"), "用户消息的操作挂在气泡上");
+    assert.match(edit.className, /\btop-full\b/, "在气泡下面");
+    assert.match(edit.className, /\bright-0\b/, "靠气泡右缘，不跑到左边");
     const copies = Array.from(ui.el.querySelectorAll("button")).filter((b) => b.textContent?.includes("复制"));
     assert.equal(copies.length, 2);
     for (const b of copies) assert.match(b.parentElement!.className, /(^|\s)absolute(\s|$)/);

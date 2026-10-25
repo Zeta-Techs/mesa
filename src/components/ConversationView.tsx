@@ -298,8 +298,9 @@ export default function ConversationView({
   const setDiffFocusReq = useAppStore((s) => s.setDiffFocusReq);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   /** 悬停在消息上出现的操作（docs/design-chat-layer.md §5）：复制；用户消息另有「编辑后重发」，
-   *  助手消息另有「从这里分叉」。浮着不占高度（2026-10-25 用户：对话间距太松）：用户消息的贴在气泡左边、
-   *  回答的挂在回答下面那段留白里（父元素 relative，下方留白 ≥ 这一行高，App.css .ccode-chat-user-row 一段） */
+   *  助手消息另有「从这里分叉」。浮着不占高度（2026-10-25 用户：对话间距太松）：都挂在消息下面那段留白里
+   *  （父元素 relative，下方留白 ≥ 这一行高，App.css .ccode-chat-user-row 一段）；用户消息的靠气泡右缘
+   *  （同日用户：贴在气泡左边「怎么跑到左边去了」） */
   function messageActions(m: ChatMessageDto, mk: string, align: "left" | "right") {
     const text = m.blocks
       .filter((b) => b.kind === "text")
@@ -312,7 +313,7 @@ export default function ConversationView({
     return (
       <div
         className={`absolute flex gap-0.5 whitespace-nowrap opacity-0 transition-opacity group-hover/msg:opacity-100 focus-within:opacity-100 ${
-          align === "right" ? "bottom-0 right-full mr-1" : "left-0 top-full mt-0.5"
+          align === "right" ? "right-0 top-full mt-0.5 justify-end" : "left-0 top-full mt-0.5"
         }`}
       >
         <button
@@ -793,7 +794,7 @@ export default function ConversationView({
             ref={hit ? hitRef : undefined}
             data-search-hit={hit ? "1" : undefined}
             // 每个新问题前留大空、连着发的几句不拉开（App.css .ccode-chat-user-row）；大圆角气泡（原 6px 像一张卡片）
-            className={"group/msg mb-2 flex flex-col items-end ccode-chat-user-row"}
+            className={"group/msg mb-4 flex flex-col items-end ccode-chat-user-row"}
           >
             <div
               className={`relative max-w-[70%] bg-chat-bubble ccode-chat-user rounded-2xl px-3.5 py-2 ${
