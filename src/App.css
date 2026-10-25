@@ -2704,9 +2704,11 @@ select:focus-visible {
   font-size: calc(var(--ccode-chat-fs, var(--chat-base)) * 0.94);
 }
 /* 栏宽按字数定：回答一行约 52 个汉字（Claude 约 45–50 个），换大字号栏跟着变宽，不再固定 max-w-4xl
-   （Mac 上 13.5px 一行近 58 字）。对话流、输入框、底部状态栏、对话回放同一个类；+2.5rem 是对话流两侧内边距 */
+   （Mac 上 13.5px 一行近 58 字）。对话流、输入框、底部状态栏、对话回放同一个类。
+   对话流不再在栏内另加内边距（2026-10-25 用户：回答左缘、气泡右缘都比输入框缩进一截）：正文左缘＝输入框左缘、
+   气泡右缘＝输入框右缘；+1rem 给输入框里的 ＋ 与发送块留位，正文一行仍约 52 字 */
 .ccode-chat-column {
-  max-width: calc(var(--ccode-chat-fs, var(--chat-base)) * 52 + 2.5rem);
+  max-width: calc(var(--ccode-chat-fs, var(--chat-base)) * 52 + 1rem);
 }
 /* 中文排版：中文与英文、数字之间自动留约四分之一字宽（text-autospace；原文已有空格不再加）、
    段末不留孤字（text-wrap: pretty）、句读不落行首（line-break: strict）。macOS 的 WKWebView（本机实测）
@@ -2725,13 +2727,18 @@ select:focus-visible {
 .ccode-chat-code {
   text-autospace: no-autospace;
 }
-/* 一问一答的节奏：每个新问题前留大空，同一轮之内收紧（原先所有块一律 12px，长对话分不出哪是一问一答）；
-   连着发的几句（排队）之间不拉开 */
+/* 一问一答的节奏（2026-10-25 用户对照 Claude 客户端：间距太松、忽大忽小）：
+   上一轮回答到下一个问题约 32px（回答自带 mb-6，悬停操作浮在这段留白里，这里再补 0.5rem）；
+   问题到它的回答 16px（问题 mb-2 + 下面这条 0.5rem）；连着发的几句（排队）之间 8px。
+   悬停操作不再占高度（ConversationView messageActions）——原先每条下面都垫着一行隐形按钮，看着松 */
 .ccode-chat-user-row {
-  margin-top: 1.75rem;
+  margin-top: 0.5rem;
 }
 .ccode-chat-user-row:first-child,
 .ccode-chat-user-row + .ccode-chat-user-row {
+  margin-top: 0;
+}
+.ccode-chat-user-row + :not(.ccode-chat-user-row) {
   margin-top: 0.5rem;
 }
 /* 用户长消息（大段粘贴）收起：约 12 行，底部三行渐隐，点「展开」看全文 */

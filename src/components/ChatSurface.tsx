@@ -989,8 +989,10 @@ export default function ChatSurface({
             : "ccode-chat-scroll relative min-h-0 flex-1 overflow-auto [overflow-anchor:none]"
         }
       >
-        {/* 栏宽跟聊天字号走（App.css .ccode-chat-column，回答一行约 52 字），与输入框、底部状态栏同一条中轴 */}
-        <div className="ccode-chat-column mx-auto flex min-h-full w-full flex-col px-4 pb-6 pt-8 sm:px-5">
+        {/* 栏宽跟聊天字号走（App.css .ccode-chat-column，回答一行约 52 字），与输入框、底部状态栏同一条中轴：
+            外层 px-4、内层不再加内边距，和 ChatComposer 同构——正文左缘、气泡右缘与输入框两边对齐（2026-10-25） */}
+        <div className="flex min-h-full flex-col px-4">
+        <div className="ccode-chat-column mx-auto flex w-full flex-1 flex-col pb-6 pt-8">
           {emptyLayout && (
             // 空态问候：Mesa 光标标志 + 时段问候，贴在输入框正上方（2026-10-17 用户选定）。
             // 只是问候：不重复「问一个问题…」，不写 Agent 身份（v3.214 否决的是居中引导语）。
@@ -1151,6 +1153,7 @@ export default function ChatSurface({
               有新消息 ↓
             </button>
           )}
+        </div>
         </div>
         {!emptyLayout && (
           // 对话流底部渐隐（2026-10-22 配色）：字滚到输入框上方时淡进画布，不是一刀切；负边距不占高度，不挡点击。

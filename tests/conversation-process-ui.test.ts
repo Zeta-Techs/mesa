@@ -220,3 +220,35 @@ test("失败的步骤：收起时标在「已工作」后面，展开后那一�
     await ui.close();
   }
 });
+
+test("没有时长的一轮：摘要本身就是那一行，不再前缀「过程 ·」（2026-10-25）", async () => {
+  const ui = await mount();
+  try {
+    const noTime = MESSAGES.map((x) => ({ ...x, timestamp: null }));
+    await ui.render({ messages: noTime, cwd: CWD });
+    const text = ui.el.textContent ?? "";
+    assert.match(text, /改了 1 个文件 · 运行 1 条命令/);
+    assert.doesNotMatch(text, /过程/);
+    assert.equal(ui.button("运行 1 条命令").getAttribute("aria-expanded"), "false");
+  } finally {
+    await ui.close();
+  }
+});
+
+test("悬停操作浮着不占高度：用户的贴在气泡里（左侧浮出），回答的挂在回答下面（2026-10-25）", async () => {
+  const ui = await mount();
+  try {
+    await ui.render({
+      messages: [m("user", [block("text", "你好")], 0), m("assistant", [block("text", "你好！")], 2)],
+      onEditResend: () => {},
+    });
+    const edit = ui.button("编辑后重发").parentElement!;
+    assert.match(edit.className, /(^|\s)absolute(\s|$)/);
+    assert.ok(edit.closest(".rounded-2xl"), "用户消息的操作在气泡里，往左浮出");
+    const copies = Array.from(ui.el.querySelectorAll("button")).filter((b) => b.textContent?.includes("复制"));
+    assert.equal(copies.length, 2);
+    for (const b of copies) assert.match(b.parentElement!.className, /(^|\s)absolute(\s|$)/);
+  } finally {
+    await ui.close();
+  }
+});

@@ -298,7 +298,8 @@ export default function ConversationView({
   const setDiffFocusReq = useAppStore((s) => s.setDiffFocusReq);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   /** 悬停在消息上出现的操作（docs/design-chat-layer.md §5）：复制；用户消息另有「编辑后重发」，
-   *  助手消息另有「从这里分叉」 */
+   *  助手消息另有「从这里分叉」。浮着不占高度（2026-10-25 用户：对话间距太松）：用户消息的贴在气泡左边、
+   *  回答的挂在回答下面那段留白里（父元素 relative，下方留白 ≥ 这一行高，App.css .ccode-chat-user-row 一段） */
   function messageActions(m: ChatMessageDto, mk: string, align: "left" | "right") {
     const text = m.blocks
       .filter((b) => b.kind === "text")
@@ -310,8 +311,8 @@ export default function ConversationView({
       "inline-flex h-5 items-center gap-1 rounded-md px-1.5 text-micro text-l4 hover:bg-hover hover:text-l1";
     return (
       <div
-        className={`mt-0.5 flex gap-0.5 opacity-0 transition-opacity group-hover/msg:opacity-100 focus-within:opacity-100 ${
-          align === "right" ? "justify-end" : ""
+        className={`absolute flex gap-0.5 whitespace-nowrap opacity-0 transition-opacity group-hover/msg:opacity-100 focus-within:opacity-100 ${
+          align === "right" ? "bottom-0 right-full mr-1" : "left-0 top-full mt-0.5"
         }`}
       >
         <button
@@ -695,13 +696,16 @@ export default function ConversationView({
         : "思考过程"
       : seg.seconds !== null
         ? `已工作 ${formatSeconds(seg.seconds)}`
-        : "过程";
+        : summary.text || "过程";
+    // 没有时长时摘要本身就是这一行（「运行 3 条命令」），不再前缀「过程 ·」（2026-10-25 用户：字太多）
+    const summaryTail = seg.seconds !== null || thoughtOnly ? summary.text : "";
     return (
       <div
         key={key}
         ref={hit ? hitRef : undefined}
         data-search-hit={hit ? "1" : undefined}
-        className={`group/msg mb-3 max-w-full ${hit ? "rounded-md bg-seg-sel px-2 py-1" : ""}`}
+        // 回答下面留 1.5rem：悬停操作浮在这段留白里（messageActions），也是到下一个问题的间距
+        className={`group/msg relative max-w-full ${seg.live ? "mb-2" : "mb-6"} ${hit ? "rounded-md bg-seg-sel px-2 py-1" : ""}`}
       >
         {!seg.live && (
           <button
@@ -711,7 +715,7 @@ export default function ConversationView({
             className={`flex max-w-full items-center gap-1.5 min-h-8 ${rowText} text-l3 hover:text-l1`}
           >
             <span className="shrink-0">{label}</span>
-            {summary.text && <span className="min-w-0 truncate text-l4">· {summary.text}</span>}
+            {summaryTail && <span className="min-w-0 truncate text-l4">· {summaryTail}</span>}
             {summary.problem && (
               <span className="shrink-0 text-warn-text">· {summary.problem}</span>
             )}
@@ -789,14 +793,15 @@ export default function ConversationView({
             ref={hit ? hitRef : undefined}
             data-search-hit={hit ? "1" : undefined}
             // 每个新问题前留大空、连着发的几句不拉开（App.css .ccode-chat-user-row）；大圆角气泡（原 6px 像一张卡片）
-            className={"group/msg mb-3 flex flex-col items-end ccode-chat-user-row"}
+            className={"group/msg mb-2 flex flex-col items-end ccode-chat-user-row"}
           >
             <div
-              className={`max-w-[70%] bg-chat-bubble ccode-chat-user rounded-2xl px-3.5 py-2 ${
+              className={`relative max-w-[70%] bg-chat-bubble ccode-chat-user rounded-2xl px-3.5 py-2 ${
                 hit ? "ring-1 ring-cta-bd" : ""
               }`}
             >
               {renderBlocks(m, mk, true, hit)}
+              {!m.queued && messageActions(m, mk, "right")}
             </div>
             {m.queued && (
               // 上一轮还在生成时发的：已写进终端、由 CLI 处理（Mesa 不另设队列，所以没有撤回钮）。
@@ -817,14 +822,13 @@ export default function ConversationView({
                 )}
               </span>
             )}
-            {!m.queued && messageActions(m, mk, "right")}
           </div>
         ) : (
           <div
             key={mk}
             ref={hit ? hitRef : undefined}
             data-search-hit={hit ? "1" : undefined}
-            className={`group/msg mb-3 max-w-full ${hit ? "rounded-md bg-seg-sel px-2 py-1" : ""}`}
+            className={`group/msg relative mb-6 max-w-full ${hit ? "rounded-md bg-seg-sel px-2 py-1" : ""}`}
           >
             {renderBlocks(m, mk, false, hit)}
             {messageActions(m, mk, "left")}
