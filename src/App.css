@@ -3239,39 +3239,131 @@ select:focus-visible {
   }
 }
 
-/* 聊天「回到最新」圆钮生成中的样子（2026-10-26 用户：往上翻时 Agent 还在写，按钮要是生成中的动画，鼠标移上去再变 ↓）：
-   外圈一道弧（约四分之一圈，l3 色）匀速转，中间一小块品牌琥珀光标（同 M▁ / MesaCaret 的比例，不闪——弧已经在动，
-   再闪就两处一起抢眼）。减弱动态效果时弧停住不转，光标照旧；Windows 高对比度下弧与光标改用系统前景色 */
-@keyframes ccode-jump-spin {
-  to {
-    transform: rotate(360deg);
+/* 聊天「回到最新」圆钮生成中的样子：「光标在写一行」（2026-10-26 用户：做成琥珀光标组成的进行中动画，不要转圈，要符合 Mesa）。
+   出发点是 M▁ 里那道横光标——终端里的插入符。圆钮中间并排三格，每格一枚光标大小的横块（6×2.5px，长宽比约同 MesaCaret 的 2.5:1），
+   一拍（1.8s）里演一遍「打一行字」：
+     0%    琥珀光标落在第一格；
+     20%   第一格留下一道「写过的字」（l3 灰、半透明，不发光），光标跳到第二格；
+     40%   同上，光标到行尾第三格；
+     40–78% 光标停在行尾，按 M▁ 的节拍阶跃亮灭一次（等下一句）；
+     78–92% 整行淡出，像一行交了出去；循环回第一格。
+   跳格是阶跃（关键帧两两贴着 0.1% 放），不滑动——插入符是跳着走的，滑过去就成了进度条；只有收尾淡出是渐变。
+   琥珀只给「此刻光标所在」那一格，深色底带同色余辉、浅色底不加（同 MesaCaret）。
+   悬停 / 键盘聚焦时整行淡出、换成 ↓（JSX 里 group-hover/jump）。减弱动态效果时停在「写了两格、光标在行尾」那一帧；
+   Windows 高对比度下全部用系统前景色 */
+.ccode-jump-typing {
+  --ccode-jump-glow: 0 0 5px color-mix(in srgb, var(--color-mesa-amber) 55%, transparent);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+[data-theme$="-light"] .ccode-jump-typing {
+  --ccode-jump-glow: 0 0 0 transparent;
+}
+.ccode-jump-typing > span {
+  width: 6px;
+  height: 2.5px;
+  border-radius: 1px;
+  opacity: 0;
+  animation: 1.8s linear infinite;
+}
+.ccode-jump-typing > span:nth-child(1) {
+  animation-name: ccode-type-1;
+}
+.ccode-jump-typing > span:nth-child(2) {
+  animation-name: ccode-type-2;
+}
+.ccode-jump-typing > span:nth-child(3) {
+  animation-name: ccode-type-3;
+}
+@keyframes ccode-type-1 {
+  0%,
+  19.9% {
+    opacity: 1;
+    background: var(--color-mesa-amber);
+    box-shadow: var(--ccode-jump-glow);
+  }
+  20%,
+  78% {
+    opacity: 0.55;
+    background: var(--color-l3);
+    box-shadow: none;
+  }
+  92%,
+  100% {
+    opacity: 0;
+    background: var(--color-l3);
+    box-shadow: none;
   }
 }
-.ccode-jump-spin {
-  color: var(--color-l3);
-  animation: ccode-jump-spin 1.1s linear infinite;
+@keyframes ccode-type-2 {
+  0%,
+  19.9% {
+    opacity: 0;
+    background: var(--color-mesa-amber);
+    box-shadow: none;
+  }
+  20%,
+  39.9% {
+    opacity: 1;
+    background: var(--color-mesa-amber);
+    box-shadow: var(--ccode-jump-glow);
+  }
+  40%,
+  78% {
+    opacity: 0.55;
+    background: var(--color-l3);
+    box-shadow: none;
+  }
+  92%,
+  100% {
+    opacity: 0;
+    background: var(--color-l3);
+    box-shadow: none;
+  }
 }
-.ccode-jump-caret {
-  width: 8px;
-  height: 3px;
-  border-radius: 1px;
+@keyframes ccode-type-3 {
+  0%,
+  39.9% {
+    opacity: 0;
+  }
+  40%,
+  54.9% {
+    opacity: 1;
+  }
+  55%,
+  64.9% {
+    opacity: 0;
+  }
+  65%,
+  78% {
+    opacity: 1;
+  }
+  92%,
+  100% {
+    opacity: 0;
+  }
+}
+.ccode-jump-typing > span:nth-child(3) {
   background: var(--color-mesa-amber);
-  box-shadow: 0 0 6px color-mix(in srgb, var(--color-mesa-amber) 45%, transparent);
-}
-[data-theme$="-light"] .ccode-jump-caret {
-  box-shadow: none;
+  box-shadow: var(--ccode-jump-glow);
 }
 @media (prefers-reduced-motion: reduce) {
-  .ccode-jump-spin {
+  .ccode-jump-typing > span {
     animation: none;
+    opacity: 0.55;
+    background: var(--color-l3);
+  }
+  .ccode-jump-typing > span:nth-child(3) {
+    opacity: 1;
+    background: var(--color-mesa-amber);
   }
 }
 @media (forced-colors: active) {
-  .ccode-jump-spin {
-    color: CanvasText;
-  }
-  .ccode-jump-caret {
+  .ccode-jump-typing > span,
+  .ccode-jump-typing > span:nth-child(3) {
     background: CanvasText;
+    box-shadow: none;
   }
 }
 

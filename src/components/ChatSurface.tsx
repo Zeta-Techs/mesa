@@ -254,8 +254,8 @@ export default function ChatSurface({
   const scrollFadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const followRef = useRef(true);
   const [hasNew, setHasNew] = useState(false);
-  // 往上翻得远了：底部正中浮一枚「回到最新」（2026-10-26 用户）。离底一点就冒出来太吵（同日用户：「不要离底立马就显现，
-  // 用户可能需要的时候再显示」），所以只在离底超过一屏（手动滚回去要费点劲了）时出；底下来了新内容另由 hasNew 叫出来
+  // 往上翻了一段：底部正中浮一枚「回到最新」（2026-10-26 用户）。离底一点就冒出来太吵（同日用户：「不要离底立马就显现，
+  // 用户可能需要的时候再显示」），一屏又太晚（同日二改）：离底超过三分之一屏（至少 160px）才出；底下来了新内容另由 hasNew 叫出来
   const [awayFromBottom, setAwayFromBottom] = useState(false);
   const [stuckWaiting, setStuckWaiting] = useState(false);
   const [seedInsert, setSeedInsert] = useState<string | ComposerSeed | null>(null);
@@ -1159,10 +1159,10 @@ export default function ChatSurface({
           <div aria-hidden="true" className="ccode-chat-fade pointer-events-none sticky bottom-0 -mt-12 h-12" />
         )}
         {!emptyLayout && (awayFromBottom || hasNew) && (
-          // 回到最新（2026-10-26 用户：往上翻找内容时要有个悬浮按钮回到最新）：离底超过一屏，或底下来了新内容才出现。
+          // 回到最新（2026-10-26 用户：往上翻找内容时要有个悬浮按钮回到最新）：离底超过三分之一屏，或底下来了新内容才出现。
           // 零高粘底层挂在滚动区本身，
           // 按钮浮在可视区底边上方、和对话栏同一条中轴，不占版面（出现 / 收起不推动正文）。
-          // 三种样子：生成中 = 圆钮外圈一道转动的弧 + 中间琥珀光标（同聊天插入符），鼠标移上去 / 键盘聚焦换成 ↓；
+          // 三种样子：生成中 = 圆钮里三格琥珀光标演「写一行字」，鼠标移上去 / 键盘聚焦换成 ↓；
           // 不在生成、有新消息 = 「↓ 有新消息」小胶囊；只是翻上去了 = 只有 ↓ 的圆钮。
           // 生成中不写「有新消息」：一直在出字，那句话没有信息量
           <div className="pointer-events-none sticky bottom-3 z-10 h-0">
@@ -1177,18 +1177,16 @@ export default function ChatSurface({
               >
                 {generating ? (
                   <>
-                    <svg
+                    {/* 生成中：三格琥珀光标演「写一行字」（节拍与设计说明见 App.css .ccode-jump-typing） */}
+                    <span
                       aria-hidden="true"
-                      viewBox="0 0 32 32"
-                      className="ccode-jump-spin pointer-events-none absolute inset-0 size-full transition-opacity group-hover/jump:opacity-0 group-focus-visible/jump:opacity-0"
+                      className="ccode-jump-typing absolute inset-0 justify-center transition-opacity group-hover/jump:opacity-0 group-focus-visible/jump:opacity-0"
                     >
-                      <circle cx="16" cy="16" r="15.25" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeDasharray="22 74" />
-                    </svg>
+                      <span />
+                      <span />
+                      <span />
+                    </span>
                     <span className="relative flex size-3.5 items-center justify-center">
-                      <span
-                        aria-hidden="true"
-                        className="ccode-jump-caret absolute transition-opacity group-hover/jump:opacity-0 group-focus-visible/jump:opacity-0"
-                      />
                       <ArrowDown
                         size={14}
                         strokeWidth={2}
@@ -1312,9 +1310,10 @@ function nearBottom(el: HTMLElement): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight < 56;
 }
 
-/** 离底超过一屏：这时才给「回到最新」浮钮（离底一点点自己滚回去就行，常驻一枚按钮反而挡字） */
+/** 离底超过三分之一屏（至少 160px）：这时才给「回到最新」浮钮——离底一点点（看一眼上一段）自己滚回去就行，
+ *  按钮冒出来反而挡字；翻过三分之一屏多半是在往回找东西了 */
 function farFromBottom(el: HTMLElement): boolean {
-  return el.scrollHeight - el.scrollTop - el.clientHeight > el.clientHeight;
+  return el.scrollHeight - el.scrollTop - el.clientHeight > Math.max(160, el.clientHeight / 3);
 }
 
 /** 1234 → 1.2k；千以下原样 */
