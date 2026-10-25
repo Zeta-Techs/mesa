@@ -2934,12 +2934,27 @@ const TerminalView = memo(function TerminalView({
     if (initialCwd) profileSelectRef.current?.focus();
   }, [initialCwd]);
 
-  // 懒挂载：首次可见时才创建 xterm，未展示过的标签不占用终端资源
-  const [everVisible, setEverVisible] = useState(visible);
+  // 懒挂载：首次可见时才创建 xterm，未展示过的标签不占用终端资源。
+  // 被聊天层盖着、也不自动启动的（侧栏点开只看的对话、重启恢复的占位标签）推到画完一帧之后再建：
+  // 建 xterm + WebGL 约 30ms，压在切过去的第一帧里就是「点一下卡一下」，对话记录要等它建完才上屏（2026-10-26 实测）
+  const deferTerminal = coveredByChat && !autoStart;
+  const [everVisible, setEverVisible] = useState(visible && !deferTerminal);
   everVisibleRef.current = everVisible;
   useEffect(() => {
-    if (visible) setEverVisible(true);
-  }, [visible]);
+    if (!visible || everVisible) return;
+    if (!deferTerminal) {
+      setEverVisible(true);
+      return;
+    }
+    let timer = 0;
+    const frame = requestAnimationFrame(() => {
+      timer = window.setTimeout(() => setEverVisible(true), 0);
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
+  }, [visible, everVisible, deferTerminal]);
 
   // 恢复占位标签只做目录检查，不自动启动或偷偷迁移目录；失效时把修复入口放进空态卡。
   useEffect(() => {
@@ -3839,7 +3854,7 @@ const TerminalView = memo(function TerminalView({
     lastResumeKickRef.current = resumeKick;
     void launch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resumeKick, visible, running]);
+  }, [resumeKick, visible, everVisible, running]);
 
   /** 终端自己发的通知（OSC 9/777 标题、BEL）：与注意力通知同一套门——
    *  设置关了不发、前台当前标签不打扰（画面就在眼前）、按标签限频。
