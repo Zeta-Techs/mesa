@@ -471,7 +471,7 @@ test("模型菜单：Agent 停了还能接着聊时，改选「接着聊用」�
   }
 });
 
-test("等你决定卡片：照 CLI 原文摆选项，高亮项实心，总有「打开终端」", async () => {
+test("等你决定卡片：照 CLI 原文摆选项，高亮项是主按钮（CTA、在最右、带键帽），总有「打开终端」", async () => {
   const ui = await mount();
   try {
     const hits: string[] = [];
@@ -490,7 +490,11 @@ test("等你决定卡片：照 CLI 原文摆选项，高亮项实心，总有「
       }),
     );
     assert.match(ui.el.textContent ?? "", /Switch model\?/);
-    assert.match(ui.button("Yes, switch to glm-other").className, /bg-seg-sel/);
+    const yes = ui.button("Yes, switch to glm-other");
+    assert.match(yes.className, /bg-cta/);
+    // 主按钮在最右：底栏最后一个按钮
+    const footerButtons = Array.from(ui.el.querySelectorAll("footer button"));
+    assert.equal(footerButtons[footerButtons.length - 1], yes);
     await ui.click("No, go back");
     await ui.click("打开终端");
     assert.deepEqual(hits, ["no", "terminal"]);
@@ -1062,17 +1066,12 @@ test("Claude 提问卡片：多选打勾、提交这一题、点题签切题；�
     );
     await ui.act(async () => (boxes[1] as HTMLButtonElement).click());
     await ui.click("提交这一题");
-    // 当前题签不可点，别的题签和「提交」页可以
-    const tabButtons = Array.from(ui.el.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
-    assert.deepEqual(
-      tabButtons.map((t) => [t.textContent, t.getAttribute("aria-selected")]),
-      [
-        ["颜色", "false"],
-        ["水果", "true"],
-        ["提交", "false"],
-      ],
-    );
-    await ui.act(async () => tabButtons[0].click());
+    // 右上角翻页：第 2 / 2 题，往前翻到第一题；往后翻是确认页
+    assert.match(ui.el.textContent ?? "", /2 \/ 2/);
+    assert.match(ui.el.textContent ?? "", /水果/, "当前题签是问句上方的小标签");
+    const prev = ui.el.querySelector<HTMLButtonElement>('button[aria-label="上一题"]')!;
+    assert.equal(ui.el.querySelector<HTMLButtonElement>('button[aria-label="下一题"]')!.disabled, false);
+    await ui.act(async () => prev.click());
     assert.deepEqual(actions, [{ kind: "pick", index: 1 }, { kind: "submit" }, { kind: "tab", index: 0 }]);
 
     actions.length = 0;
@@ -1153,6 +1152,75 @@ test("输入框：点发送就清空，不等写进终端；发失败把原话�
     await typeInto(ui, "新写的");
     await ui.act(async () => finish("发送失败：x"));
     assert.equal(box.value, "新写的");
+  } finally {
+    await ui.close();
+  }
+});
+
+test("等你决定卡片：焦点在卡片所在的聊天区里按 Ctrl/⌘+Enter = 主按钮；输入框里写了字不抢，焦点在别处不响应", async () => {
+  const ui = await mount();
+  try {
+    const hits: string[] = [];
+    await ui.render(
+      ui.h("div", { "data-chat-host": "t1" },
+        ui.h(ui.Decision, {
+          decision: {
+            key: "trust",
+            title: "启动前要你确认：是否信任这个目录",
+            options: [
+              { label: "信任此目录", primary: true, onClick: () => hits.push("trust") },
+              { label: "不信任，退出", onClick: () => hits.push("exit") },
+            ],
+          },
+          onOpenTerminal: () => {},
+        }),
+        ui.h("textarea", { "aria-label": "输入" }),
+      ),
+    );
+    const press = (target: Element) =>
+      ui.act(async () => {
+        target.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
+      });
+    const box = ui.el.querySelector("textarea")!;
+    // 主按钮带键帽，次按钮在它左边
+    const buttons = Array.from(ui.el.querySelectorAll("footer button")).map((b) => b.textContent);
+    assert.deepEqual(buttons, ["不信任，退出", "信任此目录Ctrl ↵"]);
+    // 焦点不在这个聊天区：不响应
+    await press(document.body);
+    assert.deepEqual(hits, []);
+    box.focus();
+    await press(box);
+    assert.deepEqual(hits, ["trust"]);
+    // 输入框里有字：那是要发的话，不抢
+    box.value = "先问一句";
+    await press(box);
+    assert.deepEqual(hits, ["trust"]);
+  } finally {
+    await ui.close();
+  }
+});
+
+test("等你决定卡片：选项多或很长（Claude 审批菜单）时摆成整行列表，高亮那项序号用 CTA 并标键帽", async () => {
+  const ui = await mount();
+  try {
+    const hits: number[] = [];
+    const labels = ["Yes", "Yes, and don't ask again for echo commands in this project", "No, and tell Claude what to do differently"];
+    await ui.render(
+      ui.h(ui.Decision, {
+        decision: {
+          key: "menu",
+          title: "Do you want to proceed?",
+          options: labels.map((label, i) => ({ label, primary: i === 0, onClick: () => hits.push(i) })),
+        },
+        onOpenTerminal: () => {},
+      }),
+    );
+    assert.equal(ui.el.querySelector("footer"), null, "列表时没有按钮底栏");
+    const rows = Array.from(ui.el.querySelectorAll<HTMLButtonElement>('[role="listitem"]'));
+    assert.deepEqual(rows.map((r) => r.textContent?.replace(/Ctrl ↵$/, "")), labels.map((l, i) => `${i + 1}${l}`));
+    assert.match(rows[0].querySelector("span")!.className, /bg-cta/);
+    await ui.act(async () => rows[2].click());
+    assert.deepEqual(hits, [2]);
   } finally {
     await ui.close();
   }
