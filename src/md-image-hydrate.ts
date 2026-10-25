@@ -1,27 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
+import { cachedImageUrl, loadImageUrl } from "./image-cache";
 import { classifyMdHref, mdImageAbsPath } from "./reader";
-
-/** 已读过的本地图：预览重绘把节点盖回占位后，靠缓存同步换回，避免再卡在「图片加载中」 */
-const CACHE_CAP = 32;
-const cache = new Map<string, { mime: string; data: string }>();
-
-function cacheGet(path: string): { mime: string; data: string } | undefined {
-  const hit = cache.get(path);
-  if (!hit) return undefined;
-  cache.delete(path);
-  cache.set(path, hit);
-  return hit;
-}
-
-function cacheSet(path: string, dto: { mime: string; data: string }): void {
-  if (cache.has(path)) cache.delete(path);
-  cache.set(path, dto);
-  while (cache.size > CACHE_CAP) {
-    const oldest = cache.keys().next().value;
-    if (oldest === undefined) break;
-    cache.delete(oldest);
-  }
-}
 
 function failNode(node: Element, text: string): void {
   if (!node.isConnected) return;
@@ -31,22 +9,17 @@ function failNode(node: Element, text: string): void {
   node.replaceWith(span);
 }
 
-function applyDataUrl(
-  node: Element,
-  dto: { mime: string; data: string },
-  alt: string,
-  abs?: string,
-): void {
+function applyImageUrl(node: Element, url: string, alt: string, abs?: string): void {
   if (!node.isConnected) return;
   const el = document.createElement("img");
-  el.src = `data:${dto.mime};base64,${dto.data}`;
+  el.src = url;
   el.alt = alt;
   if (abs) el.dataset.ccodePath = abs;
   node.replaceWith(el);
 }
 
 /**
- * 把 host 里剩余的 [data-md-src] 占位换成 https 直链或本地 data URL。
+ * 把 host 里剩余的 [data-md-src] 占位换成 https 直链或本地图（blob URL）。
  * 一进来就摘掉 data-md-src，防止同一次绘制里重复发起读取。
  * 调用方应在每次 layout 都跑一遍：dangerouslySetInnerHTML 重绘后 deps 不变，
  * 不重跑就会永远停在「图片加载中」。
@@ -100,23 +73,18 @@ export function hydrateMdImages(
       failNode(node, `[图片不可读] ${src}`);
       continue;
     }
-    const cached = cacheGet(abs);
+    // 读过的图（image-cache 共用缓存）同步换回：预览重绘、切回会话都不再卡在「图片加载中」
+    const cached = cachedImageUrl(abs);
     if (cached) {
-      applyDataUrl(node, cached, alt, abs);
+      applyImageUrl(node, cached, alt, abs);
       continue;
     }
     if (node instanceof HTMLElement) {
       node.classList.add("md-img-pending");
       node.textContent = "图片加载中…";
     }
-    void invoke<{ mime: string; data: string }>("read_image_bytes", {
-      path: abs,
-      cwdHint: opts.cwdHint ?? null,
-    })
-      .then((dto) => {
-        cacheSet(abs, dto);
-        applyDataUrl(node, dto, alt, abs);
-      })
+    loadImageUrl(abs, opts.cwdHint)
+      .then((url) => applyImageUrl(node, url, alt, abs))
       .catch(() => {
         failNode(node, `[图片不可读] ${src}`);
       });

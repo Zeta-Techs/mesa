@@ -7,6 +7,7 @@ import { Marked } from "marked";
 import { ChevronRight, ImageOff, Volume2 } from "lucide-react";
 import { useAppStore } from "../store";
 import { classifyMdHref, resolveMdPath, rewriteMdImageHtml } from "../reader";
+import { cachedImageUrl, loadImageUrl } from "../image-cache";
 import { hydrateMdImages } from "../md-image-hydrate";
 import { decorateMdCodeBlocks, decorateMdTables, handleMdCodeCopyClick } from "../md-code-chrome";
 import { chatMathExtensions, renderMathInto } from "../md-math";
@@ -406,7 +407,7 @@ function MarkdownBody({
   );
 }
 
-/** 消息级图片卡：整行图片路径经 read_image_bytes 白名单换 data URL 内嵌，点击放大到预览页签；
+/** 消息级图片卡：整行图片路径经 read_image_bytes 白名单读图（image-cache 缓存成 blob URL）内嵌，点击放大到预览页签；
  *  不可读（白名单外/文件已删）回落为路径文本卡（quiet：回复里顺口提到的路径，读不到就不出卡）。
  *  相对路径以 cwd 为基准解析，~/ 原样交后端展开 */
 export function ChatImageCard({
@@ -420,22 +421,25 @@ export function ChatImageCard({
 }) {
   const setPreviewReq = useAppStore((s) => s.setPreviewReq);
   const editImage = useContext(ChatImageEditContext);
-  const [src, setSrc] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
-  const [viewing, setViewing] = useState(false);
   const abs = path.startsWith("~") || !cwd ? path : resolveMdPath(`${cwd}/_`, path);
   const name = abs.split(/[\\/]/).pop() ?? abs;
+  // 读过的图首帧就画（image-cache），切回会话不再先出「图片加载中」
+  const [src, setSrc] = useState<string | null>(() => cachedImageUrl(abs) ?? null);
+  const [failed, setFailed] = useState(false);
+  const [viewing, setViewing] = useState(false);
 
   useEffect(() => {
     let stale = false;
-    setSrc(null);
     setFailed(false);
-    invoke<{ mime: string; data: string }>("read_image_bytes", {
-      path: abs,
-      cwdHint: cwd ?? null,
-    })
-      .then((dto) => {
-        if (!stale) setSrc(`data:${dto.mime};base64,${dto.data}`);
+    const hit = cachedImageUrl(abs);
+    if (hit) {
+      setSrc(hit);
+      return;
+    }
+    setSrc(null);
+    loadImageUrl(abs, cwd)
+      .then((url) => {
+        if (!stale) setSrc(url);
       })
       .catch(() => {
         if (!stale) setFailed(true);

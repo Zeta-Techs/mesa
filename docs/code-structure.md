@@ -344,7 +344,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 与 lit_watch.rs 双端镜像，指标未知放行不误伤；快筛解读 watchExplainPrompt /
                              # parseWatchExplain 五节学术口径；卡片展开按项目记忆（默认收起）；
                              # tests/lit-watch.test.ts）
-  md-image-hydrate.ts        # md 阅读/聊天图片占位水合：每次 layout 扫 data-md-src，本地图缓存
+  md-image-hydrate.ts        # md 阅读/聊天图片占位水合：每次 layout 扫 data-md-src，本地图走 image-cache
   md-pdf-refs.ts             # md 阅读视图里把 p.3/第 3 页/Fig. 2/Table 1 包成可点引用（每次布局幂等重扫，跳过 a/code/公式；
                              # 标注行/译段引用块带上原文）+ 点中取跳转请求 + focusMdText（滚到含某段文字的块并闪）；
                              # 只在阅读区笔记栏接线（FilePreviewEditor onPdfRef/focusText）（tests/reader-note.test.ts）
@@ -552,6 +552,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   composer-assist.ts         # 聊天输入框的纯逻辑：@ 引用（mentionQueryAt / applyMention，带空格加引号）、斜杠面板 Mesa 组（MesaCommand / filterMesaCommands）、
                              # ↑ 一路往回翻（userTextHistory；lastUserText 保留）、上下文圆环数据（lastContextTokens / contextUsage）；Mesa 组的内容由 TerminalPage mesaCommandsFor 组装，
                              # ↑ 取回跳过项目上下文包（splitLaunchPrompt）（tests/composer-assist.test.ts）
+  image-cache.ts             # 读过的本地图按路径缓存成 blob URL（条数 + 字节双上限 LRU，淘汰即 revoke；同路径读取去重），
+                             # 聊天图片卡与 md 内嵌图共用，切回会话首帧就有图（tests/image-cache.test.ts）
   image-markup.ts            # 输入框图片标注纯逻辑：标注类型（原图像素坐标）、线宽 / 徽标 / 箭头几何、意见框编号与消息圈码、
                              # 裁剪范围、paintMarkup 导出绘制（与 MarkupLayer 预览同源）、exportMarkup 生成新图字节（tests/image-markup.test.ts）
   chat-permission.ts         # 输入框权限菜单纯逻辑（2026-10-22）：按项目类型拿一件事说明四档（permissionExample）、⇧Tab 轮换跳过没有的档（nextPermissionTier）；
