@@ -457,6 +457,10 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-25 · 侧栏底部记号换 ›、展开改抽屉动画
+
+用户：「侧栏底部的 ⋯ 是不是需要换个符号，动画也优化一下，现在是直接出现」。⋯ 是「更多菜单」的通用记号，这里其实是往右展开，换成 › （ChevronRight 15px l4）；三个图标常驻在抽屉里（不再按开合增删节点），抽屉 max-width 200ms 从一个 › 滑到三格，图标 opacity + translate 依次入场（40ms 起每个 +35ms）、› 同时淡出右移，收回不排队；收着时三个图标 tabIndex -1。Tailwind v4 的 translate-x 走 `translate` 属性，transition 列表写 translate 不写 transform。
+
 ### 2026-10-25 · 聊天 / 终端切换加快捷键
 
 用户：「聊天层切换到终端 加一个快捷键切换」。默认 `mod+shift+t`（⌘⇧T / Ctrl+Shift+T），设置「全局快捷键」卡可改可禁（`hotkeyToggleSurface`），只在运行页可见时挂、走 window 捕获阶段——光标在终端里也要接（从终端切回聊天正是这时候按），所以不走 `globalHotkeyAllowed`；不选 ⌘J（Windows 上 Ctrl+J 是 CLI 的换行）、不选 ⌘`（macOS 系统轮换窗口、非美式键盘位置不一）。切到终端时光标落进 xterm（>_、/terminal 一并受益，只认整块终端由盖着变露着这一下）；切回聊天先放掉终端焦点，免得接着打的字进 PTY。转终端计数 detail 记 `hotkey`。

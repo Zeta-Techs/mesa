@@ -1206,19 +1206,16 @@ html[data-material="none"] .ccode-app-rail .bg-rail-sel {
   animation: ccode-pop 150ms var(--ccode-motion-ease);
 }
 
-/* 侧栏底部那一排展开时，技能 / MCP / 用量淡入（App railNavExpanded）；减弱动态效果时直接出现 */
-.ccode-rail-reveal {
-  animation: ccode-rail-reveal 120ms var(--ccode-motion-ease);
-}
-@keyframes ccode-rail-reveal {
-  from {
-    opacity: 0;
-    transform: translateX(-4px);
-  }
+/* 侧栏底部那一排的抽屉（App 资源与管理段）：宽度从一个 › 滑到三个图标（200ms），图标依次淡入右移、› 淡出；
+   收回时不排队、同时退。缓动同全站 --ccode-motion-ease；减弱动态效果时直接切换 */
+.ccode-rail-drawer,
+.ccode-rail-drawer-item {
+  transition-timing-function: var(--ccode-motion-ease);
 }
 @media (prefers-reduced-motion: reduce) {
-  .ccode-rail-reveal {
-    animation: none;
+  .ccode-rail-drawer,
+  .ccode-rail-drawer-item {
+    transition: none !important;
   }
 }
 

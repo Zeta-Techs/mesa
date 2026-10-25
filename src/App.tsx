@@ -12,7 +12,7 @@ import {
   Inbox,
   Info,
   Megaphone,
-  MoreHorizontal,
+  ChevronRight,
   RefreshCw,
   Search,
   ShieldAlert,
@@ -133,12 +133,6 @@ function PageLoading() {
 /** 展开侧栏底部平时收着、鼠标移上去才展开的页（平时只留连接、设置两个图标） */
 const RAIL_MORE_PAGES: readonly string[] = ["skills", "mcp", "stats"];
 
-/** 展开侧栏底部那一排：连接、设置在前不动，展开时技能 / MCP / 用量接在后面（光标底下的图标不跳） */
-function railNavExpanded(open: boolean) {
-  const all = [...NAV_GROUPS.find((g) => g.label === "资源")!.items, ...NAV_BOTTOM];
-  const fixed = all.filter((n) => !RAIL_MORE_PAGES.includes(n.id));
-  return open ? [...fixed, ...all.filter((n) => RAIL_MORE_PAGES.includes(n.id))] : fixed;
-}
 
 /** 侧栏收起态的应用内 tooltip：展开态已有文字，不再重复弹提示。 */
 function RailTooltip({
@@ -1914,43 +1908,31 @@ function App() {
                 )}
 
                 {/* 资源与管理段：连接/技能/MCP/用量/设置（对话已归上面的工作入口）。
-                    展开态平时只留连接、设置两个图标 + ⋯（2026-10-25 用户对照 Claude 客户端：五个没字的图标只能靠猜）；
-                    鼠标移到这一排上（或键盘 Tab 进来）技能 / MCP / 用量接在设置后面自动展开，移开收回（同日用户：点 ⋯ 再选太麻烦）。
+                    展开态平时只留连接、设置两个图标 + 一个 ›（2026-10-25 用户对照 Claude 客户端：五个没字的图标只能靠猜）；
+                    鼠标移到这一排上（或键盘 Tab 进来）技能 / MCP / 用量从 › 的位置向右滑出、一个接一个淡入，移开收回
+                    （同日用户：点 ⋯ 再选太麻烦；⋯ 读作「更多菜单」，换成往右指的 ›，说明是往这边展开；动画别直接出现）。
                     连接、设置位置不动，展开时光标底下的图标不跳；正在这三页之一时一直展开，选中的那个看得见。
                     悬停出名字。图标态侧栏照旧竖排五个 */}
-                <div
-                  onMouseEnter={collapsed ? undefined : () => setRailBarOpen(true)}
-                  onMouseLeave={collapsed ? undefined : () => setRailBarOpen(false)}
-                  onFocus={collapsed ? undefined : () => setRailBarOpen(true)}
-                  onBlur={
-                    collapsed
-                      ? undefined
-                      : (e) => {
-                          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setRailBarOpen(false);
-                        }
-                  }
-                  className={`shrink-0 border-t border-white/5 px-1.5 py-2 ${
-                    collapsed ? "" : "flex items-center gap-0.5"
-                  }`}
-                >
-                  {(collapsed
-                    ? [...NAV_GROUPS.find((g) => g.label === "资源")!.items, ...NAV_BOTTOM]
-                    : railNavExpanded(railBarOpen || RAIL_MORE_PAGES.includes(page))
-                  ).map((n) => (
-                    <RailTooltip
-                      key={n.id}
-                      label={n.label}
-                      collapsed={collapsed}
-                      up={!collapsed}
-                    >
+                {(() => {
+                  const all = [...NAV_GROUPS.find((g) => g.label === "资源")!.items, ...NAV_BOTTOM];
+                  const barOpen = railBarOpen || RAIL_MORE_PAGES.includes(page);
+                  const railIcon = (n: (typeof all)[number], extra?: { index: number }) => (
+                    <RailTooltip key={n.id} label={n.label} collapsed={collapsed} up={!collapsed}>
                       <button
                         type="button"
                         onClick={() => setPage(n.id)}
                         aria-current={page === n.id ? "page" : undefined}
                         aria-label={n.label}
-                        className={`relative flex h-8 items-center justify-center rounded-md transition-colors ${
-                          collapsed ? "mb-0.5 w-11" : `w-9 ${RAIL_MORE_PAGES.includes(n.id) ? "ccode-rail-reveal" : ""}`
-                        } ${
+                        // 收着时滑出来的三个不进键盘顺序（Tab 到「连接」时整排已经展开）
+                        tabIndex={extra && !barOpen ? -1 : undefined}
+                        style={extra ? { transitionDelay: barOpen ? `${40 + extra.index * 35}ms` : "0ms" } : undefined}
+                        className={`relative flex h-8 shrink-0 items-center justify-center rounded-md ${
+                          extra
+                            ? `ccode-rail-drawer-item transition-[opacity,translate,background-color,color] duration-200 ${
+                                barOpen ? "translate-x-0 opacity-100" : "-translate-x-1.5 opacity-0"
+                              }`
+                            : "transition-colors"
+                        } ${collapsed ? "mb-0.5 w-11" : "w-9"} ${
                           page === n.id
                             ? `${collapsed ? "ccode-rail-active" : "ccode-rail-active-under"} bg-rail-sel text-l1`
                             : "text-l3 hover:bg-hover hover:text-l2"
@@ -1964,21 +1946,43 @@ function App() {
                         />
                       </button>
                     </RailTooltip>
-                  ))}
-                  {!collapsed && !(railBarOpen || RAIL_MORE_PAGES.includes(page)) && (
-                    // 只是「后面还有」的记号：鼠标移到这一排上就展开。不进键盘顺序——Tab 到「连接」时整排已经展开，
-                    // 这个记号一获焦就被换掉会把焦点弄丢
-                    <button
-                      type="button"
-                      tabIndex={-1}
-                      aria-hidden="true"
-                      onClick={() => setRailBarOpen(true)}
-                      className="flex h-8 w-9 items-center justify-center rounded-md text-l4 hover:bg-hover hover:text-l2"
+                  );
+                  if (collapsed) {
+                    return (
+                      <div className="shrink-0 border-t border-white/5 px-1.5 py-2">{all.map((n) => railIcon(n))}</div>
+                    );
+                  }
+                  const extras = all.filter((n) => RAIL_MORE_PAGES.includes(n.id));
+                  return (
+                    <div
+                      onMouseEnter={() => setRailBarOpen(true)}
+                      onMouseLeave={() => setRailBarOpen(false)}
+                      onFocus={() => setRailBarOpen(true)}
+                      onBlur={(e) => {
+                        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setRailBarOpen(false);
+                      }}
+                      className="flex shrink-0 items-center gap-0.5 border-t border-white/5 px-1.5 py-2"
                     >
-                      <MoreHorizontal size={16} strokeWidth={1.8} aria-hidden="true" />
-                    </button>
-                  )}
-                </div>
+                      {all.filter((n) => !RAIL_MORE_PAGES.includes(n.id)).map((n) => railIcon(n))}
+                      {/* 抽屉：› 与三个图标叠在同一处，宽度从一个 › 的宽度滑到三个图标的宽度 */}
+                      <div
+                        className={`ccode-rail-drawer relative flex items-center gap-0.5 overflow-hidden transition-[max-width] duration-200 ${
+                          barOpen ? "max-w-[7rem]" : "max-w-9"
+                        }`}
+                      >
+                        <span
+                          aria-hidden="true"
+                          className={`ccode-rail-drawer-item pointer-events-none absolute left-0 top-0 flex h-8 w-9 items-center justify-center text-l4 transition-[opacity,translate] duration-150 ${
+                            barOpen ? "translate-x-1.5 opacity-0" : "translate-x-0 opacity-100"
+                          }`}
+                        >
+                          <ChevronRight size={15} strokeWidth={1.8} />
+                        </span>
+                        {extras.map((n, index) => railIcon(n, { index }))}
+                      </div>
+                    </div>
+                  );
+                })()}
                 {/* 右边缘拖动改宽、双击回默认（只在展开时有） */}
                 {!collapsed && (
                   <div
