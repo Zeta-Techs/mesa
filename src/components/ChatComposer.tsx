@@ -1129,7 +1129,7 @@ export default function ChatComposer({
             }}
             // 一行起，随内容长高（2026-10-23 用户：空态两行高太大，一行就行）
             rows={1}
-            placeholder={ghost ?? (viewed?.edit ? "描述修改内容" : placeholder) ?? "输入消息…"}
+            placeholder={ghost ?? (viewed?.edit ? "描述修改内容" : placeholder) ?? "输入消息"}
             // 插入符是 M▁ 那道琥珀（--color-mesa-amber），光标本身就是品牌
             className={`block max-h-40 w-full resize-none bg-transparent px-1.5 py-[5px] text-sm leading-6 text-l1 caret-mesa-amber outline-none focus:outline-none focus-visible:outline-none focus-visible:outline-offset-0 placeholder:text-l3 disabled:cursor-not-allowed disabled:opacity-60 ${ghost ? "pr-20" : ""}`}
           />

@@ -2147,9 +2147,11 @@ select:focus-visible {
     box-shadow 120ms var(--ccode-motion-ease),
     color 120ms var(--ccode-motion-ease);
 }
+/* 没字时只留一个很淡的箭头，不铺灰块（2026-10-25 用户对照 Claude 客户端：空着的发送块像一个按不了的按钮杵在那） */
 .ccode-send-block[data-state="empty"] {
-  background: var(--color-seg-sel);
+  background: transparent;
   color: var(--color-l4);
+  opacity: 0.55;
   cursor: not-allowed;
 }
 .ccode-send-block[data-state="ready"] {

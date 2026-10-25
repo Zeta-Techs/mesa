@@ -34,20 +34,20 @@ test("没核实过的家不给立即发送；气泡与占位字按真实行为�
   assert.equal(queuedNote(midTurnSpec("gemini", { csiU: false })).text, "排队中 · 这一轮结束后处理");
   assert.equal(
     runningPlaceholder(midTurnSpec("claude-code", { csiU: false }), "⌘"),
-    "还在回复；现在发的话它下一步就会看到，⌘↩ 立即发送…",
+    "还在回复；现在发的话它下一步就会看到，⌘↩ 立即发送",
   );
   assert.equal(
     runningPlaceholder(midTurnSpec("qwen", { csiU: false }), "Ctrl+"),
-    "还在回复；现在发的话它下一步就会看到…",
+    "还在回复；现在发的话它下一步就会看到",
   );
   // 输入框不认快捷键时不写
   assert.equal(
     runningPlaceholder(midTurnSpec("codex", { csiU: false }), null),
-    "还在回复；现在发的话它下一步就会看到…",
+    "还在回复；现在发的话它下一步就会看到",
   );
   assert.equal(
     runningPlaceholder(midTurnSpec("kimi", { csiU: true }), "Ctrl+"),
-    "还在回复；现在发的话会排队，这一轮结束后处理，Ctrl+↩ 插进这一轮…",
+    "还在回复；现在发的话会排队，这一轮结束后处理，Ctrl+↩ 插进这一轮",
   );
 });
 

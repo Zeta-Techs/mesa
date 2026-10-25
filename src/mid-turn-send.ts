@@ -126,5 +126,5 @@ export function runningPlaceholder(spec: MidTurnSpec, mod: string | null): strin
     spec.delivery === "next_step"
       ? "还在回复；现在发的话它下一步就会看到"
       : "还在回复；现在发的话会排队，这一轮结束后处理";
-  return spec.sendNow && mod ? `${base}，${mod}↩ ${spec.sendNow.hint}…` : `${base}…`;
+  return spec.sendNow && mod ? `${base}，${mod}↩ ${spec.sendNow.hint}` : base;
 }

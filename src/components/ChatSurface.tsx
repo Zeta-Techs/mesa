@@ -1174,19 +1174,20 @@ export default function ChatSurface({
         agentId={agentId}
         seedInsert={seedInsert}
         onSeedConsumed={() => setSeedInsert(null)}
+        // 占位字不带结尾的「…」（2026-10-25 用户对照 Claude 客户端：系统字体里它画成底线上的三个点，读作「...」）
         placeholder={
           decision?.ask
             ? decision.ask.form.kind === "review"
               ? "先在上面提交或取消这组回答"
-              : "写你自己的答案，发出去就交这一题…"
+              : "写你自己的答案，发出去就交这一题"
             : decision
-            ? "先在上面选一项，或者直接回复…"
+            ? "先在上面选一项，或者直接回复"
             : readOnly
-            ? "这是只读分叉；可以提问、分析和规划…"
+            ? "这是只读分叉；可以提问、分析和规划"
             : generating && running
               ? runningPlaceholder(midTurn, null)
             : messages.length === 0
-              ? "问一个问题…"
+              ? "问一个问题"
               : undefined
         }
         // Claude 猜的下一句：只在它停在输入框、没有等你决定的事时给（生成中屏上那行是排队提示，不是建议）
