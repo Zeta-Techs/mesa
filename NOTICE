@@ -13,4 +13,5 @@ Copyright 2026 泽塔前沿科技（杭州）有限公司
   © Design Science, Inc. / Khan Academy。
 
 商标：Mesa 不是 Claude Code、Codex 等任何 CLI 的官方产品，各家名称与商标
-归其所有者。"Mesa" 名称与图标不随代码许可授权（Apache-2.0 §6）。
+归其所有者。"Mesa" 名称与图标不随代码许可授权（Apache-2.0 §6），
+使用规则见 TRADEMARKS.md；对外发布修改版须换名换图标。

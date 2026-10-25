@@ -125,7 +125,7 @@ npm run tauri build    # 打包
 
 ## 许可与商标
 
-本项目按 [Apache-2.0](LICENSE) 发布，附带 [NOTICE](NOTICE)。Apache-2.0 不授予商标权：**"Mesa" 名称与图标归项目维护方，不随代码许可授权**。Mesa 不是 Claude Code、Codex 等任何 CLI 的官方产品，各家名称与商标归其所有者；本项目与 [Mesa 3D 图形库](https://mesa3d.org/) 等同名项目无关联。
+本项目按 [Apache-2.0](LICENSE) 发布，附带 [NOTICE](NOTICE)。Apache-2.0 不授予商标权：**"Mesa" 名称与图标归项目维护方，不随代码许可授权**。介绍、评测、原样转发可以直接用；对外发布修改版要换名换图标，细则见 [TRADEMARKS.md](TRADEMARKS.md)。Mesa 不是 Claude Code、Codex 等任何 CLI 的官方产品，各家名称与商标归其所有者；本项目与 [Mesa 3D 图形库](https://mesa3d.org/) 等同名项目无关联。
 
 内嵌的 JetBrains Mono 与 KaTeX 字体按 SIL OFL 1.1 再分发；第三方组件清单见 [docs/licenses/THIRD-PARTY.md](docs/licenses/THIRD-PARTY.md)（随包版本由构建脚本生成，应用内「设置 → 关于 → 开源许可」可查看）。
 

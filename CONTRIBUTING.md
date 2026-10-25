@@ -48,3 +48,6 @@ cd src-tauri && cargo test
 贡献按 [Apache-2.0](LICENSE) 发布。提交请带签署（DCO）：`git commit -s` 会在提交说明末尾
 生成 `Signed-off-by: <姓名> <邮箱>`，PR 里每个提交都要有——表示你有权按本仓库的许可证
 提交这份改动。贡献者保留自己的版权，只是按同一许可证发布。
+
+许可证管代码，不管名称和图标：「Mesa」名称与应用图标的使用规则见 [TRADEMARKS.md](TRADEMARKS.md)。
+请不要在 PR 里替换或修改应用图标，图标的改动由维护方处理。
