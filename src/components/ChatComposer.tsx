@@ -519,7 +519,11 @@ export default function ChatComposer({
     setViewing((cur) => (cur === path ? null : path));
     requestAnimationFrame(() => ref.current?.focus());
   }
+  /** 标注台 × / Esc：普通附件只收起；从对话点进来改的图是「取消改图」，缩略图一并移除
+   *（2026-10-25 用户：关了上面、下面还留着图）。点缩略图收起不走这里，图照留 */
   function closeStage() {
+    const hit = viewing ? attachmentsRef.current.find((a) => a.path === viewing) : undefined;
+    if (hit?.edit) removeAttachment(hit.path);
     setViewing(null);
     requestAnimationFrame(() => ref.current?.focus());
   }

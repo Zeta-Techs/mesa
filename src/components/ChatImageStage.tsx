@@ -318,8 +318,8 @@ export default function ChatImageStage({
         <button
           type="button"
           onClick={onClose}
-          aria-label="收起图片"
-          title="收起图片（Esc）"
+          aria-label={onQuickText ? "取消改图" : "收起图片"}
+          title={onQuickText ? "取消改图，输入框里的这张图一并移除（Esc）" : "收起图片（Esc）"}
           className="ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1"
         >
           <X size={15} strokeWidth={1.8} aria-hidden="true" />
