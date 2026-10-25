@@ -457,6 +457,10 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-25 · 顶栏帮助改纯图标（对照 Claude 客户端第三批 11）
+
+顶栏「? 帮助」去掉文字只留 ? 图标（size-6，悬停 title「帮助」），菜单内容不变；「待处理」本来就只在 `inboxGroups` 非空时出现。命令面板入口（⌘K + 「命令面板」）待用户定，本条不动。
+
 ### 2026-10-25 · 输入框：空发送块只留淡箭头、占位字去掉结尾「…」（对照 Claude 客户端第三批 10）
 
 `.ccode-send-block[data-state=empty]` 不铺 seg-sel 底，l4 箭头 55% 不透明；ChatSurface / ChatComposer / `runningPlaceholder` 的占位字去掉结尾 U+2026——源码里本来就是「…」，但 SF 字体把它画成底线上的三个点，读作「输入消息...」，Claude 的占位字也不带省略号。

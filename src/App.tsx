@@ -1450,7 +1450,8 @@ function App() {
                   aria-label="帮助"
                   aria-expanded={helpOpen}
                   aria-haspopup="menu"
-                  className="flex h-6 shrink-0 items-center gap-1.5 rounded-md px-2 text-micro text-l3 hover:bg-hover hover:text-l1"
+                  // 只留图标（2026-10-25 用户对照 Claude 客户端：顶栏三组文字太挤），悬停写「帮助」
+                  className="flex size-6 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1"
                 >
                   <CircleHelp
                     size={14.5}
@@ -1458,7 +1459,6 @@ function App() {
                     className="shrink-0"
                     aria-hidden="true"
                   />
-                  <span className="hidden sm:inline">帮助</span>
                 </button>
                 {helpOpen && (
                   <div
