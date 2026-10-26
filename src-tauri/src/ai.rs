@@ -1431,20 +1431,35 @@ pub(crate) fn parse_kind_theme(line: &str) -> Option<(String, String)> {
     Some((kind.to_string(), theme))
 }
 
-fn build_session_title_prompt(material: &str, mmdd: &str, early: bool, taken: &[String]) -> String {
+fn build_session_title_prompt(
+    material: &str,
+    mmdd: &str,
+    early: bool,
+    reference: &[String],
+    background: Option<&str>,
+) -> String {
     let scope = if early {
         "这是临时标题，只根据用户第一条真正的问题。"
     } else {
         "根据用户自己说过的话。首条是最初意图，纠正是中途改方向，定题是最后要求。不要参考助手回复或工具调用。"
     };
-    let occupied = if taken.is_empty() {
+    let occupied = if reference.is_empty() {
         String::new()
     } else {
-        let lines: Vec<String> = taken.iter().take(40).map(|t| format!("- {t}")).collect();
+        let lines: Vec<String> = reference.iter().map(|t| format!("- {t}")).collect();
         format!(
             "\n已有标题，不要重复或只改一两个字：\n{}\n",
             lines.join("\n")
         )
+    };
+    let background = match background {
+        Some(bg) => format!(
+            "\n## 背景（Mesa 提供，不是用户说的）\n{bg}\n\
+             用户原话若只是「读 TASK.md，按简报做到完成标准」「任务书定稿」这类通用开工语，\
+             主题按背景写出具体是哪一步、做的什么课题，例如「镁硫电池综述大纲任务书敲定」；\
+             用户原话有具体要求时以原话为准，背景只用来补足对象。\n"
+        ),
+        None => String::new(),
     };
     format!(
         "{scope}只输出一行，不要解释、不要引号、不要代码块。\n\
@@ -1454,9 +1469,51 @@ fn build_session_title_prompt(material: &str, mmdd: &str, early: bool, taken: &[
          主题：8到28个字，必须让人一眼看出「对什么做了哪一件事」。\n\
          写成对象+动作，例如「Grok继续链合并去重」「目标卡与项目栏同底」。\n\
          不要项目名 Mesa/Ccode，不要完整句子，不要「优化界面」「功能开发」「问题修复」「架构调整」这种空标题。\n\
-         不要输出日期（日期由系统填写，创建日为 {mmdd}）。{occupied}\n\
+         不要输出日期（日期由系统填写，创建日为 {mmdd}）。{occupied}{background}\n\
          ## 用户原话\n{material}"
     )
+}
+
+/// 去重参照：撞车多发生在同类话题，先挑跟这次原话（含背景）共享字词最多的已有标题，
+/// 再用最近的补满。整库按写入先后排，只取前 N 条会全是最老的那批，起不到提醒作用。
+fn pick_reference_titles(taken: &[String], material: &str, limit: usize) -> Vec<String> {
+    let want = title_grams(material);
+    let mut scored: Vec<(usize, usize)> = taken
+        .iter()
+        .enumerate()
+        .map(|(i, t)| (title_grams(&title_identity_key(t)).intersection(&want).count(), i))
+        .filter(|(score, _)| *score > 0)
+        .collect();
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+    let mut picked: Vec<usize> = scored.into_iter().take(limit / 2).map(|(_, i)| i).collect();
+    for i in (0..taken.len()).rev() {
+        if picked.len() >= limit {
+            break;
+        }
+        if !picked.contains(&i) {
+            picked.push(i);
+        }
+    }
+    picked.into_iter().map(|i| taken[i].clone()).collect()
+}
+
+/// 粗粒度字词：相邻两个汉字一组 + 三个字母以上的英文词（小写）
+fn title_grams(text: &str) -> std::collections::HashSet<String> {
+    let is_cjk = |c: char| ('\u{4e00}'..='\u{9fff}').contains(&c);
+    let mut out = std::collections::HashSet::new();
+    let chars: Vec<char> = text.chars().collect();
+    for w in chars.windows(2) {
+        if is_cjk(w[0]) && is_cjk(w[1]) {
+            out.insert(w.iter().collect());
+        }
+    }
+    for word in text
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| w.len() >= 3)
+    {
+        out.insert(word.to_ascii_lowercase());
+    }
+    out
 }
 
 fn title_identity_key(title: &str) -> String {
@@ -1504,6 +1561,186 @@ fn mesa_auto_title_ready(title: &str, taken: &[String]) -> bool {
     parse_kind_theme(title).is_some() && uniquify_session_title(title, taken) == title
 }
 
+/// 开工类对话的背景：流水线步骤 / 任务工作区里，首句常是固定开工语（「读 TASK.md，按简报做到完成标准」），
+/// 只看原话起出来的标题分不出是哪个项目哪一步。普通对话没有背景，仍只看用户原话。
+fn title_background(meta: &crate::sessions::SessionMetaDto) -> Option<String> {
+    let step = meta
+        .step_name
+        .as_deref()
+        .or(meta.workspace.as_deref())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let (task_title, topic) = meta
+        .cwd
+        .as_deref()
+        .and_then(|cwd| fs::read(PathBuf::from(cwd).join("TASK.md")).ok())
+        .map(|bytes| {
+            let head = String::from_utf8_lossy(&bytes[..bytes.len().min(16 * 1024)]).into_owned();
+            parse_task_md_head(&head)
+        })
+        .unwrap_or((None, None));
+    if step.is_none() && task_title.is_none() && topic.is_none() {
+        return None;
+    }
+    let project = project_display_name(&meta.project_path);
+    format_title_background(
+        project.as_deref(),
+        step,
+        task_title.as_deref(),
+        topic.as_deref(),
+    )
+}
+
+/// 补名批的廉价预判（不读文件）：有步骤名或工作区名的对话一定有背景。
+fn has_background_hint(meta: &crate::sessions::SessionMetaDto) -> bool {
+    meta.step_name.as_deref().is_some_and(|s| !s.trim().is_empty())
+        || meta.workspace.as_deref().is_some_and(|s| !s.trim().is_empty())
+}
+
+fn project_display_name(project_path: &str) -> Option<String> {
+    let project_path = project_path.trim();
+    if project_path.is_empty() {
+        return None;
+    }
+    crate::projects::registered_project_rows()
+        .into_iter()
+        .find(|(path, _)| crate::paths::same_path(path, project_path))
+        .map(|(_, name)| name)
+        .filter(|n| !n.trim().is_empty())
+        .or_else(|| worktree_project_dir(project_path))
+        .or_else(|| {
+            std::path::Path::new(project_path)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+        })
+}
+
+/// 工作区已归档的老会话，路径还停在 `~/ccode/workspaces/<项目>/<工作区>`（编程车道 worktrees 同构）：
+/// 取 `<项目>` 这一级，别把工作区目录名当项目名。
+fn worktree_project_dir(project_path: &str) -> Option<String> {
+    let home = crate::ccode_home::current().ok()?;
+    ["workspaces", "worktrees"].iter().find_map(|sub| {
+        let root = home.join(sub);
+        let root = root.to_string_lossy();
+        if !crate::paths::path_within(project_path, &root) {
+            return None;
+        }
+        std::path::Path::new(project_path)
+            .strip_prefix(std::path::Path::new(root.as_ref()))
+            .ok()?
+            .components()
+            .next()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+    })
+}
+
+/// TASK.md 开头：一级标题（任务书标题，多为步骤名）与「## 课题主题」下第一行。
+fn parse_task_md_head(text: &str) -> (Option<String>, Option<String>) {
+    let mut title = None;
+    let mut topic = None;
+    let mut in_topic = false;
+    for line in text.lines().map(str::trim) {
+        if title.is_none() {
+            if let Some(t) = line.strip_prefix("# ") {
+                title = Some(cap_chars(t.trim(), 60)).filter(|t| !t.is_empty());
+                continue;
+            }
+        }
+        if let Some(h) = line.strip_prefix("## ") {
+            in_topic = h.trim() == "课题主题";
+            continue;
+        }
+        if in_topic && topic.is_none() && !line.is_empty() && !line.starts_with('#') {
+            topic = Some(cap_chars(line, 60));
+            in_topic = false;
+        }
+        if title.is_some() && topic.is_some() {
+            break;
+        }
+    }
+    (title, topic)
+}
+
+fn format_title_background(
+    project: Option<&str>,
+    step: Option<&str>,
+    task_title: Option<&str>,
+    topic: Option<&str>,
+) -> Option<String> {
+    fn clean(s: Option<&str>) -> Option<&str> {
+        s.map(str::trim).filter(|s| !s.is_empty())
+    }
+    let (project, step, task_title, topic) =
+        (clean(project), clean(step), clean(task_title), clean(topic));
+    if step.is_none() && task_title.is_none() && topic.is_none() {
+        return None;
+    }
+    let mut lines = Vec::new();
+    if let Some(p) = project {
+        lines.push(format!("项目：{p}"));
+    }
+    if let Some(s) = step {
+        lines.push(format!("步骤：{s}"));
+    }
+    if let Some(t) = task_title.filter(|t| Some(*t) != step) {
+        lines.push(format!("任务书标题：{t}"));
+    }
+    if let Some(t) = topic {
+        lines.push(format!("课题：{t}"));
+    }
+    Some(lines.join("\n"))
+}
+
+/// 这次起名用的材料指纹（原话摘取 + 背景）。同样的材料问过一次就不再问 AI：
+/// 重开旧对话、只有一轮就退出的对话，都不会再白调一次、把标题换个说法。
+fn title_basis(material: &str, background: Option<&str>) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"title-v1\n");
+    h.update(background.unwrap_or("").as_bytes());
+    h.update(b"\n--\n");
+    h.update(material.as_bytes());
+    format!("{:x}", h.finalize())[..16].to_string()
+}
+
+#[derive(Debug, PartialEq)]
+enum TitlePlan {
+    /// 同样的材料问过了
+    Skip,
+    /// 指纹之前起的合格标题：补记指纹，不动标题
+    Adopt,
+    Ask,
+}
+
+/// 读对话之前的廉价判断：人手改过的不碰；临时标题只给还没有名字的新对话。
+fn title_precheck(state: &crate::sessions::TitleState, early: bool) -> bool {
+    !state.user_owned() && !(early && state.current_title().is_some())
+}
+
+fn plan_title(
+    state: &crate::sessions::TitleState,
+    basis: &str,
+    has_background: bool,
+    current_ready: bool,
+) -> TitlePlan {
+    match state.basis.as_deref() {
+        Some(b) if b == basis => TitlePlan::Skip,
+        Some(_) => TitlePlan::Ask,
+        // 有背景的老标题多半是照着开工语起的（「按简报做到完成标准」），借这次重起一回
+        None if current_ready && !has_background => TitlePlan::Adopt,
+        None => TitlePlan::Ask,
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum TitleOutcome {
+    Titled(String),
+    /// 不该起或不用起（手改过、内部、太短、材料没变……）：前端不要重试
+    Skipped,
+    /// 问了 AI 但没拿到合格标题（调用失败 / 格式不合）：可以过会儿再试
+    Retry,
+}
+
 fn auto_title_session_impl(
     profiles: Vec<Profile>,
     agent: &str,
@@ -1511,14 +1748,19 @@ fn auto_title_session_impl(
     file_path: &str,
     created_at: Option<&str>,
     early: bool,
+    meta: &dyn Fn() -> Option<crate::sessions::SessionMetaDto>,
     occupied: Option<&[String]>,
-) -> Result<Option<String>, String> {
+) -> Result<TitleOutcome, String> {
     if crate::sessions::session_marked_internal(agent, session_id) {
-        return Ok(None);
+        return Ok(TitleOutcome::Skipped);
+    }
+    let state = crate::sessions::session_title_state(agent, session_id).unwrap_or_default();
+    if !title_precheck(&state, early) {
+        return Ok(TitleOutcome::Skipped);
     }
     let msgs = crate::sessions::conversation_impl(agent, file_path);
     if conversation_too_thin(&msgs) {
-        return Ok(None);
+        return Ok(TitleOutcome::Skipped);
     }
     let mmdd = created_at.and_then(shanghai_mmdd).or_else(|| {
         first_message_timestamp(&msgs)
@@ -1526,36 +1768,51 @@ fn auto_title_session_impl(
             .and_then(shanghai_mmdd)
     });
     let Some(mmdd) = mmdd else {
-        return Ok(None);
+        return Ok(TitleOutcome::Skipped);
     };
     let material = user_title_material(&msgs, early);
     if material.trim().is_empty() {
-        return Ok(None);
+        return Ok(TitleOutcome::Skipped);
     }
+    let background = meta().as_ref().and_then(title_background);
+    let basis = title_basis(&material, background.as_deref());
     let owned = occupied
         .map(|t| t.to_vec())
         .unwrap_or_else(|| crate::sessions::list_custom_titles_except(agent, session_id));
-    let raw = match ai_prompt_impl(
+    let current_ready = state
+        .current_title()
+        .is_some_and(|t| mesa_auto_title_ready(t, &owned));
+    match plan_title(&state, &basis, background.is_some(), current_ready) {
+        TitlePlan::Skip => return Ok(TitleOutcome::Skipped),
+        TitlePlan::Adopt => {
+            crate::sessions::record_title_basis(agent, session_id, &basis)?;
+            return Ok(TitleOutcome::Skipped);
+        }
+        TitlePlan::Ask => {}
+    }
+    let reference = pick_reference_titles(
+        &owned,
+        &format!("{}\n{material}", background.as_deref().unwrap_or("")),
+        40,
+    );
+    let Ok(raw) = ai_prompt_impl(
         profiles,
         None,
         Some(FN_SUMMARIZE),
-        build_session_title_prompt(&material, &mmdd, early, &owned),
-    ) {
-        Ok(v) => v,
-        Err(_) => return Ok(None),
+        build_session_title_prompt(&material, &mmdd, early, &reference, background.as_deref()),
+    ) else {
+        return Ok(TitleOutcome::Retry);
     };
-    let Some(line) = extract_title_candidate(&raw) else {
-        return Ok(None);
-    };
-    let Some((kind, theme)) = parse_kind_theme(&line) else {
-        return Ok(None);
+    let Some((kind, theme)) = extract_title_candidate(&raw).and_then(|l| parse_kind_theme(&l))
+    else {
+        return Ok(TitleOutcome::Retry);
     };
     let title = crate::sessions::redact_sensitive_text(&format!("{mmdd}|{kind}|{theme}"));
     let title = uniquify_session_title(&title, &owned);
-    if !crate::sessions::try_set_custom_title(agent, session_id, &title)? {
-        return Ok(None);
+    if !crate::sessions::try_set_custom_title(agent, session_id, &title, Some(&basis))? {
+        return Ok(TitleOutcome::Skipped);
     }
-    Ok(Some(title))
+    Ok(TitleOutcome::Titled(title))
 }
 
 // ===== Tauri commands =====
@@ -1648,8 +1905,9 @@ pub async fn ai_summarize_session(
     .map_err(|e| e.to_string())?
 }
 
-/// 自动起名：`stage=early` 只用首条用户问题；默认/final 用用户侧首条+纠正+定题。
-/// 人手改过的标题、内部会话、内容不足或没有创建日则跳过。
+/// 自动起名：`stage=early` 只用首条用户问题，且只给还没有标题的新对话；默认/final 用用户侧首条+纠正+定题。
+/// 人手改过的标题、内部会话、内容不足、没有创建日、或材料跟上次起名时一样则跳过（返回 None，前端不重试）；
+/// 问了 AI 没拿到合格标题才返回 Err，前端过会儿再试。
 /// 设置页「会话自动命名」关掉时直接返回 None（前端也跳过调用，这里是最终闸门）。
 #[tauri::command]
 pub async fn ai_auto_title_session(
@@ -1665,7 +1923,7 @@ pub async fn ai_auto_title_session(
     }
     let profiles = store.list()?;
     let early = stage.as_deref() == Some("early");
-    tauri::async_runtime::spawn_blocking(move || {
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
         auto_title_session_impl(
             profiles,
             &agent,
@@ -1673,11 +1931,17 @@ pub async fn ai_auto_title_session(
             &file_path,
             created_at.as_deref(),
             early,
+            &|| crate::sessions::find_session_sync(&agent, &session_id),
             None,
         )
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())??;
+    match outcome {
+        TitleOutcome::Titled(title) => Ok(Some(title)),
+        TitleOutcome::Skipped => Ok(None),
+        TitleOutcome::Retry => Err("这次没起出合格的标题".into()),
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -1717,11 +1981,15 @@ fn retitle_all_sessions_impl(
     }
     let mut sessions = crate::sessions::list_sessions_sync();
     sessions.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+    let mut states = crate::sessions::all_title_states();
 
     let mut taken: Vec<String> = Vec::new();
     let mut pending = Vec::new();
     for s in sessions {
-        if crate::sessions::session_title_is_user_owned(&s.agent, &s.session_id) {
+        let state = states
+            .remove(&(s.agent.clone(), s.session_id.clone()))
+            .unwrap_or_default();
+        if state.user_owned() {
             if let Some(t) = s
                 .custom_title
                 .as_deref()
@@ -1732,13 +2000,13 @@ fn retitle_all_sessions_impl(
             }
             continue;
         }
-        pending.push(s);
+        pending.push((s, state));
     }
 
     let mut renamed = 0u32;
     let mut skipped = 0u32;
     let mut failed = 0u32;
-    for s in pending {
+    for (s, state) in pending {
         // 批量可跑几十秒到几分钟：用户中途在设置页关掉开关，下一轮就停，
         // 不再有新标题落盘（评审确认的「关不掉」窗口）
         if !gate() {
@@ -1763,7 +2031,10 @@ fn retitle_all_sessions_impl(
             .filter(|t| !t.is_empty())
             .map(str::to_string);
         if let Some(cur) = current.as_deref() {
-            if mesa_auto_title_ready(cur, &taken) {
+            // 合格的标题不读对话直接跳过；只有「有背景、还没按背景起过」的开工类老标题重起一回
+            if mesa_auto_title_ready(cur, &taken)
+                && (state.basis.is_some() || !has_background_hint(&s))
+            {
                 taken.push(cur.to_string());
                 skipped += 1;
                 continue;
@@ -1776,23 +2047,31 @@ fn retitle_all_sessions_impl(
             &s.file_path,
             s.created_at.as_deref(),
             false,
+            &|| Some(s.clone()),
             Some(&taken),
         ) {
-            Ok(Some(title)) => {
+            Ok(TitleOutcome::Titled(title)) => {
                 taken.push(title);
                 renamed += 1;
             }
-            Ok(None) => {
+            Ok(TitleOutcome::Skipped | TitleOutcome::Retry) => {
                 if let Some(cur) = current.as_deref() {
                     let unique = uniquify_session_title(cur, &taken);
                     if unique != cur
-                        && crate::sessions::try_set_custom_title(&s.agent, &s.session_id, &unique)
-                            .unwrap_or(false)
+                        && crate::sessions::try_set_custom_title(
+                            &s.agent,
+                            &s.session_id,
+                            &unique,
+                            None,
+                        )
+                        .unwrap_or(false)
                     {
                         taken.push(unique);
                         renamed += 1;
                         continue;
                     }
+                    // 留着原标题的也算占用，后面的不能再撞上它
+                    taken.push(cur.to_string());
                 }
                 skipped += 1;
             }
@@ -2754,14 +3033,14 @@ ERROR: Your access token could not be refreshed because your refresh token was r
         let pr = build_pr_prompt("abc123 feat: x", "5\t1\tsrc/a.rs");
         assert!(pr.contains("## 变更点"));
         assert!(pr.contains("不要编造"));
-        let t = build_session_title_prompt("[用户·首条] 加预设", "0908", true, &[]);
+        let t = build_session_title_prompt("[用户·首条] 加预设", "0908", true, &[], None);
         assert!(t.contains("类型|主题"));
         assert!(t.contains("0908"));
         assert!(t.contains("第一条真正的问题"));
         assert!(t.contains("[用户·首条] 加预设"));
         assert!(t.contains("8到28"));
         assert!(t.contains("对象+动作"));
-        let t2 = build_session_title_prompt("[用户·定题] 改成雷达", "0908", false, &[]);
+        let t2 = build_session_title_prompt("[用户·定题] 改成雷达", "0908", false, &[], None);
         assert!(t2.contains("不要参考助手回复"));
         assert!(!t2.contains("第一条真正的问题"));
         let t3 = build_session_title_prompt(
@@ -2769,6 +3048,7 @@ ERROR: Your access token could not be refreshed because your refresh token was r
             "0908",
             true,
             &["0908|功能|Grok继续链合并去重".into()],
+            None,
         );
         assert!(t3.contains("已有标题"));
         assert!(t3.contains("Grok继续链合并去重"));
@@ -2888,6 +3168,86 @@ ERROR: Your access token could not be refreshed because your refresh token was r
             "把 Blender 的 MCP 加到预设里",
             None
         )]));
+    }
+
+    fn title_state(title: Option<&str>, source: Option<&str>, basis: Option<&str>) -> crate::sessions::TitleState {
+        crate::sessions::TitleState {
+            custom_title: title.map(str::to_string),
+            source: source.map(str::to_string),
+            basis: basis.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn title_precheck_skips_user_titles_and_early_on_titled_sessions() {
+        // 人手改过的、旧数据有标题没来源的：读对话、问 AI 之前就停
+        assert!(!title_precheck(&title_state(Some("我的标题"), Some("user"), None), false));
+        assert!(!title_precheck(&title_state(Some("旧标题"), None, None), false));
+        // 临时标题只给还没名字的新对话：重开旧对话不再按首条覆盖
+        assert!(!title_precheck(&title_state(Some("1020|修复|某某链路合并去重"), Some("auto"), None), true));
+        assert!(title_precheck(&title_state(None, None, None), true));
+        assert!(title_precheck(&title_state(Some("1020|修复|某某链路合并去重"), Some("auto"), None), false));
+    }
+
+    #[test]
+    fn plan_title_reuses_same_material_and_adopts_old_titles() {
+        let b = title_basis("[用户·首条] 把 Blender 的 MCP 加到预设里", None);
+        assert_eq!(b, title_basis("[用户·首条] 把 Blender 的 MCP 加到预设里", None));
+        assert_ne!(b, title_basis("[用户·首条] 把 Blender 的 MCP 加到预设里", Some("步骤：精读")));
+        let auto = |basis: Option<&str>| title_state(Some("1020|功能|Blender预设加MCP"), Some("auto"), basis);
+        // 材料没变：不问
+        assert_eq!(plan_title(&auto(Some(&b)), &b, false, true), TitlePlan::Skip);
+        assert_eq!(plan_title(&auto(Some(&b)), &b, true, false), TitlePlan::Skip);
+        // 材料变了（多聊了几轮）：问
+        assert_eq!(plan_title(&auto(Some("other")), &b, false, true), TitlePlan::Ask);
+        // 指纹之前的合格老标题：补记指纹，不换说法
+        assert_eq!(plan_title(&auto(None), &b, false, true), TitlePlan::Adopt);
+        // 开工类老标题（有背景）重起一回；不合格的照常问
+        assert_eq!(plan_title(&auto(None), &b, true, true), TitlePlan::Ask);
+        assert_eq!(plan_title(&auto(None), &b, false, false), TitlePlan::Ask);
+        assert_eq!(plan_title(&title_state(None, None, None), &b, false, false), TitlePlan::Ask);
+    }
+
+    #[test]
+    fn task_md_head_and_background() {
+        let text = "# 综述大纲\n\n项目根：`/x`\n\n## 课题主题\n镁硫电池\n\n## 项目规则\n- 不虚构\n";
+        assert_eq!(
+            parse_task_md_head(text),
+            (Some("综述大纲".into()), Some("镁硫电池".into()))
+        );
+        assert_eq!(parse_task_md_head("# test\n\n- 基准：master\n"), (Some("test".into()), None));
+        assert_eq!(parse_task_md_head("## 课题主题\n\n## 其他\n"), (None, None));
+        // 任务书标题跟步骤名一样时不重复写
+        assert_eq!(
+            format_title_background(Some("综述流程测试"), Some("综述大纲"), Some("综述大纲"), Some("镁硫电池")).as_deref(),
+            Some("项目：综述流程测试\n步骤：综述大纲\n课题：镁硫电池")
+        );
+        // 只有项目名不算背景：普通对话照旧只看原话
+        assert_eq!(format_title_background(Some("Ccode"), None, None, None), None);
+        assert_eq!(format_title_background(None, Some(" "), None, None), None);
+    }
+
+    #[test]
+    fn build_title_prompt_carries_background_only_when_present() {
+        let with = build_session_title_prompt("[用户·首条] 读 TASK.md", "1015", false, &[], Some("步骤：文献检索"));
+        assert!(with.contains("## 背景"));
+        assert!(with.contains("步骤：文献检索"));
+        let without = build_session_title_prompt("[用户·首条] 修个 bug", "1015", false, &[], None);
+        assert!(!without.contains("## 背景"));
+    }
+
+    #[test]
+    fn reference_titles_prefer_related_then_recent() {
+        let mut taken: Vec<String> = (0..60).map(|i| format!("0901|功能|无关旧标题编号{i}")).collect();
+        taken.insert(3, "0902|文档|文献检索筛选任务书定稿".into());
+        let picked = pick_reference_titles(&taken, "[用户·首条] 敲定文献检索任务书", 10);
+        assert_eq!(picked.len(), 10);
+        // 老的同类标题被挑出来
+        assert!(picked.contains(&"0902|文档|文献检索筛选任务书定稿".to_string()));
+        // 其余用最近的补满，而不是最老的
+        assert!(picked.contains(&"0901|功能|无关旧标题编号59".to_string()));
+        assert!(!picked.contains(&"0901|功能|无关旧标题编号0".to_string()));
+        assert_eq!(pick_reference_titles(&[], "随便", 10), Vec::<String>::new());
     }
 
     #[test]

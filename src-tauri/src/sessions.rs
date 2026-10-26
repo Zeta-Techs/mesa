@@ -5300,6 +5300,7 @@ pub(crate) fn migrate_session_meta(conn: &Connection) {
         "project_id TEXT",
         "launch_model TEXT",
         "launch_effort TEXT",
+        "title_basis TEXT",
     ] {
         let _ = conn.execute_batch(&format!("ALTER TABLE session_meta ADD COLUMN {col}"));
     }
@@ -6044,28 +6045,30 @@ pub async fn list_sessions() -> Vec<SessionMetaDto> {
 /// 每 2 秒至多一次——否则聊天层要等满一轮缓存才接上，短回复在这一轮结束后先消失、隔几秒才出来（2026-10-21 OpenCode 实测）
 #[tauri::command]
 pub async fn find_session(agent: String, session_id: String) -> Option<SessionMetaDto> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let pick = |list: Vec<SessionMetaDto>| {
-            list.into_iter()
-                .find(|s| s.agent == agent && s.session_id == session_id)
-        };
-        if let Some(found) = pick(list_sessions_sync()) {
-            return Some(found);
+    tauri::async_runtime::spawn_blocking(move || find_session_sync(&agent, &session_id))
+        .await
+        .ok()
+        .flatten()
+}
+
+pub(crate) fn find_session_sync(agent: &str, session_id: &str) -> Option<SessionMetaDto> {
+    let pick = |list: Vec<SessionMetaDto>| {
+        list.into_iter()
+            .find(|s| s.agent == agent && s.session_id == session_id)
+    };
+    if let Some(found) = pick(list_sessions_sync()) {
+        return Some(found);
+    }
+    static LAST_RESCAN: Mutex<Option<Instant>> = Mutex::new(None);
+    {
+        let mut last = LAST_RESCAN.lock().unwrap_or_else(|e| e.into_inner());
+        if last.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(2)) {
+            return None;
         }
-        static LAST_RESCAN: Mutex<Option<Instant>> = Mutex::new(None);
-        {
-            let mut last = LAST_RESCAN.lock().unwrap_or_else(|e| e.into_inner());
-            if last.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(2)) {
-                return None;
-            }
-            *last = Some(Instant::now());
-        }
-        invalidate_scan_cache();
-        pick(list_sessions_sync())
-    })
-    .await
-    .ok()
-    .flatten()
+        *last = Some(Instant::now());
+    }
+    invalidate_scan_cache();
+    pick(list_sessions_sync())
 }
 
 #[derive(Clone)]
@@ -7220,12 +7223,93 @@ pub(crate) fn session_marked_internal(agent: &str, session_id: &str) -> bool {
     .is_some_and(|v| v != 0)
 }
 
+/// 自动起名要看的那一行：现标题、来源、上次起名用的材料指纹（title_basis）。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct TitleState {
+    pub custom_title: Option<String>,
+    pub source: Option<String>,
+    pub basis: Option<String>,
+}
+
+impl TitleState {
+    /// 人手改过的标题，或旧数据没有 title_source 但已有自定义标题：自动起名不得覆盖。
+    pub(crate) fn user_owned(&self) -> bool {
+        if self.source.as_deref() == Some("user") {
+            return true;
+        }
+        self.source.is_none() && self.current_title().is_some()
+    }
+
+    pub(crate) fn current_title(&self) -> Option<&str> {
+        self.custom_title
+            .as_deref()
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+    }
+}
+
+pub(crate) fn session_title_state(agent: &str, session_id: &str) -> Option<TitleState> {
+    let conn = open_db().ok()?;
+    conn.query_row(
+        "SELECT custom_title, title_source, title_basis FROM session_meta WHERE agent=?1 AND session_id=?2",
+        params![agent, session_id],
+        |r| {
+            Ok(TitleState {
+                custom_title: r.get(0)?,
+                source: r.get(1)?,
+                basis: r.get(2)?,
+            })
+        },
+    )
+    .ok()
+}
+
+/// 补名批用：一次读出全部会话的起名状态，免得逐条开库。
+pub(crate) fn all_title_states() -> HashMap<(String, String), TitleState> {
+    let mut map = HashMap::new();
+    let Ok(conn) = open_db() else {
+        return map;
+    };
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT agent, session_id, custom_title, title_source, title_basis FROM session_meta",
+    ) else {
+        return map;
+    };
+    if let Ok(rows) = stmt.query_map([], |r| {
+        Ok((
+            (r.get::<_, String>(0)?, r.get::<_, String>(1)?),
+            TitleState {
+                custom_title: r.get(2)?,
+                source: r.get(3)?,
+                basis: r.get(4)?,
+            },
+        ))
+    }) {
+        map.extend(rows.flatten());
+    }
+    map
+}
+
+/// 已有合格的自动标题、只是没记过材料指纹（指纹之前的老标题）：补记指纹，不动标题。
+pub(crate) fn record_title_basis(agent: &str, session_id: &str, basis: &str) -> Result<(), String> {
+    let conn = open_db()?;
+    conn.execute(
+        "UPDATE session_meta SET title_basis=?3
+         WHERE agent=?1 AND session_id=?2 AND title_source='auto'",
+        params![agent, session_id, basis],
+    )
+    .map_err(|e| format!("记录起名依据失败: {e}"))?;
+    Ok(())
+}
+
 /// 自动起名写入。人手改过的标题（title_source=user）不覆盖；机器临时标题可被聊完校正覆盖。
+/// `basis` = 这次起名用的材料指纹，同样的材料下次不再问 AI；None 保留原指纹（只去重改名时）。
 /// 返回是否写入。
 pub(crate) fn try_set_custom_title(
     agent: &str,
     session_id: &str,
     title: &str,
+    basis: Option<&str>,
 ) -> Result<bool, String> {
     let title = title.trim();
     if title.is_empty() {
@@ -7249,18 +7333,19 @@ pub(crate) fn try_set_custom_title(
         }
     }
     conn.execute(
-        "INSERT INTO session_meta(agent, session_id, custom_title, title_source)
-         VALUES(?1, ?2, ?3, 'auto')
-         ON CONFLICT(agent, session_id) DO UPDATE SET custom_title=?3, title_source='auto'
+        "INSERT INTO session_meta(agent, session_id, custom_title, title_source, title_basis)
+         VALUES(?1, ?2, ?3, 'auto', ?4)
+         ON CONFLICT(agent, session_id) DO UPDATE SET custom_title=?3, title_source='auto',
+           title_basis=COALESCE(?4, session_meta.title_basis)
          WHERE session_meta.title_source IS NULL OR session_meta.title_source != 'user'",
-        params![agent, session_id, title],
+        params![agent, session_id, title, basis],
     )
     .map_err(|e| format!("写入会话标题失败: {e}"))?;
     invalidate_scan_cache();
     Ok(true)
 }
 
-/// 其它会话已占用的展示标题（不含本条），供自动起名去重。
+/// 其它会话已占用的展示标题（不含本条），供自动起名去重；按写入先后排，越新越靠后。
 pub(crate) fn list_custom_titles_except(agent: &str, session_id: &str) -> Vec<String> {
     let Ok(conn) = open_db() else {
         return Vec::new();
@@ -7268,7 +7353,8 @@ pub(crate) fn list_custom_titles_except(agent: &str, session_id: &str) -> Vec<St
     let Ok(mut stmt) = conn.prepare(
         "SELECT custom_title FROM session_meta
          WHERE custom_title IS NOT NULL AND TRIM(custom_title) != ''
-           AND NOT (agent = ?1 AND session_id = ?2)",
+           AND NOT (agent = ?1 AND session_id = ?2)
+         ORDER BY rowid",
     ) else {
         return Vec::new();
     };
@@ -7280,29 +7366,6 @@ pub(crate) fn list_custom_titles_except(agent: &str, session_id: &str) -> Vec<St
                 .collect()
         })
         .unwrap_or_default()
-}
-
-/// 人手改过的标题，或旧数据没有 title_source 但已有自定义标题：自动起名不得覆盖。
-pub(crate) fn session_title_is_user_owned(agent: &str, session_id: &str) -> bool {
-    let Ok(conn) = open_db() else {
-        return true;
-    };
-    let row: Option<(Option<String>, Option<String>)> = conn
-        .query_row(
-            "SELECT custom_title, title_source FROM session_meta WHERE agent=?1 AND session_id=?2",
-            params![agent, session_id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .ok();
-    match row {
-        None => false,
-        Some((existing, source)) => {
-            if source.as_deref() == Some("user") {
-                return true;
-            }
-            source.is_none() && existing.as_deref().is_some_and(|t| !t.trim().is_empty())
-        }
-    }
 }
 
 /// 会话归卡（任务卡）：写 session_meta.task_id；None 或空白 = 移出卡片。

@@ -328,7 +328,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 顶栏课题主题可见性 headerShowsTopic（科研项目含无流程都展示，身份四件套之一）
                              # （lockWorkModeFromConfig / codingFactChips / codingDivergenceLabel（领先·落后文案） /
                              #   groupByWorkMode 项目栏分段（projectSwitchRows 收起态切换菜单行已随 2026-10-16 拆栏删除）；tests/work-mode.test.ts）
-  session-title.ts           # 会话列表展示标题清洗（去 URL/绝对路径/中断/resume/未命名，取首句；不写回源文件）
+  session-title.ts           # 会话列表展示标题清洗（去 URL/绝对路径/中断/resume/未命名，取首句；不写回源文件）；
+                             # autoTitleMilestone = 聊天中途校正标题的节点（用户第 3、第 8 句，TerminalPage 触发）
                              # （tests/session-title.test.ts）
   project-status.ts          # 项目页状态行 / 工作区要你管排序 / 笔记过滤 / 办公继续上次与问 AI 建议
                              # / 本项目会话过滤（filterProjectSessions，排除无头 AI / 问 AI / 阅读注入 / 已归档；默认全部列出）
@@ -1355,6 +1356,8 @@ src-tauri/src/
                              #   清单）。内嵌窗漏斗保留为过渡，通道 C 稳定后退役——细则见 pipeline.md ⑧
   fonts.rs                   # 终端字体打包与 brew 一键安装（Maple/Sarasa/Iosevka）
   ai.rs                      # 无头 AI 调用层（一次性调用对 claude/codex 不落盘 + JSON 记账：headless_oneshot_args / parse_oneshot_output）：一次性 prompt + 提交信息/摘要/PR 描述/冲突建议/提炼接力简报/评审沉淀起草（只写下一步还没有的约束，无新约束返回空）；
+                             # 会话自动起名：先判手改/临时标题再读对话；材料指纹 title_basis 没变不问 AI；步骤 / 工作区会话附背景
+                             #   （title_background：项目名、步骤名、TASK.md 标题与课题主题）；去重参照 pick_reference_titles（相近优先、最近补满）；
                              # resolve_profile_from 最近使用回落跳过官方账号（OAuth 过期会甩 CLI 日志；显式/专用仍尊重）；
                              # 失败走 summarize_headless_error，不把 stderr 整段回给前端；401 invalid_api_key 按
                              #   「报错 URL host × 绑定 base_url host」细分：发去 api.openai.com 而配置是网关 = 渠道路由错

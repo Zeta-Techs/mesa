@@ -255,7 +255,7 @@
   无证据/失败任务不开放自动采纳，内容以纯文本显示；保留返回与当前目录入口，不影响底层 PTY 挂载。
 - 「停止」或 agent 退出后必须**自动回落用户登录 shell**（`$SHELL -l`，同 cwd），不死在最终画面；手动 `exit` 不自动
   重开；回落 shell 不带 profile env；agent/shell 共用 `pty.rs` 的 `spawn_tracked`，退出事件按 PTY 类型区分。
-  同一次会话：第一条真正的用户问题出现后先无头写临时标题；Agent 退出后再只用用户原话（首条意图 / 中途纠正 / 最后定题）校正一次，不送助手回复。格式 `MMDD|类型|主题`（创建日上海时区），主题 8–28 字、至少 4 个汉字、对象+动作；已占用的「类型|主题」不得重复。写入 `session_meta.custom_title` 且 `title_source=auto`，不写回 CLI 源文件。人手改过的标题（`title_source=user`）不覆盖；内部会话、内容不足或没有创建日则跳过。失败静默，不挡回落 shell。
+  同一次会话：第一条真正的用户问题出现后先无头写临时标题（只给还没标题的会话，重开旧对话不重起）；用户说到第 3、第 8 句（`autoTitleMilestone`）与 Agent 退出时再只用用户原话（首条意图 / 中途纠正 / 最后定题）校正，不送助手回复；第一条回复出现时不再校正（材料与临时标题相同）。步骤 / 工作区会话另附背景（项目名、步骤名、TASK.md 一级标题与「课题主题」，`ai.rs title_background`），普通对话不附。材料指纹记 `session_meta.title_basis`，同样的材料不再问 AI；`ai_auto_title_session` 返回 None = 不用起（前端不重试），Err = 问了 AI 没拿到合格标题（前端 8 秒后重试，最多三次）。格式 `MMDD|类型|主题`（创建日上海时区），主题 8–28 字、至少 4 个汉字、对象+动作；已占用的「类型|主题」不得重复。写入 `session_meta.custom_title` 且 `title_source=auto`，不写回 CLI 源文件。人手改过的标题（`title_source=user`）不覆盖；内部会话、内容不足或没有创建日则跳过。失败静默，不挡回落 shell。
 - **重启只恢复标签元数据，不恢复 PTY**：白名单限 label/cwd/agent/profile/model/sessionId，禁存 PTY id/scrollback/密钥/
   env/run 脚本；重开后为「上次任务，可恢复」占位，点击才建新 PTY；目录/profile 失效留在可编辑启动栏提示，禁自动换目标。
 - **预览版本与编辑缓冲（2026-09-07）**：文件预览和产物内联编辑均使用后端读取快照的 `revision` 保存，冲突时保留

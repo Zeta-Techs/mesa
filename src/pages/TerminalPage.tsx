@@ -165,7 +165,7 @@ import { toast } from "../toast";
 import { idleStopPass } from "../idle-stop";
 import { RIGHT_DEFAULT_PX, RIGHT_MIN_PX, runLayout } from "../run-layout";
 import { sidebarChatTitle } from "../sidebar-chats";
-import { tidySessionTitle } from "../session-title";
+import { autoTitleMilestone, tidySessionTitle } from "../session-title";
 import {
   menuMoveKeys,
   menuReadyToConfirm,
@@ -1693,7 +1693,8 @@ const TerminalView = memo(function TerminalView({
   // 收尾被 ptyLive 推迟后的保证重试定时器（去重：同屏最多挂一个）
   const settleRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoTitleEarlyRef = useRef(false);
-  const autoTitleFinalRef = useRef(false);
+  /** 已触发过的中途校正节点（autoTitleMilestone），0 = 还没触发 */
+  const autoTitleMilestoneRef = useRef(0);
   const setLiveSession = useAppStore((s) => s.setLiveSession);
   const setOpenSessionReq = useAppStore((s) => s.setOpenSessionReq);
   const setPage = useAppStore((s) => s.setPage);
@@ -4408,13 +4409,14 @@ const TerminalView = memo(function TerminalView({
         autoTitleEarlyRef.current = true;
         scheduleAutoTitle("early");
       }
-      if (
-        !autoTitleFinalRef.current &&
-        parsedMessages.some(
-          (m) => m.role !== "user" && m.blocks.some((b) => b.kind === "text" && b.text.trim()),
-        )
-      ) {
-        autoTitleFinalRef.current = true;
+      // 中途校正按用户说了几句来：第一条回复出来时材料跟临时标题一样，不再多问一次
+      const milestone = autoTitleMilestone(
+        mergedMessages.filter(
+          (m) => m.role === "user" && m.blocks.some((b) => b.kind === "text" && b.text.trim()),
+        ).length,
+      );
+      if (milestone > autoTitleMilestoneRef.current) {
+        autoTitleMilestoneRef.current = milestone;
         scheduleAutoTitle("final");
       }
     } catch {
@@ -4823,10 +4825,8 @@ const TerminalView = memo(function TerminalView({
         stage,
       })
         .then((title) => {
-          if (!title) {
-            if (n < 2) window.setTimeout(() => attempt(n + 1), 8000);
-            return;
-          }
+          // null = 不该起或不用起（手改过、材料没变……），重试也一样；只有出错才重试
+          if (!title) return;
           const cur = linkCtxRef.current;
           if (cur?.sessionId === sessionId) setLinkedSessionTitle(title);
           void useAppStore.getState().loadSessions(true);
@@ -4846,7 +4846,7 @@ const TerminalView = memo(function TerminalView({
     if (sid && linkedAgent) setLiveSession(linkedAgent, sid, null);
     invoke("release_session_claim", { claimId: tabId }).catch(() => {});
     autoTitleEarlyRef.current = false;
-    autoTitleFinalRef.current = false;
+    autoTitleMilestoneRef.current = 0;
     linkCtxRef.current = null;
     convSigRef.current = "";
     olderRef.current = [];

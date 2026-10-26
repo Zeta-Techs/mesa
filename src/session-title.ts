@@ -135,3 +135,16 @@ export function splitRecentItems<T>(
     older: items.slice(limit),
   };
 }
+
+/**
+ * 聊天中途校正标题的节点：用户说到第 3、第 8 句时各补一次（Agent 退出时再收一次尾）。
+ * 返回已到达的最高节点，0 = 还没到。重开旧对话时一上来就过节点也无妨：
+ * 后端发现起名材料跟上次一样就不问 AI。
+ */
+export const AUTO_TITLE_MILESTONES = [3, 8] as const;
+
+export function autoTitleMilestone(userTurns: number): number {
+  let reached = 0;
+  for (const n of AUTO_TITLE_MILESTONES) if (userTurns >= n) reached = n;
+  return reached;
+}

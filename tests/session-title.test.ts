@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  autoTitleMilestone,
   projectSessionLabel,
   replaceAbsFsPaths,
   sessionIsInterrupted,
@@ -131,4 +132,13 @@ test("项目侧栏未命名写成对话，旧的收在更早", () => {
     recent: [1, 2, 3],
     older: [4],
   });
+});
+
+test("聊天中途校正标题只在第 3、第 8 句各一次", () => {
+  assert.equal(autoTitleMilestone(0), 0);
+  assert.equal(autoTitleMilestone(2), 0);
+  assert.equal(autoTitleMilestone(3), 3);
+  assert.equal(autoTitleMilestone(7), 3);
+  assert.equal(autoTitleMilestone(8), 8);
+  assert.equal(autoTitleMilestone(40), 8);
 });
