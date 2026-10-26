@@ -1740,6 +1740,9 @@ stop_hook_summary，被拒那轮没有），旁路回合一直开着、又压过
 按 interrupted 收掉；三平台同。（同日补：非 Claude 模型关工具搜索见本条三；Claude 中途弹「Enter to continue · Esc to cancel」的通知——经第三方网关时 auto mode 分类器计费说明——原先被认成面板、聊天层只给按 Esc（=取消），改为 `tui-panel.ts parseTuiNotice` 认出、给「继续」（回车）卡。）二，**Claude 的回复不是流式出来的**：不是模型也不是网关——直连智谱 Anthropic 端点 glm-5.3-flash 流式，
 正文 228 个增量、每块 1–12 字、4.7 秒内陆续到（之前另有约 20 秒思考，开不开 thinking 参数都思考）；Windows 上用假网关慢速吐字抓屏，
 Claude Code 2.1.305 与 2.1.292 都是转圈计 token、整条消息收完才一次画出（Mac 上 2.1.292 同一假网关是逐行画出，见 live-reply 测试样本）。
+（2026-10-26 补源码层证据，2.1.310 Windows 与 darwin-arm64 两个二进制对照：生成中文字显示与否由 `isStreamingTextVisible =
+!prefersReducedMotion && !X()` 决定，X 在 darwin 版是 `!!WT_SESSION`，在 Windows 版被编译期折叠成 `return !0`——Windows 上恒不显示，
+与终端种类无关，没有环境变量或设置能打开；Mac 上打开「减少动态效果」同样不显示。不必再从终端 / 网关 / 注入方向排查。）
 Mesa 对 Claude 只能读屏（hooks 不带正文），所以 Windows 上 Claude 的聊天层没有逐字预览；长思考期间屏上也只有「Thinking」。
 同日用户拍板补救：「正在回复」后面显示转圈行里的已生成 token 数（`live-reply.ts claudeOutputTokens`，只认 ↓；有逐字预览时不显示），两平台同。
 三，**Claude 说「没有加载文件与命令行类工具」**：上一次判成纯模型问题，这次会话实证到原因——Claude Code 对第三方网关也开工具搜索，

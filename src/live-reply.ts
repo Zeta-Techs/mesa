@@ -171,7 +171,8 @@ const LAYOUTS: Record<string, Layout> = {
 
 /**
  * Claude Code 转圈行里这一轮已生成的 token 数：「✶ Musing… (5s · ↓ 1.2k tokens)」→ 1200。
- * Windows 上 Claude Code 整条消息收完才画出来（2026-10-21 抓屏：2.1.292 / 2.1.305 都是转圈计数、最后一次画出），
+ * Windows 上 Claude Code 整条消息收完才画出来（2026-10-21 抓屏：2.1.292 / 2.1.305 都是转圈计数、最后一次画出；
+ * 2026-10-26 查 2.1.310 二进制：Windows 版把「生成中文字可见」的平台判断编译成常量假，无开关可开，见 architecture §10 2026-10-21「Windows 上 Claude 回复不流式」条），
  * 聊天层没有逐字预览，拿它告诉人还在出字；长思考时也有用。只认 ↓（收到的），认不出返回 null
  */
 export function claudeOutputTokens(lines: readonly string[]): number | null {
