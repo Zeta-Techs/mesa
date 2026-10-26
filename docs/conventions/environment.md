@@ -79,7 +79,10 @@
     找到就同步跑；**开发态** `target/debug/mesa_helper.exe` 会被 tauri-build 的 0 字节占位反复覆盖，要用就先
     `cargo build --bin mesa_helper`（真身在 `target/debug/deps/`，`hooks::native_hook_exe` 会去那里找），没建就退回 PowerShell 脚本。
     出图工具（`MESA_IMAGE_TOOL`）同一个 helper、同一个查找口 `image_gen::find_bundled_helper`（2026-10-26：出图曾漏找 deps/，
-    开发版设置卡一直报「没找到随包的出图工具」）；新加用 helper 的地方一律走它，不另写查找。
+    开发版设置卡一直报「没找到随包的出图工具」）；新加用 helper 的地方一律走它，不另写查找。**三平台同病**（同日 Mac 实测）：
+    tauri-build 拿 `binaries/` 里的 sidecar 覆盖 `target/debug/mesa_helper`——没打过包是 0 字节占位，打过包是那次的旧 release
+    （开发版会一直用着旧 helper）；macOS / Linux 上 deps/ 里的真身名字带哈希（`mesa_helper-<哈希>`）。所以开发态（debug 构建）
+    先按修改时间找 deps/ 里 cargo 建的那份，`cargo test` 的同名测试壳试跑 `--probe` 认不出来自动跳过。
     写进全局配置的三家（Gemini / Kimi / Grok）用拷到 `hooks-state/ccode-hook.exe` 的那份、程序路径**不加引号、用正斜杠**——
     Gemini 在 PowerShell 里跑 hook，双引号开头的命令它不认；这种写法 cmd /s /c、powershell -Command、bash -c 都认（实测）。
     路径带空格或 `&()%` 之类就退回 `.ps1`。启动时开关已开的几家按当前该用的写法重写一次（写前备份）。
