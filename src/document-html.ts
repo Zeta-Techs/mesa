@@ -70,25 +70,20 @@ export function createHtmlPreviewSanitizer(window: WindowLike): (html: string) =
       if (!allowed) data.keepAttr = false;
     }
   });
+  // 2026-10-26 放宽到「报告能看」：Quarto / Jupyter 导出的 HTML 靠内联 style、内嵌 SVG 图（matplotlib）、
+  // MathML 公式排版，原先白名单把三样都剥了。脚本、表单、内嵌框架仍一律剥掉——交互图表（plotly 等）
+  // 在预览里只能看静态部分，工具条给「在浏览器打开」
   return (html) => purifier.sanitize(html, {
     WHOLE_DOCUMENT: true,
-    ALLOWED_TAGS: [
-      "html", "head", "body", "meta", "title", "style", "link",
-      "a", "abbr", "b", "blockquote", "br", "caption", "code", "col", "colgroup",
-      "dd", "del", "details", "div", "dl", "dt", "em", "figcaption", "figure",
-      "h1", "h2", "h3", "h4", "h5", "h6", "header", "footer", "hr", "i", "img",
-      "ins", "kbd", "li", "main", "mark", "nav", "ol", "p", "pre", "s", "samp",
-      "section", "small", "span", "strong", "sub", "summary", "sup",
-      "table", "tbody", "td", "th", "thead", "tfoot", "tr", "u", "ul", "var",
-    ],
-    ALLOWED_ATTR: [
-      "href", "src", "alt", "title", "id", "class", "width", "height", "colspan",
-      "rowspan", "align", "start", "reversed", "open", "charset", "name", "content",
-      "rel", "type", "media",
-    ],
+    USE_PROFILES: { html: true, svg: true, svgFilters: true, mathMl: true },
+    ADD_TAGS: ["meta", "title", "style", "link"],
+    ADD_ATTR: ["charset", "content", "name", "rel", "media"],
     ALLOW_DATA_ATTR: false,
-    ALLOW_ARIA_ATTR: false,
-    FORBID_TAGS: ["script", "iframe", "object", "embed", "form", "input", "button", "textarea"],
+    FORBID_TAGS: [
+      "script", "iframe", "frame", "frameset", "object", "embed", "form", "input",
+      "button", "textarea", "select", "base", "portal",
+    ],
+    FORBID_ATTR: ["srcset", "ping", "formaction", "action"],
   });
 }
 

@@ -6,6 +6,7 @@ import DocxPreview from "./DocxPreview";
 import XlsxPreview from "./XlsxPreview";
 import ImagePreview from "./ImagePreview";
 import UnsupportedPreview from "./UnsupportedPreview";
+import SlidesPreview from "./SlidesPreview";
 
 const FilePreviewEditor = lazy(() => import("./FilePreviewEditor"));
 
@@ -69,10 +70,22 @@ export default function ProjectFilePreview({
       </div>
     );
   }
+  if (kind === "slides") {
+    return (
+      <div className={frame}>
+        <SlidesPreview path={path} cwdHint={root} />
+      </div>
+    );
+  }
   if (kind === "legacy-doc") {
     return (
       <div className={frame}>
-        <UnsupportedPreview path={path} hint="旧版 Word / RTF 文档：用 Word 另存为 .docx 后可以在这里预览。" />
+        <UnsupportedPreview
+          path={path}
+          cwdHint={root}
+          convertible
+          hint="旧版 Office 或 OpenDocument 文档：用 Word / PowerPoint 另存为 .docx / .pptx 后可以在这里预览。"
+        />
       </div>
     );
   }

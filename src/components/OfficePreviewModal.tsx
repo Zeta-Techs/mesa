@@ -16,6 +16,9 @@ import PdfContinuousView from "./PdfContinuousView";
 import DocxPreview from "./DocxPreview";
 import XlsxPreview from "./XlsxPreview";
 import ImagePreview from "./ImagePreview";
+import SlidesPreview from "./SlidesPreview";
+import UnsupportedPreview from "./UnsupportedPreview";
+import { projectFilePreviewKind } from "../project-files";
 
 export default function OfficePreviewModal({
   path,
@@ -152,6 +155,10 @@ export default function OfficePreviewModal({
           {text}
         </pre>
       );
+  } else if (!companionPdf && projectFilePreviewKind(path) === "slides") {
+    body = <SlidesPreview path={path} cwdHint={root} />;
+  } else if (!companionPdf && projectFilePreviewKind(path) === "legacy-doc") {
+    body = <UnsupportedPreview path={path} cwdHint={root} convertible />;
   } else {
     body = companionPdf ? <div className="flex h-full min-h-0 flex-col">
       <p className="mb-2 text-xs text-warn-text">显示同次结果中的配套 PDF。它是独立文件，不代表 Mesa 已验证 PPT 与 PDF 内容一致；请结合原文件核对。</p>

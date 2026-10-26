@@ -1,5 +1,13 @@
 import { sanitizeDocumentHtml } from "../document-html";
-import { memo, useEffect, useState } from "react";
+import { lazy, memo, Suspense, useEffect, useState } from "react";
+import { openPath } from "@tauri-apps/plugin-opener";
+import {
+  docxDroppedSummary,
+  officeConverterAvailable,
+  type DocxFeatures,
+} from "../office-convert";
+
+const OfficePdfView = lazy(() => import("./OfficePdfView"));
 import { invoke } from "@tauri-apps/api/core";
 import PreviewErrorState from "./PreviewErrorState";
 import { useFileVersion } from "../file-watch";
@@ -46,12 +54,22 @@ function DocxPreview({
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState(0);
   const [retry, setRetry] = useState(0);
+  /** mammoth 显示不出来的东西（公式、修订、批注、页眉页脚…），office_view.rs 数出来 */
+  const [features, setFeatures] = useState<DocxFeatures | null>(null);
+  const [canConvert, setCanConvert] = useState(false);
+  /** 看原样：经 LibreOffice 转成 PDF 显示 */
+  const [asPdf, setAsPdf] = useState(false);
+  useEffect(() => {
+    void officeConverterAvailable().then(setCanConvert);
+  }, []);
 
   // 磁盘上换了一版（Agent 重新导出 docx）：就地重转，旧内容留到新的出来，滚动位置不丢
   const fileVersion = useFileVersion(path);
   useEffect(() => {
     setHtml(null);
     setWarnings(0);
+    setFeatures(null);
+    setAsPdf(false);
   }, [path, cwdHint]);
 
   // 加载并转换
@@ -72,6 +90,11 @@ function DocxPreview({
         if (cancelled) return;
         setWarnings(result.messages.length);
         setHtml(sanitizeDocumentHtml(result.value));
+        invoke<DocxFeatures>("docx_features", { path, cwdHint })
+          .then((f) => {
+            if (!cancelled) setFeatures(f);
+          })
+          .catch(() => {});
       } catch (e) {
         if (!cancelled) setError(String(e));
       }
@@ -88,7 +111,7 @@ function DocxPreview({
           {basename(path)}
         </span>
         <span className="shrink-0 rounded-sm bg-inset px-1 text-l4">docx</span>
-        {warnings > 0 && (
+        {warnings > 0 && !asPdf && (
           <span
             className="shrink-0 text-l4"
             title="部分格式（如复杂文本框/域）在转换中被简化，以 Word 打开为准"
@@ -96,9 +119,39 @@ function DocxPreview({
             {warnings} 处格式已简化
           </span>
         )}
+        <span className="ml-auto flex shrink-0 items-center gap-1">
+          {canConvert && (
+            <button
+              type="button"
+              onClick={() => setAsPdf((v) => !v)}
+              title={asPdf ? "回到可选字的阅读版式" : "用本机的 LibreOffice 转成 PDF，看分页、公式、页眉页脚的原样"}
+              className={`rounded-sm px-2 py-0.5 hover:bg-hover ${asPdf ? "text-l1" : "text-l2"}`}
+            >
+              {asPdf ? "阅读版式" : "看原样（PDF）"}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => void openPath(path).catch((e) => setError(String(e)))}
+            className="rounded-sm px-2 py-0.5 text-l2 hover:bg-hover"
+          >
+            用 Word 打开
+          </button>
+        </span>
       </div>
-      {error ? (
-        <PreviewErrorState error={error} kind="DOCX" onRetry={() => setRetry((v) => v + 1)} />
+      {features && !asPdf && docxDroppedSummary(features) && (
+        <p className="shrink-0 border-b border-hairline bg-inset px-3 py-1 text-xs text-warn-text">
+          {docxDroppedSummary(features)}
+          {canConvert ? "，点「看原样（PDF）」或用 Word 打开核对。" : "，以 Word 打开为准（装了 LibreOffice 还能在这里看原样）。"}
+          {features.citationFields > 0 && ` 文献引用域 ${features.citationFields} 处只显示成文字。`}
+        </p>
+      )}
+      {asPdf ? (
+        <Suspense fallback={null}>
+          <OfficePdfView path={path} cwdHint={cwdHint} />
+        </Suspense>
+      ) : error ? (
+        <PreviewErrorState error={error} kind="DOCX" path={path} onRetry={() => setRetry((v) => v + 1)} />
       ) : html === null ? (
         <div className="p-3">
           <p className="text-sm text-l4">正在加载 docx…</p>

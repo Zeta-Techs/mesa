@@ -94,6 +94,7 @@ mod model_registry;
 mod models;
 mod paths;
 mod pdf;
+mod office_view;
 mod phone_drop;
 mod portwatch;
 mod pricing;
@@ -663,7 +664,9 @@ pub fn run() {
             fs_tree::watch_dir,
             fs_tree::unwatch_dir,
             fs_tree::watch_file,
+            fs_tree::read_text_document,
             fs_tree::search_files,
+            fs_tree::list_recent_files,
             fs_tree::existing_files,
             fs_tree::list_office_docs,
             fs_tree::open_in_system,
@@ -679,6 +682,10 @@ pub fn run() {
             pdf::read_pdf_bytes,
             pdf::read_docx_bytes,
             pdf::file_stamp,
+            office_view::docx_features,
+            office_view::slides_outline,
+            office_view::office_converter,
+            office_view::office_to_pdf,
             sheet_preview::read_sheet_preview,
             citation::check_citation_health,
             citation::cite_lookup,

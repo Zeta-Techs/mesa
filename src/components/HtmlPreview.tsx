@@ -21,10 +21,13 @@ export default function HtmlPreview({
   html,
   filePath,
   root,
+  truncated = false,
 }: {
   html: string;
   filePath: string;
   root: string;
+  /** 编辑器只读到前 256 KB：渲染时另读整份（自包含的报告动辄几 MB，截半就排不出来） */
+  truncated?: boolean;
 }) {
   const [srcdoc, setSrcdoc] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -36,8 +39,12 @@ export default function HtmlPreview({
     setError(null);
     void (async () => {
       try {
+        const source = truncated
+          ? (await invoke<{ text: string }>("read_text_document", { path: filePath, root })).text
+          : html;
+        if (cancelled) return;
         const cssByHref: Record<string, string> = {};
-        for (const href of htmlStylesheetHrefs(html)) {
+        for (const href of htmlStylesheetHrefs(source)) {
           if (!isLocalStylesheetHref(href)) continue;
           const abs = resolveMdPath(filePath, href);
           try {
@@ -50,7 +57,7 @@ export default function HtmlPreview({
             /* 读不到的 stylesheet 丢掉，不阻断正文 */
           }
         }
-        let next = replaceStylesheetLinks(html, cssByHref);
+        let next = replaceStylesheetLinks(source, cssByHref);
         for (const src of htmlLocalImageSrcs(next)) {
           const abs = mdImageAbsPath(src, filePath);
           if (!abs) continue;
@@ -77,7 +84,7 @@ export default function HtmlPreview({
     return () => {
       cancelled = true;
     };
-  }, [html, filePath, root, retry]);
+  }, [html, filePath, root, retry, truncated]);
 
   if (error) {
     return (

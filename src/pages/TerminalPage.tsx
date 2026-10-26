@@ -10845,6 +10845,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                   ) : /\.(doc|rtf)$/i.test(preview.path) ? (
                     <UnsupportedPreview
                       path={preview.path}
+                      cwdHint={preview.root ?? activeCwd}
+                      convertible
                       hint="旧版 Word / RTF 文档：用 Word 另存为 .docx 后可以在这里预览。"
                     />
                   ) : isPreviewableImagePath(preview.path) ? (

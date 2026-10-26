@@ -282,6 +282,17 @@ pub async fn list_dir(
     .map_err(|e| format!("读取目录失败: {e}"))?
 }
 
+/// 只读整份读大文本（HTML 报告、Jupyter 笔记本动辄几 MB，256 KB 预览通道一截就渲染不出来）：
+/// 同一套根约束与编码识别，32 MB 封顶；不给保存用
+const DOCUMENT_CAP: usize = 32 * 1024 * 1024;
+
+#[tauri::command]
+pub async fn read_text_document(path: String, root: String) -> Result<FilePreviewDto, String> {
+    tauri::async_runtime::spawn_blocking(move || read_capped_sync(&path, &root, DOCUMENT_CAP, true))
+        .await
+        .map_err(|e| format!("读取文件失败: {e}"))?
+}
+
 #[tauri::command]
 pub async fn read_file_preview(
     path: String,
@@ -1460,20 +1471,43 @@ fn list_office_docs_sync(root: &str) -> Result<Vec<OfficeDocDto>, String> {
     }
     let mut out = Vec::new();
     let mut visited = 0;
-    office_walk(&root_path, &root_path, 0, &mut visited, &mut out);
+    office_walk(&root_path, &root_path, 0, Some(OFFICE_EXTS), OFFICE_MAX, &mut visited, &mut out);
     out.sort_by(|a, b| b.modified.cmp(&a.modified).then_with(|| a.rel.cmp(&b.rel)));
     out.truncate(OFFICE_MAX);
     Ok(out)
 }
 
+/// 「引用项目文件」弹层一次给这么多（最近改过的在前）；更早的靠搜
+const RECENT_FILES_MAX: usize = 300;
+/// 扫这么多个文件后不再往下走（大仓库里也只看前这些，再按修改时间排）
+const RECENT_SCAN_MAX: usize = 20000;
+
+/// 项目里最近改过的文件（2026-10-26，聊天输入框「＋ → 引用项目文件」弹层）：不限类型，
+/// 跳过点开头的文件 / 目录与依赖、构建目录（同 office_walk），按修改时间倒序
+fn list_recent_files_sync(root: &str) -> Result<Vec<OfficeDocDto>, String> {
+    let root_path = std::path::PathBuf::from(expand_tilde(root));
+    if !root_path.is_dir() {
+        return Err("目录不存在".into());
+    }
+    let mut out = Vec::new();
+    let mut visited = 0;
+    office_walk(&root_path, &root_path, 0, None, RECENT_SCAN_MAX, &mut visited, &mut out);
+    out.sort_by(|a, b| b.modified.cmp(&a.modified).then_with(|| a.rel.cmp(&b.rel)));
+    out.truncate(RECENT_FILES_MAX);
+    Ok(out)
+}
+
+/// exts = None：不限类型（点开头的文件也跳过）；cap：收满这么多就停
 fn office_walk(
     root: &std::path::Path,
     dir: &std::path::Path,
     depth: usize,
+    exts: Option<&[&str]>,
+    cap: usize,
     visited: &mut usize,
     out: &mut Vec<OfficeDocDto>,
 ) {
-    if depth > OFFICE_DEPTH || *visited >= SEARCH_MAX_VISITED || out.len() >= OFFICE_MAX {
+    if depth > OFFICE_DEPTH || *visited >= SEARCH_MAX_VISITED || out.len() >= cap {
         return;
     }
     let Ok(rd) = fs::read_dir(dir) else {
@@ -1481,7 +1515,7 @@ fn office_walk(
     };
     for e in rd.flatten() {
         *visited += 1;
-        if *visited >= SEARCH_MAX_VISITED || out.len() >= OFFICE_MAX {
+        if *visited >= SEARCH_MAX_VISITED || out.len() >= cap {
             break;
         }
         let name = e.file_name().to_string_lossy().into_owned();
@@ -1501,14 +1535,20 @@ fn office_walk(
             {
                 continue;
             }
-            office_walk(root, &path, depth + 1, visited, out);
+            office_walk(root, &path, depth + 1, exts, cap, visited, out);
             continue;
         }
-        let Some(ext) = file_ext(&name) else {
-            continue;
-        };
-        if !OFFICE_EXTS.contains(&ext.as_str()) {
-            continue;
+        match exts {
+            Some(list) => {
+                let Some(ext) = file_ext(&name) else {
+                    continue;
+                };
+                if !list.contains(&ext.as_str()) {
+                    continue;
+                }
+            }
+            None if name.starts_with('.') => continue,
+            None => {}
         }
         let rel = path
             .strip_prefix(root)
@@ -1534,6 +1574,13 @@ pub async fn list_office_docs(root: String) -> Result<Vec<OfficeDocDto>, String>
     tauri::async_runtime::spawn_blocking(move || list_office_docs_sync(&root))
         .await
         .map_err(|e| format!("列出文档失败: {e}"))?
+}
+
+#[tauri::command]
+pub async fn list_recent_files(root: String) -> Result<Vec<OfficeDocDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || list_recent_files_sync(&root))
+        .await
+        .map_err(|e| format!("列出文件失败: {e}"))?
 }
 
 /// 系统打开前的门槛：项目根内（canonicalize + path_within）且扩展名在办公白名单。
@@ -1739,6 +1786,34 @@ mod search_tests {
             "{:?}",
             out2.iter().map(|d| &d.name).collect::<Vec<_>>()
         );
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn list_recent_files_any_type_newest_first_skips_hidden() {
+        let dir = std::env::temp_dir().join(format!("ccode-recent-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::create_dir_all(dir.join(".git")).unwrap();
+        fs::create_dir_all(dir.join("node_modules")).unwrap();
+        fs::write(dir.join("src/old.rs"), "a").unwrap();
+        fs::write(dir.join("data.csv"), "b").unwrap();
+        fs::write(dir.join(".env"), "SECRET=1").unwrap();
+        fs::write(dir.join(".git/HEAD"), "ref").unwrap();
+        fs::write(dir.join("node_modules/x.js"), "c").unwrap();
+        // 修改时间直接写死，不靠 sleep 拉开先后
+        let at = |p: &str, secs: u64| {
+            fs::File::options()
+                .write(true)
+                .open(dir.join(p))
+                .unwrap()
+                .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs))
+                .unwrap();
+        };
+        at("src/old.rs", 1_700_000_000);
+        at("data.csv", 1_800_000_000);
+        let out = list_recent_files_sync(dir.to_str().unwrap()).unwrap();
+        let rels: Vec<String> = out.iter().map(|d| d.rel.replace('\\', "/")).collect();
+        assert_eq!(rels, vec!["data.csv", "src/old.rs"]);
         fs::remove_dir_all(&dir).ok();
     }
 

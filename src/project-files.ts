@@ -8,6 +8,7 @@ export type ProjectFilePreviewKind =
   | "xlsx"
   | "docx"
   | "legacy-doc"
+  | "slides"
   | "text";
 
 /** recent 是「最近修改」视图不是类型筛选：不参与按类型收窄 */
@@ -106,6 +107,11 @@ export function supportsImmersiveReader(path: string): boolean {
   return IMMERSIVE_EXTS.has(fileExt(path));
 }
 
+/** PowerPoint（OOXML）：逐页大纲 + 装了 LibreOffice 时看原样 */
+const SLIDE_EXTS = new Set(["pptx", "pptm", "ppsx", "potx"]);
+/** 旧版 Office 与 OpenDocument：内嵌预览不了，装了 LibreOffice 时可转 PDF 看 */
+export const LEGACY_OFFICE_EXTS = new Set(["doc", "rtf", "odt", "ppt", "pps", "odp"]);
+
 export function projectFilePreviewKind(path: string): ProjectFilePreviewKind {
   const ext = fileExt(path);
   if (ext === "pdf") return "pdf";
@@ -130,7 +136,8 @@ export function projectFilePreviewKind(path: string): ProjectFilePreviewKind {
     return "xlsx";
   }
   if (ext === "docx") return "docx";
-  if (ext === "doc" || ext === "rtf") return "legacy-doc";
+  if (SLIDE_EXTS.has(ext)) return "slides";
+  if (LEGACY_OFFICE_EXTS.has(ext)) return "legacy-doc";
   return "text";
 }
 
@@ -150,7 +157,8 @@ export function artifactPreviewSurface(
     kind === "pdf" ||
     kind === "docx" ||
     kind === "xlsx" ||
-    kind === "image"
+    kind === "image" ||
+    kind === "slides"
   ) {
     return "media";
   }

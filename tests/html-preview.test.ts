@@ -59,3 +59,20 @@ test("HTML 预览消毒剥脚本保留 style", () => {
   assert.doesNotMatch(out, /onclick/i);
   assert.match(out, />ok</);
 });
+
+test("HTML 预览消毒保留报告要用的内联 style、内嵌 SVG 与 MathML，仍剥脚本与事件", () => {
+  const dom = new JSDOM("");
+  const sanitize = createHtmlPreviewSanitizer(dom.window);
+  const out = sanitize(
+    `<!DOCTYPE html><html><head><title>报告</title></head><body>` +
+      `<div style="color:red">红字</div>` +
+      `<svg width="10" height="10" onload="x()"><rect width="5" height="5" fill="blue"/><script>alert(1)</script></svg>` +
+      `<math><mi>x</mi></math>` +
+      `<a href="javascript:alert(1)">坏链</a><form><input></form></body></html>`,
+  );
+  assert.match(out, /style="color:red"/);
+  assert.match(out, /<svg[^>]*>/);
+  assert.match(out, /<rect/);
+  assert.match(out, /<math>/);
+  assert.doesNotMatch(out, /script|onload|javascript:|<form|<input/i);
+});

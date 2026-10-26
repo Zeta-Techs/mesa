@@ -457,6 +457,10 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-26 · HTML 报告、Word、PowerPoint 预览补强
+
+同批第七条。① HTML：预览消毒改为 DOMPurify html+svg+svgFilters+mathMl 配置（保留内联 style、内嵌 SVG、MathML），仍剥 script / 框架 / 表单 / base / srcset；编辑器只读到 256 KB 时渲染另经新命令 `read_text_document`（同根约束与编码识别、32 MB 封顶、不给保存）读整份；不跑脚本——交互图表给「在浏览器打开」（openPath，系统默认浏览器），**不放开 iframe 脚本**（不透明源沙箱里跑任意本地 HTML 脚本的风险没有收益）。② 新模块 `office_view.rs`：`docx_features` 数 mammoth 丢掉的公式（m:oMath）、修订（w:ins/w:del）、批注、页眉页脚、文本框、文献引用域，前端黄字如实说；`slides_outline` 按 presentation.xml 放映顺序抽每页标题 / 段落 / 第一张图（单张 3 MB、总 30 MB）/ 备注与首页缩略图；`office_to_pdf` 找本机 LibreOffice（PATH + 三平台默认位置）转 PDF 到 `<config>/ccode/tmp/office-pdf/<路径哈希>/`（读取白名单内，独立 UserInstallation 不抢用户实例，3 分钟超时走 capture_command 杀树，比原文件新则复用）。不装 LibreOffice 的照旧可用，按钮不出现。③ 分流：pptx/ppsx/potx/pptm → 幻灯大纲；doc/rtf/odt/ppt/pps/odp → 中性态 + 可转 PDF；文件页、运行页右栏、办公弹层同一套。
+
 ### 2026-10-26 · 文本预览认编码：非 UTF-8 认出来可看可改、照原编码写回
 
 同批第六条。`read_file_preview` 遇非法 UTF-8 时用 chardetng 认编码（新增依赖 `chardetng` 0.1、`encoding_rs` 转为直接依赖），带 BOM 的 UTF-16 先于 NUL 嗅探放行；DTO 新增 `encoding`，版本号仍按原始字节算。`save_file_preview` 新增 `encoding` 参数：按原编码写回，表示不了的字符拒绝（不换问号），UTF-16 手写带 BOM。前端工具条编码小标记，点一下切「改用 UTF-8 保存」（标脏，保存才写）。**台账通道（read/save_research_ledger）不认编码**，非 UTF-8 照旧只读——台账是 Mesa 自己写的 UTF-8，不能被悄悄转码。随包许可清单已重新生成。

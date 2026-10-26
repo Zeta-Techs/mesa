@@ -69,6 +69,8 @@ import MergeConflictView from "./MergeConflictView";
 import { HoverTip } from "./HoverTip";
 import PreviewErrorState from "./PreviewErrorState";
 import UnsupportedPreview from "./UnsupportedPreview";
+import SlidesPreview from "./SlidesPreview";
+import { projectFilePreviewKind } from "../project-files";
 import {
   LATEX_EXTENSIONS,
   LATEX_LANGUAGE_ID,
@@ -1700,13 +1702,22 @@ function TextFilePreviewEditor({
           </div>
         )}
         <div className="ml-auto flex shrink-0 items-center gap-1">
-          {readOnlyReason && (
+          {readOnlyReason && !isHtml && (
             <button
               onClick={() => void openPath(path).catch((e) => setError(String(e)))}
               title="这份文件在这里只能看（太大、编码不支持或在项目外），用系统里的应用打开它来改"
               className="shrink-0 rounded-sm px-2 py-0.5 text-l2 hover:bg-hover"
             >
               用系统应用打开
+            </button>
+          )}
+          {ready && isHtml && mode === "read" && (
+            <button
+              onClick={() => void openPath(path).catch((e) => setError(String(e)))}
+              title="预览里不跑脚本，交互图表（plotly 等）只显示静态部分；在浏览器里打开看完整效果"
+              className="shrink-0 rounded-sm px-2 py-0.5 text-l2 hover:bg-hover"
+            >
+              在浏览器打开
             </button>
           )}
           {ready && isMd && mode === "read" && (
@@ -1898,7 +1909,7 @@ function TextFilePreviewEditor({
       {mode === "read" && ready && (
         isHtml ? (
           <div className="flex min-h-0 flex-1 flex-col">
-            <HtmlPreview html={text!} filePath={path} root={root} />
+            <HtmlPreview html={text!} filePath={path} root={root} truncated={truncated} />
           </div>
         ) : (
           <MarkdownView
@@ -1961,7 +1972,7 @@ function TextFilePreviewEditor({
           {mode === "read" ? (
             isHtml ? (
               <div className="flex min-h-0 flex-1 flex-col">
-                <HtmlPreview html={text ?? ""} filePath={path} root={root} />
+                <HtmlPreview html={text ?? ""} filePath={path} root={root} truncated={truncated} />
               </div>
             ) : (
               <MarkdownView
@@ -1991,6 +2002,12 @@ function FilePreviewEditor(
 ) {
   if (isPreviewableImagePath(props.path)) {
     return <ImagePreview path={props.path} cwdHint={props.root} />;
+  }
+  // 宿主没先分流的 Office 文件（运行页右栏等走到这里）：幻灯给大纲，旧版 Office 给可转 PDF 的说明
+  const kind = projectFilePreviewKind(props.path);
+  if (kind === "slides") return <SlidesPreview path={props.path} cwdHint={props.root} />;
+  if (kind === "legacy-doc") {
+    return <UnsupportedPreview path={props.path} cwdHint={props.root} convertible />;
   }
   return <TextFilePreviewEditor {...props} />;
 }

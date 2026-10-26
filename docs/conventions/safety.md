@@ -167,6 +167,9 @@
      拒受保护路径与项目根本身、重名拒绝（只改大小写经临时名中转）；「移动到…」目标必须在项目根内；
      **从访达拖进来 = 复制**（`fs_import_paths`），源路径只认原生拖放 / Rust 选择器登记过的（`attach_grants::user_supplied`，
      文件按读取登记、文件夹按拖放另登记），前端传来的任意路径不复制——否则可被诱导把 ~/.ssh 之类拷进项目；
+     本地 HTML 预览（2026-10-26）：消毒放宽到内联 style / SVG / MathML，**脚本、框架、表单、base、srcset 一律剥**，
+     iframe 不加 allow-same-origin；交互内容只走「在浏览器打开」，不在应用里跑任意本地 HTML 脚本。
+     LibreOffice 转 PDF 只读白名单内的源文件，输出落 `<config>/ccode/tmp/office-pdf/`，独立 UserInstallation、超时杀树；
   6. **内部对话保留期清理**（2026-10-17，`internal_sessions.rs`）：设置「数据与存储」的自动清理开关（默认开、保留 30 天）
      或「立即清理」即用户授权。目标三条件同时成立：provenance/会话 meta 标为 internal、cwd 是 `ccode-ai-<uuid>`
      临时目录或定时雷达隔离 worktree 根下、未 pin；时间不明 / 源文件已不在（只剩快照）一律不删；**定时任务历史还引用着的
