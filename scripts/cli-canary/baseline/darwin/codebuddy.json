@@ -171,6 +171,7 @@
   },
   "session-meta": {
    "keys": [
+    "contextWindow",
     "id",
     "meta",
     "sessionId",
@@ -200,5 +201,5 @@
    ]
   }
  },
- "version": "2.176.0"
+ "version": "2.177.0"
 }
