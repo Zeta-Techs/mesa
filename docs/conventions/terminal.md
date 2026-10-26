@@ -443,7 +443,7 @@
   都经 store `closeTabReq` 交给运行页 `requestCloseTab`（在跑的照旧确认；对话头 × 同日三改撤掉）。
 - **关掉一段对话（2026-10-26 用户定，三处入口同一条路）**：①侧栏对话行悬停 ×（顶替运行光标那格，design-system 同日条）与 ⋯「关掉这段对话」；
   ②对话头 ⋯ 最后一项「关掉这段对话」（行尾写快捷键，主要让人发现它）；③快捷键——macOS ⌘W 是菜单「文件 → 关闭对话」加速键（`lib.rs` `close-chat` →
-  `menu:action` → App.tsx 取 `terminalActiveTabId`，即 `focusedId`，分屏时是光标那一侧），不在运行页时什么也不做、**不退回关窗口**；预置 `close_window()`
+  `menu:action` → App.tsx 取 `terminalActiveTabId`，即 `focusedId`，分屏时是光标那一侧），不在运行页时什么也不做、**不退回关窗口**；焦点在别的窗口（机构登录窗 `inst-login`）时 ⌘W 照旧关那个窗口，事件只发主窗口；确认框开着时不接（全局只有一个确认框，再弹会把正在问的那件事当取消顶掉）；预置 `close_window()`
   的键固定 ⌘W 改不了，自建「关闭窗口」⇧⌘W（`close-window`，走 CloseRequested，关窗存盘照旧）。Windows / Linux 用 Ctrl+Shift+W（`closeChatCombo`，
   TerminalPage capture 阶段拦在 xterm 之前）——**不用 Ctrl+W**，那是终端里删前一个词。固定不可改，列在设置页固定快捷键。
   **先问的口径**（`closeAsksFirst`）：只有 Agent 在干活 / 等你确认、或注意力还不知道（刚起来、没联动上，可能正在干活）时弹确认；明确回完话在等下一句的直接关

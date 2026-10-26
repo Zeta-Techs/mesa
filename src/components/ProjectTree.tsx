@@ -431,7 +431,10 @@ export default function ProjectTree({
             {
               label: "关掉这段对话",
               icon: X,
-              title: "停下这段对话的 Agent、收起它；记录还在，再点开发一句就接回（在干活的会先问你）",
+              title:
+                holder.running && !holder.shell
+                  ? "停下这段对话的 Agent、收起它；记录还在，再点开发一句就接回（在干活的会先问你）"
+                  : "收起它：AI 没在跑（已退出或还没接回），记录还在，再点开发一句就接回",
               onSelect: () => useAppStore.getState().requestCloseTab(holder.tabId),
             },
           ]
@@ -798,7 +801,11 @@ export default function ProjectTree({
                 <button
                   type="button"
                   aria-label={`关掉「${sidebarChatTitle(full)}」`}
-                  title={`关掉：停下它，记录还在（在干活的会先问你）${dot ? `\n现在：${dotTitle(dot)}` : ""}`}
+                  title={
+                    dot
+                      ? `关掉：停下它，记录还在（在干活的会先问你）\n现在：${dotTitle(dot)}`
+                      : "收起：AI 没在跑（已退出或还没接回），这里还开着一个标签；记录还在"
+                  }
                   onClick={() => useAppStore.getState().requestCloseTab(holder.tabId)}
                   className="hidden h-6 w-6 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1 group-hover/chat:flex group-focus-within/chat:flex"
                 >

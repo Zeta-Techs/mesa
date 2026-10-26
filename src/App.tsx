@@ -45,7 +45,7 @@ import {
   type HelpDialogKind,
 } from "./components/HelpDialogs";
 import TopNavCapsule from "./components/TopNavCapsule";
-import { ConfirmDialogHost } from "./components/ConfirmDialog";
+import { ConfirmDialogHost, confirmDialogOpen } from "./components/ConfirmDialog";
 import { HoverTip, useHoverTip } from "./components/HoverTip";
 import { LoadingRows, rowActionClass } from "./components/PageFrame";
 import "./App.css";
@@ -903,9 +903,12 @@ function App() {
       else if (e.payload === "palette") setPaletteOpen((v) => !v);
       else if (e.payload === "feedback") setFeedbackOpen(true);
       else if (e.payload === "close-chat") {
-        // ⌘W：只在运行页、有正看着的对话时关它；别的页面什么也不做（不退回关窗口，关窗口是 ⇧⌘W）
+        // ⌘W：只在运行页、有正看着的对话时关它；别的页面什么也不做（不退回关窗口，关窗口是 ⇧⌘W）。
+        // 确认框开着时不接：确认框只有一个，再弹会把正在问的那件事当成「取消」顶掉
         const st = useAppStore.getState();
-        if (st.page === "terminal" && st.terminalActiveTabId) st.requestCloseTab(st.terminalActiveTabId);
+        if (st.page === "terminal" && st.terminalActiveTabId && !confirmDialogOpen()) {
+          st.requestCloseTab(st.terminalActiveTabId);
+        }
       }
     }).then((f) => {
       if (cancelled) f();

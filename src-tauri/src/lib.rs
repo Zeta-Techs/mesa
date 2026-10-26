@@ -345,7 +345,20 @@ pub fn run() {
                         let _ = app_handle.emit("menu:action", "new-chat");
                     }
                     "close-chat" => {
-                        let _ = app_handle.emit("menu:action", "close-chat");
+                        // ⌘W 在别的窗口（机构登录窗 inst-login 等）里照旧关那个窗口：那里没有对话，
+                        // 不能把主窗口里正看着的那段关掉
+                        let focused = app_handle
+                            .webview_windows()
+                            .into_values()
+                            .find(|w| w.is_focused().unwrap_or(false));
+                        match focused {
+                            Some(w) if w.label() != "main" => {
+                                let _ = w.close();
+                            }
+                            _ => {
+                                let _ = app_handle.emit_to("main", "menu:action", "close-chat");
+                            }
+                        }
                     }
                     "close-window" => {
                         // 键盘焦点所在的窗口；取不到就关主窗口

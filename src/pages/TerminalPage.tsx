@@ -111,7 +111,7 @@ import { loadCodingOverview } from "../components/CodingProjectView";
 import { normalizeWorkMode } from "../work-mode";
 import { exitCodeClause, exitCodeSummary, exitToneClass } from "../exit-code";
 import ChatSurface from "../components/ChatSurface";
-import { confirmDialog, alertDialog } from "../components/ConfirmDialog";
+import { confirmDialog, alertDialog, confirmDialogOpen } from "../components/ConfirmDialog";
 import ContextMenu from "../components/ContextMenu";
 import InsertMenuItems from "../components/InsertMenuItems";
 import {
@@ -9826,6 +9826,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       if (e.isComposing || !eventMatchesCombo(e, combo)) return;
       e.preventDefault();
       e.stopPropagation();
+      // 确认框开着时不接（同 App.tsx ⌘W）：再弹会把正在问的那件事顶掉
+      if (confirmDialogOpen()) return;
       void requestCloseTabRef.current(focusedIdRef.current);
     };
     window.addEventListener("keydown", onKey, true);
