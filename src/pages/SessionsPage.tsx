@@ -83,7 +83,7 @@ import GitPanel from "../components/GitPanel";
 import HandoffPicker from "../components/HandoffPicker";
 import DigestPicker from "../components/DigestPicker";
 import { alertDialog, confirmDialog } from "../components/ConfirmDialog";
-import { openConversation, openQuickChat } from "../quick-chat-launch";
+import { conversationRestFor, openConversation, openQuickChat } from "../quick-chat-launch";
 import { isScratchCwd } from "../quick-chat";
 import SessionImportModal from "../components/SessionImportModal";
 import SessionSlimDialog from "../components/SessionSlimDialog";
@@ -1065,11 +1065,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
         // 先摆最近一页，再在后台把更早的一次接齐：往上翻不再一页页接，滚动条一开始就是全长（2026-10-26）
         if (page.cursor != null) {
           setLoadingOlder(true);
-          void invoke<ConversationPageDto>("get_session_conversation_rest", {
-            agent: s.agent,
-            filePath: s.filePath,
-            before: page.cursor,
-          })
+          void conversationRestFor(s.agent, s.filePath, page.cursor)
             .then((rest) => {
               if (request !== conversationRequestRef.current) return;
               // 接的这会儿轮询可能已刷新过、并进了滑出窗口的几条：在现有列表前面接，不按旧长度截

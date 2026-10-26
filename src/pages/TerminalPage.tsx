@@ -126,7 +126,7 @@ import {
   isBlankChatTab,
   isThrowawayTab,
 } from "../quick-chat";
-import { conversationPageFor, saveQuickChatChoice } from "../quick-chat-launch";
+import { conversationPageFor, conversationRestFor, saveQuickChatChoice } from "../quick-chat-launch";
 import { connectionModels, readModelHistory } from "../model-history";
 import { modelKind } from "../model-kinds";
 import FileTree, { type DirEntryDto } from "../components/FileTree";
@@ -4552,11 +4552,7 @@ const TerminalView = memo(function TerminalView({
     restForRef.current = key;
     setLoadingOlder(true);
     try {
-      const rest = await invoke<ConversationPageDto>("get_session_conversation_rest", {
-        agent: src.agentId,
-        filePath: src.filePath,
-        before: cursor,
-      });
+      const rest = await conversationRestFor(src.agentId, src.filePath, cursor);
       if (!isCurrent()) return;
       olderRef.current = mergeConversationPages(rest.messages, olderRef.current);
       convCursorRef.current = null;

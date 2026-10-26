@@ -11,6 +11,8 @@
 export const RESUME_LOOKUP_TTL_MS = 10_000;
 /** 记录页最多留几段（每段几十条消息） */
 export const PAGE_CACHE_LIMIT = 24;
+/** 整段里更早的那部分最多留几段（大的一段几 MB，留最近看过的几段够来回切） */
+export const REST_CACHE_LIMIT = 8;
 
 type Clock = () => number;
 

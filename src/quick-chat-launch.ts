@@ -13,6 +13,7 @@ import { AGENTS, type ConversationPageDto, type ProjectDto, type RunDto, type Se
 import {
   OneShotPrefetch,
   PAGE_CACHE_LIMIT,
+  REST_CACHE_LIMIT,
   RESUME_LOOKUP_TTL_MS,
   VersionedCache,
 } from "./conversation-prefetch";
@@ -166,6 +167,7 @@ type ResumeLookup = {
 // 点开对话前要等的两样东西与摆出来的记录页，鼠标移上去就先取（conversation-prefetch.ts）
 const resumeLookups = new OneShotPrefetch<ResumeLookup>(RESUME_LOOKUP_TTL_MS);
 const conversationPages = new VersionedCache<ConversationPageDto>(PAGE_CACHE_LIMIT);
+const conversationRests = new VersionedCache<ConversationPageDto>(REST_CACHE_LIMIT);
 
 function resumeLookupKey(s: SessionMetaDto): string {
   return `${s.agent}\n${s.sessionId}`;
@@ -201,6 +203,20 @@ export function conversationPageFor(
       before: null,
       around: null,
     }),
+  );
+}
+
+/**
+ * 首屏之前的全部记录（get_session_conversation_rest）：[0, cursor) 这一段写完就不会再变，按 cursor 认版本，
+ * 来回切同几段对话不再每次重读、重传整段（2026-10-26）。聊天层与对话页回放共用
+ */
+export function conversationRestFor(
+  agent: string,
+  filePath: string,
+  before: number,
+): Promise<ConversationPageDto> {
+  return conversationRests.get(`${agent}\n${filePath}`, String(before), () =>
+    invoke<ConversationPageDto>("get_session_conversation_rest", { agent, filePath, before }),
   );
 }
 

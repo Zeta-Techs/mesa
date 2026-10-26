@@ -162,6 +162,7 @@
   首屏照旧先拿最近一页（快、能先摆出来），随即调 `get_session_conversation_rest(agent, filePath, before = 首屏 cursor)` 在后台把更早的一次接齐
   （普通 jsonl 直接读 [0, before) 解析一遍；OpenCode / Grok 的 cursor 不是字节偏移，后端按页往前接到头），接齐后 cursor 置空、不再分页。
   聊天层（TerminalView `loadRestOfConversation`）与对话页回放（`openSession`）都这样；接的期间 `loadingOlder` 为真，聊天层自己不翻页，刚打开的遮罩也等它（最多 600ms）。
+  `conversationRestFor`（quick-chat-launch.ts）按「会话 + cursor」缓存最近 8 段：[0, cursor) 写完就不再变，来回切同几段对话不再重读、重传整段（2026-10-26）。
   读不出时留着 cursor，往上翻照旧一页页接。**开着的对话已有「更早」时，每次刷新先把滑出最新一页的那几条并进「更早」**（`slidOutOfWindow`）：
   原先最新一页往后挪、「更早」不动，对话一长中间那段会从画面消失。只看不接转接回同一份文件时，已接齐的「更早」原样带过去（`carryOlderRef`），不再缩回一页重接。
 - **刚摆出的对话排好再露（2026-10-26 用户：每切到这段对话，上方文字都会抖动两下；`src/chat-veil.ts` `useSettleVeil`，聊天层与对话页回放共用）**：
