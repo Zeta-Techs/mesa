@@ -11,6 +11,7 @@ import {
   FolderMinus,
   FolderOpen,
   FolderPlus,
+  MessageCircle,
   MessagesSquare,
   MoreHorizontal,
   Pencil,
@@ -1036,10 +1037,10 @@ export default function ProjectTree({
   }
 
   /** 节头最前的图标格（2026-10-24 用户：「分不清哪些是项目、哪些是会话」）：平时是文件夹（收着 Folder、展开 FolderOpen；
-   *  随手聊是对话气泡），一眼看出这一行是装对话的；鼠标移到这一行上换成箭头，点它只开合对话（点名字是进项目页）。
+   *  随手聊是单个圆气泡 MessageCircle，同输入框项目按钮里的随手聊、同「新对话」那一家；两个方气泡留给「对话管理」，2026-10-27），一眼看出这一行是装对话的；鼠标移到这一行上换成箭头，点它只开合对话（点名字是进项目页）。
    *  原先的名字后小箭头撤掉，状态由图标本身带 */
   function renderFolderToggle(name: string, open: boolean, onToggle: () => void, kind: "project" | "scratch" | "unregistered") {
-    const Icon = kind === "scratch" ? MessagesSquare : open ? FolderOpen : Folder;
+    const Icon = kind === "scratch" ? MessageCircle : open ? FolderOpen : Folder;
     return (
       <button
         type="button"
