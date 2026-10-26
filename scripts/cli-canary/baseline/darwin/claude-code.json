@@ -64,7 +64,6 @@
      "effort-2025-11-24",
      "interleaved-thinking-2025-05-14",
      "mid-conversation-tool-changes-2026-07-01",
-     "prompt-caching-scope-2026-01-05",
      "thinking-display-updates-2026-08-18",
      "thinking-token-count-2026-05-13"
     ],
@@ -95,6 +94,7 @@
     "ExitPlanMode",
     "ExitWorktree",
     "ListAgents",
+    "Monitor",
     "NotebookEdit",
     "Read",
     "ReportFindings",
@@ -132,6 +132,7 @@
  "transcript": {
   "api-request": {
    "keys": [
+    "base",
     "cacheControl",
     "id",
     "keep",
@@ -327,6 +328,7 @@
     "permissionMode",
     "promptId",
     "promptSource",
+    "sandboxed",
     "sessionId",
     "session_id",
     "sourceToolAssistantUUID",
@@ -341,5 +343,5 @@
    ]
   }
  },
- "version": "2.1.306"
+ "version": "2.1.310"
 }
