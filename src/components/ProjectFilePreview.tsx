@@ -5,6 +5,7 @@ import PdfContinuousView from "./PdfContinuousView";
 import DocxPreview from "./DocxPreview";
 import XlsxPreview from "./XlsxPreview";
 import ImagePreview from "./ImagePreview";
+import UnsupportedPreview from "./UnsupportedPreview";
 
 const FilePreviewEditor = lazy(() => import("./FilePreviewEditor"));
 
@@ -70,9 +71,9 @@ export default function ProjectFilePreview({
   }
   if (kind === "legacy-doc") {
     return (
-      <p className="px-3 py-4 text-sm text-l3">
-        旧版 .doc 不能内嵌预览，请用 Word 另存为 .docx 后再打开。
-      </p>
+      <div className={frame}>
+        <UnsupportedPreview path={path} hint="旧版 Word / RTF 文档：用 Word 另存为 .docx 后可以在这里预览。" />
+      </div>
     );
   }
   return (

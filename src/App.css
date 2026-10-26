@@ -3581,3 +3581,13 @@ select:focus-visible {
   border-radius: 2px;
   background: color-mix(in srgb, var(--color-del) 30%, transparent);
 }
+/* md 阅读态查找命中（md-find.ts）：全部命中淡琥珀，当前一处深一档 */
+.md-body mark.md-find-hit {
+  background: color-mix(in srgb, var(--color-warn-text) 26%, transparent);
+  color: inherit;
+  border-radius: 2px;
+}
+.md-body mark.md-find-hit.md-find-current {
+  background: color-mix(in srgb, var(--color-warn-text) 58%, transparent);
+  color: var(--color-l1);
+}

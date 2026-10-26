@@ -325,6 +325,7 @@ wireWorkspaceLaunchGuard(() => {
 const FilePreviewEditor = lazy(() => import("../components/FilePreviewEditor"));
 // pdf.js 同样拆懒加载 chunk，首次打开 PDF 预览时才加载
 const PdfContinuousView = lazy(() => import("../components/PdfContinuousView"));
+const UnsupportedPreview = lazy(() => import("../components/UnsupportedPreview"));
 
 /** 沉浸阅读/写笔记时把 PDF 所在文件夹加成项目（默认不挂研究流程）。取消或失败返回 null。 */
 async function offerAddLitProject(
@@ -10825,12 +10826,11 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                       path={preview.path}
                       cwdHint={preview.root ?? activeCwd}
                     />
-                  ) : /\.doc$/i.test(preview.path) ? (
-                    <div className="p-3">
-                      <p className="text-sm text-l3">
-                        旧版 .doc 不能内嵌预览，请用 Word 另存为 .docx 后再打开。
-                      </p>
-                    </div>
+                  ) : /\.(doc|rtf)$/i.test(preview.path) ? (
+                    <UnsupportedPreview
+                      path={preview.path}
+                      hint="旧版 Word / RTF 文档：用 Word 另存为 .docx 后可以在这里预览。"
+                    />
                   ) : isPreviewableImagePath(preview.path) ? (
                     <ImagePreview
                       path={preview.path}

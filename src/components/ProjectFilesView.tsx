@@ -62,6 +62,7 @@ import FileTypeMark from "./FileTypeMark";
 import ProjectFilePreview from "./ProjectFilePreview";
 import { cachedNotePaired, checkNotePaired, isMarkdownNote } from "../note-pdf-pair";
 import { Modal } from "./Modal";
+import { armDraftHandoff } from "../file-draft-handoff";
 
 type EntryCache = Record<string, DirEntryDto[]>;
 
@@ -82,6 +83,11 @@ function sameEntries(a: DirEntryDto[], b: DirEntryDto[]): boolean {
     }
   }
   return true;
+}
+
+/** 宽屏（Tailwind lg）判定；测试环境没有 matchMedia 时按宽屏 */
+function wideQuery(): MediaQueryList | null {
+  return typeof window.matchMedia === "function" ? window.matchMedia("(min-width: 1024px)") : null;
 }
 
 function modifiedLabel(iso: string | null | undefined): string {
@@ -186,6 +192,20 @@ export default function ProjectFilesView({
   const listRef = useRef<HTMLDivElement>(null);
   /** 当前预览的未保存编辑（编辑器上报；换/关预览经 confirmLoseDirty 确认） */
   const dirtyRef = useRef(false);
+  // 侧栏预览（宽屏）与列表下方预览（窄屏）只挂一份：原先两份同时挂着、靠 CSS 藏一份，
+  // 同一文件两个编辑器各自读盘监听。窗口宽窄切换时没保存的修改跟过去（file-draft-handoff）
+  const [wide, setWide] = useState(() => wideQuery()?.matches ?? true);
+  useEffect(() => {
+    const mq = wideQuery();
+    if (!mq) return;
+    const onChange = () => {
+      const path = previewPathRef.current;
+      if (path && dirtyRef.current) armDraftHandoff(path);
+      setWide(mq.matches);
+    };
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
 
   /** quiet=true 给监听器的后台重载用：失败不弹错（目录多半已被 agent 删/改名），
    *  并把该目录从展开集合与缓存里收掉——否则每轮 fs 事件都重拉死路径、反复报错 */
@@ -497,9 +517,16 @@ export default function ProjectFilesView({
     if (!keepWindow) setWindowed(false);
   }
 
+  /** 侧栏 ⇄ 窗口预览：编辑器会换一个实例，先 arm 让没保存的修改跟过去（不再要人确认丢掉） */
+  function moveHost(toWindow: boolean) {
+    if (!preview || windowed === toWindow) return;
+    if (dirtyRef.current) armDraftHandoff(preview.path);
+    setWindowed(toWindow);
+  }
+
   async function pickFile(entry: DirEntryDto) {
     if (preview && samePath(preview.path, entry.path, IS_WINDOWS)) {
-      setWindowed(false);
+      moveHost(false);
       return;
     }
     if (!(await confirmLoseDirty())) return;
@@ -992,11 +1019,8 @@ export default function ProjectFilesView({
           type="button"
           className={`${rowActionClass} gap-1`}
           onClick={() => {
-            // 开窗同样重挂编辑器（侧栏实例卸载、Modal 挂新实例）：脏编辑先过确认
-            void (async () => {
-              if (!(await confirmLoseDirty())) return;
-              setWindowed(true);
-            })();
+            // 开窗重挂编辑器（侧栏实例卸载、Modal 挂新实例）：没保存的修改寄存过去接着改（file-draft-handoff）
+            moveHost(true);
           }}
         >
           <Maximize2 size={12} aria-hidden="true" />
@@ -1106,7 +1130,7 @@ export default function ProjectFilesView({
             )}
           </div>
         </section>
-        {preview && !windowed && (
+        {preview && !windowed && wide && (
           <section
             data-project-file-preview=""
             className={`ml-0 hidden h-full min-h-0 min-w-0 flex-1 flex-col lg:flex ${projectWellClass}`}
@@ -1131,7 +1155,7 @@ export default function ProjectFilesView({
           </section>
         )}
       </div>
-      {preview && !windowed && (
+      {preview && !windowed && !wide && (
         <section
           data-project-file-preview=""
           className={`mt-4 lg:hidden ${projectWellClass}`}
@@ -1143,6 +1167,11 @@ export default function ProjectFilesView({
               path={preview.path}
               root={projectPath}
               onOpenFile={(p) => void openPath(p)}
+              onOpenReader={
+                supportsImmersiveReader(preview.name)
+                  ? () => openImmersive(preview)
+                  : undefined
+              }
               onDirtyChange={(d) => {
                 dirtyRef.current = d;
               }}
@@ -1155,11 +1184,8 @@ export default function ProjectFilesView({
           open
           title={preview.name}
           onClose={() => {
-            // 关窗会退回侧栏预览（重挂载、重读盘）：脏编辑先经确认
-            void (async () => {
-              if (!(await confirmLoseDirty())) return;
-              setWindowed(false);
-            })();
+            // 关窗退回侧栏预览（重挂载）：没保存的修改一起带回来
+            moveHost(false);
           }}
           overflow="hidden"
           size={windowXl ? "xl" : "lg"}

@@ -17,7 +17,7 @@ export default function PreviewErrorState({
 }: PreviewErrorStateProps) {
   return (
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
-      <p className="text-sm text-err-text">无法预览此 {kind} 文件</p>
+      <p className="text-sm text-err-text">{kind === "文件" ? "无法预览这个文件" : `无法预览这个 ${kind} 文件`}</p>
       <p className="max-w-xl break-words text-xs text-l4">{error}</p>
       <div className="flex flex-wrap items-center justify-center gap-2">
         <button

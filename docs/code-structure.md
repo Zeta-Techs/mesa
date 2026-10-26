@@ -108,6 +108,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   围栏代码同一套）、上屏后 useChatDecorations 跑表格壳 / 代码高亮 / 公式 / 引用胶囊 / 文件链接，音频播放条、图片卡
                              #   （图片卡点击：聊天层经 ChatImageEditContext 进输入框标注台接着改；只读视图有工作目录走右栏预览，随手聊弹 ChatImageViewer）
   components/MergeConflictView.tsx # 保存撞车的对比合并：Monaco diff 左磁盘只读、右我的可改，保存右边以磁盘版本为基线，再撞车刷新左边
+  components/UnsupportedPreview.tsx # 本来就不在 Mesa 里预览的文件（二进制 / 旧版 doc、rtf）：中性说明 + 系统打开 / 在文件夹中显示
   components/MdFrontmatterCard.tsx # md 阅读态开头 YAML 头小卡（只展示，超 6 项折叠，双击回编辑态第 1 行）
   components/ChatImageViewer.tsx # 对话图片看大图弹层（Modal + ImagePreview 可缩放）：随手聊没有右栏预览时用
   components/ChatImageStage.tsx # 输入框上方的看图标注台（design-chat-layer §4.7）：盖住对话区、不挡输入框；
@@ -562,6 +563,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # ↑ 一路往回翻（userTextHistory；lastUserText 保留）、上下文圆环数据（lastContextTokens / contextUsage）；Mesa 组的内容由 TerminalPage mesaCommandsFor 组装，
                              # ↑ 取回跳过项目上下文包（splitLaunchPrompt）（tests/composer-assist.test.ts）
   file-watch.ts              # 预览跟随磁盘变化：fileStamp（file_stamp 大小+修改时间）/ stampKey / useFileVersion（watch_file 单文件监听，改一次加一）（tests/file-watch.test.ts）
+  image-view.ts              # 图片预览纯计算：imageFitScale（适应窗口，小图不放大）/ formatBytes（tests/image-view.test.ts）
+  file-draft-handoff.ts      # 预览换宿主（侧栏 ⇄ 窗口 ⇄ 窄屏）带上没保存的修改：arm 5 秒内卸载才寄存，取一次即清（tests/image-view.test.ts）
   image-cache.ts             # 读过的本地图按路径缓存成 blob URL（条数 + 字节双上限 LRU，淘汰即 revoke；同路径读取去重），
                              # 聊天图片卡与 md 内嵌图共用，切回会话首帧就有图；带磁盘戳，revalidateImageUrl 后台核戳换新图（tests/image-cache.test.ts）
   image-markup.ts            # 输入框图片标注纯逻辑：标注类型（原图像素坐标）、线宽 / 徽标 / 箭头几何、意见框编号与消息圈码、

@@ -1,4 +1,5 @@
 import { previewSaveCompletion, type FilePreviewSnapshot } from "../file-preview";
+import { stashDraftIfArmed, takeDraft, type PreviewDraft } from "../file-draft-handoff";
 import { sanitizeDocumentHtml } from "../document-html";
 import {
   lazy,
@@ -67,6 +68,7 @@ import MdFrontmatterCard from "./MdFrontmatterCard";
 import MergeConflictView from "./MergeConflictView";
 import { HoverTip } from "./HoverTip";
 import PreviewErrorState from "./PreviewErrorState";
+import UnsupportedPreview from "./UnsupportedPreview";
 import {
   LATEX_EXTENSIONS,
   LATEX_LANGUAGE_ID,
@@ -851,6 +853,8 @@ function TextFilePreviewEditor({
   const isHtml = isHtmlPath(path);
   const hasReadMode = isMd || isHtml;
   const [mode, setMode] = useState<"read" | "edit">(hasReadMode ? "read" : "edit");
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
   const [immersive, setImmersive] = useState(false);
   // 这份 md 能不能进三栏沉浸阅读（note-pdf-pair.ts）：配得上本篇 PDF 才给「沉浸阅读」；CHANGELOG、README 这类
   // 配不上的只给「全屏阅读」（2026-10-25 用户：没有 PDF 的文件预览也挂「沉浸阅读」有歧义）
@@ -1033,6 +1037,8 @@ function TextFilePreviewEditor({
 
   // 磁盘上的最新内容（加载/保存时更新）：外部变化重载时用于比对，避免自己保存触发的回环
   const lastSavedRef = useRef<FilePreviewSnapshot | null>(null);
+  /** 刚接过来的搬家草稿：编辑器建好后标脏、恢复光标与滚动 */
+  const pendingDraftRef = useRef<PreviewDraft | null>(null);
   // executeEdits 做外部内容替换期间置位，dirty 监听跳过这次程序性改动
   const applyingExternalRef = useRef(false);
 
@@ -1055,11 +1061,21 @@ function TextFilePreviewEditor({
           { path, root },
         );
         if (cancelled) return;
-        lastSavedRef.current = p;
         textPathRef.current = path;
-        setText(p.text);
         setTruncated(p.truncated);
         setReadOnlyReason(p.readOnlyReason);
+        // 从另一个位置搬过来的没保存修改（侧栏 ⇄ 窗口预览，file-draft-handoff）：接着改，不丢
+        const draft = p.revision ? takeDraft(path) : null;
+        if (draft) {
+          pendingDraftRef.current = draft;
+          lastSavedRef.current = draft.baseline;
+          setMode(draft.mode);
+          setText(draft.text);
+          if (p.text !== draft.baseline.text) setDiskChange(p);
+          return;
+        }
+        lastSavedRef.current = p;
+        setText(p.text);
       } catch (e) {
         if (!cancelled) setError(String(e));
       }
@@ -1171,7 +1187,25 @@ function TextFilePreviewEditor({
       setDirty(true);
       onDirtyChange?.(true);
     });
+    const draft = pendingDraftRef.current;
+    if (draft) {
+      pendingDraftRef.current = null;
+      dirtyRef.current = true;
+      setDirty(true);
+      onDirtyChange?.(true);
+      if (draft.viewState) ed.restoreViewState(draft.viewState as monaco.editor.ICodeEditorViewState);
+    }
+    const editorPath = path;
     return () => {
+      // 宿主搬家（arm 过）时把没保存的修改寄存给下一个编辑器
+      if (dirtyRef.current && lastSavedRef.current) {
+        stashDraftIfArmed(editorPath, {
+          text: ed.getValue(),
+          baseline: lastSavedRef.current,
+          mode: modeRef.current,
+          viewState: ed.saveViewState(),
+        });
+      }
       sub.dispose();
       ed.dispose();
       editorRef.current = null;
@@ -1815,6 +1849,9 @@ function TextFilePreviewEditor({
       )}
       {error && (
         error.includes("二进制") ? (
+          // 二进制本来就不在这里预览：中性说明 + 系统打开，不当成读取失败（不给没用的「重试」）
+          <UnsupportedPreview path={path} />
+        ) : error.includes("不存在或不可读") || error.includes("读取文件失败") ? (
           <PreviewErrorState
             error={error}
             kind="文件"
