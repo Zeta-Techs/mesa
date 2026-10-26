@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { probeMark } from "../switch-probe"; // PROBE
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -1714,6 +1715,7 @@ const TerminalView = memo(function TerminalView({
       setConvCursor(page.cursor);
       setConv(page.messages);
       setPreviewState("shown");
+      probeMark("shown", `${page.messages.length} msgs cursor=${page.cursor}`); // PROBE
       if (page.cursor != null) {
         void loadRestOfConversation(src, page.cursor, () => !linkCtxRef.current && previewSrcRef.current === src);
       }
@@ -1724,6 +1726,7 @@ const TerminalView = memo(function TerminalView({
       return;
     }
     setPreviewState("loading");
+    probeMark("page-miss"); // PROBE
     conversationPageFor(src.agentId, src.filePath, previewVersionRef.current)
       .then((page) => {
         if (stale || linkCtxRef.current) return;
@@ -4671,6 +4674,7 @@ const TerminalView = memo(function TerminalView({
       convCursorRef.current = null;
       setConvCursor(null);
       setConv(mergeConversationPages(olderRef.current, latestWindowRef.current));
+      probeMark("rest", `${rest.messages.length} older`); // PROBE
     };
     // 已经取回来的（刚看过、点开前等过）当场接上，和最近一页同一帧画出来
     const ready = cachedConversationRest(src.agentId, src.filePath, cursor);

@@ -232,17 +232,22 @@ export function cachedConversationRest(agent: string, filePath: string, before: 
 const RECORD_WAIT_MS = 350;
 
 /**
- * 点开前把要摆的记录（最近一页 + 更早的整段）也取好，和接回身份一起等：标签一出来第一帧就带着整段记录，
- * 原先的画面一直留到那一刻，不先空一帧（2026-10-26 用户：切对话黑一下）。取不到或太慢不挡，照旧先切
+ * 点开前把要摆的最近一页取好，和接回身份一起等：标签一出来第一帧就带着记录，原先的画面一直留到那一刻，
+ * 不先空一帧（2026-10-26 用户：切对话黑一下）。更早的整段不等（2026-10-26 实测：整段要等上百毫秒），
+ * 标签摆出最近一页后在后台接上，接上时画面不动。取不到或太慢不挡，照旧先切
  */
 function prepareRecord(s: SessionMetaDto): Promise<unknown> {
-  const all = conversationPageFor(s.agent, s.filePath, s.updatedAt ?? "")
-    .then((page) => (page.cursor != null ? conversationRestFor(s.agent, s.filePath, page.cursor) : null))
-    .catch(() => null);
-  return Promise.race([all, new Promise((r) => setTimeout(r, RECORD_WAIT_MS))]);
+  const page = conversationPageFor(s.agent, s.filePath, s.updatedAt ?? "").catch(() => null);
+  return Promise.race([page, new Promise((r) => setTimeout(r, RECORD_WAIT_MS))]);
+}
+
+/** 等这一帧画出来：侧栏点下去的高亮先上屏，再派发切换（切换那一帧要画整段记录，和高亮挤在一帧里高亮就跟着晚） */
+function afterPaint(): Promise<void> {
+  return new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
 }
 
 /** 鼠标移到列表里的一段对话上：先把点开要等的东西取回来。Mesa 里已经开着它的不用取（点了只是切过去） */
+import { probeMark } from "./switch-probe"; // PROBE
 export function prefetchConversation(s: SessionMetaDto): void {
   if (!s.alive) return;
   const { liveSessions, terminalRunInputs } = useAppStore.getState();
@@ -253,7 +258,10 @@ export function prefetchConversation(s: SessionMetaDto): void {
     return;
   }
   resumeLookups.prefetch(resumeLookupKey(s), () => fetchResumeLookup(s));
-  void conversationPageFor(s.agent, s.filePath, s.updatedAt ?? "").catch(() => {});
+  // 更早的整段也一起取：点开后最近一页一摆出来就能当场接上，不再等它（2026-10-26）
+  void conversationPageFor(s.agent, s.filePath, s.updatedAt ?? "")
+    .then((page) => (page.cursor != null ? conversationRestFor(s.agent, s.filePath, page.cursor) : null))
+    .catch(() => {});
 }
 
 /** 列表里点一段对话（侧栏项目树、工作台「最近对话」、对话页「继续」，2026-10-23 侧栏挂对话第一期）：
@@ -261,18 +269,21 @@ export function prefetchConversation(s: SessionMetaDto): void {
  *  源文件已经不在的接不回，去对话页看保留下来的快照。 */
 export function openConversation(
   s: SessionMetaDto,
-  opts?: { preferredProfileId?: string | null; split?: boolean },
+  opts?: { preferredProfileId?: string | null; split?: boolean; onOpened?: () => void; onSkipped?: () => void },
 ): void {
   if (!s.alive) {
     const { setOpenSessionReq, setPage } = useAppStore.getState();
     setOpenSessionReq({ agent: s.agent, sessionId: s.sessionId });
     setPage("sessions");
+    opts?.onOpened?.();
     return;
   }
   resumeSessionInTerminal(s, {
     preferredProfileId: opts?.preferredProfileId,
     lazy: true,
     split: opts?.split,
+    onOpened: opts?.onOpened,
+    onSkipped: opts?.onSkipped,
   });
 }
 
@@ -312,8 +323,9 @@ export function resumeSessionInTerminal(
   }
   void (async () => {
     const [{ run, config, projects }] = await Promise.all([
-      resumeLookups.take(resumeLookupKey(s), () => fetchResumeLookup(s)),
-      opts?.lazy ? prepareRecord(s) : null,
+      resumeLookups.take(resumeLookupKey(s), () => fetchResumeLookup(s)).then((v) => { probeMark("lookup"); return v; }), // PROBE
+      opts?.lazy ? prepareRecord(s).then((v) => { probeMark("record", v === undefined ? "timeout" : "ok"); return v; }) : null, // PROBE
+      opts?.lazy ? afterPaint() : null,
     ]);
     if (s.live && !holder && !lastWriteIsMesas(s.updatedAt, run)) {
       const ok = await confirmDialog(
@@ -356,6 +368,7 @@ export function resumeSessionInTerminal(
       split: opts?.split || undefined,
     });
     setPage("terminal");
+    probeMark("dispatch"); // PROBE
     opts?.onOpened?.();
   })();
 }

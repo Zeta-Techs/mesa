@@ -267,7 +267,13 @@ test("点一段对话交给 openConversation，项目给这家设的连接一并
     await view.act(async () => view.button("镁硫电池第1篇精读").click());
     const call = view.calls.find((c) => c[0] === "openConversation")!;
     assert.equal((call[1] as SessionMetaDto).sessionId, "r1");
-    assert.deepEqual(call[2], { preferredProfileId: "p-codex" });
+    const opts = call[2] as { preferredProfileId?: string; onSkipped?: () => void };
+    assert.equal(opts.preferredProfileId, "p-codex");
+    // 点下去这一行当场亮，不等切过去；没切成（确认框里取消）就收回
+    const row = () => view.button("镁硫电池第1篇精读");
+    assert.equal(row().getAttribute("aria-current"), "true");
+    await view.act(async () => opts.onSkipped?.());
+    assert.equal(row().getAttribute("aria-current"), null);
     assert.ok(!view.host.textContent?.includes("源文件不在了"));
   } finally {
     await view.close();
