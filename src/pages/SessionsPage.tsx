@@ -76,6 +76,7 @@ import { useAutoLoadOlder } from "../auto-load-older";
 import { progressiveLimit, useProgressiveRows } from "../progressive-rows";
 import { useReadingAnchor } from "../reading-anchor";
 import { useSettleVeil, veilClass } from "../chat-veil";
+import { slidOutOfWindow } from "../chat-handoff";
 import RunCaret from "../components/RunCaret";
 import { caretOfAttention, type RunCaretState } from "../run-caret";
 import GitPanel from "../components/GitPanel";
@@ -317,6 +318,8 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     boolean | undefined
   >(undefined);
   const [messages, setMessages] = useState<ChatMessageDto[]>([]);
+  const messagesRef = useRef<ChatMessageDto[]>([]);
+  messagesRef.current = messages;
   const [conversationCursor, setConversationCursor] = useState<number | null>(
     null,
   );
@@ -1008,6 +1011,8 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     setExportPath(null);
     setConversationCursor(null);
     setLoadingConv(true);
+    // 上一段在后台接更早记录的那次会被作废（请求号变了），它不会再把这个标记收回来
+    setLoadingOlder(false);
     setError(null);
     const request = ++conversationRequestRef.current;
     let target = focus;
@@ -1057,6 +1062,28 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
           const el = scrollRef.current;
           if (el) el.scrollTop = el.scrollHeight;
         });
+        // 先摆最近一页，再在后台把更早的一次接齐：往上翻不再一页页接，滚动条一开始就是全长（2026-10-26）
+        if (page.cursor != null) {
+          setLoadingOlder(true);
+          void invoke<ConversationPageDto>("get_session_conversation_rest", {
+            agent: s.agent,
+            filePath: s.filePath,
+            before: page.cursor,
+          })
+            .then((rest) => {
+              if (request !== conversationRequestRef.current) return;
+              const latest = messagesRef.current.slice(olderCountRef.current);
+              olderCountRef.current = rest.messages.length;
+              setMessages([...rest.messages, ...latest]);
+              setConversationCursor(null);
+            })
+            .catch(() => {
+              // 读不出：留着分页，往上翻照旧一页页接
+            })
+            .finally(() => {
+              if (request === conversationRequestRef.current) setLoadingOlder(false);
+            });
+        }
       }
     } catch (e) {
       if (request === conversationRequestRef.current) setError(String(e));
@@ -1248,10 +1275,12 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
             const atBottom = scroller
               ? scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 40
               : false;
-            setMessages((current) => [
-              ...current.slice(0, Math.min(olderCountRef.current, current.length)),
-              ...page.messages,
-            ]);
+            // 最新一页往后挪了：滑出窗口的那几条并进「更早」，不然对话一长中间那段会从回放里消失（2026-10-26）
+            const current = messagesRef.current;
+            const older = current.slice(0, Math.min(olderCountRef.current, current.length));
+            const slid = slidOutOfWindow(current.slice(older.length), page.messages);
+            olderCountRef.current = older.length + slid.length;
+            setMessages([...older, ...slid, ...page.messages]);
             if (atBottom)
               requestAnimationFrame(() => {
                 const el = scrollRef.current;

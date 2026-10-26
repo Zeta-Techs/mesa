@@ -6922,6 +6922,65 @@ pub async fn get_session_conversation_page(
     .map_err(|e| format!("读取会话分页失败: {e}"))?
 }
 
+/// 某个分页位置之前的全部记录，一次给齐（2026-10-26 用户对照 Claude 客户端：往上翻要丝滑、滚动条别一下变短）。
+/// 打开一段对话先摆最近一页，随后在后台用它把更早的一次接齐，前端不再一页页往上接。
+/// 普通 jsonl 直接读 [0, before) 解析一遍；OpenCode / Grok 的分页位置不是字节偏移，按页往前接到头。
+/// 实测（release）：p50 4.9MB 会话 17ms / 439 条，p90 15MB 55ms / 1422 条，最大 93MB 219ms / 5042 条。
+#[tauri::command]
+pub async fn get_session_conversation_rest(
+    agent: String,
+    file_path: String,
+    before: u64,
+) -> Result<ConversationPageDto, String> {
+    tauri::async_runtime::spawn_blocking(move || conversation_rest_impl(&agent, &file_path, before))
+        .await
+        .map_err(|e| format!("读取更早的记录失败: {e}"))?
+}
+
+pub(crate) fn conversation_rest_impl(
+    agent: &str,
+    file_path: &str,
+    before: u64,
+) -> Result<ConversationPageDto, String> {
+    if agent != "opencode" && agent != "grok" {
+        let source = PathBuf::from(file_path);
+        let path = if source.exists() {
+            source
+        } else {
+            find_snapshot(agent, &source).ok_or("会话文件已不存在，且没有可用快照")?
+        };
+        let mut magic = [0u8; 4];
+        let compressed = fs::File::open(&path)
+            .and_then(|mut file| file.read_exact(&mut magic))
+            .is_ok()
+            && magic == ZSTD_MAGIC;
+        // 压缩会话没有更早一页（首屏 cursor 就是 None），走不到这里；到了也不读
+        if compressed {
+            return Ok(ConversationPageDto { messages: Vec::new(), cursor: None });
+        }
+        let mut file = fs::File::open(&path).map_err(|e| format!("读取会话失败: {e}"))?;
+        let len = file
+            .metadata()
+            .map_err(|e| format!("读取会话信息失败: {e}"))?
+            .len();
+        let win = read_jsonl_window(&mut file, 0, before.min(len))?;
+        let mut messages = parse_session_lines(agent, &win.lines);
+        redact_conversation(&mut messages);
+        return Ok(ConversationPageDto { messages, cursor: None });
+    }
+    let mut out: Vec<ChatMessageDto> = Vec::new();
+    let mut cursor = Some(before);
+    // 防原地打转：分页位置必须一直往前
+    while let Some(at) = cursor {
+        let page = conversation_page_impl(agent, file_path, Some(at), None)?;
+        let mut messages = page.messages;
+        messages.append(&mut out);
+        out = messages;
+        cursor = page.cursor.filter(|next| *next < at);
+    }
+    Ok(ConversationPageDto { messages: out, cursor: None })
+}
+
 /// 会话全文解析（get_session_conversation 与 ai_summarize_session 共用）
 pub(crate) fn conversation_impl(agent: &str, file_path: &str) -> Vec<ChatMessageDto> {
     let mut messages = conversation_impl_raw(agent, file_path);
@@ -9432,6 +9491,39 @@ mod tests {
                 .any(|m| m.blocks[0].text.contains("消息 0100")),
             "around 窗口应包含命中那一条"
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn conversation_rest_gives_everything_before_the_first_page() {
+        let dir = std::env::temp_dir().join(format!("ccode-rest-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("long.jsonl");
+        let mut content = String::new();
+        for index in 0..4000 {
+            content.push_str(&format!(
+                "{{\"type\":\"user\",\"message\":{{\"role\":\"user\",\"content\":\"消息 {index:04} {}\"}},\"timestamp\":\"2026-07-01T00:00:00Z\"}}\n",
+                "x".repeat(80)
+            ));
+        }
+        std::fs::write(&file, &content).unwrap();
+        let path = file.to_str().unwrap();
+        let latest = conversation_page_impl("claude-code", path, None, None).unwrap();
+        let rest = conversation_rest_impl("claude-code", path, latest.cursor.unwrap()).unwrap();
+        assert_eq!(rest.cursor, None);
+        // 拼起来正好是全文，不重不漏
+        let joined: Vec<String> = rest
+            .messages
+            .iter()
+            .chain(latest.messages.iter())
+            .map(|m| m.blocks[0].text.clone())
+            .collect();
+        let full: Vec<String> = conversation_impl("claude-code", path)
+            .iter()
+            .map(|m| m.blocks[0].text.clone())
+            .collect();
+        assert_eq!(joined.len(), 4000);
+        assert_eq!(joined, full);
         std::fs::remove_dir_all(&dir).ok();
     }
 

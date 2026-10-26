@@ -465,7 +465,12 @@ export default function ChatSurface({
     fillKey: messages.length,
   });
   // 刚摆出这段对话：排好（表格、文件链接、高亮、补页都停下）再一次露出，贴底时上面的字不跟着抖（chat-veil.ts）
-  const veiled = useSettleVeil(scrollRef, !emptyLayout && shownMessages.length > 0, () => loadingOlderRef.current);
+  const veiled = useSettleVeil(
+    scrollRef,
+    !emptyLayout && shownMessages.length > 0,
+    // 自己在接更早一页，或上层正在后台把更早的记录一次接齐
+    () => loadingOlderRef.current || loadingOlder,
+  );
   const projectPaths = useAppStore((s) => s.projectPaths);
   const recentRepos = useAppStore((s) => s.recentRepos);
   const theme = useAppStore((s) => s.settings?.theme);

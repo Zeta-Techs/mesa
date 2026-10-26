@@ -301,6 +301,18 @@ export function chatMessageKey(
   return `${message.role}:${message.timestamp ?? ""}:${message.blocks.length}:${firstText.slice(0, 24)}`;
 }
 
+/**
+ * 刷新时最新一页往后挪了：上一次最新页里排在新一页第一条之前的那些（滑出窗口的）。开着的对话已经接上更早的记录时，
+ * 每次刷新先把它们并进「更早」，否则对话一长，「更早」的尾巴和最新一页之间那段会从画面上消失（2026-10-26）。
+ * 两页对不上（没有一条重合）就整页算滑出。滑出的都是窗口开头之前的、已经写完的消息，不会把写到一半的版本留下来。
+ */
+export function slidOutOfWindow(previous: ChatMessageDto[], next: ChatMessageDto[]): ChatMessageDto[] {
+  if (previous.length === 0 || next.length === 0) return [];
+  const firstKey = chatMessageKey(next[0]);
+  const at = previous.findIndex((message) => chatMessageKey(message) === firstKey);
+  return at < 0 ? previous : previous.slice(0, at);
+}
+
 /** 向前翻页时把旧窗接到最新窗前面，按内容键去重（最新窗优先） */
 export function mergeConversationPages(
   older: ChatMessageDto[],

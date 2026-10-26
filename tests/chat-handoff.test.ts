@@ -17,6 +17,7 @@ import {
   localCommandRecord,
   mergeLocalRecords,
   mergeConversationPages,
+  slidOutOfWindow,
   modelSwitchCommand,
   pendingAfterTurn,
   slashCommandRecorded,
@@ -186,6 +187,22 @@ test("会话分页去重拼接，最新窗优先", () => {
     chatMessageKey(older[1]),
     chatMessageKey(latest[0]),
   );
+});
+
+test("最新一页往后挪时，滑出窗口的那几条并进更早的，中间不丢", () => {
+  const m = (t: string) => msg("user", [{ kind: "text", text: t, toolName: null }], t);
+  const prev = [m("5"), m("6"), m("7"), m("8")];
+  const next = [m("7"), m("8"), m("9")];
+  assert.deepEqual(slidOutOfWindow(prev, next).map((x) => x.timestamp), ["5", "6"]);
+  // 没挪：什么都不并
+  assert.deepEqual(slidOutOfWindow(prev, prev), []);
+  // 对不上：整页算滑出
+  assert.deepEqual(slidOutOfWindow(prev, [m("20")]).map((x) => x.timestamp), ["5", "6", "7", "8"]);
+  assert.deepEqual(slidOutOfWindow([], next), []);
+  // 并进「更早」再拼最新一页：5–9 连着
+  const older = [m("1"), m("2"), m("3"), m("4")];
+  const kept = mergeConversationPages(older, slidOutOfWindow(prev, next));
+  assert.deepEqual(mergeConversationPages(kept, next).map((x) => x.timestamp), ["1", "2", "3", "4", "5", "6", "7", "8", "9"]);
 });
 
 test("kimi 模型别名与 /model 命令模板", () => {

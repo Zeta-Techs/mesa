@@ -593,6 +593,7 @@ pub fn run() {
             sessions::release_session_claim,
             sessions::get_session_conversation,
             sessions::get_session_conversation_page,
+            sessions::get_session_conversation_rest,
             sessions::session_file_sig,
             sessions::watch_session,
             sessions::unwatch_session,

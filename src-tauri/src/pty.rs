@@ -2215,6 +2215,7 @@ mod tests {
                     "assign_session_task",
                     "claim_next_session_for_card",
                     "claim_next_session_for_step",
+                    "get_session_conversation_rest",
                 ],
             ),
             ("handoff.rs", include_str!("handoff.rs"), &["handoff_targets", "mark_handoff"]),

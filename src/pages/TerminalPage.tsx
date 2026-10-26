@@ -74,6 +74,7 @@ import {
   confirmHandoffEvent,
   hasAssistantText,
   mergeConversationPages,
+  slidOutOfWindow,
   claudeModeTier,
   localCommandRecord,
   mergeLocalRecords,
@@ -1579,6 +1580,12 @@ const TerminalView = memo(function TerminalView({
   const lastSendAtRef = useRef(0);
   const olderRef = useRef<ChatMessageDto[]>([]);
   const latestWindowRef = useRef<ChatMessageDto[]>([]);
+  /** 上一次刷新解析出的最新一页（不含本地乐观消息）：算滑出窗口的那几条（slidOutOfWindow） */
+  const prevParsedRef = useRef<ChatMessageDto[]>([]);
+  /** 已经在后台接齐过更早记录的那份会话（agent + 文件），同一份不重复接 */
+  const restForRef = useRef<string | null>(null);
+  /** 摆着的记录转接回时，先把已接齐的更早记录留着；接上的正是同一份文件就原样放回，不再从头接一遍 */
+  const carryOlderRef = useRef<{ filePath: string; older: ChatMessageDto[] } | null>(null);
   const convCursorRef = useRef<number | null>(null);
   const [convCursor, setConvCursor] = useState<number | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -1682,11 +1689,15 @@ const TerminalView = memo(function TerminalView({
         if (stale || linkCtxRef.current) return;
         previewSrcRef.current = src;
         olderRef.current = [];
+        restForRef.current = null;
         latestWindowRef.current = page.messages;
         convCursorRef.current = page.cursor;
         setConvCursor(page.cursor);
         setConv(page.messages);
         setPreviewState("shown");
+        if (page.cursor != null) {
+          void loadRestOfConversation(src, page.cursor, () => !linkCtxRef.current && previewSrcRef.current === src);
+        }
       })
       .catch(() => {
         // 读不出就不摆，聊天层退回「这段对话还没接回」，发一句照样接回
@@ -4386,10 +4397,25 @@ const TerminalView = memo(function TerminalView({
         missing,
         pendingAssistantKeysRef.current,
       );
+      // 已经接上更早的记录时，最新一页往后挪滑出去的那几条并进「更早」，不然对话一长中间那段会消失
+      if (olderRef.current.length > 0) {
+        olderRef.current = mergeConversationPages(
+          olderRef.current,
+          slidOutOfWindow(prevParsedRef.current, parsedMessages),
+        );
+      }
+      prevParsedRef.current = parsedMessages;
       latestWindowRef.current = mergedMessages;
       if (olderRef.current.length === 0) {
         convCursorRef.current = page.cursor;
         setConvCursor(page.cursor);
+        if (page.cursor != null) {
+          void loadRestOfConversation(
+            { agentId: ctx.agentId, filePath: ctx.filePath },
+            page.cursor,
+            () => linkCtxRef.current === ctx,
+          );
+        }
       }
       setConv(mergeConversationPages(olderRef.current, mergedMessages));
       const hasNewAssistantText = parsedMessages.some(
@@ -4512,6 +4538,35 @@ const TerminalView = memo(function TerminalView({
     }
   }
 
+  /** 最近一页摆出来之后，在后台把更早的记录一次接齐（2026-10-26 用户对照 Claude 客户端：往上翻要丝滑、滚动条别一下变短）。
+   *  接的期间报「正在接更早的」：聊天层不再自己一页页接，刚打开时的遮罩也等它（chat-veil.ts）。读不出就留着分页，往上翻照旧一页页接 */
+  async function loadRestOfConversation(
+    src: { agentId: string; filePath: string },
+    cursor: number,
+    isCurrent: () => boolean,
+  ) {
+    const key = `${src.agentId}\n${src.filePath}`;
+    if (restForRef.current === key) return;
+    restForRef.current = key;
+    setLoadingOlder(true);
+    try {
+      const rest = await invoke<ConversationPageDto>("get_session_conversation_rest", {
+        agent: src.agentId,
+        filePath: src.filePath,
+        before: cursor,
+      });
+      if (!isCurrent()) return;
+      olderRef.current = mergeConversationPages(rest.messages, olderRef.current);
+      convCursorRef.current = null;
+      setConvCursor(null);
+      setConv(mergeConversationPages(olderRef.current, latestWindowRef.current));
+    } catch {
+      if (restForRef.current === key) restForRef.current = null;
+    } finally {
+      setLoadingOlder(false);
+    }
+  }
+
   async function loadOlderConversation(settle?: () => Promise<void>) {
     const ctx = linkCtxRef.current;
     // 只看没接的对话也能往上翻（来源是摆出来的那份会话文件）
@@ -4562,6 +4617,15 @@ const TerminalView = memo(function TerminalView({
     if (createdAt) ctx.createdAt = createdAt;
     olderRef.current = [];
     latestWindowRef.current = [];
+    prevParsedRef.current = [];
+    restForRef.current = null;
+    // 摆着的那份正是这一份：已接齐的更早记录原样放回（不然接回那一下整段缩回最近一页、再从头接一遍）
+    const carry = carryOlderRef.current;
+    carryOlderRef.current = null;
+    if (carry && samePath(carry.filePath, filePath, IS_WINDOWS) && carry.older.length > 0) {
+      olderRef.current = carry.older;
+      restForRef.current = `${ctx.agentId}\n${filePath}`;
+    }
     convCursorRef.current = null;
     setConvCursor(null);
     setSessionFile(filePath);
@@ -4860,8 +4924,14 @@ const TerminalView = memo(function TerminalView({
     autoTitleMilestoneRef.current = 0;
     linkCtxRef.current = null;
     convSigRef.current = "";
+    carryOlderRef.current =
+      keepPreviewConvRef.current && previewSrcRef.current && olderRef.current.length > 0
+        ? { filePath: previewSrcRef.current.filePath, older: olderRef.current }
+        : null;
     olderRef.current = [];
     latestWindowRef.current = [];
+    prevParsedRef.current = [];
+    restForRef.current = null;
     convCursorRef.current = null;
     setConvCursor(null);
     setLoadingOlder(false);
