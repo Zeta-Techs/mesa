@@ -37,3 +37,17 @@ test("读图缓存：同一路径重存时释放旧地址、字节不重复计",
   assert.equal(lru.bytes, 50);
   assert.equal(lru.get("/a.png"), "blob:a2");
 });
+
+test("读图缓存：磁盘换版时单删一条，不释放屏上还在用的旧地址", () => {
+  const revoked: string[] = [];
+  const lru = createImageLru({ capCount: 4, capBytes: 1000, revoke: (u) => revoked.push(u) });
+  lru.set("a", "blob:a", 10);
+  lru.set("b", "blob:b", 20);
+  lru.delete("a");
+  assert.equal(lru.get("a"), undefined);
+  assert.equal(lru.size, 1);
+  assert.equal(lru.bytes, 20);
+  assert.deepEqual(revoked, []);
+  lru.delete("missing");
+  assert.equal(lru.size, 1);
+});

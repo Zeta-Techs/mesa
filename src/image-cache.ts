@@ -3,6 +3,7 @@
 //! 用 blob URL 不用 data URL：DOM 里不挂几 MB 的 base64 串，WebView 按同一地址复用已解码的图。
 
 import { invoke } from "@tauri-apps/api/core";
+import { fileStamp, stampKey } from "./file-watch.ts";
 
 type Entry = { url: string; bytes: number };
 
@@ -35,6 +36,13 @@ export function createImageLru(opts: { capCount: number; capBytes: number; revok
         opts.revoke(oldest.url);
       }
     },
+    /** 删掉一条（磁盘上换了版本）；不 revoke——屏上还挂着旧地址的图等新图换上 */
+    delete(key: string): void {
+      const old = map.get(key);
+      if (!old) return;
+      map.delete(key);
+      total -= old.bytes;
+    },
     get size() {
       return map.size;
     },
@@ -50,6 +58,8 @@ const lru = createImageLru({
   revoke: (url) => URL.revokeObjectURL(url),
 });
 const inflight = new Map<string, Promise<string>>();
+/** 缓存时那一版的磁盘戳（大小 + 修改时间）：重新出图后据此换掉旧图（2026-10-26） */
+const stamps = new Map<string, string | null>();
 
 /** 已缓存就同步给地址（首帧直接画图），没有返回 undefined */
 export function cachedImageUrl(path: string): string | undefined {
@@ -60,19 +70,51 @@ export function cachedImageUrl(path: string): string | undefined {
 export function loadImageUrl(path: string, cwdHint: string | null | undefined): Promise<string> {
   const hit = lru.get(path);
   if (hit) return Promise.resolve(hit);
+  return fetchImage(path, cwdHint);
+}
+
+function fetchImage(path: string, cwdHint: string | null | undefined): Promise<string> {
   const key = `${path}\u0000${cwdHint ?? ""}`;
   const pending = inflight.get(key);
   if (pending) return pending;
-  const p = invoke<{ mime: string; data: string }>("read_image_bytes", { path, cwdHint: cwdHint ?? null })
-    .then((dto) => {
+  const p = Promise.all([
+    invoke<{ mime: string; data: string }>("read_image_bytes", { path, cwdHint: cwdHint ?? null }),
+    fileStamp(path, cwdHint),
+  ])
+    .then(([dto, stamp]) => {
       const bin = atob(dto.data);
       const bytes = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
       const url = URL.createObjectURL(new Blob([bytes], { type: dto.mime }));
       lru.set(path, url, bytes.length);
+      stamps.set(path, stampKey(stamp));
       return url;
     })
     .finally(() => inflight.delete(key));
   inflight.set(key, p);
   return p;
 }
+
+/**
+ * 缓存里的这张图磁盘上换了一版没有：换了就重读并返回新地址，没换（或读不到戳）返回 null。
+ * 先用缓存画首帧、再在后台核一次——切回会话不闪，重新出图后也不会一直停在旧图
+ */
+export async function revalidateImageUrl(
+  path: string,
+  cwdHint: string | null | undefined,
+): Promise<string | null> {
+  if (!lru.get(path)) return null;
+  const now = stampKey(await fileStamp(path, cwdHint));
+  if (now === null || now === stamps.get(path)) return null;
+  try {
+    // 先把旧的挤掉，fetchImage 才会真去读；旧地址等屏上换完再释放
+    const old = lru.get(path);
+    stamps.delete(path);
+    lru.delete(path);
+    if (old) setTimeout(() => URL.revokeObjectURL(old), 60_000);
+    return await fetchImage(path, cwdHint);
+  } catch {
+    return null;
+  }
+}
+

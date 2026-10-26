@@ -457,6 +457,10 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-26 · 预览跟随磁盘变化，字节缓存带版本戳
+
+同批第二条。PDF 字节缓存（`loadPdfBytes`）与图片缓存（`image-cache`）原来只按路径作键，quarto 重新渲染同名 PDF 后同一次运行里看到的一直是旧版。新增后端 `pdf::file_stamp`（大小 + 修改毫秒，与 read_pdf_bytes 同一白名单，白名单收集拆成 `collect_whitelist` / `whitelisted_target` 复用）：PDF 每次打开先比戳，图片缓存「先画缓存、后台核戳、换了再换图」（`revalidateImageUrl`，旧 blob 地址延迟 60 秒释放）。新增 `fs_tree::watch_file`（非递归监听所在文件夹、只认这个文件名、300ms 防抖）+ 前端 `useFileVersion`：PDF / 图片 / Word / 表格预览开着时自动重载——PDF 保留缩放并回到原滚动位置，Word 与表格旧内容留到新的出来、不清空闪一下。md 阅读态借编辑器已有的目录监听，每次变动核一遍已上屏的本地图。
+
 ### 2026-10-26 · 文件预览的 Markdown 按「文档」渲染：YAML 头成卡、脚注、引用胶囊
 
 用户「文件预览的问题全部修」第一批。marked 不认 YAML 头，`---` 开头的 qmd / SKILL.md 被排成横线 + setext 二级标题（实测）。新模块 `md-render.ts`：`splitMdFrontmatter` 拆头（至少一行顶格 `key:` 才算，防文首分隔线误判），字段画成 `MdFrontmatterCard`，正文行号偏移 `lineOffset` 加回双击跳源码行；脚注是全局 marked 扩展但**只在文档模式（`withDocMode`）生效**——聊天、任务书照旧，不会因收集了没人输出而吞字；`md-block-map` 改用同口径的 `lexMarkdownDocument`，脚注定义不占顶层元素。引用复用聊天的 `chat-inline-refs.decorateCitations`（cite_lookup 从文件所在目录往上找 references.bib，只读），先于页码链接化执行、`md-pdf-refs` 跳过 `.md-cite`。页内锚点（脚注互跳）只在本预览内找并滚动，不交 WebView 改 hash。文件页、运行页右栏、办公弹层同一套。

@@ -7,7 +7,7 @@ import { Marked } from "marked";
 import { ChevronRight, ImageOff, Volume2 } from "lucide-react";
 import { useAppStore } from "../store";
 import { classifyMdHref, resolveMdPath, rewriteMdImageHtml } from "../reader";
-import { cachedImageUrl, loadImageUrl } from "../image-cache";
+import { cachedImageUrl, loadImageUrl, revalidateImageUrl } from "../image-cache";
 import { hydrateMdImages } from "../md-image-hydrate";
 import { decorateMdCodeBlocks, decorateMdTables, handleMdCodeCopyClick } from "../md-code-chrome";
 import { chatMathExtensions, renderMathInto } from "../md-math";
@@ -434,7 +434,13 @@ export function ChatImageCard({
     const hit = cachedImageUrl(abs);
     if (hit) {
       setSrc(hit);
-      return;
+      // 磁盘上换了一版（同名重新出图）就换成新图
+      void revalidateImageUrl(abs, cwd).then((fresh) => {
+        if (fresh && !stale) setSrc(fresh);
+      });
+      return () => {
+        stale = true;
+      };
     }
     setSrc(null);
     loadImageUrl(abs, cwd)

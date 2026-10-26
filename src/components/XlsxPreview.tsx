@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import PreviewErrorState from "./PreviewErrorState";
+import { useFileVersion } from "../file-watch";
 import {
   cellRef,
   colLetter,
@@ -47,6 +48,8 @@ function XlsxPreview({
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
   const [sel, setSel] = useState<{ r: number; c: number } | null>(null);
+  // 磁盘上换了一版（清洗脚本重新写出表格）：停在当前工作表就地重读
+  const fileVersion = useFileVersion(path);
 
   useEffect(() => {
     setRequestedSheet(null);
@@ -102,7 +105,7 @@ function XlsxPreview({
     return () => {
       cancelled = true;
     };
-  }, [path, cwdHint, requestedSheet, retry]);
+  }, [path, cwdHint, requestedSheet, retry, fileVersion]);
 
   const colCount = dto?.rows.reduce((m, r) => Math.max(m, r.length), 0) ?? 0;
   const merges = dto?.merges ?? [];

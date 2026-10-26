@@ -11,6 +11,7 @@ import {
   type PdfPageMark,
 } from "./PdfPreview";
 import { usePdfGestureZoom } from "./use-pdf-zoom";
+import { useFileVersion } from "../file-watch";
 import {
   PDF_ZOOM_STEP,
   captureRectToCanvasPixels,
@@ -461,16 +462,26 @@ function PdfContinuousView({
     return () => window.removeEventListener("keydown", onKey, true);
   }, [captureOn]);
 
-  // 加载文档（路径切换整体重来）
+  // 磁盘上换了一版（Agent 重新渲染出同名 PDF）：重载并回到原来的滚动位置、保留缩放
+  const fileVersion = useFileVersion(path);
+  const loadedKeyRef = useRef<string | null>(null);
+  /** 重载后要回到的滚动位置（等新文档的页盒排出来再落） */
+  const restoreTopRef = useRef<number | null>(null);
+
+  // 加载文档（路径切换整体重来；同一路径换版只重载内容）
   useEffect(() => {
     let cancelled = false;
     let task: pdfjs.PDFDocumentLoadingTask | null = null;
+    const key = `${cwdHint ?? ""}\u0000${path}`;
+    const reload = loadedKeyRef.current === key;
+    loadedKeyRef.current = key;
+    restoreTopRef.current = reload ? (scrollRef.current?.scrollTop ?? null) : null;
     setDoc(null);
     setError(null);
     setPageCount(0);
     setPageSizes({});
     setSeenPages(new Set([1]));
-    setFixedScale(null);
+    if (!reload) setFixedScale(null);
     void (async () => {
       try {
         const bytes = await loadPdfBytes(path, cwdHint);
@@ -491,7 +502,26 @@ function PdfContinuousView({
       cancelled = true;
       void task?.destroy();
     };
-  }, [path, cwdHint]);
+  }, [path, cwdHint, fileVersion]);
+
+  // 换版重载后回到原位：页盒高度按首页实测估出来后再落（落不下就多等几帧）
+  useEffect(() => {
+    const top = restoreTopRef.current;
+    const el = scrollRef.current;
+    if (top === null || !doc || !el || !pageSizes[1]) return;
+    let tries = 0;
+    let raf = 0;
+    const step = () => {
+      el.scrollTop = top;
+      if (Math.abs(el.scrollTop - top) <= 2 || ++tries >= 10) {
+        restoreTopRef.current = null;
+        return;
+      }
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [doc, pageSizes]);
 
   // 适配宽度：量首页原始宽度换算 scale；容器尺寸变化停稳后重算并重渲染。
   // 停稳防抖（FIT_SETTLE_MS）：侧栏收起/展开动画与分隔条拖拽期间 RO 逐帧连发，

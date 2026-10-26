@@ -46,7 +46,7 @@ import {
   wrapAsLink,
   type MdEditResult,
 } from "../md-edit";
-import { hydrateMdImages } from "../md-image-hydrate";
+import { hydrateMdImages, revalidateMdImages } from "../md-image-hydrate";
 import { focusMdText, linkifyPdfRefs, pdfRefFromTarget } from "../md-pdf-refs";
 import type { PdfJumpRef } from "../reader-note";
 import { isPreviewableImagePath } from "../file-icons";
@@ -160,8 +160,11 @@ function MarkdownView({
   onPdfRef,
   focusText,
   annotateCopy = REVIEW_ANNOTATE_COPY,
+  fsTick = 0,
 }: {
   text: string;
+  /** 文件所在文件夹每变动一次加一：已上屏的本地图核一次磁盘版本（重新出图后换新图） */
+  fsTick?: number;
   large?: boolean;
   /** 划选记一条的文案（缺省 = 审阅页「加进意见」；阅读区抽查 = 「记成问题」） */
   annotateCopy?: AnnotateCopy;
@@ -292,6 +295,12 @@ function MarkdownView({
     });
     decorateMdCodeBlocks(host);
   });
+
+  // 文件夹有变动：已上屏的本地图核一次磁盘版本（md 没改、只重新出了图也能换上新图）
+  useEffect(() => {
+    const host = bodyRef.current;
+    if (host && fsTick > 0) revalidateMdImages(host, root);
+  }, [fsTick, root]);
 
   // 文献引用 [@key] → 小胶囊（与聊天同一套 chat-inline-refs：从文件所在目录往上找 references.bib，
   // 只读）；先于页码链接化，免得「[@a, p. 3]」里的页码被拆成跳转链接、整段认不出引用。
@@ -610,6 +619,8 @@ function TextFilePreviewEditor({
   const textPathRef = useRef<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  /** 所在文件夹的变动次数（交给 md 阅读态核内嵌图版本） */
+  const [fsTick, setFsTick] = useState(0);
   const [truncated, setTruncated] = useState(false);
   const [fileReadOnly, setReadOnlyReason] = useState<string | null>(null);
   const readOnlyReason = readOnly ?? fileReadOnly;
@@ -847,6 +858,7 @@ function TextFilePreviewEditor({
           return;
         }
         unlisten = await listen(`fs-changed-${watchId}`, async () => {
+          setFsTick((n) => n + 1);
           try {
             const generation = ++refreshGeneration;
             const p = await invoke<FilePreviewSnapshot>("read_file_preview", { path, root });
@@ -1395,6 +1407,7 @@ function TextFilePreviewEditor({
             compact={compact}
             onPdfRef={isMd ? onPdfRef : undefined}
             focusText={focusText}
+            fsTick={fsTick}
           />
         )
       )}

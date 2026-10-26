@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { fileStamp, stampKey } from "../file-watch";
 import PreviewErrorState from "./PreviewErrorState";
 import * as pdfjs from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
@@ -57,24 +58,28 @@ export interface PdfBytesDto {
  *  （transfer，原数组被 neuter），同一 Uint8Array 第二次打开同文件时已是
  *  失效对象，再传会抛 DataCloneError（The object can not be cloned） */
 const PDF_BYTES_CACHE_MAX = 8;
-const pdfBytesCache = new Map<string, Uint8Array>();
+const pdfBytesCache = new Map<string, { bytes: Uint8Array; stamp: string | null }>();
 
-/** 读 PDF 字节：先查缓存，miss 走 read_pdf_bytes 白名单，命中后把键挪到队尾 */
+/** 读 PDF 字节：先查缓存，miss 走 read_pdf_bytes 白名单，命中后把键挪到队尾。
+ *  缓存带磁盘版本戳（大小 + 修改时间，file_stamp）：quarto 重新渲染出同名 PDF 后再打开，
+ *  戳对不上就重读——原先只按路径作键，同一次运行里看到的一直是旧版（2026-10-26） */
 export async function loadPdfBytes(
   path: string,
   cwdHint: string | null,
 ): Promise<Uint8Array> {
   const key = `${cwdHint ?? ""}${path}`;
+  const stamp = stampKey(await fileStamp(path, cwdHint));
   const hit = pdfBytesCache.get(key);
-  if (hit) {
+  if (hit && stamp !== null && hit.stamp === stamp) {
     pdfBytesCache.delete(key);
     pdfBytesCache.set(key, hit);
     // 复制一份：pdf.js 会 neuter 传入的 buffer，缓存里的原件必须保持可用
-    return hit.slice();
+    return hit.bytes.slice();
   }
   const dto = await invoke<PdfBytesDto>("read_pdf_bytes", { path, cwdHint });
   const bytes = base64ToBytes(dto.data);
-  pdfBytesCache.set(key, bytes);
+  pdfBytesCache.delete(key);
+  pdfBytesCache.set(key, { bytes, stamp });
   while (pdfBytesCache.size > PDF_BYTES_CACHE_MAX) {
     const oldest = pdfBytesCache.keys().next().value;
     if (oldest === undefined) break;

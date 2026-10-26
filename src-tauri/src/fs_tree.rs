@@ -641,6 +641,54 @@ pub fn watch_dir(app: tauri::AppHandle, path: String) -> Result<String, String> 
     Ok(id)
 }
 
+/// 单文件监听（预览跟随磁盘变化：PDF / 图片 / Word / 表格预览开着时 Agent 重新生成了它）：
+/// 只非递归监听所在文件夹、只认这一个文件名的事件，防抖 300ms 后发 `fs-changed-<id>`。
+/// 原子写（临时文件 rename 过来）的事件路径就是目标文件，照样命中。取消同 unwatch_dir
+#[tauri::command]
+pub fn watch_file(app: tauri::AppHandle, path: String) -> Result<String, String> {
+    use tauri::Emitter;
+    let target = PathBuf::from(expand_tilde(&path));
+    let parent = target
+        .parent()
+        .ok_or_else(|| "文件没有所在文件夹".to_string())?
+        .to_path_buf();
+    let name = target
+        .file_name()
+        .ok_or_else(|| "路径不是文件".to_string())?
+        .to_os_string();
+    let id = uuid::Uuid::new_v4().to_string();
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+        if let Ok(ev) = res {
+            if ev.paths.iter().any(|p| p.file_name() == Some(name.as_os_str())) {
+                let _ = tx.send(());
+            }
+        }
+    })
+    .map_err(|e| format!("创建文件监听失败: {e}"))?;
+    notify::Watcher::watch(&mut watcher, &parent, notify::RecursiveMode::NonRecursive)
+        .map_err(|e| format!("监听文件失败: {e}"))?;
+    let event = format!("fs-changed-{id}");
+    std::thread::spawn(move || loop {
+        match rx.recv_timeout(std::time::Duration::from_millis(300)) {
+            Ok(_) => {
+                while rx
+                    .recv_timeout(std::time::Duration::from_millis(300))
+                    .is_ok()
+                {}
+                let _ = app.emit(&event, ());
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    });
+    watchers()
+        .lock()
+        .unwrap()
+        .insert(id.clone(), WatchEntry { _watcher: watcher });
+    Ok(id)
+}
+
 #[tauri::command]
 pub fn unwatch_dir(id: String) -> Result<(), String> {
     watchers().lock().unwrap().remove(&id);

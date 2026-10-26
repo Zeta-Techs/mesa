@@ -1,4 +1,4 @@
-import { cachedImageUrl, loadImageUrl } from "./image-cache";
+import { cachedImageUrl, loadImageUrl, revalidateImageUrl } from "./image-cache";
 import { classifyMdHref, mdImageAbsPath } from "./reader";
 
 function failNode(node: Element, text: string): void {
@@ -77,6 +77,10 @@ export function hydrateMdImages(
     const cached = cachedImageUrl(abs);
     if (cached) {
       applyImageUrl(node, cached, alt, abs);
+      // 先画缓存，再核磁盘上是不是换了一版（重新出图后不再一直停在旧图）
+      void revalidateImageUrl(abs, opts.cwdHint).then((fresh) => {
+        if (fresh) swapImageSrc(host, abs, fresh);
+      });
       continue;
     }
     if (node instanceof HTMLElement) {
@@ -88,5 +92,24 @@ export function hydrateMdImages(
       .catch(() => {
         failNode(node, `[图片不可读] ${src}`);
       });
+  }
+}
+
+function swapImageSrc(host: HTMLElement, abs: string, url: string): void {
+  for (const img of Array.from(host.querySelectorAll<HTMLImageElement>("img[data-ccode-path]"))) {
+    if (img.dataset.ccodePath === abs && img.src !== url) img.src = url;
+  }
+}
+
+/** 已上屏的本地图逐张核一次磁盘版本（文件夹有变动时由预览调用）：换了版本的换成新图 */
+export function revalidateMdImages(host: HTMLElement, cwdHint: string | null | undefined): void {
+  const seen = new Set<string>();
+  for (const img of Array.from(host.querySelectorAll<HTMLImageElement>("img[data-ccode-path]"))) {
+    const abs = img.dataset.ccodePath;
+    if (!abs || seen.has(abs)) continue;
+    seen.add(abs);
+    void revalidateImageUrl(abs, cwdHint).then((fresh) => {
+      if (fresh) swapImageSrc(host, abs, fresh);
+    });
   }
 }

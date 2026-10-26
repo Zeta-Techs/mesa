@@ -45,13 +45,34 @@ pub(crate) fn read_whitelisted_sync(
     cap: u64,
     cap_exceeded: impl Fn(f64) -> String,
 ) -> Result<(Vec<u8>, u64), String> {
+    let target = canonical_file(path)?;
+    let (roots, resources) = collect_whitelist(cwd_hint);
+    read_whitelisted_in(&target, cap, cap_exceeded, &roots, &resources)
+}
+
+fn canonical_file(path: &str) -> Result<PathBuf, String> {
     let target = PathBuf::from(crate::sessions::expand_tilde(path))
         .canonicalize()
         .map_err(|e| format!("文件不存在或不可读: {e}"))?;
     if target.is_dir() {
         return Err("目录不支持预览".into());
     }
-    // 白名单收集：任一来源失败静默跳过（宁缺勿滥，绝不因 db 读不到而整体放行）
+    Ok(target)
+}
+
+/// 白名单路径校验（不读内容）：给只需要路径的调用方（文件版本戳、媒体地址授权、转 PDF）。
+/// 返回 canonical 路径
+pub(crate) fn whitelisted_target(path: &str, cwd_hint: Option<&str>) -> Result<PathBuf, String> {
+    let target = canonical_file(path)?;
+    let (roots, resources) = collect_whitelist(cwd_hint);
+    if !path_allowed(&target, &roots, &resources) {
+        return Err("路径不在项目/登记资源/工作区/终端目录范围内，拒绝读取".into());
+    }
+    Ok(target)
+}
+
+/// 白名单收集：任一来源失败静默跳过（宁缺勿滥，绝不因 db 读不到而整体放行）
+fn collect_whitelist(cwd_hint: Option<&str>) -> (Vec<PathBuf>, Vec<PathBuf>) {
     let mut roots: Vec<PathBuf> = Vec::new();
     let mut resources: Vec<PathBuf> = Vec::new();
     if let Some(hint) = cwd_hint {
@@ -92,7 +113,36 @@ pub(crate) fn read_whitelisted_sync(
                 .filter_map(|p| canon(&p)),
         );
     }
-    read_whitelisted_in(&target, cap, cap_exceeded, &roots, &resources)
+    (roots, resources)
+}
+
+/// 文件版本戳：大小 + 修改时间（毫秒）。预览缓存（PDF 字节、md 内嵌图）据此判断磁盘上是不是换了一版
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileStampDto {
+    pub size: u64,
+    pub modified_ms: u64,
+}
+
+pub(crate) fn stamp_of(path: &Path) -> Result<FileStampDto, String> {
+    let md = fs::metadata(path).map_err(|e| format!("读取文件失败: {e}"))?;
+    let modified_ms = md
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    Ok(FileStampDto { size: md.len(), modified_ms })
+}
+
+#[tauri::command]
+pub async fn file_stamp(path: String, cwd_hint: Option<String>) -> Result<FileStampDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = whitelisted_target(&path, cwd_hint.as_deref())?;
+        stamp_of(&target)
+    })
+    .await
+    .map_err(|e| format!("读取文件失败: {e}"))?
 }
 
 /// 核心读取：白名单由调用方注入。拆出来是为了让测试注入临时根——

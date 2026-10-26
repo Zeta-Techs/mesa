@@ -2,6 +2,7 @@ import { memo, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { pdfWheelShouldZoom, pdfWheelZoomFactor } from "../reader";
 import PreviewErrorState from "./PreviewErrorState";
+import { useFileVersion } from "../file-watch";
 
 function basename(p: string): string {
   const parts = p.replace(/[\\/]+$/, "").split(/[\\/]/);
@@ -22,10 +23,15 @@ function ImagePreview({
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
   const [scale, setScale] = useState(1);
+  // 磁盘上换了一版（重新出图）：换图，缩放与滚动不动
+  const fileVersion = useFileVersion(path);
+
+  useEffect(() => {
+    setUrl(null);
+  }, [path, cwdHint]);
 
   useEffect(() => {
     let cancelled = false;
-    setUrl(null);
     setError(null);
     void (async () => {
       try {
@@ -41,7 +47,7 @@ function ImagePreview({
     return () => {
       cancelled = true;
     };
-  }, [path, cwdHint, retry]);
+  }, [path, cwdHint, retry, fileVersion]);
 
   useEffect(() => {
     setScale(1);

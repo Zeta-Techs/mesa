@@ -2,6 +2,7 @@ import { sanitizeDocumentHtml } from "../document-html";
 import { memo, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import PreviewErrorState from "./PreviewErrorState";
+import { useFileVersion } from "../file-watch";
 // mammoth 无 ESM 默认导出（export =），本项目 tsconfig 未开 esModuleInterop，用命名空间导入
 import * as mammoth from "mammoth";
 
@@ -46,12 +47,17 @@ function DocxPreview({
   const [warnings, setWarnings] = useState(0);
   const [retry, setRetry] = useState(0);
 
-  // 加载并转换（路径切换整体重来）
+  // 磁盘上换了一版（Agent 重新导出 docx）：就地重转，旧内容留到新的出来，滚动位置不丢
+  const fileVersion = useFileVersion(path);
+  useEffect(() => {
+    setHtml(null);
+    setWarnings(0);
+  }, [path, cwdHint]);
+
+  // 加载并转换
   useEffect(() => {
     let cancelled = false;
-    setHtml(null);
     setError(null);
-    setWarnings(0);
     void (async () => {
       try {
         const dto = await invoke<DocxBytesDto>("read_docx_bytes", {
@@ -73,7 +79,7 @@ function DocxPreview({
     return () => {
       cancelled = true;
     };
-  }, [path, cwdHint, retry]);
+  }, [path, cwdHint, retry, fileVersion]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
