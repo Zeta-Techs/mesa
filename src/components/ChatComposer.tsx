@@ -38,6 +38,7 @@ import { appendMarkRef, exportMarkup, nextMarkNumber, type Markup } from "../ima
 import { attachmentLines, composerImageKind } from "../chat-image";
 import { docThumb, docThumbKind, docTypeLabel } from "../doc-thumb";
 import { fileTypeIcon } from "../file-icons";
+import ProjectFilePicker from "./ProjectFilePicker";
 
 /** 按扩展名认图片附件（选来的、读不出缩略图的也要算） */
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|heif|tiff?)$/i;
@@ -223,7 +224,7 @@ function AddMenu({
                 type="button"
                 className={row}
                 disabled={!canMention}
-                title={canMention ? undefined : "先选项目或文件夹"}
+                title={canMention ? "从这个项目里挑文件；也可以在输入框里打 @ 搜" : "先选项目或文件夹"}
                 onClick={() => {
                   setOpen(false);
                   onMention();
@@ -642,21 +643,12 @@ export default function ChatComposer({
       el.setSelectionRange(next.caret, next.caret);
     });
   }
-  /** 「+ → 引用项目文件」：在光标处补一个 @ 打开搜索 */
-  function startMention() {
-    const el = ref.current;
-    const at = el?.selectionStart ?? value.length;
-    const needSpace = at > 0 && !/\s/.test(value[at - 1]);
-    const insert = needSpace ? " @" : "@";
-    const next = value.slice(0, at) + insert + value.slice(at);
-    setValue(next);
-    setMentionDismissed(false);
-    setCaret(at + insert.length);
-    requestAnimationFrame(() => {
-      if (!el) return;
-      el.focus();
-      el.setSelectionRange(at + insert.length, at + insert.length);
-    });
+  /** 「+ → 引用项目文件」：弹层里挑（最近改过的在前、能搜、可多选），选中的成附件卡（2026-10-26，
+   *  原先只在光标处补个 @，用户：点了选不了文件）；打 @ 就地搜照旧 */
+  const [projectPickOpen, setProjectPickOpen] = useState(false);
+  function addProjectFiles(paths: string[]) {
+    addPathAttachments(paths);
+    requestAnimationFrame(() => ref.current?.focus());
   }
 
   useEffect(() => {
@@ -1045,7 +1037,7 @@ export default function ChatComposer({
               canMention={Boolean(cwd)}
               onInsert={insertResourceText}
               onPickFiles={() => void pickFiles()}
-              onMention={startMention}
+              onMention={() => setProjectPickOpen(true)}
               onPhone={openPhoneDrop}
             />
           </span>
@@ -1284,6 +1276,14 @@ export default function ChatComposer({
         </div>
         {footer}
       </div>
+      {cwd && (
+        <ProjectFilePicker
+          open={projectPickOpen}
+          cwd={cwd}
+          onClose={() => setProjectPickOpen(false)}
+          onAdd={addProjectFiles}
+        />
+      )}
     </div>
   );
 }

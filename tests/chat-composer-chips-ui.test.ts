@@ -102,6 +102,13 @@ async function mount() {
             { path: "/proj/src/my app.ts", rel: "src/my app.ts", name: "my app.ts", isDir: false },
           ];
         }
+        if (command === "list_recent_files") {
+          return [
+            { path: "/proj/figures/cover.png", rel: "figures/cover.png", name: "cover.png", modified: "2026-10-25T01:49:00Z", size: 10 },
+            { path: "/proj/data.csv", rel: "data.csv", name: "data.csv", modified: "2026-10-23T05:40:00Z", size: 10 },
+            { path: "/proj/notes/a.md", rel: "notes/a.md", name: "a.md", modified: null, size: 10 },
+          ];
+        }
         if (command === "git_status") {
           return { isRepo: true, branch: "main" };
         }
@@ -579,6 +586,52 @@ test("输入框「+」：选文件成文件卡、随消息按路径发出；没�
     await ui.render(ui.h(ui.Composer, { ...props, cwd: null }));
     await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="添加"]')!.click());
     assert.equal(ui.button("引用项目文件").disabled, true);
+  } finally {
+    await ui.close();
+  }
+});
+
+test("输入框「+ → 引用项目文件」：弹层列最近改过的文件、能搜、可多选，添加后成附件卡随消息发出", async () => {
+  const ui = await mount();
+  try {
+    const sent: string[] = [];
+    await ui.render(ui.h(ui.Composer, { onSend: async (t: string) => (sent.push(t), null), cwd: "/proj" }));
+    await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="添加"]')!.click());
+    await ui.click("引用项目文件");
+    const dialog = () => ui.el.querySelector('[role="dialog"]');
+    assert.ok(dialog(), "点了弹出挑文件的弹层，不再只往输入框插 @");
+    assert.equal(ui.el.querySelector("textarea")!.value, "", "输入框不被插 @");
+    await ui.act(async () => new Promise((r) => setTimeout(r, 0)));
+    const options = () => Array.from(dialog()!.querySelectorAll<HTMLButtonElement>('[role="option"]'));
+    assert.deepEqual(options().map((o) => o.title), ["figures/cover.png", "data.csv", "notes/a.md"], "最近改过的在前");
+    assert.ok(ui.host.imageReads.includes("/proj/figures/cover.png"), "图片带缩略图");
+    assert.match(options()[0].textContent ?? "", /figures/, "第二行写所在文件夹");
+    assert.equal(ui.button("添加").disabled, true, "没勾不能添加");
+
+    await ui.act(async () => options()[1].click());
+    await ui.act(async () => options()[0].click());
+    assert.equal(options()[0].getAttribute("aria-selected"), "true");
+    await ui.click("添加 2 个");
+    // 弹层退场动画 150ms 后才卸载
+    await ui.act(async () => new Promise((r) => setTimeout(r, 200)));
+    assert.equal(dialog(), null, "添加后弹层收起");
+    assert.match(ui.el.textContent ?? "", /data\.csv/, "文件成附件卡");
+    assert.ok(ui.el.querySelector('button[aria-label="看图与标注"]'), "图片成缩略卡");
+    await typeInto(ui, "看看这两个");
+    await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="发送"]')!.click());
+    assert.deepEqual(sent, ["看看这两个\n/proj/data.csv\n/proj/figures/cover.png"], "按勾选顺序随消息发出");
+
+    // 搜索整个项目：文件夹不进列表
+    await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="添加"]')!.click());
+    await ui.click("引用项目文件");
+    const search = dialog()!.querySelector<HTMLInputElement>('input[aria-label="搜索项目文件"]')!;
+    await ui.act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+      setter.call(search, "main");
+      search.dispatchEvent(new window.Event("input", { bubbles: true }));
+    });
+    await ui.act(async () => new Promise((r) => setTimeout(r, 200)));
+    assert.match(options()[0]?.textContent ?? "", /main\.rs/);
   } finally {
     await ui.close();
   }

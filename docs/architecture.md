@@ -457,6 +457,10 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-26 · 「＋ → 引用项目文件」改成挑文件弹层
+
+用户：点了只在光标处插个 `@`，选不了文件，要像 Codex「从资料库添加」那样点开就能挑。改法：新弹层 `ProjectFilePicker`——列这个项目最近改过的文件（新命令 `list_recent_files`，不限类型，跳过点开头与依赖 / 构建目录，最多扫 2 万个、取前 300，只读元数据），搜索走现成的 `search_files`（只留文件），列表 / 网格两种看法，图片滚到看得见才读缩略图（`read_image_bytes` 工作目录白名单），点行勾选可多选、双击直接添加。添加的落点定为**附件卡**（与「文件或图片」、拖入同一条路，发送时绝对路径跟在正文后），不是 `@相对路径`：卡片能看缩略图、能进看图标注台，和截图里「添加」的语义一致。打 `@` 就地搜、插 `@相对路径` 保留，给只想在句子里提一下文件的人。
+
 ### 2026-10-26 · HTML 报告、Word、PowerPoint 预览补强
 
 同批第七条。① HTML：预览消毒改为 DOMPurify html+svg+svgFilters+mathMl 配置（保留内联 style、内嵌 SVG、MathML），仍剥 script / 框架 / 表单 / base / srcset；编辑器只读到 256 KB 时渲染另经新命令 `read_text_document`（同根约束与编码识别、32 MB 封顶、不给保存）读整份；不跑脚本——交互图表给「在浏览器打开」（openPath，系统默认浏览器），**不放开 iframe 脚本**（不透明源沙箱里跑任意本地 HTML 脚本的风险没有收益）。② 新模块 `office_view.rs`：`docx_features` 数 mammoth 丢掉的公式（m:oMath）、修订（w:ins/w:del）、批注、页眉页脚、文本框、文献引用域，前端黄字如实说；`slides_outline` 按 presentation.xml 放映顺序抽每页标题 / 段落 / 第一张图（单张 3 MB、总 30 MB）/ 备注与首页缩略图；`office_to_pdf` 找本机 LibreOffice（PATH + 三平台默认位置）转 PDF 到 `<config>/ccode/tmp/office-pdf/<路径哈希>/`（读取白名单内，独立 UserInstallation 不抢用户实例，3 分钟超时走 capture_command 杀树，比原文件新则复用）。不装 LibreOffice 的照旧可用，按钮不出现。③ 分流：pptx/ppsx/potx/pptm → 幻灯大纲；doc/rtf/odt/ppt/pps/odp → 中性态 + 可转 PDF；文件页、运行页右栏、办公弹层同一套。

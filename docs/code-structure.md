@@ -175,6 +175,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   usePhoneDropEvents（App 挂一次）里接，输入框只从 deliveries 取自己那份（防多监听器各改各的）；
                              #   starting 期间丢弃旧会话迟到的「已停止」事件；openForComposer：有已配对手机就直接开始接收不弹窗；
                              #   没有目标输入框时收到东西自动弹窗（onArrive 交 App 发系统通知）
+  components/ProjectFilePicker.tsx # 聊天输入框「＋ → 引用项目文件」弹层：list_recent_files 最近改过的在前、search_files 搜整个项目（只留文件）、
+                             #   列表 / 网格、图片滚到看得见才读缩略图、点行多选、双击直接添加；添加 = ChatComposer addPathAttachments（同「文件或图片」）
   components/PhoneDropDialog.tsx # 从手机添加弹层（App 全局一处；入口：聊天输入框「+」/ ⌘K / 收件箱「手机」）：二维码（后端 SVG，
                              #   data: URL 进 img）+ 地址复制 + 换地址（电脑名 / 各网卡 IP）+ 「扫了打不开？」；有已配对手机时顶上是状态卡、
                              #   二维码收进「配对新手机」、已配对的手机折叠（移除）；收到的列表带 96px 缩略图（读一次画小图只留小图，
@@ -579,6 +581,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   plan-approval.ts           # Claude 计划模式方案确认那一屏（2026-10-26，tests/plan-approval.test.ts）：认屏（isPlanMenu：旁路 ExitPlanMode 或问句）、
                              # 选项说成中文并标开工后哪一档（planChoice：go / revise / stay / other，认不出照原文）、方案原文兜底（latestPlanText）；
                              # 卡片是 ChatDecisionCard PlanCard，「接着改方案」= TerminalPage answerMenu(index, text) 挪到那一行打字再回车
+  project-file-pick.ts       # 「引用项目文件」弹层纯逻辑：行内日期（fileDateLabel）、所在文件夹、搜索结果去文件夹、勾选顺序（tests/project-file-pick.test.ts）
   chat-project-picker.ts     # 输入框项目弹层纯逻辑：最近 6 个 / 搜索 12 个、类型与项目默认、随手聊 / 主目录固定行（pickerRows）；UI 在 components/ChatProjectPicker.tsx，
                              # 选了项目带项目默认由 TerminalPage pickDir 做（chat 槽 > 项目默认，project-agents.ts projectChatLaunch）（tests/chat-project-picker.test.ts）
   jump-formations.ts         # 聊天「回到最新」浮钮三枚光标（MesaThinkingDots）的队形表（一行 / 三角 / 倒三角 / 一摞 / 台阶 / 竖排圆点 / 折行）+ 随机挑下一个（不重复）+ 按总路程最短分配格子（换队不交叉）（tests/jump-formations.test.ts）
@@ -1465,6 +1468,8 @@ src-tauri/src/
                              # MERGE_HEAD → merging + git_abort_merge；porcelain 冲突码归 U
   fs_tree.rs                 # 文件树与文件操作（删除走系统回收站 trash；重要路径删除保护，canonicalize 双校验；
                              # existing_files：聊天回复里提到的路径哪些是 cwd 内的文件（只看元数据，返回原样路径 + 规范化绝对路径）；
+                             # list_recent_files：项目里最近改过的文件（不限类型，跳过点开头与依赖 / 构建目录，扫 2 万个后按修改时间取前 300；只读元数据），
+                             #   与 list_office_docs 共用 office_walk（exts=None 不限类型）；
                              # drop_ris_record / drop_fetch_line：移出时整份改写超过 256 KB 的 RIS 与 to-fetch.md（to-fetch.md 开头「还没有全文的 N 篇」按剩下没打 ✓ 的行重算）
                              # read_research_ledger / save_research_ledger：科研台账整份读写（16 MB 上限，白名单
                              #   papers/included.json|included.md|to-fetch.md|to-fetch.ris|endnote-import.ris|screening.md、
