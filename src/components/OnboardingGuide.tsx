@@ -144,10 +144,10 @@ function stepActions(id: OnboardingStepId, facts: OnboardingFacts): StepAction[]
       return [
         { label: "知道了", primary: true, keepOpen: true, run: () => ack("naming") },
         {
-          label: "打开搜对话",
+          label: "打开对话管理",
           run: () => {
             ack("naming");
-            // 同侧栏「搜对话」：进对话页、光标落进搜索框
+            // 同侧栏「对话管理」：进对话页、光标落进搜索框
             s().goEntry("sessions");
           },
         },

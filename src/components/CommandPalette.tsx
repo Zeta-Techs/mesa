@@ -446,7 +446,7 @@ export default function CommandPalette({
               },
               icon: icon(NAV_ICONS[p.id]),
               kbd: true,
-              // 同侧栏入口：「搜对话」进对话页时光标落进搜索框
+              // 同侧栏入口：「对话管理」进对话页时光标落进搜索框
               run: () => useAppStore.getState().goEntry(p.id),
             };
           }),

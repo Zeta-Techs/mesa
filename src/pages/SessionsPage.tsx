@@ -430,10 +430,10 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     setSessionsProjectPathReq(null);
   }, [sessionsProjectPathReq, setSessionsProjectPathReq]);
 
-  // 侧栏「搜对话」点进来：光标直接落在搜索框（页面显示出来之后才聚焦得上）
+  // 侧栏「对话管理」点进来：光标直接落在搜索框（页面显示出来之后才聚焦得上）
   const searchInputRef = useRef<HTMLInputElement>(null);
   const sessionsSearchFocusReq = useAppStore((s) => s.sessionsSearchFocusReq);
-  // 页面是懒挂载的：第一次点「搜对话」时本页才挂上，从 0 比起才接得住这一次
+  // 页面是懒挂载的：第一次点「对话管理」时本页才挂上，从 0 比起才接得住这一次
   const searchFocusHandledRef = useRef(0);
   useEffect(() => {
     if (!visible || sessionsSearchFocusReq === searchFocusHandledRef.current) return;

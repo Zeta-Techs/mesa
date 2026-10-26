@@ -14,7 +14,7 @@ import RunCaret from "./RunCaret";
 
 /**
  * 灵动岛上的对话切换器（2026-10-24 用户定 A+D+E 的 D）：侧栏完全隐藏时，岛上「你在哪」那一格在运行页写正看着的对话名，
- * 展开面里同一格可点，往下弹「打开的对话」（同 ⌘K 那一组：sidebar-chats.paletteOpenChats）+ 去搜对话。
+ * 展开面里同一格可点，往下弹「打开的对话」（同 ⌘K 那一组：sidebar-chats.paletteOpenChats）+ 去对话管理。
  * 活动胶囊照旧只管「谁在跑 / 谁等你」，这里管「切到哪一段」。
  */
 
@@ -196,7 +196,7 @@ function ChatSwitcherPanel({
             className="ccode-menu-item flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-l2 hover:bg-hover hover:text-l1 focus-visible:bg-hover"
           >
             <Search size={13} strokeWidth={1.8} className="shrink-0 text-l3" aria-hidden="true" />
-            搜对话…
+            对话管理…
           </button>
         </div>
       </div>
