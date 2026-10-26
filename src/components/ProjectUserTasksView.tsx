@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Archive, Play, Plus, RotateCw } from "lucide-react";
+import { Archive, Play, Plus, RotateCw, Square } from "lucide-react";
 import { runInboxAction, selectHiddenProfiles, useAppStore } from "../store";
 import {
   AGENTS,
@@ -169,6 +169,7 @@ export default function ProjectUserTasksView({
   const [error, setError] = useState<string | null>(null);
   const [startingId, setStartingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [stoppingId, setStoppingId] = useState<string | null>(null);
   const [restoringId, setRestoringId] = useState<string | null>(null);
   const [purgingId, setPurgingId] = useState<string | null>(null);
   const [configReady, setConfigReady] = useState(
@@ -387,6 +388,36 @@ export default function ProjectUserTasksView({
     }
   }
 
+  /** 进行中的目标就地停下（2026-10-26，原先只能去终端关标签）：交互运行杀这条 Run 的终端进程，无头运行发取消；
+   *  后端按「用户主动停止」收尾，有可审成果的照旧进待验收，没有的变「已停止」可重试接着做 */
+  async function stopGoal(task: TaskDto, run: RunDto) {
+    const ok = await confirmDialog(
+      `停止目标「${goalDisplayName(task)}」正在跑的 Agent？\n\n正在做的这一步会被打断。已经写下的文件留在工作副本里：之后点「重试」接着做，有成果的也可以先去验收。`,
+      { danger: true, confirmText: "停止" },
+    );
+    if (!ok) return;
+    setStoppingId(task.id);
+    try {
+      if (run.runtime === "headless") {
+        await invoke("run_cancel", { id: run.id });
+      } else {
+        const ptyId = await invoke<string | null>("pty_id_for_run", { runId: run.id });
+        if (!ptyId) {
+          // 进程不在这个 Mesa 里（另一个 Mesa 开着、或正在启动）：不替它收尾，免得把别处还在跑的标成已停止
+          setError("这个目标的 Agent 不在当前窗口里运行。点「继续」打开它，再在对话里停止。");
+          return;
+        }
+        await invoke("pty_kill", { ptyId });
+      }
+      setError(null);
+      await load();
+    } catch (reason) {
+      setError(`停止目标失败：${String(reason)}`);
+    } finally {
+      setStoppingId(null);
+    }
+  }
+
   async function deleteGoal(task: TaskDto) {
     const name = goalDisplayName(task);
     const reviewNote = task.status === "pending_review"
@@ -570,6 +601,19 @@ export default function ProjectUserTasksView({
                                   继续
                                 </button>
                               )}
+                              {!recoveryPending && running && run && (
+                                <button
+                                  type="button"
+                                  className={`${ghostActionClass} gap-1.5`}
+                                  aria-label={`停止目标：${name}`}
+                                  disabled={stoppingId === task.id}
+                                  title="停下正在跑的 Agent；已写的文件留在工作副本里，之后可重试或验收"
+                                  onClick={() => void stopGoal(task, run)}
+                                >
+                                  <Square size={11} strokeWidth={0} fill="currentColor" aria-hidden="true" />
+                                  {stoppingId === task.id ? "停止中…" : "停止"}
+                                </button>
+                              )}
                               {canStart && (
                                 <button
                                   type="button"
@@ -676,7 +720,7 @@ export default function ProjectUserTasksView({
                                     : cleanupPending
                                       ? "请先继续未完成的副本清理，再归档"
                                       : running
-                                        ? "先停掉正在跑的 Agent，再归档"
+                                        ? "先点「停止」停掉正在跑的 Agent，再归档"
                                         : deletingId === task.id ? "归档中…" : "归档目标（记录都保留，副本仍占磁盘）"}
                                   onClick={() => void deleteGoal(task)}
                                 >

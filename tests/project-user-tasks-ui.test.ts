@@ -101,6 +101,7 @@ async function renderGoals(options: {
     loadError: options.loadError ?? false, reviewError: options.reviewError ?? false, archiveError: false, startError: false,
     confirm: false, confirmations: [] as string[], starts: [] as any[], continues: [] as any[],
     preparedRun: execution(goal("new")),
+    ptyForRun: "pty-1" as string | null,
     storage: null as any, cleanupError: null as string | null,
     review: options.pendingReview ?? { changes: [], frozen: true, seq: 4, payloadDir: "/frozen/4" },
     store: {
@@ -136,6 +137,11 @@ async function renderGoals(options: {
           return data.review;
         }
         if (command === "task_adopt_outputs") return;
+        if (command === "pty_id_for_run") return data.ptyForRun;
+        if (command === "pty_kill" || command === "run_cancel") {
+          data.tasks = data.tasks.map((task) => task.status === "running" ? { ...task, status: "stopped" } : task);
+          return;
+        }
         if (command === "task_recover_outputs") return data.tasks.find((task) => task.pendingApplyRunId === args.runId);
         if (command === "task_delete" || command === "task_unarchive") {
           if (data.archiveError) throw new Error("写入失败");
@@ -265,6 +271,41 @@ test("混合目标按验收/进行中/需处理/未开始/已完成排序，仅�
     assert.match(view.host.querySelector('[role="dialog"]')!.textContent!, /验收文档/);
     assert.ok(view.calls.some((call) => call.command === "task_output_changes" && call.args.runId === `run-${tasks[3].id}`));
     assert.ok(!view.calls.some((call) => call.command === "task_adopt_outputs"), "打开验收绝不自动采纳");
+  } finally { await view.close(); }
+});
+
+test("进行中的目标卡能就地停止：确认后杀这条 Run 的终端进程，不在本窗口时只提示不收尾", async () => {
+  const task = goal("进行中", "running");
+  const view = await renderGoals({ tasks: [task], runs: [execution(task, { status: "running" })] });
+  try {
+    const card = view.row(task);
+    // 取消确认：什么都不做
+    await view.click(`停止目标：${task.name}`, card);
+    assert.match(view.data.confirmations.at(-1)!, /停止目标「整理进行中文档」/);
+    assert.ok(!view.calls.some((call) => call.command === "pty_kill"));
+    // 进程不在这个 Mesa 里：不替它收尾
+    view.data.confirm = true;
+    view.data.ptyForRun = null;
+    await view.click(`停止目标：${task.name}`, card);
+    assert.ok(view.calls.some((call) => call.command === "pty_id_for_run" && call.args.runId === `run-${task.id}`));
+    assert.ok(!view.calls.some((call) => call.command === "pty_kill" || call.command === "run_close"));
+    assert.match(view.host.textContent!, /不在当前窗口里运行/);
+    // 在本窗口：杀掉终端进程，卡片刷新成已停止、出现重试
+    view.data.ptyForRun = "pty-9";
+    await view.click(`停止目标：${task.name}`, view.row(task));
+    assert.deepEqual(view.calls.find((call) => call.command === "pty_kill")!.args, { ptyId: "pty-9" });
+    assert.ok(view.button("重试", view.row(task)));
+  } finally { await view.close(); }
+});
+
+test("无头运行的目标停止走取消", async () => {
+  const task = goal("后台", "running");
+  const view = await renderGoals({ tasks: [task], runs: [execution(task, { status: "running", runtime: "headless" })] });
+  try {
+    view.data.confirm = true;
+    await view.click(`停止目标：${task.name}`, view.row(task));
+    assert.deepEqual(view.calls.find((call) => call.command === "run_cancel")!.args, { id: `run-${task.id}` });
+    assert.ok(!view.calls.some((call) => call.command === "pty_id_for_run"));
   } finally { await view.close(); }
 });
 

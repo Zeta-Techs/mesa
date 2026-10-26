@@ -122,6 +122,8 @@ created → starting → running → {completed | failed | stopped}
 worktree 不删分支；冲突卡片在 `behind>0` 时明说「主仓已前进 N 提交，旧轮被重跑取代可直删工作区」，
 不让人把过时冲突当活冲突去解。
 
+**目标卡「停止」（2026-10-26）**：进行中的普通目标卡在「继续」旁有「停止」（确认后执行）：交互运行按 `pty_id_for_run` 找到这条 Run 的终端进程 `pty_kill`（后端按「用户主动停止」收尾，有可审成果照旧进待验收），无头运行 `run_cancel`。**这个 Mesa 里找不到进程时不替它收尾**——可能在另一个 Mesa 里跑或正在启动，`run_close` 会把别处还在跑的标成已停止；只提示点「继续」打开再停。陈旧 Run 由启动时 `reconcile_stale_runs` 按 OS 租约收口，不归卡片管。
+
 无流程科研 / 办公的 `task-runs` 容量清理是显式两步（先工作副本，再历史冻结），各需确认；不得删除仍被其他项目或运行引用的目录，中断后待删目录被外部改过则拒绝继续。清理后任务与接受记录保留，不能从已删副本续跑。
 
 Run 只引用 `isolationPath`。禁止把编程树并进 `workspaces` 表（`coding-git.md` Non-Goal）。用户心智统一为「给 Agent 的独立目录」，代码保持两套。
