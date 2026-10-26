@@ -33,7 +33,7 @@ export function readScreen(agent: string, rows: string[], keys: readonly (keyof 
   const out: ScreenFixture["expect"] = {};
   for (const k of keys) {
     if (k === "menu") {
-      const m = parseTuiMenu(rows);
+      const m = parseTuiMenu(rows, undefined, agent);
       out.menu = m && { question: m.question, options: m.options, selected: m.selected };
     } else if (k === "trust") {
       const t = parseTrustPrompt(rows);

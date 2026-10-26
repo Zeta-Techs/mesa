@@ -251,6 +251,30 @@ test("Kimi Code 2.2「▶ 1.」、Gemini 0.64 方框里的「● 1.」、Grok 1.
   assert.deepEqual(menuAnswerKeys(grok, 2), ["\x1b[B", "\r"]);
 });
 
+// 2026-10-26 用户 Windows 截图：Claude Code 回复以编号清单开头，「● 1. …」被当成 Gemini 式的选中项，出了一张三项的确认卡，点了一遍遍弹
+test("正文行首是 ● 的家（Windows 上的 Claude Code、Kimi）：「● 1. …」开头的回复不是菜单；Gemini 的「● 1.」照认", () => {
+  const reply = [
+    "  Thought for 9s, searched for 1 pattern, listed 1 directory, ran 1 shell command",
+    "",
+    "● 1. mesa_probe 目录下有 hello.py 和一个既有的 red.png。",
+    "  2. 运行成功，输出了 hello 和当前时间。",
+    "  3. 搜索到 \"hello\" 出现在 hello.py 第 3 行。",
+  ];
+  assert.ok(parseTuiMenu(reply), "不知道是哪家时照旧按通用认法");
+  assert.equal(parseTuiMenu(reply, undefined, "claude-code"), null);
+  assert.equal(parseTuiMenu(reply, undefined, "kimi"), null);
+  // 这两家自己的菜单照认
+  assert.deepEqual(parseTuiMenu(["Do you want to proceed?", " ❯ 1. Yes", "   2. No"], undefined, "claude-code")?.options, ["Yes", "No"]);
+  assert.deepEqual(
+    parseTuiMenu(["   ▶ Run this command?", "   ▶ 1. Approve once", "     2. Reject", "   ↑/↓ select · ↵ confirm"], undefined, "kimi")?.options,
+    ["Approve once", "Reject"],
+  );
+  assert.deepEqual(
+    parseTuiMenu(["│ Allow execution of [Shell]?", "│ ● 1. Allow once", "│   2. No, suggest changes (esc)"], undefined, "gemini")?.options,
+    ["Allow once", "No, suggest changes (esc)"],
+  );
+});
+
 test("用户自己发的编号清单回显不是菜单", () => {
   const menu = parseTuiMenu(["› 1. 先读配置", "  2. 再改测试"]);
   assert.ok(menu, "形状上像菜单");

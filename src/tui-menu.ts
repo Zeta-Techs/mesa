@@ -36,6 +36,12 @@ const DASHED = /^[╌┄┈╍┅┉]+$/;
 // 这几个符号单独出现时是输入提示、标题或助手正文的行首）
 const MARKED = /^\s*(?:[❯›]\s*(?:\d+[.)]\s*)?|[>▶●]\s*\d+[.)]\s*)(\S.*?)\s*$/;
 const NUMBERED = /^\s*(?:[❯›>▶●]\s*)?\d+[.)]\s/;
+// 正文行首就是 ● 的家（Windows 上的 Claude Code、Kimi）：回复以编号清单开头时第一行是「● 1. …」，和 Gemini 的选中项一个样，
+// 下面的「  2. …」「  3. …」凑成一张三项的确认卡，点了会往输入框里按方向键、卡片一遍遍重画（2026-10-26 用户 Windows 截图）。
+// 这两家的菜单不用 ●（Claude 用 ❯、Kimi 用 ▶），● 不算选中标记
+const MARKED_NO_DOT = /^\s*(?:[❯›]\s*(?:\d+[.)]\s*)?|[>▶]\s*\d+[.)]\s*)(\S.*?)\s*$/;
+const NUMBERED_NO_DOT = /^\s*(?:[❯›>▶]\s*)?\d+[.)]\s/;
+const DOT_IS_BODY_LEAD = new Set(["claude-code", "kimi"]);
 // Grok 的单选写法「2 (●) Yes, proceed」「3 (○) No, reject」：先改写成「❯ 2. …」「  3. …」再认。
 // Windows 上 Grok 的选中点画成 •（2026-10-20 ConPTY 抓屏）
 const RADIO = /^(\s*)(\d+)\s+\(([●•○◉◯])\)\s+(.*)$/;
@@ -69,16 +75,27 @@ function unbox(line: string): string {
   return t;
 }
 
+interface Marks {
+  marked: RegExp;
+  numbered: RegExp;
+}
+
+/** agent：这是哪家的屏（不传按各家通用的认法） */
 export function parseTuiMenu(
   raw: readonly string[],
   cellsOf?: (row: number) => readonly ScreenCell[],
+  agent?: string,
 ): TuiMenu | null {
+  const marks: Marks =
+    agent && DOT_IS_BODY_LEAD.has(agent)
+      ? { marked: MARKED_NO_DOT, numbered: NUMBERED_NO_DOT }
+      : { marked: MARKED, numbered: NUMBERED };
   const lines = raw.map(unbox);
   for (let i = 0; i < lines.length; i++) {
-    const m = MARKED.exec(lines[i]);
+    const m = marks.marked.exec(lines[i]);
     // 「❯ /model xxx」是对话记录里回显的用户命令，不是菜单高亮
     if (!m || m[1].startsWith("/")) continue;
-    const menu = menuAround(lines, i, cellsOf);
+    const menu = menuAround(lines, i, marks, cellsOf);
     if (menu) return menu;
   }
   return null;
@@ -127,6 +144,7 @@ function descriptionRows(
 function menuAround(
   lines: readonly string[],
   markIdx: number,
+  { marked: MARKED, numbered: NUMBERED }: Marks,
   cellsOf?: (row: number) => readonly ScreenCell[],
 ): TuiMenu | null {
   const isOption = (line: string) => !KEY_HINT.test(line) && (MARKED.test(line) || PLAIN.test(line));

@@ -2323,7 +2323,7 @@ const TerminalView = memo(function TerminalView({
   /** 屏上等你选的东西：Claude 的提问表单按表单读（tui-ask.ts），其余照通用菜单读（Kimi 选择器的说明行靠字色分开） */
   function parseScreenMenu(lines: string[]): TuiMenu | null {
     const ask = launchAgentRef.current === "claude-code" ? parseClaudeAsk(lines, screenCells) : null;
-    return ask ? askMenu(ask) : parseTuiMenu(lines, screenCells);
+    return ask ? askMenu(ask) : parseTuiMenu(lines, screenCells, launchAgentRef.current);
   }
   // 终端里换权限模式的跟随（fetchConversation 读会话文件；基线 = 这个文件第一次读到的模式）
   const permBaselineRef = useRef<{ file: string; mode: string } | null>(null);
