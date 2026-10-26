@@ -73,6 +73,7 @@ import {
 import ConversationView from "../components/ConversationView";
 import { firstCompleteTurnIndex } from "../conversation-tools";
 import { useAutoLoadOlder } from "../auto-load-older";
+import { progressiveLimit, useProgressiveRows } from "../progressive-rows";
 import { useReadingAnchor } from "../reading-anchor";
 import RunCaret from "../components/RunCaret";
 import { caretOfAttention, type RunCaretState } from "../run-caret";
@@ -811,7 +812,17 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
       g.list.map((s, i) => ({ header: i === 0 ? g.name : null, s })),
     );
   }, [sessionList, filter, q]);
-  const shownSessionRows = displayList;
+  // 上千段对话不一次全画：先画一段，滚近底部再接（progressive-rows.ts）；选中的在后面就画到它
+  const progressive = useProgressiveRows(displayList.length, `${JSON.stringify(filter)}\n${q}`);
+  const selectedRowIndex = selected
+    ? displayList.findIndex(
+        ({ s }) => s.agent === selected.agent && s.sessionId === selected.sessionId,
+      )
+    : -1;
+  const shownSessionRows = displayList.slice(
+    0,
+    progressiveLimit(progressive.limit, displayList.length, selectedRowIndex),
+  );
 
   /** 切换树筛选：同时退出回放态回到列表，保证右栏与所选节点对应 */
   function selectFilter(f: Filter) {
@@ -2114,6 +2125,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
           onScroll={(e) => {
             const scrolled = e.currentTarget.scrollTop > 0;
             if (scrolled !== listScrolled) setListScrolled(scrolled);
+            progressive.onScroll(e.currentTarget);
           }}
         >
             {shownSessionRows.map(({ header, s }) => {
