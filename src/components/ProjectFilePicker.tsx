@@ -8,13 +8,10 @@ import { fileTypeIcon, isPreviewableImagePath } from "../file-icons";
 import { fileThumb, hasFileThumb } from "../file-thumb";
 import { fileDateLabel, filesOnly, folderOf, toggleSelected, type PickFile } from "../project-file-pick";
 
-/** 列表 / 网格记在这次运行里，下次打开还是上次那样；默认网格看缩略图（2026-10-26 用户） */
-let lastView: "list" | "grid" = "grid";
-
 /**
  * 「＋ → 引用项目文件」弹层（2026-10-26 用户：点了只插个 @、选不了文件，要做成点开就能挑的样子）：
- * 顶上搜索，下面是这个项目最近改过的文件（list_recent_files），默认网格看缩略图（图片、PDF、Word、表格、文字都画，
- * file-thumb.ts；画不出的 PPT 等留类型色块），可换列表；
+ * 顶上搜索，下面是这个项目最近改过的文件（list_recent_files），每次打开是列表（同日用户：默认用列表），
+ * 每行左边带缩略图；右上角换网格看大缩略图（图片、PDF、Word、表格、文字都画，file-thumb.ts；画不出的 PPT 等留类型色块）；
  * 点行勾选（可多选），「添加」后成输入框里的附件卡，随消息按路径发出（同「文件或图片」）
  */
 export default function ProjectFilePicker({
@@ -34,13 +31,14 @@ export default function ProjectFilePicker({
   const [hits, setHits] = useState<PickFile[] | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [active, setActive] = useState(0);
-  const [view, setView] = useState(lastView);
+  const [view, setView] = useState<"list" | "grid">("list");
   const listRef = useRef<HTMLDivElement>(null);
 
   // 每次打开重新列：刚让 AI 出的图、刚存的稿子要在最上面
   useEffect(() => {
     if (!open) return;
     setQuery("");
+    setView("list");
     setHits(null);
     setSelected([]);
     setActive(0);
@@ -100,10 +98,6 @@ export default function ProjectFilePicker({
     if (paths.length === 0) return;
     onAdd(paths);
     onClose();
-  }
-  function switchView(next: "list" | "grid") {
-    lastView = next;
-    setView(next);
   }
 
   const status =
@@ -181,7 +175,7 @@ export default function ProjectFilePicker({
         </label>
         <button
           type="button"
-          onClick={() => switchView(view === "list" ? "grid" : "list")}
+          onClick={() => setView(view === "list" ? "grid" : "list")}
           title={view === "list" ? "换成网格（看图方便）" : "换成列表"}
           aria-label={view === "list" ? "网格显示" : "列表显示"}
           className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-l3 transition-colors hover:bg-hover hover:text-l1"

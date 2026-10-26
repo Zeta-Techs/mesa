@@ -616,9 +616,10 @@ test("输入框「+ → 引用项目文件」：弹层列最近改过的文件�
     assert.ok(ui.host.imageReads.includes("/proj/figures/cover.png"), "图片带缩略图");
     assert.ok(ui.host.textReads.includes("/proj/notes/a.md"), "文字文件也排成一页纸当缩略图");
     await ui.act(async () => new Promise((r) => setTimeout(r, 20)));
-    assert.equal(options().filter((o) => o.querySelector("img")).length, 3, "默认网格，三个都有缩略图（CSV 排成小表）");
-    await ui.act(async () => dialog()!.querySelector<HTMLButtonElement>('button[aria-label="列表显示"]')!.click());
-    assert.match(options()[0].textContent ?? "", /figures/, "列表第二行写所在文件夹");
+    assert.match(options()[0].textContent ?? "", /figures/, "默认列表，第二行写所在文件夹");
+    assert.equal(options().filter((o) => o.querySelector("img")).length, 3, "列表每行也带缩略图（CSV 排成小表）");
+    await ui.act(async () => dialog()!.querySelector<HTMLButtonElement>('button[aria-label="网格显示"]')!.click());
+    assert.equal(options().filter((o) => o.querySelector("img")).length, 3, "换网格看大缩略图");
     assert.equal(ui.button("添加").disabled, true, "没勾不能添加");
 
     await ui.act(async () => options()[1].click());
@@ -637,6 +638,7 @@ test("输入框「+ → 引用项目文件」：弹层列最近改过的文件�
     // 搜索整个项目：文件夹不进列表
     await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="添加"]')!.click());
     await ui.click("引用项目文件");
+    assert.ok(dialog()!.querySelector('button[aria-label="网格显示"]'), "上次换了网格，再打开仍是列表");
     const search = dialog()!.querySelector<HTMLInputElement>('input[aria-label="搜索项目文件"]')!;
     await ui.act(async () => {
       const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
