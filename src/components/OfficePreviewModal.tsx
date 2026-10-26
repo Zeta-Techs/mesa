@@ -2,7 +2,10 @@ import { sanitizeDocumentHtml } from "../document-html";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { invoke } from "@tauri-apps/api/core";
-import { marked } from "marked";
+import { renderMarkdownDocument, splitMdFrontmatter, type MdFrontmatter } from "../md-render";
+import { decorateCitations } from "../chat-inline-refs";
+import { parentDir } from "../path-utils";
+import MdFrontmatterCard from "./MdFrontmatterCard";
 import { hydrateMdImages } from "../md-image-hydrate";
 import { renderMathInto } from "../md-math";
 import { rewriteMdImageHtml } from "../reader";
@@ -44,6 +47,7 @@ export default function OfficePreviewModal({
   const mode = officePreviewMode(path);
   const [text, setText] = useState<string | null>(null);
   const [html, setHtml] = useState<string>("");
+  const [front, setFront] = useState<MdFrontmatter | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [truncated, setTruncated] = useState(false);
   const mdRef = useRef<HTMLDivElement>(null);
@@ -52,7 +56,7 @@ export default function OfficePreviewModal({
   const isMarkdown = isText && /\.(md|markdown|mdx|qmd)$/i.test(name);
 
   useEffect(() => {
-    setText(null); setHtml(""); setError(null); setTruncated(false);
+    setText(null); setHtml(""); setFront(null); setError(null); setTruncated(false);
     if (!isText) return;
     let cancelled = false;
     invoke<{ text: string; truncated: boolean }>("read_file_preview", {
@@ -72,14 +76,17 @@ export default function OfficePreviewModal({
 
   useEffect(() => {
     if (text == null || !isMarkdown) return;
-    const raw = marked.parse(text, { async: false }) as string;
-    setHtml(sanitizeDocumentHtml(rewriteMdImageHtml(raw)));
+    // YAML 头拆成小卡、脚注收到文末（md-render.ts，与文件预览同一套）
+    const doc = splitMdFrontmatter(text);
+    setFront(doc.front);
+    setHtml(sanitizeDocumentHtml(rewriteMdImageHtml(renderMarkdownDocument(doc.body))));
   }, [text, isMarkdown]);
 
   useLayoutEffect(() => {
     const el = mdRef.current;
     if (!el) return;
     hydrateMdImages(el, { fromFile: path, cwdHint: root, allowHttps: true });
+    void decorateCitations(el, parentDir(path) || root);
   });
 
   useEffect(() => {
@@ -127,11 +134,14 @@ export default function OfficePreviewModal({
       text == null ? (
         <p className="text-xs text-l4">读取中…</p>
       ) : (
-        <div
-          ref={mdRef}
-          className="md-body min-h-0 flex-1 overflow-auto"
-          dangerouslySetInnerHTML={{ __html: html }}
-        />
+        <div className="min-h-0 flex-1 overflow-auto">
+          {front && <MdFrontmatterCard fields={front.fields} className="mb-3" />}
+          <div
+            ref={mdRef}
+            className="md-body"
+            dangerouslySetInnerHTML={{ __html: html }}
+          />
+        </div>
       );
   } else if (isText) {
     body =

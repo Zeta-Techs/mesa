@@ -6,7 +6,7 @@ import {
 } from "./reader-note.ts";
 
 /** 不进链接化的地方：已有链接、代码、公式、已包过的引用 */
-const SKIP = "a, code, pre, .md-pdf-ref, .katex, .md-math, .md-code, .md-mermaid";
+const SKIP = "a, code, pre, .md-pdf-ref, .md-cite, .katex, .md-math, .md-code, .md-mermaid";
 
 /**
  * md 阅读视图里把「p.3」「第 3 页」「Fig. 2」「Table 1」包成可点的引用（阅读区笔记栏，点了跳 PDF）。

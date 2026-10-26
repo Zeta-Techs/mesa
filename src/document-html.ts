@@ -18,7 +18,7 @@ export function createDocumentSanitizer(window: WindowLike): (html: string) => s
     if (data.attrName === "class") {
       // 不允许文档借应用的 fixed/inset/z-index 等样式覆盖工作台。
       data.attrValue = data.attrValue.split(/\s+/).filter((name) =>
-        /^(md-math(?:-display)?|md-img-pending|task-list-item|contains-task-list|language-[\w-]+)$/.test(name),
+        /^(md-math(?:-display)?|md-img-pending|md-footnotes|md-fn-ref|md-fn-back|task-list-item|contains-task-list|language-[\w-]+)$/.test(name),
       ).join(" ");
     }
   });

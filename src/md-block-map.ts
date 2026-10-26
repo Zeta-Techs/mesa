@@ -1,7 +1,7 @@
-import { marked, type Token, type Tokens } from "marked";
-// 保证 mathBlock 扩展已注册（模块作用域 marked.use，全局一次）：lexer 与渲染走同一套
-// tokenizer，$$ 块才不会在 token 流里退化成 paragraph、与渲染 DOM 对不上
-import "./md-math.ts";
+import type { Token, Tokens } from "marked";
+// md-render 先注册公式 / 脚注扩展并给出文档模式 lexer：lexer 与渲染走同一套 tokenizer，
+// $$ 块、脚注定义才不会在 token 流里退化成 paragraph、与渲染 DOM 对不上
+import { lexMarkdownDocument } from "./md-render.ts";
 
 /**
  * md 渲染块 → 源码行映射（2026-10-14 拍板：阅读态双击段落跳编辑态定位源码行）。
@@ -61,9 +61,9 @@ export function mdBlocks(srcRaw: string): MdBlockInfo[] {
   // Lexer 入口把 \r\n/\r 归一成 \n（token.raw 里没有 \r），源文做同款归一偏移才能
   // 与 raw 对上；归一不改行数，行号对原文件（含 \r\n）仍成立
   const src = srcRaw.replace(/\r\n?/g, "\n");
-  // 无参调用：带 options 对象会整体替换 defaults，丢掉 marked.use 注册的全局扩展
-  //（实测 $$ 块退化成 paragraph）；defaults 的 gfm=true/breaks=false 与渲染入参等价
-  const tokens = marked.lexer(src);
+  // 文档模式 lexer（内部无参调用 marked.lexer：带 options 对象会整体替换 defaults，丢掉
+  // marked.use 注册的全局扩展，实测 $$ 块退化成 paragraph）；与 renderMarkdownDocument 同口径
+  const tokens = lexMarkdownDocument(src);
   const out: MdBlockInfo[] = [];
   let pos = 0;
   let line = 1;

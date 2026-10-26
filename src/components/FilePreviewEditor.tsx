@@ -18,7 +18,6 @@ import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import * as monaco from "monaco-editor";
 import editorWorker from "monaco-editor/editor/editor.worker.js?worker";
-import { marked } from "marked";
 import SelectionFloatBar, { DistillSkillButton } from "./SelectionFloatBar";
 import { confirmDialog } from "./ConfirmDialog";
 import { useAppStore } from "../store";
@@ -37,6 +36,9 @@ import { imeBlocksEnter } from "../ime-guard";
 // md-math 模块作用域完成 marked 公式扩展注册（全局生效，占位=原始 $..$ 源码，未升级处观感不变）
 import { renderMathInto } from "../md-math";
 import { mdBlocks, mdChildTagOf, mdLineForChild } from "../md-block-map";
+import { renderMarkdownDocument, splitMdFrontmatter } from "../md-render";
+import { citeTipFor, decorateCitations } from "../chat-inline-refs";
+import { parentDir } from "../path-utils";
 import {
   continueListItem,
   toggleInlineMark,
@@ -58,6 +60,8 @@ import {
 import ImagePreview from "./ImagePreview";
 import HtmlPreview from "./HtmlPreview";
 import MdToc from "./MdToc";
+import MdFrontmatterCard from "./MdFrontmatterCard";
+import { HoverTip } from "./HoverTip";
 import PreviewErrorState from "./PreviewErrorState";
 import {
   LATEX_EXTENSIONS,
@@ -189,11 +193,14 @@ function MarkdownView({
   /** 双击段落：切编辑态并定位到该块源码行（null=定位失败，只切模式）；只读/截断时宿主不传 */
   onJumpToSource?: (line: number | null) => void;
 }) {
+  // YAML 头（qmd / SKILL.md / Quarto 稿件）拆出来画成小卡，不交给 marked——原先渲染成横线 + 大号二级标题
+  //（md-render.ts）；lineOffset = 拆掉的行数，双击跳源码行要加回去
+  const doc = useMemo(() => splitMdFrontmatter(text), [text]);
   // 渲染/映射共用解析源（emoji 替换的原因见下方 html useMemo 注释）：
   // 双击跳源码行的映射（md-block-map）必须与渲染解析同一份字符串
   const mdSource = useMemo(
-    () => text.replace(/⚠️/g, "⚠︎"),
-    [text],
+    () => doc.body.replace(/⚠️/g, "⚠︎"),
+    [doc.body],
   );
   const html = useMemo(
     // ⚠️（U+26A0+U+FE0F）在 WKWebView 里渲染成黄色 Apple Color Emoji，
@@ -201,15 +208,7 @@ function MarkdownView({
     // FE0E 让其按文字颜色单色渲染。只改显示、不改文件内容；
     // 实测 font-variant-emoji: text 在 WKWebView 无效，故走字符替换
     () =>
-      sanitizeDocumentHtml(
-        rewriteMdImageHtml(
-          marked.parse(mdSource, {
-            gfm: true,
-            breaks: false,
-            async: false,
-          }) as string,
-        ),
-      ),
+      sanitizeDocumentHtml(rewriteMdImageHtml(renderMarkdownDocument(mdSource))),
     [mdSource],
   );
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -294,11 +293,34 @@ function MarkdownView({
     decorateMdCodeBlocks(host);
   });
 
-  // 页码/图表引用链接化：同图片水合，每次布局都扫（幂等，已包过的跳过）
+  // 文献引用 [@key] → 小胶囊（与聊天同一套 chat-inline-refs：从文件所在目录往上找 references.bib，
+  // 只读）；先于页码链接化，免得「[@a, p. 3]」里的页码被拆成跳转链接、整段认不出引用。
+  // 每次布局都扫（幂等，已包过的跳过）
   useLayoutEffect(() => {
     const host = bodyRef.current;
-    if (host && onPdfRef) linkifyPdfRefs(host);
+    if (!host) return;
+    void decorateCitations(host, parentDir(filePath) || root);
+    if (onPdfRef) linkifyPdfRefs(host);
   });
+
+  // 引用胶囊的悬停卡片（应用内浮层，同聊天）
+  const [citeTip, setCiteTip] = useState<{ x: number; y: number; text: string; warn: string | null } | null>(null);
+  useEffect(() => {
+    if (!citeTip) return;
+    const hide = () => setCiteTip(null);
+    window.addEventListener("scroll", hide, true);
+    return () => window.removeEventListener("scroll", hide, true);
+  }, [citeTip]);
+  function onBodyOver(e: React.MouseEvent<HTMLDivElement>) {
+    const chip = (e.target as HTMLElement).closest(".md-cite-item");
+    const tip = chip ? citeTipFor(chip) : null;
+    if (!chip || !tip) {
+      if (citeTip) setCiteTip(null);
+      return;
+    }
+    const r = chip.getBoundingClientRect();
+    setCiteTip({ x: r.left + r.width / 2, y: r.top - 8, ...tip });
+  }
 
   // 外部定位（PDF 高亮「在笔记里看」）：正文换过（html 变）后也要能落位
   const focusedNonceRef = useRef(0);
@@ -333,7 +355,17 @@ function MarkdownView({
     const href = a.getAttribute("href") ?? "";
     if (!href) return;
     const kind = classifyMdHref(href);
-    if (kind === "anchor") return;
+    if (kind === "anchor") {
+      // 页内锚点（脚注 ↔ 正文、手写目录）只在这份预览里找：同屏几份预览 id 会重名，交给 WebView
+      // 默认跳转会改应用地址栏的 hash、还可能跳到别的预览里
+      const id = decodeURIComponent(href.slice(1));
+      const target = id ? bodyRef.current?.querySelector(`[id="${CSS.escape(id)}"]`) : null;
+      if (target) {
+        e.preventDefault();
+        target.scrollIntoView({ block: "center", behavior: "smooth" });
+      }
+      return;
+    }
     e.preventDefault();
     if (kind === "external" || kind === "other") {
       void openUrl(href).catch(() => showHint("无法打开外部链接"));
@@ -368,7 +400,8 @@ function MarkdownView({
     const tags = Array.from(host.children).map((c) =>
       mdChildTagOf(c.tagName, c.getAttribute("class") ?? ""),
     );
-    onJumpToSource(mdLineForChild(mdBlocks(mdSource), tags, index));
+    const line = mdLineForChild(mdBlocks(mdSource), tags, index);
+    onJumpToSource(line === null ? null : line + doc.lineOffset);
   }
 
   return (
@@ -383,15 +416,25 @@ function MarkdownView({
       )}
       <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-y-auto">
         <MdToc bodyRef={bodyRef} />
+        {doc.front && (
+          <MdFrontmatterCard
+            fields={doc.front.fields}
+            className={large ? "mx-auto max-w-3xl px-8 pt-10" : compact ? "px-4 pt-3" : "px-5 pt-4"}
+            onDoubleClick={onJumpToSource ? () => onJumpToSource(1) : undefined}
+          />
+        )}
         <div
           ref={bodyRef}
           onClick={onBodyClick}
           onDoubleClick={onJumpToSource ? onBodyDoubleClick : undefined}
+          onMouseOver={onBodyOver}
+          onMouseLeave={() => setCiteTip(null)}
           className={`md-body${large ? " md-body-lg" : ""}${compact ? " md-body-compact" : ""} ${
             large ? "mx-auto max-w-3xl px-8 py-10" : compact ? "px-4 py-3" : "px-5 py-4"
           }`}
           dangerouslySetInnerHTML={{ __html: html }}
         />
+        <HoverTip tip={citeTip} text={citeTip?.text ?? ""} warn={citeTip?.warn} up />
         {showMermaid && (
           <Suspense fallback={null}>
             <MermaidDiagrams hostRef={bodyRef} html={html} />

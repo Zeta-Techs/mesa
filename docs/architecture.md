@@ -457,6 +457,10 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-26 · 文件预览的 Markdown 按「文档」渲染：YAML 头成卡、脚注、引用胶囊
+
+用户「文件预览的问题全部修」第一批。marked 不认 YAML 头，`---` 开头的 qmd / SKILL.md 被排成横线 + setext 二级标题（实测）。新模块 `md-render.ts`：`splitMdFrontmatter` 拆头（至少一行顶格 `key:` 才算，防文首分隔线误判），字段画成 `MdFrontmatterCard`，正文行号偏移 `lineOffset` 加回双击跳源码行；脚注是全局 marked 扩展但**只在文档模式（`withDocMode`）生效**——聊天、任务书照旧，不会因收集了没人输出而吞字；`md-block-map` 改用同口径的 `lexMarkdownDocument`，脚注定义不占顶层元素。引用复用聊天的 `chat-inline-refs.decorateCitations`（cite_lookup 从文件所在目录往上找 references.bib，只读），先于页码链接化执行、`md-pdf-refs` 跳过 `.md-cite`。页内锚点（脚注互跳）只在本预览内找并滚动，不交 WebView 改 hash。文件页、运行页右栏、办公弹层同一套。
+
 ### 2026-10-25 · z-30 全屏页三平台都让出标题栏
 
 用户贴截图：全屏编辑的头一行（文件名 · 全屏编辑 · 保存 · 退出）和 macOS 红绿灯、右上帮助 / ⌘K / 待处理叠在一起。原来只有 Windows 规定页内全屏层从标题栏下沿起铺；现在 `.ccode-app-shell .fixed.inset-0.z-30:not(.ccode-covers-titlebar)` 三个平台都 `top: var(--ccode-titlebar-h)`（全屏阅读 / 编辑、流水线编辑器、保存历史一起好）。z≥40 的弹窗遮罩在 macOS / Linux 照旧盖住标题栏（只压暗不叠字）。
