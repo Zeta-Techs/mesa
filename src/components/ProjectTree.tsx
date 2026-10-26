@@ -91,7 +91,6 @@ import {
 } from "../sidebar-chats";
 import { tidySessionTitle } from "../session-title";
 import { openConversation, openQuickChat, prefetchConversation } from "../quick-chat-launch";
-import { probeMark, probeStart } from "../switch-probe"; // PROBE
 import { projectResumeProfileId } from "../project-agents";
 import { startProjectChat } from "./AskAiModal";
 import { imeBlocksEnter } from "../ime-guard";
@@ -649,8 +648,6 @@ export default function ProjectTree({
     page === "terminal" && activeRun?.sessionId
       ? `${activeRun.agentId}\n${activeRun.sessionId}`
       : null;
-  useEffect(() => { if (selectedChatKey) probeMark("highlight"); }, [selectedChatKey]); // PROBE
-  useEffect(() => { if (pressedChatKey) probeMark("pressed"); }, [pressedChatKey]); // PROBE
   // 正看着的标签跟上了点下去的那段，就交回它管高亮（先切页、后换标签时中间那一下不能亮回原来那行）
   useEffect(() => {
     if (selectedChatKey) setPressedChatKey((k) => (k === selectedChatKey ? null : k));
@@ -831,7 +828,7 @@ export default function ProjectTree({
           // 点下去就开、不等松手（2026-10-24 用户：切对话要和 Claude 客户端一样点了就出来）；
           // 键盘回车 / 空格触发的 click（detail 为 0）照旧开。鼠标移上来 / 键盘走到这行就先取点开要等的东西
           onMouseDown={(e) => {
-            if (e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) { probeStart(key); openChat(s, project); } // PROBE
+            if (e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) openChat(s, project);
           }}
           // 不按修饰键点下去 = 打开这一段，同时清掉多选
           onPointerDown={(e) => {

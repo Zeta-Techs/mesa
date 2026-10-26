@@ -247,7 +247,6 @@ function afterPaint(): Promise<void> {
 }
 
 /** 鼠标移到列表里的一段对话上：先把点开要等的东西取回来。Mesa 里已经开着它的不用取（点了只是切过去） */
-import { probeMark } from "./switch-probe"; // PROBE
 export function prefetchConversation(s: SessionMetaDto): void {
   if (!s.alive) return;
   const { liveSessions, terminalRunInputs } = useAppStore.getState();
@@ -323,8 +322,8 @@ export function resumeSessionInTerminal(
   }
   void (async () => {
     const [{ run, config, projects }] = await Promise.all([
-      resumeLookups.take(resumeLookupKey(s), () => fetchResumeLookup(s)).then((v) => { probeMark("lookup"); return v; }), // PROBE
-      opts?.lazy ? prepareRecord(s).then((v) => { probeMark("record", v === undefined ? "timeout" : "ok"); return v; }) : null, // PROBE
+      resumeLookups.take(resumeLookupKey(s), () => fetchResumeLookup(s)),
+      opts?.lazy ? prepareRecord(s) : null,
       opts?.lazy ? afterPaint() : null,
     ]);
     if (s.live && !holder && !lastWriteIsMesas(s.updatedAt, run)) {
@@ -368,7 +367,6 @@ export function resumeSessionInTerminal(
       split: opts?.split || undefined,
     });
     setPage("terminal");
-    probeMark("dispatch"); // PROBE
     opts?.onOpened?.();
   })();
 }
