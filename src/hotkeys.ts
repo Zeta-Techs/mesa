@@ -5,13 +5,13 @@
  */
 
 /** 页切绑定清单单一出处（App.tsx 全局监听、设置页录制 UI、命令面板同源）：
- *  顺序与展开的侧栏一致：工作台 · 搜对话 · 项目 · 连接 · 技能 · MCP · 用量 · 设置，⌘1–⌘8。
+ *  顺序与展开的侧栏一致：工作台 · 对话管理 · 项目 · 连接 · 技能 · MCP · 用量 · 设置，⌘1–⌘8。
  *  「运行」不在里面（2026-10-24 用户二改：「快捷键也还有运行」）——展开的侧栏、命令面板、灵动岛都不列它，
  *  回到对话点侧栏里那一段；同日早先一版是九页、按图标态侧栏排（⌘2 运行 / ⌘3 搜对话 / ⌘4 项目），再早是 ⌘2 项目 / ⌘3 运行 / ⌘4 对话。
  *  label = 侧栏上的入口名，hint = 设置页悬停说明。combo 为该页默认绑定（settings.hotkeyPages 按页 id 覆盖） */
 export const PAGE_HOTKEY_DEFS = [
   { id: "workbench", label: "工作台", combo: "mod+1", hint: "所有课题的总览" },
-  { id: "sessions", label: "搜对话", combo: "mod+2", hint: "打开对话页，光标落在搜索框" },
+  { id: "sessions", label: "对话管理", combo: "mod+2", hint: "打开对话页，光标落在搜索框" },
   { id: "workspaces", label: "项目", combo: "mod+3", hint: "当前课题的项目页" },
   { id: "profiles", label: "连接", combo: "mod+4", hint: "API 连接与官方账号" },
   { id: "skills", label: "技能", combo: "mod+5", hint: "给 Agent 装的技能" },
@@ -49,6 +49,12 @@ export const FIXED_HOTKEYS: readonly { label: string; mac: string; other: string
   { label: "切回刚看的对话", mac: "⌃Tab", other: "Ctrl+Tab", hint: "在运行页里按，按最近看过的顺序往回切" },
   { label: "切到最早看的对话", mac: "⌃⇧Tab", other: "Ctrl+Shift+Tab", hint: "在运行页里按，和上一条反方向" },
   { label: "侧栏里上下选", mac: "↑ ↓ ↵", other: "↑ ↓ Enter", hint: "光标在侧栏里时：↑ ↓ 选，回车打开，← → 收起 / 展开课题" },
+  {
+    label: "侧栏里多选对话",
+    mac: "⌘点 / ⇧点 / ⇧↑↓",
+    other: "Ctrl+点 / Shift+点 / Shift+↑↓",
+    hint: "⌘（Ctrl）点一段加进或拿出，⇧ 点整段选上；选好后树底下一条能一起置顶或归档，Esc 取消",
+  },
   { label: "打开设置", mac: "⌘,", other: "Ctrl+," },
   {
     label: "界面放大缩小",
@@ -67,7 +73,7 @@ export const FIXED_HOTKEYS: readonly { label: string; mac: string; other: string
 
 /**
  * 已存下的绑定里互相撞车的：id → 同组合的另一条的名字（第一个撞上的）。录制时撞车会被拒，但存量绑定可能撞——
- * 页面快捷键重排后，以前改过、存成旧默认的（如「项目」⌘2）会和新默认（「搜对话」⌘2）撞，
+ * 页面快捷键重排后，以前改过、存成旧默认的（如「项目」⌘2）会和新默认（「对话管理」⌘2）撞，
  * 按下去只会到排在前面那页。设置页据此把两行都标出来。空串（禁用）不算撞
  */
 export function hotkeyClashes(

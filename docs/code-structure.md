@@ -88,7 +88,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   聊天变体留左右两格 chatMetaRef 给 ChatSurface portal 挂「权限 · 项目 | 模型」，2026-10-23） 等
   App.tsx                    # 应用壳：标题栏（收件箱/帮助/命令面板）、三段式侧栏（快速入口/项目树/系统段）、主区 page 驱动挂载、
                              #   全局快捷键、启动过渡、跨实例同步、通知、确认框宿主。侧栏纵向间距收紧（2026-10-25 用户：品牌区到导航、导航到「项目」嫌松）：品牌区 h-[34px]、导航区 pt-1、项目区 pt-1.5。侧栏（2026-10-16 定稿）：品牌区下是快速入口
-                             #   （工作台 ⌘1 / 新对话 / 运行（常驻）/ 搜对话），中段项目树（ProjectTree，课题下挂对话），
+                             #   （工作台 ⌘1 / 新对话 / 运行（常驻）/ 对话管理），中段项目树（ProjectTree，课题下挂对话），
                              #   底部资源段（连接/技能/MCP/用量/设置：展开态平时连接、设置 + › 记号，悬停这一排抽屉滑出技能 / MCP / 用量（RAIL_MORE_PAGES，`.ccode-rail-drawer`，2026-10-25）、图标态竖排五个）；收起态=图标条（项目树不可用，展开后才有）。
                              #   主区：page==="workbench" 显示工作台概览、page==="workspaces" 显示选中课题详情（选中经 selectProjectReq
                              #   一次性请求由项目页消费——与收件箱/对话页/统计页跳转同一条链，禁再拿它当持久选中态渲染）。
@@ -134,7 +134,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   完成后 loadProjects+bumpProjectsVersion 通知本树与项目页重拉；
                              #   2026-10-23 挂对话（纯逻辑 sidebar-chats.ts）：最上面「随手聊」、节头名字后的箭头开合对话（默认只展开运行页
                              #   正看着的那个，人手开关记 ccode.projectTreeChats）、展开按侧栏空位列（至少 5 段）+ 「还有 N 段 / 收起」，行尾运行状态光标（RunCaret，收着也报）；
-                             #   点对话 openConversation（只看不起进程）；点课题名进项目页并展开它的对话（10-24）；行尾悬停 ＋（startProjectChat / openQuickChat）与 ⋯ 平时不占宽（随手聊的 ⋯：对话页看全部随手聊 / 归档 7 天没动的，2026-10-26）；
+                             #   点对话 openConversation（只看不起进程）；点课题名进项目页并展开它的对话（10-24）；行尾悬停 ＋（startProjectChat / openQuickChat）与 ⋯ 平时不占宽（随手聊的 ⋯：对话页看全部随手聊 / 归档 7 天没动的，2026-10-26）；置顶一节的对话行尾小字写所属课题（originOfChat，悬停让位给 ⋯）；收着的课题之间只隔 1px、展开的那节上下留 pt-3（10-27）；对话多选（⌘/Ctrl 点、⇧ 点、⇧↑↓，选中铺 .ccode-rail-picked，树底「已选 N 段」条 + 选中行右键同一份批量菜单：置顶 / 归档，10-27）；
                              #   对话行尾 ⋯ 与右键：在右侧分屏打开 / 关掉这段对话（Mesa 里开着才有）/ 重命名 / 归档 / 在对话页查看；开着的对话行悬停 × 顶替运行光标那格（10-26）；会话列表自己保鲜（展开拉一次、看得见时每分钟）；拖动按整块（tabDragShift）；
                              #   2026-10-24 第二期（运行页标签条退场）：开着、列表里还没有的挂在文件夹最上面（openTabRows，带 ×，经 store.requestCloseTab 关），
                              #   不在任何项目里的单列「其他打开的」（展开态没有「运行」行了，在跑靠各行行尾的光标 + 折起项目头上的光标）
@@ -151,7 +151,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   侧栏树在主 chunk，静态引入会把整页拖进主包），树右键与页面共用同一份
   navigation.ts              # 导航清单单一出处（九页全量）。侧栏本身不按本表渲染（App.tsx 自排三段），本表供隐藏态导航胶囊
                              #   （TopNavCapsule）、设置页「岛上显示的入口」勾选消费——删页会静默弄坏这两处；顺序与字同图标态侧栏
-                             #   （2026-10-24：工作台 · 运行 · 搜对话 · 项目；新对话不是页，岛上插在工作台后；page = 停在这一页时报的页名）；
+                             #   （2026-10-24：工作台 · 运行 · 对话管理（10-27 前叫「搜对话」）· 项目；新对话不是页，岛上插在工作台后；page = 停在这一页时报的页名）；
                              #   「运行」只留给岛上休眠面报页名，不是任何地方的入口（同日撤出图标态侧栏、岛、快捷键）
   App.css                    # 主题令牌与壳层样式。侧栏罩色：展开 42%、图标态 28%、选中行 88%；Linux 与减少透明度回落实心
   feedback.ts                # 反馈与提需求纯逻辑：类型闭集/环境行/正文与主题拼装/mailto 与网页邮箱链接/端点负载/截图常量（≤3 张 ≤2MB）/发送方式闭集与默认（记本机 ccode.feedback.channel）/附件注记（tests/feedback.test.ts）
@@ -665,7 +665,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 正在看的标签归哪个文件夹（currentFolderKey，工作树归主仓）、展开默认（folderOpen）、短标题去「MMDD|类型|」、挂在课题下再去开头重复的课题名
                              # （sidebarChatTitle）、各文件夹列几段（chatQuotas / chatSlots：至少 5 段、按侧栏空位补满；expandedExtra：
                              # 「还有 N 段」在眼下段数上多 10 段）、开着但列表里还没有的标签挂到哪（openTabRows，10-24）、
-                             # 置顶对话（CHAT_PINS_KEY / parseChatPins / toggleChatPin / pinnedChats，10-24，localStorage，与「保留」快照无关）、
+                             # 置顶对话（CHAT_PINS_KEY / parseChatPins / toggleChatPin / pinnedChats，10-24，localStorage，与「保留」快照无关；多选一起钉 pinPicked，10-27）、多选（nextPicked：⌘ 点加减、⇧ 点从起点整段换上，10-27）、
                              # 侧栏键盘走（railNavIndex，10-24）
                              # （tests/sidebar-chats.test.ts；界面 ProjectTree，tests/project-tree-chats-ui.test.ts）
   chat-unread.ts             # 跑完了没看的对话（2026-10-24）：注意力 working → done 那一刻没在看就记，看到即消；会话键优先、标签键认出会话后挪
@@ -794,7 +794,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   展开面＝操作（恢复侧栏居首 + 对话切换器 + 导航 + 可点活动胶囊 + 可点播报）。休眠面控件指针够不着，只放展示；不挂导航角标；
                              #   运行页上休眠面写正看着的对话名（ChatSwitcher.useCurrentChatLabel）；「运行」不上岛（nav-capsule 可见判定拦掉）
   components/ChatSwitcher.tsx # 灵动岛对话切换器（2026-10-24 A+D+E 的 D）：按钮写正看着那段 / 「打开的对话 N」，点开弹打开的对话（sidebar-chats.paletteOpenChats，
-                             #   portal 到 body 同活动面板）+ 搜对话…；活动胶囊管「谁在跑」，这里管「切到哪段」
+                             #   portal 到 body 同活动面板）+ 对话管理…；活动胶囊管「谁在跑」，这里管「切到哪段」
   components/RailPeek.tsx    # 探出整栏（2026-10-24 A+E）：图标态 / 完全隐藏时把同一棵 ProjectTree 盖在内容上滑出（App 挂、store.railPeekOpen）；
                              #   鼠标离开、Esc、点外面收，去了别处（换页 / 换正看着的标签 / 选项目）时鼠标还在里面不收、不在里面（⌘0 键盘选的）才立刻收（2026-10-25）；开着菜单或在改名时离开不收；useRailPeekTrigger 管悬停触发
                              #   （图标栏中段空白 0.12 秒、隐藏态左边缘 8px 0.32 秒），⌘0 也开。ProjectTree 的 focusRailReq 只认挂载后的新请求，探出层挂上不抢焦点；

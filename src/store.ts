@@ -662,7 +662,7 @@ interface AppState {
   /** 当前页面（nav id），放 store 里让任意页面可跳转 */
   page: string;
   setPage: (p: string) => void;
-  /** 按侧栏入口的意思去一页（快捷键、命令面板、灵动岛共用）：「搜对话」进对话页时光标落进搜索框，其余同 setPage */
+  /** 按侧栏入口的意思去一页（快捷键、命令面板、灵动岛共用）：「对话管理」进对话页时光标落进搜索框，其余同 setPage */
   goEntry: (p: string) => void;
   /** 侧栏收缩状态（localStorage 持久化，品牌区点击切换） */
   navCollapsed: boolean;
@@ -803,7 +803,7 @@ interface AppState {
   /** 侧栏项目树项目「全部 N 条」→ 对话页只列这个目录的（跨 Agent，消费并清空） */
   sessionsProjectPathReq: string | null;
   setSessionsProjectPathReq: (path: string | null) => void;
-  /** 侧栏「搜对话」→ 对话页把光标放进搜索框（递增令牌，对话页见新值就聚焦） */
+  /** 侧栏「对话管理」→ 对话页把光标放进搜索框（递增令牌，对话页见新值就聚焦） */
   sessionsSearchFocusReq: number;
   requestSessionsSearchFocus: () => void;
   /** 把光标移到侧栏里正看着的那段对话（快捷键默认 mod+0；ProjectTree 消费，之后 ↑↓ 选、回车打开） */

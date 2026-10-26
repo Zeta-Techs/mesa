@@ -973,6 +973,17 @@ body {
   );
 }
 
+/* 侧栏多选（2026-10-27）：选中的几段铺一层淡强调色，和「正看着的那段」（中性提亮 + 左条）分得开；
+   不乘透明度系数——0 档也得看得出选了哪几段 */
+.ccode-app-rail .ccode-rail-picked,
+.ccode-rail-peek .ccode-rail-picked {
+  background-color: color-mix(in srgb, var(--color-nav-accent) 18%, transparent);
+}
+.ccode-app-rail .ccode-rail-picked:hover,
+.ccode-rail-peek .ccode-rail-picked:hover {
+  background-color: color-mix(in srgb, var(--color-nav-accent) 24%, transparent);
+}
+
 /* 选中左条：胶囊随透明度系数变淡、0 档消失，hover 底色却不变——没有这条，低档位下 hover 行
    会比选中行更显眼。左条是实心强调色、不乘系数，0 档也认得出选中；它不是罩色，不违背
    「0 档不铺罩色」。图标态同样画在左缘。 */
@@ -1260,6 +1271,44 @@ html[data-material="none"] .ccode-app-rail .bg-rail-sel {
   background-color: var(--color-raised);
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06);
   animation: ccode-pop 150ms var(--ccode-motion-ease);
+}
+
+/* 深色右键 / ⋯ 菜单（ContextMenu）照系统菜单做成半透明磨砂：侧栏是透出桌面的玻璃，实心 raised 菜单压在上面
+   读作一块黑（2026-10-27 用户截图，蓝色壁纸下最明显）。底色留 raised 64%，压在侧栏上透出的是同一块桌面材质，
+   压在主画布上由 backdrop-filter 模糊背后的字。描边提到白 14%，菜单边界不靠底色深浅撑。浅色、降低透明度时仍是实心 raised。
+   Mac 上模糊必须挂在菜单本身：挂 ::before 时，淡入那 150ms 里父层 opacity<1，WKWebView 取不到背景，
+   菜单先压暗再在淡完那一刻跳亮——用户看到的「先闪一下黑底」（2026-10-27 真 WKWebView 录屏逐帧：亮度 42 跳 55；
+   挂本身是 75→53 平滑）。Windows 同层模糊会把菜单字一起栅格化发糊（见 .ccode-nav-island），仍放 ::before。 */
+.ccode-app-shell[data-chrome="dark"] .ccode-menu-surface {
+  background-color: color-mix(in srgb, var(--color-raised) 64%, transparent);
+  border-color: rgb(255 255 255 / 0.14);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  backdrop-filter: blur(24px) saturate(160%);
+}
+[data-platform="windows"] .ccode-app-shell[data-chrome="dark"] .ccode-menu-surface {
+  isolation: isolate;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+[data-platform="windows"] .ccode-app-shell[data-chrome="dark"] .ccode-menu-surface::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  backdrop-filter: blur(24px) saturate(160%);
+  pointer-events: none;
+}
+@media (prefers-reduced-transparency: reduce) {
+  .ccode-app-shell[data-chrome="dark"] .ccode-menu-surface {
+    background-color: var(--color-raised);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  [data-platform="windows"] .ccode-app-shell[data-chrome="dark"] .ccode-menu-surface::before {
+    content: none;
+  }
 }
 
 /* 侧栏底部那一排的抽屉（App 资源与管理段）：宽度从一个 › 滑到三个图标（200ms），图标依次淡入右移、› 淡出；
@@ -2403,7 +2452,7 @@ select:focus-visible {
   font-size: 12px;
   line-height: 1rem;
 }
-/* 侧栏对话标题与课题名（2026-10-24 用户：「字号再小一点点」）：13px，比「工作台 / 搜对话」的 14px 小一档。两个平台同值。
+/* 侧栏对话标题与课题名（2026-10-24 用户：「字号再小一点点」）：13px，比「工作台 / 对话管理」的 14px 小一档。两个平台同值。
    同日用户「分不清项目和对话」后课题名也用这一档：课题和对话靠课题前的文件夹图标、对话缩进到名字起点分层，不靠字号；
    12px 的 xs 只留给分节标签（项目 / 置顶 / 其他打开的）与「展开更多」这类动作 */
 .ccode-app-rail .ccode-rail-text,

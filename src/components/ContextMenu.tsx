@@ -123,7 +123,7 @@ export default function ContextMenu({
         ref={panelRef}
         role="menu"
         onKeyDown={onPanelKeyDown}
-        className={`ccode-anchor-topleft absolute min-w-44 max-w-80 rounded-md border border-field ccode-float-surface p-1${exiting ? " ccode-exiting" : ""}`}
+        className={`ccode-anchor-topleft absolute min-w-44 max-w-80 rounded-md border border-field ccode-float-surface ccode-menu-surface p-1${exiting ? " ccode-exiting" : ""}`}
         style={style}
         onClick={(e) => e.stopPropagation()}
       >

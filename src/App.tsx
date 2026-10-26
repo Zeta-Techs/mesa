@@ -14,7 +14,6 @@ import {
   Megaphone,
   ChevronRight,
   RefreshCw,
-  Search,
   ShieldAlert,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
@@ -1858,15 +1857,15 @@ function App() {
                   </RailTooltip>
                   {/* 图标态的「运行」图标 2026-10-24 撤掉（用户定 A+D+E）：回到对话改走探出整栏——悬停下面那段空白或按 ⌘0，
                       项目树盖在内容上滑出来；在跑的看顶栏活动芯片 */}
-                  {/* 「搜对话」（2026-10-23 侧栏挂对话第一期，原「全部对话」）：日常找对话在下面项目树里，
-                      对话页管跨项目搜索与整理（归档、导出），点进去光标直接在搜索框 */}
-                  <RailTooltip label="搜对话" collapsed={collapsed}>
+                  {/* 「对话管理」（2026-10-23 侧栏挂对话第一期由「全部对话」改「搜对话」，2026-10-27 用户改「对话管理」）：
+                      日常找对话在下面项目树里，对话页管跨项目搜索与整理（归档、导出、批量），点进去光标直接在搜索框 */}
+                  <RailTooltip label="对话管理" collapsed={collapsed}>
                     <button
                       type="button"
                       onClick={() => useAppStore.getState().goEntry("sessions")}
                       aria-current={page === "sessions" ? "page" : undefined}
-                      aria-label="搜对话"
-                      title={`搜对话：在所有项目的对话里找，也在那里归档、导出${keyHint("sessions")}`}
+                      aria-label="对话管理"
+                      title={`对话管理：在所有项目的对话里搜索、筛选，也在那里归档、导出、批量整理${keyHint("sessions")}`}
                       className={`relative mb-0.5 flex h-8 w-full items-center rounded-md text-sm transition-colors ${
                         collapsed ? "justify-center" : "px-2.5"
                       } ${
@@ -1875,13 +1874,14 @@ function App() {
                           : "text-l3 hover:bg-hover hover:text-l2"
                       }`}
                     >
-                      <Search
+                      {/* 图标同命令面板 / 灵动岛的「对话管理」（NAV_ICONS.sessions，2026-10-27 用户：统一，不再用放大镜） */}
+                      <NAV_ICONS.sessions
                         size={16}
                         strokeWidth={1.8}
                         className={`${collapsed ? "" : "mr-2 shrink-0"} ${page === "sessions" ? "text-nav-accent" : ""}`}
                         aria-hidden="true"
                       />
-                      {!collapsed && <span className="truncate">搜对话</span>}
+                      {!collapsed && <span className="truncate">对话管理</span>}
                     </button>
                   </RailTooltip>
                   {/* 图标态：项目树不可见，文件夹与其他图标一样只管「去项目页」；

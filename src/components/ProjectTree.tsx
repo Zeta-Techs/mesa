@@ -66,7 +66,9 @@ import {
   chatDot,
   currentFolderKey,
   parseChatPins,
+  nextPicked,
   pinnedChats,
+  pinPicked,
   railNavIndex,
   toggleChatPin,
   folderDot,
@@ -323,6 +325,22 @@ export default function ProjectTree({
       return next;
     });
   }
+  /** 多选里几段一起置顶 / 取消置顶 */
+  function pinPickedFor(keys: string[]) {
+    setChatPins((prev) => {
+      const next = pinPicked(prev, keys);
+      try {
+        localStorage.setItem(CHAT_PINS_KEY, JSON.stringify(next));
+      } catch {
+        /* 存不下只影响下次启动 */
+      }
+      return next;
+    });
+  }
+  // 多选（2026-10-27）：⌘（Windows 上 Ctrl）点 / ⇧ 点 / ⇧↑↓ 选几段，一起置顶或归档；不点修饰键照旧打开并清掉选择
+  const [picked, setPicked] = useState<Set<string>>(() => new Set());
+  const pickAnchor = useRef<string | null>(null);
+  const [pickMenu, setPickMenu] = useState<{ x: number; y: number; alignRight?: boolean } | null>(null);
   const pinnedList = useMemo(() => pinnedChats(sessions, chatPins), [sessions, chatPins]);
   const pinnedKeys = useMemo(
     () => new Set(pinnedList.map((s) => `${s.agent}\n${s.sessionId}`)),
@@ -376,6 +394,12 @@ export default function ProjectTree({
   function projectOfChat(s: SessionMetaDto): ProjectDto | null {
     const key = currentFolderKey(s.projectPath, folders, projectPaths, IS_WINDOWS);
     return key ? (rows.find((r) => pathKey(r.repoPath, IS_WINDOWS) === key)?.project ?? null) : null;
+  }
+  /** 一段对话属于哪个文件夹（课题名 / 随手聊）；不在任何一个里的给 null */
+  function originOfChat(s: SessionMetaDto): string | null {
+    const key = currentFolderKey(s.projectPath, folders, projectPaths, IS_WINDOWS);
+    if (key === SCRATCH_FOLDER_KEY) return "随手聊";
+    return key ? (rows.find((r) => pathKey(r.repoPath, IS_WINDOWS) === key)?.name ?? null) : null;
   }
   function openChat(s: SessionMetaDto, project: ProjectDto | null, split = false) {
     openConversation(s, {
@@ -676,14 +700,15 @@ export default function ProjectTree({
       const k = pathKey(r.repoPath, IS_WINDOWS);
       if (folderOpen(k, chatOpenPrefs, currentKey)) open.push({ key: k, count: chatsByRoot.get(k)?.length ?? 0 });
     }
-    // 行高按 rem 折算（Mac 根 14px、Windows 16px）：对话行 h-8 + 1px 行距；节头 h-7 + pt-2；
-    // 每个展开的文件夹再留一行「还有 N 段」（h-6）与底边距 pb-1；三段容器各 pt-2
+    // 行高按 rem 折算（Mac 根 14px、Windows 16px）：对话行 h-8 + 1px 行距；节头 h-7，收着的之间只隔 1px，
+    // 展开的上下各留 pt-3（2026-10-27）；每个展开的文件夹再留一行「还有 N 段」（h-6）与底边距 pb-1；三段容器各 pt-2
     const rem = parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 14;
     const headers = sections.length + 1;
     // 「置顶」一节（节头 + 每段一行）也占地方，先扣掉
     const pinnedRows = pinnedList.length > 0 ? 2.25 * rem + pinnedList.length * (2 * rem + 1) : 0;
     // 「项目」标签行（mt-2 + h-7，2026-10-26 挪进滚动区）占 2.25rem，紧跟它的第一段省掉 pt-2
-    const fixed = headers * 2.25 * rem + open.length * 1.75 * rem + 1.5 * rem + pinnedRows + 1.75 * rem;
+    const fixed =
+      headers * (1.75 * rem + 1) + open.length * 3.25 * rem + 1.5 * rem + pinnedRows + 1.75 * rem;
     const slots = chatSlots({ available: listHeight, fixed, rowHeight: 2 * rem + 1 });
     const shown = chatQuotas({
       counts: open.map((o) => o.count),
@@ -697,7 +722,7 @@ export default function ProjectTree({
    *  完整标题放悬停），状态点放行尾；右键改名 / 归档 / 去对话页 */
   /** 对话不缩进，左缘对齐课题行的图标（2026-10-25 用户对照 Claude 客户端：课题名降成小号灰字的分组标题，
    *  项目和对话靠字号、字色分层，不再靠缩进；原 2026-10-24 缩进到名字起点） */
-  function renderChat(s: SessionMetaDto, project: ProjectDto | null, folderName?: string) {
+  function renderChat(s: SessionMetaDto, project: ProjectDto | null, folderName?: string, origin?: string | null) {
     const key = chatKey(s);
     const full = tidySessionTitle(s).title;
     // 挂在课题下时去掉开头重复的课题名（置顶一节不给，那里看不出属于谁）
@@ -755,15 +780,25 @@ export default function ProjectTree({
       );
     }
     const menuOpen = chatMenu != null && chatKey(chatMenu.s) === key;
+    const isPicked = picked.has(key);
+    // 选了好几段时，在其中一段上右键 / 点 ⋯ 出的是对这几段的菜单
+    const forPicked = isPicked && picked.size > 1;
     return (
       <div
         key={key}
         className={`group/chat relative grid h-8 grid-cols-[1fr_auto] items-center rounded-md transition-colors ${
-          selected ? "ccode-rail-active bg-rail-sel" : menuOpen ? "bg-hover" : "hover:bg-hover"
+          isPicked
+            ? `ccode-rail-picked${selected ? " ccode-rail-active" : ""}`
+            : selected
+              ? "ccode-rail-active bg-rail-sel"
+              : menuOpen
+                ? "bg-hover"
+                : "hover:bg-hover"
         }`}
         onContextMenu={(e) => {
           e.preventDefault();
-          setChatMenu({ x: e.clientX, y: e.clientY, s, project });
+          if (forPicked) setPickMenu({ x: e.clientX, y: e.clientY });
+          else setChatMenu({ x: e.clientX, y: e.clientY, s, project });
         }}
       >
         <button
@@ -774,23 +809,45 @@ export default function ProjectTree({
           onMouseDown={(e) => {
             if (e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) openChat(s, project);
           }}
-          onClick={(e) => {
-            if (e.detail === 0) openChat(s, project);
+          // 不按修饰键点下去 = 打开这一段，同时清掉多选
+          onPointerDown={(e) => {
+            if (e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) clearPicked();
           }}
+          onClick={(e) => {
+            // ⌘ 点（Windows 上 Ctrl；Mac 上 Ctrl 点是右键）加进 / 拿出，⇧ 点整段选上：只选不开
+            if (IS_MAC ? e.metaKey : e.ctrlKey) pick(key, "toggle");
+            else if (e.shiftKey) pick(key, "range");
+            else if (e.detail === 0) {
+              clearPicked();
+              openChat(s, project);
+            }
+          }}
+          data-chat-key={key}
+          data-picked={isPicked ? "1" : undefined}
           onPointerEnter={() => prefetchConversation(s)}
           onFocus={() => prefetchConversation(s)}
           aria-current={selected ? "true" : undefined}
-          title={`${full}\n${agent} · ${relTime(s.updatedAt)}${dot ? ` · ${dotTitle(dot)}` : ""}\n点一下接着聊`}
+          title={`${full}\n${origin ? `${origin} · ` : ""}${agent} · ${relTime(s.updatedAt)}${dot ? ` · ${dotTitle(dot)}` : ""}\n点一下接着聊`}
           className={`flex h-8 min-w-0 items-center gap-2 rounded-md pl-2 pr-1 ${
             selected || unread ? "text-l1" : "text-l3 group-hover/chat:text-l2"
           }`}
         >
-          {/* 字号 13px（.ccode-rail-text，2026-10-24 用户：比「工作台 / 搜对话」的 14px 再小一点点）。写在内层 span 上：
+          {/* 字号 13px（.ccode-rail-text，2026-10-24 用户：比「工作台 / 对话管理」的 14px 再小一点点）。写在内层 span 上：
               按钮上写字号会被全站 button { font: inherit } 吞掉。
               字色同工作入口：平时 l3、悬停 l2，只有正看着的那段亮到 l1（2026-10-24 用户：标题不用全亮着） */}
           <span className="ccode-rail-text ccode-rail-fade min-w-0 flex-1 text-left">{short}</span>
         </button>
         <div className="flex shrink-0 items-center gap-0.5 pr-0.5">
+          {/* 置顶一节跨课题：行尾小字写它属于哪个课题（2026-10-26 用户：置顶的看不出是谁的）。
+              悬停 / 聚焦时让位给 ⋯，标题宽度大致不变；课题名长了自己截断，不挤标题 */}
+          {origin && (
+            <span
+              className="max-w-[6.5rem] truncate pl-1 pr-1.5 text-micro text-l4 group-hover/chat:hidden group-focus-within/chat:hidden"
+              data-chat-origin
+            >
+              {origin}
+            </span>
+          )}
           {/* 运行状态光标（2026-10-24 用户：绿点换成 Mesa 的光标）。有光标才占一格、标题在它前面淡出；
               没光标的行标题写到行尾（2026-10-26 用户：右边这一列要干净，同 Claude 客户端侧栏；空格位让标题早早淡掉、右边空一截）；Mesa 外在跑的悬停时不让位，⋯ 出现在它右边。
               干活时的呼吸在悬停时停下、常亮（App.css .ccode-run-caret） */}
@@ -825,7 +882,8 @@ export default function ProjectTree({
             aria-expanded={menuOpen}
             onClick={(e) => {
               const r = e.currentTarget.getBoundingClientRect();
-              setChatMenu({ x: r.right, y: r.bottom + 4, s, project, alignRight: true });
+              if (forPicked) setPickMenu({ x: r.right, y: r.bottom + 4, alignRight: true });
+              else setChatMenu({ x: r.right, y: r.bottom + 4, s, project, alignRight: true });
             }}
             className={`h-6 w-6 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1 ${
               menuOpen ? "flex" : "hidden group-hover/chat:flex group-focus-within/chat:flex"
@@ -997,9 +1055,25 @@ export default function ProjectTree({
     const target = e.target as HTMLElement;
     // 改名输入框里的方向键归输入框
     if (target.tagName === "INPUT") return;
+    if (e.key === "Escape" && picked.size > 0) {
+      e.preventDefault();
+      clearPicked();
+      return;
+    }
     const rows = railNavRows();
     const current = rows.indexOf(target);
     const next = railNavIndex(e.key, current, rows.length);
+    // ⇧↑ / ⇧↓ 在对话上：从起点（第一次按时是这一段）整段选到下一段（2026-10-27 多选）
+    const fromKey = target.dataset.chatKey;
+    const toKey = next != null ? rows[next]?.dataset.chatKey : undefined;
+    if (e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown") && fromKey && toKey) {
+      e.preventDefault();
+      if (pickAnchor.current == null) pickAnchor.current = fromKey;
+      const anchor = pickAnchor.current;
+      setPicked((prev) => nextPicked(prev, pickOrder(), toKey, anchor, "range"));
+      focusRailRow(rows[next!]);
+      return;
+    }
     if (next != null) {
       e.preventDefault();
       focusRailRow(rows[next]);
@@ -1271,12 +1345,15 @@ export default function ProjectTree({
     const isSource = inSection?.key === row.key;
     const shift =
       inSection && !isSource ? tabDragShift(inSection.slots, inSection.from, inSection.target, index) : 0;
+    // 节与节之间：收着的课题一行挨一行（只隔 1px，2026-10-27 用户：收起的文件夹太高）；
+    // 自己或上一节展开着才留 pt-3，节头读作分节标题，不和上一节的对话挤成一串
+    const prevOpen = index > 0 && folderOpen(pathKey(paths[index - 1], IS_WINDOWS), chatOpenPrefs, currentKey);
+    const gap = index === 0 ? "" : open || prevOpen ? "pt-3" : "pt-px";
     return (
       <div
         key={row.key}
         data-tree-row={row.key}
         data-rail-group
-        // 节与节之间留一点白（首节除外），节头读作分节标题，不和上一节的对话挤成一串
         style={
           inSection
             ? {
@@ -1286,7 +1363,7 @@ export default function ProjectTree({
               }
             : undefined
         }
-        className={`${index > 0 ? "pt-3" : ""} ${isSource ? "relative z-10 rounded-md bg-raised" : ""}`}
+        className={`${gap} ${isSource ? "relative z-10 rounded-md bg-raised" : ""}`}
       >
         <div
           onPointerDown={(e) => onRowPointerDown(e, section, paths, row.key)}
@@ -1449,9 +1526,14 @@ export default function ProjectTree({
       ))
     )
       return;
+    await archiveChats(stale, "随手聊");
+  }
+
+  /** 逐条写归档（不碰 CLI 源文件），先改本地镜像再强刷；what 是 toast 里的量词后缀 */
+  async function archiveChats(list: SessionMetaDto[], what = "对话") {
     const done = new Set<string>();
     const failed: string[] = [];
-    for (const s of stale) {
+    for (const s of list) {
       try {
         await invoke("set_session_meta", {
           agent: s.agent,
@@ -1470,7 +1552,71 @@ export default function ProjectTree({
     });
     void useAppStore.getState().loadSessions(true);
     if (failed.length > 0) toast(`已归档 ${done.size} 段，${failed.length} 段失败：${failed[0]}`, "error");
-    else toast(`已归档 ${done.size} 段随手聊`);
+    else toast(`已归档 ${done.size} 段${what}`);
+  }
+
+  /** 眼下侧栏里列着的对话，从上到下（⇧ 点整段选用） */
+  function pickOrder(): string[] {
+    const root = listRef.current;
+    return root ? Array.from(root.querySelectorAll<HTMLElement>("[data-chat-key]")).map((el) => el.dataset.chatKey!) : [];
+  }
+  function pick(key: string, mode: "toggle" | "range") {
+    // ⇧ 点的起点：上回 ⌘ 点的那段，没有就是正看着的那段
+    const anchor = pickAnchor.current ?? selectedChatKey;
+    setPicked((prev) => nextPicked(prev, pickOrder(), key, anchor, mode));
+    if (mode === "toggle") pickAnchor.current = key;
+    else if (pickAnchor.current == null) pickAnchor.current = anchor ?? key;
+  }
+  function clearPicked() {
+    setPicked((prev) => (prev.size ? new Set() : prev));
+    pickAnchor.current = null;
+    setPickMenu(null);
+  }
+  /** 选中的几段，按侧栏里从上到下 */
+  function pickedSessions(): SessionMetaDto[] {
+    const byKey = new Map(sessions.map((s) => [chatKey(s), s]));
+    const order = pickOrder();
+    const keys = [...picked].sort((a, b) => order.indexOf(a) - order.indexOf(b));
+    return keys.map((k) => byKey.get(k)).filter((s): s is SessionMetaDto => s != null);
+  }
+  function pickMenuItems(): ContextMenuItem[] {
+    const list = pickedSessions();
+    const keys = list.map(chatKey);
+    const allPinned = keys.length > 0 && keys.every((k) => chatPins.includes(k));
+    return [
+      {
+        label: allPinned ? `取消置顶这 ${keys.length} 段` : `置顶这 ${keys.length} 段`,
+        icon: allPinned ? PinOff : Pin,
+        disabled: keys.length === 0,
+        onSelect: () => {
+          pinPickedFor(keys);
+          clearPicked();
+        },
+      },
+      {
+        label: `归档这 ${keys.length} 段…`,
+        icon: Archive,
+        disabled: keys.length === 0,
+        title: "归档后侧栏不再列，对话记录不删；在对话页「更多 → 已归档」里能找回",
+        onSelect: () => void archivePicked(list),
+      },
+      { label: "取消选择", icon: X, onSelect: clearPicked },
+    ];
+  }
+  async function archivePicked(list: SessionMetaDto[]) {
+    const head = list
+      .slice(0, 3)
+      .map((s) => `「${sidebarChatTitle(tidySessionTitle(s).title)}」`)
+      .join("、");
+    if (
+      !(await confirmDialog(
+        `归档这 ${list.length} 段对话？\n\n${head}${list.length > 3 ? ` 等 ${list.length} 段` : ""}\n\n` +
+          `归档后侧栏不再列，对话记录不删；在对话页「更多 → 已归档」里能找回、取消归档。开着的对话照样开着。`,
+      ))
+    )
+      return;
+    clearPicked();
+    await archiveChats(list);
   }
 
   /** 搜索弹层的料：侧栏能列出的全部对话（置顶 / 随手聊 / 各课题，不受「展开更多」限额）+ 全部课题 */
@@ -1570,7 +1716,7 @@ export default function ProjectTree({
               <span className={RAIL_SECTION_LABEL}>置顶</span>
             </div>
             <div role="group" aria-label="置顶的对话" className="space-y-px">
-              {pinnedList.map((s) => renderChat(s, projectOfChat(s)))}
+              {pinnedList.map((s) => renderChat(s, projectOfChat(s), undefined, originOfChat(s)))}
             </div>
           </div>
         )}
@@ -1628,6 +1774,52 @@ export default function ProjectTree({
         )}
       </div>
 
+      {/* 选了对话时树底下一条：几段、一起置顶 / 归档、取消（右键选中的行是同一份菜单）。薄雾底，不画横线 */}
+      {picked.size > 0 && (() => {
+        const keys = pickedSessions().map(chatKey);
+        const allPinned = keys.length > 0 && keys.every((k) => chatPins.includes(k));
+        const action = "flex h-6 items-center gap-1 rounded-md px-1.5 text-l2 hover:bg-hover hover:text-l1 disabled:opacity-40";
+        return (
+          <div
+            role="toolbar"
+            aria-label="选中的对话"
+            className="mx-1.5 mb-1 flex h-8 shrink-0 items-center gap-0.5 rounded-md bg-hover pl-2.5 pr-0.5"
+          >
+            <span className="mr-auto text-xs text-l2">已选 {keys.length} 段</span>
+            <button
+              type="button"
+              disabled={keys.length === 0}
+              onClick={() => {
+                pinPickedFor(keys);
+                clearPicked();
+              }}
+              className={action}
+            >
+              {allPinned ? <PinOff size={13} strokeWidth={1.8} aria-hidden="true" /> : <Pin size={13} strokeWidth={1.8} aria-hidden="true" />}
+              <span className="text-xs">{allPinned ? "取消置顶" : "置顶"}</span>
+            </button>
+            <button
+              type="button"
+              disabled={keys.length === 0}
+              onClick={() => void archivePicked(pickedSessions())}
+              className={action}
+            >
+              <Archive size={13} strokeWidth={1.8} aria-hidden="true" />
+              <span className="text-xs">归档</span>
+            </button>
+            <button
+              type="button"
+              aria-label="取消选择"
+              title="取消选择（Esc）"
+              onClick={clearPicked}
+              className="flex h-6 w-6 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1"
+            >
+              <X size={13} strokeWidth={1.8} aria-hidden="true" />
+            </button>
+          </div>
+        );
+      })()}
+
       {menu && (
         <ContextMenu
           x={menu.x}
@@ -1635,6 +1827,15 @@ export default function ProjectTree({
           alignRight={menu.alignRight}
           onClose={() => setMenu(null)}
           items={menuItems(menu.row)}
+        />
+      )}
+      {pickMenu && (
+        <ContextMenu
+          x={pickMenu.x}
+          y={pickMenu.y}
+          alignRight={pickMenu.alignRight}
+          onClose={() => setPickMenu(null)}
+          items={pickMenuItems()}
         />
       )}
       {scratchMenu && (

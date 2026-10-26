@@ -96,7 +96,7 @@ test("PAGE_HOTKEY_DEFS：八页、顺序同展开的侧栏、没有「运行」�
   );
   assert.deepEqual(
     PAGE_HOTKEY_DEFS.slice(0, 3).map((p) => p.label),
-    ["工作台", "搜对话", "项目"],
+    ["工作台", "对话管理", "项目"],
     "字同侧栏入口",
   );
   const combos = PAGE_HOTKEY_DEFS.map((p) => p.combo);
@@ -125,7 +125,7 @@ test("新对话 / 光标移到侧栏：默认 ⌘N / ⌘0，不和九页、命�
   assert.equal(globalHotkeyAllowed(false, false), true);
 });
 
-test("hotkeyClashes：存下的旧绑定和新默认撞车时两条都标出（项目存成旧默认 ⌘2，撞搜对话 ⌘2）；禁用不算撞", () => {
+test("hotkeyClashes：存下的旧绑定和新默认撞车时两条都标出（项目存成旧默认 ⌘2，撞对话管理 ⌘2）；禁用不算撞", () => {
   const pages = PAGE_HOTKEY_DEFS.map((p) => ({
     id: p.id,
     label: p.label,
@@ -133,7 +133,7 @@ test("hotkeyClashes：存下的旧绑定和新默认撞车时两条都标出（�
     combo: p.id === "workspaces" ? "mod+2" : p.combo,
   }));
   const clashes = hotkeyClashes([...pages, { id: "newChat", label: "新对话", combo: "" }]);
-  assert.equal(clashes.get("workspaces"), "搜对话");
+  assert.equal(clashes.get("workspaces"), "对话管理");
   assert.equal(clashes.get("sessions"), "项目");
   assert.equal(clashes.size, 2);
   assert.equal(hotkeyClashes(PAGE_HOTKEY_DEFS.map((p) => ({ ...p }))).size, 0, "默认绑定互不相撞");

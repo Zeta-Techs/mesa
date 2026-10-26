@@ -11,7 +11,9 @@ import {
   openTabRows,
   paletteOpenChats,
   parseChatPins,
+  nextPicked,
   pinnedChats,
+  pinPicked,
   projectChats,
   railNavIndex,
   toggleChatPin,
@@ -357,4 +359,23 @@ test("命令面板「打开的对话」：侧栏列着的也列（侧栏这时�
   const work = rows.find((r) => r.tabId === "work")!;
   assert.equal(work.label, "干活", "同侧栏去掉「MMDD|类型|」");
   assert.equal(work.fullTitle, "1024|研究|干活");
+});
+
+test("多选：⌘ 点加进 / 拿出，⇧ 点从起点到这一行整段换上（上下都行），起点不在眼下列着的里只选这一行", () => {
+  const order = ["a", "b", "c", "d", "e"];
+  let p = nextPicked(new Set(), order, "b", null, "toggle");
+  assert.deepEqual([...p], ["b"]);
+  p = nextPicked(p, order, "d", "b", "toggle");
+  assert.deepEqual([...p].sort(), ["b", "d"]);
+  p = nextPicked(p, order, "b", "d", "toggle");
+  assert.deepEqual([...p], ["d"]);
+  assert.deepEqual([...nextPicked(p, order, "b", "d", "range")], ["b", "c", "d"]);
+  assert.deepEqual([...nextPicked(p, order, "e", "c", "range")], ["c", "d", "e"]);
+  assert.deepEqual([...nextPicked(p, order, "c", "gone", "range")], ["c"]);
+  assert.deepEqual([...nextPicked(p, order, "c", null, "range")], ["c"]);
+});
+
+test("多选置顶：有没钉的就把没钉的接在后面，全都钉着才一起取消", () => {
+  assert.deepEqual(pinPicked(["x", "a"], ["a", "b", "c"]), ["x", "a", "b", "c"]);
+  assert.deepEqual(pinPicked(["x", "a", "b"], ["a", "b"]), ["x"]);
 });
