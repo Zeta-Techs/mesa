@@ -629,6 +629,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   auto-load-older.ts         # 回放往上翻自动加载更早一页（useAutoLoadOlder：对话页 / 项目对话 / 聊天层共用；只认用户滚动，
                              # 不满一屏自动补页）+ wasPrepended（聊天层前插判定，最新窗后滑不算）
   idle-preload.ts            # 启动后空闲时依次预载大块（preloadInIdle：一次一块、失败静默；App 里列运行页 / 项目页 / 文件预览编辑器 / PDF 阅读）
+  chat-veil.ts               # 刚摆出的对话排好再露（useSettleVeil：尺寸 120ms 不变且没在补页才淡入，最多 600ms；聊天层与对话页回放共用）
   stable-props.ts            # memoWithLatestFunctions：父组件每次传新闭包时仍能跳过重画（比较时函数算相等、交出去的是转发到最新闭包的固定函数）；终端页每标签的聊天层 / 状态栏在用
   polling.ts                 # 定时刷新统一口径（usePolling / pollEvery：窗口隐藏时停、回前台补一次、上一次没回来不叠；createPoller 纯逻辑可测）
   progressive-rows.ts        # 长列表分段渲染（useProgressiveRows：先画 150 行，离底三屏接下一段，换筛选回第一段；选中项在后面画到它）；对话页列表在用

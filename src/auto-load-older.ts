@@ -15,6 +15,13 @@ export type ScrollMetrics = {
   clientHeight: number;
 };
 
+/** 人碰过滚动区之后多久内的滚动事件算人翻的（惯性滑动期间滚轮事件一直在来，会一直续上） */
+export const USER_SCROLL_WINDOW_MS = 1200;
+
+export function scrollIsUsers(sinceInputMs: number): boolean {
+  return sinceInputMs <= USER_SCROLL_WINDOW_MS;
+}
+
 /** 内容不满一屏：没有滚动条可翻，只能自动补页（否则长会话打开只看见一两个气泡） */
 export function needsFill(m: ScrollMetrics): boolean {
   return m.scrollHeight - m.clientHeight <= 1;
@@ -121,22 +128,41 @@ export function useAutoLoadOlder(
     attachedRef.current?.off();
     attachedRef.current = null;
     if (!el) return;
+    // 人碰过滚动区（滚轮 / 触控板惯性也是滚轮事件、拖滚动条、触摸、键盘）之后的滚动才算人翻的；
+    // 贴底、锚点挪回这些程序改 scrollTop 也会发 scroll 事件，原先照样当「翻到离顶三屏内」去接更早一页，
+    // 一打开对话就多接一页、整段重排一次（2026-10-26 逐帧实测）
+    let lastInputAt = Number.NEGATIVE_INFINITY;
+    const onInput = () => {
+      lastInputAt = performance.now();
+    };
+    const onPointerMove = (e: PointerEvent) => {
+      if (e.buttons) lastInputAt = performance.now();
+    };
     const onScroll = () => {
-      lastScrollAtRef.current = performance.now();
-      if (nearTop(el)) triggerRef.current();
+      const now = performance.now();
+      lastScrollAtRef.current = now;
+      if (scrollIsUsers(now - lastInputAt) && nearTop(el)) triggerRef.current();
     };
     // 已经停在顶部时再往上滚不会产生 scroll 事件，靠滚轮补一下
     const onWheel = (e: WheelEvent) => {
-      lastScrollAtRef.current = performance.now();
+      lastInputAt = lastScrollAtRef.current = performance.now();
       if (e.deltaY < 0 && nearTop(el)) triggerRef.current();
     };
     el.addEventListener("scroll", onScroll, { passive: true });
     el.addEventListener("wheel", onWheel, { passive: true });
+    el.addEventListener("pointerdown", onInput, { passive: true });
+    el.addEventListener("pointermove", onPointerMove, { passive: true });
+    el.addEventListener("touchstart", onInput, { passive: true });
+    el.addEventListener("keydown", onInput);
     attachedRef.current = {
       el,
       off: () => {
         el.removeEventListener("scroll", onScroll);
         el.removeEventListener("wheel", onWheel);
+        el.removeEventListener("pointerdown", onInput);
+        el.removeEventListener("pointermove", onPointerMove);
+        el.removeEventListener("touchstart", onInput);
+        el.removeEventListener("keydown", onInput);
       },
     };
   });

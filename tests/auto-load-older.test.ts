@@ -42,3 +42,11 @@ test("拉回来的更早一页等手停了再接；快撞顶就不等", () => {
   assert.equal(canCommitNow({ scrollTop: 400, clientHeight: 800, sinceLastScrollMs: 16 }), true);
   assert.equal(canCommitNow({ scrollTop: 401, clientHeight: 800, sinceLastScrollMs: 16 }), false);
 });
+
+test("只有人碰过滚动区之后的滚动才去接更早一页（贴底、锚点挪回不算）", async () => {
+  const { scrollIsUsers, USER_SCROLL_WINDOW_MS } = await import("../src/auto-load-older.ts");
+  assert.equal(scrollIsUsers(0), true);
+  assert.equal(scrollIsUsers(USER_SCROLL_WINDOW_MS), true);
+  assert.equal(scrollIsUsers(USER_SCROLL_WINDOW_MS + 1), false);
+  assert.equal(scrollIsUsers(Number.POSITIVE_INFINITY), false, "打开后从没碰过");
+});

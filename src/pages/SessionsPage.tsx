@@ -75,6 +75,7 @@ import { firstCompleteTurnIndex } from "../conversation-tools";
 import { useAutoLoadOlder } from "../auto-load-older";
 import { progressiveLimit, useProgressiveRows } from "../progressive-rows";
 import { useReadingAnchor } from "../reading-anchor";
+import { useSettleVeil, veilClass } from "../chat-veil";
 import RunCaret from "../components/RunCaret";
 import { caretOfAttention, type RunCaretState } from "../run-caret";
 import GitPanel from "../components/GitPanel";
@@ -1205,6 +1206,8 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     onLoad: loadOlderMessages,
     fillKey: messages.length,
   });
+  // 切到一段对话：排好再一次露出，不让表格、链接、补页这些后到的改动当着面挪字（chat-veil.ts）
+  const replayVeiled = useSettleVeil(scrollRef, !loadingConv && messages.length > 0, () => loadingOlder);
 
   // 页面可见时每 8s 轮询（后端扫描结果缓存 10s，更密的轮询无意义）；
   // 当前打开的会话 updatedAt 变了就重拉对话
@@ -2821,7 +2824,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                 <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto [overflow-anchor:none]">
                   {/* 阅读栏居中限宽：与聊天层同一个栏宽（跟聊天字号走，App.css .ccode-chat-column）；
                       scrollRef 仍挂滚动容器，分页语义不变 */}
-                  <div className="ccode-chat-column mx-auto p-4">
+                  <div className={`ccode-chat-column mx-auto p-4 ${veilClass(replayVeiled)}`}>
                     {loadingConv ? (
                       <LoadingRows compact />
                     ) : (

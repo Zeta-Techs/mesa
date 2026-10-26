@@ -12,6 +12,7 @@ import MesaThinkingDots from "./MesaThinkingDots";
 import { firstCompleteTurnIndex } from "../conversation-tools";
 import { useAutoLoadOlder, wasPrepended } from "../auto-load-older";
 import { useReadingAnchor } from "../reading-anchor";
+import { useSettleVeil, veilClass } from "../chat-veil";
 import { chatGreeting, resolveChatCwd, starterContextFor } from "../chat-empty-start";
 import { useAppStore } from "../store";
 import { isLightTheme } from "../themes";
@@ -463,6 +464,8 @@ export default function ChatSurface({
     onLoad: loadOlder,
     fillKey: messages.length,
   });
+  // 刚摆出这段对话：排好（表格、文件链接、高亮、补页都停下）再一次露出，贴底时上面的字不跟着抖（chat-veil.ts）
+  const veiled = useSettleVeil(scrollRef, !emptyLayout && shownMessages.length > 0, () => loadingOlderRef.current);
   const projectPaths = useAppStore((s) => s.projectPaths);
   const recentRepos = useAppStore((s) => s.recentRepos);
   const theme = useAppStore((s) => s.settings?.theme);
@@ -1075,7 +1078,7 @@ export default function ChatSurface({
       >
         {/* 栏宽跟聊天字号走（App.css .ccode-chat-column，回答一行约 52 字），与输入框、底部状态栏同一条中轴：
             外层 px-4、内层不再加内边距，和 ChatComposer 同构——正文左缘、气泡右缘与输入框两边对齐（2026-10-25） */}
-        <div className="flex min-h-full flex-col px-4">
+        <div className={`flex min-h-full flex-col px-4 ${veilClass(veiled)}`}>
         <div className="ccode-chat-column mx-auto flex w-full flex-1 flex-col pb-6 pt-8">
           {emptyLayout && (
             // 空态问候：Mesa 光标标志 + 时段问候，贴在输入框正上方（2026-10-17 用户选定）。

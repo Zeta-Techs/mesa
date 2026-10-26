@@ -53,7 +53,10 @@ function wrapRanges(
 
 // ---------- 文件路径 ----------
 
-const EXIST_CACHE_MS = 15_000;
+/** 核实过是文件的记 5 分钟：重开一段对话时链接在第一帧之前就能套上，不再晚到一拍把行挤动（2026-10-26）；
+ *  不是文件的只记 15 秒——Agent 可能刚提到、马上就建出来 */
+const EXIST_CACHE_MS = 5 * 60_000;
+const MISSING_CACHE_MS = 15_000;
 /** 键 = cwd + 原样路径；abs = null 表示核实过、不是文件 */
 const existCache = new Map<string, { at: number; abs: string | null }>();
 
@@ -64,7 +67,7 @@ async function existingFiles(cwd: string, paths: string[]): Promise<Map<string, 
   const ask: string[] = [];
   for (const p of paths) {
     const hit = existCache.get(`${cwd}\n${p}`);
-    if (hit && now - hit.at < EXIST_CACHE_MS) {
+    if (hit && now - hit.at < (hit.abs ? EXIST_CACHE_MS : MISSING_CACHE_MS)) {
       if (hit.abs) known.set(p, hit.abs);
     } else ask.push(p);
   }
