@@ -543,7 +543,8 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   v3.77 起只服务未挂步骤卡片的纯聊一路；v3.80 起开关随想法区走——聚焦态想法区标题行）：
   开 = 预填指令带「只讨论不动文件」约束 + `PendingTerminal.readonly` → pty_spawn 注入注册表
   `readonly_args`（`agents::readonly_launch_args`；claude/codebuddy `--permission-mode plan`、codex `-s read-only`
-  替换默认 workspace-write、gemini `--approval-mode plan`、kimi/cursor `--plan`；qwen/opencode 无据只有软约束，
+  替换默认 workspace-write、gemini `--approval-mode plan`、kimi/cursor `--plan`、qwen `--approval-mode plan`（≥0.25.3）、
+  opencode `--agent plan` + 实验计划模式开关与收紧的 plan agent 权限（≥1.19.3，`readonly_launch_env`；2026-10-26）；版本不够时拒绝，
   支持矩阵见 matrix 跨 agent 共性结论 §6）；卡片 ⋯「聊想法（允许改文件）」= 不动开关的单次豁免（开关关时不渲染）。
   主按钮口径（v3.77；v3.80 起「聊想法」改名「接着聊」）：有绑定工作区 = 继续（工作树读 TASK.md）；
   未开工挂步骤 = 接着聊（草稿口径）+ 开工；未挂步骤 = 只读纯聊。

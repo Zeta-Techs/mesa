@@ -176,7 +176,7 @@ import {
   type TuiMenu,
 } from "../tui-menu";
 import { askAfter, askAnswerKeys, askFinishes, askMenu, parseClaudeAsk, type AskAction } from "../tui-ask";
-import { screenPlan } from "../plan-approval";
+import { PLAN_EXIT_TOOLS, screenPlan } from "../plan-approval";
 import { promptSuggestionSupported, readPromptSuggestion } from "../prompt-suggestion";
 import { lineCells } from "../screen-cells";
 import { lastContextTokens, type MesaCommand } from "../composer-assist";
@@ -2368,7 +2368,9 @@ const TerminalView = memo(function TerminalView({
       return false;
     }
     if (!ch || channelInfersApproval(ch) || !channelTurnOpen(ch)) return false;
-    // 旁路的卡上答不了（没有回复通道的那类请求）：屏上原文的卡更有用
+    // 旁路的卡上答不了（没有回复通道的那类请求）：屏上原文的卡更有用。
+    // 结束计划（Qwen exit_plan_mode）旁路只给「允许 / 拒绝」，屏上那张有几种开工法，交给屏上的方案卡（plan-approval.ts）
+    if (ch.approval?.toolName && PLAN_EXIT_TOOLS.has(ch.approval.toolName)) return false;
     if (ch.approval) return channelCanAnswer(ch, launchAgentRef.current);
     const now = Date.now();
     if (now - channelApprovalGoneAtRef.current < 3000) {

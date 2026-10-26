@@ -51,8 +51,8 @@ PYTE_DIR=/tmp/pyte python3 -I scripts/e2e-model-routing/chat-capture.py /tmp/e2e
 APPROVE_KEYS='\x1b[B|\r' PYTE_DIR=/tmp/pyte python3 -I scripts/e2e-model-routing/chat-capture.py /tmp/e2e-plans.json grok ask /tmp/cap/grok.json
 # Codex 沙箱里的命令不问人，要申请出沙箱才走审批：
 TOOL_PROMPT="TRIGGER_TOOL TRIGGER_ESC 跑一下" PYTE_DIR=/tmp/pyte python3 -I scripts/e2e-model-routing/chat-capture.py /tmp/e2e-plans.json codex ask /tmp/cap/codex.json /model
-# 只讨论（计划模式）写完方案、问要不要开工那一屏（2026-10-26，Claude / CodeBuddy / Gemini / Kimi / Grok 都能跑）：计划里的
-# discuss 档 = 只讨论的启动参数；假网关先把方案写进系统提示指定的方案文件再调结束计划的工具。APPROVE_KEYS='\x1b[B|\x1b[B|:意见|\r'
+# 只讨论（计划模式）写完方案、问要不要开工那一屏（2026-10-26，Claude / CodeBuddy / Gemini / Kimi / Qwen / OpenCode / Grok 都能跑）：
+# 计划里的 discuss 档 = 只讨论的启动参数、discuss_env = 另加的环境（OpenCode）；Qwen / OpenCode 按版本放行，生成计划时加 MESA_E2E_REAL_CLI=1；假网关先把方案写进系统提示指定的方案文件再调结束计划的工具。APPROVE_KEYS='\x1b[B|\x1b[B|:意见|\r'
 # 看「接着改方案」的按法（Kimi 的 Revise 要先回车：'\x1b[B|\x1b[B|\r|:意见|\r'）；CAP_KEEP=<目录> 留下临时 HOME 看会话文件
 REPLY_PROMPT="你好" TOOL_PROMPT="TRIGGER_PLAN 写个方案" PYTE_DIR=/tmp/pyte python3 -I scripts/e2e-model-routing/chat-capture.py /tmp/e2e-plans.json claude-code discuss /tmp/cap/claude-plan.json
 # 比一屏还长的回复（60 行，看开头滚出屏后预览接不接得上）：第一幕换成 TRIGGER_LONG、拍久一点

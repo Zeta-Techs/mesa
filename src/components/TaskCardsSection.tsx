@@ -235,7 +235,7 @@ export default function TaskCardsSection({
   // 想法期只读保护开关（settings.json，默认开）
   const discussGuard = useAppStore((s) => s.settings?.discussReadonly !== false);
   // 只读保护对当前启动栏 agent 是否真的是硬保护（进程级参数）：
-  // qwen/opencode 的注册表 readonly_args 为空，开了也只剩 prompt 软约束，UI 要如实标注。
+  // 没有只读参数（或版本太旧的 Qwen / OpenCode）的家开了也只剩 prompt 软约束，UI 要如实标注。
   // 能力位来自后端 detect_agents（与 agent_specs 注册表同一出处，不在前端另抄一份名单）
   const detected = useAppStore((s) => s.agents);
   const guardAgentId = launchBarAgent();

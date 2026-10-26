@@ -74,7 +74,7 @@ if WIN:
     env["USERPROFILE"] = home  # Windows 上 CLI 的「家目录」看 USERPROFILE
 for k in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "all_proxy"): env.pop(k, None)
 for k in plan.get("env_remove", []): env.pop(k, None)
-for k, v in plan["env"]: env[k] = v
+for k, v in (plan.get("discuss_env") or plan["env"]) if tier == "discuss" else plan["env"]: env[k] = v
 # CAP_ENV="K=V;K2=V2"：再加几个环境变量（上面把 CLAUDE_CODE_* 都去掉了，要开 Claude 的某个开关从这里给，
 # 如 CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=1——「猜下一句」平时要服务端开关，假网关下拿不到）
 for pair in filter(None, os.environ.get("CAP_ENV", "").split(";")):

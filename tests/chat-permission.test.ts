@@ -13,7 +13,7 @@ test("权限示例按项目类型取，四档都有一句", () => {
 });
 
 test("只讨论：Claude Code / CodeBuddy / Gemini / Kimi 是计划模式，写成「先出方案，你点头再…」；其余各家照旧", () => {
-  for (const agent of ["codebuddy", "gemini", "kimi"]) {
+  for (const agent of ["codebuddy", "gemini", "kimi", "qwen", "opencode"]) {
     assert.equal(permissionExample("coding", agent).outcomes.discuss, "先出方案，你点头再跑", agent);
   }
   for (const agent of ["grok", "cursor"]) {

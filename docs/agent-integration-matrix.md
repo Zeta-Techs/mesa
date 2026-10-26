@@ -155,7 +155,7 @@
 6. **只读/计划模式参数（2026-08-12 本机 `--help` 实测，「聊想法」想法期只读保护用）**：claude `--permission-mode plan`、
    codex `-s read-only`（替换 Ccode 默认注入的 `-s workspace-write`，重复 -s 生效顺序未文档化故先剔除）、
    gemini `--approval-mode plan`、kimi（新版）`--plan`、cursor `--plan`（= `--mode plan`）、codebuddy `--permission-mode plan`；
-   **qwen 0.21.1 无 approval/plan 类参数**（`--safe-mode` 只是禁用自定义配置，非只读）；opencode 1.18.10 有 `--prompt` 但没有已核实的只读/计划参数，因此只读保护仍只有 prompt 软约束。
+   ~~qwen 0.21.1 无 approval/plan 类参数；opencode 只有 prompt 软约束~~（2026-10-26 起两家都有，见本条末「Qwen / OpenCode」）。
    grok（源码调研，待实机验证）：`--permission-mode dontAsk --sandbox read-only`（CI 严格白名单 + OS 级只读；
    `--permission-mode plan` 门控链路未确认，不用）。
    注册表落点：`agent_specs.rs` 的 `AgentSpec.readonly_args`，应用逻辑 `agents::readonly_launch_args`。
@@ -173,7 +173,17 @@
    后 ExitPlanMode，屏上「Current plan ┌ plan: … ┐ / Ready to build with this plan? / 1. Approve / 2. Reject / 3. Revise」，Revise 回车后
    出「Type feedback · ↵ submit」再打字。改方案的意见四家都回成带意见的拒绝。Grok 1.0.70 只读档下 exit_plan_mode 仍可调，
    弹 a approve / s request changes / c comment / q quit 的方案查看器，但只读沙箱不随之放开；Codex 只读档没有结束计划的工具；
-   Cursor 假网关下起不来未核实。Qwen 0.25.3 `--help` 已有 `--approval-mode plan`（上面 0.21.1 的结论已过时），OpenCode 有 `--agent`。
+   Cursor 假网关下起不来未核实。
+   **Qwen / OpenCode 接上只讨论（2026-10-26 同法实测）**：Qwen 0.25.3 `--approval-mode plan`——改状态的命令直接拦下
+   （「Plan mode blocked this shell command…」），`exit_plan_mode(plan=全文)` 没有方案文件，屏上「? ExitPlanMode Plan: / 方案 /
+   Would you like to proceed? / 1. Yes, restore previous mode (default)（→ Ask permissions）/ 2. Yes, and auto-accept edits /
+   3. Yes, and manually approve edits / 4. No, keep planning (esc)」；Dual Output 旁路把它报成 can_use_tool（Approve / Reject Plan），
+   聊天层不用旁路的两键，交给屏上那张。OpenCode 1.19.3 `--agent plan`：自带 plan agent 只禁改文件，bash / task / MCP 不问就跑
+   （`echo > 文件` 实测写成），plan_exit 要 `OPENCODE_EXPERIMENTAL_PLAN_MODE=1` 才有；Mesa 只讨论时经 OPENCODE_CONFIG_CONTENT 给
+   agent.plan 注入 `"*":"ask"` 再放行只读几样、edit 只放行 `*opencode/plans/*.md`（规则按顺序后者优先，serde_json 键名排序 * 在前），
+   实测 bash 先问、方案照写进数据目录 plans/。屏上「Plan at <文件> is complete. Would you like to switch to the build agent and start
+   implementing? / 1. Yes / 2. No」（各带一行说明，当前项只靠序号颜色：6a91c6 对 808080），Yes 切到 build agent。
+   两家都按版本放行（`agents::readonly_min_version`：Qwen 0.25.3、OpenCode 1.19.3），查不到或更旧 = 不支持只讨论。
    **模型路由端到端核对（2026-10-17，`scripts/e2e-model-routing/`）**：Claude 2.1.292 / CodeBuddy / Codex / Qwen / Kimi / OpenCode / Grok
    的请求都带所选模型（Claude `/v1/messages`、Codex `/v1/responses`、其余 `/v1/chat/completions`，Grok 先 GET `/v1/models`；
    OpenCode、Qwen 的标题 / 记忆小任务也用所选模型）。Claude 的 settings.json env 压过进程 env：用户级 env 里的

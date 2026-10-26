@@ -625,7 +625,10 @@ export default function ChatSurface({
     };
   }
   const decision: ChatDecision | null =
-    channelApproval && channelChoices.length && !trustPrompt
+    // 方案确认排在旁路审批前：Qwen 的结束计划旁路只给「允许 / 拒绝」，屏上那张有几种开工法
+    planMenu && !trustPrompt
+      ? planDecision(planMenu)
+      : channelApproval && channelChoices.length && !trustPrompt
       ? {
           key: `channel:${channelApproval.requestId ?? ""}`,
           title: approvalTitle(channelApproval, agentLabel(agentId)),
@@ -701,8 +704,6 @@ export default function ChatSurface({
                 onAction: (action) => onAnswerAsk?.(action),
               },
             }
-        : planMenu
-          ? planDecision(planMenu)
         : menuPrompt
           ? {
               key: `menu:${menuPrompt.question ?? ""}:${menuPrompt.options.join("|")}`,

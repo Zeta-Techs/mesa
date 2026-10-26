@@ -8,9 +8,15 @@ import type { ChatMessageDto } from "../src/types.ts";
 // 四家真屏（tests/fixtures/plan-screens.json，假网关 TRIGGER_PLAN 抓的）
 const SCREENS = JSON.parse(readFileSync(new URL("./fixtures/plan-screens.json", import.meta.url), "utf8")) as Record<string, string[]>;
 const PLAN = "方案：写一个探针文件\n\n1. 在工作目录新建 mesa_probe.txt\n2. 写入一行 mesa\n3. 读回确认";
+// OpenCode 的当前项只靠序号颜色：照 1.19.3 抓屏回放的字色（当前项序号 6a91c6、其余序号与说明 808080、按键提示 eeeeee）
+const opencodeCells = (lines: string[]) => (row: number) => {
+  const t = lines[row];
+  const fg = /^\s*┃\s+1\. Yes/.test(t) ? "rgb:6a91c6" : /↑↓/.test(t) ? "rgb:eeeeee" : "rgb:808080";
+  return [...t].map((ch) => ({ ch, dim: false, inverse: false, bg: true, fg }));
+};
 const read = (agent: string) => {
   const lines = SCREENS[agent];
-  const menu = parseTuiMenu(lines);
+  const menu = parseTuiMenu(lines, agent === "opencode" ? opencodeCells(lines) : undefined);
   assert.ok(menu, `${agent} 认出菜单`);
   const plan = screenPlan(lines, menu);
   return { menu: plan ? { ...menu, plan } : menu, plan };
@@ -121,13 +127,29 @@ test("改方案的意见压成一行、去掉控制字符（回车会把它交�
   assert.equal(planFeedbackText("\n\n"), "");
 });
 
-test("四家真屏：都认成方案确认，屏上读得到整篇方案（编号清单不当选项截断）", () => {
-  for (const agent of ["claude-code", "codebuddy", "gemini", "kimi"]) {
+test("六家真屏：都认成方案确认，屏上读得到整篇方案（编号清单不当选项截断）", () => {
+  const squash = (t: string | null | undefined) => (t ?? "").split("\n").map((l) => l.trim()).join("\n");
+  for (const agent of ["claude-code", "codebuddy", "gemini", "kimi", "qwen"]) {
     const { menu, plan } = read(agent);
     assert.ok(isPlanMenu(menu, null), `${agent} 不靠旁路也认得出`);
-    assert.equal(plan?.text, PLAN, `${agent} 屏上的方案`);
+    assert.equal(squash(plan?.text), squash(PLAN), `${agent} 屏上的方案`);
     assert.equal(planMenuTitle(menu, false), "方案写好了，按这个方案开工吗？");
   }
+  // OpenCode 屏上只有「Plan at … is complete」与写文件的回显，方案原文从会话里写进 plans/ 的那次取
+  const { menu, plan } = read("opencode");
+  assert.equal(plan, null);
+  assert.ok(isPlanMenu(menu, null));
+  assert.equal(menu.selected, 0, "当前项靠序号颜色认出");
+});
+
+test("只靠颜色标当前项的菜单：颜色都一样或没有按键提示时不认（对话里的编号清单）", () => {
+  const lines = SCREENS.opencode;
+  const same = (row: number) => [...lines[row]].map((ch) => ({ ch, dim: false, inverse: false, bg: true, fg: "rgb:808080" }));
+  assert.equal(parseTuiMenu(lines, same), null);
+  const noHint = lines.filter((l) => !/↑↓/.test(l));
+  assert.equal(parseTuiMenu(noHint, opencodeCells(noHint)), null);
+  // 没有字色信息（来源给不出）也不猜
+  assert.equal(parseTuiMenu(lines), null);
 });
 
 test("各家选项：开工后按哪一档、哪一项能写意见、哪一项要先回车", () => {
@@ -149,6 +171,18 @@ test("各家选项：开工后按哪一档、哪一项能写意见、哪一项�
     ["revise", "接着改方案", true],
   ]);
   assert.equal(kimi[0].description, "权限回到这家 CLI 自己的设置");
+  assert.deepEqual(kinds(read("qwen").menu.options), [
+    ["go", "按方案开工 · 回到原来的权限", "ask"],
+    ["go", "按方案开工 · 自动改文件", null],
+    ["go", "按方案开工 · 请求批准", "ask"],
+    ["stay", "先不开工", null],
+  ]);
+  assert.equal(planChoice(read("qwen").menu.options[0], 0).description, "原来是「请求批准」：改文件、跑命令前都先问你");
+  assert.deepEqual(kinds(read("opencode").menu.options), [
+    ["go", "按方案开工", null],
+    ["stay", "先不开工", null],
+  ]);
+  assert.equal(planChoice(read("opencode").menu.options[0], 0).description, "权限回到这家 CLI 自己的设置");
   assert.deepEqual(kinds(read("codebuddy").menu.options), [
     ["go", "按方案开工", null],
     ["stay", "先不开工", null],
@@ -166,6 +200,9 @@ test("方案原文兜底：会话文件里写进 plans/ 的那一次（Kimi Writ
   });
   assert.equal(latestPlanText([user, call("Write", { path: "/s/agents/main/plans/a.md", content: "# K" }), call("ExitPlanMode", {})]), "# K");
   assert.equal(latestPlanText([user, call("write_file", { file_path: "../x/plans/mesa-plan.md", content: "# G" }), call("exit_plan_mode", { plan_filename: "mesa-plan.md" })]), "# G");
+  // Qwen：方案就在 exit_plan_mode 的 plan 里；OpenCode：write(filePath) 写进数据目录的 plans/
+  assert.equal(latestPlanText([user, call("exit_plan_mode", { plan: "# Q" })]), "# Q");
+  assert.equal(latestPlanText([user, call("write", { filePath: "/h/.local/share/opencode/plans/1-a.md", content: "# O" }), call("plan_exit", {})]), "# O");
   const code = `await Write({ file_path: "/h/.codebuddy/plans/q.md", content: "# C\\n\\n1. 一" }); return 'ok'`;
   assert.equal(latestPlanText([user, call("REPL", { code }), call("REPL", { code: "return await ExitPlanMode({})" })]), "# C\n\n1. 一");
   // 写的不是方案文件：不算

@@ -85,6 +85,56 @@ export function parseTuiMenu(
     const menu = menuAround(lines, i, cellsOf);
     if (menu) return menu;
   }
+  return cellsOf ? colorMarkedMenu(lines, cellsOf) : null;
+}
+
+const NUMBERED_ROW = /^(\s*)(\d+)[.)]\s+\S/;
+// 只靠颜色标高亮的菜单下面那行按键提示（OpenCode「↑↓ select  enter submit  esc dismiss」）
+const SELECT_HINT = /↑↓|\benter (?:submit|confirm|select)\b/i;
+
+/**
+ * 没有 ❯ 一类选中标记、只靠颜色标出当前项的编号菜单（OpenCode 的提问 / 方案确认：当前项序号是强调色，其余灰，
+ * 2026-10-26 实测 1.19.3）。认法：从 1 起连号的几行（中间可夹说明行），下面紧跟按键提示，且恰好一行的序号颜色和其余不同；
+ * 认出后把那一行改写成「❯ 1. …」交给通用认法。对话里的编号清单颜色一样、也没有按键提示，不会被认成菜单
+ */
+function colorMarkedMenu(
+  lines: readonly string[],
+  cellsOf: (row: number) => readonly ScreenCell[],
+): TuiMenu | null {
+  for (let i = 0; i < lines.length; i++) {
+    const first = NUMBERED_ROW.exec(lines[i]);
+    if (!first || first[2] !== "1") continue;
+    const indent = first[1].length;
+    const rows = [i];
+    let last = i;
+    for (let k = i + 1; k < lines.length && k <= last + 3; k++) {
+      const m = NUMBERED_ROW.exec(lines[k]);
+      if (m && m[1].length === indent && Number(m[2]) === rows.length + 1) {
+        rows.push(k);
+        last = k;
+      } else if (m || (lines[k].trim() && lines[k].length - lines[k].trimStart().length <= indent)) {
+        break;
+      }
+    }
+    if (rows.length < 2 || !lines.slice(last + 1, last + 5).some((l) => SELECT_HINT.test(l))) continue;
+    const fgs = rows.map((r) => cellsOf(r)[indent]?.fg);
+    if (fgs.some((f) => f === undefined) || new Set(fgs).size !== 2) continue;
+    // 「没选中」的颜色：三项以上取多数；只有两项时看夹在中间的说明行（OpenCode 说明行与没选中的序号同一个灰）
+    const counts = fgs.map((f) => fgs.filter((g) => g === f).length);
+    let plain: string | null | undefined = counts.some((c) => c > 1) ? fgs[counts.indexOf(Math.max(...counts))] : undefined;
+    if (plain === undefined) {
+      const desc = [];
+      for (let r = i + 1; r < last; r++) if (!rows.includes(r) && lines[r].trim()) desc.push(r);
+      const lead = desc.map((r) => cellsOf(r)[lines[r].length - lines[r].trimStart().length]?.fg);
+      if (!lead.length || new Set(lead).size !== 1 || !fgs.includes(lead[0])) continue;
+      plain = lead[0];
+    }
+    const odd = fgs.filter((f) => f !== plain);
+    if (odd.length !== 1) continue;
+    const pick = rows[fgs.indexOf(odd[0])];
+    const marked = lines.map((l, r) => (r === pick ? `${" ".repeat(Math.max(0, indent - 2))}❯ ${l.trimStart()}` : l));
+    return menuAround(marked, pick, cellsOf);
+  }
   return null;
 }
 

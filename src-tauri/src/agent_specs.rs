@@ -557,7 +557,8 @@ static AGENT_SPECS: &[AgentSpec] = &[
             },
         ]),
         prompt_inject: PromptInject::Flag("-i"),
-        readonly_args: &[],
+        // 计划模式（0.25.3 实测：改状态的命令被拦下、exit_plan_mode 问要不要开工；更早的版本见 agents::readonly_min_version）
+        readonly_args: &["--approval-mode", "plan"],
         permission_args: &[("ask", &["--approval-mode", "default"]), ("auto", &["--approval-mode", "auto"]), ("full", &["--approval-mode", "yolo"])],
         fixed_session_id: true,
         resume: ResumeSpec { prepend: false, args: &["-r", "{session}"] },
@@ -627,7 +628,8 @@ static AGENT_SPECS: &[AgentSpec] = &[
         // opencode 1.18.x exposes a top-level `--prompt` option for starting
         // an interactive session with an initial prompt.
         prompt_inject: PromptInject::Flag("--prompt"),
-        readonly_args: &[],
+        // 自带的 plan agent（1.19.3 实测）：只读另靠 agents::readonly_launch_env 注入的权限收紧（原样 bash 不问就跑）
+        readonly_args: &["--agent", "plan"],
         permission_args: &[("full", &["--auto"])],
         fixed_session_id: false,
         resume: ResumeSpec { prepend: false, args: &["--session", "{session}"] },
@@ -1172,9 +1174,13 @@ fn flag(supported: bool, reason: Option<&'static str>) -> CapabilityFlagDto {
 
 fn readonly_cap(spec: &AgentSpec) -> CapabilityFlagDto {
     if spec.readonly_args.is_empty() {
-        flag(false, Some("没有只读/计划模式参数，不能以只讨论权限启动"))
-    } else {
-        flag(true, None)
+        return flag(false, Some("没有只读/计划模式参数，不能以只讨论权限启动"));
+    }
+    // 要看版本的家（agents::readonly_min_version）：版本不够时启动拒绝、徽标置灰
+    match spec.id {
+        "qwen" => flag(true, Some("需要 Qwen Code 0.25.3 及以上")),
+        "opencode" => flag(true, Some("需要 OpenCode 1.19.3 及以上")),
+        _ => flag(true, None),
     }
 }
 
@@ -1941,7 +1947,8 @@ mod tests {
         assert_eq!(qwen_dto.request_policy.max_output_tokens, "inject");
         assert_eq!(qwen_dto.request_policy.custom_headers, "unknown");
         assert_eq!(qwen_dto.effort_options, Vec::<&str>::new());
-        assert!(!qwen_dto.readonly.supported);
+        assert!(qwen_dto.readonly.supported);
+        assert!(qwen_dto.readonly.reason.unwrap().contains("0.25.3"));
         assert!(!qwen_dto.headless_write.supported);
         assert!(qwen_dto.headless_write.reason.unwrap().contains("未验证"));
         assert!(claude_dto.readonly.supported);

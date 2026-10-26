@@ -44,7 +44,8 @@ ASK_FRUIT = {"question": "下面这些水果你平时会吃哪些？", "header":
 # TRIGGER_PLAN = 照真模型在计划模式里的走法：先把方案写进系统提示指定的方案文件，再调「结束计划」工具，看「要不要开工」那一屏
 # （2026-10-26）。各家：Claude / CodeBuddy「create your plan at <路径>」+ Write / ExitPlanMode（CodeBuddy 只有 REPL，写成 JS 调）；
 # Kimi「Plan file: <路径>」+ Write(path) / ExitPlanMode；Gemini「implementation plan in `<目录>`」+ write_file / exit_plan_mode(plan_filename)；
-# Grok exit_plan_mode 无参、没有方案文件，直接调。Claude 2.1.308 起方案不在参数里，屏上那份读方案文件；没写文件只问「Exit plan mode?」。
+# Grok exit_plan_mode 无参、没有方案文件，直接调；Qwen exit_plan_mode(plan=方案全文)、没有方案文件；
+# OpenCode（--agent plan + OPENCODE_EXPERIMENTAL_PLAN_MODE）「create your plan at <路径>」+ write(filePath) / plan_exit。Claude 2.1.308 起方案不在参数里，屏上那份读方案文件；没写文件只问「Exit plan mode?」。
 # 按这一轮已有几个工具结果走：0 = 写方案（没有方案文件的家直接结束计划），1 = 结束计划，再往后 = done
 PLAN_TEXT = os.environ.get("E2E_PLAN_TEXT", "# 方案：写一个探针文件\n\n1. 在工作目录新建 mesa_probe.txt\n2. 写入一行 mesa\n3. 读回确认")
 # E2E_PROBE_CMD 换探针命令（如写绝对路径，看沙箱里的工作目录对不对）
@@ -127,7 +128,7 @@ def plan_step(tools, raw):
     """TRIGGER_PLAN 这一步该调哪个工具：(工具名, 参数 JSON)；该回 done 时为 None"""
     names = dict(tools)
     text = raw.decode("utf-8", "replace").replace("\\n", "\n")
-    exit_name = next((n for n in ("ExitPlanMode", "exit_plan_mode") if n in names), None)
+    exit_name = next((n for n in ("ExitPlanMode", "exit_plan_mode", "plan_exit") if n in names), None)
     repl = exit_name is None and "REPL" in names
     if not exit_name and not repl:
         return None
@@ -145,10 +146,11 @@ def plan_step(tools, raw):
     if steps[n] == "write":
         name = next(w for w in ("Write", "write_file", "write") if w in names)
         props = (names[name] or {}).get("properties") or {}
-        key = "file_path" if "file_path" in props else "path"
+        key = next((k for k in ("file_path", "filePath") if k in props), "path")
         return name, json.dumps({key: plan_file, "content": PLAN_TEXT}, ensure_ascii=False)
     props = (names[exit_name] or {}).get("properties") or {}
-    return exit_name, json.dumps({"plan_filename": "mesa-plan.md"} if "plan_filename" in props else {}, ensure_ascii=False)
+    args = {"plan_filename": "mesa-plan.md"} if "plan_filename" in props else {"plan": PLAN_TEXT} if "plan" in props else {}
+    return exit_name, json.dumps(args, ensure_ascii=False)
 
 
 def log(**kw):

@@ -585,7 +585,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   chat-permission.ts         # 输入框权限菜单纯逻辑（2026-10-22）：按项目类型拿一件事说明四档（permissionExample）、⇧Tab 轮换跳过没有的档（nextPermissionTier）；
                              # 只讨论按家分说法（PLAN_FIRST_AGENTS：只有 Claude Code 写「先出方案，你点头再…」，2026-10-26）；
                              # 符号「界线」在 components/ChatPermissionBadge.tsx PermissionGlyph（tests/chat-permission.test.ts）
-  plan-approval.ts           # 计划模式方案确认那一屏（2026-10-26，Claude / CodeBuddy / Gemini / Kimi，tests/plan-approval.test.ts + fixtures/plan-screens.json）：
+  plan-approval.ts           # 计划模式方案确认那一屏（2026-10-26，Claude / CodeBuddy / Gemini / Kimi / Qwen / OpenCode，tests/plan-approval.test.ts + fixtures/plan-screens.json）：
                              # 认屏（isPlanMenu：旁路结束计划工具、屏上标题或问句）、选项说成中文并标开工后哪一档（planChoice：go / revise / stay / leave / other，
                              # 认不出照原文；openFirst = Kimi Revise 先回车）、方案原文三级来源（旁路 > latestPlanText 会话里写进 plans/ 的调用 > screenPlan 屏上）；
                              # 卡片是 ChatDecisionCard PlanCard，按键走 TerminalPage answerMenu(index, MenuAnswer)，开工后 onPlanLeft 改标签权限
@@ -628,6 +628,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   两侧测试共读 tests/fixtures/model-kinds.json。连接目录面板隐藏、对话菜单置灰、启动栏过滤都用它
   tui-menu.ts                # 认屏上的 TUI 选择菜单（parseTuiMenu / menuAnswerKeys / sameTuiMenu / menuEchoesText）：切换命令后 5 秒、启动后 20 秒、
                              # 以及这一轮没结束前都扫屏，切换确认与七家工具审批按原文给按钮；剥方框边与滚动条、Grok 单选改写成序号行、
+                             # 没有 ❯、当前项只靠序号颜色的编号菜单（OpenCode，colorMarkedMenu，要有按键提示且恰好一行颜色不同）、
                              # 折行并回上一项、问句取贴着选项的发问行；回显的 /命令、⎿ 续行、用户刚发的编号清单、上下被横线夹住的输入框草稿都不算菜单
   tui-ask.ts                 # Claude 提问表单（AskUserQuestion）按表单读（parseClaudeAsk：题签 / 当前题靠底色 / 问句 / 选项与说明 / 勾选 / 「自己写」 / Submit（多题未完时写 Next） 行 /
                              # Chat about this / 确认页）、要按的键（askAnswerKeys）、哪一下算交卷（askFinishes：卡片当场收起、到确认页替人确认）、多选先照按键结果画（askAfter）、给通用菜单流程的摘要（askMenu）；

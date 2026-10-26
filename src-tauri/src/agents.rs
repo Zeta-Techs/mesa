@@ -1473,6 +1473,11 @@ pub fn readonly_launch_args(agent_id: &str, base_args: &[String]) -> Option<Vec<
     if spec.readonly_args.is_empty() {
         return None;
     }
+    if let Some(min) = readonly_min_version(agent_id) {
+        if !cli_version(agent_id).is_some_and(|v| v >= min) {
+            return None;
+        }
+    }
     let mut args: Vec<String> = if agent_id == "codex" {
         without_sandbox_pair(base_args)
     } else {
@@ -1482,6 +1487,71 @@ pub fn readonly_launch_args(agent_id: &str, base_args: &[String]) -> Option<Vec<
         args.push((*a).into());
     }
     Some(args)
+}
+
+/// 只讨论要看版本的家（2026-10-26 本机实测的版本）：低于它或查不到版本就当没有只讨论，启动时拒绝、徽标置灰。
+/// Qwen 更早的版本 `--approval-mode` 没有 plan（0.21.1 连这个参数都没有）；OpenCode 的 plan_exit 与权限写法按 1.19.3 核对
+pub(crate) fn readonly_min_version(agent_id: &str) -> Option<(u32, u32, u32)> {
+    match agent_id {
+        "qwen" => Some((0, 25, 3)),
+        "opencode" => Some((1, 19, 3)),
+        _ => None,
+    }
+}
+
+/// 检测结果里的「能不能只讨论」：注册表有只读参数，且要看版本的家版本够
+fn readonly_supported_at(spec: &AgentSpec, version: Option<&str>) -> bool {
+    !spec.readonly_args.is_empty()
+        && readonly_min_version(spec.id)
+            .is_none_or(|min| version.and_then(parse_cli_semver).is_some_and(|v| v >= min))
+}
+
+/// OpenCode 只讨论时 plan agent 的权限（经 OPENCODE_CONFIG_CONTENT 注入，不写用户配置）。自带的 plan agent 只禁了改文件，
+/// bash、子任务、MCP 工具都不问就跑（1.19.3 实测 `echo > 文件` 直接写成）；这里先把一切改成要问，再放行只读的几样，
+/// 改文件只放行方案文件（`.opencode/plans/` 或数据目录 `opencode/plans/`，通配符 * 跨目录）
+fn opencode_plan_permission() -> serde_json::Value {
+    serde_json::json!({
+        "*": "ask",
+        "read": { "*": "allow", "*.env": "ask", "*.env.*": "ask", "*.env.example": "allow" },
+        "glob": "allow", "grep": "allow", "list": "allow", "lsp": "allow",
+        "webfetch": "allow", "websearch": "allow", "codesearch": "allow",
+        "todowrite": "allow", "todoread": "allow", "question": "allow", "skill": "allow", "plan_exit": "allow",
+        "edit": { "*": "deny", "*opencode/plans/*.md": "allow" },
+        "external_directory": { "*": "ask", "*opencode/plans/*": "allow", "*opencode/tool-output/*": "allow" }
+    })
+}
+
+/// 只讨论启动时另加的环境变量（readonly_launch_args 管参数，这里管环境）。OpenCode：打开实验性的计划模式
+/// （有了它 plan agent 才有 plan_exit，写完方案问要不要切到 build 开工），并把上面的权限并进内联配置的 agent.plan
+pub fn readonly_launch_env(agent_id: &str, env: &mut Vec<(String, String)>) {
+    if agent_id != "opencode" {
+        return;
+    }
+    env.retain(|(k, _)| k != "OPENCODE_EXPERIMENTAL_PLAN_MODE");
+    env.push(("OPENCODE_EXPERIMENTAL_PLAN_MODE".into(), "1".into()));
+    let idx = env.iter().position(|(k, _)| k == "OPENCODE_CONFIG_CONTENT");
+    let mut cfg: serde_json::Value = idx
+        .and_then(|i| serde_json::from_str(&env[i].1).ok())
+        .filter(|v: &serde_json::Value| v.is_object())
+        .unwrap_or_else(|| serde_json::json!({}));
+    let agent = cfg
+        .as_object_mut()
+        .unwrap()
+        .entry("agent")
+        .or_insert_with(|| serde_json::json!({}));
+    if !agent.is_object() {
+        *agent = serde_json::json!({});
+    }
+    let plan = agent.as_object_mut().unwrap().entry("plan").or_insert_with(|| serde_json::json!({}));
+    if !plan.is_object() {
+        *plan = serde_json::json!({});
+    }
+    plan.as_object_mut().unwrap().insert("permission".into(), opencode_plan_permission());
+    let text = cfg.to_string();
+    match idx {
+        Some(i) => env[i].1 = text,
+        None => env.push(("OPENCODE_CONFIG_CONTENT".into(), text)),
+    }
 }
 
 /// 本机原生权限档（ask / auto / full）的启动参数；这家没有该档返回 None（调用方拒绝启动，不静默降级）。
@@ -3470,11 +3540,12 @@ fn detect_one(spec: &'static AgentSpec) -> DetectResult {
             version = Some(format!("{v} ({hint})"));
         }
     }
+    let readonly_supported = readonly_supported_at(spec, version.as_deref());
     DetectResult {
         id: spec.id.to_string(),
         binary_path,
         version,
-        readonly_supported: !spec.readonly_args.is_empty(),
+        readonly_supported,
         permission_modes: spec
             .permission_args
             .iter()
@@ -4191,14 +4262,19 @@ mod tests {
                                     .map(|a| ((*m).to_string(), serde_json::json!(with_extra(a))))
                             })
                             .collect();
+                        // 要看版本的家（Qwen / OpenCode）测试态查不到版本：设 MESA_E2E_REAL_CLI=1 按本机版本出
+                        let mut discuss_env = plan.env.clone();
                         if let Some(a) = readonly_launch_args(agent, &plan.args) {
                             tiers.insert("discuss".into(), serde_json::json!(with_extra(a)));
+                            readonly_launch_env(agent, &mut discuss_env);
                         }
                         serde_json::json!({
                             "env": plan.env,
                             "args": with_extra(plan.args.clone()),
                             "env_remove": plan.env_remove,
                             "permission": tiers,
+                            // 只讨论另加的环境（OpenCode 计划模式开关与 plan agent 权限，readonly_launch_env）
+                            "discuss_env": discuss_env,
                         })
                     }
                     Err(e) => serde_json::json!({ "error": e }),
@@ -4960,10 +5036,55 @@ api_backend = "responses"
             readonly_launch_args("codex", &base).unwrap(),
             vec!["-c", "x=1", "-s", "read-only"]
         );
-        // 无只读参数（qwen/opencode）与未知 agent：None = 只有软约束，调用方原样用 plan.args
+        // 要看版本的家（qwen / opencode）：测试态查不到本机版本 = 当没有只讨论；未知 agent 也是 None
         assert!(readonly_launch_args("qwen", &[]).is_none());
         assert!(readonly_launch_args("opencode", &[]).is_none());
         assert!(readonly_launch_args("nope", &[]).is_none());
+    }
+
+    #[test]
+    fn readonly_supported_follows_min_version() {
+        let qwen = agent_spec("qwen").unwrap();
+        assert_eq!(qwen.readonly_args, &["--approval-mode", "plan"]);
+        assert!(readonly_supported_at(qwen, Some("0.25.3")));
+        assert!(readonly_supported_at(qwen, Some("Qwen Code 0.26.1")));
+        assert!(!readonly_supported_at(qwen, Some("0.25.2")));
+        assert!(!readonly_supported_at(qwen, None), "查不到版本不冒险");
+        let oc = agent_spec("opencode").unwrap();
+        assert_eq!(oc.readonly_args, &["--agent", "plan"]);
+        assert!(readonly_supported_at(oc, Some("1.19.3")));
+        assert!(!readonly_supported_at(oc, Some("1.18.10")));
+        // 不看版本的家照旧
+        assert!(readonly_supported_at(agent_spec("claude-code").unwrap(), None));
+        assert!(readonly_supported_at(agent_spec("cursor").unwrap(), None));
+    }
+
+    #[test]
+    fn readonly_env_tightens_opencode_plan_agent() {
+        let mut env = vec![
+            ("OPENCODE_CONFIG_CONTENT".to_string(), r#"{"model":"ccode/m","agent":{"build":{"x":1}}}"#.to_string()),
+            ("OPENCODE_DISABLE_AUTOUPDATE".to_string(), "1".to_string()),
+        ];
+        readonly_launch_env("opencode", &mut env);
+        let get = |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+        assert_eq!(get("OPENCODE_EXPERIMENTAL_PLAN_MODE").as_deref(), Some("1"));
+        let cfg: serde_json::Value = serde_json::from_str(&get("OPENCODE_CONFIG_CONTENT").unwrap()).unwrap();
+        assert_eq!(cfg["model"], "ccode/m", "原有配置保留");
+        assert_eq!(cfg["agent"]["build"]["x"], 1);
+        let perm = &cfg["agent"]["plan"]["permission"];
+        assert_eq!(perm["*"], "ask", "bash / 子任务 / MCP 一律先问");
+        assert_eq!(perm["edit"]["*"], "deny");
+        assert_eq!(perm["edit"]["*opencode/plans/*.md"], "allow", "方案文件能写");
+        assert_eq!(perm["plan_exit"], "allow");
+        // 第一个键必须是 *：OpenCode 按顺序后来者优先，先兜底再放行（serde_json 按键名排序，* 排在字母前）
+        assert_eq!(perm.as_object().unwrap().keys().next().map(String::as_str), Some("*"));
+        // 没有内联配置也补一份；别家不动
+        let mut bare = Vec::new();
+        readonly_launch_env("opencode", &mut bare);
+        assert!(bare.iter().any(|(k, _)| k == "OPENCODE_CONFIG_CONTENT"));
+        let mut other = vec![("A".to_string(), "1".to_string())];
+        readonly_launch_env("qwen", &mut other);
+        assert_eq!(other.len(), 1);
     }
 
     #[test]

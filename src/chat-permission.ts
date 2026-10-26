@@ -4,7 +4,7 @@
  *   办公「改 周报.docx」、随手聊「新建一个文件」），每档写这件事它会怎么做——比四段抽象说明好懂
  * - ⇧Tab 在输入框里按 只讨论 → 请求批准 → 帮我批准 → 完全访问 轮换（跳过这家没有的档），
  *   和 Claude Code 终端里的手感一致；只在开聊前生效（开聊后换档要重开）
- * - 只讨论这一档分两种说法（2026-10-26）：Claude Code / CodeBuddy / Gemini / Kimi 的只讨论就是各家的计划模式，写完方案会问
+ * - 只讨论这一档分两种说法（2026-10-26）：Claude Code / CodeBuddy / Gemini / Kimi / Qwen / OpenCode 的只讨论就是各家的计划模式，写完方案会问
  *   「要不要开工」、点头后在同一段对话里接着做（聊天层方案卡，plan-approval.ts，假网关逐家实测）——写成「先出方案，你点头再…」；
  *   Codex / Grok 的只讨论是只读沙箱，Cursor 没法在假网关下核实，照旧写「不…，告诉你怎么…」
  */
@@ -23,7 +23,7 @@ export interface PermissionExample {
 }
 
 /** 只讨论 = 计划模式、写完方案能在同一段对话里点头开工的家（本机假网关实测过方案确认那一屏的） */
-export const PLAN_FIRST_AGENTS: ReadonlySet<string> = new Set(["claude-code", "codebuddy", "gemini", "kimi"]);
+export const PLAN_FIRST_AGENTS: ReadonlySet<string> = new Set(["claude-code", "codebuddy", "gemini", "kimi", "qwen", "opencode"]);
 
 function example(verb: string, target: string, discuss: string, planFirst: boolean): PermissionExample {
   return {

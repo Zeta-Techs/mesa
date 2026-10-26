@@ -214,7 +214,7 @@ export function approvalTitle(a: ChannelApproval, agentLabel: string): string {
   const name = a.path ? a.path.split(/[\\/]/).pop() : null;
   const base = `${agentLabel} ${KIND_TITLE[a.kind]}`;
   if (a.kind === "edit" && name) return `${base} · ${name}`;
-  if (a.toolName === "ExitPlanMode" || a.toolName === "exit_plan_mode") return `${agentLabel} 写好了方案，等你决定要不要开工`;
+  if (a.toolName === "ExitPlanMode" || a.toolName === "exit_plan_mode" || a.toolName === "plan_exit") return `${agentLabel} 写好了方案，等你决定要不要开工`;
   if (a.kind === "other" && a.toolName) return `${agentLabel} 要用 ${a.toolName}`;
   return base;
 }

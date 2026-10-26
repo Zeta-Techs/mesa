@@ -426,8 +426,8 @@ export interface DetectResult {
   id: string;
   binaryPath: string | null;
   version: string | null;
-  /** 该 CLI 有进程级只读参数（--permission-mode plan / -s read-only 之类）。
-   *  false（qwen / opencode）= 「只读保护」对它只剩 prompt 软约束，agent 可以无视 */
+  /** 该 CLI 有进程级只读参数（--permission-mode plan / -s read-only 之类）。Qwen / OpenCode 还要本机版本够
+   *  （0.25.3 / 1.19.3，agents::readonly_min_version）；false = 「只读保护」对它只剩 prompt 软约束，agent 可以无视 */
   readonlySupported: boolean;
   /** 能在启动参数里指定的原生权限档（agent_specs permission_args）：ask 请求批准 / auto 帮我批准 / full 完全访问 */
   permissionModes: string[];
