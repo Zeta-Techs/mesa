@@ -1675,6 +1675,8 @@ const TerminalView = memo(function TerminalView({
   );
   /** 摆着的记录转接回的那一次 resetLink 不清空对话（见 sendMessage） */
   const keepPreviewConvRef = useRef(false);
+  // 先启动 / 接回 Agent 再发的那一句正在路上（showEarlyBubble 到 launch 回来）：resetLink 不收「等回复」
+  const earlyLaunchRef = useRef(false);
   // 绘制前摆：记录已经取回来（鼠标移上去时取过、点开前等过、刚看过）就在第一帧画出来，不先画一帧空白再出字
   //（2026-10-26 用户：切对话黑一下）
   useLayoutEffect(() => {
@@ -4966,7 +4968,9 @@ const TerminalView = memo(function TerminalView({
     // 摆着的记录正转接回：先留在画面上，接上后会话文件刷新会整份替换
     if (!keepPreviewConvRef.current) setConv([]);
     previewSrcRef.current = null;
-    setPendingReply(false);
+    // 先启动再发的那一句：「等回复」留着，launch 回来重新登记气泡。原先这里一收，生成中那一行
+    // 先出、消失（启动那几百毫秒）、再出——新对话发第一句闪一下（2026-10-26 用户）
+    if (!earlyLaunchRef.current) setPendingReply(false);
     pendingUsersRef.current = [];
     pendingAssistantKeysRef.current = new Set();
     ptyWorkingArmedRef.current = false;
@@ -5805,6 +5809,7 @@ const TerminalView = memo(function TerminalView({
   function showEarlyBubble(text: string) {
     const shown: ChatMessageDto[] = [showOptimisticUserMessage(text)];
     keepPreviewConvRef.current = true;
+    earlyLaunchRef.current = true;
     return {
       reRegister: () => {
         shown.push(showOptimisticUserMessage(text));
@@ -5814,6 +5819,7 @@ const TerminalView = memo(function TerminalView({
   }
   function endEarlyBubbleLaunch() {
     keepPreviewConvRef.current = false;
+    earlyLaunchRef.current = false;
   }
 
   async function restartWritable(): Promise<ChatSendResult> {
