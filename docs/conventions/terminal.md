@@ -549,6 +549,9 @@
   读屏认不出输入框的家照旧等旁路）；Claude 在审批菜单里被拒绝 / 按 Esc 打断时**不触发 Stop hook**，回合靠会话文件收：
   会话尾部判成收尾时前端调 `chat_channel_settle_from_transcript`，后端只认这一轮开始之后的打断标记 / turn_duration
   （`sessions::claude_turn_end_after`），按 interrupted 收掉（2026-10-21 用户实测：拒绝后聊天层 1 分半仍「正在回复」）；
+  **还没出字就按 Esc 打断时连会话文件也不留收尾**（Claude 2.1.310 把这句退回输入框，文件里只有这句提问；2026-10-26 用户：聊天层点停止后
+  过一会又「思考中」）：按了 Esc（聊天层停止 / 终端里）后前端看屏，连着两次看不到输入框下的「esc to interrupt」（`claudeTurnActiveOnScreen`）
+  就调 `chat_channel_settle_interrupted` 收掉还开着的回合；还在跑（Esc 被菜单之类吃掉）不动，最多看 4.5 秒（`settleAfterEsc`）；
   **旁路回合开着时 `fetchConversation` 不走签名门、过了门才占请求序号**（2026-10-25 用户：提问被 Esc 后终端已结束、聊天层一直「还在回复」——
   被签名门挡掉的轮询先占了号，让正在等后端的那次读取作废，收尾检查与这次调用都没做，之后文件不变就再没人查）；
   ③会话跟随：旁路给了文件路径就锁定（文件未落盘先记 id），

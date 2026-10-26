@@ -181,7 +181,7 @@ import { promptSuggestionSupported, readPromptSuggestion } from "../prompt-sugge
 import { lineCells } from "../screen-cells";
 import { lastContextTokens, type MesaCommand } from "../composer-assist";
 import { slashCommandsFor } from "../slash-commands";
-import { claudeOutputTokens, extractLiveReply, extractLiveThinking, liveReplySupported, mergeLiveReply, sentTextStuckInBox, staleEcho, staleWithoutEcho, terminalHasInputBox } from "../live-reply";
+import { claudeOutputTokens, claudeTurnActiveOnScreen, extractLiveReply, extractLiveThinking, liveReplySupported, mergeLiveReply, sentTextStuckInBox, staleEcho, staleWithoutEcho, terminalHasInputBox } from "../live-reply";
 import { parseTuiNotice, parseTuiPanel } from "../tui-panel";
 import {
   connIssueCounts,
@@ -2224,6 +2224,29 @@ const TerminalView = memo(function TerminalView({
     hadPtyWorkingOutputRef.current = false;
     setAttention((prev) => (prev === "working" ? null : prev));
   }
+  // 按了 Esc（聊天层停止按钮 / 终端里）之后收旁路的回合：Claude 还没出字就被打断时把这句退回输入框，会话文件里只留这句提问——
+  // 没有打断标记、没有 turn_duration，也不发 Stop，旁路回合一直「在回复」，聊天层停下后过一会又被它点亮成「思考中」
+  // （2026-10-26 用户 Windows 实测；e2e_channel E2E_INTERRUPT_MS 核对过 Esc 1.5 秒后回合仍是 running）。
+  // 屏上连着两次看不到「esc to interrupt」= 真停了，才收；还在跑（Esc 被菜单之类吃掉）就不动，最多看 4.5 秒
+  const escSettleTimerRef = useRef<number | null>(null);
+  function settleAfterEsc() {
+    if (launchAgentRef.current !== "claude-code") return;
+    if (escSettleTimerRef.current) window.clearTimeout(escSettleTimerRef.current);
+    let tries = 0;
+    let quiet = 0;
+    const check = () => {
+      escSettleTimerRef.current = null;
+      const ch = channelRef.current;
+      if (!mountedRef.current || ch?.kind !== "hooks" || !channelTurnOpen(ch)) return;
+      quiet = claudeTurnActiveOnScreen(screenLines()) ? 0 : quiet + 1;
+      if (quiet >= 2) {
+        void invoke<boolean>("chat_channel_settle_interrupted", { tabId }).catch(() => false);
+        return;
+      }
+      if (++tries < 15) escSettleTimerRef.current = window.setTimeout(check, 300);
+    };
+    escSettleTimerRef.current = window.setTimeout(check, 300);
+  }
   // 用户交互时间（终端里敲键 / 点击引起的焦点进出）：TUI 开了焦点上报（mode 1004）
   // 时点一下输入框就会让 TUI 重绘一帧，按键回显同理——这些用户自己引发的重绘
   // 不是「生成中」，交互后短窗口内的 PTY 输出不打 working（否则点下输入框就转圈）
@@ -3564,6 +3587,7 @@ const TerminalView = memo(function TerminalView({
         if (echo.swallow) return;
         markInteraction();
         if (ptyInputLooksLikeSubmit(data, KIMI_CSI_U_ENTER)) armPtyWorking();
+        else if (data === "\x1b") settleAfterEsc();
         const id = ptyIdRef.current;
         if (id) invoke("pty_write", { ptyId: id, data }).catch((e) => setError(String(e)));
       }),
@@ -5823,7 +5847,10 @@ const TerminalView = memo(function TerminalView({
     writePty: (data) => {
       if (data === "\x1b" || data === "\x03") {
         disarmPtyWorking();
-        if (data === "\x1b") setPendingReply(false);
+        if (data === "\x1b") {
+          setPendingReply(false);
+          settleAfterEsc();
+        }
       } else if (data === "y" || data === "n") armPtyWorking();
       const id = ptyIdRef.current;
       if (id) writeInteractivePty(id, data);

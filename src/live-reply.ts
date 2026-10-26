@@ -203,6 +203,14 @@ export function liveReplySupported(agentId: string): boolean {
 }
 
 /**
+ * Claude Code 这一轮还在跑：输入框下面的提示行带「esc to interrupt」（2.1.310 抓屏：「⏸ manual mode on · esc to interrupt」，
+ * 按 Esc 打断后只剩「⏸ manual mode on」）。打断后看屏确认回合真停了再收旁路的回合（TerminalPage settleAfterEsc）
+ */
+export function claudeTurnActiveOnScreen(lines: readonly string[]): boolean {
+  return lines.some((l) => /\besc to interrupt\b/i.test(l));
+}
+
+/**
  * 屏上正在想的那一框（Layout.thinkBlock，现只有 Grok）：这一轮回显之后、输入框之上，头一行下面行首竖线（┃ / │）的几行，
  * 照终端原样给聊天层显示（2026-10-26 用户：就要原生的思考显示，只把竖条、Thinking 符号这些无关的去掉）——去掉竖线与共同缩进、
  * 头一行「◆ Thinking…」、CLI 把前面折掉时的「…」一行，终端按框宽折的行接回成段。想完收起、确认菜单挂着、不在对话界面时返回 null

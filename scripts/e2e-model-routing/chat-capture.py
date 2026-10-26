@@ -273,11 +273,17 @@ if os.environ.get("QUEUE_PROMPT"):
     json.dump(record, open(out_path, "w"), ensure_ascii=False, indent=1)
     try: proc.terminate(force=True) if WIN else os.kill(pid, signal.SIGKILL)
     except OSError: pass
-    shutil.rmtree(home, ignore_errors=True)
+    shutil.rmtree(home, ignore_errors=True) if not os.environ.get("CAP_KEEP_HOME") else print(f"临时 HOME 留在 {home}")
     print(f"{agent}/{tier}: queue probe_created={record['probe_created']} kitty={kitty[0]} alive={alive[0]}")
     sys.exit(0)
 
 send(os.environ.get("REPLY_PROMPT", "TRIGGER_SLOW 讲一段"))
+# REPLY_ESC_AFTER=<秒>：回复到一半按 Esc（同聊天层的停止按钮），再拍 REPLY_SECS 秒，看打断后屏上和会话文件里留下什么（2026-10-26）
+esc_after = os.environ.get("REPLY_ESC_AFTER")
+if esc_after:
+    record["scenes"]["reply_before_esc"] = film(float(esc_after))
+    try: pty_write(b"\x1b")
+    except OSError: alive[0] = False
 record["scenes"]["reply"] = film(float(os.environ.get("REPLY_SECS", "12")))
 pump(1)
 
@@ -333,7 +339,7 @@ if RAW is not None: record["raw"] = RAW; record["size"] = [COLS, ROWS]
 json.dump(record, open(out_path, "w"), ensure_ascii=False, indent=1)
 try: proc.terminate(force=True) if WIN else os.kill(pid, signal.SIGKILL)
 except OSError: pass
-shutil.rmtree(home, ignore_errors=True)
+shutil.rmtree(home, ignore_errors=True) if not os.environ.get("CAP_KEEP_HOME") else print(f"临时 HOME 留在 {home}")
 for rel, d in changed.items(): print(f"--- {rel} 被改了：\n{d}")
 print(f"{agent}/{tier}: probe_created={record['probe_created']} kitty={kitty[0]} alive={alive[0]} "
       f"frames={ {k: len(v) for k, v in record['scenes'].items()} }")

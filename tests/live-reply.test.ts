@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { claudeOutputTokens, extractLiveReply, extractLiveThinking, liveReplySupported, mergeLiveReply, sentTextStuckInBox, staleEcho, staleWithoutEcho, terminalHasInputBox, unsyncedTail } from "../src/live-reply.ts";
+import { claudeOutputTokens, claudeTurnActiveOnScreen, extractLiveReply, extractLiveThinking, liveReplySupported, mergeLiveReply, sentTextStuckInBox, staleEcho, staleWithoutEcho, terminalHasInputBox, unsyncedTail } from "../src/live-reply.ts";
 
 const RULE = "─".repeat(100);
 // Claude Code 2.1.292 本机 PTY 实录（流式写到一半；假 API 慢速吐字）
@@ -879,4 +879,25 @@ test("刚发的这句还躺在 Claude 输入框里没交出去（2026-10-24 HER 
   ];
   assert.equal(sentTextStuckInBox(sentOk, "claude-code", sent), false);
   assert.equal(sentTextStuckInBox(stuck, "no-such-agent", sent), null);
+});
+
+// 2026-10-26 Claude Code 2.1.310 Windows 抓屏（chat-capture REPLY_ESC_AFTER）：还没出字就按 Esc，这一句被退回输入框，
+// 输入框下面的「esc to interrupt」随之消失——聊天层靠它确认回合真停了再收旁路的回合
+test("Claude 这一轮还在跑：看输入框下面的「esc to interrupt」", () => {
+  const running = [
+    "❯ TRIGGER_THINK TRIGGER_SLOW 讲一段",
+    "* Quantumizing… (5s · thinking with high effort)",
+    "─".repeat(60),
+    "❯",
+    "─".repeat(60),
+    "  ⏸ manual mode on · esc to interrupt",
+  ];
+  const interrupted = [
+    "─".repeat(60),
+    "❯ TRIGGER_THINK TRIGGER_SLOW 讲一段",
+    "─".repeat(60),
+    "  ⏸ manual mode on",
+  ];
+  assert.equal(claudeTurnActiveOnScreen(running), true);
+  assert.equal(claudeTurnActiveOnScreen(interrupted), false);
 });
