@@ -271,9 +271,12 @@ function cellWidth(s: string): number {
   return n;
 }
 
+// 不能出现在行首的标点：CLI 折行时把它和前一个字一起推到下一行（Grok 折「…材 / 料，…」，2026-10-26 Mac 抓屏）
+const NO_LINE_START = /^[，。、；：？！）」』】》〉…—,.;:?!)\]}]+/u;
+
 /**
- * 终端按框宽折开的行接回成段，聊天栏比终端窄时不会一行长一行短：这一行开头的词（汉字是一个字）放在上一行（原样的那一行）
- * 末尾就超出框宽（取最宽的一行）= 是 CLI 折的，接上；放得下 = 原文就在这里换行（「Then the code:」下面接代码）。
+ * 终端按框宽折开的行接回成段，聊天栏比终端窄时不会一行长一行短：这一行开头的词（汉字是一个字，连同后面不能放行首的标点）
+ * 放在上一行（原样的那一行）末尾就超出框宽（取最宽的一行）= 是 CLI 折的，接上；放得下 = 原文就在这里换行（「Then the code:」下面接代码）。
  * 缩进的行（代码）、空行、列表 / 编号照原样；汉字前后不加空格
  */
 function unwrapLines(lines: readonly string[]): string[] {
@@ -283,7 +286,9 @@ function unwrapLines(lines: readonly string[]): string[] {
   for (const l of lines) {
     const prev = out.length ? out[out.length - 1] : "";
     const tight = WIDE.test(prev.slice(-1)) || WIDE.test(l.charAt(0));
-    const unit = WIDE.test(l.charAt(0)) ? l.charAt(0) : (/^\S+/.exec(l)?.[0] ?? "");
+    const unit = WIDE.test(l.charAt(0))
+      ? l.charAt(0) + (NO_LINE_START.exec(l.slice(1))?.[0] ?? "")
+      : (/^\S+/.exec(l)?.[0] ?? "");
     const wrapped =
       prev.trim() !== "" &&
       l.trim() !== "" &&

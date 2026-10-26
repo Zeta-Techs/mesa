@@ -273,6 +273,29 @@ test("Grok 思考框：不进回复预览，另读成原样的思考（去竖线
   ]);
 });
 
+// 2026-10-26 macOS 抓屏（Grok 1.0.70，假网关慢慢流出思考）：「材料，」的「料，」被一起推到下一行（标点不放行首），
+// 这一屏又没有占满框宽的行，只看「料」一个字放得下，原先当成原文换行，思考断成两段
+test("Grok 思考框：行首字连着不能放行首的标点一起折下来的，照样接回", () => {
+  const screen = [
+    "     ❯ TRIGGER_THINK TRIGGER_SLOW 讲一段                                                                    11:43 PM",
+    "  ┃  ◆ Thinking…",
+    "  ┃",
+    "  ┃  …",
+    "  ┃  什么，再看手头有哪些材料，最后决定怎么组织这一段回答的结构。 第3步：先想清楚用户到底要什么，再看手头有哪些材",
+    "  ┃  料，最后决定怎么组织这一段回答的结构。 第4步：先想清楚用户到底要什么，再看手头有哪些材料，最后决定怎么组织这一",
+    "  ┃  段回答的结构。 第5步：",
+    "    ⠋ Thinking… 1.2s                                                                                1.3s ⇣1.35k [stop]",
+    "  ╭" + "─".repeat(114) + "╮",
+    "  │ ❯" + " ".repeat(112) + "│",
+    "  ╰" + "─".repeat(101) + " e2e-picked ─╯",
+    "  Shift+Tab:mode  │  Ctrl+c:cancel  │  Ctrl+x:shortcuts",
+  ];
+  assert.equal(extractLiveReply(screen, "grok"), null);
+  const thinking = extractLiveThinking(screen, "grok");
+  assert.equal(thinking?.length, 1);
+  assert.match(thinking![0], /哪些材料，最后决定/);
+});
+
 test("Grok 想完收起、等首字的转圈、别家：都读不出思考框", () => {
   const thought = [
     "     > 写一段代码                                              2:58 PM",
