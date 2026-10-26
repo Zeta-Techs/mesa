@@ -839,6 +839,10 @@ test("多选的气泡：一段段归档到第 2 次贴下一段提醒（B），�
     await archiveOne("镁硫电池第4篇精读");
     assert.equal(nudge(), null, "第 1 次不提醒");
     await archiveOne("镁硫电池第3篇精读");
+    // 等侧栏重排完才贴上去
+    await view.act(async () => {
+      await new Promise((r) => setTimeout(r, 450));
+    });
     assert.match(nudge()!.textContent!, /刚归档了 2 段/);
     assert.match(nudge()!.textContent!, /按住 .+ 点选它们/);
     assert.equal(localStorage.getItem("ccode.railPickNudgeSeen"), "1");
@@ -888,11 +892,101 @@ test("多选的气泡：Esc 收起提醒，置顶同样计数（2026-10-27）", 
     const nudge = () => doc.body.querySelector('[data-coach-tip][role="dialog"]');
     await pinOne("镁硫电池第4篇精读");
     await pinOne("镁硫电池第3篇精读");
+    await view.act(async () => {
+      await new Promise((r) => setTimeout(r, 450));
+    });
     assert.match(nudge()!.textContent!, /刚置顶了 2 段/);
     await view.act(async () => {
       doc.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     });
     assert.equal(nudge(), null);
+  } finally {
+    await view.close();
+  }
+});
+
+test("来回看两段：侧栏 A → B → A → B 地点时提醒 Ctrl+Tab，「并排看」把刚离开的那段放右边；这次打开已出过一条就不再出别的（2026-10-27）", async () => {
+  const view = await renderTree({ requestCloseTab: () => {} });
+  try {
+    const win = view.host.ownerDocument.defaultView!;
+    const doc = view.host.ownerDocument;
+    const open = (label: string) =>
+      view.act(async () => {
+        view.button(label).dispatchEvent(new win.MouseEvent("mousedown", { bubbles: true, button: 0 }));
+      });
+    const wait = () =>
+      view.act(async () => {
+        await new Promise((r) => setTimeout(r, 450));
+      });
+    const tip = () => doc.body.querySelector('[data-coach-tip][role="dialog"]');
+    // 第 5 篇开着（标签 t1），⌃Tab 回得去
+    await open("镁硫电池第5篇精读");
+    await open("镁硫电池第4篇精读");
+    await open("镁硫电池第5篇精读");
+    await wait();
+    assert.equal(tip(), null, "只回来一次还不算");
+    await open("镁硫电池第4篇精读");
+    await wait();
+    assert.match(tip()!.textContent!, /在这两段之间来回看/);
+    assert.match(tip()!.textContent!, /Tab/);
+    assert.equal(localStorage.getItem("ccode.coachSwitchBackSeen"), "1");
+    const side = Array.from(tip()!.querySelectorAll("button")).find((b) => b.textContent === "并排看")!;
+    await view.act(async () => side.click());
+    assert.equal(tip(), null);
+    const last = view.calls.filter((c) => c[0] === "openConversation").at(-1)!;
+    assert.equal((last[1] as { sessionId: string }).sessionId, "r5");
+    assert.equal((last[2] as { split?: boolean }).split, true);
+    // 名额用掉了：接着用鼠标关两段也不出 ⌘W 那条
+    await view.act(async () => view.button("关掉「镁硫电池第5篇精读」").click());
+    await view.act(async () => view.button("关掉「镁硫电池第5篇精读」").click());
+    await wait();
+    assert.equal(tip(), null);
+    assert.equal(localStorage.getItem("ccode.coachCloseKeySeen"), null, "没出的不记");
+  } finally {
+    await view.close();
+  }
+});
+
+test("来回看两段：离开的那段没开着（⌃Tab 回不去）就不提（2026-10-27）", async () => {
+  const view = await renderTree();
+  try {
+    const win = view.host.ownerDocument.defaultView!;
+    for (const label of ["镁硫电池第3篇精读", "镁硫电池第4篇精读", "镁硫电池第3篇精读", "镁硫电池第4篇精读"]) {
+      await view.act(async () => {
+        view.button(label).dispatchEvent(new win.MouseEvent("mousedown", { bubbles: true, button: 0 }));
+      });
+    }
+    await view.act(async () => {
+      await new Promise((r) => setTimeout(r, 450));
+    });
+    assert.equal(view.host.ownerDocument.body.querySelector("[data-coach-tip]"), null);
+    assert.equal(localStorage.getItem("ccode.coachSwitchBackSeen"), null);
+  } finally {
+    await view.close();
+  }
+});
+
+test("用鼠标关对话：关到第 2 段时在那一行旁边提醒 ⌘W（2026-10-27）", async () => {
+  const closed: string[] = [];
+  const view = await renderTree({ requestCloseTab: (id: string) => closed.push(id) });
+  try {
+    const doc = view.host.ownerDocument;
+    const tip = () => doc.body.querySelector('[data-coach-tip][role="dialog"]');
+    await view.act(async () => view.button("关掉「镁硫电池第5篇精读」").click());
+    await view.act(async () => {
+      await new Promise((r) => setTimeout(r, 450));
+    });
+    assert.equal(tip(), null, "第 1 次不提");
+    await view.act(async () => view.button("关掉「镁硫电池第5篇精读」").click());
+    await view.act(async () => {
+      await new Promise((r) => setTimeout(r, 450));
+    });
+    assert.deepEqual(closed, ["t1", "t1"]);
+    assert.match(tip()!.textContent!, /关掉对话有快捷键/);
+    assert.match(tip()!.textContent!, /⌘W|Ctrl\+Shift\+W/);
+    const ok = Array.from(tip()!.querySelectorAll("button")).find((b) => b.textContent === "知道了")!;
+    await view.act(async () => ok.click());
+    assert.equal(tip(), null);
   } finally {
     await view.close();
   }

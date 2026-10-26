@@ -1388,6 +1388,12 @@ html[data-material="none"] .ccode-app-rail .bg-rail-sel {
   border-top-width: 0;
   border-left-width: 0;
 }
+.ccode-coach[data-arrow="up"]::after {
+  top: -5.5px;
+  left: var(--coach-arrow, 24px);
+  border-bottom-width: 0;
+  border-right-width: 0;
+}
 .ccode-coach kbd {
   display: inline-flex;
   align-items: center;

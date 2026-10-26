@@ -12,7 +12,6 @@ import {
   paletteOpenChats,
   parseChatPins,
   nextPicked,
-  noteSingleAct,
   nudgeAnchor,
   pinnedChats,
   pinPicked,
@@ -382,16 +381,7 @@ test("多选置顶：有没钉的就把没钉的接在后面，全都钉着才�
   assert.deepEqual(pinPicked(["x", "a", "b"], ["a", "b"]), ["x"]);
 });
 
-test("多选提醒：1 分钟内同一件事做到第 2 次才提醒，过期的不算、别的事不算；贴下一段，没有就上一段（2026-10-27）", () => {
-  let r = noteSingleAct([], "archive", 0);
-  assert.equal(r.nudge, false);
-  r = noteSingleAct(r.acts, "pin", 1000);
-  assert.equal(r.nudge, false, "置顶不和归档凑数");
-  r = noteSingleAct(r.acts, "archive", 30_000);
-  assert.equal(r.nudge, true);
-  r = noteSingleAct([{ kind: "archive", at: 0 }], "archive", 60_000);
-  assert.equal(r.nudge, false, "满 1 分钟的不算");
-  assert.deepEqual(r.acts, [{ kind: "archive", at: 60_000 }]);
+test("多选提醒贴哪：刚处理那段的下一段，没有就上一段（2026-10-27）", () => {
   assert.equal(nudgeAnchor(["a", "b", "c"], "b"), "c");
   assert.equal(nudgeAnchor(["a", "b", "c"], "c"), "b");
   assert.equal(nudgeAnchor(["a"], "a"), null);

@@ -60,7 +60,8 @@ import RunCaret from "./RunCaret";
 import { RUN_CARET_LABEL, strongestCaret, withUnread } from "../run-caret";
 import { unreadKeyOf } from "../chat-unread";
 import RenameProjectModal from "./RenameProjectModal";
-import CoachTip from "./CoachTip";
+import CoachTip, { showFloatingCoach } from "./CoachTip";
+import { noteMouseCloseChat } from "./close-chat-nudge";
 import { toast } from "../toast";
 import { AGENTS, type ProjectDto, type SessionMetaDto, type WorkspaceDto } from "../types";
 import {
@@ -69,10 +70,7 @@ import {
   currentFolderKey,
   parseChatPins,
   nextPicked,
-  noteSingleAct,
   nudgeAnchor,
-  PICK_NEXT_SEEN_KEY,
-  PICK_NUDGE_SEEN_KEY,
   pinnedChats,
   pinPicked,
   railNavIndex,
@@ -94,8 +92,16 @@ import {
   openTabRows,
   type ChatDot,
   type OpenTabRow,
-  type SingleAct,
 } from "../sidebar-chats";
+import {
+  canShowCoachTip,
+  markCoachTipSeen,
+  markCoachTipShown,
+  noteChatOpen,
+  noteSingleAct,
+  type ChatOpen,
+  type SingleAct,
+} from "../coach-tips";
 import { tidySessionTitle } from "../session-title";
 import { openConversation, openQuickChat, prefetchConversation } from "../quick-chat-launch";
 import { projectResumeProfileId } from "../project-agents";
@@ -135,21 +141,6 @@ const PRESSED_HOLD_MS = 1500;
 /** 多选的修饰键怎么写（提示文字用；Mac 上 Ctrl 点是右键，所以是 ⌘） */
 const PICK_TOGGLE_KEY = IS_MAC ? "⌘" : "Ctrl";
 const PICK_RANGE_KEY = IS_MAC ? "⇧" : "Shift";
-/** 一次性气泡出过没有（localStorage 存不了就当没出过，最多多出一次） */
-function tipSeen(key: string): boolean {
-  try {
-    return localStorage.getItem(key) === "1";
-  } catch {
-    return false;
-  }
-}
-function markTipSeen(key: string) {
-  try {
-    localStorage.setItem(key, "1");
-  } catch {
-    /* 同上 */
-  }
-}
 
 export default function ProjectTree({
   selectedRoot,
@@ -435,7 +426,11 @@ export default function ProjectTree({
     // 点下去这一行先亮（分屏打开时左边正看着的那段不变，不抢高亮）。切过去后高亮交回「正看着的标签」；
     // 没切成（确认框里取消、没真正切过去）就收回
     const key = chatKey(s);
-    if (!split) setPressedChatKey(key);
+    if (!split) {
+      setPressedChatKey(key);
+      openedChats.current.set(key, { s, project });
+      noteSwitch(key);
+    }
     openConversation(s, {
       preferredProfileId: project ? projectResumeProfileId(profiles, project, s.agent) : undefined,
       ...(split ? { split: true } : {}),
@@ -502,7 +497,11 @@ export default function ProjectTree({
               label: "关掉这段对话",
               icon: X,
               title: "停下这段对话的 Agent、收起它；记录还在，再点开发一句就接回（在干活的会先问你）",
-              onSelect: () => useAppStore.getState().requestCloseTab(holder.tabId),
+              onSelect: () => {
+                const row = rowOf(chatKey(s));
+                if (row) noteMouseCloseChat(row.getBoundingClientRect(), "right", listRef.current);
+                useAppStore.getState().requestCloseTab(holder.tabId);
+              },
             },
           ]
         : []),
@@ -735,75 +734,96 @@ export default function ProjectTree({
     [],
   );
 
-  // —— 多选的两条一次性气泡（2026-10-27 用户选 B + D，设计稿 docs/design-rail-multiselect-tip-mockup.html）——
-  // nudge：用 ⋯ / 右键一段段归档或置顶，1 分钟内第 2 次时，贴在下一段那行右边提醒能多选；
-  // next：选上第一段时，贴在树底「已选 1 段」上面教怎么接着选，选到第 2 段或取消就收。各出一次，用过多选就都不再出
+  // —— 一次性提醒气泡（规矩与计数在 coach-tips.ts：看得出在绕远路才出、各出一次、一次打开 Mesa 最多主动出一条）——
+  /** 侧栏里这一段（对话行按 chatKey，开着的标签行按 tab:标签 id）的那一行 */
+  function rowOf(key: string): HTMLElement | null {
+    const els = listRef.current?.querySelectorAll<HTMLElement>("[data-chat-key],[data-open-tab]") ?? [];
+    return (
+      Array.from(els).find((el) => (el.dataset.chatKey ?? `tab:${el.dataset.openTab}`) === key)?.parentElement ?? null
+    );
+  }
+  // 多选（2026-10-27 用户选 B + D，设计稿 docs/design-rail-multiselect-tip-mockup.html）：
+  // B：用 ⋯ / 右键一段段归档或置顶，1 分钟内第 2 次时，贴在下一段那行右边提醒能多选；
+  // D：选上第一段时，贴在树底「已选 1 段」上面教怎么接着选，选到第 2 段或取消就收（followUp，不占名额）
   const singleActs = useRef<SingleAct[]>([]);
-  const [nudge, setNudge] = useState<{ kind: SingleAct["kind"]; anchor: string; count: number } | null>(null);
-  const [nudgePos, setNudgePos] = useState<{ x: number; y: number; arrowAt: number } | null>(null);
   const [nextTip, setNextTip] = useState(false);
   function noteSingle(kind: SingleAct["kind"], s: SessionMetaDto) {
     const r = noteSingleAct(singleActs.current, kind, Date.now());
     singleActs.current = r.acts;
-    if (!r.nudge || tipSeen(PICK_NUDGE_SEEN_KEY)) return;
-    // 趁这一段还在侧栏里先取它的下一段
+    if (!r.nudge || !canShowCoachTip("pickNudge")) return;
+    // 趁这一段还在侧栏里先取它的下一段；等归档 / 置顶后侧栏重排完再量那一行
     const anchor = nudgeAnchor(pickOrder(), chatKey(s));
-    if (anchor) setNudge({ kind, anchor, count: r.acts.filter((a) => a.kind === kind).length });
+    if (!anchor) return;
+    const count = r.acts.filter((a) => a.kind === kind).length;
+    const verb = kind === "archive" ? "归档" : "置顶";
+    window.setTimeout(() => {
+      const row = rowOf(anchor);
+      if (!row || !canShowCoachTip("pickNudge")) return;
+      markCoachTipShown("pickNudge");
+      showFloatingCoach({
+        anchor: row.getBoundingClientRect(),
+        place: "right",
+        scrollRoot: listRef.current,
+        title: `刚${verb}了 ${count} 段`,
+        body: (
+          <>
+            要一次收拾好几段，按住 <kbd>{PICK_TOGGLE_KEY}</kbd> 点选它们，侧栏底下会出现「已选 N 段」，一起{verb}。
+          </>
+        ),
+        actions: [
+          { label: "不用了", onClick: () => {} },
+          { label: "从这段开始选", onClick: () => pick(anchor, "toggle") },
+        ],
+      });
+    }, 400);
   }
-  // 归档 / 置顶后行会挪：等侧栏重排完再量那一行贴上去，量不到就不出
-  useLayoutEffect(() => {
-    if (!nudge) {
-      setNudgePos(null);
-      return;
-    }
-    const btn = Array.from(listRef.current?.querySelectorAll<HTMLElement>("[data-chat-key]") ?? []).find(
-      (el) => el.dataset.chatKey === nudge.anchor,
-    );
-    const row = btn?.parentElement;
-    if (!row) {
-      setNudge(null);
-      return;
-    }
-    const r = row.getBoundingClientRect();
-    const center = r.top + r.height / 2;
-    // 气泡约 150px 高，贴窗口底时往上挪，小三角仍对着这一行
-    const top = Math.max(8, Math.min(center - 21, window.innerHeight - 158));
-    setNudgePos({ x: r.right + 10, y: top, arrowAt: center - top - 5 });
-    markTipSeen(PICK_NUDGE_SEEN_KEY);
-  }, [nudge, sessions, chatPins]);
-  // 点别处、Esc、滚动、窗口变大小都收起
-  useEffect(() => {
-    if (!nudge) return;
-    const close = () => setNudge(null);
-    const onDown = (e: PointerEvent) => {
-      if (!(e.target instanceof Element && e.target.closest("[data-coach-tip]"))) close();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
-    };
-    window.addEventListener("pointerdown", onDown, true);
-    window.addEventListener("keydown", onKey, true);
-    window.addEventListener("scroll", close, true);
-    window.addEventListener("resize", close);
-    return () => {
-      window.removeEventListener("pointerdown", onDown, true);
-      window.removeEventListener("keydown", onKey, true);
-      window.removeEventListener("scroll", close, true);
-      window.removeEventListener("resize", close);
-    };
-  }, [nudge]);
   useEffect(() => {
     if (picked.size >= 2) {
-      markTipSeen(PICK_NEXT_SEEN_KEY);
-      markTipSeen(PICK_NUDGE_SEEN_KEY);
+      // 会多选了：两条都不用再出
+      markCoachTipSeen("pickNext");
+      markCoachTipSeen("pickNudge");
       setNextTip(false);
     } else if (picked.size === 1) {
-      if (!tipSeen(PICK_NEXT_SEEN_KEY)) {
-        markTipSeen(PICK_NEXT_SEEN_KEY);
+      if (canShowCoachTip("pickNext", true)) {
+        markCoachTipShown("pickNext", true);
         setNextTip(true);
       }
     } else setNextTip(false);
   }, [picked]);
+  // 来回看两段（2026-10-27 用户定）：在侧栏 A → B → A → B 地点，贴在刚点的那行右边提醒 ⌃Tab / Ctrl+Tab
+  // （运行页按最近看过的顺序切，TerminalPage）；「并排看」把刚离开的那段放到右侧分屏
+  const chatOpens = useRef<ChatOpen[]>([]);
+  const openedChats = useRef(new Map<string, { s: SessionMetaDto; project: ProjectDto | null }>());
+  function noteSwitch(key: string) {
+    const r = noteChatOpen(chatOpens.current, key, Date.now());
+    chatOpens.current = r.opens;
+    const other = r.other;
+    if (!other || !canShowCoachTip("switchBack")) return;
+    // 等切过去：只看了没说的那段离开时会自己收掉，⌃Tab 就回不去了，那就不提
+    window.setTimeout(() => {
+      const runs = useAppStore.getState().terminalRunInputs;
+      const open = runs.some((x) => (other.startsWith("tab:") ? `tab:${x.tabId}` : `${x.agentId}\n${x.sessionId}`) === other);
+      const row = rowOf(key);
+      if (!open || !row || !canShowCoachTip("switchBack")) return;
+      markCoachTipShown("switchBack");
+      const back = openedChats.current.get(other);
+      showFloatingCoach({
+        anchor: row.getBoundingClientRect(),
+        place: "right",
+        scrollRoot: listRef.current,
+        title: "在这两段之间来回看？",
+        body: (
+          <>
+            按 <kbd>{IS_MAC ? "Control" : "Ctrl"}</kbd> + <kbd>Tab</kbd> 回到刚才看的那段，不用回侧栏找。
+          </>
+        ),
+        actions: [
+          ...(back ? [{ label: "并排看", onClick: () => openChat(back.s, back.project, true) }] : []),
+          { label: "知道了", onClick: () => {} },
+        ],
+      });
+    }, 400);
+  }
   useEffect(() => {
     const el = listRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
@@ -988,7 +1008,11 @@ export default function ProjectTree({
                   type="button"
                   aria-label={`关掉「${short}」`}
                   title={`关掉：停下它，记录还在（在干活的会先问你）\n现在：${dotTitle(dot)}`}
-                  onClick={() => useAppStore.getState().requestCloseTab(holder.tabId)}
+                  onClick={() => {
+                    const row = rowOf(key);
+                    if (row) noteMouseCloseChat(row.getBoundingClientRect(), "right", listRef.current);
+                    useAppStore.getState().requestCloseTab(holder.tabId);
+                  }}
                   className="hidden h-6 w-6 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1 group-hover/chat:flex group-focus-within/chat:flex"
                 >
                   <X size={13} strokeWidth={1.8} aria-hidden="true" />
@@ -1036,10 +1060,12 @@ export default function ProjectTree({
         <button
           type="button"
           data-rail-nav
+          data-open-tab={r.tabId}
           onClick={() => {
             const st = useAppStore.getState();
             st.setPage("terminal");
             st.focusTab(r.tabId);
+            noteSwitch(`tab:${r.tabId}`);
           }}
           aria-current={selected ? "true" : undefined}
           title={
@@ -1067,7 +1093,10 @@ export default function ProjectTree({
             type="button"
             aria-label={`关掉「${r.label}」`}
             title={r.kind === "new" ? "不要这段新对话了" : "关掉：停下它，记录还在（在跑的会先问你）"}
-            onClick={() => useAppStore.getState().requestCloseTab(r.tabId)}
+            onClick={(e) => {
+              noteMouseCloseChat(e.currentTarget.parentElement!.getBoundingClientRect(), "right", listRef.current);
+              useAppStore.getState().requestCloseTab(r.tabId);
+            }}
             className="hidden h-6 w-6 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1 group-hover/chat:flex group-focus-within/chat:flex"
           >
             <X size={13} strokeWidth={1.8} aria-hidden="true" />
@@ -1948,34 +1977,6 @@ export default function ProjectTree({
         );
       })()}
 
-      {/* 一段段归档 / 置顶时提醒能多选（设计稿 B）：挂到 body，贴在下一段那行右边、伸到画布上 */}
-      {nudge &&
-        nudgePos &&
-        createPortal(
-          <CoachTip
-            arrow="left"
-            arrowAt={nudgePos.arrowAt}
-            className="fixed w-[248px]"
-            style={{ left: nudgePos.x, top: nudgePos.y }}
-            title={`刚${nudge.kind === "archive" ? "归档" : "置顶"}了 ${nudge.count} 段`}
-            onClose={() => setNudge(null)}
-            actions={[
-              { label: "不用了", onClick: () => setNudge(null) },
-              {
-                label: "从这段开始选",
-                onClick: () => {
-                  const key = nudge.anchor;
-                  setNudge(null);
-                  pick(key, "toggle");
-                },
-              },
-            ]}
-          >
-            要一次收拾好几段，按住 <kbd>{PICK_TOGGLE_KEY}</kbd> 点选它们，侧栏底下会出现「已选 N 段」，一起
-            {nudge.kind === "archive" ? "归档" : "置顶"}。
-          </CoachTip>,
-          document.body,
-        )}
 
       {menu && (
         <ContextMenu

@@ -45,6 +45,7 @@ import {
 } from "./components/HelpDialogs";
 import TopNavCapsule from "./components/TopNavCapsule";
 import { ConfirmDialogHost, confirmDialogOpen } from "./components/ConfirmDialog";
+import { markCoachTipSeen } from "./coach-tips";
 import { HoverTip, useHoverTip } from "./components/HoverTip";
 import { LoadingRows, rowActionClass } from "./components/PageFrame";
 import "./App.css";
@@ -906,6 +907,7 @@ function App() {
         // 确认框开着时不接：确认框只有一个，再弹会把正在问的那件事当成「取消」顶掉
         const st = useAppStore.getState();
         if (st.page === "terminal" && st.terminalActiveTabId && !confirmDialogOpen()) {
+          markCoachTipSeen("closeKey");
           st.requestCloseTab(st.terminalActiveTabId);
         }
       }

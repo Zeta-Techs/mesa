@@ -113,6 +113,8 @@ import { normalizeWorkMode } from "../work-mode";
 import { exitCodeClause, exitCodeSummary, exitToneClass } from "../exit-code";
 import ChatSurface from "../components/ChatSurface";
 import { confirmDialog, alertDialog, confirmDialogOpen } from "../components/ConfirmDialog";
+import { markCoachTipSeen } from "../coach-tips";
+import { noteMouseCloseChat } from "../components/close-chat-nudge";
 import ContextMenu from "../components/ContextMenu";
 import InsertMenuItems from "../components/InsertMenuItems";
 import {
@@ -9922,6 +9924,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       if (order.length < 2) return;
       e.preventDefault();
       e.stopPropagation();
+      // 会用了：侧栏来回点的提醒不用再出（coach-tips.ts）
+      markCoachTipSeen("switchBack");
       activateTabRef.current(e.shiftKey ? order[order.length - 1] : order[1]);
     };
     window.addEventListener("keydown", onKey, true);
@@ -9964,6 +9968,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       e.stopPropagation();
       // 确认框开着时不接（同 App.tsx ⌘W）：再弹会把正在问的那件事顶掉
       if (confirmDialogOpen()) return;
+      markCoachTipSeen("closeKey");
       void requestCloseTabRef.current(focusedIdRef.current);
     };
     window.addEventListener("keydown", onKey, true);
@@ -10403,7 +10408,14 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                   icon: X,
                   hint: comboLabel(closeChatCombo(IS_MAC)),
                   title: "停下这段对话的 Agent、收起它；记录还在侧栏，再点开发一句就接回（在干活或等你确认的会先问你）",
-                  onSelect: () => void requestCloseTab(focusedId),
+                  onSelect: () => {
+                    // 用鼠标关到第 2 段时提醒快捷键（close-chat-nudge.tsx）：挂在 ⋯ 下面
+                    noteMouseCloseChat(
+                      { left: headMenu.x - 28, right: headMenu.x, top: headMenu.y - 32, bottom: headMenu.y - 4 },
+                      "below",
+                    );
+                    void requestCloseTab(focusedId);
+                  },
                 },
               ]}
             />
