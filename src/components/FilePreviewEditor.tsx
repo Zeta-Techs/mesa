@@ -594,6 +594,24 @@ function TextFilePreviewEditor({
   const hasReadMode = isMd || isHtml;
   const [mode, setMode] = useState<"read" | "edit">(hasReadMode ? "read" : "edit");
   const [immersive, setImmersive] = useState(false);
+  // 这份 md 能不能进三栏沉浸阅读：先问后端能不能配上本篇 PDF（reader_for_note 只读：查项目归属 + 配对），
+  // 配得上才给「沉浸阅读」；CHANGELOG、README 这类配不上的只给「全屏阅读」（2026-10-25 用户：没有 PDF 的文件
+  // 预览也挂「沉浸阅读」有歧义——原先一律挂，点了才报「未找到与这份笔记配对的 PDF」）
+  const [notePaired, setNotePaired] = useState(false);
+  const wantsReader = isMd && Boolean(onOpenReader);
+  useEffect(() => {
+    setNotePaired(false);
+    if (!wantsReader) return;
+    let alive = true;
+    invoke("reader_for_note", { notePath: path })
+      .then(() => {
+        if (alive) setNotePaired(true);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [path, wantsReader]);
   // 双击段落跳源码行（2026-10-14 拍板）：{line, nonce} 同 modeTick 的 tick 模式——
   // 双击同一块两次也要重新定位（revealLine prop 的同值不重触发不适用于交互重放）
   const [jumpReveal, setJumpReveal] = useState<{
@@ -1204,7 +1222,7 @@ function TextFilePreviewEditor({
           </div>
         )}
         <div className="ml-auto flex shrink-0 items-center gap-1">
-          {ready && isMd && mode === "read" && onOpenReader ? (
+          {ready && isMd && mode === "read" && onOpenReader && notePaired ? (
             <button
               onClick={onOpenReader}
               title="进沉浸阅读区（笔记｜PDF｜Agent 三栏，自动配对本篇 PDF）"
@@ -1218,10 +1236,11 @@ function TextFilePreviewEditor({
             (mode === "edit" || hasReadMode) && (
               <button
                 onClick={() => setImmersive(true)}
-                title={`全宽沉浸${mode === "read" ? "阅读" : "编辑"}（Esc 退出）`}
+                // 「沉浸阅读」专指笔记｜PDF｜Agent 三栏阅读区；这里只是把这份文件铺满窗口，叫「全屏」免得混
+                title={`铺满整个窗口${mode === "read" ? "阅读" : "编辑"}这份文件（Esc 退出）`}
                 className="shrink-0 rounded-sm px-2 py-0.5 text-l2 hover:bg-hover"
               >
-                ⛶ {mode === "read" ? "沉浸阅读" : "沉浸编辑"}
+                ⛶ {mode === "read" ? "全屏阅读" : "全屏编辑"}
               </button>
             )
           )}
@@ -1361,7 +1380,7 @@ function TextFilePreviewEditor({
               {path.split(/[\\/]/).pop()}
             </span>
             <span className="text-l4">
-              沉浸{mode === "read" ? "阅读" : "编辑"} · Esc 退出
+              全屏{mode === "read" ? "阅读" : "编辑"} · Esc 退出
             </span>
             {mode === "edit" && !readOnlyReason && (
               <button
@@ -1381,7 +1400,7 @@ function TextFilePreviewEditor({
             )}
             <button
               onClick={() => setImmersive(false)}
-              title={`退出沉浸${mode === "read" ? "阅读" : "编辑"}（Esc）`}
+              title={`退出全屏${mode === "read" ? "阅读" : "编辑"}（Esc）`}
               className={`${mode === "edit" && !readOnlyReason ? "" : "ml-auto "}shrink-0 rounded-sm px-2 py-1 text-l3 hover:bg-hover hover:text-l1`}
             >
               ✕ 退出
