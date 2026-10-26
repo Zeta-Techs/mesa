@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { claudeOutputTokens, extractLiveReply, liveReplySupported, mergeLiveReply, sentTextStuckInBox, staleEcho, terminalHasInputBox, unsyncedTail } from "../src/live-reply.ts";
+import { claudeOutputTokens, dropAskedEcho, extractLiveReply, liveReplySupported, mergeLiveReply, sentTextStuckInBox, staleEcho, terminalHasInputBox, unsyncedTail } from "../src/live-reply.ts";
 
 const RULE = "─".repeat(100);
 // Claude Code 2.1.292 本机 PTY 实录（流式写到一半；假 API 慢速吐字）
@@ -766,4 +766,50 @@ test("刚发的这句还躺在 Claude 输入框里没交出去（2026-10-24 HER 
   ];
   assert.equal(sentTextStuckInBox(sentOk, "claude-code", sent), false);
   assert.equal(sentTextStuckInBox(stuck, "no-such-agent", sent), null);
+});
+
+// 2026-10-26 用户截图：项目里新对话的第一句带着项目说明，几段之间隔着空行。读屏只认第一段是回显，
+// 后面几段连同人说的话被当成回复，聊天层把整段提问又画一遍、光标接在末尾
+test("dropAskedEcho：分段提问在回显里的其余几段不当回复", () => {
+  const asked = [
+    "项目里现有（顶层）：",
+    "- notes/",
+    "- papers/",
+    "",
+    "课题主题：",
+    "HER 硼化物",
+    "",
+    "----",
+    "",
+    "用 Mesa 出图技能 绘制该 PDF 的总结图 /Users/me/Desktop/测试项目/papers/Gao2023-two-dimensional-ruthenium-boride-a.pdf",
+  ].join("\n");
+  const codex = [
+    "• 上一轮的回复。",
+    "",
+    "› 项目里现有（顶层）：",
+    "  - notes/",
+    "  - papers/",
+    "",
+    "  课题主题：",
+    "  HER 硼化物",
+    "",
+    "  ----",
+    "",
+    "  用 Mesa 出图技能 绘制该 PDF 的总结图 /Users/me/Desktop/测试项目/papers/Gao2023-two-dimensional-ruthenium-boride-a.p",
+    "  df",
+    "",
+    "• Working (3s • esc to interrupt)",
+    "",
+    "› Ask Codex to do anything",
+  ];
+  const read = extractLiveReply(codex, "codex");
+  const live = read ? (mergeLiveReply(null, read) ?? []) : [];
+  assert.ok(live.length > 0, "读屏本身仍把后几段当回复（这是要兜住的情形）");
+  assert.deepEqual(dropAskedEcho(live, asked), []);
+  // 回复出来以后：提问的几段去掉，回复留下
+  assert.deepEqual(dropAskedEcho([...live, "", "我先读一下这篇 PDF。"], asked), ["我先读一下这篇 PDF。"]);
+  // 回复第一行碰巧是提问里的短词：不紧接上一行就不算提问
+  assert.deepEqual(dropAskedEcho(["好的", "我来画"], "好的话请画图"), ["好的", "我来画"]);
+  // 没有提问可比：原样
+  assert.deepEqual(dropAskedEcho(["回复"], ""), ["回复"]);
 });

@@ -457,6 +457,10 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-26 · 实时预览去掉分段提问的回显
+
+用户截图：项目里新对话的第一句带项目说明，几段之间隔空行；读屏的回显续行只跳到第一个空行（`echoStart`），其余几段连同人说的话被当成回复，聊天层灰字把整段提问再画一遍、光标接在末尾。改在聊天层算预览处：`dropAskedEcho` 按顺序把开头能在最近一条用户消息里找到的行去掉（短行只在紧接上一行时算），各家读屏共用，不改每家的画面布局。
+
 ### 2026-10-26 · Codex 的 app-server 拿齐 PTY 上的 Agent 变量
 
 用户实测 Codex 里出图技能用不了，`$MESA_IMAGE_TOOL` 为空。Codex 在 Mesa 里经私有 app-server 跑（chat_channel.rs），命令由 app-server 执行、不经 PTY，而出图工具路径只在 `spawn_tracked` 注入 PTY。**规则**：PTY 上另加给 Agent 用的变量收在 `pty.rs pty_agent_env`（出图工具路径、Windows 的 `PYTHONIOENCODING`），同时交给 app-server；以后往 PTY 加这类变量要一并加。10-25 的九家核对没走 app-server，漏了这家。

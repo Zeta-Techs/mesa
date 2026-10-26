@@ -30,7 +30,7 @@ import type {
 } from "../pages/TerminalPage";
 import type { MenuAnswer, TuiMenu } from "../tui-menu";
 import type { PermissionTierId } from "../chat-permission";
-import { liveReplySupported, unsyncedTail } from "../live-reply";
+import { dropAskedEcho, liveReplySupported, unsyncedTail } from "../live-reply";
 import { useRevealedText } from "../text-reveal";
 import { lastContextTokens, userTextHistory, type MesaCommand } from "../composer-assist";
 import { AGENTS, type ProjectDto } from "../types";
@@ -559,7 +559,15 @@ export default function ChatSurface({
       .filter((m) => m.role !== "user")
       .flatMap((m) => m.blocks.filter((b) => b.kind === "text").map((b) => b.text))
       .join("\n");
-    return unsyncedTail(liveReply, synced);
+    // 分几段的提问（带项目说明的第一句）在终端里隔着空行回显，读屏只认得第一段：其余几段不当回复
+    const asked =
+      lastUser >= 0
+        ? messages[lastUser].blocks
+            .filter((b) => b.kind === "text")
+            .map((b) => b.text)
+            .join("\n")
+        : "";
+    return unsyncedTail(dropAskedEcho(liveReply, asked), synced);
   })();
   // 实时预览多出一行：贴着底的就当帧跟到底。原先只在消息列表变化时贴底（生成中 700ms 一次的轮询），新出的那一行先落在
   // 底部留白和渐隐里，等下一次轮询整段才往上跳一行，看着像那一行在原位闪一下才出新内容（2026-10-22 用户 Claude 长回复）

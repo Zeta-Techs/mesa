@@ -524,6 +524,30 @@ export function staleEcho(read: LiveReplyRead, before: string | null, sent: stri
 }
 
 /**
+ * 去掉开头那几行人刚问的话：分好几段的提问（项目里开新对话时附的项目说明、空行隔开的清单）在终端回显里也隔着空行，
+ * 读屏只认得出第一段是回显，后面几段当成了回复，聊天层把整段提问又画一遍、光标接在末尾
+ * （2026-10-26 用户截图）。asked = 最近一条用户消息的原文（含折起来的项目说明）。
+ * 只去开头连着的、按顺序能在提问里找到的行；短行（折行剩下的「pdf」、回复里的「好的」）只在紧接上一行时才算。
+ * 回复第一行一旦对不上，后面一律保留
+ */
+export function dropAskedEcho(live: readonly string[], asked: string): string[] {
+  const q = norm(asked);
+  if (!q) return [...live];
+  let pos = -1;
+  let i = 0;
+  while (i < live.length) {
+    const n = norm(live[i]);
+    if (n) {
+      const at = n.length >= 4 ? q.indexOf(n, Math.max(pos, 0)) : pos >= 0 && q.startsWith(n, pos) ? pos : -1;
+      if (at < 0) break;
+      pos = at + n.length;
+    }
+    i++;
+  }
+  return live.slice(i);
+}
+
+/**
  * 去掉聊天层已经有了的行：从第一行「会话里还没有」的开始往后都算实时部分。
  * synced = 最近几条助手消息的正文（调用方拼好）
  */
