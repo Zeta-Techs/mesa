@@ -678,7 +678,8 @@ export default function ProjectTree({
     const headers = sections.length + 1;
     // 「置顶」一节（节头 + 每段一行）也占地方，先扣掉
     const pinnedRows = pinnedList.length > 0 ? 2.25 * rem + pinnedList.length * (2 * rem + 1) : 0;
-    const fixed = headers * 2.25 * rem + open.length * 1.75 * rem + 1.5 * rem + pinnedRows;
+    // 「项目」标签行（mt-2 + h-7，2026-10-26 挪进滚动区）占 2.25rem，紧跟它的第一段省掉 pt-2
+    const fixed = headers * 2.25 * rem + open.length * 1.75 * rem + 1.5 * rem + pinnedRows + 1.75 * rem;
     const slots = chatSlots({ available: listHeight, fixed, rowHeight: 2 * rem + 1 });
     const shown = chatQuotas({
       counts: open.map((o) => o.count),
@@ -1417,10 +1418,11 @@ export default function ProjectTree({
     return { chats, projects: projectItems };
   }
 
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      {/* 项目标签行：计数 + 搜索 + 添加菜单（添加流程与示例课题创建都在项目页，经一次性请求触发） */}
-      <div className="flex h-7 shrink-0 items-center gap-1.5 pl-4 pr-2">
+  /** 项目标签行：计数 + 搜索 + 添加菜单（添加流程与示例课题创建都在项目页，经一次性请求触发）。
+   *  放在随手聊下面、课题上面（2026-10-26 用户：置顶的对话和随手聊都不是项目，原先压在「项目 N」下面读不通） */
+  function renderProjectsLabel() {
+    return (
+      <div className="mt-2 flex h-7 items-center gap-1.5 pl-2.5 pr-0.5">
         <span className={RAIL_SECTION_LABEL}>
           项目
         </span>
@@ -1452,9 +1454,13 @@ export default function ProjectTree({
           </button>
         </span>
       </div>
+    );
+  }
 
-      {/* 顶边 6px、底边 12px 渐隐：往下滚时上面的行淡出，不在「项目」标题行下面硬切半行，底下的行也不撞上工具栏分隔线；
-          底部留 12px 内边距，滚到底时最后一行落在渐隐区上面。分节标签（项目 / 置顶 / 其他打开的）的左缘对齐上面导航图标的左缘（16px）。
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {/* 顶边 6px、底边 12px 渐隐：往下滚时上面的行淡出，不在上面的导航下面硬切半行，底下的行也不撞上工具栏分隔线；
+          底部留 12px 内边距，滚到底时最后一行落在渐隐区上面。分节标签（置顶 / 其他打开的 / 项目）的左缘对齐上面导航图标的左缘（16px）。
           键盘（2026-10-24）：光标在树里时 ↑↓ / Home / End 走行，回车打开，← → 收起 / 展开课题，在对话上按 ← 回到它的课题 */}
       <div
         ref={listRef}
@@ -1505,12 +1511,13 @@ export default function ProjectTree({
         )}
         {/* 随手聊排最上 */}
         {renderScratch()}
+        {renderProjectsLabel()}
         {rows.length === 0 ? (
-          <p className="px-2 py-3 text-xs text-l4">
-            还没有项目，点上面的 ＋ 添加
+          <p className="px-2.5 py-2 text-xs text-l4">
+            还没有项目，点「项目」右边的 ＋ 添加
           </p>
         ) : (
-          // 三段各自一个容器：拖动只在同一段里挪（置顶段的顺序是置顶表本身）
+          // 三段各自一个容器：拖动只在同一段里挪（置顶段的顺序是置顶表本身）；紧跟「项目」标签的第一段不再垫 pt-2
           <>
             {(
               [
@@ -1518,10 +1525,11 @@ export default function ProjectTree({
                 ["projects", grouped.projects],
                 ["unregistered", grouped.unregistered],
               ] as const
-            ).map(([section, all]) => {
+            ).map(([section, all], _, sections) => {
               const list = currentRow ? all.filter((r) => r.key !== currentRow.key) : all;
+              const first = sections.find(([, a]) => a.some((r) => r.key !== currentRow?.key))?.[0] === section;
               return list.length === 0 ? null : (
-                <div key={section} className="pt-2">
+                <div key={section} className={first ? undefined : "pt-2"}>
                   {list.map((r, i, rest) =>
                     renderRow(r, i, section, rest.map((x) => x.repoPath), section === "pinned"),
                   )}

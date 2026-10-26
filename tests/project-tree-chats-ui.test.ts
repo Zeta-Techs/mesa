@@ -615,3 +615,26 @@ test("弹出列表（liftCurrent）：正聊着的项目整块提到最上面（
     await sidebar.close();
   }
 });
+
+test("「项目 N」标签在置顶的对话和随手聊下面、课题上面：它只管下面那排文件夹（2026-10-26）", async () => {
+  const view = await renderTree();
+  try {
+    await view.act(async () => view.button("「镁硫电池第3篇精读」的更多操作").click());
+    await view.act(async () => view.button("置顶").click());
+    const doc = view.host.ownerDocument;
+    const label = Array.from(view.host.querySelectorAll("span")).find((s) => s.textContent === "项目")!;
+    assert.ok(label, "有「项目」标签");
+    const before = (a: Element, b: Element) =>
+      (a.compareDocumentPosition(b) & doc.defaultView!.Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    assert.ok(before(view.host.querySelector('[aria-label="置顶的对话"]')!, label), "置顶在「项目」上面");
+    assert.ok(before(view.button("随手聊"), label), "随手聊在「项目」上面");
+    assert.ok(before(label, view.button("综述流程测试")), "课题在「项目」下面");
+    assert.ok(before(label, view.button("Ccode")), "课题在「项目」下面");
+    assert.equal(label.parentElement?.querySelector(".text-l4")?.textContent, "2", "计数只数课题");
+    // 搜索和添加还在这一行
+    assert.ok(label.parentElement?.querySelector('[aria-label="搜索对话和项目"]'));
+    assert.ok(label.parentElement?.querySelector('[aria-label="添加项目 / 创建示例课题"]'));
+  } finally {
+    await view.close();
+  }
+});
