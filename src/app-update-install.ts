@@ -7,7 +7,7 @@ import { toast } from "./toast";
 
 /**
  * 应用更新的「下载并安装」：设置 → 更新与帮助菜单的更新弹窗共用。
- * 成功后 relaunch 进新版本；失败恢复按钮可重试。重启会杀掉后台无头任务，
+ * 成功后 relaunch 进新版本；下载失败恢复按钮可重试。重启会杀掉后台无头任务，
  * 安装前先查一遍，有活着的任务必须用户明确点头。
  */
 
@@ -49,8 +49,10 @@ export function useAppUpdateInstall(onError?: (message: string) => void) {
     setInstalling(true);
     setProgress({ downloaded: 0, total: null });
     setError(null);
+    let stopped = false;
     try {
-      await update.downloadAndInstall((ev) => {
+      // 先下载：这一步失败什么都没动，终端照常，可以直接重试
+      await update.download((ev) => {
         if (ev.event === "Started") {
           setProgress({ downloaded: 0, total: ev.data.contentLength ?? null });
         } else if (ev.event === "Progress") {
@@ -65,9 +67,19 @@ export function useAppUpdateInstall(onError?: (message: string) => void) {
           }));
         }
       });
+      // 下完再做退出收尾：更新后的重启与 Windows 安装包都绕过正常退出那一套（lib.rs prepare_app_exit）。
+      // 各标签先存一版回放，给落盘留出与关窗链路相同的时间，再让后端停终端、后台任务和聊天旁路服务
+      window.dispatchEvent(new CustomEvent("mesa:save-terminal-replays"));
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      await invoke("prepare_app_exit");
+      stopped = true;
+      // Windows 上 install 拉起安装包后进程就退出，走不到 relaunch
+      await update.install();
       await relaunch();
     } catch (e) {
-      const message = String(e);
+      const message = stopped
+        ? `${String(e)}。终端和后台任务已经停下，请退出并重新打开 Mesa 后再试`
+        : String(e);
       setError(message);
       onError?.(message);
       toast(`更新安装失败：${message}`, "error");

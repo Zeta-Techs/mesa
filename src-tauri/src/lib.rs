@@ -141,6 +141,36 @@ mod internal_sessions;
 mod ws_settings;
 mod zotero;
 
+/// 退出收尾只做一次：正常退出（ExitRequested）与应用更新安装前（prepare_app_exit）共用
+static EXIT_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static EXIT_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 退出前收尾：停后台捕获、关终端、关聊天旁路服务（Mac 上 Codex app-server 自成进程组，
+/// 不收就成孤儿）、停手机收件；后台捕获线程最多等 5 秒
+fn shutdown_for_exit(app: &tauri::AppHandle) {
+    process::shutdown_captures();
+    app.state::<pty::PtyManager>().shutdown();
+    chat_channel::shutdown_all();
+    phone_drop::shutdown();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while process::capture_count() > 0 && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    EXIT_READY.store(true, std::sync::atomic::Ordering::Release);
+}
+
+/// 应用更新安装前先收尾。更新后的重启（relaunch → request_restart）会无视 prevent_exit，
+/// Windows 上更新插件拉起安装包后直接 process::exit——两条路都等不到 ExitRequested 里的收尾线程
+#[tauri::command]
+async fn prepare_app_exit(app: tauri::AppHandle) -> Result<(), String> {
+    if EXIT_STARTED.swap(true, std::sync::atomic::Ordering::AcqRel) {
+        return Ok(()); // 已在收尾（正常退出进行中或已收过）
+    }
+    tauri::async_runtime::spawn_blocking(move || shutdown_for_exit(&app))
+        .await
+        .map_err(|e| format!("退出收尾失败: {e}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     static CLOSE_DIALOG_OPEN: std::sync::atomic::AtomicBool =
@@ -148,8 +178,6 @@ pub fn run() {
     static ALLOW_CLOSE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     /// 关窗存盘只拦一次（拦下→通知前端→350ms 后二次 close 放行）
     static FLUSH_CLOSE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    static EXIT_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    static EXIT_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     diagnostics::start_process_monitor();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -978,6 +1006,7 @@ pub fn run() {
             phone_drop::phone_drop_remove_device,
             phone_drop::phone_drop_sync,
             phone_drop::phone_drop_set_standby,
+            prepare_app_exit,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -997,15 +1026,7 @@ pub fn run() {
                 }
                 let app = app.clone();
                 std::thread::spawn(move || {
-                    process::shutdown_captures();
-                    app.state::<pty::PtyManager>().shutdown();
-                    chat_channel::shutdown_all();
-                    phone_drop::shutdown();
-                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-                    while process::capture_count() > 0 && std::time::Instant::now() < deadline {
-                        std::thread::sleep(std::time::Duration::from_millis(20));
-                    }
-                    EXIT_READY.store(true, std::sync::atomic::Ordering::Release);
+                    shutdown_for_exit(&app);
                     app.exit(code.unwrap_or(0));
                 });
             }
