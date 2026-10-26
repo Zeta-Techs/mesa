@@ -96,6 +96,7 @@ import {
   channelRelink,
   channelTurnOpen,
   hooksApprovalAnswered,
+  menuOutgrowsChannel,
   sessionSwitchNote,
   type ChannelReplyDecision,
   type ChatChannelSnapshot,
@@ -2393,8 +2394,10 @@ const TerminalView = memo(function TerminalView({
       return false;
     }
     if (!ch || channelInfersApproval(ch) || !channelTurnOpen(ch)) return false;
-    // 旁路的卡上答不了（没有回复通道的那类请求）：屏上原文的卡更有用
-    if (ch.approval) return channelCanAnswer(ch, launchAgentRef.current);
+    // 旁路的卡上答不了（没有回复通道的那类请求）：屏上原文的卡更有用；终端菜单的选项比旁路能回的多，也用屏上原文的卡
+    if (ch.approval) {
+      return channelCanAnswer(ch, launchAgentRef.current) && !menuOutgrowsChannel(ch, launchAgentRef.current, menu.options.length);
+    }
     const now = Date.now();
     if (now - channelApprovalGoneAtRef.current < 3000) {
       window.setTimeout(scanMenuSoon, 600);

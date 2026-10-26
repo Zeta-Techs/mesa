@@ -12,6 +12,7 @@ import {
   displayCommand,
   hooksApprovalAnswered,
   channelInfersApproval,
+  menuOutgrowsChannel,
   sessionSwitchNote,
   type ChannelApproval,
   type ChatChannelSnapshot,
@@ -155,6 +156,19 @@ test("能从聊天层答的才给按钮；「都允许」只给支持的家", ()
     approvalChoices(approval({ replyable: true, requestId: "r" }), "codex").map((c) => c.decision),
     ["allow", "allow_always", "deny"],
   );
+});
+
+// 2026-10-26 用户截图（Qwen 0.26.1）：终端三项（多了「Switch to Default Mode and allow once (recommended)」），聊天卡只有允许 / 拒绝
+test("终端菜单的选项比旁路能回的多，就改用照终端原文的菜单卡", () => {
+  const qwen = snap({ agent: "qwen", kind: "qwen", turn: turn("awaiting_approval"), approval: approval({ replyable: true, requestId: "r" }) });
+  assert.equal(menuOutgrowsChannel(qwen, "qwen", 3), true, "自动模式兜底多出一项");
+  assert.equal(menuOutgrowsChannel(qwen, "qwen", 4), true, "平常的「总是允许」两项");
+  assert.equal(menuOutgrowsChannel(qwen, "qwen", 2), false, "两项正好对上允许 / 拒绝");
+  const codex = snap({ agent: "codex", kind: "codex", turn: turn("awaiting_approval"), approval: approval({ replyable: true, requestId: "r" }) });
+  assert.equal(menuOutgrowsChannel(codex, "codex", 3), false, "Codex 的三项旁路都能回");
+  // 旁路回不了 / 没有审批：本来就走菜单卡，不归这里管
+  assert.equal(menuOutgrowsChannel(snap({ approval: approval({ replyable: false, requestId: "r" }) }), "claude-code", 4), false);
+  assert.equal(menuOutgrowsChannel(snap(), "qwen", 4), false);
 });
 
 test("聊天卡上能答的审批不再拉起终端；只能在终端菜单里答的交回原来的判断", () => {

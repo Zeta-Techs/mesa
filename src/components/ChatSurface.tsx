@@ -65,6 +65,7 @@ import {
   approvalChoices,
   approvalPreview,
   approvalTitle,
+  menuOutgrowsChannel,
   type ChannelReplyDecision,
   type ChatChannelSnapshot,
 } from "../chat-channel";
@@ -582,8 +583,12 @@ export default function ChatSurface({
   // CLI 比 Mesa 核对过的新（cli-verified.ts）：卡上的选项是读屏认出来的，画面变了可能按不准，提醒一句
   const cliNewer = useCliNewer(agentId);
   const channelChoices = channelApproval ? approvalChoices(channelApproval, agentId ?? null) : [];
+  // 终端菜单的选项比旁路能回的多（Qwen 只收允许 / 拒绝）：让给下面照终端原文的菜单卡，命令原文照样画在卡上
+  const menuOutgrows = Boolean(
+    menuPrompt && !menuPrompt.ask && menuOutgrowsChannel(channel ?? null, agentId ?? null, menuPrompt.options.length),
+  );
   const decision: ChatDecision | null =
-    channelApproval && channelChoices.length && !trustPrompt
+    channelApproval && channelChoices.length && !trustPrompt && !menuOutgrows
       ? {
           key: `channel:${channelApproval.requestId ?? ""}`,
           title: approvalTitle(channelApproval, agentLabel(agentId)),

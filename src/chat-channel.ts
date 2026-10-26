@@ -220,6 +220,22 @@ export function channelCanAnswer(snap: ChatChannelSnapshot | null, agent: string
   return Boolean(snap?.approval && approvalChoices(snap.approval, agent).length);
 }
 
+/**
+ * 终端菜单的选项比旁路能回的多：旁路的卡会少选项，改用照终端原文的菜单卡（按键答，tui-menu.ts）。
+ * Qwen 的官方通道只收「允许 / 拒绝」（dual-output confirmation_response 只有 allowed 布尔），终端里却还有
+ * 「总是允许…」「Switch to Default Mode and allow once (recommended)」（自动模式分类器不可用时插在拒绝前面）这些——
+ * 2026-10-26 用户截图：终端三项、聊天卡只有允许 / 拒绝
+ */
+export function menuOutgrowsChannel(
+  snap: ChatChannelSnapshot | null,
+  agent: string | null,
+  menuOptions: number,
+): boolean {
+  if (!snap?.approval) return false;
+  const choices = approvalChoices(snap.approval, agent).length;
+  return choices > 0 && menuOptions > choices;
+}
+
 /** 可从聊天层答的审批给哪几个按钮（只摆 CLI 支持的，不替用户选） */
 export function approvalChoices(
   a: ChannelApproval,
