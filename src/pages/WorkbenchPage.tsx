@@ -74,6 +74,7 @@ import {
   LoadingRows,
   MenuSelect,
   PageFrame,
+  RowAction,
   fieldClass,
   ghostActionClass,
   hoverRevealClass,
@@ -912,18 +913,16 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                     <p className="mt-1 text-sm text-l3">{stepName}</p>
                   )}
                 </div>
-                {/* 在客户端打开与继续工作并排：原先单独占主卡底下一整行（还画一条分隔线），空着大半截（2026-10-26 用户） */}
-                <div className="flex shrink-0 items-center gap-2">
+                {/* 在客户端打开与继续工作并排：原先单独占主卡底下一整行（还画一条分隔线），空着大半截；
+                    写字的描边钮又和主按钮差不多大、抢了「继续工作」，只留外开图标，悬停说去哪（2026-10-26 用户） */}
+                <div className="flex shrink-0 items-center gap-1.5">
                   {showClientJump && (
-                    <button
-                      type="button"
-                      className={`${rowActionClass} gap-1`}
-                      title={clientJumpTitle}
+                    <RowAction
+                      icon={<SquareArrowOutUpRight size={15} strokeWidth={1.8} aria-hidden="true" />}
+                      tip={`${clientJumpLabel}（只打开项目，不定位到某条对话）`}
+                      label={clientJumpLabel}
                       onClick={() => clientOpen.openProject(hero.path)}
-                    >
-                      {clientJumpLabel}
-                      <SquareArrowOutUpRight size={12} strokeWidth={1.8} aria-hidden="true" />
-                    </button>
+                    />
                   )}
                   <button
                     type="button"
