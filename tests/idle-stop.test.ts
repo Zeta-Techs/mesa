@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { IDLE_STOP_MS, idleEligible, idleStopPass, isPlainChatTab } from "../src/idle-stop.ts";
+import { IDLE_STOP_MS, idleEligible, idleStopPass, isPlainChatTab, EXITED_GRACE_MS, exitedCollectPass, isExitedAgentTab } from "../src/idle-stop.ts";
 
 const idle = { running: true, shell: false, attention: "done" as const };
 
@@ -52,4 +52,38 @@ test("空闲满 30 分钟才收；正看着的 / 有没发的字的重新计时�
   assert.deepEqual(pass.stop, ["a"]);
   assert.equal(pass.since.b, t0 + IDLE_STOP_MS);
   assert.equal(pass.since.c, undefined);
+});
+
+test("Agent 退出、退回 shell 的普通对话才算要收的：纯终端、只看没接、还在跑、步骤都不算", () => {
+  const exited = { running: false, shell: true, sessionId: "s1" };
+  assert.equal(isExitedAgentTab({ id: "a" }, exited), true);
+  assert.equal(isExitedAgentTab({ id: "a" }, { running: false, shell: true, sessionId: null }), false, "纯终端没有会话");
+  assert.equal(isExitedAgentTab({ id: "a" }, { running: true, shell: false, sessionId: "s1" }), false, "还在跑");
+  assert.equal(isExitedAgentTab({ id: "a" }, { running: false, shell: false, sessionId: "s1" }), false, "没退回 shell（只看没接 / 还没起来）");
+  assert.equal(isExitedAgentTab({ id: "a", preview: true }, exited), false);
+  assert.equal(isExitedAgentTab({ id: "a", shellOnly: true }, exited), false, "run 脚本");
+  assert.equal(isExitedAgentTab({ id: "a", stepName: "精读" }, exited), false, "流水线步骤有自己的收尾");
+  assert.equal(isExitedAgentTab({ id: "a" }, null), false);
+});
+
+test("退回 shell 满一小会儿、没人看着才收；正看着 / 输入框有字的只计时不收；接回了就从记录里去掉", () => {
+  const tabs = [{ id: "a" }, { id: "b" }, { id: "c" }];
+  const statuses = {
+    a: { running: false, shell: true, sessionId: "s1" },
+    b: { running: false, shell: true, sessionId: "s2" },
+    c: { running: true, shell: false, sessionId: "s3" },
+  };
+  const first = exitedCollectPass({ tabs, statuses, kept: new Set(["b"]), since: {}, now: 1000 });
+  assert.deepEqual(first.since, { a: 1000, b: 1000 });
+  assert.deepEqual(first.collect, [], "刚退回 shell：换模型 / 换权限中间那一下，不能当场收");
+  const later = exitedCollectPass({ tabs, statuses, kept: new Set(["b"]), since: first.since, now: 1000 + EXITED_GRACE_MS });
+  assert.deepEqual(later.collect, ["a"], "b 正看着，不收");
+  const resumed = exitedCollectPass({
+    tabs,
+    statuses: { ...statuses, a: { running: true, shell: false, sessionId: "s1" } },
+    kept: new Set(),
+    since: later.since,
+    now: 1000 + 2 * EXITED_GRACE_MS,
+  });
+  assert.deepEqual(Object.keys(resumed.since), ["b"], "a 接回了，下次退出重新计时");
 });

@@ -25,6 +25,15 @@ const bundle = await build({
         b.onResolve({ filter: /^\.\.?\/store$/ }, () => ({ path: "store", namespace: "stub" }));
         b.onResolve({ filter: /quick-chat-launch$/ }, () => ({ path: "launch", namespace: "stub" }));
         b.onResolve({ filter: /\/AskAiModal$/ }, () => ({ path: "askai", namespace: "stub" }));
+        b.onResolve({ filter: /\/ConfirmDialog$/ }, () => ({ path: "confirm", namespace: "stub" }));
+        b.onLoad({ filter: /^confirm$/, namespace: "stub" }, () => ({
+          contents: `
+            export const confirmDialog = async (...a) => { window.__calls.push(["confirmDialog", ...a]); return true; };
+            export const alertDialog = async () => {};
+            export const confirmDialogOpen = () => false;
+            export const ConfirmDialogHost = () => null;`,
+          loader: "js",
+        }));
         b.onLoad({ filter: /^store$/, namespace: "stub" }, () => ({
           contents: `
             const st = () => window.__treeStore;
@@ -162,7 +171,11 @@ async function renderTree(
     },
     __TAURI_INTERNALS__: {
       transformCallback: () => 0,
-      invoke: async (command: string) => {
+      invoke: async (command: string, args?: unknown) => {
+        if (command === "set_session_meta") {
+          calls.push(["set_session_meta", args]);
+          return null;
+        }
         if (command === "list_projects") return [PROJECT, { path: "/work/code", name: "Ccode", workMode: "coding" }];
         if (command === "list_workspaces") {
           wsCalls += 1;
@@ -460,6 +473,33 @@ test("对话 ⋯ 里能在右侧分屏打开；开着的能关掉（行尾 × �
   }
 });
 
+test("Agent 已退出、标签还开着的行：没有光标就没有 ×，⋯ 里也不给关（Mesa 自己收）", async () => {
+  const run = (tabId: string, sessionId: string, running: boolean) => ({
+    tabId,
+    title: "",
+    agentId: "claude-code",
+    model: "",
+    cwd: PROJECT.path,
+    running,
+    shell: !running,
+    attention: running ? ("done" as const) : null,
+    sessionId,
+  });
+  const view = await renderTree({ terminalRunInputs: [run("t1", "r5", true), run("t2", "r2", false)] });
+  try {
+    assert.ok(view.host.querySelector('[aria-label="关掉「镁硫电池第5篇精读」"]'), "在跑的照旧有 ×");
+    const row = view.button("镁硫电池第2篇精读");
+    assert.equal(row.parentElement?.querySelector("[data-run-slot]"), null, "退出了的不留光标那一格");
+    assert.equal(view.host.querySelector('[aria-label="关掉「镁硫电池第2篇精读」"]'), null);
+    await view.act(async () => view.button("「镁硫电池第2篇精读」的更多操作").click());
+    assert.ok(
+      !Array.from(view.host.ownerDocument.querySelectorAll("button")).some((b) => b.textContent?.trim() === "关掉这段对话"),
+    );
+  } finally {
+    await view.close();
+  }
+});
+
 test("对话 ⋯ 置顶：挪到最上面「置顶」一节、原课题下不再列，记在本机；取消置顶放回去", async () => {
   const view = await renderTree();
   try {
@@ -591,5 +631,92 @@ test("弹出列表（liftCurrent）：正聊着的项目整块提到最上面（
     assert.deepEqual(order(sidebar), ["随手聊", "综述流程测试", "Ccode"], "展开的侧栏不提：位置不跟着正聊的项目跳");
   } finally {
     await sidebar.close();
+  }
+});
+
+test("「项目 N」标签在置顶的对话和随手聊下面、课题上面：它只管下面那排文件夹（2026-10-26）", async () => {
+  const view = await renderTree();
+  try {
+    await view.act(async () => view.button("「镁硫电池第3篇精读」的更多操作").click());
+    await view.act(async () => view.button("置顶").click());
+    const doc = view.host.ownerDocument;
+    const label = Array.from(view.host.querySelectorAll("span")).find((s) => s.textContent === "项目")!;
+    assert.ok(label, "有「项目」标签");
+    const before = (a: Element, b: Element) =>
+      (a.compareDocumentPosition(b) & doc.defaultView!.Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    assert.ok(before(view.host.querySelector('[aria-label="置顶的对话"]')!, label), "置顶在「项目」上面");
+    assert.ok(before(view.button("随手聊"), label), "随手聊在「项目」上面");
+    assert.ok(before(label, view.button("综述流程测试")), "课题在「项目」下面");
+    assert.ok(before(label, view.button("Ccode")), "课题在「项目」下面");
+    assert.equal(label.parentElement?.querySelector(".text-l4")?.textContent, "2", "计数只数课题");
+    // 搜索和添加还在这一行
+    assert.ok(label.parentElement?.querySelector('[aria-label="搜索对话和项目"]'));
+    assert.ok(label.parentElement?.querySelector('[aria-label="添加项目 / 创建示例课题"]'));
+  } finally {
+    await view.close();
+  }
+});
+
+test("课题下的对话标题开头是课题名时省掉，悬停里还是完整标题；置顶一节不省（2026-10-26）", async () => {
+  const step = session({
+    sessionId: "step1",
+    customTitle: "1026|研究|综述流程测试文献检索筛选任务书",
+    updatedAt: "2026-10-26T00:00:00Z",
+  });
+  const view = await renderTree({ sessions: [...reviewChats, step] });
+  try {
+    const row = view.button("文献检索筛选任务书");
+    assert.ok(view.chatGroup("综述流程测试")!.contains(row));
+    assert.match(row.title, /综述流程测试文献检索筛选任务书/, "完整标题在悬停里");
+    assert.ok(view.button("「文献检索筛选任务书」的更多操作"));
+    await view.act(async () => view.button("「文献检索筛选任务书」的更多操作").click());
+    await view.act(async () => view.button("置顶").click());
+    const pinned = view.host.querySelector('[aria-label="置顶的对话"]')!;
+    assert.ok(pinned.textContent?.includes("综述流程测试文献检索筛选任务书"), "置顶一节看不出属于谁，不省");
+  } finally {
+    await view.close();
+  }
+});
+
+test("随手聊不列空对话；节头 ⋯ 能去对话页看全部随手聊、一键归档 7 天没动的（连空对话，开着的不动）（2026-10-26）", async () => {
+  const SC = "/Users/u/ccode/scratch";
+  const old = "2026-01-01T00:00:00Z";
+  const view = await renderTree({
+    sessions: [
+      ...reviewChats,
+      session({ sessionId: "sc-old", projectPath: SC, customTitle: "很早的随手聊", updatedAt: old }),
+      session({ sessionId: "sc-empty", projectPath: SC, title: null, updatedAt: old }),
+      session({ sessionId: "sc-new", projectPath: SC, customTitle: "刚聊的随手聊", updatedAt: new Date().toISOString() }),
+    ],
+  });
+  try {
+    await view.act(async () => view.button("随手聊").click());
+    const group = view.chatGroup("随手聊")!;
+    assert.ok(group.textContent?.includes("很早的随手聊"));
+    assert.ok(!group.textContent?.includes("未命名对话"), "空对话不列");
+    await view.act(async () => view.button("随手聊的更多操作").click());
+    await view.act(async () => view.button("在对话页看全部随手聊").click());
+    assert.equal(view.reqs.scratch, true);
+    assert.equal(view.pages.at(-1), "sessions");
+    await view.act(async () => view.button("随手聊的更多操作").click());
+    await view.act(async () => view.button("归档 7 天没动的（2 段）").click());
+    await view.act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    assert.ok(view.calls.some((c) => c[0] === "confirmDialog"), "先问一句");
+    const archived = view.calls
+      .filter((c) => c[0] === "set_session_meta")
+      .map((c) => (c[1] as { sessionId: string; archived: boolean }));
+    assert.deepEqual(archived.map((a) => a.sessionId).sort(), ["sc-empty", "sc-old"]);
+    assert.ok(archived.every((a) => a.archived));
+    // 本地镜像当场标归档（侧栏据此不再列），没归档的不动
+    const store = (view.host.ownerDocument.defaultView as unknown as { __treeStore: { sessions: SessionMetaDto[] } })
+      .__treeStore;
+    const flag = (id: string) => store.sessions.find((x) => x.sessionId === id)?.archived;
+    assert.equal(flag("sc-old"), true);
+    assert.equal(flag("sc-empty"), true);
+    assert.equal(flag("sc-new"), false);
+  } finally {
+    await view.close();
   }
 });

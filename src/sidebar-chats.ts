@@ -9,6 +9,7 @@ import { isScratchCwd } from "./quick-chat.ts";
 import { sessionExcludedFromProjectList } from "./session-filter.ts";
 import { caretOfAttention, strongestCaret, withUnread, type RunCaretState } from "./run-caret.ts";
 import { unreadKeyOf } from "./chat-unread.ts";
+import { tidySessionTitle } from "./session-title.ts";
 
 /** 每个文件夹下最多列几段，更早的走「全部 N 条」进对话页 */
 export const SIDEBAR_CHAT_LIMIT = 5;
@@ -19,14 +20,30 @@ export const SCRATCH_FOLDER_KEY = "scratch";
 /** 自动起名的「MMDD|类型|」前缀（类型闭集见 AGENTS.md 会话标题）：侧栏窄，只留主题，完整标题放悬停 */
 const AUTO_TITLE_PREFIX = /^\d{4}\|(?:功能|设计|修复|优化|发布|探索|文档|研究)\|\s*/;
 
-export function sidebarChatTitle(full: string): string {
+/** 去掉项目名后剩下的至少这么多字才去（再短就看不出是哪件事了） */
+const FOLDER_PREFIX_MIN_REST = 4;
+
+/** 侧栏短标题。给了所在文件夹名（挂在某个课题下时）再去掉开头重复的课题名：流程步骤的对话起名时带着项目背景，
+ *  常写成「测试项目综述大纲…」，挂在「测试项目」下面这几个字是重复的，还把后半截挤出侧栏（2026-10-26）。
+ *  只改显示，完整标题照旧放悬停 */
+export function sidebarChatTitle(full: string, folderName?: string): string {
   const trimmed = full.trim();
-  return trimmed.replace(AUTO_TITLE_PREFIX, "").trim() || trimmed;
+  const short = trimmed.replace(AUTO_TITLE_PREFIX, "").trim() || trimmed;
+  const folder = folderName?.trim() ?? "";
+  if ([...folder].length < 2 || !short.toLowerCase().startsWith(folder.toLowerCase())) return short;
+  const rest = short.slice(folder.length).replace(/^[\s·:：|｜\-—_，,、]+/, "");
+  return [...rest].length >= FOLDER_PREFIX_MIN_REST ? rest : short;
 }
 
 function listable(s: SessionMetaDto): boolean {
   // 源文件不在的接不回也看不了回放，留给对话页（那里有保留下来的快照）
   return s != null && !s.archived && !s.internal && s.alive && !sessionExcludedFromProjectList(s);
+}
+
+/** 课题 / 随手聊下面列不列：没起名、也没说过一句话的空对话不占侧栏（2026-10-26 用户：随手聊被「未命名对话」占满），
+ *  对话页照列；开着的照样挂在文件夹最上面（openTabRows 认「列表里还没有的」）。置顶是人手钉的，不走这条 */
+function listedInFolder(s: SessionMetaDto): boolean {
+  return listable(s) && !tidySessionTitle(s).unnamed;
 }
 
 function byRecent(a: SessionMetaDto, b: SessionMetaDto): number {
@@ -46,7 +63,7 @@ export function projectChats(
   return sessions
     .filter(
       (s) =>
-        listable(s) &&
+        listedInFolder(s) &&
         (pathKey(s.projectPath, isWindows) === key ||
           worktrees.some((w) => pathWithin(s.projectPath, w, isWindows))),
     )
@@ -90,11 +107,34 @@ export function scratchChats(
   return sessions
     .filter(
       (s) =>
-        listable(s) &&
+        listedInFolder(s) &&
         isScratchCwd(s.projectPath, isWindows) &&
         !projects.has(pathKey(s.projectPath, isWindows)),
     )
     .sort(byRecent);
+}
+
+/** 随手聊「归档 N 天没动的」默认天数 */
+export const SCRATCH_STALE_DAYS = 7;
+
+/** 随手聊里多少天没动的对话（节头 ⋯ 一键归档用，2026-10-26）：连侧栏不列的空对话一起算；
+ *  外面还在跑的、Mesa 里开着的、不知道什么时候动过的都不算。调用方先剔掉置顶的 */
+export function staleScratchChats(
+  sessions: readonly SessionMetaDto[],
+  projectPaths: readonly string[],
+  openKeys: ReadonlySet<string>,
+  nowMs: number,
+  days = SCRATCH_STALE_DAYS,
+  isWindows = false,
+): SessionMetaDto[] {
+  const projects = new Set(projectPaths.filter(Boolean).map((p) => pathKey(p, isWindows)));
+  const cutoff = nowMs - days * 86_400_000;
+  return sessions.filter((s) => {
+    if (!listable(s) || s.live || openKeys.has(`${s.agent}\n${s.sessionId}`)) return false;
+    if (!isScratchCwd(s.projectPath, isWindows) || projects.has(pathKey(s.projectPath, isWindows))) return false;
+    const at = s.updatedAt ? Date.parse(s.updatedAt) : NaN;
+    return Number.isFinite(at) && at < cutoff;
+  });
 }
 
 /** 运行页标签的状态镜像里本节要用的几样（RunOverviewInput 的子集） */

@@ -73,8 +73,10 @@ import {
   folderOpen,
   projectChats,
   SCRATCH_FOLDER_KEY,
+  SCRATCH_STALE_DAYS,
   scratchChats,
   scratchDot,
+  staleScratchChats,
   SIDEBAR_CHAT_LIMIT,
   SIDEBAR_CHAT_STEP,
   sidebarChatTitle,
@@ -362,6 +364,8 @@ export default function ProjectTree({
     /** ⋯ 打开时菜单右缘对齐按钮；右键打开时贴光标 */
     alignRight?: boolean;
   } | null>(null);
+  /** 随手聊节头 ⋯ 的菜单（随手聊不是项目，没有项目那一份菜单） */
+  const [scratchMenu, setScratchMenu] = useState<{ x: number; y: number } | null>(null);
   const [renaming, setRenaming] = useState<{ key: string; value: string } | null>(null);
   const composingRef = useRef(false);
 
@@ -426,15 +430,13 @@ export default function ProjectTree({
         title: "正看着的那段留在左边，这段放右边对照",
         onSelect: () => openChat(s, project, true),
       },
-      ...(holder
+      // 只在 AI 开着时给（同行尾 ×）：退出了的 Mesa 自己收，没东西可关
+      ...(holder?.running && !holder.shell
         ? [
             {
               label: "关掉这段对话",
               icon: X,
-              title:
-                holder.running && !holder.shell
-                  ? "停下这段对话的 Agent、收起它；记录还在，再点开发一句就接回（在干活的会先问你）"
-                  : "收起它：AI 没在跑（已退出或还没接回），记录还在，再点开发一句就接回",
+              title: "停下这段对话的 Agent、收起它；记录还在，再点开发一句就接回（在干活的会先问你）",
               onSelect: () => useAppStore.getState().requestCloseTab(holder.tabId),
             },
           ]
@@ -680,7 +682,8 @@ export default function ProjectTree({
     const headers = sections.length + 1;
     // 「置顶」一节（节头 + 每段一行）也占地方，先扣掉
     const pinnedRows = pinnedList.length > 0 ? 2.25 * rem + pinnedList.length * (2 * rem + 1) : 0;
-    const fixed = headers * 2.25 * rem + open.length * 1.75 * rem + 1.5 * rem + pinnedRows;
+    // 「项目」标签行（mt-2 + h-7，2026-10-26 挪进滚动区）占 2.25rem，紧跟它的第一段省掉 pt-2
+    const fixed = headers * 2.25 * rem + open.length * 1.75 * rem + 1.5 * rem + pinnedRows + 1.75 * rem;
     const slots = chatSlots({ available: listHeight, fixed, rowHeight: 2 * rem + 1 });
     const shown = chatQuotas({
       counts: open.map((o) => o.count),
@@ -694,15 +697,22 @@ export default function ProjectTree({
    *  完整标题放悬停），状态点放行尾；右键改名 / 归档 / 去对话页 */
   /** 对话不缩进，左缘对齐课题行的图标（2026-10-25 用户对照 Claude 客户端：课题名降成小号灰字的分组标题，
    *  项目和对话靠字号、字色分层，不再靠缩进；原 2026-10-24 缩进到名字起点） */
-  function renderChat(s: SessionMetaDto, project: ProjectDto | null) {
+  function renderChat(s: SessionMetaDto, project: ProjectDto | null, folderName?: string) {
     const key = chatKey(s);
     const full = tidySessionTitle(s).title;
-    // Mesa 里开着这段的标签：有它才给 ×（Mesa 外终端在写的只亮光标，关不了）
-    const holder = terminalRunInputs.find((r) => r.agentId === s.agent && r.sessionId === s.sessionId);
+    // 挂在课题下时去掉开头重复的课题名（置顶一节不给，那里看不出属于谁）
+    const short = sidebarChatTitle(full, folderName);
+    const runDot = chatDot(s, terminalRunInputs);
+    // × 只跟着光标走（2026-10-26 用户定）：Mesa 里开着、AI 在跑的才给。Mesa 外终端在写的只亮光标，关不了；
+    // Agent 已退出、标签还开着的不给，Mesa 切走 / 没人看时自己收（TerminalPage collectExitedTab）。
+    // 看的是运行光标本身，不算叠上去的「做完了没看」
+    const holder = runDot
+      ? terminalRunInputs.find((r) => r.agentId === s.agent && r.sessionId === s.sessionId && r.running && !r.shell)
+      : undefined;
     const selected = key === selectedChatKey;
     // 跑完了没看：标题亮到 l1（同正看着的那段的字色，但不铺底）、行尾蓝光标，点开就消
     const unread = !selected && unreadSet.has(key);
-    const dot = withUnread(chatDot(s, terminalRunInputs), unread);
+    const dot = withUnread(runDot, unread);
     const agent = AGENTS.find((a) => a.id === s.agent)?.label ?? s.agent;
     if (renaming?.key === key) {
       return (
@@ -778,34 +788,27 @@ export default function ProjectTree({
           {/* 字号 13px（.ccode-rail-text，2026-10-24 用户：比「工作台 / 搜对话」的 14px 再小一点点）。写在内层 span 上：
               按钮上写字号会被全站 button { font: inherit } 吞掉。
               字色同工作入口：平时 l3、悬停 l2，只有正看着的那段亮到 l1（2026-10-24 用户：标题不用全亮着） */}
-          <span className="ccode-rail-text ccode-rail-fade min-w-0 flex-1 text-left">{sidebarChatTitle(full)}</span>
+          <span className="ccode-rail-text ccode-rail-fade min-w-0 flex-1 text-left">{short}</span>
         </button>
         <div className="flex shrink-0 items-center gap-0.5 pr-0.5">
           {/* 运行状态光标（2026-10-24 用户：绿点换成 Mesa 的光标）。有光标才占一格、标题在它前面淡出；
               没光标的行标题写到行尾（2026-10-26 用户：右边这一列要干净，同 Claude 客户端侧栏；空格位让标题早早淡掉、右边空一截）；Mesa 外在跑的悬停时不让位，⋯ 出现在它右边。
               干活时的呼吸在悬停时停下、常亮（App.css .ccode-run-caret） */}
-          {/* 关掉（2026-10-26 用户定）：Mesa 里开着的行，悬停时 × 顶替光标那一格，⋯ 固定在最右；行宽不变。
-              Agent 退出了、标签还开着的行平时空着这格，悬停也出 × 收起 */}
-          {(dot || holder) && (
+          {/* 关掉（2026-10-26 用户定）：Mesa 里开着、AI 在跑的行，悬停时 × 顶替光标那一格，⋯ 固定在最右；行宽不变 */}
+          {dot && (
             <span className="flex h-6 w-6 items-center justify-center" data-run-slot>
-              {dot && (
-                <span
-                  className={`flex items-center justify-center${
-                    holder ? " group-hover/chat:hidden group-focus-within/chat:hidden" : ""
-                  }`}
-                >
-                  <RunCaret state={dot} />
-                </span>
-              )}
+              <span
+                className={`flex items-center justify-center${
+                  holder ? " group-hover/chat:hidden group-focus-within/chat:hidden" : ""
+                }`}
+              >
+                <RunCaret state={dot} />
+              </span>
               {holder && (
                 <button
                   type="button"
-                  aria-label={`关掉「${sidebarChatTitle(full)}」`}
-                  title={
-                    dot
-                      ? `关掉：停下它，记录还在（在干活的会先问你）\n现在：${dotTitle(dot)}`
-                      : "收起：AI 没在跑（已退出或还没接回），这里还开着一个标签；记录还在"
-                  }
+                  aria-label={`关掉「${short}」`}
+                  title={`关掉：停下它，记录还在（在干活的会先问你）\n现在：${dotTitle(dot)}`}
                   onClick={() => useAppStore.getState().requestCloseTab(holder.tabId)}
                   className="hidden h-6 w-6 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1 group-hover/chat:flex group-focus-within/chat:flex"
                 >
@@ -816,7 +819,7 @@ export default function ProjectTree({
           )}
           <button
             type="button"
-            aria-label={`「${sidebarChatTitle(full)}」的更多操作`}
+            aria-label={`「${short}」的更多操作`}
             title="更多操作"
             aria-haspopup="menu"
             aria-expanded={menuOpen}
@@ -913,7 +916,7 @@ export default function ProjectTree({
         {chats.length === 0 ? (
           opened.length === 0 && <p className="py-1 pl-2 pr-2 text-xs text-l4">还没有对话</p>
         ) : (
-          visible.map((s) => renderChat(s, project))
+          visible.map((s) => renderChat(s, project, name))
         )}
         {(more || folded) && (
           <div className="flex items-center">
@@ -1386,12 +1389,88 @@ export default function ProjectTree({
           </button>
           {renderToggleSpace(open, dot, toggle)}
           {renderNewChat("开一段新的随手聊", "开一段新的随手聊（同侧栏「新对话」）", () => void openQuickChat())}
-          {/* 与课题行的 ⋯ 同宽留白，悬停时 ＋ 上下对齐 */}
-          <span className="mr-0.5 hidden w-6 shrink-0 group-hover:block group-focus-within:block" aria-hidden="true" />
+          <button
+            type="button"
+            aria-label="随手聊的更多操作"
+            title="更多操作"
+            aria-haspopup="menu"
+            aria-expanded={scratchMenu != null}
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              setScratchMenu({ x: r.right, y: r.bottom + 4 });
+            }}
+            className={`mr-0.5 h-6 w-6 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1 ${
+              scratchMenu ? "flex" : "hidden group-hover:flex group-focus-within:flex"
+            }`}
+          >
+            <MoreHorizontal size={14} strokeWidth={1.8} aria-hidden="true" />
+          </button>
         </div>
         {open && renderChats(scratchList, null, "随手聊", SCRATCH_FOLDER_KEY)}
       </div>
     );
+  }
+
+  /** 随手聊节头 ⋯：去对话页看全部 / 一键归档多少天没动的（2026-10-26 用户：随手聊被试手的对话占满） */
+  function scratchMenuItems(): ContextMenuItem[] {
+    const openKeys = new Set(
+      terminalRunInputs.filter((r) => r.sessionId).map((r) => `${r.agentId}\n${r.sessionId}`),
+    );
+    const stale = staleScratchChats(unpinnedSessions, projectPaths, openKeys, Date.now(), SCRATCH_STALE_DAYS, IS_WINDOWS);
+    return [
+      {
+        label: "在对话页看全部随手聊",
+        icon: MessagesSquare,
+        title: "对话页只列随手聊，能搜、能整理、能批量删",
+        onSelect: () => {
+          const st = useAppStore.getState();
+          st.setSessionsScratchReq(true);
+          st.setPage("sessions");
+        },
+      },
+      {
+        label: stale.length > 0 ? `归档 ${SCRATCH_STALE_DAYS} 天没动的（${stale.length} 段）` : `归档 ${SCRATCH_STALE_DAYS} 天没动的`,
+        icon: Archive,
+        disabled: stale.length === 0,
+        title:
+          stale.length > 0
+            ? "连侧栏没列的空对话一起；置顶的、开着的、外面还在跑的不动。归档后在对话页「更多 → 已归档」里找回"
+            : `没有 ${SCRATCH_STALE_DAYS} 天没动的随手聊`,
+        onSelect: () => void archiveStale(stale),
+      },
+    ];
+  }
+
+  async function archiveStale(stale: SessionMetaDto[]) {
+    if (
+      !(await confirmDialog(
+        `归档 ${stale.length} 段 ${SCRATCH_STALE_DAYS} 天没动的随手聊？\n\n` +
+          `归档后侧栏不再列，对话记录不删；在对话页「更多 → 已归档」里能找回、取消归档。置顶的、开着的不动。`,
+      ))
+    )
+      return;
+    const done = new Set<string>();
+    const failed: string[] = [];
+    for (const s of stale) {
+      try {
+        await invoke("set_session_meta", {
+          agent: s.agent,
+          sessionId: s.sessionId,
+          customTitle: s.customTitle,
+          tags: s.tags,
+          archived: true,
+        });
+        done.add(chatKey(s));
+      } catch (reason) {
+        failed.push(`${tidySessionTitle(s).title}：${String(reason)}`);
+      }
+    }
+    useAppStore.setState({
+      sessions: useAppStore.getState().sessions.map((x) => (done.has(chatKey(x)) ? { ...x, archived: true } : x)),
+    });
+    void useAppStore.getState().loadSessions(true);
+    if (failed.length > 0) toast(`已归档 ${done.size} 段，${failed.length} 段失败：${failed[0]}`, "error");
+    else toast(`已归档 ${done.size} 段随手聊`);
   }
 
   /** 搜索弹层的料：侧栏能列出的全部对话（置顶 / 随手聊 / 各课题，不受「展开更多」限额）+ 全部课题 */
@@ -1402,7 +1481,7 @@ export default function ProjectTree({
       const fullTitle = tidySessionTitle(s).title;
       chats.push({
         key: chatKey(s),
-        title: sidebarChatTitle(fullTitle),
+        title: sidebarChatTitle(fullTitle, folder),
         fullTitle,
         folder,
         updatedAt: s.updatedAt,
@@ -1427,10 +1506,11 @@ export default function ProjectTree({
     return { chats, projects: projectItems };
   }
 
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      {/* 项目标签行：计数 + 搜索 + 添加菜单（添加流程与示例课题创建都在项目页，经一次性请求触发） */}
-      <div className="flex h-7 shrink-0 items-center gap-1.5 pl-4 pr-2">
+  /** 项目标签行：计数 + 搜索 + 添加菜单（添加流程与示例课题创建都在项目页，经一次性请求触发）。
+   *  放在随手聊下面、课题上面（2026-10-26 用户：置顶的对话和随手聊都不是项目，原先压在「项目 N」下面读不通） */
+  function renderProjectsLabel() {
+    return (
+      <div className="mt-2 flex h-7 items-center gap-1.5 pl-2.5 pr-0.5">
         <span className={RAIL_SECTION_LABEL}>
           项目
         </span>
@@ -1462,9 +1542,13 @@ export default function ProjectTree({
           </button>
         </span>
       </div>
+    );
+  }
 
-      {/* 顶边 6px、底边 12px 渐隐：往下滚时上面的行淡出，不在「项目」标题行下面硬切半行，底下的行也不撞上工具栏分隔线；
-          底部留 12px 内边距，滚到底时最后一行落在渐隐区上面。分节标签（项目 / 置顶 / 其他打开的）的左缘对齐上面导航图标的左缘（16px）。
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {/* 顶边 6px、底边 12px 渐隐：往下滚时上面的行淡出，不在上面的导航下面硬切半行，底下的行也不撞上工具栏分隔线；
+          底部留 12px 内边距，滚到底时最后一行落在渐隐区上面。分节标签（置顶 / 其他打开的 / 项目）的左缘对齐上面导航图标的左缘（16px）。
           键盘（2026-10-24）：光标在树里时 ↑↓ / Home / End 走行，回车打开，← → 收起 / 展开课题，在对话上按 ← 回到它的课题 */}
       <div
         ref={listRef}
@@ -1515,12 +1599,13 @@ export default function ProjectTree({
         )}
         {/* 随手聊排最上 */}
         {renderScratch()}
+        {renderProjectsLabel()}
         {rows.length === 0 ? (
-          <p className="px-2 py-3 text-xs text-l4">
-            还没有项目，点上面的 ＋ 添加
+          <p className="px-2.5 py-2 text-xs text-l4">
+            还没有项目，点「项目」右边的 ＋ 添加
           </p>
         ) : (
-          // 三段各自一个容器：拖动只在同一段里挪（置顶段的顺序是置顶表本身）
+          // 三段各自一个容器：拖动只在同一段里挪（置顶段的顺序是置顶表本身）；紧跟「项目」标签的第一段不再垫 pt-2
           <>
             {(
               [
@@ -1528,10 +1613,11 @@ export default function ProjectTree({
                 ["projects", grouped.projects],
                 ["unregistered", grouped.unregistered],
               ] as const
-            ).map(([section, all]) => {
+            ).map(([section, all], _, sections) => {
               const list = currentRow ? all.filter((r) => r.key !== currentRow.key) : all;
+              const first = sections.find(([, a]) => a.some((r) => r.key !== currentRow?.key))?.[0] === section;
               return list.length === 0 ? null : (
-                <div key={section} className="pt-2">
+                <div key={section} className={first ? undefined : "pt-2"}>
                   {list.map((r, i, rest) =>
                     renderRow(r, i, section, rest.map((x) => x.repoPath), section === "pinned"),
                   )}
@@ -1549,6 +1635,15 @@ export default function ProjectTree({
           alignRight={menu.alignRight}
           onClose={() => setMenu(null)}
           items={menuItems(menu.row)}
+        />
+      )}
+      {scratchMenu && (
+        <ContextMenu
+          x={scratchMenu.x}
+          y={scratchMenu.y}
+          alignRight
+          onClose={() => setScratchMenu(null)}
+          items={scratchMenuItems()}
         />
       )}
       {chatMenu && (

@@ -119,7 +119,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   意见框 / 画笔 / 箭头 / 打码 / 裁剪 + 撤销清空，标注存原图坐标交回输入框；
                              #   onQuickText 给了 = 从对话里点进来接着改的图：改图提示 + 「移除背景 / 调整画幅」写进输入框（不直接发）；
                              #   MarkupLayer = 标注的 SVG 画法（标注台与缩略图共用，几何与导出同源 image-markup.ts）
-  components/ProjectTree.tsx # 侧栏项目树（展开态）：「项目」标签行（计数＋放大镜＋添加入口）+ 一节一节平铺的随手聊与课题；
+  components/ProjectTree.tsx # 侧栏项目树（展开态）：一节一节平铺——置顶对话 / 其他打开的 / 随手聊，再是「项目」标签行（计数只数课题＋放大镜＋添加入口，2026-10-26 挪进滚动区、排在随手聊下面）与课题；
                              #   放大镜开 RailSearchPalette（对话和项目一起搜，料由 searchSources 现组：置顶 / 随手聊 / 各课题的全部对话，
                              #   不受「展开更多」限额），树本身不再就地筛。树滚动区顶 6px / 底 12px 渐隐（底部留 12px 内边距），分节标签（项目 / 置顶 / 其他打开的）左缘对齐导航图标左缘 16px（2026-10-25）。`liftCurrent`（只 App 里探出层传）时正聊着的课题（currentKey 对应行）整块提到随手聊上面、不参与拖动排序；展开侧栏不提（2026-10-25 用户）。分三层（2026-10-24）：分节标签 RAIL_SECTION_LABEL / 课题行最前
                              #   renderFolderToggle（文件夹图标，悬停换箭头，点它开合）+ 课题名 xs l4 分组标题 / 对话 pl-2 不缩进（2026-10-25）
@@ -134,7 +134,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   完成后 loadProjects+bumpProjectsVersion 通知本树与项目页重拉；
                              #   2026-10-23 挂对话（纯逻辑 sidebar-chats.ts）：最上面「随手聊」、节头名字后的箭头开合对话（默认只展开运行页
                              #   正看着的那个，人手开关记 ccode.projectTreeChats）、展开按侧栏空位列（至少 5 段）+ 「还有 N 段 / 收起」，行尾运行状态光标（RunCaret，收着也报）；
-                             #   点对话 openConversation（只看不起进程）；点课题名进项目页并展开它的对话（10-24）；行尾悬停 ＋（startProjectChat / openQuickChat）与 ⋯ 平时不占宽；
+                             #   点对话 openConversation（只看不起进程）；点课题名进项目页并展开它的对话（10-24）；行尾悬停 ＋（startProjectChat / openQuickChat）与 ⋯ 平时不占宽（随手聊的 ⋯：对话页看全部随手聊 / 归档 7 天没动的，2026-10-26）；
                              #   对话行尾 ⋯ 与右键：在右侧分屏打开 / 关掉这段对话（Mesa 里开着才有）/ 重命名 / 归档 / 在对话页查看；开着的对话行悬停 × 顶替运行光标那格（10-26）；会话列表自己保鲜（展开拉一次、看得见时每分钟）；拖动按整块（tabDragShift）；
                              #   2026-10-24 第二期（运行页标签条退场）：开着、列表里还没有的挂在文件夹最上面（openTabRows，带 ×，经 store.requestCloseTab 关），
                              #   不在任何项目里的单列「其他打开的」（展开态没有「运行」行了，在跑靠各行行尾的光标 + 折起项目头上的光标）
@@ -661,8 +661,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 认「终端里开着一个面板」（parseTuiPanel：没有该家输入框 + Esc to cancel/close 一类关闭提示；/cost、/usage 的 Settings 面板）：
                              # 与菜单同一次扫屏，认出菜单时不算面板；聊天层给「结果在终端面板里」卡，不再挂「正在生成回复」（tests/tui-panel.test.ts）
   sidebar-chats.ts           # 侧栏项目树挂对话纯逻辑（2026-10-23）：每个文件夹列哪几段（projectChats / scratchChats：按最近活动，
-                             # 归档 / 内部 / 源文件不在的不列）、对话与文件夹的运行状态（chatDot / folderDot / scratchDot：run-caret 三态，文件夹取最要紧的）、
-                             # 正在看的标签归哪个文件夹（currentFolderKey，工作树归主仓）、展开默认（folderOpen）、短标题去「MMDD|类型|」
+                             # 归档 / 内部 / 源文件不在的 / 没起名也没说过话的空对话不列）、随手聊多少天没动的（staleScratchChats，节头 ⋯ 一键归档）、对话与文件夹的运行状态（chatDot / folderDot / scratchDot：run-caret 三态，文件夹取最要紧的）、
+                             # 正在看的标签归哪个文件夹（currentFolderKey，工作树归主仓）、展开默认（folderOpen）、短标题去「MMDD|类型|」、挂在课题下再去开头重复的课题名
                              # （sidebarChatTitle）、各文件夹列几段（chatQuotas / chatSlots：至少 5 段、按侧栏空位补满；expandedExtra：
                              # 「还有 N 段」在眼下段数上多 10 段）、开着但列表里还没有的标签挂到哪（openTabRows，10-24）、
                              # 置顶对话（CHAT_PINS_KEY / parseChatPins / toggleChatPin / pinnedChats，10-24，localStorage，与「保留」快照无关）、
@@ -676,7 +676,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # （runLayout；tests/run-layout.test.ts）
   idle-stop.ts               # 空闲对话的后台进程自动收（2026-10-24 用户拍板 A）：普通对话（isPlainChatTab）Agent 回完话、没在看、输入框没字，
                              # 满 30 分钟（IDLE_STOP_MS）该收哪些（idleStopPass 维护开始空闲时刻）；纯终端 / 步骤 / 车道 / 阅读 / 自定义运行时不收
-                             # （tests/idle-stop.test.ts；TerminalPage 每分钟一检）
+                             # （tests/idle-stop.test.ts；TerminalPage 每分钟一检）；Agent 退出、退回 shell 的普通对话（isExitedAgentTab / exitedCollectPass，
+                             # 退回满 EXITED_GRACE_MS）切走时与每分钟检查时收，shell 里有命令在跑（pty_shell_busy）不收（10-26）
   quick-chat.ts              # 快速开聊纯逻辑：默认选择 pickQuickChatDefault（记住的 → 同家另一条 → 上次启动 → 装了的第一家）、
                              # 空白标签 isBlankChatTab（再点只复用没说过话的）、新对话入口的复用键 isNewChatKey（quickchat: / 项目 ＋ 的 <类型>:<项目>:project:<uuid>）、
                              # Windows 上 Codex 在主目录启动前要不要确认 codexSandboxCoversHome（完全访问不提醒）、
@@ -1049,7 +1050,7 @@ src-tauri/src/
                              # 迁移命令曾实现后按「未发布无用即删」移除（存量已手工迁完，重建序列见 pipeline.md）
   project_memory.rs          # 项目知识 .ccode/memory.md：结构化块只记人工确认（revision 比对 + active/superseded/revoked 状态机；
                              # 作废/替代条目不注入，Agent 结论不自动采纳；原文历史保留并留备份）
-  pty.rs                     # PtyManager：spawn_tracked 公共拉起，agent/shell 复用；
+  pty.rs                     # PtyManager：spawn_tracked 公共拉起，agent/shell 复用；pty_shell_busy = 退回的 shell 里有没有命令在跑（unix 前台进程组 / Windows 子进程）；
                              #   开 PTY 用前端传入的 cols/rows（缺省 24×80），避免 resume 先窄后宽把旧帧留进滚动记录；
                              # terminal_link_target = 终端相对路径点击的终审（cwd 拼 + ~ 展开 + 存在性）；
                              # pty_report_terminal_colors = Windows 底色告知（win32-input-mode 记录逐条投递，
