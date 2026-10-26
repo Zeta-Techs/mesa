@@ -81,7 +81,8 @@ Binding
 
 | Agent | 槽 | 现实现 |
 |---|---|---|
-| Claude Code / CodeBuddy | `anthropic` | `ANTHROPIC_*` / `CODEBUDDY_*` env |
+| Claude Code | `anthropic` | `ANTHROPIC_*` env |
+| CodeBuddy | `openai` | `CODEBUDDY_*` env（2026-10-21 起，见下文更正段；原在 anthropic 槽） |
 | Codex | `responses` | `-c model_providers.<id>.*`，`wire_api=responses` |
 | Gemini | `gemini` | `GOOGLE_GEMINI_BASE_URL` 等 |
 | Cursor | `cursor` | 只在端点是 `*.cursor.sh` / `*.cursor.com` 时注入 `CURSOR_API_KEY` + `CURSOR_API_ENDPOINT`；第三方地址拒绝启动。模型仍是 `--model` |
@@ -382,7 +383,7 @@ Codex            → …
   （`GEMINI_CLI_SYSTEM_SETTINGS_PATH`）要求文件归 root，普通用户写的被静默跳过——走不通。所以启动前只读检查（`agents::gemini_auth_blocker`），
   不是 `gemini-api-key` 就拒绝并给出改法（连接「设为全局默认」会写 selectedType 并先备份，或 gemini 里 /auth）；不替用户改文件。
 - Gemini：`/v1beta/models` 候选（`models.rs` `model_list_candidates`），query `key=`，不是 `{base}/v1/models`；槽位带版本段先剥掉再拼候选（CLI 自拼 `/v1beta`，见 §2 归一口径）。
-- Anthropic 槽：现 Claude/CodeBuddy 拉目录的路径与鉴权（Bearer）不得改成 OpenAI 形。
+- Anthropic 槽：现 Claude 拉目录的路径与鉴权（Bearer）不得改成 OpenAI 形（CodeBuddy 2026-10-21 起走 OpenAI 槽，不再占这一槽）。
 - Cursor：继续拒绝通用 `/models`（现直接报错）。
 - OpenAI / Responses：现 `{base}/v1/models` 或 `{base}/models` 候选链。
 

@@ -5,7 +5,7 @@
 > 2026-08-06 新增 §7 CodeBuddy Code（v2.132.0 实机验证，含真实会话样本与 product.json 核实）。
 > 2026-08 新增 §9 Grok Build（xai-org/grok-build 源码调研；标注「待实机验证」处未经实机核对）。
 > 2026-08-20 新增 §12 精确注意力 hooks 桥接调研（九家，实现 = hooks.rs 的 BRIDGE_SPECS；cursor/opencode 未接入结论同记）。
-> 2026-10-21 起 Claude Code / Codex 有每日金丝雀（`scripts/cli-canary/`）：Mesa 已核对到的版本与指纹见 `scripts/cli-canary/baseline/<平台>/<agent>.json` 的 `version`，比本表各处「x.y 实测」更新。
+> 2026-10-21 起有每日金丝雀（`scripts/cli-canary/`，10-22 扩到九家）：Mesa 已核对到的版本与指纹见 `scripts/cli-canary/baseline/<平台>/<agent>.json` 的 `version`，比本表各处「x.y 实测」更新。
 > 标记「易漂移」的均为各 CLI 内部格式，解析必须防御式（跳过未知类型、容忍缺字段、容忍末行截断）。
 
 ## 1. Claude Code
@@ -434,6 +434,11 @@ Ccode 清单模型只收公共子集：stdio（command/args/env/cwd）+ remote�
 无更新回落尾部推断（消费侧零改动）。
 
 ### 12.1 桥接总表
+
+> **2026-10-20 起口径变了**：Mesa 不再对多数家写下面这列「配置文件」——claude-code / codebuddy 启动时经 `--settings` 注入
+> hooks（不落盘用户配置）、qwen / opencode / codex 改走结构化旁路取事件（§14），写全局配置的只剩 gemini / kimi / grok 三家
+> （设置页开关也只剩这三家，10-20 前写过的启动时自动收回，见 hooks.rs 注释与 architecture §10 同日条）。下表「配置文件 /
+> 写入形态 / 状态」列是 2026-08-20 调研时点的写入口径，事件名与格式仍以本表为准。
 
 | CLI | 配置文件 | 格式/写入形态 | 三事件映射（工作中 / 已回复 / 待确认） | 生效门槛 | 证据与版本 | Ccode 状态 |
 |---|---|---|---|---|---|---|
