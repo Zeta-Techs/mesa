@@ -457,6 +457,13 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-26 · Grok 的思考在聊天层照终端原样显示，只去掉竖线、Thinking 头这些无关的
+
+用户报 Grok 思考时聊天层把竖线框里的思考原文连竖线一起当回复显示。同日试过三版都被否决：脑形图标 + 多行思考栏（别家生成中没有这个样子）、
+只在 M▁ 那一行写最新一句（挤牙膏，还和「思考中」来回跳）、逐帧拼出思考全文。用户定：「就之前那种原生的思考显示就可以了，只是把竖条、
+thinking 符号这些无关的去掉」。定下：思考框不进回复预览，读屏另读、去掉竖线 / 头一行 / 折叠的「…」后，正文出来前显示在实时预览的位置；样子用别家思考展开后的那一套（小一号、浅灰、左边细线），与正文区分开。
+细则见 terminal.md「思考框照原样显示、只去掉无关的」。
+
 ### 2026-10-26 · AGENTS.md 收紧：文档按需检索、文档同步只改受影响的
 
 用户：「优化一下 AGENTS.md 以及相关文档，不要反而浪费了时间和精力，使 Agent 作无用功」。定案写进 AGENTS.md 文首：①**省力原则**——每次会话只读 AGENTS.md，architecture / code-structure / conventions 大文件按关键词 Grep 读命中小节，「改动前必读」指相关条目不指整份；§10 用关键词搜、同主题以最新为准。②**文档同步改成对照表**，取代「每次提交前把说明书、教程、README、CHANGELOG、§10、代码地图、conventions 全过一遍」：只改命中行的文档，纯重构 / 按既有规则修 bug / 只加测试不改文档。③**§10 只记拍板、取舍、否决及由此定下的规则**，写拍板、理由和细则落点，细则进 conventions。④AGENTS.md 只留每次会话都要守的硬约束：会话标题、开源与许可、热力图、定时雷达、从手机添加、聊天层旁路、CLI 金丝雀、客户端接力等单领域细则收成一行指针，原文迁进 terminal.md / 新建 `conventions/open-source.md` / design-system.md / `scripts/cli-canary/README.md`（其余已在 pipeline.md、safety.md、design-phone-drop.md、design-client-handoff.md 里的不重复搬）；`.reference/` 只在设计新机制时查。

@@ -119,6 +119,7 @@ export default function ChatSurface({
   tuiNotice = null,
   liveReply = null,
   liveTokens = null,
+  liveThinking = null,
   promptSuggestion = null,
   onRestartPermission,
   mesaCommands = [],
@@ -220,6 +221,8 @@ export default function ChatSurface({
   liveReply?: string[] | null;
   /** Claude 转圈行里这一轮已生成的 token 数（Windows 上 Claude 不边写边画，靠它看出还在出字）；没有为 null */
   liveTokens?: number | null;
+  /** 终端思考框里正在显示的思考（live-reply.ts extractLiveThinking，现只有 Grok）：正文出来前照原样显示在实时预览的位置 */
+  liveThinking?: string | null;
   /** Claude 输入框里那行灰字：它猜你下一句想说什么（prompt-suggestion.ts）；输入框空着时照样灰着显示，Tab 填入 */
   promptSuggestion?: string | null;
   /** 运行中换权限：停下 Agent、带新权限接回原会话（标签动作 restartWithPermission） */
@@ -494,7 +497,7 @@ export default function ChatSurface({
   const [progressAt, setProgressAt] = useState(() => Date.now());
   useEffect(() => {
     setProgressAt(Date.now());
-  }, [messages.length, liveReply, activity?.startedAt, thinking, statusLine]);
+  }, [messages.length, liveReply, liveThinking, activity?.startedAt, thinking, statusLine]);
   const quiet = generating && Date.now() - progressAt >= QUIET_HINT_MS;
   const extraHint = approvalExtraHint(agentId, hooksEnabled);
   const liveReplyCapable = liveReplySupported(agentId ?? "");
@@ -539,10 +542,23 @@ export default function ChatSurface({
       .join("\n");
     return unsyncedTail(liveReply, synced);
   })();
+  // 终端里正在想（Grok 的思考框）：正文出来前照终端原样显示在实时预览的位置，竖线、「◆ Thinking…」、折叠的「…」已在读屏时去掉
+  // （2026-10-26 用户：就要原生的思考显示，只把无关的去掉）；正文一出来就让位
+  const thinkingPreview =
+    livePreview.length === 0 &&
+    generating &&
+    liveThinking &&
+    attention !== "confirm" &&
+    !trustPrompt &&
+    !connIssue &&
+    !menuPrompt &&
+    !tuiPanel
+      ? liveThinking
+      : "";
   // 实时预览多出一行：贴着底的就当帧跟到底。原先只在消息列表变化时贴底（生成中 700ms 一次的轮询），新出的那一行先落在
   // 底部留白和渐隐里，等下一次轮询整段才往上跳一行，看着像那一行在原位闪一下才出新内容（2026-10-22 用户 Claude 长回复）
   // 一块一块到的预览匀速放出来（text-reveal.ts）：到一块贴一块看着一顿一顿的；不在生成了一次放完
-  const livePreviewText = useRevealedText(livePreview.join("\n"), generating);
+  const livePreviewText = useRevealedText(livePreview.length > 0 ? livePreview.join("\n") : thinkingPreview, generating);
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (el && followRef.current && livePreviewText) el.scrollTop = el.scrollHeight;
@@ -1078,11 +1094,17 @@ export default function ChatSurface({
             />
             </ChatImageEditContext.Provider>
           )}
-          {livePreview.length > 0 && (
+          {(livePreview.length > 0 || thinkingPreview) && (
             // 与助手正文同一栏、同字号，但不走 Markdown（终端里已渲染过）：灰一级表示「还在写、以落盘为准」。
             // 还在写时 Mesa 光标接在最后一个字后面，不另起一行写状态（2026-10-21）
-            // 字号行高与落盘后的回答同一档（.ccode-chat-body），落盘那一下不跳
-            <div className="ccode-chat-body mb-2 whitespace-pre-wrap break-words text-l3">
+            // 字号行高与落盘后的回答同一档（.ccode-chat-body），落盘那一下不跳。
+            // 显示的是终端里的思考（Grok 思考框）时换成别家思考展开后的样子（ConversationView 过程「思考」行的正文）：
+            // 过程行那一档字号（.ccode-chat-meta）、左边一条细线，与正文分开（2026-10-26 用户：思考和正文区分不开）
+            <div
+              className={`mb-2 whitespace-pre-wrap break-words text-l3 ${
+                livePreview.length > 0 ? "ccode-chat-body" : "ccode-chat-meta border-l border-hairline pl-3 leading-relaxed"
+              }`}
+            >
               {livePreviewText}
               {generating && !decision && <MesaCaret light={isLightTheme(theme)} />}
             </div>
@@ -1104,7 +1126,7 @@ export default function ChatSurface({
               }
             />
           )}
-          {generating && !decision && livePreview.length === 0 && (
+          {generating && !decision && livePreview.length === 0 && !thinkingPreview && (
             // 生成中那一行（2026-10-21 用户：「正在生成回复」「正在用」太机械）：M▁ 光标一直亮灭，后面说这一轮在做的事——
             // 正在跑的工具（「运行 npm test」）、计划里在做的一项、思考的小标题，都没有才写「思考中」，文字带一道光带扫过；
             // 过程里已经有那一行在动时只留光标。满 10 秒才写时间，Claude 没有逐字预览时写已生成的 token 数，

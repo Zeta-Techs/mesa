@@ -181,7 +181,7 @@ import { promptSuggestionSupported, readPromptSuggestion } from "../prompt-sugge
 import { lineCells } from "../screen-cells";
 import { lastContextTokens, type MesaCommand } from "../composer-assist";
 import { slashCommandsFor } from "../slash-commands";
-import { claudeOutputTokens, extractLiveReply, liveReplySupported, mergeLiveReply, sentTextStuckInBox, staleEcho, staleWithoutEcho, terminalHasInputBox } from "../live-reply";
+import { claudeOutputTokens, extractLiveReply, extractLiveThinking, liveReplySupported, mergeLiveReply, sentTextStuckInBox, staleEcho, staleWithoutEcho, terminalHasInputBox } from "../live-reply";
 import { parseTuiNotice, parseTuiPanel } from "../tui-panel";
 import {
   connIssueCounts,
@@ -596,6 +596,8 @@ export interface SessionLinkState {
   liveReply: string[] | null;
   /** Claude 转圈行里这一轮已生成的 token 数（live-reply.ts claudeOutputTokens）；别家与没认出时 null */
   liveTokens: number | null;
+  /** 终端思考框里正在显示的思考（live-reply.ts extractLiveThinking，现只有 Grok；去掉竖线与 Thinking 头）；不在想为 null */
+  liveThinking: string | null;
   /** Claude Code 输入框里那行灰字：它猜你下一句想说什么（prompt-suggestion.ts）；没有为 null */
   promptSuggestion: string | null;
   /** Agent 在跑但 PTY 已 4 秒没出字：TUI 静止（多半停在菜单 / 登录上），不是模型还在想 */
@@ -2461,6 +2463,8 @@ const TerminalView = memo(function TerminalView({
   const liveReplyRef = useRef<string[] | null>(null);
   const [liveTokens, setLiveTokens] = useState<number | null>(null);
   const liveTokensRef = useRef<number | null>(null);
+  const [liveThinking, setLiveThinking] = useState<string | null>(null);
+  const liveThinkingRef = useRef<string | null>(null);
   const liveScanAtRef = useRef(0);
   const liveScanTimerRef = useRef<number | null>(null);
   // 最近一次从聊天发出时屏上的最后一条回显与原文（writeChatMessage 记；读到新回显后清）
@@ -2501,6 +2505,12 @@ const TerminalView = memo(function TerminalView({
         liveTokensRef.current = tokens;
         setLiveTokens(tokens);
       }
+    }
+    // 正在想的那一框（Grok）：不混进回复预览，照终端原样（去掉竖线与 Thinking 头）另给聊天层；框收起 = 想完了，清掉
+    const thinking = extractLiveThinking(lines, launchAgentRef.current)?.join("\n") ?? null;
+    if (thinking !== liveThinkingRef.current) {
+      liveThinkingRef.current = thinking;
+      setLiveThinking(thinking);
     }
     const shown = liveReplyRef.current;
     // 一时读不出（菜单挂着、重绘半帧）保留上一次的，免得预览闪没；新一轮发送时清
@@ -2894,6 +2904,7 @@ const TerminalView = memo(function TerminalView({
       connIssue,
       liveReply,
       liveTokens,
+      liveThinking,
       promptSuggestion,
       ptyQuiet,
       launchPick,
@@ -2921,6 +2932,7 @@ const TerminalView = memo(function TerminalView({
     connIssue,
     liveReply,
     liveTokens,
+    liveThinking,
     promptSuggestion,
     ptyQuiet,
     launchPick,
@@ -4135,6 +4147,8 @@ const TerminalView = memo(function TerminalView({
     setLiveReply(null);
     liveTokensRef.current = null;
     setLiveTokens(null);
+    liveThinkingRef.current = null;
+    setLiveThinking(null);
     setSuggestion(null);
     if (kind === "agent") {
       // 记录可恢复的会话 id（一键恢复按钮用）
@@ -4878,6 +4892,8 @@ const TerminalView = memo(function TerminalView({
     setLiveReply(null);
     liveTokensRef.current = null;
     setLiveTokens(null);
+    liveThinkingRef.current = null;
+    setLiveThinking(null);
     setSuggestion(null);
   }
 
@@ -5527,6 +5543,8 @@ const TerminalView = memo(function TerminalView({
     setLiveReply(null);
     liveTokensRef.current = null;
     setLiveTokens(null);
+    liveThinkingRef.current = null;
+    setLiveThinking(null);
     setSuggestion(null);
     const message: ChatMessageDto = {
       role: "user",
@@ -8028,6 +8046,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         cur.menuPrompt === s.menuPrompt &&
         cur.liveReply === s.liveReply &&
         cur.liveTokens === s.liveTokens &&
+        cur.liveThinking === s.liveThinking &&
         cur.promptSuggestion === s.promptSuggestion &&
         cur.tuiPanel === s.tuiPanel &&
         cur.tuiNotice === s.tuiNotice &&
@@ -10437,6 +10456,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         tuiNotice={sessionByTab[t.id]?.tuiNotice ?? null}
                         liveReply={sessionByTab[t.id]?.liveReply ?? null}
                         liveTokens={sessionByTab[t.id]?.liveTokens ?? null}
+                        liveThinking={sessionByTab[t.id]?.liveThinking ?? null}
                         promptSuggestion={sessionByTab[t.id]?.promptSuggestion ?? null}
                         mesaCommands={mesaCommandsFor(t.id)}
                         externalInsert={chatInsertByTab[t.id] ?? null}

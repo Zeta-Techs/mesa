@@ -12,7 +12,7 @@
  *   Codex 0.163：     「› 回显 / • 正文（续行缩进 2）/ • Ran … / • Working (… esc to interrupt) / › 输入行」（无边框）
  *   Qwen Code 0.25：  「  > 回显 / ◆ 正文（续行缩进 4–5）/   ? Shell … / ⠼ … esc to cancel / ─── >  ───」
  *   Gemini CLI 0.64： 「▄▄ > 回显 ▀▀ / ✦ 正文（续行缩进 2–3）/ Thinking... (esc to cancel) / ▄▄ > 输入 ▀▀」
- *   Grok Build 1.0：  「❯ 回显（缩进 5，右侧时间）/ 正文无行首符号（缩进 5）/ ◆ Running … / ⠧ Responding… / ╭ │ ❯ │ ╰」
+ *   Grok Build 1.0：  「❯ 回显（缩进 5，右侧时间）/ ┃ ◆ Thinking… 思考框 / 正文无行首符号（缩进 5）/ ◆ Running … / ⠧ Responding… / ╭ │ ❯ │ ╰」
  *   Kimi Code 2.2：   「❯ 回显 / ● 正文（续行缩进 3）/ ● Running a command … / ⠏ Working… / ╭ │ > │ ╰」
  * 认不出的：CodeBuddy 2.168 生成中只画「✹ Waking… (streaming · ↓ N tokens)」，正文写完才一次画出，屏上没有可读的半截；
  * OpenCode 1.19 是整屏重绘的分栏界面，对话区不按行排。这两家返回 null，聊天层退回「看实时输出」入口。
@@ -35,6 +35,13 @@ interface Layout {
    * Claude Code 2.1.304；终端窄一点 Mac 上同样会折行）
    */
   wrapSkip?: RegExp;
+  /**
+   * 思考框的头一行：它和下面行首是「│」的行整块不进回复预览，另由 {@link extractLiveThinking} 读出、照原样（去掉竖线与头一行）显示在聊天层。
+   * Grok 1.0.70 思考时画「┃  ◆ Thinking…」（简化字形下是「│  ♦」：pywinpty 抓屏是这套，Mesa 终端里是前一套，2026-10-26 实录），
+   * 下面竖线框里滚动显示思考原文（开头折成「┃  …」），想完收成一行
+   * 「♦ Thought for 8.6s」（2026-10-26 用户 Windows 截图：思考原文连竖线一起当成了回复）
+   */
+  thinkBlock?: RegExp;
   /** 续行去掉的缩进（空格数，最多去这么多） */
   indent: number;
   /** 行尾要去掉的东西（Grok 右侧的时间） */
@@ -61,6 +68,8 @@ interface Layout {
   scrolledAway?: RegExp;
 }
 
+// 思考框左边那条竖线（Grok：Mesa 终端里是粗线 ┃，简化字形下是 │）
+const THINK_GUTTER = /^\s*[│┃]/;
 // 横线、半格边框，以及方框的上下边（画到一半的输入框「╭────」也算）
 const BORDER = /^[╭╰]?[─━═▄▀]{8,}[╮╯]?$/;
 const MENU_BORDER = /^[▔▁]{8,}$/;
@@ -151,8 +160,11 @@ const LAYOUTS: Record<string, Layout> = {
     echo: /^\s+[❯>]\s+\S/,
     lead: null,
     tool: /^\s*[◆♦]\s/,
-    // ▲ / ▼ = 对话区上下还有内容的滚动提示（提问钉在屏顶时紧跟在它下面）
-    skip: /Responding…|^\s*Worked for\b|^\s*[◇○]\s+\S+\s+\[Copy\]$|^\s*[▲▼]$/,
+    // ▲ / ▼ = 对话区上下还有内容的滚动提示（提问钉在屏顶时紧跟在它下面）；
+    // 转圈行「| Waiting for response… 0.0s」「- Thinking… 3.8s」「\ Responding… 2.2s」：Windows 上转圈是 | / - \，
+    // 不归 SPINNER 管；按 Ctrl+C 后输入框上方的「Press Ctrl+c to cancel the turn」（2026-10-26 抓屏）
+    skip: /Responding…|^\s*\S\s+[A-Z][\w ]*…\s+[\d.]+s\b|Press Ctrl\+c to cancel the turn|^\s*Worked for\b|^\s*[◇○]\s+\S+\s+\[Copy\]$|^\s*[▲▼]$/,
+    thinkBlock: /^\s*[│┃]\s*[◆♦]\s/,
     indent: 5,
     tail: /\s{2,}\d{1,2}:\d{2}\s?[AP]M$/,
     scrolledHint: /^\s*▲$/,
@@ -188,6 +200,76 @@ export function claudeOutputTokens(lines: readonly string[]): number | null {
 
 export function liveReplySupported(agentId: string): boolean {
   return agentId in LAYOUTS;
+}
+
+/**
+ * 屏上正在想的那一框（Layout.thinkBlock，现只有 Grok）：这一轮回显之后、输入框之上，头一行下面行首竖线（┃ / │）的几行，
+ * 照终端原样给聊天层显示（2026-10-26 用户：就要原生的思考显示，只把竖条、Thinking 符号这些无关的去掉）——去掉竖线与共同缩进、
+ * 头一行「◆ Thinking…」、CLI 把前面折掉时的「…」一行，终端按框宽折的行接回成段。想完收起、确认菜单挂着、不在对话界面时返回 null
+ */
+export function extractLiveThinking(lines: readonly string[], agentId: string): string[] | null {
+  const layout = LAYOUTS[agentId];
+  const head = layout?.thinkBlock;
+  if (!head) return null;
+  const rows = cleanRows(lines);
+  if (rows.some((l) => MENU_BORDER.test(l.trim()))) return null;
+  const boxTop = layout.boxTop(rows);
+  if (boxTop < 0) return null;
+  let at = -1;
+  for (let i = boxTop - 1; i >= 0; i--) {
+    if (head.test(rows[i])) {
+      at = i;
+      break;
+    }
+    if (layout.echo.test(rows[i])) return null;
+  }
+  if (at < 0) return null;
+  const body: string[] = [];
+  for (let i = at + 1; i < boxTop && THINK_GUTTER.test(rows[i]); i++) {
+    const text = rows[i].replace(THINK_GUTTER, "");
+    if (text.trim() !== "…") body.push(text);
+  }
+  const indent = Math.min(...body.filter((l) => l.trim()).map((l) => l.length - l.trimStart().length));
+  const out = body.map((l) => (l.trim() ? l.slice(indent) : ""));
+  while (out.length && !out[0]) out.shift();
+  while (out.length && !out[out.length - 1]) out.pop();
+  return out.length ? unwrapLines(out) : null;
+}
+
+// 终端里占两格的字：汉字、假名、谚文、注音，CJK 标点（、到〿）与全角符号（！到｠）
+const WIDE = /[\p{Script=Han}\p{Script=Hangul}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Bopomofo}、-〿！-｠]/u;
+
+function cellWidth(s: string): number {
+  let n = 0;
+  for (const ch of s) n += WIDE.test(ch) ? 2 : 1;
+  return n;
+}
+
+/**
+ * 终端按框宽折开的行接回成段，聊天栏比终端窄时不会一行长一行短：这一行开头的词（汉字是一个字）放在上一行（原样的那一行）
+ * 末尾就超出框宽（取最宽的一行）= 是 CLI 折的，接上；放得下 = 原文就在这里换行（「Then the code:」下面接代码）。
+ * 缩进的行（代码）、空行、列表 / 编号照原样；汉字前后不加空格
+ */
+function unwrapLines(lines: readonly string[]): string[] {
+  const width = Math.max(...lines.map(cellWidth));
+  const out: string[] = [];
+  let lastRaw = "";
+  for (const l of lines) {
+    const prev = out.length ? out[out.length - 1] : "";
+    const tight = WIDE.test(prev.slice(-1)) || WIDE.test(l.charAt(0));
+    const unit = WIDE.test(l.charAt(0)) ? l.charAt(0) : (/^\S+/.exec(l)?.[0] ?? "");
+    const wrapped =
+      prev.trim() !== "" &&
+      l.trim() !== "" &&
+      !/^\s/.test(l) &&
+      !/^\s/.test(lastRaw) &&
+      !/^(?:[-*•+]|\d+[.)])\s/.test(l) &&
+      cellWidth(lastRaw) + (tight ? 0 : 1) + cellWidth(unit) > width;
+    if (wrapped) out[out.length - 1] = prev + (tight ? "" : " ") + l;
+    else out.push(l);
+    lastRaw = l;
+  }
+  return out;
 }
 
 /**
@@ -387,10 +469,17 @@ function readReply(layout: Layout, region: readonly string[], start: number, anc
   const out: string[] = [];
   let inTool = false;
   let inWrapSkip = false;
+  let inThink = false;
   for (let at = start; at < region.length; at++) {
     const raw0 = region[at];
     const raw = layout.tail ? raw0.replace(layout.tail, "") : raw0;
     const t = raw.trim();
+    if (layout.thinkBlock?.test(raw)) {
+      inThink = true;
+      continue;
+    }
+    if (inThink && THINK_GUTTER.test(raw)) continue;
+    inThink = false;
     if (table[at]) {
       if (!inTool) out.push(dedent(raw));
       continue;

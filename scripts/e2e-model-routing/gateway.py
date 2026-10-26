@@ -31,6 +31,17 @@ def pieces(lines, chunk):
     return [text[i:i + chunk] for i in range(0, len(text), chunk)]
 # TRIGGER_THINK 时先出的那段思考（Codex 推理摘要的样子：粗体小标题 + 一句）
 THINK_TEXT = "**规划探针命令**\n\n先跑一条命令看看环境，再回答。"
+# E2E_THINK_FILE=<文件>：思考改为流出这份文件，按 E2E_THINK_CHUNK 字一块、每块隔 E2E_THINK_DELAY 秒（看各家生成中怎么画长思考）
+if os.environ.get("E2E_THINK_FILE"):
+    THINK_TEXT = open(os.environ["E2E_THINK_FILE"], encoding="utf-8").read().rstrip("\n")
+THINK_CHUNK = int(os.environ.get("E2E_THINK_CHUNK", "0"))
+THINK_DELAY = float(os.environ.get("E2E_THINK_DELAY", "0"))
+
+
+def think_pieces(text):
+    if THINK_CHUNK <= 0:
+        return [text]
+    return [text[i:i + THINK_CHUNK] for i in range(0, len(text), THINK_CHUNK)]
 # Claude 一轮结束后另发一次请求猜「你下一句想说什么」（系统提示带 SUGGESTION MODE），回这一句，它会灰着字放进输入框（2026-10-22）
 SUGGESTION = os.environ.get("E2E_SUGGESTION", "再运行一次看看输出")
 # TRIGGER_ASK = 回一个 AskUserQuestion 工具调用（Claude 的「问你一个问题」菜单，看聊天层提问卡片）；TRIGGER_ASK2 = 一次问两题；
@@ -228,7 +239,9 @@ class H(BaseHTTPRequestHandler):
             bi = 0
             if think:
                 self._ev({"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": ""}}, "content_block_start")
-                self._ev({"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": think}}, "content_block_delta")
+                for piece in think_pieces(think):
+                    self._ev({"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": piece}}, "content_block_delta")
+                    time.sleep(THINK_DELAY)
                 self._ev({"type": "content_block_delta", "index": 0, "delta": {"type": "signature_delta", "signature": "e2e"}}, "content_block_delta")
                 self._ev({"type": "content_block_stop", "index": 0}, "content_block_stop")
                 time.sleep(1.0)
@@ -256,7 +269,9 @@ class H(BaseHTTPRequestHandler):
             self._sse_start()
             base = {"id": "c", "object": "chat.completion.chunk", "created": int(time.time()), "model": model}
             if think:
-                self._ev({**base, "choices": [{"index": 0, "delta": {"role": "assistant", "reasoning_content": think}, "finish_reason": None}]})
+                for piece in think_pieces(think):
+                    self._ev({**base, "choices": [{"index": 0, "delta": {"role": "assistant", "reasoning_content": piece}, "finish_reason": None}]})
+                    time.sleep(THINK_DELAY)
                 time.sleep(1.0)
             if shell:
                 call = {"index": 0, "id": "call_probe", "type": "function", "function": {"name": shell[0], "arguments": call_args}}
@@ -282,7 +297,9 @@ class H(BaseHTTPRequestHandler):
                 rs = {"id": "rs_1", "type": "reasoning", "summary": [{"type": "summary_text", "text": think}]}
                 self._ev({"type": "response.output_item.added", "output_index": 0, "item": {**rs, "summary": []}}, "response.output_item.added")
                 self._ev({"type": "response.reasoning_summary_part.added", "item_id": "rs_1", "output_index": 0, "summary_index": 0, "part": {"type": "summary_text", "text": ""}}, "response.reasoning_summary_part.added")
-                self._ev({"type": "response.reasoning_summary_text.delta", "item_id": "rs_1", "output_index": 0, "summary_index": 0, "delta": think}, "response.reasoning_summary_text.delta")
+                for piece in think_pieces(think):
+                    self._ev({"type": "response.reasoning_summary_text.delta", "item_id": "rs_1", "output_index": 0, "summary_index": 0, "delta": piece}, "response.reasoning_summary_text.delta")
+                    time.sleep(THINK_DELAY)
                 self._ev({"type": "response.reasoning_summary_text.done", "item_id": "rs_1", "output_index": 0, "summary_index": 0, "text": think}, "response.reasoning_summary_text.done")
                 self._ev({"type": "response.reasoning_summary_part.done", "item_id": "rs_1", "output_index": 0, "summary_index": 0, "part": {"type": "summary_text", "text": think}}, "response.reasoning_summary_part.done")
                 self._ev({"type": "response.output_item.done", "output_index": 0, "item": rs}, "response.output_item.done")

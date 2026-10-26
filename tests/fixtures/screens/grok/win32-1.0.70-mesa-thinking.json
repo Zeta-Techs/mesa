@@ -1,0 +1,51 @@
+{
+ "agent": "grok",
+ "cliVersion": "1.0.70",
+ "platform": "win32",
+ "source": "Mesa 终端回放快照（用户 Windows 实机，glm-5.3-flash 真实思考）",
+ "note": "Mesa 终端里 Grok 用完整字形：思考框竖线是粗线 ┃、头一行「◆ Thinking…」（抓屏是 │ / ♦）。思考不进回复预览，另读成原样的思考（去竖线、头一行与「…」）",
+ "rows": [
+  "",
+  "  <工作目录>                                                                                                                1.6K / 256K │ [Dashboard]",
+  "",
+  "",
+  "     ❯ 不要调用任何工具。请按下面清单原样输出一段 Markdown，每项都要有，内容随意：                                                               3:54 PM",
+  "       1. 三个二级标题（## 开头），每个标题下写至少 8 行文字，让整段回复超过 1500 字",
+  "       2. 一个两层嵌套的无序列表，和一个有序列表 …",
+  "",
+  "",
+  "  ┃  ◆ Thinking…",
+  "  ┃",
+  "  ┃  …",
+  "  ┃  Ambiguous. I'll make header + 4 data rows, which clearly has at least 4 rows.)",
+  "  ┃",
+  "  ┃  Hmm, let me make it header + 3 data rows = 4 rows total, or header + 4 data rows. The safest interpretation: the",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "    ⠋ Thinking… 11s                                                                                                                      15s ⇣1.61k [stop]",
+  "",
+  "  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
+  "  │ ❯                                                                                                                                                    │",
+  "  ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────── glm-5.3-flash · always-approve ─╯",
+  "",
+  "  Shift+Tab:mode  │  Ctrl+c:cancel  │  Ctrl+x:shortcuts"
+ ],
+ "expect": {
+  "liveReply": null,
+  "thinking": [
+   "Ambiguous. I'll make header + 4 data rows, which clearly has at least 4 rows.)",
+   "",
+   "Hmm, let me make it header + 3 data rows = 4 rows total, or header + 4 data rows. The safest interpretation: the"
+  ],
+  "menu": null
+ }
+}

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { claudeOutputTokens, extractLiveReply, liveReplySupported, mergeLiveReply, sentTextStuckInBox, staleEcho, staleWithoutEcho, terminalHasInputBox, unsyncedTail } from "../src/live-reply.ts";
+import { claudeOutputTokens, extractLiveReply, extractLiveThinking, liveReplySupported, mergeLiveReply, sentTextStuckInBox, staleEcho, staleWithoutEcho, terminalHasInputBox, unsyncedTail } from "../src/live-reply.ts";
 
 const RULE = "─".repeat(100);
 // Claude Code 2.1.292 本机 PTY 实录（流式写到一半；假 API 慢速吐字）
@@ -233,6 +233,68 @@ test("Grok Build 1.0：正文没有行首符号，右侧时间与滚动条去掉
     "  Shift+Tab:mode  │  Ctrl+c:cancel",
   ];
   assert.deepEqual(extractLiveReply(screen, "grok")?.lines, HALF);
+});
+
+// 2026-10-26 Grok 1.0.70 Windows 抓屏（假网关慢慢流出长思考）：思考框「│  ♦ Thinking…」+ 竖线框里的思考原文，
+// 开头折成「…」；想完收成「♦ Thought for Ns」。转圈在 Windows 上是 ASCII 的竖线、斜线、横线轮换
+const GROK_THINKING = (body: string[]) => [
+  "     > 写一段代码                                              2:58 PM",
+  "",
+  "",
+  "  │  ♦ Thinking…",
+  "  │",
+  ...body.map((l) => (l ? `  │  ${l}` : "  │")),
+  "",
+  "    | Thinking… 6.1s                                            6.2s ↓1.42k [stop]",
+  "",
+  ...BOX(">"),
+];
+
+test("Grok 思考框：不进回复预览，另读成原样的思考（去竖线、头一行与折叠的「…」，折行接回、代码行原样、汉字不加空格）", () => {
+  const screen = GROK_THINKING([
+    "…",
+    "rows. Most people count table rows including the header, but the risk of being",
+    "judged short is worse than one extra row. Then the code:",
+    "def greet(name):",
+    "    # 拼接问候语并返回",
+    "    return name",
+    "",
+    "这一段是中文的思考内容，终端按照框宽把它折成了两行，接回来之时汉字之间不能多出",
+    "空格。",
+  ]);
+  assert.equal(extractLiveReply(screen, "grok"), null);
+  assert.deepEqual(extractLiveThinking(screen, "grok"), [
+    "rows. Most people count table rows including the header, but the risk of being judged short is worse than one extra row. Then the code:",
+    "def greet(name):",
+    "    # 拼接问候语并返回",
+    "    return name",
+    "",
+    "这一段是中文的思考内容，终端按照框宽把它折成了两行，接回来之时汉字之间不能多出空格。",
+  ]);
+});
+
+test("Grok 想完收起、等首字的转圈、别家：都读不出思考框", () => {
+  const thought = [
+    "     > 写一段代码                                              2:58 PM",
+    "",
+    "     ♦ Thought for 8.6s",
+    "",
+    "     第一段：这是一段慢慢流出来的回复。                     2:58 PM",
+    "",
+    "    | Responding… 2.2s                                          10s ↓1.42k [stop]",
+    ...BOX(">"),
+  ];
+  assert.equal(extractLiveThinking(thought, "grok"), null);
+  assert.deepEqual(extractLiveReply(thought, "grok")?.lines, ["第一段：这是一段慢慢流出来的回复。"]);
+  const waiting = [
+    "     > 写一段代码                                              2:58 PM",
+    "",
+    "    | Waiting for response… 0.0s                                0.0s ↓1.36k [stop]",
+    ...BOX(">"),
+  ];
+  assert.equal(extractLiveReply(waiting, "grok"), null);
+  assert.equal(extractLiveThinking(waiting, "grok"), null);
+  assert.equal(extractLiveThinking(GROK_THINKING(["想一想"]), "kimi"), null);
 });
 
 test("Kimi Code 2.2：❯ 回显 / ● 正文 / 方框输入框；工具调用整块跳过", () => {
