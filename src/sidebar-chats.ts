@@ -18,9 +18,19 @@ export const SCRATCH_FOLDER_KEY = "scratch";
 /** 自动起名的「MMDD|类型|」前缀（类型闭集见 AGENTS.md 会话标题）：侧栏窄，只留主题，完整标题放悬停 */
 const AUTO_TITLE_PREFIX = /^\d{4}\|(?:功能|设计|修复|优化|发布|探索|文档|研究)\|\s*/;
 
-export function sidebarChatTitle(full: string): string {
+/** 去掉项目名后剩下的至少这么多字才去（再短就看不出是哪件事了） */
+const FOLDER_PREFIX_MIN_REST = 4;
+
+/** 侧栏短标题。给了所在文件夹名（挂在某个课题下时）再去掉开头重复的课题名：流程步骤的对话起名时带着项目背景，
+ *  常写成「测试项目综述大纲…」，挂在「测试项目」下面这几个字是重复的，还把后半截挤出侧栏（2026-10-26）。
+ *  只改显示，完整标题照旧放悬停 */
+export function sidebarChatTitle(full: string, folderName?: string): string {
   const trimmed = full.trim();
-  return trimmed.replace(AUTO_TITLE_PREFIX, "").trim() || trimmed;
+  const short = trimmed.replace(AUTO_TITLE_PREFIX, "").trim() || trimmed;
+  const folder = folderName?.trim() ?? "";
+  if ([...folder].length < 2 || !short.toLowerCase().startsWith(folder.toLowerCase())) return short;
+  const rest = short.slice(folder.length).replace(/^[\s·:：|｜\-—_，,、]+/, "");
+  return [...rest].length >= FOLDER_PREFIX_MIN_REST ? rest : short;
 }
 
 function listable(s: SessionMetaDto): boolean {

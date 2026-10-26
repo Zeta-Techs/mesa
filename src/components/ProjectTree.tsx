@@ -693,9 +693,11 @@ export default function ProjectTree({
    *  完整标题放悬停），状态点放行尾；右键改名 / 归档 / 去对话页 */
   /** 对话不缩进，左缘对齐课题行的图标（2026-10-25 用户对照 Claude 客户端：课题名降成小号灰字的分组标题，
    *  项目和对话靠字号、字色分层，不再靠缩进；原 2026-10-24 缩进到名字起点） */
-  function renderChat(s: SessionMetaDto, project: ProjectDto | null) {
+  function renderChat(s: SessionMetaDto, project: ProjectDto | null, folderName?: string) {
     const key = chatKey(s);
     const full = tidySessionTitle(s).title;
+    // 挂在课题下时去掉开头重复的课题名（置顶一节不给，那里看不出属于谁）
+    const short = sidebarChatTitle(full, folderName);
     const dot = chatDot(s, terminalRunInputs);
     // × 只跟着光标走（2026-10-26 用户定）：Mesa 里开着、AI 在跑的才给。Mesa 外终端在写的只亮光标，关不了；
     // Agent 已退出、标签还开着的不给，Mesa 切走 / 没人看时自己收（TerminalPage collectExitedTab）
@@ -780,7 +782,7 @@ export default function ProjectTree({
           {/* 字号 13px（.ccode-rail-text，2026-10-24 用户：比「工作台 / 搜对话」的 14px 再小一点点）。写在内层 span 上：
               按钮上写字号会被全站 button { font: inherit } 吞掉。
               字色同工作入口：平时 l3、悬停 l2，只有正看着的那段亮到 l1（2026-10-24 用户：标题不用全亮着） */}
-          <span className="ccode-rail-text ccode-rail-fade min-w-0 flex-1 text-left">{sidebarChatTitle(full)}</span>
+          <span className="ccode-rail-text ccode-rail-fade min-w-0 flex-1 text-left">{short}</span>
         </button>
         <div className="flex shrink-0 items-center gap-0.5 pr-0.5">
           {/* 运行状态光标（2026-10-24 用户：绿点换成 Mesa 的光标）。有光标才占一格、标题在它前面淡出；
@@ -799,7 +801,7 @@ export default function ProjectTree({
               {holder && (
                 <button
                   type="button"
-                  aria-label={`关掉「${sidebarChatTitle(full)}」`}
+                  aria-label={`关掉「${short}」`}
                   title={`关掉：停下它，记录还在（在干活的会先问你）\n现在：${dotTitle(dot)}`}
                   onClick={() => useAppStore.getState().requestCloseTab(holder.tabId)}
                   className="hidden h-6 w-6 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1 group-hover/chat:flex group-focus-within/chat:flex"
@@ -811,7 +813,7 @@ export default function ProjectTree({
           )}
           <button
             type="button"
-            aria-label={`「${sidebarChatTitle(full)}」的更多操作`}
+            aria-label={`「${short}」的更多操作`}
             title="更多操作"
             aria-haspopup="menu"
             aria-expanded={menuOpen}
@@ -907,7 +909,7 @@ export default function ProjectTree({
         {chats.length === 0 ? (
           opened.length === 0 && <p className="py-1 pl-2 pr-2 text-xs text-l4">还没有对话</p>
         ) : (
-          visible.map((s) => renderChat(s, project))
+          visible.map((s) => renderChat(s, project, name))
         )}
         {(more || folded) && (
           <div className="flex items-center">
@@ -1393,7 +1395,7 @@ export default function ProjectTree({
       const fullTitle = tidySessionTitle(s).title;
       chats.push({
         key: chatKey(s),
-        title: sidebarChatTitle(fullTitle),
+        title: sidebarChatTitle(fullTitle, folder),
         fullTitle,
         folder,
         updatedAt: s.updatedAt,

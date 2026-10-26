@@ -638,3 +638,24 @@ test("「项目 N」标签在置顶的对话和随手聊下面、课题上面：
     await view.close();
   }
 });
+
+test("课题下的对话标题开头是课题名时省掉，悬停里还是完整标题；置顶一节不省（2026-10-26）", async () => {
+  const step = session({
+    sessionId: "step1",
+    customTitle: "1026|研究|综述流程测试文献检索筛选任务书",
+    updatedAt: "2026-10-26T00:00:00Z",
+  });
+  const view = await renderTree({ sessions: [...reviewChats, step] });
+  try {
+    const row = view.button("文献检索筛选任务书");
+    assert.ok(view.chatGroup("综述流程测试")!.contains(row));
+    assert.match(row.title, /综述流程测试文献检索筛选任务书/, "完整标题在悬停里");
+    assert.ok(view.button("「文献检索筛选任务书」的更多操作"));
+    await view.act(async () => view.button("「文献检索筛选任务书」的更多操作").click());
+    await view.act(async () => view.button("置顶").click());
+    const pinned = view.host.querySelector('[aria-label="置顶的对话"]')!;
+    assert.ok(pinned.textContent?.includes("综述流程测试文献检索筛选任务书"), "置顶一节看不出属于谁，不省");
+  } finally {
+    await view.close();
+  }
+});

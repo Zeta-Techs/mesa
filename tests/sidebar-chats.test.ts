@@ -80,6 +80,20 @@ test("侧栏短标题：去掉自动起名的「MMDD|类型|」，别的原样",
   assert.equal(sidebarChatTitle("1023|研究|"), "1023|研究|");
 });
 
+test("侧栏短标题：挂在课题下时去掉开头重复的课题名，剩得太短或不是开头就不去", () => {
+  assert.equal(sidebarChatTitle("1026|研究|测试项目综述大纲任务书问答敲定", "测试项目"), "综述大纲任务书问答敲定");
+  // 课题名后面的分隔符一起去
+  assert.equal(sidebarChatTitle("Mesa · 侧栏标签挪位置", "Mesa"), "侧栏标签挪位置");
+  assert.equal(sidebarChatTitle("mesa侧栏标签挪位置", "Mesa"), "侧栏标签挪位置", "英文名不分大小写");
+  // 剩下不到 4 个字：看不出是哪件事，原样
+  assert.equal(sidebarChatTitle("测试项目启动", "测试项目"), "测试项目启动");
+  // 不在开头、或没给文件夹名：原样
+  assert.equal(sidebarChatTitle("整理测试项目的文献", "测试项目"), "整理测试项目的文献");
+  assert.equal(sidebarChatTitle("测试项目综述大纲任务书"), "测试项目综述大纲任务书");
+  // 一个字的文件夹名不去（太容易误伤）
+  assert.equal(sidebarChatTitle("图表重画与配色", "图"), "图表重画与配色");
+});
+
 test("项目的对话：目录就是它或在它的工作树里，按最近活动倒序；归档 / 内部 / 源文件不在的不列", () => {
   const out = projectChats(
     [

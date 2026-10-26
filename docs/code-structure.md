@@ -662,7 +662,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 与菜单同一次扫屏，认出菜单时不算面板；聊天层给「结果在终端面板里」卡，不再挂「正在生成回复」（tests/tui-panel.test.ts）
   sidebar-chats.ts           # 侧栏项目树挂对话纯逻辑（2026-10-23）：每个文件夹列哪几段（projectChats / scratchChats：按最近活动，
                              # 归档 / 内部 / 源文件不在的不列）、对话与文件夹的运行状态（chatDot / folderDot / scratchDot：run-caret 三态，文件夹取最要紧的）、
-                             # 正在看的标签归哪个文件夹（currentFolderKey，工作树归主仓）、展开默认（folderOpen）、短标题去「MMDD|类型|」
+                             # 正在看的标签归哪个文件夹（currentFolderKey，工作树归主仓）、展开默认（folderOpen）、短标题去「MMDD|类型|」、挂在课题下再去开头重复的课题名
                              # （sidebarChatTitle）、各文件夹列几段（chatQuotas / chatSlots：至少 5 段、按侧栏空位补满；expandedExtra：
                              # 「还有 N 段」在眼下段数上多 10 段）、开着但列表里还没有的标签挂到哪（openTabRows，10-24）、
                              # 置顶对话（CHAT_PINS_KEY / parseChatPins / toggleChatPin / pinnedChats，10-24，localStorage，与「保留」快照无关）、
