@@ -34,6 +34,11 @@
   `pollEvery(tick, ms)`，不再裸写 `setInterval`——窗口隐藏时停、回前台立刻补一次，上一次没回来不叠下一次。例外只有两类：
   驱动通知 / 回合判定的计时器（终端页 `linkTick`、PTY 静默、空闲收标签、回放快照保存），窗口藏着时也得照常跑；
   纯界面计时（倒计时、动画、相对时间刷新）。新增轮询先想有没有事件可听（`fs-changed`、`goal-review-ready` 等），没有再轮询。
+- **终端页里按标签画的组件不陪跑重画（2026-10-26）**：`TerminalPage` 在一个组件里给每个标签画聊天层、状态栏，回调都是内联闭包，
+  `sessionByTab` 任何一个标签变（实时预览约 300ms 一次）整页重画。按标签画的重组件一律经 `memoWithLatestFunctions`
+  （`src/stable-props.ts`）包一层（现有 `StableChatSurface` / `StableTerminalStatusBar`）；props 里嵌着函数的对象 / 对象数组要在
+  `depths` 里写明深度，否则那个 prop 每次都算变了。**不要**改用 `memo` + 忽略函数的比较器：跳过重画后子组件手里是旧闭包。
+  新加给这两个组件的 prop 若是每次渲染现算的对象（`(() => ({...}))()` 这类），同样补进 `depths`。
 
 ## 终端行为（用户明确要求；配色 = VS Code Dark+ 调色板，集中在 `TerminalPage.tsx` 的 `theme` 一处）
 

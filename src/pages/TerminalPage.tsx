@@ -308,6 +308,16 @@ import type {
 import type { PdfActionResult } from "../components/PdfPreview";
 import { watchDevicePixelRatio } from "../device-pixel-ratio";
 import { pollEvery } from "../polling";
+import { memoWithLatestFunctions } from "../stable-props";
+
+// 每个标签的聊天层 / 状态栏都在本页一起画，回调是内联闭包：换成转发到最新闭包的固定函数后，
+// 别的标签实时预览出一行字不再带着这个标签的整段对话重画（stable-props.ts）
+const StableChatSurface = memoWithLatestFunctions(ChatSurface, {
+  onPickLaunch: 2,
+  runtime: 2,
+  mesaCommands: 3,
+});
+const StableTerminalStatusBar = memoWithLatestFunctions(TerminalStatusBar, { colors: 2 });
 
 // wsLast 记忆层闸门接线（H4 修复）：buildWorkspaceTerminalRequest 是纯逻辑层、按测试
 // 打包口径不直接依赖 store 模块；这里模块加载时把真实数据源接上（停用连接不被自动
@@ -10250,7 +10260,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                                 : "absolute inset-0 z-20"
                         }
                       >
-                      <ChatSurface
+                      <StableChatSurface
                         metaSlots={chatMetaSlots[t.id] ?? null}
                         messages={sessionByTab[t.id]?.conv ?? []}
                         state={sessionByTab[t.id]?.state ?? "idle"}
@@ -10452,7 +10462,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                       (surfaceModeByTab[t.id] ?? defaultSurface) ===
                         "chat" && !peekByTab[t.id];
                     return (
-                      <TerminalStatusBar
+                      <StableTerminalStatusBar
                         variant={chatBar ? "chat" : "terminal"}
                         status={st}
                         fallbackCwd={t.initialCwd ?? ""}
