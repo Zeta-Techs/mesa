@@ -47,7 +47,8 @@ export const SETTINGS_SEARCH_INDEX: readonly SettingsSearchEntry[] = [
       "状态栏", "底部状态栏", "打开对话时先显示", "聊天层", "终端层", "默认聊天", "默认终端",
       "透明度", "磨砂", "毛玻璃", "侧栏透明", "顶栏透明", "玻璃", "透视", "壁纸",
       "应用图标", "图标", "程序坞", "Dock", "任务栏图标", "托盘图标",
-      "theme", "appearance", "opacity", "blur", "icon",
+      "界面大小", "界面缩放", "缩放", "放大", "缩小", "字太小", "看不清", "分辨率", "高分屏",
+      "theme", "appearance", "opacity", "blur", "icon", "zoom",
     ],
   },
   {

@@ -457,6 +457,14 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-26 · Qwen / OpenCode 接上只讨论（计划模式），方案确认卡扩到六家
+
+用户拍板接上。实测（同日假网关 TRIGGER_PLAN）：Qwen 0.25.3 `--approval-mode plan` 是硬保护（改状态的命令被拦），`exit_plan_mode(plan)` 弹「Would you like to proceed?」四项；OpenCode 1.19.3 `--agent plan` 自带权限只禁改文件、bash 照跑，plan_exit 要实验开关。改法：① `readonly_args` 填上两家，`agents::readonly_min_version`（Qwen 0.25.3、OpenCode 1.19.3）在启动与检测（`readonly_supported_at`，徽标置灰）两处把关，查不到版本当不支持；② `readonly_launch_env`：OpenCode 只讨论加 `OPENCODE_EXPERIMENTAL_PLAN_MODE=1`，并把 agent.plan.permission（`"*":"ask"` 兜底、只读几样放行、edit 只放行方案文件）并进内联配置——不写用户配置，pty_spawn 在拿到只读参数后调；③ Qwen 的结束计划旁路只有允许 / 拒绝两键，`channelOwnsMenu` 遇到结束计划工具让给屏上菜单，ChatSurface 方案卡排在旁路审批卡前；④ `tui-menu colorMarkedMenu` 认 OpenCode 那种没有 ❯、当前项只靠序号颜色的菜单（要有按键提示、颜色恰好一行不同；两项时看夹在中间的说明行定「没选中」的颜色）；⑤ 选项表加 Qwen「restore previous mode (<模式>)」（写「回到原来的权限」，和手动批准那项区分）与 OpenCode「Yes / Switch to build agent」；⑥ e2e 计划导出 `discuss_env`，chat-capture 只讨论档用它。
+
+### 2026-10-26 · 界面缩放、最小窗口尺寸、换屏 / 缩放后画布重画
+
+用户问「不同分辨率下能不能清晰显示」，查出四处缺口后拍板补上。① 缩放走 webview 原生 zoom（`ui_zoom.rs`：WKWebView `pageZoom` / WebView2 `ZoomFactor`），不用 CSS `zoom`：原生缩放同步改 `devicePixelRatio`，终端与 PDF 按新像素比重画就清楚；CSS zoom 下 xterm 鼠标坐标错位。档位 80/90/100/110/125/150% 以前端 `ui-zoom.ts` 为准，Rust 只夹 [0.8, 1.5]（测试读 Rust 常量钉两端）；存在 `settings.uiZoom`，`update_settings` 带上它时顺手套到主窗口，开机在 setup 先套免得首帧跳。快捷键 ⌘= / ⌘-（Windows Ctrl），**不设复位键**——⌘0 已是「光标移到侧栏」（2026-10-24），复位走提示里的「恢复 100%」与设置页；Windows 上光标在终端里让给终端（`globalHotkeyAllowed` 同口径）；编辑器调字号、Mermaid 大图缩放先 `preventDefault`，全局见 `defaultPrevented` 让路（Mermaid 监听改捕获阶段）。② 最小窗口尺寸 = 网页 720×480 × 缩放（对齐 App.css 最窄断点 720px），封顶所有屏里最小可用区域的 90%，小屏放大后仍拖得动；不写进 tauri.conf（dev 配置整体替换 windows 数组会丢）。③ **像素比变化统一走 `device-pixel-ratio.ts`，媒体查询 + resize 两路都听**：真 WKWebView 实测 pageZoom 1→1.25 后 dpr 2→2.5，但 `(resolution: 2dppx)` 仍匹配、不发 change，只有 resize（xterm 自己也是两路都听）。终端单元格宽补位、PDF 页（`PdfPreview` 渲染依赖加 dpr，连续阅读共用一份监听）都接它。④ 原生红绿灯不随缩放变：标题栏让位写成 `calc(78px / var(--ccode-ui-zoom))`，80% 时不压项目芯片；垂直方向随缩放偏移不处理（tauri 2.11 没有运行时改红绿灯位置的接口）。⑤ PDF 首页缩略图按像素比出图（封顶 3 倍）；文稿 / 表格缩略图本是 SVG，不动。
+
 ### 2026-10-26 · 文件页并排对照与 PDF「整理为笔记」
 
 同批第十条。并排对照不做多页签（文件页定位是「列表 + 一份预览」，多页签要重做 ↑/↓、未保存确认与窗口态）：预览头「对照」把当前文件钉到左栏（`compare`），主预览照旧随列表与 ↑/↓ 换；左栏有独立的未保存确认（`compareDirtyRef`），改名 / 移动跟到新路径、删除即收，关预览一起收；宽屏侧栏与窗口预览出现，窄屏不出；换宿主同样 arm 草稿。PDF「整理为笔记」从 TerminalPage 抽到 `pdf-organize.ts`（运行页与文件页共用：精读步在跑时预填终端，项目页调用经 `onLaunch` 跳运行页）。

@@ -43,6 +43,12 @@ export const FIXED_HOTKEYS: readonly { label: string; mac: string; other: string
   { label: "切到最早看的对话", mac: "⌃⇧Tab", other: "Ctrl+Shift+Tab", hint: "在运行页里按，和上一条反方向" },
   { label: "侧栏里上下选", mac: "↑ ↓ ↵", other: "↑ ↓ Enter", hint: "光标在侧栏里时：↑ ↓ 选，回车打开，← → 收起 / 展开课题" },
   { label: "打开设置", mac: "⌘,", other: "Ctrl+," },
+  {
+    label: "界面放大缩小",
+    mac: "⌘= / ⌘-",
+    other: "Ctrl+= / Ctrl+-",
+    hint: "整个界面一起放大缩小（80%–150%），恢复 100% 在设置 → 外观「界面大小」；Windows 上光标在终端里时这组键留给终端",
+  },
   { label: "终端里查找", mac: "⌘F", other: "Ctrl+F", hint: "光标在终端里时" },
 ];
 

@@ -130,6 +130,7 @@ mod storage;
 mod subscription_quota;
 mod task_review;
 mod tray;
+mod ui_zoom;
 mod uninstall;
 mod updater;
 mod usage;
@@ -316,6 +317,8 @@ pub fn run() {
             }
             // 配置里的 windowEffects 在建窗时就会套。这里再挂一次，兜住没带上的情况。
             if let Some(window) = app.get_webview_window("main") {
+                // 界面缩放与最小窗口尺寸（ui_zoom.rs）：开机先套存下的缩放，首帧就是对的大小
+                ui_zoom::apply(&window, settings::current_ui_zoom());
                 // Windows：去掉原生标题栏，前端自绘拖拽区与窗口按钮（与 macOS Overlay 同构）。
                 // 不能放进 tauri.conf：titleBarStyle 只在 macOS 生效，dev 配置覆盖时
                 // windows 数组整体替换，平台配置会丢。

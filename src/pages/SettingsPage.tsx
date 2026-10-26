@@ -52,6 +52,7 @@ import {
   PAGE_HOTKEY_DEFS,
 } from "../hotkeys";
 import { normalizeStartPage, START_PAGE_OPTIONS, type StartPageId } from "../start-page";
+import { formatUiZoom, normalizeUiZoom, UI_ZOOM_STEPS } from "../ui-zoom";
 import {
   canOneClickInstall,
   depMissingReason,
@@ -2878,6 +2879,19 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             }))}
             value={String(normalizeChromeOpacity(settings?.chromeOpacity))}
             onChange={(id) => void patch({ chromeOpacity: Number(id) })}
+            className="flex-wrap"
+          />
+        </Row>
+
+        <Row
+          label="界面大小"
+          hint={`整个界面一起放大缩小，立即生效；也可以按 ${IS_MAC ? "⌘= / ⌘-" : "Ctrl+= / Ctrl+-"}`}
+          labelTitle="文字、按钮、终端、PDF 一起变大变小，放大后照样清楚（按新的像素重画，不是把图片拉大）。窗口能拖到的最小尺寸也跟着变，放大后窗口太小时会被撑开一些。只想调聊天正文用下面的「聊天字号」，只调终端用「终端」里的字号"
+        >
+          <SegTabs
+            items={UI_ZOOM_STEPS.map((z) => ({ id: String(z), label: formatUiZoom(z) }))}
+            value={String(normalizeUiZoom(settings?.uiZoom))}
+            onChange={(id) => void patch({ uiZoom: Number(id) })}
             className="flex-wrap"
           />
         </Row>

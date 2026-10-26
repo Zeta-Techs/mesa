@@ -306,6 +306,7 @@ import type {
   SurfaceMode,
 } from "../types";
 import type { PdfActionResult } from "../components/PdfPreview";
+import { watchDevicePixelRatio } from "../device-pixel-ratio";
 
 // wsLast 记忆层闸门接线（H4 修复）：buildWorkspaceTerminalRequest 是纯逻辑层、按测试
 // 打包口径不直接依赖 store 模块；这里模块加载时把真实数据源接上（停用连接不被自动
@@ -3346,15 +3347,8 @@ const TerminalView = memo(function TerminalView({
     };
     loadWebgl();
     cellWidthSyncRef.current = syncCellWidth;
-    // 拖到另一块像素比不同的屏：xterm 自己会重算尺寸，补位要跟着重判
-    let dprQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
-    const onDprChange = () => {
-      dprQuery.removeEventListener("change", onDprChange);
-      dprQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
-      dprQuery.addEventListener("change", onDprChange);
-      syncCellWidth();
-    };
-    dprQuery.addEventListener("change", onDprChange);
+    // 拖到另一块像素比不同的屏、界面缩放（⌘= / ⌘-）：xterm 自己会重算尺寸，补位要跟着重判
+    const stopDprWatch = watchDevicePixelRatio(() => syncCellWidth());
     document.fonts?.addEventListener?.("loadingdone", syncCellWidth);
     const recoverWebgl = () => {
       if (wantWebgl && webglRecoveryLeft > 0) loadWebgl();
@@ -3367,7 +3361,7 @@ const TerminalView = memo(function TerminalView({
     const teardownWebglRecovery = () => {
       window.removeEventListener("focus", recoverWebgl);
       document.removeEventListener("visibilitychange", onVisRecover);
-      dprQuery.removeEventListener("change", onDprChange);
+      stopDprWatch();
       document.fonts?.removeEventListener?.("loadingdone", syncCellWidth);
       cellWidthSyncRef.current = null;
     };

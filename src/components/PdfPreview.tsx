@@ -11,6 +11,7 @@ import { HoverTip, useHoverTip } from "./HoverTip";
 import { IS_MAC, IS_WINDOWS } from "../hotkeys";
 import { usePdfGestureZoom } from "./use-pdf-zoom";
 import { RenderGate } from "../render-gate";
+import { useDevicePixelRatio } from "../device-pixel-ratio";
 import {
   PDF_ZOOM_STEP,
   clampPdfScale,
@@ -256,6 +257,8 @@ export const PdfPageView = memo(function PdfPageView({
   /** scale=1 的页尺寸缓存：布局倍率变化时同步换算页盒，不等渲染链路 */
   const baseSizeRef = useRef<{ w: number; h: number } | null>(null);
   const rs = renderScale ?? scale;
+  // 拖到像素比不同的屏、界面缩放后按新像素比重画，不然位图被拉伸发虚
+  const dpr = useDevicePixelRatio();
   const [markBoxes, setMarkBoxes] = useState<MarkBox[]>([]);
   const marksKey = JSON.stringify(marks);
   const scrolledNonceRef = useRef(0);
@@ -319,7 +322,6 @@ export const PdfPageView = memo(function PdfPageView({
         const viewport = page.getViewport({ scale: rs });
         const baseVp = page.getViewport({ scale: 1 });
         baseSizeRef.current = { w: baseVp.width, h: baseVp.height };
-        const dpr = window.devicePixelRatio || 1;
         const cssW = Math.floor(viewport.width);
         const cssH = Math.floor(viewport.height);
         const out = pdfCanvasOutputScale(cssW, cssH, dpr);
@@ -409,7 +411,7 @@ export const PdfPageView = memo(function PdfPageView({
       textLayer?.cancel();
       drawLayer?.destroy();
     };
-  }, [doc, pageNum, rs, fillParent]);
+  }, [doc, pageNum, rs, fillParent, dpr]);
 
   // 术语高亮：textLayer 落地后（或术语表增删后）对文本节点跑整词匹配，命中处包
   // <span class="ccode-gloss">（点状下划线，悬停释义由 PdfContinuousView 事件代理出 HoverTip）；

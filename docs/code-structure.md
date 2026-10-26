@@ -331,7 +331,9 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   project-status.ts          # 项目页状态行 / 工作区要你管排序 / 笔记过滤 / 办公继续上次与问 AI 建议
                              # / 本项目会话过滤（filterProjectSessions，排除无头 AI / 问 AI / 阅读注入 / 已归档；默认全部列出）
                              # （tests/project-status.test.ts）
-  mac-titlebar.ts            # macOS Overlay 顶栏左边距：窗口态红绿灯让 78px，全屏取消
+  mac-titlebar.ts            # macOS Overlay 顶栏左边距：窗口态红绿灯让 78pt（按界面缩放反算成 calc(78px / var(--ccode-ui-zoom))），全屏取消
+  ui-zoom.ts                 # 界面缩放档位（80–150%，两端与 ui_zoom.rs 常量对齐）/ ⌘= ⌘- 判键 / 归档；没有复位键（⌘0 是光标移到侧栏）（tests/ui-zoom.test.ts）
+  device-pixel-ratio.ts      # 像素比变化统一监听：媒体查询 + resize 两路（WKWebView 缩放不发媒体查询 change）；useDevicePixelRatio 共用一份监听（终端补位、PDF 页重画用）
                              # （macOverlayPadClass / useMacFullscreen；tests/mac-titlebar.test.ts）；
                              # useMacFullscreenState 另给「全屏动画中」：原生预告先翻状态，onResized 查询经 resolveFullscreen 对账
   folder-groups.ts           # 项目页分级文件夹树（本层文件与子夹并列；可剥 papers/notes/data）
@@ -361,7 +363,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   doc-thumb.ts               # 聊天附件文件卡：哪些能出预览（docThumbKind）、类型字（docTypeLabel）、HTML 排进一张纸出 SVG foreignObject 图片地址（htmlPageThumb）、表格前几行（read_sheet_preview）；
                              #   docThumb 按类型分派，pdf.js / mammoth 各自动态 import
   docx-thumb.ts              # Word（docx）附件首页预览：read_docx_bytes → mammoth → sanitizeDocumentHtml → htmlPageThumb
-  pdf-thumb.ts               # 聊天附件卡的 PDF 首页缩略图（read_pdf_bytes + pdf.js 画第一页出 data URL，失败 null）；输入框按需动态 import，不进主包
+  pdf-thumb.ts               # 聊天附件卡的 PDF 首页缩略图（read_pdf_bytes + pdf.js 画第一页出 data URL，按像素比出图封顶 3 倍，失败 null）；输入框按需动态 import，不进主包
   pdf-search.ts              # PDF 文本检索纯逻辑（2026-10-18）：页文本组装与归一（文本项原样拼、行尾补空格、断词复原、
                              # 大小写/弯引号/短横线/连字）——页级计数与页内高亮同一口径；命中→文本项分段、同行碎矩形合并、
                              # 标注重定位候选 quoteSearchCandidates（原样→去词内连字符→前 60 字）、图表定位 locateFigure（行首图注优先）、
@@ -1514,6 +1516,7 @@ src-tauri/src/
                              #   只管新建落点，all_roots()/all_sub() 管「是不是 Mesa 自己的」判定；进程内缓存，
                              #   测试态恒默认；validate_base 校验、next_history 维护曾用根。红线见 architecture §10 2026-10-18
   storage.rs                 # 本机文件持久化原语：跨进程读改写锁、私有临时文件（0600）、安全替换
+  ui_zoom.rs                 # 界面缩放 + 最小窗口尺寸：webview 原生 zoom（改 devicePixelRatio，画布重画才清楚，不用 CSS zoom）；最小尺寸 = 网页 720×480 × 缩放，封顶最小屏可用区 90%；update_settings 带 uiZoom 时与开机 setup 调
   uninstall.rs               # 一键卸载：Mesa 独占目录（配置 ccode/、~/ccode/、本机数据 ccode/、
                              #   com.ccode.dev 的网页数据）移入回收站；浏览器桥清单与 Windows
                              #   注册表键复用 browser_bridge 的目录表。课题文件夹与各 CLI 数据不动

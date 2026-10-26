@@ -274,6 +274,9 @@ pub struct AppSettingsDto {
     /// 反馈邮箱直发配置（非密钥部分；授权码存 keys.json 键 feedback-smtp，
     /// 由 feedback.rs 的 set_feedback_smtp_secret 管理，绝不进 settings）
     pub feedback_smtp: Option<crate::feedback::FeedbackSmtpConfigDto>,
+    /// 界面大小（整页缩放，1.0 = 100%）：档位见前端 ui-zoom.ts，这里只夹到 ui_zoom 的范围；
+    /// update_settings 带上它时顺手套到主窗口（连同最小窗口尺寸），开机由 lib.rs setup 先套
+    pub ui_zoom: Option<f64>,
     pub theme: Option<String>,
     /// 主题跟随系统深浅（2026-10-17，缺省关）：开着时前端在系统外观变化时把 theme 换成
     /// 同名 twin（xxx ↔ xxx-light）写回，theme 始终是生效值；自定义配色无 twin 不跟随
@@ -868,6 +871,9 @@ fn with_defaults(s: AppSettingsDto) -> AppSettingsDto {
                 .unwrap_or(crate::internal_sessions::DEFAULT_RETENTION_DAYS),
         ),
         feedback_smtp: s.feedback_smtp,
+        ui_zoom: Some(crate::ui_zoom::clamp_zoom(
+            s.ui_zoom.unwrap_or(crate::ui_zoom::DEFAULT_ZOOM),
+        )),
         theme: Some(theme),
         chrome_opacity: Some(
             s.chrome_opacity
@@ -1032,6 +1038,9 @@ fn merge(cur: &mut AppSettingsDto, patch: AppSettingsDto) {
     // 清空不走这里——Option<T> 下 null 等价于字段缺失，清除有专用命令
     if patch.feedback_smtp.is_some() {
         cur.feedback_smtp = patch.feedback_smtp;
+    }
+    if let Some(z) = patch.ui_zoom {
+        cur.ui_zoom = Some(crate::ui_zoom::clamp_zoom(z));
     }
     if patch.theme.is_some() {
         cur.theme = patch.theme;
@@ -1384,6 +1393,13 @@ pub(crate) fn current_theme_follows_system() -> bool {
     s.theme_follow_system.unwrap_or(DEFAULT_THEME_FOLLOW_SYSTEM) && !custom
 }
 
+/// 开机套到主窗口的界面缩放（lib.rs setup，先于首帧，免得先按 100% 画一下再跳）
+pub(crate) fn current_ui_zoom() -> f64 {
+    current_with_defaults()
+        .ui_zoom
+        .unwrap_or(crate::ui_zoom::DEFAULT_ZOOM)
+}
+
 pub(crate) fn brew_mirror_enabled() -> bool {
     read_current().brew_mirror.unwrap_or(DEFAULT_BREW_MIRROR)
 }
@@ -1443,22 +1459,33 @@ pub async fn get_settings() -> Result<AppSettingsDto, String> {
 }
 
 #[tauri::command]
-pub async fn update_settings(patch: AppSettingsDto) -> Result<AppSettingsDto, String> {
-    // 与 profiles 共用同一把读-改-写锁，防并发 patch 互相覆盖；
-    // 本函数持锁期间不再获取其他锁，与全局写入（GLOBAL_CONFIG_MUTEX 内不调 profiles）锁序一致
-    let _g = crate::profiles::store_lock()?;
-    let path = settings_path()?;
-    if let Some(ref proxy) = patch.outbound_proxy {
-        validate_outbound_proxy(proxy)?;
+pub async fn update_settings(
+    app: tauri::AppHandle,
+    patch: AppSettingsDto,
+) -> Result<AppSettingsDto, String> {
+    let zoom_changed = patch.ui_zoom.is_some();
+    let out = {
+        // 与 profiles 共用同一把读-改-写锁，防并发 patch 互相覆盖；
+        // 本函数持锁期间不再获取其他锁，与全局写入（GLOBAL_CONFIG_MUTEX 内不调 profiles）锁序一致
+        let _g = crate::profiles::store_lock()?;
+        let path = settings_path()?;
+        if let Some(ref proxy) = patch.outbound_proxy {
+            validate_outbound_proxy(proxy)?;
+        }
+        // 直发配置入 settings 前过一遍校验（merge 只搬运不校验）
+        if let Some(ref smtp) = patch.feedback_smtp {
+            crate::feedback::validate_smtp_config(smtp)?;
+        }
+        let mut cur = read_checked(&path)?;
+        merge(&mut cur, patch);
+        write_to(&path, &cur)?;
+        with_defaults(cur)
+    };
+    // 放锁后再碰窗口：存下的值是准的，缩放套不上只记日志
+    if zoom_changed {
+        crate::ui_zoom::apply_to_main(&app, out.ui_zoom.unwrap_or(crate::ui_zoom::DEFAULT_ZOOM));
     }
-    // 直发配置入 settings 前过一遍校验（merge 只搬运不校验）
-    if let Some(ref smtp) = patch.feedback_smtp {
-        crate::feedback::validate_smtp_config(smtp)?;
-    }
-    let mut cur = read_checked(&path)?;
-    merge(&mut cur, patch);
-    write_to(&path, &cur)?;
-    Ok(with_defaults(cur))
+    Ok(out)
 }
 
 /// 设置工作副本家目录的位置（设置页「数据与存储」）。`path` 为空 = 恢复默认 `~/ccode`。

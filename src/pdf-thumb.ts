@@ -25,7 +25,9 @@ export async function pdfFirstPageThumb(path: string, cwdHint: string | null, wi
     try {
       const doc = await task.promise;
       const page = await doc.getPage(1);
-      const viewport = page.getViewport({ scale: width / page.getViewport({ scale: 1 }).width });
+      // 按屏幕像素比出图（封顶 3 倍）：Retina 上格子 ≥160px 宽，288 像素的位图会被拉软
+      const outWidth = width * Math.min(3, Math.max(1, globalThis.devicePixelRatio || 1));
+      const viewport = page.getViewport({ scale: outWidth / page.getViewport({ scale: 1 }).width });
       const canvas = document.createElement("canvas");
       canvas.width = Math.ceil(viewport.width);
       canvas.height = Math.ceil(viewport.height);

@@ -131,6 +131,8 @@ export interface AppSettings {
     tls: string;
     from: string;
   } | null;
+  /** 界面大小（整页缩放，1 = 100%；档位见 ui-zoom.ts，后端顺手套到窗口并按它定最小窗口尺寸） */
+  uiZoom?: number;
   theme: string;
   /** 自定义主题三色（左栏/画布/强调）；theme 为 custom / custom-light 时生效 */
   customTheme?: CustomThemeSeeds | null;

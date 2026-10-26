@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { REPO_URL } from "./help-links";
 import {
   Activity,
@@ -109,6 +109,7 @@ import PhoneDropDialog from "./components/PhoneDropDialog";
 import { usePhoneDropEvents, usePhoneDropStore } from "./phone-drop-store";
 import { phonePendingCount } from "./phone-drop";
 import { toast } from "./toast";
+import { formatUiZoom, normalizeUiZoom, stepUiZoom, uiZoomKeyDirection, UI_ZOOM_DEFAULT } from "./ui-zoom";
 import { isCancellationRejection } from "./diagnostics";
 
 // 页面懒加载：首屏只拉当前页 chunk，其余页首次访问时才加载
@@ -749,6 +750,41 @@ function App() {
   // 换引用而重跑再刷回来，表现就是调一下「侧栏 / 顶栏透明度」窗口闪一下（只有浅色模式
   // 看得出，深色模式下两个写手写的是同一个值）。
   // 开机态由 Rust setup 侧先定（settings::current_theme_is_light + set_theme），见 lib.rs。
+  // 原生红绿灯不随缩放变：标题栏让位按缩放反算（mac-titlebar.ts MAC_TRAFFIC_PAD）
+  useEffect(() => {
+    document.documentElement.style.setProperty("--ccode-ui-zoom", String(normalizeUiZoom(settings?.uiZoom)));
+  }, [settings?.uiZoom]);
+  // 连按 ⌘= 时 settings 还没回来：从上一次要的值接着挪，不从旧值重算（否则连按两下只挪一档）
+  const uiZoomRef = useRef<number | null>(null);
+  useEffect(() => {
+    uiZoomRef.current = settings?.uiZoom ?? UI_ZOOM_DEFAULT;
+  }, [settings?.uiZoom]);
+  const setUiZoomStep = useCallback((dir: 1 | -1) => {
+    const cur = uiZoomRef.current ?? UI_ZOOM_DEFAULT;
+    const next = stepUiZoom(cur, dir);
+    if (next === cur) {
+      toast(`界面大小已经是${dir > 0 ? "最大" : "最小"}（${formatUiZoom(next)}）`, "info", { key: "ui-zoom" });
+      return;
+    }
+    uiZoomRef.current = next;
+    const st = useAppStore.getState();
+    st.updateSettings({ uiZoom: next }).catch((err) => toast(`界面大小没改成：${String(err)}`, "warning"));
+    toast(`界面大小 ${formatUiZoom(next)}`, "info", {
+      key: "ui-zoom",
+      actions:
+        next === UI_ZOOM_DEFAULT
+          ? undefined
+          : [
+              {
+                label: "恢复 100%",
+                onClick: () => {
+                  uiZoomRef.current = UI_ZOOM_DEFAULT;
+                  void useAppStore.getState().updateSettings({ uiZoom: UI_ZOOM_DEFAULT });
+                },
+              },
+            ],
+    });
+  }, []);
   const navCapsuleDelay = normalizeNavCapsuleDelay(
     settings?.navCapsuleHideDelayMs,
   );
@@ -793,6 +829,14 @@ function App() {
         }
         return;
       }
+      // 界面缩放（⌘= / ⌘-）：输入框里也生效（同浏览器）。编辑器 / 图表大图自己接了这组键时
+      // 会先 preventDefault（FilePreviewEditor 调字号、Mermaid 大图缩放），这里让给它们
+      const zoomDir = allowed && !e.defaultPrevented ? uiZoomKeyDirection(e) : null;
+      if (zoomDir) {
+        e.preventDefault();
+        setUiZoomStep(zoomDir);
+        return;
+      }
       const isEditable =
         target?.isContentEditable ||
         target?.tagName === "INPUT" ||
@@ -823,7 +867,7 @@ function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [paletteOpen, setPage, toggleChromeHidden, settings]);
+  }, [paletteOpen, setPage, toggleChromeHidden, settings, setUiZoomStep]);
 
   // macOS 菜单栏入口（v3.259）：Rust on_menu_event 经 "menu:action" 转发，
   // 设置/命令面板/反馈与侧栏、⌘K、帮助菜单同一动作出口。Windows/Linux 无菜单栏，不挂监听。

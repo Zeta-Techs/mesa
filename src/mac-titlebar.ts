@@ -3,11 +3,13 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 /**
- * macOS Overlay 标题栏左边距：窗口态给红绿灯让 78px；
+ * macOS Overlay 标题栏左边距：窗口态给红绿灯让 78pt；
  * 全屏时系统把三个按钮收起，让位取消，否则左边空一块。
+ * 红绿灯是原生按钮、不随界面缩放变（ui-zoom.ts），让位按 78 ÷ 缩放写成网页像素，
+ * 缩到 80% 时才不会压到项目芯片。--ccode-ui-zoom 由 App.tsx 按设置写在根元素上
  */
 
-export const MAC_TRAFFIC_PAD = "pl-[78px]";
+export const MAC_TRAFFIC_PAD = "pl-[calc(78px/var(--ccode-ui-zoom,1))]";
 
 export function macOverlayPadClass(
   isMac: boolean,

@@ -75,18 +75,25 @@ function MermaidLightbox({
   );
 
   useEffect(() => {
+    // 捕获阶段 + preventDefault：大图开着时 ⌘= / ⌘- 缩的是图，不再连带全局的界面缩放（App.tsx 见 defaultPrevented 让路）
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
-      if (e.key === "+" || e.key === "=") setScale((s) => Math.min(6, s * 1.2));
-      if (e.key === "-") setScale((s) => Math.max(0.25, s / 1.2));
+      if (e.key === "+" || e.key === "=") {
+        e.preventDefault();
+        setScale((s) => Math.min(6, s * 1.2));
+      }
+      if (e.key === "-") {
+        e.preventDefault();
+        setScale((s) => Math.max(0.25, s / 1.2));
+      }
       if (e.key === "0") {
         setScale(1);
         setTx(0);
         setTy(0);
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [onClose]);
 
   return (
