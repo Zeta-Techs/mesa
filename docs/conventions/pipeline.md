@@ -132,7 +132,7 @@
   待补账状态由持久凭证派生，重新打开项目/评审仍有入口，不只放在组件 state 中。
   补账不受主仓新改动阻挡，但凭证版本必须仍属于基准历史；损坏/缺失凭证拒绝猜测。账本未完成不归档。
   已合并工作区仍允许之后归档，归档继续检查工作区脏状态、未合入提交和活任务。
-  **合并闸门台账豁免（2026-10-13 双台账重写，`review_contract::is_untracked_ledger_file`，merge 闸门/开工脏文件点名/编程改动计数/迁移前置四处共用）**：日常积累面**任何 git 状态**都不算主仓脏、不阻塞合并、不计入「改动未存入历史」——`notes/*.md`（用户笔记；`notes/index.json` 是流程正典，不豁免）、`notes/assets/`（沉浸阅读截图，2026-10-17 补入：未提交截图曾拦住所有工作区合并；开工接驳同口径把它随笔记带进基准）、`notes/inbox.md`、`papers/watch-seen.md`、`papers/watch-followup.md`、`.ccode/acceptance-log.jsonl/.lock`；**只豁免未跟踪（??）态**：`papers/reading-list.md`、`.ccode/watch-explains.json`、`.ccode/pending-registrations.json`——reading-list 只豁免 ?? 是防呆设计，agent 违规把积累账提交进工作区分支后它变 tracked，后续写入的 M 态仍会拦合并并点名。旧口径「已跟踪的账本改动仍算」对上述积累面作废；闸门只负责提前拦，git merge 自身的脏文件保护仍会拒绝任何真覆盖。
+  **合并闸门台账豁免（2026-10-13 双台账重写，`review_contract::is_untracked_ledger_file`，merge 闸门/开工脏文件点名/编程改动计数三处共用；迁移前置调用方随迁移命令移除）**：日常积累面**任何 git 状态**都不算主仓脏、不阻塞合并、不计入「改动未存入历史」——`notes/*.md`（用户笔记；`notes/index.json` 是流程正典，不豁免）、`notes/assets/`（沉浸阅读截图，2026-10-17 补入：未提交截图曾拦住所有工作区合并；开工接驳同口径把它随笔记带进基准）、`notes/inbox.md`、`papers/watch-seen.md`、`papers/watch-followup.md`、`.ccode/acceptance-log.jsonl/.lock`、`.ccode/watch/`（雷达订阅目录）；**只豁免未跟踪（??）态**：`papers/reading-list.md`、`.ccode/watch-explains.json`、`.ccode/pending-registrations.json`——reading-list 只豁免 ?? 是防呆设计，agent 违规把积累账提交进工作区分支后它变 tracked，后续写入的 M 态仍会拦合并并点名。旧口径「已跟踪的账本改动仍算」对上述积累面作废；闸门只负责提前拦，git merge 自身的脏文件保护仍会拒绝任何真覆盖。
   开工时，本步要读的未存文件由「记下并开始」先提交再开工，不再二次确认。与本步输入无关的改动不开工弹层里提醒。
   任务书工具合同只在所选工具变了时挡住开始。产物名单增减不挡。技能预期读入若已是本步预期产物，不报上游缺失。
   精读收尾写 `notes/handoff.md`：写作约束给大纲遵守，补全文和登录留在 help-wanted，不进下一步任务书。大纲输入含这份文件。`handoff.md` 是 Agent 交的产物。「沉淀到下一步」是人在审阅里另写的一段，追加进下一步任务书草稿，不代替 handoff。help-wanted 在步骤保存后仍进收件箱，直到人忽略或文件清空。
@@ -223,7 +223,8 @@
   模板应用三处入口（注册后选择、项目页模板选择、编辑器追加）统一调用后端原子事务：步骤、缺失的项目级设定、投稿分支/轮次、
   topic 与 `pipeline_opt_out` 一次写入，已有真实设定按问题名保留。
   模板自检还必须满足：步骤声明 Quarto `run` 时挂载 `quarto-render`；`lit-search` 步骤声明
-  screening.md/included.md/included.json/to-fetch.md/to-fetch.ris/zotero-sync.md 六项固定产物，且无论 Zotero
+  screening.md/included.md/included.json/to-fetch.md/to-fetch.ris/endnote-import.ris/zotero-sync.md 七项固定产物
+  （综述模板默认不写 zotero-sync.md，其余全七项），且无论 Zotero
   是否启用或回落，都必须留下非空的同步报告（记录未启用、未授权、不可用或已同步原因）；
   返修步骤的回复信、修订稿、对照表、引用报告和再投稿清单全部带 `rN` 轮次后缀。
   **文献雷达消费契约**：`notes/inbox.md` 的二级标题只有在块内出现至少一个文献字段（来源/作者/摘要/链接/相关性等）时才算命中；巡检摘要不得使用会被消费层识别为文献的 `##` 块。scheduler 的 `newEntries` 必须复用同一有效条目解析口径。
