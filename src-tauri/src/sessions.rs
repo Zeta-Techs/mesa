@@ -1386,6 +1386,28 @@ fn codex_message_text(p: &Value) -> Option<String> {
     }
 }
 
+/// Codex 推理条目里看得见的字：有摘要（官方模型的 `**小标题**` 摘要）用摘要，没有用原始推理（第三方模型）；
+/// 只有加密内容的返回 None
+fn codex_reasoning_text(p: &Value) -> Option<String> {
+    let collect = |key: &str| {
+        p.get(key)
+            .and_then(|v| v.as_array())
+            .map(|parts| {
+                parts
+                    .iter()
+                    .filter_map(|c| get_str(c, "text"))
+                    .map(str::trim)
+                    .filter(|t| !t.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n\n")
+            })
+            .unwrap_or_default()
+    };
+    let summary = collect("summary");
+    let text = if summary.is_empty() { collect("content") } else { summary };
+    (!text.is_empty()).then_some(text)
+}
+
 /** Codex 会把工作区规则/导入历史作为 user response_item 写入会话；这类上下文不是用户对话，不能展示在聊天层。 */
 pub(crate) fn is_injected_context_message(text: &str) -> bool {
     let trimmed = text.trim_start();
@@ -1600,6 +1622,24 @@ fn parse_codex(lines: &[String]) -> Vec<ChatMessageDto> {
                         usage: None,
                         id: get_str(p, "id").map(String::from),
                     }),
+                    // 思考：别家的思考都进「思考」过程行，Codex 原先整条丢了（2026-10-26 审查：本机 71 条有正文的推理一条没显示）
+                    Some("reasoning") => {
+                        if let Some(text) = codex_reasoning_text(p) {
+                            msgs.push(ChatMessageDto {
+                                role: "assistant".into(),
+                                blocks: vec![BlockDto {
+                                    kind: "thinking".into(),
+                                    text,
+                                    tool_name: None,
+                                    is_error: false,
+                                    call_id: None,
+                                }],
+                                timestamp: ts,
+                                usage: None,
+                                id: get_str(p, "id").map(String::from),
+                            });
+                        }
+                    }
                     Some("function_call_output") | Some("custom_tool_call_output") => {
                         let text = stringify_payload(p.get("output"));
                         push_tool_result(
@@ -9522,6 +9562,23 @@ mod tests {
             (u.input, u.output, u.cache_read, u.cache_write),
             (90, 20, 10, 0)
         );
+    }
+
+    // 2026-10-26 审查（Codex 0.164 实录形状）：推理条目进「思考」；摘要优先，没摘要用原始推理；只有加密内容的不出
+    #[test]
+    fn codex_reasoning_becomes_thinking_block() {
+        let lines = s(&[
+            r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"测试一下"}]}}"#,
+            r#"{"type":"response_item","payload":{"type":"reasoning","id":"rs_1","summary":[],"content":[{"type":"reasoning_text","text":"The user wants a quick test."}],"encrypted_content":null}}"#,
+            r#"{"type":"response_item","payload":{"type":"reasoning","id":"rs_2","summary":[{"type":"summary_text","text":"**规划步骤**\n\n先看目录"}],"content":[{"type":"reasoning_text","text":"raw"}]}}"#,
+            r#"{"type":"response_item","payload":{"type":"reasoning","id":"rs_3","summary":[],"encrypted_content":"gAAAA"}}"#,
+            r#"{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"好的"}]}}"#,
+        ]);
+        let msgs = parse_codex(&lines);
+        let kinds: Vec<(&str, &str)> = msgs.iter().map(|m| (m.role.as_str(), m.blocks[0].kind.as_str())).collect();
+        assert_eq!(kinds, [("user", "text"), ("assistant", "thinking"), ("assistant", "thinking"), ("assistant", "text")]);
+        assert_eq!(msgs[1].blocks[0].text, "The user wants a quick test.");
+        assert_eq!(msgs[2].blocks[0].text, "**规划步骤**\n\n先看目录", "有摘要用摘要");
     }
 
     #[test]
