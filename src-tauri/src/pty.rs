@@ -2830,8 +2830,17 @@ mod tests {
                 _ => format!("cd '{}'\r", target.to_string_lossy()),
             };
             writer.write_all(quoted.as_bytes()).unwrap();
-            pump(&mut writer, 4);
-            let got = process_cwd(pid, file.as_deref());
+            // 不按固定秒数断言：CI 的 Windows runner 慢时 PowerShell 4 秒内还没回到提示符、没写目录
+            // （2026-10-26 实证报「实际 start」）。轮询到目录对上为止，最多 30 秒防挂死
+            let deadline = Instant::now() + Duration::from_secs(30);
+            let mut got = None;
+            while Instant::now() < deadline {
+                pump(&mut writer, 1);
+                got = process_cwd(pid, file.as_deref());
+                if got.as_deref().is_some_and(|g| crate::paths::same_path(g, &target.to_string_lossy())) {
+                    break;
+                }
+            }
             let _ = child.kill();
             if let Some(f) = &file {
                 let _ = std::fs::remove_file(f);
