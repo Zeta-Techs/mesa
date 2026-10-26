@@ -60,6 +60,7 @@ import RunCaret from "./RunCaret";
 import { RUN_CARET_LABEL, strongestCaret, withUnread } from "../run-caret";
 import { unreadKeyOf } from "../chat-unread";
 import RenameProjectModal from "./RenameProjectModal";
+import CoachTip from "./CoachTip";
 import { toast } from "../toast";
 import { AGENTS, type ProjectDto, type SessionMetaDto, type WorkspaceDto } from "../types";
 import {
@@ -68,6 +69,10 @@ import {
   currentFolderKey,
   parseChatPins,
   nextPicked,
+  noteSingleAct,
+  nudgeAnchor,
+  PICK_NEXT_SEEN_KEY,
+  PICK_NUDGE_SEEN_KEY,
   pinnedChats,
   pinPicked,
   railNavIndex,
@@ -89,6 +94,7 @@ import {
   openTabRows,
   type ChatDot,
   type OpenTabRow,
+  type SingleAct,
 } from "../sidebar-chats";
 import { tidySessionTitle } from "../session-title";
 import { openConversation, openQuickChat, prefetchConversation } from "../quick-chat-launch";
@@ -126,6 +132,24 @@ type TreeRow = {
  *  行首状态点只认「此刻有 Agent 在跑」（绿点）；待处理黄点归顶栏收件箱与工作台，不在此重复计算。 */
 /** 派发切换后还没轮到「正看着的标签」接过高亮时，点下去的高亮最多再留这么久（ms），免得闪回原来那行 */
 const PRESSED_HOLD_MS = 1500;
+/** 多选的修饰键怎么写（提示文字用；Mac 上 Ctrl 点是右键，所以是 ⌘） */
+const PICK_TOGGLE_KEY = IS_MAC ? "⌘" : "Ctrl";
+const PICK_RANGE_KEY = IS_MAC ? "⇧" : "Shift";
+/** 一次性气泡出过没有（localStorage 存不了就当没出过，最多多出一次） */
+function tipSeen(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === "1";
+  } catch {
+    return false;
+  }
+}
+function markTipSeen(key: string) {
+  try {
+    localStorage.setItem(key, "1");
+  } catch {
+    /* 同上 */
+  }
+}
 
 export default function ProjectTree({
   selectedRoot,
@@ -494,7 +518,10 @@ export default function ProjectTree({
             label: "置顶",
             icon: Pin,
             title: "钉到侧栏最上面「置顶」一节，不管它在哪个课题",
-            onSelect: () => toggleChatPinFor(chatKey(s)),
+            onSelect: () => {
+              noteSingle("pin", s);
+              toggleChatPinFor(chatKey(s));
+            },
           },
       {
         label: "重命名",
@@ -505,7 +532,10 @@ export default function ProjectTree({
         label: "归档",
         icon: Archive,
         title: "从这里收起；对话页筛「已归档」还能找到",
-        onSelect: () => void writeChatMeta(s, { archived: true }),
+        onSelect: () => {
+          noteSingle("archive", s);
+          void writeChatMeta(s, { archived: true });
+        },
       },
       { separator: true },
       {
@@ -704,6 +734,76 @@ export default function ProjectTree({
     },
     [],
   );
+
+  // —— 多选的两条一次性气泡（2026-10-27 用户选 B + D，设计稿 docs/design-rail-multiselect-tip-mockup.html）——
+  // nudge：用 ⋯ / 右键一段段归档或置顶，1 分钟内第 2 次时，贴在下一段那行右边提醒能多选；
+  // next：选上第一段时，贴在树底「已选 1 段」上面教怎么接着选，选到第 2 段或取消就收。各出一次，用过多选就都不再出
+  const singleActs = useRef<SingleAct[]>([]);
+  const [nudge, setNudge] = useState<{ kind: SingleAct["kind"]; anchor: string; count: number } | null>(null);
+  const [nudgePos, setNudgePos] = useState<{ x: number; y: number; arrowAt: number } | null>(null);
+  const [nextTip, setNextTip] = useState(false);
+  function noteSingle(kind: SingleAct["kind"], s: SessionMetaDto) {
+    const r = noteSingleAct(singleActs.current, kind, Date.now());
+    singleActs.current = r.acts;
+    if (!r.nudge || tipSeen(PICK_NUDGE_SEEN_KEY)) return;
+    // 趁这一段还在侧栏里先取它的下一段
+    const anchor = nudgeAnchor(pickOrder(), chatKey(s));
+    if (anchor) setNudge({ kind, anchor, count: r.acts.filter((a) => a.kind === kind).length });
+  }
+  // 归档 / 置顶后行会挪：等侧栏重排完再量那一行贴上去，量不到就不出
+  useLayoutEffect(() => {
+    if (!nudge) {
+      setNudgePos(null);
+      return;
+    }
+    const btn = Array.from(listRef.current?.querySelectorAll<HTMLElement>("[data-chat-key]") ?? []).find(
+      (el) => el.dataset.chatKey === nudge.anchor,
+    );
+    const row = btn?.parentElement;
+    if (!row) {
+      setNudge(null);
+      return;
+    }
+    const r = row.getBoundingClientRect();
+    const center = r.top + r.height / 2;
+    // 气泡约 150px 高，贴窗口底时往上挪，小三角仍对着这一行
+    const top = Math.max(8, Math.min(center - 21, window.innerHeight - 158));
+    setNudgePos({ x: r.right + 10, y: top, arrowAt: center - top - 5 });
+    markTipSeen(PICK_NUDGE_SEEN_KEY);
+  }, [nudge, sessions, chatPins]);
+  // 点别处、Esc、滚动、窗口变大小都收起
+  useEffect(() => {
+    if (!nudge) return;
+    const close = () => setNudge(null);
+    const onDown = (e: PointerEvent) => {
+      if (!(e.target instanceof Element && e.target.closest("[data-coach-tip]"))) close();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    window.addEventListener("pointerdown", onDown, true);
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("pointerdown", onDown, true);
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [nudge]);
+  useEffect(() => {
+    if (picked.size >= 2) {
+      markTipSeen(PICK_NEXT_SEEN_KEY);
+      markTipSeen(PICK_NUDGE_SEEN_KEY);
+      setNextTip(false);
+    } else if (picked.size === 1) {
+      if (!tipSeen(PICK_NEXT_SEEN_KEY)) {
+        markTipSeen(PICK_NEXT_SEEN_KEY);
+        setNextTip(true);
+      }
+    } else setNextTip(false);
+  }, [picked]);
   useEffect(() => {
     const el = listRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
@@ -1805,8 +1905,14 @@ export default function ProjectTree({
           <div
             role="toolbar"
             aria-label="选中的对话"
-            className="mx-1.5 mb-1 flex h-8 shrink-0 items-center gap-0.5 rounded-md bg-hover pl-2.5 pr-0.5"
+            className="relative mx-1.5 mb-1 flex h-8 shrink-0 items-center gap-0.5 rounded-md bg-hover pl-2.5 pr-0.5"
           >
+            {/* 第一次选上一段：气泡贴在这条上面教怎么接着选（设计稿 D） */}
+            {nextTip && keys.length === 1 && (
+              <CoachTip arrow="down" arrowAt={26} className="absolute right-0.5 bottom-[calc(100%+8px)] left-0">
+                再按住 <kbd>{PICK_TOGGLE_KEY}</kbd> 点几段加进来；按住 <kbd>{PICK_RANGE_KEY}</kbd> 点，从这段连着选到那段。
+              </CoachTip>
+            )}
             <span className="mr-auto text-xs text-l2">已选 {keys.length} 段</span>
             <button
               type="button"
@@ -1841,6 +1947,35 @@ export default function ProjectTree({
           </div>
         );
       })()}
+
+      {/* 一段段归档 / 置顶时提醒能多选（设计稿 B）：挂到 body，贴在下一段那行右边、伸到画布上 */}
+      {nudge &&
+        nudgePos &&
+        createPortal(
+          <CoachTip
+            arrow="left"
+            arrowAt={nudgePos.arrowAt}
+            className="fixed w-[248px]"
+            style={{ left: nudgePos.x, top: nudgePos.y }}
+            title={`刚${nudge.kind === "archive" ? "归档" : "置顶"}了 ${nudge.count} 段`}
+            onClose={() => setNudge(null)}
+            actions={[
+              { label: "不用了", onClick: () => setNudge(null) },
+              {
+                label: "从这段开始选",
+                onClick: () => {
+                  const key = nudge.anchor;
+                  setNudge(null);
+                  pick(key, "toggle");
+                },
+              },
+            ]}
+          >
+            要一次收拾好几段，按住 <kbd>{PICK_TOGGLE_KEY}</kbd> 点选它们，侧栏底下会出现「已选 N 段」，一起
+            {nudge.kind === "archive" ? "归档" : "置顶"}。
+          </CoachTip>,
+          document.body,
+        )}
 
       {menu && (
         <ContextMenu

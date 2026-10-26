@@ -824,6 +824,80 @@ test("多选：⌘ / Ctrl 点只选不开，⇧ 点整段选上，树底一条�
   }
 });
 
+test("多选的气泡：一段段归档到第 2 次贴下一段提醒（B），「从这段开始选」后树底那条上面教怎么接着选（D），各只出一次（2026-10-27）", async () => {
+  const view = await renderTree();
+  try {
+    const win = view.host.ownerDocument.defaultView!;
+    const doc = view.host.ownerDocument;
+    const archiveOne = async (label: string) => {
+      await view.act(async () => {
+        view.button(label).dispatchEvent(new win.MouseEvent("contextmenu", { bubbles: true }));
+      });
+      await view.act(async () => view.button("归档").click());
+    };
+    const nudge = () => doc.body.querySelector('[data-coach-tip][role="dialog"]');
+    await archiveOne("镁硫电池第4篇精读");
+    assert.equal(nudge(), null, "第 1 次不提醒");
+    await archiveOne("镁硫电池第3篇精读");
+    assert.match(nudge()!.textContent!, /刚归档了 2 段/);
+    assert.match(nudge()!.textContent!, /按住 .+ 点选它们/);
+    assert.equal(localStorage.getItem("ccode.railPickNudgeSeen"), "1");
+    // 「从这段开始选」：选上第 3 篇的下一段，气泡收起，树底那条上面出 D
+    const start = Array.from(nudge()!.querySelectorAll("button")).find((b) => b.textContent === "从这段开始选")!;
+    await view.act(async () => start.click());
+    assert.equal(nudge(), null);
+    const picked = () => Array.from(view.host.querySelectorAll("[data-picked]")).map((b) => b.textContent?.trim());
+    assert.deepEqual(picked(), ["镁硫电池第2篇精读"]);
+    const bar = () => view.host.querySelector('[aria-label="选中的对话"]')!;
+    assert.match(bar().querySelector("[data-coach-tip]")!.textContent!, /再按住 .+ 点几段加进来/);
+    // 选到第 2 段：D 收起
+    await view.act(async () => {
+      view.button("镁硫电池第1篇精读").dispatchEvent(
+        new win.MouseEvent("click", { bubbles: true, detail: 1, metaKey: true, ctrlKey: true }),
+      );
+    });
+    assert.equal(bar().querySelector("[data-coach-tip]"), null);
+    // 出过了：再选一段、再连着归档两段都不再出
+    await view.act(async () => view.button("取消选择").click());
+    await view.act(async () => {
+      view.button("镁硫电池第5篇精读").dispatchEvent(
+        new win.MouseEvent("click", { bubbles: true, detail: 1, metaKey: true, ctrlKey: true }),
+      );
+    });
+    assert.equal(bar().querySelector("[data-coach-tip]"), null);
+    await view.act(async () => view.button("取消选择").click());
+    await archiveOne("镁硫电池第2篇精读");
+    await archiveOne("镁硫电池第1篇精读");
+    assert.equal(nudge(), null);
+  } finally {
+    await view.close();
+  }
+});
+
+test("多选的气泡：Esc 收起提醒，置顶同样计数（2026-10-27）", async () => {
+  const view = await renderTree();
+  try {
+    const win = view.host.ownerDocument.defaultView!;
+    const doc = view.host.ownerDocument;
+    const pinOne = async (label: string) => {
+      await view.act(async () => {
+        view.button(label).dispatchEvent(new win.MouseEvent("contextmenu", { bubbles: true }));
+      });
+      await view.act(async () => view.button("置顶").click());
+    };
+    const nudge = () => doc.body.querySelector('[data-coach-tip][role="dialog"]');
+    await pinOne("镁硫电池第4篇精读");
+    await pinOne("镁硫电池第3篇精读");
+    assert.match(nudge()!.textContent!, /刚置顶了 2 段/);
+    await view.act(async () => {
+      doc.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    assert.equal(nudge(), null);
+  } finally {
+    await view.close();
+  }
+});
+
 test("多选键盘：对话上 ⇧↓ 从这一段整段选下去，⇧↑ 收回（2026-10-27）", async () => {
   const view = await renderTree();
   try {

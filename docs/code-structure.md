@@ -125,6 +125,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   renderFolderToggle（文件夹图标，悬停换箭头，点它开合）+ 课题名 xs l4 分组标题 / 对话 pl-2 不缩进（2026-10-25）
                              #   工作区清单（课题的工作副本）在开着的对话出现认不出归属的目录时重读一次（reposTick；开步刚建的副本），
                              #   重读后仍认不出的签名不变、不反复读
+  components/CoachTip.tsx    # 一次性悬浮气泡（2026-10-27 侧栏多选起用）：只管画（标题 / 正文 kbd / 按钮 / ×、小三角朝左或朝下），何时出、记没记出过、贴哪由调用方定；样式 App.css .ccode-coach
   components/RailSearchPalette.tsx # 「搜索对话和项目」弹层（2026-10-24 照 Claude 客户端）：只管列和选，打开由宿主回调；排序筛选在 rail-search.ts
   rail-search.ts             # 搜索弹层纯逻辑：空查询=最近对话 50 段；有查询=命中项目在前、命中对话在后（标题命中先于只命中文件夹名），多词全中
                              #   （2026-10-23 照 Claude 客户端侧栏，不再按工作方式分组；置顶 / 课题 / 未添加三段，段内可拖动排序）
@@ -134,7 +135,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   完成后 loadProjects+bumpProjectsVersion 通知本树与项目页重拉；
                              #   2026-10-23 挂对话（纯逻辑 sidebar-chats.ts）：最上面「随手聊」、节头名字后的箭头开合对话（默认只展开运行页
                              #   正看着的那个，人手开关记 ccode.projectTreeChats）、展开按侧栏空位列（至少 5 段）+ 「还有 N 段 / 收起」，行尾运行状态光标（RunCaret，收着也报）；
-                             #   点对话 openConversation（只看不起进程）；点课题名进项目页并展开它的对话（10-24）；行尾悬停 ＋（startProjectChat / openQuickChat）与 ⋯ 平时不占宽（随手聊的 ⋯：对话页看全部随手聊 / 归档 7 天没动的，2026-10-26）；置顶一节的对话行尾小字写所属课题（originOfChat，悬停让位给 ⋯）；收着的课题之间只隔 1px、展开的那节上下留 pt-3（10-27）；对话多选（⌘/Ctrl 点、⇧ 点、⇧↑↓，选中铺 .ccode-rail-picked，树底「已选 N 段」条 + 选中行右键同一份批量菜单：置顶 / 归档，10-27）；
+                             #   点对话 openConversation（只看不起进程）；点课题名进项目页并展开它的对话（10-24）；行尾悬停 ＋（startProjectChat / openQuickChat）与 ⋯ 平时不占宽（随手聊的 ⋯：对话页看全部随手聊 / 归档 7 天没动的，2026-10-26）；置顶一节的对话行尾小字写所属课题（originOfChat，悬停让位给 ⋯）；收着的课题之间只隔 1px、展开的那节上下留 pt-3（10-27）；对话多选（⌘/Ctrl 点、⇧ 点、⇧↑↓，选中铺 .ccode-rail-picked，树底「已选 N 段」条 + 选中行右键同一份批量菜单：置顶 / 归档，10-27；一段段归档 / 置顶到第 2 次贴下一段出 CoachTip 提醒、第一次选上一段时条上面教怎么接着选，各一次）；
                              #   对话行尾 ⋯ 与右键：在右侧分屏打开 / 关掉这段对话（Mesa 里开着才有）/ 重命名 / 归档 / 在对话页查看；开着的对话行悬停 × 顶替运行光标那格（10-26）；会话列表自己保鲜（展开拉一次、看得见时每分钟）；拖动按整块（tabDragShift）；
                              #   2026-10-24 第二期（运行页标签条退场）：开着、列表里还没有的挂在文件夹最上面（openTabRows，带 ×，经 store.requestCloseTab 关），
                              #   不在任何项目里的单列「其他打开的」（展开态没有「运行」行了，在跑靠各行行尾的光标 + 折起项目头上的光标）
@@ -666,7 +667,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # （sidebarChatTitle）、各文件夹列几段（chatQuotas / chatSlots：至少 5 段、按侧栏空位补满；expandedExtra：
                              # 「还有 N 段」在眼下段数上多 10 段）、开着但列表里还没有的标签挂到哪（openTabRows，10-24）、
                              # 置顶对话（CHAT_PINS_KEY / parseChatPins / toggleChatPin / pinnedChats，10-24，localStorage，与「保留」快照无关；多选一起钉 pinPicked，10-27）、多选（nextPicked：⌘ 点加减、⇧ 点从起点整段换上，10-27）、
-                             # 侧栏键盘走（railNavIndex，10-24）
+                             # 侧栏键盘走（railNavIndex，10-24）、多选提醒气泡何时出与贴哪（noteSingleAct / nudgeAnchor / PICK_*_SEEN_KEY，10-27）
                              # （tests/sidebar-chats.test.ts；界面 ProjectTree，tests/project-tree-chats-ui.test.ts）
   chat-unread.ts             # 跑完了没看的对话（2026-10-24）：注意力 working → done 那一刻没在看就记，看到即消；会话键优先、标签键认出会话后挪
                              # （nextUnread；App 维护 store.unreadChats，ProjectTree 把那一行标题亮到 l1；tests/chat-unread.test.ts）

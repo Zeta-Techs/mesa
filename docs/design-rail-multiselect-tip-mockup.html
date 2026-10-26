@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="midnight">
+<head>
+<meta charset="utf-8" />
+<title>侧栏多选 · 悬浮气泡提示设计稿</title>
+<!-- 2026-10-27 用户：「我需要的提示是那种悬浮气泡，你做几个设计给我」。四版气泡 + 一个组合建议；令牌取自 App.css 默认深色 / 对应浅色 -->
+<style>
+  :root, [data-theme="midnight"] {
+    --rail: #0c0b09; --canvas: #131210; --strip: #1e1d1b; --inset: #232220; --raised: #2b2a28;
+    --rail-sel: #31302d; --hairline: #31302d; --field: #464542;
+    --l1: #e9e6e2; --l2: #bdbab4; --l3: #95959a; --l4: #6b6b72;
+    --cta: #faa8d4; --cta-text: #2a1220; --hover: rgb(255 255 255 / 0.05);
+    --tip-bg: #2c2c2e; --tip-bd: rgb(255 255 255 / 0.2); --tip-fg: #ececec;
+    --kbd-bd: rgb(255 255 255 / 0.22);
+  }
+  [data-theme="midnight-light"] {
+    --rail: #e5e5dd; --canvas: #edede9; --strip: #f6f6f4; --inset: #fbfbf9; --raised: #ffffff;
+    --rail-sel: #ddd9d1; --hairline: #d4d1c8; --field: #b8b4a8;
+    --l1: #1a1814; --l2: #3f3c36; --l3: #6f6b62; --l4: #9a958b;
+    --cta: #c2447f; --cta-text: #ffffff; --hover: rgb(0 0 0 / 0.05);
+    --tip-bg: #f6f6f6; --tip-bd: rgb(0 0 0 / 0.16); --tip-fg: #1d1d1f;
+    --kbd-bd: rgb(0 0 0 / 0.2);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 40px 60px; background: #08080a; color: #d8d6d2;
+    font: 14px/1.6 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  [data-theme="midnight-light"] body { background: #d9d8d3; color: #2a2722; }
+  h1 { font-size: 20px; margin: 0 0 4px; font-weight: 600; }
+  .lead { color: #8f8d88; margin: 0 0 20px; font-size: 13px; }
+  .toggle { position: fixed; top: 24px; right: 32px; font: inherit; font-size: 12px; padding: 4px 10px;
+    border-radius: 6px; border: 1px solid #555; background: transparent; color: inherit; cursor: pointer; }
+  .grid { display: grid; grid-template-columns: repeat(2, 640px); gap: 36px 32px; }
+  .card h2 { font-size: 15px; margin: 0 0 2px; font-weight: 600; }
+  .card h2 b { color: var(--cta); font-weight: 600; margin-right: 6px; }
+  .card .spec { font-size: 12.5px; color: #8f8d88; margin: 6px 0 0; padding-left: 1.1em; }
+  [data-theme="midnight-light"] .card .spec { color: #5f5b54; }
+  .card .spec li { margin: 1px 0; }
+
+  /* —— 模拟窗口：左侧栏 + 右画布 —— */
+  .frame { position: relative; width: 640px; height: 400px; border-radius: 10px; overflow: hidden;
+    display: grid; grid-template-columns: 248px 1fr; border: 1px solid #2a2a2a; margin-top: 8px; }
+  [data-theme="midnight-light"] .frame { border-color: #c4c1b8; }
+  .rail { background: var(--rail); padding: 10px 6px 0; display: flex; flex-direction: column; position: relative; }
+  .canvas { background: var(--canvas); position: relative; padding: 28px 28px; }
+  .canvas .ln { height: 9px; border-radius: 4px; background: var(--hairline); margin: 0 0 12px; opacity: .55; }
+  .canvas .bub { margin-left: auto; width: 46%; height: 30px; border-radius: 14px; background: var(--rail-sel); opacity: .6; margin-bottom: 20px; }
+  .sec { font-size: 11px; letter-spacing: .08em; color: var(--l3); padding: 10px 10px 4px; font-weight: 500; }
+  .nav { height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 10px; font-size: 14px; color: var(--l2); border-radius: 6px; }
+  .nav i { width: 14px; height: 14px; border: 1.5px solid var(--l3); border-radius: 3px; display: inline-block; }
+  .folder { height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 10px; font-size: 13px; color: var(--l2); margin-top: 6px; }
+  .folder i { width: 14px; height: 11px; border: 1.5px solid var(--l3); border-radius: 2px; display: inline-block; }
+  .row { position: relative; height: 32px; display: flex; align-items: center; padding: 0 8px 0 10px;
+    font-size: 13px; color: var(--l3); border-radius: 6px; margin: 1px 0; white-space: nowrap; }
+  .row.hover { background: var(--hover); color: var(--l2); }
+  .row.sel { background: var(--rail-sel); color: var(--l1); }
+  .row.sel::before { content: ""; position: absolute; left: 0; top: 7px; bottom: 7px; width: 2px; border-radius: 2px; background: var(--cta); }
+  .row.picked { background: color-mix(in srgb, var(--cta) 18%, transparent); color: var(--l1); }
+  .row .more { margin-left: auto; color: var(--l3); letter-spacing: 1px; }
+  .row.gone { opacity: .0; }
+  .bar { margin: auto 6px 6px; height: 32px; border-radius: 6px; background: var(--hover); display: flex; align-items: center;
+    padding: 0 4px 0 10px; font-size: 12px; color: var(--l2); gap: 4px; }
+  [data-theme="midnight"] .bar { background: rgb(255 255 255 / .07); }
+  .bar span:first-child { margin-right: auto; }
+  .bar .act { padding: 2px 6px; border-radius: 5px; }
+  .bar .x { color: var(--l3); padding: 0 6px; }
+  .cursor { position: absolute; width: 14px; height: 20px; z-index: 5; pointer-events: none; }
+  .cursor svg { display: block; }
+
+  /* —— 气泡本体：同 .ccode-tooltip 的底与边，零阴影（design-system：零阴影不开特例） —— */
+  .tip { position: absolute; z-index: 6; background: var(--tip-bg); border: 1px solid var(--tip-bd); color: var(--tip-fg);
+    border-radius: 9px; font-size: 12.5px; line-height: 1.6; padding: 10px 12px 10px; width: 236px;
+    animation: pop .18s cubic-bezier(.2,.8,.2,1); }
+  .tip .t { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+  .tip .b { opacity: .82; }
+  .tip .foot { display: flex; justify-content: flex-end; gap: 4px; margin-top: 8px; }
+  .tip .btn { font-size: 12px; padding: 2px 9px; border-radius: 6px; opacity: .8; }
+  .tip .btn.pri { background: var(--cta); color: var(--cta-text); opacity: 1; font-weight: 500; }
+  .tip .close { position: absolute; top: 6px; right: 8px; opacity: .5; font-size: 13px; }
+  /* 小三角：同底同边的旋转方块 */
+  .tip::after { content: ""; position: absolute; width: 9px; height: 9px; background: var(--tip-bg); border: 1px solid var(--tip-bd); }
+  .tip.l::after { left: -5.5px; top: var(--ay, 14px); transform: rotate(45deg); border-top: 0; border-right: 0; }
+  .tip.d::after { bottom: -5.5px; left: var(--ax, 24px); transform: rotate(45deg); border-top: 0; border-left: 0; }
+  .tip.u::after { top: -5.5px; left: var(--ax, 24px); transform: rotate(45deg); border-bottom: 0; border-right: 0; }
+  kbd { font: 11px/1 -apple-system, "PingFang SC", sans-serif; display: inline-flex; align-items: center; justify-content: center;
+    min-width: 18px; height: 18px; padding: 0 4px; margin: 0 2px; border: 1px solid var(--kbd-bd); border-radius: 4px; vertical-align: 1px; }
+  .tip.mini { width: auto; padding: 4px 10px; white-space: nowrap; font-size: 12px; border-radius: 7px; }
+  @keyframes pop { from { opacity: 0; transform: translateY(3px) scale(.98); } }
+
+  /* —— C 版的动画示意 —— */
+  .demo { position: relative; margin: 2px 0 10px; height: 104px; border-radius: 7px; background: var(--rail); padding: 6px 5px; overflow: hidden; }
+  .demo .r { height: 20px; border-radius: 4px; margin: 2px 0; display: flex; align-items: center; padding-left: 7px; font-size: 11px; color: var(--l3); }
+  .demo .r i { display: block; height: 5px; border-radius: 3px; background: var(--l4); opacity: .6; }
+  .demo .r1 { animation: pk1 4.8s infinite; }
+  .demo .r3 { animation: pk3 4.8s infinite; }
+  .demo .mbar { position: absolute; left: 5px; right: 5px; bottom: 5px; height: 18px; border-radius: 4px; font-size: 10px; color: var(--l2);
+    display: flex; align-items: center; padding: 0 6px; gap: 8px; background: var(--hover); animation: mb 4.8s infinite; }
+  [data-theme="midnight"] .demo .mbar { background: rgb(255 255 255 / .08); }
+  .demo .mbar span:first-child { margin-right: auto; }
+  .demo .cur { position: absolute; left: 120px; top: 14px; animation: cur 4.8s infinite; }
+  .demo .key { position: absolute; right: 8px; top: 8px; animation: key 4.8s infinite; }
+  @keyframes cur { 0%,8% { transform: translate(0,0); } 22%,40% { transform: translate(-20px,0); } 55%,75% { transform: translate(-30px,44px); } 100% { transform: translate(0,0); } }
+  @keyframes pk1 { 0%,26% { background: transparent; } 30%,88% { background: color-mix(in srgb, var(--cta) 22%, transparent); } 96%,100% { background: transparent; } }
+  @keyframes pk3 { 0%,58% { background: transparent; } 62%,88% { background: color-mix(in srgb, var(--cta) 22%, transparent); } 96%,100% { background: transparent; } }
+  @keyframes mb { 0%,28% { opacity: 0; transform: translateY(4px); } 32%,88% { opacity: 1; transform: none; } 96%,100% { opacity: 0; } }
+  @keyframes key { 0%,14% { opacity: .35; } 18%,80% { opacity: 1; } 90%,100% { opacity: .35; } }
+  @media (prefers-reduced-motion: reduce) { .demo * { animation: none !important; } .demo .r1, .demo .r3 { background: color-mix(in srgb, var(--cta) 22%, transparent); } }
+
+  .rec { margin-top: 34px; max-width: 1312px; font-size: 13.5px; border-top: 1px solid #333; padding-top: 16px; }
+  [data-theme="midnight-light"] .rec { border-color: #bbb; }
+  .rec h2 { font-size: 15px; margin: 0 0 6px; }
+  .rec p { margin: 4px 0; }
+</style>
+</head>
+<body>
+<button class="toggle" onclick="document.documentElement.dataset.theme = document.documentElement.dataset.theme === 'midnight' ? 'midnight-light' : 'midnight'">深色 / 浅色</button>
+<h1>侧栏多选 · 悬浮气泡提示</h1>
+<p class="lead">四版气泡，区别主要在「什么时候冒出来」。气泡外观统一沿用应用现有悬浮提示（.ccode-tooltip）的底和边，零阴影；键位按平台写（Mac ⌘ / ⇧，Windows Ctrl / Shift）。每版都只出现一次，用过一次多选后永不再出。</p>
+
+<div class="grid">
+
+<!-- ======== A 首次悬停 ======== -->
+<section class="card">
+  <h2><b>A</b>第一次停在对话上时</h2>
+  <div class="frame">
+    <div class="rail">
+      <div class="nav"><i></i>工作台</div>
+      <div class="nav"><i></i>对话管理</div>
+      <div class="folder"><i></i>镁硫电池综述</div>
+      <div class="row sel">综述大纲第二版</div>
+      <div class="row">镁硫电池第5篇精读</div>
+      <div class="row hover">镁硫电池第4篇精读<span class="more">⋯</span></div>
+      <div class="row">镁硫电池第3篇精读</div>
+      <div class="row">镁硫电池第2篇精读</div>
+      <div class="row">镁硫电池第1篇精读</div>
+      <div class="cursor" style="left:150px; top:182px"><svg width="14" height="20" viewBox="0 0 14 20"><path d="M1 1v15l4-4 3 7 2.4-1-3-7h5.6z" fill="#fff" stroke="#000" stroke-width="1"/></svg></div>
+    </div>
+    <div class="canvas">
+      <div class="bub"></div><div class="ln" style="width:80%"></div><div class="ln" style="width:64%"></div><div class="ln" style="width:72%"></div>
+      <div class="tip l" style="left:-6px; top:160px; --ay:22px">
+        <div class="t">一次处理好几段</div>
+        <div class="b">按住 <kbd>⌘</kbd> 点几段对话，或按住 <kbd>⇧</kbd> 连着选一整段，选好后一起置顶或归档。</div>
+        <div class="foot"><span class="btn pri">知道了</span></div>
+      </div>
+    </div>
+  </div>
+  <ul class="spec">
+    <li>何时出：侧栏里列着 ≥ 6 段对话，鼠标第一次在某一行上停满 1 秒</li>
+    <li>贴在这一行右边、伸到画布上，不挡侧栏</li>
+    <li>何时收：点「知道了」/ 点别处 / 按 Esc；之后永不再出</li>
+    <li>好处：人人都能看到；代价：还没想用多选的人也会被打断一次</li>
+  </ul>
+</section>
+
+<!-- ======== B 顺手提示 ======== -->
+<section class="card">
+  <h2><b>B</b>一段段地归档 / 置顶时顺手提醒</h2>
+  <div class="frame">
+    <div class="rail">
+      <div class="nav"><i></i>工作台</div>
+      <div class="nav"><i></i>对话管理</div>
+      <div class="folder"><i></i>随手聊</div>
+      <div class="row">测试一下</div>
+      <div class="row hover">未命名对话 123321<span class="more">⋯</span></div>
+      <div class="row">翻译这段摘要</div>
+      <div class="row">hello</div>
+      <div class="row">改一下图注</div>
+      <div class="folder"><i></i>镁硫电池综述</div>
+    </div>
+    <div class="canvas">
+      <div class="bub"></div><div class="ln" style="width:80%"></div><div class="ln" style="width:64%"></div>
+      <div class="tip l" style="left:-6px; top:134px; --ay:16px; width:248px">
+        <span class="close">×</span>
+        <div class="t">刚归档了 2 段</div>
+        <div class="b">要一次收拾好几段，按住 <kbd>⌘</kbd> 点选它们，侧栏底下会出现「已选 N 段」，一起归档。</div>
+        <div class="foot"><span class="btn">不用了</span><span class="btn pri">从这段开始选</span></div>
+      </div>
+    </div>
+  </div>
+  <ul class="spec">
+    <li>何时出：1 分钟内用 ⋯ / 右键对单段做了第 2 次归档（或置顶）</li>
+    <li>贴在鼠标下一段要处理的那行旁边</li>
+    <li>「从这段开始选」= 直接把这一行选上，底下的「已选 1 段」条出现</li>
+    <li>好处：只在真有需要时说，最不打扰；代价：从不批量收拾的人永远看不到</li>
+  </ul>
+</section>
+
+<!-- ======== C 动画示意 ======== -->
+<section class="card">
+  <h2><b>C</b>带小动画的说明气泡</h2>
+  <div class="frame">
+    <div class="rail">
+      <div class="nav"><i></i>工作台</div>
+      <div class="nav"><i></i>对话管理</div>
+      <div class="folder"><i></i>镁硫电池综述</div>
+      <div class="row sel">综述大纲第二版</div>
+      <div class="row hover">镁硫电池第5篇精读<span class="more">⋯</span></div>
+      <div class="row">镁硫电池第4篇精读</div>
+      <div class="row">镁硫电池第3篇精读</div>
+      <div class="row">镁硫电池第2篇精读</div>
+    </div>
+    <div class="canvas">
+      <div class="tip l" style="left:-6px; top:92px; --ay:58px; width:262px">
+        <div class="demo">
+          <div class="r r1"><i style="width:62%"></i></div>
+          <div class="r"><i style="width:48%"></i></div>
+          <div class="r r3"><i style="width:56%"></i></div>
+          <div class="mbar"><span>已选 2 段</span><span>置顶</span><span>归档</span></div>
+          <kbd class="key">⌘</kbd>
+          <div class="cur"><svg width="11" height="16" viewBox="0 0 14 20"><path d="M1 1v15l4-4 3 7 2.4-1-3-7h5.6z" fill="#fff" stroke="#000" stroke-width="1"/></svg></div>
+        </div>
+        <div class="t">侧栏可以多选了</div>
+        <div class="b">按住 <kbd>⌘</kbd> 点几段对话，一起置顶或归档。<kbd>⇧</kbd> 点连着选，<kbd>Esc</kbd> 取消。</div>
+        <div class="foot"><span class="btn pri">知道了</span></div>
+      </div>
+    </div>
+  </div>
+  <ul class="spec">
+    <li>何时出：同 A（第一次停 1 秒），或作为「新功能」更新后第一次打开时出一次</li>
+    <li>上半是 4.8 秒循环小动画：按住 ⌘ → 点两行 → 底下出「已选 2 段」</li>
+    <li>系统开了「减弱动态效果」时只显示静止的结果画面</li>
+    <li>好处：一眼看懂；代价：最大、最像新手引导</li>
+  </ul>
+</section>
+
+<!-- ======== D 接着教 ======== -->
+<section class="card">
+  <h2><b>D</b>第一次选上一段之后，接着教下一步</h2>
+  <div class="frame">
+    <div class="rail">
+      <div class="nav"><i></i>工作台</div>
+      <div class="nav"><i></i>对话管理</div>
+      <div class="folder"><i></i>镁硫电池综述</div>
+      <div class="row sel">综述大纲第二版</div>
+      <div class="row">镁硫电池第5篇精读</div>
+      <div class="row picked">镁硫电池第4篇精读</div>
+      <div class="row">镁硫电池第3篇精读</div>
+      <div class="row">镁硫电池第2篇精读</div>
+      <div class="tip d" style="left:10px; bottom:46px; width:226px; --ax:30px">
+        <div class="b" style="opacity:1">再按住 <kbd>⌘</kbd> 点几段加进来；按住 <kbd>⇧</kbd> 点，从这段连着选到那段。</div>
+      </div>
+      <div class="bar"><span>已选 1 段</span><span class="act">置顶</span><span class="act">归档</span><span class="x">×</span></div>
+    </div>
+    <div class="canvas">
+      <div class="bub"></div><div class="ln" style="width:80%"></div><div class="ln" style="width:64%"></div><div class="ln" style="width:72%"></div>
+    </div>
+  </div>
+  <ul class="spec">
+    <li>何时出：第一次选上一段时（⌘ 点进来的，或 B 的「从这段开始选」进来的）</li>
+    <li>贴在树底「已选 1 段」那条上方，不带按钮</li>
+    <li>选到第 2 段、或取消选择时自己消失；之后永不再出</li>
+    <li>它只教「接下来怎么选」，不负责让人发现多选——要和 A / B / C 之一搭配</li>
+  </ul>
+</section>
+
+</div>
+
+<div class="rec">
+  <h2>我的建议：B + D</h2>
+  <p>B 只在用户正一段段收拾时出现，这时候说「可以一起选」最有用、最不烦人；点「从这段开始选」接上 D，教完 ⌘ / ⇧ 两种选法后自己消失。</p>
+  <p>如果希望每个人都至少看到一次，把 B 换成 A（文字气泡），C 的小动画留给发版后「新功能」提示用。</p>
+</div>
+</body>
+</html>

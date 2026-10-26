@@ -1349,6 +1349,77 @@ html[data-material="none"] .ccode-app-rail .bg-rail-sel {
   }
 }
 
+/* 一次性悬浮气泡（CoachTip，2026-10-27 侧栏多选起用，设计稿 docs/design-rail-multiselect-tip-mockup.html）：
+   底与边同 .ccode-tooltip、零阴影；小三角是同底同边的旋转方块，去掉朝里的两条边。
+   定位（fixed / absolute）交给调用处的 Tailwind 类——这里写 position 会压过工具类 */
+.ccode-coach {
+  background-color: #2c2c2e;
+  border: 1px solid rgb(255 255 255 / 0.2);
+  border-radius: 9px;
+  color: #ececec;
+  font-size: 12.5px;
+  line-height: 1.6;
+  animation: ccode-pop 150ms var(--ccode-motion-ease);
+}
+/* 标题比正文（12.5px，同悬停提示）大半号 */
+.ccode-coach-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.ccode-coach::after {
+  content: "";
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  background-color: inherit;
+  border: inherit;
+  border-radius: 0;
+  transform: rotate(45deg);
+}
+.ccode-coach[data-arrow="left"]::after {
+  left: -5.5px;
+  top: var(--coach-arrow, 14px);
+  border-top-width: 0;
+  border-right-width: 0;
+}
+.ccode-coach[data-arrow="down"]::after {
+  bottom: -5.5px;
+  left: var(--coach-arrow, 24px);
+  border-top-width: 0;
+  border-left-width: 0;
+}
+.ccode-coach kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  margin: 0 2px;
+  border: 1px solid rgb(255 255 255 / 0.22);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1;
+  vertical-align: 1px;
+}
+[data-theme$="-light"] .ccode-coach {
+  background-color: #f6f6f6;
+  border-color: rgb(0 0 0 / 0.16);
+  color: #1d1d1f;
+}
+[data-theme$="-light"] .ccode-coach kbd {
+  border-color: rgb(0 0 0 / 0.2);
+}
+@media (forced-colors: active) {
+  .ccode-coach,
+  .ccode-coach kbd {
+    background-color: Canvas;
+    border-color: CanvasText;
+    color: CanvasText;
+  }
+}
+
 /* ===== 浮层退场与锚定（apple-motion 手感批 2026-10-12）=====
    emil §7 空间一致性：从哪来回哪去——退场沿入场路径逆向、时长对称。
    组件侧由 src/exit-animation.ts 控制延迟卸载（reduced-motion 直接跳过）；

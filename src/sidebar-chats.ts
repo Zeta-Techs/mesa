@@ -120,6 +120,31 @@ export function nextPicked(
   return new Set(order.slice(Math.min(a, b), Math.max(a, b) + 1));
 }
 
+/** 多选的两条一次性气泡（2026-10-27，设计稿 docs/design-rail-multiselect-tip-mockup.html）出过就记下：
+ *  nudge = 一段段归档 / 置顶时提醒能多选；next = 选上第一段后教怎么接着选。用过一次多选（选到 2 段）两条都算出过 */
+export const PICK_NUDGE_SEEN_KEY = "ccode.railPickNudgeSeen";
+export const PICK_NEXT_SEEN_KEY = "ccode.railPickNextSeen";
+export const PICK_NUDGE_WINDOW_MS = 60_000;
+
+export type SingleAct = { kind: "archive" | "pin"; at: number };
+
+/** 对单段做了一次归档 / 置顶：记下来，并判断该不该提醒能多选——1 分钟内同一件事做到第 2 次 */
+export function noteSingleAct(
+  prev: readonly SingleAct[],
+  kind: SingleAct["kind"],
+  now: number,
+): { acts: SingleAct[]; nudge: boolean } {
+  const acts = [...prev.filter((a) => now - a.at < PICK_NUDGE_WINDOW_MS), { kind, at: now }];
+  return { acts, nudge: acts.filter((a) => a.kind === kind).length >= 2 };
+}
+
+/** 提醒贴哪一行：刚处理的那段在侧栏里的下一段（没有就上一段），就是接下来最可能要处理的那段 */
+export function nudgeAnchor(order: readonly string[], key: string): string | null {
+  const i = order.indexOf(key);
+  if (i < 0) return null;
+  return order[i + 1] ?? order[i - 1] ?? null;
+}
+
 /** 「置顶」一节列哪几段：按置顶顺序，归档 / 内部 / 源文件不在的不列（同各课题口径） */
 export function pinnedChats(sessions: readonly SessionMetaDto[], pins: readonly string[]): SessionMetaDto[] {
   const byKey = new Map(sessions.filter(listable).map((s) => [`${s.agent}\n${s.sessionId}`, s]));
