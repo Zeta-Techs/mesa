@@ -16,6 +16,9 @@ import {
 // 拼法要和 Mesa 界面「纳入」时追加 RIS 的那份（screening-review.ts risBody）逐条一致——两边对不上，
 // 人点纳入后追加的那条和检索步写的就是两种样子，同步进 Zotero / EndNote 也是两种样子。
 const python = process.platform === "win32" ? "python" : "python3";
+// 脚本里有联网补全（Crossref、ISO 4 缩写表 LTWA）：测试一律连不上外网，免得外部站点变慢就拖到超时（2026-10-26 CI：
+// issn.org 对 runner 一直不回，用例卡满超时被杀）。出站指向不监听的本机代理，连接当场被拒、脚本走离线分支
+for (const k of ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"]) process.env[k] = "http://127.0.0.1:9";
 const script = resolve("src-tauri/resources/skills/lit-search/scripts/lit_records.py");
 const bridge = resolve("src-tauri/resources/skills/endnote-bridge/scripts/bridge.py");
 const run = (args: string[], cwd: string) =>
