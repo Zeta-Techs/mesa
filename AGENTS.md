@@ -81,9 +81,12 @@ npm run tauri build    # 打包
 - **dev 端口固定 17575**（勿改回 1420；agent 不得自行改端口或另起配置外实例，被占先报占用方交用户处理）。
   第二实例走 `npm run tauri:dev:17576`，验收三锚点 = 仓库路径 + 窗口标题后缀 + devUrl 端口（细则见 environment.md）。
 - **git 提交与单人开发流程（2026-09-22 定稿）**：日常直接在 main 上开发，三条纪律——
-  ① **一个主题一个提交**，提交时基线全绿（`npm test` + `cd src-tauri && cargo test` + `npm run build` 都过）；
+  ① **一个主题一个提交**，提交时**改到的那一侧**基线全绿（2026-10-26 用户拍板，取代「每次三样全跑」）：
+  只改文档不跑；只改 Rust 跑 `cd src-tauri && cargo test`（全量，不能只跑改到的模块）；只改前端跑 `npm test` + `npm run build`；
+  两侧都改，或动了两侧共用的东西（共读的 `tests/fixtures/` 样例、Tauri 命令名与参数、DTO 字段名、双端镜像逻辑）三样全跑；
+  拿不准算哪种就全跑。CI 每次 push 在两平台三样全跑兜底，本地漏判的代价是 main 红，红了当次处理。
   禁止攒多主题「一系列修复」式大杂烩提交（提交太大 `git bisect` 定位不了回退）。**`node --test` 只剥类型
-  不做类型检查**，tsc 错误只有 `npm run build` 抓得住，提交前必须跑（2026-09-22 实证：三处 tsc 错误
+  不做类型检查**，tsc 错误只有 `npm run build` 抓得住，改了前端提交前必须跑（2026-09-22 实证：三处 tsc 错误
   带病进了 main，本地测试全绿）。
   ② 几天的大功能或实验性改动开分支（`git switch -c feat/...`），做完 `git merge --no-ff` 回 main；
   已 push 的历史禁止 rebase/amend 改写。单晚小修、文档直接 main。

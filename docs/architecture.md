@@ -457,6 +457,10 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-26 · 提交前基线按改到的那一侧跑
+
+用户问「每次修改提交前都要三样全跑吗」后拍板改 AGENTS.md：取代 2026-09-22「提交时 `npm test` + `cargo test` + `npm run build` 都过」。只改文档不跑；只改 Rust 跑全量 `cargo test`；只改前端跑 `npm test` + `npm run build`；两侧都改或动了两侧共用的东西（共读的 `tests/fixtures/` 样例、Tauri 命令名与参数、DTO 字段名、双端镜像逻辑）三样全跑，拿不准就全跑。理由：Windows 上一次 Rust 全量构建就要几分钟，跨侧跑换不来信号（改 Rust 不会让 tsc 报错，反之亦然）；CI 每次 push 两平台三样全跑兜底。「基线必须保持全绿」「改了前端必须跑 `npm run build`」不变。
+
 ### 2026-10-25 · z-30 全屏页三平台都让出标题栏
 
 用户贴截图：全屏编辑的头一行（文件名 · 全屏编辑 · 保存 · 退出）和 macOS 红绿灯、右上帮助 / ⌘K / 待处理叠在一起。原来只有 Windows 规定页内全屏层从标题栏下沿起铺；现在 `.ccode-app-shell .fixed.inset-0.z-30:not(.ccode-covers-titlebar)` 三个平台都 `top: var(--ccode-titlebar-h)`（全屏阅读 / 编辑、流水线编辑器、保存历史一起好）。z≥40 的弹窗遮罩在 macOS / Linux 照旧盖住标题栏（只压暗不叠字）。

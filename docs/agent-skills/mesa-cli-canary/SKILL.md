@@ -116,7 +116,7 @@ node --experimental-strip-types scripts/screen-corpus/add-from-capture.ts /tmp/c
 
 ## 第五步：验证与提交
 
-三套基线全绿才提交（AGENTS.md 硬约束；`node --test` 不做类型检查，`npm run build` 一定要跑）：
+按改到的那一侧跑基线再提交（AGENTS.md 硬约束「git 提交与单人开发流程」①；改了前端 `npm run build` 一定要跑——`node --test` 不做类型检查；只改了 `baseline/` 指纹不用跑）。两侧都改时三样全跑：
 
 ```bash
 npm test
