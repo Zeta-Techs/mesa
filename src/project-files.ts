@@ -173,3 +173,30 @@ export function artifactPreviewSurface(
   }
   return "jump";
 }
+
+/** 收起的文件夹行尾写里面有几项：0 写「空」，封顶（后端数到 1000 停）写「999+」；没数（旧数据 / 读不了）不写 */
+export function folderCountLabel(count: number | null | undefined): string | null {
+  if (count == null) return null;
+  if (count <= 0) return "空";
+  if (count >= 1000) return "999+";
+  return String(count);
+}
+
+/**
+ * Shift 点选：从锚点到这一行（含两端，按当前看得见的文件顺序）。锚点不在当前列表里
+ * （刚换了筛选 / 被删了）就只选这一行。
+ */
+export function rangeSelect(order: readonly string[], anchor: string | null, target: string): string[] {
+  const to = order.indexOf(target);
+  if (to < 0) return [];
+  const from = anchor ? order.indexOf(anchor) : -1;
+  if (from < 0) return [target];
+  const [a, b] = from <= to ? [from, to] : [to, from];
+  return order.slice(a, b + 1);
+}
+
+/** 多选后「问 AI」的开场白：一份一行，带空格的路径加引号（与单份「请看这份文件」同口径） */
+export function batchAskPrompt(paths: readonly string[]): string {
+  const lines = paths.map((p) => `- ${/\s/.test(p) ? `"${p}"` : p}`);
+  return `请看这几份文件：\n${lines.join("\n")}`;
+}

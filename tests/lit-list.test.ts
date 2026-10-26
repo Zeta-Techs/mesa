@@ -7,6 +7,7 @@ import {
   pickContinueNotePath,
   listPreviewToggleLabel,
   litReadState,
+  pdfLitState,
   litRowMatches,
   splitNoteSeq,
 } from "../src/lit-list.ts";
@@ -88,4 +89,16 @@ test("笔记排序：最近优先，同分走编号", () => {
   assert.equal(recent[0].name, "01-a.md");
   const seq = [...rows].sort((a, b) => compareNotes(a, b, "seq"));
   assert.equal(seq[0].name, "01-a.md");
+});
+
+test("PDF 行阅读状态：笔记 > 精读清单 > 积累清单 > 未读；非 PDF 恒为未读", () => {
+  const pdf = "/p/papers/Boride catalysts for hydrogen evolution.pdf";
+  const empty = { notes: [], included: [], readingList: [] };
+  assert.equal(pdfLitState(pdf, empty), "unread");
+  const t = [{ title: "Boride catalysts for hydrogen evolution" }];
+  assert.equal(pdfLitState(pdf, { ...empty, readingList: t }), "accumulated");
+  assert.equal(pdfLitState(pdf, { ...empty, readingList: t, included: t }), "queued");
+  const notes = [{ notePath: "/p/notes/x.md", noteName: "x.md", pdfRel: "papers/Boride catalysts for hydrogen evolution.pdf" }];
+  assert.equal(pdfLitState(pdf, { notes, included: t, readingList: t }), "read");
+  assert.equal(pdfLitState("/p/papers/Boride catalysts for hydrogen evolution.md", { notes, included: t, readingList: t }), "unread");
 });

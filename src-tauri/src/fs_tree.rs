@@ -21,6 +21,31 @@ pub struct DirEntryDto {
     pub modified: Option<String>, // ISO 时间
     /// 家目录直下的系统目录（macOS 的 Library 等）：前端置灰降噪，交互不受影响
     pub is_system: bool,
+    /// 文件夹里直接有几项（同一套隐藏规则，数到 CHILD_COUNT_CAP 为止）；只有调用方要了才数，文件为 None
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub child_count: Option<u32>,
+}
+
+/// 文件夹行数量的封顶：再多只显示「999+」，不为一个数字把几万项的目录读完
+const CHILD_COUNT_CAP: u32 = 1000;
+
+/// 列表里看得见的条目名（.ccode 豁免见 list_dir_sync）
+fn listed_name(name: &str, show_hidden: bool) -> bool {
+    show_hidden || !name.starts_with('.') || name == ".ccode"
+}
+
+fn count_children(dir: &std::path::Path, show_hidden: bool) -> Option<u32> {
+    let rd = fs::read_dir(dir).ok()?;
+    let mut n = 0u32;
+    for e in rd.flatten() {
+        if listed_name(&e.file_name().to_string_lossy(), show_hidden) {
+            n += 1;
+            if n >= CHILD_COUNT_CAP {
+                break;
+            }
+        }
+    }
+    Some(n)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -74,7 +99,11 @@ fn iso_from_unix(secs: u64) -> String {
     format!("{y:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}Z")
 }
 
-fn list_dir_sync(path: &str, show_hidden: bool) -> Result<Vec<DirEntryDto>, String> {
+fn list_dir_sync(
+    path: &str,
+    show_hidden: bool,
+    with_counts: bool,
+) -> Result<Vec<DirEntryDto>, String> {
     let dir = expand_tilde(path);
     let rd = fs::read_dir(&dir).map_err(|e| format!("读取目录失败: {e}"))?;
     let mut entries = Vec::new();
@@ -82,7 +111,7 @@ fn list_dir_sync(path: &str, show_hidden: bool) -> Result<Vec<DirEntryDto>, Stri
         let name = e.file_name().to_string_lossy().into_owned();
         // .ccode 目录豁免：任务书草稿（drafts/）等是用户要找的内容，默认隐藏会让人找不到
         // （预览关掉后只能从这里重新打开）；其余点开头条目照旧隐藏
-        if !show_hidden && name.starts_with('.') && name != ".ccode" {
+        if !listed_name(&name, show_hidden) {
             continue;
         }
         // 读不到元数据的条目（坏链接、权限不足）静默跳过
@@ -101,6 +130,11 @@ fn list_dir_sync(path: &str, show_hidden: bool) -> Result<Vec<DirEntryDto>, Stri
             is_dir: md.is_dir(),
             size: if md.is_dir() { 0 } else { md.len() },
             modified,
+            child_count: if with_counts && md.is_dir() {
+                count_children(&e.path(), show_hidden)
+            } else {
+                None
+            },
         });
         if entries.len() >= LIST_CAP {
             break;
@@ -271,12 +305,13 @@ pub async fn list_dir(
     path: String,
     show_hidden: bool,
     root: Option<String>,
+    with_counts: Option<bool>,
 ) -> Result<Vec<DirEntryDto>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         if let Some(root) = root {
             require_inside_root(&path, &root)?;
         }
-        list_dir_sync(&path, show_hidden)
+        list_dir_sync(&path, show_hidden, with_counts.unwrap_or(false))
     })
     .await
     .map_err(|e| format!("读取目录失败: {e}"))?
@@ -837,7 +872,7 @@ mod tests {
         fs::write(dir.join("Gamma.txt"), "x").unwrap();
         fs::write(dir.join(".hidden"), "x").unwrap();
         fs::create_dir_all(dir.join(".ccode/drafts")).unwrap();
-        let entries = list_dir_sync(dir.to_str().unwrap(), false).unwrap();
+        let entries = list_dir_sync(dir.to_str().unwrap(), false, false).unwrap();
         let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, [".ccode", "Alpha", "zeta", "beta.txt", "Gamma.txt"]);
         assert!(entries[0].is_dir && entries[1].is_dir);
@@ -845,8 +880,27 @@ mod tests {
         assert!(entries[3].modified.is_some());
         assert!(!names.contains(&".hidden"), "默认不显示隐藏文件");
         assert!(names.contains(&".ccode"), ".ccode 目录豁免默认隐藏");
-        let with_hidden = list_dir_sync(dir.to_str().unwrap(), true).unwrap();
+        let with_hidden = list_dir_sync(dir.to_str().unwrap(), true, false).unwrap();
         assert!(with_hidden.iter().any(|e| e.name == ".hidden"));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn list_dir_counts_children_only_when_asked() {
+        let dir = tmpdir("counts");
+        fs::create_dir_all(dir.join("papers/sub")).unwrap();
+        fs::write(dir.join("papers/a.pdf"), "x").unwrap();
+        fs::write(dir.join("papers/.DS_Store"), "x").unwrap();
+        fs::create_dir_all(dir.join("empty")).unwrap();
+        fs::write(dir.join("top.md"), "x").unwrap();
+        let plain = list_dir_sync(dir.to_str().unwrap(), false, false).unwrap();
+        assert!(plain.iter().all(|e| e.child_count.is_none()), "不要就不数");
+        let counted = list_dir_sync(dir.to_str().unwrap(), false, true).unwrap();
+        let count = |name: &str| counted.iter().find(|e| e.name == name).unwrap().child_count;
+        // 隐藏文件不算，和列表看得见的一致
+        assert_eq!(count("papers"), Some(2));
+        assert_eq!(count("empty"), Some(0));
+        assert_eq!(count("top.md"), None, "文件不数");
         fs::remove_dir_all(&dir).ok();
     }
 

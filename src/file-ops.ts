@@ -46,15 +46,26 @@ export async function pickAndMove(
   root: string,
   isWindows: boolean,
 ): Promise<string | null> {
+  const dest = await pickMoveTarget(parentDir(path) ?? root, root, isWindows);
+  if (!dest) return null;
+  return invoke<string>("fs_move_path", { path, destDir: dest, root });
+}
+
+/** 系统选文件夹窗挑「移到哪」：只认项目里的文件夹；取消返回 null（多选批量移动也走它，只问一次） */
+export async function pickMoveTarget(
+  defaultDir: string,
+  root: string,
+  isWindows: boolean,
+): Promise<string | null> {
   const picked = await open({
     directory: true,
     multiple: false,
-    defaultPath: parentDir(path) ?? root,
+    defaultPath: defaultDir,
     title: "移到项目里的哪个文件夹",
   });
   if (typeof picked !== "string") return null;
   if (!pathWithin(picked, root, isWindows)) throw new Error("只能移到这个项目里的文件夹");
-  return invoke<string>("fs_move_path", { path, destDir: picked, root });
+  return picked;
 }
 
 /** 拖进窗口的文件 / 文件夹复制到 destDir（后端只认原生拖放交来的路径），返回落地后的路径 */

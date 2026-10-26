@@ -2,12 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   ancestorDirsToReveal,
+  artifactPreviewSurface,
+  batchAskPrompt,
   fileMatchesProjectFilter,
   flattenVisibleFiles,
+  folderCountLabel,
   inTypingContext,
   neighborFile,
-  artifactPreviewSurface,
   projectFilePreviewKind,
+  rangeSelect,
   supportsImmersiveReader,
 } from "../src/project-files.ts";
 
@@ -110,5 +113,29 @@ test("ancestorDirsToReveal：展开到文件所在目录，不含根", () => {
   assert.deepEqual(
     ancestorDirsToReveal("C:\\p", "C:\\p\\papers\\a.pdf", true),
     ["C:\\p\\papers"],
+  );
+});
+
+test("文件夹行数量：0 写空、封顶写 999+、没数不写", () => {
+  assert.equal(folderCountLabel(undefined), null);
+  assert.equal(folderCountLabel(null), null);
+  assert.equal(folderCountLabel(0), "空");
+  assert.equal(folderCountLabel(28), "28");
+  assert.equal(folderCountLabel(1000), "999+");
+});
+
+test("Shift 连选：锚点到目标含两端，反向也行；锚点不在列表里只选目标", () => {
+  const order = ["/p/a", "/p/b", "/p/c", "/p/d"];
+  assert.deepEqual(rangeSelect(order, "/p/b", "/p/d"), ["/p/b", "/p/c", "/p/d"]);
+  assert.deepEqual(rangeSelect(order, "/p/d", "/p/b"), ["/p/b", "/p/c", "/p/d"]);
+  assert.deepEqual(rangeSelect(order, null, "/p/c"), ["/p/c"]);
+  assert.deepEqual(rangeSelect(order, "/gone", "/p/c"), ["/p/c"]);
+  assert.deepEqual(rangeSelect(order, "/p/a", "/gone"), []);
+});
+
+test("多选问 AI 的开场白：一份一行，带空格的路径加引号", () => {
+  assert.equal(
+    batchAskPrompt(["/p/a.pdf", "/p/my paper.pdf"]),
+    '请看这几份文件：\n- /p/a.pdf\n- "/p/my paper.pdf"',
   );
 });

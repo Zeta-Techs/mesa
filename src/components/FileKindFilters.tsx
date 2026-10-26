@@ -1,28 +1,12 @@
-import {
-  Clock,
-  FileSpreadsheet,
-  FileText,
-  Image,
-  LayoutGrid,
-  Presentation,
-  type LucideIcon,
-} from "lucide-react";
+import { Clock } from "lucide-react";
 import { OFFICE_FILTERS } from "../work-mode";
 import type { OfficeDocKind } from "../work-mode";
 import type { ProjectFileFilter } from "../project-files";
 
 type KindFilter = (typeof OFFICE_FILTERS)[number]["id"];
 
-const ICONS: Record<KindFilter, LucideIcon | "pdf"> = {
-  all: LayoutGrid,
-  doc: FileText,
-  sheet: FileSpreadsheet,
-  slide: Presentation,
-  pdf: "pdf",
-  image: Image,
-  other: FileText,
-};
-
+/** 类型筛选写字不画图标（2026-10-26 用户拍板）：文件行换成线条类型图标后，
+ *  「文档」钮的页面图标和 PDF 行同形，PDF 钮又是字，一排里图标和字混着认不准 */
 const LABELS: Record<KindFilter, string> = {
   all: "全部",
   doc: "文档",
@@ -62,7 +46,6 @@ export default function FileKindFilters({
           item.id === "all" || item.id === filter || counts[item.id] > 0,
       ).map((item) => {
         const count = item.id === "all" ? 0 : counts[item.id];
-        const Icon = ICONS[item.id];
         const selected = filter === item.id;
         const label = LABELS[item.id];
         return (
@@ -71,16 +54,11 @@ export default function FileKindFilters({
             type="button"
             role="radio"
             aria-checked={selected}
-            title={label}
             aria-label={count > 0 ? `${label} ${count}` : label}
             className={capsule(selected)}
             onClick={() => onChange(item.id)}
           >
-            {Icon === "pdf" ? (
-              <span className="font-mono text-micro">PDF</span>
-            ) : (
-              <Icon size={13} strokeWidth={1.8} />
-            )}
+            {label}
             {count > 0 && <span className="text-micro text-l4">{count}</span>}
           </button>
         );

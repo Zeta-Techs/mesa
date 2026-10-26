@@ -208,7 +208,9 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 预览三宿主（侧栏/窄屏/窗口弹层）同屏只挂一份（窗口态侧栏不双挂）；未保存编辑在换文件/
                              # 关预览/关窗口前经 confirmLoseDirty 确认（dirtyRef 由 ProjectFilePreview.onDirtyChange 上报）；
                              # 右键菜单（打开终端/新建文件夹/复制路径/删除走回收站 fs_delete_path）、「最近」视图（officeDocs
-                             # 后端已按修改时间降序）、搜索/筛选态预览头「定位」退回树视图展开父链；2000/400 截断点名
+                             # 后端已按修改时间降序）、搜索/筛选态预览头「定位」退回树视图展开父链；2000/400 截断点名；
+                             # 多选（只选文件，⌘/Ctrl 加减 + Shift 连选，批量条 问 AI / 加入积累 / 移动 / 删除，右键选中行出批量菜单）、
+                             # PDF 行阅读状态（pdfLitState，三份清单 1.5s 防抖重读）、收起文件夹行尾数量（list_dir withCounts）
   components/CloseoutPack.tsx # 项目卡「完结文件」：按脉络列出已写出的文件，点开到文件页
   internal-sessions.ts       # 设置页「Mesa 内部对话」卡片纯逻辑：保留天数档、体积白话、立即清理确认文案（tests/internal-sessions.test.ts）
   notice-text.ts             # 提示条 / 浮动提示正文分层（首句=结果标题，其余按句成说明行）+ 停留时长（tests/notice-text.test.ts）
@@ -479,6 +481,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 未收录返回 null，画通用文件图标，不留空槽；图形到 Lucide 的映射与渲染在 components/FileTypeMark.tsx；
                              # isPreviewableImagePath（png/jpg/gif/webp/svg，tests/file-icons.test.ts）
   project-files.ts           # 文件页纯逻辑：预览形态分流 / 类型筛选（recent 是视图不参与类型收窄）/
+                             # folderCountLabel（文件夹行数量）/ rangeSelect（Shift 连选）/ batchAskPrompt（多选问 AI 开场白）/
                              # 展开链 ancestorDirsToReveal / 上下文件步进 / 沉浸阅读判据唯一落点 /
                              # inTypingContext（方向键只在非打字焦点接管，Monaco/输入框放行；tests/project-files.test.ts）
   sheet-preview.ts           # Excel 预览纯逻辑：列字母 / 单元格引用 / 截断文案 /
@@ -771,7 +774,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   kickoff-inputs.ts          # 开步确认弹层「上一步接到的输入」芯片；isDeclaredStepInput 排除已声明输入，不进未登记列表；
                              #   unsavedUpstreamSteps：前面哪些步骤（进行中/待评审/有冲突）的产物与本步必读输入重叠、还没保存进项目
                              #   （模式按首个 * 前缀互相覆盖判定，宁多认；tests/kickoff-upstream.test.ts）
-  lit-list.ts                # 无流程科研文献/笔记列表：展示名、编号、状态与过滤纯逻辑
+  lit-list.ts                # 无流程科研文献/笔记列表：展示名、编号、状态与过滤纯逻辑；pdfLitState + LIT_STATE_LABELS（文件页 PDF 行与资源列表同一套状态词）
   model-switch.ts            # 各 CLI 多模型注入能力表 + 启动栏提示纯逻辑（对应 agent_specs.model_switch）；
                              # runtimeModelSwitch 按连接收窄运行中切模型（Kimi 接口连接只带一个模型，/model 别名换不了）
   components/TopNavCapsule.tsx # 隐藏侧栏时的灵动岛：休眠面＝状态（当前页标签 + RunActivityStatus 只读活动 + 只读播报，当前页格聚焦/点击只展开岛）；
@@ -1488,6 +1491,7 @@ src-tauri/src/
   git_info.rs                # git 状态/累计 diff/逐 hunk/勾选提交临时索引；
                              # MERGE_HEAD → merging + git_abort_merge；porcelain 冲突码归 U
   fs_tree.rs                 # 文件树与文件操作（删除走系统回收站 trash；重要路径删除保护，canonicalize 双校验；
+                             # list_dir 可选 withCounts：文件夹带 child_count（同一套隐藏规则，数到 1000 封顶，默认不数）；
                              # existing_files：聊天回复里提到的路径哪些是 cwd 内的文件（只看元数据，返回原样路径 + 规范化绝对路径）；
                              # list_recent_files：项目里最近改过的文件（不限类型，跳过点开头与依赖 / 构建目录，扫 2 万个后按修改时间取前 300；只读元数据），
                              #   与 list_office_docs 共用 office_walk（exts=None 不限类型）；

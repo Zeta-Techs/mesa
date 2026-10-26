@@ -2,7 +2,12 @@
  * 无流程科研文献/笔记列表：展示名、编号、状态与过滤纯逻辑。
  */
 
-import { normalizeTitle } from "./lit-watch.ts";
+import {
+  normalizeTitle,
+  noteLinkForPaper,
+  paperIsIncluded,
+  type PaperNoteLink,
+} from "./lit-watch.ts";
 
 const DISPLAY_EXT = /\.(pdf|md|markdown|mdx|qmd|ris|bib|txt|csv|tsv|docx|xlsx)$/i;
 
@@ -56,6 +61,30 @@ export function litReadState(
   if (included) return "queued";
   if (accumulated) return "accumulated";
   return "unread";
+}
+
+/** 行上的状态字（未读不写）：文件页 PDF 行与资源列表同一套词 */
+export const LIT_STATE_LABELS: Record<Exclude<LitReadState, "unread">, string> = {
+  read: "已读",
+  queued: "已在清单",
+  accumulated: "已积累",
+};
+
+/** 一篇 PDF 的阅读状态：笔记配对、精读清单、积累清单三份事实合起来（非 PDF 恒为未读） */
+export function pdfLitState(
+  path: string,
+  facts: {
+    notes: readonly PaperNoteLink[];
+    included: readonly { title: string }[];
+    readingList: readonly { title: string }[];
+  },
+): LitReadState {
+  if (!/\.pdf$/i.test(path)) return "unread";
+  return litReadState(
+    !!noteLinkForPaper(path, facts.notes),
+    paperIsAccumulated(path, facts.readingList),
+    paperIsIncluded(path, facts.included),
+  );
 }
 
 export const LIT_STATUS_FILTERS: {

@@ -10,7 +10,7 @@ import { build } from "esbuild";
  *  记录下来当「当前预览是谁」的观测点。 */
 const ROOT = "/p";
 
-test("文件页：↑/↓ 步进、打字焦点放行、Esc 关预览、右键菜单、最近视图", async () => {
+test("文件页：↑/↓ 步进、打字焦点放行、Esc 关预览、右键菜单、最近视图、多选、文件夹数量、PDF 阅读状态", async () => {
   const bundle = await build({
     stdin: {
       contents:
@@ -154,6 +154,7 @@ export const languages={register(){},setMonarchTokensProvider(){},getLanguages()
                 isDir: true,
                 size: 0,
                 modified: "2026-10-16T01:00:00Z",
+                childCount: 2,
               },
               {
                 name: "a.md",
@@ -173,6 +174,13 @@ export const languages={register(){},setMonarchTokensProvider(){},getLanguages()
           if (p === `${ROOT}/papers`)
             return [
               {
+                name: "Boride catalysts for hydrogen evolution.pdf",
+                path: `${ROOT}/papers/Boride catalysts for hydrogen evolution.pdf`,
+                isDir: false,
+                size: 5,
+                modified: "2026-10-16T02:00:00Z",
+              },
+              {
                 name: "c.md",
                 path: `${ROOT}/papers/c.md`,
                 isDir: false,
@@ -183,6 +191,10 @@ export const languages={register(){},setMonarchTokensProvider(){},getLanguages()
           return [];
         }
         if (command === "list_office_docs") return officeDocs;
+        if (command === "list_paper_notes") return [];
+        if (command === "list_included_entries")
+          return [{ title: "Boride catalysts for hydrogen evolution" }];
+        if (command === "list_reading_list_entries") return [];
         if (command === "watch_dir") return "w1";
         return null;
       },
@@ -216,6 +228,67 @@ export const languages={register(){},setMonarchTokensProvider(){},getLanguages()
   assert.ok(body.textContent!.includes("a.md"));
   assert.ok(body.textContent!.includes("b.md"));
   assert.ok(body.textContent!.includes("papers"));
+  // 类型筛选写字：「文档」带数量，不再只有图标
+  const filterBar = body.querySelector('[role="radiogroup"][aria-label="文件类型"]')!;
+  assert.ok(filterBar.textContent!.includes("文档"));
+  // 收起的文件夹写里面有几项
+  const papersRow = [...body.querySelectorAll("button[aria-expanded]")].find((b) =>
+    b.textContent!.includes("papers"),
+  )!;
+  assert.ok(papersRow.textContent!.includes("2"));
+
+  // 多选：Ctrl/⌘ 点两份 → 批量操作条；Esc 取消选择
+  const click = (el: Element, mods: Record<string, boolean> = {}) =>
+    act(async () => {
+      el.dispatchEvent(
+        new dom.window.MouseEvent("click", { bubbles: true, cancelable: true, ...mods }),
+      );
+    });
+  const readsBeforePick = reads.length;
+  await click(body.querySelector(`[data-file-path="${ROOT}/a.md"]`)!, { metaKey: true, ctrlKey: true });
+  await click(body.querySelector(`[data-file-path="${ROOT}/b.md"]`)!, { metaKey: true, ctrlKey: true });
+  const bar = () => body.querySelector('[role="toolbar"][aria-label="批量操作"]');
+  assert.ok(bar()?.textContent!.includes("已选 2 个文件"));
+  assert.equal(reads.length, readsBeforePick, "⌘ 点只选不预览");
+  // 没有 PDF 就不出「加入积累」
+  assert.ok(!bar()!.textContent!.includes("加入积累"));
+  // 右键选中的那行 = 批量菜单
+  await act(async () => {
+    body.querySelector(`[data-file-path="${ROOT}/a.md"]`)!.dispatchEvent(
+      new dom.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+    );
+  });
+  assert.ok(body.textContent!.includes("删除 2 个文件"));
+  // 第一下 Esc 先收菜单（菜单退场有动画，等它卸载），第二下才取消选择
+  await act(async () => {
+    dom.window.dispatchEvent(
+      new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+    );
+    await new Promise((r) => setTimeout(r, 400));
+  });
+  assert.ok(bar(), "收菜单的那一下不取消选择");
+  await act(async () => {
+    dom.window.dispatchEvent(
+      new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+    );
+  });
+  assert.equal(bar(), null, "Esc 取消选择");
+
+  // 展开 papers：PDF 行标出阅读状态（在精读清单里 = 已在清单），展开后文件夹不再写数量
+  await click(papersRow);
+  const pdfRow = body.querySelector(
+    `[data-file-path="${ROOT}/papers/Boride catalysts for hydrogen evolution.pdf"]`,
+  )!;
+  assert.ok(pdfRow.textContent!.includes("已在清单"));
+  // Shift 连选：从 a.md 点到 PDF，中间的 b.md 一起选上；有 PDF 才出「加入积累」
+  await click(body.querySelector(`[data-file-path="${ROOT}/papers/c.md"]`)!, { metaKey: true, ctrlKey: true });
+  await click(pdfRow, { shiftKey: true });
+  assert.ok(bar()?.textContent!.includes("已选 2 个文件"));
+  assert.ok(bar()!.textContent!.includes("加入积累"));
+  await click(body.querySelector('[aria-label="取消选择"]')!);
+  assert.equal(bar(), null);
+  // 收起 papers，后面的步进断言照旧只在根下两份之间走
+  await click(papersRow);
 
   // 点文件 → 预览打开（同一文件初次加载可能读两次：初次 + 编辑器 ready 后刷新，
   //  断言只看「最后一次读到谁」）

@@ -59,6 +59,8 @@ export interface DirEntryDto {
   modified: string | null;
   /** 家目录直下的系统目录（macOS Library 等）：置灰降噪，交互不受影响 */
   isSystem?: boolean;
+  /** 文件夹里直接有几项（list_dir 带 withCounts 时才有，项目文件页的文件夹行用） */
+  childCount?: number;
 }
 
 /** git 状态字母配色（M 改 / A·?? 增 / D 删 / R 改名） */

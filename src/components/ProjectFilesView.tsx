@@ -10,6 +10,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
   BookOpen,
+  BookmarkPlus,
   ChevronRight,
   Columns2,
   Copy,
@@ -24,8 +25,10 @@ import {
   MessageSquare,
   Pencil,
   RefreshCw,
+  SquareCheck,
   SquareTerminal,
   Trash2,
+  X,
 } from "lucide-react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useAppStore } from "../store";
@@ -34,6 +37,7 @@ import type { DirEntryDto, SearchResultDto } from "./FileTree";
 import {
   ghostActionClass,
   iconActionClass,
+  inlineActionClass,
   projectWellClass,
   rowActionClass,
   searchFieldClass,
@@ -46,14 +50,20 @@ import { parentDir, pathWithin, revealFolderLabel, samePath } from "../path-util
 import { absTime, relTime } from "../rel-time";
 import {
   ancestorDirsToReveal,
+  batchAskPrompt,
   fileMatchesProjectFilter,
   flattenVisibleFiles,
+  folderCountLabel,
   inTypingContext,
   neighborFile,
   projectFilePreviewKind,
+  rangeSelect,
   supportsImmersiveReader,
   type ProjectFileFilter,
 } from "../project-files";
+import { displayFileTitle, LIT_STATE_LABELS, pdfLitState, type LitReadState } from "../lit-list";
+import type { PaperNoteLink } from "../lit-watch";
+import { toast } from "../toast";
 import { officeKindCounts } from "../project-status";
 import type { OfficeDocDto, RunDto, TaskDto, TaskReviewDto } from "../types";
 import {
@@ -77,6 +87,7 @@ import {
   importDropped,
   nameDraftPrompt,
   pickAndMove,
+  pickMoveTarget,
   stemSelection,
   submitNameDraft as submitNameDraftCmd,
   type NameDraft,
@@ -95,7 +106,8 @@ function sameEntries(a: DirEntryDto[], b: DirEntryDto[]): boolean {
       x.path !== y.path ||
       x.isDir !== y.isDir ||
       x.size !== y.size ||
-      x.modified !== y.modified
+      x.modified !== y.modified ||
+      x.childCount !== y.childCount
     ) {
       return false;
     }
@@ -130,6 +142,39 @@ function FileModified({ iso }: { iso: string | null | undefined }) {
     </span>
   );
 }
+
+/** 文件夹行尾：里面有几项（与文件的修改时间同一位置，悬停同样让位给行内图标） */
+function FolderCount({ count }: { count: number | undefined }) {
+  const label = folderCountLabel(count);
+  if (!label) return null;
+  return (
+    <span className="shrink-0 text-micro text-l4 group-hover:hidden group-focus-within:hidden">
+      {label}
+    </span>
+  );
+}
+
+/** PDF 行的阅读状态（与资源列表同一套词与样式；未读不写） */
+const LIT_PILL: Record<Exclude<LitReadState, "unread">, string> = {
+  read: "bg-inset text-l3",
+  queued: "border border-field bg-canvas text-l2",
+  accumulated: "bg-canvas text-l4",
+};
+function LitPill({ state }: { state: LitReadState }) {
+  if (state === "unread") return null;
+  return (
+    <span className={`inline-flex shrink-0 rounded-full px-1.5 py-px text-micro ${LIT_PILL[state]}`}>
+      {LIT_STATE_LABELS[state]}
+    </span>
+  );
+}
+
+type LitFacts = {
+  notes: PaperNoteLink[];
+  included: { title: string }[];
+  readingList: { title: string }[];
+};
+const NO_LIT_FACTS: LitFacts = { notes: [], included: [], readingList: [] };
 
 function asFileEntry(file: {
   path: string;
@@ -216,6 +261,11 @@ export default function ProjectFilesView({
   const [dropDir, setDropDir] = useState<string | null>(null);
   /** 命中 2000 项展示上限的目录（点名提示；低于上限的重载解除） */
   const [truncDir, setTruncDir] = useState<string | null>(null);
+  /** 多选（只选文件）：⌘ / Ctrl 点加减、Shift 点连选；有选中时列表上方出批量操作条 */
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const pickAnchorRef = useRef<string | null>(null);
+  /** PDF 行阅读状态的三份事实（笔记配对 / 精读清单 / 积累清单），项目切换与文件变化后重读 */
+  const [litFacts, setLitFacts] = useState<LitFacts>(NO_LIT_FACTS);
   const pendingMark = goalReviewCopy(workMode).fileMark;
   const listRef = useRef<HTMLDivElement>(null);
   /** 当前预览的未保存编辑（编辑器上报；换/关预览经 confirmLoseDirty 确认） */
@@ -243,6 +293,7 @@ export default function ProjectFilesView({
         const entries = await invoke<DirEntryDto[]>("list_dir", {
           path,
           showHidden: false,
+          withCounts: true,
         });
         setCache((current) => {
           // 内容没变就保留旧引用：agent 持续写盘期间监听器每轮重载，
@@ -285,9 +336,24 @@ export default function ProjectFilesView({
       .catch(() => setOfficeDocs([]));
   }, []);
 
+  /** 读不到（非科研项目、没有 papers/）就当三份都空：PDF 行不标状态 */
+  const reloadLitFacts = useCallback((root: string) => {
+    void Promise.all([
+      invoke<PaperNoteLink[]>("list_paper_notes", { projectRoot: root }).catch(() => []),
+      invoke<{ title: string }[]>("list_included_entries", { projectRoot: root }).catch(() => []),
+      invoke<{ title: string }[]>("list_reading_list_entries", { projectRoot: root }).catch(() => []),
+    ]).then(([notes, included, readingList]) =>
+      setLitFacts({ notes: notes ?? [], included: included ?? [], readingList: readingList ?? [] }),
+    );
+  }, []);
+
   useEffect(() => {
     setCache({});
     setExpanded(new Set());
+    setPicked(new Set());
+    pickAnchorRef.current = null;
+    setLitFacts(NO_LIT_FACTS);
+    reloadLitFacts(projectPath);
     setPreview(null);
     setCompare(null);
     compareDirtyRef.current = false;
@@ -343,7 +409,7 @@ export default function ProjectFilesView({
         })
         .catch(() => setGoalMarks([]));
     }
-  }, [load, projectPath, reloadOffice, workMode]);
+  }, [load, projectPath, reloadOffice, reloadLitFacts, workMode]);
 
   const cacheRef = useRef(cache);
   cacheRef.current = cache;
@@ -358,6 +424,8 @@ export default function ProjectFilesView({
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     let watchId: string | null = null;
+    // Agent 连续写盘时每 500ms 来一次事件：阅读状态要读三份清单，攒 1.5 秒再读一次
+    let litTimer: number | undefined;
     void (async () => {
       try {
         watchId = await invoke<string>("watch_dir", { path: projectPath });
@@ -369,6 +437,8 @@ export default function ProjectFilesView({
           for (const p of [projectPath, ...expandedRef.current])
             void load(p, true);
           reloadOffice(projectPath);
+          window.clearTimeout(litTimer);
+          litTimer = window.setTimeout(() => reloadLitFacts(projectPath), 1500);
         });
       } catch {
         // 目录不可读等：静默退回手动刷新
@@ -376,15 +446,17 @@ export default function ProjectFilesView({
     })();
     return () => {
       cancelled = true;
+      window.clearTimeout(litTimer);
       unlisten?.();
       if (watchId) invoke("unwatch_dir", { id: watchId }).catch(() => {});
     };
-  }, [projectPath, load, reloadOffice]);
+  }, [projectPath, load, reloadOffice, reloadLitFacts]);
 
   /** 刷新 = 根目录 + 已展开目录全部重拉（旧实现只重载根，子目录永远停在第一次展开） */
   function refresh() {
     for (const p of [projectPath, ...expandedRef.current]) void load(p);
     reloadOffice(projectPath);
+    reloadLitFacts(projectPath);
   }
 
   useEffect(() => {
@@ -617,6 +689,203 @@ export default function ProjectFilesView({
       preferredModel,
     });
   }
+
+  const pickedRef = useRef(picked);
+  pickedRef.current = picked;
+  const pickedList = useMemo(() => [...picked], [picked]);
+  const pickedPdfs = pickedList.filter((p) => /\.pdf$/i.test(p));
+
+  function clearPicked() {
+    setPicked(new Set());
+    pickAnchorRef.current = null;
+  }
+
+  // 换筛选 / 改搜索词后列表换了一批，留着看不见的选中容易误删：一起清掉
+  useEffect(() => {
+    clearPicked();
+  }, [filter, query]);
+
+  /** 点文件行：⌘（Windows / Linux 上 Ctrl）点加减选中，Shift 点从上次点的那行连选；
+   *  普通点照旧预览，并清掉多选。正在预览的那份算「已经点过的」（Finder 同款：先点一份，再 ⌘ / Shift 点另一份） */
+  function clickFile(event: React.MouseEvent, entry: DirEntryDto) {
+    const additive = IS_MAC ? event.metaKey : event.ctrlKey;
+    if (additive || event.shiftKey) {
+      event.preventDefault();
+      const order = visibleFilesRef.current.map((f) => f.path);
+      const current = previewPathRef.current;
+      const seed = current && order.includes(current) ? current : null;
+      const anchor = pickAnchorRef.current ?? seed;
+      setPicked((cur) => {
+        const next = new Set(cur);
+        if (next.size === 0 && seed) next.add(seed);
+        if (event.shiftKey) {
+          for (const p of rangeSelect(order, anchor, entry.path)) next.add(p);
+        } else if (next.has(entry.path)) {
+          next.delete(entry.path);
+        } else {
+          next.add(entry.path);
+        }
+        return next;
+      });
+      if (!event.shiftKey || !anchor) pickAnchorRef.current = entry.path;
+      return;
+    }
+    if (pickedRef.current.size) setPicked(new Set());
+    pickAnchorRef.current = entry.path;
+    void pickFile(entry);
+  }
+
+  /** 右键菜单「选择」：不知道快捷键也能开始多选 */
+  function addToPicked(path: string) {
+    setPicked((cur) => new Set(cur).add(path));
+    pickAnchorRef.current = path;
+  }
+
+  function askAiPicked() {
+    const paths = pickedList;
+    if (paths.length === 0) return;
+    if (paths.length === 1) {
+      askAi(asFileEntry({ path: paths[0], name: baseName(paths[0]) }));
+      return;
+    }
+    beginAskAi({
+      path: paths[0],
+      name: `${paths.length} 个文件`,
+      cwd: projectPath,
+      root: projectPath,
+      reuseKey: `project-files:${projectPath}:${[...paths].sort().join("|")}`,
+      prompt: batchAskPrompt(paths),
+      preferredAgent,
+      preferredProfile,
+      preferredModel,
+    });
+  }
+
+  /** 选中的 PDF 一起进积累清单：题名先按项目题录找真名（与阅读区顶栏同一个查法），找不到用文件名 */
+  async function accumulatePicked() {
+    const pdfs = pickedPdfs;
+    let added = 0;
+    let already = 0;
+    let firstError = "";
+    for (const pdf of pdfs) {
+      try {
+        const known = await invoke<string | null>("reader_paper_title", {
+          projectRoot: projectPath,
+          pdfPath: pdf,
+        }).catch(() => null);
+        const res = await invoke<{ added: boolean }>("add_reading_list_entry", {
+          projectRoot: projectPath,
+          title: known?.trim() || displayFileTitle(baseName(pdf)),
+          authorsYear: "",
+          source: "",
+          link: "",
+        });
+        if (res.added) added += 1;
+        else already += 1;
+      } catch (reason) {
+        if (!firstError) firstError = String(reason);
+      }
+    }
+    reloadLitFacts(projectPath);
+    const failed = pdfs.length - added - already;
+    const parts = [added ? `已加入积累 ${added} 篇` : "没有新加入的"];
+    if (already) parts.push(`${already} 篇本来就在清单里`);
+    if (failed) parts.push(`${failed} 篇没加上：${firstError}`);
+    toast(parts.join("，"), failed && !added ? "error" : "info");
+  }
+
+  async function movePicked() {
+    const paths = pickedList;
+    if (paths.length === 0) return;
+    const touchesPreview =
+      preview && paths.some((p) => samePath(preview.path, p, IS_WINDOWS));
+    if (touchesPreview && !(await confirmLoseDirty())) return;
+    let dest: string | null;
+    try {
+      dest = await pickMoveTarget(parentDir(paths[0]) ?? projectPath, projectPath, IS_WINDOWS);
+    } catch (reason) {
+      onError(`移动失败：${String(reason)}`);
+      return;
+    }
+    if (!dest) return;
+    const failures: string[] = [];
+    for (const path of paths) {
+      try {
+        const next = await invoke<string>("fs_move_path", { path, destDir: dest, root: projectPath });
+        followCompare(path, next);
+        if (preview && samePath(preview.path, path, IS_WINDOWS)) followMoved(preview.path, path, next);
+      } catch (reason) {
+        failures.push(`${baseName(path)}：${String(reason)}`);
+      }
+    }
+    clearPicked();
+    setExpanded((prev) => new Set(prev).add(dest));
+    refresh();
+    if (failures.length) onError(`有 ${failures.length} 个没移过去——${failures.join("；")}`);
+  }
+
+  async function deletePicked() {
+    const paths = pickedList;
+    if (paths.length === 0) return;
+    const names = paths.map(baseName);
+    const shown = names.slice(0, 5).join("、") + (names.length > 5 ? ` 等 ${names.length} 个` : "");
+    if (
+      !(await confirmDialog(`删除这 ${paths.length} 个文件（${shown}）？将移入系统回收站。`, {
+        danger: true,
+      }))
+    )
+      return;
+    const failures: string[] = [];
+    for (const path of paths) {
+      try {
+        await invoke("fs_delete_path", { path, root: projectPath });
+        if (compare && samePath(compare.path, path, IS_WINDOWS)) {
+          compareDirtyRef.current = false;
+          setCompare(null);
+        }
+        if (preview && samePath(preview.path, path, IS_WINDOWS)) {
+          dirtyRef.current = false;
+          setPreview(null);
+          setWindowed(false);
+        }
+      } catch (reason) {
+        failures.push(`${baseName(path)}：${String(reason)}`);
+      }
+    }
+    clearPicked();
+    refresh();
+    if (failures.length) onError(`有 ${failures.length} 个没删掉——${failures.join("；")}`);
+  }
+
+  // 有选中时 Esc 先取消选择（不关预览）；打字控件、菜单、弹窗里的 Esc 归它们自己
+  useEffect(() => {
+    if (picked.size === 0) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key !== "Escape" || event.isComposing) return;
+      const target = event.target as HTMLElement | null;
+      if (inTypingContext(target) || menu || confirmDialogOpen()) return;
+      if (document.querySelector(".ccode-modal-backdrop")) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      clearPicked();
+    }
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [picked, menu]);
+
+  /** 每篇 PDF 的阅读状态，按三份事实算一次缓存住（行渲染时直接取） */
+  const litStateOf = useMemo(() => {
+    const memo = new Map<string, LitReadState>();
+    return (path: string): LitReadState => {
+      let state = memo.get(path);
+      if (state === undefined) {
+        state = pdfLitState(path, litFacts);
+        memo.set(path, state);
+      }
+      return state;
+    };
+  }, [litFacts]);
 
   function readPdf(entry: DirEntryDto) {
     setReaderReq({ pdfPath: entry.path, projectRoot: projectPath });
@@ -940,6 +1209,7 @@ export default function ProjectFilesView({
         // 打字控件（搜索框/新建文件夹输入/Monaco）各自处理自己的 Esc；
         // 预览内、窗口态、右键菜单、全局确认框与任何 Modal 打开时都不接管
         if (
+          pickedRef.current.size > 0 ||
           inTypingContext(target) ||
           windowed ||
           menu ||
@@ -966,11 +1236,12 @@ export default function ProjectFilesView({
     return entries.map((entry) => {
       const open = expanded.has(entry.path);
       const selected = !entry.isDir && preview?.path === entry.path;
+      const isPicked = !entry.isDir && picked.has(entry.path);
       return (
         <li key={entry.path}>
           <div
             className={`group relative flex min-h-9 items-center gap-2 rounded-md px-2 ${
-              selected ? "bg-hover" : "hover:bg-hover"
+              isPicked ? "bg-seg-sel" : selected ? "bg-hover" : "hover:bg-hover"
             } ${entry.isDir && dropDir === entry.path ? "ring-1 ring-cta-bd" : ""}`}
             style={{ paddingLeft: 8 + depth * 16 }}
             data-drop-dir={entry.isDir ? entry.path : (parentDir(entry.path) ?? projectPath)}
@@ -1003,14 +1274,16 @@ export default function ProjectFilesView({
                 ) : (
                   <Folder size={14} className="shrink-0 text-folder" />
                 )}
-                <span className="truncate">{entry.name}</span>
+                <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+                {!open && <FolderCount count={entry.childCount} />}
               </button>
             ) : (
               <button
                 type="button"
                 className="flex min-w-0 flex-1 items-center gap-2 text-left text-xs text-l2 outline-none focus:outline-none focus-visible:outline-none"
                 data-file-path={entry.path}
-                onClick={() => void pickFile(entry)}
+                aria-pressed={isPicked || undefined}
+                onClick={(event) => clickFile(event, entry)}
                 title={entry.path}
               >
                 <span className="w-[13px] shrink-0" />
@@ -1019,6 +1292,7 @@ export default function ProjectFilesView({
                 {goalMarkFor(entry.path) && (
                   <span className="shrink-0 text-micro text-warn-text">{pendingMark}</span>
                 )}
+                <LitPill state={litStateOf(entry.path)} />
                 <FileModified iso={entry.modified} />
               </button>
             )}
@@ -1089,7 +1363,11 @@ export default function ProjectFilesView({
           <li key={file.path}>
             <div
               className={`group relative flex min-h-9 items-center gap-2 rounded-md px-2 ${
-                preview?.path === file.path ? "bg-hover" : "hover:bg-hover"
+                picked.has(file.path)
+                  ? "bg-seg-sel"
+                  : preview?.path === file.path
+                    ? "bg-hover"
+                    : "hover:bg-hover"
               }`}
               data-drop-dir={parentDir(file.path) ?? projectPath}
               onPointerEnter={() => probeNotePair(file.path)}
@@ -1108,7 +1386,8 @@ export default function ProjectFilesView({
                 type="button"
                 className="flex min-w-0 flex-1 items-center gap-2 text-left text-xs text-l2 outline-none focus:outline-none focus-visible:outline-none"
                 data-file-path={file.path}
-                onClick={() => void pickFile(asFileEntry(file))}
+                aria-pressed={picked.has(file.path) || undefined}
+                onClick={(event) => clickFile(event, asFileEntry(file))}
                 title={file.path}
               >
                 <FileTypeMark path={file.path} />
@@ -1116,6 +1395,7 @@ export default function ProjectFilesView({
                 {goalMarkFor(file.path) && (
                   <span className="shrink-0 text-micro text-warn-text">{pendingMark}</span>
                 )}
+                <LitPill state={litStateOf(file.path)} />
                 {file.rel && file.rel !== file.name && (
                   <span className="max-w-[40%] truncate font-mono text-micro text-l4">
                     {file.rel}
@@ -1324,6 +1604,58 @@ export default function ProjectFilesView({
               className={`${searchFieldClass} w-full`}
               aria-label="搜索文件"
             />
+            {picked.size > 0 && (
+              <div
+                className="flex flex-wrap items-center gap-1 rounded-md bg-seg-sel py-0.5 pl-2.5 pr-1"
+                role="toolbar"
+                aria-label="批量操作"
+              >
+                <span className="mr-auto text-xs text-l1">
+                  已选 {picked.size} 个文件
+                  <span className="ml-2 text-micro text-l4">
+                    {IS_MAC ? "⌘" : "Ctrl"} 点加选，Shift 点连选
+                  </span>
+                </span>
+                <button type="button" className={`${inlineActionClass} gap-1`} onClick={askAiPicked}>
+                  <MessageSquare size={12} strokeWidth={1.8} aria-hidden="true" />
+                  问 AI
+                </button>
+                {pickedPdfs.length > 0 && (
+                  <button
+                    type="button"
+                    className={`${inlineActionClass} gap-1`}
+                    onClick={() => void accumulatePicked()}
+                  >
+                    <BookmarkPlus size={12} strokeWidth={1.8} aria-hidden="true" />
+                    加入积累
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className={`${inlineActionClass} gap-1`}
+                  onClick={() => void movePicked()}
+                >
+                  <FolderInput size={12} strokeWidth={1.8} aria-hidden="true" />
+                  移动到…
+                </button>
+                <button
+                  type="button"
+                  className={`${inlineActionClass} gap-1 hover:text-err-text`}
+                  onClick={() => void deletePicked()}
+                >
+                  <Trash2 size={12} strokeWidth={1.8} aria-hidden="true" />
+                  删除
+                </button>
+                <button
+                  type="button"
+                  className={iconActionClass}
+                  aria-label="取消选择"
+                  onClick={clearPicked}
+                >
+                  <X size={13} strokeWidth={1.8} />
+                </button>
+              </div>
+            )}
             {nameDraft && (
               <div className="flex items-center gap-1">
                 <span className="max-w-[45%] shrink-0 truncate text-xs text-l4">
@@ -1505,7 +1837,39 @@ export default function ProjectFilesView({
           </div>
         </Modal>
       )}
-      {menu && (
+      {menu && !menu.isDir && picked.has(menu.path) && picked.size > 1 && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          items={[
+            {
+              label: `问 AI（${picked.size} 个文件）`,
+              icon: MessageSquare,
+              onSelect: askAiPicked,
+            },
+            ...(pickedPdfs.length
+              ? [
+                  {
+                    label: `加入积累（${pickedPdfs.length} 篇 PDF）`,
+                    icon: BookmarkPlus,
+                    onSelect: () => void accumulatePicked(),
+                  },
+                ]
+              : []),
+            { label: "移动到…", icon: FolderInput, onSelect: () => void movePicked() },
+            { label: "取消选择", icon: X, onSelect: clearPicked },
+            { separator: true },
+            {
+              icon: Trash2,
+              label: `删除 ${picked.size} 个文件`,
+              danger: true,
+              onSelect: () => void deletePicked(),
+            },
+          ]}
+        />
+      )}
+      {menu && !(!menu.isDir && picked.has(menu.path) && picked.size > 1) && (
         <ContextMenu
           x={menu.x}
           y={menu.y}
@@ -1552,6 +1916,15 @@ export default function ProjectFilesView({
                     icon: FolderInput,
                     onSelect: () => void moveMenuTarget(menu),
                   },
+                  ...(menu.isDir
+                    ? []
+                    : [
+                        {
+                          label: `选择（${IS_MAC ? "⌘" : "Ctrl"} 点加选）`,
+                          icon: SquareCheck,
+                          onSelect: () => addToPicked(menu.path),
+                        },
+                      ]),
                   { separator: true },
                 ]),
             {
