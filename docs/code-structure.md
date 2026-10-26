@@ -10,6 +10,9 @@ docs/                        # 架构方案 + 九 CLI 适配参考（规格）
   conventions/               # 主题化约定细则（改动对应领域前必读，见「关键约定」索引）
 src/                         # 前端 React + TS + Tailwind v4（vite 插件接入）
   pages/                     # 侧栏九页：工作台▣ 项目⛁（workspaces，v3.92 起 UI 页名「项目」） 运行⌨（terminal） 对话◔ 连接⇄（profiles） 技能✦ MCP⌗ 用量◫（stats） 设置⛭
+pages/McpPage.tsx          # MCP 页（matrix §10 调研落地）：五列网格清单（名称｜类型｜配置｜分发｜行内操作＋启用开关，列模板 MCP_GRID 表头与数据行共用）＋添加/编辑弹层（stdio 命令/参数与 remote url/headers 两形态、env/headers 键值对编辑、${VAR} 密钥引用不落明文）＋内置预设（MCP_PRESETS，含 Blender 本机探测 applyBlenderMcpProbe 与 setup 步引导不代装）＋行首健康状态点（未检测不渲染；清单沉淀的上次结果带「上次检测」前缀与实时结果区分）＋收编候选（discover_mcp_servers，相对路径命令收编时后端先落绝对路径）。分发只写用户级（项目级有审批闸）；展示纯逻辑全在 mcp-display.ts。唯一挂载 App.tsx page==="mcp"（懒加载）
+pages/ProfilesPage.tsx     # 连接页：按 agent 分组的连接清单（五列：名称｜端点｜模型｜状态｜操作；组折叠记 localStorage ccode.profiles.collapsed，空组默认折叠；状态列/标记胶囊/诊断在组件内）＋添加/编辑连接弹层 ProfileModal（导出供 store.profileModalReq 与上手引导挂载）＋官方账号登录/登出引导（登出走 CLI 自己的 logout、Mesa 不删 auth 文件）＋三层验证 ValidationDialog、启动计划预览 PreviewDialog、「设为全局默认」GlobalWritePreviewDialog（脱敏预览）→ GlobalApplyDialog＋漂移检查 check_global_drift 组头胶囊＋CLI 安装与更新（check_agent_updates、winget 安装帮助、interactiveTui 自更新经 update-routing 开终端）＋导入导出 v2；网关库 GatewayLibrary 与出图模型 ImageGenPanel 唯一挂载在本页（页尾）。行状态纯逻辑在 profile-connection-ui.ts。唯一挂载 App.tsx page==="profiles"（懒加载）
+pages/SettingsPage.tsx     # 设置页：左导航＋分区内容，SETTING_NAV 十一档顺序即导航顺序（基础：外观/终端/通用/快捷键；管理：AI 与 Agent/网络/用量/更新/诊断/数据与存储/关于；id 与 settings-search.ts SettingSectionId 一一对应，搜索命中经 CommandPalette / settingsSectionReq 一次性请求深链定位分区）。版式原子 Section/SubHeading/Card/CardRow/RowGroup（相邻 Row 自动并成分组卡，design-system 设置页规格）；自带终端预览 TerminalPreview、快捷键录制 HotkeyCapture（录制互斥）、外部终端/shell 下拉按平台、一键卸载 UninstallRow（两次确认、第二次输原名）、自定义运行时 CustomRuntimeBlock、AI 功能按功能配置行（键对应 ai.rs FN_*）、应用图标三选一；调色板/聊天排版/罩色等与 settings.rs KNOWN_* 白名单逐表镜像——加选项两头同步，否则静默回落。唯一挂载 App.tsx page==="settings"（懒加载）；「更新」分区是应用更新安装入口（更新提示本体走收件箱 update:）
                              # 定时任务不是侧栏页（2026-09-13 用户移除）：只是项目「定时任务」页签；
                              #   页切快捷键（hotkeys.ts PAGE_HOTKEY_DEFS）、设置页「启动时进入」与 settings.rs KNOWN_PAGES 同为九页清单，
                              #   全局 page id schedules 仅作旧值重定向（App.tsx 转项目定时任务页签），SchedulesPage.tsx 已删
@@ -102,18 +105,25 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   components/InternalSessionsCard.tsx # 设置「数据与存储」→ Mesa 内部对话：条数/体积/最早、自动清理开关、保留天数、立即清理
   components/InsertMenuItems.tsx # 「插入技能/MCP」菜单条目：运行页收缩行、标签栏 ✦（仅终端层）、聊天输入框 ＋ 三处共用（只画 <li>，浮层由调用方定位）
   components/ConversationView.tsx # 对话渲染（聊天层 / 对话页回放 / 项目对话预览共用）：气泡与正文、一轮过程收在「已工作 X 分 Y 秒」下，
+components/SessionImportModal.tsx  # 会话导入向导弹层（SessionsPage 唯一挂载）：选 .ccode-sessions.zip → import_sessions_inspect 预览（逐条目标目录预填、按注册项目认 cwd、可逐条 EntryDecision）→ import_sessions_apply；Codex 内联 provider 会话顺带写客户端 provider 定义块（有密钥的绑定预选）；状态文案在 session-transfer.ts
                              #   展开为动作行（点行看差异 / 命令输出 / 思考），回答露在外面；working 由聊天层传（进行中不收起）；
                              #   AI 回复不截断、用户长消息 UserText 量行收起；字号走聊天阶梯类（design-system「聊天正文排版」）
   components/ChatMarkdown.tsx # AI 回复 Markdown（独立 Marked 实例、原始 HTML 转义）：长回复分节小标题按级别排、ChatCodeBlock（用户气泡里的
                              #   围栏代码同一套）、上屏后 useChatDecorations 跑表格壳 / 代码高亮 / 公式 / 引用胶囊 / 文件链接，音频播放条、图片卡
                              #   （图片卡点击：聊天层经 ChatImageEditContext 进输入框标注台接着改；只读视图有工作目录走右栏预览，随手聊弹 ChatImageViewer）
   components/MergeConflictView.tsx # 保存撞车的对比合并：Monaco diff 左磁盘只读、右我的可改，保存右边以磁盘版本为基线，再撞车刷新左边
+components/HistoryOverlay.tsx  # 「保存历史」全宽只读覆盖层（ProjectGroup）：project_history 的 first-parent 主线 git log 翻成白话时间线（翻译层 history-view.ts），merge commit 的「保存进项目」按工作区名换步骤名；工作区分支过程提交不单列、成果经「✓ 保存进项目」体现；Esc 关，缺 Git 就地 GitInstallOffer 装好重读
   components/SlidesPreview.tsx # PowerPoint 逐页大纲（标题 / 要点 / 第一张图 / 备注 / 首页缩略图）+ 看原样（PDF）
   components/OfficePdfView.tsx # Word / 幻灯经 LibreOffice 转出的 PDF 视图（原文件改了重转）
+components/SelectionFloatBar.tsx  # 选区浮动动作条（PdfPreview / FilePreviewEditor / PdfContinuousView 共用）：容器内选中文字就在选区末端下方出按钮条、失选即收；按钮由调用方 children 给，须 onMouseDown preventDefault 保住选区、click 时再读 window.getSelection；DistillSkillButton =「✦ 沉淀为技能」（ai_distill_skill 出草稿跳技能页预填新建）
   components/NotebookPreview.tsx # Jupyter 笔记本按单元预览（Markdown / 高亮代码 / 输出文字图表格报错），「源码」切回编辑器
+components/HtmlPreview.tsx  # 本地 HTML 沙箱预览（FilePreviewEditor 唯一消费者）：消毒后进不透明源 iframe（HTML_IFRAME_SANDBOX），相对 CSS 经 read_file_preview 内联、本地图换 data URL；编辑器只读到 256KB 时另读整份再渲染（自包含报告动辄几 MB，截半排不出来）；拼装纯逻辑在 html-preview.ts
   components/MediaPreview.tsx # 音视频预览：grant_media_url 放行后经 asset 协议流式播放，放不了的编码提示系统打开
   components/UnsupportedPreview.tsx # 本来就不在 Mesa 里预览的文件（二进制 / 旧版 doc、rtf）：中性说明 + 系统打开 / 在文件夹中显示
+components/PreviewErrorState.tsx  # 文件预览统一失败态（Pdf/Docx/Xlsx/Slides/Image/Html/Notebook 预览与 FilePreviewEditor 八处共用）：原因 + 重试 + 可复制的文件类型；带路径的（二进制等无法内嵌）另给「用系统应用打开 / 在文件夹中显示」
   components/MdFrontmatterCard.tsx # md 阅读态开头 YAML 头小卡（只展示，超 6 项折叠，双击回编辑态第 1 行）
+components/MdToc.tsx  # md 阅读态浮动目录（FilePreviewEditor）：零高度 sticky 条（子 layout 父 ref 未挂，自己取 parent 当滚动容器），≥3 标题才出，MutationObserver 跟正文变化；扫描与定位在 md-toc.ts
+components/MermaidDiagrams.tsx  # md 阅读态 mermaid 围栏渲染（FilePreviewEditor 唯一消费者，lazy chunk——无围栏不加载，检测在 mermaid-blocks.ts）：securityLevel strict + sanitizeMermaidSvg 二次清洗、主题随亮暗、点开 Lightbox 缩放；渲染失败留原文回退不吞源码
   components/ChatImageViewer.tsx # 对话图片看大图弹层（Modal + ImagePreview 可缩放）：随手聊没有右栏预览时用
   components/ChatImageStage.tsx # 输入框上方的看图标注台（design-chat-layer §4.7）：盖住对话区、不挡输入框；
                              #   意见框 / 画笔 / 箭头 / 打码 / 裁剪 + 撤销清空，标注存原图坐标交回输入框；
@@ -150,8 +160,11 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   （项目页唯一写入方的当前项目镜像，单一事实源）。「＋ 添加项目」经 store.addProjectOpenReq
                              #   一次性请求交项目页（完整注册流程在那里），同时 setPage("workspaces") 保证消费方已挂载。
   components/RenameProjectModal.tsx # 重命名项目弹窗（register_project 幂等 upsert）：从 WorkspacesPage 拆出（页面是懒加载 chunk，
+components/ProjectIdentityHeader.tsx  # 项目页身份头（WorkspacesPage 唯一消费者）：注册名/路径（~ 折叠）/工作方式与课题主题就地编辑（写 project.toml）、config 警告行、未注册给「添加到 Mesa」；⋯ 菜单（设置/编辑器/历史/从 Mesa 移除）经 ProjectChromeAction 一次性请求 chromeReq 驱动，动作由页面执行
                              #   侧栏树在主 chunk，静态引入会把整页拖进主包），树右键与页面共用同一份
   navigation.ts              # 导航清单单一出处（九页全量）。侧栏本身不按本表渲染（App.tsx 自排三段），本表供隐藏态导航胶囊
+navigation-icons.ts        # 九页＋新对话/定时任务的 Lucide 图标表 NAV_ICONS（图标单一出处）：侧栏三段（App.tsx）、navigation.ts 导航清单、命令面板、灵动岛/对话切换器、连接页 agent 分组头共用——换图标只改这里（2026-10-27 用户拍板「对话管理」统一 NAV_ICONS.sessions 弃放大镜）
+types.ts                   # 共享 DTO 与小闭集总表（全前端 100+ 文件 import）：Profile/ComboSurfaceDto（逐字段通道表）/Gateway*、会话（SessionMetaDto/瘦身/搜索/导入导出）、工作区（评审冻结/合并/PR/产物）、人工事项、任务卡、用量（含活跃度四列口径）、MCP、定时任务、目标 Run/评审快照等后端 DTO 的 TS 镜像（与 Rust 端 serde camelCase 对齐），另出九家 agent id 清单与 AGENT_PROTOCOLS。纯类型＋常量、不放逻辑；后端 DTO 增删字段先改这里再编译前端
                              #   （TopNavCapsule）、设置页「岛上显示的入口」勾选消费——删页会静默弄坏这两处；顺序与字同图标态侧栏
                              #   （2026-10-24：工作台 · 运行 · 对话管理（10-27 前叫「搜对话」）· 项目；新对话不是页，岛上插在工作台后；page = 停在这一页时报的页名）；
                              #   「运行」只留给岛上休眠面报页名，不是任何地方的入口（同日撤出图标态侧栏、岛、快捷键）
@@ -160,6 +173,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   components/FeedbackModal.tsx # 反馈表单弹层（帮助菜单、诊断弹窗「附到反馈」、设置→关于三入口）：端点已配只走端点，否则用户选发送方式（邮件应用/网页邮箱/邮箱直发）；附件=截图缩略图+诊断包（表单内现导出或 attachDiagnostics 带入，后端按路径白名单自读）；邮件类通道附件落盘+交接提示（清空/保留草稿由人定）；邮箱直发配置视图（保存并测试、结果就地显示、首存失败回滚授权码）
   components/UpdateNotes.tsx # 更新说明渲染（Markdown→浅底框，原始 HTML 转义、链接/图片只留文字）；设置→更新卡片与帮助「检查更新」弹窗共用
   components/ChatHandoffStatsPanel.tsx # 设置「诊断」→ 聊天层转到终端：按 agent + 原因 + 细分的次数排序、近 30 天 / 全部、清空
+components/BackgroundTasksPanel.tsx  # 设置页「后台任务」卡（SettingsPage 唯一挂载）：active_background_runs 2 秒轮询列 Mesa 替你跑的无头 Agent（定时任务、起名摘要等），run_cancel 停单条——给无头任务一个人能停的出口，不用干等超时（tests/background-tasks-panel.test.ts）
   components/ChatBetaBadge.tsx # 聊天层「测试版」说明（useChatBeta + ChatBetaNotes）：2026-10-23 起在模型菜单底部一行的二级页，说这一家的档与要回终端的事，CLI 比核对过的新时芯片带点并提醒
   components/HelpDialogs.tsx # 帮助菜单三个内容弹窗：诊断与日志（日志按级别筛/计数/复制 + 导出诊断包 → 附到反馈）、检查更新（打开即查；状态/更新说明/下载进度/安装，安装走 useAppUpdateInstall）、关于（图标/版本复制/更新状态只读 store/仓库与许可入口，许可页同弹窗切换）；快捷键速查曾短暂存在后按「不与命令面板/设置/说明书重复」删除（2026-10-12）
   components/ThirdPartyNotices.tsx # 「开源许可与致谢」内容区（帮助→关于、设置→关于共用）：致谢与数据来源（Markdown 阅读版式，许可全文收进 details，链接交系统浏览器）/ 组件许可（可搜索）两页签；清单读一次进程内缓存
@@ -169,7 +183,9 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # MesaCaret = 实时预览末尾的插入符
   components/MesaThinkingDots.tsx # 聊天「回到最新」浮钮生成中的三枚琥珀光标：每 3.2s 随机换队形（jump-formations.ts），位置走 CSS translate 过渡，呼吸在 App.css .ccode-jump-dots；减弱动态效果时不换队
   components/CommandPalette.tsx # ⌘K 面板：默认列表 快速操作/最近项目（list_projects 前 5）/页面（快捷键跟随设置）/外观/帮助；设置分区（SETTINGS_SEARCH_INDEX）、单个主题、较早项目、外链只在搜索时出现；「切换主题…」进主题网格（与设置页主题卡同长相、7 列深浅上下对齐、方向键四向移动、当前打勾；色样懒加载 App.css?raw；跟随系统只列与系统同深浅的一排并走 followedTheme）；输入法组词 Enter 不执行、↑↓ 循环、键盘移动跟随滚动；帮助类动作经 onHelp 交 App 的同一批弹窗（「上手引导」直接调 openOnboardingGuide）
+settings-search.ts         # 设置页搜索索引单一出处（SettingSectionId 与 SettingsPage SETTING_NAV 一一对应）：每档带别名——写用户会打的词不写字段名（搜「代理」落「网络」、「卡顿」落「终端」）；searchSettings 四档排序＝档名命中 > 别名全等 > 别名包含 > 复合词拆半两半都命中（「依赖体检」这类连打词）；只搜到档不做逐行高亮——开关类设置高亮一半控件比多看一个分区更费解（CommandPalette 设置分区消费；tests/settings-search.test.ts）
   money-format.ts            # 金额千分位两位小数 groupedMoney（用量页费用、网关余额共用；币种与 ≥ ~ 前缀由调用方拼）
+rel-time.ts                # 相对时间白话 relTime（刚刚/N 分钟前/N 小时前/N 天前，超 30 天回落日期）＋悬浮绝对时间 absTime：白话双层（相对为主、绝对降为悬浮 title），定时任务行/雷达卡/验收账/内部对话卡/侧栏搜索等列表行共用（tests/rel-time.test.ts）
   project-tree.ts            # 侧栏项目树置顶与组内顺序纯逻辑：togglePin / splitPinned（置顶段按先后、移出原分组）/ parsePins（坏数据当空表）/ applyOrder + reorderGroup（拖动排序，只比同组相对先后）；
                              #   localStorage ccode.projectTreePins；tests/project-tree.test.ts
   usage-dist.ts              # 用量页分布区纯逻辑：shareOf/barWidthPct/sharePctLabel、visibleDistRows（先露 10 行、≤12 行不折）、
@@ -189,6 +205,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   模块级缓存）、点开走 OfficePreviewModal（displayName 用原名、↑↓ 翻、右下一个后续动作）、文字就地展开；
                              #   从输入框打开的「收起」接收继续，⌘K 打开的「完成」即停止
   components/ClientOpenDialog.tsx # useClientOpen 钩子 + 确认层：对话页底栏/右键菜单与工作台项目行共用；预检全过直接打开，有 note/warn/fix/block 才弹层（Codex 缺渠道「写入并打开」可选连接，Claude 渠道会变提示，被拦只给原因/下载入口）
+components/AskAiModal.tsx  # 「问 AI」弹层（App 全局挂一份，store.askAiReq）：选 Agent/连接/模型，可勾「设为默认」（记忆存取在 ask-ai.ts）；beginAskAi = 三处共用入口（ScheduleSection / ProjectGroup / ProjectFilesView），先拼项目上下文包（composeLaunchPrompt），上次的选择仍有效就直连进终端不弹窗；startProjectChat 只委托 quick-chat-launch 的 openProjectChat（侧栏项目行「＋」与项目页「＋ 新对话」共用）
   components/FileTypeMark.tsx # 文件类型线条图标：FileTypeGlyph（Lucide 线条 + 识别色经 --file-glyph 传入，浅色主题由 .ccode-file-glyph 压暗；
                              #   附件卡 / 文件选择窗 / 资源列表 / 改动面板按 size 复用）+ FileTypeMark（14px 槽，与文件夹图标同宽对齐）
   components/ConfirmDialog.tsx # 全局确认/提示框（confirmDialog/alertDialog，126 处共用）：语气图标 + 结构化正文（标题/对照表/注意条，
@@ -203,11 +220,25 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   components/LaunchMenu.tsx  # 启动栏下拉菜单组件：portal 到 body、分组标题、键盘导航，替代原生 select
                              # （Agent/配置/模型三段共用；隐藏配置沉「已停用（可手选）」组）
   components/StepEvidenceChip.tsx # 步骤卡证据徽标：读当前步骤报告，显示质量状态与未决标记计数（解析在 step-evidence.ts）
+components/ResearchDecisionFields.tsx  # 开工弹层「你的决定」决策字段（KickoffConfirmDialog）：逐项选状态再写一句范围，经 setDecisionAnswer 写回任务书文本（解析/格式化与 step-decisions.ts 同一出处）；证据版本变了旧 approve/prepare 标过期不沿用（tests/research-panels.test.ts）
+components/ResearchEvidencePanel.tsx  # 开工与评审共用的只读报告查看（KickoffConfirmDialog / WorkspaceReviewView）：按模式扫报告、逐节 details 展开看原文（256KB 预览通道），onFingerprint 回 evidenceFingerprint 供决策绑定证据版本；注明「状态为报告自述，未经系统质量认证」（tests/research-panels.test.ts）
+components/TemplatePicker.tsx  # 研究流程模板选择器（内联面板；ProjectGroup 空流程引导与「更换模板」共用的唯一实例）：内置 PIPELINE_TEMPLATES + 用户模板（list_pipeline_templates，命令未注册优雅降级只列内置），投稿与返修模板另选初稿/返修与轮次；选中只抛 steps（TemplatePickItem），写回 project.toml 与覆盖确认归父组件——注册成功后的首选层是另一个 TemplatePickModal
   components/ReviewDecisionList.tsx # 步骤上的审查/待核实清单：逐条接受、拒绝、修改，写回报告后再接回对话
+components/ResearchAcceptancePanel.tsx  # 科研验收决定表单（评审页 WorkspaceReviewView 与目标页 ProjectUserTasksView 共用；检索步 screening 变体换措辞）：接受/有条件接受/退回三档，research_source 锁证据版本——上游变了列 stale 点名重验，research_save_acceptance 落验收账，可勾「关联本次复现记录」（版本不一致提示重跑，不把运行结束当科学通过）（tests/research-acceptance-panel.test.ts）
+components/ResearchReproductionPanel.tsx  # 复现运行面板（评审页 WorkspaceReviewView 与目标页 ProjectUserTasksView）：从报告抽复现约定（parseReproductionContract：MESA_REPRODUCE / reproduce 子命令）+ 项目脚本拼可运行清单，research_run_reproduce 在工作区执行——确认框写明不是只读沙箱、约定输出写 ~/ccode/reproductions/；入口版本变了拒跑要求重新审阅（tests/research-panels.test.ts）
+components/UpstreamResearchAcceptance.tsx  # 开工弹层「上游已确认的结论范围」（KickoffConfirmDialog）：research_upstream_acceptances 列上游验收行（白话 upstreamAcceptanceNote），有效行一键「引用依据，当前仅允许准备」写 prepare 答案并绑当前证据版本——引用既有依据不自动批准本步；上游文件变了标「需重验」
+components/WatchRunReview.tsx  # 定时雷达单次运行评审（WorkspaceReviewView 里 taskKind=watch 的运行，历史行「去评审」进入）：watch_run_snapshot 只看冻结证据（before/initial/after）、watch_run_entries 只列该次新命中、逐条留下/排除（watch_run_decide）后采纳把留下的并进项目（排除的不写、已收过不重复加）；locked=已采纳只读重开，决定文件坏了 fail-closed 点名（tests/watch-run-review.test.ts）
   components/HandbackPanels.tsx # 定稿步「打开清单 / 打开填写」展开的面板：许可清单一篇一行（文章页、状态下拉即存、原图文件夹），投稿声明一节一框离开即存
+components/ResearchToolFields.tsx  # 步骤编辑器里的科研工具下拉组（PipelineEditor 唯一消费者）：稿件载体/文献库等 select（Zotero 与 EndNote 二选一的白话说明在此），字段表与默认值单一出处 research-tool-fields.ts / research-tools.ts；折叠态已选过非默认交付自动展开，不把既有选择藏起来（tests/research-tool-ui.test.ts 经 PipelineEditor）
   components/PendingConfirmList.tsx # 检索步文献清单：待确认纳入/排除、已纳入移出、已排除恢复；行上现查 IF/分区/TOP；
+components/ScreeningReviewPanel.tsx  # 检索步评审面板（WorkspaceReviewView 检索步）：included.json 计数与清单、待获取计数、检索日志摘录（screening-review.ts），pane=list/process 两栏；待确认清空经 onPendingCleared 供步骤卡自动勾「核对待确认篇目」（tests/screening-review-ui.test.ts）
                              #   指标表状态与排序跟在「纳入所选 / 排除所选」右侧，没有待确认时单独靠右
   components/ProjectFilesView.tsx # 项目面「文件」页：左目录树右预览（v3.231 三态合一）。watch_dir/fs-changed 自动跟上
+components/FileKindFilters.tsx  # 文件页类型筛选胶囊（ProjectFilesView 唯一消费者）：全/文档/表格/幻灯/PDF/图片/其他带计数（OFFICE_FILTERS 在 work-mode.ts），「最近修改」是与类型筛选互斥的单选；只写字不画图标（2026-10-26 用户拍板：类型图标行与页面图标同形、一排里图标和字混着认不准）
+components/FolderGroupedList.tsx  # 按文件夹分组的资源列表通用件（ResourceListSection、LitWatchCard 共用）：folder-groups.ts 建树、展开状态按 scope 记 localStorage、reveal 展开父链揭示指定路径；useFolderChrome = 展开状态共享 hook，ListPreviewToggle = 列表⇄预览切换钮
+components/PortsSection.tsx  # 编程项目页「端口」区（CodingProjectView 唯一挂载）：list_listening_ports 按仓库根过滤（filterPortsForRepo），按归属着点（工作区/项目/范围/其他），kill_port_process 终止——非 Mesa 起的进程先危险确认；无端口无错误整块不渲染
+components/ProjectAgentsView.tsx  # 项目页「Agents」页签（WorkspacesPage 唯一挂载）：每家一行设项目默认连接/模型、槽位专属绑定（精读 reader、问 AI discuss、项目对话 chat，槽位清单与后端 PROJECT_AGENT_BINDING_SLOTS 同源）、步骤槽与悬空坏行、定时任务各自一条连接（写 schedules.json 不进项目槽位）、一键「全部跟随默认」；名册与解析单一出处 project-agents.ts（tests/project-agents-ui.test.ts）
+components/ProjectSurfaceTabs.tsx  # 项目面页签条（WorkspacesPage）：页签集合按工作方式出（project-surface.ts projectSurfaceTabsForMode：目标/定时任务/文件/Agents）；方向键只挪焦点不切换——几个页签各自拉真实数据，按住扫过一排会连发请求，Enter/Space 才切；键盘数学在 tab-keys.ts（tests/tab-keys.test.ts）
                              # Agent 产物（与终端树同一套，监听失败退回手动刷新）；刷新 = 根 + 已展开目录全部重读；
                              # 预览三宿主（侧栏/窄屏/窗口弹层）同屏只挂一份（窗口态侧栏不双挂）；未保存编辑在换文件/
                              # 关预览/关窗口前经 confirmLoseDirty 确认（dirtyRef 由 ProjectFilePreview.onDirtyChange 上报）；
@@ -216,14 +247,19 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 多选（只选文件，⌘/Ctrl 加减 + Shift 连选，批量条 问 AI / 加入积累 / 移动 / 删除，右键选中行出批量菜单）、
                              # PDF 行阅读状态（pdfLitState，三份清单 1.5s 防抖重读）、收起文件夹行尾数量（list_dir withCounts）
   components/CloseoutPack.tsx # 项目卡「完结文件」：按脉络列出已写出的文件，点开到文件页
+components/GoalStorageModal.tsx  # 目标「释放副本空间」弹层（ProjectUserTasksView 目标详情）：task_storage_review 只有显式打开才扫磁盘（列表轮询不递归统计副本），task_cleanup 分工作副本/历史冻结两档、危险确认 focusCancel、中断的清理 pending 下次接着办（revision 守卫）；归档不等于清理的口径写在确认文案里（tests/goal-storage-ui.test.ts）
+components/ProjectUserTasksView.tsx  # 项目「目标」页（WorkspacesPage tasks 页签；选了「不使用研究流程」的科研项目由 ProjectGroup embed 同一份）：目标分桶时间线（进行中/待验收/已完成）、新建/编辑/启动/就地停止（2026-10-26：交互运行杀这条 Run 的终端进程、无头发取消，有成果照旧进待验收）、归档与恢复、goal-review-ready 事件即时刷新（否则 2.5s 轮询）；科研目标验收挂 ResearchAcceptancePanel、复现挂 ResearchReproductionPanel、「释放副本空间」进 GoalStorageModal（tests/project-user-tasks-ui.test.ts）
+components/ResourceListSection.tsx  # 项目卡资源面板（ProjectGroup，默认标题「文献」）：FolderGroupedList 按夹分组，文献行带精读状态胶囊（pdfLitState 同一套状态词）、笔记直连（noteLinkForPaper）与「已积累」标（lit-list / lit-watch 纯逻辑）；office 文件点开 OfficePreviewModal，问 AI / 沉浸阅读入口由调用方注入
   internal-sessions.ts       # 设置页「Mesa 内部对话」卡片纯逻辑：保留天数档、体积白话、立即清理确认文案（tests/internal-sessions.test.ts）
   notice-text.ts             # 提示条 / 浮动提示正文分层（首句=结果标题，其余按句成说明行）+ 停留时长（tests/notice-text.test.ts）
   toast.ts                   # 右下角浮动提示总线：toast(msg, tone, { actions, sticky, key }) / dismissToast(key)；带动作按钮、
+exit-animation.ts          # 弹层退场与折叠动效（apple-motion 手感批 2026-10-12，约束 design-system「动效口径」）：useExitRender（open→false 后保持挂载 150ms 播 ccode-exiting 逆向退场、退场中重开取消卸载、closeNow 给 commit 路径选中即散）、useAnimatedDismiss（父级控制挂载的弹层把纯 dismiss 推迟成先退场再 onClose）、PageFrame Collapse 五阶段（0fr/1fr 行轨、open 停稳不裁切焦点环）；reduced-motion 时长取 0 立即卸载不留静态残影（Modal/命令面板/右键菜单/抽屉/灵动岛组件等共用；tests/exit-animation.test.ts）
                              #   常驻不自动消失、同 key 顶替旧的（上手引导「下一步」只留一条）。ToastHost 渲染，满员先挤会自动消失的
   onboarding.ts              # 上手引导纯逻辑（2026-10-20）：七步步骤表与文案、完成判定（全由数据现算，只有「切到终端看看」
                              #   「认识对话标题」「官方账号跳过网关」靠确认——终端那步运行页真切过一次也记，store.ackOnboarding）、进度/当前步、新完成集合、首次判定（有连接=老用户收起）、
                              #   「结果 + 下一步」提示文案、localStorage ccode.onboarding 存取（tests/onboarding.test.ts）
   components/OnboardingGuide.tsx # 上手引导界面：OnboardingHost（App 根部；首屏数据齐后首次判定、步骤完成跃迁弹 sticky 「下一步」
+components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：前端崩溃时显示错误栈而不是整窗白屏（webview 没有控制台可看的定位手段），componentDidCatch 经 log_event 落应用日志；「尝试恢复」清错误态重渲染
                              #   toast、欢迎页 Modal、清单浮层——贴侧栏 data-onboarding-anchor 行向右展开，侧栏全隐藏时挂帮助下方）+
                              #   useOnboardingRail / OnboardingRing（App 侧栏行用）+ OnboardingPageStrip（连接页页头下方当前步引导条）+
                              #   openOnboardingGuide（帮助菜单 / ⌘K）。各步动作走既有一次性请求（gatewayLibraryReq / profileModalReq /
@@ -253,6 +289,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   标签即存、补充失焦存；补充框自持原文（回流模板会裁空白）；放不进勾选形状的手工版式给
                              #   「编辑源文本 / 改用勾选」两条出路（tests/session-template-editor-ui.test.ts）
   components/ProjectInjectionPanel.tsx # 项目设置抽屉「对话注入」面板（2026-10-16）：三态 SegTabs（自动/自定义/不注入）+
+components/ProjectMemoryPanel.tsx  # 项目设置抽屉「项目长期知识」分区（ProjectSettingsDrawer 编程/工作组装）：读写 .ccode/memory.md（project_memory_read/update）——新增/替代/作废都要写依据（reason）、revision 乐观锁、作废先确认，历史与 legacy 原文保留可查；默认收起、摘要给有效条数（tests/project-memory-panel.test.ts）
+components/ProjectRulesPanel.tsx  # 项目设置抽屉「规则」面板（ProjectSettingsDrawer，SettingsRulesSection 同款分区）：规则草稿与生效预览（effectiveProjectRules）、保护文件夹勾选（protectableEntries/suggestProtectedPaths）、项目技能池增删；按工作方式给占位示例（tests/project-rules-panel.test.ts）
                              #   模板编辑（切到自定义且模板空 → 直接填默认版式并保存；恢复默认模板覆盖前确认；「插入」占位符小标签、
                              #   未知占位符/单独 ---- 行点名、人清空时的不生效提示）+
                              #   展开式预览（loadProjectContextPack + sessionOverride 按面板未保存的档位/草稿 400ms 防抖重渲，所见即所得，
@@ -275,10 +313,14 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   分档/活跃/峰值/连续随胶囊重算，streak 限所选年）；
                              #   数据自持（usage_activity 全历史非零日，refreshKey 由页级刷新驱动）
   pipeline-presets.ts        # 内置流水线模板 PIPELINE_TEMPLATES（六套，含 v3.97「LaTeX 论文」）；
+pipeline-append.ts         # 「＋ 从模板追加」冲突判定（PipelineEditor / TemplatePickModal 消费，与后端 append_pipeline_steps 同口径）：同名步骤交付相容（expectedArtifacts 被旧步包含）可直接复用，不相容的 renameConflictingSteps 改名「步骤名（模板名）·N」防撞名——显示名不等于步骤身份（tests/research-tools.test.ts）
+pipeline-upgrade.ts        # 模板升级候选 pipelineUpgradeCandidates：名称与工作区名同时一致才配对，逐字段比 brief/产物/输入/人工事项/决策等十余键，只提出更新候选、不自动改写已有项目（PipelineEditor 消费；tests/research-tools.test.ts）
+manuscript-font.ts         # 初稿正文字体一句话指令（默认 Times New Roman＋宋体）：让 agent 渲染前先跑 quarto-render 技能的 manuscript_font.py 写 YAML mainfont/CJKmainfont 与 format.docx 的 reference-doc，写完再渲、本机没这套字体就停下不换。注意：现挂载点仅 tests/manuscript-font.test.ts——同口径纪律文本已并入 pipeline-presets.ts 初稿步 brief，运行时无消费方，改提示词两处对齐
                              #   每套 projectRules 纪律不同，settingsForTemplateApply 不落空表格
   lit-project.ts             # 文献-only 项目：建议添加目录 / 家目录禁入 / 「整理为笔记」摘录落点（notesExcerptTarget：
                              #   lit-notes 工作区名或挂 lit-notes 技能的步骤；工作区没在跑时调用方写项目根 notes/excerpts.md）
   task-md.ts                 # TASK.md 拼装纯函数（项目根/产物目录绝对路径）；pipeline-start 再导出
+task-md-sections.ts        # TASK.md「文献来源」段单一出处（renderTaskMd 模板拼装与就地同步 upsert 共用）：zotero/endnote/folder 才有段（search/空＝默认从零系统检索，不必写），把检索步定性成「盘点＋查漏补缺」并立三条执行纪律、置于简报之前；upsertLitSourceSection 项目配置改文献来源后同步进已存任务书（内容文件一旦编辑就是快照，这段是改变检索性质的硬前提必须跟配置走；search 时删段、无变化原样返回不写盘）；upsertPendingSettingsSection「待确认的全局设定」跟项目规则走、已填的删掉（ProjectGroup / TaskCardsSection 消费；tests/task-md-lit-source.test.ts）
   pipeline-start.ts          # 一键开步共享链路（renderTaskMd/gatherTaskMdExtras 单一出处，弹层预览与落盘共用）；
                              # 工作区→终端交接单一出处 buildWorkspaceTerminalRequest（reuseKey 找回同工作区标签 +
                              # 无 prompt 时 resume 最近会话；步骤绑定换了 Agent 则不接回，见 keepWorkspaceResume）
@@ -304,12 +346,14 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 分发状态徽标 mcpDistBadge（modified/missing/disabled_externally 三异常态文案与识别色）+
                              # 命令路径告警徽标 mcpCmdPathBadge（relative/missing）与收编解析附注 mcpPathResolveNote
   run-overview.ts            # 运行中聚合视图纯逻辑（按「要你管」排序）+ 项目列表状态点 projectRailStatus
+run-announce.ts            # 顶部岛跑完播报纯逻辑（App.tsx 算、TopNavCapsule 休眠面报一行）：只报「跑完/断开」事件不持状态——等确认归收件箱，收件箱已持有计数的岛不得再持一份；runFinished 去重（attention 在会话尾部 sticky，同回合反复上报不重播；failed=此前 running 现在不 running 且不在等确认，正常退出与崩溃不区分——对用户都是「它没了」）；mergeAnnouncements 1.5s 窗口内同标签后到顶替、多标签同结局合并成「N 个已跑完」不轮流霸屏；停留 4s 刻意不跟随导航收起档（用户选「立即」是嫌导航挡路，不是嫌播报碍事）（tests/run-announce.test.ts）
                              # + tabRunInput（标签折成 terminalRunInputs 一行；没上报状态先用开标签时的 Agent / 目录 / 要接的会话，侧栏不闪「新对话」）
   run-model.ts               # Project→Task→Run 前端镜像：inferTaskKind / 工作台白名单 isWorkbenchSurfaceRun
                              # （登录/无头/空闲 shell 不进「正在进行」；阅读标签还开着则进）/
                              # pickRecoverableRun 找回可恢复 Run（排除 internal/login/watch/reader——阅读关掉就离开，
                              # 不进找回链）/ isRunProcessLive 活进程判定（保留标签不算运行中）（tests/run-model.test.ts）
   project-tasks.ts           # 人声明任务：资料范围（不带入/勾选/整个项目）/ 嵌套路径剪枝 /
+human-task-completion.ts   # 人工事项完成判定闭集与落点兼容（PipelineEditor 编辑人工事项消费）：exists 出现即检测 / manual 必须人工确认 / all 全部目标满足（仅后端支持的「目录/末段通配」，跨目录 * 不认）/ no_placeholders、decisions_cleared（只读单个文本文件，不能用于目录/通配）；落点可省＝行内处理；normalizeCompletion 把改型后判不完的组合收敛成 exists，别存一个后端永远判不完的配置（tests/human-task-completion.test.ts）
                              # 声明步骤过滤（不含会话自动登记）/ 审核回流文案 / 目标短名 goalShortTitle 与全文 goalFullText /
                              # 保护文件夹勾选（验收写回保持原样，不是另存副本；tests/project-tasks.test.ts）
   project-agents.ts          # 项目 Agents 名册：每家默认配置 / 项目选用的模型 / 项目默认 / 声明步骤归属
@@ -325,6 +369,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   Windows 本机 Python 提示 WINDOWS_PYTHON_HINTS 与 task-md 共用（2026-10-26）
                              # （tests/project-context.test.ts）
   coding-lanes.ts            # 编程车道覆盖层：有树无行按分支现算、theme 分组、空闲/Agent；
+coding-git.ts              # 编程页 Git/GitHub 前端纯逻辑（与 coding.rs 双端镜像；isWindows 显式传参禁读 navigator）：parseGitRemoteUrl（scp/https/ssh 语法、拒 `-` 开头与控制字符与 ..、hostKind=github 仅精确认 github.com）、githubCompareUrl、shouldWarnEnterPrimaryBase（主仓/基准入口警示，口径 conventions/coding-git.md）、cwdIsCodingWorktree（走 path-utils 同口径）、远程分支选择行 remotePickerRows、「再开一条」预填 nextLaneBranchName（feature/x→feature/x-2）（CodingProjectView 与 TerminalPage 消费；tests/coding-git.test.ts）
                              # arrangeBranchMap 分支地图（基准作根 / 其余树分组 / 未检出分支单列）
                              # （tests/coding-lanes.test.ts）
   agent-caps.ts              # 能力表前端消费：定时任务禁选未验证无头；Grok 标「会批准全部操作」
@@ -348,6 +393,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # （macOverlayPadClass / useMacFullscreen；tests/mac-titlebar.test.ts）；
                              # useMacFullscreenState 另给「全屏动画中」：原生预告先翻状态，onResized 查询经 resolveFullscreen 对账
   folder-groups.ts           # 项目页分级文件夹树（本层文件与子夹并列；可剥 papers/notes/data）
+project-surface.ts         # 项目页页签闭集与持久化（tasks/schedules/files/agents；「对话」页签 2026-10-23 随侧栏挂对话撤掉，存过 chats 的项目回落默认页签）：projectTaskLabel 按工作方式叫科研/工作/编程任务、normalizeProjectSurfaceTab、每项目 localStorage ccode.projectSurface.<path>（store / ProjectSurfaceTabs / WorkspacesPage / TerminalPage 消费；tests/project-surface.test.ts）
+project-sessions-layout.ts # 项目页右侧「这个项目的对话」栏：开/关持久化（ccode.projectSessionsOpen）＋主区井窄于 896px 改抽屉不并排挤主区。「对话」页签 2026-10-23 撤掉后 src 内已无运行时消费方，仅 tests/project-sessions-layout.test.ts 钉住——侧栏对话形态若回收再接回，勿凭文件存在误判在用
                              # 展开路径 persist（默认全收起，跟随上次；tests/folder-groups.test.ts）
   workbench-hero.ts          # 工作台主卡纯逻辑：当前工作按运行标签归属（注册名优先；隔离目标副本按
                              # runId/taskId 归属表归回真实项目，不按 cwd 拆卡；同名项目按 contextPath 路径选，名字只作唯一命中回落）、
@@ -418,6 +465,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   mermaid-blocks.ts          # mermaid 围栏检测（无围栏不加载 chunk）
   mermaid-sanitize.ts        # mermaid SVG 二次清洗（strict + 剥脚本/链接）
   html-preview.ts            # html 沙箱预览：stylesheet 内联 / 本地图 / srcdoc
+document-html.ts           # DOMPurify 文档清洗两套：sanitizeDocumentHtml（md 阅读版式/聊天 Markdown/docx/幻灯/笔记本/更新说明/许可浮层等渲染共用——白名单标签，链接只放行本地与 http(s)/mailto/tel，class 只留 md-* 有限集防文档借 fixed/inset/z-index 盖工作台，checkbox 一律禁用）与 sanitizeHtmlPreviewDocument（html 文件沙箱预览，2026-10-26 放宽到「报告能看」：放行内联 style/内嵌 SVG/MathML 供 Quarto/Jupyter 导出排版，脚本表单内嵌框架仍剥，交互图表只看静态＋「在浏览器打开」）；本地路径只决定能否读文件、不决定其中 HTML 可信（tests/document-html.test.ts）
   md-find.ts                 # md 阅读态页内查找：按块拼文字找、跨行内元素逐节点包 mark、清除复原；跳过 .md-cite（tests/md-find.test.ts）
   editor-font.ts             # 文件预览编辑器字号（本机存储 + CustomEvent 广播，10–22 一档一像素）（tests/editor-font.test.ts）
   md-render.ts               # 文档版 md 渲染：splitMdFrontmatter 拆 YAML 头（画成 MdFrontmatterCard）、脚注扩展只在 withDocMode 内生效，
@@ -430,11 +478,14 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 「＋ 话题」占位按当前步骤给例子（ideaTopicPlaceholder，综述大纲不写对照实验）
                              # （tests/task-cards.test.ts）
   step-flow.ts               # 步骤内协同流程线纯逻辑：种子→before→agent→during→after→评审节点链
+citation-style-choice.ts   # 流程线「更换引用样式」纯逻辑（StepFlow 唯一消费）：样式族闭集（编号方括号/编号上标/作者-年）与各形 ask 文案、按期刊重排指令（先读作者须知再对照 references.bib 里该刊近作，不一致停下来问不猜）、styleFamilyOf 按 csl 判定核对换的样式落没落、target-journal.md 读写与「沿用已定」唯一来源 parseTargetJournal、topJournals、citationCarryAsk 定稿开工问一次；旧任务名「填写引用样式」照认（isCitationStyleTask，step-node-actions 也用）。格式只在定稿步定，起草步固定编号制（tests/citation-style-choice.test.ts）
+step-node-actions.ts       # 步骤节点行的动作选择纯逻辑（StepFlow 消费；从组件里 190 行 switch 抽出——「给不给入口」是行为不是版式，改错用户只看到按钮消失不报错，付费墙/EndNote 入口都这么坏过）：stepNodeAction 按节点 kind 走有序判据——去笔记夹、资料库同步刻意排在就绪门之前（未就绪按钮在但灰着占位，普通 after 事项未就绪干脆不出现，重排会抹掉这层语义）；stepNodeReady/stepNodeWaiting 同一就绪口径三处共用（给入口/压暗/说明文字），分叉会出现压暗行里躺着可点按钮；文献类交付（落点 papers/）统一引到「文献与数据」按来源高亮进料口；行内点选与域稿不交文件、AI 写好人来填的给「打开/交给 AI」（2026-10-24）（tests/step-node-actions.test.ts）
                              # （v3.97 起 after 档一律进主干，可选项带徽标但不抢当前节点；
                              #   「确定文献来源」= 选了非默认来源或这一步已开工（默认检索开工后不再钉住当前）；
                              #   demoReadPaperResource：「开读这一篇」仅示例课题精读步，普通模板只显示「开始」；
                              #   tests/step-flow.test.ts）
   skill-conflicts.ts         # 技能接口对账纯逻辑：产物冲突（skillOutputConflicts，outputs 两两相交）+
+skill-diff.ts              # 内置技能「本机与新版对照」diff（SkillsPage 消费）：换行统一 LF 再比（Windows 本机副本常是 CRLF，不统一整份都算改了），复用 tool-activity 的 lineDiff，中间连续未改行折「⋯」、改动前后各留 2 行 ctx；无增删返回空不画（tests/skill-diff.test.ts）
                              # 跨步骤链路（skillChainWarnings：inputs 找供给/outputs 对账预期产物，
                              # 支持 * 通配与目录/文件互含，推断接口打标；tests/skill-conflicts.test.ts）
   schedule-tasks.ts          # 定时任务纯逻辑：周期白话/相对时间/按 projectRoot 过滤（tests/schedule-tasks.test.ts）；
@@ -469,6 +520,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   chat-fidelity.ts           # 聊天层对九家能做到哪一步（2026-10-22，tests/chat-fidelity.test.ts，docs/design-chat-fidelity.md）：CHAT_FIDELITY 分档
                              # 单一出处、parseVersion / verifiedVersion（本平台基线优先）/ versionTrust（比核对过的新 = newer）
   cli-verified.ts            # 已核对 CLI 版本：构建时 import.meta.glob 读金丝雀基线的 version（测试里兜成空表）；useCliNewer 给降级用
+vite-env.d.ts              # Vite client 类型引用一行：import.meta.glob（cli-verified.ts 构建期读金丝雀基线用）与 import.meta.env 的 TS 类型来源
+__conv-harness.tsx         # 本地截图 harness（非产品代码，.gitignore 钉死不进仓）：内嵌一段真会话 JSON 按 ?s= 参数切十片挂 ConversationView，供开发用 Vite 17575＋headless Chrome 截对话组件（memory「组件截图 harness」流程）；验完即删，tsc 会扫到它、别提交
   text-reveal.ts             # 聊天实时预览匀速显示（2026-10-22，tests/text-reveal.test.ts）：revealStep 按积压放字、shownAfterRetarget
                              # 「接着长才匀速、换了一段整段」、safeCut 不切开字形、useRevealedText（rAF + 兜底节拍）；ChatSurface 消费
                              # thinkingHeadline 取 `**小标题**` 或第一句（tests/chat-status.test.ts）；ChatSurface 消费
@@ -482,8 +535,10 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   2026-09-15 核对插件源码）——桌面点通知只激活窗口，「待确认」跳转由 App.tsx 窗口获焦时的
                              #   右下角提醒条补位（点「去处理」直达终端标签，按待确认集合去重）
   git-status-groups.ts       # 改动列表状态分组/白话双层纯逻辑（含冲突 unmerged 组）；userDirtyFiles（剔台账，评审提交面板用）/
+path-utils.ts              # 前端路径方言层（AGENTS「路径比较」条的前端口径，与后端 paths.rs path_key/path_within 同规则）：normSep/stripVerbatim（存量库里仍有 \\?\ verbatim 记录，显示与比较前都要过一道）/pathKey（Windows 折叠大小写，只用于比较不回写）/samePath/pathWithin（段边界含根自身）、normalizeStatusKeys＋hasChangedInside（git 装饰表键归一与文件夹变更点）、parentDir（Windows 盘符根保留）、abbrevHome（~ 折叠显示）、relativeUnder（写进 agent 指令的正斜杠相对路径）、revealFolderLabel 平台叫法；isWindows/isMac 显式传参禁模块内读平台（跨页广泛消费；tests/path-utils.test.ts）
                              #   userWorkDirtyFiles（再剔 Mesa 自有档案 .ccode/·.gitignore，项目页提醒与开工弹层用）
   file-icons.ts              # 文件类型图标纯逻辑：扩展名 → 图形种类（FileGlyph）+ 固定识别色（另按整名认点开头配置文件、按 .bak 段认备份副本）；
+agent-colors.ts            # agent 识别色唯一在用色相表 AGENT_BRAND（固定 hex 不随主题变，同 file-icons「固定识别色」先例）：对话页列表行胶囊（agentBrandBadgeStyle＝色字+同色 10% 淡底、无描边）与统计页进度条/圆点、项目任务/Agents 视图、模型菜单、会话导入弹层共用；未知 agent 按 id 哈希取 HSL 兜底（确定性、不撞令牌池）。v3.92 调色口径：低饱和中明度雾面、九家 hue 拉开；v3.94 起旧令牌色表 AGENT_COLORS 已随「进度条改绑品牌色」拍板删除——新增 agent 在这里加一行，别撞色
                              # 未收录返回 null，画通用文件图标，不留空槽；图形到 Lucide 的映射与渲染在 components/FileTypeMark.tsx；
                              # isPreviewableImagePath（png/jpg/gif/webp/svg，tests/file-icons.test.ts）
   project-files.ts           # 文件页纯逻辑：预览形态分流 / 类型筛选（recent 是视图不参与类型收窄）/
@@ -520,6 +575,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   terminal-notify.ts         # OSC 9 / 777 通知标题（777 三段式取标题）与 OSC 9;4 进度解析
                              # （parseOsc9Progress → 标签条徽章），从画面文字里抽走（tests/terminal-notify.test.ts）
   terminal-replay.ts         # 重启回放取缓冲尾部纯文本（tests/terminal-replay.test.ts）
+exit-code.ts               # pty-exit-<id> 退出码白话（TerminalPage 唯一消费）：0/126/127 与 128+信号惯例（130=Ctrl-C、137=SIGKILL…）→ label/short/tone；-1 是后端「原因未知」哨兵（pty_kill/回收/wait 超时都发它），文案中性不染红、code 给 null 不显示假数字；回落 shell 提示的括号子句 exitCodeClause 只在非正常退出给（tests/exit-code.test.ts）
   terminal-protocols.ts      # 内嵌终端协议：Kitty 键盘查询识别与剥离（应答由后端 term_query.rs 写回；只宣布 flags 5；无修饰功能键保持传统
                              # 序列、只改写 Esc；带修饰方向键走 CSI 1;mod 字母形）、弹栈认层数、
                              # XTVERSION 两问法统一 DCS 应答、XTGETTCAP 答 Ms、OSC 52 限长写剪贴板、
@@ -534,6 +590,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # ⌘←/⌘→/⌘⌫ 照 iTerm 改写成 Ctrl+A/E/U 的 macLineEditKey、
                              # 剪贴板图片条目判定/MIME→扩展名/粘贴反馈文案（tests/terminal-input.test.ts）
   terminal-welcome.ts        # 终端未启动空态：isTerminalIdle / 卡上「将在 … 启动」目录文案 / 点开的目录菜单 welcomeDirChoices
+terminal-cwd.ts            # 目录读取错误统一人话（FileTree / TerminalPage 消费）：ENOENT 等归「目录不存在或已移动：路径」，其余剥「读取目录失败：」前缀给「目录不可用：…」——底层错误串不直接暴露在界面，可恢复的（建目录/挪回来）不吓人
                              # （tests/terminal-welcome.test.ts）
   terminal-wheel-scroll.ts    # 触控板/滚轮合帧：capture 阶段截住 wheel，同帧多枚合成一枚再派回深层 target
                              # （滚动卡顿修复 2026-09-21，拍板记录 architecture.md §10；tests/terminal-wheel-scroll.test.ts）
@@ -558,16 +615,19 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   tab-surface.ts             # 打开对话先显示聊天还是终端（2026-10-22，tests/tab-surface.test.ts）：设置 openSurface 默认值 +
                              # pendingTerminal 落标签定层（shell 恒终端 / 写死照写 / 复用不动 / 新开跟设置）；进对话的入口禁写死 surface
   terminal-palettes.ts       # 终端调色板共享表（设置页与终端同源）：四套深色 + 四套配对浅色 twin，
+terminal-font.ts           # 终端字体族单一出处（设置页下拉与 xterm 建链共用，禁页面各自拼字体串）：TERMINAL_FONT_CHOICES（加字体＝加一条；ui-monospace 是 macOS 拿系统等宽 SF Mono 的唯一写法、SF Mono 需自装并如实标注）；terminalFontStack＝已选族名排最前＋共享回退链（读 App.css --font-mono 与全局等宽同一出处，MONO_FALLBACK_STACK 字面量仅供无 DOM/读空兜底，测试比对防漂移），去重不去末位 monospace；2026-09-21 实测：回退链里 ui-monospace 必须排在 Menlo 之前否则永远落 Menlo，默认 JetBrains Mono 对齐 Ghostty 自带（tests/terminal-font.test.ts）
                              # ANSI 16 色 + 光标 + 选区全在表内；resolvePaletteId 按主题亮暗自动换 twin；
                              # 没选过 / "auto" = 跟随主题（themeDefaultPalette：深色 One Dark、暮紫 Catppuccin、浅色 Light+）
                              # （新增调色板须同步 settings.rs KNOWN_PALETTES，否则被静默丢弃，tests/terminal-palettes.test.ts）
   upstream-note.ts           # brew 最新但上游 npm 更高版本的提示
+update-routing.ts          # CLI 自更新路由 interactiveUpdatePrefill（ProfilesPage 消费）：interactiveTui 家（kimi upgrade 这类方向键选择界面）配置页行输入（updater_write 只应答 [y/n]）操作不了，命中时返回预填完整终端的自更新命令（与官方账号登录同款开终端机制）；未命中返回 null 走原 run_streaming_pty 实时终端，普通渠道行为不变（tests/update-routing.test.ts）
   trust-prompt.ts            # 启动「是否信任这个目录」菜单识别（读 xterm 可视区文本；认 Claude / Kimi / CodeBuddy 方框 / Gemini 四种形态，信任只选范围最窄的那项）+ 代答按键序列（方向键挪到目标项再回车）；认不出返回 null 走 8 秒拉起终端的出口
   chat-style.ts              # 聊天层阅读体验：字号档 / 字体 / 行内代码强调色 / 滚动条四张表（与 settings.rs KNOWN_CHAT_* 逐表镜像）+ 壳上内联变量 chatStyleVars（标准/系统档不写变量）；
                              # 颜色与滚动条行为都在 App.css（data-chat-accent / data-chat-scrollbar / .ccode-chat-scroll / .ccode-chat-user，tests/chat-style.test.ts）
   profile-connection-ui.ts   # 连接页行状态列（profileStatusCell：只说例外与测试通过）、未测试给「测试」入口（profileNeedsProbe）、同组重名（duplicateNameIds）、「同步目录」是否出现
   chat-empty-start.ts        # 聊天空态纯逻辑：按目录类型的起手提示表（STARTER_PROMPTS）+ 通用目录的「接着做〈项目〉」（recentProjectStarters）+ 时段问候（chatGreeting）；输入框目录芯片文字在 terminal-welcome.ts cwdChipLabel，UI 在 components/ChatEmptyStart.tsx（不列旧对话：10-23 起挂在侧栏项目树；输入框居中版式在 ChatSurface）；输入框右下「模型 · 思考」菜单在 components/ChatModelMenu.tsx（开聊前 / 运行中 / 接着聊同一个单栏菜单），左下权限四档在 components/ChatPermissionBadge.tsx，对话末尾「等你决定」卡在 components/ChatDecisionCard.tsx（所有弹出卡片一个骨架 CardShell，主按钮 ⌘↵；口径 design-system.md 对话页 ③，设计稿 docs/design-chat-layer.md）
   model-caps-label.ts        # 模型菜单每行右侧的能力灰字（200K · 思考 · 看图），数据来自 model_capabilities
+model-caps-override.ts     # 网关库模型行「能力声明」编辑表单纯逻辑（GatewayLibrary 消费，model_registry.rs 用户覆盖层的表单入口）：thinking/vision 三态 ""=未声明（查询链继续向下）/"true"/"false" 显式声明，context 正整数校验与 Rust validate_override 同口径；output/api_backend 不进表单（output 的用户旋钮是策略字段 max output）由调用方往返保留；全空表单＝没有声明，保存降级为清除（tests/model-caps-override.test.ts）
   （scripts/e2e-model-routing/：假网关 + 驱动，用 agents.rs 的 e2e_dump_launch_plans 生成的真实启动计划拉起各家 CLI，核对请求里的模型与路径；
    chat-capture.py 按权限四档拉起、发 TRIGGER_SLOW / TRIGGER_TOOL / 切换命令逐帧抓屏，聊天层第三期逐家核实用（2026-10-20 起
    Windows 走 ConPTY / pywinpty；TRIGGER_ASK / TRIGGER_ASK2 回 Claude 提问表单、APPROVE_KEYS 每按一键记一帧，假网关认 SUGGESTION MODE 回猜的下一句）；capture-check.ts 把抓屏交给 tui-menu / live-reply 解析器看读不读得出；live-replay.ts 用真 xterm.js
@@ -592,6 +652,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   office-convert.ts          # LibreOffice 转换器探测（进程内只问一次）/ 转 PDF / docxDroppedSummary（tests/office-convert.test.ts）
   file-ops.ts                # 文件页 / 文件树文件操作：名字输入行（新建文件 / 文件夹 / 重命名）、复制一份、移动到…（系统选文件夹）、拖入复制与落点判定（tests/file-ops.test.ts）
   file-watch.ts              # 预览跟随磁盘变化：fileStamp（file_stamp 大小+修改时间）/ stampKey / useFileVersion（watch_file 单文件监听，改一次加一）（tests/file-watch.test.ts）
+file-preview.ts            # 预览保存快照纯逻辑（FilePreviewEditor / ArtifactChecklist 共用）：previewSaveCompletion 保存期间继续输入只更新磁盘基线、dirty 按当前内容重算（后输入不得标成已保存）；非 UTF-8 认出的编码（GBK/Big5/UTF-16LE…）保存按它写回，encodingLabel 给人话名（gb18030/GBK 都叫 GBK）（tests/file-preview.test.ts）
   image-view.ts              # 图片预览纯计算：imageFitScale（适应窗口，小图不放大）/ formatBytes（tests/image-view.test.ts）
   file-draft-handoff.ts      # 预览换宿主（侧栏 ⇄ 窗口 ⇄ 窄屏）带上没保存的修改：arm 5 秒内卸载才寄存，取一次即清（tests/image-view.test.ts）
   image-cache.ts             # 读过的本地图按路径缓存成 blob URL（条数 + 字节双上限 LRU，淘汰即 revoke；同路径读取去重），
@@ -633,18 +694,21 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # （extractLiveReply）+ 长回复滚出屏后按屏顶位置接到上一次后面（mergeLiveReply，不要求尾巴逐字相同）+ 剔掉会话文件已有的行（unsyncedTail）+ 剔掉开头被读成回复的分段提问回显（dropAskedEcho）+ 屏上有没有输入框（terminalHasInputBox）+ Claude 转圈行已生成 token 数（claudeOutputTokens，聊天层「正在回复」后显示）+ Claude 这一轮还在跑（claudeTurnActiveOnScreen，「esc to interrupt」）+ 正在想的那一框（extractLiveThinking，现只有 Grok，去掉竖线与 Thinking 头后在正文出来前显示在实时预览的位置）；
                              # CodeBuddy / OpenCode / Cursor 返回 null。新增一家先抓屏、样本进测试
   menu-key-nav.ts            # 聊天输入框小弹层的键盘操作（useMenuKeyNav：打开聚焦当前项、↑↓/Home/End、关闭还焦点）
+tab-keys.ts                # 标签栏/分段控件键盘导航三件（tabNavDelta 方向键位移、nextTabIndex 环形回卷且无选中从 0 起步、tabStopIndex 游标 tabindex 整排只停一次）：PageFrame SegTabs 与 ProjectSurfaceTabs 共用，调用方只决定「按键即切」还是「按键后等 Enter」
   auto-load-older.ts         # 回放往上翻自动加载更早一页（useAutoLoadOlder：对话页 / 项目对话 / 聊天层共用；只认用户滚动，
                              # 不满一屏自动补页）+ wasPrepended（聊天层前插判定，最新窗后滑不算）
   idle-preload.ts            # 启动后空闲时依次预载大块（preloadInIdle：一次一块、失败静默；App 里列运行页 / 项目页 / 文件预览编辑器 / PDF 阅读）
   virtual-window.ts          # 长对话只画视野附近（useVirtualWindow：上下两块占位、按字数估高 / 画过记实高、往上接画按锚点从占位扣差额；planWindow / remapWindow 纯逻辑可测）
   stable-props.ts            # memoWithLatestFunctions：父组件每次传新闭包时仍能跳过重画（比较时函数算相等、交出去的是转发到最新闭包的固定函数）；终端页每标签的聊天层 / 状态栏在用
   polling.ts                 # 定时刷新统一口径（usePolling / pollEvery：窗口隐藏时停、回前台补一次、上一次没回来不叠；createPoller 纯逻辑可测）
+session-refresh.ts         # 会话列表刷新协调器 createSessionRefreshCoordinator（store.ts 唯一挂载）：普通刷新复用在途请求不叠轮；强制刷新开新代次，旧请求晚回不覆盖新列表（成功与失败两路同口径，旧请求的失败也不暴露给新调用者，等最新请求返回当前列表）（tests/session-refresh.test.ts）
   progressive-rows.ts        # 长列表分段渲染（useProgressiveRows：先画 150 行，离底三屏接下一段，换筛选回第一段；选中项在后面画到它）；对话页列表在用
   run-caret.ts               # 运行状态光标三态（working 灰色呼吸 / idle 淡灰 / confirm 琥珀）：注意力 → 光标、几个合成取最要紧；
                              # 凡说「这段对话的 Agent 现在怎样」都用它，不再画绿点 / 黄点（组件 components/RunCaret.tsx）
   reading-anchor.ts          # 阅读位置自己锚（useReadingAnchor：对话页 / 聊天层；滚动时记眼睛看着的那块，内容变尺寸就挪回；
                              # 红线：滚动容器 [overflow-anchor:none]，不按 scrollHeight 差值补，不交回浏览器自带锚定）
   model-history.ts           # 「这份连接能选哪些模型」：连接名单 + 按 Agent+连接记的手填历史；开聊前选择器、启动栏、模型芯片同源
+model-vendors.ts           # 获取模型下拉按厂商分组折叠（大网关 400+ 模型平铺没法选；GatewayLibrary 与连接编辑弹层消费）：vendorOf 从模型 id 推断厂商（openrouter 风格取斜杠前段，否则取开头「字母+数字」段——宁粗勿错，仅用于展示分组）、组内按名排序、「其他」恒末，visibleVendorGroups 支持按厂商筛选＋子串过滤（tests/model-vendors.test.ts）
   image-models.ts            # 出图模型的家族归类、「最新在前」排序、各家推荐、耗时估算与进度（到结果前不满格）；纯逻辑
   model-kinds.ts             # 模型分类（出图/视频/向量/重排/语音/审核 = 不能对话）+ isImageGenModel；与 image_gen.rs 镜像，
                              #   两侧测试共读 tests/fixtures/model-kinds.json。连接目录面板隐藏、对话菜单置灰、启动栏过滤都用它
@@ -708,6 +772,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   有 Claude Code 先选它）（tests/gateway-option.test.ts）
   command-palette.ts         # 命令面板过滤与排序纯逻辑：searchOnly 默认不列、得分（标题全等/开头/「前缀：名字」开头/包含 > 别名 > 散字兜底）、组按最高分排且组内连续、matchedKeyword（tests/command-palette.test.ts）
   stats-insight.ts           # 统计页花费环比 / 会话标题回落纯逻辑；compact/fmtCost 统计页统一数字方言（tests/stats-insight.test.ts）
+stats-trend.ts             # 用量页「每日用量」折线的自适应日期轴纯逻辑（折线路径与交互态留在 StatsPage，手绘 SVG 不引图表库）：≤45 天按 MM-DD 均匀抽稀，更久按月首点标「M月」（跨年带「YY年M月」）；天数按 UTC 日界算避开时区/夏令时误差（tests/stats-trend.test.ts）
   usage-activity.ts          # 活跃度热力图纯逻辑：周一开头滚动网格（去年同月 1 日到今天，不翻年；整年网格
                              #   buildYearGrid/yearBounds/future 标记随 2026-10-15 时间窗改口移除）/ 月份标签避让 /
                              #   非零天四分位分档（GitHub 同构）/ streaks（今天宽限，跨年不断档）/ yearStats / 中文日期短语 /
@@ -746,6 +811,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   hotkeys.ts                 # 快捷键组合串纯逻辑 + 页切清单 PAGE_HOTKEY_DEFS（顺序 / 字同侧栏，10-24 重排）+ 新对话 / 在侧栏里选对话 / 聊天↔终端默认绑定
                              # + globalHotkeyAllowed（Win / Linux 焦点在终端里不抢 Ctrl+N 等）+ FIXED_HOTKEYS（设置页只读列出）
   themes.ts                  # 主题清单单一出处 + isLightTheme() 亮暗判定单一出处 + DEFAULT_THEME_ID（首装琥珀，与 settings.rs 同步）（禁另造判定；
+chrome-opacity.ts          # 侧栏/顶栏罩色挡位（CHROME_OPACITIES 0–100 六档，100=主题原样也是缺省、0=全透文字直接压壁纸，由 hint 讲明不硬拦）：挡位数是「各主题罩色基数的倍率」不是不透明度；与 settings.rs KNOWN_CHROME_OPACITIES 白名单镜像（前端加选项 Rust 没跟上会被静默落回默认＝选了没反应）；chromeOpacityScale 只出倍率，42/78/28 基数留在 App.css（--ccode-chrome-scale，App.tsx 写入）；挡位不走滑块——能看清文字的下限只能一档一档比出来（App 与设置页消费；tests/chrome-opacity.test.ts）
                              #   custom / custom-light 不进十四套清单）
   theme-follow.ts            # 主题跟随系统深浅：同名 twin（xxx ↔ xxx-light）换算；store 在设置读写后与系统
                              #   外观变化时调用，把 theme 写成生效值；自定义配色不跟随（tests/theme-follow.test.ts）
@@ -781,6 +847,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   windows-shell.ts           # Windows WebView2 默认行为收口纯判定（刷新/打印/查找/后退快捷键、鼠标侧键、默认右键、
                              #   Win11 判定）；挂载在 main.tsx，仅 Windows
   gateway-draft.ts           # 网关库槽位纯逻辑：effectiveSlotUrl 主输入跟随/脱离、slotsFollowMaster、firstProbeableSlot
+gateway-catalog.ts         # 网关目录刷新合并 mergeGatewayCatalog（GatewayLibrary 消费）：fetch_gateway_catalog 回来的目录只并元数据，逐模型策略（temperature/topP/maxOutputTokens/reasoningEffort）保留未保存的本地值；手工添加的模型（source=user）来源与状态以本地为准不被目录覆盖（tests/gateway-catalog.test.ts）
   goal-review.ts             # 目标验收弹层分组与文案：科研按文献/笔记/数据/论文、工作按文档/表格/幻灯（tests/goal-review.test.ts）
   history-view.ts            # 历史时间线白话翻译层（✓保存进项目/⚙自动保存/◔保存，hash/分支名降为二级）
   step-review.ts             # 科研步骤评审档案闭集 screening/files/acceptance/default；一张审阅壳按类型拼区块（tests/step-review.test.ts）
@@ -789,6 +856,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # （报告自述，不是系统认证；tests/step-evidence.test.ts）
   review-save-copy.ts        # 科研保存链白话：保存进项目；不是编程合进基准、不是科研验收决定
   kickoff-inputs.ts          # 开步确认弹层「上一步接到的输入」芯片；isDeclaredStepInput 排除已声明输入，不进未登记列表；
+kickoff-launch.ts          # 开工启动挑选纯逻辑：pickKickoffLaunch（指定绑定 > 记忆三元组 > 名册第一条；模型只在同一条连接名单里才沿用记忆值——别家连接的模型名带过来会启动失败）、codingTerminalLaunch（编程开工/进入工作树：项目绑了 Agents 直接拉起 autoStart）、kickoffLaunchLabel；开工项目级记忆 ccode.kickoffLast.<projectRoot>（2026-09-15 B1：与问 AI 的 ccode.askAi 彻底分键、此前两处互相覆写 useDefault；effort 是本次覆盖不入记忆；缺失时只读回落 loadAskAiRemembered 首跑预填不回写）（KickoffConfirmDialog / ProjectGroup / CodingProjectView / pipeline-start 消费；tests/kickoff-launch.test.ts）
                              #   unsavedUpstreamSteps：前面哪些步骤（进行中/待评审/有冲突）的产物与本步必读输入重叠、还没保存进项目
                              #   （模式按首个 * 前缀互相覆盖判定，宁多认；tests/kickoff-upstream.test.ts）
   lit-list.ts                # 无流程科研文献/笔记列表：展示名、编号、状态与过滤纯逻辑；pdfLitState + LIT_STATE_LABELS（文件页 PDF 行与资源列表同一套状态词）
@@ -805,6 +873,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   动画是 data-shown 驱动的 CSS 过渡（App.css .ccode-rail-peek，可半路改向），收起由 App 的 useExitRender(180) 多挂一会儿
   nav-capsule.ts             # 侧栏可配置胶囊入口（恢复侧栏始终保留，不在此列）
   components/WindowControls.tsx # Windows 自绘窗口按钮（最小化/最大化-还原/关闭，46px 宽、关闭悬停红）；仅 Windows 渲染，
+components/ReaderTranslatePanel.tsx  # 沉浸阅读区翻译面板（两种摆位：ReaderOverlay 原位档占布局流可拖高度、ReaderTlFloat 悬浮档锚在「译」球旁）：表头行（收起/原文显隐/存进笔记/复制/⋯/×）+ 块级对照正文 + 历史抽屉点行载入；历史/pending/高度/钉位等状态由 ReaderOverlay 持有，本组件 memo 只管呈现，旧 bilingual 条目经 reader.ts shim 转纯译文
                              #   App 标题栏与 ReaderOverlay 顶栏（盖住标题栏）各挂一份；对应 Rust lib.rs setup 的 set_decorations(false)
   session-template-blocks.ts # 对话注入模板 ↔ 勾选模型：[项目基本信息] → 勾中的内容段（固定标准顺序）→ 我的补充；
                              #   parseSimpleTemplate（放不进返回 null）/ serializeSimpleTemplate / coerceSimpleTemplate（只丢顺序不丢字）/
@@ -1103,6 +1172,7 @@ src-tauri/src/
                              # 字节是请求体原样（tauri::ipc::Request，postMessage 退路收 JSON 数组）、扩展名在 x-image-ext 头，后台线程落盘；
                              # read_clipboard_files = 文件管理器复制文件的粘贴（mac NSPasteboard / win CF_HDROP / linux 空）
   sessions.rs                # 会话浏览：九 agent 会话扫描/解析（Codex .zst、OpenCode SQLite/JSON）、session_meta、pin 快照、
+scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_meta_cache）：sessions.rs 六张 meta 缓存表（plain/chained/claude/kimi/snapshot/kimi_snapshot）按「键＋文件指纹」整表落盘，新进程首轮扫描前 load_once 装回——指纹未变的文件一个字节不重读（实测冷扫描 3.2s→约 0.8s）。schema 演进靠 SCAN_CACHE_VER 整表作废（serde 对缺字段静默取默认值，逐行跳过拦不住，对照 usage.rs USAGE_SCHEMA_VERSION 先例；SessionMetaDTO 增删/改派生字段必须 bump）、真坏行逐行跳过自愈、app.db 打不开/写不进静默退回无落盘绝不阻塞扫描主路径；save_once 首轮扫描后落一次、out 为空不落（防把好数据清成空表）。已知局限（当日实测口径）：plain 表「每段整表替换」的既有语义使落盘只对 chained/claude/kimi 完整生效，gemini 等明文段每进程重走 seek 头窗读（亚秒级，改共享热路径不值）；opencode_db/grok_summary 不落盘（外部状态指纹、解析便宜）；消费点仅 sessions.rs 两处（首轮扫描前后）
                              # 会话连接与启动模型 / 思考档记录（set_session_profile，launch_model / launch_effort 列）与接着聊默认配置
                              #   session_resume_config（模型取文件最后一轮、Codex 思考档取 rollout，读不到用启动记录，2026-10-24）、
                              # 列表标题与起名去掉 Mesa 塞的项目上下文包（strip_mesa_launch_pack）、
