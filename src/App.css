@@ -2328,8 +2328,10 @@ select:focus-visible {
   overscroll-behavior: none;
 }
 
+/* 选中文字的底色：带一点链接蓝（2026-10-26 用户：输入框里全选几乎看不出选中了——原先用 seg-sel，
+   和输入框 / 面板底色只差一档）。半透明叠在任何底上都分得出，深浅主题共用 */
 ::selection {
-  background: var(--color-seg-sel);
+  background: color-mix(in srgb, var(--color-link) 42%, transparent);
   color: var(--color-l1);
 }
 

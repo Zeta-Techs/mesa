@@ -815,7 +815,8 @@ function App() {
         void openQuickChat();
         return;
       }
-      if (allowed && eventMatchesCombo(e, focusRailCombo)) {
+      // 编辑器里 ⌘0 是「字号还原」（FilePreviewEditor 先 preventDefault），这里让给它，同界面缩放
+      if (allowed && !e.defaultPrevented && eventMatchesCombo(e, focusRailCombo)) {
         e.preventDefault();
         setPaletteOpen(false);
         // 侧栏收成图标 / 完全隐藏时不改形态，把项目树探出来（2026-10-24 用户定 A+D+E）；
