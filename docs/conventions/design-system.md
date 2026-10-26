@@ -277,7 +277,7 @@
   优先级高于 Tailwind v4 工具类——按钮上的 `text-*` 类实际不生效，**全站按钮按继承字号渲染**。
   曾尝试包进 `@layer base` 修复，全站按钮整体变小一档，用户实测「还不如之前」否决，已回退。
   局部块要统一字号的做法：给容器定字号、让按钮继承（不要再给按钮单独标 `text-*`）。
-- **动效口径**：弹层入场 `ccode-pop`（150ms opacity+scale .98→1，已绑在 `.ccode-float-surface` 上，弹层零额外接入）；
+- **动效口径**：弹层入场 `ccode-pop`（150ms 只淡入，已绑在 `.ccode-float-surface` 上，弹层零额外接入；**2026-10-26 起不再缩放**——原 scale .98→1 以中心缩放，WKWebView 实测聊天「＋」菜单右侧提示字 150ms 里内缩 2.6px 再滑回，用户看到「后面的字符缩进一下」；退场 `ccode-pop-out` 同改只淡出。**文字浮层禁缩放入场**，要位移只平移整数像素外层）；
   遮罩入场 `ccode-fade`（120ms 透明度）；统一 `--ccode-motion-ease`，UI 反馈都在 200ms 内；`prefers-reduced-motion` 全局关闭。
   **阅读区侧栏收起滑动（2026-10-14）**：`ccode-reader-panel`（200ms 负 margin 滑出 + visibility 参与过渡）——
   栏块常挂载、栏宽不变，Monaco/xterm 宿主零重排；重排类面板动画一律先问「内容是否逐帧重排」，

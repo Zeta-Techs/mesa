@@ -1204,7 +1204,7 @@ html[data-material="none"] .ccode-app-rail .bg-rail-sel {
 
 /* 浮层表面统一口径（弹窗/下拉/右键菜单/命令面板）：raised 一档浮起 + 顶部 1px 内高光
    （Linear edge highlight 手法）——零阴影原则不变，浮起感靠边缘高光而非投影表达；
-   浅色主题下高光落在白板上近不可见，无害。入场动效直接绑在本类上：opacity + 轻微 scale，
+   浅色主题下高光落在白板上近不可见，无害。入场动效直接绑在本类上：只淡入（2026-10-26 起不缩放，见 ccode-pop），
    150ms ease-out（Linear 口径：UI 反馈 200ms 内），扁平语言下靠动效表达层级 */
 .ccode-float-surface {
   /* 浮层内部内容卡不继承背后项目工作面的 rail2，外壳仍用 raised。 */
@@ -1259,11 +1259,9 @@ html[data-material="none"] .ccode-app-rail .bg-rail-sel {
 @keyframes ccode-pop-out {
   from {
     opacity: 1;
-    transform: scale(1);
   }
   to {
     opacity: 0;
-    transform: scale(0.98);
   }
 }
 
@@ -1290,6 +1288,7 @@ html[data-material="none"] .ccode-app-rail .bg-rail-sel {
 }
 
 /* 锚定展开（emil §7 anchored origins）：菜单从触发器一侧长出来，而非中心凭空浮现。
+   2026-10-26 浮层入场 / 退场改为只淡入淡出后，这两条暂时不起作用，留给以后有位移的动效用。
    topleft 给下沿对齐触发器的菜单/右键菜单；top 给居中下落的命令面板。 */
 .ccode-anchor-topleft {
   transform-origin: top left;
@@ -1787,14 +1786,14 @@ button.ccode-nav-island-announce:hover {
   animation: ccode-fade 120ms var(--ccode-motion-ease);
 }
 
+/* 浮层入场只淡入、不缩放（2026-10-26 用户：点开聊天「＋」菜单「后面的字符缩进一下」）：原 scale(.98→1) 以中心缩放，
+   WKWebView 实测右侧提示字 150ms 里从内缩 2.6px 滑回原位，文字多的浮层看着就是字在抖。退场 ccode-pop-out 同口径 */
 @keyframes ccode-pop {
   from {
     opacity: 0;
-    transform: scale(0.98);
   }
   to {
     opacity: 1;
-    transform: scale(1);
   }
 }
 
