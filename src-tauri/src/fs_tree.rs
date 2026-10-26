@@ -274,7 +274,7 @@ fn save_file_preview_sync(
         return Err(reason);
     }
     if current.revision.as_deref() != Some(expected_revision) {
-        return Err("文件已被 Agent 或其他程序修改，未覆盖磁盘内容。请先保留本次编辑，再重新打开文件对比合并。".into());
+        return Err("文件已被 Agent 或其他程序修改，未覆盖磁盘内容。".into());
     }
     let root_c = crate::paths::canonicalize_plain(std::path::Path::new(&expand_tilde(root)))
         .map_err(|e| format!("项目根目录无效: {e}"))?;

@@ -15,7 +15,8 @@ import {
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openPath, openUrl } from "@tauri-apps/plugin-opener";
+import { Search } from "lucide-react";
 import * as monaco from "monaco-editor";
 import editorWorker from "monaco-editor/editor/editor.worker.js?worker";
 import SelectionFloatBar, { DistillSkillButton } from "./SelectionFloatBar";
@@ -31,7 +32,7 @@ import {
 } from "../reader";
 import { escapeShellPath, imageExtFromMime } from "../terminal-input";
 import { saveClipboardImage } from "../clipboard-image";
-import { comboLabel, eventMatchesCombo, IS_WINDOWS, READER_MODE_HOTKEY } from "../hotkeys";
+import { comboLabel, eventMatchesCombo, IS_MAC, IS_WINDOWS, READER_MODE_HOTKEY } from "../hotkeys";
 import { imeBlocksEnter } from "../ime-guard";
 // md-math 模块作用域完成 marked 公式扩展注册（全局生效，占位=原始 $..$ 源码，未升级处观感不变）
 import { renderMathInto } from "../md-math";
@@ -47,6 +48,8 @@ import {
   type MdEditResult,
 } from "../md-edit";
 import { hydrateMdImages, revalidateMdImages } from "../md-image-hydrate";
+import { clearFindMarks, markFindHits, setCurrentHit } from "../md-find";
+import { onEditorFontChange, readEditorFont, stepEditorFont, writeEditorFont, EDITOR_FONT_DEFAULT } from "../editor-font";
 import { focusMdText, linkifyPdfRefs, pdfRefFromTarget } from "../md-pdf-refs";
 import type { PdfJumpRef } from "../reader-note";
 import { isPreviewableImagePath } from "../file-icons";
@@ -61,6 +64,7 @@ import ImagePreview from "./ImagePreview";
 import HtmlPreview from "./HtmlPreview";
 import MdToc from "./MdToc";
 import MdFrontmatterCard from "./MdFrontmatterCard";
+import MergeConflictView from "./MergeConflictView";
 import { HoverTip } from "./HoverTip";
 import PreviewErrorState from "./PreviewErrorState";
 import {
@@ -117,6 +121,16 @@ interface PathContext {
   branch: string | null;
 }
 
+/** save_file_preview 的「磁盘已被改过」拒绝（fs_tree.rs save_file_preview_sync 同一句开头） */
+function isSaveConflict(e: unknown): boolean {
+  return String(e).includes("已被 Agent 或其他程序修改");
+}
+
+/** md 阅读态交给宿主的位置查询（阅读 ⇄ 编辑切换保位置） */
+interface MdViewSync {
+  topLine: () => number | null;
+}
+
 /** 划选记一条的四处文案：浮条按钮 / 提交钮 / 输入框提示 / 记上后的回执 */
 export interface AnnotateCopy {
   button: string;
@@ -161,8 +175,17 @@ function MarkdownView({
   focusText,
   annotateCopy = REVIEW_ANNOTATE_COPY,
   fsTick = 0,
+  syncRef,
+  initialLine,
+  findTick,
 }: {
   text: string;
+  /** 阅读 ⇄ 编辑切换保位置：宿主经它问「阅读态顶上是第几行」 */
+  syncRef?: React.MutableRefObject<MdViewSync | null>;
+  /** 上屏后滚到这一行所在的块（编辑 → 阅读时保持位置）；只在挂载时用一次 */
+  initialLine?: number | null;
+  /** 值变化就打开查找条（工具条上的查找按钮） */
+  findTick?: number;
   /** 文件所在文件夹每变动一次加一：已上屏的本地图核一次磁盘版本（重新出图后换新图） */
   fsTick?: number;
   large?: boolean;
@@ -217,6 +240,116 @@ function MarkdownView({
   const scrollRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const showMermaid = useMemo(() => hasMermaidFence(text), [text]);
+
+  /** 每个顶层块对应的源码行（含 YAML 头偏移）；对不上的为 null */
+  function childLines(): (number | null)[] {
+    const host = bodyRef.current;
+    if (!host) return [];
+    const blocks = mdBlocks(mdSource);
+    const tags = Array.from(host.children).map((c) =>
+      mdChildTagOf(c.tagName, c.getAttribute("class") ?? ""),
+    );
+    return tags.map((_, i) => {
+      const line = mdLineForChild(blocks, tags, i);
+      return line === null ? null : line + doc.lineOffset;
+    });
+  }
+
+  /** 阅读态视口顶上那一块的源码行 */
+  function topLine(): number | null {
+    const host = bodyRef.current;
+    const scroll = scrollRef.current;
+    if (!host || !scroll) return null;
+    if (scroll.scrollTop < 4) return 1;
+    const top = scroll.getBoundingClientRect().top + 4;
+    const lines = childLines();
+    let last: number | null = null;
+    const kids = Array.from(host.children);
+    for (let i = 0; i < kids.length; i++) {
+      if (lines[i] !== null) last = lines[i]!;
+      if (kids[i]!.getBoundingClientRect().bottom > top) return last ?? 1;
+    }
+    return last;
+  }
+
+  /** 滚到这一行所在的块（块顶对齐视口顶） */
+  function scrollToLine(line: number) {
+    const host = bodyRef.current;
+    const scroll = scrollRef.current;
+    if (!host || !scroll) return;
+    if (line <= 1) {
+      scroll.scrollTop = 0;
+      return;
+    }
+    const lines = childLines();
+    let pick = -1;
+    lines.forEach((l, i) => {
+      if (l !== null && l <= line) pick = i;
+    });
+    const el = pick >= 0 ? host.children[pick] : null;
+    if (!el) return;
+    scroll.scrollTop += el.getBoundingClientRect().top - scroll.getBoundingClientRect().top - 8;
+  }
+
+  if (syncRef) syncRef.current = { topLine };
+
+  // 编辑 → 阅读：挂载后滚回编辑器里看着的那一行（只做一次）
+  const initialLineRef = useRef(initialLine);
+  useLayoutEffect(() => {
+    const line = initialLineRef.current;
+    if (line && line > 1) scrollToLine(line);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ===== 页内查找（md-find.ts）=====
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [findIndex, setFindIndex] = useState(0);
+  const [findCount, setFindCount] = useState(0);
+  const findHitsRef = useRef<HTMLElement[][]>([]);
+  const findInputRef = useRef<HTMLInputElement>(null);
+  function openFind() {
+    setFindOpen(true);
+    requestAnimationFrame(() => {
+      findInputRef.current?.focus();
+      findInputRef.current?.select();
+    });
+  }
+  function closeFind() {
+    setFindOpen(false);
+    scrollRef.current?.focus({ preventScroll: true });
+  }
+  const findTickRef = useRef(findTick);
+  useEffect(() => {
+    if (findTickRef.current === findTick) return;
+    findTickRef.current = findTick;
+    openFind();
+  }, [findTick]);
+  // 命中标记：查找词、正文（html）变了都重标；关掉查找条就清掉
+  useEffect(() => {
+    const host = bodyRef.current;
+    if (!host) return;
+    clearFindMarks(host);
+    findHitsRef.current = [];
+    if (!findOpen || !findQuery.trim()) {
+      setFindCount(0);
+      return;
+    }
+    const hits = markFindHits(host, findQuery);
+    findHitsRef.current = hits;
+    setFindCount(hits.length);
+    setFindIndex((i) => (hits.length ? Math.min(i, hits.length - 1) : 0));
+  }, [findOpen, findQuery, html]);
+  useEffect(() => {
+    if (!findOpen) return;
+    const el = setCurrentHit(findHitsRef.current, findIndex);
+    el?.scrollIntoView({ block: "center" });
+  }, [findOpen, findIndex, findCount]);
+  function stepFind(delta: 1 | -1) {
+    const n = findHitsRef.current.length;
+    if (!n) return;
+    setFindIndex((i) => (i + delta + n) % n);
+  }
   const setPreviewReq = useAppStore((s) => s.setPreviewReq);
   const [hint, setHint] = useState<string | null>(null);
   const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -423,7 +556,77 @@ function MarkdownView({
           {hint}
         </p>
       )}
-      <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-y-auto">
+      {findOpen && (
+        <div className="md-find-scope flex h-8 shrink-0 items-center gap-1.5 border-b border-hairline bg-strip px-2 text-xs">
+          <input
+            ref={findInputRef}
+            value={findQuery}
+            onChange={(e) => {
+              setFindQuery(e.target.value);
+              setFindIndex(0);
+            }}
+            onKeyDown={(e) => {
+              if (e.nativeEvent.isComposing) return;
+              if (e.key === "Enter") {
+                e.preventDefault();
+                stepFind(e.shiftKey ? -1 : 1);
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                e.stopPropagation();
+                closeFind();
+              }
+            }}
+            placeholder="在这份文件里查找"
+            aria-label="在这份文件里查找"
+            className="min-w-0 flex-1 rounded-sm bg-inset px-2 py-0.5 text-xs text-l2 outline-none placeholder:text-l4"
+          />
+          <span className="shrink-0 tabular-nums text-l4">
+            {findQuery.trim() ? (findCount ? `${findIndex + 1} / ${findCount}` : "无结果") : ""}
+          </span>
+          <button
+            type="button"
+            onClick={() => stepFind(-1)}
+            disabled={!findCount}
+            title="上一处（Shift+Enter）"
+            className="shrink-0 rounded-sm px-1.5 text-l3 hover:bg-hover hover:text-l1 disabled:opacity-40"
+          >
+            ↑
+          </button>
+          <button
+            type="button"
+            onClick={() => stepFind(1)}
+            disabled={!findCount}
+            title="下一处（Enter）"
+            className="shrink-0 rounded-sm px-1.5 text-l3 hover:bg-hover hover:text-l1 disabled:opacity-40"
+          >
+            ↓
+          </button>
+          <button
+            type="button"
+            onClick={closeFind}
+            title="关闭查找（Esc）"
+            aria-label="关闭查找"
+            className="shrink-0 rounded-sm px-1.5 text-l3 hover:bg-hover hover:text-l1"
+          >
+            ×
+          </button>
+        </div>
+      )}
+      <div
+        ref={scrollRef}
+        tabIndex={-1}
+        onKeyDown={(e) => {
+          if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
+            e.preventDefault();
+            e.stopPropagation();
+            openFind();
+          } else if (e.key === "Escape" && findOpen) {
+            e.stopPropagation();
+            closeFind();
+          }
+        }}
+        className="md-find-scope relative min-h-0 flex-1 overflow-y-auto outline-none"
+      >
         <MdToc bodyRef={bodyRef} />
         {doc.front && (
           <MdFrontmatterCard
@@ -660,21 +863,50 @@ function TextFilePreviewEditor({
   } | null>(null);
   const jumpNonceRef = useRef(0);
   const jumpDoneNonceRef = useRef(0);
+  /** 编辑中磁盘上出现的新版本（Agent 或别的程序改了）；null = 没有 */
+  const [diskChange, setDiskChange] = useState<FilePreviewSnapshot | null>(null);
+  /** 对比合并界面（保存撞车或点了「对比合并」） */
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [fontSize, setFontSize] = useState(readEditorFont);
+  useEffect(() => onEditorFontChange(setFontSize), []);
+  useEffect(() => {
+    editorRef.current?.updateOptions({ fontSize });
+  }, [fontSize]);
+  const rootRef = useRef<HTMLDivElement>(null);
+  /** md 阅读态的位置查询（阅读 ⇄ 编辑保位置） */
+  const mdSyncRef = useRef<MdViewSync | null>(null);
+  /** 编辑 → 阅读时要滚到的源码行（阅读态挂载时用一次） */
+  const [readInitialLine, setReadInitialLine] = useState<number | null>(null);
+  /** 阅读 → 编辑时要滚到顶上的源码行 */
+  const [editScrollLine, setEditScrollLine] = useState<{ line: number; nonce: number } | null>(null);
+  const [findTick, setFindTick] = useState(0);
 
   /** 编辑→阅读：把编辑器缓冲（含未保存改动）同步进 text 状态。
       编辑期间 text 不随键入更新、dirty 时 watcher 也停订，不同步的话
       阅读态永远停在旧盘稿（新增/删除都看不见）；反向（text → 编辑器）
       由既有的 external-reload effect 负责，模型相同会自行跳过 */
-  function switchMode(m: "read" | "edit") {
+  function switchMode(m: "read" | "edit", keepPlace = true) {
+    if (m === mode) return;
     if (m === "read" && editorRef.current) {
       setText(editorRef.current.getValue());
+      // 切过去仍看着编辑器里这一段（只 md 有块映射；html 阅读态在沙箱里，不对位）
+      setReadInitialLine(
+        keepPlace && isMd ? (editorRef.current.getVisibleRanges()[0]?.startLineNumber ?? null) : null,
+      );
+    }
+    if (m === "edit" && keepPlace && isMd) {
+      const line = mdSyncRef.current?.topLine() ?? null;
+      if (line && line > 1) {
+        jumpNonceRef.current += 1;
+        setEditScrollLine({ line, nonce: jumpNonceRef.current });
+      }
     }
     setMode(m);
   }
 
   /** 阅读态双击段落的落点：切编辑态；拿到行号则排队定位（定位 effect 在 revealLine 邻近） */
   function jumpToSource(line: number | null) {
-    switchMode("edit");
+    switchMode("edit", false);
     if (line !== null && line > 0) {
       jumpNonceRef.current += 1;
       setJumpReveal({ line, nonce: jumpNonceRef.current });
@@ -841,10 +1073,11 @@ function TextFilePreviewEditor({
   // text 只有在属于当前 path 时才有效；切换路径的瞬间旧内容立即失效（空白等待新加载）
   const ready = text !== null && textPathRef.current === path;
 
-  // 外部变化自动刷新（合并/agent 写盘等）：监听文件所在目录，内容真的变了才重载；
-  // 编辑中（dirty）不订阅，不覆盖用户未保存的修改
+  // 外部变化自动刷新（合并/agent 写盘等）：监听文件所在目录，内容真的变了才重载。
+  // 有未保存修改时不覆盖，只记下磁盘上的新版本、顶上提示一条（diskChange），由人选对比合并或用磁盘版本
+  //（2026-10-26：原先编辑中干脆不订阅，要到点保存才知道撞车）
   useEffect(() => {
-    if (dirty || saving || !ready) return;
+    if (!ready) return;
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     let watchId: string | null = null;
@@ -862,7 +1095,14 @@ function TextFilePreviewEditor({
           try {
             const generation = ++refreshGeneration;
             const p = await invoke<FilePreviewSnapshot>("read_file_preview", { path, root });
-            if (!cancelled && generation === refreshGeneration && !dirtyRef.current && !savingRef.current) {
+            if (cancelled || generation !== refreshGeneration || savingRef.current) return;
+            if (dirtyRef.current) {
+              // 磁盘内容与打开时（或上次保存时）不同才算有新版本；自己保存引起的事件对得上，不提示
+              if (p.text !== lastSavedRef.current?.text) setDiskChange(p);
+              return;
+            }
+            {
+              setDiskChange(null);
               const ed = editorRef.current;
               const model = ed?.getModel();
               if (ed && model && model.getValue() !== p.text) {
@@ -892,7 +1132,7 @@ function TextFilePreviewEditor({
       if (watchId) invoke("unwatch_dir", { id: watchId }).catch(() => {});
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [path, root, dirty, saving, ready]);
+  }, [path, root, ready]);
 
   // 创建/销毁编辑器；只读状态单独更新，不因文件增长而重建旧内容。
   // 同路径的外部内容更新不重建编辑器，由下方同步 effect 走 executeEdits，保住滚动/光标/undo。
@@ -910,7 +1150,7 @@ function TextFilePreviewEditor({
       // md 缩进 2 空格（列表嵌套），其他语言保持 monaco 默认
       ...(isMd ? { insertSpaces: true, tabSize: 2 } : {}),
       minimap: { enabled: false },
-      fontSize: 12.5,
+      fontSize,
       automaticLayout: true,
       scrollBeyondLastLine: false,
       renderWhitespace: "none",
@@ -971,6 +1211,48 @@ function TextFilePreviewEditor({
     return () => cancelAnimationFrame(raf);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jumpReveal, ready, mode]);
+
+  // 阅读 → 编辑保位置：把阅读态顶上那一块的源码行滚到编辑器顶上（不动光标）；等一帧同双击定位的理由
+  useEffect(() => {
+    if (!editScrollLine || !ready || mode !== "edit") return;
+    const ed = editorRef.current;
+    if (!ed) return;
+    const raf = requestAnimationFrame(() => {
+      const total = ed.getModel()?.getLineCount() ?? editScrollLine.line;
+      ed.setScrollTop(ed.getTopForLineNumber(Math.min(editScrollLine.line, total)));
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [editScrollLine, ready, mode]);
+
+  // ⌘S / Ctrl+S 保存；编辑器有焦点时 ⌘= / ⌘- / ⌘0 调字号（capture 抢在 Monaco 前；沉浸层也在根节点里）
+  const saveRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.isComposing || !(e.metaKey || e.ctrlKey) || e.altKey) return;
+      const key = e.key.toLowerCase();
+      if (key === "s" && !e.shiftKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        saveRef.current();
+        return;
+      }
+      if (!editorRef.current?.hasTextFocus()) return;
+      if (key === "=" || key === "+") {
+        e.preventDefault();
+        setFontSize((v) => writeEditorFont(stepEditorFont(v, 1)));
+      } else if (key === "-") {
+        e.preventDefault();
+        setFontSize((v) => writeEditorFont(stepEditorFont(v, -1)));
+      } else if (key === "0") {
+        e.preventDefault();
+        setFontSize(writeEditorFont(EDITOR_FONT_DEFAULT));
+      }
+    };
+    el.addEventListener("keydown", onKey, true);
+    return () => el.removeEventListener("keydown", onKey, true);
+  }, []);
 
   // 外部定位的编辑态分支（阅读态交给 MarkdownView）：找到这段文字选中并居中
   const focusDoneRef = useRef(0);
@@ -1178,6 +1460,7 @@ function TextFilePreviewEditor({
     const ed = editorRef.current;
     const baseline = lastSavedRef.current;
     if (!ed || !baseline?.revision || savingRef.current) return;
+    if (!dirtyRef.current || readOnlyReason) return;
     savingRef.current = true;
     setSaving(true);
     try {
@@ -1202,7 +1485,19 @@ function TextFilePreviewEditor({
       setDirty(completion.dirty);
       onDirtyChange?.(completion.dirty);
     } catch (e) {
-      if (editorRef.current === ed) setError(String(e));
+      if (editorRef.current !== ed) return;
+      if (isSaveConflict(e)) {
+        // 磁盘上已是别的版本：不报一句红字了事，直接摆出对比合并
+        try {
+          const disk = await invoke<FilePreviewSnapshot>("read_file_preview", { path, root });
+          setDiskChange(disk);
+          setMergeOpen(true);
+          return;
+        } catch {
+          /* 读不到磁盘版本：落到下面照常报错 */
+        }
+      }
+      setError(String(e));
     } finally {
       if (editorRef.current === ed) {
         savingRef.current = false;
@@ -1210,9 +1505,85 @@ function TextFilePreviewEditor({
       }
     }
   }
+  saveRef.current = () => void onSave();
+
+  /** 把编辑器换成磁盘上的这一版并视为已保存（不进 dirty） */
+  function adoptSnapshot(p: FilePreviewSnapshot) {
+    const ed = editorRef.current;
+    const model = ed?.getModel();
+    if (ed && model && model.getValue() !== p.text) {
+      applyingExternalRef.current = true;
+      try {
+        ed.pushUndoStop();
+        ed.executeEdits("disk-version", [{ range: model.getFullModelRange(), text: p.text }]);
+        ed.pushUndoStop();
+      } finally {
+        applyingExternalRef.current = false;
+      }
+    }
+    lastSavedRef.current = p;
+    dirtyRef.current = false;
+    setDirty(false);
+    onDirtyChange?.(false);
+    setTruncated(p.truncated);
+    setReadOnlyReason(p.readOnlyReason);
+    setText(p.text);
+    setDiskChange(null);
+    setMergeOpen(false);
+    setError(null);
+  }
+
+  /** 「用磁盘上的版本」：丢掉这边没保存的修改（先确认；编辑器里 ⌘Z 还能撤回到丢掉前） */
+  async function takeDiskVersion() {
+    if (!diskChange) return;
+    if (
+      !(await confirmDialog(
+        "丢掉你这边没保存的修改，换成磁盘上的版本？换完在编辑器里按 ⌘Z 还能找回。",
+        { danger: true, confirmText: "用磁盘上的版本" },
+      ))
+    )
+      return;
+    adoptSnapshot(diskChange);
+  }
+
+  /** 对比合并界面里「保存右边的内容」：以磁盘上那一版为基线保存；又被改了就刷新左边、返回提示 */
+  async function saveMerged(merged: string): Promise<string | null> {
+    const base = diskChange;
+    if (!base?.revision) {
+      return base?.readOnlyReason ?? "磁盘上的版本不能在这里保存（可能太大或编码不支持），请用系统应用打开处理";
+    }
+    if (
+      ctx?.kind === "main" &&
+      !mainRepoIsHome &&
+      !(await confirmDialog("这是主仓库（非工作区分支）的文件，保存会直接改动主项目。确认保存？", { danger: true }))
+    )
+      return null;
+    savingRef.current = true;
+    setSaving(true);
+    try {
+      const revision = await invoke<string>("save_file_preview", {
+        path, root, text: merged, expectedRevision: base.revision,
+      });
+      adoptSnapshot({ text: merged, truncated: false, revision, readOnlyReason: null });
+      return null;
+    } catch (e) {
+      if (isSaveConflict(e)) {
+        try {
+          setDiskChange(await invoke<FilePreviewSnapshot>("read_file_preview", { path, root }));
+        } catch {
+          /* 读不到就保持左边旧内容 */
+        }
+        return "磁盘上又被改了一次，左边已换成最新版本，再看一眼后保存";
+      }
+      return String(e);
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div ref={rootRef} className="flex min-h-0 flex-1 flex-col">
       {/* 工具条：h-8 + 底部 hairline 与阅读区三栏的顶条规格统一（栏间严丝合缝） */}
       <div className="flex h-8 shrink-0 items-center gap-2 border-b border-hairline bg-strip px-3 text-xs">
         {leading}
@@ -1263,6 +1634,43 @@ function TextFilePreviewEditor({
           </div>
         )}
         <div className="ml-auto flex shrink-0 items-center gap-1">
+          {readOnlyReason && (
+            <button
+              onClick={() => void openPath(path).catch((e) => setError(String(e)))}
+              title="这份文件在这里只能看（太大、编码不支持或在项目外），用系统里的应用打开它来改"
+              className="shrink-0 rounded-sm px-2 py-0.5 text-l2 hover:bg-hover"
+            >
+              用系统应用打开
+            </button>
+          )}
+          {ready && isMd && mode === "read" && (
+            <button
+              onClick={() => setFindTick((n) => n + 1)}
+              title={`在这份文件里查找（${IS_MAC ? "⌘" : "Ctrl+"}F）`}
+              aria-label="查找"
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1"
+            >
+              <Search size={13} strokeWidth={1.8} />
+            </button>
+          )}
+          {ready && mode === "edit" && (
+            <span className="flex shrink-0 items-center" title={`编辑器字号 ${fontSize}（编辑器里 ${IS_MAC ? "⌘" : "Ctrl+"}= 放大、${IS_MAC ? "⌘" : "Ctrl+"}- 缩小、${IS_MAC ? "⌘" : "Ctrl+"}0 还原）`}>
+              <button
+                onClick={() => setFontSize((v) => writeEditorFont(stepEditorFont(v, -1)))}
+                aria-label="缩小字号"
+                className="rounded-sm px-1 text-micro text-l3 hover:bg-hover hover:text-l1"
+              >
+                A−
+              </button>
+              <button
+                onClick={() => setFontSize((v) => writeEditorFont(stepEditorFont(v, 1)))}
+                aria-label="放大字号"
+                className="rounded-sm px-1 text-l3 hover:bg-hover hover:text-l1"
+              >
+                A+
+              </button>
+            </span>
+          )}
           {ready && isMd && mode === "read" && onOpenReader && notePaired ? (
             <button
               onClick={onOpenReader}
@@ -1291,8 +1699,8 @@ function TextFilePreviewEditor({
               disabled={!dirty || saving}
               title={
                 ctx?.kind === "main" && !mainRepoIsHome
-                  ? "直接修改主项目（不属于任何分支），保存前会再确认"
-                  : undefined
+                  ? `直接修改主项目（不属于任何分支），保存前会再确认（${IS_MAC ? "⌘" : "Ctrl+"}S）`
+                  : `保存（${IS_MAC ? "⌘" : "Ctrl+"}S）`
               }
               className={`shrink-0 rounded-sm px-2 py-0.5 hover:bg-hover disabled:opacity-50 ${
                 ctx?.kind === "main" && !mainRepoIsHome ? "text-warn-text" : "text-l2"
@@ -1303,6 +1711,36 @@ function TextFilePreviewEditor({
           )}
         </div>
       </div>
+      {diskChange && dirty && !mergeOpen && (
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-hairline bg-warn px-3 py-1.5 text-xs text-warn-text">
+          <span className="min-w-0 flex-1">磁盘上的这份文件刚被改过（Agent 或别的程序），你这边还有没保存的修改。</span>
+          <button
+            onClick={() => setMergeOpen(true)}
+            className="shrink-0 rounded-sm border border-current px-2 py-0.5 hover:bg-hover"
+          >
+            对比合并
+          </button>
+          <button onClick={() => void takeDiskVersion()} className="shrink-0 rounded-sm px-2 py-0.5 hover:bg-hover">
+            用磁盘上的版本
+          </button>
+          <button onClick={() => setDiskChange(null)} className="shrink-0 rounded-sm px-2 py-0.5 hover:bg-hover">
+            先不管
+          </button>
+        </div>
+      )}
+      {mergeOpen && diskChange && (
+        <MergeConflictView
+          fileName={path.split(/[\\/]/).pop() ?? path}
+          language={languageFor(path)}
+          disk={diskChange.text}
+          mine={editorRef.current?.getValue() ?? text ?? ""}
+          fontSize={fontSize}
+          wordWrap={isMd}
+          onSave={saveMerged}
+          onTakeDisk={() => void takeDiskVersion()}
+          onClose={() => setMergeOpen(false)}
+        />
+      )}
       {/* md 编辑格式行（2026-10-14 补齐）：按钮与快捷键同一套纯逻辑（md-edit）；
           行级按钮对选区覆盖的行整组切换；只读/截断态收起（executeEdits 会被拒，
           按了只抢焦点没反应） */}
@@ -1408,6 +1846,9 @@ function TextFilePreviewEditor({
             onPdfRef={isMd ? onPdfRef : undefined}
             focusText={focusText}
             fsTick={fsTick}
+            syncRef={mdSyncRef}
+            initialLine={readInitialLine}
+            findTick={findTick}
           />
         )
       )}
@@ -1429,15 +1870,15 @@ function TextFilePreviewEditor({
                 onClick={onSave}
                 disabled={!dirty || saving}
                 title={
-                  ctx?.kind === "main"
+                  ctx?.kind === "main" && !mainRepoIsHome
                     ? "直接修改主项目（不属于任何分支），保存前会再确认"
                     : undefined
                 }
                 className={`ml-auto shrink-0 rounded-sm px-2 py-1 hover:bg-hover disabled:opacity-50 ${
-                  ctx?.kind === "main" ? "text-warn-text" : "text-l2"
+                  ctx?.kind === "main" && !mainRepoIsHome ? "text-warn-text" : "text-l2"
                 }`}
               >
-                {saving ? "保存中…" : ctx?.kind === "main" ? "保存到主仓库" : "保存"}
+                {saving ? "保存中…" : ctx?.kind === "main" && !mainRepoIsHome ? "保存到主仓库" : "保存"}
               </button>
             )}
             <button

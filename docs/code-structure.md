@@ -107,6 +107,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   components/ChatMarkdown.tsx # AI 回复 Markdown（独立 Marked 实例、原始 HTML 转义）：长回复分节小标题按级别排、ChatCodeBlock（用户气泡里的
                              #   围栏代码同一套）、上屏后 useChatDecorations 跑表格壳 / 代码高亮 / 公式 / 引用胶囊 / 文件链接，音频播放条、图片卡
                              #   （图片卡点击：聊天层经 ChatImageEditContext 进输入框标注台接着改；只读视图有工作目录走右栏预览，随手聊弹 ChatImageViewer）
+  components/MergeConflictView.tsx # 保存撞车的对比合并：Monaco diff 左磁盘只读、右我的可改，保存右边以磁盘版本为基线，再撞车刷新左边
   components/MdFrontmatterCard.tsx # md 阅读态开头 YAML 头小卡（只展示，超 6 项折叠，双击回编辑态第 1 行）
   components/ChatImageViewer.tsx # 对话图片看大图弹层（Modal + ImagePreview 可缩放）：随手聊没有右栏预览时用
   components/ChatImageStage.tsx # 输入框上方的看图标注台（design-chat-layer §4.7）：盖住对话区、不挡输入框；
@@ -396,6 +397,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   mermaid-blocks.ts          # mermaid 围栏检测（无围栏不加载 chunk）
   mermaid-sanitize.ts        # mermaid SVG 二次清洗（strict + 剥脚本/链接）
   html-preview.ts            # html 沙箱预览：stylesheet 内联 / 本地图 / srcdoc
+  md-find.ts                 # md 阅读态页内查找：按块拼文字找、跨行内元素逐节点包 mark、清除复原；跳过 .md-cite（tests/md-find.test.ts）
+  editor-font.ts             # 文件预览编辑器字号（本机存储 + CustomEvent 广播，10–22 一档一像素）（tests/editor-font.test.ts）
   md-render.ts               # 文档版 md 渲染：splitMdFrontmatter 拆 YAML 头（画成 MdFrontmatterCard）、脚注扩展只在 withDocMode 内生效，
                              # renderMarkdownDocument / lexMarkdownDocument 渲染与块映射同口径（tests/md-render.test.ts）
   md-math.ts                 # md 阅读版式公式渲染（批次 E）：marked 扩展按 Pandoc 口径切分 $/$$

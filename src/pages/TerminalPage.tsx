@@ -1540,8 +1540,8 @@ const TerminalView = memo(function TerminalView({
     if (!visible || !primaryFocus) return;
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
-        // Monaco 编辑器（文件预览）有自己的查找组件，不劫持
-        if (e.target instanceof Element && e.target.closest(".monaco-editor"))
+        // Monaco 编辑器（文件预览）有自己的查找组件、md 阅读态有自己的查找条（md-find-scope），不劫持
+        if (e.target instanceof Element && e.target.closest(".monaco-editor, .md-find-scope"))
           return;
         e.preventDefault();
         setSearchOpen(true);

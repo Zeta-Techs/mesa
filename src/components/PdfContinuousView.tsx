@@ -838,7 +838,7 @@ function PdfContinuousView({
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
       if (e.key.toLowerCase() !== "f") return;
-      if (e.target instanceof Element && e.target.closest(".monaco-editor, .xterm")) return;
+      if (e.target instanceof Element && e.target.closest(".monaco-editor, .xterm, .md-find-scope")) return;
       e.preventDefault();
       e.stopPropagation();
       openFind();
@@ -853,7 +853,7 @@ function PdfContinuousView({
     if (!findOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.isComposing) return;
-      if (e.target instanceof Element && e.target.closest(".monaco-editor, .xterm")) return;
+      if (e.target instanceof Element && e.target.closest(".monaco-editor, .xterm, .md-find-scope")) return;
       e.stopPropagation();
       closeFind();
     };

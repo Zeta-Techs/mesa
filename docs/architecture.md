@@ -457,6 +457,10 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-26 · 文件预览编辑器：⌘S、撞车对比合并、字号、阅读态查找、切换保位置
+
+同批第三条。① ⌘S 挂在编辑器根节点 capture（沉浸层与对比界面都在根内；对比界面自己 window capture 先接）。② 编辑中不再停订目录监听：dirty 时磁盘内容与基线不同只记 `diskChange` 出黄条，不覆盖；保存被 `save_file_preview` 以「已被 Agent 或其他程序修改」拒绝时直接读盘打开 `MergeConflictView`（Monaco diff：左磁盘只读、右我的可改、`renderMarginRevertIcon` 行间搬块），「保存右边」以磁盘版本号为基线，再撞车就刷新左边提示；「用磁盘上的版本」经确认整文替换并留 undo。后端拒绝文案去掉「请重新打开文件对比合并」（界面已承接）。③ 字号 `editor-font.ts` 存本机、CustomEvent 广播给所有编辑器，⌘= / ⌘- / ⌘0 只在编辑器有焦点时接。④ md 阅读态查找 `md-find.ts`：按块拼文字找、跨行内元素逐节点包 `<mark>`，不进 `.md-cite`（胶囊异步改字会冲掉标记）；查找范围带 `.md-find-scope`，终端页与 PDF 的 ⌘F 监听让位。⑤ 阅读⇄编辑保位置：复用双击跳行的块映射，阅读态顶块→源码行滚到编辑器顶（不动光标），编辑器可见首行→阅读态对应块。
+
 ### 2026-10-26 · 预览跟随磁盘变化，字节缓存带版本戳
 
 同批第二条。PDF 字节缓存（`loadPdfBytes`）与图片缓存（`image-cache`）原来只按路径作键，quarto 重新渲染同名 PDF 后同一次运行里看到的一直是旧版。新增后端 `pdf::file_stamp`（大小 + 修改毫秒，与 read_pdf_bytes 同一白名单，白名单收集拆成 `collect_whitelist` / `whitelisted_target` 复用）：PDF 每次打开先比戳，图片缓存「先画缓存、后台核戳、换了再换图」（`revalidateImageUrl`，旧 blob 地址延迟 60 秒释放）。新增 `fs_tree::watch_file`（非递归监听所在文件夹、只认这个文件名、300ms 防抖）+ 前端 `useFileVersion`：PDF / 图片 / Word / 表格预览开着时自动重载——PDF 保留缩放并回到原滚动位置，Word 与表格旧内容留到新的出来、不清空闪一下。md 阅读态借编辑器已有的目录监听，每次变动核一遍已上屏的本地图。
