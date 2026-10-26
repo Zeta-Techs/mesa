@@ -60,6 +60,7 @@ import {
 import { goalReviewCopy } from "../goal-review";
 import FileTypeMark from "./FileTypeMark";
 import ProjectFilePreview from "./ProjectFilePreview";
+import { cachedNotePaired, checkNotePaired, isMarkdownNote } from "../note-pdf-pair";
 import { Modal } from "./Modal";
 
 type EntryCache = Record<string, DirEntryDto[]>;
@@ -159,6 +160,18 @@ export default function ProjectFilesView({
   const [goalMarks, setGoalMarks] = useState<
     { relative: string; goalName: string; pending: boolean }[]
   >([]);
+  // 文件行的「沉浸阅读」：PDF 永远有；md 笔记要配得上本篇 PDF 才有（note-pdf-pair.ts）。悬停 / 聚焦到这一行时才去问，
+  // 问到了加一刷新这一列（2026-10-25 用户：没有 PDF 的文件也挂「沉浸阅读」有歧义）
+  const [, setPairTick] = useState(0);
+  function probeNotePair(path: string) {
+    if (!isMarkdownNote(path) || cachedNotePaired(path) !== undefined) return;
+    void checkNotePaired(path).then((ok) => {
+      if (ok) setPairTick((n) => n + 1);
+    });
+  }
+  function rowHasReader(path: string, name: string): boolean {
+    return supportsImmersiveReader(name) && (!isMarkdownNote(name) || cachedNotePaired(path) === true);
+  }
   const [menu, setMenu] = useState<{
     x: number;
     y: number;
@@ -745,6 +758,8 @@ export default function ProjectFilesView({
               selected ? "bg-hover" : "hover:bg-hover"
             }`}
             style={{ paddingLeft: 8 + depth * 16 }}
+            onPointerEnter={entry.isDir ? undefined : () => probeNotePair(entry.path)}
+            onFocus={entry.isDir ? undefined : () => probeNotePair(entry.path)}
             onContextMenu={(e) => {
               e.preventDefault();
               setMenu({
@@ -811,15 +826,11 @@ export default function ProjectFilesView({
                   <MessageSquare size={13} strokeWidth={1.8} />
                 )}
               </button>
-              {supportsImmersiveReader(entry.name) && (
+              {!entry.isDir && rowHasReader(entry.path, entry.name) && (
                 <button
                   type="button"
                   className={iconActionClass}
-                  title={
-                    /\.pdf$/i.test(entry.name)
-                      ? "沉浸阅读"
-                      : "沉浸阅读（自动配对本篇 PDF；无配对时进不去）"
-                  }
+                  title={/\.pdf$/i.test(entry.name) ? "沉浸阅读" : "沉浸阅读（笔记对照本篇 PDF）"}
                   aria-label="沉浸阅读"
                   onClick={() => openImmersive(entry)}
                 >
@@ -864,6 +875,8 @@ export default function ProjectFilesView({
               className={`group relative flex min-h-9 items-center gap-2 rounded-md px-2 ${
                 preview?.path === file.path ? "bg-hover" : "hover:bg-hover"
               }`}
+              onPointerEnter={() => probeNotePair(file.path)}
+              onFocus={() => probeNotePair(file.path)}
               onContextMenu={(e) => {
                 e.preventDefault();
                 setMenu({
@@ -903,7 +916,7 @@ export default function ProjectFilesView({
                 >
                   <MessageSquare size={13} strokeWidth={1.8} />
                 </button>
-                {supportsImmersiveReader(file.name) && (
+                {rowHasReader(file.path, file.name) && (
                   <button
                     type="button"
                     className={iconActionClass}

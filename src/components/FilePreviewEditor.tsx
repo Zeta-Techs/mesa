@@ -22,6 +22,7 @@ import { marked } from "marked";
 import SelectionFloatBar, { DistillSkillButton } from "./SelectionFloatBar";
 import { confirmDialog } from "./ConfirmDialog";
 import { useAppStore } from "../store";
+import { useNotePaired } from "../note-pdf-pair";
 import {
   bytesToBase64,
   classifyMdHref,
@@ -594,24 +595,9 @@ function TextFilePreviewEditor({
   const hasReadMode = isMd || isHtml;
   const [mode, setMode] = useState<"read" | "edit">(hasReadMode ? "read" : "edit");
   const [immersive, setImmersive] = useState(false);
-  // 这份 md 能不能进三栏沉浸阅读：先问后端能不能配上本篇 PDF（reader_for_note 只读：查项目归属 + 配对），
-  // 配得上才给「沉浸阅读」；CHANGELOG、README 这类配不上的只给「全屏阅读」（2026-10-25 用户：没有 PDF 的文件
-  // 预览也挂「沉浸阅读」有歧义——原先一律挂，点了才报「未找到与这份笔记配对的 PDF」）
-  const [notePaired, setNotePaired] = useState(false);
-  const wantsReader = isMd && Boolean(onOpenReader);
-  useEffect(() => {
-    setNotePaired(false);
-    if (!wantsReader) return;
-    let alive = true;
-    invoke("reader_for_note", { notePath: path })
-      .then(() => {
-        if (alive) setNotePaired(true);
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, [path, wantsReader]);
+  // 这份 md 能不能进三栏沉浸阅读（note-pdf-pair.ts）：配得上本篇 PDF 才给「沉浸阅读」；CHANGELOG、README 这类
+  // 配不上的只给「全屏阅读」（2026-10-25 用户：没有 PDF 的文件预览也挂「沉浸阅读」有歧义）
+  const notePaired = useNotePaired(path, isMd && Boolean(onOpenReader));
   // 双击段落跳源码行（2026-10-14 拍板）：{line, nonce} 同 modeTick 的 tick 模式——
   // 双击同一块两次也要重新定位（revealLine prop 的同值不重触发不适用于交互重放）
   const [jumpReveal, setJumpReveal] = useState<{

@@ -27,6 +27,7 @@ import {
 } from "../path-utils";
 import { IS_MAC, IS_WINDOWS } from "../hotkeys";
 import { directoryErrorMessage } from "../terminal-cwd";
+import { useNotePaired } from "../note-pdf-pair";
 
 export interface SearchResultDto {
   path: string;
@@ -241,7 +242,8 @@ function FileTree({
   refreshKey: number;
   onOpenFile: (path: string, name: string, root: string, files: DirEntryDto[]) => void;
   onOpenTerminal: (path: string) => void;
-  /** PDF/md 右键「⛶ 沉浸阅读」（批次 B1 阅读区入口；v3.98 起 md 笔记走 reader_for_note 配对 PDF）；
+  /** PDF/md 右键「⛶ 沉浸阅读」（批次 B1 阅读区入口；v3.98 起 md 笔记走 reader_for_note 配对 PDF，
+      2026-10-25 起配不上的 md 不显示）；
       不给则不显示该菜单项 */
   onOpenReader?: (path: string, name: string, root: string) => void;
   /** 文件系统变化回调（fs-changed 防抖后触发，供 GitPanel 等联动刷新） */
@@ -274,6 +276,8 @@ function FileTree({
   const errorPathRef = useRef<string | null>(null);
   errorPathRef.current = errorPath;
   const [menu, setMenu] = useState<{ x: number; y: number; path: string; isDir: boolean } | null>(null);
+  // 右键「沉浸阅读」：PDF 永远有；md 笔记配得上本篇 PDF 才有（note-pdf-pair.ts，菜单打开时去问，问到了这一项再出现）
+  const menuNotePaired = useNotePaired(menu && !menu.isDir ? menu.path : null, Boolean(onOpenReader));
   const [gitMap, setGitMap] = useState<Record<string, string>>({});
   // 当前根的路径归属（主仓库/工作区分支）；other 或查询失败不显示徽标
   const [ctx, setCtx] = useState<PathContext | null>(null);
@@ -623,7 +627,7 @@ function FileTree({
                   },
                 ]
               : []),
-            ...(!menu.isDir && /\.(pdf|md)$/i.test(menu.path) && onOpenReader
+            ...(!menu.isDir && (/\.pdf$/i.test(menu.path) || menuNotePaired) && onOpenReader
               ? [
                   {
                     label: "沉浸阅读",

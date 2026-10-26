@@ -357,6 +357,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 大小写/弯引号/短横线/连字）——页级计数与页内高亮同一口径；命中→文本项分段、同行碎矩形合并、
                              # 标注重定位候选 quoteSearchCandidates（原样→去词内连字符→前 60 字）、图表定位 locateFigure（行首图注优先）、
                              # 目录拍平与落点高度（tests/pdf-search.test.ts）
+  note-pdf-pair.ts           # md 笔记配不配得上本篇 PDF（reader_for_note 结果按路径缓存 30 秒、同路径并发只问一次 + useNotePaired）：
+                             # 「沉浸阅读」入口只给配得上的——FilePreviewEditor 预览右上角、ProjectFilesView 文件行悬停、FileTree 右键（2026-10-25；tests/note-pdf-pair.test.ts）
   reader-note.ts             # 笔记 ↔ PDF 纯逻辑（2026-10-18）：「## 标注」行格式与解析（与 reader.rs 双端镜像，改动需同步）、
                              # 八小节是否全空（让 AI 起草入口）与起草指令、页码/图表引用识别、标注 toast 口径（tests/reader-note.test.ts）
   agent-binding 体系（2026-10-15 定稿，全文 docs/conventions/agent-binding.md）：
