@@ -457,6 +457,10 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-26 · 表格预览：排序、框选复制、加载更多、日期格
+
+同批第九条。`read_sheet_preview` 加 `maxRows`（默认 200，前端每次 +1000，后端封顶 2 万）；CSV 改经 `read_text_document` 整份读（原来 256 KB 截断后再按 200 行切）。calamine 开 `dates` feature（chrono 已是直接依赖，不新增 crate），日期 / 时间 / 时长格按类型格式化——原先 `ExcelDateTime` 的 Display 打出序列号。排序与复制是纯前端（`sheet-preview.ts`：`sortedRowOrder` 稳定排序、第一行当表头、数按数比含千分位与百分号、空格在后；`rangeTsv` 制表符分隔、含换行引号按 Excel 规则加引号）；有合并格时不排序（合并区坐标按原行算，排了就对不上）；排序只作用于已载入的行，提示里写明。
+
 ### 2026-10-26 · Jupyter 笔记本与音视频预览
 
 同批第八条。① `notebook.ts` 解析 nbformat 4（旧版提示用 Jupyter 另存）：相邻同流输出合并、图片优先于 text/plain、svg 输出转 base64 当 `<img>`（不进 DOM）、traceback 去 ANSI；`NotebookPreview` 经 `read_text_document` 读整份，Markdown 单元走文档渲染、代码单元转围栏复用代码高亮与复制钮，text/html 输出走文档清洗（不跑脚本）；「源码」回 Monaco 编辑 JSON。② 音视频不再整份 base64 过 IPC：**开启 Tauri asset 协议（cargo feature protocol-asset，tauri.conf `assetProtocol.scope = []` 默认什么都不放行）**，新命令 `pdf::grant_media_url` 过读取白名单后 `asset_protocol_scope().allow_file` 只放行这一个文件，前端 `convertFileSrc` 流式播放；CSP 的 media-src 加 asset 源。WebView 放不了的编码由播放器 onError 提示系统打开。随包许可清单已重新生成（http-range）。

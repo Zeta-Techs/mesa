@@ -173,3 +173,78 @@ export function delimitedSheetPreview(
 export function csvDelimiterForPath(path: string): "," | "\t" {
   return /\.tsv$/i.test(path) ? "\t" : ",";
 }
+
+// ---------- 排序与框选复制（2026-10-26） ----------
+
+/** 单元格比较：两边都是数（含千分位、百分号、负号）按数比，否则按中文习惯比字；空格排在最后 */
+export function compareSheetCells(a: string, b: string): number {
+  const ea = a.trim() === "";
+  const eb = b.trim() === "";
+  if (ea || eb) return ea === eb ? 0 : ea ? 1 : -1;
+  const na = sheetNumber(a);
+  const nb = sheetNumber(b);
+  if (na !== null && nb !== null) return na - nb;
+  return a.localeCompare(b, "zh-Hans-CN", { numeric: true });
+}
+
+function sheetNumber(s: string): number | null {
+  const t = s.trim().replace(/,/g, "");
+  const pct = t.endsWith("%");
+  const core = pct ? t.slice(0, -1) : t;
+  if (!/^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(core)) return null;
+  const v = Number(core);
+  return Number.isFinite(v) ? (pct ? v / 100 : v) : null;
+}
+
+/**
+ * 按某一列排序后的行下标顺序（返回原行下标，不改数据）。keepHeader = 第一行当表头不参与排序。
+ * 同值保持原顺序（稳定）。
+ */
+export function sortedRowOrder(
+  rows: readonly (readonly string[])[],
+  col: number,
+  dir: "asc" | "desc",
+  keepHeader: boolean,
+): number[] {
+  const idx = rows.map((_, i) => i);
+  const head = keepHeader ? idx.slice(0, 1) : [];
+  const body = keepHeader ? idx.slice(1) : idx;
+  body.sort((x, y) => {
+    const c = compareSheetCells(rows[x]?.[col] ?? "", rows[y]?.[col] ?? "");
+    return (dir === "asc" ? c : -c) || x - y;
+  });
+  return [...head, ...body];
+}
+
+export interface SheetRange {
+  r0: number;
+  c0: number;
+  r1: number;
+  c1: number;
+}
+
+/** 两个角 → 规整的矩形（左上到右下） */
+export function normRange(a: { r: number; c: number }, b: { r: number; c: number }): SheetRange {
+  return {
+    r0: Math.min(a.r, b.r),
+    c0: Math.min(a.c, b.c),
+    r1: Math.max(a.r, b.r),
+    c1: Math.max(a.c, b.c),
+  };
+}
+
+/** 框选区域 → 制表符分隔文字（粘进 Excel / 文本都对得上列）；viewRows 是显示顺序的行 */
+export function rangeTsv(viewRows: readonly (readonly string[])[], r: SheetRange): string {
+  const lines: string[] = [];
+  for (let i = r.r0; i <= r.r1; i++) {
+    const row = viewRows[i] ?? [];
+    const cells: string[] = [];
+    for (let j = r.c0; j <= r.c1; j++) {
+      const v = row[j] ?? "";
+      // 含换行 / 制表符 / 引号的格按 Excel 的写法加引号
+      cells.push(/[\t\n\r"]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+    }
+    lines.push(cells.join("\t"));
+  }
+  return lines.join("\n");
+}

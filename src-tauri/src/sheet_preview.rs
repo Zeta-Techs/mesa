@@ -170,6 +170,31 @@ fn xlsx_merges_from_bytes(bytes: &[u8], sheet: &str) -> Vec<Dimensions> {
     parse_merge_refs(&ws)
 }
 
+fn excel_datetime_text(dt: &calamine::ExcelDateTime) -> String {
+    if dt.is_duration() {
+        if let Some(d) = dt.as_duration() {
+            let secs = d.num_seconds();
+            let sign = if secs < 0 { "-" } else { "" };
+            let s = secs.abs();
+            return format!("{sign}{}:{:02}:{:02}", s / 3600, (s % 3600) / 60, s % 60);
+        }
+    } else if let Some(t) = dt.as_datetime() {
+        use chrono::Timelike;
+        // 只有时间（日期部分是 Excel 的 0 日）：只写时间
+        if dt.as_f64().abs() < 1.0 {
+            return t.format("%H:%M:%S").to_string();
+        }
+        if t.hour() == 0 && t.minute() == 0 && t.second() == 0 {
+            return t.format("%Y-%m-%d").to_string();
+        }
+        if t.second() == 0 {
+            return t.format("%Y-%m-%d %H:%M").to_string();
+        }
+        return t.format("%Y-%m-%d %H:%M:%S").to_string();
+    }
+    dt.to_string()
+}
+
 fn cell_text(d: &Data) -> String {
     match d {
         Data::Empty => String::new(),
@@ -190,16 +215,22 @@ fn cell_text(d: &Data) -> String {
             }
         }
         Data::Error(e) => format!("#{e:?}"),
-        Data::DateTime(dt) => dt.to_string(),
+        // 日期 / 时间格的值是 Excel 序列号（45123.5 这种），按单元格类型换成看得懂的写法（2026-10-26）
+        Data::DateTime(dt) => excel_datetime_text(dt),
         Data::DateTimeIso(s) | Data::DurationIso(s) => s.clone(),
     }
 }
+
+/// 「加载更多行」的上限：再多就该用 Excel / 脚本看了
+const MAX_ROWS_CAP: usize = 20_000;
 
 fn read_sheet_preview_sync(
     path: &str,
     cwd_hint: Option<&str>,
     sheet_name: Option<&str>,
+    max_rows: Option<usize>,
 ) -> Result<SheetPreviewDto, String> {
+    let max_rows = max_rows.unwrap_or(MAX_ROWS).clamp(1, MAX_ROWS_CAP);
     let (bytes, size) = read_whitelisted_sync(path, cwd_hint, XLSX_CAP, |mb| {
         format!("表格超过 20 MB（{mb:.1} MB），暂不支持内嵌预览")
     })?;
@@ -223,9 +254,9 @@ fn read_sheet_preview_sync(
         .map_err(|e| format!("读取工作表失败: {e}"))?;
     let total_cols = range.width();
     let total_rows = range.height();
-    let truncated = total_rows > MAX_ROWS || total_cols > MAX_COLS;
+    let truncated = total_rows > max_rows || total_cols > MAX_COLS;
     let width = total_cols.min(MAX_COLS);
-    let take_rows = total_rows.min(MAX_ROWS);
+    let take_rows = total_rows.min(max_rows);
     let origin = range.start().unwrap_or((0, 0));
     let mut rows = Vec::with_capacity(take_rows);
     for r in 0..take_rows {
@@ -288,9 +319,10 @@ pub async fn read_sheet_preview(
     path: String,
     cwd_hint: Option<String>,
     sheet: Option<String>,
+    max_rows: Option<usize>,
 ) -> Result<SheetPreviewDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        read_sheet_preview_sync(&path, cwd_hint.as_deref(), sheet.as_deref())
+        read_sheet_preview_sync(&path, cwd_hint.as_deref(), sheet.as_deref(), max_rows)
     })
     .await
     .map_err(|e| format!("读取表格失败: {e}"))?
@@ -311,7 +343,7 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let f = dir.join("t.xlsx");
         fs::write(&f, b"PK\x03\x04not-a-real-xlsx").unwrap();
-        let err = read_sheet_preview_sync(f.to_str().unwrap(), None, None).unwrap_err();
+        let err = read_sheet_preview_sync(f.to_str().unwrap(), None, None, None).unwrap_err();
         assert!(
             err.contains("拒绝") || err.contains("范围") || err.contains("不存在"),
             "{err}"
@@ -337,6 +369,17 @@ mod tests {
     }
 
     #[test]
+    fn excel_dates_show_as_dates_not_serial_numbers() {
+        use calamine::{ExcelDateTime, ExcelDateTimeType};
+        let d = |v: f64| excel_datetime_text(&ExcelDateTime::new(v, ExcelDateTimeType::DateTime, false));
+        assert_eq!(d(45292.0), "2024-01-01");
+        assert_eq!(d(45292.5), "2024-01-01 12:00");
+        assert_eq!(d(0.75), "18:00:00");
+        let dur = ExcelDateTime::new(1.5, ExcelDateTimeType::TimeDelta, false);
+        assert_eq!(excel_datetime_text(&dur), "36:00:00");
+    }
+
+    #[test]
     fn clip_merge_crops_to_window() {
         let d = Dimensions::new((0, 0), (1, 2));
         let m = clip_merge(&d, (0, 0), 10, 10).unwrap();
@@ -353,7 +396,7 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let f = dir.join("t.xlsx");
         write_minimal_xlsx(&f, "hello", true);
-        let dto = read_sheet_preview_sync(f.to_str().unwrap(), Some(dir.to_str().unwrap()), None)
+        let dto = read_sheet_preview_sync(f.to_str().unwrap(), Some(dir.to_str().unwrap()), None, None)
             .expect("parse");
         assert!(
             dto.merges
@@ -370,7 +413,7 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let f = dir.join("t.xlsx");
         write_minimal_xlsx(&f, "hello", false);
-        let dto = read_sheet_preview_sync(f.to_str().unwrap(), Some(dir.to_str().unwrap()), None)
+        let dto = read_sheet_preview_sync(f.to_str().unwrap(), Some(dir.to_str().unwrap()), None, None)
             .expect("parse");
         assert!(!dto.rows.is_empty());
         assert!(dto.total_rows >= 1);

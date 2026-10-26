@@ -475,7 +475,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 展开链 ancestorDirsToReveal / 上下文件步进 / 沉浸阅读判据唯一落点 /
                              # inTypingContext（方向键只在非打字焦点接管，Monaco/输入框放行；tests/project-files.test.ts）
   sheet-preview.ts           # Excel 预览纯逻辑：列字母 / 单元格引用 / 截断文案 /
-                             #   合并区 clipSheetMerge / sheetCellHidden（tests/sheet-preview.test.ts）
+                             #   合并区 clipSheetMerge / sheetCellHidden（tests/sheet-preview.test.ts）；
+                             #   排序 compareSheetCells / sortedRowOrder、框选 normRange / rangeTsv（tests/sheet-sort.test.ts）
   editor-languages.ts        # monaco 语言注册（批次 E）：monaco-editor 0.56 ESM 不带 latex，
                              # 自带紧凑 Monarch 定义覆盖 .tex/.sty/.cls/.bib（tests/editor-languages.test.ts）
   workspace-visibility.ts    # 聚焦步骤工作区可见性过滤纯逻辑（不匹配任何步骤的手动工作区始终可见，
