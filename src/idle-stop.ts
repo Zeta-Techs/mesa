@@ -62,3 +62,49 @@ export function idleStopPass(input: {
   }
   return { since, stop };
 }
+
+/**
+ * Agent 退出、标签退回 shell 的普通对话（2026-10-26 用户定）：侧栏这一行没有光标、也不给 ×，Mesa 自己收——
+ * 切走时、或没人看着时每分钟看一次。只看「退回了 shell、还记得接的哪段」：纯终端（没有会话）、只看没接的、
+ * 还没起来的都不算；步骤 / 车道 / 自定义运行时等同 isPlainChatTab 不收。shell 里有没有命令在跑要问后端（pty_shell_busy），这里不判
+ */
+export const EXITED_GRACE_MS = 5 * 1000;
+
+export interface ExitedStatusInput {
+  running: boolean;
+  shell: boolean;
+  sessionId?: string | null;
+}
+
+export function isExitedAgentTab(
+  tab: IdleTabInput & { preview?: boolean; shellOnly?: boolean },
+  status: ExitedStatusInput | null | undefined,
+): boolean {
+  if (!status?.shell || status.running || !status.sessionId) return false;
+  if (tab.preview || tab.shellOnly) return false;
+  return isPlainChatTab(tab);
+}
+
+/**
+ * 退回 shell 从什么时候开始（tabId → 时刻），并给出现在能收的：退回满 graceMs、不在 kept 里（正看着的 / 分屏右栏 / 输入框有字）。
+ * 要等一会儿：换模型 / 换权限是「停下 → 退回 shell → 接回」，中间那一下也是退回 shell，不能当场收
+ */
+export function exitedCollectPass(input: {
+  tabs: readonly (IdleTabInput & { preview?: boolean; shellOnly?: boolean })[];
+  statuses: Readonly<Record<string, ExitedStatusInput | undefined>>;
+  kept: ReadonlySet<string>;
+  since: Readonly<Record<string, number>>;
+  now: number;
+  graceMs?: number;
+}): { since: Record<string, number>; collect: string[] } {
+  const grace = input.graceMs ?? EXITED_GRACE_MS;
+  const since: Record<string, number> = {};
+  const collect: string[] = [];
+  for (const tab of input.tabs) {
+    if (!isExitedAgentTab(tab, input.statuses[tab.id])) continue;
+    const from = input.since[tab.id] ?? input.now;
+    since[tab.id] = from;
+    if (!input.kept.has(tab.id) && input.now - from >= grace) collect.push(tab.id);
+  }
+  return { since, collect };
+}

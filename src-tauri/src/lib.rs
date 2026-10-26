@@ -656,6 +656,7 @@ pub fn run() {
             pty::pty_cd,
             win_snap::window_show_snap_layouts,
             pty::pty_has_running_process,
+            pty::pty_shell_busy,
             sessions::list_sessions,
             sessions::find_session,
             session_search::search_sessions,

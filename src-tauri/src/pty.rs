@@ -1828,6 +1828,52 @@ fn has_running_process(manager: &PtyManager, pty_id: &str) -> bool {
     }
 }
 
+/// Agent 退出后退回的 shell 里，这会儿有没有命令在跑（2026-10-26：这种标签切走 / 没人看时 Mesa 自己收，跑着命令的不收）。
+/// unix 看终端前台进程组是不是 shell 自己（tcgetpgrp）：p10k 的 gitstatusd 这类常驻后台子进程不算在跑；
+/// Windows 没有前台进程组，看 shell 有没有子进程。PTY 不在 = 没在跑；拿不到 pid / 前台组 = 当作在跑，宁可不收。
+/// 刷进程表要几十毫秒，放后台线程（同 pty_get_cwd）
+#[tauri::command]
+pub async fn pty_shell_busy(app: AppHandle, pty_id: String) -> bool {
+    tauri::async_runtime::spawn_blocking(move || shell_busy(&app.state::<PtyManager>(), &pty_id))
+        .await
+        .unwrap_or(true)
+}
+
+#[cfg(unix)]
+fn shell_busy(manager: &PtyManager, pty_id: &str) -> bool {
+    let entries = manager.entries.lock().unwrap();
+    let Some(entry) = entries.get(pty_id) else {
+        return false;
+    };
+    foreground_not_shell(entry.master.as_ref(), entry.child.process_id())
+}
+
+/// 终端前台进程组不是 shell 自己 = shell 里有命令在前台跑；拿不到当作在跑
+#[cfg(unix)]
+fn foreground_not_shell(master: &(dyn MasterPty + Send), shell_pid: Option<u32>) -> bool {
+    match (shell_pid, master.process_group_leader()) {
+        (Some(pid), Some(leader)) => leader as u32 != pid,
+        _ => true,
+    }
+}
+
+#[cfg(not(unix))]
+fn shell_busy(manager: &PtyManager, pty_id: &str) -> bool {
+    let pid = {
+        let entries = manager.entries.lock().unwrap();
+        let Some(entry) = entries.get(pty_id) else {
+            return false;
+        };
+        match entry.child.process_id() {
+            Some(pid) => sysinfo::Pid::from_u32(pid),
+            None => return true,
+        }
+    };
+    let mut sys = sysinfo::System::new();
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+    sys.processes().values().any(|p| p.parent() == Some(pid))
+}
+
 /// 子进程仍在运行 = 非阻塞 try_wait 尚未取到退出状态（探测出错按未运行处理）
 fn child_running(child: &mut (dyn Child + Send + Sync)) -> bool {
     matches!(child.try_wait(), Ok(None))
@@ -2982,5 +3028,43 @@ mod tests {
         assert!(PtyManager::default()
             .ensure_workspace_free("/ws/task", "归档")
             .is_ok());
+    }
+
+    /// 交互 shell 空闲时前台组是 shell 自己；跑着 sleep 时前台组换成 sleep（Agent 退出后的标签收不收靠这个，2026-10-26）
+    #[cfg(unix)]
+    #[test]
+    fn shell_foreground_tracks_running_command() {
+        let pair = native_pty_system()
+            .openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 })
+            .unwrap();
+        let mut cmd = CommandBuilder::new("/bin/sh");
+        cmd.arg("-i");
+        cmd.env("PS1", "$ ");
+        let mut child = pair.slave.spawn_command(cmd).unwrap();
+        let pid = child.process_id();
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            while let Ok(n) = reader.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+            }
+        });
+        let mut writer = pair.master.take_writer().unwrap();
+        let wait_until = |want: bool| {
+            let end = Instant::now() + Duration::from_secs(15);
+            while Instant::now() < end {
+                if foreground_not_shell(pair.master.as_ref(), pid) == want {
+                    return true;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            false
+        };
+        assert!(wait_until(false), "空闲的 shell 不该算在跑");
+        writer.write_all(b"sleep 30\n").unwrap();
+        assert!(wait_until(true), "前台跑着 sleep 应算在跑");
+        let _ = child.kill();
     }
 }

@@ -170,7 +170,7 @@ import {
   type ResizeLatch,
 } from "../terminal-geometry";
 import { toast } from "../toast";
-import { idleStopPass } from "../idle-stop";
+import { EXITED_GRACE_MS, exitedCollectPass, idleStopPass, isExitedAgentTab } from "../idle-stop";
 import { closeAsksFirst } from "../run-caret";
 import { RIGHT_DEFAULT_PX, RIGHT_MIN_PX, runLayout } from "../run-layout";
 import { sidebarChatTitle } from "../sidebar-chats";
@@ -9692,9 +9692,61 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     ) {
       delete draftByTabRef.current[id];
       doCloseTab(id);
+    } else if (
+      tab &&
+      id !== splitTabId &&
+      !draftByTabRef.current[id] &&
+      isExitedAgentTab(tab, statusesRef.current[id]) &&
+      Date.now() - (exitedSinceRef.current[id] ?? Date.now()) >= EXITED_GRACE_MS
+    ) {
+      // Agent 已经退出、退回 shell 的那段，切走也收（shell 里有命令在跑的不收，collectExitedTab 先问后端）
+      void collectExitedTab(id);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId, tabs]);
+
+  /** Agent 退出、退回 shell 的标签（2026-10-26 用户定）：侧栏那一行没有光标也不给 ×，Mesa 自己收——切走时（上面）、
+   *  没人看着时每分钟（idleTick）。退回满 EXITED_GRACE_MS 才收：换模型 / 换权限中间那一下也是退回 shell。
+   *  shell 里有命令在跑（pty_shell_busy）不收，等跑完、下一分钟再看 */
+  const exitedSinceRef = useRef<Record<string, number>>({});
+  useEffect(() => {
+    exitedSinceRef.current = exitedCollectPass({
+      tabs,
+      statuses,
+      kept: new Set(),
+      since: exitedSinceRef.current,
+      now: Date.now(),
+    }).since;
+  }, [tabs, statuses]);
+  const doCloseTabRef = useRef(doCloseTab);
+  doCloseTabRef.current = doCloseTab;
+  const splitTabIdRef = useRef(splitTabId);
+  splitTabIdRef.current = splitTabId;
+  const collectingExitedRef = useRef(new Set<string>());
+  async function collectExitedTab(id: string) {
+    const ptyId = statusesRef.current[id]?.ptyId;
+    if (!ptyId || collectingExitedRef.current.has(id)) return;
+    collectingExitedRef.current.add(id);
+    try {
+      const busy = await invoke<boolean>("pty_shell_busy", { ptyId }).catch(() => true);
+      if (busy) return;
+      // 问后端这一会儿可能又切回来了、写了字、或者接回了：按最新状态再判一次
+      const tab = tabsRef.current.find((t) => t.id === id);
+      if (
+        !tab ||
+        id === activeIdRef.current ||
+        id === splitTabIdRef.current ||
+        draftByTabRef.current[id] ||
+        !isExitedAgentTab(tab, statusesRef.current[id])
+      )
+        return;
+      delete exitedSinceRef.current[id];
+      void invoke("drop_terminal_replay", { tabId: id }).catch(() => {});
+      doCloseTabRef.current(id);
+    } finally {
+      collectingExitedRef.current.delete(id);
+    }
+  }
 
   // —— 标签条撤掉之后（2026-10-24 侧栏挂对话第二期）：开着的东西列在侧栏，关、切、收都不靠标签条 ——
   const activeIdRef = useRef(activeId);
@@ -9728,7 +9780,19 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     });
     idleSinceRef.current = since;
     const id = stop[0];
-    if (!id) return;
+    if (!id) {
+      // 这一分钟没有要停的在跑对话，再看有没有 Agent 已退出、没人看着的（一次收一个，同上）
+      const exited = exitedCollectPass({
+        tabs,
+        statuses,
+        kept,
+        since: exitedSinceRef.current,
+        now: Date.now(),
+      });
+      exitedSinceRef.current = exited.since;
+      if (exited.collect[0]) void collectExitedTab(exited.collect[0]);
+      return;
+    }
     delete idleSinceRef.current[id];
     const title = statuses[id]?.title;
     void invoke("drop_terminal_replay", { tabId: id }).catch(() => {});

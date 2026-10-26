@@ -426,15 +426,13 @@ export default function ProjectTree({
         title: "正看着的那段留在左边，这段放右边对照",
         onSelect: () => openChat(s, project, true),
       },
-      ...(holder
+      // 只在 AI 开着时给（同行尾 ×）：退出了的 Mesa 自己收，没东西可关
+      ...(holder?.running && !holder.shell
         ? [
             {
               label: "关掉这段对话",
               icon: X,
-              title:
-                holder.running && !holder.shell
-                  ? "停下这段对话的 Agent、收起它；记录还在，再点开发一句就接回（在干活的会先问你）"
-                  : "收起它：AI 没在跑（已退出或还没接回），记录还在，再点开发一句就接回",
+              title: "停下这段对话的 Agent、收起它；记录还在，再点开发一句就接回（在干活的会先问你）",
               onSelect: () => useAppStore.getState().requestCloseTab(holder.tabId),
             },
           ]
@@ -698,8 +696,11 @@ export default function ProjectTree({
     const key = chatKey(s);
     const full = tidySessionTitle(s).title;
     const dot = chatDot(s, terminalRunInputs);
-    // Mesa 里开着这段的标签：有它才给 ×（Mesa 外终端在写的只亮光标，关不了）
-    const holder = terminalRunInputs.find((r) => r.agentId === s.agent && r.sessionId === s.sessionId);
+    // × 只跟着光标走（2026-10-26 用户定）：Mesa 里开着、AI 在跑的才给。Mesa 外终端在写的只亮光标，关不了；
+    // Agent 已退出、标签还开着的不给，Mesa 切走 / 没人看时自己收（TerminalPage collectExitedTab）
+    const holder = dot
+      ? terminalRunInputs.find((r) => r.agentId === s.agent && r.sessionId === s.sessionId && r.running && !r.shell)
+      : undefined;
     const selected = key === selectedChatKey;
     // 跑完了没看：标题亮到 l1（同正看着的那段的字色，但不铺底），点开就消
     const unread = !selected && unreadSet.has(key);
@@ -784,28 +785,21 @@ export default function ProjectTree({
           {/* 运行状态光标（2026-10-24 用户：绿点换成 Mesa 的光标）。有光标才占一格、标题在它前面淡出；
               没光标的行标题写到行尾（2026-10-26 用户：右边这一列要干净，同 Claude 客户端侧栏；空格位让标题早早淡掉、右边空一截）；Mesa 外在跑的悬停时不让位，⋯ 出现在它右边。
               干活时的呼吸在悬停时停下、常亮（App.css .ccode-run-caret） */}
-          {/* 关掉（2026-10-26 用户定）：Mesa 里开着的行，悬停时 × 顶替光标那一格，⋯ 固定在最右；行宽不变。
-              Agent 退出了、标签还开着的行平时空着这格，悬停也出 × 收起 */}
-          {(dot || holder) && (
+          {/* 关掉（2026-10-26 用户定）：Mesa 里开着、AI 在跑的行，悬停时 × 顶替光标那一格，⋯ 固定在最右；行宽不变 */}
+          {dot && (
             <span className="flex h-6 w-6 items-center justify-center" data-run-slot>
-              {dot && (
-                <span
-                  className={`flex items-center justify-center${
-                    holder ? " group-hover/chat:hidden group-focus-within/chat:hidden" : ""
-                  }`}
-                >
-                  <RunCaret state={dot} />
-                </span>
-              )}
+              <span
+                className={`flex items-center justify-center${
+                  holder ? " group-hover/chat:hidden group-focus-within/chat:hidden" : ""
+                }`}
+              >
+                <RunCaret state={dot} />
+              </span>
               {holder && (
                 <button
                   type="button"
                   aria-label={`关掉「${sidebarChatTitle(full)}」`}
-                  title={
-                    dot
-                      ? `关掉：停下它，记录还在（在干活的会先问你）\n现在：${dotTitle(dot)}`
-                      : "收起：AI 没在跑（已退出或还没接回），这里还开着一个标签；记录还在"
-                  }
+                  title={`关掉：停下它，记录还在（在干活的会先问你）\n现在：${dotTitle(dot)}`}
                   onClick={() => useAppStore.getState().requestCloseTab(holder.tabId)}
                   className="hidden h-6 w-6 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1 group-hover/chat:flex group-focus-within/chat:flex"
                 >

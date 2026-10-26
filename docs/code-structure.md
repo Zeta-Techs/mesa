@@ -676,7 +676,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # （runLayout；tests/run-layout.test.ts）
   idle-stop.ts               # 空闲对话的后台进程自动收（2026-10-24 用户拍板 A）：普通对话（isPlainChatTab）Agent 回完话、没在看、输入框没字，
                              # 满 30 分钟（IDLE_STOP_MS）该收哪些（idleStopPass 维护开始空闲时刻）；纯终端 / 步骤 / 车道 / 阅读 / 自定义运行时不收
-                             # （tests/idle-stop.test.ts；TerminalPage 每分钟一检）
+                             # （tests/idle-stop.test.ts；TerminalPage 每分钟一检）；Agent 退出、退回 shell 的普通对话（isExitedAgentTab / exitedCollectPass，
+                             # 退回满 EXITED_GRACE_MS）切走时与每分钟检查时收，shell 里有命令在跑（pty_shell_busy）不收（10-26）
   quick-chat.ts              # 快速开聊纯逻辑：默认选择 pickQuickChatDefault（记住的 → 同家另一条 → 上次启动 → 装了的第一家）、
                              # 空白标签 isBlankChatTab（再点只复用没说过话的）、新对话入口的复用键 isNewChatKey（quickchat: / 项目 ＋ 的 <类型>:<项目>:project:<uuid>）、
                              # Windows 上 Codex 在主目录启动前要不要确认 codexSandboxCoversHome（完全访问不提醒）、
@@ -1049,7 +1050,7 @@ src-tauri/src/
                              # 迁移命令曾实现后按「未发布无用即删」移除（存量已手工迁完，重建序列见 pipeline.md）
   project_memory.rs          # 项目知识 .ccode/memory.md：结构化块只记人工确认（revision 比对 + active/superseded/revoked 状态机；
                              # 作废/替代条目不注入，Agent 结论不自动采纳；原文历史保留并留备份）
-  pty.rs                     # PtyManager：spawn_tracked 公共拉起，agent/shell 复用；
+  pty.rs                     # PtyManager：spawn_tracked 公共拉起，agent/shell 复用；pty_shell_busy = 退回的 shell 里有没有命令在跑（unix 前台进程组 / Windows 子进程）；
                              #   开 PTY 用前端传入的 cols/rows（缺省 24×80），避免 resume 先窄后宽把旧帧留进滚动记录；
                              # terminal_link_target = 终端相对路径点击的终审（cwd 拼 + ~ 展开 + 存在性）；
                              # pty_report_terminal_colors = Windows 底色告知（win32-input-mode 记录逐条投递，

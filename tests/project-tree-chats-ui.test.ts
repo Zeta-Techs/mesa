@@ -460,6 +460,33 @@ test("对话 ⋯ 里能在右侧分屏打开；开着的能关掉（行尾 × �
   }
 });
 
+test("Agent 已退出、标签还开着的行：没有光标就没有 ×，⋯ 里也不给关（Mesa 自己收）", async () => {
+  const run = (tabId: string, sessionId: string, running: boolean) => ({
+    tabId,
+    title: "",
+    agentId: "claude-code",
+    model: "",
+    cwd: PROJECT.path,
+    running,
+    shell: !running,
+    attention: running ? ("done" as const) : null,
+    sessionId,
+  });
+  const view = await renderTree({ terminalRunInputs: [run("t1", "r5", true), run("t2", "r2", false)] });
+  try {
+    assert.ok(view.host.querySelector('[aria-label="关掉「镁硫电池第5篇精读」"]'), "在跑的照旧有 ×");
+    const row = view.button("镁硫电池第2篇精读");
+    assert.equal(row.parentElement?.querySelector("[data-run-slot]"), null, "退出了的不留光标那一格");
+    assert.equal(view.host.querySelector('[aria-label="关掉「镁硫电池第2篇精读」"]'), null);
+    await view.act(async () => view.button("「镁硫电池第2篇精读」的更多操作").click());
+    assert.ok(
+      !Array.from(view.host.ownerDocument.querySelectorAll("button")).some((b) => b.textContent?.trim() === "关掉这段对话"),
+    );
+  } finally {
+    await view.close();
+  }
+});
+
 test("对话 ⋯ 置顶：挪到最上面「置顶」一节、原课题下不再列，记在本机；取消置顶放回去", async () => {
   const view = await renderTree();
   try {
