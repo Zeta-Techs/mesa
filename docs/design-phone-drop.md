@@ -147,7 +147,7 @@
 - 手机页三个静态文件放 `src-tauri/resources/phone-drop/`（`index.html` / `app.js` / `app.css`），`include_str!` 嵌进二进制。
 - 命令：`phone_drop_start(bind?) -> { url, qrSvg, addresses, bindAddr }`（已在接收则返回现有会话）、`phone_drop_stop()`、
   `phone_drop_list() -> items`、`phone_drop_place(id, projectRoot)`、`phone_drop_save_as(id, dest)`、`phone_drop_delete(id)`、
-  `phone_drop_mark(id, status)`（附到输入框 / 被 × 掉）。
+  `phone_drop_set_status(id, status)`（附到输入框 / 被 × 掉；命令族还有 status/devices/remove_device/set_standby，见 §10）。
 - 事件：`phone-drop-state`（`receiving` / `connected` / `stopped` 及原因）、`phone-drop-incoming`（开始收某个文件，给状态行）、
   `phone-drop-item`（收完一条）。DTO 整结构体 `#[serde(rename_all = "camelCase")]`。
 - 进项目：PDF 调 `lit_watch` 的校验 + `save_paper_bytes`；图片把 `reader::save_reader_capture_sync` 里「根门槛 + symlink 双校验 +
