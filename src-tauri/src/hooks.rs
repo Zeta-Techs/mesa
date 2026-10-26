@@ -403,6 +403,42 @@ pub(crate) fn migrate_launch_injected() {
     }
 }
 
+/// 卸载用：从各家全局配置里收回 Mesa 写进去的 hook 条目（按标记找，不看设置开关）。卸载会把 hook 程序、
+/// 脚本和状态目录一起移进回收站，条目留着的话 Windows 上每触发一次就报错，其它平台的 hook 命令
+/// 会把 Mesa 的数据目录重新建出来、一直往里追加。返回没能收回的项
+pub(crate) fn retract_all_for_uninstall() -> Vec<String> {
+    let Some(home) = dirs::home_dir() else {
+        return vec!["无法确定用户主目录，各家 CLI 配置里的 hooks 没有检查".into()];
+    };
+    let backups = match backups_dir() {
+        Ok(b) => b,
+        Err(e) => return vec![format!("各家 CLI 配置里的 hooks 没有检查：{e}")],
+    };
+    retract_all_at(&home, &backups, |spec| hooks_log_path(spec))
+}
+
+fn retract_all_at(
+    home: &Path,
+    backups: &Path,
+    log_for: impl Fn(&BridgeSpec) -> Result<PathBuf, String>,
+) -> Vec<String> {
+    let mut errors = Vec::new();
+    for spec in BRIDGE_SPECS {
+        // 读不了的文件不可能是我们写的；没有标记的不改写，免得白添一份备份
+        let Ok(text) = fs::read_to_string(home.join(spec.config_rel)) else {
+            continue;
+        };
+        if !has_marker(&text, &spec.marker()) {
+            continue;
+        }
+        let result = log_for(spec).and_then(|log| apply_hooks_at(spec, home, &log, backups, false));
+        if let Err(e) = result {
+            errors.push(format!("{} 里 Mesa 的 hooks 没能移除：{e}", spec.display()));
+        }
+    }
+    errors
+}
+
 /// 开着全局开关的 Gemini，配置里 Mesa 的条目还没有 name（2026-10-21 之前写的）：启动时按当前写法重写一次
 /// （apply_hooks_at 写前备份），之后转圈行显示 hook 名字而不是一串路径。已有 name 不动，不会每次启动多一份备份
 pub(crate) fn refresh_gemini_hook_name() {
@@ -1836,6 +1872,60 @@ mod tests {
         apply_hooks_at(spec, &missing_home, &log, &backups, false).unwrap();
         assert!(!missing_home.join(spec.config_rel).exists());
         fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 卸载收回：只改写带 Mesa 标记的那家，其它键保留；没有标记的家原样不动、不添备份
+    #[test]
+    fn retract_all_at_removes_only_marked_entries() {
+        let dir = tmpdir("retract");
+        let home = dir.join("home");
+        let backups = dir.join("backups");
+        let log_for = |spec: &BridgeSpec| -> Result<PathBuf, String> {
+            Ok(dir.join("hooks-state").join(format!("{}-hooks.jsonl", spec.log_tag)))
+        };
+        let gemini = spec_for("gemini").unwrap();
+        let settings = home.join(gemini.config_rel);
+        fs::create_dir_all(settings.parent().unwrap()).unwrap();
+        fs::write(&settings, r#"{"theme": "dark"}"#).unwrap();
+        apply_hooks_at(gemini, &home, &log_for(gemini).unwrap(), &backups, true).unwrap();
+        assert!(has_marker(&fs::read_to_string(&settings).unwrap(), &gemini.marker()));
+        let qwen = spec_for("qwen").unwrap();
+        let qwen_path = home.join(qwen.config_rel);
+        fs::create_dir_all(qwen_path.parent().unwrap()).unwrap();
+        fs::write(&qwen_path, r#"{"model": "x"}"#).unwrap();
+        let backups_before = fs::read_dir(&backups).map(|d| d.count()).unwrap_or(0);
+
+        assert!(retract_all_at(&home, &backups, log_for).is_empty());
+        let text = fs::read_to_string(&settings).unwrap();
+        assert!(!has_marker(&text, &gemini.marker()), "Mesa 的条目已收回");
+        let v: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["theme"], "dark");
+        assert_eq!(fs::read_to_string(&qwen_path).unwrap(), r#"{"model": "x"}"#);
+        assert_eq!(fs::read_dir(&backups).unwrap().count(), backups_before + 1, "只给改写的那家备份");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 干跑：把本机真实的各家配置拷进临时 HOME（环境变量 `CCODE_RETRACT_DRYRUN_HOME` 指向它），
+    /// 按卸载同一条路径收回，打印改写前后有没有标记
+    #[test]
+    #[ignore]
+    fn real_config_retract_dry_run() {
+        let home = PathBuf::from(std::env::var("CCODE_RETRACT_DRYRUN_HOME").expect("设 CCODE_RETRACT_DRYRUN_HOME"));
+        let backups = home.join("_backups");
+        let log_for = |spec: &BridgeSpec| -> Result<PathBuf, String> {
+            Ok(home.join("_hooks-state").join(format!("{}-hooks.jsonl", spec.log_tag)))
+        };
+        let errors = retract_all_at(&home, &backups, log_for);
+        assert!(errors.is_empty(), "{errors:?}");
+        for spec in BRIDGE_SPECS {
+            let path = home.join(spec.config_rel);
+            if let Ok(text) = fs::read_to_string(&path) {
+                println!("{}: 还有标记 = {}", spec.display(), has_marker(&text, &spec.marker()));
+                assert!(!has_marker(&text, &spec.marker()));
+            } else {
+                println!("{}: 文件不在", spec.display());
+            }
+        }
     }
 
     /// kimi 端到端：config.toml 合并/移除走文件，备份用 .toml 扩展名

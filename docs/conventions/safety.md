@@ -203,7 +203,10 @@
      浏览器收货桥清单走 `browser_bridge::native_host_dirs` 同一份目录（Windows 再删对应
      HKCU 注册表键）。前端在调用卸载命令前同步清掉 WebView localStorage 里的 `ccode.*`
      界面记忆键，兜住进程退出前的最后一次写入。课题文件夹、论文、各 CLI 的配置与会话
-     一律不动。应用本体不在这里删。
+     一律不动，例外只有 Mesa 自己放进去、又指向上述目录的两样，移目录前先收回（2026-10-26）：
+     各家技能目录里指向技能库的软链（`skills::unlink_distributed_for_uninstall`，带标记的副本自成一份不动）、
+     全局配置里带 Mesa 标记的 hook 条目（`hooks::retract_all_for_uninstall`，按标记找、不看开关，写前备份）。
+     「设为全局」写进去的连接与密钥不动，确认框与说明书写明。应用本体不在这里删。
 - **「设为全局」/MCP 写入/技能分发的各家支持面统一查 AgentSpec 能力表**（agent_specs.rs 的 set_global/mcp_write/
   skill_dist 三字段，fail-loud：不支持必须带用户可见原因，后端报错与前端置灰同源），不再散写硬编码名单
   （mcp.rs 的 grok 只读、skills.rs 的 allow_symlink_for 等旧硬编码均已改查表）。

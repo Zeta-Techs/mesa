@@ -2,8 +2,9 @@
 //!
 //! 只动 Mesa 自己建的目录：配置目录 `ccode/`、主目录 `~/ccode/`（含用户自定义的家目录，工作区、工作树、
 //! 快速开聊、复现记录）、本机数据目录 `ccode/task-runs`，以及这个应用身份留下的
-//! 网页数据（界面记住的最近项目和偏好）。课题文件夹、各家 CLI 的配置与会话一律不动。
-//! 应用本体由系统卸载（Mac 把 Mesa.app 拖进废纸篓）。
+//! 网页数据（界面记住的最近项目和偏好）。课题文件夹、各家 CLI 的配置与会话一律不动，
+//! 只收回 Mesa 自己放进去、又指向上面这些目录的东西：技能目录里指向技能库的软链、全局配置里的 hook 条目
+//! （目录一移走它们就断了）。应用本体由系统卸载（Mac 把 Mesa.app 拖进废纸篓）。
 
 use std::path::{Path, PathBuf};
 
@@ -226,6 +227,9 @@ pub async fn uninstall_mesa() -> Result<UninstallResultDto, String> {
             remove_file(&path, &mut result);
         }
         result.errors.extend(remove_windows_bridge_keys());
+        // 数据目录移走之前先收回指向它们的东西，否则各家 CLI 里留下断掉的技能链接与 hook 命令
+        result.errors.extend(crate::skills::unlink_distributed_for_uninstall());
+        result.errors.extend(crate::hooks::retract_all_for_uninstall());
         for (root, plan) in plans {
             match plan {
                 RootPlan::DeferUntilExit if root.exists() => {

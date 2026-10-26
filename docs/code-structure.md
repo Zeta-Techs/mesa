@@ -1543,7 +1543,8 @@ src-tauri/src/
   ui_zoom.rs                 # 界面缩放 + 最小窗口尺寸：webview 原生 zoom（改 devicePixelRatio，画布重画才清楚，不用 CSS zoom）；最小尺寸 = 网页 720×480 × 缩放，封顶最小屏可用区 90%；update_settings 带 uiZoom 时与开机 setup 调
   uninstall.rs               # 一键卸载：Mesa 独占目录（配置 ccode/、~/ccode/、本机数据 ccode/、
                              #   com.ccode.dev 的网页数据）移入回收站；浏览器桥清单与 Windows
-                             #   注册表键复用 browser_bridge 的目录表。课题文件夹与各 CLI 数据不动
+                             #   注册表键复用 browser_bridge 的目录表。课题文件夹与各 CLI 数据不动；移目录前先收回
+                             #   各家技能目录里指向技能库的软链（skills）与全局配置里带标记的 hook 条目（hooks）
   updater.rs                 # CLI 安装/更新（brew TUNA、npm_for 同目录 npm、Windows winget 渠道：claude/codex/opencode/kimi/grok 五家有官方包）+ 应用自身 Tauri updater；
                              #   run_streaming_pty/run_streaming/emit_done/winget_args 为 pub(crate)，dep_check 复用同一管线
   watch_review.rs            # 定时巡检产物评审：工作目录可复用，但评审和采纳只读每次执行冻结的副本

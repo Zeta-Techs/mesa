@@ -1296,7 +1296,8 @@ function UninstallRow() {
             const ok = await confirmDialog(
               "卸载 Mesa 的本机数据？\n\n" +
                 "会移入回收站：配置与密钥、技能库、会话索引、工作副本、定时任务记录，以及界面记住的最近项目和偏好。\n" +
-                "课题文件夹、论文和各家 AI 自己的会话不会动。\n\n" +
+                "课题文件夹、论文和各家 AI 自己的会话不会动；各家 AI 技能目录里指向 Mesa 的链接、Mesa 写进全局配置的 hooks 会一并收回。\n" +
+                "用「设为全局默认」写进各家配置的连接（含密钥）不会动。\n\n" +
                 "应用本身还在：Mac 把 Mesa.app 拖进废纸篓；Windows 在「设置 → 应用」里卸载。",
               { danger: true, confirmText: "继续", focusCancel: true },
             );

@@ -1313,6 +1313,47 @@ fn remove_ours(target: &Path, lib: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// 卸载用：收回各 agent 技能目录里指向技能库的符号链接——库一进回收站，这些链接就全断了。
+/// 带标记的副本自成一份、照样能用，留着；用户自有目录不碰。返回没能收回的项
+pub(crate) fn unlink_distributed_for_uninstall() -> Vec<String> {
+    match SkillStore::default_paths() {
+        Ok(store) => unlink_links_into(&store.lib, &agent_dirs()),
+        Err(e) => vec![format!("技能目录里的链接没有检查：{e}")],
+    }
+}
+
+fn unlink_links_into(lib: &Path, dirs: &HashMap<String, PathBuf>) -> Vec<String> {
+    let mut errors = Vec::new();
+    let mut seen: Vec<&PathBuf> = Vec::new();
+    for dir in dirs.values() {
+        // 几家可能共用一个技能目录
+        if seen
+            .iter()
+            .any(|d| crate::paths::same_path(&d.to_string_lossy(), &dir.to_string_lossy()))
+        {
+            continue;
+        }
+        seen.push(dir);
+        let Ok(entries) = fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let target = entry.path();
+            let Ok(link) = fs::read_link(&target) else {
+                continue;
+            };
+            if !crate::paths::path_within_path(&link, lib) {
+                continue;
+            }
+            // 符号链接按文件删；Windows 目录符号链接需要 remove_dir
+            if let Err(e) = fs::remove_file(&target).or_else(|_| fs::remove_dir(&target)) {
+                errors.push(format!("技能链接 {} 没能移除：{e}", target.display()));
+            }
+        }
+    }
+    errors
+}
+
 fn apply_impl(
     store: &SkillStore,
     dirs: &HashMap<String, PathBuf>,
@@ -4842,5 +4883,51 @@ mod tests {
         let err = require_skill_distributed_at(&fx.store, "ghost", "codex").unwrap_err();
         assert!(err.contains("技能库没有"));
         let _ = skill;
+    }
+
+    /// 卸载收回：只删指向技能库的链接；用户自己的链接、带标记的副本、库本身都不动；共用目录只扫一遍
+    #[cfg(unix)]
+    #[test]
+    fn unlink_links_into_removes_only_links_to_library() {
+        let root =
+            std::env::temp_dir().join(format!("ccode-skills-unlink-{}", uuid::Uuid::new_v4()));
+        let lib = root.join("lib");
+        let agent = root.join("agent-skills");
+        let other = root.join("elsewhere");
+        fs::create_dir_all(lib.join("bib-check")).unwrap();
+        fs::create_dir_all(&agent).unwrap();
+        fs::create_dir_all(&other).unwrap();
+        std::os::unix::fs::symlink(lib.join("bib-check"), agent.join("bib-check")).unwrap();
+        std::os::unix::fs::symlink(&other, agent.join("user-link")).unwrap();
+        fs::create_dir_all(agent.join("copied")).unwrap();
+        fs::write(agent.join("copied").join(MARKER_FILE), "x").unwrap();
+        let mut dirs = HashMap::new();
+        dirs.insert("claude-code".to_string(), agent.clone());
+        dirs.insert("codex".to_string(), agent.clone());
+
+        assert!(unlink_links_into(&lib, &dirs).is_empty());
+        assert!(fs::symlink_metadata(agent.join("bib-check")).is_err(), "指向库的链接已收回");
+        assert!(fs::read_link(agent.join("user-link")).is_ok(), "用户自己的链接不动");
+        assert!(agent.join("copied").is_dir(), "副本自成一份，留着");
+        assert!(lib.join("bib-check").is_dir(), "库本身不动");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    /// 干跑：`CCODE_UNLINK_DRYRUN_DIR` 指向用 `cp -RP` 拷出的某家技能目录副本，按本机真实技能库收回
+    #[cfg(unix)]
+    #[test]
+    #[ignore]
+    fn real_skill_dir_unlink_dry_run() {
+        let dir = PathBuf::from(std::env::var("CCODE_UNLINK_DRYRUN_DIR").expect("设 CCODE_UNLINK_DRYRUN_DIR"));
+        let lib = SkillStore::default_paths().unwrap().lib;
+        let mut dirs = HashMap::new();
+        dirs.insert("dry".to_string(), dir.clone());
+        let errors = unlink_links_into(&lib, &dirs);
+        assert!(errors.is_empty(), "{errors:?}");
+        for entry in fs::read_dir(&dir).unwrap().flatten() {
+            let link = fs::read_link(entry.path()).ok();
+            println!("留下：{} {:?}", entry.file_name().to_string_lossy(), link);
+            assert!(!link.is_some_and(|l| crate::paths::path_within_path(&l, &lib)));
+        }
     }
 }
