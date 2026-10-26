@@ -4585,7 +4585,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
               className={`${ghostActionClass} gap-1.5`}
               title="在浏览器打开 GitHub 仓库：源码与发布记录，顺手点个 Star"
               onClick={() =>
-                void openUrl("https://github.com/hongtongzhou-design/ccode").catch(
+                void openUrl("https://github.com/Zeta-Techs/mesa").catch(
                   () => toast("浏览器没打开，稍后再试", "warning"),
                 )
               }
@@ -4625,7 +4625,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             className={secondaryActionClass}
             onClick={() =>
               void openUrl(
-                "https://github.com/hongtongzhou-design/ccode/issues",
+                "https://github.com/Zeta-Techs/mesa/issues",
               ).catch(() => toast("浏览器没打开，稍后再试", "warning"))
             }
           >

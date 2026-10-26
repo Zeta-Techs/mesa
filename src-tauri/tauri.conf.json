@@ -66,7 +66,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDdCMjg0MDE1RUI3RDI4OTMKUldTVEtIM3JGVUFvZTM4TXBPV0hpaThON3Y1aWtmWWZEUDRaZFVNMlEwbnROY2daRDJiWitYMEMK",
       "endpoints": [
-        "https://github.com/hongtongzhou-design/ccode/releases/latest/download/latest.json"
+        "https://github.com/Zeta-Techs/mesa/releases/latest/download/latest.json"
       ]
     }
   }

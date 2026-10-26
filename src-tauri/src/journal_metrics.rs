@@ -401,7 +401,7 @@ fn compute_status() -> JournalMetricsStatusDto {
 async fn fetch_csv(file_name: &str) -> Result<Vec<u8>, String> {
     let client = reqwest::Client::builder()
         .timeout(DOWNLOAD_TIMEOUT)
-        .user_agent("Mesa journal-metrics (https://github.com/hongtongzhou-design/ccode)")
+        .user_agent("Mesa journal-metrics (https://github.com/Zeta-Techs/mesa)")
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
     let urls = [
@@ -578,7 +578,7 @@ pub async fn lookup_journal_metrics(
     }
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(12))
-        .user_agent("Mesa journal-metrics (https://github.com/hongtongzhou-design/ccode)")
+        .user_agent("Mesa journal-metrics (https://github.com/Zeta-Techs/mesa)")
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
     for chunk in missing.chunks(6) {
@@ -660,7 +660,7 @@ fn upstream_is_newer(upstream: &str, local: &str) -> bool {
 pub async fn check_journal_metrics_update() -> Result<JournalMetricsUpdateDto, String> {
     let client = reqwest::Client::builder()
         .timeout(UPDATE_CHECK_TIMEOUT)
-        .user_agent("Mesa journal-metrics (https://github.com/hongtongzhou-design/ccode)")
+        .user_agent("Mesa journal-metrics (https://github.com/Zeta-Techs/mesa)")
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
     let url =

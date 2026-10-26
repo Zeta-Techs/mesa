@@ -285,7 +285,7 @@ test("关于页身份卡 GitHub 链接：打开仓库", async () => {
     assert.ok(button.querySelector("svg"), "按钮上要有 GitHub 图标");
     await view.click("GitHub", view.content());
     const open = view.calls.find((call) => call.command === "plugin:opener|open_url");
-    assert.equal(open?.args?.url, "https://github.com/hongtongzhou-design/ccode");
+    assert.equal(open?.args?.url, "https://github.com/Zeta-Techs/mesa");
   } finally { await view.close(); }
 });
 

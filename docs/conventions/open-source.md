@@ -8,7 +8,7 @@
 - Mesa 按 **Apache-2.0** 开源（LICENSE/NOTICE/package.json/Cargo.toml/README/CONTRIBUTING/关于页同步）。
 - **版权落款 `泽塔前沿科技（杭州）有限公司`**——七处署名：LICENSE/NOTICE/Cargo authors/tauri.conf publisher/关于页版权行/
   macOS About 面板/gen 脚本随包清单头。中文注册名即主体名，无官方英文名不写英文。
-- 仓库链接与 updater endpoint 仍指 `hongtongzhou-design/ccode` 个人 repo（转 org 时按三处同步口径换，见 AGENTS.md「git 推送」）。
+- 仓库在公司组织 `Zeta-Techs/mesa`（2026-10-27 从个人仓库 `hongtongzhou-design/ccode` 转入）；仓库链接、updater endpoint、各处 User-Agent 一律用新地址，旧地址只靠 GitHub 跳转（见 AGENTS.md「git 推送」）。
 - 贡献要求 DCO 签署。
 - **名称与图标使用规则在仓库根 `TRADEMARKS.md`（2026-10-26）**：对外发布修改版须换名换图标，PR 不收图标改动。
 

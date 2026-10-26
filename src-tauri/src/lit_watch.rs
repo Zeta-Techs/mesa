@@ -1481,7 +1481,7 @@ async fn fetch_pdf_bytes(url: &str) -> Result<Vec<u8>, String> {
     let client = reqwest::Client::builder()
         .timeout(DOWNLOAD_TIMEOUT)
         // 部分出版商/预印本站拦无 UA 请求
-        .user_agent("Mesa lit-watch (https://github.com/hongtongzhou-design/ccode)")
+        .user_agent("Mesa lit-watch (https://github.com/Zeta-Techs/mesa)")
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
     let mut resp = client

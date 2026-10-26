@@ -419,7 +419,7 @@ pub async fn submit_feedback(
     };
     let client = reqwest::Client::builder()
         .timeout(SUBMIT_TIMEOUT)
-        .user_agent("Mesa feedback (https://github.com/hongtongzhou-design/ccode)")
+        .user_agent("Mesa feedback (https://github.com/Zeta-Techs/mesa)")
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
     let resp = client

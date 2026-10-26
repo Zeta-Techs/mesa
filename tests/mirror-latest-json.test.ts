@@ -13,15 +13,15 @@ const latest = {
   platforms: {
     "windows-x86_64": {
       signature: "sig-win",
-      url: "https://github.com/hongtongzhou-design/ccode/releases/download/v1.2.3/Mesa_1.2.3_x64-setup.exe",
+      url: "https://github.com/Zeta-Techs/mesa/releases/download/v1.2.3/Mesa_1.2.3_x64-setup.exe",
     },
     "darwin-aarch64": {
       signature: "sig-arm",
-      url: "https://github.com/hongtongzhou-design/ccode/releases/download/v1.2.3/Mesa_aarch64.app.tar.gz",
+      url: "https://github.com/Zeta-Techs/mesa/releases/download/v1.2.3/Mesa_aarch64.app.tar.gz",
     },
     "darwin-x86_64": {
       signature: "sig-x64",
-      url: "https://github.com/hongtongzhou-design/ccode/releases/download/v1.2.3/Mesa_x64.app.tar.gz",
+      url: "https://github.com/Zeta-Techs/mesa/releases/download/v1.2.3/Mesa_x64.app.tar.gz",
     },
   },
 };

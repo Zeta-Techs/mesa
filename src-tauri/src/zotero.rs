@@ -1106,7 +1106,7 @@ fn zotero_client(timeout_secs: u64) -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .no_proxy()
         .timeout(std::time::Duration::from_secs(timeout_secs))
-        .user_agent("Mesa zotero-attach (https://github.com/hongtongzhou-design/ccode)")
+        .user_agent("Mesa zotero-attach (https://github.com/Zeta-Techs/mesa)")
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))
 }
@@ -1320,7 +1320,7 @@ fn bbt_id_from_xpi(bytes: &[u8]) -> Result<String, String> {
 async fn download_bbt_xpi() -> Result<Vec<u8>, String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(90))
-        .user_agent("Mesa zotero-bbt (https://github.com/hongtongzhou-design/ccode)")
+        .user_agent("Mesa zotero-bbt (https://github.com/Zeta-Techs/mesa)")
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
     let meta = client

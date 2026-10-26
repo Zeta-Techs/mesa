@@ -31,7 +31,7 @@ const POLL_INTERVAL: Duration = Duration::from_secs(3);
 const LOGIN_WINDOW_LABEL: &str = "inst-login";
 /// OA 查证（Unpaywall/OpenAlex）单独收紧超时：best-effort，慢网不拖累整条阶梯
 const OA_TIMEOUT: Duration = Duration::from_secs(10);
-const UA: &str = "Mesa lit-watch (https://github.com/hongtongzhou-design/ccode)";
+const UA: &str = "Mesa lit-watch (https://github.com/Zeta-Techs/mesa)";
 /// 登录窗拦下的 PDF 用浏览器 UA：CDN（mdpi-res.com 等）按页面自己的下载发，
 /// 不带 Mesa 爬虫 UA。程序化阶梯（fetch_via_session）仍用上面的礼貌 UA。
 const WINDOW_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15";

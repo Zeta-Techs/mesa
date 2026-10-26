@@ -87,7 +87,7 @@ Mesa 是装在电脑上的 **AI （科研）工作台**。它自己不是一个�
 
 ### 2.1 下载哪个包
 
-到 [Releases](https://github.com/hongtongzhou-design/ccode/releases/latest) 按电脑选：
+到 [Releases](https://github.com/Zeta-Techs/mesa/releases/latest) 按电脑选：
 
 | 电脑 | 安装包 |
 |---|---|
@@ -919,4 +919,4 @@ AI 写好、要你来填的清单，行上都是 **打开填写** 和 **填好�
 | 改动面板报找不到 git | 诊断页一键安装；Mac 先处理 Xcode 许可弹窗 |
 | 做图 / 做视频的对话发着发着报 413 Request body too large | 截图把每次发送的请求体撑过了网关上限。回放顶部点 **瘦身…**（或 ⋯ → **瘦身会话…**），把较早的截图换成文字占位，见说明书 7.2 |
 
-如果您有其他问题与想法提到 [GitHub Issues](https://github.com/hongtongzhou-design/ccode/issues)。最好是附上 **设置 → 诊断** 导出的日志。谢谢！
+如果您有其他问题与想法提到 [GitHub Issues](https://github.com/Zeta-Techs/mesa/issues)。最好是附上 **设置 → 诊断** 导出的日志。谢谢！

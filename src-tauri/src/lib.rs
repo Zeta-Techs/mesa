@@ -375,7 +375,7 @@ pub fn run() {
                         use tauri_plugin_opener::OpenerExt;
                         let _ = app_handle
                             .opener()
-                            .open_url("https://github.com/hongtongzhou-design/ccode", None::<&str>);
+                            .open_url("https://github.com/Zeta-Techs/mesa", None::<&str>);
                     }
                     "feedback" => {
                         // 反馈走应用内表单（2026-10-12 拍板：不跳 GitHub）——
