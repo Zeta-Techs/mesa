@@ -100,8 +100,8 @@
      tests/theme-contrast.test.ts 钉范围。只管聊天回答（.md-chat），其余页面的层级不动。
      2026-10-25 用户在 A/B/C 对照里选 C：聊天区改细字（.ccode-chat-scroll / .ccode-chat-composer 灰度抗锯齿），
      笔画变细后正文提亮补回实感；同日用户「正文有点太亮了」：从满格 l1 退到 l1 与 l2 五五混，又「有点暗了」：
-     落在 l1 七成（对画布约 11–14:1），加粗走满格 l1——细笔画下 l1 不再「一粒粒跳出来」 */
-  --color-chat-text: color-mix(in oklab, var(--color-l1) 70%, var(--color-l2));
+     落在 l1 七成，仍「还是有点暗」：再提到八成五（对画布约 11.5–15:1），加粗走满格 l1——细笔画下 l1 不再「一粒粒跳出来」 */
+  --color-chat-text: color-mix(in oklab, var(--color-l1) 85%, var(--color-l2));
   --color-chat-strong: var(--color-l1);
 
   /* diff 增删 */
