@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { connIssueDecision } from "../src/chat-decision.ts";
+import { connIssueDecision, grokLoginDecision } from "../src/chat-decision.ts";
 import type { ConnIssueState } from "../src/pages/TerminalPage.tsx";
 
 function issue(over: Partial<ConnIssueState> = {}): ConnIssueState {
@@ -67,4 +67,19 @@ test("连接出问题：没有可换的连接时给「去添加连接」，提�
   const bare = connIssueDecision(issue(), "Codex", { onSwitch: () => {}, onDismiss: () => {} });
   assert.deepEqual(bare.options.map((o) => o.label), ["先不换"]);
   assert.match(bare.hint ?? "", /等额度恢复/);
+});
+
+test("Grok 卡在续期官方登录上：推荐退出官方登录接着聊，另一个是先不管", () => {
+  const picked: string[] = [];
+  const d = grokLoginDecision({ onLogout: () => picked.push("logout"), onDismiss: () => picked.push("dismiss") });
+  assert.equal(d.key, "grok-login-stuck");
+  assert.deepEqual(
+    d.options.map((o) => [o.label, Boolean(o.primary)]),
+    [
+      ["退出官方登录，接着这段对话", true],
+      ["先不管", false],
+    ],
+  );
+  d.options.forEach((o) => o.onClick());
+  assert.deepEqual(picked, ["logout", "dismiss"]);
 });

@@ -613,7 +613,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   launch-combos.ts           # 模型菜单「最近在这个项目用过」：按工作目录记 Agent + 连接 + 模型 + 思考档，最多 3 套，localStorage 只存 id（tests/launch-combos.test.ts）
   effort-depth.ts            # 思考档深度 0..1 与一句白话（effortDepth / effortGloss / effortValleyY）；小 M 画在 components/EffortMark.tsx（tests/effort-depth.test.ts）
   token-format.ts            # 聊天变体状态栏的 token 中文计数（千分位 / 万 / 亿，fmtTokensZh）；终端变体仍用 k / M（tests/token-format.test.ts）
-  chat-decision.ts           # 「等你决定」卡的纯逻辑：连接出问题 → 卡片（connIssueDecision：同家连接最多三个「换到 X」按钮 / 去添加连接 / 先不换，提示按错误种类给另一条路）；方案确认卡的认屏与选项在 plan-approval.ts
+  chat-decision.ts           # 「等你决定」卡的纯逻辑：连接出问题 → 卡片（connIssueDecision：同家连接最多三个「换到 X」按钮 / 去添加连接 / 先不换，提示按错误种类给另一条路）；Grok 卡在官方登录上 → grokLoginDecision（退出官方登录接着聊 / 先不管）；方案确认卡的认屏与选项在 plan-approval.ts
   role-models.ts             # 连接的「模型分工」（后台小模型 / 子 Agent）：哪些 Agent 有、各角色说明、保存前归一、Claude 别名指向（与 agents.rs claude_model_env 同规则）
   help-links.ts              # 仓库与使用手册外链（REPO_URL / userGuideUrl）；仓库转 org 时与 updater endpoint、README 同步改
   popover-side.ts            # 聊天输入框小弹层往哪边开（pickPopoverSide：下面放得下就往下，贴底时往上）
@@ -1286,6 +1286,9 @@ src-tauri/src/
                              #   agent 安装/更新、依赖安装、字体下载走 download_proxy_env（大小写成对，curl 只认小写 http_proxy），
                              #   更新检查的 npm view/brew info 同注；国内镜像主机（TUNA/南大 ghcr）并入 NO_PROXY 直连不绕代理；
                              #   用户环境已带任一代理变量时不覆盖。网关启动仍不走；extra_env 同名键覆盖；校验 http(s)/socks5，空串清除）
+  grok_login.rs              # Grok 卡在续期过期的 xAI 官方登录上（2026-10-26）：grok_login_check 读 auth.json 判过期 +
+                             #   日志 network_unreachable / 启动时探 auth.x.ai 判卡住（只读）；grok_logout 跑 CLI 自己的
+                             #   grok logout 后重读确认清掉（别的标签占锁没清掉要报错）；$GROK_HOME 优先
   hooks.rs                   # 精确注意力标记（七家 hooks 桥接）：BRIDGE_SPECS 每 agent 一张桥接规格（claude/qwen/
                              # codebuddy/gemini/kimi/grok/codex；cursor 无「等待确认」等价事件、opencode 无 shell hooks
                              #   形态，两家未接入），写各家 hooks 配置（备份留 10 份 + 原子写 + marker 合并/移除 +

@@ -26,6 +26,7 @@ mod fs_tree;
 mod gateway_store;
 mod git_info;
 mod global_config;
+mod grok_login;
 mod handoff;
 mod hooks;
 
@@ -525,6 +526,8 @@ pub fn run() {
             agents::detect_agents,
             agents::preview_launch_plan,
             agents::official_account_status,
+            grok_login::grok_login_check,
+            grok_login::grok_logout,
             agents::clear_account_conflicts,
             agents::session_resume_command,
             agents::resume_external_terminal,

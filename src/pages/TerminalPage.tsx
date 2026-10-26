@@ -501,6 +501,10 @@ export interface FocusTabActions {
   switchConnection: (profileId: string) => void;
   /** 关掉「连接出问题」提示：此刻屏上的错误记作已看过，同一个错误不再提示，新的照常 */
   dismissConnIssue: () => void;
+  /** Grok 卡在续期过期的官方登录上（grok_login.rs）：停下 Grok、grok logout、按原会话接回 */
+  grokLogout: () => void;
+  /** 关掉上面那条提示：这次启动不再提示 */
+  dismissGrokLogin: () => void;
 }
 
 async function resolveLaunchCwdForCustom(
@@ -610,6 +614,8 @@ export interface SessionLinkState {
   tuiNotice: string[] | null;
   /** 连接出问题（额度 / 限流 / 钥匙 / 服务 / 模型；conn-issue.ts 扫终端画面认出）+ 可换的同家连接 */
   connIssue: ConnIssueState | null;
+  /** Grok 用 API 连接启动，却卡在续期本地已过期的 xAI 官方登录上（grok_login.rs），消息发不出去 */
+  grokLoginStuck: boolean;
   /** 终端画面里这一轮正在写的回复（live-reply.ts；只认 Claude Code / CodeBuddy，别家 null） */
   liveReply: string[] | null;
   /** Claude 转圈行里这一轮已生成的 token 数（live-reply.ts claudeOutputTokens）；别家与没认出时 null */
@@ -2669,6 +2675,46 @@ const TerminalView = memo(function TerminalView({
     };
   }, [rawConnIssue, profiles, agentId, profileId, hiddenProfileKey]);
   const [connPick, setConnPick] = useState("");
+  // Grok 卡在续期官方登录上（2026-10-26，grok_login.rs）：用 API 连接启动的 Grok 也会先续期本地存着的 xAI 官方登录，
+  // 连不上 auth.x.ai 时每条消息卡半分钟以上、屏上没有任何报错。启动时探一次登录服务器，运行中每 8 秒看一眼 Grok 日志
+  const [grokLoginStuck, setGrokLoginStuck] = useState(false);
+  const grokLoginDismissedRef = useRef(false);
+  const grokLogoutPendingRef = useRef(false);
+  const grokLoginWatched =
+    running && launchAgentRef.current === "grok" && selectedProfile?.accountType !== "official";
+  useEffect(() => {
+    if (!grokLoginWatched || startedAt === null) return;
+    // 「先不管」只管这一次启动
+    grokLoginDismissedRef.current = false;
+    let alive = true;
+    const check = (probe: boolean) =>
+      invoke<{ staleLogin: boolean; blocked: boolean }>("grok_login_check", {
+        sinceMs: probe ? null : startedAt,
+        probe,
+      })
+        .then((r) => {
+          if (!alive || grokLoginDismissedRef.current) return;
+          if (r.staleLogin && r.blocked) setGrokLoginStuck(true);
+          // 登录续上了（不再过期）或被清掉：提示收回
+          else if (!r.staleLogin) setGrokLoginStuck(false);
+        })
+        .catch(() => {});
+    void check(true);
+    const timer = window.setInterval(() => void check(false), 8000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [grokLoginWatched, startedAt]);
+  function dismissGrokLogin() {
+    grokLoginDismissedRef.current = true;
+    setGrokLoginStuck(false);
+  }
+  function grokLogout() {
+    setGrokLoginStuck(false);
+    grokLogoutPendingRef.current = true;
+    if (ptyKindRef.current === "agent" && ptyIdRef.current) void stop();
+  }
   /** 写一条 TUI 命令（聊天层 / 底栏切模型、思考档），随后盯 5 秒屏幕看 CLI 有没有弹确认 */
   function runTuiCommand(cmd: string) {
     const id = ptyIdRef.current;
@@ -2957,6 +3003,7 @@ const TerminalView = memo(function TerminalView({
       tuiPanel,
       tuiNotice,
       connIssue,
+      grokLoginStuck,
       liveReply,
       liveTokens,
       promptSuggestion,
@@ -2984,6 +3031,7 @@ const TerminalView = memo(function TerminalView({
     tuiPanel,
     tuiNotice,
     connIssue,
+    grokLoginStuck,
     liveReply,
     liveTokens,
     promptSuggestion,
@@ -5519,6 +5567,26 @@ const TerminalView = memo(function TerminalView({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running, shellActive, profileId]);
+  // 退出 Grok 官方登录：等 Grok 停下（它不再占着登录文件锁）再 grok logout，然后按原会话接回。
+  // logout 没清掉（别的 Grok 标签还卡着）照样接回，把原因报出来
+  useEffect(() => {
+    if (!grokLogoutPendingRef.current || running || !shellActive) return;
+    grokLogoutPendingRef.current = false;
+    void (async () => {
+      try {
+        await invoke("grok_logout");
+        setNotice("已退出 Grok 官方登录，改用这条连接的钥匙");
+      } catch (reason) {
+        setError(String(reason));
+      }
+      const resume = lastResumeRef.current ?? undefined;
+      keepPreviewConvRef.current = Boolean(resume);
+      await launch(resume, { prompt: "" }).finally(() => {
+        keepPreviewConvRef.current = false;
+      });
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running, shellActive]);
 
   async function stop() {
     const id = ptyIdRef.current;
@@ -5883,6 +5951,8 @@ const TerminalView = memo(function TerminalView({
     relaunchWith: () => {},
     switchConnection: () => {},
     dismissConnIssue: () => {},
+    grokLogout: () => {},
+    dismissGrokLogin: () => {},
   });
   actionsRef.current = {
     stop: () => void stop(),
@@ -5944,6 +6014,8 @@ const TerminalView = memo(function TerminalView({
     relaunchWith,
     switchConnection,
     dismissConnIssue,
+    grokLogout,
+    dismissGrokLogin,
   };
   useEffect(() => {
     onActions?.(tabId, {
@@ -5979,6 +6051,8 @@ const TerminalView = memo(function TerminalView({
       relaunchWith: (patch) => actionsRef.current.relaunchWith(patch),
       switchConnection: (id) => actionsRef.current.switchConnection(id),
       dismissConnIssue: () => actionsRef.current.dismissConnIssue(),
+      grokLogout: () => actionsRef.current.grokLogout(),
+      dismissGrokLogin: () => actionsRef.current.dismissGrokLogin(),
     });
   }, [onActions, tabId]);
 
@@ -6974,6 +7048,35 @@ const TerminalView = memo(function TerminalView({
             <button
               type="button"
               onClick={dismissConnIssue}
+              aria-label="关闭提示"
+              className="h-6 shrink-0 rounded-sm px-1.5 text-l4 hover:bg-hover hover:text-l2"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+        {/* Grok 卡在续期官方登录上（grok_login.rs）：同连接出问题的提示条，按钮与聊天层确认卡同一个动作 */}
+        {grokLoginStuck && !connIssue && (
+          <div
+            role="alert"
+            className="absolute inset-x-3 top-2 z-30 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-field ccode-float-surface px-2.5 py-1.5 text-xs"
+          >
+            <TriangleAlert size={14} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-warn-text" />
+            <span className="font-medium text-l1">Grok 卡在续期官方登录上，消息发不出去</span>
+            <span className="min-w-0 flex-1 truncate text-l3" title="这台电脑存着一个已过期的 xAI 官方登录，连不上 auth.x.ai 续期">
+              这台电脑存着一个已过期的 xAI 官方登录，连不上 auth.x.ai 续期
+            </span>
+            <button
+              type="button"
+              onClick={grokLogout}
+              title="停下 Grok，运行 grok logout，再接回原来这段对话"
+              className="h-6 shrink-0 rounded-sm bg-cta px-2 text-xs text-cta-text hover:opacity-90"
+            >
+              退出官方登录
+            </button>
+            <button
+              type="button"
+              onClick={dismissGrokLogin}
               aria-label="关闭提示"
               className="h-6 shrink-0 rounded-sm px-1.5 text-l4 hover:bg-hover hover:text-l2"
             >
@@ -8148,6 +8251,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         cur.tuiPanel === s.tuiPanel &&
         cur.tuiNotice === s.tuiNotice &&
         cur.connIssue === s.connIssue &&
+        cur.grokLoginStuck === s.grokLoginStuck &&
         cur.ptyQuiet === s.ptyQuiet &&
         cur.launchPick === s.launchPick &&
         cur.skills === s.skills &&
@@ -10521,6 +10625,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         onDismissConnIssue={() =>
                           tabActionsRef.current.get(t.id)?.dismissConnIssue()
                         }
+                        grokLoginStuck={sessionByTab[t.id]?.grokLoginStuck ?? false}
+                        onGrokLogout={() => tabActionsRef.current.get(t.id)?.grokLogout()}
+                        onDismissGrokLogin={() => tabActionsRef.current.get(t.id)?.dismissGrokLogin()}
                         onOpenProfiles={() => setPage("profiles")}
                       />
                       </div>

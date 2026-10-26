@@ -15,6 +15,28 @@ const NO_ALT_TAIL: Record<ConnIssueState["kind"], string> = {
 };
 
 /**
+ * Grok 官方登录过期卡住发消息的确认卡（2026-10-26，grok_login.rs）：用 API 连接启动的 Grok 也会先去续期本地存着的
+ * xAI 官方登录，这台电脑连不上登录服务器就每条消息卡半分钟以上。退出官方登录后改用连接里的钥匙，接回原对话。
+ */
+export function grokLoginDecision(actions: { onLogout: () => void; onDismiss: () => void }): ChatDecision {
+  return {
+    key: "grok-login-stuck",
+    title: "Grok 卡在续期官方登录上，消息发不出去",
+    detail: "这台电脑存着一个已过期的 xAI 官方登录，Grok 每发一条消息前都要先去 auth.x.ai 续期，现在连不上",
+    hint: "退出官方登录后 Grok 改用这条连接的钥匙，会停下再接回这段对话，聊过的不丢。以后要用官方账号，开着代理重新登录就行",
+    options: [
+      {
+        label: "退出官方登录，接着这段对话",
+        primary: true,
+        title: "停下 Grok，运行 grok logout，再接回原来这段对话",
+        onClick: actions.onLogout,
+      },
+      { label: "先不管", title: "这次启动不再提示（比如你要开代理让它续上）", onClick: actions.onDismiss },
+    ],
+  };
+}
+
+/**
  * 连接出问题的确认卡（2026-10-18，与「Mesa内嵌终端优化」会话的终端顶栏同一份 connIssue）：标题是给人看的一句话，
  * 说明是网关原文；按钮把同家其他连接逐个摆出来，点了 = 停下 AI、换连接、按原会话接回（聊过的不丢）。
  * 没有可换的连接时只给「去添加连接」；「先不换」= 这条错误记作看过，同一个错误不再提示。

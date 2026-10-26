@@ -56,7 +56,7 @@ import { chatStatus, settleStatus, statusCaretMotion, type ShownStatus } from ".
 import { confirmChoices } from "../chat-reply";
 import ChatDecisionCard, { type ChatDecision } from "./ChatDecisionCard";
 import { useCliNewer } from "../cli-verified";
-import { connIssueDecision } from "../chat-decision";
+import { connIssueDecision, grokLoginDecision } from "../chat-decision";
 import { cwdChipLabel } from "../terminal-welcome";
 import { escInterruptSafe } from "../agent-caps";
 import { midTurnSpec, queueSendHint, queuedNote, runningPlaceholder, stopTitle } from "../mid-turn-send";
@@ -131,6 +131,9 @@ export default function ChatSurface({
   connIssue = null,
   onSwitchConnection,
   onDismissConnIssue,
+  grokLoginStuck = false,
+  onGrokLogout,
+  onDismissGrokLogin,
   onOpenProfiles,
   onForkFrom,
   channel = null,
@@ -243,6 +246,10 @@ export default function ChatSurface({
   /** 换到这条连接接着这段对话（标签动作 switchConnection：停下、换连接、按原会话接回） */
   onSwitchConnection?: (profileId: string) => void;
   onDismissConnIssue?: () => void;
+  /** Grok 卡在续期过期的官方登录上（grok_login.rs）：卡片给「退出官方登录，接着这段对话」 */
+  grokLoginStuck?: boolean;
+  onGrokLogout?: () => void;
+  onDismissGrokLogin?: () => void;
   /** 没有可换的连接时去「连接」页添加 */
   onOpenProfiles?: () => void;
   /** 助手消息「从这里分叉」：带着到这条为止的对话开一个分叉标签 */
@@ -557,6 +564,7 @@ export default function ChatSurface({
       attention === "confirm" ||
       trustPrompt ||
       connIssue ||
+      grokLoginStuck ||
       menuPrompt ||
       tuiPanel
     )
@@ -727,6 +735,11 @@ export default function ChatSurface({
               onSwitch: (id) => onSwitchConnection?.(id),
               onDismiss: () => onDismissConnIssue?.(),
               onOpenProfiles,
+            })
+        : grokLoginStuck
+          ? grokLoginDecision({
+              onLogout: () => onGrokLogout?.(),
+              onDismiss: () => onDismissGrokLogin?.(),
             })
         : menuPrompt?.ask
           ? {
