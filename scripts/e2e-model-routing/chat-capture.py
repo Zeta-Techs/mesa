@@ -40,6 +40,13 @@ a = list(plan["args"] if tier == "base" else plan["permission"][tier])
 if "--settings" in a and not os.path.exists(a[a.index("--settings") + 1]):
     sys.exit(f"{agent}: 启动计划里的 --settings 文件已不在，请重新生成计划（cargo test e2e_dump_launch_plans）后马上跑")
 home = tempfile.mkdtemp(prefix=f"cc-{agent}-"); os.chmod(home, 0o700)
+# Windows runner 的 %TEMP% 是 8.3 短名（C:\Users\RUNNER~1\...）：Claude 2.1.310 见到 ~1 会改弹「可疑 Windows 路径」审批，
+# 第二项折行、菜单与开发机抓到的不一样（2026-10-26 CI）。展开成长路径，各机器抓到的画面才可比
+if os.name == "nt":
+    import ctypes
+    _buf = ctypes.create_unicode_buffer(32768)
+    if 0 < ctypes.windll.kernel32.GetLongPathNameW(home, _buf, 32768) < 32768:
+        home = _buf.value
 # CLEAN_HOME=1（CLI 金丝雀）：不拷本机配置，只预置 Claude「已走完首次引导」——各台机器、CI 抓到的画面才可比
 CLEAN = bool(os.environ.get("CLEAN_HOME"))
 for rel in [] if CLEAN else COPY:
