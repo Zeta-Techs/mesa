@@ -6,9 +6,11 @@ import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 
 const python = process.platform === "win32" ? "python" : "python3";
-// 脚本里有联网补全（ISO 4 缩写表 LTWA、Crossref）：测试一律连不上外网，免得外部站点变慢就拖到超时（2026-10-26 CI：
-// issn.org 对 runner 一直不回，四个用例都卡满 20 秒被杀）。出站指向不监听的本机代理，连接当场被拒、脚本走离线分支
+// 脚本里有联网补全（ISO 4 缩写表 LTWA、JabRef 缩写表、Crossref）：测试一律不联网（2026-10-26 CI 起四个用例卡满 20 秒被杀）
 for (const k of ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"]) process.env[k] = "http://127.0.0.1:9";
+// 只断网还不够：联网失败会按次退避重试（每个地址几秒），本机又有 30 天缓存——CI 上卡满超时、本机却全过。
+// MESA_LIT_OFFLINE 让脚本不联网也不读缓存、当场按连不上处理，两边结果一致
+process.env.MESA_LIT_OFFLINE = "1";
 const bridge = resolve("src-tauri/resources/skills/endnote-bridge/scripts/bridge.py");
 const citeDocx = resolve("src-tauri/resources/skills/endnote-bridge/scripts/cite_docx.py");
 const run = (script: string, args: string[]) => spawnSync(python, [script, ...args], { encoding: "utf8", timeout: 20_000 });

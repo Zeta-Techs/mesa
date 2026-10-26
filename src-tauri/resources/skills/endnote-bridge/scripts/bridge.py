@@ -914,9 +914,17 @@ def _cache_put(url, body):
         pass
 
 
+def _offline(url):
+    """MESA_LIT_OFFLINE=1：不联网也不读缓存，当场按连不上处理（测试用，免得结果随网络和本机缓存变）。"""
+    if os.environ.get('MESA_LIT_OFFLINE'):
+        import urllib.error
+        raise urllib.error.URLError('offline (MESA_LIT_OFFLINE): ' + url)
+
+
 def http_json(url, timeout=40, attempts=4):
     import urllib.error
     import urllib.request
+    _offline(url)
     cached = _cache_get(url)
     if cached is not None:
         try:
@@ -1038,6 +1046,7 @@ _nlm_cache = {}
 def http_text(url, timeout=40, attempts=4):
     import urllib.error
     import urllib.request
+    _offline(url)
     cached = _cache_get(url)
     if cached is not None:
         return cached.decode('utf-8', 'replace')

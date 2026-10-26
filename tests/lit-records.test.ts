@@ -19,6 +19,7 @@ const python = process.platform === "win32" ? "python" : "python3";
 // 脚本里有联网补全（Crossref、ISO 4 缩写表 LTWA）：测试一律连不上外网，免得外部站点变慢就拖到超时（2026-10-26 CI：
 // issn.org 对 runner 一直不回，用例卡满超时被杀）。出站指向不监听的本机代理，连接当场被拒、脚本走离线分支
 for (const k of ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"]) process.env[k] = "http://127.0.0.1:9";
+process.env.MESA_LIT_OFFLINE = "1"; // bridge.py 也不读本机 30 天缓存（见 research-tool-scripts.test.ts）
 const script = resolve("src-tauri/resources/skills/lit-search/scripts/lit_records.py");
 const bridge = resolve("src-tauri/resources/skills/endnote-bridge/scripts/bridge.py");
 const run = (args: string[], cwd: string) =>
