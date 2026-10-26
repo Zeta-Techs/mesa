@@ -457,6 +457,10 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-26 · Codex 的 app-server 拿齐 PTY 上的 Agent 变量
+
+用户实测 Codex 里出图技能用不了，`$MESA_IMAGE_TOOL` 为空。Codex 在 Mesa 里经私有 app-server 跑（chat_channel.rs），命令由 app-server 执行、不经 PTY，而出图工具路径只在 `spawn_tracked` 注入 PTY。**规则**：PTY 上另加给 Agent 用的变量收在 `pty.rs pty_agent_env`（出图工具路径、Windows 的 `PYTHONIOENCODING`），同时交给 app-server；以后往 PTY 加这类变量要一并加。10-25 的九家核对没走 app-server，漏了这家。
+
 ### 2026-10-26 · 长对话只画视野附近；遮罩收紧到 400ms
 
 复查记下的第四处，也是「为什么别家点了就出来」的主因：整段一次取齐后几千条一次全画（最大那段开发构建 270ms），遮罩只好等满 600ms。照 VS Code 聊天面板的做法（虚拟列表：没量过的估高、量过的记实高）做 `src/virtual-window.ts` `useVirtualWindow`，ConversationView 用，聊天层与对话页回放都走它：

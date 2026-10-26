@@ -643,6 +643,18 @@ fn pty_size_from(cols: Option<u16>, rows: Option<u16>) -> PtySize {
     }
 }
 
+/// PTY 里的 Agent 另外拿到的变量（出图工具路径、Windows 的 Python 输出编码），给不经 PTY 跑命令的进程（Codex app-server）补齐
+fn pty_agent_env() -> Vec<(String, String)> {
+    let mut env = Vec::new();
+    if let Some(tool) = crate::image_gen::helper_exe() {
+        env.push((crate::image_gen::TOOL_ENV.to_string(), tool.to_string_lossy().into_owned()));
+    }
+    if let Some((k, v)) = crate::process::agent_python_io_env() {
+        env.push((k.to_string(), v.to_string()));
+    }
+    env
+}
+
 /// 在 PTY 中拉起进程并登记到管理器，输出/退出通过 `pty-output-<id>` / `pty-exit-<id>` 事件推送。
 fn spawn_tracked(
     app: &AppHandle,
@@ -1121,6 +1133,9 @@ fn pty_spawn_sync(
     if let Some(extra) = &extra_env {
         channel_env_full.extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));
     }
+    // Codex 的命令由 app-server 跑、不经 PTY：PTY 上另加的变量（出图工具路径、Windows 的 Python 输出编码）也要给它。
+    // 原先只进 PTY，Codex 里 `$MESA_IMAGE_TOOL` 恒为空、出图技能用不了（2026-10-26 用户实测）
+    channel_env_full.extend(pty_agent_env());
     let (channel_env, channel) = crate::chat_channel::prepare(
         &agent_id,
         link_claim_id.as_deref(),

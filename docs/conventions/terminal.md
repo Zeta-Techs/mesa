@@ -591,7 +591,8 @@
   Codex）不再读屏；⑤Codex 恢复时远程 TUI 拒收权限参数，`split_codex_args` 改成 app-server 的 `-c` 配置，新开会话仍由 TUI 带；
   新线程 rollout 未落盘前 `thread/resume` 会失败，线程转 active 时再订；⑥旁路目录 `<config>/ccode/chat-channels/<pid>-<tab>-<随机>/`
   0700，标签退出即删，启动只清进程已不在的（打包版与 Mesa Dev 共用配置目录）；Codex app-server 自成进程组，随 PTY 退出 /
-  应用退出一并杀。改任一家旁路前先跑 `scripts/e2e-model-routing/README.md`「聊天层结构化旁路」两层核对。
+  应用退出一并杀；**app-server 跑命令不经 PTY**，PTY 上另加给 Agent 的变量（`pty.rs pty_agent_env`：出图工具路径、Windows 的
+  `PYTHONIOENCODING`）同时交给它（2026-10-26：原先只进 PTY，Codex 里 `MESA_IMAGE_TOOL` 恒为空）。改任一家旁路前先跑 `scripts/e2e-model-routing/README.md`「聊天层结构化旁路」两层核对。
   **Windows 口径（2026-10-20 实测后定，macOS / Linux 行为不变）**：⑦hook 命令是起一个 PowerShell 跑共用脚本，每次 0.9–1.2 秒
   （Claude 记的 Stop hook 1241ms）——同步挂着时每个工具调用前后各卡一秒，所以**只在 Windows、只给 Claude Code**带
   `"async": true`（`hooks::launch_hooks_async`），另挂 `PermissionRequest`（payload 自带工具名与参数）；后台 hook 先后不可信，

@@ -423,6 +423,8 @@ Ccode 清单模型只收公共子集：stdio（command/args/env/cwd）+ remote�
   回复里写出的图片路径，聊天层按回复文字出图片卡（`mentionedImageFiles`，与 agent 无关），前提是这家的回复能从会话文件读出来——
   九家都能，金丝雀每天核「解析器读到回复」。
   Codex 默认沙箱不让命令联网，真出图时它会申请出沙箱（技能 image-gen 已写）；其余八家没有默认沙箱。
+  **Codex 的命令由私有 app-server 跑、不经 PTY**（chat_channel.rs）：上面的核对没走 app-server，漏了它——2026-10-26 用户实测 Codex 里
+  `MESA_IMAGE_TOOL` 为空。PTY 上另加的变量（出图工具路径、Windows 的 `PYTHONIOENCODING`）由 `pty.rs pty_agent_env` 同时交给 app-server，往 PTY 加 Agent 要用的变量时一并加进去。
 
 ## 12. 精确注意力 hooks 桥接调研（2026-08-20；实现 = hooks.rs 的 BRIDGE_SPECS，写字段/事件名前以本节为准）
 

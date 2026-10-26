@@ -1589,6 +1589,6 @@ src-tauri/src/
                              #   OpenAI 出图接口）+ 改图 --image（Seedream 出图接口带 image / 其余 /images/edits 手拼 multipart，
                              #   不认再退带 image；Gemini inlineData）+ 设置页命令（image_gen_candidates/status/test）+ helper 入口 helper_image_cli；
                              #   红线：密钥只在本进程用、下载图片地址不带鉴权头、Target 不派生 Debug；helper_exe 试跑
-                             #   `image --probe` 通过才把路径作 MESA_IMAGE_TOOL 注入 PTY（pty.rs spawn_tracked）
+                             #   `image --probe` 通过才把路径作 MESA_IMAGE_TOOL 注入 PTY（pty.rs spawn_tracked；Codex app-server 经 pty_agent_env 同样拿到）
   lib.rs                     # 模块与 Tauri command 注册
 ```
