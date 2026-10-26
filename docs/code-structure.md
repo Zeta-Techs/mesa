@@ -178,7 +178,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   starting 期间丢弃旧会话迟到的「已停止」事件；openForComposer：有已配对手机就直接开始接收不弹窗；
                              #   没有目标输入框时收到东西自动弹窗（onArrive 交 App 发系统通知）
   components/ProjectFilePicker.tsx # 聊天输入框「＋ → 引用项目文件」弹层：list_recent_files 最近改过的在前、search_files 搜整个项目（只留文件）、
-                             #   列表 / 网格、图片滚到看得见才读缩略图、点行多选、双击直接添加；添加 = ChatComposer addPathAttachments（同「文件或图片」）
+                             #   默认网格、滚到看得见才画缩略图（file-thumb.ts）、点行多选、双击直接添加；添加 = ChatComposer addPathAttachments（同「文件或图片」）
   components/PhoneDropDialog.tsx # 从手机添加弹层（App 全局一处；入口：聊天输入框「+」/ ⌘K / 收件箱「手机」）：二维码（后端 SVG，
                              #   data: URL 进 img）+ 地址复制 + 换地址（电脑名 / 各网卡 IP）+ 「扫了打不开？」；有已配对手机时顶上是状态卡、
                              #   二维码收进「配对新手机」、已配对的手机折叠（移除）；收到的列表带 96px 缩略图（读一次画小图只留小图，
@@ -586,6 +586,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 认屏（isPlanMenu：旁路结束计划工具、屏上标题或问句）、选项说成中文并标开工后哪一档（planChoice：go / revise / stay / leave / other，
                              # 认不出照原文；openFirst = Kimi Revise 先回车）、方案原文三级来源（旁路 > latestPlanText 会话里写进 plans/ 的调用 > screenPlan 屏上）；
                              # 卡片是 ChatDecisionCard PlanCard，按键走 TerminalPage answerMenu(index, MenuAnswer)，开工后 onPlanLeft 改标签权限
+  file-thumb.ts              # 任意项目文件的缩略图（「引用项目文件」网格）：图片读原图、PDF / Word 走 doc-thumb 整页、表格 / CSV / 文字排 4:3 小纸；
+                             #   键带修改时间的缓存、同时最多画三张；画不出返回 null 由调用方画类型色块（tests/file-thumb.test.ts）
   project-file-pick.ts       # 「引用项目文件」弹层纯逻辑：行内日期（fileDateLabel）、所在文件夹、搜索结果去文件夹、勾选顺序（tests/project-file-pick.test.ts）
   chat-project-picker.ts     # 输入框项目弹层纯逻辑：最近 6 个 / 搜索 12 个、类型与项目默认、随手聊 / 主目录固定行（pickerRows）；UI 在 components/ChatProjectPicker.tsx，
                              # 选了项目带项目默认由 TerminalPage pickDir 做（chat 槽 > 项目默认，project-agents.ts projectChatLaunch）（tests/chat-project-picker.test.ts）

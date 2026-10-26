@@ -5,14 +5,16 @@ import { Modal } from "./Modal";
 import { primaryActionClass, quietActionClass } from "./PageFrame";
 import type { SearchResultDto } from "./FileTree";
 import { fileTypeIcon, isPreviewableImagePath } from "../file-icons";
+import { fileThumb, hasFileThumb } from "../file-thumb";
 import { fileDateLabel, filesOnly, folderOf, toggleSelected, type PickFile } from "../project-file-pick";
 
-/** 列表 / 网格记在这次运行里，下次打开还是上次那样 */
-let lastView: "list" | "grid" = "list";
+/** 列表 / 网格记在这次运行里，下次打开还是上次那样；默认网格看缩略图（2026-10-26 用户） */
+let lastView: "list" | "grid" = "grid";
 
 /**
  * 「＋ → 引用项目文件」弹层（2026-10-26 用户：点了只插个 @、选不了文件，要做成点开就能挑的样子）：
- * 顶上搜索，下面是这个项目最近改过的文件（list_recent_files），图片带缩略图、其余画类型色块；
+ * 顶上搜索，下面是这个项目最近改过的文件（list_recent_files），默认网格看缩略图（图片、PDF、Word、表格、文字都画，
+ * file-thumb.ts；画不出的 PPT 等留类型色块），可换列表；
  * 点行勾选（可多选），「添加」后成输入框里的附件卡，随消息按路径发出（同「文件或图片」）
  */
 export default function ProjectFilePicker({
@@ -218,7 +220,7 @@ export default function ProjectFilePicker({
             />
           ))
         ) : (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] gap-2 p-0.5">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(10rem,1fr))] gap-2 p-0.5">
             {rows!.map((f, i) => (
               <FileTile
                 key={f.path}
@@ -266,20 +268,19 @@ function CheckMark({ checked, active, onImage = false }: { checked: boolean; act
   );
 }
 
-/** 图片缩略图：滚到看得见才读（read_image_bytes 走工作目录白名单），读不出就画类型色块 */
-function useImageThumb(path: string, cwd: string) {
+/** 缩略图：滚到看得见才画（file-thumb.ts：图片读原图，PDF / Word / 表格 / 文字排成一页纸），画不出就留类型色块 */
+function useFileThumb(file: PickFile, cwd: string) {
   const ref = useRef<HTMLSpanElement>(null);
   const [url, setUrl] = useState<string | null>(null);
-  const isImage = isPreviewableImagePath(path);
+  const can = hasFileThumb(file.path);
   useEffect(() => {
-    if (!isImage) return;
+    setUrl(null);
+    if (!can) return;
     let stale = false;
     const load = () =>
-      void invoke<{ mime: string; data: string }>("read_image_bytes", { path, cwdHint: cwd })
-        .then((img) => {
-          if (!stale) setUrl(`data:${img.mime};base64,${img.data}`);
-        })
-        .catch(() => undefined);
+      void fileThumb(file.path, cwd, file.modified).then((u) => {
+        if (!stale) setUrl(u);
+      });
     const el = ref.current;
     if (!el || typeof IntersectionObserver === "undefined") {
       load();
@@ -298,8 +299,10 @@ function useImageThumb(path: string, cwd: string) {
       stale = true;
       io.disconnect();
     };
-  }, [path, cwd, isImage]);
-  return { ref, url };
+  }, [file.path, file.modified, cwd, can]);
+  // 文档是一页纸：从纸顶往下看；图片居中裁
+  const fit = isPreviewableImagePath(file.path) ? "object-cover" : "object-cover object-top bg-white";
+  return { ref, url, fit };
 }
 
 /** 没有缩略图时的类型色块（Word 蓝 W、PDF 红…，同文件列表的识别色） */
@@ -316,7 +319,7 @@ function KindBlock({ path, big = false }: { path: string; big?: boolean }) {
 }
 
 function FileRow({ file, idx, cwd, active, checked, onToggle, onAdd, onHover }: ItemProps) {
-  const { ref, url } = useImageThumb(file.path, cwd);
+  const { ref, url, fit } = useFileThumb(file, cwd);
   const folder = folderOf(file.rel);
   const date = fileDateLabel(file.modified);
   return (
@@ -337,7 +340,7 @@ function FileRow({ file, idx, cwd, active, checked, onToggle, onAdd, onHover }: 
         ref={ref}
         className="size-9 shrink-0 overflow-hidden rounded-md border border-hairline bg-canvas"
       >
-        {url ? <img src={url} alt="" className="h-full w-full object-cover" /> : <KindBlock path={file.path} />}
+        {url ? <img src={url} alt="" className={`h-full w-full ${fit}`} /> : <KindBlock path={file.path} />}
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate text-sm text-l1">{file.name}</span>
@@ -352,7 +355,7 @@ function FileRow({ file, idx, cwd, active, checked, onToggle, onAdd, onHover }: 
 }
 
 function FileTile({ file, idx, cwd, active, checked, onToggle, onAdd, onHover }: ItemProps) {
-  const { ref, url } = useImageThumb(file.path, cwd);
+  const { ref, url, fit } = useFileThumb(file, cwd);
   return (
     <button
       type="button"
@@ -368,7 +371,7 @@ function FileTile({ file, idx, cwd, active, checked, onToggle, onAdd, onHover }:
       }`}
     >
       <span ref={ref} className="block aspect-[4/3] w-full overflow-hidden rounded-md border border-hairline bg-canvas">
-        {url ? <img src={url} alt="" className="h-full w-full object-cover" /> : <KindBlock path={file.path} big />}
+        {url ? <img src={url} alt="" className={`h-full w-full ${fit}`} /> : <KindBlock path={file.path} big />}
       </span>
       <span className="truncate px-0.5 text-xs text-l1">{file.name}</span>
       <span className="absolute right-2.5 top-2.5">

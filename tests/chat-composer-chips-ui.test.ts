@@ -66,6 +66,8 @@ async function mount() {
     localStorage: dom.window.localStorage,
     HTMLElement: dom.window.HTMLElement,
     HTMLButtonElement: dom.window.HTMLButtonElement,
+    // 文档 / 文字缩略图把一页纸序列化进 SVG（doc-thumb htmlPageThumb）
+    XMLSerializer: dom.window.XMLSerializer,
     getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
     requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
     cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
@@ -81,6 +83,7 @@ async function mount() {
     pickFiles: ["/proj/docs/报告.pdf"] as string[] | null,
     searches: [] as unknown[],
     imageReads: [] as string[],
+    textReads: [] as string[],
     pdfThumbs: [] as string[],
     pickDirs: [] as unknown[],
   };
@@ -101,6 +104,10 @@ async function mount() {
             { path: "/proj/src/main.rs", rel: "src/main.rs", name: "main.rs", isDir: false },
             { path: "/proj/src/my app.ts", rel: "src/my app.ts", name: "my app.ts", isDir: false },
           ];
+        }
+        if (command === "read_file_preview") {
+          host.textReads.push((args as { path: string }).path);
+          return { text: "# 笔记\n第一行", truncated: false, revision: null, readOnlyReason: null, encoding: null };
         }
         if (command === "list_recent_files") {
           return [
@@ -605,7 +612,11 @@ test("输入框「+ → 引用项目文件」：弹层列最近改过的文件�
     const options = () => Array.from(dialog()!.querySelectorAll<HTMLButtonElement>('[role="option"]'));
     assert.deepEqual(options().map((o) => o.title), ["figures/cover.png", "data.csv", "notes/a.md"], "最近改过的在前");
     assert.ok(ui.host.imageReads.includes("/proj/figures/cover.png"), "图片带缩略图");
-    assert.match(options()[0].textContent ?? "", /figures/, "第二行写所在文件夹");
+    assert.ok(ui.host.textReads.includes("/proj/notes/a.md"), "文字文件也排成一页纸当缩略图");
+    await ui.act(async () => new Promise((r) => setTimeout(r, 20)));
+    assert.equal(options().filter((o) => o.querySelector("img")).length, 3, "默认网格，三个都有缩略图（CSV 排成小表）");
+    await ui.act(async () => dialog()!.querySelector<HTMLButtonElement>('button[aria-label="列表显示"]')!.click());
+    assert.match(options()[0].textContent ?? "", /figures/, "列表第二行写所在文件夹");
     assert.equal(ui.button("添加").disabled, true, "没勾不能添加");
 
     await ui.act(async () => options()[1].click());

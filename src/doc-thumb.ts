@@ -43,22 +43,26 @@ const PAGE_H = 849;
 /** 只排第一页用得上的前几十个块，别把整本书塞进图片地址 */
 const MAX_BLOCKS = 40;
 
-/** 一段（已清洗的）HTML 排进一张白纸，出 SVG 图片地址 */
-export function htmlPageThumb(html: string): string {
-  const page = document.createElementNS(XHTML, "div") as HTMLDivElement;
-  page.innerHTML = html;
-  while (page.children.length > MAX_BLOCKS) page.lastElementChild!.remove();
-  page.setAttribute(
+/** 一段（已清洗的）HTML 排进一张白纸，出 SVG 图片地址。page 不给就是 A4 比例的整页；
+ *  「引用项目文件」网格里的文字 / CSV 用小一号的横版纸（缩到格子里字还认得出） */
+export function htmlPageThumb(
+  html: string,
+  page: { width: number; height: number; padding: string } = { width: PAGE_W, height: PAGE_H, padding: "56px 60px" },
+): string {
+  const sheet = document.createElementNS(XHTML, "div") as HTMLDivElement;
+  sheet.innerHTML = html;
+  while (sheet.children.length > MAX_BLOCKS) sheet.lastElementChild!.remove();
+  sheet.setAttribute(
     "style",
-    `box-sizing:border-box;width:${PAGE_W}px;height:${PAGE_H}px;overflow:hidden;padding:56px 60px;` +
+    `box-sizing:border-box;width:${page.width}px;height:${page.height}px;overflow:hidden;padding:${page.padding};` +
       "background:#fff;color:#1f1f1f;font:15px/1.55 -apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',serif;word-break:break-word",
   );
-  page.querySelectorAll("img").forEach((img) => img.setAttribute("style", "max-width:100%;height:auto"));
-  page.querySelectorAll("table").forEach((t) => t.setAttribute("style", "border-collapse:collapse;width:100%"));
-  page.querySelectorAll("td,th").forEach((c) => c.setAttribute("style", "border:1px solid #ccc;padding:2px 6px"));
-  const body = new XMLSerializer().serializeToString(page);
+  sheet.querySelectorAll("img").forEach((img) => img.setAttribute("style", "max-width:100%;height:auto"));
+  sheet.querySelectorAll("table").forEach((t) => t.setAttribute("style", "border-collapse:collapse;width:100%"));
+  sheet.querySelectorAll("td,th").forEach((c) => c.setAttribute("style", "border:1px solid #ccc;padding:2px 6px"));
+  const body = new XMLSerializer().serializeToString(sheet);
   const svg =
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${PAGE_W}" height="${PAGE_H}">` +
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${page.width}" height="${page.height}">` +
     `<foreignObject width="100%" height="100%">${body}</foreignObject></svg>`;
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
