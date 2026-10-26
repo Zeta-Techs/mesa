@@ -646,6 +646,54 @@ export function continueWorkbenchTarget(hero: WorkbenchHero): WorkbenchContinue 
   return { kind: "enter-cwd", path: hero.path };
 }
 
+/** 流程进度：第一个还没合并的步骤是第几步；全做完 done=true、指末步；没有步骤返回 null */
+export function openStepProgress(
+  steps: readonly {
+    name: string;
+    workspaceName: string;
+    seedComplete?: boolean;
+  }[],
+  workspaces: readonly Pick<
+    WorkbenchWorkspaceRef,
+    "name" | "status" | "mergedAt"
+  >[],
+): { name: string; index: number; total: number; done: boolean } | null {
+  const name = firstOpenStepName(steps, workspaces);
+  if (name === null) return null;
+  const total = steps.length;
+  const open = steps.findIndex((step) => {
+    if (step.seedComplete) return false;
+    const ws = workspaces.find((w) => w.name === step.workspaceName && w.status !== "archived");
+    return !(ws && ws.status === "active" && ws.mergedAt);
+  });
+  if (open < 0) return { name, index: total, total, done: true };
+  return { name, index: open + 1, total, done: false };
+}
+
+/**
+ * 工作台副行的步骤：写明是「进行到哪一步」。只写步骤名时，和下面「上次停在」那句
+ * （常是在商量后面某一步的任务书）挨着读像矛盾（2026-10-26 用户截图）。
+ */
+export function stepProgressLabel(
+  progress: { name: string; index: number; total: number; done: boolean } | null,
+): string | null {
+  if (!progress) return null;
+  if (progress.done) return `${progress.total} 步都已完成`;
+  if (progress.total <= 1) return `进行到：${progress.name}`;
+  return `进行到：${progress.name}（第 ${progress.index} / ${progress.total} 步）`;
+}
+
+/** 「上次停在」那段对话归在别的步骤时，标出是哪一步；同一步或没有归属不标 */
+export function lastSaidStepTag(
+  sessionStep: string | null | undefined,
+  currentStep: string | null | undefined,
+): string | null {
+  const step = sessionStep?.trim();
+  if (!step) return null;
+  if (currentStep && step === currentStep.trim()) return null;
+  return step;
+}
+
 /** 流水线里第一个尚未合并的步骤名；全做完回末步；没有步骤返回 null */
 export function firstOpenStepName(
   steps: readonly {

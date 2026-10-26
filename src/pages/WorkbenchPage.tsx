@@ -43,15 +43,17 @@ import { pickRecoverableRun, isWorkbenchActiveRun } from "../run-model";
 import { visibleDeclaredTasks } from "../project-tasks";
 import {
   continueWorkbenchTarget,
-  firstOpenStepName,
   goalCaptureTargets,
   heroStatusLine,
   inboxItemProjectRoot,
+  lastSaidStepTag,
   lastUserInstruction,
   latestProjectSession,
   namedSessionTitle,
+  openStepProgress,
   pickWorkbenchHero,
   pickWorkbenchNow,
+  stepProgressLabel,
   workbenchLoadFailureMessage,
   workbenchNowSectionTitle,
   workbenchNowSubtitle,
@@ -83,6 +85,8 @@ import { toast } from "../toast";
 import RunCaret from "../components/RunCaret";
 import { caretOfAttention, type RunCaretState } from "../run-caret";
 import { workbenchScheduleRows } from "../schedule-tasks";
+import { sidebarChatTitle } from "../sidebar-chats";
+import { isScratchCwd } from "../quick-chat";
 
 const iconClass = "shrink-0 text-l4";
 /** 工作方式标签：描边不铺底（铺 bg-strip 在 well 上看不出边界，像一段错位的字） */
@@ -365,7 +369,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
       if (mode === "research") {
         // 流程只读本项目自己的；读取失败就是无步骤，不跨项目回落
         const st = researchCfg[p.path]?.steps ?? [];
-        subtitle = firstOpenStepName(st, mineWs);
+        subtitle = stepProgressLabel(openStepProgress(st, mineWs));
         needsYou = mineWs.some((w) => w.status === "active" && !w.mergedAt);
       } else if (mode === "coding") {
         const ov = codingByPath[p.path];
@@ -562,7 +566,17 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
       ...(hero ? [hero.path] : []),
       ...nowItems.slice(1).map((item) => item.path),
     ];
-    const out: { path: string; key: string; agent: string; sessionId: string; filePath: string }[] = [];
+    const out: {
+      path: string;
+      key: string;
+      agent: string;
+      sessionId: string;
+      filePath: string;
+      /** 那段对话归在哪一步（步骤工作区 / 步骤认领）；「上次停在」后面标出来 */
+      stepName: string | null;
+      /** 这个项目最后一次对话活动，紧凑行行尾的时间 */
+      updatedAt: string | null;
+    }[] = [];
     for (const path of paths) {
       if (out.some((row) => samePath(row.path, path, IS_WINDOWS))) continue;
       const session = latestProjectSession(sessions, path, IS_WINDOWS);
@@ -573,10 +587,15 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
         agent: session.agent,
         sessionId: session.sessionId,
         filePath: session.filePath,
+        stepName: session.stepName ?? null,
+        updatedAt: session.updatedAt,
       });
     }
     return out;
   }, [hero, nowItems, sessions]);
+  function lastTargetFor(path: string) {
+    return lastSaidTargets.find((t) => samePath(t.path, path, IS_WINDOWS)) ?? null;
+  }
   const lastSaidSig = lastSaidTargets.map((t) => `${t.path}=${t.key}`).join("\n");
   useEffect(() => {
     if (!visible) return;
@@ -747,28 +766,35 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
     await openContinueTarget(continueWorkbenchTarget(hero));
   }
 
-  const stepName = useMemo(() => {
-    if (nowItems[0]?.subtitle) return nowItems[0].subtitle;
+  /** 主卡项目的流程进度（科研项目才有）：副行写「进行到哪一步」，「上次停在」据它判断要不要标步骤 */
+  const heroProgress = useMemo(() => {
     if (!hero?.registered) return null;
-    const mine = workspaces.filter((w) =>
-      samePath(w.repoPath, hero.path, IS_WINDOWS),
+    const mine = workspaces.filter(
+      (w) => w.status !== "archived" && samePath(w.repoPath, hero.path, IS_WINDOWS),
     );
     const cfg = Object.entries(researchCfg).find(([path]) =>
       samePath(path, hero.path, IS_WINDOWS),
     )?.[1];
-    return firstOpenStepName(cfg?.steps ?? [], mine);
-  }, [hero, researchCfg, workspaces, nowItems]);
+    return openStepProgress(cfg?.steps ?? [], mine);
+  }, [hero, researchCfg, workspaces]);
+  const stepName = useMemo(() => {
+    if (nowItems[0]?.subtitle) return nowItems[0].subtitle;
+    return stepProgressLabel(heroProgress);
+  }, [heroProgress, nowItems]);
 
   const recentSessions = useMemo(() => {
     return workbenchRecentSessions(sessions).map((session) => ({
       meta: session,
       agent: session.agent,
       sessionId: session.sessionId,
-      title: namedSessionTitle(session) ?? "",
+      // 与侧栏同一写法：自动起名的「MMDD|类型|」前缀省掉，完整标题放悬停
+      fullTitle: namedSessionTitle(session) ?? "",
+      title: sidebarChatTitle(namedSessionTitle(session) ?? ""),
       updatedAt: session.updatedAt,
-      // 已添加项目写注册名；随手聊 / 外部目录不写（行尾不放路径）
+      // 已添加项目写注册名；随手聊写「随手聊」；外部目录不写（行尾不放路径）
       projectName: session.projectPath
-        ? (projects.find((p) => samePath(p.path, session.projectPath, IS_WINDOWS))?.name ?? null)
+        ? (projects.find((p) => samePath(p.path, session.projectPath, IS_WINDOWS))?.name ??
+          (isScratchCwd(session.projectPath, IS_WINDOWS) ? "随手聊" : null))
         : null,
     }));
   }, [sessions, projects]);
@@ -824,6 +850,10 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
     return item.runningCount > 0 ? "idle" : null;
   }
   const heroSaid = hero ? lastSaidFor(hero.path) : null;
+  // 「上次停在」那段对话归在别的步骤（常见：在商量后面一步的任务书）时标出步骤，和副行的「进行到」对得上
+  const heroSaidStep = hero
+    ? lastSaidStepTag(lastTargetFor(hero.path)?.stepName, heroProgress?.name)
+    : null;
 
   return (
     <PageFrame width="fluid" className="pb-12 pt-6">
@@ -882,13 +912,27 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                     <p className="mt-1 text-sm text-l3">{stepName}</p>
                   )}
                 </div>
-                <button
-                  type="button"
-                  className={primaryActionClass}
-                  onClick={() => void continueWork()}
-                >
-                  继续工作
-                </button>
+                {/* 在客户端打开与继续工作并排：原先单独占主卡底下一整行（还画一条分隔线），空着大半截（2026-10-26 用户） */}
+                <div className="flex shrink-0 items-center gap-2">
+                  {showClientJump && (
+                    <button
+                      type="button"
+                      className={`${rowActionClass} gap-1`}
+                      title={clientJumpTitle}
+                      onClick={() => clientOpen.openProject(hero.path)}
+                    >
+                      {clientJumpLabel}
+                      <SquareArrowOutUpRight size={12} strokeWidth={1.8} aria-hidden="true" />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className={primaryActionClass}
+                    onClick={() => void continueWork()}
+                  >
+                    继续工作
+                  </button>
+                </div>
               </div>
               {heroSaid && (
                 // 继续之前先知道停在哪：最近一次对话里你说的最后一句，点开看整段对话
@@ -898,7 +942,10 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                   title={`上次停在：${heroSaid.full}\n点开查看这段对话`}
                   onClick={() => openLastSaid(heroSaid)}
                 >
-                  <span className="shrink-0 text-micro text-l3">上次停在</span>
+                  <span className="shrink-0 text-micro text-l3">
+                    上次停在
+                    {heroSaidStep ? ` · ${heroSaidStep}` : ""}
+                  </span>
                   <span className="min-w-0 flex-1 truncate text-sm">{heroSaid.text}</span>
                   {heroSaid.timestamp && (
                     <span
@@ -910,29 +957,11 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                   )}
                 </button>
               )}
-              {/* 有 Agent 在跑 / 等确认才报状态；空闲时只剩「在客户端打开」，也没有就整行不出（没事不画点） */}
-              {(statusText || showClientJump) && (
+              {/* 有 Agent 在跑 / 等确认才报状态；空闲时整行不出（没事不画点、不画分隔线） */}
+              {statusText && (
               <div className="mt-4 flex items-center gap-2 border-t border-hairline pt-3 text-micro text-l3">
-                {statusText ? (
-                  <>
-                    <span className="min-w-0 truncate">{statusText}</span>
-                    {heroCaret && <RunCaret state={heroCaret} decorative className="-ml-1.5" />}
-                    <span className="flex-1" />
-                  </>
-                ) : (
-                  <span className="flex-1" />
-                )}
-                {showClientJump && (
-                  <button
-                    type="button"
-                    className={`${rowActionClass} shrink-0 gap-1`}
-                    title={clientJumpTitle}
-                    onClick={() => clientOpen.openProject(hero.path)}
-                  >
-                    {clientJumpLabel}
-                    <SquareArrowOutUpRight size={12} strokeWidth={1.8} aria-hidden="true" />
-                  </button>
-                )}
+                <span className="min-w-0 truncate">{statusText}</span>
+                {heroCaret && <RunCaret state={heroCaret} decorative className="-ml-1.5" />}
               </div>
               )}
               {hero.runs.length > 1 && (
@@ -975,6 +1004,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
             <div className="divide-y divide-hairline overflow-hidden rounded-lg ccode-well">
             {nowItems.slice(1).map((item) => {
               const said = lastSaidFor(item.path);
+              const lastAt = lastTargetFor(item.path)?.updatedAt ?? null;
               return (
               <div
                 key={item.path}
@@ -1016,10 +1046,19 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                   {/* 运行状态光标跟在状态字后面、竖着居中（同侧栏口径，没事不画）。不贴在课题名后面：
                       夹在名字和「科研」之间读成破折号（2026-10-24 光标改居中时看出来的） */}
                   {itemCaret(item) && <RunCaret state={itemCaret(item)!} decorative className="-ml-2 text-micro" />}
+                  {/* 多久没动：与下面最近对话、定时任务行尾同一处写时间（2026-10-26 用户）；悬停时让位给「继续 →」 */}
+                  {lastAt && (
+                    <span
+                      className="shrink-0 text-micro text-l3 group-hover:hidden group-focus-within:hidden"
+                      title={absTime(lastAt)}
+                    >
+                      {relTime(lastAt)}
+                    </span>
+                  )}
                   {/* 整行可点即「继续」，不每行常驻同一个字；悬停时行尾出「继续 →」。
                       原先是单个 ›，读作「展开」（2026-10-25 用户：「看着像展开」） */}
                   <span
-                    className={`flex shrink-0 items-center gap-1 text-micro text-l3 group-focus-within:opacity-100 ${hoverRevealClass}`}
+                    className="hidden shrink-0 items-center gap-1 text-micro text-l3 group-hover:flex group-focus-within:flex"
                     aria-hidden="true"
                   >
                     继续
@@ -1029,7 +1068,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                 {showClientJump && (
                   <button
                     type="button"
-                    className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-l4 hover:bg-hover hover:text-l1 ${hoverRevealClass}`}
+                    className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-md text-l4 hover:bg-hover hover:text-l1 group-hover:flex group-focus-within:flex"
                     title={clientJumpTitle}
                     aria-label={clientJumpLabel}
                     onClick={() => clientOpen.openProject(item.path)}
@@ -1343,7 +1382,9 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                   onClick={() => openConversation(session.meta)}
                 >
                   <MessageSquare size={15} strokeWidth={1.8} className={iconClass} aria-hidden="true" />
-                  <span className="min-w-0 flex-1 truncate text-sm text-l2">{session.title}</span>
+                  <span className="min-w-0 flex-1 truncate text-sm text-l2" title={session.fullTitle}>
+                    {session.title}
+                  </span>
                   {session.projectName && (
                     <span className="max-w-[12rem] shrink-0 truncate text-micro text-l3">
                       {session.projectName}

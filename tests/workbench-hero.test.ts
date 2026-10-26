@@ -4,6 +4,9 @@ import type { RunOverviewInput } from "../src/run-overview.ts";
 import {
   continueWorkbenchTarget,
   firstOpenStepName,
+  lastSaidStepTag,
+  openStepProgress,
+  stepProgressLabel,
   goalCaptureTargets,
   inboxItemProjectRoot,
   lastUserInstruction,
@@ -978,4 +981,37 @@ test("workbenchLoadFailureMessage：多项目失败合成一条", () => {
     workbenchLoadFailureMessage(["甲", "乙"], "编程状态"),
     "「甲」「乙」的编程状态没读到，可稍后重试",
   );
+});
+
+test("流程进度：写明进行到第几步，全做完说都已完成；「上次停在」只在别的步骤时标", () => {
+  const steps = [
+    { name: "文献检索与筛选", workspaceName: "lit-search" },
+    { name: "文献精读与笔记", workspaceName: "lit-notes" },
+    { name: "综述大纲", workspaceName: "outline" },
+  ];
+  const merged = (name: string) => ({ name, status: "active", mergedAt: "2026-10-01T00:00:00Z" });
+  assert.deepEqual(openStepProgress(steps, []), {
+    name: "文献检索与筛选",
+    index: 1,
+    total: 3,
+    done: false,
+  });
+  assert.equal(
+    stepProgressLabel(openStepProgress(steps, [])),
+    "进行到：文献检索与筛选（第 1 / 3 步）",
+  );
+  assert.equal(
+    stepProgressLabel(openStepProgress(steps, [merged("lit-search")])),
+    "进行到：文献精读与笔记（第 2 / 3 步）",
+  );
+  const all = [merged("lit-search"), merged("lit-notes"), merged("outline")];
+  assert.equal(stepProgressLabel(openStepProgress(steps, all)), "3 步都已完成");
+  assert.equal(stepProgressLabel(openStepProgress([steps[0]], [])), "进行到：文献检索与筛选");
+  assert.equal(openStepProgress([], []), null);
+  assert.equal(stepProgressLabel(null), null);
+  // 上次那段对话在商量后面一步：标出来；同一步、没有归属都不标
+  assert.equal(lastSaidStepTag("综述大纲", "文献检索与筛选"), "综述大纲");
+  assert.equal(lastSaidStepTag("文献检索与筛选", "文献检索与筛选"), null);
+  assert.equal(lastSaidStepTag(null, "文献检索与筛选"), null);
+  assert.equal(lastSaidStepTag("综述大纲", null), "综述大纲");
 });

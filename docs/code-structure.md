@@ -347,7 +347,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 展开路径 persist（默认全收起，跟随上次；tests/folder-groups.test.ts）
   workbench-hero.ts          # 工作台主卡纯逻辑：当前工作按运行标签归属（注册名优先；隔离目标副本按
                              # runId/taskId 归属表归回真实项目，不按 cwd 拆卡；同名项目按 contextPath 路径选，名字只作唯一命中回落）、
-                             # 步骤取流水线第一个未合并步、「继续工作」有标签则聚焦，否则按 runId 找回原 Run，再回落进项目/真进入；
+                             # 步骤取流水线第一个未合并步（openStepProgress / stepProgressLabel 写「进行到：X（第 i / n 步）」，
+                             #   lastSaidStepTag：「上次停在」那段对话归在别的步骤时标出）、「继续工作」有标签则聚焦，否则按 runId 找回原 Run，再回落进项目/真进入；
                              # pickWorkbenchNow = 正在进行列表（大卡 + 紧凑行）；runningCount 只算活进程
                              # （isRunProcessLive，已退出/未启动的保留标签留在 runs 里可继续但不冒充「正在工作」）；
                              # 副行优先待验收/进行中目标；最近对话先按可见范围过滤（归档/内部无头/问 AI/阅读注入不列，
