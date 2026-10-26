@@ -901,3 +901,52 @@ test("Claude 这一轮还在跑：看输入框下面的「esc to interrupt」", 
   assert.equal(claudeTurnActiveOnScreen(running), true);
   assert.equal(claudeTurnActiveOnScreen(interrupted), false);
 });
+
+// Kimi 2.3.2 ThinkingComponent：思考中画「⠋ thinking…」，下面缩进两格只留思考原文的最后两行；想完收成斜体浅字的「● 第一行 / 续行 /
+// … (N more lines, ctrl+o to expand)」。2026-10-26 用户：Grok 思考时左边有细线，Kimi 要想完、会话文件落了盘才有——统一成 Grok 那样
+const KIMI_BOX = [
+  " ╭" + "─".repeat(60) + "╮",
+  " │ >" + " ".repeat(58) + "│",
+  " ╰" + "─".repeat(60) + "╯",
+];
+
+test("Kimi 思考中：「⠋ thinking…」下面两行读成思考，不进回复预览", () => {
+  const screen = [
+    " ❯ 今天天气怎么样",
+    "",
+    " ⠋ thinking…",
+    "   用户问天气，我需要先确定位置。可以先用 IP 粗略定位，",
+    "   定位不准再请用户告诉我城市名。",
+    "",
+    ...KIMI_BOX,
+  ];
+  assert.equal(extractLiveReply(screen, "kimi"), null);
+  assert.deepEqual(extractLiveThinking(screen, "kimi"), [
+    "用户问天气，我需要先确定位置。可以先用 IP 粗略定位，定位不准再请用户告诉我城市名。",
+  ]);
+  // 想完了（头一行没了）：没有思考框
+  const done = [" ❯ 今天天气怎么样", "", " ● 今天晴，22°C。", "", ...KIMI_BOX];
+  assert.equal(extractLiveThinking(done, "kimi"), null);
+  assert.deepEqual(extractLiveReply(done, "kimi")?.lines, ["今天晴，22°C。"]);
+});
+
+test("Kimi 收起的思考是斜体：调用方标出斜体行时不当成回复的开头", () => {
+  const screen = [
+    " ❯ 今天天气怎么样",
+    "",
+    " ● 用户问天气，我需要先确定位置。",
+    "   可以先用 IP 粗略定位。",
+    "   定位不准再请用户告诉我城市名。",
+    "   … (4 more lines, ctrl+o to expand)",
+    "",
+    " ● 今天晴，22°C，适合外出。",
+    "",
+    ...KIMI_BOX,
+  ];
+  const italic = new Set([2, 3, 4]);
+  assert.deepEqual(extractLiveReply(screen, "kimi", (row) => italic.has(row))?.lines, ["今天晴，22°C，适合外出。"]);
+  // 不给字样时只看文字：认不出（行首 ● 和正文一样），照旧整段读
+  assert.equal(extractLiveReply(screen, "kimi")?.lines[0], "用户问天气，我需要先确定位置。");
+  // 别家不看斜体
+  assert.deepEqual(extractLiveReply(screen, "claude-code", () => true), extractLiveReply(screen, "claude-code"));
+});

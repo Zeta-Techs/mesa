@@ -42,6 +42,16 @@ interface Layout {
    * 「♦ Thought for 8.6s」（2026-10-26 用户 Windows 截图：思考原文连竖线一起当成了回复）
    */
   thinkBlock?: RegExp;
+  /**
+   * 思考框头一行下面算作框里的行，匹配到的部分去掉（不写 = 行首竖线 ┃ / │，Grok）。
+   * Kimi 2.3 没有竖线：「⠋ thinking…」下面缩进两格的两行是思考原文的最后两行，到空行为止
+   */
+  thinkGutter?: RegExp;
+  /**
+   * 斜体的行是思考原文（调用方按屏上的字样告诉哪几行是斜体）。Kimi 想完把思考收成「● 第一行 / 续行 / … (N more lines…)」，
+   * 行首的 ● 和回复正文一模一样，只差在思考整段是斜体浅字——不认，回复一出来，上面收起的思考就当成回复的开头一起显示
+   */
+  thinkItalic?: boolean;
   /** 续行去掉的缩进（空格数，最多去这么多） */
   indent: number;
   /** 行尾要去掉的东西（Grok 右侧的时间） */
@@ -178,7 +188,12 @@ const LAYOUTS: Record<string, Layout> = {
     // 2.3 等首字时转月相「🌑 · Tip: …」（2026-10-21 抓屏；用户截图里 🌕Kimi 叠在「正在回复」上面）。
     // MCP 服务连上 / 失败 / 要登录时插进对话区的状态行「MCP server "x" needs OAuth — run /mcp-config login x」
     // （2.3.2 McpStatus finalizeMcpServerStatusRow；2026-10-26 用户 Windows 截图：接在回复后面成了正文）
-    skip: /Press Ctrl\+B to run in background|^\s*Tool ".*" was not run|^\s*Rejected:|^\s*[\u{1F311}-\u{1F318}]|^\s*·\s*Tip:|^\s*MCP server ".+?" (?:connected\b|failed\b|needs OAuth\b|disabled$|removed$|connecting…)/u,
+    // 收起的思考下面那行「… (12 more lines, ctrl+o to expand)」也不是回复
+    skip: /Press Ctrl\+B to run in background|^\s*Tool ".*" was not run|^\s*Rejected:|^\s*[\u{1F311}-\u{1F318}]|^\s*·\s*Tip:|^\s*MCP server ".+?" (?:connected\b|failed\b|needs OAuth\b|disabled$|removed$|connecting…)|^\s*… \(\d+ more lines?, ctrl\+o to expand\)/u,
+    // 思考中（2.3.2 ThinkingComponent live）：「⠋ thinking…」下面缩进两格、只留思考原文的最后两行；想完收成斜体的「● …」一段
+    thinkBlock: /^\s*[⠀-⣿]\s+thinking…\s*$/,
+    thinkGutter: /^(?=\s{2,}\S)/,
+    thinkItalic: true,
     indent: 3,
   },
 };
@@ -213,14 +228,15 @@ export function claudeTurnActiveOnScreen(lines: readonly string[]): boolean {
 }
 
 /**
- * 屏上正在想的那一框（Layout.thinkBlock，现只有 Grok）：这一轮回显之后、输入框之上，头一行下面行首竖线（┃ / │）的几行，
+ * 屏上正在想的那一框（Layout.thinkBlock：Grok、Kimi）：这一轮回显之后、输入框之上，头一行下面算作框里的几行（Layout.thinkGutter），
  * 照终端原样给聊天层显示（2026-10-26 用户：就要原生的思考显示，只把竖条、Thinking 符号这些无关的去掉）——去掉竖线与共同缩进、
- * 头一行「◆ Thinking…」、CLI 把前面折掉时的「…」一行，终端按框宽折的行接回成段。想完收起、确认菜单挂着、不在对话界面时返回 null
+ * 头一行「◆ Thinking…」「⠋ thinking…」、CLI 把前面折掉时的「…」一行，终端按框宽折的行接回成段。想完收起、确认菜单挂着、不在对话界面时返回 null
  */
 export function extractLiveThinking(lines: readonly string[], agentId: string): string[] | null {
   const layout = LAYOUTS[agentId];
   const head = layout?.thinkBlock;
   if (!head) return null;
+  const gutter = layout.thinkGutter ?? THINK_GUTTER;
   const rows = cleanRows(lines);
   if (rows.some((l) => MENU_BORDER.test(l.trim()))) return null;
   const boxTop = layout.boxTop(rows);
@@ -235,8 +251,8 @@ export function extractLiveThinking(lines: readonly string[], agentId: string): 
   }
   if (at < 0) return null;
   const body: string[] = [];
-  for (let i = at + 1; i < boxTop && THINK_GUTTER.test(rows[i]); i++) {
-    const text = rows[i].replace(THINK_GUTTER, "");
+  for (let i = at + 1; i < boxTop && gutter.test(rows[i]); i++) {
+    const text = rows[i].replace(gutter, "");
     if (text.trim() !== "…") body.push(text);
   }
   const indent = Math.min(...body.filter((l) => l.trim()).map((l) => l.length - l.trimStart().length));
@@ -344,7 +360,12 @@ export interface LiveReplyRead {
   echo?: string;
 }
 
-export function extractLiveReply(lines: readonly string[], agentId: string): LiveReplyRead | null {
+/** italicRow：屏上第几行是斜体字（Layout.thinkItalic 的家用来认收起的思考；不给就只看文字） */
+export function extractLiveReply(
+  lines: readonly string[],
+  agentId: string,
+  italicRow?: (row: number) => boolean,
+): LiveReplyRead | null {
   const layout = LAYOUTS[agentId];
   if (!layout) return null;
   // 行尾的空白与右侧滚动条（Grok / Gemini 的 █）
@@ -357,7 +378,9 @@ export function extractLiveReply(lines: readonly string[], agentId: string): Liv
   if (boxTop < 0) return null;
   const away = layout.scrolledAway;
   if (away && rows.slice(Math.max(0, boxTop - 3), boxTop).some((l) => l.trim() !== "" && away.test(l.trim()))) return null;
-  const region = layout.noticeBox ? dropNoticeBoxes(rows.slice(0, boxTop)) : rows.slice(0, boxTop);
+  const region0 = layout.noticeBox ? dropNoticeBoxes(rows.slice(0, boxTop)) : rows.slice(0, boxTop);
+  // 收起的思考（斜体）换成空行：行号不变，下面照常认回显、行首与段落
+  const region = layout.thinkItalic && italicRow ? region0.map((l, i) => (l.trim() && italicRow(i) ? "" : l)) : region0;
   // 最后一条用户回显之后才是这一轮的回复；回显滚出屏幕时从第一段助手行首起
   let echoAt = -1;
   for (let i = region.length - 1; i >= 0; i--) {
@@ -488,7 +511,7 @@ function readReply(layout: Layout, region: readonly string[], start: number, anc
       inThink = true;
       continue;
     }
-    if (inThink && THINK_GUTTER.test(raw)) continue;
+    if (inThink && (layout.thinkGutter ?? THINK_GUTTER).test(raw)) continue;
     inThink = false;
     if (table[at]) {
       if (!inTool) out.push(dedent(raw));

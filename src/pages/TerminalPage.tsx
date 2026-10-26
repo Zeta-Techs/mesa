@@ -178,7 +178,7 @@ import {
 } from "../tui-menu";
 import { askAfter, askAnswerKeys, askFinishes, askMenu, parseClaudeAsk, type AskAction } from "../tui-ask";
 import { promptSuggestionSupported, readPromptSuggestion } from "../prompt-suggestion";
-import { lineCells } from "../screen-cells";
+import { italicLine, lineCells } from "../screen-cells";
 import { lastContextTokens, type MesaCommand } from "../composer-assist";
 import { slashCommandsFor } from "../slash-commands";
 import { claudeOutputTokens, claudeTurnActiveOnScreen, extractLiveReply, extractLiveThinking, liveReplySupported, mergeLiveReply, sentTextStuckInBox, staleEcho, staleWithoutEcho, terminalHasInputBox } from "../live-reply";
@@ -596,7 +596,7 @@ export interface SessionLinkState {
   liveReply: string[] | null;
   /** Claude 转圈行里这一轮已生成的 token 数（live-reply.ts claudeOutputTokens）；别家与没认出时 null */
   liveTokens: number | null;
-  /** 终端思考框里正在显示的思考（live-reply.ts extractLiveThinking，现只有 Grok；去掉竖线与 Thinking 头）；不在想为 null */
+  /** 终端思考框里正在显示的思考（live-reply.ts extractLiveThinking：Grok、Kimi；去掉竖线与 Thinking 头）；不在想为 null */
   liveThinking: string | null;
   /** Claude Code 输入框里那行灰字：它猜你下一句想说什么（prompt-suggestion.ts）；没有为 null */
   promptSuggestion: string | null;
@@ -2345,6 +2345,10 @@ const TerminalView = memo(function TerminalView({
     const buf = term.buffer.active;
     return lineCells(buf.getLine(buf.viewportY + row));
   }
+  /** 可视区第 row 行整行是斜体（Kimi 收起的思考，live-reply.ts Layout.thinkItalic） */
+  function screenItalicRow(row: number) {
+    return italicLine(screenCells(row));
+  }
   /** 屏上等你选的东西：Claude 的提问表单按表单读（tui-ask.ts），其余照通用菜单读（Kimi 选择器的说明行靠字色分开） */
   function parseScreenMenu(lines: string[]): TuiMenu | null {
     const ask = launchAgentRef.current === "claude-code" ? parseClaudeAsk(lines, screenCells) : null;
@@ -2520,7 +2524,7 @@ const TerminalView = memo(function TerminalView({
     liveScanAtRef.current = Date.now();
     const lines = screenLines();
     // 长回复滚出屏后只看得见续行：接到上一次读到的整段后面（mergeLiveReply）
-    const read = extractLiveReply(lines, launchAgentRef.current);
+    const read = extractLiveReply(lines, launchAgentRef.current, screenItalicRow);
     // Claude 转圈行的已生成 token 数（Windows 上 Claude 不边写边画，聊天层靠它看出还在出字）
     if (launchAgentRef.current === "claude-code") {
       const tokens = claudeOutputTokens(lines);
@@ -2529,7 +2533,7 @@ const TerminalView = memo(function TerminalView({
         setLiveTokens(tokens);
       }
     }
-    // 正在想的那一框（Grok）：不混进回复预览，照终端原样（去掉竖线与 Thinking 头）另给聊天层；框收起 = 想完了，清掉
+    // 正在想的那一框（Grok、Kimi）：不混进回复预览，照终端原样（去掉竖线与 Thinking 头）另给聊天层；框收起 = 想完了，清掉
     const thinking = extractLiveThinking(lines, launchAgentRef.current)?.join("\n") ?? null;
     if (thinking !== liveThinkingRef.current) {
       liveThinkingRef.current = thinking;
@@ -5501,7 +5505,7 @@ const TerminalView = memo(function TerminalView({
     // 拿上一句比对排除不掉（2026-10-21 用户 Grok：七步清单在输入框里时出了一张「终端里在等你选一项」）
     lastSentRef.current = text;
     // 发送前屏上最后一条回显与那时读得出的一截：CLI 画出这句之前，实时预览读到的还是上一轮（staleEcho / staleWithoutEcho）
-    const beforeRead = extractLiveReply(screenLines(), launchAgentRef.current);
+    const beforeRead = extractLiveReply(screenLines(), launchAgentRef.current, screenItalicRow);
     sendEchoRef.current = {
       before: beforeRead?.echo ?? null,
       beforeLines: beforeRead?.lines ?? null,

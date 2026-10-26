@@ -16,6 +16,8 @@ export interface ScreenCell {
   inverse: boolean;
   /** 有自己的底色（不是终端默认底） */
   bg: boolean;
+  /** 斜体（SGR 3）：Kimi 的思考正文；来源给不出时没有这一项 */
+  italic?: boolean;
   /** 字色（颜色模式:值），终端默认色为 null；来源给不出字色时没有这一项 */
   fg?: string | null;
 }
@@ -27,6 +29,7 @@ export interface CellSource {
   isDim(): number;
   isInverse(): number;
   isBgDefault(): boolean;
+  isItalic?(): number;
   getFgColor?(): number;
   getFgColorMode?(): number;
   isFgDefault?(): boolean;
@@ -49,10 +52,21 @@ export function lineCells(line: LineSource | undefined): ScreenCell[] {
       inverse: cell.isInverse() !== 0,
       bg: !cell.isBgDefault(),
     };
+    if (cell.isItalic) item.italic = cell.isItalic() !== 0;
     if (cell.getFgColor && cell.getFgColorMode && cell.isFgDefault) {
       item.fg = cell.isFgDefault() ? null : `${cell.getFgColorMode()}:${cell.getFgColor()}`;
     }
     out.push(item);
   }
   return out;
+}
+
+/**
+ * 这一行的字都是斜体（行首的状态点「●」不算，它单独上色、不带斜体）：Kimi 收起的思考整段是斜体浅字，
+ * 和回复正文只差在这里（live-reply.ts Layout.thinkItalic）。没有字、或来源给不出斜体时为 false
+ */
+export function italicLine(cells: readonly ScreenCell[]): boolean {
+  const text = cells.filter((c) => c.ch.trim() !== "");
+  const body = text[0]?.ch === "●" ? text.slice(1) : text;
+  return body.length > 0 && body.every((c) => c.italic === true);
 }

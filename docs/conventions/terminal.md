@@ -93,6 +93,11 @@
   屏上没有说完的一句时还和「思考中」来回跳）；③逐帧拼出思考全文（用户：就要原生的思考显示）。Windows 上转圈是 ASCII 竖线 / 斜线 / 横线，
   不归 SPINNER 管，「Waiting for response… / Thinking… N.Ns」与按 Ctrl+C 后的「Press Ctrl+c to cancel the turn」进 skip。
   样本 `tests/fixtures/screens/grok/win32-1.0.70-*`。
+  **各家统一（同日用户：Grok 思考时就有细线，Kimi 要想完才有，统一）**：凡终端里看得见思考原文的家，思考中一律走这一套
+  （`thinkingPreview`，细线样式），不得当成回复正文显示。新增一家给 `Layout.thinkBlock`（头一行）+ `thinkGutter`（框里的行，默认竖线）。
+  Kimi 2.3.2：思考中画「⠋ thinking…」、下面缩进两格只留最后两行（`thinkGutter` = 缩进两格以上、到空行为止）；想完收成「● 第一行 / 续行 /
+  … (N more lines, ctrl+o to expand)」，行首 ● 与回复正文一模一样、只差整段斜体浅字——`Layout.thinkItalic` 让调用方按单元格斜体
+  （`screen-cells.ts italicLine`）把这几行剔出回复预览，提示行进 skip。
   **2026-10-21 用户 Windows 实测补四条**：①读屏前去掉字形后的变体选择符（U+FE0E / FE0F）——Qwen 0.25.3 画「◆︎ 正文」「∴︎ Thought…」，
   xterm 把它并进前一格，行首符号认不出，思考折叠行连同上一轮回复一起进了预览；②Kimi 2.3 等首字时转月相「🌑 · Tip: …」，进 skip
   （用户截图：🌕Kimi 叠在「正在回复」上面）；③Gemini 0.65 输入框上方的提示按权限档变字（「auto-accept edits  Shift+Tab to manual」）、

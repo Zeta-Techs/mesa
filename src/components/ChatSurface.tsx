@@ -221,7 +221,7 @@ export default function ChatSurface({
   liveReply?: string[] | null;
   /** Claude 转圈行里这一轮已生成的 token 数（Windows 上 Claude 不边写边画，靠它看出还在出字）；没有为 null */
   liveTokens?: number | null;
-  /** 终端思考框里正在显示的思考（live-reply.ts extractLiveThinking，现只有 Grok）：正文出来前照原样显示在实时预览的位置 */
+  /** 终端思考框里正在显示的思考（live-reply.ts extractLiveThinking：Grok、Kimi）：正文出来前照原样显示在实时预览的位置 */
   liveThinking?: string | null;
   /** Claude 输入框里那行灰字：它猜你下一句想说什么（prompt-suggestion.ts）；输入框空着时照样灰着显示，Tab 填入 */
   promptSuggestion?: string | null;
@@ -1098,7 +1098,7 @@ export default function ChatSurface({
             // 与助手正文同一栏、同字号，但不走 Markdown（终端里已渲染过）：灰一级表示「还在写、以落盘为准」。
             // 还在写时 Mesa 光标接在最后一个字后面，不另起一行写状态（2026-10-21）
             // 字号行高与落盘后的回答同一档（.ccode-chat-body），落盘那一下不跳。
-            // 显示的是终端里的思考（Grok 思考框）时换成别家思考展开后的样子（ConversationView 过程「思考」行的正文）：
+            // 显示的是终端里的思考（Grok 思考框、Kimi「thinking…」下的两行）时换成别家思考展开后的样子（ConversationView 过程「思考」行的正文）：
             // 过程行那一档字号（.ccode-chat-meta）、左边一条细线，与正文分开（2026-10-26 用户：思考和正文区分不开）
             <div
               className={`mb-2 whitespace-pre-wrap break-words text-l3 ${
