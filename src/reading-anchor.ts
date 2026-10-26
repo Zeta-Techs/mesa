@@ -61,7 +61,9 @@ export function pickAnchor<T extends AnchorEl>(
     const el = kids[i] as T;
     picked = el;
     if (depth === 0) rootIndex = i;
-    if (el.getBoundingClientRect().top >= viewTop) break;
+    // 整块在顶线以下就锚它——除非它是这一层唯一的子元素（纯包装层，如聊天的栏宽容器）：往它里面开头插内容
+    //（加载更早一页）时它自己不挪，锚它等于没锚，停在最顶上时一接上更早的就整屏换成更早的内容（2026-10-26 实测）
+    if (el.getBoundingClientRect().top >= viewTop && kids.length > 1) break;
     parent = el;
   }
   return picked ? { el: picked, rootIndex } : null;

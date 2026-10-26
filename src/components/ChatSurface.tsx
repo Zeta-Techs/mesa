@@ -450,7 +450,10 @@ export default function ChatSurface({
 
   async function loadOlder(settle?: () => Promise<void>) {
     if (!onLoadOlder) return;
-    followRef.current = false;
+    // 人往上翻到顶附近才算不跟底了；还贴着底（刚打开、最新一页不满三屏就自动接更早的）时接上来仍贴底——
+    // 原先一律不跟，切到一段对话先在底部闪一下、接上更早一页后停在上面（2026-10-26 用户）
+    const el = scrollRef.current;
+    if (!el || !nearBottom(el)) followRef.current = false;
     loadingOlderRef.current = true;
     await onLoadOlder(settle);
   }

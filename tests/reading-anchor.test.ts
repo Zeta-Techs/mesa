@@ -46,3 +46,15 @@ test("整块在顶线以下就锚它；跨着顶线就往里找一层，锚住�
   const padded = box(0, 300, column([50, 50], 0));
   assert.equal(pickAnchor(box(0, 300, [padded]), 200)?.el, padded);
 });
+
+test("唯一的包装层整块在顶线以下：往里找，锚它里面的第一块（往包装层开头插内容时才跟得住）", () => {
+  // 聊天：内容根 → 栏宽容器（唯一子元素，上内边距 32）→ 一轮一轮
+  const turns = column([300, 300], 32);
+  const wrapper = box(0, 632, turns);
+  const root = box(0, 632, [wrapper]);
+  assert.equal(pickAnchor(root, 0)?.el, turns[0]);
+  // 有兄弟的整块照旧锚它自己
+  const a = box(10, 100, column([50, 50], 10));
+  const b = box(110, 100);
+  assert.equal(pickAnchor(box(0, 210, [a, b]), 0)?.el, a);
+});
