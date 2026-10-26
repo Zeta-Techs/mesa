@@ -4720,11 +4720,26 @@ const TerminalView = memo(function TerminalView({
     };
   }, [tabId]);
 
+  // 认领扫描在 Windows 上一次要好几秒，500ms 一轮会叠着发；叠着的那轮回来时旁路早已锁定会话，
+  // 拿「没找到」把同步状态改回 waiting，之后再没人改回来——对话照常刷新，底部却一直挂着「等待会话文件」
+  // （2026-10-26 Windows Codex 实测）。所以同一时刻只跑一轮，扫描回来先确认还没锁上
+  const linkTickBusyRef = useRef(false);
   async function linkTick() {
+    if (linkTickBusyRef.current) return;
+    linkTickBusyRef.current = true;
+    try {
+      await linkTickOnce();
+    } finally {
+      linkTickBusyRef.current = false;
+    }
+  }
+
+  async function linkTickOnce() {
     const ctx = linkCtxRef.current;
     if (!ctx) return;
     if (!ctx.filePath) {
       const hit = await findSessionFile();
+      if (linkCtxRef.current !== ctx || ctx.filePath) return;
       if (!hit) {
         setSyncState("waiting");
         if (Date.now() - linkStartedAtRef.current >= 20_000)
@@ -4762,7 +4777,7 @@ const TerminalView = memo(function TerminalView({
     if (!ctx.filePath) {
       const hit = await findSessionFile();
       if (hit) lockLink(hit.filePath, hit.sessionId, hit.title, hit.createdAt);
-      else setLinkState("timeout");
+      else if (linkCtxRef.current === ctx && !ctx.filePath) setLinkState("timeout");
     }
     await fetchConversation(true);
     // Agent 退出不代表会话文件已经完成落盘；保留短轮询，让最后一条 assistant
