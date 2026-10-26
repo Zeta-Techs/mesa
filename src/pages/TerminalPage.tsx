@@ -2984,32 +2984,34 @@ const TerminalView = memo(function TerminalView({
   }, [initialCwd]);
 
   // 懒挂载：首次可见时才创建 xterm，未展示过的标签不占用终端资源。
-  // 被聊天层盖着、也不自动启动的（侧栏点开只看的对话、重启恢复的占位标签）推到画完一帧之后再建：
-  // 建 xterm + WebGL 约 30ms，压在切过去的第一帧里就是「点一下卡一下」，对话记录要等它建完才上屏（2026-10-26 实测）
-  const deferTerminal = coveredByChat && !autoStart;
+  // 被聊天层盖着、也不自动启动的（侧栏点开只看的对话、重启恢复的占位标签）用到才建：切到终端层 / 窥视、
+  // 发第一句接回（launch 里 ensureTerminal 现建）。建 xterm + WebGL 约 30ms：原先推到第一帧之后建，
+  // 每点一段只看的对话仍白建一个、切完紧跟一次长任务（2026-10-26 改为用到才建）
+  const deferTerminal = coveredByChat && !autoStart && !resumeKick;
   const [everVisible, setEverVisible] = useState(visible && !deferTerminal);
   everVisibleRef.current = everVisible;
   useEffect(() => {
-    if (!visible || everVisible) return;
-    if (!deferTerminal) {
-      setEverVisible(true);
-      return;
-    }
-    let timer = 0;
-    const frame = requestAnimationFrame(() => {
-      timer = window.setTimeout(() => setEverVisible(true), 0);
-    });
-    return () => {
-      cancelAnimationFrame(frame);
-      window.clearTimeout(timer);
-    };
+    if (!visible || everVisible || deferTerminal) return;
+    setEverVisible(true);
   }, [visible, everVisible, deferTerminal]);
+  /** 用到才建的标签：launch 前现建 xterm，等它挂好、再等一帧让 fit 量到真实大小 */
+  async function ensureTerminal(): Promise<boolean> {
+    if (termRef.current) return true;
+    setEverVisible(true);
+    const until = performance.now() + 2000;
+    while (!termRef.current && performance.now() < until) {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    }
+    if (!termRef.current) return false;
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    return true;
+  }
 
   // 恢复占位标签只做目录检查，不自动启动或偷偷迁移目录；失效时把修复入口放进空态卡。
   useEffect(() => {
-    if (!restored || !visible || !everVisible) return;
+    if (!restored || !visible) return;
     void checkWorkingDirectory(cwd);
-  }, [restored, visible, everVisible, cwd]);
+  }, [restored, visible, cwd]);
 
   useEffect(() => {
     if (!everVisible) return;
@@ -5096,7 +5098,7 @@ const TerminalView = memo(function TerminalView({
         return null;
       }
     }
-    if (!visible || !everVisible) {
+    if (!visible || !(await ensureTerminal())) {
       setError("这次没能按画面大小启动");
       return null;
     }
