@@ -16,7 +16,7 @@
   不能因此拒绝启动），本机设完全访问也收窄；Claude Code 再按 `reuse_key` 前缀 `reader:` 追加 `--allowedTools Edit(./notes/**)`，
   只预放行项目 `notes/` 下的编辑。这条放行只跟着阅读会话走，不扩到别的会话、不写任何 CLI 配置。
 - **终端输入/输出（2026-09-08）**：每 PTY 独立有界队列（16 项，单次最多 1 MB），入队后后台等待，不能持全局表锁阻塞写入；聊天正文和延迟提交键是一项请求，不能交错。超时明确告知可能仍在写入，禁止自动重发。PTY 实际输出不等数据库：诊断副本经有界队列每 500ms 批量落盘、复用连接，每 Run 最多 100 条、全局最多 10000 条输出事件，不清除生命周期事件；尾部未闭合 token 不持久化，先脱敏后截尾。
-- **取消和退出（2026-09-08）**：无头任务有取消信号；定时行和设置→诊断均有停止入口。原生退出阶段拒绝新启动，并限时回收捕获进程与 PTY，不只依赖 React 卸载。Windows 受管理捕获命令先挂起创建，再加入 kill-on-close Job Object 后恢复，失败不无保护继续；打开 GitHub Desktop/浏览器的启动器不进入该 Job，也不继承输出管道，以免关闭用户打开的窗口。Windows 全应用/界面仍需实机验收。
+- **取消和退出（2026-09-08）**：无头任务有取消信号；定时行和设置→诊断均有停止入口。原生退出阶段拒绝新启动，并限时回收捕获进程与 PTY，不只依赖 React 卸载；**应用内更新安装前走同一收尾**（2026-10-26：先下载、`shutdown_for_exit` 收尾（杀 Codex app-server 等后台服务）、再 install+relaunch——Windows 更新插件拉起安装包后直接退出进程，等不到 ExitRequested 的收尾线程）。Windows 受管理捕获命令先挂起创建，再加入 kill-on-close Job Object 后恢复，失败不无保护继续；打开 GitHub Desktop/浏览器的启动器不进入该 Job，也不继承输出管道，以免关闭用户打开的窗口。Windows 全应用/界面仍需实机验收。
 - **出站/预算（2026-09-08）**：普通日志查看、复制、导出与诊断包统一后端脱敏；模型目录响应最多 16 MB，公共模型库/期刊 CSV 最多 32 MB，按实际解压字节累计，不能只相信 Content-Length。配置读取失败不清空上次成功列表，必须提供原因与重试。
 - **读浏览器下载记录（2026-10-22，`download_inbox.rs drain_browser_history`）**：为收「另存到别的文件夹」的全文，读 Chromium 系 profile 的 `History` 库。
   只在有收货登记（点过「官网」、30 分钟内）时读；History 修改时间与大小没变就不读；浏览器开着时库被占用，复制到系统临时目录只读查询、**读完即删副本**；
@@ -50,7 +50,7 @@
 
 - **Run 结束登记（2026-09-08）**：终态事务成功与否都释放存活锁；失败写诊断。禁止只 `let _ = close` 而不记录，留下进程已退出、账本仍运行。
 
-- **密钥绝不回显/进 shell**：存 0600 `keys.json`，只在拉起瞬间注入子进程 env；`profiles.json` 只存尾号 key_hint；
+- **密钥绝不回显/进 shell**：存 0600 `keys.json`，只在拉起瞬间注入子进程 env；网关/绑定 JSON（`gateways.json` / `bindings.json`，2026-10 拆层；旧 `profiles.json` 只是拆层迁移输入）只存尾号 key_hint；
   `NO_COLOR` 必须 `env_remove`；`TERM=xterm-256color`/`COLORTERM=truecolor`/`TERM_PROGRAM=Mesa` 必须显式设置。
   **外部恢复/复制恢复命令不携带 profile env**（`agents::resume_command_line`，⇗/⧉ 共用）；⇗ 拉起：CLI 用绝对路径
   （`resolve_binary`，⧉ 复制命令才用裸名）、shell 必须 `-l -i` 交互登录（非交互不加载 `.zshrc` 的安装器 PATH）。
@@ -171,7 +171,7 @@
      iframe 不加 allow-same-origin；交互内容只走「在浏览器打开」，不在应用里跑任意本地 HTML 脚本。
      LibreOffice 转 PDF 只读白名单内的源文件，输出落 `<config>/ccode/tmp/office-pdf/`，独立 UserInstallation、超时杀树；
      asset 协议（音视频流式播放）默认 scope 为空，只经 `grant_media_url` 过读取白名单后逐个文件放行，不得在 tauri.conf 里配目录级 scope；
-  6. **内部对话保留期清理**（2026-10-17，`internal_sessions.rs`）：设置「数据与存储」的自动清理开关（默认开、保留 30 天）
+  5. **内部对话保留期清理**（2026-10-17，`internal_sessions.rs`）：设置「数据与存储」的自动清理开关（默认开、保留 30 天）
      或「立即清理」即用户授权。目标三条件同时成立：provenance/会话 meta 标为 internal、cwd 是 `ccode-ai-<uuid>`
      临时目录或定时雷达隔离 worktree 根下、未 pin；时间不明 / 源文件已不在（只剩快照）一律不删；**定时任务历史还引用着的
      （「看过程」入口，`scheduler::referenced_sessions`，2026-10-23）也不删**，掉出 20 条历史后照常到期。删除复用会话删除的
@@ -179,7 +179,7 @@
      回收站既慢又塞满回收站；session_meta 与搜索索引随删，用量行刻意保留。另扫 `~/.claude/projects` 下名字以
      `ccode-ai-<uuid>` 结尾、无任何 .jsonl、一天内未改动的空壳目录。2026-10-17 在真实数据副本（HOME 指向 /tmp 拷贝）
      完整跑过：Codex 654 条删掉、用户会话 253→253、内部用量行 1061→1061；路径不在副本会话目录内的被白名单拒删。
-  5. **会话导入**（`session_transfer.rs`：用户显式选 zip 并确认目标目录后，才把会话文件写入各 CLI 会话数据目录）。防护：
+  6. **会话导入**（`session_transfer.rs`：用户显式选 zip 并确认目标目录后，才把会话文件写入各 CLI 会话数据目录）。防护：
      zip 解压防 zip-slip（`enclosed_name` + 禁 `..` / 绝对路径，条目只允许 `manifest.json` 与 `sessions/`）；单文件 200MB / 整包解压 512MB / 条目数 2 万上限；
      目标路径必须落在 `session_data_dirs_at` 白名单内（cursor 另限 `projects/*/agent-transcripts/**/*.jsonl`）；
      额外放行的索引写点仅 `~/.kimi-code/session_index.jsonl`、`~/.kimi/kimi.json`、gemini `.project_root`、grok 组目录 `.cwd`（codex `config.toml` 走现有注册命令，不经本模块直写）；
@@ -195,7 +195,7 @@
      长度与 mtime 没变；同目录 `.ccode-slim-<uuid>.tmp`（0600）+ `sync_all` + `storage::replace` 原子替换，并把 mtime 还原成原值；
      同一时刻只跑一次；Mesa 自己的终端标签里正在运行该会话时前端拒绝。只检测不写盘的 `session_slim_inspect` 对小于 8 MB 的文件免扫描。
      测试走 `*_at(home, …)` 注入假 home，真实数据干跑用被忽略的 `real_data_dry_run`（环境变量 `CCODE_SLIM_DRYRUN_FILE` 指向副本）。
-  6. **卸载 Mesa**（`uninstall.rs`：设置 → 数据与存储。两次确认，第二次须输入「卸载」）。
+  8. **卸载 Mesa**（`uninstall.rs`：设置 → 数据与存储。两次确认，第二次须输入「卸载」）。
      只把 Mesa 独占目录移入回收站：平台配置目录 `ccode/`、主目录 `~/ccode/`（含用户自定义过的工作副本家目录 `<所选>/ccode`，取 `ccode_home::all_roots`）、本机数据目录
      `ccode/`（目标副本），以及打包身份 `com.ccode.dev` 的网页数据（macOS 的
      `~/Library/WebKit/<身份>`、Caches、Saved Application State；Windows 的
@@ -240,9 +240,8 @@
 - **系统打开文档（办公「系统打开」/无法内嵌预览的 ppt·doc·rtf）**：禁止给 WebView 开 `opener:allow-open-path`（任意路径可被默认应用执行）。只走 `fs_tree::open_in_system`：`canonicalize_plain` + `path_within` 锁在调用方给出的项目根内，扩展名必须在办公白名单（与 `list_office_docs` 同源），再由 Rust 调 `tauri_plugin_opener::open_path`。目录不打开（请用「显示」）。
 - **编程页添加 origin**：只接受 https / ssh（含 scp `user@host:path`），拒绝 `file://`、`ext::`、`git://`、host 以 `-` 开头、换行与控制字符。`git remote add -- origin <url>`（argv 数组，禁止拼进 shell）。HTTPS userinfo 须用户确认后才写；出站 DTO 剥 userinfo，stderr 过 `redact_sensitive_text`。fetch 失败不回滚 origin（`code=git_failed, failedPhase=fetch`）。
 - **GitHub Desktop 只走文档化 CLI**：`coding_open_desktop(repo_path, path)` 现场 `git worktree list` + `same_path`，只打开本仓工作树。argv 锁死 `github <absPath>`（`resolve_binary`，没有则用应用捆绑的 `github.sh` / Windows `%LOCALAPPDATA%\GitHubDesktop\bin`）；不对 CLI 传 `--cli-open`，不走已删除的 `x-github-client://openLocalRepo`，Windows **不**给 `GitHubDesktop.exe` 传路径。macOS 再回落必须 `open -n <GitHub Desktop.app> --args --cli-open=<path>`（与官方 cli.js 相同；`open -a` 不加 `-n` 只激活窗口不切仓）。禁止给 WebView 开 `opener:allow-open-path` 或自定义协议。`gh` / `github.bat` 走 `background_command`（Windows `CREATE_NO_WINDOW`）。
-- **PDF 预览（P2a）**：pdf.js 渲染器必须随 PdfPreview 组件动态 import 拆独立 chunk（禁进主包）；`read_pdf_bytes` 只放行五类
-  白名单（注册项目登记资源/注册项目根/工作区·仓库根/终端标签 cwd hint/Mesa 自管剪贴板图片目录 `<config>/ccode/tmp`
-  ——paste-* 写入侧已有扩展名白名单 + 50MB 上限 + 7 天清理），外加「用户亲手交来的文件」精确路径（2026-10-23，
+- **PDF 预览（P2a）**：pdf.js 渲染器必须随 PdfPreview 组件动态 import 拆独立 chunk（禁进主包）；`read_pdf_bytes` 的白名单（`pdf.rs collect_whitelist`，2026-10-26 核对共八类）：注册项目登记资源 / 注册项目根 / 工作区·仓库根 / 终端标签 cwd hint / Mesa 自管剪贴板图片目录 `<config>/ccode/tmp`
+  （paste-* 写入侧已有扩展名白名单 + 50MB 上限 + 7 天清理）/ 手机暂存区 `<config>/phone-inbox`（见手机投递条）/ LibreOffice 转 PDF 输出目录 `<config>/ccode/tmp/office-pdf/` / **提货单登记产物**（`workspaces.rs artifact_paths_at`：评审页 `artifacts.yaml` 里登记的产物按条目精确路径放行，P4 口径），外加「用户亲手交来的文件」精确路径（2026-10-23，
   `attach_grants.rs`：只认原生拖放事件与 Rust 侧弹的附件选择器 `pick_attachment_files`，进程内、只收文件、不落盘；
   **禁止加「前端传路径就登记」的命令**，那等于取消白名单），canonicalize 后判定，传输用 base64 字符串（macOS
   Raw 响应会退化为逐字节 JSON 数组，禁改 raw bytes）；选段问 AI 只 pty_write 注入活跃标签输入框，不自动回车。

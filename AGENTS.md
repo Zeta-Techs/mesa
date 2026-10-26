@@ -18,8 +18,9 @@
 > **动真实数据先干跑 + 未发布不养闲机器（2026-10-13 用户拍板）**：凡要写用户真实项目数据的功能（迁移/清理/批量改写一类），
 > 交到用户手里点之前必须先在干跑环境或用户一个真实项目上完整执行一遍验证——静态审查代替不了执行（当日实证：迁移命令审查
 > 全过，用户一点才暴露 git add 拒收被忽略文件）。应用未发布期间，只服务「假想老用户」的界面机器不留：用户数据量小就直接
-> 替用户做掉并验证，机器删掉（当日实证：文献台账迁移命令+界面整体移除）；真到发布需要重建的，重建序列记在
-> `docs/conventions/pipeline.md`「双台账·存量收口」，发布前检查项见 architecture §12。
+> 替用户做掉并验证，机器删掉（当日实证：文献台账迁移命令+界面整体移除）；~~真到发布需要重建的，重建序列记在
+> `docs/conventions/pipeline.md`「双台账·存量收口」~~（2026-10-26 拍板收窄：GitHub 上的 v0.1.0 只是测试版、没有外部老用户，
+> 存量迁移不重建，见 architecture §12「发布前检查项」当日条；「双台账·存量收口」仅作历史序列存档），发布前检查项见 architecture §12。
 >
 > **文档同步（用户指令）**：文档和代码进同一个提交（2026-10-24 用户：「下次提交之前更新文档」），事后另补不算。
 > **只改受影响的文档**（2026-10-26 收窄，取代「每次提交前把全部文档过一遍」）：
@@ -188,7 +189,7 @@ docs/            architecture.md（总体设计 + §10 决策记录 + §12 当�
   Agent 经随包 `mesa_helper image` 出图，密钥由 helper 自取、不进 Agent env，PTY 只注入 `MESA_IMAGE_TOOL`；找随包 helper 一律走
   `image_gen::find_bundled_helper`。细则 profiles.md / safety.md 同名条。
 - **二进制解析统一走 `agents::resolve_binary`**：先 which（继承 PATH），miss 时按平台候选目录兜底；新增 CLI/工具调用点一律
-  用它，禁直接 `which::which` 或裸名 spawn（候选目录清单见 `docs/conventions/safety.md` 对应实现 `agents.rs`）。
+  用它，禁直接 `which::which` 或裸名 spawn（平台候选目录清单 = `agent_specs.rs::binary_candidate_dirs`，`agents.rs` 只是调用方）。
   PATH 上第一个可能是占位程序时（Windows 应用商店的 `python`、macOS CLT 没装时的 `/usr/bin/python3`）改用
   `agents::resolve_binary_all` 列全部候选、逐个试跑，拿「能跑」的那个（2026-10-19，见 dep_check `usable_python`）。
   **Python 一律走 `dep_check::usable_python()`**，禁 `resolve_binary("python3")`：python.org 的 Windows 安装包只有
