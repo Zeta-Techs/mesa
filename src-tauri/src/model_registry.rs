@@ -704,7 +704,12 @@ pub struct ModelDbStatusDto {
 
 /// 公共能力库状态（设置/配置页展示用）
 #[tauri::command]
-pub fn model_db_status() -> ModelDbStatusDto {
+pub async fn model_db_status() -> Result<ModelDbStatusDto, String> {
+    tauri::async_runtime::spawn_blocking(model_db_status_sync)
+        .await
+        .map_err(|e| e.to_string())
+}
+fn model_db_status_sync() -> ModelDbStatusDto {
     let Some(path) = db_path() else {
         return ModelDbStatusDto {
             downloaded: false,
@@ -826,7 +831,7 @@ pub async fn download_model_db() -> Result<ModelDbStatusDto, String> {
         }
         crate::profiles::atomic_write(&path, &text)?;
         invalidate_db_cache();
-        Ok(model_db_status())
+        Ok(model_db_status_sync())
     })
     .await
     .map_err(|e| format!("保存模型能力库失败: {e}"))?

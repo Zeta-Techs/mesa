@@ -1890,7 +1890,12 @@ pub struct ProfileUsageRefsDto {
 }
 
 #[tauri::command]
-pub fn profile_usage_refs(id: String) -> Result<ProfileUsageRefsDto, String> {
+pub async fn profile_usage_refs(id: String) -> Result<ProfileUsageRefsDto, String> {
+    tauri::async_runtime::spawn_blocking(move || profile_usage_refs_sync(id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn profile_usage_refs_sync(id: String) -> Result<ProfileUsageRefsDto, String> {
     let conn = crate::sessions::open_db()?;
     // projects：default_profiles / default_models 不含 id（那是 agent→id 的 map，值才
     // 是连接 id）；default_profiles JSON 值命中或 task_bindings 任意槽引用都算

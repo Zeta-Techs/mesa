@@ -13,7 +13,14 @@
   open / start）、等端口就绪、走回收站、删拷目录树、冻结评审快照的命令，一律 `async fn` + `tauri::async_runtime::spawn_blocking`，
   需要的 State 在闭包里经 `app.state()` 取。已挪出：`pty_spawn` / `shell_spawn` / `pty_spawn_custom` / `pty_kill`、三个外部终端命令、
   `run_close`、`delete_schedule` / `schedule_run_delete` / `adopt_watch_run`、`save_clipboard_image`（pty.rs `waiting_commands_stay_off_main_thread` 钉住）、
-  `run_find`（侧栏点开对话要等它，2026-10-24）、`pty_get_cwd`（macOS 上起 lsof 实测 25–50ms，原先还在 PTY 全局锁里跑，连 `pty_ack` / `pty_write` 一起挡住；现在锁内只取 pid，2026-10-24）、`task_list` / `run_list` / `run_get` / `list_schedules`（页面轮询 / 挂载时调，要开 app.db，2026-10-24；Rust 内部调用走 `run_get_sync` / `run_list_sync`，别回头调 async 版）。
+  `run_find`（侧栏点开对话要等它，2026-10-24）、`pty_get_cwd`（macOS 上起 lsof 实测 25–50ms，原先还在 PTY 全局锁里跑，连 `pty_ack` / `pty_write` 一起挡住；现在锁内只取 pid，2026-10-24）、`task_list` / `run_list` / `run_get` / `list_schedules`（页面轮询 / 挂载时调，要开 app.db，2026-10-24；Rust 内部调用走 `run_get_sync` / `run_list_sync`，别回头调 async 版）；
+  2026-10-26 一批收齐写 app.db 或扫目录的：目标与 Run 的增删改查（`task_create` / `task_update` / `task_delete` / `task_unarchive` /
+  `task_purge_archived` / `task_set_launch` / `task_get` / `run_events` / `task_goal_events` / `run_open` / `run_open_custom` /
+  `run_attach_session` / `run_cancel`）、对话元数据（`set_session_meta` / `unpin_session` / `assign_session_task` /
+  `set_session_profile_command` / 两个 `claim_next_session_for_*`）、`mark_handoff` / `handoff_targets`、自定义运行时三件、
+  `profile_usage_refs`、`model_db_status`、`read_project_status`（打开项目顺带回放 PDF 登记）/ `read_acceptance_log`、`run_artifacts`、
+  雷达技能草稿的列 / 提交与 `ensure_schedule_skill_distributed`（拷技能目录）、`cancel_schedule_run`、`font_status`（扫字体目录）。
+  写法统一为 async 外壳 + 同名 `_sync` 本体；**新增写 app.db 的命令默认就照这样写**，并补进守卫测试名单。
   **app.db 的轮询读不得申请写锁**：`runs::db()` 每次调用都过 `ensure_schema`，其中项目归属回填的 UPDATE 命中 0 行也要写锁，所以必须先用只读 EXISTS 判断有无可回填行
   （`ensure_schema_needs_no_write_lock_when_nothing_to_backfill` 钉住）；新增每次开库都跑的迁移同口径，没事可做就不写。`journal_mode=WAL` 由 `sessions::ensure_wal_mode` 在进程内第一次开库时尝试，
   写进库文件：对 app.db 做文件级备份要连 `-wal` / `-shm` 一起拷，或先 checkpoint。

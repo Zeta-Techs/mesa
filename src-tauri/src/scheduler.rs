@@ -2855,7 +2855,12 @@ fn schedule_run_delete_sync(
 }
 
 #[tauri::command]
-pub fn cancel_schedule_run(id: String) -> Result<(), String> {
+pub async fn cancel_schedule_run(id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || cancel_schedule_run_sync(id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn cancel_schedule_run_sync(id: String) -> Result<(), String> {
     for run_id in crate::process::active_capture_ids() {
         if let Some(run) = crate::runs::run_get_sync(run_id.clone())? {
             if run.task_ref.as_deref() == Some(&id) && run.task_kind == "watch" {
@@ -3192,7 +3197,12 @@ pub fn start_watch_skill_draft(input: StartWatchSkillInput) -> Result<WatchSkill
 }
 
 #[tauri::command]
-pub fn list_watch_skill_drafts(project_root: String) -> Result<Vec<WatchSkillDraftDto>, String> {
+pub async fn list_watch_skill_drafts(project_root: String) -> Result<Vec<WatchSkillDraftDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || list_watch_skill_drafts_sync(project_root))
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn list_watch_skill_drafts_sync(project_root: String) -> Result<Vec<WatchSkillDraftDto>, String> {
     let root = gated_project_root(&project_root)?;
     let dir = root.join(".ccode").join("drafts");
     let rd = match fs::read_dir(&dir) {
@@ -3283,7 +3293,17 @@ pub fn discard_watch_skill_draft(project_root: String, id: String) -> Result<(),
 }
 
 #[tauri::command]
-pub fn commit_watch_skill_draft(
+pub async fn commit_watch_skill_draft(
+    project_root: String,
+    id: String,
+    draft_text: Option<String>,
+    schedule: Option<DraftScheduleInput>,
+) -> Result<ScheduleDto, String> {
+    tauri::async_runtime::spawn_blocking(move || commit_watch_skill_draft_sync(project_root, id, draft_text, schedule))
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn commit_watch_skill_draft_sync(
     project_root: String,
     id: String,
     draft_text: Option<String>,
@@ -3375,7 +3395,15 @@ pub fn commit_watch_skill_draft(
 
 /// 给已有巡检技能补分发（创建任务或改连接时）。lit-watch 不处理。
 #[tauri::command]
-pub fn ensure_schedule_skill_distributed(
+pub async fn ensure_schedule_skill_distributed(
+    skill: String,
+    profile_id: Option<String>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || ensure_schedule_skill_distributed_sync(skill, profile_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn ensure_schedule_skill_distributed_sync(
     skill: String,
     profile_id: Option<String>,
 ) -> Result<String, String> {

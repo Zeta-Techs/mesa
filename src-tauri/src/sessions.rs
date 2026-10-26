@@ -6181,7 +6181,18 @@ fn set_session_profile_at(
 }
 
 #[tauri::command]
-pub fn set_session_profile_command(
+pub async fn set_session_profile_command(
+    agent: String,
+    session_id: String,
+    profile_id: String,
+    model: Option<String>,
+    effort: Option<String>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || set_session_profile_command_sync(agent, session_id, profile_id, model, effort))
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn set_session_profile_command_sync(
     agent: String,
     session_id: String,
     profile_id: String,
@@ -7160,7 +7171,16 @@ fn pin_session_impl(agent: &str, session_id: &str, file_path: &str) -> Result<()
 }
 
 #[tauri::command]
-pub fn unpin_session(
+pub async fn unpin_session(
+    agent: String,
+    session_id: String,
+    delete_snapshot: bool,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || unpin_session_sync(agent, session_id, delete_snapshot))
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn unpin_session_sync(
     agent: String,
     session_id: String,
     delete_snapshot: bool,
@@ -7183,7 +7203,18 @@ pub fn unpin_session(
 }
 
 #[tauri::command]
-pub fn set_session_meta(
+pub async fn set_session_meta(
+    agent: String,
+    session_id: String,
+    custom_title: Option<String>,
+    tags: Vec<String>,
+    archived: bool,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || set_session_meta_sync(agent, session_id, custom_title, tags, archived))
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn set_session_meta_sync(
     agent: String,
     session_id: String,
     custom_title: Option<String>,
@@ -7371,7 +7402,16 @@ pub(crate) fn list_custom_titles_except(agent: &str, session_id: &str) -> Vec<St
 /// 会话归卡（任务卡）：写 session_meta.task_id；None 或空白 = 移出卡片。
 /// 只存 id，卡片名在列表时按项目档案卡回填（卡片改名/删除不需要回写这里）。
 #[tauri::command]
-pub fn assign_session_task(
+pub async fn assign_session_task(
+    agent: String,
+    session_id: String,
+    task_id: Option<String>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || assign_session_task_sync(agent, session_id, task_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn assign_session_task_sync(
     agent: String,
     session_id: String,
     task_id: Option<String>,
@@ -7425,7 +7465,16 @@ pub(crate) fn ensure_card_claim_table(conn: &Connection) -> Result<(), String> {
 /// 卡片发起聊天前登记认领（聊想法/开工/继续共用）；同 agent+cwd 重复登记覆盖（以最后一次发起为准）。
 /// 登记不设过期：很久之后才产生的新会话也能命中（靠 created_at 时间口径排除登记前的旧会话）。
 #[tauri::command]
-pub fn claim_next_session_for_card(
+pub async fn claim_next_session_for_card(
+    agent: String,
+    cwd: String,
+    task_id: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || claim_next_session_for_card_sync(agent, cwd, task_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn claim_next_session_for_card_sync(
     agent: String,
     cwd: String,
     task_id: String,
@@ -7524,7 +7573,16 @@ pub(crate) fn ensure_step_claim_table(conn: &Connection) -> Result<(), String> {
 /// 按步骤上下文发起会话前登记认领（「跟 AI 商量一下」共用）；同 agent+cwd 重复登记覆盖（以最后一次为准）。
 /// 登记不设过期：很久之后才产生的新会话也能命中（靠 created_at 时间口径排除登记前的旧会话）。
 #[tauri::command]
-pub fn claim_next_session_for_step(
+pub async fn claim_next_session_for_step(
+    agent: String,
+    cwd: String,
+    step_name: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || claim_next_session_for_step_sync(agent, cwd, step_name))
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn claim_next_session_for_step_sync(
     agent: String,
     cwd: String,
     step_name: String,

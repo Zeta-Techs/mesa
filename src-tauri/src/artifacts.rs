@@ -146,7 +146,12 @@ fn modified_after(path: &Path, created_at: &str) -> bool {
 }
 
 #[tauri::command]
-pub fn run_artifacts(run_id: String) -> Result<Vec<ArtifactDto>, String> {
+pub async fn run_artifacts(run_id: String) -> Result<Vec<ArtifactDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || run_artifacts_sync(run_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn run_artifacts_sync(run_id: String) -> Result<Vec<ArtifactDto>, String> {
     let run = crate::runs::run_get_sync(run_id.clone())?.ok_or("Run 不存在")?;
     let raw_root = PathBuf::from(&run.isolation_path);
     let Some(root_type) = is_safe_entry(&raw_root) else {

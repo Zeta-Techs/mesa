@@ -2400,7 +2400,12 @@ pub async fn read_project_memory(path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn read_acceptance_log(path: String) -> Result<Vec<AcceptanceLogEntry>, String> {
+pub async fn read_acceptance_log(path: String) -> Result<Vec<AcceptanceLogEntry>, String> {
+    tauri::async_runtime::spawn_blocking(move || read_acceptance_log_sync(path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn read_acceptance_log_sync(path: String) -> Result<Vec<AcceptanceLogEntry>, String> {
     let root = PathBuf::from(crate::sessions::expand_tilde(&path));
     Ok(read_acceptance_log_at(&root))
 }
@@ -2506,7 +2511,12 @@ pub(crate) fn append_acceptance_log_at(
 }
 
 #[tauri::command]
-pub fn read_project_status(path: String) -> Result<ProjectStatusDto, String> {
+pub async fn read_project_status(path: String) -> Result<ProjectStatusDto, String> {
+    tauri::async_runtime::spawn_blocking(move || read_project_status_sync(path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn read_project_status_sync(path: String) -> Result<ProjectStatusDto, String> {
     let root = PathBuf::from(crate::sessions::expand_tilde(&path));
     // 项目打开时回放流程期间暂缓的 PDF 资源登记（幂等 best-effort）
     crate::lit_watch::replay_pending_registrations(&root);

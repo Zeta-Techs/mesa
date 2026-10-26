@@ -128,7 +128,12 @@ pub(crate) fn get_custom_runtime(id: &str) -> Result<CustomRuntimeDto, String> {
 }
 
 #[tauri::command]
-pub fn list_custom_runtimes() -> Result<Vec<CustomRuntimeDto>, String> {
+pub async fn list_custom_runtimes() -> Result<Vec<CustomRuntimeDto>, String> {
+    tauri::async_runtime::spawn_blocking(list_custom_runtimes_sync)
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn list_custom_runtimes_sync() -> Result<Vec<CustomRuntimeDto>, String> {
     let conn = crate::sessions::open_db()?;
     ensure_schema(&conn)?;
     let mut stmt = conn
@@ -144,7 +149,19 @@ pub fn list_custom_runtimes() -> Result<Vec<CustomRuntimeDto>, String> {
 }
 
 #[tauri::command]
-pub fn save_custom_runtime(
+pub async fn save_custom_runtime(
+    id: Option<String>,
+    name: String,
+    command: String,
+    args: Vec<String>,
+    env: Option<HashMap<String, String>>,
+    cwd: Option<String>,
+) -> Result<CustomRuntimeDto, String> {
+    tauri::async_runtime::spawn_blocking(move || save_custom_runtime_sync(id, name, command, args, env, cwd))
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn save_custom_runtime_sync(
     id: Option<String>,
     name: String,
     command: String,
@@ -214,7 +231,12 @@ fn is_valid_env_key(key: &str) -> bool {
 }
 
 #[tauri::command]
-pub fn delete_custom_runtime(id: String) -> Result<(), String> {
+pub async fn delete_custom_runtime(id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || delete_custom_runtime_sync(id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn delete_custom_runtime_sync(id: String) -> Result<(), String> {
     let conn = crate::sessions::open_db()?;
     ensure_schema(&conn)?;
     conn.execute("DELETE FROM custom_runtimes WHERE id=?1", params![id])

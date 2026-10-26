@@ -1569,7 +1569,17 @@ fn normalize_goal_skills(skills: &[String]) -> Vec<String> {
 }
 
 #[tauri::command]
-pub fn task_set_launch(
+pub async fn task_set_launch(
+    id: String,
+    agent: Option<String>,
+    profile_id: Option<String>,
+    model: Option<String>,
+) -> Result<TaskDto, String> {
+    tauri::async_runtime::spawn_blocking(move || task_set_launch_sync(id, agent, profile_id, model))
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn task_set_launch_sync(
     id: String,
     agent: Option<String>,
     profile_id: Option<String>,
@@ -1596,7 +1606,12 @@ pub fn task_set_launch(
 }
 
 #[tauri::command]
-pub fn task_create(input: CreateTaskInput) -> Result<TaskDto, String> {
+pub async fn task_create(input: CreateTaskInput) -> Result<TaskDto, String> {
+    tauri::async_runtime::spawn_blocking(move || task_create_sync(input))
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn task_create_sync(input: CreateTaskInput) -> Result<TaskDto, String> {
     let root = validate_existing_dir(&input.project_root, "项目根目录")?;
     if !matches!(input.kind.as_str(), "free_research" | "office_doc") {
         return Err("这里只能创建科研或工作目标".into());
@@ -1745,7 +1760,12 @@ fn apply_task_update(conn: &Connection, id: &str, edit: GoalEdit) -> Result<(), 
 }
 
 #[tauri::command]
-pub fn task_update(input: UpdateTaskInput) -> Result<TaskDto, String> {
+pub async fn task_update(input: UpdateTaskInput) -> Result<TaskDto, String> {
+    tauri::async_runtime::spawn_blocking(move || task_update_sync(input))
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn task_update_sync(input: UpdateTaskInput) -> Result<TaskDto, String> {
     let conn = db()?;
     let task = task_by_id(&conn, &input.id)?;
     let root = task
@@ -2849,13 +2869,23 @@ fn unarchive_goal_at(conn: &Connection, id: &str) -> Result<TaskDto, String> {
 }
 
 #[tauri::command]
-pub fn task_delete(id: String) -> Result<(), String> {
+pub async fn task_delete(id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || task_delete_sync(id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn task_delete_sync(id: String) -> Result<(), String> {
     let _lock = goal_storage::lock_task(&id)?;
     archive_goal_at(&db()?, &id)
 }
 
 #[tauri::command]
-pub fn task_unarchive(id: String) -> Result<TaskDto, String> {
+pub async fn task_unarchive(id: String) -> Result<TaskDto, String> {
+    tauri::async_runtime::spawn_blocking(move || task_unarchive_sync(id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn task_unarchive_sync(id: String) -> Result<TaskDto, String> {
     let _lock = goal_storage::lock_task(&id)?;
     unarchive_goal_at(&db()?, &id)
 }
@@ -2937,13 +2967,23 @@ fn purge_archived_goal_at(conn: &Connection, id: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn task_purge_archived(id: String) -> Result<(), String> {
+pub async fn task_purge_archived(id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || task_purge_archived_sync(id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn task_purge_archived_sync(id: String) -> Result<(), String> {
     let _lock = goal_storage::lock_task(&id)?;
     purge_archived_goal_at(&db()?, &id)
 }
 
 #[tauri::command]
-pub fn task_get(id: String) -> Result<Option<TaskDto>, String> {
+pub async fn task_get(id: String) -> Result<Option<TaskDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || task_get_sync(id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn task_get_sync(id: String) -> Result<Option<TaskDto>, String> {
     let conn = db()?;
     let task = conn
         .query_row(
@@ -3661,7 +3701,12 @@ fn map_run_event(r: &rusqlite::Row<'_>) -> rusqlite::Result<RunEventDto> {
 }
 
 #[tauri::command]
-pub fn run_events(id: String) -> Result<Vec<RunEventDto>, String> {
+pub async fn run_events(id: String) -> Result<Vec<RunEventDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || run_events_sync(id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn run_events_sync(id: String) -> Result<Vec<RunEventDto>, String> {
     let conn = db()?;
     let mut stmt = conn.prepare("SELECT id,run_id,event_type,payload,created_at FROM run_events WHERE run_id=?1 ORDER BY rowid").map_err(|e| e.to_string())?;
     let rows = stmt
@@ -3671,7 +3716,12 @@ pub fn run_events(id: String) -> Result<Vec<RunEventDto>, String> {
 }
 
 #[tauri::command]
-pub fn task_goal_events(project_root: Option<String>) -> Result<Vec<RunEventDto>, String> {
+pub async fn task_goal_events(project_root: Option<String>) -> Result<Vec<RunEventDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || task_goal_events_sync(project_root))
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn task_goal_events_sync(project_root: Option<String>) -> Result<Vec<RunEventDto>, String> {
     let conn = db()?;
     let sql_base = "SELECT e.id, e.run_id, e.event_type, e.payload, e.created_at
              FROM run_events e
@@ -3756,7 +3806,12 @@ fn reconcile_ids(conn: &Connection, dir: &Path, ids: &[String]) -> Result<usize,
 }
 
 #[tauri::command]
-pub fn run_open(input: OpenRunInput) -> Result<RunDto, String> {
+pub async fn run_open(input: OpenRunInput) -> Result<RunDto, String> {
+    tauri::async_runtime::spawn_blocking(move || run_open_sync(input))
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn run_open_sync(input: OpenRunInput) -> Result<RunDto, String> {
     open_run_impl(input)
 }
 // 前端轮询 / 页面挂载时调：开库要等文件锁，放后台线程，不和终端输出抢主线程（Rust 内部调用走 *_sync）
@@ -3887,7 +3942,12 @@ pub async fn active_background_runs() -> Result<Vec<RunDto>, String> {
 }
 
 #[tauri::command]
-pub fn run_cancel(id: String) -> Result<(), String> {
+pub async fn run_cancel(id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || run_cancel_sync(id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn run_cancel_sync(id: String) -> Result<(), String> {
     let run = run_get_sync(id.clone())?.ok_or("Run 不存在")?;
     if run.runtime != "headless" {
         return Err("交互终端请使用终端停止按钮".into());
@@ -3918,7 +3978,12 @@ pub async fn run_close(
     .map_err(|e| format!("结束运行失败: {e}"))?
 }
 #[tauri::command]
-pub fn run_attach_session(id: String, session_id: String) -> Result<(), String> {
+pub async fn run_attach_session(id: String, session_id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || run_attach_session_sync(id, session_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn run_attach_session_sync(id: String, session_id: String) -> Result<(), String> {
     attach_session_impl(&id, &session_id)
 }
 
@@ -3998,7 +4063,17 @@ pub fn open_headless_with_root(
     })
 }
 #[tauri::command]
-pub fn run_open_custom(
+pub async fn run_open_custom(
+    cwd: String,
+    reuse_key: String,
+    run_id: Option<String>,
+    custom_runtime_id: Option<String>,
+) -> Result<RunDto, String> {
+    tauri::async_runtime::spawn_blocking(move || run_open_custom_sync(cwd, reuse_key, run_id, custom_runtime_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn run_open_custom_sync(
     cwd: String,
     reuse_key: String,
     run_id: Option<String>,

@@ -39,7 +39,12 @@ pub struct HandoffTargetDto {
 
 /// 接力目标清单：九 CLI 全量返回，前端按 installed/prompt_supported 排序与标注
 #[tauri::command]
-pub fn handoff_targets() -> Vec<HandoffTargetDto> {
+pub async fn handoff_targets() -> Result<Vec<HandoffTargetDto>, String> {
+    tauri::async_runtime::spawn_blocking(handoff_targets_sync)
+        .await
+        .map_err(|e| e.to_string())
+}
+fn handoff_targets_sync() -> Vec<HandoffTargetDto> {
     agent_specs::all_agent_specs()
         .iter()
         .map(|spec| HandoffTargetDto {
@@ -643,7 +648,17 @@ fn mark_handoff_at(
 
 /// 发起接力时登记：目标 agent + 目录 ← 来源 agent + 会话
 #[tauri::command]
-pub fn mark_handoff(
+pub async fn mark_handoff(
+    target_agent: String,
+    target_cwd: String,
+    from_agent: String,
+    from_session_id: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || mark_handoff_sync(target_agent, target_cwd, from_agent, from_session_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+fn mark_handoff_sync(
     target_agent: String,
     target_cwd: String,
     from_agent: String,
@@ -1183,7 +1198,7 @@ mod tests {
     /// 接力目标清单覆盖九 CLI，目前仅 kimi 标注需手动注入
     #[test]
     fn handoff_targets_cover_registry() {
-        let targets = handoff_targets();
+        let targets = handoff_targets_sync();
         assert_eq!(targets.len(), 9);
         let manual: Vec<&str> = targets
             .iter()

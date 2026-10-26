@@ -148,7 +148,12 @@ pub struct FontStatusDto {
 }
 
 #[tauri::command]
-pub fn font_status() -> Vec<FontStatusDto> {
+pub async fn font_status() -> Result<Vec<FontStatusDto>, String> {
+    tauri::async_runtime::spawn_blocking(font_status_sync)
+        .await
+        .map_err(|e| e.to_string())
+}
+fn font_status_sync() -> Vec<FontStatusDto> {
     FONT_SPECS
         .iter()
         .map(|s| FontStatusDto {

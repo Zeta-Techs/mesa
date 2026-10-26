@@ -2154,8 +2154,9 @@ mod tests {
     #[test]
     fn waiting_commands_stay_off_main_thread() {
         // 不带 async 的 Tauri 命令跑在主线程上。这几个会等子进程 / 外部应用 / 回收站或冻结快照，
-        // 改回同步，等待期间所有终端的输出和按键都会停住（conventions/terminal.md「会等待的命令不占主线程」）
-        let sources: [(&str, &str, &[&str]); 5] = [
+        // 改回同步，等待期间所有终端的输出和按键都会停住（conventions/terminal.md「会等待的命令不占主线程」）。
+        // 写 app.db 的命令同理：后台在写库时主线程最多等满 busy_timeout
+        let sources: [(&str, &str, &[&str]); 13] = [
             (
                 "pty.rs",
                 include_str!("pty.rs"),
@@ -2169,14 +2170,68 @@ mod tests {
             (
                 "runs.rs",
                 include_str!("runs.rs"),
-                &["run_close", "run_get", "run_list", "task_list"],
+                &[
+                    "run_close",
+                    "run_get",
+                    "run_list",
+                    "task_list",
+                    "task_set_launch",
+                    "task_create",
+                    "task_update",
+                    "task_delete",
+                    "task_unarchive",
+                    "task_purge_archived",
+                    "task_get",
+                    "run_events",
+                    "task_goal_events",
+                    "run_open",
+                    "run_cancel",
+                    "run_attach_session",
+                    "run_open_custom",
+                ],
             ),
             (
                 "scheduler.rs",
                 include_str!("scheduler.rs"),
-                &["delete_schedule", "schedule_run_delete", "adopt_watch_run", "list_schedules"],
+                &[
+                    "delete_schedule",
+                    "schedule_run_delete",
+                    "adopt_watch_run",
+                    "list_schedules",
+                    "cancel_schedule_run",
+                    "commit_watch_skill_draft",
+                    "ensure_schedule_skill_distributed",
+                    "list_watch_skill_drafts",
+                ],
             ),
             ("clipboard.rs", include_str!("clipboard.rs"), &["save_clipboard_image"]),
+            (
+                "sessions.rs",
+                include_str!("sessions.rs"),
+                &[
+                    "set_session_profile_command",
+                    "unpin_session",
+                    "set_session_meta",
+                    "assign_session_task",
+                    "claim_next_session_for_card",
+                    "claim_next_session_for_step",
+                ],
+            ),
+            ("handoff.rs", include_str!("handoff.rs"), &["handoff_targets", "mark_handoff"]),
+            (
+                "custom_runtime.rs",
+                include_str!("custom_runtime.rs"),
+                &["list_custom_runtimes", "save_custom_runtime", "delete_custom_runtime"],
+            ),
+            ("profiles.rs", include_str!("profiles.rs"), &["profile_usage_refs"]),
+            ("model_registry.rs", include_str!("model_registry.rs"), &["model_db_status"]),
+            (
+                "projects.rs",
+                include_str!("projects.rs"),
+                &["read_project_status", "read_acceptance_log"],
+            ),
+            ("artifacts.rs", include_str!("artifacts.rs"), &["run_artifacts"]),
+            ("fonts.rs", include_str!("fonts.rs"), &["font_status"]),
         ];
         for (file, source, commands) in sources {
             let source = source.replace("\r\n", "\n");
