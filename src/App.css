@@ -1247,6 +1247,34 @@ html[data-material="none"] .ccode-app-rail .bg-rail-sel {
   animation: ccode-pop 150ms var(--ccode-motion-ease);
 }
 
+/* 深色右键 / ⋯ 菜单（ContextMenu）照系统菜单做成半透明磨砂：侧栏是透出桌面的玻璃，实心 raised 菜单压在上面
+   读作一块黑（2026-10-27 用户截图，蓝色壁纸下最明显）。底色留 raised 64%，压在侧栏上透出的是同一块桌面材质，
+   压在主画布上由 backdrop-filter 模糊背后的字；模糊放 ::before（Windows 同层模糊会把菜单字一起栅格化发糊，
+   见 .ccode-nav-island）。描边提到白 14%，菜单边界不靠底色深浅撑。浅色、降低透明度时仍是实心 raised。 */
+.ccode-app-shell[data-chrome="dark"] .ccode-menu-surface {
+  isolation: isolate;
+  background-color: color-mix(in srgb, var(--color-raised) 64%, transparent);
+  border-color: rgb(255 255 255 / 0.14);
+}
+.ccode-app-shell[data-chrome="dark"] .ccode-menu-surface::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  backdrop-filter: blur(24px) saturate(160%);
+  pointer-events: none;
+}
+@media (prefers-reduced-transparency: reduce) {
+  .ccode-app-shell[data-chrome="dark"] .ccode-menu-surface {
+    background-color: var(--color-raised);
+  }
+  .ccode-app-shell[data-chrome="dark"] .ccode-menu-surface::before {
+    content: none;
+  }
+}
+
 /* 侧栏底部那一排的抽屉（App 资源与管理段）：宽度从一个 › 滑到三个图标（200ms），图标依次淡入右移、› 淡出；
    收回时不排队、同时退。缓动同全站 --ccode-motion-ease；减弱动态效果时直接切换 */
 .ccode-rail-drawer,
