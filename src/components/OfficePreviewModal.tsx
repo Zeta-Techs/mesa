@@ -1,5 +1,5 @@
 import { sanitizeDocumentHtml } from "../document-html";
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { invoke } from "@tauri-apps/api/core";
 import { renderMarkdownDocument, splitMdFrontmatter, type MdFrontmatter } from "../md-render";
@@ -10,16 +10,19 @@ import { hydrateMdImages } from "../md-image-hydrate";
 import { renderMathInto } from "../md-math";
 import { rewriteMdImageHtml } from "../reader";
 import { officePreviewMode } from "../work-mode";
-import { rowActionClass, InlineNotice } from "./PageFrame";
+import { rowActionClass, InlineNotice, LoadingRows } from "./PageFrame";
 import { Modal } from "./Modal";
-import PdfContinuousView from "./PdfContinuousView";
-import DocxPreview from "./DocxPreview";
-import XlsxPreview from "./XlsxPreview";
-import ImagePreview from "./ImagePreview";
-import SlidesPreview from "./SlidesPreview";
-import MediaPreview from "./MediaPreview";
-import UnsupportedPreview from "./UnsupportedPreview";
 import { projectFilePreviewKind } from "../project-files";
+
+// 各类预览按需加载：本弹层经「从手机添加」挂在 App 上，静态引入会把 pdfjs、mammoth（连 jszip 等）
+// 一起拉进启动包（2026-10-26 实测入口包里 pdfjs 一家 827K）
+const PdfContinuousView = lazy(() => import("./PdfContinuousView"));
+const DocxPreview = lazy(() => import("./DocxPreview"));
+const XlsxPreview = lazy(() => import("./XlsxPreview"));
+const ImagePreview = lazy(() => import("./ImagePreview"));
+const SlidesPreview = lazy(() => import("./SlidesPreview"));
+const MediaPreview = lazy(() => import("./MediaPreview"));
+const UnsupportedPreview = lazy(() => import("./UnsupportedPreview"));
 
 export default function OfficePreviewModal({
   path,
@@ -239,7 +242,7 @@ export default function OfficePreviewModal({
           }
         >
           {truncated && <InlineNotice tone="warn" className="mb-2">只显示文件前半部分，不能据此确认完整内容。</InlineNotice>}
-          {body}
+          <Suspense fallback={<LoadingRows />}>{body}</Suspense>
         </div>
         <div
           className={`flex shrink-0 justify-end gap-2 ${

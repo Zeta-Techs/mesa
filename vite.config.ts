@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { Plugin as EsbuildPlugin } from "esbuild";
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig, type Plugin, type Rollup } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
@@ -54,6 +54,44 @@ function monacoClipboardCancelEsbuildPlugin(): EsbuildPlugin {
   };
 }
 
+/**
+ * 启动包守卫（2026-10-26）：入口连同它静态引入的块里不得出现 monaco / mermaid / xterm / pdfjs / mammoth / xlsx。
+ * 回退过两次（v1.6 首屏 224KB → 2026-10 约 8MB）：manualChunks 把共用小件收进大 vendor 块、
+ * 挂在 App 上的弹层静态引了预览组件。出现就让构建失败，改成懒加载再提交。
+ */
+function entryGuardPlugin(): Plugin {
+  const heavyChunk = /(^|\/)(monaco|mermaid|xterm)-[^/]*\.js$/;
+  const heavyModule = /node_modules\/(monaco-editor|mermaid|@xterm|pdfjs-dist|mammoth|xlsx)\//;
+  return {
+    name: "entry-guard",
+    apply: "build",
+    generateBundle(_options, bundle) {
+      const entry = Object.values(bundle).find(
+        (c): c is Rollup.OutputChunk => c.type === "chunk" && c.isEntry,
+      );
+      if (!entry) return;
+      const seen = new Set<string>();
+      const stack = [entry.fileName];
+      while (stack.length) {
+        const file = stack.pop()!;
+        if (seen.has(file)) continue;
+        seen.add(file);
+        const chunk = bundle[file];
+        if (chunk?.type === "chunk") stack.push(...chunk.imports);
+      }
+      const bad = [...seen].flatMap((file) => {
+        const chunk = bundle[file];
+        if (chunk?.type !== "chunk") return [];
+        if (heavyChunk.test(file)) return [file];
+        return Object.keys(chunk.modules).filter((id) => heavyModule.test(id));
+      });
+      if (bad.length) {
+        this.error(`启动包静态带上了大依赖（应懒加载）：\n  ${bad.slice(0, 8).join("\n  ")}`);
+      }
+    },
+  };
+}
+
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 // 工作区（git worktree）或第二 clone 里跑第二个实例时，用注入的 CCODE_PORT 避免与主实例撞端口
@@ -66,7 +104,7 @@ const port = Number(process.env.CCODE_PORT ?? 17575);
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-  plugins: [react(), tailwindcss(), monacoClipboardCancelPlugin()],
+  plugins: [react(), tailwindcss(), monacoClipboardCancelPlugin(), entryGuardPlugin()],
   optimizeDeps: {
     esbuildOptions: {
       plugins: [monacoClipboardCancelEsbuildPlugin()],
@@ -79,7 +117,12 @@ export default defineConfig(async () => ({
         // 大依赖拆独立 vendor chunk：首屏只载 react + 当前页，
         // xterm 随终端页懒加载，monaco 随文件预览懒加载
         manualChunks(id: string) {
+          // 入口和懒加载块都要用的小件单独成块：manualChunks 会把大 vendor 块的依赖一起收进去，
+          // 入口为了 __vitePreload 静态带上整个 monaco、为了 dompurify 带上整个 mermaid
+          //（2026-10-26 实测启动时多载约 6.5MB，见 architecture §10 当日「操作流畅性一批」）
+          if (id.includes("vite/preload-helper") || id.includes("commonjsHelpers")) return "runtime";
           if (!id.includes("node_modules")) return undefined;
+          if (id.includes("node_modules/dompurify/")) return "dompurify";
           if (/node_modules\/(react|react-dom|scheduler)\//.test(id)) return "react";
           if (id.includes("node_modules/@xterm/")) return "xterm";
           if (id.includes("node_modules/monaco-editor/")) {

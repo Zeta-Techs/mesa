@@ -111,6 +111,7 @@ import { phonePendingCount } from "./phone-drop";
 import { toast } from "./toast";
 import { formatUiZoom, normalizeUiZoom, stepUiZoom, uiZoomKeyDirection, UI_ZOOM_DEFAULT } from "./ui-zoom";
 import { isCancellationRejection } from "./diagnostics";
+import { browserIdleScheduler, preloadInIdle } from "./idle-preload";
 
 // 页面懒加载：首屏只拉当前页 chunk，其余页首次访问时才加载
 const ProfilesPage = lazy(() => import("./pages/ProfilesPage"));
@@ -122,6 +123,13 @@ const StatsPage = lazy(() => import("./pages/StatsPage"));
 const TerminalPage = lazy(() => import("./pages/TerminalPage"));
 const WorkspacesPage = lazy(() => import("./pages/WorkspacesPage"));
 const WorkbenchPage = lazy(() => import("./pages/WorkbenchPage"));
+// 启动后空闲时依次先载进来的大块（idle-preload.ts）：运行页、项目页最常去，文件预览编辑器（monaco）与 PDF 阅读第一次打开最慢
+const IDLE_PRELOADS = [
+  () => import("./pages/TerminalPage"),
+  () => import("./pages/WorkspacesPage"),
+  () => import("./components/FilePreviewEditor"),
+  () => import("./components/PdfContinuousView"),
+];
 
 function PageLoading() {
   return (
@@ -403,6 +411,17 @@ function App() {
   // 「在看」= 在运行页、是正看着的那段、Mesa 在前台；切回前台的那一下也要再算一次
   const terminalActiveTabId = useAppStore((s) => s.terminalActiveTabId);
   const [appInFront, setAppInFront] = useState(() => document.hasFocus());
+  useEffect(() => {
+    // 等启动时的数据加载先过去，再趁空闲一块一块载
+    let stop: (() => void) | null = null;
+    const timer = window.setTimeout(() => {
+      stop = preloadInIdle(IDLE_PRELOADS, browserIdleScheduler());
+    }, 2000);
+    return () => {
+      window.clearTimeout(timer);
+      stop?.();
+    };
+  }, []);
   useEffect(() => {
     const sync = () => setAppInFront(document.hasFocus() && document.visibilityState === "visible");
     window.addEventListener("focus", sync);

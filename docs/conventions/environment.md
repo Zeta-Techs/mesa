@@ -142,6 +142,11 @@
   **卸掉 conda 版 quarto 后要从新终端重启 Mesa**：conda 的激活脚本导出过 `QUARTO_SHARE_PATH`、`QUARTO_DENO`
   等十来个变量，卸载后已经在跑的进程（`tauri dev` 和它拉起的 Mesa、Mesa 里开的终端与 Agent）仍带着，官方版
   quarto 认这些变量，`--version` 读不到、渲染也会失败。依赖体检会点名这些残留变量（`dep_check::stale_quarto_env`）。
+- **启动包守卫（2026-10-26）**：`vite build` 里的 `entryGuardPlugin`（vite.config.ts）检查入口连同它静态引入的块，出现
+  monaco / mermaid / xterm / pdfjs / mammoth / xlsx 就让构建失败。报错时别加白名单：找到那条静态引用改成 `lazy` / 动态 `import()`。
+  `manualChunks` 新增大 vendor 块时，入口也要用的小件（`vite/preload-helper`、`dompurify` 这类）先单独成块，否则会被收进大块、
+  入口为一个小函数静态带上整块（当日实证：入口为 `__vitePreload` 带上 3.9MB monaco、为 dompurify 带上 2.6MB mermaid）。
+  挂在 App 上的弹层（如「从手机添加」→ 文件预览弹层）里的预览组件一律懒加载。
 - **dev 端口为 17575**（`vite.config.ts` + `tauri.conf.json` devUrl 两处同步；勿改回 1420——Codex 桌面版 NetworkService 占用）。vite 撞已占端口静默退出；**stdin EOF 也自杀**——后台拉起必须 `tail -f /dev/null | npm run tauri:dev`。
   **agent 不得自行改端口、加 `--port`/`--strictPort` 参数或另起配置外的 dev 实例**；17575 被占时先报出占用方（Windows 用
   `netstat -ano | findstr :17575`）交用户处理，不静默换端口。
