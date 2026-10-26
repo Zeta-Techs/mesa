@@ -20,6 +20,9 @@ test("用鼠标关对话：时间窗里第 2 次才算（2026-10-27）", () => {
   r = noteRepeat(r.at, 500, 1000);
   assert.equal(r.hit, true);
   assert.equal(noteRepeat([0], 1000, 1000).hit, false, "满窗口的不算");
+  // 聊天 ↔ 终端：去、回还不算，再去才算
+  assert.equal(noteRepeat([0], 10, 1000, 3).hit, false);
+  assert.equal(noteRepeat([0, 10], 20, 1000, 3).hit, true);
 });
 
 test("来回点两段对话：A → B → A → B 时报出刚离开的那段，别的走法不报（2026-10-27）", () => {

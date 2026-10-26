@@ -61,7 +61,7 @@ import { RUN_CARET_LABEL, strongestCaret, withUnread } from "../run-caret";
 import { unreadKeyOf } from "../chat-unread";
 import RenameProjectModal from "./RenameProjectModal";
 import CoachTip, { showFloatingCoach } from "./CoachTip";
-import { noteMouseCloseChat } from "./close-chat-nudge";
+import { noteMouseCloseChat } from "./shortcut-nudges";
 import { toast } from "../toast";
 import { AGENTS, type ProjectDto, type SessionMetaDto, type WorkspaceDto } from "../types";
 import {

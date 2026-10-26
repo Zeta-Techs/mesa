@@ -13,6 +13,8 @@ export const COACH_TIP_KEYS = {
   switchBack: "ccode.coachSwitchBackSeen",
   /** 用鼠标关对话时提醒 ⌘W / Ctrl+Shift+W */
   closeKey: "ccode.coachCloseKeySeen",
+  /** 用右上角 >_ 在聊天和终端之间来回切时提醒快捷键（默认 ⌘⇧T / Ctrl+Shift+T，设置页可改） */
+  surfaceKey: "ccode.coachSurfaceKeySeen",
 } as const;
 export type CoachTipId = keyof typeof COACH_TIP_KEYS;
 
@@ -46,12 +48,20 @@ export function markCoachTipShown(id: CoachTipId, followUp = false) {
   if (!followUp) shownThisLaunch = true;
 }
 
-/** 同一件事在 windowMs 里做到第 2 次（用鼠标关对话之类） */
-export function noteRepeat(prev: readonly number[], now: number, windowMs: number): { at: number[]; hit: boolean } {
+/** 同一件事在 windowMs 里做到第 times 次（用鼠标关对话之类） */
+export function noteRepeat(
+  prev: readonly number[],
+  now: number,
+  windowMs: number,
+  times = 2,
+): { at: number[]; hit: boolean } {
   const at = [...prev.filter((t) => now - t < windowMs), now];
-  return { at, hit: at.length >= 2 };
+  return { at, hit: at.length >= times };
 }
 export const CLOSE_KEY_WINDOW_MS = 5 * 60_000;
+/** 聊天 ↔ 终端：去、回、再去（点到第 3 下）才算来回切，只看一眼终端不算 */
+export const SURFACE_KEY_WINDOW_MS = 5 * 60_000;
+export const SURFACE_KEY_TIMES = 3;
 
 export const PICK_NUDGE_WINDOW_MS = 60_000;
 export type SingleAct = { kind: "archive" | "pin"; at: number };

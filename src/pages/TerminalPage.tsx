@@ -114,7 +114,7 @@ import { exitCodeClause, exitCodeSummary, exitToneClass } from "../exit-code";
 import ChatSurface from "../components/ChatSurface";
 import { confirmDialog, alertDialog, confirmDialogOpen } from "../components/ConfirmDialog";
 import { markCoachTipSeen } from "../coach-tips";
-import { noteMouseCloseChat } from "../components/close-chat-nudge";
+import { noteMouseCloseChat, noteMouseToggleSurface } from "../components/shortcut-nudges";
 import ContextMenu from "../components/ContextMenu";
 import InsertMenuItems from "../components/InsertMenuItems";
 import {
@@ -9947,6 +9947,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       // 切回聊天时光标还在被盖住的终端里，接着打的字会进 PTY：先放掉，聊天输入框随后自己要焦点
       const el = document.activeElement;
       if (el instanceof HTMLElement && el.closest(".xterm")) el.blur();
+      markCoachTipSeen("surfaceKey");
       toggleSurfaceRef.current("hotkey");
     };
     window.addEventListener("keydown", onKey, true);
@@ -10278,7 +10279,11 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           <span className="ml-auto flex shrink-0 items-center gap-1">
             <button
               type="button"
-              onClick={() => toggleSurface("tab-bar")}
+              onClick={(e) => {
+                // 用鼠标来回切到第 3 下时提醒快捷键（shortcut-nudges.tsx）：挂在按钮下面
+                noteMouseToggleSurface(e.currentTarget.getBoundingClientRect(), toggleSurfaceCombo);
+                toggleSurface("tab-bar");
+              }}
               aria-pressed={focusedSurfaceMode !== "chat"}
               title={`${focusedSurfaceMode === "chat" ? "看这段对话的终端" : "回到聊天"}${
                 toggleSurfaceCombo ? `（${comboLabel(toggleSurfaceCombo)}）` : ""
@@ -10409,7 +10414,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                   hint: comboLabel(closeChatCombo(IS_MAC)),
                   title: "停下这段对话的 Agent、收起它；记录还在侧栏，再点开发一句就接回（在干活或等你确认的会先问你）",
                   onSelect: () => {
-                    // 用鼠标关到第 2 段时提醒快捷键（close-chat-nudge.tsx）：挂在 ⋯ 下面
+                    // 用鼠标关到第 2 段时提醒快捷键（shortcut-nudges.tsx）：挂在 ⋯ 下面
                     noteMouseCloseChat(
                       { left: headMenu.x - 28, right: headMenu.x, top: headMenu.y - 32, bottom: headMenu.y - 4 },
                       "below",
