@@ -82,7 +82,11 @@ export default function ChatMarkdown({
 }) {
   const sections = useMemo(() => splitReplySections(text), [text]);
   const audios = useMemo(() => mentionedAudioFiles(text), [text]);
-  const images = useMemo(() => mentionedImageFiles(text), [text]);
+  // 内嵌的图与正文里提到的路径按会话目录解析后再比：一边写相对路径、一边写绝对路径也认得出是同一张
+  const images = useMemo(
+    () => mentionedImageFiles(text, (p) => (p.startsWith("~") || !cwd ? p.replace(/\\/g, "/") : resolveMdPath(`${cwd}/_`, p))),
+    [text, cwd],
+  );
   // 默认全部展开、点小节标题收起：原先只开第一节，长回答大半被藏在一串标题后面，
   // 读起来像内容丢了（2026-10-17 用户截图）
   const [closedSections, setClosedSections] = useState<Set<number>>(() => new Set());

@@ -91,18 +91,38 @@ const IMAGE_EXT = /\.(?:png|jpe?g|gif|webp|svg)$/i;
 /**
  * 回复里提到的本机图片（2026-10-25 用户：出图后聊天里只有一串路径，看不到图）：切词口径同 mentionedAudioFiles，
  * 但只收带目录的路径（绝对、~/、含 / 或 \ 的相对路径）——裸文件名和正文短语分不开，且常和同一张图的完整路径重复。
- * `![…](…)` 已由 Markdown 就地内嵌，不再重复列。
+ * `![…](…)` 已由 Markdown 就地内嵌：它本身不列，正文别处再提到同一张图（先写一句「已生成 `x.png`」再内嵌）也不列，
+ * 否则同一张图出两张（2026-10-26 用户截图）。toKey 把路径换成比较用的键（调用方按会话目录解析成绝对路径；
+ * 默认只统一斜杠、去掉开头的 ./）
  */
-export function mentionedImageFiles(text: string): string[] {
+export function mentionedImageFiles(text: string, toKey: (path: string) => string = imagePathKey): string[] {
   const found = new Set<string>();
+  const embedded = new Set<string>();
+  const key = (path: string) => {
+    try {
+      return toKey(decodeURI(path));
+    } catch {
+      // 不是合法的 %xx 编码：按原样比
+      return toKey(path);
+    }
+  };
+  for (const m of text.matchAll(/!\[[^\]]*\]\(\s*(?:<([^>]*)>|([^)\s]+))[^)]*\)/g)) {
+    const dest = (m[1] ?? m[2] ?? "").trim();
+    if (dest) embedded.add(key(dest));
+  }
   const plain = text.replace(/!\[[^\]]*\]\([^)]*\)/g, " ");
   for (const raw of plain.split(/[\s`'"()（）<>[\]，。；：！？、「」]+/)) {
     const token = raw.replace(/^[*_]+/, "").replace(/[*_.,;:!?]+$/, "");
     if (!token || token.includes("://") || !IMAGE_EXT.test(token)) continue;
     if (!/[\\/]/.test(token)) continue;
+    if (embedded.has(key(token))) continue;
     found.add(token);
   }
   return [...found];
+}
+
+function imagePathKey(path: string): string {
+  return path.replace(/\\/g, "/").replace(/^(?:\.\/)+/, "");
 }
 
 /**
