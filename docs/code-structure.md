@@ -1243,7 +1243,7 @@ src-tauri/src/
                              #   （message/tool_name/title 尽力而为），聊天层审批卡片用；
                              # 2026-10-20：hook 命令整行一次写入、记 CCODE_TAB_ID（日志第二段，旧格式照读）、payload 截 64KB
                              # 2026-10-20 二：Windows 上每次启动注入的两家（Claude / CodeBuddy）有原生 hook 程序就用它——
-                             #   native_hook_exe 找随包的 mesa_helper（hook 模式，开发态在 target/debug/deps/），试跑 --probe 确认；
+                             #   native_hook_exe 找随包的 mesa_helper（hook 模式，经 image_gen::find_bundled_helper，开发态在 target/debug/deps/），试跑 --probe 确认；
                              #   找到就同步跑（launch_hooks_async 返回 false），找不到照旧 PowerShell 脚本 + 后台；写全局配置的三家
                              #   用 global_hook_command：helper 拷成 hooks-state/ccode-hook.exe、路径不加引号（三种宿主都认），不行退回 .ps1
                              #   （PostToolUse 2KB，截断按字段名兜底）；launch_hooks_value = Claude / CodeBuddy 每次启动注入的 hooks；
@@ -1523,6 +1523,7 @@ src-tauri/src/
                              #   OpenAI 出图接口）+ 改图 --image（Seedream 出图接口带 image / 其余 /images/edits 手拼 multipart，
                              #   不认再退带 image；Gemini inlineData）+ 设置页命令（image_gen_candidates/status/test）+ helper 入口 helper_image_cli；
                              #   红线：密钥只在本进程用、下载图片地址不带鉴权头、Target 不派生 Debug；helper_exe 试跑
-                             #   `image --probe` 通过才把路径作 MESA_IMAGE_TOOL 注入 PTY（pty.rs spawn_tracked）
+                             #   `image --probe` 通过才把路径作 MESA_IMAGE_TOOL 注入 PTY（pty.rs spawn_tracked）；
+                             #   find_bundled_helper 是随包 helper 的唯一查找口（同目录 → deps/ → 上一层），hooks 的原生 hook 也走它
   lib.rs                     # 模块与 Tauri command 注册
 ```

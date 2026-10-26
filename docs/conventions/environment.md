@@ -78,6 +78,8 @@
   - hooks 原生小程序：每次启动注入的 Claude Code / CodeBuddy 的 hook 命令用随包的 `mesa_helper hook`（~0.1 秒，PowerShell 约 1.2 秒），
     找到就同步跑；**开发态** `target/debug/mesa_helper.exe` 会被 tauri-build 的 0 字节占位反复覆盖，要用就先
     `cargo build --bin mesa_helper`（真身在 `target/debug/deps/`，`hooks::native_hook_exe` 会去那里找），没建就退回 PowerShell 脚本。
+    出图工具（`MESA_IMAGE_TOOL`）同一个 helper、同一个查找口 `image_gen::find_bundled_helper`（2026-10-26：出图曾漏找 deps/，
+    开发版设置卡一直报「没找到随包的出图工具」）；新加用 helper 的地方一律走它，不另写查找。
     写进全局配置的三家（Gemini / Kimi / Grok）用拷到 `hooks-state/ccode-hook.exe` 的那份、程序路径**不加引号、用正斜杠**——
     Gemini 在 PowerShell 里跑 hook，双引号开头的命令它不认；这种写法 cmd /s /c、powershell -Command、bash -c 都认（实测）。
     路径带空格或 `&()%` 之类就退回 `.ps1`。启动时开关已开的几家按当前该用的写法重写一次（写前备份）。
