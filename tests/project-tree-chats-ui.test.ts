@@ -736,3 +736,17 @@ test("置顶一节的对话行尾小字写它属于哪个课题（随手聊写�
     await view.close();
   }
 });
+
+test("收着的课题一行挨一行（只隔 1px），展开的那节上下留白（2026-10-27）", async () => {
+  const view = await renderTree();
+  try {
+    const rows = () => Array.from(view.host.querySelectorAll("[data-tree-row]")) as HTMLElement[];
+    const gaps = () => rows().map((r) => (/\bpt-3\b/.test(r.className) ? "gap" : /\bpt-px\b/.test(r.className) ? "tight" : "first"));
+    // 综述流程测试展开着：它后面那节留白
+    assert.deepEqual(gaps(), ["first", "gap"]);
+    await view.act(async () => view.button("收起「综述流程测试」的对话").click());
+    assert.deepEqual(gaps(), ["first", "tight"]);
+  } finally {
+    await view.close();
+  }
+});

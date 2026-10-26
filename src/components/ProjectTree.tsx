@@ -682,14 +682,15 @@ export default function ProjectTree({
       const k = pathKey(r.repoPath, IS_WINDOWS);
       if (folderOpen(k, chatOpenPrefs, currentKey)) open.push({ key: k, count: chatsByRoot.get(k)?.length ?? 0 });
     }
-    // 行高按 rem 折算（Mac 根 14px、Windows 16px）：对话行 h-8 + 1px 行距；节头 h-7 + pt-2；
-    // 每个展开的文件夹再留一行「还有 N 段」（h-6）与底边距 pb-1；三段容器各 pt-2
+    // 行高按 rem 折算（Mac 根 14px、Windows 16px）：对话行 h-8 + 1px 行距；节头 h-7，收着的之间只隔 1px，
+    // 展开的上下各留 pt-3（2026-10-27）；每个展开的文件夹再留一行「还有 N 段」（h-6）与底边距 pb-1；三段容器各 pt-2
     const rem = parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 14;
     const headers = sections.length + 1;
     // 「置顶」一节（节头 + 每段一行）也占地方，先扣掉
     const pinnedRows = pinnedList.length > 0 ? 2.25 * rem + pinnedList.length * (2 * rem + 1) : 0;
     // 「项目」标签行（mt-2 + h-7，2026-10-26 挪进滚动区）占 2.25rem，紧跟它的第一段省掉 pt-2
-    const fixed = headers * 2.25 * rem + open.length * 1.75 * rem + 1.5 * rem + pinnedRows + 1.75 * rem;
+    const fixed =
+      headers * (1.75 * rem + 1) + open.length * 3.25 * rem + 1.5 * rem + pinnedRows + 1.75 * rem;
     const slots = chatSlots({ available: listHeight, fixed, rowHeight: 2 * rem + 1 });
     const shown = chatQuotas({
       counts: open.map((o) => o.count),
@@ -1281,12 +1282,15 @@ export default function ProjectTree({
     const isSource = inSection?.key === row.key;
     const shift =
       inSection && !isSource ? tabDragShift(inSection.slots, inSection.from, inSection.target, index) : 0;
+    // 节与节之间：收着的课题一行挨一行（只隔 1px，2026-10-27 用户：收起的文件夹太高）；
+    // 自己或上一节展开着才留 pt-3，节头读作分节标题，不和上一节的对话挤成一串
+    const prevOpen = index > 0 && folderOpen(pathKey(paths[index - 1], IS_WINDOWS), chatOpenPrefs, currentKey);
+    const gap = index === 0 ? "" : open || prevOpen ? "pt-3" : "pt-px";
     return (
       <div
         key={row.key}
         data-tree-row={row.key}
         data-rail-group
-        // 节与节之间留一点白（首节除外），节头读作分节标题，不和上一节的对话挤成一串
         style={
           inSection
             ? {
@@ -1296,7 +1300,7 @@ export default function ProjectTree({
               }
             : undefined
         }
-        className={`${index > 0 ? "pt-3" : ""} ${isSource ? "relative z-10 rounded-md bg-raised" : ""}`}
+        className={`${gap} ${isSource ? "relative z-10 rounded-md bg-raised" : ""}`}
       >
         <div
           onPointerDown={(e) => onRowPointerDown(e, section, paths, row.key)}
