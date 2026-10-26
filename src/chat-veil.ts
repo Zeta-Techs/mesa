@@ -5,11 +5,12 @@ import { useEffect, useRef, useState, type RefObject } from "react";
  *
  * 在 Mesa Dev 里逐帧量过：对话第一屏贴底摆出来之后，还有好几批后到的改动——表格套壳、行内文件链接与引用胶囊
  * （要问后端）、代码高亮、公式、图片、输入框那排芯片挪进状态栏、首屏补页——贴着底时每改一次高度，上面的字就跟着挪一下。
- * 逐个堵堵不完，所以从「从没有到有」那一刻起让对话区透明，等尺寸 120ms 不再变、也没在接更早一页时再淡入，最多等 600ms。
+ * 逐个堵堵不完，所以从「从没有到有」那一刻起让对话区透明，等尺寸 90ms 不再变、也没在接更早一页时再淡入，最多等 400ms
+ * （起初 120 / 600ms；长对话改为只画视野附近之后排得快了，2026-10-26 同日收紧）。
  * 已经开着的对话切回来不会重新摆，不遮。
  */
-export const VEIL_QUIET_MS = 120;
-export const VEIL_MAX_MS = 600;
+export const VEIL_QUIET_MS = 90;
+export const VEIL_MAX_MS = 400;
 
 export function veilDecision(m: {
   elapsedMs: number;

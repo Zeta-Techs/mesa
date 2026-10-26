@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Bot,
   BookOpen,
@@ -46,6 +46,7 @@ import {
 } from "../conversation-tools";
 import { resultStatusLabel, type ActivityKind, type DiffLine } from "../tool-activity";
 import { IS_WINDOWS } from "../hotkeys";
+import { estimateSegmentHeight, useVirtualWindow } from "../virtual-window";
 
 /** 纯文本块：保留换行，超长不带空格的串（长 URL、一串 aaaa）在气泡内折行，不撑出气泡（2026-10-19 用户截图） */
 const WRAP_TEXT = "whitespace-pre-wrap [overflow-wrap:anywhere]";
@@ -748,9 +749,33 @@ export default function ConversationView({
     if (m.queued) lastQueuedIndex = i;
   });
 
+  // 长对话只画视野附近的那一段（virtual-window.ts）；每段一个根元素、key 与这里一致，量高按 key 记
+  const segments = useMemo(
+    () => groupConversationSegments(messages, { live: working, cwd: cwd ?? null, isWindows: IS_WINDOWS }),
+    [messages, working, cwd],
+  );
+  const segmentKeys = useMemo(
+    () =>
+      segments.map((seg) =>
+        seg.kind === "turn" ? `turn:${msgKey(messages[seg.start], seg.start)}` : msgKey(seg.message, seg.index),
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [segments],
+  );
+  const pinSegment =
+    focusIndex < 0
+      ? -1
+      : segments.findIndex((seg) => (seg.kind === "turn" ? segmentContainsIndex(seg, focusIndex) : seg.index === focusIndex));
+  const view = useVirtualWindow({
+    keys: segmentKeys,
+    estimate: (i) => estimateSegmentHeight(segments[i]),
+    pin: pinSegment,
+  });
+
   return (
     <>
-      {groupConversationSegments(messages, { live: working, cwd: cwd ?? null, isWindows: IS_WINDOWS }).map((seg) => {
+      {view.enabled && <div ref={view.topRef} aria-hidden="true" data-vpad="top" style={{ height: view.topPad }} />}
+      {segments.slice(view.start, view.end).map((seg) => {
         if (seg.kind === "turn") return renderTurn(seg);
         const m = seg.message;
         const mi = seg.index;
@@ -836,6 +861,9 @@ export default function ConversationView({
           </div>
         );
       })}
+      {view.enabled && (
+        <div ref={view.bottomRef} aria-hidden="true" data-vpad="bottom" style={{ height: view.bottomPad }} />
+      )}
     </>
   );
 }
