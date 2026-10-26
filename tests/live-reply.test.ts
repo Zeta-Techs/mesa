@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { claudeOutputTokens, extractLiveReply, liveReplySupported, mergeLiveReply, sentTextStuckInBox, staleEcho, terminalHasInputBox, unsyncedTail } from "../src/live-reply.ts";
+import { claudeOutputTokens, extractLiveReply, liveReplySupported, mergeLiveReply, sentTextStuckInBox, staleEcho, staleWithoutEcho, terminalHasInputBox, unsyncedTail } from "../src/live-reply.ts";
 
 const RULE = "─".repeat(100);
 // Claude Code 2.1.292 本机 PTY 实录（流式写到一半；假 API 慢速吐字）
@@ -758,6 +758,36 @@ test("staleEcho：刚发的这句还没画出来时，读到的是上一轮回�
   // 重复发同一句：认作新的；发送前屏上没有回显：不拦
   assert.equal(staleEcho(read, "  > 你好", "你好"), false);
   assert.equal(staleEcho(read, null, "讲个笑话"), false);
+});
+
+// 2026-10-26 用户 Windows 截图（Claude Code）：上一轮回复长过一屏、提问卷出去了，刚发的这句还没画出来时，
+// 预览把上一轮的后半段（「5. … 6. … 7. …」「七步全部完成」）当成了这一轮的回复
+test("staleWithoutEcho：屏上没有回显、读到的字全是发送前就在的，是上一轮的尾巴", () => {
+  const line = "─".repeat(60);
+  const box = [line, "❯ ", line, "  ? for shortcuts"];
+  const tail = [
+    "  5. 已把第 3 行的 hello 改为 hello Mesa。",
+    "  6. 读取确认：print(\"hello Mesa\", datetime.datetime.now()) 已生效。",
+    "  7. tmp.txt 已新建并删除，目录恢复为 hello.py、red.png。",
+    "",
+    "  七步全部完成 ✅",
+    "",
+  ];
+  const before = extractLiveReply([...tail, ...box], "claude-code");
+  assert.ok(before && before.echo === undefined, "上一轮的提问已经卷出屏");
+  // 刚发的这句粘在输入框里、还没交出去：对话区没变
+  const pasted = extractLiveReply([...tail, line, "❯ 请输出 1 到 60，每行一行", line, "  ? for shortcuts"], "claude-code")!;
+  assert.equal(staleWithoutEcho(pasted, before.lines), true);
+  // 交出去、往上卷了几行（回显还没画出来）：剩下的仍是旧的
+  const scrolled = extractLiveReply([...tail.slice(2), ...box], "claude-code")!;
+  assert.equal(staleWithoutEcho(scrolled, before.lines), true);
+  // 这一轮的回复一次画出来、长过一屏把回显挤出去了：有新字，照常预览
+  const fresh = extractLiveReply(["  第 58 行：天色已晚。", "  第 59 行：准备收工。", "  第 60 行：晚安。", "", ...box], "claude-code")!;
+  assert.equal(staleWithoutEcho(fresh, before.lines), false);
+  // 读到了回显的归 staleEcho 管；发送前屏上什么也读不出：不拦
+  const echoed = extractLiveReply(["❯ 请输出 1 到 60", "", ...tail, ...box], "claude-code")!;
+  assert.equal(staleWithoutEcho(echoed, before.lines), false);
+  assert.equal(staleWithoutEcho(scrolled, null), false);
 });
 
 test("刚发的这句还躺在 Claude 输入框里没交出去（2026-10-24 HER 润色：接回的会话吞了回车）", () => {

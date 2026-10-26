@@ -181,7 +181,7 @@ import { promptSuggestionSupported, readPromptSuggestion } from "../prompt-sugge
 import { lineCells } from "../screen-cells";
 import { lastContextTokens, type MesaCommand } from "../composer-assist";
 import { slashCommandsFor } from "../slash-commands";
-import { claudeOutputTokens, extractLiveReply, liveReplySupported, mergeLiveReply, sentTextStuckInBox, staleEcho, terminalHasInputBox } from "../live-reply";
+import { claudeOutputTokens, extractLiveReply, liveReplySupported, mergeLiveReply, sentTextStuckInBox, staleEcho, staleWithoutEcho, terminalHasInputBox } from "../live-reply";
 import { parseTuiNotice, parseTuiPanel } from "../tui-panel";
 import {
   connIssueCounts,
@@ -2464,7 +2464,7 @@ const TerminalView = memo(function TerminalView({
   const liveScanAtRef = useRef(0);
   const liveScanTimerRef = useRef<number | null>(null);
   // 最近一次从聊天发出时屏上的最后一条回显与原文（writeChatMessage 记；读到新回显后清）
-  const sendEchoRef = useRef<{ before: string | null; sent: string } | null>(null);
+  const sendEchoRef = useRef<{ before: string | null; beforeLines: string[] | null; sent: string } | null>(null);
   // 连续因「一帧还没画完」改期的次数（封顶后照读，免得 CLI 忘了收尾时预览永远不动）
   const liveSyncWaitsRef = useRef(0);
   // 实时预览攒的是哪一条回显后面的回复
@@ -2510,6 +2510,8 @@ const TerminalView = memo(function TerminalView({
     if (sent && read.echo !== undefined) {
       if (staleEcho(read, sent.before, sent.sent)) return;
       sendEchoRef.current = null;
+    } else if (sent && staleWithoutEcho(read, sent.beforeLines)) {
+      return;
     }
     // 回显换了 = 新的一轮（在终端里直接发的话不经聊天发送，不会清掉上一轮的预览）：不拿上一轮的开头去补这一轮
     let prev = shown;
@@ -5458,9 +5460,11 @@ const TerminalView = memo(function TerminalView({
     // 写之前就记下：正文粘进输入框到按下提交之间（多行要等 0.65 秒），输入框里的编号清单会被扫菜单认成选项，
     // 拿上一句比对排除不掉（2026-10-21 用户 Grok：七步清单在输入框里时出了一张「终端里在等你选一项」）
     lastSentRef.current = text;
-    // 发送前屏上最后一条回显：CLI 画出这句之前，实时预览读到的还是上一轮（staleEcho）
+    // 发送前屏上最后一条回显与那时读得出的一截：CLI 画出这句之前，实时预览读到的还是上一轮（staleEcho / staleWithoutEcho）
+    const beforeRead = extractLiveReply(screenLines(), launchAgentRef.current);
     sendEchoRef.current = {
-      before: extractLiveReply(screenLines(), launchAgentRef.current)?.echo ?? null,
+      before: beforeRead?.echo ?? null,
+      beforeLines: beforeRead?.lines ?? null,
       sent: text,
     };
     try {

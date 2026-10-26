@@ -533,6 +533,18 @@ export function staleEcho(read: LiveReplyRead, before: string | null, sent: stri
 }
 
 /**
+ * 读到的这一截没有回显（上一轮的提问早卷出屏了，回复从第一段助手行首读起），字又全是发送前屏上就有的：还是上一轮的尾巴。
+ * {@link staleEcho} 要靠回显比，回显不在屏上时管不着——上一轮回复长过一屏、Windows 上 Claude 还没画出刚发的这句时，
+ * 预览把上一轮的后半段当成了这一轮的回复（2026-10-26 用户截图）。before = 发送前屏上读出的那一截（没有为 null）
+ */
+export function staleWithoutEcho(read: LiveReplyRead, before: readonly string[] | null): boolean {
+  if (read.echo !== undefined || !before?.length) return false;
+  const known = new Set(before.map(norm).filter(Boolean));
+  const keys = read.lines.map(norm).filter(Boolean);
+  return keys.length > 0 && keys.every((k) => known.has(k));
+}
+
+/**
  * 去掉聊天层已经有了的行：从第一行「会话里还没有」的开始往后都算实时部分。
  * synced = 最近几条助手消息的正文（调用方拼好）
  */
