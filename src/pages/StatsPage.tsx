@@ -88,6 +88,7 @@ import {
   InlineNotice,
 } from "../components/PageFrame";
 import type { WeekOverWeek } from "../stats-insight";
+import { pollEvery } from "../polling";
 
 type Range = "today" | "week" | "month" | "all";
 type DistView = "sessions" | "agent" | "project" | "gateway" | "task" | "model";
@@ -845,11 +846,10 @@ export default function StatsPage({ visible }: { visible: boolean }) {
   // 订阅余量 / 网关余额自动轮询：页面开着每 2 分钟刷一次（与后端缓存 TTL 对齐）；不可见即停
   useEffect(() => {
     if (!visible) return;
-    const timer = setInterval(() => {
+    return pollEvery(() => {
       void loadPlans(false);
       void loadWallets(false);
     }, 120_000);
-    return () => clearInterval(timer);
   }, [visible]);
 
   useEffect(() => {

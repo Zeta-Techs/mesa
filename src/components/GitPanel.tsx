@@ -26,6 +26,7 @@ import { FileTypeGlyph } from "./FileTypeMark";
 import { groupFilesByStatus, statusBadgeTitle } from "../git-status-groups";
 import { IS_MAC } from "../hotkeys";
 import { diffLineNumbers, hunkLabel, pairIntraline, parseHunkHeader } from "../diff-intraline";
+import { usePolling } from "../polling";
 
 interface GitStatusDto {
   isRepo: boolean;
@@ -381,10 +382,8 @@ function GitPanel({
     setHunksStaged(false);
     setDiffError(null);
     void refresh();
-    if (!visible) return;
-    const timer = setInterval(() => void refresh(), 8000);
-    return () => clearInterval(timer);
   }, [refresh, visible]);
+  usePolling(() => refresh(), visible ? 8000 : null);
 
   // 外部刷新信号（fs-changed 文件监听等）：只刷新数据，不动勾选与展开的 diff；
   // refresh 自身会把已失效的勾选安全剪枝

@@ -94,6 +94,7 @@ import { imeBlocksEnter } from "../ime-guard";
 import { relTime } from "../rel-time";
 import RailSearchPalette from "./RailSearchPalette";
 import type { RailSearchChat, RailSearchProject } from "../rail-search";
+import { usePolling } from "../polling";
 
 const GROUPS_KEY = "ccode.projectTreeGroups";
 /** 各文件夹（项目 / 随手聊）对话展开与否：人手开关过的才记，没碰过的只展开正在聊的那个（sidebar-chats.ts folderOpen） */
@@ -353,12 +354,7 @@ export default function ProjectTree({
   }
   // 侧栏常驻，会话列表要自己保鲜（App 聚焦时不拉会话，见 App.tsx 那段约定）：窗口看得见时每分钟拉一次。
   // Mesa 里开的对话不靠它：终端页接上 / 停下时就强刷了
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      if (document.visibilityState === "visible") void useAppStore.getState().loadSessions();
-    }, 60_000);
-    return () => window.clearInterval(id);
-  }, []);
+  usePolling(() => useAppStore.getState().loadSessions(), 60_000);
   const [chatMenu, setChatMenu] = useState<{
     x: number;
     y: number;

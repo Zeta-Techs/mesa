@@ -307,6 +307,7 @@ import type {
 } from "../types";
 import type { PdfActionResult } from "../components/PdfPreview";
 import { watchDevicePixelRatio } from "../device-pixel-ratio";
+import { pollEvery } from "../polling";
 
 // wsLast 记忆层闸门接线（H4 修复）：buildWorkspaceTerminalRequest 是纯逻辑层、按测试
 // 打包口径不直接依赖 store 模块；这里模块加载时把真实数据源接上（停用连接不被自动
@@ -2132,10 +2133,10 @@ const TerminalView = memo(function TerminalView({
       }
     };
     void tick();
-    const timer = setInterval(() => void tick(), 4000);
+    const unpoll = pollEvery(tick, 4000);
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      unpoll();
     };
   }, [visible, activePtyId, running, shellActive]);
 

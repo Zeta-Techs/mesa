@@ -11,6 +11,7 @@ import { slashCommandsFor } from "../slash-commands";
 import type { DetectResult, GitCommitResultDto, SessionUsageDto } from "../types";
 import type { GitSummary } from "./GitPanel";
 import type { TabStatus } from "../pages/TerminalPage";
+import { pollEvery } from "../polling";
 
 /**
  * 终端底部状态栏（胶囊化）：32px 固置于终端 pane 内部下缘，与终端同底同色。
@@ -175,10 +176,10 @@ export default function TerminalStatusBar({
         .catch(() => {});
     };
     pull();
-    const t = setInterval(pull, 60_000);
+    const unpoll = pollEvery(pull, 60_000);
     return () => {
       stale = true;
-      clearInterval(t);
+      unpoll();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, usageAgent, attention]);

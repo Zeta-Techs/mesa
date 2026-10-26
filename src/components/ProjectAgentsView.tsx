@@ -49,6 +49,7 @@ import { confirmDialog } from "./ConfirmDialog";
 import { headlessWriteBlocked } from "../agent-caps";
 import { isLitWatchSkill } from "../schedule-skill";
 import type { AgentCapabilitiesDto } from "../types";
+import { usePolling } from "../polling";
 
 export default function ProjectAgentsView({
   project,
@@ -105,10 +106,8 @@ export default function ProjectAgentsView({
 
   useEffect(() => {
     void loadTasks();
-    if (taskKinds.size === 0) return;
-    const timer = window.setInterval(() => void loadTasks(), 2500);
-    return () => window.clearInterval(timer);
   }, [loadTasks, taskKinds]);
+  usePolling(() => loadTasks(), taskKinds.size === 0 ? null : 2500);
 
   useEffect(() => {
     let cancelled = false;

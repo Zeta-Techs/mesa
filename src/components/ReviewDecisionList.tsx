@@ -14,6 +14,7 @@ import {
   type ReviewVerdict,
 } from "../review-decisions";
 import { InlineNotice } from "./PageFrame";
+import { usePolling } from "../polling";
 
 async function readFirst(roots: string[], rel: string) {
   for (const root of roots) {
@@ -92,11 +93,7 @@ export default function ReviewDecisionList({
   }, [worktreePath, projectRoot, rel, kind, refreshKey]);
 
   // 文件还没写出来时隔几秒再看一眼，写出来就停
-  useEffect(() => {
-    if (!missing) return;
-    const timer = window.setInterval(() => void load(), 5000);
-    return () => window.clearInterval(timer);
-  }, [missing, worktreePath, projectRoot, rel, kind]);
+  usePolling(() => load(), missing ? 5000 : null);
 
   async function choose(item: ReviewItem, verdict: ReviewVerdict) {
     if (!revision) return;

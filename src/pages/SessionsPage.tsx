@@ -112,6 +112,7 @@ import type {
   SlimInspectDto,
   TokenUsageDto,
 } from "../types";
+import { pollEvery } from "../polling";
 
 /** GitPanel 的 onTotals 占位（会话页不消费改动总量；稳定引用避免击穿 memo） */
 const NOOP_TOTALS = () => {};
@@ -1210,7 +1211,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
   useEffect(() => {
     if (!visible) return;
     let stopped = false;
-    const timer = setInterval(async () => {
+    const unpoll = pollEvery(async () => {
       if (stopped || editingRef.current) return;
       try {
         const fresh = await loadSessions();
@@ -1261,7 +1262,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     }, 8000);
     return () => {
       stopped = true;
-      clearInterval(timer);
+      unpoll();
     };
   }, [visible, loadSessions]);
 

@@ -110,6 +110,7 @@ import {
 } from "../review-decisions";
 import type { ProjectStepDto, WorkspaceDto } from "../types";
 import type { StepRunStatus } from "../step-flow";
+import { pollEvery } from "../polling";
 
 /** 步骤内协同流程线（v3.71，聚焦视图顶部）：把这一步里人和 agent 的动作按先后排成有序节点链
  * （种子 → before 事项 → agent 执行 → during 事项 → after 事项 → 评审合并），当前节点高亮。
@@ -308,11 +309,11 @@ function NotesProgressLine({ roots, live }: { roots: string[]; live: boolean }) 
     void load();
     const onFocus = () => void load();
     window.addEventListener("focus", onFocus);
-    const timer = live ? window.setInterval(() => void load(), 20000) : null;
+    const unpoll = live ? pollEvery(() => load(), 20000) : null;
     return () => {
       stale = true;
       window.removeEventListener("focus", onFocus);
-      if (timer != null) window.clearInterval(timer);
+      unpoll?.();
     };
   }, [rootsKey, live]);
   if (!line) return null;
@@ -941,8 +942,7 @@ export default function StepFlow({
     // 承诺「实时标出已存」却只有面板开合/事件两个刷新点，用扩展存的篇目要
     // 收起再展开才亮（2026-09-17 审计）。面板开着时低频轮询补上
     if (!paywallListOpen) return;
-    const t = window.setInterval(() => refreshToFetchProgress(), 2000);
-    return () => window.clearInterval(t);
+    return pollEvery(() => refreshToFetchProgress(), 2000);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paywallListOpen]);
   useEffect(() => {

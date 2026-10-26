@@ -88,6 +88,7 @@ import { caretOfAttention, type RunCaretState } from "../run-caret";
 import { workbenchScheduleRows } from "../schedule-tasks";
 import { sidebarChatTitle } from "../sidebar-chats";
 import { isScratchCwd } from "../quick-chat";
+import { pollEvery } from "../polling";
 
 const iconClass = "shrink-0 text-l4";
 /** 工作方式标签：描边不铺底（铺 bg-strip 在 well 上看不出边界，像一段错位的字） */
@@ -265,7 +266,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
         });
     };
     load();
-    const timer = window.setInterval(load, 60_000);
+    const unpoll = pollEvery(load, 60_000);
     const unlisteners: Array<() => void> = [];
     for (const event of ["scheduler-run-started", "scheduler-run-done", "watch-run-adopted"]) {
       listen(event, load)
@@ -277,7 +278,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
     }
     return () => {
       stale = true;
-      window.clearInterval(timer);
+      unpoll();
       unlisteners.forEach((u) => u());
     };
   }, [visible, reloadToken]);

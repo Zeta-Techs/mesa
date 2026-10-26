@@ -73,6 +73,7 @@ import type { WatchSubscriptionDto } from "../lit-watch";
 import { headlessWriteBlocked, headlessWriteCaution, headlessWriteNote } from "../agent-caps";
 import CodexWinSandboxNotice from "./CodexWinSandboxNotice";
 import { toast } from "../toast";
+import { usePolling } from "../polling";
 
 const NEW_WATCH = "__new__";
 
@@ -1293,18 +1294,8 @@ export default function ScheduleSection({
   }, [subsVersion]);
 
   const waitingDraft = drafts.some((d) => !d.hasDraft);
-  useEffect(() => {
-    if (!waitingDraft) return;
-    const t = window.setInterval(() => void load(), 4000);
-    return () => window.clearInterval(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [waitingDraft, projectRoot]);
-
-  useEffect(() => {
-    if (!open) return;
-    const timer = window.setInterval(() => void load(), 5000);
-    return () => window.clearInterval(timer);
-  }, [open, projectRoot]);
+  usePolling(() => load(), waitingDraft ? 4000 : null);
+  usePolling(() => load(), open ? 5000 : null);
 
   async function cancelSchedule(s: ScheduleDto) {
     try { await invoke("cancel_schedule_run", { id: s.id }); }

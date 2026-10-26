@@ -84,6 +84,7 @@ import {
   goalsNeedAttention,
 } from "../project-status";
 import { absTime, relTime } from "../rel-time";
+import { usePolling } from "../polling";
 
 function agentLabel(id: string): string {
   return AGENTS.find((agent) => agent.id === id)?.label ?? id;
@@ -244,10 +245,8 @@ export default function ProjectUserTasksView({
     setArchiveOpen(false);
     setDetailsTaskId(null);
     void load();
-    if (!eligible) return;
-    const timer = window.setInterval(() => void load(), 2500);
-    return () => window.clearInterval(timer);
   }, [eligible, load]);
+  usePolling(() => load(), eligible ? 2500 : null);
 
   // 待验收提升是后端事件（goal-review-ready）：立即刷新，不等 2.5s 轮询
   useEffect(() => {

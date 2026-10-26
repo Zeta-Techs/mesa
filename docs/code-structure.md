@@ -628,6 +628,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   menu-key-nav.ts            # 聊天输入框小弹层的键盘操作（useMenuKeyNav：打开聚焦当前项、↑↓/Home/End、关闭还焦点）
   auto-load-older.ts         # 回放往上翻自动加载更早一页（useAutoLoadOlder：对话页 / 项目对话 / 聊天层共用；只认用户滚动，
                              # 不满一屏自动补页）+ wasPrepended（聊天层前插判定，最新窗后滑不算）
+  polling.ts                 # 定时刷新统一口径（usePolling / pollEvery：窗口隐藏时停、回前台补一次、上一次没回来不叠；createPoller 纯逻辑可测）
   progressive-rows.ts        # 长列表分段渲染（useProgressiveRows：先画 150 行，离底三屏接下一段，换筛选回第一段；选中项在后面画到它）；对话页列表在用
   run-caret.ts               # 运行状态光标三态（working 灰色呼吸 / idle 淡灰 / confirm 琥珀）：注意力 → 光标、几个合成取最要紧；
                              # 凡说「这段对话的 Agent 现在怎样」都用它，不再画绿点 / 黄点（组件 components/RunCaret.tsx）

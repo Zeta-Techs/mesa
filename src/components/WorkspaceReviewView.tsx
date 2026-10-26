@@ -104,6 +104,7 @@ import type {
   WorkspaceMergeResultDto,
   WorkspacePrResultDto,
 } from "../types";
+import { usePolling } from "../polling";
 
 const OfficePreviewModal = lazy(() => import("./OfficePreviewModal"));
 
@@ -1714,12 +1715,7 @@ function LiveWorkspaceReviewView({
     void startConflictResolution(false);
   }, [busy, conflictBusy, diff, health?.conflict, initialAction, status, unmerged]);
 
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      if (!busy && !conflictBusy) void refresh(true);
-    }, 8000);
-    return () => window.clearInterval(timer);
-  }, [busy, conflictBusy, refresh]);
+  usePolling(() => (busy || conflictBusy ? undefined : refresh(true)), 8000);
 
   useEffect(() => {
     if (!diff || !unmerged?.merging || unmerged.staleBase) return;

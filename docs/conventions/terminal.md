@@ -30,6 +30,10 @@
   留在同步，不为挪而挪。**大块二进制不按 JSON 数字数组传**：IPC 请求在主线程上解析，5MB 截图编成数组是 18.7MB 的 JSON，
   网页和 Rust 两边各编解一遍；请求体直接给 `Uint8Array`、元数据放请求头，命令收 `tauri::ipc::Request`（先例
   `saveClipboardImage` / `save_clipboard_image`，自定义协议不通时 Tauri 退回 postMessage、请求体变回 JSON 数组，两种都要收）。
+- **前端定时刷新走 `src/polling.ts`（2026-10-26）**：拉后端数据的轮询一律 `usePolling(tick, ms | null)` 或在已有 effect 里
+  `pollEvery(tick, ms)`，不再裸写 `setInterval`——窗口隐藏时停、回前台立刻补一次，上一次没回来不叠下一次。例外只有两类：
+  驱动通知 / 回合判定的计时器（终端页 `linkTick`、PTY 静默、空闲收标签、回放快照保存），窗口藏着时也得照常跑；
+  纯界面计时（倒计时、动画、相对时间刷新）。新增轮询先想有没有事件可听（`fs-changed`、`goal-review-ready` 等），没有再轮询。
 
 ## 终端行为（用户明确要求；配色 = VS Code Dark+ 调色板，集中在 `TerminalPage.tsx` 的 `theme` 一处）
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AGENTS, type RunDto } from "../types";
 import { InlineNotice, ghostActionClass } from "./PageFrame";
+import { usePolling } from "../polling";
 
 /** 低频诊断区提供无头任务停止入口，避免只能等待超时。
  *  外形对齐设置页统一内容卡（卡头标题 + 一句说明），不画分隔横线（设置页不画线口径，2026-10-17） */
@@ -9,22 +10,19 @@ export default function BackgroundTasksPanel() {
   const [runs, setRuns] = useState<RunDto[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [stopping, setStopping] = useState<string | null>(null);
+  const reload = async (alive: () => boolean) => {
+    try {
+      const rows = await invoke<RunDto[]>("active_background_runs");
+      if (alive()) { setRuns(rows); setError(null); }
+    } catch (reason) { if (alive()) setError(String(reason)); }
+  };
   useEffect(() => {
     let disposed = false;
-    let inFlight = false;
-    const reload = async () => {
-      if (inFlight) return;
-      inFlight = true;
-      try {
-        const rows = await invoke<RunDto[]>("active_background_runs");
-        if (!disposed) { setRuns(rows); setError(null); }
-      } catch (reason) { if (!disposed) setError(String(reason)); }
-      finally { inFlight = false; }
-    };
-    void reload();
-    const timer = window.setInterval(() => void reload(), 2000);
-    return () => { disposed = true; window.clearInterval(timer); };
+    void reload(() => !disposed);
+    return () => { disposed = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  usePolling(reload, 2000);
   const agentLabel = (id: string) => AGENTS.find((a) => a.id === id)?.label ?? id;
   return <div className="mt-3 rounded-lg ccode-well p-3">
     <div className="mb-2">

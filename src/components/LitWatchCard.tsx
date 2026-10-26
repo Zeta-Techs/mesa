@@ -101,6 +101,7 @@ import type {
   LitWatchFilterDto,
   ScheduleDto,
 } from "../types";
+import { usePolling } from "../polling";
 
 function HeadIcon({
   label,
@@ -1632,9 +1633,8 @@ export default function LitWatchCard({
   }, [projectRoot]);
   useEffect(() => {
     refreshFollowupSaved();
-    const timer = window.setInterval(refreshFollowupSaved, 4000);
-    return () => window.clearInterval(timer);
   }, [entries, readingList, refreshFollowupSaved]);
+  usePolling(() => refreshFollowupSaved(), 4000);
   // 收货/关联落盘即时回执（与检索步同款事件）：不等 4 秒轮询，标题/书标当场翻
   useEffect(() => {
     let un: (() => void) | undefined;
