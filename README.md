@@ -56,12 +56,10 @@
 | 平台 | 选哪个 | 说明 |
 |---|---|---|
 | macOS（Apple 芯片 M1/M2/M3/M4） | `Mesa_x.x.x_aarch64.dmg` | |
-| macOS（Intel 芯片） | `Mesa_x.x.x_x64.dmg` | 从 2026-10-20 之后的版本起提供 |
-| Windows | `Mesa_x.x.x_x64-setup.exe` | 唯一的 Windows 安装包；批量部署用静默安装 `setup.exe /S` |
+| macOS（Intel 芯片） | `Mesa_x.x.x_x64.dmg` | |
+| Windows | `Mesa_x.x.x_x64-setup.exe` | 批量部署用静默安装 `setup.exe /S` |
 
-不再提供 `.msi`：应用内更新只认 NSIS 渠道，混用会装出两份应用。以前用 `.msi` 装过的机器，请先用系统卸载再用 `setup.exe` 装一次。
-
-本版本不再发布 Linux 安装包。以前装过的 Linux 版本也收不到应用内更新。
+暂不提供 Linux 安装包。
 
 其余 `.sig`、`latest.json`、`.app.tar.gz` 是应用内自动更新用的签名文件，**不用手动下载**。
 
@@ -118,7 +116,7 @@ npm run tauri build    # 打包
 
 - macOS 安装包还没有 Apple 签名公证（发版流程已接好，等 Apple 开发者账号）。首次打开若提示「已损坏」，按上面的 `xattr` 命令处理。
 - Windows 安装包还没有代码签名，首次安装会被 SmartScreen 拦一下，按上面的说明继续。
-- 本版本不发布 Linux 安装包。
+- 暂不提供 Linux 安装包。
 - 不是系统综述工具，也不做 Meta 分析。
 - 客户端接力目前只覆盖 Codex 客户端与 Claude 桌面版；其余七家要么没有读同一份会话存储的客户端，要么只能打开项目，暂不显示入口。
 - 不在 PDF 文件本身上写批注（沉浸阅读的高亮批注记进笔记）；不做多人协作、SSH 远程执行、云端会话同步。

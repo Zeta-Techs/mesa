@@ -92,13 +92,14 @@ Mesa 是装在电脑上的 **AI （科研）工作台**。它自己不是一个�
 | 电脑 | 安装包 |
 |---|---|
 | Mac（M1–M4 芯片） | `Mesa_x.x.x_aarch64.dmg` |
-| Windows | `Mesa_x.x.x_x64-setup.exe`（批量部署静默安装：`setup.exe /S`；不再提供 `.msi`） |
+| Mac（Intel 芯片） | `Mesa_x.x.x_x64.dmg` |
+| Windows | `Mesa_x.x.x_x64-setup.exe`（批量部署静默安装：`setup.exe /S`） |
 
-本版本不发布 Linux 安装包。
+暂不提供 Linux 安装包。
 
 带 `.sig`、`latest.json` 的是自动更新用的签名文件，不用下。
 
-Intel 芯片 Mac 本版本不出包（上面的 aarch64 包装不上）。Windows ARM 机器可以用 x64 包靠系统自带的模拟运行，但没有测试过，不保证。
+不确定 Mac 是哪种芯片：左上角苹果菜单 → 关于本机，看「芯片」一栏。Windows ARM 机器可以用 x64 包靠系统自带的模拟运行，但没有测试过，不保证。
 
 ### 2.2 Mac 提示「已损坏，无法打开」
 
