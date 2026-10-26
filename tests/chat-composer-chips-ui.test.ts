@@ -584,6 +584,37 @@ test("输入框「+」：选文件成文件卡、随消息按路径发出；没�
   }
 });
 
+test("输入框长文：换行后字占满整宽、+ 和发送挪到下一排；超出高度给渐隐和「展开」，Esc 收回", async () => {
+  const ui = await mount();
+  try {
+    await ui.render(ui.h(ui.Composer, { onSend: async () => null, cwd: "/proj" }));
+    const row = () => ui.el.querySelector(".ccode-composer-row")!;
+    const box = await typeInto(ui, "一句话");
+    assert.equal(row().hasAttribute("data-stacked"), false, "一行时 + · 字 · 发送同一排");
+    await typeInto(ui, "第一行\n第二行");
+    assert.equal(row().hasAttribute("data-stacked"), true, "有换行就换成上下两层");
+    assert.equal(ui.el.querySelector("textarea"), box, "换层不重建输入框（焦点、光标不丢）");
+    assert.equal(ui.el.querySelector('button[aria-label="展开输入框"]'), null, "没超出高度不给展开");
+
+    // JSDOM 不做布局：假装内容比框高、停在顶上
+    Object.defineProperty(box, "scrollHeight", { configurable: true, get: () => 600 });
+    Object.defineProperty(box, "clientHeight", { configurable: true, get: () => 216 });
+    await typeInto(ui, "第一行\n第二行\n第三行");
+    assert.equal(box.hasAttribute("data-fade-bottom"), true, "下面还有字：下沿渐隐");
+    assert.equal(box.hasAttribute("data-fade-top"), false);
+    await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="展开输入框"]')!.click());
+    assert.match(box.className, /min-h-/, "展开后至少占一大块高度");
+    await key(ui, "Escape");
+    assert.ok(ui.el.querySelector('button[aria-label="展开输入框"]'), "Esc 收回原来的高度");
+    assert.equal(box.value, "第一行\n第二行\n第三行", "收回不动字");
+
+    await typeInto(ui, "");
+    assert.equal(row().hasAttribute("data-stacked"), false, "清空回到一行");
+  } finally {
+    await ui.close();
+  }
+});
+
 test("输入框图片：编辑后重发还原成缩略卡；点图在输入框上方看图标注、消息照常写；意见框编号接进消息", async () => {
   const ui = await mount();
   try {

@@ -1,7 +1,18 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ArrowUp, AtSign, FileText, Paperclip, Plus, Smartphone, Square, TriangleAlert } from "lucide-react";
+import {
+  ArrowUp,
+  AtSign,
+  FileText,
+  Maximize2,
+  Minimize2,
+  Paperclip,
+  Plus,
+  Smartphone,
+  Square,
+  TriangleAlert,
+} from "lucide-react";
 import type { McpServerDto, SkillDto } from "../types";
 import type { SearchResultDto } from "./FileTree";
 import {
@@ -540,8 +551,6 @@ export default function ChatComposer({
       if (!el) return;
       el.focus();
       el.setSelectionRange(el.value.length, el.value.length);
-      el.style.height = "0";
-      el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
     });
   }
 
@@ -563,13 +572,7 @@ export default function ChatComposer({
   function insertResourceText(text: string) {
     setError(null);
     setValue((current) => (current ? `${current}\n${text}` : text));
-    requestAnimationFrame(() => {
-      const el = ref.current;
-      if (!el) return;
-      el.focus();
-      el.style.height = "0";
-      el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
-    });
+    requestAnimationFrame(() => ref.current?.focus());
   }
 
   // CLI 猜的下一句：输入框空着才灰着显示（同终端里的样子），填进来之后照常改、照常发
@@ -684,11 +687,57 @@ export default function ChatComposer({
     if (!disabled && focusWhen) ref.current?.focus();
   }, [disabled, focusWhen]);
 
-  // 发送清空后把自动增高复位（onChange 不会因 setValue("") 触发）
-  useEffect(() => {
+  // ---- 长文本（2026-10-26 对照 Codex 网页端）：一折行就把字放到整宽的上层、+ 和发送挪到下面一排；
+  // 超出高度时藏滚动条、按还能往哪边滚给上下沿渐隐，右上角给「展开」写长文 ----
+  const [stacked, setStacked] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [fade, setFade] = useState({ top: false, bottom: false, overflow: false });
+  // 因为折行才换成两层时的字数：删到比它短（且没有换行）就回到一行；因换行进来的记 null，删掉换行就试着回一行
+  const wrapLenRef = useRef<number | null>(null);
+  function syncFade(el: HTMLTextAreaElement) {
+    const overflow = el.scrollHeight - el.clientHeight > 1;
+    const top = overflow && el.scrollTop > 1;
+    const bottom = overflow && el.scrollTop + el.clientHeight < el.scrollHeight - 1;
+    setFade((cur) =>
+      cur.top === top && cur.bottom === bottom && cur.overflow === overflow ? cur : { top, bottom, overflow },
+    );
+  }
+  // 随内容自动增高（封顶在 CSS max-height，超出内部滚动）；换层在绘制前定下，不闪
+  useLayoutEffect(() => {
     const el = ref.current;
-    if (el && value === "") el.style.height = "";
-  }, [value]);
+    if (!el) return;
+    if (value === "") {
+      el.style.height = "";
+      wrapLenRef.current = null;
+      setStacked(false);
+      setExpanded(false);
+      syncFade(el);
+      return;
+    }
+    // 量高度时先压到 0 会把滚动位置挤到底，量完放回去：在长文中间改字不跳
+    const keepTop = el.scrollTop;
+    el.style.height = "0";
+    el.style.height = `${el.scrollHeight}px`;
+    el.scrollTop = keepTop;
+    const hasBreak = value.includes("\n");
+    if (!stacked) {
+      const css = getComputedStyle(el);
+      const oneLine =
+        parseFloat(css.lineHeight) * 1.5 + parseFloat(css.paddingTop) + parseFloat(css.paddingBottom);
+      if (hasBreak || el.scrollHeight > oneLine) {
+        wrapLenRef.current = hasBreak ? null : value.length;
+        setStacked(true);
+      }
+    } else if (!hasBreak && (wrapLenRef.current === null || value.length < wrapLenRef.current)) {
+      setStacked(false);
+    }
+    syncFade(el);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value, stacked, expanded]);
+  function toggleExpanded() {
+    setExpanded((cur) => !cur);
+    requestAnimationFrame(() => ref.current?.focus());
+  }
 
   const canSubmit = !disabled && !busy && (value.trim() !== "" || attachments.length > 0);
 
@@ -977,10 +1026,14 @@ export default function ChatComposer({
             </p>
           )}
           {/* 框里只有一行：+ · 正在写的话 · 发送（2026-10-23 用户：照 Claude 客户端那样简洁）；
-              权限、项目、模型挪到框下面那一行。多行时 + 和发送钮贴底。
-              居中空态也是一行（同日用户：两行高、上下两排都嫌大），只是栏宽收窄 */}
-          <div className="flex items-end gap-1 px-2 py-1.5">
-          <span className="flex h-[34px] shrink-0 items-center">
+              权限、项目、模型挪到框下面那一行。居中空态也是一行（同日用户：两行高、上下两排都嫌大），只是栏宽收窄。
+              字一折行就换成上下两层（2026-10-26 对照 Codex 网页端）：字占满整宽，+ 和发送挪到下面一排；
+              同一组节点只换 grid 区域（App.css .ccode-composer-row），焦点和光标不丢 */}
+          <div
+            data-stacked={stacked || undefined}
+            className={`ccode-composer-row px-2 ${stacked ? "pb-1.5 pt-2" : "py-1.5"}`}
+          >
+          <span data-slot="add" className="flex h-[34px] shrink-0 items-center">
             <AddMenu
               skills={skills}
               mcps={mcps}
@@ -992,11 +1045,13 @@ export default function ChatComposer({
               onPhone={openPhoneDrop}
             />
           </span>
-          <div className="relative min-w-0 flex-1">
+          <div data-slot="text" className="relative min-w-0">
           <textarea
             ref={ref}
             value={value}
             disabled={disabled || busy}
+            data-fade-top={fade.top || undefined}
+            data-fade-bottom={fade.bottom || undefined}
             onPaste={(e) => {
               // 剪贴板有图片条目则接管粘贴（落盘为附件卡），纯文本走默认粘贴
               const items = Array.from(e.clipboardData?.items ?? []);
@@ -1012,11 +1067,8 @@ export default function ChatComposer({
               if (error) setError(null);
               if (slashDismissed) setSlashDismissed(false);
               if (mentionDismissed) setMentionDismissed(false);
-              // 随内容自动增高（max-h-40 封顶，超出内部滚动）
-              const el = e.target;
-              el.style.height = "0";
-              el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
             }}
+            onScroll={(e) => syncFade(e.currentTarget)}
             onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
             onCompositionStart={lockIme}
             onCompositionEnd={unlockImeAfterFrame}
@@ -1085,11 +1137,7 @@ export default function ChatComposer({
                   const text = next >= 0 ? recallHistory[next] : "";
                   setValue(text);
                   requestAnimationFrame(() => {
-                    const t = ref.current;
-                    if (!t) return;
-                    t.style.height = "0";
-                    t.style.height = `${Math.min(t.scrollHeight, 160)}px`;
-                    t.setSelectionRange(text.length, text.length);
+                    ref.current?.setSelectionRange(text.length, text.length);
                   });
                   return;
                 }
@@ -1120,6 +1168,12 @@ export default function ChatComposer({
                   return;
                 }
               }
+              // 展开写长文时：Esc 先收回原来的高度（字不动）
+              if (e.key === "Escape" && expanded) {
+                e.preventDefault();
+                setExpanded(false);
+                return;
+              }
               // 看图标注台开着：Esc 先收起它（面板类都收完了才轮到这里）
               if (e.key === "Escape" && viewing) {
                 e.preventDefault();
@@ -1134,9 +1188,29 @@ export default function ChatComposer({
             // 一行起，随内容长高（2026-10-23 用户：空态两行高太大，一行就行）
             rows={1}
             placeholder={ghost ?? (viewed?.edit ? "描述修改内容" : placeholder) ?? "输入消息"}
-            // 插入符是 M▁ 那道琥珀（--color-mesa-amber），光标本身就是品牌
-            className={`block max-h-40 w-full resize-none bg-transparent px-1.5 py-[5px] text-sm leading-6 text-l1 caret-mesa-amber outline-none focus:outline-none focus-visible:outline-none focus-visible:outline-offset-0 placeholder:text-l3 disabled:cursor-not-allowed disabled:opacity-60 ${ghost ? "pr-20" : ""}`}
+            // 插入符是 M▁ 那道琥珀（--color-mesa-amber），光标本身就是品牌。
+            // 平时封顶九行，「展开」后至少占四成窗口高（App.css .ccode-composer-text：藏滚动条、上下沿渐隐）
+            className={`ccode-composer-text block w-full resize-none bg-transparent px-1.5 py-[5px] text-sm leading-6 text-l1 caret-mesa-amber outline-none focus:outline-none focus-visible:outline-none focus-visible:outline-offset-0 placeholder:text-l3 disabled:cursor-not-allowed disabled:opacity-60 ${
+              expanded ? "max-h-[min(60vh,40rem)] min-h-[min(40vh,24rem)]" : "max-h-[13.5rem]"
+            } ${ghost ? "pr-20" : stacked && (fade.overflow || expanded) ? "pr-8" : ""}`}
           />
+          {stacked && (fade.overflow || expanded) && (
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={toggleExpanded}
+              title={expanded ? "收回（Esc）" : "展开输入框，写长文更方便"}
+              aria-label={expanded ? "收回输入框" : "展开输入框"}
+              aria-pressed={expanded}
+              className="absolute right-0 top-0.5 inline-flex size-7 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1"
+            >
+              {expanded ? (
+                <Minimize2 size={14} strokeWidth={1.8} aria-hidden="true" />
+              ) : (
+                <Maximize2 size={14} strokeWidth={1.8} aria-hidden="true" />
+              )}
+            </button>
+          )}
           {ghost && (
             // 灰字是 CLI 猜的下一句：右上角说一声怎么填，点一下也行
             <button
@@ -1152,7 +1226,7 @@ export default function ChatComposer({
             </button>
           )}
           </div>
-            <div className="flex h-[34px] shrink-0 items-center gap-1.5">
+            <div data-slot="send" className="flex h-[34px] shrink-0 items-center gap-1.5">
               {running &&
               onInterrupt &&
               !busy &&

@@ -457,6 +457,10 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-26 · 聊天输入框长文：折行就分上下两层，超高渐隐 + 展开
+
+用户拿 Codex 网页端对照：Mesa 输入框写长文时左边一列 ＋ 把字挤成窄条，滚动条露在框里，底边硬切。改法（`ChatComposer`）：一行时仍是「+ · 字 · 发送」同排（2026-10-23 一行口径不变）；字折行或有换行就换成上下两层，字铺满整宽、＋ 与发送挪到下一排，删回一行又合回（按进入时的字数做回差，免得在临界宽度来回跳）。三格同一组节点只换 grid 区域，不重建 textarea——焦点、光标、输入法组词都不丢。平时封顶九行（原六行半），超出藏滚动条、按可滚方向给上下沿渐隐；右上角「展开」至少占四成窗口高，Esc / 再点收回，清空或发送后复位。量高度时先压到 0 会把滚动位置挤到底，量完放回原位，在长文中间改字不再跳到末尾。规则落 design-system.md「聊天输入框长文」。
+
 ### 2026-10-26 · Claude 计划模式的出口：方案确认卡「按方案开工 / 接着改方案」，只讨论按家分说法
 
 用户问权限菜单要不要加「计划模式」一档：不加——Claude Code / CodeBuddy / Gemini / Kimi / Cursor 的只讨论本来就是各家的计划模式参数，再加一档两档等价。缺的是出口，假网关实测（`gateway.py` 新增 TRIGGER_PLAN：先 Write 方案文件、再调 ExitPlanMode，2.1.308 起方案不在参数里，不写文件只问「Exit plan mode?」）：原来聊天层把这一屏当通用菜单——标题英文、预览是参数 JSON、第三项粘上了按键提示「shift+tab to approve…」。改法：① `approval_from_tool` 认 ExitPlanMode，`ApprovalDto.plan` 带方案原文（hook 的 tool_input 由 CLI 补了 plan / planFilePath，上限 40k 字）；② `plan-approval.ts` 认屏（旁路 ExitPlanMode 或问句「ready to execute」「Exit plan mode?」，且至少一项开工，否则交回通用卡），选项仍照终端原文逐项，只把认得出的说成中文并标开工后哪一档（auto mode → 帮我批准、manually approve → 请求批准、bypass → 完全访问、clear context → 清空上下文再开工），认不出的照原文；③ 卡片 PlanCard：整篇方案 Markdown + 开工几行 + 「接着改方案」输入行，聊天输入框发出的话也当意见；意见 = 挪到「Tell Claude what to change」、打字、回车（实测工具结果是带意见的拒绝，留在计划模式）——`answerMenu(index, text)`，挪完仍先读屏核对高亮再打字；④ `tui-menu` KEY_HINT 认组合键开头的提示行，不再粘进上一项；⑤ 只讨论的标签在 Claude 离开计划模式后跟到所选档（原来 discuss 一律不跟，徽标停在「只讨论」、接着聊又按计划模式重开）；⑥ 只讨论的说法按家分：只有核实过出口的 Claude Code 写「先出方案，你点头再…」（`PLAN_FIRST_AGENTS`），其余照旧。其余几家计划模式的出口未核实，没有这张卡。

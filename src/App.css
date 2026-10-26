@@ -2111,6 +2111,60 @@ select:focus-visible {
 [data-theme$="-light"] .ccode-composer-box {
   box-shadow: inset 0 -1px 0 rgb(0 0 0 / 0.03);
 }
+/* 输入框里那一排（ChatComposer）：一行时「+ · 正在写的话 · 发送」，+ 和发送贴底；字一折行就换成上下两层
+   （2026-10-26 对照 Codex 网页端：左边一列 + 把长文挤成窄条）——字占满整宽在上，+ 和发送挪到下面一排。
+   三格节点不动，只换 grid 区域，换层时焦点和光标不丢 */
+.ccode-composer-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: "add text send";
+  align-items: end;
+  column-gap: 0.25rem;
+}
+.ccode-composer-row[data-stacked] {
+  grid-template-areas:
+    "text text text"
+    "add . send";
+  row-gap: 0.125rem;
+}
+.ccode-composer-row > [data-slot="add"] {
+  grid-area: add;
+}
+.ccode-composer-row > [data-slot="text"] {
+  grid-area: text;
+}
+.ccode-composer-row > [data-slot="send"] {
+  grid-area: send;
+}
+/* 长文超出高度：不出滚动条，上下沿按还能往哪边滚渐隐（同 Codex 网页端），滚轮 / 光标照常能滚 */
+.ccode-composer-text {
+  --fade-top: 0px;
+  --fade-bottom: 0px;
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)),
+    transparent 100%
+  );
+}
+.ccode-composer-text::-webkit-scrollbar {
+  display: none;
+}
+.ccode-composer-text[data-fade-top] {
+  --fade-top: 1.5rem;
+}
+.ccode-composer-text[data-fade-bottom] {
+  --fade-bottom: 2rem;
+}
 /* 权限写在输入框本身上（2026-10-22）：只讨论 = 虚线框（常驻）；完全访问 = 切到这一档时上沿亮一道 caution 细线
    （两端淡出）约 2.4 秒后淡掉，不常驻（同日用户：一直亮着输入框太花）。权限字平时灰字（2026-10-23 用户），
    只在同一时刻跟着亮一下 caution 再淡回灰（.ccode-perm-flash，同一条曲线）。

@@ -290,6 +290,10 @@
   字号类（决策卡、帮助卡写 `text-sm`）。禁止再逐处手调 `mt-px / mt-0.5 / mt-[3px]`——对话字号可调，手调值一换字号就偏。
   **聊天输入框聚焦**：边框换 l4（`focus-within:border-l4`），不加外环。2026-10-23 试过「边框小加深 + 两圈无模糊外环」，
   用户当日要求恢复原样——**否决，勿再改回柔环**。
+  **聊天输入框长文（2026-10-26 用户对照 Codex 网页端）**：一行时「+ · 字 · 发送」同排（2026-10-23 一行口径不变）；字一折行
+  或有换行就换成上下两层——字占满整宽在上，+ 与发送挪到下一排。三格同一组节点只换 grid 区域（App.css `.ccode-composer-row`），
+  **禁止为换层重建 textarea**（焦点、光标、输入法组词会丢）。平时封顶九行，超出不出滚动条，上下沿按可滚方向渐隐
+  （`.ccode-composer-text` 的 mask），右上角「展开」至少占四成窗口高，Esc / 再点收回，清空或发送后复位。
   **浮层退场与锚定（2026-10-12 apple-motion 批）**：关闭不再是瞬时卸载——纯 dismiss（Esc/遮罩/点外）先播 150ms 逆向
   退场再卸载（`ccode-pop-out`/`ccode-fade-out`；挂载延续由 `src/exit-animation.ts` 的 `useExitRender`（自带 open prop 的
   壳：Modal/Sheet/MenuSelect/项目设置抽屉/useDownMenu）与 `useAnimatedDismiss`（父级挂载控制：CommandPalette/ContextMenu/
