@@ -1260,14 +1260,22 @@ html[data-material="none"] .ccode-app-rail .bg-rail-sel {
 
 /* 深色右键 / ⋯ 菜单（ContextMenu）照系统菜单做成半透明磨砂：侧栏是透出桌面的玻璃，实心 raised 菜单压在上面
    读作一块黑（2026-10-27 用户截图，蓝色壁纸下最明显）。底色留 raised 64%，压在侧栏上透出的是同一块桌面材质，
-   压在主画布上由 backdrop-filter 模糊背后的字；模糊放 ::before（Windows 同层模糊会把菜单字一起栅格化发糊，
-   见 .ccode-nav-island）。描边提到白 14%，菜单边界不靠底色深浅撑。浅色、降低透明度时仍是实心 raised。 */
+   压在主画布上由 backdrop-filter 模糊背后的字。描边提到白 14%，菜单边界不靠底色深浅撑。浅色、降低透明度时仍是实心 raised。
+   Mac 上模糊必须挂在菜单本身：挂 ::before 时，淡入那 150ms 里父层 opacity<1，WKWebView 取不到背景，
+   菜单先压暗再在淡完那一刻跳亮——用户看到的「先闪一下黑底」（2026-10-27 真 WKWebView 录屏逐帧：亮度 42 跳 55；
+   挂本身是 75→53 平滑）。Windows 同层模糊会把菜单字一起栅格化发糊（见 .ccode-nav-island），仍放 ::before。 */
 .ccode-app-shell[data-chrome="dark"] .ccode-menu-surface {
-  isolation: isolate;
   background-color: color-mix(in srgb, var(--color-raised) 64%, transparent);
   border-color: rgb(255 255 255 / 0.14);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  backdrop-filter: blur(24px) saturate(160%);
 }
-.ccode-app-shell[data-chrome="dark"] .ccode-menu-surface::before {
+[data-platform="windows"] .ccode-app-shell[data-chrome="dark"] .ccode-menu-surface {
+  isolation: isolate;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+[data-platform="windows"] .ccode-app-shell[data-chrome="dark"] .ccode-menu-surface::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -1280,8 +1288,10 @@ html[data-material="none"] .ccode-app-rail .bg-rail-sel {
 @media (prefers-reduced-transparency: reduce) {
   .ccode-app-shell[data-chrome="dark"] .ccode-menu-surface {
     background-color: var(--color-raised);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
-  .ccode-app-shell[data-chrome="dark"] .ccode-menu-surface::before {
+  [data-platform="windows"] .ccode-app-shell[data-chrome="dark"] .ccode-menu-surface::before {
     content: none;
   }
 }
