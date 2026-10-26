@@ -574,6 +574,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   （docs/agent-skills/：维护 Mesa 仓库本身的 Agent 技能（不随应用分发）；mesa-cli-canary = 金丝雀日常维护，装法见其 README）
   （scripts/screen-corpus/：抓屏语料库——corpus.ts 读一屏（菜单 / 信任 / 实时预览 / 输入框）、add-from-capture.ts 从抓屏挑三屏存进
    tests/fixtures/screens/<agent>/，tests/screen-corpus.test.ts 逐份重读；规则见 tests/fixtures/screens/README.md）
+  （scripts/chat-layout-measure/：聊天区量测——本机真实对话（sessions.rs 的 ignored 测试 dump_chat_layout_samples 写进 harness.local/）
+   在屏外真 WKWebView（host.swift）里跑聊天层，逐帧看切过去之后字动没动（switch）、往上翻有没有错位（scroll）；改聊天区后跑，只在 Mac；见其 README）
   （scripts/mirror-latest-json.mjs：应用内更新国内镜像——把 Release 的 latest.json 下载地址改写成镜像地址，签名原样、缺签名拒绝；
    .github/workflows/mirror-release.yml 在 Release 发布时调用，build.yml 打包时按仓库变量 UPDATE_MIRROR_BASE 把镜像加到 updater 地址最前；
    开通步骤 docs/release.md）
@@ -629,7 +631,6 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   auto-load-older.ts         # 回放往上翻自动加载更早一页（useAutoLoadOlder：对话页 / 项目对话 / 聊天层共用；只认用户滚动，
                              # 不满一屏自动补页）+ wasPrepended（聊天层前插判定，最新窗后滑不算）
   idle-preload.ts            # 启动后空闲时依次预载大块（preloadInIdle：一次一块、失败静默；App 里列运行页 / 项目页 / 文件预览编辑器 / PDF 阅读）
-  chat-veil.ts               # 刚摆出的对话排好再露（useSettleVeil：尺寸 90ms 不变且没在补页才淡入，最多 400ms；人刚发的第一句不遮；聊天层与对话页回放共用）
   virtual-window.ts          # 长对话只画视野附近（useVirtualWindow：上下两块占位、按字数估高 / 画过记实高、往上接画按锚点从占位扣差额；planWindow / remapWindow 纯逻辑可测）
   stable-props.ts            # memoWithLatestFunctions：父组件每次传新闭包时仍能跳过重画（比较时函数算相等、交出去的是转发到最新闭包的固定函数）；终端页每标签的聊天层 / 状态栏在用
   polling.ts                 # 定时刷新统一口径（usePolling / pollEvery：窗口隐藏时停、回前台补一次、上一次没回来不叠；createPoller 纯逻辑可测）
@@ -686,9 +687,10 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 发第一句才接回，源文件不在的去对话页；split = 右侧分屏）、resumeSessionInTerminal（接着聊一段旧对话的底层派发：
                              # Mesa 标签持着就切过去；连接 / 模型 / 思考档用这段对话上次的（session_resume_config）；Mesa 自己最后写的不弹外部终端提醒）、
                              # prefetchConversation / conversationPageFor（侧栏对话行悬停就预取接回身份与记录页，缓存规则在 conversation-prefetch.ts）、
+                             # 只看的对话点开前最多等 350ms 把记录页 + 更早整段取好再切（prepareRecord），cachedConversationPage / Rest 给标签第一帧同步摆、
                              # openProjectChat（项目 ＋ 新对话，10-24：空白对话、发第一句才启动、每次新开，项目说明在 TerminalView 发第一句时按目录现拼附在第一句前）
   conversation-prefetch.ts   # 点开对话前的预取缓存（2026-10-24 切对话卡顿）：接回身份 OneShotPrefetch 用一次就扔、10 秒过期（Run 发第一句后才登记，
-                             #   留久了会分裂出新 Run）；记录页 VersionedCache 按会话 updatedAt 认，24 段 LRU（tests/conversation-prefetch.test.ts）
+                             #   留久了会分裂出新 Run）；记录页 VersionedCache 按会话 updatedAt 认，24 段 LRU；peek 取已回来的现成结果（tests/conversation-prefetch.test.ts）
   confirm-dialog.ts          # 确认框键盘语义：Esc 取消，Enter 激活当前焦点钮；设为全局挡路可 focusCancel（tests/confirm-dialog.test.ts）
   custom-runtime.ts          # 自定义运行时默认 cwd：仅空目录/scratch 启用（tests/custom-runtime.test.ts）
   unbind-impact.ts           # 解绑/删网关前「会怎样」文案（定时任务/项目/目标；连接页解绑与网关库「解绑并删除」共用，tests/unbind-impact.test.ts）

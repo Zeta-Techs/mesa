@@ -220,6 +220,28 @@ export function conversationRestFor(
   );
 }
 
+/** 已经取回来的记录页 / 更早记录（没有就 undefined）：标签第一帧就把记录摆出来，不先画一帧空白 */
+export function cachedConversationPage(agent: string, filePath: string, version: string): ConversationPageDto | undefined {
+  return conversationPages.peek(`${agent}\n${filePath}`, version);
+}
+export function cachedConversationRest(agent: string, filePath: string, before: number): ConversationPageDto | undefined {
+  return conversationRests.peek(`${agent}\n${filePath}`, String(before));
+}
+
+/** 只看不接的标签点开前最多为记录多等这么久（ms）：再慢就先切过去，记录到了再摆 */
+const RECORD_WAIT_MS = 350;
+
+/**
+ * 点开前把要摆的记录（最近一页 + 更早的整段）也取好，和接回身份一起等：标签一出来第一帧就带着整段记录，
+ * 原先的画面一直留到那一刻，不先空一帧（2026-10-26 用户：切对话黑一下）。取不到或太慢不挡，照旧先切
+ */
+function prepareRecord(s: SessionMetaDto): Promise<unknown> {
+  const all = conversationPageFor(s.agent, s.filePath, s.updatedAt ?? "")
+    .then((page) => (page.cursor != null ? conversationRestFor(s.agent, s.filePath, page.cursor) : null))
+    .catch(() => null);
+  return Promise.race([all, new Promise((r) => setTimeout(r, RECORD_WAIT_MS))]);
+}
+
 /** 鼠标移到列表里的一段对话上：先把点开要等的东西取回来。Mesa 里已经开着它的不用取（点了只是切过去） */
 export function prefetchConversation(s: SessionMetaDto): void {
   if (!s.alive) return;
@@ -289,7 +311,10 @@ export function resumeSessionInTerminal(
     return;
   }
   void (async () => {
-    const { run, config, projects } = await resumeLookups.take(resumeLookupKey(s), () => fetchResumeLookup(s));
+    const [{ run, config, projects }] = await Promise.all([
+      resumeLookups.take(resumeLookupKey(s), () => fetchResumeLookup(s)),
+      opts?.lazy ? prepareRecord(s) : null,
+    ]);
     if (s.live && !holder && !lastWriteIsMesas(s.updatedAt, run)) {
       const ok = await confirmDialog(
         "这段对话可能正在别的终端里运行\n\n它的记录在最近一分钟里还有写入，而 Mesa 里没有打开它——多半是你在 iTerm、Ghostty 这类终端里直接运行的。两边同时接着聊，两份回复会交错写进同一段记录。\n\n建议先在那个终端里退出（Claude Code 按两次 Ctrl+C），再回来点继续。如果那边刚刚已经退出，可以直接继续。",

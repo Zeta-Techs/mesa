@@ -54,3 +54,17 @@ test("记录页缓存：超过上限扔最久没用过的", async () => {
   assert.equal(await cache.get("a", "v", load), 1);
   assert.equal(await cache.get("b", "v", load), 4);
 });
+
+test("记录页缓存：取回来之后能当场拿到（版本不对、还在取、取失败都拿不到）", async () => {
+  let release: (v: number) => void = () => {};
+  const cache = new VersionedCache<number>(4);
+  const p = cache.get("f", "v1", () => new Promise<number>((r) => (release = r)));
+  assert.equal(cache.peek("f", "v1"), undefined, "还在取");
+  release(5);
+  await p;
+  assert.equal(cache.peek("f", "v1"), 5);
+  assert.equal(cache.peek("f", "v2"), undefined);
+  await assert.rejects(cache.get("g", "v", () => Promise.reject(new Error("x"))));
+  await Promise.resolve();
+  assert.equal(cache.peek("g", "v"), undefined);
+});

@@ -126,7 +126,13 @@ import {
   isBlankChatTab,
   isThrowawayTab,
 } from "../quick-chat";
-import { conversationPageFor, conversationRestFor, saveQuickChatChoice } from "../quick-chat-launch";
+import {
+  cachedConversationPage,
+  cachedConversationRest,
+  conversationPageFor,
+  conversationRestFor,
+  saveQuickChatChoice,
+} from "../quick-chat-launch";
 import { connectionModels, readModelHistory } from "../model-history";
 import { modelKind } from "../model-kinds";
 import FileTree, { type DirEntryDto } from "../components/FileTree";
@@ -1669,7 +1675,9 @@ const TerminalView = memo(function TerminalView({
   );
   /** 摆着的记录转接回的那一次 resetLink 不清空对话（见 sendMessage） */
   const keepPreviewConvRef = useRef(false);
-  useEffect(() => {
+  // 绘制前摆：记录已经取回来（鼠标移上去时取过、点开前等过、刚看过）就在第一帧画出来，不先画一帧空白再出字
+  //（2026-10-26 用户：切对话黑一下）
+  useLayoutEffect(() => {
     if (running || shellActive || linkState !== "idle" || !previewFilePath) {
       setPreviewState(null);
       return;
@@ -1683,21 +1691,29 @@ const TerminalView = memo(function TerminalView({
     if (!visible) return;
     let stale = false;
     const src = { agentId, filePath: previewFilePath };
+    const show = (page: ConversationPageDto) => {
+      previewSrcRef.current = src;
+      olderRef.current = [];
+      restForRef.current = null;
+      latestWindowRef.current = page.messages;
+      convCursorRef.current = page.cursor;
+      setConvCursor(page.cursor);
+      setConv(page.messages);
+      setPreviewState("shown");
+      if (page.cursor != null) {
+        void loadRestOfConversation(src, page.cursor, () => !linkCtxRef.current && previewSrcRef.current === src);
+      }
+    };
+    const ready = cachedConversationPage(src.agentId, src.filePath, previewVersionRef.current);
+    if (ready && !linkCtxRef.current) {
+      show(ready);
+      return;
+    }
     setPreviewState("loading");
     conversationPageFor(src.agentId, src.filePath, previewVersionRef.current)
       .then((page) => {
         if (stale || linkCtxRef.current) return;
-        previewSrcRef.current = src;
-        olderRef.current = [];
-        restForRef.current = null;
-        latestWindowRef.current = page.messages;
-        convCursorRef.current = page.cursor;
-        setConvCursor(page.cursor);
-        setConv(page.messages);
-        setPreviewState("shown");
-        if (page.cursor != null) {
-          void loadRestOfConversation(src, page.cursor, () => !linkCtxRef.current && previewSrcRef.current === src);
-        }
+        show(page);
       })
       .catch(() => {
         // 读不出就不摆，聊天层退回「这段对话还没接回」，发一句照样接回
@@ -4541,7 +4557,7 @@ const TerminalView = memo(function TerminalView({
   }
 
   /** 最近一页摆出来之后，在后台把更早的记录一次接齐（2026-10-26 用户对照 Claude 客户端：往上翻要丝滑、滚动条别一下变短）。
-   *  接的期间报「正在接更早的」：聊天层不再自己一页页接，刚打开时的遮罩也等它（chat-veil.ts）。读不出就留着分页，往上翻照旧一页页接 */
+   *  接的期间报「正在接更早的」：聊天层不再自己一页页接。已经取回来的当场接上（点开前等过、刚看过）。读不出就留着分页，往上翻照旧一页页接 */
   async function loadRestOfConversation(
     src: { agentId: string; filePath: string },
     cursor: number,
@@ -4550,14 +4566,23 @@ const TerminalView = memo(function TerminalView({
     const key = `${src.agentId}\n${src.filePath}`;
     if (restForRef.current === key) return;
     restForRef.current = key;
-    setLoadingOlder(true);
-    try {
-      const rest = await conversationRestFor(src.agentId, src.filePath, cursor);
-      if (!isCurrent()) return;
+    const apply = (rest: ConversationPageDto) => {
       olderRef.current = mergeConversationPages(rest.messages, olderRef.current);
       convCursorRef.current = null;
       setConvCursor(null);
       setConv(mergeConversationPages(olderRef.current, latestWindowRef.current));
+    };
+    // 已经取回来的（刚看过、点开前等过）当场接上，和最近一页同一帧画出来
+    const ready = cachedConversationRest(src.agentId, src.filePath, cursor);
+    if (ready) {
+      apply(ready);
+      return;
+    }
+    setLoadingOlder(true);
+    try {
+      const rest = await conversationRestFor(src.agentId, src.filePath, cursor);
+      if (!isCurrent()) return;
+      apply(rest);
     } catch {
       if (restForRef.current === key) restForRef.current = null;
     } finally {

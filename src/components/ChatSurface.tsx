@@ -12,7 +12,6 @@ import MesaThinkingDots from "./MesaThinkingDots";
 import { firstCompleteTurnIndex } from "../conversation-tools";
 import { useAutoLoadOlder, wasPrepended } from "../auto-load-older";
 import { useReadingAnchor } from "../reading-anchor";
-import { useSettleVeil, veilClass } from "../chat-veil";
 import { chatGreeting, resolveChatCwd, starterContextFor } from "../chat-empty-start";
 import { useAppStore } from "../store";
 import { isLightTheme } from "../themes";
@@ -264,6 +263,7 @@ export default function ChatSurface({
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollFadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const followRef = useRef(true);
+  const lastScrollTopRef = useRef(0);
   const [hasNew, setHasNew] = useState(false);
   // 往上翻了一段：底部正中浮一枚「回到最新」（2026-10-26 用户）。离底一点就冒出来太吵（同日用户：「不要离底立马就显现，
   // 用户可能需要的时候再显示」），一屏又太晚（同日二改）：离底超过三分之一屏（至少 160px）才出；底下来了新内容另由 hasNew 叫出来
@@ -464,15 +464,6 @@ export default function ChatSurface({
     onLoad: loadOlder,
     fillKey: messages.length,
   });
-  // 刚摆出这段对话：排好（表格、文件链接、高亮、补页都停下）再一次露出，贴底时上面的字不跟着抖（chat-veil.ts）
-  const veiled = useSettleVeil(
-    scrollRef,
-    !emptyLayout && shownMessages.length > 0,
-    // 自己在接更早一页，或上层正在后台把更早的记录一次接齐
-    () => loadingOlderRef.current || loadingOlder,
-    // 新对话里人刚发的第一句（等回复中，或只有人说的话）：不是摆出来的记录，立刻露出，不能让自己发的话晚半秒才出现
-    loading || shownMessages.every((m) => m.role === "user"),
-  );
   const projectPaths = useAppStore((s) => s.projectPaths);
   const recentRepos = useAppStore((s) => s.recentRepos);
   const theme = useAppStore((s) => s.settings?.theme);
@@ -1080,7 +1071,10 @@ export default function ChatSurface({
             delete el.dataset.scrolling;
           }, 900);
           const atBottom = nearBottom(el);
-          followRef.current = atBottom;
+          // 跟着底时只有往上挪了才算人要离开：贴底之后内容又在上方长高（整段记录接上、窗口换段）也会发一次滚动事件，
+          // 那时离底远了但位置没往上走，照旧跟底——原先这一下就断了跟底，画面停在中间一帧再跳回底（2026-10-26 实测）
+          followRef.current = atBottom || (followRef.current && el.scrollTop >= lastScrollTopRef.current - 1);
+          lastScrollTopRef.current = el.scrollTop;
           setAwayFromBottom(farFromBottom(el));
           if (atBottom) setHasNew(false);
         }}
@@ -1093,7 +1087,7 @@ export default function ChatSurface({
       >
         {/* 栏宽跟聊天字号走（App.css .ccode-chat-column，回答一行约 52 字），与输入框、底部状态栏同一条中轴：
             外层 px-4、内层不再加内边距，和 ChatComposer 同构——正文左缘、气泡右缘与输入框两边对齐（2026-10-25） */}
-        <div className={`flex min-h-full flex-col px-4 ${veilClass(veiled)}`}>
+        <div className="flex min-h-full flex-col px-4">
         <div className="ccode-chat-column mx-auto flex w-full flex-1 flex-col pb-6 pt-8">
           {emptyLayout && (
             // 空态问候：Mesa 光标标志 + 时段问候，贴在输入框正上方（2026-10-17 用户选定）。

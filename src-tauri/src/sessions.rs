@@ -8359,6 +8359,31 @@ pub fn unwatch_session(watch_id: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    /// 聊天区量测（scripts/chat-layout-measure）的样本：从本机一个 Claude Code 项目目录里按文件大小取中位、九成位、最大三段，
+    /// 解析成聊天层拿到的样子写进 harness.local/（gitignored，是真实对话，不进仓库）。只在手动量测时跑：
+    /// MESA_CHAT_SAMPLES=~/.claude/projects/<项目目录> cargo test --lib dump_chat_layout_samples -- --ignored
+    #[test]
+    #[ignore]
+    fn dump_chat_layout_samples() {
+        let dir = std::env::var("MESA_CHAT_SAMPLES").expect("设 MESA_CHAT_SAMPLES 为一个 Claude Code 项目会话目录");
+        let mut files: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "jsonl"))
+            .map(|p| (std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0), p))
+            .collect();
+        files.sort();
+        assert!(!files.is_empty(), "目录里没有会话文件");
+        let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../harness.local");
+        std::fs::create_dir_all(&out).unwrap();
+        let n = files.len();
+        for (name, idx) in [("p50", n / 2), ("p90", n * 9 / 10), ("max", n - 1)] {
+            let msgs = super::conversation_impl("claude-code", files[idx].1.to_str().unwrap());
+            std::fs::write(out.join(format!("conv-{name}.json")), serde_json::to_string(&msgs).unwrap()).unwrap();
+        }
+    }
+
     /// qwen 退出后 runtime.json 不清理：只有进程还在、同一台机器、PID 没被复用才算进行中
     #[test]
     fn qwen_sidecar_live_requires_a_real_running_process() {

@@ -153,6 +153,7 @@ function SectionHeading({
     [section.title],
   );
   const titleRef = useRef<HTMLSpanElement>(null);
+  const inner = useMemo(() => ({ __html: html }), [html]);
   useChatDecorations(titleRef, html, cwd);
   const Tag = (["h1", "h2", "h3", "h4"] as const)[Math.min(Math.max(section.level, 1), 4) - 1];
   return (
@@ -182,7 +183,7 @@ function SectionHeading({
           style={{ transform: open ? "rotate(90deg)" : undefined, transition: "transform 120ms" }}
         />
       </button>
-      <span ref={titleRef} dangerouslySetInnerHTML={{ __html: html }} />
+      <span ref={titleRef} dangerouslySetInnerHTML={inner} />
     </Tag>
   );
 }
@@ -305,6 +306,9 @@ function MarkdownBody({
     [text],
   );
   const bodyRef = useRef<HTMLDivElement>(null);
+  // React 19 按对象引用比 dangerouslySetInnerHTML：每次重画都给新对象，就每次重设 innerHTML，表格壳、高亮、公式、
+  // 文件链接全被冲掉再重做一遍，高度跟着变（2026-10-26 实测：切到一段对话后整屏段落被重写两次，上面的字跟着挪）
+  const inner = useMemo(() => ({ __html: html }), [html]);
   const setPreviewReq = useAppStore((s) => s.setPreviewReq);
   const editImage = useContext(ChatImageEditContext);
   // resolveMdPath 按「文件所在目录」解析相对路径：传 cwd 下的伪文件名，目录即 cwd
@@ -400,7 +404,7 @@ function MarkdownBody({
         onMouseOver={onBodyOver}
         onMouseLeave={() => setCiteTip(null)}
         className="md-body md-chat"
-        dangerouslySetInnerHTML={{ __html: html }}
+        dangerouslySetInnerHTML={inner}
       />
       <HoverTip tip={citeTip} text={citeTip?.text ?? ""} warn={citeTip?.warn} up />
     </>

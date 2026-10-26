@@ -42,7 +42,7 @@ export class OneShotPrefetch<T> {
 
 /** 按版本认的结果缓存（记录页）：版本一样就复用，取失败的不留；超过上限扔最久没用的 */
 export class VersionedCache<T> {
-  private entries = new Map<string, { version: string; value: Promise<T> }>();
+  private entries = new Map<string, { version: string; value: Promise<T>; done?: { v: T } }>();
   private limit: number;
   constructor(limit: number) {
     this.limit = limit;
@@ -56,15 +56,30 @@ export class VersionedCache<T> {
       return hit.value;
     }
     const value = load();
-    this.entries.set(key, { version, value });
-    value.catch(() => {
-      if (this.entries.get(key)?.value === value) this.entries.delete(key);
-    });
+    const entry: { version: string; value: Promise<T>; done?: { v: T } } = { version, value };
+    this.entries.set(key, entry);
+    value.then(
+      (v) => {
+        entry.done = { v };
+      },
+      () => {
+        if (this.entries.get(key)?.value === value) this.entries.delete(key);
+      },
+    );
     while (this.entries.size > this.limit) {
       const oldest = this.entries.keys().next().value;
       if (oldest === undefined) break;
       this.entries.delete(oldest);
     }
     return value;
+  }
+
+  /**
+   * 已经取回来的现成结果（版本一样才算），没有或还在取就 undefined。切到一段看过 / 鼠标移上去时已取过的对话，
+   * 第一帧就能把记录摆出来，不先画一帧空白（2026-10-26 用户：切对话黑一下）
+   */
+  peek(key: string, version: string): T | undefined {
+    const hit = this.entries.get(key);
+    return hit && hit.version === version ? hit.done?.v : undefined;
   }
 }
