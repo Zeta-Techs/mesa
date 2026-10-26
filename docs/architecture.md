@@ -44,14 +44,14 @@
 ```
 ┌────────────────────────────────────────────────────────┐
 │ 前端 React + TS（Tauri WebView）                        │
-│  ├─ ProfilesPage    配置中心：agent × profile 增删改查  │
-│  ├─ LauncherPage    启动面板：选 agent/profile/项目     │
-│  ├─ WorkspaceView   工作区：终端 + 结构化对话双栏联动   │
-│  │    ├─ TerminalView  内嵌终端标签页（xterm.js）       │
-│  │    └─ SessionView   当前会话的结构化对话（准实时）   │
-│  ├─ ProjectsPage    常用项目（自动聚合 + 分类 + 置顶）  │
-│  ├─ SessionsPage    会话浏览：项目 → 会话 → 对话回放    │
-│  └─ (后期) FilesPage / 编辑器 / 统计面板                │
+│  ├─ WorkbenchPage   工作台：课题/对话总览               │
+│  ├─ TerminalPage    运行页：内嵌终端标签 + 聊天层        │
+│  │    ├─ xterm.js 终端（PTY）                           │
+│  │    └─ ChatSurface  同一会话的结构化聊天层             │
+│  ├─ WorkspacesPage  项目页（含编程车道、定时任务页签）   │
+│  ├─ SessionsPage    对话管理：搜索/回放/归档             │
+│  ├─ ProfilesPage    连接：网关 × 绑定                   │
+│  ├─ SkillsPage / McpPage / StatsPage / SettingsPage     │
 ├────────────────── Tauri IPC（commands + events）────────┤
 │ Rust 核心                                               │
 │  ├─ ProfileStore    网关+绑定持久化（JSON + 0600 keys.json） │
@@ -208,7 +208,7 @@ struct ChatMessage {
 
 ### 6.2 密钥存储
 
-- 密钥本体存 `<平台配置目录>/ccode/keys.json`，文件权限 0600（与 Codex `auth.json`、Claude Code 在 Linux 的 `.credentials.json` 同一威胁模型）；`profiles.json` 里只存尾号提示（`key_hint`）。MCP 引用变量的值另存同目录 `mcp-keys.json`（0600，键是环境变量名如 `CONSENSUS_API_KEY`），不与网关 id 混表。
+- 密钥本体存 `<平台配置目录>/ccode/keys.json`，文件权限 0600（与 Codex `auth.json`、Claude Code 在 Linux 的 `.credentials.json` 同一威胁模型）；网关/绑定 JSON（`gateways.json` / `bindings.json`；旧 `profiles.json` 仅作拆层迁移输入）里只存尾号提示（`key_hint`）。MCP 引用变量的值另存同目录 `mcp-keys.json`（0600，键是环境变量名如 `CONSENSUS_API_KEY`），不与网关 id 混表。
 - **不用系统钥匙串**（v0.1 曾用，已废弃）：macOS 钥匙串 ACL 与代码签名绑定，未签名的开发构建每次热重编译产生新 cdhash，旧条目即失配读不到，表现为「密钥消失」；Linux 的 Secret Service 在无桌面环境下也不可用。读取时保留从钥匙串的一次性迁移，兼容旧版本数据。
 - 注入时从 `keys.json` 读出，只存在于子进程环境变量中，不进日志、不前端回显（UI 只显示尾号掩码）。MCP 引用变量同时注入 `mcp-keys.json`。
 
@@ -254,7 +254,8 @@ struct ChatMessage {
 
 ```
 <平台 app-data 目录>/ccode/
-├── profiles.json          # profile 定义（无密钥明文）
+├── gateways.json          # 网关定义（无密钥明文，只存尾号 key_hint；旧 profiles.json 为一次性迁移输入）
+├── bindings.json          # 绑定（网关 id × 实体/槽位/用途）
 ├── keys.json              # API 密钥（0600）
 ├── catalogs/              # codex model catalog（按 profile 生成）
 ├── snapshots/             # pin 的会话快照
@@ -268,7 +269,7 @@ VS Code 的五区布局（活动栏/侧栏/编辑器区/面板/状态栏）映�
 
 - **工作树（Explorer）**：终端页左侧可折叠栏，根目录 = 活动终端标签的 cwd，切标签即切根。借鉴 VS Code Explorer 的懒加载（展开才读子目录，`list_dir` command）与单击预览（右侧预览面板，只读、文本上限 256KB、二进制拒绝，`read_file_preview` command，路径限制在项目根内）。刷新：切回标签自动 + 手动按钮；文件监听自动刷新留 P4。
 - **运行中总览**：工作树下方固定面板，列出全部终端标签（借鉴 VS Code 终端标签列表）：状态点（绿=agent 运行 / 蓝=shell / 灰=已退出）、agent、profile、模型、项目 basename、启动时长；点击激活标签。这是并行工作的可视化入口；P3 接 hooks badge 后叠加「等待输入」标记（Wave 思路）。
-- **布局**：终端页三带 `[上下文（项目/工作区/文件树） | Agent 聊天/终端 | 成果工作台（文件 / 改动）]`，左栏可折叠，主工作区先显示聊天层还是终端层由设置「打开对话时先显示」决定（2026-10-22；默认聊天，09-02–10-17 曾默认终端）。聊天与终端共享同一 TerminalView、PTY、xterm 和会话文件；聊天可拉起同一会话的终端：底栏真实分栏并 fit（v3.168 / v3.177 界面名「拉起终端」；不能裁全高 xterm 底部，Codex inline 底下是空行）。右侧工作台只负责文件预览编辑和 Git 改动，避免重复渲染实时对话；任务审阅仍从改动页进入既有全宽覆盖层。右侧宽度可拖拽并记忆，宽屏动作只隐藏工作树、不杀终端。App 主区与终端三带均以 `h-full/min-h-0` 约束，外层裁切溢出，滚动只落在文件树、聊天消息、diff 等具体内容区；避免页面级滚动或无约束 flex 子项在窗口缩放、拖动或长内容后留下黑屏/空白。
+- **布局**（2026-10-24 改版，旧三带 `[上下文|聊天/终端|成果工作台]` 中左列已撤）：主区就是聊天/终端两层（先显示哪层由设置「打开对话时先显示」决定，2026-10-22；默认聊天，09-02–10-17 曾默认终端），右栏一次只开一块——**文件**（顶上文件树标签 + 预览标签，可树/预览左右并排）或**改动**（Git 面板），对话头的文件夹图标 / ± 切换；文件树不再占左列，对话更宽。聊天与终端共享同一 TerminalView、PTY、xterm 和会话文件；聊天可拉起同一会话的终端：底栏真实分栏并 fit（v3.168 / v3.177 界面名「拉起终端」；不能裁全高 xterm 底部，Codex inline 底下是空行）。右侧工作台只负责文件预览编辑和 Git 改动，避免重复渲染实时对话；任务审阅仍从改动页进入既有全宽覆盖层。右侧宽度可拖拽并记忆，宽屏动作不杀终端。App 主区与各栏均以 `h-full/min-h-0` 约束，外层裁切溢出，滚动只落在文件树、聊天消息、diff 等具体内容区；避免页面级滚动或无约束 flex 子项在窗口缩放、拖动或长内容后留下黑屏/空白。
 - **改动面板（借鉴 VS Code Source Control 与 Codex 环境信息）**：右栏第三页签，量化 agent 的工作成果——当前分支、领先/落后远程、对比 HEAD 的 `+/-` 行数（含未跟踪文件）、文件级列表。普通仓库默认不选择文件，`git_commit(paths)` 与 `ai_commit_message(paths)` 使用 `--literal-pathspecs` 且重新校验当前 status，只暂存/读取用户勾选项；工作区任务维持全量提交语义。提交信息非空时按原文执行「提交 / 提交并推送」，留空时同一按钮切为「快速提交 / 快速提交并推送」，前端按所选文件状态或数量即时生成中性默认信息，不启动 AI。Git 失败保留默认信息。独立 ◈ 仍可按需生成更完整的信息。8 秒轮询刷新，非 git 仓库明确提示；git 写操作始终只由用户点击触发，命令输出与错误回显。
 - **明确不借鉴**：VS Code 服务化 workbench 架构（过重）；文件树 git 装饰（标改动）留 P4；真正的编辑器留 P4 Monaco，预览只读先行。
 
@@ -319,7 +320,7 @@ run 脚本在终端页以按钮呈现（在工作区上下文时），run_mode=n
 
 ### 6.11 P3 设计：OpenCode 解析、用量统计、注意力标记
 
-**页面结构**：侧栏由四页扩为五页——配置 / 工作区 / 终端 / 会话 / **统计**。
+**页面结构**：侧栏由四页扩为五页——配置 / 工作区 / 终端 / 会话 / **统计**。（P3 时点口径；现为九页：工作台 · 对话管理 · 项目 · 连接 · 技能 · MCP · 用量 · 设置，⌘1–⌘8，运行页不是侧栏页。）
 
 **OpenCode 会话解析（补齐第六个 agent）**
 - 数据源：`~/.local/share/opencode/opencode.db`（v1.2+ SQLite，WAL 只读打开，`busy_timeout`）；旧版（<v1.2）`storage/` 扁平 JSON 做兼容回退
@@ -351,10 +352,10 @@ run 脚本在终端页以按钮呈现（在工作区上下文时），run_mode=n
 
 ### 6.13 技能管理（Skills，借鉴 cc-switch 与 Agent Skills 开放标准）
 
-侧栏第五页「技能」（配置/工作区/终端/会话/**技能**）。技能 = 目录 + `SKILL.md`（开放标准，frontmatter `name`/`description` 必填，各 CLI 扩展字段防御式忽略）。
+侧栏第五页「技能」（配置/工作区/终端/会话/**技能**；时点口径，现技能页在 ⌘5，全部九页见 §3/导航 `src/navigation.ts`）。技能 = 目录 + `SKILL.md`（开放标准，frontmatter `name`/`description` 必填，各 CLI 扩展字段防御式忽略）。
 
 **模型：技能库（SSOT）+ 分发**
-- 库位置：`<config>/ccode/skills/<name>/`；元数据存 `skills.json`（name、description、source、apps 六 agent 布尔、installed_at）
+- 库位置：`<config>/ccode/skills/<name>/`；元数据存 `skills.json`（name、description、source、apps 按 agent 的布尔映射——动态键，遍历 `AGENT_SPECS` 九家，不再是固定六个）
 - **应用到 agent** = 把库里的技能分发到各 CLI 的技能目录：
   - claude-code → `~/.claude/skills/`；codex → `~/.codex/skills/`；gemini → `~/.gemini/skills/`；qwen → `~/.qwen/skills/`；opencode → `~/.config/opencode/skills/`；kimi → `~/.kimi-code/skills/`
   - 分发方式 Auto（symlink 优先，失败回退 copy；Windows 无权限时自动 copy）
@@ -365,7 +366,7 @@ run 脚本在终端页以按钮呈现（在工作区上下文时），run_mode=n
 1. **本地目录**：选一个目录，递归扫描含 SKILL.md 的子目录批量入库
 2. **ZIP 文件**：扫描 ZIP 内含 SKILL.md 的条目；安全三件套（解压预算 ≤128MB/10000 条、路径穿越校验、symlink 物化为副本）
 3. **GitHub 仓库**：`owner/repo[/subdir]`，下载 `archive/refs/heads/<branch>.zip`（main→master 回退）后按 ZIP 流程；预设 anthropics/skills 等常用源
-4. **从应用目录发现**：扫描六 CLI 技能目录 + `~/.agents/skills/` 里未纳管的技能，一键收编入库
+4. **从应用目录发现**：扫描九家 CLI 技能目录 + `~/.agents/skills/` 里未纳管的技能，一键收编入库
 
 同名导入返回结构化 `added/updated/skipped/conflicts`；用户可选择跳过、备份后覆盖或另存为。覆盖先备份旧库，ZIP 先完整解压到 staging，元数据保存失败回滚库目录。GitHub 来源额外持久化 repo/ref/subdir/revision，`check_skill_updates` 提示 revision 变化；`apply_skill_update` 一键应用更新——按记录的 repo/ref/subdir 重下 zipball，`import_zip_impl` 加 `only` 过滤只覆盖同名技能（其余不新增不覆盖，走同一覆盖+备份路径），成功后刷新 revision 基线；上游改名/移动时明确报错并引导手动重新导入（仍走冲突确认）。
 
@@ -373,7 +374,7 @@ run 脚本在终端页以按钮呈现（在工作区上下文时），run_mode=n
 
 **导出**：单个/多个技能打包为 ZIP（系统保存对话框）。
 
-**页面**：技能行（名称 + description + 六个 agent 的应用开关徽标）+ 操作（查看 SKILL.md、重新应用、导出、删除）；顶部 导入/导出 按钮。查看用只读预览复用现有组件。
+**页面**：技能行（名称 + description + 按 agent 的应用开关徽标，九家）+ 操作（查看 SKILL.md、重新应用、导出、删除）；顶部 导入/导出 按钮。查看用只读预览复用现有组件。
 
 **后续（v2）**：来源更新检测（content_hash 比对）、SKILL.md 在线编辑、自定义命令（commands/prompts）管理。
 
@@ -401,7 +402,7 @@ Windows release 构建使用 `windows_subsystem = "windows"`，没有可继承�
 
 ### 6.15 MCP server 清单与分发
 
-MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-servers.json`，`mcp.rs`），按开关分发到各 CLI 的**用户级** MCP 配置（grok 首版只读清单、不分发，见 matrix §10.1）。规格与调研结论的单一出处是 `docs/agent-integration-matrix.md` §10（分发通道总表 / schema 映射 / 密钥插值 / 共性红线），改映射前先读它。
+MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：Mesa 自有统一清单（`<config>/ccode/mcp-servers.json`，`mcp.rs`），按开关分发到各 CLI 的**用户级** MCP 配置（grok 首版只读清单、不分发，见 matrix §10.1）。规格与调研结论的单一出处是 `docs/agent-integration-matrix.md` §10（分发通道总表 / schema 映射 / 密钥插值 / 共性红线），改映射前先读它。
 
 要点：
 
@@ -422,7 +423,7 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 | 文件监听 | `notify` | 跨平台 |
 | SQLite | `rusqlite`（bundled） | 读 OpenCode db + 自身索引缓存 |
 | 压缩 | `zstd` crate | Codex `.jsonl.zst` |
-| 密钥 | `keyring` crate | 三平台系统钥匙串抽象 |
+| 密钥 | 0600 `keys.json`（v0.1 曾选 `keyring` 系统钥匙串，2026-09 废弃，仅剩一次性迁移读取，见 §6.2） |
 | 路径 | `dirs` crate | 三平台 app-data / home 目录 |
 | 状态管理 | zustand | 轻量，够用 |
 | TOML/JSON | `toml` / `serde_json` | 写各 CLI 配置文件 |
@@ -447,7 +448,7 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 | 风险 | 对策 |
 |---|---|
-| 各 CLI 会话格式是内部格式，随版本漂移（调研已确认六家都漂移） | 防御式解析；每行带 version 时记录；解析失败降级为「原始视图」而不是报错 |
+| 各 CLI 会话格式是内部格式，随版本漂移（调研已确认九家都漂移） | 防御式解析；每行带 version 时记录；解析失败降级为「原始视图」而不是报错 |
 | Codex 中转必须讲 Responses API，很多 Anthropic 系中转不支持 | UI 上对该 profile 类型给出协议提示；不强推 Codex + 任意中转的组合 |
 | Gemini 会话默认 30 天自动清除 | 列表页容忍会话消失；重要会话提供「导出快照」 |
 | 新旧 Kimi 命令同名、格式完全不同 | detect 时按版本号 + 数据目录区分，UI 显示为两个 agent 条目或标注版本 |
@@ -3769,7 +3770,7 @@ Claude Code 用量无法恢复。
 | **P4 ✅** | 论文（v3.21）：manuscript 模板（科研论文/毕业论文）+ quarto render 脚本（RX4a 追加 export-docx）+ quarto-render 技能；提货单登记的根外 PDF 产物纳入预览白名单；bib 联动以模板简报引用 references.bib 务实落地 |
 | **P5 部分 ✅** | 通用层打磨（v3.21/v3.22）：逐 hunk 验收 ✅（v1 边界=仅未提交）、跨标签聚合视图 ✅、成本按工作区归因 ✅（任务成本）、订阅口径 ✅、历史时间线视图 ✅（first-parent 主线 + 白话翻译）；批量验收、云端会话双源调研留 backlog |
 
-**Backlog（记录不动手）**：SSH 远程执行（数据集在实验室服务器时启动）、MCP 配置分发调研、团队协作 2.0、PDF 批注系统（永远不做）、深度阅读器（✅ 已落地为沉浸阅读区，v3.96）、批量验收、云端会话双源调研、首启引导完整版（示例课题带演示数据 + 示例 PDF）、工作区类型驱动默认值（数据类跳端口）。
+**Backlog（记录不动手）**：SSH 远程执行（数据集在实验室服务器时启动）、~~MCP 配置分发调研~~（✅ 已落地：MCP 页统一清单 + 分发，见 §6.15 / matrix §10）、团队协作 2.0、PDF 批注系统（永远不做）、深度阅读器（✅ 已落地为沉浸阅读区，v3.96）、批量验收、云端会话双源调研、首启引导完整版（示例课题带演示数据 + 示例 PDF）、工作区类型驱动默认值（数据类跳端口）。
 
 #### 历史设计记录：定时任务与研究流程的结合（已落地部分闭环，2026-08-18）
 
@@ -3847,7 +3848,7 @@ Claude Code 用量无法恢复。
   **2026-10-26 用户确认：GitHub 上的 v0.1.0（当时名 Ccode）只是测试版，没有外部老用户**——①②都不用重建，
   Ccode → Mesa 改名升级路径（Windows 按产品名分装两份、Mac 沿用 `Ccode.app` 包名）也不用处理，只影响用户自己的测试机。
 - **普通目标待拍板（2026-10-22 立，见 §10 同日「新建目标补齐」）**：~~①进行中的目标卡没有「停止」，只能去终端关标签~~ ✅ 2026-10-26 加了「停止」（§10 同日「操作流畅性一批」七）；
-  ②只讨论目标没有验收环，CLI 退出即「已完成」，是否需要人点「完成」；③「验收后写入」开聊建的目标都叫「项目对话（验收后写入）」，
+  ②「先出方案」目标（旧称只讨论目标，2026-10-26 改名）没有验收环，CLI 退出即「已完成」，是否需要人点「完成」；③「验收后写入」开聊建的目标都叫「项目对话（验收后写入）」，
   在目标列表里会出现多条同名，是否改用首句提问做名字或单独分组。
 - ~~**侧栏挂对话第二期待定**~~ ✅ 2026-10-24 落地（§10 同日「侧栏挂对话（第二期）」）：标签条退场、空闲 30 分钟自动收、重启只回上次那段。
   遗留：~~侧栏收成图标时只有活动芯片（只列在跑的）与 ⌃Tab 能切对话，没说话的新对话 / 纯终端在那种形态下找不到入口~~（同日稍后「探出整栏 + 岛上对话切换器」已解决，2026-10-26 核对补记）；阅读区仍是运行页内的覆盖层，没进树。
