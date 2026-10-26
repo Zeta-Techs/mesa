@@ -75,7 +75,8 @@ import { firstCompleteTurnIndex } from "../conversation-tools";
 import { useAutoLoadOlder } from "../auto-load-older";
 import { useReadingAnchor } from "../reading-anchor";
 import RunCaret from "../components/RunCaret";
-import { caretOfAttention, type RunCaretState } from "../run-caret";
+import { caretOfAttention, withUnread, type RunCaretState } from "../run-caret";
+import { unreadKeyOf } from "../chat-unread";
 import GitPanel from "../components/GitPanel";
 import HandoffPicker from "../components/HandoffPicker";
 import DigestPicker from "../components/DigestPicker";
@@ -212,11 +213,13 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     () => new Set(terminalRunInputs.filter((r) => r.attention === "confirm").map((r) => r.tabId)),
     [terminalRunInputs],
   );
-  /** 列表行尾的运行状态光标：Mesa 里有标签开着它就按那个标签的注意力，只是 Mesa 外的终端在写算在干活 */
+  const unreadChats = useAppStore((s) => s.unreadChats);
+  /** 列表行尾的运行状态光标：Mesa 里有标签开着它就按那个标签的注意力（跑完了没看的蓝色），只是 Mesa 外的终端在写算在干活 */
   const liveCaret = (s: { agent: string; sessionId: string }): RunCaretState => {
     const tab = liveSessions[sessionRuntimeKey(s.agent, s.sessionId)];
     const run = tab ? terminalRunInputs.find((r) => r.tabId === tab) : undefined;
-    return run ? caretOfAttention(run.attention) : "working";
+    if (!run) return "working";
+    return withUnread(caretOfAttention(run.attention), unreadChats.includes(unreadKeyOf(run))) ?? "idle";
   };
   const profiles = useAppStore((s) => s.profiles);
   const appSettings = useAppStore((s) => s.settings);

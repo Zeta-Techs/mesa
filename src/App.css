@@ -3224,6 +3224,10 @@ select:focus-visible {
 .ccode-run-caret[data-state="idle"] {
   background: var(--color-l4);
 }
+/* 做完了、还没看：链接蓝常亮（与琥珀「等你确认」分开：有结果可看，不是轮到你拍板） */
+.ccode-run-caret[data-state="unread"] {
+  background: var(--color-link);
+}
 .ccode-run-caret[data-state="confirm"] {
   background: var(--color-mesa-amber);
   box-shadow: 0 0 5px color-mix(in srgb, var(--color-mesa-amber) 55%, transparent);
@@ -3242,6 +3246,9 @@ select:focus-visible {
   }
   .ccode-run-caret[data-state="confirm"] {
     background: Highlight;
+  }
+  .ccode-run-caret[data-state="unread"] {
+    background: LinkText;
   }
 }
 

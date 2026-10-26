@@ -7,7 +7,8 @@ import type { SessionMetaDto } from "./types";
 import { pathKey, pathWithin } from "./path-utils.ts";
 import { isScratchCwd } from "./quick-chat.ts";
 import { sessionExcludedFromProjectList } from "./session-filter.ts";
-import { caretOfAttention, strongestCaret, type RunCaretState } from "./run-caret.ts";
+import { caretOfAttention, strongestCaret, withUnread, type RunCaretState } from "./run-caret.ts";
+import { unreadKeyOf } from "./chat-unread.ts";
 
 /** 每个文件夹下最多列几段，更早的走「全部 N 条」进对话页 */
 export const SIDEBAR_CHAT_LIMIT = 5;
@@ -286,6 +287,8 @@ export interface PaletteOpenChat {
 export function paletteOpenChats(
   runs: readonly OpenTabInput[],
   focusedTabId: string | null,
+  /** 跑完了没看的（chat-unread.ts 的键）：光标换成蓝色，排在等确认之后 */
+  unread: ReadonlySet<string> = new Set(),
 ): PaletteOpenChat[] {
   const rows = openTabRows({ runs, listed: new Set(), focusedTabId, folderOf: () => null });
   const out = rows.map((r) => {
@@ -295,13 +298,16 @@ export function paletteOpenChats(
       kind: r.kind,
       label: r.kind === "chat" ? sidebarChatTitle(r.label) : r.label,
       fullTitle: r.label,
-      caret: r.kind === "chat" && run.running ? caretOfAttention(run.attention) : null,
+      caret: withUnread(
+        r.kind === "chat" && run.running ? caretOfAttention(run.attention) : null,
+        r.tabId !== focusedTabId && unread.has(unreadKeyOf(run)),
+      ),
       cwd: run.cwd,
       current: r.tabId === focusedTabId,
     };
   });
   const rank = (c: PaletteOpenChat) =>
-    c.current ? 3 : c.caret === "confirm" ? 0 : c.caret === "working" ? 1 : 2;
+    c.current ? 4 : c.caret === "confirm" ? 0 : c.caret === "unread" ? 1 : c.caret === "working" ? 2 : 3;
   // sort 稳定：同档保持开的顺序
   return out.sort((a, b) => rank(a) - rank(b));
 }
