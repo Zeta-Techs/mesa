@@ -123,6 +123,9 @@ type TreeRow = {
  *  清除痕迹 / 删除目录，动作自持，完成后 bump projectsVersion 通知本树与项目页重拉。
  *  选中高亮吃 contextLabel.projectPath（项目页唯一写入方的「当前项目」镜像）。
  *  行首状态点只认「此刻有 Agent 在跑」（绿点）；待处理黄点归顶栏收件箱与工作台，不在此重复计算。 */
+/** 派发切换后还没轮到「正看着的标签」接过高亮时，点下去的高亮最多再留这么久（ms），免得闪回原来那行 */
+const PRESSED_HOLD_MS = 1500;
+
 export default function ProjectTree({
   selectedRoot,
   active,
@@ -386,6 +389,8 @@ export default function ProjectTree({
   const [scratchMenu, setScratchMenu] = useState<{ x: number; y: number } | null>(null);
   const [renaming, setRenaming] = useState<{ key: string; value: string } | null>(null);
   const composingRef = useRef(false);
+  /** 刚点下去、还没切过去的那段（2026-10-26 实测：高亮要等切换那一帧画完，晚 100–200ms） */
+  const [pressedChatKey, setPressedChatKey] = useState<string | null>(null);
 
   function chatKey(s: SessionMetaDto): string {
     return `${s.agent}\n${s.sessionId}`;
@@ -402,9 +407,20 @@ export default function ProjectTree({
     return key ? (rows.find((r) => pathKey(r.repoPath, IS_WINDOWS) === key)?.name ?? null) : null;
   }
   function openChat(s: SessionMetaDto, project: ProjectDto | null, split = false) {
+    // 点下去这一行先亮（分屏打开时左边正看着的那段不变，不抢高亮）。切过去后高亮交回「正看着的标签」；
+    // 没切成（确认框里取消、没真正切过去）就收回
+    const key = chatKey(s);
+    if (!split) setPressedChatKey(key);
     openConversation(s, {
       preferredProfileId: project ? projectResumeProfileId(profiles, project, s.agent) : undefined,
       ...(split ? { split: true } : {}),
+      ...(split
+        ? {}
+        : {
+            onOpened: () =>
+              window.setTimeout(() => setPressedChatKey((k) => (k === key ? null : k)), PRESSED_HOLD_MS),
+            onSkipped: () => setPressedChatKey((k) => (k === key ? null : k)),
+          }),
     });
   }
   /** 改名 / 归档：写会话元数据（不碰 CLI 源文件），先改本地镜像再强刷 */
@@ -632,6 +648,11 @@ export default function ProjectTree({
     page === "terminal" && activeRun?.sessionId
       ? `${activeRun.agentId}\n${activeRun.sessionId}`
       : null;
+  // 正看着的标签跟上了点下去的那段，就交回它管高亮（先切页、后换标签时中间那一下不能亮回原来那行）
+  useEffect(() => {
+    if (selectedChatKey) setPressedChatKey((k) => (k === selectedChatKey ? null : k));
+  }, [selectedChatKey]);
+  const highlightChatKey = pressedChatKey ?? selectedChatKey;
   // 置顶的不在原课题下重复列
   const unpinnedSessions = useMemo(
     () => (pinnedKeys.size ? sessions.filter((s) => !pinnedKeys.has(`${s.agent}\n${s.sessionId}`)) : sessions),
@@ -733,7 +754,7 @@ export default function ProjectTree({
     const holder = dot
       ? terminalRunInputs.find((r) => r.agentId === s.agent && r.sessionId === s.sessionId && r.running && !r.shell)
       : undefined;
-    const selected = key === selectedChatKey;
+    const selected = key === highlightChatKey;
     // 跑完了没看：标题亮到 l1（同正看着的那段的字色，但不铺底），点开就消
     const unread = !selected && unreadSet.has(key);
     const agent = AGENTS.find((a) => a.id === s.agent)?.label ?? s.agent;

@@ -176,8 +176,10 @@
 - **切到一段对话第一帧就是排好的样子，不遮、不先空一帧（2026-10-26 用户：切对话先黑一下，「直接显示新会话不行吗」）**：
   同日早些时候的「排好再露」遮罩（`chat-veil.ts`，透明到尺寸 90ms 不变再淡入）已删——在 Mesa Dev 逐帧实测 6 次切换，出字之后一个字都没动，
   黑的那一下是「新标签先空一帧 + 遮罩」，遮罩本身没有要遮的东西。现在的三条：
-  ① **点开前先取好再切**：侧栏点一段只看的对话，`resumeSessionInTerminal` 和接回身份一起等记录页 + 更早整段（`prepareRecord`，最多 350ms），
-  原来的画面留到那一刻；**标签在绘制前摆**：TerminalView 只看记录的那段 effect 是 `useLayoutEffect`，记录已在缓存（`cachedConversationPage` /
+  ① **点开前先取好再切**：侧栏点一段只看的对话，`resumeSessionInTerminal` 和接回身份一起等最近一页记录（`prepareRecord`，最多 350ms），
+  原来的画面留到那一刻；更早的整段不等（同日实测整段要等上百毫秒），鼠标移上去时 `prefetchConversation` 连整段一起预取，摆出最近一页后
+  在后台接上、画面不动。**点下去这一行当场亮**：侧栏先记下点的那段（`pressedChatKey`），等一帧画完（`afterPaint`）再派发切换，
+  正看着的标签跟上后交回它管高亮；没切成（确认框里取消，`onSkipped`）就收回，切成了最多再留 1.5 秒；**标签在绘制前摆**：TerminalView 只看记录的那段 effect 是 `useLayoutEffect`，记录已在缓存（`cachedConversationPage` /
   `cachedConversationRest`，`VersionedCache.peek`）就同步 setState，第一帧带着整段；不在缓存才走异步、先空着。
   ② **聊天内容上屏后不得再改高度**：新加的行内加工 / 卡片第一帧就占好最终尺寸，晚到的只换颜色或内容；能用缓存在第一帧前套上的先查缓存
   （文件链接核实结果记 5 分钟，不是文件的只记 15 秒）。**`dangerouslySetInnerHTML` 的对象必须 `useMemo` 按 html 记住**：React 19 按对象引用比，
