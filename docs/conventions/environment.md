@@ -72,6 +72,8 @@
   - 界面：自绘标题栏恒在最上，页内全屏层与 z≥40 遮罩在 Windows 从标题栏下沿起铺，要整窗覆盖的层（沉浸阅读）
     加 `ccode-covers-titlebar` 且自带拖拽区与 `WindowControls`；WebView2 的刷新 / 打印 / 查找 / 后退快捷键与默认右键
     由 `windows-shell.ts` 收口；Windows 10 无 Mica 时 `data-material=none` 回实心底。
+    **z-30 全屏页（全屏阅读 / 编辑、流水线编辑器、保存历史）三个平台都从标题栏下沿起铺**（2026-10-25，macOS 上它们的头一行与红绿灯、
+    右上帮助 / ⌘K / 待处理叠字）；新增全屏页照用 `fixed inset-0 z-30`，要盖标题栏的才加 `ccode-covers-titlebar` 并自己给红绿灯让位。
 - **Windows 二批（2026-10-20，用户「全部做」）**：
   - hooks 原生小程序：每次启动注入的 Claude Code / CodeBuddy 的 hook 命令用随包的 `mesa_helper hook`（~0.1 秒，PowerShell 约 1.2 秒），
     找到就同步跑；**开发态** `target/debug/mesa_helper.exe` 会被 tauri-build 的 0 字节占位反复覆盖，要用就先

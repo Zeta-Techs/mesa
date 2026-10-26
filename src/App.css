@@ -1069,6 +1069,12 @@ html[data-material="none"] .ccode-app-rail .bg-rail-sel {
   .fixed.inset-0:is(.z-30, .z-40, .z-50, .z-60, .z-70):not(.ccode-covers-titlebar) {
   top: var(--ccode-titlebar-h);
 }
+/* 三个平台：z-30 全屏页（全屏阅读 / 编辑、流水线编辑器、保存历史）也从标题栏下沿起铺。它们自己的头一行
+   （文件名 · 保存 · 退出）原先顶到窗口最上沿，和 macOS 红绿灯、右上的帮助 / ⌘K / 待处理叠在一起（2026-10-25 用户截图）。
+   z≥40 的弹窗遮罩在 macOS / Linux 照旧盖住标题栏（只是压暗，不叠字） */
+.ccode-app-shell .fixed.inset-0.z-30:not(.ccode-covers-titlebar) {
+  top: var(--ccode-titlebar-h);
+}
 
 /* 品牌区与侧栏同底不画线（Codex 式：侧栏只有全高竖分界 + 底部栏一根横线，分区间靠留白）。
    字标不走按钮 text-*（全站 button { font: inherit } 会吞掉）；四字 Mesa 不用 tracking-wide。 */
