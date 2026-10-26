@@ -9,7 +9,7 @@
   **不统一的对象**：主次按钮、输入框/搜索框、状态与选中标记、工具栏/页签、弹层外壳、骨架/进度条、代码与 diff、PDF/文档页和 xterm；原本透明的密集行不为了统一而铺卡。未安装连接组仍可无底降权。只统一底色，不重排布局、不改状态/行为。新增内容卡必须复用此规则；跨页覆盖与编译后层级由 `tests/content-surfaces.test.ts`、主题对比度由 `tests/theme-contrast.test.ts` 守住。
 
 - 全站主题令牌集中在 `src/App.css` 的 `@theme` + `[data-theme]` 变体（**七套深色 + 七套对应浅色**，v3.44 起：
-  沉浸黑/陶土/Ayu琥珀(首装默认，2026-10-22 起；原沉浸黑)/Catppuccin/极简灰蓝/Dracula/灰蓝正红，各配一套同性格浅色；浅色方向翻转——rail 比 canvas
+  沉浸黑/陶土/Ayu琥珀(2026-10-22～10-26 首装默认)/Catppuccin/极简灰蓝(首装默认，2026-10-26 起)/Dracula/灰蓝正红，各配一套同性格浅色；浅色方向翻转——rail 比 canvas
   略暗、面板向白浮起、hairline/field 为深灰线、cta 加深保白底对比，状态语义色共享深色值；行 hover 统一走
   `--color-hover` 令牌（深色 5% 白 / 浅色 5% 黑，`hover:bg-hover`，禁再写死 `hover:bg-white/*`），选中行 bg-white/10
   与缩进线 border-white/5 仍在浅色下由 App.css 按类名翻转），运行时切 `document.documentElement.dataset.theme`，
@@ -24,8 +24,9 @@
   沉浸黑 CTA 粉 `#faa8d4`（cta-text 近黑）；`--color-raised`（浮起面板/pill 底）、
   `--color-bubble`（用户消息气泡）、`--color-nav-accent`（侧栏选中左条+选中图标，十四套一律取各自 CTA 色——
   沉浸黑原靛蓝 2026-10-22 并入同口径，粉 + 靛蓝 + 琥珀三色打架）。
-  **首装默认 = 琥珀 + 跟随系统深浅**（`themes.ts DEFAULT_THEME_ID` ↔ `settings.rs DEFAULT_THEME / DEFAULT_THEME_FOLLOW_SYSTEM`，
-  前端兜底与后端默认同步改）：琥珀 CTA 与品牌琥珀光标同色，整屏一种强调色；跟随开着时启动不强制窗口外观（lib.rs）。
+  **首装默认 = 极简灰蓝深色 + 不跟随系统深浅**（2026-10-26 用户拍板，取代 2026-10-22 的琥珀 + 跟随；`themes.ts DEFAULT_THEME_ID` ↔
+  `settings.rs DEFAULT_THEME / DEFAULT_THEME_FOLLOW_SYSTEM`，前端兜底与后端默认同步改）：不跟随才保证新用户首屏是深色，启动按存的主题
+  强制深色窗口外观（lib.rs）；用户自己打开跟随后照旧交还系统。存过值的老设置不受影响。
   **默认主题「琥珀」= Mesa 自己的「暖炭」配色（2026-10-24 重配，取代照搬的 Ayu 值；对照稿 `docs/design-default-theme-mockup.html`）**：
   ①底、字、强调**同一暖色相**（OKLCH H≈75–80，深色底 C≈0.008、浅色底 C≈0.012），禁再出现冷底配暖字或暖纸配冷字；
   ②`--color-cta` **逐字等于** `--color-mesa-amber`（深 `#f5b83d` / 浅 `#e39a1c`），不再有两种琥珀；

@@ -13,10 +13,11 @@ pub const DEFAULT_NOTIFICATIONS_ENABLED: bool = true;
 /// 会话自动命名（聊完起名 + 打开对话页补名去重）默认开；关 = 全停，手改标题不受影响
 pub const DEFAULT_AUTO_TITLE_SESSIONS: bool = true;
 pub const DEFAULT_NAV_CAPSULE_RUN_ANNOUNCE: bool = true;
-/// 首次安装的主题与「跟随系统深浅」（2026-10-22 用户拍板：琥珀 + 跟随，原沉浸黑 + 不跟随）。
+/// 首次安装的主题与「跟随系统深浅」（2026-10-26 用户拍板：极简灰蓝深色 + 不跟随；
+/// 原 2026-10-22 琥珀 + 跟随）。不跟随才能保证新用户首屏就是深色，系统浅色也不换成浅色那套。
 /// 前端兜底在 themes.ts DEFAULT_THEME_ID，两边同步；存过值的老设置不受影响
-pub const DEFAULT_THEME: &str = "ayu";
-pub const DEFAULT_THEME_FOLLOW_SYSTEM: bool = true;
+pub const DEFAULT_THEME: &str = "neutral";
+pub const DEFAULT_THEME_FOLLOW_SYSTEM: bool = false;
 pub const DEFAULT_TERMINAL_FONT_FAMILY: &str = "JetBrains Mono";
 /// 全局快捷键默认绑定（前端 hotkeys.ts 解析；mod = macOS ⌘ / 其他平台 Ctrl）
 pub const DEFAULT_HOTKEY_PALETTE: &str = "mod+k";
@@ -1377,7 +1378,7 @@ pub(crate) fn current_theme_is_light() -> bool {
     theme_is_light(&theme)
 }
 
-/// 启动时窗口外观要不要交还系统：跟随系统深浅开着（首装默认开）且不是自定义配色时，
+/// 启动时窗口外观要不要交还系统：跟随系统深浅开着（首装默认关）且不是自定义配色时，
 /// 前端会把主题校正成与系统同深浅的 twin（theme-follow.ts），此时强行按存的主题上外观，
 /// 系统浅色的机器首帧会先闪一下深色材质
 pub(crate) fn current_theme_follows_system() -> bool {
@@ -1661,16 +1662,16 @@ mod tests {
         assert_eq!(full.rate_usd_cny, Some(7.2));
         assert_eq!(full.brew_mirror, Some(true));
         assert_eq!(full.auto_title_sessions, Some(true));
-        assert_eq!(full.theme.as_deref(), Some("ayu"));
-        assert_eq!(full.theme_follow_system, Some(true));
-        // 存过「不跟随」的老设置照旧
+        assert_eq!(full.theme.as_deref(), Some("neutral"));
+        assert_eq!(full.theme_follow_system, Some(false));
+        // 存过「跟随」的老设置照旧
         let kept = with_defaults(AppSettingsDto {
-            theme: Some("midnight".into()),
-            theme_follow_system: Some(false),
+            theme: Some("ayu".into()),
+            theme_follow_system: Some(true),
             ..Default::default()
         });
-        assert_eq!(kept.theme.as_deref(), Some("midnight"));
-        assert_eq!(kept.theme_follow_system, Some(false));
+        assert_eq!(kept.theme.as_deref(), Some("ayu"));
+        assert_eq!(kept.theme_follow_system, Some(true));
         // 100 = 各主题原有罩色，是「没调过和以前一模一样」的那一档
         assert_eq!(full.chrome_opacity, Some(100));
         assert_eq!(full.startup_nav_mode, None);
