@@ -926,6 +926,9 @@ interface AppState {
   connectionLoadError: string | null;
   /** 拉取全部 agent 的会话元数据，返回最新列表供轮询比对 */
   loadSessions: (force?: boolean) => Promise<SessionMetaDto[]>;
+  /** 用户确认删除后先从列表拿掉，再在后台删（Mac 上进回收站要等 Finder）；删的过程中回来的刷新也不让它冒回来。
+   *  返回撤销：删失败时调用，这几行随下一次刷新回来 */
+  hideSessionsWhileDeleting: (keys: readonly string[]) => () => void;
   saveProfile: (id: string | null, input: ProfileInput) => Promise<void>;
   removeProfile: (id: string) => Promise<void>;
   duplicateProfile: (id: string) => Promise<void>;
@@ -937,8 +940,13 @@ interface AppState {
 }
 
 export const useAppStore = create<AppState>((set, get) => {
+  // 正在删的会话（agent\nsessionId）：删完之前扫描还会看见源文件，刷新回来的列表要把它们滤掉
+  const deleting = new Map<string, number>();
+  const sessionKey = (s: SessionMetaDto) => `${s.agent}\n${s.sessionId}`;
+  const withoutDeleting = (list: SessionMetaDto[]) =>
+    deleting.size ? list.filter((s) => !deleting.has(sessionKey(s))) : list;
   const sessionRefresh = createSessionRefreshCoordinator(
-    () => invoke<SessionMetaDto[]>("list_sessions"),
+    () => invoke<SessionMetaDto[]>("list_sessions").then(withoutDeleting),
     () => get().sessions,
     (sessions) => set({ sessions }),
   );
@@ -1399,6 +1407,21 @@ export const useAppStore = create<AppState>((set, get) => {
   },
 
   loadSessions: (force = false) => sessionRefresh.load(force),
+
+  hideSessionsWhileDeleting: (keys) => {
+    for (const k of keys) deleting.set(k, (deleting.get(k) ?? 0) + 1);
+    set({ sessions: withoutDeleting(get().sessions) });
+    let undone = false;
+    return () => {
+      if (undone) return;
+      undone = true;
+      for (const k of keys) {
+        const n = (deleting.get(k) ?? 1) - 1;
+        if (n > 0) deleting.set(k, n);
+        else deleting.delete(k);
+      }
+    };
+  },
 
   saveProfile: async (id, input) => {
     if (id) {

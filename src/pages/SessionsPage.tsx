@@ -1351,7 +1351,20 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     }
   }
 
-  /** 删除单个会话（源文件+快照+整理数据，后端一并处理）；正在回放的被删则退出回放 */
+  /** 正在回放的会话在 keys 里就退出回放 */
+  function leaveReplayIf(hit: (cur: SessionMetaDto) => boolean) {
+    const cur = selectedRef.current;
+    if (cur && hit(cur)) {
+      setSelected(null);
+      olderCountRef.current = 0;
+      setMessages([]);
+      setConversationCursor(null);
+    }
+  }
+
+  /** 删除单个会话（源文件+快照+整理数据，后端一并处理）。确认后这一行当场消失、回放当场退出，
+   *  删在后台做（2026-10-26 用户：删了要立马没，不要顿一下——Mac 上进回收站要等 Finder，删完还要全量重扫）；
+   *  删失败这一行随刷新回来并报错 */
   async function deleteSession(s: SessionMetaDto) {
     setError(null);
     if (
@@ -1361,22 +1374,19 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
       ))
     )
       return;
+    const release = useAppStore.getState().hideSessionsWhileDeleting([skey(s)]);
+    leaveReplayIf((cur) => cur.agent === s.agent && cur.sessionId === s.sessionId);
     try {
       await invoke("delete_session", {
         agent: s.agent,
         sessionId: s.sessionId,
         filePath: s.filePath,
       });
-      const cur = selectedRef.current;
-      if (cur && cur.agent === s.agent && cur.sessionId === s.sessionId) {
-        setSelected(null);
-        olderCountRef.current = 0;
-        setMessages([]);
-        setConversationCursor(null);
-      }
-      await loadSessions(true);
     } catch (e) {
       setError(String(e));
+    } finally {
+      release();
+      void loadSessions(true).catch(() => {});
     }
   }
 
@@ -1442,12 +1452,17 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     setConfirmBatch(false);
   }
 
-  /** 批量删除：逐个走 delete_session，语义与单个删除一致（pin 快照/整理数据由后端一并清理） */
+  /** 批量删除：逐个走 delete_session，语义与单个删除一致（pin 快照/整理数据由后端一并清理）；
+   *  同单个删除，勾的几行当场拿掉，删失败的随刷新回来 */
   async function batchDelete() {
     const targets = sessionList.filter((s) => checked.has(skey(s)));
     if (targets.length === 0) return;
+    const release = useAppStore.getState().hideSessionsWhileDeleting(targets.map(skey));
+    const gone = new Set(targets.map(skey));
+    leaveReplayIf((cur) => gone.has(skey(cur)));
     setBatchDeleting(true);
     setError(null);
+    exitSelectMode();
     const failed: string[] = [];
     for (const s of targets) {
       try {
@@ -1460,17 +1475,9 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
         failed.push(sessionTitle(s));
       }
     }
-    // 正在回放的会话被删则退出回放
-    const cur = selectedRef.current;
-    if (cur && checked.has(skey(cur))) {
-      setSelected(null);
-      olderCountRef.current = 0;
-      setMessages([]);
-      setConversationCursor(null);
-    }
     setBatchDeleting(false);
-    exitSelectMode();
-    await loadSessions(true);
+    release();
+    await loadSessions(true).catch(() => {});
     if (failed.length > 0)
       setError(
         `已删除 ${targets.length - failed.length} 项，${failed.length} 项失败：${failed.join("、")}`,
