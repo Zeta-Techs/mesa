@@ -4,6 +4,9 @@
  *   办公「改 周报.docx」、随手聊「新建一个文件」），每档写这件事它会怎么做——比四段抽象说明好懂
  * - ⇧Tab 在输入框里按 只讨论 → 请求批准 → 帮我批准 → 完全访问 轮换（跳过这家没有的档），
  *   和 Claude Code 终端里的手感一致；只在开聊前生效（开聊后换档要重开）
+ * - 只讨论这一档分两种说法（2026-10-26）：Claude Code 的只讨论就是它的计划模式，写完方案会问「要不要开工」、
+ *   点头后在同一段对话里接着做（聊天层方案卡，plan-approval.ts）——写成「先出方案，你点头再…」；
+ *   其余各家只读 / 计划模式出口没核实过，照旧写「不…，告诉你怎么…」
  */
 import type { StarterContext } from "./chat-empty-start.ts";
 
@@ -19,12 +22,15 @@ export interface PermissionExample {
   outcomes: Record<PermissionTierId, string>;
 }
 
-function example(verb: string, target: string, discuss: string): PermissionExample {
+/** 只讨论 = 计划模式、写完方案能在同一段对话里点头开工的家（本机假网关实测过方案确认那一屏的） */
+export const PLAN_FIRST_AGENTS: ReadonlySet<string> = new Set(["claude-code"]);
+
+function example(verb: string, target: string, discuss: string, planFirst: boolean): PermissionExample {
   return {
     verb,
     target,
     outcomes: {
-      discuss,
+      discuss: planFirst ? `先出方案，你点头再${verb}` : discuss,
       ask: "先停下来问你",
       auto: `直接${verb}；删文件这类才问`,
       full: `直接${verb}，删文件也不问`,
@@ -32,16 +38,17 @@ function example(verb: string, target: string, discuss: string): PermissionExamp
   };
 }
 
-export function permissionExample(context: StarterContext): PermissionExample {
+export function permissionExample(context: StarterContext, agentId?: string | null): PermissionExample {
+  const planFirst = Boolean(agentId && PLAN_FIRST_AGENTS.has(agentId));
   switch (context) {
     case "coding":
-      return example("跑", "npm test", "不跑，告诉你怎么跑");
+      return example("跑", "npm test", "不跑，告诉你怎么跑", planFirst);
     case "research":
-      return example("改", "manuscript/draft.md", "不改，说给你听怎么改");
+      return example("改", "manuscript/draft.md", "不改，说给你听怎么改", planFirst);
     case "office":
-      return example("改", "周报.docx", "不改，说给你听怎么改");
+      return example("改", "周报.docx", "不改，说给你听怎么改", planFirst);
     default:
-      return example("建", "一个新文件", "不建，告诉你怎么做");
+      return example("建", "一个新文件", "不建，告诉你怎么做", planFirst);
   }
 }
 

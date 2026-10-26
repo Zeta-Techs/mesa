@@ -1,0 +1,109 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { isPlanMenu, latestPlanText, planChoice, planFeedbackText, planMenuTitle } from "../src/plan-approval.ts";
+import { parseTuiMenu } from "../src/tui-menu.ts";
+import type { ChatMessageDto } from "../src/types.ts";
+
+// Claude Code 2.1.308 只讨论（--permission-mode plan）里写完方案、调 ExitPlanMode 后的那一屏（2026-10-26 假网关 TRIGGER_PLAN 抓屏，120 列）
+const RULE = "─".repeat(120);
+const DASH = "╌".repeat(120);
+const PLAN_SCREEN = [
+  "❯ TRIGGER_PLAN 写个方案",
+  "",
+  "⏺ Updated plan",
+  "  ⎿  /plan to preview",
+  "",
+  RULE,
+  " Ready to code?",
+  "",
+  " Here is Claude's plan:",
+  DASH,
+  " 方案：写一个探针文件",
+  "",
+  " 1. 在工作目录新建 mesa_probe.txt",
+  " 2. 写入一行 mesa",
+  " 3. 读回确认",
+  DASH,
+  RULE,
+  "",
+  " Claude has written up a plan and is ready to execute. Would you like to proceed?",
+  "",
+  " ❯ 1. Yes, and use auto mode",
+  "   2. Yes, manually approve edits",
+  "   3. Tell Claude what to change",
+  "      shift+tab to approve with this feedback",
+  "",
+  " ctrl+g to edit in Vim · ~/.claude/plans/virtual-spinning-toucan.md",
+];
+
+test("认出方案确认那一屏：三项照原文、高亮第一项；按键提示不粘进第三项", () => {
+  const menu = parseTuiMenu(PLAN_SCREEN);
+  assert.ok(menu);
+  assert.equal(menu.question, "Claude has written up a plan and is ready to execute. Would you like to proceed?");
+  assert.deepEqual(menu.options, ["Yes, and use auto mode", "Yes, manually approve edits", "Tell Claude what to change"]);
+  assert.equal(menu.selected, 0);
+  assert.ok(isPlanMenu(menu, null), "旁路没到也凭问句认");
+  assert.ok(isPlanMenu(menu, "ExitPlanMode"));
+  assert.equal(planMenuTitle(menu, true), "方案写好了，按这个方案开工吗？");
+});
+
+test("没写方案文件就要退出计划模式：「Exit plan mode?」也认，标题不提方案", () => {
+  const menu = parseTuiMenu([
+    RULE,
+    " Exit plan mode?",
+    "",
+    "  Claude wants to exit plan mode",
+    "",
+    "  ❯ 1. Yes, and switch to default (ask each time) for this session",
+    "    2. No",
+  ]);
+  assert.ok(menu);
+  assert.ok(isPlanMenu(menu, null));
+  assert.equal(planMenuTitle(menu, false), "它想结束计划模式，开始动手吗？");
+  const [go, no] = menu.options.map((o, i) => planChoice(o, i));
+  assert.deepEqual([go.kind, go.tier, go.label], ["go", "ask", "按方案开工 · 请求批准"]);
+  assert.deepEqual([no.kind, no.label], ["stay", "先不开工"]);
+});
+
+test("普通审批菜单不当方案确认；旁路说是 ExitPlanMode 但认不出开工项时也交回通用卡", () => {
+  const bash = parseTuiMenu([RULE, " Bash command", "", "   echo mesa", "", " Do you want to proceed?", " ❯ 1. Yes", "   2. No"]);
+  assert.ok(bash);
+  assert.equal(isPlanMenu(bash, "Bash"), false);
+  assert.equal(isPlanMenu({ question: "?", detail: null, options: ["好", "不好"], selected: 0 }, "ExitPlanMode"), false);
+  assert.equal(isPlanMenu(null, "ExitPlanMode"), false);
+});
+
+test("开工选项说成中文、标出开工后按哪一档；认不出的照原文", () => {
+  const pick = (t: string) => planChoice(t, 0);
+  assert.deepEqual([pick("Yes, and use auto mode").label, pick("Yes, and use auto mode").tier], ["按方案开工 · 帮我批准", "auto"]);
+  assert.deepEqual([pick("Yes, manually approve edits").label, pick("Yes, manually approve edits").tier], ["按方案开工 · 请求批准", "ask"]);
+  assert.deepEqual([pick("Yes, and bypass permissions").label, pick("Yes, and bypass permissions").tier], ["按方案开工 · 完全访问", "full"]);
+  const accept = pick("Yes, and auto-accept edits");
+  assert.deepEqual([accept.label, accept.tier], ["按方案开工 · 自动改文件", null]);
+  const clear = pick("Yes, clear context and use auto mode");
+  assert.equal(clear.label, "清空上下文再开工 · 帮我批准");
+  assert.match(clear.description ?? "", /清掉这段对话的上下文/);
+  assert.deepEqual([pick("Yes, do something new").label, pick("Yes, do something new").description], ["按方案开工", "Yes, do something new"]);
+  assert.deepEqual([pick("Tell Claude what to change").kind, pick("Tell Claude what to change").label], ["revise", "接着改方案"]);
+  assert.deepEqual([pick("No, keep planning").kind, pick("Something else").kind, pick("Something else").label], ["stay", "other", "Something else"]);
+});
+
+test("方案原文兜底：这一轮最近一次 ExitPlanMode 的 plan；上一轮的不算", () => {
+  const plan = (text: string, extra: Partial<ChatMessageDto> = {}): ChatMessageDto => ({
+    role: "assistant",
+    blocks: [{ kind: "tool_use", toolName: "ExitPlanMode", text: JSON.stringify({ plan: text, planFilePath: "/p.md" }) }],
+    timestamp: null,
+    usage: null,
+    ...extra,
+  });
+  const user = (text: string): ChatMessageDto => ({ role: "user", blocks: [{ kind: "text", text, toolName: null }], timestamp: null, usage: null });
+  assert.equal(latestPlanText([user("做个方案"), plan("# 旧"), plan("# 新")]), "# 新");
+  assert.equal(latestPlanText([plan("# 上一轮"), user("改一下")]), null);
+  assert.equal(latestPlanText([user("x"), { ...plan(""), blocks: [{ kind: "tool_use", toolName: "ExitPlanMode", text: "{坏" }] }]), null);
+  assert.equal(latestPlanText([]), null);
+});
+
+test("改方案的意见压成一行、去掉控制字符（回车会把它交出去）", () => {
+  assert.equal(planFeedbackText("  第一步换成\n写测试\t先\x1b[A  "), "第一步换成 写测试 先[A");
+  assert.equal(planFeedbackText("\n\n"), "");
+});

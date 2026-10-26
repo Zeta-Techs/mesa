@@ -472,8 +472,8 @@ export interface FocusTabActions {
   applyLaunchCombo: (combo: { agentId: string; profileId: string; model: string }) => void;
   /** 写一条 TUI 命令并盯屏 5 秒，CLI 弹确认菜单时上报 menuPrompt（切模型 / 思考档用） */
   runTuiCommand: (cmd: string) => void;
-  /** 替用户在确认菜单里选第 index 项 */
-  answerMenu: (index: number) => void;
+  /** 替用户在确认菜单里选第 index 项；带 text 时先把字打进那一行再回车（Claude 方案确认的「Tell Claude what to change」） */
+  answerMenu: (index: number, text?: string) => void;
   /** 替用户答 Claude 的提问表单（tui-ask.ts：选一项 / 自己写 / 交这一题 / 切题 / 先不答） */
   answerAsk: (action: AskAction) => void;
   /** 运行中换权限：停下 Agent，带着新权限接回原来那段对话（权限在启动参数里，只能重开兑现） */
@@ -2633,7 +2633,7 @@ const TerminalView = memo(function TerminalView({
     menuWatchUntilRef.current = Date.now() + 5000;
     scanMenuSoon();
   }
-  function answerMenu(index: number) {
+  function answerMenu(index: number, text?: string) {
     const menu = menuPromptRef.current;
     const id = ptyIdRef.current;
     if (!menu || !id) return;
@@ -2646,10 +2646,24 @@ const TerminalView = memo(function TerminalView({
     const moves = menuMoveKeys(menu, index);
     // 一个确认之后可能还有下一个（选完模型再问思考档）：再开一小段窗口
     menuWatchUntilRef.current = Date.now() + 3000;
+    // 能打字的那一行（Claude 方案确认「Tell Claude what to change」）：高亮停对了先把字整段写进去，隔一拍再回车。
+    // 打字期间屏上那一行变成了字，扫屏先别把卡片拿回来
+    const submit = (): number => {
+      if (!text) {
+        writeInteractivePty(id, enter);
+        return 0;
+      }
+      writeInteractivePty(id, text);
+      askKeysDoneAtRef.current = Date.now() + 700;
+      window.setTimeout(() => {
+        if (ptyIdRef.current === id) writeInteractivePty(id, enter);
+      }, 300);
+      return 300;
+    };
     if (moves.length === 0) {
       // 高亮本来就在这一项（刚从屏上读到的）：直接回车
-      writeInteractivePty(id, enter);
-      window.setTimeout(scanMenuSoon, 400);
+      const wait = submit();
+      window.setTimeout(scanMenuSoon, wait + 400);
       return;
     }
     // 先挪高亮，再读一遍屏确认停对了才回车（tui-menu.ts menuReadyToConfirm）：读屏认错了格数也不会选中另一项
@@ -2667,9 +2681,9 @@ const TerminalView = memo(function TerminalView({
         return;
       }
       if (menuReadyToConfirm(menu, index, parseScreenMenu(screenLines()))) {
-        writeInteractivePty(id, enter);
         settle();
-        window.setTimeout(scanMenuSoon, 400);
+        const wait = submit();
+        window.setTimeout(scanMenuSoon, wait + 400);
         return;
       }
       // 画面可能还没跟上：再等两拍；仍对不上就不按，卡片按屏上现在的样子重画，交给人再点一次
@@ -5845,7 +5859,7 @@ const TerminalView = memo(function TerminalView({
       newProject: () => actionsRef.current.newProject(),
       applyLaunchCombo: (c) => actionsRef.current.applyLaunchCombo(c),
       runTuiCommand: (cmd) => actionsRef.current.runTuiCommand(cmd),
-      answerMenu: (i) => actionsRef.current.answerMenu(i),
+      answerMenu: (i, text) => actionsRef.current.answerMenu(i, text),
       answerAsk: (a) => actionsRef.current.answerAsk(a),
       restartWithPermission: () => actionsRef.current.restartWithPermission(),
       relaunchWith: (patch) => actionsRef.current.relaunchWith(patch),
@@ -7757,7 +7771,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   ]);
 
   // 终端里换了权限模式（cliModeSwitch）：标签的权限档跟上，聊天徽标与之后接着聊的启动参数都按新档。
-  // 按序号只应用一次——用户随后在徽标里自己换档时，旧运行留下的值不能把它改回去。只讨论档不动（由启动参数保证）
+  // 按序号只应用一次——用户随后在徽标里自己换档时，旧运行留下的值不能把它改回去。
+  // 只讨论档也跟：Claude 计划模式里方案确认点了「按方案开工」，CLI 已换到选的那一档（会话文件记 permission-mode），
+  // 徽标还写「只讨论」、接着聊又按计划模式重开就不对了（2026-10-26）。只有用户在 CLI 里亲手离开计划模式才会走到这里
   const appliedModeSwitchRef = useRef<Record<string, number>>({});
   useEffect(() => {
     const updates: Record<string, "ask" | "auto" | "full"> = {};
@@ -7771,7 +7787,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     if (Object.keys(updates).length === 0) return;
     setTabs((prev) =>
       prev.map((x) =>
-        updates[x.id] && x.permission !== "discuss" && x.permissionMode !== updates[x.id]
+        updates[x.id] && (x.permission === "discuss" || x.permissionMode !== updates[x.id])
           ? { ...x, permission: "write_tree", permissionMode: updates[x.id] }
           : x,
       ),
@@ -10436,9 +10452,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                             0,
                           )
                         }
-                        onAnswerMenu={(i) => {
+                        onAnswerMenu={(i, text) => {
                           holdAutoPeek(t.id);
-                          tabActionsRef.current.get(t.id)?.answerMenu(i);
+                          tabActionsRef.current.get(t.id)?.answerMenu(i, text);
                         }}
                         onAnswerAsk={(a) => {
                           holdAutoPeek(t.id);

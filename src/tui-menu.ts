@@ -47,8 +47,10 @@ const ECHO = /^[❯›>]\s/;
 // 常见的发问开头（审批 / 切换确认 / 选择器标题）
 const ASK = /^(?:Do you want|Would you like|Allow|Switch|Select|Choose|Are you sure|Apply|Proceed|Confirm)/i;
 
-// 菜单下面的按键提示「Enter to confirm · Esc to cancel」也是缩进行，不能当成一项
-const KEY_HINT = /^\s*(?:Enter|Esc|Tab|Space|Press|↑|↓|←|→)\b.*\bto\b|·\s*Esc\b/i;
+// 菜单下面的按键提示「Enter to confirm · Esc to cancel」也是缩进行，不能当成一项。
+// 组合键开头的也是（Claude 方案确认「shift+tab to approve with this feedback」「ctrl+g to edit in Vim」，2026-10-26）：
+// 原先被当成上一项的折行，选项读成「Tell Claude what to change shift+tab to approve…」
+const KEY_HINT = /^\s*(?:(?:shift|ctrl|alt|option|cmd)\+\w+|Enter|Esc|Tab|Space|Press|↑|↓|←|→)\b.*\bto\b|·\s*Esc\b/i;
 
 /**
  * 去掉方框的左右竖边和滚动条（Gemini 审批整个画在 ╭│╰ 框里、右边还有 █ 滚动条；Grok 审批左边一条 ┃），

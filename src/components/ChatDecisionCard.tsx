@@ -3,6 +3,7 @@ import { Check, ChevronLeft, ChevronRight, CornerDownLeft, PenLine } from "lucid
 import type { DecisionPreview } from "../chat-channel";
 import { IS_MAC } from "../hotkeys";
 import type { AskAction, AskQuestion, AskReview, ClaudeAsk } from "../tui-ask";
+import ChatMarkdown from "./ChatMarkdown";
 import { DiffView, OutputView } from "./ConversationView";
 import { primaryActionClass, quietActionClass, secondaryActionClass } from "./PageFrame";
 
@@ -30,6 +31,22 @@ export interface ChatDecision {
     pending: boolean;
     onAction: (action: AskAction) => void;
   } | null;
+  /** Claude 计划模式的方案确认（plan-approval.ts）：有它时画整篇方案 + 开工 / 改方案，不用 options */
+  plan?: PlanDecision | null;
+}
+
+export interface PlanDecision {
+  /** 方案原文（Markdown）；没写方案文件时为 null */
+  text: string | null;
+  /** 方案文件路径（标题下灰字） */
+  path: string | null;
+  cwd?: string | null;
+  /** 开工的几项（照终端顺序），primary = 终端当前高亮那项 */
+  go: Array<DecisionOption & { description?: string | null }>;
+  /** 其余不开工的项（「先不开工」） */
+  others: DecisionOption[];
+  /** 「接着改方案」：意见写进终端那一行再回车；这一屏没有能打字的那一行时为 null */
+  onRevise: ((text: string) => void) | null;
 }
 
 /** 主按钮的键帽：Mac ⌘↵，其余 Ctrl ↵ */
@@ -54,6 +71,17 @@ export default function ChatDecisionCard({
   /** 露出下方终端（选项更多 / 按键无效时） */
   onPeek?: () => void;
 }) {
+  if (decision.plan) {
+    return (
+      <PlanCard
+        title={decision.title}
+        hint={decision.hint}
+        plan={decision.plan}
+        onOpenTerminal={onOpenTerminal}
+        onPeek={onPeek}
+      />
+    );
+  }
   if (decision.ask) {
     return (
       <AskCard
@@ -347,6 +375,113 @@ function ChoiceMark({ multi, checked }: { multi: boolean; checked: boolean }) {
       aria-hidden="true"
       className="mt-0.5 size-4 shrink-0 rounded-full border border-l4 transition-colors group-hover:border-cta"
     />
+  );
+}
+
+/**
+ * 方案确认卡（2026-10-26）：标题下整篇方案照 Markdown 排（长了在框里滚），下面几行开工选项各带「开工后怎么问你」，
+ * 最后一行直接写意见 = 接着改方案；底栏左边「先不开工」，主按钮是终端当前高亮的那项开工。
+ */
+function PlanCard({
+  title,
+  hint,
+  plan,
+  onOpenTerminal,
+  onPeek,
+}: {
+  title: string;
+  hint?: string | null;
+  plan: PlanDecision;
+  onOpenTerminal: () => void;
+  onPeek?: () => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const primary = plan.go.find((o) => o.primary) ?? null;
+  function sendDraft() {
+    const text = draft.trim();
+    if (!text || !plan.onRevise) return;
+    plan.onRevise(text);
+    setDraft("");
+  }
+  return (
+    <CardShell
+      label={title}
+      title={title}
+      detail={plan.path ? `方案文件：${plan.path}` : null}
+      hint={hint}
+      onOpenTerminal={onOpenTerminal}
+      onPeek={onPeek}
+      onPrimary={primary ? primary.onClick : null}
+      footer={
+        <>
+          {plan.onRevise && <span className="mr-auto text-micro text-l4">也可以在下面的输入框里说要改哪里</span>}
+          {plan.others.map((opt, i) => (
+            <button
+              key={`${i}-${opt.label}`}
+              type="button"
+              onClick={opt.onClick}
+              title={opt.title}
+              className={`${secondaryActionClass} ${!plan.onRevise && i === 0 ? "mr-auto" : ""}`}
+            >
+              {opt.label}
+            </button>
+          ))}
+          {primary && (
+            <PrimaryButton className={plan.onRevise || plan.others.length ? "" : "ml-auto"} title={primary.title} onClick={primary.onClick}>
+              {primary.label}
+            </PrimaryButton>
+          )}
+        </>
+      }
+    >
+      {plan.text && (
+        <div className="mx-4 mb-3 max-h-[min(24rem,45vh)] overflow-y-auto rounded-lg border border-hairline px-3 py-2 ccode-chat-scroll">
+          <ChatMarkdown text={plan.text} cwd={plan.cwd} />
+        </div>
+      )}
+      <div role="list">
+        {plan.go.map((opt, i) => (
+          <OptionRow
+            key={`${i}-${opt.label}`}
+            mark={<NumberMark index={i} on={Boolean(opt.primary)} />}
+            label={opt.label}
+            description={opt.description}
+            title={opt.title}
+            trailing={opt.primary ? <KeyCap>{PRIMARY_KEY}</KeyCap> : null}
+            onClick={opt.onClick}
+          />
+        ))}
+      </div>
+      {plan.onRevise && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            sendDraft();
+          }}
+          className="flex items-center gap-3 border-t border-hairline px-4 py-1.5 transition-colors focus-within:bg-hover"
+        >
+          <span className="flex size-5 shrink-0 items-center justify-center text-l4" aria-hidden="true">
+            <PenLine size={13} strokeWidth={1.8} />
+          </span>
+          <input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            aria-label="接着改方案：写下要改哪里"
+            placeholder="接着改方案：写下要改哪里，先不开工"
+            className="h-8 min-w-0 flex-1 bg-transparent text-sm text-l1 outline-none placeholder:text-l4"
+          />
+          <button
+            type="submit"
+            disabled={!draft.trim()}
+            title="把意见交回去，它照着改方案"
+            aria-label="把意见交回去，它照着改方案"
+            className="flex size-7 shrink-0 items-center justify-center rounded-md text-l3 transition-colors enabled:hover:bg-hover enabled:hover:text-l1 disabled:opacity-40"
+          >
+            <CornerDownLeft size={14} strokeWidth={1.8} aria-hidden="true" />
+          </button>
+        </form>
+      )}
+    </CardShell>
   );
 }
 

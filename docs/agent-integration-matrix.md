@@ -159,6 +159,13 @@
    grok（源码调研，待实机验证）：`--permission-mode dontAsk --sandbox read-only`（CI 严格白名单 + OS 级只读；
    `--permission-mode plan` 门控链路未确认，不用）。
    注册表落点：`agent_specs.rs` 的 `AgentSpec.readonly_args`，应用逻辑 `agents::readonly_launch_args`。
+   **Claude 计划模式的出口（2026-10-26，2.1.308 假网关 TRIGGER_PLAN 实测）**：系统提示给出方案文件路径（`~/.claude/plans/<名>.md`），
+   模型先 Write 进去再调 ExitPlanMode（参数只剩已弃用的 allowedPrompts；hook 的 tool_input 由 CLI 补 `plan` 全文与 `planFilePath`，
+   会话文件里的这条调用也带）。屏上「Ready to code? / Here is Claude's plan: / ╌ 方案 ╌ / Would you like to proceed?」，选项随本机设置，
+   实测「1. Yes, and use auto mode / 2. Yes, manually approve edits / 3. Tell Claude what to change（下一行 shift+tab to approve with this feedback）」；
+   第 3 项是能打字的一行：挪过去、打字、回车 = 带意见拒绝（工具结果「the user said: <意见>」，留在计划模式）。开工后会话文件记
+   `permission-mode`（如 auto）。没写方案文件就调只问「Exit plan mode?」（1. Yes, and switch to default (ask each time) / 2. No）。
+   其余几家计划 / 只读模式写完方案的出口未核实。
    **模型路由端到端核对（2026-10-17，`scripts/e2e-model-routing/`）**：Claude 2.1.292 / CodeBuddy / Codex / Qwen / Kimi / OpenCode / Grok
    的请求都带所选模型（Claude `/v1/messages`、Codex `/v1/responses`、其余 `/v1/chat/completions`，Grok 先 GET `/v1/models`；
    OpenCode、Qwen 的标题 / 记忆小任务也用所选模型）。Claude 的 settings.json env 压过进程 env：用户级 env 里的

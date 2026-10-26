@@ -41,6 +41,10 @@ ASK_COLOR = {"question": "红、绿、蓝三种颜色里，你更喜欢哪一种
 ASK_FRUIT = {"question": "下面这些水果你平时会吃哪些？", "header": "水果", "multiSelect": True,
              "options": [{"label": "苹果", "description": "脆甜，一年四季都有"}, {"label": "香蕉", "description": "软糯，适合当早餐"},
                          {"label": "葡萄", "description": "一串一串，夏天最多"}]}
+# TRIGGER_PLAN = 照真模型在 Claude 计划模式里的走法：先用 Write 把方案写进系统提示指定的方案文件，再调 ExitPlanMode
+# （2.1.308 起方案不在参数里，屏上那份是读方案文件来的；没写文件只会问「Exit plan mode?」），看「要不要开工」那一屏
+# （2026-10-26）；拿到 ExitPlanMode 的结果（开工 / 接着改方案）后回 done
+PLAN_TEXT = os.environ.get("E2E_PLAN_TEXT", "# 方案：写一个探针文件\n\n1. 在工作目录新建 mesa_probe.txt\n2. 写入一行 mesa\n3. 读回确认")
 # E2E_PROBE_CMD 换探针命令（如写绝对路径，看沙箱里的工作目录对不对）
 PROBE = os.environ.get("E2E_PROBE_CMD", "echo mesa > mesa_probe.txt")
 # E2E_DONE_TEXT 换工具跑完后的那句回复（如带图片路径，看聊天层出不出图）
@@ -169,6 +173,9 @@ class H(BaseHTTPRequestHandler):
         if b"SUGGESTION MODE" in raw:
             mode = "suggest"
         # 后一幕的触发词在前：第二幕的请求历史里还带着第一幕的 TRIGGER_SLOW
+        elif tools and b"TRIGGER_PLAN" in raw:
+            mode = ("done" if b"toolu_plan_exit" in raw and has_tool_result(body, raw)
+                    else "plan" if "ExitPlanMode" in dict(tools) else "notool")
         elif tools and b"TRIGGER_ASK" in raw:
             mode = "done" if has_tool_result(body, raw) else ("ask" if "AskUserQuestion" in dict(tools) else "notool")
         elif tools and b"TRIGGER_TOOL" in raw:
@@ -212,6 +219,19 @@ class H(BaseHTTPRequestHandler):
                 log(note="emit-subagent", tool=name)
                 self._ev({"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": "toolu_e2e", "name": name, "input": {}}}, "content_block_start")
                 self._ev({"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": json.dumps({"description": "e2e", "prompt": "SUBTASK say ok", "subagent_type": "general-purpose"})}}, "content_block_delta")
+                self._ev({"type": "content_block_stop", "index": 0}, "content_block_stop")
+                self._ev({"type": "message_delta", "delta": {"stop_reason": "tool_use", "stop_sequence": None}, "usage": {"output_tokens": 1}}, "message_delta")
+                self._ev({"type": "message_stop"}, "message_stop")
+                return
+            if mode == "plan":
+                import re as _re
+                plan_file = _re.search(r"create your plan at (\S+?\.md)", sysp or "") or _re.search(r"create your plan at (\S+?\.md)", raw.decode("utf-8", "replace"))
+                write_first = plan_file and b"toolu_plan_write" not in raw
+                name, tid, args = (("Write", "toolu_plan_write", {"file_path": plan_file.group(1), "content": PLAN_TEXT}) if write_first
+                                   else ("ExitPlanMode", "toolu_plan_exit", {}))
+                log(note="emit-plan", tool=name, plan_file=plan_file.group(1) if plan_file else None)
+                self._ev({"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": tid, "name": name, "input": {}}}, "content_block_start")
+                self._ev({"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": json.dumps(args, ensure_ascii=False)}}, "content_block_delta")
                 self._ev({"type": "content_block_stop", "index": 0}, "content_block_stop")
                 self._ev({"type": "message_delta", "delta": {"stop_reason": "tool_use", "stop_sequence": None}, "usage": {"output_tokens": 1}}, "message_delta")
                 self._ev({"type": "message_stop"}, "message_stop")

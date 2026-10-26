@@ -122,6 +122,10 @@ test("实时文字按行给预览", () => {
 
 test("审批卡：命令原文 / 要改的差异 / Codex 的统一差异", () => {
   assert.deepEqual(approvalPreview(approval({ command: "rm -rf build" })), { kind: "command", text: "rm -rf build" });
+  // Claude 计划模式出完方案（ExitPlanMode）：卡上给方案原文，不给参数 JSON
+  const plan = approval({ toolName: "ExitPlanMode", kind: "other", plan: "# 方案", detail: '{"plan":"# 方案"}' });
+  assert.deepEqual(approvalPreview(plan), { kind: "text", text: "# 方案" });
+  assert.equal(approvalTitle(plan, "Claude Code"), "Claude Code 写好了方案，等你决定要不要开工");
   const edit = approvalPreview(approval({ kind: "edit", path: "/w/a.ts", oldText: "x", newText: "y" }));
   assert.ok(edit && edit.kind === "diff");
   assert.deepEqual(

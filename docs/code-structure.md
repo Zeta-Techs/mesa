@@ -570,14 +570,18 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   image-markup.ts            # 输入框图片标注纯逻辑：标注类型（原图像素坐标）、线宽 / 徽标 / 箭头几何、意见框编号与消息圈码、
                              # 裁剪范围、paintMarkup 导出绘制（与 MarkupLayer 预览同源）、exportMarkup 生成新图字节（tests/image-markup.test.ts）
   chat-permission.ts         # 输入框权限菜单纯逻辑（2026-10-22）：按项目类型拿一件事说明四档（permissionExample）、⇧Tab 轮换跳过没有的档（nextPermissionTier）；
+                             # 只讨论按家分说法（PLAN_FIRST_AGENTS：只有 Claude Code 写「先出方案，你点头再…」，2026-10-26）；
                              # 符号「界线」在 components/ChatPermissionBadge.tsx PermissionGlyph（tests/chat-permission.test.ts）
+  plan-approval.ts           # Claude 计划模式方案确认那一屏（2026-10-26，tests/plan-approval.test.ts）：认屏（isPlanMenu：旁路 ExitPlanMode 或问句）、
+                             # 选项说成中文并标开工后哪一档（planChoice：go / revise / stay / other，认不出照原文）、方案原文兜底（latestPlanText）；
+                             # 卡片是 ChatDecisionCard PlanCard，「接着改方案」= TerminalPage answerMenu(index, text) 挪到那一行打字再回车
   chat-project-picker.ts     # 输入框项目弹层纯逻辑：最近 6 个 / 搜索 12 个、类型与项目默认、随手聊 / 主目录固定行（pickerRows）；UI 在 components/ChatProjectPicker.tsx，
                              # 选了项目带项目默认由 TerminalPage pickDir 做（chat 槽 > 项目默认，project-agents.ts projectChatLaunch）（tests/chat-project-picker.test.ts）
   jump-formations.ts         # 聊天「回到最新」浮钮三枚光标（MesaThinkingDots）的队形表（一行 / 三角 / 倒三角 / 一摞 / 台阶 / 竖排圆点 / 折行）+ 随机挑下一个（不重复）+ 按总路程最短分配格子（换队不交叉）（tests/jump-formations.test.ts）
   launch-combos.ts           # 模型菜单「最近在这个项目用过」：按工作目录记 Agent + 连接 + 模型 + 思考档，最多 3 套，localStorage 只存 id（tests/launch-combos.test.ts）
   effort-depth.ts            # 思考档深度 0..1 与一句白话（effortDepth / effortGloss / effortValleyY）；小 M 画在 components/EffortMark.tsx（tests/effort-depth.test.ts）
   token-format.ts            # 聊天变体状态栏的 token 中文计数（千分位 / 万 / 亿，fmtTokensZh）；终端变体仍用 k / M（tests/token-format.test.ts）
-  chat-decision.ts           # 「等你决定」卡的纯逻辑：连接出问题 → 卡片（connIssueDecision：同家连接最多三个「换到 X」按钮 / 去添加连接 / 先不换，提示按错误种类给另一条路）
+  chat-decision.ts           # 「等你决定」卡的纯逻辑：连接出问题 → 卡片（connIssueDecision：同家连接最多三个「换到 X」按钮 / 去添加连接 / 先不换，提示按错误种类给另一条路）；方案确认卡的认屏与选项在 plan-approval.ts
   role-models.ts             # 连接的「模型分工」（后台小模型 / 子 Agent）：哪些 Agent 有、各角色说明、保存前归一、Claude 别名指向（与 agents.rs claude_model_env 同规则）
   help-links.ts              # 仓库与使用手册外链（REPO_URL / userGuideUrl）；仓库转 org 时与 updater endpoint、README 同步改
   popover-side.ts            # 聊天输入框小弹层往哪边开（pickPopoverSide：下面放得下就往下，贴底时往上）
@@ -1038,6 +1042,7 @@ src-tauri/src/
                              #   Tracker = 回合状态机（幂等开始 / 结束、审批、实时文字、会话跟随），快照推 chat-channel-<tabId>；
                              #   快照另带 activity（正在跑的工具，track_activity 按开始 / 结束登记，参数 slim_input 截断脱敏）与 thinking
                              #   （Codex item/reasoning/summaryTextDelta、Qwen thinking_delta、OpenCode reasoning part）；出站 outbound 脱敏实时文字与思考；
+                             #   审批 DTO 由 approval_from_tool 统一出（ExitPlanMode 另给 plan 方案原文与方案文件路径，2026-10-26）；
                              #   chat_channel_reply 经官方通道回审批；chat_channel_settle_from_transcript（Claude 被拒绝 / Esc 打断不发 Stop，
                              #   按会话文件里这一轮之后的收尾标记收回合）；close_for_pty 随 PTY 退出收旁路；e2e::e2e_channel（ignored）=
                              #   真 CLI + 假网关端到端（scripts/e2e-model-routing/README.md，三平台同一份）；

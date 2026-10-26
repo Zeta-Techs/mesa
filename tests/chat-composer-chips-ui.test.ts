@@ -189,6 +189,7 @@ test("权限菜单四档：本机设置对应的那档打勾并标注，没有�
     assert.match(ui.el.textContent ?? "", /完全访问/);
     await ui.click("完全访问");
     assert.match(ui.el.textContent ?? "", /假如它要/, "拿一件具体的事说明四档（2026-10-22）");
+    assert.match(menuItem(ui, "只讨论").textContent ?? "", /不建，告诉你怎么做/, "没传哪一家：照旧的说法");
     for (const label of ["只讨论", "请求批准", "帮我批准", "完全访问"]) menuItem(ui, label);
     assert.doesNotMatch(ui.el.textContent ?? "", /自动改文件|按本机设置|先问再改/, "旧的五档已收掉");
     assert.equal(menuItem(ui, "完全访问").getAttribute("aria-checked"), "true");
@@ -1239,6 +1240,74 @@ test("等你决定卡片：选项多或很长（Claude 审批菜单）时摆成�
     assert.match(rows[0].querySelector("span")!.className, /bg-cta/);
     await ui.act(async () => rows[2].click());
     assert.deepEqual(hits, [2]);
+  } finally {
+    await ui.close();
+  }
+});
+
+test("Claude 方案确认卡：整篇方案、开工几项带权限说明、高亮项是主按钮、写意见 = 接着改方案", async () => {
+  const ui = await mount();
+  try {
+    const picks: unknown[] = [];
+    let terminal = 0;
+    await ui.render(
+      ui.h(ui.Decision, {
+        decision: {
+          key: "plan:x",
+          title: "方案写好了，按这个方案开工吗？",
+          hint: "开工后这段对话接着按选的那一档走",
+          options: [],
+          plan: {
+            text: "# 方案：写一个探针文件\n\n1. 新建 mesa_probe.txt",
+            path: "virtual-spinning-toucan.md",
+            go: [
+              { label: "按方案开工 · 帮我批准", description: "普通操作直接做，有风险的才问你", primary: true, onClick: () => picks.push(0) },
+              { label: "按方案开工 · 请求批准", description: "改文件、跑命令前都先问你", onClick: () => picks.push(1) },
+            ],
+            others: [],
+            onRevise: (text: string) => picks.push(["revise", text]),
+          },
+        },
+        onOpenTerminal: () => terminal++,
+      }),
+    );
+    const text = ui.el.textContent ?? "";
+    assert.match(text, /方案写好了，按这个方案开工吗？/);
+    assert.match(text, /方案：写一个探针文件/, "方案原文画在卡上");
+    assert.match(text, /方案文件：virtual-spinning-toucan\.md/);
+    assert.doesNotMatch(text, /Yes, and use auto mode|shift\+tab|"plan"/, "不摆英文原文、不摊参数 JSON");
+    // 主按钮在底栏（带 ⌘↵ / Ctrl ↵ 键帽），整行列表里也有它
+    const footer = ui.el.querySelector("footer")!;
+    assert.match(footer.textContent ?? "", /按方案开工 · 帮我批准/);
+    await ui.act(async () => ui.button("改文件、跑命令前都先问你").click());
+    await fillInput(ui, "接着改方案：写下要改哪里", "第二步先写测试");
+    await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="把意见交回去，它照着改方案"]')!.click());
+    assert.equal(ui.el.querySelector<HTMLInputElement>('input[aria-label="接着改方案：写下要改哪里"]')!.value, "", "交了就清空");
+    await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="打开终端"]')!.click());
+    assert.deepEqual(picks, [1, ["revise", "第二步先写测试"]]);
+    assert.equal(terminal, 1);
+
+    // 没有能打字的那一行（「Exit plan mode?」那种）：不出意见框，「先不开工」在底栏
+    await ui.render(
+      ui.h(ui.Decision, {
+        decision: {
+          key: "plan:y",
+          title: "它想结束计划模式，开始动手吗？",
+          options: [],
+          plan: {
+            text: null,
+            path: null,
+            go: [{ label: "按方案开工 · 请求批准", primary: true, onClick: () => picks.push("go") }],
+            others: [{ label: "先不开工", onClick: () => picks.push("stay") }],
+            onRevise: null,
+          },
+        },
+        onOpenTerminal: () => {},
+      }),
+    );
+    assert.equal(ui.el.querySelector('input[aria-label="接着改方案：写下要改哪里"]'), null);
+    await ui.click("先不开工");
+    assert.deepEqual(picks.slice(2), ["stay"]);
   } finally {
     await ui.close();
   }

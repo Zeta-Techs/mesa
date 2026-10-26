@@ -105,6 +105,7 @@ export function effectivePermissionTier(
  */
 export default function ChatPermissionBadge({
   agentLabel,
+  agentId = null,
   permission,
   mode,
   modes,
@@ -118,6 +119,8 @@ export default function ChatPermissionBadge({
   flash = false,
 }: {
   agentLabel: string;
+  /** 哪一家：只讨论那一档的说法按它分（Claude Code 的只讨论是计划模式，写完方案点头就开工） */
+  agentId?: string | null;
   permission: Permission;
   /** 手动选的原生档；null = 按本机设置 */
   mode: NativePermissionMode | null;
@@ -181,7 +184,7 @@ export default function ChatPermissionBadge({
   const label = cur?.label ?? (followsLocal && note ? note.short : "默认权限");
   const loud = current === "full";
   const explain = followsLocal && note ? note.detail : (cur?.desc ?? `按 ${agentLabel} 自己的权限设置`);
-  const ex = permissionExample(context);
+  const ex = permissionExample(context, agentId);
 
   async function choose(id: Tier) {
     setOpen(false);

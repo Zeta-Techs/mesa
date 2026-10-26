@@ -40,6 +40,8 @@ export interface ChannelApproval {
   diff: string | null;
   detail: string | null;
   alwaysLabel: string | null;
+  /** Claude 计划模式出完方案、问要不要开工（ExitPlanMode）时的方案原文（Markdown）；旧版后端没有这个字段 */
+  plan?: string | null;
 }
 
 export interface ChatChannelSnapshot {
@@ -152,6 +154,7 @@ export function approvalPreview(a: ChannelApproval | null): DecisionPreview | nu
   if (a.oldText !== null || a.newText !== null) {
     return { kind: "diff", path: a.path, lines: lineDiff(a.oldText ?? "", a.newText ?? "") };
   }
+  if (a.plan) return { kind: "text", text: a.plan };
   if (a.kind === "other" && a.detail) return { kind: "text", text: a.detail };
   return null;
 }
@@ -211,6 +214,7 @@ export function approvalTitle(a: ChannelApproval, agentLabel: string): string {
   const name = a.path ? a.path.split(/[\\/]/).pop() : null;
   const base = `${agentLabel} ${KIND_TITLE[a.kind]}`;
   if (a.kind === "edit" && name) return `${base} · ${name}`;
+  if (a.toolName === "ExitPlanMode") return `${agentLabel} 写好了方案，等你决定要不要开工`;
   if (a.kind === "other" && a.toolName) return `${agentLabel} 要用 ${a.toolName}`;
   return base;
 }

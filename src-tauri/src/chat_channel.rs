@@ -42,6 +42,8 @@ const THINKING_CAP: usize = 2_000;
 const ACTIVITY_STR_CAP: usize = 1_200;
 /// 审批卡里命令 / 差异 / 参数的长度上限
 const PREVIEW_CAP: usize = 6_000;
+/// 方案卡里方案原文的长度上限（Claude 计划模式的方案常有几屏，卡上整篇照 Markdown 排）
+const PLAN_CAP: usize = 40_000;
 /// 往前端推快照的最短间隔（实时文字一字一个事件，合并着推）
 const EMIT_INTERVAL: Duration = Duration::from_millis(150);
 /// Codex app-server 起来的等待上限（实测 0.1 秒左右）
@@ -81,6 +83,8 @@ pub struct ApprovalDto {
     pub detail: Option<String>,
     /// 这家支持「本次会话都允许」时给出的文案
     pub always_label: Option<String>,
+    /// Claude 计划模式出完方案、问要不要开工（ExitPlanMode）时的方案原文（Markdown）
+    pub plan: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
@@ -756,6 +760,14 @@ pub(crate) fn approval_from_tool(name: &str, input: &Value) -> ApprovalDto {
         ..Default::default()
     };
     let is = |names: &[&str]| names.iter().any(|n| lower == *n);
+    // Claude 计划模式出完方案：2.1.308 起参数里只有已弃用的 allowedPrompts，hook 收到的 tool_input 由 CLI 补上
+    // plan（方案文件全文）与 planFilePath（2026-10-26 假网关实测）。方案给卡片整篇排，不当参数 JSON 摊开
+    if lower == "exitplanmode" {
+        dto.plan = str_field(input, &["plan"])
+            .map(|t| crate::sessions::redact_sensitive_text(&cap(&t, PLAN_CAP)));
+        dto.path = str_field(input, &["planFilePath"]).map(|p| crate::sessions::redact_sensitive_text(&p));
+        return dto;
+    }
     // CodeBuddy 的 ptc 模式只给一个 REPL 工具，命令写成 JS（`await Bash({ command })`），原样给人看
     if lower == "repl" {
         if let Some(code) = str_field(input, &["code"]) {
@@ -3228,6 +3240,11 @@ mod tests {
         assert_eq!((a.kind, a.path.as_deref(), a.old_text.as_deref(), a.new_text.as_deref()), ("edit", Some("/w/a.rs"), Some("x"), Some("y")));
         let a = approval_from_tool("run_shell_command", &json!({"command":"ls"}));
         assert_eq!(a.kind, "execute");
+        let a = approval_from_tool(
+            "ExitPlanMode",
+            &json!({"plan":"# 方案\n\n1. 写探针","planFilePath":"/h/.claude/plans/a.md"}),
+        );
+        assert_eq!((a.kind, a.plan.as_deref(), a.path.as_deref(), a.detail.as_deref()), ("other", Some("# 方案\n\n1. 写探针"), Some("/h/.claude/plans/a.md"), None));
         let a = approval_from_tool("mcp__srv__tool", &json!({"q":"x"}));
         assert_eq!(a.kind, "other");
         assert!(a.detail.unwrap().contains("\"q\""));
@@ -3855,6 +3872,9 @@ mod e2e {
         println!("{agent}{label}: 会话 {:?} 文件 {:?}", r.last.session_id, r.last.transcript_path);
         println!("{agent}{label}: 回合状态变化 {:?}", r.statuses);
         println!("{agent}{label}: 审批 {:?}", r.approval.as_ref().map(|a| (a.kind, a.command.clone(), a.replyable)));
+        if let Some(plan) = r.approval.as_ref().and_then(|a| a.plan.as_ref()) {
+            println!("{agent}{label}: 审批带方案 {plan:?}");
+        }
         println!("{agent}{label}: 答法 {:?}；实时文字 {:?}", r.answered, r.last.live_text);
         if r.cleared.is_some() {
             println!("{agent}{label}: /clear 之后 {:?}", r.cleared);

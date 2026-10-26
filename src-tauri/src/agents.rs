@@ -4182,14 +4182,18 @@ mod tests {
                             a.extend(extra.iter().cloned());
                             a
                         };
-                        // 聊天层权限四档的启动参数（pty.rs 同一处拼法），第三期逐家抓屏用
-                        let tiers: serde_json::Map<String, serde_json::Value> = ["ask", "auto", "full"]
+                        // 聊天层权限四档的启动参数（pty.rs 同一处拼法），第三期逐家抓屏用；
+                        // 只讨论走 readonly_args（2026-10-26 补：Claude 计划模式出完方案后的「要不要开工」菜单要抓）
+                        let mut tiers: serde_json::Map<String, serde_json::Value> = ["ask", "auto", "full"]
                             .iter()
                             .filter_map(|m| {
                                 permission_launch_args(agent, &plan.args, m)
                                     .map(|a| ((*m).to_string(), serde_json::json!(with_extra(a))))
                             })
                             .collect();
+                        if let Some(a) = readonly_launch_args(agent, &plan.args) {
+                            tiers.insert("discuss".into(), serde_json::json!(with_extra(a)));
+                        }
                         serde_json::json!({
                             "env": plan.env,
                             "args": with_extra(plan.args.clone()),

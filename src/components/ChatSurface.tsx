@@ -61,6 +61,7 @@ import { escInterruptSafe } from "../agent-caps";
 import { midTurnSpec, queueSendHint, queuedNote, runningPlaceholder, stopTitle } from "../mid-turn-send";
 import type { TrustPrompt } from "../trust-prompt";
 import type { AskAction } from "../tui-ask";
+import { isPlanMenu, latestPlanText, planChoice, planFeedbackText, planMenuTitle } from "../plan-approval";
 import {
   approvalChoices,
   approvalPreview,
@@ -209,7 +210,8 @@ export default function ChatSurface({
   onTuiCommand?: (cmd: string) => void;
   /** 切换命令之后 CLI 弹出的确认 / 选择菜单 */
   menuPrompt?: TuiMenu | null;
-  onAnswerMenu?: (index: number) => void;
+  /** 选菜单第 index 项；带 text 时先把字打进那一行再回车（Claude 方案确认的「Tell Claude what to change」） */
+  onAnswerMenu?: (index: number, text?: string) => void;
   /** 答 Claude 的提问表单（menuPrompt.ask，tui-ask.ts） */
   onAnswerAsk?: (action: AskAction) => void;
   /** 终端里开着一个只能在终端看的面板（/cost、/usage 的 Settings 面板等，tui-panel.ts） */
@@ -566,6 +568,46 @@ export default function ChatSurface({
   // CLI 比 Mesa 核对过的新（cli-verified.ts）：卡上的选项是读屏认出来的，画面变了可能按不准，提醒一句
   const cliNewer = useCliNewer(agentId);
   const channelChoices = channelApproval ? approvalChoices(channelApproval, agentId ?? null) : [];
+  // Claude 计划模式出完方案、问要不要开工（plan-approval.ts）：卡上整篇方案 + 按方案开工 / 接着改方案
+  const planMenu = isPlanMenu(menuPrompt ?? null, channelApproval?.toolName) ? menuPrompt! : null;
+  const planChoices = planMenu ? planMenu.options.map((o, i) => planChoice(o, i)) : [];
+  const planRevise = planChoices.find((c) => c.kind === "revise") ?? null;
+  function planDecision(menu: TuiMenu): ChatDecision {
+    const text = channelApproval?.plan ?? latestPlanText(messages);
+    const file = channelApproval?.toolName === "ExitPlanMode" ? channelApproval.path : null;
+    const pick = (i: number) => () => onAnswerMenu?.(i);
+    return {
+      key: `plan:${menu.options.join("|")}`,
+      title: planMenuTitle(menu, Boolean(text)),
+      hint: cliNewer
+        ? "这版 CLI Mesa 还没核对过：选项按终端原文认，按不对就点「露出终端」在终端里选"
+        : "开工后这段对话接着按选的那一档走，不用重开；也可以在终端里答，哪边先答算哪边",
+      options: [],
+      plan: {
+        text,
+        path: file ? (file.split(/[\\/]/).pop() ?? file) : null,
+        cwd,
+        go: planChoices
+          .filter((c) => c.kind === "go" || c.kind === "other")
+          .map((c) => ({
+            label: c.label,
+            description: c.description,
+            primary: c.index === menu.selected,
+            title: `在终端菜单里选「${c.original}」`,
+            onClick: pick(c.index),
+          })),
+        others: planChoices
+          .filter((c) => c.kind === "stay")
+          .map((c) => ({ label: c.label, title: `${c.description}（终端里的「${c.original}」）`, onClick: pick(c.index) })),
+        onRevise: planRevise
+          ? (feedback) => {
+              const t = planFeedbackText(feedback);
+              if (t) onAnswerMenu?.(planRevise.index, t);
+            }
+          : null,
+      },
+    };
+  }
   const decision: ChatDecision | null =
     channelApproval && channelChoices.length && !trustPrompt
       ? {
@@ -643,6 +685,8 @@ export default function ChatSurface({
                 onAction: (action) => onAnswerAsk?.(action),
               },
             }
+        : planMenu
+          ? planDecision(planMenu)
         : menuPrompt
           ? {
               key: `menu:${menuPrompt.question ?? ""}:${menuPrompt.options.join("|")}`,
@@ -693,6 +737,14 @@ export default function ChatSurface({
   async function sendFromComposer(text: string): Promise<string | null> {
     // Claude 的提问表单开着时，输入框里写的就是答案：写进表单「自己写」那一行再交（直接打进终端的话，
     // 回车会选中光标停着的那一项）。确认页没有地方写字，让人先在卡片上提交或取消
+    // 方案确认开着时，输入框里写的是对方案的意见：写进「Tell Claude what to change」那一行再交（直接打进终端，
+    // 回车会选中高亮的「开工」那一项）
+    if (planRevise && onAnswerMenu) {
+      const t = planFeedbackText(text);
+      if (!t) return "写下要改哪里";
+      onAnswerMenu(planRevise.index, t);
+      return null;
+    }
     const ask = menuPrompt?.ask;
     if (ask && onAnswerAsk) {
       if (menuPrompt?.pending) return "上一步还在交给终端，稍等一下再发";
@@ -826,6 +878,7 @@ export default function ChatSurface({
       {launchPick && !readOnly && (launchPickOpen || resumePickOpen || running || canResume) && (
         <ChatPermissionBadge
           agentLabel={launchAgentLabel}
+          agentId={launchPick.agentId}
           context={workContext}
           cycleHint={launchPickOpen || resumePickOpen}
           permission={launchPick.permission}
@@ -1219,6 +1272,8 @@ export default function ChatSurface({
             ? decision.ask.form.kind === "review"
               ? "先在上面提交或取消这组回答"
               : "写你自己的答案，发出去就交这一题"
+            : decision?.plan?.onRevise
+            ? "要改方案就写在这里，发出去它先改方案、不开工"
             : decision
             ? "先在上面选一项，或者直接回复"
             : readOnly

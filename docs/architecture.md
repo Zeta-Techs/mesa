@@ -457,6 +457,10 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-26 · Claude 计划模式的出口：方案确认卡「按方案开工 / 接着改方案」，只讨论按家分说法
+
+用户问权限菜单要不要加「计划模式」一档：不加——Claude Code / CodeBuddy / Gemini / Kimi / Cursor 的只讨论本来就是各家的计划模式参数，再加一档两档等价。缺的是出口，假网关实测（`gateway.py` 新增 TRIGGER_PLAN：先 Write 方案文件、再调 ExitPlanMode，2.1.308 起方案不在参数里，不写文件只问「Exit plan mode?」）：原来聊天层把这一屏当通用菜单——标题英文、预览是参数 JSON、第三项粘上了按键提示「shift+tab to approve…」。改法：① `approval_from_tool` 认 ExitPlanMode，`ApprovalDto.plan` 带方案原文（hook 的 tool_input 由 CLI 补了 plan / planFilePath，上限 40k 字）；② `plan-approval.ts` 认屏（旁路 ExitPlanMode 或问句「ready to execute」「Exit plan mode?」，且至少一项开工，否则交回通用卡），选项仍照终端原文逐项，只把认得出的说成中文并标开工后哪一档（auto mode → 帮我批准、manually approve → 请求批准、bypass → 完全访问、clear context → 清空上下文再开工），认不出的照原文；③ 卡片 PlanCard：整篇方案 Markdown + 开工几行 + 「接着改方案」输入行，聊天输入框发出的话也当意见；意见 = 挪到「Tell Claude what to change」、打字、回车（实测工具结果是带意见的拒绝，留在计划模式）——`answerMenu(index, text)`，挪完仍先读屏核对高亮再打字；④ `tui-menu` KEY_HINT 认组合键开头的提示行，不再粘进上一项；⑤ 只讨论的标签在 Claude 离开计划模式后跟到所选档（原来 discuss 一律不跟，徽标停在「只讨论」、接着聊又按计划模式重开）；⑥ 只讨论的说法按家分：只有核实过出口的 Claude Code 写「先出方案，你点头再…」（`PLAN_FIRST_AGENTS`），其余照旧。其余几家计划模式的出口未核实，没有这张卡。
+
 ### 2026-10-26 · 预览换宿主带上草稿、预览不了的文件给中性态、图片按真实宽高缩放
 
 同批第四条。① `file-draft-handoff.ts`：宿主搬家（文件页侧栏 ⇄ 窗口预览、宽窄屏换位）前 `armDraftHandoff(path)`（5 秒有效），旧编辑器卸载时脏内容连同基线、阅读/编辑态、视图状态寄存，新编辑器读到同一路径取走并标脏，磁盘已变则同时出「磁盘上有新版本」黄条；没 arm 的卸载不寄存（关预览前确认丢掉的不能复活）。文件页侧栏与窄屏两份预览原来同时挂、CSS 藏一份（同一文件两个编辑器各自读盘监听），改 matchMedia 只挂一份。② `UnsupportedPreview`：二进制 / 旧版 doc、rtf 是「本来就不预览」，中性说明 + 系统打开 / 在文件夹中显示；`PreviewErrorState` 只留给真读取失败，并修「无法预览此 文件 文件」叠词。③ 图片：原 transform: scale 在居中滚动框里放大后左上溢出滚不到；改按倍率设真实宽高 + `w-max min-w-full` 包一层 `m-auto`，默认适应窗口（小图不放大），以指针为锚缩放、拖动平移、双击切适应 / 100%，显示像素尺寸与文件大小（`image-view.ts`）。
