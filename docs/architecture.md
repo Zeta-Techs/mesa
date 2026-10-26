@@ -457,6 +457,10 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-26 · 方案确认卡扩到 CodeBuddy / Gemini / Kimi；Codex、Grok、Cursor 不做
+
+用户追问其他几家。假网关 TRIGGER_PLAN 扩成各协议通用（`plan_step`：按这一轮已有几个工具结果走「写方案文件 → 结束计划 → done」，方案路径从各家系统提示里取），逐家实测出口：CodeBuddy 2.175（只有 REPL，写方案文件在 ptc 下要先批一次；Ready to code? / 1. Yes / 2. No, keep planning / 3. Exit plan mode——Yes 回到启动时的权限，Exit plan mode = 结束计划但不按方案做）、Gemini 0.65（框里 Ready to start implementation? / 自动 = Auto-Edit、手动 = Default / 3. Type your feedback 直接打字）、Kimi 2.3.1（Ready to build with this plan? / Approve 回到启动权限 / Reject / Revise 要先回车再打字）。四家改方案的意见都是「带意见的拒绝」、留在计划模式。改法：① `plan-approval` 选项表加这几家的写法，新增 kind `leave`、`openFirst`；② 方案原文三级来源：旁路 plan > 会话文件里写进 `plans/` 的那次调用（Write.path / write_file / CodeBuddy REPL 代码里的 Write）> 屏上读（`screenPlan`：Claude「Here is Claude's plan:」、CodeBuddy「Ready to code?」、Gemini「Ready to start implementation?」、Kimi「┌ plan:」框；编号清单只在碰到菜单第一项时停），屏上读的照原样分行、注明可能只有一截；③ `answerMenu(index, { text, openFirst, onDone })`，开工 / 结束计划的键真按下去才 `onPlanLeft` 把标签从只讨论换到所选档（不在四档里的 = 跟本机设置）；④ `PLAN_FIRST_AGENTS` 扩到四家。**不做的**：Codex（只讨论是 `-s read-only`，没有结束计划的工具；自带的 Plan 协作模式 Mesa 没接）、Grok（只讨论是 dontAsk + 只读沙箱，exit_plan_mode 会弹 a/s/c/q 方案查看器，但沙箱不变、批了也动不了手）、Cursor（假网关下起不来，没法核实）。另查到 Qwen 0.25.3 已有 `--approval-mode plan`、OpenCode 有自带的 plan agent，只讨论可以接，待拍板。
+
 ### 2026-10-26 · 「＋ → 引用项目文件」改成挑文件弹层
 
 用户：点了只在光标处插个 `@`，选不了文件，要像 Codex「从资料库添加」那样点开就能挑。改法：新弹层 `ProjectFilePicker`——列这个项目最近改过的文件（新命令 `list_recent_files`，不限类型，跳过点开头与依赖 / 构建目录，最多扫 2 万个、取前 300，只读元数据），搜索走现成的 `search_files`（只留文件），列表 / 网格两种看法，图片滚到看得见才读缩略图（`read_image_bytes` 工作目录白名单），点行勾选可多选、双击直接添加。添加的落点定为**附件卡**（与「文件或图片」、拖入同一条路，发送时绝对路径跟在正文后），不是 `@相对路径`：卡片能看缩略图、能进看图标注台，和截图里「添加」的语义一致。打 `@` 就地搜、插 `@相对路径` 保留，给只想在句子里提一下文件的人。

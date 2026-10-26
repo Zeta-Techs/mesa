@@ -12,7 +12,13 @@ test("权限示例按项目类型取，四档都有一句", () => {
   for (const id of ["discuss", "ask", "auto", "full"] as const) assert.ok(general.outcomes[id]);
 });
 
-test("只讨论：Claude Code 是计划模式，写成「先出方案，你点头再…」；其余各家照旧", () => {
+test("只讨论：Claude Code / CodeBuddy / Gemini / Kimi 是计划模式，写成「先出方案，你点头再…」；其余各家照旧", () => {
+  for (const agent of ["codebuddy", "gemini", "kimi"]) {
+    assert.equal(permissionExample("coding", agent).outcomes.discuss, "先出方案，你点头再跑", agent);
+  }
+  for (const agent of ["grok", "cursor"]) {
+    assert.equal(permissionExample("coding", agent).outcomes.discuss, "不跑，告诉你怎么跑", agent);
+  }
   assert.equal(permissionExample("coding", "claude-code").outcomes.discuss, "先出方案，你点头再跑");
   assert.equal(permissionExample("research", "claude-code").outcomes.discuss, "先出方案，你点头再改");
   assert.equal(permissionExample("general", "claude-code").outcomes.discuss, "先出方案，你点头再建");

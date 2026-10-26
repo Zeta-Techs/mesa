@@ -27,6 +27,8 @@ export interface TuiMenu {
   ask?: ClaudeAsk | null;
   /** 刚替用户按过键、终端还没换到新画面（卡片按钮先停用） */
   pending?: boolean;
+  /** 屏上认出了计划模式的方案确认（plan-approval.ts screenPlan：标题与屏上读得到的方案），调用方附上 */
+  plan?: { text: string | null } | null;
 }
 
 const BORDER = /^[─━═│┃╭╮╰╯▔▁]+$/;
@@ -237,6 +239,14 @@ function menuAround(
   return { question, detail, options, selected };
 }
 
+/** 替人选菜单一项时的附加动作：text = 把字打进那一行再回车（方案确认的「接着改方案」），openFirst = 先回车打开输入行
+ *  （Kimi「Revise」），onDone = 键真按下去了（读屏核对过高亮）才调 */
+export interface MenuAnswer {
+  text?: string;
+  openFirst?: boolean;
+  onDone?: () => void;
+}
+
 /** 选第 target 项要按的键：方向键从当前高亮挪过去再回车，每个键单独写（Ink 一次只认一个键） */
 export function menuAnswerKeys(menu: TuiMenu, target: number): string[] {
   return [...menuMoveKeys(menu, target), "\r"];
@@ -283,6 +293,8 @@ export function sameTuiMenu(a: TuiMenu | null, b: TuiMenu | null): boolean {
     a.selected === b.selected &&
     a.options.join("\n") === b.options.join("\n") &&
     Boolean(a.pending) === Boolean(b.pending) &&
+    Boolean(a.plan) === Boolean(b.plan) &&
+    (a.plan?.text ?? null) === (b.plan?.text ?? null) &&
     sameClaudeAsk(a.ask, b.ask)
   );
 }

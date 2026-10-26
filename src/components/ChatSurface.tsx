@@ -27,7 +27,8 @@ import type {
   NativePermissionMode,
   TabStatus,
 } from "../pages/TerminalPage";
-import type { TuiMenu } from "../tui-menu";
+import type { MenuAnswer, TuiMenu } from "../tui-menu";
+import type { PermissionTierId } from "../chat-permission";
 import { liveReplySupported, unsyncedTail } from "../live-reply";
 import { useRevealedText } from "../text-reveal";
 import { lastContextTokens, userTextHistory, type MesaCommand } from "../composer-assist";
@@ -115,6 +116,7 @@ export default function ChatSurface({
   onTuiCommand,
   menuPrompt = null,
   onAnswerMenu,
+  onPlanLeft,
   onAnswerAsk,
   tuiPanel = false,
   tuiNotice = null,
@@ -211,7 +213,9 @@ export default function ChatSurface({
   /** 切换命令之后 CLI 弹出的确认 / 选择菜单 */
   menuPrompt?: TuiMenu | null;
   /** 选菜单第 index 项；带 text 时先把字打进那一行再回车（Claude 方案确认的「Tell Claude what to change」） */
-  onAnswerMenu?: (index: number, text?: string) => void;
+  onAnswerMenu?: (index: number, opts?: MenuAnswer) => void;
+  /** 方案确认上点了开工（或结束计划模式）、键已按下：这段对话离开只讨论，按 tier 走（null = 这家 CLI 自己的设置） */
+  onPlanLeft?: (tier: NativePermissionMode | null) => void;
   /** 答 Claude 的提问表单（menuPrompt.ask，tui-ask.ts） */
   onAnswerAsk?: (action: AskAction) => void;
   /** 终端里开着一个只能在终端看的面板（/cost、/usage 的 Settings 面板等，tui-panel.ts） */
@@ -568,14 +572,25 @@ export default function ChatSurface({
   // CLI 比 Mesa 核对过的新（cli-verified.ts）：卡上的选项是读屏认出来的，画面变了可能按不准，提醒一句
   const cliNewer = useCliNewer(agentId);
   const channelChoices = channelApproval ? approvalChoices(channelApproval, agentId ?? null) : [];
-  // Claude 计划模式出完方案、问要不要开工（plan-approval.ts）：卡上整篇方案 + 按方案开工 / 接着改方案
+  // 计划模式写完方案、问要不要开工（plan-approval.ts，Claude / CodeBuddy / Gemini / Kimi）：卡上整篇方案 + 按方案开工 / 接着改方案
   const planMenu = isPlanMenu(menuPrompt ?? null, channelApproval?.toolName) ? menuPrompt! : null;
   const planChoices = planMenu ? planMenu.options.map((o, i) => planChoice(o, i)) : [];
   const planRevise = planChoices.find((c) => c.kind === "revise") ?? null;
+  const revisePlan = (feedback: string) =>
+    planRevise && onAnswerMenu?.(planRevise.index, { text: feedback, openFirst: planRevise.openFirst });
   function planDecision(menu: TuiMenu): ChatDecision {
-    const text = channelApproval?.plan ?? latestPlanText(messages);
+    // 方案原文：旁路（Claude hooks）> 会话文件里写方案文件 / 结束计划的那次调用 > 屏上读得到的那一截
+    const known = channelApproval?.plan ?? latestPlanText(messages);
+    const text = known ?? menu.plan?.text ?? null;
     const file = channelApproval?.toolName === "ExitPlanMode" ? channelApproval.path : null;
-    const pick = (i: number) => () => onAnswerMenu?.(i);
+    const pick = (c: { index: number; kind: string; tier: PermissionTierId | null }) => () =>
+      onAnswerMenu?.(c.index, {
+        // 开工 / 结束计划模式：键真按下去了，这段对话就不再是只讨论
+        onDone:
+          c.kind === "go" || c.kind === "leave"
+            ? () => onPlanLeft?.(c.tier === "discuss" ? null : c.tier)
+            : undefined,
+      });
     return {
       key: `plan:${menu.options.join("|")}`,
       title: planMenuTitle(menu, Boolean(text)),
@@ -585,6 +600,7 @@ export default function ChatSurface({
       options: [],
       plan: {
         text,
+        fromScreen: !known && Boolean(text),
         path: file ? (file.split(/[\\/]/).pop() ?? file) : null,
         cwd,
         go: planChoices
@@ -594,15 +610,15 @@ export default function ChatSurface({
             description: c.description,
             primary: c.index === menu.selected,
             title: `在终端菜单里选「${c.original}」`,
-            onClick: pick(c.index),
+            onClick: pick(c),
           })),
         others: planChoices
-          .filter((c) => c.kind === "stay")
-          .map((c) => ({ label: c.label, title: `${c.description}（终端里的「${c.original}」）`, onClick: pick(c.index) })),
+          .filter((c) => c.kind === "stay" || c.kind === "leave")
+          .map((c) => ({ label: c.label, title: `${c.description}（终端里的「${c.original}」）`, onClick: pick(c) })),
         onRevise: planRevise
           ? (feedback) => {
               const t = planFeedbackText(feedback);
-              if (t) onAnswerMenu?.(planRevise.index, t);
+              if (t) revisePlan(t);
             }
           : null,
       },
@@ -742,7 +758,7 @@ export default function ChatSurface({
     if (planRevise && onAnswerMenu) {
       const t = planFeedbackText(text);
       if (!t) return "写下要改哪里";
-      onAnswerMenu(planRevise.index, t);
+      revisePlan(t);
       return null;
     }
     const ask = menuPrompt?.ask;

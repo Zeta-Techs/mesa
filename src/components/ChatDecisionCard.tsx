@@ -38,12 +38,14 @@ export interface ChatDecision {
 export interface PlanDecision {
   /** 方案原文（Markdown）；没写方案文件时为 null */
   text: string | null;
+  /** 方案是从终端屏上读的（旁路、会话文件都给不出）：终端排过版、可能只有屏上那一截，按原样分行显示 */
+  fromScreen?: boolean;
   /** 方案文件路径（标题下灰字） */
   path: string | null;
   cwd?: string | null;
   /** 开工的几项（照终端顺序），primary = 终端当前高亮那项 */
   go: Array<DecisionOption & { description?: string | null }>;
-  /** 其余不开工的项（「先不开工」） */
+  /** 其余不开工的项（「先不开工」「结束计划模式，先不开工」） */
   others: DecisionOption[];
   /** 「接着改方案」：意见写进终端那一行再回车；这一屏没有能打字的那一行时为 null */
   onRevise: ((text: string) => void) | null;
@@ -436,7 +438,14 @@ function PlanCard({
     >
       {plan.text && (
         <div className="mx-4 mb-3 max-h-[min(24rem,45vh)] overflow-y-auto rounded-lg border border-hairline px-3 py-2 ccode-chat-scroll">
-          <ChatMarkdown text={plan.text} cwd={plan.cwd} />
+          {plan.fromScreen ? (
+            <>
+              <div className="whitespace-pre-wrap break-words text-sm leading-6 text-l2">{plan.text}</div>
+              <div className="mt-1 text-micro text-l4">照终端里显示的抄下来；方案长时这里只有屏上那一截，全文点「露出终端」看</div>
+            </>
+          ) : (
+            <ChatMarkdown text={plan.text} cwd={plan.cwd} />
+          )}
         </div>
       )}
       <div role="list">

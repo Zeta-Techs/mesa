@@ -333,6 +333,9 @@ if RAW is not None: record["raw"] = RAW; record["size"] = [COLS, ROWS]
 json.dump(record, open(out_path, "w"), ensure_ascii=False, indent=1)
 try: proc.terminate(force=True) if WIN else os.kill(pid, signal.SIGKILL)
 except OSError: pass
+# CAP_KEEP=<目录>：删临时 HOME 前整个留一份（看会话文件里这一轮记成什么样，如计划模式的方案文件与结束计划的调用）
+if os.environ.get("CAP_KEEP"):
+    shutil.copytree(home, os.environ["CAP_KEEP"], symlinks=True, dirs_exist_ok=True, ignore_dangling_symlinks=True)
 shutil.rmtree(home, ignore_errors=True)
 for rel, d in changed.items(): print(f"--- {rel} 被改了：\n{d}")
 print(f"{agent}/{tier}: probe_created={record['probe_created']} kitty={kitty[0]} alive={alive[0]} "

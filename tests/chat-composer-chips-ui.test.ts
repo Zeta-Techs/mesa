@@ -1394,8 +1394,31 @@ test("Claude 方案确认卡：整篇方案、开工几项带权限说明、高�
       }),
     );
     assert.equal(ui.el.querySelector('input[aria-label="接着改方案：写下要改哪里"]'), null);
+    assert.doesNotMatch(ui.el.textContent ?? "", /照终端里显示的抄下来/);
     await ui.click("先不开工");
     assert.deepEqual(picks.slice(2), ["stay"]);
+
+    // 方案是从屏上读的（Kimi / Gemini / CodeBuddy 没有旁路给方案时）：照原样分行，注明只有屏上那一截
+    await ui.render(
+      ui.h(ui.Decision, {
+        decision: {
+          key: "plan:z",
+          title: "方案写好了，按这个方案开工吗？",
+          options: [],
+          plan: {
+            text: "方案：写一个探针文件\n\n1. 新建 mesa_probe.txt",
+            fromScreen: true,
+            path: null,
+            go: [{ label: "按方案开工", description: "权限回到这家 CLI 自己的设置", primary: true, onClick: () => {} }],
+            others: [],
+            onRevise: () => {},
+          },
+        },
+        onOpenTerminal: () => {},
+      }),
+    );
+    assert.match(ui.el.textContent ?? "", /照终端里显示的抄下来/);
+    assert.match(ui.el.textContent ?? "", /权限回到这家 CLI 自己的设置/);
   } finally {
     await ui.close();
   }

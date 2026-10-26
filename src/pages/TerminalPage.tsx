@@ -174,9 +174,11 @@ import {
   menuEchoesText,
   parseTuiMenu,
   sameTuiMenu,
+  type MenuAnswer,
   type TuiMenu,
 } from "../tui-menu";
 import { askAfter, askAnswerKeys, askFinishes, askMenu, parseClaudeAsk, type AskAction } from "../tui-ask";
+import { screenPlan } from "../plan-approval";
 import { promptSuggestionSupported, readPromptSuggestion } from "../prompt-suggestion";
 import { lineCells } from "../screen-cells";
 import { lastContextTokens, type MesaCommand } from "../composer-assist";
@@ -472,8 +474,8 @@ export interface FocusTabActions {
   applyLaunchCombo: (combo: { agentId: string; profileId: string; model: string }) => void;
   /** 写一条 TUI 命令并盯屏 5 秒，CLI 弹确认菜单时上报 menuPrompt（切模型 / 思考档用） */
   runTuiCommand: (cmd: string) => void;
-  /** 替用户在确认菜单里选第 index 项；带 text 时先把字打进那一行再回车（Claude 方案确认的「Tell Claude what to change」） */
-  answerMenu: (index: number, text?: string) => void;
+  /** 替用户在确认菜单里选第 index 项；带 text 时把字打进那一行再回车（方案确认的「接着改方案」，MenuAnswer） */
+  answerMenu: (index: number, opts?: MenuAnswer) => void;
   /** 替用户答 Claude 的提问表单（tui-ask.ts：选一项 / 自己写 / 交这一题 / 切题 / 先不答） */
   answerAsk: (action: AskAction) => void;
   /** 运行中换权限：停下 Agent，带着新权限接回原来那段对话（权限在启动参数里，只能重开兑现） */
@@ -2324,7 +2326,11 @@ const TerminalView = memo(function TerminalView({
   /** 屏上等你选的东西：Claude 的提问表单按表单读（tui-ask.ts），其余照通用菜单读（Kimi 选择器的说明行靠字色分开） */
   function parseScreenMenu(lines: string[]): TuiMenu | null {
     const ask = launchAgentRef.current === "claude-code" ? parseClaudeAsk(lines, screenCells) : null;
-    return ask ? askMenu(ask) : parseTuiMenu(lines, screenCells);
+    if (ask) return askMenu(ask);
+    const menu = parseTuiMenu(lines, screenCells);
+    // 计划模式的方案确认：标题与屏上读得到的方案附在菜单上（旁路、会话文件给不出方案时卡片用它）
+    const plan = menu ? screenPlan(lines, menu) : null;
+    return menu && plan ? { ...menu, plan } : menu;
   }
   // 终端里换权限模式的跟随（fetchConversation 读会话文件；基线 = 这个文件第一次读到的模式）
   const permBaselineRef = useRef<{ file: string; mode: string } | null>(null);
@@ -2633,7 +2639,8 @@ const TerminalView = memo(function TerminalView({
     menuWatchUntilRef.current = Date.now() + 5000;
     scanMenuSoon();
   }
-  function answerMenu(index: number, text?: string) {
+  function answerMenu(index: number, opts: MenuAnswer = {}) {
+    const { text, openFirst, onDone } = opts;
     const menu = menuPromptRef.current;
     const id = ptyIdRef.current;
     if (!menu || !id) return;
@@ -2646,19 +2653,24 @@ const TerminalView = memo(function TerminalView({
     const moves = menuMoveKeys(menu, index);
     // 一个确认之后可能还有下一个（选完模型再问思考档）：再开一小段窗口
     menuWatchUntilRef.current = Date.now() + 3000;
-    // 能打字的那一行（Claude 方案确认「Tell Claude what to change」）：高亮停对了先把字整段写进去，隔一拍再回车。
-    // 打字期间屏上那一行变成了字，扫屏先别把卡片拿回来
+    // 能打字的那一行（方案确认的「接着改方案」）：高亮停对了先把字整段写进去，隔一拍再回车；
+    // openFirst（Kimi「Revise」）先回车打开输入行再打字。打字期间屏上那一行变成了字，扫屏先别把卡片拿回来
+    const later = (ms: number, data: string) =>
+      window.setTimeout(() => {
+        if (ptyIdRef.current === id) writeInteractivePty(id, data);
+      }, ms);
     const submit = (): number => {
+      onDone?.();
       if (!text) {
         writeInteractivePty(id, enter);
         return 0;
       }
-      writeInteractivePty(id, text);
-      askKeysDoneAtRef.current = Date.now() + 700;
-      window.setTimeout(() => {
-        if (ptyIdRef.current === id) writeInteractivePty(id, enter);
-      }, 300);
-      return 300;
+      const lead = openFirst ? 400 : 0;
+      if (openFirst) writeInteractivePty(id, enter);
+      later(lead, text);
+      later(lead + 300, enter);
+      askKeysDoneAtRef.current = Date.now() + lead + 700;
+      return lead + 300;
     };
     if (moves.length === 0) {
       // 高亮本来就在这一项（刚从屏上读到的）：直接回车
@@ -5859,7 +5871,7 @@ const TerminalView = memo(function TerminalView({
       newProject: () => actionsRef.current.newProject(),
       applyLaunchCombo: (c) => actionsRef.current.applyLaunchCombo(c),
       runTuiCommand: (cmd) => actionsRef.current.runTuiCommand(cmd),
-      answerMenu: (i, text) => actionsRef.current.answerMenu(i, text),
+      answerMenu: (i, opts) => actionsRef.current.answerMenu(i, opts),
       answerAsk: (a) => actionsRef.current.answerAsk(a),
       restartWithPermission: () => actionsRef.current.restartWithPermission(),
       relaunchWith: (patch) => actionsRef.current.relaunchWith(patch),
@@ -10452,10 +10464,21 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                             0,
                           )
                         }
-                        onAnswerMenu={(i, text) => {
+                        onAnswerMenu={(i, opts) => {
                           holdAutoPeek(t.id);
-                          tabActionsRef.current.get(t.id)?.answerMenu(i, text);
+                          tabActionsRef.current.get(t.id)?.answerMenu(i, opts);
                         }}
+                        onPlanLeft={(tier) =>
+                          // 方案确认上点了开工：CLI 已离开计划模式，标签不再是只讨论（徽标、接着聊的启动参数都跟上）。
+                          // tier = null 是回到这家 CLI 自己的设置（Kimi Approve、CodeBuddy Yes）
+                          setTabs((prev) =>
+                            prev.map((x) =>
+                              x.id === t.id && x.permission === "discuss"
+                                ? { ...x, permission: "write_tree", permissionMode: tier }
+                                : x,
+                            ),
+                          )
+                        }
                         onAnswerAsk={(a) => {
                           holdAutoPeek(t.id);
                           tabActionsRef.current.get(t.id)?.answerAsk(a);

@@ -1,8 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isPlanMenu, latestPlanText, planChoice, planFeedbackText, planMenuTitle } from "../src/plan-approval.ts";
+import { readFileSync } from "node:fs";
+import { isPlanMenu, latestPlanText, planChoice, planFeedbackText, planMenuTitle, screenPlan } from "../src/plan-approval.ts";
 import { parseTuiMenu } from "../src/tui-menu.ts";
 import type { ChatMessageDto } from "../src/types.ts";
+
+// 四家真屏（tests/fixtures/plan-screens.json，假网关 TRIGGER_PLAN 抓的）
+const SCREENS = JSON.parse(readFileSync(new URL("./fixtures/plan-screens.json", import.meta.url), "utf8")) as Record<string, string[]>;
+const PLAN = "方案：写一个探针文件\n\n1. 在工作目录新建 mesa_probe.txt\n2. 写入一行 mesa\n3. 读回确认";
+const read = (agent: string) => {
+  const lines = SCREENS[agent];
+  const menu = parseTuiMenu(lines);
+  assert.ok(menu, `${agent} 认出菜单`);
+  const plan = screenPlan(lines, menu);
+  return { menu: plan ? { ...menu, plan } : menu, plan };
+};
+const kinds = (options: string[]) => options.map((o, i) => planChoice(o, i)).map((c) => [c.kind, c.label, c.tier]);
 
 // Claude Code 2.1.308 只讨论（--permission-mode plan）里写完方案、调 ExitPlanMode 后的那一屏（2026-10-26 假网关 TRIGGER_PLAN 抓屏，120 列）
 const RULE = "─".repeat(120);
@@ -107,3 +120,55 @@ test("改方案的意见压成一行、去掉控制字符（回车会把它交�
   assert.equal(planFeedbackText("  第一步换成\n写测试\t先\x1b[A  "), "第一步换成 写测试 先[A");
   assert.equal(planFeedbackText("\n\n"), "");
 });
+
+test("四家真屏：都认成方案确认，屏上读得到整篇方案（编号清单不当选项截断）", () => {
+  for (const agent of ["claude-code", "codebuddy", "gemini", "kimi"]) {
+    const { menu, plan } = read(agent);
+    assert.ok(isPlanMenu(menu, null), `${agent} 不靠旁路也认得出`);
+    assert.equal(plan?.text, PLAN, `${agent} 屏上的方案`);
+    assert.equal(planMenuTitle(menu, false), "方案写好了，按这个方案开工吗？");
+  }
+});
+
+test("各家选项：开工后按哪一档、哪一项能写意见、哪一项要先回车", () => {
+  assert.deepEqual(kinds(read("claude-code").menu.options), [
+    ["go", "按方案开工 · 帮我批准", "auto"],
+    ["go", "按方案开工 · 请求批准", "ask"],
+    ["revise", "接着改方案", null],
+  ]);
+  // Gemini 每项下面一行说明被并进选项名，照样认
+  assert.deepEqual(kinds(read("gemini").menu.options), [
+    ["go", "按方案开工 · 自动改文件", null],
+    ["go", "按方案开工 · 请求批准", "ask"],
+    ["revise", "接着改方案", null],
+  ]);
+  const kimi = read("kimi").menu.options.map((o, i) => planChoice(o, i));
+  assert.deepEqual(kimi.map((c) => [c.kind, c.label, Boolean(c.openFirst)]), [
+    ["go", "按方案开工", false],
+    ["stay", "先不开工", false],
+    ["revise", "接着改方案", true],
+  ]);
+  assert.equal(kimi[0].description, "权限回到这家 CLI 自己的设置");
+  assert.deepEqual(kinds(read("codebuddy").menu.options), [
+    ["go", "按方案开工", null],
+    ["stay", "先不开工", null],
+    ["leave", "结束计划模式，先不开工", null],
+  ]);
+});
+
+test("方案原文兜底：会话文件里写进 plans/ 的那一次（Kimi Write.path、Gemini write_file、CodeBuddy REPL 里的 Write）", () => {
+  const user: ChatMessageDto = { role: "user", blocks: [{ kind: "text", text: "做个方案", toolName: null }], timestamp: null, usage: null };
+  const call = (toolName: string, input: unknown): ChatMessageDto => ({
+    role: "assistant",
+    blocks: [{ kind: "tool_use", toolName, text: JSON.stringify(input) }],
+    timestamp: null,
+    usage: null,
+  });
+  assert.equal(latestPlanText([user, call("Write", { path: "/s/agents/main/plans/a.md", content: "# K" }), call("ExitPlanMode", {})]), "# K");
+  assert.equal(latestPlanText([user, call("write_file", { file_path: "../x/plans/mesa-plan.md", content: "# G" }), call("exit_plan_mode", { plan_filename: "mesa-plan.md" })]), "# G");
+  const code = `await Write({ file_path: "/h/.codebuddy/plans/q.md", content: "# C\\n\\n1. 一" }); return 'ok'`;
+  assert.equal(latestPlanText([user, call("REPL", { code }), call("REPL", { code: "return await ExitPlanMode({})" })]), "# C\n\n1. 一");
+  // 写的不是方案文件：不算
+  assert.equal(latestPlanText([user, call("Write", { file_path: "/w/src/a.ts", content: "x" })]), null);
+});
+

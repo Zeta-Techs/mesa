@@ -165,7 +165,15 @@
    实测「1. Yes, and use auto mode / 2. Yes, manually approve edits / 3. Tell Claude what to change（下一行 shift+tab to approve with this feedback）」；
    第 3 项是能打字的一行：挪过去、打字、回车 = 带意见拒绝（工具结果「the user said: <意见>」，留在计划模式）。开工后会话文件记
    `permission-mode`（如 auto）。没写方案文件就调只问「Exit plan mode?」（1. Yes, and switch to default (ask each time) / 2. No）。
-   其余几家计划 / 只读模式写完方案的出口未核实。
+   **其余几家（同日同法实测）**：CodeBuddy 2.175 系统提示同 Claude（`.codebuddy/plans/`），ptc 下只有 REPL、写方案文件要先批一次，
+   屏上「Ready to code? / 方案 / ─── / Would you like to proceed? / 1. Yes / 2. No, keep planning (escape) / 3. Exit plan mode」，
+   Yes 回到启动时的权限，Exit plan mode 结束计划但工具结果告诉模型用户没批；Gemini 0.65 系统提示「implementation plan in `<目录>`」、
+   `write_file` 后 `exit_plan_mode(plan_filename)`，框里「Ready to start implementation? / 方案 / 1. Yes, automatically accept edits（→ Auto-Edit）/
+   2. Yes, manually accept edits（→ Default）/ 3. Type your feedback...（直接打字）」；Kimi 2.3.1 系统提示「Plan file: <路径>」、Write(path)
+   后 ExitPlanMode，屏上「Current plan ┌ plan: … ┐ / Ready to build with this plan? / 1. Approve / 2. Reject / 3. Revise」，Revise 回车后
+   出「Type feedback · ↵ submit」再打字。改方案的意见四家都回成带意见的拒绝。Grok 1.0.70 只读档下 exit_plan_mode 仍可调，
+   弹 a approve / s request changes / c comment / q quit 的方案查看器，但只读沙箱不随之放开；Codex 只读档没有结束计划的工具；
+   Cursor 假网关下起不来未核实。Qwen 0.25.3 `--help` 已有 `--approval-mode plan`（上面 0.21.1 的结论已过时），OpenCode 有 `--agent`。
    **模型路由端到端核对（2026-10-17，`scripts/e2e-model-routing/`）**：Claude 2.1.292 / CodeBuddy / Codex / Qwen / Kimi / OpenCode / Grok
    的请求都带所选模型（Claude `/v1/messages`、Codex `/v1/responses`、其余 `/v1/chat/completions`，Grok 先 GET `/v1/models`；
    OpenCode、Qwen 的标题 / 记忆小任务也用所选模型）。Claude 的 settings.json env 压过进程 env：用户级 env 里的
