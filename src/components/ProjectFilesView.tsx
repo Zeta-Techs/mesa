@@ -12,12 +12,16 @@ import {
   BookOpen,
   ChevronRight,
   Copy,
+  CopyPlus,
+  FilePlus,
   Folder,
+  FolderInput,
   FolderOpen,
   FolderPlus,
   Locate,
   Maximize2,
   MessageSquare,
+  Pencil,
   RefreshCw,
   SquareTerminal,
   Trash2,
@@ -37,7 +41,7 @@ import FileKindFilters from "./FileKindFilters";
 import ContextMenu from "./ContextMenu";
 import { confirmDialog, confirmDialogOpen } from "./ConfirmDialog";
 import { IS_MAC, IS_WINDOWS } from "../hotkeys";
-import { pathWithin, revealFolderLabel, samePath } from "../path-utils";
+import { parentDir, pathWithin, revealFolderLabel, samePath } from "../path-utils";
 import { absTime, relTime } from "../rel-time";
 import {
   ancestorDirsToReveal,
@@ -63,6 +67,18 @@ import ProjectFilePreview from "./ProjectFilePreview";
 import { cachedNotePaired, checkNotePaired, isMarkdownNote } from "../note-pdf-pair";
 import { Modal } from "./Modal";
 import { armDraftHandoff } from "../file-draft-handoff";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import type { DragDropEvent } from "@tauri-apps/api/webview";
+import {
+  dropTargetAt,
+  duplicatePath,
+  importDropped,
+  nameDraftPrompt,
+  pickAndMove,
+  stemSelection,
+  submitNameDraft as submitNameDraftCmd,
+  type NameDraft,
+} from "../file-ops";
 
 type EntryCache = Record<string, DirEntryDto[]>;
 
@@ -88,6 +104,10 @@ function sameEntries(a: DirEntryDto[], b: DirEntryDto[]): boolean {
 /** 宽屏（Tailwind lg）判定；测试环境没有 matchMedia 时按宽屏 */
 function wideQuery(): MediaQueryList | null {
   return typeof window.matchMedia === "function" ? window.matchMedia("(min-width: 1024px)") : null;
+}
+
+function baseName(p: string): string {
+  return p.split(/[\\/]/).filter(Boolean).pop() ?? p;
 }
 
 function modifiedLabel(iso: string | null | undefined): string {
@@ -184,8 +204,11 @@ export default function ProjectFilesView({
     path: string;
     isDir: boolean;
   } | null>(null);
-  const [newFolderFor, setNewFolderFor] = useState<string | null>(null);
-  const [newFolderName, setNewFolderName] = useState("");
+  /** 顶上名字输入行：新建文件 / 新建文件夹 / 重命名（file-ops.ts） */
+  const [nameDraft, setNameDraft] = useState<NameDraft | null>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  /** 从访达拖进来时正悬停的落点文件夹（高亮用） */
+  const [dropDir, setDropDir] = useState<string | null>(null);
   /** 命中 2000 项展示上限的目录（点名提示；低于上限的重载解除） */
   const [truncDir, setTruncDir] = useState<string | null>(null);
   const pendingMark = goalReviewCopy(workMode).fileMark;
@@ -269,8 +292,7 @@ export default function ProjectFilesView({
     // 脏标志不清会带着旧项目的「没保存修改」去误拦新项目
     setTruncDir(null);
     setMenu(null);
-    setNewFolderFor(null);
-    setNewFolderName("");
+    setNameDraft(null);
     dirtyRef.current = false;
     setLoading(true);
     void load(projectPath).finally(() => setLoading(false));
@@ -692,21 +714,144 @@ export default function ProjectFilesView({
     }
   }
 
-  async function submitNewFolder() {
-    const parent = newFolderFor;
-    const name = newFolderName.trim();
-    setNewFolderFor(null);
-    setNewFolderName("");
-    if (!parent || !name) return;
+  /** 提交顶上的名字输入：新建文件夹 / 新建文件 / 重命名 */
+  async function submitNameDraft() {
+    const d = nameDraft;
+    setNameDraft(null);
+    if (!d || !d.value.trim()) return;
+    const verb = d.kind === "folder" ? "新建文件夹" : d.kind === "file" ? "新建文件" : "重命名";
     try {
-      await invoke("fs_create_dir", { root: parent, name });
-      // 新夹落在被右键的目录里：展开它才看得见
-      setExpanded((prev) => new Set(prev).add(parent));
+      if (d.kind === "rename") {
+        const renamingPreview =
+          preview &&
+          (samePath(preview.path, d.path, IS_WINDOWS) || pathWithin(preview.path, d.path, IS_WINDOWS));
+        // 改的是正在预览（或它所在文件夹）的文件：先过未保存确认，改完预览跟到新路径
+        if (renamingPreview && !(await confirmLoseDirty())) return;
+        const next = await submitNameDraftCmd(d, projectPath);
+        forgetPath(d.path);
+        if (renamingPreview && preview) followMoved(preview.path, d.path, next);
+      } else {
+        const created = await submitNameDraftCmd(d, projectPath);
+        // 新东西落在被右键的目录里：展开它才看得见；新建的文件直接打开
+        setExpanded((prev) => new Set(prev).add(d.dir));
+        if (d.kind === "file" && (await confirmLoseDirty())) {
+          applyPreview(asFileEntry({ path: created, name: baseName(created) }));
+        }
+      }
       refresh();
     } catch (reason) {
-      onError(`新建文件夹失败：${String(reason)}`);
+      onError(`${verb}失败：${String(reason)}`);
     }
   }
+
+  /** 预览中的文件（或它所在文件夹）被改名 / 移走：预览跟到新路径 */
+  function followMoved(previewPath: string, from: string, to: string) {
+    const moved = samePath(previewPath, from, IS_WINDOWS) ? to : to + previewPath.slice(from.length);
+    applyPreview(asFileEntry({ path: moved, name: baseName(moved) }), true);
+  }
+
+  const menuIsDirRef = useRef(false);
+  function startNameDraft(d: NameDraft) {
+    setNameDraft(d);
+    requestAnimationFrame(() => {
+      const input = nameInputRef.current;
+      if (!input) return;
+      input.focus();
+      if (d.kind === "rename") {
+        const [a, b] = stemSelection(d.value, menuIsDirRef.current);
+        input.setSelectionRange(a, b);
+      }
+    });
+  }
+
+  /** 路径被改名 / 移走后，把它（及其下）从展开集合与缓存里收掉，免得重拉死路径 */
+  function forgetPath(path: string) {
+    setExpanded((cur) => {
+      const next = new Set<string>();
+      for (const p of cur) {
+        if (p === path || pathWithin(p, path, IS_WINDOWS)) continue;
+        next.add(p);
+      }
+      return next;
+    });
+    setCache((cur) => {
+      const next: EntryCache = {};
+      for (const [k, v] of Object.entries(cur)) {
+        if (k === path || pathWithin(k, path, IS_WINDOWS)) continue;
+        next[k] = v;
+      }
+      return next;
+    });
+  }
+
+  async function moveMenuTarget(m: { path: string; isDir: boolean }) {
+    const affectsPreview =
+      preview && (samePath(preview.path, m.path, IS_WINDOWS) || pathWithin(preview.path, m.path, IS_WINDOWS));
+    if (affectsPreview && !(await confirmLoseDirty())) return;
+    try {
+      const next = await pickAndMove(m.path, projectPath, IS_WINDOWS);
+      if (!next) return;
+      forgetPath(m.path);
+      if (affectsPreview && preview) followMoved(preview.path, m.path, next);
+      refresh();
+    } catch (reason) {
+      onError(`移动失败：${String(reason)}`);
+    }
+  }
+
+  async function duplicateMenuTarget(m: { path: string }) {
+    try {
+      await duplicatePath(m.path, projectPath);
+      refresh();
+    } catch (reason) {
+      onError(`复制失败：${String(reason)}`);
+    }
+  }
+
+  // 从访达 / 资源管理器拖进来：落在文件夹行上放进那个文件夹，落在文件行上放进它所在的文件夹，
+  // 落在列表空白处放进项目根。只复制，不移动原文件
+  useEffect(() => {
+    let unlisten: Promise<() => void>;
+    try {
+      unlisten = getCurrentWebviewWindow().onDragDropEvent(onDrop);
+    } catch {
+      return; // 没有窗口（测试环境）：不接拖放
+    }
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+    function onDrop(event: { payload: DragDropEvent }) {
+      const p = event.payload;
+      if (p.type === "leave") {
+        setDropDir(null);
+        return;
+      }
+      if (p.type !== "over" && p.type !== "drop") return;
+      const hit = dropTargetAt(p.position.x, p.position.y, "[data-drop-dir], [data-files-drop-zone]");
+      const dir = hit ? (hit.getAttribute("data-drop-dir") ?? projectPath) : null;
+      if (p.type === "over") {
+        setDropDir(dir);
+        return;
+      }
+      setDropDir(null);
+      if (!dir || !p.paths.length) return;
+      void importDropped(p.paths, dir, projectPath)
+        .then((made) => {
+          setExpanded((prev) => new Set(prev).add(dir));
+          refresh();
+          const one = made.length === 1 ? made[0] : null;
+          if (one) {
+            requestAnimationFrame(() =>
+              listRef.current
+                ?.querySelector(`[data-file-path="${CSS.escape(one)}"]`)
+                ?.scrollIntoView({ block: "nearest" }),
+            );
+          }
+        })
+        .catch((reason) => onError(`放进项目失败：${String(reason)}`));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectPath]);
 
   useEffect(() => {
     if (!preview) return;
@@ -783,8 +928,9 @@ export default function ProjectFilesView({
           <div
             className={`group relative flex min-h-9 items-center gap-2 rounded-md px-2 ${
               selected ? "bg-hover" : "hover:bg-hover"
-            }`}
+            } ${entry.isDir && dropDir === entry.path ? "ring-1 ring-cta-bd" : ""}`}
             style={{ paddingLeft: 8 + depth * 16 }}
+            data-drop-dir={entry.isDir ? entry.path : (parentDir(entry.path) ?? projectPath)}
             onPointerEnter={entry.isDir ? undefined : () => probeNotePair(entry.path)}
             onFocus={entry.isDir ? undefined : () => probeNotePair(entry.path)}
             onContextMenu={(e) => {
@@ -902,6 +1048,7 @@ export default function ProjectFilesView({
               className={`group relative flex min-h-9 items-center gap-2 rounded-md px-2 ${
                 preview?.path === file.path ? "bg-hover" : "hover:bg-hover"
               }`}
+              data-drop-dir={parentDir(file.path) ?? projectPath}
               onPointerEnter={() => probeNotePair(file.path)}
               onFocus={() => probeNotePair(file.path)}
               onContextMenu={(e) => {
@@ -1078,24 +1225,24 @@ export default function ProjectFilesView({
               className={`${searchFieldClass} w-full`}
               aria-label="搜索文件"
             />
-            {newFolderFor && (
+            {nameDraft && (
               <div className="flex items-center gap-1">
-                <span className="shrink-0 text-xs text-l4">
-                  新建于 {newFolderFor.split(/[\\/]/).pop()}:
+                <span className="max-w-[45%] shrink-0 truncate text-xs text-l4">
+                  {nameDraftPrompt(nameDraft).label}
                 </span>
                 <input
-                  autoFocus
-                  value={newFolderName}
-                  onChange={(event) => setNewFolderName(event.target.value)}
+                  ref={nameInputRef}
+                  value={nameDraft.value}
+                  onChange={(event) =>
+                    setNameDraft((d) => (d ? { ...d, value: event.target.value } : d))
+                  }
                   onKeyDown={(event) => {
-                    if (event.key === "Enter") void submitNewFolder();
-                    if (event.key === "Escape") {
-                      setNewFolderFor(null);
-                      setNewFolderName("");
-                    }
+                    if (event.nativeEvent.isComposing) return;
+                    if (event.key === "Enter") void submitNameDraft();
+                    if (event.key === "Escape") setNameDraft(null);
                   }}
-                  onBlur={() => void submitNewFolder()}
-                  placeholder="文件夹名称"
+                  onBlur={() => void submitNameDraft()}
+                  placeholder={nameDraftPrompt(nameDraft).placeholder}
                   className="min-w-0 flex-1 rounded-sm border border-field bg-inset px-1.5 py-0.5 text-xs text-l2 outline-none"
                 />
               </div>
@@ -1116,8 +1263,17 @@ export default function ProjectFilesView({
           </div>
           <div
             ref={listRef}
-            className="ccode-file-list min-h-0 flex-1 overflow-y-auto outline-none"
+            className={`ccode-file-list min-h-0 flex-1 overflow-y-auto rounded-md outline-none ${
+              dropDir && samePath(dropDir, projectPath, IS_WINDOWS) ? "ring-1 ring-cta-bd" : ""
+            }`}
             aria-label="项目文件列表"
+            data-files-drop-zone=""
+            onContextMenu={(e) => {
+              // 列表空白处右键 = 对项目根操作（新建文件 / 文件夹、打开终端）；行上的右键各自处理
+              if ((e.target as HTMLElement).closest("[data-drop-dir]")) return;
+              e.preventDefault();
+              setMenu({ x: e.clientX, y: e.clientY, path: projectPath, isDir: true });
+            }}
           >
             {loading ? (
               <p className="px-2 py-3 text-xs text-l4">读取文件…</p>
@@ -1246,13 +1402,41 @@ export default function ProjectFilesView({
                     onSelect: () => openShellAt(menu.path),
                   },
                   {
+                    label: "新建文件",
+                    icon: FilePlus,
+                    onSelect: () => startNameDraft({ kind: "file", dir: menu.path, value: "" }),
+                  },
+                  {
                     label: "新建文件夹",
                     icon: FolderPlus,
-                    onSelect: () => setNewFolderFor(menu.path),
+                    onSelect: () => startNameDraft({ kind: "folder", dir: menu.path, value: "" }),
                   },
                   { separator: true },
                 ]
               : []),
+            ...(samePath(menu.path, projectPath, IS_WINDOWS)
+              ? []
+              : [
+                  {
+                    label: "重命名",
+                    icon: Pencil,
+                    onSelect: () => {
+                      menuIsDirRef.current = menu.isDir;
+                      startNameDraft({ kind: "rename", path: menu.path, value: baseName(menu.path) });
+                    },
+                  },
+                  {
+                    label: "复制一份",
+                    icon: CopyPlus,
+                    onSelect: () => void duplicateMenuTarget(menu),
+                  },
+                  {
+                    label: "移动到…",
+                    icon: FolderInput,
+                    onSelect: () => void moveMenuTarget(menu),
+                  },
+                  { separator: true },
+                ]),
             {
               label: revealFolderLabel(IS_MAC, IS_WINDOWS),
               icon: FolderOpen,
@@ -1271,12 +1455,16 @@ export default function ProjectFilesView({
                   .catch(() => onError("复制路径失败"));
               },
             },
-            {
-              icon: Trash2,
-              label: menu.isDir ? "删除文件夹" : "删除文件",
-              danger: true,
-              onSelect: () => void deleteMenuTarget(menu),
-            },
+            ...(samePath(menu.path, projectPath, IS_WINDOWS)
+              ? []
+              : [
+                  {
+                    icon: Trash2,
+                    label: menu.isDir ? "删除文件夹" : "删除文件",
+                    danger: true,
+                    onSelect: () => void deleteMenuTarget(menu),
+                  },
+                ]),
           ]}
         />
       )}

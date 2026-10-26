@@ -562,6 +562,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   composer-assist.ts         # 聊天输入框的纯逻辑：@ 引用（mentionQueryAt / applyMention，带空格加引号）、斜杠面板 Mesa 组（MesaCommand / filterMesaCommands）、
                              # ↑ 一路往回翻（userTextHistory；lastUserText 保留）、上下文圆环数据（lastContextTokens / contextUsage）；Mesa 组的内容由 TerminalPage mesaCommandsFor 组装，
                              # ↑ 取回跳过项目上下文包（splitLaunchPrompt）（tests/composer-assist.test.ts）
+  file-ops.ts                # 文件页 / 文件树文件操作：名字输入行（新建文件 / 文件夹 / 重命名）、复制一份、移动到…（系统选文件夹）、拖入复制与落点判定（tests/file-ops.test.ts）
   file-watch.ts              # 预览跟随磁盘变化：fileStamp（file_stamp 大小+修改时间）/ stampKey / useFileVersion（watch_file 单文件监听，改一次加一）（tests/file-watch.test.ts）
   image-view.ts              # 图片预览纯计算：imageFitScale（适应窗口，小图不放大）/ formatBytes（tests/image-view.test.ts）
   file-draft-handoff.ts      # 预览换宿主（侧栏 ⇄ 窗口 ⇄ 窄屏）带上没保存的修改：arm 5 秒内卸载才寄存，取一次即清（tests/image-view.test.ts）
@@ -1467,11 +1468,14 @@ src-tauri/src/
                              #   notes/index.json、references.bib；带版本防覆盖，与预览保存同锁）——预览通道 256 KB 截断，
                              #   两百篇带摘要的纳入清单就超；台账读写禁止回落预览通道
                              #   家目录直下系统目录标 isSystem 供前端置灰）
+                             # fs_create_file / fs_rename_path / fs_move_path / fs_duplicate_path / fs_import_paths：与删除同口径的文件操作，
+                             #   拖入只复制 attach_grants::user_supplied 登记过的源
                              # watch_file：单文件监听（非递归盯所在文件夹、只认这个文件名，300ms 防抖），预览跟随磁盘变化
   pdf.rs                     # PDF/docx 字节读取：read_pdf_bytes 白名单 + canonicalize + 上限，base64 传输
                              #   （白名单根含 ccode/tmp 粘贴图与 phone_drop 暂存区，精确路径含 attach_grants 登记的文件）；
                              #   collect_whitelist / whitelisted_target 供只要路径的调用方复用；file_stamp = 大小 + 修改毫秒（预览缓存换版判定）
   attach_grants.rs           # 用户亲手交来的文件（拖进窗口的原生事件 / pick_attachment_files 选择器）进程内登记，供读取白名单按精确路径放行；
+                             #   拖进来的文件夹另登记一张表，user_supplied 供「拖进文件页 = 复制」判定；
                              #   前端传来的路径不登记（红线）
   phone_drop.rs              # 从手机添加（2026-10-20，docs/design-phone-drop.md；安全口径 safety.md 同名条）：人点了才在各张局域网
                              #   网卡的私网 IPv4 上同端口起 tiny_http 收件服务（单线程轮询；令牌在路径、Host 校验、错令牌/未知路径同一个 404、只收不出），

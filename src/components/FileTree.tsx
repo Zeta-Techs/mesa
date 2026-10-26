@@ -5,10 +5,14 @@ import { listen } from "@tauri-apps/api/event";
 import {
   BookOpen,
   Copy,
+  CopyPlus,
   File,
+  FilePlus,
   FolderClosed,
+  FolderInput,
   FolderOpen,
   FolderPlus,
+  Pencil,
   SquareTerminal,
   Trash2,
 } from "lucide-react";
@@ -28,6 +32,14 @@ import {
 import { IS_MAC, IS_WINDOWS } from "../hotkeys";
 import { directoryErrorMessage } from "../terminal-cwd";
 import { useNotePaired } from "../note-pdf-pair";
+import {
+  duplicatePath,
+  nameDraftPrompt,
+  pickAndMove,
+  stemSelection,
+  submitNameDraft as submitNameDraftCmd,
+  type NameDraft,
+} from "../file-ops";
 
 export interface SearchResultDto {
   path: string;
@@ -423,21 +435,39 @@ function FileTree({
     },
     [],
   );
-  const [newFolderFor, setNewFolderFor] = useState<string | null>(null);
-  const [newFolderName, setNewFolderName] = useState("");
+  /** 栏头下的名字输入行：新建文件 / 新建文件夹 / 重命名（file-ops.ts） */
+  const [nameDraft, setNameDraft] = useState<NameDraft | null>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  const reloadAll = () => {
+    for (const p of [root, ...expandedRef.current]) void load(p);
+  };
 
-  async function submitNewFolder() {
-    const parent = newFolderFor;
-    const name = newFolderName.trim();
-    setNewFolderFor(null);
-    setNewFolderName("");
-    if (!parent || !name) return;
+  async function submitNameDraft() {
+    const d = nameDraft;
+    setNameDraft(null);
+    if (!d || !d.value.trim()) return;
     try {
-      await invoke("fs_create_dir", { root: parent, name });
-      for (const p of [root, ...expandedRef.current]) void load(p);
+      const made = await submitNameDraftCmd(d, root);
+      if (d.kind !== "rename") {
+        setExpanded((prev) => new Set(prev).add(d.dir));
+        if (!cacheRef.current[d.dir]) void load(d.dir);
+      }
+      reloadAll();
+      // 新建的文件直接在右边打开
+      if (d.kind === "file") onOpenFile(made, basenameOf(made), root, []);
     } catch (e) {
       setError(String(e));
     }
+  }
+
+  function startNameDraft(d: NameDraft, isDir = false) {
+    setNameDraft(d);
+    requestAnimationFrame(() => {
+      const input = nameInputRef.current;
+      if (!input) return;
+      input.focus();
+      if (d.kind === "rename") input.setSelectionRange(...stemSelection(d.value, isDir));
+    });
   }
 
   /** 搜索结果定位：在树里从根逐级展开到那一项所在的文件夹，亮一下（不打开预览、不换根） */
@@ -535,19 +565,20 @@ function FileTree({
           className="w-full rounded-md bg-inset px-2 py-1 text-xs text-l2 outline-none transition-colors placeholder:text-l4 focus:bg-raised"
         />
       </div>
-      {newFolderFor && (
+      {nameDraft && (
         <div className="flex shrink-0 items-center gap-1 px-2 py-1">
-          <span className="shrink-0 text-xs text-l4">新建于 {basenameOf(newFolderFor)}:</span>
+          <span className="max-w-[45%] shrink-0 truncate text-xs text-l4">{nameDraftPrompt(nameDraft).label}</span>
           <input
-            autoFocus
-            value={newFolderName}
-            onChange={(e) => setNewFolderName(e.target.value)}
+            ref={nameInputRef}
+            value={nameDraft.value}
+            onChange={(e) => setNameDraft((d) => (d ? { ...d, value: e.target.value } : d))}
             onKeyDown={(e) => {
-              if (e.key === "Enter") void submitNewFolder();
-              if (e.key === "Escape") setNewFolderFor(null);
+              if (e.nativeEvent.isComposing) return;
+              if (e.key === "Enter") void submitNameDraft();
+              if (e.key === "Escape") setNameDraft(null);
             }}
-            onBlur={() => void submitNewFolder()}
-            placeholder="文件夹名称"
+            onBlur={() => void submitNameDraft()}
+            placeholder={nameDraftPrompt(nameDraft).placeholder}
             className="min-w-0 flex-1 rounded-sm border border-field bg-inset px-1.5 py-0.5 text-xs text-l2 outline-none"
           />
         </div>
@@ -619,14 +650,40 @@ function FileTree({
                     onSelect: () => onOpenTerminal(menu.path),
                   },
                   {
+                    label: "新建文件",
+                    icon: FilePlus,
+                    onSelect: () => startNameDraft({ kind: "file", dir: menu.path, value: "" }),
+                  },
+                  {
                     label: "新建文件夹",
                     icon: FolderPlus,
-                    onSelect: async () => {
-                      setNewFolderFor(menu.path);
-                    },
+                    onSelect: () => startNameDraft({ kind: "folder", dir: menu.path, value: "" }),
                   },
                 ]
               : []),
+            {
+              label: "重命名",
+              icon: Pencil,
+              onSelect: () =>
+                startNameDraft({ kind: "rename", path: menu.path, value: basenameOf(menu.path) }, menu.isDir),
+            },
+            {
+              label: "复制一份",
+              icon: CopyPlus,
+              onSelect: () => {
+                void duplicatePath(menu.path, root).then(reloadAll, (e) => setError(String(e)));
+              },
+            },
+            {
+              label: "移动到…",
+              icon: FolderInput,
+              onSelect: () => {
+                void pickAndMove(menu.path, root, IS_WINDOWS).then(
+                  (to) => to && reloadAll(),
+                  (e) => setError(String(e)),
+                );
+              },
+            },
             ...(!menu.isDir && (/\.pdf$/i.test(menu.path) || menuNotePaired) && onOpenReader
               ? [
                   {

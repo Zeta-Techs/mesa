@@ -35,10 +35,43 @@ pub(crate) fn granted() -> Vec<PathBuf> {
     GRANTED.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
+/// 拖进窗口的文件夹（只给「拖进项目文件页 = 复制进来」用，不放行读取其下内容）
+static DROPPED_DIRS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
 /// 原生拖放落下：窗口事件与 webview 事件两条路都可能送来，重复登记无害
 pub(crate) fn grant_drop(event: &tauri::DragDropEvent) {
     if let tauri::DragDropEvent::Drop { paths, .. } = event {
         grant(paths);
+        let mut dirs = DROPPED_DIRS.lock().unwrap_or_else(|e| e.into_inner());
+        for p in paths {
+            if let Ok(c) = p.canonicalize() {
+                if c.is_dir() {
+                    dirs.retain(|x| x != &c);
+                    dirs.push(c);
+                }
+            }
+        }
+        let over = dirs.len().saturating_sub(64);
+        if over > 0 {
+            dirs.drain(..over);
+        }
+    }
+}
+
+/// 这条路径是不是用户亲手拖进窗口 / 在选择器里选的（文件按读取登记，文件夹按拖放登记）。
+/// 「复制进项目」只收这种，前端传来的任意路径不认
+pub(crate) fn user_supplied(path: &Path) -> bool {
+    let Ok(c) = path.canonicalize() else {
+        return false;
+    };
+    if c.is_dir() {
+        DROPPED_DIRS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .any(|d| d == &c)
+    } else {
+        granted().iter().any(|g| g == &c)
     }
 }
 

@@ -1881,6 +1881,221 @@ fn create_dir_sync(root: &str, name: &str) -> Result<String, String> {
     Ok(dir.to_string_lossy().into_owned())
 }
 
+fn create_file_sync(root: &str, name: &str) -> Result<String, String> {
+    let name = name.trim();
+    crate::paths::validate_fs_name(name).map_err(|e| format!("文件名无效（{e}）"))?;
+    let file = PathBuf::from(expand_tilde(root)).join(name);
+    if !lexical_in_root(&file.to_string_lossy(), root) {
+        return Err("路径超出项目根目录，拒绝创建".into());
+    }
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&file)
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                "已存在同名文件或目录".to_string()
+            } else {
+                format!("新建文件失败: {e}")
+            }
+        })?;
+    Ok(file.to_string_lossy().into_owned())
+}
+
+/// 改名 / 移动 / 复制共用的前置检查：在项目根内、不是根本身、不是受保护路径
+fn movable_source(path: &str, root: &str) -> Result<PathBuf, String> {
+    if is_protected_path(path) {
+        return Err("系统/重要目录受保护，不能改动".into());
+    }
+    if !lexical_in_root(path, root) {
+        return Err("路径超出项目根目录".into());
+    }
+    let p = PathBuf::from(expand_tilde(path));
+    let root_norm = expand_tilde(root).trim_end_matches(['/', '\\']).to_string();
+    if crate::paths::same_path(&p.to_string_lossy(), &root_norm) {
+        return Err("不能改动项目根目录本身".into());
+    }
+    if fs::symlink_metadata(&p).is_err() {
+        return Err("文件或文件夹不存在".into());
+    }
+    Ok(p)
+}
+
+fn rename_path_sync(path: &str, new_name: &str, root: &str) -> Result<String, String> {
+    let src = movable_source(path, root)?;
+    let new_name = new_name.trim();
+    crate::paths::validate_fs_name(new_name).map_err(|e| format!("名称无效（{e}）"))?;
+    let parent = src.parent().ok_or("路径没有所在文件夹")?;
+    let dst = parent.join(new_name);
+    if dst == src {
+        return Ok(dst.to_string_lossy().into_owned());
+    }
+    // 只改大小写（a.md → A.md）在不分大小写的磁盘上 dst.exists() 也是真：经临时名中转
+    let case_only = src
+        .file_name()
+        .map(|n| n.to_string_lossy().to_lowercase() == new_name.to_lowercase())
+        .unwrap_or(false);
+    if case_only {
+        let tmp = parent.join(format!(".ccode-rename-{}", uuid::Uuid::new_v4()));
+        fs::rename(&src, &tmp).map_err(|e| format!("重命名失败: {e}"))?;
+        fs::rename(&tmp, &dst).map_err(|e| format!("重命名失败: {e}"))?;
+        return Ok(dst.to_string_lossy().into_owned());
+    }
+    if fs::symlink_metadata(&dst).is_ok() {
+        return Err("已存在同名文件或文件夹".into());
+    }
+    fs::rename(&src, &dst).map_err(|e| format!("重命名失败: {e}"))?;
+    Ok(dst.to_string_lossy().into_owned())
+}
+
+fn move_path_sync(path: &str, dest_dir: &str, root: &str) -> Result<String, String> {
+    let src = movable_source(path, root)?;
+    if !lexical_in_root(dest_dir, root) {
+        return Err("只能移到这个项目里的文件夹".into());
+    }
+    let dest = PathBuf::from(expand_tilde(dest_dir));
+    if !dest.is_dir() {
+        return Err("目标不是文件夹".into());
+    }
+    if crate::paths::path_within_path(&dest, &src) {
+        return Err("不能把文件夹移到它自己里面".into());
+    }
+    let name = src.file_name().ok_or("路径没有文件名")?;
+    let dst = dest.join(name);
+    if dst == src {
+        return Ok(dst.to_string_lossy().into_owned());
+    }
+    if fs::symlink_metadata(&dst).is_ok() {
+        return Err(format!("「{}」里已有同名的「{}」", dest.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), name.to_string_lossy()));
+    }
+    fs::rename(&src, &dst).map_err(|e| format!("移动失败: {e}"))?;
+    Ok(dst.to_string_lossy().into_owned())
+}
+
+/// 同一文件夹里不重名的落点：「名字 副本.ext」「名字 副本 2.ext」……（suffix 为空时用「名字 (1).ext」）
+fn unique_target(dir: &std::path::Path, file_name: &str, suffix: &str, split_ext: bool) -> PathBuf {
+    let (stem, ext) = match file_name.rfind('.') {
+        Some(i) if i > 0 && split_ext => (&file_name[..i], &file_name[i..]),
+        _ => (file_name, ""),
+    };
+    let first = dir.join(file_name);
+    if suffix.is_empty() && fs::symlink_metadata(&first).is_err() {
+        return first;
+    }
+    for n in 1..10_000 {
+        let name = if suffix.is_empty() {
+            format!("{stem} ({n}){ext}")
+        } else if n == 1 {
+            format!("{stem} {suffix}{ext}")
+        } else {
+            format!("{stem} {suffix} {n}{ext}")
+        };
+        let cand = dir.join(name);
+        if fs::symlink_metadata(&cand).is_err() {
+            return cand;
+        }
+    }
+    dir.join(format!("{stem} {}{ext}", uuid::Uuid::new_v4()))
+}
+
+/// 递归复制（文件夹不跟随符号链接：链接按链接复制，Windows 上跳过）
+fn copy_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
+    let md = fs::symlink_metadata(src).map_err(|e| format!("读取失败: {e}"))?;
+    if md.file_type().is_symlink() {
+        #[cfg(unix)]
+        {
+            let target = fs::read_link(src).map_err(|e| format!("读取链接失败: {e}"))?;
+            std::os::unix::fs::symlink(target, dst).map_err(|e| format!("复制链接失败: {e}"))?;
+        }
+        return Ok(());
+    }
+    if md.is_dir() {
+        fs::create_dir(dst).map_err(|e| format!("建立文件夹失败: {e}"))?;
+        for entry in fs::read_dir(src).map_err(|e| format!("读取文件夹失败: {e}"))?.flatten() {
+            copy_recursive(&entry.path(), &dst.join(entry.file_name()))?;
+        }
+        return Ok(());
+    }
+    fs::copy(src, dst).map_err(|e| format!("复制失败: {e}"))?;
+    Ok(())
+}
+
+fn duplicate_path_sync(path: &str, root: &str) -> Result<String, String> {
+    let src = movable_source(path, root)?;
+    let parent = src.parent().ok_or("路径没有所在文件夹")?;
+    let name = src.file_name().ok_or("路径没有文件名")?.to_string_lossy().into_owned();
+    // 文件夹不拆扩展名（「data.v2」整体当名字）
+    let dst = unique_target(parent, &name, "副本", !src.is_dir());
+    copy_recursive(&src, &dst)?;
+    Ok(dst.to_string_lossy().into_owned())
+}
+
+/// 从访达 / 资源管理器拖进项目文件页的文件与文件夹：复制到 dest_dir，重名的加「 (1)」。
+/// 只收原生拖放 / Rust 选择器交来的路径（attach_grants::user_supplied），前端传的任意路径不认
+fn import_paths_sync(paths: &[String], dest_dir: &str, root: &str) -> Result<Vec<String>, String> {
+    if !lexical_in_root(dest_dir, root) {
+        return Err("只能放进这个项目里的文件夹".into());
+    }
+    let dest = PathBuf::from(expand_tilde(dest_dir));
+    if !dest.is_dir() {
+        return Err("目标不是文件夹".into());
+    }
+    let mut out = Vec::new();
+    for p in paths {
+        let src = PathBuf::from(expand_tilde(p));
+        if !crate::attach_grants::user_supplied(&src) {
+            return Err(format!("「{p}」不是拖进来的文件，没有复制"));
+        }
+        if crate::paths::path_within_path(&dest, &src) {
+            return Err("不能把文件夹复制到它自己里面".into());
+        }
+        let name = src.file_name().ok_or("路径没有文件名")?.to_string_lossy().into_owned();
+        let dst = unique_target(&dest, &name, "", !src.is_dir());
+        copy_recursive(&src, &dst)?;
+        out.push(dst.to_string_lossy().into_owned());
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+pub async fn fs_create_file(root: String, name: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || create_file_sync(&root, &name))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn fs_rename_path(path: String, new_name: String, root: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || rename_path_sync(&path, &new_name, &root))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn fs_move_path(path: String, dest_dir: String, root: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || move_path_sync(&path, &dest_dir, &root))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn fs_duplicate_path(path: String, root: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || duplicate_path_sync(&path, &root))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn fs_import_paths(
+    paths: Vec<String>,
+    dest_dir: String,
+    root: String,
+) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || import_paths_sync(&paths, &dest_dir, &root))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// 重要系统/用户路径保护：无论根目录范围如何都拒绝删除
 /// （pub(crate)：projects::delete_project_dir 删项目目录前复用同一黑名单）
 pub(crate) fn is_protected_path(path: &str) -> bool {
@@ -2066,6 +2281,68 @@ pub async fn fs_delete_path(path: String, root: String) -> Result<(), String> {
 #[cfg(test)]
 mod fsops_tests {
     use super::*;
+
+    #[test]
+    fn create_rename_move_duplicate_ops() {
+        let dir = std::env::temp_dir().join(format!("ccode-fsops2-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(dir.join("sub")).unwrap();
+        let root = dir.to_str().unwrap().to_string();
+        // 新建文件：重名拒绝、非法名拒绝
+        let f = create_file_sync(&root, "note.md").unwrap();
+        assert!(std::path::Path::new(&f).is_file());
+        assert!(create_file_sync(&root, "note.md").is_err());
+        assert!(create_file_sync(&root, "a/b.md").is_err());
+        // 改名：重名拒绝；只改大小写可以
+        fs::write(dir.join("other.md"), "x").unwrap();
+        assert!(rename_path_sync(&f, "other.md", &root).is_err());
+        let r = rename_path_sync(&f, "Note.md", &root).unwrap();
+        assert!(r.ends_with("Note.md"));
+        let names: Vec<String> = fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(names.contains(&"Note.md".to_string()));
+        // 项目根本身不能改
+        assert!(rename_path_sync(&root, "x", &root).is_err());
+        // 移动：进子文件夹；文件夹不能移进自己里面
+        let moved = move_path_sync(&r, dir.join("sub").to_str().unwrap(), &root).unwrap();
+        assert!(std::path::Path::new(&moved).ends_with("sub/Note.md"));
+        let sub = dir.join("sub");
+        assert!(move_path_sync(sub.to_str().unwrap(), sub.to_str().unwrap(), &root).is_err());
+        // 根外的目标拒绝
+        assert!(move_path_sync(&moved, std::env::temp_dir().to_str().unwrap(), &root).is_err());
+        // 复制一份：文件「副本」「副本 2」，文件夹整体复制、不拆扩展名
+        let d1 = duplicate_path_sync(&moved, &root).unwrap();
+        assert!(d1.ends_with("Note 副本.md"));
+        let d2 = duplicate_path_sync(&moved, &root).unwrap();
+        assert!(d2.ends_with("Note 副本 2.md"));
+        fs::create_dir(dir.join("data.v2")).unwrap();
+        fs::write(dir.join("data.v2").join("x.csv"), "1").unwrap();
+        let dd = duplicate_path_sync(dir.join("data.v2").to_str().unwrap(), &root).unwrap();
+        assert!(dd.ends_with("data.v2 副本"));
+        assert!(std::path::Path::new(&dd).join("x.csv").is_file());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn import_requires_user_supplied_paths() {
+        let dir = std::env::temp_dir().join(format!("ccode-fsimport-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let outside = std::env::temp_dir().join(format!("ccode-fsimport-src-{}.txt", uuid::Uuid::new_v4()));
+        fs::write(&outside, "hello").unwrap();
+        let root = dir.to_str().unwrap().to_string();
+        // 没登记（不是拖进来的）不复制
+        assert!(import_paths_sync(&[outside.to_string_lossy().into_owned()], &root, &root).is_err());
+        crate::attach_grants::grant([&outside]);
+        let out = import_paths_sync(&[outside.to_string_lossy().into_owned()], &root, &root).unwrap();
+        assert_eq!(out.len(), 1);
+        // 再拖一次同名的：加 (1)
+        let again = import_paths_sync(&[outside.to_string_lossy().into_owned()], &root, &root).unwrap();
+        assert!(again[0].contains(" (1)"));
+        fs::remove_dir_all(&dir).ok();
+        fs::remove_file(&outside).ok();
+    }
 
     #[test]
     fn create_and_delete_ops() {
