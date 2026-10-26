@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, MessageSquare, Search, SquarePen, SquareTerminal } from "lucide-react";
+import { ChevronDown, MessageSquare, SquarePen, SquareTerminal } from "lucide-react";
+import { NAV_ICONS } from "../navigation-icons";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "../store";
 import { paletteOpenChats, type PaletteOpenChat } from "../sidebar-chats";
@@ -195,7 +196,7 @@ function ChatSwitcherPanel({
             }}
             className="ccode-menu-item flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-l2 hover:bg-hover hover:text-l1 focus-visible:bg-hover"
           >
-            <Search size={13} strokeWidth={1.8} className="shrink-0 text-l3" aria-hidden="true" />
+            <NAV_ICONS.sessions size={13} strokeWidth={1.8} className="shrink-0 text-l3" aria-hidden="true" />
             对话管理…
           </button>
         </div>

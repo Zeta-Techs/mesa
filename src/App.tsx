@@ -14,7 +14,6 @@ import {
   Megaphone,
   ChevronRight,
   RefreshCw,
-  Search,
   ShieldAlert,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
@@ -1875,7 +1874,8 @@ function App() {
                           : "text-l3 hover:bg-hover hover:text-l2"
                       }`}
                     >
-                      <Search
+                      {/* 图标同命令面板 / 灵动岛的「对话管理」（NAV_ICONS.sessions，2026-10-27 用户：统一，不再用放大镜） */}
+                      <NAV_ICONS.sessions
                         size={16}
                         strokeWidth={1.8}
                         className={`${collapsed ? "" : "mr-2 shrink-0"} ${page === "sessions" ? "text-nav-accent" : ""}`}
