@@ -4069,6 +4069,12 @@ mod e2e {
         for k in ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "all_proxy"] {
             std::env::remove_var(k);
         }
+        // E2E_EXTRA_ENV="K=V;K=V"：金丝雀给个别家补的环境（如 Grok 出站指向不监听的代理，模拟连不上厂商云端）
+        for pair in std::env::var("E2E_EXTRA_ENV").unwrap_or_default().split(';') {
+            if let Some((k, v)) = pair.split_once('=') {
+                env.push((k.to_string(), v.to_string()));
+            }
+        }
         let env_remove = strs(&plan["env_remove"]);
         let spec = crate::agent_specs::agent_spec(&agent).unwrap();
         let bin = crate::agents::resolve_binary(spec.binary).expect("装了这家 CLI");

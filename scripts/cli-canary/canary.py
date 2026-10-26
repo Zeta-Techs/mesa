@@ -38,6 +38,11 @@ NO_GATEWAY = {"cursor"}
 # CI 标记变量不往下传：Gemini 见 CI / GITHUB_ACTIONS 就走无头模式（「No input provided via stdin」），Ink 写的界面
 # （CodeBuddy、Qwen）在 CI 里不画动态画面、这一轮发不出去。金丝雀要模拟的是用户终端里的 CLI（2026-10-25 CI 首次跑完时实证）
 CI_ENV = ("CI", "CONTINUOUS_INTEGRATION", "GITHUB_ACTIONS", "BUILD_NUMBER", "RUN_ID")
+# 连不上厂商云端的家：出站一律指向一个不监听的本机代理（假网关在 127.0.0.1，走 NO_PROXY 不受影响）。
+# Grok 1.0.70 自 2026-10-25 起，能连上 x.ai 时拿假密钥启动会自动弹设备登录、不发请求；开发机连不上 x.ai 一切照常，
+# 基线也是在那种环境里接受的。CI 跟着连不上，各机器才可比（用户侧的登录风险另记 matrix §9 Grok「坑」行）
+OFFLINE = {"grok"}
+OFFLINE_ENV = {k: "http://127.0.0.1:9" for k in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy")}
 TOOL_PROMPT = {"codex": "TRIGGER_TOOL TRIGGER_ESC 跑一下"}
 DEFAULT_TOOL_PROMPT = "TRIGGER_TOOL 跑一下"
 # 公开发版说明（GitHub Releases）；Claude 另取 CHANGELOG.md，没有公开说明的家不取
@@ -282,6 +287,8 @@ def channel_phase(agent, gw, out, adir):
     plans = make_plans(gw, out)
     keep = os.path.join(adir, "channel")
     env = dict(os.environ, MESA_E2E_REAL_CLI="1", E2E_PLANS=plans, E2E_AGENT=agent, E2E_CLEAN_HOME="1", E2E_KEEP=keep)
+    if agent in OFFLINE:
+        env["E2E_EXTRA_ENV"] = ";".join(f"{k}={v}" for k, v in OFFLINE_ENV.items())
     mark = gw.mark()
     code, text = run([cargo(), "test", "--lib", "e2e_channel", "--", "--ignored", "--nocapture"],
                      cwd=os.path.join(ROOT, "src-tauri"), env=env, timeout=600)
@@ -310,6 +317,8 @@ def screen_phase(agent, gw, out, adir, deps):
     # Grok 认不认注入的密钥、为什么转去浏览器登录，只有它自己的日志看得出（2026-10-25 Windows CI 停在登录页，本机复现不了）
     if agent == "grok":
         env["GROK_LOG_FILE"] = os.path.join(adir, "grok-debug.log")
+    if agent in OFFLINE:
+        env["CAP_ENV"] = ";".join(filter(None, [env.get("CAP_ENV", ""), *(f"{k}={v}" for k, v in OFFLINE_ENV.items())]))
     # 有「请求批准」档就按它抓（看审批菜单）；没有这一档的家（Kimi、OpenCode）按默认启动参数
     tier = "ask" if (json.load(open(plans, encoding="utf-8")).get(agent, {}).get("permission") or {}).get("ask") else "base"
     code, text = run([sys.executable, "-I", "-X", "utf8", os.path.join(E2E, "chat-capture.py"), plans, agent, tier, cap],
