@@ -744,7 +744,7 @@ export default function ProjectTree({
     return (
       <div
         key={key}
-        className={`group/chat relative flex h-8 items-center rounded-md transition-colors ${
+        className={`group/chat relative grid h-8 grid-cols-[1fr_auto] items-center rounded-md transition-colors ${
           selected ? "ccode-rail-active bg-rail-sel" : menuOpen ? "bg-hover" : "hover:bg-hover"
         }`}
         onContextMenu={(e) => {
@@ -767,34 +767,41 @@ export default function ProjectTree({
           onFocus={() => prefetchConversation(s)}
           aria-current={selected ? "true" : undefined}
           title={`${full}\n${agent} · ${relTime(s.updatedAt)}${dot ? ` · ${dotTitle(dot)}` : ""}${unread ? " · 跑完了，还没看" : ""}\n点一下接着聊`}
-          className={`flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md pl-2 pr-1 ${
+          className={`flex h-8 min-w-0 items-center gap-2 rounded-md pl-2 pr-1 ${
             selected || unread ? "text-l1" : "text-l3 group-hover/chat:text-l2"
           }`}
         >
           {/* 字号 13px（.ccode-rail-text，2026-10-24 用户：比「工作台 / 搜对话」的 14px 再小一点点）。写在内层 span 上：
               按钮上写字号会被全站 button { font: inherit } 吞掉。
               字色同工作入口：平时 l3、悬停 l2，只有正看着的那段亮到 l1（2026-10-24 用户：标题不用全亮着） */}
-          <span className="ccode-rail-text min-w-0 flex-1 truncate text-left">{sidebarChatTitle(full)}</span>
-          {/* 运行状态光标（2026-10-24 用户：绿点换成 Mesa 的光标）：悬停时不让位，⋯ 出现在它右边；
+          <span className="ccode-rail-text ccode-rail-fade min-w-0 flex-1 text-left">{sidebarChatTitle(full)}</span>
+        </button>
+        <div className="flex shrink-0 items-center gap-0.5 pr-0.5">
+          {/* 运行状态光标（2026-10-24 用户：绿点换成 Mesa 的光标）。有光标才占一格、标题在它前面淡出；
+              没光标的行标题写到行尾（2026-10-26 用户：右边这一列要干净，同 Claude 客户端侧栏；空格位让标题早早淡掉、右边空一截）；悬停时不让位，⋯ 出现在它右边。
               干活时的呼吸在悬停时停下、常亮（App.css .ccode-run-caret） */}
-          {dot && <RunCaret state={dot} className="mr-1.5" />}
-        </button>
-        <button
-          type="button"
-          aria-label={`「${sidebarChatTitle(full)}」的更多操作`}
-          title="更多操作"
-          aria-haspopup="menu"
-          aria-expanded={menuOpen}
-          onClick={(e) => {
-            const r = e.currentTarget.getBoundingClientRect();
-            setChatMenu({ x: r.right, y: r.bottom + 4, s, project, alignRight: true });
-          }}
-          className={`mr-0.5 h-6 w-6 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1 ${
-            menuOpen ? "flex" : "hidden group-hover/chat:flex group-focus-within/chat:flex"
-          }`}
-        >
-          <MoreHorizontal size={14} strokeWidth={1.8} aria-hidden="true" />
-        </button>
+          {dot && (
+            <span className="flex h-6 w-6 items-center justify-center" data-run-slot>
+              <RunCaret state={dot} />
+            </span>
+          )}
+          <button
+            type="button"
+            aria-label={`「${sidebarChatTitle(full)}」的更多操作`}
+            title="更多操作"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              setChatMenu({ x: r.right, y: r.bottom + 4, s, project, alignRight: true });
+            }}
+            className={`h-6 w-6 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1 ${
+              menuOpen ? "flex" : "hidden group-hover/chat:flex group-focus-within/chat:flex"
+            }`}
+          >
+            <MoreHorizontal size={14} strokeWidth={1.8} aria-hidden="true" />
+          </button>
+        </div>
       </div>
     );
   }
@@ -809,7 +816,7 @@ export default function ProjectTree({
     return (
       <div
         key={`tab:${r.tabId}`}
-        className={`group/chat relative flex h-8 items-center rounded-md transition-colors ${
+        className={`group/chat relative grid h-8 grid-cols-[1fr_auto] items-center rounded-md transition-colors ${
           selected ? "ccode-rail-active bg-rail-sel" : "hover:bg-hover"
         }`}
       >
@@ -829,25 +836,30 @@ export default function ProjectTree({
                 ? `${r.label}\n开着的终端`
                 : `${r.label}${r.dot ? ` · ${dotTitle(r.dot)}` : ""}${unread ? " · 跑完了，还没看" : ""}`
           }
-          className={`flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md pl-2 pr-1 ${
+          className={`flex h-8 min-w-0 items-center gap-2 rounded-md pl-2 pr-1 ${
             selected || unread ? "text-l1" : "text-l3 group-hover/chat:text-l2"
           }`}
         >
           {Icon && <Icon size={13} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l4" />}
-          <span className="ccode-rail-text min-w-0 flex-1 truncate text-left">{r.label}</span>
+          <span className="ccode-rail-text ccode-rail-fade min-w-0 flex-1 text-left">{r.label}</span>
+        </button>
+        {/* 状态列同对话行：有光标才占一格，标题不进来 */}
+        <div className="flex shrink-0 items-center gap-0.5 pr-0.5">
           {r.dot && (
-            <RunCaret state={r.dot} className="mr-1.5" />
+            <span className="flex h-6 w-6 items-center justify-center" data-run-slot>
+              <RunCaret state={r.dot} />
+            </span>
           )}
-        </button>
-        <button
-          type="button"
-          aria-label={`关掉「${r.label}」`}
-          title={r.kind === "new" ? "不要这段新对话了" : "关掉：停下它，记录还在（在跑的会先问你）"}
-          onClick={() => useAppStore.getState().requestCloseTab(r.tabId)}
-          className="mr-0.5 hidden h-6 w-6 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1 group-hover/chat:flex group-focus-within/chat:flex"
-        >
-          <X size={13} strokeWidth={1.8} aria-hidden="true" />
-        </button>
+          <button
+            type="button"
+            aria-label={`关掉「${r.label}」`}
+            title={r.kind === "new" ? "不要这段新对话了" : "关掉：停下它，记录还在（在跑的会先问你）"}
+            onClick={() => useAppStore.getState().requestCloseTab(r.tabId)}
+            className="hidden h-6 w-6 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1 group-hover/chat:flex group-focus-within/chat:flex"
+          >
+            <X size={13} strokeWidth={1.8} aria-hidden="true" />
+          </button>
+        </div>
       </div>
     );
   }

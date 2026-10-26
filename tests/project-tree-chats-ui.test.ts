@@ -234,7 +234,9 @@ test("正在聊的项目默认展开：量不到侧栏高度时列 5 段 + 「�
       "还有 1 段",
     ]);
     const first = view.button("镁硫电池第5篇精读");
-    const caret = first.querySelector(".ccode-run-caret");
+    // 光标在行尾单独那一列，不在标题按钮里（右边这一列不让标题进来）
+    assert.equal(first.querySelector(".ccode-run-caret"), null, "标题按钮里不放状态光标");
+    const caret = first.parentElement?.querySelector("[data-run-slot] .ccode-run-caret");
     assert.equal(caret?.getAttribute("data-state"), "confirm", "等你确认的那段行尾是琥珀光标（不再是黄点）");
     assert.equal(caret?.getAttribute("aria-label"), "等你确认");
     assert.equal(first.getAttribute("aria-current"), "true", "正看着的这段铺选中底");

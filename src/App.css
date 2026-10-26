@@ -927,16 +927,29 @@ body {
   --ccode-shell-base: 78%;
 }
 
-/* 选中行胶囊：基数（--ccode-lsel-base，声明在 .ccode-app-shell 里）× 同一个用户系数。
-   88% 是改版前的值，k=1 时逐字节还原。展开 88% 而不是实心：胶囊要透出一点侧栏罩色，
-   深浅两套才都成立（浅色侧栏 78% 已经很亮，实心 rail-sel 会糊成一块砖）。
+/* 选中行胶囊，深浅两套都乘同一个用户系数 k（--ccode-chrome-scale）。
+   深色：前景色 l1 叠 9%，提亮而不是压暗，玻璃底色照样透上来（2026-10-26 用户拍板，照 Claude 客户端侧栏）。
+   原先是 rail-sel 88%：深灰几乎不透明地盖在玻璃上，选中行像挖掉一块黑，不带色相的主题（极简灰蓝）最明显。
+   浅色：仍是 rail-sel × 基数 88%（--ccode-lsel-base，声明在 .ccode-app-shell 里），k=1 时与改版前逐字节一致；
+   浅色侧栏 78% 已经很亮，实心 rail-sel 会糊成一块砖，所以也不铺满。
 
-   hover 与选中的强弱关系随系数变，这是有意的：k=1 时胶囊 88% 明显重于 hover（5% 白/黑）；
+   hover 与选中的强弱关系随系数变，这是有意的：k=1 时深色胶囊 9% 略重于 hover（5%），浅色 88% 明显重于 hover；
    调到 0 后胶囊消失，选中靠 text-l1 + text-nav-accent 图标 + 实心选中左条（.ccode-rail-active，
    不乘系数）认出，hover 是文字转 text-l2 加 5% 底色。0 档本来就是「完全不铺罩色、还看得到字」的档位，不该再靠一块实心
    胶囊把选中钉回来（那会让 0 档名不副实）。副作用是臂展/滑动浏览时选中项更依赖文字对比，
    照片壁纸上尤其明显——hint 里已经讲明 0 档文字会压在壁纸上。 */
 .ccode-app-rail .bg-rail-sel {
+  background-color: color-mix(in srgb, var(--color-l1) 9%, transparent);
+  background-color: color-mix(
+    in srgb,
+    var(--color-l1) calc(9% * var(--ccode-chrome-scale)),
+    transparent
+  );
+}
+
+/* 浅色那条套 :where()，权重与上一条相同：排在它后面才盖得住，又不会压过下文 Linux / 降低透明度 /
+   无材质三处实心兜底（那几处侧栏是实心 rail，选中底照旧铺实心 rail-sel，深浅都对） */
+:where(.ccode-app-shell[data-chrome="light"]) .ccode-app-rail .bg-rail-sel {
   background-color: color-mix(in srgb, var(--color-rail-sel) var(--ccode-lsel-base), transparent);
   background-color: color-mix(
     in srgb,
@@ -2382,6 +2395,14 @@ select:focus-visible {
 .ccode-rail-peek .ccode-rail-text {
   font-size: 13px;
   line-height: 1.15rem;
+}
+/* 侧栏对话标题放不下时右边渐隐，不出「…」（2026-10-26 用户：照 Claude 客户端侧栏，长标题是遮罩的样子）。
+   遮罩挂在占满左列的标题盒上：短标题碰不到最右这 20px（约一个半字），不受影响；只有放不下的长标题末尾淡出 */
+.ccode-rail-fade {
+  overflow: hidden;
+  white-space: nowrap;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
 }
 
 /* 探出整栏（RailPeek，2026-10-24）：同一棵项目树盖在内容上，所以不能用侧栏的半透明罩色——实心 rail2 底，

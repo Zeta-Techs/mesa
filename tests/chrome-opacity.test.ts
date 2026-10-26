@@ -87,18 +87,28 @@ test("App.css 收紧到基数 × 系数，规则本体不再写死百分比", ()
 
 /* 选中行胶囊跟罩色同乘一个系数：罩色淡而胶囊不淡，胶囊就不再读作「这行被高亮」，
    而读作「壁纸上贴了一块不透明的东西」——用户把侧栏调透，最显眼的那块却没动。
-   这条钉住它留在缩放体系里，且 88% 只作为基数出现（声明在 .ccode-app-shell）。 */
-test("选中行胶囊同乘系数，88% 只作为基数出现", () => {
+   深色（2026-10-26）只叠 9% 前景色、玻璃透上来；不得退回实心 rail-sel 88%（那会把玻璃盖成一块黑）。
+   浅色仍是 rail-sel，88% 只作为基数出现（声明在 .ccode-app-shell）。 */
+test("深色选中行叠 9% 前景色并乘系数，不铺 rail-sel", () => {
+  const sel = /\n\.ccode-app-rail \.bg-rail-sel\s*\{[^}]*\}/.exec(css);
+  assert.ok(sel, "找不到 .ccode-app-rail .bg-rail-sel 规则");
+  assert.match(sel[0], /var\(--color-l1\) calc\(9% \* var\(--ccode-chrome-scale\)\)/);
+  assert.ok(!/--color-rail-sel/.test(sel[0]), "深色选中行又铺回了 rail-sel——会把玻璃盖成一块黑");
+});
+
+test("浅色选中行仍是 rail-sel 同乘系数，88% 只作为基数出现", () => {
   assert.match(css, /--ccode-lsel-base:\s*88%/);
 
-  const sel = /\.ccode-app-rail \.bg-rail-sel\s*\{[^}]*\}/.exec(css);
-  assert.ok(sel, "找不到 .ccode-app-rail .bg-rail-sel 规则");
+  const sel = /:where\(\.ccode-app-shell\[data-chrome="light"\]\) \.ccode-app-rail \.bg-rail-sel\s*\{[^}]*\}/.exec(css);
+  assert.ok(sel, "找不到浅色 .bg-rail-sel 规则");
   assert.match(sel[0], /calc\(var\(--ccode-lsel-base\) \* var\(--ccode-chrome-scale\)\)/);
   assert.ok(
     !/color-mix\(in srgb, var\(--color-rail-sel\) \d+%/.test(sel[0]),
     "选中行胶囊里又出现了写死的百分比——它必须留在缩放体系里",
   );
   assert.match(sel[0], /var\(--ccode-lsel-base\), transparent\)/);
+  // 浅色规则必须排在深色之后才盖得住（两条权重相同）
+  assert.ok(css.indexOf(sel[0]) > css.search(/\n\.ccode-app-rail \.bg-rail-sel\s*\{/), "浅色选中行规则要排在深色之后");
 });
 
 /* 顶栏自己不铺：深浅两套都靠壳那层罩（深色 48%、浅色 78%）。
