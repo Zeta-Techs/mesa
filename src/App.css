@@ -446,60 +446,75 @@
 
 /* Windows：透明窗口下 WebView2 只画灰度抗锯齿字（ClearType 彩边已否决，见 design-system），浅灰小字
    显得发虚，靠抬对比补：l3/l4 两档向更强一档靠（l3 向 l2 收 35%、l4 向 l3 收 50%；2026-10-19 用户要求
-   在原 Windows 值上再加深一档）。正文 l2、标题 l1 保持主题原值；macOS/Linux 不走这里。浅色压深、深色提亮。 */
+   在原 Windows 值上再加深一档）。2026-10-26 用户对照 Claude 客户端嫌整体发暗发糊：正文 l2 也向 l1 收 50%
+   （对画布约 10:1 → 11–12.7:1），l3/l4 不动；标题 l1 保持主题原值；macOS/Linux 不走这里。浅色压深、深色提亮。 */
 [data-platform="windows"][data-theme="midnight-light"] {
+  --color-l2: #2c2a25;
   --color-l3: #524e47;
   --color-l4: #66625a;
 }
 [data-platform="windows"][data-theme="terracotta-light"] {
+  --color-l2: #332e2a;
   --color-l3: #5c554f;
   --color-l4: #6f6862;
 }
 [data-platform="windows"][data-theme="ayu-light"] {
+  --color-l2: #372e25;
   --color-l3: #5c5249;
   --color-l4: #685e56;
 }
 [data-platform="windows"][data-theme="mocha-light"] {
+  --color-l2: #34333e;
   --color-l3: #565561;
   --color-l4: #676671;
 }
 [data-platform="windows"][data-theme="neutral-light"] {
+  --color-l2: #282828;
   --color-l3: #505050;
   --color-l4: #656565;
 }
 [data-platform="windows"][data-theme="dracula-light"] {
+  --color-l2: #322c40;
   --color-l3: #564f64;
   --color-l4: #6b6478;
 }
 [data-platform="windows"][data-theme="shadcn-light"] {
+  --color-l2: #222c3e;
   --color-l3: #495468;
   --color-l4: #5f687a;
 }
 [data-platform="windows"][data-theme="midnight"] {
+  --color-l2: #d3d0cb;
   --color-l3: #a3a2a3;
   --color-l4: #808086;
 }
 [data-platform="windows"][data-theme="terracotta"] {
+  --color-l2: #d5d4d2;
   --color-l3: #a3a39e;
   --color-l4: #7e7d79;
 }
 [data-platform="windows"][data-theme="ayu"] {
+  --color-l2: #d5d0c8;
   --color-l3: #a49e96;
   --color-l4: #7e7971;
 }
 [data-platform="windows"][data-theme="mocha"] {
+  --color-l2: #d1d5e0;
   --color-l3: #9ea2b2;
   --color-l4: #7b7f8e;
 }
 [data-platform="windows"][data-theme="neutral"] {
+  --color-l2: #d4d4d4;
   --color-l3: #acacac;
   --color-l4: #838383;
 }
 [data-platform="windows"][data-theme="dracula"] {
+  --color-l2: #e5e7f0;
   --color-l3: #afb1bc;
   --color-l4: #878893;
 }
 [data-platform="windows"][data-theme="shadcn"] {
+  --color-l2: #d3d3d8;
   --color-l3: #9c9ca7;
   --color-l4: #757580;
 }
@@ -885,11 +900,11 @@ body {
   );
 }
 
-/* Windows 浅色侧栏：罩色半透明、灰度抗锯齿的细字压在上面，l3 档对比只有 ~5:1，
-   和深色侧栏（近 10:1）并排时读成「发糊」。侧栏子树内把 l3 抬到 l2（选中行仍是 l1 + 底衬 + 强调色，
-   层次不丢）；只作用于 Windows 浅色，macOS / Linux / 深色主题不动，全局 l3 令牌不变。
+/* Windows 侧栏：罩色半透明、灰度抗锯齿的细字压在上面，l3 档读成「发糊」（浅色 ~5:1 先做，2026-10-19；
+   2026-10-26 用户对照 Claude 客户端嫌深色侧栏也发暗，深色同做）。侧栏子树内把 l3 抬到 l2（选中行仍是 l1 + 底衬 + 强调色，
+   层次不丢）；只作用于 Windows，macOS / Linux 不动，全局 l3 令牌不变。
    须排在上面那条基础 .ccode-app-rail 之后：chrome-opacity 测试按文本取第一条 .ccode-app-rail。 */
-[data-platform="windows"][data-theme$="-light"] .ccode-app-rail {
+[data-platform="windows"] .ccode-app-rail {
   --color-l3: var(--color-l2);
 }
 
@@ -2421,7 +2436,9 @@ select:focus-visible {
 }
 
 /* 聊天区细字（2026-10-25 用户选 C）：对话流、输入框、回放里的回答都用灰度抗锯齿，笔画比全站的 auto 细一档，
-   配合 --color-chat-text 提到 l1。只有 macOS / Linux 的 WebKit 认这条；Windows 不认，正文色也留在原来的 l2（下一条） */
+   配合 --color-chat-text 提到 l1。只有 macOS / Linux 的 WebKit 认这条；Windows 不认，但 Mica 透明窗口下本来就只有
+   灰度字（笔画同样细），2026-10-26 用户对照 Claude 客户端嫌聊天字发暗：Windows 正文直接走满格 l1（Claude 同为近白），
+   加粗同色、只靠字重区分（下一条） */
 .ccode-chat-body,
 .ccode-chat-user,
 .md-chat,
@@ -2431,8 +2448,8 @@ select:focus-visible {
   -moz-osx-font-smoothing: grayscale;
 }
 [data-platform="windows"] {
-  --color-chat-text: var(--color-l2);
-  --color-chat-strong: color-mix(in oklab, var(--color-l1) 60%, var(--color-l2));
+  --color-chat-text: var(--color-l1);
+  --color-chat-strong: var(--color-l1);
 }
 
 /* 聊天滚动区（.ccode-chat-scroll）：轨道加宽到 10px 好抓，拇指用透明描边「内缩」成 4px 细条，

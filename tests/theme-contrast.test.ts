@@ -582,14 +582,15 @@ test("热力图五档色阶（cta 单极梯子）全主题可辨：方向单调 
   assert.deepEqual(failures, [], `热力图色阶断档：\n${failures.join("\n")}`);
 });
 
-test("聊天回答的字适合长读：Mac 细字下正文 l1 八成五对画布 11–15.5:1、加粗 l1 更亮；Windows 不认细字，正文 l2 8.5–11.5:1、加粗更亮且不超过 14:1", () => {
-  // 2026-10-25 用户选 C：聊天区灰度抗锯齿（笔画细一档）+ 正文提到 l1；Windows 没有细字，留原口径
+test("聊天回答的字适合长读：Mac 细字下正文 l1 八成五对画布 11–15.5:1、加粗 l1 更亮；Windows 灰度字正文与加粗都走满格 l1（13–15.5:1）", () => {
+  // 2026-10-25 用户选 C：聊天区灰度抗锯齿（笔画细一档）+ 正文提到 l1；
+  // 2026-10-26 Windows 对照 Claude 客户端嫌发暗：Mica 下本就只有灰度字，正文直接满格 l1，加粗只靠字重
   const root = /@theme \{(.*?)\n\}/s.exec(css)?.[1] ?? "";
   assert.match(root, /--color-chat-text:\s*color-mix\(in oklab, var\(--color-l1\) 85%, var\(--color-l2\)\)/);
   assert.match(root, /--color-chat-strong:\s*var\(--color-l1\)/);
   assert.match(css, /\.ccode-chat-body,\s*\.ccode-chat-user,\s*\.md-chat,\s*\.ccode-chat-composer,\s*\.ccode-chat-scroll \{\s*-webkit-font-smoothing:\s*antialiased/);
-  const win = /\[data-platform="windows"\] \{\s*--color-chat-text:\s*var\(--color-l2\);\s*--color-chat-strong:\s*color-mix\(in oklab, var\(--color-l1\) 60%, var\(--color-l2\)\);/;
-  assert.match(css, win, "Windows 留 l2 正文 + 六成 l1 加粗");
+  const win = /\[data-platform="windows"\] \{\s*--color-chat-text:\s*var\(--color-l1\);\s*--color-chat-strong:\s*var\(--color-l1\);/;
+  assert.match(css, win, "Windows 正文与加粗都走满格 l1");
   const bad: string[] = [];
   for (const t of THEMES) {
     const v = { ...tokens(null), ...(t.id === "midnight" ? {} : tokens(t.id)) };
@@ -597,11 +598,22 @@ test("聊天回答的字适合长读：Mac 细字下正文 l1 八成五对画布
     const macStrong = contrast(v.l1, v.canvas);
     if (mac < 11 || mac > 15.5) bad.push(`${t.id} Mac 正文对画布 ${mac.toFixed(2)}:1`);
     if (macStrong <= mac) bad.push(`${t.id} Mac 加粗不比正文亮`);
-    const ct = contrast(v.l2, v.canvas);
-    const cs = contrast(mixOklab(v.l1, v.l2, 60), v.canvas);
-    if (ct < 8.5 || ct > 11.5) bad.push(`${t.id} Windows 正文 l2 对画布 ${ct.toFixed(2)}:1`);
-    if (cs <= ct) bad.push(`${t.id} Windows 加粗不比正文亮（${cs.toFixed(2)} ≤ ${ct.toFixed(2)}）`);
-    if (cs > 14) bad.push(`${t.id} Windows 加粗对画布 ${cs.toFixed(2)}:1，长读刺眼`);
+    if (macStrong < 11.5 || macStrong > 15.5) bad.push(`${t.id} Windows 正文 l1 对画布 ${macStrong.toFixed(2)}:1`);
+  }
+  assert.deepEqual(bad, [], bad.join("\n"));
+});
+
+test("Windows 正文 l2 向 l1 收一半：比主题原值更亮（浅色更深），仍弱于 l1、强于 l3", () => {
+  // 2026-10-26 用户对照 Claude 客户端嫌整体发暗发糊；l3/l4 维持 2026-10-19 的值
+  const bad: string[] = [];
+  for (const t of THEMES) {
+    const v = { ...tokens(null), ...(t.id === "midnight" ? {} : tokens(t.id)) };
+    const win = platformTokens("windows", t.id);
+    const c2 = contrast(win.l2, v.canvas);
+    if (!(c2 > contrast(v.l2, v.canvas))) bad.push(`${t.id} Windows l2 没比原值更醒目`);
+    if (!(c2 < contrast(v.l1, v.canvas))) bad.push(`${t.id} Windows l2 不弱于 l1`);
+    if (!(c2 > contrast(win.l3, v.canvas))) bad.push(`${t.id} Windows l2 不强于 l3`);
+    if (c2 < 10.5 || c2 > 13) bad.push(`${t.id} Windows l2 对画布 ${c2.toFixed(2)}:1`);
   }
   assert.deepEqual(bad, [], bad.join("\n"));
 });

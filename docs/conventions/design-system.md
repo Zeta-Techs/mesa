@@ -35,7 +35,7 @@
   **聊天回答的字（2026-10-22，用户：有的主题在聊天层不适合长时间聊）**：`.md-chat` 正文走 `--color-chat-text`（默认 l2），
   加粗与 h1–h4 走 `--color-chat-strong`（默认 l1 与 l2 在 OKLab 六四混，不跳满格 l1）；正文偏离 8.5–11.5:1 或带明显色偏的主题
   在自己块里覆写（2026-10-24 起十四套都不需要了——极简灰蓝、暮紫、暮紫·浅改为直接调 l1/l2 与彩度，正文本身就在长读区间；令牌机制保留给以后的主题），范围钉 `tests/theme-contrast.test.ts`。只管聊天回答，其余页面层级不动。
-  **2026-10-25 改（用户 A/B/C 对照选 C）**：聊天区（`.ccode-chat-scroll` / `.ccode-chat-composer` / `.md-chat` / `.ccode-chat-user` / `.ccode-chat-body`）改灰度抗锯齿细字，正文 l1 八成五（同日用户先嫌满格 l1「太亮」、五五混与七成都嫌「暗」，落在八成五；对画布 11–15.5:1）、加粗满格 l1；Windows 不认 font-smoothing，`[data-platform="windows"]` 留 l2 正文 + 六成 l1 加粗。全站其余地方仍是 `auto`（「字发白发飘」的取舍不变）。
+  **2026-10-25 改（用户 A/B/C 对照选 C）**：聊天区（`.ccode-chat-scroll` / `.ccode-chat-composer` / `.md-chat` / `.ccode-chat-user` / `.ccode-chat-body`）改灰度抗锯齿细字，正文 l1 八成五（同日用户先嫌满格 l1「太亮」、五五混与七成都嫌「暗」，落在八成五；对画布 11–15.5:1）、加粗满格 l1；Windows 不认 font-smoothing，但 Mica 下本就只有灰度字，**2026-10-26 用户对照 Claude 客户端嫌发暗**：`[data-platform="windows"]` 正文与加粗都走满格 l1（对画布 11.9–15:1，加粗只靠字重；原「l2 正文 + 六成 l1 加粗」作废）。全站其余地方仍是 `auto`（「字发白发飘」的取舍不变）。
   **深色主题终端底 = 画布底**（XTERM_BG_FG 深色行 = editor-bg = canvas，`tests/theme-tokens.test.ts` 钉住）：聊天层与终端切换不跳色；
   浅色终端仍是近白卡（灰画布上 Light+ 绿 / 黄对比掉到 2.2，不跟画布）。
 - **底色与文字同一色调（2026-10-24，十四套）**：一套主题的底色和文字四档取同一色相（OKLCH 色相差不超过约 30°），禁冷底配暖字或暖纸配冷字；
@@ -259,16 +259,19 @@
   `.ccode-titlebar` / `.ccode-top-nav-capsule` / Markdown 阅读（`.md-body`，含对话回放 `.md-chat`、
   笔记与产物预览）改静态 Segoe UI；字重不动。`.md-body` 在 Windows 把 13.5px 对齐到 14px（半像素发糊），
   `.md-chat` 不吃这条：Windows 上按聊天字号阶梯（`--chat-base` 14px）与「聊天字体」设置走（2026-10-21 修：原先 Segoe 写死，Windows 上聊天字体选了没反应）。聊天 Markdown 比笔记更瘦：行内 `code` 去描边只留浅底，`blockquote` 只留左线不铺 inset 底（警告/摘录才不会占半屏）。胶囊的 backdrop-filter 放到 `::before`。macOS/Linux 不走此块。
-  浅色主题文字梯队按平台压深 l3/l4 两档（正文 l2、标题 l1 保持主题原值）：Windows 压最多（补偿 DirectWrite 小字号灰化），
+  浅色主题文字梯队按平台压深 l3/l4 两档（标题 l1 保持主题原值；Windows 正文 l2 另见下文 2026-10-26 条）：Windows 压最多（补偿 DirectWrite 小字号灰化），
   macOS 取原值→Windows 值 65% 的中间档（CoreText 字干较重，但原始 l3/l4 在 canvas 上仅 4.0/2.2:1 不过 WCAG AA；
   中间档 l3 ≥ 4.7、l4 ≥ 3.1，数值由 tests/theme-contrast.test.ts 锁定），Linux 保持主题原值。
   **Windows 再加深一档（2026-10-19 用户拍板，深浅主题都做）**：在原 Windows 值（深色主题即主题原值）上
   l3 向 l2 收 35%、l4 向 l3 收 50%——浅色压深、深色提亮，`[data-platform="windows"][data-theme=…]` 每主题一块，
   14 块紧挨着放在 macOS 块之前（深色 shadcn 的 l3/l4 块须排在其强调色块之前，测试取首个匹配块）。
   效果：浅色 l3 ≈ 6–7:1、l4 ≈ 4.4–5.2:1；深色 l3 ≈ 6.3–8.3:1、l4 ≈ 3.9–5:1。自定义配色走内联变量，不受影响。
+  **Windows 正文 l2 也抬（2026-10-26 用户对照 Claude 客户端：整体发暗发糊）**：同一组平台块里 l2 向 l1 收 50%
+  （对画布约 9–10.6:1 → 10.5–12.8:1，浅色压深、深色提亮），l1 与 l3/l4 不动，`tests/theme-contrast.test.ts` 钉「原值 < Windows l2 < l1、> Windows l3」。
+  侧栏子树 l3 抬到 l2 从浅色扩到深浅都做（`[data-platform="windows"] .ccode-app-rail`）。
   **Windows 保持灰度抗锯齿（2026-10-19 定论）**：透明窗口（Mica）下 WebView2 只画灰度字。曾用页面容器独立合成拿到
   ClearType，用户实看彩边像马赛克，已撤回；Claude 客户端正文同样是灰度，清楚靠高对比。**Windows 清晰度只从文字对比度
-  与字重上补，不走 ClearType 合成层路线。** 浅色主题下侧栏子树 l3 抬到 l2 补对比（规则须排在基础 `.ccode-app-rail` 之后，
+  与字重上补，不走 ClearType 合成层路线。** 侧栏子树 l3 抬到 l2 补对比（2026-10-19 浅色起，2026-10-26 深色同做；规则须排在基础 `.ccode-app-rail` 之后，
   chrome-opacity 测试按文本取第一条）。
   **强调色也可按平台微调**（2026-08-31：灰蓝正红的红在 Windows WebView2 直出 sRGB 下比 macOS P3 色彩管理显鲜，
   `[data-platform="windows"]` 覆写 shadcn/shadcn-light 的 cta 族只降饱和度不动色相，macOS/Linux 原值不变；
