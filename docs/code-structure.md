@@ -185,6 +185,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   模块级缓存）、点开走 OfficePreviewModal（displayName 用原名、↑↓ 翻、右下一个后续动作）、文字就地展开；
                              #   从输入框打开的「收起」接收继续，⌘K 打开的「完成」即停止
   components/ClientOpenDialog.tsx # useClientOpen 钩子 + 确认层：对话页底栏/右键菜单与工作台项目行共用；预检全过直接打开，有 note/warn/fix/block 才弹层（Codex 缺渠道「写入并打开」可选连接，Claude 渠道会变提示，被拦只给原因/下载入口）
+  components/FileTypeMark.tsx # 文件类型线条图标：FileTypeGlyph（Lucide 线条 + 识别色经 --file-glyph 传入，浅色主题由 .ccode-file-glyph 压暗；
+                             #   附件卡 / 文件选择窗 / 资源列表 / 改动面板按 size 复用）+ FileTypeMark（14px 槽，与文件夹图标同宽对齐）
   components/ConfirmDialog.tsx # 全局确认/提示框（confirmDialog/alertDialog，126 处共用）：语气图标 + 结构化正文（标题/对照表/注意条，
                              #   解析在 confirm-dialog.ts）+ 危险钮 dangerActionClass、按钮动词推断、危险默认焦点给取消
   components/ContextMenu.tsx # 全站右键 / ⋯ 菜单（25 处共用）：fixed 全屏遮罩 + 视口钳制浮层、图标列按需、danger 沉底、
@@ -473,8 +475,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   右下角提醒条补位（点「去处理」直达终端标签，按待确认集合去重）
   git-status-groups.ts       # 改动列表状态分组/白话双层纯逻辑（含冲突 unmerged 组）；userDirtyFiles（剔台账，评审提交面板用）/
                              #   userWorkDirtyFiles（再剔 Mesa 自有档案 .ccode/·.gitignore，项目页提醒与开工弹层用）
-  file-icons.ts              # 文件类型小徽标纯逻辑：扩展名 → 短标签 + 固定识别色（另按整名认点开头配置文件、按 .bak 段认备份副本）；
-                             # 未收录返回 null，FileTypeMark / GitPanel 画通用文件图标，不留空槽；
+  file-icons.ts              # 文件类型图标纯逻辑：扩展名 → 图形种类（FileGlyph）+ 固定识别色（另按整名认点开头配置文件、按 .bak 段认备份副本）；
+                             # 未收录返回 null，画通用文件图标，不留空槽；图形到 Lucide 的映射与渲染在 components/FileTypeMark.tsx；
                              # isPreviewableImagePath（png/jpg/gif/webp/svg，tests/file-icons.test.ts）
   project-files.ts           # 文件页纯逻辑：预览形态分流 / 类型筛选（recent 是视图不参与类型收窄）/
                              # 展开链 ancestorDirsToReveal / 上下文件步进 / 沉浸阅读判据唯一落点 /

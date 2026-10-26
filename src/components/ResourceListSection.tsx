@@ -8,7 +8,7 @@ import {
   rowActionClass,
   searchFieldClass,
 } from "./PageFrame";
-import { fileTypeIcon } from "../file-icons";
+import { FileTypeGlyph } from "./FileTypeMark";
 import { RESOURCE_TYPE_LABELS } from "../pipeline-presets";
 import { officePreviewMode } from "../work-mode";
 import { absoluteResourcePath } from "./ArtifactChecklist";
@@ -269,7 +269,6 @@ export default function ResourceListSection({
           onReveal={folders.reveal}
           rowKey={(row) => row.r.path}
           renderRow={({ r, note, state, title }) => {
-            const icon = fileTypeIcon(r.path);
             const previewable =
               officePreviewMode(absoluteResourcePath(projectPath, r.path)) !==
               "external";
@@ -281,11 +280,8 @@ export default function ResourceListSection({
               <li
                 className="group grid min-h-10 grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-2 rounded-md px-2.5 hover:bg-hover"
               >
-                <span
-                  className="w-8 shrink-0 text-center font-mono text-micro"
-                  style={icon ? { color: icon.color } : undefined}
-                >
-                  {icon?.label ?? "·"}
+                <span aria-hidden="true" className="flex w-8 shrink-0 justify-center">
+                  <FileTypeGlyph path={r.path} />
                 </span>
                 <button
                   type="button"

@@ -6,7 +6,7 @@ import { normalizeTitle } from "./lit-watch.ts";
 
 const DISPLAY_EXT = /\.(pdf|md|markdown|mdx|qmd|ris|bib|txt|csv|tsv|docx|xlsx)$/i;
 
-/** 行上隐去类型后缀（左侧已有 PDF / M↓ 识别），完整文件名留给 title */
+/** 行上隐去类型后缀（左侧类型图标已按图形 + 识别色区分 PDF / 笔记），完整文件名留给 title */
 export function displayFileTitle(name: string): string {
   const base = name.replace(/\\/g, "/").split("/").pop() ?? name;
   const stripped = base.replace(DISPLAY_EXT, "");

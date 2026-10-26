@@ -420,6 +420,16 @@
   --heat-4: color-mix(in oklab, var(--color-cta) 58%, black);
 }
 
+/* 文件类型线条图标（FileTypeGlyph）：识别色由 --file-glyph 传入、色相固定；
+   细线条在浅底上比原先的彩色字块淡得多（React 青、题录黄对米白不到 2:1），
+   浅色主题同色相压暗 25%，最淡的一档也到 3:1 */
+.ccode-file-glyph {
+  color: var(--file-glyph);
+}
+[data-theme$="-light"] .ccode-file-glyph {
+  color: color-mix(in oklab, var(--file-glyph) 75%, black);
+}
+
 /* 浅色浮层边界：raised 在浅色下是纯白、canvas 是米白，两者几乎同色，
    而深色用的白色内高光在白底上完全不可见 → 浮层与页面糊在一起。
    改为极淡内暗边 + 一圈 0.5px 外描线；零偏移零模糊，不违反「零阴影」 */

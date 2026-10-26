@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { File, Maximize2, PanelRightClose, PanelRightOpen } from "lucide-react";
+import { Maximize2, PanelRightClose, PanelRightOpen } from "lucide-react";
 import type {
   ArtifactEntryDto,
   GitCommitResultDto,
@@ -22,7 +22,7 @@ import ImagePairView, { isImagePath } from "./ImagePairView";
 import { useAppStore } from "../store";
 import { defaultCommitMessage } from "../git-commit-message";
 import { GitInstallOffer } from "../dep-install";
-import { fileTypeIcon } from "../file-icons";
+import { FileTypeGlyph } from "./FileTypeMark";
 import { groupFilesByStatus, statusBadgeTitle } from "../git-status-groups";
 import { IS_MAC } from "../hotkeys";
 import { diffLineNumbers, hunkLabel, pairIntraline, parseHunkHeader } from "../diff-intraline";
@@ -179,23 +179,11 @@ function formatSize(n: number): string {
   return `${(n / 1024 / 1024 / 1024).toFixed(1)} GB`;
 }
 
-/** 文件类型小徽标（固定识别色，不随主题）；未收录类型画通用文件图标（与 FileTypeMark 同口径） */
+/** 文件类型线条图标（固定识别色，不随主题；与 FileTypeMark 同一套） */
 function FileTypeBadge({ path }: { path: string }) {
-  const icon = fileTypeIcon(path);
-  if (!icon) {
-    return (
-      <span aria-hidden="true" className="flex h-4 min-w-4 shrink-0 items-center justify-center text-l4">
-        <File size={13} strokeWidth={1.6} />
-      </span>
-    );
-  }
   return (
-    <span
-      aria-hidden="true"
-      className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-sm px-0.5 font-mono text-micro leading-4"
-      style={{ color: icon.color, backgroundColor: `${icon.color}26` }}
-    >
-      {icon.label}
+    <span aria-hidden="true" className="flex h-4 w-4 shrink-0 items-center justify-center">
+      <FileTypeGlyph path={path} size={13} />
     </span>
   );
 }

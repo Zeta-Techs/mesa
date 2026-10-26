@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Check, FileText, LayoutGrid, List, Search } from "lucide-react";
+import { Check, LayoutGrid, List, Search } from "lucide-react";
 import { Modal } from "./Modal";
 import { primaryActionClass, quietActionClass } from "./PageFrame";
 import type { SearchResultDto } from "./FileTree";
-import { fileTypeIcon, isPreviewableImagePath } from "../file-icons";
+import { isPreviewableImagePath } from "../file-icons";
+import { FileTypeGlyph } from "./FileTypeMark";
 import { fileThumb, hasFileThumb } from "../file-thumb";
 import { fileDateLabel, filesOnly, folderOf, toggleSelected, type PickFile } from "../project-file-pick";
 
@@ -299,15 +300,11 @@ function useFileThumb(file: PickFile, cwd: string) {
   return { ref, url, fit };
 }
 
-/** 没有缩略图时的类型色块（Word 蓝 W、PDF 红…，同文件列表的识别色） */
+/** 没有缩略图时的类型图标（同文件列表的线条图标 + 识别色，不铺色块） */
 function KindBlock({ path, big = false }: { path: string; big?: boolean }) {
-  const icon = fileTypeIcon(path);
   return (
-    <span
-      className={`flex h-full w-full items-center justify-center font-mono ${big ? "text-base" : "text-xs"}`}
-      style={icon ? { color: icon.color, backgroundColor: `${icon.color}1f` } : undefined}
-    >
-      {icon ? icon.label : <FileText size={big ? 22 : 15} strokeWidth={1.6} className="text-l4" />}
+    <span className="flex h-full w-full items-center justify-center">
+      <FileTypeGlyph path={path} size={big ? 26 : 16} />
     </span>
   );
 }

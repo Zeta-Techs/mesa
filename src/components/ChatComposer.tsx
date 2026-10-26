@@ -4,7 +4,6 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   ArrowUp,
   AtSign,
-  FileText,
   Maximize2,
   Minimize2,
   Paperclip,
@@ -37,7 +36,7 @@ import ChatImageStage, { MarkupLayer } from "./ChatImageStage";
 import { appendMarkRef, exportMarkup, nextMarkNumber, type Markup } from "../image-markup";
 import { attachmentLines, composerImageKind } from "../chat-image";
 import { docThumb, docThumbKind, docTypeLabel } from "../doc-thumb";
-import { fileTypeIcon } from "../file-icons";
+import { FileTypeGlyph } from "./FileTypeMark";
 import ProjectFilePicker from "./ProjectFilePicker";
 
 /** 按扩展名认图片附件（选来的、读不出缩略图的也要算） */
@@ -50,16 +49,14 @@ export interface ComposerSeed {
   /** 点了对话里的图「接着改」（2026-10-25）：这张图成附件后直接展开看图标注台，按改图口径（提示、占位字、发送时附原图） */
   edit?: string;
 }
-/** 文件卡左边没有首页预览时的类型色块（Word 蓝 W、Excel 绿 X、PPT 橙 P…，同文件列表的识别色） */
+/** 文件卡左边没有首页预览时的类型图标（同文件列表的线条图标 + 识别色，不铺色块） */
 function FileKindBlock({ path }: { path: string }) {
-  const icon = fileTypeIcon(path);
   return (
     <span
       aria-hidden="true"
-      className="flex h-full w-10 shrink-0 items-center justify-center border-r border-hairline font-mono text-xs"
-      style={icon ? { color: icon.color, backgroundColor: `${icon.color}1f` } : undefined}
+      className="flex h-full w-10 shrink-0 items-center justify-center border-r border-hairline"
     >
-      {icon ? icon.label : <FileText size={15} strokeWidth={1.6} className="text-l4" />}
+      <FileTypeGlyph path={path} size={16} />
     </span>
   );
 }
