@@ -137,6 +137,10 @@ test("off mode never silences goal packs", async () => {
   assert.match(goalPack, /验收再写回/);
 });
 
+// 加载器按 hotkeys.IS_WINDOWS 决定要不要补「本机 Python（Windows）」一节；期望值照同一判定算，Windows CI 上才对得上
+const LOADER_IS_WINDOWS =
+  typeof navigator !== "undefined" && (navigator.platform || "").startsWith("Win");
+
 test("custom mode renders the template with live data", async () => {
   const { loadProjectContextPack } = await bundleLoader();
   const template = "{{课题主题}}\n\n{{项目规则}}\n\n先给结论。";
@@ -163,6 +167,7 @@ test("custom mode renders the template with live data", async () => {
       ],
       kind: "session",
       memory: "记忆内容",
+      isWindows: LOADER_IS_WINDOWS,
     }),
   );
   assert.match(pack, /先给结论。/);
@@ -193,6 +198,7 @@ test("custom mode with empty template falls open to the auto pack", async () => 
       ],
       kind: "session",
       memory: "记忆内容",
+      isWindows: LOADER_IS_WINDOWS,
     }),
   );
 });
