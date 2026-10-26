@@ -655,7 +655,8 @@ fn pty_agent_env() -> Vec<(String, String)> {
     env
 }
 
-/// 在 PTY 中拉起进程并登记到管理器，输出/退出通过 `pty-output-<id>` / `pty-exit-<id>` 事件推送。
+/// 在 PTY 中拉起进程并登记到管理器，输出经 `pty_subscribe` 通道推送（带 `pty_ack` 流控），
+/// 退出与后台信号走 `pty-exit-<id>` / `pty-signal-<id>` 事件（无 `pty-output` 事件）。
 fn spawn_tracked(
     app: &AppHandle,
     manager: &PtyManager,

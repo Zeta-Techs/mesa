@@ -1023,7 +1023,7 @@ export default function TaskCardsSection({
             {mainDirty} 处改动未存入历史
           </button>
         )}
-        {/* 「想法期只读保护」开关已迁入聚焦态想法区标题行（它只管想法卡的只读纯聊一路） */}
+        {/* 「想法期只读保护」开关已收掉（2026-10-26 用户拍板）：聊想法固定只读开聊，这里不再有开关 */}
       </div>
       {error && <InlineNotice tone="err" className="mt-1">{error}</InlineNotice>}
       {dirtyOpen && mainDirty !== null && mainDirty > 0 && (
@@ -1155,7 +1155,7 @@ export default function TaskCardsSection({
               !showIdeaEntry && !ideaFormOpen ? null : (
               <div className="mt-1">
                 {/* 想法区（v3.80）：自由想法卡（kind=idea）——只读纯聊 + ◈ 沉淀进任务书；
-                    「想法期只读保护」开关只管只读纯聊这一路，设置页不加行。
+                    「想法期只读保护」开关 2026-10-26 已收掉，聊想法固定只读开聊（TaskCardsSection 顶部 guard 提示）。
                     与「跟 AI 商量一下」是两层东西，文案对仗点破：商量=边聊边改 TASK.md（改合同），
                     想法=先聊不改稿、点 ◈ 沉淀才进任务书（先发散后收编） */}
                 <div className="group flex flex-wrap items-center gap-2">

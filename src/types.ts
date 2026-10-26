@@ -427,7 +427,9 @@ export interface DetectResult {
   binaryPath: string | null;
   version: string | null;
   /** 该 CLI 有进程级只读参数（--permission-mode plan / -s read-only 之类）。Qwen / OpenCode 还要本机版本够
-   *  （0.25.3 / 1.19.3，agents::readonly_min_version）；false = 「只读保护」对它只剩 prompt 软约束，agent 可以无视 */
+   *  （0.25.3 / 1.19.3，agents::readonly_min_version）。false = 版本不够 / 查不到：只读开聊会被启动闸拒绝
+   *  （agents::validate_launch_compatibility），徽标置灰、想法区标「X 不能只读开聊」——
+   *  九家 readonly_args 均非空，旧「只剩 prompt 软约束」的回落已不存在（2026-10-26 核对） */
   readonlySupported: boolean;
   /** 能在启动参数里指定的原生权限档（agent_specs permission_args）：ask 请求批准 / auto 帮我批准 / full 完全访问 */
   permissionModes: string[];

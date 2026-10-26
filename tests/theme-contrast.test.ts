@@ -111,7 +111,7 @@ test("浅色选中态与线条必须比所在底色深", () => {
     assert.ok(lum(t["seg-sel"]) < lum(t["rail-sel"]), `${id}: 分段选中不够深`);
     assert.ok(lum(t.hairline) < lum(t.canvas), `${id}: hairline 在 canvas 上看不见`);
     assert.ok(lum(t.field) < lum(t.hairline), `${id}: field 边不比 hairline 明显`);
-    assert.ok(lum(t.bubble) < lum(t.canvas), `${id}: 消息气泡不比 canvas 深`);
+    // 用户消息气泡旧令牌 --color-bubble 已删（UI 用 --color-chat-bubble，canvas×l1 color-mix 混出，无 hex 可比）
   }
 });
 

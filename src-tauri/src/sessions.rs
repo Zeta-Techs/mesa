@@ -2849,7 +2849,7 @@ fn kimi_looks_like_wire(lines: &[String]) -> bool {
         .map_or(false, |v| v.get("type").is_some())
 }
 
-// ===== CodeBuddy Code（~/.codebuddy/projects/<slug>/<uuid>.jsonl，slug 规则同 Claude） =====
+// ===== CodeBuddy Code（~/.codebuddy/projects/<slug>/<uuid>.jsonl；slug 把路径分隔符换成 '-'，Windows 是 C-Users 不是 Claude 的 C--Users，见 matrix §7） =====
 //
 // 行 schema（v2.132.0 实测）：
 //   {"type":"message","role":"user","content":[{"type":"input_text","text":...}],
@@ -3036,7 +3036,7 @@ fn parse_codebuddy(lines: &[String]) -> Vec<ChatMessageDto> {
 
 // ===== Cursor CLI（~/.cursor/projects/<编码cwd>/agent-transcripts/<uuid>/<uuid>.jsonl） =====
 //
-// 目录名=文件名=session id；<编码cwd> 把路径分隔符替换成 '-'（有损，不解码，同 Claude slug 规则）。
+// 目录名=文件名=session id；<编码cwd> 把路径分隔符替换成 '-'（有损，不解码；Windows 是 C-Users，同 CodeBuddy，非 Claude 的 C--Users）。
 // JSONL 每行带 type 字段，源码枚举（2026.08.04-aaa8809 调研）：
 //   user_message / tool_call / tool_result / turn_ended / turn_id / message_id 等。
 // 完整字段样本未验证——防御式解析：未知 type 跳过，文本/时间戳按多个候选字段名提取，

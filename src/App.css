@@ -42,7 +42,6 @@
   --color-raised: #2b2a28; /* 浮起面板 / 状态 pill 底 */
   --color-rail-sel: #31302d; /* 侧栏选中行（保持亮于 raised） */
   --color-seg-sel: #373633; /* 分段控件选中 */
-  --color-bubble: #3a3936; /* 用户消息气泡 */
   --color-hairline: #31302d; /* 隐式 0.5px 细线 */
   --color-field: #464542; /* 输入框 / 弹层边线（保持亮于 hairline） */
 
@@ -94,8 +93,9 @@
   --color-chat-bubble: color-mix(in oklab, var(--color-canvas), var(--color-l1) 4.5%);
   --color-composer: color-mix(in oklab, var(--color-canvas), var(--color-l1) 7%);
   --color-composer-edge: color-mix(in oklab, var(--color-canvas), var(--color-l1) 13%);
-  /* 聊天里的字（2026-10-22 用户：有的主题在聊天层不适合长时间聊）：回答正文 = 正文色；加粗与小标题只往 l1 走六成——
-     回答里加粗多，满格 l1（对画布 13–18:1）在 10:1 左右的正文里一粒粒跳出来，长读刺眼。
+  /* 聊天里的字（2026-10-22 用户：有的主题在聊天层不适合长时间聊）：回答正文 = 正文色；
+     （2026-10-25/26 现行口径见同文件 chat-text 段与 design-system 同日段：正文 l1 八成五、加粗满格 l1，
+      旧「加粗只往 l1 走六成」已作废——回答里加粗多，当年满格 l1 在 10:1 左右的正文里一粒粒跳出来，长读刺眼。）
      正文偏离 8.5–11.5:1 或带色偏的主题（极简灰蓝太亮、暮紫偏蓝、暮紫·浅与琥珀·浅偏淡）在各自块里覆写，
      tests/theme-contrast.test.ts 钉范围。只管聊天回答（.md-chat），其余页面的层级不动。
      2026-10-25 用户在 A/B/C 对照里选 C：聊天区改细字（.ccode-chat-scroll / .ccode-chat-composer 灰度抗锯齿），
@@ -169,7 +169,7 @@
 [data-theme="terracotta"] {
   --color-rail: #0f0f0e; --color-rail2: #1d1d1b; --color-rail-sel: #333330;
   --color-strip: #21211f; --color-canvas: #181816; --color-inset: #262624;
-  --color-raised: #2e2e2b; --color-bubble: #3b3b38;
+  --color-raised: #2e2e2b;
   --color-seg-sel: #383834; --color-hairline: #2f2f2c; --color-field: #454542;
   --color-l1: #e5e4e3; --color-l2: #c5c4c0; --color-l3: #91918b; --color-l4: #6b6a67;
   --color-cta: #cc7d5e; --color-cta-text: #f9f9f7; --color-cta-bd: #8f4f38;
@@ -188,7 +188,7 @@
      底色阶梯与沉浸黑同次序 rail < canvas < rail2 < strip < inset < raised */
   --color-rail: #0d0b08; --color-rail2: #1b1815; --color-rail-sel: #312d29;
   --color-strip: #1e1b18; --color-canvas: #15130f; --color-inset: #23211d;
-  --color-raised: #2c2925; --color-bubble: #383530;
+  --color-raised: #2c2925;
   --color-seg-sel: #35322d; --color-hairline: #2c2a26; --color-field: #413f3c;
   --color-l1: #e5e0d9; --color-l2: #c5bfb6; --color-l3: #928c84; --color-l4: #6b675f;
   --color-cta: #f5b83d; --color-cta-text: #1d1608; --color-cta-bd: #855d00;
@@ -205,7 +205,7 @@
      文字本身不再发蓝，原聊天正文去色偏覆写随之取消 */
   --color-rail: #19191c; --color-rail2: #232428; --color-rail-sel: #303035;
   --color-strip: #28282c; --color-canvas: #1f1f23; --color-inset: #2d2d32;
-  --color-raised: #34343a; --color-bubble: #3d3e44;
+  --color-raised: #34343a;
   --color-seg-sel: #38393f; --color-hairline: #36363c; --color-field: #404045;
   --color-l1: #e4e8f1; --color-l2: #bec2cf; --color-l3: #8e92a2; --color-l4: #686c7a;
   --color-cta: #cba6f7; --color-cta-text: #2a1b3d; --color-cta-bd: #6b4d94;
@@ -219,7 +219,7 @@
 [data-theme="neutral"] {
   --color-rail: #0d0d0d; --color-rail2: #161616; --color-rail-sel: #262626;
   --color-strip: #1c1c1c; --color-canvas: #111111; --color-inset: #212121;
-  --color-raised: #272727; --color-bubble: #303030;
+  --color-raised: #272727;
   --color-seg-sel: #2b2b2b; --color-hairline: #2c2c2c; --color-field: #383838;
   --color-l1: #e5e5e5; --color-l2: #c2c2c2; --color-l3: #989898; --color-l4: #6e6e6e;
   --color-cta: #0169cc; --color-cta-text: #eaf4ff; --color-cta-bd: #014a8f;
@@ -241,7 +241,7 @@
   /* 2026-10-24 用户「哥特底色太紫」：底色彩度降到约三分之一（OKLCH C≈0.022 → 0.008），色相与亮度不动；Dracula 粉强调、带紫蓝调的冷白字不动 */
   --color-rail: #202024; --color-rail2: #2f2f33; --color-rail-sel: #3f4045;
   --color-strip: #343539; --color-canvas: #2a2b2f; --color-inset: #3a3b3f;
-  --color-raised: #404146; --color-bubble: #4a4b52;
+  --color-raised: #404146;
   --color-seg-sel: #44454a; --color-hairline: #45454b; --color-field: #4b4b51;
   --color-l1: #f5f7ff; --color-l2: #d5d7e1; --color-l3: #9a9ca7; --color-l4: #72747e;
   --color-cta: #ff79c6; --color-cta-text: #38102a; --color-cta-bd: #a64a80;
@@ -255,7 +255,7 @@
 [data-theme="shadcn"] {
   --color-rail: #0e1014; --color-rail2: #13161c; --color-rail-sel: #232c3c;
   --color-strip: #1a2230; --color-canvas: #12141a; --color-inset: #202938;
-  --color-raised: #252f41; --color-bubble: #2f3b4e;
+  --color-raised: #252f41;
   --color-seg-sel: #293447; --color-hairline: #2b323f; --color-field: #363e4e;
   --color-l1: #e4e4e7; --color-l2: #c2c2c9; --color-l3: #878794; --color-l4: #62626c;
   --color-cta: #ff5c5c; --color-cta-text: #3d0f0f; --color-cta-bd: #a83232;
@@ -276,7 +276,7 @@
   /* 与深色沉浸黑同性格：暖纸面。选中/线条/正文原先还是去蓝前的冷灰，会和暖画布打架。 */
   --color-rail: #e5e5dd; --color-rail2: #f2f2ee; --color-rail-sel: #ddd9d1;
   --color-strip: #f6f6f4; --color-canvas: #edede9; --color-inset: #fbfbf9;
-  --color-raised: #ffffff; --color-bubble: #e4e1d8;
+  --color-raised: #ffffff;
   --color-seg-sel: #cfcbc2; --color-hairline: #d4d1c8; --color-field: #b8b4a8;
   --color-l1: #1a1814; --color-l2: #3f3c36; --color-l3: #6f6b62; --color-l4: #9a958b;
   --color-cta: #c2447f; --color-cta-text: #ffffff; --color-cta-bd: #a33368;
@@ -290,7 +290,7 @@
 [data-theme="terracotta-light"] {
   --color-rail: #ebe3db; --color-rail2: #f5f1ed; --color-rail-sel: #e0d9d3;
   --color-strip: #f8f6f3; --color-canvas: #f2ece7; --color-inset: #fefaf6;
-  --color-raised: #ffffff; --color-bubble: #e8e1da;
+  --color-raised: #ffffff;
   --color-seg-sel: #d3cbc3; --color-hairline: #d8d1ca; --color-field: #bcb3a9;
   --color-l1: #211d1a; --color-l2: #453f3a; --color-l3: #7a726b; --color-l4: #a49b92;
   --color-cta: #b25a3c; --color-cta-text: #ffffff; --color-cta-bd: #8f4f38;
@@ -305,7 +305,7 @@
   /* Mesa 默认浅色「暖炭 · 浅」：米白纸 + 墨棕字，与深色同一暖色相（原暖纸底配冷石板字）；强调 = 浅色品牌琥珀 #e39a1c */
   --color-rail: #e7e2db; --color-rail2: #f6f2e9; --color-rail-sel: #e1dcd3;
   --color-strip: #fbf5ed; --color-canvas: #f2eee5; --color-inset: #fefaf6;
-  --color-raised: #ffffff; --color-bubble: #eae5dc;
+  --color-raised: #ffffff;
   --color-seg-sel: #d2cdc3; --color-hairline: #dad4cc; --color-field: #bab4aa;
   --color-l1: #2a2119; --color-l2: #443a31; --color-l3: #7b7068; --color-l4: #a79f98;
   --color-cta: #e39a1c; --color-cta-text: #241a02; --color-cta-bd: #ab7000;
@@ -322,7 +322,7 @@
      2026-10-24 同深色一起去紫：底色彩度约五成半、文字五成，强调色不动 */
   --color-rail: #e2e0e6; --color-rail2: #f2f0f4; --color-rail-sel: #d7d4de;
   --color-strip: #f6f5f8; --color-canvas: #edecf0; --color-inset: #fbfafb;
-  --color-raised: #ffffff; --color-bubble: #e1dee7;
+  --color-raised: #ffffff;
   --color-seg-sel: #c8c5d0; --color-hairline: #cfccd5; --color-field: #ada9b7;
   --color-l1: #2c2b35; --color-l2: #3d3b47; --color-l3: #6e6d78; --color-l4: #9c9aa4;
   --color-cta: #8839ef; --color-cta-text: #ffffff; --color-cta-bd: #6d2bd0;
@@ -336,7 +336,7 @@
 [data-theme="neutral-light"] {
   --color-rail: #e4e4e4; --color-rail2: #f1f1f1; --color-rail-sel: #dedede;
   --color-strip: #f6f6f6; --color-canvas: #ededed; --color-inset: #fafafa;
-  --color-raised: #ffffff; --color-bubble: #e5e5e5;
+  --color-raised: #ffffff;
   --color-seg-sel: #d0d0d0; --color-hairline: #d6d6d6; --color-field: #bababa;
   --color-l1: #161616; --color-l2: #3a3a3a; --color-l3: #6e6e6e; --color-l4: #9d9d9d;
   --color-cta: #0169cc; --color-cta-text: #ffffff; --color-cta-bd: #014a8f;
@@ -350,7 +350,7 @@
 [data-theme="dracula-light"] {
   --color-rail: #e7e2ef; --color-rail2: #f3f1f7; --color-rail-sel: #e0dae9;
   --color-strip: #f7f5fa; --color-canvas: #efecf5; --color-inset: #fbfafc;
-  --color-raised: #ffffff; --color-bubble: #e6e0ee;
+  --color-raised: #ffffff;
   --color-seg-sel: #d0c9de; --color-hairline: #d5cfe0; --color-field: #b7aec6;
   --color-l1: #241f31; --color-l2: #403a4e; --color-l3: #716a80; --color-l4: #9d97ab;
   --color-cta: #d6336c; --color-cta-text: #ffffff; --color-cta-bd: #b02855;
@@ -366,7 +366,7 @@
      strip 压半档、inset 抬向白，保证 canvas→strip→inset 每档亮度差 ≥4。 */
   --color-rail: #dde3ee; --color-rail2: #eef1f6; --color-rail-sel: #d0d7e4;
   --color-strip: #f3f5f9; --color-canvas: #e8ecf3; --color-inset: #fafbfc;
-  --color-raised: #ffffff; --color-bubble: #dfe5ee;
+  --color-raised: #ffffff;
   --color-seg-sel: #c5cddb; --color-hairline: #cdd3de; --color-field: #aeb6c4;
   --color-l1: #101828; --color-l2: #344054; --color-l3: #667085; --color-l4: #98a2b3;
   --color-cta: #dc2626; --color-cta-text: #ffffff; --color-cta-bd: #a83232;

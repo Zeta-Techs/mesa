@@ -12,7 +12,7 @@ import { fileDateLabel, filesOnly, folderOf, toggleSelected, type PickFile } fro
 /**
  * 「＋ → 引用项目文件」弹层（2026-10-26 用户：点了只插个 @、选不了文件，要做成点开就能挑的样子）：
  * 顶上搜索，下面是这个项目最近改过的文件（list_recent_files），每次打开是列表（同日用户：默认用列表），
- * 每行左边带缩略图；右上角换网格看大缩略图（图片、PDF、Word、表格、文字都画，file-thumb.ts；画不出的 PPT 等留类型色块）；
+ * 每行左边带缩略图；右上角换网格看大缩略图（图片、PDF、Word、表格、文字都画，file-thumb.ts；画不出的 PPT 等给 FileTypeGlyph 线条图标 + 类型色）；
  * 点行勾选（可多选），「添加」后成输入框里的附件卡，随消息按路径发出（同「文件或图片」）
  */
 export default function ProjectFilePicker({
@@ -263,7 +263,7 @@ function CheckMark({ checked, active, onImage = false }: { checked: boolean; act
   );
 }
 
-/** 缩略图：滚到看得见才画（file-thumb.ts：图片读原图，PDF / Word / 表格 / 文字排成一页纸），画不出就留类型色块 */
+/** 缩略图：滚到看得见才画（file-thumb.ts：图片读原图，PDF / Word / 表格 / 文字排成一页纸），画不出就给 FileTypeGlyph 线条图标 + 类型色 */
 function useFileThumb(file: PickFile, cwd: string) {
   const ref = useRef<HTMLSpanElement>(null);
   const [url, setUrl] = useState<string | null>(null);

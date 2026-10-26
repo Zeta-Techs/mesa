@@ -1526,7 +1526,7 @@ export default function StepFlow({
     // 步骤认领不在此登记：启动栏还可能改 agent/目录，改由终端页 spawn 时以最终值登记
     // （pendingTerminal.stepName → TerminalView launch 时 invoke claim_next_session_for_step）。
     // 它跑在项目根（只改 TASK.md，不落步骤工作区），不登记的话 stepName 为空，
-    // 项目「对话」页按步骤筛会漏掉它。
+    // 对话管理页（⌘2）按步骤筛会漏掉它。
     // 已经商量过：接回那条会话（resume），不要再注入「先通读一遍」开场——那会另开一轮。
     const resume = discussResume;
     setPendingTerminal({
