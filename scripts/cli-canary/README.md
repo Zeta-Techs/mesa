@@ -87,6 +87,8 @@ Grok 的程序状态不带会话 id，「旁路认出会话」这项不查，会
    基线文件里的 `version` 就是「Mesa 已核对到的版本」。检查没全过时 `--accept` 会拒绝。
    **这个版本会随包进 Mesa**（`src/cli-verified.ts`）：用户装的比它新时，聊天层不替人自动按键、确认卡上提醒（`docs/design-chat-fidelity.md`）。
    所以基线要跟得上：CLI 版本前进而指纹没变时，跑一次 `--accept-unchanged` 把核对版本往前挪。
+   CI 每天跑的就是 `--accept-unchanged`：全绿而只是版本前进时，工作流自己把 `baseline/` 提交回 main（有 `contents: write`，
+   只动 `baseline/`）——所以本地推送前先 `git pull`。
 4. 有新画面时顺手存进抓屏语料库：`scripts/screen-corpus/add-from-capture.ts <out>/<agent>/screen.json`（见 `tests/fixtures/screens/README.md`）。
 3. 基线按平台分开存（`win32` / `darwin`）：两边的画面和跑的层本来就不同，比如 Windows 上 Grok 不跑旁路端到端。
    跟系统语言走的界面要钉成英文再记基线（Qwen 已由 `QWEN_CODE_LANG=en` 钉住），否则中文机器和 CI 记出来的菜单对不上。

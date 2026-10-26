@@ -457,6 +457,10 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-26 · AGENTS.md 收紧：文档按需检索、文档同步只改受影响的
+
+用户：「优化一下 AGENTS.md 以及相关文档，不要反而浪费了时间和精力，使 Agent 作无用功」。定案写进 AGENTS.md 文首：①**省力原则**——每次会话只读 AGENTS.md，architecture / code-structure / conventions 大文件按关键词 Grep 读命中小节，「改动前必读」指相关条目不指整份；§10 用关键词搜、同主题以最新为准。②**文档同步改成对照表**，取代「每次提交前把说明书、教程、README、CHANGELOG、§10、代码地图、conventions 全过一遍」：只改命中行的文档，纯重构 / 按既有规则修 bug / 只加测试不改文档。③**§10 只记拍板、取舍、否决及由此定下的规则**，写拍板、理由和细则落点，细则进 conventions。④AGENTS.md 只留每次会话都要守的硬约束：会话标题、开源与许可、热力图、定时雷达、从手机添加、聊天层旁路、CLI 金丝雀、客户端接力等单领域细则收成一行指针，原文迁进 terminal.md / 新建 `conventions/open-source.md` / design-system.md / `scripts/cli-canary/README.md`（其余已在 pipeline.md、safety.md、design-phone-drop.md、design-client-handoff.md 里的不重复搬）；`.reference/` 只在设计新机制时查。
+
 ### 2026-10-26 · 提交前基线按改到的那一侧跑
 
 用户问「每次修改提交前都要三样全跑吗」后拍板改 AGENTS.md：取代 2026-09-22「提交时 `npm test` + `cargo test` + `npm run build` 都过」。只改文档不跑；只改 Rust 跑全量 `cargo test`；只改前端跑 `npm test` + `npm run build`；两侧都改或动了两侧共用的东西（共读的 `tests/fixtures/` 样例、Tauri 命令名与参数、DTO 字段名、双端镜像逻辑）三样全跑，拿不准就全跑。理由：Windows 上一次 Rust 全量构建就要几分钟，跨侧跑换不来信号（改 Rust 不会让 tsc 报错，反之亦然）；CI 每次 push 两平台三样全跑兜底。「基线必须保持全绿」「改了前端必须跑 `npm run build`」不变。
