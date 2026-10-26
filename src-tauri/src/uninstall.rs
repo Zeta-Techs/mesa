@@ -184,7 +184,7 @@ fn remove_file(path: &Path, result: &mut UninstallResultDto) {
 }
 
 /// 卸载 Mesa 本机数据。调用方必须已经让用户确认过两次。
-/// 成功后进程应退出：配置目录已经不在，继续跑会写出半套新数据。
+/// 移走过任何目录后进程都应退出，部分失败也一样：配置目录可能已经不在，继续跑会写出半套新数据。
 #[tauri::command]
 pub async fn uninstall_mesa() -> Result<UninstallResultDto, String> {
     tauri::async_runtime::spawn_blocking(move || {

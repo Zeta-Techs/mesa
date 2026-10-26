@@ -1198,7 +1198,6 @@ function HotkeysSection({
   );
 }
 
-/** 一键卸载：清 Mesa 自己的数据，课题文件夹不动。确认两次，第二次要原样输入「卸载」。 */
 /** 内置终端用哪个 shell：候选只列本机找得到的（后端 terminal_shell_options），选了没装的启动时回落自动 */
 function TerminalShellRow({
   value,
@@ -1242,6 +1241,7 @@ function TerminalShellRow({
   );
 }
 
+/** 一键卸载：清 Mesa 自己的数据，课题文件夹不动。确认两次，第二次要原样输入「卸载」。 */
 function UninstallRow() {
   const [busy, setBusy] = useState(false);
   const [armed, setArmed] = useState(false);
@@ -1255,25 +1255,30 @@ function UninstallRow() {
         errors: string[];
         deferred: string[];
       }>("uninstall_mesa");
-      if (result.errors.length > 0) {
+      if (result.errors.length > 0 && result.trashed.length === 0) {
+        // 一个目录都没移走：应用还完整，留在原处让人处理后重试
         await alertDialog(
-          `有 ${result.errors.length} 项没能清掉，应用先不退出：\n${result.errors.join("\n")}`,
+          `卸载没有完成，Mesa 的目录一个都没移走：\n${result.errors.join("\n")}`,
         );
         setBusy(false);
         return;
       }
-      // 界面记忆（最近项目、偏好等 ccode.* 键）在 WebView 的 localStorage 里，后端够不到。
-      // 卸载真正成功后才清：后端中途拒绝（如 Windows 上还有终端开在 Mesa 目录里）时设置不该丢
+      // 移走过任何目录就必须退出（配置目录可能已在回收站，继续跑会写出半套新数据），没清掉的列给人退出后手动处理。
+      // 界面记忆（最近项目、偏好等 ccode.* 键）在 WebView 的 localStorage 里，后端够不到；
+      // 后端中途拒绝（如 Windows 上还有终端开在 Mesa 目录里）时会走 catch，设置不丢
       for (let i = localStorage.length - 1; i >= 0; i--) {
         const key = localStorage.key(i);
         if (key?.startsWith("ccode.")) localStorage.removeItem(key);
       }
-      // Windows：网页数据目录被 Mesa 自己占着，运行中删不掉，退出前告诉用户手动删
-      if (result.deferred.length > 0) {
-        await alertDialog(
-          `以下目录 Mesa 运行时被自身占用，退出后请手动删除：\n${result.deferred.join("\n")}`,
-        );
+      const notes: string[] = [];
+      if (result.errors.length > 0) {
+        notes.push(`有 ${result.errors.length} 项没能清掉，退出后请手动处理：\n${result.errors.join("\n")}`);
       }
+      // Windows：网页数据目录被 Mesa 自己占着，运行中删不掉
+      if (result.deferred.length > 0) {
+        notes.push(`以下目录 Mesa 运行时被自身占用，退出后请手动删除：\n${result.deferred.join("\n")}`);
+      }
+      if (notes.length > 0) await alertDialog(notes.join("\n\n"));
       await exit(0);
     } catch (reason) {
       await alertDialog(`卸载没有完成：${String(reason)}`);
