@@ -103,18 +103,23 @@ export function withForwarders(
   return value;
 }
 
+/**
+ * `frozen` 为 true 时不重画（藏着的标签：记录照常刷新，但画面看不见，等露出来那一下再按最新的画一次，
+ * 2026-10-26 实测四段藏着的对话每 0.7 秒各白画一遍）。`frozen` 也会传给子组件，子组件不认就忽略。
+ */
 export function memoWithLatestFunctions<P extends object>(
   Component: ComponentType<P>,
   depths: NestedDepths = {},
-): ComponentType<P> {
-  const Inner = memo(Component, (a, b) =>
-    propsEqualIgnoringFunctions(
+): ComponentType<P & { frozen?: boolean }> {
+  const Inner = memo(Component, (a, b) => {
+    if ((b as { frozen?: boolean }).frozen) return true;
+    return propsEqualIgnoringFunctions(
       a as unknown as Record<string, unknown>,
       b as unknown as Record<string, unknown>,
       depths,
-    ),
-  );
-  function Stable(props: P) {
+    );
+  });
+  function Stable(props: P & { frozen?: boolean }) {
     const latest = useRef(props);
     latest.current = props;
     const cache = useRef(new Map<string, AnyFn>());

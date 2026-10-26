@@ -115,3 +115,44 @@ test("父组件换闭包重画时子组件跳过；数据变了才重画，点�
     }
   }
 });
+
+test("frozen 时不重画，解冻那一下按最新的画", async () => {
+  const dom = new JSDOM('<div id="root"></div>', { url: "http://localhost/", pretendToBeVisual: true });
+  const g = globalThis as Record<string, unknown>;
+  const saved = ["window", "document", "navigator", "HTMLElement", "IS_REACT_ACT_ENVIRONMENT"].map(
+    (k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)] as const,
+  );
+  Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true, writable: true });
+  Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true, writable: true });
+  Object.defineProperty(globalThis, "navigator", { value: dom.window.navigator, configurable: true, writable: true });
+  Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true, writable: true });
+  g.IS_REACT_ACT_ENVIRONMENT = true;
+  try {
+    const React = await import("react");
+    const { createRoot } = await import("react-dom/client");
+    let renders = 0;
+    function Child(props: { label: string }) {
+      renders += 1;
+      return React.createElement("span", { id: "s" }, props.label);
+    }
+    const StableChild = memoWithLatestFunctions(Child);
+    const root = createRoot(dom.window.document.getElementById("root")!);
+    const draw = (label: string, frozen: boolean) =>
+      React.act(async () => root.render(React.createElement(StableChild, { label, frozen })));
+    await draw("一", false);
+    assert.equal(renders, 1);
+    await draw("二", true);
+    await draw("三", true);
+    assert.equal(renders, 1, "藏着时内容变了也不画");
+    assert.equal(dom.window.document.getElementById("s")!.textContent, "一");
+    await draw("三", false);
+    assert.equal(renders, 2);
+    assert.equal(dom.window.document.getElementById("s")!.textContent, "三");
+    await React.act(async () => root.unmount());
+  } finally {
+    for (const [k, d] of saved) {
+      if (d) Object.defineProperty(globalThis, k, d);
+      else delete g[k];
+    }
+  }
+});

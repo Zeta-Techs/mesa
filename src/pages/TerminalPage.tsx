@@ -10331,6 +10331,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         }
                       >
                       <StableChatSurface
+                        // 藏着的标签（没在看、也不在阅读区右栏）：记录照常刷新，不重画，露出来那一下再画
+                        frozen={!tabVisible && !inReader}
                         metaSlots={chatMetaSlots[t.id] ?? null}
                         messages={sessionByTab[t.id]?.conv ?? []}
                         state={sessionByTab[t.id]?.state ?? "idle"}
@@ -10533,6 +10535,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         "chat" && !peekByTab[t.id];
                     return (
                       <StableTerminalStatusBar
+                        frozen={!tabVisible}
                         variant={chatBar ? "chat" : "terminal"}
                         status={st}
                         fallbackCwd={t.initialCwd ?? ""}
