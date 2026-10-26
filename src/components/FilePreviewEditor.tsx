@@ -1,4 +1,4 @@
-import { previewSaveCompletion, type FilePreviewSnapshot } from "../file-preview";
+import { encodingLabel, previewSaveCompletion, type FilePreviewSnapshot } from "../file-preview";
 import { stashDraftIfArmed, takeDraft, type PreviewDraft } from "../file-draft-handoff";
 import { sanitizeDocumentHtml } from "../document-html";
 import {
@@ -871,6 +871,9 @@ function TextFilePreviewEditor({
   const [diskChange, setDiskChange] = useState<FilePreviewSnapshot | null>(null);
   /** 对比合并界面（保存撞车或点了「对比合并」） */
   const [mergeOpen, setMergeOpen] = useState(false);
+  /** 这份文件不是 UTF-8 时认出的编码（GBK 等），保存照它写回；saveAsUtf8 = 人点了「改用 UTF-8 保存」 */
+  const [fileEncoding, setFileEncoding] = useState<string | null>(null);
+  const [saveAsUtf8, setSaveAsUtf8] = useState(false);
   const [fontSize, setFontSize] = useState(readEditorFont);
   useEffect(() => onEditorFontChange(setFontSize), []);
   useEffect(() => {
@@ -1064,6 +1067,8 @@ function TextFilePreviewEditor({
         textPathRef.current = path;
         setTruncated(p.truncated);
         setReadOnlyReason(p.readOnlyReason);
+        setFileEncoding(p.encoding ?? null);
+        setSaveAsUtf8(false);
         // 从另一个位置搬过来的没保存修改（侧栏 ⇄ 窗口预览，file-draft-handoff）：接着改，不丢
         const draft = p.revision ? takeDraft(path) : null;
         if (draft) {
@@ -1509,11 +1514,14 @@ function TextFilePreviewEditor({
       if (editorRef.current !== ed || textPathRef.current !== path) return;
       const submitted = ed.getValue();
       setError(null);
+      const encoding = saveAsUtf8 ? null : (baseline.encoding ?? null);
       const revision = await invoke<string>("save_file_preview", {
-        path, root, text: submitted, expectedRevision: baseline.revision,
+        path, root, text: submitted, expectedRevision: baseline.revision, encoding,
       });
       if (editorRef.current !== ed || textPathRef.current !== path) return;
-      const completion = previewSaveCompletion(submitted, ed.getValue(), revision);
+      const completion = previewSaveCompletion(submitted, ed.getValue(), revision, encoding);
+      setFileEncoding(encoding);
+      setSaveAsUtf8(false);
       lastSavedRef.current = completion.snapshot;
       dirtyRef.current = completion.dirty;
       setDirty(completion.dirty);
@@ -1561,6 +1569,8 @@ function TextFilePreviewEditor({
     onDirtyChange?.(false);
     setTruncated(p.truncated);
     setReadOnlyReason(p.readOnlyReason);
+    setFileEncoding(p.encoding ?? null);
+    setSaveAsUtf8(false);
     setText(p.text);
     setDiskChange(null);
     setMergeOpen(false);
@@ -1595,10 +1605,11 @@ function TextFilePreviewEditor({
     savingRef.current = true;
     setSaving(true);
     try {
+      const encoding = saveAsUtf8 ? null : (base.encoding ?? null);
       const revision = await invoke<string>("save_file_preview", {
-        path, root, text: merged, expectedRevision: base.revision,
+        path, root, text: merged, expectedRevision: base.revision, encoding,
       });
-      adoptSnapshot({ text: merged, truncated: false, revision, readOnlyReason: null });
+      adoptSnapshot({ text: merged, truncated: false, revision, readOnlyReason: null, encoding });
       return null;
     } catch (e) {
       if (isSaveConflict(e)) {
@@ -1644,6 +1655,27 @@ function TextFilePreviewEditor({
           <span className="shrink-0 rounded-sm bg-warn px-1 text-warn-text" title={readOnlyReason}>
             {truncated ? "已截断（只读）" : "只读"}
           </span>
+        )}
+        {fileEncoding && (
+          <button
+            type="button"
+            onClick={() => {
+              if (readOnlyReason) return;
+              // 换编码也是一处改动：标脏，点保存才真写
+              setSaveAsUtf8((v) => !v);
+              dirtyRef.current = true;
+              setDirty(true);
+              onDirtyChange?.(true);
+            }}
+            title={
+              saveAsUtf8
+                ? `保存时改成 UTF-8（原来是 ${encodingLabel(fileEncoding)}）。再点一下改回原编码`
+                : `这份文件是 ${encodingLabel(fileEncoding)} 编码，保存时照原编码写回。点一下改用 UTF-8 保存`
+            }
+            className="shrink-0 rounded-sm bg-inset px-1 font-mono text-micro text-l3 hover:text-l1"
+          >
+            {saveAsUtf8 ? `${encodingLabel(fileEncoding)} → UTF-8` : encodingLabel(fileEncoding)}
+          </button>
         )}
         {dirty && <span className="shrink-0 text-l3" title="有未保存的修改">●</span>}
         {hasReadMode && (

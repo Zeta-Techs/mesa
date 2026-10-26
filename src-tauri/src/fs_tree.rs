@@ -31,6 +31,8 @@ pub struct FilePreviewDto {
     pub revision: Option<String>,
     #[serde(rename = "readOnlyReason")]
     pub read_only_reason: Option<String>,
+    /// 不是 UTF-8 时认出来的编码（GBK、Big5、UTF-16LE…）；UTF-8 为 None。保存时按它写回，不悄悄改编码
+    pub encoding: Option<String>,
 }
 
 fn expand_tilde(path: &str) -> String {
@@ -134,10 +136,68 @@ fn require_inside_root(path: &str, root: &str) -> Result<(), String> {
 }
 
 pub(crate) fn read_file_preview_sync(path: &str, root: &str) -> Result<FilePreviewDto, String> {
-    read_capped_sync(path, root, PREVIEW_CAP)
+    read_capped_sync(path, root, PREVIEW_CAP, true)
 }
 
-fn read_capped_sync(path: &str, root: &str, cap: usize) -> Result<FilePreviewDto, String> {
+/// UTF-16 带 BOM（Windows 记事本「Unicode」）：NUL 嗅探会把它当二进制，先认 BOM
+fn utf16_bom(buf: &[u8]) -> Option<&'static encoding_rs::Encoding> {
+    match buf {
+        [0xFF, 0xFE, ..] => Some(encoding_rs::UTF_16LE),
+        [0xFE, 0xFF, ..] => Some(encoding_rs::UTF_16BE),
+        _ => None,
+    }
+}
+
+/// 不是 UTF-8 的文本：认编码（中文 Windows 导出的 GBK / GB18030 最常见）并解成文字。
+/// 返回 (文字, 编码名)；认不出返回 None
+fn decode_legacy(buf: &[u8]) -> Option<(String, &'static encoding_rs::Encoding)> {
+    let enc = if let Some(bom) = utf16_bom(buf) {
+        bom
+    } else {
+        let mut det = chardetng::EncodingDetector::new();
+        det.feed(buf, true);
+        // tld = None、allow_utf8 = false：已知不是合法 UTF-8
+        det.guess(None, false)
+    };
+    if enc == encoding_rs::UTF_8 {
+        return None;
+    }
+    let (text, _, _) = enc.decode(buf);
+    Some((text.into_owned(), enc))
+}
+
+/// 按编码把文字写回字节；表示不了的字符拒绝（不悄悄换成问号）。UTF-16 encoding_rs 不编码，手写并带 BOM
+fn encode_legacy(text: &str, label: &str) -> Result<Vec<u8>, String> {
+    let enc = encoding_rs::Encoding::for_label(label.as_bytes())
+        .ok_or_else(|| format!("不认识的编码 {label}"))?;
+    if enc == encoding_rs::UTF_8 {
+        return Ok(text.as_bytes().to_vec());
+    }
+    if enc == encoding_rs::UTF_16LE || enc == encoding_rs::UTF_16BE {
+        let le = enc == encoding_rs::UTF_16LE;
+        let mut out = if le { vec![0xFF, 0xFE] } else { vec![0xFE, 0xFF] };
+        let body = text.strip_prefix('\u{FEFF}').unwrap_or(text);
+        for u in body.encode_utf16() {
+            out.extend_from_slice(&if le { u.to_le_bytes() } else { u.to_be_bytes() });
+        }
+        return Ok(out);
+    }
+    let (bytes, _, had_errors) = enc.encode(text);
+    if had_errors {
+        return Err(format!(
+            "内容里有 {} 表示不了的字符（如表情、生僻字），没有保存。可以在工具条上改用 UTF-8 保存",
+            enc.name()
+        ));
+    }
+    Ok(bytes.into_owned())
+}
+
+fn read_capped_sync(
+    path: &str,
+    root: &str,
+    cap: usize,
+    allow_legacy_encoding: bool,
+) -> Result<FilePreviewDto, String> {
     let root_exp = expand_tilde(root);
     let path_exp = expand_tilde(path);
     // 保留用户从树中预览外链 symlink 的能力，但不允许 ../ 绕过词法根边界。
@@ -164,14 +224,21 @@ fn read_capped_sync(path: &str, root: &str, cap: usize) -> Result<FilePreviewDto
     f.take((cap + 1) as u64)
         .read_to_end(&mut buf)
         .map_err(|e| format!("读取文件失败: {e}"))?;
-    // 二进制检测：前 8KB 出现 NUL 即判二进制
-    if buf.iter().take(BINARY_SNIFF).any(|b| *b == 0) {
+    // 二进制检测：前 8KB 出现 NUL 即判二进制（带 BOM 的 UTF-16 文本除外）
+    if (!allow_legacy_encoding || utf16_bom(&buf).is_none())
+        && buf.iter().take(BINARY_SNIFF).any(|b| *b == 0)
+    {
         return Err("二进制文件不支持预览".into());
     }
     let truncated = buf.len() > cap;
     if truncated {
         buf.truncate(cap);
     }
+    let legacy = if allow_legacy_encoding && std::str::from_utf8(&buf).is_err() {
+        decode_legacy(&buf)
+    } else {
+        None
+    };
     let read_only_reason = if truncated {
         Some(format!(
             "文件超过 {} KB，仅预览开头部分，不能保存",
@@ -181,16 +248,21 @@ fn read_capped_sync(path: &str, root: &str, cap: usize) -> Result<FilePreviewDto
         || root_c == std::path::Path::new("/"))
     {
         Some("符号链接指向项目根目录之外，仅支持预览".into())
-    } else if std::str::from_utf8(&buf).is_err() {
+    } else if legacy.is_none() && std::str::from_utf8(&buf).is_err() {
         Some("文件不是有效 UTF-8，仅支持预览，避免保存时改变编码".into())
     } else {
         None
     };
+    let (text, encoding) = match legacy {
+        Some((text, enc)) => (text, Some(enc.name().to_string())),
+        None => (String::from_utf8_lossy(&buf).into_owned(), None),
+    };
     Ok(FilePreviewDto {
         revision: read_only_reason.is_none().then(|| preview_revision(&buf)),
-        text: String::from_utf8_lossy(&buf).into_owned(),
+        text,
         truncated,
         read_only_reason,
+        encoding,
     })
 }
 
@@ -240,6 +312,17 @@ fn save_file_preview_sync(
     text: &str,
     expected_revision: &str,
 ) -> Result<String, String> {
+    save_file_preview_encoded_sync(path, root, text, expected_revision, None)
+}
+
+/// encoding = 读到的非 UTF-8 编码（GBK 等）时按它写回，表示不了的字符拒绝；None / UTF-8 照旧写 UTF-8
+fn save_file_preview_encoded_sync(
+    path: &str,
+    root: &str,
+    text: &str,
+    expected_revision: &str,
+    encoding: Option<&str>,
+) -> Result<String, String> {
     if text.len() > PREVIEW_CAP {
         return Err("文件超过 256 KB，暂不支持在预览里保存".into());
     }
@@ -283,8 +366,12 @@ fn save_file_preview_sync(
     if !(crate::paths::path_within_path(&path_c, &root_c) || root_c == std::path::Path::new("/")) {
         return Err("路径超出项目根目录，拒绝写入".into());
     }
-    crate::profiles::atomic_write(&path_c, text)?;
-    Ok(preview_revision(text.as_bytes()))
+    let bytes = match encoding {
+        Some(label) => encode_legacy(text, label)?,
+        None => text.as_bytes().to_vec(),
+    };
+    crate::profiles::atomic_write_bytes(&path_c, &bytes)?;
+    Ok(preview_revision(&bytes))
 }
 
 /// 科研台账（纳入清单、待获取、两份 RIS、笔记索引、引文库）的整份读写上限。
@@ -336,6 +423,7 @@ fn read_research_ledger_sync(path: &str, root: &str) -> Result<FilePreviewDto, S
         &path_c.to_string_lossy(),
         &root_c.to_string_lossy(),
         LEDGER_CAP,
+        false,
     )
 }
 
@@ -356,6 +444,7 @@ fn save_research_ledger_sync(
         &path_c.to_string_lossy(),
         &root_c.to_string_lossy(),
         LEDGER_CAP,
+        false,
     )?;
     if let Some(reason) = current.read_only_reason {
         return Err(reason);
@@ -543,9 +632,10 @@ pub async fn save_file_preview(
     root: String,
     text: String,
     expected_revision: String,
+    encoding: Option<String>,
 ) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        save_file_preview_sync(&path, &root, &text, &expected_revision)
+        save_file_preview_encoded_sync(&path, &root, &text, &expected_revision, encoding.as_deref())
     })
     .await
     .map_err(|e| format!("保存文件失败: {e}"))?
@@ -992,14 +1082,19 @@ mod tests {
     }
 
     #[test]
-    fn preview_invalid_utf8_is_readonly() {
+    fn preview_non_utf8_reads_with_detected_encoding() {
+        // 2026-10-26 起：不是 UTF-8 的文本认出编码后可看可改（保存按原编码写回）；
+        // 台账通道仍按 UTF-8 严格读，非 UTF-8 只读
         let dir = tmpdir("invalid-utf8");
         let path = dir.join("note.txt");
         fs::write(&path, [b'x', 0xff]).unwrap();
         let snapshot =
             read_file_preview_sync(path.to_str().unwrap(), dir.to_str().unwrap()).unwrap();
-        assert!(snapshot.revision.is_none());
-        assert!(snapshot.read_only_reason.unwrap().contains("UTF-8"));
+        assert!(snapshot.revision.is_some());
+        assert!(snapshot.encoding.is_some());
+        let strict = read_capped_sync(path.to_str().unwrap(), dir.to_str().unwrap(), PREVIEW_CAP, false).unwrap();
+        assert!(strict.revision.is_none());
+        assert!(strict.read_only_reason.unwrap().contains("UTF-8"));
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -2281,6 +2376,56 @@ pub async fn fs_delete_path(path: String, root: String) -> Result<(), String> {
 #[cfg(test)]
 mod fsops_tests {
     use super::*;
+
+    #[test]
+    fn gbk_and_utf16_files_read_as_text_and_save_back_in_same_encoding() {
+        let dir = std::env::temp_dir().join(format!("ccode-enc-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let root = dir.to_str().unwrap().to_string();
+        // GBK：中文 Windows Excel 导出的 CSV
+        let (gbk, _, _) = encoding_rs::GBK.encode("姓名,年龄\n张三,30\n李四,28\n王五,35\n镁硫电池循环寿命测试数据\n");
+        let csv = dir.join("data.csv");
+        fs::write(&csv, &gbk).unwrap();
+        let p = read_file_preview_sync(csv.to_str().unwrap(), &root).unwrap();
+        assert!(p.text.starts_with("姓名,年龄"));
+        assert!(p.read_only_reason.is_none());
+        let enc = p.encoding.clone().unwrap();
+        assert!(enc == "GBK" || enc == "gb18030", "{enc}");
+        let rev = save_file_preview_encoded_sync(
+            csv.to_str().unwrap(),
+            &root,
+            "姓名,年龄\n赵六,40\n",
+            p.revision.as_deref().unwrap(),
+            Some(&enc),
+        )
+        .unwrap();
+        let back = fs::read(&csv).unwrap();
+        assert_eq!(encoding_rs::GBK.decode(&back).0, "姓名,年龄\n赵六,40\n");
+        // 表示不了的字符拒绝，不改文件
+        assert!(save_file_preview_encoded_sync(csv.to_str().unwrap(), &root, "😀", &rev, Some(&enc)).is_err());
+        assert_eq!(fs::read(&csv).unwrap(), back);
+        // 改用 UTF-8 保存
+        save_file_preview_encoded_sync(csv.to_str().unwrap(), &root, "😀", &rev, None).unwrap();
+        assert_eq!(fs::read_to_string(&csv).unwrap(), "😀");
+        // UTF-16LE 带 BOM（记事本「Unicode」）：不再当二进制
+        let txt = dir.join("u16.txt");
+        let mut b = vec![0xFF, 0xFE];
+        for u in "你好 hello".encode_utf16() {
+            b.extend_from_slice(&u.to_le_bytes());
+        }
+        fs::write(&txt, &b).unwrap();
+        let p = read_file_preview_sync(txt.to_str().unwrap(), &root).unwrap();
+        assert_eq!(p.encoding.as_deref(), Some("UTF-16LE"));
+        assert_eq!(p.text.trim_start_matches('\u{FEFF}'), "你好 hello");
+        save_file_preview_encoded_sync(txt.to_str().unwrap(), &root, "再见", p.revision.as_deref().unwrap(), Some("UTF-16LE")).unwrap();
+        let back = fs::read(&txt).unwrap();
+        assert_eq!(&back[..2], &[0xFF, 0xFE]);
+        // UTF-8 文件照旧没有 encoding
+        let md = dir.join("a.md");
+        fs::write(&md, "正常").unwrap();
+        assert_eq!(read_file_preview_sync(md.to_str().unwrap(), &root).unwrap().encoding, None);
+        fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn create_rename_move_duplicate_ops() {

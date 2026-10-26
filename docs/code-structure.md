@@ -1470,6 +1470,7 @@ src-tauri/src/
                              #   家目录直下系统目录标 isSystem 供前端置灰）
                              # fs_create_file / fs_rename_path / fs_move_path / fs_duplicate_path / fs_import_paths：与删除同口径的文件操作，
                              #   拖入只复制 attach_grants::user_supplied 登记过的源
+                             # read_file_preview 非 UTF-8 用 chardetng 认编码（UTF-16 认 BOM），save_file_preview 按 encoding 写回、表示不了的字拒绝；台账通道不认编码
                              # watch_file：单文件监听（非递归盯所在文件夹、只认这个文件名，300ms 防抖），预览跟随磁盘变化
   pdf.rs                     # PDF/docx 字节读取：read_pdf_bytes 白名单 + canonicalize + 上限，base64 传输
                              #   （白名单根含 ccode/tmp 粘贴图与 phone_drop 暂存区，精确路径含 attach_grants 登记的文件）；

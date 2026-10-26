@@ -471,6 +471,7 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | cfg-expr | 0.15.8 | MIT OR Apache-2.0 |
 | cfg-if | 1.0.4 | MIT OR Apache-2.0 |
 | chacha20 | 0.10.1 | MIT OR Apache-2.0 |
+| chardetng | 0.1.17 | Apache-2.0 OR MIT |
 | chrono | 0.4.45 | MIT OR Apache-2.0 |
 | chunked_transfer | 1.5.0 | MIT OR Apache-2.0 |
 | cipher | 0.4.4 | MIT OR Apache-2.0 |

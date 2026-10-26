@@ -457,6 +457,10 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-26 · 文本预览认编码：非 UTF-8 认出来可看可改、照原编码写回
+
+同批第六条。`read_file_preview` 遇非法 UTF-8 时用 chardetng 认编码（新增依赖 `chardetng` 0.1、`encoding_rs` 转为直接依赖），带 BOM 的 UTF-16 先于 NUL 嗅探放行；DTO 新增 `encoding`，版本号仍按原始字节算。`save_file_preview` 新增 `encoding` 参数：按原编码写回，表示不了的字符拒绝（不换问号），UTF-16 手写带 BOM。前端工具条编码小标记，点一下切「改用 UTF-8 保存」（标脏，保存才写）。**台账通道（read/save_research_ledger）不认编码**，非 UTF-8 照旧只读——台账是 Mesa 自己写的 UTF-8，不能被悄悄转码。随包许可清单已重新生成。
+
 ### 2026-10-26 · 文件页 / 文件树补齐新建文件、重命名、移动、复制一份、拖入
 
 同批第五条。后端 `fs_tree.rs` 新增 `fs_create_file` / `fs_rename_path` / `fs_move_path` / `fs_duplicate_path` / `fs_import_paths`，与删除同口径（项目根内、受保护路径与根本身拒绝、`validate_fs_name`、重名拒绝；只改大小写经临时名中转；复制不跟随符号链接）。**拖入只复制、只认原生拖放登记的源**：`attach_grants` 原来只登记文件，补一张「拖进来的文件夹」表，`user_supplied` 判定，前端传的任意路径不复制。移动的目标经系统选文件夹窗口选，前后端都校验在项目根内（不做树内拖拽移动——Windows 上开着原生拖放时 HTML5 拖拽不可靠）。前端 `file-ops.ts` 共用：名字输入行（新建文件 / 文件夹 / 重命名，改名默认只选主名）、改名或移走正在预览的文件时预览跟到新路径（先过未保存确认）。运行页文件树不接拖入（终端页有自己的拖放 = 贴路径）。
