@@ -377,6 +377,12 @@ export default function ProjectTree({
     const key = currentFolderKey(s.projectPath, folders, projectPaths, IS_WINDOWS);
     return key ? (rows.find((r) => pathKey(r.repoPath, IS_WINDOWS) === key)?.project ?? null) : null;
   }
+  /** 一段对话属于哪个文件夹（课题名 / 随手聊）；不在任何一个里的给 null */
+  function originOfChat(s: SessionMetaDto): string | null {
+    const key = currentFolderKey(s.projectPath, folders, projectPaths, IS_WINDOWS);
+    if (key === SCRATCH_FOLDER_KEY) return "随手聊";
+    return key ? (rows.find((r) => pathKey(r.repoPath, IS_WINDOWS) === key)?.name ?? null) : null;
+  }
   function openChat(s: SessionMetaDto, project: ProjectDto | null, split = false) {
     openConversation(s, {
       preferredProfileId: project ? projectResumeProfileId(profiles, project, s.agent) : undefined,
@@ -697,7 +703,7 @@ export default function ProjectTree({
    *  完整标题放悬停），状态点放行尾；右键改名 / 归档 / 去对话页 */
   /** 对话不缩进，左缘对齐课题行的图标（2026-10-25 用户对照 Claude 客户端：课题名降成小号灰字的分组标题，
    *  项目和对话靠字号、字色分层，不再靠缩进；原 2026-10-24 缩进到名字起点） */
-  function renderChat(s: SessionMetaDto, project: ProjectDto | null, folderName?: string) {
+  function renderChat(s: SessionMetaDto, project: ProjectDto | null, folderName?: string, origin?: string | null) {
     const key = chatKey(s);
     const full = tidySessionTitle(s).title;
     // 挂在课题下时去掉开头重复的课题名（置顶一节不给，那里看不出属于谁）
@@ -778,7 +784,7 @@ export default function ProjectTree({
           onPointerEnter={() => prefetchConversation(s)}
           onFocus={() => prefetchConversation(s)}
           aria-current={selected ? "true" : undefined}
-          title={`${full}\n${agent} · ${relTime(s.updatedAt)}${dot ? ` · ${dotTitle(dot)}` : ""}${unread ? " · 跑完了，还没看" : ""}\n点一下接着聊`}
+          title={`${full}\n${origin ? `${origin} · ` : ""}${agent} · ${relTime(s.updatedAt)}${dot ? ` · ${dotTitle(dot)}` : ""}${unread ? " · 跑完了，还没看" : ""}\n点一下接着聊`}
           className={`flex h-8 min-w-0 items-center gap-2 rounded-md pl-2 pr-1 ${
             selected || unread ? "text-l1" : "text-l3 group-hover/chat:text-l2"
           }`}
@@ -789,6 +795,16 @@ export default function ProjectTree({
           <span className="ccode-rail-text ccode-rail-fade min-w-0 flex-1 text-left">{short}</span>
         </button>
         <div className="flex shrink-0 items-center gap-0.5 pr-0.5">
+          {/* 置顶一节跨课题：行尾小字写它属于哪个课题（2026-10-26 用户：置顶的看不出是谁的）。
+              悬停 / 聚焦时让位给 ⋯，标题宽度大致不变；课题名长了自己截断，不挤标题 */}
+          {origin && (
+            <span
+              className="max-w-[6.5rem] truncate pl-1 pr-1.5 text-micro text-l4 group-hover/chat:hidden group-focus-within/chat:hidden"
+              data-chat-origin
+            >
+              {origin}
+            </span>
+          )}
           {/* 运行状态光标（2026-10-24 用户：绿点换成 Mesa 的光标）。有光标才占一格、标题在它前面淡出；
               没光标的行标题写到行尾（2026-10-26 用户：右边这一列要干净，同 Claude 客户端侧栏；空格位让标题早早淡掉、右边空一截）；Mesa 外在跑的悬停时不让位，⋯ 出现在它右边。
               干活时的呼吸在悬停时停下、常亮（App.css .ccode-run-caret） */}
@@ -1564,7 +1580,7 @@ export default function ProjectTree({
               <span className={RAIL_SECTION_LABEL}>置顶</span>
             </div>
             <div role="group" aria-label="置顶的对话" className="space-y-px">
-              {pinnedList.map((s) => renderChat(s, projectOfChat(s)))}
+              {pinnedList.map((s) => renderChat(s, projectOfChat(s), undefined, originOfChat(s)))}
             </div>
           </div>
         )}

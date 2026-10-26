@@ -715,3 +715,24 @@ test("随手聊不列空对话；节头 ⋯ 能去对话页看全部随手聊、
     await view.close();
   }
 });
+
+test("置顶一节的对话行尾小字写它属于哪个课题（随手聊写「随手聊」），悬停时让位给 ⋯；课题下的行不写（2026-10-26）", async () => {
+  const view = await renderTree();
+  try {
+    assert.equal(view.host.querySelector("[data-chat-origin]"), null, "没置顶时不出");
+    await view.act(async () => view.button("「镁硫电池第3篇精读」的更多操作").click());
+    await view.act(async () => view.button("置顶").click());
+    await view.act(async () => view.button("随手聊").click());
+    await view.act(async () => view.button("「截图区块内容询问」的更多操作").click());
+    await view.act(async () => view.button("置顶").click());
+    const pinned = view.host.querySelector('[aria-label="置顶的对话"]')!;
+    const origins = Array.from(pinned.querySelectorAll("[data-chat-origin]")).map((e) => e.textContent);
+    assert.deepEqual(origins.sort(), ["综述流程测试", "随手聊"].sort());
+    const tag = pinned.querySelector("[data-chat-origin]")!;
+    assert.match(tag.className, /group-hover\/chat:hidden/, "悬停时让位给 ⋯");
+    assert.match(view.button("镁硫电池第3篇精读").title, /综述流程测试 · /, "悬停里也写");
+    assert.equal(view.chatGroup("综述流程测试")!.querySelector("[data-chat-origin]"), null);
+  } finally {
+    await view.close();
+  }
+});
