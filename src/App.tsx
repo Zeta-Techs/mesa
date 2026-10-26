@@ -902,6 +902,11 @@ function App() {
       else if (e.payload === "new-chat") void openQuickChat();
       else if (e.payload === "palette") setPaletteOpen((v) => !v);
       else if (e.payload === "feedback") setFeedbackOpen(true);
+      else if (e.payload === "close-chat") {
+        // ⌘W：只在运行页、有正看着的对话时关它；别的页面什么也不做（不退回关窗口，关窗口是 ⇧⌘W）
+        const st = useAppStore.getState();
+        if (st.page === "terminal" && st.terminalActiveTabId) st.requestCloseTab(st.terminalActiveTabId);
+      }
     }).then((f) => {
       if (cancelled) f();
       else un = f;

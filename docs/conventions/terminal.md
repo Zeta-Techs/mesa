@@ -441,6 +441,13 @@
 - **标签条退场（2026-10-24 侧栏挂对话第二期，用户「按计划开修」）**：运行页不再画标签条，标签只是运行时容器，**开着的东西列在侧栏**
   （design-system「侧栏挂对话」第二期）。顶上是对话头，只写 `focusedId` 那段；关标签只剩两条路：侧栏开着的行 ×（新对话 / 终端）、对话 ⋯「停下 Agent」——
   都经 store `closeTabReq` 交给运行页 `requestCloseTab`（在跑的照旧确认；对话头 × 同日三改撤掉）。
+- **关掉一段对话（2026-10-26 用户定，三处入口同一条路）**：①侧栏对话行悬停 ×（顶替运行光标那格，design-system 同日条）与 ⋯「关掉这段对话」；
+  ②对话头 ⋯ 最后一项「关掉这段对话」（行尾写快捷键，主要让人发现它）；③快捷键——macOS ⌘W 是菜单「文件 → 关闭对话」加速键（`lib.rs` `close-chat` →
+  `menu:action` → App.tsx 取 `terminalActiveTabId`，即 `focusedId`，分屏时是光标那一侧），不在运行页时什么也不做、**不退回关窗口**；预置 `close_window()`
+  的键固定 ⌘W 改不了，自建「关闭窗口」⇧⌘W（`close-window`，走 CloseRequested，关窗存盘照旧）。Windows / Linux 用 Ctrl+Shift+W（`closeChatCombo`，
+  TerminalPage capture 阶段拦在 xterm 之前）——**不用 Ctrl+W**，那是终端里删前一个词。固定不可改，列在设置页固定快捷键。
+  **先问的口径**（`closeAsksFirst`）：只有 Agent 在干活 / 等你确认、或注意力还不知道（刚起来、没联动上，可能正在干活）时弹确认；明确回完话在等下一句的直接关
+  ——记录在侧栏，点开发一句就接回。所有关闭入口（含侧栏 ×、⌘W）共用这一条，不分入口另写规则。
   **项目说明附在第一句前**（同日三改，用户：「这个项目说明就是对话注入吧，相应的设置是不是要改」）：发第一句才启动的那条路（`sendMessage` 末段）
   按当时的 cwd 现查——是已添加的项目就按它的「项目说明」三态（原对话注入，`loadProjectContextPack` kind session）拼好附在第一句前；项目行 ＋、新对话在输入框里换到项目
   一视同仁，不再由入口预先塞包（`launchPack` 撤掉）。切换：侧栏点行 / `focusTab`、⌃Tab / ⌃⇧Tab（MRU，capture 阶段拦在 xterm 之前）。

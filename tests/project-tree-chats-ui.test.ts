@@ -436,17 +436,20 @@ test("开着、列表里还没有的挂在文件夹最上面（新对话 / 终�
   }
 });
 
-test("对话 ⋯ 里能在右侧分屏打开；在跑的还能停下 Agent", async () => {
+test("对话 ⋯ 里能在右侧分屏打开；开着的能关掉（行尾 × 与菜单同一条路）", async () => {
   const closed: string[] = [];
   const view = await renderTree({ requestCloseTab: (id: string) => closed.push(id) });
   try {
-    await view.act(async () => view.button("「镁硫电池第5篇精读」的更多操作").click());
-    await view.act(async () => view.button("停下 Agent").click());
+    await view.act(async () => view.button("关掉「镁硫电池第5篇精读」").click());
     assert.deepEqual(closed, ["t1"]);
+    await view.act(async () => view.button("「镁硫电池第5篇精读」的更多操作").click());
+    await view.act(async () => view.button("关掉这段对话").click());
+    assert.deepEqual(closed, ["t1", "t1"]);
+    assert.equal(view.host.querySelector('[aria-label="关掉「镁硫电池第2篇精读」"]'), null, "没开着的行没有 ×");
     await view.act(async () => view.button("「镁硫电池第2篇精读」的更多操作").click());
     assert.ok(
-      !Array.from(view.host.ownerDocument.querySelectorAll("button")).some((b) => b.textContent?.trim() === "停下 Agent"),
-      "没开着的不给停下",
+      !Array.from(view.host.ownerDocument.querySelectorAll("button")).some((b) => b.textContent?.trim() === "关掉这段对话"),
+      "没开着的不给关",
     );
     await view.act(async () => view.button("在右侧分屏打开").click());
     const call = view.calls.find((c) => c[0] === "openConversation")!;

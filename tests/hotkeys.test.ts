@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   captureDecision,
+  closeChatCombo,
   comboFromEvent,
   comboLabel,
   DEFAULT_FOCUS_RAIL_HOTKEY,
@@ -167,4 +168,13 @@ test("聊天 / 终端切换：默认 ⌘⇧T / Ctrl+Shift+T，按住 Shift 时 k
     action: "save",
     combo: DEFAULT_TOGGLE_SURFACE_HOTKEY,
   });
+});
+
+test("关掉这段对话：macOS ⌘W，其余平台 Ctrl+Shift+W（Ctrl+W 留给终端删词），并列在固定快捷键里", () => {
+  assert.equal(closeChatCombo(true), "mod+w");
+  assert.equal(closeChatCombo(false), "mod+shift+w");
+  const row = FIXED_HOTKEYS.find((h) => h.label === "关掉这段对话");
+  assert.ok(row);
+  assert.equal(row.mac, "⌘W");
+  assert.equal(row.other, "Ctrl+Shift+W");
 });

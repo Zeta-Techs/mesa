@@ -59,7 +59,7 @@ test("菜单项：未到告警线也可用（方便提前处理），没有可�
 
 test("拦路：Mesa 终端里在跑 / 最近一分钟有写入都不能动手", () => {
   assert.equal(slimBlockReason(inspect(), false), null);
-  assert.match(slimBlockReason(inspect(), true)!, /正在 Mesa 里运行.*停下 Agent/);
+  assert.match(slimBlockReason(inspect(), true)!, /正在 Mesa 里运行.*关掉这段对话/);
   assert.match(slimBlockReason(inspect({ recentlyWritten: true }), false)!, /最近一分钟/);
 });
 

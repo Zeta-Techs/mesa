@@ -34,6 +34,7 @@ import {
   DEFAULT_TOGGLE_SURFACE_HOTKEY,
   IS_MAC,
   IS_WINDOWS,
+  closeChatCombo,
   comboLabel,
   eventMatchesCombo,
 } from "../hotkeys";
@@ -170,6 +171,7 @@ import {
 } from "../terminal-geometry";
 import { toast } from "../toast";
 import { idleStopPass } from "../idle-stop";
+import { closeAsksFirst } from "../run-caret";
 import { RIGHT_DEFAULT_PX, RIGHT_MIN_PX, runLayout } from "../run-layout";
 import { sidebarChatTitle } from "../sidebar-chats";
 import { autoTitleMilestone, tidySessionTitle } from "../session-title";
@@ -258,6 +260,7 @@ import {
   FileDiff,
   MoreHorizontal,
   Terminal as TerminalIcon,
+  X,
 } from "lucide-react";
 import {
   PERMISSION_TIERS,
@@ -9636,18 +9639,18 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     }
   }, [activeId, splitActive, splitTabId, statuses, visible]);
 
-  /** 关闭标签守卫：仅「agent 还在跑」的标签弹确认（shell/已退出/未启动不弹）。
-      存活判定以后端 pty_has_running_process 为准；命令不存在或报错时守卫静默跳过，不阻塞关闭。 */
+  /** 关闭标签守卫：只有 Agent 在干活 / 等你确认（或还不知道）的标签弹确认；回完话在等下一句的、shell / 已退出 / 未启动的直接关
+      （closeAsksFirst）。存活判定以后端 pty_has_running_process 为准；命令不存在或报错时守卫静默跳过，不阻塞关闭。 */
   async function requestCloseTab(id: string) {
     const s = statusesRef.current[id];
-    if (s?.running && s.ptyId) {
+    if (s?.running && s.ptyId && closeAsksFirst(s.attention)) {
       try {
         const alive = await invoke<boolean>("pty_has_running_process", {
           ptyId: s.ptyId,
         });
         if (
           alive &&
-          !(await confirmDialog("这段对话的 AI 还在运行，确认停下它？\n\n记录还在侧栏，再点开发一句就接回。", {
+          !(await confirmDialog("这段对话的 Agent 还在干活或在等你确认，关掉会停下它。确认关掉？\n\n记录还在侧栏，再点开发一句就接回。", {
             danger: true,
           }))
         )
@@ -9809,6 +9812,25 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [visible, toggleSurfaceCombo]);
+
+  // 关掉正看着的这段（Windows / Linux Ctrl+Shift+W；分屏时是光标所在那一侧）。macOS 的 ⌘W 是「文件 → 关闭对话」
+  // 菜单加速键，先被菜单接走、经 menu:action 到 App.tsx，这里不再接，免得一次按键关两回
+  const focusedIdRef = useRef(focusedId);
+  focusedIdRef.current = focusedId;
+  const requestCloseTabRef = useRef(requestCloseTab);
+  requestCloseTabRef.current = requestCloseTab;
+  useEffect(() => {
+    if (!visible || IS_MAC) return;
+    const combo = closeChatCombo(false);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.isComposing || !eventMatchesCombo(e, combo)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      void requestCloseTabRef.current(focusedIdRef.current);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [visible]);
 
   function doCloseTab(id: string) {
     const idx = tabs.findIndex((t) => t.id === id);
@@ -10184,7 +10206,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
               }}
               aria-haspopup="menu"
               aria-expanded={headMenu != null}
-              title="更多：分屏对照、查找终端输出…"
+              title="更多：分屏对照、查找终端输出、关掉这段对话…"
               aria-label="更多操作"
               className={`flex size-7 items-center justify-center rounded-md transition-colors ${
                 headMenu ? "bg-hover text-l1" : "text-l4 hover:bg-hover hover:text-l2"
@@ -10236,6 +10258,15 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                       },
                     ]
                   : []),
+                // 关掉放最后、和上面隔开：停下 Agent 不是查看类动作（2026-10-26 用户定三处入口之一，主要让人发现快捷键）
+                { separator: true },
+                {
+                  label: "关掉这段对话",
+                  icon: X,
+                  hint: comboLabel(closeChatCombo(IS_MAC)),
+                  title: "停下这段对话的 Agent、收起它；记录还在侧栏，再点开发一句就接回（在干活或等你确认的会先问你）",
+                  onSelect: () => void requestCloseTab(focusedId),
+                },
               ]}
             />
           )}

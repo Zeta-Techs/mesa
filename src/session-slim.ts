@@ -47,7 +47,7 @@ export function slimBlockReason(
   runningInMesaTab: boolean,
 ): string | null {
   if (runningInMesaTab) {
-    return "这条对话正在 Mesa 里运行。先在侧栏这段对话的 ⋯ 里「停下 Agent」，再来瘦身。";
+    return "这条对话正在 Mesa 里运行。先关掉这段对话（侧栏这一行行尾的 ×，或 ⋯ 里「关掉这段对话」），再来瘦身。";
   }
   if (i.recentlyWritten) {
     return "这条对话最近一分钟内还有写入，多半有进程正在使用它（Claude 客户端或别的终端）。先在那边停止并退出这条对话，再来瘦身。";

@@ -28,6 +28,13 @@ export const DEFAULT_FOCUS_RAIL_HOTKEY = "mod+0";
  *  所以不走 globalHotkeyAllowed：带 Shift 的 Ctrl+Shift+T 不是 shell / CLI 的键（Ctrl+T 照常进终端） */
 export const DEFAULT_TOGGLE_SURFACE_HOTKEY = "mod+shift+t";
 
+/** 关掉正看着的这段对话（2026-10-26 用户定）：macOS ⌘W（「关闭窗口」挪到 ⇧⌘W，菜单 lib.rs）；
+ *  Windows / Linux 用 Ctrl+Shift+W——Ctrl+W 是终端里删前一个词，不能抢（同 Windows Terminal 关标签）。
+ *  固定不可改：macOS 这一条是菜单加速键，和 ⌘N 一样写死 */
+export function closeChatCombo(isMac: boolean): string {
+  return isMac ? "mod+w" : "mod+shift+w";
+}
+
 /**
  * 全局快捷键这次按下去该不该由 Mesa 接：Windows / Linux 上 mod 是 Ctrl，焦点在终端里时 Ctrl+N（下一条历史）、
  * Ctrl+0 这类组合是给 shell / Agent 的，不能抢；macOS 的 mod 是 ⌘，终端里也照接。`inTerminal` = 焦点在 xterm 里
@@ -50,6 +57,12 @@ export const FIXED_HOTKEYS: readonly { label: string; mac: string; other: string
     hint: "整个界面一起放大缩小（80%–150%），恢复 100% 在设置 → 外观「界面大小」；Windows 上光标在终端里时这组键留给终端",
   },
   { label: "终端里查找", mac: "⌘F", other: "Ctrl+F", hint: "光标在终端里时" },
+  {
+    label: "关掉这段对话",
+    mac: "⌘W",
+    other: "Ctrl+Shift+W",
+    hint: "在运行页里按：停下正看着的这段（分屏时是光标所在那一侧），记录还在侧栏；在干活或等你确认的会先问你。macOS 关窗口改成 ⇧⌘W",
+  },
 ];
 
 /**

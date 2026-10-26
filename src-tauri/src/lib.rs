@@ -285,7 +285,16 @@ pub fn run() {
                 let new_chat_item = MenuItemBuilder::with_id("new-chat", "新对话")
                     .accelerator("CmdOrCtrl+N")
                     .build(app)?;
-                let file_menu = SubmenuBuilder::new(app, "文件").item(&new_chat_item).build()?;
+                // 文件 → 关闭对话（2026-10-26 用户定）：⌘W 关正看着的这段对话，同浏览器 / VS Code 关标签。
+                // 原先 ⌘W 是「关闭窗口」，顺手一按整个应用没了——关窗口改 ⇧⌘W（下方窗口菜单）。
+                // 只发事件，前端判断：不在运行页 / 没开着对话时什么也不做（不退回关窗口）
+                let close_chat_item = MenuItemBuilder::with_id("close-chat", "关闭对话")
+                    .accelerator("CmdOrCtrl+W")
+                    .build(app)?;
+                let file_menu = SubmenuBuilder::new(app, "文件")
+                    .item(&new_chat_item)
+                    .item(&close_chat_item)
+                    .build()?;
                 let edit_menu = SubmenuBuilder::new(app, "编辑")
                     .undo()
                     .redo()
@@ -295,13 +304,18 @@ pub fn run() {
                     .paste()
                     .select_all()
                     .build()?;
+                // 预置 close_window() 的加速键固定 ⌘W，改不了键，只能自建一项：⇧⌘W，行为与红绿灯关窗相同
+                // （走 CloseRequested，关窗存盘、在跑确认那一套照旧）
+                let close_window_item = MenuItemBuilder::with_id("close-window", "关闭窗口")
+                    .accelerator("CmdOrCtrl+Shift+W")
+                    .build(app)?;
                 let window_menu = SubmenuBuilder::new(app, "窗口")
                     .minimize()
                     .maximize()
                     .separator()
                     .fullscreen()
                     .separator()
-                    .close_window()
+                    .item(&close_window_item)
                     .build()?;
                 let docs_item =
                     MenuItemBuilder::with_id("docs", "Mesa 文档").build(app)?;
@@ -329,6 +343,20 @@ pub fn run() {
                     }
                     "new-chat" => {
                         let _ = app_handle.emit("menu:action", "new-chat");
+                    }
+                    "close-chat" => {
+                        let _ = app_handle.emit("menu:action", "close-chat");
+                    }
+                    "close-window" => {
+                        // 键盘焦点所在的窗口；取不到就关主窗口
+                        let target = app_handle
+                            .webview_windows()
+                            .into_values()
+                            .find(|w| w.is_focused().unwrap_or(false))
+                            .or_else(|| app_handle.get_webview_window("main"));
+                        if let Some(w) = target {
+                            let _ = w.close();
+                        }
                     }
                     "docs" => {
                         use tauri_plugin_opener::OpenerExt;

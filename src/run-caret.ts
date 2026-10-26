@@ -24,6 +24,12 @@ export function caretOfAttention(
   return attention === "confirm" ? "confirm" : attention === "working" ? "working" : "idle";
 }
 
+/** 关掉一段开着的对话（侧栏 ×、⌘W、⋯ 里「关掉这段对话」）要不要先问（2026-10-26 用户：只在干活 / 等确认时问）。
+ *  明确做完了（done）直接关——记录在侧栏，点开发一句就接回；还不知道的（刚起来、没联动上）可能正在干活，照样问 */
+export function closeAsksFirst(attention: "done" | "working" | "confirm" | null | undefined): boolean {
+  return attention !== "done";
+}
+
 /** 几个合成一个（项目头、活动芯片）：有等确认的 > 有在干活的 > 都闲着；一个都没有为 null */
 export function strongestCaret(states: Iterable<RunCaretState | null | undefined>): RunCaretState | null {
   let out: RunCaretState | null = null;
