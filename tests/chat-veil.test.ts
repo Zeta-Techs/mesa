@@ -18,3 +18,9 @@ test("遮着只改透明度不动排版；露出淡入，减弱动态效果时�
   assert.match(veilClass(false), /motion-reduce:transition-none/);
   assert.doesNotMatch(veilClass(true), /hidden|invisible/);
 });
+
+test("聊天层：人刚发的第一句不遮（等回复中，或只有人说的话）", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../src/components/ChatSurface.tsx", import.meta.url), "utf8");
+  assert.match(src, /loading \|\| shownMessages\.every\(\(m\) => m\.role === "user"\)/);
+});

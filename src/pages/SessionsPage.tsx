@@ -76,7 +76,7 @@ import { useAutoLoadOlder } from "../auto-load-older";
 import { progressiveLimit, useProgressiveRows } from "../progressive-rows";
 import { useReadingAnchor } from "../reading-anchor";
 import { useSettleVeil, veilClass } from "../chat-veil";
-import { slidOutOfWindow } from "../chat-handoff";
+import { mergeConversationPages, slidOutOfWindow } from "../chat-handoff";
 import RunCaret from "../components/RunCaret";
 import { caretOfAttention, type RunCaretState } from "../run-caret";
 import GitPanel from "../components/GitPanel";
@@ -1072,9 +1072,11 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
           })
             .then((rest) => {
               if (request !== conversationRequestRef.current) return;
-              const latest = messagesRef.current.slice(olderCountRef.current);
-              olderCountRef.current = rest.messages.length;
-              setMessages([...rest.messages, ...latest]);
+              // 接的这会儿轮询可能已刷新过、并进了滑出窗口的几条：在现有列表前面接，不按旧长度截
+              const shown = messagesRef.current;
+              const merged = mergeConversationPages(rest.messages, shown);
+              olderCountRef.current += merged.length - shown.length;
+              setMessages(merged);
               setConversationCursor(null);
             })
             .catch(() => {

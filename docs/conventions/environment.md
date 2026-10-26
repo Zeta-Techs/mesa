@@ -147,6 +147,8 @@
   `manualChunks` 新增大 vendor 块时，入口也要用的小件（`vite/preload-helper`、`dompurify` 这类）先单独成块，否则会被收进大块、
   入口为一个小函数静态带上整块（当日实证：入口为 `__vitePreload` 带上 3.9MB monaco、为 dompurify 带上 2.6MB mermaid）。
   挂在 App 上的弹层（如「从手机添加」→ 文件预览弹层）里的预览组件一律懒加载。
+  **懒加载 / 预载的第三方 CSS 可能带全局规则**：`pdf_viewer.css` 有 `:root { color-scheme: light dark }`，插在 App.css 之后同权重会盖掉应用的
+  配色模式（原生控件改跟系统明暗走）；App.css 用 `:root:root` 钉住（2026-10-26）。新增预载 / 懒加载的库先查它的 CSS 有没有 `:root`、`html`、`body`、`*` 规则。
 - **dev 端口为 17575**（`vite.config.ts` + `tauri.conf.json` devUrl 两处同步；勿改回 1420——Codex 桌面版 NetworkService 占用）。vite 撞已占端口静默退出；**stdin EOF 也自杀**——后台拉起必须 `tail -f /dev/null | npm run tauri:dev`。
   **agent 不得自行改端口、加 `--port`/`--strictPort` 参数或另起配置外的 dev 实例**；17575 被占时先报出占用方（Windows 用
   `netstat -ano | findstr :17575`）交用户处理，不静默换端口。

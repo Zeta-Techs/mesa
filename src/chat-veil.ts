@@ -29,11 +29,14 @@ export function useSettleVeil(
   scrollRef: RefObject<HTMLElement | null>,
   hasContent: boolean,
   loadingOlder: () => boolean,
+  /** 这批内容不是「摆出来的记录」（如新对话里人刚发的第一句）：直接露出，不遮 */
+  skip = false,
 ): boolean {
   const [settled, setSettled] = useState(false);
   // 内容清空（换了一段、重开）就重新来一次；渲染期间按条件调整（React「根据 props 调整 state」写法）
   if (!hasContent && settled) setSettled(false);
-  const veiled = hasContent && !settled;
+  if (hasContent && !settled && skip) setSettled(true);
+  const veiled = hasContent && !settled && !skip;
   const loadingRef = useRef(loadingOlder);
   loadingRef.current = loadingOlder;
   useEffect(() => {

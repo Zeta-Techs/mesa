@@ -470,6 +470,8 @@ export default function ChatSurface({
     !emptyLayout && shownMessages.length > 0,
     // 自己在接更早一页，或上层正在后台把更早的记录一次接齐
     () => loadingOlderRef.current || loadingOlder,
+    // 新对话里人刚发的第一句（等回复中，或只有人说的话）：不是摆出来的记录，立刻露出，不能让自己发的话晚半秒才出现
+    loading || shownMessages.every((m) => m.role === "user"),
   );
   const projectPaths = useAppStore((s) => s.projectPaths);
   const recentRepos = useAppStore((s) => s.recentRepos);

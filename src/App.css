@@ -671,6 +671,16 @@ body {
   color-scheme: light;
 }
 
+/* pdf_viewer.css 自带一条全局 :root { color-scheme: light dark }，PDF 阅读那一块按需加载（启动后空闲时也会预载）
+   时插在本文件之后，同权重后到的会盖掉上面两条，原生控件改跟系统明暗走（2026-10-26 复查发现）。
+   用双 :root 抬一档权重，把上面两条的结果钉住：其余平台恒为 dark，Windows 浅色主题为 light */
+:root:root {
+  color-scheme: dark;
+}
+:root:root[data-platform="windows"][data-theme$="-light"] {
+  color-scheme: light;
+}
+
 .ccode-app-shell {
   /* 桌面磨砂（macOS 菜单材质 Menu / Windows Mica）从窗口底透上来。
      shell 本身不铺实心底，罩色只落在标题栏和侧栏；主画布仍是不透明面板。
