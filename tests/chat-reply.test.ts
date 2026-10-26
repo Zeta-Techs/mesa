@@ -153,6 +153,20 @@ test("回复里提到的本机图片给图片卡：带目录的路径才认，�
   assert.deepEqual(mentionedImageFiles("没有图片的回复。"), []);
 });
 
+// 2026-10-26 用户截图：先说「已生成 `mesa_probe/red.png`」再 ![红色方块](mesa_probe/red.png)，同一张图出了两张
+test("正文里提到的图已经用 ![]() 内嵌过，就不再在下面另出一张", () => {
+  const text = "已生成 `mesa_probe/red.png`（64×64 纯红 PNG，仅用标准库）：\n\n![红色方块](mesa_probe/red.png)";
+  assert.deepEqual(mentionedImageFiles(text), []);
+  // 写法不同（./ 前缀、反斜杠、尖括号、带标题、%20）也认作同一张
+  assert.deepEqual(mentionedImageFiles("见 .\\out\\ab.png\n![图](<./out/ab.png> \"标题\")"), []);
+  assert.deepEqual(mentionedImageFiles("见 out/a%20b.png 与 out/c.png\n![图](out/a%20b.png)"), ["out/c.png"]);
+  // 调用方给解析函数时，相对与绝对路径也对得上
+  const resolve = (p: string) => (p.startsWith("C:") ? p.replace(/\\/g, "/") : `C:/proj/${p.replace(/\\/g, "/")}`);
+  assert.deepEqual(mentionedImageFiles("已存到 C:\\proj\\figs\\x.png\n![x](figs/x.png)", resolve), []);
+  // 内嵌的是别的图，提到的这张照常出卡
+  assert.deepEqual(mentionedImageFiles("另存了 figs/y.png\n![x](figs/x.png)"), ["figs/y.png"]);
+});
+
 test("反引号里的中文说法按正文排，带代码符号的仍是代码", () => {
   for (const t of ["随手聊", "完全访问", "接着做 Ccode", "解释一个概念"]) assert.equal(isProseCodeSpan(t), true, t);
   for (const t of ["glm-5.3-flash", "+", "↑", "notes/笔记.md", "f(中文)", "key=值", "npm test"]) {

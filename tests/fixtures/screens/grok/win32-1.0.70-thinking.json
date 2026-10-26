@@ -1,0 +1,52 @@
+{
+ "agent": "grok",
+ "cliVersion": "1.0.70",
+ "platform": "win32",
+ "source": "chat-capture ask（假网关 E2E_THINK_FILE 慢慢流出长思考）",
+ "note": "思考中：│ 竖线框里滚动显示思考原文（开头折成「…」），下面转圈「| Thinking… 6.1s」。思考不进回复预览，另读成原样的思考（去竖线、头一行与「…」，折行接回成段）",
+ "rows": [
+  "",
+  "  ~/work                                                                           1.4K / 256K │ [Dashboard]",
+  "",
+  "",
+  "     > TRIGGER_THINK TRIGGER_SLOW 讲一段                                                           2:58 PM",
+  "",
+  "",
+  "  │  ♦ Thinking…",
+  "  │",
+  "  │  …",
+  "  │  rows. Most people count table rows including the header, but the risk of being judged short is worse",
+  "  │  than one extra row. Fourth, a python code block with a # comment and a line starting with def, plus a",
+  "  │  code block with no language. Fifth, a qu",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "    | Thinking… 6.1s                                                                      6.2s ↓1.42k [stop]",
+  "",
+  "  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
+  "  │ >                                                                                                      │",
+  "  ╰─────────────────────────────────────────────────────────────────────────────────────────── e2e-picked ─╯",
+  "",
+  "  Shift+Tab:mode  │  Ctrl+c:cancel  │  Ctrl+x:shortcuts",
+  ""
+ ],
+ "expect": {
+  "liveReply": null,
+  "thinking": [
+   "rows. Most people count table rows including the header, but the risk of being judged short is worse than one extra row. Fourth, a python code block with a # comment and a line starting with def, plus a code block with no language. Fifth, a qu"
+  ],
+  "menu": null
+ }
+}

@@ -6,7 +6,7 @@
 import { parseTuiMenu } from "../../src/tui-menu.ts";
 import { parseClaudeAsk } from "../../src/tui-ask.ts";
 import { parseTrustPrompt } from "../../src/trust-prompt.ts";
-import { extractLiveReply, terminalHasInputBox } from "../../src/live-reply.ts";
+import { extractLiveReply, extractLiveThinking, terminalHasInputBox } from "../../src/live-reply.ts";
 
 export interface ScreenFixture {
   agent: string;
@@ -22,6 +22,8 @@ export interface ScreenFixture {
     menu?: { question: string | null; options: string[]; selected: number } | null;
     trust?: { options: string[]; selected: number; yesIndex: number; noIndex: number } | null;
     liveReply?: string[] | null;
+    /** 正在想的那一框（live-reply.ts extractLiveThinking，折行已接回成段） */
+    thinking?: string[] | null;
     inputBox?: boolean | null;
     /** Claude 提问表单（tui-ask.ts，不看颜色所以读不出当前题）：问句、单选 / 多选、选项名、光标能停的行 */
     ask?: { question: string; multiSelect: boolean; options: string[]; rows: string[] } | { review: true; answers: number } | null;
@@ -33,13 +35,15 @@ export function readScreen(agent: string, rows: string[], keys: readonly (keyof 
   const out: ScreenFixture["expect"] = {};
   for (const k of keys) {
     if (k === "menu") {
-      const m = parseTuiMenu(rows);
+      const m = parseTuiMenu(rows, undefined, agent);
       out.menu = m && { question: m.question, options: m.options, selected: m.selected };
     } else if (k === "trust") {
       const t = parseTrustPrompt(rows);
       out.trust = t && { options: t.options, selected: t.selected, yesIndex: t.yesIndex, noIndex: t.noIndex };
     } else if (k === "liveReply") {
       out.liveReply = extractLiveReply(rows, agent)?.lines ?? null;
+    } else if (k === "thinking") {
+      out.thinking = extractLiveThinking(rows, agent);
     } else if (k === "inputBox") {
       out.inputBox = terminalHasInputBox(rows, agent);
     } else if (k === "ask") {

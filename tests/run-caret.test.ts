@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { caretOfAttention, closeAsksFirst, strongestCaret } from "../src/run-caret.ts";
+import { caretOfAttention, closeAsksFirst, strongestCaret, withUnread } from "../src/run-caret.ts";
 
 test("一个开着的 Agent：等确认 / 干活照注意力，做完了或还不知道按闲着", () => {
   assert.equal(caretOfAttention("confirm"), "confirm");
@@ -23,4 +23,18 @@ test("关掉开着的对话：只有明确回完话的直接关，干活 / 等�
   assert.equal(closeAsksFirst("confirm"), true);
   assert.equal(closeAsksFirst(null), true);
   assert.equal(closeAsksFirst(undefined), true);
+});
+
+test("做完了没看：闲着或进程已收掉换成蓝光标，又在干活 / 等确认时照旧", () => {
+  assert.equal(withUnread("idle", true), "unread");
+  assert.equal(withUnread(null, true), "unread");
+  assert.equal(withUnread("working", true), "working");
+  assert.equal(withUnread("confirm", true), "confirm");
+  assert.equal(withUnread("idle", false), "idle");
+  assert.equal(withUnread(null, false), null);
+});
+
+test("几个合成一个时没看的排在干活前面、等确认后面", () => {
+  assert.equal(strongestCaret(["working", "unread", "idle"]), "unread");
+  assert.equal(strongestCaret(["unread", "confirm"]), "confirm");
 });

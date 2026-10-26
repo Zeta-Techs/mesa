@@ -1,0 +1,32 @@
+{
+ "agent": "qwen",
+ "cliVersion": "0.26.1",
+ "platform": "win32",
+ "source": "用户截图（2026-10-26，按截图抄写）",
+ "note": "自动模式分类器不可用时，Qwen 在「否」前面插一项「Switch to Default Mode and allow once (recommended)」，默认高亮停在「否」；旁路只收允许 / 拒绝，聊天层要照这三项出卡",
+ "rows": [
+  "  > 在当前目录依次完成 mesa_probe 的七步，每一步用一句话汇报",
+  "  ? 运行命令 python mesa_probe\\hello.py (运行 hello.py 打印问候与时间) ←",
+  "",
+  "     python mesa_probe\\hello.py",
+  "",
+  "   允许执行：'python'？",
+  "",
+  "     1. 是，允许一次",
+  "     2. Switch to Default Mode and allow once (recommended)",
+  "   › 3. 否，建议更改 (esc)",
+  "",
+  "  o Grep 'hello' in mesa_probe"
+ ],
+ "expect": {
+  "menu": {
+   "question": "允许执行：'python'？",
+   "options": [
+    "是，允许一次",
+    "Switch to Default Mode and allow once (recommended)",
+    "否，建议更改 (esc)"
+   ],
+   "selected": 2
+  }
+ }
+}

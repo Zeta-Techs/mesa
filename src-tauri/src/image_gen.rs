@@ -807,21 +807,24 @@ pub fn save_images(images: &[GenImage], out: &Path) -> Result<Vec<PathBuf>, Stri
 
 // ===== helper 定位与 PTY 注入 =====
 
-/// 随包 helper（mesa_helper）的路径：打包版与主程序同目录（Tauri sidecar 去掉 triple 后缀），
-/// 开发态在 target/debug/。试跑 `image --probe` 认得出图子命令才算数（旧 helper 不认）。
+/// 随包 helper（mesa_helper）的路径。试跑 `image --probe` 认得出图子命令才算数（旧 helper 不认）。
 pub fn helper_exe() -> Option<PathBuf> {
     use std::sync::OnceLock;
     static CACHE: OnceLock<Option<PathBuf>> = OnceLock::new();
-    CACHE.get_or_init(find_helper).clone()
+    CACHE.get_or_init(|| find_bundled_helper("image")).clone()
 }
 
-fn find_helper() -> Option<PathBuf> {
+/// 找随包 helper 并试跑 `<mode> --probe`（出图与 Windows 原生 hook 共用，免得两处查找口径走散）。
+/// 打包版：与主程序同目录（Tauri sidecar 去掉 triple 后缀）。开发态：target/debug/mesa_helper(.exe)
+/// 在 Windows 上会被 tauri-build 的 0 字节占位反复覆盖，`cargo build --bin mesa_helper` 的真身留在 deps/；
+/// 测试二进制本身就在 deps/，再往上找一层。
+pub(crate) fn find_bundled_helper(mode: &str) -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
     let ext = if cfg!(windows) { ".exe" } else { "" };
     let triple = env!("TAURI_ENV_TARGET_TRIPLE");
     let names = [format!("mesa_helper{ext}"), format!("mesa_helper-{triple}{ext}")];
-    let dirs = [Some(dir.to_path_buf()), dir.parent().map(Path::to_path_buf)];
+    let dirs = [Some(dir.to_path_buf()), Some(dir.join("deps")), dir.parent().map(Path::to_path_buf)];
     for d in dirs.into_iter().flatten() {
         for name in &names {
             let p = d.join(name);
@@ -829,7 +832,7 @@ fn find_helper() -> Option<PathBuf> {
                 continue;
             }
             let probe = crate::process::background_command(&p)
-                .args(["image", "--probe"])
+                .args([mode, "--probe"])
                 .stdin(std::process::Stdio::null())
                 .output();
             if probe.is_ok_and(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "ok") {

@@ -129,6 +129,10 @@ node --experimental-strip-types scripts/e2e-model-routing/capture-check.ts "$(cy
 
 **多行消息**：`REPLY_PROMPT` 里写 `\n`（字面两个字符）就发两行；子进程开了 bracketed paste（结果里 `bracketed_paste`）时照 Mesa 包成一次粘贴。
 
+**长思考（2026-10-26）**：假网关起的时候设 `E2E_THINK_FILE=<文本文件>`（`TRIGGER_THINK` 的思考改为这份文件）、`E2E_THINK_CHUNK=12`、
+`E2E_THINK_DELAY=0.08`（按字数切块慢慢流出），抓屏发 `REPLY_PROMPT="TRIGGER_THINK TRIGGER_SLOW 讲一段"`，看各家生成中怎么画思考。
+Grok 1.0.70 的结论与样本见 docs/conventions/terminal.md「思考不进预览」。
+
 **Windows 上跑**（2026-10-20）：依赖装到临时目录 `python -m pip install --target <目录> pyte pywinpty`，`PYTE_DIR` / `PYWINPTY_DIR` 都指向它；
 三个坑——①中文系统必须 `python -I -X utf8`（不加时读计划 JSON 按 GBK 报错；`-I` 会忽略 `PYTHONUTF8` 环境变量）；
 ②在 Git Bash 里带斜杠命令参数（`/model`）要 `MSYS_NO_PATHCONV=1`，否则变成 `C:/Program Files/Git/model` 被当成一句话发出去，

@@ -386,6 +386,7 @@ export default function CommandPalette({
           ...paletteOpenChats(
             terminalRunInputs,
             page === "terminal" ? terminalActiveTabId : null,
+            new Set(useAppStore.getState().unreadChats),
           ).map((c, i) => {
             const project = projectOfCwd(c.cwd, projects.map((p) => p.path), IS_WINDOWS);
             const where = project
@@ -395,11 +396,9 @@ export default function CommandPalette({
                 : "";
             const state = c.current
               ? "正看着"
-              : c.caret === "confirm"
-                ? RUN_CARET_LABEL.confirm
-                : c.caret === "working"
-                  ? RUN_CARET_LABEL.working
-                  : "";
+              : c.caret === "confirm" || c.caret === "unread" || c.caret === "working"
+                ? RUN_CARET_LABEL[c.caret]
+                : "";
             return {
               cmd: {
                 id: `tab:${c.tabId}`,

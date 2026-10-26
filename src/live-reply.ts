@@ -12,7 +12,7 @@
  *   Codex 0.163：     「› 回显 / • 正文（续行缩进 2）/ • Ran … / • Working (… esc to interrupt) / › 输入行」（无边框）
  *   Qwen Code 0.25：  「  > 回显 / ◆ 正文（续行缩进 4–5）/   ? Shell … / ⠼ … esc to cancel / ─── >  ───」
  *   Gemini CLI 0.64： 「▄▄ > 回显 ▀▀ / ✦ 正文（续行缩进 2–3）/ Thinking... (esc to cancel) / ▄▄ > 输入 ▀▀」
- *   Grok Build 1.0：  「❯ 回显（缩进 5，右侧时间）/ 正文无行首符号（缩进 5）/ ◆ Running … / ⠧ Responding… / ╭ │ ❯ │ ╰」
+ *   Grok Build 1.0：  「❯ 回显（缩进 5，右侧时间）/ ┃ ◆ Thinking… 思考框 / 正文无行首符号（缩进 5）/ ◆ Running … / ⠧ Responding… / ╭ │ ❯ │ ╰」
  *   Kimi Code 2.2：   「❯ 回显 / ● 正文（续行缩进 3）/ ● Running a command … / ⠏ Working… / ╭ │ > │ ╰」
  * 认不出的：CodeBuddy 2.168 生成中只画「✹ Waking… (streaming · ↓ N tokens)」，正文写完才一次画出，屏上没有可读的半截；
  * OpenCode 1.19 是整屏重绘的分栏界面，对话区不按行排。这两家返回 null，聊天层退回「看实时输出」入口。
@@ -35,6 +35,23 @@ interface Layout {
    * Claude Code 2.1.304；终端窄一点 Mac 上同样会折行）
    */
   wrapSkip?: RegExp;
+  /**
+   * 思考框的头一行：它和下面行首是「│」的行整块不进回复预览，另由 {@link extractLiveThinking} 读出、照原样（去掉竖线与头一行）显示在聊天层。
+   * Grok 1.0.70 思考时画「┃  ◆ Thinking…」（简化字形下是「│  ♦」：pywinpty 抓屏是这套，Mesa 终端里是前一套，2026-10-26 实录），
+   * 下面竖线框里滚动显示思考原文（开头折成「┃  …」），想完收成一行
+   * 「♦ Thought for 8.6s」（2026-10-26 用户 Windows 截图：思考原文连竖线一起当成了回复）
+   */
+  thinkBlock?: RegExp;
+  /**
+   * 思考框头一行下面算作框里的行，匹配到的部分去掉（不写 = 行首竖线 ┃ / │，Grok）。
+   * Kimi 2.3 没有竖线：「⠋ thinking…」下面缩进两格的两行是思考原文的最后两行，到空行为止
+   */
+  thinkGutter?: RegExp;
+  /**
+   * 斜体的行是思考原文（调用方按屏上的字样告诉哪几行是斜体）。Kimi 想完把思考收成「● 第一行 / 续行 / … (N more lines…)」，
+   * 行首的 ● 和回复正文一模一样，只差在思考整段是斜体浅字——不认，回复一出来，上面收起的思考就当成回复的开头一起显示
+   */
+  thinkItalic?: boolean;
   /** 续行去掉的缩进（空格数，最多去这么多） */
   indent: number;
   /** 行尾要去掉的东西（Grok 右侧的时间） */
@@ -54,8 +71,15 @@ interface Layout {
    * 原先整段当成回复贴在预览末尾，2026-10-22 金丝雀抓屏）。表格用的是方角（┌），不受影响
    */
   noticeBox?: boolean;
+  /**
+   * 输入框正上方有这一行 = 这家自己的对话区被往上翻了，屏上是翻上去的旧内容，不是这一轮。Codex 0.164 起对话区能滚，
+   * 翻上去时输入框上方出「↓ Back to bottom · esc」（2026-10-26 用户 Windows 截图：预览里是前两轮的回复，连这行提示一起）
+   */
+  scrolledAway?: RegExp;
 }
 
+// 思考框左边那条竖线（Grok：Mesa 终端里是粗线 ┃，简化字形下是 │）
+const THINK_GUTTER = /^\s*[│┃]/;
 // 横线、半格边框，以及方框的上下边（画到一半的输入框「╭────」也算）
 const BORDER = /^[╭╰]?[─━═▄▀]{8,}[╮╯]?$/;
 const MENU_BORDER = /^[▔▁]{8,}$/;
@@ -107,6 +131,8 @@ const LAYOUTS: Record<string, Layout> = {
     skip: /^•\s+Working\b|esc to interrupt|^\s*(?:─+\s*)?Worked for\b|^\s*└/,
     indent: 2,
     pinnedEcho: true,
+    // 0.164 tui/src/transcript_view/composer_gap.rs 的几种写法：「↓ Back to bottom · esc」「↓ Bottom」「New activity · ↓ …」
+    scrolledAway: /^(?:↓\s*)?(?:New activity(?:\s+·\s+)?)?(?:↓(?:\s+(?:Back to bottom|Bottom))?(?:\s+·\s+esc)?)?$/,
   },
   qwen: {
     boxTop: (rows) => lastBox(rows, (i) => (i > 0 && /^>\s/.test(rows[i]) && BORDER.test(rows[i - 1].trim()) ? i - 1 : -1)),
@@ -144,8 +170,11 @@ const LAYOUTS: Record<string, Layout> = {
     echo: /^\s+[❯>]\s+\S/,
     lead: null,
     tool: /^\s*[◆♦]\s/,
-    // ▲ / ▼ = 对话区上下还有内容的滚动提示（提问钉在屏顶时紧跟在它下面）
-    skip: /Responding…|^\s*Worked for\b|^\s*[◇○]\s+\S+\s+\[Copy\]$|^\s*[▲▼]$/,
+    // ▲ / ▼ = 对话区上下还有内容的滚动提示（提问钉在屏顶时紧跟在它下面）；
+    // 转圈行「| Waiting for response… 0.0s」「- Thinking… 3.8s」「\ Responding… 2.2s」：Windows 上转圈是 | / - \，
+    // 不归 SPINNER 管；按 Ctrl+C 后输入框上方的「Press Ctrl+c to cancel the turn」（2026-10-26 抓屏）
+    skip: /Responding…|^\s*\S\s+[A-Z][\w ]*…\s+[\d.]+s\b|Press Ctrl\+c to cancel the turn|^\s*Worked for\b|^\s*[◇○]\s+\S+\s+\[Copy\]$|^\s*[▲▼]$/,
+    thinkBlock: /^\s*[│┃]\s*[◆♦]\s/,
     indent: 5,
     tail: /\s{2,}\d{1,2}:\d{2}\s?[AP]M$/,
     scrolledHint: /^\s*▲$/,
@@ -156,15 +185,23 @@ const LAYOUTS: Record<string, Layout> = {
     echo: /^\s*❯\s+\S/,
     lead: /^\s*●\s/,
     tool: new RegExp(`^\\s*[●✗✓•]\\s+${TOOL_VERB}\\b`),
-    // 2.3 等首字时转月相「🌑 · Tip: …」（2026-10-21 抓屏；用户截图里 🌕Kimi 叠在「正在回复」上面）
-    skip: /Press Ctrl\+B to run in background|^\s*Tool ".*" was not run|^\s*Rejected:|^\s*[\u{1F311}-\u{1F318}]|^\s*·\s*Tip:/u,
+    // 2.3 等首字时转月相「🌑 · Tip: …」（2026-10-21 抓屏；用户截图里 🌕Kimi 叠在「正在回复」上面）。
+    // MCP 服务连上 / 失败 / 要登录时插进对话区的状态行「MCP server "x" needs OAuth — run /mcp-config login x」
+    // （2.3.2 McpStatus finalizeMcpServerStatusRow；2026-10-26 用户 Windows 截图：接在回复后面成了正文）
+    // 收起的思考下面那行「… (12 more lines, ctrl+o to expand)」也不是回复
+    skip: /Press Ctrl\+B to run in background|^\s*Tool ".*" was not run|^\s*Rejected:|^\s*[\u{1F311}-\u{1F318}]|^\s*·\s*Tip:|^\s*MCP server ".+?" (?:connected\b|failed\b|needs OAuth\b|disabled$|removed$|connecting…)|^\s*… \(\d+ more lines?, ctrl\+o to expand\)/u,
+    // 思考中（2.3.2 ThinkingComponent live）：「⠋ thinking…」下面缩进两格、只留思考原文的最后两行；想完收成斜体的「● …」一段
+    thinkBlock: /^\s*[⠀-⣿]\s+thinking…\s*$/,
+    thinkGutter: /^(?=\s{2,}\S)/,
+    thinkItalic: true,
     indent: 3,
   },
 };
 
 /**
  * Claude Code 转圈行里这一轮已生成的 token 数：「✶ Musing… (5s · ↓ 1.2k tokens)」→ 1200。
- * Windows 上 Claude Code 整条消息收完才画出来（2026-10-21 抓屏：2.1.292 / 2.1.305 都是转圈计数、最后一次画出），
+ * Windows 上 Claude Code 整条消息收完才画出来（2026-10-21 抓屏：2.1.292 / 2.1.305 都是转圈计数、最后一次画出；
+ * 2026-10-26 查 2.1.310 二进制：Windows 版把「生成中文字可见」的平台判断编译成常量假，无开关可开，见 architecture §10 2026-10-21「Windows 上 Claude 回复不流式」条），
  * 聊天层没有逐字预览，拿它告诉人还在出字；长思考时也有用。只认 ↓（收到的），认不出返回 null
  */
 export function claudeOutputTokens(lines: readonly string[]): number | null {
@@ -180,6 +217,85 @@ export function claudeOutputTokens(lines: readonly string[]): number | null {
 
 export function liveReplySupported(agentId: string): boolean {
   return agentId in LAYOUTS;
+}
+
+/**
+ * Claude Code 这一轮还在跑：输入框下面的提示行带「esc to interrupt」（2.1.310 抓屏：「⏸ manual mode on · esc to interrupt」，
+ * 按 Esc 打断后只剩「⏸ manual mode on」）。打断后看屏确认回合真停了再收旁路的回合（TerminalPage settleAfterEsc）
+ */
+export function claudeTurnActiveOnScreen(lines: readonly string[]): boolean {
+  return lines.some((l) => /\besc to interrupt\b/i.test(l));
+}
+
+/**
+ * 屏上正在想的那一框（Layout.thinkBlock：Grok、Kimi）：这一轮回显之后、输入框之上，头一行下面算作框里的几行（Layout.thinkGutter），
+ * 照终端原样给聊天层显示（2026-10-26 用户：就要原生的思考显示，只把竖条、Thinking 符号这些无关的去掉）——去掉竖线与共同缩进、
+ * 头一行「◆ Thinking…」「⠋ thinking…」、CLI 把前面折掉时的「…」一行，终端按框宽折的行接回成段。想完收起、确认菜单挂着、不在对话界面时返回 null
+ */
+export function extractLiveThinking(lines: readonly string[], agentId: string): string[] | null {
+  const layout = LAYOUTS[agentId];
+  const head = layout?.thinkBlock;
+  if (!head) return null;
+  const gutter = layout.thinkGutter ?? THINK_GUTTER;
+  const rows = cleanRows(lines);
+  if (rows.some((l) => MENU_BORDER.test(l.trim()))) return null;
+  const boxTop = layout.boxTop(rows);
+  if (boxTop < 0) return null;
+  let at = -1;
+  for (let i = boxTop - 1; i >= 0; i--) {
+    if (head.test(rows[i])) {
+      at = i;
+      break;
+    }
+    if (layout.echo.test(rows[i])) return null;
+  }
+  if (at < 0) return null;
+  const body: string[] = [];
+  for (let i = at + 1; i < boxTop && gutter.test(rows[i]); i++) {
+    const text = rows[i].replace(gutter, "");
+    if (text.trim() !== "…") body.push(text);
+  }
+  const indent = Math.min(...body.filter((l) => l.trim()).map((l) => l.length - l.trimStart().length));
+  const out = body.map((l) => (l.trim() ? l.slice(indent) : ""));
+  while (out.length && !out[0]) out.shift();
+  while (out.length && !out[out.length - 1]) out.pop();
+  return out.length ? unwrapLines(out) : null;
+}
+
+// 终端里占两格的字：汉字、假名、谚文、注音，CJK 标点（、到〿）与全角符号（！到｠）
+const WIDE = /[\p{Script=Han}\p{Script=Hangul}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Bopomofo}、-〿！-｠]/u;
+
+function cellWidth(s: string): number {
+  let n = 0;
+  for (const ch of s) n += WIDE.test(ch) ? 2 : 1;
+  return n;
+}
+
+/**
+ * 终端按框宽折开的行接回成段，聊天栏比终端窄时不会一行长一行短：这一行开头的词（汉字是一个字）放在上一行（原样的那一行）
+ * 末尾就超出框宽（取最宽的一行）= 是 CLI 折的，接上；放得下 = 原文就在这里换行（「Then the code:」下面接代码）。
+ * 缩进的行（代码）、空行、列表 / 编号照原样；汉字前后不加空格
+ */
+function unwrapLines(lines: readonly string[]): string[] {
+  const width = Math.max(...lines.map(cellWidth));
+  const out: string[] = [];
+  let lastRaw = "";
+  for (const l of lines) {
+    const prev = out.length ? out[out.length - 1] : "";
+    const tight = WIDE.test(prev.slice(-1)) || WIDE.test(l.charAt(0));
+    const unit = WIDE.test(l.charAt(0)) ? l.charAt(0) : (/^\S+/.exec(l)?.[0] ?? "");
+    const wrapped =
+      prev.trim() !== "" &&
+      l.trim() !== "" &&
+      !/^\s/.test(l) &&
+      !/^\s/.test(lastRaw) &&
+      !/^(?:[-*•+]|\d+[.)])\s/.test(l) &&
+      cellWidth(lastRaw) + (tight ? 0 : 1) + cellWidth(unit) > width;
+    if (wrapped) out[out.length - 1] = prev + (tight ? "" : " ") + l;
+    else out.push(l);
+    lastRaw = l;
+  }
+  return out;
 }
 
 /**
@@ -244,7 +360,12 @@ export interface LiveReplyRead {
   echo?: string;
 }
 
-export function extractLiveReply(lines: readonly string[], agentId: string): LiveReplyRead | null {
+/** italicRow：屏上第几行是斜体字（Layout.thinkItalic 的家用来认收起的思考；不给就只看文字） */
+export function extractLiveReply(
+  lines: readonly string[],
+  agentId: string,
+  italicRow?: (row: number) => boolean,
+): LiveReplyRead | null {
   const layout = LAYOUTS[agentId];
   if (!layout) return null;
   // 行尾的空白与右侧滚动条（Grok / Gemini 的 █）
@@ -255,7 +376,11 @@ export function extractLiveReply(lines: readonly string[], agentId: string): Liv
   // 原先退回整屏，信任菜单的「Accessing workspace / Quick safety check」被当回复画进了聊天层（2026-10-17 用户截图）
   const boxTop = layout.boxTop(rows);
   if (boxTop < 0) return null;
-  const region = layout.noticeBox ? dropNoticeBoxes(rows.slice(0, boxTop)) : rows.slice(0, boxTop);
+  const away = layout.scrolledAway;
+  if (away && rows.slice(Math.max(0, boxTop - 3), boxTop).some((l) => l.trim() !== "" && away.test(l.trim()))) return null;
+  const region0 = layout.noticeBox ? dropNoticeBoxes(rows.slice(0, boxTop)) : rows.slice(0, boxTop);
+  // 收起的思考（斜体）换成空行：行号不变，下面照常认回显、行首与段落
+  const region = layout.thinkItalic && italicRow ? region0.map((l, i) => (l.trim() && italicRow(i) ? "" : l)) : region0;
   // 最后一条用户回显之后才是这一轮的回复；回显滚出屏幕时从第一段助手行首起
   let echoAt = -1;
   for (let i = region.length - 1; i >= 0; i--) {
@@ -377,10 +502,17 @@ function readReply(layout: Layout, region: readonly string[], start: number, anc
   const out: string[] = [];
   let inTool = false;
   let inWrapSkip = false;
+  let inThink = false;
   for (let at = start; at < region.length; at++) {
     const raw0 = region[at];
     const raw = layout.tail ? raw0.replace(layout.tail, "") : raw0;
     const t = raw.trim();
+    if (layout.thinkBlock?.test(raw)) {
+      inThink = true;
+      continue;
+    }
+    if (inThink && (layout.thinkGutter ?? THINK_GUTTER).test(raw)) continue;
+    inThink = false;
     if (table[at]) {
       if (!inTool) out.push(dedent(raw));
       continue;
@@ -545,6 +677,18 @@ export function dropAskedEcho(live: readonly string[], asked: string): string[] 
     i++;
   }
   return live.slice(i);
+}
+
+/**
+ * 读到的这一截没有回显（上一轮的提问早卷出屏了，回复从第一段助手行首读起），字又全是发送前屏上就有的：还是上一轮的尾巴。
+ * {@link staleEcho} 要靠回显比，回显不在屏上时管不着——上一轮回复长过一屏、Windows 上 Claude 还没画出刚发的这句时，
+ * 预览把上一轮的后半段当成了这一轮的回复（2026-10-26 用户截图）。before = 发送前屏上读出的那一截（没有为 null）
+ */
+export function staleWithoutEcho(read: LiveReplyRead, before: readonly string[] | null): boolean {
+  if (read.echo !== undefined || !before?.length) return false;
+  const known = new Set(before.map(norm).filter(Boolean));
+  const keys = read.lines.map(norm).filter(Boolean);
+  return keys.length > 0 && keys.every((k) => known.has(k));
 }
 
 /**

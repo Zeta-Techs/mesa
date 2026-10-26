@@ -98,6 +98,7 @@ import {
   channelRelink,
   channelTurnOpen,
   hooksApprovalAnswered,
+  menuOutgrowsChannel,
   sessionSwitchNote,
   type ChannelReplyDecision,
   type ChatChannelSnapshot,
@@ -187,10 +188,10 @@ import {
 import { askAfter, askAnswerKeys, askFinishes, askMenu, parseClaudeAsk, type AskAction } from "../tui-ask";
 import { PLAN_EXIT_TOOLS, screenPlan } from "../plan-approval";
 import { promptSuggestionSupported, readPromptSuggestion } from "../prompt-suggestion";
-import { lineCells } from "../screen-cells";
+import { italicLine, lineCells } from "../screen-cells";
 import { lastContextTokens, type MesaCommand } from "../composer-assist";
 import { slashCommandsFor } from "../slash-commands";
-import { claudeOutputTokens, extractLiveReply, liveReplySupported, mergeLiveReply, sentTextStuckInBox, staleEcho, terminalHasInputBox } from "../live-reply";
+import { claudeOutputTokens, claudeTurnActiveOnScreen, extractLiveReply, extractLiveThinking, liveReplySupported, mergeLiveReply, sentTextStuckInBox, staleEcho, staleWithoutEcho, terminalHasInputBox } from "../live-reply";
 import { parseTuiNotice, parseTuiPanel } from "../tui-panel";
 import {
   connIssueCounts,
@@ -623,6 +624,8 @@ export interface SessionLinkState {
   liveReply: string[] | null;
   /** Claude 转圈行里这一轮已生成的 token 数（live-reply.ts claudeOutputTokens）；别家与没认出时 null */
   liveTokens: number | null;
+  /** 终端思考框里正在显示的思考（live-reply.ts extractLiveThinking：Grok、Kimi；去掉竖线与 Thinking 头）；不在想为 null */
+  liveThinking: string | null;
   /** Claude Code 输入框里那行灰字：它猜你下一句想说什么（prompt-suggestion.ts）；没有为 null */
   promptSuggestion: string | null;
   /** Agent 在跑但 PTY 已 4 秒没出字：TUI 静止（多半停在菜单 / 登录上），不是模型还在想 */
@@ -2272,6 +2275,29 @@ const TerminalView = memo(function TerminalView({
     hadPtyWorkingOutputRef.current = false;
     setAttention((prev) => (prev === "working" ? null : prev));
   }
+  // 按了 Esc（聊天层停止按钮 / 终端里）之后收旁路的回合：Claude 还没出字就被打断时把这句退回输入框，会话文件里只留这句提问——
+  // 没有打断标记、没有 turn_duration，也不发 Stop，旁路回合一直「在回复」，聊天层停下后过一会又被它点亮成「思考中」
+  // （2026-10-26 用户 Windows 实测；e2e_channel E2E_INTERRUPT_MS 核对过 Esc 1.5 秒后回合仍是 running）。
+  // 屏上连着两次看不到「esc to interrupt」= 真停了，才收；还在跑（Esc 被菜单之类吃掉）就不动，最多看 4.5 秒
+  const escSettleTimerRef = useRef<number | null>(null);
+  function settleAfterEsc() {
+    if (launchAgentRef.current !== "claude-code") return;
+    if (escSettleTimerRef.current) window.clearTimeout(escSettleTimerRef.current);
+    let tries = 0;
+    let quiet = 0;
+    const check = () => {
+      escSettleTimerRef.current = null;
+      const ch = channelRef.current;
+      if (!mountedRef.current || ch?.kind !== "hooks" || !channelTurnOpen(ch)) return;
+      quiet = claudeTurnActiveOnScreen(screenLines()) ? 0 : quiet + 1;
+      if (quiet >= 2) {
+        void invoke<boolean>("chat_channel_settle_interrupted", { tabId }).catch(() => false);
+        return;
+      }
+      if (++tries < 15) escSettleTimerRef.current = window.setTimeout(check, 300);
+    };
+    escSettleTimerRef.current = window.setTimeout(check, 300);
+  }
   // 用户交互时间（终端里敲键 / 点击引起的焦点进出）：TUI 开了焦点上报（mode 1004）
   // 时点一下输入框就会让 TUI 重绘一帧，按键回显同理——这些用户自己引发的重绘
   // 不是「生成中」，交互后短窗口内的 PTY 输出不打 working（否则点下输入框就转圈）
@@ -2370,11 +2396,15 @@ const TerminalView = memo(function TerminalView({
     const buf = term.buffer.active;
     return lineCells(buf.getLine(buf.viewportY + row));
   }
+  /** 可视区第 row 行整行是斜体（Kimi 收起的思考，live-reply.ts Layout.thinkItalic） */
+  function screenItalicRow(row: number) {
+    return italicLine(screenCells(row));
+  }
   /** 屏上等你选的东西：Claude 的提问表单按表单读（tui-ask.ts），其余照通用菜单读（Kimi 选择器的说明行靠字色分开） */
   function parseScreenMenu(lines: string[]): TuiMenu | null {
     const ask = launchAgentRef.current === "claude-code" ? parseClaudeAsk(lines, screenCells) : null;
     if (ask) return askMenu(ask);
-    const menu = parseTuiMenu(lines, screenCells);
+    const menu = parseTuiMenu(lines, screenCells, launchAgentRef.current);
     // 计划模式的方案确认：标题与屏上读得到的方案附在菜单上（旁路、会话文件给不出方案时卡片用它）
     const plan = menu ? screenPlan(lines, menu) : null;
     return menu && plan ? { ...menu, plan } : menu;
@@ -2418,10 +2448,12 @@ const TerminalView = memo(function TerminalView({
       return false;
     }
     if (!ch || channelInfersApproval(ch) || !channelTurnOpen(ch)) return false;
-    // 旁路的卡上答不了（没有回复通道的那类请求）：屏上原文的卡更有用。
+    // 旁路的卡上答不了（没有回复通道的那类请求）：屏上原文的卡更有用；终端菜单的选项比旁路能回的多，也用屏上原文的卡。
     // 结束计划（Qwen exit_plan_mode）旁路只给「允许 / 拒绝」，屏上那张有几种开工法，交给屏上的方案卡（plan-approval.ts）
     if (ch.approval?.toolName && PLAN_EXIT_TOOLS.has(ch.approval.toolName)) return false;
-    if (ch.approval) return channelCanAnswer(ch, launchAgentRef.current);
+    if (ch.approval) {
+      return channelCanAnswer(ch, launchAgentRef.current) && !menuOutgrowsChannel(ch, launchAgentRef.current, menu.options.length);
+    }
     const now = Date.now();
     if (now - channelApprovalGoneAtRef.current < 3000) {
       window.setTimeout(scanMenuSoon, 600);
@@ -2517,10 +2549,12 @@ const TerminalView = memo(function TerminalView({
   const liveReplyRef = useRef<string[] | null>(null);
   const [liveTokens, setLiveTokens] = useState<number | null>(null);
   const liveTokensRef = useRef<number | null>(null);
+  const [liveThinking, setLiveThinking] = useState<string | null>(null);
+  const liveThinkingRef = useRef<string | null>(null);
   const liveScanAtRef = useRef(0);
   const liveScanTimerRef = useRef<number | null>(null);
   // 最近一次从聊天发出时屏上的最后一条回显与原文（writeChatMessage 记；读到新回显后清）
-  const sendEchoRef = useRef<{ before: string | null; sent: string } | null>(null);
+  const sendEchoRef = useRef<{ before: string | null; beforeLines: string[] | null; sent: string } | null>(null);
   // 连续因「一帧还没画完」改期的次数（封顶后照读，免得 CLI 忘了收尾时预览永远不动）
   const liveSyncWaitsRef = useRef(0);
   // 实时预览攒的是哪一条回显后面的回复
@@ -2549,7 +2583,7 @@ const TerminalView = memo(function TerminalView({
     liveScanAtRef.current = Date.now();
     const lines = screenLines();
     // 长回复滚出屏后只看得见续行：接到上一次读到的整段后面（mergeLiveReply）
-    const read = extractLiveReply(lines, launchAgentRef.current);
+    const read = extractLiveReply(lines, launchAgentRef.current, screenItalicRow);
     // Claude 转圈行的已生成 token 数（Windows 上 Claude 不边写边画，聊天层靠它看出还在出字）
     if (launchAgentRef.current === "claude-code") {
       const tokens = claudeOutputTokens(lines);
@@ -2557,6 +2591,12 @@ const TerminalView = memo(function TerminalView({
         liveTokensRef.current = tokens;
         setLiveTokens(tokens);
       }
+    }
+    // 正在想的那一框（Grok、Kimi）：不混进回复预览，照终端原样（去掉竖线与 Thinking 头）另给聊天层；框收起 = 想完了，清掉
+    const thinking = extractLiveThinking(lines, launchAgentRef.current)?.join("\n") ?? null;
+    if (thinking !== liveThinkingRef.current) {
+      liveThinkingRef.current = thinking;
+      setLiveThinking(thinking);
     }
     const shown = liveReplyRef.current;
     // 一时读不出（菜单挂着、重绘半帧）保留上一次的，免得预览闪没；新一轮发送时清
@@ -2566,6 +2606,8 @@ const TerminalView = memo(function TerminalView({
     if (sent && read.echo !== undefined) {
       if (staleEcho(read, sent.before, sent.sent)) return;
       sendEchoRef.current = null;
+    } else if (sent && staleWithoutEcho(read, sent.beforeLines)) {
+      return;
     }
     // 回显换了 = 新的一轮（在终端里直接发的话不经聊天发送，不会清掉上一轮的预览）：不拿上一轮的开头去补这一轮
     let prev = shown;
@@ -3009,6 +3051,7 @@ const TerminalView = memo(function TerminalView({
       grokLoginStuck,
       liveReply,
       liveTokens,
+      liveThinking,
       promptSuggestion,
       ptyQuiet,
       launchPick,
@@ -3037,6 +3080,7 @@ const TerminalView = memo(function TerminalView({
     grokLoginStuck,
     liveReply,
     liveTokens,
+    liveThinking,
     promptSuggestion,
     ptyQuiet,
     launchPick,
@@ -3663,6 +3707,7 @@ const TerminalView = memo(function TerminalView({
         if (echo.swallow) return;
         markInteraction();
         if (ptyInputLooksLikeSubmit(data, KIMI_CSI_U_ENTER)) armPtyWorking();
+        else if (data === "\x1b") settleAfterEsc();
         const id = ptyIdRef.current;
         if (id) invoke("pty_write", { ptyId: id, data }).catch((e) => setError(String(e)));
       }),
@@ -4246,6 +4291,8 @@ const TerminalView = memo(function TerminalView({
     setLiveReply(null);
     liveTokensRef.current = null;
     setLiveTokens(null);
+    liveThinkingRef.current = null;
+    setLiveThinking(null);
     setSuggestion(null);
     if (kind === "agent") {
       // 记录可恢复的会话 id（一键恢复按钮用）
@@ -4892,11 +4939,26 @@ const TerminalView = memo(function TerminalView({
     };
   }, [tabId]);
 
+  // 认领扫描在 Windows 上一次要好几秒，500ms 一轮会叠着发；叠着的那轮回来时旁路早已锁定会话，
+  // 拿「没找到」把同步状态改回 waiting，之后再没人改回来——对话照常刷新，底部却一直挂着「等待会话文件」
+  // （2026-10-26 Windows Codex 实测）。所以同一时刻只跑一轮，扫描回来先确认还没锁上
+  const linkTickBusyRef = useRef(false);
   async function linkTick() {
+    if (linkTickBusyRef.current) return;
+    linkTickBusyRef.current = true;
+    try {
+      await linkTickOnce();
+    } finally {
+      linkTickBusyRef.current = false;
+    }
+  }
+
+  async function linkTickOnce() {
     const ctx = linkCtxRef.current;
     if (!ctx) return;
     if (!ctx.filePath) {
       const hit = await findSessionFile();
+      if (linkCtxRef.current !== ctx || ctx.filePath) return;
       if (!hit) {
         setSyncState("waiting");
         if (Date.now() - linkStartedAtRef.current >= 20_000)
@@ -4934,7 +4996,7 @@ const TerminalView = memo(function TerminalView({
     if (!ctx.filePath) {
       const hit = await findSessionFile();
       if (hit) lockLink(hit.filePath, hit.sessionId, hit.title, hit.createdAt);
-      else setLinkState("timeout");
+      else if (linkCtxRef.current === ctx && !ctx.filePath) setLinkState("timeout");
     }
     await fetchConversation(true);
     // Agent 退出不代表会话文件已经完成落盘；保留短轮询，让最后一条 assistant
@@ -5039,6 +5101,8 @@ const TerminalView = memo(function TerminalView({
     setLiveReply(null);
     liveTokensRef.current = null;
     setLiveTokens(null);
+    liveThinkingRef.current = null;
+    setLiveThinking(null);
     setSuggestion(null);
   }
 
@@ -5641,9 +5705,11 @@ const TerminalView = memo(function TerminalView({
     // 写之前就记下：正文粘进输入框到按下提交之间（多行要等 0.65 秒），输入框里的编号清单会被扫菜单认成选项，
     // 拿上一句比对排除不掉（2026-10-21 用户 Grok：七步清单在输入框里时出了一张「终端里在等你选一项」）
     lastSentRef.current = text;
-    // 发送前屏上最后一条回显：CLI 画出这句之前，实时预览读到的还是上一轮（staleEcho）
+    // 发送前屏上最后一条回显与那时读得出的一截：CLI 画出这句之前，实时预览读到的还是上一轮（staleEcho / staleWithoutEcho）
+    const beforeRead = extractLiveReply(screenLines(), launchAgentRef.current, screenItalicRow);
     sendEchoRef.current = {
-      before: extractLiveReply(screenLines(), launchAgentRef.current)?.echo ?? null,
+      before: beforeRead?.echo ?? null,
+      beforeLines: beforeRead?.lines ?? null,
       sent: text,
     };
     try {
@@ -5706,6 +5772,8 @@ const TerminalView = memo(function TerminalView({
     setLiveReply(null);
     liveTokensRef.current = null;
     setLiveTokens(null);
+    liveThinkingRef.current = null;
+    setLiveThinking(null);
     setSuggestion(null);
     const message: ChatMessageDto = {
       role: "user",
@@ -5988,7 +6056,10 @@ const TerminalView = memo(function TerminalView({
     writePty: (data) => {
       if (data === "\x1b" || data === "\x03") {
         disarmPtyWorking();
-        if (data === "\x1b") setPendingReply(false);
+        if (data === "\x1b") {
+          setPendingReply(false);
+          settleAfterEsc();
+        }
       } else if (data === "y" || data === "n") armPtyWorking();
       const id = ptyIdRef.current;
       if (id) writeInteractivePty(id, data);
@@ -8250,6 +8321,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         cur.menuPrompt === s.menuPrompt &&
         cur.liveReply === s.liveReply &&
         cur.liveTokens === s.liveTokens &&
+        cur.liveThinking === s.liveThinking &&
         cur.promptSuggestion === s.promptSuggestion &&
         cur.tuiPanel === s.tuiPanel &&
         cur.tuiNotice === s.tuiNotice &&
@@ -10613,6 +10685,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         tuiNotice={sessionByTab[t.id]?.tuiNotice ?? null}
                         liveReply={sessionByTab[t.id]?.liveReply ?? null}
                         liveTokens={sessionByTab[t.id]?.liveTokens ?? null}
+                        liveThinking={sessionByTab[t.id]?.liveThinking ?? null}
                         promptSuggestion={sessionByTab[t.id]?.promptSuggestion ?? null}
                         mesaCommands={mesaCommandsFor(t.id)}
                         externalInsert={chatInsertByTab[t.id] ?? null}

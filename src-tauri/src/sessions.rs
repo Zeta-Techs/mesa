@@ -1246,7 +1246,9 @@ fn parse_claude(lines: &[String]) -> Vec<ChatMessageDto> {
                             match get_str(b, "type") {
                                 Some("text") => {
                                     if let Some(t) = get_str(b, "text") {
-                                        if !is_claude_interrupt_marker(t) {
+                                        // 宿主塞进用户消息的 `<system-reminder>` 段（如「用户从这里分叉了一个会话」）不是人说的话
+                                        // （2026-10-26 审查：分叉提示显示在了用户气泡里）
+                                        if !is_claude_interrupt_marker(t) && !t.trim_start().starts_with("<system-reminder>") {
                                             blocks.push(text_block(t.to_string()));
                                         }
                                     }
@@ -1386,11 +1388,36 @@ fn codex_message_text(p: &Value) -> Option<String> {
     }
 }
 
-/** Codex 会把工作区规则/导入历史作为 user response_item 写入会话；这类上下文不是用户对话，不能展示在聊天层。 */
+/// Codex 推理条目里看得见的字：有摘要（官方模型的 `**小标题**` 摘要）用摘要，没有用原始推理（第三方模型）；
+/// 只有加密内容的返回 None
+fn codex_reasoning_text(p: &Value) -> Option<String> {
+    let collect = |key: &str| {
+        p.get(key)
+            .and_then(|v| v.as_array())
+            .map(|parts| {
+                parts
+                    .iter()
+                    .filter_map(|c| get_str(c, "text"))
+                    .map(str::trim)
+                    .filter(|t| !t.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n\n")
+            })
+            .unwrap_or_default()
+    };
+    let summary = collect("summary");
+    let text = if summary.is_empty() { collect("content") } else { summary };
+    (!text.is_empty()).then_some(text)
+}
+
+/** Codex 会把工作区规则/导入历史作为 user response_item 写入会话；这类上下文不是用户对话，不能展示在聊天层。
+ *  中途换权限 / 目录时它还会再补一条 `<environment_context>`（2026-10-26 审查：显示成了一条用户气泡） */
 pub(crate) fn is_injected_context_message(text: &str) -> bool {
     let trimmed = text.trim_start();
     trimmed.starts_with("# AGENTS.md")
         || trimmed.starts_with("\\# AGENTS.md")
+        || trimmed.starts_with("<environment_context>")
+        || trimmed.starts_with("<user_instructions>")
         || trimmed.starts_with("The following is the Codex agent history")
         || trimmed.starts_with("The following is the Claude Code history")
 }
@@ -1600,6 +1627,24 @@ fn parse_codex(lines: &[String]) -> Vec<ChatMessageDto> {
                         usage: None,
                         id: get_str(p, "id").map(String::from),
                     }),
+                    // 思考：别家的思考都进「思考」过程行，Codex 原先整条丢了（2026-10-26 审查：本机 71 条有正文的推理一条没显示）
+                    Some("reasoning") => {
+                        if let Some(text) = codex_reasoning_text(p) {
+                            msgs.push(ChatMessageDto {
+                                role: "assistant".into(),
+                                blocks: vec![BlockDto {
+                                    kind: "thinking".into(),
+                                    text,
+                                    tool_name: None,
+                                    is_error: false,
+                                    call_id: None,
+                                }],
+                                timestamp: ts,
+                                usage: None,
+                                id: get_str(p, "id").map(String::from),
+                            });
+                        }
+                    }
                     Some("function_call_output") | Some("custom_tool_call_output") => {
                         let text = stringify_payload(p.get("output"));
                         push_tool_result(
@@ -9269,6 +9314,17 @@ mod tests {
         assert_eq!(texts, vec!["运行 rm 一下", "[Request interrupted by user] 但这句有别的话"]);
     }
 
+    // 2026-10-26 审查（本机实录形状）：分叉提示作为 <system-reminder> 段和用户原话放在同一条消息里，只留原话
+    #[test]
+    fn claude_system_reminder_part_is_not_user_text() {
+        let lines = s(&[
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"<system-reminder>\nThe user forked this conversation from an earlier message into session local_x.\n</system-reminder>\n\n"},{"type":"text","text":"现在可以了，你看一下"}]}}"#,
+        ]);
+        let msgs = parse_claude(&lines);
+        let texts: Vec<_> = msgs.iter().flat_map(|m| m.blocks.iter().map(|b| b.text.as_str())).collect();
+        assert_eq!(texts, vec!["现在可以了，你看一下"]);
+    }
+
     #[test]
     fn claude_pasted_prompt_replays_without_wrapper() {
         let lines = s(&[
@@ -9760,6 +9816,35 @@ mod tests {
             (u.input, u.output, u.cache_read, u.cache_write),
             (90, 20, 10, 0)
         );
+    }
+
+    // 2026-10-26 审查（Codex 0.164 实录形状）：推理条目进「思考」；摘要优先，没摘要用原始推理；只有加密内容的不出
+    #[test]
+    fn codex_reasoning_becomes_thinking_block() {
+        let lines = s(&[
+            r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"测试一下"}]}}"#,
+            r#"{"type":"response_item","payload":{"type":"reasoning","id":"rs_1","summary":[],"content":[{"type":"reasoning_text","text":"The user wants a quick test."}],"encrypted_content":null}}"#,
+            r#"{"type":"response_item","payload":{"type":"reasoning","id":"rs_2","summary":[{"type":"summary_text","text":"**规划步骤**\n\n先看目录"}],"content":[{"type":"reasoning_text","text":"raw"}]}}"#,
+            r#"{"type":"response_item","payload":{"type":"reasoning","id":"rs_3","summary":[],"encrypted_content":"gAAAA"}}"#,
+            r#"{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"好的"}]}}"#,
+        ]);
+        let msgs = parse_codex(&lines);
+        let kinds: Vec<(&str, &str)> = msgs.iter().map(|m| (m.role.as_str(), m.blocks[0].kind.as_str())).collect();
+        assert_eq!(kinds, [("user", "text"), ("assistant", "thinking"), ("assistant", "thinking"), ("assistant", "text")]);
+        assert_eq!(msgs[1].blocks[0].text, "The user wants a quick test.");
+        assert_eq!(msgs[2].blocks[0].text, "**规划步骤**\n\n先看目录", "有摘要用摘要");
+    }
+
+    // 2026-10-26 审查：中途换权限后 Codex 补写的 <environment_context> 不是用户说的话
+    #[test]
+    fn codex_skips_mid_session_environment_context() {
+        let lines = s(&[
+            r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"第一问"}]}}"#,
+            r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>\n  <current_date>2026-10-26</current_date>\n</environment_context>"}]}}"#,
+            r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"第二问"}]}}"#,
+        ]);
+        let texts: Vec<String> = parse_codex(&lines).iter().map(|m| m.blocks[0].text.clone()).collect();
+        assert_eq!(texts, ["第一问", "第二问"]);
     }
 
     #[test]

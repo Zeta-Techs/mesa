@@ -2671,6 +2671,28 @@ pub fn chat_channel_settle_from_transcript(tab_id: String) -> bool {
     true
 }
 
+/// 人按了 Esc 打断 Claude、屏上「esc to interrupt」也没了（前端看屏确认后调）：收掉还开着的这一轮（interrupted）。
+/// 还没出字就打断时 Claude 把这句退回输入框，会话文件里只留这句提问——没有打断标记、没有 turn_duration，也不发 Stop，
+/// [`chat_channel_settle_from_transcript`] 等不到东西，聊天层停下后过一会又被旁路的「在回复」点亮成「思考中」
+/// （2026-10-26 用户 Windows 实测 + 抓屏，Claude Code 2.1.310）。只认 hooks 家的 Claude、回合还开着；收了返回 true
+#[tauri::command]
+pub fn chat_channel_settle_interrupted(tab_id: String) -> bool {
+    let Some(ch) = channel_for_tab(&tab_id) else {
+        return false;
+    };
+    {
+        let Ok(t) = ch.tracker.lock() else {
+            return false;
+        };
+        let open = t.snap.turn.as_ref().is_some_and(|turn| turn.ended_at.is_none());
+        if !(open && t.snap.kind == "hooks" && t.snap.agent == "claude-code") {
+            return false;
+        }
+    }
+    feed(&ch, vec![ChannelEvent::TurnEnd { reason: Some("interrupted".into()) }]);
+    true
+}
+
 /// 聊天层「等你决定」卡上点了按钮：经这家官方的回复通道送回（decision = allow | allow_always | deny）。
 /// 只送用户点的那一项；终端里已经答过的，CLI 会回「已处理」并丢掉这条，不会出错。
 #[tauri::command]
@@ -3721,8 +3743,29 @@ mod e2e {
         let mut answered = None;
         let mut approval = None;
         let mut done = false;
+        // E2E_INTERRUPT_MS：发出后过这么久按 Esc（同聊天层的停止按钮），再过 1.5 秒照前端口径收回合（chat_channel_settle_interrupted）。
+        // 配 E2E_PROMPT="TRIGGER_THINK TRIGGER_SLOW 讲一段" 与假网关 E2E_THINK_FILE + E2E_THINK_DELAY：还没出字就打断，Claude 不发 Stop
+        let interrupt_ms: Option<u64> = std::env::var("E2E_INTERRUPT_MS").ok().and_then(|v| v.parse().ok());
+        let mut esc_at: Option<Instant> = None;
+        let mut interrupt_settled = false;
         while started.elapsed() < Duration::from_secs(60) {
             std::thread::sleep(Duration::from_millis(300));
+            if let (Some(ms), None) = (interrupt_ms, esc_at) {
+                if started.elapsed() >= Duration::from_millis(ms) {
+                    send(b"\x1b");
+                    esc_at = Some(Instant::now());
+                    println!("{agent}: 按了 Esc");
+                }
+            }
+            if let Some(at) = esc_at.filter(|_| !interrupt_settled) {
+                if at.elapsed() >= Duration::from_millis(1500) {
+                    let before = snaps.lock().unwrap().last().cloned().unwrap_or_default();
+                    let status = before.turn.as_ref().map(|t| t.status.clone()).unwrap_or_default();
+                    let r = chat_channel_settle_interrupted("e2e-tab".into());
+                    println!("{agent}: Esc 1.5 秒后回合状态 {status}，chat_channel_settle_interrupted → {r}");
+                    interrupt_settled = true;
+                }
+            }
             let last = snaps.lock().unwrap().last().cloned();
             let Some(last) = last else { continue };
             if let (Some(a), None) = (&last.approval, &answered) {
@@ -3757,7 +3800,7 @@ mod e2e {
             let ran = last.turn.as_ref().is_some_and(|t| t.status == "completed" || t.status == "cancelled");
             // 新进程的状态机从第 0 轮起算：走完一轮就是发的这句（回放的旧轮不算回合）
             // 按 Esc 不答的那一轮不会跑命令，没有探针文件
-            let esc = answered.as_deref() == Some("终端菜单 Esc");
+            let esc = answered.as_deref() == Some("终端菜单 Esc") || interrupt_settled;
             if ran && (!need_probe || esc || probe.exists()) {
                 done = true;
                 break;

@@ -940,6 +940,7 @@ pub fn run() {
             hooks::session_confirm_detail,
             chat_channel::chat_channel_snapshot,
             chat_channel::chat_channel_settle_from_transcript,
+            chat_channel::chat_channel_settle_interrupted,
             chat_channel::chat_channel_reply,
             chat_handoff_log::chat_handoff_record,
             chat_handoff_log::chat_handoff_summary,

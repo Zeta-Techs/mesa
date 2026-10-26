@@ -31,7 +31,8 @@ export function ChatSwitcherButton({ tabIndex }: { tabIndex?: number }) {
   const page = useAppStore((s) => s.page);
   const runs = useAppStore((s) => s.terminalRunInputs);
   const active = useAppStore((s) => s.terminalActiveTabId);
-  const chats = paletteOpenChats(runs, page === "terminal" ? active : null);
+  const unreadChats = useAppStore((s) => s.unreadChats);
+  const chats = paletteOpenChats(runs, page === "terminal" ? active : null, new Set(unreadChats));
   const current = chats.find((c) => c.current) ?? null;
   const [anchor, setAnchor] = useState<{ left: number; top: number } | null>(null);
   if (chats.length === 0) return null;
@@ -153,11 +154,9 @@ function ChatSwitcherPanel({
             const Icon = c.kind === "terminal" ? SquareTerminal : c.kind === "new" ? SquarePen : null;
             const state = c.current
               ? "正看着"
-              : c.caret === "confirm"
-                ? RUN_CARET_LABEL.confirm
-                : c.caret === "working"
-                  ? RUN_CARET_LABEL.working
-                  : "";
+              : c.caret === "confirm" || c.caret === "unread" || c.caret === "working"
+                ? RUN_CARET_LABEL[c.caret]
+                : "";
             const place = where(c);
             return (
               <button

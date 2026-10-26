@@ -1,7 +1,7 @@
 # 代码地图（源码逐文件注释）
 
 > 2026-09-22 自 AGENTS.md「代码结构」整节迁入（原文未改）。
-> **改任何源文件前先查它的条目**——条目里是职责边界、红线和双端镜像口径，不是目录装修。
+> **改源文件前在本文件 Grep 该文件名，读它的条目**（不必通读全图）——条目里是职责边界、红线和双端镜像口径，不是目录装修。
 > 迁移新文件进本图时保持在 AGENTS.md 时代的老规矩：一行职责 + 只在非显而易见处写注释。
 
 
@@ -628,7 +628,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   conn-issue.ts              # 认终端画面里的连接错误（额度 / 限流 / 钥匙 / 服务 / 模型）：七家实录形态的 detectConnIssues、按次数判新错误的 newestConnIssue、给人看的 connIssueText
   terminal-quote.ts          # 终端选中文字交给对话 / 存笔记的排版：quoteForChat（每行「> 」）、askAboutText、clipNoteEntry（notes/clips.md 小节）
   live-reply.ts              # 聊天实时预览：按每家画面布局（LAYOUTS：Claude / Codex / Qwen / Gemini / Grok / Kimi，第三期抓屏定的）抽出这一轮正在写的段落
-                             # （extractLiveReply）+ 长回复滚出屏后按屏顶位置接到上一次后面（mergeLiveReply，不要求尾巴逐字相同）+ 剔掉会话文件已有的行（unsyncedTail）+ 剔掉开头被读成回复的分段提问回显（dropAskedEcho）+ 屏上有没有输入框（terminalHasInputBox）+ Claude 转圈行已生成 token 数（claudeOutputTokens，聊天层「正在回复」后显示）；
+                             # （extractLiveReply）+ 长回复滚出屏后按屏顶位置接到上一次后面（mergeLiveReply，不要求尾巴逐字相同）+ 剔掉会话文件已有的行（unsyncedTail）+ 剔掉开头被读成回复的分段提问回显（dropAskedEcho）+ 屏上有没有输入框（terminalHasInputBox）+ Claude 转圈行已生成 token 数（claudeOutputTokens，聊天层「正在回复」后显示）+ Claude 这一轮还在跑（claudeTurnActiveOnScreen，「esc to interrupt」）+ 正在想的那一框（extractLiveThinking，现只有 Grok，去掉竖线与 Thinking 头后在正文出来前显示在实时预览的位置）；
                              # CodeBuddy / OpenCode / Cursor 返回 null。新增一家先抓屏、样本进测试
   menu-key-nav.ts            # 聊天输入框小弹层的键盘操作（useMenuKeyNav：打开聚焦当前项、↑↓/Home/End、关闭还焦点）
   auto-load-older.ts         # 回放往上翻自动加载更早一页（useAutoLoadOlder：对话页 / 项目对话 / 聊天层共用；只认用户滚动，
@@ -655,7 +655,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 卡片在 components/ChatDecisionCard.tsx AskCard（tests/tui-ask.test.ts）
   prompt-suggestion.ts       # Claude「猜你下一句」：输入框那一行除第一个字外全是灰字才算（readPromptSuggestion），排除 Try "…" 等固定提示；
                              # 聊天输入框空着时当占位字显示、Tab 填入（tests/prompt-suggestion.test.ts）
-  screen-cells.ts            # xterm 一行转成每个字的样子（灰 / 反色 / 底色 / 字色，lineCells）：只看文字认不出的读屏用（猜的下一句、提问表单当前题、Kimi 选择器的说明行）
+  screen-cells.ts            # xterm 一行转成每个字的样子（灰 / 反色 / 底色 / 字色 / 斜体，lineCells）：只看文字认不出的读屏用（猜的下一句、提问表单当前题、Kimi 选择器的说明行、Kimi 收起的思考 italicLine）
   tui-panel.ts               # parseTuiNotice：没有输入框 + 「Enter to continue」= 要按回车才继续的通知（Claude 中途弹的计费说明），
                              #   聊天层给「继续」卡（回车），认出时不再当面板；
                              # 认「终端里开着一个面板」（parseTuiPanel：没有该家输入框 + Esc to cancel/close 一类关闭提示；/cost、/usage 的 Settings 面板）：
@@ -1085,7 +1085,8 @@ src-tauri/src/
                              #   （Codex item/reasoning/summaryTextDelta、Qwen thinking_delta、OpenCode reasoning part）；出站 outbound 脱敏实时文字与思考；
                              #   审批 DTO 由 approval_from_tool 统一出（ExitPlanMode 另给 plan 方案原文与方案文件路径，2026-10-26）；
                              #   chat_channel_reply 经官方通道回审批；chat_channel_settle_from_transcript（Claude 被拒绝 / Esc 打断不发 Stop，
-                             #   按会话文件里这一轮之后的收尾标记收回合）；close_for_pty 随 PTY 退出收旁路；e2e::e2e_channel（ignored）=
+                             #   按会话文件里这一轮之后的收尾标记收回合）；chat_channel_settle_interrupted（按了 Esc、屏上确认停了才调：
+                             #   还没出字就打断时会话文件也不留收尾）；close_for_pty 随 PTY 退出收旁路；e2e::e2e_channel（ignored）=
                              #   真 CLI + 假网关端到端（scripts/e2e-model-routing/README.md，三平台同一份）；
                              #   Windows 专属（terminal.md 旁路条⑦–⑪）：官方账号 hooks 写 settings.json 传路径、Claude hooks 后台跑时
                              #   Tracker::async_hooks 按身份对账（apply_async_tool）、app-server spawn_tied_to_app、收旁路先杀后删
@@ -1302,7 +1303,7 @@ src-tauri/src/
                              #   （message/tool_name/title 尽力而为），聊天层审批卡片用；
                              # 2026-10-20：hook 命令整行一次写入、记 CCODE_TAB_ID（日志第二段，旧格式照读）、payload 截 64KB
                              # 2026-10-20 二：Windows 上每次启动注入的两家（Claude / CodeBuddy）有原生 hook 程序就用它——
-                             #   native_hook_exe 找随包的 mesa_helper（hook 模式，开发态在 target/debug/deps/），试跑 --probe 确认；
+                             #   native_hook_exe 找随包的 mesa_helper（hook 模式，经 image_gen::find_bundled_helper，开发态在 target/debug/deps/），试跑 --probe 确认；
                              #   找到就同步跑（launch_hooks_async 返回 false），找不到照旧 PowerShell 脚本 + 后台；写全局配置的三家
                              #   用 global_hook_command：helper 拷成 hooks-state/ccode-hook.exe、路径不加引号（三种宿主都认），不行退回 .ps1
                              #   （PostToolUse 2KB，截断按字段名兜底）；launch_hooks_value = Claude / CodeBuddy 每次启动注入的 hooks；
@@ -1598,6 +1599,7 @@ src-tauri/src/
                              #   OpenAI 出图接口）+ 改图 --image（Seedream 出图接口带 image / 其余 /images/edits 手拼 multipart，
                              #   不认再退带 image；Gemini inlineData）+ 设置页命令（image_gen_candidates/status/test）+ helper 入口 helper_image_cli；
                              #   红线：密钥只在本进程用、下载图片地址不带鉴权头、Target 不派生 Debug；helper_exe 试跑
-                             #   `image --probe` 通过才把路径作 MESA_IMAGE_TOOL 注入 PTY（pty.rs spawn_tracked；Codex app-server 经 pty_agent_env 同样拿到）
+                             #   `image --probe` 通过才把路径作 MESA_IMAGE_TOOL 注入 PTY（pty.rs spawn_tracked；Codex app-server 经 pty_agent_env 同样拿到）；
+                             #   find_bundled_helper 是随包 helper 的唯一查找口（同目录 → deps/ → 上一层），hooks 的原生 hook 也走它
   lib.rs                     # 模块与 Tauri command 注册；退出收尾 shutdown_for_exit 由 ExitRequested 与更新前的 prepare_app_exit 共用（只做一次）
 ```

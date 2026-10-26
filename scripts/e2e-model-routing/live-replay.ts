@@ -10,14 +10,17 @@
  *   LR=<另一份 live-reply.ts> 换接法比较；SHOW=1 打印接好的预览；NOSYNC=1 半帧也读。
  */
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { pathToFileURL } from "node:url";
 import { JSDOM } from "jsdom";
 
-const root = fileURLToPath(new URL("../../", import.meta.url));
+// 动态 import 要 file:// 地址：Windows 上裸写盘符路径（C:\…）会被当成 c: 协议
+const root = new URL("../../", import.meta.url).href;
 const dom = new JSDOM("<!doctype html><html><body></body></html>");
 Object.assign(globalThis, { window: dom.window, document: dom.window.document, self: dom.window });
 const { Terminal } = await import(`${root}node_modules/@xterm/xterm/lib/xterm.mjs`);
-const lr = (await import(process.env.LR ?? `${root}src/live-reply.ts`)) as typeof import("../../src/live-reply.ts");
+const lr = (await import(
+  process.env.LR ? pathToFileURL(process.env.LR).href : `${root}src/live-reply.ts`
+)) as typeof import("../../src/live-reply.ts");
 
 const [capPath, truthPath] = process.argv.slice(2);
 const cap = JSON.parse(readFileSync(capPath, "utf8")) as { agent: string; size: [number, number]; raw: [number, string][] };

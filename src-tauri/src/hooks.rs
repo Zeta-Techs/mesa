@@ -219,29 +219,7 @@ fn find_native_hook_exe() -> Option<PathBuf> {
     if std::env::var_os("CCODE_HOOK_NO_NATIVE").is_some() {
         return None;
     }
-    let exe = std::env::current_exe().ok()?;
-    let dir = exe.parent()?;
-    let triple = env!("TAURI_ENV_TARGET_TRIPLE");
-    let names = ["mesa_helper.exe".to_string(), format!("mesa_helper-{triple}.exe")];
-    // 打包版：同目录带 triple 后缀的 sidecar。开发态：target/debug/mesa_helper.exe 会被 tauri-build
-    // 用 0 字节占位反复覆盖，`cargo build --bin mesa_helper` 的真身留在 deps/；测试二进制本身就在 deps/
-    let dirs = [Some(dir.to_path_buf()), Some(dir.join("deps")), dir.parent().map(Path::to_path_buf)];
-    for d in dirs.into_iter().flatten() {
-        for name in &names {
-            let p = d.join(name);
-            if !fs::metadata(&p).is_ok_and(|m| m.is_file() && m.len() > 0) {
-                continue;
-            }
-            let probe = crate::process::background_command(&p)
-                .args(["hook", "--probe"])
-                .stdin(std::process::Stdio::null())
-                .output();
-            if probe.is_ok_and(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "ok") {
-                return Some(p);
-            }
-        }
-    }
-    None
+    crate::image_gen::find_bundled_helper("hook")
 }
 
 /// 每次启动注入用的 hook 命令：Windows 有原生 hook 程序就用它，否则同 hook_command_capped

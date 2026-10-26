@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { claudeOutputTokens, dropAskedEcho, extractLiveReply, liveReplySupported, mergeLiveReply, sentTextStuckInBox, staleEcho, terminalHasInputBox, unsyncedTail } from "../src/live-reply.ts";
+import { claudeOutputTokens, claudeTurnActiveOnScreen, dropAskedEcho, extractLiveReply, extractLiveThinking, liveReplySupported, mergeLiveReply, sentTextStuckInBox, staleEcho, staleWithoutEcho, terminalHasInputBox, unsyncedTail } from "../src/live-reply.ts";
 
 const RULE = "─".repeat(100);
 // Claude Code 2.1.292 本机 PTY 实录（流式写到一半；假 API 慢速吐字）
@@ -235,6 +235,68 @@ test("Grok Build 1.0：正文没有行首符号，右侧时间与滚动条去掉
   assert.deepEqual(extractLiveReply(screen, "grok")?.lines, HALF);
 });
 
+// 2026-10-26 Grok 1.0.70 Windows 抓屏（假网关慢慢流出长思考）：思考框「│  ♦ Thinking…」+ 竖线框里的思考原文，
+// 开头折成「…」；想完收成「♦ Thought for Ns」。转圈在 Windows 上是 ASCII 的竖线、斜线、横线轮换
+const GROK_THINKING = (body: string[]) => [
+  "     > 写一段代码                                              2:58 PM",
+  "",
+  "",
+  "  │  ♦ Thinking…",
+  "  │",
+  ...body.map((l) => (l ? `  │  ${l}` : "  │")),
+  "",
+  "    | Thinking… 6.1s                                            6.2s ↓1.42k [stop]",
+  "",
+  ...BOX(">"),
+];
+
+test("Grok 思考框：不进回复预览，另读成原样的思考（去竖线、头一行与折叠的「…」，折行接回、代码行原样、汉字不加空格）", () => {
+  const screen = GROK_THINKING([
+    "…",
+    "rows. Most people count table rows including the header, but the risk of being",
+    "judged short is worse than one extra row. Then the code:",
+    "def greet(name):",
+    "    # 拼接问候语并返回",
+    "    return name",
+    "",
+    "这一段是中文的思考内容，终端按照框宽把它折成了两行，接回来之时汉字之间不能多出",
+    "空格。",
+  ]);
+  assert.equal(extractLiveReply(screen, "grok"), null);
+  assert.deepEqual(extractLiveThinking(screen, "grok"), [
+    "rows. Most people count table rows including the header, but the risk of being judged short is worse than one extra row. Then the code:",
+    "def greet(name):",
+    "    # 拼接问候语并返回",
+    "    return name",
+    "",
+    "这一段是中文的思考内容，终端按照框宽把它折成了两行，接回来之时汉字之间不能多出空格。",
+  ]);
+});
+
+test("Grok 想完收起、等首字的转圈、别家：都读不出思考框", () => {
+  const thought = [
+    "     > 写一段代码                                              2:58 PM",
+    "",
+    "     ♦ Thought for 8.6s",
+    "",
+    "     第一段：这是一段慢慢流出来的回复。                     2:58 PM",
+    "",
+    "    | Responding… 2.2s                                          10s ↓1.42k [stop]",
+    ...BOX(">"),
+  ];
+  assert.equal(extractLiveThinking(thought, "grok"), null);
+  assert.deepEqual(extractLiveReply(thought, "grok")?.lines, ["第一段：这是一段慢慢流出来的回复。"]);
+  const waiting = [
+    "     > 写一段代码                                              2:58 PM",
+    "",
+    "    | Waiting for response… 0.0s                                0.0s ↓1.36k [stop]",
+    ...BOX(">"),
+  ];
+  assert.equal(extractLiveReply(waiting, "grok"), null);
+  assert.equal(extractLiveThinking(waiting, "grok"), null);
+  assert.equal(extractLiveThinking(GROK_THINKING(["想一想"]), "kimi"), null);
+});
+
 test("Kimi Code 2.2：❯ 回显 / ● 正文 / 方框输入框；工具调用整块跳过", () => {
   const screen = [
     " ❯ 讲一段",
@@ -466,6 +528,27 @@ test("Codex：多行提问的真回显刚好滚到第一行，续行仍不进预
   ];
   const read = extractLiveReply(screen, "codex")!;
   assert.deepEqual(mergeLiveReply(prev, read), nth(1, 3));
+});
+
+// 2026-10-26 用户 Windows 截图（Codex 0.164）：对话区被往上翻着，预览里是前两轮的回复，连「↓ Back to bottom · esc」一起
+test("Codex 0.164：对话区往上翻着（输入框上方有「↓ Back to bottom」）时不预览，翻回底部照常", () => {
+  const old = [
+    "› 运行 ls /不存在的目录，把报错原样告诉我，然后再用 echo 恢复正常",
+    "",
+    "• 我先运行不存在的目录命令，再用 echo 恢复正常输出。",
+    "",
+    "• 随后执行 echo 恢复正常，输出为：",
+    "",
+  ];
+  for (const hint of ["↓ Back to bottom · esc", "↓ Bottom", "New activity · ↓ Back to bottom · esc"]) {
+    const screen = [...old, `                    ${hint}`, "› Ask Codex to do anything"];
+    assert.equal(extractLiveReply(screen, "codex"), null, hint);
+  }
+  const atBottom = ["› 原样复述我这条消息的第三行", "", "• <b>不该加粗</b> & “引号”", "", "› Ask Codex to do anything"];
+  assert.deepEqual(extractLiveReply(atBottom, "codex")?.lines, ["<b>不该加粗</b> & “引号”"]);
+  // 回复正文里提到这几个词不算
+  const mention = ["› 解释一下", "", "• 按 ↓ Back to bottom 回到底部即可。", "", "› Ask Codex to do anything"];
+  assert.deepEqual(extractLiveReply(mention, "codex")?.lines, ["按 ↓ Back to bottom 回到底部即可。"]);
 });
 
 test("接续时上一次的最后一行只写了半截，写全后不重复", () => {
@@ -739,6 +822,36 @@ test("staleEcho：刚发的这句还没画出来时，读到的是上一轮回�
   assert.equal(staleEcho(read, null, "讲个笑话"), false);
 });
 
+// 2026-10-26 用户 Windows 截图（Claude Code）：上一轮回复长过一屏、提问卷出去了，刚发的这句还没画出来时，
+// 预览把上一轮的后半段（「5. … 6. … 7. …」「七步全部完成」）当成了这一轮的回复
+test("staleWithoutEcho：屏上没有回显、读到的字全是发送前就在的，是上一轮的尾巴", () => {
+  const line = "─".repeat(60);
+  const box = [line, "❯ ", line, "  ? for shortcuts"];
+  const tail = [
+    "  5. 已把第 3 行的 hello 改为 hello Mesa。",
+    "  6. 读取确认：print(\"hello Mesa\", datetime.datetime.now()) 已生效。",
+    "  7. tmp.txt 已新建并删除，目录恢复为 hello.py、red.png。",
+    "",
+    "  七步全部完成 ✅",
+    "",
+  ];
+  const before = extractLiveReply([...tail, ...box], "claude-code");
+  assert.ok(before && before.echo === undefined, "上一轮的提问已经卷出屏");
+  // 刚发的这句粘在输入框里、还没交出去：对话区没变
+  const pasted = extractLiveReply([...tail, line, "❯ 请输出 1 到 60，每行一行", line, "  ? for shortcuts"], "claude-code")!;
+  assert.equal(staleWithoutEcho(pasted, before.lines), true);
+  // 交出去、往上卷了几行（回显还没画出来）：剩下的仍是旧的
+  const scrolled = extractLiveReply([...tail.slice(2), ...box], "claude-code")!;
+  assert.equal(staleWithoutEcho(scrolled, before.lines), true);
+  // 这一轮的回复一次画出来、长过一屏把回显挤出去了：有新字，照常预览
+  const fresh = extractLiveReply(["  第 58 行：天色已晚。", "  第 59 行：准备收工。", "  第 60 行：晚安。", "", ...box], "claude-code")!;
+  assert.equal(staleWithoutEcho(fresh, before.lines), false);
+  // 读到了回显的归 staleEcho 管；发送前屏上什么也读不出：不拦
+  const echoed = extractLiveReply(["❯ 请输出 1 到 60", "", ...tail, ...box], "claude-code")!;
+  assert.equal(staleWithoutEcho(echoed, before.lines), false);
+  assert.equal(staleWithoutEcho(scrolled, null), false);
+});
+
 test("刚发的这句还躺在 Claude 输入框里没交出去（2026-10-24 HER 润色：接回的会话吞了回车）", () => {
   const sent = "manuscript/review-report.md 里每条都已经写了「决定：」。接受和要求修改的按报告改；拒绝的不改。改完继续这一步还没做完的事，不要停下来等我再点评审。";
   const line = "─".repeat(60);
@@ -812,4 +925,74 @@ test("dropAskedEcho：分段提问在回显里的其余几段不当回复", () =
   assert.deepEqual(dropAskedEcho(["好的", "我来画"], "好的话请画图"), ["好的", "我来画"]);
   // 没有提问可比：原样
   assert.deepEqual(dropAskedEcho(["回复"], ""), ["回复"]);
+});
+
+// 2026-10-26 Claude Code 2.1.310 Windows 抓屏（chat-capture REPLY_ESC_AFTER）：还没出字就按 Esc，这一句被退回输入框，
+// 输入框下面的「esc to interrupt」随之消失——聊天层靠它确认回合真停了再收旁路的回合
+test("Claude 这一轮还在跑：看输入框下面的「esc to interrupt」", () => {
+  const running = [
+    "❯ TRIGGER_THINK TRIGGER_SLOW 讲一段",
+    "* Quantumizing… (5s · thinking with high effort)",
+    "─".repeat(60),
+    "❯",
+    "─".repeat(60),
+    "  ⏸ manual mode on · esc to interrupt",
+  ];
+  const interrupted = [
+    "─".repeat(60),
+    "❯ TRIGGER_THINK TRIGGER_SLOW 讲一段",
+    "─".repeat(60),
+    "  ⏸ manual mode on",
+  ];
+  assert.equal(claudeTurnActiveOnScreen(running), true);
+  assert.equal(claudeTurnActiveOnScreen(interrupted), false);
+});
+
+// Kimi 2.3.2 ThinkingComponent：思考中画「⠋ thinking…」，下面缩进两格只留思考原文的最后两行；想完收成斜体浅字的「● 第一行 / 续行 /
+// … (N more lines, ctrl+o to expand)」。2026-10-26 用户：Grok 思考时左边有细线，Kimi 要想完、会话文件落了盘才有——统一成 Grok 那样
+const KIMI_BOX = [
+  " ╭" + "─".repeat(60) + "╮",
+  " │ >" + " ".repeat(58) + "│",
+  " ╰" + "─".repeat(60) + "╯",
+];
+
+test("Kimi 思考中：「⠋ thinking…」下面两行读成思考，不进回复预览", () => {
+  const screen = [
+    " ❯ 今天天气怎么样",
+    "",
+    " ⠋ thinking…",
+    "   用户问天气，我需要先确定位置。可以先用 IP 粗略定位，",
+    "   定位不准再请用户告诉我城市名。",
+    "",
+    ...KIMI_BOX,
+  ];
+  assert.equal(extractLiveReply(screen, "kimi"), null);
+  assert.deepEqual(extractLiveThinking(screen, "kimi"), [
+    "用户问天气，我需要先确定位置。可以先用 IP 粗略定位，定位不准再请用户告诉我城市名。",
+  ]);
+  // 想完了（头一行没了）：没有思考框
+  const done = [" ❯ 今天天气怎么样", "", " ● 今天晴，22°C。", "", ...KIMI_BOX];
+  assert.equal(extractLiveThinking(done, "kimi"), null);
+  assert.deepEqual(extractLiveReply(done, "kimi")?.lines, ["今天晴，22°C。"]);
+});
+
+test("Kimi 收起的思考是斜体：调用方标出斜体行时不当成回复的开头", () => {
+  const screen = [
+    " ❯ 今天天气怎么样",
+    "",
+    " ● 用户问天气，我需要先确定位置。",
+    "   可以先用 IP 粗略定位。",
+    "   定位不准再请用户告诉我城市名。",
+    "   … (4 more lines, ctrl+o to expand)",
+    "",
+    " ● 今天晴，22°C，适合外出。",
+    "",
+    ...KIMI_BOX,
+  ];
+  const italic = new Set([2, 3, 4]);
+  assert.deepEqual(extractLiveReply(screen, "kimi", (row) => italic.has(row))?.lines, ["今天晴，22°C，适合外出。"]);
+  // 不给字样时只看文字：认不出（行首 ● 和正文一样），照旧整段读
+  assert.equal(extractLiveReply(screen, "kimi")?.lines[0], "用户问天气，我需要先确定位置。");
+  // 别家不看斜体
+  assert.deepEqual(extractLiveReply(screen, "claude-code", () => true), extractLiveReply(screen, "claude-code"));
 });

@@ -56,7 +56,7 @@ import {
 import ContextMenu, { type ContextMenuItem } from "./ContextMenu";
 import { confirmDialog } from "./ConfirmDialog";
 import RunCaret from "./RunCaret";
-import { RUN_CARET_LABEL } from "../run-caret";
+import { RUN_CARET_LABEL, strongestCaret, withUnread } from "../run-caret";
 import { unreadKeyOf } from "../chat-unread";
 import RenameProjectModal from "./RenameProjectModal";
 import { toast } from "../toast";
@@ -697,12 +697,12 @@ export default function ProjectTree({
   function renderChat(s: SessionMetaDto, project: ProjectDto | null) {
     const key = chatKey(s);
     const full = tidySessionTitle(s).title;
-    const dot = chatDot(s, terminalRunInputs);
     // Mesa 里开着这段的标签：有它才给 ×（Mesa 外终端在写的只亮光标，关不了）
     const holder = terminalRunInputs.find((r) => r.agentId === s.agent && r.sessionId === s.sessionId);
     const selected = key === selectedChatKey;
-    // 跑完了没看：标题亮到 l1（同正看着的那段的字色，但不铺底），点开就消
+    // 跑完了没看：标题亮到 l1（同正看着的那段的字色，但不铺底）、行尾蓝光标，点开就消
     const unread = !selected && unreadSet.has(key);
+    const dot = withUnread(chatDot(s, terminalRunInputs), unread);
     const agent = AGENTS.find((a) => a.id === s.agent)?.label ?? s.agent;
     if (renaming?.key === key) {
       return (
@@ -770,7 +770,7 @@ export default function ProjectTree({
           onPointerEnter={() => prefetchConversation(s)}
           onFocus={() => prefetchConversation(s)}
           aria-current={selected ? "true" : undefined}
-          title={`${full}\n${agent} · ${relTime(s.updatedAt)}${dot ? ` · ${dotTitle(dot)}` : ""}${unread ? " · 跑完了，还没看" : ""}\n点一下接着聊`}
+          title={`${full}\n${agent} · ${relTime(s.updatedAt)}${dot ? ` · ${dotTitle(dot)}` : ""}\n点一下接着聊`}
           className={`flex h-8 min-w-0 items-center gap-2 rounded-md pl-2 pr-1 ${
             selected || unread ? "text-l1" : "text-l3 group-hover/chat:text-l2"
           }`}
@@ -841,6 +841,7 @@ export default function ProjectTree({
     const selected = page === "terminal" && r.tabId === terminalActiveTabId;
     const run = terminalRunInputs.find((x) => x.tabId === r.tabId);
     const unread = !selected && run != null && unreadSet.has(unreadKeyOf(run));
+    const rowDot = withUnread(r.dot, unread);
     const Icon = r.kind === "terminal" ? SquareTerminal : r.kind === "new" ? SquarePen : null;
     return (
       <div
@@ -863,7 +864,7 @@ export default function ProjectTree({
               ? "还没说话的新对话：发第一句才启动"
               : r.kind === "terminal"
                 ? `${r.label}\n开着的终端`
-                : `${r.label}${r.dot ? ` · ${dotTitle(r.dot)}` : ""}${unread ? " · 跑完了，还没看" : ""}`
+                : `${r.label}${rowDot ? ` · ${dotTitle(rowDot)}` : ""}`
           }
           className={`flex h-8 min-w-0 items-center gap-2 rounded-md pl-2 pr-1 ${
             selected || unread ? "text-l1" : "text-l3 group-hover/chat:text-l2"
@@ -874,9 +875,9 @@ export default function ProjectTree({
         </button>
         {/* 状态列同对话行：有光标才占一格，标题不进来 */}
         <div className="flex shrink-0 items-center gap-0.5 pr-0.5">
-          {r.dot && (
+          {rowDot && (
             <span className="flex h-6 w-6 items-center justify-center" data-run-slot>
-              <RunCaret state={r.dot} />
+              <RunCaret state={rowDot} />
             </span>
           )}
           <button
@@ -1254,10 +1255,13 @@ export default function ProjectTree({
       selectedRoot != null && samePath(selectedRoot, row.repoPath, IS_WINDOWS);
     const fkey = pathKey(row.repoPath, IS_WINDOWS);
     const open = folderOpen(fkey, chatOpenPrefs, currentKey);
-    // 收着时节头行尾报状态：这个课题里有标签等你确认＝黄、在跑＝绿
-    const dot = folderDot([row.repoPath, ...(worktreesOf.get(fkey) ?? [])], terminalRunInputs, IS_WINDOWS);
     // 收着、里面有跑完没看的：课题名亮到 l1（展开时各段自己亮）
     const unreadInside = !open && folderHasUnread(fkey, chatsByRoot.get(fkey) ?? []);
+    // 收着时节头行尾报状态（这个课题里最要紧的那个：等确认 > 做完没看 > 在干活 > 闲着）
+    const dot = strongestCaret([
+      folderDot([row.repoPath, ...(worktreesOf.get(fkey) ?? [])], terminalRunInputs, IS_WINDOWS),
+      unreadInside ? "unread" : null,
+    ]);
     const menuOpen = menu?.row.key === row.key;
     // 拖动：源节跟手；落在「原位 → 目标」之间的节各让出源那么高（节高矮不一，见 tabDragShift）
     const inSection = drag?.section === section ? drag : null;
@@ -1362,8 +1366,8 @@ export default function ProjectTree({
   /** 随手聊：不挂在项目下的对话，排在最上面。没有项目页，点名字也只开合 */
   function renderScratch() {
     const open = folderOpen(SCRATCH_FOLDER_KEY, chatOpenPrefs, currentKey);
-    const dot = scratchDot(terminalRunInputs, IS_WINDOWS);
     const unreadInside = !open && folderHasUnread(SCRATCH_FOLDER_KEY, scratchList);
+    const dot = strongestCaret([scratchDot(terminalRunInputs, IS_WINDOWS), unreadInside ? "unread" : null]);
     const toggle = () => toggleFolder(SCRATCH_FOLDER_KEY, open);
     return (
       <div data-rail-group>

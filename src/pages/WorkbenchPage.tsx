@@ -84,7 +84,8 @@ import {
 } from "../components/PageFrame";
 import { toast } from "../toast";
 import RunCaret from "../components/RunCaret";
-import { caretOfAttention, type RunCaretState } from "../run-caret";
+import { caretOfAttention, withUnread, type RunCaretState } from "../run-caret";
+import { unreadKeyOf } from "../chat-unread";
 import { workbenchScheduleRows } from "../schedule-tasks";
 import { sidebarChatTitle } from "../sidebar-chats";
 import { isScratchCwd } from "../quick-chat";
@@ -140,6 +141,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
   const setPage = useAppStore((s) => s.setPage);
   const contextLabel = useAppStore((s) => s.contextLabel);
   const terminalRunInputs = useAppStore((s) => s.terminalRunInputs);
+  const unreadChats = useAppStore((s) => s.unreadChats);
   const rawInboxItems = useAppStore((s) => s.inboxItems);
   const appUpdate = useAppStore((s) => s.appUpdate);
   const inboxDismissed = useAppStore((s) => s.inboxDismissed);
@@ -851,6 +853,11 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
     if (item.attention === "confirm" || item.attention === "working") return item.attention;
     return item.runningCount > 0 ? "idle" : null;
   }
+  /** 这个标签上跑完了没看（chat-unread.ts）：行尾光标换蓝色 */
+  function runUnread(tabId: string): boolean {
+    const run = terminalRunInputs.find((x) => x.tabId === tabId);
+    return run != null && unreadChats.includes(unreadKeyOf(run));
+  }
   const heroSaid = hero ? lastSaidFor(hero.path) : null;
   // 「上次停在」那段对话归在别的步骤（常见：在商量后面一步的任务书）时标出步骤，和副行的「进行到」对得上
   const heroSaidStep = hero
@@ -993,7 +1000,9 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                           </span>
                         ) : null}
                         {/* 已经停了的（live === false）不画；还开着的按注意力 */}
-                        {r.live !== false && <RunCaret state={caretOfAttention(r.attention)} className="mr-1" />}
+                        {r.live !== false && (
+                          <RunCaret state={withUnread(caretOfAttention(r.attention), runUnread(r.tabId)) ?? "idle"} className="mr-1" />
+                        )}
                       </button>
                     </li>
                   ))}
