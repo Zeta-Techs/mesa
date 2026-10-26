@@ -570,6 +570,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # ↑ 一路往回翻（userTextHistory；lastUserText 保留）、上下文圆环数据（lastContextTokens / contextUsage）；Mesa 组的内容由 TerminalPage mesaCommandsFor 组装，
                              # ↑ 取回跳过项目上下文包（splitLaunchPrompt）（tests/composer-assist.test.ts）
   notebook.ts                # .ipynb 解析（nbformat 4）：单元 / 输出归一、相邻流合并、svg 转图、traceback 去 ANSI（tests/notebook.test.ts）
+  pdf-organize.ts            # PDF 选段「整理为笔记」：写 notes/excerpts.md，精读步在跑时写工作区并预填终端（运行页与项目文件页共用）
   office-convert.ts          # LibreOffice 转换器探测（进程内只问一次）/ 转 PDF / docxDroppedSummary（tests/office-convert.test.ts）
   file-ops.ts                # 文件页 / 文件树文件操作：名字输入行（新建文件 / 文件夹 / 重命名）、复制一份、移动到…（系统选文件夹）、拖入复制与落点判定（tests/file-ops.test.ts）
   file-watch.ts              # 预览跟随磁盘变化：fileStamp（file_stamp 大小+修改时间）/ stampKey / useFileVersion（watch_file 单文件监听，改一次加一）（tests/file-watch.test.ts）

@@ -11,6 +11,7 @@ import { listen } from "@tauri-apps/api/event";
 import {
   BookOpen,
   ChevronRight,
+  Columns2,
   Copy,
   CopyPlus,
   FilePlus,
@@ -67,6 +68,7 @@ import ProjectFilePreview from "./ProjectFilePreview";
 import { cachedNotePaired, checkNotePaired, isMarkdownNote } from "../note-pdf-pair";
 import { Modal } from "./Modal";
 import { armDraftHandoff } from "../file-draft-handoff";
+import { organizePdfExcerpt } from "../pdf-organize";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type { DragDropEvent } from "@tauri-apps/api/webview";
 import {
@@ -178,6 +180,9 @@ export default function ProjectFilesView({
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [preview, setPreview] = useState<DirEntryDto | null>(null);
+  /** 「对照」钉在左边的那份文件（宽屏与窗口预览里并排看两份；2026-10-26） */
+  const [compare, setCompare] = useState<DirEntryDto | null>(null);
+  const compareDirtyRef = useRef(false);
   const [windowed, setWindowed] = useState(false);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<ProjectFileFilter>("all");
@@ -284,6 +289,8 @@ export default function ProjectFilesView({
     setCache({});
     setExpanded(new Set());
     setPreview(null);
+    setCompare(null);
+    compareDirtyRef.current = false;
     setWindowed(false);
     setQuery("");
     setFilter("all");
@@ -543,6 +550,7 @@ export default function ProjectFilesView({
   function moveHost(toWindow: boolean) {
     if (!preview || windowed === toWindow) return;
     if (dirtyRef.current) armDraftHandoff(preview.path);
+    if (compare && compareDirtyRef.current) armDraftHandoff(compare.path);
     setWindowed(toWindow);
   }
 
@@ -578,6 +586,8 @@ export default function ProjectFilesView({
   async function closePreview() {
     if (!(await confirmLoseDirty())) return;
     applyPreview(null);
+    // 预览关了，对照也一起收（对照栏有没保存的修改时 closeCompare 会再问）
+    if (compare) await closeCompare();
   }
 
   async function stepPreview(delta: -1 | 1) {
@@ -698,6 +708,13 @@ export default function ProjectFilesView({
         }
         return next;
       });
+      if (
+        compare &&
+        (samePath(compare.path, m.path, IS_WINDOWS) || pathWithin(compare.path, m.path, IS_WINDOWS))
+      ) {
+        compareDirtyRef.current = false;
+        setCompare(null);
+      }
       // 删的就是当前预览（或其所在目录）：直接关掉，不存在丢编辑的问题
       if (
         preview &&
@@ -729,6 +746,7 @@ export default function ProjectFilesView({
         if (renamingPreview && !(await confirmLoseDirty())) return;
         const next = await submitNameDraftCmd(d, projectPath);
         forgetPath(d.path);
+        followCompare(d.path, next);
         if (renamingPreview && preview) followMoved(preview.path, d.path, next);
       } else {
         const created = await submitNameDraftCmd(d, projectPath);
@@ -742,6 +760,30 @@ export default function ProjectFilesView({
     } catch (reason) {
       onError(`${verb}失败：${String(reason)}`);
     }
+  }
+
+  /** 对照栏里的文件被改名 / 移走：跟到新路径 */
+  function followCompare(from: string, to: string) {
+    setCompare((c) => {
+      if (!c) return c;
+      if (!samePath(c.path, from, IS_WINDOWS) && !pathWithin(c.path, from, IS_WINDOWS)) return c;
+      const moved = samePath(c.path, from, IS_WINDOWS) ? to : to + c.path.slice(from.length);
+      return asFileEntry({ path: moved, name: baseName(moved) });
+    });
+  }
+
+  /** 关对照栏：有没保存的修改先问 */
+  async function closeCompare() {
+    if (
+      compareDirtyRef.current &&
+      !(await confirmDialog("对照栏里的文件有没保存的修改，关掉就会丢掉。仍要关？", {
+        danger: true,
+        confirmText: "关掉",
+      }))
+    )
+      return;
+    compareDirtyRef.current = false;
+    setCompare(null);
   }
 
   /** 预览中的文件（或它所在文件夹）被改名 / 移走：预览跟到新路径 */
@@ -792,6 +834,7 @@ export default function ProjectFilesView({
       const next = await pickAndMove(m.path, projectPath, IS_WINDOWS);
       if (!next) return;
       forgetPath(m.path);
+      followCompare(m.path, next);
       if (affectsPreview && preview) followMoved(preview.path, m.path, next);
       refresh();
     } catch (reason) {
@@ -1125,6 +1168,51 @@ export default function ProjectFilesView({
   const windowKind = preview ? projectFilePreviewKind(preview.path) : "text";
   const windowXl = windowKind === "xlsx" || windowKind === "pdf";
 
+  /** PDF 选段「整理为笔记」（与运行页同一套，pdf-organize.ts）：精读步在跑时预填终端并跳到运行页 */
+  function organizeFor(pdfPath: string) {
+    return (text: string, page: number, fileName: string) =>
+      organizePdfExcerpt({ pdfPath, text, page, fileName, onLaunch: () => setPage("terminal") });
+  }
+
+  /** 对照栏：左边钉住的那份（只在宽屏侧栏与窗口预览里出现） */
+  function comparePane(extraClass = "") {
+    if (!compare) return null;
+    return (
+      <section
+        data-project-file-preview=""
+        className={`flex h-full min-h-0 min-w-0 flex-1 flex-col ${extraClass}`}
+      >
+        <div className="mb-2 flex shrink-0 items-center gap-2">
+          <FileTypeMark path={compare.path} />
+          <span className="min-w-0 flex-1 truncate text-sm text-l1" title={compare.path}>
+            {compare.name}
+          </span>
+          <span className="shrink-0 text-micro text-l4">对照</span>
+          <button
+            type="button"
+            className={ghostActionClass}
+            onClick={() => void closeCompare()}
+            aria-label="关掉对照"
+            title="关掉对照"
+          >
+            ×
+          </button>
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden overscroll-none">
+          <ProjectFilePreview
+            key={`cmp:${compare.path}`}
+            path={compare.path}
+            root={projectPath}
+            onOrganize={organizeFor(compare.path)}
+            onDirtyChange={(d) => {
+              compareDirtyRef.current = d;
+            }}
+          />
+        </div>
+      </section>
+    );
+  }
+
   function previewChrome() {
     if (!preview) return null;
     return (
@@ -1160,6 +1248,17 @@ export default function ProjectFilesView({
           >
             <Locate size={12} aria-hidden="true" />
             定位
+          </button>
+        )}
+        {(wide || windowed) && !compare && (
+          <button
+            type="button"
+            className={`${rowActionClass} gap-1`}
+            onClick={() => setCompare(preview)}
+            title="把这份钉在左边，再点列表里另一份文件，两份并排对照"
+          >
+            <Columns2 size={12} aria-hidden="true" />
+            对照
           </button>
         )}
         <button
@@ -1286,6 +1385,7 @@ export default function ProjectFilesView({
             )}
           </div>
         </section>
+        {preview && !windowed && wide && compare && comparePane(`mr-3 ${projectWellClass}`)}
         {preview && !windowed && wide && (
           <section
             data-project-file-preview=""
@@ -1303,6 +1403,7 @@ export default function ProjectFilesView({
                     ? () => openImmersive(preview)
                     : undefined
                 }
+                onOrganize={organizeFor(preview.path)}
                 onDirtyChange={(d) => {
                   dirtyRef.current = d;
                 }}
@@ -1328,6 +1429,7 @@ export default function ProjectFilesView({
                   ? () => openImmersive(preview)
                   : undefined
               }
+              onOrganize={organizeFor(preview.path)}
               onDirtyChange={(d) => {
                 dirtyRef.current = d;
               }}
@@ -1344,15 +1446,28 @@ export default function ProjectFilesView({
             moveHost(false);
           }}
           overflow="hidden"
-          size={windowXl ? "xl" : "lg"}
+          size={windowXl || compare ? "xl" : "lg"}
           panelClassName={
-            windowXl
+            windowXl || compare
               ? "h-[min(88vh,920px)] max-w-[min(96vw,1280px)]"
               : "h-[80vh] max-w-4xl"
           }
-          contentClassName="flex min-h-0 flex-1 flex-col overflow-hidden overscroll-none"
+          contentClassName="flex min-h-0 flex-1 flex-row gap-3 overflow-hidden overscroll-none"
         >
+          {compare && comparePane()}
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="mb-2 flex shrink-0 items-center gap-1">
+            {!compare && (
+              <button
+                type="button"
+                className={`${rowActionClass} gap-1`}
+                onClick={() => setCompare(preview)}
+                title="把这份钉在左边，再按 ↑ / ↓ 或点列表换另一份，两份并排对照"
+              >
+                <Columns2 size={12} aria-hidden="true" />
+                对照
+              </button>
+            )}
             <button
               type="button"
               className={`${rowActionClass} ml-auto`}
@@ -1382,10 +1497,12 @@ export default function ProjectFilesView({
                 ? () => openImmersive(preview)
                 : undefined
             }
+            onOrganize={organizeFor(preview.path)}
             onDirtyChange={(d) => {
               dirtyRef.current = d;
             }}
           />
+          </div>
         </Modal>
       )}
       {menu && (

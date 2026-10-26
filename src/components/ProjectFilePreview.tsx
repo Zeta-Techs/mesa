@@ -1,4 +1,4 @@
-import { lazy, Suspense, type ReactNode } from "react";
+import { lazy, Suspense, type ComponentProps, type ReactNode } from "react";
 import { projectFilePreviewKind } from "../project-files";
 import { LoadingRows } from "./PageFrame";
 import PdfContinuousView from "./PdfContinuousView";
@@ -18,6 +18,7 @@ export default function ProjectFilePreview({
   leading,
   onAnnotate,
   onDirtyChange,
+  onOrganize,
 }: {
   path: string;
   root: string;
@@ -32,6 +33,8 @@ export default function ProjectFilePreview({
     fileName: string,
     comment: string,
   ) => string | null;
+  /** PDF 选段「整理为笔记」（项目文件页接线，pdf-organize.ts） */
+  onOrganize?: ComponentProps<typeof PdfContinuousView>["onOrganize"];
   /** 脏状态上报（只有文本编辑态会脏）：宿主用来在切换/关闭预览前确认丢弃 */
   onDirtyChange?: (dirty: boolean) => void;
 }) {
@@ -45,6 +48,7 @@ export default function ProjectFilePreview({
           cwdHint={root}
           maxFitMultiplier={1.5}
           onOpenReader={onOpenReader}
+          onOrganize={onOrganize}
         />
       </div>
     );

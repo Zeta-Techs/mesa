@@ -145,9 +145,7 @@ import { formatPdfExcerptPrompt, readerReuseKey } from "../reader";
 import {
   projectChatLaunch,
   READER_BINDING_SLOT,
-  stepSlotKey,
   taskBindingLaunch,
-  workspaceLaunchChain,
 } from "../project-agents";
 import type { DirPick } from "../components/ChatProjectPicker";
 import { defaultCommitMessage } from "../git-commit-message";
@@ -200,10 +198,9 @@ import {
   trustAnswerKeys,
   type TrustPrompt,
 } from "../trust-prompt";
-import { ORGANIZE_NOTES_PROMPT } from "../pipeline-presets";
+import { organizePdfExcerpt as organizePdfExcerptShared } from "../pdf-organize";
 import {
   isUnsafeLitProjectDir,
-  notesExcerptTarget,
   suggestLitProjectDir,
 } from "../lit-project";
 import { isPreviewableImagePath } from "../file-icons";
@@ -297,7 +294,6 @@ import type {
   ConversationPageDto,
   GitCommitResultDto,
   HandoffTargetDto,
-  ProjectConfigReadDto,
   ProjectDto,
   RunDto,
   SessionMetaDto,
@@ -9312,99 +9308,16 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     ): Promise<PdfActionResult> => {
       const pdfPath = preview?.path;
       if (!pdfPath) return { ok: false, msg: "预览已关闭，请重新打开 PDF" };
-      let owner = await invoke<ProjectDto | null>("pdf_owner_project", {
+      // 整理为笔记的落点与开工逻辑与项目文件页共用（pdf-organize.ts）
+      return organizePdfExcerptShared({
         pdfPath,
+        text,
+        page,
+        fileName,
+        offerAddProject: () => offerAddLitProject(pdfPath, statuses[focusedId]?.cwd ?? preview?.root),
       });
-      if (!owner) {
-        const root = await offerAddLitProject(
-          pdfPath,
-          statuses[focusedId]?.cwd ?? preview?.root,
-        );
-        if (!root) return { ok: false, msg: "未添加项目，笔记没有写入" };
-        owner = { path: root, name: "", createdAt: null, lastOpenedAt: null };
-      }
-      const read = await invoke<ProjectConfigReadDto>("read_project_config", {
-        path: owner.path,
-      });
-      const cfg = read.config;
-      const date = new Date().toLocaleDateString("sv-SE");
-      const chunk = `\n## ${fileName} · 第 ${page} 页 · ${date}\n\n${text}\n`;
-      const target = notesExcerptTarget(cfg);
-      const step =
-        target.kind === "workspace"
-          ? cfg.steps.find((s) => s.workspaceName === target.name)
-          : undefined;
-      const all =
-        target.kind === "workspace"
-          ? await invoke<WorkspaceDto[]>("list_workspaces")
-          : [];
-      const ws = all.find(
-        (w) =>
-          samePath(w.repoPath, owner.path, IS_WINDOWS) &&
-          target.kind === "workspace" &&
-          w.name === target.name &&
-          w.status === "active",
-      );
-      if (!ws || !step) {
-        await invoke("append_notes_excerpt", {
-          worktreePath: owner.path,
-          content: chunk,
-        });
-        return {
-          ok: true,
-          msg: step
-            ? `已写入项目 notes/excerpts.md。「${step.name}」开工时会带进工作区，AI 精读到这篇时并进笔记。`
-            : "已写入项目 notes/excerpts.md。可在右边「文件」里打开这份摘录继续写。",
-        };
-      }
-      await invoke("append_notes_excerpt", {
-        worktreePath: ws.worktreePath,
-        content: chunk,
-      });
-      const pairs = await invoke<[string, string][]>("workspace_env_for", {
-        worktreePath: ws.worktreePath,
-      });
-      const last = (() => {
-        try {
-          return JSON.parse(
-            localStorage.getItem(`ccode.wsLast.${ws.worktreePath}`) ?? "{}",
-          ) as Partial<{ agentId: string; profileId: string; model: string }>;
-        } catch {
-          return {};
-        }
-      })();
-      // B1：整理笔记是步骤工作区启动——步骤槽绑定优先于 wsLast（workspaceLaunchChain
-      // 与 buildWorkspaceTerminalRequest 同一纯链，免两处顺序漂移）；绑定现读，
-      // 读不到按未绑定走 wsLast 现状
-      let stepL: { agentId: string; profileId: string; model: string } | null = null;
-      try {
-        const b = await invoke<{ profile: string; model?: string | null } | null>(
-          "get_project_agent_binding",
-          {
-            projectRoot: owner.path,
-            slot: stepSlotKey(step.name),
-          },
-        );
-        stepL = taskBindingLaunch(useAppStore.getState().profiles, b);
-      } catch {
-        /* 读不到按未绑定回落 */
-      }
-      const chain = workspaceLaunchChain(null, stepL, last);
-      setPendingTerminal({
-        cwd: ws.worktreePath,
-        extraEnv: Object.fromEntries(pairs),
-        title: ws.name,
-        agentId: chain.agentId,
-        profileId: chain.profileId,
-        model: chain.model,
-        initialPrompt: ORGANIZE_NOTES_PROMPT,
-      });
-      return {
-        ok: true,
-        msg: `已写入工作区「${ws.name}」的 notes/excerpts.md，并预填了终端启动（确认配置后点「启动」）`,
-      };
     },
-    [preview, focusedId, statuses, setPendingTerminal],
+    [preview, focusedId, statuses],
   );
 
   // 会话页「进行中」反向跳转：聚焦指定标签
