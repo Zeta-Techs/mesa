@@ -2547,6 +2547,13 @@ select:focus-visible {
   background-color: rgba(0, 0, 0, 0.44);
 }
 
+/* Mac 的浮层（下拉 / 右键菜单 / 弹窗）也走系统原生浮层滚动条（2026-10-26 用户：聊天「＋」菜单打开后「最后面少一个字符」）：
+   自绘 6px 滚动条占布局宽，打开那一刻先按原生浮层画（宽 0、拇指闪一下），随后换成自绘的 6px，右侧提示字和省略号
+   跟着往里缩 6px、截断多吃一个字。原生浮层从头到尾布局宽 0，不再换宽 */
+[data-platform="mac"] .ccode-float-surface {
+  scrollbar-width: thin;
+}
+
 /* Mac 的「闲置淡出」同样改用系统原生浮层滚动条（原因见上面侧栏树那条：WKWebView 不重画自绘拇指）；「常显」仍走自绘 */
 [data-platform="mac"] .ccode-app-shell[data-chat-scrollbar="auto"] .ccode-chat-scroll {
   scrollbar-width: thin;
