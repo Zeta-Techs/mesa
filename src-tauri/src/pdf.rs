@@ -135,6 +135,25 @@ pub(crate) fn stamp_of(path: &Path) -> Result<FileStampDto, String> {
     Ok(FileStampDto { size: md.len(), modified_ms })
 }
 
+/// 预览里播放音视频（2026-10-26）：大文件不能整份 base64 过 IPC，改走 Tauri asset 协议流式读取。
+/// 协议的放行范围默认是空的（tauri.conf assetProtocol.scope = []），这里过一遍读取白名单后只放行这一个文件，
+/// 返回 canonical 路径给前端 convertFileSrc
+#[tauri::command]
+pub async fn grant_media_url(
+    app: tauri::AppHandle,
+    path: String,
+    cwd_hint: Option<String>,
+) -> Result<String, String> {
+    use tauri::Manager;
+    let target = tauri::async_runtime::spawn_blocking(move || whitelisted_target(&path, cwd_hint.as_deref()))
+        .await
+        .map_err(|e| format!("读取文件失败: {e}"))??;
+    app.asset_protocol_scope()
+        .allow_file(&target)
+        .map_err(|e| format!("放行播放失败: {e}"))?;
+    Ok(target.to_string_lossy().into_owned())
+}
+
 #[tauri::command]
 pub async fn file_stamp(path: String, cwd_hint: Option<String>) -> Result<FileStampDto, String> {
     tauri::async_runtime::spawn_blocking(move || {

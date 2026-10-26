@@ -110,6 +110,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   components/MergeConflictView.tsx # 保存撞车的对比合并：Monaco diff 左磁盘只读、右我的可改，保存右边以磁盘版本为基线，再撞车刷新左边
   components/SlidesPreview.tsx # PowerPoint 逐页大纲（标题 / 要点 / 第一张图 / 备注 / 首页缩略图）+ 看原样（PDF）
   components/OfficePdfView.tsx # Word / 幻灯经 LibreOffice 转出的 PDF 视图（原文件改了重转）
+  components/NotebookPreview.tsx # Jupyter 笔记本按单元预览（Markdown / 高亮代码 / 输出文字图表格报错），「源码」切回编辑器
+  components/MediaPreview.tsx # 音视频预览：grant_media_url 放行后经 asset 协议流式播放，放不了的编码提示系统打开
   components/UnsupportedPreview.tsx # 本来就不在 Mesa 里预览的文件（二进制 / 旧版 doc、rtf）：中性说明 + 系统打开 / 在文件夹中显示
   components/MdFrontmatterCard.tsx # md 阅读态开头 YAML 头小卡（只展示，超 6 项折叠，双击回编辑态第 1 行）
   components/ChatImageViewer.tsx # 对话图片看大图弹层（Modal + ImagePreview 可缩放）：随手聊没有右栏预览时用
@@ -566,6 +568,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   composer-assist.ts         # 聊天输入框的纯逻辑：@ 引用（mentionQueryAt / applyMention，带空格加引号）、斜杠面板 Mesa 组（MesaCommand / filterMesaCommands）、
                              # ↑ 一路往回翻（userTextHistory；lastUserText 保留）、上下文圆环数据（lastContextTokens / contextUsage）；Mesa 组的内容由 TerminalPage mesaCommandsFor 组装，
                              # ↑ 取回跳过项目上下文包（splitLaunchPrompt）（tests/composer-assist.test.ts）
+  notebook.ts                # .ipynb 解析（nbformat 4）：单元 / 输出归一、相邻流合并、svg 转图、traceback 去 ANSI（tests/notebook.test.ts）
   office-convert.ts          # LibreOffice 转换器探测（进程内只问一次）/ 转 PDF / docxDroppedSummary（tests/office-convert.test.ts）
   file-ops.ts                # 文件页 / 文件树文件操作：名字输入行（新建文件 / 文件夹 / 重命名）、复制一份、移动到…（系统选文件夹）、拖入复制与落点判定（tests/file-ops.test.ts）
   file-watch.ts              # 预览跟随磁盘变化：fileStamp（file_stamp 大小+修改时间）/ stampKey / useFileVersion（watch_file 单文件监听，改一次加一）（tests/file-watch.test.ts）
@@ -1485,6 +1488,7 @@ src-tauri/src/
                              #   office_converter / office_to_pdf（LibreOffice 转 PDF 到 config tmp，白名单内，超时杀树）
   pdf.rs                     # PDF/docx 字节读取：read_pdf_bytes 白名单 + canonicalize + 上限，base64 传输
                              #   （白名单根含 ccode/tmp 粘贴图与 phone_drop 暂存区，精确路径含 attach_grants 登记的文件）；
+                             #   grant_media_url：白名单通过后 asset_protocol_scope().allow_file 只放行这一个音视频文件；
                              #   collect_whitelist / whitelisted_target 供只要路径的调用方复用；file_stamp = 大小 + 修改毫秒（预览缓存换版判定）
   attach_grants.rs           # 用户亲手交来的文件（拖进窗口的原生事件 / pick_attachment_files 选择器）进程内登记，供读取白名单按精确路径放行；
                              #   拖进来的文件夹另登记一张表，user_supplied 供「拖进文件页 = 复制」判定；

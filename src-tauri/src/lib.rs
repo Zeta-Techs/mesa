@@ -682,6 +682,7 @@ pub fn run() {
             pdf::read_pdf_bytes,
             pdf::read_docx_bytes,
             pdf::file_stamp,
+            pdf::grant_media_url,
             office_view::docx_features,
             office_view::slides_outline,
             office_view::office_converter,

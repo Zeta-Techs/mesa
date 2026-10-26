@@ -17,6 +17,7 @@ import DocxPreview from "./DocxPreview";
 import XlsxPreview from "./XlsxPreview";
 import ImagePreview from "./ImagePreview";
 import SlidesPreview from "./SlidesPreview";
+import MediaPreview from "./MediaPreview";
 import UnsupportedPreview from "./UnsupportedPreview";
 import { projectFilePreviewKind } from "../project-files";
 
@@ -155,6 +156,14 @@ export default function OfficePreviewModal({
           {text}
         </pre>
       );
+  } else if (projectFilePreviewKind(path) === "audio" || projectFilePreviewKind(path) === "video") {
+    body = (
+      <MediaPreview
+        path={path}
+        cwdHint={root}
+        kind={projectFilePreviewKind(path) === "audio" ? "audio" : "video"}
+      />
+    );
   } else if (!companionPdf && projectFilePreviewKind(path) === "slides") {
     body = <SlidesPreview path={path} cwdHint={root} />;
   } else if (!companionPdf && projectFilePreviewKind(path) === "legacy-doc") {

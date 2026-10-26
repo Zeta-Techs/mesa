@@ -457,6 +457,10 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-26 · Jupyter 笔记本与音视频预览
+
+同批第八条。① `notebook.ts` 解析 nbformat 4（旧版提示用 Jupyter 另存）：相邻同流输出合并、图片优先于 text/plain、svg 输出转 base64 当 `<img>`（不进 DOM）、traceback 去 ANSI；`NotebookPreview` 经 `read_text_document` 读整份，Markdown 单元走文档渲染、代码单元转围栏复用代码高亮与复制钮，text/html 输出走文档清洗（不跑脚本）；「源码」回 Monaco 编辑 JSON。② 音视频不再整份 base64 过 IPC：**开启 Tauri asset 协议（cargo feature protocol-asset，tauri.conf `assetProtocol.scope = []` 默认什么都不放行）**，新命令 `pdf::grant_media_url` 过读取白名单后 `asset_protocol_scope().allow_file` 只放行这一个文件，前端 `convertFileSrc` 流式播放；CSP 的 media-src 加 asset 源。WebView 放不了的编码由播放器 onError 提示系统打开。随包许可清单已重新生成（http-range）。
+
 ### 2026-10-26 · 方案确认卡扩到 CodeBuddy / Gemini / Kimi；Codex、Grok、Cursor 不做
 
 用户追问其他几家。假网关 TRIGGER_PLAN 扩成各协议通用（`plan_step`：按这一轮已有几个工具结果走「写方案文件 → 结束计划 → done」，方案路径从各家系统提示里取），逐家实测出口：CodeBuddy 2.175（只有 REPL，写方案文件在 ptc 下要先批一次；Ready to code? / 1. Yes / 2. No, keep planning / 3. Exit plan mode——Yes 回到启动时的权限，Exit plan mode = 结束计划但不按方案做）、Gemini 0.65（框里 Ready to start implementation? / 自动 = Auto-Edit、手动 = Default / 3. Type your feedback 直接打字）、Kimi 2.3.1（Ready to build with this plan? / Approve 回到启动权限 / Reject / Revise 要先回车再打字）。四家改方案的意见都是「带意见的拒绝」、留在计划模式。改法：① `plan-approval` 选项表加这几家的写法，新增 kind `leave`、`openFirst`；② 方案原文三级来源：旁路 plan > 会话文件里写进 `plans/` 的那次调用（Write.path / write_file / CodeBuddy REPL 代码里的 Write）> 屏上读（`screenPlan`：Claude「Here is Claude's plan:」、CodeBuddy「Ready to code?」、Gemini「Ready to start implementation?」、Kimi「┌ plan:」框；编号清单只在碰到菜单第一项时停），屏上读的照原样分行、注明可能只有一截；③ `answerMenu(index, { text, openFirst, onDone })`，开工 / 结束计划的键真按下去才 `onPlanLeft` 把标签从只讨论换到所选档（不在四档里的 = 跟本机设置）；④ `PLAN_FIRST_AGENTS` 扩到四家。**不做的**：Codex（只讨论是 `-s read-only`，没有结束计划的工具；自带的 Plan 协作模式 Mesa 没接）、Grok（只讨论是 dontAsk + 只读沙箱，exit_plan_mode 会弹 a/s/c/q 方案查看器，但沙箱不变、批了也动不了手）、Cursor（假网关下起不来，没法核实）。另查到 Qwen 0.25.3 已有 `--approval-mode plan`、OpenCode 有自带的 plan agent，只讨论可以接，待拍板。

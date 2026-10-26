@@ -9,6 +9,9 @@ export type ProjectFilePreviewKind =
   | "docx"
   | "legacy-doc"
   | "slides"
+  | "notebook"
+  | "audio"
+  | "video"
   | "text";
 
 /** recent 是「最近修改」视图不是类型筛选：不参与按类型收窄 */
@@ -110,6 +113,9 @@ export function supportsImmersiveReader(path: string): boolean {
 /** PowerPoint（OOXML）：逐页大纲 + 装了 LibreOffice 时看原样 */
 const SLIDE_EXTS = new Set(["pptx", "pptm", "ppsx", "potx"]);
 /** 旧版 Office 与 OpenDocument：内嵌预览不了，装了 LibreOffice 时可转 PDF 看 */
+/** 音视频：asset 协议流式播放（WebView 放不了的编码由播放器报错后提示系统打开） */
+const AUDIO_EXTS = new Set(["mp3", "wav", "m4a", "aac", "flac", "ogg", "oga", "opus", "aif", "aiff"]);
+const VIDEO_EXTS = new Set(["mp4", "m4v", "mov", "webm", "ogv", "mkv", "avi"]);
 export const LEGACY_OFFICE_EXTS = new Set(["doc", "rtf", "odt", "ppt", "pps", "odp"]);
 
 export function projectFilePreviewKind(path: string): ProjectFilePreviewKind {
@@ -137,6 +143,9 @@ export function projectFilePreviewKind(path: string): ProjectFilePreviewKind {
   }
   if (ext === "docx") return "docx";
   if (SLIDE_EXTS.has(ext)) return "slides";
+  if (ext === "ipynb") return "notebook";
+  if (AUDIO_EXTS.has(ext)) return "audio";
+  if (VIDEO_EXTS.has(ext)) return "video";
   if (LEGACY_OFFICE_EXTS.has(ext)) return "legacy-doc";
   return "text";
 }

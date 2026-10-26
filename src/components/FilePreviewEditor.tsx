@@ -70,6 +70,8 @@ import { HoverTip } from "./HoverTip";
 import PreviewErrorState from "./PreviewErrorState";
 import UnsupportedPreview from "./UnsupportedPreview";
 import SlidesPreview from "./SlidesPreview";
+import MediaPreview from "./MediaPreview";
+import NotebookPreview from "./NotebookPreview";
 import { projectFilePreviewKind } from "../project-files";
 import {
   LATEX_EXTENSIONS,
@@ -1997,6 +1999,30 @@ function TextFilePreviewEditor({
   );
 }
 
+/** 笔记本：默认按单元看，「源码」切回编辑器改 JSON（编辑器工具条左侧给「按单元看」回去） */
+function NotebookHost(props: ComponentProps<typeof TextFilePreviewEditor>) {
+  const [raw, setRaw] = useState(false);
+  useEffect(() => setRaw(false), [props.path]);
+  if (!raw) return <NotebookPreview path={props.path} root={props.root} onShowSource={() => setRaw(true)} />;
+  return (
+    <TextFilePreviewEditor
+      {...props}
+      leading={
+        <>
+          {props.leading}
+          <button
+            type="button"
+            onClick={() => setRaw(false)}
+            className="shrink-0 rounded-sm px-1.5 py-0.5 text-l2 hover:bg-hover"
+          >
+            ← 按单元看
+          </button>
+        </>
+      }
+    />
+  );
+}
+
 function FilePreviewEditor(
   props: ComponentProps<typeof TextFilePreviewEditor>,
 ) {
@@ -2006,6 +2032,10 @@ function FilePreviewEditor(
   // 宿主没先分流的 Office 文件（运行页右栏等走到这里）：幻灯给大纲，旧版 Office 给可转 PDF 的说明
   const kind = projectFilePreviewKind(props.path);
   if (kind === "slides") return <SlidesPreview path={props.path} cwdHint={props.root} />;
+  if (kind === "audio" || kind === "video") {
+    return <MediaPreview path={props.path} cwdHint={props.root} kind={kind} />;
+  }
+  if (kind === "notebook") return <NotebookHost {...props} />;
   if (kind === "legacy-doc") {
     return <UnsupportedPreview path={props.path} cwdHint={props.root} convertible />;
   }

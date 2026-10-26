@@ -24,7 +24,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 # macos-private-api：macOS 窗口透明（侧栏桌面磨砂）必需。启用后不能上 Mac App Store，
 # Mesa 走 GitHub Release 分发，不走商店。
-tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
+tauri = { version = "2", features = ["tray-icon", "macos-private-api", "protocol-asset"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-updater = "2"

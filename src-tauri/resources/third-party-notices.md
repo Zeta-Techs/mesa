@@ -603,6 +603,7 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | http | 1.5.0 | MIT OR Apache-2.0 |
 | http-body | 1.1.0 | MIT |
 | http-body-util | 0.1.4 | MIT |
+| http-range | 0.1.6 | MIT |
 | httparse | 1.10.1 | MIT OR Apache-2.0 |
 | httpdate | 1.0.3 | MIT OR Apache-2.0 |
 | hyper | 1.11.0 | MIT |

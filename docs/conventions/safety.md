@@ -170,6 +170,7 @@
      本地 HTML 预览（2026-10-26）：消毒放宽到内联 style / SVG / MathML，**脚本、框架、表单、base、srcset 一律剥**，
      iframe 不加 allow-same-origin；交互内容只走「在浏览器打开」，不在应用里跑任意本地 HTML 脚本。
      LibreOffice 转 PDF 只读白名单内的源文件，输出落 `<config>/ccode/tmp/office-pdf/`，独立 UserInstallation、超时杀树；
+     asset 协议（音视频流式播放）默认 scope 为空，只经 `grant_media_url` 过读取白名单后逐个文件放行，不得在 tauri.conf 里配目录级 scope；
   6. **内部对话保留期清理**（2026-10-17，`internal_sessions.rs`）：设置「数据与存储」的自动清理开关（默认开、保留 30 天）
      或「立即清理」即用户授权。目标三条件同时成立：provenance/会话 meta 标为 internal、cwd 是 `ccode-ai-<uuid>`
      临时目录或定时雷达隔离 worktree 根下、未 pin；时间不明 / 源文件已不在（只剩快照）一律不删；**定时任务历史还引用着的
