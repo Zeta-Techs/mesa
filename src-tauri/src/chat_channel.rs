@@ -3733,7 +3733,29 @@ mod e2e {
             let prompt = std::env::var("E2E_PROMPT").unwrap_or_else(|_| {
                 if agent == "codex" { "TRIGGER_TOOL TRIGGER_ESC 跑一下" } else { "TRIGGER_TOOL 跑一下" }.to_string()
             });
-            send(prompt.as_bytes());
+            // 输入框画出来了也可能还没接字（2026-10-25/26 Windows Codex 经 --remote 起，屏上停在空输入框、字被吞）：
+            // 打完看回显里有没有触发词，4 秒没出现就隔一会再打，最多三次
+            let marker = prompt.split_whitespace().next().unwrap_or("").to_string();
+            for attempt in 0..3 {
+                screen.lock().unwrap().clear();
+                send(prompt.as_bytes());
+                let typed_at = Instant::now();
+                let echoed = loop {
+                    let shown = crate::updater::strip_ansi_keep_cr(&screen.lock().unwrap());
+                    if marker.is_empty() || shown.contains(&marker) {
+                        break true;
+                    }
+                    if typed_at.elapsed() >= Duration::from_secs(4) {
+                        break false;
+                    }
+                    std::thread::sleep(Duration::from_millis(200));
+                };
+                if echoed {
+                    break;
+                }
+                println!("{agent}: 第 {} 次打字没回显，等输入框就绪再打", attempt + 1);
+                settle(2, 10);
+            }
             // E2E_SUBMIT_GAP_MS：正文与回车的间隔，照聊天层发送（pty_input 的提交间隔）复现「字留在输入框」
             let gap = std::env::var("E2E_SUBMIT_GAP_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(400);
             std::thread::sleep(Duration::from_millis(gap));
