@@ -1592,9 +1592,12 @@ function App() {
                   </button>
                   {titleInboxCat !== null && (
                     <ul className="absolute right-0 top-full z-40 mt-1.5 max-h-80 w-[360px] max-w-[80vw] space-y-2 overflow-auto rounded-md border border-field ccode-float-surface p-1">
+                      {/* 计数只在不重复时出（2026-10-26 用户）：只有一类时「共 N 条」与分类小标题同数，
+                          一类只一条时小标题的数字与那一行同义——都不挂；表头只剩全部已读或干脆不出 */}
+                      {(inboxGroups.length > 1 || bulkInboxItems.length > 0) && (
                       <li className="flex items-center justify-between border-b border-hairline px-1.5 pb-1">
                         <span className="text-micro text-l4">
-                          共 {inboxItems.length} 条
+                          {inboxGroups.length > 1 ? `共 ${inboxItems.length} 条` : ""}
                         </span>
                         {bulkInboxItems.length > 0 && (
                           <button
@@ -1608,10 +1611,12 @@ function App() {
                           </button>
                         )}
                       </li>
+                      )}
                       {inboxGroups.map((group) => (
                         <li key={group.category}>
                           <div className="px-2.5 py-1 text-micro text-l3">
-                            {group.label} {group.items.length}
+                            {group.label}
+                            {group.items.length > 1 && ` ${group.items.length}`}
                           </div>
                           {group.items.map((item) => (
                             <div

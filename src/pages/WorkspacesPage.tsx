@@ -2063,9 +2063,11 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
             </button>
             {inboxOpen && (
               <ul className="absolute left-0 top-full z-20 mt-1 max-h-80 w-[360px] max-w-[80vw] space-y-2 overflow-auto rounded-md border border-field ccode-float-surface p-1">
+                {/* 计数只在不重复时出，口径同 App.tsx 标题栏收件箱下拉 */}
+                {(inboxGroups.length > 1 || bulkInboxItems.length > 0) && (
                 <li className="flex items-center justify-between border-b border-hairline px-1.5 pb-1">
                   <span className="text-micro text-l4">
-                    共 {inboxItems.length} 条
+                    {inboxGroups.length > 1 ? `共 ${inboxItems.length} 条` : ""}
                   </span>
                   {bulkInboxItems.length > 0 && (
                     <button
@@ -2082,10 +2084,12 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                     </button>
                   )}
                 </li>
+                )}
                 {inboxGroups.map((group) => (
                   <li key={group.category}>
                     <div className="px-2.5 py-1 text-micro text-l4">
-                      {group.label} {group.items.length}
+                      {group.label}
+                      {group.items.length > 1 && ` ${group.items.length}`}
                     </div>
                     {group.items.map((item) => (
                       <div
