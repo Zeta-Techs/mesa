@@ -140,6 +140,91 @@ test("formatTopLevelMap caps long lists and marks empty trees", () => {
   assert.match(lines[24], /还有 6 项/);
 });
 
+test("formatTopLevelMap folds same-type piles so key files stay visible", () => {
+  // 2026-10-26 实证：根目录 93 篇 PDF 把 references.bib、outline.md 挤出上限
+  const pdfs = Array.from({ length: 93 }, (_, index) => ({
+    name: `Paper ${index}.pdf`,
+    isDir: false,
+  }));
+  const lines = formatTopLevelMap([
+    ...pdfs.slice(0, 40),
+    { name: "references.bib", isDir: false },
+    { name: "papers", isDir: true },
+    ...pdfs.slice(40),
+    { name: "outline.md", isDir: false },
+    { name: "notes", isDir: true },
+  ]);
+  assert.deepEqual(lines, [
+    "- papers/",
+    "- notes/",
+    "- references.bib",
+    "- outline.md",
+    "- 另有 93 个 PDF 文件（未逐个列出）",
+  ]);
+  // 同类不到 6 个照常逐个列；扩展名大小写合并计数
+  const few = formatTopLevelMap([
+    { name: "a.PDF", isDir: false },
+    { name: "b.pdf", isDir: false },
+  ]);
+  assert.deepEqual(few, ["- a.PDF", "- b.pdf"]);
+});
+
+test("pack rules show research-tool settings in plain words", () => {
+  const pack = renderProjectContextPack({
+    name: "p",
+    path: "/tmp/p",
+    workMode: "research",
+    settings: [
+      "目标期刊：Advanced Energy Materials",
+      "科研工具/manuscript：word",
+      "科研工具/libraryExport：endnote",
+      "科研工具/literature：zotero",
+      "科研工具/plotting：不认识",
+    ],
+    topLevel: [],
+    kind: "session",
+  });
+  assert.match(pack, /2\. 稿件载体：已有 Word（人工插件验收）/);
+  assert.match(pack, /3\. 文献库：EndNote/);
+  assert.doesNotMatch(pack, /科研工具\//);
+});
+
+test("session pack says where new files go and does not repeat the follow-the-user line", () => {
+  const research = renderProjectContextPack({
+    name: "p",
+    path: "/tmp/p",
+    workMode: "research",
+    topLevel: [],
+    kind: "session",
+  });
+  assert.match(research, /没有合适的就放 output\/；不要散在项目根/);
+  assert.equal(research.match(/按用户这次说的做/g)?.length, 1);
+  const coding = renderProjectContextPack({
+    name: "p",
+    path: "/tmp/p",
+    workMode: "coding",
+    topLevel: [],
+    kind: "session",
+  });
+  assert.doesNotMatch(coding, /output\//);
+});
+
+test("Windows adds the local Python hints to auto and custom packs", () => {
+  const base = { ...FULL_SESSION_INPUT, isWindows: true };
+  const auto = renderProjectContextPack(base);
+  assert.match(auto, /本机 Python（Windows）：\n- 命令名用 `python`/);
+  assert.match(auto, /-X utf8/);
+  assert.match(renderSessionInjection("{{课题主题}}", base), /^课题主题：[\s\S]*本机 Python（Windows）/);
+  assert.equal(renderSessionInjection(DEFAULT_SESSION_TEMPLATE, base), auto);
+  assert.doesNotMatch(renderProjectContextPack(FULL_SESSION_INPUT), /本机 Python/);
+});
+
+test("retired 人的决定 placeholder renders empty in old custom templates", () => {
+  assert.equal(renderSessionInjection("A\n\n{{人的决定}}\n\nB", FULL_SESSION_INPUT), "A\n\nB");
+  assert.equal(isSessionTemplateKey("人的决定"), true);
+  assert.doesNotMatch(DEFAULT_SESSION_TEMPLATE, /人的决定/);
+});
+
 test("composeLaunchPrompt keeps pack and user text apart", () => {
   assert.equal(composeLaunchPrompt("PACK", ""), "PACK");
   assert.equal(composeLaunchPrompt("", "hello"), "hello");
@@ -278,7 +363,6 @@ const FULL_SESSION_INPUT = {
     { name: "notes", isDir: true },
   ],
   kind: "session" as const,
-  decisions: ["综述角度聚焦负极"],
   memory: "只用项目内文献。",
   accepted: [{ name: "文献检索", outputs: ["papers/included.md"] }],
 };

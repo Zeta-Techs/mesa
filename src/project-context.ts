@@ -1,4 +1,5 @@
 import { WORK_MODE_LABEL, normalizeWorkMode } from "./work-mode.ts";
+import { readableResearchToolSetting } from "./research-tool-fields.ts";
 
 export type ContextPackEntry = {
   name: string;
@@ -68,24 +69,37 @@ export type ProjectContextInput = {
   accepted?: readonly (string | AcceptedGoalPack)[];
   openGoals?: readonly string[];
   protectedPaths?: readonly string[];
-  decisions?: readonly string[];
   feedback?: string | null;
   /** 项目长期知识（.ccode/memory.md 全文；只含人确认过的结论） */
   memory?: string | null;
   skills?: readonly ProjectSkillPack[];
+  /** Windows 上补「本机 Python」提示（纯模块不读平台，调用方显式传） */
+  isWindows?: boolean;
 };
+
+/** Windows 本机 Python 的两条提示：开工任务书（task-md）与项目说明共用这一处。
+ *  Mesa 补的 PYTHONIOENCODING 遇 -I / -E 失效，中文系统回落 GBK（2026-10-22 实测）。 */
+export const WINDOWS_PYTHON_HINTS: readonly string[] = [
+  "命令名用 `python`，不要用 `python3`（Windows 上的 `python3` 是应用商店占位程序，一运行就失败）。",
+  "加了 `-I` 或 `-E` 时，Python 会忽略 Mesa 设好的 UTF-8 输出，打印中文或 Č、² 这类字符就报 `'gbk' codec can't encode`：这时同时加 `-X utf8`。它也会把 `open()` 的默认编码改成 UTF-8，读 GBK 文件要显式写 `encoding=\"gbk\"`。",
+];
 
 export function projectHomeHint(
   workMode?: string | null,
   kind: ContextPackKind = "goal",
 ): string[] {
-  if (kind === "session") {
-    return [
-      "这是项目里的对话，工作目录就是当前目录，不是隔离副本。",
-      "按用户这次说的做；没说的不要自己开工，也不要套固定流程。",
-    ];
-  }
   const mode = normalizeWorkMode(workMode);
+  if (kind === "session") {
+    // 「按用户这次说的做」归技能纪律一句说，这里只写环境事实和新文件放哪
+    // （2026-10-26 实证：没交代放哪，Agent 翻了四个目录才决定总结图落点）
+    const place =
+      mode === "research"
+        ? ["新生成的文件放进项目里已有的对应目录（如图放 figures/、分析放 analysis/），没有合适的就放 output/；不要散在项目根。"]
+        : mode === "office"
+          ? ["新生成的文件和项目里同类文件放在一起。"]
+          : [];
+    return ["这是项目里的对话，工作目录就是当前目录，不是隔离副本，改动直接生效。", ...place];
+  }
   if (mode === "office") {
     return [
       "按项目里已有的文档风格写。",
@@ -135,9 +149,19 @@ export function packRuleLines(
   const saved = uniqueRuleLines(settings ?? []).filter(
     (line) => !isSettingPlaceholder(line),
   );
-  if (rulesOwned) return saved;
-  const defaults = new Set(defaultContextRules(workMode));
-  return saved.filter((line) => !defaults.has(line));
+  const defaults = new Set(rulesOwned ? [] : defaultContextRules(workMode));
+  return readableRuleLines(saved.filter((line) => !defaults.has(line)));
+}
+
+/** 给 AI 看的规则：档案卡机器键（科研工具/…）换成界面说法，认不出的工具键不带。
+ *  只管渲染；规则面板编辑的仍是档案卡原文。 */
+export function readableRuleLines(lines: readonly string[]): string[] {
+  return uniqueRuleLines(
+    lines.flatMap((line) => {
+      const text = readableResearchToolSetting(line.trim());
+      return text ? [text] : [];
+    }),
+  );
 }
 
 const MODE_RULES: Record<string, string[]> = {
@@ -195,6 +219,15 @@ export function formatAcceptedGoalLine(goal: string | AcceptedGoalPack): string 
   return `- ${line}`;
 }
 
+/** 同一扩展名的文件达到这个数就折成一行：根目录散着几十篇 PDF 时，逐个列会把
+ *  references.bib、outline.md 挤出上限（2026-10-26 实证：93 篇 PDF 列了 18 篇，bib 被挤掉）。 */
+const FOLD_SAME_EXT_AT = 6;
+
+function fileExt(name: string): string {
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
+}
+
 export function formatTopLevelMap(
   entries: readonly ContextPackEntry[],
   limit = 24,
@@ -206,12 +239,29 @@ export function formatTopLevelMap(
       entry.name !== "node_modules" &&
       entry.name !== "target",
   );
-  const shown = visible.slice(0, limit);
+  const extCount = new Map<string, number>();
+  for (const entry of visible) {
+    const ext = entry.isDir ? "" : fileExt(entry.name);
+    if (ext) extCount.set(ext, (extCount.get(ext) ?? 0) + 1);
+  }
+  const folded = (entry: ContextPackEntry) =>
+    !entry.isDir && (extCount.get(fileExt(entry.name)) ?? 0) >= FOLD_SAME_EXT_AT;
+  // 目录在前，再列不折叠的文件；折叠的同类文件各占一行计数，不占上限
+  const listed = [
+    ...visible.filter((entry) => entry.isDir),
+    ...visible.filter((entry) => !entry.isDir && !folded(entry)),
+  ];
+  const shown = listed.slice(0, limit);
   const lines = shown.map((entry) =>
     entry.isDir ? `- ${entry.name}/` : `- ${entry.name}`,
   );
-  if (visible.length > shown.length) {
-    lines.push(`- … 还有 ${visible.length - shown.length} 项`);
+  if (listed.length > shown.length) {
+    lines.push(`- … 还有 ${listed.length - shown.length} 项`);
+  }
+  for (const [ext, count] of extCount) {
+    if (count >= FOLD_SAME_EXT_AT) {
+      lines.push(`- 另有 ${count} 个 ${ext.toUpperCase()} 文件（未逐个列出）`);
+    }
   }
   return lines.length ? lines : ["- （顶层还没有文件）"];
 }
@@ -220,7 +270,7 @@ const GOAL_SKILL_DISCIPLINE =
   "技能纪律：只做目标要求的事，范围以目标为准。只有「本目标点名要用的技能」才按其规范执行；项目技能池和其他技能只是可用工具，目标不需要就一个都不用。简单任务直接做完，不要自行引入额外流程、模板或重型技能（如文献检索/精读/综述流程）。";
 
 const SESSION_SKILL_DISCIPLINE =
-  "技能纪律：按用户这次说的做。技能是可用工具，没点名就不用。不要自行套文献检索、精读或综述流程。";
+  "技能纪律：按用户这次说的做，没说的不要自己开工。技能是可用工具，没点名就不用；不要自行套文献检索、精读或综述流程。";
 
 /** 各段独立成块（含段头，空段为 ""）；自动包与自定义模板共用同一出处。
  *  字段顺序即包内版式，renderProjectContextPack / renderSessionInjection 都从这里取材。 */
@@ -230,7 +280,6 @@ type PackSections = {
   topic: string;
   home: string;
   rules: string;
-  decisions: string;
   protectedPaths: string;
   namedSkills: string;
   poolSkills: string;
@@ -241,6 +290,7 @@ type PackSections = {
   openGoals: string;
   feedback: string;
   permission: string;
+  python: string;
 };
 
 function packSections(input: ProjectContextInput): PackSections {
@@ -249,7 +299,6 @@ function packSections(input: ProjectContextInput): PackSections {
   const topic = input.topic?.trim();
   const home = projectHomeHint(mode, isGoal ? "goal" : "session");
   const rules = packRuleLines(input.settings, mode, input.rulesOwned);
-  const decisions = uniqueRuleLines(input.decisions ?? []);
   const protectedPaths = isGoal
     ? uniqueRuleLines(input.protectedPaths ?? [])
     : [];
@@ -293,9 +342,6 @@ function packSections(input: ProjectContextInput): PackSections {
     rules: rules.length
       ? ["项目规则：", ...rules.map((rule, index) => `${index + 1}. ${rule}`)].join("\n")
       : "",
-    decisions: decisions.length
-      ? ["人的决定：", ...decisions.map((item) => `- ${item}`)].join("\n")
-      : "",
     protectedPaths: protectedPaths.length
       ? ["写回时跳过：", ...protectedPaths.map((path) => `- ${path}`)].join("\n")
       : "",
@@ -332,6 +378,9 @@ function packSections(input: ProjectContextInput): PackSections {
     permission: input.writeReview
       ? "权限：只改当前工作目录。完成后不要修改项目原目录；改动会交给人验收再写回。"
       : "",
+    python: input.isWindows
+      ? ["本机 Python（Windows）：", ...WINDOWS_PYTHON_HINTS.map((line) => `- ${line}`)].join("\n")
+      : "",
   };
 }
 
@@ -344,7 +393,6 @@ export function renderProjectContextPack(input: ProjectContextInput): string {
     s.topic,
     s.home,
     s.rules,
-    s.decisions,
     s.protectedPaths,
     s.namedSkills,
     s.poolSkills,
@@ -355,6 +403,7 @@ export function renderProjectContextPack(input: ProjectContextInput): string {
     s.openGoals,
     s.feedback,
     s.permission,
+    s.python,
   ]
     .filter(Boolean)
     .join("\n\n")
@@ -393,18 +442,24 @@ export const SESSION_TEMPLATE_VARS: readonly {
   { token: "{{课题主题}}", hint: "档案卡课题主题，未填则整段省略" },
   { token: "{{工作环境}}", hint: "项目对话的环境提示" },
   { token: "{{项目规则}}", hint: "档案卡规则（编号）" },
-  { token: "{{人的决定}}", hint: "已拍板的决定" },
   { token: "{{技能纪律}}", hint: "不自行套流程的纪律句" },
   { token: "{{长期知识}}", hint: "人确认过的结论（超长自动截断）" },
   { token: "{{已验收}}", hint: "已验收目标（上限 8 条）" },
 ];
+
+/** 撤掉的占位符：旧模板里还写着，认得、渲染为空，但不再给插入/勾选。
+ *  「人的决定」从没有数据来源（会话包、目标包都不传），2026-10-26 撤。 */
+export const RETIRED_SESSION_TEMPLATE_KEYS: readonly string[] = ["人的决定"];
 
 /** 占位符已知判定单一出处：渲染端替换与面板「未识别」点名共用，键先 trim
  *  （{{ 课题主题 }} 与 {{课题主题}} 同判）。只认清单内的键——顺带挡住普通对象
  *  查表命中 Object.prototype 原型链（{{constructor}} 一类）的坑。 */
 export function isSessionTemplateKey(key: string): boolean {
   const trimmed = key.trim();
-  return SESSION_TEMPLATE_VARS.some((item) => item.token === `{{${trimmed}}}`);
+  return (
+    RETIRED_SESSION_TEMPLATE_KEYS.includes(trimmed) ||
+    SESSION_TEMPLATE_VARS.some((item) => item.token === `{{${trimmed}}}`)
+  );
 }
 
 /** 默认模板 = 自动包版式的占位符表达；「填入默认模板」与 auto 渲染共用分块出处。 */
@@ -420,8 +475,6 @@ export const DEFAULT_SESSION_TEMPLATE = [
   "{{工作环境}}",
   "",
   "{{项目规则}}",
-  "",
-  "{{人的决定}}",
   "",
   "{{技能纪律}}",
   "",
@@ -445,19 +498,20 @@ export function sessionTemplateValues(input: ProjectContextInput): Record<string
     课题主题: s.topic,
     工作环境: s.home,
     项目规则: s.rules,
-    人的决定: s.decisions,
+    人的决定: "",
     技能纪律: s.discipline,
     长期知识: s.memory,
     已验收: s.accepted,
   };
 }
 
+/** 自定义模板同样在末尾带上 Windows 本机提示：这是平台必需的环境事实，不是可选段。 */
 export function renderSessionInjection(
   template: string,
   input: ProjectContextInput,
 ): string {
   const blocks = sessionTemplateValues(input);
-  return template
+  const body = template
     .replace(/\{\{([^{}\n]+)\}\}/g, (whole, raw: string) => {
       const key = raw.trim();
       // 只换清单内的键：未知占位符原样保留，也不给原型链属性（constructor 等）开口子
@@ -469,6 +523,8 @@ export function renderSessionInjection(
     })
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+  const python = packSections(input).python;
+  return python ? (body ? `${body}\n\n${python}` : python) : body;
 }
 
 /** 上下文包与用户第一句话之间的分隔（工作台「上次停在」据此只取人话，改这里两边一起变） */

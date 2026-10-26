@@ -31,7 +31,7 @@ test("对话注入勾选编辑：点标签去掉一段、补充一段话，手�
   const root = createRoot(host);
   const emits: { text: string; commit: boolean }[] = [];
   let sourceAsked = 0;
-  const values = { 课题主题: "课题主题：\nHER硼化物", 人的决定: "" };
+  const values = { 课题主题: "课题主题：\nHER硼化物", 长期知识: "" };
   let value = DEFAULT_SESSION_TEMPLATE;
   const render = () =>
     act(async () => root.render(h(Editor, {
@@ -43,15 +43,15 @@ test("对话注入勾选编辑：点标签去掉一段、补充一段话，手�
     [...host.querySelectorAll("button[aria-pressed]")].find((b) => b.textContent?.replace("（空）", "") === label) as HTMLButtonElement;
   try {
     await render();
-    assert.equal(host.querySelectorAll("button[aria-pressed]").length, 9, "项目基本信息 + 八段");
+    assert.equal(host.querySelectorAll("button[aria-pressed]").length, 8, "项目基本信息 + 七段");
     assert.ok([...host.querySelectorAll("button[aria-pressed]")].every((b) => b.getAttribute("aria-pressed") === "true"), "默认全勾");
     assert.match(chip("课题主题").title, /现在：HER硼化物/, "悬停看这个项目现在的内容");
-    assert.match(host.textContent!, /人的决定（空）/, "勾着但当前为空的段标出来");
-    // 点「人的决定」：从模板里去掉，立即要求保存
-    await act(async () => chip("人的决定").click());
-    assert.deepEqual(emits.at(-1), { text: DEFAULT_SESSION_TEMPLATE.replace("\n\n{{人的决定}}", ""), commit: true });
+    assert.match(host.textContent!, /长期知识（空）/, "勾着但当前为空的段标出来");
+    // 点「长期知识」：从模板里去掉，立即要求保存
+    await act(async () => chip("长期知识").click());
+    assert.deepEqual(emits.at(-1), { text: DEFAULT_SESSION_TEMPLATE.replace("\n\n{{长期知识}}", ""), commit: true });
     await render();
-    assert.equal(chip("人的决定").getAttribute("aria-pressed"), "false");
+    assert.equal(chip("长期知识").getAttribute("aria-pressed"), "false");
     // 写补充：打字只同步草稿，失焦才保存；补充放最后
     const extra = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="我的补充"]')!;
     await act(async () => {

@@ -1330,7 +1330,14 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   `{{项目规则}}` `{{文件地图}}` `{{长期知识}}` `{{已验收}}` 等，清单单一出处 `SESSION_TEMPLATE_VARS`），开对话按项目
   当时数据填入、空段消隐、未知占位符原样保留；纯文本＝完全自定。占位符渲染与自动包共用 `packSections` 分块单一
   出处（`DEFAULT_SESSION_TEMPLATE` 与自动包逐字节一致，测试钉住）。改注入相关逻辑前先跑
-  `tests/project-context.test.ts` 的等价性守卫。
+  `tests/project-context.test.ts` 的等价性守卫。**包内容口径（2026-10-26）**：①文件地图目录在前、零散文件在后，
+  同一扩展名 ≥6 个折成一行计数、不占 24 项上限（防 PDF 堆把 references.bib 挤掉）；②规则渲染经 `readableRuleLines`
+  把 `科研工具/<key>：<value>` 换成 `RESEARCH_TOOL_FIELDS` 的界面说法（认不出的工具键不带），档案卡仍存机器键，
+  开工任务书 TASK.md 同口径；③会话包「工作环境」只写环境事实 + 新文件放哪（科研：已有对应目录，否则 output/），
+  「按用户这次说的做」只在技能纪律说一次；④撤掉的占位符（`RETIRED_SESSION_TEMPLATE_KEYS`，目前「人的决定」）
+  仍认得、渲染为空、勾选模型读模板时略过，不再给插入/勾选——撤占位符一律走这条，不得让旧模板出现原样 `{{…}}`；
+  ⑤Windows 的「本机 Python」两条（`WINDOWS_PYTHON_HINTS`，与 TASK.md 共用）由调用方显式传 `isWindows`，
+  自动包与自定义模板都追加在末尾，「不附带」不带。
 - **上游漂移提醒（v3.63，启发式非硬状态）**：`stale_upstream_for`（workspaces.rs）——步骤 k 的任一上游步骤
   （序号更小，steps[].workspace_name 绑定工作区）晚于本步「最后推进时间」（已合并取 merged_at、未合并取
   created_at；now_iso 定宽串字典序即时间序）发生合并 → `WorkspaceDto.staleUpstream` 回填最晚合并的上游步骤名

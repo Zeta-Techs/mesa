@@ -4,7 +4,9 @@ import { RESOURCE_TYPE_LABELS } from "./pipeline-presets.ts";
 import {
   effectiveProjectRules,
   isSettingPlaceholder,
+  readableRuleLines,
   uniqueRuleLines,
+  WINDOWS_PYTHON_HINTS,
 } from "./project-context.ts";
 import { stripOptionalTitlePrefix } from "./step-flow.ts";
 import { resolveSkillRefs, type SkillProvides } from "./skill-slots.ts";
@@ -45,10 +47,8 @@ export function renderTaskMd(
   if (topic) {
     lines.push("## 课题主题", topic, "");
   }
-  const globals = effectiveProjectRules(
-    cfg.settings,
-    cfg.workMode,
-    cfg.rulesOwned,
+  const globals = readableRuleLines(
+    effectiveProjectRules(cfg.settings, cfg.workMode, cfg.rulesOwned),
   );
   if (globals.length > 0) {
     lines.push("## 项目规则", ...globals.map((x) => `- ${x}`), "");
@@ -166,8 +166,7 @@ export function renderTaskMd(
     lines.push(
       "",
       "## 本机 Python（Windows）",
-      "- 命令名用 `python`，不要用 `python3`（Windows 上的 `python3` 是应用商店占位程序，一运行就失败）。",
-      "- 加了 `-I` 或 `-E` 时，Python 会忽略 Mesa 设好的 UTF-8 输出，打印中文或 Č、² 这类字符就报 `'gbk' codec can't encode`：这时同时加 `-X utf8`。它也会把 `open()` 的默认编码改成 UTF-8，读 GBK 文件要显式写 `encoding=\"gbk\"`。",
+      ...WINDOWS_PYTHON_HINTS.map((line) => `- ${line}`),
     );
     if (readsPdf) {
       lines.push(

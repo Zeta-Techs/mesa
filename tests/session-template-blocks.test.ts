@@ -10,7 +10,7 @@ import {
   serializeSimpleTemplate,
 } from "../src/session-template-blocks.ts";
 
-test("默认模板 = 基本信息 + 八段全勾 + 无补充，拼回与原文一致", () => {
+test("默认模板 = 基本信息 + 七段全勾 + 无补充，拼回与原文一致", () => {
   const simple = parseSimpleTemplate(DEFAULT_SESSION_TEMPLATE);
   assert.deepEqual(simple, { basics: true, sections: [...SECTION_KEYS], extra: "" });
   assert.equal(serializeSimpleTemplate(simple!), DEFAULT_SESSION_TEMPLATE);
@@ -66,4 +66,14 @@ test("内容段摘要：去段头和列表符号，空段说明会省略", () =>
   assert.deepEqual(sectionSummary("课题主题：\nHER硼化物"), { text: "HER硼化物", empty: false });
   assert.deepEqual(sectionSummary("技能纪律：按用户这次说的做。", "技能纪律"), { text: "按用户这次说的做。", empty: false });
   assert.deepEqual(sectionSummary(""), { text: "当前为空，开对话时省略", empty: true });
+});
+
+test("旧模板里撤掉的「人的决定」独占一段：略过，仍能用勾选改", () => {
+  // 2026-10-26 前「填入默认模板」存下的自定义版式都夹着这一段
+  const old = `${BASICS_BLOCK}\n\n{{文件地图}}\n\n{{项目规则}}\n\n{{人的决定}}\n\n{{技能纪律}}`;
+  assert.deepEqual(parseSimpleTemplate(old), {
+    basics: true,
+    sections: ["文件地图", "项目规则", "技能纪律"],
+    extra: "",
+  });
 });

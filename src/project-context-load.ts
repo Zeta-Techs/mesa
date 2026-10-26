@@ -14,6 +14,7 @@ import {
   type SessionInjectionMode,
 } from "./project-context";
 import { acceptedGoalOutputs, isDeclaredTask } from "./project-tasks";
+import { IS_WINDOWS } from "./hotkeys";
 import type { ProjectConfigReadDto, ProjectStatusDto, SkillDto, TaskDto } from "./types";
 
 type PackRequest = {
@@ -176,6 +177,7 @@ async function gatherPack(input: PackRequest) {
     feedback: input.feedback,
     memory,
     skills,
+    isWindows: IS_WINDOWS,
   };
   if (input.sessionOverride) {
     injectionMode = input.sessionOverride.mode;

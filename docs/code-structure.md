@@ -312,7 +312,9 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   空表格不进规则，有流程用模板纪律、无流程用工作方式默认条；
                              #   段落先拼成命名分块（packSections，空块为 ""）再拼版式——自动包与对话注入自定义模板
                              #   （DEFAULT_SESSION_TEMPLATE + renderSessionInjection，{{课题主题}} 等占位符开对话时填入、
-                             #   未知占位符原样保留、空块消隐）共用同一出处，三态只管 session 包（2026-10-16 拍板）
+                             #   未知占位符原样保留、空块消隐）共用同一出处，三态只管 session 包（2026-10-16 拍板）；
+                             #   文件地图同类文件 ≥6 个折成一行、规则机器键换白话、撤掉的占位符渲染为空、
+                             #   Windows 本机 Python 提示 WINDOWS_PYTHON_HINTS 与 task-md 共用（2026-10-26）
                              # （tests/project-context.test.ts）
   coding-lanes.ts            # 编程车道覆盖层：有树无行按分支现算、theme 分组、空闲/Agent；
                              # arrangeBranchMap 分支地图（基准作根 / 其余树分组 / 未检出分支单列）
@@ -811,6 +813,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   review-file-groups.ts      # 精读/写作评审文件分组：笔记/稿件/引文/待获取/过程（tests/review-file-groups.test.ts）
   closeout-pack.ts           # 项目卡完结清单：最终稿 / 源稿 / 图 / 文献 / 核对 / 笔记（tests/closeout-pack.test.ts）；
                              #   索引里没有的笔记（沉浸阅读建的）按 list_paper_notes 来源行配 PDF、题名取 PDF 文件名
+  research-tool-fields.ts    # 科研工具字段表 / 默认值 / 档案卡键读写与 readableResearchToolSetting（机器键→界面说法）；纯模块不引
+                             #   React / Tauri，上下文包从这里取，research-tools.ts 原样转出
   research-tools.ts          # 科研工具注入 withResearchTools；定稿步同时挂 output/endnote.docx 与 output/zotero.docx（LaTeX 不挂）；
   skill-slots.ts             # 技能位单一出处：{skill:锚名} 占位解析（provides 优先、名字兜底）、行为键判定、provides 映射 hook；锚名闭集见 pipeline.md（tests/skill-slots.test.ts）
                              # 域稿不再挂成定稿步人工事项（入口在完结文件，2026-10-24）；老档案的域稿行不挂文献库同步按钮；来源只认 lit_source

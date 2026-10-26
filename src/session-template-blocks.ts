@@ -4,13 +4,14 @@
  *  段之间空一行。手工改过、放不进这个形状的模板（顺序打乱、文字夹在中间）解析为 null，
  *  界面让人选「编辑源文本」或「改用勾选（按固定顺序重排）」。 */
 
+import { RETIRED_SESSION_TEMPLATE_KEYS } from "./project-context.ts";
+
 /** 自成一段的内容占位符：各自带段头（「项目规则：」…），可整段勾选 */
 export const SECTION_KEYS = [
   "文件地图",
   "课题主题",
   "工作环境",
   "项目规则",
-  "人的决定",
   "技能纪律",
   "长期知识",
   "已验收",
@@ -35,13 +36,15 @@ export interface SimpleTemplate {
 type Block = { kind: "section"; key: SectionKey } | { kind: "text"; text: string };
 
 const SECTION_ONLY = new RegExp(`^\\{\\{\\s*(${SECTION_KEYS.join("|")})\\s*\\}\\}$`);
+/** 撤掉的占位符独占一段时渲染为空：读模板时直接略过，旧档案照样能用勾选改 */
+const RETIRED_ONLY = new RegExp(`^\\{\\{\\s*(${RETIRED_SESSION_TEMPLATE_KEYS.join("|")})\\s*\\}\\}$`);
 
 /** 段按空行切；独占一段的内容占位符 = 内容段，其余 = 文字段。 */
 function splitBlocks(template: string): Block[] {
   const blocks: Block[] = [];
   for (const raw of template.replace(/\r\n/g, "\n").split(/\n[ \t]*\n/)) {
     const para = raw.replace(/^\n+|\s+$/g, "");
-    if (!para.trim()) continue;
+    if (!para.trim() || RETIRED_ONLY.test(para.trim())) continue;
     const hit = SECTION_ONLY.exec(para.trim());
     blocks.push(hit ? { kind: "section", key: hit[1] as SectionKey } : { kind: "text", text: para });
   }
