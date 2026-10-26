@@ -45,7 +45,7 @@ Project                         已有 project.toml
     编程 = Lane（第 2 期）：名 + 分支 + 可选主题分组
 
     Run                         一次执行（第 1 期）
-      runtime      local_cli | headless | custom | cloud
+      runtime      local_cli | headless | custom | cloud（cloud 仅规格预留，RuntimeKind 未实现）
       isolation    worktree 路径；哨兵任务才允许 project_root
       agent        用户指定的绑定
       permission   discuss | write_tree
@@ -61,10 +61,10 @@ Project                         已有 project.toml
 Run
   id              UUID；关标签不删
   projectRoot     注册项目根；scratch 可空
-  taskKind        pipeline_step | coding_lane | office_doc | watch | reader | scratch
+  taskKind        pipeline_step | coding_lane | office_doc | watch | reader | scratch（另有 free_research / login，由 infer_task_kind 按 `free:` / `research:` / `login:` 前缀产出，前端镜像 src/run-model.ts 同列）
   taskRef         步骤名 / 分支 / 文档路径 / 日程 id
   isolationPath   实际 cwd（科研 worktree / 编程 worktree / 项目根 / ~）
-  runtime         local_cli | headless | custom | cloud
+  runtime         local_cli | headless | custom | cloud（仅规格预留）
   agent           AgentSpec.id
   profileId       绑定 id；custom 可空
   permission      discuss | write_tree
@@ -234,7 +234,7 @@ runs: {
 科研开工弹层已经选 Agent。编程「从基准开工 / 再开一条 / 进入」要对齐：
 
 - 创建树成功后的 `PendingTerminal` 用 `pickKickoffLaunch` 同款规则（`ccode.askAi` 记住的连接还在就用）
-- 若用户勾过「设为默认」，`autoStart: true`；否则预填启动栏不自动拉起
+- 若用户勾过「设为默认」，`autoStart: true`；否则预填启动栏不自动拉起（**2026-10-15 C2a 拍板②后改**：`kickoff-launch.ts` 的 `autoStart = !!project || askAiCanSkip(...)`——项目有默认绑定即直接拉起；编程侧 `gateCodingAutoStart` 同口径，连接停用/失效才降为预填）
 - 不新造第三套记忆键
 
 ### 3.4 标签标题先任务、后 Agent
@@ -337,7 +337,7 @@ SQLite `runs` 表（`app.db`），字段见 §1.1。不把 PTY id、密钥、env
 
 ### 4.3 验收
 
-- 关标签 ≠ 丢**交互**任务：工作台 / 收件箱 / 项目「对话」页能用同一 `runId` 对上开步、工作树、普通终端
+- 关标签 ≠ 丢**交互**任务：工作台 / 收件箱 / 侧栏项目树下的对话（原项目「对话」页签，2026-10-23 撤、对话挂侧栏）能用同一 `runId` 对上开步、工作树、普通终端
 - 无头巡检成功：只更新雷达/收件箱，工作台不出现一张「刚巡检过」
 - 工作台单栏（2026-10-23 用户：两栏怪异）：自上而下 正在进行 → 待你处理 → 待你验收 → 定时任务 → 最近对话，不再分右栏；后三块有内容才出现
 - 区块标题计数（2026-10-26 用户：一条时绿点 + 黄「1」重复提醒）：≥2 条才挂；「待你处理」计数黄底只在含黄点（要拍板）条目时，全是绿点通知用中性灰底；「待你验收」恒中性。
@@ -348,7 +348,7 @@ SQLite `runs` 表（`app.db`），字段见 §1.1。不把 PTY id、密钥、env
 - 阅读区问 AI：仅当对应标签还活着才进「正在进行」；结束后不进本项目会话
 - 会话解析仍只读；Run 行不得回写 CLI 会话文件
 
-**用户行为验收（一期完成线）**：从工作台「继续」、收件箱动作、项目「对话」页进入时，三处都定位到同一个 `runId`；关掉标签后仍可找回；无头成功/失败只更新结果入口，不生成可聊天任务。
+**用户行为验收（一期完成线）**：从工作台「继续」、收件箱动作、侧栏项目树下的对话进入时，三处都定位到同一个 `runId`；关掉标签后仍可找回；无头成功/失败只更新结果入口，不生成可聊天任务。
 
 ---
 
@@ -530,4 +530,4 @@ Headless 支持取消但不承诺会话恢复；定时任务行显示「停止�
 - Context Pack 分两套：目标包带工作环境（按科研/工作/编程各写两句）、项目规则、保护路径、已验收目标及其产出与意见、尚未完成的目标、上一版修改意见；会话包只带身份、目录、规则和「按这次说的做」，不把未完成目标塞进对话。
 - 验收接受写入 `.ccode/project-status.json`（目标名、产出路径、意见）。普通目标页头只列数量，不重复卡片名称；「项目现在」摘要只保留给工作台等聚合面。无独立记忆页。有流程科研仍用简报。
 - 定时任务没有独立页（2026-09-13 侧栏移除，2026-10-23 再次确认）：在项目「定时任务」页签，跨项目看页签底部总览与工作台摘要；巡检仍是后台 Run，不进入交互工作台「正在进行」。
-- 项目对话是任务页右侧栏，不是第四个页签。科研 / 工作 / 编程同一套：展开时标题行「＋ 新对话」和收起钮；收起后标题行仍能再打开。侧栏「对话」页仍是全局历史。
+- 项目对话挂侧栏的项目树下面（2026-10-23 起曾用任务页右侧栏、更早是页签，两者均已撤）：入口是标题行「＋ 新对话」。侧栏「对话」页（现「对话管理」）仍是全局历史。

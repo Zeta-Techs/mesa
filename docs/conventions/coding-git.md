@@ -25,9 +25,9 @@
 
 ## Background & Motivation
 
-### 当前实现（已核对代码，不凭印象）
+### 当前实现（2026-09-03 快照；命令注册表现以本节开头 2026-10-26 核对清单为准——origin URL / PR / Desktop 三缺口已由 `coding_add_origin` / `coding_open_pr` / `coding_open_desktop` 落地）
 
-后端单一入口 `src-tauri/src/coding.rs`，命令在 `src-tauri/src/lib.rs` 注册：`coding_overview` / `coding_create_worktree` / `coding_remove_worktree` / `coding_fetch` / `coding_pull` / `coding_push` / `coding_merge_into_base` / `coding_abort_merge` / `coding_delete_branch`。科研工作区（`workspaces.rs` 的 `ccode/<name>` 分支、端口、TASK.md、评审 PR）保持另一条库，禁止合并。
+后端单一入口 `src-tauri/src/coding.rs`，命令在 `src-tauri/src/lib.rs` 注册：`coding_overview` / `coding_create_worktree` / `coding_remove_worktree` / `coding_fetch` / `coding_pull` / `coding_push` / `coding_merge_into_base` / `coding_delete_branch` / `coding_add_origin` / `coding_open_desktop` / `coding_open_pr` / `coding_upsert_lane`，另有 `git_is_repo`（2026-10-26 核对）。科研工作区（`workspaces.rs` 的 `ccode/<name>` 分支、端口、TASK.md、评审 PR）保持另一条库，禁止合并。
 
 现有写命令全部是 `Result<String, String>`（或 `Result<CodingWorktreeDto, String>`）。前端已有用 `msg.includes("未合入")` 探测字符串的先例（删分支），**v1 新写操作不再扩这种通道**。
 
@@ -42,7 +42,7 @@
 | 拉取 | **仅** `pull --ff-only` |
 | 合并 | 合进 **已检出基准的那棵工作树**；基准脏则拒；找不到 `is_base` 工作树时现文案是「请先把主仓切回 {base}，或为基准分支建一棵工作树」（**第一条与 v1 不切主仓检出打架**） |
 | 空仓 | `ensure_initial_commit` **只在 `create_at` 里调用**；返回值被 `let _ =` 丢掉。`overview_at` **每次**写死 `created_initial_commit: false`。前端 `initNote` 读 overview 旗标，**实际上不会亮** |
-| 取消合并 | 项目页走 `git_abort_merge`（`GitPanel` 同源）；`coding_abort_merge` 已注册但项目页未用，两套并存 |
+| 取消合并 | 项目页走 `git_abort_merge`（`GitPanel` 同源）；`coding_abort_merge` 已按下方清理待办删除，只留一条 |
 | 远程身份 | **DTO 无 origin URL、无远程分支、无 PR、无 gh、无 Desktop** |
 
 前端 `src/components/CodingProjectView.tsx`（v3.190）：左工作树右会话。主 CTA 文案是「**创建工作树**」，placeholder `feature/login`。工作树行：进入 / 查看改动 / 拉取·推送 / `⋯`（fetch、复制路径、`revealItemInDir`、删除）。芯片来自 `codingFactChips`（`src/work-mode.ts`）：仅 `key/label/tone`，无 `tip`；`↑N` / `↓N` / 未推送 / 无上游。`FactChips` 只渲染 span。
@@ -278,7 +278,7 @@ v3.190 的按钮层级保留：主色只留给「从基准开工」（**该文�
 | 一句 | 仅非主仓且 PR 4 已可点：`用 GitHub Desktop 打开这一目录` |
 | PR | `hostKind==github && hasUpstream`：ghost「打开 Pull Request」常驻卡上（不进 `⋯`、不依赖刚推送的 toast）。`!hasUpstream`：同一按钮 **禁用**，HoverTip「先推送才能开 PR」。非 github 或无 origin：**不渲染** |
 
-`⋯` 收敛：取消合并（仅冲突，invoke `git_abort_merge`，**不用** `coding_abort_merge`）、删除工作树（非主仓）。复制/显示从 `⋯` 挪到路径行。fetch 升到身份段后，行内 `⋯` 不再放 fetch。删除未使用的 `coding_abort_merge` 命令（或令其转调 `git_abort_merge` 后去掉重复注册）在落地 PR 里一并做，项目页与改动面板只留一条。
+`⋯` 收敛：取消合并（仅冲突，invoke `git_abort_merge`，**不用** `coding_abort_merge`）、删除工作树（非主仓）。复制/显示从 `⋯` 挪到路径行。fetch 升到身份段后，行内 `⋯` 不再放 fetch。~~删除未使用的 `coding_abort_merge` 命令（或令其转调 `git_abort_merge` 后去掉重复注册）在落地 PR 里一并做，项目页与改动面板只留一条~~（✅ 已删，2026-10-26 核对：lib.rs 已无该注册）。
 
 **推送按钮 `title`（项目页组合钮，次要入口）：**
 
@@ -654,7 +654,7 @@ export interface CodingWorktreeDto {
 | `coding_merge_into_base` | 现签名 | **保留 `CodingMergeDto`**，加 `code`（`ok` / `base_not_checked_out`）；冲突仍 `conflict`+`cwd`。文案不再建议切主仓 |
 | `coding_push` / `coding_pull` / `coding_fetch` | 现签名可先留 `Result<String>` | 新失败码能放进 `CodingOpDto` 的，逐步迁；**不要**发明前缀。PR 后续不依赖 push 返回值 |
 
-`coding_abort_merge`：删除或转调 `git_abort_merge`，UI 只调后者。
+~~`coding_abort_merge`：删除或转调 `git_abort_merge`，UI 只调后者。~~（✅ 已删，2026-10-26 核对）
 
 ### 纯逻辑（`src/coding-git.ts` + `work-mode.ts`）
 
