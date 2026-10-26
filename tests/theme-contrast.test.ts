@@ -582,10 +582,10 @@ test("热力图五档色阶（cta 单极梯子）全主题可辨：方向单调 
   assert.deepEqual(failures, [], `热力图色阶断档：\n${failures.join("\n")}`);
 });
 
-test("聊天回答的字适合长读：Mac 细字下正文 l1/l2 五五混对画布 10–13:1、加粗 l1 更亮；Windows 不认细字，正文 l2 8.5–11.5:1、加粗更亮且不超过 14:1", () => {
+test("聊天回答的字适合长读：Mac 细字下正文 l1 七成对画布 10.5–14.5:1、加粗 l1 更亮；Windows 不认细字，正文 l2 8.5–11.5:1、加粗更亮且不超过 14:1", () => {
   // 2026-10-25 用户选 C：聊天区灰度抗锯齿（笔画细一档）+ 正文提到 l1；Windows 没有细字，留原口径
   const root = /@theme \{(.*?)\n\}/s.exec(css)?.[1] ?? "";
-  assert.match(root, /--color-chat-text:\s*color-mix\(in oklab, var\(--color-l1\) 50%, var\(--color-l2\)\)/);
+  assert.match(root, /--color-chat-text:\s*color-mix\(in oklab, var\(--color-l1\) 70%, var\(--color-l2\)\)/);
   assert.match(root, /--color-chat-strong:\s*var\(--color-l1\)/);
   assert.match(css, /\.ccode-chat-body,\s*\.ccode-chat-user,\s*\.md-chat,\s*\.ccode-chat-composer,\s*\.ccode-chat-scroll \{\s*-webkit-font-smoothing:\s*antialiased/);
   const win = /\[data-platform="windows"\] \{\s*--color-chat-text:\s*var\(--color-l2\);\s*--color-chat-strong:\s*color-mix\(in oklab, var\(--color-l1\) 60%, var\(--color-l2\)\);/;
@@ -593,9 +593,9 @@ test("聊天回答的字适合长读：Mac 细字下正文 l1/l2 五五混对画
   const bad: string[] = [];
   for (const t of THEMES) {
     const v = { ...tokens(null), ...(t.id === "midnight" ? {} : tokens(t.id)) };
-    const mac = contrast(mixOklab(v.l1, v.l2, 50), v.canvas);
+    const mac = contrast(mixOklab(v.l1, v.l2, 70), v.canvas);
     const macStrong = contrast(v.l1, v.canvas);
-    if (mac < 10 || mac > 13) bad.push(`${t.id} Mac 正文对画布 ${mac.toFixed(2)}:1`);
+    if (mac < 10.5 || mac > 14.5) bad.push(`${t.id} Mac 正文对画布 ${mac.toFixed(2)}:1`);
     if (macStrong <= mac) bad.push(`${t.id} Mac 加粗不比正文亮`);
     const ct = contrast(v.l2, v.canvas);
     const cs = contrast(mixOklab(v.l1, v.l2, 60), v.canvas);
