@@ -1149,9 +1149,19 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                     <CheckCheck size={13} strokeWidth={1.8} aria-hidden="true" />
                   </button>
                 )}
-                <span className="rounded-full bg-warn px-2 py-0.5 text-micro text-warn-text">
-                  {inboxItems.length}
-                </span>
+                {/* 只剩一条时数字和那一行说的是同一件事，不再挂；
+                    黄芯片只在有黄点（要你拍板）的条目时出，全是绿点通知就用中性色，别替通知喊急（2026-10-26 用户） */}
+                {inboxItems.length > 1 && (
+                  <span
+                    className={
+                      inboxItems.some((item) => item.dot !== "bg-ok-text")
+                        ? "rounded-full bg-warn px-2 py-0.5 text-micro text-warn-text"
+                        : "rounded-full bg-inset px-2 py-0.5 text-micro text-l3"
+                    }
+                  >
+                    {inboxItems.length}
+                  </span>
+                )}
               </span>
             }
           />
@@ -1210,10 +1220,12 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
             icon={ClipboardCheck}
             title="待你验收"
             action={
-              // 计数中性：紧迫感由「待你处理」的黄芯片承担，这里不再并排第二个黄块
-              <span className="rounded-full bg-inset px-2 py-0.5 text-micro text-l3">
-                {reviewTasks.length}
-              </span>
+              // 计数中性：紧迫感由「待你处理」的黄芯片承担，这里不再并排第二个黄块；只有一条时不挂数字
+              reviewTasks.length > 1 ? (
+                <span className="rounded-full bg-inset px-2 py-0.5 text-micro text-l3">
+                  {reviewTasks.length}
+                </span>
+              ) : undefined
             }
           />
           <div className="space-y-2">
