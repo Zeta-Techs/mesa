@@ -54,6 +54,11 @@ interface Layout {
    * 原先整段当成回复贴在预览末尾，2026-10-22 金丝雀抓屏）。表格用的是方角（┌），不受影响
    */
   noticeBox?: boolean;
+  /**
+   * 输入框正上方有这一行 = 这家自己的对话区被往上翻了，屏上是翻上去的旧内容，不是这一轮。Codex 0.164 起对话区能滚，
+   * 翻上去时输入框上方出「↓ Back to bottom · esc」（2026-10-26 用户 Windows 截图：预览里是前两轮的回复，连这行提示一起）
+   */
+  scrolledAway?: RegExp;
 }
 
 // 横线、半格边框，以及方框的上下边（画到一半的输入框「╭────」也算）
@@ -107,6 +112,8 @@ const LAYOUTS: Record<string, Layout> = {
     skip: /^•\s+Working\b|esc to interrupt|^\s*(?:─+\s*)?Worked for\b|^\s*└/,
     indent: 2,
     pinnedEcho: true,
+    // 0.164 tui/src/transcript_view/composer_gap.rs 的几种写法：「↓ Back to bottom · esc」「↓ Bottom」「New activity · ↓ …」
+    scrolledAway: /^(?:↓\s*)?(?:New activity(?:\s+·\s+)?)?(?:↓(?:\s+(?:Back to bottom|Bottom))?(?:\s+·\s+esc)?)?$/,
   },
   qwen: {
     boxTop: (rows) => lastBox(rows, (i) => (i > 0 && /^>\s/.test(rows[i]) && BORDER.test(rows[i - 1].trim()) ? i - 1 : -1)),
@@ -255,6 +262,8 @@ export function extractLiveReply(lines: readonly string[], agentId: string): Liv
   // 原先退回整屏，信任菜单的「Accessing workspace / Quick safety check」被当回复画进了聊天层（2026-10-17 用户截图）
   const boxTop = layout.boxTop(rows);
   if (boxTop < 0) return null;
+  const away = layout.scrolledAway;
+  if (away && rows.slice(Math.max(0, boxTop - 3), boxTop).some((l) => l.trim() !== "" && away.test(l.trim()))) return null;
   const region = layout.noticeBox ? dropNoticeBoxes(rows.slice(0, boxTop)) : rows.slice(0, boxTop);
   // 最后一条用户回显之后才是这一轮的回复；回显滚出屏幕时从第一段助手行首起
   let echoAt = -1;

@@ -468,6 +468,27 @@ test("Codex：多行提问的真回显刚好滚到第一行，续行仍不进预
   assert.deepEqual(mergeLiveReply(prev, read), nth(1, 3));
 });
 
+// 2026-10-26 用户 Windows 截图（Codex 0.164）：对话区被往上翻着，预览里是前两轮的回复，连「↓ Back to bottom · esc」一起
+test("Codex 0.164：对话区往上翻着（输入框上方有「↓ Back to bottom」）时不预览，翻回底部照常", () => {
+  const old = [
+    "› 运行 ls /不存在的目录，把报错原样告诉我，然后再用 echo 恢复正常",
+    "",
+    "• 我先运行不存在的目录命令，再用 echo 恢复正常输出。",
+    "",
+    "• 随后执行 echo 恢复正常，输出为：",
+    "",
+  ];
+  for (const hint of ["↓ Back to bottom · esc", "↓ Bottom", "New activity · ↓ Back to bottom · esc"]) {
+    const screen = [...old, `                    ${hint}`, "› Ask Codex to do anything"];
+    assert.equal(extractLiveReply(screen, "codex"), null, hint);
+  }
+  const atBottom = ["› 原样复述我这条消息的第三行", "", "• <b>不该加粗</b> & “引号”", "", "› Ask Codex to do anything"];
+  assert.deepEqual(extractLiveReply(atBottom, "codex")?.lines, ["<b>不该加粗</b> & “引号”"]);
+  // 回复正文里提到这几个词不算
+  const mention = ["› 解释一下", "", "• 按 ↓ Back to bottom 回到底部即可。", "", "› Ask Codex to do anything"];
+  assert.deepEqual(extractLiveReply(mention, "codex")?.lines, ["按 ↓ Back to bottom 回到底部即可。"]);
+});
+
 test("接续时上一次的最后一行只写了半截，写全后不重复", () => {
   const merged = mergeLiveReply(["第一行写完了", "第二行写到一"], { lines: ["第二行写到一半又写完", "第三行"], anchored: false });
   assert.deepEqual(merged, ["第一行写完了", "第二行写到一半又写完", "第三行"]);
