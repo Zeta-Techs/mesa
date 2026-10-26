@@ -203,9 +203,6 @@ export interface AppSettings {
   /** 页切逐页绑定：键 = 页面 id（hotkeys.ts PAGE_HOTKEY_DEFS），值 = 组合串；
       键缺失 = 该页用默认绑定（mod+1..mod+9） */
   hotkeyPages?: Record<string, string>;
-  /** 想法期只读保护（卡片区「聊想法」，默认开）：开 = 支持的 CLI 注入只读/计划模式参数 +
-      预填指令带不动文件约束；关 = 纯聊天 */
-  discussReadonly?: boolean;
   /** 底部状态栏统一开关（默认开）：终端层与聊天层同进退；关 = 两层都不显示（旧 statusBarInChat 已迁移） */
   statusBar?: boolean;
   /** 打开对话时先显示哪一层（默认聊天）：进入 Agent 对话的入口都跟它走，见 tab-surface.ts */

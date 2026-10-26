@@ -970,7 +970,7 @@ pub struct AgentCapabilitiesDto {
     /// 请求策略 reasoningEffort 的已知档位（非空 = 前端出下拉，空 = 自由输入）。
     /// 只收实证值集：claude /effort 闭集、opencode 配置枚举、codex catalog 模板、grok README
     pub effort_options: Vec<&'static str>,
-    /// 想法期只读硬保护：readonly_args 非空 = supported
+    /// 只读 / 计划模式硬保护（先出方案 / 只讨论）：readonly_args 非空 = supported
     pub readonly: CapabilityFlagDto,
     /// 无头/定时写盘：未实证则 supported=false 或 reason 写人话（qwen 禁选、grok 标无沙箱）
     pub headless_write: CapabilityFlagDto,

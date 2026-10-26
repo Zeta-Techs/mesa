@@ -49,7 +49,8 @@ test("搜界面上不出现的词也能落到对档", () => {
     ["自动命名", "integration"],
     ["起名", "integration"],
     ["应用图标", "appearance"],
-    ["只读", "integration"],
+    // 「只读」随想法期只读保护开关一起退出索引（2026-10-26 收掉）
+    ["hooks", "integration"],
     ["brew", "network"],
     ["会话标题", "integration"],
     ["依赖体检", "diag"],

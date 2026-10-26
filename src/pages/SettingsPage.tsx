@@ -3752,19 +3752,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           </button>
         </Row>
 
-        <SubHeading title="对 Agent 的约束" hint="Mesa 拉起各家 CLI 时额外加的保护与标记" />
-        <Row
-          label="想法期只读保护"
-          hint="聊想法时不让 agent 改文件（支持的 CLI 走进程级保护）"
-        >
-          {/* v3.66 当时定「设置页不加行」，前提是只有一个开关点；
-              现在它影响多条讨论路径，用户在卡片区之外找不到它（v3.88 补） */}
-          <Toggle
-            checked={settings?.discussReadonly ?? true}
-            onChange={(v) => patch({ discussReadonly: v })}
-            label="想法期只读保护"
-          />
-        </Row>
+        <SubHeading title="对 Agent 的标记" hint="Mesa 拉起各家 CLI 时额外加的标记" />
 
         {hookSupportError && (
           <div className="mt-3 flex items-center gap-2 text-xs text-err-text">

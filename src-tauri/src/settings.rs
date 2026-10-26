@@ -360,9 +360,6 @@ pub struct AppSettingsDto {
     /// 页切逐页绑定：键 = 页面 id（前端 hotkeys.ts PAGE_HOTKEY_DEFS），值 = 组合串；
     /// 键缺失 = 该页用默认绑定（mod+1..mod+9），整图覆盖（同 ai_profiles 口径）
     pub hotkey_pages: Option<BTreeMap<String, String>>,
-    /// 想法期只读保护（卡片区「聊想法」）：开 = 注入只读/计划模式参数（支持的 CLI）+
-    /// 预填指令带不动文件约束；关 = 纯聊天不动参数。卡片区就地开关，设置页不加行
-    pub discuss_readonly: Option<bool>,
     /// 底部状态栏统一开关（终端层与聊天层同进退，默认开）。关 = 两层都不渲染，
     /// 切层不改终端行列数（两层一致无需占位）；旧字段 status_bar_in_chat=false 自动迁移为关
     pub status_bar: Option<bool>,
@@ -963,7 +960,6 @@ fn with_defaults(s: AppSettingsDto) -> AppSettingsDto {
         hotkey_page_switch: s.hotkey_page_switch.or(Some(DEFAULT_HOTKEY_PAGE_SWITCH)),
         // 逐页绑定不做默认值填充：键缺失即「跟随默认」（同 ai_profiles 口径）
         hotkey_pages: s.hotkey_pages,
-        discuss_readonly: s.discuss_readonly.or(Some(true)),
         status_bar: Some(s.status_bar.or(s.status_bar_in_chat).unwrap_or(true)),
         status_bar_in_chat: s.status_bar_in_chat.or(Some(true)),
         open_surface: Some(
@@ -1146,9 +1142,6 @@ fn merge(cur: &mut AppSettingsDto, patch: AppSettingsDto) {
     // 逐页绑定整图覆盖（前端每次提交完整 map）
     if patch.hotkey_pages.is_some() {
         cur.hotkey_pages = patch.hotkey_pages;
-    }
-    if patch.discuss_readonly.is_some() {
-        cur.discuss_readonly = patch.discuss_readonly;
     }
     if patch.status_bar.is_some() {
         cur.status_bar = patch.status_bar;
@@ -2275,29 +2268,15 @@ mod tests {
         std::fs::remove_dir_all(p.parent().unwrap()).ok();
     }
 
+    /// 「想法期只读保护」开关 2026-10-26 收掉（聊想法固定只读开聊）：旧 settings.json 里留着的键读进来不报错、写回时丢掉
     #[test]
-    fn discuss_readonly_defaults_true_and_roundtrips() {
+    fn retired_discuss_readonly_key_is_ignored() {
         let p = tmp();
-        // 缺省 → true（想法期只读保护默认开）
-        assert_eq!(with_defaults(read_from(&p)).discuss_readonly, Some(true));
-        let mut cur = read_from(&p);
-        merge(
-            &mut cur,
-            AppSettingsDto {
-                discuss_readonly: Some(false),
-                ..Default::default()
-            },
-        );
+        std::fs::write(&p, r#"{"discussReadonly":false,"theme":"dark"}"#).unwrap();
+        let cur = read_from(&p);
         write_to(&p, &cur).unwrap();
-        assert_eq!(
-            with_defaults(read_from(&p)).discuss_readonly,
-            Some(false),
-            "写读往返"
-        );
-        // 无关 patch 不动该字段
-        let mut cur2 = read_from(&p);
-        merge(&mut cur2, AppSettingsDto::default());
-        assert_eq!(cur2.discuss_readonly, Some(false));
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(!text.contains("discussReadonly"), "{text}");
         std::fs::remove_dir_all(p.parent().unwrap()).ok();
     }
 

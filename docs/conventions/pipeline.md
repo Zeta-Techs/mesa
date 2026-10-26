@@ -522,9 +522,9 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   `create_task_card` 加可选 kind 参数，缺省按同一规则推断。前端纯逻辑在 `src/task-cards.ts`
   （`ideaCardsForStep`/`discussionCardsForStep`，tests/task-cards.test.ts）。
   **想法区（聚焦态专属，流程线上方，独立 strip 容器 `rounded-md bg-strip`）**：标题行 =「想法区（N）」+「＋ 新建想法」（内联命名，kind=idea、
-  step=当前聚焦步骤）+「想法期只读保护」开关（从卡片区总标题行迁入此处，settings.discussReadonly 存储不动）；
+  step=当前聚焦步骤）（「想法期只读保护」开关 2026-10-26 收掉，见下）；
   空态一行引导（「还没有想法…」）。
-  想法卡行 = 名称 +「聊想法」（只读纯聊 onDiscuss）+「◈ 融合进任务书」+ ⋯（重命名/删除/单次豁免沿用）；
+  想法卡行 = 名称 +「聊想法」（只读纯聊 onDiscuss）+「◈ 融合进任务书」+ ⋯（重命名/删除）；
   **聚焦步骤已有活跃工作区（runStatus 非 pending）时藏融合按钮**，卡仍可续聊。
   draft 卡的「聊想法」主按钮改名「**接着聊**」（与 idea 卡只读纯聊区分）。
   **v3.81 起无总览态（用户拍板）**：卡片区恒为单步骤聚焦视图，「总览全部步骤」按钮与全部步骤页删除，
@@ -539,13 +539,14 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   ② 前端 FuseDraftModal 预览/可编辑（编辑区形态同开工弹层）→ 确认才 `write_task_draft` 整份覆盖落盘
   （ensure_task_project_root 门槛 + draft_rel_path 单一出处 + atomic_write）→ `onDraftChanged` 回调让
   ProjectGroup 即刻重读 focusDraft。AI 未配/失败行内中文报错可重试。
-  **想法期只读保护**（v3.66，settings.json `discussReadonly`，就地开关、默认开，设置页不加行；
-  v3.77 起只服务未挂步骤卡片的纯聊一路；v3.80 起开关随想法区走——聚焦态想法区标题行）：
-  开 = 预填指令带「只讨论不动文件」约束 + `PendingTerminal.readonly` → pty_spawn 注入注册表
+  **聊想法固定只读开聊**（v3.66 的「想法期只读保护」开关、设置页那一行与 ⋯「聊想法（允许改文件）」单次豁免
+  2026-10-26 用户拍板收掉：关掉 = AI 在项目根直接改文件、没有验收；真要改在聊天里换权限重开。`settings.discussReadonly`
+  字段一并删除，旧文件里的键读进来忽略）：预填指令带「只讨论不动文件」约束 + `PendingTerminal.readonly` / `discussOnly`
+  （方案卡不给开工）→ pty_spawn 注入注册表
   `readonly_args`（`agents::readonly_launch_args`；claude/codebuddy `--permission-mode plan`、codex `-s read-only`
   替换默认 workspace-write、gemini `--approval-mode plan`、kimi/cursor `--plan`、qwen `--approval-mode plan`（≥0.25.3）、
   opencode `--agent plan` + 实验计划模式开关与收紧的 plan agent 权限（≥1.19.3，`readonly_launch_env`；2026-10-26）；版本不够时拒绝，
-  支持矩阵见 matrix 跨 agent 共性结论 §6）；卡片 ⋯「聊想法（允许改文件）」= 不动开关的单次豁免（开关关时不渲染）。
+  支持矩阵见 matrix 跨 agent 共性结论 §6）；当前 Agent 做不到只读时想法区标一句「X 不能只读开聊」。
   主按钮口径（v3.77；v3.80 起「聊想法」改名「接着聊」）：有绑定工作区 = 继续（工作树读 TASK.md）；
   未开工挂步骤 = 接着聊（草稿口径）+ 开工；未挂步骤 = 只读纯聊。
 
@@ -568,7 +569,7 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   评审沉淀 = `append_step_draft`（读-改-原子写，不存在则以「# 任务书草稿：<步骤名>」头新建，
   小节 = 「## 上一步（<工作区名>）评审沉淀（<时间>）」）。
 - **聊任务书**：流程线 discuss 节点（改名「任务书」）与种子点击同口径——非只读启动（agent 要写文件，
-  想法期只读保护不适用），预填指令约束**只许新建/修改这一个文件**，并要求把没定下来的问题记到
+  聊想法的只读约束不适用），预填指令约束**只许新建/修改这一个文件**，并要求把没定下来的问题记到
   「## 待拍板」小节；种子点击仍建卡归档（对话归置不变）。**「跟 AI 商量一下」直接进终端**（2026-09-12）：
   用项目 Agents 页的默认 Agent 和绑定自动启动（没设才停在启动栏），不打开右栏预览；看任务书用流程线「预览/编辑 TASK.md」。
   discuss 节点完成口径 = 已有正文（hasDraft，纯文件口径）。

@@ -1748,7 +1748,7 @@ export interface AgentCapabilitiesDto {
   };
   /** reasoningEffort 已知档位集（非空 = 表单出下拉，空 = 自由输入） */
   effortOptions: string[];
-  /** 想法期只读硬保护（readonly_args 非空） */
+  /** 只读 / 计划模式硬保护（readonly_args 非空；聊天「先出方案」、目标与聊想法的「只讨论」都靠它） */
   readonly: CapabilityFlagDto;
   /** 无头/定时写盘：不支持则禁选；支持但有 reason 则当附注（grok 无沙箱） */
   headlessWrite: CapabilityFlagDto;

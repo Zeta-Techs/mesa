@@ -1,5 +1,4 @@
 import {
-  FilePenLine,
   MessageCircle,
   Pencil,
   Trash2,
@@ -14,7 +13,6 @@ import {
   primaryActionClass,
   RoleBadge,
   secondaryActionClass,
-  Toggle,
   InlineNotice,
 } from "./PageFrame";
 import { Modal } from "./Modal";
@@ -231,11 +229,8 @@ export default function TaskCardsSection({
   const deleteCard = useAppStore((s) => s.deleteCard);
   const setPendingTerminal = useAppStore((s) => s.setPendingTerminal);
   const setPage = useAppStore((s) => s.setPage);
-  const updateSettings = useAppStore((s) => s.updateSettings);
-  // 想法期只读保护开关（settings.json，默认开）
-  const discussGuard = useAppStore((s) => s.settings?.discussReadonly !== false);
-  // 只读保护对当前启动栏 agent 是否真的是硬保护（进程级参数）：
-  // 没有只读参数（或版本太旧的 Qwen / OpenCode）的家开了也只剩 prompt 软约束，UI 要如实标注。
+  // 聊想法固定只读开聊（2026-10-26 用户拍板收掉「想法期只读保护」开关）：当前启动栏 agent 没有只读参数
+  // （或版本太旧的 Qwen / OpenCode）时启动会被拒绝，想法区先如实标注一句。
   // 能力位来自后端 detect_agents（与 agent_specs 注册表同一出处，不在前端另抄一份名单）
   const detected = useAppStore((s) => s.agents);
   const guardAgentId = launchBarAgent();
@@ -441,17 +436,15 @@ export default function TaskCardsSection({
   }
 
   /** 聊想法（idea 卡专用——想法区行内主按钮与 ⋯ 菜单；draft 卡的讨论并入 onSeed 草稿口径）：项目根开终端（不建工作区——想法期不动手）。
-   *  想法期只读保护（卡片区标题行开关，默认开；allowEdit = ⋯ 菜单的单次豁免）：
-   *  开 = 预填指令带不动文件约束 + readonly 标记（后端对支持的 CLI 注入只读/计划模式参数——硬保护）；
-   *  关/豁免 = 纯聊天，不动参数。
+   *  固定只读开聊（2026-10-26 收掉「想法期只读保护」开关与「允许改文件」单次豁免：关掉 = AI 在项目根直接改文件、
+   *  没有验收；真要改，在聊天里换权限重开）：预填指令带不动文件约束 + 只讨论（后端对支持的 CLI 注入只读/计划模式参数
+   *  ——硬保护；discussOnly = 方案卡不给开工）。
    *  预填指令还要给「该动手了」一个明确出口（回项目页开工/商量）——只读约束管得住文件、
    *  管不住 agent 在项目根读到 project.toml 与草稿后主动请缨开工；没有出口话术，
    *  它会把「用户点头」当成在主仓直接产出的授权（实测：聊想法会话里 agent 问「要现在开 outline 吗」）。
    *  kimi 无启动注入参数：启动栏保留指令文本由用户手动发送（promptDropped 既有处理） */
-  function onDiscuss(card: TaskCardDto, allowEdit = false, topic?: string) {
+  function onDiscuss(card: TaskCardDto, topic?: string) {
     claimForCard(card, discussLaunch);
-    const guard = useAppStore.getState().settings?.discussReadonly !== false;
-    const protect = guard && !allowEdit;
     const opening = topic
       ? `我想跟你探讨「${card.name}」里的待拍板问题：${topic}`
       : `我想跟你探讨：${card.name}`;
@@ -459,12 +452,10 @@ export default function TaskCardsSection({
       cwd: projectPath,
       extraEnv: {},
       title: card.name,
-      readonly: protect || undefined,
-      permission: protect ? "discuss" : "write_tree",
-      discussOnly: protect || undefined,
-      initialPrompt: protect
-        ? `${opening}。注意：现在只讨论方案，不要修改/新建/删除任何文件，也不要在这里产出任何步骤产物（哪怕我点头）——聊到该动手的程度时，提醒我回项目页点「开工」或「跟 AI 商量一下」，那边会在独立工作区里执行。`
-        : opening,
+      readonly: true,
+      permission: "discuss",
+      discussOnly: true,
+      initialPrompt: `${opening}。注意：现在只讨论方案，不要修改/新建/删除任何文件，也不要在这里产出任何步骤产物（哪怕我点头）——聊到该动手的程度时，提醒我回项目页点「开工」或「跟 AI 商量一下」，那边会在独立工作区里执行。`,
       ...(discussLaunch ?? {}),
       autoStart: Boolean(discussLaunch?.profileId),
     });
@@ -483,7 +474,7 @@ export default function TaskCardsSection({
   }
 
   /** 开聊一个话题（种子 chip / 决策项「开聊」/ 手动加的话题共用；已有同名卡则续聊）。
-   *  与「聊想法」同一口径：**只读开聊**（受想法期只读保护约束），结论不由 agent 直接落盘，
+   *  与「聊想法」同一口径：**只读开聊**，结论不由 agent 直接落盘，
    *  聊完走「◈ 沉淀进任务书」提炼后追加——讨论入口只此一条，
    *  「让 agent 直接改草稿」由 discuss 节点的「跟 Agent 聊任务书」单独承担，两者不再重叠 */
   async function onSeed(stepName: string, seed: string, topic?: string) {
@@ -492,7 +483,7 @@ export default function TaskCardsSection({
       const existing = (cards ?? []).find((c) => c.name === seed);
       const card =
         existing ?? (await createCard(projectPath, seed, stepName, "idea"));
-      onDiscuss(card, false, topic);
+      onDiscuss(card, topic);
     } catch (reason) {
       setError(String(reason));
     }
@@ -1212,33 +1203,14 @@ export default function TaskCardsSection({
                       ＋ 话题
                     </button>
                   )}
-                  {ideaCards.length > 0 && (
-                  <span
-                    className="ml-auto flex shrink-0 items-center gap-1"
-                    title={
-                      guardHard
-                        ? `开启后以只读/计划模式启动 ${guardAgentLabel}——进程级参数，约束工具执行（计划模式不等同于 OS 沙箱）`
-                        : `${guardAgentLabel} 没有只读启动参数：不能以只讨论权限启动；请换 Claude Code / Codex / Gemini / Kimi / CodeBuddy / Cursor / Grok`
-                    }
-                  >
-                    <span className="text-xs text-l4">聊天时不让 AI 改文件</span>
-                    {/* 如实标注当前 agent 有没有硬保护：不标的话开关会沉默降级，
-                        而头脑风暴恰恰最依赖「它不会动我文件」这个假设 */}
-                    {discussGuard && !guardHard && (
-                      <span className="text-micro text-warn-text">
-                        {guardAgentLabel} 不支持只讨论
-                      </span>
-                    )}
-                    <Toggle
-                      checked={discussGuard}
-                      onChange={(checked) =>
-                        void updateSettings({
-                          discussReadonly: checked,
-                        }).catch((e) => setError(String(e)))
-                      }
-                      label="聊的时候不让 AI 改文件"
-                    />
-                  </span>
+                  {/* 聊想法固定只读开聊：当前 Agent 做不到只读时启动会被拒，先如实说一句（开关已收掉，2026-10-26） */}
+                  {ideaCards.length > 0 && !guardHard && (
+                    <span
+                      className="ml-auto shrink-0 text-micro text-warn-text"
+                      title={`${guardAgentLabel} 没有只读启动参数（或本机版本太旧），聊想法开不起来：换一家 Agent，或更新 CLI`}
+                    >
+                      {guardAgentLabel} 不能只读开聊
+                    </span>
                   )}
                 </div>
                 {ideaCards.length > 0 && (
@@ -1379,18 +1351,6 @@ export default function TaskCardsSection({
                     title:
                       "在项目根开一段对话聊聊这张卡（不建工作区，只读纯聊），新会话自动归入本卡",
                     onSelect: () => onDiscuss(menu.card),
-                  },
-                ]
-              : []),
-            // 单次豁免：不动「想法期只读保护」开关，本次允许 Agent 改文件（开关关时无意义不渲染）
-            ...(discussGuard && menu.card.kind === "idea"
-              ? [
-                  {
-                    icon: FilePenLine,
-                    label: "聊想法（允许改文件）",
-                    title:
-                      "只此一次以普通模式启动（不注入只读参数、不带不动文件约束）；开关保持开",
-                    onSelect: () => onDiscuss(menu.card, true),
                   },
                 ]
               : []),

@@ -178,7 +178,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   starting 期间丢弃旧会话迟到的「已停止」事件；openForComposer：有已配对手机就直接开始接收不弹窗；
                              #   没有目标输入框时收到东西自动弹窗（onArrive 交 App 发系统通知）
   components/ProjectFilePicker.tsx # 聊天输入框「＋ → 引用项目文件」弹层：list_recent_files 最近改过的在前、search_files 搜整个项目（只留文件）、
-                             #   默认网格、滚到看得见才画缩略图（file-thumb.ts）、点行多选、双击直接添加；添加 = ChatComposer addPathAttachments（同「文件或图片」）
+                             #   每次打开是列表（可换网格）、滚到看得见才画缩略图（file-thumb.ts）、点行多选、双击直接添加；添加 = ChatComposer addPathAttachments（同「文件或图片」）
   components/PhoneDropDialog.tsx # 从手机添加弹层（App 全局一处；入口：聊天输入框「+」/ ⌘K / 收件箱「手机」）：二维码（后端 SVG，
                              #   data: URL 进 img）+ 地址复制 + 换地址（电脑名 / 各网卡 IP）+ 「扫了打不开？」；有已配对手机时顶上是状态卡、
                              #   二维码收进「配对新手机」、已配对的手机折叠（移除）；收到的列表带 96px 缩略图（读一次画小图只留小图，
@@ -1249,7 +1249,7 @@ src-tauri/src/
   about.rs                   # 「关于」分区后端：read_third_party_notices（include_str! 嵌随包许可清单）+ build_info（平台/架构/渠道）；清单由 scripts/gen-third-party-notices.mjs 生成，改依赖后必须 npm run gen:notices 再提交
   feedback.rs                # 反馈通道后端：FEEDBACK_ENDPOINT 常量（None=mailto 回落，公司端点上线改这一行）+ submit_feedback（POST JSON，15s 超时，表单+环境行+截图 Base64）+ save_feedback_images（邮件通道截图落盘 Downloads/ccode-exports/mesa-feedback-<时间>/）+ 邮箱直发（send_feedback_smtp：lettre+rustls，截图与诊断包真实附件；授权码经 profiles::set_shared_key 存 keys.json 键 feedback-smtp，0600 持锁；配置存 settings feedbackSmtp）。诊断包附件只收路径、后端经 checked_diagnostics_path 白名单（导出目录 + ccode-diagnostics-*.zip + 非链接 + ≤20MB）自读。端点启用前需验证 8MB 级 JSON 的 IPC 与超时
   settings.rs                # 应用设置（settings.json）：字体/scrollback/渲染器（terminal_renderer：auto/dom/webgl，Mac 默认清晰、Windows 默认流畅，读时闭集过滤）/汇率/镜像/主题/OS 通知/精确注意力
-                             # （hooks_attention 按 agent map，旧 claude_hooks_attention 仅反序列化兼容迁移）/想法期只读保护
+                             # （hooks_attention 按 agent map，旧 claude_hooks_attention 仅反序列化兼容迁移）
                              # /会话自动命名开关（auto_title_sessions 默认开，关 = ai.rs 起名/补名命令全停；
                              #   闸门读 auto_title_sessions_enabled）
                              # /底部状态栏统一开关（status_bar 默认开，终端/聊天两层同进退；关 = 都不渲染，
