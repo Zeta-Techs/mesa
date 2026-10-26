@@ -66,7 +66,9 @@ import {
   chatDot,
   currentFolderKey,
   parseChatPins,
+  nextPicked,
   pinnedChats,
+  pinPicked,
   railNavIndex,
   toggleChatPin,
   folderDot,
@@ -323,6 +325,22 @@ export default function ProjectTree({
       return next;
     });
   }
+  /** 多选里几段一起置顶 / 取消置顶 */
+  function pinPickedFor(keys: string[]) {
+    setChatPins((prev) => {
+      const next = pinPicked(prev, keys);
+      try {
+        localStorage.setItem(CHAT_PINS_KEY, JSON.stringify(next));
+      } catch {
+        /* 存不下只影响下次启动 */
+      }
+      return next;
+    });
+  }
+  // 多选（2026-10-27）：⌘（Windows 上 Ctrl）点 / ⇧ 点 / ⇧↑↓ 选几段，一起置顶或归档；不点修饰键照旧打开并清掉选择
+  const [picked, setPicked] = useState<Set<string>>(() => new Set());
+  const pickAnchor = useRef<string | null>(null);
+  const [pickMenu, setPickMenu] = useState<{ x: number; y: number; alignRight?: boolean } | null>(null);
   const pinnedList = useMemo(() => pinnedChats(sessions, chatPins), [sessions, chatPins]);
   const pinnedKeys = useMemo(
     () => new Set(pinnedList.map((s) => `${s.agent}\n${s.sessionId}`)),
@@ -760,15 +778,25 @@ export default function ProjectTree({
       );
     }
     const menuOpen = chatMenu != null && chatKey(chatMenu.s) === key;
+    const isPicked = picked.has(key);
+    // 选了好几段时，在其中一段上右键 / 点 ⋯ 出的是对这几段的菜单
+    const forPicked = isPicked && picked.size > 1;
     return (
       <div
         key={key}
         className={`group/chat relative grid h-8 grid-cols-[1fr_auto] items-center rounded-md transition-colors ${
-          selected ? "ccode-rail-active bg-rail-sel" : menuOpen ? "bg-hover" : "hover:bg-hover"
+          isPicked
+            ? `ccode-rail-picked${selected ? " ccode-rail-active" : ""}`
+            : selected
+              ? "ccode-rail-active bg-rail-sel"
+              : menuOpen
+                ? "bg-hover"
+                : "hover:bg-hover"
         }`}
         onContextMenu={(e) => {
           e.preventDefault();
-          setChatMenu({ x: e.clientX, y: e.clientY, s, project });
+          if (forPicked) setPickMenu({ x: e.clientX, y: e.clientY });
+          else setChatMenu({ x: e.clientX, y: e.clientY, s, project });
         }}
       >
         <button
@@ -779,9 +807,21 @@ export default function ProjectTree({
           onMouseDown={(e) => {
             if (e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) openChat(s, project);
           }}
-          onClick={(e) => {
-            if (e.detail === 0) openChat(s, project);
+          // 不按修饰键点下去 = 打开这一段，同时清掉多选
+          onPointerDown={(e) => {
+            if (e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) clearPicked();
           }}
+          onClick={(e) => {
+            // ⌘ 点（Windows 上 Ctrl；Mac 上 Ctrl 点是右键）加进 / 拿出，⇧ 点整段选上：只选不开
+            if (IS_MAC ? e.metaKey : e.ctrlKey) pick(key, "toggle");
+            else if (e.shiftKey) pick(key, "range");
+            else if (e.detail === 0) {
+              clearPicked();
+              openChat(s, project);
+            }
+          }}
+          data-chat-key={key}
+          data-picked={isPicked ? "1" : undefined}
           onPointerEnter={() => prefetchConversation(s)}
           onFocus={() => prefetchConversation(s)}
           aria-current={selected ? "true" : undefined}
@@ -840,7 +880,8 @@ export default function ProjectTree({
             aria-expanded={menuOpen}
             onClick={(e) => {
               const r = e.currentTarget.getBoundingClientRect();
-              setChatMenu({ x: r.right, y: r.bottom + 4, s, project, alignRight: true });
+              if (forPicked) setPickMenu({ x: r.right, y: r.bottom + 4, alignRight: true });
+              else setChatMenu({ x: r.right, y: r.bottom + 4, s, project, alignRight: true });
             }}
             className={`h-6 w-6 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1 ${
               menuOpen ? "flex" : "hidden group-hover/chat:flex group-focus-within/chat:flex"
@@ -1011,9 +1052,25 @@ export default function ProjectTree({
     const target = e.target as HTMLElement;
     // 改名输入框里的方向键归输入框
     if (target.tagName === "INPUT") return;
+    if (e.key === "Escape" && picked.size > 0) {
+      e.preventDefault();
+      clearPicked();
+      return;
+    }
     const rows = railNavRows();
     const current = rows.indexOf(target);
     const next = railNavIndex(e.key, current, rows.length);
+    // ⇧↑ / ⇧↓ 在对话上：从起点（第一次按时是这一段）整段选到下一段（2026-10-27 多选）
+    const fromKey = target.dataset.chatKey;
+    const toKey = next != null ? rows[next]?.dataset.chatKey : undefined;
+    if (e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown") && fromKey && toKey) {
+      e.preventDefault();
+      if (pickAnchor.current == null) pickAnchor.current = fromKey;
+      const anchor = pickAnchor.current;
+      setPicked((prev) => nextPicked(prev, pickOrder(), toKey, anchor, "range"));
+      focusRailRow(rows[next!]);
+      return;
+    }
     if (next != null) {
       e.preventDefault();
       focusRailRow(rows[next]);
@@ -1463,9 +1520,14 @@ export default function ProjectTree({
       ))
     )
       return;
+    await archiveChats(stale, "随手聊");
+  }
+
+  /** 逐条写归档（不碰 CLI 源文件），先改本地镜像再强刷；what 是 toast 里的量词后缀 */
+  async function archiveChats(list: SessionMetaDto[], what = "对话") {
     const done = new Set<string>();
     const failed: string[] = [];
-    for (const s of stale) {
+    for (const s of list) {
       try {
         await invoke("set_session_meta", {
           agent: s.agent,
@@ -1484,7 +1546,71 @@ export default function ProjectTree({
     });
     void useAppStore.getState().loadSessions(true);
     if (failed.length > 0) toast(`已归档 ${done.size} 段，${failed.length} 段失败：${failed[0]}`, "error");
-    else toast(`已归档 ${done.size} 段随手聊`);
+    else toast(`已归档 ${done.size} 段${what}`);
+  }
+
+  /** 眼下侧栏里列着的对话，从上到下（⇧ 点整段选用） */
+  function pickOrder(): string[] {
+    const root = listRef.current;
+    return root ? Array.from(root.querySelectorAll<HTMLElement>("[data-chat-key]")).map((el) => el.dataset.chatKey!) : [];
+  }
+  function pick(key: string, mode: "toggle" | "range") {
+    // ⇧ 点的起点：上回 ⌘ 点的那段，没有就是正看着的那段
+    const anchor = pickAnchor.current ?? selectedChatKey;
+    setPicked((prev) => nextPicked(prev, pickOrder(), key, anchor, mode));
+    if (mode === "toggle") pickAnchor.current = key;
+    else if (pickAnchor.current == null) pickAnchor.current = anchor ?? key;
+  }
+  function clearPicked() {
+    setPicked((prev) => (prev.size ? new Set() : prev));
+    pickAnchor.current = null;
+    setPickMenu(null);
+  }
+  /** 选中的几段，按侧栏里从上到下 */
+  function pickedSessions(): SessionMetaDto[] {
+    const byKey = new Map(sessions.map((s) => [chatKey(s), s]));
+    const order = pickOrder();
+    const keys = [...picked].sort((a, b) => order.indexOf(a) - order.indexOf(b));
+    return keys.map((k) => byKey.get(k)).filter((s): s is SessionMetaDto => s != null);
+  }
+  function pickMenuItems(): ContextMenuItem[] {
+    const list = pickedSessions();
+    const keys = list.map(chatKey);
+    const allPinned = keys.length > 0 && keys.every((k) => chatPins.includes(k));
+    return [
+      {
+        label: allPinned ? `取消置顶这 ${keys.length} 段` : `置顶这 ${keys.length} 段`,
+        icon: allPinned ? PinOff : Pin,
+        disabled: keys.length === 0,
+        onSelect: () => {
+          pinPickedFor(keys);
+          clearPicked();
+        },
+      },
+      {
+        label: `归档这 ${keys.length} 段…`,
+        icon: Archive,
+        disabled: keys.length === 0,
+        title: "归档后侧栏不再列，对话记录不删；在对话页「更多 → 已归档」里能找回",
+        onSelect: () => void archivePicked(list),
+      },
+      { label: "取消选择", icon: X, onSelect: clearPicked },
+    ];
+  }
+  async function archivePicked(list: SessionMetaDto[]) {
+    const head = list
+      .slice(0, 3)
+      .map((s) => `「${sidebarChatTitle(tidySessionTitle(s).title)}」`)
+      .join("、");
+    if (
+      !(await confirmDialog(
+        `归档这 ${list.length} 段对话？\n\n${head}${list.length > 3 ? ` 等 ${list.length} 段` : ""}\n\n` +
+          `归档后侧栏不再列，对话记录不删；在对话页「更多 → 已归档」里能找回、取消归档。开着的对话照样开着。`,
+      ))
+    )
+      return;
+    clearPicked();
+    await archiveChats(list);
   }
 
   /** 搜索弹层的料：侧栏能列出的全部对话（置顶 / 随手聊 / 各课题，不受「展开更多」限额）+ 全部课题 */
@@ -1642,6 +1768,52 @@ export default function ProjectTree({
         )}
       </div>
 
+      {/* 选了对话时树底下一条：几段、一起置顶 / 归档、取消（右键选中的行是同一份菜单）。薄雾底，不画横线 */}
+      {picked.size > 0 && (() => {
+        const keys = pickedSessions().map(chatKey);
+        const allPinned = keys.length > 0 && keys.every((k) => chatPins.includes(k));
+        const action = "flex h-6 items-center gap-1 rounded-md px-1.5 text-l2 hover:bg-hover hover:text-l1 disabled:opacity-40";
+        return (
+          <div
+            role="toolbar"
+            aria-label="选中的对话"
+            className="mx-1.5 mb-1 flex h-8 shrink-0 items-center gap-0.5 rounded-md bg-hover pl-2.5 pr-0.5"
+          >
+            <span className="mr-auto text-xs text-l2">已选 {keys.length} 段</span>
+            <button
+              type="button"
+              disabled={keys.length === 0}
+              onClick={() => {
+                pinPickedFor(keys);
+                clearPicked();
+              }}
+              className={action}
+            >
+              {allPinned ? <PinOff size={13} strokeWidth={1.8} aria-hidden="true" /> : <Pin size={13} strokeWidth={1.8} aria-hidden="true" />}
+              <span className="text-xs">{allPinned ? "取消置顶" : "置顶"}</span>
+            </button>
+            <button
+              type="button"
+              disabled={keys.length === 0}
+              onClick={() => void archivePicked(pickedSessions())}
+              className={action}
+            >
+              <Archive size={13} strokeWidth={1.8} aria-hidden="true" />
+              <span className="text-xs">归档</span>
+            </button>
+            <button
+              type="button"
+              aria-label="取消选择"
+              title="取消选择（Esc）"
+              onClick={clearPicked}
+              className="flex h-6 w-6 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1"
+            >
+              <X size={13} strokeWidth={1.8} aria-hidden="true" />
+            </button>
+          </div>
+        );
+      })()}
+
       {menu && (
         <ContextMenu
           x={menu.x}
@@ -1649,6 +1821,15 @@ export default function ProjectTree({
           alignRight={menu.alignRight}
           onClose={() => setMenu(null)}
           items={menuItems(menu.row)}
+        />
+      )}
+      {pickMenu && (
+        <ContextMenu
+          x={pickMenu.x}
+          y={pickMenu.y}
+          alignRight={pickMenu.alignRight}
+          onClose={() => setPickMenu(null)}
+          items={pickMenuItems()}
         />
       )}
       {scratchMenu && (

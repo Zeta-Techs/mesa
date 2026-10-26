@@ -90,6 +90,35 @@ export function toggleChatPin(pins: readonly string[], key: string): string[] {
   return pins.includes(key) ? pins.filter((k) => k !== key) : [...pins, key];
 }
 
+/** 多选里几段一起置顶 / 取消置顶（2026-10-27）：有没钉的就把没钉的按点选顺序接在后面；全都钉着才一起取消 */
+export function pinPicked(pins: readonly string[], picked: readonly string[]): string[] {
+  const missing = picked.filter((k) => !pins.includes(k));
+  if (missing.length > 0) return [...pins, ...missing];
+  const drop = new Set(picked);
+  return pins.filter((k) => !drop.has(k));
+}
+
+/** 侧栏多选（2026-10-27）：⌘（Windows 上 Ctrl）点一行 = 加进 / 拿出；⇧ 点 = 从起点到这一行整段换上（同访达）。
+ *  order 是侧栏里眼下列着的对话从上到下；起点不在里面就只选这一行 */
+export function nextPicked(
+  prev: ReadonlySet<string>,
+  order: readonly string[],
+  key: string,
+  anchor: string | null,
+  mode: "toggle" | "range",
+): Set<string> {
+  if (mode === "toggle") {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    return next;
+  }
+  const a = anchor == null ? -1 : order.indexOf(anchor);
+  const b = order.indexOf(key);
+  if (a < 0 || b < 0) return new Set([key]);
+  return new Set(order.slice(Math.min(a, b), Math.max(a, b) + 1));
+}
+
 /** 「置顶」一节列哪几段：按置顶顺序，归档 / 内部 / 源文件不在的不列（同各课题口径） */
 export function pinnedChats(sessions: readonly SessionMetaDto[], pins: readonly string[]): SessionMetaDto[] {
   const byKey = new Map(sessions.filter(listable).map((s) => [`${s.agent}\n${s.sessionId}`, s]));

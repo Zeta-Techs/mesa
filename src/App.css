@@ -958,6 +958,17 @@ body {
   );
 }
 
+/* 侧栏多选（2026-10-27）：选中的几段铺一层淡强调色，和「正看着的那段」（中性提亮 + 左条）分得开；
+   不乘透明度系数——0 档也得看得出选了哪几段 */
+.ccode-app-rail .ccode-rail-picked,
+.ccode-rail-peek .ccode-rail-picked {
+  background-color: color-mix(in srgb, var(--color-nav-accent) 18%, transparent);
+}
+.ccode-app-rail .ccode-rail-picked:hover,
+.ccode-rail-peek .ccode-rail-picked:hover {
+  background-color: color-mix(in srgb, var(--color-nav-accent) 24%, transparent);
+}
+
 /* 选中左条：胶囊随透明度系数变淡、0 档消失，hover 底色却不变——没有这条，低档位下 hover 行
    会比选中行更显眼。左条是实心强调色、不乘系数，0 档也认得出选中；它不是罩色，不违背
    「0 档不铺罩色」。图标态同样画在左缘。 */

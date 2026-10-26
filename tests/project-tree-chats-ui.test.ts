@@ -750,3 +750,84 @@ test("收着的课题一行挨一行（只隔 1px），展开的那节上下留�
     await view.close();
   }
 });
+
+test("多选：⌘ / Ctrl 点只选不开，⇧ 点整段选上，树底一条能一起置顶 / 归档，右键选中的行是同一份，Esc 和普通点清掉（2026-10-27）", async () => {
+  const view = await renderTree();
+  try {
+    const win = view.host.ownerDocument.defaultView!;
+    const click = (label: string, init: MouseEventInit) =>
+      view.act(async () => {
+        view.button(label).dispatchEvent(new win.MouseEvent("click", { bubbles: true, detail: 1, ...init }));
+      });
+    const pickedTitles = () =>
+      Array.from(view.host.querySelectorAll("[data-picked]")).map((b) => b.textContent?.trim());
+    const opens = () => view.calls.filter((c) => c[0] === "openConversation").length;
+    await click("镁硫电池第4篇精读", { metaKey: true, ctrlKey: true });
+    await click("镁硫电池第2篇精读", { metaKey: true, ctrlKey: true });
+    assert.deepEqual(pickedTitles(), ["镁硫电池第4篇精读", "镁硫电池第2篇精读"]);
+    assert.equal(opens(), 0, "只选不开");
+    const bar = () => view.host.querySelector('[aria-label="选中的对话"]');
+    assert.match(bar()!.textContent!, /已选 2 段/);
+    // ⇧ 点：从上回 ⌘ 点的那段整段选到这一段
+    await click("镁硫电池第1篇精读", { shiftKey: true });
+    assert.deepEqual(pickedTitles(), ["镁硫电池第2篇精读", "镁硫电池第1篇精读"]);
+    // 右键选中的行：对这几段的菜单
+    await view.act(async () => {
+      view.button("镁硫电池第1篇精读").dispatchEvent(new win.MouseEvent("contextmenu", { bubbles: true }));
+    });
+    assert.ok(view.button("置顶这 2 段"));
+    await view.act(async () => view.button("置顶这 2 段").click());
+    assert.deepEqual(JSON.parse(localStorage.getItem("ccode.sidebarChatPins")!), ["claude-code\nr2", "codex\nr1"]);
+    assert.equal(bar(), null, "做完清掉选择");
+    // 再选两段，从树底那条归档：先问一句，逐条写归档
+    await click("镁硫电池第4篇精读", { metaKey: true, ctrlKey: true });
+    await click("镁硫电池第3篇精读", { metaKey: true, ctrlKey: true });
+    const archive = Array.from(bar()!.querySelectorAll("button")).find((b) => b.textContent?.trim() === "归档")!;
+    await view.act(async () => archive.click());
+    await view.act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    assert.ok(view.calls.some((c) => c[0] === "confirmDialog"));
+    const archived = view.calls
+      .filter((c) => c[0] === "set_session_meta")
+      .map((c) => (c[1] as { sessionId: string }).sessionId);
+    assert.deepEqual(archived, ["r4", "r3"]);
+    // Esc 清掉
+    await click("镁硫电池第5篇精读", { metaKey: true, ctrlKey: true });
+    assert.ok(bar());
+    await view.act(async () => {
+      view.button("镁硫电池第5篇精读").dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    assert.equal(bar(), null);
+    // 普通点下去：清掉选择并打开
+    await click("镁硫电池第5篇精读", { metaKey: true, ctrlKey: true });
+    await view.act(async () => {
+      const b = view.button("镁硫电池第5篇精读");
+      b.dispatchEvent(new win.MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+      b.dispatchEvent(new win.MouseEvent("mousedown", { bubbles: true, button: 0 }));
+    });
+    assert.equal(bar(), null);
+    assert.equal(opens(), 1);
+  } finally {
+    await view.close();
+  }
+});
+
+test("多选键盘：对话上 ⇧↓ 从这一段整段选下去，⇧↑ 收回（2026-10-27）", async () => {
+  const view = await renderTree();
+  try {
+    const win = view.host.ownerDocument.defaultView!;
+    const key = (label: string, k: string) =>
+      view.act(async () => {
+        view.button(label).dispatchEvent(new win.KeyboardEvent("keydown", { key: k, shiftKey: true, bubbles: true }));
+      });
+    const picked = () => Array.from(view.host.querySelectorAll("[data-picked]")).map((b) => b.textContent?.trim());
+    await key("镁硫电池第5篇精读", "ArrowDown");
+    await key("镁硫电池第4篇精读", "ArrowDown");
+    assert.deepEqual(picked(), ["镁硫电池第5篇精读", "镁硫电池第4篇精读", "镁硫电池第3篇精读"]);
+    await key("镁硫电池第3篇精读", "ArrowUp");
+    assert.deepEqual(picked(), ["镁硫电池第5篇精读", "镁硫电池第4篇精读"]);
+  } finally {
+    await view.close();
+  }
+});
