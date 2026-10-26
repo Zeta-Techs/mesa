@@ -25,7 +25,7 @@ import { GitInstallOffer } from "../dep-install";
 import { fileTypeIcon } from "../file-icons";
 import { groupFilesByStatus, statusBadgeTitle } from "../git-status-groups";
 import { IS_MAC } from "../hotkeys";
-import { hunkLabel, pairIntraline } from "../diff-intraline";
+import { diffLineNumbers, hunkLabel, pairIntraline, parseHunkHeader } from "../diff-intraline";
 
 interface GitStatusDto {
   isRepo: boolean;
@@ -66,35 +66,74 @@ function hunkBodyLines(patch: string): string[] {
 }
 
 /**
- * diff 正文：长行折行（窄栏里每块各带一条横向滚动条没法读，2026-10-23 用户），前缀 +/- 悬在左边、折下来的行对齐正文；
- * 成对的删加行标出改了的那一段（diff-intraline.ts pairIntraline）
+ * diff 正文（2026-10-26 对照 Claude 桌面版重排）：每行 = 左缘色条 · 行号 · +/- 标记 · 正文四列，
+ * 增删只铺淡底 + 左缘一道语义色，正文保持阅读色；长行折行（窄栏里每块各带一条横向滚动条没法读，2026-10-23 用户），
+ * 折下来的行对齐正文列；行号与标记不进复制；成对的删加行标出改了的那一段（diff-intraline.ts pairIntraline）。
+ * start 给了是逐块正文（@@ 已去掉），不给是整段 diff 文本
  */
-function DiffBody({ lines, lineClass }: { lines: readonly string[]; lineClass: (line: string) => string }) {
+function DiffBody({ lines, start }: { lines: readonly string[]; start?: { oldStart: number; newStart: number } }) {
   const marks = pairIntraline(lines);
+  const numbers = diffLineNumbers(lines, start);
+  const digits = Math.max(2, ...numbers.map((n) => (n == null ? 0 : String(n).length)));
   return (
-    <pre className="py-1 font-mono text-xs leading-5">
+    <div className="py-1 font-mono text-xs leading-5">
       {lines.map((line, index) => {
+        const key = `${index}:${line.slice(0, 24)}`;
+        const n = numbers[index];
+        if (n == null) {
+          // 文件头 / 「\ No newline」等：整行弱化，不占行号列
+          const hunk = line.startsWith("@@") ? hunkLabel(line) : null;
+          return (
+            <div
+              key={key}
+              className={`whitespace-pre-wrap pr-2 pl-[calc(0.5rem+3px)] [overflow-wrap:anywhere] ${hunk ? "bg-inset text-l3" : "text-l4"}`}
+              title={hunk ? line : undefined}
+            >
+              {hunk ? (hunk.context ? `${hunk.line} · ${hunk.context}` : hunk.line) : line || " "}
+            </div>
+          );
+        }
+        const kind = line[0] === "+" ? "add" : line[0] === "-" ? "del" : "ctx";
+        const text = line.slice(1);
         const mark = marks.get(index);
-        const hl = line.startsWith("+") ? "ccode-diff-hl-add" : "ccode-diff-hl-del";
         return (
-          <span
-            key={`${index}:${line.slice(0, 24)}`}
-            className={`block whitespace-pre-wrap pr-2 pl-[calc(0.5rem+1ch)] [overflow-wrap:anywhere] ${lineClass(line)}`}
-            style={{ textIndent: "-1ch" }}
+          <div
+            key={key}
+            className={`flex ${kind === "add" ? "bg-diff-add-bg" : kind === "del" ? "bg-diff-del-bg" : ""}`}
           >
-            {mark ? (
-              <>
-                {line.slice(0, 1 + mark[0])}
-                <span className={hl}>{line.slice(1 + mark[0], 1 + mark[1])}</span>
-                {line.slice(1 + mark[1])}
-              </>
-            ) : (
-              line || " "
-            )}
-          </span>
+            <span
+              aria-hidden="true"
+              className={`w-[3px] shrink-0 ${kind === "add" ? "bg-add" : kind === "del" ? "bg-del" : ""}`}
+            />
+            <span
+              className="shrink-0 select-none pr-2 pl-1.5 text-right text-l4 tabular-nums"
+              style={{ width: `calc(${digits}ch + 0.875rem)` }}
+            >
+              {n}
+            </span>
+            <span
+              aria-hidden="true"
+              className={`w-[2ch] shrink-0 select-none ${kind === "add" ? "text-add" : kind === "del" ? "text-del" : ""}`}
+            >
+              {kind === "add" ? "+" : kind === "del" ? "-" : ""}
+            </span>
+            <span className="min-w-0 flex-1 whitespace-pre-wrap pr-2 text-l2 [overflow-wrap:anywhere]">
+              {mark ? (
+                <>
+                  {text.slice(0, mark[0])}
+                  <span className={kind === "add" ? "ccode-diff-hl-add" : "ccode-diff-hl-del"}>
+                    {text.slice(mark[0], mark[1])}
+                  </span>
+                  {text.slice(mark[1])}
+                </>
+              ) : (
+                text || " "
+              )}
+            </span>
+          </div>
         );
       })}
-    </pre>
+    </div>
   );
 }
 
@@ -825,7 +864,10 @@ function GitPanel({
                       </>
                     )}
                   </div>
-                  <DiffBody lines={body.slice(0, DIFF_LINE_CAP)} lineClass={diffLineClass} />
+                  <DiffBody
+                    lines={body.slice(0, DIFF_LINE_CAP)}
+                    start={parseHunkHeader(h.header) ?? { oldStart: 1, newStart: 1 }}
+                  />
                   {body.length > DIFF_LINE_CAP && (
                     <p className="border-t border-hairline px-2 py-1 text-micro text-l4">
                       仅渲染前 {DIFF_LINE_CAP} 行（共 {body.length}{" "}
@@ -845,7 +887,7 @@ function GitPanel({
                 改动已全部暂存；勾选后「保存到任务分支」将提交这些内容
               </p>
             )}
-            <DiffBody lines={diffLines.slice(0, DIFF_LINE_CAP)} lineClass={diffLineClass} />
+            <DiffBody lines={diffLines.slice(0, DIFF_LINE_CAP)} />
             {diffLines.length > DIFF_LINE_CAP && (
               <p className="border-t border-hairline px-2 py-1 text-micro text-l4">
                 仅渲染前 {DIFF_LINE_CAP} 行（共 {diffLines.length}{" "}
@@ -856,25 +898,6 @@ function GitPanel({
         ) : null}
       </div>
     );
-  }
-
-  // 增删整行铺语义底色（diff-add/del 令牌）：用户拍板「可以铺」，比细边更清晰；
-  // 深色主题深底浅字，浅色主题由 App.css 覆写为浅底深字（GitHub 式）；
-  // 正文保持中性阅读色（text-l2），与审阅视图 DiffSide 同口径——整文件新增不染成绿字墙
-  function diffLineClass(line: string): string {
-    if (line.startsWith("@@")) return "bg-inset text-link";
-    if (line.startsWith("+") && !line.startsWith("+++"))
-      return "bg-diff-add-bg text-l2";
-    if (line.startsWith("-") && !line.startsWith("---"))
-      return "bg-diff-del-bg text-l2";
-    if (
-      line.startsWith("diff --git") ||
-      line.startsWith("index ") ||
-      line.startsWith("---") ||
-      line.startsWith("+++")
-    )
-      return "text-l4";
-    return "text-l2";
   }
 
   return (

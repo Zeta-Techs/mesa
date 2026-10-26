@@ -109,10 +109,12 @@
   --color-del: #d98a93;
 
   /* diff 增删行整行铺底（深色主题口径：深底浅字）；浅色主题在下方 [data-theme$="-light"]
-     统一覆写为浅底深字——深底只在小 pill 上成立，整行铺在浅底上会显黑 */
-  --color-diff-add-bg: #10331f;
+     统一覆写为浅底深字——深底只在小 pill 上成立，整行铺在浅底上会显黑。
+     2026-10-26 对照 Claude 桌面版：原 #10331f / #381e24 实色饱和成一整块墨绿，改成同色相 13% 半透明淡染，
+     叠在各深色主题自己的底色上（dracula 等浅一档的底不再出现一块突兀的黑绿），语义靠 diff 左缘色条补 */
+  --color-diff-add-bg: color-mix(in srgb, #4cc38a 13%, transparent);
   --color-diff-add-fg: #4cc38a;
-  --color-diff-del-bg: #381e24;
+  --color-diff-del-bg: color-mix(in srgb, #f07070 13%, transparent);
   --color-diff-del-fg: #f07070;
 
   /* 流水线步进器"已完成"色（v3.47）：随主题走的低饱和绿，比 ok 状态绿更安静；

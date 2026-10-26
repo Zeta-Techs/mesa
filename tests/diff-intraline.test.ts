@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { hunkLabel, intralineRanges, pairIntraline, parseHunkHeader } from "../src/diff-intraline.ts";
+import { diffLineNumbers, hunkLabel, intralineRanges, pairIntraline, parseHunkHeader } from "../src/diff-intraline.ts";
 
 test("块头：@@ 原样换成「第 N 行 · 上下文」，纯删除块退回旧行号", () => {
   assert.deepEqual(parseHunkHeader("@@ -339,10 +340,11 @@ Mesa 工作台"), {
@@ -30,4 +30,23 @@ test("配对：连续删紧跟同样条数的加才逐行配，条数不同不�
   assert.ok(!m.has(1), "旧行是纯插入，没有可标的字");
   assert.equal(lines[2].slice(1).slice(...m.get(2)!), " / 定时任务");
   assert.ok(!m.has(4) && !m.has(5) && !m.has(6), "两删一加不配对");
+});
+
+test("行号：加行与上下文取新行号、删行取旧行号；文件头、@@、「\\ No newline」不给号", () => {
+  const body = [" 上下文", "-旧", "+新", "+再加", " 尾", "\\ No newline at end of file"];
+  assert.deepEqual(diffLineNumbers(body, { oldStart: 10, newStart: 20 }), [20, 11, 21, 22, 23, null]);
+  const full = [
+    "diff --git a/x b/x",
+    "--- a/x",
+    "+++ b/x",
+    "@@ -1,2 +1,2 @@ 标题",
+    "-a",
+    "+b",
+    " c",
+    "@@ -9 +9,2 @@",
+    " d",
+    "+e",
+    "",
+  ];
+  assert.deepEqual(diffLineNumbers(full), [null, null, null, null, 1, 1, 2, null, 9, 10, null]);
 });

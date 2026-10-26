@@ -81,6 +81,47 @@ export function pairIntraline(lines: readonly string[]): Map<number, Range> {
   return out;
 }
 
+/**
+ * 每行行号（2026-10-26 对照 Claude 桌面版 diff 加行号列）：加行与上下文取新文件行号、删行取旧文件行号；
+ * @@ 行、文件头、「\ No newline」给 null。给了 start 是逐块正文（@@ 已去掉）；
+ * 不给时从正文里的 @@ 起算，第一个 @@ 之前都是文件头——所以「+++ b/x」不会被当成加行。
+ */
+export function diffLineNumbers(
+  lines: readonly string[],
+  start?: { oldStart: number; newStart: number },
+): (number | null)[] {
+  let oldN = start?.oldStart ?? 0;
+  let newN = start?.newStart ?? 0;
+  let inHunk = start != null;
+  return lines.map((line) => {
+    if (line.startsWith("@@")) {
+      const h = parseHunkHeader(line);
+      inHunk = h != null;
+      if (h) {
+        oldN = h.oldStart;
+        newN = h.newStart;
+      }
+      return null;
+    }
+    if (!start && line.startsWith("diff --git")) {
+      inHunk = false;
+      return null;
+    }
+    if (!inHunk) return null;
+    switch (line[0]) {
+      case "+":
+        return newN++;
+      case "-":
+        return oldN++;
+      case " ":
+        oldN++;
+        return newN++;
+      default:
+        return null;
+    }
+  });
+}
+
 function isDel(line: string): boolean {
   return line.startsWith("-") && !line.startsWith("---");
 }

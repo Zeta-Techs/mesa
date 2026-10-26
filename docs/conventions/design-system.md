@@ -72,7 +72,7 @@
   深色主题沿用深底浅字，浅色主题在 `[data-theme$="-light"]` 统一覆写为 GitHub 式浅底深字——ok/err 深底整行铺在浅底上
   会显黑，故不再直接复用 bg-ok/bg-err 铺整行）；**增删行正文一律中性 `text-l2`，语义绿/红只铺整行底、审阅视图收进行号槽**
   （2026-09-18：原「底＋字同染」在整文件新增时是一面绿字墙，正文回归阅读色，GitHub/VS Code 同手法；
-  GitPanel 紧凑 diff 同口径只铺底）；**diff 行数文字 `--color-add/--color-del` 同样分深浅两套**
+  GitPanel 紧凑 diff 同口径只铺底；**2026-10-26 对照 Claude 桌面版**：深色 diff 行底改同色相 13% 半透明淡染（不再用实色墨绿 / 酒红），GitPanel 每行四列「左缘 3px 语义色条 · 行号 l4 · +/- 语义色 · 正文 l2」，行号与标记不进复制）；**diff 行数文字 `--color-add/--color-del` 同样分深浅两套**
   （画在 canvas 上不是画在 pill 上，深色值在浅底约 1.8:1）；零阴影、隐式 hairline。**浮层统一口径**：弹窗/下拉/右键菜单/命令面板表面一律
   `.ccode-float-surface`（= raised 底 + 顶部 1px 内高光，Linear edge highlight 手法——零阴影原则不变，浮起感靠
   边缘高光而非投影），禁再随手用 bg-strip/bg-raised 做弹层；**浅色下白色内高光在白底上不可见**，
