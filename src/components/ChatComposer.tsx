@@ -688,12 +688,16 @@ export default function ChatComposer({
   }, [disabled, focusWhen]);
 
   // ---- 长文本（2026-10-26 对照 Codex 网页端）：一折行就把字放到整宽的上层、+ 和发送挪到下面一排；
-  // 超出高度时藏滚动条、按还能往哪边滚给上下沿渐隐，右上角给「展开」写长文 ----
+  // 超出高度时滚动条同侧栏树（滚时出现、停下消失）、按还能往哪边滚给上下沿渐隐，右上角给「展开」写长文 ----
   const [stacked, setStacked] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [fade, setFade] = useState({ top: false, bottom: false, overflow: false });
   // 因为折行才换成两层时的字数：删到比它短（且没有换行）就回到一行；因换行进来的记 null，删掉换行就试着回一行
   const wrapLenRef = useRef<number | null>(null);
+  const scrollIdleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (scrollIdleRef.current) clearTimeout(scrollIdleRef.current);
+  }, []);
   function syncFade(el: HTMLTextAreaElement) {
     const overflow = el.scrollHeight - el.clientHeight > 1;
     const top = overflow && el.scrollTop > 1;
@@ -1068,7 +1072,16 @@ export default function ChatComposer({
               if (slashDismissed) setSlashDismissed(false);
               if (mentionDismissed) setMentionDismissed(false);
             }}
-            onScroll={(e) => syncFade(e.currentTarget)}
+            onScroll={(e) => {
+              const el = e.currentTarget;
+              syncFade(el);
+              // 滚动条同侧栏树：滚动时打标显出来，停 0.9 秒摘掉（App.css .ccode-composer-text）
+              el.dataset.scrolling = "1";
+              if (scrollIdleRef.current) clearTimeout(scrollIdleRef.current);
+              scrollIdleRef.current = setTimeout(() => {
+                delete el.dataset.scrolling;
+              }, 900);
+            }}
             onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
             onCompositionStart={lockIme}
             onCompositionEnd={unlockImeAfterFrame}
@@ -1189,7 +1202,7 @@ export default function ChatComposer({
             rows={1}
             placeholder={ghost ?? (viewed?.edit ? "描述修改内容" : placeholder) ?? "输入消息"}
             // 插入符是 M▁ 那道琥珀（--color-mesa-amber），光标本身就是品牌。
-            // 平时封顶九行，「展开」后至少占四成窗口高（App.css .ccode-composer-text：藏滚动条、上下沿渐隐）
+            // 平时封顶九行，「展开」后至少占四成窗口高（App.css .ccode-composer-text：滚动条滚时才出、上下沿渐隐）
             className={`ccode-composer-text block w-full resize-none bg-transparent px-1.5 py-[5px] text-sm leading-6 text-l1 caret-mesa-amber outline-none focus:outline-none focus-visible:outline-none focus-visible:outline-offset-0 placeholder:text-l3 disabled:cursor-not-allowed disabled:opacity-60 ${
               expanded ? "max-h-[min(60vh,40rem)] min-h-[min(40vh,24rem)]" : "max-h-[13.5rem]"
             } ${ghost ? "pr-20" : stacked && (fade.overflow || expanded) ? "pr-8" : ""}`}

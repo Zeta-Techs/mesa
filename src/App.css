@@ -2136,11 +2136,11 @@ select:focus-visible {
 .ccode-composer-row > [data-slot="send"] {
   grid-area: send;
 }
-/* 长文超出高度：不出滚动条，上下沿按还能往哪边滚渐隐（同 Codex 网页端），滚轮 / 光标照常能滚 */
+/* 长文超出高度：上下沿按还能往哪边滚渐隐（同 Codex 网页端）。滚动条同侧栏树：静止不显示、滚动时出现、停下消失
+   （规则并在下面 .ccode-rail-scroll 那组；Mac 走系统浮层滚动条） */
 .ccode-composer-text {
   --fade-top: 0px;
   --fade-bottom: 0px;
-  scrollbar-width: none;
   -webkit-mask-image: linear-gradient(
     to bottom,
     transparent 0,
@@ -2155,9 +2155,6 @@ select:focus-visible {
     #000 calc(100% - var(--fade-bottom)),
     transparent 100%
   );
-}
-.ccode-composer-text::-webkit-scrollbar {
-  display: none;
 }
 .ccode-composer-text[data-fade-top] {
   --fade-top: 1.5rem;
@@ -2523,21 +2520,27 @@ select:focus-visible {
 }
 
 /* 侧栏树滚动区：静止时不显示滚动条，滚动期间（ProjectTree 打 data-scrolling，停 0.9s 后摘）
-   或鼠标移到拇指上（透明拇指仍可抓）才显现。
+   或鼠标移到拇指上（透明拇指仍可抓）才显现。聊天输入框的长文（.ccode-composer-text，ChatComposer 同样打标）同一套。
    Mac 不走这套：WKWebView 改属性不重画 ::-webkit-scrollbar 拇指（实测显示/消失都不重画），
    scrollbar-width 一设就改用系统原生浮层滚动条（布局宽 0、滚动时出现、停下自动淡出，随系统设置）。 */
-[data-platform="mac"] .ccode-rail-scroll {
+[data-platform="mac"] .ccode-rail-scroll,
+[data-platform="mac"] .ccode-composer-text {
   scrollbar-width: thin;
 }
-.ccode-rail-scroll::-webkit-scrollbar-thumb {
+.ccode-rail-scroll::-webkit-scrollbar-thumb,
+.ccode-composer-text::-webkit-scrollbar-thumb {
   background-color: transparent;
 }
 .ccode-rail-scroll[data-scrolling]::-webkit-scrollbar-thumb,
-.ccode-rail-scroll::-webkit-scrollbar-thumb:hover {
+.ccode-rail-scroll::-webkit-scrollbar-thumb:hover,
+.ccode-composer-text[data-scrolling]::-webkit-scrollbar-thumb,
+.ccode-composer-text::-webkit-scrollbar-thumb:hover {
   background-color: rgba(255, 255, 255, 0.4);
 }
 [data-theme$="-light"] .ccode-rail-scroll[data-scrolling]::-webkit-scrollbar-thumb,
-[data-theme$="-light"] .ccode-rail-scroll::-webkit-scrollbar-thumb:hover {
+[data-theme$="-light"] .ccode-rail-scroll::-webkit-scrollbar-thumb:hover,
+[data-theme$="-light"] .ccode-composer-text[data-scrolling]::-webkit-scrollbar-thumb,
+[data-theme$="-light"] .ccode-composer-text::-webkit-scrollbar-thumb:hover {
   background-color: rgba(0, 0, 0, 0.44);
 }
 

@@ -602,6 +602,10 @@ test("输入框长文：换行后字占满整宽、+ 和发送挪到下一排；
     await typeInto(ui, "第一行\n第二行\n第三行");
     assert.equal(box.hasAttribute("data-fade-bottom"), true, "下面还有字：下沿渐隐");
     assert.equal(box.hasAttribute("data-fade-top"), false);
+    await ui.act(async () => {
+      box.dispatchEvent(new window.Event("scroll"));
+    });
+    assert.equal(box.dataset.scrolling, "1", "滚动时打标、滚动条显出来（同侧栏树，停 0.9 秒摘掉）");
     await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="展开输入框"]')!.click());
     assert.match(box.className, /min-h-/, "展开后至少占一大块高度");
     await key(ui, "Escape");
