@@ -19,6 +19,7 @@ import {
   scratchChats,
   scratchDot,
   sidebarChatTitle,
+  staleScratchChats,
   type ChatRunInput,
 } from "../src/sidebar-chats.ts";
 import { isThrowawayTab } from "../src/quick-chat.ts";
@@ -144,6 +145,38 @@ test("随手聊的对话：只认 ccode/scratch；随手聊目录被登记成项
     ["s1"],
   );
   assert.deepEqual(scratchChats(sessions, [`${SCRATCH}/`]), []);
+});
+
+test("没起名也没说过话的空对话不进课题 / 随手聊（对话页照列；置顶是人手钉的照列）", () => {
+  const empty = session({ sessionId: "e", projectPath: SCRATCH, title: null, summary: null });
+  const untitled = session({ sessionId: "u", projectPath: "/repo", title: "未命名对话" });
+  const named = session({ sessionId: "n", projectPath: SCRATCH, title: "123321" });
+  const custom = session({ sessionId: "c", projectPath: "/repo", title: null, customTitle: "我改的名" });
+  const sessions = [empty, untitled, named, custom];
+  assert.deepEqual(scratchChats(sessions, []).map((s) => s.sessionId), ["n"]);
+  assert.deepEqual(projectChats(sessions, "/repo").map((s) => s.sessionId), ["c"]);
+  assert.deepEqual(pinnedChats(sessions, ["claude-code\ne"]).map((s) => s.sessionId), ["e"]);
+});
+
+test("随手聊多少天没动的：连空对话一起；外面在跑的、开着的、没有时间的、项目里的都不算", () => {
+  const now = Date.parse("2026-10-26T12:00:00Z");
+  const old = "2026-10-10T00:00:00Z";
+  const sessions = [
+    session({ sessionId: "old", projectPath: SCRATCH, updatedAt: old }),
+    session({ sessionId: "empty", projectPath: SCRATCH, title: null, updatedAt: old }),
+    session({ sessionId: "fresh", projectPath: SCRATCH, updatedAt: "2026-10-25T00:00:00Z" }),
+    session({ sessionId: "live", projectPath: SCRATCH, updatedAt: old, live: true }),
+    session({ sessionId: "open", projectPath: SCRATCH, updatedAt: old }),
+    session({ sessionId: "notime", projectPath: SCRATCH, updatedAt: null }),
+    session({ sessionId: "gone", projectPath: SCRATCH, updatedAt: old, alive: false }),
+    session({ sessionId: "arch", projectPath: SCRATCH, updatedAt: old, archived: true }),
+    session({ sessionId: "proj", projectPath: "/repo", updatedAt: old }),
+  ];
+  const out = staleScratchChats(sessions, [], new Set(["claude-code\nopen"]), now);
+  assert.deepEqual(out.map((s) => s.sessionId), ["old", "empty"]);
+  // 天数可调；随手聊目录登记成项目后归项目，不算随手聊
+  assert.deepEqual(staleScratchChats(sessions, [], new Set(), now, 30), []);
+  assert.deepEqual(staleScratchChats(sessions, [SCRATCH], new Set(), now), []);
 });
 
 test("对话状态光标：等你确认 / 在干活 / 开着闲着三种；回落 shell / 已停没有；Mesa 外在写算在干活", () => {

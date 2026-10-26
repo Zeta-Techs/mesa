@@ -73,8 +73,10 @@ import {
   folderOpen,
   projectChats,
   SCRATCH_FOLDER_KEY,
+  SCRATCH_STALE_DAYS,
   scratchChats,
   scratchDot,
+  staleScratchChats,
   SIDEBAR_CHAT_LIMIT,
   SIDEBAR_CHAT_STEP,
   sidebarChatTitle,
@@ -362,6 +364,8 @@ export default function ProjectTree({
     /** ⋯ 打开时菜单右缘对齐按钮；右键打开时贴光标 */
     alignRight?: boolean;
   } | null>(null);
+  /** 随手聊节头 ⋯ 的菜单（随手聊不是项目，没有项目那一份菜单） */
+  const [scratchMenu, setScratchMenu] = useState<{ x: number; y: number } | null>(null);
   const [renaming, setRenaming] = useState<{ key: string; value: string } | null>(null);
   const composingRef = useRef(false);
 
@@ -1379,12 +1383,88 @@ export default function ProjectTree({
           </button>
           {renderToggleSpace(open, dot, toggle)}
           {renderNewChat("开一段新的随手聊", "开一段新的随手聊（同侧栏「新对话」）", () => void openQuickChat())}
-          {/* 与课题行的 ⋯ 同宽留白，悬停时 ＋ 上下对齐 */}
-          <span className="mr-0.5 hidden w-6 shrink-0 group-hover:block group-focus-within:block" aria-hidden="true" />
+          <button
+            type="button"
+            aria-label="随手聊的更多操作"
+            title="更多操作"
+            aria-haspopup="menu"
+            aria-expanded={scratchMenu != null}
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              setScratchMenu({ x: r.right, y: r.bottom + 4 });
+            }}
+            className={`mr-0.5 h-6 w-6 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1 ${
+              scratchMenu ? "flex" : "hidden group-hover:flex group-focus-within:flex"
+            }`}
+          >
+            <MoreHorizontal size={14} strokeWidth={1.8} aria-hidden="true" />
+          </button>
         </div>
         {open && renderChats(scratchList, null, "随手聊", SCRATCH_FOLDER_KEY)}
       </div>
     );
+  }
+
+  /** 随手聊节头 ⋯：去对话页看全部 / 一键归档多少天没动的（2026-10-26 用户：随手聊被试手的对话占满） */
+  function scratchMenuItems(): ContextMenuItem[] {
+    const openKeys = new Set(
+      terminalRunInputs.filter((r) => r.sessionId).map((r) => `${r.agentId}\n${r.sessionId}`),
+    );
+    const stale = staleScratchChats(unpinnedSessions, projectPaths, openKeys, Date.now(), SCRATCH_STALE_DAYS, IS_WINDOWS);
+    return [
+      {
+        label: "在对话页看全部随手聊",
+        icon: MessagesSquare,
+        title: "对话页只列随手聊，能搜、能整理、能批量删",
+        onSelect: () => {
+          const st = useAppStore.getState();
+          st.setSessionsScratchReq(true);
+          st.setPage("sessions");
+        },
+      },
+      {
+        label: stale.length > 0 ? `归档 ${SCRATCH_STALE_DAYS} 天没动的（${stale.length} 段）` : `归档 ${SCRATCH_STALE_DAYS} 天没动的`,
+        icon: Archive,
+        disabled: stale.length === 0,
+        title:
+          stale.length > 0
+            ? "连侧栏没列的空对话一起；置顶的、开着的、外面还在跑的不动。归档后在对话页「更多 → 已归档」里找回"
+            : `没有 ${SCRATCH_STALE_DAYS} 天没动的随手聊`,
+        onSelect: () => void archiveStale(stale),
+      },
+    ];
+  }
+
+  async function archiveStale(stale: SessionMetaDto[]) {
+    if (
+      !(await confirmDialog(
+        `归档 ${stale.length} 段 ${SCRATCH_STALE_DAYS} 天没动的随手聊？\n\n` +
+          `归档后侧栏不再列，对话记录不删；在对话页「更多 → 已归档」里能找回、取消归档。置顶的、开着的不动。`,
+      ))
+    )
+      return;
+    const done = new Set<string>();
+    const failed: string[] = [];
+    for (const s of stale) {
+      try {
+        await invoke("set_session_meta", {
+          agent: s.agent,
+          sessionId: s.sessionId,
+          customTitle: s.customTitle,
+          tags: s.tags,
+          archived: true,
+        });
+        done.add(chatKey(s));
+      } catch (reason) {
+        failed.push(`${tidySessionTitle(s).title}：${String(reason)}`);
+      }
+    }
+    useAppStore.setState({
+      sessions: useAppStore.getState().sessions.map((x) => (done.has(chatKey(x)) ? { ...x, archived: true } : x)),
+    });
+    void useAppStore.getState().loadSessions(true);
+    if (failed.length > 0) toast(`已归档 ${done.size} 段，${failed.length} 段失败：${failed[0]}`, "error");
+    else toast(`已归档 ${done.size} 段随手聊`);
   }
 
   /** 搜索弹层的料：侧栏能列出的全部对话（置顶 / 随手聊 / 各课题，不受「展开更多」限额）+ 全部课题 */
@@ -1549,6 +1629,15 @@ export default function ProjectTree({
           alignRight={menu.alignRight}
           onClose={() => setMenu(null)}
           items={menuItems(menu.row)}
+        />
+      )}
+      {scratchMenu && (
+        <ContextMenu
+          x={scratchMenu.x}
+          y={scratchMenu.y}
+          alignRight
+          onClose={() => setScratchMenu(null)}
+          items={scratchMenuItems()}
         />
       )}
       {chatMenu && (

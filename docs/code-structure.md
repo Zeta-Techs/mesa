@@ -134,7 +134,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              #   完成后 loadProjects+bumpProjectsVersion 通知本树与项目页重拉；
                              #   2026-10-23 挂对话（纯逻辑 sidebar-chats.ts）：最上面「随手聊」、节头名字后的箭头开合对话（默认只展开运行页
                              #   正看着的那个，人手开关记 ccode.projectTreeChats）、展开按侧栏空位列（至少 5 段）+ 「还有 N 段 / 收起」，行尾运行状态光标（RunCaret，收着也报）；
-                             #   点对话 openConversation（只看不起进程）；点课题名进项目页并展开它的对话（10-24）；行尾悬停 ＋（startProjectChat / openQuickChat）与 ⋯ 平时不占宽；
+                             #   点对话 openConversation（只看不起进程）；点课题名进项目页并展开它的对话（10-24）；行尾悬停 ＋（startProjectChat / openQuickChat）与 ⋯ 平时不占宽（随手聊的 ⋯：对话页看全部随手聊 / 归档 7 天没动的，2026-10-26）；
                              #   对话行尾 ⋯ 与右键：在右侧分屏打开 / 关掉这段对话（Mesa 里开着才有）/ 重命名 / 归档 / 在对话页查看；开着的对话行悬停 × 顶替运行光标那格（10-26）；会话列表自己保鲜（展开拉一次、看得见时每分钟）；拖动按整块（tabDragShift）；
                              #   2026-10-24 第二期（运行页标签条退场）：开着、列表里还没有的挂在文件夹最上面（openTabRows，带 ×，经 store.requestCloseTab 关），
                              #   不在任何项目里的单列「其他打开的」（展开态没有「运行」行了，在跑靠各行行尾的光标 + 折起项目头上的光标）
@@ -661,7 +661,7 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # 认「终端里开着一个面板」（parseTuiPanel：没有该家输入框 + Esc to cancel/close 一类关闭提示；/cost、/usage 的 Settings 面板）：
                              # 与菜单同一次扫屏，认出菜单时不算面板；聊天层给「结果在终端面板里」卡，不再挂「正在生成回复」（tests/tui-panel.test.ts）
   sidebar-chats.ts           # 侧栏项目树挂对话纯逻辑（2026-10-23）：每个文件夹列哪几段（projectChats / scratchChats：按最近活动，
-                             # 归档 / 内部 / 源文件不在的不列）、对话与文件夹的运行状态（chatDot / folderDot / scratchDot：run-caret 三态，文件夹取最要紧的）、
+                             # 归档 / 内部 / 源文件不在的 / 没起名也没说过话的空对话不列）、随手聊多少天没动的（staleScratchChats，节头 ⋯ 一键归档）、对话与文件夹的运行状态（chatDot / folderDot / scratchDot：run-caret 三态，文件夹取最要紧的）、
                              # 正在看的标签归哪个文件夹（currentFolderKey，工作树归主仓）、展开默认（folderOpen）、短标题去「MMDD|类型|」、挂在课题下再去开头重复的课题名
                              # （sidebarChatTitle）、各文件夹列几段（chatQuotas / chatSlots：至少 5 段、按侧栏空位补满；expandedExtra：
                              # 「还有 N 段」在眼下段数上多 10 段）、开着但列表里还没有的标签挂到哪（openTabRows，10-24）、

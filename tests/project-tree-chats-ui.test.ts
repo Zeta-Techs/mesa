@@ -25,6 +25,15 @@ const bundle = await build({
         b.onResolve({ filter: /^\.\.?\/store$/ }, () => ({ path: "store", namespace: "stub" }));
         b.onResolve({ filter: /quick-chat-launch$/ }, () => ({ path: "launch", namespace: "stub" }));
         b.onResolve({ filter: /\/AskAiModal$/ }, () => ({ path: "askai", namespace: "stub" }));
+        b.onResolve({ filter: /\/ConfirmDialog$/ }, () => ({ path: "confirm", namespace: "stub" }));
+        b.onLoad({ filter: /^confirm$/, namespace: "stub" }, () => ({
+          contents: `
+            export const confirmDialog = async (...a) => { window.__calls.push(["confirmDialog", ...a]); return true; };
+            export const alertDialog = async () => {};
+            export const confirmDialogOpen = () => false;
+            export const ConfirmDialogHost = () => null;`,
+          loader: "js",
+        }));
         b.onLoad({ filter: /^store$/, namespace: "stub" }, () => ({
           contents: `
             const st = () => window.__treeStore;
@@ -162,7 +171,11 @@ async function renderTree(
     },
     __TAURI_INTERNALS__: {
       transformCallback: () => 0,
-      invoke: async (command: string) => {
+      invoke: async (command: string, args?: unknown) => {
+        if (command === "set_session_meta") {
+          calls.push(["set_session_meta", args]);
+          return null;
+        }
         if (command === "list_projects") return [PROJECT, { path: "/work/code", name: "Ccode", workMode: "coding" }];
         if (command === "list_workspaces") {
           wsCalls += 1;
@@ -655,6 +668,49 @@ test("课题下的对话标题开头是课题名时省掉，悬停里还是完�
     await view.act(async () => view.button("置顶").click());
     const pinned = view.host.querySelector('[aria-label="置顶的对话"]')!;
     assert.ok(pinned.textContent?.includes("综述流程测试文献检索筛选任务书"), "置顶一节看不出属于谁，不省");
+  } finally {
+    await view.close();
+  }
+});
+
+test("随手聊不列空对话；节头 ⋯ 能去对话页看全部随手聊、一键归档 7 天没动的（连空对话，开着的不动）（2026-10-26）", async () => {
+  const SC = "/Users/u/ccode/scratch";
+  const old = "2026-01-01T00:00:00Z";
+  const view = await renderTree({
+    sessions: [
+      ...reviewChats,
+      session({ sessionId: "sc-old", projectPath: SC, customTitle: "很早的随手聊", updatedAt: old }),
+      session({ sessionId: "sc-empty", projectPath: SC, title: null, updatedAt: old }),
+      session({ sessionId: "sc-new", projectPath: SC, customTitle: "刚聊的随手聊", updatedAt: new Date().toISOString() }),
+    ],
+  });
+  try {
+    await view.act(async () => view.button("随手聊").click());
+    const group = view.chatGroup("随手聊")!;
+    assert.ok(group.textContent?.includes("很早的随手聊"));
+    assert.ok(!group.textContent?.includes("未命名对话"), "空对话不列");
+    await view.act(async () => view.button("随手聊的更多操作").click());
+    await view.act(async () => view.button("在对话页看全部随手聊").click());
+    assert.equal(view.reqs.scratch, true);
+    assert.equal(view.pages.at(-1), "sessions");
+    await view.act(async () => view.button("随手聊的更多操作").click());
+    await view.act(async () => view.button("归档 7 天没动的（2 段）").click());
+    await view.act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    assert.ok(view.calls.some((c) => c[0] === "confirmDialog"), "先问一句");
+    const archived = view.calls
+      .filter((c) => c[0] === "set_session_meta")
+      .map((c) => (c[1] as { sessionId: string; archived: boolean }));
+    assert.deepEqual(archived.map((a) => a.sessionId).sort(), ["sc-empty", "sc-old"]);
+    assert.ok(archived.every((a) => a.archived));
+    // 本地镜像当场标归档（侧栏据此不再列），没归档的不动
+    const store = (view.host.ownerDocument.defaultView as unknown as { __treeStore: { sessions: SessionMetaDto[] } })
+      .__treeStore;
+    const flag = (id: string) => store.sessions.find((x) => x.sessionId === id)?.archived;
+    assert.equal(flag("sc-old"), true);
+    assert.equal(flag("sc-empty"), true);
+    assert.equal(flag("sc-new"), false);
   } finally {
     await view.close();
   }
