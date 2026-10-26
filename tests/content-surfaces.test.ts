@@ -87,7 +87,10 @@ test("编译后的卡片规则低于 hover/选中工具类，不改浮层外壳�
     }
     return undefined;
   }
-  const order = css.nodes.find((node) => node.type === "atrule" && node.name === "layer" && !node.nodes);
+  // App.css 里有 @property 时 Tailwind 会在最前面另声明一层 properties（旧浏览器的初值兜底），不影响这四层的先后
+  const order = css.nodes.find(
+    (node) => node.type === "atrule" && node.name === "layer" && !node.nodes && node.params !== "properties",
+  );
   assert.equal(order?.type === "atrule" ? order.params : undefined, "theme, base, components, utilities");
   assert.equal(layer(rule(".ccode-well")), "components");
   assert.match(rule(".ccode-well").toString(), /var\(--ccode-surface-base, var\(--color-canvas\)\) 65%/);

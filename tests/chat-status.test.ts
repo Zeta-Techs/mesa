@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { chatStatus, describeActivity, thinkingHeadline, STATUS_QUIET_START_MS } from "../src/chat-status.ts";
+import {
+  chatStatus,
+  describeActivity,
+  settleStatus,
+  statusCaretMotion,
+  thinkingHeadline,
+  STATUS_MIN_DWELL_MS,
+} from "../src/chat-status.ts";
 import type { BlockDto, ChatMessageDto } from "../src/types.ts";
 
 const msg = (role: string, blocks: BlockDto[]): ChatMessageDto => ({ role, blocks, timestamp: null, usage: null });
@@ -15,7 +22,7 @@ const result = (t: string, callId?: string): BlockDto => ({ kind: "tool_result",
 const think = (t: string): BlockDto => ({ kind: "thinking", text: t, toolName: null });
 const ask = msg("user", [text("帮我跑一下测试")]);
 
-const base = { messages: [ask], activity: null, thinking: null, sinceStartMs: 5000, cwd: "/w", isWindows: false };
+const base = { messages: [ask], activity: null, thinking: null, cwd: "/w", isWindows: false };
 
 test("CLI 自己报的现状（程序状态）：比「思考中」多说了点什么才用原文", () => {
   assert.deepEqual(chatStatus({ ...base, statusLine: "Connection failed | Retrying (1/15)" }), {
@@ -27,9 +34,34 @@ test("CLI 自己报的现状（程序状态）：比「思考中」多说了点�
   assert.equal(chatStatus({ ...base, statusLine: "x", thinking: "**读配置**" }).kind, "thinking");
 });
 
-test("什么都还没有：刚发出只亮光标，过一会儿写「思考中」", () => {
-  assert.deepEqual(chatStatus({ ...base, sinceStartMs: 200 }), { kind: "none", text: null });
-  assert.deepEqual(chatStatus({ ...base, sinceStartMs: STATUS_QUIET_START_MS }), { kind: "waiting", text: "思考中" });
+test("什么都还没有：刚发出就写「思考中」，和 M▁ 同一帧出（2026-10-26）", () => {
+  assert.deepEqual(chatStatus(base), { kind: "waiting", text: "思考中" });
+});
+
+test("状态字最短停留：停够才换，期间来的只留最新一条", () => {
+  const think = { kind: "waiting" as const, text: "思考中" };
+  const readA = { kind: "tool" as const, text: "读取 a.ts" };
+  const readB = { kind: "tool" as const, text: "读取 b.ts" };
+  const first = settleStatus(null, think, 0);
+  assert.deepEqual(first, { shown: { status: think, at: 0 }, retryInMs: null }, "第一条马上出");
+  // 300ms 来了 a：还没停够，照旧显示「思考中」，约好到点再来
+  const early = settleStatus(first.shown, readA, 300);
+  assert.equal(early.shown, first.shown);
+  assert.equal(early.retryInMs, STATUS_MIN_DWELL_MS - 300);
+  // 到点时最新的已经是 b：直接换成 b，a 跳过
+  const due = settleStatus(early.shown, readB, STATUS_MIN_DWELL_MS);
+  assert.deepEqual(due, { shown: { status: readB, at: STATUS_MIN_DWELL_MS }, retryInMs: null });
+  // 同一条再来不算换，不重新计时
+  assert.equal(settleStatus(due.shown, { ...readB }, STATUS_MIN_DWELL_MS + 50).shown, due.shown);
+});
+
+test("M▁ 光标的动作：在想呼吸、干活伸缩、等你确认常亮", () => {
+  assert.equal(statusCaretMotion("waiting", false), "breathe");
+  assert.equal(statusCaretMotion("thinking", false), "breathe");
+  assert.equal(statusCaretMotion("cli", false), "breathe");
+  assert.equal(statusCaretMotion("tool", false), "stretch");
+  assert.equal(statusCaretMotion("plan", false), "stretch");
+  assert.equal(statusCaretMotion("tool", true), "steady");
 });
 
 test("旁路报来正在跑的工具：说在做的事，不说工具原名", () => {
@@ -53,7 +85,7 @@ test("旁路报来正在跑的工具：说在做的事，不说工具原名", ()
 
 test("过程里已经有那一行在动：状态行不重复，只说计划里在做的一项", () => {
   const running = [ask, msg("assistant", [use("Bash", { command: "npm test" }, "c1")])];
-  assert.deepEqual(chatStatus({ ...base, messages: running, activity: { name: "Bash", input: "{}" } }), { kind: "none", text: null });
+  assert.deepEqual(chatStatus({ ...base, messages: running, activity: { name: "Bash", input: "{}" } }), { kind: "tool", text: null });
   const plan = msg("assistant", [
     use("TodoWrite", { todos: [
       { content: "跑测试", activeForm: "正在跑测试", status: "in_progress" },
@@ -113,5 +145,5 @@ test("Claude Code 的 Task 清单跨轮共用：发了「继续」后这一轮�
     msg("user", [result("ok", "p9")]),
     msg("assistant", [use("Bash", { command: "ls" }, "c10")]),
   ];
-  assert.deepEqual(chatStatus({ ...base, messages: finished }), { kind: "none", text: null });
+  assert.deepEqual(chatStatus({ ...base, messages: finished }), { kind: "tool", text: null });
 });

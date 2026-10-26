@@ -3274,9 +3274,9 @@ select:focus-visible {
   animation: ccode-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) 3;
 }
 
-/* 聊天「正在回复」的 Mesa 字标（2026-10-18 用户：生成状态换成 Mesa 独有的设计）：M▁ 的琥珀光标
-   像终端插入符一样亮灭——「AI 正在往下写」就是光标在跳。阶跃（不渐变）才像插入符；只在生成中挂，
-   停了类名撤掉光标常亮。减弱动态效果时不闪，常亮 */
+/* 聊天实时预览末尾的插入符（MesaCaret；2026-10-18 用户：生成状态换成 Mesa 独有的设计）：M▁ 的琥珀光标
+   像终端插入符一样亮灭——「AI 正在往下写」就是光标在跳。阶跃（不渐变）才像插入符。
+   生成中那一行的 M▁ 2026-10-26 起不再硬闪，按阶段动（见下 .ccode-status-lead）。减弱动态效果时不闪，常亮 */
 @keyframes ccode-caret {
   0%,
   100% {
@@ -3353,6 +3353,136 @@ select:focus-visible {
   }
   .ccode-run-caret[data-state="confirm"] {
     background: Highlight;
+  }
+}
+
+/* 聊天生成中那一行的开头 M▁ + 状态字（MesaStatusLead；2026-10-26，设计稿 docs/design-chat-status-motion-mockup.html）。
+   M 用遮罩画（组件行内给 mask-image），尺寸比例同原 MesaMark 小字号版：M 高 0.8em、宽 560/456，光标 250×100、圆角 14，
+   间隔 28（单位都是图标源的 456 高）。光标按阶段换一种动作，每次只变一个属性：
+     breathe 在想（思考中 / 思考小标题 / CLI 报的现状）：同侧栏运行光标的 2.4s 呼吸（用户否过硬闪：一直闪太吵）；
+     stretch 在干活（工具 / 计划里那一步）：横向拉长到约 1.5 倍再收回，2s 一次；
+     steady  等你确认：常亮，深色底余辉加重，不扫光带。
+   光带（data-sweep）：一道 l1 亮带 2.4s 从左扫到右，连着扫过 M 和字——整段共用一个渐变坐标（--ccode-sweep-w 是整段宽，
+   各段按自己的 --ccode-sweep-ox 往回挪），进度 --ccode-sweep 挂在外层一处动，换字时光带不重头扫。
+   不认 @property 的旧 WebKit 上进度不连续，亮带落在两侧看不见，退成静止的 l3，不出错。
+   字换了组件重挂，淡入 180ms。减弱动态效果时都不动、不扫、常亮；Windows 高对比度下用系统色 */
+@property --ccode-sweep {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 1;
+}
+@keyframes ccode-sweep {
+  from {
+    --ccode-sweep: 1;
+  }
+  to {
+    --ccode-sweep: 0;
+  }
+}
+@keyframes ccode-caret-stretch {
+  0%,
+  100% {
+    transform: scaleX(1);
+  }
+  50% {
+    transform: scaleX(1.55);
+  }
+}
+@keyframes ccode-status-in {
+  from {
+    opacity: 0;
+  }
+}
+.ccode-status-lead {
+  position: relative;
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.ccode-status-mark {
+  display: inline-flex;
+  flex: none;
+  align-items: flex-end;
+  height: 0.8em;
+}
+.ccode-status-m {
+  width: calc(0.8em * 560 / 456);
+  height: 0.8em;
+  background-color: currentColor;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+.ccode-status-caret {
+  margin-left: calc(0.8em * 28 / 456);
+  width: calc(0.8em * 250 / 456);
+  height: calc(0.8em * 100 / 456);
+  border-radius: calc(0.8em * 14 / 456);
+  background: var(--color-mesa-amber);
+  box-shadow: 0 0 4px color-mix(in srgb, var(--color-mesa-amber) 45%, transparent);
+  transform-origin: left center;
+}
+.ccode-status-caret[data-motion="breathe"] {
+  animation: ccode-run-breathe 2.4s ease-in-out infinite;
+}
+.ccode-status-caret[data-motion="stretch"] {
+  animation: ccode-caret-stretch 2s ease-in-out infinite;
+}
+.ccode-status-caret[data-motion="steady"] {
+  box-shadow: 0 0 6px color-mix(in srgb, var(--color-mesa-amber) 70%, transparent);
+}
+[data-theme$="-light"] .ccode-status-caret {
+  box-shadow: none;
+}
+.ccode-status-text {
+  animation: ccode-status-in 180ms ease-out both;
+}
+.ccode-status-lead[data-sweep] {
+  animation: ccode-sweep 2.4s linear infinite;
+}
+.ccode-status-lead[data-sweep] .ccode-sweep {
+  background-color: transparent;
+  background-image: linear-gradient(
+    90deg,
+    var(--color-l3) 0%,
+    var(--color-l3) 40%,
+    var(--color-l1) 50%,
+    var(--color-l3) 60%,
+    var(--color-l3) 100%
+  );
+  background-repeat: no-repeat;
+  background-size: calc(3 * var(--ccode-sweep-w, 12em)) 100%;
+  background-position: calc(var(--ccode-sweep) * -2 * var(--ccode-sweep-w, 12em) - var(--ccode-sweep-ox, 0px)) 0;
+}
+.ccode-status-lead[data-sweep] .ccode-status-text {
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ccode-status-lead,
+  .ccode-status-caret,
+  .ccode-status-text {
+    animation: none !important;
+  }
+}
+@media (forced-colors: active) {
+  .ccode-status-lead .ccode-status-m,
+  .ccode-status-lead .ccode-status-caret {
+    forced-color-adjust: none;
+    background: CanvasText;
+    box-shadow: none;
+  }
+  .ccode-status-lead .ccode-status-caret[data-motion="steady"] {
+    background: Highlight;
+  }
+  .ccode-status-lead .ccode-status-text {
+    animation: none;
+    background: none;
+    -webkit-text-fill-color: currentColor;
   }
 }
 

@@ -1,4 +1,12 @@
-import { useId } from "react";
+import { useId, useLayoutEffect, useRef } from "react";
+import type { StatusCaretMotion } from "../chat-status";
+
+/** M 的字形（与图标源 src-tauri/icons/source/mesa-*.svg 同一条路径；包围盒 232,284 起 560×456） */
+const M_PATH = "M232 740 V284 H356 L512 512 L668 284 H792 V740 H672 V474 L548 652 H476 L352 474 V740 Z";
+/** 状态行里 M 用 CSS 遮罩画，好让光带的渐变连着扫过 M 和后面的字 */
+const M_MASK = `url("data:image/svg+xml,${encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="232 284 560 456"><path d="${M_PATH}"/></svg>`,
+)}")`;
 
 /** 光标的品牌琥珀：浅色底用深一档才压得住 */
 function mesaAmber(light: boolean): string {
@@ -31,49 +39,78 @@ export function MesaCaret({ light, className = "" }: { light: boolean; className
 export function MesaMark({
   light,
   blink = false,
-  typing = false,
-  inline = false,
   className = "",
 }: {
   /** 浅色主题：光标用深一档的琥珀，白底上才压得住 */
   light: boolean;
   /** 出现时光标闪三下后停住（有界脉冲，不做无限闪烁） */
   blink?: boolean;
-  /** 生成中：光标像插入符一样一直亮灭（聊天「正在回复」那一行用；停了就撤掉） */
-  typing?: boolean;
-  /** 跟 12px 小字同排时用：光标按小字号做视觉补偿（加宽加厚），否则缩到 10px 高只剩一个句点大小 */
-  inline?: boolean;
   className?: string;
 }) {
   // 多个聊天标签可能同时挂着字标：滤镜 id 每个实例各一份
   const glowId = `mesa-mark-glow-${useId().replace(/:/g, "")}`;
   const amber = mesaAmber(light);
-  // 光标矩形（与图标源同值 120×60）；小字号版加宽加厚到 250×100，viewBox 跟着往右放
-  const cw = inline ? 250 : 120;
-  const ch = inline ? 100 : 60;
   return (
-    <svg
-      viewBox={`232 284 ${588 + cw} 456`}
-      overflow="visible"
-      className={className}
-      aria-hidden="true"
-    >
+    <svg viewBox="232 284 708 456" overflow="visible" className={className} aria-hidden="true">
       <defs>
         <filter id={glowId} x="-60%" y="-120%" width="220%" height="340%">
           <feGaussianBlur stdDeviation="16" />
         </filter>
       </defs>
-      <path
-        d="M232 740 V284 H356 L512 512 L668 284 H792 V740 H672 V474 L548 652 H476 L352 474 V740 Z"
-        fill="currentColor"
-      />
-      <g className={typing ? "ccode-caret-blink" : blink ? "animate-pulse-brief" : undefined}>
+      <path d={M_PATH} fill="currentColor" />
+      <g className={blink ? "animate-pulse-brief" : undefined}>
         {/* 浅色底上余辉发脏，只在深色底保留 */}
-        {!light && (
-          <rect x="820" y={740 - ch} width={cw} height={ch} rx="6" fill={amber} opacity="0.45" filter={`url(#${glowId})`} />
-        )}
-        <rect x="820" y={740 - ch} width={cw} height={ch} rx={inline ? 14 : 6} fill={amber} />
+        {!light && <rect x="820" y="680" width="120" height="60" rx="6" fill={amber} opacity="0.45" filter={`url(#${glowId})`} />}
+        <rect x="820" y="680" width="120" height="60" rx="6" fill={amber} />
       </g>
     </svg>
+  );
+}
+
+/**
+ * 聊天生成中那一行的开头：M▁ 加这一轮在做的事（2026-10-26，设计稿 docs/design-chat-status-motion-mockup.html）。
+ * 光标按阶段换动作（motion，见 chat-status statusCaretMotion）；sweep 时一道光带连着扫过 M 和字——
+ * 两段共用整段的宽度作渐变坐标，各自按偏移对齐（App.css .ccode-status-lead）。字换了就重挂、淡入。
+ * 光标比例同原 MesaMark 小字号版（加宽加厚到 250×100，否则 10px 高只剩一个句点）
+ */
+export function MesaStatusLead({
+  text,
+  motion,
+  sweep,
+}: {
+  text: string | null;
+  motion: StatusCaretMotion;
+  sweep: boolean;
+}) {
+  const ref = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    const row = ref.current;
+    if (!row || !sweep) return;
+    const measure = () => {
+      row.style.setProperty("--ccode-sweep-w", `${row.offsetWidth}px`);
+      for (const el of row.querySelectorAll<HTMLElement>(".ccode-sweep")) {
+        el.style.setProperty("--ccode-sweep-ox", `${el.offsetLeft}px`);
+      }
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(row);
+    return () => ro.disconnect();
+  }, [sweep, text]);
+  return (
+    <span ref={ref} className="ccode-status-lead" data-sweep={sweep ? "" : undefined}>
+      <span className="ccode-status-mark" aria-hidden="true">
+        <span className="ccode-status-m ccode-sweep" style={{ WebkitMaskImage: M_MASK, maskImage: M_MASK }} />
+        <span className="ccode-status-caret" data-motion={motion} />
+      </span>
+      <span aria-live="polite" className="contents">
+        {text && (
+          <span key={text} className="ccode-status-text ccode-sweep min-w-0 truncate">
+            {text}
+          </span>
+        )}
+      </span>
+    </span>
   );
 }

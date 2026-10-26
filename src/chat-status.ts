@@ -6,6 +6,10 @@
  * 取数先后：旁路（正在跑的工具、思考摘要，chat_channel.rs）> 会话文件（还没回结果的调用、计划里进行中的一项、
  * 刚落盘的一段思考）> CLI 自己报的一句现状（程序状态旁路，如 Grok「Connection failed | Retrying (1/15)」）> 「思考中」。
  * 旁路没接上的家只走会话文件这一档，慢几秒但说法一样。
+ *
+ * 2026-10-26（设计稿 docs/design-chat-status-motion-mockup.html）：「思考中」与 M▁ 同一帧出现（原先刚发出 1.5 秒只亮光标——
+ * 出字时整行本来就让位给预览，早出字不会多闪一下）；真会晃眼的是状态字连跳，由 settleStatus 让每条至少停 STATUS_MIN_DWELL_MS。
+ * M▁ 的光标按这一轮所处的阶段换动作（statusCaretMotion）。
  */
 import type { ChatMessageDto } from "./types.ts";
 import { groupConversationSegments, sessionPlan, turnPlan, type ProcessItem } from "./conversation-tools.ts";
@@ -24,23 +28,21 @@ export interface ChatStatusInput {
   thinking: string | null;
   /** CLI 自己报的一句现状（程序状态旁路的 msg）；照原文显示，只在比「思考中」多说了点什么时用 */
   statusLine?: string | null;
-  /** 这一轮开始了多久（毫秒） */
-  sinceStartMs: number;
   cwd: string | null;
   /** 显式传入（纯逻辑不读平台）：工具路径相对化走 Windows 方言 */
   isWindows: boolean;
 }
 
-export type ChatStatusKind = "tool" | "plan" | "thinking" | "cli" | "waiting" | "none";
+export type ChatStatusKind = "tool" | "plan" | "thinking" | "cli" | "waiting";
 
 export interface ChatStatus {
   kind: ChatStatusKind;
-  /** 状态行写的字；null = 只留 M▁（刚发出，或过程里那一行已经在动） */
+  /** 状态行写的字；null = 只留 M▁（过程里正在跑的那一行已经在动，kind 为 tool） */
   text: string | null;
 }
 
-/** 刚发出的这一会儿只亮光标，不急着写「思考中」（多数回复一两秒内就有动静） */
-export const STATUS_QUIET_START_MS = 1500;
+/** 每条状态字至少停这么久再换（一秒里连读三个文件时不让字跟着连跳；期间来的只留最新一条） */
+export const STATUS_MIN_DWELL_MS = 800;
 
 const HEADLINE_MAX = 48;
 
@@ -123,7 +125,7 @@ function liveTurn(
 export function chatStatus(input: ChatStatusInput): ChatStatus {
   const turn = liveTurn(input.messages, input.cwd, input.isWindows);
   // 正在跑的工具：过程里已经有那一行（带光带）就不重复，状态行改说计划里在做的那一项（没有就只留光标）
-  if (turn.pendingVisible) return turn.planStep ? { kind: "plan", text: turn.planStep } : { kind: "none", text: null };
+  if (turn.pendingVisible) return turn.planStep ? { kind: "plan", text: turn.planStep } : { kind: "tool", text: null };
   if (input.activity) {
     const text = describeActivity(input.activity, input.cwd, input.isWindows);
     if (text) return { kind: "tool", text };
@@ -135,6 +137,37 @@ export function chatStatus(input: ChatStatusInput): ChatStatus {
   if (settled) return { kind: "thinking", text: settled };
   const line = input.statusLine?.trim();
   if (line && !GENERIC_STATUS_RE.test(line)) return { kind: "cli", text: clip(line, 72) };
-  if (input.sinceStartMs < STATUS_QUIET_START_MS) return { kind: "none", text: null };
   return { kind: "waiting", text: "思考中" };
+}
+
+/** 屏上正显示的那条状态与它出现的时刻 */
+export interface ShownStatus {
+  status: ChatStatus;
+  at: number;
+}
+
+const sameStatus = (a: ChatStatus, b: ChatStatus) => a.kind === b.kind && a.text === b.text;
+
+/**
+ * 状态字最短停留：上一条停够 STATUS_MIN_DWELL_MS 才换成最新的；没停够时照旧显示上一条，
+ * retryInMs 告诉调用方多久后再来一次（那时取的仍是那一刻最新的一条，中间的直接跳过）
+ */
+export function settleStatus(
+  shown: ShownStatus | null,
+  next: ChatStatus,
+  now: number,
+): { shown: ShownStatus; retryInMs: number | null } {
+  if (!shown) return { shown: { status: next, at: now }, retryInMs: null };
+  if (sameStatus(shown.status, next)) return { shown, retryInMs: null };
+  const wait = shown.at + STATUS_MIN_DWELL_MS - now;
+  if (wait <= 0) return { shown: { status: next, at: now }, retryInMs: null };
+  return { shown, retryInMs: wait };
+}
+
+/** M▁ 光标的动作：在想 = 呼吸，在干活（工具 / 计划里那一步）= 横向伸缩，等你确认 = 常亮 */
+export type StatusCaretMotion = "breathe" | "stretch" | "steady";
+
+export function statusCaretMotion(kind: ChatStatusKind, awaitingYou: boolean): StatusCaretMotion {
+  if (awaitingYou) return "steady";
+  return kind === "tool" || kind === "plan" ? "stretch" : "breathe";
 }

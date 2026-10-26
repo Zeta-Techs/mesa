@@ -15,7 +15,7 @@ import { useReadingAnchor } from "../reading-anchor";
 import { chatGreeting, resolveChatCwd, starterContextFor } from "../chat-empty-start";
 import { useAppStore } from "../store";
 import { isLightTheme } from "../themes";
-import { MesaCaret, MesaMark } from "./MesaMark";
+import { MesaCaret, MesaMark, MesaStatusLead } from "./MesaMark";
 import ChatModelMenu from "./ChatModelMenu";
 import ChatPermissionBadge, { confirmPermissionChoice, effectivePermissionTier } from "./ChatPermissionBadge";
 import ChatProjectPicker, { type DirPick } from "./ChatProjectPicker";
@@ -52,7 +52,7 @@ import {
   slashHandoff,
 } from "../chat-handoff";
 import { decisionKind, recordChatHandoff, type HandoffReason } from "../chat-handoff-log";
-import { chatStatus, STATUS_QUIET_START_MS } from "../chat-status";
+import { chatStatus, settleStatus, statusCaretMotion, type ShownStatus } from "../chat-status";
 import { confirmChoices } from "../chat-reply";
 import ChatDecisionCard, { type ChatDecision } from "./ChatDecisionCard";
 import { useCliNewer } from "../cli-verified";
@@ -480,8 +480,7 @@ export default function ChatSurface({
     const t = window.setInterval(() => setGenTick((n) => n + 1), 1000);
     return () => window.clearInterval(t);
   }, [genStartedAt]);
-  const genElapsedMs = genStartedAt === null ? 0 : Date.now() - genStartedAt;
-  const genElapsed = Math.floor(genElapsedMs / 1000);
+  const genElapsed = genStartedAt === null ? 0 : Math.floor((Date.now() - genStartedAt) / 1000);
   // 「这一轮现在在做什么」（chat-status.ts）：说在做的事，不说阶段；过程里已经在动的那一行不在这里重复
   const activity = channel?.activity ?? null;
   const thinking = channel?.thinking ?? null;
@@ -493,16 +492,37 @@ export default function ChatSurface({
         activity,
         thinking,
         statusLine,
-        // 刚发出的那一会儿另算（下面），这里按「已经过了」给，免得每秒重算整轮
-        sinceStartMs: Number.MAX_SAFE_INTEGER,
         cwd: cwd ?? null,
         isWindows: IS_WINDOWS,
       }),
     [messages, activity, thinking, statusLine, cwd],
   );
-  const status =
-    statusBase.kind === "waiting" && genElapsedMs < STATUS_QUIET_START_MS ? { kind: "none" as const, text: null } : statusBase;
+  // 状态字最短停留（settleStatus）：一秒里连跳几条时不跟着闪，停够了换成那一刻最新的一条；每一轮从头算。
+  // 「思考中」与 M▁ 同一帧出（2026-10-26，原先刚发出 1.5 秒只亮光标）
+  const shownStatusRef = useRef<ShownStatus | null>(null);
+  const [shownStatus, setShownStatus] = useState<ShownStatus | null>(null);
+  useEffect(() => {
+    if (!generating) {
+      shownStatusRef.current = null;
+      setShownStatus(null);
+      return;
+    }
+    let timer = 0;
+    const apply = () => {
+      const r = settleStatus(shownStatusRef.current, statusBase, Date.now());
+      if (r.shown !== shownStatusRef.current) {
+        shownStatusRef.current = r.shown;
+        setShownStatus(r.shown);
+      }
+      if (r.retryInMs !== null) timer = window.setTimeout(apply, r.retryInMs);
+    };
+    apply();
+    return () => window.clearTimeout(timer);
+  }, [generating, statusBase]);
+  // 刚开始生成、还没排进去的那一帧直接用算出来的（和第一条一样，不必空一帧）
+  const status = shownStatus?.status ?? statusBase;
   const statusText = trustPrompt ? "等你确认是否信任这个目录" : status.text;
+  const statusMotion = statusCaretMotion(status.kind, Boolean(trustPrompt));
   // 最近一次「看得见的进展」：新消息、预览出字、旁路换了工具 / 思考 / CLI 自己报的现状。安静满 10 秒才给「看实时输出」
   const [progressAt, setProgressAt] = useState(() => Date.now());
   useEffect(() => {
@@ -1194,25 +1214,13 @@ export default function ChatSurface({
             />
           )}
           {generating && !decision && livePreview.length === 0 && (
-            // 生成中那一行（2026-10-21 用户：「正在生成回复」「正在用」太机械）：M▁ 光标一直亮灭，后面说这一轮在做的事——
-            // 正在跑的工具（「运行 npm test」）、计划里在做的一项、思考的小标题，都没有才写「思考中」，文字带一道光带扫过；
-            // 过程里已经有那一行在动时只留光标。满 10 秒才写时间，Claude 没有逐字预览时写已生成的 token 数，
+            // 生成中那一行（2026-10-21 用户：「正在生成回复」「正在用」太机械）：M▁ 后面说这一轮在做的事——
+            // 正在跑的工具（「运行 npm test」）、计划里在做的一项、思考的小标题，都没有才写「思考中」；
+            // 过程里已经有那一行在动时只留光标。2026-10-26 起光标按阶段动（在想呼吸、干活伸缩、等你确认常亮），
+            // 一道光带连着扫过 M 和字（等你确认时不扫）。满 10 秒才写时间，Claude 没有逐字预览时写已生成的 token 数，
             // 安静满 10 秒才给「看实时输出」。预览在出字时这一行不出现，光标接在预览末尾
             <div className="mb-2 flex min-w-0 items-center gap-2 text-xs text-l3">
-              <MesaMark
-                light={isLightTheme(theme)}
-                typing
-                inline
-                className="h-[0.8em] w-auto shrink-0 text-l3"
-              />
-              {statusText && (
-                <span
-                  aria-live="polite"
-                  className={`min-w-0 truncate ${trustPrompt ? "" : "ccode-shimmer"}`}
-                >
-                  {statusText}
-                </span>
-              )}
+              <MesaStatusLead text={statusText} motion={statusMotion} sweep={!trustPrompt} />
               {genElapsed >= 10 && (
                 <span className="shrink-0 tabular-nums text-l4" aria-hidden="true">
                   {fmtElapsed(genElapsed)}

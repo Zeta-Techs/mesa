@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>Mesa 聊天层「生成中那一行」· 现在 vs 建议（2026-10-26）</title>
+<style>
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: #0a0b0e; color: #bdbab4; font: 14px/1.6 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif; }
+  header, .section { max-width: 1400px; margin: 0 auto; padding: 0 24px; }
+  header { margin-top: 26px; }
+  header h1 { margin: 0; font-size: 19px; color: #e9e6e2; font-weight: 600; }
+  header p { margin: 6px 0 0; color: #95959a; font-size: 13px; max-width: 1100px; }
+  h2 { font-size: 14px; color: #e9e6e2; font-weight: 600; margin: 30px 0 4px; }
+  .sub { font-size: 12.5px; color: #95959a; margin: 0 0 12px; }
+
+  /* 控制条 */
+  .controls { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; margin: 14px 0 12px; font-size: 12.5px; color: #95959a; }
+  .seg { display: inline-flex; border: 1px solid #2a2c33; border-radius: 8px; overflow: hidden; }
+  .seg button { background: transparent; color: #95959a; border: 0; padding: 5px 11px; font: inherit; cursor: pointer; }
+  .seg button + button { border-left: 1px solid #2a2c33; }
+  .seg button.on { background: #23252c; color: #e9e6e2; }
+  .btn { background: #23252c; color: #e9e6e2; border: 1px solid #2f323a; border-radius: 8px; padding: 5px 12px; font: inherit; cursor: pointer; }
+  label.chk { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+
+  /* 主题 */
+  .dark  { --canvas: #131210; --l1: #e9e6e2; --l2: #c8c5c0; --l3: #95959a; --l4: #6b6b72; --amber: #f5b83d; --bubble: color-mix(in oklab, #131210, #e9e6e2 4.5%); --edge: #24231f; }
+  .light { --canvas: #edede9; --l1: #1a1814; --l2: #3f3c36; --l3: #6f6b62; --l4: #9a958b; --amber: #e39a1c; --bubble: color-mix(in oklab, #edede9, #1a1814 5%); --edge: #dcdbd6; }
+
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .pane { position: relative; border-radius: 14px; overflow: hidden; background: var(--canvas); color: var(--l2); border: 1px solid var(--edge); --z: 1; }
+  .tag { position: absolute; top: 10px; left: 14px; font-size: 11px; color: var(--l4); z-index: 2; }
+  .tag b { color: var(--l2); font-weight: 600; margin-right: 6px; }
+  .flow { height: calc(250px * var(--z)); padding: calc(38px * var(--z)) calc(36px * var(--z)) 0; display: flex; flex-direction: column; overflow: hidden; }
+  .user { align-self: flex-end; max-width: 72%; padding: calc(7px * var(--z)) calc(14px * var(--z)); border-radius: calc(18px * var(--z)); background: var(--bubble); color: var(--l1); font-size: calc(13.5px * var(--z)); margin-bottom: calc(14px * var(--z)); }
+  .proc { font-size: calc(12.5px * var(--z)); color: var(--l4); margin-bottom: calc(6px * var(--z)); }
+  .proc em { font-style: normal; color: var(--l3); }
+  .preview { font-size: calc(14px * var(--z)); line-height: 1.75; color: var(--l3); white-space: pre-wrap; margin-bottom: calc(8px * var(--z)); }
+  .preview.done { color: color-mix(in oklab, var(--l1) 85%, var(--l2)); }
+
+  /* 生成中那一行 */
+  .status { position: relative; display: flex; align-items: center; gap: calc(8px * var(--z)); min-width: 0; font-size: calc(12px * var(--z)); color: var(--l3); height: calc(20px * var(--z)); }
+  .st { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .elapsed { color: var(--l4); font-variant-numeric: tabular-nums; }
+
+  /* M▁ 字标：M 用遮罩画，光标单独一块（与 MesaMark.tsx 同比例：M 560×456，间隔 28，小字号版光标 250×100、圆角 14） */
+  .mark { --h: 0.8em; display: inline-flex; align-items: flex-end; height: var(--h); flex: none; }
+  .mark .m { width: calc(var(--h) * 560 / 456); height: var(--h); background-color: currentColor; -webkit-mask: var(--m-mask) center / 100% 100% no-repeat; mask: var(--m-mask) center / 100% 100% no-repeat; }
+  .mark .c { margin-left: calc(var(--h) * 28 / 456); width: calc(var(--h) * 250 / 456); height: calc(var(--h) * 100 / 456); border-radius: calc(var(--h) * 14 / 456); background: var(--amber); transform-origin: left center; }
+  .dark .mark .c { box-shadow: 0 0 calc(var(--h) * 0.6) color-mix(in srgb, var(--amber) 50%, transparent); }
+
+  /* 光标的几种动作 */
+  @keyframes caret { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+  @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.22; } }
+  @keyframes stretch { 0%, 100% { transform: scaleX(1); } 50% { transform: scaleX(1.55); } }
+  .c.blink { animation: caret 1.06s steps(1, end) infinite; }
+  .c.breathe { animation: breathe 2.4s ease-in-out infinite; }
+  .c.stretch { animation: stretch 2s ease-in-out infinite; }
+  .dark .c.steady { box-shadow: 0 0 calc(var(--h) * 0.9) color-mix(in srgb, var(--amber) 70%, transparent); }
+
+  /* 插入符（接在实时预览最后一个字后面，同 MesaCaret） */
+  .caret { display: inline-block; margin-left: 0.2em; width: 0.55em; height: 0.22em; vertical-align: baseline; background: var(--amber); animation: caret 1.06s steps(1, end) infinite; }
+  .dark .caret { box-shadow: 0 0 6px color-mix(in srgb, var(--amber) 45%, transparent); }
+
+  /* 文字淡入 */
+  @keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
+  .st.fade { animation: fadein 180ms ease-out both; }
+
+  /* 现在：光带只扫文字（同 App.css .ccode-shimmer） */
+  @keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0% 0; } }
+  .st.shim { background-image: linear-gradient(90deg, var(--l3) 0%, var(--l3) 40%, var(--l1) 50%, var(--l3) 60%, var(--l3) 100%); background-size: 300% 100%; background-position: 100% 0; -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; animation: shimmer 2.4s linear infinite; }
+  .st.shim.fade { animation: fadein 180ms ease-out both, shimmer 2.4s linear infinite; }
+
+  /* 建议：一道光带连着扫过 M 和文字（同一坐标系：整行宽 --w，各段按自己的 --ox 对齐） */
+  @property --p { syntax: "<number>"; inherits: true; initial-value: 1; }
+  @keyframes sweep { from { --p: 1; } to { --p: 0; } }
+  .status.sweep { animation: sweep 2.4s linear infinite; }
+  .status.sweep .sw { background-color: transparent; background-image: linear-gradient(90deg, var(--l3) 0%, var(--l3) 40%, var(--l1) 50%, var(--l3) 60%, var(--l3) 100%); background-size: calc(3 * var(--w, 200px)) 100%; background-repeat: no-repeat; background-position: calc(var(--p) * -2 * var(--w, 200px) - var(--ox, 0px)) 0; }
+  .status.sweep .st.sw { -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+
+  /* 减弱动态效果 */
+  .rm *, .rm *::before { animation: none !important; transition: none !important; }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+
+  /* 时间轴 */
+  .timeline { position: relative; height: 34px; margin: 10px 0 0; }
+  .track { position: absolute; left: 0; right: 0; top: 8px; height: 3px; border-radius: 2px; background: #23252c; }
+  .fill { position: absolute; left: 0; top: 8px; height: 3px; border-radius: 2px; background: #f5b83d; width: 0; }
+  .tick { position: absolute; top: 3px; width: 1px; height: 13px; background: #4a4d57; }
+  .tick span { position: absolute; top: 15px; left: 0; transform: translateX(-50%); white-space: nowrap; font-size: 10.5px; color: #6b6b72; }
+  .clock { font-variant-numeric: tabular-nums; color: #e9e6e2; }
+
+  /* 分阶段一览 */
+  .gallery { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; }
+  .card { border-radius: 12px; background: var(--canvas); border: 1px solid var(--edge); padding: 14px 16px 16px; color: var(--l3); }
+  .card h3 { margin: 0 0 2px; font-size: 12.5px; color: var(--l1); font-weight: 600; }
+  .card p { margin: 0 0 12px; font-size: 11.5px; color: var(--l4); line-height: 1.5; min-height: 3em; }
+  .card .big { display: flex; align-items: center; justify-content: center; height: 86px; font-size: 64px; color: var(--l3); border-radius: 8px; background: color-mix(in oklab, var(--canvas), var(--l1) 3%); margin-bottom: 12px; }
+  .card .big .mark { --h: 0.8em; }
+  .card .row1x { --z: 1; }
+
+  .notes { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; font-size: 12.5px; color: #95959a; margin-bottom: 48px; }
+  .notes h3 { font-size: 13px; color: #e9e6e2; margin: 0 0 6px; font-weight: 600; }
+  .notes ul { margin: 0; padding-left: 18px; }
+  .notes li { margin: 3px 0; }
+  .notes b { color: #c8c5c0; font-weight: 600; }
+</style>
+</head>
+<body>
+<header>
+  <h1>聊天层「生成中那一行」：现在 vs 建议</h1>
+  <p>上半部分两栏同时回放同一轮对话，左边是现在的做法，右边是建议的做法；下半部分把每个阶段的光标动作单独摆出来放大看。实际界面里这一行是 12px 小字，可以用「放大」看清细节，再切回 1× 看真实观感。</p>
+</header>
+
+<div class="section">
+  <h2>一、回放一轮对话</h2>
+  <div class="controls">
+    <span>场景</span>
+    <span class="seg" id="scenarios"></span>
+    <button class="btn" id="replay">重播</button>
+    <button class="btn" id="pause">暂停</button>
+    <span class="seg" id="speed"><button data-v="1" class="on">1×速度</button><button data-v="0.5">0.5×速度</button></span>
+    <span class="seg" id="theme"><button data-v="dark" class="on">深色</button><button data-v="light">浅色</button></span>
+    <span class="seg" id="zoom"><button data-v="1" class="on">1×</button><button data-v="2">放大 2×</button></span>
+    <label class="chk"><input type="checkbox" id="sweepM" checked /> 建议栏：光带连着 M 一起扫</label>
+    <label class="chk"><input type="checkbox" id="rm" /> 减弱动态效果</label>
+  </div>
+  <p class="sub" id="scDesc"></p>
+  <div class="pair">
+    <div class="pane dark" id="paneNow"><div class="tag"><b>现在</b>图标先出，「思考中」第 2 秒才出；光标一直硬闪；状态字随来随换</div><div class="flow"></div></div>
+    <div class="pane dark" id="paneNew"><div class="tag"><b>建议</b>图标和字同时出、字淡入；光标按阶段换动作；状态字至少停 0.8 秒</div><div class="flow"></div></div>
+  </div>
+  <div class="timeline" id="timeline"><div class="track"></div><div class="fill" id="fill"></div></div>
+  <div class="sub">已过 <span class="clock" id="clock">0.0</span> 秒 · 刻度是 Agent 那边真实发生的事（左栏照着刻度换字，右栏遇到连跳时攒一攒再换）</div>
+
+  <h2>二、每个阶段的光标动作（建议）</h2>
+  <p class="sub">只动 M 后面那一道琥珀光标，M 本身不动；每个阶段只变一种属性。上面是放大后的字标，下面是 1× 的真实大小。</p>
+  <div class="gallery" id="gallery"></div>
+
+  <h2>三、要点</h2>
+  <div class="notes">
+    <div>
+      <h3>「思考中」什么时候出</h3>
+      <ul>
+        <li><b>和图标同一帧出现</b>，用 180ms 淡入，不再先单独亮一个图标等 2 秒。</li>
+        <li>快回复（场景「一秒内就出字」）里，整行本来就会被实时预览换掉，所以早点出字不会多闪一下。</li>
+        <li>真正会晃眼的是<b>状态字连跳</b>（场景「状态连跳」）：每条状态字至少停 0.8 秒，期间来的新状态只留最新一条，到时间再换。</li>
+        <li>现在的「1.5 秒」其实要到第 2 秒才生效（计时每秒刷新一次），改完这个问题也一起消失。</li>
+      </ul>
+    </div>
+    <div>
+      <h3>光标怎么动</h3>
+      <ul>
+        <li><b>思考中</b>：呼吸（2.4 秒一明一暗），和侧栏「运行中」光标同一套；侧栏那边你说过「不要闪烁，做成呼吸」。</li>
+        <li><b>跑工具</b>：横向慢慢拉长再收回（2 秒一次），表示在干活。</li>
+        <li><b>出字中</b>：保持插入符硬闪，跟在最后一个字后面，表示正在写。</li>
+        <li><b>等你确认</b>：常亮加余辉，不扫光带，和侧栏的「等你确认」一致。</li>
+        <li>光带连着 M 一起扫，让字标和状态字读成一个整体；不想要可以只扫文字（取消上面的勾选对比）。</li>
+        <li>不做的：三枚光标换队形（留给「回到最新」浮钮）、M 缩放或旋转、等得越久转得越快。</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<script>
+const M_PATH = "M232 740 V284 H356 L512 512 L668 284 H792 V740 H672 V474 L548 652 H476 L352 474 V740 Z";
+document.documentElement.style.setProperty(
+  "--m-mask",
+  `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="232 284 560 456"><path d="${M_PATH}"/></svg>`)}")`,
+);
+
+// 场景：Agent 那边真实发生的事（kind：waiting / tool / thinking / confirm）。preview = 开始出字，done = 落盘
+const SCENARIOS = [
+  {
+    id: "normal", label: "普通一轮",
+    desc: "先想、跑测试、改文件、再想，最后开始写回复。看左栏开头空等的 2 秒，以及光标从头到尾都是同一种硬闪。",
+    ask: "测试挂了，帮我看一下原因",
+    events: [
+      { t: 0, kind: "waiting", text: "思考中" },
+      { t: 3200, kind: "tool", text: "运行 npm test", proc: "运行 <em>npm test</em>" },
+      { t: 5600, kind: "waiting", text: "思考中" },
+      { t: 6300, kind: "tool", text: "编辑 src/store.ts", proc: "编辑 <em>src/store.ts</em>" },
+      { t: 7600, kind: "thinking", text: "核对测试失败的原因" },
+    ],
+    preview: 9800, done: 13600,
+    reply: "测试失败是因为 store 里的默认值在上一次改动后变成了 undefined，补上初始值后 12 个用例全部通过。",
+  },
+  {
+    id: "fast", label: "一秒内就出字",
+    desc: "回复很快的一轮。两栏都只亮一下就被实时预览换掉，建议栏多出的那几百毫秒「思考中」并不会多闪一次。",
+    ask: "这个函数叫什么名字更好？",
+    events: [{ t: 0, kind: "waiting", text: "思考中" }],
+    preview: 700, done: 2600,
+    reply: "叫 resolveLaunchChain 更贴切：它做的是按顺序找出这次启动该用哪套配置。",
+  },
+  {
+    id: "burst", label: "状态连跳",
+    desc: "一秒里连读三个文件再搜索。左栏字跟着连跳；右栏每条至少停 0.8 秒，期间的新状态只留最新一条。",
+    ask: "chatStatus 在哪些地方被调用？",
+    events: [
+      { t: 0, kind: "waiting", text: "思考中" },
+      { t: 350, kind: "tool", text: "读取 src/chat-status.ts", proc: "读取 <em>src/chat-status.ts</em>" },
+      { t: 600, kind: "tool", text: "读取 src/components/ChatSurface.tsx", proc: "读取 <em>src/components/ChatSurface.tsx</em>" },
+      { t: 820, kind: "tool", text: "读取 tests/chat-status.test.ts", proc: "读取 <em>tests/chat-status.test.ts</em>" },
+      { t: 1100, kind: "tool", text: "运行 rg \"chatStatus\"", proc: "运行 <em>rg \"chatStatus\"</em>" },
+      { t: 1700, kind: "thinking", text: "对照三处调用的取数顺序" },
+    ],
+    preview: 4400, done: 7600,
+    reply: "一共两处：ChatSurface 里算状态行，另一处在测试里。取数顺序都是先看旁路，再看会话文件。",
+  },
+  {
+    id: "confirm", label: "等你确认",
+    desc: "中途停下等你拍板。建议栏光标常亮加余辉、不扫光带，和侧栏「等你确认」同一个样子；左栏光标照旧在闪。",
+    ask: "在新目录里把项目跑起来",
+    events: [
+      { t: 0, kind: "waiting", text: "思考中" },
+      { t: 900, kind: "confirm", text: "等你确认是否信任这个目录" },
+      { t: 4600, kind: "waiting", text: "思考中" },
+      { t: 5600, kind: "tool", text: "运行 npm install", proc: "运行 <em>npm install</em>" },
+    ],
+    preview: 8200, done: 11000,
+    reply: "依赖装好了，开发服务器在 5173 端口，可以在浏览器里打开。",
+  },
+];
+
+const DWELL = 800;
+const QUIET_NOW = 2000; // 现在：1.5 秒门槛 + 每秒刷新一次 → 实际第 2 秒
+
+// 建议栏：每条状态至少停 DWELL，期间来的只留最新一条
+function applyDwell(events) {
+  const out = [];
+  let last = -Infinity;
+  let i = 0;
+  while (i < events.length) {
+    const at = Math.max(events[i].t, last + DWELL);
+    let j = i;
+    while (j + 1 < events.length && events[j + 1].t <= at) j++;
+    out.push({ ...events[j], t: at });
+    last = at;
+    i = j + 1;
+  }
+  return out;
+}
+
+function latest(events, t) {
+  let e = null;
+  for (const x of events) if (x.t <= t) e = x;
+  return e;
+}
+
+function caretClass(mode, kind) {
+  if (mode === "now") return "blink";
+  if (kind === "tool") return "stretch";
+  if (kind === "confirm") return "steady";
+  return "breathe";
+}
+
+function markHTML() {
+  return `<span class="mark"><span class="m sw"></span><span class="c"></span></span>`;
+}
+
+// 量一下整行宽与各段偏移，供「光带连着 M 扫」用
+function measure(row) {
+  const kids = row.querySelectorAll(".sw");
+  if (!kids.length) return;
+  const st = row.querySelector(".st");
+  const w = st ? st.offsetLeft + st.offsetWidth : row.offsetWidth;
+  row.style.setProperty("--w", `${Math.max(w, 40)}px`);
+  for (const k of kids) {
+    let ox = 0;
+    for (let n = k; n && n !== row; n = n.offsetParent) ox += n.offsetLeft;
+    k.style.setProperty("--ox", `${ox}px`);
+  }
+}
+
+class PaneSim {
+  constructor(el, mode) {
+    this.el = el;
+    this.mode = mode;
+    this.flow = el.querySelector(".flow");
+  }
+  load(sc) {
+    this.sc = sc;
+    this.events = this.mode === "new" ? applyDwell(sc.events) : sc.events;
+    this.flow.innerHTML = `<div class="user">${sc.ask}</div><div class="procs"></div><div class="preview" hidden></div><div class="status">${markHTML()}</div>`;
+    this.procs = this.flow.querySelector(".procs");
+    this.preview = this.flow.querySelector(".preview");
+    this.row = this.flow.querySelector(".status");
+    this.caret = this.row.querySelector(".c");
+    this.key = "";
+    this.procCount = -1;
+    this.previewLen = -1;
+  }
+  render(t, opts) {
+    const sc = this.sc;
+    // 已经做完的工具（下一件事开始了）进过程区，两栏一样
+    const done = sc.events.filter((e, i) => e.proc && (sc.events[i + 1]?.t ?? sc.preview) <= t);
+    if (done.length !== this.procCount) {
+      this.procCount = done.length;
+      this.procs.innerHTML = done.map((e) => `<div class="proc">${e.proc}</div>`).join("");
+    }
+    // 出字后整行让位给实时预览
+    const live = t < sc.preview;
+    this.row.hidden = !live;
+    if (!live) {
+      const finished = t >= sc.done;
+      const n = finished ? sc.reply.length : Math.min(sc.reply.length, Math.floor((t - sc.preview) / 55));
+      const key = `${n}|${finished}`;
+      if (key !== this.previewLen) {
+        this.previewLen = key;
+        this.preview.hidden = false;
+        this.preview.classList.toggle("done", finished);
+        this.preview.innerHTML = [...sc.reply].slice(0, n).join("") + (finished ? "" : `<span class="caret"></span>`);
+      }
+      return;
+    }
+    this.preview.hidden = true;
+    const e = latest(this.events, t);
+    let text = e?.text ?? null;
+    const kind = e?.kind ?? "waiting";
+    if (this.mode === "now" && kind === "waiting" && t < QUIET_NOW) text = null;
+    const sweep = this.mode === "new" && opts.sweepM && kind !== "confirm";
+    const key = `${kind}|${text}|${sweep}`;
+    if (key === this.key) return;
+    this.key = key;
+    this.caret.className = `c ${caretClass(this.mode, kind)}`;
+    this.row.classList.toggle("sweep", sweep);
+    this.row.querySelector(".st")?.remove();
+    if (text) {
+      const span = document.createElement("span");
+      const shimmer = kind !== "confirm";
+      span.className = ["st", this.mode === "new" ? "fade" : "", sweep ? "sw" : shimmer ? "shim" : ""].join(" ");
+      span.textContent = text;
+      this.row.appendChild(span);
+    }
+    measure(this.row);
+  }
+}
+
+const panes = [new PaneSim(document.getElementById("paneNow"), "now"), new PaneSim(document.getElementById("paneNew"), "new")];
+const opts = { sweepM: true };
+let sc = SCENARIOS[0];
+let speed = 1;
+let t = 0;
+let paused = false;
+let lastFrame = performance.now();
+const HOLD = 1600; // 播完停一会儿再重播
+
+function total() { return sc.done + HOLD; }
+
+function buildTimeline() {
+  const tl = document.getElementById("timeline");
+  tl.querySelectorAll(".tick").forEach((n) => n.remove());
+  const marks = [...sc.events.map((e) => ({ t: e.t, label: e.kind === "waiting" ? "想" : e.kind === "tool" ? e.text.split(" ")[0] : e.kind === "confirm" ? "确认" : "思考摘要" })),
+    { t: sc.preview, label: "开始出字" }, { t: sc.done, label: "落盘" }];
+  const showLabel = sc.id !== "burst";
+  for (const m of marks) {
+    const d = document.createElement("div");
+    d.className = "tick";
+    d.style.left = `${(m.t / total()) * 100}%`;
+    if (showLabel || m.t === 0 || m.t >= sc.preview || m.t === 1700) d.innerHTML = `<span>${m.label}</span>`;
+    tl.appendChild(d);
+  }
+}
+
+function loadScenario(next) {
+  sc = next;
+  t = 0;
+  document.getElementById("scDesc").textContent = sc.desc;
+  for (const p of panes) p.load(sc);
+  buildTimeline();
+  document.querySelectorAll("#scenarios button").forEach((b) => b.classList.toggle("on", b.dataset.id === sc.id));
+}
+
+function frame(now) {
+  const dt = now - lastFrame;
+  lastFrame = now;
+  if (!paused) {
+    t += dt * speed;
+    if (t > total()) loadScenario(sc);
+  }
+  for (const p of panes) p.render(t, opts);
+  document.getElementById("fill").style.width = `${Math.min(1, t / total()) * 100}%`;
+  document.getElementById("clock").textContent = (Math.min(t, sc.done) / 1000).toFixed(1);
+  requestAnimationFrame(frame);
+}
+
+// 控件
+const scBox = document.getElementById("scenarios");
+for (const s of SCENARIOS) {
+  const b = document.createElement("button");
+  b.textContent = s.label;
+  b.dataset.id = s.id;
+  b.onclick = () => loadScenario(s);
+  scBox.appendChild(b);
+}
+document.getElementById("replay").onclick = () => { paused = false; document.getElementById("pause").textContent = "暂停"; loadScenario(sc); };
+document.getElementById("pause").onclick = (e) => { paused = !paused; e.target.textContent = paused ? "继续" : "暂停"; };
+function segGroup(id, fn) {
+  const box = document.getElementById(id);
+  box.querySelectorAll("button").forEach((b) => (b.onclick = () => {
+    box.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+    fn(b.dataset.v);
+  }));
+}
+segGroup("speed", (v) => (speed = Number(v)));
+segGroup("theme", (v) => {
+  document.querySelectorAll(".pane, .card").forEach((p) => { p.classList.remove("dark", "light"); p.classList.add(v); });
+  for (const p of panes) { p.key = ""; }
+  requestAnimationFrame(() => document.querySelectorAll(".status").forEach(measure));
+});
+segGroup("zoom", (v) => {
+  document.querySelectorAll(".pane").forEach((p) => p.style.setProperty("--z", v));
+  for (const p of panes) { p.key = ""; }
+});
+document.getElementById("sweepM").onchange = (e) => { opts.sweepM = e.target.checked; for (const p of panes) p.key = ""; };
+document.getElementById("rm").onchange = (e) => document.body.classList.toggle("rm", e.target.checked);
+
+// 分阶段一览
+const GALLERY = [
+  { title: "现在 · 所有阶段", note: "不管在想还是在跑工具，光标都是 1.06 秒一下硬闪。", kind: "waiting", text: "思考中", mode: "now" },
+  { title: "思考中 · 呼吸", note: "2.4 秒一明一暗，缓入缓出；同侧栏「运行中」光标。", kind: "waiting", text: "思考中", mode: "new" },
+  { title: "跑工具 · 伸缩", note: "横向慢慢拉长到约 1.5 倍再收回，2 秒一次。", kind: "tool", text: "运行 npm test", mode: "new" },
+  { title: "出字中 · 插入符", note: "整行让位给实时预览，光标接在最后一个字后面硬闪（不变）。", kind: "writing", text: "测试失败是因为默认值", mode: "new" },
+  { title: "等你确认 · 常亮", note: "常亮加余辉，不扫光带；同侧栏「等你确认」。", kind: "confirm", text: "等你确认是否信任这个目录", mode: "new" },
+];
+const gal = document.getElementById("gallery");
+for (const g of GALLERY) {
+  const card = document.createElement("div");
+  card.className = "card dark";
+  const cls = caretClass(g.mode, g.kind);
+  const big = g.kind === "writing"
+    ? `<div class="big" style="font-size:30px;color:var(--l3)">默认值<span class="caret"></span></div>`
+    : `<div class="big"><span class="mark"><span class="m"></span><span class="c ${cls}"></span></span></div>`;
+  const small = g.kind === "writing"
+    ? `<div class="preview row1x" style="--z:1;margin:0">${g.text}<span class="caret"></span></div>`
+    : `<div class="status row1x ${g.mode === "new" && g.kind !== "confirm" ? "sweep" : ""}">${markHTML().replace('class="c"', `class="c ${cls}"`)}<span class="st ${g.mode === "new" && g.kind !== "confirm" ? "sw" : g.kind === "confirm" ? "" : "shim"}">${g.text}</span></div>`;
+  card.innerHTML = `<h3>${g.title}</h3><p>${g.note}</p>${big}${small}`;
+  gal.appendChild(card);
+}
+requestAnimationFrame(() => gal.querySelectorAll(".status").forEach(measure));
+
+loadScenario(SCENARIOS[0]);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

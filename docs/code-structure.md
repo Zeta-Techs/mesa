@@ -162,7 +162,9 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   components/HelpDialogs.tsx # 帮助菜单三个内容弹窗：诊断与日志（日志按级别筛/计数/复制 + 导出诊断包 → 附到反馈）、检查更新（打开即查；状态/更新说明/下载进度/安装，安装走 useAppUpdateInstall）、关于（图标/版本复制/更新状态只读 store/仓库与许可入口，许可页同弹窗切换）；快捷键速查曾短暂存在后按「不与命令面板/设置/说明书重复」删除（2026-10-12）
   components/ThirdPartyNotices.tsx # 「开源许可与致谢」内容区（帮助→关于、设置→关于共用）：致谢与数据来源（Markdown 阅读版式，许可全文收进 details，链接交系统浏览器）/ 组件许可（可搜索）两页签；清单读一次进程内缓存
   third-party-notices.ts     # 随包许可清单解析纯逻辑：依赖表拆组拆行（跳过代码块里的 ##、丢弃文件头生成说明）+ 按名字/许可搜索（tests/third-party-notices.test.ts 含真文件格式守卫）
-  components/MesaMark.tsx    # Mesa 光标标志的字标版（去底板，M 跟文字色、光标品牌琥珀 + 深色底余辉，viewBox 裁到图形、底边即基线）；聊天空态问候在用
+  components/MesaMark.tsx    # Mesa 光标标志的字标版（去底板，M 跟文字色、光标品牌琥珀 + 深色底余辉，viewBox 裁到图形、底边即基线）；聊天空态问候在用。
+                             # MesaStatusLead = 聊天生成中那一行的 M▁ + 状态字（M 走 CSS 遮罩，光带连着扫 M 和字，样式 App.css .ccode-status-lead）；
+                             # MesaCaret = 实时预览末尾的插入符
   components/MesaThinkingDots.tsx # 聊天「回到最新」浮钮生成中的三枚琥珀光标：每 3.2s 随机换队形（jump-formations.ts），位置走 CSS translate 过渡，呼吸在 App.css .ccode-jump-dots；减弱动态效果时不换队
   components/CommandPalette.tsx # ⌘K 面板：默认列表 快速操作/最近项目（list_projects 前 5）/页面（快捷键跟随设置）/外观/帮助；设置分区（SETTINGS_SEARCH_INDEX）、单个主题、较早项目、外链只在搜索时出现；「切换主题…」进主题网格（与设置页主题卡同长相、7 列深浅上下对齐、方向键四向移动、当前打勾；色样懒加载 App.css?raw；跟随系统只列与系统同深浅的一排并走 followedTheme）；输入法组词 Enter 不执行、↑↓ 循环、键盘移动跟随滚动；帮助类动作经 onHelp 交 App 的同一批弹窗（「上手引导」直接调 openOnboardingGuide）
   money-format.ts            # 金额千分位两位小数 groupedMoney（用量页费用、网关余额共用；币种与 ≥ ~ 前缀由调用方拼）
@@ -460,7 +462,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
                              # messageKey / chatMessageKey 有来源 id 用 id；HOOKS_AGENTS 键是 agent id（2026-10-20 改正 claude-code）
   chat-status.ts             # 生成中那一行「这一轮在做什么」（2026-10-21，规则见 design-system「生成中那一行」）：旁路 activity / thinking
                              # > 会话里还没回结果的调用（已有那一行就不重复）/ 计划进行中一项（activeForm）/ 刚落盘的思考
-                             # > CLI 自己报的现状 statusLine（程序状态旁路，只等于「在等 / 在想」的不用）> 「思考中」；
+                             # > CLI 自己报的现状 statusLine（程序状态旁路，只等于「在等 / 在想」的不用）> 「思考中」（一发出就写）；
+                             # settleStatus 状态字最短停留 800ms、statusCaretMotion 光标按阶段动（2026-10-26）；
   chat-fidelity.ts           # 聊天层对九家能做到哪一步（2026-10-22，tests/chat-fidelity.test.ts，docs/design-chat-fidelity.md）：CHAT_FIDELITY 分档
                              # 单一出处、parseVersion / verifiedVersion（本平台基线优先）/ versionTrust（比核对过的新 = newer）
   cli-verified.ts            # 已核对 CLI 版本：构建时 import.meta.glob 读金丝雀基线的 version（测试里兜成空表）；useCliNewer 给降级用
