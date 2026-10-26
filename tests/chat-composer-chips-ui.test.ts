@@ -203,8 +203,10 @@ test("权限菜单四档：本机设置对应的那档打勾并标注，没有�
     assert.match(ui.el.textContent ?? "", /完全访问/);
     await ui.click("完全访问");
     assert.match(ui.el.textContent ?? "", /假如它要/, "拿一件具体的事说明四档（2026-10-22）");
-    assert.match(menuItem(ui, "只讨论").textContent ?? "", /不建，告诉你怎么做/, "没传哪一家：照旧的说法");
-    for (const label of ["只讨论", "请求批准", "帮我批准", "完全访问"]) menuItem(ui, label);
+    assert.match(menuItem(ui, "先出方案").textContent ?? "", /不建，告诉你怎么做/, "没传哪一家：照旧的说法");
+    // 2026-10-26「只讨论」改名「先出方案」（目标 / 聊想法里的只讨论另是一回事，不跟着改）
+    assert.equal(ui.el.textContent?.includes("只讨论"), false);
+    for (const label of ["先出方案", "请求批准", "帮我批准", "完全访问"]) menuItem(ui, label);
     assert.doesNotMatch(ui.el.textContent ?? "", /自动改文件|按本机设置|先问再改/, "旧的五档已收掉");
     assert.equal(menuItem(ui, "完全访问").getAttribute("aria-checked"), "true");
     assert.match(menuItem(ui, "完全访问").textContent ?? "", /本机设置/);

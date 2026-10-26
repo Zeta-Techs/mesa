@@ -69,6 +69,8 @@ export function goalRunTerminalFields(
     cwd: run.isolationPath,
     autoStart: true,
     permission: task.reviewRequired ? "write_tree" : "discuss",
+    // 不验收的目标：只讨论是约定，计划模式写完方案也不在这里开工（store.PendingTerminal.discussOnly）
+    discussOnly: task.reviewRequired ? undefined : true,
     initialPrompt: prompt,
     reuseKey: `task:${task.id}`,
     runId: run.id,

@@ -12,7 +12,9 @@ type Tier = PermissionTier;
 
 /** 四档的名字与说明：聊天输入框左下的菜单、终端启动栏「权限」格、「这次启动」信息卡共用 */
 export const PERMISSION_TIERS: { id: Tier; label: string; desc: string }[] = [
-  { id: "discuss", label: "只讨论", desc: "只看、只说，不改文件、不跑命令" },
+  // 2026-10-26 由「只讨论」改名：多数家的这一档是计划模式，方案写好点头就能在同一段对话里开工，「只讨论」说不准了。
+  // 目标 / 聊想法里的「只讨论」是另一回事（不开工、没有验收环），名字不跟着改（store.PendingTerminal.discussOnly）
+  { id: "discuss", label: "先出方案", desc: "先看、先出方案，你点头前不改文件、不跑命令" },
   { id: "ask", label: "请求批准", desc: "改文件、跑命令前都先问你" },
   { id: "auto", label: "帮我批准", desc: "日常操作自动放行，有风险才问你" },
   { id: "full", label: "完全访问", desc: "改文件、跑命令都不再问你" },

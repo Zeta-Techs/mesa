@@ -588,7 +588,8 @@ src/                         # 前端 React + TS + Tailwind v4（vite 插件接�
   plan-approval.ts           # 计划模式方案确认那一屏（2026-10-26，Claude / CodeBuddy / Gemini / Kimi / Qwen / OpenCode，tests/plan-approval.test.ts + fixtures/plan-screens.json）：
                              # 认屏（isPlanMenu：旁路结束计划工具、屏上标题或问句）、选项说成中文并标开工后哪一档（planChoice：go / revise / stay / leave / other，
                              # 认不出照原文；openFirst = Kimi Revise 先回车）、方案原文三级来源（旁路 > latestPlanText 会话里写进 plans/ 的调用 > screenPlan 屏上）；
-                             # 卡片是 ChatDecisionCard PlanCard，按键走 TerminalPage answerMenu(index, MenuAnswer)，开工后 onPlanLeft 改标签权限
+                             # 卡片是 ChatDecisionCard PlanCard，按键走 TerminalPage answerMenu(index, MenuAnswer)，开工后 onPlanLeft 改标签权限；
+                             # planCardChoices：只讨论的目标 / 聊想法（PendingTerminal.discussOnly → ChatSurface planStartBlocked）不给开工
   file-thumb.ts              # 任意项目文件的缩略图（「引用项目文件」网格）：图片读原图、PDF / Word 走 doc-thumb 整页、表格 / CSV / 文字排 4:3 小纸；
                              #   键带修改时间的缓存、同时最多画三张；画不出返回 null 由调用方画类型色块（tests/file-thumb.test.ts）
   project-file-pick.ts       # 「引用项目文件」弹层纯逻辑：行内日期（fileDateLabel）、所在文件夹、搜索结果去文件夹、勾选顺序（tests/project-file-pick.test.ts）

@@ -1,6 +1,6 @@
 //! 各家 CLI 本机默认权限的只读探查（聊天权限菜单用，2026-10-17）。
 //!
-//! 聊天权限菜单四档（只讨论 / 请求批准 / 帮我批准 / 完全访问）。用户没手动选时按这家 CLI 本机设置启动，
+//! 聊天权限菜单四档（先出方案 / 请求批准 / 帮我批准 / 完全访问）。用户没手动选时按这家 CLI 本机设置启动，
 //! 菜单要如实标出本机设置对应哪一档——例：用户本机 Claude 设了 bypassPermissions，「完全访问」打勾并标「本机设置」。
 //! 只读：CLI 配置目录一律只读（AGENTS.md），这里不改任何设置。读不到 / 没设返回 None。
 
@@ -45,7 +45,7 @@ fn claude_note(config_dir: &Path) -> Option<CliPermissionNote> {
             "本机 Claude Code 设为自动判断：普通操作直接做，有风险的才问你",
         ),
         "default" | "manual" => note(Some("ask"), "请求批准", "本机 Claude Code 设为改文件、跑命令前都先问"),
-        "plan" => note(Some("discuss"), "只讨论", "本机 Claude Code 默认计划模式：先出方案，不直接动手"),
+        "plan" => note(Some("discuss"), "先出方案", "本机 Claude Code 默认计划模式：先出方案，你点头再动手"),
         "acceptEdits" => note(None, "自动改文件", "本机 Claude Code 设为自动接受改文件，跑命令仍会先问"),
         "dontAsk" => note(None, "不问就拒绝", "本机 Claude Code 设为 dontAsk：白名单外的操作直接拒绝"),
         _ => None,
@@ -87,7 +87,7 @@ fn grok_note(grok_home: &Path) -> Option<CliPermissionNote> {
         "auto" => note(Some("auto"), "帮我批准", "本机 Grok 设为自动判断：普通操作直接做，有风险的才问你"),
         "acceptEdits" => note(None, "自动改文件", "本机 Grok 设为自动接受改文件，跑命令仍会先问"),
         "default" | "ask" => note(Some("ask"), "请求批准", "本机 Grok 设为改文件、跑命令前都先问"),
-        "plan" => note(Some("discuss"), "只讨论", "本机 Grok 默认计划模式：先出方案，不直接动手"),
+        "plan" => note(Some("discuss"), "先出方案", "本机 Grok 默认计划模式：先出方案，不直接动手"),
         _ => None,
     }
 }

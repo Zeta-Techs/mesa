@@ -353,6 +353,10 @@ export interface PendingTerminal {
   previewRoot?: string;
   /** 对外权限政策：只讨论 / 可改这棵树。缺省 write_tree。 */
   permission?: "discuss" | "write_tree";
+  /** 只讨论是约定、不是这段对话的一档权限（2026-10-26）：目标不验收的「只讨论」、任务卡「聊想法」、MCP 登录。
+      这类对话没有验收环，计划模式写完方案时方案卡不给开工、标签也不离开只讨论（要动手回项目页走开工 / 把目标改成可写）。
+      仅内存标记，不进重启持久化白名单 */
+  discussOnly?: boolean;
   /** 可以改文件时的原生权限档（ask 请求批准 / auto / full）；缺省 = 按这家 CLI 本机设置。
       阅读会话固定「请求批准」（改笔记以外的文件先问） */
   permissionMode?: "ask" | "auto" | "full" | null;

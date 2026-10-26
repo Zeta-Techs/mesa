@@ -2891,6 +2891,7 @@ export default function StepFlow({
                     ...(projectLaunch ?? {}),
                     autoStart: Boolean(projectLaunch?.profileId),
                     permission: "discuss",
+                    discussOnly: true,
                     surface: "terminal",
                     reuseKey: `mcp-login:${projectPath}`,
                   });

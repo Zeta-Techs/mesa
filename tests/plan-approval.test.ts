@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
-import { isPlanMenu, latestPlanText, planChoice, planFeedbackText, planMenuTitle, screenPlan } from "../src/plan-approval.ts";
+import { isPlanMenu, latestPlanText, planCardChoices, planChoice, planFeedbackText, planMenuTitle, screenPlan } from "../src/plan-approval.ts";
 import { parseTuiMenu } from "../src/tui-menu.ts";
 import type { ChatMessageDto } from "../src/types.ts";
 
@@ -209,3 +209,12 @@ test("方案原文兜底：会话文件里写进 plans/ 的那一次（Kimi Writ
   assert.equal(latestPlanText([user, call("Write", { file_path: "/w/src/a.ts", content: "x" })]), null);
 });
 
+test("只讨论的目标 / 想法：卡上不给开工、不给结束计划模式，只留改方案与先不开工", () => {
+  const codebuddy = read("codebuddy").menu.options.map((o, i) => planChoice(o, i));
+  const open = planCardChoices(codebuddy, false);
+  assert.deepEqual([open.go.map((c) => c.kind), open.others.map((c) => c.kind)], [["go"], ["stay", "leave"]]);
+  const blocked = planCardChoices(codebuddy, true);
+  assert.deepEqual([blocked.go, blocked.others.map((c) => c.kind)], [[], ["stay"]]);
+  const claude = planCardChoices(read("claude-code").menu.options.map((o, i) => planChoice(o, i)), true);
+  assert.deepEqual([claude.go, claude.others], [[], []], "Claude 只剩写意见那一行");
+});

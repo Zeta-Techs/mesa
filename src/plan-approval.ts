@@ -253,6 +253,17 @@ function planFromCall(name: string, raw: string): string | null {
   return null;
 }
 
+/**
+ * 卡上摆哪几项：开工（含认不出的）一项一行，不开工的（先不开工 / 结束计划模式）放底栏。
+ * blocked = 只讨论的目标 / 任务卡想法（PendingTerminal.discussOnly）：没有验收环，开工与结束计划模式都不给，只剩改方案与先不开工
+ */
+export function planCardChoices(choices: readonly PlanChoice[], blocked: boolean): { go: PlanChoice[]; others: PlanChoice[] } {
+  return {
+    go: blocked ? [] : choices.filter((c) => c.kind === "go" || c.kind === "other"),
+    others: choices.filter((c) => c.kind === "stay" || (c.kind === "leave" && !blocked)),
+  };
+}
+
 /** 意见写进改方案那一行：一行，不带控制字符（回车会把它交出去） */
 export function planFeedbackText(text: string): string {
   return text

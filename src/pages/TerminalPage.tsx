@@ -7182,6 +7182,10 @@ interface Tab {
   /** 「聊想法」只读模式标签：pty_spawn 注入只读/计划模式参数（不进持久化白名单） */
   readonly?: boolean;
   permission?: "discuss" | "write_tree";
+  /** 只讨论是约定、不是这段对话的一档权限（2026-10-26）：目标不验收的「只讨论」、任务卡「聊想法」、MCP 登录。
+      这类对话没有验收环，计划模式写完方案时方案卡不给开工、标签也不离开只讨论（要动手回项目页走开工 / 把目标改成可写）。
+      仅内存标记，不进重启持久化白名单 */
+  discussOnly?: boolean;
   /** 聊天权限徽标选的原生权限档（不进持久化白名单：完全访问不该跨重启自动带上）；null = 按本机设置 */
   permissionMode?: NativePermissionMode | null;
   /** 开工弹层的本次思考档覆盖（不进持久化白名单）：launch 经 pty_spawn
@@ -7611,7 +7615,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       list.push({
         cmd: "/fork",
         label: "分叉成新对话",
-        hint: "带着这段对话的摘要另开一段只讨论的对话",
+        hint: "带着这段对话的摘要另开一段对话（先出方案，不改文件）",
         run: () => void forkChat(tabId),
       });
       list.push({
@@ -7791,7 +7795,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     if (Object.keys(updates).length === 0) return;
     setTabs((prev) =>
       prev.map((x) =>
-        updates[x.id] && (x.permission === "discuss" || x.permissionMode !== updates[x.id])
+        updates[x.id] && !(x.permission === "discuss" && x.discussOnly) && (x.permission === "discuss" || x.permissionMode !== updates[x.id])
           ? { ...x, permission: "write_tree", permissionMode: updates[x.id] }
           : x,
       ),
@@ -8373,6 +8377,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       permission?: "discuss" | "write_tree";
       /** 原生权限档（pendingTerminal.permissionMode 透传；阅读会话用「请求批准」） */
       permissionMode?: NativePermissionMode | null;
+      /** 只讨论是约定（目标 / 聊想法 / MCP 登录）：方案卡不给开工（pendingTerminal.discussOnly 透传） */
+      discussOnly?: boolean;
       effort?: string | null;
       forkSource?: { agent: string; sessionId: string };
       /** 复用键（pendingTerminal.reuseKey 透传）：重复入口切标签而不是新开 */
@@ -8401,6 +8407,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         readonly: init?.readonly,
         permission: init?.permission,
         permissionMode: init?.permissionMode,
+        discussOnly: init?.discussOnly,
         effort: init?.effort,
         forkSource: init?.forkSource,
         reuseKey: init?.reuseKey,
@@ -8744,6 +8751,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         readonly: pt.readonly ?? pt.permission === "discuss",
         permission: pt.permission ?? (pt.readonly ? "discuss" : "write_tree"),
         permissionMode: pt.permissionMode ?? null,
+        discussOnly: pt.discussOnly,
         effort: pt.effort ?? null,
         reuseKey: pt.reuseKey,
         stepName: pt.stepName,
@@ -10377,12 +10385,13 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                           holdAutoPeek(t.id);
                           tabActionsRef.current.get(t.id)?.answerMenu(i, opts);
                         }}
+                        planStartBlocked={Boolean(t.discussOnly && t.permission === "discuss")}
                         onPlanLeft={(tier) =>
-                          // 方案确认上点了开工：CLI 已离开计划模式，标签不再是只讨论（徽标、接着聊的启动参数都跟上）。
-                          // tier = null 是回到这家 CLI 自己的设置（Kimi Approve、CodeBuddy Yes）
+                          // 方案确认上点了开工：CLI 已离开计划模式，标签不再是先出方案（徽标、接着聊的启动参数都跟上）。
+                          // tier = null 是回到这家 CLI 自己的设置（Kimi Approve、CodeBuddy Yes）；只讨论的目标 / 想法不动
                           setTabs((prev) =>
                             prev.map((x) =>
-                              x.id === t.id && x.permission === "discuss"
+                              x.id === t.id && x.permission === "discuss" && !x.discussOnly
                                 ? { ...x, permission: "write_tree", permissionMode: tier }
                                 : x,
                             ),

@@ -461,6 +461,7 @@ export default function TaskCardsSection({
       title: card.name,
       readonly: protect || undefined,
       permission: protect ? "discuss" : "write_tree",
+      discussOnly: protect || undefined,
       initialPrompt: protect
         ? `${opening}。注意：现在只讨论方案，不要修改/新建/删除任何文件，也不要在这里产出任何步骤产物（哪怕我点头）——聊到该动手的程度时，提醒我回项目页点「开工」或「跟 AI 商量一下」，那边会在独立工作区里执行。`
         : opening,

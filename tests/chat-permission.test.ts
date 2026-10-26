@@ -12,16 +12,16 @@ test("权限示例按项目类型取，四档都有一句", () => {
   for (const id of ["discuss", "ask", "auto", "full"] as const) assert.ok(general.outcomes[id]);
 });
 
-test("只讨论：Claude Code / CodeBuddy / Gemini / Kimi 是计划模式，写成「先出方案，你点头再…」；其余各家照旧", () => {
+test("先出方案（原「只讨论」）：Claude Code / CodeBuddy / Gemini / Kimi / Qwen / OpenCode 是计划模式，写成「方案你点头了再…」；其余各家照旧", () => {
   for (const agent of ["codebuddy", "gemini", "kimi", "qwen", "opencode"]) {
-    assert.equal(permissionExample("coding", agent).outcomes.discuss, "先出方案，你点头再跑", agent);
+    assert.equal(permissionExample("coding", agent).outcomes.discuss, "方案你点头了再跑", agent);
   }
   for (const agent of ["grok", "cursor"]) {
     assert.equal(permissionExample("coding", agent).outcomes.discuss, "不跑，告诉你怎么跑", agent);
   }
-  assert.equal(permissionExample("coding", "claude-code").outcomes.discuss, "先出方案，你点头再跑");
-  assert.equal(permissionExample("research", "claude-code").outcomes.discuss, "先出方案，你点头再改");
-  assert.equal(permissionExample("general", "claude-code").outcomes.discuss, "先出方案，你点头再建");
+  assert.equal(permissionExample("coding", "claude-code").outcomes.discuss, "方案你点头了再跑");
+  assert.equal(permissionExample("research", "claude-code").outcomes.discuss, "方案你点头了再改");
+  assert.equal(permissionExample("general", "claude-code").outcomes.discuss, "方案你点头了再建");
   assert.equal(permissionExample("coding", "codex").outcomes.discuss, "不跑，告诉你怎么跑");
   assert.equal(permissionExample("general", null).outcomes.discuss, "不建，告诉你怎么做");
   assert.equal(permissionExample("general", "claude-code").outcomes.auto, "直接建；删文件这类才问");

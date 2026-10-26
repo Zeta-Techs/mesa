@@ -62,7 +62,7 @@ import { escInterruptSafe } from "../agent-caps";
 import { midTurnSpec, queueSendHint, queuedNote, runningPlaceholder, stopTitle } from "../mid-turn-send";
 import type { TrustPrompt } from "../trust-prompt";
 import type { AskAction } from "../tui-ask";
-import { isPlanMenu, latestPlanText, planChoice, planFeedbackText, planMenuTitle } from "../plan-approval";
+import { isPlanMenu, latestPlanText, planCardChoices, planChoice, planFeedbackText, planMenuTitle } from "../plan-approval";
 import {
   approvalChoices,
   approvalPreview,
@@ -117,6 +117,7 @@ export default function ChatSurface({
   menuPrompt = null,
   onAnswerMenu,
   onPlanLeft,
+  planStartBlocked = false,
   onAnswerAsk,
   tuiPanel = false,
   tuiNotice = null,
@@ -216,6 +217,8 @@ export default function ChatSurface({
   onAnswerMenu?: (index: number, opts?: MenuAnswer) => void;
   /** 方案确认上点了开工（或结束计划模式）、键已按下：这段对话离开只讨论，按 tier 走（null = 这家 CLI 自己的设置） */
   onPlanLeft?: (tier: NativePermissionMode | null) => void;
+  /** 只讨论的目标 / 任务卡想法（discussOnly）：方案卡不给开工，只留「接着改方案」「先不开工」 */
+  planStartBlocked?: boolean;
   /** 答 Claude 的提问表单（menuPrompt.ask，tui-ask.ts） */
   onAnswerAsk?: (action: AskAction) => void;
   /** 终端里开着一个只能在终端看的面板（/cost、/usage 的 Settings 面板等，tui-panel.ts） */
@@ -594,7 +597,9 @@ export default function ChatSurface({
     return {
       key: `plan:${menu.options.join("|")}`,
       title: planMenuTitle(menu, Boolean(text)),
-      hint: cliNewer
+      hint: planStartBlocked
+        ? "这是只讨论的目标 / 想法，这里不开工：要动手回项目页点「开工」，或把目标改成要验收的，在那边做"
+        : cliNewer
         ? "这版 CLI Mesa 还没核对过：选项按终端原文认，按不对就点「露出终端」在终端里选"
         : "开工后这段对话接着按选的那一档走，不用重开；也可以在终端里答，哪边先答算哪边",
       options: [],
@@ -603,8 +608,8 @@ export default function ChatSurface({
         fromScreen: !known && Boolean(text),
         path: file ? (file.split(/[\\/]/).pop() ?? file) : null,
         cwd,
-        go: planChoices
-          .filter((c) => c.kind === "go" || c.kind === "other")
+        // 只讨论的目标 / 想法：开工、结束计划模式都不给（没有验收环，开工就直接改项目文件）
+        go: planCardChoices(planChoices, planStartBlocked).go
           .map((c) => ({
             label: c.label,
             description: c.description,
@@ -612,8 +617,7 @@ export default function ChatSurface({
             title: `在终端菜单里选「${c.original}」`,
             onClick: pick(c),
           })),
-        others: planChoices
-          .filter((c) => c.kind === "stay" || c.kind === "leave")
+        others: planCardChoices(planChoices, planStartBlocked).others
           .map((c) => ({ label: c.label, title: `${c.description}（终端里的「${c.original}」）`, onClick: pick(c) })),
         onRevise: planRevise
           ? (feedback) => {

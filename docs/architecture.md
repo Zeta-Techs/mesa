@@ -457,6 +457,10 @@ MCP 页（第八页，⌘6）：Ccode 自有统一清单（`<config>/ccode/mcp-s
 
 ## 10. 决策记录
 
+### 2026-10-26 · 聊天权限第一档改名「先出方案」；只讨论的目标 / 想法里不给开工
+
+用户问「只讨论」要不要改名，按推荐拍板：聊天权限菜单第一档改叫「先出方案」（id 仍 `discuss`，菜单说法「方案你点头了再…」，本机设置注记同改）——六家的这一档是计划模式，方案写好点头就在同一段对话里开工，「只讨论」说不准了；Codex / Grok 这一档虽只读，也确实只出方案。「只讨论」留给项目页目标权限与任务卡「聊想法」（以及 MCP 登录），那是只聊不做、没有验收环的约定：新增 `PendingTerminal.discussOnly`（goal-run 不验收的目标、TaskCardsSection 想法保护、StepFlow MCP 登录置上，Tab 透传、只进内存），这类标签方案卡不给开工与结束计划模式（`planCardChoices`），`onPlanLeft` 与 Claude 会话文件的模式跟随都不把它改成可写——之前加的「按方案开工」会在这里绕过验收直接改项目文件。常用词对照新增「先出方案 / 只讨论」一行写明区别。
+
 ### 2026-10-26 · Qwen / OpenCode 接上只讨论（计划模式），方案确认卡扩到六家
 
 用户拍板接上。实测（同日假网关 TRIGGER_PLAN）：Qwen 0.25.3 `--approval-mode plan` 是硬保护（改状态的命令被拦），`exit_plan_mode(plan)` 弹「Would you like to proceed?」四项；OpenCode 1.19.3 `--agent plan` 自带权限只禁改文件、bash 照跑，plan_exit 要实验开关。改法：① `readonly_args` 填上两家，`agents::readonly_min_version`（Qwen 0.25.3、OpenCode 1.19.3）在启动与检测（`readonly_supported_at`，徽标置灰）两处把关，查不到版本当不支持；② `readonly_launch_env`：OpenCode 只讨论加 `OPENCODE_EXPERIMENTAL_PLAN_MODE=1`，并把 agent.plan.permission（`"*":"ask"` 兜底、只读几样放行、edit 只放行方案文件）并进内联配置——不写用户配置，pty_spawn 在拿到只读参数后调；③ Qwen 的结束计划旁路只有允许 / 拒绝两键，`channelOwnsMenu` 遇到结束计划工具让给屏上菜单，ChatSurface 方案卡排在旁路审批卡前；④ `tui-menu colorMarkedMenu` 认 OpenCode 那种没有 ❯、当前项只靠序号颜色的菜单（要有按键提示、颜色恰好一行不同；两项时看夹在中间的说明行定「没选中」的颜色）；⑤ 选项表加 Qwen「restore previous mode (<模式>)」（写「回到原来的权限」，和手动批准那项区分）与 OpenCode「Yes / Switch to build agent」；⑥ e2e 计划导出 `discuss_env`，chat-capture 只讨论档用它。

@@ -1025,7 +1025,7 @@ fn pty_spawn_sync(
     // 恢复和新建必须兑现同一权限；能力不足不能只保留 discuss 标签。
     let plan_args = if discuss {
         let args = agents::readonly_launch_args(&agent_id, &plan.args).ok_or(
-            "此 Agent 不支持只讨论启动约束（或本机版本太旧），请换支持只读/计划模式的 Agent、更新 CLI，或明确选择可写权限",
+            "此 Agent 不支持只读 / 计划模式启动（先出方案 / 只讨论都要它；或本机版本太旧），请换支持的 Agent、更新 CLI，或明确选择可写权限",
         )?;
         agents::readonly_launch_env(&agent_id, &mut plan.env);
         args
