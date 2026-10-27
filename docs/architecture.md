@@ -458,6 +458,13 @@ MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：
 
 ## 10. 决策记录
 
+### 2026-10-27 · 别家 Agent 第一次启动：Gemini 认证方式卡、Cursor 登录卡
+
+另外八家空 HOME + Mesa 启动参数逐家实录：Codex / Qwen / OpenCode / Grok 无首次设置，Kimi / CodeBuddy 只有信任文件夹（已有卡）。
+Gemini 没选认证方式时先问认证、再要把密钥存进系统钥匙串（输密钥那屏原先被认成「面板」）；Cursor 没登录停在「Press any key to log in」。
+用户拍板按推荐做：Gemini 在终端里起之前拦下，聊天里出「设成 API Key 并启动」卡，点了**只**改 settings.json 的认证方式（先备份）再启动——
+「CLI 配置目录只读」新增这一项例外（safety.md 读写例外第 8 条、AGENTS.md）；输密钥屏与 Cursor 登录屏改用专门的卡（terminal.md「终端在等你」条）。
+
 ### 2026-10-27 · 从访达打开时读一次登录 shell 的环境，凭据不带
 
 排查打包版问题时实测：从访达打开的 Mesa 只有 launchd 给的短 PATH、没有 LANG，`.zshrc` 里的 conda、Homebrew 都没有——安装版 python3

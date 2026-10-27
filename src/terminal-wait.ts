@@ -231,3 +231,40 @@ export function launchFailureHint(lines: readonly string[], code: number): strin
   if (/EACCES|permission denied/i.test(text)) return "没有权限运行这个程序。";
   return null;
 }
+
+// ===== 认得出的首次启动屏：Gemini 要存密钥、Cursor 要登录（2026-10-27 空 HOME 实录，样本 tests/fixtures/terminal-wait/） =====
+
+/** 后端拦 Gemini 认证方式时话里带的那一句（agents.rs GEMINI_AUTH_MARK 同字）：聊天层据此出「设成 API Key 并启动」卡 */
+export const GEMINI_AUTH_MARK = "把认证方式设成 API Key";
+
+/** 启动被拦下、聊天层能给出处理办法的那类（目前只有 Gemini 认证方式） */
+export interface LaunchBlock {
+  kind: "gemini-auth";
+  message: string;
+}
+
+export function launchBlockOf(error: string): LaunchBlock | null {
+  return error.includes(GEMINI_AUTH_MARK) ? { kind: "gemini-auth", message: error.replace(/^Error:\s*/, "") } : null;
+}
+
+export type SpecialScreen =
+  /** Gemini「Enter Gemini API Key」：回车会把密钥存进系统钥匙串（原先被当成「面板」） */
+  | { kind: "gemini-key-store" }
+  /** Cursor 没登录：「Press any key to log in」或已经给出登录链接 */
+  | { kind: "cursor-login"; url: string | null };
+
+export function specialScreenOf(raw: readonly string[], agent: string | null | undefined): SpecialScreen | null {
+  const lines = raw.map(unbox);
+  const has = (re: RegExp) => lines.some((l) => re.test(l));
+  if (agent === "gemini" && has(/^\s*Enter Gemini API Key\s*$/) && has(/system keychain/i)) {
+    return { kind: "gemini-key-store" };
+  }
+  if (agent === "cursor") {
+    if (has(/click this link to log in/i) || has(/Signing in with the browser/i)) {
+      const text = lines.map((l) => l.trim()).filter(Boolean);
+      return { kind: "cursor-login", url: linksOf(text)[0] ?? null };
+    }
+    if (has(/Press any key to log in/i)) return { kind: "cursor-login", url: null };
+  }
+  return null;
+}

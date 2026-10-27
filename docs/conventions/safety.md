@@ -194,6 +194,11 @@
      （目录 0700、文件 0600、同会话留最近 3 份；备份失败即中止、写失败即删备份与临时文件）；文件最近 60 秒有写入拒绝，写完前复核源文件
      长度与 mtime 没变；同目录 `.ccode-slim-<uuid>.tmp`（0600）+ `sync_all` + `storage::replace` 原子替换，并把 mtime 还原成原值；
      同一时刻只跑一次；Mesa 自己的终端标签里正在运行该会话时前端拒绝。只检测不写盘的 `session_slim_inspect` 对小于 8 MB 的文件免扫描。
+  8. **Gemini 认证方式设成 API Key**（2026-10-27 用户拍板，`global_config::gemini_use_api_key_auth`）：Gemini 还没选认证方式（刚装好）或选的不是
+     API Key 时，在终端里起 Gemini 前拦下（`agents::gemini_interactive_blocker`），聊天里出「设成 API Key 并启动」卡，用户点了才写。
+     **只改** `~/.gemini/settings.json`（或连接上的 `GEMINI_CLI_HOME`）的 `security.auth.selectedType`，其余字段与模型名单一概不动；
+     与「设为全局默认」同一把锁、同一套批次备份（gemini 备份目录，连接页「恢复备份」能回退）。不写 `.env`、不碰系统钥匙串。
+     无头运行（-p）没有首次认证屏，仍按原口径只在带地址时拦。
      测试走 `*_at(home, …)` 注入假 home，真实数据干跑用被忽略的 `real_data_dry_run`（环境变量 `CCODE_SLIM_DRYRUN_FILE` 指向副本）。
   8. **卸载 Mesa**（`uninstall.rs`：设置 → 数据与存储。两次确认，第二次须输入「卸载」）。
      只把 Mesa 独占目录移入回收站：平台配置目录 `ccode/`、主目录 `~/ccode/`（含用户自定义过的工作副本家目录 `<所选>/ccode`，取 `ccode_home::all_roots`）、本机数据目录

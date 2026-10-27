@@ -1000,6 +1000,10 @@ fn pty_spawn_sync(
         Some(_) => None,
         None => initial_prompt.as_deref(),
     };
+    // Gemini 在终端里第一次起：没选过认证方式时先问认证、再要存钥匙串——拦下来，聊天层出「设成 API Key 并启动」卡
+    if let Some(msg) = agents::gemini_interactive_blocker(&profile, key.is_some()) {
+        return Err(msg);
+    }
     let mut plan = agents::launch_plan_with_prompt(&profile, key, model.as_deref(), prompt)?;
     // 口径 C：原始文献（PDF/导入）允许直写主仓 papers/——从步骤工作区启动的 codex
     // 把该目录预授权进 workspace-write 沙箱（sandbox_workspace_write.writable_roots），

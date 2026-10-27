@@ -729,7 +729,7 @@ model-vendors.ts           # 获取模型下拉按厂商分组折叠（大网关
   terminal-wait.ts           # 「终端在等你」通用卡（2026-10-27，取代自动弹出底部终端）：waitScreenOf 摘终端那一块（去字符画 / 方框竖边、最多 16 行、
                              # 数序号、接折行网址、认要输入文字）、waitKeyBytes 卡上按键的字节；Claude Code 首次启动配色 / 安全须知两屏认法
                              # （claudeFirstRunStep、claudeThemeTarget：Mac 选 Auto，Windows 按主题明暗）；一启动就退出的最后几行与原因（exitTail /
-                             # launchFailureHint）。卡片画在 ChatDecisionCard ScreenCard，扫屏与替人按键在 TerminalPage（tests/terminal-wait.test.ts，样本 tests/fixtures/terminal-wait/）
+                             # launchFailureHint）；Gemini 存密钥屏 / Cursor 登录屏（specialScreenOf）、Gemini 认证方式被拦（launchBlockOf，GEMINI_AUTH_MARK 与 agents.rs 同字）。卡片画在 ChatDecisionCard ScreenCard，扫屏与替人按键在 TerminalPage（tests/terminal-wait.test.ts，样本 tests/fixtures/terminal-wait/）
   sidebar-chats.ts           # 侧栏项目树挂对话纯逻辑（2026-10-23）：每个文件夹列哪几段（projectChats / scratchChats：按最近活动，
                              # 归档 / 内部 / 源文件不在的 / 没起名也没说过话的空对话不列）、随手聊多少天没动的（staleScratchChats，节头 ⋯ 一键归档）、对话与文件夹的运行状态（chatDot / folderDot / scratchDot：run-caret 三态，文件夹取最要紧的）、
                              # 正在看的标签归哪个文件夹（currentFolderKey，工作树归主仓）、展开默认（folderOpen）、短标题去「MMDD|类型|」、挂在课题下再去开头重复的课题名

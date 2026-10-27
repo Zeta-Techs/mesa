@@ -603,6 +603,7 @@ pub fn run() {
             client_open::client_open_plan,
             client_open::client_open_launch,
             global_config::restore_global_backup,
+            global_config::gemini_use_api_key_auth,
             global_config::has_global_backup,
             global_config::has_original_backup,
             global_config::restore_original_backup,

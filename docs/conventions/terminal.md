@@ -256,6 +256,9 @@
   **Claude Code 首次启动**：配色屏挪到「Auto (match terminal)」（Windows 的 ConPTY 吞底色查询，按 Mesa 主题选 Light / Dark mode），
   读屏核对高亮再回车；安全须知回车；聊天里留一行说明、原文可展开。CLI 比核对过的新、或每屏试三次没成，不替人按，交给通用卡。
   信任文件夹仍走信任卡、由人点。不写 `~/.claude.json` 跳过引导（配置目录只读）。2.1.308 实录样本在 `tests/fixtures/terminal-wait/`。
+  **认得出的首次启动屏**（`specialScreenOf`，先于菜单 / 面板 / 通用卡）：Gemini「Enter Gemini API Key … system keychain」出「Gemini 要把密钥存进系统钥匙串」卡
+  （取消 = Esc，继续 = 回车；原先被认成面板）；Cursor「Press any key to log in」/ 登录链接出「Cursor 要先登录」卡（去浏览器登录 = 回车，有链接时直接打开，另有「去连接页」）。
+  **Gemini 认证方式被拦**（`launchBlockOf` 认后端话里的 `GEMINI_AUTH_MARK`，两端同字、Rust 测试钉住）：聊天里出「设成 API Key 并启动」卡，见 safety.md 读写例外第 8 条。
   **一启动就退出**（接上不到 30 秒、退出码 > 0）：退出横幅写进 xterm 之前读屏，聊天里出「没能启动」卡（最后 8 行定格、`launchFailureHint`
   认 node 找不到 / 127 / 权限），按钮「重新启动」「知道了」。
 - **读屏认出的菜单也是「等你确认」（2026-10-18 用户：终端里等你确认时 Mesa 不提醒，要做就九家都做）**：TerminalView 上报

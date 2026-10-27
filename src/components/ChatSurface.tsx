@@ -62,7 +62,15 @@ import { cwdChipLabel } from "../terminal-welcome";
 import { escInterruptSafe } from "../agent-caps";
 import { midTurnSpec, queueSendHint, queuedNote, runningPlaceholder, stopTitle } from "../mid-turn-send";
 import type { TrustPrompt } from "../trust-prompt";
-import { launchFailureHint, type FirstRunNote, type LaunchFailure, type WaitKey, type WaitScreen } from "../terminal-wait";
+import {
+  launchFailureHint,
+  type FirstRunNote,
+  type LaunchBlock,
+  type LaunchFailure,
+  type SpecialScreen,
+  type WaitKey,
+  type WaitScreen,
+} from "../terminal-wait";
 import type { AskAction } from "../tui-ask";
 import { isPlanMenu, latestPlanText, planCardChoices, planChoice, planFeedbackText, planMenuTitle } from "../plan-approval";
 import {
@@ -149,6 +157,10 @@ export default function ChatSurface({
   launchFailure = null,
   onLaunchAgain,
   onDismissLaunchFailure,
+  launchBlock = null,
+  onFixGeminiAuth,
+  onDismissLaunchBlock,
+  specialScreen = null,
   metaSlots = null,
 }: {
   messages: ChatMessageDto[];
@@ -282,6 +294,12 @@ export default function ChatSurface({
   launchFailure?: LaunchFailure | null;
   onLaunchAgain?: () => void;
   onDismissLaunchFailure?: () => void;
+  /** 启动被拦、聊天层能给出处理办法（Gemini 还没把认证方式设成 API Key） */
+  launchBlock?: LaunchBlock | null;
+  onFixGeminiAuth?: () => void;
+  onDismissLaunchBlock?: () => void;
+  /** 认得出的首次启动屏（Gemini 要存密钥、Cursor 要登录，terminal-wait.ts specialScreenOf） */
+  specialScreen?: SpecialScreen | null;
   /**
    * 底部状态栏（聊天变体）留给「权限 · 项目 | 模型」的左右两格（TerminalStatusBar chatMetaRef）。
    * 两格都在、输入框不在居中空态时挂进去（输入框下面只有一行，2026-10-23）；否则画在输入框下面
@@ -769,9 +787,59 @@ export default function ChatSurface({
           },
         }
       : null;
+  // Gemini 还没选认证方式：启动前就拦下了，卡上一键只改认证方式（先备份）再启动（2026-10-27 用户拍板）
+  const blockDecision: ChatDecision | null =
+    launchBlock?.kind === "gemini-auth" && !running
+      ? {
+          key: "launch-block:gemini-auth",
+          title: "Gemini 还要设一下认证方式",
+          detail: launchBlock.message,
+          hint: "只改 ~/.gemini/settings.json 里认证方式这一项，改之前先备份，在连接页「恢复备份」能改回去；密钥照旧只在启动时交给它，不存进钥匙串",
+          options: [
+            ...(onDismissLaunchBlock ? [{ label: "先不用", onClick: onDismissLaunchBlock }] : []),
+            ...(onFixGeminiAuth
+              ? [{ label: "设成 API Key 并启动", primary: true, title: "改 ~/.gemini/settings.json 的认证方式（先备份），然后启动 Gemini", onClick: onFixGeminiAuth }]
+              : []),
+          ],
+        }
+      : null;
+  // 认得出的首次启动屏：Gemini 要把密钥存进钥匙串、Cursor 要先登录
+  const specialDecision: ChatDecision | null =
+    !running || !specialScreen
+      ? null
+      : specialScreen.kind === "gemini-key-store"
+        ? {
+            key: "special:gemini-key-store",
+            title: "Gemini 要把密钥存进系统钥匙串",
+            detail:
+              "Gemini 在问你要不要把这条连接的密钥存进系统钥匙串。Mesa 平时只在启动时把密钥交给它、不另外存；继续的话，以后在终端里单独运行 Gemini 也会用这把密钥。",
+            hint: "不想存就点「取消」，再到连接页把这条连接「设为全局默认」：Gemini 改成直接用 Mesa 启动时交给它的密钥",
+            options: [
+              { label: "取消", title: "往终端按 Esc", onClick: () => onWaitKey?.("esc") },
+              { label: "存进钥匙串并继续", primary: true, title: "往终端按回车", onClick: () => onWaitKey?.("enter") },
+            ],
+          }
+        : {
+            key: `special:cursor-login:${specialScreen.url ?? ""}`,
+            title: "Cursor 要先登录",
+            detail: specialScreen.url
+              ? "已经给出登录链接：在浏览器里登录 Cursor 账号，登录好这张卡会自己收起。"
+              : "Cursor CLI 只用 Cursor 自己的账号，第一次要在浏览器里登录一次。",
+            hint: "也可以到「连接」页用官方账号登录 Cursor",
+            options: [
+              ...(onOpenProfiles ? [{ label: "去连接页", onClick: onOpenProfiles }] : []),
+              specialScreen.url
+                ? { label: "在浏览器打开登录页", primary: true, title: specialScreen.url, onClick: () => onOpenLink?.(specialScreen.url!) }
+                : { label: "去浏览器登录", primary: true, title: "往终端按回车，Cursor 会打开浏览器", onClick: () => onWaitKey?.("enter") },
+            ],
+          };
   const decision: ChatDecision | null =
     failureDecision
       ? failureDecision
+      : blockDecision
+      ? blockDecision
+      : specialDecision
+      ? specialDecision
       : // 方案确认排在旁路审批前：Qwen 的结束计划旁路只给「允许 / 拒绝」，屏上那张有几种开工法
     planMenu && !trustPrompt
       ? planDecision(planMenu)

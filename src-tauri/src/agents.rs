@@ -841,7 +841,17 @@ fn claude_settings_override(
 /// 不替用户改配置文件——拦下来说清楚怎么改（「设为全局默认」会写 selectedType 并先备份）。
 fn gemini_auth_blocker(profile: &Profile) -> Option<String> {
     let has_base = profile.base_url.as_deref().is_some_and(|u| !u.trim().is_empty());
-    gemini_auth_blocker_for(gemini_selected_auth_type(profile).as_deref(), has_base)
+    gemini_auth_blocker_for(gemini_selected_auth_type(profile).as_deref(), has_base, false)
+}
+
+/// 在终端里起 Gemini（pty_spawn）时的拦法：没选过认证方式也拦，不管带不带地址——交互界面第一次进门先问认证、
+/// 再要把密钥存进系统钥匙串（2026-10-27 空 HOME 实录）。无头运行（-p）没有这两屏，环境变量兜底就够，仍按 launch_plan 的口径
+pub(crate) fn gemini_interactive_blocker(profile: &Profile, has_key: bool) -> Option<String> {
+    if profile.agent != "gemini" || (!has_key && profile.base_url.is_none()) {
+        return None;
+    }
+    let has_base = profile.base_url.as_deref().is_some_and(|u| !u.trim().is_empty());
+    gemini_auth_blocker_for(gemini_selected_auth_type(profile).as_deref(), has_base, true)
 }
 
 /// 用户 Gemini settings 的 security.auth.selectedType（只读）；单测不读本机（TEST_GEMINI_AUTH 注入）
@@ -853,14 +863,7 @@ fn gemini_selected_auth_type(profile: &Profile) -> Option<String> {
     }
     #[cfg(not(test))]
     {
-    let dir = profile
-        .extra_env
-        .get("GEMINI_CLI_HOME")
-        .cloned()
-        .or_else(|| std::env::var("GEMINI_CLI_HOME").ok())
-        .filter(|d| !d.trim().is_empty())
-        .map(PathBuf::from)
-        .or_else(dirs::home_dir)?;
+    let dir = gemini_home(profile)?;
     let selected = std::fs::read_to_string(dir.join(".gemini").join("settings.json"))
         .ok()
         .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
@@ -873,19 +876,41 @@ fn gemini_selected_auth_type(profile: &Profile) -> Option<String> {
     }
 }
 
-fn gemini_auth_blocker_for(selected: Option<&str>, has_base: bool) -> Option<String> {
+/// Gemini 读 settings.json 的目录：连接上的 GEMINI_CLI_HOME > 进程环境 > 家目录（只读判定与聊天卡写入同一处）
+pub(crate) fn gemini_home(profile: &Profile) -> Option<PathBuf> {
+    profile
+        .extra_env
+        .get("GEMINI_CLI_HOME")
+        .cloned()
+        .or_else(|| std::env::var("GEMINI_CLI_HOME").ok())
+        .filter(|d| !d.trim().is_empty())
+        .map(PathBuf::from)
+        .or_else(dirs::home_dir)
+}
+
+/// 拦下的话里都带这一句：聊天层认它出「设成 API Key 并启动」卡（src/terminal-wait.ts GEMINI_AUTH_MARK 同字）
+pub(crate) const GEMINI_AUTH_MARK: &str = "把认证方式设成 API Key";
+
+/// interactive = 在终端里起（gemini_interactive_blocker）：没选过认证方式不带地址也拦。聊天层把这段话认成一张卡，
+/// 点了只设认证方式（global_config::gemini_use_api_key_auth）
+fn gemini_auth_blocker_for(selected: Option<&str>, has_base: bool, interactive: bool) -> Option<String> {
+    let tail = format!(
+        "{GEMINI_AUTH_MARK}就能直接用这条连接：在聊天里点「设成 API Key 并启动」，或在这条连接上点「设为全局默认」（都会先备份 ~/.gemini/settings.json）。"
+    );
     match selected {
         Some("gemini-api-key") => None,
-        None if !has_base => None,
-        other => {
+        None if !has_base && !interactive => None,
+        None => Some(format!(
+            "Gemini CLI 还没选认证方式（刚装好时是这样），会先问你用哪种认证、再要把密钥存进系统钥匙串。{tail}"
+        )),
+        Some(other) => {
             let now = match other {
-                Some("oauth-personal") => "用 Google 账号登录",
-                Some("vertex-ai") => "用 Vertex AI",
-                Some(_) => "用别的认证方式",
-                None => "没有选认证方式",
+                "oauth-personal" => "用 Google 账号登录",
+                "vertex-ai" => "用 Vertex AI",
+                _ => "用别的认证方式",
             };
             Some(format!(
-                "Gemini CLI 现在{now}，会无视这条连接的密钥和地址，请求到不了这个网关。先把 Gemini 的认证方式换成 API Key：在这条连接上点「设为全局默认」（会先备份 ~/.gemini/settings.json），或在终端运行 gemini、输入 /auth 选「Use Gemini API Key」。"
+                "Gemini CLI 现在{now}，会无视这条连接的密钥和地址，请求到不了网关。{tail}"
             ))
         }
     }
@@ -4142,10 +4167,18 @@ mod tests {
     #[test]
     fn gemini_api_binding_refuses_when_cli_auth_ignores_env() {
         // 端到端实测：oauth-personal 时 Mesa 注入的密钥和地址全被无视；没选认证方式但带地址时 CLI 报 Invalid auth
-        assert!(gemini_auth_blocker_for(Some("oauth-personal"), true).unwrap().contains("Google 账号"));
-        assert!(gemini_auth_blocker_for(None, true).is_some());
-        assert!(gemini_auth_blocker_for(Some("gemini-api-key"), true).is_none());
-        assert!(gemini_auth_blocker_for(None, false).is_none(), "官方 Gemini API（不带地址）靠环境变量就行");
+        assert!(gemini_auth_blocker_for(Some("oauth-personal"), true, false).unwrap().contains("Google 账号"));
+        assert!(gemini_auth_blocker_for(None, true, false).is_some());
+        assert!(gemini_auth_blocker_for(Some("gemini-api-key"), true, true).is_none());
+        // 无头运行不带地址：环境变量兜底就够，不拦
+        assert!(gemini_auth_blocker_for(None, false, false).is_none(), "官方 Gemini API（不带地址）无头靠环境变量就行");
+        // 在终端里起、刚装好没选过认证方式：不带地址也拦（第一次进门先问认证、再要存钥匙串，2026-10-27 空 HOME 实录）
+        let fresh = gemini_auth_blocker_for(None, false, true).unwrap();
+        assert!(fresh.contains("还没选认证方式") && fresh.contains(GEMINI_AUTH_MARK));
+        assert!(gemini_auth_blocker_for(Some("oauth-personal"), false, true).unwrap().contains(GEMINI_AUTH_MARK));
+        // 前端按这句认卡（src/terminal-wait.ts GEMINI_AUTH_MARK）：两边同字
+        let ts = include_str!("../../src/terminal-wait.ts");
+        assert!(ts.contains(&format!("GEMINI_AUTH_MARK = \"{GEMINI_AUTH_MARK}\"")));
         let p = profile("gemini", Some("https://gw.example"));
         TEST_GEMINI_AUTH.with(|k| *k.borrow_mut() = Some("oauth-personal".into()));
         let err = launch_plan(&p, Some("sk".into()), Some("m")).unwrap_err();

@@ -198,10 +198,14 @@ import {
   claudeThemeLabel,
   claudeThemeTarget,
   exitTail,
+  launchBlockOf,
+  specialScreenOf,
   waitKeyBytes,
   waitScreenOf,
   type FirstRunNote,
+  type LaunchBlock,
   type LaunchFailure,
+  type SpecialScreen,
   type WaitKey,
   type WaitScreen,
 } from "../terminal-wait";
@@ -526,6 +530,9 @@ export interface FocusTabActions {
   /** 「没能启动」卡：按原来的设置再启动一次（接得回上次的会话就接） */
   launchAgain: () => void;
   dismissLaunchFailure: () => void;
+  /** Gemini 卡：只把认证方式设成 API Key（先备份）再启动 */
+  fixGeminiAuth: () => void;
+  dismissLaunchBlock: () => void;
 }
 
 async function resolveLaunchCwdForCustom(
@@ -639,6 +646,10 @@ export interface SessionLinkState {
   firstRunNote: FirstRunNote | null;
   /** Agent 一启动就退出：退出码与终端最后几行 */
   launchFailure: LaunchFailure | null;
+  /** 启动被拦、聊天层能给出处理办法（Gemini 认证方式） */
+  launchBlock: LaunchBlock | null;
+  /** 认得出的首次启动屏（Gemini 要存密钥、Cursor 要登录） */
+  specialScreen: SpecialScreen | null;
   /** 连接出问题（额度 / 限流 / 钥匙 / 服务 / 模型；conn-issue.ts 扫终端画面认出）+ 可换的同家连接 */
   connIssue: ConnIssueState | null;
   /** Grok 用 API 连接启动，却卡在续期本地已过期的 xAI 官方登录上（grok_login.rs），消息发不出去 */
@@ -2497,6 +2508,7 @@ const TerminalView = memo(function TerminalView({
       !tuiPanelRef.current &&
       !tuiNoticeRef.current &&
       !waitScreenRef.current &&
+      !specialScreenRef.current &&
       !waitWatchRef.current &&
       Date.now() > menuWatchUntilRef.current &&
       !turnLive
@@ -2525,6 +2537,20 @@ const TerminalView = memo(function TerminalView({
     menuSyncWaitsRef.current = 0;
     const lines = screenLines();
     if (handleClaudeFirstRun(lines)) return;
+    const special = specialScreenOf(lines, launchAgentRef.current);
+    setSpecialScreenState(special);
+    if (special) {
+      // 认得出的屏有专门的卡：不当面板 / 通用卡（Gemini 输密钥那屏原先被认成「面板」）
+      setTuiNoticeLines(null);
+      setPanelOpen(false);
+      setWaitScreenState(null);
+      setPromptIdle(false);
+      if (menuPromptRef.current) {
+        menuPromptRef.current = null;
+        setMenuPrompt(null);
+      }
+      return;
+    }
     const found = parseScreenMenu(lines);
     // 用户自己发的多行编号清单回显在屏上（「❯ 1. … / 2. …」）也是这个形状：选项全在刚发的话里就不算
     const echoed = found ? menuEchoesText(found, lastSentRef.current) : false;
@@ -2609,6 +2635,28 @@ const TerminalView = memo(function TerminalView({
   const [firstRunNote, setFirstRunNote] = useState<FirstRunNote | null>(null);
   // Agent 一启动就退出（接上不到 30 秒、非零退出码）：聊天里出「没能启动」卡，原先只在终端里留一行红字、对话区空着
   const [launchFailure, setLaunchFailure] = useState<LaunchFailure | null>(null);
+  // 启动被拦、聊天层能给出处理办法（Gemini 还没把认证方式设成 API Key）：聊天里出带按钮的卡
+  const [launchBlock, setLaunchBlock] = useState<LaunchBlock | null>(null);
+  // 认得出的首次启动屏（Gemini 要存密钥、Cursor 要登录，terminal-wait.ts specialScreenOf）：专门的卡
+  const [specialScreen, setSpecialScreen] = useState<SpecialScreen | null>(null);
+  const specialScreenRef = useRef<SpecialScreen | null>(null);
+  function setSpecialScreenState(next: SpecialScreen | null) {
+    if (JSON.stringify(specialScreenRef.current) === JSON.stringify(next)) return;
+    specialScreenRef.current = next;
+    setSpecialScreen(next);
+  }
+  /** Gemini 卡「设成 API Key 并启动」：只改认证方式（后端先备份），再按原来的设置启动 */
+  async function fixGeminiAuth() {
+    try {
+      await invoke("gemini_use_api_key_auth", { profileId });
+    } catch (e) {
+      setLaunchBlock((b) => (b ? { ...b, message: `没能改认证方式：${String(e)}` } : b));
+      return;
+    }
+    setLaunchBlock(null);
+    setError(null);
+    void launch(lastResumeRef.current ?? undefined);
+  }
   const firstRunRef = useRef<{ busyUntil: number; tries: Record<string, number> }>({ busyUntil: 0, tries: {} });
   function handleClaudeFirstRun(lines: string[]): boolean {
     if (launchAgentRef.current !== "claude-code" || cliNewerRef.current) return false;
@@ -3171,6 +3219,8 @@ const TerminalView = memo(function TerminalView({
       waitScreen,
       firstRunNote,
       launchFailure,
+      launchBlock,
+      specialScreen,
       connIssue,
       grokLoginStuck,
       liveReply,
@@ -3203,6 +3253,8 @@ const TerminalView = memo(function TerminalView({
     waitScreen,
     firstRunNote,
     launchFailure,
+    launchBlock,
+    specialScreen,
     connIssue,
     grokLoginStuck,
     liveReply,
@@ -4201,7 +4253,9 @@ const TerminalView = memo(function TerminalView({
       firstRunRef.current = { busyUntil: 0, tries: {} };
       setFirstRunNote(null);
       setWaitScreenState(null);
+      setSpecialScreenState(null);
       setLaunchFailure(null);
+      setLaunchBlock(null);
       // 换连接 / 重开接回后，xterm 里还留着上一个进程画的错误：记作已看过，不再提示
       connBaselineRef.current = connIssueCounts(detectConnIssues(screenLines(), agentId));
     }
@@ -4417,6 +4471,7 @@ const TerminalView = memo(function TerminalView({
     setPanelOpen(false);
     setTuiNoticeLines(null);
     setWaitScreenState(null);
+    setSpecialScreenState(null);
     // 一启动就退出：xterm 解析是异步的，排在退出横幅前面读屏，读到的是进程最后画的样子
     if (kind === "agent" && code > 0 && Date.now() - ptyAttachedAtRef.current < 30_000) {
       termRef.current?.write("", () => setLaunchFailure({ code, lines: exitTail(screenLines()) }));
@@ -5651,6 +5706,7 @@ const TerminalView = memo(function TerminalView({
       setShellActive(false);
       setActivePtyId(null);
       setError(String(e));
+      setLaunchBlock(launchBlockOf(String(e)));
       return null;
     } finally {
       interactiveLaunchLocks.delete(lockKey);
@@ -6172,6 +6228,8 @@ const TerminalView = memo(function TerminalView({
     pressWaitKey: () => {},
     launchAgain: () => {},
     dismissLaunchFailure: () => {},
+    fixGeminiAuth: () => {},
+    dismissLaunchBlock: () => {},
   });
   actionsRef.current = {
     stop: () => void stop(),
@@ -6244,6 +6302,8 @@ const TerminalView = memo(function TerminalView({
       void launch(lastResumeRef.current ?? undefined);
     },
     dismissLaunchFailure: () => setLaunchFailure(null),
+    fixGeminiAuth: () => void fixGeminiAuth(),
+    dismissLaunchBlock: () => setLaunchBlock(null),
   };
   useEffect(() => {
     onActions?.(tabId, {
@@ -6284,6 +6344,8 @@ const TerminalView = memo(function TerminalView({
       pressWaitKey: (k) => actionsRef.current.pressWaitKey(k),
       launchAgain: () => actionsRef.current.launchAgain(),
       dismissLaunchFailure: () => actionsRef.current.dismissLaunchFailure(),
+      fixGeminiAuth: () => actionsRef.current.fixGeminiAuth(),
+      dismissLaunchBlock: () => actionsRef.current.dismissLaunchBlock(),
     });
   }, [onActions, tabId]);
 
@@ -8427,6 +8489,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         cur.waitScreen === s.waitScreen &&
         cur.firstRunNote === s.firstRunNote &&
         cur.launchFailure === s.launchFailure &&
+        cur.launchBlock === s.launchBlock &&
+        cur.specialScreen === s.specialScreen &&
         cur.connIssue === s.connIssue &&
         cur.grokLoginStuck === s.grokLoginStuck &&
         cur.ptyQuiet === s.ptyQuiet &&
@@ -10821,6 +10885,10 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         launchFailure={sessionByTab[t.id]?.launchFailure ?? null}
                         onLaunchAgain={() => tabActionsRef.current.get(t.id)?.launchAgain()}
                         onDismissLaunchFailure={() => tabActionsRef.current.get(t.id)?.dismissLaunchFailure()}
+                        launchBlock={sessionByTab[t.id]?.launchBlock ?? null}
+                        onFixGeminiAuth={() => tabActionsRef.current.get(t.id)?.fixGeminiAuth()}
+                        onDismissLaunchBlock={() => tabActionsRef.current.get(t.id)?.dismissLaunchBlock()}
+                        specialScreen={sessionByTab[t.id]?.specialScreen ?? null}
                         onApprovalKey={(key) => {
                           chatApprovalKey(key);
                         }}

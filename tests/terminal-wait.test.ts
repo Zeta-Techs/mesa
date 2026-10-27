@@ -7,6 +7,9 @@ import {
   claudeThemeTarget,
   exitTail,
   launchFailureHint,
+  GEMINI_AUTH_MARK,
+  launchBlockOf,
+  specialScreenOf,
   waitKeyBytes,
   waitScreenOf,
 } from "../src/terminal-wait.ts";
@@ -120,4 +123,20 @@ test("启动失败：最后几行与原因", () => {
   assert.match(launchFailureHint(["zsh: command not found: codex"], 127)!, /找不到要运行的程序/);
   assert.equal(launchFailureHint(["Error: invalid config"], 1), null);
   assert.equal(exitTail(Array.from({ length: 20 }, (_, i) => `line ${i}`)).length, 8);
+});
+
+test("Gemini 存密钥屏、Cursor 登录屏：认成专门的屏，别家不认", () => {
+  assert.deepEqual(specialScreenOf(screen("gemini-key-store"), "gemini"), { kind: "gemini-key-store" });
+  assert.equal(specialScreenOf(screen("gemini-key-store"), "qwen"), null);
+  assert.deepEqual(specialScreenOf(screen("cursor-login-press"), "cursor"), { kind: "cursor-login", url: null });
+  const link = specialScreenOf(screen("cursor-login-link"), "cursor");
+  assert.ok(link?.kind === "cursor-login" && link.url);
+  assert.match(link.url, /^https:\/\/cursor\.com\/loginDeepControl\?challenge=.*&supportsSelectedTeamLogin=true$/, "折行的网址接上");
+  assert.equal(specialScreenOf(screen("claude-trust"), "cursor"), null);
+});
+
+test("启动被拦：认出 Gemini 认证方式那句", () => {
+  const msg = `Gemini CLI 还没选认证方式（刚装好时是这样）……${GEMINI_AUTH_MARK}就能直接用这条连接`;
+  assert.deepEqual(launchBlockOf(`Error: ${msg}`), { kind: "gemini-auth", message: msg });
+  assert.equal(launchBlockOf("未找到 gemini"), null);
 });

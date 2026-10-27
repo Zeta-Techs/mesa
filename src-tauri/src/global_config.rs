@@ -481,6 +481,22 @@ pub(crate) fn patch_gemini_settings(
     to_pretty(&v)
 }
 
+/// Gemini 第一次用：只把认证方式设成 API Key（`security.auth.selectedType`），别的一个字段都不动、不写模型名单。
+/// 没选过认证方式时 Gemini 进门先问用哪种认证、再要把密钥存进钥匙串（2026-10-27 空 HOME 实录）；
+/// 选成 API Key 后它直接用 Mesa 启动时给的密钥。用户在聊天卡上点了才写（gemini_use_api_key_auth）
+pub(crate) fn patch_gemini_auth_only(existing: Option<&str>) -> Result<String, String> {
+    let mut v = match existing {
+        Some(text) if !text.trim().is_empty() => serde_json::from_str::<Value>(&crate::mcp::strip_jsonc(text))
+            .map_err(|e| format!("现有 settings.json 解析失败，已停止写入: {e}"))?,
+        _ => json!({}),
+    };
+    if !v.is_object() {
+        return Err("现有 settings.json 根节点不是对象，已停止写入".into());
+    }
+    ensure_obj(&mut v, &["security", "auth"])?.insert("selectedType".into(), json!("gemini-api-key"));
+    to_pretty(&v)
+}
+
 fn patch_opencode_config(
     existing: Option<&str>,
     provider: Value,
@@ -2124,6 +2140,36 @@ pub(crate) fn register_codex_client_provider_named(
     apply_plans(&backups_dir, &home, &plans)
 }
 
+/// 聊天卡「设成 API Key 并启动」（2026-10-27 用户拍板）：先备份，再只改 `~/.gemini/settings.json` 的认证方式。
+/// 目录同 agents::gemini_selected_auth_type（连接上的 GEMINI_CLI_HOME > 进程环境 > 家目录），写完那边就读得到；
+/// 备份进 gemini 的备份目录，连接页「恢复备份」照常能回退
+#[tauri::command]
+pub async fn gemini_use_api_key_auth(
+    store: tauri::State<'_, ProfileStore>,
+    profile_id: String,
+) -> Result<Vec<String>, String> {
+    let profile = store.get(&profile_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        if profile.agent != "gemini" {
+            return Err("只有 Gemini 的连接需要设认证方式".into());
+        }
+        let _guard = GLOBAL_CONFIG_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _file_guard = crate::storage::config_lock("global-config")?;
+        let home = agents::gemini_home(&profile).ok_or("无法确定 Gemini 的配置目录")?;
+        let path = home.join(".gemini/settings.json");
+        let plans = vec![PlannedWrite {
+            tag: "settings.json",
+            content: patch_gemini_auth_only(read_existing(&path)?.as_deref())?,
+            path,
+        }];
+        apply_plans(&backups_root()?.join("gemini"), &home, &plans)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub async fn restore_global_backup(
     app: tauri::AppHandle,
@@ -2208,6 +2254,30 @@ pub async fn has_global_backup(agent: String) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gemini_auth_only_touches_just_selected_type() {
+        // 刚装好没有文件：只写认证方式
+        let v: Value = serde_json::from_str(&patch_gemini_auth_only(None).unwrap()).unwrap();
+        assert_eq!(v, json!({ "security": { "auth": { "selectedType": "gemini-api-key" } } }));
+        // 已有设置（带注释的 JSONC）：别的字段原样保留，Google 登录改成 API Key，不写模型名单
+        let existing = r#"{
+          // 用户自己的
+          "ui": { "theme": "GitHub" },
+          "security": { "auth": { "selectedType": "oauth-personal", "useExternal": false }, "folderTrust": { "enabled": true } },
+          "mcpServers": { "x": { "command": "y" } },
+        }"#;
+        let v: Value = serde_json::from_str(&patch_gemini_auth_only(Some(existing)).unwrap()).unwrap();
+        assert_eq!(v["security"]["auth"]["selectedType"], "gemini-api-key");
+        assert_eq!(v["security"]["auth"]["useExternal"], false);
+        assert_eq!(v["security"]["folderTrust"]["enabled"], true);
+        assert_eq!(v["ui"]["theme"], "GitHub");
+        assert_eq!(v["mcpServers"]["x"]["command"], "y");
+        assert!(v.get("modelConfigs").is_none() && v.get("experimental").is_none());
+        // 坏文件不写
+        assert!(patch_gemini_auth_only(Some("{ not json")).is_err());
+        assert!(patch_gemini_auth_only(Some("[1]")).is_err());
+    }
 
     fn tmpdir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("ccode-gcfg-{name}-{}", uuid::Uuid::new_v4()));
