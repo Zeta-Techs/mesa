@@ -27,8 +27,8 @@ import {
 } from "lucide-react";
 import type { BlockDto, ChatMessageDto } from "../types";
 import { Collapse, FoldMark } from "./PageFrame";
-import ChatMarkdown, { ChatCodeBlock, ChatImageCard } from "./ChatMarkdown";
-import { splitImagePaths } from "../chat-image";
+import ChatMarkdown, { ChatCodeBlock, ChatFileCard, ChatImageCard } from "./ChatMarkdown";
+import { splitDocPaths, splitImagePaths } from "../chat-image";
 import { splitLaunchPrompt } from "../project-context";
 import { splitFenced } from "../text-fences";
 import { useAppStore } from "../store";
@@ -487,6 +487,8 @@ export default function ConversationView({
       <ChatImageCard key={p} path={p} cwd={cwd} />
     ));
     if (isUser) {
+      // 输入框发出去的文档附件（整行一个路径）画成文件卡，不当正文
+      const { text: userText, docs } = splitDocPaths(bodyText);
       const packKey = `${key}:pack`;
       const packOpen = forceOpen || expanded.has(packKey);
       return (
@@ -504,8 +506,11 @@ export default function ConversationView({
               {packOpen && <div className="mt-1 whitespace-pre-wrap break-words text-l3">{pack}</div>}
             </div>
           )}
-          {bodyText && <UserText text={bodyText} cwd={cwd} forceOpen={forceOpen} />}
+          {userText && <UserText text={userText} cwd={cwd} forceOpen={forceOpen} />}
           {imageRow}
+          {docs.map((p) => (
+            <ChatFileCard key={p} path={p} cwd={cwd} />
+          ))}
         </div>
       );
     }

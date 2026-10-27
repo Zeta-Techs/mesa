@@ -2,7 +2,7 @@ import { isProseCodeSpan, mentionedAudioFiles, mentionedImageFiles, splitReplySe
 import { sanitizeDocumentHtml } from "../document-html";
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { Marked } from "marked";
 import { ChevronRight, ImageOff, Volume2 } from "lucide-react";
 import { useAppStore } from "../store";
@@ -16,6 +16,8 @@ import { citeTipFor, decorateCitations, linkFileRefs } from "../chat-inline-refs
 import { HoverTip } from "./HoverTip";
 import { Collapse } from "./PageFrame";
 import ChatImageViewer from "./ChatImageViewer";
+import { FileTypeGlyph } from "./FileTypeMark";
+import { docThumb, docThumbKind, docTypeLabel } from "../doc-thumb";
 
 /**
  * 聊天层里点对话中的图 =「接着改这张图」（2026-10-25 用户对照 ChatGPT）：ChatSurface 提供，把图放进输入框并展开看图标注台。
@@ -498,5 +500,56 @@ export function ChatImageCard({
       </button>
       {viewing && <ChatImageViewer path={abs} cwdHint={null} onClose={() => setViewing(false)} />}
     </>
+  );
+}
+
+/** 读过的文档首页预览（键 = 绝对路径）：切回会话不再重画 pdf.js；读不出的记 null，不反复试 */
+const docThumbCache = new Map<string, string | null>();
+
+/**
+ * 用户消息里的文档附件卡（2026-10-27 用户：PDF 发出去就成了一行路径，要像 ChatGPT 那样一张卡）：
+ * 左边首页预览（PDF / Word / 表格，同输入框附件卡 doc-thumb.ts），读不出的画类型图标；右边文件名 + 类型。
+ * 点开：有工作目录走右栏文件预览（PDF 自动展开右栏），没有（只读回放）交系统默认应用打开
+ */
+export function ChatFileCard({ path, cwd }: { path: string; cwd?: string | null }) {
+  const setPreviewReq = useAppStore((s) => s.setPreviewReq);
+  const abs = path.startsWith("~") || !cwd ? path : resolveMdPath(`${cwd}/_`, path);
+  const name = abs.split(/[\\/]/).pop() ?? abs;
+  const [thumb, setThumb] = useState<string | null>(() => docThumbCache.get(abs) ?? null);
+  useEffect(() => {
+    if (docThumbCache.has(abs) || !docThumbKind(abs)) return;
+    let stale = false;
+    void docThumb(abs, cwd ?? null)
+      .catch(() => null)
+      .then((url) => {
+        docThumbCache.set(abs, url);
+        if (!stale) setThumb(url);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [abs, cwd]);
+  return (
+    <button
+      type="button"
+      title={`${abs}（点开查看）`}
+      onClick={() => {
+        if (cwd) setPreviewReq({ path: abs, name, root: cwd });
+        else void openPath(abs).catch(() => {});
+      }}
+      className="my-1 flex h-14 w-64 max-w-full items-center gap-2.5 overflow-hidden rounded-lg border border-hairline bg-canvas pr-3 text-left transition-colors hover:border-field"
+    >
+      {thumb ? (
+        <img src={thumb} alt="" className="h-full w-10 shrink-0 border-r border-hairline bg-white object-cover object-top" />
+      ) : (
+        <span aria-hidden="true" className="flex h-full w-10 shrink-0 items-center justify-center border-r border-hairline">
+          <FileTypeGlyph path={abs} size={16} />
+        </span>
+      )}
+      <span className="flex min-w-0 flex-col gap-0.5">
+        <span className="truncate text-xs text-l1">{name}</span>
+        <span className="text-micro text-l4">{docTypeLabel(abs)}</span>
+      </span>
+    </button>
   );
 }

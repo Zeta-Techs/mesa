@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { attachmentLines, composerImageKind, imagePathFromLine, labeledImageFromLine, splitImagePaths } from "../src/chat-image.ts";
+import { attachmentLines, composerImageKind, docPathFromLine, imagePathFromLine, labeledImageFromLine, splitDocPaths, splitImagePaths } from "../src/chat-image.ts";
 
 test("整行绝对路径识别为图片", () => {
   assert.equal(imagePathFromLine("/Users/x/pic/a.png"), "/Users/x/pic/a.png");
@@ -78,4 +78,13 @@ test("要不要模型看图：普通图片附件要；接着改的图只在标�
   assert.equal(composerImageKind([img({ edit: true, marked: true })]), "marks");
   assert.equal(composerImageKind([img({ edit: true, marked: true }), img({})]), "plain");
   assert.equal(composerImageKind([{ path: "/a.pdf", isImage: false, marked: false }]), null);
+});
+
+test("splitDocPaths：整行的文档路径抽成附件，正文里顺口提到的不动", () => {
+  const { text, docs } = splitDocPaths("帮我总结这篇\n'/Users/me/Downloads/Dynamic Kinetic.pdf'\n再看 notes/a.docx 第二节\nC:\\data\\t.xlsx");
+  assert.equal(text, "帮我总结这篇\n再看 notes/a.docx 第二节");
+  assert.deepEqual(docs, ["/Users/me/Downloads/Dynamic Kinetic.pdf", "C:\\data\\t.xlsx"]);
+  assert.equal(docPathFromLine("paper.pdf"), null);
+  assert.equal(docPathFromLine("https://x.org/a.pdf"), null);
+  assert.equal(docPathFromLine("/tmp/a.png"), null);
 });

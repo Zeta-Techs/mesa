@@ -8,7 +8,7 @@ import ChatSearch from "./ChatSearch";
 import { locateChatQuote, messageIdentity } from "../chat-navigation";
 import { ChatImageEditContext } from "./ChatMarkdown";
 import ChatComposer, { useFlashOnSeq, type ComposerSeed } from "./ChatComposer";
-import { splitImagePaths } from "../chat-image";
+import { splitDocPaths, splitImagePaths } from "../chat-image";
 import ChatEmptyStart from "./ChatEmptyStart";
 import MesaThinkingDots from "./MesaThinkingDots";
 import { firstCompleteTurnIndex } from "../conversation-tools";
@@ -1414,10 +1414,11 @@ export default function ChatSurface({
               focusRequest={focus?.seq ?? 0}
               working={generating || settling}
               awaiting={attention === "confirm" || channel?.turn?.status === "awaiting_approval"}
-              // 消息里整行的图片路径还原成附件缩略卡，不当文字塞回输入框
+              // 消息里整行的图片 / 文档路径还原成附件卡，不当文字塞回输入框
               onEditResend={(text) => {
                 const split = splitImagePaths(text);
-                setSeedInsert({ text: split.text, paths: split.images });
+                const docs = splitDocPaths(split.text);
+                setSeedInsert({ text: docs.text, paths: [...split.images, ...docs.docs] });
               }}
               onForkHere={onForkFrom}
               onQuote={(quote) => setSeedInsert({ text: "", paths: [], quote })}

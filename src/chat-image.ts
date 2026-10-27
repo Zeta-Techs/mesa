@@ -11,6 +11,30 @@ const URL_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
  *  Windows 双引号）。裸文件名（无分隔符）不识别——无法和正文短语区分。
  *  命中返回剥离引号后的路径。 */
 export function imagePathFromLine(line: string): string | null {
+  return localPathFromLine(line, IMAGE_EXT);
+}
+
+/** 输入框发出去的文档附件（PDF / Word / 表格 / 演示）：用户消息里整行是这类路径的，画成文件卡（2026-10-27 用户：PDF 发出去变成一行路径） */
+const DOC_EXT = /\.(pdf|docx?|rtf|xlsx|xlsm|xls|ods|csv|tsv|pptx?|odp|key)$/i;
+
+/** 一行文本是否是本地文档路径（口径同 imagePathFromLine，只换扩展名） */
+export function docPathFromLine(line: string): string | null {
+  return localPathFromLine(line, DOC_EXT);
+}
+
+/** 用户消息里整行的文档路径抽出来（按出现顺序），其余行拼回正文 */
+export function splitDocPaths(text: string): { text: string; docs: string[] } {
+  const docs: string[] = [];
+  const kept: string[] = [];
+  for (const line of text.split("\n")) {
+    const p = docPathFromLine(line);
+    if (p) docs.push(p);
+    else kept.push(line);
+  }
+  return { text: kept.join("\n").trim(), docs };
+}
+
+function localPathFromLine(line: string, ext: RegExp): string | null {
   const t = line.trim();
   if (!t || URL_SCHEME.test(t)) return null;
   // 剥 shell 引号包裹：单引号含 '\'' 回转，双引号含 "" 回转
@@ -20,7 +44,7 @@ export function imagePathFromLine(line: string): string | null {
   } else if (t.length > 1 && t.startsWith('"') && t.endsWith('"')) {
     unquoted = t.slice(1, -1).replace(/""/g, '"');
   }
-  if (!IMAGE_EXT.test(unquoted)) return null;
+  if (!ext.test(unquoted)) return null;
   const isAbs =
     unquoted.startsWith("/") ||
     unquoted.startsWith("~") ||
