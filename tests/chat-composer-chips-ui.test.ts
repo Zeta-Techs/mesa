@@ -1438,3 +1438,97 @@ test("Claude 方案确认卡：整篇方案、开工几项带权限说明、高�
     await ui.close();
   }
 });
+
+test("终端在等你：终端原文、数字键 / 方向键 / 回车 / Esc 发给终端，网址做成按钮，要输入时给输入框", async () => {
+  const ui = await mount();
+  try {
+    const keys: string[] = [];
+    const links: string[] = [];
+    let terminal = 0;
+    await ui.render(
+      ui.h(ui.Decision, {
+        decision: {
+          key: "wait:x",
+          title: "终端在等你：Select login method:",
+          hint: "Mesa 认不出这一步，下面是终端原文",
+          options: [],
+          screen: {
+            lines: ["Select login method:", "", "❯ 1. Claude account", "  2. Console account", "  3. 3rd-party platform"],
+            live: true,
+            numbered: 3,
+            links: ["https://claude.com/cai/oauth/authorize?code=true"],
+            typeIn: true,
+            keys: true,
+            esc: true,
+            onKey: (k: string) => keys.push(k),
+            onOpenLink: (u: string) => links.push(u),
+          },
+        },
+        onOpenTerminal: () => terminal++,
+      }),
+    );
+    const text = ui.el.textContent ?? "";
+    assert.match(text, /终端原文 · 实时/);
+    assert.match(ui.el.querySelector("pre")!.textContent!, /❯ 1\. Claude account\n  2\. Console account/, "原文照排");
+    await ui.click("2");
+    await ui.click("↓");
+    await ui.click("回车");
+    await ui.click("Esc");
+    await ui.click("在浏览器打开 · claude.com");
+    const input = ui.el.querySelector<HTMLInputElement>("form input")!;
+    await ui.act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+      setter.call(input, "  abc123  ");
+      input.dispatchEvent(new window.Event("input", { bubbles: true }));
+    });
+    await ui.click("发给终端");
+    assert.deepEqual(keys, ["digit:2", "down", "enter", "esc", "text:abc123"]);
+    assert.deepEqual(links, ["https://claude.com/cai/oauth/authorize?code=true"]);
+    await ui.click("打开终端");
+    assert.equal(terminal, 1, "去终端只在卡上由人点");
+  } finally {
+    await ui.close();
+  }
+});
+
+test("没能启动：定格的最后几行、不给按键，重新启动是主按钮", async () => {
+  const ui = await mount();
+  try {
+    const hits: string[] = [];
+    await ui.render(
+      ui.h(ui.Decision, {
+        decision: {
+          key: "launch-failed:127",
+          title: "Codex 没能启动",
+          detail: "它一启动就退出了（退出码 127）。终端里的最后几行：",
+          options: [
+            { label: "知道了", onClick: () => hits.push("dismiss") },
+            { label: "重新启动", primary: true, onClick: () => hits.push("again") },
+          ],
+          screen: {
+            lines: ["env: node: No such file or directory"],
+            live: false,
+            numbered: 0,
+            links: [],
+            typeIn: false,
+            keys: false,
+            esc: false,
+            onKey: () => hits.push("key"),
+            onOpenLink: () => {},
+          },
+        },
+        onOpenTerminal: () => {},
+      }),
+    );
+    const text = ui.el.textContent ?? "";
+    assert.match(text, /终端原文env: node/);
+    assert.doesNotMatch(text, /实时/);
+    assert.equal(ui.el.querySelector("form"), null);
+    assert.ok(!Array.from(ui.el.querySelectorAll("button")).some((b) => b.textContent === "↑"), "不给方向键");
+    await ui.click("重新启动");
+    await ui.click("知道了");
+    assert.deepEqual(hits, ["again", "dismiss"]);
+  } finally {
+    await ui.close();
+  }
+});

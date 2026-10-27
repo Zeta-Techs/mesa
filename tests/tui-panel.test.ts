@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { parseTuiNotice, parseTuiPanel } from "../src/tui-panel.ts";
 
@@ -88,4 +89,12 @@ test("parseTuiNotice：要按回车继续的通知取出正文；有输入框、
   assert.equal(parseTuiNotice(AUTO_MODE_NOTICE.slice(0, -1), "claude-code"), null);
   const withPrompt = [...AUTO_MODE_NOTICE, "─".repeat(100), "❯ ", "─".repeat(100)];
   assert.equal(parseTuiNotice(withPrompt, "claude-code"), null);
+});
+
+test("通知正文不带启动字符画（Claude 首次启动的安全须知，2.1.308 实录）", () => {
+  const lines = readFileSync(new URL("./fixtures/terminal-wait/claude-security.txt", import.meta.url), "utf8").split("\n");
+  const body = parseTuiNotice(lines, "claude-code");
+  assert.ok(body);
+  assert.equal(body[0], "Security notes:");
+  assert.ok(body.every((l) => !/[░█]/.test(l)));
 });

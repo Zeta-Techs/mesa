@@ -11,7 +11,6 @@ import {
   composerShowsInterrupt,
   confirmHandoffEvent,
   placePendingUsers,
-  handoffFor,
   hasAssistantText,
   kimiModelArg,
   localCommandRecord,
@@ -22,7 +21,6 @@ import {
   pendingAfterTurn,
   slashCommandRecorded,
   slashSettledLocally,
-  shouldAutoPeek,
   slashHandoff,
   userTextRecorded,
 } from "../src/chat-handoff.ts";
@@ -67,20 +65,6 @@ test("七家有 hooks，cursor/opencode 没有", () => {
   assert.equal(agentHasHooks("cursor"), false);
   assert.equal(agentHasHooks("opencode"), true);
   assert.equal(agentHasHooks(null), false);
-});
-
-test("交接表：能聊天完成 / 窥视 / 必须切走", () => {
-  assert.equal(handoffFor("send_message"), "chat_ok");
-  assert.equal(handoffFor("direct_slash"), "chat_ok");
-  assert.equal(handoffFor("picker_model"), "peek");
-  assert.equal(handoffFor("hooks_confirm"), "peek");
-  assert.equal(handoffFor("no_hooks_confirm"), "peek");
-  assert.equal(handoffFor("login_or_trust"), "peek");
-  assert.equal(handoffFor("prompt_dropped"), "must_switch");
-  assert.equal(handoffFor("self_update"), "must_switch");
-  assert.equal(shouldAutoPeek("picker_model"), true);
-  assert.equal(shouldAutoPeek("send_message"), false);
-  assert.equal(shouldAutoPeek("prompt_dropped"), true);
 });
 
 test("confirm 事件按 hooks 开关分流", () => {

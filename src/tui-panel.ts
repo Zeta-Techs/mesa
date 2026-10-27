@@ -13,6 +13,7 @@
  * 选择菜单（审批 / 切模型确认 / 启动信任）也有 Esc to cancel，由调用方先认菜单，这里只管剩下的。
  */
 import { terminalHasInputBox } from "./live-reply.ts";
+import { isArt } from "./terminal-wait.ts";
 
 const CLOSE_HINT = /\bEsc(?:ape)? to (?:cancel|close|dismiss|exit|go back|return)\b/i;
 
@@ -37,7 +38,8 @@ export function parseTuiNotice(lines: readonly string[], agentId: string): strin
   while (hint >= 0 && !CONTINUE_HINT.test(lines[hint])) hint--;
   if (hint < 0) return null;
   let start = hint - 1;
-  while (start >= 0 && !RULE_LINE.test(lines[start])) start--;
+  // 上一条分隔线或启动字符画（Claude 首次启动的安全须知顶上是欢迎画）之下才是提示正文
+  while (start >= 0 && !RULE_LINE.test(lines[start]) && !isArt(lines[start])) start--;
   const body = lines
     .slice(start + 1, hint)
     .map((l) => l.trim())

@@ -72,7 +72,6 @@ import { pasteGuardPlan } from "../paste-guard";
 import type { TerminalProgress } from "../terminal-notify";
 import { REPLAY_HEAD, REPLAY_TAIL, terminalReplayText } from "../terminal-replay";
 import {
-  confirmHandoffEvent,
   hasAssistantText,
   mergeConversationPages,
   slidOutOfWindow,
@@ -82,12 +81,11 @@ import {
   messageKey,
   pendingAfterTurn,
   placePendingUsers,
-  shouldAutoPeek,
   slashCommandRecorded,
   slashSettledLocally,
   userTextRecorded,
 } from "../chat-handoff";
-import { confirmHandoffReason, recordChatHandoff } from "../chat-handoff-log";
+import { recordChatHandoff } from "../chat-handoff-log";
 import { useCliNewer } from "../cli-verified";
 import { AGENTS, type CustomRuntimeDto, type OfficialAccountStatusDto } from "../types";
 import {
@@ -195,6 +193,18 @@ import { lastContextTokens, type MesaCommand } from "../composer-assist";
 import { slashCommandsFor } from "../slash-commands";
 import { claudeOutputTokens, claudeTurnActiveOnScreen, extractLiveReply, extractLiveThinking, liveReplySupported, mergeLiveReply, sentTextStuckInBox, staleEcho, staleWithoutEcho, terminalHasInputBox } from "../live-reply";
 import { parseTuiNotice, parseTuiPanel } from "../tui-panel";
+import {
+  claudeFirstRunStep,
+  claudeThemeLabel,
+  claudeThemeTarget,
+  exitTail,
+  waitKeyBytes,
+  waitScreenOf,
+  type FirstRunNote,
+  type LaunchFailure,
+  type WaitKey,
+  type WaitScreen,
+} from "../terminal-wait";
 import {
   connIssueCounts,
   connIssueText,
@@ -511,6 +521,11 @@ export interface FocusTabActions {
   grokLogout: () => void;
   /** 关掉上面那条提示：这次启动不再提示 */
   dismissGrokLogin: () => void;
+  /** 「终端在等你」通用卡上的一下按键（terminal-wait.ts） */
+  pressWaitKey: (key: WaitKey) => void;
+  /** 「没能启动」卡：按原来的设置再启动一次（接得回上次的会话就接） */
+  launchAgain: () => void;
+  dismissLaunchFailure: () => void;
 }
 
 async function resolveLaunchCwdForCustom(
@@ -618,6 +633,12 @@ export interface SessionLinkState {
   tuiPanel: boolean;
   /** 终端里弹了一条要按回车才继续的通知（tui-panel.ts parseTuiNotice）：正文行；没有为 null */
   tuiNotice: string[] | null;
+  /** 终端里「在等你」的那一块（terminal-wait.ts）：通用卡用；认得出的屏、看得见输入框时为 null */
+  waitScreen: (WaitScreen & { noInputBox: boolean }) | null;
+  /** Claude Code 第一次启动时替人走完的配色 / 安全须知 */
+  firstRunNote: FirstRunNote | null;
+  /** Agent 一启动就退出：退出码与终端最后几行 */
+  launchFailure: LaunchFailure | null;
   /** 连接出问题（额度 / 限流 / 钥匙 / 服务 / 模型；conn-issue.ts 扫终端画面认出）+ 可换的同家连接 */
   connIssue: ConnIssueState | null;
   /** Grok 用 API 连接启动，却卡在续期本地已过期的 xAI 官方登录上（grok_login.rs），消息发不出去 */
@@ -2475,6 +2496,8 @@ const TerminalView = memo(function TerminalView({
       !menuPromptRef.current &&
       !tuiPanelRef.current &&
       !tuiNoticeRef.current &&
+      !waitScreenRef.current &&
+      !waitWatchRef.current &&
       Date.now() > menuWatchUntilRef.current &&
       !turnLive
     )
@@ -2501,6 +2524,7 @@ const TerminalView = memo(function TerminalView({
     }
     menuSyncWaitsRef.current = 0;
     const lines = screenLines();
+    if (handleClaudeFirstRun(lines)) return;
     const found = parseScreenMenu(lines);
     // 用户自己发的多行编号清单回显在屏上（「❯ 1. … / 2. …」）也是这个形状：选项全在刚发的话里就不算
     const echoed = found ? menuEchoesText(found, lastSentRef.current) : false;
@@ -2518,8 +2542,14 @@ const TerminalView = memo(function TerminalView({
     // 要按回车继续的通知也带 Esc to cancel：认出通知时不当面板（面板卡的按钮是 Esc，按了会取消）
     const notice = found === null ? parseTuiNotice(lines, launchAgentRef.current) : null;
     setTuiNoticeLines(notice);
-    setPanelOpen(found === null && notice === null && parseTuiPanel(lines, launchAgentRef.current));
-    setPromptIdle(next === null && terminalHasInputBox(lines, launchAgentRef.current) === true);
+    const panel = found === null && notice === null && parseTuiPanel(lines, launchAgentRef.current);
+    setPanelOpen(panel);
+    const inputBox = terminalHasInputBox(lines, launchAgentRef.current);
+    setPromptIdle(next === null && inputBox === true);
+    // 通用卡的摘录：认得出的屏（菜单 / 通知 / 面板 / 信任）各有专用卡，看得见输入框就是没在等人
+    const recognized = found !== null || notice !== null || panel || trustPromptRef.current !== null || parseTrustPrompt(lines) !== null;
+    const wait = recognized || inputBox === true ? null : waitScreenOf(lines);
+    setWaitScreenState(wait ? { ...wait, noInputBox: inputBox === false } : null);
     const ask = next?.ask ?? null;
     // 卡片上交过卷又到了确认页：答案就是刚在卡片上选的，替人按「Submit answers」，不要人再点一次
     // （2026-10-22 用户：为什么还有确认提交回答）。还有题没答（带提醒）、或人自己点到确认页的，照常出卡
@@ -2546,6 +2576,89 @@ const TerminalView = memo(function TerminalView({
     menuPromptRef.current = next;
     setMenuPrompt(next);
   }
+  // 「终端在等你」通用卡（terminal-wait.ts，2026-10-27 取代自动弹出底部终端）：屏上那一块的摘录，跟菜单同一次扫屏认。
+  // 等确认 / Agent 静止时（waitWatchRef）也扫一次——停在配色、登录这类画面上时终端不再出字，没有输出驱动扫屏
+  const [waitScreen, setWaitScreen] = useState<(WaitScreen & { noInputBox: boolean }) | null>(null);
+  const waitScreenRef = useRef<(WaitScreen & { noInputBox: boolean }) | null>(null);
+  const waitWatchRef = useRef(false);
+  function setWaitScreenState(next: (WaitScreen & { noInputBox: boolean }) | null) {
+    const key = (w: typeof next) => (w ? `${w.noInputBox}\n${w.lines.join("\n")}` : null);
+    if (key(waitScreenRef.current) === key(next)) return;
+    waitScreenRef.current = next;
+    setWaitScreen(next);
+  }
+  useEffect(() => {
+    waitWatchRef.current = attention === "confirm" || ptyQuiet;
+    if (waitWatchRef.current) scanMenuSoon();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attention, ptyQuiet]);
+  /** 通用卡上点的键：回车按这家的提交键（Kimi 是 CSI-u），按完再扫一次屏，卡片跟着终端变 */
+  function pressWaitKey(key: WaitKey) {
+    const id = ptyIdRef.current;
+    if (!id) return;
+    const enter = submitCsiU ? KIMI_CSI_U_ENTER : "\r";
+    const keys = waitKeyBytes(key).map((k) => (k === "\r" ? enter : k));
+    const done = queuePtyKeys(id, keys);
+    if (key === "enter" || key.startsWith("digit:") || key.startsWith("text:")) armPtyWorking();
+    menuWatchUntilRef.current = done + 3000;
+    window.setTimeout(scanMenuSoon, Math.max(0, done - Date.now()) + 200);
+  }
+
+  // Claude Code 第一次启动的配色、安全须知两屏 Mesa 替人走完（2026-10-27 用户：新用户第一印象很差）；
+  // 信任文件夹仍由人在信任卡上点。CLI 比核对过的新时不替人按，交给通用卡。每屏最多试三次，按不准就交给通用卡
+  const [firstRunNote, setFirstRunNote] = useState<FirstRunNote | null>(null);
+  // Agent 一启动就退出（接上不到 30 秒、非零退出码）：聊天里出「没能启动」卡，原先只在终端里留一行红字、对话区空着
+  const [launchFailure, setLaunchFailure] = useState<LaunchFailure | null>(null);
+  const firstRunRef = useRef<{ busyUntil: number; tries: Record<string, number> }>({ busyUntil: 0, tries: {} });
+  function handleClaudeFirstRun(lines: string[]): boolean {
+    if (launchAgentRef.current !== "claude-code" || cliNewerRef.current) return false;
+    const step = claudeFirstRunStep(lines);
+    const id = ptyIdRef.current;
+    if (!step || !id) return false;
+    const state = firstRunRef.current;
+    const left = state.busyUntil - Date.now();
+    if (left > 0) {
+      menuScanTimerRef.current = window.setTimeout(runMenuScan, left + 50);
+      return true;
+    }
+    const tries = (state.tries[step.kind] ?? 0) + 1;
+    if (tries > 3) return false;
+    state.tries[step.kind] = tries;
+    const enter = submitCsiU ? KIMI_CSI_U_ENTER : "\r";
+    if (step.kind === "security") {
+      const done = queuePtyKeys(id, [enter]);
+      state.busyUntil = done + 1200;
+      setFirstRunNote((prev) => ({ theme: prev?.theme ?? null, security: step.text }));
+      menuWatchUntilRef.current = state.busyUntil + 5000;
+      menuScanTimerRef.current = window.setTimeout(runMenuScan, state.busyUntil - Date.now() + 50);
+      return true;
+    }
+    // 配色：能跟随终端的选 Auto；Windows 的 ConPTY 吞掉底色查询，按 Mesa 主题明暗选
+    const light = isLightTheme(settingsRef.current?.theme ?? DEFAULT_THEME_ID);
+    const target = claudeThemeTarget(step.options, IS_WINDOWS ? (light ? "light" : "dark") : "auto");
+    if (target < 0) return false;
+    const moves = menuMoveKeys({ question: null, detail: null, options: step.options, selected: step.selected }, target);
+    const done = moves.length ? queuePtyKeys(id, moves) : Date.now();
+    state.busyUntil = done + 1500;
+    // 挪完读屏核对：高亮停在要选的那一项上才回车（同 answerMenu，替人按键只在认准时做）
+    const confirm = (n: number) => {
+      if (ptyIdRef.current !== id) return;
+      const now = claudeFirstRunStep(screenLines());
+      if (now?.kind === "theme" && now.selected === target) {
+        writeInteractivePty(id, enter);
+        setFirstRunNote((prev) => ({ theme: claudeThemeLabel(step.options[target]), security: prev?.security ?? null }));
+      } else if (n < 3) {
+        window.setTimeout(() => confirm(n + 1), 150);
+        return;
+      }
+      state.busyUntil = Date.now() + 800;
+      menuWatchUntilRef.current = Date.now() + 8000;
+      menuScanTimerRef.current = window.setTimeout(runMenuScan, 900);
+    };
+    window.setTimeout(() => confirm(0), Math.max(0, done - Date.now()) + 150);
+    return true;
+  }
+
   // 实时预览：Agent 出字时节流 300ms 读一次可视区，抽出这一轮正在写的回复给聊天层（会话文件一段写完才落盘）
   const [liveReply, setLiveReply] = useState<string[] | null>(null);
   const liveReplyRef = useRef<string[] | null>(null);
@@ -3055,6 +3168,9 @@ const TerminalView = memo(function TerminalView({
       cliModeSwitch,
       tuiPanel,
       tuiNotice,
+      waitScreen,
+      firstRunNote,
+      launchFailure,
       connIssue,
       grokLoginStuck,
       liveReply,
@@ -3084,6 +3200,9 @@ const TerminalView = memo(function TerminalView({
     cliModeSwitch,
     tuiPanel,
     tuiNotice,
+    waitScreen,
+    firstRunNote,
+    launchFailure,
     connIssue,
     grokLoginStuck,
     liveReply,
@@ -4079,6 +4198,10 @@ const TerminalView = memo(function TerminalView({
     if (kind === "agent") {
       menuBaselineRef.current = null;
       menuWatchUntilRef.current = Date.now() + 20_000;
+      firstRunRef.current = { busyUntil: 0, tries: {} };
+      setFirstRunNote(null);
+      setWaitScreenState(null);
+      setLaunchFailure(null);
       // 换连接 / 重开接回后，xterm 里还留着上一个进程画的错误：记作已看过，不再提示
       connBaselineRef.current = connIssueCounts(detectConnIssues(screenLines(), agentId));
     }
@@ -4293,6 +4416,11 @@ const TerminalView = memo(function TerminalView({
     setMenuPrompt(null);
     setPanelOpen(false);
     setTuiNoticeLines(null);
+    setWaitScreenState(null);
+    // 一启动就退出：xterm 解析是异步的，排在退出横幅前面读屏，读到的是进程最后画的样子
+    if (kind === "agent" && code > 0 && Date.now() - ptyAttachedAtRef.current < 30_000) {
+      termRef.current?.write("", () => setLaunchFailure({ code, lines: exitTail(screenLines()) }));
+    }
     // 换权限重开 / 退出：下一次接上的运行重新取基线，旧运行的切换不再上报
     permBaselineRef.current = null;
     liveReplyRef.current = null;
@@ -6041,6 +6169,9 @@ const TerminalView = memo(function TerminalView({
     dismissConnIssue: () => {},
     grokLogout: () => {},
     dismissGrokLogin: () => {},
+    pressWaitKey: () => {},
+    launchAgain: () => {},
+    dismissLaunchFailure: () => {},
   });
   actionsRef.current = {
     stop: () => void stop(),
@@ -6107,6 +6238,12 @@ const TerminalView = memo(function TerminalView({
     dismissConnIssue,
     grokLogout,
     dismissGrokLogin,
+    pressWaitKey,
+    launchAgain: () => {
+      setLaunchFailure(null);
+      void launch(lastResumeRef.current ?? undefined);
+    },
+    dismissLaunchFailure: () => setLaunchFailure(null),
   };
   useEffect(() => {
     onActions?.(tabId, {
@@ -6144,6 +6281,9 @@ const TerminalView = memo(function TerminalView({
       dismissConnIssue: () => actionsRef.current.dismissConnIssue(),
       grokLogout: () => actionsRef.current.grokLogout(),
       dismissGrokLogin: () => actionsRef.current.dismissGrokLogin(),
+      pressWaitKey: (k) => actionsRef.current.pressWaitKey(k),
+      launchAgain: () => actionsRef.current.launchAgain(),
+      dismissLaunchFailure: () => actionsRef.current.dismissLaunchFailure(),
     });
   }, [onActions, tabId]);
 
@@ -8024,64 +8164,6 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     }
   }
 
-  // 刚在聊天卡上替用户答过（批准 / 信任 / 菜单）：菜单当场清掉，「在等确认」要等会话文件 / hooks 下一拍才撤，
-  // 这几秒不自动露出终端（2026-10-19 用户：点批准时底部终端有时弹起来）；过了还在等确认、又认不出菜单才露
-  const PEEK_HOLD_AFTER_ANSWER_MS = 4000;
-  const peekHoldUntilRef = useRef<Record<string, number>>({});
-  const [peekRecheck, setPeekRecheck] = useState(0);
-  function holdAutoPeek(tabId: string) {
-    peekHoldUntilRef.current[tabId] = Date.now() + PEEK_HOLD_AFTER_ANSWER_MS;
-    window.setTimeout(() => setPeekRecheck((n) => n + 1), PEEK_HOLD_AFTER_ANSWER_MS + 50);
-  }
-
-  // 「在等确认」刚出现时先等一会儿再决定弹不弹：旁路的审批事件比屏上画出菜单早到，读屏认菜单还有 250ms 防抖，
-  // 认出来了卡上就有按钮（2026-10-20 用户：Codex 聊天卡上能批准时，底部终端也同步弹出来）
-  const CONFIRM_PEEK_GRACE_MS = 1500;
-  const confirmSinceRef = useRef<Record<string, number>>({});
-  useEffect(() => {
-    if (statuses[focusedId]?.attention !== "confirm") {
-      delete confirmSinceRef.current[focusedId];
-      return;
-    }
-    if (focusedSurfaceMode !== "chat") return;
-    if (Date.now() < (peekHoldUntilRef.current[focusedId] ?? 0)) return;
-    // 聊天层卡上就能答的不拉终端：旁路经官方通道答（Codex / Qwen / OpenCode），或屏上认出了菜单（审批 / 信任 /
-    // 切换确认，卡上按原文给按钮）。「等确认就弹终端」是聊天层能答之前的兜底，只留给卡上答不了的情形
-    const link = sessionByTab[focusedId];
-    if (channelCanAnswer(link?.channel ?? null, statuses[focusedId]?.agentId ?? null)) return;
-    if (link?.menuPrompt || link?.trustPrompt) return;
-    const since = (confirmSinceRef.current[focusedId] ??= Date.now());
-    const wait = since + CONFIRM_PEEK_GRACE_MS - Date.now();
-    if (wait > 0) {
-      window.setTimeout(() => setPeekRecheck((n) => n + 1), wait + 50);
-      return;
-    }
-    const confirmEvent = confirmHandoffEvent(
-      statuses[focusedId]?.agentId,
-      Boolean(
-        useAppStore.getState().settings?.hooksAttention?.[
-          statuses[focusedId]?.agentId ?? ""
-        ] || sessionByTab[focusedId]?.channel,
-      ),
-    );
-    if (!shouldAutoPeek(confirmEvent)) return;
-    // 真要露出来（没露着、用户这轮没手动收起）才记数：聊天卡上答不了这次确认
-    if (!peekByTab[focusedId] && !peekLocked[focusedId]) {
-      recordChatHandoff(statuses[focusedId]?.agentId, confirmHandoffReason(confirmEvent));
-    }
-    setPeek(focusedId, true);
-    // peekLocked / 用户手动收起由 setPeek 守
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    statuses[focusedId]?.attention,
-    focusedId,
-    focusedSurfaceMode,
-    sessionByTab[focusedId]?.menuPrompt,
-    sessionByTab[focusedId]?.trustPrompt,
-    sessionByTab[focusedId]?.channel?.approval,
-    peekRecheck,
-  ]);
-
   // 终端里换了权限模式（cliModeSwitch）：标签的权限档跟上，聊天徽标与之后接着聊的启动参数都按新档。
   // 按序号只应用一次——用户随后在徽标里自己换档时，旧运行留下的值不能把它改回去。
   // 只讨论档也跟：Claude 计划模式里方案确认点了「按方案开工」，CLI 已换到选的那一档（会话文件记 permission-mode），
@@ -8342,6 +8424,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         cur.promptSuggestion === s.promptSuggestion &&
         cur.tuiPanel === s.tuiPanel &&
         cur.tuiNotice === s.tuiNotice &&
+        cur.waitScreen === s.waitScreen &&
+        cur.firstRunNote === s.firstRunNote &&
+        cur.launchFailure === s.launchFailure &&
         cur.connIssue === s.connIssue &&
         cur.grokLoginStuck === s.grokLoginStuck &&
         cur.ptyQuiet === s.ptyQuiet &&
@@ -10725,18 +10810,22 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                           },
                         }}
                         onAnswerTrust={(accept) => {
-                          holdAutoPeek(t.id);
                           tabActionsRef.current.get(t.id)?.answerTrust(accept);
                         }}
                         onInterrupt={chatInterrupt}
                         onSendNow={(keys) => tabActionsRef.current.get(t.id)?.writePty(keys)}
+                        waitScreen={sessionByTab[t.id]?.waitScreen ?? null}
+                        onWaitKey={(key) => tabActionsRef.current.get(t.id)?.pressWaitKey(key)}
+                        onOpenLink={(url) => void openUrl(url).catch(() => {})}
+                        firstRunNote={sessionByTab[t.id]?.firstRunNote ?? null}
+                        launchFailure={sessionByTab[t.id]?.launchFailure ?? null}
+                        onLaunchAgain={() => tabActionsRef.current.get(t.id)?.launchAgain()}
+                        onDismissLaunchFailure={() => tabActionsRef.current.get(t.id)?.dismissLaunchFailure()}
                         onApprovalKey={(key) => {
-                          holdAutoPeek(t.id);
                           chatApprovalKey(key);
                         }}
                         peek={peek}
                         onTogglePeek={() => setPeek(t.id, !peek, true)}
-                        onRequestPeek={() => setPeek(t.id, true)}
                         modelSwitch={runtimeModelSwitch(
                           det?.modelSwitch ?? null,
                           agentKey,
@@ -10747,7 +10836,6 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         )}
                         channel={sessionByTab[t.id]?.channel ?? null}
                         onChannelReply={(requestId, decision) => {
-                          holdAutoPeek(t.id);
                           void replyChannel(t.id, requestId, decision);
                         }}
                         hasOlder={sessionByTab[t.id]?.convCursor != null}
@@ -10800,7 +10888,6 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                           )
                         }
                         onAnswerMenu={(i, opts) => {
-                          holdAutoPeek(t.id);
                           tabActionsRef.current.get(t.id)?.answerMenu(i, opts);
                         }}
                         planStartBlocked={Boolean(t.discussOnly && t.permission === "discuss")}
@@ -10816,7 +10903,6 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                           )
                         }
                         onAnswerAsk={(a) => {
-                          holdAutoPeek(t.id);
                           tabActionsRef.current.get(t.id)?.answerAsk(a);
                         }}
                         onForkFrom={(text) => void forkChat(t.id, text)}

@@ -2,8 +2,8 @@
 //!
 //! 聊天是同一 PTY 的结构化显示层，不复制九家 TUI 菜单解析器。
 //! 能用已知字符串写进 PTY 的（直切 /model、/effort、y/n/Esc、生成中 Esc 暂停）留在聊天；
-//! 方向键选择器、登录、信任目录交给终端画面——默认「窥视」（露出同一 xterm 底部，
-//! 不改行列数），只有启动注入失败等必须粘贴进 TUI 输入框的才整层切走。
+//! 认不出的确认、方向键选择器、登录交给聊天里的「终端在等你」通用卡（terminal-wait.ts：终端原文 + 按键）。
+//! 2026-10-27 起不再自动露出 / 切到终端（用户：底部终端自己弹起来第一印象很差），去终端只由人点。
 
 import type { ChatMessageDto, SessionSyncState } from "./types.ts";
 
@@ -30,9 +30,6 @@ export type ChatHandoffEvent =
   | "prompt_dropped"
   | "self_update";
 
-/** chat_ok = 聊天层独立完成；peek = 露出同一会话 TUI；must_switch = 整层切到终端 */
-export type ChatHandoffAction = "chat_ok" | "peek" | "must_switch";
-
 export function agentHasHooks(agentId: string | null | undefined): boolean {
   return Boolean(agentId && HOOKS_AGENTS.has(agentId));
 }
@@ -44,27 +41,6 @@ export function confirmHandoffEvent(
   return agentHasHooks(agentId) && hooksEnabled
     ? "hooks_confirm"
     : "no_hooks_confirm";
-}
-
-export function handoffFor(event: ChatHandoffEvent): ChatHandoffAction {
-  switch (event) {
-    case "send_message":
-    case "direct_slash":
-      return "chat_ok";
-    case "picker_model":
-    case "hooks_confirm":
-    case "no_hooks_confirm":
-    case "login_or_trust":
-      return "peek";
-    case "prompt_dropped":
-    case "self_update":
-      return "must_switch";
-  }
-}
-
-export function shouldAutoPeek(event: ChatHandoffEvent): boolean {
-  const action = handoffFor(event);
-  return action === "peek" || action === "must_switch";
 }
 
 /** 审批卡片附加说明：不解析 TUI，只提示已知失效原因 */

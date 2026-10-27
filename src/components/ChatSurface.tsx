@@ -49,9 +49,10 @@ import {
   chatMessageKey,
   CHAT_NO_SESSION_TEXT,
   composerShowsInterrupt,
+  confirmHandoffEvent,
   slashHandoff,
 } from "../chat-handoff";
-import { decisionKind, recordChatHandoff, type HandoffReason } from "../chat-handoff-log";
+import { confirmHandoffReason, decisionKind, recordChatHandoff, type HandoffReason } from "../chat-handoff-log";
 import { chatStatus, settleStatus, statusCaretMotion, type ShownStatus } from "../chat-status";
 import { confirmChoices } from "../chat-reply";
 import ChatDecisionCard, { type ChatDecision } from "./ChatDecisionCard";
@@ -61,6 +62,7 @@ import { cwdChipLabel } from "../terminal-welcome";
 import { escInterruptSafe } from "../agent-caps";
 import { midTurnSpec, queueSendHint, queuedNote, runningPlaceholder, stopTitle } from "../mid-turn-send";
 import type { TrustPrompt } from "../trust-prompt";
+import { launchFailureHint, type FirstRunNote, type LaunchFailure, type WaitKey, type WaitScreen } from "../terminal-wait";
 import type { AskAction } from "../tui-ask";
 import { isPlanMenu, latestPlanText, planCardChoices, planChoice, planFeedbackText, planMenuTitle } from "../plan-approval";
 import {
@@ -96,7 +98,6 @@ export default function ChatSurface({
   onApprovalKey,
   peek = false,
   onTogglePeek,
-  onRequestPeek,
   modelSwitch,
   hooksEnabled = false,
   hasOlder = false,
@@ -141,6 +142,13 @@ export default function ChatSurface({
   channel = null,
   onChannelReply,
   onSendNow,
+  waitScreen = null,
+  onWaitKey,
+  onOpenLink,
+  firstRunNote = null,
+  launchFailure = null,
+  onLaunchAgain,
+  onDismissLaunchFailure,
   metaSlots = null,
 }: {
   messages: ChatMessageDto[];
@@ -167,7 +175,6 @@ export default function ChatSurface({
   onApprovalKey?: (key: "y" | "n" | "esc" | "enter") => void;
   peek?: boolean;
   onTogglePeek?: () => void;
-  onRequestPeek?: () => void;
   modelSwitch?: DetectResult["modelSwitch"];
   hooksEnabled?: boolean;
   hasOlder?: boolean;
@@ -264,6 +271,17 @@ export default function ChatSurface({
   onChannelReply?: (requestId: string, decision: ChannelReplyDecision) => void;
   /** 往终端写一串键（「立即发送」：这家 CLI 让排着的那句马上处理的键，mid-turn-send.ts） */
   onSendNow?: (keys: string) => void;
+  /** 终端里「在等你」的那一块（terminal-wait.ts waitScreenOf）；noInputBox = 这家有画面布局表且屏上没有它的输入框 */
+  waitScreen?: (WaitScreen & { noInputBox: boolean }) | null;
+  /** 通用卡上的按键：照这家的口径写进终端（标签动作 pressWaitKey） */
+  onWaitKey?: (key: WaitKey) => void;
+  onOpenLink?: (url: string) => void;
+  /** Claude Code 第一次启动时替人走完的配色 / 安全须知（聊天里留一行说明） */
+  firstRunNote?: FirstRunNote | null;
+  /** Agent 一启动就退出、还没接上会话：退出码与终端最后几行 */
+  launchFailure?: LaunchFailure | null;
+  onLaunchAgain?: () => void;
+  onDismissLaunchFailure?: () => void;
   /**
    * 底部状态栏（聊天变体）留给「权限 · 项目 | 模型」的左右两格（TerminalStatusBar chatMetaRef）。
    * 两格都在、输入框不在居中空态时挂进去（输入框下面只有一行，2026-10-23）；否则画在输入框下面
@@ -313,27 +331,30 @@ export default function ChatSurface({
     return () => clearTimeout(t);
   }, [maybeStuck]);
 
-  // 认出了信任菜单就在聊天层直接给按钮，不必再拉起终端。
-  // 因为卡住而自动拉起的终端，等会话接上后自动收回；人手拉起的不动
-  const autoPeekedRef = useRef(false);
-  const prevStuckRef = useRef(false);
+  // 卡住、认不出的确认、斜杠命令打开的选择器：不再自动弹出底部终端（2026-10-27 用户拍板），改出「终端在等你」通用卡
+  //（waitDecision）。选择器开着由这里记：发了会打开选择器的命令 / 点了芯片里的选择器之后，到屏上回到输入框为止
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const pickerSeenRef = useRef(false);
   useEffect(() => {
-    // 只在刚判定卡住的那一下拉起；人手收起后不再反复弹回来
-    const rising = stuckWaiting && !prevStuckRef.current;
-    prevStuckRef.current = stuckWaiting;
-    if (!rising || trustPrompt) return;
-    if (!peek) {
-      autoPeekedRef.current = true;
-      recordChatHandoff(agentId, "stuck_start");
-    }
-    onRequestPeek?.();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stuckWaiting, trustPrompt]);
+    if (!pickerOpen) return;
+    if (waitScreen) pickerSeenRef.current = true;
+    else if (pickerSeenRef.current) setPickerOpen(false);
+    const t = setTimeout(() => setPickerOpen(false), 30_000);
+    return () => clearTimeout(t);
+  }, [pickerOpen, waitScreen]);
+  function openPicker() {
+    pickerSeenRef.current = false;
+    setPickerOpen(true);
+  }
+  // 「在等确认」刚出现先等一会儿：hooks / 旁路的事件比屏上画出菜单早到，扫屏认菜单还有 250ms 节流，
+  // 这一下读到的是半截画面，认不出就先冒一张通用卡、随即换成菜单卡（同原先自动露出终端的 1.5 秒宽限）
+  const [confirmAged, setConfirmAged] = useState(false);
   useEffect(() => {
-    if (syncState === "waiting" || !autoPeekedRef.current) return;
-    autoPeekedRef.current = false;
-    if (peek) onTogglePeek?.();
-  }, [syncState, peek, onTogglePeek]);
+    setConfirmAged(false);
+    if (attention !== "confirm") return;
+    const t = setTimeout(() => setConfirmAged(true), 1500);
+    return () => clearTimeout(t);
+  }, [attention]);
 
   function scrollBottom() {
     const el = scrollRef.current;
@@ -689,8 +710,69 @@ export default function ChatSurface({
       },
     };
   }
+  // 「终端在等你」通用卡（terminal-wait.ts）：认不出的确认、卡住、选择器开着、启动后停在没有输入框的画面上。
+  // 原先这几种都自动弹出底部终端，2026-10-27 用户拍板改成卡片，去终端只在卡上由人点
+  const waitReason: HandoffReason | null = !waitScreen || !running
+    ? null
+    : attention === "confirm" && confirmAged
+      ? confirmHandoffReason(confirmHandoffEvent(agentId, hooksEnabled))
+      : pickerOpen
+        ? "picker"
+        : stuckWaiting || (ptyQuiet && waitScreen.noInputBox)
+          ? "stuck_start"
+          : null;
+  function waitDecision(screen: WaitScreen, detail?: string | null): ChatDecision {
+    return {
+      key: `wait:${screen.title}`,
+      title: screen.title ? `终端在等你：${screen.title}` : `${agentLabel(agentId)} 在终端里等你处理`,
+      detail: detail ?? null,
+      hint: cliNewer
+        ? "这版 CLI Mesa 还没核对过，下面是终端原文；按键直接发给终端，处理完卡片自己收起"
+        : "Mesa 认不出这一步，下面是终端原文；按键直接发给终端，处理完卡片自己收起",
+      options: [],
+      screen: {
+        lines: screen.lines,
+        live: true,
+        numbered: screen.numbered,
+        links: screen.links,
+        typeIn: screen.typeIn,
+        keys: true,
+        // Grok 非 prompt 态 Esc 会触发整进程退出确认（escInterruptSafe）
+        esc: escInterruptSafe(agentId),
+        onKey: (k) => onWaitKey?.(k),
+        onOpenLink: (url) => onOpenLink?.(url),
+      },
+    };
+  }
+  // 一启动就退出、还没接上会话：退出码与终端最后几行（不再只在终端里留一行红字）
+  const failureDecision: ChatDecision | null =
+    launchFailure && !running
+      ? {
+          key: `launch-failed:${launchFailure.code}:${launchFailure.lines.join("\n")}`,
+          title: `${agentLabel(agentId)} 没能启动`,
+          detail: `它一启动就退出了${launchFailure.code > 0 ? `（退出码 ${launchFailure.code}）` : ""}。终端里的最后几行：`,
+          hint: launchFailureHint(launchFailure.lines, launchFailure.code),
+          options: [
+            ...(onDismissLaunchFailure ? [{ label: "知道了", onClick: onDismissLaunchFailure }] : []),
+            ...(onLaunchAgain ? [{ label: "重新启动", primary: true, onClick: onLaunchAgain }] : []),
+          ],
+          screen: {
+            lines: launchFailure.lines,
+            live: false,
+            numbered: 0,
+            links: [],
+            typeIn: false,
+            keys: false,
+            esc: false,
+            onKey: () => {},
+            onOpenLink: (url) => onOpenLink?.(url),
+          },
+        }
+      : null;
   const decision: ChatDecision | null =
-    // 方案确认排在旁路审批前：Qwen 的结束计划旁路只给「允许 / 拒绝」，屏上那张有几种开工法
+    failureDecision
+      ? failureDecision
+      : // 方案确认排在旁路审批前：Qwen 的结束计划旁路只给「允许 / 拒绝」，屏上那张有几种开工法
     planMenu && !trustPrompt
       ? planDecision(planMenu)
       : channelApproval && channelChoices.length && !trustPrompt && !menuOutgrows
@@ -707,6 +789,11 @@ export default function ChatSurface({
             onClick: () => onChannelReply?.(channelApproval.requestId!, c.decision),
           })),
         }
+      : attention === "confirm" && !menuPrompt && !trustPrompt && waitScreen
+      ? // 宽限里先不出卡（菜单多半马上认出来），过了还认不出才出通用卡
+        confirmAged
+        ? waitDecision(waitScreen, confirmDetail ?? channelApproval?.detail ?? null)
+        : null
       : attention === "confirm" && !menuPrompt && !trustPrompt
       ? {
           key: `approval:${confirmDetail ?? ""}`,
@@ -813,9 +900,17 @@ export default function ChatSurface({
                   ? [{ label: "关闭面板", title: "往终端按 Esc", onClick: () => onApprovalKey?.("esc") }]
                   : [],
               }
-            : null;
+            : waitReason && waitScreen
+              ? waitDecision(waitScreen)
+              : null;
   // 出了新问题就滚到底：卡片贴着输入框，不能藏在视口外
   const decisionKey = decision?.key ?? null;
+  // 通用卡 = 聊天层没接住的一次（设置「诊断」里的计数，排下一步该补什么）：同一张卡只记一次
+  const waitCardKey = decision?.screen?.live ? decisionKey : null;
+  useEffect(() => {
+    if (waitCardKey && waitReason) recordChatHandoff(agentId, waitReason);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [waitCardKey]);
   useEffect(() => {
     if (decisionKey) requestAnimationFrame(scrollBottom);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -853,10 +948,7 @@ export default function ChatSurface({
       );
     }
     const event = slashHandoff(text, modelSwitch?.kind ?? null);
-    if (event === "picker_model") {
-      if (!peek) recordChatHandoff(agentId, "picker", "slash");
-      onRequestPeek?.();
-    }
+    if (event === "picker_model") openPicker();
     return onSend(text);
   }
 
@@ -1066,10 +1158,7 @@ export default function ChatSurface({
         effort={runtime.effort}
         submitCsiU={runtime.submitCsiU}
         onTuiCommand={onTuiCommand}
-        onPicker={() => {
-          if (!peek) noteHandoff("picker", "menu");
-          onRequestPeek?.();
-        }}
+        onPicker={openPicker}
         contextUsed={contextUsed}
         // 挂进状态栏时圆环由状态栏画（它有本段用量与连接名，悬停一起说）
         showRing={!metaSlotted}
@@ -1158,7 +1247,7 @@ export default function ChatSurface({
             </div>
           )}
           {state === "idle" && messages.length === 0 ? (
-            stuckWaiting ? (
+            stuckWaiting && !decision ? (
               <div className="flex flex-1 flex-col items-center justify-center pb-20 text-center">
                 <p className="max-w-md text-sm text-warn-text">
                   {CHAT_NO_SESSION_TEXT}
@@ -1236,6 +1325,7 @@ export default function ChatSurface({
               {generating && !decision && <MesaCaret light={isLightTheme(theme)} />}
             </div>
           )}
+          {firstRunNote && (firstRunNote.theme || firstRunNote.security) && <FirstRunLine note={firstRunNote} agent={agentLabel(agentId)} />}
           {decision && (
             <ChatDecisionCard
               decision={decision}
@@ -1464,4 +1554,41 @@ function fmtElapsed(sec: number): string {
 
 function agentLabel(agentId: string | null | undefined): string {
   return AGENTS.find((a) => a.id === agentId)?.label ?? "Agent";
+}
+
+/** Claude Code 第一次启动时 Mesa 替人走完的两步：一行说明，安全须知原文可展开（不替人看，只是不挡路） */
+function FirstRunLine({ note, agent }: { note: FirstRunNote; agent: string }) {
+  const [open, setOpen] = useState(false);
+  const done = [
+    note.theme ? `配色选了「${note.theme}」` : null,
+    note.security ? "安全须知已确认" : null,
+  ].filter(Boolean);
+  return (
+    <div className="mb-3 text-xs leading-5 text-l3">
+      <div className="flex items-start gap-2">
+        <span className="mt-[7px] size-1.5 shrink-0 rounded-full bg-done" aria-hidden="true" />
+        <span>
+          {agent} 第一次启动，Mesa 替你完成了：{done.join("，")}
+          {note.security && (
+            <>
+              {" · "}
+              <button
+                type="button"
+                onClick={() => setOpen((v) => !v)}
+                className="text-cta-pill-text underline decoration-dashed underline-offset-2 hover:text-l1"
+              >
+                {open ? "收起原文" : "看安全须知原文"}
+              </button>
+            </>
+          )}
+          {note.theme && <span className="text-l4">（以后可在终端里用 /theme 改）</span>}
+        </span>
+      </div>
+      {open && note.security && (
+        <pre className="ml-3.5 mt-1.5 whitespace-pre-wrap rounded-lg border border-hairline bg-inset px-3 py-2 font-mono text-xs leading-5 text-l2">
+          {note.security.join("\n")}
+        </pre>
+      )}
+    </div>
+  );
 }

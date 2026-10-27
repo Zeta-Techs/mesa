@@ -507,9 +507,9 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # （tests/app-update.test.ts）；真正 check()/安装在 store.ts
   chat-handoff-log.ts        # 聊天层转到终端记数（2026-10-22，tests/chat-handoff-log.test.ts）：原因闭集 HANDOFF_REASONS（与 chat_handoff_log.rs
                              # REASONS 同名同序，测试钉住）、说法、确认卡种类 decisionKind、同家同原因 3 秒去重；记录失败静默。
-                             # 记数点：TerminalPage 等确认自动露出 / 标签栏与 /terminal 切终端，ChatSurface 卡住自动露出、选择器、卡片与「看实时输出」按钮；
+                             # 记数点：标签栏与 /terminal 切终端（TerminalPage），ChatSurface 出「终端在等你」卡（认不出的确认 / 卡住 / 选择器）、卡片与「看实时输出」按钮；
                              # 查看在 components/ChatHandoffStatsPanel.tsx（设置「诊断」）
-  chat-handoff.ts            # 聊天⇄终端交接表：chat_ok / peek / must_switch、卡住时的一句话 CHAT_NO_SESSION_TEXT、斜杠是否要窥视 TUI、
+  chat-handoff.ts            # 聊天⇄终端交接：等确认有没有精确状态（confirmHandoffEvent）、卡住时的一句话 CHAT_NO_SESSION_TEXT、斜杠会不会打开选择器、
                              # 聊天头状态 chatHeaderStatus（未开始不写「等待会话文件」，tests/chat-handoff.test.ts）；
                              # 本地乐观消息放回解析结果的位置 placePendingUsers（排队中的接末尾，其余插在发送后的第一条新回复前）；
                              # messageKey / chatMessageKey 有来源 id 用 id；HOOKS_AGENTS 键是 agent id（2026-10-20 改正 claude-code）
@@ -621,7 +621,7 @@ terminal-font.ts           # 终端字体族单一出处（设置页下拉与 xt
                              # （新增调色板须同步 settings.rs KNOWN_PALETTES，否则被静默丢弃，tests/terminal-palettes.test.ts）
   upstream-note.ts           # brew 最新但上游 npm 更高版本的提示
 update-routing.ts          # CLI 自更新路由 interactiveUpdatePrefill（ProfilesPage 消费）：interactiveTui 家（kimi upgrade 这类方向键选择界面）配置页行输入（updater_write 只应答 [y/n]）操作不了，命中时返回预填完整终端的自更新命令（与官方账号登录同款开终端机制）；未命中返回 null 走原 run_streaming_pty 实时终端，普通渠道行为不变（tests/update-routing.test.ts）
-  trust-prompt.ts            # 启动「是否信任这个目录」菜单识别（读 xterm 可视区文本；认 Claude / Kimi / CodeBuddy 方框 / Gemini 四种形态，信任只选范围最窄的那项）+ 代答按键序列（方向键挪到目标项再回车）；认不出返回 null 走 8 秒拉起终端的出口
+  trust-prompt.ts            # 启动「是否信任这个目录」菜单识别（读 xterm 可视区文本；认 Claude / Kimi / CodeBuddy 方框 / Gemini 四种形态，信任只选范围最窄的那项）+ 代答按键序列（方向键挪到目标项再回车）；认不出返回 null，卡住时聊天层出「终端在等你」卡
   chat-style.ts              # 聊天层阅读体验：字号档 / 字体 / 行内代码强调色 / 滚动条四张表（与 settings.rs KNOWN_CHAT_* 逐表镜像）+ 壳上内联变量 chatStyleVars（标准/系统档不写变量）；
                              # 颜色与滚动条行为都在 App.css（data-chat-accent / data-chat-scrollbar / .ccode-chat-scroll / .ccode-chat-user，tests/chat-style.test.ts）
   profile-connection-ui.ts   # 连接页行状态列（profileStatusCell：只说例外与测试通过）、未测试给「测试」入口（profileNeedsProbe）、同组重名（duplicateNameIds）、「同步目录」是否出现
@@ -726,6 +726,10 @@ model-vendors.ts           # 获取模型下拉按厂商分组折叠（大网关
                              #   聊天层给「继续」卡（回车），认出时不再当面板；
                              # 认「终端里开着一个面板」（parseTuiPanel：没有该家输入框 + Esc to cancel/close 一类关闭提示；/cost、/usage 的 Settings 面板）：
                              # 与菜单同一次扫屏，认出菜单时不算面板；聊天层给「结果在终端面板里」卡，不再挂「正在生成回复」（tests/tui-panel.test.ts）
+  terminal-wait.ts           # 「终端在等你」通用卡（2026-10-27，取代自动弹出底部终端）：waitScreenOf 摘终端那一块（去字符画 / 方框竖边、最多 16 行、
+                             # 数序号、接折行网址、认要输入文字）、waitKeyBytes 卡上按键的字节；Claude Code 首次启动配色 / 安全须知两屏认法
+                             # （claudeFirstRunStep、claudeThemeTarget：Mac 选 Auto，Windows 按主题明暗）；一启动就退出的最后几行与原因（exitTail /
+                             # launchFailureHint）。卡片画在 ChatDecisionCard ScreenCard，扫屏与替人按键在 TerminalPage（tests/terminal-wait.test.ts，样本 tests/fixtures/terminal-wait/）
   sidebar-chats.ts           # 侧栏项目树挂对话纯逻辑（2026-10-23）：每个文件夹列哪几段（projectChats / scratchChats：按最近活动，
                              # 归档 / 内部 / 源文件不在的 / 没起名也没说过话的空对话不列）、随手聊多少天没动的（staleScratchChats，节头 ⋯ 一键归档）、对话与文件夹的运行状态（chatDot / folderDot / scratchDot：run-caret 三态，文件夹取最要紧的）、
                              # 正在看的标签归哪个文件夹（currentFolderKey，工作树归主仓）、展开默认（folderOpen）、短标题去「MMDD|类型|」、挂在课题下再去开头重复的课题名

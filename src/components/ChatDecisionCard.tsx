@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronLeft, ChevronRight, CornerDownLeft, PenLine } from "lucide-react";
 import type { DecisionPreview } from "../chat-channel";
 import { IS_MAC } from "../hotkeys";
+import type { WaitKey } from "../terminal-wait";
 import type { AskAction, AskQuestion, AskReview, ClaudeAsk } from "../tui-ask";
 import ChatMarkdown from "./ChatMarkdown";
 import { DiffView, OutputView } from "./ConversationView";
@@ -33,6 +34,26 @@ export interface ChatDecision {
   } | null;
   /** Claude 计划模式的方案确认（plan-approval.ts）：有它时画整篇方案 + 开工 / 改方案，不用 options */
   plan?: PlanDecision | null;
+  /** 「终端在等你」通用卡（terminal-wait.ts）：终端原文摘录 + 按键；有它时 options 只当额外按钮 */
+  screen?: ScreenDecision | null;
+}
+
+export interface ScreenDecision {
+  /** 终端里那一块的原文（terminal-wait.ts waitScreenOf） */
+  lines: string[];
+  /** 摘录跟着终端实时变（启动失败卡是退出那一刻的定格） */
+  live: boolean;
+  /** 屏上带序号的选项数：给同样多的数字键 */
+  numbered: number;
+  links: string[];
+  /** 屏上在等人输入一段文字：给输入框 */
+  typeIn: boolean;
+  /** 给方向键 / 回车一排（启动失败卡不给） */
+  keys: boolean;
+  /** 给 Esc（Grok 非输入态按 Esc 是退出确认，不给） */
+  esc: boolean;
+  onKey: (key: WaitKey) => void;
+  onOpenLink: (url: string) => void;
 }
 
 export interface PlanDecision {
@@ -82,6 +103,11 @@ export default function ChatDecisionCard({
         onOpenTerminal={onOpenTerminal}
         onPeek={onPeek}
       />
+    );
+  }
+  if (decision.screen) {
+    return (
+      <ScreenCard decision={decision} screen={decision.screen} onOpenTerminal={onOpenTerminal} onPeek={onPeek} />
     );
   }
   if (decision.ask) {
@@ -266,6 +292,143 @@ function CardShell({
       )}
     </section>
   );
+}
+
+/**
+ * 「终端在等你」通用卡（2026-10-27 用户拍板，取代自动弹出底部终端；样稿 .claude/mockups/terminal-waits.html）：
+ * 终端里那一块原样贴出来、跟着屏实时变，下面一排按键直接发给终端；要输入文字时给输入框，屏上的网址做成按钮。
+ * 想看整个终端点右上角「露出终端 / 打开终端」——由人点，不自动弹
+ */
+function ScreenCard({
+  decision,
+  screen,
+  onOpenTerminal,
+  onPeek,
+}: {
+  decision: ChatDecision;
+  screen: ScreenDecision;
+  onOpenTerminal: () => void;
+  onPeek?: () => void;
+}) {
+  const [text, setText] = useState("");
+  const primary = decision.options.find((o) => o.primary) ?? null;
+  const send = () => {
+    const t = text.trim();
+    if (!t) return;
+    screen.onKey(`text:${t}`);
+    setText("");
+  };
+  const key = (k: WaitKey, label: ReactNode, title: string) => (
+    <button
+      key={k}
+      type="button"
+      onClick={() => screen.onKey(k)}
+      title={title}
+      className="h-7 min-w-8 rounded-md border border-b-2 border-field bg-inset px-2 font-mono text-xs text-l2 transition-colors hover:bg-hover hover:text-l1 active:translate-y-px active:border-b"
+    >
+      {label}
+    </button>
+  );
+  return (
+    <CardShell
+      label={decision.title}
+      title={decision.title}
+      detail={decision.detail}
+      hint={decision.hint}
+      onOpenTerminal={onOpenTerminal}
+      onPeek={onPeek}
+      onPrimary={primary ? primary.onClick : null}
+      footer={
+        <>
+          {screen.links.map((url) => (
+            <button
+              key={url}
+              type="button"
+              onClick={() => screen.onOpenLink(url)}
+              title={url}
+              className={`${secondaryActionClass} max-w-[16rem]`}
+            >
+              <span className="truncate">在浏览器打开{linkHost(url)}</span>
+            </button>
+          ))}
+          {screen.keys && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {screen.numbered > 0 && (
+                <>
+                  <span className="text-micro text-l4">选</span>
+                  {Array.from({ length: screen.numbered }, (_, i) =>
+                    key(`digit:${i + 1}`, i + 1, `往终端按 ${i + 1}`),
+                  )}
+                  <span className="ml-1 text-micro text-l4">或</span>
+                </>
+              )}
+              {key("up", "↑", "往终端按 ↑")}
+              {key("down", "↓", "往终端按 ↓")}
+              {key("enter", <span className="font-sans">回车</span>, "往终端按回车")}
+              {screen.esc && key("esc", <span className="font-sans">Esc</span>, "往终端按 Esc")}
+            </div>
+          )}
+          {decision.options
+            .filter((o) => o !== primary)
+            .map((opt, i) => (
+              <button
+                key={`${i}-${opt.label}`}
+                type="button"
+                onClick={opt.onClick}
+                title={opt.title}
+                className={`${secondaryActionClass} max-w-[18rem]`}
+              >
+                <span className="truncate">{opt.label}</span>
+              </button>
+            ))}
+          {primary && (
+            <PrimaryButton className="ml-auto" title={primary.title} onClick={primary.onClick}>
+              {primary.label}
+            </PrimaryButton>
+          )}
+        </>
+      }
+    >
+      <div className="mx-4 mb-3 overflow-hidden rounded-lg border border-hairline bg-inset">
+        <div className="flex items-center gap-1.5 border-b border-hairline px-3 py-1 text-micro text-l4">
+          {screen.live && <span className="size-1.5 rounded-full bg-done" aria-hidden="true" />}
+          {screen.live ? "终端原文 · 实时" : "终端原文"}
+        </div>
+        <pre className="ccode-chat-scroll max-h-56 overflow-auto whitespace-pre-wrap break-all px-3 py-2 font-mono text-xs leading-5 text-l2">
+          {screen.lines.join("\n")}
+        </pre>
+      </div>
+      {screen.typeIn && (
+        <form
+          className="mx-4 mb-3 flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            send();
+          }}
+        >
+          <input
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="要输入到终端的内容（如浏览器里给的代码）"
+            spellCheck={false}
+            className="h-8 min-w-0 flex-1 rounded-md border border-field bg-inset px-2.5 font-mono text-xs text-l1 outline-none focus:border-cta"
+          />
+          <button type="submit" disabled={!text.trim()} className={`${primaryActionClass} shrink-0`}>
+            发给终端
+          </button>
+        </form>
+      )}
+    </CardShell>
+  );
+}
+
+/** 链接按钮上的域名（「在浏览器打开 · claude.com」）；解析不了就不写 */
+function linkHost(url: string): string {
+  try {
+    return ` · ${new URL(url).host}`;
+  } catch {
+    return "";
+  }
 }
 
 function KeyCap({ children }: { children: ReactNode }) {
