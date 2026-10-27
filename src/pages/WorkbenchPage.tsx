@@ -1637,8 +1637,9 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
 
       <section className="min-w-0">
           <div className="mb-2.5 flex flex-wrap items-center gap-2 px-1">
-            <CircleDot size={14} strokeWidth={1.8} className="text-nav-accent" aria-hidden="true" />
-            <h2 className="text-micro font-medium text-l2">
+            {/* 三块的标题同一个样子（同 SectionHeading）：原先这里是 micro 灰字，夹在两个 base 粗体标题之间 */}
+            <CircleDot size={14} strokeWidth={1.8} className={iconClass} aria-hidden="true" />
+            <h2 className="text-base font-semibold text-l1">
               {workbenchNowSectionTitle(runningBadge)}
             </h2>
             {runningBadge > 0 && (

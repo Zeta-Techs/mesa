@@ -3981,21 +3981,19 @@ select:focus-visible {
 }
 
 /* 工作台按内容宽度排版；窗口侧栏变化也能触发，信息文字不降到 l4。 */
+/* 字号跟全站令牌走（2026-10-27 用户：「和全站的字体格式一致吗」）：原先这里把 sm / xs / base 局部钉成 13 / 12 / 14px，
+   Mac 上比全站大一档、Windows 上 sm 反而小一档；现在不覆写，名称 sm、状态与几个数 xs、时间 micro */
 .ccode-workbench {
   container: workbench / inline-size;
-  --text-base: 14px;
   /* 限宽（2026-10-27 精修）：列表铺满宽窗时名称在最左、时间在最右，一行要横扫整屏才读完 */
   max-width: 1040px;
   margin-inline: auto;
 }
 .ccode-workbench, .ccode-workbench-detail {
-  --text-sm: 13px;
-  --text-xs: 12px;
   font-size: var(--text-sm);
 }
 .ccode-workbench-detail-backdrop { top: var(--ccode-titlebar-h); }
 .ccode-workbench-detail {
-  --text-base: 17px;
   width: min(400px, 100%);
   max-width: 100%;
   border-left: 1px solid var(--color-field);
@@ -4004,8 +4002,10 @@ select:focus-visible {
 .ccode-workbench-list { background: var(--color-strip); }
 .ccode-workbench-project-head {
   min-height: 42px;
-  padding: 7px 12px 3px 6px;
+  padding: 7px 14px 3px 6px;
 }
+/* 项目头的时间与任务行时间同宽同右缘，上下对成一列 */
+.ccode-workbench-updated { width: 7.5rem; }
 /* 项目头的去处 / 外开：悬停或焦点在这一组里时才出现（每组常驻一排按钮是噪音）；触屏没有悬停，照常显示 */
 @media (hover: hover) {
   .ccode-workbench-reveal { opacity: 0; transition: opacity 120ms; }
@@ -4025,13 +4025,27 @@ select:focus-visible {
 /* 任务一行读完：点 · 名称紧跟状态 · 待拍板 · 时间（2026-10-27 精修，原七列 56px 行） */
 .ccode-workbench-task {
   display: grid;
-  grid-template-columns: 6px minmax(0, 1fr) auto 7.5rem;
+  grid-template-columns: 16px minmax(0, 1fr) auto 7.5rem;
   grid-template-areas: "dot main flag time";
   align-items: center;
   column-gap: 10px;
   min-height: 34px;
-  padding: 5px 14px 5px 18px;
+  padding: 5px 14px 5px 14px;
 }
+/* 步骤序号圈：当前步实心（强调色底），其余描边；颜色跟随所在行的语气 */
+.ccode-workbench-step-badge {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid currentColor;
+  border-radius: 999px;
+  font-size: var(--text-micro);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.ccode-workbench-step-badge.is-current { background: var(--color-nav-accent); border-color: var(--color-nav-accent); color: var(--color-canvas); }
 .ccode-workbench-task-dot { grid-area: dot; }
 .ccode-workbench-task-main { grid-area: main; display: flex; align-items: baseline; gap: 8px; overflow: hidden; }
 .ccode-workbench-task-name { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -4065,7 +4079,8 @@ select:focus-visible {
 }
 .ccode-workbench-time-item:hover { background: var(--color-hover); }
 @container workbench (max-width: 740px) {
-  .ccode-workbench-task { grid-template-columns: 6px minmax(0, 1fr) auto 5.5rem; }
+  .ccode-workbench-task { grid-template-columns: 16px minmax(0, 1fr) auto 5.5rem; }
+  .ccode-workbench-updated { width: 5.5rem; }
   .ccode-workbench-vitals { display: none; }
   .ccode-workbench-project-name { flex-basis: 10rem; }
   .ccode-workbench-schedule {
@@ -4079,7 +4094,7 @@ select:focus-visible {
 @container workbench (max-width: 470px) {
   /* 最窄：状态换到名称下面，时间跟在状态后 */
   .ccode-workbench-task {
-    grid-template-columns: 6px minmax(0, 1fr) auto;
+    grid-template-columns: 16px minmax(0, 1fr) auto;
     grid-template-areas: "dot main flag" ". time time";
     row-gap: 2px;
     padding-right: 12px;

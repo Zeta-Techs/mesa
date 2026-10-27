@@ -1,5 +1,15 @@
 import { useEffect, useId, useState, type ReactNode } from "react";
-import { ArrowRight, ChevronDown, SquareArrowOutUpRight } from "lucide-react";
+import {
+  ArrowRight,
+  Briefcase,
+  ChevronDown,
+  Code,
+  FlaskConical,
+  GitBranch,
+  MessageSquare,
+  SquareArrowOutUpRight,
+  Target,
+} from "lucide-react";
 import RunCaret from "./RunCaret";
 import { ghostActionClass } from "./PageFrame";
 import type { RunCaretState } from "../run-caret";
@@ -8,17 +18,35 @@ import {
   CARD_VISIBLE_TASKS,
   type CardLiveRun,
   type CardTask,
-  type CardTone,
   type ProjectCard,
 } from "../workbench-cards";
 import { WORK_MODE_LABEL } from "../work-mode";
 
-/** 行首点：在干活绿、等你黄、出错红、流程当前步强调色；开着但在等你下一句、以及其余一律灰（不替闲着的对话报喜） */
-function dotClass(task: CardTask): string {
-  if (task.queued) return TONE_DOT.wait;
-  if (task.live) return task.live.attention === "confirm" ? TONE_DOT.wait : task.live.attention === "working" ? TONE_DOT.live : "bg-l3";
-  if (task.current && task.tone === "idle") return "bg-nav-accent";
-  return TONE_DOT[task.tone];
+/** 工作方式图标：与对话页项目选择器同一套（ChatProjectPicker MODE_ICON）；未添加的目录（随手聊）用对话图标 */
+const MODE_ICON = { research: FlaskConical, coding: Code, office: Briefcase } as const;
+
+/** 图标的颜色（2026-10-27 用户：「乍一看全是文字」——行首改成按类别的图标，颜色仍只给有事的） */
+function iconTone(task: CardTask): string {
+  if (task.queued) return "text-warn-text";
+  if (task.live) return task.live.attention === "confirm" ? "text-warn-text" : task.live.attention === "working" ? "text-ok-text" : "text-l3";
+  if (task.tone === "fail") return "text-err-text";
+  if (task.tone === "wait") return "text-warn-text";
+  if (task.current) return "text-nav-accent";
+  return "text-l3";
+}
+
+/** 行首类别图标：步骤写序号圈（当前步实心），分支 / 目标 / 对话各一个线条图标 */
+function KindIcon({ task }: { task: CardTask }) {
+  const tone = iconTone(task);
+  if (task.ref.kind === "step") {
+    return (
+      <span className={`ccode-workbench-step-badge ${task.current ? "is-current" : ""} ${tone}`} aria-hidden="true">
+        {task.ref.stepIndex + 1}
+      </span>
+    );
+  }
+  const Icon = task.ref.kind === "branch" ? GitBranch : task.ref.kind === "goal" ? Target : MessageSquare;
+  return <Icon size={14} strokeWidth={1.8} className={tone} aria-hidden="true" />;
 }
 
 function stateClass(task: CardTask): string {
@@ -26,13 +54,6 @@ function stateClass(task: CardTask): string {
   return task.tone === "fail" ? "text-err-text" : task.tone === "wait" ? "text-warn-text" : "text-l3";
 }
 
-const TONE_DOT: Record<CardTone, string> = {
-  live: "bg-ok-text",
-  wait: "bg-warn-text",
-  fail: "bg-err-text",
-  done: "bg-ok-text/50",
-  idle: "bg-l4/60",
-};
 
 /**
  * 工作台项目分组（workbench-cards.ts；2026-10-27 由卡片改成分组列表，用户截图：卡片一排按最高那张对齐、
@@ -105,6 +126,14 @@ export default function WorkbenchProjectGroup({
           <ChevronDown size={14} className={collapsed ? "-rotate-90" : ""} aria-hidden="true" />
         </button>
         <div className="ccode-workbench-project-name flex min-w-0 flex-1 flex-wrap items-center gap-2">
+          {(() => {
+            const ModeIcon = card.workMode ? MODE_ICON[card.workMode] : MessageSquare;
+            return (
+              <span title={card.workMode ? WORK_MODE_LABEL[card.workMode] : "对话"} className="flex shrink-0 text-l3">
+                <ModeIcon size={14} strokeWidth={1.8} aria-hidden="true" />
+              </span>
+            );
+          })()}
           {onOpenProject ? (
             <button
               type="button"
@@ -112,18 +141,16 @@ export default function WorkbenchProjectGroup({
               title={`去项目页：${card.path}`}
               onClick={onOpenProject}
             >
-              <span className="text-base font-semibold">{card.name}</span>
+              <span className="text-sm font-semibold">{card.name}</span>
             </button>
           ) : (
-            <span className="min-w-0 break-words text-base font-semibold text-l1" title={card.path}>
+            <span className="min-w-0 break-words text-sm font-semibold text-l1" title={card.path}>
               {card.name}
             </span>
           )}
-          {(card.workMode || vitals.length > 0) && (
+          {vitals.length > 0 && (
             <span className="ccode-workbench-vitals min-w-0 text-xs text-l3">
-              {[card.workMode ? WORK_MODE_LABEL[card.workMode] : null, ...vitals.map((v) => `${v.label} ${v.value}`)]
-                .filter(Boolean)
-                .join(" · ")}
+              {vitals.map((v) => `${v.label} ${v.value}`).join(" · ")}
             </span>
           )}
         </div>
@@ -145,11 +172,6 @@ export default function WorkbenchProjectGroup({
             {progress && <span className="shrink-0 text-micro tabular-nums text-l3">{progress.replace(/^第 (\d+ \/ \d+) 步$/, "$1")}</span>}
           </div>
         )}
-        {lastActive && (
-          <span className="ccode-workbench-updated shrink-0 text-right text-micro text-l3" title={absTime(lastActive)}>
-            {shortWhen(lastActive)}
-          </span>
-        )}
         {clientJump && (
           <button
             type="button"
@@ -170,6 +192,14 @@ export default function WorkbenchProjectGroup({
           <span className="text-xs">{continueLabel}</span>
           <ArrowRight size={12} strokeWidth={1.8} aria-hidden="true" />
         </button>
+        {/* 时间放最右、与任务行时间同一列：去处按钮隐着也占位，放在时间左边才不把时间挤偏 */}
+        {lastActive ? (
+          <span className="ccode-workbench-updated shrink-0 text-right text-micro tabular-nums text-l3" title={absTime(lastActive)}>
+            {shortWhen(lastActive)}
+          </span>
+        ) : (
+          <span className="ccode-workbench-updated shrink-0" aria-hidden="true" />
+        )}
       </div>
 
       <div id={contentsId} hidden={collapsed}>
@@ -192,11 +222,9 @@ export default function WorkbenchProjectGroup({
                     aria-haspopup="dialog"
                     onClick={() => onOpenTask(task)}
                   >
-                    <span
-                      aria-hidden="true"
-                      className={`ccode-workbench-task-dot size-1.5 rounded-full ${dotClass(task)}`}
-                      title={task.current ? "流程当前这一步" : undefined}
-                    />
+                    <span className="ccode-workbench-task-dot flex items-center justify-center" title={task.current ? `${task.kindLabel} · 流程当前这一步` : task.kindLabel}>
+                      <KindIcon task={task} />
+                    </span>
                     <span className="ccode-workbench-task-main min-w-0">
                       <span className="ccode-workbench-task-name min-w-0 text-sm text-l1" title={`${task.kindLabel} · ${task.name}`}>
                         {task.name}
@@ -210,7 +238,7 @@ export default function WorkbenchProjectGroup({
                     {task.queued && (
                       <span className="ccode-workbench-task-flag shrink-0 rounded-full bg-warn px-1.5 py-px text-micro text-warn-text">待拍板</span>
                     )}
-                    <span className="ccode-workbench-task-time min-w-0 text-xs tabular-nums text-l3" title={meta?.elapsed ? "这一轮已跑多久" : task.touchedAt ? `最后一次动它：${absTime(task.touchedAt)}` : undefined}>
+                    <span className="ccode-workbench-task-time min-w-0 text-micro tabular-nums text-l3" title={meta?.elapsed ? "这一轮已跑多久" : task.touchedAt ? `最后一次动它：${absTime(task.touchedAt)}` : undefined}>
                       {meta?.elapsed ? `本轮 ${meta.elapsed}` : shortWhen(task.touchedAt)}
                     </span>
                   </button>
