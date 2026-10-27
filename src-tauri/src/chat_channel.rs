@@ -496,6 +496,25 @@ impl Tracker {
                 });
                 let changed_id = self.snap.session_id.as_deref() != Some(id.as_str());
                 let changed_path = path.is_some() && self.snap.transcript_path != path;
+                if changed_id && self.snap.session_id.is_some() {
+                    self.snap.turn = None;
+                    self.snap.approval = None;
+                    self.snap.live_text = None;
+                    self.snap.thinking = None;
+                    self.snap.activity = None;
+                    self.snap.status_line = None;
+                    self.snap.transcript_path = None;
+                    self.snap.session_source = None;
+                    self.tools.clear();
+                    self.last_tool = None;
+                    self.running.clear();
+                    self.queued.clear();
+                    self.finished.clear();
+                    self.ended.clear();
+                    self.approval_call = None;
+                    self.approval_src = None;
+                    self.pending_break = false;
+                }
                 if changed_id || changed_path {
                     if self.snap.session_id.is_some() {
                         self.snap.session_seq += 1;
@@ -1364,6 +1383,10 @@ pub(crate) fn map_codex(msg: &Value, st: &mut CodexState) -> (Vec<ChannelEvent>,
         (None, _) => false,
     };
     let join = |st: &mut CodexState, id: String, path: Option<String>, out: &mut Vec<ChannelEvent>, send: &mut Vec<Value>| {
+        st.calls.clear();
+        st.pending.clear();
+        st.summarized.clear();
+        st.subscribed = false;
         st.thread = Some(id.clone());
         st.joined = true;
         out.push(ChannelEvent::Session {
@@ -1451,8 +1474,14 @@ pub(crate) fn map_codex(msg: &Value, st: &mut CodexState) -> (Vec<ChannelEvent>,
             "thread/started" => {
                 let thread = params.get("thread").cloned().unwrap_or(Value::Null);
                 let id = thread.get("id").and_then(|x| x.as_str()).map(String::from);
-                let is_child = thread.get("parentThreadId").is_some_and(|x| !x.is_null());
-                if let (Some(id), false, true) = (id, is_child, st.thread.is_none()) {
+                let is_child = thread.get("parentThreadId").is_some_and(|x| !x.is_null())
+                    || thread.get("source").and_then(|s| s.get("subAgent")).is_some();
+                let ephemeral = thread.get("ephemeral").and_then(Value::as_bool) == Some(true);
+                let source = thread.get("threadSource").and_then(Value::as_str);
+                // 私有服务还会发起 thread_title 等后台线程；只跟用户在 TUI 打开的对话。
+                // 老版本不报 threadSource 时仅允许初次绑定，不能凭一个新根线程猜用户换了对话。
+                let foreground = source == Some("user") || (source.is_none() && st.thread.is_none());
+                if let Some(id) = id.filter(|id| !is_child && !ephemeral && foreground && st.thread.as_ref() != Some(id)) {
                     let path = thread.get("path").and_then(|x| x.as_str()).map(String::from);
                     join(st, id, path, &mut out, &mut send);
                 }
@@ -2855,6 +2884,40 @@ mod tests {
                 t.apply(ev, i as i64);
             }
         }
+    }
+
+    #[test]
+    fn codex_follows_user_thread_without_following_title_or_child_threads() {
+        let mut st = CodexState::default();
+        let started = |id: &str, source: &str, ephemeral: bool, parent: Value| json!({
+            "method":"thread/started", "params":{"thread":{"id":id,"threadSource":source,
+            "ephemeral":ephemeral,"parentThreadId":parent}}
+        });
+        let (_, first) = map_codex(&started("a", "user", false, Value::Null), &mut st);
+        assert_eq!(st.thread.as_deref(), Some("a"));
+        assert!(map_codex(&started("title", "thread_title", true, Value::Null), &mut st).0.is_empty());
+        assert!(map_codex(&started("child", "user", false, json!("a")), &mut st).0.is_empty());
+        st.pending.insert("old".into(), (json!(1), "item/fileChange/requestApproval".into()));
+        let (events, _) = map_codex(&started("b", "user", false, Value::Null), &mut st);
+        assert!(matches!(&events[0], ChannelEvent::Session { id, .. } if id == "b"));
+        assert!(st.pending.is_empty());
+        assert!(!st.subscribed);
+        let (late, _) = map_codex(&json!({"id":first[0]["id"],"result":{"thread":{"id":"a","path":"/old"}}}), &mut st);
+        assert!(late.is_empty(), "旧订阅响应不能把旧路径绑给新线程");
+        assert!(map_codex(&started("b", "user", false, Value::Null), &mut st).1.is_empty(), "resume 重播不重复订阅");
+    }
+
+    #[test]
+    fn switching_session_drops_previous_path_and_turn() {
+        let mut t = tracker();
+        t.apply(ChannelEvent::Session { id: "a".into(), path: Some("/a".into()), source: None }, 1);
+        t.apply(ChannelEvent::TextDelta("old".into()), 2);
+        t.apply(ChannelEvent::Session { id: "b".into(), path: None, source: None }, 3);
+        assert_eq!(t.snap.session_id.as_deref(), Some("b"));
+        assert!(t.snap.transcript_path.is_none());
+        assert!(t.snap.turn.is_none());
+        assert!(t.snap.live_text.is_none());
+        assert_eq!(t.snap.session_seq, 1);
     }
 
     #[test]
