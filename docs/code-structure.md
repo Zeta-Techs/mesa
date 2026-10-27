@@ -187,6 +187,7 @@ components/BackgroundTasksPanel.tsx  # 设置页「后台任务」卡（Settings
 settings-search.ts         # 设置页搜索索引单一出处（SettingSectionId 与 SettingsPage SETTING_NAV 一一对应）：每档带别名——写用户会打的词不写字段名（搜「代理」落「网络」、「卡顿」落「终端」）；searchSettings 四档排序＝档名命中 > 别名全等 > 别名包含 > 复合词拆半两半都命中（「依赖体检」这类连打词）；只搜到档不做逐行高亮——开关类设置高亮一半控件比多看一个分区更费解（CommandPalette 设置分区消费；tests/settings-search.test.ts）
   money-format.ts            # 金额千分位两位小数 groupedMoney（用量页费用、网关余额共用；币种与 ≥ ~ 前缀由调用方拼）
 rel-time.ts                # 相对时间白话 relTime（刚刚/N 分钟前/N 小时前/N 天前，超 30 天回落日期）＋悬浮绝对时间 absTime：白话双层（相对为主、绝对降为悬浮 title），定时任务行/雷达卡/验收账/内部对话卡/侧栏搜索等列表行共用（tests/rel-time.test.ts）
+                             # shortWhen：列表统一的「什么时候」（7 天内相对、更早「9月10日」、跨年带年份；nowMs 显式传，工作台用）
   project-tree.ts            # 侧栏项目树置顶与组内顺序纯逻辑：togglePin / splitPinned（置顶段按先后、移出原分组）/ parsePins（坏数据当空表）/ applyOrder + reorderGroup（拖动排序，只比同组相对先后）；
                              #   localStorage ccode.projectTreePins；tests/project-tree.test.ts
   usage-dist.ts              # 用量页分布区纯逻辑：shareOf/barWidthPct/sharePctLabel、visibleDistRows（先露 10 行、≤12 行不折）、

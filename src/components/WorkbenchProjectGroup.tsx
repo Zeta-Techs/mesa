@@ -3,7 +3,7 @@ import { ArrowRight, ChevronDown, SquareArrowOutUpRight } from "lucide-react";
 import RunCaret from "./RunCaret";
 import { ghostActionClass } from "./PageFrame";
 import type { RunCaretState } from "../run-caret";
-import { absTime, relTime } from "../rel-time";
+import { absTime, shortWhen } from "../rel-time";
 import {
   CARD_VISIBLE_TASKS,
   type CardLiveRun,
@@ -12,6 +12,19 @@ import {
   type ProjectCard,
 } from "../workbench-cards";
 import { WORK_MODE_LABEL } from "../work-mode";
+
+/** 行首点：在干活绿、等你黄、出错红、流程当前步强调色；开着但在等你下一句、以及其余一律灰（不替闲着的对话报喜） */
+function dotClass(task: CardTask): string {
+  if (task.queued) return TONE_DOT.wait;
+  if (task.live) return task.live.attention === "confirm" ? TONE_DOT.wait : task.live.attention === "working" ? TONE_DOT.live : "bg-l3";
+  if (task.current && task.tone === "idle") return "bg-nav-accent";
+  return TONE_DOT[task.tone];
+}
+
+function stateClass(task: CardTask): string {
+  if (task.live) return task.live.attention === "confirm" ? "text-warn-text" : task.live.attention === "working" ? "text-ok-text" : "text-l3";
+  return task.tone === "fail" ? "text-err-text" : task.tone === "wait" ? "text-warn-text" : "text-l3";
+}
 
 const TONE_DOT: Record<CardTone, string> = {
   live: "bg-ok-text",
@@ -24,7 +37,9 @@ const TONE_DOT: Record<CardTone, string> = {
 /**
  * 工作台项目分组（workbench-cards.ts；2026-10-27 由卡片改成分组列表，用户截图：卡片一排按最高那张对齐、
  * 只有一行的卡下面空一大块，状态 / 时长 / 花费也横着对不齐）：一行项目头 + 下面缩进的任务行，
- * 按容器宽度收放状态与时间，几个分组摞在同一个细线框里，和上面的「等你拍板」同一种列表
+ * 按容器宽度收放状态与时间，几个分组摞在同一个细线框里，和上面的「等你拍板」同一种列表。
+ * 2026-10-27 精修（用户：「有点粗糙」）：任务一行读完——名称后紧跟状态、时间靠右，不再每行带 →；
+ * 项目头的去处 / 外开在悬停或聚焦时出现；工作方式写成灰字，不用胶囊；颜色只给在干活 / 等你 / 出错
  */
 export default function WorkbenchProjectGroup({
   card,
@@ -104,23 +119,20 @@ export default function WorkbenchProjectGroup({
               {card.name}
             </span>
           )}
-          {card.workMode ? (
-            <span className="inline-block shrink-0 rounded-full border border-hairline px-1.5 py-px text-micro leading-tight text-l3">
-              {WORK_MODE_LABEL[card.workMode]}
-            </span>
-          ) : null}
-          {vitals.length > 0 && (
-            <span className="ccode-workbench-vitals min-w-0 text-micro text-l3">
-              {vitals.map((v) => `${v.label} ${v.value}`).join(" · ")}
+          {(card.workMode || vitals.length > 0) && (
+            <span className="ccode-workbench-vitals min-w-0 text-xs text-l3">
+              {[card.workMode ? WORK_MODE_LABEL[card.workMode] : null, ...vitals.map((v) => `${v.label} ${v.value}`)]
+                .filter(Boolean)
+                .join(" · ")}
             </span>
           )}
         </div>
         {card.track && (
           <div
-            className="ccode-workbench-track w-32 shrink-0"
+            className="ccode-workbench-track flex w-28 shrink-0 items-center gap-2"
             title={card.track.map((s, i) => `${i + 1}. ${s.name}${s.state === "done" ? "（已完成）" : s.state === "cur" ? "（当前）" : ""}`).join("\n")}
           >
-            <div className="flex gap-[2px]">
+            <div className="flex flex-1 gap-[2px]">
               {card.track.map((s, i) => (
                 <span
                   key={i}
@@ -130,18 +142,18 @@ export default function WorkbenchProjectGroup({
                 />
               ))}
             </div>
-            {progress && <div className="mt-0.5 text-micro text-l3">{progress}</div>}
+            {progress && <span className="shrink-0 text-micro tabular-nums text-l3">{progress.replace(/^第 (\d+ \/ \d+) 步$/, "$1")}</span>}
           </div>
         )}
         {lastActive && (
           <span className="ccode-workbench-updated shrink-0 text-right text-micro text-l3" title={absTime(lastActive)}>
-            {relTime(lastActive)}
+            {shortWhen(lastActive)}
           </span>
         )}
         {clientJump && (
           <button
             type="button"
-            className="hidden h-6 w-6 shrink-0 items-center justify-center rounded-md text-l4 hover:bg-hover hover:text-l1 group-hover:flex group-focus-within:flex"
+            className="ccode-workbench-reveal flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1"
             title={`${clientJump.label}（只打开项目，不会定位到某条对话）`}
             aria-label={clientJump.label}
             onClick={clientJump.onClick}
@@ -151,7 +163,7 @@ export default function WorkbenchProjectGroup({
         )}
         <button
           type="button"
-          className={`${ghostActionClass} h-6 shrink-0 gap-1 px-1.5 text-l3 hover:text-l1`}
+          className={`${ghostActionClass} ccode-workbench-reveal h-6 shrink-0 gap-1 px-1.5 text-l3 hover:text-l1`}
           title={continueTip}
           onClick={onContinue}
         >
@@ -182,31 +194,25 @@ export default function WorkbenchProjectGroup({
                   >
                     <span
                       aria-hidden="true"
-                      className={`ccode-workbench-task-dot size-1.5 rounded-full ${
-                        task.current && task.tone === "idle" && !task.queued ? "bg-nav-accent" : TONE_DOT[task.queued ? "wait" : task.tone]
-                      }`}
+                      className={`ccode-workbench-task-dot size-1.5 rounded-full ${dotClass(task)}`}
                       title={task.current ? "流程当前这一步" : undefined}
                     />
-                    <span className="ccode-workbench-task-kind text-micro text-l3">{task.kindLabel}</span>
-                    <span className="ccode-workbench-task-name min-w-0 break-words text-sm text-l1" title={task.name}>
-                      {task.name}
-                    </span>
-                    <span className="ccode-workbench-task-state min-w-0 text-xs text-l3">
-                      <span className={`flex min-w-0 items-center gap-1.5 ${task.tone === "fail" ? "text-err-text" : task.tone === "live" ? "text-ok-text" : task.tone === "wait" ? "text-warn-text" : ""}`}>
-                        <span className="min-w-0 break-words" title={state}>{state}</span>
-                        {task.live && <RunCaret state={caretFor(task.live)} decorative className="text-micro" />}
+                    <span className="ccode-workbench-task-main min-w-0">
+                      <span className="ccode-workbench-task-name min-w-0 text-sm text-l1" title={`${task.kindLabel} · ${task.name}`}>
+                        {task.name}
                       </span>
-                      {(task.live || task.queued) && (
-                        <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-micro text-l3">
-                          {task.live && <span>{agentLabel(task.live.agentId)}</span>}
-                          {task.queued && <span className="rounded-full bg-warn px-1.5 py-px text-warn-text">待拍板</span>}
-                        </span>
-                      )}
+                      <span className={`ccode-workbench-task-state min-w-0 text-xs ${stateClass(task)}`} title={state}>
+                        {task.current && !task.live ? `当前这一步 · ${state}` : state}
+                        {task.live ? ` · ${agentLabel(task.live.agentId) ?? task.live.agentId}` : ""}
+                      </span>
+                      {task.live && <RunCaret state={caretFor(task.live)} decorative className="shrink-0 text-micro" />}
                     </span>
-                    <span className="ccode-workbench-task-time min-w-0 text-xs tabular-nums text-l3" title={meta?.elapsed ? "这一轮已跑多久" : task.touchedAt ? absTime(task.touchedAt) : undefined}>
-                      {meta?.elapsed ? `本轮 ${meta.elapsed}` : task.touchedAt ? `更新于 ${relTime(task.touchedAt)}` : ""}
+                    {task.queued && (
+                      <span className="ccode-workbench-task-flag shrink-0 rounded-full bg-warn px-1.5 py-px text-micro text-warn-text">待拍板</span>
+                    )}
+                    <span className="ccode-workbench-task-time min-w-0 text-xs tabular-nums text-l3" title={meta?.elapsed ? "这一轮已跑多久" : task.touchedAt ? `最后一次动它：${absTime(task.touchedAt)}` : undefined}>
+                      {meta?.elapsed ? `本轮 ${meta.elapsed}` : shortWhen(task.touchedAt)}
                     </span>
-                    <ArrowRight size={13} className="ccode-workbench-task-arrow text-l3" aria-hidden="true" />
                   </button>
                 </li>
               );

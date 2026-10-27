@@ -92,6 +92,7 @@ import {
   type CardFilter,
   type CardLiveRun,
   type CardTask,
+  type ProjectCard,
   type CardProjectInput,
   type CardRunInput,
 } from "../workbench-cards";
@@ -115,6 +116,8 @@ import {
   type QueueRow,
 } from "../workbench-queue";
 import { pollEvery } from "../polling";
+import { sidebarChatTitle } from "../sidebar-chats";
+import { isScratchCwd } from "../quick-chat";
 import { PROJECT_ORDER_KEY, PROJECT_PINS_KEY, parsePins } from "../project-tree";
 import WorkbenchSchedules from "../components/WorkbenchSchedules";
 import { fmtCost } from "../stats-insight";
@@ -1003,7 +1006,8 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
           taskId: r.taskId,
           agentId: r.agentId,
           cwd: r.cwd,
-          title: r.title,
+          // 自动起名的「1027|功能|」前缀与侧栏同口径省掉
+          title: sidebarChatTitle(r.title),
           running: r.running,
           attention: r.attention,
         })),
@@ -1027,7 +1031,13 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
       // 没添加的目录只在「正在进行」里有活时出卡（只有对话行）
       ...nowRows
         .filter((row) => !row.registered)
-        .map((row) => ({ path: row.path, name: row.name, registered: false, workMode: null })),
+        // 随手聊目录不写文件夹名「scratch」
+        .map((row) => ({
+          path: row.path,
+          name: isScratchCwd(row.path, IS_WINDOWS) ? "随手聊" : row.name,
+          registered: false,
+          workMode: null,
+        })),
     ];
     return inputs.map((project) => {
       const cfg = Object.entries(researchCfg).find(([path]) => samePath(path, project.path, IS_WINDOWS))?.[1];
@@ -1093,9 +1103,8 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
   }, [cards, nowRows, hero, lastActiveByPath])
   const [cardFilter, setCardFilter] = useState<CardFilter>("active");
   // 顺序跟侧栏（置顶 > 拖动排序 > 其余按最近活动），和左边项目树对得上（2026-10-27）
-  const shownCards = (() => {
-    const picked = filterCards(cards, activeCardPaths, cardFilter, IS_WINDOWS);
-    const byRecent = [...picked].sort((a, b) => (lastActiveOf(b.path) ?? "").localeCompare(lastActiveOf(a.path) ?? ""));
+  function orderLikeSidebarSafe<T extends ProjectCard>(list: readonly T[]): T[] {
+    const byRecent = [...list].sort((a, b) => (lastActiveOf(b.path) ?? "").localeCompare(lastActiveOf(a.path) ?? ""));
     let pins: string[] = [];
     let order: string[] = [];
     try {
@@ -1105,7 +1114,15 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
       /* 读不到就按最近活动 */
     }
     return orderLikeSidebar(byRecent, pins, order, IS_WINDOWS);
-  })();
+  }
+  const shownCards = orderLikeSidebarSafe(filterCards(cards, activeCardPaths, cardFilter, IS_WINDOWS));
+  // 安静的项目收成一行（2026-10-27 精修）：「有活的」里不出现的、以及其余筛选下手上什么都没有的，
+  // 不再各画一整组（空组里只剩一行「记下一个目标」）；分组只给有事可看的
+  const groupCards = cardFilter === "active" ? shownCards : shownCards.filter((card) => card.tasks.length > 0);
+  const quietCards = (cardFilter === "active"
+    ? orderLikeSidebarSafe(cards.filter((card) => card.registered && !activeCardPaths.some((p) => samePath(p, card.path, IS_WINDOWS))))
+    : shownCards.filter((card) => card.tasks.length === 0)
+  ).filter((card) => card.registered);
   const cardFilterOptions: { id: CardFilter; label: string }[] = [
     { id: "active", label: `有活的 ${activeCardPaths.length}` },
     { id: "all", label: "全部" },
@@ -1402,7 +1419,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
   type NavItem = { key: string; queue?: (typeof queueRows)[number]; card?: (typeof cards)[number]; task?: CardTask; schedule?: ScheduleOverviewRow };
   const navItems: NavItem[] = [
     ...navigableQueueRows.map((row) => ({ key: `q:${row.key}`, queue: row })),
-    ...shownCards.flatMap((card) => card.tasks.map((task) => ({ key: `t:${card.path}\n${task.id}`, card, task }))),
+    ...groupCards.flatMap((card) => card.tasks.map((task) => ({ key: `t:${card.path}\n${task.id}`, card, task }))),
     ...scheduleRows.map((row) => ({ key: `s:${row.task.id}`, schedule: row })),
   ];
   const navIndex = resolveSelection(navItems, selectedKey, lastSelectedIndex.current);
@@ -1650,9 +1667,9 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
           </div>
 
           {nowRows.length > 0 ? (
-            shownCards.length > 0 ? (
+            groupCards.length > 0 || quietCards.length > 0 ? (
               <div className="ccode-workbench-list overflow-hidden rounded-lg border border-hairline" data-workbench-queue="">
-                {shownCards.map((card) => {
+                {groupCards.map((card) => {
                   const item = nowRows.find((row) => samePath(row.path, card.path, IS_WINDOWS)) ?? null;
                   const said = lastSaidFor(card.path);
                   const destination = resolveWorkbenchDestination(
@@ -1739,6 +1756,31 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                     />
                   );
                 })}
+                {quietCards.length > 0 && (
+                  <p
+                    className={`flex flex-wrap items-baseline gap-x-1.5 gap-y-1 px-4 py-2.5 text-xs text-l3 ${groupCards.length ? "border-t border-hairline" : ""}`}
+                  >
+                    <span>
+                      {cardFilter === "active" ? "其他" : "另有"} {quietCards.length} 个项目没有进行中的事：
+                    </span>
+                    {quietCards.map((card, i) => (
+                      <span key={card.path} className="inline-flex items-baseline gap-1.5">
+                        <button
+                          type="button"
+                          className="text-l2 hover:text-l1 hover:underline"
+                          title={`去项目页：${card.path}`}
+                          onClick={() => {
+                            setSelectProjectReq(card.path);
+                            setPage("workspaces");
+                          }}
+                        >
+                          {card.name}
+                        </button>
+                        {i < quietCards.length - 1 && <span aria-hidden="true">·</span>}
+                      </span>
+                    ))}
+                  </p>
+                )}
               </div>
             ) : (
               <p className="px-1 py-3 text-sm text-l3">这一类没有项目。</p>

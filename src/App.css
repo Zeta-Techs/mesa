@@ -3984,6 +3984,9 @@ select:focus-visible {
 .ccode-workbench {
   container: workbench / inline-size;
   --text-base: 14px;
+  /* 限宽（2026-10-27 精修）：列表铺满宽窗时名称在最左、时间在最右，一行要横扫整屏才读完 */
+  max-width: 1040px;
+  margin-inline: auto;
 }
 .ccode-workbench, .ccode-workbench-detail {
   --text-sm: 13px;
@@ -4000,8 +4003,14 @@ select:focus-visible {
 }
 .ccode-workbench-list { background: var(--color-strip); }
 .ccode-workbench-project-head {
-  min-height: 54px;
-  padding: 10px 13px 10px 8px;
+  min-height: 42px;
+  padding: 7px 12px 3px 6px;
+}
+/* 项目头的去处 / 外开：悬停或焦点在这一组里时才出现（每组常驻一排按钮是噪音）；触屏没有悬停，照常显示 */
+@media (hover: hover) {
+  .ccode-workbench-reveal { opacity: 0; transition: opacity 120ms; }
+  section:hover > .ccode-workbench-project-head .ccode-workbench-reveal,
+  section:focus-within > .ccode-workbench-project-head .ccode-workbench-reveal { opacity: 1; }
 }
 .ccode-workbench-project-name { flex-basis: 12rem; }
 .ccode-workbench-queue-row {
@@ -4013,36 +4022,35 @@ select:focus-visible {
 }
 .ccode-workbench-queue-symbol { width: 24px; height: 24px; border-radius: 7px; }
 .ccode-workbench-queue-actions > button { min-height: 30px; font-size: var(--text-xs); }
+/* 任务一行读完：点 · 名称紧跟状态 · 待拍板 · 时间（2026-10-27 精修，原七列 56px 行） */
 .ccode-workbench-task {
   display: grid;
-  grid-template-columns: 6px 34px minmax(0, 1.05fr) minmax(0, 1fr) 120px 22px;
-  grid-template-areas: "dot kind name state time arrow";
+  grid-template-columns: 6px minmax(0, 1fr) auto 7.5rem;
+  grid-template-areas: "dot main flag time";
   align-items: center;
-  column-gap: 14px;
-  row-gap: 4px;
-  min-height: 56px;
-  padding: 10px 18px 10px 25px;
+  column-gap: 10px;
+  min-height: 34px;
+  padding: 5px 14px 5px 18px;
 }
 .ccode-workbench-task-dot { grid-area: dot; }
-.ccode-workbench-task-kind { grid-area: kind; }
-.ccode-workbench-task-name { grid-area: name; overflow-wrap: anywhere; }
-.ccode-workbench-task-state { grid-area: state; overflow-wrap: anywhere; }
-.ccode-workbench-task-time { grid-area: time; text-align: right; }
-.ccode-workbench-task-arrow { grid-area: arrow; justify-self: end; }
+.ccode-workbench-task-main { grid-area: main; display: flex; align-items: baseline; gap: 8px; overflow: hidden; }
+.ccode-workbench-task-name { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ccode-workbench-task-state { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ccode-workbench-task-flag { grid-area: flag; }
+.ccode-workbench-task-time { grid-area: time; text-align: right; white-space: nowrap; }
 .ccode-workbench-schedule {
   display: grid;
-  grid-template-columns: 62px minmax(0, 1fr) minmax(0, 1fr) minmax(0, .9fr) auto;
-  grid-template-areas: "time identity frequency state action";
+  grid-template-columns: 6.5rem minmax(0, 1.2fr) minmax(0, 1fr) auto;
+  grid-template-areas: "time identity state action";
   align-items: center;
-  column-gap: 15px;
-  row-gap: 4px;
-  padding: 12px 15px;
+  column-gap: 12px;
+  row-gap: 2px;
+  min-height: 44px;
+  padding: 6px 14px;
 }
 .ccode-workbench-schedule-time { grid-area: time; }
 .ccode-workbench-schedule-identity { grid-area: identity; }
-.ccode-workbench-schedule-name { overflow-wrap: anywhere; }
-.ccode-workbench-schedule-frequency { grid-area: frequency; }
-.ccode-workbench-schedule-state { grid-area: state; overflow-wrap: anywhere; }
+.ccode-workbench-schedule-state { grid-area: state; }
 .ccode-workbench-schedule-action { grid-area: action; }
 .ccode-workbench-schedule-action > button { min-height: 30px; font-size: var(--text-xs); }
 .ccode-workbench-time-item {
@@ -4057,34 +4065,32 @@ select:focus-visible {
 }
 .ccode-workbench-time-item:hover { background: var(--color-hover); }
 @container workbench (max-width: 740px) {
-  .ccode-workbench-task {
-    grid-template-columns: 6px 34px minmax(0, 1fr) minmax(0, 1fr) 21px;
-    grid-template-areas: "dot kind name state arrow" ". kind name time arrow";
-    column-gap: 12px;
-  }
-  .ccode-workbench-task-time { text-align: left; }
+  .ccode-workbench-task { grid-template-columns: 6px minmax(0, 1fr) auto 5.5rem; }
   .ccode-workbench-vitals { display: none; }
   .ccode-workbench-project-name { flex-basis: 10rem; }
   .ccode-workbench-schedule {
-    grid-template-columns: 48px minmax(0, 1fr) auto;
-    grid-template-areas: "time identity action" ". frequency action" ". state action";
+    grid-template-columns: 5.5rem minmax(0, 1fr) auto;
+    grid-template-areas: "time identity action" ". state action";
     column-gap: 10px;
   }
   .ccode-workbench-queue-row { grid-template-columns: 24px minmax(0, 1fr); }
   .ccode-workbench-queue-actions { grid-column: 2; justify-content: flex-start; }
 }
 @container workbench (max-width: 470px) {
+  /* 最窄：状态换到名称下面，时间跟在状态后 */
   .ccode-workbench-task {
-    grid-template-columns: 6px 34px minmax(0, 1fr) 20px;
-    grid-template-areas: "dot kind name arrow" ". . state arrow" ". . time arrow";
-    column-gap: 9px;
-    row-gap: 5px;
+    grid-template-columns: 6px minmax(0, 1fr) auto;
+    grid-template-areas: "dot main flag" ". time time";
+    row-gap: 2px;
     padding-right: 12px;
   }
+  .ccode-workbench-task-main { flex-direction: column; align-items: flex-start; gap: 1px; }
+  .ccode-workbench-task-name, .ccode-workbench-task-state { max-width: 100%; }
+  .ccode-workbench-task-time { text-align: left; }
   .ccode-workbench-track, .ccode-workbench-updated { display: none; }
   .ccode-workbench-schedule {
-    grid-template-columns: 43px minmax(0, 1fr);
-    grid-template-areas: "time identity" ". frequency" ". state" ". action";
+    grid-template-columns: 4.5rem minmax(0, 1fr);
+    grid-template-areas: "time identity" ". state" ". action";
   }
   .ccode-workbench-schedule-action { text-align: left; }
 }

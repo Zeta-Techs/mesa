@@ -268,7 +268,13 @@ test("同刻定时任务可展开并打开；待拍板只导航，操作后只�
   Date.now = () => new Date("2026-10-27T10:00:00").getTime();
   const ui = await harness();
   try {
-    ui.data.schedules = [schedule("a"), schedule("b"), schedule("paused", { enabled: false, pausedReason: "连续失败" })];
+    // 今后 24 小时要跑的超过 3 个才出时间项（2026-10-27 精修）
+    ui.data.schedules = [
+      schedule("a"), schedule("b"),
+      schedule("c", { hour: 18, nextRunAt: "2026-10-27T18:00:00" }),
+      schedule("d", { hour: 20, nextRunAt: "2026-10-27T20:00:00" }),
+      schedule("paused", { enabled: false, pausedReason: "连续失败" }),
+    ];
     ui.state.inboxItems = [{ key: "sched:paused:paused", dot: "bg-warn-text", text: "雷达 paused 已暂停", actionLabel: "去处理", action: { type: "page", page: "workspaces" } }];
     await ui.render();
     const summary = ui.host.querySelector("summary")!;
@@ -284,5 +290,10 @@ test("同刻定时任务可展开并打开；待拍板只导航，操作后只�
     assert.equal(ui.calls.length, before);
     await ui.update(() => ui.button("现在跑").click());
     assert.deepEqual(ui.calls.slice(before).map((call) => call.command), ["run_schedule_now", "list_schedules"]);
+    // 一两个要跑的时候不出时间项：和下面的表是同一件事
+    ui.data.schedules = [schedule("a")];
+    await ui.render(false); await ui.render();
+    assert.equal(ui.host.querySelector('[aria-label="今后 24 小时要跑的定时任务"]'), null);
+    assert.match(ui.host.querySelector(".ccode-workbench-schedule")!.textContent!, /16:00.*雷达 a.*测试项目 · 每天 16:00/);
   } finally { await ui.close(); Date.now = originalNow; }
 });
