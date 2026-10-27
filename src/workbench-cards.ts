@@ -1,5 +1,5 @@
 /**
- * 工作台项目卡（2026-10-27 设计稿 docs/design-workbench-mockup.html 第二批）：每个项目一张卡，卡头是项目现在怎么样，
+ * 工作台项目分组（2026-10-27 设计稿 docs/design-workbench-mockup.html 第二批；同日由卡片改为分组列表）：每个项目一组，项目头是项目现在怎么样，
  * 任务行是里面每件事到哪了，点任务行在右侧开任务面板。纯逻辑，只读已有数据（项目 / 工作区 / 流程步骤 / 编程概览 /
  * 目标 / 定时任务 / 运行标签），不新增后端；供 node --test 直接测。
  *
@@ -37,6 +37,9 @@ export interface CardTask {
   live: CardLiveRun | null;
   /** 这件事在拍板队列里（行上只标「待拍板」） */
   queued: boolean;
+  /** 手上正在做（开着工作副本的步骤、改了没提交的分支、进行中的目标、开着的对话、正在跑的定时）；
+   *  只落后 / 领先基准、记下没开工的不算——它们是事实，不是「有活」（2026-10-27 用户截图：三个旧编程项目全被算成有活的） */
+  inProgress: boolean;
   /** 详情面板与跳转用的原始身份 */
   ref:
     | { kind: "step"; stepIndex: number; workspaceName: string; worktreePath: string | null; workspaceId: string | null }
@@ -214,6 +217,7 @@ export function buildProjectCard(input: {
         tone: live ? liveTone(live) : queued ? "wait" : "idle",
         live,
         queued,
+        inProgress: Boolean(live || s.ws),
         ref: { kind: "step", stepIndex: i, workspaceName: s.step.workspaceName, worktreePath: s.ws?.worktreePath ?? null, workspaceId: s.ws?.id ?? null },
       });
     });
@@ -235,10 +239,19 @@ export function buildProjectCard(input: {
         kind: "goal",
         kindLabel: "目标",
         name: goal.name,
-        state: live ? liveState(live, GOAL_BUCKET_LABEL[bucket]) : bucket === "open" ? "记下了，还没开工" : GOAL_BUCKET_LABEL[bucket],
+        state: live
+          ? liveState(live, GOAL_BUCKET_LABEL[bucket])
+          : bucket === "open"
+            ? "记下了，还没开工"
+            : bucket === "stuck"
+              ? goal.status === "failed"
+                ? "上次失败，需要处理"
+                : "上次停了，需要处理"
+              : GOAL_BUCKET_LABEL[bucket],
         tone: live ? liveTone(live) : bucket === "review" ? "wait" : bucket === "stuck" ? "fail" : "idle",
         live,
         queued,
+        inProgress: Boolean(live || bucket === "running"),
         ref: { kind: "goal", taskId: goal.id, status: goal.status },
       });
     }
@@ -250,6 +263,7 @@ export function buildProjectCard(input: {
   if (project.workMode === "coding" && input.coding) {
     const lanes = input.coding.worktrees.filter((w) => !(w.isBase && w.isPrimary));
     const kinds: Partial<Record<CodingKind, number>> = {};
+    const base = input.coding.baseBranch || "基准";
     for (const w of lanes) {
       const kind = deriveCodingKind({ ...w, hasWorktree: true });
       kinds[kind] = (kinds[kind] ?? 0) + 1;
@@ -261,10 +275,18 @@ export function buildProjectCard(input: {
         kind: "branch",
         kindLabel: "分支",
         name: w.branch || "工作树",
-        state: live ? liveState(live, CODING_KIND_LABEL[kind]) : CODING_KIND_LABEL[kind],
-        tone: live ? liveTone(live) : kind === "sync" || kind === "ready" ? "wait" : "idle",
+        state: live
+          ? liveState(live, CODING_KIND_LABEL[kind])
+          : kind === "sync"
+            ? `落后 ${base}，需同步`
+            : kind === "ready"
+              ? `比 ${base} 多出提交，等待合并`
+              : CODING_KIND_LABEL[kind],
+        // 落后 / 领先基准是事实不是待办：不上黄点（黄点留给真在等你的）
+        tone: live ? liveTone(live) : "idle",
         live,
         queued,
+        inProgress: Boolean(live || kind === "dev"),
         ref: { kind: "branch", path: w.path, branch: w.branch, codingKind: kind },
       });
     }
@@ -288,6 +310,7 @@ export function buildProjectCard(input: {
       tone: liveTone(live),
       live,
       queued: inQueue(confirmKey(run)),
+      inProgress: true,
       ref: { kind: "chat", tabId: run.tabId },
     });
   }
@@ -317,6 +340,7 @@ export function buildProjectCard(input: {
               : `上次失败：${reason || "没有错误信息"}`
             : (nextRunLabel(s, input.now) ?? "仅手动"),
       tone: running ? "live" : s.pausedReason || failed ? "fail" : "idle",
+      inProgress: running,
       live: null,
       queued,
       ref: { kind: "schedule", scheduleId: s.id },
@@ -348,6 +372,19 @@ export function buildProjectCard(input: {
 
 function rank(task: CardTask): number {
   return TONE_ORDER[task.queued ? "wait" : task.tone];
+}
+
+/** 手上在做、但此刻没人在跑的项目，多久没动就不再算「有活的」 */
+export const ACTIVE_IDLE_MS = 7 * 24 * 3600_000;
+
+/**
+ * 「有活的」：此刻有事（在跑 / 等你 / 出错 / 在拍板队列里），或手上在做且 7 天内动过。
+ * 只是分支落后基准、目标记下没开工的不算（2026-10-27）
+ */
+export function cardIsActive(card: ProjectCard, lastActiveMs: number | null, nowMs: number): boolean {
+  if (card.tasks.some((t) => t.queued || t.tone === "live" || t.tone === "wait" || t.tone === "fail")) return true;
+  if (!card.tasks.some((t) => t.inProgress)) return false;
+  return lastActiveMs !== null && nowMs - lastActiveMs <= ACTIVE_IDLE_MS;
 }
 
 /** 卡上默认列几行，其余折成「还有 N 项」 */

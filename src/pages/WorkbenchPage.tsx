@@ -72,11 +72,12 @@ import {
 import { dismissToast, toast } from "../toast";
 import { caretOfAttention, withUnread } from "../run-caret";
 import { unreadKeyOf } from "../chat-unread";
-import WorkbenchProjectCard from "../components/WorkbenchProjectCard";
+import WorkbenchProjectGroup from "../components/WorkbenchProjectGroup";
 import WorkbenchTaskPanel, { type TaskPanelAction } from "../components/WorkbenchTaskPanel";
 import {
   awaySummary,
   buildProjectCard,
+  cardIsActive,
   durationLabel,
   filterCards,
   liveActivityLine,
@@ -596,8 +597,6 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
       agent: string;
       sessionId: string;
       filePath: string;
-      /** 这个项目最后一次对话活动，紧凑行行尾的时间 */
-      updatedAt: string | null;
     }[] = [];
     for (const path of paths) {
       if (out.some((row) => samePath(row.path, path, IS_WINDOWS))) continue;
@@ -609,14 +608,10 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
         agent: session.agent,
         sessionId: session.sessionId,
         filePath: session.filePath,
-        updatedAt: session.updatedAt,
       });
     }
     return out;
   }, [hero, nowItems, sessions]);
-  function lastTargetFor(path: string) {
-    return lastSaidTargets.find((t) => samePath(t.path, path, IS_WINDOWS)) ?? null;
-  }
   const lastSaidSig = lastSaidTargets.map((t) => `${t.path}=${t.key}`).join("\n");
   useEffect(() => {
     if (!visible) return;
@@ -1016,7 +1011,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [visible]);
 
-  // ===== 项目卡与任务面板（workbench-cards.ts，第二批）=====
+  // ===== 项目分组与任务面板（workbench-cards.ts，第二批）=====
   const cardRuns = useMemo(
     (): CardRunInput[] =>
       terminalRunInputs
@@ -1060,15 +1055,50 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
       });
     });
   }, [projects, nowRows, researchCfg, codingByPath, workspaces, userTasks, schedules, cardRuns, queueKeySig]);
-  // 有活的 = 「正在进行」原来那几个 ∪ 卡上有任务在跑 / 等你 / 出错的（定时任务失败、等验收的项目也该看见）
-  const activeCardPaths = useMemo(() => {
-    const out = nowRows.map((row) => row.path);
+  /** 项目最后一次活动：项目根与它的工作副本 / 工作树里的对话，加分支最近提交，取最新 */
+  const lastActiveByPath = useMemo(() => {
+    const out = new Map<string, string>();
     for (const card of cards) {
-      if (out.some((p) => samePath(p, card.path, IS_WINDOWS))) continue;
-      if (card.tasks.some((t) => t.queued || t.tone === "live" || t.tone === "wait" || t.tone === "fail")) out.push(card.path);
+      const roots = [
+        card.path,
+        ...workspaces.filter((w) => samePath(w.repoPath, card.path, IS_WINDOWS)).map((w) => w.worktreePath),
+        ...(Object.entries(codingByPath).find(([path]) => samePath(path, card.path, IS_WINDOWS))?.[1].worktrees ?? []).map((w) => w.path),
+      ];
+      let best: string | null = null;
+      for (const sess of sessions) {
+        if (sess.internal || !sess.updatedAt || !sess.projectPath) continue;
+        if (!roots.some((root) => pathWithin(sess.projectPath, root, IS_WINDOWS))) continue;
+        if (!best || sess.updatedAt > best) best = sess.updatedAt;
+      }
+      for (const w of Object.entries(codingByPath).find(([path]) => samePath(path, card.path, IS_WINDOWS))?.[1].worktrees ?? []) {
+        if (w.isBase && w.isPrimary) continue;
+        if (w.lastCommitAt && (!best || Date.parse(w.lastCommitAt) > Date.parse(best))) best = w.lastCommitAt;
+      }
+      if (best) out.set(card.path, best);
     }
     return out;
-  }, [nowRows, cards]);
+  }, [cards, sessions, workspaces, codingByPath]);
+  const lastActiveOf = (path: string) =>
+    [...lastActiveByPath.entries()].find(([p]) => samePath(p, path, IS_WINDOWS))?.[1] ?? null;
+  // 有活的（cardIsActive）：此刻有事，或手上在做且 7 天内动过；只是分支落后基准、目标记下没开工的不算。
+  // 「正在进行」原有的排序（确认 > 正在跑 > 其余）在前，其余按最近活动；一个都没有时留最近在做的那一个
+  const activeCardPaths = useMemo(() => {
+    const now = Date.now();
+    const active = cards.filter((card) => {
+      const at = lastActiveOf(card.path);
+      return cardIsActive(card, at ? Date.parse(at) : null, now);
+    });
+    const rank = (path: string) => {
+      const i = nowRows.findIndex((row) => samePath(row.path, path, IS_WINDOWS));
+      return i < 0 ? Number.MAX_SAFE_INTEGER : i;
+    };
+    const out = active
+      .sort((a, b) => rank(a.path) - rank(b.path) || (lastActiveOf(b.path) ?? "").localeCompare(lastActiveOf(a.path) ?? ""))
+      .map((card) => card.path);
+    if (out.length === 0 && hero) out.push(hero.path);
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cards, nowRows, hero, lastActiveByPath])
   const [cardFilter, setCardFilter] = useState<CardFilter>("active");
   const shownCards = filterCards(cards, activeCardPaths, cardFilter, IS_WINDOWS);
   const cardFilterOptions: { id: CardFilter; label: string }[] = [
@@ -1546,13 +1576,13 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
 
           {nowRows.length > 0 ? (
             shownCards.length > 0 ? (
-              <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(22rem,1fr))]">
+              <div className="overflow-hidden rounded-lg border border-hairline">
                 {shownCards.map((card) => {
                   const item = nowRows.find((row) => samePath(row.path, card.path, IS_WINDOWS)) ?? null;
                   const said = lastSaidFor(card.path);
                   const canGoal = goalTargets.some((t) => samePath(t.path, card.path, IS_WINDOWS));
                   return (
-                    <WorkbenchProjectCard
+                    <WorkbenchProjectGroup
                       key={card.path}
                       card={card}
                       openTaskId={openTask && samePath(openTask.path, card.path, IS_WINDOWS) ? openTask.taskId : null}
@@ -1571,7 +1601,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                         )
                       }
                       continueTip={said ? `回到上次停下的地方\n上次停在：${said.full}` : "回到上次停下的地方"}
-                      lastActive={lastTargetFor(card.path)?.updatedAt ?? null}
+                      lastActive={lastActiveOf(card.path)}
                       liveMeta={liveMeta}
                       caretFor={(live) => withUnread(caretOfAttention(live.attention), runUnread(live.tabId)) ?? "idle"}
                       clientJump={

@@ -280,7 +280,7 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
   components/HoverTip.tsx      # 应用内 tooltip 共享件（v3.93 提取自 ProjectGroup）：useHoverTip + HoverTip，
                              # portal 到 body（免疫祖先 opacity/transform 的 fixed 包含块问题）、滚动/缩放即关、
                              # up 参数支持锚点上方弹出（行内动作栏 tooltip 专用）；PageFrame 的 RowAction 内置上方 tooltip
-  components/WorkbenchProjectCard.tsx # 工作台项目卡：卡头（名称 / 方式 / 最近活动 / 继续 → / 外开）、几个数、科研进度条、任务行（点开任务面板）、卡底插槽
+  components/WorkbenchProjectGroup.tsx # 工作台项目分组（2026-10-27 由卡片改为分组列表）：项目头（名称 / 方式 / 几个数 / 科研进度条 / 最近活动 / 继续 → / 外开）+ 缩进任务行（固定列：点·类别·名称·状态·时长·花费·待拍板，点开任务面板）+ 组末插槽
   components/WorkbenchTaskPanel.tsx # 工作台任务面板（右侧抽屉，借 SettingsDrawerShell）：按目标 / 步骤 / 分支 / 定时 / 对话显示详情与「过程」，动作只带路不另起流程
   components/ProjectSettingsDrawer.tsx # 项目设置抽屉（三方式共用，2026-10-16 统一）：SettingsDrawerShell 外壳（title 可传，工作台任务面板复用）
                              #   （ccode-sheet-right 滑入/退场 + Esc/Tab 焦点圈闭 + role=dialog + 遮罩 mousedown
@@ -414,10 +414,10 @@ project-sessions-layout.ts # 项目页右侧「这个项目的对话」栏：开
                              # 行内能做的只有两种——旁路能回复的待确认（Codex / Qwen / OpenCode）允许 / 拒绝、信息类（BULK_READABLE）收起；
                              # 键盘 J/K/回车/A/R/E（queueKeyAction，当前行做不了的键不吞）、按键记选中行；
                              # createDeferred 撤销窗口（QUEUE_UNDO_MS 5 秒后才送出，挂模块不挂组件）（tests/workbench-queue.test.ts）
-  workbench-cards.ts         # 工作台项目卡（2026-10-27 第二批）：buildProjectCard 卡头几个数 + 科研进度条 + 任务行
+  workbench-cards.ts         # 工作台项目分组数据（2026-10-27 第二批）：buildProjectCard 项目头几个数 + 科研进度条 + 任务行
                              # （科研流程步骤 / 目标（工作与 liteResearch，同 goalCaptureTargets 口径）/ 编程分支 / 定时 / 对不上的活标签「对话」），
                              # 活标签按 taskId / 工作副本目录归行、一条只归一行；在拍板队列里的行标 queued；
-                             # filterCards：有活的 / 全部 / 按工作方式；第三批 liveActivityLine（旁路快照→此刻在做什么，复用 chat-status describeActivity）、
+                             # cardIsActive（有活的：此刻有事，或手上在做且 7 天内动过；只落后基准不算）、filterCards：有活的 / 全部 / 按工作方式；第三批 liveActivityLine（旁路快照→此刻在做什么，复用 chat-status describeActivity）、
                              # turnElapsedMs / durationLabel、awaySummary 离开期间摘要（只数结束的非内部运行与定时跑次，不估花费）（tests/workbench-cards.test.ts）
   lit-watch.ts               # 文献雷达纯逻辑：日分组/关键词分组（groupEntriesByKeyword，取 keywordsHit 首词、
                              # 未分类恒末）/趋势/直链转换/全文可得性分流（fulltextLinkFor：arxiv abs 与 .pdf 直链=可下载，

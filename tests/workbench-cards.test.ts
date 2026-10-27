@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   awaySummary,
   buildProjectCard,
+  cardIsActive,
   durationLabel,
   filterCards,
   liveActivityLine,
@@ -68,6 +69,8 @@ test("工作项目：列没做完的目标，标签按 taskId 认领，做完的
       { id: "g3", projectRoot: "/p", name: "旧活", status: "completed", archivedAt: null },
       { id: "g4", projectRoot: "/p", name: "验收", status: "pending_review", archivedAt: null },
       { id: "g5", projectRoot: "/other", name: "别家", status: "running", archivedAt: null },
+      { id: "g6", projectRoot: "/p", name: "停掉的", status: "stopped", archivedAt: null },
+      { id: "g7", projectRoot: "/p", name: "失败的", status: "failed", archivedAt: null },
     ],
     runs: [run({ taskId: "g1", cwd: "/tmp/iso/g1" })],
     queueKeys: new Set(["review:g4"]),
@@ -75,6 +78,8 @@ test("工作项目：列没做完的目标，标签按 taskId 认领，做完的
   assert.deepEqual(card.tasks.map((t) => [t.name, t.state, t.tone]), [
     ["验收", "待验收", "wait"],
     ["整理数据", "正在干活", "live"],
+    ["停掉的", "上次停了，需要处理", "fail"],
+    ["失败的", "上次失败，需要处理", "fail"],
     ["周报", "记下了，还没开工", "idle"],
   ]);
   assert.deepEqual(card.vitals, [
@@ -82,6 +87,34 @@ test("工作项目：列没做完的目标，标签按 taskId 认领，做完的
     { label: "待验收", value: "1" },
     { label: "记下未开工", value: "1" },
   ]);
+});
+
+test("cardIsActive：此刻有事就算；手上在做要 7 天内动过；只落后基准、记下没开工的不算", () => {
+  const now = Date.parse("2026-10-27T10:00:00Z");
+  const day = 24 * 3600_000;
+  const wt = (over: object) => ({ path: "/p", branch: "main", isPrimary: false, isBase: false, dirty: false, ahead: 0, behind: 0, ...over });
+  const coding = (worktrees: object[], runs: CardRunInput[] = []) =>
+    buildProjectCard({
+      ...base,
+      project: { path: "/p", name: "x", registered: true, workMode: "coding" },
+      coding: { baseBranch: "dev", worktrees: [wt({ isPrimary: true, isBase: true }), ...worktrees] as never },
+      runs,
+    });
+  const stale = coding([wt({ path: "/wt/a", branch: "feat", behind: 3 })]);
+  assert.equal(stale.tasks[0].state, "落后 dev，需同步");
+  assert.equal(cardIsActive(stale, now - day, now), false);
+  const dirty = coding([wt({ path: "/wt/a", branch: "feat", dirty: true })]);
+  assert.equal(cardIsActive(dirty, now - 2 * day, now), true);
+  assert.equal(cardIsActive(dirty, now - 12 * day, now), false);
+  assert.equal(cardIsActive(dirty, null, now), false);
+  const live = coding([wt({ path: "/wt/a", branch: "feat", behind: 3 })], [run({ cwd: "/wt/a" })]);
+  assert.equal(cardIsActive(live, now - 30 * day, now), true);
+  const draftOnly = buildProjectCard({
+    ...base,
+    project: { path: "/p", name: "x", registered: true, workMode: "office" },
+    goals: [{ id: "g", projectRoot: "/p", name: "周报", status: "draft", archivedAt: null }],
+  });
+  assert.equal(cardIsActive(draftOnly, now, now), false);
 });
 
 test("科研不用流程且没有步骤时同工作项目列目标；还留着步骤的照旧列步骤（与项目页同口径）", () => {
@@ -109,9 +142,10 @@ test("编程：列基准以外的分支，标签按工作树目录认领", () =>
     },
     runs: [run({ cwd: "/wt/a" })],
   });
-  assert.deepEqual(card.tasks.map((t) => [t.name, t.state, t.tone]), [
-    ["feat/b", "等待合并", "wait"],
-    ["feat/a", "正在干活", "live"],
+  // 落后 / 领先基准不上黄点：在跑的排前
+  assert.deepEqual(card.tasks.map((t) => [t.name, t.state, t.tone, t.inProgress]), [
+    ["feat/a", "正在干活", "live", true],
+    ["feat/b", "比 main 多出提交，等待合并", "idle", false],
   ]);
   assert.deepEqual(card.vitals, [
     { label: "基准", value: "main" },
