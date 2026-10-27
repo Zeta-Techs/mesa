@@ -12,7 +12,6 @@ import {
   turnPlan,
   turnSummary,
   turnToolEntries,
-  isVerificationTool,
   type ConversationSegment,
 } from "../src/conversation-tools.ts";
 import type { BlockDto, ChatMessageDto } from "../src/types.ts";
@@ -259,16 +258,14 @@ test("计划：Claude Code 新版任务工具一条一条建、按编号改，�
 });
 
 
-test("带 id 的孤立结果不能挂给另一条命令，验证记录不推断通过", () => {
+test("带 id 的孤立结果不能挂给另一条命令", () => {
   const messages = [msg("user", [text("验证")]), msg("assistant", [
     { ...use("Bash", { command: "npm test", workdir: "/p" }), callId: "pending" },
     { ...result("Exit code 0"), callId: "missing" },
   ]), msg("user", [text("继续")])];
   const records = turnToolEntries(turnOf(groupConversationSegments(messages)).items);
   assert.equal(records[0].tool.result, null);
-  assert.equal(isVerificationTool(records[0].tool), true);
   assert.equal(records[1].tool.activity.verb, "工具结果");
-  assert.equal(isVerificationTool(records[1].tool), false);
 });
 
 test("查阅合并行中的失败保留可展开的位置；失败写入只叫操作", () => {

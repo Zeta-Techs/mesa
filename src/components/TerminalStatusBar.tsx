@@ -1108,11 +1108,10 @@ export default function TerminalStatusBar({
           </span>
         ))}
 
-      {/* 右区：时长 · token（等宽小字）。聊天变体（2026-10-23 照 Claude 客户端收字）：模型 · 思考芯片（聊天层挂进来）+ 上下文圆环；
+      {/* 右区：时长 · token（等宽小字）。聊天变体（2026-10-23 照 Claude 客户端收字）：上下文圆环 + 模型 · 思考芯片（聊天层挂进来）；
           这段对话用了多少、经哪条连接收进圆环的悬停。窗口大小不知道的家（如 Grok）没有圆环，照旧写 token 数 */}
       {chat ? (
         <span className="ml-auto flex min-w-0 shrink-0 items-center gap-1.5 text-l4">
-          {chatMetaRef && <span ref={chatMetaRightRef} className="flex min-w-0 items-center gap-1.5 empty:hidden" />}
           {!ownHidden && ring ? (
             <ContextRing
               showPercent
@@ -1132,6 +1131,7 @@ export default function TerminalStatusBar({
               {fmtTokensZh(usageTotal(usage))} token
             </span>
           ) : null}
+          {chatMetaRef && <span ref={chatMetaRightRef} className="flex min-w-0 items-center gap-1.5 empty:hidden" />}
         </span>
       ) : (
       <span

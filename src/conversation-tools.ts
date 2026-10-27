@@ -241,7 +241,7 @@ function allTools(items: readonly ProcessItem[]): ProcessTool[] {
   return items.flatMap((it) => (it.kind === "tool" ? [it.tool] : it.kind === "explore" ? it.tools : []));
 }
 
-/** 保留过程行位置，异常 / 依据入口直接展开同一份记录，不另建状态。 */
+/** 保留过程行位置，异常入口直接展开同一份记录，不另建状态。 */
 export function turnToolEntries(items: readonly ProcessItem[]) {
   return items.flatMap((item, index) =>
     item.kind === "tool"
@@ -250,12 +250,6 @@ export function turnToolEntries(items: readonly ProcessItem[]) {
         ? item.tools.map((tool, i) => ({ tool, row: `${index}:${i}`, parent: String(index) }))
         : [],
   );
-}
-
-/** 仅筛选可供核对的命令记录；名称命中不意味着验证通过。 */
-export function isVerificationTool(tool: ProcessTool): boolean {
-  return tool.activity.kind === "run" && tool.activity.command !== null &&
-    /(?:^|[\s;&|])(?:npm\s+(?:run\s+)?(?:test|build|lint|typecheck)|(?:pnpm|yarn)\s+(?:run\s+)?(?:test|build|lint|typecheck)|cargo\s+(?:test|check|build|clippy)|(?:python[\d.]*\s+-m\s+)?pytest|node\s+--test|(?:npx\s+)?(?:tsc|vitest|jest))(?=$|[\s;&|])/i.test(tool.activity.command);
 }
 
 /**

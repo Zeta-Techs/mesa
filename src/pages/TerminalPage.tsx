@@ -852,6 +852,7 @@ const TerminalView = memo(function TerminalView({
   onConsumeResume,
   onForkChat,
   onConversationInsert,
+  onSearchChat,
   onPatchLaunch,
   getConversationActions,
   onOpenPath,
@@ -944,6 +945,7 @@ const TerminalView = memo(function TerminalView({
   /** 选中的终端文字交给对话（引用到输入框 / 问 AI）：父级按这个标签当前在聊天层还是终端层分派。
    *  带 tabId 的稳定回调，避免击穿 memo(TerminalView) */
   onConversationInsert?: (tabId: string, text: string, opts: { send: boolean }) => void;
+  onSearchChat?: (tabId: string) => void;
   /** 启动栏「思考」「权限」格与「这次启动」卡写回标签级选择（与聊天输入框同一份）。带 tabId 的稳定回调 */
   onPatchLaunch?: (tabId: string, patch: TabLaunchPatch) => void;
   /** ⋯ 菜单里的「对话操作」（与聊天层斜杠面板 Mesa 组同一份，去掉终端层用不着的）。带 tabId 的稳定回调 */
@@ -1569,14 +1571,14 @@ const TerminalView = memo(function TerminalView({
     termRef.current?.focus();
   }, []);
 
-  // 切走标签（或整页隐藏）时收起搜索条，避免隐藏标签残留查找态
+  // 终端被聊天盖住时也收起查找，避免浮层留在聊天搜索上方。
   useEffect(() => {
-    if (!visible) {
+    if (!visible || coveredByChat) {
       setSearchOpen(false);
       setTerminalActionMenu(null);
       setTermCtxMenu(null);
     }
-  }, [visible]);
+  }, [visible, coveredByChat]);
 
   // 搜索条打开时聚焦输入框并选中已有文本，同时按当前缓冲区类型定一次提示。
   // 订阅只在「切换」时触发：若打开搜索条时已经身处全屏程序里（备屏早已激活），
@@ -1603,17 +1605,19 @@ const TerminalView = memo(function TerminalView({
   useEffect(() => {
     if (!visible || !primaryFocus) return;
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
+      if (!e.defaultPrevented && !e.altKey && !e.shiftKey && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
         // Monaco 编辑器（文件预览）有自己的查找组件、md 阅读态有自己的查找条（md-find-scope），不劫持
         if (e.target instanceof Element && e.target.closest(".monaco-editor, .md-find-scope"))
           return;
         e.preventDefault();
-        setSearchOpen(true);
+        const inTerminal = e.target instanceof Element && e.target.closest(".xterm, [data-terminal-search]");
+        if ((coveredByChat || embedInPeek) && !inTerminal) onSearchChat?.(tabId);
+        else setSearchOpen(true);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [visible, primaryFocus]);
+  }, [visible, primaryFocus, coveredByChat, embedInPeek, onSearchChat, tabId]);
 
   // —— 当前会话联动（SessionLink）：事件驱动刷新，签名轮询仅作兜底 ——
   const [sessionFile, setSessionFile] = useState<string | null>(null);
@@ -7159,8 +7163,8 @@ const TerminalView = memo(function TerminalView({
           </div>
         </div>
       )}
-      {searchOpen && (
-        <div className="absolute left-3 top-2 z-30 flex flex-col items-start gap-1 rounded-md border border-field bg-strip px-2 py-1">
+      {searchOpen && !coveredByChat && (
+        <div data-terminal-search className="absolute left-3 top-2 z-30 flex flex-col items-start gap-1 rounded-md border border-field bg-strip px-2 py-1">
           <div className="flex items-center gap-1">
             <input
               ref={searchInputRef}
@@ -8171,7 +8175,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     Record<string, { text: string; send: boolean; token: number }>
   >({});
   const [chatSearchByTab, setChatSearchByTab] = useState<Record<string, number>>({});
-  const openChatSearch = (id: string) => setChatSearchByTab((prev) => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }));
+  const openChatSearch = useCallback((id: string) => setChatSearchByTab((prev) => ({ ...prev, [id]: (prev[id] ?? 0) + 1 })), []);
   const conversationInsert = useCallback(
     (tabId: string, text: string, opts: { send: boolean }) => {
       const mode = surfaceModeRef.current[tabId] ?? defaultSurfaceRef.current;
@@ -10383,9 +10387,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       ref={terminalRootRef}
       className="terminal-workbench relative flex h-full bg-canvas"
       onKeyDownCapture={(event) => {
-        if (!(event.metaKey || event.ctrlKey) || event.altKey || event.key.toLowerCase() !== "f") return;
+        if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== "f") return;
         const target = event.target as HTMLElement;
-        if (target.closest(".monaco-editor, .md-find-scope, .xterm")) return;
+        if (target.closest(".monaco-editor, .md-find-scope, .xterm, [data-terminal-search]")) return;
         const chatId = target.closest<HTMLElement>("[data-chat-host]")?.dataset.chatHost;
         if (!chatId && focusedSurfaceMode !== "chat") return;
         event.preventDefault();
@@ -10700,6 +10704,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                 onConsumeResume={clearResumeSession}
                 onForkChat={handleTabForkChat}
                 onConversationInsert={conversationInsert}
+                onSearchChat={openChatSearch}
                 onPatchLaunch={patchTabLaunch}
                 getConversationActions={getConversationActions}
                 onOpenPath={handleTerminalOpenPath}
@@ -11169,9 +11174,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                   <button
                     type="button"
                     onClick={() => setFilesViewPref("tree")}
-                    onDoubleClick={toggleRightExpanded}
                     aria-pressed={filesView === "tree" || filesSideBySide}
-                    title={`文件树；双击${rightExpanded ? "退出专注内容" : "进入专注内容"}`}
+                    title="文件树"
                     aria-label="文件树"
                     className={`flex h-7 shrink-0 items-center rounded-sm px-2 ${
                       filesView === "tree" || filesSideBySide ? "bg-seg-sel text-l1" : "text-l3 hover:text-l1"
@@ -11188,8 +11192,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                       <button
                         type="button"
                         onClick={() => setFilesViewPref("preview")}
-                        onDoubleClick={toggleRightExpanded}
-                        title={`${preview.path}；双击${rightExpanded ? "退出专注内容" : "进入专注内容"}`}
+                        title={preview.path}
                         className="min-w-0 truncate italic"
                       >
                         {preview.name}

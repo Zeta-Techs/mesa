@@ -36,7 +36,6 @@ import {
   exploreLabel,
   formatSeconds,
   groupConversationSegments,
-  isVerificationTool,
   problemText,
   segmentContainsIndex,
   turnPlan,
@@ -50,7 +49,6 @@ import {
 import { resultStatusLabel, type ActivityKind, type DiffLine } from "../tool-activity";
 import { IS_WINDOWS } from "../hotkeys";
 import { estimateSegmentHeight, useVirtualWindow } from "../virtual-window";
-import { resolveMdPath } from "../reader";
 import { makeChatQuote, type ChatQuote } from "../chat-navigation";
 
 /** 纯文本块：保留换行，超长不带空格的串（长 URL、一串 aaaa）在气泡内折行，不撑出气泡（2026-10-19 用户截图） */
@@ -306,7 +304,6 @@ export default function ConversationView({
   };
 }) {
   const setDiffFocusReq = useAppStore((s) => s.setDiffFocusReq);
-  const setPreviewReq = useAppStore((s) => s.setPreviewReq);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   /** 悬停在消息上出现的操作（docs/design-chat-layer.md §5）：复制；用户消息另有「编辑后重发」，
    *  助手消息另有「从这里分叉」。浮着不占高度（2026-10-25 用户：对话间距太松）：都挂在消息下面那段留白里
@@ -740,8 +737,6 @@ export default function ConversationView({
     const items = plan ? seg.items.filter((it) => !(it.kind === "tool" && it.tool.activity.kind === "todo")) : seg.items;
     const records = turnToolEntries(items);
     const problems = records.filter(({ tool }) => tool.status !== "ok");
-    const files = records.filter(({ tool }) => tool.activity.path && ["edit", "write", "delete"].includes(tool.activity.kind));
-    const checks = records.filter(({ tool }) => isVerificationTool(tool));
     const revealRecord = (record: (typeof records)[number]) => {
       const target = `${key}:${record.row}`;
       setExpanded((prev) => new Set([...prev, key, target, ...(record.parent ? [`${key}:${record.parent}`] : [])]));
@@ -804,35 +799,6 @@ export default function ConversationView({
             <div data-chat-answer="1" data-search-block={hit && messages[focusIndex]?.blocks.some((block) => seg.answer!.blocks.includes(block)) || undefined}>{renderBlocks(seg.answer, answerKey, false, hit)}</div>
             {messageActions(seg.answer, answerKey, "left", messages.slice(seg.start, seg.end + 1).filter((message) => message.blocks.some((block) => seg.answer!.blocks.includes(block))))}
           </>
-        )}
-        {!seg.live && (files.length > 0 || checks.length > 0) && (
-          <div className="mt-2 text-xs text-l3">
-            <div className="flex flex-wrap items-center gap-2">
-              {files.length > 0 && <button type="button" className="min-h-7 rounded-md px-1 hover:bg-hover focus-visible:outline-2 focus-visible:outline-cta"
-                aria-expanded={expanded.has(`${key}:files`)} onClick={() => toggleExpand(`${key}:files`)}>文件记录 {files.length}</button>}
-              {checks.length > 0 && <button type="button" className="min-h-7 rounded-md px-1 hover:bg-hover focus-visible:outline-2 focus-visible:outline-cta"
-                aria-expanded={expanded.has(`${key}:checks`)} onClick={() => toggleExpand(`${key}:checks`)}>验证记录 {checks.length}</button>}
-            </div>
-            {[{ name: "files", entries: files }, { name: "checks", entries: checks }].map(({ name, entries }) => (
-              <Collapse key={name} open={expanded.has(`${key}:${name}`)}>
-                <ul className="mt-1 border-l border-hairline pl-2">
-                  {entries.map((record) => <li key={record.row} className="flex items-center gap-1">
-                    <button type="button" className="flex min-h-8 w-full items-center gap-2 rounded-md px-1 text-left hover:bg-hover focus-visible:outline-2 focus-visible:outline-cta"
-                      onClick={() => revealRecord(record)} title="查看本轮工具的参数和原始输出；不代表已验收或验证通过">
-                      <span className="min-w-0 break-all font-mono">{record.tool.activity.path ?? record.tool.activity.command}</span>
-                      <span className="shrink-0">{resultStatusLabel(record.tool.status) ?? (record.tool.result === null ? "未收到结果" : "查看记录")}</span>
-                    </button>
-                    {name === "files" && record.tool.activity.kind !== "delete" && record.tool.status === "ok" && record.tool.result !== null && record.tool.activity.path && cwd && (
-                      <button type="button" className="min-h-7 shrink-0 rounded-md px-1 hover:bg-hover focus-visible:outline-2 focus-visible:outline-cta"
-                        onClick={() => setPreviewReq({ path: record.tool.activity.path!.startsWith("~") ? record.tool.activity.path! : resolveMdPath(`${cwd}/_`, record.tool.activity.path!), name: record.tool.activity.target, root: cwd })}>
-                        打开当前文件
-                      </button>
-                    )}
-                  </li>)}
-                </ul>
-              </Collapse>
-            ))}
-          </div>
         )}
       </div>
     );

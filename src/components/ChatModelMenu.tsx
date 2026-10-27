@@ -466,6 +466,18 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
 
   return (
     <div ref={rootRef} className="relative flex min-w-0 items-center gap-1">
+      {/* 上下文圆环在模型芯片左边（2026-10-27 用户）；窗口大小不知道的家（如 Grok）不画 */}
+      {ctxRatio !== null && ctxWindow && ctxUsed && (
+        <ContextRing
+          showPercent
+          ratio={ctxRatio}
+          used={ctxUsed}
+          window={ctxWindow}
+          agentId={agentId}
+          breakdown={breakdownRequest(runtime?.status ?? null)}
+          onCompact={runtime?.onCompact}
+        />
+      )}
       <button
         type="button"
         aria-haspopup="dialog"
@@ -489,18 +501,6 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
         {/* CLI 比 Mesa 核对过的新（原「测试版」格上的小点，2026-10-23 随它收进菜单） */}
         {beta.newer && <span aria-label="CLI 比核对过的新" className="size-1.5 shrink-0 rounded-full bg-caution-text" />}
       </button>
-      {/* 上下文圆环在芯片右边（2026-10-23 照 Claude 客户端）；窗口大小不知道的家（如 Grok）不画 */}
-      {ctxRatio !== null && ctxWindow && ctxUsed && (
-        <ContextRing
-          showPercent
-          ratio={ctxRatio}
-          used={ctxUsed}
-          window={ctxWindow}
-          agentId={agentId}
-          breakdown={breakdownRequest(runtime?.status ?? null)}
-          onCompact={runtime?.onCompact}
-        />
-      )}
       {open && (
         <div
           ref={menuRef}

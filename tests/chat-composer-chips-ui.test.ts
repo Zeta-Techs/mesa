@@ -1536,7 +1536,7 @@ test("没能启动：定格的最后几行、不给按键，重新启动是主�
   }
 });
 
-test("异常直接展开原始输出，验证入口不把后续总结当成通过；重试只填草稿", async () => {
+test("异常直接展开原始输出，不把后续总结当成通过；重试只填草稿", async () => {
   const ui = await mount();
   try {
     const drafts: string[] = [];
@@ -1550,7 +1550,6 @@ test("异常直接展开原始输出，验证入口不把后续总结当成通�
     ]}));
     await ui.click("1 步失败");
     assert.match(ui.el.querySelector('[data-scrolled="1"]')?.textContent ?? "", /missing fixture/);
-    await ui.click("验证记录 1");
     assert.doesNotMatch(ui.el.textContent ?? "", /验证通过|已恢复/);
     await ui.click("让它检查后重试");
     assert.equal(drafts.length, 1);
