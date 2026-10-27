@@ -1263,6 +1263,14 @@ fn pty_spawn_sync(
     })
 }
 
+/// conda / mamba 的「当前激活了哪个环境」变量（`CONDA_PREFIX_1` 之类是嵌套激活留下的）
+fn is_conda_activation_var(key: &str) -> bool {
+    matches!(key, "CONDA_SHLVL" | "CONDA_PREFIX" | "CONDA_DEFAULT_ENV" | "CONDA_PROMPT_MODIFIER")
+        || key
+            .strip_prefix("CONDA_PREFIX_")
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
 /// 拉起用户的登录 shell，供 agent 退出后回落或纯终端使用。参数含义见 `shell_spawn_sync`
 #[tauri::command]
 pub async fn shell_spawn(
@@ -1306,6 +1314,16 @@ fn shell_spawn_sync(
     };
     let mut cmd = CommandBuilder::new(&shell);
     let cwd_file = kind.and_then(|k| attach_cwd_tracking(&mut cmd, &mut shell_args, k));
+    // 交互 shell 会自己跑 rc 里的 conda 初始化：继承来的「已激活」状态会让它跳过激活，
+    // 而 /etc/zprofile 的 path_helper 已把 PATH 重排，conda 的 bin 就没了（2026-10-27 实测：读回 shell 环境后
+    // 终端里 python3 落到 /usr/bin）。清掉激活状态，让它像新开的终端一样重新激活
+    if kind.is_some() {
+        for (key, _) in std::env::vars_os() {
+            if key.to_str().is_some_and(is_conda_activation_var) {
+                cmd.env_remove(&key);
+            }
+        }
+    }
     for arg in &shell_args {
         cmd.arg(arg);
     }
@@ -2365,6 +2383,17 @@ mod tests {
         let got = process_cwd(std::process::id(), None).expect("应能读取本进程 cwd");
         let expect = std::env::current_dir().unwrap().canonicalize().unwrap();
         assert_eq!(std::path::Path::new(&got).canonicalize().unwrap(), expect);
+    }
+
+    #[test]
+    fn conda_activation_vars_only() {
+        for key in ["CONDA_SHLVL", "CONDA_PREFIX", "CONDA_PREFIX_1", "CONDA_PREFIX_12", "CONDA_DEFAULT_ENV", "CONDA_PROMPT_MODIFIER"] {
+            assert!(is_conda_activation_var(key), "{key}");
+        }
+        // conda 本体位置不是激活状态，留着；rc 里的初始化要用
+        for key in ["CONDA_EXE", "CONDA_PYTHON_EXE", "_CONDA_ROOT", "CONDA_PREFIX_", "CONDA_PREFIX_X", "PATH"] {
+            assert!(!is_conda_activation_var(key), "{key}");
+        }
     }
 
     #[cfg(unix)]

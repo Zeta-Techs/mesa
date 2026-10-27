@@ -21,6 +21,9 @@
   应用日志记一行用时与个数，不记名字和值。**验收不用打包**：只起 Vite（`npm run dev -- --host 127.0.0.1`）后
   `launchctl submit -l com.ccode.gui-probe -- <仓库>/src-tauri/target/debug/ccode`，拿到的就是 launchd 环境；`launchctl remove` 收掉
   （submit 的任务退出会被拉起）。启动 Agent 子进程等新调用点不需另做什么，继承进程环境即可。
+  **内置终端的交互 shell 启动前清掉 conda 激活状态**（`CONDA_SHLVL` / `CONDA_PREFIX[_n]` / `CONDA_DEFAULT_ENV` / `CONDA_PROMPT_MODIFIER`，
+  `pty.rs is_conda_activation_var`）：shell 自己会跑 rc 的 conda 初始化，继承的「已激活」让它跳过激活，而 `/etc/zprofile` 的 path_helper
+  已把 PATH 重排，终端里 python3 就落到 /usr/bin（2026-10-27 实测）。Agent 与后台命令不经 rc，照旧继承。
 - **GUI 应用 PATH 很短**：打包应用可能找不到 npm 装的 CLI（开发模式不受影响）；统一经 `agents::resolve_binary` 候选目录兜底解析。
   **只找到 CLI 不够**（2026-10-27 本机实证）：npm 装的 Codex / Gemini / CodeBuddy 是 `#!/usr/bin/env node` 脚本，子进程沿用
   Finder 给的 `/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin` 找不到 Homebrew 的 node，一起就退 127，打包版标签一片空白。
