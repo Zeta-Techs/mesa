@@ -1690,3 +1690,19 @@ test("生成中发送按钮的可访问名称与真实处理时机一致", async
     assert.equal(ui.el.querySelector('button[aria-label="排队发送"]'), null);
   } finally { await ui.close(); }
 });
+
+
+test("不能持续回读权限的 CLI：运行中明确标为已选，启动前仍直接显示档位", async () => {
+  const ui = await mount();
+  const props = { agentLabel: "Codex", agentId: "codex", permission: "write_tree", mode: "ask",
+    modes: ["ask", "full"], readonlySupported: true, note: null, editable: false };
+  try {
+    await ui.render(ui.h(ui.Badge, { ...props, live: { busy: true, onRestart: () => {} } }));
+    assert.match(ui.el.textContent ?? "", /已选 · 请求批准/);
+    assert.match(ui.el.querySelector("[title]")?.getAttribute("title") ?? "", /以终端显示为准/);
+    await ui.render(ui.h(ui.Badge, props));
+    assert.doesNotMatch(ui.el.textContent ?? "", /已选/);
+    await ui.render(ui.h(ui.Badge, { ...props, agentId: "claude-code", live: { busy: true, onRestart: () => {} } }));
+    assert.doesNotMatch(ui.el.textContent ?? "", /已选/);
+  } finally { await ui.close(); }
+});

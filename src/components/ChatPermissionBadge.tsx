@@ -88,7 +88,7 @@ export async function confirmPermissionChoice(
   );
 }
 
-/** 实际生效的那一档：手动选的 > 本机设置对应的；都没有 = 不知道 */
+/** Mesa 记录的权限选择：手动选的 > 本机设置对应的；都没有 = 不知道 */
 export function effectivePermissionTier(
   permission: Permission,
   mode: NativePermissionMode | null,
@@ -183,9 +183,13 @@ export default function ChatPermissionBadge({
   const current = effectivePermissionTier(permission, mode, note);
   const available = (id: Tier) => (id === "discuss" ? readonlySupported : modes.includes(id));
   const cur = PERMISSION_TIERS.find((t) => t.id === current) ?? null;
-  const label = cur?.label ?? (followsLocal && note ? note.short : "默认权限");
+  const selectedOnly = Boolean(live && agentId && agentId !== "claude-code");
+  const label = `${selectedOnly ? "已选 · " : ""}${cur?.label ?? (followsLocal && note ? note.short : "默认权限")}`;
   const loud = current === "full";
-  const explain = followsLocal && note ? note.detail : (cur?.desc ?? `按 ${agentLabel} 自己的权限设置`);
+  const settingExplain = followsLocal && note ? note.detail : (cur?.desc ?? `按 ${agentLabel} 自己的权限设置`);
+  const explain = selectedOnly
+    ? `Mesa 记录的权限选择。暂不能持续读取这家 CLI 的当前权限；在终端里改过后，以终端显示为准。\n${settingExplain}`
+    : settingExplain;
   const ex = permissionExample(context, agentId);
 
   async function choose(id: Tier) {
@@ -250,6 +254,7 @@ export default function ChatPermissionBadge({
             假如它要{ex.verb}
             <code className="rounded-sm bg-inset px-1 font-mono text-micro text-l3">{ex.target}</code>
           </div>
+          {selectedOnly && <p className="px-2 py-1 text-xs text-l3">这里显示 Mesa 记录的选择；在终端里改过权限后，以终端显示为准。</p>}
           {PERMISSION_TIERS.map((t) => {
             const ok = available(t.id);
             const selected = current === t.id;
