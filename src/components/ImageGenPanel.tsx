@@ -6,7 +6,7 @@
 // 存在设置的 imageGenGatewayId + imageGenModel（同进退）；这是唯一编辑处，设置页只显示现状并跳过来。
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useRef, useState, type Ref } from "react";
-import { X } from "lucide-react";
+import { ImageIcon, X } from "lucide-react";
 import { FoldMark, ghostActionClass, primaryActionClass, settingsPillClass } from "./PageFrame";
 import ImageModelPicker from "./ImageModelPicker";
 import { Modal } from "./Modal";
@@ -142,6 +142,16 @@ export default function ImageGenPanel({
     void setImageGenModel(it.gatewayId, it.model).catch((e) => toast(`保存失败：${String(e)}`));
   }
 
+  async function clearImageGenModel() {
+    try {
+      // 后端口径：网关与模型任一传空串 = 两个一起清空（settings.rs）
+      await useAppStore.getState().updateSettings({ imageGenGatewayId: "", imageGenModel: "" });
+      toast("已移除出图模型");
+    } catch (e) {
+      toast(`移除失败：${String(e)}`);
+    }
+  }
+
   function openLab() {
     setLab((v) => !v);
     if (!lab && compare.length === 0 && currentKey) setCompare([currentKey]);
@@ -258,7 +268,12 @@ export default function ImageGenPanel({
         <>
           <div className={`group grid min-h-14 ${gridClass} items-center gap-3 border-t border-hairline px-4 text-sm`}>
             <span className="flex min-w-0 items-center gap-2">
-              <VendorIcon vendor={gw ? vendorForGateway(gw) : null} name={gatewayName ?? "出图"} />
+              {/* 还没选网关时给中性的图片图标，不拿「出图」二字的首字当厂商占位（2026-10-27 用户：那个「出」看不懂） */}
+              {gw ? (
+                <VendorIcon vendor={vendorForGateway(gw)} name={gatewayName ?? gw.name} />
+              ) : (
+                <ImageIcon size={16} strokeWidth={1.6} className="shrink-0 text-l4" aria-hidden="true" />
+              )}
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-medium text-l1">Agent 出图</span>
                 <span className={`mt-0.5 block truncate text-micro ${caption.cls}`} title={"tip" in caption ? caption.tip : undefined}>
@@ -297,6 +312,16 @@ export default function ImageGenPanel({
               >
                 {model ? "更换" : "选模型"}
               </button>
+              {currentKey && (
+                <button
+                  type="button"
+                  className={ghostActionClass}
+                  title="不再给 Agent 配出图模型；技能还在，Agent 要画图时会说没配"
+                  onClick={() => void clearImageGenModel()}
+                >
+                  移除
+                </button>
+              )}
               <button
                 type="button"
                 className={lab ? `${ghostActionClass} bg-hover text-l1` : ghostActionClass}
