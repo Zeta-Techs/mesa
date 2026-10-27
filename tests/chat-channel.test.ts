@@ -158,7 +158,7 @@ test("能从聊天层答的才给按钮；「都允许」只给支持的家", ()
   );
   assert.deepEqual(
     approvalChoices(approval({ replyable: true, requestId: "r" }), "codex").map((c) => c.decision),
-    ["allow", "allow_always", "deny"],
+    ["allow", "deny"],
   );
 });
 
@@ -169,7 +169,10 @@ test("终端菜单的选项比旁路能回的多，就改用照终端原文的�
   assert.equal(menuOutgrowsChannel(qwen, "qwen", 4), true, "平常的「总是允许」两项");
   assert.equal(menuOutgrowsChannel(qwen, "qwen", 2), false, "两项正好对上允许 / 拒绝");
   const codex = snap({ agent: "codex", kind: "codex", turn: turn("awaiting_approval"), approval: approval({ replyable: true, requestId: "r" }) });
-  assert.equal(menuOutgrowsChannel(codex, "codex", 3), false, "Codex 的三项旁路都能回");
+  assert.equal(menuOutgrowsChannel(codex, "codex", 3), true, "命令前缀授权不能换成整个会话授权");
+  assert.equal(menuOutgrowsChannel(codex, "codex", 2), true, "项数相同也按终端原文回答");
+  assert.equal(menuOutgrowsChannel(codex, "codex", 0), false, "还没有菜单时只给单次允许和拒绝");
+  assert.deepEqual(approvalChoices(approval({ replyable: true, requestId: "r" }), "opencode").map(c => c.decision), ["allow", "allow_always", "deny"]);
   // 旁路回不了 / 没有审批：本来就走菜单卡，不归这里管
   assert.equal(menuOutgrowsChannel(snap({ approval: approval({ replyable: false, requestId: "r" }) }), "claude-code", 4), false);
   assert.equal(menuOutgrowsChannel(snap(), "qwen", 4), false);

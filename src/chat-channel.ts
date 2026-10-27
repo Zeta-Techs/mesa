@@ -237,7 +237,8 @@ export function menuOutgrowsChannel(
 ): boolean {
   if (!snap?.approval) return false;
   const choices = approvalChoices(snap.approval, agent).length;
-  return choices > 0 && menuOptions > choices;
+  // Codex 的第二项可能是命令前缀或网络规则，不能用固定的会话授权替代。
+  return choices > 0 && (agent === "codex" ? menuOptions > 0 : menuOptions > choices);
 }
 
 /** 可从聊天层答的审批给哪几个按钮（只摆 CLI 支持的，不替用户选） */
@@ -247,7 +248,7 @@ export function approvalChoices(
 ): Array<{ decision: ChannelReplyDecision; label: string; primary?: boolean }> {
   if (!a.replyable || !a.requestId) return [];
   const always =
-    agent === "codex" ? "这次会话都允许" : agent === "opencode" ? "总是允许这类操作" : null;
+    agent === "opencode" ? "总是允许这类操作" : null;
   return [
     { decision: "allow", label: "允许", primary: true },
     ...(always ? [{ decision: "allow_always" as const, label: a.alwaysLabel ?? always }] : []),
