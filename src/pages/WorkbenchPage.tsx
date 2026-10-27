@@ -6,14 +6,17 @@ import { listen } from "@tauri-apps/api/event";
 import {
   CheckCheck,
   CircleDot,
+  AlarmClock,
+  Files,
   Inbox,
   Moon,
   Plus,
+  TriangleAlert,
 } from "lucide-react";
 import { useAppStore, runInboxAction, visibleInboxItems } from "../store";
 import { usePhoneDropStore } from "../phone-drop-store";
 import { phonePendingCount } from "../phone-drop";
-import { bulkReadableItems } from "../inbox";
+import { bulkReadableItems, inboxCategoryOf } from "../inbox";
 import { pathWithin, samePath } from "../path-utils";
 import { IS_WINDOWS } from "../hotkeys";
 import { useClientOpen } from "../components/ClientOpenDialog";
@@ -159,8 +162,7 @@ function SectionHeading({
   return (
     <div className="mb-2.5 flex flex-wrap items-center gap-2 px-1">
       <Icon size={14} strokeWidth={1.8} className={iconClass} aria-hidden="true" />
-      {/* Mac 根字号 14px 下 text-xs 只有 10.5px，比旁边 11px 的「查看全部」还小：标题用 micro，靠字重与字色分层 */}
-      <h2 className="text-micro font-medium text-l2">{title}</h2>
+      <h2 className="text-base font-semibold text-l1">{title}</h2>
       {action && <div className="ml-auto">{action}</div>}
     </div>
   );
@@ -1493,20 +1495,23 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
 
   function renderQueueList(rows: typeof queueRows, label: string) {
     return (
-      <ul className="overflow-hidden rounded-lg border border-hairline" aria-label={label}>
+      <ul className="ccode-workbench-list overflow-hidden rounded-lg border border-hairline" aria-label={label}>
         {rows.map((row, index) => {
           const tierHead = showTierHeads && row.tier !== "notice" && (index === 0 || rows[index - 1].tier !== row.tier);
           const selected = row === selectedRow;
           const approval = row.kind === "inbox" ? row.approval : null;
+          const category = row.kind === "inbox" ? inboxCategoryOf(row.key) : "ready";
+          const Symbol = category === "conflict" ? Files : category === "schedule" ? AlarmClock : row.tier === "blocking" ? TriangleAlert : row.tier === "notice" ? Inbox : CheckCheck;
+          const symbolColor = row.dot === "bg-err-text" ? "text-err-text" : row.dot === "bg-ok-text" ? "text-ok-text" : row.tier === "notice" ? "text-l3" : "text-warn-text";
           return (
             <li key={row.key} id={`wbq-${row.key}`} data-workbench-nav={`q:${row.key}`} tabIndex={-1}
               className={`group relative border-t border-hairline first:border-t-0 ${selected ? "bg-hover shadow-[inset_2px_0_0_var(--color-nav-accent)]" : "hover:bg-hover"}`}
               onFocusCapture={() => setSelectedKey(`q:${row.key}`)}>
               {tierHead && <p className="px-3.5 pb-0.5 pt-2 text-micro text-l3">{QUEUE_TIER_LABEL[row.tier]}</p>}
-              <div className="ccode-workbench-queue-row flex min-h-11 items-center gap-3 px-3.5 py-2">
-                <span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${row.dot}`} />
+              <div className="ccode-workbench-queue-row">
+                <span aria-hidden="true" className={`ccode-workbench-queue-symbol flex shrink-0 items-center justify-center border border-hairline ${symbolColor}`}><Symbol size={14} strokeWidth={1.6} /></span>
                 <button type="button" className="ccode-workbench-queue-content min-w-0 flex-1 text-left" aria-haspopup={approval ? "dialog" : undefined} onClick={() => openRow(row)}>
-                  <span className="block break-words text-sm text-l1">{approval?.title ?? row.text}</span>
+                  <span className="block break-words text-sm font-medium text-l1">{approval?.title ?? row.text}</span>
                   {(row.project || approval) && (
                     <span className="mt-0.5 flex min-w-0 flex-wrap items-baseline gap-x-1.5 text-xs text-l3">
                       {approval && <span>{row.text}</span>}
@@ -1518,9 +1523,9 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                 <span className="ccode-workbench-queue-actions flex shrink-0 flex-wrap items-center gap-1.5">
                   {approval ? (
                     <>
+                      <button type="button" className={rowActionClass} aria-haspopup="dialog" onClick={() => setOpenApprovalKey(row.key)}>详情</button>
                       <button type="button" className={rowActionClass} title="拒绝这一问（R）：5 秒内可撤销" onClick={() => answerApproval(row, "deny")}>{approval.denyLabel}</button>
                       <button type="button" className={rowActionClass} title="允许这一次（A）：5 秒内可撤销；更多权限选项在原对话里选择" onClick={() => answerApproval(row, "allow")}>允许一次</button>
-                      <button type="button" className={rowActionClass} aria-haspopup="dialog" onClick={() => setOpenApprovalKey(row.key)}>详情</button>
                     </>
                   ) : (
                     <>
@@ -1646,7 +1651,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
 
           {nowRows.length > 0 ? (
             shownCards.length > 0 ? (
-              <div className="overflow-hidden rounded-lg border border-hairline" data-workbench-queue="">
+              <div className="ccode-workbench-list overflow-hidden rounded-lg border border-hairline" data-workbench-queue="">
                 {shownCards.map((card) => {
                   const item = nowRows.find((row) => samePath(row.path, card.path, IS_WINDOWS)) ?? null;
                   const said = lastSaidFor(card.path);
@@ -1679,6 +1684,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                       continueTip={said ? `${destination.label}\n上次停在：${said.full}` : destination.label}
                       lastActive={lastActiveOf(card.path)}
                       liveMeta={liveMeta}
+                      agentLabel={agentLabel}
                       caretFor={(live) => withUnread(caretOfAttention(live.attention), runUnread(live.tabId)) ?? "idle"}
                       clientJump={
                         showClientJump

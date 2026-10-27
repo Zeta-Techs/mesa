@@ -38,6 +38,7 @@ export default function WorkbenchProjectGroup({
   clientJump,
   lastActive,
   liveMeta,
+  agentLabel,
   caretFor,
   footer,
 }: {
@@ -56,6 +57,7 @@ export default function WorkbenchProjectGroup({
   lastActive: string | null;
   /** 开着的那一行：此刻在做什么 / 这一轮跑了多久 */
   liveMeta: (live: CardLiveRun) => { activity: string | null; elapsed: string | null };
+  agentLabel: (id: string | null) => string | null;
   /** 行尾光标：注意力 + 跑完没看（蓝） */
   caretFor: (live: CardLiveRun) => RunCaretState;
   /** 分组末尾一行（记目标的按钮 / 输入框由页面给）；没有就不画 */
@@ -76,7 +78,7 @@ export default function WorkbenchProjectGroup({
   const progress = card.vitals.find((v) => v.label === "进行到")?.value ?? null;
   return (
     <section className="border-t border-hairline first:border-t-0" aria-label={card.name}>
-      <div className="ccode-workbench-project-head group flex min-h-11 min-w-0 flex-wrap items-center gap-2 px-3 py-2">
+      <div className="ccode-workbench-project-head group flex min-w-0 flex-wrap items-center gap-2">
         <button
           type="button"
           className="flex size-7 shrink-0 items-center justify-center rounded-lg text-l3 hover:bg-hover hover:text-l1"
@@ -91,14 +93,14 @@ export default function WorkbenchProjectGroup({
           {onOpenProject ? (
             <button
               type="button"
-              className="min-w-0 break-words text-left text-sm font-medium text-l1 hover:underline"
+              className="min-w-0 break-words text-left text-l1 hover:underline"
               title={`去项目页：${card.path}`}
               onClick={onOpenProject}
             >
-              {card.name}
+              <span className="text-base font-semibold">{card.name}</span>
             </button>
           ) : (
-            <span className="min-w-0 break-words text-sm font-medium text-l1" title={card.path}>
+            <span className="min-w-0 break-words text-base font-semibold text-l1" title={card.path}>
               {card.name}
             </span>
           )}
@@ -172,7 +174,7 @@ export default function WorkbenchProjectGroup({
                     type="button"
                     id={`wbt-${card.path}\n${task.id}`}
                     data-workbench-nav={`t:${card.path}\n${task.id}`}
-                    className={`ccode-workbench-task min-h-9 w-full py-1 pl-6 pr-4 text-left hover:bg-hover ${
+                    className={`ccode-workbench-task w-full text-left hover:bg-hover ${
                       openTaskId === task.id || selected ? "bg-hover shadow-[inset_2px_0_0_var(--color-nav-accent)]" : ""
                     }`}
                     aria-haspopup="dialog"
@@ -189,20 +191,22 @@ export default function WorkbenchProjectGroup({
                     <span className="ccode-workbench-task-name min-w-0 break-words text-sm text-l1" title={task.name}>
                       {task.name}
                     </span>
-                    <span className="ccode-workbench-task-state flex min-w-0 items-center gap-1.5 text-xs text-l3">
-                      <span className={`min-w-0 break-words ${task.tone === "fail" ? "text-err-text" : ""}`} title={state}>
-                        {state}
+                    <span className="ccode-workbench-task-state min-w-0 text-xs text-l3">
+                      <span className={`flex min-w-0 items-center gap-1.5 ${task.tone === "fail" ? "text-err-text" : task.tone === "live" ? "text-ok-text" : task.tone === "wait" ? "text-warn-text" : ""}`}>
+                        <span className="min-w-0 break-words" title={state}>{state}</span>
+                        {task.live && <RunCaret state={caretFor(task.live)} decorative className="text-micro" />}
                       </span>
-                      {task.live && <RunCaret state={caretFor(task.live)} decorative className="text-micro" />}
+                      {(task.live || task.queued) && (
+                        <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-micro text-l3">
+                          {task.live && <span>{agentLabel(task.live.agentId)}</span>}
+                          {task.queued && <span className="rounded-full bg-warn px-1.5 py-px text-warn-text">待拍板</span>}
+                        </span>
+                      )}
                     </span>
                     <span className="ccode-workbench-task-time min-w-0 text-xs tabular-nums text-l3" title={meta?.elapsed ? "这一轮已跑多久" : task.touchedAt ? absTime(task.touchedAt) : undefined}>
                       {meta?.elapsed ? `本轮 ${meta.elapsed}` : task.touchedAt ? `更新于 ${relTime(task.touchedAt)}` : ""}
                     </span>
-                    <span className="ccode-workbench-task-badge text-right">
-                      {task.queued && (
-                        <span className="rounded-full bg-warn px-1.5 py-px text-micro text-warn-text">待拍板</span>
-                      )}
-                    </span>
+                    <ArrowRight size={13} className="ccode-workbench-task-arrow text-l3" aria-hidden="true" />
                   </button>
                 </li>
               );

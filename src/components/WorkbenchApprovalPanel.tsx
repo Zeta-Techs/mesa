@@ -29,6 +29,7 @@ export default function WorkbenchApprovalPanel({
   return (
     <SettingsDrawerShell
       className="ccode-workbench-detail"
+      backdropClassName="ccode-workbench-detail-backdrop"
       open={!!approval}
       onClose={onClose}
       title={approval?.title ?? "审批详情"}

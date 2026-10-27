@@ -9,12 +9,12 @@ import {
   type ScheduleOverviewRow,
 } from "../workbench-cards";
 
-const TONE_DOT: Record<CardTone, string> = {
-  live: "bg-ok-text",
-  wait: "bg-warn-text",
-  fail: "bg-err-text",
-  done: "bg-ok-text/50",
-  idle: "bg-l4/60",
+const TONE_TEXT: Record<CardTone, string> = {
+  live: "text-ok-text",
+  wait: "text-warn-text",
+  fail: "text-err-text",
+  done: "text-l3",
+  idle: "text-l3",
 };
 
 const ACTION_LABEL: Record<ScheduleAction, string> = {
@@ -65,7 +65,7 @@ export default function WorkbenchSchedules({
     <section className="mt-7 min-w-0" aria-label="定时任务" data-workbench-queue="">
       <div className="mb-2.5 flex items-center gap-2 px-1">
         <AlarmClock size={14} strokeWidth={1.8} className="shrink-0 text-l4" aria-hidden="true" />
-        <h2 className="text-micro font-medium text-l2">定时任务</h2>
+        <h2 className="text-base font-semibold text-l1">定时任务</h2>
         <span className="text-micro text-l3">
           {rows.length - paused} 个在用{paused ? ` · ${paused} 个暂停` : ""}
         </span>
@@ -106,35 +106,41 @@ export default function WorkbenchSchedules({
         {groups.length === 0 && <p className="text-xs text-l3">今后 24 小时没有要跑的</p>}
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-hairline">
+      <div className="ccode-workbench-list overflow-hidden rounded-lg border border-hairline">
         {rows.map((row) => {
           const selected = selectedTaskId === row.task.id;
+          const next = row.nextAt === null ? null : new Date(row.nextAt);
+          const time = row.task.tone === "live" ? "在跑" : row.task.state.startsWith("已自动暂停") ? "暂停" : next ? hhmm(next.getHours(), next.getMinutes()) : "—";
           return (
             <div
               key={row.task.id}
               id={`wbs-${row.task.id}`}
               tabIndex={-1}
               data-workbench-nav={`s:${row.task.id}`}
-              className={`ccode-workbench-schedule min-h-10 border-t border-hairline px-4 py-1.5 first:border-t-0 ${
+              className={`ccode-workbench-schedule border-t border-hairline first:border-t-0 ${
                 openTaskId === row.task.id || selected ? "bg-hover" : "hover:bg-hover"
               } ${selected ? "shadow-[inset_2px_0_0_var(--color-nav-accent)]" : ""}`}
             >
-              <span aria-hidden="true" className={`ccode-workbench-schedule-dot size-1.5 rounded-full ${TONE_DOT[row.task.queued ? "wait" : row.task.tone]}`} />
-              <button
-                type="button"
-                className="ccode-workbench-schedule-name min-w-0 break-words text-left text-sm text-l1 hover:underline"
-                aria-haspopup={row.task.queued ? undefined : "dialog"}
-                title={row.task.queued ? `去拍板队列处理「${row.task.name}」` : `看「${row.task.name}」的详情`}
-                onClick={() => row.task.queued ? onQueue(row) : onOpen(row)}
-              >
-                {row.task.name}
-              </button>
-              <span className="ccode-workbench-schedule-project min-w-0 break-words text-xs text-l3" title={row.projectRoot}>
-                {row.projectName}
+              <span className="ccode-workbench-schedule-time text-sm font-medium tabular-nums text-l2" title={next ? absTime(next.toISOString()) : undefined}>
+                {time}
               </span>
+              <div className="ccode-workbench-schedule-identity min-w-0">
+                <button
+                  type="button"
+                  className="ccode-workbench-schedule-name min-w-0 break-words text-left text-sm text-l1 hover:underline"
+                  aria-haspopup={row.task.queued ? undefined : "dialog"}
+                  title={row.task.queued ? `去拍板队列处理「${row.task.name}」` : `看「${row.task.name}」的详情`}
+                  onClick={() => row.task.queued ? onQueue(row) : onOpen(row)}
+                >
+                  {row.task.name}
+                </button>
+                <span className="mt-0.5 block min-w-0 break-words text-micro text-l3" title={row.projectRoot}>
+                  {row.projectName}
+                </span>
+              </div>
               <span className="ccode-workbench-schedule-frequency min-w-0 break-words text-xs text-l3">{row.frequency}</span>
               <span
-                className={`ccode-workbench-schedule-state min-w-0 break-words text-xs ${row.task.tone === "fail" ? "text-err-text" : "text-l3"}`}
+                className={`ccode-workbench-schedule-state min-w-0 break-words text-xs ${TONE_TEXT[row.task.tone]}`}
                 title={row.task.state}
               >
                 {row.task.state}

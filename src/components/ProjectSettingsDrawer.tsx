@@ -17,6 +17,7 @@ export function SettingsDrawerShell({
   title = "项目设置",
   headerActions,
   className = "",
+  backdropClassName = "",
   children,
 }: {
   open: boolean;
@@ -28,6 +29,7 @@ export function SettingsDrawerShell({
   /** 固定在标题下的操作区；任务 / 审批详情复用，其他设置抽屉不传。 */
   headerActions?: ReactNode;
   className?: string;
+  backdropClassName?: string;
   children: ReactNode;
 }) {
   const titleId = useId();
@@ -77,7 +79,7 @@ export function SettingsDrawerShell({
   if (!render) return null;
   return (
     <div
-      className={`fixed inset-0 z-40 flex justify-end bg-black/40 ccode-fade${exiting ? " ccode-exiting" : ""}`}
+      className={`fixed inset-0 z-40 flex justify-end bg-black/40 ccode-fade ${backdropClassName}${exiting ? " ccode-exiting" : ""}`}
       onMouseDown={(event) => event.target === event.currentTarget && onClose()}
     >
       <aside

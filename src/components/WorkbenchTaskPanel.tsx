@@ -96,6 +96,7 @@ export default function WorkbenchTaskPanel({
   return (
     <SettingsDrawerShell
       className="ccode-workbench-detail"
+      backdropClassName="ccode-workbench-detail-backdrop"
       open={open && !!task}
       onClose={onClose}
       title={task?.name ?? "任务"}
