@@ -1858,21 +1858,22 @@ function App() {
               >
                 {/* 快速入口（2026-10-27 用户拍板：去掉 Mesa 品牌行，两个「新建」放最上面、分量一样，再是工作台 / 对话管理；
                     「新对话」原名「快速开聊」，2026-10-18 改） */}
-                <div className="shrink-0 px-1.5 pt-1.5">
+                {/* 行距照 Claude 客户端（2026-10-28 用户：太挤）：红绿灯到第一行留 pt-3，行 h-9 + 3px，图标与字隔 mr-3 */}
+                <div className="shrink-0 px-1.5 pt-3">
                   <RailTooltip label="新对话" collapsed={collapsed}>
                     <button
                       type="button"
                       onClick={() => void openQuickChat()}
                       aria-label="新对话"
                       title={`新对话：直接开一段空白对话，默认在随手聊里，可在输入框下换项目${keyHint("new-chat")}`}
-                      className={`relative mb-0.5 flex h-8 w-full items-center rounded-md text-sm text-l3 transition-colors hover:bg-hover hover:text-l2 ${
-                        collapsed ? "justify-center" : "px-2.5"
+                      className={`relative mb-[3px] flex h-9 w-full items-center rounded-md text-sm text-l3 transition-colors hover:bg-hover hover:text-l2 ${
+                        collapsed ? "justify-center" : "px-3"
                       }`}
                     >
                       <NAV_ICONS.quickChat
                         size={16}
                         strokeWidth={1.8}
-                        className={collapsed ? "" : "mr-2 shrink-0"}
+                        className={collapsed ? "" : "mr-3 shrink-0"}
                         aria-hidden="true"
                       />
                       {!collapsed && <span className="truncate">新对话</span>}
@@ -1889,14 +1890,14 @@ function App() {
                       aria-haspopup="menu"
                       aria-expanded={Boolean(newProjectMenu)}
                       title={`新项目：新建一个项目文件夹，或把已有文件夹登记成项目${keyHint("new-project")}`}
-                      className={`relative mb-0.5 flex h-8 w-full items-center rounded-md text-sm transition-colors ${
-                        collapsed ? "justify-center" : "px-2.5"
+                      className={`relative mb-[3px] flex h-9 w-full items-center rounded-md text-sm transition-colors ${
+                        collapsed ? "justify-center" : "px-3"
                       } ${newProjectMenu ? "bg-hover text-l2" : "text-l3 hover:bg-hover hover:text-l2"}`}
                     >
                       <NAV_ICONS.newProject
                         size={16}
                         strokeWidth={1.8}
-                        className={collapsed ? "" : "mr-2 shrink-0"}
+                        className={collapsed ? "" : "mr-3 shrink-0"}
                         aria-hidden="true"
                       />
                       {!collapsed && <span className="truncate">新项目</span>}
@@ -1909,8 +1910,8 @@ function App() {
                       aria-current={page === "workbench" ? "page" : undefined}
                       aria-label="工作台"
                       title={`工作台${keyHint("workbench")}`}
-                      className={`relative mb-0.5 flex h-8 w-full items-center rounded-md text-sm transition-colors ${
-                        collapsed ? "justify-center" : "px-2.5"
+                      className={`relative mb-[3px] flex h-9 w-full items-center rounded-md text-sm transition-colors ${
+                        collapsed ? "justify-center" : "px-3"
                       } ${
                         page === "workbench"
                           ? "ccode-rail-active bg-rail-sel text-l1"
@@ -1920,7 +1921,7 @@ function App() {
                       <NAV_ICONS.workbench
                         size={16}
                         strokeWidth={1.8}
-                        className={`${collapsed ? "" : "mr-2 shrink-0"} ${page === "workbench" ? "text-nav-accent" : ""}`}
+                        className={`${collapsed ? "" : "mr-3 shrink-0"} ${page === "workbench" ? "text-nav-accent" : ""}`}
                         aria-hidden="true"
                       />
                       {!collapsed && <span className="truncate">工作台</span>}
@@ -1937,8 +1938,8 @@ function App() {
                       aria-current={page === "sessions" ? "page" : undefined}
                       aria-label="对话管理"
                       title={`对话管理：在所有项目的对话里搜索、筛选，也在那里归档、导出、批量整理${keyHint("sessions")}`}
-                      className={`relative mb-0.5 flex h-8 w-full items-center rounded-md text-sm transition-colors ${
-                        collapsed ? "justify-center" : "px-2.5"
+                      className={`relative mb-[3px] flex h-9 w-full items-center rounded-md text-sm transition-colors ${
+                        collapsed ? "justify-center" : "px-3"
                       } ${
                         page === "sessions"
                           ? "ccode-rail-active bg-rail-sel text-l1"
@@ -1949,7 +1950,7 @@ function App() {
                       <NAV_ICONS.sessions
                         size={16}
                         strokeWidth={1.8}
-                        className={`${collapsed ? "" : "mr-2 shrink-0"} ${page === "sessions" ? "text-nav-accent" : ""}`}
+                        className={`${collapsed ? "" : "mr-3 shrink-0"} ${page === "sessions" ? "text-nav-accent" : ""}`}
                         aria-hidden="true"
                       />
                       {!collapsed && <span className="truncate">对话管理</span>}
@@ -1971,7 +1972,7 @@ function App() {
                         onClick={() => setPage("workspaces")}
                         aria-current={page === "workspaces" ? "page" : undefined}
                         aria-label="项目"
-                        className={`relative mb-0.5 flex h-8 w-full items-center justify-center rounded-md transition-colors ${
+                        className={`relative mb-[3px] flex h-9 w-full items-center justify-center rounded-md transition-colors ${
                           page === "workspaces"
                             ? "ccode-rail-active bg-rail-sel text-l1"
                             : "text-l3 hover:bg-hover hover:text-l2"

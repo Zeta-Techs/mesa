@@ -881,18 +881,19 @@ export default function ProjectTree({
       const k = pathKey(r.repoPath, IS_WINDOWS);
       if (folderOpen(k, chatOpenPrefs, currentKey)) open.push({ key: k, count: chatsByRoot.get(k)?.length ?? 0 });
     }
-    // 行高按 rem 折算（Mac 根 14px、Windows 16px）：对话行 h-8 + 1px 行距；节头 h-7，收着的之间只隔 1px，
-    // 展开的上下各留 pt-3（2026-10-27）；每个展开的文件夹再留一行「还有 N 段」（h-6）与底边距 pb-1；三段容器各 pt-2
+    // 行高按 rem 折算（Mac 根 14px、Windows 16px）。2026-10-28 用户嫌挤、照 Claude 客户端放松：对话行 h-8 + 3px 行距；
+    // 节头 h-8，收着的之间隔 3px，展开的上下各留 pt-3；展开的文件夹头下垫 3px，再留一行「还有 N 段」（h-6）与底边距 pb-1；
+    // 三段容器各 pt-2；置顶 / 其他打开的一节 = 节头 h-8 + 底 pb-4
     const rem = parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 14;
     const headers = sections.length + 1;
     // 「置顶」一节（节头 + 每段一行）也占地方，先扣掉
-    const pinnedRows = pinnedList.length > 0 ? 2.25 * rem + (collapsedSections.includes("pinned") ? 0 : pinnedList.length * (2 * rem + 1)) : 0;
+    const pinnedRows = pinnedList.length > 0 ? 3 * rem + (collapsedSections.includes("pinned") ? 0 : 3 + pinnedList.length * (2 * rem + 3)) : 0;
     const otherCount = openByFolder.get(null)?.length ?? 0;
-    const otherRows = otherCount > 0 ? 2.25 * rem + (collapsedSections.includes("other") ? 0 : otherCount * (2 * rem + 1)) : 0;
-    // 「项目」标签行（mt-2 + h-7，2026-10-26 挪进滚动区）占 2.25rem，紧跟它的第一段省掉 pt-2
+    const otherRows = otherCount > 0 ? 3 * rem + (collapsedSections.includes("other") ? 0 : 3 + otherCount * (2 * rem + 3)) : 0;
+    // 「项目」标签行（mt-4 + h-8）占 3rem，紧跟它的第一段省掉 pt-2
     const fixed =
-      headers * (1.75 * rem + 1) + open.length * 3.25 * rem + 1.5 * rem + pinnedRows + otherRows + 1.75 * rem;
-    const slots = chatSlots({ available: listHeight, fixed, rowHeight: 2 * rem + 1 });
+      headers * (2 * rem + 3) + open.length * (3.25 * rem + 3) + 1.5 * rem + pinnedRows + otherRows + 2.5 * rem;
+    const slots = chatSlots({ available: listHeight, fixed, rowHeight: 2 * rem + 3 });
     const shown = chatQuotas({
       counts: open.map((o) => o.count),
       extra: open.map((o) => chatExtra[o.key] ?? 0),
@@ -1164,7 +1165,7 @@ export default function ProjectTree({
     const remaining = chats.length - visible.length;
     const more = remaining > 0;
     return (
-      <div role="group" aria-label={`${name} 的对话`} className="space-y-px pb-1">
+      <div role="group" aria-label={`${name} 的对话`} className="space-y-[3px] pb-1 pt-[3px]">
         {opened.map((r) => renderOpenRow(r))}
         {chats.length === 0 ? (
           opened.length === 0 && <p className="py-1 pl-2 pr-2 text-xs text-l4">还没有对话</p>
@@ -1553,7 +1554,7 @@ export default function ProjectTree({
     // 节与节之间：收着的课题一行挨一行（只隔 1px，2026-10-27 用户：收起的文件夹太高）；
     // 自己或上一节展开着才留 pt-3，节头读作分节标题，不和上一节的对话挤成一串
     const prevOpen = index > 0 && folderOpen(pathKey(paths[index - 1], IS_WINDOWS), chatOpenPrefs, currentKey);
-    const gap = index === 0 ? "" : open || prevOpen ? "pt-3" : "pt-px";
+    const gap = index === 0 ? "" : open || prevOpen ? "pt-3" : "pt-[3px]";
     return (
       <div
         key={row.key}
@@ -1572,7 +1573,7 @@ export default function ProjectTree({
       >
         <div
           onPointerDown={(e) => onRowPointerDown(e, section, paths, row.key)}
-          className={`group relative flex h-7 items-center rounded-md transition-colors ${
+          className={`group relative flex h-8 items-center rounded-md transition-colors ${
             selected && active
               ? "ccode-rail-active bg-rail-sel"
               : menuOpen
@@ -1602,7 +1603,7 @@ export default function ProjectTree({
             title={row.project ? row.repoPath : `${row.repoPath}\n这个文件夹还没添加到 Mesa`}
             aria-current={selected && active ? "page" : undefined}
             // 课题名是分组标题（2026-10-25 用户对照 Claude 客户端；2026-10-27 用户：比 Claude 客户端看着糊）：13px 加粗、字色 l2，对话同字号 l2 常重，对话 13px 不缩进，靠图标与字重分层
-            className={`flex h-7 min-w-0 items-center gap-1 rounded-md pr-0.5 ${
+            className={`flex h-8 min-w-0 items-center gap-1 rounded-md pr-0.5 ${
               selected && active
                 ? "font-medium text-l1"
                 : selected
@@ -1654,7 +1655,7 @@ export default function ProjectTree({
     const toggle = () => toggleFolder(SCRATCH_FOLDER_KEY, open);
     return (
       <div data-rail-group>
-        <div className="group relative flex h-7 items-center rounded-md transition-colors hover:bg-hover">
+        <div className="group relative flex h-8 items-center rounded-md transition-colors hover:bg-hover">
           {renderFolderToggle("随手聊", open, toggle, "scratch")}
           <button
             type="button"
@@ -1663,7 +1664,7 @@ export default function ProjectTree({
             data-rail-folder={SCRATCH_FOLDER_KEY}
             data-rail-open={open ? "1" : "0"}
             title="不挂在项目下的对话（新对话默认开在这里）"
-            className={`flex h-7 min-w-0 items-center rounded-md pr-0.5 ${unreadInside ? "text-l1" : "text-l2 group-hover:text-l1"}`}
+            className={`flex h-8 min-w-0 items-center rounded-md pr-0.5 ${unreadInside ? "text-l1" : "text-l2 group-hover:text-l1"}`}
           >
             <span className="ccode-rail-text min-w-0 truncate text-left font-medium">随手聊</span>
           </button>
@@ -1869,25 +1870,24 @@ export default function ProjectTree({
         aria-controls={`${sectionId}-${key}`}
         aria-description={`${count} 段${!open && dot ? `，${dotTitle(dot)}` : ""}`}
         onClick={() => toggleSection(key)}
-        className="flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-l3 hover:bg-hover hover:text-l1"
+        className="flex h-8 w-full items-center gap-1.5 rounded-md px-2 text-l3 hover:bg-hover hover:text-l1"
       >
         <Chevron size={12} aria-hidden="true" className="shrink-0" />
         <span className={RAIL_SECTION_LABEL}>{label}</span>
-        <span className="text-xs text-l3">{count}</span>
         {!open && dot && <span className="ml-auto flex h-6 w-6 items-center justify-center"><RunCaret state={dot} /></span>}
       </button>
     );
   }
 
-  /** 项目标签行：只报计数。添加入口在侧栏顶部「新项目」（2026-10-27 用户：同一件事不放两处）。
+  /** 项目标签行：只一个「项目」字，不写数字（2026-10-28 用户：置顶 / 项目后面的数字删掉；节头的段数只留给读屏）。
+   *  添加入口在侧栏顶部「新项目」（2026-10-27 用户：同一件事不放两处）。
    *  放在随手聊下面、课题上面（2026-10-26 用户：置顶的对话和随手聊都不是项目，原先压在「项目 N」下面读不通） */
   function renderProjectsLabel() {
     return (
-      <div className="mt-2 flex h-7 items-center gap-1.5 pl-2.5 pr-0.5">
+      <div className="mt-4 flex h-8 items-center pl-2.5 pr-0.5">
         <span className={RAIL_SECTION_LABEL}>
           项目
         </span>
-        <span className="text-xs text-l4">{rows.length}</span>
       </div>
     );
   }
@@ -1909,34 +1909,34 @@ export default function ProjectTree({
             delete el.dataset.scrolling;
           }, 900);
         }}
-        className="ccode-rail-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1.5 pb-3 pt-1.5 [mask-image:linear-gradient(to_bottom,transparent,black_6px,black_calc(100%_-_12px),transparent)]"
+        className="ccode-rail-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1.5 pb-3 pt-3 [mask-image:linear-gradient(to_bottom,transparent,black_6px,black_calc(100%_-_12px),transparent)]"
       >
         {/* 置顶的对话（2026-10-24）：跨课题钉在最上面，原课题下不重复列 */}
         {pinnedList.length > 0 && (
-          <div className="pb-2" data-rail-group>
+          <div className="pb-4" data-rail-group>
             {renderSectionHeader("pinned", "置顶", pinnedList.length, strongestCaret(pinnedList.map((s) =>
               withUnread(chatDot(s, terminalRunInputs), chatKey(s) !== highlightChatKey && unreadSet.has(chatKey(s))),
             )))}
-            <div id={`${sectionId}-pinned`} role="group" aria-label="置顶的对话" hidden={collapsedSections.includes("pinned")} className="space-y-px">
+            <div id={`${sectionId}-pinned`} role="group" aria-label="置顶的对话" hidden={collapsedSections.includes("pinned")} className="space-y-[3px] pt-[3px]">
               {!collapsedSections.includes("pinned") && pinnedList.map((s) => renderChat(s, projectOfChat(s), undefined, originOfChat(s)))}
             </div>
           </div>
         )}
         {/* 开着、但不在任何项目里也不是随手聊的（主目录、别的文件夹里开的终端 / 对话）：单列一节放最上 */}
         {(openByFolder.get(null)?.length ?? 0) > 0 && (
-          <div className="pb-2" data-rail-group>
+          <div className="pb-4" data-rail-group>
             {renderSectionHeader("other", "其他打开的", openByFolder.get(null)!.length, strongestCaret(openByFolder.get(null)!.map((r) => {
               const run = terminalRunInputs.find((x) => x.tabId === r.tabId);
               return withUnread(r.dot, r.tabId !== terminalActiveTabId && !!run && unreadSet.has(unreadKeyOf(run)));
             })))}
-            <div id={`${sectionId}-other`} role="group" aria-label="其他打开的" hidden={collapsedSections.includes("other")} className="space-y-px">
+            <div id={`${sectionId}-other`} role="group" aria-label="其他打开的" hidden={collapsedSections.includes("other")} className="space-y-[3px] pt-[3px]">
               {!collapsedSections.includes("other") && openByFolder.get(null)!.map((r) => renderOpenRow(r))}
             </div>
           </div>
         )}
         {/* 弹出列表：正聊着的项目提到随手聊上面；它是单独一块，不参与拖动排序 */}
         {currentRow && (
-          <div className="pb-2">
+          <div className="pb-4">
             {renderRow(
               currentRow,
               0,
@@ -1951,7 +1951,7 @@ export default function ProjectTree({
         {renderProjectsLabel()}
         {rows.length === 0 ? (
           <p className="px-2.5 py-2 text-xs text-l4">
-            还没有项目，点「项目」右边的 ＋ 添加
+            还没有项目，点上面的「新项目」添加
           </p>
         ) : (
           // 三段各自一个容器：拖动只在同一段里挪（置顶段的顺序是置顶表本身）；紧跟「项目」标签的第一段不再垫 pt-2

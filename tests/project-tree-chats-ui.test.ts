@@ -657,7 +657,9 @@ test("「项目 N」标签在置顶的对话和随手聊下面、课题上面：
     assert.ok(before(view.button("随手聊"), label), "随手聊在「项目」上面");
     assert.ok(before(label, view.button("综述流程测试")), "课题在「项目」下面");
     assert.ok(before(label, view.button("Ccode")), "课题在「项目」下面");
-    assert.equal(label.parentElement?.querySelector(".text-l4")?.textContent, "2", "计数只数课题");
+    // 2026-10-28 用户：置顶 / 项目后面不写数字（段数只留给读屏）
+    assert.equal(label.parentElement?.textContent, "项目", "项目标签不带数字");
+    assert.equal(view.button("收起「置顶」").textContent, "置顶", "置顶节头不带数字");
     // 2026-10-27：搜索入口挪到标题栏、添加挪到侧栏顶部「新项目」，树里两样都不再有
     assert.equal(view.host.querySelector('[aria-label="搜索对话和项目"]'), null);
     assert.equal(label.parentElement?.querySelector("button"), null, "项目标签行只报计数");
@@ -751,11 +753,11 @@ test("置顶一节的对话行尾小字写它属于哪个课题（随手聊写�
   }
 });
 
-test("收着的课题一行挨一行（只隔 1px），展开的那节上下留白（2026-10-27）", async () => {
+test("收着的课题一行挨一行（只隔 3px），展开的那节上下留白（2026-10-27，行距 2026-10-28 放松）", async () => {
   const view = await renderTree();
   try {
     const rows = () => Array.from(view.host.querySelectorAll("[data-tree-row]")) as HTMLElement[];
-    const gaps = () => rows().map((r) => (/\bpt-3\b/.test(r.className) ? "gap" : /\bpt-px\b/.test(r.className) ? "tight" : "first"));
+    const gaps = () => rows().map((r) => (/\bpt-3\b/.test(r.className) ? "gap" : /\bpt-\[3px\]/.test(r.className) ? "tight" : "first"));
     // 综述流程测试展开着：它后面那节留白
     assert.deepEqual(gaps(), ["first", "gap"]);
     await view.act(async () => view.button("收起「综述流程测试」的对话").click());
