@@ -109,9 +109,8 @@ export default function WorkbenchProjectGroup({
   const expanded = expandedByClick || selectedAt >= CARD_VISIBLE_TASKS;
   const shown = expanded ? card.tasks : card.tasks.slice(0, CARD_VISIBLE_TASKS);
   const hidden = card.tasks.length - shown.length;
-  // 项目头只写「进行到」以外的几个数：进度由进度条和它下面的「第几步」说
-  const vitals = card.vitals.filter((v) => v.label !== "进行到");
-  const progress = card.vitals.find((v) => v.label === "进行到")?.value ?? null;
+  // 进度写在几个数里（「进行到 第 1 / 5 步」）：项目头不再挂进度条——下面的步骤序号圈已经说了走到哪（2026-10-27 用户：进度条突兀）
+  const vitals = card.vitals;
   return (
     <section className="border-t border-hairline first:border-t-0" aria-label={card.name}>
       <div className="ccode-workbench-project-head group flex min-w-0 flex-wrap items-center gap-2">
@@ -154,24 +153,6 @@ export default function WorkbenchProjectGroup({
             </span>
           )}
         </div>
-        {card.track && (
-          <div
-            className="ccode-workbench-track flex w-28 shrink-0 items-center gap-2"
-            title={card.track.map((s, i) => `${i + 1}. ${s.name}${s.state === "done" ? "（已完成）" : s.state === "cur" ? "（当前）" : ""}`).join("\n")}
-          >
-            <div className="flex flex-1 gap-[2px]">
-              {card.track.map((s, i) => (
-                <span
-                  key={i}
-                  className={`h-[3px] flex-1 rounded-full ${
-                    s.state === "done" ? "bg-ok-text/60" : s.state === "cur" ? "bg-nav-accent" : "bg-hairline"
-                  }`}
-                />
-              ))}
-            </div>
-            {progress && <span className="shrink-0 text-micro tabular-nums text-l3">{progress.replace(/^第 (\d+ \/ \d+) 步$/, "$1")}</span>}
-          </div>
-        )}
         {clientJump && (
           <button
             type="button"
@@ -192,13 +173,11 @@ export default function WorkbenchProjectGroup({
           <span className="text-xs">{continueLabel}</span>
           <ArrowRight size={12} strokeWidth={1.8} aria-hidden="true" />
         </button>
-        {/* 时间放最右、与任务行时间同一列：去处按钮隐着也占位，放在时间左边才不把时间挤偏 */}
-        {lastActive ? (
+        {/* 时间放最右、与任务行时间同一右缘；按钮紧挨着时间，不再隔一整列（2026-10-27 用户） */}
+        {lastActive && (
           <span className="ccode-workbench-updated shrink-0 text-right text-micro tabular-nums text-l3" title={absTime(lastActive)}>
             {shortWhen(lastActive)}
           </span>
-        ) : (
-          <span className="ccode-workbench-updated shrink-0" aria-hidden="true" />
         )}
       </div>
 

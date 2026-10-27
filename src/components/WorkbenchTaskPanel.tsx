@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { SettingsDrawerShell } from "./ProjectSettingsDrawer";
 import { rowActionClass, secondaryActionClass } from "./PageFrame";
 import RunCaret from "./RunCaret";
@@ -6,6 +6,7 @@ import { caretOfAttention } from "../run-caret";
 import { absTime, relTime } from "../rel-time";
 import { frequencyLabel, nextRunLabel, summaryPreview } from "../schedule-tasks";
 import { codingDivergenceLabel } from "../work-mode";
+import { criterionText, readableBrief } from "../acceptance-text";
 import type { CardTask, ProjectCard } from "../workbench-cards";
 import type { CodingWorktreeDto, ProjectStepDto, RunDto, ScheduleDto, TaskDto } from "../types";
 
@@ -45,18 +46,44 @@ function Rows({ rows }: { rows: [string, ReactNode][] }) {
   );
 }
 
-function PathList({ paths }: { paths: readonly string[] }) {
-  if (!paths.length) return <p className="text-sm text-l3">（无）</p>;
+/** 产物 / 路径排成一行行小标签，不竖排一长列 */
+function PathChips({ paths }: { paths: readonly string[] }) {
   return (
-    <ul className="space-y-0.5">
+    <ul className="flex flex-wrap gap-1.5">
       {paths.map((p) => (
-        <li key={p} className="break-all font-mono text-micro text-l2">
+        <li key={p} className="max-w-full break-all rounded-md bg-inset px-1.5 py-0.5 font-mono text-micro text-l2">
           {p}
         </li>
       ))}
     </ul>
   );
 }
+
+/**
+ * 长说明默认只露前几行，点「展开全文」再看全（2026-10-27 用户截图：任务书整段铺满抽屉）。
+ * 段落按原文换行分开，段间留一点空；`{skill:x}` 写成技能名
+ */
+function Brief({ text, resetKey }: { text: string; resetKey: string }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => setOpen(false), [resetKey]);
+  const paras = readableBrief(text).split(/\n+/).map((p) => p.trim()).filter(Boolean);
+  const long = paras.length > 3 || text.length > 220;
+  return (
+    <div>
+      <div className={`space-y-1.5 text-sm leading-relaxed text-l1 ${long && !open ? "line-clamp-5" : ""}`}>
+        {paras.map((p, i) => (
+          <p key={i} className="break-words">{p}</p>
+        ))}
+      </div>
+      {long && (
+        <button type="button" className="mt-1.5 text-xs text-l3 hover:text-l1" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+          {open ? "收起" : "展开全文"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 
 /**
  * 工作台任务面板（2026-10-27 第二批）：点项目分组里的任务行，在右侧看这件事——要做什么、现在怎样、过程、产物，
@@ -130,7 +157,7 @@ export default function WorkbenchTaskPanel({
           {goal && (
             <Section title="目标">
               {goal.description.trim() && goal.description.trim() !== goal.name.trim() && (
-                <p className="mb-3 whitespace-pre-wrap break-words text-sm text-l1">{goal.description}</p>
+                <div className="mb-3"><Brief text={goal.description} resetKey={task.id} /></div>
               )}
               <div>
                 <Rows
@@ -145,34 +172,52 @@ export default function WorkbenchTaskPanel({
           )}
           {goal && (
             <Section title="带上的资料">
-              <PathList paths={goal.inputPaths.map((p) => (p === "." ? "整个项目" : p))} />
+              <PathChips paths={goal.inputPaths.map((p) => (p === "." ? "整个项目" : p))} />
             </Section>
           )}
           {goal?.adoptedPaths?.length ? (
             <Section title="上次写回项目的">
-              <PathList paths={goal.adoptedPaths} />
+              <PathChips paths={goal.adoptedPaths} />
             </Section>
           ) : null}
 
-          {step && (
-            <Section title="这一步要做什么">
-              <p className="whitespace-pre-wrap break-words text-sm text-l1">{step.brief || step.name}</p>
-            </Section>
-          )}
           {step?.expectedArtifacts.length ? (
             <Section title="应交的产物">
-              <PathList paths={step.expectedArtifacts} />
+              <PathChips paths={step.expectedArtifacts} />
             </Section>
           ) : null}
-          {step?.acceptanceCriteria?.length ? (
-            <Section title="怎样算做完">
-              <ul className="list-disc space-y-0.5 pl-4 text-sm text-l1">
-                {step.acceptanceCriteria.map((c) => (
-                  <li key={c}>{c}</li>
-                ))}
-              </ul>
+          {step?.acceptanceCriteria?.length ? (() => {
+            // 人看的条件在前；Mesa 自动核对的（machine:）翻成白话、小字列在后面，不露内部写法
+            const items = step.acceptanceCriteria.map(criterionText);
+            const human = items.filter((c) => !c.machine);
+            const auto = items.filter((c) => c.machine);
+            return (
+              <Section title="怎样算做完">
+                {human.length > 0 && (
+                  <ul className="list-disc space-y-1 pl-4 text-sm leading-relaxed text-l1">
+                    {human.map((c) => (
+                      <li key={c.text} className="break-words">{c.text}</li>
+                    ))}
+                  </ul>
+                )}
+                {auto.length > 0 && (
+                  <div className={human.length ? "mt-2.5" : ""}>
+                    <p className="mb-1 text-micro text-l3">Mesa 会自动核对：</p>
+                    <ul className="space-y-0.5 text-xs text-l2">
+                      {auto.map((c) => (
+                        <li key={c.text} className="break-all">· {c.text}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </Section>
+            );
+          })() : null}
+          {step && (
+            <Section title="这一步要做什么">
+              <Brief text={step.brief || step.name} resetKey={task.id} />
             </Section>
-          ) : null}
+          )}
           {task.ref.kind === "step" && (
             <Section title="工作副本">
               <p className="break-all font-mono text-micro text-l2">

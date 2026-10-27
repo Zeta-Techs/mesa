@@ -61,7 +61,6 @@ import {
   normalizeWorkMode,
 } from "../work-mode";
 import {
-  EmptyState,
   LoadingRows,
   PageFrame,
   fieldClass,
@@ -115,6 +114,7 @@ import {
   type QueueRow,
 } from "../workbench-queue";
 import { pollEvery } from "../polling";
+import { openQuickChat } from "../quick-chat-launch";
 import { sidebarChatTitle } from "../sidebar-chats";
 import { isScratchCwd } from "../quick-chat";
 import { PROJECT_ORDER_KEY, PROJECT_PINS_KEY, parsePins } from "../project-tree";
@@ -197,6 +197,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
   const setTaskReviewReq = useAppStore((s) => s.setTaskReviewReq);
   const setFocusTabReq = useAppStore((s) => s.setFocusTabReq);
   const setProjectFocusReq = useAppStore((s) => s.setProjectFocusReq);
+  const setDemoProjectOpenReq = useAppStore((s) => s.setDemoProjectOpenReq);
   const setWorkspaceReviewRequest = useAppStore((s) => s.setWorkspaceReviewRequest);
 
   function openRun(runId: string, tabId?: string) {
@@ -1332,11 +1333,13 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
       .filter((r) => r.sessionId)
       .map((r) => usageKey(r.agent, r.sessionId!));
     const liveSession = live ? sessionOfTab(live.tabId, live.runId) : null;
-    const total = costText([...new Set([...pastKeys, ...(liveSession ? [usageKey(liveSession.agent, liveSession.sessionId)] : [])])]);
+    const rawTotal = costText([...new Set([...pastKeys, ...(liveSession ? [usageKey(liveSession.agent, liveSession.sessionId)] : [])])]);
+    // 一分钱没花（还没真正跑过）不单占一块写「$0.00」
+    const total = rawTotal && rawTotal !== "$0.00" ? rawTotal : null;
     const meta = live ? liveMeta(live) : null;
     if (!meta?.activity && !meta?.elapsed && !total) return null;
     return (
-      <dl className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-x-3 gap-y-1 rounded-lg ccode-well p-3 text-sm">
+      <dl className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm">
         {meta?.activity && (
           <>
             <dt className="text-l3">此刻</dt>
@@ -1791,20 +1794,48 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
           ) : !projectsLoaded ? (
             <LoadingRows />
           ) : (
-            <EmptyState
-              compact
-              title="从一个项目开始"
-              detail="添加项目后，Mesa 会从上次停下的地方继续。"
-              action={
-                <button
-                  type="button"
-                  className={primaryActionClass}
-                  onClick={() => setPage("workspaces")}
-                >
+            // 新用户第一次打开（2026-10-27 用户：「新用户看到的工作台什么样，设计了吗」）：说清这一页以后会放什么，
+            // 给三个起步入口；不放示例数据冒充项目
+            <div className="rounded-lg border border-hairline px-6 py-7">
+              <h3 className="text-base font-semibold text-l1">从一个项目开始</h3>
+              <p className="mt-1.5 max-w-xl text-sm leading-relaxed text-l2">
+                工作台会把所有项目里等你决定的事、手上在做的事和定时任务排在一处。先有一个项目——一个放资料和成果的文件夹。
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button type="button" className={primaryActionClass} onClick={() => setPage("workspaces")}>
                   添加项目
                 </button>
-              }
-            />
+                <button
+                  type="button"
+                  className={secondaryActionClass}
+                  title="建一个带好文献和流程的示例课题，照着点一遍就知道怎么用"
+                  onClick={() => {
+                    setPage("workspaces");
+                    setDemoProjectOpenReq(Date.now());
+                  }}
+                >
+                  创建示例课题
+                </button>
+                <button type="button" className={ghostActionClass} onClick={() => void openQuickChat()}>
+                  先随便聊聊
+                </button>
+              </div>
+              <ol className="mt-6 grid gap-4 border-t border-hairline pt-5 sm:grid-cols-3">
+                {[
+                  { title: "添加项目", text: "选一个文件夹；用过的 Agent 对话里出现过的目录，会自动列在项目页等你认领。" },
+                  { title: "在项目里开始", text: "科研项目按流程一步步来，工作项目记下目标，编程项目开分支；也可以直接聊。" },
+                  { title: "回到这里看", text: "AI 停下来问你、做完等你验收的事排在「等你拍板」，手上在做的事按项目列出。" },
+                ].map((step, i) => (
+                  <li key={step.title} className="min-w-0">
+                    <div className="flex items-center gap-2 text-sm font-medium text-l1">
+                      <span className="ccode-workbench-step-badge text-l3" aria-hidden="true">{i + 1}</span>
+                      {step.title}
+                    </div>
+                    <p className="mt-1 text-xs leading-relaxed text-l3">{step.text}</p>
+                  </li>
+                ))}
+              </ol>
+            </div>
           )}
       </section>
 

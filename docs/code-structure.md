@@ -418,6 +418,7 @@ project-sessions-layout.ts # 项目页右侧「这个项目的对话」栏：开
                              # 行内能做的只有两种——旁路能回复的待确认（Codex / Qwen / OpenCode）允许 / 拒绝、信息类（BULK_READABLE）收起；
                              # 键盘 J/K/回车/A/R/E（queueKeyAction，当前行做不了的键不吞）、按键记选中行；
                              # createDeferred 撤销窗口（QUEUE_UNDO_MS 5 秒后才送出，挂模块不挂组件，隐藏按请求 id 区分同一 Run 的下一问）（tests/workbench-queue.test.ts）
+  acceptance-text.ts         # 「怎样算做完」给人看：criterionText 把 machine: 验收条目（语法见 workspaces.rs machine_acceptance_satisfied）翻成白话、与人工条件分开；readableBrief 把 {skill:x} 写成技能名（工作台任务面板用；tests/acceptance-text.test.ts）
   workbench-cards.ts         # 工作台项目分组数据（2026-10-27 第二批）：buildProjectCard 项目头几个数 + 科研进度条 + 任务行
                              # （科研流程步骤 / 目标（工作与 liteResearch，同 goalCaptureTargets 口径）/ 编程分支 / 定时 / 对不上的活标签「对话」），
                              # 活标签按 taskId / 工作副本目录归行、一条只归一行；在拍板队列里的行标 queued；
