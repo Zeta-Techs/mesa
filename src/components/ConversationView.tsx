@@ -35,10 +35,12 @@ import {
   exploreLabel,
   formatSeconds,
   groupConversationSegments,
+  isVerificationTool,
   problemText,
   segmentContainsIndex,
   turnPlan,
   turnSummary,
+  turnToolEntries,
   type ConversationSegment,
   type PlanEntry,
   type ProcessItem,
@@ -47,6 +49,7 @@ import {
 import { resultStatusLabel, type ActivityKind, type DiffLine } from "../tool-activity";
 import { IS_WINDOWS } from "../hotkeys";
 import { estimateSegmentHeight, useVirtualWindow } from "../virtual-window";
+import { resolveMdPath } from "../reader";
 
 /** 纯文本块：保留换行，超长不带空格的串（长 URL、一串 aaaa）在气泡内折行，不撑出气泡（2026-10-19 用户截图） */
 const WRAP_TEXT = "whitespace-pre-wrap [overflow-wrap:anywhere]";
@@ -297,6 +300,7 @@ export default function ConversationView({
   };
 }) {
   const setDiffFocusReq = useAppStore((s) => s.setDiffFocusReq);
+  const setPreviewReq = useAppStore((s) => s.setPreviewReq);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   /** 悬停在消息上出现的操作（docs/design-chat-layer.md §5）：复制；用户消息另有「编辑后重发」，
    *  助手消息另有「从这里分叉」。浮着不占高度（2026-10-25 用户：对话间距太松）：都挂在消息下面那段留白里
@@ -355,6 +359,13 @@ export default function ConversationView({
     );
   }
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [detailTarget, setDetailTarget] = useState<{ key: string; seq: number } | null>(null);
+  const detailRef = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    if (!detailTarget || !detailRef.current) return;
+    detailRef.current.scrollIntoView({ block: "center" });
+    detailRef.current.querySelector("button")?.focus({ preventScroll: true });
+  }, [detailTarget]);
   const hitRef = useRef<HTMLDivElement | null>(null);
   const didFocusScroll = useRef(false);
 
@@ -516,6 +527,7 @@ export default function ConversationView({
       added?: number | null;
       removed?: number | null;
       problem?: string | null;
+      failed?: boolean;
       /** 还在跑（进行中的一轮里没回结果的调用） */
       pending?: boolean;
       detail?: () => ReactNode;
@@ -549,7 +561,7 @@ export default function ConversationView({
         )}
         {(row.added ?? 0) > 0 && <span className="shrink-0 tabular-nums text-add">+{row.added}</span>}
         {(row.removed ?? 0) > 0 && <span className="shrink-0 tabular-nums text-del">−{row.removed}</span>}
-        {row.problem && <span className="shrink-0 text-err-text">{row.problem}</span>}
+        {row.problem && <span className={`shrink-0 ${row.failed ? "text-err-text" : "text-warn-text"}`}>{row.problem}</span>}
         {live && awaiting && <span className="shrink-0 text-l4">等你决定</span>}
       </>
     );
@@ -562,7 +574,7 @@ export default function ConversationView({
       );
     }
     return (
-      <div key={key}>
+      <div key={key} ref={detailTarget?.key === key ? detailRef : undefined}>
         <button
           type="button"
           aria-expanded={open}
@@ -571,7 +583,7 @@ export default function ConversationView({
         >
           {line}
         </button>
-        <Collapse open={open} className="mb-2 mt-1 pl-6">
+        <Collapse key={detailTarget?.key.startsWith(key) ? detailTarget.seq : "toggle"} open={open} className="mb-2 mt-1 pl-6">
           {row.detail()}
         </Collapse>
       </div>
@@ -611,7 +623,12 @@ export default function ConversationView({
           </>
         );
       }
-      if (a.kind === "run") return <OutputView command={a.command} text={t.result} />;
+      if (a.kind === "run") return <>
+        <OutputView command={a.command} text={t.result} />
+        <details className="mt-1 text-xs text-l3"><summary className="min-h-7 cursor-pointer">调用参数</summary><OutputView text={prettyInput(a.input)} /></details>
+        {t.status === "failed" && onEditResend && <button type="button" className="min-h-7 rounded-md px-1 text-xs text-l2 hover:bg-hover"
+          onClick={() => onEditResend(`请检查这条失败命令的原因，确认影响后再决定是否重试：\n\n${a.command ?? a.target}\n\n失败输出：\n${(t.result ?? "").slice(0, 4000)}`)}>让它检查后重试</button>}
+      </>;
       if (a.kind === "other" || a.kind === "mcp") {
         return (
           <>
@@ -642,6 +659,7 @@ export default function ConversationView({
       added: a.added,
       removed: a.removed,
       problem,
+      failed: t.status === "failed",
       pending,
       detail,
     });
@@ -689,6 +707,15 @@ export default function ConversationView({
     const plan = turnPlan(seg.items);
     // 有计划卡就不再一行行列「更新待办」（同一份清单反复改，画最新那份就够）
     const items = plan ? seg.items.filter((it) => !(it.kind === "tool" && it.tool.activity.kind === "todo")) : seg.items;
+    const records = turnToolEntries(items);
+    const problems = records.filter(({ tool }) => tool.status !== "ok");
+    const files = records.filter(({ tool }) => tool.activity.path && ["edit", "write", "delete"].includes(tool.activity.kind));
+    const checks = records.filter(({ tool }) => isVerificationTool(tool));
+    const revealRecord = (record: (typeof records)[number]) => {
+      const target = `${key}:${record.row}`;
+      setExpanded((prev) => new Set([...prev, key, target, ...(record.parent ? [`${key}:${record.parent}`] : [])]));
+      setDetailTarget((prev) => ({ key: target, seq: (prev?.seq ?? 0) + 1 }));
+    };
     const answerKey = `${key}:answer`;
     // 只想了想、没动手的一轮：写「已思考」，展开直接是思考正文，不再套一行「思考」
     const thoughtOnly = seg.items.every((item) => item.kind === "thinking");
@@ -710,6 +737,7 @@ export default function ConversationView({
         className={`group/msg relative max-w-full ${seg.live ? "mb-2" : "mb-6"} ${hit ? "rounded-md bg-seg-sel px-2 py-1" : ""}`}
       >
         {!seg.live && (
+          <div className="flex flex-wrap items-center gap-x-2">
           <button
             type="button"
             aria-expanded={open}
@@ -718,13 +746,17 @@ export default function ConversationView({
           >
             <span className="shrink-0">{label}</span>
             {summaryTail && <span className="min-w-0 truncate text-l4">· {summaryTail}</span>}
-            {summary.problem && (
-              <span className="shrink-0 text-warn-text">· {summary.problem}</span>
-            )}
             <FoldMark open={open} />
           </button>
+          {problems.length > 0 && (
+            <button type="button" className={`min-h-8 rounded-md px-1 ${rowText} text-warn-text hover:bg-hover focus-visible:outline-2 focus-visible:outline-cta`}
+              title="展开并定位第一处异常的原始输出" onClick={() => revealRecord(problems[0])}>
+              {summary.problem}
+            </button>
+          )}
+          </div>
         )}
-        <Collapse open={open} className={seg.live ? "" : "mb-3 mt-1 border-t border-hairline pt-2"}>
+        <Collapse key={detailTarget?.key.startsWith(`${key}:`) ? detailTarget.seq : "toggle"} open={open} className={seg.live ? "" : "mb-3 mt-1 border-t border-hairline pt-2"}>
           {plan && <PlanCard entries={plan} />}
           {thoughtOnly && !seg.live
             ? richText(
@@ -739,6 +771,35 @@ export default function ConversationView({
             {renderBlocks(seg.answer, answerKey, false, hit)}
             {messageActions(seg.answer, answerKey, "left")}
           </>
+        )}
+        {!seg.live && (files.length > 0 || checks.length > 0) && (
+          <div className="mt-2 text-xs text-l3">
+            <div className="flex flex-wrap items-center gap-2">
+              {files.length > 0 && <button type="button" className="min-h-7 rounded-md px-1 hover:bg-hover focus-visible:outline-2 focus-visible:outline-cta"
+                aria-expanded={expanded.has(`${key}:files`)} onClick={() => toggleExpand(`${key}:files`)}>文件记录 {files.length}</button>}
+              {checks.length > 0 && <button type="button" className="min-h-7 rounded-md px-1 hover:bg-hover focus-visible:outline-2 focus-visible:outline-cta"
+                aria-expanded={expanded.has(`${key}:checks`)} onClick={() => toggleExpand(`${key}:checks`)}>验证记录 {checks.length}</button>}
+            </div>
+            {[{ name: "files", entries: files }, { name: "checks", entries: checks }].map(({ name, entries }) => (
+              <Collapse key={name} open={expanded.has(`${key}:${name}`)}>
+                <ul className="mt-1 border-l border-hairline pl-2">
+                  {entries.map((record) => <li key={record.row} className="flex items-center gap-1">
+                    <button type="button" className="flex min-h-8 w-full items-center gap-2 rounded-md px-1 text-left hover:bg-hover focus-visible:outline-2 focus-visible:outline-cta"
+                      onClick={() => revealRecord(record)} title="查看本轮工具的参数和原始输出；不代表已验收或验证通过">
+                      <span className="min-w-0 break-all font-mono">{record.tool.activity.path ?? record.tool.activity.command}</span>
+                      <span className="shrink-0">{resultStatusLabel(record.tool.status) ?? (record.tool.result === null ? "未收到结果" : "查看记录")}</span>
+                    </button>
+                    {name === "files" && record.tool.activity.kind !== "delete" && record.tool.status === "ok" && record.tool.result !== null && record.tool.activity.path && cwd && (
+                      <button type="button" className="min-h-7 shrink-0 rounded-md px-1 hover:bg-hover focus-visible:outline-2 focus-visible:outline-cta"
+                        onClick={() => setPreviewReq({ path: record.tool.activity.path!.startsWith("~") ? record.tool.activity.path! : resolveMdPath(`${cwd}/_`, record.tool.activity.path!), name: record.tool.activity.target, root: cwd })}>
+                        打开当前文件
+                      </button>
+                    )}
+                  </li>)}
+                </ul>
+              </Collapse>
+            ))}
+          </div>
         )}
       </div>
     );

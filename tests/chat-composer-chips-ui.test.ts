@@ -87,6 +87,7 @@ async function mount() {
     pdfThumbs: [] as string[],
     pickDirs: [] as unknown[],
   };
+  dom.window.HTMLElement.prototype.scrollIntoView = function () { this.dataset.scrolled = "1"; };
   Object.assign(dom.window, {
     __chips: host,
     __TAURI_INTERNALS__: {
@@ -1531,4 +1532,27 @@ test("没能启动：定格的最后几行、不给按键，重新启动是主�
   } finally {
     await ui.close();
   }
+});
+
+test("异常直接展开原始输出，验证入口不把后续总结当成通过；重试只填草稿", async () => {
+  const ui = await mount();
+  try {
+    const drafts: string[] = [];
+    await ui.render(ui.h(ui.Conversation, { cwd: "/proj", onEditResend: (v: string) => drafts.push(v), messages: [
+      {role: "user", timestamp: "1", usage: null, blocks: [{kind: "text", text: "检查", toolName: null}]},
+      {role: "assistant", timestamp: "2", usage: null, blocks: [
+        {kind: "tool_use", toolName: "Bash", text: '{"command":"npm test","workdir":"/proj"}'},
+        {kind: "tool_result", toolName: null, text: "Exit code 1\nmissing fixture"},
+        {kind: "text", toolName: null, text: "我已经完成。"},
+      ]},
+    ]}));
+    await ui.click("1 步失败");
+    assert.match(ui.el.querySelector('[data-scrolled="1"]')?.textContent ?? "", /missing fixture/);
+    await ui.click("验证记录 1");
+    assert.doesNotMatch(ui.el.textContent ?? "", /验证通过|已恢复/);
+    await ui.click("让它检查后重试");
+    assert.equal(drafts.length, 1);
+    assert.match(drafts[0], /npm test[\s\S]*missing fixture/);
+    assert.match(ui.el.textContent ?? "", /1 步失败/);
+  } finally { await ui.close(); }
 });

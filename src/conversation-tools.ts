@@ -121,7 +121,8 @@ function buildItems(
     } else if (block.kind === "tool_result") {
       const status = resultStatus(block.text, block.isError);
       const matched = block.callId ? byCall.get(block.callId) : undefined;
-      const tools = matched ?? open[0];
+      // 带 id 的孤立结果不能错挂到另一个具名调用；旧格式无 id 的调用仍按顺序配对。
+      const tools = matched ?? (block.callId ? open.find((group) => ![...byCall.values()].includes(group)) : open[0]);
       if (tools) {
         const at = open.indexOf(tools);
         if (at >= 0) open.splice(at, 1);
@@ -236,15 +237,34 @@ function allTools(items: readonly ProcessItem[]): ProcessTool[] {
   return items.flatMap((it) => (it.kind === "tool" ? [it.tool] : it.kind === "explore" ? it.tools : []));
 }
 
+/** 保留过程行位置，异常 / 依据入口直接展开同一份记录，不另建状态。 */
+export function turnToolEntries(items: readonly ProcessItem[]) {
+  return items.flatMap((item, index) =>
+    item.kind === "tool"
+      ? [{ tool: item.tool, row: String(index), parent: null as string | null }]
+      : item.kind === "explore"
+        ? item.tools.map((tool, i) => ({ tool, row: `${index}:${i}`, parent: String(index) }))
+        : [],
+  );
+}
+
+/** 仅筛选可供核对的命令记录；名称命中不意味着验证通过。 */
+export function isVerificationTool(tool: ProcessTool): boolean {
+  return tool.activity.kind === "run" && tool.activity.command !== null &&
+    /(?:^|[\s;&|])(?:npm\s+(?:run\s+)?(?:test|build|lint|typecheck)|(?:pnpm|yarn)\s+(?:run\s+)?(?:test|build|lint|typecheck)|cargo\s+(?:test|check|build|clippy)|(?:python[\d.]*\s+-m\s+)?pytest|node\s+--test|(?:npx\s+)?(?:tsc|vitest|jest))(?=$|[\s;&|])/i.test(tool.activity.command);
+}
+
 /**
  * 没顺利完成的几步怎么说：被你拒绝的单说「被拒绝」，不混进「没成功」——拒绝是你的决定，不是出错
  * （2026-10-19 用户实测：拒绝一条命令后收起行写「1 步没成功」）
  */
 export function problemText(statuses: readonly ResultStatus[], unit = "步"): string | null {
   const denied = statuses.filter((s) => s === "denied").length;
-  const failed = statuses.filter((s) => s === "failed" || s === "interrupted").length;
+  const failed = statuses.filter((s) => s === "failed").length;
+  const interrupted = statuses.filter((s) => s === "interrupted").length;
   const parts: string[] = [];
-  if (failed) parts.push(`${failed} ${unit}没成功`);
+  if (failed) parts.push(`${failed} ${unit}失败`);
+  if (interrupted) parts.push(`${interrupted} ${unit}已中断`);
   if (denied) parts.push(`${denied} ${unit}被拒绝`);
   return parts.length ? parts.join(" · ") : null;
 }
@@ -263,7 +283,7 @@ export function turnSummary(items: readonly ProcessItem[]): {
   );
   const runs = tools.filter((t) => t.activity.kind === "run").length;
   const parts: string[] = [];
-  if (files.size) parts.push(`改了 ${files.size} 个文件`);
+  if (files.size) parts.push(`${files.size} 个文件操作`);
   if (runs) parts.push(`运行 ${runs} 条命令`);
   if (!parts.length) {
     const looked = tools.filter((t) => EXPLORE.has(t.activity.kind) || t.activity.kind === "web").length;

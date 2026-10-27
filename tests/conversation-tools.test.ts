@@ -11,6 +11,8 @@ import {
   segmentContainsIndex,
   turnPlan,
   turnSummary,
+  turnToolEntries,
+  isVerificationTool,
   type ConversationSegment,
 } from "../src/conversation-tools.ts";
 import type { BlockDto, ChatMessageDto } from "../src/types.ts";
@@ -54,7 +56,7 @@ test("一轮：过程收成一组（思考、工具、中途说明），最后�
   assert.equal(segmentContainsIndex(t, 1), true);
   assert.equal(segmentContainsIndex(t, 4), true);
   assert.equal(segmentContainsIndex(t, 0), false);
-  assert.deepEqual(turnSummary(t.items), { text: "改了 1 个文件", problems: 0, problem: null });
+  assert.deepEqual(turnSummary(t.items), { text: "1 个文件操作", problems: 0, problem: null });
 });
 
 test("没有过程的回答照原样一条一条，不加「已工作」", () => {
@@ -100,7 +102,7 @@ test("连着的读文件 / 搜索并成一行「查阅」，夹着别的动作�
   const t = turnOf(groupConversationSegments(messages));
   assert.deepEqual(t.items.map((i) => i.kind), ["explore", "tool", "tool"]);
   if (t.items[0].kind === "explore") assert.equal(exploreLabel(t.items[0].tools), "读了 2 个文件，搜索 1 次");
-  assert.deepEqual(turnSummary(t.items), { text: "运行 1 条命令", problems: 1, problem: "1 步没成功" });
+  assert.deepEqual(turnSummary(t.items), { text: "运行 1 条命令", problems: 1, problem: "1 步失败" });
 });
 
 test("结果没处挂、后端给成「用户」的工具结果仍算这一轮；分页截断处的孤立结果也有一行", () => {
@@ -134,9 +136,9 @@ test("时长写法", () => {
 
 test("被拒绝单说，不混进「没成功」；CLI 标了 is_error 的结果算失败", () => {
   assert.equal(problemText(["ok", "denied"]), "1 步被拒绝");
-  assert.equal(problemText(["failed", "interrupted", "denied"]), "2 步没成功 · 1 步被拒绝");
+  assert.equal(problemText(["failed", "interrupted", "denied"]), "1 步失败 · 1 步已中断 · 1 步被拒绝");
   assert.equal(problemText(["ok"]), null);
-  assert.equal(problemText(["failed"], "处"), "1 处没成功");
+  assert.equal(problemText(["failed"], "处"), "1 处失败");
   const msgs: ChatMessageDto[] = [
     { role: "user", blocks: [{ kind: "text", text: "查一下", toolName: null }], timestamp: "t0", usage: null },
     {
@@ -254,4 +256,29 @@ test("计划：Claude Code 新版任务工具一条一条建、按编号改，�
     { text: "新建 plan_a.txt", status: "completed", active: "新建中" },
     { text: "写一行 ok", status: "in_progress" },
   ]);
+});
+
+
+test("带 id 的孤立结果不能挂给另一条命令，验证记录不推断通过", () => {
+  const messages = [msg("user", [text("验证")]), msg("assistant", [
+    { ...use("Bash", { command: "npm test", workdir: "/p" }), callId: "pending" },
+    { ...result("Exit code 0"), callId: "missing" },
+  ]), msg("user", [text("继续")])];
+  const records = turnToolEntries(turnOf(groupConversationSegments(messages)).items);
+  assert.equal(records[0].tool.result, null);
+  assert.equal(isVerificationTool(records[0].tool), true);
+  assert.equal(records[1].tool.activity.verb, "工具结果");
+  assert.equal(isVerificationTool(records[1].tool), false);
+});
+
+test("查阅合并行中的失败保留可展开的位置；失败写入只叫操作", () => {
+  const t = turnOf(groupConversationSegments([msg("user", [text("查阅")]), msg("assistant", [
+    use("Read", {file_path: "/p/a"}), result("ok"),
+    use("Read", {file_path: "/p/b"}), result("Error: missing"),
+    use("Write", {file_path: "/p/c", content: "x"}), result("User rejected"),
+  ])]));
+  const records = turnToolEntries(t.items);
+  assert.deepEqual(records.map(r => [r.row, r.parent]), [["0:0", "0"], ["0:1", "0"], ["1", null]]);
+  assert.equal(records[1].tool.status, "failed");
+  assert.equal(turnSummary(t.items).text, "1 个文件操作");
 });

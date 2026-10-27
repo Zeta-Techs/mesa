@@ -142,7 +142,7 @@ test("一轮结束后收成「已工作 4 分 13 秒」，回答露在外面；�
     await ui.render({ messages: MESSAGES, cwd: CWD });
     const text = ui.el.textContent ?? "";
     assert.match(text, /已工作 4 分 13 秒/);
-    assert.match(text, /改了 1 个文件 · 运行 1 条命令/);
+    assert.match(text, /1 个文件操作 · 运行 1 条命令/);
     assert.match(text, /改完并全绿了/);
     assert.doesNotMatch(text, /先把文案改成白话/, "中途说明收在过程里");
     assert.doesNotMatch(text, /file_path|old_string/);
@@ -213,7 +213,7 @@ test("失败的步骤：收起时标在「已工作」后面，展开后那一�
       ],
       cwd: CWD,
     });
-    assert.match(ui.el.textContent ?? "", /1 步没成功/);
+    assert.match(ui.el.textContent ?? "", /1 步失败/);
     await ui.click("已工作");
     assert.match(ui.el.textContent ?? "", /运行npm test失败/);
   } finally {
@@ -227,7 +227,7 @@ test("没有时长的一轮：摘要本身就是那一行，不再前缀「过�
     const noTime = MESSAGES.map((x) => ({ ...x, timestamp: null }));
     await ui.render({ messages: noTime, cwd: CWD });
     const text = ui.el.textContent ?? "";
-    assert.match(text, /改了 1 个文件 · 运行 1 条命令/);
+    assert.match(text, /1 个文件操作 · 运行 1 条命令/);
     assert.doesNotMatch(text, /过程/);
     assert.equal(ui.button("运行 1 条命令").getAttribute("aria-expanded"), "false");
   } finally {
