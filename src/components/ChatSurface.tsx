@@ -1514,8 +1514,10 @@ export default function ChatSurface({
           // 对话流底部渐隐（2026-10-22 配色）：字滚到输入框上方时淡进画布，不是一刀切；负边距不占高度，不挡点击。
           // 挂在滚动区本身（不在内容栏里）：粘底层不能越出所在块的内容框，放在内容栏里时停在底部会落到 pb-6 留白之上、
           // 正好压在最后一行上（同日用户：「底部隐现的太多了」）。放这里停在底部时先盖住留白，只轻扫「思考中」那一行下缘；
-          // 往上翻时贴边这一段淡得明显（同日用户：「渐隐更突出一点，思考中只底部一点点」；曲线见 App.css .ccode-chat-fade）
-          <div aria-hidden="true" className="ccode-chat-fade pointer-events-none sticky bottom-0 -mt-12 h-12" />
+          // 往上翻时贴边这一段淡得明显（同日用户：「渐隐更突出一点，思考中只底部一点点」；曲线见 App.css .ccode-chat-fade）。
+          // 高度与内容栏 pb-6 相同（2026-10-27 用户：「思考中」遮得太多、底部每次都发糊，贴着输入框还漏一条半透明的字）：
+          // 停在底部时只盖留白、不碰最后一行；往上翻时字在这 24px 里收尽，贴着输入框那一截已是实底，不再透出一条字
+          <div aria-hidden="true" className="ccode-chat-fade pointer-events-none sticky bottom-0 -mt-6 h-6" />
         )}
         {!emptyLayout && (awayFromBottom || hasNew) && (
           // 回到最新（2026-10-26 用户：往上翻找内容时要有个悬浮按钮回到最新）：离底超过三分之一屏，或底下来了新内容才出现。
