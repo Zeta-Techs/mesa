@@ -72,7 +72,7 @@ export default function RailSearchPalette<C, P>({
       panelClassName={`self-start mt-[8vh] max-h-[80vh]! ${exiting ? "ccode-exiting" : ""}`}
       contentClassName="flex min-h-0 flex-1 flex-col"
     >
-      <div className="flex items-center gap-2.5 border-b border-hairline px-4">
+      <div className="flex items-center gap-2.5 border-b border-hairline">
         <Search size={16} strokeWidth={1.8} className="shrink-0 text-l3" aria-hidden="true" />
         <input
           ref={inputRef}
@@ -116,10 +116,10 @@ export default function RailSearchPalette<C, P>({
           aria-expanded="true"
           aria-controls={listId}
           aria-activedescendant={activeIndex >= 0 ? `${listId}-${activeIndex}` : undefined}
-          className="h-12 min-w-0 flex-1 bg-transparent text-sm text-l1 outline-none placeholder:text-l4"
+          className="ccode-picker-search h-12 min-w-0 flex-1 bg-transparent text-sm text-l1 outline-none placeholder:text-l4"
         />
       </div>
-      <div role="group" aria-label="对话状态筛选" className="flex shrink-0 flex-wrap gap-1 py-2">
+      <div role="group" aria-label="对话状态筛选" className="-ml-2.5 flex shrink-0 flex-wrap gap-1 py-2">
         {([
           ["all", "全部"], ["working", "运行中"], ["confirm", "等确认"], ["unread", "未读"],
         ] as const).map(([value, label]) => (
@@ -136,7 +136,7 @@ export default function RailSearchPalette<C, P>({
         ))}
       </div>
       <span role="status" className="sr-only">{hits.length} 条结果</span>
-      <ul ref={listRef} id={listId} role="listbox" aria-label="搜索结果" className="min-h-0 max-h-[min(480px,50vh)] overflow-auto p-1.5">
+      <ul ref={listRef} id={listId} role="listbox" aria-label="搜索结果" className="-mx-2.5 min-h-0 max-h-[min(480px,50vh)] overflow-auto py-1.5">
         {hits.map((hit, i) => {
           const selected = i === activeIndex;
           const group = groupOf(hit);

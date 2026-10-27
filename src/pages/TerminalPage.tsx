@@ -10521,7 +10521,6 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
               }`}
             >
               <TerminalIcon size={15} strokeWidth={1.8} aria-hidden="true" />
-              <span className="hidden text-xs @[38rem]/chat-head:inline">{focusedSurfaceMode === "chat" ? "终端" : "聊天"}</span>
             </button>
             {(() => {
               const changesOpen = rightOpen && rightTab === "git";
@@ -10550,7 +10549,6 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                   }`}
                 >
                   <FileDiff size={15} strokeWidth={1.8} aria-hidden="true" />
-                  <span className="hidden text-xs @[38rem]/chat-head:inline">改动</span>
                   {/* 有改动只点一个小点，个数放悬停（文件夹里别的会话的改动也算在内，写个大数字像是这段对话改的） */}
                   {count > 0 && !changesOpen && (
                     <span className="absolute right-1 top-1 size-1.5 rounded-full bg-l3" aria-hidden="true" />
@@ -10572,7 +10570,6 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                   }`}
                 >
                   <FolderTree size={15} strokeWidth={1.8} aria-hidden="true" />
-                  <span className="hidden text-xs @[38rem]/chat-head:inline">文件</span>
                 </button>
               );
             })()}
