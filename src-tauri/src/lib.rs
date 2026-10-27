@@ -182,6 +182,9 @@ pub fn run() {
     // 打包版从 Finder 启动时 PATH 很短：先补全，再起任何线程（见 agents::extend_process_path）
     #[cfg(unix)]
     agents::extend_process_path();
+    // 同理补 UTF-8 的 LANG，否则 shell / Agent 里中文文件名乱码（见 process::ensure_utf8_locale）
+    #[cfg(target_os = "macos")]
+    process::ensure_utf8_locale();
     diagnostics::start_process_monitor();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())

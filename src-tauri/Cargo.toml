@@ -71,9 +71,10 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Securit
 # WKWebView 手势开关只在 macOS 用（inst_access 登录窗）；无条件依赖会让 Linux/Windows 直接编译失败
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-# 订阅 NSWindow 全屏 will 通知（mac_fullscreen.rs）；两者已随 tauri 进依赖图，这里只是直接引用
+# 订阅 NSWindow 全屏 will 通知（mac_fullscreen.rs）；两者已随 tauri 进依赖图，这里只是直接引用。
+# NSLocale：从访达启动时按系统地区补 LANG（process::ensure_utf8_locale）
 block2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSNotification", "NSString", "NSOperation"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSNotification", "NSString", "NSOperation", "NSLocale"] }
 
 # dev 构建下 zstd 的 C 解码按 profile 默认 -O0 编译，冷启动扫 2.8GB 归档压缩档时
 # 解压本身就成了大头（2026-10-16 实测：批量滑窗修完后扫描仍 17.5s，其中 codex 16.7s）。

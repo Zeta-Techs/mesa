@@ -19,6 +19,11 @@
   `/usr/local/bin`，所以别人的机器没事、Apple 芯片 + Homebrew 的机器才出事——验收这类问题要在 Homebrew node 的机器上看打包版。
   Mesa 开着时用户新装的程序同理（PATH 只在启动时读一次）：新增依赖要给它的默认安装落点进候选目录，装完不重启也认得——
   如 PowerShell 7（`%ProgramFiles%\PowerShell\7`）、「仅为我安装」的 Git Bash（`%LOCALAPPDATA%\Programs\Git\bin`，`agents::git_bash_default_paths`）（2026-10-21）。
+- **macOS GUI 应用也没有 LANG**（2026-10-27 本机实证：打包版 Mesa 与它起的 Codex 进程环境里只有短 PATH 和 `__CF_USER_TEXT_ENCODING`）。
+  子进程都跑在 C 语言环境：`lsof` 把中文路径转义成 `\xe7…`、`ls` 显示 `????`、zsh 里打中文变 `<e7>`。启动时紧跟 `extend_process_path`
+  调 `process::ensure_utf8_locale`：LANG / LC_ALL / LC_CTYPE 都没有才补 `LANG=<系统地区>.UTF-8`（NSLocale，本机无该 locale 回落 en_US.UTF-8），
+  同「终端」App 的默认做法。此外**解析外部程序输出里的路径时不依赖 locale**：进程 cwd 走 sysinfo（proc_pidinfo / /proc），不起 lsof。
+  开发版从终端启动、继承了 LANG，这类问题只在打包版出现，验收要看打包版。
 - **Windows 正式版没有父控制台**：后台 `git/cmd/netstat/tasklist/CLI --version` 等若直接 `Command::new` 会反复创建
   `conhost.exe` 闪窗；所有不需要独立可见窗口的命令必须走 `process::background_command`，统一加 `CREATE_NO_WINDOW`
   并在 spawn/wait 边界登记脱敏参数与生命周期。该包装和 250ms 进程扫描只在 Windows 生效；macOS/Linux 直接返回标准

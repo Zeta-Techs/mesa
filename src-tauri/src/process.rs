@@ -95,6 +95,39 @@ fn python_io_env_for(windows: bool, existing: Option<&OsStr>) -> Option<(&'stati
     }
 }
 
+/// 从访达 / 程序坞启动的 Mesa 没有 LANG（只有短 PATH 和 `__CF_USER_TEXT_ENCODING`），之后起的 shell、Agent、
+/// ls / lsof 都跑在 C 语言环境里：中文文件名显示成 `????` 或 `\xe7…`，zsh 里打中文变 `<e7>`
+/// （2026-10-27 本机：打包版 Codex 子进程无 LANG）。启动时照「终端」App 的做法补 `LANG=<系统地区>.UTF-8`，
+/// 本机没有该地区的 UTF-8 locale 就用 en_US.UTF-8；LANG / LC_ALL / LC_CTYPE 已有任一个（从终端启动）不动。
+/// 必须在起任何线程之前调（set_var 不是线程安全的，同 agents::extend_process_path）。
+#[cfg(target_os = "macos")]
+pub fn ensure_utf8_locale() {
+    let has = |key: &str| std::env::var_os(key).is_some_and(|v| !v.is_empty());
+    if has("LANG") || has("LC_ALL") || has("LC_CTYPE") {
+        return;
+    }
+    let id = objc2_foundation::NSLocale::currentLocale()
+        .localeIdentifier()
+        .to_string();
+    let lang = utf8_lang_for(&id, |name| Path::new("/usr/share/locale").join(name).is_dir());
+    std::env::set_var("LANG", lang);
+}
+
+/// 系统地区标识（`zh_CN`、`zh-Hans_CN`、`en_US@rg=cnzzzz`）→ `zh_CN.UTF-8`；本机没有这个 locale 就 en_US.UTF-8
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+fn utf8_lang_for(identifier: &str, exists: impl Fn(&str) -> bool) -> String {
+    let base = identifier.split('@').next().unwrap_or("");
+    let lang = base.split(['-', '_']).next().unwrap_or("");
+    let region = base.rsplit_once('_').map(|(_, r)| r).unwrap_or("");
+    if !lang.is_empty() && !region.is_empty() {
+        let name = format!("{lang}_{region}.UTF-8");
+        if exists(&name) {
+            return name;
+        }
+    }
+    "en_US.UTF-8".into()
+}
+
 /// Windows 注册表里的字符串值：`reg query <键> /ve`（默认值）或 `/v <值名>`。读不到返回 None。
 /// 用来找装在非默认目录的外部应用（EndNote 装在 D 盘、Zotero 的 App Paths），不写注册表。
 #[cfg(windows)]
@@ -1314,6 +1347,18 @@ endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\node_
         assert_eq!(python_io_env_for(false, None), None);
         // 不设 PYTHONUTF8：它会连 open() 的默认编码一起改
         assert_ne!(python_io_env_for(true, None).map(|(k, _)| k), Some("PYTHONUTF8"));
+    }
+
+    #[test]
+    fn utf8_lang_follows_system_region_with_fallback() {
+        let installed = |name: &str| ["zh_CN.UTF-8", "en_US.UTF-8", "ja_JP.UTF-8"].contains(&name);
+        assert_eq!(utf8_lang_for("zh_CN", installed), "zh_CN.UTF-8");
+        assert_eq!(utf8_lang_for("zh-Hans_CN", installed), "zh_CN.UTF-8");
+        assert_eq!(utf8_lang_for("ja_JP@calendar=japanese", installed), "ja_JP.UTF-8");
+        // 本机没有的组合、只有语言没有地区、读不到 → en_US.UTF-8
+        assert_eq!(utf8_lang_for("en_CN", installed), "en_US.UTF-8");
+        assert_eq!(utf8_lang_for("zh-Hans", installed), "en_US.UTF-8");
+        assert_eq!(utf8_lang_for("", installed), "en_US.UTF-8");
     }
 
     /// 直调 exe 的 shim 起进程时绕开 cmd：PTY 命令的程序就是那个 exe，参数原样（含换行、%、引号、|）
