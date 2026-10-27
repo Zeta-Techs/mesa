@@ -2270,11 +2270,12 @@ select:focus-visible {
 /* 对话流底部渐隐（ChatSurface 滚动区末尾的粘底层）：透明 → 画布。前段放缓、后段收紧——
    停在底部时最上沿只轻轻扫到最后一行的下缘，往上翻时贴边那一段淡得明显（2026-10-22 用户：渐隐更突出一点、「思考中」只底部一点点） */
 .ccode-chat-fade {
+  /* 2026-10-27 收到 24px（与内容栏 pb-6 同高，停在底部不碰最后一行），最后一截实底：贴着输入框不再漏出半透明的一条字 */
   background: linear-gradient(
     to bottom,
     transparent 0%,
-    color-mix(in srgb, var(--color-canvas) 35%, transparent) 30%,
-    color-mix(in srgb, var(--color-canvas) 85%, transparent) 70%,
+    color-mix(in srgb, var(--color-canvas) 55%, transparent) 40%,
+    var(--color-canvas) 80%,
     var(--color-canvas) 100%
   );
 }
@@ -2741,6 +2742,15 @@ select:focus-visible {
 /* Mac 的「闲置淡出」同样改用系统原生浮层滚动条（原因见上面侧栏树那条：WKWebView 不重画自绘拇指）；「常显」仍走自绘 */
 [data-platform="mac"] .ccode-app-shell[data-chat-scrollbar="auto"] .ccode-chat-scroll {
   scrollbar-width: thin;
+}
+
+/* Mac 原生浮层滚动条按所在元素的 color-scheme 配色：全局钉成 dark（见 :root:root 那条），浅色主题下画出来是浅色拇指压在浅底上，
+   几乎看不见（2026-10-27 用户：浅色模式聊天滚动条看不清）。只给走原生浮层的几处滚动区单独换成 light，原生控件的全局口径不动 */
+[data-platform="mac"][data-theme$="-light"] .ccode-chat-scroll,
+[data-platform="mac"][data-theme$="-light"] .ccode-rail-scroll,
+[data-platform="mac"][data-theme$="-light"] .ccode-composer-text,
+[data-platform="mac"][data-theme$="-light"] .ccode-float-surface {
+  color-scheme: light;
 }
 
 /* Markdown 阅读版式（RX2a 笔记阅读模式）：全部走主题令牌，七套深色主题通用；
