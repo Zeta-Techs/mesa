@@ -42,6 +42,7 @@ const bundle = await build({
           "./ChatMarkdown": `import { createElement } from 'react';
             export default function ChatMarkdown(p) { return createElement('div', null, p.text); }
             export function ChatImageCard() { return null; }
+            export function ChatFileCard() { return null; }
             export function ChatCodeBlock(p) { return createElement('pre', null, p.text); }`,
         };
         b.onResolve({ filter: /.*/ }, (args) =>
