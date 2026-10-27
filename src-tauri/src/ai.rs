@@ -1397,13 +1397,25 @@ fn is_mmdd_token(s: &str) -> bool {
 }
 
 fn theme_is_specific(theme: &str) -> bool {
-    let chars: Vec<char> = theme.chars().collect();
-    let n = chars.len();
-    let cjk = chars
-        .iter()
-        .filter(|c| **c >= '\u{4e00}' && **c <= '\u{9fff}')
+    let cjk = theme
+        .chars()
+        .filter(|c| ('\u{4e00}'..='\u{9fff}').contains(c))
         .count();
-    (8..=28).contains(&n) && cjk >= 4
+    // 6–16 字（英文字母、数字两个算一个字，crate::sessions::title_width 同口径）
+    (12..=32).contains(&crate::sessions::title_width(theme)) && cjk >= 4 && !joins_two_things(theme)
+}
+
+/// 「修 A 并推送」「A 以及 B」：一个标题塞了两件事。合并 / 并发 / 并行这类词里的「并」不算
+fn joins_two_things(theme: &str) -> bool {
+    if theme.contains("以及") || theme.contains("同时") {
+        return true;
+    }
+    let chars: Vec<char> = theme.chars().collect();
+    chars.iter().enumerate().any(|(i, c)| {
+        *c == '并'
+            && !(i > 0 && "合兼吞归一".contains(chars[i - 1]))
+            && !chars.get(i + 1).is_some_and(|n| "发行列存入购网集联排轨".contains(*n))
+    })
 }
 
 pub(crate) fn parse_kind_theme(line: &str) -> Option<(String, String)> {
@@ -1466,7 +1478,8 @@ fn build_session_title_prompt(
          格式：类型|主题\n\
          类型只能是以下之一：功能、设计、修复、优化、发布、探索、文档、研究。\n\
          同时符合多个类型时选最能代表这次目的的一个。\n\
-         主题：8到28个字，必须让人一眼看出「对什么做了哪一件事」。\n\
+         主题：6到16个字（英文字母、数字两个算一个字），必须让人一眼看出「对什么做了哪一件事」。\n\
+         只写一件事：做了几件就挑最主要的那件，不要用「并」「以及」「同时」把两件事连起来。\n\
          写成对象+动作，例如「Grok继续链合并去重」「目标卡与项目栏同底」。\n\
          不要项目名 Mesa/Ccode，不要完整句子，不要「优化界面」「功能开发」「问题修复」「架构调整」这种空标题。\n\
          不要输出日期（日期由系统填写，创建日为 {mmdd}）。{occupied}{background}\n\
@@ -1723,8 +1736,10 @@ fn plan_title(
     has_background: bool,
     current_ready: bool,
 ) -> TitlePlan {
+    // 起名规则收紧后（2026-10-28 主题 6–16 字、只写一件事），按旧规则起的标题即使材料没变也重起一回
+    let outdated = state.current_title().is_some_and(|t| parse_kind_theme(t).is_none());
     match state.basis.as_deref() {
-        Some(b) if b == basis => TitlePlan::Skip,
+        Some(b) if b == basis && !outdated => TitlePlan::Skip,
         Some(_) => TitlePlan::Ask,
         // 有背景的老标题多半是照着开工语起的（「按简报做到完成标准」），借这次重起一回
         None if current_ready && !has_background => TitlePlan::Adopt,
@@ -3038,7 +3053,8 @@ ERROR: Your access token could not be refreshed because your refresh token was r
         assert!(t.contains("0908"));
         assert!(t.contains("第一条真正的问题"));
         assert!(t.contains("[用户·首条] 加预设"));
-        assert!(t.contains("8到28"));
+        assert!(t.contains("6到16"));
+        assert!(t.contains("只写一件事"));
         assert!(t.contains("对象+动作"));
         let t2 = build_session_title_prompt("[用户·定题] 改成雷达", "0908", false, &[], None);
         assert!(t2.contains("不要参考助手回复"));
@@ -3105,11 +3121,16 @@ ERROR: Your access token could not be refreshed because your refresh token was r
         );
         assert!(parse_kind_theme("闲聊|随便说说").is_none());
         assert!(parse_kind_theme("修复|短").is_none());
-        assert!(parse_kind_theme("修复|登录状态异常").is_none());
-        assert!(parse_kind_theme(
-            "修复|一二三四五六七八九十一二三四五六七八九十一二三四五六七八九"
-        )
-        .is_none());
+        assert!(parse_kind_theme("修复|登录异常").is_none());
+        assert!(parse_kind_theme("修复|登录状态异常").is_some());
+        assert!(parse_kind_theme("修复|一二三四五六七八九十一二三四五六七").is_none());
+        // 英文两个字母算一个字：25 个字符的混排主题只有 17.5 字宽
+        assert!(parse_kind_theme("修复|Codex退出遗留app-server孤儿进程回收").is_none());
+        assert!(parse_kind_theme("修复|Codex退出遗留孤儿进程回收").is_some());
+        // 一个标题只写一件事；合并 / 并行里的「并」不算
+        assert!(parse_kind_theme("修复|tray编译错误并推送").is_none());
+        assert!(parse_kind_theme("优化|图标以及配色调整").is_none());
+        assert!(parse_kind_theme("功能|会话列表并行加载").is_some());
         assert!(parse_kind_theme("hello|world").is_none());
         assert!(parse_kind_theme("功能|Blender 预设").is_none());
         assert_eq!(
@@ -3194,10 +3215,13 @@ ERROR: Your access token could not be refreshed because your refresh token was r
         let b = title_basis("[用户·首条] 把 Blender 的 MCP 加到预设里", None);
         assert_eq!(b, title_basis("[用户·首条] 把 Blender 的 MCP 加到预设里", None));
         assert_ne!(b, title_basis("[用户·首条] 把 Blender 的 MCP 加到预设里", Some("步骤：精读")));
-        let auto = |basis: Option<&str>| title_state(Some("1020|功能|Blender预设加MCP"), Some("auto"), basis);
+        let auto = |basis: Option<&str>| title_state(Some("1020|功能|Blender预设加入MCP服务"), Some("auto"), basis);
         // 材料没变：不问
         assert_eq!(plan_title(&auto(Some(&b)), &b, false, true), TitlePlan::Skip);
         assert_eq!(plan_title(&auto(Some(&b)), &b, true, false), TitlePlan::Skip);
+        // 材料没变但标题不合现行规则（旧规则下起的长标题）：重起一回
+        let old = title_state(Some("1024|修复|tray.rs修Windows编译错误并推送"), Some("auto"), Some(&b));
+        assert_eq!(plan_title(&old, &b, false, false), TitlePlan::Ask);
         // 材料变了（多聊了几轮）：问
         assert_eq!(plan_title(&auto(Some("other")), &b, false, true), TitlePlan::Ask);
         // 指纹之前的合格老标题：补记指纹，不换说法

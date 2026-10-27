@@ -302,15 +302,28 @@ fn clean_block_text(role: &str, text: &str) -> String {
     }
 }
 
+/// 标题字宽（半字为单位）：ASCII 算半个字，其余算一个字。自动起名的主题上限同口径（ai.rs theme_is_specific）
+pub(crate) fn title_width(text: &str) -> usize {
+    text.chars().map(|c| if c.is_ascii() { 1 } else { 2 }).sum()
+}
+
+/// 回落标题（CLI 自带标题 / 首句）截到 24 字左右：英文两个字母算一个字
 fn truncate_title(text: &str) -> String {
-    const MAX: usize = 60;
+    const MAX_WIDTH: usize = 48;
     let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
     let t = normalized.trim();
-    if t.chars().count() <= MAX {
-        t.to_string()
-    } else {
-        format!("{}…", t.chars().take(MAX).collect::<String>())
+    if title_width(t) <= MAX_WIDTH {
+        return t.to_string();
     }
+    let mut width = 0;
+    let head: String = t
+        .chars()
+        .take_while(|c| {
+            width += title_width(c.encode_utf8(&mut [0; 4]));
+            width <= MAX_WIDTH
+        })
+        .collect();
+    format!("{}…", head.trim_end())
 }
 
 /// 纯问候语判定（整条消息就是打招呼、没有实质内容）：列表标题拒识——
@@ -8714,10 +8727,13 @@ mod tests {
     }
 
     #[test]
-    fn title_truncates_to_60_chars() {
+    fn title_truncates_to_24_wide_chars() {
         let long = "啊".repeat(100);
-        let t = truncate_title(&long);
-        assert_eq!(t.chars().count(), 61); // 60 + 省略号
+        assert_eq!(truncate_title(&long).chars().count(), 25); // 24 + 省略号
+        // 英文两个字母算一个字
+        let en = truncate_title("Greeting in Chinese, no task specified yet, waiting for the user");
+        assert_eq!(en, "Greeting in Chinese, no task specified yet, wait…");
+        assert_eq!(truncate_title("修复统计页今日用量"), "修复统计页今日用量");
     }
 
     #[test]
