@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { claudeOutputTokens, claudeTurnActiveOnScreen, dropAskedEcho, extractLiveReply, extractLiveThinking, liveReplySupported, mergeLiveReply, sentTextStuckInBox, staleEcho, staleWithoutEcho, terminalHasInputBox, unsyncedTail } from "../src/live-reply.ts";
+import { claudeOutputTokens, claudeTurnActiveOnScreen, dropAskedEcho, extractLiveReply, extractLiveThinking, liveReplySupported, mergeLiveReply, sameAsPrevReply, sentTextStuckInBox, staleEcho, staleWithoutEcho, terminalHasInputBox, unsyncedTail } from "../src/live-reply.ts";
 
 const RULE = "─".repeat(100);
 // Claude Code 2.1.292 本机 PTY 实录（流式写到一半；假 API 慢速吐字）
@@ -1030,4 +1030,12 @@ test("Kimi 收起的思考是斜体：调用方标出斜体行时不当成回复
   assert.equal(extractLiveReply(screen, "kimi")?.lines[0], "用户问天气，我需要先确定位置。");
   // 别家不看斜体
   assert.deepEqual(extractLiveReply(screen, "claude-code", () => true), extractLiveReply(screen, "claude-code"));
+});
+
+test("sameAsPrevReply：整段都是上一轮的回复才拦，有一行新的就放行", () => {
+  const prev = "你好！有什么可以帮你的？之前 mesa_probe 那 7 步已经全部完成，如果想继续操作或者有其他任务，直接告诉我就行。";
+  assert.equal(sameAsPrevReply(["你好！有什么可以帮你的？之前 mesa_probe 那 7 步已经全部完成，如果想继续操作或者有其他任务，直接", "告诉我就行。"], prev), true);
+  assert.equal(sameAsPrevReply(["你好！", "这次换个问题：要我先看哪份文件？"], prev), false);
+  assert.equal(sameAsPrevReply(["你好！"], ""), false);
+  assert.equal(sameAsPrevReply([""], prev), false);
 });

@@ -712,6 +712,17 @@ export function staleWithoutEcho(read: LiveReplyRead, before: readonly string[] 
 }
 
 /**
+ * 实时预览读到的这一截是不是整段都在上一轮的回复里（prev = 上一轮助手正文）：是就还是上一轮的，不当这一轮的预览。
+ * 有一行对不上就不算——新回复碰巧与上一轮有一行相同不受影响
+ */
+export function sameAsPrevReply(live: readonly string[], prev: string): boolean {
+  const done = norm(prev);
+  if (!done) return false;
+  const keys = live.map(norm).filter(Boolean);
+  return keys.length > 0 && keys.every((k) => done.includes(k));
+}
+
+/**
  * 去掉聊天层已经有了的行：从第一行「会话里还没有」的开始往后都算实时部分。
  * synced = 最近几条助手消息的正文（调用方拼好）
  */

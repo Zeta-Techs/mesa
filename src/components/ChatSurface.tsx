@@ -31,7 +31,7 @@ import type {
 } from "../pages/TerminalPage";
 import type { MenuAnswer, TuiMenu } from "../tui-menu";
 import type { PermissionTierId } from "../chat-permission";
-import { dropAskedEcho, liveReplySupported, unsyncedTail } from "../live-reply";
+import { dropAskedEcho, liveReplySupported, sameAsPrevReply, unsyncedTail } from "../live-reply";
 import { useRevealedText } from "../text-reveal";
 import { lastContextTokens, userTextHistory, type MesaCommand } from "../composer-assist";
 import { AGENTS, type ProjectDto } from "../types";
@@ -639,14 +639,20 @@ export default function ChatSurface({
     )
       return [];
     let lastUser = -1;
+    let prevUser = -1;
     messages.forEach((m, i) => {
-      if (m.role === "user" && m.blocks.some((b) => b.kind === "text")) lastUser = i;
+      if (m.role === "user" && m.blocks.some((b) => b.kind === "text")) {
+        prevUser = lastUser;
+        lastUser = i;
+      }
     });
-    const synced = messages
-      .slice(lastUser + 1)
-      .filter((m) => m.role !== "user")
-      .flatMap((m) => m.blocks.filter((b) => b.kind === "text").map((b) => b.text))
-      .join("\n");
+    const replyText = (from: number, to: number) =>
+      messages
+        .slice(from, to)
+        .filter((m) => m.role !== "user")
+        .flatMap((m) => m.blocks.filter((b) => b.kind === "text").map((b) => b.text))
+        .join("\n");
+    const synced = replyText(lastUser + 1, messages.length);
     // 分几段的提问（带项目说明的第一句）在终端里隔着空行回显，读屏只认得第一段：其余几段不当回复
     const asked =
       lastUser >= 0
@@ -655,7 +661,11 @@ export default function ChatSurface({
             .map((b) => b.text)
             .join("\n")
         : "";
-    return unsyncedTail(dropAskedEcho(liveReply, asked), synced);
+    const live = dropAskedEcho(liveReply, asked);
+    // 读到的整段都是上一轮已经画出来的回复：读屏在新回显画出来之前读到了上一轮（隔一会再发、两句一样时），不当这一轮的预览。
+    // 只在整段都对得上时才拦，新回复里碰巧有一行与上一轮相同不受影响（2026-10-27 用户截图；读屏侧的拦法见 live-reply.ts staleEcho）
+    if (lastUser >= 0 && sameAsPrevReply(live, replyText(prevUser + 1, lastUser))) return [];
+    return unsyncedTail(live, synced);
   })();
   // 终端里正在想（Grok 的思考框）：正文出来前照终端原样显示在实时预览的位置，竖线、「◆ Thinking…」、折叠的「…」已在读屏时去掉
   // （2026-10-26 用户：就要原生的思考显示，只把无关的去掉）；正文一出来就让位
