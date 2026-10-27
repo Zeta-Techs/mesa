@@ -211,3 +211,15 @@ test("审批卡上的命令剥掉外层 shell 包装", () => {
   // 双引号里有变量要外层先展开：不剥
   assert.equal(displayCommand(`pwsh -Command "echo $env:PATH"`), `pwsh -Command "echo $env:PATH"`);
 });
+
+
+test("只报 ID 的旁路换会话：已绑定文件也跟随，重复快照不重置", () => {
+  for (const agent of ["qwen", "opencode"] as const) {
+    const current = { filePath: "/p/a.json", sessionId: "a", hint: "a", seenSeq: 1 };
+    const next = snap({ agent, kind: agent, sessionId: "b", sessionSeq: 2 });
+    assert.deepEqual(channelRelink(next, current, false), { kind: "hint", sessionId: "b" });
+    assert.deepEqual(channelRelink(next, { ...current, sessionId: "b", hint: "b" }, false), { kind: "none" });
+    assert.deepEqual(channelRelink(next, { ...current, seenSeq: 2 }, false), { kind: "none" });
+    assert.deepEqual(channelRelink(next, { ...current, filePath: null, hint: "b" }, false), { kind: "none" });
+  }
+});

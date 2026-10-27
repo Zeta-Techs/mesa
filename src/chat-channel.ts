@@ -105,7 +105,7 @@ export function hooksApprovalAnswered(snap: ChatChannelSnapshot | null, promptId
  */
 export function channelRelink(
   snap: ChatChannelSnapshot | null,
-  current: { filePath: string | null; hint: string | null; seenSeq: number },
+  current: { filePath: string | null; hint: string | null; seenSeq: number; sessionId?: string | null },
   isWindows: boolean,
 ): { kind: "none" } | { kind: "lock" | "switch"; path: string; sessionId: string | null } | { kind: "hint"; sessionId: string } {
   if (!snap) return { kind: "none" };
@@ -116,7 +116,10 @@ export function channelRelink(
     }
     return { kind: "none" };
   }
-  if (snap.sessionId && !current.filePath && current.hint !== snap.sessionId) {
+  if (snap.sessionId && (
+    (!current.filePath && current.hint !== snap.sessionId) ||
+    (current.filePath && snap.sessionSeq > current.seenSeq && snap.sessionId !== (current.sessionId ?? current.hint))
+  )) {
     return { kind: "hint", sessionId: snap.sessionId };
   }
   return { kind: "none" };

@@ -4645,6 +4645,7 @@ const TerminalView = memo(function TerminalView({
     const sig = await invoke<[number, number] | null>("session_file_sig", {
       filePath: ctx.filePath,
     }).catch(() => null);
+    if (linkCtxRef.current !== ctx) return;
     // hooks 家的旁路回合还开着：照「等回复」一样每轮都读到尾部检查——拒绝工具 / Esc 打断时 Claude 不发 Stop，
     // 只能靠读会话文件收掉（chat_channel_settle_from_transcript），文件不再变也要接着查
     const hooksTurnOpen = channelRef.current?.kind === "hooks" && channelTurnOpen(channelRef.current);
@@ -4932,6 +4933,7 @@ const TerminalView = memo(function TerminalView({
     if (!ctx || ctx.filePath) return;
     ctx.filePath = filePath;
     ctx.sessionId = sessionId;
+    if (localRecordsRef.current.file === "") localRecordsRef.current.file = filePath;
     if (createdAt) ctx.createdAt = createdAt;
     olderRef.current = [];
     latestWindowRef.current = [];
@@ -5004,24 +5006,41 @@ const TerminalView = memo(function TerminalView({
   // 优先于读会话文件 / 读屏的推断；旁路没接上的家（或这次没接上）照旧走原来那套
 
   /** CLI 换了会话（Claude /clear、恢复别的会话）：改盯新文件，对话流换成「已开始新对话」一行 */
-  function relinkTo(filePath: string, sessionId: string | null, source: string | null) {
+  function relinkTo(filePath: string | null, sessionId: string | null, source: string | null) {
     const ctx = linkCtxRef.current;
     if (!ctx) return;
     stopSessionWatcher();
     if (ctx.sessionId) setLiveSession(ctx.agentId, ctx.sessionId, null);
-    ctx.filePath = null;
-    ctx.sessionId = null;
-    ctx.hint = sessionId;
+    // 换对象使上一会话尚未返回的读取失效；新文件没出现时也不能继续展示旧会话。
+    linkCtxRef.current = { ...ctx, filePath: null, sessionId: null, hint: sessionId, createdAt: null };
+    conversationRequestRef.current++;
+    olderRef.current = [];
+    latestWindowRef.current = [];
+    prevParsedRef.current = [];
+    restForRef.current = null;
+    carryOlderRef.current = null;
+    convCursorRef.current = null;
+    setConvCursor(null);
+    setSessionFile(null);
+    setLinkedSessionId(null);
+    setLinkedSessionTitle(null);
+    setLinkState("detecting");
+    setSyncState("waiting");
+    linkStartedAtRef.current = Date.now();
+    pendingUsersRef.current = [];
+    pendingAssistantKeysRef.current = new Set();
+    setPendingReply(false);
     const note: ChatMessageDto = {
       role: "user",
       blocks: [{ kind: "command_output", text: sessionSwitchNote(source), toolName: null }],
       timestamp: new Date().toISOString(),
       usage: null,
     };
-    localRecordsRef.current = { file: filePath, records: [note] };
+    localRecordsRef.current = { file: filePath ?? "", records: [note] };
     convSigRef.current = "";
     setConv([note]);
-    lockLink(filePath, sessionId ?? "", null);
+    if (filePath) lockLink(filePath, sessionId ?? "", null);
+    else void linkTick();
   }
 
   function applyChannel(snap: ChatChannelSnapshot | null) {
@@ -5035,7 +5054,7 @@ const TerminalView = memo(function TerminalView({
     if (ctx && snap.agent === ctx.agentId) {
       const rel = channelRelink(
         snap,
-        { filePath: ctx.filePath, hint: ctx.hint, seenSeq: channelSeqSeenRef.current },
+        { filePath: ctx.filePath, hint: ctx.hint, sessionId: ctx.sessionId, seenSeq: channelSeqSeenRef.current },
         IS_WINDOWS,
       );
       channelSeqSeenRef.current = snap.sessionSeq;
@@ -5048,13 +5067,14 @@ const TerminalView = memo(function TerminalView({
         void invoke<[number, number] | null>("session_file_sig", { filePath: path })
           .then((sig) => {
             const cur = linkCtxRef.current;
-            if (!cur || cur.filePath) return;
+            if (cur !== ctx || cur.filePath || channelRef.current?.sessionId !== sid) return;
             if (sig && sid) lockLink(path, sid, null);
             else if (sid) cur.hint = sid;
           })
           .catch(() => {});
       } else if (rel.kind === "hint") {
-        ctx.hint = rel.sessionId;
+        if (ctx.filePath) relinkTo(null, rel.sessionId, snap.sessionSource);
+        else linkCtxRef.current = { ...ctx, hint: rel.sessionId };
       }
     }
     // 回合状态 → 标签注意力（working / confirm / done）
@@ -5076,9 +5096,11 @@ const TerminalView = memo(function TerminalView({
       channelEndHandledRef.current = turn.endedAt;
       void fetchConversation(true);
       if (pendingReplyRef.current) {
+        const endedCtx = linkCtxRef.current;
         window.setTimeout(() => {
+          if (linkCtxRef.current !== endedCtx) return;
           void fetchConversation(true).then(() => {
-            if (!pendingReplyRef.current) return;
+            if (linkCtxRef.current !== endedCtx || !pendingReplyRef.current) return;
             pendingUsersRef.current = pendingAfterTurn(pendingUsersRef.current, turn.startedAt);
             if (pendingUsersRef.current.length > 0) return;
             setPendingReply(false);
@@ -5089,7 +5111,7 @@ const TerminalView = memo(function TerminalView({
       }
     }
     // 旁路的提示（压缩上下文）：在对话流里记一行灰字，只在这次打开的聊天里保留
-    if (snap.notice && snap.notice.seq !== prev?.notice?.seq && ctx?.filePath) {
+    if (snap.notice && snap.notice.seq !== prev?.notice?.seq && ctx?.filePath && linkCtxRef.current === ctx) {
       if (localRecordsRef.current.file !== ctx.filePath) {
         localRecordsRef.current = { file: ctx.filePath, records: [] };
       }
