@@ -1115,6 +1115,7 @@ export default function TerminalStatusBar({
           {chatMetaRef && <span ref={chatMetaRightRef} className="flex min-w-0 items-center gap-1.5 empty:hidden" />}
           {!ownHidden && ring ? (
             <ContextRing
+              showPercent
               ratio={ring.ratio}
               used={contextUsed!}
               window={ring.window}

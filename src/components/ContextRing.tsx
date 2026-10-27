@@ -79,6 +79,7 @@ export default function ContextRing({
   trackColor = "var(--color-field)",
   className = "",
   extra = [],
+  showPercent = false,
 }: {
   ratio: number;
   used: number;
@@ -95,6 +96,8 @@ export default function ContextRing({
   className?: string;
   /** 悬停里多写的几行（2026-10-23 底栏收字：本段用了多少 token、经哪条连接不再单写在底栏上） */
   extra?: string[];
+  /** 聊天层直接显示比例，圆环与原有输入控件的位置不变。 */
+  showPercent?: boolean;
 }) {
   const r = 6;
   const c = 2 * Math.PI * r;
@@ -188,7 +191,7 @@ export default function ContextRing({
     <button
       ref={ringRef}
       type="button"
-      className={`inline-flex size-6 shrink-0 items-center justify-center rounded-md outline-none hover:bg-hover focus-visible:bg-hover ${
+      className={`inline-flex ${showPercent ? "h-7 gap-1 px-1" : "size-6"} shrink-0 items-center justify-center rounded-md outline-none hover:bg-hover focus-visible:ring-2 focus-visible:ring-cta ${
         stroke ? "" : warn ? "text-warn-text" : "text-l3"
       } ${className}`}
       style={stroke ? { color: stroke } : undefined}
@@ -325,6 +328,7 @@ export default function ContextRing({
           transform="rotate(-90 8 8)"
         />
       </svg>
+      {showPercent && <span className="text-micro tabular-nums">{pct}%</span>}
     </button>
   );
 }

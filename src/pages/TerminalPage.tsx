@@ -10379,7 +10379,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   return (
     <div
       ref={terminalRootRef}
-      className="terminal-workbench relative flex h-full bg-canvas"
+      className="terminal-workbench @container/chat-head relative flex h-full bg-canvas"
     >
       {/* 中带：终端标签区。向上盖 1px，挡住顶栏透出的那条窗口黑缝。 */}
       <div className="relative -mt-px flex min-w-0 flex-1 flex-col bg-canvas">
@@ -10453,11 +10453,12 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                 toggleSurfaceCombo ? `（${comboLabel(toggleSurfaceCombo)}）` : ""
               }`}
               aria-label={focusedSurfaceMode === "chat" ? "看这段对话的终端" : "回到聊天"}
-              className={`flex size-7 items-center justify-center rounded-md transition-colors ${
+              className={`flex h-8 min-w-8 items-center justify-center gap-1.5 rounded-md px-1.5 transition-colors ${
                 focusedSurfaceMode !== "chat" ? "bg-seg-sel text-l1" : "text-l4 hover:bg-hover hover:text-l2"
               }`}
             >
               <TerminalIcon size={15} strokeWidth={1.8} aria-hidden="true" />
+              <span className="hidden text-xs @[38rem]/chat-head:inline">{focusedSurfaceMode === "chat" ? "终端" : "聊天"}</span>
             </button>
             {(() => {
               const changesOpen = rightOpen && rightTab === "git";
@@ -10481,11 +10482,12 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         : "改动"
                   }
                   aria-label={changesOpen ? "收起改动" : "看改动"}
-                  className={`relative flex size-7 items-center justify-center rounded-md transition-colors ${
+                  className={`relative flex h-8 min-w-8 items-center justify-center gap-1.5 rounded-md px-1.5 transition-colors ${
                     changesOpen ? "bg-seg-sel text-l1" : "text-l4 hover:bg-hover hover:text-l2"
                   }`}
                 >
                   <FileDiff size={15} strokeWidth={1.8} aria-hidden="true" />
+                  <span className="hidden text-xs @[38rem]/chat-head:inline">改动</span>
                   {/* 有改动只点一个小点，个数放悬停（文件夹里别的会话的改动也算在内，写个大数字像是这段对话改的） */}
                   {count > 0 && !changesOpen && (
                     <span className="absolute right-1 top-1 size-1.5 rounded-full bg-l3" aria-hidden="true" />
@@ -10502,11 +10504,12 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                   aria-pressed={filesOpen}
                   title={filesOpen ? "收起文件" : "文件：这段对话文件夹里的文件，点开就在右边看"}
                   aria-label={filesOpen ? "收起文件" : "看文件"}
-                  className={`flex size-7 items-center justify-center rounded-md transition-colors ${
+                  className={`flex h-8 min-w-8 items-center justify-center gap-1.5 rounded-md px-1.5 transition-colors ${
                     filesOpen ? "bg-seg-sel text-l1" : "text-l4 hover:bg-hover hover:text-l2"
                   }`}
                 >
                   <FolderTree size={15} strokeWidth={1.8} aria-hidden="true" />
+                  <span className="hidden text-xs @[38rem]/chat-head:inline">文件</span>
                 </button>
               );
             })()}

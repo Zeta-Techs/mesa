@@ -492,6 +492,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
       {/* 上下文圆环在芯片右边（2026-10-23 照 Claude 客户端）；窗口大小不知道的家（如 Grok）不画 */}
       {ctxRatio !== null && ctxWindow && ctxUsed && (
         <ContextRing
+          showPercent
           ratio={ctxRatio}
           used={ctxUsed}
           window={ctxWindow}

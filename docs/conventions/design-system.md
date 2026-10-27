@@ -560,6 +560,8 @@
 
 ## 页面与控件规范
 
+- **聊天层完善（2026-10-27 用户拍板）**：采用 `docs/design-chat-review-2026-10-27.md` 的状态、证据入口、引用追问与聊天搜索方案；**输入框布局保持现状**，不把权限、项目、模型移进边框，也不常驻 Enter/Shift+Enter 提示。唯一常驻增量是上下文圆环旁的百分比，沿用可靠用量；未知窗口不造比例。顶栏终端/改动/文件宽处带短标签，主区窄于 38rem 收回图标。过程区分失败、中断和用户拒绝；恢复与验证结论只认明确依据，不能由后续正文推断。
+
 - **分辨率与界面缩放（2026-10-26）**：界面缩放只走 webview 原生 zoom（`ui_zoom.rs`，设置 → 外观「界面大小」80–150%，⌘= / ⌘-），
   禁用 CSS `zoom` / `transform: scale` 做整页缩放。**按像素比画的画布（canvas 位图、WebGL）必须接 `device-pixel-ratio.ts`**
   （`watchDevicePixelRatio` / `useDevicePixelRatio`），不得只在挂载时读一次 `devicePixelRatio`，也不得只听 `(resolution)` 媒体查询——
