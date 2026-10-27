@@ -998,7 +998,7 @@ export default function ProjectTree({
           aria-current={selected ? "true" : undefined}
           title={`${full}\n${origin ? `${origin} · ` : ""}${agent} · ${relTime(s.updatedAt)}${dot ? ` · ${dotTitle(dot)}` : ""}\n点一下接着聊`}
           className={`flex h-8 min-w-0 items-center gap-2 rounded-md pl-2 pr-1 ${
-            selected || unread ? "text-l1" : "text-l3 group-hover/chat:text-l2"
+            selected || unread ? "text-l1" : "text-l2 group-hover/chat:text-l1"
           }`}
         >
           {/* 字号 13px（.ccode-rail-text，2026-10-24 用户：比「工作台 / 对话管理」的 14px 再小一点点）。写在内层 span 上：
@@ -1012,7 +1012,7 @@ export default function ProjectTree({
               悬停 / 聚焦时让位给 ⋯，标题宽度大致不变；课题名长了自己截断，不挤标题 */}
           {origin && (
             <span
-              className="max-w-[6.5rem] truncate pl-1 pr-1.5 text-micro text-l4 group-hover/chat:hidden group-focus-within/chat:hidden"
+              className="max-w-[6.5rem] truncate pl-1 pr-1.5 text-micro text-l3 group-hover/chat:hidden group-focus-within/chat:hidden"
               data-chat-origin
             >
               {origin}
@@ -1104,7 +1104,7 @@ export default function ProjectTree({
                 : `${r.label}${rowDot ? ` · ${dotTitle(rowDot)}` : ""}`
           }
           className={`flex h-8 min-w-0 items-center gap-2 rounded-md pl-2 pr-1 ${
-            selected || unread ? "text-l1" : "text-l3 group-hover/chat:text-l2"
+            selected || unread ? "text-l1" : "text-l2 group-hover/chat:text-l1"
           }`}
         >
           {Icon && <Icon size={13} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l4" />}
@@ -1141,7 +1141,7 @@ export default function ProjectTree({
     const folded = (chatExtra[folderKey] ?? 0) > 0;
     // 「还有 N 段 / 收起」是动作不是对话：比对话行矮、再小一号、最淡（l4），读作挂在最后一段下面的注脚
     // （2026-10-25 用户：原「展开更多」整行和对话一样高，读着像一段对话）
-    const linkCls = "flex h-6 items-center rounded-md pl-2 pr-2 text-left text-l4 hover:bg-hover hover:text-l2";
+    const linkCls = "flex h-6 items-center rounded-md pl-2 pr-2 text-left text-l3 hover:bg-hover hover:text-l1";
     const opened = openByFolder.get(folderKey) ?? [];
     // 正看着的那段排得比较靠后（从对话页点开的旧对话）：也摆出来，不然侧栏里找不到「现在在哪」
     const selIdx = selectedChatKey ? chats.findIndex((s) => chatKey(s) === selectedChatKey) : -1;
@@ -1586,7 +1586,7 @@ export default function ProjectTree({
             data-rail-open={open ? "1" : "0"}
             title={row.project ? row.repoPath : `${row.repoPath}\n这个文件夹还没添加到 Mesa`}
             aria-current={selected && active ? "page" : undefined}
-            // 课题名是分组标题（2026-10-25 用户对照 Claude 客户端）：小一号（12px），正文至少 l3 保证可读，对话 13px 不缩进，靠图标与字号分层
+            // 课题名是分组标题（2026-10-25 用户对照 Claude 客户端；2026-10-27 用户：比 Claude 客户端看着糊）：13px 加粗、字色 l2，对话同字号 l2 常重，对话 13px 不缩进，靠图标与字重分层
             className={`flex h-7 min-w-0 items-center gap-1 rounded-md pr-0.5 ${
               selected && active
                 ? "font-medium text-l1"
@@ -1594,10 +1594,10 @@ export default function ProjectTree({
                   ? "font-medium text-l2 group-hover:text-l1"
                   : unreadInside
                     ? "text-l1"
-                    : "text-l3 group-hover:text-l2"
+                    : "text-l2 group-hover:text-l1"
             }`}
           >
-            <span className="min-w-0 truncate text-left text-xs">{row.name}</span>
+            <span className="ccode-rail-text min-w-0 truncate text-left font-medium">{row.name}</span>
             {pinned && <Pin size={10} strokeWidth={1.8} aria-label="已置顶" className="shrink-0 text-l4" />}
           </button>
           {renderToggleSpace(open, dot, () => toggleFolder(fkey, open))}
@@ -1648,9 +1648,9 @@ export default function ProjectTree({
             data-rail-folder={SCRATCH_FOLDER_KEY}
             data-rail-open={open ? "1" : "0"}
             title="不挂在项目下的对话（新对话默认开在这里）"
-            className={`flex h-7 min-w-0 items-center rounded-md pr-0.5 ${unreadInside ? "text-l1" : "text-l3 group-hover:text-l2"}`}
+            className={`flex h-7 min-w-0 items-center rounded-md pr-0.5 ${unreadInside ? "text-l1" : "text-l2 group-hover:text-l1"}`}
           >
-            <span className="min-w-0 truncate text-left text-xs">随手聊</span>
+            <span className="ccode-rail-text min-w-0 truncate text-left font-medium">随手聊</span>
           </button>
           {renderToggleSpace(open, dot, toggle)}
           {renderNewChat("开一段新的随手聊", "开一段新的随手聊（同侧栏「新对话」）", () => void openQuickChat())}

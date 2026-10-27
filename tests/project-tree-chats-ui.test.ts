@@ -365,8 +365,8 @@ test("不再按科研 / 编程 / 工作分组：课题平铺成节，没在聊�
     assert.equal(head.children[0], chevron, "图标在名字前面");
     const chatRow = view.button("镁硫电池第5篇精读");
     assert.match(chatRow.className, /\bpl-2\b/, "对话不缩进，左缘对齐课题行图标（2026-10-25）");
-    assert.ok(view.button("Ccode").querySelector(".text-xs"), "课题名是 12px 的分组标题");
-    assert.ok(view.button("Ccode").classList.contains("text-l3"), "课题名保持正文可读性，不再用提示文字亮度");
+    assert.ok(view.button("Ccode").querySelector(".ccode-rail-text.font-medium"), "课题名与对话同字号（13px）、加粗分层");
+    assert.ok(view.button("Ccode").classList.contains("text-l2"), "课题名用 l2，保证对照 Claude 客户端时读得清");
     // 名字右边的空白也能开合（2026-10-24 用户：点那里没反应）；点名字是进项目页
     const blank = head.children[2] as HTMLElement;
     await view.act(async () => blank.click());
@@ -538,7 +538,7 @@ test("跑完没看的那段标题亮到 l1、行尾蓝光标、悬停写明；�
       "行尾状态格是「做完了，还没看」的蓝光标",
     );
     assert.equal(view.button("镁硫电池第1篇精读").parentElement?.querySelector(".ccode-run-caret"), null);
-    assert.doesNotMatch(view.button("镁硫电池第1篇精读").className, /\btext-l1\b/);
+    assert.doesNotMatch(view.button("镁硫电池第1篇精读").className, /(^|\s)text-l1\b/);
     assert.match(view.button("随手聊").className, /\btext-l1\b/, "随手聊收着，里面那段没看，名字亮");
   } finally {
     await view.close();

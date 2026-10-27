@@ -133,7 +133,7 @@ components/MermaidDiagrams.tsx  # md 阅读态 mermaid 围栏渲染（FilePrevie
   components/ProjectTree.tsx # 侧栏项目树（展开态）：一节一节平铺——置顶对话 / 其他打开的（这两节可折叠，记 ccode.railCollapsedSections，收起保留数量与状态）/ 随手聊，再是「项目」标签行（计数只数课题＋添加入口，2026-10-26 挪进滚动区、排在随手聊下面）与课题；
                              #   树滚动区外的固定入口开 RailSearchPalette（对话和项目一起搜，料由 searchSources 现组：置顶 / 随手聊 / 各课题的全部对话，
                              #   不受「展开更多」限额），树本身不再就地筛。树滚动区顶 6px / 底 12px 渐隐（底部留 12px 内边距），项目标签左缘对齐导航图标；置顶 / 其他打开的标题前置折叠箭头。`liftCurrent`（只 App 里探出层传）时正聊着的课题（currentKey 对应行）整块提到随手聊上面、不参与拖动排序；展开侧栏不提（2026-10-25 用户）。分三层（2026-10-24）：分节标签 RAIL_SECTION_LABEL / 课题行最前
-                             #   renderFolderToggle（文件夹图标，悬停换箭头，点它开合）+ 课题名 xs l3 分组标题 / 对话 pl-2 不缩进（2026-10-25）
+                             #   renderFolderToggle（文件夹图标，悬停换箭头，点它开合）+ 课题名 13px 加粗 l2 分组标题（2026-10-27 用户：比 Claude 客户端糊，对话同字号 l2 常重） / 对话 pl-2 不缩进（2026-10-25）
                              #   工作区清单（课题的工作副本）在开着的对话出现认不出归属的目录时重读一次（reposTick；开步刚建的副本），
                              #   重读后仍认不出的签名不变、不反复读
   components/CoachTip.tsx    # 一次性悬浮气泡（2026-10-27 侧栏多选起用）：只管画（标题 / 正文 kbd / 按钮 / ×、小三角朝左 / 下 / 上）；showFloatingCoach = 挂 body 浮在锚点旁（右边或下面，量过自己再摆、同时只有一个、点外面 / Esc / 指定滚动区滚动 / 窗口变大小收起）；何时出由 coach-tips.ts 管；样式 App.css .ccode-coach
